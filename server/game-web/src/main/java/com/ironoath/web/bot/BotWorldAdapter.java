@@ -49,7 +49,7 @@ import com.ironoath.web.service.MarchAppService;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.service.TargetSearchService;
 import com.ironoath.web.service.WorldAppService;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：{@code BotScheduler.World} 的唯一生产实现 —— 把 Bot 的一次 tick 变成<b>与真人一模一样的
@@ -82,7 +82,7 @@ public class BotWorldAdapter implements BotScheduler.World {
     private final ArmyAppService army;
     private final HeroAppService heroes;
     private final ArmyRepository armies;
-    private final InMemorySocialStore social;
+    private final SocialStore social;
     private final MarchRepository marches;
     private final BotSpawnService spawner;
     private final RewardPorts.Wallet wallet;
@@ -199,7 +199,7 @@ public class BotWorldAdapter implements BotScheduler.World {
 
     public BotWorldAdapter(BotRegistry bots, PlayerRepository players, CityAppService cities,
                            ArmyAppService army, HeroAppService heroes, ArmyRepository armies,
-                           InMemorySocialStore social, MarchRepository marches, BotSpawnService spawner,
+                           SocialStore social, MarchRepository marches, BotSpawnService spawner,
                            RewardPorts.Wallet wallet, ConfigRegistry configs,
                            MarchAppService marches2, ExileAppService exiles,
                            com.ironoath.core.world.WorldRepository world,

@@ -57,7 +57,7 @@ import com.ironoath.web.store.memory.InMemoryHeroStore;
 import com.ironoath.web.store.memory.InMemoryInventoryStore;
 import com.ironoath.web.store.memory.InMemoryMarchStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.store.memory.InMemoryWorldStore;
 import com.ironoath.web.store.memory.SortedMarchDueQueue;
 
@@ -111,7 +111,7 @@ class RallyDepartureTest {
     @Autowired private com.ironoath.core.gacha.GachaLogStore gachaLogs;
     @Autowired private com.ironoath.core.limit.DailyCounter dailyCounter;
     @Autowired private BattleReportStore battleReports;
-    @Autowired private InMemorySocialStore socialStore;
+    @Autowired private SocialStore socialStore;
 
     @BeforeEach
     void resetStores() {

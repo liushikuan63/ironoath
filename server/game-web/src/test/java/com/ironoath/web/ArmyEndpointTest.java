@@ -642,7 +642,7 @@ class ArmyEndpointTest {
 
     @Autowired private com.ironoath.web.service.SocialAppService social;
     @Autowired private com.ironoath.web.quest.QuestAppService quests;
-    @Autowired private com.ironoath.web.store.memory.InMemorySocialStore socialStore;
+    @Autowired private com.ironoath.web.social.SocialStore socialStore;
 
     @Autowired private com.ironoath.web.service.BagAppService bag;
 

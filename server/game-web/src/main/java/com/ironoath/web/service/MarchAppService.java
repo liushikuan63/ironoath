@@ -112,7 +112,7 @@ public class MarchAppService {
      */
     private final SocialAppService socialAppService;
     /** 集结本体：出发时要跨组织扫到点的那几个，到家时要按参与者承诺把幸存兵力分回各人。 */
-    private final com.ironoath.web.store.memory.InMemorySocialStore socialStore;
+    private final com.ironoath.web.social.SocialStore socialStore;
     /** 只读：闭城死守的「期间不可出兵采集」限制记在玩家 PVP 侧状态上。仓储不依赖 service，无环。 */
     private final com.ironoath.core.player.PlayerRepository players;
     /** 只读：流亡迁城的冷却是它定的规则，本类只负责把「下一次可用时刻」随列表一起下发，不重算第二份。 */
@@ -137,7 +137,7 @@ public class MarchAppService {
                            com.ironoath.web.battle.MonsterBattleService monsterBattleService,
                            com.ironoath.web.battle.PlayerCityBattleService playerCityBattleService,
                            SocialAppService socialAppService,
-                           com.ironoath.web.store.memory.InMemorySocialStore socialStore,
+                           com.ironoath.web.social.SocialStore socialStore,
                            com.ironoath.core.player.PlayerRepository players,
                            ExileAppService exileAppService,
                            com.ironoath.web.quest.QuestEvents questEvents,

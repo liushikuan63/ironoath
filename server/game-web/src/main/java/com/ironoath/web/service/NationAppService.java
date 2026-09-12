@@ -47,7 +47,7 @@ import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.nation.NationLeaders;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.social.SocialRulesAssembler;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：国家域应用服务 —— 建国、联盟入籍与退出国、解散国家、官职任命、查看与国库流水
@@ -83,7 +83,7 @@ public class NationAppService {
     private final NationStore nations;
     private final NationRulesAssembler assembler;
     private final SocialRulesAssembler socialRules;
-    private final InMemorySocialStore socialStore;
+    private final SocialStore socialStore;
     /** 议员席（派生席位）的注入器，与 {@code SocialAppService} 共用同一份实现。 */
     private final NationLeaders leaders;
     private final PlayerRepository players;
@@ -99,7 +99,7 @@ public class NationAppService {
     private final RewardService rewardService;
 
     public NationAppService(NationStore nations, NationRulesAssembler assembler,
-                            SocialRulesAssembler socialRules, InMemorySocialStore socialStore,
+                            SocialRulesAssembler socialRules, SocialStore socialStore,
                             NationLeaders leaders,
                             PlayerRepository players, PlayerLock playerLock,
                             IdempotencyStore idempotency, TimeService timeService,

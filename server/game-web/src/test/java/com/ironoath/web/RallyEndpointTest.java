@@ -42,7 +42,7 @@ import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.WorldAppService;
 import com.ironoath.web.store.memory.InMemoryArmyStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：B10 §5 集结的端到端验证 —— 承诺即锁定、退出/取消原路退回、权限位、组织边界。
@@ -70,7 +70,7 @@ class RallyEndpointTest {
     @Autowired private WorldAppService worldAppService;
     @Autowired private PlayerRepository players;
     @Autowired private ArmyRepository armies;
-    @Autowired private InMemorySocialStore socialStore;
+    @Autowired private SocialStore socialStore;
     @Autowired private com.ironoath.web.service.PowerRefreshService powerRefreshService;
 
     @BeforeEach

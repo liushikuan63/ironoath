@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.web.dto.generated.HelpTargetKind;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：登记一条「求助请求」并通知同组织的人（B10 验收 6 的生产者侧接线）。
@@ -19,7 +19,7 @@ import com.ironoath.web.store.memory.InMemorySocialStore;
  * {@code BeanCurrentlyInCreationException}）。把"登记 + 广播"抽成只依赖存储的叶子，
  * 依赖方向就永远只有一条：**发起方 → 登记器 → 存储**。
  *
- * <p>事件有效期放在 {@link InMemorySocialStore#EVENT_TTL_MILLIS}：三小时前的求援已经支援不上了，
+ * <p>事件有效期放在 {@link SocialStore#EVENT_TTL_MILLIS}：三小时前的求援已经支援不上了，
  * 而这个"多久算过期"的口径必须只有一处（原先写在社交服务里，登记器再抄一份就会漂）。
  */
 @Component
@@ -27,7 +27,7 @@ public class HelpRequestRegistrar {
 
     private static final Logger LOG = LoggerFactory.getLogger(HelpRequestRegistrar.class);
 
-    private final InMemorySocialStore store;
+    private final SocialStore store;
     private final PlayerRepository players;
     /**
      * 事件触发的聊天（B11 §四）：升级/训练/治疗真的卡住了，本人喊一句「谁能帮我加个速」。
@@ -38,7 +38,7 @@ public class HelpRequestRegistrar {
      */
     private final org.springframework.context.ApplicationEventPublisher events;
 
-    public HelpRequestRegistrar(InMemorySocialStore store, PlayerRepository players,
+    public HelpRequestRegistrar(SocialStore store, PlayerRepository players,
                                 org.springframework.context.ApplicationEventPublisher events) {
         this.store = store;
         this.players = players;
@@ -52,13 +52,13 @@ public class HelpRequestRegistrar {
      */
     public void register(String requestId, String playerId, HelpTargetKind kind, String targetKey,
                          String targetDesc, long finishAt, long now) {
-        store.putHelpRequest(new InMemorySocialStore.HelpRequest(requestId, playerId,
+        store.putHelpRequest(new SocialStore.HelpRequest(requestId, playerId,
                 nickname(playerId), kind.name(), targetKey, targetDesc, finishAt, 0));
         String title = nickname(playerId) + " 请求帮助：" + targetDesc;
         for (String peer : store.peerPlayerIds(playerId)) {
-            store.pushEvent(peer, new InMemorySocialStore.SocialEvent(
+            store.pushEvent(peer, new SocialStore.SocialEvent(
                     "evt_HELP_REQUESTED_" + requestId + "_" + now, "HELP_REQUESTED", title, null,
-                    null, null, requestId, now, now + InMemorySocialStore.EVENT_TTL_MILLIS));
+                    null, null, requestId, now, now + SocialStore.EVENT_TTL_MILLIS));
         }
         LOG.info("登记求助请求 requestId={} 发起人={} 目标={} 完成于={} 通知同组织={}人",
                 requestId, playerId, targetDesc, finishAt, store.peerPlayerIds(playerId).size());
@@ -90,7 +90,7 @@ public class HelpRequestRegistrar {
             return;
         }
         int removed = 0;
-        for (InMemorySocialStore.HelpRequest request : store.helpRequests()) {
+        for (SocialStore.HelpRequest request : store.helpRequests()) {
             if (playerId.equals(request.fromPlayerId()) && targetKey.equals(request.targetKey())) {
                 store.removeHelpRequest(request.requestId());
                 removed++;

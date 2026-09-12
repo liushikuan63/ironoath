@@ -28,11 +28,11 @@ import com.ironoath.web.dto.generated.AllianceTechReq;
 import com.ironoath.web.dto.generated.AllianceTechResp;
 import com.ironoath.web.dto.generated.SocialSummaryResp;
 import com.ironoath.web.service.SocialAppService;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：联盟域 HTTP 入口（B10 §2）。
- * 依赖：Spring Web、{@link SocialAppService}、{@link InMemorySocialStore}（只为 diff 同步读版本号）。
+ * 依赖：Spring Web、{@link SocialAppService}、{@link SocialStore}（只为 diff 同步读版本号）。
  *
  * <p><b>{@code POST /alliance/sync} 是验收 10 的落点</b>：成员数据变更只下发 diff，不全量同步。
  * 客户端带上手里的版本号，版本相同就返回 unchanged=true 与三个空列表 ——
@@ -51,9 +51,9 @@ public class AllianceController {
 
     private final SocialAppService social;
     private final TimeService timeService;
-    private final InMemorySocialStore store;
+    private final SocialStore store;
 
-    public AllianceController(SocialAppService social, TimeService timeService, InMemorySocialStore store) {
+    public AllianceController(SocialAppService social, TimeService timeService, SocialStore store) {
         this.social = social;
         this.timeService = timeService;
         this.store = store;

@@ -427,6 +427,13 @@ public final class Squad {
         return Collections.unmodifiableList(new ArrayList<>(members.keySet()));
     }
 
+    /**
+     * 成员角色表（只读副本，按加入顺序）。仓储映射用 —— 只靠 {@link #memberIds()} 无法重建谁是什么角色。
+     */
+    public Map<String, SquadRole> members() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(members));
+    }
+
     /** 所属联盟 id；独立小队为 null。 */
     public String allianceId() {
         return allianceId;
@@ -444,6 +451,14 @@ public final class Squad {
 
     public long disbandedAt() {
         return disbandedAt;
+    }
+
+    /**
+     * 全部小队币余额（只读副本，按加入顺序）。仓储映射用。
+     * 注意 key 集合不保证等于成员集合：离队成员的余额可能仍在这里，直接按成员表重建会丢钱。
+     */
+    public Map<String, Long> squadCoins() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(squadCoins));
     }
 
     public long squadCoinPool() {
@@ -500,5 +515,15 @@ public final class Squad {
         squad.dailyQuestProgress = dailyQuestProgress;
         squad.disbandedAt = disbandedAt;
         return squad;
+    }
+    /**
+     * 深拷贝。存储层「读返回副本」用：调用方改这份副本不会动到库里的实例，
+     * 忘记 save 时不会再出现"dev 下看起来生效、换 Mongo 就丢"的假象。
+     *
+     * <p>规则对象不可变，可以共享；成员表与金币表必须复制 —— 它们是本类里唯一可被就地改写的东西。
+     */
+    public Squad copy() {
+        return restore(id, name, leaderId, rules, members, level, exp, allianceId,
+                squadCoins, squadCoinPool, dailyQuestProgress, disbandedAt);
     }
 }

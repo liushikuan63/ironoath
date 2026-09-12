@@ -21,7 +21,7 @@ import com.ironoath.web.dto.generated.AllianceTechReq;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.SocialAppService;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：联盟科技 → 战斗乘区 B 这条接线的验证（B05 §1.3 的乘区 B、B10 §2 的「全盟生效」）。
@@ -40,7 +40,7 @@ class AllianceTechBonusTest {
     @Autowired private SocialAppService social;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
-    @Autowired private InMemorySocialStore socialStore;
+    @Autowired private SocialStore socialStore;
 
     /** 没有联盟就没有科技：打野与 PVE 不该被联盟绑住，所以要回 0 而不是抛错。 */
     @Test

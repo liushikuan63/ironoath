@@ -74,11 +74,11 @@ import com.ironoath.web.dto.generated.SquadMemberReq;
 import com.ironoath.web.dto.generated.SquadSelfReq;
 import com.ironoath.web.dto.generated.SquadView;
 import com.ironoath.web.social.SocialRulesAssembler;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：B10 社交域的应用服务 —— 小队与联盟的创建/加入/审核/捐献、互助帮助、聊天、事件补偿。
- * 依赖：{@link InMemorySocialStore}、{@link SocialRulesAssembler}、玩家仓储、玩家锁、幂等、时间服务。
+ * 依赖：{@link SocialStore}、{@link SocialRulesAssembler}、玩家仓储、玩家锁、幂等、时间服务。
  *
  * <p><b>本类不持有任何数值</b>（铁律 1）：人数上限、捐献档位、帮助额度、限流窗口全部来自
  * {@link SocialRulesAssembler}，而它只读配置表。本类做的是编排：加锁、幂等、
@@ -87,7 +87,7 @@ import com.ironoath.web.store.memory.InMemorySocialStore;
  * <p><b>三条纪律</b>：
  * <ol>
  *   <li><b>跨玩家的操作要在锁内串行</b>。踢人、审核、帮助都会同时改两个人的状态，
- *       玩家级锁挡不住这种竞争 —— 内存存储自己用一把粗锁兜住（见 InMemorySocialStore 的说明）</li>
+ *       玩家级锁挡不住这种竞争 —— 内存存储自己用一把粗锁兜住（见 SocialStore 的说明）</li>
  *   <li><b>幂等键先占后做</b>。创建联盟会扣金币、捐献会扣资源、帮助会扣额度，
  *       没有幂等就等于允许重放刷奖励（B00 陷阱 3）</li>
  *   <li><b>失败要把「差什么」说出来</b>。人数满了就说上限是多少，权限不够就带上缺的权限位 ——
@@ -105,9 +105,9 @@ public class SocialAppService {
     private static final Logger LOG = LoggerFactory.getLogger(SocialAppService.class);
     private static final long LOCK_TIMEOUT_MS = 3000L;
     /** 事件的可响应窗口。唯一来源在存储上（求助登记器也要用同一个数）。 */
-    private static final long EVENT_TTL_MILLIS = InMemorySocialStore.EVENT_TTL_MILLIS;
+    private static final long EVENT_TTL_MILLIS = SocialStore.EVENT_TTL_MILLIS;
 
-    private final InMemorySocialStore store;
+    private final SocialStore store;
     private final SocialRulesAssembler rules;
     private final PlayerRepository players;
     private final PlayerLock playerLock;
@@ -144,7 +144,7 @@ public class SocialAppService {
      */
     private final org.springframework.context.ApplicationEventPublisher events;
 
-    public SocialAppService(InMemorySocialStore store, SocialRulesAssembler rules, PlayerRepository players,
+    public SocialAppService(SocialStore store, SocialRulesAssembler rules, PlayerRepository players,
                             PlayerLock playerLock, IdempotencyStore idempotency, TimeService timeService,
                             ConfigRegistry configs,
                             com.ironoath.web.reward.PlayerWallet wallet,
@@ -900,9 +900,9 @@ public class SocialAppService {
 
     /** GET /social/summary。三层社交一屏给全，红点数由服务端算好（验收 6）。 */
     public SocialSummaryResp summary(String playerId, long now) {
-        List<InMemorySocialStore.SocialEvent> unread = store.unreadEvents(playerId);
+        List<SocialStore.SocialEvent> unread = store.unreadEvents(playerId);
         List<SocialEventView> events = new ArrayList<>(unread.size());
-        for (InMemorySocialStore.SocialEvent record : unread) {
+        for (SocialStore.SocialEvent record : unread) {
             events.add(toEventView(record, now));
         }
         return new SocialSummaryResp(
@@ -982,12 +982,12 @@ public class SocialAppService {
         int skipped = 0;
         long speedup = 0L;
         for (String requestId : requestIds) {
-            Optional<InMemorySocialStore.HelpRequest> found = store.helpRequest(requestId);
+            Optional<SocialStore.HelpRequest> found = store.helpRequest(requestId);
             if (found.isEmpty()) {
                 skipped++;
                 continue;
             }
-            InMemorySocialStore.HelpRequest request = found.get();
+            SocialStore.HelpRequest request = found.get();
             if (request.fromPlayerId().equals(playerId)) {
                 skipped++;
                 continue;
@@ -1032,7 +1032,7 @@ public class SocialAppService {
      * <p><b>只落库、不碰账本</b>：这次实际授予多少比例由 {@code HelpLedger} 说了算，
      * 本方法只负责把它乘到目标的原始总时长上（那才是"目标自己的属性"）。
      */
-    private void applyHelpToTarget(InMemorySocialStore.HelpRequest request, long grantedFixed, long now) {
+    private void applyHelpToTarget(SocialStore.HelpRequest request, long grantedFixed, long now) {
         if (request.targetKey() == null || request.targetKey().isBlank()) {
             return;
         }
@@ -1096,7 +1096,7 @@ public class SocialAppService {
         }
     }
 
-    private static String helpKey(InMemorySocialStore.HelpRequest request) {
+    private static String helpKey(SocialStore.HelpRequest request) {
         // 目标键要能唯一标识「谁的哪一件事」：只用 playerId 的话，
         // 同一个人同时升级两个建筑就只能被帮一次
         return request.fromPlayerId() + ":" + request.requestId();
@@ -1116,7 +1116,7 @@ public class SocialAppService {
         int remaining = Math.max(0, helpLedger.remainingToday(playerId, now));
         List<HelpRequestView> rows = new ArrayList<>();
         int pending = 0;
-        for (InMemorySocialStore.HelpRequest request : store.helpRequests()) {
+        for (SocialStore.HelpRequest request : store.helpRequests()) {
             if (request.fromPlayerId().equals(playerId)) {
                 continue;   // 不能帮自己
             }
@@ -1177,7 +1177,7 @@ public class SocialAppService {
 
     public void notifyMemberAttacked(String victimId, String attackerName, long coordX, long coordY,
                                      long now, long expireAt) {
-        InMemorySocialStore.SocialEvent record = new InMemorySocialStore.SocialEvent(
+        SocialStore.SocialEvent record = new SocialStore.SocialEvent(
                 "evt_attack_" + victimId + "_" + now, "MEMBER_ATTACKED",
                 "盟友 " + nickname(victimId) + " 正在被 " + attackerName + " 攻击",
                 "点击跳转支援", coordX, coordY, victimId, now, expireAt);
@@ -1218,7 +1218,7 @@ public class SocialAppService {
             throw new BizException(ErrorCode.SOCIAL_CHAT_RATE_LIMITED,
                     "同一句话 " + (verdict.retryAfterMillis() / 1000L + 1L) + " 秒后才能再发");
         }
-        InMemorySocialStore.ChatMessage message = new InMemorySocialStore.ChatMessage(
+        SocialStore.ChatMessage message = new SocialStore.ChatMessage(
                 // 不与内容、时刻、发送者挂钩：原先那串（playerId + now + content.hashCode）里，
                 // hashCode 不是单射（"Aa" 与 "BB" 同码是 Java 的经典例子），所以"同一毫秒 + 不同内容
                 // 但同码"的两条会得到同一个 id —— 而 /chat/list 的游标就是按 id 定位的，
@@ -1234,10 +1234,10 @@ public class SocialAppService {
     public ChatListResp chatList(String playerId, ChatListReq req, long now) {
         String channelKey = requireChannelKey(req.channel(), playerId, req.toPlayerId());
         int limit = (int) Math.min(Math.max(1, req.limit()), configs.longParam("CHAT_LOCAL_HISTORY_MAX"));
-        List<InMemorySocialStore.ChatMessage> messages =
+        List<SocialStore.ChatMessage> messages =
                 store.chat(channelKey, req.beforeMessageId(), limit);
         List<ChatMessageView> views = new ArrayList<>(messages.size());
-        for (InMemorySocialStore.ChatMessage message : messages) {
+        for (SocialStore.ChatMessage message : messages) {
             views.add(toMessageView(message));
         }
         return new ChatListResp(views, store.hasMore(channelKey, req.beforeMessageId(), limit), now);
@@ -1404,7 +1404,7 @@ public class SocialAppService {
         return out;
     }
 
-    private SocialEventView toEventView(InMemorySocialStore.SocialEvent record, long now) {
+    private SocialEventView toEventView(SocialStore.SocialEvent record, long now) {
         return new SocialEventView(record.eventId(),
                 com.ironoath.web.dto.generated.SocialEventType.valueOf(record.type()),
                 record.title(), record.body(),
@@ -1413,7 +1413,7 @@ public class SocialAppService {
                 record.relatedId(), record.occurredAt(), record.expiredAt(now));
     }
 
-    private static ChatMessageView toMessageView(InMemorySocialStore.ChatMessage message) {
+    private static ChatMessageView toMessageView(SocialStore.ChatMessage message) {
         return new ChatMessageView(message.messageId(),
                 ChatChannel.valueOf(message.channel()), message.senderId(),
                 message.senderName(), message.content(), message.sentAt());
@@ -1430,9 +1430,9 @@ public class SocialAppService {
         }
     }
 
-    private static InMemorySocialStore.SocialEvent event(String type, String title, String body,
+    private static SocialStore.SocialEvent event(String type, String title, String body,
                                                         String relatedId, long now) {
-        return new InMemorySocialStore.SocialEvent(
+        return new SocialStore.SocialEvent(
                 "evt_" + type + "_" + relatedId + "_" + now, type, title, body,
                 null, null, relatedId, now, now + EVENT_TTL_MILLIS);
     }
@@ -1474,7 +1474,7 @@ public class SocialAppService {
 
     private int pendingInvitesOf(String playerId) {
         int count = 0;
-        for (InMemorySocialStore.SocialEvent record : store.unreadEvents(playerId)) {
+        for (SocialStore.SocialEvent record : store.unreadEvents(playerId)) {
             if ("ALLIANCE_APPLIED".equals(record.type()) || "RALLY_INVITED".equals(record.type())) {
                 count++;
             }

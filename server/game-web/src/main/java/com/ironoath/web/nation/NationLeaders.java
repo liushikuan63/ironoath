@@ -3,7 +3,7 @@ package com.ironoath.web.nation;
 import org.springframework.stereotype.Component;
 
 import com.ironoath.core.nation.Nation;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：把「联盟 → 盟主」这份查询注入 {@link Nation}，使议员席（B13 §2「每盟主 1 席」）
@@ -31,11 +31,11 @@ import com.ironoath.web.store.memory.InMemorySocialStore;
 @Component
 public class NationLeaders {
 
-    private final InMemorySocialStore social;
+    private final SocialStore social;
     /** 合规红线的唯一判定入口（B13 §2、B16 §七 4：Bot 不得担任任何国家官职）。 */
     private final com.ironoath.web.bot.BotRegistry bots;
 
-    public NationLeaders(InMemorySocialStore social, com.ironoath.web.bot.BotRegistry bots) {
+    public NationLeaders(SocialStore social, com.ironoath.web.bot.BotRegistry bots) {
         this.social = social;
         this.bots = bots;
     }

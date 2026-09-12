@@ -32,7 +32,7 @@ import com.ironoath.web.dto.generated.QuestClaimResp;
 import com.ironoath.web.dto.generated.QuestListResp;
 import com.ironoath.web.dto.generated.QuestReward;
 import com.ironoath.web.dto.generated.QuestView;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：任务面板（B12 §1）—— 进度视图、领取奖励、日切/周切。
@@ -79,13 +79,13 @@ public class QuestAppService {
     private final RewardService rewardService;
     private final IdempotencyStore idempotency;
     private final PlayerRepository players;
-    private final InMemorySocialStore socialStore;
+    private final SocialStore socialStore;
     private final PlayerLock playerLock;
 
     public QuestAppService(ConfigRegistry configs, QuestRulesAssembler assembler,
                            QuestProgressStore store, TimeService timeService,
                            RewardService rewardService, IdempotencyStore idempotency,
-                           PlayerRepository players, InMemorySocialStore socialStore,
+                           PlayerRepository players, SocialStore socialStore,
                            PlayerLock playerLock) {
         this.configs = configs;
         this.assembler = assembler;

@@ -51,7 +51,7 @@ import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
 import com.ironoath.web.store.memory.InMemoryNationStore;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：B13 国家域的端到端验证 —— 建国前置、联盟 ⊂ 国家、官职任命的权限与合规红线。
@@ -87,7 +87,7 @@ class NationEndpointTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
-    @Autowired private InMemorySocialStore socialStore;
+    @Autowired private SocialStore socialStore;
     @Autowired private InMemoryNationStore nationStore;
     @Autowired private BotRegistry bots;
     /** 攻击闸门：外交那一层是否真的生效，只有问它本人才算数。 */

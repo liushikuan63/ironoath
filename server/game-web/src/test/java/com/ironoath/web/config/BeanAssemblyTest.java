@@ -55,7 +55,7 @@ class BeanAssemblyTest {
             com.ironoath.web.battle.BattleReportStore.class,
             com.ironoath.web.nation.NationStore.class,
             com.ironoath.web.ops.TrackEventStore.class,
-            com.ironoath.web.store.memory.InMemorySocialStore.class);
+            com.ironoath.web.social.SocialStore.class);
 
     @Test
     @DisplayName("存储端口的实现不许挂 @Primary：它今天不解决任何歧义，补上生产实现时会劫持装配")

@@ -51,7 +51,7 @@ import com.ironoath.web.dto.generated.SquadSelfReq;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：B10 社交域的端到端验证 —— 验收 1/2/4/6/7/8/9/10/12 里可以走 HTTP 断言的那些。
@@ -79,7 +79,7 @@ class SocialEndpointTest {
     @Autowired private PlayerRepository players;
     @Autowired private SocialAppService social;
     @Autowired private ReddotTree reddotTree;
-    @Autowired private InMemorySocialStore socialStore;
+    @Autowired private SocialStore socialStore;
     @Autowired private com.ironoath.web.reward.PlayerWallet wallet;
     @Autowired private com.ironoath.web.social.SocialRulesAssembler socialRules;
 
@@ -955,9 +955,9 @@ class SocialEndpointTest {
     @Test
     @DisplayName("同一频道里重复的 messageId 被存储层当场拒绝：撞号等于静默丢消息")
     void duplicateMessageIdIsRefusedByTheStore() {
-        InMemorySocialStore.ChatMessage first = new InMemorySocialStore.ChatMessage(
+        SocialStore.ChatMessage first = new SocialStore.ChatMessage(
                 "msg_same", "WORLD", "P-a", "甲", "一", 1000L);
-        InMemorySocialStore.ChatMessage twin = new InMemorySocialStore.ChatMessage(
+        SocialStore.ChatMessage twin = new SocialStore.ChatMessage(
                 "msg_same", "WORLD", "P-b", "乙", "二", 1001L);
         socialStore.appendChat("WORLD", first, 50);
 

@@ -46,7 +46,7 @@ import com.ironoath.web.dto.generated.ShopRowView;
 import com.ironoath.web.service.ShopAppService;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.SocialAppService;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：商店兑换的端到端验证（B02 商店表 + B10 验收 8「商店兑换正确扣减」）。
@@ -77,7 +77,7 @@ class ShopEndpointTest {
     @Autowired private ShopAppService shop;
     @Autowired private SocialAppService socialAppService;
     @Autowired private PlayerInitService playerInitService;
-    @Autowired private InMemorySocialStore social;
+    @Autowired private SocialStore social;
     @Autowired private RewardPorts.Wallet wallet;
     @Autowired private RewardPorts.Bag bag;
     @Autowired private DailyCounter limits;

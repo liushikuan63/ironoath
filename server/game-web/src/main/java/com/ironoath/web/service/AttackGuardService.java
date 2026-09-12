@@ -60,7 +60,7 @@ public class AttackGuardService {
      * 而 B13 验收 12 要的是"改一次外交立刻改变谁能打谁"。少接一个入口的表现不是报错，
      * 是那条外交关系在某些攻击路径上根本不存在。
      */
-    private final com.ironoath.web.store.memory.InMemorySocialStore social;
+    private final com.ironoath.web.social.SocialStore social;
     private final com.ironoath.web.nation.NationStore nations;
     /**
      * 攻击频控（B11 §五：同一真人 24h 内被托管账号攻击 ≤ N 次）。
@@ -74,7 +74,7 @@ public class AttackGuardService {
     public AttackGuardService(PlayerRepository players, WorldRepository world,
                               PowerService powerService, PowerRefreshService powerRefreshService,
                               com.ironoath.web.season.SeasonAppService seasons,
-                              com.ironoath.web.store.memory.InMemorySocialStore social,
+                              com.ironoath.web.social.SocialStore social,
                               com.ironoath.web.nation.NationStore nations,
                               com.ironoath.web.bot.BotAttackLimiter botAttackLimiter) {
         this.players = players;

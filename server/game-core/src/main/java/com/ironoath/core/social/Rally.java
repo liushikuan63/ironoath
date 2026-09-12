@@ -473,6 +473,14 @@ public final class Rally {
         return Collections.unmodifiableList(new ArrayList<>(participants.keySet()));
     }
 
+    /**
+     * 参与者表（只读副本，按加入顺序）。仓储映射用 —— {@link Participant} 自身不可变，
+     * 但这份表会随加入/退出变化，不能把内部引用交出去。
+     */
+    public Map<String, Participant> participants() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(participants));
+    }
+
     public Participant participant(String playerId) {
         return participants.get(playerId);
     }
@@ -493,5 +501,41 @@ public final class Rally {
     /** 目标类型（裸字符串，口径与行军一致）；无目标时为 null。 */
     public String targetType() {
         return targetType;
+    }
+
+    /**
+     * 供仓储重建。
+     *
+     * <p>participants 复制成保持插入顺序的 LinkedHashMap —— 顺序在集结里是有意义的信息
+     * （谁先响应），用调用方给的 HashMap 重建会把它打乱。
+     * 发起人必须出现在 participants 里：真正的发起人兵力不在旁路字段上，
+     * 静默给一个空值会让重建后的集结在出发时少一支队伍，且没有任何报错。
+     */
+    public static Rally restore(String rallyId, Scope scope, String groupId, String initiatorId,
+                                int maxMembers, int minMembers, long createdAt, long prepareUntil,
+                                Map<String, Participant> participants, Status status, Departure departure,
+                                long targetX, long targetY, String targetType) {
+        Participant initiator = participants.get(initiatorId);
+        if (initiator == null) {
+            throw new IllegalArgumentException("participants 里缺少发起人：" + initiatorId
+                    + "。重建集结不能凭猜测补一份兵力");
+        }
+        Rally rally = new Rally(rallyId, scope, groupId, initiatorId, maxMembers, minMembers,
+                createdAt, prepareUntil, initiator, targetX, targetY, targetType);
+        rally.participants.clear();
+        rally.participants.putAll(participants);
+        rally.status = status;
+        rally.departure = departure;
+        return rally;
+    }
+
+    /**
+     * 深拷贝。存储层「读返回副本」用：Participant 自身是不可变记录，
+     * 但参与者表是可变的，必须复制。
+     */
+    public Rally copy() {
+        return restore(rallyId, scope, groupId, initiatorId, maxMembers, minMembers,
+                createdAt, prepareUntil, participants, status, departure,
+                targetX, targetY, targetType);
     }
 }

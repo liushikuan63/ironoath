@@ -40,7 +40,7 @@ import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.store.memory.InMemoryArmyStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.store.memory.InMemoryWorldStore;
 
 /**
@@ -60,7 +60,7 @@ class BotEventChatTest {
     @Autowired private PlayerRepository players;
     @Autowired private WorldRepository world;
     @Autowired private ArmyRepository armies;
-    @Autowired private InMemorySocialStore socialStore;
+    @Autowired private SocialStore socialStore;
     @Autowired private SocialAppService social;
     @Autowired private TimeService timeService;
     @Autowired private BotRegistry bots;

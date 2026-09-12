@@ -69,7 +69,7 @@ class SeasonStatusTest {
     @Autowired private RewardService rewardService;
     @Autowired private IdempotencyStore idempotency;
     /** 下面那条用例要手工构造攻击闸门，这两个是它新增的两颗依赖。 */
-    @Autowired private com.ironoath.web.store.memory.InMemorySocialStore socialStore;
+    @Autowired private com.ironoath.web.social.SocialStore socialStore;
     @Autowired private com.ironoath.web.nation.NationStore nationStore;
     @Autowired private com.ironoath.web.bot.BotAttackLimiter botAttackLimiter;
 

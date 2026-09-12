@@ -38,7 +38,7 @@ import com.ironoath.web.service.PowerRefreshService;
 import com.ironoath.web.service.WorldAppService;
 import com.ironoath.web.store.memory.InMemoryArmyStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.store.memory.InMemoryWorldStore;
 
 /**
@@ -64,7 +64,7 @@ class BotPveTest {
     @Autowired private WorldRepository world;
     @Autowired private ArmyRepository armies;
     @Autowired private MarchRepository marches;
-    @Autowired private InMemorySocialStore socialStore;
+    @Autowired private SocialStore socialStore;
     @Autowired private PowerRefreshService powerRefreshService;
     @Autowired private WorldAppService worldAppService;
     @Autowired private ConfigRegistry configs;

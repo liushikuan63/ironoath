@@ -803,12 +803,33 @@ public final class Alliance {
         return Collections.unmodifiableList(new ArrayList<>(members.keySet()));
     }
 
+    /** 成员角色表（只读副本，按加入顺序）。仓储映射用。 */
+    public Map<String, AllianceRole> members() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(members));
+    }
+
+    /** 全部贡献值（只读副本）。仓储映射用；注意它可能包含已离盟成员的历史贡献。 */
+    public Map<String, Long> contributions() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(contributions));
+    }
+
     public long contributionOf(String playerId) {
         return contributions.getOrDefault(playerId, 0L);
     }
 
     public int donatedToday(String playerId, String dayKey) {
         return donatedToday.getOrDefault(playerId + ":" + dayKey, 0);
+    }
+
+    /**
+     * 全部"当日已捐"计数（只读副本）。
+     *
+     * <p><b>key 是 {@code playerId + ":" + dayKey} 复合键</b>，不是单个 playerId ——
+     * 仓储映射必须原样保存与恢复它。丢掉这份账本的表现是：同一天可以无限次捐献，
+     * 每次都能拿到贡献值（每日上限变成了摆设）。
+     */
+    public Map<String, Integer> donatedTodayByKey() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(donatedToday));
     }
 
     /**
@@ -843,16 +864,29 @@ public final class Alliance {
         }
     }
 
-    /** 供仓储重建。 */
+    /**
+     * 供仓储重建。
+     *
+     * <p><b>donatedToday 与 techLevels 必须一起恢复</b>：前者是"今天还能捐几次"的账本，
+     * 后者是联盟科技的等级。早先这个方法的签名里没有它们，于是"用 restore 重建一份存档"
+     * 会静默丢掉当日捐献次数与全部已研究科技 —— 内存实现里没人调用所以看不出来，
+     * 一旦拿它写 Mongo 映射就是每天白送捐献额度、科技等级归零。Mongo 实现落地时补上，
+     * 并由 {@code AllianceRestoreTest} 钉住逐字段往返一致。
+     */
     public static Alliance restore(String id, String name, String tag, String leaderId, Rules rules,
-                                  Map<String, AllianceRole> members, Map<String, Long> contributions,
-                                  int level, long exp, long fund, int territoryCount, int paidCapTier,
-                                  long version, long disbandedAt) {
+                                   Map<String, AllianceRole> members, Map<String, Long> contributions,
+                                   Map<String, Integer> donatedToday, Map<String, Integer> techLevels,
+                                   int level, long exp, long fund, int territoryCount, int paidCapTier,
+                                   long version, long disbandedAt) {
         Alliance alliance = new Alliance(id, name, tag, leaderId, rules);
         alliance.members.clear();
         alliance.members.putAll(members);
         alliance.contributions.clear();
         alliance.contributions.putAll(contributions);
+        alliance.donatedToday.clear();
+        alliance.donatedToday.putAll(donatedToday);
+        alliance.techLevels.clear();
+        alliance.techLevels.putAll(techLevels);
         alliance.level = level;
         alliance.exp = exp;
         alliance.fund = fund;
@@ -861,5 +895,16 @@ public final class Alliance {
         alliance.version = version;
         alliance.disbandedAt = disbandedAt;
         return alliance;
+    }
+
+    /**
+     * 深拷贝。存储层「读返回副本」用：Mongo 版每次读都重新拼一个对象，
+     * 内存版必须给出同一个语义，否则"改了没 save"在 dev 下看不出来、上线才丢档。
+     * 规则对象不可变可共享；成员、贡献、当日捐献、科技四张表必须复制。
+     */
+    public Alliance copy() {
+        return restore(id, name, tag, leaderId, rules, members, contributions,
+                donatedToday, techLevels, level, exp, fund, territoryCount, paidCapTier,
+                version, disbandedAt);
     }
 }

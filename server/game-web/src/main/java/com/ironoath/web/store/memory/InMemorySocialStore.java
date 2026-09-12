@@ -12,59 +12,29 @@ import java.util.Optional;
 
 import com.ironoath.core.social.Alliance;
 import com.ironoath.core.social.Squad;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：B10 社交域的内存存储 —— 小队、联盟、入盟申请、帮助请求、社交事件、聊天记录。
  * 依赖：game-core 的 social 领域对象。
  *
- * <p><b>与其它 InMemory*Store 同一个身份：本地开发与单测用，重启即丢</b>（见 MemoryStoreConfig 的 WARN）。
- * MongoDB 实现属 B16，已记在待办清单里。
+ * <p><b>与其它 InMemory*Store 同一个身份：本地开发与单测用，重启即丢</b>（见 SocialBeansConfig 的 WARN）。
+ * 生产实现是 {@code MongoSocialStore}（2026-09-12 落地），两套实现<b>读出来都是副本</b>：
+ * 调用方改完必须 save，忘记 save 在 dev 与生产上是同一个结果。
  *
  * <p><b>为什么把六个概念放进一个类而不是六个 Store</b>：它们的操作全都是「按 playerId 找组织，
  * 再改组织状态」，而 B10 的每个用例都同时触及其中三四个（创建联盟要查申请、写事件、发聊天）。
  * 拆成六个 Store 会让服务层每次操作都要在六个 Bean 之间搬数据，
  * 而它们的生命周期完全一致（都随玩家存档一起持久化）。
- * 等 Mongo 实现落地时若发现集合边界需要分开，再按集合拆 —— 那时拆是有依据的，现在拆是猜。
+ * Mongo 实现（{@code MongoSocialStore}）按实际查询轴拆成 squad / alliance / rally / chat /
+ * player / application / help_request 七个集合 —— 拆分依据是查询与并发边界，不是猜。
  *
  * <p><b>全部方法 synchronized</b>：B10 的写操作跨玩家（踢人、审核、帮助都会改别人的状态），
  * 玩家级锁挡不住这种跨玩家竞争。内存实现下用一把粗锁最简单也最不容易出错；
- * Mongo 实现要换成按组织 id 的乐观锁（version 字段已经在 Alliance 上了）。
+ * Mongo 实现今天仍是整档替换：Squad/Rally 没有版本号，Alliance 的 version 也没有接进端口签名，
+ * 所以并发"读-改-写"下仍是后写覆盖先写（收口清单 #101 在册）。
  */
-public final class InMemorySocialStore {
-
-    /** 一条聊天记录。 */
-    public record ChatMessage(String messageId, String channel, String senderId, String senderName,
-                              String content, long sentAt) {
-    }
-
-    /**
-     * 事件的可响应窗口：三小时前的求援已经支援不上了（B10 验收 12：过期事件置灰不可跳转）。
-     *
-     * <p>放在存储上是因为它有两个使用者（社交服务与求助登记器），而"多久算过期"必须只有一处。
-     */
-    public static final long EVENT_TTL_MILLIS = 3L * 3600L * 1000L;
-
-    /** 一条社交事件（推送与离线补偿共用同一结构，B10 验收 5 / 12）。 */
-    public record SocialEvent(String eventId, String type, String title, String body,
-                              Long coordX, Long coordY, String relatedId, long occurredAt,
-                              long expireAt) {
-        /** 是否已过期。过期事件必须置灰且不可跳转（与 B07 侦查情报同一条纪律）。 */
-        public boolean expiredAt(long now) {
-            return expireAt > 0L && now >= expireAt;
-        }
-    }
-
-    /**
-     * 一条待帮助请求。
-     *
-     * @param targetKey 加速要落到哪个目标上（建筑的 instanceId 等）。<b>与 targetDesc 分工不同</b>：
-     *                  后者是给人看的文案，前者是给代码用的定位符 —— 早先只有 targetDesc，
-     *                  于是"帮了忙"这件事根本找不到要加速的那栋楼
-     */
-    public record HelpRequest(String requestId, String fromPlayerId, String fromPlayerName,
-                              String kind, String targetKey, String targetDesc,
-                              long finishAt, int helpedCount) {
-    }
+public final class InMemorySocialStore implements SocialStore {
 
     private final Map<String, Squad> squadsById = new LinkedHashMap<>();
     private final Map<String, String> squadIdByPlayer = new HashMap<>();
@@ -100,8 +70,16 @@ public final class InMemorySocialStore {
 
     // ---------- 小队 ----------
 
+    @Override
     public synchronized boolean saveSquad(Squad squad) {
-        squadsById.put(squad.id(), squad);
+        // 名字唯一性在写入点再查一次：服务层的"先查后写"挡得住顺序调用，挡不住两个调用线程;
+        // Mongo 侧同名会被唯一索引拒绝，两侧必须给出同一个结果，否则 dev 全绿、生产第一次撞名就炸
+        String squadNameOwner = squadIdByName.get(squad.name());
+        if (squadNameOwner != null && !squadNameOwner.equals(squad.id())) {
+            throw new IllegalStateException("小队名已被其它小队占用：" + squad.name()
+                    + "。名字是玩家查找小队的唯一入口，两支同名小队等于其中一支从名字上消失");
+        }
+        squadsById.put(squad.id(), squad.copy());
         squadIdByName.put(squad.name(), squad.id());
         for (String playerId : squad.memberIds()) {
             squadIdByPlayer.put(playerId, squad.id());
@@ -109,20 +87,24 @@ public final class InMemorySocialStore {
         return true;
     }
 
+    @Override
     public synchronized Optional<Squad> squadOf(String playerId) {
         String squadId = squadIdByPlayer.get(playerId);
-        return squadId == null ? Optional.empty() : Optional.ofNullable(squadsById.get(squadId));
+        return squadId == null ? Optional.empty() : Optional.ofNullable(squadsById.get(squadId)).map(Squad::copy);
     }
 
+    @Override
     public synchronized Optional<Squad> squadById(String squadId) {
-        return Optional.ofNullable(squadsById.get(squadId));
+        return Optional.ofNullable(squadsById.get(squadId)).map(Squad::copy);
     }
 
+    @Override
     public synchronized boolean squadNameTaken(String name) {
         return squadIdByName.containsKey(name);
     }
 
     /** 成员离开小队后清掉他的反查索引；小队解散时清掉全部成员与名字。 */
+    @Override
     public synchronized void unbindSquadMember(String squadId, String playerId) {
         // 判据是「这个索引指向的是不是要解绑的那个小队」，而不是「playerId 等不等于索引值」——
         // 后者拿玩家 id 去比小队 id，永远为 false，于是索引从来清不掉：
@@ -143,8 +125,19 @@ public final class InMemorySocialStore {
 
     // ---------- 联盟 ----------
 
+    @Override
     public synchronized void saveAlliance(Alliance alliance) {
-        alliancesById.put(alliance.id(), alliance);
+        String allianceNameOwner = allianceIdByName.get(alliance.name());
+        if (allianceNameOwner != null && !allianceNameOwner.equals(alliance.id())) {
+            throw new IllegalStateException("联盟名已被其它联盟占用：" + alliance.name()
+                    + "。联盟名是玩家查找联盟的唯一入口，两个联盟共用一名等于其中一个从名字上消失");
+        }
+        String allianceTagOwner = allianceIdByTag.get(alliance.tag());
+        if (allianceTagOwner != null && !allianceTagOwner.equals(alliance.id())) {
+            throw new IllegalStateException("联盟标签已被其它联盟占用：" + alliance.tag()
+                    + "。标签是外交与战报里指代联盟的短标识，重复会让指代出现歧义");
+        }
+        alliancesById.put(alliance.id(), alliance.copy());
         allianceIdByName.put(alliance.name(), alliance.id());
         allianceIdByTag.put(alliance.tag(), alliance.id());
         for (String playerId : alliance.memberIds()) {
@@ -152,9 +145,10 @@ public final class InMemorySocialStore {
         }
     }
 
+    @Override
     public synchronized Optional<Alliance> allianceOf(String playerId) {
         String allianceId = allianceIdByPlayer.get(playerId);
-        return allianceId == null ? Optional.empty() : Optional.ofNullable(alliancesById.get(allianceId));
+        return allianceId == null ? Optional.empty() : Optional.ofNullable(alliancesById.get(allianceId)).map(Alliance::copy);
     }
 
     /**
@@ -164,29 +158,37 @@ public final class InMemorySocialStore {
      * 而按 id 排序是为了让同一份库存上每次跑出来的结果可复现 —— 随机顺序会让
      * "为什么这个 Bot 申请了那个联盟"变成不可复现的问题。
      */
+    @Override
     public synchronized List<Alliance> allAlliances() {
         List<Alliance> out = new java.util.ArrayList<>(alliancesById.size());
-        out.addAll(alliancesById.values());
+        for (Alliance alliance : alliancesById.values()) {
+            out.add(alliance.copy());
+        }
         out.sort(java.util.Comparator.comparing(Alliance::id));
         return out;
     }
 
+    @Override
     public synchronized Optional<Alliance> allianceById(String allianceId) {
-        return Optional.ofNullable(alliancesById.get(allianceId));
+        return Optional.ofNullable(alliancesById.get(allianceId)).map(Alliance::copy);
     }
 
+    @Override
     public synchronized boolean allianceNameTaken(String name) {
         return allianceIdByName.containsKey(name);
     }
 
+    @Override
     public synchronized boolean allianceTagTaken(String tag) {
         return allianceIdByTag.containsKey(tag);
     }
 
+    @Override
     public synchronized void unbindAllianceMember(String allianceId, String playerId) {
         allianceIdByPlayer.remove(playerId, allianceId);
     }
 
+    @Override
     public synchronized void removeAlliance(Alliance alliance) {
         alliancesById.remove(alliance.id());
         allianceIdByName.remove(alliance.name(), alliance.id());
@@ -198,30 +200,36 @@ public final class InMemorySocialStore {
 
     // ---------- 解散保护期（验收 7） ----------
 
+    @Override
     public synchronized void protectFromCreating(String playerId, long until) {
         // 只延长不缩短：连续解散两次不该让第二次的保护期覆盖掉第一次更长的剩余时间
         disbandProtectedUntil.merge(playerId, until, Math::max);
     }
 
+    @Override
     public synchronized long disbandProtectedUntil(String playerId) {
         return disbandProtectedUntil.getOrDefault(playerId, 0L);
     }
 
     // ---------- 入盟申请 ----------
 
+    @Override
     public synchronized boolean addApplication(String allianceId, String playerId) {
         return pendingApplications.putIfAbsent(key(allianceId, playerId), playerId) == null;
     }
 
+    @Override
     public synchronized boolean removeApplication(String allianceId, String playerId) {
         return pendingApplications.remove(key(allianceId, playerId)) != null;
     }
 
+    @Override
     public synchronized boolean hasApplication(String allianceId, String playerId) {
         return pendingApplications.containsKey(key(allianceId, playerId));
     }
 
     /** 某个玩家的待处理申请数（红点数据源之一）。 */
+    @Override
     public synchronized int pendingApplicationCount(String allianceId) {
         int count = 0;
         for (String applicationKey : pendingApplications.keySet()) {
@@ -249,6 +257,7 @@ public final class InMemorySocialStore {
      * 同一个 id 出现两次意味着"从这条往前翻"永远落在第一条上 —— 第二条连同它之前的一起被跳过。
      * 那是一句静默丢失的聊天，玩家只会说"我朋友发的消息我这儿没显示"，而日志里什么都没有。
      */
+    @Override
     public synchronized void appendChat(String channelKey, ChatMessage message, int historyCap) {
         Deque<ChatMessage> queue = chats.computeIfAbsent(channelKey, k -> new ArrayDeque<>());
         for (ChatMessage seen : queue) {
@@ -289,6 +298,7 @@ public final class InMemorySocialStore {
      *
      * @param beforeMessageId 游标；null 表示从最新往回取
      */
+    @Override
     public synchronized List<ChatMessage> chat(String channelKey, String beforeMessageId, int limit) {
         Deque<ChatMessage> queue = chats.get(channelKey);
         if (queue == null || queue.isEmpty()) {
@@ -301,6 +311,7 @@ public final class InMemorySocialStore {
         return Collections.unmodifiableList(new ArrayList<>(all.subList(start, end)));
     }
 
+    @Override
     public synchronized boolean hasMore(String channelKey, String beforeMessageId, int limit) {
         Deque<ChatMessage> queue = chats.get(channelKey);
         if (queue == null) {
@@ -313,10 +324,12 @@ public final class InMemorySocialStore {
 
     // ---------- 社交事件（验收 5 / 12） ----------
 
+    @Override
     public synchronized void pushEvent(String playerId, SocialEvent event) {
         unreadEvents.computeIfAbsent(playerId, k -> new ArrayList<>()).add(event);
     }
 
+    @Override
     public synchronized List<SocialEvent> unreadEvents(String playerId) {
         List<SocialEvent> events = unreadEvents.get(playerId);
         return events == null ? List.of() : Collections.unmodifiableList(new ArrayList<>(events));
@@ -330,12 +343,14 @@ public final class InMemorySocialStore {
     // ================= 集结（B10 §5） =================
 
     /** 写入或更新一次集结。Rally 是可变对象，调用方改完必须写回来。 */
+    @Override
     public synchronized void saveRally(com.ironoath.core.social.Rally rally) {
-        rallies.put(rally.rallyId(), rally);
+        rallies.put(rally.rallyId(), rally.copy());
     }
 
+    @Override
     public synchronized Optional<com.ironoath.core.social.Rally> rallyOf(String rallyId) {
-        return Optional.ofNullable(rallies.get(rallyId));
+        return Optional.ofNullable(rallies.get(rallyId)).map(com.ironoath.core.social.Rally::copy);
     }
 
     /**
@@ -344,12 +359,13 @@ public final class InMemorySocialStore {
      * <p>只返回 PREPARING 的：已出发/已取消的集结留在面板上没有意义，
      * 而「点进去发现早就出发了」比「看不到」更让人困惑。
      */
+    @Override
     public synchronized List<com.ironoath.core.social.Rally> preparingRalliesOf(String groupId) {
         List<com.ironoath.core.social.Rally> out = new ArrayList<>();
         for (com.ironoath.core.social.Rally rally : rallies.values()) {
             if (rally.groupId().equals(groupId)
                     && rally.status() == com.ironoath.core.social.Rally.Status.PREPARING) {
-                out.add(rally);
+                out.add(rally.copy());
             }
         }
         out.sort(java.util.Comparator.comparingLong(com.ironoath.core.social.Rally::createdAt));
@@ -364,20 +380,22 @@ public final class InMemorySocialStore {
      * 只按组织查就得先知道「有哪些组织有集结」，那等于在本类里再维护一份索引，
      * 而那份索引一旦漏更新，症状就是「有些集结永远出不了发，且没有任何日志」。
      *
-     * <p>返回的是<b>存储中的同一个对象</b>（{@code Rally} 可变，全项目都按引用读写，
-     * 见 {@link #saveRally} 的注释），所以调用方改完必须写回来。
+     * <p>返回的都是<b>副本</b>（与 Mongo 实现同一条语义），所以调用方改完必须写回来 ——
+     * 不写回时改动只会留在本地那份上，不会再出现"dev 下看起来生效"的假象。
      */
+    @Override
     public synchronized List<com.ironoath.core.social.Rally> dueRallies(long now) {
         List<com.ironoath.core.social.Rally> out = new ArrayList<>();
         for (com.ironoath.core.social.Rally rally : rallies.values()) {
             if (rally.dueAt(now)) {
-                out.add(rally);
+                out.add(rally.copy());
             }
         }
         out.sort(java.util.Comparator.comparingLong(com.ironoath.core.social.Rally::createdAt));
         return out;
     }
 
+    @Override
     public synchronized int ackEvents(String playerId, List<String> eventIds) {
         List<SocialEvent> events = unreadEvents.get(playerId);
         if (events == null || events.isEmpty()) {
@@ -391,10 +409,12 @@ public final class InMemorySocialStore {
 
     // ---------- 帮助请求 ----------
 
+    @Override
     public synchronized void putHelpRequest(HelpRequest request) {
         helpRequests.put(request.requestId(), request);
     }
 
+    @Override
     public synchronized Optional<HelpRequest> helpRequest(String requestId) {
         return Optional.ofNullable(helpRequests.get(requestId));
     }
@@ -406,6 +426,7 @@ public final class InMemorySocialStore {
      * 而它同时被两条路径需要（求助请求的广播、以及未来的其它通知）；放在服务里会让另一个服务
      * 为了发一条通知去依赖那个服务 —— {@code CityAppService → SocialAppService} 正是这么成环的。
      */
+    @Override
     public synchronized List<String> peerPlayerIds(String playerId) {
         List<String> peers = new ArrayList<>();
         Optional<Squad> squad = squadOf(playerId);
@@ -427,16 +448,19 @@ public final class InMemorySocialStore {
         return peers;
     }
 
+    @Override
     public synchronized void removeHelpRequest(String requestId) {
         helpRequests.remove(requestId);
     }
 
     /** 全部待帮助请求。红点与「一键帮助」都基于它。 */
+    @Override
     public synchronized List<HelpRequest> helpRequests() {
         return Collections.unmodifiableList(new ArrayList<>(helpRequests.values()));
     }
 
     /** 帮助次数 +1。 */
+    @Override
     public synchronized void markHelped(String requestId) {
         HelpRequest request = helpRequests.get(requestId);
         if (request != null) {
@@ -446,6 +470,7 @@ public final class InMemorySocialStore {
         }
     }
 
+    @Override
     public synchronized int counts() {
         return squadsById.size() + alliancesById.size() + chats.size() + helpRequests.size();
     }
@@ -457,6 +482,7 @@ public final class InMemorySocialStore {
      * 用例之间不清空的话，第二个用例会因为「名字已被占用」而失败 ——
      * 而那条失败信息看起来像是业务逻辑坏了，实际是测试隔离没做好。
      */
+    @Override
     public synchronized void clear() {
         squadsById.clear();
         squadIdByPlayer.clear();

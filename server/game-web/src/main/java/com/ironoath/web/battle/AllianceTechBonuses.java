@@ -8,11 +8,11 @@ import com.ironoath.battle.TechBonus;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.AllianceTechCfg;
 import com.ironoath.core.social.Alliance;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：把本盟已研究的联盟科技折成战斗内核的<b>乘区 B</b>（B05 §1.3「×(1 + 科技加成)」那一项）。
- * 依赖：{@link InMemorySocialStore}（联盟账本）、{@link ConfigRegistry}（alliance_tech 表）。
+ * 依赖：{@link SocialStore}（联盟账本）、{@link ConfigRegistry}（alliance_tech 表）。
  *
  * <p><b>只折算 UNIT_ATTACK 与 UNIT_DEFENSE 两个效果属性</b>，不是偷懒而是这张表目前的全部可接线范围：
  * 内核的乘区 B 就是一份攻击 + 一份防御，而另外六个属性
@@ -36,10 +36,10 @@ import com.ironoath.web.store.memory.InMemorySocialStore;
 @Component
 public class AllianceTechBonuses {
 
-    private final InMemorySocialStore social;
+    private final SocialStore social;
     private final ConfigRegistry configs;
 
-    public AllianceTechBonuses(InMemorySocialStore social, ConfigRegistry configs) {
+    public AllianceTechBonuses(SocialStore social, ConfigRegistry configs) {
         this.social = social;
         this.configs = configs;
     }

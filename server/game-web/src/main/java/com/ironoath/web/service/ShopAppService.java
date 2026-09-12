@@ -34,12 +34,12 @@ import com.ironoath.web.dto.generated.ShopCurrency;
 import com.ironoath.web.dto.generated.ShopListResp;
 import com.ironoath.web.dto.generated.ShopRefresh;
 import com.ironoath.web.dto.generated.ShopRowView;
-import com.ironoath.web.store.memory.InMemorySocialStore;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：商店兑换（B02 商店表 + B10 验收 8「商店兑换正确扣减」）—— 货架查询与购买，覆盖金币 /
  * 联盟贡献值 / 小队币三种货币。
- * 依赖：配置表、{@link RewardPorts.Wallet}、{@link InMemorySocialStore}、{@link DailyCounter}、
+ * 依赖：配置表、{@link RewardPorts.Wallet}、{@link SocialStore}、{@link DailyCounter}、
  * {@link RewardService}。
  *
  * <p><b>本类存在的另一半理由是「把一条商品行变成一次真实变动」</b>：此前 {@code shop.json} 的
@@ -83,7 +83,7 @@ public class ShopAppService {
     private final RewardService rewardService;
     private final RewardPorts.Compensation compensation;
     private final DailyCounter limits;
-    private final InMemorySocialStore social;
+    private final SocialStore social;
     private final PlayerRepository players;
     private final PlayerLock playerLock;
     private final IdempotencyStore idempotency;
@@ -91,7 +91,7 @@ public class ShopAppService {
 
     public ShopAppService(ConfigRegistry configs, RewardPorts.Wallet wallet, RewardService rewardService,
                           RewardPorts.Compensation compensation, DailyCounter limits,
-                          InMemorySocialStore social, PlayerRepository players, PlayerLock playerLock,
+                          SocialStore social, PlayerRepository players, PlayerLock playerLock,
                           IdempotencyStore idempotency, TimeService timeService) {
         this.configs = configs;
         this.wallet = wallet;
