@@ -109,7 +109,54 @@ export class GameBootstrap extends Component {
   }
 
   override onLoad(): void {
+    this.installViewportGuard()
     void this.boot()
+  }
+
+  /**
+   * 窄视口提示：游戏按 960×640 横屏设计，在窄高窗口（侧栏、竖屏手机）里等比缩放后
+   * 字会小到看不清 —— 表现是"顶部一小条、下面全黑，看不出来是什么"。
+   *
+   * <p>与其让玩家面对一个缩小的画面猜，不如显式告诉他「把窗口拉宽」，并给一个全屏按钮。
+   * 只在有 DOM 的运行时安装（微信小游戏走 wx API，不走这条）。
+   */
+  private installViewportGuard(): void {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      return
+    }
+    const MIN_WIDTH = 900
+    const overlay = document.createElement('div')
+    overlay.style.cssText = [
+      'position:fixed', 'inset:0', 'z-index:99999', 'display:none',
+      'align-items:center', 'justify-content:center', 'flex-direction:column',
+      'gap:16px', 'background:rgba(12,10,9,0.96)', 'color:#e2d6be',
+      'font:16px/1.6 "Microsoft YaHei",sans-serif', 'text-align:center', 'padding:24px',
+    ].join(';')
+    const title = document.createElement('div')
+    title.textContent = '窗口太窄，画面会小到看不清'
+    title.style.cssText = 'font-size:20px;color:#b8860b'
+    const detail = document.createElement('div')
+    const button = document.createElement('button')
+    button.textContent = '进入全屏'
+    button.style.cssText = 'padding:10px 24px;font-size:16px;background:#b8860b;'
+      + 'color:#1a1310;border:0;border-radius:6px;cursor:pointer'
+    button.addEventListener('click', () => {
+      const root = document.documentElement
+      if (typeof root.requestFullscreen === 'function') {
+        void root.requestFullscreen()
+      }
+    })
+    overlay.appendChild(title)
+    overlay.appendChild(detail)
+    overlay.appendChild(button)
+    document.body.appendChild(overlay)
+    const sync = (): void => {
+      overlay.style.display = window.innerWidth < MIN_WIDTH ? 'flex' : 'none'
+      detail.textContent = `当前宽度 ${window.innerWidth}px；游戏按横屏设计，建议至少 ${MIN_WIDTH}px。`
+        + '把窗口拉宽后这层提示会自动消失。'
+    }
+    sync()
+    window.addEventListener('resize', sync)
   }
 
   /**
