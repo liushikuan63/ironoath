@@ -195,6 +195,29 @@ public class MongoStoreConfig {
     }
 
     /**
+     * 行军到期队列。它不是"多一份缓存"：{@code MarchAppService} 的到期推进完全依赖
+     * {@code dueBefore} 返回的 id，队列一旦随进程消失，重启后所有在途行军会停在半路永不推进
+     * （B07 验收 1 要求杀进程重进后按真实剩余时间继续）。写放大很小（每支行军一次 upsert），
+     * 但缺了它等于 mongo 模式下行军功能只剩半条命。语义等价见 {@code MarchDueQueueEquivalenceTest}。
+     */
+    @Bean
+    public com.ironoath.core.march.MarchDueQueue marchDueQueue(MongoTemplate mongo) {
+        LOG.info("使用 MongoDB 行军到期队列（重启后在途队伍仍会被到期扫描推进）");
+        return new MongoMarchDueQueue(mongo);
+    }
+    /**
+     * 社交存储。这是 {@link com.ironoath.web.config.MongoStorageGuard} 清单上的最后一类
+     * "无条件装配的内存实现"（收口清单 #16）：小队、联盟、入盟申请、帮助请求、社交事件、聊天记录、集结。
+     * 语义等价由 {@code SocialStoreEquivalenceTest} 在内存与真实 Mongo 两侧跑同一组用例保证。
+     * 规则（Squad/Alliance 的等级表）不进档，重建时从 {@code SocialRulesAssembler} 现取。
+     */
+    @Bean
+    public com.ironoath.web.social.SocialStore socialStore(MongoTemplate mongo,
+            com.ironoath.web.social.SocialRulesAssembler rules) {
+        LOG.info("使用 MongoDB 社交存储（小队、联盟、聊天、互助与集结不再随进程消失）");
+        return new MongoSocialStore(mongo, rules);
+    }
+    /**
      * 埋点与崩溃上报。契约见 {@code TrackStoreEquivalenceTest}。
      * 这一档缺了不会有人报错，只是<b>上线第一天没人看得懂玩家卡在哪一步走</b> ——
      * 而 D1/D3/D7/D30 留存与卡点流失率全部依赖它。

@@ -164,7 +164,48 @@ public final class MongoIndexes {
         String crashExpiry = mongo.indexOps(TrackCrashDocument.COLLECTION).ensureIndex(new Index()
                 .on("serverTs", Sort.Direction.ASC)
                 .named("idx_track_crash_server_ts"));
-        String summary = PlayerDocument.COLLECTION + ".{deviceId} → " + deviceIdIndex
+        // 社交：三条唯一索引是"名字/标签全局唯一"在并发下唯一还成立的保证
+        // （小队名、联盟名、联盟标签）。members.playerId 服务"查我在哪个组织"；
+        // rally 两条服务"本组织进行中"与"到期扫描"。聊天/玩家事件/帮助请求都按 _id 点查，
+        // 入盟申请另按 allianceId 数一次红点，除此之外不需要额外索引。
+        IndexOperations squadIndexes = mongo.indexOps(SquadDocument.COLLECTION);
+        String uniqueSquadName = squadIndexes.ensureIndex(new Index()
+                .on("name", Sort.Direction.ASC)
+                .unique()
+                .named("uk_social_squad_name"));
+        String bySquadMember = squadIndexes.ensureIndex(new Index()
+                .on("members.playerId", Sort.Direction.ASC)
+                .named("idx_social_squad_member"));
+        IndexOperations allianceIndexes = mongo.indexOps(AllianceDocument.COLLECTION);
+        String uniqueAllianceName = allianceIndexes.ensureIndex(new Index()
+                .on("name", Sort.Direction.ASC)
+                .unique()
+                .named("uk_social_alliance_name"));
+        String uniqueAllianceTag = allianceIndexes.ensureIndex(new Index()
+                .on("tag", Sort.Direction.ASC)
+                .unique()
+                .named("uk_social_alliance_tag"));
+        String byAllianceMember = allianceIndexes.ensureIndex(new Index()
+                .on("members.playerId", Sort.Direction.ASC)
+                .named("idx_social_alliance_member"));
+        IndexOperations rallyIndexes = mongo.indexOps(RallyDocument.COLLECTION);
+        String byRallyGroup = rallyIndexes.ensureIndex(new Index()
+                .on("groupId", Sort.Direction.ASC)
+                .on("status", Sort.Direction.ASC)
+                .on("createdAt", Sort.Direction.ASC)
+                .named("idx_social_rally_group_status"));
+        String byRallyDue = rallyIndexes.ensureIndex(new Index()
+                .on("status", Sort.Direction.ASC)
+                .on("prepareUntil", Sort.Direction.ASC)
+                .named("idx_social_rally_status_prepare"));
+        String byApplicationAlliance = mongo.indexOps(SocialApplicationDocument.COLLECTION)
+                .ensureIndex(new Index()
+                        .on("allianceId", Sort.Direction.ASC)
+                        .named("idx_social_application_alliance"));        // 行军到期扫描：每条 dueBefore 都是 "dueAt <= now 按 dueAt 升序取前 N 条"，
+        // 给 dueAt 一条索引即可；_id 是 marchId，点查/删除走主键。
+        String byMarchDueAt = mongo.indexOps(MarchDueDocument.COLLECTION).ensureIndex(new Index()
+                .on("dueAt", Sort.Direction.ASC)
+                .named("idx_march_due_at"));        String summary = PlayerDocument.COLLECTION + ".{deviceId} → " + deviceIdIndex
                 + "；" + RequestIdDocument.COLLECTION + ".{expireAt} → " + ttlIndex
                 + "；" + GachaLogBatchDocument.COLLECTION + ".{playerId,lastDrawnAt} → " + drawnAtIndex
                 + "；" + MarchDocument.COLLECTION + " → " + byPlayer + " / " + byFromChunk
@@ -181,7 +222,13 @@ public final class MongoIndexes {
                 + "；" + WorldCellDocument.COLLECTION + " → " + byCellChunk
                 + "；" + ScoutReportDocument.COLLECTION + " → " + myReports + " / " + reportExpiry
                 + "；" + TrackEventDocument.COLLECTION + " → " + byTrackPlayer + " / " + trackExpiry
-                + "；" + TrackCrashDocument.COLLECTION + " → " + crashExpiry;
+                + "；" + TrackCrashDocument.COLLECTION + " → " + crashExpiry
+                + "；" + SquadDocument.COLLECTION + " → " + uniqueSquadName + " / " + bySquadMember
+                + "；" + AllianceDocument.COLLECTION + " → " + uniqueAllianceName + " / "
+                + uniqueAllianceTag + " / " + byAllianceMember
+                + "；" + RallyDocument.COLLECTION + " → " + byRallyGroup + " / " + byRallyDue
+                + "；" + SocialApplicationDocument.COLLECTION + " → " + byApplicationAlliance
+                + "；" + MarchDueDocument.COLLECTION + ".{dueAt} → " + byMarchDueAt;
         LOG.info("Mongo 索引就绪：{}", summary);
         return summary;
     }

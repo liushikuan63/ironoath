@@ -43,7 +43,10 @@ public class WorldBeansConfig {
         return new InMemoryMarchStore((int) configs.longParam("WORLD_CHUNK_SIZE"));
     }
 
+    /** 到期队列的内存实现：mongo 模式下由 {@code MongoStoreConfig.marchDueQueue} 接管。 */
     @Bean
+    @ConditionalOnProperty(name = "ironoath.storage", havingValue = GameProperties.STORAGE_MEMORY,
+            matchIfMissing = true)
     public MarchDueQueue marchDueQueue() {
         LOG.info("使用内存行军到期队列（TreeMap 按到期时刻排序，请求驱动扫描，无任何定时器）");
         return new SortedMarchDueQueue();
