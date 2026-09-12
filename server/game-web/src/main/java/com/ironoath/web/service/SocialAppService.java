@@ -205,7 +205,8 @@ public class SocialAppService {
                     throw new BizException(ErrorCode.SQUAD_NAME_TAKEN, "小队名「" + name + "」已被占用");
                 }
                 Squad squad = Squad.create("squad_" + playerId, name, playerId, rules.squadRules());
-                store.saveSquad(squad);
+                // 建档：expectedVersion=0 表示"我认为它还不存在"；库里已有同 id 才是冲突
+                store.saveSquad(squad, 0L);
                 LOG.info("创建小队 playerId={} squadId={} name={} 人数上限={}",
                         playerId, squad.id(), name, squad.memberCap(save.cityLevel()));
                 return summary(playerId, now);
@@ -227,13 +228,14 @@ public class SocialAppService {
                 }
                 Squad squad = store.squadById(req.squadId())
                         .orElseThrow(() -> new BizException(ErrorCode.SQUAD_NOT_FOUND, "squadId=" + req.squadId()));
+                long expectedSquadVersion = squad.version();
                 int leaderCityLevel = cityLevelOf(squad.leaderId());
                 try {
                     squad.join(playerId, leaderCityLevel);
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.SQUAD_FULL, e.getMessage());
                 }
-                store.saveSquad(squad);
+                store.saveSquad(squad, expectedSquadVersion);
                 pushToSquad(squad, playerId, "SQUAD_JOINED",
                         nickname(playerId) + " 加入了小队", null, now);
                 LOG.info("加入小队 playerId={} squadId={} 当前人数={}", playerId, squad.id(), squad.memberCount());
@@ -252,12 +254,13 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Squad squad = requireSquad(playerId);
+                long expectedSquadVersion = squad.version();
                 try {
                     squad.leave(playerId);
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.SQUAD_NOT_LEADER, e.getMessage());
                 }
-                store.saveSquad(squad);
+                store.saveSquad(squad, expectedSquadVersion);
                 store.unbindSquadMember(squad.id(), playerId);
                 return summary(playerId, now);
             });
@@ -274,6 +277,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Squad squad = requireSquad(playerId);
+                long expectedSquadVersion = squad.version();
                 // 权限位取 role_permission 表的 permission 列（START_RALLY），不是行 id
                 // （perm_squad_start_rally）—— 用行 id 的话查表永远查不到，而症状是
                 // 「连队长都发起不了集结」，看起来像权限表配错了
@@ -283,7 +287,7 @@ public class SocialAppService {
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.SQUAD_NOT_MEMBER, e.getMessage());
                 }
-                store.saveSquad(squad);
+                store.saveSquad(squad, expectedSquadVersion);
                 store.unbindSquadMember(squad.id(), req.memberId());
                 // 被踢的人必须收到通知：不通知的话他只会在下次打开面板时发现小队没了，
                 // 而那会被理解成 bug 或者被背叛（B10 验收 2 的同一条纪律）
@@ -355,11 +359,13 @@ public class SocialAppService {
                     refund(playerId, GOLD_RESOURCE_ID, cost, now, "创建联盟失败退款 " + name);
                     throw new BizException(ErrorCode.ALLIANCE_CREATE_COST_LACK, e.getMessage());
                 }
-                store.saveAlliance(alliance);
+                // 建档：expectedVersion=0 表示"我认为它还不存在"
+                store.saveAlliance(alliance, 0L);
                 // 入盟时小队自动转为联盟内分队，功能全部保留（关键设计点 1、验收 1）
                 store.squadOf(playerId).ifPresent(squad -> {
+                    long expectedSquadVersion = squad.version();
                     squad.attachToAlliance(alliance.id());
-                    store.saveSquad(squad);
+                    store.saveSquad(squad, expectedSquadVersion);
                 });
                 LOG.info("创建联盟 playerId={} allianceId={} name={} tag={} 扣金币={} 人数上限={}",
                         playerId, alliance.id(), name, tag, cost, alliance.effectiveMemberCap());
@@ -412,6 +418,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "APPROVE_APPLICATION");
                 if (!store.hasApplication(alliance.id(), req.applicantId())) {
                     throw new BizException(ErrorCode.ALLIANCE_APPLY_NOT_FOUND,
@@ -431,11 +438,12 @@ public class SocialAppService {
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.ALLIANCE_FULL, e.getMessage());
                 }
-                store.saveAlliance(alliance);
+                store.saveAlliance(alliance, expectedAllianceVersion);
                 // 关键设计点 1：入盟时小队转为分队，功能全部保留
                 store.squadOf(req.applicantId()).ifPresent(squad -> {
+                    long expectedSquadVersion = squad.version();
                     squad.attachToAlliance(alliance.id());
-                    store.saveSquad(squad);
+                    store.saveSquad(squad, expectedSquadVersion);
                 });
                 store.pushEvent(req.applicantId(), event("ALLIANCE_JOINED",
                         "你已加入联盟「" + alliance.name() + "」", null, alliance.id(), now));
@@ -464,13 +472,14 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Squad squad = requireSquad(playerId);
+                long expectedSquadVersion = squad.version();
                 requirePermission(PermissionMatrix.Scope.SQUAD, squad.roleOf(playerId), "TRANSFER_LEADER");
                 try {
                     squad.transferLeadership(playerId, req.memberId());
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.SQUAD_NOT_MEMBER, e.getMessage());
                 }
-                store.saveSquad(squad);
+                store.saveSquad(squad, expectedSquadVersion);
                 store.pushEvent(req.memberId(), event("SQUAD_LEADER_CHANGED",
                         "你已成为小队「" + squad.name() + "」的队长", null, null, now));
                 LOG.info("小队转让队长 operator={} squadId={} 新队长={}", playerId, squad.id(), req.memberId());
@@ -497,6 +506,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 // 权限位是 permission 列的 EXPAND_CAPACITY，不是行 id perm_alliance_expand
                 requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "EXPAND_CAPACITY");
                 Alliance.Expansion expansion;
@@ -518,7 +528,7 @@ public class SocialAppService {
                     }
                     throw new BizException(ErrorCode.SYSTEM_ERROR, message);
                 }
-                store.saveAlliance(alliance);
+                store.saveAlliance(alliance, expectedAllianceVersion);
                 LOG.info("联盟扩容 operator={} allianceId={} 消耗资金={} 余额={} 等级={} 人数上限={}",
                         playerId, alliance.id(), expansion.cost(), expansion.fund(),
                         expansion.level(), expansion.memberCap());
@@ -542,6 +552,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "KICK_MEMBER");
                 // 不另加一份 requireText：空或非法的 memberId 本来就不是成员，
                 // 下面那条 ALLIANCE_NOT_MEMBER 是更一致的答案（控制器里已有三份私有实现，够了）
@@ -554,7 +565,7 @@ public class SocialAppService {
                             "不能踢盟主：要换人请走 /alliance/transfer");
                 }
                 alliance.kick(playerId, target);
-                store.saveAlliance(alliance);
+                store.saveAlliance(alliance, expectedAllianceVersion);
                 // 与 allianceLeave 同一套收尾：成员索引不解的话，被踢的人之后每次
                 // 读 /social/summary 都会指回这个已经没有他位置的联盟
                 store.unbindAllianceMember(alliance.id(), target);
@@ -578,6 +589,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 // 不另加一份 requireText：空或非法的 memberId 本来就不是成员，
                 // 下面那条 ALLIANCE_NOT_MEMBER 是更一致的答案（控制器里已有三份私有实现，够了）
                 String target = req.memberId();
@@ -592,7 +604,7 @@ public class SocialAppService {
                     throw new BizException(ErrorCode.ALLIANCE_NOT_MEMBER, "memberId=" + target);
                 }
                 alliance.transferLeadership(playerId, target);
-                store.saveAlliance(alliance);
+                store.saveAlliance(alliance, expectedAllianceVersion);
                 store.pushEvent(target, event("ALLIANCE_TRANSFERRED",
                         "你已成为联盟「" + alliance.name() + "」的盟主", null, alliance.id(), now));
                 LOG.info("盟主转让 allianceId={} 原盟主={} 新盟主={}：权力交接必须留痕",
@@ -618,6 +630,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 // 不另加一份 requireText：空或非法的 memberId 本来就不是成员，
                 // 下面那条 ALLIANCE_NOT_MEMBER 是更一致的答案（控制器里已有三份私有实现，够了）
                 String target = req.memberId();
@@ -634,7 +647,7 @@ public class SocialAppService {
                     // 域内的规则全是权限问题（任命低于自己、不能降级盟主），统一翻成权限码
                     throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED, e.getMessage());
                 }
-                store.saveAlliance(alliance);
+                store.saveAlliance(alliance, expectedAllianceVersion);
                 store.pushEvent(target, event("ALLIANCE_ROLE_SET",
                         "你在联盟「" + alliance.name() + "」的职位变为 " + req.role().name(),
                         null, alliance.id(), now));
@@ -665,12 +678,13 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 try {
                     alliance.leave(playerId);
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.ALLIANCE_NOT_LEADER, e.getMessage());
                 }
-                store.saveAlliance(alliance);
+                store.saveAlliance(alliance, expectedAllianceVersion);
                 store.unbindAllianceMember(alliance.id(), playerId);
                 onMemberLeftAlliance(playerId, alliance.id(), now);
                 return summary(playerId, now);
@@ -692,10 +706,11 @@ public class SocialAppService {
         if (squad == null || !allianceId.equals(squad.allianceId())) {
             return;
         }
+        long expectedSquadVersion = squad.version();
         if (!squad.leaderId().equals(playerId)) {
             // 普通队员退盟：只摘掉他，小队保留
             squad.memberLeavesAlliance(playerId);
-            store.saveSquad(squad);
+            store.saveSquad(squad, expectedSquadVersion);
             store.unbindSquadMember(squad.id(), playerId);
             return;
         }
@@ -705,7 +720,7 @@ public class SocialAppService {
         } catch (IllegalStateException e) {
             throw new BizException(ErrorCode.SQUAD_NOT_FOUND, e.getMessage());
         }
-        store.saveSquad(squad);
+        store.saveSquad(squad, expectedSquadVersion);
         for (String member : toNotify) {
             store.unbindSquadMember(squad.id(), member);
             store.pushEvent(member, event("SQUAD_DISBANDED",
@@ -723,6 +738,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "DISBAND_ALLIANCE");
                 // 排第一，且在联盟侧任何写操作之前：国家那一次带版本写如果撞了锁，整次解散就该失败，
                 // 而不是留下"联盟已经没了、国家的成员表里还挂着它"这种半状态（幽灵席位白占一个名额）
@@ -767,6 +783,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 Alliance.DonateTier tier = Alliance.donateTierOf(alliance.rules(), req.tier());
                 String reason = "联盟捐献 档位" + req.tier();
                 long goldBalance = balanceOf(playerId, GOLD_RESOURCE_ID, now);
@@ -812,7 +829,7 @@ public class SocialAppService {
                     throw new BizException(ErrorCode.ALLIANCE_DONATE_DAILY_LIMIT, e.getMessage());
                 }
                 alliance.addExp(tier.expGained());
-                store.saveAlliance(alliance);
+                store.saveAlliance(alliance, expectedAllianceVersion);
                 LOG.info("联盟捐献 playerId={} allianceId={} tier={} 资金+{} 贡献+{} 余额={}",
                         playerId, alliance.id(), req.tier(), donation.fundGained(),
                         donation.contributionGained(), donation.fund());
@@ -845,6 +862,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "RESEARCH_TECH");
                 if (req.levels() < 1) {
                     throw new BizException(ErrorCode.PARAM_INVALID,
@@ -881,7 +899,7 @@ public class SocialAppService {
                     throw new BizException(ErrorCode.SYSTEM_ERROR,
                             "联盟内有其它研究同时进行，本次未执行，请重试：" + race.getMessage());
                 }
-                store.saveAlliance(alliance);
+                store.saveAlliance(alliance, expectedAllianceVersion);
                 LOG.info("联盟科技研究 playerId={} allianceId={} tech={} 研究{}级 → {}级 上限={} 资金-{} 余额={}"
                                 + " 累计效果={}",
                         playerId, alliance.id(), tech.id(), req.levels(), research.level(),
@@ -1441,8 +1459,9 @@ public class SocialAppService {
     private void detachSquad(String playerId, String allianceId) {
         store.squadOf(playerId).ifPresent(squad -> {
             if (allianceId.equals(squad.allianceId())) {
+                long expectedSquadVersion = squad.version();
                 squad.detachFromAlliance();
-                store.saveSquad(squad);
+                store.saveSquad(squad, expectedSquadVersion);
             }
         });
     }
@@ -1630,6 +1649,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
+                long expectedAllianceVersion = alliance.version();
                 requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId),
                         "START_RALLY");
                 int maxSize = Math.min(Math.max(req.maxMembers(), rules.allianceRallyRules().minMembers()),
@@ -1660,6 +1680,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Rally rally = requireRally(req.rallyId(), now);
+                long expectedRallyVersion = rally.version();
                 Map<String, Long> troops = troopsOf(req.troops());
                 if (troops.isEmpty()) {
                     throw new BizException(ErrorCode.RALLY_NO_TROOP, "加入集结必须承诺兵力");
@@ -1676,7 +1697,7 @@ public class SocialAppService {
                     refundTroops(playerId, troops);
                     throw new BizException(errorOfJoinFailure(e.getMessage()), e.getMessage());
                 }
-                store.saveRally(rally);
+                store.saveRally(rally, expectedRallyVersion);
                 LOG.info("加入集结 rallyId={} playerId={} 承诺兵力={} 当前人数={}/{}",
                         rally.rallyId(), playerId, troops, rally.joinedCount(), rally.maxMembers());
                 // 参战算一次（B12 §1 的 JOIN_RALLY）：周常要的正是"组织行为"这件事
@@ -1696,6 +1717,7 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Rally rally = requireRally(req.rallyId(), now);
+                long expectedRallyVersion = rally.version();
                 Rally.Participant mine = rally.participant(playerId);
                 if (mine == null) {
                     throw new BizException(ErrorCode.RALLY_NOT_FOUND, "你不是这次集结的参与者");
@@ -1708,7 +1730,7 @@ public class SocialAppService {
                 } else {
                     refundTroops(playerId, mine.troops());
                 }
-                store.saveRally(rally);
+                store.saveRally(rally, expectedRallyVersion);
                 LOG.info("退出集结 rallyId={} playerId={} 发起人退出={} 退回兵力={} 新状态={}",
                         rally.rallyId(), playerId, wasInitiator, mine.troops(), rally.status());
                 return new RallyResp(toRallyView(rally, now), now);
@@ -1726,12 +1748,13 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Rally rally = requireRally(req.rallyId(), now);
+                long expectedRallyVersion = rally.version();
                 if (!rally.initiatorId().equals(playerId)) {
                     throw new BizException(ErrorCode.RALLY_NOT_INITIATOR, "只有发起人能取消这次集结");
                 }
                 rally.cancel(playerId);
                 refundAll(rally);
-                store.saveRally(rally);
+                store.saveRally(rally, expectedRallyVersion);
                 LOG.info("集结已取消 rallyId={} 发起人={} 退回人数={}",
                         rally.rallyId(), playerId, rally.memberIds().size());
                 return new RallyResp(toRallyView(rally, now), now);
@@ -1802,7 +1825,8 @@ public class SocialAppService {
                     troops, heroes, maxSize, requestedPrepareMillis, now,
                     scope == Rally.Scope.SQUAD ? rules.squadRallyRules() : rules.allianceRallyRules(),
                     coord.x(), coord.y(), targetType.name());
-            store.saveRally(rally);
+            // 创建集结：expectedVersion=0，库里已有同 id 才是冲突（rallyId 里已带 now，正常不会撞）
+            store.saveRally(rally, 0L);
             return rally;
         } catch (IllegalArgumentException | IllegalStateException e) {
             refundTroops(playerId, troops);
@@ -1841,6 +1865,7 @@ public class SocialAppService {
      * @return 出发结果（合并后的兵力）；本次没有出发时为 empty
      */
     public java.util.Optional<Rally.Departure> settleDueRally(Rally rally, long now) {
+        long expectedRallyVersion = rally.version();
         if (rally.status() != Rally.Status.PREPARING || !rally.dueAt(now)) {
             return java.util.Optional.empty();
         }
@@ -1850,7 +1875,7 @@ public class SocialAppService {
         }
         try {
             Rally.Departure departure = rally.depart(now);
-            store.saveRally(rally);
+            store.saveRally(rally, expectedRallyVersion);
             LOG.info("集结出发 rallyId={} 发起人={} 参与人数={} 合并兵力={} 目标=({},{}) 类型={}",
                     rally.rallyId(), rally.initiatorId(), departure.memberCount(),
                     departure.mergedTroops(), rally.targetX(), rally.targetY(), rally.targetType());
@@ -1875,19 +1900,21 @@ public class SocialAppService {
         if (rally == null) {
             return;
         }
+        long expectedRallyVersion = rally.version();
         refundAll(rally);
         rally.abortDeparted();
-        store.saveRally(rally);
+        store.saveRally(rally, expectedRallyVersion);
         LOG.error("集结 {} 已出发但合并行军未建立，已撤销出发并退回 {} 名成员的兵力",
                 rallyId, rally.memberIds().size());
     }
 
     /** 人数不足到点：所有人的兵原路退回，集结取消（发起人自己的兵也在 participants 里，一起退）。 */
     private void refundInsufficient(Rally rally) {
+        long expectedRallyVersion = rally.version();
         int members = rally.memberIds().size();
         refundAll(rally);
         rally.cancel(rally.initiatorId());
-        store.saveRally(rally);
+        store.saveRally(rally, expectedRallyVersion);
         LOG.warn("集结到点时人数不足：{} 人（下限 {}），已把各人承诺的兵力原路退回并取消 rallyId={}",
                 members, rally.minMembersRequired(), rally.rallyId());
     }

@@ -76,6 +76,24 @@ public record AllianceDocument(
                 alliance.version(), alliance.disbandedAt());
     }
 
+    /** 乐观锁更新用的全字段 {@code $set}，与 {@link #fromDomain} 一一对应。 */
+    org.springframework.data.mongodb.core.query.Update toUpdate() {
+        return new org.springframework.data.mongodb.core.query.Update()
+                .set("name", name)
+                .set("tag", tag)
+                .set("leaderId", leaderId)
+                .set("members", members)
+                .set("contributions", contributions)
+                .set("donatedToday", donatedToday)
+                .set("techLevels", techLevels)
+                .set("level", level)
+                .set("exp", exp)
+                .set("fund", fund)
+                .set("territoryCount", territoryCount)
+                .set("paidCapTier", paidCapTier)
+                .set("version", version)
+                .set("disbandedAt", disbandedAt);
+    }
     Alliance toDomain(Alliance.Rules rules) {
         Map<String, AllianceRole> memberRoles = new LinkedHashMap<>();
         for (MemberEntry member : members) {

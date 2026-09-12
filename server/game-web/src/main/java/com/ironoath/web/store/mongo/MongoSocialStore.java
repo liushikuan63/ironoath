@@ -33,11 +33,12 @@ import com.ironoath.web.social.SocialStore;
  * "先查后写"两条语句之间总有竞态窗口，索引是唯一能在并发下仍然成立的保证；
  * 捕获 {@link DuplicateKeyException} 之后给出与内存实现逐字相同的拒绝文案。
  *
- * <p><b>已知欠账（不假装已解决）</b>：{@link Squad} 与 {@link Rally} 没有版本号，
- * {@code save} 是整档替换；{@link Alliance} 虽然有 {@code version}，端口签名
- * {@link SocialStore#saveAlliance} 没有携带"期望版本"，所以这里也做不了 CAS。
- * 并发"读-改-写"下仍是后写覆盖先写。要收口得先把期望版本接进端口签名与全部调用点，
- * 记在收口清单 #16 的后续档里。
+ * <p><b>并发口径（2026-09-12 起）</b>：三个 {@code save} 都是乐观锁（CAS）——
+ * 建档走 {@code insert}（{@code expectedVersion<=0} 表示"我认为它还不存在"），
+ * 更新走"{@code _id} + {@code version} 同时匹配"的原子 {@code $set}，
+ * 匹配不到就区分"不存在"与"版本被推进"并拒绝，而不是静默覆盖。
+ * 每次更新都把文档的全部字段重新 set 一遍（{@code *Document#toUpdate}），
+ * 漏字段与 CAS 是两类不同的错误，前者由逐字段往返测试兜住。
  */
 public final class MongoSocialStore implements SocialStore {
 
@@ -52,20 +53,36 @@ public final class MongoSocialStore implements SocialStore {
     // ---------- 小队 ----------
 
     @Override
-    public boolean saveSquad(Squad squad) {
+    public long saveSquad(Squad squad, long expectedVersion) {
         Objects.requireNonNull(squad, "squad 不得为 null");
         if (mongo.exists(Query.query(Criteria.where("name").is(squad.name()).and("_id").ne(squad.id())),
                 SquadDocument.class, SquadDocument.COLLECTION)) {
             throw squadNameConflict(squad.name());
         }
-        try {
-            mongo.save(SquadDocument.fromDomain(squad), SquadDocument.COLLECTION);
-        } catch (DuplicateKeyException e) {
-            // 唯一索引是并发下唯一还成立的保证：两个请求同时通过上面的 exists 检查时，
-            // 第二个会撞在这里。抛与内存实现相同的文案，而不是把 DuplicateKey 原样漏给上层
-            throw squadNameConflict(squad.name());
+        SquadDocument document = SquadDocument.fromDomain(squad);
+        if (expectedVersion <= 0L) {
+            try {
+                mongo.insert(document, SquadDocument.COLLECTION);
+            } catch (DuplicateKeyException e) {
+                // 两种可能：_id 撞上（并发建档）或 name 撞上（并发同名）。
+                // 唯一索引是并发下唯一还成立的保证：两个请求同时通过上面的 exists 检查时，
+                // 第二个会撞在这里 —— 抛与内存实现相同的文案，而不是把 DuplicateKey 漏给上层
+                if (mongo.exists(Query.query(Criteria.where("_id").is(squad.id())),
+                        SquadDocument.class, SquadDocument.COLLECTION)) {
+                    throw alreadyExists("小队", squad.id(),
+                            storedVersion(SquadDocument.COLLECTION, squad.id()));
+                }
+                throw squadNameConflict(squad.name());
+            }
+            return squad.version();
         }
-        return true;
+        var result = mongo.updateFirst(Query.query(Criteria.where("_id").is(squad.id())
+                        .and("version").is(expectedVersion)),
+                document.toUpdate(), SquadDocument.class, SquadDocument.COLLECTION);
+        if (result.getMatchedCount() == 0L) {
+            rejectAsStaleOrMissing("小队", squad.id(), expectedVersion, SquadDocument.COLLECTION);
+        }
+        return squad.version();
     }
 
     @Override
@@ -104,7 +121,7 @@ public final class MongoSocialStore implements SocialStore {
     // ---------- 联盟 ----------
 
     @Override
-    public void saveAlliance(Alliance alliance) {
+    public long saveAlliance(Alliance alliance, long expectedVersion) {
         Objects.requireNonNull(alliance, "alliance 不得为 null");
         if (mongo.exists(Query.query(Criteria.where("name").is(alliance.name())
                         .and("_id").ne(alliance.id())), AllianceDocument.class,
@@ -116,18 +133,34 @@ public final class MongoSocialStore implements SocialStore {
                 AllianceDocument.COLLECTION)) {
             throw allianceTagConflict(alliance.tag());
         }
-        try {
-            mongo.save(AllianceDocument.fromDomain(alliance), AllianceDocument.COLLECTION);
-        } catch (DuplicateKeyException e) {
-            // 两条唯一索引共用同一个异常类型，靠"谁被占了"分辨是哪一条撞的 ——
-            // 不分辨就会把"标签重复"报成"名字重复"，而玩家的处置完全不同
-            if (mongo.exists(Query.query(Criteria.where("name").is(alliance.name())
-                            .and("_id").ne(alliance.id())), AllianceDocument.class,
-                    AllianceDocument.COLLECTION)) {
-                throw allianceNameConflict(alliance.name());
+        AllianceDocument document = AllianceDocument.fromDomain(alliance);
+        if (expectedVersion <= 0L) {
+            try {
+                mongo.insert(document, AllianceDocument.COLLECTION);
+            } catch (DuplicateKeyException e) {
+                if (mongo.exists(Query.query(Criteria.where("_id").is(alliance.id())),
+                        AllianceDocument.class, AllianceDocument.COLLECTION)) {
+                    throw alreadyExists("联盟", alliance.id(),
+                            storedVersion(AllianceDocument.COLLECTION, alliance.id()));
+                }
+                // 两条唯一索引共用同一个异常类型，靠"谁被占了"分辨是哪一条撞的 ——
+                // 不分辨就会把"标签重复"报成"名字重复"，而玩家的处置完全不同
+                if (mongo.exists(Query.query(Criteria.where("name").is(alliance.name())
+                                .and("_id").ne(alliance.id())), AllianceDocument.class,
+                        AllianceDocument.COLLECTION)) {
+                    throw allianceNameConflict(alliance.name());
+                }
+                throw allianceTagConflict(alliance.tag());
             }
-            throw allianceTagConflict(alliance.tag());
+            return alliance.version();
         }
+        var result = mongo.updateFirst(Query.query(Criteria.where("_id").is(alliance.id())
+                        .and("version").is(expectedVersion)),
+                document.toUpdate(), AllianceDocument.class, AllianceDocument.COLLECTION);
+        if (result.getMatchedCount() == 0L) {
+            rejectAsStaleOrMissing("联盟", alliance.id(), expectedVersion, AllianceDocument.COLLECTION);
+        }
+        return alliance.version();
     }
 
     @Override
@@ -354,9 +387,25 @@ public final class MongoSocialStore implements SocialStore {
     // ---------- 集结（B10 §5） ----------
 
     @Override
-    public void saveRally(Rally rally) {
+    public long saveRally(Rally rally, long expectedVersion) {
         Objects.requireNonNull(rally, "rally 不得为 null");
-        mongo.save(RallyDocument.fromDomain(rally), RallyDocument.COLLECTION);
+        RallyDocument document = RallyDocument.fromDomain(rally);
+        if (expectedVersion <= 0L) {
+            try {
+                mongo.insert(document, RallyDocument.COLLECTION);
+            } catch (DuplicateKeyException e) {
+                throw alreadyExists("集结", rally.rallyId(),
+                        storedVersion(RallyDocument.COLLECTION, rally.rallyId()));
+            }
+            return rally.version();
+        }
+        var result = mongo.updateFirst(Query.query(Criteria.where("_id").is(rally.rallyId())
+                        .and("version").is(expectedVersion)),
+                document.toUpdate(), RallyDocument.class, RallyDocument.COLLECTION);
+        if (result.getMatchedCount() == 0L) {
+            rejectAsStaleOrMissing("集结", rally.rallyId(), expectedVersion, RallyDocument.COLLECTION);
+        }
+        return rally.version();
     }
 
     @Override
@@ -481,6 +530,45 @@ public final class MongoSocialStore implements SocialStore {
         mongo.remove(new Query(), HelpRequestDocument.COLLECTION);
     }
 
+    /**
+     * 乐观锁失败时把两种原因分开说清（与内存实现逐字相同）：<b>记录不存在</b>与
+     * <b>版本被别人的写入推进了</b>不是一回事 —— 前者说明调用方拿着一个已被删除的对象，
+     * 后者说明重读重试就能继续。写成一句会让运维分不清是数据被删还是有人并发写。
+     */
+    private void rejectAsStaleOrMissing(String what, String id, long expectedVersion, String collection) {
+        Long stored = storedVersion(collection, id);
+        if (stored == null) {
+            throw new IllegalStateException(what + "不存在，无法按版本更新：id=" + id
+                    + "，期望版本=" + expectedVersion);
+        }
+        throw new IllegalStateException("乐观锁冲突：" + what + " id=" + id
+                + "，存储版本=" + stored + "，提交版本=" + expectedVersion
+                + "。请重读后重试：这类改动跨玩家，PlayerLock 是按玩家的，拦不住这里");
+    }
+
+    /**
+     * 库里当前的版本号；没有这条记录返回 null。
+     *
+     * <p>只投影 version 一个字段：这是失败路径上的诊断查询，不需要把整档读出来。
+     * <b>文档没有 version 字段</b>（本轮之前写入的历史数据）时返回 -1 —— 那是一个必然冲突的版本，
+     * 错误信息会把它显示出来，提醒操作者需要迁移或重建，而不是静默放行。
+     */
+    private Long storedVersion(String collection, String id) {
+        org.bson.Document existing = mongo.getCollection(collection)
+                .find(new org.bson.Document("_id", id))
+                .projection(new org.bson.Document("version", 1))
+                .first();
+        if (existing == null) {
+            return null;
+        }
+        Object version = existing.get("version");
+        return version instanceof Number number ? number.longValue() : -1L;
+    }
+
+    private static IllegalStateException alreadyExists(String what, String id, Long storedVersion) {
+        return new IllegalStateException(what + "已存在，不能用 expectedVersion<=0 建档：id=" + id
+                + "，存储版本=" + storedVersion);
+    }
     private static IllegalStateException squadNameConflict(String name) {
         return new IllegalStateException("小队名已被其它小队占用：" + name
                 + "。名字是玩家查找小队的唯一入口，两支同名小队等于其中一支从名字上消失");

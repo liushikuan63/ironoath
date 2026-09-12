@@ -240,7 +240,10 @@ class BotSocialRaidTest {
         String allianceId = allianceOf(leader, "集结队");
         String member = humanAt(300, 300, "响应者");
         bots.register(profileOf(member, "0.30", "1.00"));
-        socialStore.saveAlliance(membershipOf(allianceId, member));
+        Alliance joinAlliance = socialStore.allianceById(allianceId).orElseThrow();
+        long expectedAllianceVersion = joinAlliance.version();
+        joinAlliance.join(member);
+        socialStore.saveAlliance(joinAlliance, expectedAllianceVersion);
         giveTroops(leader, Map.of("unit_infantry_t1", 100L));
         giveTroops(member, Map.of("unit_infantry_t1", 100L));
         long now = timeService.serverNow();
@@ -343,10 +346,4 @@ class BotSocialRaidTest {
         armies.save(playerId, army, version);
     }
 
-    /** 把一个真人塞进某个联盟（等价于"盟主把他收进来了"）：测试里没有邀请端点，直接改成员表。 */
-    private Alliance membershipOf(String allianceId, String playerId) {
-        Alliance alliance = socialStore.allianceById(allianceId).orElseThrow();
-        alliance.join(playerId);
-        return alliance;
-    }
 }

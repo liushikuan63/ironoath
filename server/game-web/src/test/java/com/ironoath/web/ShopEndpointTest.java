@@ -399,35 +399,39 @@ class ShopEndpointTest {
      */
     private void mintContribution(String playerId, long contribution) {
         Alliance alliance = allianceOf(playerId);
+        long expectedAllianceVersion = alliance.version();
         long perTier = 10L;
         for (int i = 0; i < contribution / perTier; i++) {
             alliance.donate(playerId, 0, DayKey.of(timeService.serverNow()) + "#" + i);
         }
-        social.saveAlliance(alliance);
+        social.saveAlliance(alliance, expectedAllianceVersion);
     }
 
     private void mintSquadCoin(String playerId, long coins) {
         Squad squad = squadOf(playerId);
+        long expectedSquadVersion = squad.version();
         squad.completeDailyQuest(coins, 1L);
-        social.saveSquad(squad);
+        social.saveSquad(squad, expectedSquadVersion);
     }
 
     private void joinAlliance(String leader, String newcomer) {
         Alliance alliance = allianceOf(leader);
+        long expectedAllianceVersion = alliance.version();
         alliance.join(newcomer);
         // 入盟索引由 saveAlliance 顺带按成员建立（store 里没有单独的 bind 方法）
-        social.saveAlliance(alliance);
+        social.saveAlliance(alliance, expectedAllianceVersion);
     }
 
     /** 把小队顶到「商店已解锁」的等级：具体要多少经验由 squad_config 说话，这里不猜数字。 */
     private void unlockSquadShop(String playerId) {
         Squad squad = squadOf(playerId);
+        long expectedSquadVersion = squad.version();
         for (int i = 0; i < 20 && !squad.shopUnlocked(); i++) {
             squad.addExp(10_000L);
         }
         assertThat(squad.shopUnlocked())
                 .as("加满经验仍解锁不了商店，说明 squad_config 的 shopUnlock 曲线改了，夹具要跟着改").isTrue();
-        social.saveSquad(squad);
+        social.saveSquad(squad, expectedSquadVersion);
     }
 
     private Alliance allianceOf(String playerId) {

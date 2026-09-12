@@ -294,8 +294,9 @@ class BotEventChatTest {
         social.allianceCreate(leader, new AllianceCreateReq("req-" + UUID.randomUUID(),
                 "事件聊天" + nickPrefix, "T" + Math.abs(nickPrefix.hashCode() % 1000)));
         var alliance = socialStore.allianceOf(leader).orElseThrow();
+        long expectedAllianceVersion = alliance.version();
         alliance.join(bot);
-        socialStore.saveAlliance(alliance);
+        socialStore.saveAlliance(alliance, expectedAllianceVersion);
         return bot;
     }
 

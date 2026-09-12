@@ -957,8 +957,9 @@ public class MarchAppService {
         if (rally == null || rally.status() != com.ironoath.core.social.Rally.Status.DEPARTED) {
             return;
         }
+        long expectedRallyVersion = rally.version();
         rally.arrive();
-        socialStore.saveRally(rally);
+        socialStore.saveRally(rally, expectedRallyVersion);
     }
 
     /**

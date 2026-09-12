@@ -26,10 +26,12 @@ import com.ironoath.core.social.Squad;
  * 读一次、就地改、不 save，再读必须看不到那笔改动。这条纪律与 {@code NationStore}、四个版本化仓储
  * 完全一致（见收口清单 #16 与 #54）。
  *
- * <p><b>并发口径</b>：{@link Alliance} 自带 {@code version}（每次状态变化推进），因此
- * {@link #saveAlliance} 的 Mongo 实现按版本做乐观锁；同名 / 同标签 / 同一入盟申请靠唯一索引
- * 原子拒绝。{@link Squad} / {@link Rally} 今天没有版本号，存储侧只能做整档替换 ——
- * 这与内存实现的粗锁不是同一强度，属于在册欠账，不要把它当作已经解决的并发保证。
+ * <p><b>并发口径（2026-09-12 起）</b>：{@link Squad} / {@link Alliance} / {@link Rally} 都自带
+ * 内容版本（每次状态变化 +1），三个 {@code saveXxx} 都带 {@code expectedVersion} 做乐观锁（CAS）：
+ * 读-改-写的调用方必须把「读到时的那一版」传回来，与库里当前版本不符就抛
+ * {@link IllegalStateException}，而不是静默覆盖别人的改动。同名 / 同标签 / 同一入盟申请
+ * 另有唯一索引原子拒绝。两套实现给出同一套结果，由 {@code SocialStoreEquivalenceTest} 的
+ * CAS 用例逐条钉住。
  */
 public interface SocialStore {
 
@@ -70,11 +72,15 @@ public interface SocialStore {
     // ---------- 小队 ----------
 
     /**
-     * 写入或更新一支小队。
+     * 写入或更新一支小队（乐观锁）。
      *
-     * @return 内存实现恒为 true；Mongo 实现返回是否真的写入（保留签名与既有调用方兼容）。
+     * @param expectedVersion 创建时传 {@code 0}（语义是"我认为它还不存在"，
+     *                        库里已有同 id 即冲突）；更新时传读到的 {@code squad.version()}
+     * @return 写入后的版本号（等于 {@code squad.version()}
+     *         —— 版本由领域层在每次状态变更时推进，存储层只校验与落库）
+     * @throws IllegalStateException 期望版本与库里不一致（有并发写入，调用方必须重读重试）
      */
-    boolean saveSquad(Squad squad);
+    long saveSquad(Squad squad, long expectedVersion);
 
     Optional<Squad> squadOf(String playerId);
 
@@ -87,7 +93,14 @@ public interface SocialStore {
 
     // ---------- 联盟 ----------
 
-    void saveAlliance(Alliance alliance);
+    /**
+     * 写入或更新一个联盟（乐观锁）。
+     *
+     * @param expectedVersion 创建时传 {@code 0}，更新时传读到的 {@code alliance.version()}
+     * @return 写入后的版本号
+     * @throws IllegalStateException 期望版本与库里不一致（有并发写入，调用方必须重读重试）
+     */
+    long saveAlliance(Alliance alliance, long expectedVersion);
 
     Optional<Alliance> allianceOf(String playerId);
 
@@ -173,8 +186,14 @@ public interface SocialStore {
 
     // ---------- 集结（B10 §5） ----------
 
-    /** 写入或更新一次集结。Rally 是可变对象，调用方改完必须写回来。 */
-    void saveRally(Rally rally);
+    /**
+     * 写入或更新一次集结（乐观锁）。Rally 是可变对象，调用方改完必须写回来。
+     *
+     * @param expectedVersion 创建时传 {@code 0}，更新时传读到的 {@code rally.version()}
+     * @return 写入后的版本号
+     * @throws IllegalStateException 期望版本与库里不一致（有并发写入，调用方必须重读重试）
+     */
+    long saveRally(Rally rally, long expectedVersion);
 
     Optional<Rally> rallyOf(String rallyId);
 

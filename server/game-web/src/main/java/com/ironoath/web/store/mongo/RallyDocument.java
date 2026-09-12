@@ -33,7 +33,8 @@ public record RallyDocument(
         DepartureEntry departure,
         long targetX,
         long targetY,
-        String targetType) {
+        String targetType,
+        long version) {
 
     public static final String COLLECTION = "social_rally";
 
@@ -69,9 +70,27 @@ public record RallyDocument(
         return new RallyDocument(rally.rallyId(), rally.scope().name(), rally.groupId(),
                 rally.initiatorId(), rally.maxMembers(), rally.minMembersRequired(), rally.createdAt(),
                 rally.prepareUntil(), participants, rally.status().name(), departureEntry,
-                rally.targetX(), rally.targetY(), rally.targetType());
+                rally.targetX(), rally.targetY(), rally.targetType(), rally.version());
     }
 
+    /** 乐观锁更新用的全字段 {@code $set}，与 {@link #fromDomain} 一一对应。 */
+    org.springframework.data.mongodb.core.query.Update toUpdate() {
+        return new org.springframework.data.mongodb.core.query.Update()
+                .set("scope", scope)
+                .set("groupId", groupId)
+                .set("initiatorId", initiatorId)
+                .set("maxMembers", maxMembers)
+                .set("minMembers", minMembers)
+                .set("createdAt", createdAt)
+                .set("prepareUntil", prepareUntil)
+                .set("participants", participants)
+                .set("status", status)
+                .set("departure", departure)
+                .set("targetX", targetX)
+                .set("targetY", targetY)
+                .set("targetType", targetType)
+                .set("version", version);
+    }
     Rally toDomain() {
         Map<String, Rally.Participant> parts = new LinkedHashMap<>();
         for (ParticipantEntry participant : participants) {
@@ -93,6 +112,6 @@ public record RallyDocument(
         }
         return Rally.restore(rallyId, Rally.Scope.valueOf(scope), groupId, initiatorId, maxMembers,
                 minMembers, createdAt, prepareUntil, parts, Rally.Status.valueOf(status),
-                departureDomain, targetX, targetY, targetType);
+                departureDomain, targetX, targetY, targetType, version);
     }
 }

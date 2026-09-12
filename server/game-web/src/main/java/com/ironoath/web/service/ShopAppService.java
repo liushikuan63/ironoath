@@ -296,23 +296,25 @@ public class ShopAppService {
                 Alliance alliance = social.allianceOf(playerId)
                         .orElseThrow(() -> new BizException(ErrorCode.ALLIANCE_NOT_FOUND,
                                 "兑换贡献值商品必须在联盟里"));
+                long expectedAllianceVersion = alliance.version();
                 try {
                     alliance.spendContribution(playerId, spent);
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.ALLIANCE_CONTRIBUTION_LACK, e.getMessage());
                 }
-                social.saveAlliance(alliance);
+                social.saveAlliance(alliance, expectedAllianceVersion);
             }
             case SQUAD_COIN -> {
                 Squad squad = social.squadOf(playerId)
                         .orElseThrow(() -> new BizException(ErrorCode.SQUAD_NOT_FOUND,
                                 "兑换小队币商品必须在小队里"));
+                long expectedSquadVersion = squad.version();
                 try {
                     squad.spendSquadCoin(playerId, spent);
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.SOCIAL_SQUAD_COIN_LACK, e.getMessage());
                 }
-                social.saveSquad(squad);
+                social.saveSquad(squad, expectedSquadVersion);
             }
             case SEASON_COIN -> throw closedCurrency(ShopCurrency.SEASON_COIN);
         }

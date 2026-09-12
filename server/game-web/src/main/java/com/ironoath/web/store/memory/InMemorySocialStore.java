@@ -31,8 +31,8 @@ import com.ironoath.web.social.SocialStore;
  *
  * <p><b>全部方法 synchronized</b>：B10 的写操作跨玩家（踢人、审核、帮助都会改别人的状态），
  * 玩家级锁挡不住这种跨玩家竞争。内存实现下用一把粗锁最简单也最不容易出错；
- * Mongo 实现今天仍是整档替换：Squad/Rally 没有版本号，Alliance 的 version 也没有接进端口签名，
- * 所以并发"读-改-写"下仍是后写覆盖先写（收口清单 #101 在册）。
+ * 与 Mongo 实现同一套 CAS：三个 {@code save} 都要求传"读到时的那一版"，
+ * 对不上就抛乐观锁冲突（{@code requireExpectedVersion}），两套实现的判定与文案逐字相同。
  */
 public final class InMemorySocialStore implements SocialStore {
 
@@ -71,7 +71,7 @@ public final class InMemorySocialStore implements SocialStore {
     // ---------- 小队 ----------
 
     @Override
-    public synchronized boolean saveSquad(Squad squad) {
+    public synchronized long saveSquad(Squad squad, long expectedVersion) {
         // 名字唯一性在写入点再查一次：服务层的"先查后写"挡得住顺序调用，挡不住两个调用线程;
         // Mongo 侧同名会被唯一索引拒绝，两侧必须给出同一个结果，否则 dev 全绿、生产第一次撞名就炸
         String squadNameOwner = squadIdByName.get(squad.name());
@@ -79,12 +79,14 @@ public final class InMemorySocialStore implements SocialStore {
             throw new IllegalStateException("小队名已被其它小队占用：" + squad.name()
                     + "。名字是玩家查找小队的唯一入口，两支同名小队等于其中一支从名字上消失");
         }
+        Squad stored = squadsById.get(squad.id());
+        requireExpectedVersion("小队", squad.id(), stored == null ? null : stored.version(), expectedVersion);
         squadsById.put(squad.id(), squad.copy());
         squadIdByName.put(squad.name(), squad.id());
         for (String playerId : squad.memberIds()) {
             squadIdByPlayer.put(playerId, squad.id());
         }
-        return true;
+        return squad.version();
     }
 
     @Override
@@ -126,7 +128,7 @@ public final class InMemorySocialStore implements SocialStore {
     // ---------- 联盟 ----------
 
     @Override
-    public synchronized void saveAlliance(Alliance alliance) {
+    public synchronized long saveAlliance(Alliance alliance, long expectedVersion) {
         String allianceNameOwner = allianceIdByName.get(alliance.name());
         if (allianceNameOwner != null && !allianceNameOwner.equals(alliance.id())) {
             throw new IllegalStateException("联盟名已被其它联盟占用：" + alliance.name()
@@ -137,12 +139,15 @@ public final class InMemorySocialStore implements SocialStore {
             throw new IllegalStateException("联盟标签已被其它联盟占用：" + alliance.tag()
                     + "。标签是外交与战报里指代联盟的短标识，重复会让指代出现歧义");
         }
+        Alliance stored = alliancesById.get(alliance.id());
+        requireExpectedVersion("联盟", alliance.id(), stored == null ? null : stored.version(), expectedVersion);
         alliancesById.put(alliance.id(), alliance.copy());
         allianceIdByName.put(alliance.name(), alliance.id());
         allianceIdByTag.put(alliance.tag(), alliance.id());
         for (String playerId : alliance.memberIds()) {
             allianceIdByPlayer.put(playerId, alliance.id());
         }
+        return alliance.version();
     }
 
     @Override
@@ -240,6 +245,32 @@ public final class InMemorySocialStore implements SocialStore {
         return count;
     }
 
+    /**
+     * 乐观锁校验。两套实现必须给出<b>逐字相同</b>的判定与文案，否则等价测试只能测"都抛异常"，
+     * 测不出"同一个冲突在生产上被说成另一回事"。
+     *
+     * @param storedVersion 库里当前版本；{@code null} 表示没有这条记录
+     * @param expectedVersion 调用方读到的版本；{@code <= 0} 表示"我认为它还不存在"（建档）
+     */
+    private static void requireExpectedVersion(String what, String id, Long storedVersion,
+                                               long expectedVersion) {
+        if (expectedVersion <= 0L) {
+            if (storedVersion != null) {
+                throw new IllegalStateException(what + "已存在，不能用 expectedVersion<=0 建档：id=" + id
+                        + "，存储版本=" + storedVersion);
+            }
+            return;
+        }
+        if (storedVersion == null) {
+            throw new IllegalStateException(what + "不存在，无法按版本更新：id=" + id
+                    + "，期望版本=" + expectedVersion);
+        }
+        if (storedVersion.longValue() != expectedVersion) {
+            throw new IllegalStateException("乐观锁冲突：" + what + " id=" + id
+                    + "，存储版本=" + storedVersion + "，提交版本=" + expectedVersion
+                    + "。请重读后重试：这类改动跨玩家，PlayerLock 是按玩家的，拦不住这里");
+        }
+    }
     private static String key(String allianceId, String playerId) {
         return allianceId + ":" + playerId;
     }
@@ -344,8 +375,12 @@ public final class InMemorySocialStore implements SocialStore {
 
     /** 写入或更新一次集结。Rally 是可变对象，调用方改完必须写回来。 */
     @Override
-    public synchronized void saveRally(com.ironoath.core.social.Rally rally) {
+    public synchronized long saveRally(com.ironoath.core.social.Rally rally, long expectedVersion) {
+        com.ironoath.core.social.Rally stored = rallies.get(rally.rallyId());
+        requireExpectedVersion("集结", rally.rallyId(),
+                stored == null ? null : stored.version(), expectedVersion);
         rallies.put(rally.rallyId(), rally.copy());
+        return rally.version();
     }
 
     @Override

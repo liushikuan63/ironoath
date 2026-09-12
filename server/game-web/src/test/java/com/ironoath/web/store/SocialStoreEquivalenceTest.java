@@ -79,7 +79,7 @@ class SocialStoreEquivalenceTest {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
             Squad squad = richSquad("SQ-1", "铁血");
-            store.saveSquad(squad);
+            store.saveSquad(squad, 0L);
 
             assertThat(describe(store.squadById("SQ-1").orElseThrow()))
                     .as("%s：按 id 读回来的小队必须逐字段等于写进去的那份", label)
@@ -97,7 +97,7 @@ class SocialStoreEquivalenceTest {
     void squadReadReturnsADetachedCopy() {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
-            store.saveSquad(richSquad("SQ-1", "铁血"));
+            store.saveSquad(richSquad("SQ-1", "铁血"), 0L);
             Squad copy = store.squadById("SQ-1").orElseThrow();
             int before = copy.memberCount();
             copy.join("P-9", 30);
@@ -113,11 +113,11 @@ class SocialStoreEquivalenceTest {
     void squadNameCollisionIsRefused() {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
-            store.saveSquad(richSquad("SQ-1", "铁血"));
-            assertThatThrownBy(() -> store.saveSquad(richSquad("SQ-2", "铁血")))
+            store.saveSquad(richSquad("SQ-1", "铁血"), 0L);
+            assertThatThrownBy(() -> store.saveSquad(richSquad("SQ-2", "铁血"), 0L))
                     .as("%s：同名写入必须被拒", label)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("小队名已被其它小队占用");
+                    .hasMessageContaining("小队名已被其它小队占用", 0L);
         }
     }
 
@@ -128,7 +128,7 @@ class SocialStoreEquivalenceTest {
             String label = store.getClass().getSimpleName();
             Squad squad = richSquad("SQ-1", "铁血");
             squad.disband(T0 + 1_000L);
-            store.saveSquad(squad);
+            store.saveSquad(squad, 0L);
             store.unbindSquadMember("SQ-1", "P-1");
 
             assertThat(store.squadById("SQ-1")).as("%s：解散后按 id 查不到", label).isEmpty();
@@ -145,7 +145,7 @@ class SocialStoreEquivalenceTest {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
             Alliance alliance = richAlliance("AL-1", "铁盟", "IRON");
-            store.saveAlliance(alliance);
+            store.saveAlliance(alliance, 0L);
 
             assertThat(describe(store.allianceById("AL-1").orElseThrow()))
                     .as("%s：按 id 往返", label).isEqualTo(describe(alliance));
@@ -163,7 +163,7 @@ class SocialStoreEquivalenceTest {
     void allianceReadReturnsADetachedCopy() {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
-            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"));
+            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"), 0L);
             Alliance copy = store.allianceById("AL-1").orElseThrow();
             long before = copy.fund();
             copy.addFund(999L);
@@ -178,15 +178,15 @@ class SocialStoreEquivalenceTest {
     void allianceNameAndTagCollisionsAreRefused() {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
-            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"));
-            assertThatThrownBy(() -> store.saveAlliance(richAlliance("AL-2", "铁盟", "GOLD")))
+            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"), 0L);
+            assertThatThrownBy(() -> store.saveAlliance(richAlliance("AL-2", "铁盟", "GOLD"), 0L))
                     .as("%s：重名", label)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("联盟名已被其它联盟占用");
-            assertThatThrownBy(() -> store.saveAlliance(richAlliance("AL-3", "别的盟", "IRON")))
+                    .hasMessageContaining("联盟名已被其它联盟占用", 0L);
+            assertThatThrownBy(() -> store.saveAlliance(richAlliance("AL-3", "别的盟", "IRON"), 0L))
                     .as("%s：重标签", label)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("联盟标签已被其它联盟占用");
+                    .hasMessageContaining("联盟标签已被其它联盟占用", 0L);
         }
     }
 
@@ -196,7 +196,7 @@ class SocialStoreEquivalenceTest {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
             Alliance alliance = richAlliance("AL-1", "铁盟", "IRON");
-            store.saveAlliance(alliance);
+            store.saveAlliance(alliance, 0L);
             store.removeAlliance(alliance);
 
             assertThat(store.allianceById("AL-1")).as("%s：按 id 查不到", label).isEmpty();
@@ -326,8 +326,8 @@ class SocialStoreEquivalenceTest {
     void peerUnionMatches() {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
-            store.saveSquad(richSquad("SQ-1", "铁血"));
-            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"));
+            store.saveSquad(richSquad("SQ-1", "铁血"), 0L);
+            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"), 0L);
 
             assertThat(store.peerPlayerIds("P-1"))
                     .as("%s：P-2/P-3 来自小队，P-4 只来自联盟，去重且不含自己", label)
@@ -346,8 +346,8 @@ class SocialStoreEquivalenceTest {
             Rally departed = richRally("R-2", Rally.Status.DEPARTED,
                     new Rally.Departure(Map.of("unit_infantry_t1", 150L), 150L, 2, T0 + 60_000L),
                     T0 + 60_000L);
-            store.saveRally(preparing);
-            store.saveRally(departed);
+            store.saveRally(preparing, 0L);
+            store.saveRally(departed, 0L);
 
             assertThat(describe(store.rallyOf("R-1").orElseThrow()))
                     .as("%s：进行中的集结逐字段往返", label).isEqualTo(describe(preparing));
@@ -361,6 +361,107 @@ class SocialStoreEquivalenceTest {
         }
     }
 
+    // ---------- 乐观锁（CAS） ----------
+
+    @Test
+    @DisplayName("小队乐观锁：两个句柄读到同一版，后写的那次必须被拒，赢家的改动不许被盖掉")
+    void staleSquadSaveIsRefused() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveSquad(richSquad("SQ-1", "铁血"), 0L);
+            Squad first = store.squadById("SQ-1").orElseThrow();
+            Squad second = store.squadById("SQ-1").orElseThrow();
+            long firstExpected = first.version();
+            long secondExpected = second.version();
+            assertThat(secondExpected).as("%s：两个句柄读到的必须是同一版", label).isEqualTo(firstExpected);
+
+            first.completeDailyQuest(5L, 1L);
+            long written = store.saveSquad(first, firstExpected);
+            assertThat(written).as("%s：返回写入后的版本", label).isEqualTo(first.version());
+
+            second.completeDailyQuest(9L, 1L);
+            assertThatThrownBy(() -> store.saveSquad(second, secondExpected))
+                    .as("%s：拿旧版本的写入必须被拒", label)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("乐观锁冲突");
+            assertThat(store.squadById("SQ-1").orElseThrow().squadCoinOf("P-1"))
+                    .as("%s：赢家 7+5=12 必须还在，而不是被 7+9 盖掉", label)
+                    .isEqualTo(12L);
+        }
+    }
+
+    @Test
+    @DisplayName("联盟乐观锁：后写的旧版本被拒，资金改动不被覆盖")
+    void staleAllianceSaveIsRefused() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"), 0L);
+            Alliance first = store.allianceById("AL-1").orElseThrow();
+            Alliance second = store.allianceById("AL-1").orElseThrow();
+            long firstExpected = first.version();
+            long secondExpected = second.version();
+
+            first.addFund(1_000L);
+            store.saveAlliance(first, firstExpected);
+            second.addFund(5_000L);
+            assertThatThrownBy(() -> store.saveAlliance(second, secondExpected))
+                    .as("%s：旧版本写入被拒", label)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("乐观锁冲突");
+            assertThat(store.allianceById("AL-1").orElseThrow().fund())
+                    .as("%s：库里是赢家的 50_000+1_000", label).isEqualTo(51_000L);
+        }
+    }
+
+    @Test
+    @DisplayName("集结乐观锁：两个人同时加入时，后写的那次被拒且不抹掉前一个人的兵")
+    void staleRallySaveIsRefused() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveRally(richRally("R-1", Rally.Status.PREPARING, null, T0 + 60_000L), 0L);
+            Rally first = store.rallyOf("R-1").orElseThrow();
+            Rally second = store.rallyOf("R-1").orElseThrow();
+            long firstExpected = first.version();
+            long secondExpected = second.version();
+
+            first.join("P-3", Map.of("unit_infantry_t1", 10L), List.of());
+            store.saveRally(first, firstExpected);
+            second.join("P-4", Map.of("unit_infantry_t1", 20L), List.of());
+            assertThatThrownBy(() -> store.saveRally(second, secondExpected))
+                    .as("%s：旧版本写入被拒", label)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("乐观锁冲突");
+            assertThat(store.rallyOf("R-1").orElseThrow().memberIds())
+                    .as("%s：赢家加进来的 P-3 必须还在，P-4 不在", label)
+                    .contains("P-3").doesNotContain("P-4");
+        }
+    }
+
+    @Test
+    @DisplayName("建档口径：expectedVersion=0 表示「我认为它不存在」，重复建档必须被拒")
+    void createWithZeroVersionConflictsWhenAlreadyExists() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveSquad(richSquad("SQ-1", "铁血"), 0L);
+            assertThatThrownBy(() -> store.saveSquad(richSquad("SQ-1", "别的名字"), 0L))
+                    .as("%s：小队同 id 重复建档", label)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("已存在，不能用 expectedVersion<=0 建档");
+
+            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"), 0L);
+            assertThatThrownBy(() -> store.saveAlliance(richAlliance("AL-1", "别盟", "GOLD"), 0L))
+                    .as("%s：联盟同 id 重复建档", label)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("已存在，不能用 expectedVersion<=0 建档");
+
+            store.saveRally(richRally("R-1", Rally.Status.PREPARING, null, T0 + 60_000L), 0L);
+            assertThatThrownBy(() -> store.saveRally(
+                    richRally("R-1", Rally.Status.PREPARING, null, T0 + 60_000L), 0L))
+                    .as("%s：集结同 id 重复建档", label)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("已存在，不能用 expectedVersion<=0 建档");
+        }
+    }
     // ---------- 计数与清空 ----------
 
     @Test
@@ -368,8 +469,8 @@ class SocialStoreEquivalenceTest {
     void countsAndClearMatch() {
         for (SocialStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
-            store.saveSquad(richSquad("SQ-1", "铁血"));
-            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"));
+            store.saveSquad(richSquad("SQ-1", "铁血"), 0L);
+            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"), 0L);
             store.appendChat("WORLD", chat("m1", 1L), 10);
             store.putHelpRequest(help("H-1"));
 
@@ -410,7 +511,7 @@ class SocialStoreEquivalenceTest {
         coins.put("P-2", 3L);
         coins.put("P-3", 0L);
         return Squad.restore(id, name, "P-1", rules.squadRules(), members, 3, 250L,
-                "AL-1", coins, 10L, 4L, 0L);
+                "AL-1", coins, 10L, 4L, 0L, 7L);
     }
 
     /** 富状态联盟：含当日捐献与科技两张容易被旧 restore 丢掉的表。 */
@@ -441,7 +542,7 @@ class SocialStoreEquivalenceTest {
         participants.put("P-2", new Rally.Participant("P-2",
                 Map.of("unit_archer_t1", 50L), List.of()));
         return Rally.restore(id, Rally.Scope.SQUAD, "SQ-1", "P-1", 5, 2, T0, prepareUntil,
-                participants, status, departure, 10L, 20L, "MONSTER");
+                participants, status, departure, 10L, 20L, "MONSTER", 7L);
     }
 
     private static SocialStore.ChatMessage chat(String messageId, long sentAt) {

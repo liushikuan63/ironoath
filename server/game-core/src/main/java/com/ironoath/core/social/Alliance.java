@@ -695,9 +695,19 @@ public final class Alliance {
         bumpVersion();
     }
 
-    /** 日切：清空「今日已捐档数」。由日切流程调用，key 里已经带了 dayKey 所以直接整体清。 */
+    /**
+     * 日切：清空「今日已捐档数」。由日切流程调用，key 里已经带了 dayKey 所以直接整体清。
+     *
+     * <p><b>只有真的清掉了东西才推进版本</b>：没有捐献记录时清空是空操作，
+     * 推进版本会让客户端 diff 平白刷新一次；而有记录时不推进则更糟 ——
+     * 旧版本号会让"结算前那份副本"照样写进来，把刚清掉的计数又装回去。
+     */
     public void rollDay() {
+        if (donatedToday.isEmpty()) {
+            return;
+        }
         donatedToday.clear();
+        bumpVersion();
     }
 
     // ---------- 只读访问 ----------

@@ -121,6 +121,13 @@ public final class Squad {
     private long squadCoinPool;
     private long dailyQuestProgress;
     private long disbandedAt;
+    /**
+     * 内容版本。每次状态变更 +1，存储层用它做乐观锁（CAS）：
+     * 两个玩家同时改同一支小队时，后写的那次必须拿到"我读到的版本"，
+     * 与库里当前版本不符就响亮拒绝，而不是静默覆盖前一次改动。
+     * 与 {@code Alliance.version} 同一套语义；创建即为 1（0 留给"我认为它还不存在"）。
+     */
+    private long version;
 
     private Squad(String id, String name, String leaderId, Rules rules) {
         this.id = id;
@@ -129,6 +136,7 @@ public final class Squad {
         this.rules = rules;
         this.level = 1;
         this.members.put(leaderId, SquadRole.LEADER);
+        this.version = 1L;
     }
 
     /** 创建小队。发起人即队长。 */
@@ -200,6 +208,7 @@ public final class Squad {
             throw new IllegalStateException("小队人数已满（上限 " + memberCap(leaderMainCityLevel) + " 人）");
         }
         members.put(playerId, SquadRole.MEMBER);
+        version++;
     }
 
     /**
@@ -242,6 +251,7 @@ public final class Squad {
         }
         members.remove(playerId);
         squadCoins.remove(playerId);
+        version++;
     }
 
     /** 加入联盟：小队转为联盟内分队，<b>成员、等级、活跃度、小队币一律保留</b>（验收 1）。 */
@@ -251,12 +261,14 @@ public final class Squad {
             throw new IllegalArgumentException("allianceId 不得为空");
         }
         this.allianceId = newAllianceId;
+        version++;
     }
 
     /** 全员退出联盟：小队退回独立状态，同样不清空任何东西。 */
     public void detachFromAlliance() {
         requireActive();
         this.allianceId = null;
+        version++;
     }
 
     /** 退出小队（队长退出走 {@link #leaderLeavesAlliance} 或 {@link #transferLeadership}）。 */
@@ -270,6 +282,7 @@ public final class Squad {
             throw new IllegalStateException("对方不是本小队成员");
         }
         squadCoins.remove(playerId);
+        version++;
     }
 
     /** 踢人。权限位由 PermissionMatrix 裁决，这里只做状态变更。 */
@@ -285,6 +298,7 @@ public final class Squad {
             throw new IllegalStateException("对方不是本小队成员");
         }
         squadCoins.remove(targetId);
+        version++;
     }
 
     /** 转让队长。 */
@@ -299,6 +313,7 @@ public final class Squad {
         members.put(leaderId, SquadRole.MEMBER);
         members.put(newLeaderId, SquadRole.LEADER);
         leaderId = newLeaderId;
+        version++;
     }
 
     /** 解散小队。 */
@@ -307,6 +322,7 @@ public final class Squad {
         members.clear();
         squadCoins.clear();
         disbandedAt = now;
+        version++;
     }
 
     /**
@@ -329,6 +345,7 @@ public final class Squad {
         if (level >= rules.maxLevel()) {
             exp = Math.min(exp, expToNext());
         }
+        version++;
         return level;
     }
 
@@ -360,6 +377,7 @@ public final class Squad {
             squadCoins.merge(playerId, coinPerMember, Long::sum);
         }
         squadCoinPool += coinPerMember * members.size();
+        version++;
         return squadCoinPool;
     }
 
@@ -385,6 +403,7 @@ public final class Squad {
         }
         long left = balance - amount;
         squadCoins.put(playerId, left);
+        version++;
         return left;
     }
 
@@ -453,6 +472,11 @@ public final class Squad {
         return disbandedAt;
     }
 
+    /** 内容版本。乐观锁的期望值就是读到这里的那一个。 */
+    public long version() {
+        return version;
+    }
+
     /**
      * 全部小队币余额（只读副本，按加入顺序）。仓储映射用。
      * 注意 key 集合不保证等于成员集合：离队成员的余额可能仍在这里，直接按成员表重建会丢钱。
@@ -499,11 +523,12 @@ public final class Squad {
         }
     }
 
-    /** 供仓储重建。 */
+    /** 供仓储重建。version 必须一并恢复：它是乐观锁的期望版本，丢了会让 CAS 永远冲突或永远放行。 */
     public static Squad restore(String id, String name, String leaderId, Rules rules,
                                Map<String, SquadRole> members, int level, long exp,
                                String allianceId, Map<String, Long> squadCoins,
-                               long squadCoinPool, long dailyQuestProgress, long disbandedAt) {
+                               long squadCoinPool, long dailyQuestProgress, long disbandedAt,
+                               long version) {
         Squad squad = new Squad(id, name, leaderId, rules);
         squad.members.clear();
         squad.members.putAll(members);
@@ -514,6 +539,7 @@ public final class Squad {
         squad.squadCoinPool = squadCoinPool;
         squad.dailyQuestProgress = dailyQuestProgress;
         squad.disbandedAt = disbandedAt;
+        squad.version = version;
         return squad;
     }
     /**
@@ -524,6 +550,6 @@ public final class Squad {
      */
     public Squad copy() {
         return restore(id, name, leaderId, rules, members, level, exp, allianceId,
-                squadCoins, squadCoinPool, dailyQuestProgress, disbandedAt);
+                squadCoins, squadCoinPool, dailyQuestProgress, disbandedAt, version);
     }
 }

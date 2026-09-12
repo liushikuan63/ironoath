@@ -228,6 +228,13 @@ public final class Rally {
     private final long targetX;
     private final long targetY;
     private final String targetType;
+    /**
+     * 内容版本。每次状态变更 +1，存储层用它做乐观锁（CAS）：
+     * 两个人同时加入/取消同一次集结时，后写的那次版本对不上就拒绝，
+     * 而不是静默覆盖（覆盖的表现是"我明明加了，出发时却少一队人"）。
+     * 创建即为 1（0 留给"我认为它还不存在"）。
+     */
+    private long version;
 
     private Rally(String rallyId, Scope scope, String groupId, String initiatorId, int maxMembers, int minMembers,
                   long createdAt, long prepareUntil, Participant initiatorTroops,
@@ -245,6 +252,7 @@ public final class Rally {
         this.targetX = targetX;
         this.targetY = targetY;
         this.targetType = targetType;
+        this.version = 1L;
     }
 
     /**
@@ -314,6 +322,7 @@ public final class Rally {
             throw new IllegalStateException("集结人数已满（上限 " + maxMembers + "）");
         }
         participants.put(playerId, new Participant(playerId, troops, heroes));
+        version++;
     }
 
     /** 退出集结。发起人退出等于取消（没有人能替他指出兵）。 */
@@ -321,11 +330,13 @@ public final class Rally {
         requirePreparing("退出");
         if (initiatorId.equals(playerId)) {
             status = Status.CANCELLED;
+            version++;
             return;
         }
         if (participants.remove(playerId) == null) {
             throw new IllegalStateException("你不是这次集结的参与者");
         }
+        version++;
     }
 
     /** 取消集结。只有发起人能取消（权限位由 PermissionMatrix 裁决，这里只做状态迁移）。 */
@@ -335,6 +346,7 @@ public final class Rally {
             throw new IllegalStateException("只有发起人能取消这次集结");
         }
         status = Status.CANCELLED;
+        version++;
     }
 
     /**
@@ -354,6 +366,7 @@ public final class Rally {
             throw new IllegalStateException("只有已出发但尚未到达的集结能撤销出发，当前=" + status);
         }
         status = Status.CANCELLED;
+        version++;
     }
 
     /**
@@ -393,6 +406,7 @@ public final class Rally {
         }
         status = Status.DEPARTED;
         departure = new Departure(merged, mergedTotal, participants.size(), Math.max(now, prepareUntil));
+        version++;
         return departure;
     }
 
@@ -402,6 +416,7 @@ public final class Rally {
             throw new IllegalStateException("只有已出发的集结能标记到达，当前=" + status);
         }
         status = Status.ARRIVED;
+        version++;
     }
 
     /** 出发所需的最少人数。取「规则下限」与「人数上限」的较小值，避免上限低于下限时永远无法出发。 */
@@ -503,6 +518,11 @@ public final class Rally {
         return targetType;
     }
 
+    /** 内容版本。乐观锁的期望值就是读到这里的那一个。 */
+    public long version() {
+        return version;
+    }
+
     /**
      * 供仓储重建。
      *
@@ -514,7 +534,7 @@ public final class Rally {
     public static Rally restore(String rallyId, Scope scope, String groupId, String initiatorId,
                                 int maxMembers, int minMembers, long createdAt, long prepareUntil,
                                 Map<String, Participant> participants, Status status, Departure departure,
-                                long targetX, long targetY, String targetType) {
+                                long targetX, long targetY, String targetType, long version) {
         Participant initiator = participants.get(initiatorId);
         if (initiator == null) {
             throw new IllegalArgumentException("participants 里缺少发起人：" + initiatorId
@@ -526,6 +546,7 @@ public final class Rally {
         rally.participants.putAll(participants);
         rally.status = status;
         rally.departure = departure;
+        rally.version = version;
         return rally;
     }
 
@@ -536,6 +557,6 @@ public final class Rally {
     public Rally copy() {
         return restore(rallyId, scope, groupId, initiatorId, maxMembers, minMembers,
                 createdAt, prepareUntil, participants, status, departure,
-                targetX, targetY, targetType);
+                targetX, targetY, targetType, version);
     }
 }

@@ -32,7 +32,8 @@ public record SquadDocument(
         List<CoinEntry> squadCoins,
         long squadCoinPool,
         long dailyQuestProgress,
-        long disbandedAt) {
+        long disbandedAt,
+        long version) {
 
     public static final String COLLECTION = "social_squad";
 
@@ -55,9 +56,28 @@ public record SquadDocument(
         }
         return new SquadDocument(squad.id(), squad.name(), squad.leaderId(), members, squad.level(),
                 squad.exp(), squad.allianceId(), coins, squad.squadCoinPool(),
-                squad.dailyQuestProgress(), squad.disbandedAt());
+                squad.dailyQuestProgress(), squad.disbandedAt(), squad.version());
     }
 
+    /**
+     * 乐观锁更新用的全字段 {@code $set}。**字段必须与 {@link #fromDomain} 一一对应** ——
+     * 漏一个就是静默丢档，而 CAS 只保证"没有并发覆盖"，不保证"字段写全了"。
+     * 由 {@code SocialStoreEquivalenceTest} 的逐字段往返兜住。
+     */
+    org.springframework.data.mongodb.core.query.Update toUpdate() {
+        return new org.springframework.data.mongodb.core.query.Update()
+                .set("name", name)
+                .set("leaderId", leaderId)
+                .set("members", members)
+                .set("level", level)
+                .set("exp", exp)
+                .set("allianceId", allianceId)
+                .set("squadCoins", squadCoins)
+                .set("squadCoinPool", squadCoinPool)
+                .set("dailyQuestProgress", dailyQuestProgress)
+                .set("disbandedAt", disbandedAt)
+                .set("version", version);
+    }
     Squad toDomain(Squad.Rules rules) {
         Map<String, SquadRole> memberRoles = new LinkedHashMap<>();
         for (MemberEntry member : members) {
@@ -68,6 +88,6 @@ public record SquadDocument(
             coins.put(coin.playerId(), coin.amount());
         }
         return Squad.restore(squadId, name, leaderId, rules, memberRoles, level, exp, allianceId,
-                coins, squadCoinPool, dailyQuestProgress, disbandedAt);
+                coins, squadCoinPool, dailyQuestProgress, disbandedAt, version);
     }
 }
