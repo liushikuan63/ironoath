@@ -95,7 +95,28 @@ export class PanelNav extends Component {
       this.panelNodes.set(def.key, node)
     }
     this.buildBar()
-    this.show(PANELS[0]?.key ?? 'city')
+    // 初始面板：URL 里的 ?panel=<key> 优先（Web 调试/深链用），否则第一个面板
+    this.show(this.initialPanelFromUrl() ?? PANELS[0]?.key ?? 'city')
+  }
+
+  /**
+   * 从 `?panel=<key>` 读初始面板。
+   *
+   * <p>存在的理由有两个：① 调试时能直接打开某个面板，不用先点导航（"我要看地图"这件事
+   * 不该依赖点击成功）；② Web 端将来做深链分享时，这一处就是入口。
+   * 小游戏没有 `location`，取不到就回退默认面板 —— 不抛错、不猜。
+   */
+  private initialPanelFromUrl(): string | null {
+    if (typeof location === 'undefined') {
+      return null
+    }
+    try {
+      const key = new URLSearchParams(location.search).get('panel')
+      return key !== null && this.panelNodes.has(key) ? key : null
+    } catch (error) {
+      console.warn('[PanelNav] 解析 ?panel 失败，使用默认面板', error)
+      return null
+    }
   }
 
   /** 显示某个面板。未知 key 直接忽略（不猜、也不静默切到第一个）。 */
