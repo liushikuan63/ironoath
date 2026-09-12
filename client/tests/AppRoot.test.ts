@@ -1,0 +1,534 @@
+/**
+ * 职责：组合根 AppRoot 的单测 —— 按钮的意图有没有变成请求、响应有没有回到面板、
+ *      失败时有没有偷刷新。
+ * 依赖：真实的 NetModule / GameApi / GameSession / Store / TimeSync，只有传输是假的。
+ *
+ * <p>这个文件是「面板按钮通不通」这件事唯一的可验证证据：场景层（`scene/`）在本仓库里
+ * 只能过类型桩，跑不起来。所以根被刻意做成不 import 'cc'，才能在这里被真实驱动。
+ *
+ * <p>假传输用「路径 → 响应」的路由表而不是脚本队列：根一次启动就要发九个请求，
+ * 按顺序排的脚本会让每条断言都依赖前面几条的执行次数（本项目踩过这种假绿）。
+ */
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { NetModule } from '../assets/scripts/net/NetModule'
+import type { NetConfig, NetDeps } from '../assets/scripts/net/NetModule'
+import type { HttpResponse, HttpTransport } from '../assets/scripts/net/NetTransport'
+import { Prng } from '../assets/scripts/core/Prng'
+import { TimeSync } from '../assets/scripts/core/TimeSync'
+import { Store } from '../assets/scripts/game/store/Store'
+import { GameApi } from '../assets/scripts/game/session/GameApi'
+import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
+import { GameSession } from '../assets/scripts/game/session/GameSession'
+import { AppRoot } from '../assets/scripts/game/session/AppRoot'
+import type { PanelTargets } from '../assets/scripts/game/session/AppRoot'
+import { resetWorld } from '../assets/scripts/game/world/WorldContext'
+
+const SERVER_NOW = 1_788_000_000_000
+
+/** 每个端点的响应。只给「代码真的会读到的字段」，其余留空对象。 */
+const ROUTES: Record<string, unknown> = {
+  '/player/init': {
+    playerId: 'P1', profile: { nickName: '君' }, cityLevel: 1, resources: {},
+    power: { displayPower: 10, matchPower: 10, peakPower: 10 }, protectUntil: null,
+    serverNow: SERVER_NOW, isNewPlayer: true,
+  },
+  '/city/list': { buildings: [], upgrade: null, resources: {}, serverNow: SERVER_NOW },
+  '/army/list': { troops: [], wounded: [], hospital: {}, serverNow: SERVER_NOW },
+  '/hero/list': { heroes: [], lineups: [] },
+  '/bag/list': { items: [] },
+  '/resource/detail': { entries: [], serverNow: SERVER_NOW },
+  '/stage/list': { chapters: [], serverNow: SERVER_NOW },
+  '/social/summary': {
+    squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+    helpRemainingToday: 0, events: [], serverNow: SERVER_NOW,
+  },
+  '/player/power': {
+    power: { displayPower: 10, matchPower: 10, peakPower: 10 }, serverNow: SERVER_NOW, lines: [],
+  },
+  '/world/marches': {
+    marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3,
+    peaceUntil: null, nextExileAt: null, serverNow: SERVER_NOW,
+  },
+  '/world/exile': {
+    coord: { x: 300, y: 220 }, peaceUntil: SERVER_NOW + 3_600_000,
+    nextExileAt: SERVER_NOW + 7_200_000, seed: 7, serverNow: SERVER_NOW,
+  },
+  '/city/upgrade': { accepted: true, serverNow: SERVER_NOW },
+  '/city/speedUp': { remainingSeconds: 0, serverNow: SERVER_NOW },
+  '/city/collect': { collected: {}, entries: [], serverNow: SERVER_NOW },
+  '/army/train': { started: 1, serverNow: SERVER_NOW },
+  '/army/treat': { treated: {}, serverNow: SERVER_NOW },
+  '/item/use': { used: 1, remaining: 0, effects: [], serverNow: SERVER_NOW },
+  '/stage/sweep': { results: {}, rewards: [], serverNow: SERVER_NOW },
+  '/social/help': { helped: 1, skipped: 0, helpRemainingToday: 5, pendingHelps: 0, speedupGranted: 0, serverNow: SERVER_NOW },
+  '/social/helpAll': { helped: 2, skipped: 0, helpRemainingToday: 4, pendingHelps: 0, speedupGranted: 0, serverNow: SERVER_NOW },
+  '/social/ackEvents': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
+  '/squad/kick': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
+  '/alliance/kick': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
+  '/alliance/donate': { tier: 1, donated: {}, contribution: 0, fund: 0, serverNow: SERVER_NOW },
+  '/world/searchTargets': { targets: [], selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW },
+  '/quest/list': {
+    quests: [
+      { questId: 'quest_main_01', name: '筑起第一堵墙', type: 'MAIN',
+        goalType: 'UPGRADE_BUILDING', goalTarget: 'main_city', goalValue: 2,
+        current: 2, complete: true, claimed: false, claimable: true, locked: false,
+        preQuestId: null, heroChoices: [
+          { heroId: 'hero_sr_01', name: '卫无咎' },
+          { heroId: 'hero_sr_02', name: '沈砚秋' },
+          { heroId: 'hero_sr_03', name: '崔明烛' },
+        ] },
+    ],
+    claimableCount: 1, serverNow: SERVER_NOW,
+  },
+  '/quest/claim': {
+    questId: 'quest_main_01',
+    rewards: [{ type: 'HERO', id: 'hero_sr_01', count: 1, name: '卫无咎' }],
+    claimableCount: 0, serverNow: SERVER_NOW,
+  },
+  '/social/helpRequests': {
+    requests: [
+      { requestId: 'h1', fromPlayerId: 'P2', fromPlayerName: '乙', kind: 'BUILDING',
+        targetDesc: '伐木场 Lv7→8', remainingSeconds: 600, helpedCount: 0, alreadyHelped: false },
+      { requestId: 'h2', fromPlayerId: 'P3', fromPlayerName: '丙', kind: 'TRAINING',
+        targetDesc: '训练步兵 100', remainingSeconds: 300, helpedCount: 1, alreadyHelped: true },
+    ],
+    pendingHelps: 1, helpRemainingToday: 5, serverNow: SERVER_NOW,
+  },
+  '/alliance/sync': {
+    version: 7, unchanged: false, removedMemberIds: [], fund: 100, level: 1, memberCount: 2,
+    announcement: '', serverNow: SERVER_NOW,
+    changedMembers: [
+      { id: 'M1', name: '甲', power: 10, role: 'LEADER', contribution: 5, lastActiveAt: 1, squadId: null },
+      { id: 'M2', name: '乙', power: 20, role: 'MEMBER', contribution: 3, lastActiveAt: 2, squadId: null },
+    ],
+  },
+}
+
+function syncResponse(overrides: Record<string, unknown>) {
+  return Object.assign({}, ROUTES['/alliance/sync'], overrides)
+}
+
+interface Call {
+  readonly method: 'GET' | 'POST'
+  readonly path: string
+  readonly body: Record<string, unknown>
+}
+
+class RoutingHttp implements HttpTransport {
+  readonly calls: Call[] = []
+  /** 下一条写请求返回这个业务错误。用来验「失败不许刷新」。 */
+  bizFailNext: { code: number, msg: string, detail: string | null } | null = null
+  /** 这些路径一律回业务错误（用来验"某个面板拉不到"时的降级，而不是整块白屏）。 */
+  failPaths = new Set<string>()
+  /**
+   * 每个用例自己的响应覆盖表。刻意不去改模块级的 ROUTES：那会把上一个用例留下的
+   * 响应带给下一个用例，症状是"单独跑是绿的、整文件跑就红"，而这类失败最难查。
+   */
+  overrides = new Map<string, unknown>()
+
+  post(url: string, bodyText: string): Promise<HttpResponse> {
+    return this.reply('POST', url, bodyText)
+  }
+
+  get(url: string): Promise<HttpResponse> {
+    return this.reply('GET', url, '')
+  }
+
+  private async reply(method: 'GET' | 'POST', url: string, bodyText: string): Promise<HttpResponse> {
+    const path = new URL(url).pathname
+    this.calls.push({ method, path, body: bodyText === '' ? {} : JSON.parse(bodyText) as Record<string, unknown> })
+    if (this.failPaths.has(path)) {
+      return { status: 200, bodyText: JSON.stringify({ code: 9999, msg: '服务繁忙', detail: null, data: null, serverNow: SERVER_NOW }) }
+    }
+    if (!this.bizFailNext) {
+      const data = this.overrides.has(path) ? this.overrides.get(path) : ROUTES[path]
+      if (data === undefined) {
+        throw new Error(`路由表里没有 ${path}：请补上，别让测试拿着空响应假装通过`)
+      }
+      return { status: 200, bodyText: JSON.stringify({ code: 0, msg: '成功', data, serverNow: SERVER_NOW }) }
+    }
+    const fail = this.bizFailNext
+    this.bizFailNext = null
+    return {
+      status: 200,
+      bodyText: JSON.stringify({ code: fail.code, msg: fail.msg, detail: fail.detail, data: null, serverNow: SERVER_NOW }),
+    }
+  }
+
+  countOf(path: string): number {
+    return this.calls.filter(c => c.path === path).length
+  }
+}
+
+interface Harness {
+  /** 最近一次落地给社交面板的成员 id 列表（断言 diff 合并结果用）。 */
+  readonly lastSocialMembers: string[]
+  /** 最近一次落地给社交面板的互助请求 id 列表。 */
+  readonly lastSocialHelps: string[]
+
+  readonly root: AppRoot
+  readonly http: RoutingHttp
+  readonly store: Store
+  readonly errors: Array<[string, string]>
+  readonly attached: string[]
+  readonly events: Array<{ name: string, params: Record<string, string> }>
+}
+
+function harness(options: { transportFails?: boolean } = {}): Harness {
+  resetWorld()
+  const http = new RoutingHttp()
+  const transport: HttpTransport = options.transportFails
+    ? {
+      post: async (): Promise<HttpResponse> => {
+        throw new Error('fetch failed')
+      },
+      get: async (): Promise<HttpResponse> => {
+        throw new Error('fetch failed')
+      },
+    }
+    : http
+  const store = new Store()
+  const timeSync = new TimeSync({ alphaFixed: 3000, jitterFactorFixed: 30000, initialBestRttMs: 200 })
+  const clock = { now: 1_000 }
+  let seq = 0
+  const config: NetConfig = {
+    baseUrl: 'https://game.test', wsUrl: 'wss://game.test/ws', maxRetryAttempts: 2,
+    retryBaseDelayMs: 10, retryMaxDelayMs: 40, offlineQueueMax: 5, requestTimeoutMs: 1000,
+  }
+  const deps: NetDeps = {
+    http: transport,
+    socketFactory: () => {
+      throw new Error('本测试不连 WebSocket')
+    },
+    now: () => clock.now,
+    delay: async (ms: number) => {
+      clock.now += ms
+    },
+    rng: Prng.of(1),
+    newRequestId: () => `req-${++seq}`,
+    newTraceId: () => `trace-${seq}`,
+  }
+  const net = new NetModule(config, deps)
+  const session = new GameSession({ net, store, timeSync, now: () => clock.now, newRequestId: deps.newRequestId })
+  const apiDeps: GameApiDeps = {
+    net, store, timeSync, now: () => clock.now, newRequestId: deps.newRequestId,
+    worldLayout: { worldSize: 512, chunkSize: 32, maxChunks: 9 },
+  }
+  const api = new GameApi(apiDeps)
+  const errors: Array<[string, string]> = []
+  const attached: string[] = []
+  let socialMembers: string[] = []
+  let socialHelps: string[] = []
+
+  const targets: PanelTargets = {
+    city: () => attached.push('city'),
+    cityCollect: () => attached.push('cityCollect'),
+    army: () => attached.push('army'),
+    hero: () => attached.push('hero'),
+    resources: () => attached.push('resources'),
+    bag: () => attached.push('bag'),
+    stage: () => attached.push('stage'),
+    social: (_resp, helps, members) => {
+      attached.push('social')
+      socialMembers = members.map(m => m.id)
+      socialHelps = helps.map(h => h.requestId)
+    },
+    power: () => attached.push('power'),
+    targets: () => attached.push('targets'),
+    quest: () => attached.push('quest'),
+    home: () => attached.push('home'),
+    error: (panel, message) => errors.push([panel, message]),
+  }
+  const events: Array<{ name: string, params: Record<string, string> }> = []
+  const root = new AppRoot({
+    api, session, store, timeSync, targets,
+    tracker: { track: (name, params) => events.push({ name, params: params ?? {} }) },
+  })
+  return {
+    get lastSocialMembers() {
+      return socialMembers
+    },
+    get lastSocialHelps() {
+      return socialHelps
+    },
+
+    root, http, store, errors, attached, events,
+  }
+}
+
+// 登录 1 条 + 首屏面板请求。社交面板是三条（摘要 + 成员 diff + 互助列表），
+// 2026-09-12 加任务面板（B12 §1 + 收口清单 #98 的三选一送将）后再 +1 ——
+// 这个数被断言写死正是为了让每一次新增都要被看见并解释
+const PANEL_PULLS = 12
+
+test('start：先登录，再把十个面板各拉一次，并把家坐标交出去', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+
+  assert.equal(h.http.calls[0]?.path, '/player/init', '登录必须是第一个请求')
+  assert.deepEqual(h.attached,
+    ['city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power', 'home', 'quest'])
+  assert.equal(h.errors.length, 0)
+  assert.equal(h.root.playerId, 'P1')
+})
+
+test('登录失败就停手：一个面板请求都不发（否则一进游戏被十个 400 糊脸）', async () => {
+  const h = harness()
+  h.http.bizFailNext = { code: 2002, msg: '设备标识非法', detail: null }
+
+  assert.equal(await h.root.start('bad-device', '君'), false)
+  assert.deepEqual(h.http.calls.map(c => c.path), ['/player/init'],
+    '登录之外一条都不发')
+  assert.equal(h.attached.length, 0)
+  assert.deepEqual(h.errors[0], ['session', '设备标识非法'])
+})
+
+test('升级成功：请求带 configId 与幂等键，之后城建列表被重新拉一次', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  const before = h.http.countOf('/city/list')
+
+  await h.root.upgradeBuilding('barracks')
+
+  const call = h.http.calls.find(c => c.path === '/city/upgrade')
+  assert.notEqual(call, undefined)
+  assert.equal(call?.body.configId, 'barracks')
+  assert.match(String(call?.body.requestId), /^req-/, '幂等键必须由编排层注入，不给面板漏填的机会')
+  assert.equal(h.http.countOf('/city/list'), before + 1, '成功必须重拉列表：客户端不自己改数字')
+})
+
+test('业务失败：只报服务端给的原因，一次都不多拉（刷新会盖掉玩家正在看的提示）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+  h.http.bizFailNext = { code: 3003, msg: '资源不足', detail: '木材还差 1200' }
+
+  await h.root.upgradeBuilding('barracks')
+
+  assert.equal(h.http.calls.length, total + 1, '只多发这一条写请求，不许顺手重拉列表')
+  assert.deepEqual(h.errors.at(-1), ['city', '木材还差 1200'],
+    'detail 优先于 msg：玩家要知道差多少，不是听一句「资源不足」')
+})
+
+test('业务失败没有 detail 时退回 msg：detail 是「差多少」，msg 只是「哪一类」', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.bizFailNext = { code: 3003, msg: '资源不足', detail: null }
+
+  await h.root.upgradeBuilding('barracks')
+
+  assert.equal(h.errors.at(-1)?.[1], '资源不足')
+})
+
+test('传输抛错时说的是「网络不通」：玩家看到这句会等，看到「操作失败」只会去重试同一件事', async () => {
+  const h = harness({ transportFails: true })
+
+  assert.equal(await h.root.start('dev-1', '君'), false)
+  assert.equal(h.errors[0]?.[0], 'session')
+  assert.match(h.errors[0]?.[1] ?? '', /网络不通/)
+})
+
+test('一键收割发的是 buildingId=null，且收割结果先落地再刷新列表', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.attached.length = 0
+
+  await h.root.collect(null)
+
+  const call = h.http.calls.find(c => c.path === '/city/collect')
+  assert.equal(call?.body.buildingId, null,
+    '「一键收割」必须是显式的 null，而不是缺字段 —— 缺字段在服务端那是另一种语义')
+  assert.deepEqual(h.attached.slice(0, 2), ['cityCollect', 'city'],
+    '飘字必须赶在列表重画之前，否则玩家看不到收了多少')
+})
+
+test('领奖：三选一的 heroChoice 原样进请求体，埋点区分「选完再领」与「直接领」', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.claimQuest('quest_main_01', 'hero_sr_02')
+
+  const claims = h.http.calls.filter(c => c.path === '/quest/claim')
+  assert.equal(claims.length, 1)
+  assert.equal(claims[0]?.body.questId, 'quest_main_01')
+  assert.equal(claims[0]?.body.heroChoice, 'hero_sr_02',
+    '选中的武将必须原样进请求体 —— 服务端靠它决定发哪一名')
+  assert.deepEqual(h.events.find(e => e.name === 'quest_claim')?.params,
+    { questId: 'quest_main_01', needsChoice: 'true', heroId: 'hero_sr_02' })
+  assert.deepEqual(h.attached.slice(-2), ['quest', 'hero'],
+    '领完要重拉任务面板（已领取状态）与武将面板（整卡进册的权威读法）')
+})
+
+test('领奖：没有候选的任务必须带 null 而不是空串（多传或漏传都会被服务端拒）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.claimQuest('quest_side_01', null)
+
+  const claim = h.http.calls.find(c => c.path === '/quest/claim')
+  assert.equal(claim?.body.heroChoice, null,
+    '无候选就是 null：空串会让服务端把「传了一个空 id」当成选择结果')
+  assert.equal(h.events.find(e => e.name === 'quest_claim')?.params.needsChoice, 'false')
+})
+
+test('×10 扫荡只发一个 count=10 的请求（拆成十个请求，弱网下会只成一半而红点剩一格）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.sweep('s1', 10)
+
+  const sweeps = h.http.calls.filter(c => c.path === '/stage/sweep')
+  assert.equal(sweeps.length, 1)
+  assert.equal(sweeps[0]?.body.count, 10)
+})
+
+test('信息不足的动作不发请求，只说清缺什么（替玩家挑阵容消耗的是他的兵和体力，且不会报错）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  h.root.challenge('s1')
+  await h.root.useItem('item_speedup', true)
+  h.root.sellItem('item_wood')
+
+  assert.equal(h.http.calls.length, total, '三个动作都不该发出请求')
+  assert.equal(h.errors.length, 3, '三个动作各一条说明；首屏的降级提示是另一条用例的桩造的，不在这里')
+// 按内容找而不是按下标：首屏可能再插进别面板的降级提示，下标不是契约
+  const messages = h.errors.map(e => e[1]).join('\n')
+  assert.match(messages, /阵容/)
+  assert.match(messages, /目标/)
+  assert.match(messages, /出售/)
+})
+
+test('踢人按页签分流到不同端点：View 的回调不带组织，根必须带上', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.kick('P2', 'squad')
+  await h.root.kick('P3', 'alliance')
+
+  const paths = h.http.calls.filter(c => c.path.includes('kick')).map(c => c.path)
+  assert.deepEqual(paths, ['/squad/kick', '/alliance/kick'])
+})
+
+test('流亡迁城：exile 一次 + 它内部重拉列表一次，不重复刷世界面板', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  const marchesBefore = h.http.countOf('/world/marches')
+
+  await h.root.exile()
+
+  assert.equal(h.http.countOf('/world/exile'), 1)
+  assert.equal(h.http.countOf('/world/marches'), marchesBefore + 1,
+    'doExile 内部已经重拉过，根再拉一次就是双倍请求')
+})
+
+test('搜索：半径由面板给、maxCount 由根定，响应回到目标列表', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.attached.length = 0
+
+  await h.root.searchTargets(64)
+
+  const call = h.http.calls.find(c => c.path === '/world/searchTargets')
+  assert.equal(call?.body.radius, 64)
+  assert.equal(typeof call?.body.maxCount, 'number')
+  assert.deepEqual(h.attached, ['targets'])
+})
+
+test('每个面板动作都要留下一个事件（B16 验收 3 的客户端半边，卡口比对的就是这件事）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.events.length = 0
+
+  await h.root.upgradeBuilding('barracks')
+  await h.root.train('unit_infantry_t1', 10)
+
+  assert.deepEqual(h.events.map(e => e.name), ['building_upgrade_start', 'army_train'],
+    '动作的事件必须在请求之前落，否则请求失败时这一环就彻底消失了')
+  const [first, second] = h.events
+  assert.deepEqual(first?.params, { buildingId: 'barracks' })
+  assert.deepEqual(second?.params, { unitId: 'unit_infantry_t1', count: '10' },
+    '参数统一是字符串：埋点字段类型化会让每加一种类型都要改双端契约')
+})
+
+test('被挡下的点击同样要留事件，并带上"被什么挡下"：这是产品该不该补选择器的依据', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.events.length = 0
+
+  await h.root.useItem('item_speedup', true)
+
+  assert.deepEqual(h.events, [{ name: 'item_use', params: { itemId: 'item_speedup', blocked: 'true' } }])
+  assert.equal(h.http.calls.filter(c => c.path === '/item/use').length, 0,
+    '挡下就不发请求，但事件必须发')
+})
+
+test('一次启动只发 PANEL_PULLS 条请求（多出来的每一个都是玩家在等的白屏时长）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  assert.equal(h.http.calls.length, PANEL_PULLS + 1)
+})
+
+test('互助列表真拉得到，且徽标用服务端给的那个数（客户端不自己数 requests）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  assert.deepEqual(h.lastSocialHelps, ['h1', 'h2'],
+    '列表包含已经帮过的行（alreadyHelped 标出来），玩家要看得见「我帮过谁」')
+  const helpCall = h.http.calls.find(c => c.path === '/social/helpRequests')
+  assert.notEqual(helpCall, undefined)
+})
+
+test('社交面板的成员走 diff 通道真拉得到：首次 version=0，之后带上服务端给的版本号', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  const social = h.attached.filter(a => a === 'social').length
+  assert.equal(social, 1, 'start 之后社交面板要落地一次')
+  const syncCall = h.http.calls.find(c => c.path === '/alliance/sync')
+  assert.equal(syncCall?.body.version, 0, '首次必须是 0，也就是"给我全量"')
+
+  h.http.calls.length = 0
+  await h.root.refresh('social')
+  const again = h.http.calls.find(c => c.path === '/alliance/sync')
+  assert.equal(again?.body.version, 7,
+    '游标必须用服务端返回的那个：本地自增会与对端错位，表现是有人早就退盟了还挂在列表里')
+})
+
+test('成员 diff 的合并：变更覆盖、移除摘掉，面板拿到的永远是合并后的全量', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  let members = h.lastSocialMembers
+  assert.deepEqual(members, ['M1', 'M2'])
+
+  h.http.overrides.set('/alliance/sync', syncResponse({
+    version: 9,
+    changedMembers: [{ id: 'M3', name: '丙', power: 30, role: 'MEMBER', contribution: 0, lastActiveAt: 3, squadId: null }],
+    removedMemberIds: ['M1'],
+  }))
+  await h.root.refresh('social')
+  members = h.lastSocialMembers
+  assert.deepEqual(members, ['M2', 'M3'], '先删后加，顺序按合并结果断言')
+})
+
+test('某一小块拉不到不连带废掉整个社交面板，且两块都坏时原因一起说清', async () => {
+  const h = harness()
+  h.http.failPaths.add('/alliance/sync')
+  h.http.failPaths.add('/social/helpRequests')
+
+  await h.root.start('dev-1', '君')
+
+  assert.equal(h.attached.includes('social'), true, '摘要本身是好的，整块不显示是过度反应')
+  assert.deepEqual(h.lastSocialMembers, [])
+  assert.deepEqual(h.lastSocialHelps, [])
+  const reason = h.errors.find(e => e[0] === 'social')?.[1] ?? ''
+  assert.ok(reason.includes('成员') && reason.includes('互助'),
+    '两条支路各坏各的要一起说，只报第一条会让玩家以为另一块是正常的：' + reason)
+
+  h.http.failPaths.clear()
+  await h.root.refresh('social')
+  assert.equal(h.lastSocialMembers.length, 2, '恢复之后不需要重启就能自动补上')
+  assert.equal(h.lastSocialHelps.length, 2)
+})

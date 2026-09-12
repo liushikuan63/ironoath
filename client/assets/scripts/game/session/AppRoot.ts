@@ -234,7 +234,7 @@ export class AppRoot {
       for (const member of resp.changedMembers) {
         byId.set(member.id, member)
       }
-      this.allianceMembers = [...byId.values()]
+            this.allianceMembers = Array.from(byId.values())
     }
     this.memberVersion = resp.version
   }

@@ -6,4 +6,4 @@ cd "$(dirname "$0")/../client"
 
 rm -rf build-test
 npx --no-install tsc -p tsconfig.test.json
-node --test build-test/assets/scripts/test/
+node --test build-test/tests/

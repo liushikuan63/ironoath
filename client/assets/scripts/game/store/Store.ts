@@ -97,7 +97,12 @@ export class Store {
         continue
       }
       // 复制一份再遍历：订阅者可能在回调里退订
-      for (const listener of [...listeners]) {
+            // 复制一份再遍历：订阅者可能在回调里退订。
+      // 用 Array.from 而不是 [...listeners]：Cocos 的转译会把 iterable 的 spread 编成
+      // `[].concat(set)`，运行时拿到的是「装着 Set 的数组」而不是元素 —— 表现为
+      // 「订阅者抛出异常 TypeError: x is not a function」。数组的 spread 没有这个问题，
+      // 但这里两种都统一成 Array.from，避免下次有人看到别的写法又改回来。
+      for (const listener of Array.from(listeners)) {
         try {
           ;(listener as FieldListener<typeof key>)(this.state[key], this.state)
         } catch (error) {
@@ -105,7 +110,7 @@ export class Store {
         }
       }
     }
-    for (const listener of [...this.snapshotListeners]) {
+        for (const listener of Array.from(this.snapshotListeners)) {
       try {
         listener(this.state, changed)
       } catch (error) {

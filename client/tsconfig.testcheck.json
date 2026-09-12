@@ -1,5 +1,5 @@
 {
-  "//": "职责：只检查不产出 —— 用与 node:test 相同的编译范围（含 assets/scripts/test/**）跑一遍 strict 类型检查。\n\n**为什么需要第三个 project**：tsconfig.json 刻意 exclude 了 test/（那里的文件 import node:test，而主 project 的 types: [] 里没有 node 类型），于是 npm run typecheck 永远看不到测试夹具。代价是真实踩到过的：协议加一个必填字段后 typecheck 全绿，而 client/assets/scripts/test/*.ts 里的夹具缺这个字段，tsc 一失败 node --test 那几百项就一条都不执行 —— 表现是「客户端测试全绿」，实际上一条都没跑。这条把它补回同一次检查里。",
+  "//": "职责：只检查不产出 —— 用与 node:test 相同的编译范围（含 client/tests/**）跑一遍 strict 类型检查。\n\n**为什么需要第三个 project**：tsconfig.headless.json 刻意 exclude 了 test/（那里的文件 import node:test，而主 project 的 types: [] 里没有 node 类型），于是 npm run typecheck 永远看不到测试夹具。代价是真实踩到过的：协议加一个必填字段后 typecheck 全绿，而 client/tests/*.ts 里的夹具缺这个字段，tsc 一失败 node --test 那几百项就一条都不执行 —— 表现是「客户端测试全绿」，实际上一条都没跑。这条把它补回同一次检查里。",
   "extends": "./tsconfig.test.json",
   "compilerOptions": {
     "noEmit": true,

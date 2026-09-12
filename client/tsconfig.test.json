@@ -1,6 +1,6 @@
 {
   "//": "职责：把逻辑层与单测编译成 CommonJS 到 build-test/，供 node --test 运行。场景层（依赖真实 Cocos 运行时）不参与。",
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.headless.json",
   "compilerOptions": {
     "module": "CommonJS",
     "moduleResolution": "Node",
@@ -13,6 +13,6 @@
     "types": ["node"],
     "paths": {}
   },
-  "include": ["assets/scripts/**/*.ts", "types/**/*.d.ts"],
+  "include": ["assets/scripts/**/*.ts", "tests/**/*.ts", "types/**/*.d.ts"],
   "exclude": ["assets/scripts/scene/**/*.ts", "build-test", "node_modules"]
 }

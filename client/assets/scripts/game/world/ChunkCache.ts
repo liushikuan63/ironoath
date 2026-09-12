@@ -130,7 +130,7 @@ export class ChunkCache {
 
     // 离开视野的块立即驱逐（stale 的除外：它还在视野内，只是这次没更新）
     const evicted: string[] = []
-    for (const key of [...this.entries.keys()]) {
+        for (const key of Array.from(this.entries.keys())) {
       if (!inViewport.has(key) && !stale.has(key)) {
         this.entries.delete(key)
         evicted.push(key)

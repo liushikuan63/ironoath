@@ -293,7 +293,7 @@ export class WorldViewModel {
       retry.push(key)
     }
     // 本次不再 stale 的块要清掉计数，否则玩家反复进出同一区域会累加到上限
-    for (const key of [...this.stale.keys()]) {
+        for (const key of Array.from(this.stale.keys())) {
       if (!staleKeys.has(key)) {
         this.stale.delete(key)
       }
@@ -373,7 +373,7 @@ export class WorldViewModel {
       this.trackMeta.set(view.marchId, { load: view.load, loadCap: view.loadCap })
     }
     // 响应里消失的行军 = 已到家 / 已被合并，必须从渲染里摘掉，否则地图上会留一支幽灵队伍
-    for (const marchId of [...this.tracks.keys()]) {
+        for (const marchId of Array.from(this.tracks.keys())) {
       if (!nextIds.has(marchId)) {
         this.tracks.delete(marchId)
         this.trackMeta.delete(marchId)
@@ -488,7 +488,7 @@ export class WorldViewModel {
   }
 
   private notify(): void {
-    for (const listener of [...this.listeners]) {
+        for (const listener of Array.from(this.listeners)) {
       try {
         listener()
       } catch (error) {

@@ -499,7 +499,7 @@ export class WorldMap extends Component {
       refs.label.string = ''
     }
     // 离开视野的块立刻归还池子 —— 这是验收 3「内存不随拖动增长」的落地点
-    for (const [key, node] of [...this.drawnTiles]) {
+        for (const [key, node] of Array.from(this.drawnTiles)) {
       if (!seen.has(key)) {
         pool.release(node)
         this.drawnTiles.delete(key)
@@ -553,7 +553,7 @@ export class WorldMap extends Component {
       const color = remaining > 0 ? COLOR_CORRECTED : COLOR_MARCH
       this.drawMarker(node, 'MARCH', cell * MARCH_SIZE_RATIO, color, formatRemaining(march.remainingMs))
     }
-    for (const marchId of [...this.flash.keys()]) {
+        for (const marchId of Array.from(this.flash.keys())) {
       if (!seen.has(marchId)) {
         this.flash.delete(marchId)
       }
@@ -581,7 +581,7 @@ export class WorldMap extends Component {
   }
 
   private recycle(pool: NodePool, drawn: Map<string, Node>, seen: ReadonlySet<string>): void {
-    for (const [key, node] of [...drawn]) {
+        for (const [key, node] of Array.from(drawn)) {
       if (!seen.has(key)) {
         pool.release(node)
         drawn.delete(key)

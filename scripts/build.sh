@@ -10,7 +10,7 @@ bash scripts/check-contract-sync.sh
 source scripts/env.sh
 mvn -f server/pom.xml -DskipTests package
 
-cd client && npx --no-install tsc -p tsconfig.json --noEmit && cd ..
+cd client && npx --no-install tsc -p tsconfig.headless.json --noEmit && cd ..
 
 bash scripts/test.sh
 

@@ -187,7 +187,7 @@ client/assets/scripts/
   net/       NetModule、传输适配、generated/Protocol.ts（生成物）
   game/      store（单一 Store）、session（登录编排）
   scene/     表现层，唯一允许 import 'cc' 的地方
-  test/      逻辑单测（node:test）
+tests/      逻辑单测（node:test；在 assets 外，Cocos 不会编译它）
 ```
 
 **能被验证的**：`core` / `net` / `game` / `test` —— `tsc` strict 类型检查 + `node --test`，

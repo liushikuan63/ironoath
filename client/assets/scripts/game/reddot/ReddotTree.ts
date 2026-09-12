@@ -137,7 +137,7 @@ export class ClientReddotTree {
         keys.add(path)
       }
     }
-    const ordered = [...keys].sort()
+        const ordered = Array.from(keys).sort()
     const litByKey = new Map<string, boolean>()
     const childrenByKey = new Map<string, string[]>()
     const roots: string[] = []
