@@ -1,0 +1,483 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/city.schema.json",
+  "title": "CityProtocol",
+  "description": "城建域协议契约（B03）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "CityProtocol",
+  "$defs": {
+    "ResourceType": {
+      "type": "string",
+      "description": "资源类型枚举。取值必须与 contract/config/resource.json 的 rows[].id 完全一致（CI 校验）。",
+      "x-enum-source": {
+        "table": "resource"
+      },
+      "enum": [
+        "WOOD",
+        "STONE",
+        "IRON",
+        "GRAIN",
+        "GOLD",
+        "STAMINA"
+      ]
+    },
+    "ResourceStateView": {
+      "type": "object",
+      "description": "资源快照（城建列表用）。字段语义与 player.schema.json 的 ResourceState 一致。",
+      "additionalProperties": false,
+      "required": [
+        "current",
+        "cap",
+        "protectedAmount",
+        "perHour",
+        "lastSettle"
+      ],
+      "properties": {
+        "current": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "cap": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "protectedAmount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "perHour": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "lastSettle": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "BuildingStatus": {
+      "type": "string",
+      "description": "建筑状态。与 game-core 的 BuildingStatus 枚举一一对应。",
+      "enum": [
+        "IDLE",
+        "UPGRADING",
+        "PAUSED"
+      ]
+    },
+    "SpeedUpSource": {
+      "type": "string",
+      "description": "加速来源。免费与付费共用同一接口，用本字段区分，供埋点与防刷使用（B03 §3）。AD 有每日次数上限，GOLD 走扣费。",
+      "enum": [
+        "AD",
+        "ALLIANCE",
+        "SQUAD",
+        "ITEM",
+        "GOLD"
+      ]
+    },
+    "ResourceAmount": {
+      "type": "object",
+      "description": "资源数量条目。用数组而不是 Map 是为了让客户端能保持配置表顺序展示。",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "amount"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "amount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "ErrorDetail": {
+      "type": "object",
+      "description": "结构化错误详情（B03 §2）。客户端直接拼成「还缺 XXX」，不显示笼统的「条件不足」。need 与 current 都必填，缺一即退化成笼统提示。",
+      "additionalProperties": false,
+      "required": [
+        "need",
+        "current"
+      ],
+      "properties": {
+        "need": {
+          "type": "string",
+          "description": "需要什么，如「主城 8 级」「木材 12000」"
+        },
+        "current": {
+          "type": "string",
+          "description": "当前是什么，如「主城 6 级」「木材 3400」"
+        }
+      }
+    },
+    "BuildingView": {
+      "type": "object",
+      "description": "单个建筑的客户端视图。finishAt 是服务端时间戳，客户端用 TimeSync 换算成本地倒计时后每秒本地刷新，不再请求服务端（B03 §4）。",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "configId",
+        "level",
+        "gridX",
+        "gridY",
+        "status",
+        "helpCount",
+        "progress"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "建筑实例 id（玩家城内唯一）"
+        },
+        "configId": {
+          "type": "string",
+          "description": "配置表 building.json 的行 id"
+        },
+        "level": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "gridX": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "gridY": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/BuildingStatus"
+        },
+        "finishAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "升级完成时刻；非升级中为 null"
+        },
+        "remainingSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "剩余秒数，服务端算好后下发，客户端不得自行推算负数"
+        },
+        "progress": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "进度（定点 0~10000）。客户端除以 10000 显示百分比，绝不自己算，避免与服务端不一致"
+        },
+        "helpCount": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "description": "已获得的联盟/小队帮助次数"
+        }
+      }
+    },
+    "QueueView": {
+      "type": "object",
+      "description": "建造队列视图。used 与 available 都下发，客户端据此显示「可开启第 N 队列」（B03 验收 7）。",
+      "additionalProperties": false,
+      "required": [
+        "used",
+        "available",
+        "max"
+      ],
+      "properties": {
+        "used": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "available": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "description": "当前可用队列数，已含新手保护期的额外队列与特权队列"
+        },
+        "max": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "description": "队列上限（含特权），来源 city_rule_max_queue_count"
+        }
+      }
+    },
+    "CityUpgradeReq": {
+      "type": "object",
+      "description": "POST /city/upgrade 请求体。gridX/gridY 用于新建 placement，已存在的建筑升级时可省略（服务端按 configId 找实例）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "configId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64,
+          "description": "幂等键。同一 requestId 只扣一次资源（B03 验收 10）"
+        },
+        "configId": {
+          "type": "string",
+          "description": "building.json 的行 id，如 barracks"
+        },
+        "gridX": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "description": "首次放置时的地块坐标"
+        },
+        "gridY": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      }
+    },
+    "CityUpgradeResp": {
+      "type": "object",
+      "description": "POST /city/upgrade 响应体。",
+      "additionalProperties": false,
+      "required": [
+        "buildingId",
+        "level",
+        "finishAt",
+        "cost",
+        "powerDelta"
+      ],
+      "properties": {
+        "buildingId": {
+          "type": "string"
+        },
+        "level": {
+          "type": "integer",
+          "format": "int32",
+          "description": "升级后的等级（升级中为目标等级）"
+        },
+        "finishAt": {
+          "type": "integer",
+          "format": "int64",
+          "description": "完成时刻（服务端毫秒时间戳）"
+        },
+        "cost": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          },
+          "description": "本次实际扣除的资源"
+        },
+        "powerDelta": {
+          "type": "integer",
+          "format": "int64",
+          "description": "战力变化量，客户端飘字用（B03 §4）"
+        }
+      }
+    },
+    "SpeedUpReq": {
+      "type": "object",
+      "description": "POST /city/speedUp 请求体。免费与付费共用（B03 §3），source 决定校验与埋点路径。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "buildingId",
+        "source"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "buildingId": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SpeedUpSource"
+        },
+        "itemId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "source=ITEM 时必填，指向 item.json 的行 id"
+        }
+      }
+    },
+    "SpeedUpResp": {
+      "type": "object",
+      "description": "POST /city/speedUp 响应体。",
+      "additionalProperties": false,
+      "required": [
+        "buildingId",
+        "reducedSeconds",
+        "remainingSeconds",
+        "finished"
+      ],
+      "properties": {
+        "buildingId": {
+          "type": "string"
+        },
+        "reducedSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "实际提前的秒数，会被剩余时间截断（不会出现负数，B03 禁止项）"
+        },
+        "remainingSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "finished": {
+          "type": "boolean",
+          "description": "是否已加速到完成"
+        }
+      }
+    },
+    "CityCancelReq": {
+      "type": "object",
+      "description": "POST /city/cancel 请求体。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "buildingId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "buildingId": {
+          "type": "string"
+        }
+      }
+    },
+    "CityCancelResp": {
+      "type": "object",
+      "description": "POST /city/cancel 响应体。refund 是实际返还量（B03 §2：取消返还 60%）。",
+      "additionalProperties": false,
+      "required": [
+        "buildingId",
+        "refund"
+      ],
+      "properties": {
+        "buildingId": {
+          "type": "string"
+        },
+        "refund": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          }
+        }
+      }
+    },
+    "CityListResp": {
+      "type": "object",
+      "description": "GET /city/list 响应体 —— 含离线结算后的资源与到点收割后的建筑状态（B03 §2）。",
+      "additionalProperties": false,
+      "required": [
+        "buildings",
+        "queues",
+        "resources",
+        "serverNow"
+      ],
+      "properties": {
+        "buildings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildingView"
+          }
+        },
+        "queues": {
+          "$ref": "#/$defs/QueueView"
+        },
+        "resources": {
+          "type": "object",
+          "description": "离线结算后的资源快照",
+          "propertyNames": {
+            "$ref": "#/$defs/ResourceType"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/ResourceStateView"
+          }
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "CityCollectReq": {
+      "type": "object",
+      "description": "POST /city/collect 请求体。收割已到点的升级并结算其离线产出（B03 §2：升级中不产资源，完成后一次性结算）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "buildingId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "指定收割某个建筑；为空表示收割全部已到点的建筑"
+        }
+      }
+    },
+    "CityCollectResp": {
+      "type": "object",
+      "description": "POST /city/collect 响应体。output 是本次结算实际入账的产量：产出走连续惰性结算（建筑按等级计入每小时产率，升级中不计，完成时刻起按新等级计），所以「收割升级」与「结算产量」是同一个动作的两面。离线累积的上限由仓储容量承担（满仓即停产），不另设追溯时长上限。buildings 是本次被收割的建筑（等级已 +1），客户端据此播放升级动效。",
+      "additionalProperties": false,
+      "required": [
+        "collected",
+        "output",
+        "serverNow"
+      ],
+      "properties": {
+        "collected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildingView"
+          },
+          "description": "本次完成升级的建筑（等级已 +1、状态回到 IDLE）"
+        },
+        "output": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          },
+          "description": "补结算的离线产出合计"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    }
+  }
+}

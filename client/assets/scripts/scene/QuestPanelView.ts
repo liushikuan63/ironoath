@@ -1,0 +1,348 @@
+/**
+ * 职责：任务面板 —— 任务列表、领奖、以及「三选一送将」的选择弹窗（B12 §1，收口清单 #98/#99）。
+ * 依赖：cc（渲染）、game/quest/QuestPanel（展示数据组装与选择流程，已单测）、scene/NodePool。
+ *
+ * <p><b>本场景不做任何判定</b>（铁律 2）：能不能领（`claimable`）、可不可以做（`locked`）、
+ * 有没有候选（`heroChoices`）全部来自服务端的 `QuestView`。这与 StagePanelView 同一条纪律。
+ *
+ * <p><b>三选一是「两步」而不是「一个按钮」</b>：带候选的任务不选就领会被服务端拒
+ * （它刻意不替玩家默认挑一个 —— 那会让三选一变成系统内定）。所以点击路径是
+ * 「点领取 → 若 intent 是 choose 则弹选择 → 选定后调 onClaim(questId, heroId)」，
+ * 这段流程本身在 {@link claimIntentOf} / {@link chosenClaimReq} 里，
+ * 本场景只负责把弹窗画出来并把玩家的选择递出去。
+ *
+ * <p><b>必须在 Cocos 编辑器里补的部分</b>：.scene / .prefab 资产、长列表的 ScrollView、
+ * 正式美术。列表 item 已按 B07 §4 池化。
+ */
+
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { buildQuestList, candidateLabel, chosenClaimReq, claimIntentOf } from '../game/quest/QuestPanel'
+import type { ClaimIntent, HeroChoicePrompt, QuestListView, QuestRow } from '../game/quest/QuestPanel'
+import type { QuestListResp } from '../net/generated/QuestProtocol'
+import { NodePool } from './NodePool'
+
+const { ccclass } = _decorator
+
+/** 配色沿用 B00「铜金 + 暗红」的题材调性（与 StagePanelView 同一套）。美术方向常量，不是游戏数值。 */
+const COLOR_BACKGROUND = new Color(20, 17, 15, 238)
+const COLOR_PANEL = new Color(40, 33, 27, 255)
+const COLOR_ROW = new Color(52, 43, 35, 255)
+const COLOR_ROW_DIM = new Color(32, 29, 27, 255)
+const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
+const COLOR_TEXT = new Color(226, 214, 190, 255)
+const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
+const COLOR_CLAIMABLE = new Color(120, 176, 96, 255)
+
+const PANEL_WIDTH = 680
+const ROW_HEIGHT = 62
+const ROW_GAP = 6
+const HEADER_HEIGHT = 64
+const PADDING = 16
+/** 一屏最多画几行。超出的要靠 ScrollView（编辑器里补），占位期截断显示并说明 */
+const MAX_VISIBLE_ROWS = 8
+/** 三选一弹窗里每个候选按钮的高度与间距 */
+const OPTION_HEIGHT = 56
+const OPTION_GAP = 8
+
+@ccclass('QuestPanelView')
+export class QuestPanelView extends Component {
+  private list: QuestListView | null = null
+  private pendingList: QuestListResp | null = null
+
+  private rowPool: NodePool | null = null
+  /** 行节点 → 它当前代表哪条任务。池化复用后靠它把点击派回正确的 questId */
+  private readonly rowQuestIds = new Map<Node, string>()
+  private readonly drawnRows: Node[] = []
+  private headerLabel: Label | null = null
+  private overflowLabel: Label | null = null
+
+  private promptPanel: Node | null = null
+  private promptTitle: Label | null = null
+  private promptHint: Label | null = null
+  /** 弹窗里每个候选按钮 → 它的 heroId。每次开弹窗重建，避免残留上一条任务的候选 */
+  private readonly optionHeroIds = new Map<Node, string>()
+  private prompt: HeroChoicePrompt | null = null
+
+  /** 玩家要领某条任务的奖励。`heroChoice` 为 null 表示这条任务没有候选（直接领） */
+  onClaim: ((questId: string, heroChoice: string | null) => void) | null = null
+  /** 面板打开/需要刷新时由外层决定（本场景只画，不主动拉数据） */
+  onRefreshRequested: (() => void) | null = null
+
+  override onLoad(): void {
+    const size = view.getVisibleSize()
+    this.buildBackground(size.width, size.height)
+    this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
+    this.buildHeader(size.height)
+    this.buildPrompt()
+    if (this.pendingList !== null) {
+      const pending = this.pendingList
+      this.pendingList = null
+      this.attach(pending)
+    }
+  }
+
+  override onDestroy(): void {
+    this.rowPool?.destroy()
+    this.rowPool = null
+    this.drawnRows.length = 0
+    this.rowQuestIds.clear()
+    this.optionHeroIds.clear()
+    this.onClaim = null
+    this.onRefreshRequested = null
+  }
+
+  /** 装载任务列表。行顺序照搬服务端（它按章节/类型稳定排序）。 */
+  attach(resp: QuestListResp): void {
+    if (this.rowPool === null) {
+      this.pendingList = resp
+      return
+    }
+    this.list = buildQuestList(resp)
+    this.hidePrompt()
+    this.render()
+  }
+
+  // ---------- 搭建 ----------
+
+  private buildBackground(width: number, height: number): void {
+    const node = new Node('Background')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(width, height))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_BACKGROUND
+    graphics.rect(-width / 2, -height / 2, width, height)
+    graphics.fill()
+  }
+
+  private buildHeader(height: number): void {
+    this.headerLabel = this.addLabel(this.node, 'Header', 0, height / 2 - PADDING - 20, COLOR_COPPER_GOLD, 22)
+    this.overflowLabel = this.addLabel(this.node, 'Overflow', 0,
+      height / 2 - PADDING - HEADER_HEIGHT - MAX_VISIBLE_ROWS * (ROW_HEIGHT + ROW_GAP) - 12,
+      COLOR_TEXT_DIM, 14)
+  }
+
+  private createRow(): Node {
+    const node = new Node('QuestRow')
+    node.layer = this.node.layer
+    node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, ROW_HEIGHT))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_ROW
+    graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
+    graphics.fill()
+
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 19)
+    title.horizontalAlign = Label.HorizontalAlign.LEFT
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -14, COLOR_TEXT_DIM, 14)
+    detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 150, 0, COLOR_TEXT, 15)
+    status.horizontalAlign = Label.HorizontalAlign.RIGHT
+
+    // 一个「领取」按钮：不可领时隐藏（灰着却能点只会让玩家一直点然后以为卡了）
+    const button = new Node('ClaimButton')
+    button.layer = node.layer
+    node.addChild(button)
+    button.setPosition(new Vec3(PANEL_WIDTH / 2 - 62, 0, 0))
+    button.addComponent(UITransform).setContentSize(new Size(76, 32))
+    const buttonGraphics = button.addComponent(Graphics)
+    buttonGraphics.fillColor = COLOR_PANEL
+    buttonGraphics.strokeColor = COLOR_COPPER_GOLD
+    buttonGraphics.lineWidth = 1
+    buttonGraphics.roundRect(-38, -16, 76, 32, 4)
+    buttonGraphics.fill()
+    buttonGraphics.stroke()
+    const caption = this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 15)
+    caption.string = '领取'
+    return node
+  }
+
+  /** 三选一弹窗：一层面板 + 一行提示 + N 个候选按钮。默认隐藏，点「领取」且确有候选时才开。 */
+  private buildPrompt(): void {
+    const panel = new Node('HeroChoicePanel')
+    panel.layer = this.node.layer
+    this.node.addChild(panel)
+    const width = PANEL_WIDTH - PADDING * 2
+    const height = HEADER_HEIGHT + MAX_VISIBLE_ROWS / 2 * (OPTION_HEIGHT + OPTION_GAP)
+    panel.addComponent(UITransform).setContentSize(new Size(width, height))
+    const graphics = panel.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 2
+    graphics.roundRect(-width / 2, -height / 2, width, height, 8)
+    graphics.fill()
+    graphics.stroke()
+    this.promptPanel = panel
+
+    this.promptTitle = this.addLabel(panel, 'PromptTitle', 0, height / 2 - 26, COLOR_COPPER_GOLD, 20)
+    this.promptHint = this.addLabel(panel, 'PromptHint', 0, height / 2 - 52, COLOR_TEXT_DIM, 14)
+    this.promptHint.string = '选择一名武将作为奖励（只能选一次）'
+    panel.active = false
+  }
+
+  private addLabel(parent: Node, name: string, x: number, y: number, color: Color, fontSize: number): Label {
+    const node = new Node(name)
+    node.layer = parent.layer
+    parent.addChild(node)
+    node.addComponent(UITransform)
+    node.setPosition(new Vec3(x, y, 0))
+    const label = node.addComponent(Label)
+    label.string = ''
+    label.color = color
+    label.fontSize = fontSize
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    return label
+  }
+
+  // ---------- 渲染 ----------
+
+  private render(): void {
+    const list = this.list
+    const pool = this.rowPool
+    if (list === null || pool === null) {
+      return
+    }
+    if (this.headerLabel !== null) {
+      this.headerLabel.string = list.claimableText === null
+        ? `任务 ${list.rows.length} 条`
+        : `任务 ${list.rows.length} 条 · ${list.claimableText}`
+    }
+
+    const size = view.getVisibleSize()
+    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    pool.releaseAll(this.drawnRows)
+    this.drawnRows.length = 0
+
+    const visible = list.rows.slice(0, MAX_VISIBLE_ROWS)
+    visible.forEach((row, index) => {
+      const node = pool.acquire()
+      node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
+      this.drawnRows.push(node)
+      this.renderRow(node, row)
+    })
+
+    if (this.overflowLabel !== null) {
+      const hidden = list.rows.length - visible.length
+      this.overflowLabel.string = hidden > 0
+        ? `另有 ${hidden} 条未显示（长列表需要 ScrollView，属编辑器资产）`
+        : ''
+    }
+  }
+
+  private renderRow(node: Node, row: QuestRow): void {
+    const graphics = node.getComponent(Graphics)
+    if (graphics !== null) {
+      graphics.clear()
+      // 可领的高亮、锁着的压暗：玩家扫一眼就该看出哪条能动
+      graphics.fillColor = row.claimable ? COLOR_ROW : COLOR_ROW_DIM
+      graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
+      graphics.fill()
+    }
+    const title = node.children[0]?.getComponent(Label)
+    const detail = node.children[1]?.getComponent(Label)
+    const status = node.children[2]?.getComponent(Label)
+    if (title !== undefined && title !== null) {
+      title.string = row.title
+      title.color = row.claimable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
+    if (detail !== undefined && detail !== null) {
+      const parts: string[] = [row.progressText]
+      if (row.lockedHint !== null) {
+        parts.push(row.lockedHint)
+      }
+      detail.string = parts.join(' · ')
+    }
+    if (status !== undefined && status !== null) {
+      status.string = row.statusText
+      status.color = row.claimable ? COLOR_CLAIMABLE : COLOR_TEXT_DIM
+    }
+
+    const button = node.children[3]
+    if (button !== undefined) {
+      button.off('touch-start')
+      button.active = row.claimable
+      this.rowQuestIds.set(node, row.questId)
+      if (row.claimable) {
+        button.on('touch-start', (_event: EventTouch) => this.handleClaimClick(row))
+      }
+    }
+  }
+
+  /** 点「领取」：按 intent 分流（直接领 / 先弹三选一 / 什么都不做）。 */
+  private handleClaimClick(row: QuestRow): void {
+    const intent: ClaimIntent = claimIntentOf(row, row.title)
+    switch (intent.kind) {
+      case 'claim':
+        this.onClaim?.(intent.questId, intent.heroChoice)
+        return
+      case 'choose':
+        this.showPrompt(intent.prompt)
+        return
+      case 'noop':
+        // 状态在点下去之前变了（别处刚领过、或刚被锁）：按钮下次渲染就会自己消失。
+        // 这里不弹提示 —— 一条注定失败的操作不值得打断玩家
+        return
+    }
+  }
+
+  // ---------- 三选一弹窗 ----------
+
+  private showPrompt(prompt: HeroChoicePrompt): void {
+    const panel = this.promptPanel
+    if (panel === null || this.promptTitle === null) {
+      return
+    }
+    this.prompt = prompt
+    this.promptTitle.string = prompt.title
+    // 候选按钮每次重建：数量随任务变，而残留的旧按钮会让玩家点到上一条任务的武将
+    for (const child of [...panel.children]) {
+      const heroId = this.optionHeroIds.get(child)
+      if (heroId !== undefined) {
+        child.removeFromParent()
+        child.destroy()
+      }
+    }
+    this.optionHeroIds.clear()
+
+    const width = PANEL_WIDTH - PADDING * 4
+    prompt.candidates.forEach((choice, index) => {
+      const option = new Node(`HeroOption_${choice.heroId}`)
+      option.layer = panel.layer
+      panel.addChild(option)
+      const y = panel.getComponent(UITransform)!.height / 2 - HEADER_HEIGHT - OPTION_HEIGHT / 2
+        - index * (OPTION_HEIGHT + OPTION_GAP)
+      option.setPosition(new Vec3(0, y, 0))
+      option.addComponent(UITransform).setContentSize(new Size(width, OPTION_HEIGHT))
+      const graphics = option.addComponent(Graphics)
+      graphics.fillColor = COLOR_ROW
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1
+      graphics.roundRect(-width / 2, -OPTION_HEIGHT / 2, width, OPTION_HEIGHT, 6)
+      graphics.fill()
+      graphics.stroke()
+      const label = this.addLabel(option, 'Name', 0, 0, COLOR_TEXT, 18)
+      label.string = candidateLabel(choice)
+      this.optionHeroIds.set(option, choice.heroId)
+      option.on('touch-start', (_event: EventTouch) => {
+        // 选中的必须在候选里：chosenClaimReq 会本地校验（不合法时抛出，
+        // 而这里只画按钮，选不中候选意味着界面出了问题 —— 抛出比继续更诚实）
+        const req = chosenClaimReq(prompt, choice.heroId)
+        this.hidePrompt()
+        this.onClaim?.(req.questId, req.heroChoice)
+      })
+    })
+    panel.active = true
+  }
+
+  private hidePrompt(): void {
+    this.prompt = null
+    if (this.promptPanel !== null) {
+      this.promptPanel.active = false
+    }
+  }
+
+  /** 当前开着的弹窗（诊断与用例断言用）。 */
+  get openPrompt(): HeroChoicePrompt | null {
+    return this.prompt
+  }
+}

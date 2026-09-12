@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  职责：通用工具层 —— PRNG、时间、定点数、错误码、统一响应、JSON 工具。零业务、零框架。
+  依赖：无本项目模块；第三方仅 jackson-databind（JSON 解析，非框架）。
+  硬约束（B01 三条硬要求之 1）：本模块不得出现任何 Spring 注解或依赖，必须能在纯 JUnit 环境毫秒级跑完。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.ironoath</groupId>
+    <artifactId>ironoath-server</artifactId>
+    <version>0.1.0</version>
+  </parent>
+
+  <artifactId>game-common</artifactId>
+  <name>game-common</name>
+  <description>通用工具层：Rng / TimeService / FixedPoint / ErrorCode / Result / JsonUtils</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+  </dependencies>
+</project>

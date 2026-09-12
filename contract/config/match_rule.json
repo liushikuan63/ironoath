@@ -1,0 +1,93 @@
+{
+  "table": "match_rule",
+  "version": 2,
+  "comment": "战力匹配与保护规则表（B08 依赖）。两类行：PROTECTION 是保护规则，SCENARIO 是 PVP 场景。本表不重复写任何数值，全部用 *Param 字段外键引用 global 表的参数 id —— 同一个数字只能有一个家，两处都写一定会不同步。",
+  "designNote": "PROTECTION 行恰好 3 条，这是 C00 公理二的可执行化：公理二要求「数一数保护规则的数量，超过三条就要问自己这条规则会阻止哪个社交行为」。把这条公理做成表结构后，任何人想加第四条保护都会在数据层面立刻显形，单测直接失败——比写在文档里靠自觉有效得多。三条保护的共同点是 blocksActiveAttack=true：护盾必须付对价，否则保护就变成免费的进攻准备期。SCENARIO 行把所有 PVP 入口的战力校验参数集中一处；铁律 11 要求任何 PVP 入口都走统一战力校验中间件、禁止新增绕过校验的代码路径，这张表就是那个中间件唯一的配置来源。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "kind": "ENUM:PROTECTION,SCENARIO",
+    "triggerCond": "STRING",
+    "durationParam": "?REF:global",
+    "triggerCountParam": "?REF:global",
+    "powerMinParam": "?REF:global",
+    "powerMaxParam": "?REF:global",
+    "bonusParam": "?REF:global",
+    "blocksActiveAttack": "BOOL",
+    "why": "?STRING",
+    "todo": "?STRING",
+    "windowParam": "?REF:global",
+    "durationParam2": "?REF:global",
+    "triggerCountParam2": "?REF:global"
+  },
+  "rows": [
+    {
+      "id": "mr_protection_newcomer",
+      "kind": "PROTECTION",
+      "triggerCond": "新号创建后自动生效，到期自动失效",
+      "blocksActiveAttack": true,
+      "why": "三条必要保护之一（C00 公理二）。3 天恰好覆盖到联盟解锁（主城 10 级 + D3）那一刻：早于 D3 结束会让还没入盟的人被裸打跑，晚于 D3 结束则消灭了冲突、也就消灭了入盟动机。护盾期禁止主动攻击——这是保护不至于变成白拿好处的对价。",
+      "durationParam": "NEWCOMER_PROTECT_SECONDS"
+    },
+    {
+      "id": "mr_protection_victim_shield",
+      "kind": "PROTECTION",
+      "triggerCond": "统计窗口内被达到触发人数上限的不同玩家攻击后自动生效（两档）",
+      "blocksActiveAttack": true,
+      "why": "三条必要保护之二：连续受害护盾，两档递进（B08 7）。\n触发条件按不同玩家计数而不是按攻击次数——同一个人连打三次不该触发，否则大佬可以靠单人压制把目标永久锁进护盾里，那等于变相禁止攻击（公理一）。\n第二档（5 人 -> 12h）的存在意义是让「被全服盯上」有一个明确的升级台阶：只有一档的话，打人方无法从护盾时长上感知到「我打得太狠了」。",
+      "durationParam": "VICTIM_SHIELD_HOURS_TIER1",
+      "triggerCountParam": "VICTIM_SHIELD_TRIGGER_COUNT_TIER1",
+      "windowParam": "VICTIM_SHIELD_WINDOW_SECONDS",
+      "triggerCountParam2": "VICTIM_SHIELD_TRIGGER_COUNT_TIER2",
+      "durationParam2": "VICTIM_SHIELD_HOURS_TIER2"
+    },
+    {
+      "id": "mr_protection_shield_no_attack",
+      "kind": "PROTECTION",
+      "triggerCond": "任意护盾生效期间",
+      "blocksActiveAttack": true,
+      "why": "三条必要保护之三：护盾期禁主动攻击。它不是一条独立保护，而是前两条的对价条款——没有它，护盾就变成免费的进攻准备期（躲起来攒兵、护盾一结束就打人），保护机制会被反向利用。"
+    },
+    {
+      "id": "mr_scenario_normal_attack",
+      "kind": "SCENARIO",
+      "triggerCond": "玩家主动搜索或指定目标攻击",
+      "blocksActiveAttack": false,
+      "why": "常规攻击的战力区间 [0.5x, 2.0x]，双向闭合。一条规则同时实现「弱者不被碾压」和「强者能虐菜」——它不是单向保护。下界 0.5 的作用不是保护弱者，而是防止玩家刷出一堆毫无价值的杂鱼浪费行军时间。",
+      "powerMinParam": "PVP_POWER_MIN_RATIO",
+      "powerMaxParam": "PVP_POWER_MAX_RATIO"
+    },
+    {
+      "id": "mr_scenario_rally",
+      "kind": "SCENARIO",
+      "triggerCond": "发起或加入集结",
+      "blocksActiveAttack": false,
+      "why": "集结放宽上限 = PVP_POWER_MAX_RATIO 乘 sqrt(N)（N 为集结人数）。\n刻意不给集结单独一个上限参数：sqrt(1)=1，单人就是常规区间，两个参数意味着同一个数字有两个家，改了一处忘了另一处就会让集结与单人的口径悄悄分叉。\n用 sqrt(N) 而不是 N：人数收益递减，防止超大规模集结变成无条件碾压，同时保证 16 人可讨伐高 8 倍目标——组团反击这条路必须始终成立（C00 公理一）。这是弱者唯一的破圈手段，也是本项目绝不提供向下收益衰减或弱者自动补偿的替代方案。",
+      "powerMinParam": "PVP_POWER_MIN_RATIO",
+      "powerMaxParam": "PVP_POWER_MAX_RATIO"
+    },
+    {
+      "id": "mr_scenario_revenge",
+      "kind": "SCENARIO",
+      "triggerCond": "攻击在窗口内攻击过自己的同一目标",
+      "blocksActiveAttack": false,
+      "why": "复仇加成 +15%。让被打成为恩怨与社交的起点而不是终点（C00 公理二）。窗口取 24 小时（global.REVENGE_WINDOW_SECONDS）是为了覆盖一个完整作息周期：玩家下线再上线仍能复仇，否则这个加成对非全天在线的人形同虚设。",
+      "bonusParam": "BONUS_REVENGE"
+    },
+    {
+      "id": "mr_scenario_mourning_defense",
+      "kind": "SCENARIO",
+      "triggerCond": "防守方参与集结抵御进攻",
+      "blocksActiveAttack": false,
+      "why": "哀兵加成 +10%，仅防守集结生效。刻意低于复仇(15%)：防守是被动收益，主动反击应更有回报，才能驱动玩家从被保护转向叫人反打。",
+      "bonusParam": "BONUS_MOURNING"
+    },
+    {
+      "id": "mr_scenario_siege_public_enemy",
+      "kind": "SCENARIO",
+      "triggerCond": "攻击暴虐值达到公敌档的目标",
+      "blocksActiveAttack": false,
+      "why": "围剿公敌加成 +15%，与复仇同档。这是暴虐值机制能闭环的前提：如果制裁大佬没有收益，全服广播就只是羞辱而不是集体行动，强者也就没有付出真实代价，虐菜的正当性会被质疑。",
+      "bonusParam": "BONUS_SIEGE_PUBLIC_ENEMY"
+    }
+  ]
+}

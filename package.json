@@ -1,0 +1,20 @@
+{
+  "name": "project-iron-oath",
+  "version": "0.1.0",
+  "private": true,
+  "description": "《列王纪·铁誓》SLG 微信小游戏 —— 根级构建脚本入口（实际逻辑在 scripts/*.sh）",
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "build": "bash scripts/build.sh",
+    "test": "bash scripts/test.sh",
+    "test:server": "bash -c 'source scripts/env.sh && mvn -f server/pom.xml test'",
+    "test:client": "bash scripts/test-client.sh",
+    "check": "bash scripts/check.sh",
+    "check:layering": "bash scripts/check-layering.sh",
+    "check:contract": "bash scripts/check-contract-sync.sh",
+    "gen": "bash scripts/gen.sh"
+  },
+  "devDependencies": {
+    "typescript": "5.4.5"
+  }
+}

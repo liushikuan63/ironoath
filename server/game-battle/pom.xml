@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  职责：★战斗内核。simulate() 为静态纯函数，纯 Java、零框架、可脱离容器批量跑万局验证平衡。
+  依赖：只能依赖 game-common（B00 分层规则，由 scripts/check-layering.sh 强制）。
+  状态：B01 仅建空壳占位，B05 实现完整战斗结算。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.ironoath</groupId>
+    <artifactId>ironoath-server</artifactId>
+    <version>0.1.0</version>
+  </parent>
+
+  <artifactId>game-battle</artifactId>
+  <name>game-battle</name>
+  <description>战斗内核（纯 Java，B05 填充）</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-common</artifactId>
+    </dependency>
+  </dependencies>
+</project>

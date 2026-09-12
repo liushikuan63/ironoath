@@ -1,0 +1,117 @@
+{
+  "table": "activity",
+  "version": 1,
+  "comment": "活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。",
+  "designNote": "八个活动精确覆盖八个系统（登录/PVE/集结/捐献/PVP/建造/小队互助/抽卡），每个都是把某系统的核心行为做成限时目标。奖励选取原则是「给玩家当下最缺的东西」而不是「给最贵的东西」：第一周给加速（缺时间）、打野活动给铁箱（缺铁）、捐献活动给研究令（在冲科技）。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "activityType": "ENUM:LOGIN_STREAK,KILL_MONSTER,JOIN_RALLY,DONATE,PVP_WIN,UPGRADE_BUILDING,HELP_SQUAD",
+    "conditionType": "ENUM:LOGIN_DAYS,KILL_MONSTER_TOTAL,JOIN_RALLY_TOTAL,DONATE_TOTAL,PVP_WIN_TOTAL,UPGRADE_COUNT,HELP_COUNT",
+    "conditionValue": "LONG_POS",
+    "durationDays": "LONG_POS",
+    "rewardGold": "LONG_NONNEG",
+    "rewardItemId": "REF:item",
+    "rewardItemCount": "LONG_POS",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "activity_login_7d",
+      "name": "七日登临",
+      "activityType": "LOGIN_STREAK",
+      "conditionType": "LOGIN_DAYS",
+      "conditionValue": 7,
+      "durationDays": 7,
+      "rewardGold": 300,
+      "rewardItemId": "item_speedup_build_1h",
+      "rewardItemCount": 5,
+      "why": "连续登录 7 天。奖励给加速道具而非资源：第一周玩家最缺的是时间（建造队列排不过来），给资源反而没用。"
+    },
+    {
+      "id": "activity_login_30d",
+      "name": "月常守望",
+      "activityType": "LOGIN_STREAK",
+      "conditionType": "LOGIN_DAYS",
+      "conditionValue": 30,
+      "durationDays": 30,
+      "rewardGold": 1500,
+      "rewardItemId": "item_chest_hero",
+      "rewardItemCount": 1,
+      "why": "连续登录 30 天送 1 个武将招募匣。这是零氪玩家拿到第二次抽卡机会的主要途径，与主线送的碎片互补。"
+    },
+    {
+      "id": "activity_monster_hunt",
+      "name": "剿匪令",
+      "activityType": "KILL_MONSTER",
+      "conditionType": "KILL_MONSTER_TOTAL",
+      "conditionValue": 50,
+      "durationDays": 3,
+      "rewardGold": 500,
+      "rewardItemId": "item_res_iron_5k",
+      "rewardItemCount": 2,
+      "why": "限时 3 天打野 50 次。铁箱作奖励是刻意的：活动要把玩家最缺的东西当诱饵，而铁是造兵瓶颈。"
+    },
+    {
+      "id": "activity_rally_week",
+      "name": "集结周",
+      "activityType": "JOIN_RALLY",
+      "conditionType": "JOIN_RALLY_TOTAL",
+      "conditionValue": 5,
+      "durationDays": 7,
+      "rewardGold": 400,
+      "rewardItemId": "item_buff_rally_2h",
+      "rewardItemCount": 2,
+      "why": "限时 7 天参与 5 次集结。把「弱者的出路是组团」做成可参与的活动——不参赛的玩家会明显感到自己落后。"
+    },
+    {
+      "id": "activity_donate_week",
+      "name": "捐献周",
+      "activityType": "DONATE",
+      "conditionType": "DONATE_TOTAL",
+      "conditionValue": 2000,
+      "durationDays": 7,
+      "rewardGold": 300,
+      "rewardItemId": "item_speedup_research_1h",
+      "rewardItemCount": 3,
+      "why": "联盟捐献活动。奖励研究令：捐献者通常已在冲科技线，给他最想要的东西。"
+    },
+    {
+      "id": "activity_pvp_win",
+      "name": "争锋令",
+      "activityType": "PVP_WIN",
+      "conditionType": "PVP_WIN_TOTAL",
+      "conditionValue": 10,
+      "durationDays": 3,
+      "rewardGold": 600,
+      "rewardItemId": "item_buff_peace_24h",
+      "rewardItemCount": 1,
+      "why": "限时 3 天 PVP 胜 10 场，奖励免战牌。这是全项目唯一「用进攻换防守」的活动，目的是让好战玩家也有停手的理由，避免活动期把中低战力玩家清出服务器——那会直接摧毁 C00 公理一要求的生态（强者虐菜得有菜可虐）。"
+    },
+    {
+      "id": "activity_build_sprint",
+      "name": "建造冲刺",
+      "activityType": "UPGRADE_BUILDING",
+      "conditionType": "UPGRADE_COUNT",
+      "conditionValue": 10,
+      "durationDays": 5,
+      "rewardGold": 400,
+      "rewardItemId": "item_speedup_build_8h",
+      "rewardItemCount": 1,
+      "why": "限时 5 天升级 10 次建筑。八小时令能让玩家在活动末尾一次性跳过一个大卡点，制造赶上进度的爽感。"
+    },
+    {
+      "id": "activity_squad_help",
+      "name": "小队同心",
+      "activityType": "HELP_SQUAD",
+      "conditionType": "HELP_COUNT",
+      "conditionValue": 30,
+      "durationDays": 7,
+      "rewardGold": 200,
+      "rewardItemId": "item_speedup_build_5m",
+      "rewardItemCount": 10,
+      "why": "小队互助活动，奖励 10 个五分钟令。给得很慷慨：互助是最轻的社交行为，用高奖励把习惯建立起来，比后期靠玩法强制社交有效得多。"
+    }
+  ]
+}

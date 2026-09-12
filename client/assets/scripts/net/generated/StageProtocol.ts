@@ -1,0 +1,179 @@
+/**
+ * 由 tools/config-gen 依据 contract/proto/ 下的 JSON Schema 自动生成，禁止手改。
+ * 要改协议请改 Schema，然后运行 `npm run gen`；CI 会用 scripts/check-contract-sync.sh 校验同步性。
+ *
+ * 本文件只有类型声明，不含任何运行期逻辑 —— 客户端不得在此实现影响数值或胜负的判断（铁律 2）。
+ */
+
+/**
+ * 关卡的兵种限制，取值与 stage 表的 unitRestriction 一致（CI 校验）。
+ *
+ * **这是入场门槛，不是三星条件之一**（对 B09 §4 字面表述的一处有意偏离）：若把它做成「不满足就少一颗星」，玩家仍然可以带违规阵容进场，限制就成了装饰 —— 而它存在的目的是逼玩家换阵型（B09 §二 的原话）。做成入场门槛才真的逼得到。三星因此是「通关 / 无损 / 限时」。
+ */
+export type UnitRestriction =
+  | 'NONE'
+  | 'NO_SIEGE'
+  | 'CAVALRY_ONLY'
+  | 'RANGED_ONLY'
+
+/**
+ * BOSS 机制，取值与 stage 表的 bossMechanic 一致（CI 校验）。
+ *
+ * B09 §二 要求 BOSS「有机制而非纯数值」。当前内核尚未实现这三种机制，所以带机制的关卡会被服务端明确拒绝（NOT_IMPLEMENTED）而不是当普通关打 —— 静默降级会让玩家以为「BOSS 也不过如此」，而机制补上之后同一关突然变难，会被理解成偷偷加强。
+ */
+export type BossMechanic =
+  | 'NONE'
+  | 'REINFORCEMENT'
+  | 'SHIELD_PHASE'
+  | 'COUNTER_STRIKE'
+
+/**
+ * 三星的三个条件分别是否达成。**逐条下发而不是只给一个总数**：玩家看到 2/3 时需要知道差的是哪一条，否则他只能反复试；而「差哪一条」正是驱动他去练兵、换阵型、升武将的信息。
+ */
+export interface StageStars {
+  /** 第一星：通关 */
+  cleared: boolean
+  /** 第二星：无损 —— 己方**阵亡**为 0（伤兵允许，伤兵可以治疗）。刻意不取「阵亡与伤兵都为 0」：这个内核里攻方损失约等于「敌方总兵力 / LANCHESTER_K」，与自己带多少兵无关（减员系数 = 1/(1+K×兵力比)，乘以己方兵力后收敛到敌方兵力/K），所以「一个都没少」在任何关卡都不可达 —— 一颗永远拿不到的星比一颗定义稍宽的星更糟，玩家会理解成数值造假。按 B05 的 PVE 死亡比例 0.20，第 1 关（敌方 10 兵）的期望损失约 1.4 个，其中阵亡 0.28 个 ⇒ 取整为 0，无损可达；而敌方兵力越多，无损就越难，门槛依然真实存在。 */
+  noLoss: boolean
+  /** 第三星：在 stage 表的 roundLimit 回合内通关 */
+  withinRounds: boolean
+  /** 三条件之和。冗余下发是因为客户端要显示星级图标，让它自己数三个布尔值等于把口径交给客户端 */
+  total: number
+}
+
+/**
+ * 一关的历史最好成绩。
+ */
+export interface StageProgressView {
+  stageId: string
+  /** 历史最好星级。**只升不降**：重试打得更差不该扣星，否则玩家会因为怕掉星而不敢重试，而重试正是养成的动力 */
+  stars: number
+  /** 历史最少回合数，0 表示尚未通关 */
+  bestRounds: number
+  /** 首次通关的服务端时刻；未通关为 0 */
+  clearedAt: number
+  /** 累计扫荡次数。埋点用：扫荡占比过高说明关卡内容被消耗完了 */
+  sweepCount: number
+}
+
+/**
+ * GET /stage/list 的响应：全部关卡的进度与解锁状态。
+ */
+export interface StageListResp {
+  stages: StageEntry[]
+  /** 当前体力。与关卡一起下发是因为「能不能打这一关」同时取决于解锁状态与体力，分两个请求会让客户端自己拼这两个条件 */
+  stamina: number
+  serverNow: number
+}
+
+/**
+ * 列表里的一关。
+ */
+export interface StageEntry {
+  stageId: string
+  chapterId: string
+  stageNo: number
+  name: string
+  staminaCost: number
+  roundLimit: number
+  unitRestriction: UnitRestriction
+  bossMechanic: BossMechanic
+  unlocked: boolean
+  /** 未解锁的原因文案；已解锁为 null。**必须给原因**：一个灰掉的关卡不说明为什么，玩家会以为是 bug（B08 的同一条纪律：绝不静默失败） */
+  lockedReason: string | null
+  /** 是否挑战过。**与 progress 分开下发**：生成器不支持可空的 $ref，而「没打过」与「打过但 0 星」在 UI 上是两种状态（前者显示未挑战，后者显示 0 星），用一个全 0 的对象表达不了这个区别 */
+  attempted: boolean
+  progress: StageProgressView
+}
+
+/**
+ * 兵力条目：unitId（含阶级）→ 数量。与 army 协议的 MarchUnit 形状相同，但生成器不支持跨文件 $ref，所以这里各有一份。两者的字段名与语义必须保持一致，由 StageContractParityTest 断言。
+ */
+export interface StageUnit {
+  /** unit 表的行 id，含阶级（如 unit_infantry_t3） */
+  unitId: string
+  count: number
+}
+
+/**
+ * 奖励条目。与 bag 协议的 RewardItemView 形状相同，但生成器只支持同文件 $ref，所以这里各有一份。**两份的字段与枚举取值必须一致**，由 StageContractParityTest 断言 —— 复制而不校验才是真正的危险：漂移的症状是服务端下发的字符串在客户端解析成 undefined，而 TS 侧不会报错，UI 只会空白。
+ */
+export interface StageReward {
+  /** 奖励类型，取值与 bag 协议的 RewardType 一致（CI 校验） */
+  type: string
+  /** 资源 id / 道具 id / 武将 id，含义由 type 决定 */
+  id: string
+  count: number
+  /** 中文显示名，服务端下发。客户端不得自行翻译：飘字与战报里的称呼必须一致 */
+  name: string
+}
+
+/**
+ * POST /stage/challenge 请求体（B09 §三）。
+ */
+export interface ChallengeStageReq {
+  /** 幂等键。挑战会扣兵、扣体力、发奖励，没有幂等就等于允许重放刷奖励 */
+  requestId: string
+  stageId: string
+  /** 出战兵力，unitId（含阶级）→ 数量。按 unitId 而不是按兵种：与行军、军队存档同一口径，否则一次挑战会把 T5 兵当 T1 用 */
+  units: StageUnit[]
+  /** 上阵武将 id，顺序即站位（0 号主将）。可空 */
+  heroes: string[] | null
+}
+
+/**
+ * POST /stage/challenge 响应体。
+ */
+export interface ChallengeStageResp {
+  /** 战报 id，可用 GET /battle/report 取完整回放。战斗结果本身不在这里重复下发 —— 逐回合数据只在玩家点开回放时才需要 */
+  reportId: string
+  stars: StageStars
+  /** 本次获得的星数（不是历史最好） */
+  starsEarned: number
+  /** 本次是否刷新了历史最好成绩。客户端据此播放「新纪录」动效 */
+  newBest: boolean
+  rewards: StageReward[]
+  /** 本次损失，unitId → 数量。**必须逐阶级下发**：只给一个总数的话，玩家看不出自己掉的是 T1 还是 T5，而这两者的代价差一个数量级 */
+  losses: StageUnit[]
+  staminaCost: number
+  /** 实扣体力。失败时为 0（B09 验收 1）—— 两个字段都下发是为了让「失败不扣体力」这条规则在客户端可见，否则玩家会以为体力被偷扣了 */
+  staminaCharged: number
+  progress: StageProgressView
+  serverNow: number
+}
+
+/**
+ * POST /stage/sweep 请求体（B09 §6）。**最多 10 次只发 1 次请求**（验收 9）：客户端逐次发 10 个请求的话，每一次都要走一遍幂等、加锁、结算，弱网下会有几次超时，玩家看到的是「扫荡了 7 次」这种无法解释的结果。
+ */
+export interface SweepReq {
+  requestId: string
+  stageId: string
+  /** 扫荡次数，1~10。超过 10 直接拒绝而不是截断：截断会让玩家以为扫了 10 次却只拿到 3 次的奖励 */
+  count: number
+}
+
+/**
+ * POST /stage/sweep 响应体。
+ */
+export interface SweepResp {
+  /** 每次扫荡的结果，按执行顺序。**逐次下发而不是只给合计**：每次都是独立的一场战斗（各自的 seed 与浮动），只给合计会让玩家无法核对，也无法复现某一次 */
+  results: SweepResult[]
+  /** 按奖励类型聚合后的合计，供「一键领取」的飘字使用 */
+  totalRewards: StageReward[]
+  staminaCost: number
+  staminaCharged: number
+  /** 实际执行次数。体力不够时会少于请求次数 —— **照实返回而不是报错**：已经扫了的几次必须给奖励，整批失败会让玩家损失已扣的体力 */
+  executed: number
+  progress: StageProgressView
+  serverNow: number
+}
+
+/**
+ * 一次扫荡的结果（B09 §三）。
+ */
+export interface SweepResult {
+  /** 这一次的战斗战报 id。扫荡同样落战报 —— 「扫荡不播放动画」不等于「扫荡没有战斗」，少了战报就没法排查「我扫荡 10 次为什么只拿到 7 次的奖励」 */
+  reportId: string
+  stars: StageStars
+  rewards: StageReward[]
+}

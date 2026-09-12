@@ -1,0 +1,107 @@
+{
+  "table": "curve",
+  "version": 2,
+  "comment": "成长曲线参数表（B00 数值速查「成长曲线」的唯一落地处）。运行期由 game-core 的 Formula 读取本表套公式，代码中不得出现任何曲线常量（铁律 1、跨语言一致性第 4 条）。base=0 表示基数由具体业务表逐行提供，本表只给比率与指数。小数一律写成十进制字符串，禁止 JSON number（见 contract/README.md）。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "kind": "ENUM:GEOMETRIC,POWER",
+    "base": "DECIMAL",
+    "ratio": "DECIMAL",
+    "exponent": "DECIMAL",
+    "unit": "ENUM:SECOND,FIXED,FIXED_PER_HOUR,COUNT",
+    "formula": "STRING",
+    "why": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "BUILDING_TIME",
+      "kind": "GEOMETRIC",
+      "base": "30",
+      "ratio": "1.18",
+      "exponent": "1",
+      "unit": "SECOND",
+      "formula": "T(n) = T0 * 1.18^(n-1)",
+      "why": "T0=30s 让 1→2 级几乎瞬时完成（五分钟体验的爽感来源）；1.18 的比率使第 8 级约需 30*1.18^7≈96s、第 20 级约 30*1.18^19≈1100s，首日卡点落在 8 级附近而不是更前。"
+    },
+    {
+      "id": "BUILDING_COST",
+      "kind": "GEOMETRIC",
+      "base": "0",
+      "ratio": "1.22",
+      "exponent": "1",
+      "unit": "FIXED",
+      "formula": "C(n) = C0 * 1.22^(n-1)",
+      "why": "消耗比率(1.22)必须大于时间比率(1.18)：让「缺资源」比「缺时间」更早成为瓶颈，从而把玩家推向采集/掠夺/交易等社交行为，而不是单纯挂机等加速。"
+    },
+    {
+      "id": "BUILDING_OUTPUT",
+      "kind": "POWER",
+      "base": "0",
+      "ratio": "1",
+      "exponent": "1.08",
+      "unit": "FIXED_PER_HOUR",
+      "formula": "P(n) = P0 * n^1.08",
+      "why": "幂函数(而非指数)让产出增长温和：升级永远有收益但不会失控，避免后期产量指数爆炸引发通胀（C00 公理四）。1.08 的轻微超线性保证「升级建筑」比「多造一个建筑」略优，引导纵向养成。"
+    },
+    {
+      "id": "POWER_CONTRIB",
+      "kind": "POWER",
+      "base": "0",
+      "ratio": "1",
+      "exponent": "1.15",
+      "unit": "FIXED",
+      "formula": "F(n) = F0 * n^1.15",
+      "why": "战力指数(1.15)高于产出指数(1.08)：战力是 PVP 匹配的唯一依据，必须让高等级玩家明显跳出低层圈层，否则 [0.5x,2.0x] 区间会把大佬和新手长期锁在一起（B08 战力圈层的前提）。"
+    },
+    {
+      "id": "TECH_TIME",
+      "kind": "GEOMETRIC",
+      "base": "0",
+      "ratio": "1.28",
+      "exponent": "1",
+      "unit": "SECOND",
+      "formula": "TR(n) = TR0 * 1.28^(n-1)",
+      "why": "科技比率(1.28)全项目最陡：科技是永久性增益，必须用最陡的时间曲线做长线消耗坑，成为终局玩家仍有事可做的保障之一（C00 公理四）。"
+    },
+    {
+      "id": "UNIT_STRENGTH",
+      "kind": "GEOMETRIC",
+      "base": "0",
+      "ratio": "1.12",
+      "exponent": "1",
+      "unit": "FIXED",
+      "formula": "S(n) = S0 * 1.12^(n-1)",
+      "why": "兵种强度比率(1.12)刻意低于建筑(1.18)与科技(1.28)：高阶兵贵而不碾压，保证「数量与克制」始终比「兵阶」更重要，战斗才有策略空间（B05 战斗内核的设计前提）。"
+    },
+    {
+      "id": "HERO_GROWTH",
+      "kind": "POWER",
+      "base": "0",
+      "ratio": "1",
+      "exponent": "1.20",
+      "unit": "FIXED",
+      "formula": "H(n) = H0 * n^1.20",
+      "why": "武将成长指数最高(1.20)：武将是付费抽取的核心商品，成长曲线必须最陡才能让付费玩家获得可感知的长期优势（B15 付费点排序中武将抽取位列第四，靠的就是这条曲线）。"
+    },
+    {
+      "id": "CHAPTER_DIFFICULTY",
+      "kind": "GEOMETRIC",
+      "base": "0",
+      "ratio": "1.25",
+      "exponent": "1",
+      "unit": "FIXED",
+      "formula": "D(n) = D0 * 1.25^(n-1)",
+      "why": "关卡难度比率(1.25)高于兵种强度(1.12)：PVE 关卡必须逐渐打不过，把玩家从「刷副本」推向「养兵种/养武将/组队」，是 PVE 向 PVP 与社交导流的闸门（B09）。"
+    },
+    {
+      "id": "HERO_LEVEL_EXP",
+      "kind": "GEOMETRIC",
+      "base": "20",
+      "ratio": "1.08",
+      "exponent": "1",
+      "unit": "COUNT",
+      "formula": "E(n) = 20 * 1.08^(n-1)",
+      "why": "升到 n 级所需经验。比率取 1.08 而不是 BUILDING_COST 的 1.22：100 级累计约 54.9 万经验，按大经验书(1 万)折算约 55 本；若用 1.22，仅第 100 级就要 20×1.22^99 ≈ 6.7×10^8 经验，等于 6.7 万本大经验书，武将线会从「养成」变成「不可能完成的任务」。1.08 让前期几本书就能升一级（B00 五分钟体验要立刻有反馈），后期单级需要十几本（长线追求），曲线形状对，量级也对。"
+    }
+  ]
+}

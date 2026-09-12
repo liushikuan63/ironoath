@@ -1,0 +1,49 @@
+{
+  "table": "hero_rarity",
+  "version": 1,
+  "comment": "武将稀有度经济表。一行 = 一个稀有度档：重复武将转多少碎片、合成需要多少碎片、每升一星需要多少碎片。",
+  "designNote": "【为什么单开一张表而不是塞进 global】这四档 × 三个数值 = 12 个参数，塞进键值型的 global 表会变成 12 行没有横向可比性的散参；开成表之后「SSR 的碎片经济」是一行，可以直接横向对比四档之间的倍率关系，也便于 CI 断言（例如 dupFragment 必须随稀有度严格递增）。\n【三个数值的比例关系】合成 ÷ 重复转碎片：N 4.0、R 3.75、SR 3.33、SSR 2.67。这个比值刻意随稀有度递减：低稀有度靠重复抽取就能合成（新手期要给明确的收集进度感），高稀有度则更依赖直接抽到 —— 否则「攒碎片换 SSR」会让抽卡失去意义，而抽卡是 B15 付费点排序里深度最大的一项。\n【升星消耗】starUpFragment 是每升一星的数量，从 1 星升到 HERO_STAR_MAX(5) 需要 4 次。SSR 满星要 160 碎片 = 5.3 个重复 SSR，对应标准池 80 抽保底 ⇒ 约 420 抽。这是刻意的深度锚：满星 SSR 应该是「一个赛季的付费目标」，不是「一周的小目标」。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "dupFragment": "LONG_POS",
+    "composeFragment": "LONG_POS",
+    "starUpFragment": "LONG_POS",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "N",
+      "name": "N 级",
+      "dupFragment": 5,
+      "composeFragment": 20,
+      "starUpFragment": 10,
+      "why": "N 档是首日就能大量获得的档位（标准池 58%）。碎片给得宽松，让玩家在新手期就体验一次「凑够碎片合成武将」，学会这条线怎么玩。"
+    },
+    {
+      "id": "R",
+      "name": "R 级",
+      "dupFragment": 8,
+      "composeFragment": 30,
+      "starUpFragment": 15,
+      "why": "R 是首日首抽就能拿到的稀有度（B00 五分钟体验），必须能养成到够用，否则零氪玩家第二天就没有可练的东西。"
+    },
+    {
+      "id": "SR",
+      "name": "SR 级",
+      "dupFragment": 15,
+      "composeFragment": 50,
+      "starUpFragment": 25,
+      "why": "SR 是零氪玩家的中后期主力（SSR/SR 只有 1.5944 倍差距，见 hero 表）。碎片经济必须让零氪靠积累能满星，否则「差距只有 1.6 倍」这条生态红线就白设了。"
+    },
+    {
+      "id": "SSR",
+      "name": "SSR 级",
+      "dupFragment": 30,
+      "composeFragment": 80,
+      "starUpFragment": 40,
+      "why": "SSR 是最深的付费锚。满星需 160 碎片 ≈ 5.3 个重复 SSR ≈ 标准池 420 抽，对应一个赛季的投入。给得太松会让 SSR 迅速普及、失去稀缺感；给得太紧则会让零氪彻底放弃这条线，转而放弃游戏。"
+    }
+  ]
+}

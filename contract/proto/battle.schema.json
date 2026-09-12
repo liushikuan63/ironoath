@@ -1,0 +1,434 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/battle.schema.json",
+  "title": "BattleProtocol",
+  "description": "战斗表现层协议契约（B05 §三）。<b>客户端不实现 simulate()</b>：服务端下发完整的逐回合快照，客户端只负责播放。战报重放 = 重播快照，不是重算。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "BattleProtocol",
+  "$defs": {
+    "UnitType": {
+      "type": "string",
+      "description": "兵种类型。取值必须与 unit 表的 type 列、game-battle 的 UnitType 枚举一致（由 BattleContractParityTest 断言）。",
+      "enum": [
+        "INFANTRY",
+        "CAVALRY",
+        "ARCHER",
+        "SIEGE"
+      ]
+    },
+    "BattleSide": {
+      "type": "string",
+      "description": "战斗结果方。与 game-battle 的 Winner 枚举一致。",
+      "enum": [
+        "ATTACKER",
+        "DEFENDER",
+        "DRAW"
+      ]
+    },
+    "BattleType": {
+      "type": "string",
+      "description": "战斗类型，决定死伤比例（B05 §1.5）。与 game-battle 的 BattleType 枚举一致。",
+      "enum": [
+        "PVE",
+        "PVP_SOLO",
+        "PVP_RALLY",
+        "SIEGE"
+      ]
+    },
+    "SkillPhase": {
+      "type": "string",
+      "description": "技能触发时机。与 game-battle 的 SkillPhase 枚举一致。",
+      "enum": [
+        "ROUND_START",
+        "EVERY_ROUND",
+        "ON_HIT",
+        "ON_DEATH"
+      ]
+    },
+    "UnitStack": {
+      "type": "object",
+      "description": "一个兵种堆叠。<b>客户端渲染的就是这个，不是单个士兵</b>：B05 §三 要求「每排最多渲染 12 个单位，超出用 ×N 图标聚合」，而服务端下发的本来就是按兵种聚合的数量，所以 10 万兵力也只有 4 个堆叠。这是低端机保 60 帧的关键，客户端绝不要试图把它展开成单个单位。",
+      "additionalProperties": false,
+      "required": [
+        "unitType",
+        "count"
+      ],
+      "properties": {
+        "unitType": {
+          "$ref": "#/$defs/UnitType"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "SkillTriggerView": {
+      "type": "object",
+      "description": "一次技能触发，供战报 UI 展示与播放技能特效。",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "skillId",
+        "side"
+      ],
+      "properties": {
+        "phase": {
+          "$ref": "#/$defs/SkillPhase"
+        },
+        "skillId": {
+          "type": "string"
+        },
+        "skillName": {
+          "type": "string",
+          "description": "中文名，来自 skill 表，客户端不得自行翻译"
+        },
+        "side": {
+          "type": "string",
+          "enum": [
+            "ATTACKER",
+            "DEFENDER"
+          ],
+          "description": "由哪一方触发"
+        },
+        "heroId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "触发的武将；null 表示非武将来源"
+        },
+        "valueFixed": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "效果值（定点 ×10000）"
+        }
+      }
+    },
+    "RoundView": {
+      "type": "object",
+      "description": "一回合的完整快照。客户端播一回合就是播这一个对象，不需要任何计算。",
+      "additionalProperties": false,
+      "required": [
+        "round",
+        "attackerUnits",
+        "defenderUnits",
+        "attackerLoss",
+        "defenderLoss",
+        "attackerAttack",
+        "defenderDefense",
+        "attritionFixed",
+        "skills"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "attackerUnits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnitStack"
+          },
+          "description": "回合开始时攻方的兵力构成"
+        },
+        "defenderUnits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnitStack"
+          }
+        },
+        "attackerLoss": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "defenderLoss": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "attackerAttack": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "攻方总攻击（已含全部乘区），供战报展开「这一回合为什么打这么多」"
+        },
+        "defenderDefense": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "attritionFixed": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "减员系数（定点）。B05 §1.4 的核心中间量，公示它才能让战报可解释"
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SkillTriggerView"
+          }
+        }
+      }
+    },
+    "BattleResultView": {
+      "type": "object",
+      "description": "一场战斗的完整结果。<b>这就是战报</b>：存下来即可无限次重播，重播不需要重算（B05 §三）。seed 一并下发用于服务端自查、问题复现与反外挂校验，客户端不参与任何基于 seed 的计算。",
+      "additionalProperties": false,
+      "required": [
+        "winner",
+        "battleType",
+        "totalRounds",
+        "rounds",
+        "attackerSurvivors",
+        "defenderSurvivors",
+        "attackerDead",
+        "attackerWounded",
+        "attackerOverflowDead",
+        "defenderDead",
+        "defenderWounded",
+        "defenderOverflowDead",
+        "loot",
+        "lootCapacity",
+        "seed",
+        "serverNow"
+      ],
+      "properties": {
+        "winner": {
+          "$ref": "#/$defs/BattleSide"
+        },
+        "battleType": {
+          "$ref": "#/$defs/BattleType"
+        },
+        "totalRounds": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "rounds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RoundView"
+          }
+        },
+        "attackerSurvivors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnitStack"
+          }
+        },
+        "defenderSurvivors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnitStack"
+          }
+        },
+        "attackerDead": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "attackerWounded": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "attackerOverflowDead": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "因医院超容量而死亡的伤兵。<b>必须单独下发</b>：B05 验收 7 要求「医院溢出：死亡数量与 UI 提示完全吻合」，如果把它并进 dead 里，玩家就看不到「有 300 个是因为医院不够而死」，也就没有升级医院的动机"
+        },
+        "defenderDead": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "defenderWounded": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "defenderOverflowDead": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "loot": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LootEntry"
+          },
+          "description": "掠夺所得。按 resource 表顺序"
+        },
+        "lootCapacity": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "本次负重上限（由兵种 load 决定）。UI 要显示「装满/未装满」"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "LootEntry": {
+      "type": "object",
+      "description": "一条掠夺所得。",
+      "additionalProperties": false,
+      "required": [
+        "resourceType",
+        "amount"
+      ],
+      "properties": {
+        "resourceType": {
+          "type": "string",
+          "description": "资源类型，取值同 resource 表的 id"
+        },
+        "amount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "BattleReportBrief": {
+      "type": "object",
+      "description": "战报列表里的一条摘要。**不含 rounds** —— 一场 8 回合的战斗逐回合展开有几十个数字，列表页只要「打赢了没有、损失多少、什么时候打的」。把 rounds 塞进列表会让一次「看看最近的战报」变成几百 KB 的下发，而 B07 为地图视野定的 20KB 上限就是为了让弱网玩家不被一次响应卡住，战报列表没有理由例外。",
+      "additionalProperties": false,
+      "required": [
+        "reportId",
+        "battleType",
+        "winner",
+        "won",
+        "totalRounds",
+        "attackerLoss",
+        "defenderLoss",
+        "createdAt",
+        "expiresAt"
+      ],
+      "properties": {
+        "reportId": {
+          "type": "string"
+        },
+        "battleType": {
+          "$ref": "#/$defs/BattleType"
+        },
+        "opponentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "对手 id。打野时是 mapmonster 的行 id，PVP 时是对方玩家 id"
+        },
+        "opponentName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "对手显示名，服务端下发。客户端不得自行翻译或拼接：「LV12 野蛮人营地」这种名字是策划在表里写的，客户端自己拼就会与服务端日志、客服工单里的称呼对不上"
+        },
+        "winner": {
+          "$ref": "#/$defs/BattleSide"
+        },
+        "won": {
+          "type": "boolean",
+          "description": "我方是否获胜。冗余于 winner，但列表页的「胜/败」标签不该让客户端自己去判断「winner==ATTACKER 且我是攻方」—— 那个判断需要知道自己是哪一方，而列表项里没有这个信息"
+        },
+        "totalRounds": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "attackerLoss": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "defenderLoss": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "createdAt": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "expiresAt": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "过期时刻。过期的战报会被清理（惰性，不跑定时器），下发这个字段是为了让客户端能置灰「即将失效」的条目，而不是让玩家点开一条已经被清掉的战报再收到一个错误"
+        }
+      }
+    },
+    "BattleReportListResp": {
+      "type": "object",
+      "description": "GET /battle/reports 的响应：我的战报列表，按时间倒序（最新的在前）。",
+      "additionalProperties": false,
+      "required": [
+        "reports",
+        "serverNow"
+      ],
+      "properties": {
+        "reports": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BattleReportBrief"
+          }
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "BattleReportResp": {
+      "type": "object",
+      "description": "GET /battle/report 的响应：一场战斗的完整回放数据。\n\n**rounds 必须逐回合完整下发**：B05 交付的客户端 BattlePlayback 就是按这个结构做时间轴的（1x/2x/跳过），少一个字段回放就会跳帧。而战报只存 seed + 输入就能由服务端 100% 复算（铁律 4），所以下发完整 rounds 不是「把计算结果泄露给客户端」——客户端本来就可以自己重放，服务端下发只是省掉它一次重算。\n\n**刻意不下发双方的完整属性**：RoundView 里只有每回合的兵力、损失、有效攻击/防御与减员系数，没有对方的兵种属性表与武将明细。回放需要的是「发生了什么」，不是「对方有多强」—— 后者是侦查的职责（B07 §3），白送会让情报系统失去意义。",
+      "additionalProperties": false,
+      "required": [
+        "reportId",
+        "result",
+        "createdAt",
+        "expiresAt",
+        "serverNow"
+      ],
+      "properties": {
+        "reportId": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/BattleResultView"
+        },
+        "createdAt": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "expiresAt": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

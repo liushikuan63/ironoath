@@ -1,0 +1,81 @@
+{
+  "table": "alliance_config",
+  "version": 3,
+  "rows": [
+    {
+      "id": "alliance_lv1",
+      "allianceLevel": 1,
+      "memberCap": 30,
+      "unlockMainLevel": 10,
+      "unlockDayOffset": 2,
+      "territoryCap": 1,
+      "rallyCapacity": 20,
+      "techCapBonus": "0.0",
+      "donationDailyCap": 3,
+      "why": "B10 §2 明写：解锁=主城 10 级 + 开服 D3 + 曾加入过小队（或付费跳过），Lv1 上限 30 人。主城 10 级比小队的 5 级高一倍，是因为联盟要承担「庇护」义务（B10 关键设计点 2），而一个连自己城都守不住的盟主提供不了庇护 —— 门槛挡住的不是新人，是「建了盟然后三天不上线」的组织者。「曾加入过小队」这个前置是为了让玩家先体验过 5 人的熟人协作再进 30 人的组织，否则他不知道联盟该干什么。territoryCap=1：Lv1 只能立一面旗帜，领地扩张必须靠升级而不是靠人多。techCapBonus=0 表示联盟科技等级上限取 alliance_tech 表的 maxLevel 原值。donationDailyCap=3 对应 §2 的「每日 3 档」。"
+    },
+    {
+      "id": "alliance_lv3",
+      "allianceLevel": 3,
+      "memberCap": 50,
+      "unlockMainLevel": 10,
+      "unlockDayOffset": 2,
+      "territoryCap": 2,
+      "rallyCapacity": 20,
+      "techCapBonus": "0.25",
+      "donationDailyCap": 3,
+      "why": "B10 §2 的人数扩展：50(Lv3)。本表只登记 1/3/5/7/9 五级 —— 偶数级不改变人数上限、领地与科技上限，它们存在的意义是给联盟一个「还在往前走」的连续进度感（捐献与科技都会涨联盟经验）。查表规则是「取 allianceLevel <= 当前等级 的最高一行」，所以 Lv2 自然沿用 Lv1 的 30 人，Lv4 沿用 Lv3 的 50 人，与文档给的锚点完全一致，不需要为偶数级编造四个数字。techCapBonus=0.25：科技上限 = maxLevel × (1 + 0.25)。"
+    },
+    {
+      "id": "alliance_lv5",
+      "allianceLevel": 5,
+      "memberCap": 80,
+      "unlockMainLevel": 10,
+      "unlockDayOffset": 2,
+      "territoryCap": 3,
+      "rallyCapacity": 20,
+      "techCapBonus": "0.50",
+      "donationDailyCap": 3,
+      "why": "B10 §2 的人数扩展：80(Lv5)。扩容消耗见 global.ALLIANCE_EXPAND_COST_BASE / _GROWTH：Lv1→3 是 20000 联盟资金，Lv3→5 是 36000。territoryCap 每次 +1，刻意不与人数同比例增长 —— 人数决定「能打多大的仗」，领地决定「能占多少资源加成」，后者若随人数线性放开，大盟会把地图上的资源点全部圈走，而 B08 的圈层设计与 C01 的非对称平衡都要求小组织仍然有生存空间。"
+    },
+    {
+      "id": "alliance_lv7",
+      "allianceLevel": 7,
+      "memberCap": 120,
+      "unlockMainLevel": 10,
+      "unlockDayOffset": 2,
+      "territoryCap": 4,
+      "rallyCapacity": 20,
+      "techCapBonus": "0.75",
+      "donationDailyCap": 3,
+      "why": "B10 §2 的人数扩展：120(Lv7)。扩容消耗 64800 联盟资金（20000×1.8^3）。120 人已经接近一个能自持的组织规模：按每日捐献三档全做算，120 人一天可产 38 万联盟资金，所以从这一级起扩容不再是「攒几天」而是「攒一晚上」，这也正是 B10 说的「中后期最重要的金币消耗点之一」——消耗点必须在中后期仍然吃紧，否则资金会溢出成无意义的数字。"
+    },
+    {
+      "id": "alliance_lv9",
+      "allianceLevel": 9,
+      "memberCap": 150,
+      "unlockMainLevel": 10,
+      "unlockDayOffset": 2,
+      "territoryCap": 5,
+      "rallyCapacity": 20,
+      "techCapBonus": "1.00",
+      "donationDailyCap": 3,
+      "why": "B10 §2 的人数扩展：150(Lv9)，这是联盟的天花板。扩容消耗 116640 联盟资金（20000×1.8^4），四次合计约 23.7 万。150 人而不是更多：再往上就与国家（B13）的规模重叠了，而三级社交（小队/联盟/国家）必须在规模上有明显的台阶，否则玩家分不清自己该在哪一层投入。techCapBonus=1.00 表示满级联盟的科技上限是表值的两倍（alliance_tech 的 maxLevel=40 ⇒ 上限 80），但 40 级以上的每级收益仍是 1.5%，所以两倍上限带来的是「更长的共同目标」而不是「翻倍的数值」——这符合 C00 的生态优先：组织强度应当体现在持续时间上，而不是瞬间的数值碾压。"
+    }
+  ],
+  "comment": "联盟配置表（B10 交付数据）。按联盟等级给出人数上限、领地容量、集结容量、科技加成。",
+  "designNote": "B10 §2：联盟 30(Lv1)→50(Lv3)→80(Lv5)→120(Lv7)→150(Lv9)，解锁条件主城 10 级 + 开服 D3（unlockDayOffset 是 0-based：0 = 开服当天，所以 D3 填 2） + 曾加入过小队（或付费跳过）。\n查表规则：**取 allianceLevel <= 当前等级 的最高一行**。只登记奇数级是刻意的：偶数级不改变任何上限，登记它们就得为 Lv2/4/6/8 编造四个文档里没有的数字，而那四个数字一旦被当成「官方数值」引用，就再也改不掉了。\n联盟存在的核心价值是**庇护**（B10 关键设计点 2）：弱者被打了，联盟有义务响应。这是 B08 反击工具箱「庇护/投靠」的落地点。所以本表的每一个上限都应当被理解为「一个盟能庇护多少人」，而不是「一个盟能塞多少人」——后者会让盟主为了凑数招进一堆不上线的人，而 B10 验收 5（被攻击 3 秒内推送）在那些人身上是无效的。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "allianceLevel": "LONG_POS",
+    "memberCap": "LONG_POS",
+    "unlockMainLevel": "LONG_POS",
+    "unlockDayOffset": "LONG_NONNEG",
+    "territoryCap": "LONG_POS",
+    "rallyCapacity": "LONG_POS",
+    "techCapBonus": "DECIMAL_NONNEG",
+    "donationDailyCap": "LONG_POS",
+    "why": "?STRING",
+    "todo": "?STRING"
+  }
+}

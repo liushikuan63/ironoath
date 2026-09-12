@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  职责：配置表 / 契约代码生成器 —— 从 contract/proto/*.schema.json 产出 Java DTO 与 TS interface。
+  依赖：game-common（JsonUtils）、game-config（生成前顺带跑一遍配置表全量校验）。
+  说明：tools/ 是构建期工具，不属于运行期分层，因此允许依赖 game-config。
+  B01 交付：协议 Schema → 双端类型。B02 补齐 xlsx → JSON → 配置表 POJO 的完整链路。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.ironoath</groupId>
+    <artifactId>ironoath-server</artifactId>
+    <version>0.1.0</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>config-gen</artifactId>
+  <name>tools/config-gen</name>
+  <description>契约与配置表代码生成器</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-config</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+  </dependencies>
+</project>

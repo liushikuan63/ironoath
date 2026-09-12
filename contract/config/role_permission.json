@@ -1,0 +1,279 @@
+{
+  "table": "role_permission",
+  "version": 2,
+  "comment": "角色权限矩阵（B10 / B13 依赖）。一行 = 一个（组织范围, 权限位）。三个角色层级 Leader / Officer / Member 在 squad / alliance / nation 三个范围内语义一致。allow* 字段用 BOOL。",
+  "designNote": "权限设计遵循一条主线：影响范围越大权限越收窄，但「求助」与「参与」两类权限永远全员开放。全员开放的有 INVITE_MEMBER（三个范围都是）、CALL_FOR_HELP、RESEARCH_TECH、JOIN_NATIONAL_RALLY——它们的共同点是玩家自己想为组织做点什么，任何审批环节都会让意愿流失。收窄到 Leader 独有的只有四项国家权限（任命官职/宣战/国策/支取国库），因为它们影响 800 人且不可逆。Officer 在 alliance 有踢人与审批权但在 nation 没有，这是刻意的：联盟官员滥权的后果是一个盟受损，国家官员滥权的后果是一个国解体，后者必须集中在一人身上并配审计日志。B00 铁律三规定冲突时优先级 国家 > 联盟 > 小队，本表 scope 字段就是那个优先级的判定依据；铁律二规定 Bot 不得担任国家官职，判定入口是 APPOINT_OFFICE 这一行。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "scope": "ENUM:SQUAD,ALLIANCE,NATION",
+    "permission": "STRING_KEY",
+    "permissionName": "STRING",
+    "allowLeader": "BOOL",
+    "allowOfficer": "BOOL",
+    "allowMember": "BOOL",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "perm_squad_kick_member",
+      "scope": "SQUAD",
+      "permission": "KICK_MEMBER",
+      "permissionName": "踢出成员",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "小队 5→10 人，队长与副队都能踢人：小队的价值是熟人圈子，队长一个人不在线时不该让整个队伍卡住。"
+    },
+    {
+      "id": "perm_squad_invite_member",
+      "scope": "SQUAD",
+      "permission": "INVITE_MEMBER",
+      "permissionName": "邀请成员",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": true,
+      "why": "全员可邀请。小队是社交最小单元，邀请门槛必须低到没有——任何审批环节都会让拉朋友进来这件事流产。"
+    },
+    {
+      "id": "perm_squad_start_rally",
+      "scope": "SQUAD",
+      "permission": "START_RALLY",
+      "permissionName": "发起集结",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "发起集结会影响全队的行军与战损，所以不给普通成员。但副队可以，保证队长离线时集结不停摆。"
+    },
+    {
+      "id": "perm_squad_call_for_help",
+      "scope": "SQUAD",
+      "permission": "CALL_FOR_HELP",
+      "permissionName": "一键求援",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": true,
+      "why": "全员可求援。这是被打之后 30 秒内必须能用的功能（C00 公理二），任何权限限制都会让它在最需要时不可用。"
+    },
+    {
+      "id": "perm_squad_edit_announcement",
+      "scope": "SQUAD",
+      "permission": "EDIT_ANNOUNCEMENT",
+      "permissionName": "修改公告",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "公告是队长的表达渠道。"
+    },
+    {
+      "id": "perm_alliance_kick_member",
+      "scope": "ALLIANCE",
+      "permission": "KICK_MEMBER",
+      "permissionName": "踢出成员",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "联盟 30→150 人，官员可踢人但需记录（B10 落地审计日志），防止官员滥权造成大规模退盟。"
+    },
+    {
+      "id": "perm_alliance_invite_member",
+      "scope": "ALLIANCE",
+      "permission": "INVITE_MEMBER",
+      "permissionName": "邀请成员",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": true,
+      "why": "全员可邀请，理由同小队。"
+    },
+    {
+      "id": "perm_alliance_approve_application",
+      "scope": "ALLIANCE",
+      "permission": "APPROVE_APPLICATION",
+      "permissionName": "审批入盟申请",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "与邀请分开：邀请是主动拉人（全员可用），审批是把关（官员专属）。"
+    },
+    {
+      "id": "perm_alliance_start_rally",
+      "scope": "ALLIANCE",
+      "permission": "START_RALLY",
+      "permissionName": "发起集结攻城",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "集结攻城是联盟级军事行动，官员专属。"
+    },
+    {
+      "id": "perm_alliance_set_territory",
+      "scope": "ALLIANCE",
+      "permission": "SET_TERRITORY",
+      "permissionName": "划定领地目标",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "领地决定全盟行军方向，是最高级的战略决策。"
+    },
+    {
+      "id": "perm_alliance_research_tech",
+      "scope": "ALLIANCE",
+      "permission": "RESEARCH_TECH",
+      "permissionName": "投入联盟科技",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": true,
+      "why": "全员可投捐献。联盟科技是公共品，投入权限绝不能收窄，否则捐献意愿直接归零。"
+    },
+    {
+      "id": "perm_alliance_send_alliance_mail",
+      "scope": "ALLIANCE",
+      "permission": "SEND_ALLIANCE_MAIL",
+      "permissionName": "发送全盟邮件",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "全盟邮件会打扰 150 人，官员专属。"
+    },
+    {
+      "id": "perm_alliance_edit_announcement",
+      "scope": "ALLIANCE",
+      "permission": "EDIT_ANNOUNCEMENT",
+      "permissionName": "修改联盟公告",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "公告是全盟的对外表达，官员专属。"
+    },
+    {
+      "id": "perm_nation_appoint_office",
+      "scope": "NATION",
+      "permission": "APPOINT_OFFICE",
+      "permissionName": "任命国家官职",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "国家 200→800 人，官职任命只有国主能做。B00 铁律二明确 Bot 不得担任国家官职，所以任命逻辑必须校验目标是否为真人（B11/B13 落地）。"
+    },
+    {
+      "id": "perm_nation_declare_war",
+      "scope": "NATION",
+      "permission": "DECLARE_WAR",
+      "permissionName": "宣战",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "宣战影响 800 人的资源与战损，是权限最高、范围最窄的操作，只有国主可用。"
+    },
+    {
+      "id": "perm_nation_set_national_policy",
+      "scope": "NATION",
+      "permission": "SET_NATIONAL_POLICY",
+      "permissionName": "制定国策",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "国策是全国性增益或减益，国主专属。"
+    },
+    {
+      "id": "perm_nation_withdraw_treasury",
+      "scope": "NATION",
+      "permission": "WITHDRAW_TREASURY",
+      "permissionName": "支取国库",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "国库支取涉及全国资源，只给国主。这条权限必须有审计日志（B13），否则国主卷款会直接导致国家解体。"
+    },
+    {
+      "id": "perm_nation_manage_diplomacy",
+      "scope": "NATION",
+      "permission": "MANAGE_DIPLOMACY",
+      "permissionName": "外交结盟与停战",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "外交可由官员协助：国主不可能 24 小时在线，而外交窗口往往很短。"
+    },
+    {
+      "id": "perm_nation_join_national_rally",
+      "scope": "NATION",
+      "permission": "JOIN_NATIONAL_RALLY",
+      "permissionName": "参与国战集结",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": true,
+      "why": "全员可参与国战。国战是国家级集体行动，参与门槛必须为零——B00 铁律三的社交逐级展开，最外层要能让每个人都进得来。"
+    },
+    {
+      "id": "perm_nation_send_nation_mail",
+      "scope": "NATION",
+      "permission": "SEND_NATION_MAIL",
+      "permissionName": "发送全国邮件",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "全国邮件会打扰 800 人，官员专属。"
+    },
+    {
+      "id": "perm_alliance_transfer_leader",
+      "scope": "ALLIANCE",
+      "permission": "TRANSFER_LEADER",
+      "permissionName": "转让盟主",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "只能由首领执行：这是把整个组织的责任交给另一个人的动作，下放给干部等于让副手能随时取代首领，而那样没人敢当干部（B10 的头号禁止项是不要把权限判断硬编码在代码里，所以「只有盟主能转让」这句话必须由本表说，不能由 Java 说）"
+    },
+    {
+      "id": "perm_alliance_disband",
+      "scope": "ALLIANCE",
+      "permission": "DISBAND_ALLIANCE",
+      "permissionName": "解散联盟",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "只能由盟主执行。解散会触发保护期（global.ALLIANCE_DISBAND_PROTECT_SECONDS），而保护期落在解散者头上，所以这个权限必须与「承担后果的人」绑定 —— 下放给干部就等于让干部替盟主背一个他自己不受影响的冷却。"
+    },
+    {
+      "id": "perm_alliance_expand",
+      "scope": "ALLIANCE",
+      "permission": "EXPAND_CAPACITY",
+      "permissionName": "扩容人数上限",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "只能由盟主执行：扩容消耗联盟资金（base 20000、增长 1.8，四次合计约 23.7 万），是中后期最大的一笔公共资产支出。让干部也能点的话，一次误点就会把全盟攒了两周的资金花掉，而这种损失无法回滚 —— 公共资产的不可逆支出应当只有一个责任人。"
+    },
+    {
+      "id": "perm_alliance_donate",
+      "scope": "ALLIANCE",
+      "permission": "DONATE",
+      "permissionName": "捐献",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": true,
+      "why": "全员开放。捐献是联盟资金的唯一来源，任何职位门槛都会直接减少资金流入；而 B10 的联盟定位是「庇护弱者」，把穷人挡在捐献之外等于告诉他们「你不算数」。"
+    },
+    {
+      "id": "perm_squad_transfer_leader",
+      "scope": "SQUAD",
+      "permission": "TRANSFER_LEADER",
+      "permissionName": "转让队长",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "只能由队长执行。小队没有干部档（SquadRole 只有两级），所以本行的 allowOfficer 恒为 false —— 保留这一列是为了与 alliance / nation 两个 scope 的表结构一致，而不是因为小队有副队长。"
+    },
+    {
+      "id": "perm_squad_disband",
+      "scope": "SQUAD",
+      "permission": "DISBAND_SQUAD",
+      "permissionName": "解散小队",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "只能由队长执行。与「队长退盟导致小队自动解散」（B10 验收 2）是同一条责任链：小队的存亡由队长一个人决定，队员不能投票解散 —— 5~10 人的熟人圈子里搞投票，输的那一方会直接退队。"
+    }
+  ]
+}

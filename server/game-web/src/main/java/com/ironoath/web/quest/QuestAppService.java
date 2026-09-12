@@ -1,0 +1,412 @@
+package com.ironoath.web.quest;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import com.ironoath.common.BizException;
+import com.ironoath.common.ErrorCode;
+import com.ironoath.common.time.DayKey;
+import com.ironoath.common.time.TimeService;
+import com.ironoath.common.time.WeekKey;
+import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.HeroCfg;
+import com.ironoath.core.idempotency.IdempotencyStore;
+import com.ironoath.core.lock.PlayerLock;
+import com.ironoath.core.player.PlayerRepository;
+import com.ironoath.core.player.PlayerSave;
+import com.ironoath.core.quest.GoalType;
+import com.ironoath.core.quest.QuestProgress;
+import com.ironoath.core.reward.RewardContext;
+import com.ironoath.core.reward.RewardItem;
+import com.ironoath.core.reward.RewardType;
+import com.ironoath.core.reward.RewardService;
+import com.ironoath.web.dto.generated.QuestClaimReq;
+import com.ironoath.web.dto.generated.QuestClaimResp;
+import com.ironoath.web.dto.generated.QuestListResp;
+import com.ironoath.web.dto.generated.QuestReward;
+import com.ironoath.web.dto.generated.QuestView;
+import com.ironoath.web.store.memory.InMemorySocialStore;
+
+/**
+ * 职责：任务面板（B12 §1）—— 进度视图、领取奖励、日切/周切。
+ * 依赖：{@link QuestRulesAssembler}（表 → 定义与奖励）、{@link QuestProgressStore}（进度账本）、
+ *       发放器（B04，奖励不得绕过它）、社交存储与玩家仓储（状态型目标的快照）、玩家锁与幂等。
+ *
+ * <p><b>进度由事件推动，本类只负责「看」与「领」</b>（B12 禁止项：任务进度不得轮询）：
+ * 累加型目标的累加发生在 {@link QuestEventListener}，本类读的是那一刻记下来的账本。
+ *
+ * <p><b>两类目标各有各的推进方式，这里不能混</b>：
+ * <ul>
+ *   <li><b>累加型</b>（升级/训练/击杀/抽卡/采集/帮助/参战/通关…）：只能在事件发生的那一刻记下来，
+ *       读的时候算不出来（兵可能已经死了）。本类只读不写</li>
+ *   <li><b>状态型</b>（当前持有某资源、是否在小队/联盟、科技等级）：进度是<b>当前状态</b>，
+ *       所以读取时顺手按存档刷一次快照 —— 这不是轮询（它由那一次读触发，服务端不跑定时器），
+ *       而是状态型目标唯一自洽的口径：玩家花掉粮食，进度就该退回去</li>
+ * </ul>
+ *
+ * <p><b>读任务面板会顺手做跨天/跨周清零</b>：每日/每周任务的重置挂在"有人读"的那一刻，
+ * 与周税、赛季结算同一条惰性推进的先例（B00 陷阱 2：服务端不跑定时器）。
+ *
+ * <p><b>本轮没有做客户端面板</b>：协议与端点先落地服务端一半（见 quest.schema.json 的说明），
+ * 面板是另一档客户端工作。
+ */
+@Service
+public class QuestAppService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(QuestAppService.class);
+    private static final long LOCK_TIMEOUT_MS = 3000L;
+
+    /**
+     * 有数据源的状态型目标 —— 其余状态型目标（今天只有个人科技）没有承载，进度保持 0。
+     *
+     * <p>写成集合而不是散在 switch 里，是为了让"新增了一个状态型目标却没接数据源"能被一条用例抓住
+     * （见 {@code QuestEndpointTest} 的 {@code everyStateTargetHasASource}）。
+     */
+    public static final Set<GoalType> STATE_TYPES_WITH_SOURCE = Set.of(
+            GoalType.REACH_RESOURCE, GoalType.JOIN_SQUAD, GoalType.JOIN_ALLIANCE);
+
+    private final ConfigRegistry configs;
+    private final QuestRulesAssembler assembler;
+    private final QuestProgressStore store;
+    private final TimeService timeService;
+    private final RewardService rewardService;
+    private final IdempotencyStore idempotency;
+    private final PlayerRepository players;
+    private final InMemorySocialStore socialStore;
+    private final PlayerLock playerLock;
+
+    public QuestAppService(ConfigRegistry configs, QuestRulesAssembler assembler,
+                           QuestProgressStore store, TimeService timeService,
+                           RewardService rewardService, IdempotencyStore idempotency,
+                           PlayerRepository players, InMemorySocialStore socialStore,
+                           PlayerLock playerLock) {
+        this.configs = configs;
+        this.assembler = assembler;
+        this.store = store;
+        this.timeService = timeService;
+        this.rewardService = rewardService;
+        this.idempotency = idempotency;
+        this.players = players;
+        this.socialStore = socialStore;
+        this.playerLock = playerLock;
+    }
+
+    /** 任务面板。顺带跨期清零与状态型快照刷新（两者都只在真变化时落库）。 */
+    public QuestListResp list(String playerId) {
+        long now = timeService.serverNow();
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            QuestProgress progress = loaded(playerId, now);
+            Map<String, String> names = new LinkedHashMap<>();
+            for (QuestRulesAssembler.QuestDef def : assembler.quests()) {
+                names.put(def.def().questId(), def.name());
+            }
+            List<QuestView> views = new ArrayList<>();
+            for (QuestProgress.Entry entry : progress.entries()) {
+                views.add(view(progress, entry, names.getOrDefault(entry.questId(), entry.questId())));
+            }
+            return new QuestListResp(List.copyOf(views), progress.claimableCount(), now);
+        });
+    }
+
+    /** 领取奖励：先推进状态（领了就是领了），再走发放器发东西。 */
+    public QuestClaimResp claim(String playerId, QuestClaimReq req) {
+        long now = timeService.serverNow();
+        acquire(req == null ? null : req.requestId(), now);
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+                QuestProgress progress = loaded(playerId, now);
+                String questId = req.questId();
+                if (questId == null || questId.isBlank()) {
+                    throw new BizException(ErrorCode.PARAM_INVALID, "questId 不得为空");
+                }
+                // 三选一的校验放在 claim 之前：它决定这次要领的到底是什么。
+                // 放到后面会让「已领」标记与「没选中」的失败顺序反转 —— 玩家点了按钮却发现要领的东西没定
+                List<RewardItem> choices = heroChoiceReward(questId, req.heroChoice());
+                try {
+                    progress.claim(questId);
+                } catch (IllegalArgumentException e) {
+                    throw new BizException(ErrorCode.QUEST_NOT_FOUND, e.getMessage());
+                } catch (IllegalStateException e) {
+                    throw new BizException(claimErrorOf(e.getMessage()), e.getMessage());
+                }
+                // 先落状态再发奖：失败方向选「标记了已领但没发出去」（有补偿队列与客服入口），
+                // 反过来（发了没标记）玩家会重复领 —— 与赛季结算、国库俸禄同一条取舍
+                store.save(playerId, stateOf(progress));
+                List<RewardItem> rewards = new ArrayList<>(assembler.rewardsByQuest()
+                        .getOrDefault(questId, List.of()));
+                // 选中的武将是「这次领奖」的一部分，追加在表里那批之后：
+                // 顺序即客户端飘字顺序，把它放最后是为了先让玩家看到资源到账、再看到武将入手
+                rewards.addAll(choices);
+                List<RewardItem> granted = List.of();
+                if (!rewards.isEmpty()) {
+                    var result = rewardService.grant(playerId, rewards,
+                            RewardContext.toMail("quest", questId, questId + ":" + req.requestId()));
+                    granted = result.granted();
+                    if (result.hasCompensation()) {
+                        LOG.error("【任务奖励未入账已进补偿队列】playerId={} questId={} 奖励={} compensationId={}",
+                                playerId, questId, rewards, result.compensationId());
+                    }
+                }
+                LOG.info("任务奖励已领取 playerId={} questId={} 奖励={}", playerId, questId, granted);
+                return new QuestClaimResp(questId, rewardViews(granted), progress.claimableCount(), now);
+            });
+        } catch (RuntimeException e) {
+            idempotency.release(req.requestId());
+            throw e;
+        }
+    }
+
+    // ---------- 进度账本的载入与推进 ----------
+
+    /**
+     * 载入（或新建）进度账本，并顺手推进两件随时间变化的事：跨期清零、状态型快照。
+     *
+     * <p><b>只有真变化才落库</b>：读面板是高频动作，每次都写一遍会让存储成为热点，
+     * 而这里的两件事都只在跨天/跨周或状态真的变了时才发生。
+     */
+    QuestProgress loaded(String playerId, long now) {
+        List<QuestRulesAssembler.QuestDef> defs = assembler.quests();
+        String day = DayKey.of(now);
+        String week = WeekKey.of(now);
+        QuestProgressStore.State stored = store.load(playerId).orElse(null);
+        QuestProgress progress = reconcile(playerId, defs, stored, day, week);
+        boolean dirty = progress.rollover(day, week) > 0;
+        if (refreshStateTargets(progress, now) > 0) {
+            dirty = true;
+        }
+        if (dirty) {
+            store.save(playerId, stateOf(progress));
+        }
+        return progress;
+    }
+
+    /**
+     * 把账本与当前的表对上一次账：<b>定义字段取表、进度字段取账本</b>。
+     *
+     * <p>少这一步会有两种症状：表里新加的任务永远不出现（账本里没有它的条目），
+     * 表里改过的 goalValue 对老玩家不生效（条目里存着旧值）。
+     * 两者都不报错 —— 只是"改了表没反应"，正是本项目反复防的那一类。
+     */
+    private static QuestProgress reconcile(String playerId, List<QuestRulesAssembler.QuestDef> defs,
+                                           QuestProgressStore.State stored, String day, String week) {
+        if (stored == null) {
+            return QuestProgress.open(playerId, defs.stream()
+                    .map(QuestRulesAssembler.QuestDef::def).toList(), day, week);
+        }
+        Map<String, QuestProgress.Entry> old = new LinkedHashMap<>();
+        for (QuestProgress.Entry entry : stored.entries()) {
+            old.put(entry.questId(), entry);
+        }
+        List<QuestProgress.Entry> merged = new ArrayList<>(defs.size());
+        for (QuestRulesAssembler.QuestDef def : defs) {
+            QuestProgress.Entry previous = old.get(def.def().questId());
+            merged.add(new QuestProgress.Entry(def.def().questId(), def.def().type(),
+                    def.def().goalType(), def.def().goalTarget(), def.def().goalValue(),
+                    def.def().preQuestId(),
+                    previous == null ? 0L : previous.current(),
+                    previous != null && previous.claimed()));
+        }
+        return QuestProgress.restore(playerId, merged, stored.dayKey(), stored.weekKey());
+    }
+
+    /**
+     * 状态型目标的快照刷新（见类注释：这不是轮询）。
+     *
+     * <p>没有数据源的目标（今天的个人科技）<b>保持 0 并静默跳过</b>：它对应的子系统还没实现，
+     * 编一个值比留 0 更坏 —— 0 是"还没做"，编出来的值是"做了但不算数"。
+     */
+    private int refreshStateTargets(QuestProgress progress, long now) {
+        int changed = 0;
+        for (QuestProgress.Entry entry : progress.entries()) {
+            if (entry.goalType().accumulates() || !STATE_TYPES_WITH_SOURCE.contains(entry.goalType())) {
+                continue;
+            }
+            long current = stateValue(progress.playerId(), entry);
+            if (current == entry.current()) {
+                continue;
+            }
+            progress.onEvent(com.ironoath.core.event.GameEvent.state(progress.playerId(),
+                    entry.goalType(), entry.goalTarget(), current, now));
+            changed++;
+        }
+        return changed;
+    }
+
+    /** 状态型目标的当前值。取不到（没有存档等）按 0 —— 与"没做过"同义。 */
+    private long stateValue(String playerId, QuestProgress.Entry entry) {
+        switch (entry.goalType()) {
+            case REACH_RESOURCE -> {
+                PlayerSave save = players.findByPlayerId(playerId).orElse(null);
+                if (save == null || entry.goalTarget() == null) {
+                    return 0L;
+                }
+                var resource = save.resources().get(entry.goalTarget());
+                return resource == null ? 0L : resource.current();
+            }
+            case JOIN_SQUAD -> {
+                return socialStore.squadOf(playerId).isPresent() ? 1L : 0L;
+            }
+            case JOIN_ALLIANCE -> {
+                return socialStore.allianceOf(playerId).isPresent() ? 1L : 0L;
+            }
+            default -> {
+                // 新增状态型目标时必须在这里接数据源，否则它的进度永远是 0
+                // （QuestEndpointTest.everyStateTargetHasASource 会把这件事变红）
+                return 0L;
+            }
+        }
+    }
+
+    private QuestProgressStore.State stateOf(QuestProgress progress) {
+        return new QuestProgressStore.State(progress.playerId(), progress.entries(),
+                progress.dayKey(), progress.weekKey());
+    }
+
+    // ---------- 视图 ----------
+
+    private QuestView view(QuestProgress progress, QuestProgress.Entry entry, String name) {
+        return new QuestView(entry.questId(), name,
+                com.ironoath.web.dto.generated.QuestType.valueOf(entry.type().name()),
+                com.ironoath.web.dto.generated.GoalType.valueOf(entry.goalType().name()),
+                entry.goalTarget(), entry.goalValue(), entry.current(), entry.complete(),
+                entry.claimed(), progress.claimable(entry.questId()),
+                !progress.unlocked(entry.questId()), entry.preQuestId(),
+                heroChoiceViews(entry.questId()));
+    }
+
+    /**
+     * 某条任务的候选武将（空列表 = 这条任务没有「挑一名」那项奖励）。
+     *
+     * <p>找不到这条任务时返回空列表而不是抛：视图组装走在读路径上，
+     * 而表被人手改坏（任务被删）时玩家的面板不该整页 500 —— 与 {@code names()} 的兜底同一条理由。
+     */
+    private List<String> heroChoicesOf(String questId) {
+        for (QuestRulesAssembler.QuestDef def : assembler.quests()) {
+            if (def.def().questId().equals(questId)) {
+                return def.heroChoices();
+            }
+        }
+        return List.of();
+    }
+
+    /**
+     * 候选的展示形态：id 与名字成对（协议 {@code HeroChoice}）。
+     *
+     * <p><b>名字在这里解析，客户端不查表</b>：与 {@code QuestReward.name} 同一条口径 ——
+     * 客户端自己翻译武将名，会在表改名之后与服务端日志、客服工单里的称呼对不上。
+     * 解析失败（hero 表里没有这个 id）时**回落成 id 而不是抛**：装配器已经在配表时校验过候选，
+     * 走到这里说明是运行期表被改坏，而一块面板不该因为一句文案整页 500。
+     */
+    private List<com.ironoath.web.dto.generated.HeroChoice> heroChoiceViews(String questId) {
+        List<String> ids = heroChoicesOf(questId);
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        List<com.ironoath.web.dto.generated.HeroChoice> out = new ArrayList<>(ids.size());
+        for (String heroId : ids) {
+            String heroName;
+            try {
+                heroName = configs.get(HeroCfg.class, heroId).name();
+            } catch (RuntimeException e) {
+                LOG.warn("候选武将 {} 不在 hero 表里（任务 {}），本次回落成 id 展示", heroId, questId);
+                heroName = heroId;
+            }
+            out.add(new com.ironoath.web.dto.generated.HeroChoice(heroId, heroName));
+        }
+        return out;
+    }
+
+    /**
+     * 三选一的校验与折算（B06 §1「主线赠送：首日必得 1 名 SR」）。
+     *
+     * <p><b>三种情况都要响亮地失败，不许替玩家默认挑一个</b>：
+     * <ul>
+     *   <li>有候选但没传选择 ⇒ 拒，并回可用候选。替玩家挑一个等于「三选一」变成「系统选中一个」，
+     *       而玩家永远不知道那次选择发生过；</li>
+     *   <li>传的选择不在候选里 ⇒ 拒。放行等于候选列表形同虚设（客户端改一个字符串就换将）；</li>
+     *   <li>没有候选却传了选择 ⇒ 也拒。静默忽略会让客户端以为自己选上了，
+     *       而玩家点的是别的地方的奖励 —— 与「多传的东西一律忽略」那条宽松惯例相比，
+     *       这里更需要让人发现调用写错了。</li>
+     * </ul>
+     * 三种都复用 {@code PARAM_INVALID}：它们都是「这次请求说错了」，
+     * 玩家侧的正确动作都是重开选择界面，不是重试。
+     *
+     * @return 选中武将对应的奖励项；这条任务没有选择时返回空列表
+     */
+    private List<RewardItem> heroChoiceReward(String questId, String heroChoice) {
+        List<String> candidates = heroChoicesOf(questId);
+        boolean picked = heroChoice != null && !heroChoice.isBlank();
+        if (candidates.isEmpty()) {
+            if (picked) {
+                throw new BizException(ErrorCode.PARAM_INVALID,
+                        "任务 " + questId + " 的奖励里没有可挑的武将，不该带 heroChoice=" + heroChoice);
+            }
+            return List.of();
+        }
+        if (!picked) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "任务 " + questId + " 需要从候选里挑一名武将（heroChoice），候选=" + candidates);
+        }
+        if (!candidates.contains(heroChoice)) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "heroChoice=" + heroChoice + " 不在候选里，候选=" + candidates);
+        }
+        return List.of(new RewardItem(RewardType.HERO, heroChoice, 1L));
+    }
+
+    private List<QuestReward> rewardViews(List<RewardItem> items) {
+        List<QuestReward> out = new ArrayList<>(items.size());
+        for (RewardItem item : items) {
+            out.add(new QuestReward(item.type().name(), item.id(), item.count(), rewardName(item)));
+        }
+        return List.copyOf(out);
+    }
+
+    /**
+     * 奖励的展示名。**与 {@code BagAppService.rewardName} 同一条口径**（碎片回 id，
+     * 绝不回一个编造的中文名）：碎片的中文名要经「武将 → 稀有度 → 碎片道具」那条映射，
+     * 而那条映射的家在发放侧（{@code HeroFragmentExtras}），任务域再拼一遍就是第二个家。
+     */
+    private String rewardName(RewardItem reward) {
+        return switch (reward.type()) {
+            case RESOURCE -> configs.getResource(reward.id()).name();
+            case ITEM -> configs.get(com.ironoath.config.cfg.ItemCfg.class, reward.id()).name();
+            case HERO -> configs.get(HeroCfg.class, reward.id()).name();
+            case HERO_FRAGMENT -> {
+                // 碎片发的是"这个武将所属稀有度"的道具，所以名字取该武将的档位（SR 武将 → SR 碎片）
+                HeroCfg hero = configs.get(HeroCfg.class, reward.id());
+                yield hero.rarity().name() + " 武将碎片";
+            }
+            case STAMINA, PRIVILEGE -> reward.id();
+        };
+    }
+
+    // ---------- 内部 ----------
+
+    private ErrorCode claimErrorOf(String message) {
+        if (message.contains("已经领过")) {
+            return ErrorCode.QUEST_ALREADY_CLAIMED;
+        }
+        if (message.contains("尚未解锁")) {
+            return ErrorCode.QUEST_LOCKED;
+        }
+        return ErrorCode.QUEST_NOT_COMPLETE;
+    }
+
+    private void acquire(String requestId, long now) {
+        if (requestId == null || requestId.isBlank()) {
+            throw new BizException(ErrorCode.REQUEST_ID_MISSING, "领取任务奖励必须带 requestId");
+        }
+        long ttlMs = configs.longParam("REQUEST_ID_TTL_SECONDS") * 1000L;
+        if (!idempotency.tryAcquire(requestId, now, ttlMs)) {
+            throw new BizException(ErrorCode.REQUEST_DUPLICATED, "requestId=" + requestId);
+        }
+    }
+}

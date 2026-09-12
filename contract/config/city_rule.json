@@ -1,0 +1,137 @@
+{
+  "table": "city_rule",
+  "version": 3,
+  "comment": "城建规则表（B03）。键值型结构与 global 表一致：valueType 决定 value 的 JSON 类型，每行必须带 source 与 why（C00 公理三：每个数字都要说得出为什么）。",
+  "designNote": "本表刻意与 global 表分开而不是并进去：global 是跨批次共用常量（定点倍数、战力区间、伤兵比例），city_rule 是城建系统专属参数。分开之后 B03 调数值不会碰到别的批次的表，热更时的影响面也清晰。三个开放问题的答案都落在具体行里：网格 6×6（city_rule_grid_size）、取消返还 60%（city_rule_cancel_refund_ratio）、队列上限 3（city_rule_max_queue_count）。\n\n【v3 删掉 city_rule_collect_grace_seconds】产出模型从「升级完成后一次性补发」改为「连续惰性结算 + 按升级完成时刻切段」（见 CityState.pendingFinishTimes）。改动原因是 B04 §2 的产出明细面板必须把建筑列进每小时产率（面板示例里就有「农田 Lv8 +600」），建筑一旦进入连续产率，再单独补发一份「完成到领取」的产出就是重复发放。\n删掉这一行而不是留着不用：原行的职责是「限制离线累积，别让挂机一周变成最优策略」，这件事现在由仓储容量承担 —— 容量 = initCap + Σ仓库等级容量（building 表 capBase），满仓即停产，可囤时长按等级从约 65 小时收敛到约 11 小时。两套机制并存必然出现「按哪个算」的分歧，而容量那套还能顺带把仓库变成一个真实的升级取舍。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "valueType": "ENUM:LONG,DECIMAL,BOOL,STRING",
+    "value": "AUTO:valueType",
+    "unit": "STRING",
+    "source": "STRING",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "city_rule_grid_size",
+      "valueType": "LONG",
+      "value": 6,
+      "unit": "格",
+      "source": "B03 §1（建议 6×6，配置化）",
+      "why": "城内网格边长。6×6=36 格，中心 1 格固定为主城，边缘 20 格可建城墙，其余 15 格为普通建筑位。B03 开放问题 1 问「建筑总数上限约 20 个够不够」：building 表当前 15 种建筑，15 个普通格刚好一种一个、没有重复建造的余地 —— 这是刻意的，重复建造会让「铺量」变成比「升级」更优的策略，而 B00 的产出曲线 P0×n^1.08 是幂函数、升级收益高于铺量，两者必须一致。"
+    },
+    {
+      "id": "city_rule_wall_edge_only",
+      "valueType": "BOOL",
+      "value": true,
+      "unit": "开关",
+      "source": "B03 §1（仅边缘格可建城墙）",
+      "why": "城墙只能建在边缘格。城墙是城的边界，建在中心没有物理意义；同时这条限制让城墙数量受网格周长约束（6×6 的周长是 20 格），避免玩家用城墙把整个城填成要塞。"
+    },
+    {
+      "id": "city_rule_center_is_main_city",
+      "valueType": "BOOL",
+      "value": true,
+      "unit": "开关",
+      "source": "B03 §1（中心格固定为主城）",
+      "why": "中心格固定为主城且不可移动。主城是不可替代的锚点，允许移动会让「破城」类玩法失去目标。"
+    },
+    {
+      "id": "city_rule_base_queue_count",
+      "valueType": "LONG",
+      "value": 1,
+      "unit": "个",
+      "source": "B03 §2（初始 1 个建造队列）",
+      "why": "初始建造队列数。1 个队列意味着升级是串行的、每次只能做一件事 —— 这是「缺时间」这个核心卡点的来源（B00 核心循环：缺资源/缺时间 → 加速与付费）。"
+    },
+    {
+      "id": "city_rule_max_queue_count",
+      "valueType": "LONG",
+      "value": 3,
+      "unit": "个",
+      "source": "B03 §2（特权/道具可开第 2、3 队列）",
+      "why": "队列上限 3（含特权）。B03 开放问题 3 的答案：3 个够了。第 4 个队列会让建造几乎不再排队，「缺时间」这条卡点消失，加速道具（B00 付费点第一位）随之失去价值。"
+    },
+    {
+      "id": "city_rule_newbie_free_queue_count",
+      "valueType": "LONG",
+      "value": 2,
+      "unit": "个",
+      "source": "B03 禁止项（新手期应给 2 个免费队列）",
+      "why": "新手保护期内额外给 1 个免费队列（合计 2 个）。理由见 B03 禁止项「不要让玩家在护盾/新手期内被建造队列卡死」：新手期是留存最关键的四十八小时，此时因为排队而卡住会直接流失，而这个阶段还没到该制造付费压力的时候。保护期结束后自动回落到 1 个。"
+    },
+    {
+      "id": "city_rule_cancel_refund_ratio",
+      "valueType": "DECIMAL",
+      "value": "0.60",
+      "unit": "比率",
+      "source": "B03 §2（取消返还 60% 资源）",
+      "why": "取消升级返还 60%。B03 开放问题 2 的答案：60% 合适，但要理解它为什么不能是 100%。100% 返还等于免费试错，玩家会反复「升级→取消」来绕过队列限制，同时资源在系统里凭空周转、没有任何消耗，违反 C00 公理四（终局必须有填不满的坑）。40% 的损耗是「改主意」的对价：低到玩家敢试错，高到不能拿来当免费刷新用。"
+    },
+    {
+      "id": "city_rule_help_per_person_ratio",
+      "valueType": "DECIMAL",
+      "value": "0.01",
+      "unit": "比率",
+      "source": "B03 §3（联盟/小队帮助每次减 1% 时间）",
+      "why": "每人每次帮助减少 1% 建造时间。1% 这个量级的意义：10 人帮助 = 10%，一个 20 人的联盟全员帮一次 = 20%，需要动员但不能靠一个人刷完。这是「互助」成为日常社交动作的数值基础 —— 帮助必须小到需要很多人参与才有明显效果，否则一个人就能替全盟点完，社交就没了。【2026-09-11 裁决：判定以社交侧为权威】社交账本 HelpLedger 用的是 global.ALLIANCE_HELP_SPEED_BONUS（同为 0.01）与 global.HELP_SPEEDUP_TOTAL_CAP（单目标 50% 封顶），实际授予量由它算、由 SocialAppService.applyHelpToTarget 落地；本行保留只为兼容既有装配，不再参与判定 —— 两处各判一次就会漂。"
+    },
+    {
+      "id": "city_rule_help_cap_ratio",
+      "valueType": "DECIMAL",
+      "value": "0.20",
+      "unit": "比率",
+      "source": "B03 §3（上限由联盟科技决定）",
+      "why": "帮助加速的总上限 20%（基础值，联盟科技 atech_help 每级 +2% 可继续抬高）。必须有上限：无上限时一个大联盟能让成员的建筑瞬间完成，建造队列与加速道具双双失去意义，而非联盟玩家被彻底甩开 —— 那会把「社交优势」变成「社交必需」，独狼玩家无处可玩。【2026-09-11 裁决：本行已作废】单目标可被帮到多少以 global.HELP_SPEEDUP_TOTAL_CAP（50%）为权威，理由是社交账本本就是「这次实际授予多少比例」的计算者，而城建侧只负责把比例乘在原始总时长上（CityState.speedUpByRatio）。原先城建侧那套 20% + 科技的判定（helpCapWithTech）零调用，已删除；本行保留只为兼容既有装配。"
+    },
+    {
+      "id": "city_rule_ad_speedup_daily_limit",
+      "valueType": "LONG",
+      "value": 5,
+      "unit": "次/日",
+      "source": "B03 §3（广告加速每日次数上限配置化）",
+      "why": "广告加速每日 5 次。上限的存在是合规要求也是设计需要：无上限的看广告加速会让「时间」这个核心卡点被免费玩家彻底绕过，付费加速失去价值；同时微信平台对激励视频的日频次也有约束。5 次对应约 5 分钟总时长，够玩家感到「有免费路子」但不足以替代付费加速。"
+    },
+    {
+      "id": "city_rule_ad_speedup_seconds",
+      "valueType": "LONG",
+      "value": 300,
+      "unit": "秒",
+      "source": "B03 §3",
+      "why": "单次广告加速 300 秒（5 分钟）。与 item 表的五分钟建造令等值 —— 看一次广告 = 用一张最小加速道具，让两种获取途径价值可比，玩家能自行选择「花时间」还是「花道具」。"
+    },
+    {
+      "id": "city_rule_move_cooldown_seconds",
+      "valueType": "LONG",
+      "value": 3600,
+      "unit": "秒",
+      "source": "B03 §1（换位有冷却，防频繁调整）",
+      "why": "建筑换位冷却 1 小时。换位本身不产生数值收益，冷却的目的不是平衡而是防止客户端频繁重排导致的性能抖动与误操作；1 小时足够挡住手滑连点，又不会让玩家在重新规划城布局时被卡住。"
+    },
+    {
+      "id": "city_rule_gold_speedup_seconds",
+      "valueType": "LONG",
+      "value": 3600,
+      "unit": "秒",
+      "source": "B03 §3（付费加速：金币直接加速）",
+      "why": "单次金币加速固定买 1 小时。与 item_speedup_build_1h 等值，让「直接花金币」与「买道具再用」两条路径可互换，玩家不会因为选错路径而吃亏；也避免开放任意秒数带来的定价复杂度（按秒计价会让玩家算出最优购买点，反而削弱付费冲动）。"
+    },
+    {
+      "id": "city_rule_gold_speedup_cost",
+      "valueType": "LONG",
+      "value": 100,
+      "unit": "金币",
+      "source": "B03 §3 + shop 表 shop_speedup_build_1h 的定价",
+      "why": "100 金币/小时，与商店里一小时建造令的价格完全一致。两处价格必须相同：若直接加速更便宜，道具就没人买、道具系统失去意义；若更贵，玩家会觉得被套路。定价一致性是「同一件商品只有一个价格」的基本要求。"
+    },
+    {
+      "id": "city_rule_daily_reset_hour_utc",
+      "valueType": "LONG",
+      "value": 16,
+      "unit": "时(UTC)",
+      "source": "B03 §3（广告加速每日次数上限）需要一个明确的「每日」定义",
+      "why": "日限次的重置时刻，用 UTC 小时表达。定在 UTC 16 点 = UTC+8 的 0 点：国内玩家的「今天」就是本地自然日，日切发生在他睡着的时候而不是午饭时间。换算式是「日切时区偏移 = (24 - 本字段) % 24」，即本字段 16 ⇒ DayKey 按 +8 取日。UTC 无夏令时，跨天判定不会出现一天 23 或 25 小时。"
+    }
+  ]
+}

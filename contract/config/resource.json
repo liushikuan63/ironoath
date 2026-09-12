@@ -1,0 +1,71 @@
+{
+  "table": "resource",
+  "version": 3,
+  "comment": "资源定义表。B01 最小集：只定义 5 种资源的初始值、容量与底产。perHour 在 B03 起改为由建筑聚合计算，basePerHour 仅作为无任何产出建筑时的兜底底产。\n\nv3 新增 STAMINA（体力）与第三个 kind：体力是 B09 打野与关卡的消耗闸门。把它做成资源行而不是独立系统，是为了复用已经修好的惰性结算 —— 「每 X 分钟恢复 1 点」「溢出不超上限」「不用定时器给全体玩家重置」这三条 B09 要求，在资源模型里分别对应 basePerHour、cap 截断、lastSettle 时间差，全部是现成的。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "kind": "ENUM:BASE,CURRENCY,STAMINA",
+    "initAmount": "LONG_NONNEG",
+    "initCap": "LONG_NONNEG",
+    "basePerHour": "LONG_NONNEG",
+    "why": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "WOOD",
+      "name": "木材",
+      "kind": "BASE",
+      "initAmount": 5000,
+      "initCap": 20000,
+      "basePerHour": 200,
+      "why": "落地即够连升 2~3 级主城（支撑「五分钟体验：秒升 2 级主城」），但不足以直冲首日目标 8 级 —— 卡点必须存在（C00 公理三）。"
+    },
+    {
+      "id": "STONE",
+      "name": "石料",
+      "kind": "BASE",
+      "initAmount": 5000,
+      "initCap": 20000,
+      "basePerHour": 200,
+      "why": "与木材等量等速：前期双资源同构，避免新手需要理解两种采集节奏。"
+    },
+    {
+      "id": "IRON",
+      "name": "铁矿",
+      "kind": "BASE",
+      "initAmount": 2000,
+      "initCap": 10000,
+      "basePerHour": 100,
+      "why": "造兵资源，刻意比木石稀缺（初始 40%、底产 50%）：让「造兵」成为第一个真实取舍点，驱动 B05 的训练节奏。"
+    },
+    {
+      "id": "GRAIN",
+      "name": "粮草",
+      "kind": "BASE",
+      "initAmount": 8000,
+      "initCap": 30000,
+      "basePerHour": 400,
+      "why": "养兵资源，容量最大、产量最高：粮草是持续消耗品（兵力维持），必须让玩家长期有进有出，是 C00 公理四「填不满的坑」的第一个入口。"
+    },
+    {
+      "id": "GOLD",
+      "name": "金币",
+      "kind": "CURRENCY",
+      "initAmount": 200,
+      "initCap": 1000000,
+      "basePerHour": 0,
+      "why": "付费/稀有货币，绝不自动产出（basePerHour=0），只来自任务、活动、付费与掠夺 —— 否则通胀直接摧毁商业化（C00 公理四、B15）。"
+    },
+    {
+      "id": "STAMINA",
+      "name": "体力",
+      "kind": "STAMINA",
+      "initAmount": 100,
+      "initCap": 100,
+      "basePerHour": 10,
+      "why": "体力：打野与章节副本的消耗闸门（B09 §5）。\nbasePerHour=10 即每 6 分钟恢复 1 点，从 0 恢复到基准上限 100 需要 10 小时 —— 这个节奏是刻意的：它长到「一天自然回满两次」，短到「想连续刷就必须买」，于是体力既是节奏控制器又是 B09 §5 明写的付费点。\n上限随主城等级提升（STAMINA_CAP_BASE + STAMINA_CAP_PER_LEVEL × 主城等级），所以 initCap 只是基准值，真实容量由 ResourceRateService 算。\n不参与掠夺也不参与保护额度：体力不在仓库里，被抢走在物理上说不通，而给它一个保护额度会让人以为它可以被抢。\n刻意不做成 CURRENCY：CURRENCY 的语义是「付费货币、不自动产出」，而体力的全部特征就是自动产出且有上限。"
+    }
+  ],
+  "designNote": "v2 删掉 initProtected 一列。\n原因：保护量已经改成由公式算出（protectedAmount = cap × global.RESOURCE_PROTECT_RATIO，见 game-core 的 ResourceProtection 与 game-web 的 ResourceRateService），而本列五行全是 0、没有任何调用方读它。留着它只会让策划以为改这一列能调保护量 —— 改了没反应比没有这一列更糟。\n\n【为什么保护量按容量算而不按初始存量配】B04 §1 写的是 protectedAmount = cap × 保护比例。按容量算的好处是「升仓库 ⇒ 打不掉的底也变厚」，这让仓库成为一个攻防两端都有意义的升级选择；按初始存量配一个死数字则永远不会变，玩家升了仓库也感觉不到保护变强。\n【付费货币不参与保护】GOLD 的 kind=CURRENCY，保护额度恒为 0（ResourceRateService 里显式返回）。金币主要来自充值，被掠走等于直接拿走玩家花的钱，那是合规与口碑事故，不是「制造冲突」。\n【perHour 与 cap 都不再由本表单独决定】basePerHour 只是「领地底产」这一项，实际每小时产量 = 底产 + Σ产出建筑 + 百分比加成；initCap 只是基础容量，实际容量 = initCap + Σ仓库容量（building.capBase）。两者都由 ResourceRateService 统一算出，本表的字段是它的输入而不是它的结果。"
+}

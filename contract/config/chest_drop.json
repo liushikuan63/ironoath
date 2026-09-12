@@ -1,0 +1,79 @@
+{
+  "table": "chest_drop",
+  "version": 1,
+  "comment": "宝箱掉落表。一行 = 一条掉落项：权重 weight、产出 rewardType/rewardId、单次数量 count、是否算稀有 rare。同 chestId 的所有行构成一个掉落组，按权重抽取。 【2026-09-12 同步：rewardType 枚举补 HERO】bag 协议新增整卡武将奖励类型后，本表的 ENUM 声明必须同步（ContractEnumParityTest 三处一致），否则「配置里能写、下发时翻译不出来」。**没有新增任何行**：宝箱产出不变，只是这张表从此能表达整卡。",
+  "designNote": "【rewardId 为什么是 STRING 而不是 REF】它指向哪张表由 rewardType 决定：RESOURCE 指 resource 表、ITEM 指 item 表、HERO_FRAGMENT 指 hero 表。校验器的 REF: 规则只能写死一张表，表达不了这种条件外键，所以退化成 STRING，改由 ChestDropReferenceTest 在测试期逐行按 rewardType 分派校验。这是「校验能力不够就用测试补上」的显式取舍，不是漏配 —— 漏配会让打错的 rewardId 在玩家开箱时才炸。\n\n【权重口径】weight 是相对权重不是百分比，抽取时归一化。军资补给箱六项合计 100，于是权重数值恰好等于百分比，便于核对；但配置里仍按权重理解，后续加项不需要重算全表。\n\n【四种基础资源的投放量按各自底产比例给】WOOD/STONE 各 5000、GRAIN 8000、IRON 2500，与 resource 表 basePerHour 的 200/200/400/100 成同向关系（粮草底产最高故给最多、铁矿最低故给最少），再叠加权重差异（铁矿 20% 权重、粮草 15%）。结果是「单次开箱期望产出」与该资源的稀缺度大致匹配，不会出现最稀缺的铁矿反而产出最多这种反直觉投放。\n\n【GOLD 权重只给 4】金币是唯一的付费货币（resource 表 kind=CURRENCY），从免费宝箱里大量投放会直接削掉 B15 的付费点。4% × 200 = 单次期望 8 金币，标准池一抽 1200 金币，即约 150 个箱子才够一抽 —— 免费玩家能摸到抽卡的门槛但摸不到底，这是刻意的。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "chestId": "REF:chest",
+    "rewardType": "ENUM:RESOURCE,ITEM,HERO_FRAGMENT,HERO,STAMINA,PRIVILEGE",
+    "rewardId": "STRING",
+    "weight": "LONG_POS",
+    "count": "LONG_POS",
+    "rare": "BOOL",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "cd_res_wood",
+      "chestId": "item_chest_resource",
+      "rewardType": "RESOURCE",
+      "rewardId": "WOOD",
+      "weight": 30,
+      "count": 5000,
+      "rare": false,
+      "why": "5000 木材 = 主城 1 级底产 25 小时的量。给到「一次开箱顶一天挂机」的量级，玩家才会觉得开箱值得点，但又不足以跳级（升一级主城的累计消耗在万级）。"
+    },
+    {
+      "id": "cd_res_stone",
+      "chestId": "item_chest_resource",
+      "rewardType": "RESOURCE",
+      "rewardId": "STONE",
+      "weight": 30,
+      "count": 5000,
+      "rare": false,
+      "why": "与木材完全对称：木石是城建的双主材（building 表里绝大多数建筑同时消耗两者），投放量必须一致，否则玩家会只囤缺口那一种，另一种变成废资源。"
+    },
+    {
+      "id": "cd_res_iron",
+      "chestId": "item_chest_resource",
+      "rewardType": "RESOURCE",
+      "rewardId": "IRON",
+      "weight": 20,
+      "count": 2500,
+      "rare": false,
+      "why": "铁矿底产只有 100/小时（木石的一半），是四种基础资源里的瓶颈项，所以权重给到 20% 高于粮草。数量给 2500 = 25 小时底产，与木石的「25 小时」口径统一。"
+    },
+    {
+      "id": "cd_res_grain",
+      "chestId": "item_chest_resource",
+      "rewardType": "RESOURCE",
+      "rewardId": "GRAIN",
+      "weight": 15,
+      "count": 8000,
+      "rare": false,
+      "why": "粮草底产 400/小时最高、容量上限 30000 也最大，是最不缺的资源，权重压到 15%。数量给 8000 同样是 20 小时底产量级 —— 单次数量按各自底产折算，横向可比。"
+    },
+    {
+      "id": "cd_res_gold",
+      "chestId": "item_chest_resource",
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "weight": 4,
+      "count": 200,
+      "rare": false,
+      "why": "见 designNote 的金币段：免费箱子里的金币只够让玩家摸到抽卡门槛，不能摸到底。4% × 200 = 期望 8 金币/箱。"
+    },
+    {
+      "id": "cd_item_speedup_5m",
+      "chestId": "item_chest_resource",
+      "rewardType": "ITEM",
+      "rewardId": "item_speedup_build_5m",
+      "weight": 1,
+      "count": 2,
+      "rare": true,
+      "why": "本箱唯一的稀有项，配合 chest.pityThreshold=50 构成保底。选 5 分钟建造令而不是更值钱的东西：稀有项的作用是「开出点意外之喜」，一旦放进 8 小时令或金币袋，玩家就会把军资补给箱当成主要获取渠道去刷，箱子从「顺手开」变成「必须刷」，投放结构失衡。"
+    }
+  ]
+}

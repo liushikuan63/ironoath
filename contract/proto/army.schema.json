@@ -1,0 +1,492 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/army.schema.json",
+  "title": "ArmyProtocol",
+  "description": "军队协议契约（B05 §二：训练队列、医院、兵种阶级）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "ArmyProtocol",
+  "$defs": {
+    "UnitType": {
+      "type": "string",
+      "description": "兵种类型。取值必须与 unit 表的 type 列一致。",
+      "enum": [
+        "INFANTRY",
+        "CAVALRY",
+        "ARCHER",
+        "SIEGE"
+      ]
+    },
+    "ResourceAmount": {
+      "type": "object",
+      "description": "资源数量条目。与 city/bag 协议里的同名结构逐字一致 —— 三处漂移由 CI 的生成物 diff 暴露。用数组而不是 Map 是为了让客户端能保持配置表顺序展示。",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "amount"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "amount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "ResourceType": {
+      "type": "string",
+      "description": "资源类型枚举。取值必须与 contract/config/resource.json 的 rows[].id 完全一致（CI 校验）。",
+      "x-enum-source": {
+        "table": "resource"
+      },
+      "enum": [
+        "WOOD",
+        "STONE",
+        "IRON",
+        "GRAIN",
+        "GOLD",
+        "STAMINA"
+      ]
+    },
+    "UnitView": {
+      "type": "object",
+      "description": "一个兵种的完整视图：现有兵力、伤兵、训练中、是否已解锁。未解锁的也要下发（带 unlockHint），否则玩家看不到「再升 3 级兵营就能训 T3」这条最重要的养成牵引。",
+      "additionalProperties": false,
+      "required": [
+        "unitId",
+        "name",
+        "type",
+        "tier",
+        "count",
+        "wounded",
+        "training",
+        "unlocked",
+        "trainTimeSec",
+        "trainCost"
+      ],
+      "properties": {
+        "unitId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/UnitType"
+        },
+        "tier": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "现有可用兵力（不含训练中、不含伤兵）"
+        },
+        "wounded": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "该兵种在医院的伤兵数"
+        },
+        "training": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "该兵种训练中的数量；0 表示没有在训"
+        },
+        "finishAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "训练完成时刻；未在训练时为 null"
+        },
+        "remainingSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "训练剩余秒数。<b>客户端本地每秒递减，不要轮询服务端</b>（B03 §4 的同一口径）"
+        },
+        "unlocked": {
+          "type": "boolean",
+          "description": "该阶级是否已解锁（由 unit 表的 unlockBuilding + unlockBuildingLevel 与城建状态共同决定）"
+        },
+        "unlockHint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "未解锁时的结构化提示，如「需要兵营 10 级，当前 6 级」。已解锁时为 null"
+        },
+        "trainTimeSec": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "单个兵的训练秒数，来自 unit 表。下发给客户端是为了让「训 1000 个要多久」这个预估不必客户端自己乘"
+        },
+        "trainCost": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          },
+          "description": "单个兵的训练消耗"
+        }
+      }
+    },
+    "HospitalView": {
+      "type": "object",
+      "description": "医院状态。capacity 为 0 时所有伤兵都会因超容量直接死亡（B05 §1.5），客户端必须据此显示红色警告。",
+      "additionalProperties": false,
+      "required": [
+        "capacity",
+        "used",
+        "treating",
+        "treatRemainingSeconds",
+        "treatSecondsPerWounded",
+        "treatCostRatio"
+      ],
+      "properties": {
+        "capacity": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "used": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "treating": {
+          "type": "boolean"
+        },
+        "treatFinishAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "treatRemainingSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "treatSecondsPerWounded": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "每个伤兵的治疗秒数。下发是为了让客户端能预估「治好这些要多久」而不必自己读配置"
+        },
+        "treatCostRatio": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "治疗消耗占训练消耗的比例（定点 ×10000）"
+        }
+      }
+    },
+    "ArmyListResp": {
+      "type": "object",
+      "description": "GET /army/list 响应体。这个「读」接口有副作用：它会顺带收割到点的训练与治疗（惰性结算，服务端不跑定时器）。",
+      "additionalProperties": false,
+      "required": [
+        "units",
+        "troopCap",
+        "troopsInUse",
+        "trainingInUse",
+        "queueSlots",
+        "queueSlotsMax",
+        "hospital",
+        "serverNow"
+      ],
+      "properties": {
+        "units": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnitView"
+          },
+          "description": "全部 20 个兵种（4 类型 × 5 阶级），含未解锁的"
+        },
+        "troopCap": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "带兵上限 = Σ上阵武将统帅值 × TROOP_PER_COMMAND + 科技加成（B05 §二、B06 验收 8）"
+        },
+        "troopsInUse": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "trainingInUse": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "训练中已占用的兵力。<b>它计入上限</b>，否则玩家可以先塞满队列再换低统率武将来绕过上限"
+        },
+        "queueSlots": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "queueSlotsMax": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "hospital": {
+          "$ref": "#/$defs/HospitalView"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "TrainReq": {
+      "type": "object",
+      "description": "POST /army/train 请求体。时间 = 单位时间 × count（B05 §二），批量不等于加速。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "unitId",
+        "count"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "unitId": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1
+        }
+      }
+    },
+    "TrainResp": {
+      "type": "object",
+      "description": "POST /army/train 响应体。cost 是本次实际扣掉的资源（= 单个消耗 × count），客户端据此播扣减动画。",
+      "additionalProperties": false,
+      "required": [
+        "unitId",
+        "count",
+        "finishAt",
+        "remainingSeconds",
+        "reducedSeconds",
+        "cost",
+        "troopsInUse",
+        "troopCap",
+        "serverNow"
+      ],
+      "properties": {
+        "unitId": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1
+        },
+        "finishAt": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "remainingSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "reducedSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "本次加速实际提前的秒数（会被剩余时间截断，不会出现负数）。开始训练时恒为 0。<b>必须单独下发</b>：客户端要据此播「-1小时」的飘字，而用 remainingSeconds 的前后差反推会受时钟抖动影响；/item/use 的契约也要求回「实际提前了多少」。"
+        },
+        "cost": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          }
+        },
+        "troopsInUse": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "troopCap": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "ArmyUnitReq": {
+      "type": "object",
+      "description": "只带 unitId 的请求（取消训练、加速某一批训练）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "unitId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "unitId": {
+          "type": "string"
+        },
+        "seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "minimum": 0,
+          "description": "加速秒数；加速请求必填"
+        },
+        "itemId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "用加速道具时填道具 id，否则为 null"
+        }
+      }
+    },
+    "TrainCancelResp": {
+      "type": "object",
+      "description": "POST /army/cancel 响应体。refund 是返还的资源（与城建取消同一口径：按比例返还，比例来自配置）。",
+      "additionalProperties": false,
+      "required": [
+        "unitId",
+        "count",
+        "refund",
+        "serverNow"
+      ],
+      "properties": {
+        "unitId": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "refund": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          }
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "TreatReq": {
+      "type": "object",
+      "description": "POST /army/treat 请求体。一次治疗全部伤兵（B05 §二没有「按兵种分次治疗」，那会让医院队列变成第二个训练队列）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        }
+      }
+    },
+    "TreatResp": {
+      "type": "object",
+      "description": "开始治疗 / 加速治疗 / 收割治疗的共用响应。returned 只在收割时非空。",
+      "additionalProperties": false,
+      "required": [
+        "woundedCount",
+        "treating",
+        "treatRemainingSeconds",
+        "cost",
+        "returned",
+        "serverNow"
+      ],
+      "properties": {
+        "woundedCount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "treating": {
+          "type": "boolean"
+        },
+        "treatFinishAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "treatRemainingSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "cost": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          },
+          "description": "开始治疗时是实际扣掉的资源；收割/查询时为空"
+        },
+        "returned": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UnitReturned"
+          },
+          "description": "本次归队的伤兵"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "UnitReturned": {
+      "type": "object",
+      "description": "归队的某个兵种数量。",
+      "additionalProperties": false,
+      "required": [
+        "unitId",
+        "count"
+      ],
+      "properties": {
+        "unitId": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

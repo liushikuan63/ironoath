@@ -1,0 +1,24 @@
+{
+  "table": "chest",
+  "version": 1,
+  "comment": "宝箱本体表。一行 = 一个可批量开启的宝箱道具，记录它的保底阈值与单次批量上限。B04 §4「宝箱走随机（服务端 PRNG + seed），结果可复现」的配置来源。掉落内容在 chest_drop 表，按 chestId 关联。",
+  "designNote": "为什么把宝箱拆成 chest + chest_drop 两张表，而不是在 item 表里塞一个 JSON 字段：\n\n1) 掉率是数值投放的核心口径，必须能逐行校验。JSON 字段里的 weight 写错成负数、rewardId 打错成不存在的道具，配置校验器都看不见，只会在玩家开箱时炸出来。拆成表之后 weight/count 走 LONG_POS、chestId 走 REF:chest，启动期全量校验就能拦住。\n2) 掉率要能被工具直接读走做期望值核算（B02 数值体检、B15 概率公示都要用）。JSON 字段需要额外解析器，表则是现成的。\n\n【只登记「走 ChestOpener 的宝箱」】item_chest_hero（武将招募匣，effectKind=OPEN_GACHA）刻意不在本表：它的抽取由 gacha 表定义（四档概率 + 双保底 + UP 锁定），是 B06 武将系统的职责，不能与资源宝箱共用一套权重模型。/item/openBatch 拿到 OPEN_GACHA 道具会明确拒绝并指向 B06，不会静默按空表处理。\n\n【保底阈值为什么定 50】军资补给箱的稀有项权重 1/100，自然期望 100 抽一次。50 抽保底把有效概率抬到约 2.5%（0.99^50 = 60.5% 的情况下会触发保底），玩家「连开 50 个什么都没有」的体验被消除，但稀有项仍然是稀有项。阈值不写进代码而放在表里，是为了让 B15 做概率公示时能直接读出「50 抽必出」这句话的数值来源。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "pityThreshold": "LONG_NONNEG",
+    "maxBatchCount": "LONG_POS",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "item_chest_resource",
+      "name": "军资补给箱",
+      "pityThreshold": 50,
+      "maxBatchCount": 100,
+      "why": "maxBatchCount=100 直接对应 B04 验收 3「一次开 100 个宝箱只发 1 次网络请求」：上限必须 ≥100，否则验收项无法通过。不给更高是因为单次请求的产出条数会线性放大响应体与落库压力，而玩家一次攒到 100 个以上的场景极少；真要批量消耗时客户端应分多次请求，而不是把单请求撑大。",
+      "todo": "B15 概率公示：本箱的 drop 权重与 50 抽保底必须原文写进道具详情弹窗，与 gacha.disclosureText 同一口径。"
+    }
+  ]
+}

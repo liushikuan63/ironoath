@@ -1,0 +1,1011 @@
+{
+  "table": "bot_schedule",
+  "version": 3,
+  "rows": [
+    {
+      "id": "sched_login_h00",
+      "hourOfDay": 0,
+      "actionType": "LOGIN",
+      "weight": 12,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h01",
+      "hourOfDay": 1,
+      "actionType": "LOGIN",
+      "weight": 8,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h02",
+      "hourOfDay": 2,
+      "actionType": "LOGIN",
+      "weight": 3,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h03",
+      "hourOfDay": 3,
+      "actionType": "LOGIN",
+      "weight": 2,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h04",
+      "hourOfDay": 4,
+      "actionType": "LOGIN",
+      "weight": 2,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h05",
+      "hourOfDay": 5,
+      "actionType": "LOGIN",
+      "weight": 3,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h06",
+      "hourOfDay": 6,
+      "actionType": "LOGIN",
+      "weight": 8,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h07",
+      "hourOfDay": 7,
+      "actionType": "LOGIN",
+      "weight": 15,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h08",
+      "hourOfDay": 8,
+      "actionType": "LOGIN",
+      "weight": 25,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h09",
+      "hourOfDay": 9,
+      "actionType": "LOGIN",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h10",
+      "hourOfDay": 10,
+      "actionType": "LOGIN",
+      "weight": 28,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h11",
+      "hourOfDay": 11,
+      "actionType": "LOGIN",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h12",
+      "hourOfDay": 12,
+      "actionType": "LOGIN",
+      "weight": 60,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h13",
+      "hourOfDay": 13,
+      "actionType": "LOGIN",
+      "weight": 55,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h14",
+      "hourOfDay": 14,
+      "actionType": "LOGIN",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h15",
+      "hourOfDay": 15,
+      "actionType": "LOGIN",
+      "weight": 28,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h16",
+      "hourOfDay": 16,
+      "actionType": "LOGIN",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h17",
+      "hourOfDay": 17,
+      "actionType": "LOGIN",
+      "weight": 35,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h18",
+      "hourOfDay": 18,
+      "actionType": "LOGIN",
+      "weight": 50,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h19",
+      "hourOfDay": 19,
+      "actionType": "LOGIN",
+      "weight": 65,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h20",
+      "hourOfDay": 20,
+      "actionType": "LOGIN",
+      "weight": 100,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h21",
+      "hourOfDay": 21,
+      "actionType": "LOGIN",
+      "weight": 95,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h22",
+      "hourOfDay": 22,
+      "actionType": "LOGIN",
+      "weight": 85,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_login_h23",
+      "hourOfDay": 23,
+      "actionType": "LOGIN",
+      "weight": 40,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h00",
+      "hourOfDay": 0,
+      "actionType": "LOGOUT",
+      "weight": 12,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h01",
+      "hourOfDay": 1,
+      "actionType": "LOGOUT",
+      "weight": 8,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h02",
+      "hourOfDay": 2,
+      "actionType": "LOGOUT",
+      "weight": 3,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h03",
+      "hourOfDay": 3,
+      "actionType": "LOGOUT",
+      "weight": 2,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h04",
+      "hourOfDay": 4,
+      "actionType": "LOGOUT",
+      "weight": 2,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h05",
+      "hourOfDay": 5,
+      "actionType": "LOGOUT",
+      "weight": 3,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h06",
+      "hourOfDay": 6,
+      "actionType": "LOGOUT",
+      "weight": 8,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h07",
+      "hourOfDay": 7,
+      "actionType": "LOGOUT",
+      "weight": 15,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h08",
+      "hourOfDay": 8,
+      "actionType": "LOGOUT",
+      "weight": 25,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h09",
+      "hourOfDay": 9,
+      "actionType": "LOGOUT",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h10",
+      "hourOfDay": 10,
+      "actionType": "LOGOUT",
+      "weight": 28,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h11",
+      "hourOfDay": 11,
+      "actionType": "LOGOUT",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h12",
+      "hourOfDay": 12,
+      "actionType": "LOGOUT",
+      "weight": 60,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h13",
+      "hourOfDay": 13,
+      "actionType": "LOGOUT",
+      "weight": 55,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h14",
+      "hourOfDay": 14,
+      "actionType": "LOGOUT",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h15",
+      "hourOfDay": 15,
+      "actionType": "LOGOUT",
+      "weight": 28,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h16",
+      "hourOfDay": 16,
+      "actionType": "LOGOUT",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h17",
+      "hourOfDay": 17,
+      "actionType": "LOGOUT",
+      "weight": 35,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h18",
+      "hourOfDay": 18,
+      "actionType": "LOGOUT",
+      "weight": 50,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h19",
+      "hourOfDay": 19,
+      "actionType": "LOGOUT",
+      "weight": 65,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h20",
+      "hourOfDay": 20,
+      "actionType": "LOGOUT",
+      "weight": 100,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h21",
+      "hourOfDay": 21,
+      "actionType": "LOGOUT",
+      "weight": 95,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h22",
+      "hourOfDay": 22,
+      "actionType": "LOGOUT",
+      "weight": 85,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_logout_h23",
+      "hourOfDay": 23,
+      "actionType": "LOGOUT",
+      "weight": 40,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h07",
+      "hourOfDay": 7,
+      "actionType": "BUILD",
+      "weight": 14,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h08",
+      "hourOfDay": 8,
+      "actionType": "BUILD",
+      "weight": 22,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h09",
+      "hourOfDay": 9,
+      "actionType": "BUILD",
+      "weight": 27,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h10",
+      "hourOfDay": 10,
+      "actionType": "BUILD",
+      "weight": 25,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h11",
+      "hourOfDay": 11,
+      "actionType": "BUILD",
+      "weight": 27,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h12",
+      "hourOfDay": 12,
+      "actionType": "BUILD",
+      "weight": 54,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h13",
+      "hourOfDay": 13,
+      "actionType": "BUILD",
+      "weight": 50,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h14",
+      "hourOfDay": 14,
+      "actionType": "BUILD",
+      "weight": 27,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h15",
+      "hourOfDay": 15,
+      "actionType": "BUILD",
+      "weight": 25,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h16",
+      "hourOfDay": 16,
+      "actionType": "BUILD",
+      "weight": 27,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h17",
+      "hourOfDay": 17,
+      "actionType": "BUILD",
+      "weight": 32,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h18",
+      "hourOfDay": 18,
+      "actionType": "BUILD",
+      "weight": 45,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h19",
+      "hourOfDay": 19,
+      "actionType": "BUILD",
+      "weight": 58,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h20",
+      "hourOfDay": 20,
+      "actionType": "BUILD",
+      "weight": 90,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h21",
+      "hourOfDay": 21,
+      "actionType": "BUILD",
+      "weight": 86,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h22",
+      "hourOfDay": 22,
+      "actionType": "BUILD",
+      "weight": 76,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_build_h23",
+      "hourOfDay": 23,
+      "actionType": "BUILD",
+      "weight": 36,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h07",
+      "hourOfDay": 7,
+      "actionType": "TRAIN",
+      "weight": 13,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h08",
+      "hourOfDay": 8,
+      "actionType": "TRAIN",
+      "weight": 21,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h09",
+      "hourOfDay": 9,
+      "actionType": "TRAIN",
+      "weight": 26,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h10",
+      "hourOfDay": 10,
+      "actionType": "TRAIN",
+      "weight": 24,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h11",
+      "hourOfDay": 11,
+      "actionType": "TRAIN",
+      "weight": 26,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h12",
+      "hourOfDay": 12,
+      "actionType": "TRAIN",
+      "weight": 51,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h13",
+      "hourOfDay": 13,
+      "actionType": "TRAIN",
+      "weight": 47,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h14",
+      "hourOfDay": 14,
+      "actionType": "TRAIN",
+      "weight": 26,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h15",
+      "hourOfDay": 15,
+      "actionType": "TRAIN",
+      "weight": 24,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h16",
+      "hourOfDay": 16,
+      "actionType": "TRAIN",
+      "weight": 26,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h17",
+      "hourOfDay": 17,
+      "actionType": "TRAIN",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h18",
+      "hourOfDay": 18,
+      "actionType": "TRAIN",
+      "weight": 42,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h19",
+      "hourOfDay": 19,
+      "actionType": "TRAIN",
+      "weight": 55,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h20",
+      "hourOfDay": 20,
+      "actionType": "TRAIN",
+      "weight": 85,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h21",
+      "hourOfDay": 21,
+      "actionType": "TRAIN",
+      "weight": 81,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h22",
+      "hourOfDay": 22,
+      "actionType": "TRAIN",
+      "weight": 72,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_train_h23",
+      "hourOfDay": 23,
+      "actionType": "TRAIN",
+      "weight": 34,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h06",
+      "hourOfDay": 6,
+      "actionType": "GATHER",
+      "weight": 6,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h07",
+      "hourOfDay": 7,
+      "actionType": "GATHER",
+      "weight": 12,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h08",
+      "hourOfDay": 8,
+      "actionType": "GATHER",
+      "weight": 20,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h09",
+      "hourOfDay": 9,
+      "actionType": "GATHER",
+      "weight": 24,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h10",
+      "hourOfDay": 10,
+      "actionType": "GATHER",
+      "weight": 22,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h11",
+      "hourOfDay": 11,
+      "actionType": "GATHER",
+      "weight": 24,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h12",
+      "hourOfDay": 12,
+      "actionType": "GATHER",
+      "weight": 48,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h13",
+      "hourOfDay": 13,
+      "actionType": "GATHER",
+      "weight": 44,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h14",
+      "hourOfDay": 14,
+      "actionType": "GATHER",
+      "weight": 24,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h15",
+      "hourOfDay": 15,
+      "actionType": "GATHER",
+      "weight": 22,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h16",
+      "hourOfDay": 16,
+      "actionType": "GATHER",
+      "weight": 24,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h17",
+      "hourOfDay": 17,
+      "actionType": "GATHER",
+      "weight": 28,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h18",
+      "hourOfDay": 18,
+      "actionType": "GATHER",
+      "weight": 40,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h19",
+      "hourOfDay": 19,
+      "actionType": "GATHER",
+      "weight": 52,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h20",
+      "hourOfDay": 20,
+      "actionType": "GATHER",
+      "weight": 80,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h21",
+      "hourOfDay": 21,
+      "actionType": "GATHER",
+      "weight": 76,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_gather_h22",
+      "hourOfDay": 22,
+      "actionType": "GATHER",
+      "weight": 68,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h08",
+      "hourOfDay": 8,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 15,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h09",
+      "hourOfDay": 9,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 18,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h10",
+      "hourOfDay": 10,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 17,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h11",
+      "hourOfDay": 11,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 18,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h12",
+      "hourOfDay": 12,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 36,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h13",
+      "hourOfDay": 13,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 33,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h14",
+      "hourOfDay": 14,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 18,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h15",
+      "hourOfDay": 15,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 17,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h16",
+      "hourOfDay": 16,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 18,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h17",
+      "hourOfDay": 17,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 21,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h18",
+      "hourOfDay": 18,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h19",
+      "hourOfDay": 19,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 39,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h20",
+      "hourOfDay": 20,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 60,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h21",
+      "hourOfDay": 21,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 57,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h22",
+      "hourOfDay": 22,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 51,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_attack_monster_h23",
+      "hourOfDay": 23,
+      "actionType": "ATTACK_MONSTER",
+      "weight": 24,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_join_rally_h12",
+      "hourOfDay": 12,
+      "actionType": "JOIN_RALLY",
+      "weight": 27,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_join_rally_h13",
+      "hourOfDay": 13,
+      "actionType": "JOIN_RALLY",
+      "weight": 25,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_join_rally_h19",
+      "hourOfDay": 19,
+      "actionType": "JOIN_RALLY",
+      "weight": 29,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_join_rally_h20",
+      "hourOfDay": 20,
+      "actionType": "JOIN_RALLY",
+      "weight": 45,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_join_rally_h21",
+      "hourOfDay": 21,
+      "actionType": "JOIN_RALLY",
+      "weight": 43,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_join_rally_h22",
+      "hourOfDay": 22,
+      "actionType": "JOIN_RALLY",
+      "weight": 38,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h08",
+      "hourOfDay": 8,
+      "actionType": "CHAT",
+      "weight": 14,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h09",
+      "hourOfDay": 9,
+      "actionType": "CHAT",
+      "weight": 16,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h10",
+      "hourOfDay": 10,
+      "actionType": "CHAT",
+      "weight": 15,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h11",
+      "hourOfDay": 11,
+      "actionType": "CHAT",
+      "weight": 16,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h12",
+      "hourOfDay": 12,
+      "actionType": "CHAT",
+      "weight": 33,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h13",
+      "hourOfDay": 13,
+      "actionType": "CHAT",
+      "weight": 30,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h14",
+      "hourOfDay": 14,
+      "actionType": "CHAT",
+      "weight": 16,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h15",
+      "hourOfDay": 15,
+      "actionType": "CHAT",
+      "weight": 15,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h16",
+      "hourOfDay": 16,
+      "actionType": "CHAT",
+      "weight": 16,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h17",
+      "hourOfDay": 17,
+      "actionType": "CHAT",
+      "weight": 19,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h18",
+      "hourOfDay": 18,
+      "actionType": "CHAT",
+      "weight": 28,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h19",
+      "hourOfDay": 19,
+      "actionType": "CHAT",
+      "weight": 36,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h20",
+      "hourOfDay": 20,
+      "actionType": "CHAT",
+      "weight": 55,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h21",
+      "hourOfDay": 21,
+      "actionType": "CHAT",
+      "weight": 52,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h22",
+      "hourOfDay": 22,
+      "actionType": "CHAT",
+      "weight": 47,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_chat_h23",
+      "hourOfDay": 23,
+      "actionType": "CHAT",
+      "weight": 22,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_donate_h12",
+      "hourOfDay": 12,
+      "actionType": "DONATE",
+      "weight": 21,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_donate_h13",
+      "hourOfDay": 13,
+      "actionType": "DONATE",
+      "weight": 19,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_donate_h20",
+      "hourOfDay": 20,
+      "actionType": "DONATE",
+      "weight": 35,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_donate_h21",
+      "hourOfDay": 21,
+      "actionType": "DONATE",
+      "weight": 33,
+      "isWeekendOnly": false
+    },
+    {
+      "id": "sched_donate_h22",
+      "hourOfDay": 22,
+      "actionType": "DONATE",
+      "weight": 30,
+      "isWeekendOnly": false
+    }
+  ],
+  "comment": "Bot 作息表（B11 交付数据）。一行 = 某小时某行为的相对权重，24 小时 × 若干行为。",
+  "designNote": "B11 §四 拟人化「作息」：按真人曲线分布 tick（午休 12-13 点、晚 20-22 点高峰、凌晨低频）。\n一行 = 某小时某行为的相对权重。**表里没有的行 = 该小时不发生该行为** —— weight 声明为 LONG_POS（必须 > 0），所以「权重 0」这种行落不进来；而权重 0 与不存在本来就等价，缺行不是信息损失。\n各行为的小时区间：BUILD/TRAIN 7-23、GATHER 6-22、ATTACK_MONSTER 8-23、CHAT 8-23、JOIN_RALLY 与 DONATE 只在 {12,13,19,20,21,22}。后两者刻意收窄：响应集结与捐献都需要别人在线才有意义，凌晨做这两件事的 Bot 一眼就是脚本（验收 2 的盲测正是测这个）。\n验收 10 的口径：凌晨 2-5 点 LOGIN 权重合计 10，晚 20-22 点合计 280，比值 3.6% < 20%。\nisWeekendOnly 目前全为 false —— 骨架期不区分工作日与周末。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "hourOfDay": "LONG_NONNEG",
+    "actionType": "ENUM:LOGIN,LOGOUT,BUILD,TRAIN,GATHER,ATTACK_MONSTER,JOIN_RALLY,CHAT,DONATE",
+    "weight": "LONG_POS",
+    "isWeekendOnly": "BOOL",
+    "why": "?STRING",
+    "todo": "?STRING"
+  }
+}

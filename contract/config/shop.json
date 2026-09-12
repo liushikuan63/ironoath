@@ -1,0 +1,141 @@
+{
+  "table": "shop",
+  "version": 1,
+  "comment": "商店表。B02 字段：商品/价格/限购/上架条件。四种货币：金币(可充值)、联盟币(捐献获得)、小队币(互助获得)、赛季币(赛季参与获得)。",
+  "designNote": "价格阶梯严格跟随 B00 付费点排序「加速道具 > 资源包 > 月卡/特权 > 武将抽取 > 皮肤/外观」：加速道具 40~50 金且日限购 20（最容易买到的第一级台阶），资源包 10~25 金日限购 50，抽卡 1500 金周限购 3 且要求主城 12 级（刻意收窄，让玩家先体验到前三项）。三种非金币货币的存在意义是切断「充值→一切」的通路：小队币只能互助获得、联盟币只能捐献获得、赛季币只能参与赛季获得，这三样东西花钱买不到，因此社交与赛季参与始终有自己的价值。免战牌是全店限购最严的商品(日 2 张)，理由见 C00 公理二。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "itemId": "REF:item",
+    "priceCurrency": "ENUM:GOLD,ALLIANCE_COIN,SQUAD_COIN,SEASON_COIN",
+    "price": "LONG_POS",
+    "limitCount": "LONG_POS",
+    "refreshType": "ENUM:NONE,DAILY,WEEKLY",
+    "requireMainLevel": "LONG_NONNEG",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "shop_speedup_build_1h",
+      "name": "一小时建造令",
+      "itemId": "item_speedup_build_1h",
+      "priceCurrency": "GOLD",
+      "price": 40,
+      "limitCount": 20,
+      "refreshType": "DAILY",
+      "requireMainLevel": 0,
+      "why": "日限购 20。B00 付费点第一位是加速道具，所以它必须是限购最宽、最容易买到的商品——付费入口的第一个台阶不能太陡。"
+    },
+    {
+      "id": "shop_speedup_build_8h",
+      "name": "八小时建造令",
+      "itemId": "item_speedup_build_8h",
+      "priceCurrency": "GOLD",
+      "price": 300,
+      "limitCount": 5,
+      "refreshType": "DAILY",
+      "requireMainLevel": 0,
+      "why": "日限购 5。八小时档覆盖一次睡眠，限 5 个防止玩家靠囤积彻底跳过建造卡点。"
+    },
+    {
+      "id": "shop_speedup_train_1h",
+      "name": "一小时训练令",
+      "itemId": "item_speedup_train_1h",
+      "priceCurrency": "GOLD",
+      "price": 45,
+      "limitCount": 20,
+      "refreshType": "DAILY",
+      "requireMainLevel": 0,
+      "why": "训练加速比建造贵 5 金：兵力恢复直接改变 PVP 战力。"
+    },
+    {
+      "id": "shop_res_wood_10k",
+      "name": "木材箱(1万)",
+      "itemId": "item_res_wood_10k",
+      "priceCurrency": "GOLD",
+      "price": 10,
+      "limitCount": 50,
+      "refreshType": "DAILY",
+      "requireMainLevel": 0,
+      "why": "资源包，B00 付费点第二位。日限购 50 是为了让「买资源」始终是补缺口的手段，而不是替代产量的常规操作。"
+    },
+    {
+      "id": "shop_res_iron_5k",
+      "name": "铁箱(5千)",
+      "itemId": "item_res_iron_5k",
+      "priceCurrency": "GOLD",
+      "price": 25,
+      "limitCount": 30,
+      "refreshType": "DAILY",
+      "requireMainLevel": 0,
+      "why": "铁箱单价是木石的 2.5 倍：铁稀缺必须体现在定价上，否则玩家会用金币批量换铁绕过产量限制，铁的战略价值归零。"
+    },
+    {
+      "id": "shop_peace_24h",
+      "name": "二十四小时免战牌",
+      "itemId": "item_buff_peace_24h",
+      "priceCurrency": "GOLD",
+      "price": 200,
+      "limitCount": 2,
+      "refreshType": "DAILY",
+      "requireMainLevel": 8,
+      "why": "日限购 2 且要求主城 8 级。这是全店限购最严的商品：C00 公理二要求被打成为社交起点，免战牌买得到但买不到永久安全，否则付费直接把游戏做成单机。"
+    },
+    {
+      "id": "shop_closed_8h",
+      "name": "八小时闭城死守令",
+      "itemId": "item_buff_closed_8h",
+      "priceCurrency": "GOLD",
+      "price": 90,
+      "limitCount": 1,
+      "refreshType": "DAILY",
+      "requireMainLevel": 8,
+      "why": "B08 §5 弱者的第二条出路：知道要被报复，先关门。定价与限购都按「代价必须是真的」来定：90 金币是 24h 免战牌（200）的两倍时长的一半多一点，即单位时长更贵、但多一条「期间不可出兵采集」的代价 —— 两条路各有适用场景，不能出现「买哪个都一样」或更糟的「买便宜的那个严格更优」。每日限购 1 次：闭城是可以反复卡的时间窗口，不限购等于允许金主永久不出兵、只挨打不还手地蹲着，那会把领地争夺变成谁也不动。主城 8 级起售与免战牌同档 —— 那正好是新手保护解除的等级，玩家第一次真的需要它的时刻。购买价与回收价同为 90，避免「买—卖」本身成为套利。"
+    },
+    {
+      "id": "shop_chest_hero",
+      "name": "武将招募匣",
+      "itemId": "item_chest_hero",
+      "priceCurrency": "GOLD",
+      "price": 1500,
+      "limitCount": 3,
+      "refreshType": "WEEKLY",
+      "requireMainLevel": 12,
+      "why": "周限购 3、要求主城 12 级。抽卡入口刻意收窄：B00 付费点排序里武将抽取排第四，前面三项(加速/资源包/月卡)必须先被玩家体验到。"
+    },
+    {
+      "id": "shop_alliance_res",
+      "name": "联盟物资包",
+      "itemId": "item_res_wood_10k",
+      "priceCurrency": "ALLIANCE_COIN",
+      "price": 30,
+      "limitCount": 10,
+      "refreshType": "WEEKLY",
+      "requireMainLevel": 0,
+      "why": "联盟币商店，捐献换取。让捐献有实际回报，是联盟留存的基础。"
+    },
+    {
+      "id": "shop_squad_speedup",
+      "name": "小队互助令",
+      "itemId": "item_speedup_build_5m",
+      "priceCurrency": "SQUAD_COIN",
+      "price": 15,
+      "limitCount": 20,
+      "refreshType": "DAILY",
+      "requireMainLevel": 0,
+      "why": "小队币商店。小队币只能靠互助获得，不可充值——熟人圈子的货币一旦能买，互助就退化成了交易。"
+    },
+    {
+      "id": "shop_season_skin",
+      "name": "赛季旗帜外观",
+      "itemId": "item_buff_rally_2h",
+      "priceCurrency": "SEASON_COIN",
+      "price": 500,
+      "limitCount": 1,
+      "refreshType": "NONE",
+      "requireMainLevel": 16,
+      "why": "赛季币商店的外观位。B00 付费点排序最后一位是皮肤/外观，用赛季币而非金币计价，让它成为赛季参与的纪念而不是直接的付费项。"
+    }
+  ]
+}

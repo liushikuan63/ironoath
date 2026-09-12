@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  职责：配置表加载与启动期全量校验。校验失败必须拒绝启动，并一次性列出全部错误字段。
+  依赖：只能依赖 game-common（分层规则，由 scripts/check-layering.sh 强制）。
+  硬约束：本模块不得出现任何 Spring 注解或依赖 —— Spring 侧的 Bean 装配由 game-web 负责。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.ironoath</groupId>
+    <artifactId>ironoath-server</artifactId>
+    <version>0.1.0</version>
+  </parent>
+
+  <artifactId>game-config</artifactId>
+  <name>game-config</name>
+  <description>配置表加载、全量校验与索引（纯 Java）</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+  </dependencies>
+</project>

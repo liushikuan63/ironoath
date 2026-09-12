@@ -1,0 +1,57 @@
+{
+  "table": "nation_config",
+  "version": 2,
+  "rows": [
+    {
+      "id": "nation_lv1",
+      "nationLevel": 1,
+      "memberCap": 200,
+      "unlockMainLevel": 16,
+      "unlockDayOffset": 13,
+      "officeCount": 12,
+      "treasuryCap": 500000,
+      "policySlotCount": 1,
+      "warCooldownHours": 24,
+      "why": "B13 §1：200 人 = 2 个联盟（每个联盟上限按 alliance_config 的 Lv9 是 150，两个满编联盟就是 300，所以 200 是「2 个中等规模联盟」的量级）。解锁条件主城 16 级 + 开服 D14（unlockDayOffset 是 0-based，所以 D14 填 13）。主城 16 级比联盟的 10 级又高了一截：国家是三级社交的终点，而 B13 硬依赖 B08 的战力圈层 —— 让一个还没进过圈层博弈的玩家去建国，他建出来的国家只会是别人的猎物。policySlotCount=1：Lv1 只能同时生效一个国策 buff，多了就等于让新国家一上来就叠满加成。"
+    },
+    {
+      "id": "nation_lv2",
+      "nationLevel": 2,
+      "memberCap": 400,
+      "unlockMainLevel": 16,
+      "unlockDayOffset": 13,
+      "officeCount": 12,
+      "treasuryCap": 2000000,
+      "policySlotCount": 2,
+      "warCooldownHours": 24,
+      "why": "B13 §1：400 人 = 4 个联盟。国库容量 ×4（50 万 → 200 万），与成员联盟数同比例 —— 国库收入来自每盟每周 10000 的税收，联盟翻倍则收入翻倍，容量若不跟着翻倍就会溢出，而溢出意味着「收上来的税凭空消失」，那是最容易被发现的数值造假。policySlotCount=2。"
+    },
+    {
+      "id": "nation_lv3",
+      "nationLevel": 3,
+      "memberCap": 800,
+      "unlockMainLevel": 16,
+      "unlockDayOffset": 13,
+      "officeCount": 12,
+      "treasuryCap": 8000000,
+      "policySlotCount": 3,
+      "warCooldownHours": 24,
+      "why": "B13 §1：800 人 = 8 个联盟，这是国家的天花板。800 人不再往上涨：再往上就与「单 kingdom 4 个国家」的上限冲突了 —— 4 × 800 = 3200 人，而 WORLD_SIZE 512×512 按 B07 的设计承载 2000~4000 名玩家，也就是说满级国家已经把整个 kingdom 装下了，再放大就会让「国家之间的战争」变成「一个国家的内战」。officeCount 三级同为 12：B13 §2 给的是固定席位数（国王1 + 首相1 + 大将军2 + 内政官4 + 外交官4），不随等级变化。议员不计入 officeCount —— 它是「每盟主 1 席」，数量随成员联盟数变化（Lv1 是 2 席、Lv3 是 8 席），由国家等级间接决定。"
+    }
+  ],
+  "comment": "国家配置表（B13 交付数据）。按国家等级给出人数上限、官职数量、国库容量、国策槽位、宣战冷却。",
+  "designNote": "B00 社交三级：国家 200→400→800 人，解锁条件主城 16 级 + D14 + 当前在某联盟中。\n**联盟 ⊂ 国家：联盟整体加入国家，个人跟随联盟，不单独入籍**（B13 §二、禁止项）。\n所以 memberCap 的语义是「成员联盟的容量之和的上限」，而不是「国家能招多少人」—— 国家不招人，招人的是联盟。\n冲突优先级：国家 > 联盟 > 小队。四条规则必须在数据层强制（B13 开工提示词明写「这四条冲突规则必须提前定死并在数据层强制，否则后期全是 Bug」）：\n  1. 退出联盟 ⇒ 失去国籍（除非新联盟属同一国家，则保留）\n  2. 联盟被开除/退出国家 ⇒ 全联盟成员失去国籍 + 24h 入籍冷却（global.NATION_JOIN_COOLDOWN_HOURS）\n  3. 小队队长退盟、队员未退 ⇒ 小队自动解散（B10 验收 2 已实现）\n  4. 小队集结不可攻击队友所在的敌对联盟 —— 外交关系优先于私人关系\nofficeCount 决定 NATION 范围的官职任命上限，而 B00 铁律二明确 Bot 不得担任国家官职，所以任命时必须调用 BotTuning.mayHoldOffice 校验（验收 4）。\nwarCooldownHours 是国战节奏的主旋钮：太短会让国家之间陷入无休止的消耗战，中低战力玩家被反复清场；太长则国战变成一赛季一次的仪式，失去持续张力。取 24 小时 = 每个国家每天最多宣战一次，配合 3 小时的战斗时长，一天里最多有 1/8 的时间在打仗。\ntreasuryCap 必须有上限：国库无上限会让国主囤积全国资源，卷款离开的损失变得不可承受。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "nationLevel": "LONG_POS",
+    "memberCap": "LONG_POS",
+    "unlockMainLevel": "LONG_POS",
+    "unlockDayOffset": "LONG_NONNEG",
+    "officeCount": "LONG_POS",
+    "treasuryCap": "LONG_NONNEG",
+    "policySlotCount": "LONG_POS",
+    "warCooldownHours": "LONG_POS",
+    "why": "?STRING",
+    "todo": "?STRING"
+  }
+}

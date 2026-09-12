@@ -1,0 +1,505 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/player.schema.json",
+  "title": "PlayerProtocol",
+  "description": "玩家域协议契约（唯一真源）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "Protocol",
+  "$defs": {
+    "ResourceType": {
+      "type": "string",
+      "description": "资源类型枚举。取值必须与 contract/config/resource.json 的 rows[].id 完全一致（CI 校验）。",
+      "x-enum-source": {
+        "table": "resource"
+      },
+      "enum": [
+        "WOOD",
+        "STONE",
+        "IRON",
+        "GRAIN",
+        "GOLD",
+        "STAMINA"
+      ]
+    },
+    "PlayerProfile": {
+      "type": "object",
+      "description": "玩家档案（展示用，不含任何数值判定）",
+      "additionalProperties": false,
+      "required": [
+        "playerId",
+        "nickName",
+        "avatarId",
+        "createdAt",
+        "lastLoginAt"
+      ],
+      "properties": {
+        "playerId": {
+          "type": "string",
+          "description": "玩家唯一 id（服务端生成，雪花或 UUID）"
+        },
+        "nickName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "avatarId": {
+          "type": "integer",
+          "format": "int32",
+          "description": "头像 id，指向配置表 avatar（B12 交付）"
+        },
+        "createdAt": {
+          "type": "integer",
+          "format": "int64",
+          "description": "创角时间（服务端毫秒时间戳）"
+        },
+        "lastLoginAt": {
+          "type": "integer",
+          "format": "int64",
+          "description": "最近登录时间（服务端毫秒时间戳）"
+        }
+      }
+    },
+    "ResourceState": {
+      "type": "object",
+      "description": "单一资源的惰性结算快照。current 为已结算值，客户端展示时需按 (serverNow - lastSettle) * perHour / 3600 做本地预测，服务端结果到达后强制纠偏。",
+      "additionalProperties": false,
+      "required": [
+        "current",
+        "cap",
+        "protectedAmount",
+        "perHour",
+        "lastSettle"
+      ],
+      "properties": {
+        "current": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "已结算的资源量"
+        },
+        "cap": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "仓库容量上限"
+        },
+        "protectedAmount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "受保护不可掠夺量（B04 由仓库/护盾决定，B01 恒为配置初始值）"
+        },
+        "perHour": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "每小时产量（B01 取配置底产，B03 起由建筑聚合）"
+        },
+        "lastSettle": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "上次惰性结算的服务端时间戳（毫秒）"
+        }
+      }
+    },
+    "PowerSnapshot": {
+      "type": "object",
+      "description": "战力三元组。displayPower 仅展示；matchPower 用于 PVP 匹配校验（含峰值记忆）；peakPower 为历史峰值。铁律 11：匹配一律用 matchPower。",
+      "additionalProperties": false,
+      "required": [
+        "displayPower",
+        "matchPower",
+        "peakPower"
+      ],
+      "properties": {
+        "displayPower": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "matchPower": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "peakPower": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "PowerBreakdown": {
+      "type": "object",
+      "description": "战力明细（B08 §1）。**UI 必须能点开看这一层** —— 玩家对「我为什么是这个战力」极度敏感，只给一个总数的话，任何一次数值调整都会被理解成「偷偷削我」。\n\n五项之和必须精确等于 displayPower，这条不变量在服务端由 PowerCalculator.Result 的构造器强制（对不上就抛异常），所以客户端可以放心把五行逐项列出来再加一个总计。",
+      "additionalProperties": false,
+      "required": [
+        "building",
+        "troops",
+        "heroes",
+        "tech",
+        "equipment"
+      ],
+      "properties": {
+        "building": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "建筑战力：各建筑按 POWER_CONTRIB 曲线的贡献之和"
+        },
+        "troops": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "部队战力：Σ(兵数 × 该兵种的攻+防+血)"
+        },
+        "heroes": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "武将战力：全部已拥有武将之和，含未上阵的 —— 展示战力要反映「我练了多少」"
+        },
+        "tech": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "科技战力。科技系统属 B12，落地前恒为 0；字段先占位，否则 B12 上线时要改协议，而改协议意味着强制客户端更新"
+        },
+        "equipment": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "装备战力。当前已并入 heroes（HeroCalculator 的入参含装备固定值），所以恒为 0；单列一项是为了让明细的行数与玩家的直觉一致 —— 玩家认为装备是独立的一块，看不到这一行会以为装备没算进去"
+        }
+      }
+    },
+    "PowerDetailResp": {
+      "type": "object",
+      "description": "GET /player/power 的响应：战力明细面板的全部数据（B08 §1）。\n\n战力三元组直接复用 PowerSnapshot，不重复声明 —— 那三个字段总是一起出现，两处各写一份迟早会漂移。\n\n**额外下发 currentMatchPower 与 peakMemoryFloor，是为了让 matchPower 可被玩家自己复算。** matchPower = max(currentMatchPower, peakMemoryFloor)。只给结果的话，一个刚打完大仗、兵力折损的玩家会看到一个比部队实际战力更高的数字，而他没有任何线索知道那是峰值记忆在起作用 —— 那正是「这游戏在骗我」的观感来源。把两个输入都摊开，规则就变成可以自查的，而不是需要相信的。",
+      "additionalProperties": false,
+      "required": [
+        "power",
+        "currentMatchPower",
+        "peakMemoryFloor",
+        "breakdown",
+        "serverNow"
+      ],
+      "properties": {
+        "power": {
+          "$ref": "#/$defs/PowerSnapshot"
+        },
+        "currentMatchPower": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "当前部队 + 上阵主将的实际战力，不含峰值记忆"
+        },
+        "peakMemoryFloor": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "峰值记忆托底线 = round(peakPower × PEAK_POWER_MEMORY_RATIO)。它存在的唯一目的是堵「战前卸兵压分」：卸兵之后 matchPower 不会立刻掉下去，所以压分没有收益"
+        },
+        "breakdown": {
+          "$ref": "#/$defs/PowerBreakdown"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "服务端时间戳。客户端不得用自己的时钟推算峰值衰减"
+        }
+      }
+    },
+    "TimeSync": {
+      "type": "object",
+      "description": "时间校准结果。offset = serverNow - clientNow，客户端用加权移动平均吸收网络抖动（B00 铁律 5）。",
+      "additionalProperties": false,
+      "required": [
+        "offset",
+        "syncAt"
+      ],
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "syncAt": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端发出本次校准的时间戳"
+        }
+      }
+    },
+    "PlayerInitReq": {
+      "type": "object",
+      "description": "POST /player/init 请求体",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "deviceId",
+        "nickName",
+        "clientTime"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64,
+          "description": "幂等键。同一 requestId 重复提交只创建一次玩家（B01 验收 11）"
+        },
+        "deviceId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "description": "设备唯一标识，同设备重复 init 返回同一存档"
+        },
+        "nickName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "clientTime": {
+          "type": "integer",
+          "format": "int64",
+          "description": "客户端本地时间，服务端据此返回校准 offset"
+        }
+      }
+    },
+    "PlayerInitResp": {
+      "type": "object",
+      "description": "POST /player/init 响应体（data 字段内容）",
+      "additionalProperties": false,
+      "required": [
+        "playerId",
+        "serverNow",
+        "profile",
+        "cityLevel",
+        "resources",
+        "power",
+        "protectUntil"
+      ],
+      "properties": {
+        "playerId": {
+          "type": "string"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端时间戳，客户端据此算偏移（铁律 5）"
+        },
+        "profile": {
+          "$ref": "#/$defs/PlayerProfile"
+        },
+        "cityLevel": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "description": "主城等级，新号 = 1"
+        },
+        "resources": {
+          "type": "object",
+          "description": "五种资源快照",
+          "propertyNames": {
+            "$ref": "#/$defs/ResourceType"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/ResourceState"
+          }
+        },
+        "power": {
+          "$ref": "#/$defs/PowerSnapshot"
+        },
+        "protectUntil": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "新手保护到期时间（服务端毫秒时间戳）；null 表示无保护"
+        }
+      }
+    },
+    "TimeSyncReq": {
+      "type": "object",
+      "description": "POST /time/sync 请求体",
+      "additionalProperties": false,
+      "required": [
+        "clientTime"
+      ],
+      "properties": {
+        "clientTime": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "TimeSyncResp": {
+      "type": "object",
+      "description": "POST /time/sync 响应体（data 字段内容）",
+      "additionalProperties": false,
+      "required": [
+        "sync"
+      ],
+      "properties": {
+        "sync": {
+          "$ref": "#/$defs/TimeSync"
+        }
+      }
+    },
+    "ApiResult": {
+      "type": "object",
+      "description": "统一响应封装。code=0 表示成功，非 0 见 ErrorCode。traceId 用于线上排查（铁律 10）。",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "msg",
+        "traceId",
+        "serverNow"
+      ],
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "msg": {
+          "type": "string"
+        },
+        "data": {
+          "description": "业务负载，类型随接口而定"
+        },
+        "traceId": {
+          "type": "string"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "错误详情，成功时为 null"
+        }
+      }
+    },
+    "StaminaResp": {
+      "type": "object",
+      "description": "GET /stamina 的响应（B09 §5）。\n\n**对 B09 契约的一处偏离**：文档给的是 `recoverPerMin`，但恢复速率是「每 6 分钟 1 点」，换算成每分钟就是 1/6 点 —— 一个 long 装不下，而铁律禁止用 double 表示这类数值。所以这里下发 `recoverPerHour`（整数，精确）加 `nextPointAt`（下一点恢复的服务端时刻）。UI 真正需要的是倒计时，`nextPointAt` 直接就是它，比一个每分钟速率更有用。",
+      "additionalProperties": false,
+      "required": [
+        "current",
+        "cap",
+        "recoverPerHour",
+        "nextPointAt",
+        "boughtToday",
+        "buyCostGold",
+        "serverNow"
+      ],
+      "properties": {
+        "current": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "当前体力（已完成惰性恢复结算）"
+        },
+        "cap": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "体力上限 = STAMINA_CAP_BASE + STAMINA_CAP_PER_LEVEL × 主城等级。溢出部分永久损失，不结转（B09 §5 禁止项：不要让体力溢出超过上限）"
+        },
+        "recoverPerHour": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "每小时恢复点数，来自 resource 表 STAMINA 行的 basePerHour"
+        },
+        "nextPointAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "下一点恢复的服务端毫秒时刻；已满时为 null（满了就不该再显示倒计时）。客户端不得用自己的时钟推算：本字段与 serverNow 一起下发，倒计时用两者之差，这样校时误差不会让倒计时跳变"
+        },
+        "boughtToday": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "今日已购买次数。下发它是为了让客户端能显示「今日还剩 N 次」，但判定仍然只在服务端做（铁律 2）"
+        },
+        "buyCostGold": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "下一次购买所需金币。已达每日上限时为 0，客户端据此把按钮置灰 —— 置灰而不是隐藏：体力是付费点，让玩家看见「明天还能买」比让它消失更有价值"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "StaminaBuyReq": {
+      "type": "object",
+      "description": "POST /stamina/buy 请求体。用金币买体力（B09 §5 的付费点；直购礼包属 B15）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "description": "幂等键。买体力要扣金币，没有幂等就等于允许重放请求刷体力"
+        },
+        "times": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "minimum": 1,
+          "description": "购买几次；null 表示 1 次。合并成一次请求是为了让「连买 5 次」只扣一次锁、只写一次存档，而不是五次读改写打架"
+        }
+      }
+    },
+    "StaminaBuyResp": {
+      "type": "object",
+      "description": "POST /stamina/buy 响应体。",
+      "additionalProperties": false,
+      "required": [
+        "stamina",
+        "granted",
+        "costGold",
+        "boughtToday"
+      ],
+      "properties": {
+        "stamina": {
+          "$ref": "#/$defs/StaminaResp"
+        },
+        "granted": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "实际到账的体力。<b>可能小于请求量</b>：超出上限的部分永久损失，而金币照扣 —— 所以客户端必须在购买前用 StaminaResp.cap 提示玩家「继续购买会溢出」。服务端不替玩家做这个判断，但服务端会在响应里照实说给了多少，绝不静默吞掉"
+        },
+        "costGold": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "本次实际扣除的金币（多次购买时是递增单价之和）"
+        },
+        "boughtToday": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "今日累计购买次数"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+# 职责：本地开发环境。零外部依赖启动 —— 不需要 MongoDB，也不需要 Redis。
+# 用法：mvn -f server/pom.xml -pl game-web -am spring-boot:run -Dspring-boot.run.profiles=dev
+#       （或 npm run dev）
+ironoath:
+  storage: memory
+  expose-detail: true
+
+logging:
+  level:
+    com.ironoath: DEBUG
+
+# 想在本地用真实 MongoDB 验证存储层，改用：
+#   mvn -f server/pom.xml -pl game-web -am spring-boot:run \
+#     -Dspring-boot.run.profiles=dev,mongo
+---
+spring:
+  config:
+    activate:
+      on-profile: mongo
+
+ironoath:
+  storage: mongo

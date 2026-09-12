@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  职责：Spring Boot 启动层 —— Controller、WebSocket、全局异常处理、存储适配（MongoDB / 内存）。
+  依赖：可依赖所有层（B00 分层规则）。本模块是唯一允许出现 Spring 注解的地方之一。
+  约定：玩法逻辑不写在这里，本层只做「协议 ↔ 领域对象」的转换、装配与 IO。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.ironoath</groupId>
+    <artifactId>ironoath-server</artifactId>
+    <version>0.1.0</version>
+  </parent>
+
+  <artifactId>game-web</artifactId>
+  <name>game-web</name>
+  <description>Spring Boot 启动层：HTTP + WebSocket + 存储适配</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-config</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-battle</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-mongodb</artifactId>
+    </dependency>
+    <!-- 分布式锁：多实例部署下 PlayerLock 的唯一正确实现（JVM 内锁跨进程无效） -->
+    <dependency>
+      <groupId>org.redisson</groupId>
+      <artifactId>redisson</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>game-web</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>com.ironoath.web.Application</mainClass>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

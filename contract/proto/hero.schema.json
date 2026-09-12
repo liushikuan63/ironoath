@@ -1,0 +1,900 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/hero.schema.json",
+  "title": "HeroProtocol",
+  "description": "武将与抽卡协议契约（B06）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "HeroProtocol",
+  "$defs": {
+    "HeroRarity": {
+      "type": "string",
+      "description": "武将稀有度。取值与 hero 表、hero_rarity 表、item 表的 rarity 列一致，声明顺序为升序（N→SSR）。",
+      "enum": [
+        "N",
+        "R",
+        "SR",
+        "SSR"
+      ]
+    },
+    "HeroAttr": {
+      "type": "string",
+      "description": "武将三维属性名。与 hero 表的 might/command/wisdom 三列对应。",
+      "enum": [
+        "MIGHT",
+        "COMMAND",
+        "WISDOM"
+      ]
+    },
+    "SkillSlot": {
+      "type": "string",
+      "description": "技能位（B06 §2.4）。主技能全队生效，副技能只在副将位生效。",
+      "enum": [
+        "MAIN",
+        "SUB"
+      ]
+    },
+    "EquipSlot": {
+      "type": "string",
+      "description": "装备槽位（B06 §2.5：4 槽位）。取值与 equip 表的 slot 列一致。",
+      "enum": [
+        "WEAPON",
+        "ARMOR",
+        "MOUNT",
+        "ACCESSORY"
+      ]
+    },
+    "BonusZone": {
+      "type": "string",
+      "description": "加成落在哪个乘区（B06 硬约束 1：配置表里要明确标注每个加成落在哪个乘区）。HERO=乘区A武将本体、BOND=乘区A的缘分子乘区、EQUIP_SET=装备乘区（B05 §1.3 的六乘区之一，与武将乘区隔离）。",
+      "enum": [
+        "HERO",
+        "BOND",
+        "EQUIP_SET"
+      ]
+    },
+    "AttrTriple": {
+      "type": "object",
+      "description": "三维属性。base 是配置表原值，final 是养成后的值（等级/星级/觉醒/装备共同作用）。",
+      "additionalProperties": false,
+      "required": [
+        "might",
+        "command",
+        "wisdom"
+      ],
+      "properties": {
+        "might": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "command": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "wisdom": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "BonusBreak": {
+      "type": "object",
+      "description": "加成明细的一行。zone 必填 —— B06 硬约束 1 要求每个加成都标明落在哪个乘区，玩家侧的「为什么我这么强」与开发侧的「数值为什么算错」都靠它。",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "value",
+        "zone"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "来源标签，直接展示，如「裴惊澜 Lv60 ★4（主将）」"
+        },
+        "value": {
+          "type": "integer",
+          "format": "int64",
+          "description": "定点加成值（×10000），如 6200 = +62%"
+        },
+        "zone": {
+          "$ref": "#/$defs/BonusZone"
+        }
+      }
+    },
+    "HeroBonus": {
+      "type": "object",
+      "description": "队伍的武将侧加成，按乘区拆分返回（B06 §2）。<b>与 B06 文档草案的差异（有意偏离，理由如下）</b>：草案写的是 atkMultiplier/defMultiplier/hpMultiplier，但 B05 已交付的战斗内核只有两个武将侧乘区（HeroSnapshot.heroBonusFixed 攻击、defBonusFixed 防御），没有独立的生命乘区 —— B05 把生命折进了有效防御（HP_DEFENSE_WEIGHT）。所以这里返回 atkFixed/defFixed/skillFixed：武力→攻击乘区、统率→防御乘区、智力→技能强度。硬造一个内核消费不了的 hpMultiplier 只会让面板显示一个不影响战斗的数字。",
+      "additionalProperties": false,
+      "required": [
+        "atkFixed",
+        "defFixed",
+        "skillFixed",
+        "commandValue",
+        "capped",
+        "breakdown"
+      ],
+      "properties": {
+        "atkFixed": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "攻击乘区加成（定点）。进 BattleSnapshot 的 heroBonusFixed"
+        },
+        "defFixed": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "防御乘区加成（定点）。进 defBonusFixed"
+        },
+        "skillFixed": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "技能强度加成（定点），由智力折算"
+        },
+        "commandValue": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "队伍统帅值合计（主将 100% + 副将各 50%），决定带兵上限"
+        },
+        "capped": {
+          "type": "boolean",
+          "description": "是否触到了 HERO_ZONE_CAP 上限。为 true 说明继续堆养成不会再变强，UI 应提示玩家"
+        },
+        "breakdown": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BonusBreak"
+          }
+        }
+      }
+    },
+    "HeroView": {
+      "type": "object",
+      "description": "一名已拥有武将的完整状态（五条养成线各占一段）。",
+      "additionalProperties": false,
+      "required": [
+        "heroId",
+        "name",
+        "rarity",
+        "level",
+        "exp",
+        "expToNext",
+        "maxLevel",
+        "star",
+        "maxStar",
+        "awaken",
+        "maxAwaken",
+        "mainSkillId",
+        "mainSkillLevel",
+        "subSkillId",
+        "subSkillLevel",
+        "maxSkillLevel",
+        "equips",
+        "baseAttrs",
+        "finalAttrs",
+        "power",
+        "bondWith"
+      ],
+      "properties": {
+        "heroId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "中文名，来自 hero 表"
+        },
+        "rarity": {
+          "$ref": "#/$defs/HeroRarity"
+        },
+        "level": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "exp": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "当前等级内已累计的经验（溢出的经验会连续升级，见 HeroGrowth）"
+        },
+        "expToNext": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "升到下一级还需多少经验；满级时为 0"
+        },
+        "maxLevel": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "star": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "maxStar": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "awaken": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "maxAwaken": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "description": "来自 hero 表 awakenMax，逐武将不同（SSR 3 / SR 2 / R 1）"
+        },
+        "mainSkillId": {
+          "type": "string"
+        },
+        "mainSkillLevel": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "subSkillId": {
+          "type": "string"
+        },
+        "subSkillLevel": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "maxSkillLevel": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1
+        },
+        "equips": {
+          "type": "array",
+          "description": "四个槽位的装备 id，按 EquipSlot 声明顺序（WEAPON/ARMOR/MOUNT/ACCESSORY），空槽为 null。用定长数组而不是 Map 是为了让客户端不必猜键名顺序。",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "baseAttrs": {
+          "$ref": "#/$defs/AttrTriple"
+        },
+        "finalAttrs": {
+          "$ref": "#/$defs/AttrTriple"
+        },
+        "power": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "该武将的战力贡献，走 curve.HERO_GROWTH（幂律），仅用于展示与 B08 圈层匹配，不进战斗公式"
+        },
+        "bondWith": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "缘分对象武将 id；null 表示该武将没有缘分"
+        }
+      }
+    },
+    "LineupView": {
+      "type": "object",
+      "description": "一套编队预设（B06 §4：每队 3 名 = 主将 + 2 副将，可编 3 套）。",
+      "additionalProperties": false,
+      "required": [
+        "presetIndex",
+        "main",
+        "sub1",
+        "sub2",
+        "bonus",
+        "activeBonds"
+      ],
+      "properties": {
+        "presetIndex": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "main": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "主将 heroId；null 表示该位置空着"
+        },
+        "sub1": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sub2": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bonus": {
+          "$ref": "#/$defs/HeroBonus"
+        },
+        "activeBonds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "已激活的缘分（成对同队才算）。给客户端做高亮与提示「再抽到 X 就能激活缘分」"
+        }
+      }
+    },
+    "HeroListResp": {
+      "type": "object",
+      "description": "GET /hero/list 响应体。",
+      "additionalProperties": false,
+      "required": [
+        "heroes",
+        "lineups",
+        "fragments",
+        "troopCap",
+        "troopsInUse",
+        "serverNow"
+      ],
+      "properties": {
+        "heroes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HeroView"
+          }
+        },
+        "lineups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LineupView"
+          }
+        },
+        "fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemCount"
+          },
+          "description": "各稀有度的碎片持有量。碎片是道具（item 表的 item_mat_hero_frag_*），所以走 ItemCount 而不是新造一个类型"
+        },
+        "troopCap": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "当前带兵上限 = Σ上阵武将统帅值 × TROOP_PER_COMMAND + 科技加成（B05 §二）"
+        },
+        "troopsInUse": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "已占用的兵力。B05 第二步落地训练系统前恒为 0"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "ItemCount": {
+      "type": "object",
+      "description": "道具数量条目。",
+      "additionalProperties": false,
+      "required": [
+        "itemId",
+        "count"
+      ],
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "HeroLevelUpReq": {
+      "type": "object",
+      "description": "POST /hero/levelUp 请求体。经验书按 expItems 逐种消耗，服务端按 curve.HERO_LEVEL_EXP 连续升级（一次投喂多本可能连升数级）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "heroId",
+        "expItems"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "heroId": {
+          "type": "string"
+        },
+        "expItems": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ItemCount"
+          }
+        }
+      }
+    },
+    "HeroGrowResp": {
+      "type": "object",
+      "description": "所有养成操作（升级/升星/觉醒/技能/装备/合成）的统一响应：改完之后的武将状态。统一成一个类型是因为客户端对这六种操作的界面反馈完全相同（刷新属性条 + 播一次成长动效），拆成六个响应类型只会让客户端写六份一样的代码。",
+      "additionalProperties": false,
+      "required": [
+        "hero",
+        "consumed",
+        "serverNow"
+      ],
+      "properties": {
+        "hero": {
+          "$ref": "#/$defs/HeroView"
+        },
+        "consumed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemCount"
+          },
+          "description": "实际消耗的道具/碎片。客户端据此播放扣减动画，不要自己算"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "HeroIdReq": {
+      "type": "object",
+      "description": "只带 heroId 的请求（升星、碎片合成）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "heroId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "heroId": {
+          "type": "string"
+        }
+      }
+    },
+    "HeroItemReq": {
+      "type": "object",
+      "description": "带 heroId + itemId 的请求（觉醒、技能升级）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "heroId",
+        "itemId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "heroId": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "skillSlot": {
+          "$ref": "#/$defs/SkillSlot"
+        }
+      }
+    },
+    "HeroEquipReq": {
+      "type": "object",
+      "description": "POST /hero/equip 请求体。equipId 为 null 表示卸下该槽位（B06 验收 10：卸下后加成必须消失）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "heroId",
+        "slot"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "heroId": {
+          "type": "string"
+        },
+        "slot": {
+          "$ref": "#/$defs/EquipSlot"
+        },
+        "equipId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "SetLineupReq": {
+      "type": "object",
+      "description": "POST /hero/lineup 请求体。三个位置都可为 null（表示空位），但主将为空时整队视为未编成。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "presetIndex"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "presetIndex": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0
+        },
+        "main": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sub1": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sub2": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "SetLineupResp": {
+      "type": "object",
+      "description": "POST /hero/lineup 响应体。带 troopCap 是因为统帅值直接决定带兵上限（B06 验收 8），换队后客户端必须立刻刷新这个数字。",
+      "additionalProperties": false,
+      "required": [
+        "lineup",
+        "troopCap",
+        "serverNow"
+      ],
+      "properties": {
+        "lineup": {
+          "$ref": "#/$defs/LineupView"
+        },
+        "troopCap": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "GachaDrawReq": {
+      "type": "object",
+      "description": "POST /gacha/draw 请求体。count 只能是 1 或 10（B06 §2）。补 requestId 是因为抽卡是不可重放的扣费操作，断网重放会白扣一次。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "poolId",
+        "count"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "poolId": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int32",
+          "enum": [
+            1,
+            10
+          ]
+        }
+      }
+    },
+    "GachaResult": {
+      "type": "object",
+      "description": "一次抽取的结果。isPity 是合规字段（B06 禁止项：抽卡日志不要缺 isPity），必须下发到客户端并存进日志 —— 监管要能区分「正常抽到」与「保底触发」。",
+      "additionalProperties": false,
+      "required": [
+        "heroId",
+        "name",
+        "rarity",
+        "isNew",
+        "isPity",
+        "fragments"
+      ],
+      "properties": {
+        "heroId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "rarity": {
+          "$ref": "#/$defs/HeroRarity"
+        },
+        "isNew": {
+          "type": "boolean",
+          "description": "是否首次获得。false 表示重复，已按 hero_rarity.dupFragment 转成碎片"
+        },
+        "isPity": {
+          "type": "boolean",
+          "description": "本次是否由保底触发（合规必需字段）"
+        },
+        "fragments": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "本次产生的碎片数；isNew=true 时为 0"
+        }
+      }
+    },
+    "GachaDrawResp": {
+      "type": "object",
+      "description": "POST /gacha/draw 响应体。seed 回传用于可复现（B06 验收 11：同 seed 同结果）与客服核查；两个保底计数器都回传，客户端要显示「还差几抽保底」。",
+      "additionalProperties": false,
+      "required": [
+        "results",
+        "ssrPityCounter",
+        "srPityCounter",
+        "fragmentsAwarded",
+        "costItemId",
+        "costCount",
+        "seed",
+        "serverNow",
+        "costResource"
+      ],
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GachaResult"
+          }
+        },
+        "ssrPityCounter": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "距上次出 SSR 已累计多少抽"
+        },
+        "srPityCounter": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "fragmentsAwarded": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "本次重复武将转化的碎片总数"
+        },
+        "costItemId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "以道具计价的池子（限定池）填这里，否则为 null。与 costResource 恰好一个非空。"
+        },
+        "costCount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "seed": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "costResource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "以资源计价的池子（新手池/标准池填 GOLD）填这里，否则为 null。与 costItemId 恰好一个非空 —— 两者都填或都不填都是配置错误，由 GachaConfigConsistencyTest 断言。"
+        }
+      }
+    },
+    "GachaProbItem": {
+      "type": "object",
+      "description": "概率面板的一行（B06 §2：客户端概率面板必须读同一份配置，禁止写死）。",
+      "additionalProperties": false,
+      "required": [
+        "heroId",
+        "name",
+        "rarity",
+        "rateFixed",
+        "isUp"
+      ],
+      "properties": {
+        "heroId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "rarity": {
+          "$ref": "#/$defs/HeroRarity"
+        },
+        "rateFixed": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "定点概率（×10000）。用定点数而不是 double（B06 禁止项：不要用 double 表示概率）"
+        },
+        "isUp": {
+          "type": "boolean",
+          "description": "是否为当期 UP 武将"
+        }
+      }
+    },
+    "PityRule": {
+      "type": "object",
+      "description": "保底规则。全部来自 gacha 表，客户端不得自行推算。",
+      "additionalProperties": false,
+      "required": [
+        "ssrPity",
+        "srPity",
+        "ssrUpGuarantee"
+      ],
+      "properties": {
+        "ssrPity": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "累计多少抽未出 SSR 则必出"
+        },
+        "srPity": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1
+        },
+        "ssrUpGuarantee": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "限定池专用：连续多少次 SSR 非 UP 后，下一次 SSR 必为 UP。0 表示该池无 UP 保底（标准池）"
+        }
+      }
+    },
+    "GachaProbResp": {
+      "type": "object",
+      "description": "GET /gacha/probability 响应体。disclosureText 必须原文展示（gacha 表已注明：不得删减、折叠或以图标替代）。",
+      "additionalProperties": false,
+      "required": [
+        "poolId",
+        "name",
+        "poolType",
+        "items",
+        "tierRates",
+        "pityRule",
+        "disclosureText",
+        "costItemId",
+        "costCount",
+        "lifetimeLimit",
+        "serverNow",
+        "costResource"
+      ],
+      "properties": {
+        "poolId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "poolType": {
+          "type": "string",
+          "enum": [
+            "STANDARD",
+            "LIMITED",
+            "NEWBIE"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GachaProbItem"
+          },
+          "description": "逐个武将的概率。限定池的 UP 武将单列，其余同稀有度武将平分该档剩余概率"
+        },
+        "tierRates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TierRate"
+          },
+          "description": "四档概率（SSR/SR/R/N），之和必须恰为 10000（B02 已把这条做成 CI 断言）"
+        },
+        "pityRule": {
+          "$ref": "#/$defs/PityRule"
+        },
+        "disclosureText": {
+          "type": "string",
+          "description": "合规公示原文，客户端必须原样展示"
+        },
+        "costItemId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "以道具计价的池子（限定池）填这里，否则为 null。与 costResource 恰好一个非空。"
+        },
+        "costCount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "单抽消耗"
+        },
+        "lifetimeLimit": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "该池的账号终身抽取次数上限；0 表示不限"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "costResource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "以资源计价的池子（新手池/标准池填 GOLD）填这里，否则为 null。与 costItemId 恰好一个非空 —— 两者都填或都不填都是配置错误，由 GachaConfigConsistencyTest 断言。"
+        }
+      }
+    },
+    "TierRate": {
+      "type": "object",
+      "description": "一档稀有度的概率。",
+      "additionalProperties": false,
+      "required": [
+        "rarity",
+        "rateFixed"
+      ],
+      "properties": {
+        "rarity": {
+          "$ref": "#/$defs/HeroRarity"
+        },
+        "rateFixed": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

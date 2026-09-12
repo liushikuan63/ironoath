@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/quest.schema.json",
+  "title": "QuestProtocol",
+  "description": "任务协议契约（B12 §1）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。\n\n**任务定义来自 quest 表，协议只下发「当前玩家的进度视图」**：任务名字、目标、奖励都不进协议固定字段 —— 改一条任务只需要改表（铁律 1）。客户端拿到的每一行都带着 goalType 与 goalValue，所以它既能渲染进度条，也能在不知道具体任务是什么版本的情况下正确显示「3/20」。\n\n**locked 与 claimed 是两个不同的东西**，不要合并：locked = 前置任务还没完成（玩家还不能做），claimed = 已经领过奖。把它们合成一个 「不可领」布尔的话，客户端就没法区分「先去完成前置任务」与「这个已经领过了」这两种完全不同的提示。\n\n**本轮只落服务端一半**：任务面板（客户端 UI）还没有实现，所以本协议今天只有服务端在与它对账（端点路径、字段形状、枚举一致）。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "QuestProtocol",
+  "$defs": {
+    "QuestType": {
+      "type": "string",
+      "description": "任务类型，决定重置周期（不决定奖励，奖励在 quest 表里）。取值与 game-core 的 QuestProgress.QuestType 逐一对应，由 NationPayEnumParityTest 一类的枚举守卫钉住。",
+      "enum": [
+        "MAIN",
+        "SIDE",
+        "DAILY",
+        "WEEKLY"
+      ]
+    },
+    "GoalType": {
+      "type": "string",
+      "description": "任务目标类型（B12 §1 的统一 GoalType）。13 个取值分成累加型与状态型两类 —— 前者进度只增不减（累计训练 20 个兵），后者进度是当前状态、可升可降（当前持有 10000 粮）。分类在服务端的 GoalType 枚举上，由 CI 的枚举一致性守卫保证两边同名同序。",
+      "enum": [
+        "UPGRADE_BUILDING",
+        "REACH_RESOURCE",
+        "TRAIN_UNIT",
+        "KILL_MONSTER",
+        "GACHA_PULL",
+        "JOIN_SQUAD",
+        "JOIN_ALLIANCE",
+        "RESEARCH_TECH",
+        "CLEAR_CHAPTER",
+        "CLEAR_STAGE",
+        "GATHER_RESOURCE",
+        "HELP_SQUAD",
+        "JOIN_RALLY"
+      ]
+    },
+    "QuestView": {
+      "type": "object",
+      "description": "一条任务的当前视图。**进度由事件推动累加**（B12 禁止项：任务进度不得轮询），所以这里的 current 是账本里的值，不是每次读的时候扫出来的。",
+      "additionalProperties": false,
+      "required": [
+        "questId",
+        "name",
+        "type",
+        "goalType",
+        "goalValue",
+        "current",
+        "complete",
+        "claimed",
+        "claimable",
+        "locked",
+        "heroChoices"
+      ],
+      "properties": {
+        "questId": {
+          "type": "string",
+          "description": "quest 表的行 id。领取奖励时原样回传。"
+        },
+        "name": {
+          "type": "string",
+          "description": "任务名（表里的 name）。客户端不得自行翻译或拼接进度文案。"
+        },
+        "type": {
+          "$ref": "#/$defs/QuestType"
+        },
+        "goalType": {
+          "$ref": "#/$defs/GoalType"
+        },
+        "goalTarget": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "目标细分（建筑 id / 资源 id / 兵种 id / 野怪 id / 卡池 id）。null = 不限定（任意建筑升级都算）。"
+        },
+        "goalValue": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "目标值。恒 >= 1：为 0 的任务一创建就是完成态（领域层在构造期就拒绝）。"
+        },
+        "current": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "当前进度。累加型只增不减；状态型是最近一次事件的快照值，可以回落（花掉粮食就退回去）。"
+        },
+        "complete": {
+          "type": "boolean",
+          "description": "current >= goalValue。**它与 claimable 不同**：完成但没领、完成且领过、以及前置没做完，是三种不同状态。"
+        },
+        "claimed": {
+          "type": "boolean",
+          "description": "奖励是否已领。重复领取会被服务端拒（幂等），所以这个字段是客户端按钮置灰的唯一依据。"
+        },
+        "claimable": {
+          "type": "boolean",
+          "description": "此刻能不能领：complete 且未 claimed 且前置已完成。客户端不要自己算这个布尔（前置链一变就会漂）。"
+        },
+        "locked": {
+          "type": "boolean",
+          "description": "前置任务未完成 ⇒ 还不能做。与 claimed 分开是为了让客户端知道该提示「先完成前置」还是「已领取」。"
+        },
+        "preQuestId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "前置任务 id，null 表示无前置。下发它是因为客户端要能画出任务链（「完成 X 后解锁」）。"
+        },
+        "heroChoices": {
+          "type": "array",
+          "description": "本条任务的可选武将列表（含名字）；空数组表示这条任务的奖励里没有「挑一名」这一项。客户端据此在领奖前弹出选择界面，选择结果随 claim 的 heroChoice 提交。",
+          "items": {
+            "$ref": "#/$defs/HeroChoice"
+          }
+        }
+      }
+    },
+    "QuestListResp": {
+      "type": "object",
+      "description": "GET /quest/list 的响应。**读这个端点会顺手做一次日切/周切**（每日/每周任务跨期清零），所以它是惰性推进点而不是纯读 —— 服务端不跑定时器（B00 铁律），跨期清零必须挂在有人读的那一刻。",
+      "additionalProperties": false,
+      "required": [
+        "quests",
+        "claimableCount",
+        "serverNow"
+      ],
+      "properties": {
+        "quests": {
+          "type": "array",
+          "description": "全部任务（含未解锁与已领取的行）。列表由服务端按章节/类型稳定排序，客户端不需要再排。",
+          "items": {
+            "$ref": "#/$defs/QuestView"
+          }
+        },
+        "claimableCount": {
+          "type": "integer",
+          "description": "此刻可领的任务数。给红点/徽标用 —— 与 quests 里 claimable=true 的行数同源（同一次遍历算出来的两个值，不允许各算一遍）。"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端时刻。"
+        }
+      }
+    },
+    "QuestClaimReq": {
+      "type": "object",
+      "description": "POST /quest/claim 请求体：领取一条已完成任务的奖励（B12 §1「奖励走 B04 的 grantReward」）。 heroChoice 是「三选一」那类奖励的选择结果，一并发在这里而不是单开端点的理由：领奖本来就是一次性操作（幂等键 + 已领标记都在这一条路径上），把选择挂上去就不再需要第二份「是否已经选过」的状态。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "questId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "description": "幂等键。重放一次领取不该再发一份奖励 —— 而「领了没到账」的玩家会自然地再点一次，所以这个键是常规路径而不是边缘情况。"
+        },
+        "questId": {
+          "type": "string",
+          "description": "要领取的任务 id。未完成 / 已领取 / 前置未完成都会被拒（三种各有各的业务码）。"
+        },
+        "heroChoice": {
+          "type": "string",
+          "description": "从候选武将里挑的那一个（B06 §1「主线赠送：首日必得 1 名 SR」）。只有带候选列表的任务需要它：不传时若该任务有候选，服务端拒绝并回可用候选（而不是替玩家默认挑一个 —— 那会让「三选一」变成「系统选中一个」）。没有候选的任务传了它也会被拒，理由同上：多传的东西静默忽略会让客户端以为自己选上了。"
+        }
+      }
+    },
+    "QuestReward": {
+      "type": "object",
+      "description": "一条已发放的任务奖励。与 bag 协议的 RewardItemView、stage 协议的 StageReward 形状相同，但生成器只支持同文件 $ref，所以这里各有一份。**三份的字段与枚举取值必须一致**，由 StageContractParityTest 一族的断言钉住 —— 复制而不校验才是真正的危险：漂移的症状是服务端下发的字符串在客户端解析成 undefined，而 TS 侧不会报错，UI 只会空白。",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "count",
+        "name"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "奖励类型，取值与 bag 协议的 RewardType 一致（CI 校验）。任务表目前产出 RESOURCE / HERO_FRAGMENT / HERO 三种（HERO 是整卡武将，首日主线赠送用）。",
+          "enum": [
+            "RESOURCE",
+            "ITEM",
+            "HERO_FRAGMENT",
+            "HERO",
+            "STAMINA",
+            "PRIVILEGE"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "description": "资源 id（WOOD/IRON/GRAIN/GOLD）、道具 id、或武将 id（HERO 直接给这名武将；HERO_FRAGMENT 由发放器换算成按稀有度的碎片道具）。"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string",
+          "description": "服务端从配置表解析后的展示名，客户端不得自行翻译。"
+        }
+      }
+    },
+    "QuestClaimResp": {
+      "type": "object",
+      "description": "POST /quest/claim 的响应。**回实际发出的奖励明细**而不是只回 ok：客户端要弹「获得 X×N」，而那份明细必须来自发放器真正发出去的东西（装不下转邮件的那部分也在里面），不是客户端自己按表猜的。",
+      "additionalProperties": false,
+      "required": [
+        "questId",
+        "rewards",
+        "claimableCount",
+        "serverNow"
+      ],
+      "properties": {
+        "questId": {
+          "type": "string",
+          "description": "领的哪一条任务。"
+        },
+        "rewards": {
+          "type": "array",
+          "description": "本次实际发放的奖励明细（已按 type+id 聚合）。",
+          "items": {
+            "$ref": "#/$defs/QuestReward"
+          }
+        },
+        "claimableCount": {
+          "type": "integer",
+          "description": "领取之后还剩几条可领。与 list 的同一字段同源，省掉客户端再查一次列表。"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端时刻。"
+        }
+      }
+    },
+    "HeroChoice": {
+      "type": "object",
+      "description": "三选一里的一个候选。**id 与 name 成对下发**：不给两条平行数组（ids 与 names）是因为它们迟早会不同长，而不同长的表现是「点了第三个选项却领到第一个武将」，全链路不报错。\nname 由服务端从 hero 表解析，客户端不得自行翻译（与 QuestReward.name 同一口径）。",
+      "additionalProperties": false,
+      "required": [
+        "heroId",
+        "name"
+      ],
+      "properties": {
+        "heroId": {
+          "type": "string",
+          "description": "hero 表的行 id。选它之后随 claim 的 heroChoice 回传。"
+        },
+        "name": {
+          "type": "string",
+          "description": "武将名（hero 表的 name）。"
+        }
+      }
+    }
+  }
+}

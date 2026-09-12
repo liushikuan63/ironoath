@@ -1,0 +1,53 @@
+{
+  "table": "squad_config",
+  "version": 3,
+  "rows": [
+    {
+      "id": "squad_lv1",
+      "squadLevel": 1,
+      "memberCap": 5,
+      "unlockMainLevel": 5,
+      "unlockDayOffset": 0,
+      "rallyCapacity": 5,
+      "helpSpeedBonus": "0.01",
+      "shopUnlock": false,
+      "why": "B10 §1 明写：解锁=主城 5 级 + 开服 D1 + 无前置，创建时 5 人。主城 5 级而不是更低，是因为 5 级才解锁医院（B09 关卡 chapter_01 也卡在 5 级），此时玩家第一次体会到「兵力会真的死」，也正是他最需要朋友的时刻 —— 把社交入口放在痛点出现的当天，比放在 D3 的转化率高一得多。rallyCapacity=5 必须等于 global.RALLY_MAX_SIZE_SQUAD，两处不一致时以 global 为准（战斗内核读 global），由 SquadConfigConsistencyTest 钉住。shopUnlock=false：刚建的小队还没有共同目标，先让「一起打野→拿小队币」这条链跑一天，第二天开店，玩家才知道币是从哪来的。"
+    },
+    {
+      "id": "squad_lv2",
+      "squadLevel": 2,
+      "memberCap": 8,
+      "unlockMainLevel": 8,
+      "unlockDayOffset": 0,
+      "rallyCapacity": 5,
+      "helpSpeedBonus": "0.01",
+      "shopUnlock": true,
+      "why": "B10 §1 的人数扩展写的是「5（创建）→ 8（队长主城 8 级）→ 10（小队等级 3）」：第二档的门槛是**队长**的主城等级而不是小队等级，所以本行的 unlockMainLevel=8 是生效的那个条件。用队长等级而不是全员平均，是因为队长是组织的责任人 —— 让他为自己的进度给全队解锁名额，比让五个人互相等要少得多摩擦。helpSpeedBonus 三级同为 0.01（B10 §1 明写每次减 1%）：小队帮助变强的方式是「人变多」而不是「每次帮得更多」，后者会让老小队对新小队形成不可追赶的碾压。"
+    },
+    {
+      "id": "squad_lv3",
+      "squadLevel": 3,
+      "memberCap": 10,
+      "unlockMainLevel": 8,
+      "unlockDayOffset": 0,
+      "rallyCapacity": 5,
+      "helpSpeedBonus": "0.01",
+      "shopUnlock": true,
+      "why": "第三档 10 人由小队等级 3 给出（B10 §1）。10 人是小队的天花板，不再往上涨：C00 公理七指出小队满足的是「我和兄弟们」这种熟人需求，而邓巴数意义上的稳定熟人圈在 10~15 人，超过这个数小队就退化成一个小联盟，两级社交的意义就没了。rallyCapacity 仍是 5 而不是 10：集结的瓶颈是「同时在线且愿意出兵的人」，把 10 人全塞进一次集结会让准备倒计时永远凑不齐，反而不如 5 人稳定出发。"
+    }
+  ],
+  "comment": "小队配置表（B10 交付数据）。按小队等级给出人数上限、集结容量、互助加成。",
+  "designNote": "B00 社交三级：小队 5→10 人，解锁条件主城 5 级 + D1（unlockDayOffset 是 0-based：0 = 开服当天，所以 D1 填 0）。铁律三的关键约束是「玩家加入联盟后小队转为分队保留，熟人圈子不被大组织稀释」——C00 公理七指出 5 个人的小队和 150 个人的联盟满足的是完全不同的需求（小队是「我和兄弟们」，联盟是「我属于哪个组织」），用大组织吃掉小组织，玩家就失去了最紧密的那层关系。所以本表在玩家入盟后必须仍然生效，不能因为有了 alliance_config 就停用。冲突时优先级 国家 > 联盟 > 小队。\n查表规则：**取 squadLevel <= 当前等级 的最高一行**。人数扩展的三个台阶（5→8→10）中，第二档的门槛是队长主城 8 级而不是小队等级，所以生效条件是「小队等级 >= 2 且队长主城 >= 8」，两个条件都要查。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "squadLevel": "LONG_POS",
+    "memberCap": "LONG_POS",
+    "unlockMainLevel": "LONG_POS",
+    "unlockDayOffset": "LONG_NONNEG",
+    "rallyCapacity": "LONG_POS",
+    "helpSpeedBonus": "DECIMAL_NONNEG",
+    "shopUnlock": "BOOL",
+    "why": "?STRING",
+    "todo": "?STRING"
+  }
+}

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  职责：★纯 Java 玩法逻辑层。不依赖 Spring、不依赖 Web、不依赖数据库，可脱离容器跑 JUnit。
+  依赖：只能依赖 game-common（B00 分层规则，由 scripts/check-layering.sh 强制）。
+  配置驱动方式：通过 game-common 的 CurveSource / GlobalParamSource 端口读取配置，
+               因此本模块不需要也不允许依赖 game-config（依赖倒置）。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.ironoath</groupId>
+    <artifactId>ironoath-server</artifactId>
+    <version>0.1.0</version>
+  </parent>
+
+  <artifactId>game-core</artifactId>
+  <name>game-core</name>
+  <description>纯 Java 玩法逻辑：Formula 曲线求值（B01）；PowerCalculator / ResourceCalculator 由 B03、B08 填充</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-common</artifactId>
+    </dependency>
+  </dependencies>
+</project>

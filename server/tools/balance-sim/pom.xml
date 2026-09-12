@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  职责：战斗平衡验证 CLI —— 跑单局可读战报与四兵种两两对战胜率矩阵。
+  依赖：game-config（读表）、game-battle（内核）、game-core（曲线）。
+  说明：这是构建期/调优期工具，不属于运行期分层。它必须能读配置表，
+        而 game-battle 按 B00 分层规则只能依赖 game-common，所以工具单独成模块。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.ironoath</groupId>
+    <artifactId>ironoath-server</artifactId>
+    <version>0.1.0</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>balance-sim</artifactId>
+  <name>tools/balance-sim</name>
+  <description>战斗平衡验证 CLI（B05 §1.6）</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-config</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.ironoath</groupId>
+      <artifactId>game-battle</artifactId>
+    </dependency>
+  </dependencies>
+</project>

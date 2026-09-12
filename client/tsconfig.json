@@ -1,0 +1,31 @@
+{
+  "//": "职责：客户端逻辑层的 headless 类型检查配置（strict）。Cocos Creator 打开工程时会用它自己的 tsconfig，本文件只服务于 CI 与本地 tsc。",
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020", "DOM"],
+    "strict": true,
+    "experimentalDecorators": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "useUnknownInCatchVariables": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "cc": ["./types/cc.d.ts"]
+    },
+    "types": []
+  },
+  "include": ["assets/scripts/**/*.ts", "types/**/*.d.ts"],
+  "exclude": ["assets/scripts/test/**/*.ts", "build-test", "node_modules"]
+}

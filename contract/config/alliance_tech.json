@@ -1,0 +1,90 @@
+{
+  "table": "alliance_tech",
+  "version": 1,
+  "comment": "联盟科技表。B02 字段：id/等级上限/消耗/效果。消耗单位为联盟捐献点数（B10 落地捐献系统）。",
+  "designNote": "每一项都对应「组团才有、单干没有」的收益，且数值一律低于对应的个人科技：攻击 1.5%/级 vs 个人 3%/级，建造 1%/级 vs 个人 3%/级。这是 C00 公理一的落地方式——组织优势必须真实成立（入盟确实更强），但不能盖过个人养成（否则玩家会放弃个人成长只刷联盟）。唯一例外是 atech_rally：它提升集结人数上限，直接决定弱者能否打高层目标，属于组织优势的核心，所以单级消耗给到全表最高。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "effectAttr": "ENUM:UNIT_ATTACK,UNIT_DEFENSE,MARCH_SPEED,LOAD_CAPACITY,HOSPITAL_CAPACITY,RALLY_CAPACITY,BUILD_SPEED,HELP_SPEED",
+    "effectValue": "DECIMAL_NONNEG",
+    "maxLevel": "LONG_POS",
+    "costBaseDonation": "LONG_POS",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "atech_atk",
+      "name": "联盟锋刃",
+      "effectAttr": "UNIT_ATTACK",
+      "effectValue": "0.015",
+      "maxLevel": 40,
+      "costBaseDonation": 2000,
+      "why": "全盟攻击 +1.5%/级，满级 +60%。刻意低于个人科技 tech_mil_atk 的满级 +120%：联盟加成是组团才有的额外收益，不该盖过个人养成，否则玩家会只堆联盟不管自己。"
+    },
+    {
+      "id": "atech_def",
+      "name": "联盟壁垒",
+      "effectAttr": "UNIT_DEFENSE",
+      "effectValue": "0.015",
+      "maxLevel": 40,
+      "costBaseDonation": 2000,
+      "why": "全盟防御 +1.5%/级，与锋刃对称。"
+    },
+    {
+      "id": "atech_march",
+      "name": "联盟驿传",
+      "effectAttr": "MARCH_SPEED",
+      "effectValue": "0.02",
+      "maxLevel": 30,
+      "costBaseDonation": 1500,
+      "why": "全盟行军速度 +2%/级。集结最需要的就是同时到达，速度是集结可行性的前提。"
+    },
+    {
+      "id": "atech_load",
+      "name": "联盟辎重队",
+      "effectAttr": "LOAD_CAPACITY",
+      "effectValue": "0.02",
+      "maxLevel": 30,
+      "costBaseDonation": 1500,
+      "why": "全盟负载 +2%/级。提升整盟掠夺收益，是组团比单干划算的直接兑现。"
+    },
+    {
+      "id": "atech_hosp",
+      "name": "联盟医营",
+      "effectAttr": "HOSPITAL_CAPACITY",
+      "effectValue": "0.03",
+      "maxLevel": 25,
+      "costBaseDonation": 2500,
+      "why": "全盟医院容量 +3%/级。被打之后能救回更多伤兵——这是 C00 公理二的物质保障：入盟的人确实更抗打。"
+    },
+    {
+      "id": "atech_rally",
+      "name": "联盟集结令",
+      "effectAttr": "RALLY_CAPACITY",
+      "effectValue": "0.05",
+      "maxLevel": 20,
+      "costBaseDonation": 3000,
+      "why": "集结人数上限 +5%/级。B00 集结门槛是 2.0×√N，提高 N 的上限直接放宽可讨伐目标的战力范围，是弱者破圈的核心科技，所以单级消耗最高。"
+    },
+    {
+      "id": "atech_donate",
+      "name": "联盟工造",
+      "effectAttr": "BUILD_SPEED",
+      "effectValue": "0.01",
+      "maxLevel": 20,
+      "costBaseDonation": 1000,
+      "why": "全盟建造速度 +1%/级。给最低档：建造加速会压缩卡点节奏，联盟层面再叠一层就太多了。"
+    },
+    {
+      "id": "atech_help",
+      "name": "联盟互助",
+      "effectAttr": "HELP_SPEED",
+      "effectValue": "0.02",
+      "maxLevel": 25,
+      "costBaseDonation": 800,
+      "why": "互助加速效果 +2%/级。互助是小队/联盟最轻的互动，把它做强能显著提高日活。"
+    }
+  ]
+}

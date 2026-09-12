@@ -1,0 +1,53 @@
+# 职责：服务端基础配置（所有环境共享）。环境差异放在 application-{dev,test,prod}.yml。
+# 约定：这里只放「部署参数」。游戏数值一律在 contract/config/*.json（铁律 1），
+#       否则策划改一个数字就要重新部署服务端。
+spring:
+  application:
+    name: ironoath-game-web
+  profiles:
+    active: dev
+  jackson:
+    # Result 的字段必须全部下发，包括 null 的 detail/protectUntil —— 客户端按契约解构，
+    # 少一个字段就会读到 undefined
+    default-property-inclusion: always
+    serialization:
+      write-dates-as-timestamps: true
+  data:
+    mongodb:
+      # storage=memory 时不会真正建连接（MongoClient 惰性初始化），所以 dev 无需本地 Mongo
+      uri: ${IRONOATH_MONGO_URI:mongodb://localhost:27017/ironoath_dev}
+      auto-index-creation: false
+
+server:
+  port: ${IRONOATH_PORT:8080}
+  # Tomcat 线程池：SLG 的请求都是短平快的读写，不需要很大的线程数，
+  # 太大反而会让 MongoDB 连接池成为瓶颈并放大雪崩
+  tomcat:
+    threads:
+      max: 100
+      min-spare: 10
+    accept-count: 200
+    max-connections: 2000
+
+ironoath:
+  # 配置表目录。相对路径会逐级向上回溯查找 contract/config，
+  # 因此无论是 `mvn -pl game-web spring-boot:run`（工作目录 server/game-web）
+  # 还是直接 `java -jar`（工作目录仓库根）都能跑通
+  config-dir: contract/config
+  # memory = 进程内存储（零依赖启动，重启丢档）；mongo = 生产存储
+  storage: memory
+  # 是否向客户端下发 Result.detail 排查信息。生产必须 false
+  expose-detail: true
+
+logging:
+  charset:
+    console: UTF-8
+    file: UTF-8
+  level:
+    root: INFO
+    com.ironoath: INFO
+    org.springframework: WARN
+    org.mongodb.driver: WARN
+  pattern:
+    # %X{traceId} 由 TraceIdFilter 写入 MDC，玩家报障时凭响应头 X-Trace-Id 就能捞全链路（铁律 10）
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-no-trace}] %logger{32} - %msg%n"

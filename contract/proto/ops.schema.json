@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/ops.schema.json",
+  "title": "OpsProtocol",
+  "description": "运维与上线协议契约（B16）：埋点批量上报、崩溃上报、版本检查与强制更新、灰度开关、配置热更清单。唯一真源，由 tools/config-gen 生成 Java record 与 TS interface，禁止手改两侧。\n\n三条贯穿全部 def 的设计约束：\n1. **埋点必须批量**（B16 禁止项写了两遍）：TrackBatchReq 是一个数组而不是单个事件，客户端攒够 TRACK_BATCH_MAX_SIZE 条或超过 TRACK_BATCH_FLUSH_SECONDS 秒才发一次。逐条上报在功能测试里完全正常，只在弱网下把客户端拖垮 —— 而弱网恰恰是最需要埋点数据的场景。\n2. **埋点不带 requestId**（与其它所有写接口不同）：埋点重投最坏的后果是某个事件被多算一次，那是分析口径问题而不是账目问题；反过来若加了幂等键，弱网重投时服务端会「正确地」把重投的那批丢掉，于是漏斗在最薄弱的环节上少一环，而没人知道是数据丢了还是玩家真没走到那一步。\n3. **强制更新与灰度是正交的两件事**：grayEnabled 决定谁能拿到新版本，forceUpdate 决定拿旧版本的人还能不能玩。合成一个开关的后果是想灰度就必须把没被灰到的 95% 挡在门外。\n\n与 B16 §二 的差异（两处，都是验收要求逼出来的）：\n- AppVersionResp 多一个 notice 字段：§二 的形状里客户端只知道「要更新」却不知道要显示什么，而验收 8 要求「收到强制更新提示」—— 提示文案必须在响应里，否则就得硬编码进客户端，而硬编码的文案在提审期被要求修改时只能发版。\n- ConfigManifestResp 多一个 outdated 数组：由服务端算好下发。「什么算过期」这条规则只能存在于一个地方，而它是 hash 比对不是版本号比对（版本号是人给的，会出现改了内容忘了升版本）。若让客户端自己比，规则就存在两份，其中一份迟早会退化成比版本号。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "OpsProtocol",
+  "$defs": {
+    "TrackEvent": {
+      "type": "object",
+      "description": "一个埋点事件（B16 §3 事件字典的一行）。事件名不在契约里枚举：字典是运营与分析侧的资产，会随版本增删，写进契约就等于每次加一个按钮都要改双端代码并重新生成 —— 而验收 3 要求的覆盖率是拿脚本比对 UI 清单，不是比对枚举。",
+      "additionalProperties": false,
+      "required": ["name", "ts", "params"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "事件名，形如 startup / login / guide_step / building_upgrade_start / speedup_used / pay_click / pay_success / battle_start / battle_lost / churn。没有名字的事件在分析侧无法归类，却已经占了上报配额，所以服务端与客户端都拒绝空名。"
+        },
+        "ts": {
+          "type": "integer",
+          "format": "int64",
+          "description": "事件发生的客户端毫秒时间戳。**只用它排序，不用它算时长**：B00 硬约束「时间以服务端时间戳为准」，客户端时钟可以被玩家改，所以任何留存/时长口径都以服务端落库时间为准，这个字段的价值是保留同一批事件内部的先后顺序 —— 而那个顺序在服务端落库时会因为批量到达而丢失。"
+        },
+        "params": {
+          "type": "object",
+          "description": "事件参数。值统一为字符串：埋点参数会进日志与看板，类型化的代价是每加一种参数类型就要改契约，而收益只有「少写一次 String.valueOf」。空 map 表示无参数，不允许 null —— 下游遍历 null 会 NPE，而 NPE 发生在上报线程里会让整批事件消失。",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "TrackBatchReq": {
+      "type": "object",
+      "description": "POST /ops/track/batch 请求体。一次上报一批（B16 §3：10 条或 10 秒触发）。\n\n**不带 requestId**：见本文件 description 的约束 2。",
+      "additionalProperties": false,
+      "required": ["events"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "description": "本批事件，按发生顺序。批大小上限来自 global.TRACK_BATCH_MAX_SIZE，服务端按 global.PERF_PAYLOAD_MAX_BYTES 校验体积 —— 客户端把上限调大而服务端不同步的话，这一批会在网关就被拒掉，症状是「埋点全丢」而不是「部分丢」。",
+          "items": {
+            "$ref": "#/$defs/TrackEvent"
+          }
+        }
+      }
+    },
+    "TrackBatchResp": {
+      "type": "object",
+      "description": "埋点上报结果。**部分失败是正常返回而不是错误**：埋点是尽力而为的数据，一批里有一条参数非法就让整批失败，等于用一条脏数据换掉九条好数据。",
+      "additionalProperties": false,
+      "required": ["accepted", "failed"],
+      "properties": {
+        "accepted": {
+          "type": "integer",
+          "description": "落库成功的事件数。"
+        },
+        "failed": {
+          "type": "integer",
+          "description": "被丢弃的事件数。客户端据此判断埋点健康度：这个数持续非零说明字典与实现已经漂移（例如某个事件名被运营删了而客户端还在发），需要人去看，而不是让它静默地一直失败。"
+        }
+      }
+    },
+    "CrashReportReq": {
+      "type": "object",
+      "description": "POST /ops/crash 请求体（B16 §6 全局错误捕获 + 上报，验收 9：后台能收到完整堆栈 + traceId）。\n\n**traceId 是这个契约存在的理由**：没有它，后台收到的是一堆匿名堆栈，而线上排查的第一步永远是「这个玩家当时在做什么」。禁止项写死了「不要让日志无 traceId」。",
+      "additionalProperties": false,
+      "required": ["traceId", "message", "stack", "clientVersion", "ts"],
+      "properties": {
+        "traceId": {
+          "type": "string",
+          "description": "全链路追踪 id。头名在服务端是 TraceIdFilter.TRACE_HEADER 常量，客户端网络层持同一字面量 —— **它刻意不做成配置项**：客户端发第一个请求时就要用这个头，无法跟随服务端配置热更，做成配置只会多出一份会与代码漂移的副本。客户端在每次请求时透传，崩溃时把最后一条上报出来 —— 于是「玩家说卡住了」可以被还原成一条完整链路。"
+        },
+        "message": {
+          "type": "string",
+          "description": "错误摘要。取异常的第一行而不是整个 message：某些异常的 message 里嵌了完整的请求体，会把这一条上报撑到超过 payload 预算。"
+        },
+        "stack": {
+          "type": "string",
+          "description": "完整堆栈。验收 9 要求「完整」，所以不做截断 —— 但客户端必须在发送前把它压到 payload 预算内（超长时保留头部与尾部，中间省略并标注省略行数），因为丢掉的往往正是最深的那一帧。"
+        },
+        "clientVersion": {
+          "type": "string",
+          "description": "崩溃时的客户端版本。灰度期间这是最关键的一个字段：5% 灰度批次里崩溃率翻倍，只有按版本分组才能看出来，而「崩溃率上升」这个总量指标在 5% 的批次里根本不动。"
+        },
+        "sceneName": {
+          "type": ["string", "null"],
+          "description": "崩溃时所在场景（world / battle / city / ...）。为 null 表示崩在场景切换之间 —— 那本身就是一种有价值的定位信息，所以用 null 而不是空串，空串会被读成「有个叫空名字的场景」。"
+        },
+        "ts": {
+          "type": "integer",
+          "format": "int64",
+          "description": "崩溃的客户端毫秒时间戳。落库时同时记录服务端时间，两者之差就是客户端时钟偏移量 —— 那是判断「这个玩家的倒计时为什么不对」的直接证据。"
+        }
+      }
+    },
+    "CrashReportResp": {
+      "type": "object",
+      "description": "崩溃上报结果。**永远返回 accepted=true 或走 HTTP 错误，不做业务失败分支**：崩溃上报的调用方是一个已经处于异常状态里的客户端，给它一个需要再处理一遍的失败语义，等于在崩溃处理里再制造一次崩溃机会。",
+      "additionalProperties": false,
+      "required": ["accepted"],
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "description": "是否已收下。false 只在服务端自身落库失败时出现，此时客户端不重试（重试也没用），但会在下次启动时补报。"
+        }
+      }
+    },
+    "TableMeta": {
+      "type": "object",
+      "description": "一张配置表的元信息（B16 §5 配置热更）。",
+      "additionalProperties": false,
+      "required": ["name", "version", "hash"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "表名，形如 global / unit / season。"
+        },
+        "version": {
+          "type": "string",
+          "description": "表版本号。**仅供人读与日志排查，不参与热更判定**：版本号是人给的，会出现「改了内容忘了升版本」，那时客户端认为自己是最新的而实际上不是。判定一律走 hash。用字符串而不是整数，是为了将来能放 git 短 sha 这类非数字版本。"
+        },
+        "hash": {
+          "type": "string",
+          "description": "表内容的指纹，由行数据算出（不含版本号）。内容变了 hash 就变 —— 内容变了而 hash 没变在数学上不可能，这正是验收 7「修改配置表后客户端拉取新版本，不改包生效」的判定依据。"
+        }
+      }
+    },
+    "ConfigManifestReq": {
+      "type": "object",
+      "description": "POST /ops/config/manifest 请求体：客户端报上自己手里各表的 hash。",
+      "additionalProperties": false,
+      "required": ["tableHashes"],
+      "properties": {
+        "tableHashes": {
+          "type": "object",
+          "description": "客户端本地各表的 hash。缺一张表（新装或首次登录）就不放这个 key —— 缺 key 与「hash 为空串」语义不同：前者是「我没有这张表」，后者是「我有一张内容未知的表」，而后者不该存在，所以不允许。",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ConfigManifestResp": {
+      "type": "object",
+      "description": "配置清单响应（验收 7）。同时给全量清单与「哪些表要更新」：清单用于展示与排查，outdated 用于决定下载什么。",
+      "additionalProperties": false,
+      "required": ["version", "tables", "outdated"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "清单版本，取服务端全部表版本的指纹。客户端把它记在本地，下次请求时若相同则可以整份跳过 —— 那是一次纯粹的省流量优化，正确性仍然由每张表的 hash 保证。"
+        },
+        "tables": {
+          "type": "array",
+          "description": "全部可热更的表（范围见 global.HOT_UPDATE_SCOPE）。",
+          "items": {
+            "$ref": "#/$defs/TableMeta"
+          }
+        },
+        "outdated": {
+          "type": "array",
+          "description": "客户端需要下载的表名，按 tables 的顺序。**由服务端算**：比 hash 不比版本号这条规则只能存在一份。",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "TrackPolicy": {
+      "type": "object",
+      "description": "客户端的埋点攒批策略，由服务端下发（B16 §3：10 条或 10 秒触发）。\n\n**为什么由服务端下发而不是客户端写死**：客户端没有配置表加载器，写死 10 条 / 10 秒就是铁律 1 禁止的硬编码；而这两个数字是运营口径 —— 分析侧发现漏斗数据太粗时会想把批调小，那时不该要求客户端发版。\n\n**为什么搭 AppVersionResp 的车而不是单开端点**：版本检查是每个会话的第一个请求，它本身就在下发「这个客户端应当如何行为」（要不要强制更新、在不在灰度里），埋点策略属于同一类。多一个端点意味着多一次弱网下的往返，而弱网恰恰是埋点最需要工作的场景。",
+      "additionalProperties": false,
+      "required": ["maxBatchSize", "flushSeconds"],
+      "properties": {
+        "maxBatchSize": {
+          "type": "integer",
+          "description": "攒够多少条发一批。来源 global.TRACK_BATCH_MAX_SIZE。客户端据此决定何时触发一次上报请求；服务端按同一个值攒批落库，两边同源所以不会出现「客户端发 50 条而服务端按 10 条拒收」这种漂移。"
+        },
+        "flushSeconds": {
+          "type": "integer",
+          "description": "最长攒多少秒。来源 global.TRACK_BATCH_FLUSH_SECONDS。这一路是给低频玩家兜底的：只按条数的话，一个点两下就退出的玩家那两个事件永远发不出去，而「进来就退」正是流失分析最需要的样本。时间窗从队首事件算起，不是从上一次发送算起。"
+        }
+      }
+    },
+    "AppVersionReq": {
+      "type": "object",
+      "description": "POST /ops/app/version 请求体：客户端启动时报上自己的版本与玩家 id。",
+      "additionalProperties": false,
+      "required": ["clientVersion"],
+      "properties": {
+        "clientVersion": {
+          "type": "string",
+          "description": "客户端自报版本，点分数字（形如 1.4.0）。**服务端按段比较而不是按字符串比较**：字符串序里 \"1.10.0\" < \"1.9.0\"，于是 1.9 之后的所有版本都会被判为更旧，全服被要求强制更新到一个不存在的版本 —— 那是一个会直接停服的 bug，而它在 1.9 之前永远测不出来。"
+        },
+        "playerId": {
+          "type": ["string", "null"],
+          "description": "玩家 id，未登录时为 null。**灰度按它做稳定哈希**，所以未登录的人不进灰度：灰度批次里的崩溃必须能归因到具体玩家，否则那 5% 里发生的事无法排查。null 与空串在这里同义，都读作「还没有玩家身份」。"
+        }
+      }
+    },
+    "AppVersionResp": {
+      "type": "object",
+      "description": "版本检查结果（验收 8：低版本客户端收到强制更新提示且无法进入游戏）。",
+      "additionalProperties": false,
+      "required": ["latest", "forceUpdate", "grayEnabled", "trackPolicy"],
+      "properties": {
+        "latest": {
+          "type": "string",
+          "description": "最新客户端版本，来自 global.RELEASE_LATEST_VERSION。"
+        },
+        "forceUpdate": {
+          "type": "boolean",
+          "description": "是否需要强制更新。true 时客户端必须停在提示页，不得进入游戏 —— 放行一个低于 minSupported 的版本等于让它在服务器上写坏数据，而那种损坏在玩家更新之后才会显现，届时已经无法归因。"
+        },
+        "grayEnabled": {
+          "type": "boolean",
+          "description": "该玩家是否落在灰度批次内（global.RELEASE_GRAY_PERCENT）。**与 forceUpdate 正交**：灰度 5% 不等于另外 95% 的人不能玩。同一个玩家的判定结果每次一致（稳定哈希），否则他刷新一次就可能从灰度里掉出去，而「刚才能玩现在不能玩」是最难排查的一类投诉。"
+        },
+        "notice": {
+          "type": ["string", "null"],
+          "description": "强制更新的提示文案（global.RELEASE_FORCE_UPDATE_NOTICE），forceUpdate=false 时为 null —— 不强制更新时不该打扰玩家。文案必须说明「为什么」：只说「请更新」的话，被挡在门外的玩家会以为游戏坏了而直接卸载。"
+        },
+        "trackPolicy": {
+          "$ref": "#/$defs/TrackPolicy",
+          "description": "本次会话应当使用的埋点攒批策略。<b>必填而不是可空</b>：客户端从第一个事件（startup）开始就要按策略攒批，而版本检查正是启动的第一个请求，所以策略在这一刻必然已经拿到。做成可空的话客户端就必须准备一套兜底数字，而那套兜底数字正是铁律 1 禁止的硬编码 —— 更糟的是它会与服务端悄悄漂移。"
+        }
+      }
+    }
+  }
+}

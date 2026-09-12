@@ -1,0 +1,15 @@
+{
+  "name": "ironoath-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "《列王纪·铁誓》客户端逻辑层。Cocos Creator 3.8 工程；本 package.json 只服务于 headless 类型检查与逻辑单测。",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.testcheck.json",
+    "test": "tsc -p tsconfig.test.json && node --test build-test/assets/scripts/test/",
+    "test:build": "tsc -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@types/node": "20.12.7",
+    "typescript": "5.4.5"
+  }
+}

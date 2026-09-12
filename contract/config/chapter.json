@@ -1,0 +1,86 @@
+{
+  "table": "chapter",
+  "version": 4,
+  "comment": "章节表：5 章、每章 10 关（B02 要求每章 10 关）。逐关数据在 stage 表，本表只放章级信息。\n\n**difficultyBase 是推导值不是手写值** = 本章第 1 关的敌方总兵力，由 global 表的 STAGE_DIFFICULTY_BASE / RATIO_EARLY / EARLY_THROUGH / RATIO_LATE 四个参数决定。",
+  "designNote": "【难度口径的裁定（重要，别再改回手写值）】\nB00 与 B09 都写 D(n) = D0 × 1.25^(n-1)，但 v1 的 difficultyBase 是手写的 200/320/460/640/880 —— 两者对不上：按 1.25 章内 10 关涨 ×7.45，于是第一章第 10 关难度 1490、第二章第 1 关只有 320，**章节交界处难度掉了 4.66 倍**（玩家刚打通 BOSS，下一章开头突然简单四倍）；反过来按表里的 base 推，章内比率只有 (320/200)^(1/10)=1.048，根本不是 1.25。\n\n【为什么裁定「难度 = 敌方总兵力」而不是别的抽象数值】\n因为这条曲线有一个精确的验证点：10 × 1.25^49 ≈ 560,000，而 mapmonster_lv50 的总兵力是 224208+112104×3 = 560,520。同一条 1.25 曲线跑 50 步，终点几乎精确落在世界野怪的最高等级上 —— 这不可能是巧合，说明设计意图就是「关卡难度与世界野怪等级共用一条兵力曲线」。\n把难度定义成总兵力还有两个好处：① 它是可验的（验收 4「零氪可通前三章」要拿 B02 的零氪 7 天模型去比玩家兵力与敌方兵力，抽象难度值没法比）；② 它与世界野怪同源，玩家不会遇到「关卡第 30 关比地图上的 LV50 野怪难十倍」这种口径分裂。\n\n【阶级是章级属性，不是关卡属性】\nenemyTier 逐章抬（1/1/2/3/4），章内 10 关不变。这样「难度」只有一个自变量（总兵力），曲线才是干净的 1.25^n；若阶级也逐关抬，难度就有两个轴，1.25 这条曲线立刻失去含义。\n\n【检查点与 BOSS 靠构成和机制加难，不靠数字】\nB09 §二 要求每 5 关一个检查点（难度跳变）、每章末 BOSS 必须有机制而非纯数值。两者都刻意**不改总兵力**：检查点换成「弓兵+攻城器」的脆皮高血量构成（逼玩家带骑兵），BOSS 换成四兵种均分 + 一个机制。改数字会让难度曲线出现无法解释的突起，而改构成是「同样的人数，更难打」—— 玩家能理解，策划也能调。\n\n【章节奖励是通关宝箱，逐关奖励在 stage 表】\n本表的 rewardGold/rewardHeroFragment/rewardStamina 是打通全章 10 关后的一次性宝箱；逐关的金币在 stage 表，且 10 关之和恰好等于本表的 rewardGold（Σ stageNo = 55，所以逐关金币 = rewardGold × stageNo / 55）—— 不引入新的数字，也就不引入新的可调参数。\n\n【v4：难度曲线改为分段，单一 1.25 被推翻】\n曾经用 curve.CHAPTER_DIFFICULTY 的单一 1.25，配合「难度 = 敌方总兵力」与「第 50 关对齐 mapmonster_lv50」两个锚点，解出 D0 = 10。三条一起成立的后果是第 30 关 = 10×1.25^29 ≈ 6462 兵，而零氪首日带兵上限只有 850、第 7 天 1513 —— **第三章成为一堵墙，B09 §二「前三章必须零氪可三星通关（首日体验底线）」直接不成立**。\n根因是四条约束不可能同时满足：B00 的单一几何曲线、难度=总兵力、终点对齐 LV50 野怪、前三章首日可通。放弃的是「单一几何曲线」这一条（改成前 30 关 1.12、后 20 关 1.466），因为另外三条都有独立的验收标准或已定稿的锚点在支撑。\n\n【连带修正：野怪与关卡不再共用同一条曲线】\nmapmonster.json 的注释原本声称「野怪与关卡共用同一条难度标尺」。这句话在分段之后不再成立，而且**它本来就不该成立**：野怪是开放世界的阶梯，玩家按自己的节奏接近（打不过 LV30 就去打 LV20，没有任何验收标准要求首日能打野怪 LV30）；关卡是有首日底线的线性推进，必须让新玩家在第一天就走完前三章。两者需求不同，硬套一条曲线正是这个矛盾的来源。\n现在两者**共用单位（敌方总兵力）但不共用曲线**，且终点仍然对齐（第 50 关 ≈ 560,700 vs LV50 野怪 560,520，相差 0.03%）——所以「关卡打到头与地图上最强的野怪同一量级」这个体感保住了，而中段两者的强度不再被强行绑定。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "chapterNo": "LONG_POS",
+    "stageCount": "LONG_POS",
+    "requireMainLevel": "LONG_POS",
+    "difficultyBase": "LONG_POS",
+    "preChapter": "?REF:chapter",
+    "rewardGold": "LONG_NONNEG",
+    "rewardHeroFragment": "LONG_NONNEG",
+    "rewardStamina": "LONG_NONNEG",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "chapter_01",
+      "name": "第一章 · 落土",
+      "chapterNo": 1,
+      "stageCount": 10,
+      "requireMainLevel": 5,
+      "difficultyBase": 10,
+      "rewardGold": 200,
+      "rewardHeroFragment": 5,
+      "rewardStamina": 20,
+      "why": "落地建城到站稳脚跟。要求主城 3 级（铁矿场解锁等级），确保玩家已经理解四种资源的分工。\n\n【主城门槛为什么是 5 而不是 3】三星里的「无损」要求己方阵亡为 0，而战斗内核把「医院装不下的伤兵」算作永久死亡（BattleSimulator.casualties 的 overflow）。医院 requireMainLevel = 5，所以第一章若只要 3 级，玩家会在根本建不起医院的情况下推进 —— 第二星对他永远不可达，B09 §二「前三章必须零氪可三星（首日体验底线）」就被破坏了。把门槛对齐到医院可用的那一级，比放宽「无损」的定义更诚实：无损本来就应当需要一点准备（建医院），而按 B03 的建造时间曲线（T0=30s、比率 1.18），主城升到 5 级只要几分钟，不构成首日体验的障碍。"
+    },
+    {
+      "id": "chapter_02",
+      "name": "第二章 · 结邻",
+      "chapterNo": 2,
+      "stageCount": 10,
+      "requireMainLevel": 5,
+      "difficultyBase": 31,
+      "preChapter": "chapter_01",
+      "rewardGold": 400,
+      "rewardHeroFragment": 10,
+      "rewardStamina": 40,
+      "why": "小队解锁节点（主城 5 级 + D1）。章节奖励首次给武将碎片，把玩家从单机体验推向社交。"
+    },
+    {
+      "id": "chapter_03",
+      "name": "第三章 · 争锋",
+      "chapterNo": 3,
+      "stageCount": 10,
+      "requireMainLevel": 8,
+      "difficultyBase": 96,
+      "preChapter": "chapter_02",
+      "rewardGold": 600,
+      "rewardHeroFragment": 15,
+      "rewardStamina": 60,
+      "why": "攻城工坊解锁节点（主城 8 级 = B00 首日目标）。首次出现带城墙的关卡，教玩家用攻城器。"
+    },
+    {
+      "id": "chapter_04",
+      "name": "第四章 · 合纵",
+      "chapterNo": 4,
+      "stageCount": 10,
+      "requireMainLevel": 10,
+      "difficultyBase": 392,
+      "preChapter": "chapter_03",
+      "rewardGold": 800,
+      "rewardHeroFragment": 20,
+      "rewardStamina": 80,
+      "why": "联盟解锁节点（主城 10 级 + D3）。关卡难度开始超出单人编队能力，设计上逼玩家借联盟援军。"
+    },
+    {
+      "id": "chapter_05",
+      "name": "第五章 · 问鼎",
+      "chapterNo": 5,
+      "stageCount": 10,
+      "requireMainLevel": 14,
+      "difficultyBase": 17980,
+      "preChapter": "chapter_04",
+      "rewardGold": 1000,
+      "rewardHeroFragment": 25,
+      "rewardStamina": 100,
+      "why": "国家解锁节点（主城 16 级 + D14）之前的最后一章。通关它意味着玩家已经具备进入国战的战力。"
+    }
+  ]
+}

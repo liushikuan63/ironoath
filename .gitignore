@@ -1,0 +1,35 @@
+# 构建产物
+target/
+build/
+dist/
+out/
+*.class
+
+# 客户端
+client/node_modules/
+client/build-test/
+client/temp/
+client/library/
+client/local/
+client/profiles/
+client/native/
+
+# 代码生成器输出（生成物入库，但临时对比目录不入库）
+.tmp-contract-check/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# 日志与本地配置
+*.log
+logs/
+server/game-web/src/main/resources/application-local.yml
+
+# 系统
+.DS_Store
+Thumbs.db

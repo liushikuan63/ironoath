@@ -1,0 +1,113 @@
+/**
+ * 由 tools/config-gen 依据 contract/proto/ 下的 JSON Schema 自动生成，禁止手改。
+ * 要改协议请改 Schema，然后运行 `npm run gen`；CI 会用 scripts/check-contract-sync.sh 校验同步性。
+ *
+ * 本文件只有类型声明，不含任何运行期逻辑 —— 客户端不得在此实现影响数值或胜负的判断（铁律 2）。
+ */
+
+/**
+ * 计价货币。取值必须与 game-config 的 `ShopCfg.PriceCurrency` 与 `shop.json` 的 fieldTypes 声明逐字一致（由 `ShopContractParityTest` 钉住三处）。
+ *
+ * 四个取值的账本各不相同：GOLD 是 resource 表里的金币（`PlayerWallet`）；ALLIANCE_COIN 是成员个人贡献值（`Alliance.contributions`，B10 明写「贡献值可兑换联盟商店道具」）；SQUAD_COIN 是小队币（`Squad.squadCoins`，由小队互助产出）；SEASON_COIN 是赛季结算发的赛季币（`SeasonLedger`）—— 它的**用途口径尚未裁决**（见收口清单 #6b），而且当前唯一一行的货品是 `item_buff_rally_2h`，一个效果没有定义数值的道具（#19），所以本文件里它是枚举成员但不可购买。
+ */
+export type ShopCurrency =
+  | 'GOLD'
+  | 'ALLIANCE_COIN'
+  | 'SQUAD_COIN'
+  | 'SEASON_COIN'
+
+/**
+ * 限购的刷新口径。取值与 `ShopCfg.RefreshType` 一致。
+ *
+ * **为什么这一列必须是枚举而不是「limitCount 每天几次」这种约定**：NONE 与 DAILY 在表里长得一样（都是 limitCount=20），差别只在什么时候清零，而这决定了玩家什么时候能再买一次。服务端算限购时读的就是这一列，两种周期共用同一个计数组件、把**周期标签**作为键的一段（日切用 `DayKey`、周口径用 `WeekKey`，两者共用同一个 `CALENDAR_ZONE`）—— 周期标签已经在键里，所以键只会因跨期而换新，绝不会因为 TTL 到点而在期内提前刷新。
+ */
+export type ShopRefresh =
+  | 'NONE'
+  | 'DAILY'
+  | 'WEEKLY'
+
+/**
+ * 货架上的一行。**客户端只显示这里给出的内容，绝不自己拼货架**：`requireMainLevel` 与限购在服务端算，客户端拼出来的版本会在下一次热更表之后立刻变成一份过期货架。
+ */
+export interface ShopRowView {
+  /** `shop` 表的行 id（如 `shop_speedup_build_1h`）。**下单用它是唯一的**：用 itemId 定位会命中同一件道具的多行价格，而那正是「一条商品行一个价格」要防的形状。 */
+  rowId: string
+  /** 买到的道具 id（`item` 表的行 id）。与 rowId 是两个东西，所以两个字段都在。 */
+  itemId: string
+  /** 表里的显示名。**下发它而不是让客户端内置**：改个名字不该发一次版。 */
+  name: string
+  /** 这一行花哪种货币。客户端应当据此决定显示哪个余额（金币在资源条上、贡献值在联盟面板里、小队币在小队面板里）。 */
+  currency: ShopCurrency
+  /** 单价（货币单位，不是「分」—— 金币/贡献值/小队币都是游戏内计数，只有真实支付金额才用分）。**总花费 = price × count，由服务端算**。 标 int64 的理由与 balance 同一条：它是表里的 LONG 列，而服务端要拿它做乘法 —— 用 int 承接一个 long 列，等于把「以后有人把价格配得很大」变成一次静默溢出而不是一个类型错误。 */
+  price: number
+  /** 限购刷新口径。 */
+  refreshType: ShopRefresh
+  /** 一个周期内最多买几个。`refreshType=NONE` 时它是**永久**上限（表里 LONG_POS 不允许 0，所以「不限购」只能表达成 NONE + 一个足够大的数，这一条由 `why` 说明而不是靠 0）。 */
+  limitCount: number
+  /** 本周期已买几个。给客户端画进度条用 —— 只给 remaining 不够，玩家看到「还能买 3 个」时不知道自己是快用完了还是刚用完一半。 */
+  used: number
+  /** 本周期还能买几个 = max(0, limitCount - used)。**由服务端算**：客户端自己减会在跨期的那一刻算错（日切时刻与服务器的 UTC+8 口径可能差好几个小时）。 */
+  remaining: number
+  /** 解锁所需主城等级，0 表示不限。 */
+  requireMainLevel: number
+  /** 此刻这个玩家能不能买。**它是「不满足就为 false」的汇总**：等级不够、次数用完、余额不足、不在这个页签所要求的联盟/小队里 —— 四种都算 false。 之所以要让服务端算这个布尔而不是让客户端自己比：客户端能比的只有它看得见的三个数，而「他今天到底买过几次」「他在不在联盟里」是服务端状态。让客户端猜的结果是按钮亮着、点下去报错。 */
+  purchasable: boolean
+  /** 不能买的原因（人话），可买时为 null。**必须带原因而不是只有一个灰按钮**：「主城 5 级解锁」与「本周限购已用完」是两种完全不同的玩家动作（继续升等 vs 等下周），而一个没有文案的灰按钮会让玩家以为坏了。 */
+  lockReason: string | null
+}
+
+/**
+ * GET /shop/list 响应：某个货币页签的货架 + 本人余额。
+ */
+export interface ShopListResp {
+  /** 回显请求的页签。 */
+  currency: ShopCurrency
+  /** 这一页现在能不能兑换。`false` 时 `rows` 仍然会给（让玩家看见有什么、以后能换什么），但每一行的 `purchasable` 都是 false。见本文件 description 第 3 条：「还没有」与「不存在」必须是两句话。 */
+  open: boolean
+  /** 为什么没开（`open=false` 时给人看的一句话）。 */
+  notice: string | null
+  /** 该货币的全部商品行，按表里的顺序。**不按等级过滤**：等级不够的商品应当显示成「主城 5 级解锁」而不是消失 —— 让玩家知道有这个东西，是解锁类门槛存在的意义。 */
+  rows: ShopRowView[]
+  /** 本人这种货币的当前余额。金币取**惰性结算之后**的值（金币会自然增长，取一个未结算的旧值会让客户端显示「差 3 个买不起」而服务端其实能扣）。 **为 null 表示「商店没有接这种货币的账本」**（今天只有 SEASON_COIN：赛季币的用途口径尚未裁决，见收口清单 #6b），客户端此时不得显示余额 —— 显示一个假的 0 会让玩家以为「我有 0 个赛季币」，而真实情况是「我们还没决定赛季币能干什么」。 标 int64 的理由：服务端的资源与社交货币全是 long，不写 format 生成器会产出 int，而 long→int 的收窄编译期不报错、只在大额时静默绕成负数 —— 客户端显示一个负余额，玩家以为存档坏了。 */
+  balance: number | null
+  /** 服务端时间戳（铁律 5）。客户端据此推算「还有多久到下一个日切/周切」，不得用自己本地时间算 —— 那会让限购显示随玩家改系统时钟而变化。 */
+  serverNow: number
+}
+
+/**
+ * POST /shop/buy 请求体。
+ */
+export interface ShopBuyReq {
+  /** 幂等键。兑换会扣货币并发道具，重放等于刷道具。 */
+  requestId: string
+  /** 客户端**以为**自己在哪个商店页兑换。必须与该行的 `priceCurrency` 一致，不一致直接拒绝（见本文件 description 第 2 条）。 */
+  currency: ShopCurrency
+  /** `shop` 表的行 id。以前这个字段叫 `itemId` 却在注释里写着「shop 表的行 id」—— 一个名字两种读法的字段在商店里必然出事：同一件道具在表里可以有多行不同价格（`item_res_wood_10k` 就同时出现在金币行与联盟行），按 itemId 找行会拿错价格。 */
+  rowId: string
+  /** 买几个。**不得为 0 或负数**：`limitCount - count` 之类的判断在负数下会变成「买得越多剩得越多」。 */
+  count: number
+}
+
+/**
+ * POST /shop/buy 响应：这一单实际花了什么、还剩多少、限购用到哪。
+ */
+export interface ShopBuyResp {
+  /** 买的是哪一行。 */
+  rowId: string
+  /** 实际入账的道具 id。与请求里的 rowId 一起构成「花在哪、拿到什么」的完整凭据 —— 客服处理「我买了但背包里没有」时要的就是这两个加上 requestId。 */
+  itemId: string
+  /** 实际成交个数。 */
+  count: number
+  /** 实际扣的货币。 */
+  currency: ShopCurrency
+  /** 实际扣掉的总额 = price × count。**回显它而不是让客户端按自己那份表快照乘**：热更之后两边算出的总价一旦不同，客户端显示的会比实际扣的多/少，而差额的投诉只会打给客服。乘积用 int64（两个 long 相乘的结果必须是 long）。 */
+  spent: number
+  /** 扣完之后的余额（long，理由见 ShopListResp.balance）。 */
+  balance: number
+  /** 本周期累计已买个数（含这一单）。 */
+  used: number
+  /** 本周期还能买几个。 */
+  remaining: number
+  /** 服务端时间戳。 */
+  serverNow: number
+}

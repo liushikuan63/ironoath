@@ -1,0 +1,790 @@
+/**
+ * 由 tools/config-gen 依据 contract/proto/ 下的 JSON Schema 自动生成，禁止手改。
+ * 要改协议请改 Schema，然后运行 `npm run gen`；CI 会用 scripts/check-contract-sync.sh 校验同步性。
+ *
+ * 本文件只有类型声明，不含任何运行期逻辑 —— 客户端不得在此实现影响数值或胜负的判断（铁律 2）。
+ */
+
+/**
+ * 集结目标的类型。取值必须与 world 协议的 TargetType 一致（SocialContractParityTest 断言）。决定集结到达后的行为分支，与 B07 §2 的行军目标类型同一套口径。
+ */
+export type SocialTargetType =
+  | 'EMPTY'
+  | 'MONSTER'
+  | 'RESOURCE'
+  | 'PLAYER_CITY'
+  | 'ALLIANCE_BUILDING'
+
+/**
+ * 小队职位（B10 §4 权限矩阵的 squad scope）。只有两级：小队 5~10 人，再多一层职位就是官僚主义 —— C00 公理七指出小队满足的是「我和兄弟们」，熟人圈子里没有副队长。
+ */
+export type SquadRole =
+  | 'LEADER'
+  | 'MEMBER'
+
+/**
+ * 联盟职位（B10 §4 权限矩阵的 alliance scope）。四级来自 B10 §2 的「盟主/副盟主/长老/成员」。**职位到权限的映射不在这里，在 role_permission 表**（B10 禁止项：不要把权限判断硬编码在代码里）。本枚举只提供「有哪些角色」，具体能不能做某件事由配置表回答。
+ */
+export type AllianceRole =
+  | 'LEADER'
+  | 'OFFICER'
+  | 'ELDER'
+  | 'MEMBER'
+
+/**
+ * 聊天频道（B10 §5：世界 / 联盟 / 小队 / 私聊）。四个频道是三层社交的可见化：世界频道让陌生人能被发现，联盟与小队频道让组织内部能协同，私聊让熟人关系能维持。少任何一个都会让某一层社交失去入口。
+ */
+export type ChatChannel =
+  | 'WORLD'
+  | 'ALLIANCE'
+  | 'SQUAD'
+  | 'PRIVATE'
+
+/**
+ * 社交事件类型。离线补偿（B10 验收 12）与推送（验收 5）共用这一套类型 —— 推送是「实时送到」，补偿是「上线后补齐」，两者的**内容必须一致**，否则玩家会看到两种不同的通知文案描述同一件事。
+ *
+ * 后四个（SQUAD_JOINED / ALLIANCE_JOINED / ALLIANCE_REJECTED / HELP_REQUESTED）不对应任何验收项，但缺了它们玩家就会遇到「申请交上去石沉大海」——B10 禁止项明写绝不静默失败，礼貌性通知也是这条纪律的一部分。
+ */
+export type SocialEventType =
+  | 'MEMBER_ATTACKED'
+  | 'SQUAD_DISBANDED'
+  | 'ALLIANCE_APPLIED'
+  | 'ALLIANCE_KICKED'
+  | 'SQUAD_KICKED'
+  | 'RALLY_INVITED'
+  | 'RALLY_DEPARTED'
+  | 'ALLIANCE_TRANSFERRED'
+  | 'ALLIANCE_DISBANDED'
+  | 'HELP_RECEIVED'
+  | 'SQUAD_JOINED'
+  | 'ALLIANCE_JOINED'
+  | 'ALLIANCE_REJECTED'
+  | 'HELP_REQUESTED'
+  | 'ALLIANCE_ROLE_SET'
+
+/**
+ * 帮助的目标类型（B10 §2：升级 / 治疗可请求帮助）。两者共用同一个每日额度 global.HELP_DAILY_LIMIT —— 各给一份等于把加速总量翻倍，而 B10 禁止项明写「不要让小队互助与联盟帮助简单叠加」。
+ */
+export type HelpTargetKind =
+  | 'BUILDING'
+  | 'TRAINING'
+  | 'TREATING'
+
+/**
+ * 集结的发起层级。三级的人数上限分别取 global.RALLY_MAX_SIZE_SQUAD(5) / _ALLIANCE(20) / _NATION(50)。国家层在 B13 落地前不会产生，枚举先留位以免届时改协议。
+ */
+export type RallyScope =
+  | 'SQUAD'
+  | 'ALLIANCE'
+  | 'NATION'
+
+/**
+ * 集结状态。PREPARING 期间成员可以加入或退出，DEPARTED 之后不可更改 —— B10 验收 11 要求「倒计时结束时所有参与部队统一出发」，若出发后还能加人，就会出现「大部队已经打完了我才到」的部队白送一次行军时间。
+ */
+export type RallyStatus =
+  | 'PREPARING'
+  | 'DEPARTED'
+  | 'ARRIVED'
+  | 'CANCELLED'
+
+/**
+ * 一个随军武将位在合并行军里的状态。
+ *
+ * **为什么必须把落选原因也下发**：武将位按加入顺序抢，成员点完「加入」只看到自己加成功了，如果面板不说他的武将落选以及为什么，他会以为加成生效了 —— 打输之后才发现在白送一次行军。「协商谁能上」是集结的核心社交动作，而协商需要一份看得见的事实。
+ */
+export type RallyHeroSlotState =
+  | 'SELECTED'
+  | 'OVER_CAP'
+  | 'DUPLICATE'
+
+/**
+ * 世界坐标（格）。与 world 协议的 Coord 形状相同，但生成器只支持同文件 $ref，所以这里各有一份。**两份的字段名与类型必须一致**，由 SocialContractParityTest 断言 —— 复制而不校验才是真正的危险：漂移的症状是服务端下发的字段在客户端解析成 undefined，TS 侧不会报错，UI 只会空白。
+ */
+export interface SocialCoord {
+  /** 横坐标（格） */
+  x: number
+  /** 纵坐标（格） */
+  y: number
+}
+
+/**
+ * 小队成员的一条摘要（B10 §二）。power 是**展示战力**而不是匹配战力 —— 小队里看的是「兄弟练得怎么样」，不是「我能不能打他」；圈层校验用的匹配战力只在 B08 的搜索与攻击链路里出现。
+ */
+export interface SquadMember {
+  /** 玩家 id */
+  id: string
+  /** 昵称。服务端下发，客户端不得自行翻译或截断 */
+  name: string
+  /** 展示战力 */
+  power: number
+  /** 最近活跃的服务端时间戳。小队只有 5~10 人，谁三天没上线一眼就该看出来 —— 这是队长决定要不要补人的唯一依据 */
+  lastActiveAt: number
+  /** 职位 */
+  role: SquadRole
+  /** 主城等级。**必须下发**：小队人数上限的第二档门槛是「队长主城 8 级」（B10 §1），客户端要能解释「为什么现在只能 5 人」 */
+  mainCityLevel: number
+}
+
+/**
+ * 小队视图（B10 §二）。**isSubSquad 与 allianceId 是 B10 关键设计点 1 的落地**：玩家加入联盟后小队自动转为联盟内分队，保留小队聊天、互助与集结 —— 熟人小圈子不能被大组织稀释，这是留存的关键细节。所以本视图在玩家入盟后**仍然完整下发**，一个字段都不少。
+ */
+export interface SquadView {
+  /** 小队 id */
+  id: string
+  /** 小队名 */
+  name: string
+  /** 队长玩家 id */
+  leaderId: string
+  /** 成员列表，按加入时间升序（稳定顺序，客户端不重排） */
+  members: SquadMember[]
+  /** 小队等级。决定人数上限与商店货品（squad_config 表） */
+  level: number
+  /** 当前等级内已累计的活跃度 */
+  exp: number
+  /** 升到下一级还需多少活跃度；满级为 0 */
+  expToNext: number
+  /** 人数上限。**服务端算好后下发**：它同时取决于小队等级与队长主城等级（5→8→10 的第二档门槛是队长主城 8 级），让客户端自己查两张表再取小，必然会出现双端不一致 */
+  memberCap: number
+  /** 小队商店的货品档位。0 表示商店尚未解锁 */
+  shopLevel: number
+  /** 我的小队币余额（个人资产，不是小队公共资金） */
+  squadCoin: number
+  /** 所属联盟 id；独立小队为 null */
+  allianceId: string | null
+  /** 是否为联盟内分队。true 时小队功能**全部保留**（验收 1）—— 这个字段存在的意义就是让客户端能明确画出「既是分队又是小队」的双重身份，而不是把小队页签藏起来 */
+  isSubSquad: boolean
+  /** 今日小队任务已完成数（合计讨伐野怪数） */
+  dailyQuestProgress: number
+  /** 今日小队任务目标数。来源 global.SQUAD_QUEST_DAILY_MONSTER，下发是为了让客户端能显示「7/20」而不是自己读配置 */
+  dailyQuestTarget: number
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * 联盟成员的一条摘要。比小队成员多了职位与贡献值 —— 联盟是 30~150 人的组织，「谁在这个组织里出了多少力」必须可见，否则盟主无从判断该提拔谁、该踢谁。
+ */
+export interface AllianceMember {
+  /** 玩家 id */
+  id: string
+  /** 昵称 */
+  name: string
+  /** 展示战力 */
+  power: number
+  /** 职位 */
+  role: AllianceRole
+  /** 累计贡献值 */
+  contribution: number
+  /** 最近活跃的服务端时间戳 */
+  lastActiveAt: number
+  /** 该成员所属的小队 id（联盟内分队）；无小队为 null。**必须下发**：盟主集结时要能按分队点名，否则 150 人的名单就是一堆散沙 */
+  squadId: string | null
+}
+
+/**
+ * 一条联盟科技的当前进度（B10 §2：用联盟资金研究、全盟生效、上限随联盟等级）。
+ */
+export interface AllianceTechView {
+  /** `alliance_tech` 表的行 id。 */
+  techId: string
+  /** 本盟已研究到的等级。表里 maxLevel 是绝对上限，实际还受联盟等级约束。 */
+  level: number
+  /** 当前联盟等级下这一项的上限。<b>必须下发</b>：它是 maxLevel × (1 + alliance_config.techCapBonus) 的结果，客户端要查两张表再乘才能算出来，而自己算门槛正是本项目反复在防的那类漂移。 */
+  levelCap: number
+  /** 累计效果值（定点，×10000）= 单级幅度 × 等级。<b>它只是「研究到的幅度」，不是最终生效的系数</b>：联盟科技该进哪个乘区、与个人科技/装备/编队加成是相加还是相乘，属于平衡口径（见收口清单 #31），定下来之前各消费方不擅自乘进去 —— 悄悄乘一遍的后果是「+1.5%/级 × 40 级」在某些组合下变成 +200%。 */
+  effectFixed: number
+}
+
+/**
+ * 联盟视图。**version 是 diff 同步的核心**（B10 验收 10、禁止项：不要让联盟数据每帧全量同步）：客户端上报手里的 version，服务端只在版本更高时下发变化项。与 B07 地图 chunk 的版本号是同一套思路，只是粒度从「块」变成「联盟」。
+ */
+export interface AllianceView {
+  /** 联盟 id */
+  id: string
+  /** 联盟名 */
+  name: string
+  /** 联盟标签（显示在成员昵称后的方括号里，也是地图实体的 allianceTag） */
+  tag: string
+  /** 盟主玩家 id */
+  leaderId: string
+  /** 联盟等级。决定人数上限、领地上限与科技上限（alliance_config 表） */
+  level: number
+  /** 当前等级内已累计的联盟经验 */
+  exp: number
+  /** 人数上限（30→50→80→120→150）。服务端按 alliance_config 查好后下发 */
+  memberCap: number
+  /** 当前成员数 */
+  memberCount: number
+  /** 联盟资金（公共资产，用于扩容与科技研究） */
+  fund: number
+  /** 已研究的联盟科技。<b>空数组表示一项都没研究</b>，与「没有这个字段」是两件事 —— 客户端要靠它区分「进度为 0」和「服务端还没实现」。表本身（alliance_tech）是随包下发的配置，客户端能自己画出货架，但研究到哪一级只有服务端知道。 */
+  techs: AllianceTechView[]
+  /** 已建造的堡垒/旗帜数 */
+  territoryCount: number
+  /** 领地上限。刻意不与人数同比例增长：人数决定「能打多大的仗」，领地决定「能占多少资源加成」，后者若随人数线性放开，大盟会把地图上的资源点全部圈走 */
+  territoryCap: number
+  /** 我在本盟的职位 */
+  myRole: AllianceRole
+  /** 我的贡献值 */
+  myContribution: number
+  /** 我今天已捐献的档数（上限 alliance_config.donationDailyCap） */
+  myDonateToday: number
+  /** 联盟公告 */
+  announcement: string
+  /** 联盟数据版本号。客户端下次同步时带上来 */
+  version: number
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * 一次集结（B10 §2 集结进攻 / §1 小队集结）。**departAt 由服务端算，客户端不参与**（B07 的同一条纪律：不要用客户端定时器决定出发）。验收 11 要求「倒计时结束时所有参与部队统一出发，兵力合并正确」—— 统一出发的实现是服务端在 departAt 那一刻把 members 的兵力合成一支部队，而不是让每个人各自出发。
+ */
+export interface RallyView {
+  /** 集结 id */
+  rallyId: string
+  /** 发起层级 */
+  scope: RallyScope
+  /** 发起组织 id（小队 id / 联盟 id / 国家 id） */
+  groupId: string
+  /** 发起人玩家 id */
+  initiatorId: string
+  /** 目标坐标 */
+  targetCoord: SocialCoord
+  /** 目标类型，决定到达后的行为 */
+  targetType: SocialTargetType
+  /** 参与人数上限。来源 global.RALLY_MAX_SIZE_*，服务端按 scope 取 */
+  maxMembers: number
+  /** 已加入的人数（不含发起人则为参与数，含发起人则为总队伍数） */
+  joinedCount: number
+  /** 已承诺出征的兵力合计。**在 PREPARING 期间就要显示** —— 集结的核心决策是「这波打得过吗」，而那个判断需要看到已经凑了多少兵 */
+  totalTroops: number
+  /** 准备阶段截止的服务端时间戳 */
+  prepareUntil: number
+  /** 统一出发时刻（= prepareUntil，除非被取消） */
+  departAt: number
+  /** 状态 */
+  status: RallyStatus
+  /** 参与者，按加入时间升序 */
+  members: string[]
+  /** 服务端时间戳 */
+  serverNow: number
+  /** 全部随军武将位及其状态，按加入顺序（发起人最先）。长度可以大于 LINEUP_HERO_COUNT —— 落选的那些也要出现在这里，见 RallyHeroSlotState。 */
+  heroSlots: RallyHeroSlotView[]
+}
+
+/**
+ * 一条待帮助请求（红点数据源，B10 验收 6「一键帮助全部」）。**alreadyHelped 必须下发**：一键帮助要跳过我已帮过的项，否则「帮助全部」会在同一个人身上重复消耗我的每日额度，而玩家看到的是「我点了 20 次却只帮到 5 个人」。
+ */
+export interface HelpRequestView {
+  /** 请求 id */
+  requestId: string
+  /** 请求者玩家 id */
+  fromPlayerId: string
+  /** 请求者昵称 */
+  fromPlayerName: string
+  /** 帮助目标类型 */
+  kind: HelpTargetKind
+  /** 目标描述，如「伐木场 Lv7→8」。服务端拼好下发，客户端不得自行组装 —— 组装规则一旦分散到客户端就会出现三套文案 */
+  targetDesc: string
+  /** 剩余秒数（服务端算好，**绝不为负**） */
+  remainingSeconds: number
+  /** 已获得的帮助次数 */
+  helpedCount: number
+  /** 我是否已经帮过这一条 */
+  alreadyHelped: boolean
+}
+
+/**
+ * 一条聊天消息。
+ */
+export interface ChatMessageView {
+  /** 消息 id */
+  messageId: string
+  /** 频道 */
+  channel: ChatChannel
+  /** 发送者玩家 id */
+  senderId: string
+  /** 发送者昵称 */
+  senderName: string
+  /** 消息正文。**原样下发，不做任何过滤后的替换** —— 敏感词处理属 B15 合规范畴，且必须在服务端做；客户端若自行替换，双端会显示不同的文本 */
+  content: string
+  /** 发送时刻（服务端时间戳） */
+  sentAt: number
+}
+
+/**
+ * 一条社交事件。推送与离线补偿共用同一结构（B10 验收 5 / 12）。**必须带 occurredAt**：离线补偿时玩家一次收到几十条，没有时间就无法判断哪条还值得响应 —— 三小时前的「盟友被攻击」已经支援不上了，点进去只会看到一片废墟。
+ */
+export interface SocialEventView {
+  /** 事件 id */
+  eventId: string
+  /** 事件类型 */
+  type: SocialEventType
+  /** 标题。服务端拼好下发（如「盟友 张三 正在被攻击」） */
+  title: string
+  /** 正文，可空 */
+  body: string | null
+  /** 相关坐标（被攻击地点、集结目标）；与坐标无关的事件为 null。用一个可空的坐标对象而不是 coordX/coordY 两个独立可空整数 —— 后者允许「X 有值而 Y 为 null」这种无意义的组合，而一个整体为 null 的坐标不可能自相矛盾 */
+  coord: SocialCoord | null
+  /** 相关的组织或集结 id；无则为 null */
+  relatedId: string | null
+  /** 发生时刻（服务端时间戳） */
+  occurredAt: number
+  /** 是否已过期（响应窗口已过）。true 时 UI 必须置灰且不可跳转 —— 与 B07 侦查情报的同一条纪律：过期情报置灰，否则玩家会拿一个已经失效的目标去做决策 */
+  expired: boolean
+}
+
+/**
+ * GET /social/summary 响应体（B10 §二）。三层社交一屏给全：小队、联盟、国家（B13 接入前恒为 null）。pendingInvites 与 pendingHelps 是红点数据 —— B10 验收 6 要求「一键帮助全部，红点清零」，所以红点数必须由服务端给出而不是客户端自己数列表。
+ */
+export interface SocialSummaryResp {
+  /** 我的小队；未加入为 null */
+  squad: SquadView | null
+  /** 我的联盟；未加入为 null */
+  alliance: AllianceView | null
+  /** 我的国家 id（B13 接入前恒为 null）；未加入为 null */
+  nationId: string | null
+  /** 待处理的邀请数（红点） */
+  pendingInvites: number
+  /** 可帮助但未帮助的请求数（红点）。**已经扣掉我帮过的与超出每日额度的**，否则红点会一直亮着而点进去发现什么都做不了 */
+  pendingHelps: number
+  /** 我今天还能帮助几次。来源 global.HELP_DAILY_LIMIT，下发是为了让客户端能显示「今日剩余 12 次」而不是自己读配置 */
+  helpRemainingToday: number
+  /** 未读的社交事件（离线补偿，验收 12）。已读的不重复下发 */
+  events: SocialEventView[]
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * POST /alliance/sync 请求体（B10 验收 10：成员数据变更只下发 diff，不全量同步）。
+ */
+export interface AllianceSyncReq {
+  /** 客户端手里的联盟数据版本号。首次同步传 0 */
+  version: number
+  /** 是否要成员列表的 diff。只想看资金与等级时传 false —— 150 人的成员列表是联盟数据里最大的一块，每次心跳都带上它就是把 diff 同步的意义抵消掉 */
+  wantMembers: boolean
+}
+
+/**
+ * POST /alliance/sync 响应体。**changed/removed 只含变化项**：version 相同且无变化时两个列表都为空（对应 B07 验收 6 的同一条纪律：无变化时二次请求的数据量为 0）。
+ */
+export interface AllianceSyncResp {
+  /** 本次同步后的版本号 */
+  version: number
+  /** 客户端版本已是最新。true 时下面所有列表都为空，客户端直接复用缓存 */
+  unchanged: boolean
+  /** 新增或变化的成员 */
+  changedMembers: AllianceMember[]
+  /** 已离开的成员 id */
+  removedMemberIds: string[]
+  /** 联盟资金（标量小，每次都给，省得客户端自己累加 diff） */
+  fund: number
+  /** 联盟等级 */
+  level: number
+  /** 成员数 */
+  memberCount: number
+  /** 联盟公告 */
+  announcement: string
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * POST /squad/create 请求体（B10 §二）。
+ */
+export interface SquadCreateReq {
+  /** 幂等键。创建会写入组织表并占名字，重放会建出两个同名小队 */
+  requestId: string
+  /** 小队名。长度与敏感词校验在服务端 */
+  name: string
+}
+
+/**
+ * 只带小队 id 的请求（加入、邀请）。
+ */
+export interface SquadIdReq {
+  /** 幂等键 */
+  requestId: string
+  /** 小队 id */
+  squadId: string
+}
+
+/**
+ * 带目标成员的请求（踢人、转让队长）。
+ */
+export interface SquadMemberReq {
+  /** 幂等键 */
+  requestId: string
+  /** 目标成员玩家 id */
+  memberId: string
+}
+
+/**
+ * 只带幂等键的小队请求（退出、领取小队任务奖励、解散）。
+ */
+export interface SquadSelfReq {
+  /** 幂等键 */
+  requestId: string
+}
+
+/**
+ * POST /squad/rally 请求体（B10 §二）。
+ */
+export interface SquadRallyReq {
+  /** 幂等键 */
+  requestId: string
+  /** 集结目标坐标 */
+  targetCoord: SocialCoord
+  /** 目标类型 */
+  targetType: SocialTargetType
+  /** 发起人承诺出征的兵力（按 unitId → 数量，与行军同一口径）。**必填，且不得为空**：Rally.initiate 需要发起人的兵力才能建出第一个 Participant，而发起人一旦成为参与者就不能再 join 自己的集结（domain 会以「重复加入会让同一个人的兵被算两遍」拒绝），所以发起人的兵只有这一个入口。缺了这个字段的话，一次集结永远只能带着别人的兵出发。承诺即锁定：这些兵会当场从城内军队扣除，退出或集结取消时原路退回。 */
+  troops: RallyTroop[]
+  /** 发起人随军的武将 id，可为空。合计受 global.LINEUP_HERO_COUNT 约束（整支集结共用这些位，见 RallyHeroSlotView）。 */
+  heroes: string[] | null
+}
+
+/**
+ * 集结发起/加入的响应体（小队与联盟共用，靠 RallyView.scope 区分）。
+ */
+export interface RallyResp {
+  /** 集结视图 */
+  rally: RallyView
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * POST /alliance/create 请求体（B10 §二）。消耗 global.ALLIANCE_CREATE_COST_GOLD 金币。
+ */
+export interface AllianceCreateReq {
+  /** 幂等键。创建会扣金币，没有幂等就等于允许重放刷掉一次扣费 */
+  requestId: string
+  /** 联盟名 */
+  name: string
+  /** 联盟标签（1~4 字符，显示在昵称后） */
+  tag: string
+}
+
+/**
+ * 只带联盟 id 的请求（申请入盟）。
+ */
+export interface AllianceIdReq {
+  /** 幂等键 */
+  requestId: string
+  /** 联盟 id */
+  allianceId: string
+}
+
+/**
+ * POST /alliance/review 请求体（审核申请）。
+ */
+export interface AllianceReviewReq {
+  /** 幂等键 */
+  requestId: string
+  /** 申请者玩家 id */
+  applicantId: string
+  /** 通过还是拒绝。**拒绝也要显式调用** —— 只是不处理会让申请永远挂着，申请者不知道自己被忽略了 */
+  approve: boolean
+}
+
+/**
+ * 带目标成员的联盟请求（踢人、转让盟主）。
+ */
+export interface AllianceMemberReq {
+  /** 幂等键 */
+  requestId: string
+  /** 目标成员玩家 id */
+  memberId: string
+}
+
+/**
+ * POST /alliance/setRole 请求体（任命职位）。
+ */
+export interface AllianceRoleReq {
+  /** 幂等键 */
+  requestId: string
+  /** 目标成员玩家 id */
+  memberId: string
+  /** 新职位。能不能任命由 role_permission 表决定，不由客户端判断 */
+  role: AllianceRole
+}
+
+/**
+ * 只带幂等键的联盟请求（退出、解散、扩容）。
+ */
+export interface AllianceSelfReq {
+  /** 幂等键 */
+  requestId: string
+}
+
+/**
+ * POST /alliance/donate 请求体（B10 §二）。
+ */
+export interface AllianceDonateReq {
+  /** 幂等键。捐献会扣资源/金币并发放贡献值，重放等于刷贡献 */
+  requestId: string
+  /** 捐献档位：0 免费 / 1 资源 / 2 金币。**档位而不是数额**：数额由 global.DONATE_TIER_* 决定，客户端传数额就等于把定价权交给客户端 */
+  tier: number
+}
+
+/**
+ * POST /alliance/donate 响应体（B10 §二 + 验收 8：捐献后资金与贡献值同步增加）。
+ */
+export interface AllianceDonateResp {
+  /** 本次给联盟的资金 */
+  fundGained: number
+  /** 本次给我的贡献值 */
+  contributionGained: number
+  /** 捐献后的联盟资金总额。**必须下发**：只给增量的话客户端要自己累加，而累加一旦与服务端不同步就再也对不上了（验收 8 要求两者同步增加） */
+  fund: number
+  /** 捐献后的我的贡献值总额 */
+  contribution: number
+  /** 今天已捐档数 */
+  donateToday: number
+  /** 每日捐献档数上限（alliance_config.donationDailyCap） */
+  donateDailyCap: number
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * POST /alliance/rally 请求体（B10 §二）。
+ */
+export interface AllianceRallyReq {
+  /** 幂等键 */
+  requestId: string
+  /** 集结目标坐标 */
+  targetCoord: SocialCoord
+  /** 目标类型 */
+  targetType: SocialTargetType
+  /** 期望的参与人数上限。**服务端会夹到 RALLY_MAX_SIZE_ALLIANCE(20)** 而不是拒绝：发起人在滑块上很容易越界，拒绝会让他以为集结功能坏了 */
+  maxMembers: number
+  /** 准备时长（分钟）。服务端会夹到 [RALLY_PREPARE_MIN_SECONDS, RALLY_PREPARE_MAX_SECONDS] 区间 */
+  prepareMinutes: number
+  /** 发起人承诺出征的兵力（按 unitId → 数量，与行军同一口径）。**必填，且不得为空**：Rally.initiate 需要发起人的兵力才能建出第一个 Participant，而发起人一旦成为参与者就不能再 join 自己的集结（domain 会以「重复加入会让同一个人的兵被算两遍」拒绝），所以发起人的兵只有这一个入口。缺了这个字段的话，一次集结永远只能带着别人的兵出发。承诺即锁定：这些兵会当场从城内军队扣除，退出或集结取消时原路退回。 */
+  troops: RallyTroop[]
+  /** 发起人随军的武将 id，可为空。上限口径与小队集结一致。 */
+  heroes: string[] | null
+}
+
+/**
+ * 集结承诺出征的一个兵种条目。用 unit 表的行 id（含阶级），不用兵种类型 —— 与 MarchUnit / StageUnit 同一口径：按兵种类型会让 T5 兵被当成 T1 用。生成器不支持跨文件 $ref，所以这里又是一份拷贝，由 SocialContractParityTest 断言与 world 协议的 MarchUnit、stage 协议的 StageUnit 字段名与语义一致。
+ */
+export interface RallyTroop {
+  /** unit 表的行 id，含阶级（如 unit_infantry_t3） */
+  unitId: string
+  /** 数量 */
+  count: number
+}
+
+/**
+ * POST /rally/join 与 /rally/quit 的请求体。
+ */
+export interface RallyJoinReq {
+  /** 幂等键。加入会锁定兵力，重放会重复锁 */
+  requestId: string
+  /** 集结 id */
+  rallyId: string
+  /** 本次承诺出征的兵力（按 unitId → 数量，与行军同一口径） */
+  troops: RallyTroop[]
+  /** 该成员随军的武将 id，可为空。武将位按加入顺序抢，满了或与他人重复会落选（见 RallyView.heroSlots）。 */
+  heroes: string[] | null
+}
+
+/**
+ * POST /social/help 请求体（帮助某人一次）。
+ */
+export interface HelpReq {
+  /** 幂等键。帮助会消耗我的每日额度并加速对方，重放等于双倍扣额度 */
+  requestId: string
+  /** 要帮助的请求 id（HelpRequestView.requestId） */
+  helpRequestId: string
+}
+
+/**
+ * 帮助类操作的响应体（单次帮助与一键帮助共用）。
+ */
+export interface HelpResp {
+  /** 本次实际帮助了几条。一键帮助时可能少于可帮助项数 —— 每日额度用完就会停，照实返回而不是报错 */
+  helped: number
+  /** 跳过的条数（我已帮过的 + 额度不足的） */
+  skipped: number
+  /** 帮助后我今天还剩几次 */
+  helpRemainingToday: number
+  /** 帮助后的红点数。**验收 6 要求「红点清零」**，所以必须下发帮助后的值让客户端能直接对上 */
+  pendingHelps: number
+  /** 本次给对方合计削减的时长比例（定点）。受 global.HELP_SPEEDUP_TOTAL_CAP 约束，所以它可能小于「帮助次数 × 1%」—— 下发实际值而不是让客户端自己乘，否则玩家会以为被吞了 */
+  speedupGranted: number
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * POST /chat/send 请求体。
+ */
+export interface ChatSendReq {
+  /** 幂等键。聊天重放会导致同一句话发两遍，而这恰好会撞上防刷屏限流，玩家看到的是「我发一句话却提示刷屏」 */
+  requestId: string
+  /** 频道 */
+  channel: ChatChannel
+  /** 正文。长度上限在服务端校验 */
+  content: string
+  /** 私聊对象；非私聊频道为 null */
+  toPlayerId: string | null
+}
+
+/**
+ * POST /chat/send 响应体。**被限流时走业务错误码而不是本响应** —— 返回一条「假装发成功」的消息会让玩家以为对方收到了（B10 验收 9）。
+ */
+export interface ChatSendResp {
+  /** 已落地的消息 */
+  message: ChatMessageView
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * POST /chat/list 请求体（拉取某频道的最近消息）。用 POST 是因为要带频道与游标，而 GET 的查询串在私聊频道上会泄漏对象 id 到访问日志里。
+ */
+export interface ChatListReq {
+  /** 频道 */
+  channel: ChatChannel
+  /** 私聊对象；<b>只有 PRIVATE 频道需要</b>，其余频道忽略。私聊的会话键是由<b>两个人</b>的 id 拼出来的，拉历史却不带对象就算不出键 —— 少这个字段的结果是「发得出去、刷新即丢」。它走请求体而不是 GET 查询串，理由与本 DTO 用 POST 同一条：对象 id 出现在 URL 里就会落进访问日志与代理日志。<b>缺它时报明确的错误，不返回空列表</b>：空列表会被客户端读成「这段会话没有历史」，从而安静地丢掉一整屏消息。 */
+  toPlayerId: string | null
+  /** 游标：只要这条之前的消息；首次拉取为 null */
+  beforeMessageId: string | null
+  /** 最多要几条。服务端会夹到 global.CHAT_LOCAL_HISTORY_MAX */
+  limit: number
+}
+
+/**
+ * POST /chat/list 响应体。
+ */
+export interface ChatListResp {
+  /** 消息，按时间升序（客户端直接从上往下画） */
+  messages: ChatMessageView[]
+  /** 是否还有更早的消息 */
+  hasMore: boolean
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * POST /social/ackEvents 请求体（标记事件已读）。离线补偿的事件必须能被标记已读，否则每次上线都会重新收到同一批（验收 12）。
+ */
+export interface SocialEventAckReq {
+  /** 幂等键 */
+  requestId: string
+  /** 要标记已读的事件 id。空数组表示全部标记 */
+  eventIds: string[]
+}
+
+/**
+ * GET /social/permissions 响应体（B10 验收 4：权限矩阵配置化）。**下发的是结论而不是矩阵**：客户端拿到「我能做什么」的列表就能决定按钮灰不灰，不需要知道 role_permission 表长什么样 —— 把表下发出去等于把权限模型暴露给客户端，而客户端的任何判断都可以被绕过。
+ */
+export interface PermissionListResp {
+  /** 权限所属层级 */
+  scope: string
+  /** 我在该层级的职位 */
+  role: string
+  /** 我在该层级拥有的权限码（role_permission.permission） */
+  permissions: string[]
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * POST /alliance/tech 请求体（用联盟资金研究科技）。
+ */
+export interface AllianceTechReq {
+  /** 幂等键。研究会扣联盟资金（公共资产），重放等于全盟被多扣一次 */
+  requestId: string
+  /** alliance_tech 表的行 id */
+  techId: string
+  /** 一次研究几级。上限由联盟等级决定（alliance_config.techCapBonus） */
+  levels: number
+}
+
+/**
+ * POST /alliance/tech 响应体。
+ */
+export interface AllianceTechResp {
+  /** 科技 id */
+  techId: string
+  /** 研究后的等级 */
+  level: number
+  /** 当前联盟等级下的等级上限。**必须下发**：上限随联盟等级变，客户端自己算不出（要查两张表并做乘法） */
+  levelCap: number
+  /** 本次消耗的联盟资金 */
+  fundCost: number
+  /** 研究后的联盟资金余额 */
+  fund: number
+  /** 研究后的效果值（定点）。全盟生效 */
+  effectValue: number
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
+ * GET /rally/list 响应：我所在的小队与联盟里**进行中**的集结。面板列表用 —— 只返回 PREPARING 的，已出发或已取消的集结留在面板上没有意义，而「点进去发现早就出发了」比「看不到」更让人困惑。
+ */
+export interface RallyListResp {
+  /** 进行中的集结，按创建时刻升序（先发起的排前面，因为它的准备窗口先结束）。 */
+  rallies: RallyView[]
+  /** 服务端时间戳。客户端据此算准备窗口的剩余秒数（铁律 5：倒计时不得用本地时钟）。 */
+  serverNow: number
+}
+
+/**
+ * 一个随军武将位（按加入顺序，发起人最先）。
+ */
+export interface RallyHeroSlotView {
+  /** 提交这个武将位的成员。 */
+  playerId: string
+  /** 武将 id。 */
+  heroId: string
+  /** 武将名，服务端从 hero 表下发。客户端不得自行拼接：那份名字要与战报、聊天、客服工单里的称呼一致。 */
+  heroName: string
+  /** 状态。 */
+  state: RallyHeroSlotState
+  /** 是否进入合并行军的名单。等于 state == SELECTED，单独给一个布尔是为了让客户端不必理解枚举就能画红点。 */
+  selected: boolean
+}
+
+/**
+ * 红点树的一个节点（含中间节点）。父节点的 lit 由服务端聚合，客户端只消费。
+ */
+export interface ReddotNodeView {
+  /** 路径式 key，分隔符与服务端 ReddotTree.SEPARATOR 一致（形如 social/help）。整棵子树的根是空串，它不下发，只作为 children 的容器。 */
+  key: string
+  /** 此刻是否亮。叶子是注册条件本身，中间节点是「任一后代叶子亮」。既不存在的 key 也不是任何叶子的前缀 ⇒ 永远 false，这是 B12 验收 1「无假红点」的落点。 */
+  lit: boolean
+  /** 子节点。叶子是空数组而不是省略 —— 客户端要能区分「这是叶子」与「还没下发到这里」。 */
+  children: ReddotNodeView[]
+}
+
+/**
+ * GET /social/reddot 响应体：服务端算好的完整红点树。刻意是**整体下发而不是增量**：客户端合并会让已经消失的红点永远留着（假红点），而那是 B12 验收 1 直接判失败的现象。
+ */
+export interface ReddotTreeResp {
+  /** 树的第一层节点（每个是一棵子树的根）。 */
+  nodes: ReddotNodeView[]
+  /** 已注册叶子数。下发是为了让「红点判断有没有散落到业务模块里」变成一个可断言的数：它应当随功能数增长，而不是长期停在个位数 */
+  leafCount: number
+  serverNow: number
+}
+
+/**
+ * GET /social/helpRequests 响应体：可互助的请求列表 + 同一个数算出来的红点。两者必须由服务端同一次遍历给出 —— 列表与徽标分开算早晚漂移，表现是「红点说 5 条、点进去只有 3 条，一键帮助却帮了 5 次」。
+ */
+export interface SocialHelpListResp {
+  /** 同组织里未过期、不是自己发的请求，**含已经帮过的**（每行的 alreadyHelped 标出来）。列表里放已经帮过的是因为玩家要知道「我帮过谁」，而不只是「还有谁能帮」。 */
+  requests: HelpRequestView[]
+  /** 徽标数：列表里 alreadyHelped=false 的行数，再按今日剩余额度截断。与 SocialSummaryResp.pendingHelps 同源同值 */
+  pendingHelps: number
+  /** 今日还能帮几次，与摘要里那个数是同一个来源 */
+  helpRemainingToday: number
+  serverNow: number
+}

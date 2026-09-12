@@ -1,0 +1,31 @@
+# 职责：生产环境配置。所有敏感项走环境变量注入，仓库里不留任何凭据。
+# 启动：java -jar game-web.jar --spring.profiles.active=prod
+ironoath:
+  storage: mongo
+  # 生产绝不下发 detail：里面含内部字段名、配置 id 与校验规则，泄漏等于给外挂作者送地图
+  expose-detail: false
+
+spring:
+  data:
+    mongodb:
+      uri: ${IRONOATH_MONGO_URI}
+      # 生产必须开事务支持（副本集）。B00 陷阱 3 要求「分布式锁 + MongoDB 事务 + requestId 幂等」
+      auto-index-creation: false
+
+server:
+  port: ${IRONOATH_PORT:8080}
+  # 生产由网关/负载均衡做超时控制，这里给一个偏保守的上限，避免慢请求长期占用线程
+  tomcat:
+    connection-timeout: 10s
+
+logging:
+  level:
+    root: WARN
+    com.ironoath: INFO
+  file:
+    name: ${IRONOATH_LOG_DIR:/var/log/ironoath}/game-web.log
+  logback:
+    rollingpolicy:
+      # 单文件 100MB、保留 14 天：够复盘一次赛季事故，又不会把磁盘吃满
+      max-file-size: 100MB
+      max-history: 14

@@ -1,0 +1,45 @@
+{
+  "table": "equip_set",
+  "version": 1,
+  "comment": "装备套装表。一行 = 一个套装，给出 2 件套与 4 件套的百分比加成。装备本体在 equip 表，用 setId 关联。",
+  "designNote": "【为什么套装做成百分比而不是固定值】B06 硬约束 1 要求武将侧的加成走乘算区 A。套装属于装备线，同样落在乘区 A，所以必须是百分比 —— 固定值加成在后期会被基础属性稀释到看不见，而百分比始终有效，这正是「乘算区」与「加算区」的区别（B05 §1.3）。\n【2 件套弱、4 件套强，且 4 件不是 2 件的简单翻倍】破军 2 件 +6%、4 件 +15%（不是 12%）：凑齐 4 件的边际收益必须明显高于「两个 2 件套」，否则玩家会混搭两个 2 件套，套装系统就退化成散装。但也不能高到「非 4 件不可」，否则中期玩家凑不齐时会觉得装备系统完全没用 —— +15% 对 +12% 的差距刚好够诱人又不排他。\n【三个套装分别偏重三维】破军(武力)/玄武(统率)/文曲(智力)对应 hero 表的三维，让「穿哪套」成为一个和「带哪名武将」耦合的选择，而不是全服一套毕业装。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "pieces2Attr": "ENUM:MIGHT,COMMAND,WISDOM",
+    "pieces2Ratio": "DECIMAL_NONNEG",
+    "pieces4Attr": "ENUM:MIGHT,COMMAND,WISDOM",
+    "pieces4Ratio": "DECIMAL_NONNEG",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "set_pojun",
+      "name": "破军",
+      "pieces2Attr": "MIGHT",
+      "pieces2Ratio": "0.06",
+      "pieces4Attr": "MIGHT",
+      "pieces4Ratio": "0.15",
+      "why": "武力套。给爆发型 SSR（裴惊澜 might 100）凑，与「澜崩」这类高倍率主技能相乘收益最大。"
+    },
+    {
+      "id": "set_xuanwu",
+      "name": "玄武",
+      "pieces2Attr": "COMMAND",
+      "pieces2Ratio": "0.06",
+      "pieces4Attr": "COMMAND",
+      "pieces4Ratio": "0.15",
+      "why": "统率套。统率同时影响带兵上限（B05 §二）与队伍承伤，是给防守方与扛线 SR（卫无咎）准备的。"
+    },
+    {
+      "id": "set_wenqu",
+      "name": "文曲",
+      "pieces2Attr": "WISDOM",
+      "pieces2Ratio": "0.06",
+      "pieces4Attr": "WISDOM",
+      "pieces4Ratio": "0.15",
+      "why": "智力套。智力型 SSR（燕孤鸿 wisdom 100）与增益/控制类技能相性最好。"
+    }
+  ]
+}

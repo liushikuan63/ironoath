@@ -1,0 +1,149 @@
+{
+  "table": "skill",
+  "version": 1,
+  "comment": "武将技能表。B02 要求字段：id/名称/触发时机/触发概率/效果类型/数值/持续回合。触发时机四种来自 B02 原文（回合开始/每回合/受击/死亡）。所有概率与数值都是定点小数（×10000 后存 long），配置里写成十进制字符串。技能由 hero 表的 mainSkill/subSkill 外键引用。",
+  "designNote": "数值口径：valueFixed 是「相对基准的倍率或百分比」，不是绝对伤害。DAMAGE 类表示对敌方造成的额外伤害系数（相对己方有效攻击），BUFF/DEBUFF 类表示属性增减百分比，HEAL 类表示按己方损失兵力回复的比例。这样同一个技能数值在 T1 与 T5 兵种上都成立，不需要为每个阶级各配一套技能（否则技能表会膨胀成 兵种数×阶级数×技能数）。触发概率上限刻意压在 0.50 以下：技能是「改变战局的变数」而不是「稳定输出的一部分」，概率过高会让战斗退化成看谁先触发，克制与阵型的策略空间被挤掉。持续回合上限 2：B00 规定战斗共 8 回合，持续 3 回合以上等于覆盖半场，buff 会变成常态而非窗口。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "trigger": "ENUM:ROUND_START,EVERY_ROUND,ON_HIT,ON_DEATH",
+    "chance": "DECIMAL_NONNEG",
+    "effect": "ENUM:DAMAGE,HEAL,BUFF_ATK,BUFF_DEF,DEBUFF_ATK,DEBUFF_DEF,SKIP_TURN",
+    "value": "DECIMAL_NONNEG",
+    "durationRounds": "LONG_NONNEG",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "skill_ssr_lan_beng",
+      "name": "澜崩",
+      "trigger": "ROUND_START",
+      "chance": "0.35",
+      "effect": "DAMAGE",
+      "value": "1.80",
+      "durationRounds": 1,
+      "why": "SSR 主技能基准。1.80 倍额外伤害 + 35% 触发 + 只在回合开始 ⇒ 期望收益 = 1.80×0.35 = 0.63 倍/回合，8 回合约 5.0 倍的额外输出。这个量级能明显改变胜负但不足以单独决定（裸兵力差 2 倍时仍会输），符合「武将是放大器不是替代品」。"
+    },
+    {
+      "id": "skill_ssr_wang_yan",
+      "name": "妄言",
+      "trigger": "EVERY_ROUND",
+      "chance": "0.40",
+      "effect": "DEBUFF_ATK",
+      "value": "0.25",
+      "durationRounds": 2,
+      "why": "削攻 25% 持续 2 回合，每回合 40% 触发。控制类技能的期望覆盖率 = 1-(1-0.40)^2 ≈ 0.64，即约六成回合敌方处于削攻状态。选 DEBUFF_ATK 而不是 SKIP_TURN：跳过回合是硬控，会让被控方玩家完全失去参与感（他什么也没做就输了），削攻则是软控，双方仍在博弈。"
+    },
+    {
+      "id": "skill_ssr_gu_hong_zhen",
+      "name": "孤鸿阵",
+      "trigger": "ROUND_START",
+      "chance": "0.30",
+      "effect": "BUFF_ATK",
+      "value": "0.35",
+      "durationRounds": 2,
+      "why": "全队增攻 35% 持续 2 回合。与 skill_ssr_lan_beng 的期望收益刻意做成同一量级（0.35×0.30×2回合 ≈ 0.21/回合 vs 1.80×0.35/回合 ≈ 0.63），但作用面不同：澜崩是单体爆发、孤鸿阵是群体持续。让「爆发型 SSR」与「辅助型 SSR」在总收益上可比，玩家按编队需要选而不是无脑选倍率最高的。"
+    },
+    {
+      "id": "skill_sr_wu_jiu_shou",
+      "name": "无咎守",
+      "trigger": "ROUND_START",
+      "chance": "0.35",
+      "effect": "BUFF_DEF",
+      "value": "0.25",
+      "durationRounds": 2,
+      "why": "SR 主技能基准，防御向。数值(0.25)低于 SSR 的孤鸿阵(0.35)，这是稀有度差距的主要来源之一 —— 但差距控制在 1.4 倍以内，因为武将整体战力比已被 hero 表锁在 SSR/SR=1.59，技能再拉开就会突破 2 倍上限（B02 禁止项）。"
+    },
+    {
+      "id": "skill_sr_yan_qiu_yu",
+      "name": "砚秋雨",
+      "trigger": "EVERY_ROUND",
+      "chance": "0.30",
+      "effect": "HEAL",
+      "value": "0.15",
+      "durationRounds": 1,
+      "why": "每回合按已损失兵力的 15% 回复。用「已损失」而不是「总量」作基数：残血时回复量最大，形成翻盘窗口；满血时不浪费，避免治疗队在无损战斗里白占一个技能位。"
+    },
+    {
+      "id": "skill_sr_ming_zhu_zhao",
+      "name": "明烛照",
+      "trigger": "ON_HIT",
+      "chance": "0.25",
+      "effect": "DAMAGE",
+      "value": "0.60",
+      "durationRounds": 1,
+      "why": "受击触发的反击型伤害。ON_HIT 的触发次数取决于被打多少下，所以倍率必须远低于 ROUND_START 类（0.60 vs 1.80），否则被集火的一方反而输出更高，会鼓励玩家故意送兵。"
+    },
+    {
+      "id": "skill_r_qing_he_ji",
+      "name": "青禾击",
+      "trigger": "ROUND_START",
+      "chance": "0.30",
+      "effect": "DAMAGE",
+      "value": "0.45",
+      "durationRounds": 1,
+      "why": "R 级主技能基准。期望 0.45×0.30 = 0.135 倍/回合，约为 SSR 澜崩(0.63)的 21%。技能强度差大于武将属性差(1.90)，这是刻意的：属性差被 B02 禁止项锁死在 2 倍内，稀有度的「体感差距」主要靠技能特效做出来 —— 玩家看得见技能触发，看不见 1.59 的属性比。"
+    },
+    {
+      "id": "skill_r_xiao_man_cang",
+      "name": "小满仓",
+      "trigger": "ON_DEATH",
+      "chance": "0.50",
+      "effect": "HEAL",
+      "value": "0.20",
+      "durationRounds": 1,
+      "why": "死亡触发是四种时机里最难触发的（一场战斗每个单位只死一次），所以概率给到全表最高的 0.50 作为补偿。效果是阵亡时回复友军，定位为「R 级的保命底牌」，让低稀有度武将在特定编队里仍有一席之地。"
+    },
+    {
+      "id": "skill_r_lan_chi_tu",
+      "name": "兰迟突",
+      "trigger": "ROUND_START",
+      "chance": "0.25",
+      "effect": "BUFF_ATK",
+      "value": "0.15",
+      "durationRounds": 1,
+      "why": "R 级的增攻，数值与持续都只有 SR/SSR 的一半左右，保持稀有度阶梯。"
+    },
+    {
+      "id": "skill_sub_po_jia",
+      "name": "破甲",
+      "trigger": "ON_HIT",
+      "chance": "0.20",
+      "effect": "DEBUFF_DEF",
+      "value": "0.15",
+      "durationRounds": 2,
+      "why": "通用副技能。削防 15% 对高防目标（重步兵、攻城器）收益最大，因此它是「打肉队」编队的核心副技能 —— 让副技能选择也有策略性，而不是随便配一个。"
+    },
+    {
+      "id": "skill_sub_gu_wu",
+      "name": "鼓舞",
+      "trigger": "ROUND_START",
+      "chance": "0.20",
+      "effect": "BUFF_ATK",
+      "value": "0.10",
+      "durationRounds": 2,
+      "why": "通用副技能，增攻 10%。数值刻意小：副技能应该是锦上添花，如果副技能能顶半个主技能，玩家就会只堆副技能数量而忽视主技能搭配。"
+    },
+    {
+      "id": "skill_sub_bao_zha",
+      "name": "包扎",
+      "trigger": "EVERY_ROUND",
+      "chance": "0.20",
+      "effect": "HEAL",
+      "value": "0.08",
+      "durationRounds": 1,
+      "why": "通用副技能，小额持续治疗。8% 的量级保证它只能延缓损失、不能逆转战局 —— 治疗如果太强，B00 的伤兵/死亡比例（PVP 攻方死 35%）就失去意义了。"
+    },
+    {
+      "id": "skill_sub_wan_kang",
+      "name": "顽抗",
+      "trigger": "ON_HIT",
+      "chance": "0.15",
+      "effect": "BUFF_DEF",
+      "value": "0.12",
+      "durationRounds": 1,
+      "why": "通用副技能，受击时短时增防。概率全表最低(0.15)：ON_HIT 触发频次高，概率必须压低才不至于常驻。"
+    }
+  ]
+}
