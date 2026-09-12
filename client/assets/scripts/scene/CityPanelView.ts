@@ -49,6 +49,18 @@ const HEADER_HEIGHT = 128
 const PADDING = 16
 /** 一屏最多画几行。建筑数量由配置表决定，超出的要靠 ScrollView（编辑器资产） */
 const MAX_VISIBLE_ROWS = 6
+/** 卡片外沿与视口的最小间距：缩放时留出它，避免贴边 */
+const PANEL_MARGIN = 12
+/** 卡片宽度：内容宽（PANEL_WIDTH）加上左右内边距 */
+const CARD_WIDTH = PANEL_WIDTH + PADDING * 2
+/**
+ * 卡片高度：标题/队列/资源两行/收割按钮（HEADER_HEIGHT）+ 满行区 + 底部消息条。
+ * <b>固定值而不是按数据算</b>：行数随数据变，卡片高度跟着跳会让整块面板忽大忽小；
+ * 固定高度 + 外层整体缩放，才是"看起来像一个面板"的做法。
+ */
+const CARD_HEIGHT = HEADER_HEIGHT + MAX_VISIBLE_ROWS * (ROW_HEIGHT + ROW_GAP) + 64
+/** 缩放上限：宽屏下允许放大到接近铺满，字更大也更好点；再大就会显得笨重 */
+const MAX_SCALE = 1.6
 
 /** 行内按钮对应的动作。 */
 type RowAction = 'upgrade' | 'speedAd' | 'speedGold' | 'collect'
@@ -66,9 +78,16 @@ export class CityPanelView extends Component {
   private rowPool: NodePool | null = null
   private readonly drawnRows: Node[] = []
   private readonly buttonKinds = new Map<Node, RowAction>()
+  /** 承载全部内容的卡片节点：内部坐标固定，适配交给外层缩放 */
+  private card: Node | null = null
+  /** 卡片当前高度（随实际建筑数变化），行区坐标与缩放都依赖它 */
+  private cardHeight = CARD_HEIGHT
+  private frameGraphics: Graphics | null = null
+  private collectAllNode: Node | null = null
   private headerLabel: Label | null = null
   private queueLabel: Label | null = null
-  private resourceLabel: Label | null = null
+  /** 资源两行三列，共 6 个（与 resource 表行数一致） */
+  private readonly resourceLabels: Label[] = []
   private messageLabel: Label | null = null
 
   /** 点「升级」。派工与扣资源都由服务端裁定 */
@@ -81,8 +100,19 @@ export class CityPanelView extends Component {
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
-    this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
-    this.buildHeader(size.height)
+    const card = new Node('Card')
+    card.layer = this.node.layer
+    this.node.addChild(card)
+    card.addComponent(UITransform).setContentSize(new Size(CARD_WIDTH, CARD_HEIGHT))
+    this.card = card
+    // 整块面板按视口等比缩放（上限 1.0）：卡片内部布局固定，外层负责适配。
+    // 背景不参与缩放（它本来就铺满整屏），所以缩放的是 Card 而不是本节点。
+    const scale = Math.min(MAX_SCALE,
+      (size.width - 2 * PANEL_MARGIN) / CARD_WIDTH,
+      (size.height - 2 * PANEL_MARGIN) / CARD_HEIGHT)
+    card.setScale(new Vec3(scale, scale, 1))
+    this.rowPool = new NodePool(card, () => this.createRow(), MAX_VISIBLE_ROWS)
+    this.buildCard()
     if (this.pending !== null) {
       const pending = this.pending
       this.pending = null
@@ -169,17 +199,41 @@ export class CityPanelView extends Component {
     graphics.fill()
   }
 
-  private buildHeader(height: number): void {
-    const top = height / 2 - PADDING
-    this.headerLabel = this.addLabel(this.node, 'Header', 0, top - 20, COLOR_COPPER_GOLD, 22)
-    this.queueLabel = this.addLabel(this.node, 'Queue', 0, top - 48, COLOR_TEXT, 17)
-    this.resourceLabel = this.addLabel(this.node, 'Resources', 0, top - 82, COLOR_TEXT_DIM, 15)
-    this.messageLabel = this.addLabel(this.node, 'Message', 0, -height / 2 + 40, COLOR_WARNING, 16)
+  /** 卡片内容：坐标全部相对卡片中心（卡片整体由 onLoad 缩放并居中）。 */
+  private buildCard(): void {
+    const card = this.card
+    if (card === null) {
+      return
+    }
+    // 卡片底板先画（第一个子节点 ⇒ 在最底层）：没有它，内容会直接散在整屏黑底上，
+    // 看起来"没对齐、也没有画面" —— 面板需要一个能看见的边界
+    const frame = new Node('CardFrame')
+    frame.layer = card.layer
+    card.addChild(frame)
+    frame.addComponent(UITransform).setContentSize(new Size(CARD_WIDTH, CARD_HEIGHT))
+    const frameGraphics = frame.addComponent(Graphics)
+    this.frameGraphics = frameGraphics
+
+    const top = CARD_HEIGHT / 2 - PADDING
+    this.headerLabel = this.addLabel(card, 'Header', 0, top - 22, COLOR_COPPER_GOLD, 22)
+    this.queueLabel = this.addLabel(card, 'Queue', 0, top - 54, COLOR_TEXT, 17)
+    // 资源排成两行三列：一行六项在宽屏下会顶到卡片外、被裁掉一半，
+    // 网格是唯一在任意宽度下都对齐的排法（列宽 = 内容宽 / 3）
+    const columnWidth = PANEL_WIDTH / 3
+    for (let row = 0; row < 2; row++) {
+      for (let column = 0; column < 3; column++) {
+        const x = -PANEL_WIDTH / 2 + columnWidth * (column + 0.5)
+        const y = top - 86 - row * 22
+        this.resourceLabels.push(this.addLabel(
+          card, `Resource-${row}-${column}`, x, y, COLOR_TEXT_DIM, 15))
+      }
+    }
+    this.messageLabel = this.addLabel(card, 'Message', 0, -CARD_HEIGHT / 2 + 20, COLOR_WARNING, 16)
 
     const collectAll = new Node('CollectAllButton')
-    collectAll.layer = this.node.layer
-    this.node.addChild(collectAll)
-    collectAll.setPosition(new Vec3(PANEL_WIDTH / 2 - 80, top - 112, 0))
+    collectAll.layer = card.layer
+    card.addChild(collectAll)
+    this.collectAllNode = collectAll
     collectAll.addComponent(UITransform).setContentSize(new Size(140, 36))
     const graphics = collectAll.addComponent(Graphics)
     graphics.fillColor = COLOR_PANEL
@@ -194,8 +248,55 @@ export class CityPanelView extends Component {
       // null = 收割全部已到点的建筑（协议里 buildingId 为空就是这个含义）
       this.onCollect?.(null)
     }, this)
+    this.layoutCard(1)
   }
 
+  /**
+   * 按实际建筑数重排卡片。
+   *
+   * <p>卡片高度写死会留下一大片空白（只有一座主城时尤其明显，看起来"什么都没有"），
+   * 所以高度随行数变化、最少一行；缩放也跟着重算，保证放大到铺满又不越界。
+   */
+  private layoutCard(rowCount: number): void {
+    const card = this.card
+    if (card === null) {
+      return
+    }
+    const visibleRows = Math.max(1, Math.min(rowCount, MAX_VISIBLE_ROWS))
+    const cardHeight = HEADER_HEIGHT + visibleRows * (ROW_HEIGHT + ROW_GAP) + 64
+    this.cardHeight = cardHeight
+    card.getComponent(UITransform)?.setContentSize(new Size(CARD_WIDTH, cardHeight))
+
+    const frame = this.frameGraphics
+    if (frame !== null) {
+      frame.clear()
+      frame.fillColor = COLOR_PANEL
+      frame.strokeColor = COLOR_COPPER_GOLD
+      frame.lineWidth = 2
+      frame.roundRect(-CARD_WIDTH / 2, -cardHeight / 2, CARD_WIDTH, cardHeight, 10)
+      frame.fill()
+      frame.stroke()
+    }
+
+    const top = cardHeight / 2 - PADDING
+    this.headerLabel?.node.setPosition(new Vec3(0, top - 22, 0))
+    this.queueLabel?.node.setPosition(new Vec3(0, top - 54, 0))
+    const columnWidth = PANEL_WIDTH / 3
+    this.resourceLabels.forEach((label, index) => {
+      const row = Math.floor(index / 3)
+      const column = index % 3
+      label.node.setPosition(new Vec3(
+        -PANEL_WIDTH / 2 + columnWidth * (column + 0.5), top - 86 - row * 22, 0))
+    })
+    this.messageLabel?.node.setPosition(new Vec3(0, -cardHeight / 2 + 20, 0))
+    this.collectAllNode?.setPosition(new Vec3(PANEL_WIDTH / 2 - 80, top - 22, 0))
+
+    const size = view.getVisibleSize()
+    const scale = Math.min(MAX_SCALE,
+      (size.width - 2 * PANEL_MARGIN) / CARD_WIDTH,
+      (size.height - 2 * PANEL_MARGIN) / cardHeight)
+    card.setScale(new Vec3(scale, scale, 1))
+  }
   private createRow(): Node {
     const node = new Node('BuildingRow')
     node.layer = this.node.layer
@@ -205,12 +306,11 @@ export class CityPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
     graphics.fill()
 
-    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 16, COLOR_TEXT, 19)
-    title.horizontalAlign = Label.HorizontalAlign.LEFT
-    const status = this.addLabel(node, 'Status', -PANEL_WIDTH / 2 + PADDING, -6, COLOR_TEXT_DIM, 15)
-    status.horizontalAlign = Label.HorizontalAlign.LEFT
-    const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING, -24, COLOR_COPPER_GOLD, 14)
-    countdown.horizontalAlign = Label.HorizontalAlign.LEFT
+    const textWidth = PANEL_WIDTH - 300
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 16, COLOR_TEXT, 19, true, textWidth)
+    const status = this.addLabel(node, 'Status', -PANEL_WIDTH / 2 + PADDING, -6, COLOR_TEXT_DIM, 15, true, textWidth)
+    const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING, -24,
+      COLOR_COPPER_GOLD, 14, true, textWidth)
 
     // 「收割」与「升级」共用同一个位置：两者互斥（升级中不能升级，到点只需收割），
     // 叠在一起既省一个按钮位，也让玩家的动作在同一处形成肌肉记忆
@@ -240,18 +340,34 @@ export class CityPanelView extends Component {
     return node
   }
 
-  private addLabel(parent: Node, name: string, x: number, y: number, color: Color, fontSize: number): Label {
+  /**
+   * 建一个文本节点。
+   *
+   * @param leftAligned 左对齐。**必须配合左锚点**：Label 在 Overflow.NONE 下由文本自身
+   *                    决定 contentSize，此时 horizontalAlign 不生效、文本以节点中心排布，
+   *                    表现就是「整行文字从卡片里向外溢出」（本轮踩过的坑）。
+   * @param maxWidth  大于 0 时固定宽度并裁剪，防止长文本压到右侧按钮上
+   */
+  private addLabel(parent: Node, name: string, x: number, y: number, color: Color, fontSize: number,
+                   leftAligned = false, maxWidth = 0): Label {
     const node = new Node(name)
     node.layer = parent.layer
     parent.addChild(node)
-    node.addComponent(UITransform)
+    const transform = node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
     const label = node.addComponent(Label)
     label.string = ''
     label.color = color
     label.fontSize = fontSize
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.horizontalAlign = leftAligned ? Label.HorizontalAlign.LEFT : Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
+    if (leftAligned) {
+      transform.setAnchorPoint(0, 0.5)
+    }
+    if (maxWidth > 0) {
+      transform.setContentSize(new Size(maxWidth, fontSize * 1.6))
+      label.overflow = Label.Overflow.CLAMP
+    }
     return label
   }
 
@@ -278,16 +394,19 @@ export class CityPanelView extends Component {
         ? panel.queueText
         : `${panel.queueText} · ${panel.queueExpandText}`
     }
-    if (this.resourceLabel !== null) {
-      this.resourceLabel.string = panel.resourceLines.join('  ')
-    }
+    panel.resourceLines.forEach((line, index) => {
+      const label = this.resourceLabels[index]
+      if (label !== undefined) {
+        label.string = line
+      }
+    })
 
     const visible = panel.rows.slice(0, MAX_VISIBLE_ROWS)
     if (rebuild) {
       pool.releaseAll(this.drawnRows)
       this.drawnRows.length = 0
-      const size = view.getVisibleSize()
-      const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+      this.layoutCard(visible.length)
+      const topY = this.cardHeight / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
       visible.forEach((_row, index) => {
         const node = pool.acquire()
         node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
