@@ -88,6 +88,12 @@ declare module 'cc' {
     destroy(): boolean
     setPosition(position: Vec3): void
     setPosition(x: number, y: number, z?: number): void
+    /**
+     * 设置缩放。真实 Creator 3.8 有两个重载 —— 桩里漏了它会让 headless 类型检查
+     * 把「用了个真有的引擎方法」报成「属性不存在」（与 getChildByName 同一条注释）。
+     */
+    setScale(scale: Vec3): void
+    setScale(x: number, y: number, z?: number): void
     addComponent<T extends Component>(type: { new(): T }): T
     getComponent<T extends Component>(type: { new(): T }): T | null
     /**
@@ -170,6 +176,16 @@ declare module 'cc' {
     now(): number
     platform: string
     isBrowser: boolean
+    /**
+     * 跨平台存储（Web 走 localStorage、微信小游戏走 wx.setStorageSync 那一套）。
+     * 桩里补它是因为「记住本机账号」只能用这个入口 —— 直接摸 window.localStorage
+     * 在小游戏上根本不存在。
+     */
+    localStorage: {
+      getItem(key: string): string | null
+      setItem(key: string, value: string): void
+      removeItem(key: string): void
+    }
   }
 }
 

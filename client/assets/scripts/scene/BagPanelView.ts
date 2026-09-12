@@ -54,6 +54,12 @@ export class BagPanelView extends Component {
   private headerLabel: Label | null = null
   private warningLabel: Label | null = null
   private readonly tabLabels = new Map<Tab, Label>()
+  /**
+   * onLoad 之前的挂载数据。节点由 PanelNav 创建且初始未激活 —— 未激活不会跑 onLoad，
+   * 而登录后的预拉数据此时已经到了，先存下来、激活时消费（与 CityPanelView 的 pending 同一条）。
+   */
+  private pendingResources: ResourceDetailResp | null = null
+  private pendingBag: BagListResp | null = null
 
   /**
    * 点「使用」。needsTarget 为 true 时（加速类道具）由外层弹出目标选择再发请求
@@ -69,6 +75,18 @@ export class BagPanelView extends Component {
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
     this.render()
+    // 消费挂载前的数据。顺序与 AppRoot.refresh 一致（bag 在前、resources 在后），
+    // 保证 tab 仍由 resources 决定 —— 两处顺序不一致会让面板开在错误的页签上
+    const pendingBag = this.pendingBag
+    const pendingResources = this.pendingResources
+    this.pendingBag = null
+    this.pendingResources = null
+    if (pendingBag !== null) {
+      this.attachBag(pendingBag)
+    }
+    if (pendingResources !== null) {
+      this.attachResources(pendingResources)
+    }
   }
 
   override onDestroy(): void {
@@ -82,6 +100,10 @@ export class BagPanelView extends Component {
 
   /** 装载资源产出明细（GET /resource/detail）。 */
   attachResources(resp: ResourceDetailResp): void {
+    if (this.rowPool === null) {
+      this.pendingResources = resp
+      return
+    }
     this.resources = buildResourcePanel(resp)
     this.tab = 'resource'
     this.render()
@@ -89,6 +111,10 @@ export class BagPanelView extends Component {
 
   /** 装载背包（GET /bag/list）。 */
   attachBag(resp: BagListResp): void {
+    if (this.rowPool === null) {
+      this.pendingBag = resp
+      return
+    }
     this.bag = buildBagPanel(resp)
     // 原来选中的类型页可能在新数据里已经空了（道具用完了），此时退回第一页
     if (this.bagPageType !== null && !this.bag.pages.some((page) => page.type === this.bagPageType)) {

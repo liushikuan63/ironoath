@@ -393,9 +393,6 @@
       },
       {
         "__id__": 17
-      },
-      {
-        "__id__": 18
       }
     ],
     "_prefab": null,
@@ -462,16 +459,5 @@
     "deviceId": "",
     "nickName": "无名君主",
     "_id": "7Cs/W4gM0m7OmWppBtk2rj"
-  },
-  {
-    "__type__": "1b4feMAh0BIrao6m3LlYTUG",
-    "_name": "",
-    "_objFlags": 0,
-    "node": {
-      "__id__": 15
-    },
-    "_enabled": true,
-    "__prefab": null,
-    "_id": "4qYuZethGE7da6EDwY2aUQ"
   }
 ]

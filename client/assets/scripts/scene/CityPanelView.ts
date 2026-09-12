@@ -314,9 +314,9 @@ export class CityPanelView extends Component {
     graphics.fill()
 
     const textWidth = PANEL_WIDTH - 300
-    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 16, COLOR_TEXT, 19, true, textWidth)
-    const status = this.addLabel(node, 'Status', -PANEL_WIDTH / 2 + PADDING, -6, COLOR_TEXT_DIM, 15, true, textWidth)
-    const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING, -24,
+    this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 16, COLOR_TEXT, 19, true, textWidth)
+    this.addLabel(node, 'Status', -PANEL_WIDTH / 2 + PADDING, -6, COLOR_TEXT_DIM, 15, true, textWidth)
+    this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING, -24,
       COLOR_COPPER_GOLD, 14, true, textWidth)
 
     // 「收割」与「升级」共用同一个位置：两者互斥（升级中不能升级，到点只需收割），

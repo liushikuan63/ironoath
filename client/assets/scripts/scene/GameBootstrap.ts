@@ -44,6 +44,7 @@ import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { WorldMap } from './WorldMap'
+import { PanelNav } from './PanelNav'
 
 const { ccclass } = _decorator
 
@@ -102,6 +103,34 @@ export class GameBootstrap extends Component {
    * 崩溃时所在场景名。拿不到就返回 null ——
    * "崩在场景切换之间"本身就是有效信息，编一个名字反而会把排查的人带到别处去。
    */
+  /**
+   * 本机固定账号 id。
+   *
+   * <p><b>为什么必须持久化</b>：留空时原来每次刷新都生成 `web-<时间戳>` ——
+   * 也就是说玩家每次刷页面都会变成一个新号，刚升的建筑、刚领的任务全都不见了。
+   * 用 {@code sys.localStorage} 而不是 window.localStorage：后者在微信小游戏里不存在。
+   *
+   * <p>受限环境（隐私模式、部分 WebView）读写可能抛异常：那就退回"本次临时账号"，
+   * 但**不能因此启动失败** —— 登不进去比丢档更糟。
+   */
+  private resolveDeviceId(): string {
+    if (this.deviceId.length > 0) {
+      return this.deviceId
+    }
+    const key = 'ironoath.deviceId'
+    try {
+      const saved = sys.localStorage.getItem(key)
+      if (saved !== null && saved.length > 0) {
+        return saved
+      }
+      const created = `web-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+      sys.localStorage.setItem(key, created)
+      return created
+    } catch (error) {
+      console.warn('[session] 本机存储不可用，本次使用临时账号（刷新后会换号）', error)
+      return `web-${Date.now()}`
+    }
+  }
   private currentSceneName(): string | null {
     const d = director as unknown as { getScene?: () => { name?: string } | null }
     const name = typeof d.getScene === 'function' ? d.getScene()?.name : undefined
@@ -110,7 +139,16 @@ export class GameBootstrap extends Component {
 
   override onLoad(): void {
     this.installViewportGuard()
+    // 导航层：由它建出各面板节点（初始未激活，因此不会九个面板一起画满屏背景），
+    // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
+    this.node.addComponent(PanelNav)
     void this.boot()
+  }
+
+  /** 按导航 key 取面板组件。未激活的节点也能拿到组件对象（只是还没跑 onLoad）。 */
+  private panel<T extends Component>(ctor: new () => T, key: string): T | null {
+    const node = this.node.getChildByName(key)
+    return node === null ? null : node.getComponent(ctor)
   }
 
   /**
@@ -291,7 +329,7 @@ export class GameBootstrap extends Component {
       tracker: activity })
     this.lastActionAt = sys.now()
     tracker?.track(TRACK_EVENTS.startup, { clientVersion: CLIENT_VERSION })
-    await this.root.start(this.deviceId || `web-${Date.now()}`, this.nickName)
+    await this.root.start(this.resolveDeviceId(), this.nickName)
   }
 
   /**
@@ -317,15 +355,16 @@ export class GameBootstrap extends Component {
 
   /** 本节点上挂了哪些面板，就接哪些。没挂的面板不会被假装接上（根只会少发那份请求的落地）。 */
   private targets(): PanelTargets {
-    const city = this.node.getComponent(CityPanelView)
-    const army = this.node.getComponent(ArmyPanelView)
-    const hero = this.node.getComponent(HeroPanelView)
-    const bag = this.node.getComponent(BagPanelView)
-    const stage = this.node.getComponent(StagePanelView)
-    const social = this.node.getComponent(SocialPanelView)
-    const power = this.node.getComponent(PowerPanelView)
-    const search = this.node.getComponent(TargetSearchView)
-    const quest = this.node.getComponent(QuestPanelView)
+    const city = this.panel(CityPanelView, 'city')
+    const army = this.panel(ArmyPanelView, 'army')
+    const hero = this.panel(HeroPanelView, 'hero')
+    const bag = this.panel(BagPanelView, 'bag')
+    const stage = this.panel(StagePanelView, 'stage')
+    const social = this.panel(SocialPanelView, 'social')
+    const power = this.panel(PowerPanelView, 'power')
+    const search = this.panel(TargetSearchView, 'targets')
+    const quest = this.panel(QuestPanelView, 'quest')
+    // 世界地图暂不在导航条里（它的数据流与其余面板不同，见 PanelNav 的注释）
     const world = this.node.getComponent(WorldMap)
     const out: PanelTargets = {
       error: (panel, message) => console.warn(`[${panel}] ${message}`),
