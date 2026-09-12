@@ -59,11 +59,9 @@ npm run dev      # 启动服务端（dev profile，内存存储，零外部依�
 # 内存存储（默认）：零外部依赖，重启丢档，用于开发与单测
 npm run dev
 
-# 真实 MongoDB：⚠ 当前只实现了两张表，起不来是预期行为
-# MongoStoreConfig 只有 PlayerRepository 与 IdempotencyStore；CityRepository / InventoryRepository
-# 装在 storage=memory 的条件里，其余仓储还是无条件装配的内存实现。
-# 所以现在跑这条命令会由 MongoStorageGuard 在启动前拒绝，并列出三条欠账 —— 这不是要绕的报错，
-# 而是防止「补两个 bean 起来一个会丢档的生产环境」。补齐进度见 收口清单.md 第 16 项。
+# 真实 MongoDB（全部 18 个存储端口已有 Mongo 实现，2026-09-12 起可直接启动）
+# 启动日志里会有一条「mongo 存储自检通过：18 个存储端口全部是 MongoDB 实现」——
+# 那是 MongoStorageGuard 在逐端口核对实现类：任何一类退回内存实现都会拒绝启动并点名。
 # 两步是必须的：命令行调用 spring-boot:run 会在 reactor 的每个模块上各执行一次，
 # 父聚合工程没有主类 ⇒ 直接 "Unable to find a suitable main class"；而只给 -pl game-web
 # 又会用本地仓库里的旧上游 jar，所以先 install。
@@ -76,11 +74,15 @@ mvn -f server/pom.xml -pl game-web spring-boot:run \
 读写都返回副本、`insertIfAbsent` 靠唯一约束保证原子性、`save` 做乐观锁版本比对。
 否则单测在内存实现上过了、上线在 Mongo 上炸，而这种 bug 只在并发时出现。
 
-启动时会自动确保两个索引存在并打日志：
+启动时会自动确保全部索引存在并打日志（`MongoIndexes.ensure`，契约测试跑的是同一份定义）：
 
 - `player.deviceId` 唯一索引 —— 这是「同设备只建一个号」的**唯一**保证。
   索引缺失时 `insertIfAbsent` 会静默退化成「永远插入成功」，等于给刷资源开了门。
 - `request_id.expireAt` TTL 索引 —— 回收幂等键，否则该集合无限膨胀。
+- `social_squad.name`、`social_alliance.name` / `.tag` 唯一索引 —— 组织名与标签的全局唯一
+  在并发下只能靠索引成立（内存版靠一把粗锁）。`members.playerId` 服务「我在哪个组织」。
+- `march_due.dueAt` —— 行军到期扫描走它；队列进 Mongo 是 B07 验收 1（重启后队伍按真实剩余时间继续）
+  的前提，内存队列一旦随进程消失，在途队伍会停在半路。
 
 ---
 
