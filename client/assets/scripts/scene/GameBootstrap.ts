@@ -364,8 +364,7 @@ export class GameBootstrap extends Component {
     const power = this.panel(PowerPanelView, 'power')
     const search = this.panel(TargetSearchView, 'targets')
     const quest = this.panel(QuestPanelView, 'quest')
-    // 世界地图暂不在导航条里（它的数据流与其余面板不同，见 PanelNav 的注释）
-    const world = this.node.getComponent(WorldMap)
+    const world = this.panel(WorldMap, 'world')
     const out: PanelTargets = {
       error: (panel, message) => console.warn(`[${panel}] ${message}`),
     }

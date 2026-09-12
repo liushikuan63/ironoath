@@ -26,6 +26,7 @@ import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { QuestPanelView } from './QuestPanelView'
+import { WorldMap } from './WorldMap'
 
 const { ccclass } = _decorator
 
@@ -46,9 +47,9 @@ interface PanelDef {
 
 /**
  * 面板清单。**顺序就是导航条从左到右的顺序**：
- * 内城 → 军队 → 武将 → 背包 → 关卡 → 任务 → 社交 → 战力 → 搜索。
- * 世界地图暂不列入：它的数据流（viewport/marches 订阅 + 瓦片缓存）与其余面板不同，
- * 等它的镜头与触摸交互收口后再进导航（收口清单 #103 的"下一步"）。
+ * 内城 → 军队 → 武将 → 背包 → 关卡 → 任务 → 社交 → 战力 → 搜索 → 地图。
+ * 地图（WorldMap）是最后一项：它带镜头与拖拽输入，且依赖 enterWorld 初始化过的世界模型
+ * （AppRoot.start 里已经拉过），所以挂上就能用，不需要额外的装配。
  */
 const PANELS: readonly PanelDef[] = [
   { key: 'city', label: '内城', view: CityPanelView },
@@ -60,6 +61,9 @@ const PANELS: readonly PanelDef[] = [
   { key: 'social', label: '社交', view: SocialPanelView },
   { key: 'power', label: '战力', view: PowerPanelView },
   { key: 'targets', label: '搜索', view: TargetSearchView },
+  // 地图放最后：它是唯一带镜头与拖拽的面板，数据流（viewport/marches 订阅）也与其余面板不同。
+  // enterWorld 在登录时已由 AppRoot 拉过，这里挂上即能渲染。
+  { key: 'world', label: '地图', view: WorldMap },
 ]
 
 @ccclass('PanelNav')
@@ -76,6 +80,7 @@ export class PanelNav extends Component {
   onShow: ((key: string) => void) | null = null
 
   override onLoad(): void {
+    const size = view.getVisibleSize()
     for (const def of PANELS) {
       const node = new Node(def.key)
       node.layer = this.node.layer
@@ -83,6 +88,9 @@ export class PanelNav extends Component {
       // 于是九个面板不会在开局一起画满屏背景（也省掉九份节点池）
       node.active = false
       this.node.addChild(node)
+      // **必须有 UITransform 且铺满屏**：触摸命中是按节点的 UITransform 矩形算的。
+      // 少这一层时，地图的拖拽（监听在本节点上）完全收不到事件 —— 表现是"地图能看不能拖"。
+      node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
       node.addComponent(def.view)
       this.panelNodes.set(def.key, node)
     }
