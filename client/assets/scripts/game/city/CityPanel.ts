@@ -17,7 +17,7 @@
  */
 
 import { countdownMs, formatCountdown as formatCountdownOf } from '../../core/Countdown'
-import type { BuildingView, CityListResp, ErrorDetail, QueueView, ResourceAmount } from '../../net/generated/CityProtocol'
+import type { BuildingView, CityCollectResp, CityListResp, ErrorDetail, QueueView, ResourceAmount } from '../../net/generated/CityProtocol'
 
 /** 一栋建筑在面板上的一行。 */
 export interface BuildingRow {
@@ -115,7 +115,7 @@ export function buildBuildingRow(building: BuildingView, offsetMs: number, local
     title: `${building.configId} Lv${building.level}`,
     statusText: statusText(building.status, done),
     countdownText: countdown === null ? null : formatCountdown(countdown),
-    progressText: upgrading ? `${formatPercent(building.progress)}%` : null,
+    progressText: upgrading ? `${formatPercent(localProgressFixed(building, offsetMs, localNow))}%` : null,
     helpText: building.helpCount > 0 ? `已获帮助 ${building.helpCount} 次` : null,
     collectable: done,
     upgrading,
@@ -123,6 +123,61 @@ export function buildBuildingRow(building: BuildingView, offsetMs: number, local
   }
 }
 
+/**
+ * 本地推算进度（定点 0~10000）。
+ *
+ * <p><b>为什么不能直接用服务端下发的 progress</b>：它是<b>响应那一刻</b>的快照，而倒计时每秒在
+ * 本地走 —— 只显示快照会出现「时间在减少、百分比不动」，玩家一眼就看出两处对不上。
+ * 这里复刻 {@code BuildingInstance#progressFixed} 的同一条公式：
+ * {@code elapsed = nowServer - startedAt}，{@code progress = elapsed / (totalSeconds × 1000)}。
+ *
+ * <p><b>分母必须用 totalSeconds，不能用 (finishAt - startedAt)</b>：加速会把两者一起压缩，
+ * 但服务端的算法以 totalSeconds 为准，客户端换一个分母就是第二套口径。
+ *
+ * <p>用浮点除法而不是定点库：它只影响**显示**（最终按整数百分比取整），不参与任何结算。
+ * 为了让展示数字两端逐位一致而把定点除法搬进客户端，代价大于收益（铁律 2：客户端从不结算）。
+ *
+ * @param totalSeconds 为 0 时回退到服务端下发的 progress（旧数据或非升级中）
+ */
+export function localProgressFixed(building: BuildingView, offsetMs: number, localNow: number): number {
+  // 字段缺失也要能活：新客户端遇到旧服务端（灰度/滚动升级期间）时这两个字段是 undefined，
+  // 直接用会算出 NaN，再喂给 formatPercent 就抛异常 —— 而那只是显示层，不该让整块面板炸掉
+  const startedAt = Number.isFinite(building.startedAt) ? building.startedAt : 0
+  const totalSeconds = Number.isFinite(building.totalSeconds) ? building.totalSeconds : 0
+  const totalMs = totalSeconds * 1000
+  // 只以「总时长」判有效：startedAt=0 是合法时间戳（服务端对非升级中下发 0），
+  // 而 totalSeconds=0 才真正表示"没有可推进的区间"，此时回退到服务端快照
+  if (totalMs <= 0) {
+    return building.progress
+  }
+  const elapsed = Math.max(0, localNow + offsetMs - startedAt)
+  return Math.min(10000, Math.floor((elapsed / totalMs) * 10000))
+}
+
+/** 收割响应 → 底部提示。 */
+export interface CollectMessage {
+  readonly text: string
+  /** done = 真的有建筑升级完成；output = 只有产出补结算，没有建筑升级 */
+  readonly kind: 'done' | 'output'
+}
+
+/**
+ * 收割响应 → 底部提示。
+ *
+ * <p><b>collected 为空时绝不能报「升级完成」</b>：一键收割会顺手补结算离线产出，
+ * 那种情况下 collected 是空的，而玩家一核对等级没变就会认定提示是假的 ——
+ * 假成功比不提示更伤信任。所以这里分成两态，分别说清发生了什么。
+ *
+ * @return null 表示这一次没有任何值得说的结果（既没升级也没产出）
+ */
+export function collectMessage(resp: CityCollectResp): CollectMessage | null {
+  const output = outputText(resp.output)
+  if (resp.collected.length > 0) {
+    const names = resp.collected.map((building) => `${building.configId} Lv${building.level}`).join(' · ')
+    return { text: `升级完成 ${names}${output === null ? '' : ` · ${output}`}`, kind: 'done' }
+  }
+  return output === null ? null : { text: output, kind: 'output' }
+}
 /**
  * 结构化错误 → 人话（B03 §2）。
  *

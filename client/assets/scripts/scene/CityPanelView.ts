@@ -21,7 +21,7 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
-import { buildCityPanel, errorText, outputText } from '../game/city/CityPanel'
+import { buildCityPanel, collectMessage, errorText } from '../game/city/CityPanel'
 import type { BuildingRow, CityPanelView as CityPanelData } from '../game/city/CityPanel'
 import type {
   CityCollectResp, CityListResp, ErrorDetail, SpeedUpSource,
@@ -154,11 +154,18 @@ export class CityPanelView extends Component {
     this.offsetMs = offsetMs
   }
 
-  /** 收割响应：播升级动效的入口，同时把补结算的产出说出来。 */
+  /**
+   * 收割响应：把「真的升级完成」与「只有产出补结算」分开说。
+   *
+   * <p>collected 为空时不能报「升级完成」—— 一键收割会顺手结算离线产出，
+   * 那种情况下等级根本没变，玩家一核对就会发现提示是假的（由 {@link collectMessage} 分态）。
+   */
   attachCollect(resp: CityCollectResp): void {
-    const output = outputText(resp.output)
-    const names = resp.collected.map((building) => `${building.configId} Lv${building.level}`).join(' · ')
-    this.showMessage(`升级完成 ${names}${output === null ? '' : ` · ${output}`}`, COLOR_GOOD)
+    const message = collectMessage(resp)
+    if (message === null) {
+      return
+    }
+    this.showMessage(message.text, message.kind === 'done' ? COLOR_GOOD : COLOR_TEXT_DIM)
   }
 
   /**

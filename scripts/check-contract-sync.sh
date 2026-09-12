@@ -37,9 +37,12 @@ diff_dir() {
     fail=1
     return
   fi
-  if ! diff -r -q "$gen" "$committed" >/dev/null 2>&1; then
+  # 忽略 *.meta：那是 Cocos 编辑器的资产数据库产物（uuid/导入设置），不是本生成器的输出。
+  # 不排除的话，编辑器一打开工程就会给生成物补 .meta，此后 CI 永远报"不同步"，
+  # 而真正该被发现的"改了 schema 忘跑 gen"反而会被这堆噪音淹没。
+  if ! diff -r -q -x '*.meta' "$gen" "$committed" >/dev/null 2>&1; then
     echo "[check-contract-sync][FAIL] $label 与契约不同步，请重新运行 'npm run gen' 并提交:" >&2
-    diff -r "$gen" "$committed" 2>&1 | head -60 >&2
+    diff -r -x '*.meta' "$gen" "$committed" 2>&1 | head -60 >&2
     fail=1
   else
     echo "[check-contract-sync] $label 同步 OK"

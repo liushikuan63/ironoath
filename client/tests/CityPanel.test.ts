@@ -14,7 +14,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildBuildingRow, buildCityPanel, countdownMs, errorText, formatCountdown,
+  buildBuildingRow, buildCityPanel, collectMessage, countdownMs, errorText, formatCountdown,
   formatPercent, outputText, queueExpandText, queueText,
 } from '../assets/scripts/game/city/CityPanel'
 import type { BuildingView, CityListResp, QueueView, ResourceStateView } from '../assets/scripts/net/generated/CityProtocol'
@@ -32,6 +32,9 @@ function building(overrides: Partial<BuildingView> = {}): BuildingView {
     finishAt: null,
     remainingSeconds: null,
     progress: 10000,
+    // 非升级中：与协议一致，两个推进字段都是 0（回退到 progress 快照）
+    startedAt: 0,
+    totalSeconds: 0,
     helpCount: 0,
     ...overrides,
   }
@@ -128,6 +131,57 @@ test('level 显示的是已达成的等级：升级途中不显示目标等级�
   assert.equal(row.title, 'building_wood Lv6')
 })
 
+test('倒计时与百分比必须同步推进：进度不能停在响应那一刻的快照上', () => {
+  // 服务端在 t=0 下发：20 秒的升级刚开始（progress 快照 = 0）
+  const resp = building({ status: 'UPGRADING', finishAt: 20_000, progress: 0, startedAt: 0, totalSeconds: 20 })
+
+  const atFive = buildBuildingRow(resp, 0, 5_000)
+  assert.equal(atFive.countdownText, '00分15秒')
+  assert.equal(atFive.progressText, '25%', '本地过 5 秒 ⇒ 25%，与服务端公式 elapsed/total 同源')
+
+  const atTen = buildBuildingRow(resp, 0, 10_000)
+  assert.equal(atTen.countdownText, '00分10秒')
+  assert.equal(atTen.progressText, '50%')
+
+  const atNineteen = buildBuildingRow(resp, 0, 19_999)
+  assert.equal(atNineteen.progressText, '99%', '封顶 99%，到点前不说 100%')
+
+  const done = buildBuildingRow(resp, 0, 20_000)
+  assert.equal(done.progressText, '99%', '到点仍不报 100%：先收割，等级才会真的 +1')
+  assert.equal(done.collectable, true)
+})
+
+test('推进字段缺失/非法时回退到快照，绝不把面板炸掉（滚动升级期间新旧并存）', () => {
+  const legacy = building({ status: 'UPGRADING', finishAt: 10_000, progress: 4_200 })
+  // 模拟旧服务端：JSON 里根本没有这两个字段
+  const raw = { ...legacy } as Record<string, unknown>
+  delete raw.startedAt
+  delete raw.totalSeconds
+  const row = buildBuildingRow(raw as unknown as BuildingView, 0, 5_000)
+  assert.equal(row.progressText, '42%', '回退到服务端快照，而不是 NaN 或抛异常')
+})
+
+test('总时长为 0 时回退到服务端快照（旧数据/非升级中），不凭空造进度', () => {
+  const row = buildBuildingRow(building({ status: 'UPGRADING', finishAt: 10_000, progress: 5_000 }), 0, 5_000)
+  assert.equal(row.progressText, '50%')
+})
+
+test('收割响应分两态：没有建筑升级时绝不报「升级完成」', () => {
+  assert.equal(collectMessage({ collected: [], output: [], serverNow: 0 }), null,
+    '既没升级也没产出 ⇒ 什么都不说')
+  const onlyOutput = collectMessage({
+    collected: [], output: [{ type: 'WOOD', amount: 800 }], serverNow: 0,
+  })
+  assert.equal(onlyOutput?.kind, 'output')
+  assert.equal(onlyOutput?.text, '补结算产出 WOOD +800',
+    '一键收割常常只结算离线产出 —— 这种时候报「升级完成」就是假成功')
+
+  const done = collectMessage({
+    collected: [building({ level: 7 })], output: [], serverNow: 0,
+  })
+  assert.equal(done?.kind, 'done')
+  assert.equal(done?.text, '升级完成 building_wood Lv7')
+})
 // ---------- 进度（验收 3） ----------
 
 test('进度截断而不是四舍五入，且封顶 99%：进度条走到 100% 而升级没完成，玩家会点按钮然后发现点不动', () => {

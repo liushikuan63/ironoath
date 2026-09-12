@@ -986,9 +986,13 @@ public class CityAppService {
     }
 
     private static BuildingView toView(BuildingInstance b, long now) {
+        // startedAt 与 totalSeconds 一起下发：进度是"响应那一刻"的快照，而倒计时在客户端本地走，
+        // 只给快照会让进度条停在原地（时间在动、百分比不动）。客户端用这两个字段复刻
+        // progressFixed 的同一条公式：elapsed = nowServer - startedAt，progress = elapsed / total。
         return new BuildingView(b.instanceId(), b.configId(), b.level(), b.gridX(), b.gridY(),
                 com.ironoath.web.dto.generated.BuildingStatus.valueOf(b.status().name()),
-                b.upgradeFinishAt(), b.remainingSeconds(now), b.progressFixed(now), b.helpCount());
+                b.upgradeFinishAt(), b.remainingSeconds(now), b.progressFixed(now),
+                b.upgradeStartedAt(), b.upgradeTotalSeconds(), b.helpCount());
     }
 
     /**

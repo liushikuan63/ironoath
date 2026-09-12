@@ -81,8 +81,12 @@ export interface BuildingView {
   finishAt: number | null
   /** 剩余秒数，服务端算好后下发，客户端不得自行推算负数 */
   remainingSeconds: number | null
-  /** 进度（定点 0~10000）。客户端除以 10000 显示百分比，绝不自己算，避免与服务端不一致 */
+  /** 进度（定点 0~10000），响应时刻的快照。客户端用 startedAt/totalSeconds 在本地把它推进起来（见下），本字段同时作为 totalSeconds=0 时的回退值 */
   progress: number
+  /** 升级开始时刻（服务端时间戳）；非升级中为 0。与 totalSeconds 一起让客户端能在本地复刻服务端的进度公式 —— 否则进度是响应快照、倒计时在本地走，两者会越差越远 */
+  startedAt: number
+  /** 本次升级的当前总时长（秒，加速会把 finishAt 与它一起压缩）；非升级中为 0。进度 = (服务端当前时刻 - startedAt) / (totalSeconds × 1000) */
+  totalSeconds: number
   /** 已获得的联盟/小队帮助次数 */
   helpCount: number
 }
