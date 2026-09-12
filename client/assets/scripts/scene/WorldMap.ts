@@ -111,6 +111,8 @@ export class WorldMap extends Component {
   /** 上一次看到的状态快照与看到它的本地时刻。用引用比较即可：状态只会整体被换成新对象。 */
   private lastExileSnapshot: ExileSnapshot | null = null
   private exileSnapshotAt = 0
+  /** 最后一次收到的家坐标；未登录/未初始化时为 null（回城按钮据此明说而不是空转）。 */
+  private homeCoord: { x: number; y: number } | null = null
   private dragging = false
   private panAccumX = 0
   private panAccumY = 0
@@ -121,8 +123,8 @@ export class WorldMap extends Component {
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
-    this.mapLayer = this.buildLayer('MapLayer')
-    this.hudLayer = this.buildLayer('HudLayer')
+    this.mapLayer = this.buildLayer('MapLayer', size.width, size.height)
+    this.hudLayer = this.buildLayer('HudLayer', size.width, size.height)
     this.tilePool = new NodePool(this.mapLayer, () => this.createMarker(), 9)
     this.entityPool = new NodePool(this.mapLayer, () => this.createMarker())
     this.marchPool = new NodePool(this.mapLayer, () => this.createMarker())
@@ -214,18 +216,39 @@ export class WorldMap extends Component {
     model.setCenter({ x, y })
   }
 
-  /** 一键回城（B07 §1）。家坐标由调用方给：它在 MarchListResp.home 里，本场景不存权威数据。 */
+  /**
+   * 接收家坐标（B07 §1）。家坐标的权威在 MarchListResp.home，本场景只记住最后一次收到的值，
+   * 供「回城」按钮使用 —— 这样按钮不需要自己去拉数据，也不会在没数据时假装能跳。
+   */
   focusHome(homeX: number, homeY: number): void {
+    this.homeCoord = { x: homeX, y: homeY }
     this.focusCoord(homeX, homeY)
+  }
+
+  /** 回城：回到最后一次收到的家坐标；还没收到就明说，而不是点了没反应。 */
+  private backHome(): void {
+    const home = this.homeCoord
+    if (home === null) {
+      this.showHint('还没拿到你的城坐标，等登录数据回来再试')
+      return
+    }
+    this.focusCoord(home.x, home.y)
   }
 
   // ---------- 搭建 ----------
 
-  private buildLayer(name: string): Node {
+  /**
+   * 建一个铺满整屏的层。
+   *
+   * <p><b>尺寸不能省</b>：触摸命中会沿着节点树做矩形测试，中间层没有 UITransform
+   * （或尺寸为 0）时，它下面的按钮全部收不到事件 —— 表现是「按钮看得见、点不动」。
+   * 地图拖拽之所以先坏后好，也是同一条。
+   */
+  private buildLayer(name: string, width: number, height: number): Node {
     const node = new Node(name)
     node.layer = this.node.layer
     this.node.addChild(node)
-    node.addComponent(UITransform)
+    node.addComponent(UITransform).setContentSize(width, height)
     return node
   }
 
@@ -262,9 +285,7 @@ export class WorldMap extends Component {
     const buttons: Array<{ name: string; text: string; onTap: () => void }> = [
       { name: 'ZoomInButton', text: '放大', onTap: () => this.zoomIn() },
       { name: 'ZoomOutButton', text: '缩小', onTap: () => this.zoomOut() },
-      // TODO(B07 表现层缺口): 家坐标要等适配层把 MarchListResp.home 落进 Store 才能取到，
-      // 现在点了没反应。接入点 focusHome 已就位，补一行即可
-      { name: 'HomeButton', text: '回城', onTap: () => undefined },
+      { name: 'HomeButton', text: '回城', onTap: () => this.backHome() },
     ]
     const startX = -width / 2 + HUD_BUTTON_SIZE / 2 + HUD_BUTTON_GAP
     buttons.forEach((button, index) => {
