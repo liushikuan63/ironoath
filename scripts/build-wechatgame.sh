@@ -66,5 +66,6 @@ done
 node scripts/patch-wechat-orientation.mjs "$BUILD_DIR/game.json"
 node scripts/patch-wechat-config.mjs "$BUILD_DIR/project.config.json" "$WECHAT_GAME_APPID"
 node scripts/patch-wechat-adapter.mjs "$BUILD_DIR/web-adapter.js"
+node scripts/patch-wechat-global.mjs "$BUILD_DIR/game.js"
 bash scripts/check-wechat-artifact.sh
 echo "[build-wechatgame] 微信小游戏构建与产物检查通过。"

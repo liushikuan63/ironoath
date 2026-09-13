@@ -50,6 +50,18 @@ else
   echo "[check-wechat-artifact] 方向：landscape ✓"
 fi
 
+# 小游戏环境没有 Node 的 global；引擎里有直接引用它的分支，缺这行会在第一屏
+# 抛 "ReferenceError: global is not defined"（开发者工具实测）。补丁必须排在所有代码之前。
+if head -c 200 "$BUILD_DIR/game.js" | grep -q 'globalThis.global = globalThis.global || globalThis;'; then
+  echo "[check-wechat-artifact] global 别名兼容补丁：存在 ✓"
+else
+  echo "[check-wechat-artifact][FAIL] game.js 缺少 global 别名兼容补丁；"
+  echo "  小游戏首屏会抛 ReferenceError: global is not defined。"
+  echo "  处置：跑 node scripts/patch-wechat-global.mjs client/build/wechatgame/game.js"
+  echo "  （build-wechatgame.sh 已自动执行，这里只是防止有人手工重建后漏掉）。"
+  FAIL=1
+fi
+
 # src/settings.json 的 engine.debug 就是本次构建模式：开发包要连开发者工具，
 # 提审量的是 release 包 —— 两者体积差接近一倍（引擎开发版 5.57MB vs 发布版 2.60MB），
 # 拿 debug 包判超限只会得到一个每次都要人工解释的假红。
