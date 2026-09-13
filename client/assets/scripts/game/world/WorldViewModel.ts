@@ -123,6 +123,8 @@ export class WorldViewModel {
 
   /** 视野中心（格）。字段名与同名访问器 center() 刻意错开，否则 TS 报重复标识符 */
   private focus: Coord
+  /** 家坐标（格）。来源是 MarchListResp.home，迁城成功后也由服务端结果改写。 */
+  private homeCoord: Coord
   private zoom: number
   private viewportKeys: string[] = []
   /** 发起最近一次 viewport 请求时的块键集合。响应回来时用它而不是当前视野做驱逐判据 */
@@ -147,6 +149,7 @@ export class WorldViewModel {
     this.cache = new ChunkCache({ maxChunks: layout.maxChunks })
     this.interpolator = new MarchInterpolator(offsetMs)
     this.focus = this.clamp(center)
+    this.homeCoord = this.focus
     this.zoom = zoom
     this.viewportKeys = this.computeViewportKeys()
     // 首次请求一定是为这个视野发的，先对齐；nextRequest 每次都会重新记录
@@ -165,6 +168,11 @@ export class WorldViewModel {
 
   center(): Coord {
     return this.focus
+  }
+
+  /** 当前家坐标。家是回城按钮的唯一权威，调用方不得再保存一份平行副本。 */
+  home(): Coord {
+    return this.homeCoord
   }
 
   currentZoom(): number {
@@ -219,6 +227,27 @@ export class WorldViewModel {
       this.needsFetch = true
     }
     this.notify()
+  }
+
+  /**
+   * 更新家坐标，不改变当前视野。
+   *
+   * <p>行军列表每次都会带权威 home；单独提供这个入口是为了让适配层在
+   * 第一次进入世界时也能把初始化坐标纳入同一份状态。
+   */
+  setHome(coord: Coord): void {
+    this.homeCoord = this.clamp(coord)
+  }
+
+  /**
+   * 迁城成功后同时移动家与视野。
+   *
+   * <p>两件事必须落成一次模型变更：只改家会让地图停在旧址，只改视野会让回城跳回旧址，
+   * 两种半成功都会表现成“迁城没生效”。
+   */
+  relocateHome(coord: Coord): void {
+    this.homeCoord = this.clamp(coord)
+    this.setCenter(coord)
   }
 
   /**
@@ -343,6 +372,7 @@ export class WorldViewModel {
    * @param localNow 收到响应那一刻的本地时刻
    */
   applyMarches(resp: MarchListResp, localNow: number): void {
+    this.homeCoord = this.clamp(resp.home)
     const nextIds = new Set<string>()
     for (const view of resp.marches) {
       nextIds.add(view.marchId)

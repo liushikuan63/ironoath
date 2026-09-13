@@ -37,6 +37,13 @@ declare module 'cc' {
   export class EventTouch {
     getUILocation(): Vec2
     getDelta(): Vec2
+    /** 当前仍在屏幕上的全部触点；用于区分单指拖动与双指缩放。 */
+    getAllTouches(): Touch[]
+  }
+
+  export class Touch {
+    getID(): number | null
+    getUILocation(): Vec2
   }
 
   export class Size {

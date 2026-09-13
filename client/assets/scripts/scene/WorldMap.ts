@@ -20,7 +20,7 @@
  * {@link WorldMap#zoomOut} / {@link WorldMap#focusHome} 三个公开方法作为它们的接入点。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, UITransform, Vec3, director, sys, view } from 'cc'
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, UITransform, Vec3, sys, view } from 'cc'
 import { exileSnapshot, worldModel, worldRequester } from '../game/world/WorldContext'
 import type { ExileSnapshot } from '../game/world/WorldContext'
 import { exileCanRequest, exileLabel } from '../game/world/ExileAction'
@@ -72,11 +72,23 @@ const MARCH_SIZE_RATIO = 0.9
 const HUD_BAND_HEIGHT = 104
 const HUD_BUTTON_SIZE = 84
 const HUD_BUTTON_GAP = 12
+/** 流亡按钮要显示「冷却 N 天 M 小时」，不能沿用 84px 的方形尺寸。 */
+const HUD_EXILE_BUTTON_WIDTH = 180
 /** 流亡迁城的二次确认窗口：过了就得重新按两下。宁短勿长 —— 拖着确认状态去干别的再回来点到，正是误操作的样子。 */
 const EXILE_CONFIRM_WINDOW_MS = 5_000
+/** 双指间距相对本次手势起点扩大 / 缩小到这个比例时，缩放一档。 */
+const PINCH_ZOOM_IN_RATIO = 1.25
+const PINCH_ZOOM_OUT_RATIO = 0.8
 
 /** 纠偏闪光持续的帧数。这是特效时长，不是游戏数值。 */
 const CORRECTED_FLASH_FRAMES = 8
+
+interface GesturePoint {
+  readonly x: number
+  readonly y: number
+}
+
+type PinchZoomAction = 'zoom-in' | 'zoom-out' | null
 
 interface MarkerRefs {
   readonly graphics: Graphics
@@ -85,6 +97,9 @@ interface MarkerRefs {
 
 @ccclass('WorldMap')
 export class WorldMap extends Component {
+  /** 放大到城市档时由组合根切到现有内城面板；本场景不直接 loadScene。 */
+  onEnterCity: (() => void) | null = null
+
   private readonly refs = new Map<Node, MarkerRefs>()
   /** 已画出的实体：键 → 节点。每帧与渲染帧做差集，决定谁复用、谁归还 */
   private readonly drawnEntities = new Map<string, Node>()
@@ -111,9 +126,16 @@ export class WorldMap extends Component {
   /** 上一次看到的状态快照与看到它的本地时刻。用引用比较即可：状态只会整体被换成新对象。 */
   private lastExileSnapshot: ExileSnapshot | null = null
   private exileSnapshotAt = 0
-  /** 最后一次收到的家坐标；未登录/未初始化时为 null（回城按钮据此明说而不是空转）。 */
-  private homeCoord: { x: number; y: number } | null = null
+  /** 一次迁城请求在途时锁住按钮，避免确认窗口被误当成“没点到”而重复发起。 */
+  private exileRequesting = false
   private dragging = false
+  /** 当前仍在屏幕上的触点；用于区分单指拖动与双指缩放。 */
+  private readonly activeTouches = new Map<number, GesturePoint>()
+  private pinchAnchorDistance: number | null = null
+  /** 一次双指手势最多缩一档，避免一次张开直接从世界档跨进城市档。 */
+  private pinchZoomTriggered = false
+  /** 双指手势结束后，必须等所有手指抬起才允许重新拖动，防止抬起一根手指时瞬移。 */
+  private suppressDragUntilRelease = false
   private panAccumX = 0
   private panAccumY = 0
   private marchesRequested = false
@@ -153,6 +175,12 @@ export class WorldMap extends Component {
     this.drawnMarches.clear()
     this.drawnTiles.clear()
     this.flash.clear()
+    this.activeTouches.clear()
+    this.onEnterCity = null
+  }
+
+  override onDisable(): void {
+    this.resetGesture()
   }
 
   override update(): void {
@@ -180,7 +208,14 @@ export class WorldMap extends Component {
       return
     }
     if (next === 2) {
-      director.loadScene('MainCity')
+      // 当前工程只有 Boot 场景，内城是同一场景里的可切换面板；加载不存在的
+      // MainCity 场景会让第二次「放大」直接报 1209，表现正是“缩放到城市档就坏了”。
+      if (this.onEnterCity === null) {
+        this.showHint('内城面板还没接入')
+        return
+      }
+      this.resetGesture()
+      this.onEnterCity()
       return
     }
     model.setZoom(next)
@@ -221,17 +256,18 @@ export class WorldMap extends Component {
    * 供「回城」按钮使用 —— 这样按钮不需要自己去拉数据，也不会在没数据时假装能跳。
    */
   focusHome(homeX: number, homeY: number): void {
-    this.homeCoord = { x: homeX, y: homeY }
+    worldModel()?.setHome({ x: homeX, y: homeY })
     this.focusCoord(homeX, homeY)
   }
 
-  /** 回城：回到最后一次收到的家坐标；还没收到就明说，而不是点了没反应。 */
+  /** 回城：从世界模型读取权威家坐标。 */
   private backHome(): void {
-    const home = this.homeCoord
-    if (home === null) {
-      this.showHint('还没拿到你的城坐标，等登录数据回来再试')
+    const model = worldModel()
+    if (model === null) {
+      this.showHint('未连接世界服务')
       return
     }
+    const home = model.home()
     this.focusCoord(home.x, home.y)
   }
 
@@ -265,11 +301,10 @@ export class WorldMap extends Component {
   }
 
   /**
-   * 顶部 HUD：坐标读数 + 三个按钮（放大 / 缩小 / 回城）。
+   * 顶部 HUD：坐标读数 + 放大 / 缩小 / 回城 + 流亡迁城。
    *
-   * <p>「回城」按钮拿不到家坐标 —— 家坐标在 MarchListResp 里，由适配层落地。
-   * 所以按钮的回调留空并加了说明，接入点已经存在（{@link WorldMap#focusHome}），
-   * 等适配层把 home 存进 Store 之后把这一行补上即可。
+   * <p>流亡按钮比方形按钮宽：冷却文案「冷却 3 天 0 小时」塞进 84px 会横向溢出，
+   * 盖住旁边的回城按钮。布局按实际宽度逐个推进，不用固定索引乘方形尺寸。
    */
   private buildHud(width: number, height: number): void {
     const y = height / 2 - HUD_BAND_HEIGHT / 2
@@ -287,16 +322,17 @@ export class WorldMap extends Component {
       { name: 'ZoomOutButton', text: '缩小', onTap: () => this.zoomOut() },
       { name: 'HomeButton', text: '回城', onTap: () => this.backHome() },
     ]
-    const startX = -width / 2 + HUD_BUTTON_SIZE / 2 + HUD_BUTTON_GAP
-    buttons.forEach((button, index) => {
+    let nextLeft = -width / 2 + HUD_BUTTON_GAP
+    for (const button of buttons) {
       const node = this.createButton(button.name, button.text,
-        startX + index * (HUD_BUTTON_SIZE + HUD_BUTTON_GAP), y)
+        nextLeft + HUD_BUTTON_SIZE / 2, y)
       node.on('touch-start', button.onTap, this)
-    })
+      nextLeft += HUD_BUTTON_SIZE + HUD_BUTTON_GAP
+    }
 
     // 流亡迁城的按钮文字要显示冷却倒计时与确认状态，所以不走上面那个固定文案的数组
     const exileNode = this.createButton('ExileButton', '流亡',
-      startX + buttons.length * (HUD_BUTTON_SIZE + HUD_BUTTON_GAP), y)
+      nextLeft + HUD_EXILE_BUTTON_WIDTH / 2, y, HUD_EXILE_BUTTON_WIDTH)
     this.exileCaption = exileNode.getChildByName('ExileButton_Caption')?.getComponent(Label) ?? null
     exileNode.on('touch-start', () => this.requestExile(), this)
   }
@@ -309,7 +345,9 @@ export class WorldMap extends Component {
     } else {
       this.node.addChild(node)
     }
-    node.addComponent(UITransform)
+    const transform = node.addComponent(UITransform)
+    transform.setContentSize(320, 28)
+    transform.setAnchorPoint(1, 0.5)
     node.setPosition(new Vec3(x, y, 0))
     const label = node.addComponent(Label)
     label.string = text
@@ -319,7 +357,8 @@ export class WorldMap extends Component {
     return label
   }
 
-  private createButton(name: string, text: string, x: number, y: number): Node {
+  private createButton(name: string, text: string, x: number, y: number,
+                       width = HUD_BUTTON_SIZE): Node {
     const node = new Node(name)
     node.layer = this.node.layer
     if (this.hudLayer !== null) {
@@ -329,25 +368,26 @@ export class WorldMap extends Component {
     }
     node.setPosition(new Vec3(x, y, 0))
     const transform = node.addComponent(UITransform)
-    transform.setContentSize(HUD_BUTTON_SIZE, HUD_BUTTON_SIZE)
+    transform.setContentSize(width, HUD_BUTTON_SIZE)
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_GROUND_GRID
     graphics.strokeColor = COLOR_MARCH
     graphics.lineWidth = 2
-    graphics.roundRect(-HUD_BUTTON_SIZE / 2, -HUD_BUTTON_SIZE / 2, HUD_BUTTON_SIZE, HUD_BUTTON_SIZE, 8)
+    graphics.roundRect(-width / 2, -HUD_BUTTON_SIZE / 2, width, HUD_BUTTON_SIZE, 8)
     graphics.fill()
     graphics.stroke()
 
     const caption = new Node(`${name}_Caption`)
     caption.layer = node.layer
     node.addChild(caption)
-    caption.addComponent(UITransform)
+    caption.addComponent(UITransform).setContentSize(width - 8, HUD_BUTTON_SIZE - 8)
     const label = caption.addComponent(Label)
     label.string = text
     label.color = COLOR_TEXT
     label.fontSize = 20
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
+    label.overflow = Label.Overflow.SHRINK
     return node
   }
 
@@ -382,20 +422,107 @@ export class WorldMap extends Component {
    */
   private bindInput(height: number): void {
     this.node.on('touch-start', (event: EventTouch) => {
+      this.syncActiveTouches(event)
+      if (this.activeTouches.size >= 2) {
+        this.beginPinch()
+        return
+      }
+      this.pinchAnchorDistance = null
+      this.suppressDragUntilRelease = false
       // 落在 HUD 条带里的触摸不启动拖动，否则点按钮的同时会把地图拖走
       this.dragging = event.getUILocation().y < height - HUD_BAND_HEIGHT
     }, this)
     this.node.on('touch-move', (event: EventTouch) => {
+      this.syncActiveTouches(event)
+      if (this.activeTouches.size >= 2) {
+        if (this.pinchAnchorDistance === null) {
+          this.beginPinch()
+        }
+        this.onPinch()
+        return
+      }
+      if (this.suppressDragUntilRelease) {
+        return
+      }
       if (!this.dragging) {
         return
       }
       this.onDrag(event)
     }, this)
-    const stop = (): void => {
+    const stop = (event: EventTouch): void => {
+      this.syncActiveTouches(event)
+      if (this.activeTouches.size >= 2) {
+        if (this.pinchAnchorDistance === null) {
+          this.beginPinch()
+        }
+        return
+      }
       this.dragging = false
+      // 双指抬起一根时，getAllTouches 仍可能只剩一根；必须等归零，否则剩余手指会立刻拖动。
+      if (this.activeTouches.size === 0) {
+        this.pinchAnchorDistance = null
+        this.suppressDragUntilRelease = false
+      }
     }
     this.node.on('touch-end', stop, this)
     this.node.on('touch-cancel', stop, this)
+  }
+
+  /**
+   * 同步当前屏幕上仍有效的触点。
+   *
+   * <p>不能拿每帧的 `getDelta()` 来识别多指：两根手指分别移动时，每个事件都只有一个
+   * delta，天然会被人当作单指拖动。触点数达到两个后必须立即锁住拖动，改用双指间距判定。
+   */
+  private syncActiveTouches(event: EventTouch): void {
+    const next = new Map<number, GesturePoint>()
+    for (const touch of event.getAllTouches()) {
+      const id = touch.getID()
+      if (id === null) {
+        continue
+      }
+      const location = touch.getUILocation()
+      next.set(id, { x: location.x, y: location.y })
+    }
+    this.activeTouches.clear()
+    for (const [id, point] of next) {
+      this.activeTouches.set(id, point)
+    }
+  }
+
+  private beginPinch(): void {
+    this.dragging = false
+    this.suppressDragUntilRelease = true
+    this.pinchZoomTriggered = false
+    this.pinchAnchorDistance = pinchDistance(Array.from(this.activeTouches.values()))
+  }
+
+  /** 双指间距越过一档阈值才缩放；整个手势期间不把双指平移写成相机拖动。 */
+  private onPinch(): void {
+    const current = pinchDistance(Array.from(this.activeTouches.values()))
+    const anchor = this.pinchAnchorDistance
+    if (current === null || anchor === null) {
+      return
+    }
+    const action = pinchZoomAction(current, anchor)
+    if (action === null || this.pinchZoomTriggered) {
+      return
+    }
+    this.pinchAnchorDistance = current
+    this.pinchZoomTriggered = true
+    if (action === 'zoom-in') {
+      this.zoomIn()
+    } else {
+      this.zoomOut()
+    }
+  }
+
+  private resetGesture(): void {
+    this.dragging = false
+    this.activeTouches.clear()
+    this.pinchAnchorDistance = null
+    this.pinchZoomTriggered = false
+    this.suppressDragUntilRelease = false
   }
 
   /**
@@ -648,7 +775,7 @@ export class WorldMap extends Component {
     const facts = {
       nextExileAt: snap.nextExileAt,
       troopsAway: snap.troopsAway,
-      requesting: false,
+      requesting: this.exileRequesting,
       serverNow: snap.serverNow + (sys.now() - this.exileSnapshotAt),
     }
     if (this.exileConfirmUntil !== 0 && sys.now() >= this.exileConfirmUntil) {
@@ -677,7 +804,7 @@ export class WorldMap extends Component {
     const facts = {
       nextExileAt: snap.nextExileAt,
       troopsAway: snap.troopsAway,
-      requesting: false,
+      requesting: this.exileRequesting,
       serverNow: snap.serverNow + (sys.now() - this.exileSnapshotAt),
     }
     if (!exileCanRequest(facts)) {
@@ -689,7 +816,22 @@ export class WorldMap extends Component {
       return
     }
     this.exileConfirmUntil = 0
-    requester.exile()
+    this.exileRequesting = true
+    this.refreshExileCaption()
+    void Promise.resolve()
+      .then(() => requester.exile())
+      .then(
+        () => this.finishExileRequest(),
+        (error: unknown) => {
+          console.error('[WorldMap] 流亡迁城请求失败', error)
+          this.finishExileRequest()
+        },
+      )
+  }
+
+  private finishExileRequest(): void {
+    this.exileRequesting = false
+    this.refreshExileCaption()
   }
 
   private showHint(text: string | null): void {
@@ -787,4 +929,32 @@ function formatRemaining(remainingMs: number): string {
 /** 取整数格部分（向零截断）。拖动累积器用它决定「这一步该移动几格」，余数留给渲染相机。 */
 function wholeCells(value: number): number {
   return Math.trunc(value)
+}
+
+/** 计算前两个触点的距离。少于两个触点或坐标非法时返回 null。 */
+function pinchDistance(points: readonly GesturePoint[]): number | null {
+  const first = points[0]
+  const second = points[1]
+  if (first === undefined || second === undefined) {
+    return null
+  }
+  const dx = second.x - first.x
+  const dy = second.y - first.y
+  const distance = Math.hypot(dx, dy)
+  return Number.isFinite(distance) && distance > 0 ? distance : null
+}
+
+/** 根据当前距离相对手势起点的比例，给出至多一档缩放动作。 */
+function pinchZoomAction(currentDistance: number, anchorDistance: number): PinchZoomAction {
+  if (!Number.isFinite(currentDistance) || !Number.isFinite(anchorDistance)
+      || currentDistance <= 0 || anchorDistance <= 0) {
+    return null
+  }
+  if (currentDistance >= anchorDistance * PINCH_ZOOM_IN_RATIO) {
+    return 'zoom-in'
+  }
+  if (currentDistance <= anchorDistance * PINCH_ZOOM_OUT_RATIO) {
+    return 'zoom-out'
+  }
+  return null
 }

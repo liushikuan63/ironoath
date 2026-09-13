@@ -35,7 +35,7 @@ export interface WorldRequester {
   /** 拉取自己的全部行军。适配层负责把响应喂给 {@link feedMarches}。 */
   marches(): void
   /** 发起一次流亡迁城。适配层负责调 {@code POST /world/exile} 并落地结果。 */
-  exile(): void
+  exile(): void | Promise<void>
 }
 
 /** 流亡迁城的客户端事实。全部来自服务端下发，本地一份都不自己算。 */
@@ -111,7 +111,7 @@ export function exileSnapshot(): ExileSnapshot {
 export function applyExileResult(coord: Coord, peaceUntil: number, nextExileAt: number,
                                  serverNow: number): void {
   exile = { nextExileAt, peaceUntil, troopsAway: 0, serverNow }
-  model?.setCenter(coord)
+  model?.relocateHome(coord)
 }
 
 /** 时间校准更新（每个 HTTP 响应都带 serverNow，等于免费校准一次）。 */

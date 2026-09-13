@@ -267,9 +267,8 @@ export class GameApi {
         marches: () => {
           void this.marches()
         },
-        exile: () => {
-          void this.doExile()
-        },
+        // 必须把 Promise 交回场景：按钮要等真正的迁城响应落地后才解除“迁城中”锁。
+        exile: () => this.doExile().then(() => undefined),
       })
       this.worldReady = true
     }

@@ -14,7 +14,8 @@ import assert from 'node:assert/strict'
 import { WorldViewModel, chunkIndexOf, chunkKeyOf, parseChunkKey } from '../assets/scripts/game/world/WorldViewModel'
 import type { WorldLayout } from '../assets/scripts/game/world/WorldViewModel'
 import {
-  bindWorldRequester, exileSnapshot, feedMarches, feedViewport, initializeWorld, resetWorld, worldModel, worldRequester,
+  applyExileResult, bindWorldRequester, exileSnapshot, feedMarches, feedViewport, initializeWorld,
+  resetWorld, worldModel, worldRequester,
 } from '../assets/scripts/game/world/WorldContext'
 import type { WorldRequester } from '../assets/scripts/game/world/WorldContext'
 import type {
@@ -114,6 +115,22 @@ test('setCenter 把越界坐标夹回世界内；zoom 只认 0/1/2 三档', () =
   assert.throws(() => model.setZoom(-1), /0\/1\/2/)
   model.setZoom(1)
   assert.equal(model.currentZoom(), 1)
+})
+
+test('家坐标随行军列表更新；迁城结果同时移动家与视野，回城不会返回旧址', () => {
+  const model = newModel()
+  assert.deepEqual(model.home(), { x: 48, y: 48 })
+
+  model.applyMarches({ ...marchList([]), home: { x: 300, y: 220 } }, 0)
+  assert.deepEqual(model.home(), { x: 300, y: 220 })
+  assert.deepEqual(model.center(), { x: 48, y: 48 }, '刷新行军列表本身不该强制拉走正在看的视野')
+
+  resetWorld()
+  const initialized = initializeWorld(LAYOUT, 0, { x: 48, y: 48 })
+  applyExileResult({ x: 440, y: 37 }, 1_000, 2_000, 500)
+  assert.deepEqual(initialized.home(), { x: 440, y: 37 })
+  assert.deepEqual(initialized.center(), { x: 440, y: 37 },
+    '迁城成功后家与视野必须一起移动，否则回城会跳回旧址')
 })
 
 test('构造期校验布局：chunkSize 必须是 2 的幂，maxChunks 必须是奇数边的完全平方数', () => {
