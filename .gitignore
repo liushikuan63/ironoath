@@ -17,6 +17,9 @@ client/native/
 # 代码生成器输出（生成物入库，但临时对比目录不入库）
 .tmp-contract-check/
 
+# 美术生成中间图；最终采用版本在 art-src/generated/accepted/ 入库
+art-src/generated/drafts/
+
 # IDE
 .idea/
 *.iml
