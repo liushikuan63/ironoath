@@ -50,6 +50,17 @@ else
   echo "[check-wechat-artifact] 方向：landscape ✓"
 fi
 
+# DevTools 的 devtools 分支原写法会拿全局 window / global.document 去查属性描述符，
+# worker 环境里它们可能不存在，首屏抛 "Cannot convert undefined or null to object"。
+if grep -q "i.window||(i.window=r),i.document||(i.document={})" "$BUILD_DIR/web-adapter.js"; then
+  echo "[check-wechat-artifact] DevTools 全局适配补丁：存在 ✓"
+else
+  echo "[check-wechat-artifact][FAIL] web-adapter.js 缺少 DevTools 全局适配补丁；"
+  echo "  小游戏在开发者工具里首屏会抛 Cannot convert undefined or null to object。"
+  echo "  处置：跑 node scripts/patch-wechat-adapter.mjs client/build/wechatgame/web-adapter.js"
+  FAIL=1
+fi
+
 # 小游戏环境没有 Node 的 global；引擎里有直接引用它的分支，缺这行会在第一屏
 # 抛 "ReferenceError: global is not defined"（开发者工具实测）。补丁必须排在所有代码之前。
 if head -c 200 "$BUILD_DIR/game.js" | grep -q 'globalThis.global = globalThis.global || globalThis;'; then
