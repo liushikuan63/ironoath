@@ -384,6 +384,64 @@ test('marches 的响应喂进世界模型，行军出现在渲染帧里', async 
   assert.equal(marches[0]?.marchId, 'x1')
 })
 
+test('doRecall 调 /world/recall、刷新列表，并把返程倒计时交给场景', async () => {
+  const { api, http } = createHarness()
+  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000 })]
+  await api.enterWorld()
+  http.calls.length = 0
+  const returning = {
+    marchId: 'x1', from: { x: 48, y: 48 }, to: { x: 148, y: 48 }, status: 'RETURNING',
+    targetType: 'MONSTER', targetId: null, action: 'ATTACK',
+    startAt: 0, arriveAt: 10_000, returnStartAt: 6_000, returnArriveAt: 18_000,
+    units: [], heroes: [], load: 0, loadCap: 100, teamSpeed: 10,
+    position: { x: 98, y: 48 }, progressFixed: 5_000, gatherFinishAt: null, serverNow: 6_000,
+  }
+  http.script = [
+    envelope({ march: returning, returnArriveAt: 18_000, returnSeconds: 12, serverNow: 6_000 }),
+    envelope({
+      marches: [returning], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 6_000,
+    }),
+  ]
+
+  const result = await api.doRecall('x1')
+
+  assert.equal(result.ok, true)
+  assert.match(result.message, /12 秒后到家/)
+  const call = http.calls.find(entry => entry.url.endsWith('/world/recall'))
+  assert.equal(JSON.parse(call?.body ?? '{}').marchId, 'x1')
+  assert.equal(worldModel()?.frame(6_000).marches[0]?.status, 'RETURNING')
+})
+
+test('doCollectGather 调 /world/collectGather，并把结算资源显示成可读文案', async () => {
+  const { api, http } = createHarness()
+  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000 })]
+  await api.enterWorld()
+  http.calls.length = 0
+  const returning = {
+    marchId: 'g1', from: { x: 48, y: 48 }, to: { x: 68, y: 48 }, status: 'RETURNING',
+    targetType: 'RESOURCE', targetId: null, action: 'GATHER',
+    startAt: 0, arriveAt: 2_000, returnStartAt: 6_000, returnArriveAt: 16_000,
+    units: [], heroes: [], load: 300, loadCap: 300, teamSpeed: 10,
+    position: { x: 68, y: 48 }, progressFixed: 0, gatherFinishAt: null, serverNow: 6_000,
+  }
+  http.script = [
+    envelope({
+      collected: [{ resourceType: 'WOOD', amount: 300 }],
+      returnArriveAt: 16_000, march: returning, serverNow: 6_000,
+    }),
+    envelope({
+      marches: [returning], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 6_000,
+    }),
+  ]
+
+  const result = await api.doCollectGather('g1')
+
+  assert.equal(result.ok, true)
+  assert.match(result.message, /WOOD ×300/)
+  const call = http.calls.find(entry => entry.url.endsWith('/world/collectGather'))
+  assert.equal(JSON.parse(call?.body ?? '{}').marchId, 'g1')
+})
+
 test('socialReddot 绑定 /social/reddot：整棵树原样返回给组合根消费', async () => {
   const { api, http } = createHarness()
   http.script = [envelope({

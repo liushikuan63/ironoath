@@ -36,12 +36,15 @@ export class GameSession {
    *
    * requestId 必须携带：断网重试时服务端凭它去重，否则会建出两个号（B01 验收 11）。
    */
-  async login(deviceId: string, nickName: string): Promise<NetOutcome<PlayerInitResp>> {
+  async login(deviceId: string, nickName: string,
+              wxCode: string | null = null): Promise<NetOutcome<PlayerInitResp>> {
     const request: PlayerInitReq = {
       requestId: this.deps.newRequestId(),
       deviceId,
       nickName,
       clientTime: this.deps.now(),
+      // 微信小游戏传 wx.login 的 code；浏览器/编辑器预览保持空串（服务端只看空白）
+      wxCode: wxCode ?? '',
     }
     const sentAt = this.deps.now()
     const outcome = await this.deps.net.post<PlayerInitReq, PlayerInitResp>(
@@ -75,6 +78,12 @@ export class GameSession {
     // 两个身份动作都做，缺一不可：setPlayer 让之后的每个 HTTP 请求带上服务端必填的身份头，
     // bindPlayer 只是向 socket 申报「把定向推送发给这个人」，连接没开时它会静默失败
     this.deps.net.setPlayer(data.playerId)
+    // 服务端签发的会话票据。旧服务端不带这个字段时退化为空串，
+    // 本地宽松身份实现照样放行；严格实现下空票据会被 2006 拒掉，这是应该的
+    // 旧服务端（或旧夹具）没有这个字段：undefined/null 都按"没有票据"处理，
+    // 不去改几十个测试夹具 —— 协议是增量字段，客户端必须能滚动升级
+    const authToken = data.authToken
+    this.deps.net.setAuthToken(typeof authToken === 'string' && authToken.length > 0 ? authToken : null)
     this.deps.net.bindPlayer(data.playerId)
     gameBus.emit('playerReady', { playerId: data.playerId, isNewPlayer })
     return outcome

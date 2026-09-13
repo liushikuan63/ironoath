@@ -18,6 +18,7 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3 } from 'cc'
 import { buildPowerPanel } from '../game/power/PowerPanel'
 import type { PowerDetailResp } from '../net/generated/Protocol'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -197,7 +198,7 @@ export class PowerPanelView extends Component {
   private createLabel(text: string, color: Color, fontSize: number): Label {
     const node = new Node('label')
     node.addComponent(UITransform)
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.color = color
     label.fontSize = fontSize

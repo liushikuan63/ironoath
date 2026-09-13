@@ -16,6 +16,10 @@ import type {
   CityCollectResp, CityListResp, ErrorDetail, SpeedUpSource,
 } from '../net/generated/CityProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
+import {
+  applyCommandButton, applyIconSprite, applySlicedSprite, buildingIconKey,
+} from './ArtCatalog'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -52,6 +56,7 @@ type RowAction = 'upgrade' | 'speedAd' | 'speedGold' | 'collect'
 interface GridTileRefs {
   readonly node: Node
   readonly graphics: Graphics
+  readonly icon: Node
   readonly nameLabel: Label
   readonly levelLabel: Label
   readonly statusLabel: Label
@@ -176,7 +181,9 @@ export class CityPanelView extends Component {
     frame.layer = card.layer
     card.addChild(frame)
     frame.addComponent(UITransform).setContentSize(new Size(CARD_WIDTH, CARD_HEIGHT))
-    this.frameGraphics = frame.addComponent(Graphics)
+    this.frameGraphics = applySlicedSprite(frame, 'ui.panel.kingdom', CARD_WIDTH, CARD_HEIGHT)
+      ? null
+      : frame.addComponent(Graphics)
 
     const top = CARD_HEIGHT / 2 - PADDING
     this.headerLabel = this.addLabel(card, 'Header', 0, top - 22, COLOR_COPPER_GOLD, 22)
@@ -216,14 +223,19 @@ export class CityPanelView extends Component {
       ))
       tile.addComponent(UITransform).setContentSize(new Size(CELL_WIDTH, CELL_HEIGHT))
       const graphics = tile.addComponent(Graphics)
-      const nameLabel = this.addLabel(tile, 'Name', 0, 8, COLOR_TEXT, 11)
-      const levelLabel = this.addLabel(tile, 'Level', 0, -7, COLOR_TEXT_DIM, 10)
-      const statusLabel = this.addLabel(tile, 'Status', 0, -18, COLOR_TEXT_DIM, 9)
+      const icon = new Node('BuildingIcon')
+      icon.layer = tile.layer
+      tile.addChild(icon)
+      icon.setPosition(new Vec3(-23, 0, 0))
+      icon.addComponent(UITransform).setContentSize(new Size(32, 32))
+      const nameLabel = this.addLabel(tile, 'Name', 17, 10, COLOR_TEXT, 10)
+      const levelLabel = this.addLabel(tile, 'Level', 17, -5, COLOR_TEXT_DIM, 10)
+      const statusLabel = this.addLabel(tile, 'Status', 17, -17, COLOR_TEXT_DIM, 9)
       for (const label of [nameLabel, levelLabel, statusLabel]) {
-        label.node.getComponent(UITransform)?.setContentSize(new Size(CELL_WIDTH - 8, 14))
+        label.node.getComponent(UITransform)?.setContentSize(new Size(50, 14))
         label.overflow = Label.Overflow.SHRINK
       }
-      this.gridTiles.push({ node: tile, graphics, nameLabel, levelLabel, statusLabel })
+      this.gridTiles.push({ node: tile, graphics, icon, nameLabel, levelLabel, statusLabel })
     }
   }
 
@@ -233,7 +245,11 @@ export class CityPanelView extends Component {
     parent.addChild(bar)
     bar.addComponent(UITransform).setContentSize(new Size(CONTENT_WIDTH, ACTION_HEIGHT))
     bar.setPosition(new Vec3(0, -CARD_HEIGHT / 2 + 106, 0))
-    const graphics = bar.addComponent(Graphics)
+    const background = new Node('SelectionBarBackground')
+    background.layer = bar.layer
+    bar.addChild(background)
+    background.addComponent(UITransform).setContentSize(new Size(CONTENT_WIDTH, ACTION_HEIGHT))
+    const graphics = background.addComponent(Graphics)
     graphics.fillColor = COLOR_PANEL
     graphics.strokeColor = COLOR_COPPER_GOLD
     graphics.lineWidth = 1
@@ -256,13 +272,15 @@ export class CityPanelView extends Component {
     parent.addChild(collectAll)
     collectAll.setPosition(new Vec3(CONTENT_WIDTH / 2 - 76, CARD_HEIGHT / 2 - PADDING - 22, 0))
     collectAll.addComponent(UITransform).setContentSize(new Size(132, 34))
-    const collectGraphics = collectAll.addComponent(Graphics)
-    collectGraphics.fillColor = COLOR_PANEL
-    collectGraphics.strokeColor = COLOR_COPPER_GOLD
-    collectGraphics.lineWidth = 2
-    collectGraphics.roundRect(-66, -17, 132, 34, 6)
-    collectGraphics.fill()
-    collectGraphics.stroke()
+    if (!applyCommandButton(collectAll, 'normal', 132, 34)) {
+      const collectGraphics = collectAll.addComponent(Graphics)
+      collectGraphics.fillColor = COLOR_PANEL
+      collectGraphics.strokeColor = COLOR_COPPER_GOLD
+      collectGraphics.lineWidth = 2
+      collectGraphics.roundRect(-66, -17, 132, 34, 6)
+      collectGraphics.fill()
+      collectGraphics.stroke()
+    }
     this.addLabel(collectAll, 'Caption', 0, 0, COLOR_TEXT, 15).string = '一键收割'
     collectAll.on('touch-start', (_event: EventTouch) => this.onCollect?.(null), this)
   }
@@ -274,14 +292,16 @@ export class CityPanelView extends Component {
     parent.addChild(button)
     button.setPosition(new Vec3(x, -20, 0))
     button.addComponent(UITransform).setContentSize(new Size(ACTION_BUTTON_WIDTH, ACTION_BUTTON_HEIGHT))
-    const graphics = button.addComponent(Graphics)
-    graphics.fillColor = COLOR_PANEL
-    graphics.strokeColor = COLOR_COPPER_GOLD
-    graphics.lineWidth = 1
-    graphics.roundRect(-ACTION_BUTTON_WIDTH / 2, -ACTION_BUTTON_HEIGHT / 2,
-      ACTION_BUTTON_WIDTH, ACTION_BUTTON_HEIGHT, 5)
-    graphics.fill()
-    graphics.stroke()
+    if (!applyCommandButton(button, 'normal', ACTION_BUTTON_WIDTH, ACTION_BUTTON_HEIGHT)) {
+      const graphics = button.addComponent(Graphics)
+      graphics.fillColor = COLOR_PANEL
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1
+      graphics.roundRect(-ACTION_BUTTON_WIDTH / 2, -ACTION_BUTTON_HEIGHT / 2,
+        ACTION_BUTTON_WIDTH, ACTION_BUTTON_HEIGHT, 5)
+      graphics.fill()
+      graphics.stroke()
+    }
     const caption = this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 12)
     caption.string = text
     caption.overflow = Label.Overflow.SHRINK
@@ -304,6 +324,7 @@ export class CityPanelView extends Component {
       frame.roundRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 10)
       frame.fill()
       frame.stroke()
+      applySlicedSprite(frame.node, 'ui.panel.kingdom', CARD_WIDTH, CARD_HEIGHT)
     }
     const size = view.getVisibleSize()
     const scale = Math.min(MAX_SCALE,
@@ -402,6 +423,9 @@ export class CityPanelView extends Component {
     tile.levelLabel.color = row?.collectable ? COLOR_GOOD : COLOR_TEXT_DIM
     tile.statusLabel.color = row?.paused ? COLOR_WARNING
       : row?.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
+    const iconVisible = row !== null
+      && applyIconSprite(tile.icon, buildingIconKey(row.configId), 30, 30)
+    tile.icon.active = iconVisible
 
     if (row?.upgrading) {
       const ratio = row.collectable ? 1 : Math.min(1, Math.max(0, Number.parseInt(row.progressText ?? '0', 10) / 100))
@@ -465,7 +489,7 @@ export class CityPanelView extends Component {
     parent.addChild(node)
     const transform = node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize

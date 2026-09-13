@@ -22,6 +22,7 @@ import { buildTargetRows, formatPower } from '../game/power/PowerPanel'
 import type { TargetRow } from '../game/power/PowerPanel'
 import type { SearchTargetsResp } from '../net/generated/WorldProtocol'
 import { NodePool } from './NodePool'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -195,7 +196,7 @@ export class TargetSearchView extends Component {
     parent.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize

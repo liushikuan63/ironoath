@@ -163,6 +163,17 @@ export class NetModule {
     this.playerId = playerId
   }
 
+  /**
+   * 设置会话票据（B15 §三）。登录成功后由 {@code GameSession} 调用，
+   * 之后每个 HTTP 请求自动带 {@code X-Auth-Token}。
+   *
+   * <p>与 {@link #setPlayer} 分开是刻意的：票据由服务端签发，客户端只是搬运工；
+   * 把两者塞进一个方法会让人以为票据是本地生成的。
+   */
+  setAuthToken(token: string | null): void {
+    this.token = token
+  }
+
   // ---------- HTTP ----------
 
   /**
@@ -469,7 +480,13 @@ export class NetModule {
 
   /** 绑定玩家身份，之后服务端才能定向推送。 */
   bindPlayer(playerId: string): boolean {
-    return this.sendRaw(JSON.stringify({ type: 'bind', playerId }))
+    // 票据跟着 bind 一起发：严格身份模式下服务端会校验它（见 GameWebSocketHandler#bind）。
+    // 漏了这一段的表现是"HTTP 全通、但订阅推送一条都收不到"，而本地宽松实现又不会报错。
+    const message: Record<string, string> = { type: 'bind', playerId }
+    if (this.token !== null) {
+      message.token = this.token
+    }
+    return this.sendRaw(JSON.stringify(message))
   }
 
   private sendRaw(text: string): boolean {

@@ -26,6 +26,7 @@ import type { LineupChoice } from '../game/session/Choices'
 import type { ChallengeStageResp, StageListResp, SweepResp } from '../net/generated/StageProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -261,7 +262,7 @@ export class StagePanelView extends Component {
     parent.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize

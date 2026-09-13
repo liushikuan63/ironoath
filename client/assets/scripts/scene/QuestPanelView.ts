@@ -20,6 +20,7 @@ import { buildQuestList, candidateLabel, chosenClaimReq, claimIntentOf } from '.
 import type { ClaimIntent, HeroChoicePrompt, QuestListView, QuestRow } from '../game/quest/QuestPanel'
 import type { QuestListResp } from '../net/generated/QuestProtocol'
 import { NodePool } from './NodePool'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -185,7 +186,7 @@ export class QuestPanelView extends Component {
     parent.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize

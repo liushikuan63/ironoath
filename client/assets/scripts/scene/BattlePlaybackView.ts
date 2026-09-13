@@ -25,6 +25,7 @@ import { BattlePlayback, parseSpeeds } from '../game/battle/BattlePlayback'
 import type { PlaybackOptions, PlaybackStep } from '../game/battle/BattlePlayback'
 import type { BattleResultView, RoundView, UnitStack, UnitType } from '../net/generated/BattleProtocol'
 import { NodePool } from './NodePool'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -289,7 +290,7 @@ export class BattlePlaybackView extends Component {
     caption.layer = node.layer
     node.addChild(caption)
     caption.addComponent(UITransform)
-    const label = caption.addComponent(Label)
+    const label = applySystemUiFont(caption.addComponent(Label))
     label.fontSize = 20
     label.color = COLOR_LOSS
     label.horizontalAlign = Label.HorizontalAlign.CENTER
@@ -303,7 +304,7 @@ export class BattlePlaybackView extends Component {
     this.node.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.color = color
     label.fontSize = fontSize

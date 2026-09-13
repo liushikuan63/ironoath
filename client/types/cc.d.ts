@@ -52,6 +52,14 @@ declare module 'cc' {
     height: number
   }
 
+  export class Rect {
+    constructor(x?: number, y?: number, width?: number, height?: number)
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+
   export class Color {
     constructor(r?: number, g?: number, b?: number, a?: number)
     r: number
@@ -132,10 +140,54 @@ declare module 'cc' {
     stroke(): void
   }
 
+  export class SpriteFrame {
+    constructor()
+    insetLeft: number
+    insetTop: number
+    insetRight: number
+    insetBottom: number
+    texture: unknown
+    rect: Rect
+    originalSize: Size
+    offset: Vec2
+    packable: boolean
+  }
+
+  export class Texture {
+    static WrapMode: {
+      REPEAT: number
+      CLAMP_TO_EDGE: number
+      MIRRORED_REPEAT: number
+    }
+  }
+
+  export class Texture2D extends Texture {
+    setWrapMode(wrapS: number, wrapT: number): void
+  }
+
+  export class Sprite extends Component {
+    spriteFrame: SpriteFrame | null
+    type: number
+    sizeMode: number
+    static Type: {
+      SIMPLE: number
+      SLICED: number
+      TILED: number
+      FILLED: number
+    }
+    static SizeMode: {
+      CUSTOM: number
+      TRIMMED: number
+      RAW: number
+    }
+  }
+
   export class Label extends Component {
     string: string
     fontSize: number
     lineHeight: number
+    useSystemFont: boolean
+    fontFamily: string
     color: Color
     horizontalAlign: number
     verticalAlign: number
@@ -172,6 +224,15 @@ declare module 'cc' {
   export const director: {
     getScene(): Node | null
     loadScene(sceneName: string, onComplete?: (error: Error | null) => void): void
+  }
+
+  export const resources: {
+    load<T>(path: string, type: { new(...args: unknown[]): T },
+            onComplete: (error: Error | null, asset: T) => void): void
+  }
+
+  export class JsonAsset {
+    json: unknown
   }
 
   export const game: {
@@ -218,6 +279,11 @@ declare const wx: {
   }): WxSocketTask
   getStorageSync(key: string): string | undefined
   setStorageSync(key: string, value: string): void
+  /** wx.login：取一次性登录凭证 code，服务端用它换 openid（B15 §三）。 */
+  login(options: {
+    success?(res: { code: string; errMsg: string }): void
+    fail?(err: { errMsg: string }): void
+  }): void
 }
 
 interface WxSocketTask {

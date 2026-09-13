@@ -36,6 +36,16 @@ export interface WorldRequester {
   marches(): void
   /** 发起一次流亡迁城。适配层负责调 {@code POST /world/exile} 并落地结果。 */
   exile(): void | Promise<void>
+  /** 召回一支自己的行军。适配层负责请求与刷新行军列表。 */
+  recall(marchId: string): Promise<WorldActionResult>
+  /** 结束采集并让队伍返程。适配层负责请求与刷新行军列表。 */
+  collectGather(marchId: string): Promise<WorldActionResult>
+}
+
+/** 场景动作的最终结果。成功与失败都要有玩家能读的说明。 */
+export interface WorldActionResult {
+  readonly ok: boolean
+  readonly message: string
 }
 
 /** 流亡迁城的客户端事实。全部来自服务端下发，本地一份都不自己算。 */

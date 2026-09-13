@@ -23,7 +23,9 @@ import type { MarchTrack } from './MarchInterpolator'
 import type {
   Coord,
   MarchListResp,
+  MarchAction,
   MarchStatus,
+  TargetType,
   ViewportReq,
   ViewportResp,
   WorldEntity,
@@ -67,12 +69,19 @@ export interface ChunkTile {
 /** 一支要画出来的行军。坐标已由 MarchInterpolator 按服务端时间插值。 */
 export interface MarchRender {
   readonly marchId: string
+  readonly from: Coord
+  readonly to: Coord
   readonly x: number
   readonly y: number
   readonly status: MarchStatus
+  readonly action: MarchAction
+  readonly targetType: TargetType
+  readonly rallyId: string | null
   /** 0~1 的行程进度，只用于画进度条/拖尾，不参与任何判定 */
   readonly progress: number
   readonly remainingMs: number
+  /** 采集队距离采满还有多少毫秒；非采集或没有完成时刻时为 0。 */
+  readonly gatherRemainingMs: number
   readonly load: number
   readonly loadCap: number
   /**
@@ -136,7 +145,16 @@ export class WorldViewModel {
   private readonly explored = new Set<string>()
   private readonly fogged = new Set<string>()
   private readonly tracks = new Map<string, MarchTrack>()
-  private readonly trackMeta = new Map<string, { load: number; loadCap: number }>()
+  private readonly trackMeta = new Map<string, {
+    readonly from: Coord
+    readonly to: Coord
+    readonly action: MarchAction
+    readonly targetType: TargetType
+    readonly rallyId: string | null
+    readonly gatherFinishAt: number | null
+    readonly load: number
+    readonly loadCap: number
+  }>()
   /** 待消费的纠偏标记 */
   private readonly pendingCorrections = new Set<string>()
   private readonly listeners = new Set<WorldListener>()
@@ -400,7 +418,16 @@ export class WorldViewModel {
         }
       }
       this.tracks.set(view.marchId, track)
-      this.trackMeta.set(view.marchId, { load: view.load, loadCap: view.loadCap })
+      this.trackMeta.set(view.marchId, {
+        from: view.from,
+        to: view.to,
+        action: view.action,
+        targetType: view.targetType,
+        rallyId: view.rallyId,
+        gatherFinishAt: view.gatherFinishAt,
+        load: view.load,
+        loadCap: view.loadCap,
+      })
     }
     // 响应里消失的行军 = 已到家 / 已被合并，必须从渲染里摘掉，否则地图上会留一支幽灵队伍
         for (const marchId of Array.from(this.tracks.keys())) {
@@ -448,13 +475,23 @@ export class WorldViewModel {
     for (const [marchId, track] of this.tracks) {
       const pos = this.interpolator.positionAt(track, localNow)
       const meta = this.trackMeta.get(marchId)
+      const serverNow = localNow + this.interpolator.offset
+      const gatherRemainingMs = meta?.gatherFinishAt === null || meta?.gatherFinishAt === undefined
+        ? 0
+        : Math.max(0, meta.gatherFinishAt - serverNow)
       marches.push({
         marchId,
+        from: meta?.from ?? { x: track.fromX, y: track.fromY },
+        to: meta?.to ?? { x: track.toX, y: track.toY },
         x: pos.x,
         y: pos.y,
         status: track.status,
+        action: meta?.action ?? 'STATION',
+        targetType: meta?.targetType ?? 'EMPTY',
+        rallyId: meta?.rallyId ?? null,
         progress: pos.progress,
         remainingMs: pos.remainingMs,
+        gatherRemainingMs,
         load: meta?.load ?? 0,
         loadCap: meta?.loadCap ?? 0,
         corrected: this.pendingCorrections.has(marchId),

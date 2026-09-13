@@ -114,6 +114,8 @@ export interface PlayerInitReq {
   nickName: string
   /** 客户端本地时间，服务端据此返回校准 offset */
   clientTime: number
+  /** 微信小游戏 wx.login 拿到的临时登录凭证（B15 §三）。服务端用它调 code2session 换 openid/session_key；不传时退回 deviceId 建档（浏览器与旧客户端）。开发环境用本地兑换器，真机走微信服务器 */
+  wxCode: string | null
 }
 
 /**
@@ -121,6 +123,8 @@ export interface PlayerInitReq {
  */
 export interface PlayerInitResp {
   playerId: string
+  /** 会话票据（B15 §三）。客户端之后每个请求都要带 X-Auth-Token；没有微信登录体系的环境返回空串 */
+  authToken: string | null
   /** 服务端时间戳，客户端据此算偏移（铁律 5） */
   serverNow: number
   profile: PlayerProfile

@@ -20,7 +20,9 @@ import { buildArmyPanel, estimateTrainMs, estimateTreatMs } from '../game/army/A
 import { formatCountdown } from '../core/Countdown'
 import type { ArmyPanelView as ArmyPanelData, UnitRow } from '../game/army/ArmyPanel'
 import type { ArmyListResp, UnitType } from '../net/generated/ArmyProtocol'
+import { applyCommandButton, applyIconSprite, unitIconKey } from './ArtCatalog'
 import { NodePool } from './NodePool'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -73,6 +75,7 @@ export class ArmyPanelView extends Component {
   private rowPool: NodePool | null = null
   private readonly drawnRows: Node[] = []
   private readonly trainButtons = new Map<Node, UnitRow | null>()
+  private readonly tabButtons = new Map<string, Node>()
   private headerLabel: Label | null = null
   private hospitalLabel: Label | null = null
   private warningLabel: Label | null = null
@@ -99,6 +102,7 @@ export class ArmyPanelView extends Component {
     this.rowPool = null
     this.drawnRows.length = 0
     this.trainButtons.clear()
+    this.tabButtons.clear()
     this.onTrain = null
     this.onTreat = null
   }
@@ -176,13 +180,17 @@ export class ArmyPanelView extends Component {
       this.node.addChild(node)
       node.setPosition(new Vec3(startX + index * tabWidth, top - 104, 0))
       node.addComponent(UITransform).setContentSize(new Size(tabWidth - 6, 32))
-      const graphics = node.addComponent(Graphics)
-      graphics.fillColor = COLOR_PANEL
-      graphics.strokeColor = COLOR_COPPER_GOLD
-      graphics.lineWidth = 1
-      graphics.roundRect(-(tabWidth - 6) / 2, -16, tabWidth - 6, 32, 5)
-      graphics.fill()
-      graphics.stroke()
+      if (!applyCommandButton(node, tab.type === this.filter ? 'hover' : 'normal',
+        tabWidth - 6, 32)) {
+        const graphics = node.addComponent(Graphics)
+        graphics.fillColor = COLOR_PANEL
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.roundRect(-(tabWidth - 6) / 2, -16, tabWidth - 6, 32, 5)
+        graphics.fill()
+        graphics.stroke()
+      }
+      this.tabButtons.set(tab.type ?? 'ALL', node)
       const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 15)
       label.string = tab.text
       const type = tab.type
@@ -194,13 +202,15 @@ export class ArmyPanelView extends Component {
     this.node.addChild(treat)
     treat.setPosition(new Vec3(PANEL_WIDTH / 2 - 60, top - 138, 0))
     treat.addComponent(UITransform).setContentSize(new Size(110, 34))
-    const treatGraphics = treat.addComponent(Graphics)
-    treatGraphics.fillColor = COLOR_PANEL
-    treatGraphics.strokeColor = COLOR_GOOD
-    treatGraphics.lineWidth = 2
-    treatGraphics.roundRect(-55, -17, 110, 34, 5)
-    treatGraphics.fill()
-    treatGraphics.stroke()
+    if (!applyCommandButton(treat, 'normal', 110, 34)) {
+      const treatGraphics = treat.addComponent(Graphics)
+      treatGraphics.fillColor = COLOR_PANEL
+      treatGraphics.strokeColor = COLOR_GOOD
+      treatGraphics.lineWidth = 2
+      treatGraphics.roundRect(-55, -17, 110, 34, 5)
+      treatGraphics.fill()
+      treatGraphics.stroke()
+    }
     const treatCaption = this.addLabel(treat, 'Caption', 0, 0, COLOR_TEXT, 15)
     treatCaption.string = '治疗伤兵'
     treat.on('touch-start', (_event: EventTouch) => this.onTreat?.(), this)
@@ -215,12 +225,24 @@ export class ArmyPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 5)
     graphics.fill()
 
-    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 16, COLOR_TEXT, 18)
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + 42,
+      16, COLOR_TEXT, 18)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
-    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -4, COLOR_TEXT_DIM, 14)
+    title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    title.node.getComponent(UITransform)?.setContentSize(new Size(400, 26))
+    title.overflow = Label.Overflow.SHRINK
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + 42,
+      -4, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
-    const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING, -22, COLOR_COPPER_GOLD, 13)
+    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    detail.node.getComponent(UITransform)?.setContentSize(new Size(450, 22))
+    detail.overflow = Label.Overflow.SHRINK
+    const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING + 42,
+      -22, COLOR_COPPER_GOLD, 13)
     countdown.horizontalAlign = Label.HorizontalAlign.LEFT
+    countdown.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    countdown.node.getComponent(UITransform)?.setContentSize(new Size(450, 20))
+    countdown.overflow = Label.Overflow.SHRINK
 
     const buttons: Array<{ name: string; text: string; x: number; count: number | null }> = [
       { name: 'TrainOnceButton', text: '训练×1', x: PANEL_WIDTH / 2 - 128, count: TRAIN_ONCE },
@@ -232,13 +254,15 @@ export class ArmyPanelView extends Component {
       node.addChild(buttonNode)
       buttonNode.setPosition(new Vec3(button.x, -14, 0))
       buttonNode.addComponent(UITransform).setContentSize(new Size(78, 28))
-      const buttonGraphics = buttonNode.addComponent(Graphics)
-      buttonGraphics.fillColor = COLOR_PANEL
-      buttonGraphics.strokeColor = COLOR_COPPER_GOLD
-      buttonGraphics.lineWidth = 1
-      buttonGraphics.roundRect(-39, -14, 78, 28, 4)
-      buttonGraphics.fill()
-      buttonGraphics.stroke()
+      if (!applyCommandButton(buttonNode, 'normal', 78, 28)) {
+        const buttonGraphics = buttonNode.addComponent(Graphics)
+        buttonGraphics.fillColor = COLOR_PANEL
+        buttonGraphics.strokeColor = COLOR_COPPER_GOLD
+        buttonGraphics.lineWidth = 1
+        buttonGraphics.roundRect(-39, -14, 78, 28, 4)
+        buttonGraphics.fill()
+        buttonGraphics.stroke()
+      }
       const caption = this.addLabel(buttonNode, 'Caption', 0, 0, COLOR_TEXT, 12)
       caption.string = button.text
       // 池化节点复用时行数据会变，所以每次渲染都重新登记；这里先占位
@@ -250,6 +274,11 @@ export class ArmyPanelView extends Component {
         }
       }, this)
     }
+    const icon = new Node('Icon')
+    icon.layer = node.layer
+    node.addChild(icon)
+    icon.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + 22, 0, 0))
+    icon.addComponent(UITransform).setContentSize(new Size(36, 36))
     return node
   }
 
@@ -259,7 +288,7 @@ export class ArmyPanelView extends Component {
     parent.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize
@@ -277,6 +306,9 @@ export class ArmyPanelView extends Component {
       return
     }
     this.lastRenderedSecond = Math.floor(sys.now() / 1000)
+    for (const [key, node] of this.tabButtons) {
+      applyCommandButton(node, key === (this.filter ?? 'ALL') ? 'hover' : 'normal', 70, 32)
+    }
 
     if (this.headerLabel !== null) {
       this.headerLabel.string = `${panel.troopCapText} · ${panel.queueText}`
@@ -332,6 +364,7 @@ export class ArmyPanelView extends Component {
     const title = node.children[0]?.getComponent(Label)
     const detail = node.children[1]?.getComponent(Label)
     const countdown = node.children[2]?.getComponent(Label)
+    const icon = node.getChildByName('Icon')
 
     if (title !== undefined && title !== null) {
       title.string = `${row.tierText} ${row.name}`
@@ -365,9 +398,12 @@ export class ArmyPanelView extends Component {
         countdown.color = COLOR_TEXT_DIM
       }
     }
+    if (icon !== null) {
+      icon.active = applyIconSprite(icon, unitIconKey(row.unitType), 34, 34)
+    }
 
     // 未解锁的兵种不给训练按钮：留着可点的按钮却只会被服务端拒绝，比灰掉更糟
-    for (const button of node.children.slice(3)) {
+    for (const button of node.children.slice(3, 5)) {
       this.trainButtons.set(button, row.unlocked ? row : null)
       button.active = row.unlocked
     }

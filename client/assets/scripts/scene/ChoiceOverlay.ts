@@ -2,6 +2,7 @@
 
 import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3 } from 'cc'
 import type { ChoiceOption } from '../game/session/Choices'
+import { applySystemUiFont } from './UiFont'
 
 const COLOR_MASK = new Color(12, 10, 9, 238)
 const COLOR_PANEL = new Color(43, 36, 29, 255)
@@ -159,7 +160,7 @@ export class ChoiceOverlay {
     parent.addChild(node)
     node.setPosition(new Vec3(x, y, 0))
     node.addComponent(UITransform)
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.color = color
     label.fontSize = size
     label.horizontalAlign = Label.HorizontalAlign.CENTER

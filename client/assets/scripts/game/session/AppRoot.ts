@@ -148,8 +148,8 @@ export class AppRoot {
    * <p>登录失败时**不**继续发请求：那些端点全都要求身份头，拿不到 playerId 就是一片 400，
    * 表现会是「一进游戏就被七八个错误弹窗糊住」。
    */
-  async start(deviceId: string, nickName: string): Promise<boolean> {
-    const outcome = await this.session.login(deviceId, nickName)
+  async start(deviceId: string, nickName: string, wxCode: string | null = null): Promise<boolean> {
+    const outcome = await this.session.login(deviceId, nickName, wxCode)
     if (outcome.kind !== 'ok') {
       this.say('session', outcome)
       return false

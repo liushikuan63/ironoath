@@ -33,7 +33,8 @@ const ROUTES: Record<string, unknown> = {
   '/player/init': {
     playerId: 'P1', profile: { nickName: '君' }, cityLevel: 1, resources: {},
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, protectUntil: null,
-    serverNow: SERVER_NOW, isNewPlayer: true,
+    // 微信登录后服务端签发的会话票据；之后每条请求都要带 X-Auth-Token
+    authToken: 'session-token-1', serverNow: SERVER_NOW, isNewPlayer: true,
   },
   '/city/list': {
     buildings: [], buildOptions: [],
@@ -157,6 +158,8 @@ interface Call {
   readonly method: 'GET' | 'POST'
   readonly path: string
   readonly body: Record<string, unknown>
+  /** 请求头。登录票据（X-Auth-Token）是 B15 之后每条请求都要带的身份凭证。 */
+  readonly headers: Readonly<Record<string, string>>
 }
 
 class RoutingHttp implements HttpTransport {
@@ -171,17 +174,24 @@ class RoutingHttp implements HttpTransport {
    */
   overrides = new Map<string, unknown>()
 
-  post(url: string, bodyText: string): Promise<HttpResponse> {
-    return this.reply('POST', url, bodyText)
+  post(url: string, bodyText: string,
+       headers: Readonly<Record<string, string>> = {}): Promise<HttpResponse> {
+    return this.reply('POST', url, bodyText, headers)
   }
 
-  get(url: string): Promise<HttpResponse> {
-    return this.reply('GET', url, '')
+  get(url: string, headers: Readonly<Record<string, string>> = {}): Promise<HttpResponse> {
+    return this.reply('GET', url, '', headers)
   }
 
-  private async reply(method: 'GET' | 'POST', url: string, bodyText: string): Promise<HttpResponse> {
+  private async reply(method: 'GET' | 'POST', url: string, bodyText: string,
+                      headers: Readonly<Record<string, string>>): Promise<HttpResponse> {
     const path = new URL(url).pathname
-    this.calls.push({ method, path, body: bodyText === '' ? {} : JSON.parse(bodyText) as Record<string, unknown> })
+    this.calls.push({
+      method,
+      path,
+      body: bodyText === '' ? {} : JSON.parse(bodyText) as Record<string, unknown>,
+      headers,
+    })
     if (this.failPaths.has(path)) {
       return { status: 200, bodyText: JSON.stringify({ code: 9999, msg: '服务繁忙', detail: null, data: null, serverNow: SERVER_NOW }) }
     }
@@ -760,4 +770,34 @@ test('某一小块拉不到不连带废掉整个社交面板，且两块都坏�
   await h.root.refresh('social')
   assert.equal(h.lastSocialMembers.length, 2, '恢复之后不需要重启就能自动补上')
   assert.equal(h.lastSocialHelps.length, 2)
+})
+
+test('微信登录：wx.login 的 code 原样进 /player/init，服务端票据之后每条请求都带', async () => {
+  const h = harness()
+
+  // 第三个参数是 wxCode：小游戏里由 wx.login 取，浏览器传 null
+  assert.equal(await h.root.start('dev-wx', '君', 'wx-code-xyz'), true)
+
+  const init = h.http.calls.find(c => c.path === '/player/init')
+  assert.ok(init !== undefined, '登录请求必须发出去')
+  assert.equal(init.body.wxCode, 'wx-code-xyz',
+    'code 必须原样交给服务端换 openid；客户端不解析、不缓存、不复用')
+
+  const after = h.http.calls.filter(c => c.path !== '/player/init')
+  assert.ok(after.length > 0, '登录后至少要拉首屏')
+  // 断言消息里带上实际头，失败时不用再跑一次才知道是哪条请求漏了票
+  const missingToken = after.filter(c => c.headers.Authorization !== 'Bearer session-token-1')
+    .map(c => `${c.path}:${JSON.stringify(c.headers)}`)
+  assert.equal(missingToken.length, 0,
+    `登录拿到的会话票据必须自动附到之后每条请求上，漏带的是 ${missingToken.join(', ')}`)
+})
+
+test('浏览器路径：没有 wxCode 时不带该值，登录链路与旧行为完全一致', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-web', '君'), true)
+
+  const init = h.http.calls.find(c => c.path === '/player/init')
+  assert.ok(init !== undefined)
+  assert.equal(init.body.wxCode, '',
+    '浏览器/编辑器预览必须发空串（服务端按空白判定），而不是让字段缺省成 undefined')
 })

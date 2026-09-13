@@ -467,6 +467,20 @@ test('bindPlayer 把 playerId 发给服务端，未连接时返回 false', () =>
   assert.deepEqual(JSON.parse(socket.sent[0] ?? '{}'), { type: 'bind', playerId: 'P1' })
 })
 
+test('bindPlayer 带上会话票据：严格身份模式下没有它，推送通道会被服务端拒掉', () => {
+  const { net } = createHarness()
+  net.setPlayer('P1')
+  net.setAuthToken('session-token-1')
+  net.connectSocket()
+  const socket = FakeSocket.instances[0]
+  assert.ok(socket !== undefined)
+  socket.simulateOpen()
+
+  assert.equal(net.bindPlayer('P1'), true)
+  assert.deepEqual(JSON.parse(socket.sent[0] ?? '{}'),
+    { type: 'bind', playerId: 'P1', token: 'session-token-1' })
+})
+
 test('断开后发出 netDisconnected 并自动重连，重连成功发出 netReconnected', async () => {
   const { net } = createHarness({ retryBaseDelayMs: 1, retryMaxDelayMs: 2 })
   const events: string[] = []

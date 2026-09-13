@@ -27,7 +27,9 @@ import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { QuestPanelView } from './QuestPanelView'
 import { WorldMap } from './WorldMap'
+import { applyCommandButton } from './ArtCatalog'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -158,7 +160,11 @@ export class PanelNav extends Component {
     this.node.addChild(bar)
     bar.setPosition(new Vec3(0, -size.height / 2 + BAR_HEIGHT / 2 + 8, 0))
     bar.addComponent(UITransform).setContentSize(new Size(width, BAR_HEIGHT))
-    const graphics = bar.addComponent(Graphics)
+    const background = new Node('BarBackground')
+    background.layer = bar.layer
+    bar.addChild(background)
+    background.addComponent(UITransform).setContentSize(new Size(width, BAR_HEIGHT))
+    const graphics = background.addComponent(Graphics)
     graphics.fillColor = COLOR_BAR
     graphics.roundRect(-width / 2, -BAR_HEIGHT / 2, width, BAR_HEIGHT, 8)
     graphics.fill()
@@ -176,7 +182,7 @@ export class PanelNav extends Component {
       labelNode.layer = button.layer
       button.addChild(labelNode)
       labelNode.addComponent(UITransform)
-      const label = labelNode.addComponent(Label)
+      const label = applySystemUiFont(labelNode.addComponent(Label))
       label.string = def.label
       label.fontSize = 18
       label.color = COLOR_TEXT_IDLE
@@ -234,13 +240,16 @@ export class PanelNav extends Component {
       }
       const active = def.key === this.currentKey
       label.color = active ? COLOR_TEXT_ACTIVE : COLOR_TEXT_IDLE
+      const width = this.columnWidth - 6
+      const height = BAR_HEIGHT - 8
+      if (applyCommandButton(button, active ? 'hover' : 'normal', width, height)) {
+        continue
+      }
       const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)
       graphics.clear()
       graphics.fillColor = active ? COLOR_ACTIVE : COLOR_IDLE
       // 尺寸用建按钮时算好的值：UITransform 的尺寸属性名在不同版本间变过（width/height
       // 与 contentSize），这里不依赖它
-      const width = this.columnWidth - 6
-      const height = BAR_HEIGHT - 8
       graphics.roundRect(-width / 2, -height / 2, width, height, 6)
       graphics.fill()
     }

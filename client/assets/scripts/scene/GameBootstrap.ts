@@ -45,6 +45,7 @@ import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { WorldMap } from './WorldMap'
 import { PanelNav } from './PanelNav'
+import { preloadRuntimeArt } from './ArtCatalog'
 
 const { ccclass } = _decorator
 
@@ -94,6 +95,7 @@ export class GameBootstrap extends Component {
   private nav: PanelNav | null = null
   private unsubscribeNetworkEvents: (() => void) | null = null
   private booting = false
+  private destroyed = false
   private trackClient: TrackClient | null = null
   private crash: CrashReporter | null = null
   private uninstallCrashHooks: (() => void) | null = null
@@ -132,6 +134,39 @@ export class GameBootstrap extends Component {
       return `web-${Date.now()}`
     }
   }
+
+  /**
+   * 取微信登录凭证（B15 §三）。
+   *
+   * <p>只有小游戏运行时才调 wx.login；浏览器/编辑器预览返回 null，
+   * 服务端会退回 deviceId 建档（本地开发与既有单测的行为不变）。
+   *
+   * <p>登录失败不阻断启动：返回 null 走设备号路径，玩家仍能进游戏 ——
+   * 微信侧偶发失败时"进不去"比"这次当作新设备"更糟（后者至少能玩，前者是黑屏）。
+   * 服务端拿到 code 后换 openid，同一微信永远回到同一份存档。
+   */
+  private resolveWxCode(): Promise<string | null> {
+    if (!isWxRuntime()) {
+      return Promise.resolve(null)
+    }
+    return new Promise((resolve) => {
+      wx.login({
+        success: (res) => {
+          if (typeof res.code === 'string' && res.code.length > 0) {
+            resolve(res.code)
+            return
+          }
+          console.warn('[session] wx.login 未返回 code，本次使用设备号建档')
+          resolve(null)
+        },
+        fail: (err) => {
+          console.warn('[session] wx.login 失败，本次使用设备号建档', err.errMsg)
+          resolve(null)
+        },
+      })
+    })
+  }
+
   private currentSceneName(): string | null {
     const d = director as unknown as { getScene?: () => { name?: string } | null }
     const name = typeof d.getScene === 'function' ? d.getScene()?.name : undefined
@@ -140,6 +175,15 @@ export class GameBootstrap extends Component {
 
   override onLoad(): void {
     this.installViewportGuard()
+    void this.startup()
+  }
+
+  /** 先预加载美术，再建导航与面板；失败时加载器内部告警，UI 继续使用 Graphics 兜底。 */
+  private async startup(): Promise<void> {
+    await preloadRuntimeArt()
+    if (this.destroyed) {
+      return
+    }
     // 导航层：由它建出各面板节点（初始未激活，因此不会九个面板一起画满屏背景），
     // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
     this.nav = this.node.addComponent(PanelNav)
@@ -160,7 +204,9 @@ export class GameBootstrap extends Component {
    * 只在有 DOM 的运行时安装（微信小游戏走 wx API，不走这条）。
    */
   private installViewportGuard(): void {
-    if (typeof document === 'undefined' || typeof window === 'undefined') {
+    // 微信小游戏没有 DOM；即使适配层补出了 window/document，屏幕宽度也永远
+    // 小于内城设计的 900px。不排除平台，玩家第一眼看到的就是一层"窗口太窄"。
+    if (isWxRuntime() || typeof document === 'undefined' || typeof window === 'undefined') {
       return
     }
     const MIN_WIDTH = 900
@@ -215,6 +261,7 @@ export class GameBootstrap extends Component {
   }
 
   override onDestroy(): void {
+    this.destroyed = true
     // 先卸载全局钩子：不卸的话场景都没了，异常仍然会回调到这个已释放的组件上，
     // 表现是"切场景之后偶发报错"，而没人知道是谁还在监听
     this.uninstallCrashHooks?.()
@@ -331,7 +378,7 @@ export class GameBootstrap extends Component {
       tracker: activity })
     this.lastActionAt = sys.now()
     tracker?.track(TRACK_EVENTS.startup, { clientVersion: CLIENT_VERSION })
-    await this.root.start(this.resolveDeviceId(), this.nickName)
+    await this.root.start(this.resolveDeviceId(), this.nickName, await this.resolveWxCode())
   }
 
   /**

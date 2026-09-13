@@ -17,8 +17,11 @@ import { buildBagPanel, buildResourcePanel } from '../game/bag/BagPanel'
 import type { BagItemRow, BagPanelView as BagPanelData, ResourcePanelView, ResourceRow } from '../game/bag/BagPanel'
 import type { SpeedupChoice } from '../game/session/Choices'
 import type { BagListResp, ResourceDetailResp } from '../net/generated/BagProtocol'
+import { applyCommandButton, applyIconSprite, resourceIconKey } from './ArtCatalog'
+import type { IconArtKey } from './ArtCatalog'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -56,6 +59,7 @@ export class BagPanelView extends Component {
   private headerLabel: Label | null = null
   private warningLabel: Label | null = null
   private readonly tabLabels = new Map<Tab, Label>()
+  private readonly tabButtons = new Map<Tab, Node>()
   /**
    * onLoad 之前的挂载数据。节点由 PanelNav 创建且初始未激活 —— 未激活不会跑 onLoad，
    * 而登录后的预拉数据此时已经到了，先存下来、激活时消费（与 CityPanelView 的 pending 同一条）。
@@ -98,6 +102,7 @@ export class BagPanelView extends Component {
     this.rowPool = null
     this.drawnRows.length = 0
     this.tabLabels.clear()
+    this.tabButtons.clear()
     this.targetPicker?.hide()
     this.targetPicker = null
     this.onUseItem = null
@@ -176,16 +181,19 @@ export class BagPanelView extends Component {
       this.node.addChild(node)
       node.setPosition(new Vec3(item.x, top - 76, 0))
       node.addComponent(UITransform).setContentSize(new Size(110, 34))
-      const graphics = node.addComponent(Graphics)
-      graphics.fillColor = COLOR_PANEL
-      graphics.strokeColor = COLOR_COPPER_GOLD
-      graphics.lineWidth = 1
-      graphics.roundRect(-55, -17, 110, 34, 5)
-      graphics.fill()
-      graphics.stroke()
+      if (!applyCommandButton(node, item.tab === this.tab ? 'hover' : 'normal', 110, 34)) {
+        const graphics = node.addComponent(Graphics)
+        graphics.fillColor = COLOR_PANEL
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.roundRect(-55, -17, 110, 34, 5)
+        graphics.fill()
+        graphics.stroke()
+      }
       const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 16)
       label.string = item.text
       this.tabLabels.set(item.tab, label)
+      this.tabButtons.set(item.tab, node)
       const tab = item.tab
       node.on('touch-start', (_event: EventTouch) => this.switchTab(tab), this)
     }
@@ -200,12 +208,20 @@ export class BagPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 5)
     graphics.fill()
 
-    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 9, COLOR_TEXT, 17)
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + 36, 9, COLOR_TEXT, 17)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
-    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -11, COLOR_TEXT_DIM, 13)
+    title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    title.node.getComponent(UITransform)?.setContentSize(new Size(270, 24))
+    title.overflow = Label.Overflow.SHRINK
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + 36,
+      -11, COLOR_TEXT_DIM, 13)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    detail.node.getComponent(UITransform)?.setContentSize(new Size(270, 20))
+    detail.overflow = Label.Overflow.SHRINK
     const value = this.addLabel(node, 'Value', PANEL_WIDTH / 2 - 120, 0, COLOR_COPPER_GOLD, 16)
     value.horizontalAlign = Label.HorizontalAlign.RIGHT
+    value.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
 
     const buttons: Array<{ name: string; text: string; x: number }> = [
       { name: 'UseButton', text: '使用', x: PANEL_WIDTH / 2 - 74 },
@@ -217,16 +233,23 @@ export class BagPanelView extends Component {
       node.addChild(buttonNode)
       buttonNode.setPosition(new Vec3(button.x, 0, 0))
       buttonNode.addComponent(UITransform).setContentSize(new Size(46, 26))
-      const buttonGraphics = buttonNode.addComponent(Graphics)
-      buttonGraphics.fillColor = COLOR_PANEL
-      buttonGraphics.strokeColor = COLOR_COPPER_GOLD
-      buttonGraphics.lineWidth = 1
-      buttonGraphics.roundRect(-23, -13, 46, 26, 4)
-      buttonGraphics.fill()
-      buttonGraphics.stroke()
+      if (!applyCommandButton(buttonNode, 'normal', 46, 26)) {
+        const buttonGraphics = buttonNode.addComponent(Graphics)
+        buttonGraphics.fillColor = COLOR_PANEL
+        buttonGraphics.strokeColor = COLOR_COPPER_GOLD
+        buttonGraphics.lineWidth = 1
+        buttonGraphics.roundRect(-23, -13, 46, 26, 4)
+        buttonGraphics.fill()
+        buttonGraphics.stroke()
+      }
       const caption = this.addLabel(buttonNode, 'Caption', 0, 0, COLOR_TEXT, 12)
       caption.string = button.text
     }
+    const icon = new Node('Icon')
+    icon.layer = node.layer
+    node.addChild(icon)
+    icon.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + 13, 0, 0))
+    icon.addComponent(UITransform).setContentSize(new Size(26, 26))
     return node
   }
 
@@ -236,7 +259,7 @@ export class BagPanelView extends Component {
     parent.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize
@@ -254,6 +277,10 @@ export class BagPanelView extends Component {
     }
     for (const [tab, label] of this.tabLabels) {
       label.color = tab === this.tab ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+      const button = this.tabButtons.get(tab)
+      if (button !== undefined) {
+        applyCommandButton(button, tab === this.tab ? 'hover' : 'normal', 110, 34)
+      }
     }
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
@@ -307,6 +334,7 @@ export class BagPanelView extends Component {
     const title = node.children[0]?.getComponent(Label)
     const detail = node.children[1]?.getComponent(Label)
     const value = node.children[2]?.getComponent(Label)
+    const icon = node.getChildByName('Icon')
     if (title !== undefined && title !== null) {
       title.string = row.title
       title.color = row.titleColor
@@ -317,6 +345,10 @@ export class BagPanelView extends Component {
     }
     if (value !== undefined && value !== null) {
       value.string = row.value
+    }
+    if (icon !== null) {
+      icon.active = row.iconKey !== null
+        && applyIconSprite(icon, row.iconKey, 26, 26)
     }
     // 前三个子节点是文本，后两个是使用/出售按钮 —— 只有背包页的道具行才显示
     const useButton = node.children[3]
@@ -366,6 +398,7 @@ export class BagPanelView extends Component {
           detail: '',
           detailColor: COLOR_TEXT_DIM,
           value: line.text,
+          iconKey: null,
           itemId: null,
           needsTarget: false,
           sellable: false,
@@ -378,6 +411,7 @@ export class BagPanelView extends Component {
         detail: resource.sumMatches ? '' : '与上面的每小时产量不一致',
         detailColor: COLOR_WARNING,
         value: resource.sumText,
+        iconKey: null,
         itemId: null,
         needsTarget: false,
         sellable: false,
@@ -406,6 +440,7 @@ export class BagPanelView extends Component {
         .join(' · '),
       detailColor: COLOR_TEXT_DIM,
       value: item.rarityText,
+      iconKey: null,
       itemId: item.itemId,
       needsTarget: item.needsTarget,
       sellable: item.sellText !== null,
@@ -426,6 +461,7 @@ interface RowDraft {
   readonly detail: string
   readonly detailColor: Color
   readonly value: string
+  readonly iconKey: IconArtKey | null
   /** 道具行才有；资源行为 null，据此隐藏使用/出售按钮 */
   readonly itemId: string | null
   readonly needsTarget: boolean
@@ -447,6 +483,7 @@ function resourceSummaryDraft(resource: ResourceRow): RowDraft {
     detail: details.join(' · '),
     detailColor: resource.full ? COLOR_WARNING : COLOR_TEXT_DIM,
     value: resource.currentText,
+    iconKey: resourceIconKey(resource.type),
     itemId: null,
     needsTarget: false,
     sellable: false,

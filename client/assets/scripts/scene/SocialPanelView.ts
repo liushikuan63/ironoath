@@ -21,7 +21,9 @@ import type {
 } from '../game/social/SocialPanel'
 import type { AllianceMember, HelpRequestView, SocialSummaryResp } from '../net/generated/SocialProtocol'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
+import { applyCommandButton } from './ArtCatalog'
 import { NodePool } from './NodePool'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -97,6 +99,7 @@ export class SocialPanelView extends Component {
   private readonly drawnRows: Node[] = []
   private readonly rowActionIds = new Map<Node, string>()
   private readonly tabLabels = new Map<Tab, Label>()
+  private readonly tabButtons = new Map<Tab, Node>()
   private readonly tabDots = new Map<Tab, Graphics>()
   private headerLabel: Label | null = null
   private hintLabel: Label | null = null
@@ -135,6 +138,7 @@ export class SocialPanelView extends Component {
     this.lastResp = null
     this.lastHelps = []
     this.tabLabels.clear()
+    this.tabButtons.clear()
     this.tabDots.clear()
     this.reddot = null
     this.onRowAction = null
@@ -250,16 +254,20 @@ export class SocialPanelView extends Component {
       this.node.addChild(node)
       node.setPosition(new Vec3(startX + index * tabWidth, top - 78, 0))
       node.addComponent(UITransform).setContentSize(new Size(tabWidth - 6, 34))
-      const graphics = node.addComponent(Graphics)
-      graphics.fillColor = COLOR_PANEL
-      graphics.strokeColor = COLOR_COPPER_GOLD
-      graphics.lineWidth = 1
-      graphics.roundRect(-(tabWidth - 6) / 2, -17, tabWidth - 6, 34, 5)
-      graphics.fill()
-      graphics.stroke()
+      if (!applyCommandButton(node, item.tab === this.tab ? 'hover' : 'normal',
+        tabWidth - 6, 34)) {
+        const graphics = node.addComponent(Graphics)
+        graphics.fillColor = COLOR_PANEL
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.roundRect(-(tabWidth - 6) / 2, -17, tabWidth - 6, 34, 5)
+        graphics.fill()
+        graphics.stroke()
+      }
       const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 16)
       label.string = item.text
       this.tabLabels.set(item.tab, label)
+      this.tabButtons.set(item.tab, node)
 
       // 红点画在页签右上角。B10 验收 6 要求「红点清零」，所以它必须可见且能被清掉
       const dot = new Node('RedDot')
@@ -290,23 +298,32 @@ export class SocialPanelView extends Component {
 
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 11, COLOR_TEXT, 17)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
+    title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    title.node.getComponent(UITransform)?.setContentSize(new Size(380, 24))
+    title.overflow = Label.Overflow.SHRINK
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -11, COLOR_TEXT_DIM, 13)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    detail.node.getComponent(UITransform)?.setContentSize(new Size(380, 20))
+    detail.overflow = Label.Overflow.SHRINK
     const value = this.addLabel(node, 'Value', PANEL_WIDTH / 2 - 120, 0, COLOR_COPPER_GOLD, 15)
     value.horizontalAlign = Label.HorizontalAlign.RIGHT
+    value.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
 
     const action = new Node('ActionButton')
     action.layer = node.layer
     node.addChild(action)
     action.setPosition(new Vec3(PANEL_WIDTH / 2 - 44, 0, 0))
     action.addComponent(UITransform).setContentSize(new Size(72, 30))
-    const actionGraphics = action.addComponent(Graphics)
-    actionGraphics.fillColor = COLOR_PANEL
-    actionGraphics.strokeColor = COLOR_COPPER_GOLD
-    actionGraphics.lineWidth = 1
-    actionGraphics.roundRect(-36, -15, 72, 30, 4)
-    actionGraphics.fill()
-    actionGraphics.stroke()
+    if (!applyCommandButton(action, 'normal', 72, 30)) {
+      const actionGraphics = action.addComponent(Graphics)
+      actionGraphics.fillColor = COLOR_PANEL
+      actionGraphics.strokeColor = COLOR_COPPER_GOLD
+      actionGraphics.lineWidth = 1
+      actionGraphics.roundRect(-36, -15, 72, 30, 4)
+      actionGraphics.fill()
+      actionGraphics.stroke()
+    }
     const caption = this.addLabel(action, 'Caption', 0, 0, COLOR_TEXT, 13)
     caption.string = ''
     return node
@@ -318,7 +335,7 @@ export class SocialPanelView extends Component {
     parent.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize
@@ -363,6 +380,10 @@ export class SocialPanelView extends Component {
   private renderTabs(): void {
     for (const [tab, label] of this.tabLabels) {
       label.color = tab === this.tab ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+      const button = this.tabButtons.get(tab)
+      if (button !== undefined) {
+        applyCommandButton(button, tab === this.tab ? 'hover' : 'normal', 86, 34)
+      }
     }
     for (const item of TABS) {
       this.setDot(item.tab,
@@ -460,6 +481,7 @@ export class SocialPanelView extends Component {
     if (!visible) {
       return
     }
+    applyCommandButton(button, draft.actionEnabled ? 'normal' : 'disabled', 72, 30)
     const caption = button.children[0]?.getComponent(Label)
     if (caption !== undefined && caption !== null) {
       caption.string = draft.actionText

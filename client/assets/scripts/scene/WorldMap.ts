@@ -26,8 +26,14 @@ import type { ExileSnapshot } from '../game/world/WorldContext'
 import { exileCanRequest, exileLabel } from '../game/world/ExileAction'
 import type { WorldViewModel } from '../game/world/WorldViewModel'
 import type { WorldFrame, ChunkTile, MarchRender } from '../game/world/WorldViewModel'
+import { buildMarchPanel } from '../game/world/MarchPanel'
+import type { MarchPanelAction } from '../game/world/MarchPanel'
 import type { WorldEntity, WorldEntityType } from '../net/generated/WorldProtocol'
 import { NodePool } from './NodePool'
+import { MarchPanelView } from './MarchPanelView'
+import { applySimpleSprite, applyTerrainSprite, applyTiledSprite } from './ArtCatalog'
+import type { ArtKey } from './ArtCatalog'
+import { applySystemUiFont } from './UiFont'
 import type { Unsubscribe } from '../core/EventBus'
 
 const { ccclass } = _decorator
@@ -74,6 +80,7 @@ const HUD_BUTTON_SIZE = 84
 const HUD_BUTTON_GAP = 12
 /** 流亡按钮要显示「冷却 N 天 M 小时」，不能沿用 84px 的方形尺寸。 */
 const HUD_EXILE_BUTTON_WIDTH = 180
+const MARCH_BUTTON_WIDTH = 120
 /** 流亡迁城的二次确认窗口：过了就得重新按两下。宁短勿长 —— 拖着确认状态去干别的再回来点到，正是误操作的样子。 */
 const EXILE_CONFIRM_WINDOW_MS = 5_000
 /** 双指间距相对本次手势起点扩大 / 缩小到这个比例时，缩放一档。 */
@@ -91,6 +98,8 @@ interface GesturePoint {
 type PinchZoomAction = 'zoom-in' | 'zoom-out' | null
 
 interface MarkerRefs {
+  readonly spriteNode: Node
+  readonly graphicsNode: Node
   readonly graphics: Graphics
   readonly label: Label
 }
@@ -141,6 +150,14 @@ export class WorldMap extends Component {
   private marchesRequested = false
   private modelSubscription: Unsubscribe | null = null
   private lastHint = ''
+  /** 行军动作的结果提示。它有自己的过期时间，不能被每帧的连接状态提示立刻覆盖。 */
+  private actionHint = ''
+  private actionHintUntil = 0
+  /** 正在等待服务端响应的 marchId，防止弱网重复点击。 */
+  private readonly marchRequesting = new Set<string>()
+  private marchPanel: MarchPanelView | null = null
+  private marchButtonCaption: Label | null = null
+  private lastMarchButtonCaption = ''
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -151,6 +168,13 @@ export class WorldMap extends Component {
     this.entityPool = new NodePool(this.mapLayer, () => this.createMarker())
     this.marchPool = new NodePool(this.mapLayer, () => this.createMarker())
     this.buildHud(size.width, size.height)
+    this.marchPanel = new MarchPanelView(this.hudLayer ?? this.node, size.width, size.height)
+    this.marchPanel.onClose = () => {
+      this.marchPanel?.hide()
+      // 关闭用的这一下不能再落到地图拖动上，否则松手时地图会跟着跳一段。
+      this.suppressDragUntilRelease = true
+    }
+    this.marchPanel.onAction = (action, marchId) => this.requestMarchAction(action, marchId)
     this.bindInput(size.height)
     this.bindModel()
   }
@@ -167,15 +191,19 @@ export class WorldMap extends Component {
     this.tilePool?.destroy()
     this.entityPool?.destroy()
     this.marchPool?.destroy()
+    this.marchPanel?.destroy()
     this.tilePool = null
     this.entityPool = null
     this.marchPool = null
+    this.marchPanel = null
     this.refs.clear()
     this.drawnEntities.clear()
     this.drawnMarches.clear()
     this.drawnTiles.clear()
     this.flash.clear()
     this.activeTouches.clear()
+    this.marchRequesting.clear()
+    this.marchButtonCaption = null
     this.onEnterCity = null
   }
 
@@ -189,7 +217,11 @@ export class WorldMap extends Component {
       this.showHint('未连接世界服务')
       return
     }
-    this.showHint(null)
+    if (this.actionHintUntil !== 0 && sys.now() >= this.actionHintUntil) {
+      this.actionHint = ''
+      this.actionHintUntil = 0
+    }
+    this.showHint(this.actionHintUntil === 0 ? null : this.actionHint)
     this.refreshExileCaption()
     this.pumpRequests(model)
     this.render(model.frame(sys.now()), model)
@@ -335,6 +367,12 @@ export class WorldMap extends Component {
       nextLeft + HUD_EXILE_BUTTON_WIDTH / 2, y, HUD_EXILE_BUTTON_WIDTH)
     this.exileCaption = exileNode.getChildByName('ExileButton_Caption')?.getComponent(Label) ?? null
     exileNode.on('touch-start', () => this.requestExile(), this)
+    nextLeft += HUD_EXILE_BUTTON_WIDTH + HUD_BUTTON_GAP
+
+    const marchNode = this.createButton('MarchButton', '行军',
+      nextLeft + MARCH_BUTTON_WIDTH / 2, y, MARCH_BUTTON_WIDTH)
+    this.marchButtonCaption = marchNode.getChildByName('MarchButton_Caption')?.getComponent(Label) ?? null
+    marchNode.on('touch-start', () => this.toggleMarchPanel(), this)
   }
 
   private createHudLabel(name: string, text: string, x: number, y: number): Label {
@@ -349,7 +387,7 @@ export class WorldMap extends Component {
     transform.setContentSize(320, 28)
     transform.setAnchorPoint(1, 0.5)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.color = COLOR_TEXT
     label.fontSize = 20
@@ -381,7 +419,7 @@ export class WorldMap extends Component {
     caption.layer = node.layer
     node.addChild(caption)
     caption.addComponent(UITransform).setContentSize(width - 8, HUD_BUTTON_SIZE - 8)
-    const label = caption.addComponent(Label)
+    const label = applySystemUiFont(caption.addComponent(Label))
     label.string = text
     label.color = COLOR_TEXT
     label.fontSize = 20
@@ -401,17 +439,26 @@ export class WorldMap extends Component {
     const node = new Node('Marker')
     node.layer = this.node.layer
     node.addComponent(UITransform)
-    const graphics = node.addComponent(Graphics)
+    const spriteNode = new Node('Art')
+    spriteNode.layer = node.layer
+    node.addChild(spriteNode)
+    spriteNode.addComponent(UITransform)
+    spriteNode.active = false
+    const graphicsNode = new Node('FallbackGraphics')
+    graphicsNode.layer = node.layer
+    node.addChild(graphicsNode)
+    graphicsNode.addComponent(UITransform)
+    const graphics = graphicsNode.addComponent(Graphics)
     const caption = new Node('Caption')
     caption.layer = node.layer
     node.addChild(caption)
     caption.addComponent(UITransform)
-    const label = caption.addComponent(Label)
+    const label = applySystemUiFont(caption.addComponent(Label))
     label.fontSize = 12
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
     label.color = COLOR_TEXT
-    this.refs.set(node, { graphics, label })
+    this.refs.set(node, { spriteNode, graphicsNode, graphics, label })
     return node
   }
 
@@ -428,9 +475,14 @@ export class WorldMap extends Component {
         return
       }
       this.pinchAnchorDistance = null
-      this.suppressDragUntilRelease = false
+      const suppressed = this.suppressDragUntilRelease
+      if (!suppressed) {
+        this.suppressDragUntilRelease = false
+      }
       // 落在 HUD 条带里的触摸不启动拖动，否则点按钮的同时会把地图拖走
-      this.dragging = event.getUILocation().y < height - HUD_BAND_HEIGHT
+      this.dragging = !suppressed
+        && !(this.marchPanel?.isVisible ?? false)
+        && event.getUILocation().y < height - HUD_BAND_HEIGHT
     }, this)
     this.node.on('touch-move', (event: EventTouch) => {
       this.syncActiveTouches(event)
@@ -611,6 +663,7 @@ export class WorldMap extends Component {
     this.renderEntities(frame.tiles, cell, zoom)
     this.renderMarches(frame.marches, cell)
     this.renderHud(frame)
+    this.renderMarchPanel(frame.marches)
   }
 
   private renderTiles(tiles: readonly ChunkTile[], chunkSize: number, cell: number): void {
@@ -632,13 +685,23 @@ export class WorldMap extends Component {
       if (refs === undefined) {
         continue
       }
-      const graphics = refs.graphics
-      graphics.clear()
-      graphics.fillColor = tileColor(tile)
-      graphics.rect(-size / 2, -size / 2, size, size)
-      graphics.fill()
+      const terrainVariant = terrainVariantForChunk(tile.cx, tile.cy)
+      const artApplied = !tile.fogged && tile.loaded
+        && (applyTerrainSprite(refs.spriteNode, terrainVariant, size, size)
+          || applyTiledSprite(refs.spriteNode, 'map.terrain.grass', size, size))
+      refs.spriteNode.active = artApplied
+      refs.graphicsNode.active = !artApplied
+      if (!artApplied) {
+        const graphics = refs.graphics
+        graphics.enabled = true
+        graphics.clear()
+        graphics.fillColor = tileColor(tile)
+        graphics.rect(-size / 2, -size / 2, size, size)
+        graphics.fill()
+      }
       // 已探索的块描一条边，让玩家看清 32×32 的分块边界（也便于核对视野确实是 3×3）
-      if (!tile.fogged && tile.loaded) {
+      if (!tile.fogged && tile.loaded && !artApplied) {
+        const graphics = refs.graphics
         graphics.strokeColor = COLOR_GROUND_GRID
         graphics.lineWidth = 1
         graphics.rect(-size / 2, -size / 2, size, size)
@@ -716,6 +779,55 @@ export class WorldMap extends Component {
     const cameraX = Math.round(frame.center.x + this.panAccumX)
     const cameraY = Math.round(frame.center.y + this.panAccumY)
     this.coordLabel.string = `(${cameraX}, ${cameraY}) · 缩放 ${frame.zoom}`
+    const caption = frame.marches.length === 0 ? '行军' : `行军 ${frame.marches.length}`
+    if (this.marchButtonCaption !== null && caption !== this.lastMarchButtonCaption) {
+      this.lastMarchButtonCaption = caption
+      this.marchButtonCaption.string = caption
+    }
+  }
+
+  private toggleMarchPanel(): void {
+    this.resetGesture()
+    this.marchPanel?.toggle()
+  }
+
+  /** 面板打开时在数据变化后重画；关闭时不创建任何额外节点工作。 */
+  private renderMarchPanel(marches: readonly MarchRender[]): void {
+    const panel = this.marchPanel
+    if (panel === null || !panel.isVisible) {
+      return
+    }
+    panel.render(buildMarchPanel(marches, 3), this.marchRequesting)
+  }
+
+  private requestMarchAction(action: MarchPanelAction, marchId: string): void {
+    const requester = worldRequester()
+    if (requester === null || this.marchRequesting.has(marchId)) {
+      return
+    }
+    this.marchRequesting.add(marchId)
+    this.renderMarchPanel(worldModel()?.frame(sys.now()).marches ?? [])
+    const request = action === 'collect'
+      ? requester.collectGather(marchId)
+      : requester.recall(marchId)
+    void request.then(
+      (result) => this.finishMarchAction(marchId, result.message),
+      (error: unknown) => {
+        console.error('[WorldMap] 行军操作失败', error)
+        this.finishMarchAction(marchId, '操作失败，请稍后重试')
+      },
+    )
+  }
+
+  private finishMarchAction(marchId: string, message: string): void {
+    this.marchRequesting.delete(marchId)
+    this.actionHint = message
+    this.actionHintUntil = sys.now() + 4_000
+    this.showHint(message)
+    const model = worldModel()
+    if (model !== null) {
+      this.render(model.frame(sys.now()), model)
+    }
   }
 
   private acquireInto(pool: NodePool, drawn: Map<string, Node>, key: string): Node {
@@ -742,7 +854,18 @@ export class WorldMap extends Component {
     if (refs === undefined) {
       return
     }
+    const art = entityArtKey(type)
+    if (art !== null && applySimpleSprite(refs.spriteNode, art, size, size)) {
+      refs.spriteNode.active = true
+      refs.graphicsNode.active = false
+      refs.label.string = caption
+      refs.label.node.setPosition(new Vec3(0, size / 2 + 8, 0))
+      return
+    }
+    refs.spriteNode.active = false
+    refs.graphicsNode.active = true
     const graphics = refs.graphics
+    graphics.enabled = true
     graphics.clear()
     graphics.fillColor = color
     if (type === 'CITY' || type === 'BUILDING') {
@@ -879,6 +1002,33 @@ function entityColor(type: WorldEntityType): Color {
     default:
       return COLOR_GROUND_GRID
   }
+}
+
+function entityArtKey(type: WorldEntityType): ArtKey | null {
+  switch (type) {
+    case 'CITY':
+      return 'map.entity.city'
+    case 'MONSTER':
+      return 'map.entity.monster'
+    case 'RESOURCE':
+      return 'map.entity.resource'
+    case 'BUILDING':
+      return 'map.entity.allianceBuilding'
+    case 'MARCH':
+      return 'map.entity.march'
+    case 'EMPTY':
+    default:
+      return null
+  }
+}
+
+/**
+ * 地形图集有 8 个纯表现变体；服务端当前不区分地貌，客户端只按块坐标做稳定的无随机映射，
+ * 避免重绘时贴图跳变，也不把视觉选择误当成玩法数据。
+ */
+function terrainVariantForChunk(cx: number, cy: number): number {
+  const hash = Math.imul(cx + 17, 73_856_093) ^ Math.imul(cy + 31, 19_349_663)
+  return (hash >>> 0) % 8
 }
 
 /** 城比野怪大一圈：占位美术阶段「谁更重要」只能靠尺寸表达。 */

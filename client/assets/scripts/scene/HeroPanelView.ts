@@ -19,7 +19,10 @@ import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, 
 import { buildHeroPanel } from '../game/hero/HeroPanel'
 import type { HeroPanelView as HeroPanelData, HeroRow, LineupPanel } from '../game/hero/HeroPanel'
 import type { HeroListResp } from '../net/generated/HeroProtocol'
+import { applyCommandButton, applyIconSprite, rarityIconKey } from './ArtCatalog'
+import type { IconArtKey } from './ArtCatalog'
 import { NodePool } from './NodePool'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -65,6 +68,7 @@ export class HeroPanelView extends Component {
   private headerLabel: Label | null = null
   private cappedLabel: Label | null = null
   private readonly tabLabels = new Map<Tab, Label>()
+  private readonly tabButtons = new Map<Tab, Node>()
 
   /**
    * 点某个养成按钮。具体消耗什么、能不能升由服务端裁定；
@@ -98,6 +102,7 @@ export class HeroPanelView extends Component {
     this.drawnRows.length = 0
     this.rowHeroes.clear()
     this.tabLabels.clear()
+    this.tabButtons.clear()
     this.onHeroAction = null
     this.onLineupEdit = null
   }
@@ -148,16 +153,19 @@ export class HeroPanelView extends Component {
       this.node.addChild(node)
       node.setPosition(new Vec3(item.x, top - 74, 0))
       node.addComponent(UITransform).setContentSize(new Size(110, 34))
-      const graphics = node.addComponent(Graphics)
-      graphics.fillColor = COLOR_PANEL
-      graphics.strokeColor = COLOR_COPPER_GOLD
-      graphics.lineWidth = 1
-      graphics.roundRect(-55, -17, 110, 34, 5)
-      graphics.fill()
-      graphics.stroke()
+      if (!applyCommandButton(node, item.tab === this.tab ? 'hover' : 'normal', 110, 34)) {
+        const graphics = node.addComponent(Graphics)
+        graphics.fillColor = COLOR_PANEL
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.roundRect(-55, -17, 110, 34, 5)
+        graphics.fill()
+        graphics.stroke()
+      }
       const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 16)
       label.string = item.text
       this.tabLabels.set(item.tab, label)
+      this.tabButtons.set(item.tab, node)
       const tab = item.tab
       node.on('touch-start', (_event: EventTouch) => this.switchTab(tab), this)
     }
@@ -179,8 +187,12 @@ export class HeroPanelView extends Component {
       { name: 'Line4', y: -26, size: 13, color: COLOR_TEXT_DIM },
     ]
     for (const line of lines) {
-      const label = this.addLabel(node, line.name, -PANEL_WIDTH / 2 + PADDING, line.y, line.color, line.size)
+      const label = this.addLabel(node, line.name, -PANEL_WIDTH / 2 + PADDING + 48,
+        line.y, line.color, line.size)
       label.horizontalAlign = Label.HorizontalAlign.LEFT
+      label.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+      label.node.getComponent(UITransform)?.setContentSize(new Size(430, line.size * 1.5))
+      label.overflow = Label.Overflow.SHRINK
     }
 
     const actions: Array<{ name: string; text: string; x: number; action: HeroAction }> = [
@@ -195,13 +207,15 @@ export class HeroPanelView extends Component {
       node.addChild(buttonNode)
       buttonNode.setPosition(new Vec3(button.x, -34, 0))
       buttonNode.addComponent(UITransform).setContentSize(new Size(48, 26))
-      const buttonGraphics = buttonNode.addComponent(Graphics)
-      buttonGraphics.fillColor = COLOR_PANEL
-      buttonGraphics.strokeColor = COLOR_COPPER_GOLD
-      buttonGraphics.lineWidth = 1
-      buttonGraphics.roundRect(-24, -13, 48, 26, 4)
-      buttonGraphics.fill()
-      buttonGraphics.stroke()
+      if (!applyCommandButton(buttonNode, 'normal', 48, 26)) {
+        const buttonGraphics = buttonNode.addComponent(Graphics)
+        buttonGraphics.fillColor = COLOR_PANEL
+        buttonGraphics.strokeColor = COLOR_COPPER_GOLD
+        buttonGraphics.lineWidth = 1
+        buttonGraphics.roundRect(-24, -13, 48, 26, 4)
+        buttonGraphics.fill()
+        buttonGraphics.stroke()
+      }
       const caption = this.addLabel(buttonNode, 'Caption', 0, 0, COLOR_TEXT, 12)
       caption.string = button.text
       const action = button.action
@@ -212,6 +226,11 @@ export class HeroPanelView extends Component {
         }
       }, this)
     }
+    const icon = new Node('Icon')
+    icon.layer = node.layer
+    node.addChild(icon)
+    icon.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + 24, 0, 0))
+    icon.addComponent(UITransform).setContentSize(new Size(54, 54))
     return node
   }
 
@@ -221,7 +240,7 @@ export class HeroPanelView extends Component {
     parent.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize
@@ -240,6 +259,10 @@ export class HeroPanelView extends Component {
     }
     for (const [tab, label] of this.tabLabels) {
       label.color = tab === this.tab ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+      const button = this.tabButtons.get(tab)
+      if (button !== undefined) {
+        applyCommandButton(button, tab === this.tab ? 'hover' : 'normal', 110, 34)
+      }
     }
     if (this.headerLabel !== null) {
       this.headerLabel.string = this.tab === 'heroes'
@@ -285,8 +308,13 @@ export class HeroPanelView extends Component {
       label.color = line === 0 ? draft.titleColor : COLOR_TEXT_DIM
     }
     // 前四个子节点是文本行，后面是养成按钮。编队页不给养成按钮（改阵容走整行点击）
-    for (const button of node.children.slice(4)) {
+    for (const button of node.children.slice(4, 8)) {
       button.active = draft.heroId !== null
+    }
+    const icon = node.getChildByName('Icon')
+    if (icon !== null) {
+      icon.active = draft.iconKey !== null
+        && applyIconSprite(icon, draft.iconKey, 52, 52)
     }
     // 整行点击也要先 off 再 on：节点来自池子，上一条数据留下的回调会指向别的武将/编队，
     // 这类 bug 的表现是「点了第 3 套编队却打开了第 1 套」，而且只在切页时出现，极难复现
@@ -304,6 +332,7 @@ export class HeroPanelView extends Component {
 interface RowDraft {
   readonly lines: readonly string[]
   readonly titleColor: Color
+  readonly iconKey: IconArtKey | null
   /** 武将行才有；编队行为 null，据此隐藏养成按钮 */
   readonly heroId: string | null
   /** 编队主行才有；点整行时把它交出去。缘分附注行为 null（点它不该打开编辑面板） */
@@ -321,6 +350,7 @@ function heroDrafts(heroes: readonly HeroRow[]): RowDraft[] {
         .join(' · '),
     ],
     titleColor: rarityColor(hero.rarity),
+    iconKey: rarityIconKey(hero.rarity),
     heroId: hero.heroId,
     presetIndex: null,
   }))
@@ -338,6 +368,7 @@ function lineupDrafts(lineups: readonly LineupPanel[]): RowDraft[] {
         lineup.breakdownLines.join(' '),
       ],
       titleColor: lineup.emptySlots > 0 ? COLOR_WARNING : COLOR_STAR,
+      iconKey: null,
       heroId: null,
       presetIndex: lineup.presetIndex,
     })
@@ -345,6 +376,7 @@ function lineupDrafts(lineups: readonly LineupPanel[]): RowDraft[] {
       out.push({
         lines: [`    已激活缘分：${lineup.bondTexts.join(' · ')}`, '', '', ''],
         titleColor: COLOR_TEXT_DIM,
+        iconKey: null,
         heroId: null,
         presetIndex: null,
       })

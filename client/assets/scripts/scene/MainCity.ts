@@ -15,6 +15,7 @@ import { gameStore } from '../game/store/Store'
 import type { GameState } from '../game/store/Store'
 import type { Unsubscribe } from '../core/EventBus'
 import type { ResourceState } from '../net/generated/Protocol'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -139,7 +140,7 @@ export class MainCity extends Component {
     node.layer = this.node.layer
     this.node.addChild(node)
     node.addComponent(UITransform)
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.color = color
     label.fontSize = 20

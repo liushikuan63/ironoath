@@ -457,6 +457,8 @@ test('initializeWorld 之后可用；resetWorld 同时解绑传输层，避免�
   resetWorld()
   const requester: WorldRequester = {
     viewport: () => undefined, marches: () => undefined, exile: () => undefined,
+    recall: async () => ({ ok: true, message: '召回成功' }),
+    collectGather: async () => ({ ok: true, message: '收取成功' }),
   }
   const model = initializeWorld(LAYOUT, 0, { x: 48, y: 48 })
   bindWorldRequester(requester)

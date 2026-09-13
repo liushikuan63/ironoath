@@ -17,6 +17,7 @@
 
 import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { GachaDisclosure, Rarity } from '../game/gacha/GachaDisclosure'
+import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -130,7 +131,7 @@ export class GachaDisclosureView extends Component {
     parent.addChild(node)
     node.addComponent(UITransform)
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = fontSize
