@@ -909,6 +909,7 @@ class WorldEndpointTest {
     /** 在玩家附近找一个指定类型的格子（世界是确定性生成的，所以一定找得到）。 */
     private Coord findCellOf(String playerId, com.ironoath.core.world.WorldGenerator.EntityType type) {
         Coord home = worldAppService.homeOf(playerId);
+        int worldSize = (int) configs.longParam("WORLD_SIZE");
         for (int radius = 1; radius < 200; radius++) {
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dy = -radius; dy <= radius; dy++) {
@@ -917,7 +918,9 @@ class WorldEndpointTest {
                     }
                     int x = home.x() + dx;
                     int y = home.y() + dy;
-                    if (x < 0 || y < 0 || x >= 512 || y >= 512) {
+                    // 世界边长只能读配置表：写死 512 后改 WORLD_SIZE 会让夹具漏搜或造出界坐标，
+                    // 最后失败在被测业务上，看起来像功能坏了。
+                    if (x < 0 || y < 0 || x >= worldSize || y >= worldSize) {
                         continue;
                     }
                     Coord candidate = Coord.of(x, y);
