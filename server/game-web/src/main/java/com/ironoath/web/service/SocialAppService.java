@@ -1516,6 +1516,11 @@ public class SocialAppService {
         return pendingInvitesOf(playerId) > 0;
     }
 
+    /** 有没有未读社交事件（红点树注册点读它，与摘要共用同一本未读账）。 */
+    public boolean hasUnreadEvents(String playerId) {
+        return !store.unreadEvents(playerId).isEmpty();
+    }
+
     private void requirePermission(PermissionMatrix.Scope scope, Object role, String permission) {
         PermissionMatrix.Tier tier = tierOf(scope, String.valueOf(role));
         if (tier == null || !rules.permissions().allows(scope, tier, permission)) {

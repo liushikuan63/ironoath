@@ -39,6 +39,8 @@ public class ReddotRegistrations {
                 "有能帮的互助请求（额度未用完）");
         tree.register("social/invite", social::hasPendingInvite,
                 "有待处理的入盟申请或集结邀请");
+        tree.register("social/events", social::hasUnreadEvents,
+                "有未读社交事件");
         // 复用升级流程自己的算式（CityAppService#attemptOf → CityState#validateUpgrade），
         // 不在这里比较资源与等级 —— 那样红点会与「点进去到底能不能升」各说各话
         tree.register("city/building", playerId -> city.hasUpgradable(playerId, time.serverNow()),

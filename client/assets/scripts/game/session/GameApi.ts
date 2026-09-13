@@ -28,6 +28,7 @@ import type { Store } from '../store/Store'
 import {
   applyExileResult, bindWorldRequester, feedMarches, feedTimeOffset, feedViewport, initializeWorld,
 } from '../world/WorldContext'
+import type { WorldActionResult } from '../world/WorldContext'
 import type { WorldLayout } from '../world/WorldViewModel'
 import type { PowerDetailResp, StaminaBuyReq, StaminaBuyResp, StaminaResp } from '../../net/generated/Protocol'
 import type {
@@ -62,8 +63,8 @@ import type {
   AllianceReviewReq, AllianceRoleReq, AllianceSelfReq, AllianceSyncReq, AllianceSyncResp,
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
   HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyResp, SocialEventAckReq,
-  SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq, SquadMemberReq, SquadRallyReq, SquadSelfReq,
-  AllianceRallyReq,
+  SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq, SquadMemberReq, SquadRallyReq,
+  SquadSelfReq, AllianceRallyReq, ReddotTreeResp,
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import type { QuestClaimReq, QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
@@ -269,6 +270,8 @@ export class GameApi {
         },
         // 必须把 Promise 交回场景：按钮要等真正的迁城响应落地后才解除“迁城中”锁。
         exile: () => this.doExile().then(() => undefined),
+        recall: (marchId) => this.doRecall(marchId),
+        collectGather: (marchId) => this.doCollectGather(marchId),
       })
       this.worldReady = true
     }
@@ -348,6 +351,33 @@ export class GameApi {
     return this.mutate<MarchIdReq, GatherResp>('/world/collectGather', req)
   }
 
+  /** 场景按下召回后的落地；无论成功失败都重拉列表，避免面板停留在旧状态。 */
+  async doRecall(marchId: string): Promise<WorldActionResult> {
+    const outcome = await this.worldRecall({ marchId })
+    return this.finishWorldAction(outcome,
+      data => `召回成功，${Math.max(0, data.returnSeconds)} 秒后到家`)
+  }
+
+  /** 场景按下收取后的落地；成功时把服务端结算的资源原样告诉玩家。 */
+  async doCollectGather(marchId: string): Promise<WorldActionResult> {
+    const outcome = await this.worldCollectGather({ marchId })
+    return this.finishWorldAction(outcome, data => {
+      const loot = data.collected
+        .map(entry => `${entry.resourceType} ×${entry.amount}`)
+        .join('、')
+      return loot.length > 0 ? `已收取 ${loot}，队伍返程中` : '采集已结算，队伍返程中'
+    })
+  }
+
+  private async finishWorldAction<T>(outcome: NetOutcome<T>,
+                                     success: (data: T) => string): Promise<WorldActionResult> {
+    const result = outcome.kind === 'ok'
+      ? { ok: true, message: success(outcome.data) }
+      : { ok: false, message: outcomeMessage(outcome) }
+    await this.marches()
+    return result
+  }
+
   scoutReports(): Promise<NetOutcome<ScoutListResp>> {
     return this.read<ScoutListResp>('/world/reports')
   }
@@ -425,6 +455,16 @@ export class GameApi {
   /** GET /social/summary。三层社交一屏给全，红点数由服务端算好（验收 6）。 */
   socialSummary(): Promise<NetOutcome<SocialSummaryResp>> {
     return this.read<SocialSummaryResp>('/social/summary')
+  }
+
+  /**
+   * GET /social/reddot。整棵红点树一次下发，客户端不按业务字段自行拼判断。
+   *
+   * <p>响应刻意是全量的：合并增量会让已经消失的红点留在界面上，
+   * 那正是 B12 验收 1 要禁止的假红点。
+   */
+  socialReddot(): Promise<NetOutcome<ReddotTreeResp>> {
+    return this.read<ReddotTreeResp>('/social/reddot')
   }
 
   /**
@@ -689,5 +729,16 @@ export class GameApi {
     // 两处都写会让「谁是权威」变得模糊
     feedTimeOffset(this.deps.timeSync.offsetMs())
     return outcome
+  }
+}
+
+function outcomeMessage(outcome: NetOutcome<unknown>): string {
+  switch (outcome.kind) {
+    case 'network':
+      return outcome.queued ? `网络不通，操作已排队：${outcome.message}` : `网络不通：${outcome.message}`
+    case 'biz':
+      return outcome.detail ?? outcome.msg
+    default:
+      return '操作未完成'
   }
 }

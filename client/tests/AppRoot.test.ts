@@ -23,6 +23,7 @@ import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
 import type { PanelTargets } from '../assets/scripts/game/session/AppRoot'
 import type { LineupChoice, SpeedupChoice } from '../assets/scripts/game/session/Choices'
+import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
 
 const SERVER_NOW = 1_788_000_000_000
@@ -49,6 +50,19 @@ const ROUTES: Record<string, unknown> = {
   '/social/summary': {
     squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
     helpRemainingToday: 0, events: [], serverNow: SERVER_NOW,
+  },
+  '/social/reddot': {
+    nodes: [
+      { key: 'social', lit: true, children: [
+        { key: 'social/help', lit: true, children: [] },
+        { key: 'social/invite', lit: false, children: [] },
+        { key: 'social/events', lit: false, children: [] },
+      ] },
+      { key: 'city', lit: false, children: [
+        { key: 'city/building', lit: false, children: [] },
+      ] },
+    ],
+    leafCount: 4, serverNow: SERVER_NOW,
   },
   '/player/power': {
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, serverNow: SERVER_NOW, lines: [],
@@ -122,6 +136,23 @@ function syncResponse(overrides: Record<string, unknown>) {
   return Object.assign({}, ROUTES['/alliance/sync'], overrides)
 }
 
+function reddotResponse(socialLit: boolean, helpLit: boolean) {
+  return {
+    nodes: [
+      { key: 'social', lit: socialLit, children: [
+        { key: 'social/help', lit: helpLit, children: [] },
+        { key: 'social/invite', lit: false, children: [] },
+        { key: 'social/events', lit: false, children: [] },
+      ] },
+      { key: 'city', lit: false, children: [
+        { key: 'city/building', lit: false, children: [] },
+      ] },
+    ],
+    leafCount: 4,
+    serverNow: SERVER_NOW,
+  }
+}
+
 interface Call {
   readonly method: 'GET' | 'POST'
   readonly path: string
@@ -179,6 +210,8 @@ interface Harness {
   readonly lastSocialMembers: string[]
   /** 最近一次落地给社交面板的互助请求 id 列表。 */
   readonly lastSocialHelps: string[]
+  /** 最近一次下发到场景层的那棵红点树。 */
+  readonly reddotTree: ClientReddotTree | null
 
   readonly root: AppRoot
   readonly http: RoutingHttp
@@ -237,6 +270,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   const attached: string[] = []
   let socialMembers: string[] = []
   let socialHelps: string[] = []
+  let reddotTree: ClientReddotTree | null = null
   let speedupOptions: SpeedupChoice[] = []
   let lineupOptions: LineupChoice[] = []
   let speedupPick: ((targetId: string) => void) | null = null
@@ -254,6 +288,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       attached.push('social')
       socialMembers = members.map(m => m.id)
       socialHelps = helps.map(h => h.requestId)
+    },
+    reddot: (tree) => {
+      attached.push('reddot')
+      reddotTree = tree
     },
     power: () => attached.push('power'),
     targets: () => attached.push('targets'),
@@ -281,6 +319,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     get lastSocialHelps() {
       return socialHelps
     },
+    get reddotTree() {
+      return reddotTree
+    },
     get speedupOptions() {
       return speedupOptions
     },
@@ -302,9 +343,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
 }
 
 // 登录 1 条 + 首屏面板请求。社交面板是三条（摘要 + 成员 diff + 互助列表），
-// 2026-09-12 加任务面板（B12 §1 + 收口清单 #98 的三选一送将）后再 +1 ——
+// 2026-09-12 加任务面板（B12 §1 + 收口清单 #98 的三选一送将）后再 +1，
+// 阶段 3.4 再把红点树作为独立首屏拉取项 +1 ——
 // 这个数被断言写死正是为了让每一次新增都要被看见并解释
-const PANEL_PULLS = 12
+const PANEL_PULLS = 13
 
 test('start：先登录，再把十个面板各拉一次，并把家坐标交出去', async () => {
   const h = harness()
@@ -312,7 +354,8 @@ test('start：先登录，再把十个面板各拉一次，并把家坐标交出
 
   assert.equal(h.http.calls[0]?.path, '/player/init', '登录必须是第一个请求')
   assert.deepEqual(h.attached,
-    ['city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power', 'home', 'quest'])
+    ['city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power', 'home', 'quest',
+      'reddot'])
   assert.equal(h.errors.length, 0)
   assert.equal(h.root.playerId, 'P1')
 })
@@ -482,7 +525,7 @@ test('加速道具先展示真实队列，选中建筑后才带 targetId 发请�
   await new Promise(resolve => setTimeout(resolve, 0))
   const call = h.http.calls.find(c => c.path === '/item/use')
   assert.equal(call?.body.targetId, 'b1')
-  assert.deepEqual(h.attached.slice(-3), ['bag', 'city', 'army'])
+  assert.deepEqual(h.attached.slice(-4), ['bag', 'city', 'army', 'reddot'])
 })
 
 test('挑战先展示已编成阵容，选中后才把英雄与全部可用兵力送进请求', async () => {
@@ -590,7 +633,7 @@ test('一次启动只发 PANEL_PULLS 条请求（多出来的每一个都是玩�
   assert.equal(h.http.calls.length, PANEL_PULLS + 1)
 })
 
-test('互助列表真拉得到，且徽标用服务端给的那个数（客户端不自己数 requests）', async () => {
+test('互助列表真拉得到：面板拿到的是一批完整请求，不再用空数组假装', async () => {
   const h = harness()
   await h.root.start('dev-1', '君')
 
@@ -598,6 +641,73 @@ test('互助列表真拉得到，且徽标用服务端给的那个数（客户�
     '列表包含已经帮过的行（alreadyHelped 标出来），玩家要看得见「我帮过谁」')
   const helpCall = h.http.calls.find(c => c.path === '/social/helpRequests')
   assert.notEqual(helpCall, undefined)
+})
+
+test('红点树进入首屏组合根，导航与面板消费的是同一棵服务端权威树', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  assert.equal(h.http.countOf('/social/reddot'), 1)
+  assert.equal(h.reddotTree?.isLit('social'), true,
+    '父链聚合必须由客户端树完成，导航不应自己看 pendingHelps')
+  assert.equal(h.reddotTree?.isLit('social/help'), true)
+  assert.equal(h.reddotTree?.isLit('social/invite'), false, '无假红点')
+  assert.equal(h.reddotTree?.isLit('city/building'), false)
+})
+
+test('一键帮助成功后重拉红点树：已消失的父链和叶子同轮熄灭', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  assert.equal(h.reddotTree?.isLit('social/help'), true)
+
+  h.http.overrides.set('/social/reddot', reddotResponse(false, false))
+  await h.root.helpAll()
+
+  assert.equal(h.http.countOf('/social/reddot'), 2,
+    '处理完不重拉，导航会一直亮到玩家刷新页面')
+  assert.equal(h.reddotTree?.isLit('social/help'), false)
+  assert.equal(h.reddotTree?.isLit('social'), false)
+  assert.deepEqual(h.attached.slice(-4), ['social', 'army', 'city', 'reddot'],
+    '互助动作结束后，社交与红点都应收到权威结果')
+})
+
+test('单条帮助也重拉红点树：处理一行后不用刷新页面才熄灭', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/social/reddot', reddotResponse(false, false))
+
+  await h.root.help('h1')
+
+  assert.equal(h.http.countOf('/social/reddot'), 2)
+  assert.equal(h.reddotTree?.isLit('social/help'), false)
+  assert.equal(h.reddotTree?.isLit('social'), false)
+})
+
+test('事件标记已读后重拉红点树：未读事件叶子与社交父链同轮熄灭', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/social/reddot', {
+    nodes: [
+      { key: 'social', lit: true, children: [
+        { key: 'social/help', lit: false, children: [] },
+        { key: 'social/invite', lit: false, children: [] },
+        { key: 'social/events', lit: true, children: [] },
+      ] },
+    ],
+    leafCount: 4,
+    serverNow: SERVER_NOW,
+  })
+  await h.root.refresh('reddot')
+  assert.equal(h.reddotTree?.isLit('social/events'), true)
+
+  h.http.overrides.set('/social/reddot', reddotResponse(false, false))
+  await h.root.ackEvents(['event-1'])
+
+  assert.equal(h.http.countOf('/social/reddot'), 3,
+    '启动、制造未读事件、标记已读各拉一次')
+  assert.equal(h.reddotTree?.isLit('social/events'), false)
+  assert.equal(h.reddotTree?.isLit('social'), false)
+  assert.deepEqual(h.attached.slice(-2), ['social', 'reddot'])
 })
 
 test('社交面板的成员走 diff 通道真拉得到：首次 version=0，之后带上服务端给的版本号', async () => {

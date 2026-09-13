@@ -725,7 +725,7 @@ class SocialEndpointTest {
         JsonNode idle = get200("/social/reddot", helper);
         assertThat(idle.get("leafCount").asInt())
                 .as("注册点里的叶子数必须可见：它长期停在个位数说明有人在业务模块里自己判红点")
-                .isEqualTo(3);
+                .isEqualTo(4);
         assertThat(litOf(idle.get("nodes"), "social")).isFalse();
 
         social.registerHelpRequest("rd-1", target, HelpTargetKind.BUILDING, "inst_rd_1", "伐木场 Lv7→8",
@@ -736,6 +736,27 @@ class SocialEndpointTest {
                 .as("叶子读的就是 hasHelpable，与摘要里的 pendingHelps 同一批判定").isTrue();
         assertThat(litOf(after.get("nodes"), "social"))
                 .as("父节点由服务端聚合，客户端不做业务判断（B12 §4 的分工）").isTrue();
+    }
+
+    @Test
+    @DisplayName("红点树：未读事件点亮 social/events，标记已读后同一条父链熄灭")
+    void reddotEventLeafFollowsUnreadStore() throws Exception {
+        String playerId = newPlayer(10);
+        socialStore.pushEvent(playerId, new SocialStore.SocialEvent(
+                "event-reddot-1", "ATTACKED", "遭到攻击", "你的城市正在被攻击",
+                12L, 34L, "march-1", System.currentTimeMillis(), 0L));
+
+        JsonNode before = get200("/social/reddot", playerId);
+        assertThat(litOf(before.get("nodes"), "social/events"))
+                .as("未读事件必须由红点树自己的叶子表达，不能只在摘要计数里旁路判断").isTrue();
+        assertThat(litOf(before.get("nodes"), "social")).isTrue();
+
+        post200("/social/ackEvents", playerId,
+                new SocialEventAckReq(newRequestId(), List.of("event-reddot-1")));
+
+        JsonNode after = get200("/social/reddot", playerId);
+        assertThat(litOf(after.get("nodes"), "social/events")).isFalse();
+        assertThat(litOf(after.get("nodes"), "social")).isFalse();
     }
 
     @Test

@@ -27,6 +27,7 @@ import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { QuestPanelView } from './QuestPanelView'
 import { WorldMap } from './WorldMap'
+import { ClientReddotTree } from '../game/reddot/ReddotTree'
 
 const { ccclass } = _decorator
 
@@ -36,6 +37,7 @@ const COLOR_ACTIVE = new Color(184, 134, 11, 255)
 const COLOR_IDLE = new Color(52, 43, 35, 240)
 const COLOR_TEXT_ACTIVE = new Color(26, 19, 16, 255)
 const COLOR_TEXT_IDLE = new Color(200, 186, 160, 255)
+const COLOR_RED_DOT = new Color(214, 60, 50, 255)
 
 const BAR_HEIGHT = 52
 
@@ -43,6 +45,8 @@ interface PanelDef {
   readonly key: string
   readonly label: string
   readonly view: new () => Component
+  /** 导航角标绑定的红点路径；null 表示这个入口目前没有服务端叶子。 */
+  readonly reddotKey: string | null
 }
 
 /**
@@ -52,18 +56,18 @@ interface PanelDef {
  * （AppRoot.start 里已经拉过），所以挂上就能用，不需要额外的装配。
  */
 const PANELS: readonly PanelDef[] = [
-  { key: 'city', label: '内城', view: CityPanelView },
-  { key: 'army', label: '军队', view: ArmyPanelView },
-  { key: 'hero', label: '武将', view: HeroPanelView },
-  { key: 'bag', label: '背包', view: BagPanelView },
-  { key: 'stage', label: '关卡', view: StagePanelView },
-  { key: 'quest', label: '任务', view: QuestPanelView },
-  { key: 'social', label: '社交', view: SocialPanelView },
-  { key: 'power', label: '战力', view: PowerPanelView },
-  { key: 'targets', label: '搜索', view: TargetSearchView },
+  { key: 'city', label: '内城', view: CityPanelView, reddotKey: 'city' },
+  { key: 'army', label: '军队', view: ArmyPanelView, reddotKey: null },
+  { key: 'hero', label: '武将', view: HeroPanelView, reddotKey: null },
+  { key: 'bag', label: '背包', view: BagPanelView, reddotKey: null },
+  { key: 'stage', label: '关卡', view: StagePanelView, reddotKey: null },
+  { key: 'quest', label: '任务', view: QuestPanelView, reddotKey: null },
+  { key: 'social', label: '社交', view: SocialPanelView, reddotKey: 'social' },
+  { key: 'power', label: '战力', view: PowerPanelView, reddotKey: null },
+  { key: 'targets', label: '搜索', view: TargetSearchView, reddotKey: null },
   // 地图放最后：它是唯一带镜头与拖拽的面板，数据流（viewport/marches 订阅）也与其余面板不同。
   // enterWorld 在登录时已由 AppRoot 拉过，这里挂上即能渲染。
-  { key: 'world', label: '地图', view: WorldMap },
+  { key: 'world', label: '地图', view: WorldMap, reddotKey: null },
 ]
 
 @ccclass('PanelNav')
@@ -75,6 +79,8 @@ export class PanelNav extends Component {
   private readonly panelNodes = new Map<string, Node>()
   private readonly buttonNodes = new Map<string, Node>()
   private readonly buttonLabels = new Map<string, Label>()
+  private readonly navDots = new Map<string, Node>()
+  private reddot: ClientReddotTree | null = null
 
   /** 切换面板时的回调。数据侧由 GameBootstrap 决定要不要补拉，导航层不碰网络。 */
   onShow: ((key: string) => void) | null = null
@@ -174,6 +180,19 @@ export class PanelNav extends Component {
       label.string = def.label
       label.fontSize = 18
       label.color = COLOR_TEXT_IDLE
+
+      const dot = new Node('NavRedDot')
+      dot.layer = button.layer
+      button.addChild(dot)
+      dot.setPosition(new Vec3((columnWidth - 6) / 2 - 9, (BAR_HEIGHT - 8) / 2 - 9, 0))
+      dot.addComponent(UITransform).setContentSize(new Size(12, 12))
+      const dotGraphics = dot.addComponent(Graphics)
+      dotGraphics.fillColor = COLOR_RED_DOT
+      dotGraphics.roundRect(-6, -6, 12, 12, 6)
+      dotGraphics.fill()
+      dot.active = false
+      this.navDots.set(def.key, dot)
+
       button.on('touch-start', (_event: EventTouch) => {
         this.show(def.key)
       }, this)
@@ -181,6 +200,28 @@ export class PanelNav extends Component {
       this.buttonLabels.set(def.key, label)
     })
     this.highlight()
+  }
+
+  /**
+   * 绑定服务端权威红点树。
+   *
+   * <p>导航不按业务数据自行判断，只按面板定义里的路径读同一棵树；
+   * 树每次整体替换后重新画一次，因此已经消失的红点不会残留。
+   */
+  attachReddot(tree: ClientReddotTree): void {
+    this.reddot = tree
+    this.refreshNavDots()
+  }
+
+  private refreshNavDots(): void {
+    const tree = this.reddot
+    for (const def of PANELS) {
+      const dot = this.navDots.get(def.key)
+      if (dot === undefined) {
+        continue
+      }
+      dot.active = tree !== null && def.reddotKey !== null && tree.isLit(def.reddotKey)
+    }
   }
 
   /** 高亮当前项：当前用铜金底 + 深色字，其余保持暗底浅字。 */
@@ -209,6 +250,8 @@ export class PanelNav extends Component {
     this.panelNodes.clear()
     this.buttonNodes.clear()
     this.buttonLabels.clear()
+    this.navDots.clear()
+    this.reddot = null
     this.onShow = null
   }
 }

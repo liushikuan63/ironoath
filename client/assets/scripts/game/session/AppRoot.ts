@@ -38,6 +38,7 @@ import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
 import { buildLineupChoices, buildSpeedupChoices } from './Choices'
 import type { LineupChoice, SpeedupChoice } from './Choices'
+import { ClientReddotTree } from '../reddot/ReddotTree'
 
 /** 面板需要落地的一类数据。全部可选：某个场景里没有这个面板时就不实现。 */
 export interface PanelTargets {
@@ -50,9 +51,8 @@ export interface PanelTargets {
   bag?(resp: BagListResp): void
   stage?(resp: StageListResp): void
   /**
-   * 社交面板。`members` 走 `/alliance/sync` 的 diff 通道真实拉取；`helps` 仍是空数组 ——
-   * 服务端只下发计数（`pendingHelps`），没有读互助请求列表的端点，已记进收口清单。
-   * 给空而不是猜，是为了让「面板少一块」成为一条可查的缺口而不是一个静默的空白区。
+   * 社交面板。`members` 走 `/alliance/sync` 的 diff 通道，`helps` 走
+   * `/social/helpRequests`；两者都由服务端给出，客户端只转手，不自己拼列表。
    */
   social?(resp: SocialSummaryResp, helps: readonly HelpRequestView[],
     members: readonly AllianceMember[], offsetMs: number): void
@@ -63,6 +63,8 @@ export interface PanelTargets {
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
   quest?(resp: QuestListResp): void
+  /** 服务端权威红点树。导航与面板只读取它，不在业务层重算。 */
+  reddot?(tree: ClientReddotTree): void
   /** 失败或不能做的说明。`panel` 是分流用的面板名，不是错误码。 */
   error?(panel: string, message: string): void
   /** 家坐标（登录、进世界、迁城之后）。场景用它接「回城」按钮。 */
@@ -75,7 +77,8 @@ export interface PanelTargets {
 
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
-  'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world' | 'quest'
+  'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
+  | 'quest' | 'reddot'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -89,6 +92,8 @@ export class AppRoot {
   private readonly timeSync: TimeSync
   private readonly targets: PanelTargets
   private readonly tracker: Tracker | null
+  /** 双来源红点树。服务端下发权威结论，本地来源将来仍通过同一棵树注册。 */
+  private readonly reddot = new ClientReddotTree()
   /** 未绑定 tracker 时只提醒一次：每次动作都刷一行日志，等于把这条信号埋进噪音里。 */
   private warnedNoTracker = false
   /** 联盟成员 diff 的游标。由服务端每次返回的 version 推进，绝不自己加一。 */
@@ -153,7 +158,8 @@ export class AppRoot {
       playerId: outcome.data.playerId,
       mainLevel: trackParam(this.store.getState().cityLevel),
     })
-    await this.refresh('city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power', 'world', 'quest')
+    await this.refresh('city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power',
+      'world', 'quest', 'reddot')
     return true
   }
 
@@ -231,6 +237,12 @@ export class AppRoot {
       case 'quest':
         this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
         return
+      case 'reddot':
+        this.deliver('reddot', await this.api.socialReddot(), r => {
+          this.reddot.applyServer(r.nodes)
+          this.targets.reddot?.(this.reddot)
+        })
+        return
       case 'world':
         this.deliver('world', await this.api.enterWorld(),
           r => this.targets.home?.(r.home.x, r.home.y))
@@ -271,20 +283,21 @@ export class AppRoot {
       : { buildingId: configId, gridX: String(gridX), gridY: String(gridY) }
     this.track(TRACK_EVENTS.buildingUpgradeStart, params)
     return this.write('city', this.api.cityUpgrade({ configId, gridX, gridY }),
-      ['city', 'power'])
+      ['city', 'power', 'reddot'])
   }
 
   /** `itemId: null` = 用金币加速而不是用加速道具。 */
   speedUpBuilding(buildingId: string, source: SpeedUpSource): Promise<void> {
     this.track(TRACK_EVENTS.speedupUsed, { target: buildingId, source })
-    return this.write('city', this.api.citySpeedUp({ buildingId, source, itemId: null }), ['city'])
+    return this.write('city', this.api.citySpeedUp({ buildingId, source, itemId: null }),
+      ['city', 'reddot'])
   }
 
   /** 顶栏的「一键收割」= `buildingId: null`，由服务端裁定收哪些；具体行则收那一格。 */
   collect(buildingId: string | null): Promise<void> {
     this.track(TRACK_EVENTS.gatherCollect, { buildingId: trackParam(buildingId), all: trackParam(buildingId === null) })
     return this.write('city', this.api.cityCollect({ buildingId }),
-      ['city', 'resources'], r => this.targets.cityCollect?.(r))
+      ['city', 'resources', 'reddot'], r => this.targets.cityCollect?.(r))
   }
 
   // ---------- 军队 ----------
@@ -326,7 +339,7 @@ export class AppRoot {
     }
     this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'false' })
     return this.write('bag', this.api.itemUse({ itemId, count: 1, targetId }),
-      ['bag', 'city', 'army'])
+      ['bag', 'city', 'army', 'reddot'])
   }
 
   /** 卖出：服务端没有对应端点（`GameApi` 里也没有 `bagSell`），所以只能明确拒绝而不是静默。 */
@@ -411,12 +424,13 @@ export class AppRoot {
 
   help(helpRequestId: string): Promise<void> {
     this.track(TRACK_EVENTS.socialHelp, { requestId: helpRequestId })
-    return this.write('social', this.api.socialHelp({ helpRequestId }), ['social', 'army', 'city'])
+    return this.write('social', this.api.socialHelp({ helpRequestId }),
+      ['social', 'army', 'city', 'reddot'])
   }
 
   helpAll(): Promise<void> {
     this.track(TRACK_EVENTS.socialHelpAll)
-    return this.write('social', this.api.socialHelpAll(), ['social', 'army', 'city'])
+    return this.write('social', this.api.socialHelpAll(), ['social', 'army', 'city', 'reddot'])
   }
 
   donate(tier: number): Promise<void> {
@@ -435,7 +449,8 @@ export class AppRoot {
   /** 事件已读（红点与离线补偿都挂在这本账上）。 */
   ackEvents(eventIds: readonly string[]): Promise<void> {
     this.track(TRACK_EVENTS.eventsAck, { kind: 'ack', count: trackParam(eventIds.length) })
-    return this.write('social', this.api.socialAckEvents({ eventIds: [...eventIds] }), ['social'])
+    return this.write('social', this.api.socialAckEvents({ eventIds: [...eventIds] }),
+      ['social', 'reddot'])
   }
 
   // ---------- 目标搜索与流亡 ----------
@@ -512,5 +527,10 @@ export class AppRoot {
 
   get playerId(): string | null {
     return this.store.getState().playerId
+  }
+
+  /** 当前红点树。场景层绑定时读取，避免各面板再维护一份副本。 */
+  get reddotTree(): ClientReddotTree {
+    return this.reddot
   }
 }

@@ -20,6 +20,7 @@ import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
 } from '../game/social/SocialPanel'
 import type { AllianceMember, HelpRequestView, SocialSummaryResp } from '../net/generated/SocialProtocol'
+import { ClientReddotTree } from '../game/reddot/ReddotTree'
 import { NodePool } from './NodePool'
 
 const { ccclass } = _decorator
@@ -48,11 +49,11 @@ const MAX_VISIBLE_ROWS = 8
 
 type Tab = 'squad' | 'alliance' | 'help' | 'events'
 
-const TABS: ReadonlyArray<{ tab: Tab; text: string }> = [
-  { tab: 'squad', text: '小队' },
-  { tab: 'alliance', text: '联盟' },
-  { tab: 'help', text: '互助' },
-  { tab: 'events', text: '事件' },
+const TABS: ReadonlyArray<{ tab: Tab; text: string; reddotKey: string | null }> = [
+  { tab: 'squad', text: '小队', reddotKey: null },
+  { tab: 'alliance', text: '联盟', reddotKey: 'social/invite' },
+  { tab: 'help', text: '互助', reddotKey: 'social/help' },
+  { tab: 'events', text: '事件', reddotKey: 'social/events' },
 ]
 
 /** 一行要画的内容。四个页签共用同一套节点结构。 */
@@ -99,9 +100,14 @@ export class SocialPanelView extends Component {
   private readonly tabDots = new Map<Tab, Graphics>()
   private headerLabel: Label | null = null
   private hintLabel: Label | null = null
+  /** 与服务端整树下发保持同一个实例；每次刷新后只重画角标。 */
+  private reddot: ClientReddotTree | null = null
 
-  /** 点某一行的动作按钮。权限已由服务端下发的列表裁决过，这里只把 id 交出去 */
-  onRowAction: ((kind: RowAction, id: string) => void) | null = null
+  /**
+   * 点某一行的动作按钮。权限已由服务端下发的列表裁决过，这里只把 id 与页签归属交出去；
+   * 踢人需要知道从小队还是联盟发起，组合根不猜当前组织。
+   */
+  onRowAction: ((kind: RowAction, id: string, from: 'squad' | 'alliance') => void) | null = null
   /** 点「一键帮助全部」（验收 6）。count 是服务端算好的可帮助条数 */
   onHelpAll: ((count: number) => void) | null = null
   /** 点某个捐献档位 */
@@ -130,6 +136,7 @@ export class SocialPanelView extends Component {
     this.lastHelps = []
     this.tabLabels.clear()
     this.tabDots.clear()
+    this.reddot = null
     this.onRowAction = null
     this.onHelpAll = null
     this.onDonate = null
@@ -193,6 +200,20 @@ export class SocialPanelView extends Component {
   attachPermissions(permissions: readonly string[]): void {
     this.permissions = [...permissions]
     this.render()
+  }
+
+  /**
+   * 绑定服务端权威红点树。
+   *
+   * <p>社交摘要里的 `redDots` 仍用于文案与动作计数，但页签是否亮只读红点树：
+   * 两个来源各画一次会让“导航亮了、页签没亮”这类漂移永远修不干净。
+   */
+  attachReddot(tree: ClientReddotTree): void {
+    this.reddot = tree
+    this.renderTabs()
+    if (this.hintLabel !== null) {
+      this.hintLabel.color = this.socialReddotLit() ? COLOR_WARNING : COLOR_TEXT_DIM
+    }
   }
 
   switchTab(tab: Tab): void {
@@ -314,7 +335,7 @@ export class SocialPanelView extends Component {
     if (data === null || pool === null) {
       return
     }
-    this.renderTabs(data)
+    this.renderTabs()
 
     const drafts = this.draftsFor(data)
     if (this.headerLabel !== null) {
@@ -322,7 +343,7 @@ export class SocialPanelView extends Component {
     }
     if (this.hintLabel !== null) {
       this.hintLabel.string = this.hintText(data)
-      this.hintLabel.color = data.redDots.any ? COLOR_WARNING : COLOR_TEXT_DIM
+      this.hintLabel.color = this.socialReddotLit() ? COLOR_WARNING : COLOR_TEXT_DIM
     }
 
     const size = view.getVisibleSize()
@@ -339,15 +360,18 @@ export class SocialPanelView extends Component {
     })
   }
 
-  private renderTabs(data: SocialData): void {
+  private renderTabs(): void {
     for (const [tab, label] of this.tabLabels) {
       label.color = tab === this.tab ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
     }
-    // 红点数由服务端给出，客户端不自己数列表（B10 验收 6）
-    this.setDot('help', data.redDots.helps > 0)
-    this.setDot('events', data.redDots.unreadEvents > 0)
-    this.setDot('alliance', data.redDots.invites > 0)
-    this.setDot('squad', false)
+    for (const item of TABS) {
+      this.setDot(item.tab,
+        this.reddot !== null && item.reddotKey !== null && this.reddot.isLit(item.reddotKey))
+    }
+  }
+
+  private socialReddotLit(): boolean {
+    return this.reddot?.isLit('social') === true
   }
 
   private setDot(tab: Tab, visible: boolean): void {
@@ -458,7 +482,7 @@ export class SocialPanelView extends Component {
         this.onDonate?.(Number(id))
         return
       }
-      this.onRowAction?.(kind, id)
+      this.onRowAction?.(kind, id, this.tab === 'alliance' ? 'alliance' : 'squad')
     }, this)
   }
 }

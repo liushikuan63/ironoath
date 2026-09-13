@@ -406,6 +406,31 @@ export class GameBootstrap extends Component {
     }
     if (social !== null) {
       out.social = (resp, helps, members, offsetMs) => social.attach(resp, helps, members, offsetMs)
+      social.onHelpAll = () => { void this.root?.helpAll() }
+      social.onDonate = tier => { void this.root?.donate(tier) }
+      social.onRowAction = (kind, id, from) => {
+        switch (kind) {
+          case 'help':
+            void this.root?.help(id)
+            return
+          case 'kick':
+            void this.root?.kick(id, from)
+            return
+          case 'event':
+            // 事件行当前只完成已读；坐标跳转还需要事件视图把数值坐标交给世界地图。
+            void this.root?.ackEvents([id])
+            return
+          case 'none':
+          case 'helpAll':
+          case 'donate':
+            return
+        }
+      }
+    }
+    // 红点树是共享实例：导航和面板各自只持引用，避免两处状态在多次刷新后漂移。
+    out.reddot = (tree) => {
+      this.nav?.attachReddot(tree)
+      social?.attachReddot(tree)
     }
     if (power !== null) {
       out.power = resp => power.render(resp)

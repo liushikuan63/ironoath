@@ -384,6 +384,28 @@ test('marches 的响应喂进世界模型，行军出现在渲染帧里', async 
   assert.equal(marches[0]?.marchId, 'x1')
 })
 
+test('socialReddot 绑定 /social/reddot：整棵树原样返回给组合根消费', async () => {
+  const { api, http } = createHarness()
+  http.script = [envelope({
+    nodes: [
+      { key: 'social', lit: true, children: [
+        { key: 'social/help', lit: true, children: [] },
+      ] },
+    ],
+    leafCount: 4,
+    serverNow: 5_000,
+  })]
+
+  const outcome = await api.socialReddot()
+
+  assert.equal(outcome.kind, 'ok')
+  assert.equal(http.lastUrl(), 'https://game.test/social/reddot')
+  if (outcome.kind === 'ok') {
+    assert.equal(outcome.data.nodes[0]?.key, 'social')
+    assert.equal(outcome.data.nodes[0]?.children[0]?.lit, true)
+  }
+})
+
 // ---------- 离线队列策略 ----------
 
 test('变更请求默认不入离线队列：断网时如实失败，而不是几小时后悄悄执行', async () => {
