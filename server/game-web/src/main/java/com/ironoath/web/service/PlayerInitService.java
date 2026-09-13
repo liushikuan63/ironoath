@@ -13,6 +13,8 @@ import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.PlayerInitResp;
+import com.ironoath.web.security.AuthSessionService;
+import com.ironoath.web.security.WeChatCodeExchanger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -51,17 +53,25 @@ public class PlayerInitService {
     private final ResourceRateService resourceRates;
     /** 登录响应要把资源结算到当前时刻，产率与容量都取决于城建状态。 */
     private final com.ironoath.core.city.CityRepository cities;
+    /** 微信登录：把 wx.login 的 code 换成 openid（B15 §三）。 */
+    private final WeChatCodeExchanger weChat;
+    /** 登录成功后签发会话票据；客户端之后每个请求都要带它。 */
+    private final AuthSessionService sessions;
 
     public PlayerInitService(ConfigRegistry configs, PlayerRepository players,
                              IdempotencyStore idempotency, TimeService timeService,
                              ResourceRateService resourceRates,
-                             com.ironoath.core.city.CityRepository cities) {
+                             com.ironoath.core.city.CityRepository cities,
+                             WeChatCodeExchanger weChat,
+                             AuthSessionService sessions) {
         this.configs = configs;
         this.players = players;
         this.idempotency = idempotency;
         this.timeService = timeService;
         this.resourceRates = resourceRates;
         this.cities = cities;
+        this.weChat = weChat;
+        this.sessions = sessions;
     }
 
     /**
@@ -74,12 +84,15 @@ public class PlayerInitService {
     public PlayerInitResp init(PlayerInitReq req) {
         validate(req);
         long now = timeService.serverNow();
+        // 微信登录：code → openid → 账号键。走这条时 deviceId 不参与建档，
+        // 于是"换手机但同一个微信"能拿回同一份存档；反过来清缓存换设备也只影响无微信的环境。
+        String accountKey = weChatAccountKey(req);
         long ttlMs = configs.longParam("REQUEST_ID_TTL_SECONDS") * 1000L;
 
         boolean firstAttempt = idempotency.tryAcquire(req.requestId(), now, ttlMs);
 
         // 第二道防线：同设备重复 init 就是登录，返回现有存档
-        Optional<PlayerSave> existing = players.findByDeviceId(req.deviceId());
+        Optional<PlayerSave> existing = players.findByDeviceId(accountKey);
         if (existing.isPresent()) {
             PlayerSave save = existing.get();
             // 定向更新登录时间戳，不走乐观锁：lastLoginAt 是单调可交换字段，
@@ -105,20 +118,20 @@ public class PlayerInitService {
         }
 
         try {
-            PlayerSave save = createNewPlayer(req, now);
+            PlayerSave save = createNewPlayer(req, accountKey, now);
             // 第三道防线：原子插入。返回 false 说明并发请求已用同一 deviceId 建号
             if (!players.insertIfAbsent(save)) {
-                PlayerSave winner = players.findByDeviceId(req.deviceId())
+                PlayerSave winner = players.findByDeviceId(accountKey)
                         .orElseThrow(() -> new BizException(ErrorCode.SYSTEM_ERROR,
-                                "deviceId 唯一索引冲突但读不到存档，deviceId=" + req.deviceId()));
+                                "deviceId 唯一索引冲突但读不到存档，deviceId=" + accountKey));
                 LOG.info("并发建号竞态，改用已存在的存档 playerId={} deviceId={}",
-                        winner.playerId(), req.deviceId());
+                        winner.playerId(), accountKey);
                 return initResp(winner, now);
             }
             TraceContext.bindPlayer(save.playerId());
             LOG.info("新玩家创建成功 playerId={} nickName={} 资源种类={} 保护到期={}",
                     save.playerId(), save.nickName(), save.resources().size(), save.protectUntil());
-            return PlayerDtoMapper.toInitResp(save, now);
+            return PlayerDtoMapper.toInitResp(save, now, sessions.issue(save.playerId(), now));
         } catch (RuntimeException e) {
             // 建号失败必须释放幂等键：副作用没有产生，让客户端能安全重试
             idempotency.release(req.requestId());
@@ -142,7 +155,25 @@ public class PlayerInitService {
         // 读不到城时传 null：settledView 会沿用存档里的产率与容量、只结算时间轴，
         // 而不是干脆不结算（那等于让新号登录返回一份停在建档时刻的存量）
         return PlayerDtoMapper.toInitResp(save, now, resourceRates.settledView(
-                save, cities.findByPlayerId(save.playerId()).orElse(null), now));
+                save, cities.findByPlayerId(save.playerId()).orElse(null), now),
+                sessions.issue(save.playerId(), now));
+    }
+
+    /**
+     * 计算账号键：有微信 code 用 openid，没有就用 deviceId。
+     *
+     * <p><b>为什么不做成"有 code 就覆盖 deviceId"的第二种存储</b>：账号键本来就是
+     * {@code PlayerSave.deviceId} 这一列（唯一索引也在它上面）。把微信登录映射进同一列，
+     * "同一微信 = 同一存档"这条与"同设备 = 同一存档"就自动共用同一套幂等与并发保护，
+     * 不需要第二张账号表，也不会出现"两套键指向同一个玩家"的裂脑状态。
+     */
+    private String weChatAccountKey(PlayerInitReq req) {
+        String code = req.wxCode();
+        if (code == null || code.isBlank()) {
+            return req.deviceId();
+        }
+        var identity = weChat.exchange(code);
+        return "wx:" + identity.openId();
     }
 
     /**
@@ -153,7 +184,7 @@ public class PlayerInitService {
      * 玩家会看到资源条数字凭空跳变（例如保护量从 0 跳到 4000）。
      * 传入空城建状态是准确的 —— 新号还没有任何产出建筑，算出来就是配置表的初始值。
      */
-    private PlayerSave createNewPlayer(PlayerInitReq req, long now) {
+    private PlayerSave createNewPlayer(PlayerInitReq req, String accountKey, long now) {
         ResourceRateService.Rates rates = resourceRates.compute(new com.ironoath.core.city.CityState());
         Map<String, PlayerResourceState> resources = new LinkedHashMap<>();
         for (ResourceCfg cfg : configs.allResources()) {
@@ -172,7 +203,9 @@ public class PlayerInitService {
 
         return PlayerSave.createNew(
                 newPlayerId(),
-                req.deviceId(),
+                // 账号键而不是原始 deviceId：走微信登录时唯一索引列必须存 openid 派生的键，
+                // 否则同一个微信第二次登录会在库里找不到自己刚才建的那份存档（每次都是新号）
+                accountKey,
                 req.nickName(),
                 (int) configs.longParam("INIT_AVATAR_ID"),
                 now,

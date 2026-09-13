@@ -33,8 +33,8 @@ public final class PlayerDtoMapper {
      * 必须改用 {@link #toInitResp(PlayerSave, long, Map)} 传结算过的状态，
      * 否则响应里的 serverNow 与各资源的 lastSettle 不同源。
      */
-    public static PlayerInitResp toInitResp(PlayerSave save, long serverNow) {
-        return toInitResp(save, serverNow, save.resources());
+    public static PlayerInitResp toInitResp(PlayerSave save, long serverNow, String authToken) {
+        return toInitResp(save, serverNow, save.resources(), authToken);
     }
 
     /**
@@ -47,7 +47,8 @@ public final class PlayerDtoMapper {
      *                  给未结算的旧存量配一个新时刻，症状是「重登一次，资源数字倒退几分钟」
      */
     public static PlayerInitResp toInitResp(PlayerSave save, long serverNow,
-                                            Map<String, PlayerResourceState> resources) {
+                                            Map<String, PlayerResourceState> resources,
+                                            String authToken) {
         Map<ResourceType, ResourceState> views = new LinkedHashMap<>();
         for (Map.Entry<String, PlayerResourceState> e : resources.entrySet()) {
             PlayerResourceState s = e.getValue();
@@ -63,7 +64,7 @@ public final class PlayerDtoMapper {
         PowerSnapshot power = new PowerSnapshot(p.displayPower(), p.matchPower(), p.peakPower());
 
         return new PlayerInitResp(
-                save.playerId(), serverNow, profile, save.cityLevel(),
+                save.playerId(), authToken == null ? "" : authToken, serverNow, profile, save.cityLevel(),
                 views, power, save.protectUntil());
     }
 }

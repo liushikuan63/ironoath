@@ -85,10 +85,35 @@ class PlayerIdentityInterceptorTest {
     @DisplayName("票据正确就放行，且带上 uri 供实现做更细的策略")
     void strictVerifierAllowsValidSession() {
         MockHttpServletRequest request = request("/bag/list", "P1");
+        // 与客户端 NetModule 实际发的头一致：Authorization: Bearer <token>。
+        // 曾经这里测的是自定义头 X-Auth-Token，于是两端头名不一致也全绿 ——
+        // 那正是"本地永远发现不了的 2006"的来源，所以断言必须贴着真实客户端。
+        request.addHeader("Authorization", "Bearer good-token");
+        PlayerIdentityInterceptor guard = new PlayerIdentityInterceptor(new StrictVerifier());
+
+        assertThat(guard.preHandle(request, new MockHttpServletResponse(), new Object())).isTrue();
+    }
+
+    @Test
+    @DisplayName("自定义 X-Auth-Token 头仍被接受：早期联调脚本与灰度期客户端不用改")
+    void legacyCustomTokenHeaderStillWorks() {
+        MockHttpServletRequest request = request("/bag/list", "P1");
         request.addHeader(PlayerIdentityVerifier.TOKEN_HEADER, "good-token");
         PlayerIdentityInterceptor guard = new PlayerIdentityInterceptor(new StrictVerifier());
 
         assertThat(guard.preHandle(request, new MockHttpServletResponse(), new Object())).isTrue();
+    }
+
+    @Test
+    @DisplayName("Authorization 不是 Bearer 前缀时按无票据处理：不把 Basic 之类当会话")
+    void nonBearerAuthorizationIsNotASession() {
+        MockHttpServletRequest request = request("/bag/list", "P1");
+        request.addHeader("Authorization", "Basic dXNlcjpwYXNz");
+        PlayerIdentityInterceptor guard = new PlayerIdentityInterceptor(new StrictVerifier());
+
+        assertThatThrownBy(() -> guard.preHandle(request, new MockHttpServletResponse(), new Object()))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("会话票据无效");
     }
 
     /**

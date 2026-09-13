@@ -57,6 +57,7 @@ public enum ErrorCode {
      * 也就是白送「哪些账号是活的」。差什么只进日志与 detail（detail 在 prod 不下发）。
      */
     PLAYER_IDENTITY_UNVERIFIED(2006, "身份校验未通过"),
+    WECHAT_LOGIN_FAILED(2007, "微信登录失败，请重试"),
 
     // ---------- 3xxx 城建（B03 填充） ----------
     CITY_MAIN_LEVEL_LOW(3000, "主城等级不足"),

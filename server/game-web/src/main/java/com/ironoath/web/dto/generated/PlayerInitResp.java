@@ -9,6 +9,7 @@ import java.util.Map;
  */
 public record PlayerInitResp(
         String playerId,
+        String authToken,   // 会话票据（B15 §三）。客户端之后每个请求都要带 X-Auth-Token；没有微信登录体系的环境返回空串
         long serverNow,   // 服务端时间戳，客户端据此算偏移（铁律 5）
         PlayerProfile profile,
         int cityLevel,   // 主城等级，新号 = 1

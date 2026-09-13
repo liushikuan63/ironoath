@@ -226,7 +226,9 @@ public class BotSpawnService {
         // 资源初始值 / 容量 / 保护额度 / 幂等三道防线都算成第二套（ResourceRateService 的注释
         // 写了「三个值的唯一计算入口必须只有一个」的后果）
         PlayerInitResp created = playerInit.init(new PlayerInitReq(
-                "bot-req-" + UUID.randomUUID(), BOT_DEVICE_PREFIX + UUID.randomUUID(), nickName, now));
+                // 空串而不是 null：Bot 不走微信登录，但字段本身不能是 null ——
+                // 服务端把"没有 code"定义为空白字符串，避免任何调用点忘记判空
+                "bot-req-" + UUID.randomUUID(), BOT_DEVICE_PREFIX + UUID.randomUUID(), nickName, now, ""));
         String botId = created.playerId();
 
         PlayerSave save = players.findByPlayerId(botId).orElseThrow(() -> new IllegalStateException(

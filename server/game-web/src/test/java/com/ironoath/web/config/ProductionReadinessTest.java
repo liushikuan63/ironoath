@@ -68,12 +68,27 @@ class ProductionReadinessTest {
         return new com.ironoath.web.security.LocalDevIdentityVerifier();
     }
 
+    /** 已接真实 code2session 的微信兑换器（prod 要求的那个）。 */
+    private static com.ironoath.web.security.WeChatCodeExchanger weChatReady() {
+        return new com.ironoath.web.security.WeChatCodeExchanger() {
+            @Override
+            public Identity exchange(String code) {
+                return new Identity("openid-" + code, null, "session-key");
+            }
+
+            @Override
+            public boolean productionReady() {
+                return true;
+            }
+        };
+    }
+
     @Test
     @DisplayName("prod + 真实表：四项全缺，四条都必须报出来（不是只报第一条）")
     void prodRefusesMissingDeploymentParams() {
         ProductionReadiness gate = new ProductionReadiness(plain,
                 new GameProperties("contract/config", GameProperties.STORAGE_MONGO, false),
-                opsMissing(), identityLenient(), "prod");
+                opsMissing(), identityLenient(), weChatReady(), "prod");
 
         assertThatThrownBy(gate::afterPropertiesSet)
                 .isInstanceOf(IllegalStateException.class)
@@ -82,7 +97,27 @@ class ProductionReadinessTest {
                 .hasMessageContaining("SEASON_START_AT")
                 .hasMessageContaining("ironoath.ops.token")
                 .hasMessageContaining("X-Player-Id")
+                // 这一条用例里微信兑换器是"已接真实实现"的，所以问题仍是 4 项；
+                // 兑换器缺失单独由 localWeChatExchangerAloneStillRefusesBoot 覆盖
                 .hasMessageContaining("4 项");
+    }
+
+    @Test
+    @DisplayName("只差微信兑换器还是本地实现：拒绝启动，并点名要配 AppID/AppSecret")
+    void localWeChatExchangerAloneStillRefusesBoot() {
+        ConfigRegistry configured = ConfigRegistry.loadFromDirectory(locateConfigDir());
+        configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
+        ProductionReadiness gate = new ProductionReadiness(configured,
+                new GameProperties(null, GameProperties.STORAGE_MONGO, false),
+                opsConfigured(), identityReady(),
+                new com.ironoath.web.security.LocalDevWeChatCodeExchanger(), "prod");
+
+        assertThat(gate.problems()).hasSize(1);
+        assertThat(gate.problems().get(0))
+                .contains("LocalDevWeChatCodeExchanger")
+                .contains("WECHAT_APP_ID")
+                .contains("WECHAT_APP_SECRET");
+        assertThatThrownBy(gate::afterPropertiesSet).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -90,13 +125,13 @@ class ProductionReadinessTest {
     void nonProdNeverBlocks() {
         ProductionReadiness dev = new ProductionReadiness(plain,
                 new GameProperties(null, GameProperties.STORAGE_MEMORY, true),
-                opsMissing(), identityLenient(), "dev");
+                opsMissing(), identityLenient(), weChatReady(), "dev");
         assertThatCode(dev::afterPropertiesSet).doesNotThrowAnyException();
         assertThat(new ProductionReadiness(plain, new GameProperties(null, "memory", false),
-                opsMissing(), identityLenient(), "").isProd()).isFalse();
+                opsMissing(), identityLenient(), weChatReady(), "").isProd()).isFalse();
         // 逗号分隔的多 profile 也要认出来（Spring 允许 prod,mongo 这种写法）
         assertThat(new ProductionReadiness(plain, new GameProperties(null, "memory", false),
-                opsMissing(), identityLenient(), "prod, mongo").isProd()).isTrue();
+                opsMissing(), identityLenient(), weChatReady(), "prod, mongo").isProd()).isTrue();
     }
 
     @Test
@@ -106,7 +141,7 @@ class ProductionReadinessTest {
         configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
         ProductionReadiness gate = new ProductionReadiness(configured,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
-                opsConfigured(), identityReady(), "prod");
+                opsConfigured(), identityReady(), weChatReady(), "prod");
 
         assertThat(gate.problems()).as("四项都配齐后不能再拦，否则会挡住正常发布").isEmpty();
         assertThatCode(gate::afterPropertiesSet).doesNotThrowAnyException();
@@ -123,7 +158,7 @@ class ProductionReadinessTest {
         configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
         ProductionReadiness gate = new ProductionReadiness(configured,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
-                opsMissing(), identityReady(), "prod");
+                opsMissing(), identityReady(), weChatReady(), "prod");
 
         assertThat(gate.problems()).as("只差令牌这一项时，报错列表里不能有别的项掩护").hasSize(1);
         assertThat(gate.problems().get(0)).contains("ironoath.ops.token").contains("赛季无人能结算");
@@ -137,7 +172,7 @@ class ProductionReadinessTest {
         configured.reload("global", com.ironoath.config.model.GlobalCfg.class, withDeploymentParams());
         ProductionReadiness gate = new ProductionReadiness(configured,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, false),
-                opsConfigured(), identityLenient(), "prod");
+                opsConfigured(), identityLenient(), weChatReady(), "prod");
 
         assertThat(gate.problems()).hasSize(1);
         assertThat(gate.problems().get(0))
@@ -153,13 +188,13 @@ class ProductionReadinessTest {
     void dangerousSwitchesAreNamed() {
         ProductionReadiness memory = new ProductionReadiness(plain,
                 new GameProperties(null, GameProperties.STORAGE_MEMORY, false),
-                opsConfigured(), identityReady(), "prod");
+                opsConfigured(), identityReady(), weChatReady(), "prod");
         assertThat(memory.problems()).anySatisfy(problem -> assertThat(problem)
                 .contains("ironoath.storage=memory").contains("丢档"));
 
         ProductionReadiness leaky = new ProductionReadiness(plain,
                 new GameProperties(null, GameProperties.STORAGE_MONGO, true),
-                opsConfigured(), identityReady(), "prod");
+                opsConfigured(), identityReady(), weChatReady(), "prod");
         assertThat(leaky.problems()).anySatisfy(problem -> assertThat(problem)
                 .contains("expose-detail").contains("外挂"));
     }

@@ -70,7 +70,7 @@ public class PlayerIdentityInterceptor implements HandlerInterceptor {
                     "缺少 " + CityController.PLAYER_HEADER + " 头");
         }
         PlayerIdentityVerifier.Verdict verdict = verifier.verify(new PlayerIdentityVerifier.Claim(
-                playerId, request.getHeader(PlayerIdentityVerifier.TOKEN_HEADER), uri));
+                playerId, bearerToken(request), uri));
         if (!verdict.allowed()) {
             LOG.warn("身份校验未通过 uri={} playerId={} 远端={} 原因={}",
                     uri, playerId, request.getRemoteAddr(), verdict.reason());
@@ -86,5 +86,21 @@ public class PlayerIdentityInterceptor implements HandlerInterceptor {
             }
         }
         return false;
+    }
+
+    /**
+     * 从标准 {@code Authorization: Bearer &lt;token&gt;} 里取票据。
+     *
+     * <p><b>为什么用标准头而不是自定义头</b>：客户端 {@code NetModule} 一直发的就是
+     * {@code Authorization: Bearer}，而这里原先读的是 {@code X-Auth-Token} ——
+     * 两端头名不一致的表现是"严格身份模式下所有请求 2006"，而且本地宽松实现永远不会暴露它。
+     * 统一到标准头，同时仍兼容自定义头（早期联调脚本按 {@code TOKEN_HEADER} 发的那种）。
+     */
+    private static String bearerToken(HttpServletRequest request) {
+        String authorization = request.getHeader("Authorization");
+        if (authorization != null && authorization.startsWith("Bearer ")) {
+            return authorization.substring("Bearer ".length()).trim();
+        }
+        return request.getHeader(PlayerIdentityVerifier.TOKEN_HEADER);
     }
 }

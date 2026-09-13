@@ -35,16 +35,19 @@ public class ProductionReadiness implements InitializingBean {
     private final GameProperties properties;
     private final com.ironoath.web.ops.OpsTokenGuard ops;
     private final com.ironoath.web.security.PlayerIdentityVerifier identity;
+    private final com.ironoath.web.security.WeChatCodeExchanger weChat;
     private final String activeProfiles;
 
     public ProductionReadiness(ConfigRegistry configs, GameProperties properties,
                                com.ironoath.web.ops.OpsTokenGuard ops,
                                com.ironoath.web.security.PlayerIdentityVerifier identity,
+                               com.ironoath.web.security.WeChatCodeExchanger weChat,
                                @Value("${spring.profiles.active:}") String activeProfiles) {
         this.configs = configs;
         this.properties = properties;
         this.ops = ops;
         this.identity = identity;
+        this.weChat = weChat;
         this.activeProfiles = activeProfiles == null ? "" : activeProfiles;
     }
 
@@ -105,6 +108,14 @@ public class ProductionReadiness implements InitializingBean {
             problems.add("身份校验实现是 " + identity.getClass().getSimpleName()
                     + "（productionReady=false）：X-Player-Id 头等于没有校验，"
                     + "必须接入微信登录会话校验（B15 §三）之后才能启动");
+        }
+        if (!weChat.productionReady()) {
+            // 与身份校验同一族：本地兑换器把 code 哈希成 openid，等于"任何人报一串字符串
+            // 就能变成某个微信账号"。而它同时还会让真实玩家永远登不进自己的号（openid 对不上），
+            // 所以既不能上生产，也不能靠"跑起来再看看"发现。
+            problems.add("微信登录兑换器是 " + weChat.getClass().getSimpleName()
+                    + "（productionReady=false）：必须配置 WECHAT_APP_ID / WECHAT_APP_SECRET "
+                    + "并切到真实 code2session 实现之后才能启动");
         }
         return List.copyOf(problems);
     }
