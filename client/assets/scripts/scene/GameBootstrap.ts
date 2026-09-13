@@ -378,7 +378,22 @@ export class GameBootstrap extends Component {
       tracker: activity })
     this.lastActionAt = sys.now()
     tracker?.track(TRACK_EVENTS.startup, { clientVersion: CLIENT_VERSION })
-    await this.root.start(this.resolveDeviceId(), this.nickName, await this.resolveWxCode())
+    const started = await this.root.start(
+      this.resolveDeviceId(), this.nickName, await this.resolveWxCode())
+    // 启动自检行：在微信开发者工具的 Console 里能一眼看出"到底跑起来没有"。
+    // 小游戏没有可编程的自动化接口（miniprogram-automator 连上即断），
+    // 所以这条日志就是 DevTools 内验证的入口 —— 它必须一行内给全判断依据：
+    // 平台、登录结果、挂上的面板数、有没有拿到服务端会话票据。
+    const mounted = Object.keys(this.targets()).length
+    const state = gameStore.getState()
+    console.log('[boot] ' + JSON.stringify({
+      platform: isWxRuntime() ? 'wechat' : 'web',
+      started,
+      playerId: state.playerId,
+      mountedPanels: mounted,
+      hasAuthToken: this.net?.hasAuthToken() ?? false,
+      clientVersion: CLIENT_VERSION,
+    }))
   }
 
   /**

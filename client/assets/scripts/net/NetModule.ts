@@ -174,6 +174,11 @@ export class NetModule {
     this.token = token
   }
 
+  /** 是否已经持有会话票据（启动自检用；不暴露票据本身）。 */
+  hasAuthToken(): boolean {
+    return this.token !== null && this.token.length > 0
+  }
+
   // ---------- HTTP ----------
 
   /**
