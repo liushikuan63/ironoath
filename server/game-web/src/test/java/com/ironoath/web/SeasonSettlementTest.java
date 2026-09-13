@@ -495,7 +495,7 @@ class SeasonSettlementTest {
     private String player(String nickName) {
         return playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                nickName, 1_700_000_000_000L)).playerId();
+                nickName, 1_700_000_000_000L, "")).playerId();
     }
 
     private long goldOf(String playerId) {

@@ -160,7 +160,7 @@ class BotRuntimeTickTest {
     void viewportDrivesTheSafetyNet() throws Exception {
         String observer = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                "仿真读图" + UUID.randomUUID().toString().substring(0, 6), 1_700_000_000_000L)).playerId();
+                "仿真读图" + UUID.randomUUID().toString().substring(0, 6), 1_700_000_000_000L, "")).playerId();
         bot();
         assertThat(runtime.enrolledCount()).as("读图之前没人被登记").isZero();
 
@@ -261,7 +261,7 @@ class BotRuntimeTickTest {
     private String bot() {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                "铁誓模拟" + UUID.randomUUID().toString().substring(0, 6), 1_700_000_000_000L)).playerId();
+                "铁誓模拟" + UUID.randomUUID().toString().substring(0, 6), 1_700_000_000_000L, "")).playerId();
         // 先做一次正常的城建读（等价于真人点开城建面板）：城建挡是 lazily 建出来的，
         // 不读一次的话仓储里没有 CityState —— 而手搓一份 CityState 就是让测试里的 Bot
         // 与孵化出来的 Bot 不再是同一种东西

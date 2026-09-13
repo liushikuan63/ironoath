@@ -1,0 +1,213 @@
+{
+  "image": "icons-atlas.png",
+  "columns": 8,
+  "cell": {
+    "width": 256,
+    "height": 256
+  },
+  "items": [
+    {
+      "key": "buildings/academy",
+      "x": 0,
+      "y": 0,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/archery-range",
+      "x": 256,
+      "y": 0,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/barracks",
+      "x": 512,
+      "y": 0,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/drill-ground",
+      "x": 768,
+      "y": 0,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/embassy",
+      "x": 1024,
+      "y": 0,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/farm",
+      "x": 1280,
+      "y": 0,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/hospital",
+      "x": 1536,
+      "y": 0,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/iron-mine",
+      "x": 1792,
+      "y": 0,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/lumber-camp",
+      "x": 0,
+      "y": 256,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/main-city",
+      "x": 256,
+      "y": 256,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/quarry",
+      "x": 512,
+      "y": 256,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/siege-workshop",
+      "x": 768,
+      "y": 256,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/stable",
+      "x": 1024,
+      "y": 256,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/wall",
+      "x": 1280,
+      "y": 256,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "buildings/warehouse",
+      "x": 1536,
+      "y": 256,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "rarity/n",
+      "x": 1792,
+      "y": 256,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "rarity/r",
+      "x": 0,
+      "y": 512,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "rarity/sr",
+      "x": 256,
+      "y": 512,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "rarity/ssr",
+      "x": 512,
+      "y": 512,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "resources/gold",
+      "x": 768,
+      "y": 512,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "resources/grain",
+      "x": 1024,
+      "y": 512,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "resources/iron",
+      "x": 1280,
+      "y": 512,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "resources/stamina",
+      "x": 1536,
+      "y": 512,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "resources/stone",
+      "x": 1792,
+      "y": 512,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "resources/wood",
+      "x": 0,
+      "y": 768,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "units/archer",
+      "x": 256,
+      "y": 768,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "units/cavalry",
+      "x": 512,
+      "y": 768,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "units/infantry",
+      "x": 768,
+      "y": 768,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "key": "units/siege",
+      "x": 1024,
+      "y": 768,
+      "width": 256,
+      "height": 256
+    }
+  ]
+}

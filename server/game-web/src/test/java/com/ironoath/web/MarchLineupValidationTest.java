@@ -229,7 +229,7 @@ class MarchLineupValidationTest {
 
     private String player(long troops) {
         String playerId = playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "编队测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "编队测试", 1_700_000_000_000L, ""))
                 .playerId();
         if (armies.findByPlayerId(playerId).isEmpty()) {
             armies.insertIfAbsent(playerId, new ArmyState());

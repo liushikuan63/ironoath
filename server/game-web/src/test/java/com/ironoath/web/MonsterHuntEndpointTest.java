@@ -481,7 +481,7 @@ class MonsterHuntEndpointTest {
 
     private String newPlayerAt(int x, int y) {
         String playerId = playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "讨伐测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "讨伐测试", 1_700_000_000_000L, ""))
                 .playerId();
         assertThat(world.placeCity(playerId, Coord.of(x, y)))
                 .as("夹具必须能把城放到 (%d,%d)", x, y).isTrue();

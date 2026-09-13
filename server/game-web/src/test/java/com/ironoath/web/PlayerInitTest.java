@@ -161,8 +161,8 @@ class PlayerInitTest {
     @DisplayName("同一 deviceId 换 requestId 重复 init：等同登录，仍只有一个玩家")
     void sameDeviceWithDifferentRequestIdIsLogin() throws Exception {
         String deviceId = newDeviceId();
-        String first = postInit(new PlayerInitReq(newRequestId(), deviceId, "流亡王裔", 1_700_000_000_000L));
-        String second = postInit(new PlayerInitReq(newRequestId(), deviceId, "改名试试", 1_700_000_000_500L));
+        String first = postInit(new PlayerInitReq(newRequestId(), deviceId, "流亡王裔", 1_700_000_000_000L, ""));
+        String second = postInit(new PlayerInitReq(newRequestId(), deviceId, "改名试试", 1_700_000_000_500L, ""));
 
         JsonNode firstData = JsonUtils.readTree(first).get("data");
         JsonNode secondData = JsonUtils.readTree(second).get("data");
@@ -181,7 +181,7 @@ class PlayerInitTest {
     void loginResponseSettlesResourcesWithoutPersisting() throws Exception {
         String deviceId = newDeviceId();
         JsonNode first = JsonUtils.readTree(postInit(new PlayerInitReq(
-                newRequestId(), deviceId, "挂机王裔", 1_700_000_000_000L))).get("data");
+                newRequestId(), deviceId, "挂机王裔", 1_700_000_000_000L, ""))).get("data");
         String playerId = first.get("playerId").asText();
         long initWood = first.get("resources").get("WOOD").get("current").asLong();
         long perHour = configs.getResource("WOOD").basePerHour();
@@ -196,7 +196,7 @@ class PlayerInitTest {
         players.save(save);
 
         JsonNode again = JsonUtils.readTree(postInit(new PlayerInitReq(
-                newRequestId(), deviceId, "挂机王裔", 1_700_000_000_000L))).get("data");
+                newRequestId(), deviceId, "挂机王裔", 1_700_000_000_000L, ""))).get("data");
 
         assertThat(again.get("resources").get("WOOD").get("current").asLong())
                 .as("登录载荷必须带上这一小时的产出：B00 要求客户端从不结算，服务端不给它就永远显示旧存量")
@@ -217,7 +217,7 @@ class PlayerInitTest {
             List<Callable<String>> tasks = new java.util.ArrayList<>();
             for (int i = 0; i < threads; i++) {
                 PlayerInitReq req = new PlayerInitReq(newRequestId(), deviceId, "并发王裔" + i,
-                        1_700_000_000_000L + i);
+                        1_700_000_000_000L + i, "");
                 tasks.add(() -> json(playerInitService.init(req)));
             }
             List<Future<String>> futures = pool.invokeAll(tasks, 30, TimeUnit.SECONDS);
@@ -239,17 +239,17 @@ class PlayerInitTest {
         long maxNick = configs.longParam("NICKNAME_MAX_LENGTH");
 
         // requestId 缺失
-        expectErrorCode(new PlayerInitReq("", newDeviceId(), "王裔", 1L), 1003);
+        expectErrorCode(new PlayerInitReq("", newDeviceId(), "王裔", 1L, ""), 1003);
         // requestId 过短
-        expectErrorCode(new PlayerInitReq("abc", newDeviceId(), "王裔", 1L), 1003);
+        expectErrorCode(new PlayerInitReq("abc", newDeviceId(), "王裔", 1L, ""), 1003);
         // deviceId 过短
-        expectErrorCode(new PlayerInitReq(newRequestId(), "short", "王裔", 1L), 2002);
+        expectErrorCode(new PlayerInitReq(newRequestId(), "short", "王裔", 1L, ""), 2002);
         // 昵称超长
-        expectErrorCode(new PlayerInitReq(newRequestId(), newDeviceId(), "王".repeat((int) maxNick + 1), 1L), 2003);
+        expectErrorCode(new PlayerInitReq(newRequestId(), newDeviceId(), "王".repeat((int) maxNick + 1), 1L, ""), 2003);
         // 昵称含换行（可伪造日志行）
-        expectErrorCode(new PlayerInitReq(newRequestId(), newDeviceId(), "王裔\n伪造日志", 1L), 2003);
+        expectErrorCode(new PlayerInitReq(newRequestId(), newDeviceId(), "王裔\n伪造日志", 1L, ""), 2003);
         // clientTime 非法
-        expectErrorCode(new PlayerInitReq(newRequestId(), newDeviceId(), "王裔", 0L), 1001);
+        expectErrorCode(new PlayerInitReq(newRequestId(), newDeviceId(), "王裔", 0L, ""), 1001);
 
         assertThat(((InMemoryPlayerStore) players).size()).as("非法请求不得产生任何存档").isZero();
     }
@@ -351,7 +351,7 @@ class PlayerInitTest {
     }
 
     private static PlayerInitReq newInitReq() {
-        return new PlayerInitReq(newRequestId(), newDeviceId(), "流亡王裔", 1_700_000_000_000L);
+        return new PlayerInitReq(newRequestId(), newDeviceId(), "流亡王裔", 1_700_000_000_000L, "");
     }
 
     private static String newRequestId() {

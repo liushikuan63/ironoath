@@ -104,7 +104,7 @@ class AllianceTechBonusTest {
     /** 主城 10 级、金币备足（建盟要 500）的新号。 */
     private String newPlayer() {
         String playerId = playerInitService.init(new PlayerInitReq(
-                reqId(), "dev-" + UUID.randomUUID(), "科技接线", 1_700_000_000_000L)).playerId();
+                reqId(), "dev-" + UUID.randomUUID(), "科技接线", 1_700_000_000_000L, "")).playerId();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
         save.setCityLevel(10);
         PlayerResourceState gold = save.resources().get("GOLD");

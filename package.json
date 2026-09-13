@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bash scripts/dev.sh",
     "build": "bash scripts/build.sh",
+    "build:wechat": "node scripts/run-bash.mjs scripts/build-wechatgame.sh",
     "test": "bash scripts/test.sh",
     "test:server": "bash -c 'source scripts/env.sh && mvn -f server/pom.xml test'",
     "test:client": "bash scripts/test-client.sh",

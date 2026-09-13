@@ -128,7 +128,7 @@ class ShopContractParityTest {
 
     private String player(String nickName) {
         return playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), nickName, 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), nickName, 1_700_000_000_000L, ""))
                 .playerId();
     }
 }

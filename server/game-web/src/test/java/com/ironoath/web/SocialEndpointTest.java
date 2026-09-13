@@ -1153,7 +1153,7 @@ class SocialEndpointTest {
 
     private String newPlayer(int cityLevel) {
         String playerId = playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "社交测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "社交测试", 1_700_000_000_000L, ""))
                 .playerId();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
         // 小队要求主城 5 级、联盟要求 10 级，所以城等由用例指定

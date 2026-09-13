@@ -293,7 +293,7 @@ class BotSocialRaidTest {
     private String humanAt(int x, int y, String nick) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                nick + UUID.randomUUID().toString().substring(0, 4), 1_700_000_000_000L)).playerId();
+                nick + UUID.randomUUID().toString().substring(0, 4), 1_700_000_000_000L, "")).playerId();
         assertThat(world.placeCity(playerId, Coord.of(x, y)))
                 .as("夹具必须能把城放到 (%d,%d)", x, y).isTrue();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();

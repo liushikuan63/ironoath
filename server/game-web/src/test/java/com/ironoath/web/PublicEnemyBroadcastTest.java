@@ -113,7 +113,7 @@ class PublicEnemyBroadcastTest {
     private String publicEnemy(long tyranny, long touchedAt) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "公敌测试",
-                1_700_000_000_000L)).playerId();
+                1_700_000_000_000L, "")).playerId();
         worldAppService.homeOf(playerId);
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
         save.setPvp(save.pvp().withTyranny(tyranny, touchedAt));

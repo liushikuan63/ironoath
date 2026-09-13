@@ -309,7 +309,7 @@ class BotAttackQuotaTest {
     private String newPlayerAt(int x, int y) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                "频控测试" + UUID.randomUUID().toString().substring(0, 6), 1_700_000_000_000L)).playerId();
+                "频控测试" + UUID.randomUUID().toString().substring(0, 6), 1_700_000_000_000L, "")).playerId();
         assertThat(world.placeCity(playerId, Coord.of(x, y)))
                 .as("夹具必须能把城放到 (%d,%d)，占位说明坐标与别的用例撞了", x, y).isTrue();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();

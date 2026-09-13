@@ -557,7 +557,7 @@ class RallyDepartureTest {
     /** 一个有兵、解除新手保护、战力已刷新的玩家（圈层校验读的是存档里的战力）。 */
     private String player(long t1, long t2) {
         String playerId = playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "集结出发测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "集结出发测试", 1_700_000_000_000L, ""))
                 .playerId();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
         save.setCityLevel(10);

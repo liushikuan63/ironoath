@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "runtimeDirectories": {
+    "firstPackage": "client/assets/ui",
+    "hotUpdate": "client/assets/resources/ui"
+  },
+  "sources": [
+    {
+      "id": "kenney-ui-adventure",
+      "repository": "https://github.com/iwenzhou/kenney",
+      "commit": "b7729283e47d38f203d85560cfda5b2c1fd6fc7e",
+      "license": "CC0-1.0",
+      "local": "art-src/kenney/ui-pack-adventure"
+    },
+    {
+      "id": "game-icons",
+      "repository": "https://github.com/game-icons/icons",
+      "commit": "82d948812bfe3f269ef8f731dcdb07b08160edc4",
+      "license": "CC-BY-3.0",
+      "local": "art-src/game-icons"
+    },
+    {
+      "id": "noto-cjk",
+      "repository": "https://github.com/notofonts/noto-cjk",
+      "commit": "f8d157532fbfaeda587e826d4cd5b21a49186f7c",
+      "license": "OFL-1.1",
+      "local": null
+    }
+  ],
+  "assets": {
+    "ui.panel.brown": "kenney/ui-pack-adventure/PNG/panel_brown.png",
+    "ui.panel.inset.brown": "kenney/ui-pack-adventure/PNG/panelInset_brown.png",
+    "ui.button.long.brown": "kenney/ui-pack-adventure/PNG/buttonLong_brown.png",
+    "ui.button.long.brown.pressed": "kenney/ui-pack-adventure/PNG/buttonLong_brown_pressed.png",
+    "ui.button.square.brown": "kenney/ui-pack-adventure/PNG/buttonSquare_brown.png",
+    "ui.button.square.brown.pressed": "kenney/ui-pack-adventure/PNG/buttonSquare_brown_pressed.png",
+    "resource.WOOD": "game-icons/svg/resources/wood.svg",
+    "resource.STONE": "game-icons/svg/resources/stone.svg",
+    "resource.IRON": "game-icons/svg/resources/iron.svg",
+    "resource.GRAIN": "game-icons/svg/resources/grain.svg",
+    "resource.GOLD": "game-icons/svg/resources/gold.svg",
+    "resource.STAMINA": "game-icons/svg/resources/stamina.svg",
+    "building.main_city": "game-icons/svg/buildings/main-city.svg",
+    "building.lumber_camp": "game-icons/svg/buildings/lumber-camp.svg",
+    "building.quarry": "game-icons/svg/buildings/quarry.svg",
+    "building.farm": "game-icons/svg/buildings/farm.svg",
+    "building.iron_mine": "game-icons/svg/buildings/iron-mine.svg",
+    "building.warehouse": "game-icons/svg/buildings/warehouse.svg",
+    "building.barracks": "game-icons/svg/buildings/barracks.svg",
+    "building.stable": "game-icons/svg/buildings/stable.svg",
+    "building.archery_range": "game-icons/svg/buildings/archery-range.svg",
+    "building.siege_workshop": "game-icons/svg/buildings/siege-workshop.svg",
+    "building.drill_ground": "game-icons/svg/buildings/drill-ground.svg",
+    "building.hospital": "game-icons/svg/buildings/hospital.svg",
+    "building.wall": "game-icons/svg/buildings/wall.svg",
+    "building.academy": "game-icons/svg/buildings/academy.svg",
+    "building.embassy": "game-icons/svg/buildings/embassy.svg",
+    "unit.INFANTRY": "game-icons/svg/units/infantry.svg",
+    "unit.CAVALRY": "game-icons/svg/units/cavalry.svg",
+    "unit.ARCHER": "game-icons/svg/units/archer.svg",
+    "unit.SIEGE": "game-icons/svg/units/siege.svg",
+    "rarity.N": "game-icons/svg/rarity/n.svg",
+    "rarity.R": "game-icons/svg/rarity/r.svg",
+    "rarity.SR": "game-icons/svg/rarity/sr.svg",
+    "rarity.SSR": "game-icons/svg/rarity/ssr.svg"
+  },
+  "generatedPending": [],
+  "generatedAccepted": {
+    "generator": "gpt-image-2",
+    "ui.panel.kingdom": "generated/accepted/ui-panel-kingdom-v1.png",
+    "ui.button.command": "generated/accepted/ui-button-command-v1.png",
+    "ui.button.command.hover": "generated/accepted/ui-button-command-v1-hover.png",
+    "ui.button.command.pressed": "generated/accepted/ui-button-command-v1-pressed.png",
+    "ui.button.command.disabled": "generated/accepted/ui-button-command-v1-disabled.png",
+    "map.terrain.atlas": "generated/accepted/map-terrain-atlas-v1.png",
+    "map.entity.city": "generated/accepted/map-player-city-v1.png",
+    "map.entity.monster": "generated/accepted/map-monster-camp-v1.png",
+    "map.entity.resource": "generated/accepted/map-resource-point-v1.png",
+    "map.entity.allianceBuilding": "generated/accepted/map-alliance-building-v1.png",
+    "map.entity.march": "generated/accepted/map-march-marker-v1.png"
+  },
+  "generatedMeta": {
+    "ui.panel.kingdom": {
+      "path": "generated/accepted/ui-panel-kingdom-v1.png",
+      "size": [512, 354],
+      "nineSlice": [68, 62, 68, 62]
+    },
+    "ui.button.command": {
+      "path": "generated/accepted/ui-button-command-v1.png",
+      "size": [512, 191],
+      "nineSlice": [72, 54, 72, 54]
+    },
+    "map.terrain.atlas": {
+      "path": "generated/accepted/map-terrain-atlas-v1.png",
+      "size": [512, 512],
+      "columns": 4,
+      "rows": 4,
+      "cell": [128, 128]
+    },
+    "map.entity": {
+      "size": [256, 256],
+      "keys": ["city", "monster", "resource", "allianceBuilding", "march"]
+    }
+  },
+  "derived": {
+    "gameIconsPng": "game-icons/png",
+    "gameIconsAtlas": "game-icons/icons-atlas.png",
+    "gameIconsAtlasIndex": "game-icons/icons-atlas.json"
+  }
+}

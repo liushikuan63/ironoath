@@ -315,7 +315,7 @@ class BotSpawnTest {
      */
     private String newPlacedHuman(long matchPower) {
         String playerId = playerInitService.init(new PlayerInitReq(
-                "test-" + UUID.randomUUID(), "human-" + UUID.randomUUID(), "裴惊澜", freshTime()))
+                "test-" + UUID.randomUUID(), "human-" + UUID.randomUUID(), "裴惊澜", freshTime(), ""))
                 .playerId();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
         save.setPower(new PlayerPower(matchPower, matchPower, matchPower));

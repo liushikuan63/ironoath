@@ -347,7 +347,7 @@ class SeasonStatusTest {
     private String newPlayer(String nickName) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + java.util.UUID.randomUUID(), "dev-" + java.util.UUID.randomUUID(),
-                nickName, 1_700_000_000_000L)).playerId();
+                nickName, 1_700_000_000_000L, "")).playerId();
         worldAppService.homeOf(playerId);
         return playerId;
     }

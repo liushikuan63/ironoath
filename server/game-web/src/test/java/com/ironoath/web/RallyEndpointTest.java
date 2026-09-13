@@ -321,7 +321,7 @@ class RallyEndpointTest {
 
     private String newPlayer(int cityLevel) {
         String playerId = playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "集结测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "集结测试", 1_700_000_000_000L, ""))
                 .playerId();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
         save.setCityLevel(cityLevel);

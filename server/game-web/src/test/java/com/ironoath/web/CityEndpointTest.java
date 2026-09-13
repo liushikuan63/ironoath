@@ -79,7 +79,7 @@ class CityEndpointTest {
 
     private String newPlayer() {
         return playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "端点测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "端点测试", 1_700_000_000_000L, ""))
                 .playerId();
     }
 

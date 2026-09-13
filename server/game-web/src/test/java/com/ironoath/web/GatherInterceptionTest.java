@@ -272,7 +272,7 @@ class GatherInterceptionTest {
 
     private String newPlayer() {
         return playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "拦截测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "拦截测试", 1_700_000_000_000L, ""))
                 .playerId();
     }
 

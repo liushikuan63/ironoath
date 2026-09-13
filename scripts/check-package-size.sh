@@ -49,7 +49,25 @@ else
   exit 1
 fi
 
-SIZE=$(du -sb "$MEASURED_DIR" | cut -f1)
+if [ "$MEASURED_DIR" = "$BUILD_DIR" ]; then
+  # 首包预算只量"玩家第一次下载要拿到的那些文件"：分包目录（subpackages/**）
+  # 不在此列。量整个构建目录会随着分包越做越多而报假红 —— 越优化越红是最坏的信号。
+  if [ -d "$MEASURED_DIR/subpackages" ]; then
+    SIZE=$(du -sb --exclude="$MEASURED_DIR/subpackages" "$MEASURED_DIR" | cut -f1)
+  else
+    SIZE=$(du -sb "$MEASURED_DIR" | cut -f1)
+  fi
+  # debug 包与 release 包的引擎体积接近一倍差（`src/settings.json` 的 engine.debug），
+  # 而提审量的是 release：debug 超限只提示，release 超限才失败。
+  DEBUG_BUILD=$(node -e '
+    const fs = require("fs")
+    const settings = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    process.stdout.write(settings.engine && settings.engine.debug ? "true" : "false")
+  ' "$MEASURED_DIR/src/settings.json" 2>/dev/null || echo false)
+else
+  SIZE=$(du -sb "$MEASURED_DIR" | cut -f1)
+  DEBUG_BUILD=false
+fi
 mb() {
   node -e 'console.log((Number(process.argv[1]) / 1048576).toFixed(2))' "$1"
 }
@@ -60,7 +78,9 @@ echo "[check-package-size] 首包预算 ${MAX_MB}MB（来源 global.PERF_FIRST_P
 echo "[check-package-size] 量的是 $MEASURED_DIR —— $KIND，实际 ${SIZE_MB}MB"
 
 FAIL=0
-if [ "$SIZE" -gt "$FIRST_PACKAGE_MAX" ]; then
+if [ "$SIZE" -gt "$FIRST_PACKAGE_MAX" ] && [ "$DEBUG_BUILD" = "true" ]; then
+  echo "[check-package-size][WARN] 这是 debug 构建，${SIZE_MB}MB 超预算不判失败；提审请用 release 构建复量。"
+elif [ "$SIZE" -gt "$FIRST_PACKAGE_MAX" ]; then
   echo "[check-package-size][FAIL] 首包 ${SIZE_MB}MB 超过预算 ${MAX_MB}MB。"
   echo "  整改顺序（按性价比）："
   echo "    1. 美术资源走分包或 CDN，不要进首包（B16 §1）"

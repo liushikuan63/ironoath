@@ -447,7 +447,7 @@ class StageEndpointTest {
 
     private String newPlayer() {
         String playerId = playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "关卡测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "关卡测试", 1_700_000_000_000L, ""))
                 .playerId();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
         // 5 级 = 第一章的门槛，也正好是医院可用的那一级（无损三星需要医院，见 giveHospital）

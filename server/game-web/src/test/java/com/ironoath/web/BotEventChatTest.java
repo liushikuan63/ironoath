@@ -173,7 +173,7 @@ class BotEventChatTest {
     void humanEventsProduceNoBotChat() {
         String human = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                "路过的真人", 1_700_000_000_000L)).playerId();
+                "路过的真人", 1_700_000_000_000L, "")).playerId();
         long now = timeService.serverNow();
 
         events.publishEvent(new BotChatEvent(human, human, BotChatBook.Scene.ATTACKED, now));
@@ -282,7 +282,7 @@ class BotEventChatTest {
         // 避免为了造一个联盟把等级与金币两道门槛也抄进本用例
         String leader = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                "盟主" + nickPrefix, 1_700_000_000_000L)).playerId();
+                "盟主" + nickPrefix, 1_700_000_000_000L, "")).playerId();
         var save = players.findByPlayerId(leader).orElseThrow();
         save.setCityLevel(16);
         var gold = save.resources().get("GOLD");
@@ -304,7 +304,7 @@ class BotEventChatTest {
     private String botAt(int x, int y) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                "事件测试" + UUID.randomUUID().toString().substring(0, 4), 1_700_000_000_000L)).playerId();
+                "事件测试" + UUID.randomUUID().toString().substring(0, 4), 1_700_000_000_000L, "")).playerId();
         assertThat(world.placeCity(playerId, Coord.of(x, y))).isTrue();
         List<Integer> allHours = new ArrayList<>();
         for (int h = 0; h < 24; h++) {

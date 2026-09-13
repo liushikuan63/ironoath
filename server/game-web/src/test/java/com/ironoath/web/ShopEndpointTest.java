@@ -365,7 +365,7 @@ class ShopEndpointTest {
 
     private String player() {
         return playerInitService.init(new PlayerInitReq(
-                newRequestId(), "dev-" + UUID.randomUUID(), "商店测试", 1_700_000_000_000L)).playerId();
+                newRequestId(), "dev-" + UUID.randomUUID(), "商店测试", 1_700_000_000_000L, "")).playerId();
     }
 
     /** 金币充足的玩家：金币初始 200，最贵的一行是 1500（且要 12 级），补齐到 100200 让用例不必各花各的。 */

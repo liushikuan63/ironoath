@@ -910,7 +910,7 @@ class NationEndpointTest {
     /** 建国要主城 16 级、建盟要 500 金币（真实扣款），两样都在夹具里备好。 */
     private String newPlayer(int cityLevel) {
         String playerId = playerInitService.init(new PlayerInitReq(
-                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "国家测试", 1_700_000_000_000L))
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "国家测试", 1_700_000_000_000L, ""))
                 .playerId();
         PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
         save.setCityLevel(cityLevel);

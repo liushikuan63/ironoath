@@ -211,7 +211,7 @@ class BotPveTest {
     private String botAt(int x, int y) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(),
-                "打野测试" + UUID.randomUUID().toString().substring(0, 4), 1_700_000_000_000L)).playerId();
+                "打野测试" + UUID.randomUUID().toString().substring(0, 4), 1_700_000_000_000L, "")).playerId();
         assertThat(world.placeCity(playerId, Coord.of(x, y)))
                 .as("夹具必须能把城放到 (%d,%d)", x, y).isTrue();
         List<Integer> allHours = new ArrayList<>();

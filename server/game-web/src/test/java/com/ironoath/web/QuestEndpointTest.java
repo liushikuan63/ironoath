@@ -434,7 +434,7 @@ class QuestEndpointTest {
 
     private String newPlayer() {
         String playerId = playerInitService.init(new PlayerInitReq(
-                newId(), "dev-" + UUID.randomUUID(), "任务测试", 1_700_000_000_000L)).playerId();
+                newId(), "dev-" + UUID.randomUUID(), "任务测试", 1_700_000_000_000L, "")).playerId();
         return playerId;
     }
 
