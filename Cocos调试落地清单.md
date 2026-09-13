@@ -1,7 +1,7 @@
 # Cocos 客户端调试落地清单 · PROJECT_IRON_OATH
 
 > 用途：拿到这份仓库的人，按顺序做完就能**在浏览器里看到并操作第一屏**。
-> 生成时间：2026-09-12 ｜ 对应收口清单 #103
+> 更新时间：2026-09-13 ｜ 对应收口清单 #103/#105/#107
 > 本清单里的每一步都在本机实测过，不是"应该可行"。
 
 ---
@@ -13,9 +13,9 @@
 | Cocos Creator 3.8.7（Windows 绿色版） | ✅ 已安装并启动过 | `D:\Cocos\Creator\3.8.7\CocosCreator.exe`（3.65 GB） |
 | Cocos 工程 | ✅ 可直接打开 | 工程根就是 `client/`（`assets/` + `settings/` + `package.json`） |
 | 启动场景 | ✅ 已生成 | `client/assets/scenes/Boot.scene`（Canvas + Camera + `Game` 节点） |
-| 挂载的组件 | ✅ | 同一节点上：`GameBootstrap` + `CityPanelView` |
-| Web 构建产物 | ✅ | `client/build/web-mobile/`（约 3.5 MB，可直接静态托管） |
-| 实测证据 | ✅ | 登录 → 内城面板（资源/建筑）→ 点「升级」→ 资源扣减、队列 1/2、27 秒倒计时、加速按钮出现 |
+| 挂载的组件 | ✅ | 同一节点上：`GameBootstrap`；`PanelNav` 在运行期创建十个全屏面板节点 |
+| Web 构建产物 | ✅ | `client/build/web-mobile/`（本次 debug 构建约 7.3 MB；release 构建原先约 3.5 MB） |
+| 实测证据 | ✅ | 登录 → 内城/地图导航；按钮与双指缩放、回城、进内城、迁城二次确认均已实测；控制台零异常 |
 
 > Cocos 下载直链（记在这里，重装时不用再找）：
 > `https://download.cocos.com/CocosCreator/v3.8.7/CocosCreator-v3.8.7-win-080718.zip`
@@ -55,10 +55,10 @@ python -m http.server 8090
 ## 三、在编辑器里预览（构建产物之外的第二条路）
 
 1. 打开工程后，资源管理器进入 `assets/scenes`，双击 `Boot.scene`。
-2. 选中 `Canvas/Game` 节点，属性检查器里能看到两个组件：
-   - `GameBootstrap`：`baseUrl = http://localhost:8080`、`wsUrl = ws://localhost:8080/ws`、
-     `deviceId`（留空则每次预览都是新号）、`nickName`
-   - `CityPanelView`：内城面板（自绘）
+2. 选中 `Canvas/Game` 节点，属性检查器里能看到 `GameBootstrap`：
+   `baseUrl = http://localhost:8080`、`wsUrl = ws://localhost:8080/ws`、
+   `deviceId`（留空则本机固定存储，清缓存后换号）、`nickName`。
+   `PanelNav` 与十个面板 View 都由该组件在运行期装配，不需要手工摆节点。
 3. 点编辑器右上角 ▶ 预览；服务端仍在 8080 跑着即可。
 
 **为什么场景里只有一个空节点**：11 个面板全部是**自绘**（`Graphics` 画底 + `Label` 写字 + `NodePool` 复用行节点），
@@ -66,8 +66,8 @@ python -m http.server 8090
 `GameBootstrap`：它用 `getComponent`（不是 `getComponentInChildren`）找面板，
 "没接上"必须是显式的装配错误，而不是"按钮没反应"。
 
-**同一时间只挂一个全屏面板**：每个面板都按"占满整屏"实现，同时挂多个会互相覆盖。
-面板之间的导航层（主城/军队/背包/社交…切换）**还没做**，属于下一档，见第六节。
+**同一时间只挂一个全屏面板**：每个面板都按"占满整屏"实现；
+`PanelNav` 只激活当前 key 对应的节点，底部导航负责切换。
 
 ---
 
@@ -124,12 +124,13 @@ python -m http.server 8090
 | 编辑器里 TS 报错但 CI 全绿 | `client/types/cc.d.ts` 只是 headless 类型桩，以编辑器为准（`DEVELOPMENT.md` §八） |
 | 构建报 `startScene(undefined)` | 没设初始场景：构建参数 `startScene=<场景 uuid>`，或在编辑器里设默认场景 |
 | 构建产物 404 | 静态服务器要指向 `client/build/web-mobile/` 目录本身 |
+| 黑屏、控制台报 `Error 3817` / `Missing class` | 旧增量缓存把脚本类判成 corrupted。先停掉正在运行的构建，再用 `CocosCreator.exe --project <client> --build platform=web-mobile;debug=true --force` 强制重建 |
 
 ---
 
 ## 七、下一步（按价值排序）
 
-1. **面板导航层**：现在一次只能看一个全屏面板；需要一个顶部/底部导航 + 面板显隐控制。
-2. **美术替换**：目前全是 `Graphics` 色块 + 系统字体，正式图标/建筑/地图贴图未接。
-3. **微信小游戏构建**：装微信开发者工具后加 `wechatgame` 平台构建与真机验证。
-4. 编辑器里的视觉微调（布局、字号、安全区）—— 自绘面板的数值都集中在各 View 顶部的常量里。
+1. **二级选择器**：道具目标、出战阵容、首次建造坐标。
+2. **红点角标**：导航条与面板行两级。
+3. **美术替换**：目前全是 `Graphics` 色块 + 系统字体，正式图标/建筑/地图贴图未接。
+4. **微信小游戏构建**：装微信开发者工具后加 `wechatgame` 平台构建与真机验证。
