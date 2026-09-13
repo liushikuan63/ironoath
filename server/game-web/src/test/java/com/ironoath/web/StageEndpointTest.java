@@ -419,6 +419,32 @@ class StageEndpointTest {
         assertThat(captured.get(0).amount()).isEqualTo(1L);
     }
 
+    @Test
+    @DisplayName("首次清完整章发布 CLEAR_CHAPTER（目标=chapter 行 id，重复挑战不再发）")
+    void clearingTheWholeChapterPublishesOneChapterEvent() {
+        String playerId = newPlayer();
+        giveTroops(playerId, Map.of(UNIT, 5000L));
+        // 前 9 关先写成已通，真正要走的生产路径只剩“挑战第 10 关”这一步。
+        unlockUpTo(playerId, BOSS_1);
+        var captured = new java.util.ArrayList<com.ironoath.core.event.GameEvent>();
+        questBus.subscribe(com.ironoath.core.quest.GoalType.CLEAR_CHAPTER, captured::add);
+
+        stageAppService.challenge(playerId, new ChallengeStageReq(newRequestId(), BOSS_1,
+                List.of(new StageUnit(UNIT, 5000L)), List.of()));
+
+        assertThat(captured).as("首次清完整章必须且只能发一个事件").hasSize(1);
+        assertThat(captured.get(0).targetId())
+                .as("目标必须是 chapter 表的行 id，而不是最后一关的 stage id")
+                .isEqualTo("chapter_01");
+        assertThat(captured.get(0).amount()).isEqualTo(1L);
+
+        long remaining = armies.findByPlayerId(playerId).orElseThrow().countOf(UNIT);
+        stageAppService.challenge(playerId, new ChallengeStageReq(newRequestId(), BOSS_1,
+                List.of(new StageUnit(UNIT, remaining)), List.of()));
+        assertThat(captured).as("重复挑战同章不再发第二个 CLEAR_CHAPTER")
+                .hasSize(1);
+    }
+
     private String newPlayer() {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "关卡测试", 1_700_000_000_000L))
