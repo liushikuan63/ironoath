@@ -17,12 +17,17 @@
  */
 
 import { countdownMs, formatCountdown as formatCountdownOf } from '../../core/Countdown'
-import type { BuildingView, CityCollectResp, CityListResp, ErrorDetail, QueueView, ResourceAmount } from '../../net/generated/CityProtocol'
+import type {
+  BuildingView, BuildOptionView, CityCollectResp, CityListResp, ErrorDetail, QueueView, ResourceAmount,
+} from '../../net/generated/CityProtocol'
 
 /** 一栋建筑在面板上的一行。 */
 export interface BuildingRow {
   readonly id: string
   readonly configId: string
+  readonly level: number
+  readonly gridX: number
+  readonly gridY: number
   /** 「伐木场 Lv6」这样的标题。等级是已达成的等级，升级中也是它（不是目标等级） */
   readonly title: string
   /** 状态文本：空闲 / 升级中 / 已暂停 / 已完成待收割 */
@@ -45,9 +50,21 @@ export interface BuildingRow {
   readonly paused: boolean
 }
 
+export const CITY_GRID_WIDTH = 6
+export const CITY_GRID_HEIGHT = 6
+
+export interface CityGrid {
+  /** 以 gridY * CITY_GRID_WIDTH + gridX 为下标；空位为 null。 */
+  readonly cells: readonly (BuildingRow | null)[]
+  /** 坐标非法或重复的建筑。场景层必须显式提示，不能静默丢掉。 */
+  readonly unplaced: readonly BuildingRow[]
+}
+
 /** 整个城建面板的数据。 */
 export interface CityPanelView {
   readonly rows: readonly BuildingRow[]
+  /** 尚未放置的建筑配置；场景层用它弹出首次建造选择器。 */
+  readonly buildOptions: readonly BuildOptionView[]
   readonly queueText: string
   /** 还能再开几条队列；已满时为 null（B03 验收 7：客户端据此显示「可开启第 N 队列」） */
   readonly queueExpandText: string | null
@@ -82,13 +99,16 @@ export function buildCityPanel(resp: CityListResp, offsetMs: number, localNow: n
     if (state === undefined) {
       continue
     }
-    // 满仓要标出来：产出停了而玩家不知道，他会以为产量被偷偷改了（B04 验收 1 的同一条纪律）
-    const full = state.current >= state.cap
+    // 满仓要标出来：产出停了而玩家不知道，他会以为产量被偷偷改了（B04 验收 1 的同一条纪律）。
+    // 但体力这类不参与生产的资源到上限不代表停产，不能把“满了”说成“停产”。
+    const full = state.perHour > 0 && state.current >= state.cap
     resources.push(`${type} ${state.current}/${state.cap}${full ? '（已满，停产）' : ''}`)
   }
 
   return {
     rows,
+    // 滚动升级期间旧服务端不会带这个新字段；缺字段按“没有可建造项”处理，不能让面板崩掉。
+    buildOptions: resp.buildOptions ?? [],
     queueText: queueText(resp.queues),
     queueExpandText: queueExpandText(resp.queues),
     resourceLines: resources,
@@ -110,6 +130,9 @@ export function buildBuildingRow(building: BuildingView, offsetMs: number, local
   return {
     id: building.id,
     configId: building.configId,
+    level: building.level,
+    gridX: building.gridX,
+    gridY: building.gridY,
     // level 是<b>已达成</b>的等级：升级途中它仍是旧等级，完成收割后才 +1。
     // 把它显示成目标等级会让玩家在升级途中就以为已经拿到了新等级的产量
     title: `${building.configId} Lv${building.level}`,
@@ -121,6 +144,28 @@ export function buildBuildingRow(building: BuildingView, offsetMs: number, local
     upgrading,
     paused,
   }
+}
+
+/** 把建筑放进 6×6 城内网格；无效或重复坐标进入 unplaced，由表现层明示。 */
+export function buildCityGrid(rows: readonly BuildingRow[]): CityGrid {
+  const cells: Array<BuildingRow | null> = Array.from(
+    { length: CITY_GRID_WIDTH * CITY_GRID_HEIGHT }, () => null)
+  const unplaced: BuildingRow[] = []
+  for (const row of rows) {
+    if (!Number.isInteger(row.gridX) || !Number.isInteger(row.gridY)
+        || row.gridX < 0 || row.gridX >= CITY_GRID_WIDTH
+        || row.gridY < 0 || row.gridY >= CITY_GRID_HEIGHT) {
+      unplaced.push(row)
+      continue
+    }
+    const index = row.gridY * CITY_GRID_WIDTH + row.gridX
+    if (cells[index] !== null) {
+      unplaced.push(row)
+      continue
+    }
+    cells[index] = row
+  }
+  return { cells, unplaced }
 }
 
 /**

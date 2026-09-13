@@ -15,7 +15,9 @@
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildBagPanel, buildResourcePanel } from '../game/bag/BagPanel'
 import type { BagItemRow, BagPanelView as BagPanelData, ResourcePanelView, ResourceRow } from '../game/bag/BagPanel'
+import type { SpeedupChoice } from '../game/session/Choices'
 import type { BagListResp, ResourceDetailResp } from '../net/generated/BagProtocol'
+import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
 
 const { ccclass } = _decorator
@@ -60,6 +62,7 @@ export class BagPanelView extends Component {
    */
   private pendingResources: ResourceDetailResp | null = null
   private pendingBag: BagListResp | null = null
+  private targetPicker: ChoiceOverlay | null = null
 
   /**
    * 点「使用」。needsTarget 为 true 时（加速类道具）由外层弹出目标选择再发请求
@@ -74,6 +77,7 @@ export class BagPanelView extends Component {
     this.buildBackground(size.width, size.height)
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
+    this.targetPicker = new ChoiceOverlay(this.node, '选择加速目标', 760)
     this.render()
     // 消费挂载前的数据。顺序与 AppRoot.refresh 一致（bag 在前、resources 在后），
     // 保证 tab 仍由 resources 决定 —— 两处顺序不一致会让面板开在错误的页签上
@@ -94,6 +98,8 @@ export class BagPanelView extends Component {
     this.rowPool = null
     this.drawnRows.length = 0
     this.tabLabels.clear()
+    this.targetPicker?.hide()
+    this.targetPicker = null
     this.onUseItem = null
     this.onSellItem = null
   }
@@ -129,6 +135,17 @@ export class BagPanelView extends Component {
     }
     this.tab = tab
     this.render()
+  }
+
+  /** AppRoot 选好候选后交给本面板画出来；选择结果只回调一次。 */
+  showTargetPicker(options: readonly SpeedupChoice[], onPick: (targetId: string) => void): void {
+    const targetById = new Map(options.map((option) => [option.id, option.targetId]))
+    this.targetPicker?.show(options, (id) => {
+      const targetId = targetById.get(id)
+      if (targetId !== undefined) {
+        onPick(targetId)
+      }
+    })
   }
 
   // ---------- 搭建 ----------

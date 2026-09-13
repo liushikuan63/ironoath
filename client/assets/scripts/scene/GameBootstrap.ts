@@ -91,6 +91,7 @@ export class GameBootstrap extends Component {
   root: AppRoot | null = null
 
   private net: NetModule | null = null
+  private nav: PanelNav | null = null
   private unsubscribeNetworkEvents: (() => void) | null = null
   private booting = false
   private trackClient: TrackClient | null = null
@@ -141,7 +142,7 @@ export class GameBootstrap extends Component {
     this.installViewportGuard()
     // 导航层：由它建出各面板节点（初始未激活，因此不会九个面板一起画满屏背景），
     // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
-    this.node.addComponent(PanelNav)
+    this.nav = this.node.addComponent(PanelNav)
     void this.boot()
   }
 
@@ -233,6 +234,7 @@ export class GameBootstrap extends Component {
     this.unsubscribeNetworkEvents = null
     this.net?.disconnect()
     this.net = null
+    this.nav = null
     this.root = null
     this.trackClient = null
   }
@@ -371,7 +373,9 @@ export class GameBootstrap extends Component {
     if (city !== null) {
       out.city = (resp, offsetMs) => city.attach(resp, offsetMs)
       out.cityCollect = resp => city.attachCollect(resp)
-      city.onUpgrade = configId => { void this.root?.upgradeBuilding(configId) }
+      city.onUpgrade = (configId: string, gridX?: number, gridY?: number) => {
+        void this.root?.upgradeBuilding(configId, gridX ?? null, gridY ?? null)
+      }
       city.onSpeedUp = (buildingId, source) => { void this.root?.speedUpBuilding(buildingId, source) }
       city.onCollect = buildingId => { void this.root?.collect(buildingId) }
     }
@@ -392,11 +396,13 @@ export class GameBootstrap extends Component {
       out.resources = resp => bag.attachResources(resp)
       bag.onUseItem = (itemId, needsTarget) => { void this.root?.useItem(itemId, needsTarget) }
       bag.onSellItem = itemId => { this.root?.sellItem(itemId) }
+      out.speedupTargetChoice = (options, onPick) => bag.showTargetPicker(options, onPick)
     }
     if (stage !== null) {
       out.stage = resp => stage.attach(resp)
       stage.onChallenge = stageId => { this.root?.challenge(stageId) }
       stage.onSweep = (stageId, count) => { void this.root?.sweep(stageId, count) }
+      out.lineupChoice = (options, onPick) => stage.showLineupPicker(options, onPick)
     }
     if (social !== null) {
       out.social = (resp, helps, members, offsetMs) => social.attach(resp, helps, members, offsetMs)
@@ -415,6 +421,8 @@ export class GameBootstrap extends Component {
     if (world !== null) {
       // 「回城」按钮此前是个空函数，就是因为没人把家坐标交给它（WorldMap 里那条 TODO）
       out.home = (x, y) => world.focusHome(x, y)
+      // 放大到城市档只切内城面板；不要再加载不存在的 MainCity.scene。
+      world.onEnterCity = () => this.nav?.show('city')
     }
     return out
   }

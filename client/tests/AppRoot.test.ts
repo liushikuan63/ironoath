@@ -22,6 +22,7 @@ import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
 import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
 import type { PanelTargets } from '../assets/scripts/game/session/AppRoot'
+import type { LineupChoice, SpeedupChoice } from '../assets/scripts/game/session/Choices'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
 
 const SERVER_NOW = 1_788_000_000_000
@@ -33,8 +34,14 @@ const ROUTES: Record<string, unknown> = {
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, protectUntil: null,
     serverNow: SERVER_NOW, isNewPlayer: true,
   },
-  '/city/list': { buildings: [], upgrade: null, resources: {}, serverNow: SERVER_NOW },
-  '/army/list': { troops: [], wounded: [], hospital: {}, serverNow: SERVER_NOW },
+  '/city/list': {
+    buildings: [], buildOptions: [],
+    queues: { used: 0, available: 2, max: 3 }, resources: {}, serverNow: SERVER_NOW,
+  },
+  '/army/list': {
+    units: [], troopCap: 0, troopsInUse: 0, trainingInUse: 0,
+    queueSlots: 0, queueSlotsMax: 0, hospital: {}, serverNow: SERVER_NOW,
+  },
   '/hero/list': { heroes: [], lineups: [] },
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
@@ -61,6 +68,12 @@ const ROUTES: Record<string, unknown> = {
   '/army/treat': { treated: {}, serverNow: SERVER_NOW },
   '/item/use': { used: 1, remaining: 0, effects: [], serverNow: SERVER_NOW },
   '/stage/sweep': { results: {}, rewards: [], serverNow: SERVER_NOW },
+  '/stage/challenge': {
+    reportId: 'r1', stars: { cleared: true, noLoss: true, withinRounds: true, total: 3 },
+    starsEarned: 3, newBest: true, rewards: [], losses: [], staminaCost: 6,
+    staminaCharged: 6, progress: { stageId: 's1', stars: 3, bestRounds: 2, clearedAt: 1, sweepCount: 0 },
+    serverNow: SERVER_NOW,
+  },
   '/social/help': { helped: 1, skipped: 0, helpRemainingToday: 5, pendingHelps: 0, speedupGranted: 0, serverNow: SERVER_NOW },
   '/social/helpAll': { helped: 2, skipped: 0, helpRemainingToday: 4, pendingHelps: 0, speedupGranted: 0, serverNow: SERVER_NOW },
   '/social/ackEvents': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
@@ -173,6 +186,10 @@ interface Harness {
   readonly errors: Array<[string, string]>
   readonly attached: string[]
   readonly events: Array<{ name: string, params: Record<string, string> }>
+  readonly speedupOptions: readonly SpeedupChoice[]
+  readonly lineupOptions: readonly LineupChoice[]
+  pickSpeedup(targetId: string): void
+  pickLineup(index: number): void
 }
 
 function harness(options: { transportFails?: boolean } = {}): Harness {
@@ -220,6 +237,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   const attached: string[] = []
   let socialMembers: string[] = []
   let socialHelps: string[] = []
+  let speedupOptions: SpeedupChoice[] = []
+  let lineupOptions: LineupChoice[] = []
+  let speedupPick: ((targetId: string) => void) | null = null
+  let lineupPick: ((choice: LineupChoice) => void) | null = null
 
   const targets: PanelTargets = {
     city: () => attached.push('city'),
@@ -238,6 +259,14 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     targets: () => attached.push('targets'),
     quest: () => attached.push('quest'),
     home: () => attached.push('home'),
+    speedupTargetChoice: (options, onPick) => {
+      speedupOptions = [...options]
+      speedupPick = onPick
+    },
+    lineupChoice: (options, onPick) => {
+      lineupOptions = [...options]
+      lineupPick = onPick
+    },
     error: (panel, message) => errors.push([panel, message]),
   }
   const events: Array<{ name: string, params: Record<string, string> }> = []
@@ -251,6 +280,21 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastSocialHelps() {
       return socialHelps
+    },
+    get speedupOptions() {
+      return speedupOptions
+    },
+    get lineupOptions() {
+      return lineupOptions
+    },
+    pickSpeedup(targetId) {
+      speedupPick?.(targetId)
+    },
+    pickLineup(index) {
+      const choice = lineupOptions[index]
+      if (choice !== undefined) {
+        lineupPick?.(choice)
+      }
     },
 
     root, http, store, errors, attached, events,
@@ -296,6 +340,20 @@ test('升级成功：请求带 configId 与幂等键，之后城建列表被重�
   assert.equal(call?.body.configId, 'barracks')
   assert.match(String(call?.body.requestId), /^req-/, '幂等键必须由编排层注入，不给面板漏填的机会')
   assert.equal(h.http.countOf('/city/list'), before + 1, '成功必须重拉列表：客户端不自己改数字')
+})
+
+test('首次建造把玩家选中的 gridX/gridY 原样送进 /city/upgrade', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '测试')
+  h.events.length = 0
+
+  await h.root.upgradeBuilding('lumber_camp', 3, 4)
+
+  const call = h.http.calls.find(c => c.path === '/city/upgrade')
+  assert.equal(call?.body.gridX, 3)
+  assert.equal(call?.body.gridY, 4)
+  assert.deepEqual(h.events[0]?.params,
+    { buildingId: 'lumber_camp', gridX: '3', gridY: '4' })
 })
 
 test('业务失败：只报服务端给的原因，一次都不多拉（刷新会盖掉玩家正在看的提示）', async () => {
@@ -401,6 +459,67 @@ test('信息不足的动作不发请求，只说清缺什么（替玩家挑阵�
   assert.match(messages, /出售/)
 })
 
+test('加速道具先展示真实队列，选中建筑后才带 targetId 发请求', async () => {
+  const h = harness()
+  h.http.overrides.set('/city/list', {
+    buildings: [
+      { id: 'b1', configId: 'main_city', level: 2, gridX: 3, gridY: 3,
+        status: 'UPGRADING', finishAt: SERVER_NOW + 60_000, remainingSeconds: 60,
+        progress: 5000, startedAt: SERVER_NOW - 60_000, totalSeconds: 120, helpCount: 0 },
+    ],
+    buildOptions: [],
+    queues: { used: 1, available: 2, max: 3 },
+    resources: {},
+    serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '测试')
+
+  await h.root.useItem('item_speedup', true)
+  assert.equal(h.http.countOf('/item/use'), 0, '选目标之前不能先扣道具')
+  assert.deepEqual(h.speedupOptions.map(option => option.targetId), ['b1'])
+
+  h.pickSpeedup('b1')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const call = h.http.calls.find(c => c.path === '/item/use')
+  assert.equal(call?.body.targetId, 'b1')
+  assert.deepEqual(h.attached.slice(-3), ['bag', 'city', 'army'])
+})
+
+test('挑战先展示已编成阵容，选中后才把英雄与全部可用兵力送进请求', async () => {
+  const h = harness()
+  h.http.overrides.set('/hero/list', {
+    heroes: [{ heroId: 'h1', name: '卫无咎' }, { heroId: 'h2', name: '沈砚秋' }],
+    lineups: [{
+      presetIndex: 0, main: 'h1', sub1: 'h2', sub2: null,
+      bonus: { commandValue: 120 }, activeBonds: [],
+    }],
+    fragments: [], troopCap: 360, troopsInUse: 125, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', {
+    units: [
+      { unitId: 'unit_infantry_t1', name: '步兵', count: 100 },
+      { unitId: 'unit_archer_t1', name: '弓兵', count: 25 },
+    ],
+    troopCap: 360, troopsInUse: 125, trainingInUse: 0, queueSlots: 0, queueSlotsMax: 2,
+    hospital: {}, serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '测试')
+
+  h.root.challenge('s1')
+  assert.equal(h.http.countOf('/stage/challenge'), 0, '选阵容之前不能消耗体力与兵力')
+  assert.equal(h.lineupOptions.length, 1)
+
+  h.pickLineup(0)
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const call = h.http.calls.find(c => c.path === '/stage/challenge')
+  assert.deepEqual(call?.body.heroes, ['h1', 'h2'])
+  assert.deepEqual(call?.body.units, [
+    { unitId: 'unit_infantry_t1', count: 100 },
+    { unitId: 'unit_archer_t1', count: 25 },
+  ])
+  assert.deepEqual(h.attached.slice(-3), ['stage', 'army', 'hero'])
+})
+
 test('踢人按页签分流到不同端点：View 的回调不带组织，根必须带上', async () => {
   const h = harness()
   await h.root.start('dev-1', '君')
@@ -460,7 +579,7 @@ test('被挡下的点击同样要留事件，并带上"被什么挡下"：这是
 
   await h.root.useItem('item_speedup', true)
 
-  assert.deepEqual(h.events, [{ name: 'item_use', params: { itemId: 'item_speedup', blocked: 'true' } }])
+  assert.deepEqual(h.events, [{ name: 'item_use', params: { itemId: 'item_speedup', blocked: 'picker' } }])
   assert.equal(h.http.calls.filter(c => c.path === '/item/use').length, 0,
     '挡下就不发请求，但事件必须发')
 })

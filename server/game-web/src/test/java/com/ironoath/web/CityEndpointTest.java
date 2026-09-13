@@ -106,6 +106,13 @@ class CityEndpointTest {
         assertThat(resp.buildings().get(0).status()).isEqualTo(BuildingStatus.IDLE);
         assertThat(resp.buildings().get(0).gridX()).isEqualTo(3);
         assertThat(resp.buildings().get(0).gridY()).isEqualTo(3);
+        assertThat(resp.buildOptions())
+                .as("未放置的建筑目录是首次建造选择器的唯一来源")
+                .isNotEmpty()
+                .noneMatch(option -> option.configId().equals("main_city"));
+        assertThat(resp.buildOptions())
+                .anyMatch(option -> option.configId().equals("lumber_camp")
+                        && option.name().equals("伐木场"));
 
         assertThat(resp.queues().used()).isZero();
         assertThat(resp.queues().available()).as("新号在保护期内应有 2 个队列").isEqualTo(2);

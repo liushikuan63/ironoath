@@ -22,6 +22,7 @@ import com.ironoath.core.player.PlayerSave;
 import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.web.dto.generated.BuildingView;
+import com.ironoath.web.dto.generated.BuildOptionView;
 import com.ironoath.web.dto.generated.CityCancelReq;
 import com.ironoath.web.dto.generated.CityCancelResp;
 import com.ironoath.web.dto.generated.CityCollectReq;
@@ -546,6 +547,14 @@ public class CityAppService {
             for (BuildingInstance b : city.buildings()) {
                 buildings.add(toView(b, now));
             }
+            List<BuildOptionView> buildOptions = new ArrayList<>();
+            for (BuildingCfg cfg : configs.all(BuildingCfg.class)) {
+                if (city.findByConfigId(cfg.id()) != null) {
+                    continue;
+                }
+                buildOptions.add(new BuildOptionView(cfg.id(), cfg.name(), cfg.type().name(),
+                        (int) cfg.requireMainLevel(), cfg.requireBuilding()));
+            }
             QueueView queues = new QueueView(city.usedQueues(),
                     rules.availableQueues(isInNewbieProtect(player, now), city.extraQueues()),
                     (int) rules.maxQueueCount());
@@ -556,7 +565,7 @@ public class CityAppService {
                 LOG.info("城内列表触发到点收割 playerId={} 完成建筑={} 本次入账={}",
                         playerId, ctx.settlement().harvested(), ctx.settlement().credited());
             }
-            return new CityListResp(buildings, queues,
+            return new CityListResp(buildings, buildOptions, queues,
                     toResourceMap(ctx.settlement().states()), now);
         });
     }

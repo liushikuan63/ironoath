@@ -10,6 +10,7 @@ import java.util.Map;
  */
 public record CityListResp(
         List<BuildingView> buildings,
+        List<BuildOptionView> buildOptions,   // 尚未放置的建筑配置；已放置的不会重复出现。
         QueueView queues,
         Map<ResourceType, ResourceStateView> resources,   // 离线结算后的资源快照
         long serverNow)

@@ -14,7 +14,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildBuildingRow, buildCityPanel, collectMessage, countdownMs, errorText, formatCountdown,
+  buildBuildingRow, buildCityGrid, buildCityPanel, collectMessage, countdownMs, errorText, formatCountdown,
   formatPercent, outputText, queueExpandText, queueText,
 } from '../assets/scripts/game/city/CityPanel'
 import type { BuildingView, CityListResp, QueueView, ResourceStateView } from '../assets/scripts/net/generated/CityProtocol'
@@ -48,6 +48,7 @@ function cityResp(buildings: BuildingView[], queues: QueueView,
                   resources: Partial<Record<string, ResourceStateView>> = {}): CityListResp {
   return {
     buildings,
+    buildOptions: [],
     queues,
     resources: resources as unknown as CityListResp['resources'],
     serverNow: 0,
@@ -230,6 +231,20 @@ test('满仓资源要标出来：产出停了而玩家不知道，他会以为�
   assert.deepEqual(panel.resourceLines, ['WOOD 12000/12000（已满，停产）', 'STONE 300/12000'])
 })
 
+test('不参与生产的资源到上限不报“停产”：体力满不代表产出停了', () => {
+  const panel = buildCityPanel(cityResp([], QUEUE, {
+    STAMINA: resource(100, 100, 0),
+  }), 0, 0)
+  assert.deepEqual(panel.resourceLines, ['STAMINA 100/100'])
+})
+
+test('旧服务端缺 buildOptions 时按空候选处理，滚动升级期间面板不能崩', () => {
+  const legacy = cityResp([], QUEUE)
+  delete (legacy as { buildOptions?: unknown }).buildOptions
+  const panel = buildCityPanel(legacy, 0, 0)
+  assert.deepEqual(panel.buildOptions, [])
+})
+
 test('有建筑到点未收割时，顶部给出收割提示并说明收割同时结算离线产出', () => {
   const panel = buildCityPanel(cityResp([
     building({ id: 'a', status: 'UPGRADING', finishAt: 1000 }),
@@ -252,4 +267,16 @@ test('收割产出为空时不显示「补结算产出」这一行', () => {
 test('帮助次数为 0 时不显示（「已获帮助 0 次」只是噪音）', () => {
   assert.equal(buildBuildingRow(building({ helpCount: 0 }), 0, 0).helpText, null)
   assert.equal(buildBuildingRow(building({ helpCount: 3 }), 0, 0).helpText, '已获帮助 3 次')
+})
+
+test('城内网格按 gridX/gridY 放置；非法或重复坐标不能从界面上静默消失', () => {
+  const origin = buildBuildingRow(building({ id: 'origin', gridX: 0, gridY: 0 }), 0, 0)
+  const corner = buildBuildingRow(building({ id: 'corner', gridX: 5, gridY: 5 }), 0, 0)
+  const outside = buildBuildingRow(building({ id: 'outside', gridX: 6, gridY: 0 }), 0, 0)
+  const duplicate = buildBuildingRow(building({ id: 'duplicate', gridX: 0, gridY: 0 }), 0, 0)
+
+  const grid = buildCityGrid([origin, corner, outside, duplicate])
+  assert.equal(grid.cells[0]?.id, 'origin')
+  assert.equal(grid.cells[35]?.id, 'corner')
+  assert.deepEqual(grid.unplaced.map((row) => row.id), ['outside', 'duplicate'])
 })

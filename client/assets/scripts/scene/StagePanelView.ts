@@ -22,7 +22,9 @@ import {
   buildChallengeSummary, buildStageList, buildSweepSummary,
 } from '../game/stage/StagePanel'
 import type { StageListView, StageRow } from '../game/stage/StagePanel'
+import type { LineupChoice } from '../game/session/Choices'
 import type { ChallengeStageResp, StageListResp, SweepResp } from '../net/generated/StageProtocol'
+import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
 
 const { ccclass } = _decorator
@@ -69,6 +71,7 @@ export class StagePanelView extends Component {
   private overflowLabel: Label | null = null
   private summaryLabel: Label | null = null
   private summaryPanel: Node | null = null
+  private lineupPicker: ChoiceOverlay | null = null
 
   /** 玩家点了某一关的「挑战」。派兵阵容由外层选择后再发请求，本场景不管阵容 */
   onChallenge: ((stageId: string) => void) | null = null
@@ -81,6 +84,7 @@ export class StagePanelView extends Component {
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
     this.buildSummary(size.width, size.height)
+    this.lineupPicker = new ChoiceOverlay(this.node, '选择出战阵容', 760)
     if (this.pendingList !== null) {
       const pending = this.pendingList
       this.pendingList = null
@@ -93,6 +97,8 @@ export class StagePanelView extends Component {
     this.rowPool = null
     this.drawnRows.length = 0
     this.buttonKinds.clear()
+    this.lineupPicker?.hide()
+    this.lineupPicker = null
     this.onChallenge = null
     this.onSweep = null
   }
@@ -150,6 +156,17 @@ export class StagePanelView extends Component {
     }
     lines.push(`战报 ${summary.reportIds.length} 份（每次扫荡都是一场独立战斗）`)
     this.showSummary(lines, summary.shortfallText === null ? COLOR_GOOD : COLOR_WARNING)
+  }
+
+  /** AppRoot 选好阵容候选后交给本面板画出来；选择结果只回调一次。 */
+  showLineupPicker(options: readonly LineupChoice[],
+                   onPick: (choice: LineupChoice) => void): void {
+    this.lineupPicker?.show(options, (id) => {
+      const choice = options.find((option) => option.id === id)
+      if (choice !== undefined) {
+        onPick(choice)
+      }
+    })
   }
 
   // ---------- 搭建 ----------

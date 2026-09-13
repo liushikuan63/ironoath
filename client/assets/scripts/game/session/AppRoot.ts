@@ -36,6 +36,8 @@ import type {
 } from '../../net/generated/SocialProtocol'
 import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
+import { buildLineupChoices, buildSpeedupChoices } from './Choices'
+import type { LineupChoice, SpeedupChoice } from './Choices'
 
 /** 面板需要落地的一类数据。全部可选：某个场景里没有这个面板时就不实现。 */
 export interface PanelTargets {
@@ -65,6 +67,10 @@ export interface PanelTargets {
   error?(panel: string, message: string): void
   /** 家坐标（登录、进世界、迁城之后）。场景用它接「回城」按钮。 */
   home?(x: number, y: number): void
+  /** 加速道具目标选择器。回调由场景层在选择后触发一次。 */
+  speedupTargetChoice?(options: readonly SpeedupChoice[], onPick: (targetId: string) => void): void
+  /** 关卡出战阵容选择器。回调由场景层在选择后触发一次。 */
+  lineupChoice?(options: readonly LineupChoice[], onPick: (choice: LineupChoice) => void): void
 }
 
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
@@ -89,6 +95,10 @@ export class AppRoot {
   private memberVersion = 0
   private allianceMembers: AllianceMember[] = []
   private helpRequests: HelpRequestView[] = []
+  /** 二级选择器的最近一次权威响应；不参与任何数值判断。 */
+  private cityResp: CityListResp | null = null
+  private armyResp: ArmyListResp | null = null
+  private heroResp: HeroListResp | null = null
 
   constructor(deps: {
     api: GameApi
@@ -158,13 +168,22 @@ export class AppRoot {
     const offsetMs = this.timeSync.offsetMs()
     switch (key) {
       case 'city':
-        this.deliver('city', await this.api.cityList(), r => this.targets.city?.(r, offsetMs))
+        this.deliver('city', await this.api.cityList(), r => {
+          this.cityResp = r
+          this.targets.city?.(r, offsetMs)
+        })
         return
       case 'army':
-        this.deliver('army', await this.api.armyList(), r => this.targets.army?.(r, offsetMs))
+        this.deliver('army', await this.api.armyList(), r => {
+          this.armyResp = r
+          this.targets.army?.(r, offsetMs)
+        })
         return
       case 'hero':
-        this.deliver('hero', await this.api.heroList(), r => this.targets.hero?.(r))
+        this.deliver('hero', await this.api.heroList(), r => {
+          this.heroResp = r
+          this.targets.hero?.(r)
+        })
         return
       case 'bag':
         this.deliver('bag', await this.api.bagList(), r => this.targets.bag?.(r))
@@ -245,9 +264,13 @@ export class AppRoot {
    * 升级。生成物把 `gridX` / `gridY`（原地升级时为空）声明成**必填但可空**，
    * 所以这里必须写 null —— 这不是样板，而是「漏参数会在编译期报错」这条契约的正常样子。
    */
-  upgradeBuilding(configId: string): Promise<void> {
-    this.track(TRACK_EVENTS.buildingUpgradeStart, { buildingId: configId })
-    return this.write('city', this.api.cityUpgrade({ configId, gridX: null, gridY: null }),
+  upgradeBuilding(configId: string, gridX: number | null = null,
+                  gridY: number | null = null): Promise<void> {
+    const params = gridX === null || gridY === null
+      ? { buildingId: configId }
+      : { buildingId: configId, gridX: String(gridX), gridY: String(gridY) }
+    this.track(TRACK_EVENTS.buildingUpgradeStart, params)
+    return this.write('city', this.api.cityUpgrade({ configId, gridX, gridY }),
       ['city', 'power'])
   }
 
@@ -283,13 +306,26 @@ export class AppRoot {
    * 使用道具。`needsTarget` 为真时（加速类）需要目标选择器，而它还没有 ——
    * 明说比替玩家挑一个目标好：猜错目标消耗掉的是真金白银买来的道具，且不会有任何报错。
    */
-  useItem(itemId: string, needsTarget: boolean): Promise<void> {
-    this.track(TRACK_EVENTS.itemUse, { itemId, blocked: trackParam(needsTarget) })
-    if (needsTarget) {
-      this.rejectNeeds('bag', '这个道具要先选择目标，目标选择器还没做')
+  useItem(itemId: string, needsTarget: boolean,
+          targetId: string | null = null): Promise<void> {
+    if (needsTarget && targetId === null) {
+      this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'picker' })
+      const options = buildSpeedupChoices(this.cityResp, this.armyResp)
+      if (options.length === 0) {
+        this.rejectNeeds('bag', '当前没有正在升级或训练的队列，加速道具没有可用目标')
+        return Promise.resolve()
+      }
+      if (this.targets.speedupTargetChoice === undefined) {
+        this.rejectNeeds('bag', '这个道具要先选择目标，目标选择器未接入')
+        return Promise.resolve()
+      }
+      this.targets.speedupTargetChoice(options, (picked) => {
+        void this.useItem(itemId, false, picked)
+      })
       return Promise.resolve()
     }
-    return this.write('bag', this.api.itemUse({ itemId, count: 1, targetId: null }),
+    this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'false' })
+    return this.write('bag', this.api.itemUse({ itemId, count: 1, targetId }),
       ['bag', 'city', 'army'])
   }
 
@@ -301,10 +337,44 @@ export class AppRoot {
 
   // ---------- 关卡 ----------
 
-  /** 出战阵容给不了（需要编队选择器），所以明说。 */
+  /** 先选一套已编成的阵容，再把当前全部可用兵力交给服务端裁定。 */
   challenge(stageId: string): void {
+    const options = buildLineupChoices(this.heroResp, this.armyResp)
+    if (options.length === 0) {
+      this.track(TRACK_EVENTS.battleStart, { battleType: 'stage', stageId, blocked: 'lineup_empty' })
+      this.rejectNeeds('stage', '没有已编成的阵容，请先在武将面板设置主将')
+      return
+    }
+    const withTroops = options.filter((option) => option.units.length > 0)
+    if (withTroops.length === 0) {
+      this.track(TRACK_EVENTS.battleStart, { battleType: 'stage', stageId, blocked: 'troops_empty' })
+      this.rejectNeeds('stage', '没有可出战兵力，请先训练士兵')
+      return
+    }
+    if (this.targets.lineupChoice === undefined) {
+      this.track(TRACK_EVENTS.battleStart, { battleType: 'stage', stageId, blocked: 'lineup_picker' })
+      this.rejectNeeds('stage', `挑战 "${stageId}" 要先选出战阵容，阵容选择器未接入`)
+      return
+    }
     this.track(TRACK_EVENTS.battleStart, { battleType: 'stage', stageId, blocked: 'lineup_picker' })
-    this.rejectNeeds('stage', `挑战 "${stageId}" 要先选出战阵容，阵容选择器还没做`)
+    this.targets.lineupChoice(withTroops, (choice) => {
+      void this.submitChallenge(stageId, choice)
+    })
+  }
+
+  private submitChallenge(stageId: string, choice: LineupChoice): Promise<void> {
+    this.track(TRACK_EVENTS.battleStart, {
+      battleType: 'stage',
+      stageId,
+      heroes: choice.heroes.join(','),
+      units: String(choice.units.length),
+      blocked: 'false',
+    })
+    return this.write('stage', this.api.stageChallenge({
+      stageId,
+      units: Array.from(choice.units),
+      heroes: Array.from(choice.heroes),
+    }), ['stage', 'army', 'hero'])
   }
 
   /** ×10 只发**一个** `count=10` 的请求（B09 验收 9：一次请求做完一件事，弱网下不会只成一半）。 */
