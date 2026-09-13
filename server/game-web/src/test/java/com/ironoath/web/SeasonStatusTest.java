@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ironoath.common.BizException;
+import com.ironoath.common.time.DayKey;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
@@ -154,7 +155,7 @@ class SeasonStatusTest {
         assertThat(rest.allowsPvp()).isFalse();
         assertThat(rest.dayIndex()).as("天数继续如实往前数，赛季结束不等于时间停住").isEqualTo(46);
         assertThat(rest.phaseEndAt()).as("休赛期的倒计时指向赛季终点")
-                .isEqualTo(rest.seasonStartAt() + 45 * DAY);
+                .isEqualTo(DayKey.startOfDayPlusDays(rest.seasonStartAt(), 45));
 
         assertThatThrownBy(() -> seasonAtDay(46).requirePvpAllowed(timeService.serverNow()))
                 .isInstanceOf(BizException.class)
@@ -167,19 +168,21 @@ class SeasonStatusTest {
     void phaseBoundaryIsExact() {
         // 末位是 C2 接进来的频控：本用例的两个玩家都不在托管名册里，它一路放行 ——
         // 这条用例验的仍然只是「赛季禁战有没有接在统一漏斗上」
-        long now = timeService.serverNow();
-        // 刻意留一分钟余量而不是 1 毫秒：夹具与被测代码之间总有几毫秒的执行耗时，
-        // 只留 1 毫秒会让「边界之前」在跑的时候自己越过去，变成一个随机失败的用例。
-        // 一分钟仍在同一天内，断言的仍然是「边界之前禁战」这件事
-        SeasonAppService beforeBoundary = seasonAnchoredAt(now - (7 * DAY - 60_000L));
-        SeasonAppService atBoundary = seasonAnchoredAt(now - 7 * DAY);
+        long beforeMidnight = java.time.Instant.parse("2026-09-13T15:59:59.999Z").toEpochMilli();
+        long afterMidnight = java.time.Instant.parse("2026-09-13T16:00:00Z").toEpochMilli();
+        long seasonStart = java.time.Instant.parse("2026-09-07T12:00:00Z").toEpochMilli();
+        SeasonAppService beforeBoundary = wiringAnchoredAt(seasonStart,
+                new com.ironoath.common.time.TimeService(() -> beforeMidnight)).status();
+        SeasonAppService atBoundary = wiringAnchoredAt(seasonStart,
+                new com.ironoath.common.time.TimeService(() -> afterMidnight)).status();
 
         assertThat(beforeBoundary.status(null).phase()).isEqualTo(SeasonPhase.PREPARE);
         assertThat(atBoundary.status(null).phase())
                 .as("第 8 天 00:00 起进立盟期").isEqualTo(SeasonPhase.EXPAND);
-        assertThatThrownBy(() -> beforeBoundary.requirePvpAllowed(now))
+        assertThatThrownBy(() -> beforeBoundary.requirePvpAllowed(beforeMidnight))
                 .as("边界前一毫秒解除禁战，就是给备战期最后一天开了个洞")
                 .isInstanceOf(BizException.class);
+        atBoundary.requirePvpAllowed(afterMidnight);
     }
 
     @Test
@@ -278,21 +281,29 @@ class SeasonStatusTest {
     }
 
     private Wiring wiringAnchoredAt(long seasonStartAt) {
+        return wiringAnchoredAt(seasonStartAt, timeService);
+    }
+
+    private Wiring wiringAnchoredAt(long seasonStartAt, com.ironoath.common.time.TimeService clock) {
         ConfigRegistry reloaded = ConfigRegistry.loadFromDirectory(locateConfigDir());
         reloaded.reload("global", GlobalCfg.class, withSeasonStart(seasonStartAt));
-        return wiringOn(reloaded);
+        return wiringOn(reloaded, clock);
     }
 
     /** 给定一份配置，装配一对同源的「状态查询 + 结算」服务。 */
     private Wiring wiringOn(ConfigRegistry registry) {
+        return wiringOn(registry, timeService);
+    }
+
+    private Wiring wiringOn(ConfigRegistry registry, com.ironoath.common.time.TimeService clock) {
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(registry);
         // 红线判定（Bot 不进榜）需要一份注册表；本类不注册任何 Bot，它只是一个必填依赖
         com.ironoath.web.bot.BotRegistry bots = new com.ironoath.web.bot.BotRegistry(
                 new com.ironoath.web.bot.BotRulesAssembler(registry));
-        SeasonSettlementService settlements = new SeasonSettlementService(registry, timeService,
+        SeasonSettlementService settlements = new SeasonSettlementService(registry, clock,
                 assembler, players, rewardService, new InMemorySeasonLedger(),
                 new com.ironoath.web.store.memory.InMemorySeasonBoardStore(), idempotency, bots);
-        return new Wiring(new SeasonAppService(registry, timeService, assembler, settlements),
+        return new Wiring(new SeasonAppService(registry, clock, assembler, settlements),
                 settlements);
     }
 

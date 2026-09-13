@@ -8,6 +8,8 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import com.ironoath.common.time.DayKey;
+
 /**
  * 职责：B14 赛季制核心规则的单测 —— 验收 2（结算幂等）、4（结算按快照）、
  * 6（段位降段保留进度）、8（阶段切换边界），以及 §3/§4 的排行榜与归档纪律。
@@ -22,7 +24,6 @@ import org.junit.jupiter.api.Test;
 class SeasonSystemTest {
 
     private static final long DAY = 86_400_000L;
-    private static final long MINUTE = 60_000L;
 
     /** B14 §一 的 30 天时间轴：备战 1-3 / 扩张 4-20 / 王城战 21-25 / 结算 26-28 / 休赛 29-30。 */
     private static SeasonTimeline.Rules docTimeline() {
@@ -79,37 +80,39 @@ class SeasonSystemTest {
         assertThat(timeline.allowsPvp(start + 45 * DAY, start)).as("休赛期不打仗").isFalse();
         assertThat(timeline.phaseEndAt(start + 45 * DAY, start))
                 .as("越界时倒计时指向赛季终点，而不是给 UI 一个凭空的外推时刻")
-                .isEqualTo(start + 45 * DAY);
+                .isEqualTo(DayKey.startOfDayPlusDays(start, 45));
     }
 
     @Test
     @DisplayName("验收8：第 3 天 23:59:59 属于备战期，第 4 天 00:00:00 属于扩张期")
     void phaseBoundaryIsExact() {
         SeasonTimeline timeline = timeline();
-        long start = 1_000_000L;
+        long start = java.time.Instant.parse("2026-09-13T15:30:00Z").toEpochMilli();
 
         // 第 3 天（dayIndex=2）的最后一毫秒
-        long lastOfThirdDay = start + 3 * DAY - 1;
+        long lastOfThirdDay = java.time.Instant.parse("2026-09-15T15:59:59.999Z").toEpochMilli();
         assertThat(SeasonTimeline.dayIndexOf(lastOfThirdDay, start)).isEqualTo(2);
         assertThat(timeline.stageAtTime(lastOfThirdDay, start).phase())
                 .isEqualTo(SeasonTimeline.Phase.PREPARE);
 
         // 第 4 天（dayIndex=3）的第一毫秒
-        long firstOfFourthDay = start + 3 * DAY;
+        long firstOfFourthDay = java.time.Instant.parse("2026-09-15T16:00:00Z").toEpochMilli();
         assertThat(SeasonTimeline.dayIndexOf(firstOfFourthDay, start)).isEqualTo(3);
         assertThat(timeline.stageAtTime(firstOfFourthDay, start).phase())
                 .as("左闭右开：第 4 天 00:00:00 就已经是扩张期").isEqualTo(SeasonTimeline.Phase.EXPAND);
     }
 
     @Test
-    @DisplayName("整天数向下取整：第 3 天的中午仍是第 3 天，四舍五入会让阶段切换提前半天")
-    void dayIndexFloorsInsteadOfRounding() {
-        long start = 0L;
-        assertThat(SeasonTimeline.dayIndexOf(3 * DAY + 12 * 3600_000L, start))
-                .as("第 3 天中午（dayIndex 应为 3，即第 4 天）").isEqualTo(3);
-        assertThat(SeasonTimeline.dayIndexOf(2 * DAY + 23 * 3600_000L + 59 * MINUTE, start))
-                .as("第 3 天 23:59 仍是 dayIndex=2").isEqualTo(2);
+    @DisplayName("赛季天数按 UTC+8 自然日推进：开赛当晚仍是第 0 天，零点进入第 1 天")
+    void dayIndexFollowsCalendarMidnight() {
+        long start = java.time.Instant.parse("2026-09-13T15:30:00Z").toEpochMilli();
         assertThat(SeasonTimeline.dayIndexOf(start, start)).isZero();
+        assertThat(SeasonTimeline.dayIndexOf(
+                java.time.Instant.parse("2026-09-13T15:59:59.999Z").toEpochMilli(), start))
+                .as("开赛日 23:59:59 仍是第 0 天").isZero();
+        assertThat(SeasonTimeline.dayIndexOf(
+                java.time.Instant.parse("2026-09-13T16:00:00Z").toEpochMilli(), start))
+                .as("北京时间零点后立刻进入第 1 天，不按开赛满 24 小时算").isEqualTo(1L);
     }
 
     @Test
@@ -134,11 +137,12 @@ class SeasonSystemTest {
     @DisplayName("阶段倒计时给的是本阶段结束时刻，赛季结束后给赛季总结束时刻")
     void phaseEndAtIsComputable() {
         SeasonTimeline timeline = timeline();
-        long start = 1_000_000L;
+        long start = java.time.Instant.parse("2026-09-13T15:30:00Z").toEpochMilli();
         assertThat(timeline.phaseEndAt(start + DAY, start)).as("备战期在第 3 天末结束")
-                .isEqualTo(start + 3 * DAY);
+                .isEqualTo(DayKey.startOfDayPlusDays(start, 3));
         assertThat(timeline.phaseEndAt(start + 40 * DAY, start))
-                .as("超出赛季总天数时给赛季结束时刻").isEqualTo(start + 30 * DAY);
+                .as("超出赛季总天数时给赛季结束时刻")
+                .isEqualTo(DayKey.startOfDayPlusDays(start, 30));
         assertThat(timeline.stageAt(40)).as("赛季已结束").isNull();
         assertThat(timeline.totalDays()).isEqualTo(30);
     }

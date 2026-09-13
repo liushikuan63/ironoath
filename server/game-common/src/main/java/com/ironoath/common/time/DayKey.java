@@ -1,7 +1,9 @@
 package com.ironoath.common.time;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 
 /**
  * 职责：日限次 / 每日重置用的「日期键」—— 全项目唯一的一处实现。
@@ -50,10 +52,35 @@ public final class DayKey {
         if (nowMs <= 0L) {
             throw new IllegalArgumentException("nowMs 必须为正的服务端时间戳，实际=" + nowMs);
         }
-        return Instant.ofEpochMilli(nowMs)
-                .atZone(CALENDAR_ZONE)
-                .toLocalDate()
+        return dateOf(nowMs)
                 .toString()
                 .replace("-", "");
+    }
+
+    /**
+     * 两个时刻相隔几个自然日（按 {@link #CALENDAR_ZONE} 的日期边界）。
+     *
+     * <p>这是「开服第 N 天」「赛季第 N 天」共用的时间差口径：不是除以 24 小时，
+     * 而是先各自落到自然日，再比较日期。开服发生在晚上时，第二个自然日仍从次日 0 点开始。
+     */
+    public static long daysBetween(long fromMs, long toMs) {
+        return ChronoUnit.DAYS.between(dateOf(fromMs), dateOf(toMs));
+    }
+
+    /**
+     * 从某个时刻所在自然日起再偏移 {@code days} 天后的 0 点。
+     *
+     * <p>赛季阶段结束时点用它：阶段天数表达的是自然日数，不能写成
+     * {@code seasonStart + days * 24h}——那会把日界继续绑在开赛钟点上。
+     */
+    public static long startOfDayPlusDays(long fromMs, long days) {
+        return dateOf(fromMs).plusDays(days)
+                .atStartOfDay(CALENDAR_ZONE)
+                .toInstant()
+                .toEpochMilli();
+    }
+
+    private static LocalDate dateOf(long ms) {
+        return Instant.ofEpochMilli(ms).atZone(CALENDAR_ZONE).toLocalDate();
     }
 }

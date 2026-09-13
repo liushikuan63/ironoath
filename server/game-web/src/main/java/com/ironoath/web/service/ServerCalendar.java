@@ -1,5 +1,6 @@
 package com.ironoath.web.service;
 
+import com.ironoath.common.time.DayKey;
 import com.ironoath.config.ConfigRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,17 +14,14 @@ import org.slf4j.LoggerFactory;
  * 「联盟按 A 口径解锁而国家按 B 口径解锁」，而这种漂移不会让任何单测变红，
  * 只会表现为同一批玩家在不同入口看到不同的解锁时间。
  *
- * <p><b>这里算的是「经过了几个 24 小时」，不是「第几个自然日」</b>：
- * 起点是 {@code SERVER_OPEN_AT} 这个时刻本身，所以日界跟着开服时刻走，
- * 与 {@code DayKey}（按 UTC+8 取日、用于日限次）<b>是两条不同的轴</b>。
- * 是否要把开服天数也统一到自然日（赛季的 startDayOffset 也是这个语义），
- * 记在 {@code 收口清单.md} 里等裁决，本类不擅自改口径。
+ * <p><b>这里算的是 UTC+8 自然日</b>：开服当天恒为第 0 天，次日 0 点进入第 1 天，
+ * 与 {@link DayKey} 的日限次、赛季阶段共用同一条日历轴。
+ * 2026-09-13 裁决：不再按「开服时刻起满 24 小时」计算，否则同一个玩家会在
+ * 日限次刚重置后又等一个开服钟点才看到联盟/国家门槛解锁。
  */
 public final class ServerCalendar {
 
     private static final Logger LOG = LoggerFactory.getLogger(ServerCalendar.class);
-
-    private static final long DAY_MILLIS = 24L * 3600L * 1000L;
 
     /**
      * 未配置开服时刻时返回的「极大天数」。
@@ -52,7 +50,12 @@ public final class ServerCalendar {
             LOG.debug("未配置 SERVER_OPEN_AT：开服天数门槛一律放行，上线前必须补上这个部署参数");
             return UNBOUNDED_DAYS;
         }
-        return Math.max(0L, (now - configs.longParam("SERVER_OPEN_AT")) / DAY_MILLIS);
+        return daysBetweenOpenAndNow(configs.longParam("SERVER_OPEN_AT"), now);
+    }
+
+    /** 纯日期运算，独立出来便于把「开服日 23 点 vs 次日 0 点」钉进单测。 */
+    static long daysBetweenOpenAndNow(long openAt, long now) {
+        return Math.max(0L, DayKey.daysBetween(openAt, now));
     }
 
     /**

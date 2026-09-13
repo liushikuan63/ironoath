@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import com.ironoath.common.time.DayKey;
+
 /**
  * 职责：赛季时间轴 —— 阶段定义、阶段切换、日期到阶段的映射（B14 §1，验收 8）。
  * 依赖：无（纯 Java，零框架）。
@@ -14,7 +16,7 @@ import java.util.List;
  *
  * <p><b>验收 8 的边界语义在构造期就钉死</b>：阶段区间是<b>左闭右开</b>
  * （[startDayOffset, startDayOffset + durationDays)）。
- * 于是「第 3 天 23:59:59」属于第 3 天（dayIndex=3），「第 4 天 00:00:00」属于第 4 天，
+ * 于是「第 3 天 23:59:59」属于第 3 天（dayIndex=2），「第 4 天 00:00:00」属于第 4 天（dayIndex=3），
  * 两者恰好落在相邻两个阶段。若区间写成左闭右闭，第 4 天会同时属于两个阶段，
  * 而「同时属于两个阶段」的表现是切换时刻的行为取决于遍历顺序 —— 那是最难复现的一类 bug。
  *
@@ -209,21 +211,21 @@ public final class SeasonTimeline {
     /**
      * 某个时刻是赛季第几天（0-based）。
      *
-     * <p><b>验收 8 的落点</b>：整天数用向下取整，所以第 3 天的 23:59:59 仍是 dayIndex=3，
-     * 第 4 天的 00:00:00 才变成 4。若用四舍五入，第 3 天的 12:00 就会被算成第 4 天，
-     * 阶段切换会提前半天发生 —— 而那半天里玩家看到的是「备战期却被人打了」。
+     * <p><b>验收 8 的落点</b>：按 UTC+8 自然日计算，所以第 3 天的 23:59:59 仍是 dayIndex=2，
+     * 第 4 天的 00:00:00 才变成 3。若按「从赛季锚点起满 24 小时」计算，
+     * 阶段日界会跟赛季开始钟点走，与每日重置、Bot 作息不在同一条日历轴上。
      */
     public static long dayIndexOf(long now, long seasonStart) {
-        return Math.max(0L, (now - seasonStart) / 86_400_000L);
+        return Math.max(0L, DayKey.daysBetween(seasonStart, now));
     }
 
     /** 某一天该阶段的结束时刻（供 UI 画倒计时）。 */
     public long phaseEndAt(long now, long seasonStart) {
         Stage stage = stageAtTime(now, seasonStart);
         if (stage == null) {
-            return seasonStart + rules.totalDays() * 86_400_000L;
+            return DayKey.startOfDayPlusDays(seasonStart, rules.totalDays());
         }
-        return seasonStart + stage.endDayOffsetExclusive() * 86_400_000L;
+        return DayKey.startOfDayPlusDays(seasonStart, stage.endDayOffsetExclusive());
     }
 
     /** 当前是否允许 PVP。 */
