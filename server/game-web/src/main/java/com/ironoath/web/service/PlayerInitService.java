@@ -57,13 +57,16 @@ public class PlayerInitService {
     private final WeChatCodeExchanger weChat;
     /** 登录成功后签发会话票据；客户端之后每个请求都要带它。 */
     private final AuthSessionService sessions;
+    /** 内容安全：昵称是玩家可自由填写的内容，建档前就要送检（上线检查清单 §二 7）。 */
+    private final com.ironoath.web.security.ContentSecurityGuard contentSecurity;
 
     public PlayerInitService(ConfigRegistry configs, PlayerRepository players,
                              IdempotencyStore idempotency, TimeService timeService,
                              ResourceRateService resourceRates,
                              com.ironoath.core.city.CityRepository cities,
                              WeChatCodeExchanger weChat,
-                             AuthSessionService sessions) {
+                             AuthSessionService sessions,
+                             com.ironoath.web.security.ContentSecurityGuard contentSecurity) {
         this.configs = configs;
         this.players = players;
         this.idempotency = idempotency;
@@ -72,6 +75,7 @@ public class PlayerInitService {
         this.cities = cities;
         this.weChat = weChat;
         this.sessions = sessions;
+        this.contentSecurity = contentSecurity;
     }
 
     /**
@@ -87,6 +91,11 @@ public class PlayerInitService {
         // 微信登录：code → openid → 账号键。走这条时 deviceId 不参与建档，
         // 于是"换手机但同一个微信"能拿回同一份存档；反过来清缓存换设备也只影响无微信的环境。
         String accountKey = weChatAccountKey(req);
+        // 昵称在建档之前送检：那一刻存档还不存在，账号键是唯一带着 openid 的东西。
+        // 走非微信账号（本地设备号）时没有 openid，进不了送检 —— 由守卫按既定取舍处理。
+        contentSecurity.requireCleanForAccount(accountKey,
+                com.ironoath.web.security.ContentSecurityClient.Scene.PROFILE,
+                req.nickName(), ErrorCode.PLAYER_NICKNAME_INVALID, "昵称");
         long ttlMs = configs.longParam("REQUEST_ID_TTL_SECONDS") * 1000L;
 
         boolean firstAttempt = idempotency.tryAcquire(req.requestId(), now, ttlMs);
@@ -173,7 +182,7 @@ public class PlayerInitService {
             return req.deviceId();
         }
         var identity = weChat.exchange(code);
-        return "wx:" + identity.openId();
+        return WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX + identity.openId();
     }
 
     /**

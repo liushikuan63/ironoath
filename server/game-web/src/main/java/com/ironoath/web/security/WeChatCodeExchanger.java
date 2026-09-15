@@ -20,6 +20,15 @@ package com.ironoath.web.security;
 public interface WeChatCodeExchanger {
 
     /**
+     * 微信账号键的前缀：{@code PlayerSave.deviceId} 存 {@code wx:<openid>} 时，这条存档属于一个微信账号。
+     *
+     * <p>常量住在端口上而不是散在调用处：账号键的形状由本端口定义，
+     * 认证之外还要读它的地方（例如内容安全要从账号键里取 openid 送检）都从这里取，
+     * 免得哪天改了前缀，只有一半的代码知道。
+     */
+    String WECHAT_ACCOUNT_PREFIX = "wx:";
+
+    /**
      * 用临时 code 换微信身份。
      *
      * @param code 客户端 {@code wx.login} 拿到的 code

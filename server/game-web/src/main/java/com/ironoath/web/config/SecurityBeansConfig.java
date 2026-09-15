@@ -8,11 +8,14 @@ import org.springframework.context.annotation.Configuration;
 
 import com.ironoath.common.time.TimeService;
 import com.ironoath.web.security.AuthSessionService;
+import com.ironoath.web.security.ContentSecurityClient;
+import com.ironoath.web.security.LocalDevContentSecurityClient;
 import com.ironoath.web.security.LocalDevIdentityVerifier;
 import com.ironoath.web.security.LocalDevWeChatCodeExchanger;
 import com.ironoath.web.security.PlayerIdentityVerifier;
 import com.ironoath.web.security.SessionIdentityVerifier;
 import com.ironoath.web.security.WeChatCodeExchanger;
+import com.ironoath.web.security.WeChatContentSecurityClient;
 import com.ironoath.web.security.WeChatSessionCodeExchanger;
 
 /**
@@ -54,6 +57,23 @@ public class SecurityBeansConfig {
             return new WeChatSessionCodeExchanger(appId, appSecret);
         }
         return new LocalDevWeChatCodeExchanger();
+    }
+
+    /**
+     * 内容安全送检器：配了 AppID + AppSecret 就真的调 {@code msg_sec_check}，否则退到本地放行实现。
+     *
+     * <p>与兑换器共用同一对凭据（微信的 access_token 也是这两样换来的），所以不另设环境变量 ——
+     * 多一个名字就有多一个"配了这个忘了那个"的机会，而那种组合的表现是内容安全静默空转。
+     */
+    @Bean
+    public ContentSecurityClient contentSecurityClient(
+            @Value("${WECHAT_APP_ID:}") String appId,
+            @Value("${WECHAT_APP_SECRET:}") String appSecret) {
+        if (!appId.isBlank() && !appSecret.isBlank()) {
+            LOG.info("内容安全：使用真实 msg_sec_check 送检（昵称/小队名/联盟名/聊天四个面）");
+            return new WeChatContentSecurityClient(appId, appSecret);
+        }
+        return new LocalDevContentSecurityClient();
     }
 
     /**

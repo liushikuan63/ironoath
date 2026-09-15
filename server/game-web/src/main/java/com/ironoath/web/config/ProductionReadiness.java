@@ -36,18 +36,21 @@ public class ProductionReadiness implements InitializingBean {
     private final com.ironoath.web.ops.OpsTokenGuard ops;
     private final com.ironoath.web.security.PlayerIdentityVerifier identity;
     private final com.ironoath.web.security.WeChatCodeExchanger weChat;
+    private final com.ironoath.web.security.ContentSecurityClient contentSecurity;
     private final String activeProfiles;
 
     public ProductionReadiness(ConfigRegistry configs, GameProperties properties,
                                com.ironoath.web.ops.OpsTokenGuard ops,
                                com.ironoath.web.security.PlayerIdentityVerifier identity,
                                com.ironoath.web.security.WeChatCodeExchanger weChat,
+                               com.ironoath.web.security.ContentSecurityClient contentSecurity,
                                @Value("${spring.profiles.active:}") String activeProfiles) {
         this.configs = configs;
         this.properties = properties;
         this.ops = ops;
         this.identity = identity;
         this.weChat = weChat;
+        this.contentSecurity = contentSecurity;
         this.activeProfiles = activeProfiles == null ? "" : activeProfiles;
     }
 
@@ -116,6 +119,14 @@ public class ProductionReadiness implements InitializingBean {
             problems.add("微信登录兑换器是 " + weChat.getClass().getSimpleName()
                     + "（productionReady=false）：必须配置 WECHAT_APP_ID / WECHAT_APP_SECRET "
                     + "并切到真实 code2session 实现之后才能启动");
+        }
+        if (!contentSecurity.productionReady()) {
+            // 与上面两条同一族，但分量不同：这一条不是「谁能进门」，是「玩家的内容有没有被送检」。
+            // 本地放行实现上了生产，表现是一**切照常、没有任何一处报错**，直到有人拿违规内容
+            // 截图举报 —— 那种事不会在联调里被发现，所以它必须是「起不来」。
+            problems.add("内容安全实现是 " + contentSecurity.getClass().getSimpleName()
+                    + "（productionReady=false）：昵称/小队名/联盟名/聊天都不会真的送检，"
+                    + "必须配置 WECHAT_APP_ID / WECHAT_APP_SECRET 并切到真实 msg_sec_check 实现之后才能启动");
         }
         return List.copyOf(problems);
     }

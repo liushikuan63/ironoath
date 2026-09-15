@@ -143,6 +143,8 @@ public class SocialAppService {
      * 本服务不认识任何 Bot 类型，也不该认识（它在上游，Bot 适配器在它下游）。
      */
     private final org.springframework.context.ApplicationEventPublisher events;
+    /** 内容安全：小队名/联盟名/聊天三处玩家可自由填写的内容都要送检（上线检查清单 §二 7）。 */
+    private final com.ironoath.web.security.ContentSecurityGuard contentSecurity;
 
     public SocialAppService(SocialStore store, SocialRulesAssembler rules, PlayerRepository players,
                             PlayerLock playerLock, IdempotencyStore idempotency, TimeService timeService,
@@ -157,7 +159,8 @@ public class SocialAppService {
                             com.ironoath.web.social.HelpRequestRegistrar helpRequests,
                             HeroAppService heroAppService,
                             com.ironoath.web.quest.QuestEvents questEvents,
-                            org.springframework.context.ApplicationEventPublisher events) {
+                            org.springframework.context.ApplicationEventPublisher events,
+                            com.ironoath.web.security.ContentSecurityGuard contentSecurity) {
         this.store = store;
         this.rules = rules;
         this.players = players;
@@ -176,6 +179,7 @@ public class SocialAppService {
         this.heroAppService = heroAppService;
         this.questEvents = questEvents;
         this.events = events;
+        this.contentSecurity = contentSecurity;
         this.chatLimiter = new ChatRateLimiter(rules.chatRules());
         this.helpLedger = new HelpLedger(rules.helpRules());
     }
@@ -201,6 +205,9 @@ public class SocialAppService {
                 if (name.isEmpty()) {
                     throw new BizException(ErrorCode.SQUAD_NAME_INVALID, "小队名不得为空");
                 }
+                contentSecurity.requireClean(playerId,
+                        com.ironoath.web.security.ContentSecurityClient.Scene.PROFILE,
+                        name, ErrorCode.SQUAD_NAME_INVALID, "小队名");
                 if (store.squadNameTaken(name)) {
                     throw new BizException(ErrorCode.SQUAD_NAME_TAKEN, "小队名「" + name + "」已被占用");
                 }
@@ -331,6 +338,12 @@ public class SocialAppService {
                 if (name.isEmpty() || tag.isEmpty()) {
                     throw new BizException(ErrorCode.ALLIANCE_NAME_INVALID, "联盟名与标签都不得为空");
                 }
+                contentSecurity.requireClean(playerId,
+                        com.ironoath.web.security.ContentSecurityClient.Scene.PROFILE,
+                        name, ErrorCode.ALLIANCE_NAME_INVALID, "联盟名");
+                contentSecurity.requireClean(playerId,
+                        com.ironoath.web.security.ContentSecurityClient.Scene.PROFILE,
+                        tag, ErrorCode.ALLIANCE_NAME_INVALID, "联盟标签");
                 if (store.allianceNameTaken(name)) {
                     throw new BizException(ErrorCode.ALLIANCE_NAME_TAKEN, "联盟名「" + name + "」已被占用");
                 }
@@ -1239,6 +1252,13 @@ public class SocialAppService {
         if (content.isEmpty()) {
             throw new BizException(ErrorCode.SOCIAL_CHAT_CONTENT_INVALID, "消息内容不得为空");
         }
+        // 送检排在限流之后：限流是"你发太快"，送检是"这句能不能发"，
+        // 顺序反了会让被限流的消息也白跑一次外部调用（而外部调用是这四处里最贵的一步）。
+        // 送检排在限流之后：限流是"你发太快"，送检是"这句能不能发"，
+        // 顺序反了会让被限流的消息也白跑一次外部调用（而外部调用是这四处里最贵的一步）。
+        contentSecurity.requireClean(playerId,
+                com.ironoath.web.security.ContentSecurityClient.Scene.SOCIAL_LOG,
+                content, ErrorCode.SOCIAL_CHAT_CONTENT_INVALID, "消息内容");
         String channelKey = requireChannelKey(channel, playerId, req.toPlayerId());
         ChatRateLimiter.Verdict verdict = chatLimiter.check(playerId, content, now);
         if (!verdict.allowed()) {
