@@ -21,6 +21,7 @@ function resp(overrides: Partial<AppVersionResp> = {}): AppVersionResp {
     grayEnabled: false,
     notice: null,
     trackPolicy: { maxBatchSize: 10, flushSeconds: 10 },
+    support: null,
     ...overrides,
   }
 }

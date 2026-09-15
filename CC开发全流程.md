@@ -309,7 +309,12 @@
 
 ## 阶段 7 · 发布、热更与灰度 ⬜
 
-- [ ] 提审材料（版号/备案、隐私协议、客服与退款入口 —— 见上线检查清单）
+- [x] **客服与退款入口**（上线检查清单 §二 8/9）：导航条第 11 项「设置」= 一级入口，
+      页内两行始终可见；配置随 `/ops/app/version` 下发（`WECHAT_SUPPORT_CORP_ID` /
+      `WECHAT_SUPPORT_URL`），点击走 `wx.openCustomerServiceChat`，未配置时点下去说明未配置。
+      见收口清单 #131 与 `上线检查清单.md` §二 8/9
+- [ ] 提审材料其余项：版号/备案、**隐私协议**（§二 5：首次启动弹窗 + 同意状态存档 + 设置页入口
+      —— 协议文本要法务出）、个人信息收集清单（公众平台填写）—— 都不是代码能单独完成的
 - [x] **版本闸门（`RELEASE_*`）**：服务端比较 + **客户端闸门**都齐了。
       服务端：`ReleaseRulesAssembler` 读 `RELEASE_LATEST/MIN_SUPPORTED_VERSION` 与
       `RELEASE_GRAY_PERCENT`，且 `min > latest` 时端点直接拒绝（否则全服被要求升到一个不存在的版本）。

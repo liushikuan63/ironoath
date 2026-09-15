@@ -286,6 +286,13 @@ class OpsEndpointTest {
         JsonNode notice = current.get("notice");
         assertThat(notice == null || notice.isNull()).as("不该下发文案，实际=%s", current).isTrue();
 
+        // 4. 客服/退款入口：本 profile 没配 WECHAT_SUPPORT_* ⇒ 下发 null，但**字段要出现**，
+        // 客户端据此显示入口并说明未配置（藏起来等于提审时「没有这个入口」）。
+        // 配了的那条路由 SupportEntryEndpointTest 用它自己的上下文验。
+        JsonNode support = current.get("support");
+        assertThat(support == null || support.isNull())
+                .as("未配置时下发 null（缺失或 JSON null 都算），实际=%s", current).isTrue();
+
         // 攒批策略必须随版本检查下发：客户端没有配置表加载器，写死就是硬编码，而且会与服务端漂移。
         // 下发的是「秒」而不是毫秒 —— 漏了换算的症状是攒批窗口只有 10 毫秒，也就是禁止项说的逐条上报
         JsonNode policy = current.get("trackPolicy");

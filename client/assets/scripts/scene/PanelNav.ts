@@ -27,6 +27,7 @@ import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { QuestPanelView } from './QuestPanelView'
 import { WorldMap } from './WorldMap'
+import { SettingsPanelView } from './SettingsPanelView'
 import { applyCommandButton } from './ArtCatalog'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
 import { applySystemUiFont } from './UiFont'
@@ -70,6 +71,9 @@ const PANELS: readonly PanelDef[] = [
   // 地图放最后：它是唯一带镜头与拖拽的面板，数据流（viewport/marches 订阅）也与其余面板不同。
   // enterWorld 在登录时已由 AppRoot 拉过，这里挂上即能渲染。
   { key: 'world', label: '地图', view: WorldMap, reddotKey: null },
+  // 设置放最后：客服与退款入口要「一级可见」（上线检查清单 §二 8/9），
+  // 而导航条就是本作唯一的一级入口 —— 放进某个面板里就等于二级。
+  { key: 'settings', label: '设置', view: SettingsPanelView, reddotKey: null },
 ]
 
 @ccclass('PanelNav')

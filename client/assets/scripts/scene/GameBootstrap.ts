@@ -36,6 +36,8 @@ import { CrashReporter, installGlobalHooks } from '../game/session/CrashReporter
 import { TRACK_EVENTS } from '../game/track/TrackEvents'
 import { decideUpdateGate } from '../game/release/UpdateGate'
 import { applySystemUiFont } from './UiFont'
+import { SettingsPanelView } from './SettingsPanelView'
+import type { SettingsAction } from '../game/settings/SettingsPanel'
 import type { UpdateGateDecision } from '../game/release/UpdateGate'
 import type { AppVersionResp } from '../net/generated/OpsProtocol'
 import type { NetOutcome } from '../net/NetModule'
@@ -89,6 +91,8 @@ export class GameBootstrap extends Component {
   baseUrl = 'http://localhost:8080'
   wsUrl = 'ws://localhost:8080/ws'
   deviceId = ''
+  /** 最近一次 /ops/app/version 的响应：设置页要显示版本与客服入口，拦更新时也要用。 */
+  private appVersion: AppVersionResp | null = null
   nickName = '无名君主'
 
   /** 编排本体。其它场景组件要调服务端就通过它，不要各自 new 一条网络栈。 */
@@ -341,6 +345,7 @@ export class GameBootstrap extends Component {
     // 不得进入游戏，而"进入游戏"的第一步就是登录与拉十个面板 —— 判定排在它们之后等于没拦。
     // 同一次响应后面还要用来建埋点（攒批策略在这份响应里），所以只发这一次请求。
     const version = await api.appVersion(CLIENT_VERSION, null)
+    this.appVersion = version !== null && version.kind === 'ok' ? version.data : null
     const gate = decideUpdateGate(version, CLIENT_VERSION)
     if (gate.blocked) {
       this.showUpdateNotice(gate)
@@ -414,6 +419,71 @@ export class GameBootstrap extends Component {
       hasAuthToken: this.net?.hasAuthToken() ?? false,
       clientVersion: CLIENT_VERSION,
     }))
+  }
+
+  /**
+   * 设置页里点了「联系客服」或「申请退款」。
+   *
+   * <p><b>两个入口同一条路</b>：B15 §3 要求退款通道必须留，而那条通道就是客服 ——
+   * 单开一套退款表单等于自建一个没人看的工单系统，那是另一件事。
+   *
+   * <p><b>打不开时必须说清是哪种打不开</b>：没配（服务端下发 null ⇒ 上游已经给了说明）、
+   * 当前平台没有这个接口（浏览器/编辑器里跑）—— 这两种都不是故障，但都得让玩家看见，
+   * 否则他的体感是「点了没反应」，而那会被当成 bug 报上来。
+   */
+  private handleSettingsAction(action: SettingsAction): void {
+    if (action.kind === 'message') {
+      this.showHint(action.text)
+      return
+    }
+    const wxApi = (globalThis as Record<string, unknown>).wx as
+      { openCustomerServiceChat?: (options: Record<string, unknown>) => void } | undefined
+    if (wxApi?.openCustomerServiceChat === undefined) {
+      console.warn('[settings] 当前平台没有 openCustomerServiceChat（浏览器/编辑器预览）'
+        + '，corpId=' + action.corpId)
+      this.showHint('请在微信小游戏内打开客服')
+      return
+    }
+    // 参数形状照微信文档：corpId + extInfo.url；失败回调里把原始信息打出来，
+    // 而不是让按钮静默失效 —— 客服打不开是提审与客诉都会撞到的事
+    wxApi.openCustomerServiceChat({
+      corpId: action.corpId,
+      extInfo: { url: action.url },
+      fail: (error: unknown) => {
+        console.warn('[settings] 打开客服失败', error)
+        this.showHint('打开客服失败，请稍后再试')
+      },
+    })
+  }
+
+  /**
+   * 屏幕下方的一句提示，几秒后自己消失。
+   *
+   * <p>不引第三方 Toast：这里的用途只有"把刚刚那次点击的结果说清楚"，
+   * 而一个挂在画布上的 Label 就是它的全部实现。
+   */
+  private showHint(text: string): void {
+    const canvas = this.node.parent ?? this.node
+    const hint = new Node('SettingsHint')
+    canvas.addChild(hint)
+    hint.layer = canvas.layer
+    const visible = view.getVisibleSize()
+    hint.addComponent(UITransform).setContentSize(new Size(visible.width - 80, 36))
+    hint.setPosition(0, -visible.height / 2 + 90, 0)
+    const label = applySystemUiFont(hint.addComponent(Label))
+    label.string = text
+    label.fontSize = 16
+    label.lineHeight = 22
+    label.color = new Color(226, 214, 190, 255)
+    label.overflow = Label.Overflow.SHRINK
+    hint.addComponent(Graphics)
+    const background = hint.getComponent(Graphics)
+    if (background !== null) {
+      background.fillColor = new Color(24, 20, 18, 235)
+      background.roundRect(-(visible.width - 80) / 2, -18, visible.width - 80, 36, 6)
+      background.fill()
+    }
+    setTimeout(() => hint.destroy(), 3000)
   }
 
   /**
@@ -503,8 +573,15 @@ export class GameBootstrap extends Component {
     const search = this.panel(TargetSearchView, 'targets')
     const quest = this.panel(QuestPanelView, 'quest')
     const world = this.panel(WorldMap, 'world')
+    const settings = this.panel(SettingsPanelView, 'settings')
     const out: PanelTargets = {
       error: (panel, message) => console.warn(`[${panel}] ${message}`),
+    }
+    if (settings !== null) {
+      settings.onSupport = (row) => this.handleSettingsAction(row.action)
+      // 数据在 GameBootstrap 手里（版本响应是它拉的），所以这里直接推一次；
+      // 面板没有 pending 通道可走 —— 那套是给 AppRoot 预拉的面板用的
+      settings.render(this.appVersion, CLIENT_VERSION)
     }
     if (city !== null) {
       out.city = (resp, offsetMs) => city.attach(resp, offsetMs)

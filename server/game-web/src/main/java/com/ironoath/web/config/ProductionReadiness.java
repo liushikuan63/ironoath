@@ -37,6 +37,7 @@ public class ProductionReadiness implements InitializingBean {
     private final com.ironoath.web.security.PlayerIdentityVerifier identity;
     private final com.ironoath.web.security.WeChatCodeExchanger weChat;
     private final com.ironoath.web.security.ContentSecurityClient contentSecurity;
+    private final com.ironoath.web.release.SupportConfig support;
     private final String activeProfiles;
 
     public ProductionReadiness(ConfigRegistry configs, GameProperties properties,
@@ -44,6 +45,7 @@ public class ProductionReadiness implements InitializingBean {
                                com.ironoath.web.security.PlayerIdentityVerifier identity,
                                com.ironoath.web.security.WeChatCodeExchanger weChat,
                                com.ironoath.web.security.ContentSecurityClient contentSecurity,
+                               com.ironoath.web.release.SupportConfig support,
                                @Value("${spring.profiles.active:}") String activeProfiles) {
         this.configs = configs;
         this.properties = properties;
@@ -51,6 +53,7 @@ public class ProductionReadiness implements InitializingBean {
         this.identity = identity;
         this.weChat = weChat;
         this.contentSecurity = contentSecurity;
+        this.support = support;
         this.activeProfiles = activeProfiles == null ? "" : activeProfiles;
     }
 
@@ -127,6 +130,13 @@ public class ProductionReadiness implements InitializingBean {
             problems.add("内容安全实现是 " + contentSecurity.getClass().getSimpleName()
                     + "（productionReady=false）：昵称/小队名/联盟名/聊天都不会真的送检，"
                     + "必须配置 WECHAT_APP_ID / WECHAT_APP_SECRET 并切到真实 msg_sec_check 实现之后才能启动");
+        }
+        if (!support.configured()) {
+            // 这一条与「运维令牌」同一族：漏配不是"放松校验"，是"入口变成死按钮"。
+            // 提审会查客服与退款入口（上线检查清单 §二 8/9），而那两项靠的就是这份配置 ——
+            // 让它在启动时炸，比让审核员点出一个「未配置」要好。
+            problems.add("客服/退款入口未配置（WECHAT_SUPPORT_CORP_ID / WECHAT_SUPPORT_URL）："
+                    + "设置页会显示入口但点下去只会说明未配置，而提审会查这一项");
         }
         return List.copyOf(problems);
     }

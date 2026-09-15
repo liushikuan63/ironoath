@@ -164,6 +164,16 @@ export interface TrackPolicy {
 }
 
 /**
+ * 客服与退款入口的配置（上线检查清单 §二 8/9：设置页一级可见、可跳转客服）。**配置为 null 时客户端仍然要显示入口**，点下去说明「本环境未配置客服」—— 把入口藏起来等于提审时「没有这个入口」，而那是要被打回的项。
+ */
+export interface SupportEntry {
+  /** 企业微信客服的 corpId，wx.openCustomerServiceChat 的必填参数。来自环境变量 WECHAT_SUPPORT_CORP_ID —— 与 AppID 同族：它标识的是微信账号侧的配置，不是游戏数据，所以既不进配置表（表是玩法数值的家）也不写死在客户端。 */
+  corpId: string
+  /** 客服链接，wx.openCustomerServiceChat 的必填参数。来自环境变量 WECHAT_SUPPORT_URL。 */
+  url: string
+}
+
+/**
  * POST /ops/app/version 请求体：客户端启动时报上自己的版本与玩家 id。
  */
 export interface AppVersionReq {
@@ -187,4 +197,6 @@ export interface AppVersionResp {
   notice: string | null
   /** 本次会话应当使用的埋点攒批策略。<b>必填而不是可空</b>：客户端从第一个事件（startup）开始就要按策略攒批，而版本检查正是启动的第一个请求，所以策略在这一刻必然已经拿到。做成可空的话客户端就必须准备一套兜底数字，而那套兜底数字正是铁律 1 禁止的硬编码 —— 更糟的是它会与服务端悄悄漂移。 */
   trackPolicy: TrackPolicy
+  /** 客服与退款入口的配置；本环境未配置时为 null。**刻意是可选字段而不是 required**：滚动升级期间旧服务端不会下发它，而客户端把「没有这个字段」读作「未配置」，两边都能跑。 */
+  support: SupportEntry | null
 }

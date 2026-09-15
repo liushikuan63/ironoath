@@ -54,6 +54,8 @@ public class OpsAppService {
     private final TrackFlusher flusher;
     private final TrackEventStore store;
     private final TimeService timeService;
+    /** 客服/退款入口的部署配置（环境变量来的）。未配置时下发 null，客户端照常显示入口。 */
+    private final com.ironoath.web.release.SupportConfig supportConfig;
     /**
      * 本进程启动以来被入口软上限截断掉的事件累计条数。
      *
@@ -64,11 +66,13 @@ public class OpsAppService {
     private final AtomicLong truncatedEvents = new AtomicLong();
 
     public OpsAppService(ReleaseRulesAssembler assembler, TrackFlusher flusher,
-                         TrackEventStore store, TimeService timeService) {
+                         TrackEventStore store, TimeService timeService,
+                         com.ironoath.web.release.SupportConfig supportConfig) {
         this.assembler = assembler;
         this.flusher = flusher;
         this.store = store;
         this.timeService = timeService;
+        this.supportConfig = supportConfig;
     }
 
     // ---------- 埋点（B16 §3，验收 3） ----------
@@ -193,7 +197,7 @@ public class OpsAppService {
         // 而写死的策略会与服务端悄悄漂移（症状是「客户端发 50 条，服务端按 10 条攒批」，谁都没报错）
         TrackPolicy policy = new TrackPolicy(assembler.trackBatchMaxSize(), assembler.trackFlushSeconds());
         return new AppVersionResp(verdict.latestVersion(), verdict.forceUpdate(), verdict.grayEnabled(),
-                verdict.notice(), policy);
+                verdict.notice(), policy, supportConfig.toEntry());
     }
 
     // ---------- 配置热更（B16 §5，验收 7） ----------

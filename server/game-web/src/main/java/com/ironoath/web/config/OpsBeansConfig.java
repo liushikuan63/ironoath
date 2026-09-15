@@ -2,12 +2,14 @@ package com.ironoath.web.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import com.ironoath.web.ops.TrackEventStore;
 import com.ironoath.web.release.ReleaseRulesAssembler;
+import com.ironoath.web.release.SupportConfig;
 import com.ironoath.web.store.memory.InMemoryTrackStore;
 
 /**
@@ -26,6 +28,26 @@ import com.ironoath.web.store.memory.InMemoryTrackStore;
 public class OpsBeansConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger(OpsBeansConfig.class);
+
+    /**
+     * 客服与退款入口的配置。两项都来自环境变量：corpId 与 AppID 同族（微信账号侧的东西），
+     * 进版本库等于把账号配置公开，进配置表则会让「表随包下发」这条约定多一类不该外泄的内容。
+     * 未配置时下发 null，客户端仍显示入口并说明"本环境未配置客服" —— 藏起来等于提审时没有这个入口。
+     */
+    @Bean
+    public SupportConfig supportConfig(
+            @Value("${WECHAT_SUPPORT_CORP_ID:}") String corpId,
+            @Value("${WECHAT_SUPPORT_URL:}") String url) {
+        SupportConfig config = new SupportConfig(corpId, url);
+        if (config.configured()) {
+            LOG.info("客服入口已配置（corpId 非空），设置页一级可见");
+        } else {
+            LOG.warn("客服/退款入口未配置：设置页仍会显示入口，但点下去只会说明未配置。"
+                    + "提审会查这一项，上线前请设置 WECHAT_SUPPORT_CORP_ID / WECHAT_SUPPORT_URL"
+                    + "（prod 下缺它会让服务拒绝启动）");
+        }
+        return config;
+    }
 
     @Bean
     @ConditionalOnProperty(name = "ironoath.storage",
