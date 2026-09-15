@@ -2,6 +2,7 @@ package com.ironoath.web.service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
@@ -17,8 +18,13 @@ import com.ironoath.web.dto.generated.AppVersionReq;
 import com.ironoath.web.dto.generated.AppVersionResp;
 import com.ironoath.web.dto.generated.ConfigManifestReq;
 import com.ironoath.web.dto.generated.ConfigManifestResp;
+import com.ironoath.web.dto.generated.CrashDashboardResp;
+import com.ironoath.web.dto.generated.CrashDetailResp;
+import com.ironoath.web.dto.generated.CrashListItem;
+import com.ironoath.web.dto.generated.CrashListResp;
 import com.ironoath.web.dto.generated.CrashReportReq;
 import com.ironoath.web.dto.generated.CrashReportResp;
+import com.ironoath.web.dto.generated.CrashVersionRow;
 import com.ironoath.web.dto.generated.TableMeta;
 import com.ironoath.web.dto.generated.TrackBatchReq;
 import com.ironoath.web.dto.generated.TrackBatchResp;
@@ -200,8 +206,107 @@ public class OpsAppService {
     /** 按 traceId 取崩溃记录（验收 9：后台能收到完整堆栈 + traceId）。 */
     public TrackEventStore.CrashRecord crashOf(String traceId) {
         return store.findCrash(traceId)
-                .orElseThrow(() -> new BizException(ErrorCode.CRASH_REPORT_INCOMPLETE,
+                .orElseThrow(() -> new BizException(ErrorCode.CRASH_REPORT_NOT_FOUND,
                         "未找到 traceId=" + traceId + " 的崩溃记录"));
+    }
+
+    // ---------- 崩溃率看板（B16 §六，收口清单 #135） ----------
+
+    /**
+     * 窗口下限（秒）。比这更短的窗口连一次崩溃都装不进来，回一个全零的表比回一个错误更坏 ——
+     * 运维会以为「这一分钟很稳」，而实际上什么都没查。
+     */
+    private static final int MIN_WINDOW_SECONDS = 60;
+    /** 明细列表最多带几条。与 {@code PayAppService.DEBT_LIST_MAX} 同一条理由：只读端点也要封顶。 */
+    private static final int CRASH_LIST_MAX = 50;
+    /**
+     * 崩溃率的分母事件名。
+     *
+     * <p><b>服务端不枚举事件名</b>（字典的唯一归属在客户端 {@code TrackEvents.ts}，
+     * 见 {@code ops.schema.json} 里 TrackEvent.name 的说明），所以这一条是一个常量而不是枚举。
+     * 它必须是 startup 而不是 login：崩溃发生在登录之前时 login 一条都没有，
+     * 那种崩溃会从分母与分子里同时消失，而「进都没进就崩了」恰是最该看见的一类。
+     */
+    private static final String STARTUP_EVENT = "startup";
+
+    /**
+     * 按<b>客户端版本</b>分组的崩溃率（B16 §六 第一条）。
+     *
+     * <p><b>刻意不回一个全服总崩溃率</b>：灰度只放 5% 时，这一批里崩溃率翻三倍而总量几乎不动，
+     * 「灰度看起来很安全」就是这么来的。总量在这里不是粗一点的数，是会误导决策的数。
+     *
+     * <p><b>除法只在这一处做</b>（铁律 1）：分子是分版本聚合，分母是同一窗口内
+     * {@code startup} 事件按 {@code clientVersion} 分组的条数，两者都按 serverTs 落窗（铁律 5）。
+     * 分母为 0 时崩溃率是 null 而不是 0 —— 「一次启动都没收到」与「启动了但零崩溃」
+     * 必须长得不一样，否则一个没有任何数据的版本会显示成全服最健康的那个。
+     *
+     * @param windowSeconds 请求的窗口秒数；<b>null 表示查满保留期</b>（默认值不写在控制器里，
+     *                      否则「看板查多久」就有两份真相）。给了数值才夹进
+     *                      [{@link #MIN_WINDOW_SECONDS}, 保留期最大值]，夹过就 WARN，
+     *                      因为「以为查的是 30 天而实际只查了 60 秒」是静默的错
+     */
+    public CrashDashboardResp crashDashboard(Integer windowSeconds) {
+        int max = retentionWindowSeconds();
+        int window = windowSeconds == null ? max
+                : Math.max(MIN_WINDOW_SECONDS, Math.min(windowSeconds, max));
+        if (windowSeconds != null && window != windowSeconds) {
+            LOG.warn("崩溃率看板窗口被夹：请求 {} 秒 → 实际 {} 秒（下限 {}、上限=保留期最大值 {} 秒，"
+                    + "上限之外的数据已被清理，给更大的窗口只会算出一张「零崩溃」的假表）",
+                    windowSeconds, window, MIN_WINDOW_SECONDS, max);
+        }
+        long since = timeService.serverNow() - window * 1000L;
+        Map<String, Long> crashes = store.crashCountByVersion(since);
+        Map<String, Long> startups = store.countEventsByParam(since, STARTUP_EVENT, "clientVersion");
+        java.util.Set<String> versions = new java.util.TreeSet<>(crashes.keySet());
+        versions.addAll(startups.keySet());
+        List<CrashVersionRow> rows = new ArrayList<>(versions.size());
+        for (String version : versions) {
+            long crash = crashes.getOrDefault(version, 0L);
+            long startup = startups.getOrDefault(version, 0L);
+            rows.add(new CrashVersionRow(version, (int) crash, (int) startup,
+                    startup == 0 ? null : (double) crash / startup));
+        }
+        rows.sort(java.util.Comparator.comparingInt(CrashVersionRow::crashes).reversed()
+                .thenComparing(CrashVersionRow::clientVersion));
+        return new CrashDashboardResp(window, max, List.copyOf(rows));
+    }
+
+    /**
+     * 最近的崩溃明细（<b>不带堆栈</b>，理由见 {@code CrashListItem} 的契约说明）。
+     *
+     * <p>total 与 listed 分开回：合并成一个数，运维就会以为看到的就是全部。
+     */
+    public CrashListResp recentCrashes(int limit) {
+        int capped = Math.max(1, Math.min(limit, CRASH_LIST_MAX));
+        List<TrackEventStore.CrashRecord> records = store.recentCrashes(capped);
+        List<CrashListItem> items = new ArrayList<>(records.size());
+        for (TrackEventStore.CrashRecord record : records) {
+            items.add(new CrashListItem(record.traceId(), record.clientVersion(), record.message(),
+                    record.sceneName(), record.clientTs(), record.serverTs(),
+                    record.stack() == null ? 0 : record.stack().length()));
+        }
+        return new CrashListResp(store.crashCount(), items.size(), List.copyOf(items));
+    }
+
+    /** 按 traceId 取一条崩溃的完整记录（含堆栈）。找不到抛 {@link ErrorCode#CRASH_REPORT_NOT_FOUND}。 */
+    public CrashDetailResp crashDetail(String traceId) {
+        TrackEventStore.CrashRecord record = crashOf(traceId);
+        return new CrashDetailResp(record.traceId(), record.clientVersion(), record.message(),
+                record.sceneName(), record.clientTs(), record.serverTs(), record.stack());
+    }
+
+    /**
+     * 看板窗口的上限 = {@code global.DASHBOARD_RETENTION_DAYS} 的最大值换算的秒数。
+     *
+     * <p><b>不是我另定的一个数</b>：比保留期更早的事件与崩溃已被 {@code TrackFlusher} 清掉，
+     * 允许查那么远只会得到一张零崩溃的表 —— 那正是清库动作最坏的症状：看起来像没事。
+     */
+    private int retentionWindowSeconds() {
+        int maxDays = 0;
+        for (int days : assembler.retentionDays()) {
+            maxDays = Math.max(maxDays, days);
+        }
+        return maxDays * 86_400;
     }
 
     // ---------- 版本检查与灰度（B16 §5，验收 8） ----------

@@ -13,6 +13,9 @@ import com.ironoath.web.dto.generated.AppVersionReq;
 import com.ironoath.web.dto.generated.AppVersionResp;
 import com.ironoath.web.dto.generated.ConfigManifestReq;
 import com.ironoath.web.dto.generated.ConfigManifestResp;
+import com.ironoath.web.dto.generated.CrashDashboardResp;
+import com.ironoath.web.dto.generated.CrashDetailResp;
+import com.ironoath.web.dto.generated.CrashListResp;
 import com.ironoath.web.dto.generated.CrashReportReq;
 import com.ironoath.web.dto.generated.CrashReportResp;
 import com.ironoath.web.dto.generated.PayDebtResp;
@@ -74,12 +77,6 @@ public class OpsController {
     }
 
     /**
-     * 埋点入口健康度（只读，需运维令牌）：当前软上限、累计截断条数、待落库条数、已写库批次数。
-     *
-     * <p>与上面那几个 POST 的分界就是「要不要请求体」：这一条什么都不用问就能答，所以是 GET。
-     * 它要令牌，因为回的是全服聚合数。
-     */
-    /**
      * 配置热更（B16 §5 / 验收 7）：从磁盘重读全部配置表，校验通过才整体替换。
      * 走运维令牌 —— 热更是能改变全服数值的动作，不能是任何人都能打的端点。
      */
@@ -90,11 +87,62 @@ public class OpsController {
         return Result.ok(ops.reloadConfigs());
     }
 
+    /**
+     * 埋点入口健康度（只读，需运维令牌）：当前软上限、累计截断条数、待落库条数、已写库批次数。
+     *
+     * <p>与上面那几个 POST 的分界就是「要不要请求体」：这一条什么都不用问就能答，所以是 GET。
+     * 它要令牌，因为回的是全服聚合数。
+     */
     @GetMapping("/ingest")
     public Result<TrackIngestResp> ingest(
             @RequestHeader(name = OpsTokenGuard.HEADER, required = false) String opsToken) {
         token.require(opsToken);
         return Result.ok(ops.ingestHealth());
+    }
+
+    /**
+     * 崩溃率看板（只读，需运维令牌）：<b>按客户端版本分组</b>的崩溃数、启动数与崩溃率。
+     *
+     * <p>存在理由是 B16 验收 9 的后半句：崩溃上报的写侧一直通，而读侧（{@code crashOf}、
+     * {@code findCrash}、{@code crashCount}）在生产代码里零调用点 —— 「后台能收到」变成了
+     * 「只有测试能收到」。见收口清单 #135。
+     *
+     * @param windowSeconds 统计窗口秒数；不传即查满保留期。这里给默认值等于再造一份口径，
+     *                      所以可空交由服务端按 {@code DASHBOARD_RETENTION_DAYS} 决定
+     */
+    @GetMapping("/crash/dashboard")
+    public Result<CrashDashboardResp> crashDashboard(
+            @RequestHeader(name = OpsTokenGuard.HEADER, required = false) String opsToken,
+            @RequestParam(name = "windowSeconds", required = false) Integer windowSeconds) {
+        token.require(opsToken);
+        return Result.ok(ops.crashDashboard(windowSeconds));
+    }
+
+    /**
+     * 最近崩溃明细（只读，需运维令牌）：<b>不带堆栈</b>，带堆栈长度。
+     *
+     * <p>为什么列表不给堆栈：一条堆栈最长 20KB（payload 预算），20 条就是 400KB，
+     * 一条只读端点会因此变成全仓最大的响应，而且在大面积崩溃时最大 —— 那时最需要它。
+     * 先在这里挑出要看的那一条，再用 {@code /crash/detail} 按 traceId 取堆栈。
+     */
+    @GetMapping("/crash/recent")
+    public Result<CrashListResp> recentCrashes(
+            @RequestHeader(name = OpsTokenGuard.HEADER, required = false) String opsToken,
+            @RequestParam(name = "limit", defaultValue = "20") int limit) {
+        token.require(opsToken);
+        return Result.ok(ops.recentCrashes(limit));
+    }
+
+    /**
+     * 单条崩溃的完整记录（只读，需运维令牌）：完整堆栈 + traceId，正是验收 9 要求的那个形状。
+     * 查不到回 {@code CRASH_REPORT_NOT_FOUND}，不回 null —— 后者与「有一条堆栈为空的记录」分不开。
+     */
+    @GetMapping("/crash/detail")
+    public Result<CrashDetailResp> crashDetail(
+            @RequestHeader(name = OpsTokenGuard.HEADER, required = false) String opsToken,
+            @RequestParam(name = "traceId") String traceId) {
+        token.require(opsToken);
+        return Result.ok(ops.crashDetail(traceId));
     }
 
     /**

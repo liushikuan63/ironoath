@@ -150,11 +150,43 @@ public final class InMemoryTrackStore implements TrackEventStore {
     }
 
     @Override
-    public synchronized void clear() {
-        events.clear();
-        crashesByTrace.clear();
-        droppedCount = 0;
-        dropWarned = false;
+    public synchronized int crashCount() {
+        return crashesByTrace.size();
+    }
+
+    @Override
+    public synchronized Map<String, Long> crashCountByVersion(long sinceMillis) {
+        Map<String, Long> out = new LinkedHashMap<>();
+        for (CrashRecord crash : crashesByTrace.values()) {
+            if (crash.serverTs() >= sinceMillis) {
+                out.merge(TrackEventStore.groupKey(crash.clientVersion()), 1L, Long::sum);
+            }
+        }
+        return Map.copyOf(out);
+    }
+
+    @Override
+    public synchronized Map<String, Long> countEventsByParam(long sinceMillis, String eventName,
+                                                             String paramKey) {
+        Map<String, Long> out = new LinkedHashMap<>();
+        for (TrackRecord record : events) {
+            if (record.serverTs() >= sinceMillis && record.name().equals(eventName)) {
+                out.merge(TrackEventStore.groupKey(record.params().get(paramKey)), 1L, Long::sum);
+            }
+        }
+        return Map.copyOf(out);
+    }
+
+    @Override
+    public synchronized List<CrashRecord> recentCrashes(int limit) {
+        if (limit < 1) {
+            return List.of();
+        }
+        // 插入序 + 稳定排序 = 同一毫秒并列时先落的在前。生产版（Mongo）按 _id 定序，
+        // 两者只在"并列"时不同 —— 与 recentOf 一样，并列次序不是契约。
+        List<CrashRecord> out = new ArrayList<>(crashesByTrace.values());
+        out.sort(java.util.Comparator.comparingLong(CrashRecord::serverTs).reversed());
+        return List.copyOf(out.size() > limit ? out.subList(0, limit) : out);
     }
 
     /** 因超出保留上限而丢弃的事件数。非零说明该换 Mongo 了。 */
@@ -162,8 +194,11 @@ public final class InMemoryTrackStore implements TrackEventStore {
         return droppedCount;
     }
 
-    /** 已收下的崩溃条数。 */
-    public synchronized int crashCount() {
-        return crashesByTrace.size();
+    @Override
+    public synchronized void clear() {
+        events.clear();
+        crashesByTrace.clear();
+        droppedCount = 0;
+        dropWarned = false;
     }
 }

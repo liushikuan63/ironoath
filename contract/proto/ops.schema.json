@@ -370,6 +370,156 @@
           "description": "客服与退款入口的配置；本环境未配置时为 null。**刻意是可选字段而不是 required**：滚动升级期间旧服务端不会下发它，而客户端把「没有这个字段」读作「未配置」，两边都能跑。"
         }
       }
+    },
+    "CrashVersionRow": {
+      "type": "object",
+      "description": "看板 §六「客户端崩溃率」的一行：一个客户端版本在统计窗口内的崩溃数、启动数与崩溃率。\n\n**为什么一行一个版本而不是全服一个数**：B16 §六 写死了这条口径，理由值得重复一遍 ——\n灰度只放 5% 时，这一批里崩溃率翻三倍，全服总量几乎不动；于是「灰度看起来很安全」，\n全量发布后整个服都在崩。总量在这里不是一个粗一点的数，而是一个会误导决策的数。\n所以本响应刻意不给全服崩溃率：要跨版本比较，看的是每一行。",
+      "additionalProperties": false,
+      "required": ["clientVersion", "crashes", "startups", "crashRate"],
+      "properties": {
+        "clientVersion": {
+          "type": "string",
+          "description": "客户端版本。空串表示这些上报没带版本字段（旧包或某个调用点漏了参数）—— 这一行必须留着而不是被丢掉：把它过滤掉等于静默缩小分母，而症状正是本契约要避免的那种「看板上某一环永远是 0」。"
+        },
+        "crashes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "窗口内该版本的崩溃条数。计的是「落库的新记录」，不是「收到的上报次数」：同一 traceId 客户端崩溃重启后会补报，端口按 traceId 幂等去重，所以补报不重复计数。"
+        },
+        "startups": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "窗口内该版本收到的 startup 事件条数，即崩溃率的分母。口径是「启动会话数」而不是「玩家数」：一个玩家一天启动三次崩一次，那是 33% 的会话崩溃率，而按人去重会把它读成 0%（他今天来过）—— 稳定性要看会话。"
+        },
+        "crashRate": {
+          "type": ["number", "null"],
+          "description": "crashes / startups。**除法只在这里做一次**（铁律 1）：如果每个看板各除一次，五个看板就会有五种崩溃率，而没人能说出哪个是对的。startups 为 0 时是 null 而不是 0 ——「一次启动都没收到」与「启动了但零崩溃」必须长得不一样；写成 0 会让一个完全没数据的版本看起来是全服最健康的那个。"
+        }
+      }
+    },
+    "CrashDashboardResp": {
+      "type": "object",
+      "description": "GET /ops/crash/dashboard 响应：按客户端版本分组的崩溃率（只读，需运维令牌）。\n\n**存在的理由**：崩溃上报的写侧早就通了，读侧一直只有单测在读 ——\nOpsAppService.crashOf() 与 store 的 findCrash()/crashCount() 在生产代码里零调用点，\n于是 B16 验收 9「后台能收到完整堆栈 + traceId」实际只成立了一半：收得到，取不出。\n一个只有测试能读的方法与一个没有调用点的方法是同一族问题（收口清单 #134 那条）。",
+      "additionalProperties": false,
+      "required": ["windowSeconds", "maxWindowSeconds", "rows"],
+      "properties": {
+        "windowSeconds": {
+          "type": "integer",
+          "description": "实际生效的统计窗口（秒）。**不传 windowSeconds 就是查满保留期** —— 默认值刻意不写在调用方，否则「看板查多久」会有两份真相。给了数值才会被夹进 [60, maxWindowSeconds]，所以回显是必要的：不回显的话运维以为自己查的是 30 天，而实际上服务端只算了 60 秒。"
+        },
+        "maxWindowSeconds": {
+          "type": "integer",
+          "description": "窗口能拉到的上限，由 global.DASHBOARD_RETENTION_DAYS 的最大值换算 —— **不是我另定的数**：比保留期更早的数据已经被 TrackFlusher 清掉了，给一个更大的窗口只会算出一个「零崩溃」的假结论，而那正是清库动作最坏的症状。"
+        },
+        "rows": {
+          "type": "array",
+          "description": "每个出现过的客户端版本一行，按崩溃数倒序、同数按版本号字典序。有崩溃但没有任何 startup 上报的版本照样成行（crashRate 为 null）—— 那种组合本身就是信息：客户端在发出 startup 之前就崩了。",
+          "items": {
+            "$ref": "#/$defs/CrashVersionRow"
+          }
+        }
+      }
+    },
+    "CrashListItem": {
+      "type": "object",
+      "description": "GET /ops/crash/recent 的一行：一条崩溃的索引信息，**不含堆栈**。\n\n为什么不顺手把堆栈带上：堆栈按 payload 预算最长 20KB（服务端还会截断并标注原长），\n列表默认 20 条就是 400KB —— 一条只读端点会因此成为全仓最大的响应，\n而它面对的正是大面积崩溃发生时（那时最需要它，也最容易被自己打死）。\n所以这里给 stackChars 让运维决定要不要按 traceId 去取明细。",
+      "additionalProperties": false,
+      "required": ["traceId", "clientVersion", "message", "sceneName", "clientTs", "serverTs", "stackChars"],
+      "properties": {
+        "traceId": {
+          "type": "string",
+          "description": "取明细的键：GET /ops/crash/detail?traceId=... 拿完整堆栈。"
+        },
+        "clientVersion": {
+          "type": "string",
+          "description": "崩溃时的客户端版本。大面积崩溃时第一件要看的事就是「是不是集中在某一个版本」。"
+        },
+        "message": {
+          "type": "string",
+          "description": "错误摘要（客户端取异常第一行）。"
+        },
+        "sceneName": {
+          "type": ["string", "null"],
+          "description": "崩溃时所在场景；null 表示崩在场景切换之间（不是「没取到」，那本身是定位信息）。"
+        },
+        "clientTs": {
+          "type": "integer",
+          "format": "int64",
+          "description": "客户端毫秒时间戳。与 serverTs 之差就是该玩家的时钟偏移。"
+        },
+        "serverTs": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端收到时刻。排序与窗口都按它算（铁律 5）。"
+        },
+        "stackChars": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "已落库堆栈的字符数。**被服务端截断过的堆栈，截断标记与「原长 N 字符」就写在堆栈文本里**，取明细看得到；列表只给长度，够决定要不要继续查。"
+        }
+      }
+    },
+    "CrashListResp": {
+      "type": "object",
+      "description": "GET /ops/crash/recent 响应：最近的崩溃明细索引（只读，需运维令牌）。",
+      "additionalProperties": false,
+      "required": ["total", "listed", "crashes"],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "format": "int64",
+          "description": "当前存储里的崩溃总条数。**崩溃记录不按条数上限淘汰**，所以这个数只随保留期清理而下降。"
+        },
+        "listed": {
+          "type": "integer",
+          "description": "本响应实际带出的条数。total 大于 listed 就说明还有没列出来的 —— 两个数分开给，是为了不让「翻了第一页」被读成「看到的全部」。"
+        },
+        "crashes": {
+          "type": "array",
+          "description": "按服务端收到时刻倒序，最多 limit 条。",
+          "items": {
+            "$ref": "#/$defs/CrashListItem"
+          }
+        }
+      }
+    },
+    "CrashDetailResp": {
+      "type": "object",
+      "description": "GET /ops/crash/detail 响应：一条崩溃的完整记录，含完整堆栈（只读，需运维令牌）。\n\n**这一条才是 B16 验收 9 的后半句**：「后台能收到完整堆栈 + traceId」里的「能收到」\n指的是取得出来。写侧一直成立，读侧此前只存在于单测里。",
+      "additionalProperties": false,
+      "required": ["traceId", "clientVersion", "message", "sceneName", "clientTs", "serverTs", "stack"],
+      "properties": {
+        "traceId": {
+          "type": "string",
+          "description": "全链路 id，可与服务端日志按同一条链路对齐。"
+        },
+        "clientVersion": {
+          "type": "string",
+          "description": "崩溃时的客户端版本。"
+        },
+        "message": {
+          "type": "string",
+          "description": "错误摘要。"
+        },
+        "sceneName": {
+          "type": ["string", "null"],
+          "description": "崩溃时所在场景；null 表示崩在场景切换之间。"
+        },
+        "clientTs": {
+          "type": "integer",
+          "format": "int64",
+          "description": "客户端毫秒时间戳。"
+        },
+        "serverTs": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端收到时刻。"
+        },
+        "stack": {
+          "type": "string",
+          "description": "完整堆栈。超长时尾部带「...(服务端截断，原长 N 字符)」—— 那句话在文本里而不是单独一个布尔字段：一条被截断的堆栈在后台看起来和完整的没区别，而缺的往往正是最深的那一帧，标记必须跟着文本走。"
+        }
+      }
     }
   }
 }

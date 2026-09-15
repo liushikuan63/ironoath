@@ -1,14 +1,18 @@
 package com.ironoath.web.store.mongo;
 
 import com.ironoath.web.ops.TrackEventStore;
+import org.bson.Document;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -110,6 +114,68 @@ public final class MongoTrackStore implements TrackEventStore {
     public int purgeCrashesOlderThan(long cutoffMillis) {
         return (int) mongo.remove(Query.query(Criteria.where("serverTs").lt(cutoffMillis)),
                 TrackCrashDocument.COLLECTION).getDeletedCount();
+    }
+
+    @Override
+    public int crashCount() {
+        return (int) mongo.count(new Query(), TrackCrashDocument.COLLECTION);
+    }
+
+    @Override
+    public Map<String, Long> crashCountByVersion(long sinceMillis) {
+        return groupCount(TrackCrashDocument.COLLECTION, sinceMillis, null, null, "crash.clientVersion");
+    }
+
+    @Override
+    public Map<String, Long> countEventsByParam(long sinceMillis, String eventName, String paramKey) {
+        return groupCount(TrackEventDocument.COLLECTION, sinceMillis, eventName, "event.name",
+                "event.params." + paramKey);
+    }
+
+    /**
+     * 一条 {@code $match} + {@code $group} 把分组计数留在数据库里做。
+     *
+     * <p><b>不改成"把窗口内的记录拉出来在 Java 里数"</b>：大面积崩溃时那正是记录最多的时候，
+     * 也是这条只读端点最可能被反复刷的时候 —— 拉全表会让它成为压垮自己的那根稻草，
+     * 而它存在的意义恰恰是在出事时看得见事。
+     *
+     * @param collection 集合名
+     * @param sinceMillis 窗口起点（含），按顶层 {@code serverTs} 判
+     * @param eventName   额外的事件名过滤，null 表示不过滤
+     * @param nameField   事件名在文档里的路径（埋点文档把事件嵌在 {@code event} 下）
+     * @param groupField  分组字段的文档路径
+     */
+    private Map<String, Long> groupCount(String collection, long sinceMillis, String eventName,
+                                         String nameField, String groupField) {
+        Criteria criteria = Criteria.where("serverTs").gte(sinceMillis);
+        if (eventName != null) {
+            criteria = criteria.and(nameField).is(eventName);
+        }
+        Aggregation agg = Aggregation.newAggregation(
+                Aggregation.match(criteria),
+                Aggregation.group(groupField).count().as("n"));
+        Map<String, Long> out = new HashMap<>();
+        for (Document row : mongo.aggregate(agg, collection, Document.class).getMappedResults()) {
+            Object key = row.get("_id");
+            long n = ((Number) row.get("n")).longValue();
+            // _id 在字段缺失时是 null，按端口口径归进空串这一组
+            out.merge(TrackEventStore.groupKey(key == null ? null : key.toString()), n, Long::sum);
+        }
+        return Map.copyOf(out);
+    }
+
+    @Override
+    public List<CrashRecord> recentCrashes(int limit) {
+        if (limit < 1) {
+            return List.of();
+        }
+        List<TrackCrashDocument> docs = mongo.find(new Query()
+                        .with(Sort.by(Sort.Order.desc("serverTs"), Sort.Order.asc("_id")))
+                        .limit(limit),
+                TrackCrashDocument.class, TrackCrashDocument.COLLECTION);
+        List<CrashRecord> out = new ArrayList<>(docs.size());
+        docs.forEach(d -> out.add(d.crash()));
+        return out;
     }
 
     @Override

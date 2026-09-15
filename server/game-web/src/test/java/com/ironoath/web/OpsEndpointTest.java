@@ -67,6 +67,9 @@ class OpsEndpointTest {
     private static final String VERSION_URL = "/ops/app/version";
     private static final String MANIFEST_URL = "/ops/config/manifest";
     private static final String RELOAD_URL = "/ops/config/reload";
+    private static final String CRASH_DASHBOARD_URL = "/ops/crash/dashboard";
+    private static final String CRASH_RECENT_URL = "/ops/crash/recent";
+    private static final String CRASH_DETAIL_URL = "/ops/crash/detail";
     private static final String PLAYER_HEADER = "X-Player-Id";
     /** 与 {@code application-test.yml} 的 {@code ironoath.ops.token} 一致（SeasonSettleAuthTest 同源）。 */
     private static final String OPS_TOKEN = "test-ops-token";
@@ -78,6 +81,7 @@ class OpsEndpointTest {
     @Autowired private TrackFlusher flusher;
     @Autowired private TrackEventStore store;
     @Autowired private ReleaseRulesAssembler assembler;
+    @Autowired private com.ironoath.common.time.TimeService time;
 
     @BeforeEach
     void resetStores() {
@@ -262,7 +266,7 @@ class OpsEndpointTest {
         CrashReportReq req = new CrashReportReq("trace-dup", "崩溃", "stack", "1.0.0", null, 1L);
         postJson(CRASH_URL, req);
         postJson(CRASH_URL, req);
-        assertThat(((InMemoryTrackStore) store).crashCount()).isEqualTo(1);
+        assertThat(store.crashCount()).isEqualTo(1);
     }
 
     @Test
@@ -283,6 +287,112 @@ class OpsEndpointTest {
         JsonNode root = postRoot(CRASH_URL, null,
                 new CrashReportReq(" ", "崩溃", "stack", "1.0.0", null, 1L));
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.CRASH_REPORT_INCOMPLETE.code());
+    }
+
+    // ---------- 崩溃率看板（B16 §六，收口清单 #135）：读侧 ----------
+
+    @Test
+    @DisplayName("看板：崩溃率按客户端版本分组，分母只数 startup；有崩溃没启动的版本崩溃率是 null 而不是 0")
+    void crashRateIsGroupedByClientVersion() throws Exception {
+        // 9.9.9：3 次启动、2 次崩溃
+        postTrack(startupEvents("9.9.9", 3), null);
+        postJson(CRASH_URL, new CrashReportReq("t-a", "崩", "stack", "9.9.9", "world", 1L));
+        postJson(CRASH_URL, new CrashReportReq("t-b", "崩", "stack", "9.9.9", "city", 2L));
+        // 1.0.0：一条启动上报都没有，只有一条崩溃
+        postJson(CRASH_URL, new CrashReportReq("t-c", "崩", "stack", "1.0.0", null, 3L));
+        // 干扰项：同样带 clientVersion 参数，但事件名不是 startup —— 不该进分母
+        postTrack(loginEvents("9.9.9", 5), null);
+        flusher.flushNow("看板用例");
+
+        JsonNode rows = dashboard(null).get("rows");
+        assertThat(rows.size()).as("两个版本两行：%s", rows).isEqualTo(2);
+        // 崩溃多的在前：大面积崩溃时第一屏就要看到它
+        assertThat(rows.get(0).get("clientVersion").asText()).isEqualTo("9.9.9");
+        assertThat(rows.get(0).get("crashes").asInt()).isEqualTo(2);
+        assertThat(rows.get(0).get("startups").asInt()).as("分母是 3 次启动，不是 3+5").isEqualTo(3);
+        assertThat(rows.get(0).get("crashRate").asDouble()).isCloseTo(2 / 3d, org.assertj.core.data.Offset.offset(1e-9));
+
+        JsonNode noStartup = rows.get(1);
+        assertThat(noStartup.get("clientVersion").asText()).isEqualTo("1.0.0");
+        assertThat(noStartup.get("crashes").asInt()).isEqualTo(1);
+        assertThat(noStartup.get("crashRate").isNull())
+                .as("「一次启动都没收到」不能显示成 0，否则没数据的版本看起来最健康：%s", noStartup).isTrue();
+    }
+
+    @Test
+    @DisplayName("看板：窗口之外的崩溃不计入；不传 windowSeconds 就是查满保留期")
+    void dashboardFiltersByWindowAndDefaultsToRetention() throws Exception {
+        long twoDaysAgo = time.serverNow() - 2L * 86_400_000L;
+        store.saveCrash(new TrackEventStore.CrashRecord("t-old", "两天前崩的", "stack", "8.8.8",
+                null, twoDaysAgo, twoDaysAgo));
+        postJson(CRASH_URL, new CrashReportReq("t-new", "刚崩的", "stack", "8.8.8", null, 1L));
+
+        JsonNode hour = dashboard(3_600);
+        assertThat(versionRow(hour, "8.8.8").get("crashes").asInt())
+                .as("一小时窗口里只有刚发生的这一条").isEqualTo(1);
+        JsonNode month = dashboard(null);
+        assertThat(versionRow(month, "8.8.8").get("crashes").asInt())
+                .as("默认查满保留期时两天前那条也在内").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("看板：窗口被夹时回显实际生效值（以为查 30 天而实际只查 60 秒，是静默的错）")
+    void requestedWindowIsClampedAndEchoed() throws Exception {
+        int max = dashboard(null).get("maxWindowSeconds").asInt();
+        assertThat(max).as("上限来自 DASHBOARD_RETENTION_DAYS 最大值，不是另写的数")
+                .isEqualTo(maxRetentionDays() * 86_400);
+
+        assertThat(dashboard(999_999_999).get("windowSeconds").asInt()).isEqualTo(max);
+        assertThat(dashboard(1).get("windowSeconds").asInt())
+                .as("比一次崩溃还短的窗口没有意义，抬到下限").isEqualTo(60);
+    }
+
+    @Test
+    @DisplayName("明细列表不带堆栈只带长度，且 total 与 listed 分开回（翻了第一页不等于看到全部）")
+    void recentListCarriesNoStackButKeepsTotalAndListedApart() throws Exception {
+        String stack = "java.lang.IllegalStateException: 队列已满\n\tat com.ironoath.Queue.push(Queue.ts:9)";
+        postJson(CRASH_URL, new CrashReportReq("t-1", "崩一", stack, "1.0.0", "battle", 1L));
+        postJson(CRASH_URL, new CrashReportReq("t-2", "崩二", "短堆栈", "1.0.0", null, 2L));
+
+        JsonNode all = okData(getRoot(CRASH_RECENT_URL + "?limit=20", OPS_TOKEN));
+        assertThat(all.get("total").asInt()).isEqualTo(2);
+        assertThat(all.get("listed").asInt()).isEqualTo(2);
+        JsonNode first = all.get("crashes").get(0);
+        assertThat(first.get("traceId").asText()).as("按服务端收到时刻倒序").isEqualTo("t-2");
+        assertThat(first.has("stack")).as("列表带堆栈会让只读端点变成全仓最大的响应").isFalse();
+
+        JsonNode one = okData(getRoot(CRASH_RECENT_URL + "?limit=1", OPS_TOKEN));
+        assertThat(one.get("listed").asInt()).isEqualTo(1);
+        assertThat(one.get("total").asInt()).as("limit 只砍明细，不砍总数").isEqualTo(2);
+        assertThat(one.get("crashes").get(0).get("stackChars").asInt())
+                .as("长度是「要不要去取明细」的依据").isEqualTo("短堆栈".length());
+    }
+
+    @Test
+    @DisplayName("明细端点取回完整堆栈；未知 traceId 回 16005 而不是写侧的 16003")
+    void crashDetailReturnsStackAndMissingIdHasItsOwnCode() throws Exception {
+        String stack = "TypeError: cannot read property 'gridX' of undefined\n\tat WorldMap.paint(WorldMap.ts:88)";
+        postJson(CRASH_URL, new CrashReportReq("t-detail", "地图崩了", stack, "2.3.4", "world", 1234L));
+
+        JsonNode data = okData(getRoot(CRASH_DETAIL_URL + "?traceId=t-detail", OPS_TOKEN));
+        assertThat(data.get("stack").asText()).as("验收 9 要的是「完整堆栈」").isEqualTo(stack);
+        assertThat(data.get("clientVersion").asText()).isEqualTo("2.3.4");
+        assertThat(data.get("sceneName").asText()).isEqualTo("world");
+        assertThat(data.get("clientTs").asLong()).isEqualTo(1234L);
+
+        JsonNode missing = getRoot(CRASH_DETAIL_URL + "?traceId=t-none", OPS_TOKEN);
+        assertThat(missing.get("code").asInt()).isEqualTo(ErrorCode.CRASH_REPORT_NOT_FOUND.code());
+        assertThat(missing.get("code").asInt()).as("「库里没有」与「你报的缺字段」是两个动作，不能共用一个码")
+                .isNotEqualTo(ErrorCode.CRASH_REPORT_INCOMPLETE.code());
+    }
+
+    @Test
+    @DisplayName("看板三条端点没令牌一律拒绝：回的是全服聚合数与别人的崩溃现场")
+    void crashDashboardEndpointsRefuseWithoutToken() throws Exception {
+        for (String url : List.of(CRASH_DASHBOARD_URL, CRASH_RECENT_URL, CRASH_DETAIL_URL + "?traceId=x")) {
+            assertThat(codeOf(getRoot(url, null))).as("%s 必须鉴权", url)
+                    .isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
+        }
     }
 
     // ---------- 验收 8：强制更新与灰度 ----------
@@ -452,6 +562,52 @@ class OpsEndpointTest {
      */
     private JsonNode ingestHealth() throws Exception {
         return okData(getRoot("/ops/ingest", OPS_TOKEN));
+    }
+
+    /** 带 {@code clientVersion} 参数的 startup 事件 —— 崩溃率的分母。 */
+    private static List<TrackEvent> startupEvents(String clientVersion, int count) {
+        return eventsWithVersion("startup", clientVersion, count);
+    }
+
+    /** 同样带版本、但事件名不是 startup 的干扰项。 */
+    private static List<TrackEvent> loginEvents(String clientVersion, int count) {
+        return eventsWithVersion("login", clientVersion, count);
+    }
+
+    private static List<TrackEvent> eventsWithVersion(String name, String clientVersion, int count) {
+        List<TrackEvent> out = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            out.add(new TrackEvent(name, 1_700_000_000_000L + i, Map.of("clientVersion", clientVersion)));
+        }
+        return out;
+    }
+
+    /** 读崩溃率看板；{@code windowSeconds} 传 null 表示不带这个参数（即默认查满保留期）。 */
+    private JsonNode dashboard(Integer windowSeconds) throws Exception {
+        String url = windowSeconds == null ? CRASH_DASHBOARD_URL
+                : CRASH_DASHBOARD_URL + "?windowSeconds=" + windowSeconds;
+        return okData(getRoot(url, OPS_TOKEN));
+    }
+
+    private static JsonNode versionRow(JsonNode dashboard, String clientVersion) {
+        for (JsonNode row : dashboard.get("rows")) {
+            if (clientVersion.equals(row.get("clientVersion").asText())) {
+                return row;
+            }
+        }
+        throw new AssertionError("看板里没有 " + clientVersion + " 这一行：" + dashboard);
+    }
+
+    /** 用例自己从配置表解析保留期最大天数：与服务端共用一个私有方法会把这条断言变成同义反复。 */
+    private int maxRetentionDays() {
+        int max = 0;
+        for (String part : configs.stringParam("DASHBOARD_RETENTION_DAYS").split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                max = Math.max(max, Integer.parseInt(trimmed));
+            }
+        }
+        return max;
     }
 
     /** 发一条 POST，带运维令牌；{@code opsToken} 传 null 表示根本不带那个头。 */

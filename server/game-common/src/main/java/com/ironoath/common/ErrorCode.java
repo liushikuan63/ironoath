@@ -326,7 +326,13 @@ public enum ErrorCode {
      */
     TRACK_BATCH_EMPTY(16000, "上报的事件批次为空"),
     CRASH_REPORT_INCOMPLETE(16003, "崩溃上报内容不完整"),
-    RELEASE_VERSION_MISSING(16004, "缺少客户端版本号");
+    RELEASE_VERSION_MISSING(16004, "缺少客户端版本号"),
+    /**
+     * 库里没有这个 traceId 的崩溃记录。<b>不复用 {@link #CRASH_REPORT_INCOMPLETE}</b>：
+     * 那个码是写侧的「你报的东西缺字段」，客户端补全后重发就对了；这里是读侧的「这条根本不存在」，
+     * 运维该做的是换 traceId 或放宽窗口 —— 两个提示指向两件完全不同的动作，不能共用一个码。
+     */
+    CRASH_REPORT_NOT_FOUND(16005, "没有找到这条崩溃记录");
 
     private final int code;
     private final String msg;

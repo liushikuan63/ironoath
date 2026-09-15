@@ -192,6 +192,54 @@ class TrackStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("看板读侧两侧同一个数：分组口径、窗口边界，以及「limit 只砍明细、不砍聚合」")
+    void dashboardReadsMatchAcrossImplementations() {
+        for (TrackEventStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveBatch(List.of(
+                    startup("9.9.9", T0 + 1L), startup("9.9.9", T0 + 2L), startup("1.0.0", T0 + 3L),
+                    // 没带版本参数的一条：必须进空串这一组，而不是被静默丢掉（丢了等于缩小分母）
+                    startup(null, T0 + 4L),
+                    // 早于窗口起点的一条：不该计入
+                    startup("9.9.9", T0 - 500L),
+                    // 同名参数的别的事件：不该进 startup 的分母
+                    new TrackRecord("login", "P-dash", T0, T0 + 5L, "tr-login",
+                            Map.of("clientVersion", "9.9.9"))));
+
+            Map<String, Long> startups = store.countEventsByParam(T0, "startup", "clientVersion");
+            assertThat(startups).as("%s startup 按版本分组，只数 startup", label)
+                    .containsEntry("9.9.9", 2L).containsEntry("1.0.0", 1L).containsEntry("", 1L)
+                    .hasSize(3);
+
+            store.saveCrash(new CrashRecord("tr-c1", "m", "s", "9.9.9", "SceneMain", T0, T0 + 1L));
+            store.saveCrash(new CrashRecord("tr-c2", "m", "s", "9.9.9", null, T0, T0 + 2L));
+            store.saveCrash(new CrashRecord("tr-c3", "m", "s", null, null, T0, T0 + 3L));
+            store.saveCrash(new CrashRecord("tr-c4", "m", "s", "1.0.0", "SceneMain", T0, T0 - 500L));
+
+            assertThat(store.crashCountByVersion(T0)).as("%s 崩溃分版本，窗口外那条不计", label)
+                    .containsEntry("9.9.9", 2L).containsEntry("", 1L).hasSize(2);
+            assertThat(store.crashCount()).as("%s 总数是全部存量，与窗口无关", label).isEqualTo(4);
+
+            // 这条是整段最要紧的：明细被 limit 截断，聚合数不受影响。
+            // 反过来说，如果哪天有人图省事拿 recentCrashes(limit) 去数分版本崩溃，
+            // 症状就是"某个版本明明在批量崩，看板上看不出来"。
+            List<CrashRecord> page = store.recentCrashes(2);
+            assertThat(page).as("%s 明细按 serverTs 倒序且只回 limit 条", label)
+                    .extracting(CrashRecord::traceId).containsExactly("tr-c3", "tr-c2");
+            assertThat(store.crashCountByVersion(T0).values().stream().mapToLong(Long::longValue).sum())
+                    .as("%s 翻了第一页不等于看到全部 —— 聚合必须仍是全量", label).isEqualTo(3L);
+            assertThat(store.recentCrashes(0)).as("%s limit<1 是拿不到东西，不是全量返回", label).isEmpty();
+        }
+    }
+
+    /** 一条带（或不带）版本参数的启动事件；窗口判定看 serverTs。 */
+    private static TrackRecord startup(String clientVersion, long serverTs) {
+        Map<String, String> params = clientVersion == null
+                ? Map.of("deviceId", "dev-1") : Map.of("clientVersion", clientVersion);
+        return new TrackRecord("startup", null, serverTs - 5L, serverTs, "tr-startup-" + serverTs, params);
+    }
+
+    @Test
     @DisplayName("三处索引必须存在：这张表按 30 天算是全服最大的一张，没索引每次清理都是整集合扫")
     void trackingCollectionsHaveTheirIndexes() {
         requireMongo();

@@ -72,6 +72,61 @@ public interface TrackEventStore {
      */
     int purgeCrashesOlderThan(long cutoffMillis);
 
+    /**
+     * 当前存储里的崩溃条数（内存版此前只有单测在读，提到端口是为了让 {@code /ops/crash/recent}
+     * 能把 total 与 listed 分开回）。
+     *
+     * <p><b>崩溃记录没有条数上限</b>（见 {@link #purgeCrashesOlderThan}），所以这个数只随保留期清理下降；
+     * 它突然变大有两种解释 —— 真出事了，或者有人把这个不要求身份的端点当靶子刷。
+     */
+    int crashCount();
+
+    /**
+     * 窗口内按<b>客户端版本</b>分组的崩溃条数（B16 §六 第一条：崩溃率必须按版本分组）。
+     *
+     * <p><b>为什么不复用 {@link #recentCrashes} 让调用方自己数</b>：那个方法带 limit，
+     * 而"翻了第一页"不是"看到的全部" —— 拿被截断的样本算分组计数，
+     * 症状恰恰是这条要防的那件事：某个版本明明在批量崩，看板上却看不出来。
+     * 聚合必须在存储层做（Mongo 侧是一次 {@code $group}，不是把全表拉进堆）。
+     *
+     * @param sinceMillis 窗口起点（含），按 {@code serverTs} 判
+     * @return 版本号 → 条数；<b>没带版本的崩溃归在空串这一键</b>，不静默丢弃
+     */
+    Map<String, Long> crashCountByVersion(long sinceMillis);
+
+    /**
+     * 窗口内某个事件按<b>参数值</b>分组的条数。崩溃率的分母（{@code startup} 的
+     * {@code clientVersion}）走这一条，将来 §三 漏斗的任意一环按任意参数分组都走这一条 ——
+     * 参数的取值集合是客户端字典决定的，服务端不认识它们，所以这里不枚举、只分组。
+     *
+     * <p>缺失与空串归同一组（空串键）：客户端把空值落成空串而不是 null（见
+     * {@code TrackEvents.ts#trackParam}），分成两组会让"没带参数"看起来像两个不同的桶。
+     *
+     * @param sinceMillis 窗口起点（含），按 {@code serverTs} 判
+     * @param eventName   事件名，精确匹配
+     * @param paramKey    参数键
+     */
+    Map<String, Long> countEventsByParam(long sinceMillis, String eventName, String paramKey);
+
+    /**
+     * 最近的崩溃明细，按 {@code serverTs} 倒序，最多 {@code limit} 条。
+     *
+     * <p>返回的记录含完整堆栈；<b>是端点层决定不带出去</b>（见 {@code CrashListItem} 的说明），
+     * 因为一条只读列表端点不该成为全服最大的响应。
+     */
+    List<CrashRecord> recentCrashes(int limit);
+
+    /**
+     * 分组键归一化：null 与空白一律成空串。
+     *
+     * <p><b>为什么在端口上做静态方法而不是各实现一份</b>：这是「没带版本号的崩溃算哪一组」
+     * 这一条看板口径的唯一实现。两份实现的后果不是错，而是<b>同一份数据在 dev 与生产上分组不同</b>
+     * —— 那正是最难查的那类差异：没人会去比对一个空串键和一个 null 键。
+     */
+    static String groupKey(String value) {
+        return value == null || value.isBlank() ? "" : value;
+    }
+
     /** 测试辅助：清空。 */
     void clear();
 
