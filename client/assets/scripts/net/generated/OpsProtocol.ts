@@ -310,3 +310,43 @@ export interface CrashDetailResp {
   /** 完整堆栈。超长时尾部带「...(服务端截断，原长 N 字符)」—— 那句话在文本里而不是单独一个布尔字段：一条被截断的堆栈在后台看起来和完整的没区别，而缺的往往正是最深的那一帧，标记必须跟着文本走。 */
   stack: string
 }
+
+/**
+ * GET /ops/track/recent 的一行：一条**已落库**的埋点事件原样回出来。
+ *
+ * **为什么要能把事件读出来**：客户端在微信小游戏运行时里打的自检行只存在于开发者工具的 Console 里，
+ * 而 IDE 不把它落到任何可读文件（2026-09-16 实测：近期 WeappLog 全 grep 零命中）。于是「模拟器里
+ * 到底跑通没有」这件事没有机器可读的出口，只能用人眼看 —— 而人眼看到的不会留下任何证据。
+ * 把同一次自检作为事件收下并能读回来，"跑通"才第一次变成可复核的结论。
+ */
+export interface TrackRecentItem {
+  /** 事件名，与客户端字典 {@code TrackEvents.ts} 一致。 */
+  name: string
+  /** 玩家 id。**可空是设计**：启动与自检这一类事件发生在拿到身份之前，而那一段恰恰是「进都没进就走了」的全部证据。 */
+  playerId: string | null
+  /** 客户端时刻，只用于同一批内部的先后顺序。 */
+  clientTs: number
+  /** 服务端落库时刻。排序与窗口都按它算（铁律 5）。 */
+  serverTs: number
+  /** 所属请求链路，用来把一条事件还原成一次完整的调用。 */
+  traceId: string
+  /** 事件参数，值一律字符串（与 TrackEvent.params 同一口径：类型化会让每加一种参数都要改契约）。 */
+  params: Record<string, string>
+}
+
+/**
+ * GET /ops/track/recent 响应：某个事件名最近的若干条（只读，需运维令牌）。
+ *
+ * **存在理由还包括给 {@code recentOf}/{@code recentEvents} 一个生产读者**：那两个方法此前只被
+ * 单测调用，与 unfulfilledCents()、crashOf() 是同一族 —— 机制在，没人能看。
+ */
+export interface TrackRecentResp {
+  /** 本次过滤的事件名。**回显它**是为了让"读错名字读到空表"这件事在响应里就能看出来 —— 一个不名自身过滤条件的空数组，与"这个事件真的没发生"完全无法区分。 */
+  eventName: string
+  /** 当前存储里该事件的总条数（与 listed 分开回，理由同 pay/debt：翻了第一页不等于看到全部）。 */
+  total: number
+  /** 本响应实际带出的条数。 */
+  listed: number
+  /** 按服务端落库时刻倒序，最多 limit 条。 */
+  events: TrackRecentItem[]
+}

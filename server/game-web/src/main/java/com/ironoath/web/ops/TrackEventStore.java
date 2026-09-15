@@ -109,6 +109,25 @@ public interface TrackEventStore {
     Map<String, Long> countEventsByParam(long sinceMillis, String eventName, String paramKey);
 
     /**
+     * 某个事件最近的若干条，按 {@code serverTs} 倒序，最多 {@code limit} 条。
+     *
+     * <p><b>与 {@link #recentOf} 的分工</b>：那条按玩家查（"这个人刚才做了什么"），这条按事件名查
+     * （"这轮启动自检到底成没成"）。后者要成立是因为客户端自检行只活在开发者工具的 Console 里，
+     * 而 IDE 不把它落到任何文件 —— 不能读回来的"跑通"就只是一个人眼结论。
+     *
+     * @param limit 由调用方给（禁止全量返回：这张表按 30 天算是全服最大的一张）
+     */
+    List<TrackRecord> recentByName(String eventName, int limit);
+
+    /**
+     * 某个事件的总条数（与 {@link #recentByName} 的 limit 分开回）。
+     *
+     * <p>没有它，"listed=20、total 未知"就会被读成"一共就 20 条" —— 与 {@code pay/debt}
+     * 把 total 与 listed 分开回是同一条理由。
+     */
+    int countByName(String eventName);
+
+    /**
      * 最近的崩溃明细，按 {@code serverTs} 倒序，最多 {@code limit} 条。
      *
      * <p>返回的记录含完整堆栈；<b>是端点层决定不带出去</b>（见 {@code CrashListItem} 的说明），

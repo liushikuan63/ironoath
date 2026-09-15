@@ -181,6 +181,8 @@ export class GameBootstrap extends Component {
   private uninstallCrashHooks: (() => void) | null = null
   private lastTickAt = 0
   private lastActionAt = 0
+  /** 本次启动的面板视图装配账（targets() 里写）。找不到视图是静默的，所以账必须自己记。 */
+  private panelViews: { attempted: number, missing: string[] } = { attempted: 0, missing: [] }
 
   /**
    * 崩溃时所在场景名。拿不到就返回 null ——
@@ -428,11 +430,26 @@ export class GameBootstrap extends Component {
     // 而登录就会带上设备与账号标识 —— 那正是隐私接口的范畴。
     // 弹窗与协议文本都由平台提供，本作不画、不存文案。
     this.privacyPlan = planPrivacyPrompt(readPrivacySetting())
+    // 攒批策略由服务端下发（10 条或 10 秒那种），客户端不写死。appVersion 是公开端点，
+    // 登录前就能调 —— 所以 startup 这个"登录前"的事件才有地方发。
+    // 刻意建在闸门**之前**：被强制更新挡在提示页的那批玩家恰恰是最需要被数到的人
+    // （他们"进不来"），没有 tracker 就读不到任何东西。update() 里的 trackClient.tick()
+    // 与本方法的提前 return 无关，所以队列照样会冲出去。
+    const tracker = await this.buildTracker(api, version)
+    this.trackClient = tracker
     const gate = decideUpdateGate(version, CLIENT_VERSION)
     if (gate.blocked) {
       this.showUpdateNotice(gate)
-      console.log('[boot] ' + JSON.stringify({
+      const blocked = {
         platform: isWxRuntime() ? 'wechat' : 'web',
+        started: 'false',
+        blocked: 'force-update',
+        clientVersion: CLIENT_VERSION,
+        latestVersion: gate.latest ?? '',
+        bootMs: String(bootElapsedMs()),
+      }
+      console.log('[boot] ' + JSON.stringify({
+        platform: blocked.platform,
         started: false,
         blocked: 'force-update',
         clientVersion: CLIENT_VERSION,
@@ -442,13 +459,12 @@ export class GameBootstrap extends Component {
         // "强制更新页出现得有多快"在小游戏运行时里永远是一格空白
         bootMs: bootElapsedMs(),
       }))
+      // 自检行只有开发者工具的 Console 能看见，而那边不落文件 —— 同一个事实再发一份到服务端，
+      // "被挡在更新页的人有多少"才是可查的。startup 刻意留到闸门之后：崩溃率的分母口径是
+      // "这个版本有人跑起来"，把永久停在提示页的那批掺进去会稀释一个已有指标
+      tracker?.track(TRACK_EVENTS.bootCheck, blocked)
       return
     }
-
-    // 攒批策略由服务端下发（10 条或 10 秒那种），客户端不写死。appVersion 是公开端点，
-    // 登录前就能调 —— 所以 startup 这个"登录前"的事件才有地方发。
-    const tracker = await this.buildTracker(api, version)
-    this.trackClient = tracker
 
     // 崩溃上报**不依赖埋点是否可用**：拿不到 TrackPolicy 时游戏照样要能收崩溃。
     // 有 tracker 就走它（`TrackClient.reportCrash` 不排队、不重投、失败只告警），
@@ -494,13 +510,21 @@ export class GameBootstrap extends Component {
     // 小游戏没有可编程的自动化接口（miniprogram-automator 连上即断），
     // 所以这条日志就是 DevTools 内验证的入口 —— 它必须一行内给全判断依据：
     // 平台、登录结果、挂上的面板数、有没有拿到服务端会话票据。
-    const mounted = Object.keys(this.targets()).length
+    // 数的是 targets() 那一次装配里的**视图查找结果**，不是回调条数：一个面板会给 out 添两三个键
+    // （city 与 cityCollect），按键数报"面板挂了几个"是一个会说谎的名字
+    const missingPanels = this.panelViews.missing.join(',')
+    if (missingPanels !== '') {
+      // 缺一个视图 = 那个面板永远空白，而组件找不到时是静默返回 null 的：不在这里喊，
+      // 就没有任何东西会知道（Console 之外还有一条 boot_check 能被读回来）
+      console.warn(`[boot] 面板视图缺失：${missingPanels}`)
+    }
     const state = gameStore.getState()
     console.log('[boot] ' + JSON.stringify({
       platform: isWxRuntime() ? 'wechat' : 'web',
       started,
       playerId: state.playerId,
-      mountedPanels: mounted,
+      mountedPanels: this.panelViews.attempted - this.panelViews.missing.length,
+      missingPanels,
       hasAuthToken: this.net?.hasAuthToken() ?? false,
       clientVersion: CLIENT_VERSION,
       privacyApi: this.privacyPlan.apiAvailable,
@@ -510,6 +534,20 @@ export class GameBootstrap extends Component {
       // 那一段只能在真机上看。web-mobile 那边另有 verify-perf-runtime.mjs 的外部墙钟，两个数一起看
       bootMs: bootElapsedMs(),
     }))
+    // 同一份事实再发一份到服务端：Console 里那行没人能读回来（IDE 不落文件），
+    // 而"在开发者工具里跑通了"必须是一个可复核的结论而不是一句目击证词。
+    tracker?.track(TRACK_EVENTS.bootCheck, {
+      platform: isWxRuntime() ? 'wechat' : 'web',
+      started: String(started),
+      playerId: state.playerId ?? '',
+      mountedPanels: String(this.panelViews.attempted - this.panelViews.missing.length),
+      missingPanels,
+      hasAuthToken: String(this.net?.hasAuthToken() ?? false),
+      clientVersion: CLIENT_VERSION,
+      privacyApi: String(this.privacyPlan.apiAvailable),
+      privacyAsked: String(this.privacyPlan.request),
+      bootMs: String(bootElapsedMs()),
+    })
   }
 
   /**
@@ -733,6 +771,13 @@ export class GameBootstrap extends Component {
     const quest = this.panel(QuestPanelView, 'quest')
     const world = this.panel(WorldMap, 'world')
     const settings = this.panel(SettingsPanelView, 'settings')
+    // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
+    // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
+    const views = { city, army, hero, bag, stage, social, power, search, quest, world, settings }
+    this.panelViews = {
+      attempted: Object.keys(views).length,
+      missing: Object.entries(views).filter(([, view]) => view === null).map(([key]) => key),
+    }
     const out: PanelTargets = {
       error: (panel, message) => console.warn(`[${panel}] ${message}`),
     }

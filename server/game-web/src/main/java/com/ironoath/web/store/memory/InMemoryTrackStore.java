@@ -178,6 +178,37 @@ public final class InMemoryTrackStore implements TrackEventStore {
     }
 
     @Override
+    public synchronized List<TrackRecord> recentByName(String eventName, int limit) {
+        if (eventName == null || eventName.isBlank() || limit < 1) {
+            return List.of();
+        }
+        List<TrackRecord> out = new ArrayList<>();
+        for (TrackRecord record : events) {
+            if (record.name().equals(eventName)) {
+                out.add(record);
+            }
+        }
+        // 与 recentOf 同一条：端口承诺的是"按 serverTs 倒序"，而 deque 的迭代序只是落库顺序，
+        // 补报或同批同刻时两者不等价 —— 排查时看错先后比少给几条更难发现
+        out.sort(java.util.Comparator.comparingLong(TrackRecord::serverTs).reversed());
+        return List.copyOf(out.size() > limit ? out.subList(0, limit) : out);
+    }
+
+    @Override
+    public synchronized int countByName(String eventName) {
+        if (eventName == null || eventName.isBlank()) {
+            return 0;
+        }
+        int n = 0;
+        for (TrackRecord record : events) {
+            if (record.name().equals(eventName)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    @Override
     public synchronized List<CrashRecord> recentCrashes(int limit) {
         if (limit < 1) {
             return List.of();

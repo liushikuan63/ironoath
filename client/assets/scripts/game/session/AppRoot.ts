@@ -544,6 +544,14 @@ export class AppRoot {
 
   private say(panel: string, outcome: NetOutcome<unknown>): void {
     this.targets.error?.(panel, AppRoot.reason(outcome))
+    // 同一句话发给服务端：`targets.error` 的落点是 console.warn，只有开发者看得见，
+    // 于是"某个面板一直是空的"这件事在没有人盯着 Console 的时候永远没人知道。
+    // 这是十一个面板读取的同一个收口点，所以只在这里加一次。
+    this.track(TRACK_EVENTS.panelLoadFailed, {
+      panel,
+      kind: outcome.kind,
+      reason: AppRoot.reason(outcome),
+    })
   }
 
   /**

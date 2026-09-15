@@ -495,6 +495,22 @@ test('传输抛错时说的是「网络不通」：玩家看到这句会等，�
   assert.match(h.errors[0]?.[1] ?? '', /网络不通/)
 })
 
+test('面板读取失败同时是一条埋点：只发给 Console 的话，「某个面板一直是空的」永远查不回来', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.events.length = 0
+  h.http.bizFailNext = { code: 2001, msg: '背包还没开', detail: null }
+
+  await h.root.refresh('bag')
+
+  const failed = h.events.find(e => e.name === 'panel_load_failed')
+  assert.ok(failed, `必须发一条 panel_load_failed，实际事件=${h.events.map(e => e.name).join('、') || '（一条没有）'}`)
+  assert.deepEqual(failed?.params, { panel: 'bag', kind: 'biz', reason: '背包还没开' },
+    'panel 与 kind 是分得开的两格：哪个面板、是哪一类失败')
+  assert.equal(h.errors.length, 1,
+    '埋点不取代给玩家的那句提示 —— 它们是同一个收口点的两半，少一半就是「玩家看不到」或「后台查不到」')
+})
+
 test('一键收割发的是 buildingId=null，且收割结果先落地再刷新列表', async () => {
   const h = harness()
   await h.root.start('dev-1', '君')

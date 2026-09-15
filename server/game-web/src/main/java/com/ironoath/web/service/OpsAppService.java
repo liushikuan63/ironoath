@@ -189,6 +189,35 @@ public class OpsAppService {
         return store.recentOf(playerId, limit);
     }
 
+    /**
+     * 某个事件最近的若干条（只读，供 {@code GET /ops/track/recent} 用）。
+     *
+     * <p><b>读数之前先推进缓冲</b>（同 {@link #crashDashboard}）：刚跑完一轮启动的客户端往往不足一批，
+     * 不推进就会读到一张空表，而空表在这里会被读成"这个客户端一条都没报"——恰恰是这次要问的问题的
+     * 反向答案。
+     *
+     * <p><b>为什么需要这条端点</b>：客户端的启动自检行只存在于开发者工具的 Console 里，
+     * IDE 不把它落到任何文件。读不回来，"在模拟器里跑通了"就只能是一个人眼结论，
+     * 而人眼结论既没有证据也不可复核。
+     */
+    public com.ironoath.web.dto.generated.TrackRecentResp recentTrackEvents(String eventName, int limit) {
+        advanceBuffer();
+        String name = eventName == null ? "" : eventName.trim();
+        int capped = Math.max(1, Math.min(limit, TRACK_LIST_MAX));
+        List<TrackEventStore.TrackRecord> records = name.isEmpty()
+                ? List.of() : store.recentByName(name, capped);
+        List<com.ironoath.web.dto.generated.TrackRecentItem> items = new ArrayList<>(records.size());
+        for (TrackEventStore.TrackRecord record : records) {
+            items.add(new com.ironoath.web.dto.generated.TrackRecentItem(record.name(), record.playerId(),
+                    record.clientTs(), record.serverTs(), record.traceId(), record.params()));
+        }
+        return new com.ironoath.web.dto.generated.TrackRecentResp(name, store.countByName(name),
+                items.size(), List.copyOf(items));
+    }
+
+    /** 事件明细最多带几条（一条只读端点也不该成为全服最大的响应）。 */
+    private static final int TRACK_LIST_MAX = 50;
+
     // ---------- 崩溃上报（B16 §6，验收 9） ----------
 
     /**

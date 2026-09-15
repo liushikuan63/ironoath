@@ -232,6 +232,35 @@ class TrackStoreEquivalenceTest {
         }
     }
 
+    @Test
+    @DisplayName("按事件名读回：过滤准、倒序、limit 只砍明细不砍总数，参数表原样回来")
+    void recentByNameMatchesAcrossImplementations() {
+        for (TrackEventStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveBatch(List.of(
+                    new TrackRecord("boot_check", null, T0, T0 + 1L, "tr-b1",
+                            Map.of("started", "true", "mountedPanels", "11")),
+                    new TrackRecord("boot_check", "P-boot", T0, T0 + 3L, "tr-b2",
+                            Map.of("started", "false", "blocked", "force-update")),
+                    // 别的事件不许混进来
+                    new TrackRecord("panel_load_failed", "P-boot", T0, T0 + 2L, "tr-p1",
+                            Map.of("panel", "stage")),
+                    new TrackRecord("boot_check", "P-boot", T0, T0 + 2L, "tr-b3", Map.of())));
+
+            List<TrackRecord> page = store.recentByName("boot_check", 2);
+            assertThat(page).as("%s 只回 boot_check，且最新的在前", label)
+                    .extracting(TrackRecord::traceId).containsExactly("tr-b2", "tr-b3");
+            assertThat(page.get(0).params()).as("%s 自检回执的字段必须原样读得回来", label)
+                    .containsEntry("started", "false").containsEntry("blocked", "force-update");
+            assertThat(store.countByName("boot_check")).as("%s 总数不受 limit 影响", label).isEqualTo(3);
+            assertThat(store.countByName("panel_load_failed")).as("%s 按名字各数各的", label).isEqualTo(1);
+            assertThat(store.recentByName("nope", 5)).as("%s 没这个事件就是空表", label).isEmpty();
+            assertThat(store.recentByName("boot_check", 0)).as("%s limit<1 不是全量返回", label).isEmpty();
+            assertThat(store.recentByName(null, 5)).as("%s 空名字不许变成'查全部'", label).isEmpty();
+            assertThat(store.countByName(" ")).as("%s 空白名字同样不是全量", label).isZero();
+        }
+    }
+
     /** 一条带（或不带）版本参数的启动事件；窗口判定看 serverTs。 */
     private static TrackRecord startup(String clientVersion, long serverTs) {
         Map<String, String> params = clientVersion == null

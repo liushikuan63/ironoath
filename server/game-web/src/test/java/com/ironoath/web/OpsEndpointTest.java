@@ -70,6 +70,7 @@ class OpsEndpointTest {
     private static final String CRASH_DASHBOARD_URL = "/ops/crash/dashboard";
     private static final String CRASH_RECENT_URL = "/ops/crash/recent";
     private static final String CRASH_DETAIL_URL = "/ops/crash/detail";
+    private static final String TRACK_RECENT_URL = "/ops/track/recent";
     private static final String PLAYER_HEADER = "X-Player-Id";
     /** 与 {@code application-test.yml} 的 {@code ironoath.ops.token} 一致（SeasonSettleAuthTest 同源）。 */
     private static final String OPS_TOKEN = "test-ops-token";
@@ -409,6 +410,89 @@ class OpsEndpointTest {
         assertThat(missing.get("code").asInt()).isEqualTo(ErrorCode.CRASH_REPORT_NOT_FOUND.code());
         assertThat(missing.get("code").asInt()).as("「库里没有」与「你报的缺字段」是两个动作，不能共用一个码")
                 .isNotEqualTo(ErrorCode.CRASH_REPORT_INCOMPLETE.code());
+    }
+
+    // ---------- 把客户端自检读回来（模拟器跑通的机器证据，收口清单 #143） ----------
+
+    @Test
+    @DisplayName("读事件端点：自检回执的 params 原样读得回来，eventName 回显、total 与 listed 分开")
+    void recentTrackEventsReturnsTheBootReceipt() throws Exception {
+        // 被强更挡住的这一次带身份（本地存着上次的 token），跑通的那一次没有身份
+        postTrack(List.of(new TrackEvent("boot_check", 1_700_000_200_000L, Map.of(
+                "platform", "wechat", "started", "false", "blocked", "force-update"))), "P-boot");
+        postTrack(List.of(new TrackEvent("boot_check", 1_700_000_100_000L, Map.of(
+                "platform", "wechat", "started", "true", "mountedPanels", "11", "bootMs", "2743"))), null);
+        flusher.flushNow("读事件用例");
+
+        JsonNode data = okData(getRoot(TRACK_RECENT_URL + "?name=boot_check&limit=5", OPS_TOKEN));
+        assertThat(data.get("eventName").asText()).as("回显过滤条件：读错名字与真的没发生要分得开")
+                .isEqualTo("boot_check");
+        assertThat(data.get("total").asInt()).isEqualTo(2);
+        assertThat(data.get("listed").asInt()).isEqualTo(2);
+
+        List<JsonNode> serverTs = data.get("events").findValues("serverTs");
+        for (int i = 1; i < serverTs.size(); i++) {
+            assertThat(serverTs.get(i - 1).asLong())
+                    .as("最新的在前").isGreaterThanOrEqualTo(serverTs.get(i).asLong());
+        }
+
+        // 两条各查各的：serverTs 由服务端在收下那一刻赋值，测试无法控制谁更新，
+        // 所以按内容定位。「严格最新在前」由 TrackStoreEquivalenceTest 用固定 serverTs 钉住。
+        JsonNode ran = rowWith(data, "bootMs");
+        assertThat(ran.get("params").get("bootMs").asText()).as("自检字段必须原样读得回来").isEqualTo("2743");
+        assertThat(ran.get("params").get("mountedPanels").asText()).isEqualTo("11");
+        assertThat(ran.get("playerId").isNull() || ran.get("playerId").asText().isEmpty())
+                .as("登录前的自检没有身份，这一格必须能表达「没有」而不是被丢掉").isTrue();
+        assertThat(rowWith(data, "blocked").get("playerId").asText())
+                .as("同一张表里带身份的那条也得读得回身份，否则上面那条「没有」只是因为全程没有").isEqualTo("P-boot");
+
+        JsonNode onlyOne = okData(getRoot(TRACK_RECENT_URL + "?name=boot_check&limit=1", OPS_TOKEN));
+        assertThat(onlyOne.get("listed").asInt()).as("limit 说话的就是这一页给几条").isEqualTo(1);
+        assertThat(onlyOne.get("total").asInt()).as("总数不受 limit 影响：看板不能把「只列了 1 条」读成「只发生过 1 次」")
+                .isEqualTo(2);
+        assertThat(onlyOne.get("events").size()).isEqualTo(1);
+    }
+
+    /** 取 params 里含有某个键的那一条；没有则直接红，避免用下标赌排序。 */
+    private static JsonNode rowWith(JsonNode data, String paramKey) {
+        for (JsonNode row : data.get("events")) {
+            if (row.get("params").has(paramKey)) {
+                return row;
+            }
+        }
+        throw new AssertionError("返回的 events 里没有一条带 params." + paramKey
+                + "，实际=" + data.get("events"));
+    }
+
+    @Test
+    @DisplayName("读事件把已到点的缓冲推进：模拟器只自检一次，之后再无流量，不推进就会一直读到空表")
+    void recentTrackEventsFlushesTheDueBuffer() throws Exception {
+        int maxBatch = (int) configs.longParam("TRACK_BATCH_MAX_SIZE");
+        assertThat(maxBatch).as("这条用例要的是「不足一批」那一档").isGreaterThan(1);
+        postTrack(List.of(new TrackEvent("boot_check", 1_700_000_300_000L,
+                Map.of("platform", "wechat", "started", "true"))), null);
+        assertThat(store.eventCount()).as("自检那一条还卡在服务端二次攒批器里").isZero();
+
+        // 不由测试代调 flusher.tick(未来时刻)：那样把 recentTrackEvents 里的 advanceBuffer() 删了也照样绿
+        Thread.sleep(configs.longParam("TRACK_BATCH_FLUSH_SECONDS") * 1000L + 400L);
+
+        JsonNode data = okData(getRoot(TRACK_RECENT_URL + "?name=boot_check", OPS_TOKEN));
+        assertThat(data.get("total").asInt())
+                .as("读之前推进已到点的缓冲，否则「客户端发过自检」永远读不到：%s", data).isEqualTo(1);
+        assertThat(flusher.pendingCount()).as("推进之后缓冲已清空").isZero();
+    }
+
+    @Test
+    @DisplayName("读事件端点：没令牌拒绝；读一个没人发过的事件名回空表而不是报错")
+    void recentTrackEventsGuardsAndDistinguishesEmpty() throws Exception {
+        assertThat(codeOf(getRoot(TRACK_RECENT_URL + "?name=startup", null)))
+                .isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
+
+        JsonNode data = okData(getRoot(TRACK_RECENT_URL + "?name=nobody_sends_this", OPS_TOKEN));
+        assertThat(data.get("events")).isEmpty();
+        assertThat(data.get("total").asInt()).isZero();
+        assertThat(data.get("eventName").asText())
+                .as("空表 + 回显的名字 = 能区分「这个事件真没发生」与「我读错了名字」").isEqualTo("nobody_sends_this");
     }
 
     @Test

@@ -102,6 +102,25 @@ public class OpsController {
     }
 
     /**
+     * 读回某个事件最近的若干条（只读，需运维令牌）。
+     *
+     * <p>存在理由不是"多一个端点"：客户端的启动自检行只活在开发者工具的 Console 里，
+     * IDE 不把它写进任何可读文件（实测近期 WeappLog 全 grep 零命中）。于是"在模拟器里跑通了"
+     * 这句话没有机器可复核的证据。把自检作为事件收下并能读回来，跑通才是结论而不是目击证词。
+     *
+     * @param eventName 要读的事件名（如 {@code boot_check}）；空则回空表并原样回显它
+     * @param limit     最多带几条，服务端另有上限夹住
+     */
+    @GetMapping("/track/recent")
+    public Result<com.ironoath.web.dto.generated.TrackRecentResp> recentTrackEvents(
+            @RequestHeader(name = OpsTokenGuard.HEADER, required = false) String opsToken,
+            @RequestParam(name = "name") String eventName,
+            @RequestParam(name = "limit", defaultValue = "20") int limit) {
+        token.require(opsToken);
+        return Result.ok(ops.recentTrackEvents(eventName, limit));
+    }
+
+    /**
      * 崩溃率看板（只读，需运维令牌）：<b>按客户端版本分组</b>的崩溃数、启动数与崩溃率。
      *
      * <p>存在理由是 B16 验收 9 的后半句：崩溃上报的写侧一直通，而读侧（{@code crashOf}、

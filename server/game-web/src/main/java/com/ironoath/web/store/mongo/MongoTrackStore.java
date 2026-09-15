@@ -165,6 +165,29 @@ public final class MongoTrackStore implements TrackEventStore {
     }
 
     @Override
+    public List<TrackRecord> recentByName(String eventName, int limit) {
+        if (eventName == null || eventName.isBlank() || limit < 1) {
+            return List.of();
+        }
+        List<TrackEventDocument> docs = mongo.find(Query.query(Criteria.where("event.name").is(eventName))
+                        .with(Sort.by(Sort.Order.desc("serverTs"), Sort.Order.asc("_id")))
+                        .limit(limit),
+                TrackEventDocument.class, TrackEventDocument.COLLECTION);
+        List<TrackRecord> out = new ArrayList<>(docs.size());
+        docs.forEach(d -> out.add(d.event()));
+        return out;
+    }
+
+    @Override
+    public int countByName(String eventName) {
+        if (eventName == null || eventName.isBlank()) {
+            return 0;
+        }
+        return (int) mongo.count(Query.query(Criteria.where("event.name").is(eventName)),
+                TrackEventDocument.COLLECTION);
+    }
+
+    @Override
     public List<CrashRecord> recentCrashes(int limit) {
         if (limit < 1) {
             return List.of();
