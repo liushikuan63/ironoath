@@ -53,6 +53,7 @@ class BeanAssemblyTest {
             com.ironoath.core.pay.PayOrderStore.class,
             com.ironoath.web.season.SeasonLedgerStore.class,
             com.ironoath.web.battle.BattleReportStore.class,
+            com.ironoath.web.quest.QuestProgressStore.class,
             com.ironoath.web.mail.MailStore.class,
             com.ironoath.web.nation.NationStore.class,
             com.ironoath.web.ops.TrackEventStore.class,
