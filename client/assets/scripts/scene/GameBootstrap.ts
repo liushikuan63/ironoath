@@ -524,6 +524,9 @@ export class GameBootstrap extends Component {
       started,
       playerId: state.playerId,
       mountedPanels: this.panelViews.attempted - this.panelViews.missing.length,
+      // 「找过几个」必须一起报：只有 mounted 与 missing 的话，
+      // 一次都没跑过视图查找（装配整个被跳过）也是 mounted=0 + missing 为空，看起来全绿
+      attemptedPanels: this.panelViews.attempted,
       missingPanels,
       hasAuthToken: this.net?.hasAuthToken() ?? false,
       clientVersion: CLIENT_VERSION,
@@ -541,6 +544,7 @@ export class GameBootstrap extends Component {
       started: String(started),
       playerId: state.playerId ?? '',
       mountedPanels: String(this.panelViews.attempted - this.panelViews.missing.length),
+      attemptedPanels: String(this.panelViews.attempted),
       missingPanels,
       hasAuthToken: String(this.net?.hasAuthToken() ?? false),
       clientVersion: CLIENT_VERSION,
