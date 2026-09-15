@@ -111,6 +111,27 @@ public class OpsController {
     }
 
     /**
+     * 读回补发记录（只读，需运维令牌）：谁在什么时候被补了什么、他领了没有、看过没有。
+     *
+     * <p><b>写侧单独存在是不够的</b>：本仓库已经反复撞到同一族缺口 ——
+     * 崩溃上报「收得到、取不出」(#135)、启动自检「Console 看得见、没人读得回」(#143)。
+     * 一张只写得进、查不出的补发表，等于把「你上周给我补过？」这句投诉交给记忆回答。
+     *
+     * @param playerId      只查某个人；不传或空即全服（会原样回显在响应里）
+     * @param windowSeconds 窗口秒数；不传即查满保留期，超出部分服务端夹住并打 WARN
+     * @param limit         最多带几条，服务端另有上限夹住
+     */
+    @GetMapping("/mail/recent")
+    public Result<com.ironoath.web.dto.generated.OpsMailRecentResp> recentMail(
+            @RequestHeader(value = "X-Ops-Token", required = false) String opsToken,
+            @RequestParam(name = "playerId", required = false) String playerId,
+            @RequestParam(name = "windowSeconds", required = false) Long windowSeconds,
+            @RequestParam(name = "limit", defaultValue = "20") int limit) {
+        token.require(opsToken);
+        return Result.ok(mails.recentForOps(playerId, windowSeconds, limit));
+    }
+
+    /**
      * 埋点入口健康度（只读，需运维令牌）：当前软上限、累计截断条数、待落库条数、已写库批次数。
      *
      * <p>与上面那几个 POST 的分界就是「要不要请求体」：这一条什么都不用问就能答，所以是 GET。

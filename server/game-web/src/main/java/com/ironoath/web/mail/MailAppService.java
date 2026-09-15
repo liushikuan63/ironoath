@@ -261,6 +261,58 @@ public class MailAppService {
 
     // ---------- 内部 ----------
 
+    /**
+     * 运维读回补发记录（B12 §2 的「补发必须可核对」）。
+     *
+     * <p><b>窗口夹在 [60 秒, 保留期]</b>，与崩溃率看板同一条理由：比保留期更早的邮件本就被清了，
+     * 给一个更大的窗口只会得到一张「那段时间没人补发」的假表 —— 而那正是这张表最容易骗人的读法。
+     * 夹过就回夹后的值并打 WARN，不静默按调用方给的数算。
+     *
+     * <p>{@code playerId} 传空或不传就是全服。回显过滤条件、{@code total} 与 {@code listed} 分开，
+     * 与 {@code /ops/track/recent} 同一条形状。
+     */
+    public com.ironoath.web.dto.generated.OpsMailRecentResp recentForOps(String playerId,
+                                                                        Long windowSeconds, int limit) {
+        long now = timeService.serverNow();
+        long retentionSeconds = retentionDays() * 86_400L;
+        long window = retentionSeconds;
+        if (windowSeconds != null) {
+            if (windowSeconds < WINDOW_MIN_SECONDS || windowSeconds > retentionSeconds) {
+                LOG.warn("补发读回的窗口被夹：请求 {} 秒 → 实际 {} 秒（下限 {}、上限=保留期 {} 秒；"
+                                + "比上限更早的邮件已被惰性清理，给更大窗口只会算出一张「没人补发」的假表）",
+                        windowSeconds, clamp(windowSeconds, retentionSeconds), WINDOW_MIN_SECONDS, retentionSeconds);
+            }
+            window = clamp(windowSeconds, retentionSeconds);
+        }
+        String who = playerId == null ? "" : playerId.trim();
+        int capped = Math.max(1, Math.min(limit, OPS_MAIL_LIST_MAX));
+        long since = now - window;
+        List<MailRecord> records = store.recent(who, since, now, capped);
+        List<com.ironoath.web.dto.generated.OpsMailRow> rows = new ArrayList<>(records.size());
+        for (MailRecord record : records) {
+            rows.add(new com.ironoath.web.dto.generated.OpsMailRow(record.mailId(), record.playerId(),
+                    com.ironoath.web.dto.generated.MailKind.valueOf(record.kind()), record.title(),
+                    actorOf(record.sourceRef()), record.sourceRef(), rewardViews(record.rewards()),
+                    record.claimedAt() != null || !record.hasAttachment(), record.readAt() != null,
+                    record.createdAt(), record.expireAt()));
+        }
+        return new com.ironoath.web.dto.generated.OpsMailRecentResp(who, window,
+                store.countRecent(who, since, now), rows.size(), List.copyOf(rows));
+    }
+
+    /** 一条只读端点最多带几条（与埋点读回同一条纪律：读侧不能成为最大的那个响应）。 */
+    private static final int OPS_MAIL_LIST_MAX = 50;
+    private static final long WINDOW_MIN_SECONDS = 60L;
+
+    private static long clamp(long requested, long retentionSeconds) {
+        return Math.max(WINDOW_MIN_SECONDS, Math.min(requested, retentionSeconds));
+    }
+
+    /** 补发那类的 sourceRef 形如 {@code ops:工单-6}；其余（溢出）没有人工操作者，如实回空串。 */
+    private static String actorOf(String sourceRef) {
+        return sourceRef != null && sourceRef.startsWith("ops:") ? sourceRef.substring(4) : "";
+    }
+
     private static String newId() {
         return "mail_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
     }

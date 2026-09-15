@@ -174,6 +174,41 @@ class MailStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("运维读回两侧同文：窗口边界含整点、过期的一律不计、limit<=0 不是全量、排序逐键一致")
+    void recentAndCountMatchOnBothStores() {
+        for (MailStore store : bothStores()) {
+            String label = label(store);
+            store.clear();
+            store.save(mailAt("m-edge", "P-1", T0, T0 + 30 * DAY));           // 正好落在窗口起点
+            store.save(mailAt("m-new", "P-1", T0 + DAY, T0 + 30 * DAY));
+            store.save(mailAt("m-old", "P-1", T0 - DAY, T0 + 30 * DAY));      // 窗口之外
+            store.save(mailAt("m-dead", "P-1", T0 + 2 * DAY - 3_600_000L, T0 + 2 * DAY - 60_000L));
+            store.save(mailAt("m-other", "P-2", T0 + DAY, T0 + 30 * DAY));
+
+            assertThat(store.recent(null, T0, T0 + 2 * DAY, 10))
+                    .as("%s 不传 playerId 就是全服（别人的那封当然在），过期与窗口外的不算；"
+                            + "m-new 与 m-other 同一 createdAt，tie-break 按 mailId 升序", label)
+                    .extracting(MailRecord::mailId).containsExactly("m-new", "m-other", "m-edge");
+            assertThat(store.countRecent(null, T0, T0 + 2 * DAY))
+                    .as("%s 总数与列表同一套过滤（两个数各说一套就没法核对分页）", label).isEqualTo(3);
+            assertThat(store.recent("P-2", T0, T0 + 2 * DAY, 10))
+                    .as("%s 按人筛只剩那一封", label).extracting(MailRecord::mailId)
+                    .containsExactly("m-other");
+            assertThat(store.countRecent("P-1", T0, T0 + 2 * DAY))
+                    .as("%s 分人之后总数跟着变", label).isEqualTo(2);
+            assertThat(store.recent(null, T0, T0 + 2 * DAY, 1))
+                    .as("%s limit 只截列表", label).hasSize(1);
+            assertThat(store.countRecent(null, T0, T0 + 2 * DAY))
+                    .as("%s 不截总数", label).isEqualTo(3);
+            assertThat(store.recent(null, T0, T0 + 2 * DAY, 0))
+                    .as("%s limit<=0 不能变成全量返回", label).isEmpty();
+            assertThat(store.recent(null, T0 + DAY, T0 + 2 * DAY, 10))
+                    .as("%s 窗口往前推就只剩同刻那两封（P-1 的 m-old 与已过期的那封都被排除）", label)
+                    .extracting(MailRecord::mailId).containsExactly("m-new", "m-other");
+        }
+    }
+
+    @Test
     @DisplayName("三处判据要走的索引必须存在：收件箱是每次进面板都发的查询")
     void mailCollectionsHaveTheirIndexes() {
         requireMongo();

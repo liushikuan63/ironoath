@@ -140,6 +140,44 @@ public final class MongoMailStore implements MailStore {
     }
 
     @Override
+    public List<MailRecord> recent(String playerId, long sinceCreatedAtMillis, long nowMillis, int limit) {
+        if (limit <= 0) {
+            // 与内存版同一条：limit<=0 是"一条都别给"，不是"不限条数"
+            return List.of();
+        }
+        List<MailDocument> docs = mongo.find(Query.query(windowFilter(playerId, sinceCreatedAtMillis, nowMillis))
+                        .with(Sort.by(Sort.Order.desc(MailDocument.FIELD_CREATED_AT),
+                                Sort.Order.asc("_id")))
+                        .limit(limit),
+                MailDocument.class, MailDocument.COLLECTION);
+        List<MailRecord> out = new ArrayList<>(docs.size());
+        docs.forEach(d -> out.add(d.toRecord()));
+        return out;
+    }
+
+    @Override
+    public int countRecent(String playerId, long sinceCreatedAtMillis, long nowMillis) {
+        return (int) mongo.count(Query.query(windowFilter(playerId, sinceCreatedAtMillis, nowMillis)),
+                MailDocument.COLLECTION);
+    }
+
+    /**
+     * 过滤条件只写这一处：{@link #recent} 与 {@link #countRecent} 必须同文。
+     *
+     * <p>未过期这条读的是<b>子文档里那份</b>{@code mail.expireAt}（与领取判定同一个来源）——
+     * 文档级冗余列只服务索引与列表读取，两个数对不上的时候该有一个是错的，
+     * 而错的最好下场是"少列一封"而不是"总数与列表各说一套"。
+     */
+    private static Criteria windowFilter(String playerId, long sinceCreatedAtMillis, long nowMillis) {
+        Criteria criteria = Criteria.where(MailDocument.FIELD_CREATED_AT).gte(sinceCreatedAtMillis)
+                .and(MailDocument.FIELD_MAIL_EXPIRE_AT).gt(nowMillis);
+        if (playerId != null && !playerId.isBlank()) {
+            criteria = criteria.and(MailDocument.FIELD_PLAYER_ID).is(playerId);
+        }
+        return criteria;
+    }
+
+    @Override
     public int count() {
         return (int) mongo.count(new Query(), MailDocument.COLLECTION);
     }

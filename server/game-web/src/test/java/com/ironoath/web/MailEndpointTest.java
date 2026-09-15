@@ -2,6 +2,7 @@ package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -273,6 +274,87 @@ class MailEndpointTest {
         assertThat(mail.sourceRef()).isEqualTo("battle:report-77");
         assertThat(mail.rewards()).hasSize(2);
         assertThat(mails.list(playerId).mails()).as("这封邮件在玩家面板里查得到").hasSize(1);
+    }
+
+    // ---------- 补发的读侧（"有写没读"那一族的下一档） ----------
+
+    @Test
+    @DisplayName("读回补发：谁、什么时候、补了什么、领了没有、看过没有都查得回来")
+    void opsRecentAnswersTheTicketQuestion() {
+        String a = newPlayer();
+        String b = newPlayer();
+        mails.sendByOps(new OpsMailSendReq(newId(), a, "客服补偿", "补一次损失",
+                List.of(mailReward("RESOURCE", "GOLD", 40L)), "工单-77"));
+        mails.sendByOps(new OpsMailSendReq(newId(), b, "纯公告", "维护说明", List.of(), "工单-78"));
+        mailbox.sendOverflow(a, List.of(new RewardItem(RewardType.RESOURCE, "GOLD", 9L)),
+                RewardContext.toMail("battle", "report-9", "trace-9"));
+
+        var all = mails.recentForOps(null, null, 20);
+
+        assertThat(all.playerId()).as("没按人筛要回显成空串，而不是省略这一格").isEmpty();
+        assertThat(all.total()).as("两笔补发 + 一封溢出，三封都在").isEqualTo(3);
+        assertThat(all.rows()).hasSize(3);
+        assertThat(all.windowSeconds())
+                .as("不传窗口即查满保留期").isEqualTo(configs.longParam("MAIL_RETENTION_DAYS") * 86_400L);
+
+        var forA = mails.recentForOps(a, null, 20);
+        assertThat(forA.playerId()).isEqualTo(a);
+        assertThat(forA.rows()).as("按人筛只剩他自己的两封").hasSize(2);
+        // 只断「是哪两类」，不断先后：两封在同一毫秒内生成时 createdAt 相同，
+        // 而 tie-break 是按 mailId 升序 —— 那是随机号，赌顺序就是赌一次假红
+        assertThat(forA.rows()).extracting("kind").containsExactlyInAnyOrder(
+                com.ironoath.web.dto.generated.MailKind.OVERFLOW,
+                com.ironoath.web.dto.generated.MailKind.SYSTEM);
+
+        var sent = forA.rows().stream()
+                .filter(r -> r.kind() == com.ironoath.web.dto.generated.MailKind.SYSTEM).findFirst().orElseThrow();
+        assertThat(sent.actor()).as("操作者就是工单号本身，不用再去翻 sourceRef 的写法")
+                .isEqualTo("工单-77");
+        assertThat(sent.rewards()).singleElement()
+                .satisfies(r -> assertThat(r.count()).isEqualTo(40L));
+        assertThat(sent.claimed()).as("玩家还没领，这一格就必须是 false").isFalse();
+        assertThat(sent.read()).isFalse();
+
+        var overflow = forA.rows().stream()
+                .filter(r -> r.kind() == com.ironoath.web.dto.generated.MailKind.OVERFLOW)
+                .findFirst().orElseThrow();
+        assertThat(overflow.actor())
+                .as("溢出那类没有人工操作者：回空串而不是硬套一个名字，也不是省略字段")
+                .isEmpty();
+        assertThat(mails.recentForOps(b, null, 20).rows()).singleElement()
+                .satisfies(r -> assertThat(r.claimed())
+                        .as("纯公告没有附件可领，与玩家侧同一口径：算已领").isTrue());
+    }
+
+    @Test
+    @DisplayName("读回补发：窗口被夹到保留期以内并回显夹后的值；total 不受 limit 影响")
+    void opsRecentEchoesFilterAndClampsWindow() {
+        String playerId = newPlayer();
+        for (int i = 0; i < 3; i++) {
+            mails.sendByOps(new OpsMailSendReq(newId(), playerId, "补偿" + i, "正文",
+                    List.of(mailReward("RESOURCE", "GOLD", 1L)), "工单-7" + i));
+        }
+        long retention = configs.longParam("MAIL_RETENTION_DAYS") * 86_400L;
+
+        assertThat(mails.recentForOps(playerId, retention * 4, 20).windowSeconds())
+                .as("要一个比保留期更大的窗口没有意义：更早的已被清，只会得到一张假表")
+                .isEqualTo(retention);
+        assertThat(mails.recentForOps(playerId, 1L, 20).windowSeconds())
+                .as("下限 60 秒，不给一个永远为空的窗口").isEqualTo(60L);
+
+        var paged = mails.recentForOps(playerId, null, 2);
+        assertThat(paged.listed()).isEqualTo(2);
+        assertThat(paged.total()).as("翻到第一页不等于看到全部").isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("读回补发没令牌就拒绝：它回的是「谁被补了什么」，全服可见等于把补发名单挂到门外")
+    void opsRecentRefusesWithoutToken() throws Exception {
+        assertThat(codeOf(postJson("/ops/mail/send", new OpsMailSendReq(newId(), "P-x",
+                "t", "正文", List.of(), "工单-8"), null))).isEqualTo(1009);
+        MvcResult result = mockMvc.perform(get("/ops/mail/recent")).andReturn();
+        assertThat(codeOf(JsonUtils.readTree(
+                result.getResponse().getContentAsString(StandardCharsets.UTF_8)))).isEqualTo(1009);
     }
 
     // ---------- 夹具 ----------

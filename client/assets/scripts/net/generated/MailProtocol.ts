@@ -143,3 +143,49 @@ export interface OpsMailSendResp {
   /** 附件条数（不是数量之和）。回执里给这个数是为了让运维核对「发出去的那封确实带着它以为带着的几条」。 */
   rewardCount: number
 }
+
+/**
+ * 运维读回的**一封**邮件（B12 §2 的补发核对）。列表带附件明细是刻意的：
+ * 「补了什么」正是这一格要回答的问题，而它只有几条（`MailAppService` 把一封的附件夹在 32 条内）。
+ * 与崩溃列表**不带堆栈**是同一类取舍的反面 —— 那里一条堆栈 20KB 会打死只读端点，这里一条附件几十字节。
+ */
+export interface OpsMailRow {
+  /** 补发回执上那个号，原样读回来。 */
+  mailId: string
+  /** 收件人。 */
+  playerId: string
+  /** 哪一类（SYSTEM=人工补发，OVERFLOW=发奖溢出）。 */
+  kind: MailKind
+  /** 标题。正文刻意**不**进列表：一封溢出邮件的正文把所有附件又列了一遍，列表要的是一屏能扫完的索引；要看正文按 mailId 走玩家侧那条端点。 */
+  title: string
+  /** 操作者（工单号或运维账号），从 `sourceRef` 的 `ops:` 前缀剥出来。**OVERFLOW 那类是空串** —— 没有人工操作者，与"没查这条字段"是两件事，所以回空串而不是省略。 */
+  actor: string
+  /** 归因原文（`ops:工单-6` / `battle:report-77`）。`RewardContext.sourceRef` 同一条理由：事后追查只认这个字段。 */
+  sourceRef: string
+  /** 附件明细（已解析过名字）。空数组=纯通知。 */
+  rewards: MailReward[]
+  /** 附件领了没有。**没附件时也是 true**（与玩家侧同一口径，不另立一套）。 */
+  claimed: boolean
+  /** 玩家读过没有。「补出去了但没人看」是工单要回答的第二问。 */
+  read: boolean
+  /** 发出时刻（毫秒）。 */
+  createdAt: number
+  /** 过期时刻（毫秒）。**读侧只看得到还没过期的那批**：过期即被清，而本端点扫的就是这份存储 —— 超出保留期的补发历史今天不存在，这是设计的事实，不是查询失败。 */
+  expireAt: number
+}
+
+/**
+ * GET /ops/mail/recent 响应。**窗口与过滤条件全部回显**（与 `/ops/track/recent` 的 `eventName` 同一条理由）：一个不说明自己看了多大窗口的空结果，区分不开"那段时间没人补"与"我把窗口传错了"。
+ */
+export interface OpsMailRecentResp {
+  /** 回显过滤条件：空串表示全服（没按人筛）。 */
+  playerId: string
+  /** 本次实际生效的窗口秒数（**夹过之后**的值）。上限就是保留期 —— 比它更早的邮件已被清，给一个更大的窗口只会得到一张"没人补发过"的假表，所以服务端会夹住并打 WARN。 */
+  windowSeconds: number
+  /** 窗口内匹配的封数，**不受 limit 影响**。 */
+  total: number
+  /** 本响应实际带出的条数。 */
+  listed: number
+  /** 按 `createdAt` 倒序，最多 limit 条。 */
+  rows: OpsMailRow[]
+}

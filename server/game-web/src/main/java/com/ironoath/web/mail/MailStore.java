@@ -99,6 +99,26 @@ public interface MailStore {
     /** 清理过期邮件，返回清理条数。惰性调用，不跑定时器（B00 陷阱 2、B12 禁止项）。 */
     int purgeExpired(long nowMillis);
 
+    /**
+     * 运维侧读回：<b>某个时间窗内</b>（按 {@code createdAt}）发出的、且<b>还没过期</b>的邮件，最新的在前。
+     *
+     * <p>{@code playerId} 为 null 或空串表示不按人筛（全服）。最多给 {@code limit} 条，
+     * 总数由 {@link #countRecent} 单独问 —— 两个数分开给是为了不让「只列了 20 条」
+     * 被读成「一共只有 20 次」。
+     *
+     * <p><b>过期的一律不出现，与 {@link #listOf} 同一条</b>：一封已过期的邮件按定义就是
+     * 「下一次有人读列表时会被清掉」的那一封，把它计入窗口统计会让总数随清理时机漂移，
+     * 也会让运维以为一条已经不存在的记录还躺在玩家邮箱里。代价如实写在这里：
+     * <b>超出保留期的补发历史今天不存在</b> —— 本端点扫的就是这份存储。
+     *
+     * <p>排序两侧必须逐键一致：{@code createdAt} 倒序，同刻按 {@code mailId} 升序
+     * （与 {@link #listOf} 同一条约定，理由也同一条）。
+     */
+    List<MailRecord> recent(String playerId, long sinceCreatedAtMillis, long nowMillis, int limit);
+
+    /** 与 {@link #recent} 同一套过滤条件（含未过期这条）下的总封数，不受 limit 影响。 */
+    int countRecent(String playerId, long sinceCreatedAtMillis, long nowMillis);
+
     /** 当前存量条数（健康度与测试用）。 */
     int count();
 

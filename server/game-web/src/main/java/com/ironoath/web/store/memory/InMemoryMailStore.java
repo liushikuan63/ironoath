@@ -110,6 +110,38 @@ public final class InMemoryMailStore implements MailStore {
     }
 
     @Override
+    public synchronized List<MailRecord> recent(String playerId, long sinceCreatedAtMillis,
+                                                long nowMillis, int limit) {
+        if (limit <= 0) {
+            // 与 Mongo 侧同一条：limit<=0 不是"不限条数"而是"一条都别给"。
+            // 当成无限制会让一个手滑传 0 的调用变成全集合扫描 + 本文件最大的响应
+            return List.of();
+        }
+        List<MailRecord> out = matching(playerId, sinceCreatedAtMillis, nowMillis);
+        out.sort(Comparator.comparingLong(MailRecord::createdAt).reversed()
+                .thenComparing(MailRecord::mailId));
+        return List.copyOf(out.subList(0, Math.min(limit, out.size())));
+    }
+
+    @Override
+    public synchronized int countRecent(String playerId, long sinceCreatedAtMillis, long nowMillis) {
+        return matching(playerId, sinceCreatedAtMillis, nowMillis).size();
+    }
+
+    /** 过滤条件只写这一处：列表与总数必须同文，否则两个数会各说一套（两侧实现同一条纪律）。 */
+    private List<MailRecord> matching(String playerId, long sinceCreatedAtMillis, long nowMillis) {
+        boolean allPlayers = playerId == null || playerId.isBlank();
+        List<MailRecord> out = new ArrayList<>();
+        for (MailRecord mail : mails.values()) {
+            if ((allPlayers || mail.playerId().equals(playerId))
+                    && mail.createdAt() >= sinceCreatedAtMillis && mail.expireAt() > nowMillis) {
+                out.add(mail);
+            }
+        }
+        return out;
+    }
+
+    @Override
     public synchronized int count() {
         return mails.size();
     }
