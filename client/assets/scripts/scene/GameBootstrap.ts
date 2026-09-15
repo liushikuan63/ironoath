@@ -17,6 +17,10 @@
  * 客户端不再镜像 global.json 的 512/32/9。）
  */
 
+// 这一行必须在所有 import 之前：模块按导入顺序深度优先求值，把它挪到后面（哪怕只挪一行）
+// 就等于把锚点推迟，`bootMs` 会凭空少算一段 —— 而且少多少取决于前面那些模块谁先跑，
+// 每次少得不一样多，所以退化不会以"变慢了"的形式出现，只会以"变快了"的形式出现。
+import { bootElapsedMs } from '../game/session/BootClock'
 import { _decorator, Color, Component, director, Graphics, Label, Node, Size, sys, UITransform, view } from 'cc'
 import { FetchHttpTransport } from '../net/FetchTransport'
 import { NetModule } from '../net/NetModule'
@@ -423,6 +427,9 @@ export class GameBootstrap extends Component {
         clientVersion: CLIENT_VERSION,
         latestVersion: gate.latest,
         notice: gate.notice,
+        // 停在提示页也是一次首屏：玩家已经看到一个界面了。不带这个数的话，
+        // "强制更新页出现得有多快"在小游戏运行时里永远是一格空白
+        bootMs: bootElapsedMs(),
       }))
       return
     }
@@ -487,6 +494,10 @@ export class GameBootstrap extends Component {
       clientVersion: CLIENT_VERSION,
       privacyApi: this.privacyPlan.apiAvailable,
       privacyAsked: this.privacyPlan.request,
+      // 首屏耗时（B16 §一）。小游戏运行时里没有外部墙钟可读，这个自报数就是唯一的输入；
+      // 但它是**下界** —— 从本包 JS 第一次被求值算起，不含包体下载与引擎初始化，
+      // 那一段只能在真机上看。web-mobile 那边另有 verify-perf-runtime.mjs 的外部墙钟，两个数一起看
+      bootMs: bootElapsedMs(),
     }))
   }
 

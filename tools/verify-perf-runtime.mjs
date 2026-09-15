@@ -48,6 +48,18 @@ const LIMITS = {
   minFps: threshold('PERF_MIN_FPS'),
 }
 
+// 客户端的后端地址是**构建期写死在 Boot.scene 里的两个编辑器字段**（baseUrl / wsUrl），
+// 不是运行期配置。于是本工具原先有一个会骗人的地方：`BACKEND_ORIGIN` 只改变"统计哪个前缀"，
+// 不改变"客户端实际把请求打到哪台"。共享开发机上 8080 常被别人的旧构建占着，
+// 症状就是"我明明指了自己那台，量出来的却是别人那台的延迟"，而且看不出破绽。
+// 现在：指了非默认后端就真的把产物里的写死值换掉；换不动即判失败。
+// 不给（默认就是 8080）时一个字节都不改，与改动前行为一致。
+const BAKED_HTTP = 'http://localhost:8080'
+const BAKED_WS = 'ws://localhost:8080/ws'
+const REWRITE = BACKEND !== BAKED_HTTP
+const BACKEND_WS = BACKEND.replace(/^http/, 'ws') + '/ws'
+let rewriteHits = 0
+
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.json': 'application/json', '.css': 'text/css', '.png': 'image/png',
@@ -63,7 +75,15 @@ const server = createServer(async (req, res) => {
   const url = decodeURIComponent((req.url ?? '/').split('?')[0])
   const target = path.join(ROOT, url === '/' ? 'index.html' : url)
   try {
-    const buf = await readFile(target)
+    let buf = await readFile(target)
+    if (REWRITE && ['.js', '.mjs', '.json'].includes(path.extname(target))) {
+      const text = buf.toString('utf8')
+      const after = text.split(BAKED_HTTP).join(BACKEND).split(BAKED_WS).join(BACKEND_WS)
+      if (after !== text) {
+        rewriteHits += text.split(BAKED_HTTP).length - 1 + text.split(BAKED_WS).length - 1
+        buf = Buffer.from(after, 'utf8')
+      }
+    }
     res.writeHead(200, { 'content-type': MIME[path.extname(target)] ?? 'application/octet-stream' })
     res.end(buf)
     // SPA fallback 只对非文件路径生效，且不能被当成"资源存在"的证据
@@ -82,10 +102,14 @@ const page = await context.newPage()
 const errors = []
 const backendResponses = []
 let bootAtMs = null
+let bootLine = null
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push('console.error: ' + m.text())
-  if (m.text().includes('[boot]') && bootAtMs === null) bootAtMs = Date.now()
+  if (m.text().includes('[boot]') && bootAtMs === null) {
+    bootAtMs = Date.now()
+    bootLine = m.text()
+  }
 })
 page.on('response', async (resp) => {
   if (!resp.url().startsWith(BACKEND)) return
@@ -112,6 +136,23 @@ while (bootAtMs === null && Date.now() < bootDeadline) {
 const firstScreenMs = (bootAtMs ?? readyAt) - startedAt
 const bootLineSeen = bootAtMs !== null
 
+/**
+ * 客户端自报的首屏耗时（`[boot]` 里的 `bootMs`）。
+ *
+ * <p>本工具量的是<b>外部墙钟</b>（从 goto 到看见那行），而小游戏运行时里没有这样一个外部时钟
+ * —— 那一头唯一的输入就是这个自报数。所以这里顺手核对它真的在：缺了它，
+ * 「首屏耗时的小游戏运行时版本」这条仍然不是难量，而是没有东西可量。
+ */
+const clientBootMs = (() => {
+  if (bootLine === null) {
+    return null
+  }
+  const hit = /"bootMs":([0-9]+)/.exec(bootLine)
+  return hit === null ? null : Number(hit[1])
+})()
+/** 两个时钟之差 = 本工具能看到、而自报数看不到的那一段（HTML/JS 下载与解析、引擎初始化）。 */
+const preJsLoadMs = clientBootMs === null ? null : firstScreenMs - clientBootMs
+
 const cdp = await context.newCDPSession(page)
 await cdp.send('Performance.enable')
 async function heapUsedMb() {
@@ -137,6 +178,7 @@ const fps = await page.evaluate(async (sampleMs) => {
 
 const heapStartMb = await heapUsedMb()
 console.log(`[perf] 首屏 ${firstScreenMs}ms（[boot] ${bootLineSeen ? '已捕获' : '未捕获，退到场景就绪'}），` +
+  `客户端自报 ${clientBootMs ?? '无'}ms（差 ${preJsLoadMs ?? '无'}ms = 本包 JS 被求值之前的下载与解析），` +
   `帧率 ${fps}（无头桌面 5s 采样），堆起始 ${heapStartMb}MB；开始 ${SOAK_SECONDS}s 挂机采样…`)
 let heapPeakMb = heapStartMb
 for (let elapsed = 0; elapsed < SOAK_SECONDS; elapsed += 30) {
@@ -155,7 +197,20 @@ const maxPayload = backendResponses.reduce((max, r) => Math.max(max, r.bytes), 0
 
 const failures = []
 if (!bootLineSeen) failures.push('没拿到 [boot] 自检行：首屏口径退化了，这次测量不算数')
+// 自报数是小游戏运行时里唯一可读的首屏耗时（那边没有本工具这样的外部墙钟），所以它必须在
+// 本工具跑得通的路径上先被核对存在 —— 否则"能在 DevTools 里读那一行"仍然只是一句愿望
+if (bootLineSeen && clientBootMs === null) {
+  failures.push('[boot] 里没有可解析的 bootMs：小游戏运行时那一头只能读这个自报数，缺它等于那条路又是空的')
+}
+if (clientBootMs !== null && clientBootMs > firstScreenMs) {
+  failures.push(`自报首屏 ${clientBootMs}ms > 外部墙钟 ${firstScreenMs}ms：两个数在同一台机器的同一个时钟上，`
+    + '客户端那段严格被包在里面 —— 只能是锚点被推迟（BootClock 的 import 被挪到了后面）或时钟倒拨被夹过')
+}
 if (backendResponses.length < 8) failures.push(`后端响应只观测到 ${backendResponses.length} 条（少于 8）：测量空转嫌疑`)
+if (REWRITE && rewriteHits === 0) {
+  failures.push(`指定了后端 ${BACKEND} 却在产物里一处都没换到：客户端实际打的仍是 ${BAKED_HTTP}，`
+    + '这台量出来的延迟不是那台打出来的请求')
+}
 if (heapPeakMb <= 0) failures.push('没量到 JS 堆：内存这项等于没测')
 if (firstScreenMs > LIMITS.firstScreenMs) failures.push(`首屏 ${firstScreenMs}ms > ${LIMITS.firstScreenMs}ms`)
 if (maxPayload > LIMITS.payloadBytes) failures.push(`最大响应 ${maxPayload}B > ${LIMITS.payloadBytes}B（${biggest[0]}）`)
@@ -217,6 +272,9 @@ console.log(JSON.stringify({
   note: '无头桌面浏览器测量，真机数字仍归 CC 文档阶段 6 的人工项；阈值全部读自 global.json',
   limits: LIMITS,
   firstScreenMs,
+  backend: { origin: BACKEND, rewrittenFromBaked: REWRITE, rewriteHits },
+  clientReportedBootMs: clientBootMs,
+  preJsLoadMs,
   sceneReadyMs,
   bootLineSeen,
   fpsDesktopHeadless: fps,
