@@ -115,6 +115,23 @@ const ROUTES: Record<string, unknown> = {
     ],
     claimableCount: 1, serverNow: SERVER_NOW,
   },
+  '/battle/reports': {
+    reports: [
+      { reportId: 'r-1', battleType: 'PVE', opponentId: 'mob_1', opponentName: '叛军斥候',
+        winner: 'ATTACKER', won: true, totalRounds: 6, attackerLoss: 120, defenderLoss: 400,
+        createdAt: SERVER_NOW - 60_000, expiresAt: SERVER_NOW + 7 * 86_400_000 },
+    ],
+    serverNow: SERVER_NOW,
+  },
+  '/battle/report': {
+    reportId: 'r-1',
+    result: { reportId: 'r-1', battleType: 'PVE', winner: 'ATTACKER', rounds: [],
+      attacker: { units: [], power: 100, loss: 120 }, defender: { units: [], power: 90, loss: 400 },
+      loot: [], seed: '1', skillTriggers: [] },
+    createdAt: SERVER_NOW - 60_000, expiresAt: SERVER_NOW + 7 * 86_400_000,
+    serverNow: SERVER_NOW,
+    playback: { roundMs: 900, speeds: '1,2' },
+  },
   '/mail/list': {
     mails: [
       { mailId: 'm-1', kind: 'OVERFLOW', title: '奖励放不下', text: '金币 ×500',
@@ -351,6 +368,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     targets: () => attached.push('targets'),
     quest: () => attached.push('quest'),
     mail: () => attached.push('mail'),
+    reports: () => attached.push('reports'),
+    reportReplay: () => attached.push('reportReplay'),
     mailClaimed: () => attached.push('mailClaimed'),
     home: () => attached.push('home'),
     speedupTargetChoice: (options, onPick) => {
@@ -575,6 +594,46 @@ test('领取失败与所有面板一样走同一个收口点：给玩家一句�
   assert.equal(failed?.params.reason, '请求重复提交')
   assert.equal(h.http.calls.filter(c => c.path === '/mail/list').length, 0,
     '失败就不重拉列表：列表还没变，多拉一次只是把失败藏起来')
+})
+
+test('战报列表：refresh 只发一次 GET，回执落到面板（GameApi 那两个方法第一次有了调用方）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.attached.length = 0
+
+  await h.root.refresh('reports')
+
+  assert.equal(h.http.calls.filter(c => c.path === '/battle/reports').length, 1)
+  assert.equal(h.attached.includes('reports'), true)
+  assert.equal(h.errors.length, 0)
+})
+
+test('点开一场：只拉详情，不重拉列表（列表刚拉过，重拉会把玩家正看着的那一屏换掉）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.refresh('reports')
+  h.http.calls.length = 0
+  h.attached.length = 0
+
+  await h.root.openReport('r-1')
+
+  assert.equal(h.http.calls.filter(c => c.path === '/battle/report').length, 1)
+  assert.equal(h.http.calls.some(c => c.path === '/battle/reports'), false)
+  assert.deepEqual(h.attached, ['reportReplay'], '详情落到回放，而不是又落一次列表')
+})
+
+test('详情拉不到：走所有面板同一个收口点（给玩家一句话 + 一条 panel_load_failed）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.events.length = 0
+  h.http.bizFailNext = { code: 11003, msg: '战报已过期', detail: null }
+
+  await h.root.openReport('r-gone')
+
+  assert.equal(h.errors.some(e => e[0] === 'reports'), true)
+  const failed = h.events.find(e => e.name === 'panel_load_failed')
+  assert.equal(failed?.params.panel, 'reports')
+  assert.equal(failed?.params.reason, '战报已过期')
 })
 
 test('一键收割发的是 buildingId=null，且收割结果先落地再刷新列表', async () => {

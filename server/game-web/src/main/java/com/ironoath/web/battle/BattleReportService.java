@@ -11,6 +11,7 @@ import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.ConfigException;
 import com.ironoath.config.cfg.SkillCfg;
+import com.ironoath.web.dto.generated.BattlePlaybackParams;
 import com.ironoath.web.dto.generated.BattleReportBrief;
 import com.ironoath.web.dto.generated.BattleReportListResp;
 import com.ironoath.web.dto.generated.BattleReportResp;
@@ -141,8 +142,14 @@ public class BattleReportService {
                     "战报已过期（保留 " + configs.longParam("BATTLE_REPORT_TTL_SECONDS") / 3600L
                             + " 小时），无法回放");
         }
+        // 回放时间参数随详情下发（与 TrackPolicy 随 /ops/app/version 下发同一条理由）：
+        // 这两个数住在 global 表里，客户端再写一份就是同一个事实两个家。
+        // **只发表里真有的这两条** —— 开场/结算/技能三段的时长表里没有，客户端按
+        // 「与回合时长同量级」推导（BattleReportPanel.playbackOptionsOf），在这里再造三个数就是发明。
         return new BattleReportResp(report.reportId(), toView(report, now),
-                report.createdAt(), report.expiresAt(), now);
+                report.createdAt(), report.expiresAt(), now,
+                new BattlePlaybackParams(configs.longParam("BATTLE_ROUND_DISPLAY_MS"),
+                        configs.stringParam("BATTLE_PLAYBACK_SPEEDS")));
     }
 
     /** 清理过期战报。惰性调用（列表与详情入口都会触发），不跑定时器。 */

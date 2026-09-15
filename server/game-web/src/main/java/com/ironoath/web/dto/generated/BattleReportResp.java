@@ -14,6 +14,7 @@ public record BattleReportResp(
         BattleResultView result,
         long createdAt,
         long expiresAt,
-        long serverNow)
+        long serverNow,
+        BattlePlaybackParams playback)   // 这一场回放该怎么演。**放在详情而不是列表**：列表每次进面板都拉，而时长参数只在真正放一场时用得上。
 {
 }

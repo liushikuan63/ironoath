@@ -27,6 +27,7 @@ import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { QuestPanelView } from './QuestPanelView'
 import { MailPanelView } from './MailPanelView'
+import { BattleReportPanelView } from './BattleReportPanelView'
 import { WorldMap } from './WorldMap'
 import { SettingsPanelView } from './SettingsPanelView'
 import { applyCommandButton } from './ArtCatalog'
@@ -65,6 +66,8 @@ const PANELS: readonly PanelDef[] = [
   { key: 'hero', label: '武将', view: HeroPanelView, reddotKey: null },
   { key: 'bag', label: '背包', view: BagPanelView, reddotKey: null },
   { key: 'stage', label: '关卡', view: StagePanelView, reddotKey: null },
+  // 战报紧跟关卡：都是「打完之后回来看」的入口，且它的数据在 dev 里真的会有（打野就产生战报）。
+  { key: 'reports', label: '战报', view: BattleReportPanelView, reddotKey: null },
   { key: 'quest', label: '任务', view: QuestPanelView, reddotKey: null },
   // 邮件紧跟任务：两者都是「每天进来清一次」的入口，而它的角标绑在服务端 mail/unread 叶子上
   // （B12 §4：红点判据只有一处，客户端不参与算）。

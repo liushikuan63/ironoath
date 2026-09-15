@@ -325,6 +325,12 @@ class MonsterHuntEndpointTest {
 
         BattleReportResp detail = battleReportService.open(hunter.playerId, brief.reportId());
         assertThat(detail.result().rounds()).hasSize(brief.totalRounds());
+        assertThat(detail.playback().roundMs())
+                .as("回放时长参数取自配置表：客户端写死一份就是第二个家（表现层参数也是参数）")
+                .isEqualTo(configs.longParam("BATTLE_ROUND_DISPLAY_MS"));
+        assertThat(detail.playback().speeds())
+                .as("倍速档位原样下发字符串，解析只在客户端那一处（BattlePlayback.parseSpeeds）")
+                .isEqualTo(configs.stringParam("BATTLE_PLAYBACK_SPEEDS"));
         assertThat(detail.result().seed())
                 .as("seed 必须随战报下发：凭它 + 双方构成可以 100% 复算（铁律 4）")
                 .isNotZero();

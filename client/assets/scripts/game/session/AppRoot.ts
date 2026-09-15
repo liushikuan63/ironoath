@@ -36,6 +36,7 @@ import type {
 } from '../../net/generated/SocialProtocol'
 import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
+import type { BattleReportListResp, BattleReportResp } from '../../net/generated/BattleProtocol'
 import type { MailClaimAllResp, MailListResp } from '../../net/generated/MailProtocol'
 import { buildLineupChoices, buildSpeedupChoices } from './Choices'
 import type { LineupChoice, SpeedupChoice } from './Choices'
@@ -68,6 +69,10 @@ export interface PanelTargets {
    * 邮件面板（B12 §2）。列表本身是「带副作用的读」：服务端在这次读里顺手清过期。
    */
   mail?(resp: MailListResp, serverNowMs: number): void
+  /** 战报列表（B12 §3）。时刻由外层给：列表里每行都写着「N 天后过期」，那是相对时间。 */
+  reports?(resp: BattleReportListResp, serverNowMs: number): void
+  /** 一场的完整战果 + 回放参数。回放怎么演由 {@code playbackOptionsOf} 装配，本类不算。 */
+  reportReplay?(resp: BattleReportResp): void
   /**
    * 一键领取的回执单独递一次：它要落在「刚才那一下」的结果行上，
    * 而不是等下一次列表拉取（列表拉回来的是"领完之后"的样子，玩家看不到自己领到了什么）。
@@ -88,7 +93,7 @@ export interface PanelTargets {
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
-  | 'quest' | 'reddot' | 'mail'
+  | 'quest' | 'reddot' | 'mail' | 'reports'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -274,6 +279,10 @@ export class AppRoot {
         return
       case 'quest':
         this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
+        return
+      case 'reports':
+        this.deliver('reports', await this.api.battleReports(),
+          r => this.targets.reports?.(r, this.timeSync.serverNow()))
         return
       case 'mail':
         this.deliver('mail', await this.api.mailList(),
@@ -490,6 +499,15 @@ export class AppRoot {
    * 点开一封未读邮件。重拉一次列表而不是本地把那行改成已读：
    * 未读封数是服务端算的（红点与列表同源），本地改法迟早和徽标各说一套。
    */
+  /**
+   * 点开一场战报进回放。走 {@link deliver} 而不是 {@link write}：拉详情没有副作用，
+   * 成功后也不重拉列表 —— 列表刚刚拉过，而重拉会把玩家正看着的那一屏换掉。
+   */
+  async openReport(reportId: string): Promise<void> {
+    this.deliver('reports', await this.api.battleReport(reportId),
+      r => this.targets.reportReplay?.(r))
+  }
+
   readMail(mailId: string): Promise<void> {
     this.track(TRACK_EVENTS.mailRead, { mailId })
     return this.write('mail', this.api.mailRead({ mailId }), ['mail'])

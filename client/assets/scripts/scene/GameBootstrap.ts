@@ -56,6 +56,8 @@ import { BagPanelView } from './BagPanelView'
 import { StagePanelView } from './StagePanelView'
 import { QuestPanelView } from './QuestPanelView'
 import { MailPanelView } from './MailPanelView'
+import { BattleReportPanelView } from './BattleReportPanelView'
+import { playbackOptionsOf } from '../game/battle/BattleReportPanel'
 import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
@@ -560,6 +562,10 @@ export class GameBootstrap extends Component {
       privacyAsked: String(this.privacyPlan.request),
       bootMs: String(bootElapsedMs()),
     })
+    // 战报列表刻意不挤进首屏那一批：那边已经跑在 2.8 秒 / 3.0 秒的预算上，
+    // 而「可交互」的判据里没有战报 —— 晚零点几秒到，玩家真点到那一格时通常已经拉完了。
+    // 这一句就是它在小游戏里的唯一拉取路径（PanelNav.onShow 只管邮件那一格）。
+    void this.root?.refresh('reports')
   }
 
   /**
@@ -782,12 +788,13 @@ export class GameBootstrap extends Component {
     const search = this.panel(TargetSearchView, 'targets')
     const quest = this.panel(QuestPanelView, 'quest')
     const mail = this.panel(MailPanelView, 'mail')
+    const reports = this.panel(BattleReportPanelView, 'reports')
     const world = this.panel(WorldMap, 'world')
     const settings = this.panel(SettingsPanelView, 'settings')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
-      city, army, hero, bag, stage, social, power, search, quest, mail, world, settings,
+      city, army, hero, bag, stage, reports, social, power, search, quest, mail, world, settings,
     }
     this.panelViews = {
       attempted: Object.keys(views).length,
@@ -874,6 +881,14 @@ export class GameBootstrap extends Component {
     if (quest !== null) {
       out.quest = resp => quest.attach(resp)
       quest.onClaim = (questId, heroChoice) => { void this.root?.claimQuest(questId, heroChoice) }
+    }
+    if (reports !== null) {
+      out.reports = (resp, serverNowMs) => reports.attach(resp, serverNowMs)
+      // 回放参数由服务端随战报下发（表里那两个数），这里只装配不写死。
+      // 表里写了不支持的倍速时 playbackOptionsOf 会抛 —— 那是一条配置故障，
+      // 让它响到崩溃上报里去，而不是让玩家点开一场看到一屏不动的画
+      out.reportReplay = resp => reports.showReplay(resp.result, playbackOptionsOf(resp.playback))
+      reports.onReplayRequested = reportId => { void this.root?.openReport(reportId) }
     }
     if (mail !== null) {
       out.mail = (resp, serverNowMs) => mail.attach(resp, serverNowMs)
