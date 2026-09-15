@@ -24,11 +24,14 @@ class FakeTransport implements TrackTransport {
   /** 每次调用后的行为序列；用尽之后停在最后一项。 */
   modes: Mode[] = ['ok']
   readonly batches: TrackEventDraft[][] = []
+  /** 每次随批上报的丢弃增量，按上报顺序。 */
+  readonly droppedReports: number[] = []
   readonly crashes: CrashInput[] = []
   private calls = 0
 
-  public async sendBatch(events: TrackEventDraft[]): Promise<boolean> {
+  public async sendBatch(events: TrackEventDraft[], droppedSinceLastReport: number): Promise<boolean> {
     this.batches.push(events)
+    this.droppedReports.push(droppedSinceLastReport)
     const mode = this.modes[Math.min(this.calls, this.modes.length - 1)] ?? 'ok'
     this.calls++
     if (mode === 'throw') {
@@ -202,13 +205,48 @@ test('重投缓冲区满时丢最旧的一批并计数：静默丢弃会让漏�
   assert.equal(client.droppedBatchCount(), 2, '4 批退回、上限 2 ⇒ 丢最旧的 2 批')
 })
 
+test('丢弃批数是**增量**上报：报过一次就不再重复报，累加起来才是总数', async () => {
+  // 看板要的是「总共丢了多少」，而累计值在服务端无法相加（重装、换设备、重复上报都会让总数对不上），
+  // 所以每次只报"自上次上报以来新增的丢弃"。这条用例钉的就是那个差值。
+  const transport = new FakeTransport()
+  const { client } = makeClient(transport)
+
+  transport.modes = ['refuse']
+  for (let round = 0; round < 4; round++) {
+    for (let i = 0; i < 10; i++) {
+      client.track('r' + String(round) + '_e' + String(i))
+    }
+    await client.settle()
+  }
+  const dropped = client.droppedBatchCount()
+  assert.ok(dropped > 0, '这一步应当已经丢了批次，实际=' + String(dropped))
+
+  // 网络恢复：下一批要把"还没报过的丢弃数"一起带上
+  transport.modes = ['ok']
+  for (let i = 0; i < 10; i++) {
+    client.track('after_' + String(i))
+  }
+  await client.settle()
+  const reports = transport.droppedReports
+  assert.equal(reports[reports.length - 1], dropped,
+    '这一批要补报还没上报过的丢弃数，实际=' + JSON.stringify(reports))
+
+  // 再发一批：没有新的丢弃 ⇒ 这次必须报 0，而不是把同一个数再报一遍
+  for (let i = 0; i < 10; i++) {
+    client.track('again_' + String(i))
+  }
+  await client.settle()
+  assert.equal(transport.droppedReports[transport.droppedReports.length - 1], 0,
+    '重复上报同一个累计值会让服务端的累加虚高，实际=' + JSON.stringify(transport.droppedReports))
+})
+
 test('settle 要真的等 I/O 落定：传输在宏任务里回来时不能自旋卡死（真机就是这一种）', async () => {
   // FakeTransport 是在微任务里 resolve 的，所以它永远暴露不出这个缺陷：
   // 真的网络请求在 I/O 阶段回来，而微任务队列不腾空，事件循环就轮不到它。
   // 旧实现是 `while (inFlight > 0) await Promise.resolve()`，在这里会永不结束。
   const sent: number[] = []
   const slow = {
-    sendBatch: (events: TrackEventDraft[]) => new Promise<boolean>((resolve) => {
+    sendBatch: (events: TrackEventDraft[], _dropped: number) => new Promise<boolean>((resolve) => {
       sent.push(events.length)
       setTimeout(() => resolve(true), 2)
     }),

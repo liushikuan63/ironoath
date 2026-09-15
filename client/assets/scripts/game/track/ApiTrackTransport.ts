@@ -27,9 +27,9 @@ export class ApiTrackTransport implements TrackTransport {
     this.traceIdOf = traceIdOf
   }
 
-  async sendBatch(events: TrackEventDraft[]): Promise<boolean> {
+  async sendBatch(events: TrackEventDraft[], droppedSinceLastReport: number): Promise<boolean> {
     const mapped: TrackEvent[] = events.map(e => ({ name: e.name, ts: e.ts, params: e.params }))
-    const outcome = await this.api.trackBatch(mapped)
+    const outcome = await this.api.trackBatch(mapped, droppedSinceLastReport)
     if (outcome.kind !== 'ok') {
       return false
     }

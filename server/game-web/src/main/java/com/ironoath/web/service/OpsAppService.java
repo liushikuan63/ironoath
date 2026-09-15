@@ -68,6 +68,12 @@ public class OpsAppService {
      * <b>计数没有出口就等于没有计数</b>，那正是 {@code unfulfilledCents()} 此前的处境。
      */
     private final AtomicLong truncatedEvents = new AtomicLong();
+    /**
+     * 客户端自报的丢弃批数累计（B16 §四 看板的「埋点丢弃数」的客户端那一半）。
+     * **与 truncatedEvents 分开计**：一个是"服务端截了多少条"，一个是"客户端在弱网下丢了多少批"，
+     * 合成一个数之后没人说得清该去找服务端的容量问题还是客户端的网络问题。
+     */
+    private final AtomicLong clientDroppedBatches = new AtomicLong();
 
     public OpsAppService(ReleaseRulesAssembler assembler, TrackFlusher flusher,
                          TrackEventStore store, TimeService timeService,
@@ -100,6 +106,15 @@ public class OpsAppService {
         // 软上限：超了就截断，不整批拒。一次战斗本身就产生十几个事件，
         // 拿攒批上限当门槛会把真实战斗事件整批丢掉 —— 丢看板数据比来噪音糟，但洪水必须可见。
         int softLimit = assembler.trackIngestSoftLimit();
+        // 客户端自报的丢弃数先记下来：无论这一批收了多少，客户端"丢过"这件事都已经发生了。
+        // 缺失读作 0（旧客户端不带这个字段），不做校验失败 —— 一个统计读数不该把上报打回
+        long dropped = req.droppedBatches() == null ? 0L : Math.max(0L, req.droppedBatches());
+        if (dropped > 0L) {
+            long total = clientDroppedBatches.addAndGet(dropped);
+            LOG.warn("客户端上报丢弃了 {} 批埋点（累计 {} 批）：弱网下重投缓冲被打满，看板上的漏斗会缺这一段",
+                    dropped, total);
+        }
+
         int truncated = 0;
         List<TrackEvent> events = req.events();
         if (events.size() > softLimit) {
@@ -142,7 +157,7 @@ public class OpsAppService {
      */
     public TrackIngestResp ingestHealth() {
         return new TrackIngestResp(assembler.trackIngestSoftLimit(), truncatedEvents.get(),
-                flusher.pendingCount(), flusher.batchCount());
+                (int) clientDroppedBatches.get(), flusher.pendingCount(), flusher.batchCount());
     }
 
     /** 某玩家最近的事件（排查用）。limit 由调用方给，禁止全量返回。 */

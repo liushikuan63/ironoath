@@ -44,8 +44,14 @@ export interface CrashInput {
  * （成功 / 失败 / 抛异常三种都要能造出来），而真的发 HTTP 就没法测重投与丢弃了。
  */
 export interface TrackTransport {
-  /** 发一批埋点。resolve(true) 表示服务端已收下；false 或 reject 都会触发重投。 */
-  sendBatch(events: TrackEventDraft[]): Promise<boolean>
+  /**
+   * 发一批埋点。resolve(true) 表示服务端已收下；false 或 reject 都会触发重投。
+   *
+   * @param droppedSinceLastReport 自上次上报以来、因重投缓冲满而丢弃的批数（**增量**）。
+   *   看板要的是"总共丢了多少"，而累计值在服务端无法相加（重装、换设备、重复上报都会
+   *   让总数对不上），所以只能传增量、由服务端累出来。
+   */
+  sendBatch(events: TrackEventDraft[], droppedSinceLastReport: number): Promise<boolean>
   /** 上报一次崩溃。**不重投**：崩溃上报失败时重试也没有意义（进程可能已经要退出了）。 */
   reportCrash(crash: CrashInput): Promise<boolean>
 }
@@ -55,6 +61,8 @@ export class TrackClient {
   private readonly transport: TrackTransport
   private readonly now: () => number
   private inFlight = 0
+  /** 已经报出去的丢弃批数：与队列里的总数相减就是"这次要补报多少"。 */
+  private reportedDropped = 0
   /**
    * 在途发送的 promise。`settle()` 等的是它们本身 ——
    * 只看 `inFlight` 计数就只能靠微任务自旋等它变 0，而真的网络请求是在 I/O 阶段回来的，
@@ -164,11 +172,15 @@ export class TrackClient {
 
   private send(batch: TrackBatch): void {
     this.inFlight++
-    const settled = this.transport.sendBatch(batch.events).then(
+    // 丢弃数只在成功发出的那一批里报：随批上报意味着它自己也可能丢，
+    // 而"没发出去"与"发出去但丢了"在计数上必须分开（前者不该被计进看板）
+    const droppedSinceLastReport = this.queue.droppedBatchCount() - this.reportedDropped
+    const settled = this.transport.sendBatch(batch.events, droppedSinceLastReport).then(
       (ok) => {
         this.inFlight--
         if (ok) {
           this.deliveredBatches++
+          this.reportedDropped += droppedSinceLastReport
         } else {
           this.failedBatches++
           this.queue.requeue(batch)

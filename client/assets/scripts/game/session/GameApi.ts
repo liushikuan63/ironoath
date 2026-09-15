@@ -409,8 +409,9 @@ export class GameApi {
    * 埋点是允许丢的统计流，给它加幂等键等于在分析库里留一份"这条到底算几次"的争议。
    * 因此这里走 `postRead`：不发幂等键，但仍然享受免费的一次时钟校准。
    */
-  trackBatch(events: readonly TrackEvent[]): Promise<NetOutcome<TrackBatchResp>> {
-    return this.postRead<TrackBatchReq, TrackBatchResp>('/ops/track/batch', { events: [...events] })
+  trackBatch(events: readonly TrackEvent[], droppedBatches = 0): Promise<NetOutcome<TrackBatchResp>> {
+    return this.postRead<TrackBatchReq, TrackBatchResp>('/ops/track/batch',
+      { events: [...events], droppedBatches })
   }
 
   /** POST /ops/crash。完整堆栈 + traceId，服务端同步落库（见 OpsController 的说明）。 */

@@ -188,7 +188,7 @@ class OpsEndpointTest {
     @Test
     @DisplayName("空批被拒（16000）：一个不含任何事件的请求没有存在的理由")
     void emptyBatchIsRejected() throws Exception {
-        JsonNode root = postRoot(TRACK_URL, "p5", new TrackBatchReq(List.of()));
+        JsonNode root = postRoot(TRACK_URL, "p5", new TrackBatchReq(null, List.of()));
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.TRACK_BATCH_EMPTY.code());
     }
 
@@ -198,7 +198,7 @@ class OpsEndpointTest {
         MvcResult result = mockMvc.perform(post(TRACK_URL)
                         .header(PLAYER_HEADER, "p6")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(JsonUtils.toJson(new TrackBatchReq(events(1)))))
+                        .content(JsonUtils.toJson(new TrackBatchReq(null, events(1)))))
                 .andExpect(status().isOk()).andReturn();
         String headerTrace = result.getResponse().getHeader(TRACE_HEADER);
         assertThat(headerTrace).as("TraceIdFilter 必须回写响应头").isNotBlank();
@@ -214,10 +214,27 @@ class OpsEndpointTest {
     @Test
     @DisplayName("未登录也能上报：playerId 为空时事件仍然入库，那正是「进都没进就走了」这段漏斗的证据")
     void anonymousEventsAreStillStored() throws Exception {
-        JsonNode data = postJson(TRACK_URL, new TrackBatchReq(events(1)));
+        JsonNode data = postJson(TRACK_URL, new TrackBatchReq(null, events(1)));
         assertThat(data.get("accepted").asInt()).isEqualTo(1);
         flusher.flushNow("断言前冲刷");
         assertThat(store.eventCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("客户端自报的丢弃批数会累加进运维读数：看板的「埋点丢弃数」客户端那一半")
+    void clientDroppedBatchesAccumulateIntoTheHealthReading() throws Exception {
+        // 客户端丢数据时它自己最清楚，而服务端从事件流里看不出来（丢就是没发）。
+        // 所以由客户端随批自报增量、服务端累加 —— 报的是增量而不是累计值：
+        // 累计值在服务端无法相加（重装、换设备、重复上报都会让总数对不上）。
+        int before = ingestHealth().get("clientDroppedBatches").asInt();
+
+        postRoot(TRACK_URL, "p-drop",
+                new TrackBatchReq(3, List.of(new TrackEvent("startup", 1_700_000_000_000L, Map.of()))));
+        postRoot(TRACK_URL, "p-drop",
+                new TrackBatchReq(2, List.of(new TrackEvent("startup", 1_700_000_000_001L, Map.of()))));
+
+        int after = ingestHealth().get("clientDroppedBatches").asInt();
+        assertThat(after - before).as("两次自报 3 与 2，累加应当是 5").isEqualTo(5);
     }
 
     // ---------- 验收 9：崩溃上报 ----------
@@ -401,7 +418,7 @@ class OpsEndpointTest {
     }
 
     private JsonNode postTrack(List<TrackEvent> events, String playerId) throws Exception {
-        return okData(postRoot(TRACK_URL, playerId, new TrackBatchReq(events)));
+        return okData(postRoot(TRACK_URL, playerId, new TrackBatchReq(null, events)));
     }
 
     private JsonNode postJson(String url, Object req) throws Exception {
