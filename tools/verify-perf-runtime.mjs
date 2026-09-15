@@ -23,7 +23,16 @@ import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+
+const require = createRequire(import.meta.url)
+/**
+ * 「客户端绑了哪些路径」的唯一解析在这里 —— 与 CI 卡口 `check-endpoint-paths` 同一份。
+ * 覆盖率的分子分母必须出自同一处，否则量具报的"80 条里量到 N 条"和卡口说的端点数会对不上，
+ * 而对不上的时候没人知道该信谁。
+ */
+const { clientBoundPaths } = require('../scripts/lib/endpoint-paths.js')
 
 const ROOT = path.resolve('client/build/web-mobile')
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
@@ -95,6 +104,30 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(PORT, r))
 
 const browser = await chromium.launch({ headless: true, args: ['--enable-precise-memory-info'] })
+
+/**
+ * 先跑一遍把**后端**暖起来。
+ *
+ * <p>这不是可有可无的装饰：同一份产物，服务刚起来时首屏量到 3002ms（判红），
+ * 后端暖了之后是 2705 / 2715ms。那 300 毫秒是服务端的 JIT 与连接池预热，
+ * 跟"玩家打开游戏到能操作"没有关系 —— 让它进这条指标，就是拿量具的暖机过程冒充产品的首屏。
+ *
+ * <p>刻意用**另一个 context**：新 context 有自己的 HTTP 缓存，所以只暖到服务端，
+ * 被测页面仍是"第一次下载 HTML/JS"的冷态（那一段本来就是首屏的一部分）。
+ * 判据取"预跑看见 `[boot]`"而不是固定 sleep —— 那才是"这一轮服务端已经走完一遍完整链路"的准信。
+ */
+{
+  const warmContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const warmPage = await warmContext.newPage()
+  let warmed = false
+  warmPage.on('console', (m) => { if (m.text().includes('[boot]')) warmed = true })
+  await warmPage.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' })
+  const deadline = Date.now() + 30_000
+  while (!warmed && Date.now() < deadline) await warmPage.waitForTimeout(200)
+  await warmContext.close()
+  if (!warmed) console.log('[perf] 注意：预热那一遍没等到 [boot]，首屏可能仍带着后端冷启动的开销')
+}
+
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v), `perf-${Date.now()}`)
 const page = await context.newPage()
@@ -195,6 +228,41 @@ const biggest = Array.from(backendResponses)
   .map((r) => `${r.path} ${r.bytes}B`)
 const maxPayload = backendResponses.reduce((max, r) => Math.max(max, r.bytes), 0)
 
+/**
+ * 每条接口的实测体积（B16 验收 6 的判定方式写的是"抓包"，不是"CI 里有个参数"）。
+ *
+ * <p>取最大值判预算、取中位数看常态：一个接口的最大值决定它会不会撑破 20KB，
+ * 而中位数才说明平时有多贵 —— 只看一个数会给出错的结论（只看最大值会把
+ * "偶发一次大响应"与"每次都大"混成同一条，只看中位数则会漏掉前者）。
+ */
+const byPath = new Map()
+for (const r of backendResponses) {
+  if (!byPath.has(r.path)) byPath.set(r.path, [])
+  byPath.get(r.path).push(r.bytes)
+}
+const payloadByPath = Array.from(byPath.entries())
+  .map(([p, sizes]) => {
+    const sorted = [...sizes].sort((a, b) => a - b)
+    return {
+      path: p,
+      responses: sizes.length,
+      maxBytes: sorted[sorted.length - 1],
+      medianBytes: sorted[Math.floor((sorted.length - 1) / 2)],
+      overBudget: sorted[sorted.length - 1] > LIMITS.payloadBytes,
+    }
+  })
+  .sort((a, b) => b.maxBytes - a.maxBytes)
+
+/**
+ * 覆盖面点名：客户端一共绑了这么多条路径，这次量到了其中的哪些、哪些一次都没打到。
+ *
+ * <p>没量到的必须逐个列出来。一个"60KB 里报了 13 条、剩下 67 条没人提"的表格，
+ * 读的人会默认它是全量 —— 那比明说"这些还没量"危险得多（同一族的另一例见 `数据看板需求.md` §六）。
+ */
+const clientPaths = clientBoundPaths()
+const measuredPaths = new Set(byPath.keys())
+const neverMeasured = clientPaths.filter(p => !measuredPaths.has(p))
+
 const failures = []
 if (!bootLineSeen) failures.push('没拿到 [boot] 自检行：首屏口径退化了，这次测量不算数')
 // 自报数是小游戏运行时里唯一可读的首屏耗时（那边没有本工具这样的外部墙钟），所以它必须在
@@ -223,6 +291,13 @@ if (fps < LIMITS.minFps) {
     '这一项只能用真机判定，本工具不据此判失败')
 }
 if (errors.length > 0) failures.push(`控制台报错 ${errors.length} 条`)
+
+console.log(`[perf] 逐接口体积：量到 ${payloadByPath.length} 条路径（客户端绑定 ${clientPaths.length} 条），` +
+  `最大 ${maxPayload}B / 预算 ${LIMITS.payloadBytes}B；一次都没打到的 ${neverMeasured.length} 条` +
+  `（写接口与需要前置状态的读接口，见 JSON.coverage.neverMeasured）`)
+for (const row of payloadByPath.slice(0, 6)) {
+  console.log(`[perf]   ${row.path} 最大 ${row.maxBytes}B · 中位 ${row.medianBytes}B · ${row.responses} 次`)
+}
 
 // ---------- 弱网相位 ----------
 //
@@ -343,6 +418,14 @@ console.log(JSON.stringify({
   heapPeakMb,
   heapEndMb,
   backendResponseCount: backendResponses.length,
+  payloadByPath,
+  coverage: {
+    clientBoundPaths: clientPaths.length,
+    measuredPaths: payloadByPath.length,
+    neverMeasured,
+    note: 'neverMeasured 不是"没问题"，是"这次没量到"：它们要么是写接口（要玩家动作才发），'
+      + '要么要先有状态（队列里有兵、有未领奖励等）。判 B16 验收 6 时只能按已量到的这些说',
+  },
   maxPayloadBytes: maxPayload,
   biggestResponses: biggest,
   weakNetwork,
