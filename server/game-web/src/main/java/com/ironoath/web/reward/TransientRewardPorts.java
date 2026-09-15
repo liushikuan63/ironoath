@@ -22,8 +22,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <h2>缺口清单</h2>
  * <ol>
- *   <li>{@link TransientMailbox}：溢出邮件只在内存与日志里，<b>重启即丢</b>。
- *       B12（邮件系统）必须换成持久化实现，否则玩家会因为一次背包满而永久损失奖励。</li>
+ *   <li><b>已闭环（B12 §2）</b>：溢出邮件原来就在本类里，返回的 {@code mail_overflow_1} 这种
+ *       进程内序号谁都查不回来。现在走 {@code StoreMailbox} + {@code MailStore}，
+ *       邮件是可查询、按 MAIL_RETENTION_DAYS 过期的真记录。</li>
  *   <li>{@link TransientCompensation}：补偿记录同样只在内存与日志里。
  *       B12 必须换成持久化 + 可人工重放的实现 —— 这是「发奖失败不静默」的最后兜底，
  *       丢了就等于把玩家的投诉变成无据可查。</li>
@@ -34,35 +35,12 @@ import java.util.concurrent.atomic.AtomicLong;
  *       B06（武将）/ B09（体力）/ B03（队列特权）各自落地后替换对应分支。</li>
  * </ol>
  *
- * <p>三者在启动时都会打 ERROR 级日志，确保任何人跑起服务端都会看到这些缺口。
+ * <p>剩下的两件事各自有响亮的失败：补偿队列启动时打 ERROR，体力/特权在发放时抛出去并进补偿 ——
+ * 任何人跑起服务端都会看到这些缺口，缺口的正确表达是响亮的失败而不是静默降级。
  */
 public final class TransientRewardPorts {
 
     private TransientRewardPorts() {
-    }
-
-    /** 溢出补发邮件的内存实现。 */
-    public static final class TransientMailbox implements RewardPorts.Mailbox {
-
-        private static final Logger LOG = LoggerFactory.getLogger(TransientMailbox.class);
-        private final AtomicLong seq = new AtomicLong();
-        private final Map<String, List<RewardItem>> pending = new ConcurrentHashMap<>();
-
-        @Override
-        public String sendOverflow(String playerId, List<RewardItem> overflow, RewardContext ctx) {
-            String mailId = "mail_overflow_" + seq.incrementAndGet();
-            pending.put(mailId, overflow);
-            // ERROR 级：这条日志的存在本身就是提醒「邮件还没持久化」
-            LOG.error("【未持久化】溢出奖励转邮件 playerId={} mailId={} source={} 溢出明细={} "
-                            + "—— 本实现重启即丢，B12 邮件系统必须替换",
-                    playerId, mailId, ctx.source(), overflow);
-            return mailId;
-        }
-
-        /** 供测试与后续 B12 迁移使用：查看待发邮件。 */
-        public Map<String, List<RewardItem>> pending() {
-            return Map.copyOf(pending);
-        }
     }
 
     /** 补偿队列的内存实现。 */

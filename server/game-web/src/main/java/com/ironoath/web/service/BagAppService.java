@@ -32,6 +32,7 @@ import com.ironoath.web.dto.generated.ResourceAmount;
 import com.ironoath.web.dto.generated.ResourceType;
 import com.ironoath.web.dto.generated.RewardItemView;
 import com.ironoath.web.dto.generated.SpeedUpResp;
+import com.ironoath.web.reward.RewardNames;
 import com.ironoath.web.reward.ServerSeedSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,6 +92,8 @@ public class BagAppService {
     private final CityAppService cityAppService;
     private final ArmyAppService armyAppService;
     private final ServerSeedSource serverSeeds;
+    /** 奖励展示名的唯一实现（以前本类自己有一份，与任务侧那份对碎片的处理不一致）。 */
+    private final RewardNames names;
 
     /**
      * @param inventories 只用于 {@link #list} 的只读快照。<b>任何写操作都不许走它</b> ——
@@ -104,7 +107,8 @@ public class BagAppService {
                          PlayerRepository players, PlayerLock playerLock,
                          IdempotencyStore idempotency, TimeService timeService,
                          RewardService rewardService, CityAppService cityAppService,
-                         ArmyAppService armyAppService, ServerSeedSource serverSeeds) {
+                         ArmyAppService armyAppService, ServerSeedSource serverSeeds,
+                         RewardNames names) {
         this.configs = configs;
         this.inventories = inventories;
         this.bagPort = bagPort;
@@ -116,6 +120,7 @@ public class BagAppService {
         this.cityAppService = cityAppService;
         this.armyAppService = armyAppService;
         this.serverSeeds = serverSeeds;
+        this.names = names;
     }
 
     // ---------- B04 §3：背包列表 ----------
@@ -612,15 +617,13 @@ public class BagAppService {
         return out;
     }
 
+    /**
+     * 奖励的展示名。<b>唯一实现在 {@link RewardNames}</b>；本类原来是第二份，
+     * 且它对 HERO_FRAGMENT 回裸 id（玩家在背包里看到 {@code hero_ssr_01}），
+     * 而任务面板同一张奖励回「SSR 武将碎片」。现在两边同源，
+     * <b>背包侧因此变成可读名字</b> —— 那是修正，不是回归。
+     */
     private String rewardName(RewardItem reward) {
-        return switch (reward.type()) {
-            case RESOURCE -> configs.getResource(reward.id()).name();
-            case ITEM -> itemCfg(reward.id()).name();
-            // 整卡回武将名（B06 已落地，名字就在 hero 表里）；碎片仍回 id ——
-            // 碎片的中文名要经「武将 → 稀有度 → 碎片道具」那条映射，而那条映射的家在发放侧
-            // （HeroFragmentExtras），这里再拼一遍就是第二个家
-            case HERO -> configs.get(com.ironoath.config.cfg.HeroCfg.class, reward.id()).name();
-            case HERO_FRAGMENT, STAMINA, PRIVILEGE -> reward.id();
-        };
+        return names.nameOf(reward);
     }
 }

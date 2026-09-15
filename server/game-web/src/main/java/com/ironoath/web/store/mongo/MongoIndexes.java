@@ -164,6 +164,17 @@ public final class MongoIndexes {
         String crashExpiry = mongo.indexOps(TrackCrashDocument.COLLECTION).ensureIndex(new Index()
                 .on("serverTs", Sort.Direction.ASC)
                 .named("idx_track_crash_server_ts"));
+        // 邮件：{playerId, mail.createdAt} 服务"每次进面板都发"的那条我的收件箱（B12 §2），
+        // 排序键在子文档里，所以索引也建在子文档路径上（与文档级冗余列无关）；
+        // {expireAt} 服务惰性清理 —— 没有它，每次有人打开邮箱都要整集合扫一遍
+        IndexOperations mailIndexes = mongo.indexOps(MailDocument.COLLECTION);
+        String byMailPlayer = mailIndexes.ensureIndex(new Index()
+                .on(MailDocument.FIELD_PLAYER_ID, Sort.Direction.ASC)
+                .on(MailDocument.FIELD_CREATED_AT, Sort.Direction.DESC)
+                .named("idx_mail_player_id_created_at"));
+        String mailExpiry = mailIndexes.ensureIndex(new Index()
+                .on(MailDocument.FIELD_EXPIRE_AT, Sort.Direction.ASC)
+                .named("idx_mail_expire_at"));
         // 社交：三条唯一索引是"名字/标签全局唯一"在并发下唯一还成立的保证
         // （小队名、联盟名、联盟标签）。members.playerId 服务"查我在哪个组织"；
         // rally 两条服务"本组织进行中"与"到期扫描"。聊天/玩家事件/帮助请求都按 _id 点查，
@@ -223,6 +234,7 @@ public final class MongoIndexes {
                 + "；" + ScoutReportDocument.COLLECTION + " → " + myReports + " / " + reportExpiry
                 + "；" + TrackEventDocument.COLLECTION + " → " + byTrackPlayer + " / " + trackExpiry
                 + "；" + TrackCrashDocument.COLLECTION + " → " + crashExpiry
+                + "；" + MailDocument.COLLECTION + " → " + byMailPlayer + " / " + mailExpiry
                 + "；" + SquadDocument.COLLECTION + " → " + uniqueSquadName + " / " + bySquadMember
                 + "；" + AllianceDocument.COLLECTION + " → " + uniqueAllianceName + " / "
                 + uniqueAllianceTag + " / " + byAllianceMember

@@ -32,6 +32,7 @@ import com.ironoath.web.dto.generated.QuestClaimResp;
 import com.ironoath.web.dto.generated.QuestListResp;
 import com.ironoath.web.dto.generated.QuestReward;
 import com.ironoath.web.dto.generated.QuestView;
+import com.ironoath.web.reward.RewardNames;
 import com.ironoath.web.social.SocialStore;
 
 /**
@@ -81,12 +82,13 @@ public class QuestAppService {
     private final PlayerRepository players;
     private final SocialStore socialStore;
     private final PlayerLock playerLock;
+    private final RewardNames names;
 
     public QuestAppService(ConfigRegistry configs, QuestRulesAssembler assembler,
                            QuestProgressStore store, TimeService timeService,
                            RewardService rewardService, IdempotencyStore idempotency,
                            PlayerRepository players, SocialStore socialStore,
-                           PlayerLock playerLock) {
+                           PlayerLock playerLock, RewardNames names) {
         this.configs = configs;
         this.assembler = assembler;
         this.store = store;
@@ -96,6 +98,7 @@ public class QuestAppService {
         this.players = players;
         this.socialStore = socialStore;
         this.playerLock = playerLock;
+        this.names = names;
     }
 
     /** 任务面板。顺带跨期清零与状态型快照刷新（两者都只在真变化时落库）。 */
@@ -384,22 +387,13 @@ public class QuestAppService {
     }
 
     /**
-     * 奖励的展示名。**与 {@code BagAppService.rewardName} 同一条口径**（碎片回 id，
-     * 绝不回一个编造的中文名）：碎片的中文名要经「武将 → 稀有度 → 碎片道具」那条映射，
-     * 而那条映射的家在发放侧（{@code HeroFragmentExtras}），任务域再拼一遍就是第二个家。
+     * 奖励的展示名。<b>规则不住在本类</b>：同一张奖励在任务面板、背包与邮件附件里必须同名，
+     * 而这条规则以前在 quest 与 bag 各有一份、且<b>两份不一致</b>（碎片一份回「SSR 武将碎片」
+     * 一份回裸 id），前者的注释还自称「与 BagAppService 同一条口径」。现在唯一实现在
+     * {@link RewardNames}，碎片的映射问的是发放侧 {@code HeroFragmentExtras.fragmentItemOf}。
      */
     private String rewardName(RewardItem reward) {
-        return switch (reward.type()) {
-            case RESOURCE -> configs.getResource(reward.id()).name();
-            case ITEM -> configs.get(com.ironoath.config.cfg.ItemCfg.class, reward.id()).name();
-            case HERO -> configs.get(HeroCfg.class, reward.id()).name();
-            case HERO_FRAGMENT -> {
-                // 碎片发的是"这个武将所属稀有度"的道具，所以名字取该武将的档位（SR 武将 → SR 碎片）
-                HeroCfg hero = configs.get(HeroCfg.class, reward.id());
-                yield hero.rarity().name() + " 武将碎片";
-            }
-            case STAMINA, PRIVILEGE -> reward.id();
-        };
+        return names.nameOf(reward);
     }
 
     // ---------- 内部 ----------

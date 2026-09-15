@@ -795,8 +795,10 @@ class SocialEndpointTest {
 
         JsonNode idle = get200("/social/reddot", helper);
         assertThat(idle.get("leafCount").asInt())
-                .as("注册点里的叶子数必须可见：它长期停在个位数说明有人在业务模块里自己判红点")
-                .isEqualTo(4);
+                .as("注册点里的叶子数必须可见：它长期停在个位数说明有人在业务模块里自己判红点。"
+                        + "现在这五个是 social/help、social/invite、social/events、city/building、"
+                        + "mail/unread（B12 §2 邮件）—— 加一个就要在这里解释一次")
+                .isEqualTo(5);
         assertThat(litOf(idle.get("nodes"), "social")).isFalse();
 
         social.registerHelpRequest("rd-1", target, HelpTargetKind.BUILDING, "inst_rd_1", "伐木场 Lv7→8",
@@ -838,10 +840,15 @@ class SocialEndpointTest {
                 .as("下发里只能出现注册过的路径；编一个没实现的 key 出去，客户端就会点出一个空面板")
                 .doesNotContain("guide")
                 .doesNotContain("hero");
+        java.util.Set<String> roots = new java.util.HashSet<>();
+        for (String leaf : reddotTree.leafKeys()) {
+            roots.add(leaf.substring(0, leaf.indexOf('/')));
+        }
+        assertThat(roots).as("注册过的分支就是这些（新增叶子时在这里解释一次）")
+                .containsExactlyInAnyOrder("social", "city", "mail");
         for (JsonNode top : nodes) {
             String key = top.get("key").asText();
-            assertThat(key.startsWith("social") || key.startsWith("city"))
-                    .as("顶层分支只能是注册过的这些，实际是 " + key).isTrue();
+            assertThat(roots).as("下发里出现了没注册过的顶层分支：" + key).contains(key);
         }
     }
 

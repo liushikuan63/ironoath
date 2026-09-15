@@ -22,6 +22,7 @@ import com.ironoath.web.dto.generated.PayDebtResp;
 import com.ironoath.web.dto.generated.TrackBatchReq;
 import com.ironoath.web.dto.generated.TrackBatchResp;
 import com.ironoath.web.dto.generated.TrackIngestResp;
+import com.ironoath.web.mail.MailAppService;
 import com.ironoath.web.ops.OpsTokenGuard;
 import com.ironoath.web.service.OpsAppService;
 import com.ironoath.web.service.PayAppService;
@@ -55,11 +56,14 @@ public class OpsController {
 
     private final OpsAppService ops;
     private final PayAppService pay;
+    private final MailAppService mails;
     private final OpsTokenGuard token;
 
-    public OpsController(OpsAppService ops, PayAppService pay, OpsTokenGuard token) {
+    public OpsController(OpsAppService ops, PayAppService pay, MailAppService mails,
+                         OpsTokenGuard token) {
         this.ops = ops;
         this.pay = pay;
+        this.mails = mails;
         this.token = token;
     }
 
@@ -86,6 +90,24 @@ public class OpsController {
             @RequestParam(name = "actor", required = false) String actor) {
         token.require(opsToken);
         return Result.ok(ops.reloadConfigs(actor));
+    }
+
+    /**
+     * 运营/客服补发一封邮件（B12 §2 的第二个生产者）。
+     *
+     * <p><b>这是运维面里唯一一条「凭空给玩家东西」的通路</b>（热更改的是全服数值，而这条改的是
+     * 某个玩家的资产），所以它同时过三道闸门：运维令牌（这里）、幂等键与审计日志
+     * （{@code MailAppService#sendByOps}，工单重投不重复发、发出去必须查得到是谁发的）。
+     *
+     * <p>它是<b>补发</b>入口而不是发奖入口：正常奖励由各业务系统自己走发放器发，
+     * 谁绕过发放器从这里发奖，谁就跳过了溢出、补偿与埋点那一整套账。
+     */
+    @PostMapping("/mail/send")
+    public Result<com.ironoath.web.dto.generated.OpsMailSendResp> sendMail(
+            @RequestHeader(value = "X-Ops-Token", required = false) String opsToken,
+            @RequestBody com.ironoath.web.dto.generated.OpsMailSendReq req) {
+        token.require(opsToken);
+        return Result.ok(mails.sendByOps(req));
     }
 
     /**

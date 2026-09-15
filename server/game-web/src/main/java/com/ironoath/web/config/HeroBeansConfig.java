@@ -86,10 +86,17 @@ public class HeroBeansConfig {
      * <p><b>2026-09-12 起多一个 {@code HeroRepository} 参数</b>：整卡武将（{@code RewardType.HERO}）
      * 要写进武将册而不是背包 —— B06 §1「主线赠送：首日必得 1 名 SR」这条链路此前零实现，
      * 表现是 troopCap 恒为 0（新号没武将 ⇒ 训不了兵 ⇒ 主线第 3 步死锁）。
+     *
+     * <p><b>返回类型从端口改成具体类（2026-09-16）</b>：{@code RewardNames} 要用
+     * {@link HeroFragmentExtras#fragmentItemOf} —— 那是「武将 → 稀有度碎片道具」这条映射的唯一的家，
+     * 奖励展示名必须问它而不是自己再拼一次。声明成端口而让消费者按具体类注入，
+     * 正是收口清单 #15 那个坑的形状（症状是启动期 {@code No qualifying bean}）。
+     * 按端口注入的消费者（{@code RewardGrantor}、{@code ShopAppService}）不受影响 ——
+     * 具体类型天然满足端口。
      */
     @Bean
     @Primary
-    public RewardPorts.Extras rewardExtras(RewardPorts.Bag playerBag,
+    public HeroFragmentExtras rewardExtras(RewardPorts.Bag playerBag,
                                           com.ironoath.config.ConfigRegistry configs,
                                           HeroRepository heroRepo) {
         LOG.warn("武将碎片与整卡武将已接通真实存储（整卡写武将册、重复按档折碎片）；"

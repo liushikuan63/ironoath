@@ -89,16 +89,17 @@ public class RewardBeansConfig {
     @Bean
     public RewardService rewardService(RewardPorts.Wallet playerWallet,
                                        RewardPorts.Bag playerBag,
+                                       RewardPorts.Mailbox mailbox,
                                        RewardPorts.Extras extras,
                                        RewardPorts.Compensation rewardCompensation,
                                        TimeService timeService) {
-        LOG.warn("邮箱与补偿队列当前是内存实现（重启即丢），B12 邮件系统必须替换；"
+        LOG.warn("补偿队列当前仍是内存实现（重启即丢），B12 必须换成可人工重放的持久化实现；"
                 + "体力/特权两类奖励仍会响亮失败并进补偿队列，B09/B15 落地前不得对玩家开放。"
-                + "详见 TransientRewardPorts 类注释。");
+                + "溢出邮件已接真邮箱（B12 §2，见 MailBeansConfig#rewardMailbox）。");
         return new RewardGrantor(
                 playerWallet,
                 playerBag,
-                new TransientRewardPorts.TransientMailbox(),
+                mailbox,
                 rewardCompensation,
                 extras,
                 timeService::serverNow);

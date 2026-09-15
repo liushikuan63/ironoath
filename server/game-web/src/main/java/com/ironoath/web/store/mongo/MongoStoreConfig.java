@@ -167,6 +167,17 @@ public class MongoStoreConfig {
     }
 
     /**
+     * 邮件（B12 §2）。这一档防的是「玩家该得的东西随进程消失」：
+     * 邮件里装着<b>没领走的附件</b>（发奖溢出的补发、运营补偿），内存版重启就是丢玩家资产，
+     * 而它没有任何重算入口 —— 与任务进度不同，进度至少还能从当前状态反推一部分。
+     */
+    @Bean
+    public com.ironoath.web.mail.MailStore mailStore(MongoTemplate mongo) {
+        LOG.info("使用 MongoDB 邮箱（未领附件不再随进程消失，过期按 MAIL_RETENTION_DAYS 惰性清理）");
+        return new MongoMailStore(mongo);
+    }
+
+    /**
      * 支付订单。这一类是全部存储里优先级最高的：「已收款未发货」是一笔负债，
      * 内存版重启即消失，而消失的那笔钱没有任何追查入口（收口清单 #16 与 #49，
      * 另见 上线检查清单 §四 2）。

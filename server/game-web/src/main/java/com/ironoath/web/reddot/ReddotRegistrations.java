@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Configuration;
 
 import com.ironoath.common.time.TimeService;
 import com.ironoath.core.reddot.ReddotTree;
+import com.ironoath.web.mail.MailAppService;
 import com.ironoath.web.service.CityAppService;
 import com.ironoath.web.service.SocialAppService;
 
@@ -33,7 +34,8 @@ public class ReddotRegistrations {
     private static final Logger LOG = LoggerFactory.getLogger(ReddotRegistrations.class);
 
     @Bean
-    public ReddotTree reddotTree(SocialAppService social, CityAppService city, TimeService time) {
+    public ReddotTree reddotTree(SocialAppService social, CityAppService city, MailAppService mails,
+                                 TimeService time) {
         ReddotTree tree = new ReddotTree();
         tree.register("social/help", playerId -> social.hasHelpable(playerId, time.serverNow()),
                 "有能帮的互助请求（额度未用完）");
@@ -41,6 +43,10 @@ public class ReddotRegistrations {
                 "有待处理的入盟申请或集结邀请");
         tree.register("social/events", social::hasUnreadEvents,
                 "有未读社交事件");
+        // 复用邮件面板自己的判据（MailAppService#hasUnread 读的就是列表那份记录），
+        // 不在这里比较时间戳或数附件 —— 那样徽标会亮，点进去却什么都没有
+        tree.register("mail/unread", mails::hasUnread,
+                "有没读过的邮件（含没附件的公告 —— 未读就是未读）");
         // 复用升级流程自己的算式（CityAppService#attemptOf → CityState#validateUpgrade），
         // 不在这里比较资源与等级 —— 那样红点会与「点进去到底能不能升」各说各话
         tree.register("city/building", playerId -> city.hasUpgradable(playerId, time.serverNow()),
