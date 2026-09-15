@@ -63,10 +63,13 @@ public final class BalanceCli {
         } else if (options.containsKey("single")) {
             long seed = Long.parseLong(options.getOrDefault("seed", "1"));
             printSingleBattle(resolver, rules, stats, options, seed);
+        } else if (options.containsKey("settle-bench")) {
+            passed = printSettleBench(configs, resolver, rules, stats, options);
         } else {
             System.err.println("用法（参数用 --key=value 形式）：");
             System.err.println("  --single --atk=步,骑,弓,器 --def=步,骑,弓,器 --seed=N");
             System.err.println("  --matrix --runs=1000 --tier=1 --size=1000");
+            System.err.println("  --settle-bench --samples=200 --warmup=30 --comp=25000,25000,25000,25000");
             System.err.println("退出码：矩阵判定存在违规时为 1。");
             System.exit(2);
         }
@@ -219,7 +222,109 @@ public final class BalanceCli {
         };
     }
 
-    /** 解析 "步,骑,弓,器" 形式的兵力描述。 */
+    // ---------- 单次结算耗时（B05 验收 4，压测三件之一） ----------
+
+    /**
+     * 量「十万 vs 十万单次结算」的耗时分布，并按 {@code global.PERF_BATTLE_SETTLE_P99_MAX_MS} 判定。
+     *
+     * <p><b>为什么不用 JMH</b>（收口清单 §五 裁定丁）：这个数的用途是判断"量级上还安不安全"，
+     * 不是给内核做微基准研究。JMH 要引依赖、要 fork、一轮十几分钟；而这里真正要防的是
+     * "某次改动把它从零点几毫秒推到五毫秒"。所以做法是：**JIT 预热若干局后连打 N 局，报 p50/p95/p99**，
+     * 并把机器与 JDK 一起打出来 —— 一个没有环境的数字不是证据。
+     *
+     * <p><b>只把结算计入计时</b>：两侧军队与 {@code BattleInput} 在计时区间之外构造，
+     * 因为验收口径问的是"一次结算多久"，把夹具成本算进去就成了另一个数。
+     *
+     * <p><b>最近秩而不是插值</b>：N=200 时 p99 只有第 198 个样本有资格说话，
+     * 插出来的"第 197.02 个"只是给人看的假精度。
+     */
+    private static boolean printSettleBench(ConfigRegistry configs, BattleParamsResolver resolver,
+                                            BattleRules rules, Map<UnitType, UnitStats> stats,
+                                            Map<String, String> options) {
+        // 默认两侧同构、四兵种均分共 10 万：口径里只写了"十万 vs 十万"，没规定构成，
+        // 均分是最不夹带私货的默认；要换成实战编成用 --comp 传。
+        String compSpec = options.getOrDefault("comp", "25000,25000,25000,25000");
+        Map<UnitType, Long> comp = parseArmy(compSpec);
+        long size = comp.values().stream().mapToLong(Long::longValue).sum();
+        int warmup = Integer.parseInt(options.getOrDefault("warmup", "30"));
+        int samples = Integer.parseInt(options.getOrDefault("samples", "200"));
+        long limitMs = configs.longParam("PERF_BATTLE_SETTLE_P99_MAX_MS");
+        // 与 --single 的 --seed 同一个默认起点：跑两次拿到同一组种子，数字才可比
+        long seedBase = Long.parseLong(options.getOrDefault("seed-base", "1"));
+
+        System.out.printf("=== 单次结算耗时（两侧各 %d 兵：%s；预热 %d 局 + 采样 %d 局）===%n",
+                size, formatUnits(comp), warmup, samples);
+        System.out.printf("环境：os=%s %s ｜ jdk=%s ｜ 可用核数=%d ｜ 最大堆=%dMB%n",
+                System.getProperty("os.name"), System.getProperty("os.arch"),
+                System.getProperty("java.version"), Runtime.getRuntime().availableProcessors(),
+                Runtime.getRuntime().maxMemory() / (1024 * 1024));
+        System.out.printf("阈值：PERF_BATTLE_SETTLE_P99_MAX_MS=%dms（读自 global.json）%n", limitMs);
+
+        for (int i = 0; i < warmup; i++) {
+            settleOnce(resolver, rules, stats, comp, seedBase + i);
+        }
+        long[] nanos = new long[samples];
+        double[] survivors = new double[samples];
+        for (int i = 0; i < samples; i++) {
+            ArmySide atk = resolver.bareArmy("攻方", comp, Long.MAX_VALUE / 4);
+            ArmySide def = resolver.bareArmy("守方", comp, Long.MAX_VALUE / 4);
+            BattleInput input = new BattleInput(atk, def, TerrainType.PLAIN, seedBase + i,
+                    BattleType.PVP_SOLO, BattleModifier.none(), BattleModifier.none(), stats, rules,
+                    DefenderStore.none());
+            long t0 = System.nanoTime();
+            BattleResult r = BattleSimulator.simulate(input);
+            nanos[i] = System.nanoTime() - t0;
+            survivors[i] = r.totalRounds();
+        }
+        java.util.Arrays.sort(nanos);
+        double p50 = percentileMs(nanos, 0.50);
+        double p95 = percentileMs(nanos, 0.95);
+        double p99 = percentileMs(nanos, 0.99);
+        double max = nanos[nanos.length - 1] / 1_000_000.0d;
+        System.out.printf("回合数：中位 %.0f，全部样本都跑完（十万级兵力不改变回合上限）%n",
+                median(survivors));
+        System.out.printf("结算耗时：p50=%.3fms  p95=%.3fms  p99=%.3fms  max=%.3fms%n",
+                p50, p95, p99, max);
+        boolean ok = settleWithinBudget(p99, limitMs);
+        System.out.println(ok
+                ? "结果：通过（p99 在预算内）"
+                : String.format("结果：✗ p99 %.3fms 超出 %dms（退出码 1）", p99, limitMs));
+        return ok;
+    }
+
+    private static void settleOnce(BattleParamsResolver resolver, BattleRules rules,
+                                   Map<UnitType, UnitStats> stats, Map<UnitType, Long> comp, long seed) {
+        ArmySide atk = resolver.bareArmy("攻方", comp, Long.MAX_VALUE / 4);
+        ArmySide def = resolver.bareArmy("守方", comp, Long.MAX_VALUE / 4);
+        BattleSimulator.simulate(new BattleInput(atk, def, TerrainType.PLAIN, seed,
+                BattleType.PVP_SOLO, BattleModifier.none(), BattleModifier.none(), stats, rules,
+                DefenderStore.none()));
+    }
+
+    /**
+     * 判定：p99 是否在预算内。抽出来只为让单测能直接盯住它 —— 判定写反
+     * （超了还说通过）是这条量具最坏的失败形状，而它不会自己暴露。
+     */
+    static boolean settleWithinBudget(double p99Ms, long limitMs) {
+        return p99Ms <= limitMs;
+    }
+
+    /**
+     * 最近秩分位（已排序数组）：结果一定是某个真实样本，不是插出来的。
+     *
+     * <p>包内可见是为了能被单测直接盯住 —— 秩算错一位会**把 p99 报低**，
+     * 而那正是这个量具唯一要防的假绿（与 {@code BalanceMatrix.judge} 同一理由）。
+     */
+    static double percentileMs(long[] sortedNanos, double q) {
+        int rank = (int) Math.ceil(q * sortedNanos.length) - 1;
+        return sortedNanos[Math.max(0, Math.min(rank, sortedNanos.length - 1))] / 1_000_000.0d;
+    }
+
+    private static double median(double[] values) {
+        double[] copy = values.clone();
+        java.util.Arrays.sort(copy);
+        return copy[copy.length / 2];
+    }
     private static Map<UnitType, Long> parseArmy(String spec) {
         Map<UnitType, Long> units = new EnumMap<>(UnitType.class);
         for (UnitType t : UnitType.values()) {
