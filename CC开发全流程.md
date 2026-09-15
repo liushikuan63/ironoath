@@ -310,8 +310,20 @@
 ## 阶段 7 · 发布、热更与灰度 ⬜
 
 - [ ] 提审材料（版号/备案、隐私协议、客服与退款入口 —— 见上线检查清单）
-- [ ] 热更范围与版本闸门（`HOT_UPDATE_SCOPE`、`RELEASE_*`）
-- [ ] 灰度 5% → 全量（`RELEASE_GRAY_PERCENT`）
+- [x] **版本闸门（`RELEASE_*`）**：服务端比较 + **客户端闸门**都齐了。
+      服务端：`ReleaseRulesAssembler` 读 `RELEASE_LATEST/MIN_SUPPORTED_VERSION` 与
+      `RELEASE_GRAY_PERCENT`，且 `min > latest` 时端点直接拒绝（否则全服被要求升到一个不存在的版本）。
+      客户端：2026-09-15 才补上 —— 此前 `forceUpdate` / `notice` 两个字段**全仓零引用**，
+      服务端算出"该拦"而客户端照常登录并拉十个面板（收口清单 #130）。现在 `game/release/UpdateGate.ts`
+      做判定（问不到服务端时不拦，但结论里带 `serverSeen=false` 以便区分"放行"与"没判"），
+      `GameBootstrap` 在**登录之前**拦下并停在提示页（把那块提示页之外的节点全部停用，
+      而不是只盖一层 —— 盖一层的话导航条还在下面接着触摸，点得动却全是空面板）。
+      **实测**：只把服务端那两个参数抬到 2.0.0 ⇒ `[boot]` 报 `blocked:"force-update"`、
+      `/player/init` 一次都没发；配置还原后同一产物正常进游戏（对照组）。
+- [ ] 热更范围（`HOT_UPDATE_SCOPE`）：配置表 / 引导 / 活动三类热更的**客户端落地**
+      —— 参数与 `/ops/config/manifest` 已在，缺的是"拿到 manifest 之后按 scope 真的换掉本地那份"
+- [ ] 灰度 5% → 全量（`RELEASE_GRAY_PERCENT`）：服务端已按玩家稳定哈希判定并下发 `grayEnabled`，
+      客户端**尚未按它分流**（哪个开关走灰度、灰度里试什么，属于产品决定，先记着）
 - [ ] 崩溃率与埋点看板（`/ops/*`）
 
 ---

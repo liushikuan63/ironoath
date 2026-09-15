@@ -17,7 +17,7 @@
  * 客户端不再镜像 global.json 的 512/32/9。）
  */
 
-import { _decorator, Component, director, sys } from 'cc'
+import { _decorator, Color, Component, director, Graphics, Label, Node, Size, sys, UITransform, view } from 'cc'
 import { FetchHttpTransport } from '../net/FetchTransport'
 import { NetModule } from '../net/NetModule'
 import type { NetConfig, NetDeps } from '../net/NetModule'
@@ -34,6 +34,11 @@ import { GameSession } from '../game/session/GameSession'
 import { ApiTrackTransport } from '../game/track/ApiTrackTransport'
 import { CrashReporter, installGlobalHooks } from '../game/session/CrashReporter'
 import { TRACK_EVENTS } from '../game/track/TrackEvents'
+import { decideUpdateGate } from '../game/release/UpdateGate'
+import { applySystemUiFont } from './UiFont'
+import type { UpdateGateDecision } from '../game/release/UpdateGate'
+import type { AppVersionResp } from '../net/generated/OpsProtocol'
+import type { NetOutcome } from '../net/NetModule'
 import { TrackClient } from '../game/track/TrackClient'
 import { CityPanelView } from './CityPanelView'
 import { ArmyPanelView } from './ArmyPanelView'
@@ -332,9 +337,27 @@ export class GameBootstrap extends Component {
     }
     const api = new GameApi(apiDeps)
 
+    // 版本闸门是**登录之前**的第一件事：协议写明 forceUpdate=true 时客户端必须停在提示页、
+    // 不得进入游戏，而"进入游戏"的第一步就是登录与拉十个面板 —— 判定排在它们之后等于没拦。
+    // 同一次响应后面还要用来建埋点（攒批策略在这份响应里），所以只发这一次请求。
+    const version = await api.appVersion(CLIENT_VERSION, null)
+    const gate = decideUpdateGate(version, CLIENT_VERSION)
+    if (gate.blocked) {
+      this.showUpdateNotice(gate)
+      console.log('[boot] ' + JSON.stringify({
+        platform: isWxRuntime() ? 'wechat' : 'web',
+        started: false,
+        blocked: 'force-update',
+        clientVersion: CLIENT_VERSION,
+        latestVersion: gate.latest,
+        notice: gate.notice,
+      }))
+      return
+    }
+
     // 攒批策略由服务端下发（10 条或 10 秒那种），客户端不写死。appVersion 是公开端点，
     // 登录前就能调 —— 所以 startup 这个"登录前"的事件才有地方发。
-    const tracker = await this.buildTracker(api)
+    const tracker = await this.buildTracker(api, version)
     this.trackClient = tracker
 
     // 崩溃上报**不依赖埋点是否可用**：拿不到 TrackPolicy 时游戏照样要能收崩溃。
@@ -394,13 +417,67 @@ export class GameBootstrap extends Component {
   }
 
   /**
+   * 强制更新的提示页（B16 §5）。
+   *
+   * <p>做法是**把画布上其余节点全部停用**，而不是只盖一层：盖一层的话导航条还在下面接着触摸，
+   * 玩家点得动、面板却全是空的 —— 那比直接拦住更像"游戏坏了"。停用之后这一页就是全部，
+   * 与协议里那句「必须停在提示页，不得进入游戏」是同一个意思。
+   */
+  private showUpdateNotice(gate: UpdateGateDecision): void {
+    const canvas = this.node.parent ?? this.node
+    for (const sibling of Array.from(canvas.children)) {
+      sibling.active = false
+    }
+    const visible = view.getVisibleSize()
+    const size = new Size(visible.width, visible.height)
+
+    const layer = new Node('UpdateNotice')
+    canvas.addChild(layer)
+    layer.layer = canvas.layer
+    layer.addComponent(UITransform).setContentSize(size)
+
+    const bg = new Node('Bg')
+    layer.addChild(bg)
+    bg.layer = layer.layer
+    bg.addComponent(UITransform).setContentSize(size)
+    const graphics = bg.addComponent(Graphics)
+    graphics.fillColor = new Color(18, 16, 14, 255)
+    graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
+    graphics.fill()
+
+    const title = new Node('Title')
+    layer.addChild(title)
+    title.layer = layer.layer
+    title.setPosition(0, size.height * 0.18, 0)
+    title.addComponent(UITransform).setContentSize(new Size(size.width - 80, 34))
+    const titleLabel = applySystemUiFont(title.addComponent(Label))
+    titleLabel.string = '需要更新'
+    titleLabel.fontSize = 26
+    titleLabel.lineHeight = 32
+    titleLabel.color = new Color(224, 190, 120, 255)
+
+    const body = new Node('Body')
+    layer.addChild(body)
+    body.layer = layer.layer
+    body.setPosition(0, 0, 0)
+    body.addComponent(UITransform).setContentSize(new Size(size.width - 140, 160))
+    const bodyLabel = applySystemUiFont(body.addComponent(Label))
+    // 版本号必须一起显示：只说「请更新」的话，玩家分不清是自己版本旧还是服务器炸了
+    bodyLabel.string = `${gate.notice ?? ''}\n\n当前版本 ${CLIENT_VERSION} ｜ 最新版本 ${gate.latest}`
+    bodyLabel.fontSize = 16
+    bodyLabel.lineHeight = 24
+    bodyLabel.color = new Color(220, 214, 200, 255)
+    bodyLabel.overflow = Label.Overflow.RESIZE_HEIGHT
+    bodyLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+  }
+
+  /**
    * 取 `TrackPolicy` 并建埋点客户端。
    *
    * <p>拿不到就返回 null 并说一声：埋点不是玩法功能，一次版本查询失败不该把玩家挡在游戏外；
    * 但也绝不静默 —— 静默的表现是"漏斗少了最前一环"，而没人会怀疑到上报上。
    */
-  private async buildTracker(api: GameApi) {
-    const outcome = await api.appVersion(CLIENT_VERSION, null)
+  private async buildTracker(api: GameApi, outcome: NetOutcome<AppVersionResp>) {
     if (outcome.kind !== 'ok') {
       console.warn(`[track] 没拿到 TrackPolicy，本次会话不上报埋点：${outcome.kind === 'biz'
         ? outcome.msg : outcome.message}`)
