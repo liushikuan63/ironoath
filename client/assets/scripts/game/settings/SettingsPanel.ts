@@ -11,10 +11,11 @@
  */
 
 import type { AppVersionResp, SupportEntry } from '../../net/generated/OpsProtocol'
+import type { PrivacyPlan } from '../privacy/PrivacyConsent'
 
 /** 设置页的一行。 */
 export interface SettingsRow {
-  readonly key: 'support' | 'refund'
+  readonly key: 'support' | 'refund' | 'privacy'
   readonly title: string
   readonly subtitle: string
   /** 点下去会发生什么；恒非空 —— 未配置时是一条说明，不是一个死按钮 */
@@ -24,6 +25,7 @@ export interface SettingsRow {
 /** 点击行为。两种都"有反应"，区别只是反应是什么。 */
 export type SettingsAction =
   | { readonly kind: 'open-customer-service'; readonly corpId: string; readonly url: string }
+  | { readonly kind: 'open-privacy-contract' }
   | { readonly kind: 'message'; readonly text: string }
 
 /** 整个设置页的数据。 */
@@ -42,6 +44,7 @@ export interface SettingsView {
 export function buildSettingsView(
   resp: AppVersionResp | null,
   clientVersion: string,
+  privacy: PrivacyPlan = { request: false, contractName: null, apiAvailable: false },
 ): SettingsView {
   const support = resp?.support ?? null
   const latest = resp?.latest ?? null
@@ -59,6 +62,16 @@ export function buildSettingsView(
         subtitle: '未成年人充值退款请通过客服提交（需提供监护人信息）',
         action: supportAction(support),
       },
+      {
+        key: 'privacy',
+        title: '隐私政策',
+        // 协议名用平台给的那个（公众平台上配置的《用户隐私保护指引》），本作不自己起名 ——
+        // 自己起一个名字，提审时对不上平台配置，是要被打回的那一类
+        subtitle: privacy.contractName === null
+          ? '查看平台配置的用户隐私保护指引'
+          : `查看${privacy.contractName}`,
+        action: privacyAction(privacy),
+      },
     ],
     versionText: latest === null || latest === clientVersion
       ? `当前版本 ${clientVersion}`
@@ -72,6 +85,19 @@ export function buildSettingsView(
  * <p>退款与客服同路：B15 §3 要求「退款通道必须留」，而通道就是客服 ——
  * 给它单开一套表单等于自建一个没人看的工单系统，那是另一件事。
  */
+/**
+ * 隐私协议那一行点下去做什么。
+ *
+ * <p>运行环境没有隐私接口（浏览器、编辑器预览）时给一条说明而不是死按钮 ——
+ * 与客服入口同一条纪律。
+ */
+function privacyAction(privacy: PrivacyPlan): SettingsAction {
+  if (!privacy.apiAvailable) {
+    return { kind: 'message', text: '请在微信小游戏内查看隐私政策' }
+  }
+  return { kind: 'open-privacy-contract' }
+}
+
 function supportAction(support: SupportEntry | null): SettingsAction {
   if (support === null) {
     return { kind: 'message', text: '本环境未配置客服，请通过官方渠道联系我们（配置 WECHAT_SUPPORT_* 后可用）' }

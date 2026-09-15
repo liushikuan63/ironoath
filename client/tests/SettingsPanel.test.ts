@@ -9,6 +9,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildSettingsView } from '../assets/scripts/game/settings/SettingsPanel'
+import type { PrivacyPlan } from '../assets/scripts/game/privacy/PrivacyConsent'
 import type { AppVersionResp } from '../assets/scripts/net/generated/OpsProtocol'
 
 function resp(overrides: Partial<AppVersionResp> = {}): AppVersionResp {
@@ -23,13 +24,32 @@ function resp(overrides: Partial<AppVersionResp> = {}): AppVersionResp {
   }
 }
 
+/** 运行环境没有隐私接口（浏览器/编辑器）时的计划。 */
+const noPrivacyApi: PrivacyPlan = { request: false, contractName: null, apiAvailable: false }
+
+test('隐私协议那一行：有平台接口就打开平台协议页，没有就给说明（不死按钮）', () => {
+  const withApi = buildSettingsView(resp(), '1.0.0',
+    { request: true, contractName: '《用户隐私保护指引》', apiAvailable: true })
+  const privacyRow = withApi.rows.find(r => r.key === 'privacy')
+  assert.ok(privacyRow !== undefined, '隐私入口要一级可见（§二 5）')
+  assert.equal(privacyRow.action.kind, 'open-privacy-contract', '有接口就打开平台配置的协议页')
+  assert.ok(privacyRow.subtitle.includes('《用户隐私保护指引》'),
+    '协议名用平台给的原文，提审时才对得上平台配置：' + privacyRow.subtitle)
+
+  const withoutApi = buildSettingsView(resp(), '1.0.0', noPrivacyApi)
+  const fallback = withoutApi.rows.find(r => r.key === 'privacy')
+  assert.equal(fallback?.action.kind, 'message', '没有接口时也不能是死按钮')
+  assert.ok(fallback?.action.kind === 'message' && fallback.action.text.includes('微信小游戏'),
+    '说明要讲清「这个环境看不了」，而不是「坏了」')
+})
 test('未配置客服时入口照样在，点下去说明未配置（不是死按钮）', () => {
-  const view = buildSettingsView(resp({ support: null }), '1.0.0')
+  const view = buildSettingsView(resp({ support: null }), '1.0.0', noPrivacyApi)
 
   const keys = view.rows.map(r => r.key)
-  assert.deepEqual(keys, ['support', 'refund'], '客服与退款两个入口都要一级可见（提审按这条查）')
+  assert.deepEqual(keys, ['support', 'refund', 'privacy'],
+    '客服、退款、隐私三个入口都要一级可见（提审按 §二 5/8/9 查）')
 
-  for (const row of view.rows) {
+  for (const row of view.rows.filter(r => r.key !== 'privacy')) {
     assert.equal(row.action.kind, 'message',
       `${row.key} 在未配置时也该有反应：点了什么都不发生会被当成 bug`)
     assert.ok(row.action.kind === 'message' && row.action.text.includes('未配置'),
@@ -43,7 +63,7 @@ test('配置了客服 ⇒ 两个入口都走 open-customer-service，并原样�
     support: { corpId: 'corp-x', url: 'https://work.weixin.qq.com/kf/x' },
   }), '1.0.0')
 
-  for (const row of view.rows) {
+  for (const row of view.rows.filter(r => r.key !== 'privacy')) {
     assert.equal(row.action.kind, 'open-customer-service', row.key + ' 应当直接打开客服')
     assert.ok(row.action.kind === 'open-customer-service')
     assert.equal(row.action.corpId, 'corp-x')
@@ -56,7 +76,7 @@ test('配置了客服 ⇒ 两个入口都走 open-customer-service，并原样�
 test('服务端版本没拿到时页面照常能用：入口还在，版本行只报当前版本', () => {
   const view = buildSettingsView(null, '1.0.0')
 
-  assert.equal(view.rows.length, 2, '拿不到版本响应不该让设置页空掉')
+  assert.equal(view.rows.length, 3, '拿不到版本响应不该让设置页空掉（三个入口照常）')
   assert.equal(view.versionText, '当前版本 1.0.0', '没有服务端版本就不显示「最新」，不编一个')
 })
 

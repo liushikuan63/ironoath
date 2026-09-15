@@ -14,6 +14,7 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3 } from 'cc'
 import { buildSettingsView } from '../game/settings/SettingsPanel'
 import type { SettingsRow } from '../game/settings/SettingsPanel'
+import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
 import type { AppVersionResp } from '../net/generated/OpsProtocol'
 import { applySystemUiFont } from './UiFont'
 
@@ -38,9 +39,10 @@ export class SettingsPanelView extends Component {
   /** 点「联系客服」或「申请退款」时触发；参数是那一行。 */
   onSupport: ((row: SettingsRow) => void) | null = null
 
-  render(resp: AppVersionResp | null, clientVersion: string): void {
+  render(resp: AppVersionResp | null, clientVersion: string,
+    privacy: PrivacyPlan = { request: false, contractName: null, apiAvailable: false }): void {
     this.clearRows()
-    const view = buildSettingsView(resp, clientVersion)
+    const view = buildSettingsView(resp, clientVersion, privacy)
     this.drawBackground()
 
     let y = PANEL_HEIGHT / 2 - PADDING

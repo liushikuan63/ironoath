@@ -38,6 +38,8 @@ import { decideUpdateGate } from '../game/release/UpdateGate'
 import { applySystemUiFont } from './UiFont'
 import { SettingsPanelView } from './SettingsPanelView'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
+import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
+import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
 import type { UpdateGateDecision } from '../game/release/UpdateGate'
 import type { AppVersionResp } from '../net/generated/OpsProtocol'
 import type { NetOutcome } from '../net/NetModule'
@@ -81,6 +83,65 @@ const TRACK_TICK_INTERVAL_MS = 1_000
 const CHURN_IDLE_SECONDS = 120
 
 /** `wx` 只在小游戏运行时存在；这就是全仓库唯一的平台判定。 */
+/**
+ * 取平台的隐私设置。没有这个接口（浏览器/编辑器）时返回 null —— 由纯模块决定这意味着什么。
+ *
+ * <p><b>查询是异步的</b>，而它只影响"这次弹不弹"：所以回调里拿到结果就自己发起授权，
+ * 不把它塞进启动序列等待 —— 为一个"没查到也不拦启动"的答案加一个等待点不划算。
+ */
+function readPrivacySetting(): { needAuthorization: boolean; privacyContractName: string | null } | null {
+  const wxApi = (globalThis as Record<string, unknown>).wx as {
+    getPrivacySetting?: (options: Record<string, unknown>) => void
+  } | undefined
+  if (wxApi?.getPrivacySetting === undefined) {
+    return null
+  }
+  try {
+    wxApi.getPrivacySetting({
+      success: (res: { needAuthorization?: boolean; privacyContractName?: string }) => {
+        if (res.needAuthorization === true) {
+          requestPrivacyAuthorization()
+        }
+      },
+      fail: (error: unknown) => console.warn('[privacy] getPrivacySetting 失败', error),
+    })
+  } catch (error) {
+    console.warn('[privacy] getPrivacySetting 抛异常', error)
+    return null
+  }
+  // 接口在（能查）但答案还没回来：这一次按"要问"处理由平台弹，
+  // 平台自己知道用户同意过没有 —— 重复问一次不会造成多余的弹窗
+  return { needAuthorization: true, privacyContractName: null }
+}
+
+/** 让平台弹它自己的隐私授权弹窗。失败只记日志：<b>不拦启动</b>（见 PrivacyConsent 里的取舍）。 */
+function requestPrivacyAuthorization(): void {
+  const wxApi = (globalThis as Record<string, unknown>).wx as {
+    requirePrivacyAuthorize?: (options: Record<string, unknown>) => void
+  } | undefined
+  if (wxApi?.requirePrivacyAuthorize === undefined) {
+    return
+  }
+  wxApi.requirePrivacyAuthorize({
+    success: () => console.log('[privacy] 用户已同意隐私协议'),
+    fail: (error: unknown) => console.warn('[privacy] 用户未同意隐私协议', error),
+  })
+}
+
+/** 打开平台配置的协议页（设置页那一行）。 */
+function openPrivacyContract(): void {
+  const wxApi = (globalThis as Record<string, unknown>).wx as {
+    openPrivacyContract?: (options: Record<string, unknown>) => void
+  } | undefined
+  if (wxApi?.openPrivacyContract === undefined) {
+    console.warn('[privacy] 当前平台没有 openPrivacyContract（浏览器/编辑器预览）')
+    return
+  }
+  wxApi.openPrivacyContract({
+    fail: (error: unknown) => console.warn('[privacy] 打开隐私协议失败', error),
+  })
+}
+
 function isWxRuntime(): boolean {
   return typeof (globalThis as Record<string, unknown>).wx !== 'undefined'
 }
@@ -93,6 +154,8 @@ export class GameBootstrap extends Component {
   deviceId = ''
   /** 最近一次 /ops/app/version 的响应：设置页要显示版本与客服入口，拦更新时也要用。 */
   private appVersion: AppVersionResp | null = null
+  /** 隐私授权计划：启动时问一次平台，设置页那行与 [boot] 自检行都要用它。 */
+  private privacyPlan: PrivacyPlan = { request: false, contractName: null, apiAvailable: false }
   nickName = '无名君主'
 
   /** 编排本体。其它场景组件要调服务端就通过它，不要各自 new 一条网络栈。 */
@@ -346,6 +409,10 @@ export class GameBootstrap extends Component {
     // 同一次响应后面还要用来建埋点（攒批策略在这份响应里），所以只发这一次请求。
     const version = await api.appVersion(CLIENT_VERSION, null)
     this.appVersion = version !== null && version.kind === 'ok' ? version.data : null
+    // 隐私授权排在进入游戏之前：平台要求「使用隐私相关接口前先取得同意」，
+    // 而登录就会带上设备与账号标识 —— 那正是隐私接口的范畴。
+    // 弹窗与协议文本都由平台提供，本作不画、不存文案。
+    this.privacyPlan = planPrivacyPrompt(readPrivacySetting())
     const gate = decideUpdateGate(version, CLIENT_VERSION)
     if (gate.blocked) {
       this.showUpdateNotice(gate)
@@ -418,6 +485,8 @@ export class GameBootstrap extends Component {
       mountedPanels: mounted,
       hasAuthToken: this.net?.hasAuthToken() ?? false,
       clientVersion: CLIENT_VERSION,
+      privacyApi: this.privacyPlan.apiAvailable,
+      privacyAsked: this.privacyPlan.request,
     }))
   }
 
@@ -432,6 +501,10 @@ export class GameBootstrap extends Component {
    * 否则他的体感是「点了没反应」，而那会被当成 bug 报上来。
    */
   private handleSettingsAction(action: SettingsAction): void {
+    if (action.kind === 'open-privacy-contract') {
+      openPrivacyContract()
+      return
+    }
     if (action.kind === 'message') {
       this.showHint(action.text)
       return
@@ -581,7 +654,7 @@ export class GameBootstrap extends Component {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
       // 数据在 GameBootstrap 手里（版本响应是它拉的），所以这里直接推一次；
       // 面板没有 pending 通道可走 —— 那套是给 AppRoot 预拉的面板用的
-      settings.render(this.appVersion, CLIENT_VERSION)
+      settings.render(this.appVersion, CLIENT_VERSION, this.privacyPlan)
     }
     if (city !== null) {
       out.city = (resp, offsetMs) => city.attach(resp, offsetMs)
