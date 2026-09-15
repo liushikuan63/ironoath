@@ -9,10 +9,14 @@ cd "$(dirname "$0")/.."
 
 COCOS_CREATOR="${COCOS_CREATOR:-D:/Cocos/Creator/3.8.7/CocosCreator.exe}"
 COCOS_DEBUG="${COCOS_DEBUG:-false}"
-# 开发期 AppID。Cocos 模板自带的 wx6ac3f5090a6b99c5 是"游客小游戏"，
-# 新版 IDE 的自动化通道会直接拒绝它（日志：formatProject reject tourist/empty appid），
-# 表现是"构建成功但打不开项目"。要换真实账号时用 WECHAT_GAME_APPID 覆盖。
-WECHAT_GAME_APPID="${WECHAT_GAME_APPID:-wxa048c9e48c2fc7d1}"
+# 开发期 AppID。**决定模式的是 AppID 的注册类型，不是 compileType**：
+# 填一个小程序类目的 AppID，工具就把这个包当普通小程序打开，
+# 症状是「在项目根目录未找到 app.json」（看着像产物坏了，其实是身份选错）——
+# 收口清单 #125 用一次只换 AppID 的 A/B 定位到的。本机小游戏工程的测试 AppID 是下面这个。
+# Cocos 模板自带的 wx6ac3f5090a6b99c5 是"游客小游戏"，新版 IDE 的自动化通道会直接拒绝它
+# （日志：formatProject reject tourist/empty appid），表现是"构建成功但打不开项目"。
+# 要换真实账号时用 WECHAT_GAME_APPID 覆盖。
+WECHAT_GAME_APPID="${WECHAT_GAME_APPID:-wx6293e0f5dc71d6cc}"
 PROJECT_DIR="client"
 BUILD_DIR="client/build/wechatgame"
 BOOT_META="client/assets/scenes/Boot.scene.meta"

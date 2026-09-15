@@ -257,9 +257,14 @@
   本机已开启（HTTP 端口 45269）。
 - **产物必须用真实 AppID**：Cocos 模板自带的 `wx6ac3f5090a6b99c5` 与 `touristappid`
   都会被新版 IDE 的自动化通道拒绝（日志 `formatProject reject tourist/empty appid`）。
-  本项目测试 AppID 为 `wxa048c9e48c2fc7d1`。
-- **项目缓存里的 `compileType` 要确认是小游戏**：IDE 首次导入时可能把它缓存成
-  `weapp`（并按小程序找 `app.json`，报 `在项目根目录未找到 app.json`）。
+  ~~本项目测试 AppID 为 `wxa048c9e48c2fc7d1`。~~
+  **旧记录作废（#125 的 A/B）**：`wxa048c9e48c2fc7d1` 是**小程序类目**的账号，
+  小游戏要用 `wx6293e0f5dc71d6cc`；当时 `scripts/build-wechatgame.sh` 的默认值正是填错的那个，
+  所以**每次干净构建都会把模拟器里的修复抵消一遍**（2026-09-15 已把默认值改对）。
+- ~~**项目缓存里的 `compileType` 要确认是小游戏**：IDE 首次导入时可能把它缓存成 `weapp`~~
+  **归因错了**：`在项目根目录未找到 app.json` 不是缓存里的 `compileType` 造成的，
+  而是 AppID 的注册类型决定工具进哪种模式（见上一条与 `收口清单.md` #125）——
+  产物里 `compileType` 一直是 `"game"`，换成小游戏 AppID 后立刻进小游戏模式并启动成功。
   正确值是 `compileType: "game"` 且 `engine: true`；改完要重启 IDE 才生效。
   用 CLI 打开后日志出现 `[appservice] simulator launch success` 即模拟器已起。
 - **Cocos 3.8.7 × DevTools 2.02.2608070 兼容阻塞（2026-09-13 实测）**：
@@ -269,9 +274,15 @@
   `enhance/useIsolateContext/useMultiFrameRuntime/useApiHostProcess` 后仍可复现。
   因此 5.5 真机预览暂不能继续：需要换与 Cocos 3.8.7 兼容的开发者工具版本，
   或升级 Cocos 适配器后重跑；不要在项目里继续补第三方生成文件。
+  **旧结论作废（2026-09-15）**：这条不再阻塞 —— 模拟器现在能起。当时真正卡住的还是
+  「用错了 AppID ⇒ 工具按小程序模式解析小游戏包」，不是 Cocos 与工具的版本不兼容；
+  构建链路的两个补丁（`patch-wechat-adapter.mjs` / `patch-wechat-global.mjs`）+ 小游戏 AppID 即可。
+  留一句提醒：改过产物必须 `cli cache --clean compile`，否则模拟器跑的是旧编译缓存。
 - **`cli preview` 不走小游戏**：它会对游戏产物报
   `/app.json not found`（那是小程序上传通道）。真机验证要在 IDE 里点「预览」扫码，
   或用「真机调试」；命令行预览这条对当前小游戏产物不适用。
+  **旧结论作废（2026-09-15）**：`cli preview --qr-format image --qr-output ...` 对小游戏产物
+  同样可用，实测返回 `✔ preview` 并产出可扫二维码 —— 见 5.5 与本节上面的 AppID 更正。
 
 ---
 
