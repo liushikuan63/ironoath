@@ -154,6 +154,23 @@ public class OpsAppService {
     }
 
     /**
+     * 把"已到点但还没落库"的缓冲区先推进一次，再回答任何读数。
+     *
+     * <p><b>为什么需要它</b>：{@code TrackFlusher} 刻意不起定时器（B00 陷阱 2 与
+     * {@code check-layering.sh}），推进点是 {@code offer()} —— 也就是"下一条事件进来时顺便刷"。
+     * 一个安静跑完启动的客户端（只有 startup + login 两条，攒批阈值 10 条）会永远凑不满一批，
+     * 于是读数端点报出 <b>startups=0 / 崩溃率 null</b>，看起来像"这个版本根本没人玩"，
+     * 而事实是"有人玩了他还上报了，只是数据卡在缓冲里"。
+     *
+     * <p><b>这不是把定时器换个地方起</b>：读数本身是一次外部动作，读的时候顺便推进与
+     * "写的时候顺便结算"（{@code purgeExpired}、{@code expireUnpaid}）是同一条惰性纪律，
+     * 而不是第 15 个 {@code @Scheduled}。没人读的时候依然不刷，那是设计。
+     */
+    private void advanceBuffer() {
+        flusher.tick(timeService.serverNow());
+    }
+
+    /**
      * 埋点入口的健康度（只读，供 {@code GET /ops/ingest} 用）。
      *
      * <p><b>这一存在的理由是「计数必须有出口」</b>：{@code truncatedEvents} 如果只有测试能读，
@@ -162,6 +179,7 @@ public class OpsAppService {
      * 「批数远小于事件数」变成一个能被查的事实而不是一个断言。
      */
     public TrackIngestResp ingestHealth() {
+        advanceBuffer();
         return new TrackIngestResp(assembler.trackIngestSoftLimit(), truncatedEvents.get(),
                 (int) clientDroppedBatches.get(), flusher.pendingCount(), flusher.batchCount());
     }
@@ -246,6 +264,8 @@ public class OpsAppService {
      *                      因为「以为查的是 30 天而实际只查了 60 秒」是静默的错
      */
     public CrashDashboardResp crashDashboard(Integer windowSeconds) {
+        // 分母只数已落库的 startup —— 所以先把已到点的缓冲推进，否则安静在线的版本会被读成没人玩
+        advanceBuffer();
         int max = retentionWindowSeconds();
         int window = windowSeconds == null ? max
                 : Math.max(MIN_WINDOW_SECONDS, Math.min(windowSeconds, max));

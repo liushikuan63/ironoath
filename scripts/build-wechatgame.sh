@@ -71,5 +71,8 @@ node scripts/patch-wechat-orientation.mjs "$BUILD_DIR/game.json"
 node scripts/patch-wechat-config.mjs "$BUILD_DIR/project.config.json" "$WECHAT_GAME_APPID"
 node scripts/patch-wechat-adapter.mjs "$BUILD_DIR/web-adapter.js"
 node scripts/patch-wechat-global.mjs "$BUILD_DIR/game.js"
+# 后端地址默认不传 = 保持构建期写死的 http://localhost:8080（与加这个开关之前的行为逐字节一致）。
+# 共享机器上 8080 常被别人的旧构建占着，或要把包给真机/别台机器跑时，用 WECHAT_BASE_URL 指过去。
+node scripts/patch-wechat-backend.mjs "$BUILD_DIR" "${WECHAT_BASE_URL:-}"
 bash scripts/check-wechat-artifact.sh
 echo "[build-wechatgame] 微信小游戏构建与产物检查通过。"

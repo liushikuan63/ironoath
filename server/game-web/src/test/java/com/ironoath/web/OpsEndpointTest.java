@@ -320,6 +320,31 @@ class OpsEndpointTest {
     }
 
     @Test
+    @DisplayName("读数把已到点的缓冲推进：安静在线的版本不能被报成「没人玩」（startups=0）")
+    void dashboardFlushesTheDueBufferBeforeCounting() throws Exception {
+        int maxBatch = (int) configs.longParam("TRACK_BATCH_MAX_SIZE");
+        assertThat(maxBatch).as("这条用例要的是「少于攒批阈值」的那一档").isGreaterThan(3);
+        postTrack(startupEvents("7.7.7", 3), null);
+        // 不足一批不落库（这是 B16 验收 3 要的行为），此刻三条还卡在服务端二次攒批器里
+        assertThat(store.eventCount()).as("没到攒批阈值，不该有东西落库").isZero();
+        assertThat(flusher.pendingCount()).isEqualTo(3);
+
+        JsonNode early = dashboard(null);
+        assertThat(early.get("rows")).as("还没到攒批窗口 ⇒ 读数不硬刷：这条版本此刻不该成行（成行与否本身就是事实，"
+                + "而报一个 startups=0 会把「有人在玩但数据还在缓冲」说成「没人玩」）：%s", early).isEmpty();
+
+        // 等到窗口真的过点。刻意不由测试自己调 flusher.tick(未来时刻)：那样一来
+        // 把被测的 advanceBuffer() 删掉也照样绿，这条断言就证不了任何东西
+        Thread.sleep(configs.longParam("TRACK_BATCH_FLUSH_SECONDS") * 1000L + 400L);
+
+        JsonNode row = versionRow(dashboard(null), "7.7.7");
+        assertThat(row.get("startups").asInt())
+                .as("读一次看板之前该把已到点的缓冲推进，否则分母少算").isEqualTo(3);
+        assertThat(store.eventCount()).as("推进之后事件确实落了库").isEqualTo(3);
+        assertThat(flusher.pendingCount()).as("缓冲已清空").isZero();
+    }
+
+    @Test
     @DisplayName("看板：窗口之外的崩溃不计入；不传 windowSeconds 就是查满保留期")
     void dashboardFiltersByWindowAndDefaultsToRetention() throws Exception {
         long twoDaysAgo = time.serverNow() - 2L * 86_400_000L;
