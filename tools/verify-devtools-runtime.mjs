@@ -100,7 +100,7 @@ async function main() {
   const mounted = Number(p.mountedPanels)
   verdict(Number.isFinite(attempted) && attempted > 0, '面板视图查找真的跑过（反空转下限）',
     `attemptedPanels=${p.attemptedPanels} —— 为 0 说明装配整段被跳过，那时 missing 为空只是没人找过`)
-  verdict(mounted === attempted, '十一个面板视图全部装配（缺一个就是永远空白且原先没人知道）',
+  verdict(mounted === attempted, '面板视图全部装配（找过的都找到了；缺一个就是永远空白且没人知道）',
     `mounted=${mounted} attempted=${attempted} missing="${p.missingPanels ?? ''}"`)
 
   const bootMs = Number(p.bootMs)

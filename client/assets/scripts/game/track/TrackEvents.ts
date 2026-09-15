@@ -82,6 +82,14 @@ export const TRACK_EVENTS = {
    * 首日那个送将任务是唯一带候选的，看板靠它区分「直接领」与「选完再领」两条路径。
    */
   questClaim: 'quest_claim',
+  /**
+   * 一键领取邮件（B12 §2）。**不带参数是刻意的**：领几封、领到什么全是服务端的结果，
+   * 客户端在点下去的那一刻只知道「玩家要领」。结果的计数在 `/mail/claimAll` 的响应侧，
+   * 而失败本来就有 `panel_load_failed` 那一条兜着。
+   */
+  mailClaimAll: 'mail_claim_all',
+  /** 点开一封邮件（标已读）。带 mailId：「哪一类邮件没人看」是这格唯一能回答的问题。 */
+  mailRead: 'mail_read',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

@@ -55,6 +55,7 @@ import { HeroPanelView } from './HeroPanelView'
 import { BagPanelView } from './BagPanelView'
 import { StagePanelView } from './StagePanelView'
 import { QuestPanelView } from './QuestPanelView'
+import { MailPanelView } from './MailPanelView'
 import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
@@ -269,6 +270,13 @@ export class GameBootstrap extends Component {
     // 导航层：由它建出各面板节点（初始未激活，因此不会九个面板一起画满屏背景），
     // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
     this.nav = this.node.addComponent(PanelNav)
+    // 邮件不占首屏：多一个并发请求会挤那 3 秒预算（首屏判据是「可交互」而不是「可见」），
+    // 而邮箱不在可交互的必需项里 —— 玩家点开那一格才拉第一次。onShow 这个钩子此前挂着没人用。
+    this.nav.onShow = key => {
+      if (key === 'mail') {
+        void this.root?.refresh('mail')
+      }
+    }
     void this.boot()
   }
 
@@ -773,11 +781,14 @@ export class GameBootstrap extends Component {
     const power = this.panel(PowerPanelView, 'power')
     const search = this.panel(TargetSearchView, 'targets')
     const quest = this.panel(QuestPanelView, 'quest')
+    const mail = this.panel(MailPanelView, 'mail')
     const world = this.panel(WorldMap, 'world')
     const settings = this.panel(SettingsPanelView, 'settings')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
-    const views = { city, army, hero, bag, stage, social, power, search, quest, world, settings }
+    const views = {
+      city, army, hero, bag, stage, social, power, search, quest, mail, world, settings,
+    }
     this.panelViews = {
       attempted: Object.keys(views).length,
       missing: Object.entries(views).filter(([, view]) => view === null).map(([key]) => key),
@@ -863,6 +874,12 @@ export class GameBootstrap extends Component {
     if (quest !== null) {
       out.quest = resp => quest.attach(resp)
       quest.onClaim = (questId, heroChoice) => { void this.root?.claimQuest(questId, heroChoice) }
+    }
+    if (mail !== null) {
+      out.mail = (resp, serverNowMs) => mail.attach(resp, serverNowMs)
+      out.mailClaimed = resp => mail.showOutcome(resp)
+      mail.onClaimAll = () => { void this.root?.claimAllMail() }
+      mail.onReadRequested = mailId => { void this.root?.readMail(mailId) }
     }
     if (world !== null) {
       // 「回城」按钮此前是个空函数，就是因为没人把家坐标交给它（WorldMap 里那条 TODO）

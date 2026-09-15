@@ -36,6 +36,7 @@ import type {
 } from '../../net/generated/SocialProtocol'
 import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
+import type { MailClaimAllResp, MailListResp } from '../../net/generated/MailProtocol'
 import { buildLineupChoices, buildSpeedupChoices } from './Choices'
 import type { LineupChoice, SpeedupChoice } from './Choices'
 import { ClientReddotTree } from '../reddot/ReddotTree'
@@ -63,6 +64,15 @@ export interface PanelTargets {
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
   quest?(resp: QuestListResp): void
+  /**
+   * 邮件面板（B12 §2）。列表本身是「带副作用的读」：服务端在这次读里顺手清过期。
+   */
+  mail?(resp: MailListResp, serverNowMs: number): void
+  /**
+   * 一键领取的回执单独递一次：它要落在「刚才那一下」的结果行上，
+   * 而不是等下一次列表拉取（列表拉回来的是"领完之后"的样子，玩家看不到自己领到了什么）。
+   */
+  mailClaimed?(resp: MailClaimAllResp): void
   /** 服务端权威红点树。导航与面板只读取它，不在业务层重算。 */
   reddot?(tree: ClientReddotTree): void
   /** 失败或不能做的说明。`panel` 是分流用的面板名，不是错误码。 */
@@ -78,7 +88,7 @@ export interface PanelTargets {
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
-  | 'quest' | 'reddot'
+  | 'quest' | 'reddot' | 'mail'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -264,6 +274,10 @@ export class AppRoot {
         return
       case 'quest':
         this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
+        return
+      case 'mail':
+        this.deliver('mail', await this.api.mailList(),
+          r => this.targets.mail?.(r, this.timeSync.serverNow()))
         return
       case 'reddot':
         this.deliver('reddot', await this.api.socialReddot(), r => {
@@ -459,6 +473,28 @@ export class AppRoot {
       ['quest', 'hero'])
   }
 
+  // ---------- 邮件（B12 §2） ----------
+
+  /**
+   * 一键领取全部。成功后重拉收件箱（那几封要变成「已领取」），
+   * 并把回执单独递一次给结果行 —— 只重拉的话玩家看到的是"列表变灰了"，
+   * 而不是"我刚才领到了什么"，而后者才是他来这一趟想知道的。
+   */
+  claimAllMail(): Promise<void> {
+    this.track(TRACK_EVENTS.mailClaimAll)
+    return this.write('mail', this.api.mailClaimAll({}), ['mail'],
+      r => this.targets.mailClaimed?.(r))
+  }
+
+  /**
+   * 点开一封未读邮件。重拉一次列表而不是本地把那行改成已读：
+   * 未读封数是服务端算的（红点与列表同源），本地改法迟早和徽标各说一套。
+   */
+  readMail(mailId: string): Promise<void> {
+    this.track(TRACK_EVENTS.mailRead, { mailId })
+    return this.write('mail', this.api.mailRead({ mailId }), ['mail'])
+  }
+
   // ---------- 社交 ----------
 
   help(helpRequestId: string): Promise<void> {
@@ -546,7 +582,7 @@ export class AppRoot {
     this.targets.error?.(panel, AppRoot.reason(outcome))
     // 同一句话发给服务端：`targets.error` 的落点是 console.warn，只有开发者看得见，
     // 于是"某个面板一直是空的"这件事在没有人盯着 Console 的时候永远没人知道。
-    // 这是十一个面板读取的同一个收口点，所以只在这里加一次。
+    // 这是所有面板读取的同一个收口点，所以只在这里加一次（刻意不写有几个：一写就会过期）。
     this.track(TRACK_EVENTS.panelLoadFailed, {
       panel,
       kind: outcome.kind,

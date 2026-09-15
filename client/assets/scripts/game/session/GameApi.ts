@@ -67,6 +67,9 @@ import type {
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import type { QuestClaimReq, QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
+import type {
+  MailClaimAllReq, MailClaimAllResp, MailListResp, MailReadReq, MailReadResp,
+} from '../../net/generated/MailProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -709,6 +712,31 @@ export class GameApi {
    */
   questClaim(req: Omit<QuestClaimReq, 'requestId'>): Promise<NetOutcome<QuestClaimResp>> {
     return this.mutate<QuestClaimReq, QuestClaimResp>('/quest/claim', req)
+  }
+
+  // ---------- 邮件（B12 §2） ----------
+
+  /**
+   * GET /mail/list。
+   *
+   * <p>又是一个「带副作用的读」：服务端在这一次读里顺手清掉过期邮件（惰性清理，不跑定时器），
+   * 所以面板每次打开都要真拉，不能拿缓存糊弄 —— 缓存会让一封已经过期的邮件还能被点。
+   */
+  mailList(): Promise<NetOutcome<MailListResp>> {
+    return this.read<MailListResp>('/mail/list')
+  }
+
+  /**
+   * POST /mail/claimAll。**不带 mailId 列表**：哪几封可领是服务端状态（B12 禁止一键领发 N 次请求，
+   * 而把 id 交给客户端选，等于把「已领过没有」的判断搬到对端去判）。
+   */
+  mailClaimAll(req: Omit<MailClaimAllReq, 'requestId'>): Promise<NetOutcome<MailClaimAllResp>> {
+    return this.mutate<MailClaimAllReq, MailClaimAllResp>('/mail/claimAll', req)
+  }
+
+  /** POST /mail/read。回执带新的未读封数，省一次重拉。 */
+  mailRead(req: Omit<MailReadReq, 'requestId'>): Promise<NetOutcome<MailReadResp>> {
+    return this.mutate<MailReadReq, MailReadResp>('/mail/read', req)
   }
 
   /**

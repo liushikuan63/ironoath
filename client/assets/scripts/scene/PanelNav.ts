@@ -26,6 +26,7 @@ import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { QuestPanelView } from './QuestPanelView'
+import { MailPanelView } from './MailPanelView'
 import { WorldMap } from './WorldMap'
 import { SettingsPanelView } from './SettingsPanelView'
 import { applyCommandButton } from './ArtCatalog'
@@ -65,6 +66,9 @@ const PANELS: readonly PanelDef[] = [
   { key: 'bag', label: '背包', view: BagPanelView, reddotKey: null },
   { key: 'stage', label: '关卡', view: StagePanelView, reddotKey: null },
   { key: 'quest', label: '任务', view: QuestPanelView, reddotKey: null },
+  // 邮件紧跟任务：两者都是「每天进来清一次」的入口，而它的角标绑在服务端 mail/unread 叶子上
+  // （B12 §4：红点判据只有一处，客户端不参与算）。
+  { key: 'mail', label: '邮件', view: MailPanelView, reddotKey: 'mail' },
   { key: 'social', label: '社交', view: SocialPanelView, reddotKey: 'social' },
   { key: 'power', label: '战力', view: PowerPanelView, reddotKey: null },
   { key: 'targets', label: '搜索', view: TargetSearchView, reddotKey: null },

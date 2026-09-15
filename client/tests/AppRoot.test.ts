@@ -115,6 +115,21 @@ const ROUTES: Record<string, unknown> = {
     ],
     claimableCount: 1, serverNow: SERVER_NOW,
   },
+  '/mail/list': {
+    mails: [
+      { mailId: 'm-1', kind: 'OVERFLOW', title: '奖励放不下', text: '金币 ×500',
+        rewards: [{ type: 'RESOURCE', id: 'GOLD', count: 500, name: '金币' }],
+        claimed: false, read: false, createdAt: SERVER_NOW, expireAt: SERVER_NOW + 30 * 86_400_000,
+        sourceRef: 'battle:r-1' },
+    ],
+    unreadCount: 1, claimedCount: 0,
+  },
+  '/mail/claimAll': {
+    claimed: 1,
+    rewards: [{ type: 'RESOURCE', id: 'GOLD', count: 500, name: '金币' }],
+    failed: [],
+  },
+  '/mail/read': { mailId: 'm-1', unreadCount: 0 },
   '/quest/claim': {
     questId: 'quest_main_01',
     rewards: [{ type: 'HERO', id: 'hero_sr_01', count: 1, name: '卫无咎' }],
@@ -335,6 +350,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     power: () => attached.push('power'),
     targets: () => attached.push('targets'),
     quest: () => attached.push('quest'),
+    mail: () => attached.push('mail'),
+    mailClaimed: () => attached.push('mailClaimed'),
     home: () => attached.push('home'),
     speedupTargetChoice: (options, onPick) => {
       speedupOptions = [...options]
@@ -509,6 +526,55 @@ test('面板读取失败同时是一条埋点：只发给 Console 的话，「�
     'panel 与 kind 是分得开的两格：哪个面板、是哪一类失败')
   assert.equal(h.errors.length, 1,
     '埋点不取代给玩家的那句提示 —— 它们是同一个收口点的两半，少一半就是「玩家看不到」或「后台查不到」')
+})
+
+test('邮件不在首屏预拉里：点开那一格才拉第一次（多一个并发请求会挤首屏预算）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  assert.equal(h.http.calls.some(c => c.path === '/mail/list'), false,
+    '首屏发过 /mail/list 就等于把 3 秒预算分一格给一个玩家未必会打开的面板')
+
+  await h.root.refresh('mail')
+
+  assert.equal(h.http.calls.filter(c => c.path === '/mail/list').length, 1)
+  assert.equal(h.attached.includes('mail'), true, '列表必须落到邮件面板')
+  assert.equal(h.errors.length, 0)
+})
+
+test('一键领取：只发 1 次请求（B12 禁止项），成功后重拉列表并把回执单独递一次', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.attached.length = 0
+
+  await h.root.claimAllMail()
+
+  assert.equal(h.http.calls.filter(c => c.path === '/mail/claimAll').length, 1,
+    '50 封邮件发 50 次请求就是那条禁止项')
+  assert.equal(h.http.calls.filter(c => c.path === '/mail/list').length, 1,
+    '领完重拉一次列表，那几封才会变成「已领取」')
+  assert.deepEqual(h.attached, ['mailClaimed', 'mail'],
+    '先递回执（玩家要看到领到了什么），再落重拉后的列表')
+  const claim = h.http.calls.find(c => c.path === '/mail/claimAll')
+  assert.equal(claim?.body.requestId !== undefined, true, '领取是写操作，必须带幂等键')
+  assert.equal(claim?.body.mailIds, undefined,
+    '请求体里不该出现邮件 id 列表：哪几封可领是服务端状态')
+})
+
+test('领取失败与所有面板一样走同一个收口点：给玩家一句话，并发一条 panel_load_failed', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.events.length = 0
+  h.http.bizFailNext = { code: 1002, msg: '请求重复提交', detail: null }
+
+  await h.root.claimAllMail()
+
+  assert.equal(h.errors.some(e => e[0] === 'mail'), true, '面板名必须是 mail，玩家才知道是哪一格出错')
+  const failed = h.events.find(e => e.name === 'panel_load_failed')
+  assert.equal(failed?.params.panel, 'mail')
+  assert.equal(failed?.params.reason, '请求重复提交')
+  assert.equal(h.http.calls.filter(c => c.path === '/mail/list').length, 0,
+    '失败就不重拉列表：列表还没变，多拉一次只是把失败藏起来')
 })
 
 test('一键收割发的是 buildingId=null，且收割结果先落地再刷新列表', async () => {
