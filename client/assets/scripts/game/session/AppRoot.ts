@@ -158,9 +158,28 @@ export class AppRoot {
       playerId: outcome.data.playerId,
       mainLevel: trackParam(this.store.getState().cityLevel),
     })
-    await this.refresh('city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power',
+    await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power',
       'world', 'quest', 'reddot')
     return true
+  }
+
+  /**
+   * 首屏预拉：**并发**取回这一批面板。
+   *
+   * <p><b>为什么与 {@link refresh} 分成两个方法</b>：首屏要这批全部到齐才算「可交互」，
+   * 而串行时墙钟是它们之和 —— 实测（无头桌面）这一串占掉约 1.8 秒，把可交互时刻推到 3.9 秒，
+   * 越过 `PERF_FIRST_SCREEN_MAX_MS` 的 3 秒线。那个参数自己的口径写的是「首屏**可交互**」
+   * 而不是「首屏可见」（`why` 里那句「能看见但不能点的 3 秒，体感和白屏没有区别」），
+   * 所以该被压的是这条串行链。面板之间没有先后依赖，各自写各自的 target，
+   * 串行唯一的产出是一个没有任何调用方在读的顺序。
+   *
+   * <p>点完按钮之后的重拉仍走 {@link refresh} 的串行：那里一次只有两三个键，
+   * 而且已有断言盯着它们的落地顺序（例如「先落社交再刷红点」），改它没有收益、只有回归面。
+   *
+   * <p>隔离性与串行一致：用 allSettled，一个面板失败不会把其它面板拖住。
+   */
+  private async prefetch(...keys: PanelKey[]): Promise<void> {
+    await Promise.allSettled(keys.map(key => this.refreshOne(key)))
   }
 
   /** 逐个面板拉取。单个失败只让那个面板显示原因，不牵连其它面板。 */
@@ -209,11 +228,20 @@ export class AppRoot {
         const degraded: string[] = []
         // 成员走 diff 通道（B10 验收 10）：首次 version=0 拿全量，之后带上服务端给的版本号
         // 只取变化的那几个。每次全量拉 150 人既是浪费，也让"谁刚刚变了"这件事看不出来。
-        const sync = await this.api.allianceSync({ version: this.memberVersion, wantMembers: true })
-        if (sync.kind === 'ok') {
-          this.applyMemberDiff(sync.data)
+        //
+        // **没入盟时这一问根本不该发**：服务端会回 10010「联盟不存在或已解散」，那是
+        // 「本来就没有」而不是「暂时拉不到」。当成可重试的降级，玩家每次刷新都会看到一句
+        // 永远等不到结果的话，而这一次请求每次刷新也白发。摘要里的 alliance 为 null
+        // 就是权威答案 —— 判定仍在服务端，客户端只是不再对一个已知为空的状态发起查询。
+        if (summary.data.alliance === null) {
+          this.clearMemberSync()
         } else {
-          degraded.push('成员列表暂时拉不到')
+          const sync = await this.api.allianceSync({ version: this.memberVersion, wantMembers: true })
+          if (sync.kind === 'ok') {
+            this.applyMemberDiff(sync.data)
+          } else {
+            degraded.push('成员列表暂时拉不到')
+          }
         }
         // 互助列表与徽标由服务端同一次遍历给出，客户端只转手，不自己数
         const help = await this.api.socialHelpList()
@@ -247,6 +275,17 @@ export class AppRoot {
         this.deliver('world', await this.api.enterWorld(),
           r => this.targets.home?.(r.home.x, r.home.y))
     }
+  }
+
+  /**
+   * 未入盟与退盟走同一条：成员清空、游标归零。
+   *
+   * <p>游标必须一起清：留着上一个联盟的版本号，入新盟后的第一次 diff 会拿着
+   * 一个对端从没发过的游标去要增量，表现是成员列表缺一截而请求全都成功。
+   */
+  private clearMemberSync(): void {
+    this.memberVersion = 0
+    this.allianceMembers = []
   }
 
   /**

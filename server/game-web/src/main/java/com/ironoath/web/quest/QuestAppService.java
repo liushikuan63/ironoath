@@ -115,6 +115,20 @@ public class QuestAppService {
         });
     }
 
+    /**
+     * 此刻可领的任务数（红点口径，B12 §4）。与 {@link #list} 同源 —— 都取
+     * {@code QuestProgress.claimableCount()}，不在这里另算一遍"什么算可领"。
+     *
+     * <p>单独开这一口的理由是成本：Bot 运行时每个 tick 都要问一次"有没有可领的"
+     * （见 {@code BotWorldAdapter.observe}），为这一个布尔把全部任务行连名字带进度渲染出来
+     * 是白花的服务端预算。
+     */
+    public int claimableCount(String playerId) {
+        long now = timeService.serverNow();
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
+                () -> loaded(playerId, now).claimableCount());
+    }
+
     /** 领取奖励：先推进状态（领了就是领了），再走发放器发东西。 */
     public QuestClaimResp claim(String playerId, QuestClaimReq req) {
         long now = timeService.serverNow();

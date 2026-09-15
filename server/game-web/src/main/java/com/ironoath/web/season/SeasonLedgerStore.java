@@ -59,6 +59,18 @@ public interface SeasonLedgerStore {
 
     Set<String> seasonIds();
 
+    /**
+     * 删掉一个赛季的全部结算记录。返回删掉的条数（0 表示这一季本来就没有记录）。
+     *
+     * <p><b>为什么按 seasonId 而不是按时间 cutoff</b>：保留策略的口径是「3 个赛季」，
+     * 而账本里没有结算时刻这一列 —— 造一个时间字段只为了让清理能跑，等于为了实现去发明数据。
+     *
+     * <p><b>调用方负责只删已过保留期的季</b>（见 {@code SeasonSettlementService} 的归档清理）。
+     * 删掉即不可恢复，而 B14 验收 7 要的是「归档后能完整还原赛季数据用于申诉」——
+     * 所以这个方法的正确用法只有一种：先确认这一季已经比保留数更老。
+     */
+    int purgeSeason(String seasonId);
+
     /** 测试与分服用：清空账本。 */
     void clear();
 

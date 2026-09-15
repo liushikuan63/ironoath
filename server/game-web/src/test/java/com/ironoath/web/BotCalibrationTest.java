@@ -79,17 +79,21 @@ class BotCalibrationTest {
         setMatchPower(bot, 1_000L);
 
         long now = timeService.serverNow();
-        assertThat(calibration.calibrateIfNewDay(now)).as("这一天第一次调：真的校准").isTrue();
+        // 锚到**当天上午 9 点**（日界按 DayKey 的 UTC+8）而不是"此刻"：
+        // 原先写的是 now + HOUR 当"同一天"，于是在每天 23:00~24:00 之间跑必然跨日 ⇒ 用例红。
+        // 那红的是时钟的位置，不是被测系统的行为（与 #28/#51 同族：只有运气好才过的断言）。
+        long anchor = com.ironoath.common.time.DayKey.startOfDayPlusDays(now, 0) + 9 * HOUR;
+        assertThat(calibration.calibrateIfNewDay(anchor)).as("这一天第一次调：真的校准").isTrue();
         long afterFirst = matchPowerOf(bot);
         assertThat(afterFirst)
                 .as("校准必须把它拉到真人均值的目标带里（0.8~0.95 中点 × 原型系数，再夹进验收带）")
                 .isBetween(7_000L, 10_000L);
 
         // 同一天再调：必须幂等（否则战力会被每个 tick 拉平一次，"参差"随之消失）
-        assertThat(calibration.calibrateIfNewDay(now + HOUR)).as("同一天不重复校准").isFalse();
+        assertThat(calibration.calibrateIfNewDay(anchor + HOUR)).as("同一天不重复校准").isFalse();
         assertThat(matchPowerOf(bot)).as("战力不该被第二次调用改动").isEqualTo(afterFirst);
 
-        assertThat(calibration.calibrateIfNewDay(now + DAY + HOUR))
+        assertThat(calibration.calibrateIfNewDay(anchor + DAY + HOUR))
                 .as("到了第二天（UTC+8 日期键变化）就该再校一次").isTrue();
     }
 

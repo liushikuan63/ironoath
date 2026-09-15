@@ -30,13 +30,14 @@ import java.util.Map;
  * 它必须能在秒级完成上万局 —— 这正是内核坚持纯 Java、零框架、可脱离容器运行的全部理由
  * （C00 公理四·五：想跑 10000 局验证兵种平衡，不该需要先启动 Spring、连 MongoDB、等 30 秒）。
  *
- * <p>用法：
+ * <p>用法（参数一律 {@code --key=value} 形式；空格分隔的 {@code --runs 1000} 会被解析成
+ * 一个无值参数加一个非法参数，直接报错退出）：
  * <pre>
  * # 单局可读战报
- * mvn -pl tools/balance-sim exec:java -Dexec.args="--single --atk 500,300,400,50 --def 450,350,380,60 --seed 20260906"
+ * mvn -pl tools/balance-sim exec:java -Dexec.args="--single --atk=500,300,400,50 --def=450,350,380,60 --seed=20260906"
  *
- * # 四兵种两两对战胜率矩阵（B02 验收 4 / B05 验收 8 的数据来源）
- * mvn -pl tools/balance-sim exec:java -Dexec.args="--matrix --runs 1000 --tier 1 --size 1000"
+ * # 四兵种两两对战胜率矩阵（B02 验收 4 / B05 验收 8），判定失败退出码为 1
+ * mvn -pl tools/balance-sim exec:java -Dexec.args="--matrix --runs=1000 --tier=1 --size=1000"
  * </pre>
  */
 public final class BalanceCli {
@@ -54,35 +55,55 @@ public final class BalanceCli {
         Map<UnitType, UnitStats> stats = resolver.unitStats(tier);
 
         long start = System.nanoTime();
+        boolean passed = true;
         if (options.containsKey("matrix")) {
             int runs = Integer.parseInt(options.getOrDefault("runs", "1000"));
             long size = Long.parseLong(options.getOrDefault("size", "1000"));
-            printMatrix(resolver, rules, stats, runs, size, tier);
+            passed = printMatrix(configs, resolver, rules, stats, runs, size, tier);
         } else if (options.containsKey("single")) {
             long seed = Long.parseLong(options.getOrDefault("seed", "1"));
             printSingleBattle(resolver, rules, stats, options, seed);
         } else {
-            System.err.println("用法：--single --atk 步,骑,弓,器 --def 步,骑,弓,器 --seed N");
-            System.err.println("      --matrix --runs 1000 --tier 1 --size 1000");
+            System.err.println("用法（参数用 --key=value 形式）：");
+            System.err.println("  --single --atk=步,骑,弓,器 --def=步,骑,弓,器 --seed=N");
+            System.err.println("  --matrix --runs=1000 --tier=1 --size=1000");
+            System.err.println("退出码：矩阵判定存在违规时为 1。");
             System.exit(2);
         }
         // 耗时是判断「能不能跑万局调平衡」的关键指标，每次都打出来
         System.out.printf("%n耗时 %.1f ms（内核纯 Java 无容器，这就是能跑万局的原因）%n",
                 (System.nanoTime() - start) / 1_000_000.0d);
+        if (!passed) {
+            System.exit(1);
+        }
     }
 
     // ---------- 胜率矩阵 ----------
 
-    private static void printMatrix(BattleParamsResolver resolver, BattleRules rules,
-                                    Map<UnitType, UnitStats> stats, int runs, long size, int tier) {
+    /**
+     * 打印胜率矩阵并按口径判定。
+     *
+     * @return 判定是否全部通过（false 时调用方以退出码 1 结束）
+     */
+    private static boolean printMatrix(ConfigRegistry configs, BattleParamsResolver resolver,
+                                       BattleRules rules, Map<UnitType, UnitStats> stats,
+                                       int runs, long size, int tier) {
         System.out.printf("=== 四兵种两两对战胜率矩阵（T%d，各 %d 兵，%d 局，不同 seed）===%n", tier, size, runs);
-        System.out.println("读法：行是攻方，列是守方，格内是攻方胜率。");
-        System.out.println("      B02 验收 4 要求 6 组对战全部落在 38%~62%；B05 验收 8 要求克制对与非克制对胜率差 >= 15%。");
+        System.out.println("读法：行是攻方，列是守方，格内是攻方胜率（平局算半场）。");
+        System.out.println("判定口径（unit_counter.json designNote 对 B02 验收 4 与 B05 验收 8 的冲突裁定）：");
+        System.out.printf("  对称对（互克 / 无克制）双向须落 %.0f%%~%.0f%%（B02 验收 4）；%n",
+                BalanceMatrix.SYMMETRIC_MIN * 100, BalanceMatrix.SYMMETRIC_MAX * 100);
+        System.out.printf("  单向克制对由 B05 验收 8 管辖：克制方向领先 >= %.0f%%。%n",
+                BalanceMatrix.ONE_WAY_MIN_GAP * 100);
+        System.out.println("      哪几对单向从 unit_counter 表推导，这里是："
+                + String.join("、", new java.util.TreeSet<>(BalanceMatrix.oneWayPairs(configs))));
         System.out.println();
 
-        UnitType[] types = UnitType.values();
-        Map<String, Double> rates = new LinkedHashMap<>();
+        BalanceMatrix.Outcome outcome = BalanceMatrix.run(resolver, rules, stats,
+                BalanceMatrix.oneWayPairs(configs), runs, size);
+        Map<String, Double> rates = BalanceMatrix.rateByDirection(outcome);
 
+        UnitType[] types = UnitType.values();
         StringBuilder header = new StringBuilder(String.format("%-10s", "攻\\守"));
         for (UnitType d : types) {
             header.append(String.format("%10s", d.name()));
@@ -96,45 +117,55 @@ public final class BalanceCli {
                     line.append(String.format("%10s", "—"));
                     continue;
                 }
-                int wins = 0;
-                int draws = 0;
-                for (int i = 0; i < runs; i++) {
-                    ArmySide atk = resolver.singleTypeArmy("atk", attacker, size, Long.MAX_VALUE / 4);
-                    ArmySide def = resolver.singleTypeArmy("def", defender, size, Long.MAX_VALUE / 4);
-                    BattleResult r = BattleSimulator.simulate(new BattleInput(
-                            atk, def, TerrainType.PLAIN, 7_000_000L + i, BattleType.PVP_SOLO,
-                            BattleModifier.none(), BattleModifier.none(), stats, rules, null));
-                    if (r.winner() == Winner.ATTACKER) {
-                        wins++;
-                    } else if (r.winner() == Winner.DRAW) {
-                        draws++;
-                    }
-                }
-                // 平局算半场：只算胜场会让「双方都很肉打不完」的僵持局被记成守方全胜
-                double rate = (wins + draws * 0.5d) / runs;
-                rates.put(attacker.name() + ">" + defender.name(), rate);
-                line.append(String.format("%9.1f%%", rate * 100));
+                line.append(String.format("%9.1f%%",
+                        rates.get(attacker.name() + ">" + defender.name()) * 100));
             }
             System.out.println(line);
         }
 
         System.out.println();
         System.out.println("=== 验收判定 ===");
-        int outOfRange = 0;
-        for (Map.Entry<String, Double> e : rates.entrySet()) {
-            boolean inRange = e.getValue() >= 0.38d && e.getValue() <= 0.62d;
-            if (!inRange) {
-                outOfRange++;
+        for (BalanceMatrix.Pair pair : outcome.pairs()) {
+            if (pair.oneWay()) {
+                double favored = pair.favored() == pair.a() ? pair.rateAToB() : pair.rateBToA();
+                double other = pair.favored() == pair.a() ? pair.rateBToA() : pair.rateAToB();
+                System.out.printf("  单向克制 %s → %-9s %5.1f%% vs %5.1f%%（差 %5.1f%%，要求 >= %.0f%%）%s%n",
+                        pair.favored().name(), (pair.favored() == pair.a() ? pair.b() : pair.a()).name(),
+                        favored * 100, other * 100, (favored - other) * 100,
+                        BalanceMatrix.ONE_WAY_MIN_GAP * 100,
+                        favored - other >= BalanceMatrix.ONE_WAY_MIN_GAP ? "OK" : "✗");
+            } else {
+                boolean ok = pair.rateAToB() >= BalanceMatrix.SYMMETRIC_MIN
+                        && pair.rateAToB() <= BalanceMatrix.SYMMETRIC_MAX
+                        && pair.rateBToA() >= BalanceMatrix.SYMMETRIC_MIN
+                        && pair.rateBToA() <= BalanceMatrix.SYMMETRIC_MAX;
+                System.out.printf("  对称     %s ↔ %-9s %5.1f%% / %5.1f%%%s%n",
+                        pair.a().name(), pair.b().name(), pair.rateAToB() * 100,
+                        pair.rateBToA() * 100, ok ? "" : "  ✗");
             }
-            System.out.printf("  %-22s %5.1f%%  %s%n", e.getKey(), e.getValue() * 100,
-                    inRange ? "OK（38%~62%）" : "✗ 超出 38%~62%");
         }
-        System.out.printf("%n超出区间的对局：%d / %d%n", outOfRange, rates.size());
-        if (outOfRange > 0) {
-            System.out.println("说明：超出区间不一定是 bug —— 单向克制（如骑兵→弓兵）本就该有明显胜负差。");
-            System.out.println("      B02 验收 4 的 38%~62% 针对的是「同兵力裸数值对局」，");
-            System.out.println("      克制带来的偏移应由 unit 表的基础属性补偿，而不是靠削弱克制加成。");
+
+        if (outcome.passed()) {
+            System.out.printf("%n结果：全部通过（对称对 %d 对覆盖 %d 个方向，单向克制对 %d 对）%n",
+                    outcome.pairs().size() - countOneWayPairs(outcome),
+                    outcome.cells().size() - countOneWayDirections(outcome),
+                    countOneWayPairs(outcome));
+            return true;
         }
+        System.out.println();
+        for (String violation : outcome.violations()) {
+            System.out.println("  ✗ " + violation);
+        }
+        System.out.printf("%n结果：%d 处违规（退出码 1）%n", outcome.violations().size());
+        return false;
+    }
+
+    private static long countOneWayPairs(BalanceMatrix.Outcome outcome) {
+        return outcome.pairs().stream().filter(BalanceMatrix.Pair::oneWay).count();
+    }
+
+    private static long countOneWayDirections(BalanceMatrix.Outcome outcome) {
+        return countOneWayPairs(outcome) * 2;
     }
 
     // ---------- 单局战报 ----------

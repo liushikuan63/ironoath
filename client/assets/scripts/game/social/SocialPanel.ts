@@ -245,7 +245,11 @@ export function buildAllianceSection(alliance: AllianceView | null,
       members: [],
     }
   }
-  const remaining = Math.max(0, 3 - alliance.myDonateToday)
+  // 档数上限与「今天已经捐过哪几档」都由服务端下发（2026-09-13 裁决：每档每日一次，
+  // 收口清单 §三·补 A1）。客户端不再写死 3（那是 global/alliance_config 的数字），
+  // 也不再拿一个计数去猜该摆哪个按钮 —— 那份猜测的代价是玩家点一下才收到报错
+  const cap = alliance.donateDailyCap
+  const usedTiers = alliance.donateTiersUsed
   return {
     joined: true,
     title: `[${alliance.tag}] ${alliance.name}`,
@@ -257,13 +261,9 @@ export function buildAllianceSection(alliance: AllianceView | null,
     expandText: alliance.memberCount >= alliance.memberCap
       ? '人数已满：盟主可用联盟资金扩容（这是中后期最大的资金消耗点）'
       : null,
-    donateText: `今日捐献 ${alliance.myDonateToday}/3 档`,
-    // 额度用完就不摆按钮（摆了点了只会看到报错）；还有额度时三个档位都摆 ——
-    // AllianceView 只下发「已捐几档」这个计数，没说是哪几档，所以客户端无法知道该灰掉哪个。
-    // 点了已用过的档位会收到 ALLIANCE_DONATE_DAILY_LIMIT 的明确报错，那不是静默失败。
-    // TODO(B10 缺口): AllianceView 应下发「今日已用的档位列表」而不是只有计数，
-    // 否则客户端要么摆出点不动的按钮，要么靠猜
-    donateTiersAvailable: remaining <= 0 ? [] : [0, 1, 2],
+    donateText: `今日捐献 ${usedTiers.length}/${cap} 档`,
+    donateTiersAvailable: Array.from({ length: cap }, (_, tier) => tier)
+      .filter((tier) => !usedTiers.includes(tier)),
     myRoleText: allianceRoleText(alliance.myRole),
     members: members.map((member: AllianceMember): SocialMemberRow => ({
       id: member.id,
@@ -399,6 +399,10 @@ export function eventTypeText(type: SocialEventType | string): string {
     case 'SQUAD_JOINED': return '有人加入小队'
     case 'ALLIANCE_JOINED': return '入盟申请已通过'
     case 'ALLIANCE_REJECTED': return '入盟申请被拒'
+    case 'ALLIANCE_ROLE_SET': return '联盟职务变动'
+    case 'NATION_LEFT': return '退出国家'
+    case 'NATION_DISBANDED': return '国家已解散'
+    case 'PRIVATE_MESSAGE': return '收到私信'
     default: return String(type)
   }
 }

@@ -94,6 +94,8 @@ class MonsterHuntEndpointTest {
     @Autowired private com.ironoath.core.gacha.GachaStateRepository gachaStates;
     @Autowired private com.ironoath.core.gacha.GachaLogStore gachaLogs;
     @Autowired private com.ironoath.core.limit.DailyCounter dailyCounter;
+    @Autowired private com.ironoath.web.battle.MonsterBattleService monsters;
+    @Autowired private com.ironoath.web.season.SeasonRulesAssembler seasons;
     @Autowired private BattleReportStore battleReports;
     @Autowired private com.ironoath.web.battle.BattleReportService battleReportService;
 
@@ -140,6 +142,9 @@ class MonsterHuntEndpointTest {
         assertThat(dailyCounter.used("monster_hunt", hunter.playerId,
                 com.ironoath.common.time.DayKey.of(System.currentTimeMillis())))
                 .as("每日讨伐次数被占用一次").isEqualTo(1L);
+        assertThat(dailyCounter.used("pve_season_consumed", "server",
+                seasons.timelineRules().seasonId()))
+                .as("C20：真的消耗掉一格，才占全服配额的一条（与 losingHunt… 配对）").isEqualTo(1L);
 
         March after = marches.findById(marchId).orElse(null);
         assertThat(after).as("打完的队伍应当返程而不是留在野怪面前").isNotNull();
@@ -212,6 +217,47 @@ class MonsterHuntEndpointTest {
                 .hasMessageContaining("明日")
                 .extracting(e -> ((BizException) e).errorCode())
                 .isEqualTo(ErrorCode.RATE_LIMITED);
+    }
+
+    @Test
+    @DisplayName("C20：全服 PvE 赛季配额耗尽后出征即被拒，文案说的是「这一季的野怪」而不是「你今天打满了」")
+    void seasonQuotaIsAnnouncedSeparatelyFromTheDailyLimit() {
+        Hunter hunter = readyHunter();
+        giveTroops(hunter.playerId, Map.of("unit_infantry_t1", 5000L));
+        String seasonId = seasons.timelineRules().seasonId();
+        long cap = monsters.pveSeasonConsumeCap();
+        assertThat(cap).as("分母是派生的（WORLD_SIZE² × 密度 × 比例），不该是 0").isPositive();
+        for (long i = 0; i < cap; i++) {
+            assertThat(dailyCounter.tryConsume("pve_season_consumed", "server", seasonId, cap))
+                    .as("先把全服配额占满（第 %d 次）", i).isTrue();
+        }
+
+        BizException thrown = null;
+        try {
+            sendAttack(hunter);
+        } catch (BizException e) {
+            thrown = e;
+        }
+        assertThat(thrown).as("配额占满之后出征必须被拒").isNotNull();
+        assertThat(thrown.errorCode()).isEqualTo(ErrorCode.RATE_LIMITED);
+        // 两句必须分得开：玩家看到"今日次数已用完"会等明天，
+        // 看到"本赛季全服上限"才知道要等下赛季 —— 这是两个完全不同的行动
+        assertThat(thrown.getMessage())
+                .contains("本赛季全服").contains("不会定时刷新").doesNotContain("明日");
+    }
+
+    @Test
+    @DisplayName("C20：打输不占全服 PvE 配额 —— 否则 Bot 的失败会把真人的通道吃掉")
+    void losingHuntDoesNotConsumeTheSeasonQuota() {
+        String seasonId = seasons.timelineRules().seasonId();
+        Hunter loser = readyHunter();
+        giveTroops(loser.playerId, Map.of("unit_infantry_t1", 1L));
+
+        arriveAndProcess(sendAttack(loser));
+
+        assertThat(world.isConsumed(loser.monsterCoord)).as("前置：这一场确实输了").isFalse();
+        assertThat(dailyCounter.used("pve_season_consumed", "server", seasonId))
+                .as("格子还在地图上，凭什么记一次全服消耗").isZero();
     }
 
     @Test

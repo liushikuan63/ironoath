@@ -439,6 +439,12 @@ public class PlayerCityBattleService {
             }
         }
 
+        // ---------- 四点五、受害护盾（2026-09-13 裁决：被拦下采集队算「被打一次」）----------
+        // 与攻城共用同一本 attackerHits 账：复仇与护盾对「谁在窗口内打过我」不该有两种定义，
+        // 而玩家感知里「队伍在野外被人抢了」就是一次攻击 —— 事件聊天那一侧早就把 ATTACKED 发给他了，
+        // 只有账没记，结果是「被人抢了三次却不进护盾、也不进复仇名单」这种只体现在胜率上的缺口。
+        raiseVictimShield(gathererId, attackerId, now);
+
         // ---------- 五、双方各一份战报 ----------
         String gathererName = players.findByPlayerId(gathererId)
                 .map(PlayerSave::nickName).orElse(gathererId);

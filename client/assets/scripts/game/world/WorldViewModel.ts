@@ -33,12 +33,12 @@ import type {
 import type { Unsubscribe } from '../../core/EventBus'
 
 /**
- * 地图尺寸参数。三个数都在 global.json 里，由调用方（网络适配层）从服务端注入。
+ * 地图尺寸参数。三个数都在 global.json 里，**随 MarchListResp 下发**（与 home 同一个响应）——
+ * 客户端不持有它们的第二份家（铁律 1）。
  *
- * <p>TODO(B07 表现层缺口): ViewportResp 目前不下发这三个值，客户端只能靠注入。
- * 但铁律 1 要求数值零硬编码，而客户端的 config/generated 只有<b>类型</b>没有<b>值</b>。
- * 正解是让服务端像 MarchListResp.maxConcurrent 那样把它们随响应下发（那条字段的注释已经
- * 写明了这个先例：「下发是为了让客户端能显示 2/3 而不是自己读配置」）。
+ * <p><b>为什么不是 ViewportResp</b>：建模型要用这三个值，而第一个 viewport 请求必须等模型建立
+ * （要算视野中心块与 chunk 键），放 viewport 响应里就是鸡生蛋。这个接口只是客户端侧的
+ * "布局形状"，值只有一个来源：服务端响应。
  */
 export interface WorldLayout {
   /** 世界边长（格）。来源 global.WORLD_SIZE */

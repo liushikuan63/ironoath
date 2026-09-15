@@ -1,6 +1,7 @@
 package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -31,6 +32,7 @@ import com.ironoath.web.dto.generated.ConfigManifestReq;
 import com.ironoath.web.dto.generated.CrashReportReq;
 import com.ironoath.web.dto.generated.TrackBatchReq;
 import com.ironoath.web.dto.generated.TrackEvent;
+import com.ironoath.web.ops.OpsTokenGuard;
 import com.ironoath.web.ops.TrackEventStore;
 import com.ironoath.web.ops.TrackFlusher;
 import com.ironoath.web.release.ReleaseRulesAssembler;
@@ -65,6 +67,8 @@ class OpsEndpointTest {
     private static final String VERSION_URL = "/ops/app/version";
     private static final String MANIFEST_URL = "/ops/config/manifest";
     private static final String PLAYER_HEADER = "X-Player-Id";
+    /** 与 {@code application-test.yml} 的 {@code ironoath.ops.token} 一致（SeasonSettleAuthTest 同源）。 */
+    private static final String OPS_TOKEN = "test-ops-token";
     private static final String TRACE_HEADER = "X-Trace-Id";
 
     @Autowired private MockMvc mockMvc;
@@ -128,6 +132,42 @@ class OpsEndpointTest {
         postTrack(events(total), "p3");
         assertThat(store.eventCount()).isEqualTo(total);
         assertThat(flusher.batchCount() - batchesBefore).as("服务端按 %d 条重新攒批", maxBatch).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("B14：超过入口软上限是截断而不是整批拒，且截断条数在 /ops/ingest 上看得见")
+    void oversizedBatchIsTruncatedNotRejected() throws Exception {
+        // 从表算而不是写死 100：软上限的定义就是"攒批上限 × 倍数"，写死了改参数会以无意义的方式红
+        int softLimit = (int) (configs.longParam("TRACK_BATCH_MAX_SIZE")
+                * configs.longParam("TRACK_INGEST_SOFT_LIMIT_FACTOR"));
+        int total = softLimit + 30;
+        long truncatedBefore = ingestHealth().get("truncatedEvents").asLong();
+
+        JsonNode data = postTrack(events(total), "p-truncate");
+
+        assertThat(data.get("accepted").asInt()).as("保留前面 %d 条（事件按发生顺序排）", softLimit)
+                .isEqualTo(softLimit);
+        assertThat(data.get("failed").asInt())
+                .as("截掉的那 30 条计入 failed，而不是把整批变成一次错误 —— 丢看板数据比来噪音糟")
+                .isEqualTo(total - softLimit);
+        assertThat(store.eventCount()).as("落库的就是保留下来的那一段").isEqualTo(softLimit);
+
+        JsonNode after = ingestHealth();
+        assertThat(after.get("softLimitEvents").asInt())
+                .as("当前生效的上限要随响应回出来，不要让运维记住一个数").isEqualTo(softLimit);
+        assertThat(after.get("truncatedEvents").asLong() - truncatedBefore)
+                .as("截断必须留下可查的累计数，否则「洪水必须可见」只是一句注释").isEqualTo(total - softLimit);
+    }
+
+    @Test
+    @DisplayName("运维读数要令牌：不带与带错都回 OPS_UNAUTHORIZED，而不是回一个默认值")
+    void ingestReadoutsRequireOpsToken() throws Exception {
+        assertThat(codeOf(getRoot("/ops/ingest", null)))
+                .isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
+        assertThat(codeOf(getRoot("/ops/ingest", "")))
+                .as("带了个头但值是空的，等同于没带").isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
+        assertThat(codeOf(getRoot("/ops/pay/debt", "wrong-token")))
+                .isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
     }
 
     @Test
@@ -356,5 +396,30 @@ class OpsEndpointTest {
         assertThat(root.get("code").asInt())
                 .as("业务码必须为 0，实际响应=%s", root).isZero();
         return root.get("data");
+    }
+
+    /**
+     * 读运维读数（带对令牌）。
+     *
+     * <p>令牌字面量与 {@code application-test.yml} 的 {@code ironoath.ops.token} 必须一致 ——
+     * 两处不同步的症状是所有鉴权用例都以同一句"令牌不匹配"失败，看不出是测试坏了还是闸门坏了。
+     * 与 {@code SeasonSettleAuthTest} 用的是同一个值。
+     */
+    private JsonNode ingestHealth() throws Exception {
+        return okData(getRoot("/ops/ingest", OPS_TOKEN));
+    }
+
+    /** 发一条 GET。{@code opsToken} 传 null 表示根本不带那个头。 */
+    private JsonNode getRoot(String url, String opsToken) throws Exception {
+        var builder = get(url);
+        if (opsToken != null) {
+            builder = builder.header(OpsTokenGuard.HEADER, opsToken);
+        }
+        MvcResult result = mockMvc.perform(builder).andExpect(status().isOk()).andReturn();
+        return JsonUtils.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
+    }
+
+    private static int codeOf(JsonNode root) {
+        return root.get("code").asInt();
     }
 }

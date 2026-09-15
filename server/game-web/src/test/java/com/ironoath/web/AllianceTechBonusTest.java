@@ -66,9 +66,8 @@ class AllianceTechBonusTest {
     void researchedTechLandsInZoneBWithExactFixedPointValues() {
         String leader = newPlayer();
         social.allianceCreate(leader, new AllianceCreateReq(reqId(), "加成盟", "BONUS"));
-        for (int i = 0; i < 3; i++) {
-            social.allianceDonate(leader, new AllianceDonateReq(reqId(), 2));
-        }
+        donateFreeAndGoldTiers(leader);
+        topUpFund(leader, 6000L);
         assertThat(techBonuses.forPlayer(leader)).as("研究之前必须是 0").isEqualTo(TechBonus.none());
 
         social.allianceTech(leader, new AllianceTechReq(reqId(), "atech_atk", 1));
@@ -85,9 +84,8 @@ class AllianceTechBonusTest {
     void otherEffectAttributesDoNotLeakIntoZoneB() {
         String leader = newPlayer();
         social.allianceCreate(leader, new AllianceCreateReq(reqId(), "泄漏盟", "LEAK"));
-        for (int i = 0; i < 3; i++) {
-            social.allianceDonate(leader, new AllianceDonateReq(reqId(), 2));
-        }
+        donateFreeAndGoldTiers(leader);
+        topUpFund(leader, 6000L);
 
         social.allianceTech(leader, new AllianceTechReq(reqId(), "atech_march", 1));
 
@@ -114,6 +112,31 @@ class AllianceTechBonusTest {
         }
         players.save(save);
         return playerId;
+    }
+
+    /**
+     * 攒公账的夹具。
+     *
+     * <p>原先这里写的是「同一档金币捐三次」。2026-09-13 裁决把口径定成
+     * <b>每档每日一次</b>（收口清单 §三·补 A1）之后，那条路正好是新语义要拦的形状 ——
+     * 同一档刷满 = 零成本把贡献值（联盟商店的货币）捞到手。
+     *
+     * <p>所以这里捐免费档与金币档各一次（<b>捐献这条真路径仍然被走一遍</b>，
+     * 扣款与记账都在用例眼前发生），差额用 {@code addFund} 补：它是"活动奖励、领地收入"
+     * 这类合法外部来源共用的入口，比假装一天能捐 7500 诚实。
+     */
+    private void donateFreeAndGoldTiers(String leader) {
+        social.allianceDonate(leader, new AllianceDonateReq(reqId(), 0));
+        social.allianceDonate(leader, new AllianceDonateReq(reqId(), 2));
+    }
+
+    private void topUpFund(String leader, long amount) {
+        com.ironoath.core.social.Alliance alliance = socialStore.allianceOf(leader).orElseThrow();
+        // 版本号必须在改动之前取：addFund 自己会 bumpVersion，
+        // 拿改完的 version 当 expectedVersion 等于告诉存储"我认为上一版是这个数"——必撞 CAS
+        long expectedVersion = alliance.version();
+        alliance.addFund(amount);
+        socialStore.saveAlliance(alliance, expectedVersion);
     }
 
     private static String reqId() {

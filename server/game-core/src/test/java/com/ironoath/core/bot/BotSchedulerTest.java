@@ -135,13 +135,13 @@ class BotSchedulerTest {
     // ---------- 夹具 ----------
 
     private static BotDecisionTree.WorldState idleState() {
-        return new BotDecisionTree.WorldState(false, true, true, false, true,
+        return new BotDecisionTree.WorldState(false, false, true, true, false, true,
                 true, true, false, false, false, 0L);
     }
 
     /** 受击状态：决策树会给 REACT_ATTACK，而它带 3~30 秒的拟人延迟。 */
     private static BotDecisionTree.WorldState underAttackState() {
-        return new BotDecisionTree.WorldState(true, true, true, false, true,
+        return new BotDecisionTree.WorldState(true, false, true, true, false, true,
                 true, true, false, false, false, 0L);
     }
 

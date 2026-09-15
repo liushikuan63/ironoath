@@ -179,10 +179,12 @@ public class BagAppService {
 
     private BagItem toBagItem(ItemCfg cfg, long count) {
         ItemRarity rarity = ItemRarity.valueOf(cfg.rarity().name());
+        // 表里的 sellable / sellPriceGold **不再抄进协议**（2026-09-13 裁决，见 bag.schema.json 的说明）：
+        // 服务端没有 /bag/sell、B04 也没有出售规则，下发它们只会换来一个「点了只会失败」的按钮 ——
+        // 与 #18/#19「卖了没用」同一族。数据留在表里，规则定了再随协议回来。
         return new BagItem(cfg.id(), cfg.name(), cfg.type().name(), rarity,
                 cfg.obtainFrom() == null ? "" : cfg.obtainFrom(),
-                count, cfg.stackMax(), cfg.sellable(),
-                cfg.sellable() ? cfg.sellPriceGold() : null,
+                count, cfg.stackMax(),
                 sortKey(rarity, cfg.type(), count));
     }
 

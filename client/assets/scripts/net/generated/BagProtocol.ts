@@ -87,6 +87,8 @@ export interface ResourceDetailResp {
 
 /**
  * 背包中一个道具条目（B04 §3）。sortKey 由服务端算好下发，客户端不再自行排序——排序规则（稀有度>类型>数量）属于业务逻辑，放客户端会导致双端排序不一致。
+ *
+ * **2026-09-13 裁决：`sellable` / `sellPriceGold` 不再下发**（原先这两个字段在这里、客户端据此渲染「可出售」，而服务端没有 /bag/sell 端点、B04 整篇没有出售规则 ⇒ 下发一份「点了只会失败」的数据，与 #18/#19 的「卖了没用」同族）。item 表里那两列**保留**（那是将来定规则的数据），规则与端点落地后再随协议回来。
  */
 export interface BagItem {
   /** item 表的行 id */
@@ -100,8 +102,6 @@ export interface BagItem {
   obtainFrom: string | null
   count: number
   stackMax: number
-  sellable: boolean
-  sellPriceGold: number | null
   /** 服务端算好的排序键（稀有度>类型>数量），客户端按它升序展示即可 */
   sortKey: number
 }

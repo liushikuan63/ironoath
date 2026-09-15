@@ -439,6 +439,65 @@ class NationEndpointTest {
     }
 
     @Test
+    @DisplayName("A6：最后一个成员联盟走掉即算亡，而核销记的是促成这件事的人、不是被冒充的国王")
+    void lastMemberAllianceLeavingCollapsesTheNationAndNamesTheRealActor() throws Exception {
+        TwoKingdoms k = twoKingdoms();
+        FreeAlliance f = freeAlliance();
+        post200("/nation/join", f.leader(), new NationJoinReq(newRequestId(), k.nationA()));
+
+        // 先把国王自己的联盟挪出去。这一步的用意是让"最后一个走的人"与"国王"变成两个不同的人 ——
+        // 若用例里国王就是最后一个联盟的盟主，那么把操作者写成 kingId 的错实现照样全绿。
+        post200("/nation/leave", k.kingA(), new NationLeaveReq(newRequestId()));
+        assertThat(nationOf(k.nationA()).isDisbanded())
+                .as("f 的联盟还在册，走空这件事没发生，不许提前算亡").isFalse();
+
+        post200("/nation/leave", f.leader(), new NationLeaveReq(newRequestId()));
+
+        com.ironoath.core.nation.Nation after = nationOf(k.nationA());
+        assertThat(after.isDisbanded()).as("成员联盟走空之后不留零成员的活国").isTrue();
+        assertThat(after.treasury()).as("亡国不许留着余额").isZero();
+        assertThat(after.treasuryLogs())
+                .filteredOn(log -> "collapse_writeoff".equals(log.payee()))
+                .singleElement()
+                .as("国王此刻什么都没做 —— 把核销记在他名下就是伪造一笔从未发生过的决定")
+                .satisfies(log -> assertThat(log.operatorId()).isEqualTo(f.leader()));
+    }
+
+    @Test
+    @DisplayName("A7：退出国要通知到全盟成员，而不是让他们自己发现国籍没了")
+    void leavingANationNotifiesTheWholeAlliance() throws Exception {
+        TwoKingdoms k = twoKingdoms();
+        FreeAlliance f = freeAlliance();
+        post200("/nation/join", f.leader(), new NationJoinReq(newRequestId(), k.nationA()));
+
+        post200("/nation/leave", f.leader(), new NationLeaveReq(newRequestId()));
+
+        assertThat(eventTypesOf(f.mate())).as("同伴是被动失去国籍的").contains("NATION_LEFT");
+        assertThat(eventTypesOf(f.leader()))
+                .as("发起人知道自己刚做了什么，再回他一条同一件事是噪声")
+                .doesNotContain("NATION_LEFT");
+    }
+
+    @Test
+    @DisplayName("A7：国王解散国家时，每个成员联盟的成员都收到，而下令的国王本人不收")
+    void kingDisbandNotifiesMembersOfEveryMemberAlliance() throws Exception {
+        TwoKingdoms k = twoKingdoms();
+        FreeAlliance f = freeAlliance();
+        post200("/nation/join", f.leader(), new NationJoinReq(newRequestId(), k.nationA()));
+
+        post200("/nation/disband", k.kingA(), new NationDisbandReq(newRequestId()));
+
+        // 名单必须按成员联盟展开而不是只发建国联盟：后入籍的那一家同样刚刚失去了国籍
+        assertThat(eventTypesOf(k.mateA())).contains("NATION_DISBANDED");
+        assertThat(eventTypesOf(f.leader())).contains("NATION_DISBANDED");
+        assertThat(eventTypesOf(f.mate())).contains("NATION_DISBANDED");
+        assertThat(eventTypesOf(k.kingA())).as("他是下令的人").doesNotContain("NATION_DISBANDED");
+        assertThat(eventTypesOf(k.kingB()))
+                .as("别国的人不该收到别国的解散 —— 名单来自本国的成员表，不是全服")
+                .doesNotContain("NATION_DISBANDED");
+    }
+
+    @Test
     @DisplayName("「你不是国王」与「你根本没有国」分开答，而国家在两次失败之后原样存在")
     void disbandAuthorityFailuresAreDistinct() throws Exception {
         TwoKingdoms k = twoKingdoms();
@@ -582,6 +641,45 @@ class NationEndpointTest {
     }
 
     @Test
+    @DisplayName("C16：首相档现在真的能支取，但超本周限额被 13011 拒掉，而国王不受此限")
+    void officerMaySpendUpToTheWeeklyCapWhileTheKingIsUnbounded() throws Exception {
+        TwoKingdoms k = twoKingdoms();
+        post200("/nation/appoint", k.kingA(),
+                new NationAppointReq(newRequestId(), k.mateA(), NationOffice.PRIME_MINISTER));
+
+        // 限额从流水里那条 weekly_tax 的**实收金额**乘比例算出来：不读时钟（周键由服务端自己定），
+        // 也不调用被测方法本身 —— 用 officerWeeklySpendCap 验证 officerWeeklySpendCap 说明不了任何事
+        long credited = 0L;
+        for (JsonNode log : get200("/nation/treasury", k.kingA()).get("logs")) {
+            if ("weekly_tax".equals(log.get("counterparty").asText())) {
+                credited = log.get("amount").asLong();
+            }
+        }
+        long ratioFixed = nationOf(k.nationA()).rules().officerSpendRatioFixed();
+        long cap = credited * ratioFixed / 10_000L;
+        assertThat(credited).as("前置：国库本周收过税，否则这条用例验不到限额").isPositive();
+
+        post200("/nation/treasury/spend", k.mateA(), new NationTreasurySpendReq(
+                newRequestId(), TreasuryPayeeType.SINK, null, TreasurySink.NATIONAL_TECH,
+                cap, "研究国家科技·防御"));
+
+        JsonNode over = postRaw("/nation/treasury/spend", k.mateA(), new NationTreasurySpendReq(
+                newRequestId(), TreasuryPayeeType.SINK, null, TreasurySink.NATIONAL_TECH,
+                1L, "再要一块"));
+        assertThat(over.get("code").asInt())
+                .as("额度是本周累计的，花满之后连 1 分都不该再给")
+                .isEqualTo(ErrorCode.NATION_OFFICER_SPEND_LIMIT.code());
+        assertThat(over.get("detail").asText())
+                .as("要给出上限与已用，否则官员只知道「不行」而不知道该等多久")
+                .contains("限额");
+
+        // 同一个国家、同一周、同样的动作 —— 换成国王就该过。这条是"国王不受限"的唯一证据
+        post200("/nation/treasury/spend", k.kingA(), new NationTreasurySpendReq(
+                newRequestId(), TreasuryPayeeType.SINK, null, TreasurySink.WAR_BOOST,
+                1L, "国战增益"));
+    }
+
+    @Test
     @DisplayName("消耗性用途：核销出库但没有收款人（日志写 sink:<用途>），谁的金币都不动")
     void spendingOnASinkWritesOffWithoutPayingAnyone() throws Exception {
         TwoKingdoms k = twoKingdoms();
@@ -609,7 +707,7 @@ class NationEndpointTest {
         JsonNode denied = postRaw("/nation/treasury/spend", k.mateA(), new NationTreasurySpendReq(
                 newRequestId(), TreasuryPayeeType.PLAYER, k.mateA(), null, 500L, "自己给自己发俸禄"));
         assertThat(denied.get("code").asInt())
-                .as("普通成员支取国库必须被拒（表里只给国主）")
+                .as("普通成员（MEMBER 档）支取国库仍必须被拒 —— C16 放开的是 OFFICER 档，不是全员")
                 .isEqualTo(ErrorCode.SOCIAL_PERMISSION_DENIED.code());
         assertThat(get200("/nation/treasury", k.kingA()).get("balance").asLong())
                 .as("被拒的支取不能留下任何痕迹").isEqualTo(balanceBefore);
@@ -733,6 +831,18 @@ class NationEndpointTest {
     }
 
     /**
+     * 某人未读社交事件的类型清单（离线补偿那条路，B10 验收 12）。
+     * A7 的两条用例用它问"这件事有没有人告诉他"，而不是问"日志里有没有写"。
+     */
+    private List<String> eventTypesOf(String playerId) throws Exception {
+        List<String> types = new java.util.ArrayList<>();
+        for (JsonNode event : get200("/social/summary", playerId).get("events")) {
+            types.add(event.get("type").asText());
+        }
+        return types;
+    }
+
+    /**
      * 建 n 个各自建了国的联盟，返回国家 id。
      * 名额类用例（global.NATION_MAX_PER_KINGDOM）需要"把名额占满"这个前提，
      * 而这个前提只能靠真建出来 —— 伪造一个"已有四国"的状态会让用例验的是夹具而不是规则。
@@ -770,8 +880,8 @@ class NationEndpointTest {
     }
 
     @Test
-    @DisplayName("验收12：盟约一宣布就双向打不动，改成敌对才放行 —— 单方面宣布不等于只对宣布方生效")
-    void treatyBlocksBothDirectionsAndHostilityReleasesIt() throws Exception {
+    @DisplayName("C21：盟约要双方各自宣布才成立；成立之后双向禁攻，任一侧改敌对即解除")
+    void treatyNeedsBothSidesToBindAndEitherSideCanBreakIt() throws Exception {
         TwoKingdoms k = twoKingdoms();
 
         assertThat(attackFailure(k.kingA(), k.kingB()))
@@ -781,30 +891,28 @@ class NationEndpointTest {
         post200("/nation/diplomacy", k.kingA(),
                 new NationDiplomacyReq(newRequestId(), k.nationB(), DiplomacyRelation.ALLIED));
 
+        // 这一组断言就是 C21 的全部意思：A 单方面宣布和平，谁也没被它挡住。
+        // 旧行为在这里是 B 也打不动 A —— 那等于"声明一下就拿到免战牌"
         assertThat(attackFailure(k.kingA(), k.kingB()))
-                .as("宣布方自己当然打不动")
-                .isEqualTo(ErrorCode.NATION_TREATY_PROTECTED);
-        // 这一条才是"双向"的证据：关系只记在宣布方那一侧，如果闸门只查攻方，
-        // B 会在 A 宣布和平之后立刻把 A 抢一遍 —— 那等于对 B 而言这条盟约不存在
+                .as("宣布方自己也被放行：一份没被接受的条约不是条约")
+                .isNotEqualTo(ErrorCode.NATION_TREATY_PROTECTED);
         assertThat(attackFailure(k.kingB(), k.kingA()))
-                .as("被宣布盟约的那一方同样打不动：盟约是互相的，不是单方声明")
+                .as("被单方面宣布盟约的那一方当然更没被挡住")
+                .isNotEqualTo(ErrorCode.NATION_TREATY_PROTECTED);
+
+        // B 也宣布同一个关系 ⇒ 成立 ⇒ 双向禁攻。没有 accept 端点：这一步就是 accept
+        post200("/nation/diplomacy", k.kingB(),
+                new NationDiplomacyReq(newRequestId(), k.nationA(), DiplomacyRelation.ALLIED));
+        assertThat(attackFailure(k.kingA(), k.kingB()))
+                .as("双方各自宣布之后才真的互相约束").isEqualTo(ErrorCode.NATION_TREATY_PROTECTED);
+        assertThat(attackFailure(k.kingB(), k.kingA()))
                 .isEqualTo(ErrorCode.NATION_TREATY_PROTECTED);
 
+        // 撕约只要一个人：结约要双方同意，解约不要 —— 否则一份条约可以把两个人永久锁在和平里
         post200("/nation/diplomacy", k.kingB(),
                 new NationDiplomacyReq(newRequestId(), k.nationA(), DiplomacyRelation.HOSTILE));
-        // 双向生效的代价：B 单方面改成敌对**撕不开** A 记着的那份盟约，两个方向仍然打不动。
-        // 要放行得由 A 自己也改。这等于"宣布和平就给自己加了一块免战牌"，是一条玩法后果，
-        // 已记进收口清单等裁决；这里先如实钉住当前行为，而不是挑一个方向假装它不存在。
         assertThat(attackFailure(k.kingA(), k.kingB()))
-                .as("一侧的盟约约束两侧：B 单方面改敌对撕不开")
-                .isEqualTo(ErrorCode.NATION_TREATY_PROTECTED);
-        assertThat(attackFailure(k.kingB(), k.kingA()))
-                .isEqualTo(ErrorCode.NATION_TREATY_PROTECTED);
-
-        post200("/nation/diplomacy", k.kingA(),
-                new NationDiplomacyReq(newRequestId(), k.nationB(), DiplomacyRelation.HOSTILE));
-        assertThat(attackFailure(k.kingA(), k.kingB()))
-                .as("两边都改成敌对之后才真的放行 —— 外交这一次是真的在改谁能打谁")
+                .as("B 单方面改敌对就能解除：两侧不再一致，条约不再成立")
                 .isNotEqualTo(ErrorCode.NATION_TREATY_PROTECTED);
         assertThat(attackFailure(k.kingB(), k.kingA()))
                 .isNotEqualTo(ErrorCode.NATION_TREATY_PROTECTED);

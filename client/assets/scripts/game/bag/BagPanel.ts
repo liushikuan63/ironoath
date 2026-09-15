@@ -202,26 +202,17 @@ export function buildBagPanel(resp: BagListResp): BagPanelView {
 }
 
 /**
- * 出售能力开关。**关掉的原因不是"暂时没做按钮"，而是卖不掉**：服务端没有 `/bag/sell`
- * 端点，而 B04 整篇没有"出售"这条规则（什么档能卖、按表价还是折扣、金币走不走
- * 每日保护额度、能不能买低卖高刷金，全是空的）—— 见收口清单 #47。
+ * 出售能力整条撤下（2026-09-13 裁决）：**服务端不再下发 `sellable` / `sellPriceGold`**
+ * （协议里已删，见 bag.schema.json 的说明），因为服务端没有 `/bag/sell` 端点、
+ * B04 整篇没有「出售」这条规则（什么档能卖、按表价还是折扣、金币走不走每日保护额度、
+ * 能不能买低卖高刷金，全是空的 —— 收口清单 #47 ③）。
  *
- * <p>表里的 `sellable` / `sellPriceGold` 保留不动（那是数据，撤掉等于把产品口径抹掉），
- * 只是**不渲染一个点了只会失败的控件**。端点与规则落地后把这里翻成 true，
- * 单件能不能卖仍旧由表决定。
- *
- * <p>开关只放在 {@link buildItemRow} 这一处：视图的 `sellable` 就是从 `sellText` 推出来的，
- * 两处各判一次就是两份真相。
+ * <p>原先的形态是「表里有字段 + 协议里有字段 + UI 有个开关关着的按钮」，
+ * 那是最容易被人顺手实现成刷金入口的形状；现在只剩「表里有数据 + 文档里无规则」，
+ * 定完规则再让字段随协议回来。`sellText` 这个行字段保留（视图据此决定按钮亮不亮），
+ * 但在这里就是恒 null —— 一份不存在的能力不该有第二条通路。
  */
-export const SELL_SUPPORTED = false
-
-/**
- * 组装一行道具。
- *
- * @param sellSupported 覆盖出售能力。**默认取 {@link SELL_SUPPORTED}**；开一个参数是为了
- *        "有价格才显示售价"这条规则仍然可测 —— 只读常量的话它恒为 null，那条断言就废了。
- */
-export function buildItemRow(item: BagItem, sellSupported: boolean = SELL_SUPPORTED): BagItemRow {
+export function buildItemRow(item: BagItem): BagItemRow {
   if (item === undefined || item === null) {
     throw new Error('item 不得为空')
   }
@@ -234,9 +225,7 @@ export function buildItemRow(item: BagItem, sellSupported: boolean = SELL_SUPPOR
     obtainText: item.obtainFrom === null || item.obtainFrom.length === 0
       ? null
       : `来自：${item.obtainFrom}`,
-    sellText: sellSupported && item.sellable && item.sellPriceGold !== null
-      ? `可出售 ${item.sellPriceGold} 金币`
-      : null,
+    sellText: null,
     needsTarget: item.type === 'SPEEDUP',
   }
 }

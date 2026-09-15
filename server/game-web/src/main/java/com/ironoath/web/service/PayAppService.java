@@ -16,9 +16,11 @@ import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.pay.PayOrder;
 import com.ironoath.web.dto.generated.CreateOrderReq;
 import com.ironoath.web.dto.generated.CreateOrderResp;
+import com.ironoath.web.dto.generated.DebtOrderView;
 import com.ironoath.web.dto.generated.OrderStatus;
 import com.ironoath.web.dto.generated.OrderStatusResp;
 import com.ironoath.web.dto.generated.PayCallbackReq;
+import com.ironoath.web.dto.generated.PayDebtResp;
 import com.ironoath.web.dto.generated.PayParams;
 import com.ironoath.web.dto.generated.PayRetryReq;
 import com.ironoath.web.dto.generated.PayRewardItem;
@@ -54,6 +56,14 @@ public class PayAppService {
 
     private static final Logger LOG = LoggerFactory.getLogger(PayAppService.class);
     private static final long LOCK_TIMEOUT_MS = 3000L;
+    /**
+     * 负债明细一次最多带几笔。
+     *
+     * <p>写成常量而不是配置参数：这是「一条只读运维查询最多捞多少行」的服务端自我保护，
+     * 不是策划会去调的游戏数值 —— 放进 global 表就是给一个不该有第二个家的东西发户口。
+     * 50 笔足够看出成因（一笔大的还是一堆小的），再多的明细该去导出而不是看接口。
+     */
+    private static final int DEBT_LIST_MAX = 50;
 
     /**
      * 回调验签。<b>这是一个显式的接缝</b>：真实的米大师验签需要商户密钥，
@@ -338,6 +348,30 @@ public class PayAppService {
     /** 补单队列（运维/客服用）。 */
     public List<PayOrder> retryQueue(int limit) {
         return orders.retryQueue(limit);
+    }
+
+    /**
+     * 负债读数（只读，供 {@code GET /ops/pay/debt} 用）：钱收了、货没发出去的那批订单。
+     *
+     * <p><b>这个方法存在的理由是把两个零调用点变成有调用点</b>：{@code unfulfilledCents()} 与
+     * {@link #retryQueue(int)} 此前只有测试在读，而 #27 那条 ERROR 日志写的是「必须有人跟进」——
+     * 日志喊了但没人能查账，等于没有账。
+     *
+     * @param limit 明细最多带几笔。<b>受 {@link #DEBT_LIST_MAX} 夹住</b>：这是一条只读但挂在
+     *              不需要玩家身份的 /ops/ 前缀下的路径，把 limit 原样透传给存储层等于任何人都能
+     *              要求服务端把整张订单表捞一遍。总额与笔数不受 limit 影响 ——
+     *              所以「没列全」这件事在响应里是看得见的（{@code listed < unfulfilledOrders}）。
+     */
+    public PayDebtResp debt(int limit) {
+        int capped = Math.max(1, Math.min(limit, DEBT_LIST_MAX));
+        List<PayOrder> queue = orders.retryQueue(capped);
+        List<DebtOrderView> views = new ArrayList<>(queue.size());
+        for (PayOrder order : queue) {
+            views.add(new DebtOrderView(order.orderId(), order.playerId(), order.line().totalCents(),
+                    order.paidAt(), order.fulfillAttempts(), order.failureReason()));
+        }
+        return new PayDebtResp(orders.unfulfilledCents(), orders.unfulfilledOrderCount(),
+                views.size(), views);
     }
 
     // ---------- 内部 ----------

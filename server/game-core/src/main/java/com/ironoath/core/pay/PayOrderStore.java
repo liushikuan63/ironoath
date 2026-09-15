@@ -52,6 +52,18 @@ public interface PayOrderStore {
     long unfulfilledCents();
 
     /**
+     * 未发货的订单<b>笔数</b>。与总额一起看才分得清「一笔大的」和「一堆小的」这两种成因 ——
+     * 只回总额，运维就只能猜。
+     *
+     * <p><b>刻意不复用 {@code retryQueue(limit).size()}</b>：那个队列受 limit 截断，
+     * 拿它当总数等于让运维以为列出来的就是全部。
+     *
+     * <p>与 {@link #unfulfilledCents()} 是两次独立扫描，所以两者之间如果恰好有一单被补发，
+     * 读数会短暂地不自洽。这是一个给人看的读数，不是一本要平的账 —— 真要平账的人看的是订单本身。
+     */
+    long unfulfilledOrderCount();
+
+    /**
      * 某个玩家自 {@code sinceMillis}（含）以来<b>真正付掉</b>的钱（分）。
      * 未成年月度付费限额用它算"本月已花"，月界由 {@code MonthKey.startMillis} 给。
      *

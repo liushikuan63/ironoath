@@ -62,7 +62,10 @@ function alliance(overrides: Partial<AllianceView> = {}): AllianceView {
     // 而 tsc 一失败，node --test 那几百项就一条都不会执行
     techs: [],
     territoryCount: 0, territoryCap: 1, myRole: 'MEMBER', myContribution: 260,
-    myDonateToday: 1, announcement: '每晚八点集结', version: 7, serverNow: 10_000,
+    myDonateToday: 1,
+    // 每档每日一次（2026-09-13 裁决）：已用档位与上限都由服务端下发，计数只是冗余展示值
+    donateTiersUsed: [0], donateDailyCap: 3,
+    announcement: '每晚八点集结', version: 7, serverNow: 10_000,
     ...overrides,
   }
 }
@@ -167,9 +170,25 @@ test('联盟区块把资金、贡献值、领地、职位与今日捐献档数�
   assert.equal(section.members[1]?.squadText, '分队 s1', '盟主集结时要能按分队点名')
 })
 
-test('捐献档位用完后不再摆按钮；还有额度时三档都摆（协议只给计数，没说是哪几档）', () => {
-  assert.deepEqual(buildAllianceSection(alliance({ myDonateToday: 1 }), []).donateTiersAvailable, [0, 1, 2])
-  assert.deepEqual(buildAllianceSection(alliance({ myDonateToday: 3 }), []).donateTiersAvailable, [])
+test('摆出来的是「今天还没捐过的档」：已用档位由服务端下发，客户端不再拿计数猜', () => {
+  // 旧形态是"只要有额度就把三档全摆出来，点了才知道捐过"（协议只给计数）。
+  // 2026-09-13 裁决每档每日一次之后，服务端下发 donateTiersUsed，这条才有可断言的东西
+  assert.deepEqual(
+    buildAllianceSection(alliance({ myDonateToday: 0, donateTiersUsed: [] }), []).donateTiersAvailable,
+    [0, 1, 2])
+  assert.deepEqual(
+    buildAllianceSection(alliance({ myDonateToday: 2, donateTiersUsed: [0, 2] }), []).donateTiersAvailable,
+    [1], '捐过 0 与 2 之后只剩 1 可点：摆错一个就是让玩家点一下收一次报错')
+  assert.deepEqual(
+    buildAllianceSection(alliance({ myDonateToday: 3, donateTiersUsed: [0, 1, 2] }), [])
+      .donateTiersAvailable, [])
+})
+
+test('今日档数上限取自服务端（客户端不写死 3，改 alliance_config 不该让面板撒谎）', () => {
+  assert.equal(
+    buildAllianceSection(alliance({ myDonateToday: 1, donateTiersUsed: [1], donateDailyCap: 2 }), [])
+      .donateText,
+    '今日捐献 1/2 档')
 })
 
 test('人数已满时给出扩容提示（这是中后期最大的资金消耗点，玩家要看得见它）', () => {

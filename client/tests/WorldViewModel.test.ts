@@ -74,6 +74,7 @@ function marchList(marches: MarchView[], serverNow = 0,
                    exile: { peaceUntil?: number | null, nextExileAt?: number | null } = {}): MarchListResp {
   return {
     marches, home: { x: 0, y: 0 }, maxConcurrent: 3, serverNow,
+    worldSize: 512, chunkSize: 32, maxChunks: 9,
     peaceUntil: exile.peaceUntil ?? null, nextExileAt: exile.nextExileAt ?? null,
   }
 }

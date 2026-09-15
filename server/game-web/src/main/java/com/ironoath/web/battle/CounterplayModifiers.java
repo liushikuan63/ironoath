@@ -29,10 +29,13 @@ import com.ironoath.web.service.SocialAppService;
  * 所以 {@code MonsterBattleService} 与 {@code StageAppService} 传 {@code none()} 是正确的，
  * 不是漏接。判据是「对手是不是一个有 {@link PlayerPvp} 的玩家」，不是战斗类型。
  *
- * <p><b>哀兵（{@code BONUS_MOURNING}）不在这里</b>：三处原文（C01 §4、B00 §反击加成、
+ * <p><b>哀兵（{@code BONUS_MOURNING}）不在这里，且已裁决退役</b>：三处原文（C01 §4、B00 §反击加成、
  * global 表自己的 source 字段）都把它限定成「防守集结」的加成，而<b>防守集结不存在于任何批次的交付清单</b>
  * —— B10 只有集结进攻。给它编一个触发条件（例如「凡是守方就 +10%」）等于把一条被动补偿塞进乘区 F，
- * 而那正是 C01 反直觉条款 2 禁止的东西。所以这一项留在收口清单等裁决，不在此实现。
+ * 而那正是 C01 反直觉条款 2 禁止的东西。
+ * <b>2026-09-13 裁决（收口清单 §三·补 B9）：退役这条乘区</b> —— 表里那一行标了 {@code todo}（启动日志会
+ * WARN 出来，别把它当成已生效的加成），内核 {@code BattleModifier.aggrieved} 与它的正确性用例保留为
+ * 「机制就绪、玩法未定」；要启用先回答「防守集结是什么玩法」。本类<b>永远不该</b>出现给它喂值的代码。
  */
 @Component
 public class CounterplayModifiers {

@@ -107,6 +107,37 @@ class SeasonBoardStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("归档清理：删一季要连榜带快照一起删，而另一季一条都不能少")
+    void purgeSeasonRemovesBoardAndSnapshotButLeavesOtherSeasons() {
+        Assumptions.assumeTrue(db != null,
+                "本机连不上 MongoDB（" + TestMongo.uri() + "）：这条等价性今天没被验证，别当成通过");
+
+        for (SeasonBoardStore store : List.of(newMemoryStore(), newMongoStore())) {
+            String who = store.getClass().getSimpleName();
+            store.report(SEASON, Board.POWER, entry("a", "甲", 300));
+            store.report(SEASON, Board.KILL, entry("k", "击杀", 7));
+            store.saveSnapshotIfAbsent(SEASON,
+                    new SeasonSettlement.Snapshot(Board.POWER, 123L, List.of(entry("a", "甲", 300))));
+            // 另一季必须有内容：少了这一行，"实现按前缀删、把邻季一起删了"这种错法照样全绿
+            store.report(OTHER, Board.POWER, entry("z", "别季", 9999));
+            store.saveSnapshotIfAbsent(OTHER,
+                    new SeasonSettlement.Snapshot(Board.POWER, 456L, List.of(entry("z", "别季", 9999))));
+
+            assertThat(store.purgeSeason(SEASON))
+                    .as(who + " 要报告删了多少（榜 2 条 + 快照 1 份）").isEqualTo(3);
+            assertThat(store.board(SEASON, Board.POWER)).as(who + " 的榜已空").isEmpty();
+            assertThat(store.board(SEASON, Board.KILL)).as(who + " 的另一张榜也要一起删").isEmpty();
+            assertThat(store.snapshot(SEASON, Board.POWER))
+                    .as(who + " 的快照不能留在库里，否则申诉时还能查出一个「榜已经没了的赛季」")
+                    .isNull();
+            assertThat(store.board(OTHER, Board.POWER)).as(who + " 不许碰别的赛季")
+                    .extracting(SeasonSettlement.Entry::id).containsExactly("z");
+            assertThat(store.snapshot(OTHER, Board.POWER)).as(who + " 的邻季快照也要原样在").isNotNull();
+            assertThat(store.purgeSeason(SEASON)).as(who + " 重复清理必须是 0").isZero();
+        }
+    }
+
+    @Test
     @DisplayName("换一个实例：Mongo 版答得出榜与快照，内存版答不出来 —— 生产必须用 mongo 的那条证据")
     void mongoSurvivesANewInstanceWhileMemoryDoesNot() {
         Assumptions.assumeTrue(db != null,

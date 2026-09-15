@@ -80,6 +80,17 @@ public class MonsterBattleService {
     /** 每日讨伐次数的计数域。与体力购买、广告加速分域，互不占用。 */
     private static final String SCOPE_HUNT = "monster_hunt";
 
+    /**
+     * 全服 PvE 赛季配额的计数域（2026-09-13 裁决 C20）。
+     *
+     * <p>复用 {@link DailyCounter} 而不是新建一个存储：那个端口的周期位刻意是「周期标签」
+     * （日限次传 DayKey、周限次传 WeekKey、永久额度传固定串），这里传的就是 seasonId。
+     * 为一条配额另起一张表，就是给同一个事实造第二个家。
+     */
+    private static final String SCOPE_PVE_SEASON = "pve_season_consumed";
+    /** 全服配额的 ownerId。配额是全服一份，不属于任何玩家，所以需要一个不会与玩家 id 撞上的哨兵。 */
+    private static final String SERVER_OWNER = "server";
+
     private final ConfigRegistry configs;
     private final BattleArmyFactory armyFactory;
     private final BattleRulesAssembler rulesAssembler;
@@ -95,6 +106,8 @@ public class MonsterBattleService {
     private final BattleReportService battleReports;
     private final com.ironoath.web.reward.ServerSeedSource seeds;
     private final AllianceTechBonuses techBonuses;
+    /** 本赛季的 id —— 全服 PvE 配额的周期标签。取法只有 {@code SeasonRulesAssembler} 一处。 */
+    private final com.ironoath.web.season.SeasonRulesAssembler seasons;
     /**
      * 事件触发的聊天（B11 §四 句库的五个触发场景）：打野的胜负是 VICTORY / DEFEAT 两个场景的
      * 主要来源（「打赢了，掉的不多」「被打崩了，兵掉了一半」）。发布走 Spring 事件，
@@ -111,6 +124,7 @@ public class MonsterBattleService {
                                 BattleReportService battleReports,
                                 com.ironoath.web.reward.ServerSeedSource seeds,
                                 AllianceTechBonuses techBonuses,
+                                com.ironoath.web.season.SeasonRulesAssembler seasons,
                                 org.springframework.context.ApplicationEventPublisher events) {
         this.configs = configs;
         this.armyFactory = armyFactory;
@@ -127,6 +141,7 @@ public class MonsterBattleService {
         this.battleReports = battleReports;
         this.seeds = seeds;
         this.techBonuses = techBonuses;
+        this.seasons = seasons;
         this.events = events;
     }
 
@@ -198,6 +213,15 @@ public class MonsterBattleService {
                             + " 点，当前 " + available + " 点。体力每 " + recoverMinutes()
                             + " 分钟恢复 1 点，也可以用金币购买");
         }
+        // C20 的全服配额同样要在出征时查（只读，不消耗）：配额满了还放行，
+        // 玩家就要白飞几十分钟才被拒 —— 那正是这条预检存在要消除的形状
+        long seasonCap = pveSeasonConsumeCap();
+        String seasonId = seasons.timelineRules().seasonId();
+        if (dailyCounter.used(SCOPE_PVE_SEASON, SERVER_OWNER, seasonId) >= seasonCap) {
+            throw new BizException(ErrorCode.RATE_LIMITED,
+                    "本赛季全服可讨伐的野怪已达上限（" + seasonCap + " 格，赛季 " + seasonId
+                            + "）。野怪不会定时刷新，恢复要等下赛季");
+        }
     }
 
     /**
@@ -230,13 +254,50 @@ public class MonsterBattleService {
             throw new BizException(ErrorCode.RATE_LIMITED,
                     "今日讨伐次数已用完（" + limit + " 次），明日 " + dayKey + " 之后重置");
         }
+        // 一·五、全服 PvE 赛季配额（2026-09-13 裁决 C20）。刻意排在每日次数之后：
+        // 每日次数是"你今天打满了"，这一条是"这一季的野怪快被清空了"，两句话不能混
+        String seasonId = seasons.timelineRules().seasonId();
+        long seasonCap = pveSeasonConsumeCap();
+        if (!dailyCounter.tryConsume(SCOPE_PVE_SEASON, SERVER_OWNER, seasonId, seasonCap)) {
+            dailyCounter.refund(SCOPE_HUNT, playerId, dayKey);
+            throw new BizException(ErrorCode.RATE_LIMITED,
+                    "本赛季全服可讨伐的野怪已达上限（" + seasonCap + " 格，赛季 " + seasonId
+                            + "）。野怪不会定时刷新，恢复要等下赛季");
+        }
         try {
-            return doResolve(march, monster, now, beneficiaries);
+            Outcome outcome = doResolve(march, monster, now, beneficiaries);
+            if (!outcome.won()) {
+                // 打输没有消耗掉任何格子。不退的话，Bot 的失败次数会把真人的通道一点点吃掉，
+                // 而那正是这道闸门要防的事
+                dailyCounter.refund(SCOPE_PVE_SEASON, SERVER_OWNER, seasonId);
+            }
+            return outcome;
         } catch (RuntimeException e) {
+            dailyCounter.refund(SCOPE_PVE_SEASON, SERVER_OWNER, seasonId);
             // 战斗没打成就必须退还次数，否则玩家会因为一次异常白白损失一次讨伐机会
             dailyCounter.refund(SCOPE_HUNT, playerId, dayKey);
             throw e;
         }
+    }
+
+    /**
+     * 本赛季全服可消耗的野怪格上限 = 野怪格期望数 × global.PVE_SEASON_CONSUMED_RATIO。
+     *
+     * <p>分母是 {@code WORLD_SIZE² × WORLD_MONSTER_DENSITY} 的<b>期望值</b>而不是精确点数：
+     * 精确值要扫 262144 格才能算出来，而这条闸门守的是「别把真人通道清空」这个量级的判断，
+     * 期望值与真实值的偏差远小于 30% 这道余量。刻意不再配一个绝对格数 ——
+     * 密度已经有自己的家，再写一个数就是同一条规则两个家。
+     */
+    public long pveSeasonConsumeCap() {
+        long size = configs.longParam("WORLD_SIZE");
+        long expectedMonsters = com.ironoath.common.num.FixedPoint.truncate(
+                com.ironoath.common.num.FixedPoint.mul(
+                        com.ironoath.common.num.FixedPoint.of(size * size),
+                        configs.fixedParam("WORLD_MONSTER_DENSITY")));
+        return com.ironoath.common.num.FixedPoint.truncate(
+                com.ironoath.common.num.FixedPoint.mul(
+                        com.ironoath.common.num.FixedPoint.of(expectedMonsters),
+                        configs.fixedParam("PVE_SEASON_CONSUMED_RATIO")));
     }
 
     private Outcome doResolve(March march, MapmonsterCfg monster, long now, Map<String, Long> beneficiaries) {

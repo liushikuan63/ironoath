@@ -158,6 +158,18 @@ class PowerContractParityTest {
     }
 
     @Test
+    @DisplayName("2026-09-13 裁决：哀兵是「已退役」而不是「已实现」—— 它必须带着 todo 出现在启动 WARN 清单里")
+    void mourningBonusIsMarkedRetired() {
+        // 上面那条测试钉的是"表里这个数是多少"，它不代表加成生效。退役的落点因此是 todo 标记：
+        // 启动日志会把它 WARN 出来（ConfigRegistry.pendingConfirmations），
+        // 而这条用例保证"哪天有人把 todo 抹掉、让它看起来像已实现"会当场变红。
+        // 装配侧的禁止由 CounterplayModifiers 的类注释守着：那里永远不该出现喂 aggrieved 的代码。
+        assertThat(configs.pendingConfirmations())
+                .as("BONUS_MOURNING 必须仍在待确认清单里（退役 ≠ 已生效）")
+                .anySatisfy(row -> assertThat(row.id()).isEqualTo("BONUS_MOURNING"));
+    }
+
+    @Test
     @DisplayName("搜索权重之和为 1.0，且集结上限与单人上限共用同一个参数（不设第二个家）")
     void searchWeightsAndRallyBandShareOneHome() {
         TargetSearch.Rules rules = new TargetSearch.Rules(

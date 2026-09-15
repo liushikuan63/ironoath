@@ -2,6 +2,7 @@ package com.ironoath.web.service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import com.ironoath.web.dto.generated.TableMeta;
 import com.ironoath.web.dto.generated.TrackBatchReq;
 import com.ironoath.web.dto.generated.TrackBatchResp;
 import com.ironoath.web.dto.generated.TrackEvent;
+import com.ironoath.web.dto.generated.TrackIngestResp;
 import com.ironoath.web.dto.generated.TrackPolicy;
 import com.ironoath.web.ops.TrackEventStore;
 import com.ironoath.web.ops.TrackFlusher;
@@ -52,6 +54,14 @@ public class OpsAppService {
     private final TrackFlusher flusher;
     private final TrackEventStore store;
     private final TimeService timeService;
+    /**
+     * 本进程启动以来被入口软上限截断掉的事件累计条数。
+     *
+     * <p>与 {@code SocialPushPublisher.dropped} 同一形状：进程内 AtomicLong + 一个只读出口，
+     * 不引 Micrometer、不起定时器（B00 禁 @Scheduled）。出口是 {@code GET /ops/ingest} ——
+     * <b>计数没有出口就等于没有计数</b>，那正是 {@code unfulfilledCents()} 此前的处境。
+     */
+    private final AtomicLong truncatedEvents = new AtomicLong();
 
     public OpsAppService(ReleaseRulesAssembler assembler, TrackFlusher flusher,
                          TrackEventStore store, TimeService timeService) {
@@ -75,9 +85,24 @@ public class OpsAppService {
         }
         long serverNow = timeService.serverNow();
         String traceId = TraceContext.traceId();
+        // 软上限：超了就截断，不整批拒。一次战斗本身就产生十几个事件，
+        // 拿攒批上限当门槛会把真实战斗事件整批丢掉 —— 丢看板数据比来噪音糟，但洪水必须可见。
+        int softLimit = assembler.trackIngestSoftLimit();
+        int truncated = 0;
+        List<TrackEvent> events = req.events();
+        if (events.size() > softLimit) {
+            truncated = events.size() - softLimit;
+            events = events.subList(0, softLimit);
+            long total = truncatedEvents.addAndGet(truncated);
+            LOG.warn("埋点入口软上限生效：本批 {} 条，保留 {} 条、截断 {} 条（上限=TRACK_BATCH_MAX_SIZE × "
+                            + "TRACK_INGEST_SOFT_LIMIT_FACTOR），traceId={}，累计已截断 {} 条："
+                            + "非零只有两种解释 —— 有客户端的攒批策略与本服不同步，或有人在直接刷这个"
+                            + "不要求身份的端点，两种都需要人去看",
+                    req.events().size(), softLimit, truncated, traceId, total);
+        }
         int accepted = 0;
-        int failed = 0;
-        for (TrackEvent event : req.events()) {
+        int failed = truncated;
+        for (TrackEvent event : events) {
             if (event == null || event.name() == null || event.name().isBlank()) {
                 // 没有名字的事件在分析侧无法归类，却已经占了上报配额，所以直接丢
                 failed++;
@@ -87,11 +112,25 @@ public class OpsAppService {
                     traceId, event.params()));
             accepted++;
         }
-        if (failed > 0) {
+        if (failed > truncated) {
             LOG.warn("本批埋点丢弃 {} 条（事件名为空），traceId={}：客户端某处调用了没有事件名的上报，"
-                    + "这类调用点会静默地一直失败，需要按 traceId 去客户端日志里找", failed, traceId);
+                    + "这类调用点会静默地一直失败，需要按 traceId 去客户端日志里找",
+                    failed - truncated, traceId);
         }
         return new TrackBatchResp(accepted, failed);
+    }
+
+    /**
+     * 埋点入口的健康度（只读，供 {@code GET /ops/ingest} 用）。
+     *
+     * <p><b>这一存在的理由是「计数必须有出口」</b>：{@code truncatedEvents} 如果只有测试能读，
+     * 它就和此前零调用点的 {@code unfulfilledCents()} 是同一族问题 —— 机制在，没人看。
+     * {@code pendingEvents} 与 {@code flushedBatches} 一并带出，是为了让验收 3 的
+     * 「批数远小于事件数」变成一个能被查的事实而不是一个断言。
+     */
+    public TrackIngestResp ingestHealth() {
+        return new TrackIngestResp(assembler.trackIngestSoftLimit(), truncatedEvents.get(),
+                flusher.pendingCount(), flusher.batchCount());
     }
 
     /** 某玩家最近的事件（排查用）。limit 由调用方给，禁止全量返回。 */

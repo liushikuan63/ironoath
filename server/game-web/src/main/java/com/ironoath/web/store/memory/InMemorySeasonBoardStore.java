@@ -73,6 +73,29 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
     }
 
     @Override
+    public int purgeSeason(String seasonId) {
+        int removed = 0;
+        Map<SeasonSettlement.Board, Map<String, SeasonSettlement.Entry>> boardsOfSeason =
+                boards.remove(seasonId);
+        if (boardsOfSeason != null) {
+            for (Map<String, SeasonSettlement.Entry> rows : boardsOfSeason.values()) {
+                removed += rows.size();
+            }
+        }
+        // 前缀必须带 : 这个终止符 —— 少了它，season_1 会把 season_10 的快照一起删掉，
+        // 而那是删掉一个还在保留期内的赛季，不可恢复
+        String prefix = seasonId + ":";
+        List<String> keys = new ArrayList<>(snapshots.keySet());
+        for (String key : keys) {
+            if (key.startsWith(prefix)) {
+                snapshots.remove(key);
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    @Override
     public void clear() {
         boards.clear();
         snapshots.clear();

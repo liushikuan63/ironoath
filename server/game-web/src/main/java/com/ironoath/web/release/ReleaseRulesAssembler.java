@@ -50,6 +50,18 @@ public class ReleaseRulesAssembler {
         return (int) configs.longParam("TRACK_BATCH_MAX_SIZE");
     }
 
+    /**
+     * 埋点<b>入口</b>软上限（条）= 攒批上限 × global.TRACK_INGEST_SOFT_LIMIT_FACTOR。
+     *
+     * <p>刻意做成派生而不是再配一个绝对条数：一批多大这件事已经有唯一来源了，
+     * 而调大攒批上限时如果忘了同步这里，症状是真实事件被悄悄截断 —— 一个不报错的数据丢失。
+     *
+     * <p>这是<b>软</b>上限：超了截断并计数，不整批拒（2026-09-13 裁决，收口清单 §三·补 B14）。
+     */
+    public int trackIngestSoftLimit() {
+        return trackBatchMaxSize() * (int) configs.longParam("TRACK_INGEST_SOFT_LIMIT_FACTOR");
+    }
+
     /** 攒批秒数（global.TRACK_BATCH_FLUSH_SECONDS）。原始值，双端同源下发给客户端。 */
     public int trackFlushSeconds() {
         return (int) configs.longParam("TRACK_BATCH_FLUSH_SECONDS");

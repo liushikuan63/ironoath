@@ -153,6 +153,22 @@ class GatherInterceptionTest {
     }
 
     @Test
+    @DisplayName("2026-09-13 裁决：被拦下采集队算「被打一次」——守方进受害账本，与攻城同一本 attackerHits")
+    void interceptedGathererIsRecordedInVictimLedger() {
+        Pair p = pairWithGatherer(2_000L, 300L);
+        assertThat(players.findByPlayerId(p.gatherer).orElseThrow().pvp().attackerHits())
+                .as("夹具前提：开打之前守方的受害账本是空的（否则这条断言证明不了任何事）").isEmpty();
+
+        arriveAndProcess(p.attackerMarchId);
+
+        // 这一本账同时喂两处：连续受害护盾（第三条保护）与复仇乘区 F。
+        // 少记一次的表现不是报错，而是「被人抢了三回却不进护盾、也不进复仇名单」
+        assertThat(players.findByPlayerId(p.gatherer).orElseThrow().pvp().attackerHits())
+                .as("被拦下的采集者必须与城被攻时记进同一本账")
+                .containsKey(p.attacker);
+    }
+
+    @Test
     @DisplayName("资源点上没人在采集时，出征那一刻就被拒：提示必须出现在玩家还能改主意的时刻")
     void attackingAnEmptyResourceNodeIsRejectedAtDispatch() {
         String attacker = newPlayer();

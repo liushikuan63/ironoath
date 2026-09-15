@@ -39,7 +39,9 @@ class NationSystemTest {
                 24 * HOUR,       // 入籍冷却 24h
                 10_000L,         // 每盟每周税收
                 200,             // 国库日志保留条数
-                12);             // 固定官职席位
+                12,              // 固定官职席位
+                // 0.5（定点）。两个成员联盟 ⇒ 周税入库 20000 ⇒ 非国王身份的周支出上限 10000
+                5_000L);
     }
 
     private static Nation newNation() {
@@ -89,7 +91,7 @@ class NationSystemTest {
         assertThat(nation.admitBlockFor("a2", 2000L).orElseThrow().reason())
                 .as("重复入籍与名额满了是两件事").isEqualTo(Nation.AdmitRejection.ALREADY_MEMBER);
 
-        nation.removeAlliance("a2", false, 3000L);
+        nation.removeAlliance("a2", false, "leader_a2", 3000L);
         assertThat(nation.admitBlockFor("a2", 3000L + HOUR).orElseThrow().reason())
                 .isEqualTo(Nation.AdmitRejection.COOLDOWN);
         assertThatThrownBy(() -> nation.admitAlliance("a2", 3000L + HOUR))
@@ -140,7 +142,7 @@ class NationSystemTest {
         Nation nation = newNation();
         nation.admitAlliance("a2", 1000L);
 
-        nation.removeAlliance("a2", false, 5000L);
+        nation.removeAlliance("a2", false, "leader_a2", 5000L);
         assertThat(nation.hasAlliance("a2")).isFalse();
         assertThat(nation.lastRemovalWasExpulsion()).isFalse();
         assertThat(nation.joinCooldownUntil("a2")).isEqualTo(5000L + DAY);
@@ -165,7 +167,7 @@ class NationSystemTest {
     void expulsionAlsoTriggersCooldown() {
         Nation nation = newNation();
         nation.admitAlliance("a2", 1000L);
-        nation.removeAlliance("a2", true, 2000L);
+        nation.removeAlliance("a2", true, "king", 2000L);
         assertThat(nation.lastRemovalWasExpulsion()).isTrue();
         assertThat(nation.joinCooldownUntil("a2")).isEqualTo(2000L + DAY);
     }
@@ -178,7 +180,7 @@ class NationSystemTest {
         nation.appoint("king", "general_1", "a2", Nation.Office.GENERAL);
         assertThat(nation.holdersOf(Nation.Office.GENERAL)).containsExactly("general_1");
 
-        nation.removeAlliance("a2", true, 2000L);
+        nation.removeAlliance("a2", true, "king", 2000L);
         assertThat(nation.holdersOf(Nation.Office.GENERAL))
                 .as("联盟被开除后其成员的官职必须收回").isEmpty();
         assertThat(nation.officeOf("general_1")).isNull();
@@ -212,6 +214,39 @@ class NationSystemTest {
         Nation fresh = newNation();
         assertThatThrownBy(() -> fresh.disband("not_king", 10_000L))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("只有国王");
+    }
+
+    @Test
+    @DisplayName("最后一个成员联盟走掉，国家当场算亡：不留一个零成员的活国")
+    void lastMemberAllianceLeavingCollapsesTheNation() {
+        Nation nation = newNation();
+        nation.admitAlliance("a2", 1000L);
+        nation.deposit("king", "tax_seed", 5_000L, "用例注资", 1200L);
+        nation.appoint("king", "general_2", "a2", Nation.Office.GENERAL);
+
+        nation.removeAlliance("a2", false, "leader_a2", 2000L);
+        assertThat(nation.isDisbanded())
+                .as("还剩建国联盟 a1 —— 走空这件事还没发生，不许提前算亡").isFalse();
+
+        nation.removeAlliance("a1", false, "leader_a1", 3000L);
+        assertThat(nation.isDisbanded())
+                .as("成员联盟走空之后，「这个国还算不算存在」不能有第二种答案").isTrue();
+        assertThat(nation.treasury()).as("亡国不许留着余额").isZero();
+        assertThat(nation.holdersOf(Nation.Office.GENERAL))
+                .as("走的是与国王主动解散同一个拆解入口，官职要一起清").isEmpty();
+        // 核销日志的操作者必须是真正促成这件事的人。这里写 kingId 等于在账本上伪造一笔
+        // 从未发生过的决定 —— 国王此刻什么都没做，他只是不再有人属于他的国
+        assertThat(nation.treasuryLogs())
+                .filteredOn(log -> "collapse_writeoff".equals(log.payee()))
+                .singleElement()
+                .satisfies(log -> {
+                    assertThat(log.operatorId()).isEqualTo("leader_a1");
+                    assertThat(log.amount()).isEqualTo(5_000L);
+                    assertThat(log.balanceAfter()).isZero();
+                });
+        // 算亡之后与国王主动解散同构：任何变更都被 requireActive 挡下
+        assertThatThrownBy(() -> nation.admitAlliance("a3", 4000L))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("已解散");
     }
 
     // ---------- 验收 3：官职席位 ----------
@@ -249,7 +284,7 @@ class NationSystemTest {
         // §2：议员每盟主 1 席，随成员联盟数变化
         assertThat(nation.holdersOf(Nation.Office.REPRESENTATIVE))
                 .containsExactly("leader_a1", "leader_a2");
-        nation.removeAlliance("a2", false, 2000L);
+        nation.removeAlliance("a2", false, "leader_a2", 2000L);
         assertThat(nation.holdersOf(Nation.Office.REPRESENTATIVE)).containsExactly("leader_a1");
     }
 
@@ -299,7 +334,8 @@ class NationSystemTest {
         assertThat(nation.treasury()).isEqualTo(100_000L);
 
         nation.setClock(2000L);
-        nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.NATIONAL_TECH), 30_000L, "研究国家科技·攻击");
+        nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.NATIONAL_TECH), 30_000L,
+                "研究国家科技·攻击", 1L);
         assertThat(nation.treasury()).isEqualTo(70_000L);
 
         List<Nation.TreasuryLog> logs = nation.treasuryLogs();
@@ -337,12 +373,71 @@ class NationSystemTest {
         // 缺 payee 或 reason 直接在签名层拒绝：没有「谁」和「为什么」的日志无法追责
         assertThatThrownBy(() -> Nation.Payee.toPlayer(""))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("支给谁");
-        assertThatThrownBy(() -> nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.WAR_BOOST), 100L, " "))
+        assertThatThrownBy(() -> nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.WAR_BOOST),
+                100L, " ", 1L))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("用途");
-        assertThatThrownBy(() -> nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.WAR_BOOST), 0L, "y"))
+        assertThatThrownBy(() -> nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.WAR_BOOST),
+                0L, "y", 1L))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("必须为正");
-        assertThatThrownBy(() -> nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.WAR_BOOST), 999_999L, "y"))
+        assertThatThrownBy(() -> nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.WAR_BOOST),
+                999_999L, "y", 1L))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("资金不足");
+    }
+
+    @Test
+    @DisplayName("C16：非国王身份的国库支出被周限额夹住，国王不受限")
+    void officerSpendIsCappedPerWeekWhileKingIsNot() {
+        Nation nation = newNation();
+        nation.admitAlliance("a2", 1000L);
+        nation.setClock(1500L);
+        // 夹具：每盟每周 10000、两个成员联盟 ⇒ 本周入库 20000；比例 0.5 ⇒ 官员周额度 10000
+        assertThat(nation.collectTax(1L, 1500L)).isEqualTo(20_000L);
+        assertThat(nation.officerWeeklySpendCap(1L)).isEqualTo(10_000L);
+
+        nation.spend("pm", Nation.Payee.toSink(Nation.Payee.Sink.NATIONAL_TECH), 6_000L, "国策", 1L);
+        assertThatThrownBy(() -> nation.spend("pm",
+                Nation.Payee.toSink(Nation.Payee.Sink.NATIONAL_TECH), 6_000L, "国策", 1L))
+                .as("限额按**本周累计**算：单笔 6000 合法，不代表第二笔 6000 也合法")
+                .isInstanceOf(Nation.OfficerSpendLimitException.class);
+        assertThat(nation.treasury()).as("被拒的那一笔一分都不许扣").isEqualTo(14_000L);
+
+        // 换周：额度重新给满，而分母换成了新一周的入库
+        assertThat(nation.collectTax(2L, 8_000L)).isEqualTo(20_000L);
+        nation.spend("pm", Nation.Payee.toSink(Nation.Payee.Sink.NATIONAL_TECH), 6_000L, "国策", 2L);
+        assertThat(nation.treasury()).isEqualTo(28_000L);
+
+        nation.spend("king", Nation.Payee.toSink(Nation.Payee.Sink.WAR_BOOST), 28_000L, "国战增益", 2L);
+        assertThat(nation.treasury()).as("B13 §2：国王的支取没有上限").isZero();
+    }
+
+    @Test
+    @DisplayName("C16：限额的分母是「本周实际入库」而不是应收 —— 国库被容量截断时两者不等")
+    void capUsesActualCreditNotTheoreticalIncome() {
+        Nation nation = newNation();
+        nation.admitAlliance("a2", 1000L);
+        nation.setClock(1000L);
+        // Lv1 容量 500000：先灌到只剩 5000 的空位
+        nation.deposit("king", "war_loot", 495_000L, "国战战利品", 1000L);
+
+        assertThat(nation.collectTax(1L, 1500L))
+                .as("应收 20000，但只剩 5000 的位置 ⇒ 实收 5000").isEqualTo(5_000L);
+        assertThat(nation.officerWeeklySpendCap(1L))
+                .as("按应收算会给到 10000，那等于让官员花掉国家从没收到过的钱").isEqualTo(2_500L);
+    }
+
+    @Test
+    @DisplayName("C16：本周没结税就没有额度，上周收了多少都不算")
+    void noCreditThisWeekMeansNoAllowance() {
+        Nation nation = newNation();
+        nation.admitAlliance("a2", 1000L);
+        nation.collectTax(1L, 1500L);
+
+        assertThat(nation.officerWeeklySpendCap(2L))
+                .as("第 2 周还没结税 ⇒ 额度 0。让上周的入库继续给额度，就是每周都在花一笔没收到的钱")
+                .isZero();
+        assertThatThrownBy(() -> nation.spend("pm",
+                Nation.Payee.toSink(Nation.Payee.Sink.NATIONAL_TECH), 1L, "国策", 2L))
+                .isInstanceOf(Nation.OfficerSpendLimitException.class);
     }
 
     @Test
@@ -352,7 +447,7 @@ class NationSystemTest {
         nation.deposit("king", "initial", 10_000_000L, "初始资金", 0L);
         for (int i = 0; i < 250; i++) {
             nation.setClock(i);
-            nation.spend("king", Nation.Payee.toPlayer("P" + i), 100L, "俸禄 " + i);
+            nation.spend("king", Nation.Payee.toPlayer("P" + i), 100L, "俸禄 " + i, 1L);
         }
         assertThat(nation.treasuryLogs()).hasSize(200);
         assertThat(nation.treasuryLogs().get(199).reason()).as("保留的是最近的").isEqualTo("俸禄 249");
@@ -405,7 +500,7 @@ class NationSystemTest {
         assertThat(nation.mayAttackNation("n2")).isTrue();
 
         nation.setDiplomacy("n3", Nation.Diplomacy.TRIBUTARY);
-        assertThat(nation.mayAttackNation("n3")).as("朝贡国不可被宣战").isFalse();
+        assertThat(nation.mayAttackNation("n3")).as("C22：朝贡双向禁攻，记着这一档的一侧打不动对方").isFalse();
 
         // 中立默认可被宣战；未登记的关系也是中立
         assertThat(nation.mayAttackNation("n4")).isTrue();
@@ -415,6 +510,42 @@ class NationSystemTest {
         assertThat(nation.diplomacyWith("n2")).as("设回中立等于删除登记").isEqualTo(Nation.Diplomacy.NEUTRAL);
         assertThatThrownBy(() -> nation.setDiplomacy("n1", Nation.Diplomacy.HOSTILE))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("自己");
+    }
+
+    @Test
+    @DisplayName("C21+C22：条约要两侧各自宣布才成立，成立之后双向禁攻")
+    void treatyNeedsBothSidesAndThenBlocksBothDirections() {
+        Nation liege = Nation.found("n-liege", "宗主国", "k1", "a1", 100, 100, 1000L, rules());
+        Nation vassal = Nation.found("n-vassal", "藩属国", "k2", "a2", 120, 120, 1000L, rules());
+
+        // 只有宗主单方面记着朝贡 ⇒ 不成立。这正是 C21 要消掉的形状：一边声明就能给对面挂免战牌
+        liege.setDiplomacy("n-vassal", Nation.Diplomacy.TRIBUTARY);
+        assertThat(Nation.treatyInForce(liege, vassal)).isFalse();
+        assertThat(Nation.mayAttackEachOther(liege, vassal))
+                .as("单边宣布不构成约束：藩属打不动宗主这件事，不是宗主声明出来的")
+                .isTrue();
+
+        // 对方也宣布同一个关系 ⇒ 成立，且双向都禁（C22：朝贡不是单向保护）
+        vassal.setDiplomacy("n-liege", Nation.Diplomacy.TRIBUTARY);
+        assertThat(Nation.treatyInForce(liege, vassal)).isTrue();
+        assertThat(Nation.mayAttackEachOther(liege, vassal)).as("宗主打不动藩属").isFalse();
+        assertThat(Nation.mayAttackEachOther(vassal, liege)).as("藩属也打不动宗主").isFalse();
+
+        // 两侧不一致（一个 ALLIED 一个 TRIBUTARY）不算成立：那是两份不同的条约，不是一份
+        vassal.setDiplomacy("n-liege", Nation.Diplomacy.ALLIED);
+        assertThat(Nation.treatyInForce(liege, vassal))
+                .as("双方各自宣布的必须是同一个关系才作数").isFalse();
+
+        // 成立之后任一侧改回中立即解除 —— 撕约比结约便宜，这是"和平不该靠一次双边会议维持"的对称后果
+        vassal.setDiplomacy("n-liege", Nation.Diplomacy.NEUTRAL);
+        liege.setDiplomacy("n-vassal", Nation.Diplomacy.NEUTRAL);
+        liege.setDiplomacy("n-vassal", Nation.Diplomacy.ALLIED);
+        vassal.setDiplomacy("n-liege", Nation.Diplomacy.ALLIED);
+        assertThat(Nation.treatyInForce(liege, vassal)).isTrue();
+        vassal.setDiplomacy("n-liege", Nation.Diplomacy.HOSTILE);
+        assertThat(Nation.mayAttackEachOther(liege, vassal))
+                .as("被盟约挡住的一方单方面改敌对就能解约：结约要两个人，撕约只要一个")
+                .isTrue();
     }
 
     // ---------- 验收 6：积分制防偷家 ----------
@@ -602,20 +733,30 @@ class NationSystemTest {
     void nationRulesAreValidated() {
         assertThatThrownBy(() -> new Nation.Rules(
                 List.of(level(1, 400, 500_000L, 1), level(2, 200, 2_000_000L, 2)),
-                16, 13, 4, DAY, 10_000L, 200, 12))
+                16, 13, 4, DAY, 10_000L, 200, 12, 5_000L))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("人数上限");
         assertThatThrownBy(() -> new Nation.Rules(
                 List.of(level(1, 200, 2_000_000L, 1), level(2, 400, 500_000L, 2)),
-                16, 13, 4, DAY, 10_000L, 200, 12))
+                16, 13, 4, DAY, 10_000L, 200, 12, 5_000L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("国库容量必须随等级单调不减");
         assertThatThrownBy(() -> new Nation.Rules(List.of(level(1, 200, 500_000L, 1)),
-                16, 13, 1, DAY, 10_000L, 200, 12))
+                16, 13, 1, DAY, 10_000L, 200, 12, 5_000L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("只有一个国家就不存在外交");
         assertThatThrownBy(() -> new Nation.Rules(List.of(level(1, 200, 500_000L, 1)),
-                16, 13, 4, DAY, 10_000L, 0, 12))
+                16, 13, 4, DAY, 10_000L, 0, 12, 5_000L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("保留 0 条等于没有日志");
+        // 比例 > 1 意味着官员一周能花掉比一周税收还多的钱，那已经不叫限额；
+        // 而负数会让任何一次支出都被拒 —— 两种都不该等到运行时才发现
+        assertThatThrownBy(() -> new Nation.Rules(List.of(level(1, 200, 500_000L, 1)),
+                16, 13, 4, DAY, 10_000L, 200, 12, 10_001L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("已经不叫限额");
+        assertThatThrownBy(() -> new Nation.Rules(List.of(level(1, 200, 500_000L, 1)),
+                16, 13, 4, DAY, 10_000L, 200, 12, -1L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("已经不叫限额");
     }
 }

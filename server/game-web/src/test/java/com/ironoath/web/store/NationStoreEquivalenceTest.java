@@ -300,7 +300,7 @@ class NationStoreEquivalenceTest {
             assertThat(loaded.holdersOf(Nation.Office.GENERAL))
                     .as("%s 前置条件：从存储读回来的一份就已经带着两位大将军与他们的联盟归属", label)
                     .containsExactly("P-g1", "P-g2");
-            loaded.removeAlliance("AL-out", true, T0 + 40L);
+            loaded.removeAlliance("AL-out", true, "K-N-reclaim", T0 + 40L);
             store.save(loaded, loaded.version());
 
             Nation back = store.findById("N-reclaim").orElseThrow();
@@ -319,7 +319,10 @@ class NationStoreEquivalenceTest {
             assertThat(store.findByAlliance("AL-N-index")).as("%s 在册时按联盟查得到", label).isPresent();
 
             Nation left = store.findById("N-index").orElseThrow();
-            left.removeAlliance("AL-N-index", false, T0 + 1_000L);
+            // 注：这份夹具只有唯一一个成员联盟，所以这一行现在顺带触发了 A6 的自动算亡
+            // （tearDown 会把成员表一起清空）。本用例断言的仍是"联盟索引随成员关系走"，
+            // 两件事不冲突，而亡国那份状态能不能原样存回来由同类的 disbandedNationComesBackDisbanded 覆盖。
+            left.removeAlliance("AL-N-index", false, "leader-AL-N-index", T0 + 1_000L);
             store.save(left, left.version());
 
             assertThat(store.findByAlliance("AL-N-index"))
@@ -442,11 +445,11 @@ class NationStoreEquivalenceTest {
         nation.deposit("K-" + id, "war_loot", 5_000L, "国战战利品", T0 + 20L);
         nation.setClock(T0 + 24L);
         nation.spend("K-" + id, Nation.Payee.toSink(Nation.Payee.Sink.NATIONAL_TECH), 1_000L,
-                "研究国家科技·攻击");
+                "研究国家科技·攻击", 1L);
         nation.collectTax(1L, T0 + 25L);
         nation.annexProvince("prov_a");
         nation.annexProvince("prov_b");
-        nation.removeAlliance("AL-out", true, T0 + 30L);
+        nation.removeAlliance("AL-out", true, "K-" + id, T0 + 30L);
         return nation;
     }
 
@@ -458,6 +461,10 @@ class NationStoreEquivalenceTest {
                 .append('#').append(s.capitalX()).append(',').append(s.capitalY())
                 .append('#').append(s.level()).append('#').append(s.treasury())
                 .append('#').append(s.lastTaxWeekKey()).append('#').append(s.disbandedAt())
+                // C16 的三个周限额状态：少持久化任何一个的表现都不是报错，
+                // 而是"重启之后本周已花掉的额度凭空回来"或"本周突然一分钱额度都没有"
+                .append('#').append(s.lastTaxCredited()).append('#').append(s.spendWeekKey())
+                .append('#').append(s.spentThisWeek())
                 .append("#members=").append(s.memberAlliances())
                 .append("#diplomacy=").append(s.diplomacy())
                 .append("#cooldown=").append(s.joinCooldownUntil())

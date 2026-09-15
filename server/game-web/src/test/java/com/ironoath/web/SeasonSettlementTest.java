@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +29,7 @@ import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.reward.RewardService;
 import com.ironoath.core.season.SeasonSettlement;
+import com.ironoath.core.season.SeasonTier;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.SeasonSettleReq;
 import com.ironoath.web.dto.generated.SeasonSettleResp;
@@ -409,6 +411,37 @@ class SeasonSettlementTest {
         SeasonSettlementService restarted = serviceAtDay(43);
         assertThat(restarted.liveRank(staleBot)).as("恢复时被摘掉，而不是装回第 1 名").isZero();
         assertThat(restarted.liveRank(human)).as("真人因此前进一名，而不是被存量 Bot 压在下面").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("C17：结算会把超出保留期的旧档真删掉，而保留期内的一季与当前季都不许碰")
+    void settlePurgesArchivesBeyondRetention() {
+        // 当前配置下的赛季就是 season_01（season.json 的第一行），真实数据里还不存在比它更老的季，
+        // 所以"已经攒了 4 季存档"这个前提只能用合成季号构造。清理判定只看季号先后，不看号是谁发的。
+        for (String stale : List.of("aa", "ab", "ac")) {
+            assertThat(ledger.recordIfAbsent(stale, new SeasonLedgerStore.Record(
+                    stale + "-p", 1, SeasonTier.Tier.GOLD, 10L, 100L))).as("先记上 %s", stale).isTrue();
+            boards.report(stale, SeasonSettlement.Board.POWER,
+                    new SeasonSettlement.Entry(stale + "-p", "旧季第一", 9_999L));
+        }
+
+        String human = player("现役第一");
+        boards.report(SEASON_ID, SeasonSettlement.Board.POWER,
+                new SeasonSettlement.Entry(human, "现役第一", 12_345L));
+
+        serviceAtDay(43).settle(new SeasonSettleReq(req("purge"), null));
+
+        // 保留 3 个赛季 = 当前季 + 更老的里面最新的 2 个（ac、ab）；aa 已经出窗
+        assertThat(ledger.seasonIds()).as("出窗的旧季从账本里删掉").doesNotContain("aa");
+        assertThat(ledger.seasonIds()).as("保留期内的两季原样在").contains("ab", "ac");
+        assertThat(boards.board("aa", SeasonSettlement.Board.POWER))
+                .as("榜也要一起删，只删账本等于旧季一半还在库里").isEmpty();
+        assertThat(boards.board("ab", SeasonSettlement.Board.POWER))
+                .as("不许顺手把还在保留期内的季删掉").isNotEmpty();
+        assertThat(boards.board(SEASON_ID, SeasonSettlement.Board.POWER))
+                .as("正在结算的这一季永远不进删除候选").isNotEmpty();
+        assertThat(ledger.find(SEASON_ID, human))
+                .as("当前季的结算记录更不能被自己刚写的清理删掉").isNotNull();
     }
 
     // ---------- 夹具 ----------

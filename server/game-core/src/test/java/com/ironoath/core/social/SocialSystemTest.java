@@ -47,14 +47,31 @@ class SocialSystemTest {
 
     /** alliance_config 的五行：30(Lv1) → 50(Lv3) → 80(Lv5) → 120(Lv7) → 150(Lv9)。 */
     private static Alliance.LevelRule tier(long level, long cap, long territory, String techBonus) {
+        return tier(level, cap, territory, techBonus, 3);
+    }
+
+    /**
+     * 最后一个参数是 {@code donationDailyCap}。开这个口子只为一件事：
+     * 造出「档位数 > 日上限」的夹具，才能把「这一档今天捐过」与「今天次数用完」测成两件事
+     * （见 {@code donateIsOncePerTierEvenBelowDailyCap}）。
+     */
+    private static Alliance.LevelRule tier(long level, long cap, long territory, String techBonus,
+                                           long donationDailyCap) {
         return new Alliance.LevelRule(level, cap, 10, 3, territory, 20,
-                FixedPoint.parse(techBonus), 3);
+                FixedPoint.parse(techBonus), donationDailyCap);
     }
 
     private static Alliance.Rules allianceRules() {
+        return allianceRules(3);
+    }
+
+    private static Alliance.Rules allianceRules(long donationDailyCap) {
         return new Alliance.Rules(
-                List.of(tier(1, 30, 1, "0.0"), tier(3, 50, 2, "0.25"), tier(5, 80, 3, "0.50"),
-                        tier(7, 120, 4, "0.75"), tier(9, 150, 5, "1.00")),
+                List.of(tier(1, 30, 1, "0.0", donationDailyCap),
+                        tier(3, 50, 2, "0.25", donationDailyCap),
+                        tier(5, 80, 3, "0.50", donationDailyCap),
+                        tier(7, 120, 4, "0.75", donationDailyCap),
+                        tier(9, 150, 5, "1.00", donationDailyCap)),
                 10, 3,
                 500L,                       // ALLIANCE_CREATE_COST_GOLD
                 86400 * SECOND,             // ALLIANCE_DISBAND_PROTECT_SECONDS
@@ -539,13 +556,58 @@ class SocialSystemTest {
         alliance.donate("leader", 0, "20260908");
         alliance.donate("leader", 1, "20260908");
         alliance.donate("leader", 2, "20260908");
+        // 三档各捐过一次 ⇒ 这时"再捐 tier 0"同时满足两条拒绝；按口径先报更具体的那条
         assertThatThrownBy(() -> alliance.donate("leader", 0, "20260908"))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("档位已用完");
+                .hasMessageContaining("今日已捐过");
 
         // 次日重新计数（dayKey 不同）
         Alliance.Donation next = alliance.donate("leader", 0, "20260909");
         assertThat(next.donateToday()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("2026-09-13 裁决「每档每日一次」：同档重复捐被拒，且拒的是档不是人")
+    void donateIsOncePerTierEvenBelowDailyCap() {
+        // 日上限刻意设成 2 而档位有 3 个：只有这样「这一档捐过」与「今天次数用完」才是两件事。
+        // 在 cap=3 的夹具下两者恰好同时成立，改了实现也测不出来 —— 那是这条用例存在的全部理由
+        Alliance alliance = Alliance.create("a1", "铁誓同盟", "IRON", "leader", 5000L, allianceRules(2));
+
+        alliance.donate("leader", 0, "20260908");
+        assertThatThrownBy(() -> alliance.donate("leader", 0, "20260908"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("今日已捐过")
+                .hasMessageNotContaining("档位已用完");
+        assertThat(alliance.donatedTiers("leader", "20260908")).containsExactly(0);
+
+        // 换一档还能捐（还没到上限）—— 拒的必须是"这一档"，不是"这个人今天"
+        alliance.donate("leader", 2, "20260908");
+        assertThat(alliance.donatedTiers("leader", "20260908")).containsExactly(0, 2);
+        assertThat(alliance.donatedToday("leader", "20260908")).isEqualTo(2);
+
+        // 两档都用掉了，这时才是总量上限在说话
+        assertThatThrownBy(() -> alliance.donate("leader", 1, "20260908"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("档位已用完");
+    }
+
+    @Test
+    @DisplayName("退盟要清掉当日捐献账：否则旧盟的「已捐过」跟着人进新盟，那几档在新盟里显示捐过")
+    void leavingAllianceClearsDonateLedger() {
+        Alliance alliance = newAlliance("leader");
+        alliance.join("member");
+        alliance.donate("member", 0, "20260908");
+        assertThat(alliance.donatedTiers("member", "20260908")).containsExactly(0);
+
+        alliance.leave("member");
+        assertThat(alliance.donatedToday("member", "20260908"))
+                .as("leave 里的清理必须真的删到东西（键带 dayKey 与 tier，早先按 playerId 整体 remove 删不掉）")
+                .isZero();
+
+        alliance.join("member");
+        assertThat(alliance.donate("member", 0, "20260908").donateToday())
+                .as("重新加入后第一档应当可以再捐")
+                .isEqualTo(1);
     }
 
     @Test

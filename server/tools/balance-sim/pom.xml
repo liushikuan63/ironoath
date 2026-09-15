@@ -39,4 +39,18 @@
       <artifactId>game-battle</artifactId>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <!-- 固定入口类：BalanceCli 的用法注释与验收矩阵都按 `mvn -pl tools/balance-sim exec:java -Dexec.args=...`
+           的形式写，不配这一项那条命令会报 "parameters 'mainClass' are missing" —— 文档里的命令必须真能跑。 -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>com.ironoath.battle.sim.BalanceCli</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

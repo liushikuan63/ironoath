@@ -66,7 +66,9 @@ test('任务列表：四态（未解锁/进行中/可领取/已领取）各自�
   const r2 = rowAt(resp, 2)
   const r3 = rowAt(resp, 3)
   assert.equal(r0.statusText, '未解锁')
-  assert.equal(r0.lockedHint, '完成后解锁：q0', '灰掉的行必须说明为什么')
+  assert.equal(r0.lockedHint, '完成后解锁：前置任务',
+    '灰掉的行必须说明为什么。这份夹具里 q0 不在列表中，所以只能退成泛指 —— '
+    + '但**绝不能退成配置 id**：把 quest_main_01 印到玩家眼前等于让界面说黑话')
   assert.equal(r1.statusText, '进行中')
   assert.equal(r1.progressText, '2,500/5,000')
   assert.equal(r2.statusText, '可领取')
@@ -76,6 +78,27 @@ test('任务列表：四态（未解锁/进行中/可领取/已领取）各自�
 
   assert.equal(buildQuestList({ quests: [], claimableCount: 0, serverNow: 1 }).claimableText, null,
 '没有可领的就不该显示徽标文案（空数组与 null 是两种状态，别用「0 个」凑）')
+})
+
+test('未解锁行显示前置任务的「名字」而不是配置 id（微信模拟器实测抓到）', () => {
+  // 模拟器里那一行原本是「完成后解锁：quest_main_01」—— 玩家看到的是表里的编号。
+  // 名字本来就在同一次响应里（列表连未解锁的行一起下发），所以这一步只是把服务端
+  // 已经给的数据换个字段用，不是客户端查配置表、也不是翻译（铁律 2 仍然成立）。
+  const resp: QuestListResp = {
+    quests: [
+      view({ questId: 'quest_main_01', name: '筑起第一堵墙' }),
+      view({ questId: 'quest_main_02', name: '囤积粮草', locked: true, preQuestId: 'quest_main_01' }),
+    ],
+    claimableCount: 0,
+    serverNow: 1,
+  }
+  const [first, second] = buildQuestList(resp).rows
+  assert.ok(first !== undefined && second !== undefined, '两行都该在')
+
+  assert.equal(second.lockedHint, '完成后解锁：筑起第一堵墙')
+  assert.equal(second.lockedHint.includes('quest_main_01'), false,
+    '界面上不许出现内部编号：' + second.lockedHint)
+  assert.equal(first.lockedHint, null, '没锁的行不该带这句')
 })
 
 test('可领取判定完全取服务端：客户端不看 current/goalValue 自己算', () => {

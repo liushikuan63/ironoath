@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -238,12 +239,49 @@ public class SeasonSettlementService {
         }
         List<String> expired = settlement.archive(settlement.seasonId());
         if (!expired.isEmpty()) {
-            LOG.warn("以下赛季已超出归档保留数，存储层需清理（内存实现里只是不再可查）：{}", expired);
+            LOG.warn("领域层判定有赛季超出归档保留数：{}（本服务的实际清理以账本里出现过的季号为准，"
+                    + "理由见 purgeArchivedSeasons 的注释）", expired);
         }
+        purgeArchivedSeasons(settlement.seasonId(), settlement.rules().archiveCollections());
         LOG.info("赛季结算 seasonId={} 本次新结算={}人 发金币={} 发赛季币={} 依据快照={} 榜单人数={}",
                 settlement.seasonId(), fresh, goldTotal, coinTotal, snapshotAt, entries.size());
         return new SeasonSettleResp(settlement.seasonId(), fresh, coinTotal, goldTotal,
                 snapshotAt, now);
+    }
+
+    /**
+     * 归档保留的物理执行者：把超出保留数的旧赛季从账本与榜/快照两处删掉（B14 §五 3「保留 3 个赛季」，
+     * 2026-09-13 裁决 C17）。挂在结算之后而不是开一个新端点 —— 结算是唯一的写者，
+     * 多一个运维入口就是第二个真相。
+     *
+     * <p><b>为什么不直接用领域层 {@code SeasonSettlement.archive()} 的返回值</b>：那份
+     * {@code archived} 集合是<b>进程内</b>的，而本服务每个赛季新建一个 settlement 实例，
+     * 所以它每次只装得下当前这一季 ⇒ 恒返回空。照它写清理代码会是一段永远跑不到的死码，
+     * 症状与"清理根本没写"一模一样。真源换成存储里确实存在过的季号（{@code ledger.seasonIds()}）。
+     *
+     * <p><b>季号字典序为什么能当时间序用</b>：{@code season.json} 的行 id 形如
+     * {@code season_01_phase_3}，季号补零到两位，所以字典序与时间序一致。
+     *
+     * <p><b>两条 fail-safe</b>：当前季永不进候选；且只有<b>严格小于</b>当前季号的才会被删。
+     * 万一将来季号格式不再补零，最坏结果是少删（旧档多留一阵，仍然安全），
+     * 而不是删掉一个还在申诉窗口内的赛季（不可恢复）。
+     */
+    private void purgeArchivedSeasons(String currentSeasonId, int keep) {
+        List<String> older = new ArrayList<>();
+        for (String seen : ledger.seasonIds()) {
+            if (seen.compareTo(currentSeasonId) < 0) {
+                older.add(seen);
+            }
+        }
+        older.sort(Comparator.reverseOrder());
+        // keep 里要给当前季留一个位子：B14 那句"保留 3 个赛季"含正在跑的这一季
+        for (int i = Math.max(0, keep - 1); i < older.size(); i++) {
+            String stale = older.get(i);
+            int records = ledger.purgeSeason(stale);
+            int boardRows = boards.purgeSeason(stale);
+            LOG.warn("归档超出保留期（保留 {} 个赛季），已删除 seasonId={} 结算记录={} 榜与快照条目={}："
+                    + "删除不可恢复，这一季之后不再能用于申诉", keep, stale, records, boardRows);
+        }
     }
 
     /**

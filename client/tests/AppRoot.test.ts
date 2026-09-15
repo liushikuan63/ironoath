@@ -49,7 +49,12 @@ const ROUTES: Record<string, unknown> = {
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
   '/social/summary': {
-    squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+    squad: null,
+    // 默认按「已在盟」给：摘要里的 alliance 是否为 null，是客户端决定「要不要拉成员」的
+    // 唯一依据（未入盟时那一问必然回 10010）。留成 null 会让 diff 通道那几条用例
+    // 悄悄走到"根本没发请求"的分支，而请求断言照旧通过。
+    alliance: { id: 'A1', name: '铁盟', tag: '铁', memberCount: 2 },
+    nationId: null, pendingInvites: 0, pendingHelps: 0,
     helpRemainingToday: 0, events: [], serverNow: SERVER_NOW,
   },
   '/social/reddot': {
@@ -70,6 +75,7 @@ const ROUTES: Record<string, unknown> = {
   },
   '/world/marches': {
     marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3,
+    worldSize: 512, chunkSize: 32, maxChunks: 9,
     peaceUntil: null, nextExileAt: null, serverNow: SERVER_NOW,
   },
   '/world/exile': {
@@ -173,6 +179,25 @@ class RoutingHttp implements HttpTransport {
    * 响应带给下一个用例，症状是"单独跑是绿的、整文件跑就红"，而这类失败最难查。
    */
   overrides = new Map<string, unknown>()
+  /** 被扣住的路径 → 放行前一直悬着的闸门。见 {@link hold}。 */
+  private readonly held = new Map<string, Promise<void>>()
+
+  /**
+   * 扣住某个路径的响应，直到调用返回的 release 被调用。
+   *
+   * <p>用途是把「请求是不是并发发出的」变成可判定的事实：串行实现下，第一个面板没回来时
+   * 后面的请求根本不会出现，所以「第一个还被扣着，其余十个已经在路上」这一条只可能并发成立。
+   * **只扣第一次匹配**，否则 start 之后的重拉会一起被扣住、用例看起来像卡死。
+   */
+  hold(path: string): () => void {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    this.held.set(path, gate)
+    return () => {
+      this.held.delete(path)
+      release()
+    }
+  }
 
   post(url: string, bodyText: string,
        headers: Readonly<Record<string, string>> = {}): Promise<HttpResponse> {
@@ -192,6 +217,11 @@ class RoutingHttp implements HttpTransport {
       body: bodyText === '' ? {} : JSON.parse(bodyText) as Record<string, unknown>,
       headers,
     })
+    const gate = this.held.get(path)
+    if (gate !== undefined) {
+      this.held.delete(path)
+      await gate
+    }
     if (this.failPaths.has(path)) {
       return { status: 200, bodyText: JSON.stringify({ code: 9999, msg: '服务繁忙', detail: null, data: null, serverNow: SERVER_NOW }) }
     }
@@ -273,7 +303,6 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   const session = new GameSession({ net, store, timeSync, now: () => clock.now, newRequestId: deps.newRequestId })
   const apiDeps: GameApiDeps = {
     net, store, timeSync, now: () => clock.now, newRequestId: deps.newRequestId,
-    worldLayout: { worldSize: 512, chunkSize: 32, maxChunks: 9 },
   }
   const api = new GameApi(apiDeps)
   const errors: Array<[string, string]> = []
@@ -363,11 +392,37 @@ test('start：先登录，再把十个面板各拉一次，并把家坐标交出
   assert.equal(await h.root.start('dev-1', '君'), true)
 
   assert.equal(h.http.calls[0]?.path, '/player/init', '登录必须是第一个请求')
-  assert.deepEqual(h.attached,
-    ['city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power', 'home', 'quest',
-      'reddot'])
+  // 首屏预拉改成并发之后，**落地先后不再是代码的性质**（见 #127：串行那一串实测吃掉 1.8 秒，
+  // 把首屏可交互推到 3.9 秒越过预算）。所以这里按集合比：新增或删掉一次拉取仍然会被看见，
+  // 但谁先谁后不再断言 —— 那个顺序没有任何调用方在读，钉住它只会让并发化变成一次假红。
+  assert.deepEqual(Array.from(h.attached).sort(),
+    ['army', 'bag', 'city', 'hero', 'home', 'power', 'quest', 'reddot', 'resources', 'social',
+      'stage'])
   assert.equal(h.errors.length, 0)
   assert.equal(h.root.playerId, 'P1')
+})
+
+test('首屏预拉是并发发出的：第一个面板还扣着时，其余十个已经在路上', async () => {
+  // 「首屏可交互」是这批面板全部到齐的时刻，所以它们必须是并发而不是逐个 await 的和。
+  // 这条断言只可能对并发实现成立：串行时第一个面板没回来，后面的请求根本不会发出。
+  const h = harness()
+  const release = h.http.hold('/city/list')
+
+  const started = h.root.start('dev-1', '君')
+  for (let i = 0; i < 50 && h.http.calls.length < 12; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+  const paths = h.http.calls.map(c => c.path)
+  assert.equal(paths.includes('/city/list'), true, '第一个面板得先发出去（并且被扣着）')
+  for (const path of ['/army/list', '/hero/list', '/bag/list', '/resource/detail', '/stage/list',
+    '/social/summary', '/player/power', '/world/marches', '/quest/list', '/social/reddot']) {
+    assert.equal(paths.includes(path), true,
+      `第一个面板还卡着时 ${path} 就该已经发出：串行会把这些请求排成一串，`
+      + '首屏可交互时间就是它们的和')
+  }
+
+  release()
+  assert.equal(await started, true, '放行之后启动要正常收尾')
 })
 
 test('登录失败就停手：一个面板请求都不发（否则一进游戏被十个 400 糊脸）', async () => {
@@ -734,6 +789,30 @@ test('社交面板的成员走 diff 通道真拉得到：首次 version=0，之�
   const again = h.http.calls.find(c => c.path === '/alliance/sync')
   assert.equal(again?.body.version, 7,
     '游标必须用服务端返回的那个：本地自增会与对端错位，表现是有人早就退盟了还挂在列表里')
+})
+
+test('未入盟不再拉成员列表：摘要说没有联盟就不发那一问，也不报「暂时拉不到」', async () => {
+  // 微信开发者工具实测抓到的：新号（无联盟）每次刷新社交面板都打一次 /alliance/sync，
+  // 服务端回 10010「联盟不存在或已解散」，客户端把它拼成「成员列表暂时拉不到，稍后会自动重试」。
+  // 那句话永远不会兑现，而这一次请求每轮刷新都白发。
+  const h = harness()
+  h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], { alliance: null }))
+
+  await h.root.start('dev-1', '君')
+
+  assert.equal(h.http.countOf('/alliance/sync'), 0,
+    '未入盟时那一问必然失败：发出去就是每次刷新白发一次请求')
+  assert.equal(h.errors.some(e => e[0] === 'social'), false,
+    '「本来就没有」不是「暂时拉不到」，报成后者等于给玩家一句永远等不到结果的话')
+  assert.deepEqual(h.lastSocialMembers, [])
+
+  // 之后真的入盟了：游标必须仍是"从零要全量"，不能带着上一个状态留下的版本号去要增量
+  h.http.overrides.delete('/social/summary')
+  h.http.calls.length = 0
+  await h.root.refresh('social')
+  const sync = h.http.calls.find(c => c.path === '/alliance/sync')
+  assert.equal(sync?.body.version, 0, '入盟后的第一次同步必须是全量')
+  assert.deepEqual(h.lastSocialMembers, ['M1', 'M2'], '入盟后成员列表要真的能出来')
 })
 
 test('成员 diff 的合并：变更覆盖、移除摘掉，面板拿到的永远是合并后的全量', async () => {

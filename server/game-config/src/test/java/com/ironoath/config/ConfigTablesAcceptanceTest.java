@@ -212,12 +212,29 @@ class ConfigTablesAcceptanceTest {
                     .as("权限 %s（%s）必须对 Leader 开放", perm.scope(), perm.permission())
                     .isTrue();
         }
-        // 国家级不可逆操作必须收窄到 Leader 独有
-        for (String sensitive : List.of("DECLARE_WAR", "WITHDRAW_TREASURY", "SET_NATIONAL_POLICY", "APPOINT_OFFICE")) {
+        // 国家级不可逆操作必须收窄到 Leader 独有。
+        // **WITHDRAW_TREASURY 不在这一组里了**（2026-09-13 裁决 C16）：B13 §2 本来就把「国库支出」
+        // 同时给了国王（无限制）与首相（限额），原先把它算作"国主独有"是让表去否定规范文本。
+        // 摘出来不等于放松守卫 —— 见下面那段，它改守的是另外两件事。
+        for (String sensitive : List.of("DECLARE_WAR", "SET_NATIONAL_POLICY", "APPOINT_OFFICE")) {
             RolePermissionCfg perm = registry.get(RolePermissionCfg.class, "perm_nation_" + sensitive.toLowerCase());
             assertThat(perm.allowOfficer()).as("%s 必须收窄到国主独有", sensitive).isFalse();
             assertThat(perm.allowMember()).as("%s 必须收窄到国主独有", sensitive).isFalse();
         }
+
+        RolePermissionCfg withdraw =
+                registry.get(RolePermissionCfg.class, "perm_nation_withdraw_treasury");
+        assertThat(withdraw.allowOfficer())
+                .as("C16 之后首相这一档必须真的能支取，否则 B13 §2 那句「国库支出（限额）」是装饰品")
+                .isTrue();
+        assertThat(withdraw.allowMember())
+                .as("放开到官职档不等于放开到全员：普通成员仍然支取不了国库").isFalse();
+        // 放开 OFFICER 的代价由额度夹住，所以这里必须能读到那个比例，且它落在 0~1 之间。
+        // 判据是定点：10000 = 1.0。超过 1 就是"官职一周能花掉比一周税收还多"，不叫限额
+        long ratio = registry.fixedParam("NATION_OFFICER_SPEND_WEEKLY_RATIO");
+        assertThat(ratio)
+                .as("国库支取放开到 OFFICER 档的前提是有周限额；比例必须存在且在 0~1 之间")
+                .isBetween(0L, 10_000L);
     }
 
     @Test

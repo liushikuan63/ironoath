@@ -94,14 +94,25 @@ public final class MongoPayOrderStore implements PayOrderStore {
     public long unfulfilledCents() {
         // 这里刻意不做"只取前 N 条"：对账要的是全额，少算就是账面不平。
         // 它必须最终归零，所以正常运营下这条查询的命中集很小；真变大就是负债积压，该报警而不是该优化
-        List<PayOrderDocument> docs = mongo.find(
-                Query.query(Criteria.where("state.status").is(PayOrder.Status.PAID_UNFULFILLED.name())),
+        List<PayOrderDocument> docs = mongo.find(unfulfilledQuery(),
                 PayOrderDocument.class, PayOrderDocument.COLLECTION);
         long total = 0L;
         for (PayOrderDocument doc : docs) {
             total += doc.totalCents();
         }
         return total;
+    }
+
+    @Override
+    public long unfulfilledOrderCount() {
+        // 与 unfulfilledCents 共用 unfulfilledQuery()：什么算负债只许有一处定义，
+        // 两处各写一遍 Criteria 的话，将来改一处就会让"总额"和"笔数"描述两批不同的订单
+        return mongo.count(unfulfilledQuery(), PayOrderDocument.COLLECTION);
+    }
+
+    /** 「钱收了、货没发出去」这一批订单的查询条件 —— 负债口径的唯一来源。 */
+    private static Query unfulfilledQuery() {
+        return Query.query(Criteria.where("state.status").is(PayOrder.Status.PAID_UNFULFILLED.name()));
     }
 
     /**

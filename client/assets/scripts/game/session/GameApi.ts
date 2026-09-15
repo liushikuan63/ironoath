@@ -29,7 +29,6 @@ import {
   applyExileResult, bindWorldRequester, feedMarches, feedTimeOffset, feedViewport, initializeWorld,
 } from '../world/WorldContext'
 import type { WorldActionResult } from '../world/WorldContext'
-import type { WorldLayout } from '../world/WorldViewModel'
 import type { PowerDetailResp, StaminaBuyReq, StaminaBuyResp, StaminaResp } from '../../net/generated/Protocol'
 import type {
   CityCancelReq, CityCancelResp, CityCollectReq, CityCollectResp, CityListResp, CityUpgradeReq,
@@ -75,14 +74,6 @@ export interface GameApiDeps {
   readonly timeSync: TimeSync
   readonly now: () => number
   readonly newRequestId: () => string
-  /**
-   * 世界地图尺寸参数（worldSize / chunkSize / maxChunks）。
-   *
-   * <p>TODO(B07 缺口): 这三个数在 global.json 里，而客户端的 config/generated 只有类型没有值，
-   * 铁律 1 不允许写死。正解是随 ViewportResp 下发（MarchListResp.maxConcurrent 已立先例）。
-   * 在那之前由启动流程注入，注入点收在 WorldContext 一处。
-   */
-  readonly worldLayout: WorldLayout
 }
 
 export class GameApi {
@@ -251,16 +242,24 @@ export class GameApi {
   // ---------- 世界大地图（B07 / B08） ----------
 
   /**
-   * 进入世界地图：先拉一次行军列表拿到家坐标，再据此建立世界模型。
+   * 进入世界地图：先拉一次行军列表拿到家坐标与地图布局，再据此建立世界模型。
    *
    * <p><b>为什么用 /world/marches 而不是让玩家自己给坐标</b>：家坐标是权威数据，
    * 它随 MarchListResp.home 下发（那个响应本来就要拉，因为地图上必须画出自己的队伍）。
    * 视野初始中心用家坐标而不是 (0,0)：玩家打开大地图第一眼要看到自己的城。
+   *
+   * <p><b>布局参数（worldSize / chunkSize / maxChunks）也来自这个响应</b>：
+   * 以前它们由启动流程注入（GameBootstrap 里镜像 global.json 的常数），
+   * 现在服务端随响应下发 —— 改表即两端同步，客户端不再持有 512/32/9 的第二份家。
    */
   async enterWorld(): Promise<NetOutcome<MarchListResp>> {
     const outcome = await this.marches()
     if (outcome.kind === 'ok' && !this.worldReady) {
-      initializeWorld(this.deps.worldLayout, this.deps.timeSync.offsetMs(), outcome.data.home)
+      initializeWorld({
+        worldSize: outcome.data.worldSize,
+        chunkSize: outcome.data.chunkSize,
+        maxChunks: outcome.data.maxChunks,
+      }, this.deps.timeSync.offsetMs(), outcome.data.home)
       bindWorldRequester({
         viewport: (req) => {
           void this.worldViewport(req)

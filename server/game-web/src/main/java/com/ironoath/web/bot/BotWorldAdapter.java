@@ -33,6 +33,9 @@ import com.ironoath.web.dto.generated.CityUpgradeReq;
 import com.ironoath.web.dto.generated.ExileReq;
 import com.ironoath.web.dto.generated.MarchAction;
 import com.ironoath.web.dto.generated.MarchReq;
+import com.ironoath.web.dto.generated.QuestClaimReq;
+import com.ironoath.web.dto.generated.QuestListResp;
+import com.ironoath.web.dto.generated.QuestView;
 import com.ironoath.web.dto.generated.MarchUnit;
 import com.ironoath.web.dto.generated.RallyJoinReq;
 import com.ironoath.web.dto.generated.RallyTroop;
@@ -93,6 +96,13 @@ public class BotWorldAdapter implements BotScheduler.World {
     private final ExileAppService exiles;
     /** 社交动作（捐献 / 一键帮助 / 响应集结 / 申请入盟 / 发言）—— 与真人同一个 service。 */
     private final SocialAppService social2;
+    /**
+     * 任务动作（C19：Bot 领任务奖励）—— 同样是与真人同一个 service。
+     *
+     * <p>刻意不注入 {@code QuestStore}：直接改任务进度会绕过前置校验、幂等键与发放器，
+     * 而 B11 验收 7 要的就是"调用链与真人完全一致"。
+     */
+    private final com.ironoath.web.quest.QuestAppService quests;
     /** 掠袭的目标从它来（圈层、活跃窗口、护盾、免战一并继承真人口径，不自己挑）。 */
     private final TargetSearchService targetSearch;
     /** 句库从它拿（{@code chatBook()} 每次现装配，与其它装配器同一条「不缓存」纪律）。 */
@@ -134,6 +144,8 @@ public class BotWorldAdapter implements BotScheduler.World {
     private final AtomicLong chatted = new AtomicLong();
     private final AtomicLong soughtAlliance = new AtomicLong();
     private final AtomicLong donated = new AtomicLong();
+    /** C19：Bot 成功领到的任务奖励条数。体检数之一（0 就说明领奖分支从没走通过）。 */
+    private final AtomicLong claimed = new AtomicLong();
     private final AtomicLong helped = new AtomicLong();
     private final AtomicLong rallied = new AtomicLong();
     /** C1b（#96）的两个动作计数：打野出征 / 采集出征。 */
@@ -197,6 +209,17 @@ public class BotWorldAdapter implements BotScheduler.World {
     /** 幂等键序号。Bot 没有客户端，requestId 必须由服务端造，且<b>全局唯一</b>（撞了就是 1002）。 */
     private final AtomicLong requestSeq = new AtomicLong();
 
+    /**
+     * Bot 的联盟捐献档位 —— <b>0 = 免费档</b>（2026-09-13 裁决 C18）。
+     *
+     * <p>理由不是"Bot 没钱"：资源/金币档会给联盟公账注水，而 {@code alliance_config} 的容量
+     * 曲线是按「真人每日捐献三档全做」算出来的（表里 Lv7 那行的 why 原话）。Bot 捐高档等于
+     * 在策划的经济账里凭空加一笔产出，那会让「扩容是中后期最大消耗点」这条设计前提变假。
+     *
+     * <p>改这一格会被 {@code BotQuestClaimAndDonateTest#botsDonateOnlyTheFreeTier} 当场拦下。
+     */
+    private static final int BOT_DONATE_TIER = 0;
+
     public BotWorldAdapter(BotRegistry bots, PlayerRepository players, CityAppService cities,
                            ArmyAppService army, HeroAppService heroes, ArmyRepository armies,
                            SocialStore social, MarchRepository marches, BotSpawnService spawner,
@@ -204,6 +227,7 @@ public class BotWorldAdapter implements BotScheduler.World {
                            MarchAppService marches2, ExileAppService exiles,
                            com.ironoath.core.world.WorldRepository world,
                            SocialAppService social2, TargetSearchService targetSearch,
+                           com.ironoath.web.quest.QuestAppService quests,
                            BotRulesAssembler assembler, WorldAppService worldService) {
         this.bots = bots;
         this.players = players;
@@ -220,6 +244,7 @@ public class BotWorldAdapter implements BotScheduler.World {
         this.exiles = exiles;
         this.world = world;
         this.social2 = social2;
+        this.quests = quests;
         this.targetSearch = targetSearch;
         this.assembler = assembler;
         this.worldService = worldService;
@@ -243,7 +268,7 @@ public class BotWorldAdapter implements BotScheduler.World {
             // 全部给 false，让它落到 IDLE 那一支（execute 里 IDLE 是明确的空动作）
             LOG.warn("Bot {} 有画像但没有存档，本次 tick 按无事可做处理", botId);
             return new BotDecisionTree.WorldState(false, false, false, false, false,
-                    false, false, false, false, false, 0L);
+                    false, false, false, false, false, false, 0L);
         }
         CityAppService.CityTickFacts cityFacts = readCityQuietly(botId, now);
         ArmyState armyState = armies.findByPlayerId(botId).orElse(null);
@@ -260,6 +285,8 @@ public class BotWorldAdapter implements BotScheduler.World {
                 && (answered == null || lastHit.at() > answered);
         return new BotDecisionTree.WorldState(
                 underAttack,
+                // 有没有可领的任务奖励（C19）。口径直接取任务服务那个红点读数，不在这里重算
+                quests.claimableCount(botId) > 0,
                 cityFacts.hasFreeBuildQueue(),
                 cityFacts.canAffordBuilding(),
                 // 「人口满」在 B05 的口径里就是带兵上限（troopCap 由武将统帅值决定），
@@ -279,6 +306,7 @@ public class BotWorldAdapter implements BotScheduler.World {
         try {
             switch (decision.action()) {
                 case UPGRADE_BUILDING -> upgrade(botId, now, decision);
+                case CLAIM_QUEST -> claimQuest(botId);
                 case TRAIN_TROOPS -> train(botId, now, decision);
                 case HUNT_MONSTER -> hunt(botId, now, decision);
                 case GATHER_RESOURCE -> gather(botId, now, decision);
@@ -728,13 +756,50 @@ public class BotWorldAdapter implements BotScheduler.World {
     }
 
     /**
+     * 领一条任务奖励（2026-09-13 裁决 C19）。<b>走的是真人同一条 {@code QuestAppService.claim}</b>：
+     * 前置校验、幂等键、发放器（装不下转邮件）三样全部自动继承，这里一个都不重判。
+     *
+     * <p><b>选哪一条、选哪个武将都是确定性的</b>：任务列表由服务端稳定排序，取第一条
+     * {@code claimable} 的；带候选武将的取候选里的<b>第一个</b>。裁决原话是「不新增随机数消费」，
+     * 而「Bot 总挑第一个」本身也是一个真人看得出、但无害的习惯（真人里也有一大半直接点第一个）。
+     *
+     * <p><b>没有候选时必须传 null</b>：服务层对「有候选却不挑」和「没候选却挑了一个」两种都拒，
+     * 所以这里不能一律塞一个 id，也不能一律塞 null。
+     *
+     * <p>一次只领一条：红点（{@code claimableCount}）会在下一个 tick 再把这条分支叫回来，
+     * 在一轮 tick 里清空全部奖励不是拟人，是脚本。
+     */
+    private void claimQuest(String botId) {
+        QuestListResp panel = quests.list(botId);
+        for (QuestView quest : panel.quests()) {
+            if (!quest.claimable()) {
+                continue;
+            }
+            String heroChoice = quest.heroChoices() == null || quest.heroChoices().isEmpty()
+                    ? null : quest.heroChoices().get(0).heroId();
+            try {
+                quests.claim(botId, new QuestClaimReq(newRequestId(botId), quest.questId(), heroChoice));
+                claimed.incrementAndGet();
+                LOG.info("Bot {} 领取任务奖励 questId={} 选将={}", botId, quest.questId(),
+                        heroChoice == null ? "（本条无候选）" : heroChoice);
+            } catch (RuntimeException e) {
+                // 与其它 Bot 动作同一个形状：一次失败不打死 tick，也不记进 failed
+                // （failed 是给"Bot 运行时坏了"看的，而"这一条刚好被别的什么挡了"不是故障）
+                LOG.info("Bot {} 领奖未成行（questId={}，理由={}）", botId, quest.questId(), e.getMessage());
+            }
+            return;
+        }
+        LOG.info("Bot {} 被决策为领奖，但面板上已无可领任务（大概率是同一 tick 内被领完了）", botId);
+    }
+
+    /**
      * 联盟捐献。固定走<b>免费档</b>（tier 0）：档位与消耗都是表里的数，
      * 而"Bot 该捐哪一档"没有规格 —— 免费档不花钱、不会把一个正在发育的 Bot 掏空，
      * 又确实完成了一次捐献（贡献值与联盟资金按 {@code alliance_config} 的档位表入账）。
      */
     private void donate(String botId, BotDecisionTree.Decision decision) {
         try {
-            social2.allianceDonate(botId, new AllianceDonateReq(newRequestId(botId), 0));
+            social2.allianceDonate(botId, new AllianceDonateReq(newRequestId(botId), BOT_DONATE_TIER));
             donated.incrementAndGet();
             LOG.info("Bot {} 完成一次联盟捐献（免费档）", botId);
         } catch (RuntimeException e) {
@@ -912,6 +977,7 @@ public class BotWorldAdapter implements BotScheduler.World {
                 Map.entry("reacted", reacted.get()),
                 Map.entry("raided", raided.get()), Map.entry("chatted", chatted.get()),
                 Map.entry("soughtAlliance", soughtAlliance.get()), Map.entry("donated", donated.get()),
+                Map.entry("claimed", claimed.get()),
                 Map.entry("helped", helped.get()), Map.entry("rallied", rallied.get()),
                 Map.entry("skipped", skipped.get()),
                 Map.entry("failed", failed.get()), Map.entry("unhandled", unhandled.get()));
@@ -936,6 +1002,7 @@ public class BotWorldAdapter implements BotScheduler.World {
         chatted.set(0L);
         soughtAlliance.set(0L);
         donated.set(0L);
+        claimed.set(0L);
         helped.set(0L);
         rallied.set(0L);
         skipped.set(0L);

@@ -742,7 +742,7 @@ public class SocialAppService {
                 requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "DISBAND_ALLIANCE");
                 // 排第一，且在联盟侧任何写操作之前：国家那一次带版本写如果撞了锁，整次解散就该失败，
                 // 而不是留下"联盟已经没了、国家的成员表里还挂着它"这种半状态（幽灵席位白占一个名额）
-                detachFromNation(alliance.id(), now);
+                detachFromNation(alliance.id(), playerId, now);
                 List<String> members = alliance.memberIds();
                 try {
                     alliance.disband(playerId, now);
@@ -868,8 +868,17 @@ public class SocialAppService {
                     throw new BizException(ErrorCode.PARAM_INVALID,
                             "一次研究的等级数必须 >= 1，实际=" + req.levels());
                 }
-                com.ironoath.config.cfg.AllianceTechCfg tech =
-                        configs.get(com.ironoath.config.cfg.AllianceTechCfg.class, req.techId());
+                com.ironoath.config.cfg.AllianceTechCfg tech;
+                try {
+                    tech = configs.get(com.ironoath.config.cfg.AllianceTechCfg.class, req.techId());
+                } catch (com.ironoath.config.ConfigException missing) {
+                    // 表里没有这一行 ⇒ 必须是业务码，不能是 500。两种到达方式：手滑写错 id，
+                    // 以及**已退役的科技**（atech_rally / atech_help，2026-09-13 从 v1 删到 v2，
+                    // 见收口清单 §三·补 B10/B11）—— 老客户端拿着旧 id 来研究时，
+                    // 500 会让人以为服务器坏了（然后重试、报障），而事实只有一句「这一项不存在」。
+                    throw new BizException(ErrorCode.CONFIG_NOT_FOUND,
+                            "联盟科技表里没有这一行: " + req.techId());
+                }
                 int tableMax = (int) tech.maxLevel();
                 int current = alliance.techLevel(tech.id());
                 int cap = alliance.techLevelCap(tableMax);
@@ -1245,7 +1254,37 @@ public class SocialAppService {
                 "msg_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16),
                 channel.name(), playerId, nickname(playerId), content, now);
         store.appendChat(channelKey, message, (int) configs.longParam("CHAT_LOCAL_HISTORY_MAX"));
+        if (channel == ChatChannel.PRIVATE) {
+            notifyPrivateMessage(playerId, req.toPlayerId(), now);
+        }
         return new ChatSendResp(toMessageView(message), now);
+    }
+
+    /**
+     * 私聊送达通知（2026-09-13 裁决 C23）。此前私聊「发得出去、对方不拉就永远不知道」，
+     * 而 B10 的实时性一节已经把"事件 + 离线补偿"这套机制建好了 —— 不接它才是缺口。
+     *
+     * <p><b>事件里不写正文</b>：正文的家是聊天频道（{@code /chat/list} 拉得到）。
+     * 抄一份进事件就有两个版本，而且事件带 3 小时 TTL、聊天带 200 条裁剪，
+     * 两边各自消失的时间还不一样 —— 症状是"通知说有人找我，点开却看不到那条"。
+     *
+     * <p><b>同一发信人只留一条未读</b>：连发 20 条不该产生 20 条通知，
+     * 那会把"有人找我"这一件事变成刷屏，而收件人真正要做的动作只有一个（去回话）。
+     */
+    private void notifyPrivateMessage(String senderId, String recipientId, long now) {
+        if (recipientId == null || recipientId.isBlank() || recipientId.equals(senderId)) {
+            return;
+        }
+        for (SocialStore.SocialEvent pending : store.unreadEvents(recipientId)) {
+            if ("PRIVATE_MESSAGE".equals(pending.type()) && senderId.equals(pending.relatedId())
+                    && !pending.expiredAt(now)) {
+                return;
+            }
+        }
+        SocialStore.SocialEvent record = event("PRIVATE_MESSAGE",
+                nickname(senderId) + " 给你发来一条私信", null, senderId, now);
+        store.pushEvent(recipientId, record);
+        pushPublisher.publish("PRIVATE_MESSAGE", List.of(recipientId), record);
     }
 
     /** 拉取某频道的最近消息。 */
@@ -1354,6 +1393,9 @@ public class SocialAppService {
                 toRoleView(alliance.roleOf(viewerId)),
                 alliance.contributionOf(viewerId),
                 alliance.donatedToday(viewerId, DayKey.of(now)),
+                // 「今天还剩什么可捐」只有服务端知道（档位账本在它手上）。客户端自己数就是第二份真相
+                alliance.donatedTiers(viewerId, DayKey.of(now)),
+                alliance.donationDailyCap(),
                 "", alliance.version(), now);
     }
 
@@ -1480,14 +1522,14 @@ public class SocialAppService {
      * <p><b>写回失败就让整次解散失败</b>：这里不吞异常也不重试。吞掉的表现为"解散成功、国家里多个幽灵"，
      * 而那种状态没人会去清。
      */
-    private void detachFromNation(String allianceId, long now) {
+    private void detachFromNation(String allianceId, String actorId, long now) {
         nations.findByAlliance(allianceId).ifPresent(loaded -> {
             Nation nation = nationLeaders.bind(loaded);
-            nation.removeAlliance(allianceId, false, now);
+            nation.removeAlliance(allianceId, false, actorId, now);
             nations.save(nation, nation.version());
-            LOG.info("联盟解散连带出国家 allianceId={} nationId={} 原因=联盟已解散 剩余成员联盟={} 入籍冷却至={}",
+            LOG.info("联盟解散连带出国家 allianceId={} nationId={} 原因=联盟已解散 剩余成员联盟={} 入籍冷却至={} 国家是否随之解散={}",
                     allianceId, nation.id(), nation.memberAllianceCount(),
-                    nation.joinCooldownUntil(allianceId));
+                    nation.joinCooldownUntil(allianceId), nation.isDisbanded());
         });
     }
 

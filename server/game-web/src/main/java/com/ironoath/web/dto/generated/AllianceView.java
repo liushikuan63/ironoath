@@ -22,7 +22,9 @@ public record AllianceView(
         long territoryCap,   // 领地上限。刻意不与人数同比例增长：人数决定「能打多大的仗」，领地决定「能占多少资源加成」，后者若随人数线性放开，大盟会把地图上的资源点全部圈走
         AllianceRole myRole,   // 我在本盟的职位
         long myContribution,   // 我的贡献值
-        int myDonateToday,   // 我今天已捐献的档数（上限 alliance_config.donationDailyCap）
+        int myDonateToday,   // 我今天已捐献的<b>档数</b>（= donateTiersUsed 的长度，冗余下发是为了让「X/N」这类展示不必客户端自己数）
+        List<Integer> donateTiersUsed,   // 我今天<b>已经捐过哪几档</b>（档位序号，升序，取值 0..2）。2026-09-13 裁决把口径定成「每档每日一次」（B10 §2「每日 3 档（免费 / 资源 / 金币）」）之后这个列表才有意义 —— 在此之前服务端只给一个计数，客户端不知道今天该把哪个按钮摆出来，只能全摆出来等玩家点了收报错（收口清单 §三 那条 B10 缺口的原文）。**下发而不是让客户端猜**：铁律 1，「今天还能捐什么」只有一个答案。
+        int donateDailyCap,   // 今日可捐档数上限，来源 alliance_config 当前联盟等级那行的 donationDailyCap。下发是为了让客户端显示「2/3 档」而不是把 3 写死（客户端的 generated 只有类型没有值）。
         String announcement,   // 联盟公告
         long version,   // 联盟数据版本号。客户端下次同步时带上来
         long serverNow)   // 服务端时间戳

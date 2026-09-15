@@ -11,9 +11,10 @@
  * 这是刻意的窄约定。自动去子节点里翻找会带来一种更难查的状态——「面板在场景里，但没接到根上」，
  * 表现仍是按钮没反应；挂在同一节点上则接不上就是显式的装配错误。
  *
- * <p><b>两个 baseUrl/wsUrl 与 `worldLayout` 是编辑器可改字段</b>：客户端的 generated 里
- * 只有配置表的类型没有值（`global.json` 不进包），所以这几个数必须由启动流程注入 ——
- * 这是 `WorldContext` 与 `GameApiDeps` 的 TODO 早就记下的一条，不是本文件新造的口子。
+ * <p><b>两个 baseUrl/wsUrl 是编辑器可改字段</b>：客户端的 generated 里
+ * 只有配置表的类型没有值（`global.json` 不进包），所以地址必须由启动流程注入。
+ * （`worldLayout` 曾同在这份名单里，2026-09-13 起改由 `MarchListResp` 随响应下发，
+ * 客户端不再镜像 global.json 的 512/32/9。）
  */
 
 import { _decorator, Component, director, sys } from 'cc'
@@ -58,9 +59,6 @@ const REQUEST_TIMEOUT_MS = 5_000
 const TIME_SYNC_ALPHA_FIXED = 2_000
 const TIME_SYNC_JITTER_FACTOR_FIXED = 30_000
 const TIME_SYNC_INITIAL_BEST_RTT_MS = 150
-const WORLD_SIZE = 512
-const WORLD_CHUNK_SIZE = 32
-const VIEWPORT_CHUNK_COUNT = 9
 
 /**
  * 客户端自报版本。点分数字，服务端按段比较（`ReleaseSystemTest` 钉过 "1.10.0" > "1.9.0"）。
@@ -331,7 +329,6 @@ export class GameBootstrap extends Component {
       now: () => sys.now(), newRequestId: deps.newRequestId })
     const apiDeps: GameApiDeps = {
       net, store: gameStore, timeSync, now: () => sys.now(), newRequestId: deps.newRequestId,
-      worldLayout: { worldSize: WORLD_SIZE, chunkSize: WORLD_CHUNK_SIZE, maxChunks: VIEWPORT_CHUNK_COUNT },
     }
     const api = new GameApi(apiDeps)
 

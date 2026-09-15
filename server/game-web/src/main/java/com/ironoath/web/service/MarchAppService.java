@@ -524,8 +524,13 @@ public class MarchAppService {
         com.ironoath.core.player.PlayerSave save = players.findByPlayerId(playerId).orElse(null);
         Long peaceUntil = save == null ? null : save.pvp().peaceUntil();
         Long nextExileAt = save == null ? null : exileAppService.nextExileAtOrNull(save, now);
+        // 世界布局参数随行军列表一起下发（协议注释写了为什么不是 ViewportResp：
+        // 客户端要用它们建立地图模型，而第一个 viewport 请求必须等模型建立 —— 鸡生蛋）。
+        // 客户端从此不再把 512 / 32 / 9 镜像成常数，改表即两端同步（铁律 1）
         return new MarchListResp(views, toCoord(worldAppService.homeOf(playerId)),
-                (int) configs.longParam("MARCH_MAX_CONCURRENT"), peaceUntil, nextExileAt, now);
+                (int) configs.longParam("MARCH_MAX_CONCURRENT"), peaceUntil, nextExileAt,
+                (int) configs.longParam("WORLD_SIZE"), chunkSize(),
+                (int) configs.longParam("VIEWPORT_CHUNK_COUNT"), now);
     }
 
     // ---------- 到期处理（请求驱动，无定时器） ----------

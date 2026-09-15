@@ -15,13 +15,10 @@ import com.ironoath.web.social.SocialStore;
  * 依赖：{@link SocialStore}（联盟账本）、{@link ConfigRegistry}（alliance_tech 表）。
  *
  * <p><b>只折算 UNIT_ATTACK 与 UNIT_DEFENSE 两个效果属性</b>，不是偷懒而是这张表目前的全部可接线范围：
- * 内核的乘区 B 就是一份攻击 + 一份防御，而另外六个属性
- * （MARCH_SPEED / LOAD_CAPACITY / HOSPITAL_CAPACITY / RALLY_CAPACITY / BUILD_SPEED / HELP_SPEED）
+ * 内核的乘区 B 就是一份攻击 + 一份防御，而另外四个属性
+ * （MARCH_SPEED / LOAD_CAPACITY / HOSPITAL_CAPACITY / BUILD_SPEED）
  * 各自要接的地方都<b>已经有一个数值来源在那里</b>，乘进去之前需要先定组合口径：
  * <ul>
- *   <li>{@code RALLY_CAPACITY} 与 {@code Alliance.LevelRule.rallyCapacity}（按联盟等级给的是一个
- *       绝对人数，不是百分比）怎么合？</li>
- *   <li>{@code HELP_SPEED} 与 {@code squad_config.helpSpeedBonus}（小队等级也给一份）是否叠加？</li>
  *   <li>{@code HOSPITAL_CAPACITY} 目前来自城里的医院建筑等级，是相加还是相乘？</li>
  *   <li>{@code MARCH_SPEED} / {@code BUILD_SPEED} 是缩短时长，除法的取整口径要与
  *       {@code MarchAppService}、{@code CityAppService} 现有的取整一致，否则会出现「差一秒」的争议。</li>
@@ -29,9 +26,17 @@ import com.ironoath.web.social.SocialStore;
  * 这些都属于平衡口径，未定之前这里不擅自接（接错了在战斗里看不出来，只体现在胜率上）。
  * 已记在收口清单 #31。
  *
+ * <p><b>{@code RALLY_CAPACITY} 与 {@code HELP_SPEED} 两行已在 2026-09-13 从表里退役</b>
+ * （收口清单 §三·补 B10/B11，表 v1→v2）：它们撞的正是上面这条理由 —— 集结人数上限的唯一来源是
+ * {@code Alliance.LevelRule.rallyCapacity}（绝对值），互助加速的上限已整体收归
+ * {@code global.HELP_SPEEDUP_TOTAL_CAP}。枚举里两个取值保留（将来定出口可复用），
+ * 但<b>表里没有行 = 玩家不可能再花钱研究一项永不生效的科技</b>。
+ *
  * <p><b>集结（多盟参战）时的加成按发起者的联盟算</b>：{@code ArmySide} 只有一份科技加成，
  * 而一支集结队伍可能来自多个联盟。取发起人是唯一不需要新发明状态的做法（集结本就由发起人建账），
- * 但它确实意味着队友的科技在这场战斗里不生效 —— 这条口径需要裁决，也记在 #31。
+ * 但它确实意味着队友的科技在这场战斗里不生效 ——
+ * <b>2026-09-13 裁决：保持这一口径</b>（收口清单 §三·补 A4）。逐人折算要把 {@code ArmySide} 改成
+ * 单位级科技（一处结构改动，收益只落在集结战力的少数场景），留到真需要它的那一轮再做。
  */
 @Component
 public class AllianceTechBonuses {

@@ -248,12 +248,22 @@ public final class Alliance {
     private final Map<String, AllianceRole> members = new LinkedHashMap<>();
     /** playerId → 累计贡献值。 */
     private final Map<String, Long> contributions = new LinkedHashMap<>();
-    /** playerId → 当日已捐档数。日切由外层清空。 */
+    /**
+     * 「谁在今天捐过哪一档」的账本。
+     *
+     * <p>key = {@code playerId + ":" + dayKey + ":" + tier}。2026-09-13 裁决（收口清单 §三·补 A1）
+     * 把口径定成<b>每档每日一次</b>（B10 §2 原文「每日 3 档（免费 / 资源 / 金币）」），
+     * 所以 tier <b>必须在键里</b>：只按「人 + 日」计数会让一个人把免费档刷三遍拿满贡献值，
+     * 而那贡献值还是联盟商店的货币 —— 零成本刷商店货币是经济口子，不只是数值难看。
+     *
+     * <p><b>值恒为 1，全部信息都在键上</b>。留 Map 而不是换成 Set，是为了复用已经落地并通过
+     * 等价测试的文档形状（{@code List<DonationEntry>}）；改那一层不带来任何玩家可见的收益。
+     */
     private final Map<String, Integer> donatedToday = new LinkedHashMap<>();
     /**
      * techId → 已研究等级（B10 §2 联盟科技）。
      *
-     * <p><b>没研究过的科技不写 0 占位</b>：表里有 8 行，全表补零会让每个联盟都挂 8 条无意义记录，
+     * <p><b>没研究过的科技不写 0 占位</b>：表里有 6 行（v2 起，见 §三·补 B10/B11），全表补零会让每个联盟都挂一堆无意义记录，
      * 换成持久化存储后那是要占空间的。读取一律走 {@link #techLevel(String)}，那里按缺失=0 处理。
      */
     private final Map<String, Integer> techLevels = new LinkedHashMap<>();
@@ -358,7 +368,7 @@ public final class Alliance {
             throw new IllegalStateException("对方不是本联盟成员");
         }
         contributions.remove(playerId);
-        donatedToday.remove(playerId);
+        dropDonateLedger(playerId);
         bumpVersion();
     }
 
@@ -375,7 +385,7 @@ public final class Alliance {
             throw new IllegalStateException("对方不是本联盟成员");
         }
         contributions.remove(targetId);
-        donatedToday.remove(targetId);
+        dropDonateLedger(targetId);
         bumpVersion();
     }
 
@@ -441,12 +451,19 @@ public final class Alliance {
             throw new IllegalArgumentException("dayKey 不得为空：没有它就无法判断「今日」的边界");
         }
         Alliance.DonateTier definition = donateTier(tier);
-        int dailyCap = (int) currentLevelRule().donationDailyCap();
-        int used = donatedToday.getOrDefault(playerId + ":" + dayKey, 0);
+        int dailyCap = donationDailyCap();
+        String tierKey = playerId + ":" + dayKey + ":" + tier;
+        // 「这一档今天捐过」先判，且排在总量上限之前：它更具体，玩家照着就能换一档；
+        // 反过来先报"次数用完"会让一个还能捐的人去做一件本来不必要的事（明天再来）
+        if (donatedToday.containsKey(tierKey)) {
+            throw new IllegalStateException("档位 " + tier + " 今日已捐过：每档每天只能捐一次（共 "
+                    + dailyCap + " 档）");
+        }
+        int used = donatedCount(playerId, dayKey);
         if (used >= dailyCap) {
             throw new IllegalStateException("今日捐献档位已用完（上限 " + dailyCap + " 档）");
         }
-        donatedToday.put(playerId + ":" + dayKey, used + 1);
+        donatedToday.put(tierKey, 1);
 
         fund += definition.fundGained();
         long contribution = contributions.getOrDefault(playerId, 0L) + definition.contributionGained();
@@ -827,16 +844,61 @@ public final class Alliance {
         return contributions.getOrDefault(playerId, 0L);
     }
 
+    /** 今天已捐掉的<b>档数</b>（不是次数上限意义上的"次数"）。用于视图的 X/N 展示。 */
     public int donatedToday(String playerId, String dayKey) {
-        return donatedToday.getOrDefault(playerId + ":" + dayKey, 0);
+        return donatedCount(playerId, dayKey);
     }
 
     /**
-     * 全部"当日已捐"计数（只读副本）。
+     * 今天已经捐过哪几档（升序）。2026-09-13 裁决「每档每日一次」之后才有意义：
+     * 计数版只说"还剩几次"，客户端因此不知道该灰掉哪个按钮，只能摆出来等玩家点了收报错
+     * （收口清单 §三 那条 B10 缺口的原文）。
+     */
+    public List<Integer> donatedTiers(String playerId, String dayKey) {
+        String prefix = playerId + ":" + dayKey + ":";
+        return donatedToday.keySet().stream()
+                .filter(key -> key.startsWith(prefix))
+                .map(key -> Integer.parseInt(key.substring(prefix.length())))
+                .sorted()
+                .toList();
+    }
+
+    /** 今日可捐档数上限（当前联盟等级那行 alliance_config 的 donationDailyCap）。 */
+    public int donationDailyCap() {
+        return (int) currentLevelRule().donationDailyCap();
+    }
+
+    private int donatedCount(String playerId, String dayKey) {
+        String prefix = playerId + ":" + dayKey + ":";
+        int count = 0;
+        for (String key : donatedToday.keySet()) {
+            if (key.startsWith(prefix)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 清掉某个人的当日捐献账（退盟 / 被踢）。
      *
-     * <p><b>key 是 {@code playerId + ":" + dayKey} 复合键</b>，不是单个 playerId ——
-     * 仓储映射必须原样保存与恢复它。丢掉这份账本的表现是：同一天可以无限次捐献，
-     * 每次都能拿到贡献值（每日上限变成了摆设）。
+     * <p><b>这一方法是修出来的，不是顺手抽的</b>：原先 leave 与 kick 里写的是
+     * {@code donatedToday.remove(playerId)}，而键是 {@code playerId:dayKey:tier} ——
+     * <b>那个 remove 永远删不到任何东西</b>。后果是把旧盟的"今天已捐"记录跟人进新盟
+     * （在新盟里那几档显示已捐过），并且这张表在日切前只增不减。
+     * 前缀清理的形状与 {@code PopupThrottle.forget} 一致。
+     */
+    private void dropDonateLedger(String playerId) {
+        String prefix = playerId + ":";
+        donatedToday.keySet().removeIf(key -> key.startsWith(prefix));
+    }
+
+    /**
+     * 全部"当日已捐"记录（只读副本）。
+     *
+     * <p><b>key 是 {@code playerId + ":" + dayKey + ":" + tier} 复合键</b>，
+     * 不是单个 playerId —— 仓储映射必须原样保存与恢复它。丢掉这份账本的表现是：
+     * 同一天可以无限次捐献，每次都能拿到贡献值（每日上限变成了摆设）。
      */
     public Map<String, Integer> donatedTodayByKey() {
         return Collections.unmodifiableMap(new LinkedHashMap<>(donatedToday));

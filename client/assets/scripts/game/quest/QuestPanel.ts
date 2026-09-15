@@ -58,14 +58,30 @@ export function buildQuestList(resp: QuestListResp): QuestListView {
   if (resp === undefined || resp === null) {
     throw new Error('resp 不得为空')
   }
-  const rows = resp.quests.map(toRow)
+  const namesById = new Map(resp.quests.map(q => [q.questId, q.name] as const))
+  const rows = resp.quests.map(quest => toRow(namesById, quest))
   return {
     rows,
     claimableText: resp.claimableCount > 0 ? `${resp.claimableCount} 个奖励可领取` : null,
   }
 }
 
-function toRow(quest: QuestView): QuestRow {
+/**
+ * 前置任务的展示名。
+ *
+ * <p>名字取自**同一次响应里那条任务自己**（列表连未解锁的行一起下发，所以查得到），
+ * 不是客户端去查配置表 —— 把 `quest_main_01` 这种内部编号印到玩家眼前，等于让玩家去猜表，
+ * 而 #100 已经为同一件事定过口径：展示名由服务端下发，客户端不翻译。
+ * 查不到时宁可只说「前置任务」，**绝不退回成 id**：少一句提示只是信息少，多一个编号是界面在说黑话。
+ */
+function prerequisiteName(quest: QuestView, namesById: ReadonlyMap<string, string>): string {
+  if (quest.preQuestId === undefined || quest.preQuestId === null) {
+    return '前置任务'
+  }
+  return namesById.get(quest.preQuestId) ?? '前置任务'
+}
+
+function toRow(namesById: ReadonlyMap<string, string>, quest: QuestView): QuestRow {
   return {
     questId: quest.questId,
     title: `${typeLabel(quest.type)} · ${quest.name}`,
@@ -80,7 +96,7 @@ function toRow(quest: QuestView): QuestRow {
           ? '可领取'
           : '进行中',
     lockedHint: quest.locked
-      ? `完成后解锁：${quest.preQuestId ?? '前置任务'}`
+      ? `完成后解锁：${prerequisiteName(quest, namesById)}`
       : null,
     claimable: quest.claimable,
     heroChoices: quest.heroChoices,

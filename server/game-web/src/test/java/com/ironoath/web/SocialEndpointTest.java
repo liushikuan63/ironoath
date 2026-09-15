@@ -350,10 +350,26 @@ class SocialEndpointTest {
         String allianceId = post200("/alliance/create", leader,
                 new AllianceCreateReq(newRequestId(), "科技盟", "TECH"))
                 .get("alliance").get("id").asText();
-        for (int i = 0; i < 3; i++) {
-            post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), 2));
-        }
+        // 2026-09-13 裁决「每档每日一次」（§三·补 A1）：原先这里把金币档刷三次，
+        // 而那正是新语义要拦的形状（同一档刷满 = 零成本捞贡献值，贡献值还是联盟商店的货币）。
+        // 现在捐免费档与金币档各一次（<b>捐献这条真路径仍然被走一遍</b>），差额用 addFund 补
+        post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), 0));
+        post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), 2));
+        topUpAllianceFund(leader, 6000L);
         return allianceId;
+    }
+
+    /**
+     * 夹具用的注资入口：{@code addFund} 是"活动奖励、领地收入"这类合法外部来源共用的领域方法。
+     *
+     * <p><b>版本号必须在改动之前取</b> —— {@code addFund} 自己会 bumpVersion，
+     * 拿改完的 version 当 expectedVersion 等于告诉存储"我以为上一版是这个数"，必撞乐观锁。
+     */
+    private void topUpAllianceFund(String leader, long amount) {
+        var alliance = socialStore.allianceOf(leader).orElseThrow();
+        long expectedVersion = alliance.version();
+        alliance.addFund(amount);
+        socialStore.saveAlliance(alliance, expectedVersion);
     }
 
     @Test
@@ -361,12 +377,15 @@ class SocialEndpointTest {
     void allianceTechChargesFundAndShowsInView() throws Exception {
         String leader = newPlayer(10);
         post200("/alliance/create", leader, new AllianceCreateReq(newRequestId(), "科技盟", "TECH"));
-        for (int i = 0; i < 3; i++) {
-            post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), 2));
-        }
+        // 2026-09-13 裁决「每档每日一次」（§三·补 A1）：原先这里把金币档刷三次，
+        // 而那正是新语义要拦的形状（同一档刷满 = 零成本捞贡献值，贡献值还是联盟商店的货币）。
+        // 现在捐免费档与金币档各一次（<b>捐献这条真路径仍然被走一遍</b>），差额用 addFund 补
+        post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), 0));
+        post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), 2));
+        topUpAllianceFund(leader, 6000L);
         // 建盟响应里的 fund 是 0（公账靠捐献攒），攒完之后的余额要重新读一次
         long fundBefore = get200("/social/summary", leader).get("alliance").get("fund").asLong();
-        assertThat(fundBefore).as("三次档位 2 捐献攒出的公账至少要够一级科技").isGreaterThanOrEqualTo(2000L);
+        assertThat(fundBefore).as("两档捐献 + 一笔注资攒出的公账至少要够一级科技").isGreaterThanOrEqualTo(2000L);
 
         JsonNode resp = post200("/alliance/tech", leader,
                 new com.ironoath.web.dto.generated.AllianceTechReq(newRequestId(), "atech_atk", 1));
@@ -420,6 +439,29 @@ class SocialEndpointTest {
         JsonNode view = get200("/social/summary", leader);
         assertThat(view.get("alliance").get("techs")).as("失败的不得记账").isEmpty();
         assertThat(view.get("alliance").get("fund").asLong()).as("公账仍是 0，不能出现负数").isZero();
+    }
+
+    @Test
+    @DisplayName("2026-09-13 退役的两行科技（atech_rally / atech_help）研究必被响亮拒绝：不能扣公账买一个永不生效的等级")
+    void retiredAllianceTechRowsAreRejected() throws Exception {
+        // 表 v1→v2 删掉了这两行（收口清单 §三·补 B10/B11）：它们各自要接的上限都已经有一个家
+        // （alliance_config.rallyCapacity 给绝对人数、HELP_SPEEDUP_TOTAL_CAP 收口互助上限）。
+        // 删行本身不是终点 —— 如果这里返回的是"成功"，联盟就会花掉公账去记一个永远不生效的等级，
+        // 那正是本项目反复在防的「不报错、只有玩家发现少了东西」。
+        String leader = newPlayer(10);
+        post200("/alliance/create", leader, new AllianceCreateReq(newRequestId(), "退役盟", "RETIRE"));
+
+        for (String retired : List.of("atech_rally", "atech_help")) {
+            JsonNode root = postRaw("/alliance/tech", leader,
+                    new com.ironoath.web.dto.generated.AllianceTechReq(newRequestId(), retired, 1));
+            assertThat(root.get("code").asInt())
+                    .as(retired + " 必须是「配置不存在」而不是默默记账")
+                    .isEqualTo(ErrorCode.CONFIG_NOT_FOUND.code());
+        }
+
+        JsonNode view = get200("/social/summary", leader);
+        assertThat(view.get("alliance").get("techs")).as("两次被拒都不该留下科技记录").isEmpty();
+        assertThat(view.get("alliance").get("fund").asLong()).as("一分钱都不能扣").isZero();
     }
 
     @Test
@@ -533,6 +575,30 @@ class SocialEndpointTest {
     }
 
     @Test
+    @DisplayName("联盟视图下发「今天已用哪几档 + 日上限」：客户端不必再拿计数猜该摆哪个按钮")
+    void allianceViewCarriesUsedDonateTiers() throws Exception {
+        String leader = newPlayer(10);
+        post200("/alliance/create", leader, new AllianceCreateReq(newRequestId(), "档位盟", "TIERS"));
+
+        JsonNode fresh = get200("/social/summary", leader).get("alliance");
+        assertThat(fresh.get("donateTiersUsed").isEmpty())
+                .as("没捐过要给空数组，不能省略字段 —— 客户端要靠它区分「都能捐」与「服务端还没实现」")
+                .isTrue();
+        assertThat(fresh.get("donateDailyCap").asInt())
+                .as("上限取自 alliance_config 当前等级那行（Lv1 = 3），客户端不写死这个数字")
+                .isEqualTo((int) socialRules.allianceRules().levels().get(0).donationDailyCap());
+
+        post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), 0));
+
+        JsonNode after = get200("/social/summary", leader).get("alliance");
+        assertThat(after.get("donateTiersUsed")).hasSize(1);
+        assertThat(after.get("donateTiersUsed").get(0).asInt()).isZero();
+        assertThat(after.get("myDonateToday").asInt())
+                .as("计数与列表必须同源（长度相等），否则两处哪天不一致就有一处是假消息")
+                .isEqualTo(after.get("donateTiersUsed").size());
+    }
+
+    @Test
     @DisplayName("撞到每日档数上限时已扣的钱要退回来：先扣款再入账的顺序要求这条路必须存在")
     void dailyCapRejectionRefundsTheCharge() throws Exception {
         String leader = newPlayer(10);
@@ -545,17 +611,22 @@ class SocialEndpointTest {
         assertThat(tierGold).as("这条用例的前提是金币档真的有成本，配置改了要跟着改档位").isPositive();
         setGold(leader, tierGold * 50);
 
-        for (int i = 0; i < 3; i++) {
-            post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), goldTier));
-        }
-        long afterThree = goldOf(leader);
+        // 2026-09-13 裁决「每档每日一次」之后，被拒的形态从"三次刷满"变成"同一档第二次"。
+        // 对退款路径而言两者是同一条：钱已扣、领域拒绝、必须原路退回
+        post200("/alliance/donate", leader, new AllianceDonateReq(newRequestId(), goldTier));
+        long afterFirst = goldOf(leader);
+        assertThat(afterFirst).as("夹具前提：第一次捐献必须真的扣到钱，否则退款路径根本没被走到")
+                .isEqualTo(50 * tierGold - tierGold);
 
         JsonNode root = postRaw("/alliance/donate", leader,
                 new AllianceDonateReq(newRequestId(), goldTier));
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.ALLIANCE_DONATE_DAILY_LIMIT.code());
-        // 这条才是重点：扣款发生在入账之前，所以撞上每日上限时必须原路退回，
+        assertThat(root.get("detail").asText())
+                .as("拒绝的理由要说清是「这一档捐过」，玩家才知道该换一档而不是明天再来")
+                .contains("今日已捐过");
+        // 这条才是重点：扣款发生在入账之前，所以被拒时必须原路退回，
         // 否则玩家的钱扣了而捐献没记上 —— 那是最糟的一种失败
-        assertThat(goldOf(leader)).as("被拒的捐献必须全额退款").isEqualTo(afterThree);
+        assertThat(goldOf(leader)).as("被拒的捐献必须全额退款").isEqualTo(afterFirst);
     }
 
     @Test
@@ -957,6 +1028,42 @@ class SocialEndpointTest {
     }
 
     @Test
+    @DisplayName("C23：私聊送达要通知对方，但通知只是信标 —— 正文不抄进事件，同一人连发不叠加")
+    void privateMessageNotifiesTheRecipientOncePerSender() throws Exception {
+        String a = newPlayer(5);
+        String b = newPlayer(5);
+        String c = newPlayer(5);
+
+        post200("/chat/send", a, new ChatSendReq(newRequestId(), ChatChannel.PRIVATE, "在吗", b));
+
+        JsonNode notified = eventOfType(get200("/social/summary", b).get("events"), "PRIVATE_MESSAGE");
+        assertThat(notified).as("B 不主动拉也该知道 A 找过他").isNotNull();
+        assertThat(notified.get("relatedId").asText()).as("relatedId 带的是发信人，客户端据此打开那一段会话")
+                .isEqualTo(a);
+        assertThat(notified.get("body").isNull()).as(
+                "正文不许抄进事件：它有两个家之后，事件 3 小时过期而聊天还在，症状就是「说有私信点开却没有」")
+                .isTrue();
+        assertThat(eventOfType(get200("/social/summary", a).get("events"), "PRIVATE_MESSAGE"))
+                .as("发信人不需要被通知自己刚说的话").isNull();
+        assertThat(eventOfType(get200("/social/summary", c).get("events"), "PRIVATE_MESSAGE"))
+                .as("第三方更不该收到").isNull();
+
+        // 同一发信人再发两条：只该留一条未读，否则"有人找我"会退化成刷屏
+        post200("/chat/send", a, new ChatSendReq(newRequestId(), ChatChannel.PRIVATE, "在吗？", b));
+        post200("/chat/send", a, new ChatSendReq(newRequestId(), ChatChannel.PRIVATE, "人呢", b));
+        assertThat(eventsOfType(get200("/social/summary", b).get("events"), "PRIVATE_MESSAGE").size())
+                .as("连发三条仍是一条通知，而聊天里确实是三条")
+                .isEqualTo(1);
+        assertThat(post200("/chat/list", b, new ChatListReq(ChatChannel.PRIVATE, a, null, 20))
+                .get("messages")).hasSize(3);
+
+        // 换一个人找 B：那是另一件事，必须另起一条
+        post200("/chat/send", c, new ChatSendReq(newRequestId(), ChatChannel.PRIVATE, "打个招呼", b));
+        assertThat(eventsOfType(get200("/social/summary", b).get("events"), "PRIVATE_MESSAGE").size())
+                .as("不同发信人是不同的事，去重只按发信人").isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("游标已经被淘汰时回答「没有更早的了」，不许把最新一页重放一遍")
     void staleCursorMeansEndOfHistoryNotLatestPage() throws Exception {
         String player = newPlayer(5);
@@ -1040,6 +1147,23 @@ class SocialEndpointTest {
     }
 
     // ---------- 辅助 ----------
+
+    /** 某个人未读事件里指定类型的全部条目（C23 要断"几条"，去重没做对就会多）。 */
+    private static List<JsonNode> eventsOfType(JsonNode events, String type) {
+        List<JsonNode> out = new java.util.ArrayList<>();
+        for (JsonNode event : events) {
+            if (type.equals(event.get("type").asText())) {
+                out.add(event);
+            }
+        }
+        return out;
+    }
+
+    /** 第一条该类型的未读事件；一条都没有时返回 null（用例自己断 isNotNull / isNull）。 */
+    private static JsonNode eventOfType(JsonNode events, String type) {
+        List<JsonNode> hits = eventsOfType(events, type);
+        return hits.isEmpty() ? null : hits.get(0);
+    }
 
     // ---------- 联盟管理：踢人 / 转让 / 任命（域方法早就有，本轮才接上端点） ----------
 

@@ -86,7 +86,7 @@ export type AllianceTechEffectAttr =
  * 配置表 alliance_tech 的一行。
  * 联盟科技表。B02 字段：id/等级上限/消耗/效果。消耗单位为联盟捐献点数（B10 落地捐献系统）。
  *
- * 源表 version=1
+ * 源表 version=2
  */
 export interface AllianceTechCfg {
   /** 主键 */
@@ -748,7 +748,7 @@ export type RolePermissionScope =
  * 配置表 role_permission 的一行。
  * 角色权限矩阵（B10 / B13 依赖）。一行 = 一个（组织范围, 权限位）。三个角色层级 Leader / Officer / Member 在 squad / alliance / nation 三个范围内语义一致。allow* 字段用 BOOL。
  *
- * 源表 version=2
+ * 源表 version=3
  */
 export interface RolePermissionCfg {
   /** 主键 */

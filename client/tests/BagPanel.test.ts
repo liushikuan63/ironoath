@@ -12,7 +12,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildBagPanel, buildItemRow, buildOutputLine, buildResourcePanel, buildResourceRow, itemTypeText,
-  SELL_SUPPORTED,
 } from '../assets/scripts/game/bag/BagPanel'
 import { formatRate } from '../assets/scripts/game/gacha/GachaDisclosure'
 import { percentText } from '../assets/scripts/core/FixedPoint'
@@ -52,8 +51,6 @@ function item(overrides: Partial<BagItem> = {}): BagItem {
     obtainFrom: '第七章宝箱',
     count: 3,
     stackMax: 10,
-    sellable: true,
-    sellPriceGold: 50,
     sortKey: 100,
     ...overrides,
   }
@@ -162,19 +159,11 @@ test('来源提示：配置了才显示，未配置（null 或空串）不显示
   assert.equal(buildItemRow(item({ obtainFrom: '' })).obtainText, null)
 })
 
-test('可出售但没有价格时不显示售价（协议允许 sellPriceGold 为 null）', () => {
-  // 显式打开能力位来验这两条规则本身，默认是关的（见下一条）
-  assert.equal(buildItemRow(item({ sellable: true, sellPriceGold: 50 }), true).sellText, '可出售 50 金币')
-  assert.equal(buildItemRow(item({ sellable: true, sellPriceGold: null }), true).sellText, null)
-  assert.equal(buildItemRow(item({ sellable: false, sellPriceGold: 50 }), true).sellText, null)
-})
-
-test('出售能力默认关闭：表里说能卖，也不渲染一个点了只会失败的按钮', () => {
-  // 服务端没有 /bag/sell、B04 也没有出售规则（收口清单 #47）。
-  // 这条断言的价值是：哪天端点补好了却没翻开关，它会红着提醒，
-  // 而不是让玩家继续对着一个永远点不动的按钮
-  assert.equal(buildItemRow(item({ sellable: true, sellPriceGold: 50 })).sellText, null)
-  assert.equal(SELL_SUPPORTED, false)
+test('出售整条撤下：协议里没有 sellable 可判，行不可能出现售价文案', () => {
+  // 2026-09-13 裁决：服务端不再下发 sellable / sellPriceGold（没有 /bag/sell 端点、
+  // B04 没有出售规则，收口清单 #47 ③），所以这两个字段连夹具都构造不出来 ——
+  // tsc 对字面量多余属性会直接报错，这条用例因此同时是"协议真的删干净了"的证据
+  assert.equal(buildItemRow(item()).sellText, null)
 })
 
 test('道具名字照搬服务端下发的中文，客户端不翻译', () => {

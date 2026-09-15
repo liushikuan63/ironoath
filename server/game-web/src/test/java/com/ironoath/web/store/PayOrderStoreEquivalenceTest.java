@@ -132,6 +132,8 @@ class PayOrderStoreEquivalenceTest {
                     .isEqualTo(1);
             assertThat(store.retryQueue(10)).as("%s 已发货的不该再在补单队列里", label).isEmpty();
             assertThat(store.unfulfilledCents()).as("%s 负债已清", label).isZero();
+            assertThat(store.unfulfilledOrderCount()).as("%s 总额归零时笔数也要归零，否则两个判据已经分叉",
+                    label).isZero();
         }
     }
 
@@ -220,6 +222,8 @@ class PayOrderStoreEquivalenceTest {
             assertThat(store.get("o-zombie")).as("%s 作废不是删除：删了迟到回调会变成「订单不存在」", label)
                     .isNotNull();
             assertThat(store.unfulfilledCents()).as("%s 负债不受作废影响", label).isEqualTo(3000L);
+            assertThat(store.unfulfilledOrderCount()).as("%s 三单里只有 o-paid 是负债：作废单与未付单都不该算进来，"
+                    + "这条钉住笔数与总额用的是同一个判据", label).isEqualTo(1L);
             assertThat(store.expireUnpaid(TTL, T0 + TTL + 1L)).as("%s 重复清扫必须是 0", label).isZero();
         }
     }

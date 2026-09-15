@@ -23,7 +23,7 @@ export interface TrackEvent {
  * **不带 requestId**：见本文件 description 的约束 2。
  */
 export interface TrackBatchReq {
-  /** 本批事件，按发生顺序。批大小上限来自 global.TRACK_BATCH_MAX_SIZE，服务端按 global.PERF_PAYLOAD_MAX_BYTES 校验体积 —— 客户端把上限调大而服务端不同步的话，这一批会在网关就被拒掉，症状是「埋点全丢」而不是「部分丢」。 */
+  /** 本批事件，按发生顺序。攒批上限来自 global.TRACK_BATCH_MAX_SIZE（随版本检查下发给客户端，所以那一份与客户端用的是同一个数）。 **入口不做拒绝式硬上限**（2026-09-13 裁决）：服务端只按 global.TRACK_INGEST_SOFT_LIMIT_FACTOR × TRACK_BATCH_MAX_SIZE 设一道**软**上限，超了保留前面若干条、截掉多余的并计入响应的 failed，HTTP 仍是 200。为什么不是硬拒：一次战斗本身就产生十几个事件，拿攒批上限当门槛会把真实战斗事件整批丢掉 —— 丢看板数据比来噪音糟。为什么这条判断必须存在：/ops/ 是不要求身份的公开路径，它是服务端唯一的工作量上界。 （本字段原先写着「服务端按 PERF_PAYLOAD_MAX_BYTES 校验体积」，而服务端从未有过那段代码 —— 那句话描述的是一个提案，不是事实。） */
   events: TrackEvent[]
 }
 
@@ -33,8 +33,60 @@ export interface TrackBatchReq {
 export interface TrackBatchResp {
   /** 落库成功的事件数。 */
   accepted: number
-  /** 被丢弃的事件数。客户端据此判断埋点健康度：这个数持续非零说明字典与实现已经漂移（例如某个事件名被运营删了而客户端还在发），需要人去看，而不是让它静默地一直失败。 */
+  /** 被丢弃的事件数 —— **两种原因合并计数**：事件名为空，以及超出入口软上限被截断。合并而不加第三个字段，是因为客户端对两者的处置完全相同（都不重投：一条脏数据重试一万次还是脏的，被截断的那一段则已经明确放弃了）。持续非零说明字典与实现已经漂移，或有人在直接刷这个不需要身份的端点，需要人去看而不是让它静默地一直失败。截断的累计条数由 GET /ops/ingest 单独带出。 */
   failed: number
+}
+
+/**
+ * GET /ops/ingest 响应：埋点入口的健康度（只读，需运维令牌）。
+ *
+ * **这个端点存在的理由是「计数必须有出口」**：一个只有测试在读的 AtomicLong 与一个没有调用点的方法是一回事 —— 都会长成「机制在、没人看」，而 #58 那条裁决要的是「洪水必须可见」。可见的意思不是代码里有个计数器，是有人能查得到。
+ */
+export interface TrackIngestResp {
+  /** 当前生效的入口软上限（= TRACK_BATCH_MAX_SIZE × TRACK_INGEST_SOFT_LIMIT_FACTOR）。随配置热更变化，所以每次都要回出来，不要让运维记住一个数。 */
+  softLimitEvents: number
+  /** 本进程启动以来因超过软上限而被截断的事件累计条数。非零即需人看：要么有客户端的攒批策略与本服不同步，要么有人在刷这个不要求身份的端点。**做成 64 位**是因为它是一个只增不减的累计值 —— 一个 int 装不下一个跑了一年的进程。 */
+  truncatedEvents: number
+  /** 服务端二次攒批器里尚未落库的事件数（TrackFlusher 的待发队列）。 */
+  pendingEvents: number
+  /** 服务端已写库的批次数。与事件数一起看才是验收 3 的「批数远小于事件数」，只看一个数说明不了什么。 */
+  flushedBatches: number
+}
+
+/**
+ * GET /ops/pay/debt 响应：钱收了、货没发出去的负债（只读，需运维令牌）。
+ *
+ * **为什么必须有出口**：#27 那条 ERROR 日志的原话是「这笔钱已经收了，必须有人跟进」，而 `unfulfilledCents()` 与 `retryQueue()` 此前**生产调用点为零** —— 只有测试在读。日志喊了但没人能查账，等于没有账。
+ */
+export interface PayDebtResp {
+  /** 未发货负债总额（分）。对账口径：**这个数必须最终归零**，它变大就是负债积压，该报警而不是该优化查询。金额一律 64 位（本仓库所有「分」都是）。 */
+  unfulfilledCents: number
+  /** 未发货的订单笔数（与端口 {@code unfulfilledOrderCount()} 同为 64 位）。与总额一起看才分得清「一笔大的」和「一堆小的」这两种完全不同的成因。 */
+  unfulfilledOrders: number
+  /** 本响应实际带出的笔数（受 limit 约束）。**listed 小于 unfulfilledOrders 就说明还有没列出来的**，所以不把两者合并成一个数 —— 合并了运维就会以为看到的就是全部。 */
+  listed: number
+  /** 待补发的订单明细，按存储层的顺序。 */
+  orders: DebtOrderView[]
+}
+
+/**
+ * 一笔负债。只给跟进需要的字段：谁、哪一单、多少钱、试了几次、上次为什么没发出去。
+ *
+ * **刻意不给 transactionId**：那是渠道侧的支付凭证号，出现在一个运维列表里对它没有任何用处，而多一处出现就多一处泄露面。要对着渠道查账的人应该走渠道后台。
+ */
+export interface DebtOrderView {
+  /** 订单号（本服生成）。 */
+  orderId: string
+  /** 该给谁发货。 */
+  playerId: string
+  /** 这一单的金额（分），与 unfulfilledCents 同一口径。 */
+  cents: number
+  /** 确认收款的时刻（毫秒）。玩家已经付了多久 —— 这是排优先级的第一依据。 */
+  paidAt: number
+  /** 已尝试发货的次数。为 0 表示回调进来了但从没试过，非 0 表示试过且都失败 —— 两者的处理人不同。 */
+  fulfillAttempts: number
+  /** 最后一次失败的原因。可空：从未尝试过的时候没有原因可说（不是「原因为空字符串」）。 */
+  failureReason: string | null
 }
 
 /**

@@ -26,6 +26,7 @@ import { Prng } from '../assets/scripts/core/Prng'
 import { exileSnapshot, resetWorld, worldModel, worldRequester } from '../assets/scripts/game/world/WorldContext'
 import type { WorldLayout } from '../assets/scripts/game/world/WorldViewModel'
 
+/** 服务端随 MarchListResp 下发的布局参数（夹具默认值）。改它不该影响客户端的任何行为 —— 值只从响应来。 */
 const LAYOUT: WorldLayout = { worldSize: 512, chunkSize: 32, maxChunks: 9 }
 
 class FakeHttp implements HttpTransport {
@@ -124,7 +125,6 @@ function createHarness(): Harness {
     timeSync,
     now: () => clock.now,
     newRequestId: () => `req-${++seq}`,
-    worldLayout: LAYOUT,
   }
   return { api: new GameApi(apiDeps), http, store, timeSync, clock }
 }
@@ -261,7 +261,7 @@ test('enterWorld 用 MarchListResp.home 建世界模型并绑定 requester；lea
   assert.equal(worldModel(), null)
   assert.equal(worldRequester(), null)
 
-  http.script = [envelope({ marches: [], home: { x: 200, y: 160 }, maxConcurrent: 3, serverNow: 5_000 })]
+  http.script = [envelope({ marches: [], home: { x: 200, y: 160 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 })]
   const outcome = await api.enterWorld()
   assert.equal(outcome.kind, 'ok')
 
@@ -272,6 +272,23 @@ test('enterWorld 用 MarchListResp.home 建世界模型并绑定 requester；lea
 
   api.leaveWorld()
   assert.equal(worldRequester(), null, '不解绑的话旧账号的响应会写进新账号的地图')
+})
+
+test('enterWorld 采用响应里的布局参数：响应给 256/16，模型就是 256/16（客户端不再镜像 512/32/9）', async () => {
+  const { api, http } = createHarness()
+  // 刻意给一组与「镜像默认值」不同的布局（256 % 16 === 0，校验通过）：
+  // 若实现又回去读客户端常数，这条会红 —— 那是这份用例存在的唯一理由
+  http.script = [envelope({
+    marches: [], home: { x: 100, y: 100 }, maxConcurrent: 3,
+    worldSize: 256, chunkSize: 16, maxChunks: 9, serverNow: 5_000,
+  })]
+
+  const outcome = await api.enterWorld()
+  assert.equal(outcome.kind, 'ok')
+
+  const model = worldModel()
+  assert.equal(model?.worldSize, 256, 'worldSize 必须取自响应，而不是客户端镜像的 512')
+  assert.equal(model?.chunkSize, 16, 'chunkSize 必须取自响应')
 })
 
 test('enterWorld 失败时不建世界模型：场景据此画「未连接」而不是一张假地图', async () => {
@@ -287,13 +304,13 @@ test('doExile 成功：地图中心搬到新家、冷却与免战落地，请求
   const { api, http } = createHarness()
   // FakeHttp 按累计请求数取脚本，所以一个用例里的每一次请求都要提前排好
   http.script = [
-    envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000 }),
+    envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 }),
     envelope({
       coord: { x: 300, y: 220 }, peaceUntil: 90_000, nextExileAt: 80_000, seed: 7, serverNow: 10_000,
     }),
     // doExile 之后必然重拉一次列表：按钮的每一个输入都来自它
     envelope({
-      marches: [], home: { x: 300, y: 220 }, maxConcurrent: 3, serverNow: 11_000,
+      marches: [], home: { x: 300, y: 220 }, maxConcurrent: 3, ...LAYOUT, serverNow: 11_000,
       peaceUntil: 90_000, nextExileAt: 80_000,
     }),
   ]
@@ -316,10 +333,10 @@ test('doExile 成功：地图中心搬到新家、冷却与免战落地，请求
 test('doExile 被服务端否决：不许偷偷搬家，但必须重拉列表把按钮纠正过来', async () => {
   const { api, http } = createHarness()
   http.script = [
-    envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000 }),
+    envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 }),
     envelope(null, 0, 6011, '流亡迁城冷却中'),
     envelope({
-      marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 12_000,
+      marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 12_000,
       nextExileAt: 200_000, peaceUntil: null,
     }),
   ]
@@ -334,7 +351,7 @@ test('doExile 被服务端否决：不许偷偷搬家，但必须重拉列表把
 
 test('worldViewport 的响应喂进世界模型：块进缓存、迷雾与探索落地', async () => {
   const { api, http } = createHarness()
-  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000 })]
+  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 })]
   await api.enterWorld()
   const model = worldModel()
   assert.notEqual(model, null)
@@ -364,7 +381,7 @@ test('worldViewport 的响应喂进世界模型：块进缓存、迷雾与探索
 
 test('marches 的响应喂进世界模型，行军出现在渲染帧里', async () => {
   const { api, http } = createHarness()
-  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000 })]
+  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 })]
   await api.enterWorld()
 
   http.script = [envelope({
@@ -375,7 +392,7 @@ test('marches 的响应喂进世界模型，行军出现在渲染帧里', async 
       units: [], heroes: [], load: 0, loadCap: 100, teamSpeed: 10,
       position: { x: 48, y: 48 }, progressFixed: 0, gatherFinishAt: null, serverNow: 5_000,
     }],
-    home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000,
+    home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000,
   })]
   const outcome = await api.marches()
   assert.equal(outcome.kind, 'ok')
@@ -386,7 +403,7 @@ test('marches 的响应喂进世界模型，行军出现在渲染帧里', async 
 
 test('doRecall 调 /world/recall、刷新列表，并把返程倒计时交给场景', async () => {
   const { api, http } = createHarness()
-  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000 })]
+  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 })]
   await api.enterWorld()
   http.calls.length = 0
   const returning = {
@@ -399,7 +416,7 @@ test('doRecall 调 /world/recall、刷新列表，并把返程倒计时交给场
   http.script = [
     envelope({ march: returning, returnArriveAt: 18_000, returnSeconds: 12, serverNow: 6_000 }),
     envelope({
-      marches: [returning], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 6_000,
+      marches: [returning], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 6_000,
     }),
   ]
 
@@ -414,7 +431,7 @@ test('doRecall 调 /world/recall、刷新列表，并把返程倒计时交给场
 
 test('doCollectGather 调 /world/collectGather，并把结算资源显示成可读文案', async () => {
   const { api, http } = createHarness()
-  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 5_000 })]
+  http.script = [envelope({ marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 5_000 })]
   await api.enterWorld()
   http.calls.length = 0
   const returning = {
@@ -430,7 +447,7 @@ test('doCollectGather 调 /world/collectGather，并把结算资源显示成可�
       returnArriveAt: 16_000, march: returning, serverNow: 6_000,
     }),
     envelope({
-      marches: [returning], home: { x: 48, y: 48 }, maxConcurrent: 3, serverNow: 6_000,
+      marches: [returning], home: { x: 48, y: 48 }, maxConcurrent: 3, ...LAYOUT, serverNow: 6_000,
     }),
   ]
 

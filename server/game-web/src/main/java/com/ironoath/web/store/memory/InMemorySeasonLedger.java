@@ -74,6 +74,12 @@ public class InMemorySeasonLedger implements SeasonLedgerStore {
     }
 
     @Override
+    public int purgeSeason(String seasonId) {
+        Map<String, Record> removed = bySeason.remove(seasonId);
+        return removed == null ? 0 : removed.size();
+    }
+
+    @Override
     public void clear() {
         bySeason.clear();
     }

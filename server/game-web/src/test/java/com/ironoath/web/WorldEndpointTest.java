@@ -136,6 +136,20 @@ class WorldEndpointTest {
         assertThat(world.cityAt(homeA)).contains(first);
     }
 
+    @Test
+    @DisplayName("行军列表随响应下发世界布局三参数，且逐字段对位（客户端不再把 512/32/9 镜像成常数）")
+    void marchListCarriesWorldLayoutFromConfig() {
+        String playerId = newPlayer();
+
+        var resp = marchAppService.list(playerId);
+
+        // 逐字段与配置比对：三个参数当前值互不相同（512 / 32 / 9），
+        // 任何字段接错到另一个参数上都会在这里红
+        assertThat(resp.worldSize()).isEqualTo((int) configs.longParam("WORLD_SIZE"));
+        assertThat(resp.chunkSize()).isEqualTo((int) configs.longParam("WORLD_CHUNK_SIZE"));
+        assertThat(resp.maxChunks()).isEqualTo((int) configs.longParam("VIEWPORT_CHUNK_COUNT"));
+    }
+
     // ---------- 分块视野 ----------
 
     @Test

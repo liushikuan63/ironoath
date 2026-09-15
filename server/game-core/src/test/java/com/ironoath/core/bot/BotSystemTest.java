@@ -62,7 +62,7 @@ class BotSystemTest {
                                                     boolean popFull, boolean affordTrain,
                                                     boolean stamina, boolean marchSlot,
                                                     boolean inAlliance, long idleMillis) {
-        return new BotDecisionTree.WorldState(underAttack, freeQueue, affordBuild, popFull, affordTrain,
+        return new BotDecisionTree.WorldState(underAttack, false, freeQueue, affordBuild, popFull, affordTrain,
                 stamina, marchSlot, inAlliance, false, false, idleMillis);
     }
 
@@ -155,6 +155,32 @@ class BotSystemTest {
 
         assertThat(tree.decide(steadyBot(), idleState(), rng, 0L).action())
                 .isEqualTo(BotDecisionTree.Action.IDLE);
+    }
+
+    @Test
+    @DisplayName("C19 的优先级：有可领的任务奖励排在受击之后、建造与训练之前")
+    void claimableQuestOutranksBuildingAndTraining() {
+        BotDecisionTree tree = new BotDecisionTree();
+        // 字段顺序：underAttack, hasClaimableQuest, hasFreeBuildQueue, canAffordBuilding,
+        // populationFull, canAffordTraining, hasStamina, hasFreeMarchSlot,
+        // inAlliance, inSquad, powerBehindAverage, idleMillis（共 11 个布尔 + 1 个时刻）
+        BotDecisionTree.WorldState ready = new BotDecisionTree.WorldState(
+                false, true, true, true, false, true, true, true, false, false, false, 0L);
+        assertThat(tree.decide(steadyBot(), ready, Rng.of(7), 0L).action())
+                .as("不先领到赠将就没有 troopCap，也就永远走不到训练那一步（C19 的整条理由）")
+                .isEqualTo(BotDecisionTree.Action.CLAIM_QUEST);
+
+        BotDecisionTree.WorldState attacked = new BotDecisionTree.WorldState(
+                true, true, true, true, false, true, true, true, false, false, false, 0L);
+        assertThat(tree.decide(steadyBot(), attacked, Rng.of(7), 0L).action())
+                .as("外部中断仍优先于一切自发行为 —— 领奖是自发行为，不是求救")
+                .isEqualTo(BotDecisionTree.Action.REACT_ATTACK);
+
+        // 同一个 seed 把可领位关掉就该落回建造：证明这条分支是插在前面，而不是抢走了别人的落点
+        BotDecisionTree.WorldState nothingToClaim = new BotDecisionTree.WorldState(
+                false, false, true, true, false, true, true, true, false, false, false, 0L);
+        assertThat(tree.decide(steadyBot(), nothingToClaim, Rng.of(7), 0L).action())
+                .isEqualTo(BotDecisionTree.Action.UPGRADE_BUILDING);
     }
 
     @Test

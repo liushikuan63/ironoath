@@ -1,8 +1,8 @@
 {
   "table": "role_permission",
-  "version": 2,
+  "version": 3,
   "comment": "角色权限矩阵（B10 / B13 依赖）。一行 = 一个（组织范围, 权限位）。三个角色层级 Leader / Officer / Member 在 squad / alliance / nation 三个范围内语义一致。allow* 字段用 BOOL。",
-  "designNote": "权限设计遵循一条主线：影响范围越大权限越收窄，但「求助」与「参与」两类权限永远全员开放。全员开放的有 INVITE_MEMBER（三个范围都是）、CALL_FOR_HELP、RESEARCH_TECH、JOIN_NATIONAL_RALLY——它们的共同点是玩家自己想为组织做点什么，任何审批环节都会让意愿流失。收窄到 Leader 独有的只有四项国家权限（任命官职/宣战/国策/支取国库），因为它们影响 800 人且不可逆。Officer 在 alliance 有踢人与审批权但在 nation 没有，这是刻意的：联盟官员滥权的后果是一个盟受损，国家官员滥权的后果是一个国解体，后者必须集中在一人身上并配审计日志。B00 铁律三规定冲突时优先级 国家 > 联盟 > 小队，本表 scope 字段就是那个优先级的判定依据；铁律二规定 Bot 不得担任国家官职，判定入口是 APPOINT_OFFICE 这一行。",
+  "designNote": "权限设计遵循一条主线：影响范围越大权限越收窄，但「求助」与「参与」两类权限永远全员开放。全员开放的有 INVITE_MEMBER（三个范围都是）、CALL_FOR_HELP、RESEARCH_TECH、JOIN_NATIONAL_RALLY——它们的共同点是玩家自己想为组织做点什么，任何审批环节都会让意愿流失。收窄到 Leader 独有的国家权限有三项（任命官职、宣战、国策），因为它们影响 800 人且不可逆。**支取国库是这一条的例外**：B13 §2 把国库支出同时给了国王与首相，所以它在 OFFICER 档也是开的（role_permission v3，2026-09-13 裁决）—— 代价是大将军/内政官/外交官一同获得支取权，而公共资金敞口由 global.NATION_OFFICER_SPEND_WEEKLY_RATIO 那道「本周实收周税 × 比例、全国共用一个池子」的周限额夹住，国王不受此限。B00 铁律三规定冲突时优先级 国家 > 联盟 > 小队，本表 scope 字段就是那个优先级的判定依据；铁律二规定 Bot 不得担任国家官职，判定入口是 APPOINT_OFFICE 这一行。",
   "fieldTypes": {
     "id": "STRING_KEY",
     "scope": "ENUM:SQUAD,ALLIANCE,NATION",
@@ -181,9 +181,9 @@
       "permission": "WITHDRAW_TREASURY",
       "permissionName": "支取国库",
       "allowLeader": true,
-      "allowOfficer": false,
+      "allowOfficer": true,
       "allowMember": false,
-      "why": "国库支取涉及全国资源，只给国主。这条权限必须有审计日志（B13），否则国主卷款会直接导致国家解体。"
+      "why": "B13 §2 把「国库支出」给了国王（无限制）与首相（限额）两档。2026-09-13 裁决（收口清单 §三·补 C16）放开 OFFICER 档，让首相真的能支取 —— 在此之前这一格是 false，首相**一次也花不了**，那句「国库支出（限额）」是个装饰品。\n\n**放开的代价要写明白**：本表只有 leader/officer/member 三档，表达不出「只给首相」，所以大将军、内政官、外交官与首相一同获得支取权（B13 §2 的原表只列了国王与首相两档有此项）。要按官职细分就得给本表加一列，那属配置表结构变更（见 PermissionMatrix 类注释里同一条自述）。\n\n**为什么这个代价是可接受的**：非国王身份的支出被 global.NATION_OFFICER_SPEND_WEEKLY_RATIO 夹住 —— 上限是**本周实入库的周税 × 比例**，而且是**全国共用一个池子**而不是每人一份，所以四个官职加起来也花不掉超过半周税收。国王不受限额（他就是这个国的所有人）。\n\n**为什么额度不写在本表里**：本表是「谁能做哪个动作」的布尔矩阵，没有额度列；把 0.5 塞进来就是给同一个事实造第二个家（限额的判定只有一处，在 Nation.spend）。"
     },
     {
       "id": "perm_nation_manage_diplomacy",

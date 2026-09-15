@@ -13,9 +13,11 @@
  * 要不要拉数据，要拉就交给 {@link WorldRequester}。这样场景里不出现任何 fetch/wx.request，
  * 换传输层（微信 / 浏览器 / 编辑器预览）不用动表现层。
  *
- * <p>TODO(B07 表现层缺口): WorldLayout 目前只能由适配层注入，而 ViewportResp 并不下发它。
- * 正解是服务端像 MarchListResp.maxConcurrent 那样随响应下发这三个值 ——
- * 那条字段的注释已经立了先例：「下发是为了让客户端能显示 2/3 而不是自己读配置」。
+ * <p><b>地图布局参数随 MarchListResp 下发</b>（2026-09-13 起）：worldSize / chunkSize / maxChunks
+ * 三个值与 home 一起从服务端来，客户端不再镜像 global.json 的常数（铁律 1）。
+ * <b>为什么不是 ViewportResp</b>：建地图模型要用这三个值，而第一个 viewport 请求必须等模型建立
+ * （要算视野中心块与 chunk 键）—— 放在 viewport 响应里就是鸡生蛋；marches 是进世界建模之前
+ * 唯一必拉的响应。
  */
 
 import { WorldViewModel } from './WorldViewModel'

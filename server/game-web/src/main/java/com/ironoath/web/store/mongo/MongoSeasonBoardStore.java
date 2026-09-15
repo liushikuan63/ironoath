@@ -102,6 +102,17 @@ public final class MongoSeasonBoardStore implements SeasonBoardStore {
     }
 
     @Override
+    public int purgeSeason(String seasonId) {
+        // 两个集合都要删：只删榜不删快照，表现是旧季的名次查不到了但"那一季最终榜"还能被读出来，
+        // 一个说不清自己保留了什么的库比一个明确没清的库更难查
+        long entries = mongo.remove(Query.query(Criteria.where("seasonId").is(seasonId)),
+                SeasonBoardDocument.COLLECTION).getDeletedCount();
+        long snapshots = mongo.remove(Query.query(Criteria.where("seasonId").is(seasonId)),
+                SeasonBoardSnapshotDocument.COLLECTION).getDeletedCount();
+        return Math.toIntExact(entries + snapshots);
+    }
+
+    @Override
     public void clear() {
         mongo.remove(new Query(), SeasonBoardDocument.COLLECTION);
         mongo.remove(new Query(), SeasonBoardSnapshotDocument.COLLECTION);

@@ -29,10 +29,25 @@ import com.ironoath.common.rng.Rng;
  */
 public final class BotDecisionTree {
 
-    /** 一次决策能做的动作。取值与 §三 行为树的七个分支对应。 */
+    /**
+     * 一次决策能做的动作。取值对应下面 {@code decide} 里的那几条分支
+     * （B11 §三 的七条 + 掠袭 RAID 与领奖 CLAIM_QUEST 两条后补的，见各自注释）。
+     */
     public enum Action {
         /** 升级建筑。偏向哪一类由 playStyle 决定（种田型偏资源建筑，好战型偏军事建筑） */
         UPGRADE_BUILDING,
+        /**
+         * 领取一条已完成任务的奖励（2026-09-13 裁决 C19）。
+         *
+         * <p><b>为什么必须有这条分支</b>：主线 {@code quest_main_01} 赠的三名 SR 武将是
+         * {@code troopCap} 的唯一免费来源（任务表自己的 why 就写着「赠送必须发生在训练之前，
+         * 否则 quest_main_03 永远做不完」）。Bot 不领奖 ⇒ 没有武将 ⇒ 永远造不出兵 ⇒
+         * B11 的根本目的「用 Bot 验证数值」不成立（收口清单 #98 记的现状：真机 Bot troopCap 恒 0）。
+         *
+         * <p><b>执行侧必须走真人那条 {@code QuestAppService.claim}</b>（B11 验收 7 的同路径要求），
+         * 不得直接改任务进度存储 —— 绕过 claim 等于绕过前置校验、幂等与发放器三样东西。
+         */
+        CLAIM_QUEST,
         /** 训练兵力 */
         TRAIN_TROOPS,
         /** 打野 */
@@ -76,6 +91,7 @@ public final class BotDecisionTree {
      */
     public record WorldState(
             boolean underAttack,
+            boolean hasClaimableQuest,
             boolean hasFreeBuildQueue,
             boolean canAffordBuilding,
             boolean populationFull,
@@ -142,6 +158,18 @@ public final class BotDecisionTree {
             return new Decision(Action.REACT_ATTACK, mistake, delay,
                     "受到攻击，" + (delay / 1000L) + " 秒后反应（aggression="
                             + FixedPoint.format(profile.ai().aggression()) + "）");
+        }
+
+        // 分支 1.5（2026-09-13 裁决 C19）：有可领的任务奖励 → 先领。
+        //
+        // 排在建造与训练**之前**是必需的而不是偏好：主线赠的武将是 troopCap 的唯一免费来源，
+        // 不先领就永远走不到分支 3（训练），B11「用 Bot 验证数值」就永远不成立。
+        //
+        // 刻意**不掷骰子**（与分支 2~5 不同）：奖励摆在那里而不去拿，不是"次优决策"而是"没有手"。
+        // 真人看到的是红点，点了就领 —— 这里要复现的就是那一步，加一个概率只会让 Bot 显得迟钝，
+        // 并且白耗一次随机数消费。
+        if (state.hasClaimableQuest()) {
+            return new Decision(Action.CLAIM_QUEST, mistake, 0L, "有可领的任务奖励");
         }
 
         // 分支 2（原文第 1 条）：有空闲建造队列且资源够 → 升级建筑

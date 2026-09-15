@@ -53,6 +53,15 @@ public interface SeasonBoardStore {
      */
     boolean saveSnapshotIfAbsent(String seasonId, SeasonSettlement.Snapshot snapshot);
 
+    /**
+     * 删掉一个赛季的<b>榜与快照</b>。返回删掉的条目 + 快照文档总数。
+     *
+     * <p>与 {@link SeasonLedgerStore#purgeSeason} 配对使用：归档保留策略说「留 3 个赛季」，
+     * 而一个赛季的归档由账本 + 榜 + 快照三处组成，漏掉任何一处的表现都不是报错，
+     * 而是「旧季一半还在库里」。
+     */
+    int purgeSeason(String seasonId);
+
     /** 测试辅助：清空（进程内实现用；Mongo 实现按本季删除自己的两个集合内容）。 */
     void clear();
 

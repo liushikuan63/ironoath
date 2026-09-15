@@ -226,9 +226,23 @@ public final class ProtoSchema {
             // Java 侧没有这个问题：List<String> 本来就能装 null。
             String itemTs = item.tsType();
             String arrayTs = itemTs.contains("|") ? "(" + itemTs + ")[]" : itemTs + "[]";
-            return new TypePair("List<" + item.javaType() + ">", arrayTs);
+            // Java 的泛型实参不接受原始类型 —— 原样拼 `List<int>` 会产出一个语法都不合法的文件，
+            // 症状是"整个模块编译不过"，而写 schema 的人第一反应会以为是自己字段写错了。
+            return new TypePair("List<" + boxedPrimitive(item.javaType()) + ">", arrayTs);
         }
         return resolvePrimitive(sourceFile, location, type, formatOf(spec));
+    }
+
+    /** 数组元素必须是装箱类型（其余类型原样返回）。 */
+    private static String boxedPrimitive(String javaType) {
+        return switch (javaType) {
+            case "int" -> "Integer";
+            case "long" -> "Long";
+            case "double" -> "Double";
+            case "float" -> "Float";
+            case "boolean" -> "Boolean";
+            default -> javaType;
+        };
     }
 
     private static String formatOf(JsonNode spec) {

@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.ironoath.common.num.FixedPoint;
+
 /**
  * 职责：国家领域模型（B13 §1~§6，验收 1/2/3/5）。
  * 依赖：无（纯 Java，零框架 —— game-core 读不到 game-config，规则由外层解析后传入）。
@@ -66,13 +68,21 @@ public final class Nation {
 
     /** 外交关系（§5）。四种关系直接影响国战分组与跨服匹配。 */
     public enum Diplomacy {
-        /** 盟约：不可互相攻击 */
+        /** 盟约：不可互相攻击（双向，见 {@link #mayAttackEachOther}） */
         ALLIED,
         /** 敌对：可攻击，国战的主要对象 */
         HOSTILE,
         /** 中立：默认状态 */
         NEUTRAL,
-        /** 朝贡：单向纳贡，不可被宣战 */
+        /**
+         * 朝贡：B13 §5 原文只有「朝贡」两个字，没说钱往哪流、谁护着谁。
+         *
+         * <p><b>2026-09-13 裁决 C22：禁攻是双向的</b>。此前这里写的是「单向纳贡，不可被宣战」，
+         * 读起来像"朝贡国被打不动、但它随时能打宗主" —— 交钱的一方保留反噬债主的能力，
+         * 原文并没有给这个权利，而它也不合常理。现在两侧都打不动，
+         * 由 {@link #mayAttackEachOther} 表达（本枚举仍然只描述"这一侧怎么看对方"，
+         * 因为单边视角本来就是单向的）。
+         */
         TRIBUTARY
     }
 
@@ -85,10 +95,12 @@ public final class Nation {
      * @param taxWeeklyPerAlliance 每盟每周上缴的税收。来源 global.NATION_TAX_WEEKLY_PER_ALLIANCE
      * @param treasuryLogRetention 国库日志保留条数。来源 global.NATION_TREASURY_LOG_RETENTION
      * @param officeSeatTotal    固定官职席位总数（议员不计）。来源 global.NATION_OFFICE_SEAT_TOTAL
+     * @param officerSpendRatioFixed 非国王身份的本周国库支出上限 = 本周实收入账 × 本比例（定点，10000=1.0）。
+     *                               来源 global.NATION_OFFICER_SPEND_WEEKLY_RATIO。国王不受此限
      */
     public record Rules(List<LevelRule> levels, long unlockMainLevel, long unlockDayOffset,
                         int maxPerKingdom, long joinCooldownMillis, long taxWeeklyPerAlliance,
-                        int treasuryLogRetention, int officeSeatTotal) {
+                        int treasuryLogRetention, int officeSeatTotal, long officerSpendRatioFixed) {
         public Rules {
             if (levels == null || levels.isEmpty()) {
                 throw new IllegalArgumentException("国家等级规则不得为空");
@@ -122,6 +134,11 @@ public final class Nation {
             }
             if (officeSeatTotal < 1) {
                 throw new IllegalArgumentException("官职席位总数必须 >= 1，实际=" + officeSeatTotal);
+            }
+            if (officerSpendRatioFixed < 0 || officerSpendRatioFixed > FixedPoint.SCALE) {
+                throw new IllegalArgumentException("官员周支出上限比例必须落在 0~1（定点 0~" + FixedPoint.SCALE
+                        + "），实际=" + officerSpendRatioFixed
+                        + "。超过 1 意味着官员一周能花掉超过一周的税收，那已经不叫限额");
             }
             if (unlockMainLevel < 1) {
                 throw new IllegalArgumentException("unlockMainLevel 必须 >= 1，实际=" + unlockMainLevel);
@@ -281,6 +298,23 @@ public final class Nation {
     private final List<TreasuryLog> treasuryLogs = new ArrayList<>();
     private final List<String> provinces = new ArrayList<>();
     private long lastTaxWeekKey;
+    /**
+     * 最近一次周税**实际入库**的金额（不是应收额）。C16 限额的分母。
+     *
+     * <p>为什么不用「每盟税额 × 联盟数」算：国库有容量上限，满了之后实收小于应收，
+     * 用应收算等于让一个国家花掉它从没收到过的钱。
+     */
+    private long lastTaxCredited;
+    /** spentThisWeek 所属的周键（与周税用的 {@code WeekKey} 数字键同源）。跨周即重新计。 */
+    private long spendWeekKey;
+    /**
+     * 本周已经由<b>非国王</b>身份支取走的金额。全国共用一个池子，不是每人一份。
+     *
+     * <p><b>刻意不从 {@code treasuryLogs} 反推</b>：日志有 {@code NATION_TREASURY_LOG_RETENTION}
+     * 条硬上限，一个花得猛的国会把它滚掉 —— 那时限额就会在最需要它的时候悄悄失效，
+     * 而"看起来在挡、其实没挡"比没有这个挡更坏。
+     */
+    private long spentThisWeek;
     private long disbandedAt;
     /**
      * 乐观锁版本。<b>只有仓储能改它</b>（每次成功落库 +1），业务方法一律不碰。
@@ -360,7 +394,11 @@ public final class Nation {
      * {@code lastAppointOperator}（"刚才那次操作"的一次性诊断）—— 让它们跨进程复活只会说谎。
      *
      * @param lastTaxWeekKey 最后一次缴税的周键。周税幂等就靠它，丢了就是重复收税
-     * @param disbandedAt    解散时刻；非 0 表示这个国家已不存在（记录留着供审计）
+     * @param lastTaxCredited 那次缴税**实际入库**的金额（C16 限额的分母）。丢了本周就没有额度可算
+     * @param spendWeekKey    spentThisWeek 所属周键
+     * @param spentThisWeek   本周已由非国王身份支取的累计。<b>丢了等于每周白送一份额度</b>，
+     *                        而且不报错 —— 限额会在每次重启后悄悄重置
+     * @param disbandedAt     解散时刻；非 0 表示这个国家已不存在（记录留着供审计）
      */
     public record Snapshot(String id, String name, String kingId, long capitalX, long capitalY,
                            int level, long treasury,
@@ -368,7 +406,9 @@ public final class Nation {
                            Map<String, Diplomacy> diplomacy, Map<String, Long> joinCooldownUntil,
                            List<TreasuryLog> treasuryLogs, List<String> provinces,
                            Map<String, String> holderAlliance,
-                           long lastTaxWeekKey, long disbandedAt, long version) {
+                           long lastTaxWeekKey, long lastTaxCredited,
+                           long spendWeekKey, long spentThisWeek,
+                           long disbandedAt, long version) {
     }
 
     public Snapshot snapshot() {
@@ -380,7 +420,8 @@ public final class Nation {
                 new LinkedHashMap<>(memberAlliances), officesCopy,
                 new LinkedHashMap<>(diplomacy), new LinkedHashMap<>(joinCooldownUntil),
                 List.copyOf(treasuryLogs), List.copyOf(provinces),
-                new LinkedHashMap<>(holderAlliance), lastTaxWeekKey, disbandedAt, version);
+                new LinkedHashMap<>(holderAlliance), lastTaxWeekKey, lastTaxCredited,
+                spendWeekKey, spentThisWeek, disbandedAt, version);
     }
 
     /**
@@ -429,6 +470,9 @@ public final class Nation {
             nation.provinces.addAll(s.provinces());
         }
         nation.lastTaxWeekKey = s.lastTaxWeekKey();
+        nation.lastTaxCredited = s.lastTaxCredited();
+        nation.spendWeekKey = s.spendWeekKey();
+        nation.spentThisWeek = s.spentThisWeek();
         nation.disbandedAt = s.disbandedAt();
         nation.version = s.version();
         return nation;
@@ -538,11 +582,20 @@ public final class Nation {
      * 这正是把键设计成 allianceId 的好处：不需要遍历几百个玩家逐个处理，
      * 也就不存在「漏掉某个人」的可能。
      *
+     * <p><b>最后一个成员联盟走掉时，国家当场算亡</b>（2026-09-13 裁决）。这条不变量刻意长在
+     * 本方法里而不是让调用方各判一次 {@code memberAllianceCount() == 0}：漏一次不会报错，
+     * 只会留下一个零成员的活国，而「这个国还算不算存在」的判断散在名额计数、外交面板、
+     * 入籍目标、按国王找国四处（见 {@code NationAppService} 类注释），
+     * 每一处都会为一个并不存在的国家给出肯定答案。
+     *
      * @param expelled true 表示被国家开除，false 表示主动退出。两者都触发冷却：
      *                 主动退出若无冷却，就可以「退出国 → 立刻加入敌国」，
      *                 而国战的胜负恰恰取决于双方人数
+     * @param actorId  造成这次离开的<b>人</b>（主动退出是那位盟主，开除是下令的国王）。
+     *                 只在触发亡国时用到：国库余额核销要留操作者，而自动亡国时没有国王下令这件事，
+     *                 拿 {@code kingId} 冒充等于在账本上伪造一笔从未发生过的决定
      */
-    public void removeAlliance(String allianceId, boolean expelled, long now) {
+    public void removeAlliance(String allianceId, boolean expelled, String actorId, long now) {
         requireActive();
         if (memberAlliances.remove(allianceId) == null) {
             throw new IllegalStateException("该联盟不是本国成员");
@@ -554,6 +607,11 @@ public final class Nation {
         }
         representativesChanged();
         lastRemovedWasExpulsion = expelled;
+        if (memberAlliances.isEmpty()) {
+            // 冷却上面已经给这一个写过了，这里不再重复写（tearDown 遍历的是剩余成员，此时为空）
+            tearDown(actorId, now, "collapse_writeoff",
+                    "最后一个成员联盟「" + allianceId + "」离开后国家无人存续，国库余额核销（无人收到这笔钱）");
+        }
     }
 
     /** 官职持有者 → 所属联盟。任命与除名时都要维护，否则退盟收不回官职。 */
@@ -718,6 +776,9 @@ public final class Nation {
         long room = Math.max(0L, treasuryCap() - treasury);
         long credited = Math.min(income, room);
         treasury += credited;
+        // 限额的分母记的是**实收**：国库满的时候 income 与 credited 不相等，
+        // 记 income 等于允许官员把没收到的钱花掉
+        lastTaxCredited = credited;
         lastLogAt = now;
         // 周税也要有审计行：它是国库最大的一笔常规变动，
         // 没有这一行，日志最后一列的 balanceAfter 就再也对不上国库余额（而这张账本的存在理由就是防贪污）。
@@ -739,11 +800,22 @@ public final class Nation {
      * （容量、保护量、装不下的转邮件都在发放器里）。聚合负责记账，发放负责到账，两者分工与
      * 「取消训练返还多少」同一条。
      *
-     * @param payee  落点（不得为 null，见 {@link Payee}）
-     * @param reason 用途。不得为空
+     * <p><b>国王不受限额，其余任何身份共用一个全国周额度</b>（2026-09-13 裁决 C16）：
+     * 上限 = 本周<b>实收入库</b>的周税 × {@code Rules.officerSpendRatioFixed}。
+     * 之所以是「一个池子」而不是「每人一份」：四个官职各自花满的话，实际敞口就是比例 × 4，
+     * 而「限额」两个字的意思就没了。
+     *
+     * <p><b>为什么 {@code weekKey} 由调用方给而不是本类读时钟</b>：与 {@link #collectTax} 同一条理由 ——
+     * 领域层不持有时钟，跨周重置才可被测试精确复现。传进来的必须是与周税同一个口径的周键，
+     * 否则会出现「税按 A 周结、额度按 B 周算」。
+     *
+     * @param payee   落点（不得为 null，见 {@link Payee}）
+     * @param reason  用途。不得为空
+     * @param weekKey 本次支出所属的周键（{@code WeekKey.number(now)}）
      * @return 支出后的余额
+     * @throws IllegalStateException 国库不足，或非国王身份超出本周限额
      */
-    public long spend(String operatorId, Payee payee, long amount, String reason) {
+    public long spend(String operatorId, Payee payee, long amount, String reason, long weekKey) {
         requireActive();
         if (amount <= 0) {
             throw new IllegalArgumentException("支出额必须为正，实际=" + amount);
@@ -751,12 +823,53 @@ public final class Nation {
         if (payee == null) {
             throw new IllegalArgumentException("国库支出必须写明支给谁：没有 payee 的日志无法追责");
         }
+        if (!operatorId.equals(kingId)) {
+            long already = weekKey == spendWeekKey ? spentThisWeek : 0L;
+            long cap = officerWeeklySpendCap(weekKey);
+            if (already + amount > cap) {
+                throw new OfficerSpendLimitException("本周国库支出超出限额：上限 " + cap
+                        + "（本周实收入账 " + (weekKey == lastTaxWeekKey ? lastTaxCredited : 0L)
+                        + " × 比例），本周已支取 " + already + "，本次要支取 " + amount
+                        + "。国王的支取不受此限（B13 §2）");
+            }
+            if (weekKey != spendWeekKey) {
+                spendWeekKey = weekKey;
+                spentThisWeek = 0L;
+            }
+            spentThisWeek += amount;
+        }
         if (treasury < amount) {
             throw new IllegalStateException("国库资金不足：需要 " + amount + "，当前 " + treasury);
         }
         treasury -= amount;
         appendLog(new TreasuryLog(lastLogAt, operatorId, payee.text(), amount, reason, treasury));
         return treasury;
+    }
+
+    /**
+     * 非国王身份在 {@code weekKey} 这一周还能被允许支取的总额上限（本周累计，不是单笔）。
+     *
+     * <p>公开它是为了让国库面板与错误文案共用同一个数 —— 两处各算一遍的话，
+     * 症状是「面板显示还能花 500，点下去说超限」。
+     */
+    public long officerWeeklySpendCap(long weekKey) {
+        // 只认**本周**的入库额：上周收了多少与本周能花多少无关
+        long credit = weekKey == lastTaxWeekKey ? lastTaxCredited : 0L;
+        return FixedPoint.truncate(FixedPoint.mul(FixedPoint.of(credit), rules.officerSpendRatioFixed()));
+    }
+
+    /**
+     * 「非国王身份超出本周国库限额」这个失败单独成一个类型。
+     *
+     * <p>理由不是分类癖好，而是 web 层要把它的错误码与「国库余额不足」分开（两者的下一步动作不同），
+     * 而<b>靠比对异常文案来分</b>意味着改一句提示就会悄悄把两个码混回去 —— 那种 bug 不报错。
+     *
+     * <p>继承 {@link IllegalStateException} 是为了不打挂所有既有的 {@code catch (IllegalStateException)}。
+     */
+    public static final class OfficerSpendLimitException extends IllegalStateException {
+        OfficerSpendLimitException(String message) {
+            super(message);
+        }
     }
 
     /** 国库入账（战利品、活动奖励等外部来源）。同样留日志。 */
@@ -836,10 +949,54 @@ public final class Nation {
         Diplomacy relation = diplomacyWith(targetNationId);
         return switch (relation) {
             case ALLIED -> false;      // 盟约不可互攻
-            case TRIBUTARY -> false;   // 朝贡国不可被宣战
+            case TRIBUTARY -> false;   // C22：朝贡也是双向禁攻，宗主与藩属都打不动对方
             case HOSTILE -> true;
             case NEUTRAL -> true;      // 中立可被宣战（宣战后转为敌对）
         };
+    }
+
+    /**
+     * 两个国家之间能不能<b>互相</b>攻击。
+     *
+     * <p><b>2026-09-13 裁决 C21：条约要双方各自宣布才成立。</b>此前一侧单方面宣布盟约就
+     * 约束两侧，实际效果是"弱势方给自己挂了一块免战牌" —— 与 C00 公理一
+     * 「不给弱者自动补偿」直接冲突：打不动他这件事不是他争取来的，是他声明出来的。
+     * 现在 {@code ALLIED} / {@link Diplomacy#TRIBUTARY} 必须<b>两侧都记着同一个关系</b>才算数。
+     *
+     * <p>这也意味着<b>不需要一个新的 accept 端点</b>：对方国王对外交部说一次同样的话就是接受。
+     * 裁决当时预估的"要加一个 accept 动作与端点"是没有看到这个对称性时的估计，
+     * 而多一个只服务于这一件事的端点，就是多一条要单独维护的权限与幂等路径。
+     *
+     * <p><b>为什么它是领域层的一个方法而不是各调用点自己写判定</b>：这条规则写在调用点上，
+     * 第二条攻击路径（集结、掠袭、将来的国战）漏抄一次的表现不是报错，
+     * 而是"某一侧的单边宣布仍然挡住了他，却挡不住反向的那一支"。
+     *
+     * <p>单边视角仍然留在 {@link #mayAttackNation} 里：面板要显示"我怎么看他"，
+     * 那一句不能被这个成对判定替代。
+     */
+    public static boolean mayAttackEachOther(Nation from, Nation to) {
+        if (from == null || to == null) {
+            // 有一侧根本不存在时不由本方法裁决：返回放行会把"查不到"偷偷变成"没有外交约束"
+            throw new IllegalArgumentException("mayAttackEachOther 需要两侧都存在");
+        }
+        return !treatyInForce(from, to);
+    }
+
+    /** 条约是否已经成立（两侧记着同一个条约关系）。 */
+    public static boolean treatyInForce(Nation a, Nation b) {
+        if (a == null || b == null) {
+            throw new IllegalArgumentException("treatyInForce 需要两侧都存在");
+        }
+        Diplomacy mine = a.diplomacyWith(b.id());
+        return isTreaty(mine) && mine == b.diplomacyWith(a.id());
+    }
+
+    /**
+     * 这一档关系算不算"条约"（会约束谁能打谁）。唯一的一份定义 ——
+     * web 层的文案与闸门以前各写了一遍 {@code ALLIED || TRIBUTARY}，那就是两个家。
+     */
+    public static boolean isTreaty(Diplomacy relation) {
+        return relation == Diplomacy.ALLIED || relation == Diplomacy.TRIBUTARY;
     }
 
     // ---------- 领土（§6） ----------
@@ -874,6 +1031,17 @@ public final class Nation {
         if (!operatorId.equals(kingId)) {
             throw new IllegalStateException("只有国王能解散国家");
         }
+        tearDown(operatorId, now, "disband_writeoff", "国家解散，国库余额核销（无人收到这笔钱）");
+    }
+
+    /**
+     * 亡国的拆解动作 —— 国王主动解散与「最后一个成员联盟离开」的自动算亡<b>共用这一份</b>。
+     *
+     * <p>两者要的结果完全一致（成员进冷却、官职清空、余额核销、盖上 {@code disbandedAt}），
+     * 只有核销日志上的用途与文案不同：那两样是审计要区分的东西，不是两套流程。
+     * 分成两个方法各写一遍的代价是将来只改得动一处，症状是「自动亡的国把钱静默吞了」。
+     */
+    private void tearDown(String operatorId, long now, String writeOffPayee, String writeOffReason) {
         for (String allianceId : new LinkedHashSet<>(memberAlliances.keySet())) {
             joinCooldownUntil.put(allianceId, now + rules.joinCooldownMillis());
         }
@@ -886,8 +1054,7 @@ public final class Nation {
         // 所以 payee 写成一个用途标识而不是某个人 —— 写空串会被"没有 payee 的日志无法追责"这条
         // 约定判成不合法，而把它写成某个真实 id 更是在伪造一笔转账。
         if (treasury > 0L) {
-            appendLog(new TreasuryLog(now, operatorId, "disband_writeoff", treasury,
-                    "国家解散，国库余额核销（无人收到这笔钱）", 0L));
+            appendLog(new TreasuryLog(now, operatorId, writeOffPayee, treasury, writeOffReason, 0L));
         }
         treasury = 0L;
         disbandedAt = now;

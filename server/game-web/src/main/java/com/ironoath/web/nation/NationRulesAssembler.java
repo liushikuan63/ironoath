@@ -55,6 +55,8 @@ public class NationRulesAssembler {
                 configs.longParam("NATION_JOIN_COOLDOWN_HOURS") * MILLIS_PER_HOUR,
                 configs.longParam("NATION_TAX_WEEKLY_PER_ALLIANCE"),
                 (int) configs.longParam("NATION_TREASURY_LOG_RETENTION"),
-                (int) configs.longParam("NATION_OFFICE_SEAT_TOTAL"));
+                (int) configs.longParam("NATION_OFFICE_SEAT_TOTAL"),
+                // DECIMAL 已由 fixedParam 给成定点（10000=1.0），这里不能再乘一次
+                configs.fixedParam("NATION_OFFICER_SPEND_WEEKLY_RATIO"));
     }
 }

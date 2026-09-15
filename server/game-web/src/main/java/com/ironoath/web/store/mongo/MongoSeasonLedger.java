@@ -80,6 +80,14 @@ public final class MongoSeasonLedger implements SeasonLedgerStore {
     }
 
     @Override
+    public int purgeSeason(String seasonId) {
+        // 按 seasonId 整季删：保留策略的口径是"几个赛季"，不是"多少天"
+        long deleted = mongo.remove(Query.query(Criteria.where("seasonId").is(seasonId)),
+                SeasonLedgerDocument.COLLECTION).getDeletedCount();
+        return Math.toIntExact(deleted);
+    }
+
+    @Override
     public void clear() {
         mongo.remove(new Query(), SeasonLedgerDocument.COLLECTION);
     }

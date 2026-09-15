@@ -522,6 +522,20 @@ public final class PayOrder {
         }
 
         /**
+         * 未发货的订单笔数。与 {@link #unfulfilledCents()} 共用同一个判据
+         * {@code needsRetry()} —— 什么算负债只许有一处定义，否则两个数会各自漂移。
+         */
+        public synchronized long unfulfilledOrderCount() {
+            long count = 0L;
+            for (PayOrder order : orders.values()) {
+                if (order.needsRetry()) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        /**
          * 月度限额用的"本月已花"。按 {@code paidAt} 而不是 {@code createdAt} 算 ——
          * 月末 23:59 下单、月初 00:01 付掉的这笔，钱是下个月花的，占用下个月的额度。
          */

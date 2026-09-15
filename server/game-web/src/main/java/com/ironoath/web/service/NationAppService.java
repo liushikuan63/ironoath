@@ -93,6 +93,14 @@ public class NationAppService {
     private final ConfigRegistry configs;
     private final BotRegistry bots;
     /**
+     * 亡国与退国的<b>在线</b>推送通道。与 {@code SocialAppService} 注入的是同一个 bean。
+     *
+     * <p>{@code socialStore.pushEvent} 只解决「上线后补齐」（B10 验收 12），
+     * 一个正开着游戏的人要等他下次打开社交面板才知道自己的国没了 —— 那正是 A7 要消掉的形状。
+     * 两条路共用同一份事件对象，所以实时送到与补齐的内容不会分叉。
+     */
+    private final com.ironoath.web.ws.SocialPushPublisher pushPublisher;
+    /**
      * 俸禄发放走它，不直接改存档：容量上限、保护量、装不下转邮件补发都在发放器里
      * （B04 禁止项「奖励不得绕过发放器」）。与赛季结算注入的是同一个 bean。
      */
@@ -104,6 +112,7 @@ public class NationAppService {
                             PlayerRepository players, PlayerLock playerLock,
                             IdempotencyStore idempotency, TimeService timeService,
                             ConfigRegistry configs, BotRegistry bots,
+                            com.ironoath.web.ws.SocialPushPublisher pushPublisher,
                             RewardService rewardService) {
         this.nations = nations;
         this.assembler = assembler;
@@ -116,6 +125,7 @@ public class NationAppService {
         this.timeService = timeService;
         this.configs = configs;
         this.bots = bots;
+        this.pushPublisher = pushPublisher;
         this.rewardService = rewardService;
     }
 
@@ -258,11 +268,20 @@ public class NationAppService {
                 Nation loaded = nations.findByAlliance(alliance.id()).orElseThrow(() -> new BizException(
                         ErrorCode.NATION_NOT_FOUND, "你的联盟不属于任何国家"));
                 Nation nation = settleTax(loaded.id(), now);
-                nation.removeAlliance(alliance.id(), false, now);
+                nation.removeAlliance(alliance.id(), false, playerId, now);
                 nations.save(nation, nation.version());
                 long cooldownUntil = nation.joinCooldownUntil(alliance.id());
-                LOG.info("联盟退出国 nationId={} allianceId={} 发起盟主={} 影响成员={} 可再入籍时刻={}（冷却来自 global.NATION_JOIN_COOLDOWN_HOURS）",
-                        nation.id(), alliance.id(), playerId, alliance.memberIds().size(), cooldownUntil);
+                // 发起的盟主知道自己点了什么，而他的联盟成员是被动失去国籍的 —— 收件人是全盟成员、
+                // 排除发起人。放在 save 之后：国家那边写回失败就该整次失败，不该留下一条已发出的通知。
+                notifyNation("NATION_LEFT",
+                        nation.isDisbanded()
+                                ? "联盟「" + alliance.name() + "」已退出国家「" + nation.name()
+                                        + "」，它是最后一个成员联盟 —— 国家随之解散"
+                                : "联盟「" + alliance.name() + "」已退出国家「" + nation.name() + "」",
+                        alliance.memberIds(), playerId, nation.id(), now);
+                LOG.info("联盟退出国 nationId={} allianceId={} 发起盟主={} 影响成员={} 可再入籍时刻={} 国家是否随之解散={}（冷却来自 global.NATION_JOIN_COOLDOWN_HOURS）",
+                        nation.id(), alliance.id(), playerId, alliance.memberIds().size(), cooldownUntil,
+                        nation.isDisbanded());
                 return new NationLeaveResp(nation.id(), nation.name(), cooldownUntil, now);
             });
         } catch (RuntimeException e) {
@@ -304,6 +323,9 @@ public class NationAppService {
                 Nation nation = settleTax(mine.id(), now);
                 int memberCount = nation.memberAllianceCount();
                 long writtenOff = nation.treasury();
+                // 名单必须在 disband 之前取：disband 会清空成员联盟表，事后再问"谁原本是这个国的人"
+                // 已经问不到了 —— 而恰恰是这些人需要被告知国没了
+                List<String> audience = nationMemberPlayerIds(nation);
                 try {
                     nation.disband(playerId, now);
                 } catch (IllegalStateException e) {
@@ -311,9 +333,11 @@ public class NationAppService {
                     throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED, e.getMessage());
                 }
                 nations.save(nation, nation.version());
-                LOG.info("解散国家 nationId={} name={} 国王={} 影响成员联盟={} 核销国库={}："
+                notifyNation("NATION_DISBANDED",
+                        "国家「" + nation.name() + "」已被国王解散", audience, playerId, nation.id(), now);
+                LOG.info("解散国家 nationId={} name={} 国王={} 影响成员联盟={} 影响人数={} 核销国库={}："
                                 + "这些联盟全部进入入籍冷却（与主动退出、被开除同一条规则），官职一律清空",
-                        nation.id(), nation.name(), playerId, memberCount, writtenOff);
+                        nation.id(), nation.name(), playerId, memberCount, audience.size(), writtenOff);
                 return new NationDisbandResp(nation.id(), nation.name(), memberCount, writtenOff, now);
             });
         } catch (RuntimeException e) {
@@ -441,8 +465,12 @@ public class NationAppService {
      * 因此日志必须留下完整审计（谁、何时、把与谁的关系从什么改成了什么）——
      * 一次误操作会变成一场无从追溯的战争。
      *
-     * <p><b>单方面变更</b>：B13 §5 没有要求对方同意。要求双方确认会让「结盟」变成
-     * 一次需要两人同时在线的操作，而那在小服里几乎凑不齐。
+     * <p><b>写入口是单边的，约束是双边的</b>（2026-09-13 裁决 C21）：任何人都可以先把自己的态度记下来，
+     * 不需要对方同时在线 —— 但一份 {@code ALLIED} / {@code TRIBUTARY} 只有<b>两侧都记着同一个关系</b>
+     * 才成立，成立之后才双向禁攻（见 {@code Nation.mayAttackEachOther}）。
+     * 旧口径是"一侧宣布即约束两侧"，实际效果是弱势方声明一句就拿到一块免战牌，与公理一冲突；
+     * 而当初拒绝 accept 流程的理由（"结盟变成需要两人同时在线的操作，小服里凑不齐"）在这里并不成立：
+     * 先宣布的一方那份要约一直挂着，对方什么时候说同一句话，条约就在那一刻成立。撕约只要一个人。
      */
     public NationDiplomacyResp diplomacy(String playerId, NationDiplomacyReq req) {
         long now = timeService.serverNow();
@@ -550,6 +578,50 @@ public class NationAppService {
         return activeNations().stream().filter(n -> playerId.equals(n.kingId())).findFirst();
     }
 
+    /**
+     * 国家里<b>所有人</b>的玩家 id（把成员联盟表展开一层）。
+     *
+     * <p>亡国通知的收件名单。必须在 {@code Nation.disband} 之前取 —— 它清空成员联盟表。
+     * 一个成员联盟已经不在 {@code allianceById} 里时跳过：那是联盟先没了的半状态，
+     * 这里没有可通知的人了，而国家侧的账仍然要照常拆完。
+     */
+    private List<String> nationMemberPlayerIds(Nation nation) {
+        List<String> out = new ArrayList<>();
+        for (String allianceId : nation.memberAllianceIds()) {
+            socialStore.allianceById(allianceId).ifPresent(a -> out.addAll(a.memberIds()));
+        }
+        return out;
+    }
+
+    /**
+     * 发一条国家侧通知：<b>离线补偿与在线推送两条路都走</b>（B10 验收 12 与验收 5 是同一件事的两半）。
+     *
+     * <p>两条路共用<b>同一个事件对象</b>：各 new 一份的话，实时收到的与上线补齐的就可能是两条
+     * 不同措辞的文案，而玩家只会觉得"通知有时候一个样有时候另一个样"。
+     *
+     * @param excludeId 发起人。他知道自己刚刚做了什么，再收一条"你刚做的事"是噪声；
+     *                  传 null 表示一个都不排除
+     */
+    private void notifyNation(String type, String title, List<String> recipients,
+                              String excludeId, String relatedId, long now) {
+        SocialStore.SocialEvent record = new SocialStore.SocialEvent(
+                "evt_" + type + "_" + relatedId + "_" + now, type, title, null,
+                null, null, relatedId, now, now + SocialStore.EVENT_TTL_MILLIS);
+        List<String> audience = new ArrayList<>();
+        for (String playerId : recipients) {
+            if (playerId.equals(excludeId)) {
+                continue;
+            }
+            socialStore.pushEvent(playerId, record);
+            audience.add(playerId);
+        }
+        if (audience.isEmpty()) {
+            // 只有"国王一个人解散自己的国"会走到这里。不是失败，所以不打 WARN
+            return;
+        }
+        pushPublisher.publish(type, audience, record);
+    }
+
     public NationResp view(String playerId) {
         long now = timeService.serverNow();
         Nation mine = requireNationOf(playerId);
@@ -591,10 +663,13 @@ public class NationAppService {
      * 发给某个玩家（俸禄，扣账之后走发放器发 GOLD），或由某个消耗性用途核销（国家科技 / 国战增益，
      * 不入任何个人账户）。一个自由字符串的支给对象被否掉了 —— 见 {@link Nation.Payee}。
      *
-     * <p><b>权限走 role_permission 表的 WITHDRAW_TREASURY</b>：那张表 `allowLeader=true`、
-     * 其余两档 `false`，why 写明「国库支取涉及全国资源，只给国主」。B13 §2 给首相写了
-     * 「国库支出（限额）」，而那个限额**没有数值** —— 本轮以权限表为准（首相暂不可支取）；
-     * 要放开就先给限额定数并改表，不在代码里编一个上限。
+     * <p><b>权限走 role_permission 表的 WITHDRAW_TREASURY，限额走领域层</b>（2026-09-13 裁决 C16）：
+     * 那张表原先只有国主能支取，而 B13 §2 给首相写的「国库支出（限额）」因为<b>没有数值</b>而一次也走不通 ——
+     * 是个装饰品。现在表放开到 OFFICER 档（代价见该表 why：三档模型表达不出「只给首相」），
+     * 限额则落在 {@code Nation.spend}：上限 = <b>本周实入库的周税</b> ×
+     * {@code global.NATION_OFFICER_SPEND_WEEKLY_RATIO}，<b>全国共用一个池子</b>而不是每人一份，
+     * 国王不受此限。「不在代码里编一个上限」这条纪律仍然成立 —— 数在表里，判定在领域层，本类只负责
+     * 把两种失败映射成两个错误码（余额不足 13010 / 超周限额 13011，玩家的下一步不同）。
      *
      * <p><b>顺序：先扣账 + 写日志（领域层同一步完成），再发放</b>。失败方向选「记了没发出去」：
      * 那一笔有补偿队列与客服入口，反过来（发了没记）没有 —— 与赛季结算、支付域同一条取舍。
@@ -617,8 +692,15 @@ public class NationAppService {
                 }
                 Nation.Payee payee = toPayee(req);
                 nation.setClock(now);
+                // 与 settleWeeklyTax 同源的周键：税按哪一周结，额度就必须按同一周算，
+                // 否则会出现"税按 A 周结、额度按 B 周算"
+                long weekKey = com.ironoath.common.time.WeekKey.number(now);
                 try {
-                    nation.spend(playerId, payee, req.amount(), req.reason());
+                    nation.spend(playerId, payee, req.amount(), req.reason(), weekKey);
+                } catch (Nation.OfficerSpendLimitException e) {
+                    // 必须排在下一条之前：它是 IllegalStateException 的子类，顺序反了就会被
+                    // 当成"余额不足"回答，而玩家该等的是下周额度刷新，不是国库进钱
+                    throw new BizException(ErrorCode.NATION_OFFICER_SPEND_LIMIT, e.getMessage());
                 } catch (IllegalStateException e) {
                     // 余额不足：整笔拒绝而不是部分出账（见错误码的注释）
                     throw new BizException(ErrorCode.NATION_TREASURY_NOT_ENOUGH, e.getMessage());

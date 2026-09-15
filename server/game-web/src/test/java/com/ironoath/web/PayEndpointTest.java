@@ -34,6 +34,7 @@ import com.ironoath.web.dto.generated.OrderStatusResp;
 import com.ironoath.web.dto.generated.PayCallbackReq;
 import com.ironoath.web.dto.generated.PayRetryReq;
 import com.ironoath.web.dto.generated.PlayerInitReq;
+import com.ironoath.web.ops.OpsTokenGuard;
 import com.ironoath.web.service.PayAppService;
 import com.ironoath.web.service.PlayerInitService;
 
@@ -60,6 +61,8 @@ import com.ironoath.web.service.PlayerInitService;
 class PayEndpointTest {
 
     private static final String PLAYER_HEADER = "X-Player-Id";
+    /** 与 {@code application-test.yml} 的 {@code ironoath.ops.token} 一致（OpsEndpointTest 同源）。 */
+    private static final String OPS_TOKEN = "test-ops-token";
     private static final long MINUTE = 60_000L;
 
     @Autowired private MockMvc mockMvc;
@@ -195,6 +198,69 @@ class PayEndpointTest {
         assertThat(order.fulfillAttempts()).as("补单又试了一次").isEqualTo(attemptsAfterCallback + 1);
         assertThat(order.status()).as("补单不改变已付款这个事实：仍然是一笔待发货的负债")
                 .isEqualTo(PayOrder.Status.PAID_UNFULFILLED);
+    }
+
+    // ---------- 负债出口（GET /ops/pay/debt） ----------
+
+    @Test
+    @DisplayName("B14：钱收了货没发出去的负债终于能被查到，而不是只活在一条 ERROR 日志里")
+    void debtReadoutReportsEveryUnfulfilledOrder() throws Exception {
+        // 本类的存储不在用例之间重置（Spring 上下文全程共享），所以这里看的是**增量**：
+        // 断绝对值会让用例之间互相耦合，先跑哪个都会红
+        JsonNode before = debt200(20);
+        long centsBefore = before.get("unfulfilledCents").asLong();
+        long countBefore = before.get("unfulfilledOrders").asLong();
+
+        String first = paidButUnfulfilled("growth_fund");
+        String second = paidButUnfulfilled("monthly_card");
+        long expected = orders.get(first).line().totalCents() + orders.get(second).line().totalCents();
+
+        JsonNode after = debt200(20);
+        assertThat(after.get("unfulfilledCents").asLong() - centsBefore)
+                .as("两笔已付款未发货的订单都要进总额").isEqualTo(expected);
+        assertThat(after.get("unfulfilledOrders").asLong() - countBefore)
+                .as("笔数与总额一起看才分得清是一笔大的还是一堆小的").isEqualTo(2);
+        assertThat(after.get("orders")).extracting(n -> n.get("orderId").asText())
+                .as("只给一个总额，跟进的人不知道该给谁补发").contains(first, second);
+        assertThat(after.get("listed").asInt()).isEqualTo(after.get("orders").size());
+    }
+
+    @Test
+    @DisplayName("limit 只截明细、不截总额，而「没列全」这件事在响应里是看得见的")
+    void debtListIsCappedButTheTotalIsNot() throws Exception {
+        paidButUnfulfilled("growth_fund");
+        paidButUnfulfilled("monthly_card");
+
+        JsonNode capped = debt200(1);
+        assertThat(capped.get("listed").asInt()).as("明细受 limit 约束").isEqualTo(1);
+        assertThat(capped.get("unfulfilledOrders").asLong())
+                .as("总额与笔数不受 limit 影响，否则 limit 会把一笔负债藏成零").isGreaterThan(1L);
+        assertThat(capped.get("listed").asInt())
+                .as("listed < unfulfilledOrders 就是「还有没列出来的」的明确信号")
+                .isLessThan(capped.get("unfulfilledOrders").asInt());
+    }
+
+    @Test
+    @DisplayName("负债读数要运维令牌：它回的是全服订单，不属于任何一个玩家")
+    void debtReadoutRequiresOpsToken() throws Exception {
+        JsonNode noToken = perform(get("/ops/pay/debt"));
+        assertThat(noToken.get("code").asInt()).isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
+        JsonNode wrong = perform(get("/ops/pay/debt").header(OpsTokenGuard.HEADER, "not-the-token"));
+        assertThat(wrong.get("code").asInt()).isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
+    }
+
+    /** 下一单并让回调确认收款 —— 默认发货实现什么都不发，所以它必然停成一笔负债。 */
+    private String paidButUnfulfilled(String productId) throws Exception {
+        String playerId = newPlayer();
+        String orderId = okData(postJson("/pay/order", playerId,
+                new CreateOrderReq(newRequestId(), productId, 1))).get("orderId").asText();
+        okData(postJson("/pay/callback", null, new PayCallbackReq(orderId, "txn-" + orderId, "s", true)));
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PAID_UNFULFILLED);
+        return orderId;
+    }
+
+    private JsonNode debt200(int limit) throws Exception {
+        return okData(perform(get("/ops/pay/debt?limit=" + limit).header(OpsTokenGuard.HEADER, OPS_TOKEN)));
     }
 
     // ---------- 安全边界 ----------

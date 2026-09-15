@@ -234,7 +234,7 @@ public class AttackGuardService {
         }
         Nation.Diplomacy byAttacker = from.diplomacyWith(to.id());
         Nation.Diplomacy byTarget = to.diplomacyWith(from.id());
-        if (from.mayAttackNation(to.id()) && to.mayAttackNation(from.id())) {
+        if (Nation.mayAttackEachOther(from, to)) {
             return;
         }
         LOG.info("攻击被拒：外交关系禁止 attacker={} target={} 攻方国={}({}) 守方国={}({})",
@@ -254,17 +254,14 @@ public class AttackGuardService {
      * 这里会在编译期被要求表态 —— 漏一条的表现是新关系被静默解释成一句错话。
      */
     private static String treatyReason(Nation.Diplomacy byAttacker, Nation.Diplomacy byTarget) {
-        Nation.Diplomacy blocking = isTreaty(byAttacker) ? byAttacker : byTarget;
-        return switch (blocking) {
+        // C21 之后走到这里的唯一原因是"两侧记着同一个条约"，两侧读出来就是同一个值，
+        // 不必再猜是哪一边挡住的（原先那句「对方国家认为你们之间有约在先」解释的是一种不可能
+        // 再出现的状态：单边宣布已经不构成约束）
+        return switch (byAttacker) {
             case ALLIED -> "你们两个国家之间是盟约关系，盟约不可互攻（要打先由国王解除盟约）";
-            case TRIBUTARY -> "你们两个国家之间是朝贡关系，朝贡国不可被宣战";
-            // 这两档本身放行；走到这里说明是<b>对面</b>那一侧记着条约，所以文案按对面那句说
+            case TRIBUTARY -> "你们两个国家之间是朝贡关系，双方都不得攻击对方（C22：朝贡不是单向保护）";
             case HOSTILE, NEUTRAL -> "对方国家认为你们之间有约在先，不能攻击";
         };
-    }
-
-    private static boolean isTreaty(Nation.Diplomacy relation) {
-        return relation == Nation.Diplomacy.ALLIED || relation == Nation.Diplomacy.TRIBUTARY;
     }
 
     /** 玩家所属国家 id。国籍跟随联盟，所以是「联盟 → 国家」两跳；任一跳落空就没有国家。 */
