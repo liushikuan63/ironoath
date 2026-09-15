@@ -66,6 +66,7 @@ class OpsEndpointTest {
     private static final String CRASH_URL = "/ops/crash";
     private static final String VERSION_URL = "/ops/app/version";
     private static final String MANIFEST_URL = "/ops/config/manifest";
+    private static final String RELOAD_URL = "/ops/config/reload";
     private static final String PLAYER_HEADER = "X-Player-Id";
     /** 与 {@code application-test.yml} 的 {@code ironoath.ops.token} 一致（SeasonSettleAuthTest 同源）。 */
     private static final String OPS_TOKEN = "test-ops-token";
@@ -326,6 +327,26 @@ class OpsEndpointTest {
     // ---------- 验收 7：配置热更 ----------
 
     @Test
+    @DisplayName("配置热更：带令牌可调，文件没动过时如实回答「一张都没换」")
+    void configReloadReportsWhatItActuallyChanged() throws Exception {
+        // 仓库里的表在这条用例里没被改动，所以 changed 必然是空数组 —— 那也是一个要如实说出来的结果
+        // （它是「我改的表到底是不是这张」的复核手段），不是错误。
+        // 真正的「改了文件就生效」由 ConfigRegistryReloadTest 在临时目录副本上验。
+        JsonNode data = okData(postWithOpsToken(RELOAD_URL, OPS_TOKEN));
+
+        assertThat(data.get("changed")).as("没有文件改动就该是空数组：%s", data).isEmpty();
+        assertThat(data.get("version").asText()).as("要报出热更后 live 的清单版本").isNotBlank();
+    }
+
+    @Test
+    @DisplayName("配置热更没令牌一律拒绝：那是能改变全服数值的动作")
+    void configReloadRefusesWithoutToken() throws Exception {
+        assertThat(codeOf(postWithOpsToken(RELOAD_URL, null)))
+                .as("热更能改全服数值，不能是任何人都能打的端点")
+                .isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
+    }
+
+    @Test
     @DisplayName("验收7：客户端 hash 与服务端一致时不需要更新；差一张或 hash 不同就要拉新表")
     void manifestReportsOutdatedTablesByHash() throws Exception {
         JsonNode full = postJson(MANIFEST_URL, new ConfigManifestReq(Map.of()));
@@ -414,6 +435,16 @@ class OpsEndpointTest {
      */
     private JsonNode ingestHealth() throws Exception {
         return okData(getRoot("/ops/ingest", OPS_TOKEN));
+    }
+
+    /** 发一条 POST，带运维令牌；{@code opsToken} 传 null 表示根本不带那个头。 */
+    private JsonNode postWithOpsToken(String url, String opsToken) throws Exception {
+        var builder = post(url).contentType(MediaType.APPLICATION_JSON).content("{}");
+        if (opsToken != null) {
+            builder = builder.header(OpsTokenGuard.HEADER, opsToken);
+        }
+        MvcResult result = mockMvc.perform(builder).andExpect(status().isOk()).andReturn();
+        return JsonUtils.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
     }
 
     /** 发一条 GET。{@code opsToken} 传 null 表示根本不带那个头。 */

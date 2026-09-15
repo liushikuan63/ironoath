@@ -73,7 +73,7 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
     private volatile Map<String, RawConfigTable> rawTables;
 
     /** 强类型表缓存。热更时整表替换，读方持有的旧引用依然是一致快照。 */
-    private final Map<Class<?>, ConfigTable<?>> typedTables = new ConcurrentHashMap<>();
+    private volatile Map<Class<?>, ConfigTable<?>> typedTables = new ConcurrentHashMap<>();
 
     /**
      * global 表的键值索引。<b>同样必须能被热更替换</b>：热更 global 之后
@@ -321,6 +321,31 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
             sb.append(Character.toLowerCase(c));
         }
         return sb.toString();
+    }
+
+    /**
+     * 全量热更：从目录重新读一遍全部表，**校验通过才整体替换**（B16 §5 配置热更 / 验收 7）。
+     *
+     * <p><b>为什么是全量而不是逐表</b>：只换变化的那几张看起来更省，但"哪些变了"要靠比对，
+     * 而比对的口径（内容 hash）已经在配置清单那条链路上有一份，这里再造一份就多一个会漂移的地方。
+     * 更要紧的是<b>失败方向</b>：逐表热更时第 3 张校验失败会停在「前两张已换、后一张没换」，
+     * 那是一份谁也没设计过的中间状态；全量替换下坏表让整次热更原地不动。
+     *
+     * <p>原子性靠"先建好候选、再整体换引用"：候选构建期间（解析、校验、装配强类型视图）
+     * 线上仍用旧表跑，构建成功之后是三次引用赋值。读方要么看到完整的旧快照、要么看到完整的新快照。
+     *
+     * <p><b>调用方是运维入口</b>（{@code POST /ops/config/reload}）：热更是运维动作，
+     * 不做文件监听自动加载 —— 那会让"改坏一张表"在无人值守的夜里自动生效。
+     *
+     * @throws ConfigException 任一表校验失败：<b>旧表原样保留</b>，服务不受影响
+     */
+    public synchronized void reloadAllFromDirectory(Path dir) {
+        ConfigRegistry candidate = loadFromDirectory(dir);
+        // 替换顺序与单表热更一致：原始表 → global 索引 → 强类型视图。
+        // 中间态是「清单已广告新 hash 而业务还在用旧值」，它只持续两次赋值，且客户端下载新表后自然收敛
+        this.rawTables = candidate.rawTables;
+        this.globals = candidate.globals;
+        this.typedTables = candidate.typedTables;
     }
 
     // ---------- 原始表与诊断 ----------

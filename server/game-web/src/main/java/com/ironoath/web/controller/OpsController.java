@@ -79,6 +79,17 @@ public class OpsController {
      * <p>与上面那几个 POST 的分界就是「要不要请求体」：这一条什么都不用问就能答，所以是 GET。
      * 它要令牌，因为回的是全服聚合数。
      */
+    /**
+     * 配置热更（B16 §5 / 验收 7）：从磁盘重读全部配置表，校验通过才整体替换。
+     * 走运维令牌 —— 热更是能改变全服数值的动作，不能是任何人都能打的端点。
+     */
+    @PostMapping("/config/reload")
+    public Result<com.ironoath.web.dto.generated.ConfigReloadResp> reloadConfig(
+            @RequestHeader(value = "X-Ops-Token", required = false) String opsToken) {
+        token.require(opsToken);
+        return Result.ok(ops.reloadConfigs());
+    }
+
     @GetMapping("/ingest")
     public Result<TrackIngestResp> ingest(
             @RequestHeader(name = OpsTokenGuard.HEADER, required = false) String opsToken) {

@@ -56,6 +56,10 @@ public class OpsAppService {
     private final TimeService timeService;
     /** 客服/退款入口的部署配置（环境变量来的）。未配置时下发 null，客户端照常显示入口。 */
     private final com.ironoath.web.release.SupportConfig supportConfig;
+    /** 配置热更要动的就是这一个实例（消费方持的是同一个引用，换内部引用才让所有人生效）。 */
+    private final com.ironoath.config.ConfigRegistry configs;
+    /** 配置目录：热更从磁盘重读，所以必须知道启动时读的是哪个目录。 */
+    private final com.ironoath.web.config.GameProperties properties;
     /**
      * 本进程启动以来被入口软上限截断掉的事件累计条数。
      *
@@ -67,12 +71,16 @@ public class OpsAppService {
 
     public OpsAppService(ReleaseRulesAssembler assembler, TrackFlusher flusher,
                          TrackEventStore store, TimeService timeService,
-                         com.ironoath.web.release.SupportConfig supportConfig) {
+                         com.ironoath.web.release.SupportConfig supportConfig,
+                         com.ironoath.config.ConfigRegistry configs,
+                         com.ironoath.web.config.GameProperties properties) {
         this.assembler = assembler;
         this.flusher = flusher;
         this.store = store;
         this.timeService = timeService;
         this.supportConfig = supportConfig;
+        this.configs = configs;
+        this.properties = properties;
     }
 
     // ---------- 埋点（B16 §3，验收 3） ----------
@@ -201,6 +209,53 @@ public class OpsAppService {
     }
 
     // ---------- 配置热更（B16 §5，验收 7） ----------
+
+    /**
+     * 全量热更配置表：从磁盘重读一遍，校验通过才整体替换。<b>不重启即生效</b>。
+     *
+     * <p><b>判定"哪几张变了"用内容 hash，不用版本号</b>：改了内容忘了升版本时版本号看不出来，
+     * 而 hash 看得出来（这是 {@code TableMeta} 的既定口径）。hash 由
+     * {@link ReleaseRulesAssembler#manifest()} 算，这里前后各取一次 —— 另写一份比对
+     * 等于给同一个事实造第二个家，两份迟早不一致。
+     *
+     * <p><b>失败方向</b>：任一张表校验失败就抛（由全局异常处理成 5xx），<b>旧表原样保留</b>。
+     * 热更最坏的结果不是"没热上"，而是"热了一半"—— 那会留下一份没人设计过的表组合。
+     */
+    public com.ironoath.web.dto.generated.ConfigReloadResp reloadConfigs() {
+        java.util.Map<String, String> before = hashByName();
+        try {
+            configs.reloadAllFromDirectory(java.nio.file.Path.of(properties.configDir()));
+        } catch (RuntimeException e) {
+            LOG.error("配置热更失败，已保留旧版本（服务照常跑）：{}", e.toString());
+            throw e;
+        }
+        java.util.Map<String, String> after = hashByName();
+        java.util.List<String> changed = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, String> e : after.entrySet()) {
+            if (!e.getValue().equals(before.get(e.getKey()))) {
+                changed.add(e.getKey());
+            }
+        }
+        for (String name : before.keySet()) {
+            if (!after.containsKey(name)) {
+                changed.add(name);
+            }
+        }
+        // WARN 级：热更是运维动作，日志要能和"谁在什么时候改了哪张表"对上
+        LOG.warn("配置热更完成：清单版本={} 内容变更表={}（空表示文件没动过或改回了原样）",
+                assembler.manifest().manifestVersion(), changed);
+        return new com.ironoath.web.dto.generated.ConfigReloadResp(
+                assembler.manifest().manifestVersion(), java.util.List.copyOf(changed));
+    }
+
+    /** 表名 → 内容 hash，取自配置清单（唯一的 hash 实现）。 */
+    private java.util.Map<String, String> hashByName() {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        for (com.ironoath.core.release.ReleaseGate.TableMeta meta : assembler.manifest().tables()) {
+            out.put(meta.name(), meta.hash());
+        }
+        return out;
+    }
 
     /**
      * 返回配置清单与需要更新的表。<b>过期判定由服务端算</b>：
