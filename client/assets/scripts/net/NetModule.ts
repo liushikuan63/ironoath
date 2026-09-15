@@ -49,6 +49,38 @@ export interface NetConfig {
   readonly requestTimeoutMs: number
 }
 
+/**
+ * 弱网事件（传输层的事实，不是文案）。
+ *
+ * <p><b>为什么在 net 里定义而不是在显示层</b>：这三件事（将要重投 / 重投到上限 / 链路又通了）
+ * 只有发请求的人知道，让它们从外面猜就等于猜错也没人报错。
+ * 而"该对玩家说什么"刻意不在这里 —— 那是 {@code game/network/NetworkNotice} 的判断，
+ * 两边各管一层，测试也各测各的。
+ */
+export interface NetworkRetrySignal {
+  readonly kind: 'retry'
+  /** 请求路径（如 `/player/init`）。只用于日志与排查，不进玩家可见文案。 */
+  readonly path: string
+  /** 第几次<b>重投</b>（1 起；首次发出不算）。 */
+  readonly attempt: number
+  /** 允许的重投上限，来源 `global.NET_RETRY_MAX_ATTEMPTS`。带出来是为了让上层不另存一份这个数。 */
+  readonly maxAttempts: number
+}
+
+/** 重投到上限仍未接通。不带它就没有一句"别再等了"的话可说。 */
+export interface NetworkGivenUpSignal {
+  readonly kind: 'givenUp'
+  readonly path: string
+  readonly attempts: number
+}
+
+/** 有请求真的拿到了回应（链路通了）。 */
+export interface NetworkRecoveredSignal {
+  readonly kind: 'recovered'
+}
+
+export type NetworkSignal = NetworkRetrySignal | NetworkGivenUpSignal | NetworkRecoveredSignal
+
 export interface RequestOptions {
   /**
    * 是否携带 requestId 幂等键。
@@ -78,6 +110,14 @@ export interface NetDeps {
   readonly rng: Prng
   readonly newRequestId: () => string
   readonly newTraceId: () => string
+  /**
+   * 弱网事件的观察者（可缺省）。缺省时本模块的行为与引入它之前逐字节一致 ——
+   * 一个只用来"让人知道在等什么"的出口，不该有资格把请求链路弄坏。
+   *
+   * <p>存在的理由是 B16 验收 2 的后半句「有超时重试提示」：退避重试早就在跑，
+   * 而玩家看不到任何东西，体感就是"卡死"，于是退出重进 —— 弱网下最坏的动作。
+   */
+  readonly notifyNetwork?: (signal: NetworkSignal) => void
 }
 
 /** WebSocket 服务端消息的公共形状。 */
@@ -264,6 +304,7 @@ export class NetModule {
 
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (attempt > 0) {
+        this.emit({ kind: 'retry', path, attempt, maxAttempts: attempts - 1 })
         await this.deps.delay(this.backoffMs(attempt))
       }
       const traceId = this.deps.newTraceId()
@@ -279,13 +320,40 @@ export class NetModule {
           lastError = `服务端故障 HTTP ${response.status}`
           continue
         }
+        // 服务端答了（哪怕是一个业务拒绝）= 链路通了，那句"正在重试"该收回去。
+        // 刻意不由超时器到点来清 —— 那会出现"提示自己消失了但还没通"
+        this.emit({ kind: 'recovered' })
         return this.parseEnvelope<TResp>(response.status, response.bodyText, traceId)
       } catch (error) {
         lastError = describeError(error)
       }
     }
     this.online = false
+    // 只给"确实重投过"的请求发这条：一次性失败的写请求报"重试 0 次仍未接通"是句胡话，
+    // 它该由 AppRoot 按面板报具体原因（玩家要改的是操作，不是等网络）
+    if (retryable && attempts > 1) {
+      this.emit({ kind: 'givenUp', path, attempts: attempts - 1 })
+    }
     return { kind: 'network', message: lastError, queued: false, requestId }
+  }
+
+  /**
+   * 发一条弱网事件。吞掉观察者抛出的异常。
+   *
+   * <p>这不是防御性装饰：观察者落在场景层，而场景节点会在切场景时被销毁，
+   * 一次"更新一行提示"的失败绝不能把玩家的请求链路一起带走 ——
+   * 尤其不能发生在弱网下（那时每一次成功的请求都比平时贵）。
+   */
+  private emit(signal: NetworkSignal): void {
+    const notify = this.deps.notifyNetwork
+    if (notify === undefined) {
+      return
+    }
+    try {
+      notify(signal)
+    } catch (error) {
+      console.warn('[net] 弱网提示的观察者抛异常（已忽略，不影响请求）', signal.kind, error)
+    }
   }
 
   private headers(traceId: string): Record<string, string> {

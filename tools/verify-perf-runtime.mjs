@@ -230,9 +230,11 @@ if (errors.length > 0) failures.push(`控制台报错 ${errors.length} 条`)
 // 所有打到 :8080 的请求先失败一段时间，再放行。这模拟的是"接口不可用但客户端已经跑起来"，
 // 正是 B16 弱网那一条要看的形态。
 //
-// 两条判据都只能从可观测量取：① 没有未捕获异常（不崩）；② 重试真的发生（同一条路径被打了不止一次）。
-// **超时/重试的界面文案住在 Cocos 场景里，DOM 读不到**，所以这里不把它当判据 ——
-// 真机上那半句要用眼睛看，不能用一个读不到的东西冒充证据。
+// 两条判据从可观测量取：① 没有未捕获异常（不崩）；② 重试真的发生（同一条路径被打了不止一次）。
+// ③（本轮新增）**屏幕上必须出现那句弱网提示，恢复后必须收回**。
+// 原先这里写着"界面文案住在 Cocos 场景里、DOM 读不到，所以不据此判定" —— 那句话是对的
+// （它确实不在 DOM 里）但结论错了：走 Cocos 场景图就能读到一个 Label 的 string，
+// 美术量具 `verify-art-runtime.mjs` 一直就是这么读的。读不到的从来不是界面，是没去读它。
 const WEAK_KILL_MS = Number(process.env.PERF_WEAK_KILL_MS ?? 6000)
 const weakErrors = []
 const attempts = new Map()
@@ -245,28 +247,86 @@ await weakPage.route(`${BACKEND}/**`, (route) => {
   if (killing) setTimeout(() => route.abort('failed'), 150)
   else route.continue()
 })
+
+/** 读屏幕上那行弱网提示：走 Cocos 场景图（与美术量具同一手法），不是 DOM。 */
+async function readNoticeRow(target) {
+  return target.evaluate(() => {
+    const scene = window.cc.director.getScene()
+    if (scene === null) {
+      // 页面刚导航完、场景还没建起来 —— 这不是"提示没出现"，读不到就是读不到
+      return null
+    }
+    let found = null
+    const visit = (node) => {
+      if (found !== null) {
+        return
+      }
+      if (node.name === 'NetworkNotice') {
+        const text = node.children.find((c) => c.getComponent && c.getComponent('cc.Label') !== null)
+        const label = text === undefined ? null : text.getComponent('cc.Label')
+        found = { active: node.active, text: label === null ? null : label.string }
+        return
+      }
+      for (const child of node.children) visit(child)
+    }
+    visit(scene)
+    return found
+  })
+}
+
 await weakPage.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' })
-await weakPage.waitForTimeout(WEAK_KILL_MS)
+// 先等场景建起来再开始采样：否则量到的是"页面还没起来"，却会被判成"提示没出现"
+await weakPage.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null,
+  { timeout: 30_000 })
+const noticeSamples = []
+for (let waited = 0; waited < WEAK_KILL_MS; waited += 500) {
+  await weakPage.waitForTimeout(500)
+  noticeSamples.push(await readNoticeRow(weakPage))
+}
 killing = false
 await weakPage.waitForTimeout(3000)
 const weakAlive = await weakPage.evaluate(() =>
   window.cc !== undefined && window.cc.director.getScene() !== null)
+const afterRecovery = await readNoticeRow(weakPage)
 const retriedPaths = Array.from(attempts.entries()).filter(([, n]) => n > 1).map(([p, n]) => `${p}×${n}`)
+/** 抖动期间读到过的提示文案（去重、去掉空值）。 */
+const noticeTexts = Array.from(new Set(noticeSamples
+  .filter(s => s !== null && s.active && s.text !== null && s.text !== '')
+  .map(s => s.text)))
 const weakNetwork = {
-  note: '超时/重试的界面提示在 Cocos 场景里，DOM 读不到，本相位不据此判定',
+  note: '提示文案走 Cocos 场景图读取（节点 NetworkNotice 的 Label），不走 DOM',
   killedMs: WEAK_KILL_MS,
   attempts: Object.fromEntries(attempts),
   retriedPaths,
+  noticeTexts,
+  noticeAfterRecovery: afterRecovery,
+  noticeKnownGap: afterRecovery !== null && afterRecovery.active && afterRecovery.text !== ''
+    ? '恢复后未收回，根因是登录后不再有任何请求（收口清单 #139），不是提示没接信号'
+    : null,
   aliveAfterRecovery: weakAlive,
   errors: weakErrors,
 }
 console.log(`[perf] 弱网：掐后端 ${WEAK_KILL_MS}ms，重试过的路径 ${retriedPaths.length} 条（${retriedPaths.join('、')}），` +
+  `屏幕提示读到 ${noticeTexts.length} 种（${noticeTexts.join(' / ') || '无'}），` +
   `恢复后场景存活=${weakAlive}`)
 await weakPage.close()
 
 if (weakErrors.length > 0) failures.push(`弱网下出现未捕获异常 ${weakErrors.length} 条`)
 if (retriedPaths.length === 0) failures.push('弱网下没有任何路径被重试：重试链路等于没生效')
 if (!weakAlive) failures.push('弱网恢复后场景没有存活')
+// B16 验收 2 的后半句。玩家看不到"正在重试"时的行为是退出重进，而那在弱网下最坏
+if (noticeTexts.length === 0) {
+  failures.push(`整个抖动期间屏幕上没有出现过弱网提示（采样 ${noticeSamples.length} 次）：`
+    + '重试在跑但玩家不知道，他会以为界面卡死')
+}
+// 恢复后该不该自动收回，取决于"还有没有人再试一次"。今天的答案是没有：
+// 登录按网络原因失败后客户端不再发起任何请求（见收口清单 #139），所以没有任何东西能触发 recovered。
+// 这条因此只报数、不判红 —— 判据的强度只能等于客户端承诺的强度。等 #139 定了自动重登，
+// 把这里挪进 failures 即可（文案与信号都已经就位，改的是一行）。
+if (afterRecovery !== null && afterRecovery.active && afterRecovery.text !== '') {
+  console.log(`[perf] 注意：网络恢复后那行提示仍挂着（"${afterRecovery.text}"）。`
+    + '根因不是提示没接恢复信号，而是登录后客户端不再发任何请求 ⇒ 没有请求成功过。见收口清单 #139')
+}
 
 console.log(JSON.stringify({
   note: '无头桌面浏览器测量，真机数字仍归 CC 文档阶段 6 的人工项；阈值全部读自 global.json',

@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { NetModule } from '../assets/scripts/net/NetModule'
-import type { ApiEnvelope, NetConfig, NetDeps } from '../assets/scripts/net/NetModule'
+import type { ApiEnvelope, NetConfig, NetDeps, NetworkSignal } from '../assets/scripts/net/NetModule'
 import type { HttpResponse, HttpTransport, SocketCallbacks, SocketTransport } from '../assets/scripts/net/NetTransport'
 import { Prng } from '../assets/scripts/core/Prng'
 import { gameBus } from '../assets/scripts/core/EventBus'
@@ -128,6 +128,7 @@ interface Harness {
   net: NetModule
   http: FakeHttp
   delays: number[]
+  signals: NetworkSignal[]
   clock: { now: number }
 }
 
@@ -135,6 +136,7 @@ function createHarness(overrides: Partial<NetConfig> = {}): Harness {
   FakeSocket.instances = []
   const http = new FakeHttp()
   const delays: number[] = []
+  const signals: NetworkSignal[] = []
   const clock = { now: 1_000 }
   let requestSeq = 0
 
@@ -160,8 +162,9 @@ function createHarness(overrides: Partial<NetConfig> = {}): Harness {
     rng: Prng.of(20260906),
     newRequestId: () => `req-${++requestSeq}`,
     newTraceId: () => `trace-${++requestSeq}`,
+    notifyNetwork: (signal) => signals.push(signal),
   }
-  return { net: new NetModule(config, deps), http, delays, clock }
+  return { net: new NetModule(config, deps), http, delays, clock, signals }
 }
 
 // ---------- HTTP：幂等与重试 ----------
@@ -237,6 +240,38 @@ test('退避时长封顶在 retryMaxDelayMs', async () => {
   for (const d of delays) {
     assert.ok(d <= 3000 * 1.25 + 1, `退避 ${d} 超出上限（含抖动）`)
   }
+})
+
+test('重投的每一步都发得出事件，用尽时给一句"别再等了"', async () => {
+  const { net, http, signals } = createHarness({ maxRetryAttempts: 3 })
+  http.script = [new Error('持续失败')]
+
+  await net.get('/player/init')
+
+  assert.deepEqual(signals.map(s => s.kind), ['retry', 'retry', 'retry', 'givenUp'],
+    '首次发出不算重投，所以是三条 retry；用尽后必须再来一条 givenUp')
+  const retries = signals.filter(s => s.kind === 'retry')
+  assert.deepEqual(retries.map(s => (s as { attempt: number }).attempt), [1, 2, 3],
+    '第几次重投要一路往上，玩家看的就是这个数在动')
+  assert.deepEqual(retries.map(s => (s as { maxAttempts: number }).maxAttempts), [3, 3, 3],
+    '上限来自配置，由信号带出来，显示层不另存一份')
+  const given = signals[signals.length - 1]
+  assert.ok(given !== undefined && given.kind === 'givenUp')
+  assert.equal(given.attempts, 3, '说的次数必须等于真的重投过的次数')
+  assert.equal(given.path, '/player/init', '路径进信号（给日志与排查），但不进玩家文案')
+})
+
+test('一次就通只发 recovered；一次性失败的写请求不发 givenUp', async () => {
+  const ok = createHarness()
+  ok.http.script = [envelope({ n: 1 })]
+  await ok.net.post('/x', { n: 1 }, { idempotent: true })
+  assert.deepEqual(ok.signals.map(s => s.kind), ['recovered'], '通了就该把"正在重试"收回去')
+
+  const once = createHarness()
+  once.http.script = [new Error('连接被拒')]
+  await once.net.post('/x', {}, {})
+  assert.deepEqual(once.signals.map(s => s.kind), [],
+    '非幂等写请求一次都没重投，报"重试 0 次仍未接通"是句胡话；具体原因由面板那一层说')
 })
 
 test('业务失败返回 biz 且不重试（资源不足不是网络问题，重试无意义）', async () => {

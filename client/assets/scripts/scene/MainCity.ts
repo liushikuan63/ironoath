@@ -162,11 +162,8 @@ export class MainCity extends Component {
         this.cityLevelLabel.string = `主城 ${cityLevel} 级`
       }
     }))
-    this.unsubscribes.push(gameStore.subscribe('online', (online) => {
-      this.refreshBanner(gameStore.getState(), online)
-    }))
     this.unsubscribes.push(gameStore.subscribe('nickName', () => {
-      this.refreshBanner(gameStore.getState(), gameStore.getState().online)
+      this.refreshBanner(gameStore.getState())
     }))
   }
 
@@ -176,7 +173,7 @@ export class MainCity extends Component {
     if (this.cityLevelLabel !== null) {
       this.cityLevelLabel.string = `主城 ${state.cityLevel} 级`
     }
-    this.refreshBanner(state, state.online)
+    this.refreshBanner(state)
   }
 
   /** 数据到达晚于场景搭建时补建槽位（登录前 Store 为空）。 */
@@ -202,15 +199,14 @@ export class MainCity extends Component {
     }
   }
 
-  private refreshBanner(state: GameState, online: boolean): void {
+  private refreshBanner(state: GameState): void {
     if (this.bannerLabel === null) {
       return
     }
-    if (!online) {
-      this.bannerLabel.string = '网络异常，正在重连…'
-      this.bannerLabel.color = COLOR_WARNING
-      return
-    }
+    // 网络上这一句不在这里写：顶部那行（game/network/NetworkNotice）才是它的家。
+    // 此前这里由 WebSocket 的 netDisconnected 驱动写死一句"正在重连"，而 HTTP 重投用尽
+    // 并不会发那个事件 —— 结果是"链路早就恢复了，横幅还挂着正在重连"，
+    // 同一件事两处文案、其中一处还会说谎。横幅只管身份与战力。
     this.bannerLabel.string = state.playerId === null
       ? '未登录'
       : `${state.nickName} · 战力 ${state.power?.displayPower ?? 0}`

@@ -44,9 +44,10 @@ import { SettingsPanelView } from './SettingsPanelView'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
+import { NetworkNotice } from '../game/network/NetworkNotice'
 import type { UpdateGateDecision } from '../game/release/UpdateGate'
 import type { AppVersionResp } from '../net/generated/OpsProtocol'
-import type { NetOutcome } from '../net/NetModule'
+import type { NetOutcome, NetworkSignal } from '../net/NetModule'
 import { TrackClient } from '../game/track/TrackClient'
 import { CityPanelView } from './CityPanelView'
 import { ArmyPanelView } from './ArmyPanelView'
@@ -160,6 +161,11 @@ export class GameBootstrap extends Component {
   private appVersion: AppVersionResp | null = null
   /** 隐私授权计划：启动时问一次平台，设置页那行与 [boot] 自检行都要用它。 */
   private privacyPlan: PrivacyPlan = { request: false, contractName: null, apiAvailable: false }
+  /** 弱网提示的判定（该说什么由 {@code NetworkNotice} 决定，场景只负责把它写进那一行）。 */
+  private netNotice: NetworkNotice | null = null
+  /** 顶部那一行（节点 + 文本）。没内容时节点不激活，所以它不长期占屏幕。 */
+  private netNoticeRow: Node | null = null
+  private netNoticeLabel: Label | null = null
   nickName = '无名君主'
 
   /** 编排本体。其它场景组件要调服务端就通过它，不要各自 new 一条网络栈。 */
@@ -377,6 +383,10 @@ export class GameBootstrap extends Component {
       initialBestRttMs: TIME_SYNC_INITIAL_BEST_RTT_MS,
     })
     let seq = 0
+    // 弱网提示必须在**第一个请求之前**就建好：第一次请求（版本检查）本身就可能在弱网下重投，
+    // 而 B16 验收 2 要的那句"重试提示"恰恰是给这一段等待看的
+    this.netNotice = new NetworkNotice()
+    this.createNetworkNoticeRow()
     const deps: NetDeps = {
       http: isWxRuntime() ? new WxHttpTransport(REQUEST_TIMEOUT_MS)
         : new FetchHttpTransport(REQUEST_TIMEOUT_MS),
@@ -389,6 +399,7 @@ export class GameBootstrap extends Component {
       rng: Prng.of(Date.now()),
       newRequestId: () => `req-${Date.now()}-${++seq}`,
       newTraceId: () => `trace-${Date.now()}-${seq}`,
+      notifyNetwork: (signal) => this.renderNetworkNotice(signal),
     }
     const config: NetConfig = {
       baseUrl: this.baseUrl,
@@ -623,6 +634,70 @@ export class GameBootstrap extends Component {
     bodyLabel.color = new Color(220, 214, 200, 255)
     bodyLabel.overflow = Label.Overflow.RESIZE_HEIGHT
     bodyLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+  }
+
+  /**
+   * 建顶部那行弱网提示。
+   *
+   * <p>位置在顶部而不是底部：底部横条被导航条占着，而一次弱网往往发生在玩家刚点完某个
+   * 底部按钮之后 —— 提示压在按钮上会挡住他下一个动作。
+   */
+  private createNetworkNoticeRow(): void {
+    const canvas = this.node.parent ?? this.node
+    const visible = view.getVisibleSize()
+    const width = visible.width
+    const height = 30
+
+    const row = new Node('NetworkNotice')
+    canvas.addChild(row)
+    row.layer = canvas.layer
+    row.addComponent(UITransform).setContentSize(new Size(width, height))
+    // 不用调层级：场景里的面板节点在 boot 之前就已经是 Canvas 的子节点，
+    // 运行期 addChild 落在最后 = 画在它们上面（2D UI 的兄弟序就是绘制序）
+    row.setPosition(0, visible.height / 2 - height, 0)
+
+    const bg = new Node('Bg')
+    row.addChild(bg)
+    bg.layer = row.layer
+    bg.addComponent(UITransform).setContentSize(new Size(width, height))
+    const graphics = bg.addComponent(Graphics)
+    graphics.fillColor = new Color(18, 16, 14, 200)
+    graphics.rect(-width / 2, -height / 2, width, height)
+    graphics.fill()
+
+    const text = new Node('Text')
+    row.addChild(text)
+    text.layer = row.layer
+    text.addComponent(UITransform).setContentSize(new Size(width - 24, height))
+    const label = applySystemUiFont(text.addComponent(Label))
+    label.fontSize = 15
+    label.lineHeight = 20
+    label.color = new Color(232, 176, 96, 255)
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    this.netNoticeLabel = label
+    this.netNoticeRow = row
+    // 没有内容时不该占一条屏幕高度：初始就停用，等有话可说再打开
+    row.active = false
+  }
+
+  /** 传输层的弱网事件 → 那一行的文字。判定全在 {@code NetworkNotice}，这里只做渲染。 */
+  private renderNetworkNotice(signal: NetworkSignal): void {
+    this.netNotice?.observe(signal)
+    const text = this.netNotice?.current ?? null
+    const label = this.netNoticeLabel
+    if (label === null) {
+      return
+    }
+    label.string = text ?? ''
+    if (this.netNoticeRow !== null) {
+      this.netNoticeRow.active = text !== null
+    }
+    if (signal.kind !== 'recovered') {
+      // Console 那一行是给开发者工具/真机排查用的：路径与第几次重投都在那里，
+      // 而屏幕上刻意不给路径（玩家不需要知道是 /stage/list 还是 /bag/list 没通）
+      console.warn(`[net] ${signal.kind} ${'path' in signal ? signal.path : ''} `
+        + `${'attempt' in signal ? signal.attempt : ''}${'attempts' in signal ? signal.attempts : ''}`)
+    }
   }
 
   /**
