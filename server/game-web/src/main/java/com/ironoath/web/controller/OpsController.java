@@ -82,9 +82,10 @@ public class OpsController {
      */
     @PostMapping("/config/reload")
     public Result<com.ironoath.web.dto.generated.ConfigReloadResp> reloadConfig(
-            @RequestHeader(value = "X-Ops-Token", required = false) String opsToken) {
+            @RequestHeader(value = "X-Ops-Token", required = false) String opsToken,
+            @RequestParam(name = "actor", required = false) String actor) {
         token.require(opsToken);
-        return Result.ok(ops.reloadConfigs());
+        return Result.ok(ops.reloadConfigs(actor));
     }
 
     /**

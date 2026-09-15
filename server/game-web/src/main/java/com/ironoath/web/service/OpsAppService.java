@@ -338,11 +338,19 @@ public class OpsAppService {
      * {@link ReleaseRulesAssembler#manifest()} 算，这里前后各取一次 —— 另写一份比对
      * 等于给同一个事实造第二个家，两份迟早不一致。
      *
+     * <p><b>每次热更都留逐参数的运营日志</b>（{@code 上线检查清单.md} §二 12：概率不得暗改，
+     * 变更要能回答"谁、何时、从多少改到多少"）。表级"哪张变了"回答不了这个问题，
+     * 而"有一条日志"和"有一条能答上监管问题的日志"是两回事。
+     *
      * <p><b>失败方向</b>：任一张表校验失败就抛（由全局异常处理成 5xx），<b>旧表原样保留</b>。
      * 热更最坏的结果不是"没热上"，而是"热了一半"—— 那会留下一份没人设计过的表组合。
+     *
+     * @param actor 调用方自报的操作人。可空 —— 运维令牌是全服共享的一个字符串，不区分是谁，
+     *              所以这里如实记成「未提供」而不是假装认得出人（真要认人得接部署侧的审计身份）
      */
-    public com.ironoath.web.dto.generated.ConfigReloadResp reloadConfigs() {
+    public com.ironoath.web.dto.generated.ConfigReloadResp reloadConfigs(String actor) {
         java.util.Map<String, String> before = hashByName();
+        java.util.Map<String, com.ironoath.config.RawConfigTable> tablesBefore = snapshotTables();
         try {
             configs.reloadAllFromDirectory(java.nio.file.Path.of(properties.configDir()));
         } catch (RuntimeException e) {
@@ -362,10 +370,29 @@ public class OpsAppService {
             }
         }
         // WARN 级：热更是运维动作，日志要能和"谁在什么时候改了哪张表"对上
-        LOG.warn("配置热更完成：清单版本={} 内容变更表={}（空表示文件没动过或改回了原样）",
+        LOG.warn("配置热更完成：操作人={} 清单版本={} 内容变更表={}（空表示文件没动过或改回了原样）",
+                actor == null || actor.isBlank() ? "未提供" : actor.trim(),
                 assembler.manifest().manifestVersion(), changed);
+        for (com.ironoath.config.ConfigChangeAudit.TableChanges changes
+                : com.ironoath.config.ConfigChangeAudit.between(tablesBefore, snapshotTables(),
+                before, after)) {
+            LOG.warn("配置热更明细：操作人={} {}",
+                    actor == null || actor.isBlank() ? "未提供" : actor.trim(), changes.format(AUDIT_CAP));
+        }
         return new com.ironoath.web.dto.generated.ConfigReloadResp(
                 assembler.manifest().manifestVersion(), java.util.List.copyOf(changed));
+    }
+
+    /** 一行审计日志最多列几处明细。超出会在行尾写明"另有 N 处未列出"，总数始终在行首。 */
+    private static final int AUDIT_CAP = 20;
+
+    /** 当前 live 的全部表快照，供热更前后比对（reload 是原地换引用，所以必须在换之前取）。 */
+    private java.util.Map<String, com.ironoath.config.RawConfigTable> snapshotTables() {
+        java.util.Map<String, com.ironoath.config.RawConfigTable> out = new java.util.LinkedHashMap<>();
+        for (String name : configs.tableNames()) {
+            out.put(name, configs.rawTable(name));
+        }
+        return out;
     }
 
     /** 表名 → 内容 hash，取自配置清单（唯一的 hash 实现）。 */
