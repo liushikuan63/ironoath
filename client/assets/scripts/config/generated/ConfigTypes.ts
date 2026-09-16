@@ -466,6 +466,42 @@ export interface GachaCfg {
   disclosureText: string
 }
 
+/** guide.guideTrigger 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type GuideTrigger =
+  | 'PANEL_OPEN'
+  | 'STATE_REACHED'
+
+/** guide.guideJudge 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type GuideJudge =
+  | 'QUEST_DONE'
+  | 'QUEST_CLAIMED'
+
+/**
+ * 配置表 guide 的一行。
+ * 新手引导脚本表（B18）。7 步与主线 quest_main_01~quest_main_06 逐条对齐：引导走真实主线，不另造一条链。
+ * 本表是**步骤序列的唯一出处**（改脚本不改包 = 硬要求），客户端全仓不得出现任何步骤文案（验收 1 的静态检查盯的就是这个）。
+ *
+ * 源表 version=1
+ */
+export interface GuideCfg {
+  /** 主键 */
+  id: string
+  name: string
+  stepIndex: number
+  /** 枚举，取值见 GuideTrigger */
+  trigger: GuideTrigger
+  panelKey?: string
+  highlightPath?: string
+  maskArea: string
+  text: string
+  skippable: boolean
+  saveProgress: boolean
+  /** 枚举，取值见 GuideJudge */
+  judge: GuideJudge
+  /** 外键，指向 quest 表的 id */
+  judgeTarget: string
+}
+
 /** hero.heroRarity 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type HeroRarity =
   | 'N'

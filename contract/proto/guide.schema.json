@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/guide.schema.json",
+  "title": "GuideProtocol",
+  "description": "新手引导协议契约（B18 §二，形状照 B12 §5 的草案）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。\n\n**三条贯穿全部 def 的设计约束**：\n1. **步骤序列住在服务端表里**（`contract/config/guide.json`），客户端是一个通用驱动器：\n   「改一步就要发包」是 B12 的禁止项，而脚本进配置表就天然吃 `POST /ops/config/reload` 那条热更（验收 3）。\n2. **完成判定不下发**：协议里没有 `judge` / `judgeTarget` 这两个字段 —— 它们只留在服务端的表里。\n   下发出去不会让客户端多做任何事（它只是「显示 + 上报我点了下一步」），\n   而一旦有了这两个字段，将来就会有人在客户端\"顺手\"判断完成（B00 铁律 3 的滑坡起点）。\n   伪造上报也推不动进度：服务端校验**顺序**（必须推进当前那一步）与**状态**（对应任务的真实进度），见验收 5。\n3. **`applies` 是入口闸门而不是列**：老号不再看引导（B17 之后新增的裁决③口径 = 主城 ≤ 3 级且无出征记录）。\n   它由服务端算并随脚本一起下发，客户端不自己按等级判 —— 判一次就多一个家，\n   而两个家哪天分叉的表现是「老号被引导挡住」或「新号没人引导」。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "GuideProtocol",
+  "$defs": {
+    "GuideTrigger": {
+      "type": "string",
+      "description": "一步在什么时候弹出来。**只有真被表用到的两个取值**：不预声明「首次进入战斗」这类没人用的触发器（B18 禁止项）。",
+      "enum": [
+        "PANEL_OPEN",
+        "STATE_REACHED"
+      ]
+    },
+    "GuideAction": {
+      "type": "string",
+      "description": "玩家对一步做了什么。`COMPLETE` 是「我做完了这一步」（客户端只有上报权，能不能推进由服务端按状态判），`SKIP` 是「跳过」（仅 `skippable=true` 的步骤允许）。",
+      "enum": [
+        "COMPLETE",
+        "SKIP"
+      ]
+    },
+    "GuideStepView": {
+      "type": "object",
+      "description": "一步的展示参数。全部字段都来自 `guide.json` 的同一行 —— 客户端不拼文案、不填坐标、不猜顺序。",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "stepIndex",
+        "trigger",
+        "panelKey",
+        "highlightPath",
+        "maskArea",
+        "text",
+        "skippable"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "步骤 id。上报进度时原样回传（服务端按它查当前步，不认下标）。"
+        },
+        "name": {
+          "type": "string",
+          "description": "步骤名（给埋点与客服看的短名；玩家看到的是 text）。"
+        },
+        "stepIndex": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "序号。**顺序的唯一来源是表**，下发序号只为让客户端能显示「第 3/7 步」这种进度而不必自己数。"
+        },
+        "trigger": {
+          "$ref": "#/$defs/GuideTrigger",
+          "description": "触发时机。"
+        },
+        "panelKey": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "要打开/已在的面板 key（`PanelNav` 的那套：city / quest / army / targets / hero / social）。可空：`STATE_REACHED` 那一步不需要具体面板。"
+        },
+        "highlightPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "高亮定位（按面板 key 体系的节点路径）。可空表示只提示不指东西 —— 挖洞遮罩没有高亮目标时就是整屏暗。"
+        },
+        "maskArea": {
+          "type": "string",
+          "description": "遮罩范围：`full` 或 `x,y,w,h`。本批 7 步全是 `full`（B18 验收 6 要的是「遮罩吃触摸」，与几何无关），而格式留着是因为机制上确实需要矩形那一种。"
+        },
+        "text": {
+          "type": "string",
+          "description": "气泡文案。**只在表里存一份**：客户端硬编码一句就会让「改文案要发包」变成事实（B12 禁止项）。"
+        },
+        "skippable": {
+          "type": "boolean",
+          "description": "能不能跳。`false` 时界面不显示跳过按钮，硬发 SKIP 会被拒（`GUIDE_STEP_NOT_SKIPPABLE`）。"
+        }
+      }
+    },
+    "GuideScriptResp": {
+      "type": "object",
+      "description": "一次脚本下发。体积受 `PERF_PAYLOAD_MAX_BYTES` 约束（验收 7）：7 步 × 一句文案远小于预算，真超了要按章节分页而不是悄悄超。",
+      "additionalProperties": false,
+      "required": [
+        "steps",
+        "version",
+        "nextStepIndex",
+        "applies",
+        "serverNow"
+      ],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "description": "全部步骤，顺序即表序（服务端不重排，客户端不许自己排 —— 两处排序迟早分叉）。",
+          "items": {
+            "$ref": "#/$defs/GuideStepView"
+          }
+        },
+        "version": {
+          "type": "string",
+          "description": "脚本版本 = `guide.json` 的 version。客户端带上它再请求，版本相同可以不必重下（热更判据；缓存只是省流量，权威仍是服务端）。"
+        },
+        "nextStepIndex": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "该玩家当前该做哪一步（**续传的那一位**：进度落服务端存档，杀进程重进回到这里而不是从头）。null 表示已结束或从未开始过完成步 —— 与 `finished` 配合，不重复发奖也不重复打扰。"
+        },
+        "applies": {
+          "type": "boolean",
+          "description": "这个账号该不该走引导（B18 §五③：只对新号）。false 时 `steps` 仍会给出（客户端不必分两套代码），但界面不显示引导。"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端时刻（毫秒）。引导里任何「等待/冷却」的展示都由它算，不用本地时钟（铁律 5）。"
+        }
+      }
+    },
+    "GuideProgressReq": {
+      "type": "object",
+      "description": "上报一步的结果。",
+      "additionalProperties": false,
+      "required": [
+        "stepId",
+        "action",
+        "requestId"
+      ],
+      "properties": {
+        "stepId": {
+          "type": "string",
+          "description": "玩家针对哪一步上报。服务端会校验它**是不是当前那一步**（`GUIDE_STEP_OUT_OF_ORDER`）：不校验顺序就等于允许重放刷进度。"
+        },
+        "action": {
+          "$ref": "#/$defs/GuideAction",
+          "description": "做完还是跳过。"
+        },
+        "requestId": {
+          "type": "string",
+          "description": "幂等键，与任务/邮件/活动领奖同一条要求（弱网重投不该把两步并作一步）。"
+        }
+      }
+    },
+    "GuideProgressResp": {
+      "type": "object",
+      "description": "上报结果。三个字段各说各的：有没有推进、是否走完、下一步是哪一步。",
+      "additionalProperties": false,
+      "required": [
+        "advanced",
+        "finished",
+        "nextStepIndex"
+      ],
+      "properties": {
+        "advanced": {
+          "type": "boolean",
+          "description": "本次上报是否真的推进了进度。**状态没达成时为 false**（而不是报错）—— 玩家点了「我做完了」但主城还没升到 2 级是正常情况：引导要留在这一步等他。"
+        },
+        "finished": {
+          "type": "boolean",
+          "description": "全部步骤已走完（或被跳完）。客户端据此收起引导层，不再弹下一步。"
+        },
+        "nextStepIndex": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "推进之后该做哪一步；`finished` 为 true 时为 null。"
+        }
+      }
+    }
+  }
+}

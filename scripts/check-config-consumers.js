@@ -16,6 +16,10 @@ const CHECKLIST = '收口清单.md'
 /* 已知"表做了、机制没做"的族。每条都给得出出处，出处错了卡口就红，所以这张表不会烂成借口。 */
 const UNWIRED = {
   TechCfg: '零装配：#6（个人科技没有规格 —— B12 六个子系统不含科技，见收口清单该行）',
+  // GuideCfg 挂在这里是**中间状态**而不是欠账：B18 的表与契约先落（S1），
+  // 装配器 + /guide/script + /guide/progress 在 S2 接上，届时删除本行
+  // （与 ActivityCfg 那条同一条规矩：接上读它的人之后，例外必须跟着删）。
+  GuideCfg: '零装配：B18_新手引导.md（S1 先落表与契约，S2 接装配与端点）',
   // ActivityCfg 曾挂在这里（#60「活动与七日登录只有表，没有推进与领取路径」）：
   // 2026-09-16 的 B17（ActivityRulesAssembler + ActivityEventListener + /activity/*）让它真的被读了，
   // 例外条目随之删除 —— 与下面 BotArchetypeCfg 那条同一条规矩，别照着 #60 加回来。
