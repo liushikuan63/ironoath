@@ -101,7 +101,10 @@ class TechTimeCalibrationTest {
         }
         BigDecimal percent = BigDecimal.valueOf(total)
                 .divide(BigDecimal.valueOf(seasonSeconds()), 4, java.math.RoundingMode.HALF_UP);
-        assertThat(levels).as("合计级数 = Σ maxLevel，用来核对遍历跑到了每一级").isEqualTo(340);
+        assertThat(levels)
+                .as("Σ maxLevel 变了（designNote 现在写的是 340 级）—— 整棵树的时长要重量："
+                                + "跑 `node tools/calibrate-tech-time.mjs` 取新基数，并同步 curve 那行的 why")
+                .isEqualTo(340);
         assertThat(percent)
                 .as("全树 %d 秒 = 赛季的 %.1f%%，不在裁决的 50%%~70%% 之内 —— "
                                 + "重跑 `node tools/calibrate-tech-time.mjs` 取新基数，并把新区间写回该行的 why",
