@@ -4,7 +4,7 @@ package com.ironoath.core.quest;
  * 职责：任务目标类型 —— 「进度怎么长」的分类（B12 §1 的统一 GoalType）。
  * 依赖：无（纯 Java，零框架）。
  *
- * <p><b>13 个取值分成两类，而这个分类是任务系统最容易搞错的地方</b>：
+ * <p><b>16 个取值分成两类，而这个分类是任务系统最容易搞错的地方</b>：
  * <ul>
  *   <li><b>累加型</b>（{@link #accumulates()} 为 true）：进度只增不减，事件带增量。
  *       「训练 20 个兵」是累计训练量，训完之后兵死了也不回退</li>
@@ -52,7 +52,17 @@ public enum GoalType {
     /** 累计帮助队友 N 次（B10 的互助）。 */
     HELP_SQUAD(true),
     /** 累计参加 N 次集结（B10）。 */
-    JOIN_RALLY(true);
+    JOIN_RALLY(true),
+    /**
+     * 登录一次（B17 活动的连续签到）。<b>累加型，增量恒为 1</b>，
+     * 目标细分字段为空 —— 「连续几天」是活动域从事件时刻算出来的（同日不重算、断天归零），
+     * 不是事件自己带结论（见 {@code ActivityProgress}）。
+     */
+    LOGIN_DAY(true),
+    /** 累计向联盟捐献 N 点资源（B17 捐献周）。目标细分字段为空，增量 = 本次捐献的资源量。 */
+    ALLIANCE_DONATE(true),
+    /** 累计 PVP 获胜 N 次（B17 争锋令）。目标细分字段为空，增量恒为 1（只有胜利才算）。 */
+    PVP_WIN(true);
 
     private final boolean accumulates;
 
