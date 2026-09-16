@@ -35,7 +35,8 @@ public final class Formula {
      * 等级缓存的上界。
      *
      * <p>这是基础设施容量参数而非游戏数值（不受铁律 1 约束）：超过该等级的求值仍然正确，
-     * 只是不进缓存。取值 200 的依据是：全项目最高等级建筑为 30 级、武将 100 级、科技 60 级，
+     * 只是不进缓存。取值 200 的依据是：全项目最高等级现读表为建筑 40 级（building.maxLevel）、
+     * 武将 100 级（hero.maxLevel）、科技 40 级（tech.maxLevel），
      * 200 留足余量且单条曲线的缓存开销仅 200×8B = 1.6KB。
      */
     static final int MAX_CACHED_LEVEL = 200;
