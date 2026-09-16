@@ -61,9 +61,9 @@
       "conditionValue": 5,
       "durationDays": 7,
       "rewardGold": 400,
-      "rewardItemId": "item_buff_rally_2h",
+      "rewardItemId": "item_speedup_train_1h",
       "rewardItemCount": 2,
-      "why": "限时 7 天参与 5 次集结。把「弱者的出路是组团」做成可参与的活动——不参赛的玩家会明显感到自己落后。"
+      "why": "限时 7 天参与 5 次集结。把「弱者的出路是组团」做成可参与的活动——不参赛的玩家会明显感到自己落后。奖励 2026-09-16 由 item_buff_rally_2h 改为训练令（B17 §五⑥）：集结号令的加成效果在 #118 系列已退役（道具还在、效果无数值，发出来就是「用了会失败」），而训练令语义贴合「补兵再战」，等值档位相近（45×2=90 金币档）。"
     },
     {
       "id": "activity_donate_week",
@@ -73,9 +73,9 @@
       "conditionValue": 2000,
       "durationDays": 7,
       "rewardGold": 300,
-      "rewardItemId": "item_speedup_research_1h",
+      "rewardItemId": "item_speedup_build_1h",
       "rewardItemCount": 3,
-      "why": "联盟捐献活动。奖励研究令：捐献者通常已在冲科技线，给他最想要的东西。"
+      "why": "联盟捐献活动。奖励给的是捐献者当下最缺的加速档：原设计是研究令（捐献者通常已在冲科技线），**2026-09-16 改为建造令 ×3**（B17 §五⑥）—— 研究令在 B20 科技系统落地前用了会抛 NOT_IMPLEMENTED（#46 因此下架过商店行），而捐献周面向建设，40×3=120 与原 50×3=150 同档位。B20 完成后研究令是否重新上架由策划定（数值可调，结构调整已定）。"
     },
     {
       "id": "activity_pvp_win",
