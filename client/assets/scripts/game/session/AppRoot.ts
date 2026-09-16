@@ -38,6 +38,8 @@ import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
 import type { BattleReportListResp, BattleReportResp } from '../../net/generated/BattleProtocol'
 import type { MailClaimAllResp, MailListResp } from '../../net/generated/MailProtocol'
+import type { ActivityClaimResp, ActivityListResp } from '../../net/generated/ActivityProtocol'
+import { claimActivityReq } from '../activity/ActivityPanel'
 import { buildLineupChoices, buildSpeedupChoices } from './Choices'
 import type { LineupChoice, SpeedupChoice } from './Choices'
 import { ClientReddotTree } from '../reddot/ReddotTree'
@@ -69,6 +71,8 @@ export interface PanelTargets {
    * 邮件面板（B12 §2）。列表本身是「带副作用的读」：服务端在这次读里顺手清过期。
    */
   mail?(resp: MailListResp, serverNowMs: number): void
+  /** 活动列表（B17）：口子与邮件同形 —— 响应 + 服务端时刻（剩余时间由两者相减得出）。 */
+  activity?(resp: ActivityListResp, serverNowMs: number): void
   /** 战报列表（B12 §3）。时刻由外层给：列表里每行都写着「N 天后过期」，那是相对时间。 */
   reports?(resp: BattleReportListResp, serverNowMs: number): void
   /** 一场的完整战果 + 回放参数。回放怎么演由 {@code playbackOptionsOf} 装配，本类不算。 */
@@ -78,6 +82,8 @@ export interface PanelTargets {
    * 而不是等下一次列表拉取（列表拉回来的是"领完之后"的样子，玩家看不到自己领到了什么）。
    */
   mailClaimed?(resp: MailClaimAllResp): void
+  /** 领完一次活动奖励的回执（界面用它飘字「领到了什么」）。 */
+  activityClaimed?(resp: ActivityClaimResp): void
   /** 服务端权威红点树。导航与面板只读取它，不在业务层重算。 */
   reddot?(tree: ClientReddotTree): void
   /** 失败或不能做的说明。`panel` 是分流用的面板名，不是错误码。 */
@@ -93,7 +99,7 @@ export interface PanelTargets {
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
-  | 'quest' | 'reddot' | 'mail' | 'reports'
+  | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -287,6 +293,11 @@ export class AppRoot {
       case 'mail':
         this.deliver('mail', await this.api.mailList(),
           r => this.targets.mail?.(r, this.timeSync.serverNow()))
+        return
+      case 'activity':
+        // 用响应自带的 serverNow 而不是本地时钟：剩余时间是这两个服务端时刻相减（铁律 5）
+        this.deliver('activity', await this.api.activityList(),
+          r => this.targets.activity?.(r, r.serverNow))
         return
       case 'reddot':
         this.deliver('reddot', await this.api.socialReddot(), r => {
@@ -511,6 +522,18 @@ export class AppRoot {
   readMail(mailId: string): Promise<void> {
     this.track(TRACK_EVENTS.mailRead, { mailId })
     return this.write('mail', this.api.mailRead({ mailId }), ['mail'])
+  }
+
+  // ---------- 活动（B17） ----------
+
+  /**
+   * 领一次活动奖励。成功后重拉列表（那一行要变成「本轮已领取」），
+   * 并把回执单独递一次给结果行 —— 与一键领邮件同一条：玩家想知道的是「我刚才领到了什么」。
+   */
+  claimActivity(activityId: string): Promise<void> {
+    this.track(TRACK_EVENTS.activityClaim, { activityId })
+    return this.write('activity', this.api.activityClaim(claimActivityReq(activityId)), ['activity'],
+      r => this.targets.activityClaimed?.(r))
   }
 
   // ---------- 社交 ----------

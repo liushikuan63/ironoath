@@ -90,6 +90,8 @@ export const TRACK_EVENTS = {
   mailClaimAll: 'mail_claim_all',
   /** 点开一封邮件（标已读）。带 mailId：「哪一类邮件没人看」是这格唯一能回答的问题。 */
   mailRead: 'mail_read',
+  /** 领取一次活动奖励（B17）。带 activityId —— 看板上要能看出哪条活动在发奖。 */
+  activityClaim: 'activity_claim',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

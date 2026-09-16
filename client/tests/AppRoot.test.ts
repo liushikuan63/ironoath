@@ -102,6 +102,8 @@ const ROUTES: Record<string, unknown> = {
   '/alliance/kick': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
   '/alliance/donate': { tier: 1, donated: {}, contribution: 0, fund: 0, serverNow: SERVER_NOW },
   '/world/searchTargets': { targets: [], selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW },
+  '/activity/list': { activities: [], serverNow: SERVER_NOW, claimableCount: 0 },
+  '/activity/claim': { claimed: true, state: 'RUNNING', rewards: [], serverNow: SERVER_NOW },
   '/quest/list': {
     quests: [
       { questId: 'quest_main_01', name: '筑起第一堵墙', type: 'MAIN',
@@ -282,6 +284,10 @@ interface Harness {
   readonly lastSocialMembers: string[]
   /** 最近一次落地给社交面板的互助请求 id 列表。 */
   readonly lastSocialHelps: string[]
+  /** 最近一次落地给活动页的服务端时刻（断言"剩余时间来自服务端"用）。 */
+  readonly lastActivityNow: number
+  /** 最近一次落地给活动页的行数。 */
+  readonly lastActivityRows: number
   /** 最近一次下发到场景层的那棵红点树。 */
   readonly reddotTree: ClientReddotTree | null
 
@@ -342,6 +348,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let socialMembers: string[] = []
   let socialHelps: string[] = []
   let reddotTree: ClientReddotTree | null = null
+  let activityNow = -1
+  let activityRows = -1
   let speedupOptions: SpeedupChoice[] = []
   let lineupOptions: LineupChoice[] = []
   let speedupPick: ((targetId: string) => void) | null = null
@@ -368,6 +376,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     targets: () => attached.push('targets'),
     quest: () => attached.push('quest'),
     mail: () => attached.push('mail'),
+    activity: (resp, serverNowMs) => {
+      attached.push('activity')
+      activityNow = serverNowMs
+      activityRows = resp.activities.length
+    },
+    activityClaimed: () => attached.push('activityClaimed'),
     reports: () => attached.push('reports'),
     reportReplay: () => attached.push('reportReplay'),
     mailClaimed: () => attached.push('mailClaimed'),
@@ -390,6 +404,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   return {
     get lastSocialMembers() {
       return socialMembers
+    },
+    get lastActivityNow() {
+      return activityNow
+    },
+    get lastActivityRows() {
+      return activityRows
     },
     get lastSocialHelps() {
       return socialHelps
@@ -559,6 +579,42 @@ test('邮件不在首屏预拉里：点开那一格才拉第一次（多一个�
   assert.equal(h.http.calls.filter(c => c.path === '/mail/list').length, 1)
   assert.equal(h.attached.includes('mail'), true, '列表必须落到邮件面板')
   assert.equal(h.errors.length, 0)
+})
+
+test('活动列表：刷新打 /activity/list，递下去的是响应 + 服务端时刻（剩余时间靠这两个数相减）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.attached.length = 0
+
+  assert.equal(h.http.calls.some(c => c.path === '/activity/list'), false,
+    '活动不占首屏：没点开任务那一格之前一次都不许拉（B17 §六）')
+
+  await h.root.refresh('activity')
+
+  assert.equal(h.http.calls.filter(c => c.path === '/activity/list').length, 1)
+  assert.equal(h.attached.includes('activity'), true, '列表必须落到面板的活动页')
+  assert.equal(h.lastActivityNow, SERVER_NOW,
+    '递下去的时刻必须是响应里的 serverNow —— 用本地时钟算剩余时间就是铁律 5 的违规')
+  assert.equal(h.errors.length, 0)
+})
+
+test('领活动奖励：带 activityId 发一次写请求（含幂等键），成功后重拉列表并把回执单独递一次', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.attached.length = 0
+
+  await h.root.claimActivity('activity_monster_hunt')
+
+  const claims = h.http.calls.filter(c => c.path === '/activity/claim')
+  assert.equal(claims.length, 1, '领一次只发一次请求')
+  assert.equal(claims[0]?.body.activityId, 'activity_monster_hunt')
+  assert.equal(claims[0]?.body.requestId !== undefined, true, '领取是写操作，必须带幂等键')
+  assert.equal(h.http.calls.filter(c => c.path === '/activity/list').length, 1,
+    '领完重拉一次列表，那一行才会变成「本轮已领取」')
+  assert.deepEqual(h.attached, ['activityClaimed', 'activity'],
+    '先递回执（玩家要看到领到了什么），再落重拉后的列表')
+  assert.equal(h.events.some(e => e.name === 'activity_claim' && e.params.activityId === 'activity_monster_hunt'),
+    true, '领奖要埋点：看板上要能看出哪条活动在发奖')
 })
 
 test('一键领取：只发 1 次请求（B12 禁止项），成功后重拉列表并把回执单独递一次', async () => {

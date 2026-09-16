@@ -24,6 +24,8 @@ import type {
 /** 任务列表的一行。 */
 export interface QuestRow {
   readonly questId: string
+  /** 任务类型（服务端下发）。面板按它分页签：任务页看不到成就，成就页只看 ACHIEVEMENT。 */
+  readonly type: string
   /** 「每日 · 讨伐野怪 3 次」这样的标题。类型与名字都取自服务端，客户端不拼接分类 */
   readonly title: string
   /** 进度文本：「2/5」或「已完成」。状态型的进度会回落，所以按 current/goalValue 原样展示 */
@@ -84,6 +86,7 @@ function prerequisiteName(quest: QuestView, namesById: ReadonlyMap<string, strin
 function toRow(namesById: ReadonlyMap<string, string>, quest: QuestView): QuestRow {
   return {
     questId: quest.questId,
+    type: quest.type,
     title: `${typeLabel(quest.type)} · ${quest.name}`,
     progressText: quest.complete
       ? '已完成'
@@ -114,6 +117,8 @@ function typeLabel(type: string): string {
       return '每日'
     case 'WEEKLY':
       return '每周'
+    case 'ACHIEVEMENT':
+      return '成就'
     default:
       return type
   }

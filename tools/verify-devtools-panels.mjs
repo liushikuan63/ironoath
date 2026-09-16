@@ -20,13 +20,12 @@
  * <p><b>反空转下限</b>：一个面板都没解析出来 / `[boot]` 没捕获 / 全部面板零文本，
  * 都按失败处理，而不是"没量到就跳过"。
  *
- * <p><b>这条判据证到哪一步为止</b>（种坏深链的探针实测出来的，不是推测）：
- * `power` 与 `settings` 两格在**从未激活**的状态下子树里就已经有 21 / 8 条非空 Label ——
- * 这两个视图在登录推数据那一路就把节点建好了，不依赖 onLoad。所以对这两格，本工具证的是
- * 「切过去了 + 处于激活态 + 里面有内容」，<b>不是</b>"激活之后才画"。
- * 池化列表那十一格（city/army/hero/bag/stage/reports/quest/mail/social/targets/world）
- * 未激活时子树是空的，对它们证的确实是"show 之后才建出来的"。
- * 三种读数（found / active / currentKey）必须一起看就是这个理由：单看文本会把这两格读成假绿。
+ * <p><b>读数只统计"父链全激活"的节点</b>（2026-09-16 修正）：池化归还的行节点仍留在场景里、
+ * label.string 也还在，但 active=false（不渲染）。先前不看激活状态的版本能读到"上一页"的文字 ——
+ * 表现是切到成就页仍能读到活动行，判据因此说假话。修正后还顺带挡掉了另一个形状：
+ * `power`/`settings` 两格在从未激活时子树里就有 21 / 8 条非空 Label（这两个视图在登录推数据那一路
+ * 就把节点建好了，不依赖 onLoad），旧读法会把它们算成"画出来了"。
+ * 所以对这两格，本工具证的是「切过去了 + 处于激活态 + 激活子树里有内容」，<b>不是</b>"激活之后才画"。
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -38,6 +37,17 @@ const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const TOKEN = process.env.DEVTOOLS_OPS_TOKEN ?? ''
 const PORT = Number(process.env.PANEL_PORT ?? 8093)
 const NAV_SOURCE = 'client/assets/scripts/scene/PanelNav.ts'
+const ACTIVITY_TABLE = 'contract/config/activity.json'
+
+/** 活动名从表里现读：断言"画出来的是真活动"而不是"表头里有活动两个字"（那在加载态也成立）。 */
+function activityNames() {
+  const table = JSON.parse(readFileSync(ACTIVITY_TABLE, 'utf8'))
+  const names = table.rows.map(row => row.name)
+  if (names.length < 5) {
+    throw new Error(`从 ${ACTIVITY_TABLE} 里只读到 ${names.length} 个活动名：解析式过期了`)
+  }
+  return names
+}
 
 /** 导航表里的面板 key。顺序就是导航条的顺序，也是本工具的走查顺序。 */
 function panelKeys() {
@@ -63,11 +73,14 @@ function verdict(ok, label, detail) {
 function readPanel({ key }) {
   const out = { found: false, active: false, currentKey: null, texts: [] }
   const walk = (node, inside) => {
-    const label = inside && node.getComponent ? node.getComponent('cc.Label') : null
+    // 只算**父链全激活**的节点：池化归还的行节点仍留在场景里、label.string 也还在，
+    // 但 active=false（不渲染）。不看激活状态的话，切到另一页仍会读到上一页的文字
+    const live = inside && node.activeInHierarchy !== false
+    const label = live && node.getComponent ? node.getComponent('cc.Label') : null
     if (label !== null && label !== undefined && label.string !== '') {
       out.texts.push(label.string)
     }
-    for (const child of node.children) walk(child, inside)
+    for (const child of node.children) walk(child, live)
   }
   const scene = window.cc.director.getScene()
   // 导航层当前的那一格：只看文本分不清「深链没生效」与「面板自己没画」
@@ -94,6 +107,8 @@ async function main() {
     process.exit(2)
   }
   const panels = panelKeys()
+  const activityNameList = activityNames()
+  console.log(`[panels] 从 ${ACTIVITY_TABLE} 读到 ${activityNameList.length} 个活动名：${activityNameList.join(' ')}`)
   console.log(`[panels] 从 ${NAV_SOURCE} 解析出 ${panels.length} 个面板：${panels.map(p => p.key).join(' ')}`)
 
   const preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
@@ -194,6 +209,65 @@ async function main() {
     const hit = texts.some(t => t.includes(title))
     verdict(hit, '邮件格里真的画出了那一封的标题（不是只有骨架）',
       `读到 ${texts.length} 条文本，找 "${title}" ${hit ? '命中' : '没命中'}`)
+  }
+
+  // ---- 任务面板的页签（B17 新增 活动 / 成就）----
+  {
+    const openQuest = async () => {
+      const url = new URL(`${preview.origin}/`)
+      url.searchParams.set('panel', 'quest')
+      await page.goto(url.toString(), { waitUntil: 'domcontentloaded' })
+      await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
+        null, { timeout: 60_000 })
+    }
+    const questTexts = async () => (await page.evaluate(readPanel, { key: 'quest' })).texts
+    const clickTab = async (name) => page.evaluate((tabName) => {
+      const scene = window.cc.director.getScene()
+      const quest = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('quest')
+      if (quest === undefined || quest === null) return 'no-quest-node'
+      const tab = quest.children.find(child => child.name === tabName)
+      if (tab === undefined) return 'no-tab:' + tabName
+      // 与玩家点一下同一条路：节点上注册的就是 touch-start 处理函数
+      tab.emit('touch-start')
+      return 'ok'
+    }, `Tab-${name}`)
+
+    await openQuest()
+    let texts = []
+    for (let i = 0; i < 40 && texts.length === 0; i += 1) {
+      await page.waitForTimeout(500)
+      texts = await questTexts()
+    }
+    verdict(texts.length > 0, '任务页签切之前就有内容（对照组：切页签不是"从空白变有"）',
+      `任务页文本 ${texts.length} 条 → ${texts.slice(0, 2).join(' | ').slice(0, 60)}`)
+
+    const clicked = await clickTab('activity')
+    // 命中判据是**表里现读的活动名**：只匹配"活动 "表头的话，加载态（"活动 加载中"）也会绿
+    const hitsOf = (texts) => activityNameList.filter(name => texts.some(text => text.includes(name)))
+    let activityTexts = []
+    let hits = []
+    for (let i = 0; i < 30; i += 1) {
+      await page.waitForTimeout(500)
+      activityTexts = await questTexts()
+      hits = hitsOf(activityTexts)
+      if (hits.length >= 2) break
+    }
+    verdict(clicked === 'ok' && hits.length >= 2,
+      '活动页签切过去后画出了表里的活动行（名称来自 activity.json，至少两条）',
+      `click=${clicked} 命中 ${hits.length}/${activityNameList.length} → ${hits.slice(0, 3).join('、')}`
+      + `｜文本 ${activityTexts.length} 条：${activityTexts.slice(0, 3).join(' | ').slice(0, 60)}`)
+
+    const clickedAch = await clickTab('achievement')
+    let achTexts = []
+    for (let i = 0; i < 20; i += 1) {
+      await page.waitForTimeout(500)
+      achTexts = await questTexts()
+      if (achTexts.some(text => text.includes('成就 '))) break
+    }
+    verdict(clickedAch === 'ok' && achTexts.some(text => text.includes('成就 '))
+      && !achTexts.some(text => activityNameList.some(name => text.includes(name))),
+      '成就页签切过去后有表头、且不含活动行（B17 只落了机制、没配行，所以这里是 0 条 —— 空态也要看得见）',
+      `click=${clickedAch} 文本 ${achTexts.length} 条 → ${achTexts.join(' | ').slice(0, 400)}`)
   }
 
   console.log('\n' + lines.join('\n'))

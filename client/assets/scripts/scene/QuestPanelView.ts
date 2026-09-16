@@ -19,6 +19,9 @@ import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, 
 import { buildQuestList, candidateLabel, chosenClaimReq, claimIntentOf } from '../game/quest/QuestPanel'
 import type { ClaimIntent, HeroChoicePrompt, QuestListView, QuestRow } from '../game/quest/QuestPanel'
 import type { QuestListResp } from '../net/generated/QuestProtocol'
+import type { ActivityListResp } from '../net/generated/ActivityProtocol'
+import { buildActivityList } from '../game/activity/ActivityPanel'
+import type { ActivityListView, ActivityRow } from '../game/activity/ActivityPanel'
 import { NodePool } from './NodePool'
 import { applySystemUiFont } from './UiFont'
 
@@ -45,10 +48,36 @@ const MAX_VISIBLE_ROWS = 8
 const OPTION_HEIGHT = 56
 const OPTION_GAP = 8
 
+/**
+ * 三个页签。顺序即从左到右。
+ *
+ * <p><b>活动为什么不进导航条</b>（B17 §五④ 的裁决）：导航已有 13 项，第 14 项会把底栏压薄；
+ * 而活动与任务语义相邻（都是"有目标可做"的清单）。成就是任务的一种 questType，天然属于这里。
+ */
+const TABS = [
+  { key: 'quest', label: '任务' },
+  { key: 'activity', label: '活动' },
+  { key: 'achievement', label: '成就' },
+] as const
+type TabKey = typeof TABS[number]['key']
+const TAB_HEIGHT = 34
+
 @ccclass('QuestPanelView')
 export class QuestPanelView extends Component {
   private list: QuestListView | null = null
   private pendingList: QuestListResp | null = null
+  /** 活动页数据。null = 还没拉到（页签切过去时显示提示，不假装"没有活动"） */
+  private activity: ActivityListView | null = null
+  private pendingActivity: { resp: ActivityListResp, nowMs: number } | null = null
+  /** 当前页签。默认任务页 —— 玩家点开这一格最常看的是任务 */
+  private tab: TabKey = 'quest'
+  private activityPool: NodePool | null = null
+  private readonly drawnActivity: Node[] = []
+  /** 页签按钮 → 它的 key。点击派发靠它，不靠下标（下标在加页签时会错位） */
+  private readonly tabNodes = new Map<Node, TabKey>()
+  private readonly tabLabels = new Map<Node, Label>()
+  /** 领奖回执那一行（「已领取：金币 ×500」）：玩家想知道的是刚才领到了什么 */
+  private receiptLabel: Label | null = null
 
   private rowPool: NodePool | null = null
   /** 行节点 → 它当前代表哪条任务。池化复用后靠它把点击派回正确的 questId */
@@ -68,23 +97,38 @@ export class QuestPanelView extends Component {
   onClaim: ((questId: string, heroChoice: string | null) => void) | null = null
   /** 面板打开/需要刷新时由外层决定（本场景只画，不主动拉数据） */
   onRefreshRequested: (() => void) | null = null
+  /** 玩家要领某条活动的奖励。windowKey 由服务端判，这里只递 activityId */
+  onClaimActivity: ((activityId: string) => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
+    this.activityPool = new NodePool(this.node, () => this.createActivityRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
+    this.buildTabs(size.height)
     this.buildPrompt()
     if (this.pendingList !== null) {
       const pending = this.pendingList
       this.pendingList = null
       this.attach(pending)
     }
+    if (this.pendingActivity !== null) {
+      const pending = this.pendingActivity
+      this.pendingActivity = null
+      this.attachActivity(pending.resp, pending.nowMs)
+    }
   }
 
   override onDestroy(): void {
     this.rowPool?.destroy()
     this.rowPool = null
+    this.activityPool?.destroy()
+    this.activityPool = null
+    this.drawnActivity.length = 0
+    this.tabNodes.clear()
+    this.tabLabels.clear()
+    this.onClaimActivity = null
     this.drawnRows.length = 0
     this.rowQuestIds.clear()
     this.optionHeroIds.clear()
@@ -103,6 +147,28 @@ export class QuestPanelView extends Component {
     this.render()
   }
 
+  /**
+   * 装载活动页数据。**与任务分开走**：活动是懒拉的（首次切到活动页才拉，见 GameBootstrap），
+   * 所以它可能比任务晚到，视图必须能"先记住再画"（与任务的 pending 同一条手法）。
+   */
+  attachActivity(resp: ActivityListResp, nowMs: number): void {
+    if (this.activityPool === null) {
+      this.pendingActivity = { resp, nowMs }
+      return
+    }
+    this.activity = buildActivityList(resp, nowMs)
+    if (this.tab === 'activity') {
+      this.render()
+    }
+  }
+
+  /** 领奖回执：「已领取：金币 ×500、一小时训练令 ×2」。空字符串清掉那一行。 */
+  showReceipt(text: string): void {
+    if (this.receiptLabel !== null) {
+      this.receiptLabel.string = text
+    }
+  }
+
   // ---------- 搭建 ----------
 
   private buildBackground(width: number, height: number): void {
@@ -118,6 +184,8 @@ export class QuestPanelView extends Component {
 
   private buildHeader(height: number): void {
     this.headerLabel = this.addLabel(this.node, 'Header', 0, height / 2 - PADDING - 20, COLOR_COPPER_GOLD, 22)
+    this.receiptLabel = this.addLabel(this.node, 'Receipt', 0,
+      height / 2 - PADDING - HEADER_HEIGHT + 2, COLOR_CLAIMABLE, 14)
     this.overflowLabel = this.addLabel(this.node, 'Overflow', 0,
       height / 2 - PADDING - HEADER_HEIGHT - MAX_VISIBLE_ROWS * (ROW_HEIGHT + ROW_GAP) - 12,
       COLOR_TEXT_DIM, 14)
@@ -195,26 +263,87 @@ export class QuestPanelView extends Component {
     return label
   }
 
+  /**
+   * 页签条：贴在标题下面一排。**触摸命中按 UITransform 矩形算**，所以按钮各自要有 UITransform
+   * （少这一层时点了没反应，而代码看起来一切正常）。
+   */
+  private buildTabs(height: number): void {
+    const y = height / 2 - PADDING - HEADER_HEIGHT + TAB_HEIGHT / 2 + 6
+    const width = PANEL_WIDTH / TABS.length
+    TABS.forEach((tab, index) => {
+      const node = new Node(`Tab-${tab.key}`)
+      node.layer = this.node.layer
+      this.node.addChild(node)
+      node.setPosition(new Vec3(-PANEL_WIDTH / 2 + width * (index + 0.5), y, 0))
+      node.addComponent(UITransform).setContentSize(new Size(width - 8, TAB_HEIGHT))
+      const graphics = node.addComponent(Graphics)
+      graphics.fillColor = COLOR_PANEL
+      graphics.roundRect(-(width - 8) / 2, -TAB_HEIGHT / 2, width - 8, TAB_HEIGHT, 4)
+      graphics.fill()
+      const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT_DIM, 16)
+      label.string = tab.label
+      this.tabNodes.set(node, tab.key)
+      this.tabLabels.set(node, label)
+      node.on('touch-start', (_event: EventTouch) => this.switchTab(tab.key))
+    })
+    this.renderTabs()
+  }
+
+  /** 切换页签：只改状态与高亮，数据由外层决定要不要补拉（本场景不碰网络）。 */
+  private switchTab(key: TabKey): void {
+    if (this.tab === key) {
+      return
+    }
+    this.tab = key
+    this.hidePrompt()
+    this.render()
+  }
+
+  /** 当前页签高亮。每一帧重画一次而不是记住"上一个是谁"—— 少一处状态就少一种不同步。 */
+  private renderTabs(): void {
+    for (const [node, key] of this.tabNodes) {
+      const label = this.tabLabels.get(node)
+      if (label !== undefined) {
+        const active = key === this.tab
+        label.color = active ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+      }
+    }
+  }
+
   // ---------- 渲染 ----------
 
   private render(): void {
+    this.renderTabs()
+    // 两个池都先归还：切页签时上一页的行必须消失（各页只归还自己那一半的话，
+    // 从活动页切到任务/成就页会留下一屏活动行 —— 2026-09-16 由面板量具抓到）
+    this.rowPool?.releaseAll(this.drawnRows)
+    this.drawnRows.length = 0
+    this.activityPool?.releaseAll(this.drawnActivity)
+    this.drawnActivity.length = 0
+    if (this.tab === 'activity') {
+      this.renderActivity()
+      return
+    }
     const list = this.list
     const pool = this.rowPool
     if (list === null || pool === null) {
       return
     }
+    // 任务页不含成就、成就页只看成就（两个页签的数据来自同一份响应，只是过滤不同）
+    const rows = list.rows.filter(row => this.tab === 'achievement'
+      ? row.type === 'ACHIEVEMENT'
+      : row.type !== 'ACHIEVEMENT')
     if (this.headerLabel !== null) {
-      this.headerLabel.string = list.claimableText === null
-        ? `任务 ${list.rows.length} 条`
-        : `任务 ${list.rows.length} 条 · ${list.claimableText}`
+      const scope = this.tab === 'achievement' ? '成就' : '任务'
+      const claimable = this.tab === 'achievement' ? null : list.claimableText
+      this.headerLabel.string = claimable === null
+        ? `${scope} ${rows.length} 条`
+        : `${scope} ${rows.length} 条 · ${claimable}`
     }
 
     const size = view.getVisibleSize()
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
-    pool.releaseAll(this.drawnRows)
-    this.drawnRows.length = 0
-
-    const visible = list.rows.slice(0, MAX_VISIBLE_ROWS)
+    const visible = rows.slice(0, MAX_VISIBLE_ROWS)
     visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
@@ -223,11 +352,110 @@ export class QuestPanelView extends Component {
     })
 
     if (this.overflowLabel !== null) {
-      const hidden = list.rows.length - visible.length
+      const hidden = rows.length - visible.length
       this.overflowLabel.string = hidden > 0
         ? `另有 ${hidden} 条未显示（长列表需要 ScrollView，属编辑器资产）`
         : ''
     }
+  }
+
+  /**
+   * 活动页。**只消费服务端视图**（铁律 2）：能不能领看 state，进度与剩余时间都是下发的。
+   * 没拉到数据时显示"正在加载"而不是"暂无活动" —— 后者会让玩家以为活动下线了。
+   */
+  private renderActivity(): void {
+    const pool = this.activityPool
+    if (pool === null) {
+      return
+    }
+    const data = this.activity
+    if (this.headerLabel !== null) {
+      this.headerLabel.string = data === null
+        ? '活动 加载中'
+        : (data.claimableText === null
+            ? `活动 ${data.rows.length} 条`
+            : `活动 ${data.rows.length} 条 · ${data.claimableText}`)
+    }
+    const size = view.getVisibleSize()
+    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    if (data === null) {
+      if (this.overflowLabel !== null) {
+        this.overflowLabel.string = '正在拉取活动列表…'
+      }
+      return
+    }
+    const visible = data.rows.slice(0, MAX_VISIBLE_ROWS)
+    visible.forEach((row, index) => {
+      const node = pool.acquire()
+      node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
+      this.drawnActivity.push(node)
+      this.renderActivityRow(node, row)
+    })
+    if (this.overflowLabel !== null) {
+      const hidden = data.rows.length - visible.length
+      this.overflowLabel.string = hidden > 0
+        ? `另有 ${hidden} 条未显示（长列表需要 ScrollView，属编辑器资产）`
+        : ''
+    }
+  }
+
+  private renderActivityRow(node: Node, row: ActivityRow): void {
+    const title = node.children[0]?.getComponent(Label)
+    const detail = node.children[1]?.getComponent(Label)
+    const status = node.children[2]?.getComponent(Label)
+    if (title !== undefined && title !== null) {
+      title.string = row.name
+      title.color = row.claimable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
+    if (detail !== undefined && detail !== null) {
+      detail.string = `${row.progressText} · ${row.remainingText}`
+    }
+    if (status !== undefined && status !== null) {
+      status.string = row.statusText
+      status.color = row.claimable ? COLOR_CLAIMABLE : COLOR_TEXT_DIM
+    }
+    const button = node.children[3]
+    if (button !== undefined) {
+      button.off('touch-start')
+      button.active = row.claimable
+      if (row.claimable) {
+        button.on('touch-start', (_event: EventTouch) => this.onClaimActivity?.(row.activityId))
+      }
+    }
+  }
+
+  /** 活动行的节点：标题 / 进度+剩余 / 状态 / 领取按钮。与任务行同宽同高，视觉上是一条流水线。 */
+  private createActivityRow(): Node {
+    const node = new Node('ActivityRow')
+    node.layer = this.node.layer
+    node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, ROW_HEIGHT))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_ROW
+    graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
+    graphics.fill()
+
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 19)
+    title.horizontalAlign = Label.HorizontalAlign.LEFT
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -14, COLOR_TEXT_DIM, 14)
+    detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 150, 0, COLOR_TEXT, 15)
+    status.horizontalAlign = Label.HorizontalAlign.RIGHT
+
+    const button = new Node('ClaimButton')
+    button.layer = node.layer
+    node.addChild(button)
+    button.setPosition(new Vec3(PANEL_WIDTH / 2 - 62, 0, 0))
+    button.addComponent(UITransform).setContentSize(new Size(76, 32))
+    const buttonGraphics = button.addComponent(Graphics)
+    buttonGraphics.fillColor = COLOR_PANEL
+    buttonGraphics.strokeColor = COLOR_COPPER_GOLD
+    buttonGraphics.lineWidth = 1
+    buttonGraphics.roundRect(-38, -16, 76, 32, 4)
+    buttonGraphics.fill()
+    buttonGraphics.stroke()
+    const caption = this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 15)
+    caption.string = '领取'
+    return node
   }
 
   private renderRow(node: Node, row: QuestRow): void {

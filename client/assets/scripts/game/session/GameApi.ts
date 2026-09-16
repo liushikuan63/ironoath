@@ -70,6 +70,9 @@ import type { QuestClaimReq, QuestClaimResp, QuestListResp } from '../../net/gen
 import type {
   MailClaimAllReq, MailClaimAllResp, MailListResp, MailReadReq, MailReadResp,
 } from '../../net/generated/MailProtocol'
+import type {
+  ActivityClaimReq, ActivityClaimResp, ActivityListResp,
+} from '../../net/generated/ActivityProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -737,6 +740,19 @@ export class GameApi {
   /** POST /mail/read。回执带新的未读封数，省一次重拉。 */
   mailRead(req: Omit<MailReadReq, 'requestId'>): Promise<NetOutcome<MailReadResp>> {
     return this.mutate<MailReadReq, MailReadResp>('/mail/read', req)
+  }
+
+  /**
+   * GET /activity/list（B17）。读取路径会在服务端顺手做一次窗口同步
+   * （上一轮没领的行标 EXPIRED、没碰过的行进新一轮），所以每次都真拉，不拿缓存糊弄。
+   */
+  activityList(): Promise<NetOutcome<ActivityListResp>> {
+    return this.read<ActivityListResp>('/activity/list')
+  }
+
+  /** POST /activity/claim。requestId 由 mutate 补（同任务/邮件：客户端不生成幂等键）。 */
+  activityClaim(req: Omit<ActivityClaimReq, 'requestId'>): Promise<NetOutcome<ActivityClaimResp>> {
+    return this.mutate<ActivityClaimReq, ActivityClaimResp>('/activity/claim', req)
   }
 
   /**
