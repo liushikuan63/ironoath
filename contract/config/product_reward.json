@@ -1,0 +1,107 @@
+{
+  "table": "product_reward",
+  "version": 1,
+  "comment": "付费商品的发货内容（B19 §一.1）。一个商品多行奖励：月卡的日包三行、首充的金币一行、成长基金的六档各一行。\n价格与「按什么节奏领」在 `pay_product`，本表只回答「一次发的是哪些东西、各多少个」。",
+  "designNote": "**三条口径**：\n1. **为什么拆成行而不是在商品行里塞一个 JSON 字段**：与 `chest.json` / `chest_drop.json` 当年同一条理由 ——\n   奖励要能被外键卡口逐行验。`rewardId` 打错成一个不存在的道具，校验器当场就能拦；\n   塞进 JSON 字段就看不见，只会在玩家付了钱、打开背包那一刻炸出来（付费场景里这是最贵的一种 bug）。\n2. **`rewardType` 与 `rewardId` 成对**（`RESOURCE` 指 `resource` 表、`ITEM` 指 `item` 表）：\n   这条配对由 `check-config-refs` 的规则 3 核 —— 它查得出「写 RESOURCE 而 id 填了道具」这种\n   「两边都存在、只有语义错」的行，而那种行的症状是玩家领到别的东西而不是报错。\n   **为什么不写 `REF:`**：一列指向两张表，校验器的 REF 规则表达不了，退化成 STRING + 配对规则（与 `chest_drop.rewardId` 同一处取舍）。\n3. **`requireMainLevel` 只对基金档位有意义**：`pay_product.grantOccasion=TIER` 的商品按这一列分批解锁；\n   其余行留空表示「没有等级门槛，到点就能领」。同一列两处用（有门槛/无门槛）而不是加两个列，\n   是因为「无门槛」本身就是「门槛为 0」的简写，两个列会造出一个「两列都为空算什么」的空洞。\n\n**金币等值从哪里来**：日包与礼包的「值多少钱」全部按 `shop.json` 的金币价折算（建造令 1h=40、木材包=10、\n练兵令 1h=45、铁包=25、闭城令 8h=90）。这些数不在本表复制，一致性由 `ProductRewardConsistencyTest` 现读两张表算，\n它同时钉住 #145 定的那条换算基准：`价格分 × PAY_BASE_GOLD_PER_YUAN × 各倍率 ÷ 期数 == 组成之和`。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "productId": "REF:pay_product",
+    "requireMainLevel": "?LONG_POS",
+    "rewardType": "ENUM:RESOURCE,ITEM",
+    "rewardId": "STRING",
+    "count": "LONG_POS",
+    "why": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "pr_monthly_gold",
+      "productId": "monthly_card",
+      "requireMainLevel": null,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 50,
+      "why": "日包的金币部分。50 + 40(建造令) + 10(木材包) = 100 金币等值 = 3000 ÷ 30 天，一分不多不少（一致性由测试现算）。"
+    },
+    {
+      "id": "pr_monthly_build",
+      "productId": "monthly_card",
+      "requireMainLevel": null,
+      "rewardType": "ITEM",
+      "rewardId": "item_speedup_build_1h",
+      "count": 1,
+      "why": "每天一张 1 小时建造令：月卡玩家真正感到「省时间」的就是这一张，而它每天过期重来才有回线的理由。"
+    },
+    {
+      "id": "pr_monthly_wood",
+      "productId": "monthly_card",
+      "requireMainLevel": null,
+      "rewardType": "ITEM",
+      "rewardId": "item_res_wood_10k",
+      "count": 1,
+      "why": "木材是造兵与建造的双料瓶颈（`item_res_wood_10k` 商店价 10 金币），给量小但天天给：补的是「差一点就能开工」那种卡手。"
+    },
+    {
+      "id": "pr_first_gold",
+      "productId": "first_charge",
+      "requireMainLevel": null,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 120,
+      "why": "6 元 × 基准 10 金币/元 × `FIRST_CHARGE_MULTIPLIER`(2) = 120。首充送的武将见 `pay_product.hero_choices`（三选一），不占本表的行：候选集不是「一件固定奖励」，把它写成一行就会有人以为发的是固定武将。"
+    },
+    {
+      "id": "pr_fund_t1",
+      "productId": "growth_fund",
+      "requireMainLevel": 10,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 1600,
+      "why": "第 1 档卡在主城 10 级 = 入盟门槛（`alliance_config` 那条）：付了基金的人在入队这件事上应当明显快于零氪，这是付费深度该起的作用（C08）。"
+    },
+    {
+      "id": "pr_fund_t2",
+      "productId": "growth_fund",
+      "requireMainLevel": 16,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 1600,
+      "why": "第 2 档卡在 16 级 = 建国门槛（`nation_config`）。两档对齐两个组织门槛，玩家对「基金回本」的体感就发生在两件大事上。"
+    },
+    {
+      "id": "pr_fund_t3",
+      "productId": "growth_fund",
+      "requireMainLevel": 22,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 1600,
+      "why": "中段三档（22/28/34）按赛季 45 天的成长曲线摊开：§五②d 的「均分 1600×5 + 1800」，避免任何一档给得特别多以致玩家领完就退。"
+    },
+    {
+      "id": "pr_fund_t4",
+      "productId": "growth_fund",
+      "requireMainLevel": 28,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 1600,
+      "why": "同上，第 4 档。"
+    },
+    {
+      "id": "pr_fund_t5",
+      "productId": "growth_fund",
+      "requireMainLevel": 34,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 1600,
+      "why": "同上，第 5 档。"
+    },
+    {
+      "id": "pr_fund_t6",
+      "productId": "growth_fund",
+      "requireMainLevel": 40,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 1800,
+      "why": "尾档 1800（多出的 200 在这里）：六档走完的人是全服投入最深的一批，尾款给得略多重，是「走完」这件事的定价。五档 1600 + 一档 1800 = 9800 = 98 元 × 10 金币/元 × 倍率 10，与 #145 的换算基准逐字对齐。"
+    }
+  ]
+}

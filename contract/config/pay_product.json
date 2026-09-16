@@ -1,0 +1,56 @@
+{
+  "table": "pay_product",
+  "version": 1,
+  "comment": "付费商品表（B19 §一.1）。三行 = 支付域唯一在卖的三类商品：月卡 / 成长基金 / 首充。\n本表只放**结构与权益**；价格不放这里（见 designNote 第 1 条：价格住在 global 的 PRODUCT_*_CENTS，本表用 priceCentsParam 指它的名字）。",
+  "designNote": "**四条口径**（来源：`收口清单.md` #145 的 B19 裁决 + `B19_付费发货与礼包弹窗.md` §一.1）：\n1. **价格不在本表**：三类商品的价格早已是 `global` 的 `PRODUCT_MONTHLY_CARD_CENTS` / `PRODUCT_GROWTH_FUND_CENTS` / `PRODUCT_FIRST_CHARGE_CENTS`，而 `PayAppService.priceOf` 按 productId 去读。再在本表存一份数字，就是同一个价两个家 —— 改一处另一处不动，症状是「下单按旧价扣钱、界面显示新价」。本表因此只存**参数的名字**（`priceCentsParam`），它是指针不是副本。\n2. **发货内容在 `product_reward` 那张表里**（按本表 id 挂）：月卡的日包、首充的金币与选将、基金的六档，全是「一个商品多行奖励」的形状。为什么不像宝箱那样塞一个 JSON 字段（`chest.json` 的 designNote 当年就为这件事写过理由）：奖励要能被外键卡口逐行验（`rewardId` 打错成不存在的道具，校验器看得见，JSON 看不见），而发错的后果是玩家付费后领到别的东西。\n3. **`grantOccasion` 决定「什么时候发」**，三类各不同且不能混：`ON_PURCHASE` 发货即发（首充）；`DAILY` 有效期内每天领一次（月卡，跨天走 `DayKey` UTC+8）；`TIER` 按主城等级分批领（基金，档位门槛在 `product_reward.requireMainLevel`）。这个位放本表而不是奖励行上，是因为「按什么节奏领」是**商品的属性**：日包三行奖励共享同一个节奏，逐行重复三个一样的值是抄三遍。\n4. **`adFree` / `extraQueues` 只给月卡**（§五②b 的三件套之二）。两条裁决原文留在字段里防误读：\n   · `adFree` 免的是**播放**不是次数 —— `city_rule_ad_speedup_daily_limit`（5 次/日）保留，月卡玩家照样一天最多 5 次，只是不必看广告；把上限一起免掉等于让时间卡点被付费绕过（那条 city_rule 的 why 原文就写着这件事）。\n   · `extraQueues` 是 `city_rule_max_queue_count`（3）之上**临时 +1**，到期只禁新开、不中断在跑的升级（§五②b「到期收回」）。\n\n**礼包不放本表**：礼包弹窗是「触发条件 + 限时 + 限购」那一族（`B19` §一.3），与这三类「一次买断、分批领」的商品语义不同；它随弹窗接线那一批单独成表，避免把两种生命周期塞进同一张表的可选列里。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "kind": "ENUM:MONTHLY_CARD,GROWTH_FUND,FIRST_CHARGE",
+    "priceCentsParam": "STRING",
+    "grantOccasion": "ENUM:ON_PURCHASE,DAILY,TIER",
+    "durationDays": "?LONG_POS",
+    "adFree": "BOOL",
+    "extraQueues": "LONG_NONNEG",
+    "heroChoices": "?STRING",
+    "why": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "monthly_card",
+      "name": "铁誓月卡",
+      "kind": "MONTHLY_CARD",
+      "priceCentsParam": "PRODUCT_MONTHLY_CARD_CENTS",
+      "grantOccasion": "DAILY",
+      "durationDays": 30,
+      "adFree": true,
+      "extraQueues": 1,
+      "heroChoices": null,
+      "why": "30 元 × 基准 10 金币/元 × 倍率 10 = 3000 金币等值，摊到 30 天 = 每天 100 金币等值（`product_reward` 里那三行日包加起来正好 100：50 金币 + 建造令 1h(商店价 40) + 木材包(商店价 10)）。倍率取 10 的理由与「日包为什么拆成金币 + 两张令」是同一件事：纯金币的日包会被拿去攒大招（第 30 天一次买空），而每天到期的两张令把玩家拉回日常节奏 —— 月卡买的是习惯，不是一笔钱。"
+    },
+    {
+      "id": "growth_fund",
+      "name": "成长基金",
+      "kind": "GROWTH_FUND",
+      "priceCentsParam": "PRODUCT_GROWTH_FUND_CENTS",
+      "grantOccasion": "TIER",
+      "durationDays": null,
+      "adFree": false,
+      "extraQueues": 0,
+      "heroChoices": null,
+      "why": "98 元 × 10 金币/元 × `PRODUCT_GROWTH_FUND_RETURN_RATIO`(10) = 9800 金币，分六档发（1600×5 + 1800，见 `product_reward`）。**不带有效期**（durationDays 为空）：§五②d 裁的是「永久有效」—— 一次性付费的权益不设过期，否则「买了没练到等级就作废」会直接变成退款工单。档位锚点取 10/16/22/28/34/40：10 级是入盟门槛、16 级是建国门槛，其余三档对齐赛季内的成长节奏，最后一档给 1800 是尾档补偿（走完六档的人是最投入的那批）。"
+    },
+    {
+      "id": "first_charge",
+      "name": "首充双倍",
+      "kind": "FIRST_CHARGE",
+      "priceCentsParam": "PRODUCT_FIRST_CHARGE_CENTS",
+      "grantOccasion": "ON_PURCHASE",
+      "durationDays": null,
+      "adFree": false,
+      "extraQueues": 0,
+      "heroChoices": "hero_sr_01,hero_sr_02,hero_sr_03",
+      "why": "6 元 × 10 金币/元 × `FIRST_CHARGE_MULTIPLIER`(2) = 120 金币（§五①a 定的换算基准与倍率）。**另送一名 SR，三选一**，候选集与 `quest_main_01.rewardHeroChoices` 同一批（不另建名单：两个候选集迟早分叉，而分叉时玩家会问「为什么任务送的和充钱送的不一样」。§五②e 原话）。**这一列与 `quest_main_01.rewardHeroChoices` 是两份字符串**：同源由 `ProductRewardConsistencyTest` 逐字符比对钉住，而不是让付费域去读任务表 —— 一条反向依赖换来的「少一份字符串」，代价是两个系统在编译期绑在一起。金币只给 120 是因为首充的定价价值在武将 —— 金币是添头，不是卖点。"
+    }
+  ]
+}

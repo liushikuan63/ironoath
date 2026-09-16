@@ -16,6 +16,11 @@ const CHECKLIST = '收口清单.md'
 /* 已知"表做了、机制没做"的族。每条都给得出出处，出处错了卡口就红，所以这张表不会烂成借口。 */
 const UNWIRED = {
   TechCfg: '零装配：#6（个人科技没有规格 —— B12 六个子系统不含科技，见收口清单该行）',
+  // PayProductCfg / ProductRewardCfg 挂在这里是**中间状态**而不是欠账：B19-S1 只落表与参数
+  // （商品结构 + 发货内容 + 换算基准），`ProductFulfiller` 的真实现、月卡/基金的领取端点在 S2 接上，
+  // 届时删除这两行（与下面 GuideCfg 那条同一条规矩：接上读它的人之后，例外必须跟着删）。
+  PayProductCfg: '零装配：B19_付费发货与礼包弹窗.md（S1 先落商品表，S2 接 ProductFulfiller）',
+  ProductRewardCfg: '零装配：B19_付费发货与礼包弹窗.md（S1 先落发货内容表，S2 接领取与发奖）',
   // GuideCfg 曾挂在这里（B18-S1 只落了表与契约）：S2 的 GuideRulesAssembler + /guide/script
   // + /guide/progress 让它真的被读了，例外随之删除 —— 与下面 ActivityCfg 那条同一条规矩。
   // ActivityCfg 曾挂在这里（#60「活动与七日登录只有表，没有推进与领取路径」）：
@@ -111,7 +116,12 @@ const UNREFERENCED = {
   WAR_SERVER_GOAL_GOLD: '零引用：#47（国战与全服目标整块未开工，没有承载代码）',
   NATION_VOTE_DURATION_HOURS: '零引用：#47（国策投票同上，B13 §4 没有实现）',
   POWER_DROP_ALERT_RATIO: '零引用：#26（B08 §8 的"标记观察"没有风控归属，标记了给谁看未定）',
-  PRODUCT_GROWTH_FUND_RETURN_RATIO: '零引用：#64（成长基金这件商品还没进货架，B15 §六 开放问题 2）',
+  PRODUCT_GROWTH_FUND_RETURN_RATIO: '零引用：B19_付费发货与礼包弹窗.md §五①（倍率已在 #145 定稿、基金六档已进 `product_reward`，读它的一致性测试与发货随 B19-S2 落地，届时删除本行）',
+  // 下面三条是 B19-S1 先落的换算基准（#145 裁决①a）：数字本身就是"改了要重新算价"的那一位，
+  // 消费点是 S2 的 ProductRewardConsistencyTest（现算 价格分 × 基准 × 倍率 == 组成之和）与发货实现。
+  PAY_BASE_GOLD_PER_YUAN: '零引用：B19_付费发货与礼包弹窗.md §五①a（换算基准，S2 一致性测试与发货读取，届时删除本行）',
+  FIRST_CHARGE_MULTIPLIER: '零引用：B19_付费发货与礼包弹窗.md §五①a（首充倍率，S2 发货读取，届时删除本行）',
+  MONTHLY_CARD_DAILY_MULTIPLIER: '零引用：B19_付费发货与礼包弹窗.md §五①a（月卡倍率，S2 日包一致性测试读取，届时删除本行）',
   PAY_CHANNEL: '零引用：#64（渠道写死在支付适配器上，这条参数只起记录作用）',
   // MINOR_PAY_SINGLE_LIMIT_CENTS 与 MINOR_PAY_MONTHLY_LIMIT_CENTS 曾在这里挂着：
   // 那两条不是"设计如此"，而是**没接线**（#64）。现在下单路径
