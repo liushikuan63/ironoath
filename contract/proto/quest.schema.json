@@ -8,12 +8,13 @@
   "$defs": {
     "QuestType": {
       "type": "string",
-      "description": "任务类型，决定重置周期（不决定奖励，奖励在 quest 表里）。取值与 game-core 的 QuestProgress.QuestType 逐一对应，由 NationPayEnumParityTest 一类的枚举守卫钉住。",
+      "description": "任务类型，决定重置周期（不决定奖励，奖励在 quest 表里）。ACHIEVEMENT（B17 §4 成就）永不重置、跨赛季保留 —— 成就不另开一套框架，它就是任务表里的一种 questType。取值与 game-core 的 QuestProgress.QuestType 逐一对应，由 NationPayEnumParityTest 一类的枚举守卫钉住。",
       "enum": [
         "MAIN",
         "SIDE",
         "DAILY",
-        "WEEKLY"
+        "WEEKLY",
+        "ACHIEVEMENT"
       ]
     },
     "GoalType": {

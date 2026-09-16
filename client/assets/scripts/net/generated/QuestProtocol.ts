@@ -6,13 +6,14 @@
  */
 
 /**
- * 任务类型，决定重置周期（不决定奖励，奖励在 quest 表里）。取值与 game-core 的 QuestProgress.QuestType 逐一对应，由 NationPayEnumParityTest 一类的枚举守卫钉住。
+ * 任务类型，决定重置周期（不决定奖励，奖励在 quest 表里）。ACHIEVEMENT（B17 §4 成就）永不重置、跨赛季保留 —— 成就不另开一套框架，它就是任务表里的一种 questType。取值与 game-core 的 QuestProgress.QuestType 逐一对应，由 NationPayEnumParityTest 一类的枚举守卫钉住。
  */
 export type QuestType =
   | 'MAIN'
   | 'SIDE'
   | 'DAILY'
   | 'WEEKLY'
+  | 'ACHIEVEMENT'
 
 /**
  * 任务目标类型（B12 §1 的统一 GoalType）。16 个取值分成累加型与状态型两类 —— 前者进度只增不减（累计训练 20 个兵），后者进度是当前状态、可升可降（当前持有 10000 粮）。分类在服务端的 GoalType 枚举上，由 CI 的枚举一致性守卫保证两边同名同序。末三个（LOGIN_DAY / ALLIANCE_DONATE / PVP_WIN）是 B17 活动系统补的累加型目标，任务表暂未使用。

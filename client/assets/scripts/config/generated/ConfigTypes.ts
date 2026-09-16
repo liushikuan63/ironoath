@@ -659,6 +659,7 @@ export type QuestQuestType =
   | 'SIDE'
   | 'DAILY'
   | 'WEEKLY'
+  | 'ACHIEVEMENT'
 
 /** quest.questGoalType 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type QuestGoalType =

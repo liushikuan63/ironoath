@@ -30,7 +30,8 @@ public record QuestCfg(
         MAIN,
         SIDE,
         DAILY,
-        WEEKLY
+        WEEKLY,
+        ACHIEVEMENT
     }
 
     /** 枚举取值与配置表 fieldTypes 中的 ENUM 声明完全一致（CI 校验）。 */

@@ -220,6 +220,23 @@ class QuestSystemTest {
     }
 
     @Test
+    @DisplayName("成就跨天跨周都不重置（B17 验收 7）：它就是 questType 里不重置的那一档")
+    void achievementNeverResetsAcrossPeriods() {
+        QuestProgress progress = QuestProgress.open(PLAYER, List.of(
+                def("ach_kill", QuestProgress.QuestType.ACHIEVEMENT, GoalType.KILL_MONSTER, null, 500L, null),
+                def("q_day", QuestProgress.QuestType.DAILY, GoalType.GATHER_RESOURCE, "WOOD", 100L, null)),
+                DAY, WEEK);
+        progress.onEvent(GameEvent.progress(PLAYER, GoalType.KILL_MONSTER, null, 120L, NOW));
+
+        // 跨天又跨周：日任务清零、成就一动不动。这就是"跨赛季保留"的落点 ——
+        // 全仓库只有任务域自己读任务进度账本（赛季结算不碰它），所以保留靠的是类型不重置，
+        // 而不是在结算里写一句"特意保留成就"（那种分支一旦漏写就是丢进度）
+        progress.rollover(NEXT_DAY, NEXT_WEEK);
+        assertThat(progress.entry("q_day").current()).as("日任务该清的清").isZero();
+        assertThat(progress.entry("ach_kill").current()).as("成就进度跨期不许动").isEqualTo(120L);
+    }
+
+    @Test
     @DisplayName("周任务只在跨周时重置：跨天不跨周不该动它")
     void weeklyQuestsResetOnlyOnWeekChange() {
         QuestProgress progress = QuestProgress.open(PLAYER, List.of(

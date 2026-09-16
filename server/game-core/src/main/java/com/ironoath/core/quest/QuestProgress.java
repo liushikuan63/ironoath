@@ -33,7 +33,15 @@ public final class QuestProgress {
         /** 每日：跨天清零（进度与领取状态都清）。 */
         DAILY,
         /** 每周：跨周清零。 */
-        WEEKLY;
+        WEEKLY,
+        /**
+         * 成就（B17 §4）：长期目标，**永不重置、跨赛季保留**（与 MAIN 的保留口径一致）。
+         *
+         * <p>成就不另开一套框架：它就是 quest 表里一种 questType，奖励、进度、领取、红点全部复用。
+         * 「跨赛季保留」这条承诺的落点是<b>类型本身不重置</b> —— 赛季结算不碰任务进度账本，
+         * 所以这里不需要、也不该有"赛季开始时特意保留成就"的分支（那种分支一旦漏写就是丢进度）。
+         */
+        ACHIEVEMENT;
 
         public boolean resets() {
             return this == DAILY || this == WEEKLY;
