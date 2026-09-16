@@ -1,6 +1,7 @@
 package com.ironoath.web.store.mongo;
 
 import com.ironoath.core.player.PlayerGlory;
+import com.ironoath.core.player.PlayerGuide;
 import com.ironoath.core.player.PlayerPower;
 import com.ironoath.core.player.PlayerPvp;
 import com.ironoath.core.player.PlayerResourceState;
@@ -46,6 +47,9 @@ public final class PlayerDocumentMapper {
                 save.protectUntil(),
                 new PlayerDocument.GloryDoc(save.glory().gloryLevel(),
                         save.glory().highestTier().name(), save.glory().badges()),
+                // 与 GloryDoc 一样无条件写：没走过引导也是一个明确的值（stepIndex=0、finishedAt=null），
+                // 而不是"这一列不存在" —— 后者会让读路径分不清"老号"与"这条更新漏写了"
+                new PlayerDocument.GuideDoc(save.guide().stepIndex(), save.guide().finishedAt()),
                 save.version());
     }
 
@@ -82,10 +86,18 @@ public final class PlayerDocumentMapper {
             }
         }
 
+        // 引导进度：缺子文档（老号）与子文档本身是脏的（负序号）都读成"从未开始" ——
+        // 与荣耀缓存同一条纪律：这一位读不懂的代价是引导重弹一次，而不是登录失败
+        PlayerDocument.GuideDoc d = doc.guide();
+        PlayerGuide guide = PlayerGuide.empty();
+        if (d != null && d.stepIndex() >= 0) {
+            guide = new PlayerGuide(d.stepIndex(), d.finishedAt());
+        }
+
         PlayerSave save = new PlayerSave();
         save.restore(doc.playerId(), doc.deviceId(), doc.nickName(), doc.avatarId(),
                 doc.createdAt(), doc.lastLoginAt(), doc.cityLevel(), resources,
-                power, pvp, doc.protectUntil(), glory, doc.version());
+                power, pvp, doc.protectUntil(), glory, guide, doc.version());
         return save;
     }
 }

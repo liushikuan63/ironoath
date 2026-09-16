@@ -128,6 +128,8 @@ public final class MongoPlayerStore implements PlayerRepository {
                 // 少这一行的症状不是报错，而是「内存开发一切正常、生产每次重启荣耀都清零」——
                 // 两侧写同一批字段这条纪律由 PlayerStoreContractTest 的那条新用例守着
                 .set("glory", doc.glory())
+                // 引导进度同理：漏这一行的症状是「内存 dev 一切正常、生产每次重启把玩家弹回第 1 步」
+                .set("guide", doc.guide())
                 .inc("version", 1);
 
         UpdateResult result = mongo.updateFirst(query, update, PlayerDocument.class, PlayerDocument.COLLECTION);

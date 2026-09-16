@@ -19,7 +19,6 @@ public record GuideCfg(
         String maskArea,
         String text,
         boolean skippable,
-        boolean saveProgress,
         Judge judge,   // 枚举，取值见 GuideJudge
         String judgeTarget)   // 外键，指向 quest 表的 id
 {

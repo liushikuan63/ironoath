@@ -495,7 +495,6 @@ export interface GuideCfg {
   maskArea: string
   text: string
   skippable: boolean
-  saveProgress: boolean
   /** 枚举，取值见 GuideJudge */
   judge: GuideJudge
   /** 外键，指向 quest 表的 id */

@@ -30,10 +30,20 @@ public record PlayerDocument(
         PvpDoc pvp,
         Long protectUntil,
         GloryDoc glory,
+        GuideDoc guide,
         long version) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "player";
+
+    /**
+     * 新手引导进度的持久化形态（B18：存档上的两位 —— 当前步序号与结束时刻）。
+     *
+     * <p><b>可空</b>：B18 之前建的号没有这一位，读回来补 {@code PlayerGuide.empty()}（从未开始）
+     * 而不是抛 —— 与 {@link GloryDoc}、{@link PvpDoc} 缺失时同一条读法。
+     */
+    public record GuideDoc(int stepIndex, Long finishedAt) {
+    }
 
     /**
      * 荣耀三件套的持久化形态（B14 §4：唯一允许留在主存档的赛季数据）。

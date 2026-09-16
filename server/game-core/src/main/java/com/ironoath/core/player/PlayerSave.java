@@ -37,6 +37,14 @@ public final class PlayerSave {
      * 这轮之前的号本来就没有这些，「从零开始」是唯一正确的读法（与 {@link #pvp} 同一条纪律）。
      */
     private PlayerGlory glory = PlayerGlory.empty();
+    /**
+     * 新手引导进度（B18）。<b>只有「该显示哪一步」与「还显不显示」这两位</b>，
+     * 每步做到没有是读任务账本算出来的（见 {@link PlayerGuide} 的类注释）。
+     *
+     * <p>默认 {@link PlayerGuide#empty()} 而不是 null：B18 之前的号本来就没走过引导，
+     * 「从没开始过」是唯一正确的读法（与 {@link #pvp}、{@link #glory} 同一条纪律）。
+     */
+    private PlayerGuide guide = PlayerGuide.empty();
     /** 乐观锁版本号，每次持久化自增。 */
     private long version;
 
@@ -146,6 +154,11 @@ public final class PlayerSave {
         return glory;
     }
 
+    /** 新手引导进度。永不为 null（没走过引导就是 {@link PlayerGuide#empty()}）。 */
+    public PlayerGuide guide() {
+        return guide;
+    }
+
     public Long protectUntil() {
         return protectUntil;
     }
@@ -236,6 +249,18 @@ public final class PlayerSave {
         this.glory = glory;
     }
 
+    /**
+     * 覆盖引导进度。<b>唯一写者是 {@code GuideAppService} 的推进路径</b>（B18）：
+     * 引导不发数值奖励，所以没有第二个系统需要动这一位；开第二个写者的下场与「在引导里另开一条
+     * 发奖口」是同一类问题 —— 两处写的状态没人能对账。
+     */
+    public void setGuide(PlayerGuide guide) {
+        if (guide == null) {
+            throw new IllegalArgumentException("引导进度不得为 null（没走过引导请传 PlayerGuide.empty()）");
+        }
+        this.guide = guide;
+    }
+
     public void setNickName(String nickName) {
         requireText(nickName, "nickName");
         this.nickName = nickName;
@@ -273,7 +298,8 @@ public final class PlayerSave {
                         long createdAt, long lastLoginAt, int cityLevel,
                         Map<String, PlayerResourceState> restoredResources,
                         PlayerPower restoredPower, PlayerPvp restoredPvp,
-                        Long protectUntil, PlayerGlory restoredGlory, long version) {
+                        Long protectUntil, PlayerGlory restoredGlory, PlayerGuide restoredGuide,
+                        long version) {
         this.playerId = playerId;
         this.deviceId = deviceId;
         this.nickName = nickName;
@@ -291,6 +317,8 @@ public final class PlayerSave {
         // 老存档没有这一项（本轮之前的号压根没存过荣耀）：补 empty 而不是抛，也不留 null ——
         // 读的人不该为了一个派生缓存到处判空
         this.glory = restoredGlory == null ? PlayerGlory.empty() : restoredGlory;
+        // 老存档没有这一位（B18 之前不存在引导）：读成 empty = 从未开始，而不是抛或留 null
+        this.guide = restoredGuide == null ? PlayerGuide.empty() : restoredGuide;
         this.version = version;
     }
 
@@ -304,7 +332,7 @@ public final class PlayerSave {
     public PlayerSave copy() {
         PlayerSave copy = new PlayerSave();
         copy.restore(playerId, deviceId, nickName, avatarId, createdAt, lastLoginAt, cityLevel,
-                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, version);
+                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, version);
         return copy;
     }
 }

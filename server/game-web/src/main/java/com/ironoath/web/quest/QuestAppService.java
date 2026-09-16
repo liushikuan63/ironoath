@@ -183,6 +183,29 @@ public class QuestAppService {
     // ---------- 进度账本的载入与推进 ----------
 
     /**
+     * 读某一条任务此刻的状态（达标没有、奖领了没有）。给引导用（B18 §一.2：完成判定读服务端既有状态，
+     * 而且必须是<b>任务的那一份</b>状态 —— 引导自己算一遍就会与主线分叉）。
+     *
+     * <p><b>为什么不把 {@link #loaded} 直接公开</b>：那等于对外交出整本账，调用方拿到的是
+     * 「可以自己判、也可以顺手写」的一堆条目；引导只需要一位布尔，就只给它一位。
+     * 内部照样走 {@code loaded} —— 跨期清零与状态型快照都在那一步，绕过它就等于读一份过期账本。
+     *
+     * <p>返回空 = 账本里没有这条任务（配置外键已由启动期校验，走到这里通常是表改了而进程没重载），
+     * 调用方按「未达成」处理即可：引导停在当前步，不报错也不推进。
+     */
+    public java.util.Optional<QuestProgress.Entry> entryOf(String playerId, String questId) {
+        if (questId == null || questId.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        for (QuestProgress.Entry entry : loaded(playerId, timeService.serverNow()).entries()) {
+            if (entry.questId().equals(questId)) {
+                return java.util.Optional.of(entry);
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
+    /**
      * 载入（或新建）进度账本，并顺手推进两件随时间变化的事：跨期清零、状态型快照。
      *
      * <p><b>只有真变化才落库</b>：读面板是高频动作，每次都写一遍会让存储成为热点，
