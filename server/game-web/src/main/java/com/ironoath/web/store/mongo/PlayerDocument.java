@@ -31,10 +31,29 @@ public record PlayerDocument(
         Long protectUntil,
         GloryDoc glory,
         GuideDoc guide,
+        PaidDoc paid,
         long version) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "player";
+
+    /**
+     * 付费权益的持久化形态（B19：月卡 / 成长基金 / 首充 / 发货幂等账本）。
+     *
+     * <p><b>可空</b>：B19 之前建的号没有这一位，读回来补 {@code PlayerPaid.empty()} ——
+     * 与 {@link GuideDoc}、{@link GloryDoc} 缺失时同一条读法。
+     *
+     * <p><b>两个集合存成有序的 List 而不是 Set</b>：{@code fulfilledOrderIds} 的淘汰规则是
+     * 「装满就丢最早记进去的那几笔」，靠的是插入顺序。集合从存储里回来的顺序由实现决定，
+     * 用 Set 就是把「丢哪几笔」交给驱动心情 —— 而被丢掉的每一笔都是一次可能重发奖励的机会。
+     */
+    public record PaidDoc(Long cardExpireAt,
+                          Long cardClaimedThroughAt,
+                          Long fundPurchasedAt,
+                          java.util.List<String> fundClaimedTiers,
+                          Long firstChargedAt,
+                          java.util.List<String> fulfilledOrderIds) {
+    }
 
     /**
      * 新手引导进度的持久化形态（B18：存档上的两位 —— 当前步序号与结束时刻）。

@@ -117,13 +117,13 @@ class PlayerGloryEquivalenceTest {
     @DisplayName("老存档没有这一项，或段位名字认不出来：读成 empty，绝不让一个缓存字段挡住登录")
     void missingOrUnreadableGloryReadsAsEmpty() {
         PlayerDocument noGlory = new PlayerDocument("P-old", "dev-old", "老号", 1, NOW, NOW, 1,
-                Map.of(), null, null, null, null, null, 0L);
+                Map.of(), null, null, null, null, null, null, 0L);
         assertThat(PlayerDocumentMapper.toDomain(noGlory).glory())
                 .as("这轮之前建的号压根没存过荣耀").isEqualTo(PlayerGlory.empty());
 
         PlayerDocument brokenTier = new PlayerDocument("P-bad", "dev-bad", "脏数据", 1, NOW, NOW, 1,
                 Map.of(), null, null, null,
-                new PlayerDocument.GloryDoc(2, "MYTHIC", List.of("season_x")), null, 0L);
+                new PlayerDocument.GloryDoc(2, "MYTHIC", List.of("season_x")), null, null, 0L);
         assertThat(PlayerDocumentMapper.toDomain(brokenTier).glory())
                 .as("认不出的段位是缓存读不懂，不是登录失败的理由 —— 它随时能由账本重算")
                 .isEqualTo(PlayerGlory.empty());

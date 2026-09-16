@@ -11,8 +11,14 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
+import com.ironoath.web.dto.generated.CardClaimReq;
+import com.ironoath.web.dto.generated.CardClaimResp;
+import com.ironoath.web.dto.generated.CardStatusResp;
 import com.ironoath.web.dto.generated.CreateOrderReq;
 import com.ironoath.web.dto.generated.CreateOrderResp;
+import com.ironoath.web.dto.generated.FundClaimReq;
+import com.ironoath.web.dto.generated.FundClaimResp;
+import com.ironoath.web.dto.generated.FundStatusResp;
 import com.ironoath.web.dto.generated.OrderStatusResp;
 import com.ironoath.web.dto.generated.PayCallbackReq;
 import com.ironoath.web.dto.generated.PayRetryReq;
@@ -36,9 +42,11 @@ import com.ironoath.web.service.PayAppService;
 public class PayController {
 
     private final PayAppService pay;
+    private final com.ironoath.web.pay.PaidClaimsAppService claims;
 
-    public PayController(PayAppService pay) {
+    public PayController(PayAppService pay, com.ironoath.web.pay.PaidClaimsAppService claims) {
         this.pay = pay;
+        this.claims = claims;
     }
 
     /** 价格表。**客户端不得内置任何价格**，否则调价必须发版，而发版前的旧客户端会显示旧价却按新价扣款。 */
@@ -80,6 +88,43 @@ public class PayController {
                                          @RequestBody PayRetryReq req) {
         requirePlayer(playerId);
         return Result.ok(pay.retry(playerId, req));
+    }
+
+    // ---------- B19 付费权益：月卡日包与成长基金档位 ----------
+
+    /**
+     * 月卡状态（是否在有效期、今天领过没有、现在点会领几天、当前生效的免广告与队列加成）。
+     *
+     * <p><b>读路径不拿玩家锁</b>：它只做一次读档，权益是否生效由"读出来的到期时刻 vs 服务端当前时刻"
+     * 现推，没有读改写。给读路径加锁只会把一个纯查询变成"别人卡住我 3 秒"。
+     */
+    @GetMapping("/card")
+    public Result<CardStatusResp> cardStatus(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(claims.cardStatus(playerId));
+    }
+
+    /** 领月卡日包（漏领的天数在有效期内一次补发，上限是剩余有效天数）。 */
+    @PostMapping("/card/claim")
+    public Result<CardClaimResp> claimCard(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                           @RequestBody CardClaimReq req) {
+        requirePlayer(playerId);
+        return Result.ok(claims.claimCard(playerId, req));
+    }
+
+    /** 成长基金六档的解锁与领取状态。没买过也返回档位表，玩家要能看见"买了之后有什么"。 */
+    @GetMapping("/fund")
+    public Result<FundStatusResp> fundStatus(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(claims.fundStatus(playerId));
+    }
+
+    /** 领一档成长基金（一次一档，主城等级达标才领得到）。 */
+    @PostMapping("/fund/claim")
+    public Result<FundClaimResp> claimFund(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                           @RequestBody FundClaimReq req) {
+        requirePlayer(playerId);
+        return Result.ok(claims.claimFund(playerId, req));
     }
 
     private static void requirePlayer(String playerId) {

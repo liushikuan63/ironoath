@@ -108,8 +108,13 @@ public final class RewardPorts {
         /**
          * 发放一条非资源非道具的奖励。
          *
-         * @return 实际发放数量；无法发放时返回 0
+         * @param now 服务端当前时刻。<b>自 B19 起带上它</b>：特权这一类要按「现在」算到期时刻
+         *              （月卡 +30 天），而实现里自己去读墙上时钟等于绕开铁律 5，
+         *              也让用例无法把时间钉在某个日界上
+         * @return 实际发放数量；无法发放时返回 0。
+         *         <b>注意特权（PRIVILEGE）应当返回全部 count</b>：时间没有「装不下」这回事，
+         *         返回小于 count 会被发放器当成溢出并转成邮件（那是把 30 天当道具再发一遍）
          */
-        long grant(String playerId, RewardType type, String id, long count);
+        long grant(String playerId, RewardType type, String id, long count, long now);
     }
 }

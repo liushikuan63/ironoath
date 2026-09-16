@@ -106,7 +106,7 @@ public final class RewardGrantor implements RewardService {
             case RESOURCE, STAMINA -> wallet.grant(playerId, reward.id(), requested, now);
             case ITEM -> bag.add(playerId, reward.id(), requested);
             case HERO, HERO_FRAGMENT, PRIVILEGE ->
-                    extras.grant(playerId, reward.type(), reward.id(), requested);
+                    extras.grant(playerId, reward.type(), reward.id(), requested, now);
         };
         if (actual < 0L) {
             throw new IllegalStateException("下游返回了负的发放量，type=" + reward.type()

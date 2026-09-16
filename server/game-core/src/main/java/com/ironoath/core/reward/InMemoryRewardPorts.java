@@ -232,7 +232,7 @@ public final class InMemoryRewardPorts {
         }
 
         @Override
-        public long grant(String playerId, RewardType type, String id, long count) {
+        public long grant(String playerId, RewardType type, String id, long count, long now) {
             if (rejected.contains(type.name() + "|" + id)) {
                 throw new IllegalStateException("模拟发放失败：" + type + "/" + id);
             }

@@ -29,7 +29,8 @@ import com.ironoath.core.reward.RewardType;
  * <b>转成该稀有度的碎片</b>，而不是静默丢弃 —— 丢弃会让玩家看到「获得 ×1」
  * 而武将册没有任何变化（他已经有了），那正是 B06 要防的那种「假发放」。
  *
- * <p>体力（STAMINA）与特权（PRIVILEGE）仍然抛异常，由 B09 / B15 落地。
+ * <p>体力（STAMINA）仍然抛异常，由 B09 落地；<b>特权（PRIVILEGE）自 B19 起转给
+ * {@link PaidPrivilegeGrants}</b> —— 它是唯一会写玩家付费权益的发放通路。
  * 未实现的奖励类型必须<b>响亮地失败</b>并进补偿队列，静默返回「发放成功」
  * 会让玩家看到「已获得体力 ×20」而账户里什么都没有。
  */
@@ -39,20 +40,30 @@ public final class HeroFragmentExtras implements RewardPorts.Extras {
     private final ConfigRegistry configs;
     /** 整卡要写进武将册；碎片那条路不用它。 */
     private final HeroRepository heroes;
+    /** 特权（月卡延期 / 基金登记 / 首充登记）交给它，本类不自己碰玩家存档。 */
+    private final PaidPrivilegeGrants privileges;
 
-    public HeroFragmentExtras(RewardPorts.Bag bag, ConfigRegistry configs, HeroRepository heroes) {
-        if (bag == null || configs == null || heroes == null) {
-            throw new IllegalArgumentException("Bag / ConfigRegistry / HeroRepository 都不得为 null");
+    public HeroFragmentExtras(RewardPorts.Bag bag, ConfigRegistry configs, HeroRepository heroes,
+                              PaidPrivilegeGrants privileges) {
+        if (bag == null || configs == null || heroes == null || privileges == null) {
+            throw new IllegalArgumentException(
+                    "Bag / ConfigRegistry / HeroRepository / PaidPrivilegeGrants 都不得为 null");
         }
         this.bag = bag;
         this.configs = configs;
         this.heroes = heroes;
+        this.privileges = privileges;
     }
 
     @Override
-    public long grant(String playerId, RewardType type, String id, long count) {
+    public long grant(String playerId, RewardType type, String id, long count, long now) {
         if (type == RewardType.HERO) {
             return grantHero(playerId, id, count);
+        }
+        if (type == RewardType.PRIVILEGE) {
+            // 特权不在本类的职责里（它写的不是册子也不是背包），但路由在这里：
+            // "哪一类奖励归谁"只需要看这一处
+            return privileges.grant(playerId, id, count, now);
         }
         if (type != RewardType.HERO_FRAGMENT) {
             // 交给 TransientRewardPorts.UnsupportedExtras 的同一套语义：抛出去，
@@ -60,7 +71,7 @@ public final class HeroFragmentExtras implements RewardPorts.Extras {
             throw new UnsupportedOperationException("奖励类型 " + type + "（id=" + id + "）尚未落地："
                     + switch (type) {
                         case STAMINA -> "由 B09 PVE 与关卡内容实现";
-                        case PRIVILEGE -> "由 B15 商业化与合规实现";
+                        case PRIVILEGE -> "不应走到这里（B19 已接 PaidPrivilegeGrants）";
                         case HERO -> "不应走到这里";
                         case HERO_FRAGMENT -> "不应走到这里";
                         case RESOURCE, ITEM -> "不应走到 Extras，应由 Wallet / Bag 处理";

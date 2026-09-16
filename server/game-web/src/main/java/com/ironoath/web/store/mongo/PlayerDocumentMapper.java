@@ -50,7 +50,17 @@ public final class PlayerDocumentMapper {
                 // 与 GloryDoc 一样无条件写：没走过引导也是一个明确的值（stepIndex=0、finishedAt=null），
                 // 而不是"这一列不存在" —— 后者会让读路径分不清"老号"与"这条更新漏写了"
                 new PlayerDocument.GuideDoc(save.guide().stepIndex(), save.guide().finishedAt()),
+                // 同上：一位不漏地写。付费权益里"什么都没买过"是一个明确的值，
+                // 让这一列缺席就等于把"老号"与"这次更新漏写了付费状态"混成同一种读数 ——
+                // 后者的症状是玩家的月卡凭空消失
+                toPaidDoc(save.paid()),
                 save.version());
+    }
+
+    private static PlayerDocument.PaidDoc toPaidDoc(com.ironoath.core.player.PlayerPaid paid) {
+        return new PlayerDocument.PaidDoc(paid.cardExpireAt(), paid.cardClaimedThroughAt(),
+                paid.fundPurchasedAt(), java.util.List.copyOf(paid.fundClaimedTiers()),
+                paid.firstChargedAt(), java.util.List.copyOf(paid.fulfilledOrderIds()));
     }
 
     public static PlayerSave toDomain(PlayerDocument doc) {
@@ -94,10 +104,28 @@ public final class PlayerDocumentMapper {
             guide = new PlayerGuide(d.stepIndex(), d.finishedAt());
         }
 
+        // 付费权益：缺子文档 = B19 之前的老号，读成「什么都没买过」。
+        // 但**子文档存在而内容读不懂时必须抛**，不像上面的荣耀与引导那样静默补 empty ——
+        // 那两位是派生缓存，读不懂随时能重算；这一位是付过钱的账，悄悄读成 empty 的症状是
+        // 「玩家的月卡凭空消失」，而它不会自己长回来。宁可让这一次登录炸出来。
+        PlayerDocument.PaidDoc pd = doc.paid();
+        com.ironoath.core.player.PlayerPaid paid = pd == null
+                ? com.ironoath.core.player.PlayerPaid.empty()
+                : new com.ironoath.core.player.PlayerPaid(pd.cardExpireAt(), pd.cardClaimedThroughAt(),
+                        pd.fundPurchasedAt(), safeList(pd.fundClaimedTiers()), pd.firstChargedAt(),
+                        safeList(pd.fulfilledOrderIds()));
+
         PlayerSave save = new PlayerSave();
         save.restore(doc.playerId(), doc.deviceId(), doc.nickName(), doc.avatarId(),
                 doc.createdAt(), doc.lastLoginAt(), doc.cityLevel(), resources,
-                power, pvp, doc.protectUntil(), glory, guide, doc.version());
+                power, pvp, doc.protectUntil(), glory, guide, paid, doc.version());
         return save;
+    }
+
+    /** null 容忍：老文档里这两个列表可以整个缺席（{@code PlayerPaid} 自己会把 null 读成空集）。 */
+    private static java.util.Set<String> safeList(java.util.List<String> values) {
+        // LinkedHashSet 而不是 Set.copyOf：文档里存的是有序 List，回来也要保住顺序，
+        // 否则发货幂等账本"丢最早几笔"的淘汰顺序就变了
+        return values == null ? java.util.Set.of() : new java.util.LinkedHashSet<>(values);
     }
 }

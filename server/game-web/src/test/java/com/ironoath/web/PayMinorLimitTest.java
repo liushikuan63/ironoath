@@ -50,6 +50,7 @@ class PayMinorLimitTest {
     @Autowired private PlayerLock playerLock;
     @Autowired private IdempotencyStore idempotency;
     @Autowired private Environment environment;
+    @Autowired private com.ironoath.core.player.PlayerRepository players;
 
     private long priceOf(String productId) {
         return switch (productId) {
@@ -62,7 +63,8 @@ class PayMinorLimitTest {
     private PayAppService payWith(PayOrder.Registry orders, MinorPaymentPolicy policy) {
         AtomicLong clock = new AtomicLong(BASE);
         return new PayAppService(orders, verifier, fulfiller, configs, playerLock, idempotency,
-                new TimeService(clock::get), environment, throttle(), policy);
+                new TimeService(clock::get), environment, throttle(), policy,
+                new com.ironoath.web.pay.PaidProducts(configs), players);
     }
 
     /** 频控那三条口径与生产装配同源，不为测试另编一套数。 */
@@ -80,7 +82,8 @@ class PayMinorLimitTest {
         orders.insert(PayOrder.fromSnapshot(new PayOrder.Snapshot(orderId, playerId,
                 "growth_fund", 1, cents, paidAt - 1000L, status,
                 status == PayOrder.Status.SUCCESS ? "txn_" + orderId : null,
-                1, 1, paidAt, status == PayOrder.Status.SUCCESS ? paidAt : 0L, null)));
+                1, 1, paidAt, status == PayOrder.Status.SUCCESS ? paidAt : 0L,
+                null, null, null)));
     }
 
     private static MinorPaymentPolicy alwaysMinor() {
@@ -106,7 +109,7 @@ class PayMinorLimitTest {
 
         String playerId = "p-minor-" + UUID.randomUUID();
         assertThatThrownBy(() -> payWith(orders, alwaysMinor()).createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1)))
+                new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1, null)))
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).errorCode())
                 .isEqualTo(ErrorCode.PAY_MINOR_LIMIT);
@@ -123,7 +126,7 @@ class PayMinorLimitTest {
                 playerId -> Boolean.FALSE, MinorPaymentPolicy.UNKNOWN }) {
             String playerId = "p-" + UUID.randomUUID();
             String orderId = payWith(orders, policy).createOrder(playerId,
-                    new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1)).orderId();
+                    new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1, null)).orderId();
             assertThat(orders.get(orderId)).as("这一路应当正常建档（策略=%s）", policy).isNotNull();
         }
     }
@@ -141,7 +144,7 @@ class PayMinorLimitTest {
 
         PayAppService pay = payWith(orders, alwaysMinor());
         assertThatThrownBy(() -> pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1)))
+                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1, "hero_sr_01")))
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> {
                     BizException b = (BizException) e;
@@ -163,7 +166,7 @@ class PayMinorLimitTest {
 
         PayAppService pay = payWith(orders, alwaysMinor());
         String orderId = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1, "hero_sr_01")).orderId();
         assertThat(orders.get(orderId))
                 .as("跨月刷新是限额文案里承诺过的（等下月额度刷新），做不到就是骗人").isNotNull();
     }
@@ -179,7 +182,7 @@ class PayMinorLimitTest {
 
         PayAppService pay = payWith(orders, alwaysMinor());
         String orderId = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1, "hero_sr_01")).orderId();
         assertThat(orders.get(orderId))
                 .as("玩家点了几次没付成功就把自己的额度用光了，那是「没付的钱也占额」那种事故").isNotNull();
     }
@@ -194,7 +197,7 @@ class PayMinorLimitTest {
 
         PayAppService pay = payWith(orders, alwaysMinor());
         String orderId = pay.createOrder("p-minor-" + UUID.randomUUID(),
-                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1, "hero_sr_01")).orderId();
         assertThat(orders.get(orderId)).isNotNull();
     }
 }

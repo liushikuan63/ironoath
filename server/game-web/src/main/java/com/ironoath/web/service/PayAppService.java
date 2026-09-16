@@ -11,9 +11,13 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.PayProductCfg;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.pay.PayOrder;
+import com.ironoath.core.player.PlayerPaid;
+import com.ironoath.core.player.PlayerSave;
+import com.ironoath.web.pay.PaidProducts;
 import com.ironoath.web.dto.generated.CreateOrderReq;
 import com.ironoath.web.dto.generated.CreateOrderResp;
 import com.ironoath.web.dto.generated.DebtOrderView;
@@ -33,11 +37,16 @@ import com.ironoath.web.dto.generated.ProductPrice;
  * {@link SignatureVerifier}、{@link ProductFulfiller}、配置表。
  *
  * <p><b>本类负责的是「订单的机械正确性」，不负责「商品发了什么」</b>：
- * 后者由 {@link ProductFulfiller} 承担，而 B15 §一 的三类主力商品
- * （特权卡每日领取、成长基金分批返还、首充双倍）各自是一套系统，不是一次奖励发放。
- * 所以当前默认实现<b>什么都不发</b>并把订单推进补单队列 ——
- * 这是刻意的失败方向：钱收到了、货没发出去，订单留在补单队列里并且状态可查（{@code retryQueued=true}），
- * 客服能看见、玩家能看到「发货处理中」。反过来（先假装发货成功）会让一笔钱在账面上消失。
+ * 后者由 {@link ProductFulfiller} 承担 —— 真实现是
+ * {@link com.ironoath.web.pay.ProductFulfilment}（B19 的三类商品：月卡延期、基金登记、首充即发）。
+ * 分工没有变：本类不知道奖励系统长什么样，只知道"发出去了没有"。
+ * 失败方向也和 B15 立这条时一样：发不出去就留在补单队列里可查（{@code retryQueued=true}），
+ * 绝不假装成功 —— 钱收到了、货没发出去是可追查的，而"账面消失的一笔钱"追不回来。
+ *
+ * <p>本类还管两件事的<b>下单侧</b>：选将必须合法（不替玩家挑），一次性商品不许买第二次
+ * （{@link com.ironoath.web.pay.PaidProducts#alreadyOwned}）。<b>买完之后每天/每档的领取</b>
+ * 在 {@link com.ironoath.web.pay.PaidClaimsAppService} —— 那边的时钟粒度是自然日与主城等级，
+ * 不是订单生命周期。
  *
  * <p><b>四条不可让步的口径</b>（B15 禁止项）：
  * <ol>
@@ -93,16 +102,31 @@ public class PayAppService {
      * <p>实现方必须自己保证幂等：补单会重复调用同一个订单的发货，
      * 而 {@code PayOrder} 只在「订单状态」层面保证不重复，
      * 它管不到实现方有没有把同一份奖励发两遍。
+     *
+     * <p>真实现是 {@link com.ironoath.web.pay.ProductFulfilment}（B19）；
+     * B15 那个"什么都不发"的桩已经删掉了。
      */
     public interface ProductFulfiller {
 
         /**
+         * @param orderId 本笔订单号。<b>幂等键就是它</b>（B19 §一.1 统一纪律第一条）：
+         *                实现方要靠它挡住"同一笔订单发两遍"，而 productId 挡不住合法的月卡续期
+         * @param line    订单商品行（含玩家下单时挑的武将）
+         * @param now     服务端当前时刻。延期类权益必须由它起算，实现方自己读墙上时钟
+         *                就等于绕开铁律 5，也让用例无法把时间钉在日界上
          * @return 实际发出的奖励；返回空列表或 false 都表示没发出去
          */
-        Result deliver(String playerId, PayOrder.Line line);
+        Result deliver(String playerId, String orderId, PayOrder.Line line, long now);
 
-        /** 发货结果。 */
-        record Result(boolean delivered, List<PayRewardItem> rewards, String reason) {
+        /**
+         * 发货结果。
+         *
+         * <p>{@code rewards} 用的是领域类型 {@code RewardItem} 而不是协议 DTO：实现方回答的是
+         * "我发了什么"，协议形状是 {@code OrderStatusResp} 出口那一次转换的事。两头各转一次，
+         * 就会出现"订单里存的"与"下发给客户端的"不是同一份。
+         */
+        record Result(boolean delivered, List<com.ironoath.core.reward.RewardItem> rewards,
+                      String reason) {
             public Result {
                 rewards = rewards == null ? List.of() : List.copyOf(rewards);
             }
@@ -135,13 +159,19 @@ public class PayAppService {
     private final org.springframework.core.env.Environment environment;
     private final com.ironoath.core.pay.PopupThrottle throttle;
     private final com.ironoath.web.pay.MinorPaymentPolicy minorPolicy;
+    /** 两张付费表（商品结构 + 发货内容）唯一的读处。价格也从这里取，不再有一份 switch 副本。 */
+    private final com.ironoath.web.pay.PaidProducts catalog;
+    /** 判"这一档本账号是否已经用掉"要读权益位（下单处拦，别等玩家付了第二笔钱再在发货处拦）。 */
+    private final com.ironoath.core.player.PlayerRepository players;
 
     public PayAppService(com.ironoath.core.pay.PayOrderStore orders, SignatureVerifier verifier,
                          ProductFulfiller fulfiller,
                          ConfigRegistry configs, PlayerLock playerLock, IdempotencyStore idempotency,
                          TimeService timeService, org.springframework.core.env.Environment environment,
                          com.ironoath.core.pay.PopupThrottle throttle,
-                         com.ironoath.web.pay.MinorPaymentPolicy minorPolicy) {
+                         com.ironoath.web.pay.MinorPaymentPolicy minorPolicy,
+                         com.ironoath.web.pay.PaidProducts catalog,
+                         com.ironoath.core.player.PlayerRepository players) {
         this.orders = orders;
         this.verifier = verifier;
         this.fulfiller = fulfiller;
@@ -152,6 +182,8 @@ public class PayAppService {
         this.environment = environment;
         this.throttle = throttle;
         this.minorPolicy = minorPolicy;
+        this.catalog = catalog;
+        this.players = players;
         if (!verifier.productionReady()) {
             LOG.warn("支付验签使用的是非正式实现：任何回调都会被判定为可信。"
                     + "上线前必须替换成米大师验签（B15 红线：无绕支付、回调必须验签）");
@@ -169,18 +201,17 @@ public class PayAppService {
     /**
      * 在售商品与价格（B15 §2：价格读服务端下发的价格表）。
      *
-     * <p><b>商品清单与价格的映射写在这里而不是配置表的一行里</b>：
-     * 价格是配置（PRODUCT_*_CENTS），但「哪个 productId 对应哪个价格参数」是代码结构 ——
-     * 新增一个商品本来就要为它写发货逻辑，所以它不可能只靠改配置表上线。
+     * <p><b>商品清单来自 {@code pay_product} 表，价格来自表里指名的 global 参数</b>
+     * （{@code priceCentsParam} 是指针不是副本）。B19 之前这里是一份硬编码的
+     * productId→参数名 switch，与表里那一列是同一个映射的两个家 —— 加一个商品要改两处，
+     * 漏改的那一处表现为"表里下架了、价格表还在下发"。
      */
     public PricesResp prices() {
+        String currency = currency();
         List<ProductPrice> products = new ArrayList<>();
-        products.add(new ProductPrice("monthly_card", configs.longParam("PRODUCT_MONTHLY_CARD_CENTS"),
-                currency(), null));
-        products.add(new ProductPrice("growth_fund", configs.longParam("PRODUCT_GROWTH_FUND_CENTS"),
-                currency(), null));
-        products.add(new ProductPrice("first_charge", configs.longParam("PRODUCT_FIRST_CHARGE_CENTS"),
-                currency(), null));
+        for (PaidProducts.PriceEntry entry : catalog.onSale()) {
+            products.add(new ProductPrice(entry.productId(), entry.cents(), currency, null));
+        }
         return new PricesResp(List.copyOf(products), region());
     }
 
@@ -195,10 +226,12 @@ public class PayAppService {
                 // 先扫过期再造新单：下单是唯一会让订单表变大的入口，
                 // 不在这里扫，「下了单没付」的记录就只增不减（PAY_ORDER_TTL_HOURS 的 why 就是这条）
                 expireUnpaidOrders(now);
-                long cents = priceOf(req.productId());
+                PayProductCfg product = requireBuyable(playerId, req);
+                long cents = catalog.priceCents(product);
                 String orderId = "order_" + playerId + "_" + now + "_"
                         + Long.toHexString(req.requestId().hashCode());
-                PayOrder.Line line = new PayOrder.Line(req.productId(), Math.max(1, req.count()), cents, now);
+                PayOrder.Line line = new PayOrder.Line(product.id(), Math.max(1, req.count()),
+                        cents, now, req.heroChoice());
                 PayOrder existing = orders.get(orderId);
                 if (existing != null) {
                     // 幂等：同一个 requestId 重放时返回同一个订单，而不是造出第二笔。
@@ -209,8 +242,9 @@ public class PayAppService {
                 PayOrder order = PayOrder.create(orderId, playerId, line);
                 requireWithinMinorLimit(playerId, line.totalCents(), now);
                 orders.insert(order);
-                LOG.info("下单 orderId={} playerId={} 商品={} 份数={} 金额={}分",
-                        orderId, playerId, line.productId(), line.count(), line.totalCents());
+                LOG.info("下单 orderId={} playerId={} 商品={} 份数={} 金额={}分 选将={}",
+                        orderId, playerId, line.productId(), line.count(), line.totalCents(),
+                        line.heroChoice());
                 return new CreateOrderResp(orderId, payParams(line));
             });
         } catch (RuntimeException e) {
@@ -303,7 +337,7 @@ public class PayAppService {
                     req.orderId(), order.callbackCount(), outcome.statusAfter(), outcome.reason());
             return statusOf(order, List.of());
         }
-        List<PayRewardItem> rewards = deliver(order, now);
+        var rewards = deliver(order, now);
         return statusOf(order, rewards);
     }
 
@@ -327,7 +361,7 @@ public class PayAppService {
                             "订单 " + req.orderId() + " 不在补单队列里（状态=" + order.status() + "）");
                 }
                 int maxAttempts = (int) configs.longParam("PAY_FULFILL_MAX_ATTEMPTS");
-                List<PayRewardItem> rewards = deliverWithRetry(order, maxAttempts, now);
+                var rewards = deliverWithRetry(order, maxAttempts, now);
                 return statusOf(order, rewards);
             });
         } catch (RuntimeException e) {
@@ -396,15 +430,27 @@ public class PayAppService {
         }
     }
 
-    private List<PayRewardItem> deliver(PayOrder order, long now) {
+    private List<com.ironoath.core.reward.RewardItem> deliver(PayOrder order, long now) {
         int maxAttempts = (int) configs.longParam("PAY_FULFILL_MAX_ATTEMPTS");
         return deliverWithRetry(order, maxAttempts, now);
     }
 
-    private List<PayRewardItem> deliverWithRetry(PayOrder order, int maxAttempts, long now) {
-        final List<PayRewardItem> delivered = new ArrayList<>();
+    private List<com.ironoath.core.reward.RewardItem> deliverWithRetry(PayOrder order, int maxAttempts,
+                                                                       long now) {
+        // 发货清单已经记在订单上 ⇒ 这一单发过了，回放而不是再发一遍。
+        // 挡住的是"渠道重发回调 + 我们已发货但状态没落回去"这一段：状态机在这里管不到发奖次数
+        if (!order.rewards().isEmpty()) {
+            LOG.info("订单已有发货清单，回放不再重复发货 orderId={} playerId={} 项数={}",
+                    order.orderId(), order.playerId(), order.rewards().size());
+            return PaidProducts.fromProtocolRows(order.rewards());
+        }
+        final List<com.ironoath.core.reward.RewardItem> delivered = new ArrayList<>();
         PayOrder.FulfillOutcome outcome = order.fulfill(() -> {
-            ProductFulfiller.Result result = fulfiller.deliver(order.playerId(), order.line());
+            // 玩家锁：发货要写玩家存档（权益位、钱包、背包），而回调路径上没有别的锁。
+            // 拿不到锁时 LockTimeoutException 会一路冒到 PayOrder.fulfill 的捕获里，
+            // 结果是"这次没发出去、留在补单队列"—— 正确的方向：宁可晚发，不可并发覆盖
+            ProductFulfiller.Result result = playerLock.runLocked(order.playerId(), LOCK_TIMEOUT_MS,
+                    () -> fulfiller.deliver(order.playerId(), order.orderId(), order.line(), now));
             if (result.delivered()) {
                 delivered.addAll(result.rewards());
                 return true;
@@ -413,6 +459,10 @@ public class PayAppService {
                     order.orderId(), order.playerId(), order.line().productId(), result.reason());
             return false;
         }, maxAttempts, now);
+        if (outcome.delivered()) {
+            // 记下这一单发了什么：查单端点据此回放，客服据此对账（B19 §一.1 最后一条纪律）
+            order.recordRewards(PaidProducts.toOrderRows(delivered));
+        }
         // fulfill 改的是 status / fulfilledAt / fulfillAttempts / failureReason，无论成功还是失败
         // 都必须写回：成功不落会被重复发货，失败不落这笔负债就从补单队列里消失（玩家付了钱没拿到货，
         // 而系统里没有任何一处记得它）
@@ -425,8 +475,17 @@ public class PayAppService {
         return List.copyOf(delivered);
     }
 
-    private OrderStatusResp statusOf(PayOrder order, List<PayRewardItem> rewards) {
-        return new OrderStatusResp(toStatus(order.status()), List.copyOf(rewards), order.needsRetry());
+    /**
+     * 组装订单状态响应。
+     *
+     * <p>{@code justDelivered} 为空时回落到订单上记着的发货清单：查单（{@link #status}）与
+     * 重复回调走的都是这条路 —— 玩家轮询到的「我拿到了什么」必须和他第一次看到的一致。
+     */
+    private OrderStatusResp statusOf(PayOrder order, List<com.ironoath.core.reward.RewardItem> justDelivered) {
+        List<PayRewardItem> rewards = justDelivered.isEmpty()
+                ? PaidProducts.toProtocol(PaidProducts.fromProtocolRows(order.rewards()))
+                : PaidProducts.toProtocol(justDelivered);
+        return new OrderStatusResp(toStatus(order.status()), rewards, order.needsRetry());
     }
 
     /**
@@ -468,21 +527,43 @@ public class PayAppService {
         return order;
     }
 
-    /** 商品单价（分）。查不到就是下架或未定义 —— 两种情况都不允许下单。 */
-    private long priceOf(String productId) {
-        if (isBlank(productId)) {
-            throw new BizException(ErrorCode.PAY_PRODUCT_OFFLINE, "productId 不得为空");
+    /**
+     * 下单前的三道判定：<b>商品存在 → 选将合法 → 本账号还有资格买它</b>，全在
+     * {@code orders.insert} 之前完成（与 {@link #requireWithinMinorLimit} 同一条理由：
+     * 拦下了还留一条 PENDING 订单，对账与僵尸单清理都会把它当真实交易看）。
+     *
+     * <p><b>选将的两个方向都要判</b>：该挑没挑 ⇒ 发货时只能替玩家挑一个（不允许）；
+     * 不该挑却带了值 ⇒ 说明客户端拿的是旧表或别的商品，静默忽略会让这个错一路带到发货。
+     */
+    private PayProductCfg requireBuyable(String playerId, CreateOrderReq req) {
+        PayProductCfg product = catalog.require(req.productId());
+        List<String> candidates = catalog.heroChoices(product);
+        boolean picked = req.heroChoice() != null && !req.heroChoice().isBlank();
+        if (candidates.isEmpty()) {
+            if (picked) {
+                throw new BizException(ErrorCode.PARAM_INVALID,
+                        "商品 " + product.id() + " 的发货内容里没有可挑的武将，不该带 heroChoice="
+                                + req.heroChoice());
+            }
+        } else if (!picked) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "商品 " + product.id() + " 需要从候选里挑一名武将（heroChoice），候选=" + candidates
+                            + "。不替玩家默认挑：那一选不是他做的，事后只会变成一张退款工单");
+        } else if (!candidates.contains(req.heroChoice())) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "heroChoice=" + req.heroChoice() + " 不在商品 " + product.id()
+                            + " 的候选里，候选=" + candidates);
         }
-        String param = switch (productId) {
-            case "monthly_card" -> "PRODUCT_MONTHLY_CARD_CENTS";
-            case "growth_fund" -> "PRODUCT_GROWTH_FUND_CENTS";
-            case "first_charge" -> "PRODUCT_FIRST_CHARGE_CENTS";
-            default -> null;
-        };
-        if (param == null || !configs.hasParam(param)) {
-            throw new BizException(ErrorCode.PAY_PRODUCT_OFFLINE, "商品已下架或不存在: " + productId);
+        // 读不到存档就当"本账号没有已购记录"：没有存档就没有可依据的权益位，
+        // 而这条判定的目的（别收第二次钱）由发货处的第二道同样挡得住 ——
+        // 更要紧的是，发货时会因为"存档不存在"直接失败进补单队列，那才是这道题的响亮答案
+        PlayerPaid paid = players.findByPlayerId(playerId).map(PlayerSave::paid).orElse(null);
+        String alreadyOwned = catalog.alreadyOwned(paid, product);
+        if (alreadyOwned != null) {
+            throw new BizException(ErrorCode.PAY_NOT_ENTITLED,
+                    "商品 " + product.id() + "：" + alreadyOwned);
         }
-        return configs.longParam(param);
+        return product;
     }
 
     /**

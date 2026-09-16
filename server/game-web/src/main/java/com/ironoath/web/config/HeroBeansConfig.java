@@ -94,14 +94,29 @@ public class HeroBeansConfig {
      * 按端口注入的消费者（{@code RewardGrantor}、{@code ShopAppService}）不受影响 ——
      * 具体类型天然满足端口。
      */
+    /**
+     * 付费特权的落库通路（B19）：{@code RewardType.PRIVILEGE} 经 {@link HeroFragmentExtras}
+     * 转到这里，写进玩家存档的权益位（月卡延期 / 基金登记 / 首充登记）。
+     *
+     * <p>放在本文件而不是 PayBeansConfig：它是<b>奖励发放器</b>的一个下游，
+     * 与武将册同族；PayBeansConfig 装的是支付域自己的协作者。
+     */
+    @Bean
+    public com.ironoath.web.reward.PaidPrivilegeGrants paidPrivilegeGrants(
+            com.ironoath.core.player.PlayerRepository players,
+            com.ironoath.config.ConfigRegistry configs) {
+        return new com.ironoath.web.reward.PaidPrivilegeGrants(players, configs);
+    }
+
     @Bean
     @Primary
     public HeroFragmentExtras rewardExtras(RewardPorts.Bag playerBag,
                                           com.ironoath.config.ConfigRegistry configs,
-                                          HeroRepository heroRepo) {
+                                          HeroRepository heroRepo,
+                                          com.ironoath.web.reward.PaidPrivilegeGrants privileges) {
         LOG.warn("武将碎片与整卡武将已接通真实存储（整卡写武将册、重复按档折碎片）；"
-                + "体力（B09）与特权（B15）仍会响亮失败并进补偿队列");
-        return new HeroFragmentExtras(playerBag, configs, heroRepo);
+                + "付费特权自 B19 起接通玩家存档；体力（B09）仍会响亮失败并进补偿队列");
+        return new HeroFragmentExtras(playerBag, configs, heroRepo, privileges);
     }
     @Bean
     @ConditionalOnProperty(name = "ironoath.storage", havingValue = GameProperties.STORAGE_MEMORY,

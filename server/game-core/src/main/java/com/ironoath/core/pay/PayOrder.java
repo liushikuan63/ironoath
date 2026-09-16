@@ -81,8 +81,12 @@ public final class PayOrder {
      * @param count           购买数量
      * @param unitPriceCents  单价（分）。**来自服务端下发的价格表**，不写死在客户端（§2）
      * @param createdAt       下单时刻
+     * @param heroChoice      「三选一」的所选武将（仅首充这类带候选的商品有值，其余为 null）。
+     *                        <b>它必须随订单落库</b>：发货可能在几分钟后由补单重做，
+     *                        那时客户端早就断开，而"替玩家挑一个"是不允许的（B19 §五②e）
      */
-    public record Line(String productId, int count, long unitPriceCents, long createdAt) {
+    public record Line(String productId, int count, long unitPriceCents, long createdAt,
+                       String heroChoice) {
         public Line {
             if (productId == null || productId.isBlank()) {
                 throw new IllegalArgumentException("productId 不得为空");
@@ -92,6 +96,11 @@ public final class PayOrder {
             }
             if (unitPriceCents < 0) {
                 throw new IllegalArgumentException("单价不得为负，实际=" + unitPriceCents);
+            }
+            if (heroChoice != null && heroChoice.isBlank()) {
+                // 空串会被发货实现读成"有选择但选了一个不存在的武将"，
+                // 或者读成"没选择"——两种读法给出的结果不一样，必须当场拒
+                throw new IllegalArgumentException("heroChoice 要么是真武将 id，要么是 null");
             }
         }
 
@@ -121,6 +130,25 @@ public final class PayOrder {
     public record FulfillOutcome(boolean delivered, boolean queuedForRetry, String reason) {
     }
 
+    /**
+     * 一笔订单实际发出的一项奖励（B19 §一.1「发货结果写进订单，查单端点回放给玩家对账」）。
+     *
+     * <p>定义在 core 而不是直接用协议的 {@code PayRewardItem}：分层卡口不允许 game-core 看见
+     * game-web 的 DTO。字段与协议同名同序，转换只发生在 {@code PayAppService} 一处。
+     */
+    public record RewardRow(String type, String id, long count) {
+        public RewardRow {
+            if (type == null || type.isBlank() || id == null || id.isBlank()) {
+                throw new IllegalArgumentException("奖励行的 type 与 id 都不得为空");
+            }
+            if (count <= 0) {
+                // 零与负数的"奖励"不是奖励：记进订单之后玩家看到一个 0，只会以为发货发漏了
+                throw new IllegalArgumentException("奖励数量必须为正，type=" + type + " id=" + id
+                        + " count=" + count);
+            }
+        }
+    }
+
     private final String orderId;
     private final String playerId;
     private final Line line;
@@ -133,6 +161,8 @@ public final class PayOrder {
     private long paidAt;
     private long fulfilledAt;
     private String failureReason;
+    /** 本次发货实际发出的奖励；空 = 还没发出去（不是"发了一份空奖励"）。 */
+    private List<RewardRow> rewards = List.of();
 
     private PayOrder(String orderId, String playerId, Line line) {
         this.orderId = orderId;
@@ -316,6 +346,37 @@ public final class PayOrder {
         return status == Status.PAID_UNFULFILLED;
     }
 
+    /**
+     * 记下这次发货发出了什么（B19 §一.1 统一纪律最后一条）。
+     *
+     * <p><b>只准写一次，第二次直接抛</b>：这一份清单是玩家对账「我付了钱拿到什么」的依据，
+     * 也是补单判断「这单到底发过没有」的依据。允许覆盖的话，症状是一条订单先后显示两套奖励，
+     * 而客服拿到的截图与数据库里的都对不上。
+     *
+     * @throws IllegalStateException 订单未确认收款，或清单已经记过
+     */
+    public void recordRewards(List<RewardRow> granted) {
+        if (granted == null || granted.isEmpty()) {
+            // 空清单不是"发过货"：记下来之后查单端点会把这一单读成"已结清但什么都没给"，
+            // 而补单的回放守卫（rewards 非空即已发过）也会因此失效
+            throw new IllegalArgumentException("发货清单不得为空：什么都没发就别记，让订单留在补单队列里");
+        }
+        if (!paymentConfirmed()) {
+            throw new IllegalStateException("订单 " + orderId + " 还没确认收款（状态 " + status
+                    + "），不能记下发货结果：记了就等于在账面上承认发过货");
+        }
+        if (!rewards.isEmpty()) {
+            throw new IllegalStateException("订单 " + orderId + " 的发货清单已经记过（" + rewards.size()
+                    + " 项），不覆盖：两套奖励清单同时存在时没人能判断哪一套真发出去了");
+        }
+        this.rewards = List.copyOf(granted);
+    }
+
+    /** 本单实际发出的奖励清单；空表示还没发出去。 */
+    public List<RewardRow> rewards() {
+        return rewards;
+    }
+
     // ---------- 只读访问 ----------
 
     public String orderId() {
@@ -369,17 +430,19 @@ public final class PayOrder {
      *
      * @param callbackCount   回调次数：埋点用，一个订单被回调几十次说明渠道在超时重试
      * @param fulfillAttempts 发货尝试次数，补单队列据此决定是否还要重试
+     * @param heroChoice      下单时玩家选的武将（B19 起有值；老快照与不带候选的商品为 null）
+     * @param rewards         实际发出的奖励清单（B19 起有值；老快照与没发出去的是 null 或空）
      */
     public record Snapshot(String orderId, String playerId, String productId, int count,
                            long unitPriceCents, long createdAt, Status status, String transactionId,
                            int callbackCount, int fulfillAttempts, long paidAt, long fulfilledAt,
-                           String failureReason) {
+                           String failureReason, String heroChoice, List<RewardRow> rewards) {
     }
 
     public Snapshot snapshot() {
         return new Snapshot(orderId, playerId, line.productId(), line.count(),
                 line.unitPriceCents(), line.createdAt(), status, transactionId, callbackCount,
-                fulfillAttempts, paidAt, fulfilledAt, failureReason);
+                fulfillAttempts, paidAt, fulfilledAt, failureReason, line.heroChoice(), rewards);
     }
 
     /**
@@ -387,6 +450,9 @@ public final class PayOrder {
      *
      * <p>走私有构造器而不是 {@link #create}：<code>create</code> 会把状态钉在 PENDING，
      * 而重建必须能还原任意状态（包括 PAID_UNFULFILLED 这笔没清掉的负债）。
+     *
+     * <p><b>B19 新加的两项按"缺席即没有"读</b>：老快照没有 heroChoice 与 rewards，
+     * 读成 null / 空清单才是对的 —— 把缺失当成"有一条空奖励"会让查单端点对老订单说谎。
      */
     public static PayOrder fromSnapshot(Snapshot s) {
         if (s == null) {
@@ -396,7 +462,7 @@ public final class PayOrder {
             throw new IllegalArgumentException("orderId 不得为空：它是回调幂等的唯一键");
         }
         PayOrder order = new PayOrder(s.orderId(), s.playerId(),
-                new Line(s.productId(), s.count(), s.unitPriceCents(), s.createdAt()));
+                new Line(s.productId(), s.count(), s.unitPriceCents(), s.createdAt(), s.heroChoice()));
         order.status = s.status() == null ? Status.PENDING : s.status();
         order.transactionId = s.transactionId();
         order.callbackCount = s.callbackCount();
@@ -404,6 +470,7 @@ public final class PayOrder {
         order.paidAt = s.paidAt();
         order.fulfilledAt = s.fulfilledAt();
         order.failureReason = s.failureReason();
+        order.rewards = s.rewards() == null ? List.of() : List.copyOf(s.rewards());
         return order;
     }
 

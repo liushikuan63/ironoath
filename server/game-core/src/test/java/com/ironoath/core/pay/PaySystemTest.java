@@ -30,7 +30,7 @@ class PaySystemTest {
     // ---------- 夹具 ----------
 
     private static PayOrder.Line line(long unitCents, int count) {
-        return new PayOrder.Line("gift_monthly_card", count, unitCents, 0L);
+        return new PayOrder.Line("gift_monthly_card", count, unitCents, 0L, null);
     }
 
     private static PayOrder newOrder(String orderId, long unitCents, int count) {
@@ -40,7 +40,7 @@ class PaySystemTest {
     /** 指定下单时刻的夹具：过期判定读的就是 {@code Line.createdAt}，默认夹具写死 0 只能测「必然已过期」。 */
     private static PayOrder orderCreatedAt(String orderId, long createdAt) {
         return PayOrder.create(orderId, "p1",
-                new PayOrder.Line("gift_monthly_card", 1, 3000L, createdAt));
+                new PayOrder.Line("gift_monthly_card", 1, 3000L, createdAt, null));
     }
 
     private static PopupThrottle throttle() {
@@ -64,7 +64,7 @@ class PaySystemTest {
     @Test
     @DisplayName("总价溢出要在计算时就炸：溢出后金额变成负数，支付平台会照那个值扣款")
     void totalCentsDetectsOverflow() {
-        PayOrder.Line huge = new PayOrder.Line("x", Integer.MAX_VALUE, Long.MAX_VALUE, 0L);
+        PayOrder.Line huge = new PayOrder.Line("x", Integer.MAX_VALUE, Long.MAX_VALUE, 0L, null);
         assertThatThrownBy(huge::totalCents)
                 .isInstanceOf(ArithmeticException.class)
                 .hasMessageContaining("溢出");
@@ -73,11 +73,11 @@ class PaySystemTest {
     @Test
     @DisplayName("下单参数校验：数量至少 1，单价不得为负，订单号是幂等键所以不得为空")
     void orderInputsAreValidated() {
-        assertThatThrownBy(() -> new PayOrder.Line("x", 0, 100, 0L))
+        assertThatThrownBy(() -> new PayOrder.Line("x", 0, 100, 0L, null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(">= 1");
-        assertThatThrownBy(() -> new PayOrder.Line("x", 1, -100, 0L))
+        assertThatThrownBy(() -> new PayOrder.Line("x", 1, -100, 0L, null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("不得为负");
-        assertThatThrownBy(() -> new PayOrder.Line(" ", 1, 100, 0L))
+        assertThatThrownBy(() -> new PayOrder.Line(" ", 1, 100, 0L, null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("productId");
         assertThatThrownBy(() -> PayOrder.create("", "p1", line(100, 1)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("幂等");

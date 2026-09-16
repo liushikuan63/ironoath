@@ -109,13 +109,13 @@ class PlayerGuideEquivalenceTest {
     @DisplayName("老存档没有这一位，或子文档是脏的（负序号）：读成\"从未开始\"，绝不让它挡住登录")
     void missingOrDirtyProgressReadsAsEmpty() {
         PlayerDocument noGuide = new PlayerDocument("P-old", "dev-old", "老号", 1, NOW, NOW, 1,
-                Map.of(), null, null, null, null, null, 0L);
+                Map.of(), null, null, null, null, null, null, 0L);
         assertThat(PlayerDocumentMapper.toDomain(noGuide).guide())
                 .as("B18 之前建的号压根没存过引导进度").isEqualTo(PlayerGuide.empty());
 
         PlayerDocument dirty = new PlayerDocument("P-dirty", "dev-dirty", "脏数据", 1, NOW, NOW, 1,
                 Map.of(), null, null, null, null,
-                new PlayerDocument.GuideDoc(-3, null), 0L);
+                new PlayerDocument.GuideDoc(-3, null), null, 0L);
         assertThat(PlayerDocumentMapper.toDomain(dirty).guide())
                 .as("读不懂的代价是引导重弹一次，不是登录失败")
                 .isEqualTo(PlayerGuide.empty());

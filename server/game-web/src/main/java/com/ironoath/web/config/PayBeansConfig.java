@@ -14,15 +14,16 @@ import com.ironoath.web.service.PayAppService;
  * 职责：装配支付域的三个部件 —— 订单登记簿、回调验签、发货。
  * 依赖：Spring Boot、game-core 的 {@link PayOrder}。
  *
- * <p><b>这里的两个默认实现都是「本地开发用」，而且都刻意做成显眼的失败</b>：
+ * <p><b>这里仍有一个「本地开发用」的失败实现，另一个已经被换掉</b>：
  * B15 的红线是「在做完合规前不许上线任何付费」，而最容易出的事故是
  * 某个占位实现在无人注意的情况下被带上了生产。所以：
  * <ul>
  *   <li>验签实现声明 {@code productionReady() = false}，{@code PayAppService} 构造时会打 WARN，
  *       上线检查清单 §三 1 也把它列为硬阻塞</li>
- *   <li>发货实现<b>什么都不发</b>并把订单推进补单队列。这是刻意的失败方向：
- *       钱收到了、货没发出去，订单留在队列里、状态对客户端可见（{@code retryQueued=true}），
- *       客服能看见。反过来（假装发货成功）会让一笔钱在账面上凭空消失，
+ *   <li><b>发货曾经是"什么都不发"的桩，B19 已换成真实现</b>（月卡 / 基金 / 首充三类各自成套，
+ *       这正是当初那个桩写下的待办）。它保留的是同一个失败方向：
+ *       任何一步发不出去就返回失败，订单留在 PAID_UNFULFILLED 进补单队列，
+ *       客服看得见（{@code retryQueued=true}）。反过来（假装发货成功）会让一笔钱在账面上凭空消失，
  *       而那种损失是查不出来的</li>
  * </ul>
  *
@@ -101,17 +102,32 @@ public class PayBeansConfig {
     }
 
     /**
-     * 发货。<b>当前什么都不发</b>，理由见类注释与 {@code PayAppService} 的类注释：
-     * B15 §一 的三类主力商品（特权卡每日领取、成长基金分批返还、首充双倍）各自是一套系统，
-     * 不是一次奖励发放，所以「发货」这一步在那些系统交付之前没有诚实的实现可写。
+     * 两张付费表（pay_product / product_reward）唯一的读处，装配成一个 bean 而不是各处 new：
+     * 价格、发货内容、当前权益三件事必须由同一份读法算出来，否则"表改了一列"只会有一处跟着改。
      */
     @Bean
-    public PayAppService.ProductFulfiller productFulfiller() {
-        LOG.warn("支付发货未实现：所有已付款订单都会进补单队列（retryQueued=true）。"
-                + "这是刻意的失败方向 —— 钱收到了货没发出去是可追查的，假装发货成功则会让钱凭空消失。"
-                + "需要为三类商品各写一套系统：特权卡（每日领取 + 免广告 + 建造队列 +1）、"
-                + "成长基金（按主城等级分批返还）、首充（双倍 + 首充武将）");
-        return (playerId, line) -> PayAppService.ProductFulfiller.Result.failure(
-                "商品 " + line.productId() + " 的发货逻辑尚未实现（B15 §一 的三类商品各自是一套系统）");
+    public com.ironoath.web.pay.PaidProducts paidProducts(com.ironoath.config.ConfigRegistry configs) {
+        return new com.ironoath.web.pay.PaidProducts(configs);
+    }
+
+    /**
+     * 发货（B19 §一.1）。<b>这一位从"故意失败的桩"换成了真实现</b>，类注释里那条
+     * 「所有已付款订单都会进补单队列」的 WARN 因此删掉了。
+     *
+     * <p>三类商品的节奏各走各的：首充买下即发（金币 + 玩家自己挑的武将），月卡买下只延一期有效期
+     * （日包是每天领的），成长基金买下只登记"买过"（六档按主城等级分批领）。
+     * 幂等键是 orderId，记在玩家存档的发货台账里 —— 订单状态机只挡状态迁移，
+     * 挡不住补单把同一份奖励发两遍（B19 开工提示词第 1 条）。
+     *
+     * <p><b>失败方向没有变</b>：任何一步发不出去（商品没配内容、一次性商品被第二次买、
+     * 玩家锁拿不到）都返回失败，订单留在 PAID_UNFULFILLED 进补单队列。
+     * 「钱收了货没发」是可追查的，假装发货成功则会让一笔钱在账面上凭空消失。
+     */
+    @Bean
+    public PayAppService.ProductFulfiller productFulfiller(
+            com.ironoath.web.pay.PaidProducts catalog,
+            com.ironoath.core.reward.RewardService rewardService,
+            com.ironoath.core.player.PlayerRepository players) {
+        return new com.ironoath.web.pay.ProductFulfilment(catalog, rewardService, players);
     }
 }

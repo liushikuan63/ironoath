@@ -75,12 +75,14 @@ public final class TransientRewardPorts {
     public static final class UnsupportedExtras implements RewardPorts.Extras {
 
         @Override
-        public long grant(String playerId, RewardType type, String id, long count) {
+        public long grant(String playerId, RewardType type, String id, long count, long now) {
             throw new UnsupportedOperationException("奖励类型 " + type + "（id=" + id + "）尚未落地："
                     + switch (type) {
                         case HERO, HERO_FRAGMENT -> "由 B06 武将系统实现";
                         case STAMINA -> "由 B09 PVE 与关卡内容实现";
-                        case PRIVILEGE -> "由 B03 队列特权与 B15 月卡实现";
+                        // B19 已经落了真实现（HeroFragmentExtras → PaidPrivilegeGrants）。
+                        // 走到这里只可能是装配漏了 @Primary 的那个 bean —— 是环境问题，不是功能没写
+                        case PRIVILEGE -> "特权由 B19 的 HeroFragmentExtras 处理，落到这里说明装配缺了它";
                         case RESOURCE, ITEM -> "不应走到这里：资源与道具由 Wallet / Bag 处理";
                     });
         }

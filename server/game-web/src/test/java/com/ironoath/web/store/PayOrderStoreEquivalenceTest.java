@@ -417,13 +417,13 @@ class PayOrderStoreEquivalenceTest {
     private static PayOrder confirmed(String orderId, String playerId, long cents, long paidAt) {
         return PayOrder.fromSnapshot(new PayOrder.Snapshot(orderId, playerId, "pack_monthly", 1,
                 cents, paidAt - 1_000L, PayOrder.Status.SUCCESS, "txn-" + orderId,
-                1, 1, paidAt, paidAt, null));
+                1, 1, paidAt, paidAt, null, null, null));
     }
 
     private static PayOrder order(String orderId, String playerId, String productId, long unitCents,
                                   long createdAt, int count) {
         return PayOrder.create(orderId, playerId,
-                new PayOrder.Line(productId, count, unitCents, createdAt));
+                new PayOrder.Line(productId, count, unitCents, createdAt, null));
     }
 
     /** 逐字段描述：新增字段时必须在这里出现，否则"快照少带一个字段"就查不出来。 */

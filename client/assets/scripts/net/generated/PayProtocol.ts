@@ -67,6 +67,8 @@ export interface CreateOrderReq {
   productId: string
   /** 购买份数。有单次限购的商品由服务端按限购规则裁剪或拒绝，客户端传的只是意愿。 */
   count: number
+  /** 「三选一」武将的选择，仅对 `pay_product.heroChoices` 非空的商品（首充）有意义。 **为什么随下单提交、而不是发货时由服务端替玩家挑一个**：替玩家默认挑等于把一次本应由玩家做的决定写进了付费流程，事后玩家的感受是「我花钱买到的不是我选的那位」。也**不放到发货之后再补一个选将端点**：那会造出「钱已付、权益还没选完」这个中间态，而它必须再有一套超时与提醒规则来收口。放在下单时，服务端就能在扣款之前当场拒掉非法候选。 为空而商品要求选将 ⇒ 下单直接被拒（PARAM_INVALID），不产生订单。 */
+  heroChoice: string | null
 }
 
 /**
@@ -129,6 +131,102 @@ export interface PayRetryReq {
   requestId: string
   /** 要补发的订单号。 */
   orderId: string
+}
+
+/**
+ * GET /pay/card 响应：月卡当前状态（B19 §一.1a）。
+ *
+ * **为什么要把权益也回给客户端而不是让客户端自己判断**：免广告与队列 +1 的判定住在服务端（`pay_product` 的 adFree / extraQueues），客户端只展示。客户端自己算「买过月卡 = 有权益」的话，月卡到期那一刻两端就会分叉：一边还在跳过广告，另一边已经把跳过收走了。
+ */
+export interface CardStatusResp {
+  /** 当前是否在有效期内。**由服务端用服务器时间判定**（铁律 5）：客户端时钟可以改，改快就能多领几天。 */
+  active: boolean
+  /** 到期时刻（毫秒）。null = 从未买过。续费是在原到期时刻上叠加（B19 §五②c：未到期再买 +30 天，不设上限），所以这个值可以大于「购买时刻 + 30 天」。 */
+  expireAt: number | null
+  /** 今日（UTC+8 的 DayKey）是否已领过日包。 */
+  claimedToday: boolean
+  /** 现在点领取会发出几天的日包。漏领的天数在有效期内累计补领，但**封顶为剩余有效天数**（B19 §五②a）—— 补发不会超过卡本身还剩多少天，所以「两周后回来一次领完」拿不到比日常更多的东西。0 表示今天无可领。 */
+  claimableDays: number
+  /** 免广告收益（仅指**跳过播放**）：`city_rule_ad_speedup_daily_limit` 的次数上限照旧生效。把次数一起免掉等于让「时间」这个核心卡点被付费彻底绕过，那是当初给广告加速设上限的理由。 */
+  adFree: boolean
+  /** 月卡带来的额外建造队列格数（0 表示没有）。**这是临时权益、到期即收回**：客户端不得把它累加成永久值，服务端也不落库（每次按当前有效期推导），否则到期那一刻就出现「存档里还留着 +1」的第二真相。 */
+  bonusQueues: number
+  /** 服务端当前时刻，客户端据此画倒计时（铁律 5）。 */
+  serverNow: number
+}
+
+/**
+ * POST /pay/card/claim 请求体：领取月卡日包。
+ */
+export interface CardClaimReq {
+  /** 幂等键。日包是「点一下给东西」的写操作，弱网重发不幂等就会一天领两份。 */
+  requestId: string
+}
+
+/**
+ * 月卡日包领取结果。
+ */
+export interface CardClaimResp {
+  /** 本次实际补发了几天（含今日）。为 1 就是最常见的情形；大于 1 说明前面有漏领且仍在有效期内 —— 客户端要把这个数显示出来，否则玩家的感受是「今天怎么给得特别多」，而这是策划刻意要的效果。 */
+  claimedDays: number
+  /** 本次发出的奖励（日包内容 × claimedDays）。溢出部分由发放器转邮件，不在这个列表里重复计。 */
+  rewards: PayRewardItem[]
+  /** 领取后的到期时刻，与 GET /pay/card 同口径。 */
+  expireAt: number | null
+  /** 服务端当前时刻。 */
+  serverNow: number
+}
+
+/**
+ * GET /pay/fund 响应：成长基金档位与解锁状态（B19 §一.1b）。
+ */
+export interface FundStatusResp {
+  /** 是否买过基金。没买过 ⇒ 所有档位只展示不可领，`claimable` 一律 false。 */
+  purchased: boolean
+  /** 档位列表，按主城等级升序。来源是 `product_reward` 里挂在 growth_fund 上的行 —— 表加一档，这里就多一档，不在代码里写死六档。 */
+  tiers: FundTier[]
+  /** 玩家当前主城等级（判门槛用的是它，不是任何客户端上报的值）。 */
+  mainCityLevel: number
+  /** 服务端当前时刻。 */
+  serverNow: number
+}
+
+/**
+ * 成长基金的一个返还档位。
+ */
+export interface FundTier {
+  /** `product_reward` 的行 id（形如 pr_fund_t1）。领取时原样回传 —— 用行 id 而不用「第几档」的序号，是因为序号会在表里插行时整体错位，而一次错位的后果是玩家领到别档的钱。 */
+  tierId: string
+  /** 解锁所需主城等级。 */
+  requireMainLevel: number
+  /** 该档发的金币数（`product_reward.count`）。 */
+  count: number
+  /** 是否已领过。**已领的档位永久不再出现可领状态**，基金本身不过期（B19 §五②d：一次性付费的权益不设过期）。 */
+  claimed: boolean
+  /** 现在能不能领（= 已购买 且 等级达标 且 未领过）。分开给两个布尔而不是只给一个，是因为客户端要把「还没到」和「已经领过」画成两种不同的样子。 */
+  claimable: boolean
+}
+
+/**
+ * POST /pay/fund/claim 请求体：领取一档成长基金。
+ */
+export interface FundClaimReq {
+  /** 幂等键。 */
+  requestId: string
+  /** 要领的档位行 id。**一次只领一档**：一键全领会让「哪一档领了」这件事在失败重发时变得说不清。 */
+  tierId: string
+}
+
+/**
+ * 基金档位领取结果。
+ */
+export interface FundClaimResp {
+  /** 本次领掉的档位。 */
+  tierId: string
+  /** 本次发出的奖励。 */
+  rewards: PayRewardItem[]
+  /** 服务端当前时刻。 */
+  serverNow: number
 }
 
 /**

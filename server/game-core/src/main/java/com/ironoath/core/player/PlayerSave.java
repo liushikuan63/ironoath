@@ -45,6 +45,13 @@ public final class PlayerSave {
      * 「从没开始过」是唯一正确的读法（与 {@link #pvp}、{@link #glory} 同一条纪律）。
      */
     private PlayerGuide guide = PlayerGuide.empty();
+    /**
+     * 付费权益（B19）：月卡有效期与日包领取、成长基金购买与已领档位、首充时刻、发货幂等账本。
+     *
+     * <p>默认 {@link PlayerPaid#empty()} 而不是 null：B19 之前的号本来就没付过费，
+     * 「什么都没买过」是唯一正确的读法（与 {@link #pvp}、{@link #glory}、{@link #guide} 同一条纪律）。
+     */
+    private PlayerPaid paid = PlayerPaid.empty();
     /** 乐观锁版本号，每次持久化自增。 */
     private long version;
 
@@ -159,6 +166,11 @@ public final class PlayerSave {
         return guide;
     }
 
+    /** 付费权益。永不为 null（什么都没买过就是 {@link PlayerPaid#empty()}）。 */
+    public PlayerPaid paid() {
+        return paid;
+    }
+
     public Long protectUntil() {
         return protectUntil;
     }
@@ -261,6 +273,20 @@ public final class PlayerSave {
         this.guide = guide;
     }
 
+    /**
+     * 覆盖付费权益。<b>写者只有两拨，且都必须在玩家锁内</b>（B19）：
+     * 支付域自己（下单发货、月卡日包、基金档位）与奖励发放器的 PRIVILEGE 端口
+     * （{@code PlayerWallet} 同一个形状：读档 → 改 → 写档，没有锁就有并发覆盖）。
+     * 其他系统要给人加权益，请走 {@code RewardType.PRIVILEGE} 而不是直接写这一位 ——
+     * 绕过发放器就等于绕过了幂等账本与溢出转邮件。
+     */
+    public void setPaid(PlayerPaid paid) {
+        if (paid == null) {
+            throw new IllegalArgumentException("付费权益不得为 null（什么都没买过请传 PlayerPaid.empty()）");
+        }
+        this.paid = paid;
+    }
+
     public void setNickName(String nickName) {
         requireText(nickName, "nickName");
         this.nickName = nickName;
@@ -299,7 +325,7 @@ public final class PlayerSave {
                         Map<String, PlayerResourceState> restoredResources,
                         PlayerPower restoredPower, PlayerPvp restoredPvp,
                         Long protectUntil, PlayerGlory restoredGlory, PlayerGuide restoredGuide,
-                        long version) {
+                        PlayerPaid restoredPaid, long version) {
         this.playerId = playerId;
         this.deviceId = deviceId;
         this.nickName = nickName;
@@ -319,6 +345,8 @@ public final class PlayerSave {
         this.glory = restoredGlory == null ? PlayerGlory.empty() : restoredGlory;
         // 老存档没有这一位（B18 之前不存在引导）：读成 empty = 从未开始，而不是抛或留 null
         this.guide = restoredGuide == null ? PlayerGuide.empty() : restoredGuide;
+        // 同上：B19 之前的号没有付费权益这一位，读成「什么都没买过」
+        this.paid = restoredPaid == null ? PlayerPaid.empty() : restoredPaid;
         this.version = version;
     }
 
@@ -332,7 +360,7 @@ public final class PlayerSave {
     public PlayerSave copy() {
         PlayerSave copy = new PlayerSave();
         copy.restore(playerId, deviceId, nickName, avatarId, createdAt, lastLoginAt, cityLevel,
-                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, version);
+                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, version);
         return copy;
     }
 }

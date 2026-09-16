@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +62,58 @@ import com.ironoath.web.service.PlayerInitService;
 class PayEndpointTest {
 
     private static final String PLAYER_HEADER = "X-Player-Id";
+    /**
+     * 发货替身。<b>本类测的是订单的机械正确性（幂等 / 补单 / 负债可见），不是"发了什么货"</b>，
+     * 所以它需要一个能按用例要求失败或成功的实现。
+     *
+     * <p>B19 之前不需要替身：那时生产默认实现就是"什么都不发"，本类一半用例的前提是它必然失败。
+     * 真发货实现接上之后那个前提不再由生产代码提供 —— 而"发货失败"这条路径恰恰是补单队列
+     * 存在的理由，不能因为桩换掉了就没人测。真实现的用例在 PayEntitlementTest。
+     */
+    @org.springframework.boot.test.context.TestConfiguration
+    static class StubFulfilment {
+
+        @org.springframework.context.annotation.Primary
+        @org.springframework.context.annotation.Bean
+        StubPlan stubFulfiller() {
+            return new StubPlan();
+        }
+    }
+
+    /** 默认永不成功；{@link #succeedFromAttempt} 改成 1 就是"第一次就发出去"。 */
+    static final class StubPlan implements PayAppService.ProductFulfiller {
+
+        private final java.util.concurrent.atomic.AtomicInteger calls =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private volatile int succeedFromAttempt = Integer.MAX_VALUE;
+
+        void reset() {
+            calls.set(0);
+            succeedFromAttempt = Integer.MAX_VALUE;
+        }
+
+        int calls() {
+            return calls.get();
+        }
+
+        void succeedFrom(int attempt) {
+            succeedFromAttempt = attempt;
+        }
+
+        @Override
+        public PayAppService.ProductFulfiller.Result deliver(String playerId, String orderId,
+                PayOrder.Line line, long now) {
+            int attempt = calls.incrementAndGet();
+            if (attempt < succeedFromAttempt) {
+                return PayAppService.ProductFulfiller.Result.failure(
+                        "测试桩：第 " + attempt + " 次故意不发（测的是补单，不是发货内容）");
+            }
+            return new PayAppService.ProductFulfiller.Result(true,
+                    java.util.List.of(new com.ironoath.core.reward.RewardItem(
+                            com.ironoath.core.reward.RewardType.RESOURCE, "GOLD", 100L)), null);
+        }
+    }
+
     /** 与 {@code application-test.yml} 的 {@code ironoath.ops.token} 一致（OpsEndpointTest 同源）。 */
     private static final String OPS_TOKEN = "test-ops-token";
     private static final long MINUTE = 60_000L;
@@ -74,6 +127,15 @@ class PayEndpointTest {
     @Autowired private PlayerLock playerLock;
     @Autowired private IdempotencyStore idempotency;
     @Autowired private Environment environment;
+    @Autowired private com.ironoath.core.player.PlayerRepository players;
+    /** 发货替身：见 {@link StubFulfilment} 为什么必须存在。 */
+    @Autowired private StubPlan plan;
+
+    /** 上下文是全类共享的，替身的计数与开关必须每条用例归零一次。 */
+    @BeforeEach
+    void resetFulfillmentStub() {
+        plan.reset();
+    }
 
     // ---------- 价格表 ----------
 
@@ -111,7 +173,7 @@ class PayEndpointTest {
     void orderAmountIsDecidedByTheServer() throws Exception {
         String playerId = newPlayer();
         JsonNode data = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), "first_charge", 1)));
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01")));
 
         String orderId = data.get("orderId").asText();
         assertThat(orderId).isNotBlank();
@@ -132,7 +194,7 @@ class PayEndpointTest {
     @DisplayName("未知商品被拒：客户端不能靠自造 productId 让服务端去查一个不存在的价格")
     void unknownProductIsRejected() throws Exception {
         JsonNode root = postJson("/pay/order", newPlayer(),
-                new CreateOrderReq(newRequestId(), "one_yuan_monthly_card", 1));
+                new CreateOrderReq(newRequestId(), "one_yuan_monthly_card", 1, null));
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.PAY_PRODUCT_OFFLINE.code());
     }
 
@@ -141,9 +203,10 @@ class PayEndpointTest {
     @Test
     @DisplayName("验收2：同一订单重复回调 3 次，只发货一次")
     void duplicateCallbacksDeliverOnlyOnce() throws Exception {
+        plan.succeedFrom(1);
         String playerId = newPlayer();
         String orderId = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), "monthly_card", 1))).get("orderId").asText();
+                new CreateOrderReq(newRequestId(), "monthly_card", 1, null))).get("orderId").asText();
 
         for (int i = 0; i < 3; i++) {
             JsonNode data = okData(postJson("/pay/callback", null,
@@ -159,10 +222,14 @@ class PayEndpointTest {
                         + "那是能直接亏穿一个服的经济漏洞，而手工点一次支付永远只收到一次回调，"
                         + "所以这条漏洞在功能测试里完全看不出来")
                 .isEqualTo(1);
-        // 领域状态是 PAID_UNFULFILLED（钱收了、货没发出去，因为默认发货实现什么都不发），
-        // 而协议状态收窄成 SUCCESS + retryQueued=true —— 对玩家而言钱确实付了，
-        // 把它显示成 FAILED 会让他再付一次或发起一笔不该发生的退款
-        assertThat(order.status()).isEqualTo(PayOrder.Status.PAID_UNFULFILLED);
+        // fulfillAttempts 是订单侧的次数，这一条问的是发货实现<b>真的被调用了几次</b> ——
+        // 只断言前者的话，"状态机挡住了但实现被重复调到"这一种错法测不出来
+        assertThat(plan.calls()).as("发货实现只被调用一次").isEqualTo(1);
+        assertThat(order.status()).as("货发出去了就是 SUCCESS（这一 profile 下桩会成功）")
+                .isEqualTo(PayOrder.Status.SUCCESS);
+        assertThat(order.rewards()).as("发货清单落在订单上，查单端点据此回放")
+                .hasSize(1);
+        assertThat(order.needsRetry()).as("已经结清，不该还在补单队列里").isFalse();
     }
 
     @Test
@@ -170,7 +237,7 @@ class PayEndpointTest {
     void failedFulfillmentIsQueuedForRetryAndVisible() throws Exception {
         String playerId = newPlayer();
         String orderId = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), "growth_fund", 1))).get("orderId").asText();
+                new CreateOrderReq(newRequestId(), "growth_fund", 1, null))).get("orderId").asText();
         okData(postJson("/pay/callback", null, new PayCallbackReq(orderId, "txn-1", "sign-1", true)));
 
         JsonNode status = okData(perform(get("/pay/order?orderId=" + orderId).header(PLAYER_HEADER, playerId)));
@@ -184,11 +251,11 @@ class PayEndpointTest {
     }
 
     @Test
-    @DisplayName("补单可以重复触发：每次都仍然发不出去（默认实现不发货），但订单不会因此丢失或重复发货")
+    @DisplayName("补单可以重复触发：每次都仍然发不出去（桩实现不发货），但订单不会因此丢失或重复发货")
     void retryKeepsTheOrderAliveWithoutDoubleDelivering() throws Exception {
         String playerId = newPlayer();
         String orderId = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), "monthly_card", 1))).get("orderId").asText();
+                new CreateOrderReq(newRequestId(), "monthly_card", 1, null))).get("orderId").asText();
         okData(postJson("/pay/callback", null, new PayCallbackReq(orderId, "txn-1", "sign-1", true)));
         int attemptsAfterCallback = orders.get(orderId).fulfillAttempts();
 
@@ -249,11 +316,11 @@ class PayEndpointTest {
         assertThat(wrong.get("code").asInt()).isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
     }
 
-    /** 下一单并让回调确认收款 —— 默认发货实现什么都不发，所以它必然停成一笔负债。 */
+    /** 下一单并让回调确认收款 —— 发货桩默认不发东西，所以它必然停成一笔负债。 */
     private String paidButUnfulfilled(String productId) throws Exception {
         String playerId = newPlayer();
         String orderId = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), productId, 1))).get("orderId").asText();
+                new CreateOrderReq(newRequestId(), productId, 1, null))).get("orderId").asText();
         okData(postJson("/pay/callback", null, new PayCallbackReq(orderId, "txn-" + orderId, "s", true)));
         assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PAID_UNFULFILLED);
         return orderId;
@@ -270,7 +337,7 @@ class PayEndpointTest {
     void callbackWithoutSignatureIsRejected() throws Exception {
         String playerId = newPlayer();
         String orderId = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), "first_charge", 1))).get("orderId").asText();
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
 
         JsonNode root = postJson("/pay/callback", null, new PayCallbackReq(orderId, "txn-x", " ", true));
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.PAY_SIGN_INVALID.code());
@@ -292,7 +359,7 @@ class PayEndpointTest {
         String owner = newPlayer();
         String stranger = newPlayer();
         String orderId = okData(postJson("/pay/order", owner,
-                new CreateOrderReq(newRequestId(), "first_charge", 1))).get("orderId").asText();
+                new CreateOrderReq(newRequestId(), "first_charge", 1, "hero_sr_01"))).get("orderId").asText();
 
         JsonNode root = perform(get("/pay/order?orderId=" + orderId).header(PLAYER_HEADER, stranger));
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.PAY_ORDER_DUPLICATE.code());
@@ -318,7 +385,8 @@ class PayEndpointTest {
                         (int) configs.longParam("PAY_POPUP_PER_GIFT_DAILY_MAX"),
                         configs.longParam("PAY_POPUP_GLOBAL_COOLDOWN_MINUTES") * 60_000L)),
                 // UNKNOWN 就是生产默认 bean：年龄未知 ⇒ 限额不拦，本用例的下单路径不会碰到 throttle
-                com.ironoath.web.pay.MinorPaymentPolicy.UNKNOWN);
+                com.ironoath.web.pay.MinorPaymentPolicy.UNKNOWN,
+                new com.ironoath.web.pay.PaidProducts(configs), players);
     }
 
     @Test
@@ -330,7 +398,7 @@ class PayEndpointTest {
         PayAppService pay = payWithClock(clock);
         String playerId = newPlayer();
         String orderId = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId();
         assertThat(pay.status(playerId, orderId).status()).isEqualTo(OrderStatus.PENDING);
 
         clock.set(base + ttlMs + MINUTE);
@@ -358,7 +426,7 @@ class PayEndpointTest {
         PayAppService pay = payWithClock(clock);
         String playerId = newPlayer();
         String orderId = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1, null)).orderId();
 
         clock.set(base + ttlMs + MINUTE);
         pay.status(playerId, orderId);
@@ -367,7 +435,7 @@ class PayEndpointTest {
         OrderStatusResp late = pay.callback(new PayCallbackReq(orderId, "txn-late", "sign-1", true));
         assertThat(late.status()).as("钱是实的：对玩家而言这是「已购买」，显示 FAILED 会引发一笔不该发生的退款")
                 .isEqualTo(OrderStatus.SUCCESS);
-        assertThat(late.retryQueued()).as("本 profile 下发货实现什么都不发 ⇒ 仍然是补单队列里的负债")
+        assertThat(late.retryQueued()).as("桩实现不发东西 ⇒ 这一单仍然是补单队列里的负债")
                 .isTrue();
         assertThat(orders.get(orderId).fulfillAttempts()).as("迟到的回调同样要试一次发货").isEqualTo(1);
 
@@ -386,15 +454,17 @@ class PayEndpointTest {
         java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(base);
         PayAppService pay = payWithClock(clock);
         String playerId = newPlayer();
+        // 用月卡而不是首充：B19 起「同一账号的第二次首充」会在下单处被拒，
+        // 而本用例要的是同一个人手上同时有一条负债与一条僵尸单
         String stale = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId();
         String paid = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId();
         pay.callback(new PayCallbackReq(paid, "txn-paid", "sign-1", true));
 
         clock.set(base + ttlMs + MINUTE);
         String fresh = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId();
 
         assertThat(orders.get(stale).status()).as("下单是唯一让订单表变大的入口，不在这里扫表就只增不减")
                 .isEqualTo(PayOrder.Status.CANCELLED);

@@ -94,6 +94,8 @@ public class CityAppService {
      * 挂在领取端点上会让「升完级先看了列表、再没点领取」的玩家永远拿不到这条进度。
      */
     private final com.ironoath.web.quest.QuestEvents questEvents;
+    /** 月卡的建造队列加成从这里推（付费表唯一的读处）。 */
+    private final com.ironoath.web.pay.PaidProducts paidProducts;
 
     public CityAppService(ConfigRegistry configs, Formula formula, PlayerRepository players,
                           CityRepository cities, PlayerLock playerLock,
@@ -102,7 +104,8 @@ public class CityAppService {
                           com.ironoath.core.limit.DailyCounter dailyCounter,
                           com.ironoath.core.reward.RewardPorts.Bag bagPort,
                           com.ironoath.web.social.HelpRequestRegistrar helpRequests,
-                          com.ironoath.web.quest.QuestEvents questEvents) {
+                          com.ironoath.web.quest.QuestEvents questEvents,
+                          com.ironoath.web.pay.PaidProducts paidProducts) {
         this.configs = configs;
         this.formula = formula;
         this.players = players;
@@ -115,17 +118,36 @@ public class CityAppService {
         this.bagPort = bagPort;
         this.helpRequests = helpRequests;
         this.questEvents = questEvents;
+        this.paidProducts = paidProducts;
     }
 
-    /** 城建规则，从 city_rule 表逐字段解析（铁律 1：不硬编码）。 */
-    public CityRules cityRules() {
+    /**
+     * 城建规则：从 city_rule 表逐字段解析（铁律 1：不硬编码），再把<b>这个玩家此刻生效的
+     * 付费队列加成</b>并进去（B19 月卡的 +1）。
+     *
+     * <p><b>加成并进三个队列数而不是另开一个参数</b>：{@code availableQueues} 的算法是
+     * {@code min(上限, 基础 + 额外)}，只把"上限"抬到 4 而"基础"仍是 3，结果还是 3 ——
+     * 那一格就白买了。三数同抬一个 bonus，等式两边一起动，读法与 {@code QueueView} 的展示口径
+     * 不需要各自再判一次"有没有月卡"。
+     *
+     * <p><b>为什么每次现推、不把 +1 写进 {@code CityState.extraQueues}</b>：服务端不跑定时器
+     * （B00 陷阱 2），落库的那一格没有任何人会在月卡到期时收走 —— 表现是"到期了还多一条队列，
+     * 而且永远如此"。现推则到点自动回收，正合 §五②b「到期只禁新开、不中断在跑的升级」：
+     * 上限回到 3 时正在跑的第四条队列照样跑完，只是再开新的会被 CITY_QUEUE_FULL 挡住。
+     *
+     * <p><b>玩家为 null 时按无加成处理</b>：只有单测与"还没建档"的路径会走到这里，
+     * 而拿不准的时候少给一格，永远比多给一格好收拾。
+     */
+    public CityRules cityRules(PlayerSave player, long now) {
+        int bonus = paidProducts.entitlements(player == null ? null : player.paid(), now)
+                .bonusQueuesAsInt();
         return new CityRules(
                 (int) cityLong("city_rule_grid_size"),
                 cityBool("city_rule_wall_edge_only"),
                 cityBool("city_rule_center_is_main_city"),
-                (int) cityLong("city_rule_base_queue_count"),
-                (int) cityLong("city_rule_max_queue_count"),
-                (int) cityLong("city_rule_newbie_free_queue_count"),
+                Math.addExact((int) cityLong("city_rule_base_queue_count"), bonus),
+                Math.addExact((int) cityLong("city_rule_max_queue_count"), bonus),
+                Math.addExact((int) cityLong("city_rule_newbie_free_queue_count"), bonus),
                 cityFixed("city_rule_cancel_refund_ratio"),
                 cityFixed("city_rule_help_per_person_ratio"),
                 cityFixed("city_rule_help_cap_ratio"),
@@ -256,7 +278,7 @@ public class CityAppService {
      */
     private Ctx load(String playerId, long now) {
         PlayerSave player = requirePlayer(playerId);
-        CityRules rules = cityRules();
+        CityRules rules = cityRules(player, now);
         CityState city = loadOrCreateCity(playerId, rules, now);
         long cityVersion = cities.versionOf(playerId);
         ResourceRateService.Settlement settlement = resourceRates.settle(player, city, now);
