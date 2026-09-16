@@ -149,6 +149,16 @@ const ROUTES: Record<string, unknown> = {
     failed: [],
   },
   '/mail/read': { mailId: 'm-1', unreadCount: 0 },
+  '/guide/script': {
+    steps: [
+      { id: 'g1', name: '升主城', stepIndex: 1, trigger: 'PANEL_OPEN', panelKey: 'city',
+        highlightPath: 'city', maskArea: 'full', text: '把主城升两级', skippable: false },
+      { id: 'g2', name: '领奖', stepIndex: 2, trigger: 'PANEL_OPEN', panelKey: 'quest',
+        highlightPath: 'quest', maskArea: 'full', text: '领那名赠送的武将', skippable: false },
+    ],
+    version: '7', nextStepIndex: 1, applies: true, serverNow: SERVER_NOW,
+  },
+  '/guide/progress': { advanced: true, finished: false, nextStepIndex: 2 },
   '/quest/claim': {
     questId: 'quest_main_01',
     rewards: [{ type: 'HERO', id: 'hero_sr_01', count: 1, name: '卫无咎' }],
@@ -386,6 +396,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     reportReplay: () => attached.push('reportReplay'),
     mailClaimed: () => attached.push('mailClaimed'),
     home: () => attached.push('home'),
+    guide: () => attached.push('guide'),
     speedupTargetChoice: (options, onPick) => {
       speedupOptions = [...options]
       speedupPick = onPick
@@ -1066,6 +1077,34 @@ test('微信登录：wx.login 的 code 原样进 /player/init，服务端票据�
     .map(c => `${c.path}:${JSON.stringify(c.headers)}`)
   assert.equal(missingToken.length, 0,
     `登录拿到的会话票据必须自动附到之后每条请求上，漏带的是 ${missingToken.join(', ')}`)
+})
+
+/**
+ * 引导在 AppRoot 这一层的三件事：脚本走得通路由、位置只跟着回执走、埋点三件参数齐。
+ * （一帧该画什么的判定在 GuideDriver.test.ts 里，这里只管"到浏览器之外的边界"。）
+ */
+test('引导：登录后拉一次脚本、上报之后位置跟着回执走、埋点带 stepId+action+guideVersion', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-guide', '君'), true)
+
+  await h.root.refresh('guide')
+  assert.ok(h.attached.includes('guide'), '脚本必须投递给引导层（客户端自己没有第二份脚本）')
+  const scriptCall = h.http.calls.find(c => c.path === '/guide/script')
+  assert.ok(scriptCall !== undefined, 'refresh("guide") 必须真的打一次 GET /guide/script')
+  assert.equal(scriptCall.body.requestId, undefined, '读操作不该带幂等键')
+
+  const acks: Array<number | null> = []
+  await h.root.guideProgress('g1', 'COMPLETE', resp => acks.push(resp.nextStepIndex))
+  assert.deepEqual(acks, [2], '界面只按回执里的 nextStepIndex 挪位置，不自己加一')
+  const progressCall = h.http.calls.find(c => c.path === '/guide/progress')
+  assert.equal(progressCall?.body.stepId, 'g1')
+  assert.equal(progressCall?.body.action, 'COMPLETE')
+  assert.equal(String(progressCall?.body.requestId ?? '').length > 0, true, 'mutate 必须补上幂等键')
+
+  h.root.trackGuideStep('skip', 'g2', '7')
+  const last = h.events.filter(e => e.name === 'guide_step').pop()
+  assert.deepEqual(last?.params, { action: 'skip', stepId: 'g2', guideVersion: '7' },
+    '没有 guideVersion，一次热更在看板上会长得像一次流失')
 })
 
 test('浏览器路径：没有 wxCode 时不带该值，登录链路与旧行为完全一致', async () => {

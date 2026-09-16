@@ -24,5 +24,6 @@ bash scripts/check-config-refs.sh
 bash scripts/check-checklist-table.sh
 bash scripts/check-error-codes.sh
 bash scripts/check-config-consumers.sh
+bash scripts/check-guide-no-copy.sh
 bash scripts/check-wechat-artifact.sh
 echo "[check] 全部静态检查通过。"
