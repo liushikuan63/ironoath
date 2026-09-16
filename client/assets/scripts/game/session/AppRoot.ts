@@ -39,6 +39,7 @@ import type { QuestListResp } from '../../net/generated/QuestProtocol'
 import type { BattleReportListResp, BattleReportResp } from '../../net/generated/BattleProtocol'
 import type { MailClaimAllResp, MailListResp } from '../../net/generated/MailProtocol'
 import type { ActivityClaimResp, ActivityListResp } from '../../net/generated/ActivityProtocol'
+import type { GuideAction, GuideProgressResp, GuideScriptResp } from '../../net/generated/GuideProtocol'
 import { claimActivityReq } from '../activity/ActivityPanel'
 import { buildLineupChoices, buildSpeedupChoices } from './Choices'
 import type { LineupChoice, SpeedupChoice } from './Choices'
@@ -84,6 +85,11 @@ export interface PanelTargets {
   mailClaimed?(resp: MailClaimAllResp): void
   /** 领完一次活动奖励的回执（界面用它飘字「领到了什么」）。 */
   activityClaimed?(resp: ActivityClaimResp): void
+  /**
+   * 引导脚本（B18）。整个客户端引导层唯一的数据来源：
+   * 步骤、文案、遮罩、能不能跳，全部由服务端下发，本类一个字段都不补。
+   */
+  guide?(resp: GuideScriptResp): void
   /** 服务端权威红点树。导航与面板只读取它，不在业务层重算。 */
   reddot?(tree: ClientReddotTree): void
   /** 失败或不能做的说明。`panel` 是分流用的面板名，不是错误码。 */
@@ -99,7 +105,7 @@ export interface PanelTargets {
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
-  | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity'
+  | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -299,6 +305,10 @@ export class AppRoot {
         this.deliver('activity', await this.api.activityList(),
           r => this.targets.activity?.(r, r.serverNow))
         return
+      case 'guide':
+        // 引导只在登录后拉一次（它是"新号前 5 分钟"的东西，不该每次切面板都发一遍请求）
+        this.deliver('guide', await this.api.guideScript(), r => this.targets.guide?.(r))
+        return
       case 'reddot':
         this.deliver('reddot', await this.api.socialReddot(), r => {
           this.reddot.applyServer(r.nodes)
@@ -491,6 +501,35 @@ export class AppRoot {
     })
     return this.write('quest', this.api.questClaim({ questId, heroChoice }),
       ['quest', 'hero'])
+  }
+
+  // ---------- 新手引导（B18） ----------
+
+  /**
+   * 上报引导的一步（`COMPLETE` 是"请检查我"，`SKIP` 是可跳的那几步）。
+   *
+   * <p><b>不重拉任何面板</b>：位置只按回执里的 `nextStepIndex` 交给 `onAdvanced`，
+   * 服务端说没达成（`advanced=false`）时引导就留在原步 —— 这是正常路径而不是失败，
+   * 所以这里既不报错也不改位置。失败（顺序不对、脚本过期）走 `write` 的统一提示口。
+   */
+  guideProgress(stepId: string, action: GuideAction,
+                onAdvanced: (resp: GuideProgressResp) => void): Promise<void> {
+    return this.write('guide', this.api.guideProgress({ stepId, action }), [], onAdvanced)
+  }
+
+  /**
+   * 引导埋点的唯一出口：动作、步骤 id、脚本版本三件一起走。
+   *
+   * <p>刻意由 `GuideDriver` 决定"什么时候该记"（enter 一步一次、乱点一步一次），
+   * 本方法只负责把它送到埋点通道上 —— 记不记的口径如果在两处各判一遍，
+   * 看板上"完成率"就会随调用顺序漂移。
+   */
+  trackGuideStep(action: string, stepId: string, guideVersion: string): void {
+    this.track(TRACK_EVENTS.guideStep, {
+      action,
+      stepId,
+      guideVersion: trackParam(guideVersion),
+    })
   }
 
   // ---------- 邮件（B12 §2） ----------

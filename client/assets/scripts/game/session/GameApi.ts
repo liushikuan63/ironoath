@@ -73,6 +73,9 @@ import type {
 import type {
   ActivityClaimReq, ActivityClaimResp, ActivityListResp,
 } from '../../net/generated/ActivityProtocol'
+import type {
+  GuideProgressReq, GuideProgressResp, GuideScriptResp,
+} from '../../net/generated/GuideProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -753,6 +756,21 @@ export class GameApi {
   /** POST /activity/claim。requestId 由 mutate 补（同任务/邮件：客户端不生成幂等键）。 */
   activityClaim(req: Omit<ActivityClaimReq, 'requestId'>): Promise<NetOutcome<ActivityClaimResp>> {
     return this.mutate<ActivityClaimReq, ActivityClaimResp>('/activity/claim', req)
+  }
+
+  /**
+   * GET /guide/script（B18）：步骤序列 + 版本 + 这个号的续传位置 + 该不该看引导。
+   *
+   * <p>服务端不做条件返回（七步的响应远小于单响应体积预算），所以每次都真拉；
+   * 比对 `version` 决定要不要重画是调用方的事，权威始终在服务端。
+   */
+  guideScript(): Promise<NetOutcome<GuideScriptResp>> {
+    return this.read<GuideScriptResp>('/guide/script')
+  }
+
+  /** POST /guide/progress。requestId 由 mutate 补，同一次上报重投不会把两步并作一步。 */
+  guideProgress(req: Omit<GuideProgressReq, 'requestId'>): Promise<NetOutcome<GuideProgressResp>> {
+    return this.mutate<GuideProgressReq, GuideProgressResp>('/guide/progress', req)
   }
 
   /**

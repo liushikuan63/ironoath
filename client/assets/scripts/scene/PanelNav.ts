@@ -161,6 +161,25 @@ export class PanelNav extends Component {
     return this.currentKey
   }
 
+  /**
+   * 面板的可用区域（本节点本地坐标，左下角 + 宽高）：**全屏减去底部导航条那一条**。
+   *
+   * <p>存在的唯一理由是引导遮罩要"挖洞"（B18 验收 6）：洞必须是玩家这一步真能操作的那块，
+   * 而"哪些格子属于导航条"这件事只有本类知道 —— 把条高抄到引导层去，就是同一个几何两个家，
+   * 将来改条高的人只会改这里，于是引导挡住的是内容、放过的是导航。
+   *
+   * <p>未知 key 返回 null：引导层据此退回"整屏都能点"而不是猜一个矩形。
+   */
+  contentRectFor(key: string | null): { x: number, y: number, width: number, height: number } | null {
+    if (key === null || !this.panelNodes.has(key)) {
+      return null
+    }
+    const size = view.getVisibleSize()
+    // 导航条中心在 -h/2 + BAR_HEIGHT/2 + 8 ⇒ 它占的是 y ∈ [-h/2+8, -h/2+8+BAR_HEIGHT]
+    const bottom = -size.height / 2 + 8 + BAR_HEIGHT
+    return { x: -size.width / 2, y: bottom, width: size.width, height: size.height / 2 - bottom }
+  }
+
   // ---------- 导航条 ----------
 
   private buildBar(): void {

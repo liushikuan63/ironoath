@@ -35,8 +35,6 @@ export const TRACK_EVENTS = {
   panelLoadFailed: 'panel_load_failed',
   /** 登录成功。 */
   login: 'login',
-  /** 引导每一步完成。引导系统本身还没实现（B12），字典先占位以免看板缺一环。 */
-  guideStep: 'guide_step',
   /** 开始升级建筑。 */
   buildingUpgradeStart: 'building_upgrade_start',
   /** 升级完成（含离线结算那种）。 */
@@ -92,6 +90,16 @@ export const TRACK_EVENTS = {
   mailRead: 'mail_read',
   /** 领取一次活动奖励（B17）。带 activityId —— 看板上要能看出哪条活动在发奖。 */
   activityClaim: 'activity_claim',
+  /**
+   * 新手引导的一步（B18 §一.4）。一个事件名、`action` 分三种：
+   * `enter`（这一步弹出来了）/ `complete`（玩家喊做完了，服务端认不认看回执）/
+   * `skip`（点了跳过，只有可跳的步会发）。多出来的一种 `outside_tap` 记"遮罩外乱点"，
+   * 每步最多一次 —— 看板上它是"这一步没讲明白"的信号，而不是玩家在手滑。
+   *
+   * <p>带 `guideVersion` 是为了把"改了脚本之后掉了一截完成率"与"玩家就是不做"分开：
+   * 没有它，一次热更会在看板上长得像一次流失。
+   */
+  guideStep: 'guide_step',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

@@ -56,6 +56,7 @@ import { BagPanelView } from './BagPanelView'
 import { StagePanelView } from './StagePanelView'
 import { QuestPanelView } from './QuestPanelView'
 import { MailPanelView } from './MailPanelView'
+import { GuideView } from './GuideView'
 import { BattleReportPanelView } from './BattleReportPanelView'
 import { playbackOptionsOf } from '../game/battle/BattleReportPanel'
 import { SocialPanelView } from './SocialPanelView'
@@ -177,6 +178,8 @@ export class GameBootstrap extends Component {
 
   private net: NetModule | null = null
   private nav: PanelNav | null = null
+  /** 引导层（B18）：整屏遮罩 + 气泡，挂在所有面板与导航条之上。 */
+  private guide: GuideView | null = null
   private unsubscribeNetworkEvents: (() => void) | null = null
   private booting = false
   private destroyed = false
@@ -273,6 +276,7 @@ export class GameBootstrap extends Component {
     // 导航层：由它建出各面板节点（初始未激活，因此不会九个面板一起画满屏背景），
     // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
     this.nav = this.node.addComponent(PanelNav)
+    this.buildGuideLayer()
     // 邮件不占首屏：多一个并发请求会挤那 3 秒预算（首屏判据是「可交互」而不是「可见」），
     // 而邮箱不在可交互的必需项里 —— 玩家点开那一格才拉第一次。onShow 这个钩子此前挂着没人用。
     this.nav.onShow = key => {
@@ -284,8 +288,32 @@ export class GameBootstrap extends Component {
       if (key === 'quest') {
         void this.root?.refresh('activity')
       }
+      // 引导的每一步都是"在某面板上弹"，所以换面板要重算一次该不该画（判定在驱动器里，这里只触发）
+      this.guide?.repaint()
     }
     void this.boot()
+  }
+
+  /**
+   * 引导层（B18）。节点在 PanelNav 之后挂上 ⇒ 同层兄弟里它排在最后，遮罩自然压住面板与导航条，
+   * 不必给任何面板加"让位"的逻辑（那会在每个面板里各写一遍）。
+   *
+   * <p>它只装四根线：现在开着哪个面板、那块面板的可用区域、埋点出口、上报一步。
+   * 一帧该长什么样、该不该有这一帧，全在 GuideDriver（那部分有 CI 用例）。
+   */
+  private buildGuideLayer(): void {
+    const node = new Node('Guide')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    const layer = node.addComponent(GuideView)
+    this.guide = layer
+    layer.openPanelKey = () => this.nav?.current() ?? null
+    layer.contentRectFor = key => this.nav?.contentRectFor(key) ?? null
+    layer.onTrack = (action, stepId, version) => this.root?.trackGuideStep(action, stepId, version)
+    layer.onReport = (stepId, action) => {
+      // 回执才能改位置：advanced=false 时服务端给回来的还是当前那一步，界面就留在原步等玩家
+      void this.root?.guideProgress(stepId, action, resp => this.guide?.applyProgress(resp.nextStepIndex))
+    }
   }
 
   /** 按导航 key 取面板组件。未激活的节点也能拿到组件对象（只是还没跑 onLoad）。 */
@@ -578,6 +606,10 @@ export class GameBootstrap extends Component {
     // 触发路径仍然只有 onShow 这一条：同 key 的 show() 只发通知、不重排激活，
     // 所以这里不需要再写一份「是邮件就拉邮件」的分支（那会变成第二个家）。
     // 登录没成功时不补：那一次拉取只会变成一条 panel_load_failed 噪声。
+    // 引导只在登录后拉一次：老号会拿到 applies=false，于是这一层整个不画（服务端判，客户端不猜）
+    if (started) {
+      void this.root?.refresh('guide')
+    }
     if (started && this.nav !== null) {
       this.nav.show(this.nav.current())
     }
@@ -892,6 +924,10 @@ export class GameBootstrap extends Component {
     if (search !== null) {
       out.targets = resp => search.attach(resp)
       search.onSearchRequested = radius => { void this.root?.searchTargets(radius) }
+    }
+    if (this.guide !== null) {
+      // 步骤、文案、遮罩、能不能跳，一个字段都不在客户端（验收 1）
+      out.guide = resp => this.guide?.attach(resp)
     }
     if (quest !== null) {
       out.quest = resp => quest.attach(resp)
