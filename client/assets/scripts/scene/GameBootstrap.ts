@@ -566,6 +566,15 @@ export class GameBootstrap extends Component {
     // 而「可交互」的判据里没有战报 —— 晚零点几秒到，玩家真点到那一格时通常已经拉完了。
     // 这一句就是它在小游戏里的唯一拉取路径（PanelNav.onShow 只管邮件那一格）。
     void this.root?.refresh('reports')
+    // 登录后把**当前那一格**再通知一次。PanelNav 的初始 show 跑在它自己的 onLoad 里，
+    // 那时上面那句 onShow 还没赋值、会话也还没建出来 —— 于是深链 ?panel=mail 进来的人
+    // 看到的邮箱永远只有一副骨架（症状由 tools/verify-devtools-panels.mjs 抓到）。
+    // 触发路径仍然只有 onShow 这一条：同 key 的 show() 只发通知、不重排激活，
+    // 所以这里不需要再写一份「是邮件就拉邮件」的分支（那会变成第二个家）。
+    // 登录没成功时不补：那一次拉取只会变成一条 panel_load_failed 噪声。
+    if (started && this.nav !== null) {
+      this.nav.show(this.nav.current())
+    }
   }
 
   /**

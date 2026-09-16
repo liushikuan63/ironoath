@@ -19,12 +19,11 @@
  * <p><b>反空转下限</b>：一次首屏至少要观测到 N 个后端响应、拿到 `[boot]`、量到非零堆 ——
  * 少任何一项都按失败处理，而不是"没量到所以跳过"（本项目踩过"检查器自己空转还全绿"）。
  */
-import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+import { startPreviewServer, BAKED_HTTP } from './lib/preview-server.mjs'
 
 const require = createRequire(import.meta.url)
 /**
@@ -57,51 +56,12 @@ const LIMITS = {
   minFps: threshold('PERF_MIN_FPS'),
 }
 
-// 客户端的后端地址是**构建期写死在 Boot.scene 里的两个编辑器字段**（baseUrl / wsUrl），
-// 不是运行期配置。于是本工具原先有一个会骗人的地方：`BACKEND_ORIGIN` 只改变"统计哪个前缀"，
-// 不改变"客户端实际把请求打到哪台"。共享开发机上 8080 常被别人的旧构建占着，
-// 症状就是"我明明指了自己那台，量出来的却是别人那台的延迟"，而且看不出破绽。
-// 现在：指了非默认后端就真的把产物里的写死值换掉；换不动即判失败。
-// 不给（默认就是 8080）时一个字节都不改，与改动前行为一致。
-const BAKED_HTTP = 'http://localhost:8080'
-const BAKED_WS = 'ws://localhost:8080/ws'
+// 客户端的后端地址是**构建期写死在 Boot.scene 里的两个编辑器字段**（baseUrl / wsUrl），不是运行期配置。
+// 指了非默认后端就真的把产物里那两个值换掉，换不动即判失败。规则与服务本体在 ./lib/preview-server.mjs，
+// 与 verify-devtools-panels.mjs **共用同一份**：存在两份时改了这份忘了那份，没改的那一份会把请求打到
+// 别人那台后端，而读数看起来一切正常（这条坑本工具踩过一次，所以宁可不留在两个文件里）。
+const preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
 const REWRITE = BACKEND !== BAKED_HTTP
-const BACKEND_WS = BACKEND.replace(/^http/, 'ws') + '/ws'
-let rewriteHits = 0
-
-const MIME = {
-  '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
-  '.json': 'application/json', '.css': 'text/css', '.png': 'image/png',
-  '.jpg': 'image/jpeg', '.wasm': 'application/wasm', '.svg': 'image/svg+xml',
-  '.mem': 'application/octet-stream', '.data': 'application/octet-stream',
-  '.ttf': 'font/ttf', '.map': 'application/json',
-}
-
-// content-type 必须按**解析后的文件路径**取：拿 path.extname('/') 会得到 ''
-// → application/octet-stream → 浏览器把 index.html 当下载，表现为 page.goto 直接抛
-// "Download is starting"。
-const server = createServer(async (req, res) => {
-  const url = decodeURIComponent((req.url ?? '/').split('?')[0])
-  const target = path.join(ROOT, url === '/' ? 'index.html' : url)
-  try {
-    let buf = await readFile(target)
-    if (REWRITE && ['.js', '.mjs', '.json'].includes(path.extname(target))) {
-      const text = buf.toString('utf8')
-      const after = text.split(BAKED_HTTP).join(BACKEND).split(BAKED_WS).join(BACKEND_WS)
-      if (after !== text) {
-        rewriteHits += text.split(BAKED_HTTP).length - 1 + text.split(BAKED_WS).length - 1
-        buf = Buffer.from(after, 'utf8')
-      }
-    }
-    res.writeHead(200, { 'content-type': MIME[path.extname(target)] ?? 'application/octet-stream' })
-    res.end(buf)
-    // SPA fallback 只对非文件路径生效，且不能被当成"资源存在"的证据
-  } catch {
-    const buf = await readFile(path.join(ROOT, 'index.html'))
-    res.writeHead(200, { 'content-type': 'text/html' }).end(buf)
-  }
-})
-await new Promise((r) => server.listen(PORT, r))
 
 const browser = await chromium.launch({ headless: true, args: ['--enable-precise-memory-info'] })
 
@@ -275,7 +235,7 @@ if (clientBootMs !== null && clientBootMs > firstScreenMs) {
     + '客户端那段严格被包在里面 —— 只能是锚点被推迟（BootClock 的 import 被挪到了后面）或时钟倒拨被夹过')
 }
 if (backendResponses.length < 8) failures.push(`后端响应只观测到 ${backendResponses.length} 条（少于 8）：测量空转嫌疑`)
-if (REWRITE && rewriteHits === 0) {
+if (REWRITE && preview.rewrites() === 0) {
   failures.push(`指定了后端 ${BACKEND} 却在产物里一处都没换到：客户端实际打的仍是 ${BAKED_HTTP}，`
     + '这台量出来的延迟不是那台打出来的请求')
 }
@@ -407,7 +367,7 @@ console.log(JSON.stringify({
   note: '无头桌面浏览器测量，真机数字仍归 CC 文档阶段 6 的人工项；阈值全部读自 global.json',
   limits: LIMITS,
   firstScreenMs,
-  backend: { origin: BACKEND, rewrittenFromBaked: REWRITE, rewriteHits },
+  backend: { origin: BACKEND, rewrittenFromBaked: REWRITE, rewriteHits: preview.rewrites() },
   clientReportedBootMs: clientBootMs,
   preJsLoadMs,
   sceneReadyMs,
@@ -434,5 +394,5 @@ console.log(JSON.stringify({
 }, null, 2))
 
 await browser.close()
-server.close()
+await preview.close()
 if (failures.length > 0) process.exitCode = 1
