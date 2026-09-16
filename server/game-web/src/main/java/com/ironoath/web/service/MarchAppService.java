@@ -799,7 +799,13 @@ public class MarchAppService {
                     }
                 }
                 case PLAYER_CITY -> {
-                    playerCityBattleService.resolve(march, now, beneficiaries);
+                    var pvpOutcome = playerCityBattleService.resolve(march, now, beneficiaries);
+                    // 活动进度（B17 争锋令）：只有进攻方获胜才记 —— 打输了也记的话，
+                    // 「拿下一座玩家城」会在自己被打回家的那一刻完成（与 KILL_MONSTER 同一条）
+                    if (pvpOutcome.result().winner() == com.ironoath.battle.Winner.ATTACKER) {
+                        questEvents.progress(march.playerId(),
+                                com.ironoath.core.quest.GoalType.PVP_WIN, null, 1L, now);
+                    }
                     // 仗真的打起来了才记频控的账（胜负都算 —— 真人挨了打这件事已经发生）
                     botAttackLimiter.recordAttack(march.playerId(), march.targetId(), now);
                 }

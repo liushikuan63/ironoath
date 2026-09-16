@@ -3,6 +3,7 @@ package com.ironoath.web;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -108,7 +109,7 @@ class NationPayEnumParityTest {
     }
 
     @Test
-    @DisplayName("GoalType 与 quest.json 的 goalType 枚举逐字对应：表里填了代码不认识的类型，那行任务永远不会有进度")
+    @DisplayName("GoalType 与任务/活动两张表的枚举逐字对应：表里填了代码不认识的类型，那行永远不会有进度")
     void goalTypeMatchesTheQuestTable() {
         ConfigRegistry configs = ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
         Set<String> inTable = configs.all(QuestCfg.class).stream()
@@ -121,10 +122,20 @@ class NationPayEnumParityTest {
                 .as("表里出现的每个目标类型代码都必须认识：不认识的话那行任务永远不会累加进度，"
                         + "而玩家看到的是一个永远停在 0/N 的任务")
                 .isSubsetOf(inCode);
+        // 活动表不直接写 GoalType（它写 conditionType，由 ActivityCondition 映射到事件类型），
+        // 所以这里把那份映射算进来 —— 一个类型被任务用、或能被某个活动条件订阅，都算"活着"
+        Set<String> usedByQuests = new HashSet<>(inTable);
+        Set<String> usedByActivities = configs.all(com.ironoath.config.cfg.ActivityCfg.class).stream()
+                .map(cfg -> com.ironoath.core.activity.ActivityCondition
+                        .valueOf(cfg.conditionType().name()).goalType().name())
+                .collect(Collectors.toSet());
+        Set<String> used = new HashSet<>(usedByQuests);
+        used.addAll(usedByActivities);
+
         assertThat(inCode)
-                .as("代码里的每个目标类型都应当至少被一行任务用到：用不到说明它是死枚举，"
-                        + "或者表里漏配了对应的任务")
-                .isSubsetOf(inTable);
+                .as("代码里的每个目标类型都应当至少被一行任务或一条活动条件用到：用不到说明它是死枚举"
+                        + "（B17 之后 GoalType 有两个消费者：quest.json 与 activity.json 的 conditionType）")
+                .isSubsetOf(used);
     }
 
     @Test

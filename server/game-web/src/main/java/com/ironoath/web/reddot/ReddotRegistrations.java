@@ -35,6 +35,7 @@ public class ReddotRegistrations {
 
     @Bean
     public ReddotTree reddotTree(SocialAppService social, CityAppService city, MailAppService mails,
+                                 com.ironoath.web.activity.ActivityAppService activities,
                                  TimeService time) {
         ReddotTree tree = new ReddotTree();
         tree.register("social/help", playerId -> social.hasHelpable(playerId, time.serverNow()),
@@ -51,6 +52,10 @@ public class ReddotRegistrations {
         // 不在这里比较资源与等级 —— 那样红点会与「点进去到底能不能升」各说各话
         tree.register("city/building", playerId -> city.hasUpgradable(playerId, time.serverNow()),
                 "有已放置的建筑此刻能开始升级（不含需要地块坐标的首次建造）");
+        // 复用活动域自己的可领判定（ActivityAppService#claimableCount 调的是核心的 blockOf），
+        // 不在这里数"进度够没够"—— 那样徽标会亮，点进去却是领不了的
+        tree.register("activity/claimable", playerId -> activities.claimableCount(playerId) > 0,
+                "有达标且没领的活动奖励");
         // 叶子数必须被看见：它长期停在个位数就说明有人在业务模块里自己判红点
         LOG.info("红点树注册完成：{} 个叶子 {}。新增功能要亮红点，只改这里，不要在业务 Service 里判断",
                 tree.leafCount(), tree.leafKeys());

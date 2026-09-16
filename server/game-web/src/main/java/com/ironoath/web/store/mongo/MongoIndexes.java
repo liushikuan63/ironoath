@@ -175,6 +175,13 @@ public final class MongoIndexes {
         String mailExpiry = mailIndexes.ensureIndex(new Index()
                 .on(MailDocument.FIELD_EXPIRE_AT, Sort.Direction.ASC)
                 .named("idx_mail_expire_at"));
+        // 活动进度：一个玩家一份文档，_id 就是 playerId，所以点查不需要额外索引；
+        // 但没有索引时"这个服的进度分布"这类运营查询会整集合扫，
+        // 而 windowStart 是那些查询唯一会过滤的字段（哪一轮、转没转过去）
+        IndexOperations activityIndexes = mongo.indexOps(ActivityProgressDocument.COLLECTION);
+        String byActivityWindow = activityIndexes.ensureIndex(new Index()
+                .on("entries.windowStart", Sort.Direction.ASC)
+                .named("idx_activity_window_start"));
         // 社交：三条唯一索引是"名字/标签全局唯一"在并发下唯一还成立的保证
         // （小队名、联盟名、联盟标签）。members.playerId 服务"查我在哪个组织"；
         // rally 两条服务"本组织进行中"与"到期扫描"。聊天/玩家事件/帮助请求都按 _id 点查，
@@ -235,6 +242,7 @@ public final class MongoIndexes {
                 + "；" + TrackEventDocument.COLLECTION + " → " + byTrackPlayer + " / " + trackExpiry
                 + "；" + TrackCrashDocument.COLLECTION + " → " + crashExpiry
                 + "；" + MailDocument.COLLECTION + " → " + byMailPlayer + " / " + mailExpiry
+                + "；" + ActivityProgressDocument.COLLECTION + " → " + byActivityWindow
                 + "；" + SquadDocument.COLLECTION + " → " + uniqueSquadName + " / " + bySquadMember
                 + "；" + AllianceDocument.COLLECTION + " → " + uniqueAllianceName + " / "
                 + uniqueAllianceTag + " / " + byAllianceMember

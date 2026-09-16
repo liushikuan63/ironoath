@@ -59,6 +59,8 @@ public class PlayerInitService {
     private final AuthSessionService sessions;
     /** 内容安全：昵称是玩家可自由填写的内容，建档前就要送检（上线检查清单 §二 7）。 */
     private final com.ironoath.web.security.ContentSecurityGuard contentSecurity;
+    /** 领域事件发布入口（B17 连续签到用 LOGIN_DAY）。名字沿用既有类 —— 它是业务侧发布领域事件的统一入口。 */
+    private final com.ironoath.web.quest.QuestEvents domainEvents;
 
     public PlayerInitService(ConfigRegistry configs, PlayerRepository players,
                              IdempotencyStore idempotency, TimeService timeService,
@@ -66,7 +68,8 @@ public class PlayerInitService {
                              com.ironoath.core.city.CityRepository cities,
                              WeChatCodeExchanger weChat,
                              AuthSessionService sessions,
-                             com.ironoath.web.security.ContentSecurityGuard contentSecurity) {
+                             com.ironoath.web.security.ContentSecurityGuard contentSecurity,
+                             com.ironoath.web.quest.QuestEvents domainEvents) {
         this.configs = configs;
         this.players = players;
         this.idempotency = idempotency;
@@ -76,6 +79,7 @@ public class PlayerInitService {
         this.weChat = weChat;
         this.sessions = sessions;
         this.contentSecurity = contentSecurity;
+        this.domainEvents = domainEvents;
     }
 
     /**
@@ -86,6 +90,16 @@ public class PlayerInitService {
      * @throws BizException 参数非法或重复请求
      */
     public PlayerInitResp init(PlayerInitReq req) {
+        PlayerInitResp resp = doInit(req);
+        // 登录事件（B17 连续签到）：这里发一次"我登录了"，"同一自然日只算一天"由活动域负责 ——
+        // 幂等重投也会再发一次，而那正是那条规则要处理的形状（把它在这里判掉等于把口径搬出活动域）。
+        // 建档走同一个出口（doInit 建号成功也返回），所以新号第一天就算上了。
+        domainEvents.progress(resp.playerId(),
+                com.ironoath.core.quest.GoalType.LOGIN_DAY, null, 1L, timeService.serverNow());
+        return resp;
+    }
+
+    private PlayerInitResp doInit(PlayerInitReq req) {
         validate(req);
         long now = timeService.serverNow();
         // 微信登录：code → openid → 账号键。走这条时 deviceId 不参与建档，

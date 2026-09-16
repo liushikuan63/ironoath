@@ -16,7 +16,9 @@ const CHECKLIST = '收口清单.md'
 /* 已知"表做了、机制没做"的族。每条都给得出出处，出处错了卡口就红，所以这张表不会烂成借口。 */
 const UNWIRED = {
   TechCfg: '零装配：#6（个人科技没有规格 —— B12 六个子系统不含科技，见收口清单该行）',
-  ActivityCfg: '零装配：#60（活动与七日登录只有表，没有推进与领取路径，B12 §5）',
+  // ActivityCfg 曾挂在这里（#60「活动与七日登录只有表，没有推进与领取路径」）：
+  // 2026-09-16 的 B17（ActivityRulesAssembler + ActivityEventListener + /activity/*）让它真的被读了，
+  // 例外条目随之删除 —— 与下面 BotArchetypeCfg 那条同一条规矩，别照着 #60 加回来。
   QuestCfg: '零装配：#60（任务只有表与 core 领域模型，没有装配与端点，B12 §1）',
   MatchRuleCfg: '零装配：#60（匹配规则表没读，圈层与集结校验走 global 参数那条路，B08）',
   // BotArchetypeCfg 与 BotNameCfg 曾挂在这里（#60「Bot 四张表零消费」）：2026-09-11 的孵化档

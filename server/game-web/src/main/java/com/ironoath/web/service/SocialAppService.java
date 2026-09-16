@@ -846,6 +846,11 @@ public class SocialAppService {
                 LOG.info("联盟捐献 playerId={} allianceId={} tier={} 资金+{} 贡献+{} 余额={}",
                         playerId, alliance.id(), req.tier(), donation.fundGained(),
                         donation.contributionGained(), donation.fund());
+                // 活动进度（B17 捐献周）：增量 = 这次真进联盟资金的那份资源量。
+                // 发完事件再返回 —— 事件在写路径内同步派发，失败由发布入口收口成日志，
+                // 所以"捐献成功但活动没记上"至多是少一格进度，不会让这笔捐献失败
+                questEvents.progress(playerId, com.ironoath.core.quest.GoalType.ALLIANCE_DONATE,
+                        null, donation.fundGained(), now);
                 return new AllianceDonateResp(donation.fundGained(), donation.contributionGained(),
                         donation.fund(), donation.contribution(), donation.donateToday(),
                         donation.dailyCap(), now);

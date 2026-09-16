@@ -55,6 +55,7 @@ class BeanAssemblyTest {
             com.ironoath.web.battle.BattleReportStore.class,
             com.ironoath.web.quest.QuestProgressStore.class,
             com.ironoath.web.mail.MailStore.class,
+            com.ironoath.web.activity.ActivityProgressStore.class,
             com.ironoath.web.nation.NationStore.class,
             com.ironoath.web.ops.TrackEventStore.class,
             com.ironoath.web.social.SocialStore.class);

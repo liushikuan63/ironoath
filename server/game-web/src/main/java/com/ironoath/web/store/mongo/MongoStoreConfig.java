@@ -178,6 +178,17 @@ public class MongoStoreConfig {
     }
 
     /**
+     * 活动进度（B17）。这一档防的是「连续签到天数与活动进度随进程消失」——
+     * 两类都无法从当前状态反推（日子过去了、怪已经死了），所以只能在事件发生那一刻记下来。
+     * 契约见 {@code ActivityStoreEquivalenceTest}。
+     */
+    @Bean
+    public com.ironoath.web.activity.ActivityProgressStore activityProgressStore(MongoTemplate mongo) {
+        LOG.info("使用 MongoDB 活动进度（连续签到与每轮进度不再随进程消失）");
+        return new MongoActivityProgressStore(mongo);
+    }
+
+    /**
      * 支付订单。这一类是全部存储里优先级最高的：「已收款未发货」是一笔负债，
      * 内存版重启即消失，而消失的那笔钱没有任何追查入口（收口清单 #16 与 #49，
      * 另见 上线检查清单 §四 2）。
