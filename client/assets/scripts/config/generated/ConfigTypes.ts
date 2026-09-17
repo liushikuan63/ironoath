@@ -688,6 +688,43 @@ export interface NationConfigCfg {
   warCooldownHours: number
 }
 
+/** nation_tech.nationTechSchool 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type NationTechSchool =
+  | 'AGRICULTURE'
+  | 'MILITARY'
+  | 'COMMERCE'
+  | 'FORTIFICATION'
+
+/** nation_tech.nationTechEffectAttr 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type NationTechEffectAttr =
+  | 'GRAIN_OUTPUT'
+  | 'TRAIN_SPEED'
+  | 'MARCH_SPEED'
+  | 'BUILD_SPEED'
+
+/**
+ * 配置表 nation_tech 的一行。
+ * 国家科技表（B20 块③）。与个人科技（tech.json）的关系：同一套 effectAttr 词汇、同一条 costCurve 曲线族，但**出资方与承载方都不同** —— 钱出自国库（Nation.Sink.NATIONAL_TECH 核销），等级记在国家上而不是个人身上，生效范围是全国成员。每学派一行、共 4 行（§五③）。
+ *
+ * 源表 version=1
+ */
+export interface NationTechCfg {
+  /** 主键 */
+  id: string
+  name: string
+  /** 枚举，取值见 NationTechSchool */
+  school: NationTechSchool
+  /** 枚举，取值见 NationTechEffectAttr */
+  effectAttr: NationTechEffectAttr
+  /** 定点数（真实值 ×10000）。配置里写成十进制字符串，生成后是 long，禁止还原成 double */
+  effectValue: number
+  maxLevel: number
+  costBaseTreasury: number
+  /** 外键，指向 curve 表的 id */
+  costCurve: string
+  requireNationLevel: number
+}
+
 /** pay_product.payProductKind 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type PayProductKind =
   | 'MONTHLY_CARD'

@@ -28,6 +28,10 @@ const UNWIRED = {
   // 例外条目随之删除 —— 与下面 BotArchetypeCfg 那条同一条规矩，别照着 #60 加回来。
   QuestCfg: '零装配：#60（任务只有表与 core 领域模型，没有装配与端点，B12 §1）',
   MatchRuleCfg: '零装配：#60（匹配规则表没读，圈层与集结校验走 global 参数那条路，B08）',
+  // B20 块③ 的 S1（收口清单 #163）只落了表与契约：`nation_tech.json` 四行 + `nationTech.schema.json` 七个 def，
+  // 装配（`Nation.techLevels` 账本 + 国库出资走 `Sink.NATIONAL_TECH` + `/nation/tech` 两个端点 + 与个人科技相加的
+  // 效果折算）在 S2 —— 那时本条例外必须删除，与上面 TechCfg / GuideCfg / PayProductCfg 同一条规矩。
+  NationTechCfg: '零装配：#163（B20 块③ S1 只有表与契约，端点与国库出资在 S2）',
   // BotArchetypeCfg 与 BotNameCfg 曾挂在这里（#60「Bot 四张表零消费」）：2026-09-11 的孵化档
   // （收口清单 #84）让 BotRulesAssembler 真的读它们了，例外条目随之删除 —— 别照着 #60 加回来。
   BotChatCfg: '零装配：#60（同上）',

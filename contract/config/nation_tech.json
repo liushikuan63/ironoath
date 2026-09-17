@@ -1,0 +1,69 @@
+{
+  "table": "nation_tech",
+  "version": 1,
+  "comment": "国家科技表（B20 块③）。与个人科技（tech.json）的关系：同一套 effectAttr 词汇、同一条 costCurve 曲线族，但**出资方与承载方都不同** —— 钱出自国库（Nation.Sink.NATIONAL_TECH 核销），等级记在国家上而不是个人身上，生效范围是全国成员。每学派一行、共 4 行（§五③）。",
+  "designNote": "**为什么只有 4 行而个人科技有 11 行**：国家科技的目的不是又一条成长线，而是给国库一个长期沉没口（C07「通胀要有去处」）。四行 = 每学派一行，效果词汇全部复用 `tech.json` 已有的 effectAttr 取值（GRAIN_OUTPUT / TRAIN_SPEED / MARCH_SPEED / BUILD_SPEED），**这四条在生产代码里都已经有消费点**（#155~#158），所以这张表不拖任何\"先造数值落点再造表\"的尾巴，也不新造属性 id。\n\n**每级幅度与个人科技同量级，而总上限更低**（§五③ 的\"0.04/级\"草值 + 20 级上限）：国家满级 80%/40%/60%/60% 一律低于同一属性的个人科技 150%/50%/90%/75%。这条不对称是刻意的，与联盟科技那条先例同源（atech_atk 的 why：\"组团才有的额外收益不该盖过个人养成\"）。\n\n**成本基数是有推导的，不是手感值**：锚点两个 —— ① `nation_config` Lv1 的 `treasuryCap` = 500,000；② 同表 why 给的国库收入口径是\"每盟每周 10000\"，Lv1 memberCap 200 对应 2 个联盟 ⇒ Lv1 满编国家周税收 20,000。取**一系点满 = Lv1 国库容量的一半 = 250,000 = 12.5 周税收**为设计目标（四系全满 50 周，且单系总价永远不越过容量上限，否则\"攒得起来却花不出去\"）。曲线复用 `BUILDING_COST`（ratio 1.22，与个人科技与装备强化同源，**不新造比率**），20 级等比和为 Σ_{k=0..19}1.22^k ≈ 238.0 ⇒ 基数 = 250000 ÷ 238 ≈ 1050（首级 1050 ≈ 半天税收，末级 1050×1.22^19 ≈ 45,900 ≈ 2.3 周税收）。这一区间由 `NationTechCostTest` 用生产同一个曲线算式重算并把\"每系总价落在 240,000~260,000\"钉成回归卡口 —— 改比率、改级数或改基数都会红，数字才不会烂成第二真相。\n\n**一处已知的数值形状（写在这里，别当成隐藏福利）**：§五④ 定的是\"同类加成相加成总率、作用于基础一次\"，所以建造/训练速度在个人 + 联盟 + 国家三条都满时会超过 100%，此时由 `Rates.shortenSeconds` 的钳制兜住（减到下限 1 秒，防 0 秒队列）。也就是说**满配区间的速度科技边际收益会被吃掉一截**。这是三条来源同口径的必然结果，要动它应当集中做一次全系统校准（像 #152 那样量），而不是在这张表里偷偷降权某一系。\n\n**requireNationLevel 的分布**：两条中性线（粮产、工役）Lv1 开放，两条军事线（训练、行军）要 Lv2。依据是 `nation_config` 的等级形状：Lv1 只有 2 个联盟、国库 50 万，一成立就把税收抽进战力线会让新国家之间的差距瞬间放大；Lv2（4 盟）之后才有\" national 规模\"这回事。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "school": "ENUM:AGRICULTURE,MILITARY,COMMERCE,FORTIFICATION",
+    "effectAttr": "ENUM:GRAIN_OUTPUT,TRAIN_SPEED,MARCH_SPEED,BUILD_SPEED",
+    "effectValue": "DECIMAL_NONNEG",
+    "maxLevel": "LONG_POS",
+    "costBaseTreasury": "LONG_POS",
+    "costCurve": "REF:curve",
+    "requireNationLevel": "LONG_POS",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "nt_agri_grain",
+      "name": "国屯粮道",
+      "school": "AGRICULTURE",
+      "effectAttr": "GRAIN_OUTPUT",
+      "effectValue": "0.04",
+      "maxLevel": 20,
+      "costBaseTreasury": 1050,
+      "costCurve": "BUILDING_COST",
+      "requireNationLevel": 1,
+      "why": "全国粮食产量 +4%/级，满级 +80%（个人那条 tech_agri_grain 是 +5%/级 × 30 级 = 150%，国家刻意低于它）。粮是 B02 零氪模型里唯一\"缺口会直接把玩家卡住\"的资源（七步主线要的 1 万粮就是这一位），所以国家层面的第一条加成给粮而不是给战力。Lv1 就开放：新国家唯一还谈得上共识的事就是大家一起有饭吃。"
+    },
+    {
+      "id": "nt_fort_build",
+      "name": "国兴工役",
+      "school": "FORTIFICATION",
+      "effectAttr": "BUILD_SPEED",
+      "effectValue": "0.03",
+      "maxLevel": 20,
+      "costBaseTreasury": 1050,
+      "costCurve": "BUILDING_COST",
+      "requireNationLevel": 1,
+      "why": "全国建造速度 +3%/级，满级 +60%（个人 tech_fort_build 是 +3%/级 × 25 级 = 75%，联盟 atech_donate 是 +1%/级 × 20 级 = 20%）。每级幅度与个人同级而总上限更低。§五④ 明确三条来源相加后只作用一次并由 `Rates.shortenSeconds` 钳到下限 1 秒，所以三条全满时这里给的 60% 有一部分会被吃掉 —— 那句话写在 designNote 里而不是偷偷降权，因为\"减多少\"该由一次集中校准决定。"
+    },
+    {
+      "id": "nt_mil_train",
+      "name": "国造军械",
+      "school": "MILITARY",
+      "effectAttr": "TRAIN_SPEED",
+      "effectValue": "0.02",
+      "maxLevel": 20,
+      "costBaseTreasury": 1050,
+      "costCurve": "BUILDING_COST",
+      "requireNationLevel": 2,
+      "why": "全国训练速度 +2%/级，满级 +40%，与个人 tech_mil_train（+2%/级 × 25 级 = 50%）同量级而总上限更低。**要 Lv2 才开**：训练速度直接改变 PVP 的补兵速度（shop 表给训练令定 45 金、比建造令贵 5 金的同一条理由），让只有 2 个联盟的新国家一建国就把国库抽进兵力竞赛，等于把 B08 的战力圈层往前推。加成的作用点在批次总时长上（#157 那条：塞进单兵秒数会让低级兵一秒都减不到），这张表只给幅度、不管作用位置。"
+    },
+    {
+      "id": "nt_com_march",
+      "name": "国通驿传",
+      "school": "COMMERCE",
+      "effectAttr": "MARCH_SPEED",
+      "effectValue": "0.03",
+      "maxLevel": 20,
+      "costBaseTreasury": 1050,
+      "costCurve": "BUILDING_COST",
+      "requireNationLevel": 2,
+      "why": "全国行军速度 +3%/级，满级 +60%（个人 tech_com_march 是 +3%/级 × 30 级 = 90%，联盟 atech_march 是 +2%/级 × 30 级 = 60%）。行军速度同时改善采集与打击，是国家层面最容易被当成\"军备\"的一条，所以与训练同档要 Lv2。作用方式是\"时长 ÷ (1 + 合计加速率)\"（#158 那条：不抬高兵种自身速度，否则队伍里最慢兵种的排序会变，而那跟\"行军快一点\"是两件事）。"
+    }
+  ]
+}
