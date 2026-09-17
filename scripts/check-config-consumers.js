@@ -15,7 +15,9 @@ const CHECKLIST = '收口清单.md'
 
 /* 已知"表做了、机制没做"的族。每条都给得出出处，出处错了卡口就红，所以这张表不会烂成借口。 */
 const UNWIRED = {
-  TechCfg: '零装配：#6（个人科技没有规格 —— B12 六个子系统不含科技，见收口清单该行）',
+  // TechCfg 曾挂在这里（#6「个人科技没有规格 —— B12 六个子系统不含科技」）：B20 块① 的 TechAppService
+  // 现在真的读它（整棵树、等级上限、学院前置、每级消耗与时长全部来自这张表），例外随之删除
+  // —— 与下面 PayProductCfg / GuideCfg 同一条规矩：接上读它的人之后，例外必须跟着删，别照着 #6 加回来。
   // PayProductCfg 与 ProductRewardCfg 曾挂在这里（B19-S1 只落表与参数）：S2 的 PaidProducts
   // （价格 / 发货内容 / 当前权益）与 ProductFulfilment、PaidClaimsAppService 让它们真的被生产代码读了，
   // 例外随之删除 —— 与下面 GuideCfg 那条同一条规矩：接上读它的人之后，例外必须跟着删。

@@ -65,13 +65,14 @@ public class QuestAppService {
     private static final long LOCK_TIMEOUT_MS = 3000L;
 
     /**
-     * 有数据源的状态型目标 —— 其余状态型目标（今天只有个人科技）没有承载，进度保持 0。
+     * 有数据源的状态型目标 —— 到今天为止<b>四个状态型目标全部有承载</b>（个人科技的那一位是 B20 块① 接上的）。
      *
      * <p>写成集合而不是散在 switch 里，是为了让"新增了一个状态型目标却没接数据源"能被一条用例抓住
-     * （见 {@code QuestEndpointTest} 的 {@code everyStateTargetHasASource}）。
+     * （见 {@code QuestEndpointTest} 的 {@code everyStateTargetHasASource}）：没接的目标不是"暂时为 0"，
+     * 而是<b>永远为 0</b>，而那条任务就静默地不可完成。
      */
     public static final Set<GoalType> STATE_TYPES_WITH_SOURCE = Set.of(
-            GoalType.REACH_RESOURCE, GoalType.JOIN_SQUAD, GoalType.JOIN_ALLIANCE);
+            GoalType.REACH_RESOURCE, GoalType.JOIN_SQUAD, GoalType.JOIN_ALLIANCE, GoalType.RESEARCH_TECH);
 
     private final ConfigRegistry configs;
     private final QuestRulesAssembler assembler;
@@ -295,6 +296,17 @@ public class QuestAppService {
             }
             case JOIN_ALLIANCE -> {
                 return socialStore.allianceOf(playerId).isPresent() ? 1L : 0L;
+            }
+            case RESEARCH_TECH -> {
+                // 读的是科技账本（不是"研究过几次"）：状态型目标记的就是当前等级，赛季回落时它会跟着回落。
+                // 没结算到期的研究不算数 —— 那位次在玩家下一次读取（含本路径经过的结算）之后才进账本。
+                PlayerSave save = players.findByPlayerId(playerId).orElse(null);
+                if (save == null) {
+                    return 0L;
+                }
+                return entry.goalTarget() == null || entry.goalTarget().isBlank()
+                        ? save.tech().levels().size()          // 「研究过科技」：按研究到的行数计
+                        : save.tech().levelOf(entry.goalTarget());
             }
             default -> {
                 // 新增状态型目标时必须在这里接数据源，否则它的进度永远是 0

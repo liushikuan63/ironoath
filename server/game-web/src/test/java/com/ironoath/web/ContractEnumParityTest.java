@@ -60,4 +60,31 @@ class ContractEnumParityTest {
         // 背包排序键直接用 ordinal 的反序，所以「N 在前、SSR 在后」这个顺序本身就是规则
         assertThat(contract).containsExactly("N", "R", "SR", "SSR");
     }
+
+    @Test
+    @DisplayName("协议 TechSchool 与 tech 表的 school 枚举一致（含顺序）")
+    void techSchoolMatchesTable() {
+        List<String> contract = Arrays.stream(com.ironoath.web.dto.generated.TechSchool.values())
+                .map(Enum::name).toList();
+        List<String> table = Arrays.stream(com.ironoath.config.cfg.TechCfg.School.values())
+                .map(Enum::name).toList();
+        assertThat(contract)
+                .as("表里加一个学派而协议没加时，TechAppService 的 valueOf 会在每次 /tech/list 上抛 "
+                        + "IllegalArgumentException —— 症状是整棵树打不开，而不是「少显示一行」")
+                .containsExactlyElementsOf(table);
+    }
+
+    @Test
+    @DisplayName("协议 TechEffectAttr 与 tech 表的 effectAttr 枚举一致（它是乘区归属的路标，两边必须同一套）")
+    void techEffectAttrMatchesTable() {
+        List<String> contract = Arrays.stream(com.ironoath.web.dto.generated.TechEffectAttr.values())
+                .map(Enum::name).toList();
+        List<String> table = Arrays.stream(com.ironoath.config.cfg.TechCfg.EffectAttr.values())
+                .map(Enum::name).toList();
+        assertThat(contract)
+                .as("effectAttr 决定这行科技进产量算式还是进乘区 B（B20 §四：不许为科技新开乘区），"
+                        + "协议少一个取值就等于那行科技永远下发不出去")
+                .containsExactlyElementsOf(table);
+        assertThat(contract).contains("UNIT_ATTACK", "BUILD_SPEED", "HOSPITAL_CAPACITY");
+    }
 }

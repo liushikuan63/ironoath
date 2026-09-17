@@ -32,10 +32,31 @@ public record PlayerDocument(
         GloryDoc glory,
         GuideDoc guide,
         PaidDoc paid,
+        TechDoc tech,
         long version) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "player";
+
+    /**
+     * 个人科技的持久化形态（B20 块①：已研究等级 + 当前研究槽四位）。
+     *
+     * <p><b>可空</b>：B20 之前建的号没有这一位，读回来补 {@code PlayerTech.empty()} ——
+     * 与 {@link PaidDoc}、{@link GuideDoc} 缺失时同一条读法。
+     *
+     * <p><b>{@code levels} 里只有研究过的行</b>：没研究过的键<b>不存在</b>，读的时候缺失即 0
+     * （与 {@code Alliance} 的联盟科技账本同一条读法）。给 11 行各存一个 0 是 B20 §一 明确不要的做法，
+     * 而且那份占位以后每加一行科技都会多一列永久为 0 的字段。
+     *
+     * <p>研究槽用四个平字段而不是嵌一个对象：Mongo 那边「空闲」就写成 null + 0/0/0，
+     * 由 {@link PlayerDocumentMapper} 与领域侧的构造校验对齐（空闲三位全空、研究中三位全正）。
+     */
+    public record TechDoc(java.util.Map<String, Integer> levels,
+                          String researchingId,
+                          Long finishAt,
+                          long startedAt,
+                          long totalSeconds) {
+    }
 
     /**
      * 付费权益的持久化形态（B19：月卡 / 成长基金 / 首充 / 发货幂等账本）。

@@ -54,7 +54,14 @@ public final class PlayerDocumentMapper {
                 // 让这一列缺席就等于把"老号"与"这次更新漏写了付费状态"混成同一种读数 ——
                 // 后者的症状是玩家的月卡凭空消失
                 toPaidDoc(save.paid()),
+                // 同上：一行都没研究、队列空着，也是一个明确写下来的值而不是缺列
+                toTechDoc(save.tech()),
                 save.version());
+    }
+
+    private static PlayerDocument.TechDoc toTechDoc(com.ironoath.core.player.PlayerTech tech) {
+        return new PlayerDocument.TechDoc(new java.util.LinkedHashMap<>(tech.levels()),
+                tech.researchingId(), tech.finishAt(), tech.startedAt(), tech.totalSeconds());
     }
 
     private static PlayerDocument.PaidDoc toPaidDoc(com.ironoath.core.player.PlayerPaid paid) {
@@ -115,10 +122,33 @@ public final class PlayerDocumentMapper {
                         pd.fundPurchasedAt(), safeList(pd.fundClaimedTiers()), pd.firstChargedAt(),
                         safeList(pd.fulfilledOrderIds()));
 
+        // 个人科技：缺子文档 = B20 之前的老号，读成「一行都没研究」。
+        // 与付费同一条纪律：**这一位不是派生缓存**，读不懂时抛而不是补 empty ——
+        // 悄悄把一个在研究中的槽读成空闲，等于把玩家已经等掉的那段时间扔掉，而它不会自己长回来。
+        // 唯一的宽容是 levels 里的 0 或负数：那与"这行没研究过"是同一件事，去掉占位即可。
+        PlayerDocument.TechDoc td = doc.tech();
+        com.ironoath.core.player.PlayerTech tech = com.ironoath.core.player.PlayerTech.empty();
+        if (td != null) {
+            Map<String, Integer> levels = new LinkedHashMap<>();
+            if (td.levels() != null) {
+                td.levels().forEach((id, level) -> {
+                    if (level != null && level > 0) {
+                        levels.put(id, level);
+                    }
+                });
+            }
+            String researching = td.researchingId() == null || td.researchingId().isBlank()
+                    ? null : td.researchingId();
+            tech = new com.ironoath.core.player.PlayerTech(levels, researching,
+                    researching == null ? null : td.finishAt(),
+                    researching == null ? 0L : td.startedAt(),
+                    researching == null ? 0L : td.totalSeconds());
+        }
+
         PlayerSave save = new PlayerSave();
         save.restore(doc.playerId(), doc.deviceId(), doc.nickName(), doc.avatarId(),
                 doc.createdAt(), doc.lastLoginAt(), doc.cityLevel(), resources,
-                power, pvp, doc.protectUntil(), glory, guide, paid, doc.version());
+                power, pvp, doc.protectUntil(), glory, guide, paid, tech, doc.version());
         return save;
     }
 

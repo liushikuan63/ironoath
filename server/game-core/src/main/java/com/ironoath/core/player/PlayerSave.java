@@ -52,6 +52,13 @@ public final class PlayerSave {
      * 「什么都没买过」是唯一正确的读法（与 {@link #pvp}、{@link #glory}、{@link #guide} 同一条纪律）。
      */
     private PlayerPaid paid = PlayerPaid.empty();
+    /**
+     * 个人科技（B20 块①）：已研究的等级账本 + 当前那一个研究槽。
+     *
+     * <p>默认 {@link PlayerTech#empty()} 而不是 null：B20 之前的号本来就没研究过科技，
+     * 「一行都没研究、队列空着」是唯一正确的读法（与 {@link #guide}、{@link #paid} 同一条纪律）。
+     */
+    private PlayerTech tech = PlayerTech.empty();
     /** 乐观锁版本号，每次持久化自增。 */
     private long version;
 
@@ -171,6 +178,11 @@ public final class PlayerSave {
         return paid;
     }
 
+    /** 个人科技。永不为 null（一行都没研究过就是 {@link PlayerTech#empty()}）。 */
+    public PlayerTech tech() {
+        return tech;
+    }
+
     public Long protectUntil() {
         return protectUntil;
     }
@@ -287,6 +299,20 @@ public final class PlayerSave {
         this.paid = paid;
     }
 
+    /**
+     * 覆盖个人科技这一位。<b>写者只有科技域，且必须在玩家锁内</b>（与 {@link #setPaid} 同一条纪律：
+     * 仓储返回的是深拷贝，锁外写就是两个域各改各的、后写覆盖前写）。
+     *
+     * <p>整位替换而不是原地改：{@link PlayerTech} 是不可变的，研究开始/结算/取消都返回新的一位 ——
+     * 「改了但没 save」这类漏写在结构上就不可能出现（拿到的新对象不写回去，存档还是旧的，日志看得出来）。
+     */
+    public void setTech(PlayerTech tech) {
+        if (tech == null) {
+            throw new IllegalArgumentException("科技这一位不得为 null（什么都没研究过请传 PlayerTech.empty()）");
+        }
+        this.tech = tech;
+    }
+
     public void setNickName(String nickName) {
         requireText(nickName, "nickName");
         this.nickName = nickName;
@@ -325,7 +351,7 @@ public final class PlayerSave {
                         Map<String, PlayerResourceState> restoredResources,
                         PlayerPower restoredPower, PlayerPvp restoredPvp,
                         Long protectUntil, PlayerGlory restoredGlory, PlayerGuide restoredGuide,
-                        PlayerPaid restoredPaid, long version) {
+                        PlayerPaid restoredPaid, PlayerTech restoredTech, long version) {
         this.playerId = playerId;
         this.deviceId = deviceId;
         this.nickName = nickName;
@@ -347,6 +373,8 @@ public final class PlayerSave {
         this.guide = restoredGuide == null ? PlayerGuide.empty() : restoredGuide;
         // 同上：B19 之前的号没有付费权益这一位，读成「什么都没买过」
         this.paid = restoredPaid == null ? PlayerPaid.empty() : restoredPaid;
+        // B20 之前的号没有科技这一位：读成「一行都没研究、队列空着」，而不是抛或留 null
+        this.tech = restoredTech == null ? PlayerTech.empty() : restoredTech;
         this.version = version;
     }
 
@@ -360,7 +388,7 @@ public final class PlayerSave {
     public PlayerSave copy() {
         PlayerSave copy = new PlayerSave();
         copy.restore(playerId, deviceId, nickName, avatarId, createdAt, lastLoginAt, cityLevel,
-                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, version);
+                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, tech, version);
         return copy;
     }
 }

@@ -82,17 +82,16 @@ class QuestEndpointTest {
     }
 
     @Test
-    @DisplayName("状态型目标必须有数据源：缺一个，那个任务的进度就永远是 0（今天只有个人科技是有意缺的）")
+    @DisplayName("状态型目标必须有数据源：缺一个，那个任务的进度就永远是 0（B20 块① 之后已无有意缺口）")
     void everyStateTargetHasASource() {
         Set<GoalType> stateTypes = Arrays.stream(GoalType.values())
                 .filter(type -> !type.accumulates())
                 .collect(Collectors.toSet());
         Set<GoalType> accounted = new HashSet<>(QuestAppService.STATE_TYPES_WITH_SOURCE);
-        // 有意缺的那一个：个人科技还没有规格（收口清单 #6），所以它的进度保持 0 ——
-        // 而不是编一个值。新增状态型目标却没接数据源时，这条断言会红
-        accounted.add(GoalType.RESEARCH_TECH);
+        // 这里**不再有任何"有意缺的那一个"**：个人科技的数据源是 B20 块① 接上的（读 PlayerTech 账本）。
+        // 以后新增状态型目标却没接数据源时，这条断言会红 —— 而那正是"任务静默不可完成"的形状
         assertThat(stateTypes)
-                .as("状态型目标（进度=当前状态）共 %d 个，其中接上数据源的 %d 个 + 有意缺的 1 个",
+                .as("状态型目标（进度=当前状态）共 %d 个，接上数据源的 %d 个：两边必须一个不差",
                         stateTypes.size(), QuestAppService.STATE_TYPES_WITH_SOURCE.size())
                 .containsExactlyInAnyOrderElementsOf(accounted);
     }

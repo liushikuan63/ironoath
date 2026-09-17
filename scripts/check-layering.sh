@@ -89,11 +89,16 @@ done
 #    产出必须惰性结算，行军必须走延迟队列 —— 两者都不需要 @Scheduled / setInterval / setTimeout。
 #    只扫 server 下的运行期模块（tools/ 是构建期 CLI，不受此约束）。
 SCHED_REGEX='(@Scheduled|@EnableScheduling|setInterval[[:space:]]*\(|new[[:space:]]+Timer[[:space:]]*\(|newScheduledThreadPool|scheduleAtFixedRate|scheduleWithFixedDelay)'
+# 命中点在同一行的 `//` 之后 —— 那是散文或被注释掉的代码，不是活的注解。
+# 不排掉它的话，「解释为什么这里没有定时器」的注释会让检查自己变红（生成物的 def 注释就是这么写的），
+# 而一条会假红的规则的下场通常是被人删掉，那才是真的把这一族放出去。
+# 锚法与 COMMENT_LINE_FILTER 同一条：先认「:行号:」，避开 Windows 盘符里的冒号。
+SCHED_AFTER_COMMENT_FILTER=':[0-9]+:.*//.*(Scheduled|setInterval|new[[:space:]]+Timer|scheduleAtFixedRate|scheduleWithFixedDelay)'
 for m in game-common game-config game-core game-battle game-world game-social game-bot game-web; do
   dir="server/$m/src/main"
   [ -d "$dir" ] || continue
   shits=$(grep -rnE "$SCHED_REGEX" "$dir" --include='*.java' \
-    | grep -vE "$COMMENT_LINE_FILTER" || true)
+    | grep -vE "$COMMENT_LINE_FILTER" | grep -vE "$SCHED_AFTER_COMMENT_FILTER" || true)
   if [ -n "$shits" ]; then
     err "$m 存在常驻定时器/定时调度（产出必须惰性结算，行军必须走延迟队列）:"
     echo "$shits" >&2

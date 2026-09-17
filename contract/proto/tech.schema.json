@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/tech.schema.json",
+  "title": "TechProtocol",
+  "description": "个人科技协议契约（B20 §二，块① 的机制部分：列表 / 开始研究 / 取消）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。\n\n**三条贯穿全部 def 的设计约束**：\n1. **树住在表里**：11 行科技全部来自 `contract/config/tech.json`，客户端不知道有几行、也不硬编码任何一行 id。\n   下发整棵树（11 行 × 少量字段 ≈ 1 KB）而不是分页：与研究加速道具同一条理由 —— 省流量是零收益，\n   而\"服务端替客户端决定该看哪几行\"会变成第二个真相。\n2. **等级与耗时都是服务端算完下发**（铁律 3）：`nextTimeSec` 由 `curve.TECH_TIME`（比率 1.28、基数 13 秒，\n   基数由 `tools/calibrate-tech-time.mjs` 量出）算出，客户端只拿 `finishAt - serverNow` 画进度条。\n   客户端 `Formula.ts` 那套镜像只用于表现层预测，任何进入结算的数值不从客户端来。\n3. **一次一队列是表外的机制约束**（B20 §五① 裁定「学院前置 + 一次一队列」）：所以取消请求只带 `requestId`\n   而不带 `techId` —— 队列里那一项就是被取消的那一项。带上就凭空造出一个边界\n   （\"客户端显示的是 A、服务端在研究 B\"），而这个边界在本机制里不存在。\n\n**本批不声明的东西**：研究加速（`/tech/speedUp`）与装备强化、国家科技 —— 加速要接 `REDUCE_RESEARCH_SECONDS`\n道具与商店重上架（B20 验收 8），国家科技是新表 `nation_tech.json`（§五③），各自单开发布，\n不预先声明没有生产者的端点与状态。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "TechProtocol",
+  "$defs": {
+    "TechSchool": {
+      "type": "string",
+      "description": "学派。取值与 `tech.json` 的 `school` 列 ENUM 声明逐项一致（`TechContractParityTest` 会核这一点，改表枚举不改这里就会红）。",
+      "enum": [
+        "AGRICULTURE",
+        "MILITARY",
+        "COMMERCE",
+        "FORTIFICATION"
+      ]
+    },
+    "TechEffectAttr": {
+      "type": "string",
+      "description": "这行科技改的是哪一个数。取值同样与 `tech.json` 的 `effectAttr` 列同源 —— 它是**乘区归属的路标**（B20 §四：不许为科技新开乘区），所以下发原样而不是压成一个通用百分比：客户端要按属性分组显示，而服务端要按属性决定它进产量算式还是进乘区 B。",
+      "enum": [
+        "WOOD_OUTPUT",
+        "STONE_OUTPUT",
+        "IRON_OUTPUT",
+        "GRAIN_OUTPUT",
+        "UNIT_ATTACK",
+        "UNIT_DEFENSE",
+        "MARCH_SPEED",
+        "TRAIN_SPEED",
+        "BUILD_SPEED",
+        "HOSPITAL_CAPACITY",
+        "LOAD_CAPACITY"
+      ]
+    },
+    "TechBlockReason": {
+      "type": "string",
+      "description": "为什么现在不能研究这一行。`NONE` = 没有拦着的（此时 `canResearch=true`），其余四种都是真会发生的情况：\n`ACADEMY_LOW` 学院等级不够（`requireAcademyLevel`），`QUEUE_BUSY` 队列被占（一次一队列），\n`RESOURCE_LOW` 资源不够，`MAX_LEVEL` 已满级。\n`canResearch` 与这一位是**同一次计算的两种读法**（布尔给按钮，枚举给提示文案），都由服务端一处产出，\n所以不存在两个家分叉的问题 —— 客户端不许自己按等级与资源再判一遍（那才是第二个家）。\n不声明「科技不存在」：那是请求参数错误，直接回错误码，不会出现在列表视图里。",
+      "enum": [
+        "NONE",
+        "ACADEMY_LOW",
+        "QUEUE_BUSY",
+        "RESOURCE_LOW",
+        "MAX_LEVEL"
+      ]
+    },
+    "ResourceType": {
+      "type": "string",
+      "description": "资源类型枚举。取值必须与 contract/config/resource.json 的 rows[].id 完全一致（CI 校验）。",
+      "x-enum-source": {
+        "table": "resource"
+      },
+      "enum": [
+        "WOOD",
+        "STONE",
+        "IRON",
+        "GRAIN",
+        "GOLD",
+        "STAMINA"
+      ]
+    },
+    "ResourceAmount": {
+      "type": "object",
+      "description": "资源数量条目。用数组而不是 Map 是为了让客户端能保持配置表顺序展示。",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "amount"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "amount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0
+        }
+      }
+    },
+    "TechView": {
+      "type": "object",
+      "description": "一行科技的完整状态：是什么、现在几级、下一级要什么、能不能点。客户端不需要读任何配置表。",
+      "additionalProperties": false,
+      "required": [
+        "techId",
+        "name",
+        "school",
+        "effectAttr",
+        "level",
+        "maxLevel",
+        "requireAcademyLevel",
+        "nextTimeSec",
+        "nextCost",
+        "researching",
+        "canResearch",
+        "blockedReason"
+      ],
+      "properties": {
+        "techId": {
+          "type": "string",
+          "description": "`tech.json` 的行 id。开始研究时原样回传（服务端按它查表，不认下标）。"
+        },
+        "name": {
+          "type": "string",
+          "description": "表里的中文名（客户端不硬编码科技名，否则改表不生效）。"
+        },
+        "school": {
+          "$ref": "#/$defs/TechSchool",
+          "description": "学派，界面按它分组。"
+        },
+        "effectAttr": {
+          "$ref": "#/$defs/TechEffectAttr",
+          "description": "改的是哪个数。"
+        },
+        "effectValuePerLevelFixed": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "每级增益（定点万分比：400 = +4%/级）。表里的 `effectValue` 原样下发，**不乘当前等级** —— 合计由服务端算并用在结算里，这里给的是「下一级会多快」的展示参数。"
+        },
+        "level": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "description": "当前等级。0 = 从没研究过（**服务端账本里不存 0 占位**，读的时候缺失即 0，与联盟科技 `Alliance#techLevel` 同一条读法）。"
+        },
+        "maxLevel": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "description": "等级上限（表列 `maxLevel`）。"
+        },
+        "requireAcademyLevel": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "description": "前置：学院建筑要到几级（表列 `requireAcademyLevel`）。学院当前等级另在 `TechListView.academyLevel`，两者一比就是界面的「学院 5 级解锁」。"
+        },
+        "nextTimeSec": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "研究**下一级**要多少秒（`curve.TECH_TIME`，含建造速度类加成为 0 —— 加速归口在 B20 验收 8 那一步）。已满级时为 0。"
+        },
+        "nextCost": {
+          "type": "array",
+          "description": "研究下一级的消耗（只列该行为正的资源，四种全零的行不存在 —— `TechCostCurveTest` 守着）。已满级时为空数组。",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          }
+        },
+        "researching": {
+          "type": "boolean",
+          "description": "这一行是不是当前队列里的那一项。单独给一位而不是靠 `queue.techId` 推：列表与队列同源于服务端，但界面要在行上直接标记，推一遍就是把判据搬到客户端。"
+        },
+        "canResearch": {
+          "type": "boolean",
+          "description": "服务端算好的「现在点研究会不会成功」。客户端不必（也不许）自己按等级与资源判 —— 那是第二个家，两个家分叉时玩家只信界面。"
+        },
+        "blockedReason": {
+          "$ref": "#/$defs/TechBlockReason",
+          "description": "拦着的原因；没拦着时是 `NONE`（与 `canResearch=true` 同一次算出）。"
+        }
+      }
+    },
+    "TechQueueView": {
+      "type": "object",
+      "description": "研究队列（一次一队列，所以它就是「那一项」而不是数组）。空闲时 `techId` 与 `finishAt` 为 null、两个时刻字段为 0 —— 与 `BuildingView` 的 `startedAt/totalSeconds` 同一条读法。",
+      "additionalProperties": false,
+      "required": [
+        "techId",
+        "finishAt",
+        "startedAt",
+        "totalSeconds",
+        "remainingSeconds"
+      ],
+      "properties": {
+        "techId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "在研究哪一行；null = 队列空着。"
+        },
+        "finishAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "完成时刻（服务端毫秒）。到点之后**不靠定时器**推进：下一次读取时才结算（全项目无 `@Scheduled`，与城建 `collectFinished` 同一套惰性结算）。"
+        },
+        "startedAt": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "开始时刻（毫秒），配合 `totalSeconds` 让客户端能自己画进度条而不必反复请求。"
+        },
+        "totalSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "本次研究总时长（秒）。"
+        },
+        "remainingSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "服务端算好的剩余秒数（`max(0, finishAt - serverNow)`）。客户端拿 `serverNow` 相减只能算个起点，真正的「还剩多久」以这里为准 —— 绝不为负。"
+        }
+      }
+    },
+    "TechListView": {
+      "type": "object",
+      "description": "`GET /tech/list` 的响应。读取有副作用：与 `/city/list` 一样顺带结算到期研究（否则完成时刻已到的研究在玩家眼里还是「进行中」）。",
+      "additionalProperties": false,
+      "required": [
+        "techs",
+        "queue",
+        "academyLevel",
+        "serverNow"
+      ],
+      "properties": {
+        "techs": {
+          "type": "array",
+          "description": "整棵树（11 行，顺序 = 表序）。服务端不重排，客户端不许自己排。",
+          "items": {
+            "$ref": "#/$defs/TechView"
+          }
+        },
+        "queue": {
+          "$ref": "#/$defs/TechQueueView",
+          "description": "当前队列。"
+        },
+        "academyLevel": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "description": "学院建筑当前等级（0 = 还没建）。前置校验的唯一数字来源：读的是城建的真实等级，不是玩家说建了几级。"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端时刻（毫秒）。"
+        }
+      }
+    },
+    "TechResearchReq": {
+      "type": "object",
+      "description": "开始研究一行科技（下一级）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "techId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64,
+          "description": "幂等键，与城建/训练/任务同一套（弱网重投不该扣两次资源）。"
+        },
+        "techId": {
+          "type": "string",
+          "description": "要研究哪一行。服务端依次校验：行存在 → 未满级 → 队列空着 → 学院等级够 → 资源够（顺序与城建 `validateUpgrade` 一致，先把「不该花的钱」挡住再扣资源）。"
+        }
+      }
+    },
+    "TechResearchResp": {
+      "type": "object",
+      "description": "开始研究的结果。扣掉的资源与算出的时长一并回，界面就不必再拉一次列表才更新得准。",
+      "additionalProperties": false,
+      "required": [
+        "techId",
+        "level",
+        "finishAt",
+        "cost",
+        "timeSec"
+      ],
+      "properties": {
+        "techId": {
+          "type": "string"
+        },
+        "level": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "description": "本次研究的**目标**等级（完成后就是它的新等级）。"
+        },
+        "finishAt": {
+          "type": "integer",
+          "format": "int64",
+          "description": "完成时刻（毫秒）。"
+        },
+        "cost": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          }
+        },
+        "timeSec": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "本次研究时长（秒）。必须 ≥ 1 —— 缩短时长的加成一律 `ceil`（§五④），0 秒完成等于没有队列。"
+        }
+      }
+    },
+    "TechCancelReq": {
+      "type": "object",
+      "description": "取消当前研究。只有 `requestId`：一次一队列 ⇒ 队列里那一项就是被取消的那一项。",
+      "additionalProperties": false,
+      "required": [
+        "requestId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        }
+      }
+    },
+    "TechCancelResp": {
+      "type": "object",
+      "description": "取消结果：取消了什么、退回来什么。",
+      "additionalProperties": false,
+      "required": [
+        "techId",
+        "refund"
+      ],
+      "properties": {
+        "techId": {
+          "type": "string",
+          "description": "被取消的那一行（客户端据此把行上的标记摘掉）。"
+        },
+        "refund": {
+          "type": "array",
+          "description": "返还的资源。比例与城建一致（`city_rule.city_rule_cancel_refund_ratio`，现值 0.60）—— B20 §一 明写「取消返还（比例与城建一致）」，两处各配一个数字迟早会让玩家问「为什么取消建造返 60% 取消研究返 40%」。",
+          "items": {
+            "$ref": "#/$defs/ResourceAmount"
+          }
+        }
+      }
+    }
+  }
+}

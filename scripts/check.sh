@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 职责：CI 静态检查 = 分层纯净性 + 双端契约一致性 + 禁止施舍机制（B08 验收 10）
+# 职责：CI 静态检查 = 分层纯净性 + 双端契约一致性 + 契约 $defs 同名同形（生成物同包，后一份整份覆盖前一份）
+#       + 禁止施舍机制（B08 验收 10）
 #       + Bot 无特权捷径（B11 验收 8）+ 红点无散落（B12 验收 2）
 #       + 无绕支付（B15 验收 10）+ 首包体积（B16 验收 4）
 #       + 埋点覆盖率（B16 验收 3：UI 动作清单比对，漏埋点=看板那一环永远为 0）
@@ -12,6 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 bash scripts/check-layering.sh
 bash scripts/check-contract-sync.sh
+bash scripts/check-contract-defs.sh
 bash scripts/check-no-handout.sh
 bash scripts/check-no-bot-privilege.sh
 bash scripts/check-no-scattered-reddot.sh
