@@ -780,18 +780,42 @@ public class CityAppService {
     }
 
     /**
-     * 用加速道具加速某建筑（B04 §4）。供 {@code BagAppService} 在<b>它自己的</b>锁与幂等键内调用。
+     * 用加速道具加速某建筑（B04 §4）。
      *
-     * <p>本方法不加锁、不占幂等键 —— 那是调用方的职责。这里重复加锁没有意义（同一把玩家锁可重入），
-     * 而重复占幂等键会直接失败：同一个 requestId 不能被 acquire 两次。
+     * <p><b>幂等键与玩家锁都在本方法这里</b>，不在 {@code BagAppService.useItem}：那一边对 SPEEDUP 类
+     * 在 {@code tryAcquire} <b>之前</b>就分流返回了（谁改状态谁占键），所以这一路如果也不占，
+     * 症状就是弱网重投一次 /item/use 白扣一张付费建造令 —— 钱货两讫的动作没有去重，
+     * 在 B19 的口径里等价于一次可复现的资产损失。训练那一路与研究那一路本来就是各自占键的，
+     * 这次把建造这一路补齐到同一条纪律上。
+     *
+     * <p>锁也一起补：原先它在锁外做「load → 改 → 带版本条件 save」，并发时靠版本冲突失败来兜底，
+     * 而失败之后<b>道具已经扣了</b>（{@link #speedUpByItem} 先扣后加速，退还只在同一方法内）。
      *
      * <p><b>内部只做一次 {@link #load}</b>：仓储返回的是存档副本，二次 load 会拿到另一个
      * CityState 实例，外层已经改过的东西会被后写的那份覆盖掉。
      *
-     * @param count 一次使用几个道具。扣减是原子的，持有量不足时整体失败、一个都不扣（B04 验收 10）
+     * @param count     一次使用几个道具。扣减是原子的，持有量不足时整体失败、一个都不扣（B04 验收 10）
+     * @param requestId 客户端带的幂等键（/item/use 的契约本来就要求它 —— 这次改动只是让它真的起作用）
      */
     public SpeedUpResp useSpeedUpItem(String playerId, String buildingId, String itemId,
-                                      long count, long now) {
+                                      long count, long now, String requestId) {
+        requireRequestId(requestId);
+        long ttlMs = configs.longParam("REQUEST_ID_TTL_SECONDS") * 1000L;
+        if (!idempotency.tryAcquire(requestId, now, ttlMs)) {
+            throw new BizException(ErrorCode.REQUEST_DUPLICATED, "requestId=" + requestId);
+        }
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
+                    () -> doUseSpeedUpItem(playerId, buildingId, itemId, count, now));
+        } catch (RuntimeException e) {
+            // 副作用没产生，必须释放键，否则玩家重试被永久挡在门外
+            idempotency.release(requestId);
+            throw e;
+        }
+    }
+
+    private SpeedUpResp doUseSpeedUpItem(String playerId, String buildingId, String itemId,
+                                         long count, long now) {
         Ctx ctx = load(playerId, now);
         BuildingInstance instance = ctx.city().building(buildingId);
         if (!instance.isUpgrading()) {

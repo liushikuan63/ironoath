@@ -204,9 +204,9 @@ public class TechAppService {
      * 同一条幂等纪律，只是请求形状不同（背包那条路带的是道具与张数）。
      *
      * <p><b>键必须由本域占，不能指望背包域</b>：{@code BagAppService.useItem} 对 SPEEDUP 类
-     * 在占键之前就 return 了（{@code CityAppService.useSpeedUpItem} 因此也没有去重）。
-     * 症状不是报错而是<b>弱网重投白扣一张付费道具</b>，而这一张是刚重新上架的那件 ——
-     * 训练令那条路恰好相反：{@code ArmyAppService.speedUp} 自己占键，所以背包侧不能提前占，
+     * 在占键之前就 return 了。症状不是报错而是<b>弱网重投白扣一张付费道具</b>，而这一张是刚重新上架的那件 ——
+     * 训练与建造那两条路同样是各自占键（{@code ArmyAppService.speedUp}、
+     * {@code CityAppService.useSpeedUpItem}），所以背包侧不能提前占，
      * 否则同一个 requestId 会被 acquire 两次而永久失败。
      */
     public TechSpeedUpResp speedUpByItem(String playerId, String requestId, String itemId, long count) {

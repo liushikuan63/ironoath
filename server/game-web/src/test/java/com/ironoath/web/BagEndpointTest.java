@@ -284,6 +284,55 @@ class BagEndpointTest {
     }
 
     @Test
+    @DisplayName("弱网重投同一个 requestId：建造令只扣一张、时间只减一次")
+    void replayedBuildSpeedUpChargesOnce() {
+        String playerId = newPlayer();
+        CityUpgradeResp upgrade = startUpgrade(playerId, "lumber_camp", 1, 1);
+        extendUpgrade(playerId, upgrade.buildingId(), 100_000L);
+        giveItems(playerId, "item_speedup_build_5m", 2L);
+        long perItem = configs.get(ItemCfg.class, "item_speedup_build_5m").effectValue();
+        long before = remainingOf(playerId, upgrade.buildingId());
+        String requestId = newRequestId();
+
+        bagAppService.useItem(playerId, new ItemUseReq(
+                requestId, "item_speedup_build_5m", 1L, upgrade.buildingId()));
+        assertThatThrownBy(() -> bagAppService.useItem(playerId,
+                new ItemUseReq(requestId, "item_speedup_build_5m", 1L, upgrade.buildingId())))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .as("/item/use 的加速分流必须去重：建造令是花钱买的东西")
+                .isEqualTo(ErrorCode.REQUEST_DUPLICATED);
+
+        assertThat(countOf(playerId, "item_speedup_build_5m")).as("重放不许再扣一张").isEqualTo(1L);
+        assertThat(remainingOf(playerId, upgrade.buildingId()))
+                .as("重放不许再减一次时间").isEqualTo(before - perItem);
+    }
+
+    @Test
+    @DisplayName("失败那一笔没动过任何东西 ⇒ 幂等键必须释放，同一个 requestId 还能重试成功")
+    void failedSpeedUpReleasesTheKeySoThePlayerCanRetry() {
+        String playerId = newPlayer();
+        CityUpgradeResp upgrade = startUpgrade(playerId, "lumber_camp", 1, 1);
+        extendUpgrade(playerId, upgrade.buildingId(), 100_000L);
+        giveItems(playerId, "item_speedup_build_5m", 1L);
+        String requestId = newRequestId();
+
+        assertThatThrownBy(() -> bagAppService.useItem(playerId,
+                new ItemUseReq(requestId, "item_speedup_build_5m", 3L, upgrade.buildingId())))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.ITEM_NOT_ENOUGH);
+
+        // 不释放键的话这一次重试会报 REQUEST_DUPLICATED —— 玩家看到的是「我明明没加成却还要我等」
+        ItemUseResp retry = bagAppService.useItem(playerId,
+                new ItemUseReq(requestId, "item_speedup_build_5m", 1L, upgrade.buildingId()));
+        assertThat(retry.reducedSeconds())
+                .as("重试必须真的生效，而不是只回一个成功")
+                .isEqualTo(configs.get(ItemCfg.class, "item_speedup_build_5m").effectValue());
+        assertThat(countOf(playerId, "item_speedup_build_5m")).isZero();
+    }
+
+    @Test
     @DisplayName("加速到 0 时立即完成，剩余时间不会出现负数（B03 禁止项）")
     void speedUpItemTruncatesAtZero() {
         String playerId = newPlayer();

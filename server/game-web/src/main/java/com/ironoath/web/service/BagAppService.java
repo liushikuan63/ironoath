@@ -239,11 +239,12 @@ public class BagAppService {
      * 加速类道具按 effectKind 分流到对应的域。
      *
      * <p>不在本类的锁里做，也<b>不在这里占幂等键</b>：{@code useItem} 对 SPEEDUP 类在这一步就返回了，
-     * 键由被分流到的那个域占（它才知道自己改了什么）。研究这一路 {@code speedUpByItem} 与训练那一路
-     * {@code ArmyAppService.speedUp} 各自占键；<b>建造那一路 {@code CityAppService.useSpeedUpItem}
-     * 没有占</b> —— 那是 B04 时期的既有形状，症状是弱网重投一次 /item/use 会白扣一张付费建造令。
-     * 本轮不改它（改法要在三个域之外统一占键，而训练那一路已经自己占过一遍，同一个键不能占两次），
-     * 记在收口清单本批次行里。
+     * 键由被分流到的那个域占（它才知道自己改了什么）。三路现在一致：研究 {@code speedUpByItem}、
+     * 训练 {@code ArmyAppService.speedUp}、建造 {@code CityAppService.useSpeedUpItem} 各自占键 ——
+     * 建造那一路是本轮补上的（B04 时期它不占，症状是弱网重投一次 /item/use 白扣一张付费建造令）。
+     *
+     * <p><b>同一个 requestId 只能被占一次</b>，所以分流之前更不能占：占了之后下面任何一路都必然报
+     * {@code REQUEST_DUPLICATED}。这也是本方法把 requestId 原样往下传而不是在本层判重的原因。
      *
      * <p><b>分流必须在扣道具之前完成</b>：三个域的扣道具与状态变更是同一段事务，
      * 先扣再发现「这个域不认这种道具」就得退还，多一条失败路径。
@@ -266,7 +267,7 @@ public class BagAppService {
         }
         long reduced = switch (item.effectKind()) {
             case REDUCE_BUILD_SECONDS -> cityAppService.useSpeedUpItem(
-                    playerId, req.targetId(), item.id(), req.count(), now).reducedSeconds();
+                    playerId, req.targetId(), item.id(), req.count(), now, req.requestId()).reducedSeconds();
             // 训练加速一次只用 1 个道具：/item/use 的 count 语义是「一次用几个」，
             // 但训练令的价值单位就是「一张 = effectValue 秒」，多张应当由客户端连续调用，
             // 否则一次用 10 张会把倒计时直接抹平，玩家看不到中间过程也来不及反悔
