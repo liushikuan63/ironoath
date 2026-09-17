@@ -163,6 +163,21 @@ const q=(d.data.quests||[]).find(x=>x.questId==='quest_main_08');
 console.log(q && q.goalType==='RESEARCH_TECH' && q.goalTarget==='tech_agri_wood' ? 'ok' : 'missing');
 " "$TMP_DIR/quest.resp")" "ok"
 
+echo "-- 6. 国家科技（块③）：没有国家的人读到的是 NATION_NOT_FOUND，而不是 500 或空数据 --"
+# 正向链路同样只在 JUnit 里验：建国要主城 16 级 + 一个联盟，真进程的新号两样都没有，
+# 而仓库不许有跳门槛的后门（NationTechEndpointTest 用夹具把这两样造出来，全程真跑）
+get /nation/tech "$PID_VAL" > "$TMP_DIR/ntech.resp"
+check "GET /nation/tech 无国家 → NATION_NOT_FOUND" \
+  "$(field "$TMP_DIR/ntech.resp" code)" "$(code_of NATION_NOT_FOUND)"
+cat > "$TMP_DIR/ntech.json" <<EOF
+{"requestId":"nt-$RUN_ID","techId":"nt_agri_grain"}
+EOF
+post /nation/tech/research "$PID_VAL" "$TMP_DIR/ntech.json" > "$TMP_DIR/ntech2.resp"
+check "POST /nation/tech/research 无国家 → 同一枚码（先定位国家，再谈能不能研究）" \
+  "$(field "$TMP_DIR/ntech2.resp" code)" "$(code_of NATION_NOT_FOUND)"
+check "对照组：/nation/tech/nope-not-an-endpoint 必须 404" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/nation/tech/nope-not-an-endpoint" -H "X-Player-Id: $PID_VAL")" "404"
+
 echo
 echo "=== 结果：PASS=$PASS FAIL=$FAIL ==="
 [ "$FAIL" -eq 0 ] || exit 1

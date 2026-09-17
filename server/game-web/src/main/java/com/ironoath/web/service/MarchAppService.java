@@ -129,6 +129,8 @@ public class MarchAppService {
     private final com.ironoath.web.bot.BotAttackLimiter botAttackLimiter;
     /** 科技加成的唯一读取口（B20 块①）：行军速度与负载上限都从它来。 */
     private final com.ironoath.web.tech.TechEffects techEffects;
+    /** 国家科技那一份（B20 块③）：与个人的**相加**后作用一次（§五④）。 */
+    private final com.ironoath.web.nation.NationTechBonuses nationTechBonuses;
 
     public MarchAppService(ConfigRegistry configs, MarchRepository marches, MarchDueQueue dueQueue,
                            WorldRepository world, ArmyRepository armies,
@@ -145,7 +147,8 @@ public class MarchAppService {
                            ExileAppService exileAppService,
                            com.ironoath.web.quest.QuestEvents questEvents,
                            com.ironoath.web.bot.BotAttackLimiter botAttackLimiter,
-                           com.ironoath.web.tech.TechEffects techEffects) {
+                           com.ironoath.web.tech.TechEffects techEffects,
+                          com.ironoath.web.nation.NationTechBonuses nationTechBonuses) {
         this.configs = configs;
         this.marches = marches;
         this.dueQueue = dueQueue;
@@ -169,6 +172,7 @@ public class MarchAppService {
         this.questEvents = questEvents;
         this.botAttackLimiter = botAttackLimiter;
         this.techEffects = techEffects;
+        this.nationTechBonuses = nationTechBonuses;
     }
 
     // ---------- 出征 ----------
@@ -306,8 +310,12 @@ public class MarchAppService {
         com.ironoath.core.player.PlayerTech tech = techOf(playerId);
         long carriedCap = Rates.scaleUp(loadCap, techEffects.loadCapacityPercent(tech));
         int distance = home.distanceTo(target);
+        // §五④：行军速度同样是"同类相加、作用一次" —— 国家那一份与个人的相加后交给
+        // MarchCalculator 的 speedBonusFixed 那一位（它内部是 ÷ (1 + 合计)）；分两处折就会漂
+        long marchSpeedFixed = techEffects.marchSpeedPercent(tech)
+                + nationTechBonuses.marchSpeedPercent(playerId);
         long duration = MarchCalculator.durationSeconds(distance, teamSpeed,
-                configs.fixedParam("MARCH_SECONDS_PER_TILE"), techEffects.marchSpeedPercent(tech));
+                configs.fixedParam("MARCH_SECONDS_PER_TILE"), marchSpeedFixed);
         String marchId = "march_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 
         March march;

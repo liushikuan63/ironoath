@@ -186,6 +186,16 @@
       "why": "B13 §2 把「国库支出」给了国王（无限制）与首相（限额）两档。2026-09-13 裁决（收口清单 §三·补 C16）放开 OFFICER 档，让首相真的能支取 —— 在此之前这一格是 false，首相**一次也花不了**，那句「国库支出（限额）」是个装饰品。\n\n**放开的代价要写明白**：本表只有 leader/officer/member 三档，表达不出「只给首相」，所以大将军、内政官、外交官与首相一同获得支取权（B13 §2 的原表只列了国王与首相两档有此项）。要按官职细分就得给本表加一列，那属配置表结构变更（见 PermissionMatrix 类注释里同一条自述）。\n\n**为什么这个代价是可接受的**：非国王身份的支出被 global.NATION_OFFICER_SPEND_WEEKLY_RATIO 夹住 —— 上限是**本周实入库的周税 × 比例**，而且是**全国共用一个池子**而不是每人一份，所以四个官职加起来也花不掉超过半周税收。国王不受限额（他就是这个国的所有人）。\n\n**为什么额度不写在本表里**：本表是「谁能做哪个动作」的布尔矩阵，没有额度列；把 0.5 塞进来就是给同一个事实造第二个家（限额的判定只有一处，在 Nation.spend）。"
     },
     {
+      "id": "perm_nation_research_tech",
+      "scope": "NATION",
+      "permission": "RESEARCH_NATION_TECH",
+      "permissionName": "研究国家科技",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "B20 §一 要的是「研究入口：国王/内政官」。本表只有 leader/officer/member 三档，表达不出「只给内政官」——与上面 perm_nation_withdraw_treasury 同一处限制、同一条取舍（要按官职细分就得给本表加一列，那属配置表结构变更）。所以四个官职档一同获得研究权。\n\n**为什么这个敞口不是新的**：研究花的是国库，而扣款走的是 Nation.spend 那一条路 —— 非国王身份受 global.NATION_OFFICER_SPEND_WEEKLY_RATIO 的<b>全国共用周额度</b>夹住（本周实入库周税 × 比例）。也就是说放开研究档并没有新增一条绕过限额的通道：真正的闸在限额那一处，不在这一格布尔值上。\n\n**为什么不复用 WITHDRAW_TREASURY**：那是「把钱取出去」的授权，这是「把公共钱换成全国永久加成」的授权。两者共用一格的话，未来想放开研究而收紧支取（或反之）就只能改代码里那句 requirePermission，而本表存在的意义就是让这类差别看得见。"
+    },
+    {
       "id": "perm_nation_manage_diplomacy",
       "scope": "NATION",
       "permission": "MANAGE_DIPLOMACY",

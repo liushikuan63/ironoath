@@ -92,6 +92,8 @@ public class ArmyAppService {
     private final com.ironoath.core.player.PlayerRepository players;
     /** 科技加成的唯一读取口（B20 块①）。 */
     private final com.ironoath.web.tech.TechEffects techEffects;
+    /** 国家科技那一份（B20 块③）：与个人的**相加**后作用一次（§五④）。 */
+    private final com.ironoath.web.nation.NationTechBonuses nationTechBonuses;
 
     public ArmyAppService(ConfigRegistry configs, ArmyRepository armies,
                           CityAppService cityAppService, HeroAppService heroAppService,
@@ -100,7 +102,8 @@ public class ArmyAppService {
                           com.ironoath.web.social.HelpRequestRegistrar helpRequests,
                           com.ironoath.web.quest.QuestEvents questEvents,
                           com.ironoath.core.player.PlayerRepository players,
-                          com.ironoath.web.tech.TechEffects techEffects) {
+                          com.ironoath.web.tech.TechEffects techEffects,
+                          com.ironoath.web.nation.NationTechBonuses nationTechBonuses) {
         this.configs = configs;
         this.armies = armies;
         this.cityAppService = cityAppService;
@@ -112,6 +115,7 @@ public class ArmyAppService {
         this.questEvents = questEvents;
         this.players = players;
         this.techEffects = techEffects;
+        this.nationTechBonuses = nationTechBonuses;
     }
 
     /**
@@ -218,7 +222,9 @@ public class ArmyAppService {
 
             // 扣资源先于入队：反过来在资源不足时会让玩家白训一批（可直接刷的漏洞）
             deduct(snap, cost);
-            long trainSpeedFixed = techEffects.trainSpeedPercent(snap.player().tech());
+            // §五④：个人与国家两份**相加**成总率，再由 ArmyState 作用在批次总时长上（只作用一次）
+            long trainSpeedFixed = techEffects.trainSpeedPercent(snap.player().tech())
+                    + nationTechBonuses.trainSpeedPercent(snap.player().playerId());
             long baseSeconds = unit.trainTimeSec() * req.count();
             long finishAt;
             try {

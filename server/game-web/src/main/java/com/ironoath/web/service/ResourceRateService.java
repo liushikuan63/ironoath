@@ -50,10 +50,14 @@ public class ResourceRateService {
     private final ConfigRegistry configs;
     /** 科技加成的唯一读取口（B20 块①：产量那一格今天真的有值了）。 */
     private final com.ironoath.web.tech.TechEffects techEffects;
+    /** 国家科技那一份（B20 块③）。与上面那一位<b>相加</b>后作用一次（§五④），不各乘一遍。 */
+    private final com.ironoath.web.nation.NationTechBonuses nationTechBonuses;
 
-    public ResourceRateService(ConfigRegistry configs, com.ironoath.web.tech.TechEffects techEffects) {
+    public ResourceRateService(ConfigRegistry configs, com.ironoath.web.tech.TechEffects techEffects,
+                               com.ironoath.web.nation.NationTechBonuses nationTechBonuses) {
         this.configs = configs;
         this.techEffects = techEffects;
+        this.nationTechBonuses = nationTechBonuses;
     }
 
     /**
@@ -116,7 +120,7 @@ public class ResourceRateService {
      * 道具 buff +0 (+0%)
      * </pre>
      */
-    public Rates compute(CityState city, PlayerTech tech) {
+    public Rates compute(CityState city, PlayerTech tech, String playerId) {
         if (city == null) {
             throw new IllegalArgumentException("city 不得为 null");
         }
@@ -152,12 +156,15 @@ public class ResourceRateService {
                             FixedPoint.of(cfg.capBase()), b.level(), outputExponent));
                 }
             }
-            // 科技加成自 B20 块① 起是真实值（该资源对应的 *_OUTPUT 行：每级幅度 × 等级）。
+            // 科技这一行从 B20 块① 起是真实值（个人：该资源对应的 *_OUTPUT 行 每级幅度 × 等级），
+            // 块③ 起再加一份国家的（§五④：**同类加成相加成总率，再作用于基础值一次**）——
+            // 相加发生在这一句，不在两个读取口里各乘一遍。
             // 联盟加成与道具 buff 两位仍是 0 —— 那不是"忘了填"，而是那两个生产者还不存在：
             // 联盟科技表没有 *_OUTPUT 属性，道具 buff 没有承载。0 是"还没做"，
             // 编一个值才是"做了但不算数"（明细结构与 Σ==总量 的不变量都不受影响）。
             breakdowns.put(res.id(), ResourceOutputCalculator.compute(baseLines,
-                    techEffects.outputPercent(res.id(), tech), 0L, 0L));
+                    techEffects.outputPercent(res.id(), tech)
+                            + nationTechBonuses.outputPercent(res.id(), playerId), 0L, 0L));
             caps.put(res.id(), capacity);
         }
         return new Rates(breakdowns, caps);
@@ -240,7 +247,7 @@ public class ResourceRateService {
         Map<String, Long> credited = new LinkedHashMap<>();
         Map<String, PlayerResourceState> states = new LinkedHashMap<>();
         List<String> harvested = new ArrayList<>();
-        Rates lastRates = compute(city, player.tech());
+        Rates lastRates = compute(city, player.tech(), player.playerId());
 
         // 逐个完成时刻切段：先按「收割前」的产率结算到该时刻，再收割，再进入下一段。
         // 这样升级带来的产率阶跃只影响它真正生效之后的时间。
@@ -287,7 +294,7 @@ public class ResourceRateService {
         if (player == null) {
             throw new IllegalArgumentException("settledView 需要玩家存档");
         }
-        Rates rates = city == null ? null : compute(city, player.tech());
+        Rates rates = city == null ? null : compute(city, player.tech(), player.playerId());
         Map<String, PlayerResourceState> out = new LinkedHashMap<>();
         for (Map.Entry<String, PlayerResourceState> e : player.resources().entrySet()) {
             String id = e.getKey();
@@ -313,7 +320,7 @@ public class ResourceRateService {
 
     /** 用「当前城建状态」的产率与容量，把所有资源结算到时刻 t 并写回存档。 */
     private Segment settleTo(PlayerSave player, CityState city, long t) {
-        Rates rates = compute(city, player.tech());
+        Rates rates = compute(city, player.tech(), player.playerId());
         Map<String, Long> credited = new LinkedHashMap<>();
         // player.resources() 返回快照副本，遍历期间写回不会触发并发修改
         for (Map.Entry<String, PlayerResourceState> e : player.resources().entrySet()) {

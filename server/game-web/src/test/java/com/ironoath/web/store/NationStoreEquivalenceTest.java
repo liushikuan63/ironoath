@@ -277,6 +277,8 @@ class NationStoreEquivalenceTest {
         assertThat(back.memberAllianceCount())
                 .as("周税按成员联盟数算，所以这一列错了下一周的入账额就错").isEqualTo(1);
         assertThat(back.snapshot().lastTaxWeekKey()).as("周税幂等键").isEqualTo(1L);
+        assertThat(back.techLevel("nt_might")).as("国家科技等级必须逐字落得回去（它决定的是全国的加成档位）")
+                .isEqualTo(1);
     }
 
     /**
@@ -444,8 +446,9 @@ class NationStoreEquivalenceTest {
         nation.setDiplomacy("N-foreign", Nation.Diplomacy.HOSTILE);
         nation.deposit("K-" + id, "war_loot", 5_000L, "国战战利品", T0 + 20L);
         nation.setClock(T0 + 24L);
-        nation.spend("K-" + id, Nation.Payee.toSink(Nation.Payee.Sink.NATIONAL_TECH), 1_000L,
-                "研究国家科技·攻击", 1L);
+        // 走的是 B20 块③ 那条真路径（花国库 + 抬等级 + 同一枚核销落点），
+        // 而不是只 spend 一下：这样"账本进快照"这件事才不是被夹具绕过去的
+        nation.researchTech("nt_might", 1_000L, 20, 1, "K-" + id, 1L);
         nation.collectTax(1L, T0 + 25L);
         nation.annexProvince("prov_a");
         nation.annexProvince("prov_b");
@@ -470,6 +473,8 @@ class NationStoreEquivalenceTest {
                 .append("#cooldown=").append(s.joinCooldownUntil())
                 .append("#provinces=").append(s.provinces())
                 .append("#holders=").append(s.holderAlliance())
+                // 国家科技账本：少带这一位的症状不是报错，而是"重启之后全国的研究白做"
+                .append("#tech=").append(s.techLevels())
                 .append("#logs=").append(s.treasuryLogs().size());
         for (Nation.TreasuryLog log : s.treasuryLogs()) {
             b.append('|').append(log.at()).append(',').append(log.operatorId()).append(',')

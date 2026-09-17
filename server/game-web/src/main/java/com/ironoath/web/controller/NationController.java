@@ -20,6 +20,9 @@ import com.ironoath.web.dto.generated.NationJoinReq;
 import com.ironoath.web.dto.generated.NationLeaveReq;
 import com.ironoath.web.dto.generated.NationLeaveResp;
 import com.ironoath.web.dto.generated.NationResp;
+import com.ironoath.web.dto.generated.NationTechListView;
+import com.ironoath.web.dto.generated.NationTechResearchReq;
+import com.ironoath.web.dto.generated.NationTechResearchResp;
 import com.ironoath.web.dto.generated.NationTreasuryResp;
 import com.ironoath.web.dto.generated.NationTreasurySpendReq;
 import com.ironoath.web.dto.generated.NationTreasurySpendResp;
@@ -134,7 +137,8 @@ public class NationController {
      * 国库支出（B13 §3）。落点分两类：发给某个玩家（俸禄，扣账后走发放器发 GOLD）
      * 或由消耗性用途核销（国家科技 / 国战增益，不入任何个人账户）—— 见协议里那两个枚举。
      *
-     * <p>权限走 role_permission 表的 {@code WITHDRAW_TREASURY}（表里只给国主）。
+     * <p>权限走 role_permission 表的 {@code WITHDRAW_TREASURY}（2026-09-13 的 C16 裁决把这一格
+     * 从"只给国主"放开到 OFFICER 档，代价与限额都写在那一行的 why 里）。
      */
     @PostMapping("/treasury/spend")
     public Result<NationTreasurySpendResp> spendTreasury(
@@ -142,6 +146,28 @@ public class NationController {
             @RequestBody NationTreasurySpendReq req) {
         requirePlayer(playerId);
         return Result.ok(nations.spendTreasury(playerId, req));
+    }
+
+    /**
+     * 国家科技整棵树 + 当前账本 + 国库余额（B20 块③）。
+     *
+     * <p>本国任一成员都能读，与 {@code /nation/treasury} 同一条理由：花的是公共钱，
+     * 看得见才是这本账的存在理由；只给官员看的面板等于把审计权交给被审计的人。
+     */
+    @GetMapping("/tech")
+    public Result<NationTechListView> nationTech(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(nations.nationTech(playerId));
+    }
+
+    /** 研究一级国家科技（国库出资，走 {@code sink:NATIONAL_TECH} 核销）。谁能点由 role_permission 决定。 */
+    @PostMapping("/tech/research")
+    public Result<NationTechResearchResp> researchNationTech(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestBody NationTechResearchReq req) {
+        requirePlayer(playerId);
+        return Result.ok(nations.researchNationTech(playerId, req));
     }
 
     private static void requirePlayer(String playerId) {

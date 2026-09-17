@@ -100,6 +100,8 @@ public class CityAppService {
     private final com.ironoath.web.pay.PaidProducts paidProducts;
     /** 建造速度科技加成的读取口（B20 块①；它只依赖配置表，不构成与 TechAppService 的环）。 */
     private final com.ironoath.web.tech.TechEffects techEffects;
+    /** 国家科技那一份（B20 块③），与个人的相加后作用一次（§五④）。 */
+    private final com.ironoath.web.nation.NationTechBonuses nationTechBonuses;
 
     public CityAppService(ConfigRegistry configs, Formula formula, PlayerRepository players,
                           CityRepository cities, PlayerLock playerLock,
@@ -110,7 +112,8 @@ public class CityAppService {
                           com.ironoath.web.social.HelpRequestRegistrar helpRequests,
                           com.ironoath.web.quest.QuestEvents questEvents,
                           com.ironoath.web.pay.PaidProducts paidProducts,
-                          com.ironoath.web.tech.TechEffects techEffects) {
+                          com.ironoath.web.tech.TechEffects techEffects,
+                          com.ironoath.web.nation.NationTechBonuses nationTechBonuses) {
         this.configs = configs;
         this.formula = formula;
         this.players = players;
@@ -125,6 +128,7 @@ public class CityAppService {
         this.questEvents = questEvents;
         this.paidProducts = paidProducts;
         this.techEffects = techEffects;
+        this.nationTechBonuses = nationTechBonuses;
     }
 
     /**
@@ -238,7 +242,7 @@ public class CityAppService {
         UpgradeAttempt attempt = attemptOf(city, instance, player, rules, now);
         int targetLevel = attempt.targetLevel();
         Map<String, Long> cost = attempt.cost();
-        long durationSeconds = upgradeDuration(cfg, targetLevel, player.tech());
+        long durationSeconds = upgradeDuration(player.playerId(), cfg, targetLevel, player.tech());
 
         attempt.check().orThrow();
 
@@ -378,12 +382,16 @@ public class CityAppService {
      * 向上取整不是为了好看 —— 不取整（或按倍率连乘）都会让高加成把一次升级压成 0 秒，
      * 而 0 秒的队列等于没有队列：玩家可以瞬间连点十级，卡点节奏（B02 定下的第 7 天主城 13 级）就没了。
      */
-    private long upgradeDuration(BuildingCfg cfg, int targetLevel, PlayerTech tech) {
+    private long upgradeDuration(String playerId, BuildingCfg cfg, int targetLevel, PlayerTech tech) {
         long baseSeconds = cfg.timeBaseSec() == 0L
                 ? formula.evaluateSeconds("BUILDING_TIME", Math.max(1, targetLevel - 1))
                 : formula.evaluateSeconds("BUILDING_TIME", FixedPoint.of(cfg.timeBaseSec()),
                         Math.max(1, targetLevel - 1));
-        return Rates.shortenSeconds(baseSeconds, techEffects.buildSpeedPercent(tech));
+        // §五④：同类加成先<b>相加</b>成总率，再作用于基础时长一次。个人与国家两个来源在这一句里合并，
+        // 不在各自读取口里分别乘一遍（两处各乘 = 满配时被钳到 1 秒的那条下限更早咬到）
+        long percentFixed = techEffects.buildSpeedPercent(tech)
+                + nationTechBonuses.buildSpeedPercent(playerId);
+        return Rates.shortenSeconds(baseSeconds, percentFixed);
     }
 
     /** 战力增量：按 POWER_CONTRIB 曲线（指数 1.15）算目标等级与当前等级的差。 */

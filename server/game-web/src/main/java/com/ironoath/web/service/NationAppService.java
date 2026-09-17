@@ -9,7 +9,10 @@ import org.springframework.stereotype.Service;
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.time.TimeService;
+import com.ironoath.common.num.FixedPoint;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.NationTechCfg;
+import com.ironoath.core.formula.Formula;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.nation.Nation;
 import com.ironoath.core.player.PlayerRepository;
@@ -21,6 +24,7 @@ import com.ironoath.core.reward.RewardService;
 import com.ironoath.core.reward.RewardType;
 import com.ironoath.core.social.Alliance;
 import com.ironoath.core.social.PermissionMatrix;
+import com.ironoath.common.time.WeekKey;
 import com.ironoath.web.bot.BotRegistry;
 import com.ironoath.web.dto.generated.DiplomacyRelation;
 import com.ironoath.web.dto.generated.NationAppointReq;
@@ -34,6 +38,13 @@ import com.ironoath.web.dto.generated.NationJoinReq;
 import com.ironoath.web.dto.generated.NationLeaveReq;
 import com.ironoath.web.dto.generated.NationLeaveResp;
 import com.ironoath.web.dto.generated.NationOffice;
+import com.ironoath.web.dto.generated.NationTechBlockReason;
+import com.ironoath.web.dto.generated.NationTechListView;
+import com.ironoath.web.dto.generated.NationTechResearchReq;
+import com.ironoath.web.dto.generated.NationTechResearchResp;
+import com.ironoath.web.dto.generated.NationTechView;
+import com.ironoath.web.dto.generated.TechEffectAttr;
+import com.ironoath.web.dto.generated.TechSchool;
 import com.ironoath.web.dto.generated.NationResp;
 import com.ironoath.web.dto.generated.NationTreasuryResp;
 import com.ironoath.web.dto.generated.NationTreasurySpendReq;
@@ -779,6 +790,151 @@ public class NationAppService {
         }
     }
 
+    // ---------- B20 块③：国家科技 ----------
+
+    /**
+     * 整张国家科技表 + 当前账本 + 国库余额（四行全量下发，行数由表决定，客户端不知道有几行）。
+     *
+     * <p><b>读之前先结清周税</b>，与 {@link #treasury} 同一条理由：回给玩家的余额与"这一级花不花得起"
+     * 必须互相自洽。分两次查就会拿到两个时刻的数，而"面板说够、点下去说不够"是这本账唯一要防的形状。
+     */
+    public NationTechListView nationTech(String playerId) {
+        long now = timeService.serverNow();
+        Nation nation = settleTax(requireNationOf(playerId).id(), now);
+        // 权限只在这一个地方判，判完传给每一行复用。逐行各查一遍就是把同一个判定摆成 N 份
+        boolean mayResearch = allows(nation, playerId, "RESEARCH_NATION_TECH");
+        long weekKey = WeekKey.number(now);
+        List<NationTechView> rows = new ArrayList<>();
+        for (NationTechCfg row : configs.all(NationTechCfg.class)) {
+            rows.add(nationTechView(row, nation, playerId, weekKey, mayResearch));
+        }
+        return new NationTechListView(nation.id(), nation.name(), nation.level(),
+                nation.treasury(), List.copyOf(rows), now);
+    }
+
+    /**
+     * 一行的视图。等级、下一级多少钱、点不点得动全部服务端算（铁律 3）。
+     *
+     * <p>"能不能研究"这一位<b>不自己写比较</b>，读的是 {@link Nation#techBlock} ——
+     * 与写路径同一个判定。两份判定的分叉不会报错，症状只会是"按钮亮着却按失败"。
+     */
+    private NationTechView nationTechView(NationTechCfg row, Nation nation, String playerId,
+                                          long weekKey, boolean mayResearch) {
+        int level = nation.techLevel(row.id());
+        int maxLevel = (int) row.maxLevel();
+        boolean maxed = level >= maxLevel;
+        long nextCost = maxed ? 0L : techCost(row, level + 1);
+        Nation.TechBlock blocked = maxed ? Nation.TechBlock.MAX_LEVEL
+                : nation.techBlock(playerId, weekKey, level, maxLevel,
+                        (int) row.requireNationLevel(), nextCost);
+        NationTechBlockReason reason = reasonOf(blocked, mayResearch);
+        return new NationTechView(row.id(), row.name(),
+                TechSchool.valueOf(row.school().name()),
+                TechEffectAttr.valueOf(row.effectAttr().name()),
+                row.effectValue(), level, maxLevel, (int) row.requireNationLevel(),
+                nextCost, blocked == null && mayResearch, reason);
+    }
+
+    /**
+     * 领域层的拦截 → 契约枚举。顺序按"信息量最大"排，与个人科技那一份同一口径：
+     * 满级是永久事实，不该因为这个人没权限就被说成"没权限"；国家等级是这一行自己的事；
+     * 权限是对<b>这个人</b>说的；钱是随税收在变的量，排最后。
+     *
+     * <p><b>国库不足与本周限额两枚原因不合并</b>：合并的话，面板会对一个"国库存钱充足、
+     * 只是这个官员本周额度用完"的人说"国库不够" —— 那是句假话，而他该等的是下周额度刷新
+     * （写路径同样回两枚码，理由见 {@code NATION_OFFICER_SPEND_LIMIT} 的注释）。
+     */
+    private static NationTechBlockReason reasonOf(Nation.TechBlock blocked, boolean mayResearch) {
+        if (blocked == Nation.TechBlock.MAX_LEVEL) {
+            return NationTechBlockReason.MAX_LEVEL;
+        }
+        if (blocked == Nation.TechBlock.NATION_LEVEL_LOW) {
+            return NationTechBlockReason.NATION_LOW;
+        }
+        if (blocked == Nation.TechBlock.OFFICER_WEEKLY_LIMIT) {
+            return NationTechBlockReason.OFFICER_LIMIT;
+        }
+        if (blocked == Nation.TechBlock.TREASURY_LOW) {
+            return NationTechBlockReason.TREASURY_LOW;
+        }
+        return mayResearch ? NationTechBlockReason.NONE : NationTechBlockReason.NOT_OFFICER;
+    }
+
+    /**
+     * 研究一级国家科技（花国库、抬等级、写核销日志）。
+     *
+     * <p><b>顺序与国库支出那条一致</b>：权限 → 行存在 → 交给领域层做"检查 + 扣款 + 抬等级"
+     * （那三步在同一个监视器里，见 {@link Nation#researchTech}）。本类不重复判等级与上限，
+     * 判定只有一处；这里只负责把 {@link Nation.TechBlock} 翻成四枚错误码。
+     */
+    public NationTechResearchResp researchNationTech(String playerId, NationTechResearchReq req) {
+        long now = timeService.serverNow();
+        acquire(req == null ? null : req.requestId(), now);
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+                Nation loaded = requireNationOf(playerId);
+                Nation nation = settleTax(loaded.id(), now);
+                requirePermission(nation, playerId, "RESEARCH_NATION_TECH");
+                String techId = req.techId();
+                if (techId == null || techId.isBlank()) {
+                    throw new BizException(ErrorCode.PARAM_INVALID, "techId 不得为空");
+                }
+                if (!configs.rawTable("nation_tech").has(techId)) {
+                    throw new BizException(ErrorCode.PARAM_INVALID, "nation_tech 表里没有这一行: "
+                            + techId + "（可研究的行随表走，不存在「隐藏科技」）");
+                }
+                NationTechCfg row = configs.get(NationTechCfg.class, techId);
+                long cost = techCost(row, nation.techLevel(techId) + 1);
+                nation.setClock(now);
+                Nation.TechResearch done;
+                try {
+                    done = nation.researchTech(techId, cost, (int) row.maxLevel(),
+                            (int) row.requireNationLevel(), playerId, WeekKey.number(now));
+                } catch (Nation.TechResearchException e) {
+                    throw new BizException(errorCodeOf(e.block()), e.getMessage());
+                }
+                nations.save(nation, nation.version());
+                LOG.info("国家科技研究 nationId={} 行={} 新等级={} 花费={} 余额={} 操作者={}",
+                        nation.id(), done.techId(), done.level(), done.cost(),
+                        done.treasuryAfter(), playerId);
+                return new NationTechResearchResp(done.techId(), done.level(),
+                        done.cost(), done.treasuryAfter());
+            });
+        } catch (RuntimeException e) {
+            // 副作用没产生就释放幂等键，否则玩家重试会被永久挡在门外（与域内其他写路径同一条）
+            idempotency.release(req.requestId());
+            throw e;
+        }
+    }
+
+    /** 四种拦截各自对应哪一枚码。国库相关的两枚<b>刻意复用既有那两枚</b>（§五③ 的"先对齐语义"）。 */
+    private static ErrorCode errorCodeOf(Nation.TechBlock block) {
+        return switch (block) {
+            case MAX_LEVEL -> ErrorCode.NATION_TECH_MAX_LEVEL;
+            case NATION_LEVEL_LOW -> ErrorCode.NATION_TECH_NATION_LEVEL_LOW;
+            case TREASURY_LOW -> ErrorCode.NATION_TREASURY_NOT_ENOUGH;
+            case OFFICER_WEEKLY_LIMIT -> ErrorCode.NATION_OFFICER_SPEND_LIMIT;
+        };
+    }
+
+    /**
+     * 研究到第 {@code targetLevel} 级要多少国库：该行基数 × 该行的 {@code costCurve}（比率 1.22 一族）。
+     *
+     * <p>与个人科技同一条错位口径：国家的等级账本从 <b>0 级</b>（没研究过）开始，
+     * 所以第 L 次研究取曲线的第 L 项，不传 {@code targetLevel - 1}（城建那条才是 1→2 起步）。
+     */
+    private long techCost(NationTechCfg row, int targetLevel) {
+        long ratio = configs.curve(row.costCurve()).ratioFixed();
+        return FixedPoint.round(Formula.buildingCost(
+                FixedPoint.of(row.costBaseTreasury()), targetLevel, ratio));
+    }
+
+    /** {@link #requirePermission} 的不抛版：视图要的是"这一行对这个人点不点得动"，不是异常。 */
+    private boolean allows(Nation nation, String playerId, String permission) {
+        PermissionMatrix.Tier tier = tierOf(nation, playerId);
+        return socialRules.permissions().allows(PermissionMatrix.Scope.NATION, tier, permission);
+    }
+
     // ---------- 内部 ----------
 
     private Nation requireNationOf(String playerId) {
@@ -788,20 +944,24 @@ public class NationAppService {
                 ErrorCode.NATION_NOT_FOUND, "你的联盟还没有加入任何国家")));
     }
 
-    /** 官职 → 权限档位。这是<b>结构映射</b>（哪一档官职），具体能不能做由 role_permission 表决定。 */
+    /** 没有这一格权限就抛。判定本身在 {@link #allows}，档位映射在 {@link #tierOf}。 */
     private void requirePermission(Nation nation, String playerId, String permission) {
+        if (!allows(nation, playerId, permission)) {
+            // msg 不写「需要什么官职」：那等于在代码里硬编码一份权限（B10/B13 禁止项）。
+            // 缺哪个权限位放进 detail，那里是查表得出的
+            throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED,
+                    "scope=NATION office=" + nation.officeOf(playerId) + " 缺少权限位 " + permission);
+        }
+    }
+
+    /** 官职 → 权限档位。这是<b>结构映射</b>（哪一档官职），具体能不能做由 role_permission 表决定。 */
+    private PermissionMatrix.Tier tierOf(Nation nation, String playerId) {
         Nation.Office office = nation.officeOf(playerId);
-        PermissionMatrix.Tier tier = office == null ? PermissionMatrix.Tier.MEMBER : switch (office) {
+        return office == null ? PermissionMatrix.Tier.MEMBER : switch (office) {
             case KING -> PermissionMatrix.Tier.LEADER;
             case PRIME_MINISTER, GENERAL, MINISTER, DIPLOMAT -> PermissionMatrix.Tier.OFFICER;
             case REPRESENTATIVE -> PermissionMatrix.Tier.MEMBER;
         };
-        if (!socialRules.permissions().allows(PermissionMatrix.Scope.NATION, tier, permission)) {
-            // msg 不写「需要什么官职」：那等于在代码里硬编码一份权限（B10/B13 禁止项）。
-            // 缺哪个权限位放进 detail，那里是查表得出的
-            throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED,
-                    "scope=NATION office=" + office + " 缺少权限位 " + permission);
-        }
     }
 
     private static Nation.Office toOffice(NationOffice office) {

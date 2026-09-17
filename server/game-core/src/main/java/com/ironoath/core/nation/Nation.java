@@ -297,6 +297,17 @@ public final class Nation {
     private final Map<String, Long> joinCooldownUntil = new LinkedHashMap<>();
     private final List<TreasuryLog> treasuryLogs = new ArrayList<>();
     private final List<String> provinces = new ArrayList<>();
+    /**
+     * 国家科技账本：{@code nation_tech.json} 的行 id → 等级（B20 块③）。
+     *
+     * <p><b>不存 0 占位</b>：没研究过的行根本不在这里，读取一律走 {@link #techLevel(String)}（缺失即 0）——
+     * 与 {@code Alliance#techLevels} 与 {@code PlayerTech} 同一条读法。11 个 0 塞进文档只会长出
+     * "改了表就要重存"这种麻烦，而不会带来任何信息。
+     *
+     * <p><b>记在国家上而不是玩家上</b>：出的是国库（公共钱），生效范围是全国成员。
+     * 两者若各存一份，症状就是"谁的钱花的、谁拿到的加成"对不上。
+     */
+    private final Map<String, Integer> techLevels = new LinkedHashMap<>();
     private long lastTaxWeekKey;
     /**
      * 最近一次周税**实际入库**的金额（不是应收额）。C16 限额的分母。
@@ -398,6 +409,8 @@ public final class Nation {
      * @param spendWeekKey    spentThisWeek 所属周键
      * @param spentThisWeek   本周已由非国王身份支取的累计。<b>丢了等于每周白送一份额度</b>，
      *                        而且不报错 —— 限额会在每次重启后悄悄重置
+     * @param techLevels     国家科技账本（行 id → 等级）。丢了它的症状不是报错，而是
+     *                       「全国的研究白做了一级又一级」——加成会凭空变小，而国库已经扣过了
      * @param disbandedAt     解散时刻；非 0 表示这个国家已不存在（记录留着供审计）
      */
     public record Snapshot(String id, String name, String kingId, long capitalX, long capitalY,
@@ -406,6 +419,7 @@ public final class Nation {
                            Map<String, Diplomacy> diplomacy, Map<String, Long> joinCooldownUntil,
                            List<TreasuryLog> treasuryLogs, List<String> provinces,
                            Map<String, String> holderAlliance,
+                           Map<String, Integer> techLevels,
                            long lastTaxWeekKey, long lastTaxCredited,
                            long spendWeekKey, long spentThisWeek,
                            long disbandedAt, long version) {
@@ -420,7 +434,8 @@ public final class Nation {
                 new LinkedHashMap<>(memberAlliances), officesCopy,
                 new LinkedHashMap<>(diplomacy), new LinkedHashMap<>(joinCooldownUntil),
                 List.copyOf(treasuryLogs), List.copyOf(provinces),
-                new LinkedHashMap<>(holderAlliance), lastTaxWeekKey, lastTaxCredited,
+                new LinkedHashMap<>(holderAlliance), new LinkedHashMap<>(techLevels),
+                lastTaxWeekKey, lastTaxCredited,
                 spendWeekKey, spentThisWeek, disbandedAt, version);
     }
 
@@ -461,6 +476,17 @@ public final class Nation {
         nation.holderAlliance.clear();
         nation.holderAlliance.putAll(s.holderAlliance() == null
                 ? Map.of() : new LinkedHashMap<>(s.holderAlliance()));
+        // 缺这一位 = B20 块③ 之前的老文档，读成「什么都没研究过」（与上面几张表同一条宽容读法：
+        // 这一位读不懂的代价是少一档加成，而不是这个国家打不开）。
+        // 但**等级必须为正**：脏数据里的 0 或负数不进账本，否则 levelOf 与「研究过几行」都会被它污染
+        nation.techLevels.clear();
+        if (s.techLevels() != null) {
+            s.techLevels().forEach((techId, level) -> {
+                if (techId != null && !techId.isBlank() && level != null && level > 0) {
+                    nation.techLevels.put(techId, level);
+                }
+            });
+        }
         nation.treasuryLogs.clear();
         if (s.treasuryLogs() != null) {
             nation.treasuryLogs.addAll(s.treasuryLogs());
@@ -823,23 +849,27 @@ public final class Nation {
         if (payee == null) {
             throw new IllegalArgumentException("国库支出必须写明支给谁：没有 payee 的日志无法追责");
         }
-        if (!operatorId.equals(kingId)) {
-            long already = weekKey == spendWeekKey ? spentThisWeek : 0L;
+        // 两道拒绝读的是 spendBlock —— 与科技面板的"这一行点不点得动"同一个判定（判定只有一处）。
+        // 顺序也保持原样：先限额后余额，因为非国王身份超限时那句提示才是要紧话
+        TechBlock blocked = spendBlock(operatorId, amount, weekKey);
+        if (blocked == TechBlock.OFFICER_WEEKLY_LIMIT) {
             long cap = officerWeeklySpendCap(weekKey);
-            if (already + amount > cap) {
-                throw new OfficerSpendLimitException("本周国库支出超出限额：上限 " + cap
-                        + "（本周实收入账 " + (weekKey == lastTaxWeekKey ? lastTaxCredited : 0L)
-                        + " × 比例），本周已支取 " + already + "，本次要支取 " + amount
-                        + "。国王的支取不受此限（B13 §2）");
-            }
+            long already = weekKey == spendWeekKey ? spentThisWeek : 0L;
+            throw new OfficerSpendLimitException("本周国库支出超出限额：上限 " + cap
+                    + "（本周实收入账 " + (weekKey == lastTaxWeekKey ? lastTaxCredited : 0L)
+                    + " × 比例），本周已支取 " + already + "，本次要支取 " + amount
+                    + "。国王的支取不受此限（B13 §2）");
+        }
+        if (blocked == TechBlock.TREASURY_LOW) {
+            throw new IllegalStateException("国库资金不足：需要 " + amount + "，当前 " + treasury);
+        }
+        if (!operatorId.equals(kingId)) {
             if (weekKey != spendWeekKey) {
+                // 跨周的第一笔支出先把额度清零，再记上自己（与 collectTax 的周键同一条读法）
                 spendWeekKey = weekKey;
                 spentThisWeek = 0L;
             }
             spentThisWeek += amount;
-        }
-        if (treasury < amount) {
-            throw new IllegalStateException("国库资金不足：需要 " + amount + "，当前 " + treasury);
         }
         treasury -= amount;
         appendLog(new TreasuryLog(lastLogAt, operatorId, payee.text(), amount, reason, treasury));
@@ -870,6 +900,169 @@ public final class Nation {
         OfficerSpendLimitException(String message) {
             super(message);
         }
+    }
+
+    // ---------- B20 块③：国家科技 ----------
+
+    /**
+     * @param techId         研究了哪一行
+     * @param level          研究完的等级
+     * @param cost           本次从国库扣掉多少
+     * @param treasuryAfter  扣完的国库余额（面板要的就是这个数，不再回读一次）
+     */
+    public record TechResearch(String techId, int level, long cost, long treasuryAfter) {
+    }
+
+    /** 某一行的当前等级。<b>缺失即 0</b>：这条读法是唯一入口，账本里不给 0 占位留位置。 */
+    public int techLevel(String techId) {
+        Integer level = techLevels.get(techId);
+        return level == null ? 0 : level;
+    }
+
+    /** 整本国家科技账本（只读视图）。折算成加成由 web 侧那一个读取口负责，本类不碰效果表。 */
+    public Map<String, Integer> techLevels() {
+        return Collections.unmodifiableMap(techLevels);
+    }
+
+    /** 研究一级国家科技被什么挡住。{@link #techBlock} 与 {@link #researchTech} <b>共用</b>这一份判定。 */
+    public enum TechBlock {
+        /** 国家等级不足（表列 {@code requireNationLevel}）。 */
+        NATION_LEVEL_LOW,
+        /** 这一行已到表给的上限。 */
+        MAX_LEVEL,
+        /** 国库余额不够这一笔。 */
+        TREASURY_LOW,
+        /** 非国王身份超出本周国库限额（C16）。 */
+        OFFICER_WEEKLY_LIMIT
+    }
+
+    /**
+     * 这一行现在能不能研究。<b>返回 null 表示没有拦着</b>（不返回一个 "NONE" 枚举值，
+     * 因为调用方要的是"要不要报"而不是"报哪一号"，判空比判枚举更不容易漏）。
+     *
+     * <p><b>为什么单独把判定抽出来而不是只写在 {@link #researchTech} 里</b>：面板上每一行都要显示
+     * "点得动还是点不动、为什么"。判定若只写在变更里，视图就得抄一遍同样的比较 ——
+     * 两份判定的分叉不报错，症状是"按钮亮着却按失败"或反过来。
+     *
+     * <p><b>权限位不在这里判</b>：那是 {@code role_permission} 表与社交规则的事，国家聚合不知道"谁在问"，
+     *
+     * @param operatorId         谁在研究（决定走不走周限额，与 {@link #spend} 同一条判定）
+     * @param weekKey            与周税同源的周键
+     * @param currentLevel       这一行的当前等级（{@link #techLevel(String)}）
+     * @param tableMaxLevel      表里的等级上限
+     * @param requireNationLevel 表里的国家等级前置
+     * @param cost               下一级要花多少国库（由调用方按曲线算，领域层不读配置表）
+     */
+    public TechBlock techBlock(String operatorId, long weekKey, int currentLevel, int tableMaxLevel,
+                               int requireNationLevel, long cost) {
+        if (currentLevel >= tableMaxLevel) {
+            return TechBlock.MAX_LEVEL;
+        }
+        if (level < requireNationLevel) {
+            return TechBlock.NATION_LEVEL_LOW;
+        }
+        return spendBlock(operatorId, cost, weekKey);
+    }
+
+    /**
+     * 这一笔国库支出会被哪一位挡住（{@code null} = 挡不住）。
+     *
+     * <p>公开度上收在私有 + 只被 {@link #spend} 与 {@link #techBlock} 读：两处各自比较一遍的话，
+     * 分叉的症状是"面板说花得起、点下去说超限"，而这两句话用的其实是同一个额度。
+     */
+    private TechBlock spendBlock(String operatorId, long amount, long weekKey) {
+        if (operatorId != null && !operatorId.equals(kingId)) {
+            long already = weekKey == spendWeekKey ? spentThisWeek : 0L;
+            if (already + amount > officerWeeklySpendCap(weekKey)) {
+                return TechBlock.OFFICER_WEEKLY_LIMIT;
+            }
+        }
+        return treasury < amount ? TechBlock.TREASURY_LOW : null;
+    }
+
+    /**
+     * 研究一级国家科技被挡住。<b>带类型而不是靠比对文案</b>：{@code OfficerSpendLimitException}
+     * 的类注释已经写过同一条理由 —— 靠 message 区分错误码，改一句提示就会把两个码悄悄混回去。
+     */
+    public static final class TechResearchException extends IllegalStateException {
+        private final TechBlock block;
+
+        TechResearchException(TechBlock block, String message) {
+            super(message);
+            this.block = block;
+        }
+
+        public TechBlock block() {
+            return block;
+        }
+    }
+
+    /**
+     * 研究一级国家科技：先过国家等级与上限，再花国库，最后抬等级。
+     *
+     * <p><b>为什么 {@code synchronized}</b>：应用层的锁是按<b>玩家</b>加的，而国库与这本账是按<b>国家</b>
+     * 共享的资产。两个官员同时点研究时各持自己的玩家锁、彼此不互斥，"查余额 → 扣款 → 抬等级"
+     * 就会被穿过：轻则同一级收两次钱，重则两笔都按同一个起点等级计价（后一笔看不见前一笔）。
+     * 与 {@code Alliance#researchTech} 与周税（收口清单 #25）同一条先例：<b>检查与变更进同一个监视器</b>。
+     * 这条保护只在单实例内成立，跨实例要靠仓储的乐观锁（{@code nations.save(nation, version)}）挡下第二个写者。
+     *
+     * <p><b>钱走 {@link #spend}，不在这里自己扣</b>：那一条路带着 C16 的官员周限额与
+     * {@code sink:NATIONAL_TECH} 的核销日志（验收 5 要的就是那句）。在这里另写一遍扣款，
+     * 症状是"研究科技绕过了国库周限额"——那是一条能无限支出国库的通道。
+     *
+     * @param cost               本次花费（由调用方按曲线与基数算好——领域层不读配置表）
+     * @param tableMaxLevel      表里的等级上限
+     * @param requireNationLevel 表里的国家等级前置
+     * @param operatorId         操作者（决定走不走周限额，与 {@link #spend} 同一条判定）
+     * @param weekKey            与周税同源的周键
+     * @throws IllegalArgumentException 参数本身不合法（空 id、非正花费、非正上限）
+     * @throws TechResearchException    被 {@link TechBlock} 四种之一挡住
+     */
+    public synchronized TechResearch researchTech(String techId, long cost, int tableMaxLevel,
+                                                  int requireNationLevel, String operatorId, long weekKey) {
+        requireActive();
+        if (techId == null || techId.isBlank()) {
+            throw new IllegalArgumentException("techId 不得为空：它是国家科技账本的唯一键");
+        }
+        if (cost <= 0L) {
+            throw new IllegalArgumentException("研究花费必须为正，实际=" + cost
+                    + "（免费的国家科技不是沉没口，是数值没配出来）");
+        }
+        if (tableMaxLevel < 1 || requireNationLevel < 1) {
+            throw new IllegalArgumentException("表给的上限与前置必须为正：maxLevel=" + tableMaxLevel
+                    + " requireNationLevel=" + requireNationLevel);
+        }
+        int current = techLevel(techId);
+        TechBlock blocked = techBlock(operatorId, weekKey, current, tableMaxLevel, requireNationLevel, cost);
+        if (blocked == TechBlock.MAX_LEVEL) {
+            throw new TechResearchException(blocked, "科技「" + techId + "」已满级 " + tableMaxLevel
+                    + " 级（本机制不随国家等级放大上限，与联盟科技那条不同）");
+        }
+        if (blocked == TechBlock.NATION_LEVEL_LOW) {
+            throw new TechResearchException(blocked, "国家等级不足：研究「" + techId + "」要 "
+                    + requireNationLevel + " 级国家，当前 " + level + " 级");
+        }
+        if (blocked != null) {
+            // 国库不足或本周超限：细节由 spend 那一侧写进消息（同一条判定的同一句话），这里只做转译
+            throw new TechResearchException(blocked, blocked == TechBlock.TREASURY_LOW
+                    ? "国库资金不足：研究「" + techId + "」需要 " + cost + "，当前 " + treasury
+                    : "本周国库支出已达限额：研究「" + techId + "」要 " + cost + "，本周已支取 "
+                            + (weekKey == spendWeekKey ? spentThisWeek : 0L));
+        }
+        long treasuryAfter;
+        try {
+            treasuryAfter = spend(operatorId, Payee.toSink(Payee.Sink.NATIONAL_TECH), cost,
+                    "研究国家科技 " + techId, weekKey);
+        } catch (OfficerSpendLimitException e) {
+            throw new TechResearchException(TechBlock.OFFICER_WEEKLY_LIMIT, e.getMessage());
+        } catch (IllegalStateException e) {
+            // spend 里剩的那一种失败就是"国库余额不足"（其余失败都是参数异常，已在上面挡掉）
+            throw new TechResearchException(TechBlock.TREASURY_LOW, e.getMessage());
+        }
+        // 扣款成功之后才抬等级：反过来（先抬等级再扣款）在扣款失败时会留下一档没收钱的等级
+        int target = current + 1;
+        techLevels.put(techId, target);
+        return new TechResearch(techId, target, cost, treasuryAfter);
     }
 
     /** 国库入账（战利品、活动奖励等外部来源）。同样留日志。 */

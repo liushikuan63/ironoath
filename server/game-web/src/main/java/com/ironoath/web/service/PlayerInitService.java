@@ -208,8 +208,10 @@ public class PlayerInitService {
      * 传入空城建状态是准确的 —— 新号还没有任何产出建筑，算出来就是配置表的初始值。
      */
     private PlayerSave createNewPlayer(PlayerInitReq req, String accountKey, long now) {
+        // playerId 传 null 是准确的：这一刻存档还没有 id，而新号必然没有联盟、没有国家，
+        // 国家科技那一份就是 0。塞一个占位 id 反而会让"读不到国家"与"没有国家"两种情况混成一谈
         ResourceRateService.Rates rates = resourceRates.compute(new com.ironoath.core.city.CityState(),
-                com.ironoath.core.player.PlayerTech.empty());
+                com.ironoath.core.player.PlayerTech.empty(), null);
         Map<String, PlayerResourceState> resources = new LinkedHashMap<>();
         for (ResourceCfg cfg : configs.allResources()) {
             long cap = rates.cap(cfg.id());

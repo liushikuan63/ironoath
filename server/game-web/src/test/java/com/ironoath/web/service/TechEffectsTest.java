@@ -93,7 +93,10 @@ class TechEffectsTest {
     }
 
     private ResourceOutputCalculator.Breakdown woodBreakdown(PlayerTech tech) {
-        return resourceRates.compute(cityWithLumberCamp(), tech).breakdowns().get(ResourceIds.WOOD);
+        // playerId 传 null：本套件钉的是<b>个人</b>科技那一位（2000 万分比之类的精确数），
+        // 国家那一份由 NationTechBonusTest 单独逼数。传真 id 会把两个来源混进同一条断言里
+        return resourceRates.compute(cityWithLumberCamp(), tech, null)
+                .breakdowns().get(ResourceIds.WOOD);
     }
 
     private ResourceOutputCalculator.Line lineOf(ResourceOutputCalculator.Breakdown b, String source) {
