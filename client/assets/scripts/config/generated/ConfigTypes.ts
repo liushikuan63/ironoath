@@ -367,7 +367,7 @@ export type EquipRarity =
 
 /**
  * 配置表 equip 的一行。
- * 武将装备表。一行 = 一件装备：槽位、稀有度、三维固定加成、需求武将等级、所属套装。套装效果在 equip_set 表。
+ * 武将装备表。一行 = 一件装备：槽位、稀有度、三维固定加成、需求武将等级、所属套装、强化上限。套装效果在 equip_set 表，强化价格与斜率在 curve 表。
  *
  * 源表 version=1
  */
@@ -385,6 +385,7 @@ export interface EquipCfg {
   requireLevel: number
   /** 外键，指向 equip_set 表的 id */
   setId?: string
+  forgeMax: number
 }
 
 /** equip_set.equipSetPieces2Attr 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */

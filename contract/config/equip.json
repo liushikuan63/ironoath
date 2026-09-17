@@ -1,8 +1,8 @@
 {
   "table": "equip",
   "version": 1,
-  "comment": "武将装备表。一行 = 一件装备：槽位、稀有度、三维固定加成、需求武将等级、所属套装。套装效果在 equip_set 表。",
-  "designNote": "【固定值走加算、套装走乘算，两者刻意分开】装备本体的 might/command/wisdom 是固定值，加在武将基础三维上（加算区）；套装的百分比才进乘区 A。这样设计的原因是让两条线的收益形态不同：固定值在前期占比高、后期被稀释（自然淘汰），百分比始终按比例生效（长期追求）。若装备本体也给百分比，玩家会在前期就拿到与后期同比例的加成，成长曲线被压平。\n【16 件 = 4 件入门 + 3 套 × 4 槽】入门装没有套装，保证新号第一天就能穿满 4 个槽位；三套装备的等级门槛是 20/30/40，形成明确的换装阶梯。\n【槽位语义】WEAPON 偏武力、ARMOR 偏统率、MOUNT 混合、ACCESSORY 偏智力。套装件刻意不做纯单属性（例如破军甲给武力 20 + 统率 15），否则换套等于把另一个属性清零，玩家会觉得「换装是损失」而不是「换装是升级」。\n【不做装备强化/洗练】B06 只要求「4 槽位 + 套装效果」。强化与洗练会再开两条数值线，在武将已经有五条养成线的情况下继续加线，只会让每条线都变浅（B06 开放问题 2 的答案：先不做）。",
+  "comment": "武将装备表。一行 = 一件装备：槽位、稀有度、三维固定加成、需求武将等级、所属套装、强化上限。套装效果在 equip_set 表，强化价格与斜率在 curve 表。",
+  "designNote": "【固定值走加算、套装走乘算，两者刻意分开】装备本体的 might/command/wisdom 是固定值，加在武将基础三维上（加算区）；套装的百分比才进乘区 A。这样设计的原因是让两条线的收益形态不同：固定值在前期占比高、后期被稀释（自然淘汰），百分比始终按比例生效（长期追求）。若装备本体也给百分比，玩家会在前期就拿到与后期同比例的加成，成长曲线被压平。\n【16 件 = 4 件入门 + 3 套 × 4 槽】入门装没有套装，保证新号第一天就能穿满 4 个槽位；三套装备的等级门槛是 20/30/40，形成明确的换装阶梯。\n【槽位语义】WEAPON 偏武力、ARMOR 偏统率、MOUNT 混合、ACCESSORY 偏智力。套装件刻意不做纯单属性（例如破军甲给武力 20 + 统率 15），否则换套等于把另一个属性清零，玩家会觉得「换装是损失」而不是「换装是升级」。\n【强化：只做「纯消耗、必成」这一条线（B20 §五② 裁决，推翻本表原来「不做强化」那句）】forgeMax 与稀有度挂钩（首版 N=10 / SR=15，草值）；每级把**该行自己的**三维各抬 5%（定点），落在 might/command/wisdom 这一族固定值上，不进乘区 B/F —— C01 条款 7 要求数值可追溯，混进乘区就查不出某一维是谁给的。不做成功率：随机强化要概率公示（合规面），而「让资源有地方花」这个目的必成即可达成。洗练与分解仍然不做（B06 开放问题 2 的判断依然成立：武将已有五条养成线，继续加线只会让每条都变浅）。\n【强化价格为什么不在本表】一级铁耗 = 该行属性总和 × curve.EQUIP_FORGE_COST.base(70) × 1.22^(n-1)。属性总和作乘数，是为了让「每 1 铁买到的属性点」在 16 行之间处处相等 —— 若价格与装备强度无关，全服最优解就变成只强化最高的那一件，其余沦为摆设。1.22 沿用 BUILDING_COST，基数 70 由 `node tools/calibrate-equip-forge.mjs` 量出（见 curve 那一行的 why）。",
   "fieldTypes": {
     "id": "STRING_KEY",
     "name": "STRING",
@@ -14,7 +14,8 @@
     "requireLevel": "LONG_POS",
     "setId": "?REF:equip_set",
     "why": "?STRING",
-    "todo": "?STRING"
+    "todo": "?STRING",
+    "forgeMax": "LONG_POS"
   },
   "rows": [
     {
@@ -26,6 +27,7 @@
       "command": 0,
       "wisdom": 0,
       "requireLevel": 1,
+      "forgeMax": 10,
       "why": "无套装的入门武器。必须存在：新号第一天就要能穿满 4 个槽位，否则装备界面是空的，玩家学不会这套系统。"
     },
     {
@@ -37,6 +39,7 @@
       "command": 10,
       "wisdom": 0,
       "requireLevel": 1,
+      "forgeMax": 10,
       "why": "入门护甲，给统率。统率同时抬带兵上限，所以它对新号的实际价值高于同数值的武力装。"
     },
     {
@@ -48,6 +51,7 @@
       "command": 5,
       "wisdom": 0,
       "requireLevel": 5,
+      "forgeMax": 10,
       "why": "入门坐骑，双属性各给一点。要求武将 5 级 —— 让「升级解锁更好装备」这条反馈在首日就出现一次。"
     },
     {
@@ -59,6 +63,7 @@
       "command": 0,
       "wisdom": 10,
       "requireLevel": 1,
+      "forgeMax": 10,
       "why": "入门饰品，给智力。四个槽位的入门装加起来三维都有，避免新号只堆单一属性。"
     },
     {
@@ -70,6 +75,7 @@
       "command": 0,
       "wisdom": 0,
       "requireLevel": 20,
+      "forgeMax": 15,
       "why": "破军套武器，单件武力最高的入门套装件。20 级门槛对应零氪第 2~3 天的武将等级。",
       "setId": "set_pojun"
     },
@@ -82,6 +88,7 @@
       "command": 15,
       "wisdom": 0,
       "requireLevel": 20,
+      "forgeMax": 15,
       "why": "破军套护甲。武力为主、附带统率：套装件不该是纯单属性，否则换套就等于把另一个属性清零。",
       "setId": "set_pojun"
     },
@@ -94,6 +101,7 @@
       "command": 0,
       "wisdom": 0,
       "requireLevel": 20,
+      "forgeMax": 15,
       "why": "破军套坐骑。",
       "setId": "set_pojun"
     },
@@ -106,6 +114,7 @@
       "command": 0,
       "wisdom": 10,
       "requireLevel": 20,
+      "forgeMax": 15,
       "why": "破军套饰品。附带智力，让武力套在智力型武将身上也不至于完全浪费。",
       "setId": "set_pojun"
     },
@@ -118,6 +127,7 @@
       "command": 20,
       "wisdom": 0,
       "requireLevel": 30,
+      "forgeMax": 15,
       "why": "玄武套武器。武力统率对半：坦克型武将也要打人，纯统率武器会让它在输出上完全无用。",
       "setId": "set_xuanwu"
     },
@@ -130,6 +140,7 @@
       "command": 50,
       "wisdom": 0,
       "requireLevel": 30,
+      "forgeMax": 15,
       "why": "玄武套护甲，单件统率最高。",
       "setId": "set_xuanwu"
     },
@@ -142,6 +153,7 @@
       "command": 30,
       "wisdom": 0,
       "requireLevel": 30,
+      "forgeMax": 15,
       "why": "玄武套坐骑。",
       "setId": "set_xuanwu"
     },
@@ -154,6 +166,7 @@
       "command": 25,
       "wisdom": 15,
       "requireLevel": 30,
+      "forgeMax": 15,
       "why": "玄武套饰品。",
       "setId": "set_xuanwu"
     },
@@ -166,6 +179,7 @@
       "command": 0,
       "wisdom": 30,
       "requireLevel": 40,
+      "forgeMax": 15,
       "why": "文曲套武器。40 级门槛让三套装备形成 20/30/40 的阶梯，玩家有明确的换装节奏。",
       "setId": "set_wenqu"
     },
@@ -178,6 +192,7 @@
       "command": 10,
       "wisdom": 35,
       "requireLevel": 40,
+      "forgeMax": 15,
       "why": "文曲套护甲。",
       "setId": "set_wenqu"
     },
@@ -190,6 +205,7 @@
       "command": 0,
       "wisdom": 25,
       "requireLevel": 40,
+      "forgeMax": 15,
       "why": "文曲套坐骑。",
       "setId": "set_wenqu"
     },
@@ -202,6 +218,7 @@
       "command": 0,
       "wisdom": 45,
       "requireLevel": 40,
+      "forgeMax": 15,
       "why": "文曲套饰品，单件智力最高。",
       "setId": "set_wenqu"
     }
