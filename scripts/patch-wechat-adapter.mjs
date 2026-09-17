@@ -17,17 +17,38 @@ let source = readFileSync(target, 'utf8')
  *   ② document 不存在时先补一个空对象，避免第二段循环遍历 undefined；
  *   ③ `parent/top` 改成挂在实例上（`i.window.parent = ...`），不依赖全局绑定。
  */
-const MARKER = 'i.window||(i.window=r),i.document||(i.document={});'
+const MARKER = 'try{i.parent=i.top=i.window}catch(e){}'
 const REPLACEMENT = 'i.window||(i.window=r),i.document||(i.document={});var c;'
   + 'for(c in r)try{Object.defineProperty(i.window,c,{value:r[c],configurable:!0})}catch(e){}'
   + 'for(c in r.document)try{Object.defineProperty(i.document,c,'
   + '{value:r.document[c],configurable:!0})}catch(e){}'
-  + 'i.parent=i.top=i.window,i.window.parent=i.window.top=i.window'
+  // DevTools 下 GameGlobal 就是那个 Window，top/parent 常常是只读 getter：
+  // 直接赋值会抛 "Cannot set property top of #<Window> which has only a getter"。
+  // 与官方对 window 用 Object.defineProperty + descriptor 检查同一个思路：写不进去就跳过。
+  + 'try{i.parent=i.top=i.window}catch(e){}'
+  + 'try{i.window.parent=i.window.top=i.window}catch(e){}'
+  + '}else{for(var d in r)i[d]=r[d];'
+  + 'try{i.window=r,i.top=i.parent=i.window}catch(e){i.window=r}}'
+
+/**
+ * 旧版本补丁（已写进某些构建产物）没有把 parent/top 的赋值包起来，
+ * DevTools 里会抛 "Cannot set property top"。这里按"旧串 → 新串"就地升级，
+ * 幂等：升级后旧串不再存在。
+ */
+const LEGACY = 'i.parent=i.top=i.window,i.window.parent=i.window.top=i.window'
   + '}else{for(var d in r)i[d]=r[d];i.window=r,i.top=i.parent=i.window}'
+const UPGRADED = 'try{i.parent=i.top=i.window}catch(e){}'
+  + 'try{i.window.parent=i.window.top=i.window}catch(e){}'
+  + '}else{for(var d in r)i[d]=r[d];'
+  + 'try{i.window=r,i.top=i.parent=i.window}catch(e){i.window=r}}'
 
 let changed = false
 if (source.includes(MARKER)) {
   // 已打过补丁
+} else if (source.includes(LEGACY)) {
+  // 旧版补丁产出的中间态：就地升级（否则它会带 top 只读崩溃）
+  source = source.replace(LEGACY, UPGRADED)
+  changed = true
 } else {
   // 按索引定位整块 if/else：不依赖精确引号或空白，避免"构建产物换一种压缩就匹配不上"
   const anchor = source.indexOf('"devtools"===o')

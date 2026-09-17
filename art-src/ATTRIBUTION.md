@@ -7,6 +7,22 @@
 - 许可证：CC0 1.0 Universal
 - 本地路径：`art-src/kenney/ui-pack-adventure/`
 
+## Kenney 通用素材包（2026-09-16 增补，直连 kenney.nl 下载）
+
+以下 6 个包均为 **CC0 1.0 Universal**（可商用、不强制署名；本项目仍登记备查）。
+每个包目录内保留其自带 `License.txt`（写有包版本与 CC0 声明），并放一份完整 CC0 法律文本 `LICENSE-CC0.md`。
+
+| 包 | 版本 | 来源 | 本地路径 |
+|---|---|---|---|
+| UI Pack | 2.0 | <https://kenney.nl/assets/ui-pack> | `art-src/kenney/ui-pack/` |
+| UI Pack - RPG Expansion | 未标注 | <https://kenney.nl/assets/ui-pack-rpg-expansion> | `art-src/kenney/ui-pack-rpg-expansion/` |
+| Fantasy UI Borders | 1.0 | <https://kenney.nl/assets/fantasy-ui-borders> | `art-src/kenney/fantasy-ui-borders/` |
+| Game Icons | 未标注 | <https://kenney.nl/assets/game-icons> | `art-src/kenney/game-icons/` |
+| Board Game Icons | 1.1 | <https://kenney.nl/assets/board-game-icons> | `art-src/kenney/board-game-icons/` |
+| Generic Items | #1 | <https://kenney.nl/assets/generic-items> | `art-src/kenney/generic-items/` |
+
+下载日期 2026-09-16；文件清单与用途见 `manifest.json` 的 `library.kenneyPacks`。
+
 ## Game-icons
 
 - 来源：<https://github.com/game-icons/icons>
@@ -20,14 +36,17 @@
 - Lorc，<https://lorcblog.blogspot.com>
 - Skoll
 - Heavenly Dog，<https://www.gnomosygoblins.blogspot.com>
+- Sbed（2026-09-16 增补：support / block / arena）
+- Faithtoken（2026-09-16 增补：world-boss）
+- Andy Meneely（2026-09-16 增补：report）
 
 接入界面后必须在游戏内“制作人员 / 开源许可”页保留：
 
 ```text
-Icons made by Delapouite, Lorc, Skoll, Heavenly Dog from https://game-icons.net
+Icons made by Delapouite, Lorc, Skoll, Heavenly Dog, Sbed, Faithtoken, Andy Meneely from https://game-icons.net
 ```
 
-`art-src/game-icons/png/` 与 `art-src/game-icons/icons-atlas.png` 是由上述 SVG 确定性栅格化得到的派生文件，仍沿用 CC BY 3.0 署名要求。
+`art-src/game-icons/png/` 与 `art-src/game-icons/icons-atlas.png` 是由上述 SVG 确定性栅格化得到的派生文件，仍沿用 CC BY 3.0 署名要求。2026-09-16 增补的 34 个功能图标（`svg/systems/` 与 `png/systems/`）逐项作者归属见 `manifest.json` 的 `library.gameIconsSystems.items`。
 
 ## 项目生成资源
 

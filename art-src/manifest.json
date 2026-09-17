@@ -13,6 +13,51 @@
       "local": "art-src/kenney/ui-pack-adventure"
     },
     {
+      "id": "kenney-ui-pack",
+      "source": "https://kenney.nl/assets/ui-pack",
+      "version": "2.0",
+      "license": "CC0-1.0",
+      "retrievedAt": "2026-09-16",
+      "local": "art-src/kenney/ui-pack"
+    },
+    {
+      "id": "kenney-ui-pack-rpg-expansion",
+      "source": "https://kenney.nl/assets/ui-pack-rpg-expansion",
+      "license": "CC0-1.0",
+      "retrievedAt": "2026-09-16",
+      "local": "art-src/kenney/ui-pack-rpg-expansion"
+    },
+    {
+      "id": "kenney-fantasy-ui-borders",
+      "source": "https://kenney.nl/assets/fantasy-ui-borders",
+      "version": "1.0",
+      "license": "CC0-1.0",
+      "retrievedAt": "2026-09-16",
+      "local": "art-src/kenney/fantasy-ui-borders"
+    },
+    {
+      "id": "kenney-game-icons",
+      "source": "https://kenney.nl/assets/game-icons",
+      "license": "CC0-1.0",
+      "retrievedAt": "2026-09-16",
+      "local": "art-src/kenney/game-icons"
+    },
+    {
+      "id": "kenney-board-game-icons",
+      "source": "https://kenney.nl/assets/board-game-icons",
+      "version": "1.1",
+      "license": "CC0-1.0",
+      "retrievedAt": "2026-09-16",
+      "local": "art-src/kenney/board-game-icons"
+    },
+    {
+      "id": "kenney-generic-items",
+      "source": "https://kenney.nl/assets/generic-items",
+      "license": "CC0-1.0",
+      "retrievedAt": "2026-09-16",
+      "local": "art-src/kenney/generic-items"
+    },
+    {
       "id": "game-icons",
       "repository": "https://github.com/game-icons/icons",
       "commit": "82d948812bfe3f269ef8f731dcdb07b08160edc4",
@@ -64,6 +109,77 @@
     "rarity.SR": "game-icons/svg/rarity/sr.svg",
     "rarity.SSR": "game-icons/svg/rarity/ssr.svg"
   },
+  "library": {
+    "note": "已下载登记、尚未接入运行时的通用素材库（2026-09-16 增补，见 CC开发全流程.md 阶段 8）。本节的路径均相对 art-src/（与 assets / derived 同一基准；sources[].local 是仓库根相对）。取用规则与 assets 相同：先复制到 client 侧、过体积与署名检查，再进 ArtCatalog —— 下载轮不预先把它们塞进包体。",
+    "kenneyPacks": {
+      "ui-pack": {
+        "local": "kenney/ui-pack",
+        "use": "通用 UI 元素：面板/按钮/进度条/复选框/滑块/页签，5 套配色 + Extra（含 Font/ 与 Sounds/，本项目用系统字体且小游戏构建已裁音频模块，取用前先看引擎裁剪清单）"
+      },
+      "ui-pack-rpg-expansion": {
+        "local": "kenney/ui-pack-rpg-expansion",
+        "use": "RPG 风 UI：面板/按钮/进度条，暗色系，最贴近本项目铜金暗红调性"
+      },
+      "fantasy-ui-borders": {
+        "local": "kenney/fantasy-ui-borders",
+        "use": "奇幻边框：单层/双层装饰边框，面板描边候选"
+      },
+      "game-icons": {
+        "local": "kenney/game-icons",
+        "use": "通用图标 105 个：黑/白两套着色 + 1x/2x PNG + Vector + Spritesheet"
+      },
+      "board-game-icons": {
+        "local": "kenney/board-game-icons",
+        "use": "桌面游戏图标：棋子/骰子/城堡/王冠等中世纪主题（PNG Default 64px / Double 128px / Tilesheet）"
+      },
+      "generic-items": {
+        "local": "kenney/generic-items",
+        "use": "通用道具图：武器/防具/药水/材料（Colored + White + Spritesheet）"
+      }
+    },
+    "gameIconsSystems": {
+      "svg": "game-icons/svg/systems",
+      "png": "game-icons/png/systems",
+      "upstream": "game-icons/icons@82d948812bfe3f269ef8f731dcdb07b08160edc4（与上面 game-icons 同源同提交；PNG 由 resvg 从 SVG 确定性栅格化到 256×256，黑底白图，与既有 png/ 同规格）",
+      "note": "34 个功能图标，按 CC开发全流程.md 阶段 8 的缺口清单挑选；每项为 [上游路径（作者目录/文件名）, 用途]；接入图集与 ArtCatalog 属各自功能批次，不在下载轮做（避免只下发没人消费的字段）",
+      "items": {
+        "mail": ["lorc/envelope.svg", "邮件"],
+        "chat": ["delapouite/chat-bubble.svg", "聊天频道"],
+        "announcement": ["delapouite/megaphone.svg", "公告/全服广播"],
+        "notification": ["lorc/ringing-bell.svg", "通知/提醒"],
+        "friends": ["delapouite/three-friends.svg", "好友"],
+        "diplomacy": ["delapouite/shaking-hands.svg", "外交/盟约"],
+        "settings": ["delapouite/settings-knobs.svg", "设置"],
+        "support": ["sbed/help.svg", "客服/帮助"],
+        "report": ["andymeneely/police-badge.svg", "举报/风控"],
+        "block": ["sbed/cancel.svg", "拉黑/拒绝"],
+        "activity": ["delapouite/party-popper.svg", "活动/节日"],
+        "calendar": ["delapouite/calendar.svg", "签到/活动日历"],
+        "countdown": ["lorc/hourglass.svg", "限时/倒计时"],
+        "battle-pass": ["delapouite/ticket.svg", "战令/通行证"],
+        "gift": ["delapouite/present.svg", "礼包/奖励"],
+        "ranking": ["lorc/trophy.svg", "排行榜"],
+        "podium": ["delapouite/podium.svg", "名次/颁奖"],
+        "achievement": ["lorc/medal.svg", "成就/勋章"],
+        "season": ["lorc/laurels.svg", "赛季/荣耀"],
+        "crown": ["delapouite/imperial-crown.svg", "国王/头衔"],
+        "throne": ["lorc/stone-throne.svg", "王座/王城战"],
+        "banner": ["delapouite/knight-banner.svg", "联盟旗帜"],
+        "territory": ["delapouite/flag-objective.svg", "领地/目标点"],
+        "fortress": ["delapouite/military-fort.svg", "要塞/关卡"],
+        "capital": ["delapouite/castle.svg", "都城"],
+        "vote": ["delapouite/vote.svg", "国策投票"],
+        "tech": ["lorc/cog.svg", "科技/研究"],
+        "quest": ["lorc/scroll-unfurled.svg", "任务/卷轴"],
+        "world-boss": ["faithtoken/dragon-head.svg", "世界首领/野怪"],
+        "explore": ["lorc/treasure-map.svg", "探索/地图"],
+        "combat": ["lorc/crossed-swords.svg", "战斗/击杀"],
+        "treasury": ["delapouite/coins.svg", "国库/货币"],
+        "forge": ["lorc/anvil.svg", "装备强化/锻造"],
+        "arena": ["sbed/arena.svg", "试炼/竞技"]
+      }
+    }
+  },
   "generatedPending": [],
   "generatedAccepted": {
     "generator": "gpt-image-2",
@@ -104,6 +220,7 @@
   },
   "derived": {
     "gameIconsPng": "game-icons/png",
+    "gameIconsPngSystems": "game-icons/png/systems",
     "gameIconsAtlas": "game-icons/icons-atlas.png",
     "gameIconsAtlasIndex": "game-icons/icons-atlas.json"
   }
