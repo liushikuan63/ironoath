@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ironoath.local/contract/proto/tech.schema.json",
   "title": "TechProtocol",
-  "description": "个人科技协议契约（B20 §二，块① 的机制部分：列表 / 开始研究 / 取消）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。\n\n**三条贯穿全部 def 的设计约束**：\n1. **树住在表里**：11 行科技全部来自 `contract/config/tech.json`，客户端不知道有几行、也不硬编码任何一行 id。\n   下发整棵树（11 行 × 少量字段 ≈ 1 KB）而不是分页：与研究加速道具同一条理由 —— 省流量是零收益，\n   而\"服务端替客户端决定该看哪几行\"会变成第二个真相。\n2. **等级与耗时都是服务端算完下发**（铁律 3）：`nextTimeSec` 由 `curve.TECH_TIME`（比率 1.28、基数 13 秒，\n   基数由 `tools/calibrate-tech-time.mjs` 量出）算出，客户端只拿 `finishAt - serverNow` 画进度条。\n   客户端 `Formula.ts` 那套镜像只用于表现层预测，任何进入结算的数值不从客户端来。\n3. **一次一队列是表外的机制约束**（B20 §五① 裁定「学院前置 + 一次一队列」）：所以取消请求只带 `requestId`\n   而不带 `techId` —— 队列里那一项就是被取消的那一项。带上就凭空造出一个边界\n   （\"客户端显示的是 A、服务端在研究 B\"），而这个边界在本机制里不存在。\n\n**本批不声明的东西**：研究加速（`/tech/speedUp`）与装备强化、国家科技 —— 加速要接 `REDUCE_RESEARCH_SECONDS`\n道具与商店重上架（B20 验收 8），国家科技是新表 `nation_tech.json`（§五③），各自单开发布，\n不预先声明没有生产者的端点与状态。",
+  "description": "个人科技协议契约（B20 §二，块① 的机制部分：列表 / 开始研究 / 取消 / 加速）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。\n\n**三条贯穿全部 def 的设计约束**：\n1. **树住在表里**：11 行科技全部来自 `contract/config/tech.json`，客户端不知道有几行、也不硬编码任何一行 id。\n   下发整棵树（11 行 × 少量字段 ≈ 1 KB）而不是分页：与研究加速道具同一条理由 —— 省流量是零收益，\n   而\"服务端替客户端决定该看哪几行\"会变成第二个真相。\n2. **等级与耗时都是服务端算完下发**（铁律 3）：`nextTimeSec` 由 `curve.TECH_TIME`（比率 1.28、基数 13 秒，\n   基数由 `tools/calibrate-tech-time.mjs` 量出）算出，客户端只拿 `finishAt - serverNow` 画进度条。\n   客户端 `Formula.ts` 那套镜像只用于表现层预测，任何进入结算的数值不从客户端来。\n3. **一次一队列是表外的机制约束**（B20 §五① 裁定「学院前置 + 一次一队列」）：所以取消与加速的请求都只带 `requestId`\n   而不带 `techId` —— 队列里那一项就是被取消、被加速的那一项。带上就凭空造出一个边界\n   （\"客户端显示的是 A、服务端在研究 B\"），而这个边界在本机制里不存在。\n\n**本批不声明的东西**：装备强化与国家科技 —— 强化是 §五② 的\"纯成本锻造\"（新曲线 `EQUIP_FORGE_COST`），\n国家科技是新表 `nation_tech.json`（§五③），各自单开发布，不预先声明没有生产者的端点与状态。\n研究加速<b>在射程内</b>（`TechSpeedUpReq/Resp`）：它的道具 `item_speedup_research_1h` 早就存在，\n而契约里此前缺的只是把它用到研究队列上的那个请求。",
   "x-java-package": "com.ironoath.web.dto.generated",
   "x-ts-module": "TechProtocol",
   "$defs": {
@@ -341,6 +341,67 @@
           "items": {
             "$ref": "#/$defs/ResourceAmount"
           }
+        }
+      }
+    },
+    "TechSpeedUpReq": {
+      "type": "object",
+      "description": "用研究加速道具推进当前研究（B20 验收 8：`item_speedup_research_1h`，1 小时 = 3600 秒）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "itemId",
+        "count"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64,
+          "description": "幂等键。加速是<b>消耗品 + 改状态</b>的双重动作，弱网重投若不去重就是白丢道具。"
+        },
+        "itemId": {
+          "type": "string",
+          "description": "必须是 `type=SPEEDUP` 且 `effectKind=REDUCE_RESEARCH_SECONDS` 的道具。建造令与训练令走到这里会被拒（与 `CityAppService.speedUpByItem` 同一条：宁可响，也不静默按另一种加速处理）。"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "用几张。一次多张是有意义的（研究后期一步以天计），与研究令「一张 = effectValue 秒」的定价单位一致。"
+        }
+      }
+    },
+    "TechSpeedUpResp": {
+      "type": "object",
+      "description": "加速结果。三位各说各的：真扣了多少秒、还剩多少、是否因此研究完。",
+      "additionalProperties": false,
+      "required": [
+        "techId",
+        "reducedSeconds",
+        "remainingSeconds",
+        "finished"
+      ],
+      "properties": {
+        "techId": {
+          "type": "string",
+          "description": "被加速的那一行（一次一队列，所以就是队列里那一项）。"
+        },
+        "reducedSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "<b>实际</b>提前的秒数：`min(count × 单张效果, 剩余)`。用完一张 8 小时令去加速只剩 10 秒的研究时，reduced 是 10 而不是 28800 —— 面板若显示 28800，玩家就看到了一次凭空的损失。道具仍按张数扣（多出的部分不退还，与城建加速同一口径：买得多是用在别的队列上，不是退款理由）。"
+        },
+        "remainingSeconds": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "加速后的剩余秒数，绝不为负。"
+        },
+        "finished": {
+          "type": "boolean",
+          "description": "这一级是否因此完成。<b>为 true 时等级已经在同一把锁内结算进账本</b>（不是「等下次读取再说」）：玩家花道具买的就是「现在就完成」，把它留给下一次惰性读取会让响应与实际状态不一致。"
         }
       }
     }

@@ -17,6 +17,8 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.BuildingCfg;
+import com.ironoath.config.cfg.ItemCfg;
+import com.ironoath.config.cfg.ShopCfg;
 import com.ironoath.config.cfg.TechCfg;
 import com.ironoath.core.city.BuildingInstance;
 import com.ironoath.core.city.BuildingStatus;
@@ -28,6 +30,9 @@ import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.player.PlayerTech;
 import com.ironoath.core.quest.GoalType;
 import com.ironoath.core.resource.ResourceIds;
+import com.ironoath.core.reward.RewardPorts;
+import com.ironoath.web.dto.generated.ItemUseReq;
+import com.ironoath.web.dto.generated.ItemUseResp;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.ResourceAmount;
 import com.ironoath.web.dto.generated.QuestView;
@@ -38,6 +43,8 @@ import com.ironoath.web.dto.generated.TechCancelResp;
 import com.ironoath.web.dto.generated.TechListView;
 import com.ironoath.web.dto.generated.TechResearchReq;
 import com.ironoath.web.dto.generated.TechResearchResp;
+import com.ironoath.web.dto.generated.TechSpeedUpReq;
+import com.ironoath.web.dto.generated.TechSpeedUpResp;
 import com.ironoath.web.dto.generated.TechView;
 import com.ironoath.web.quest.QuestAppService;
 import com.ironoath.web.service.CityAppService;
@@ -47,13 +54,20 @@ import com.ironoath.web.store.memory.InMemoryPlayerStore;
 import com.ironoath.web.tech.TechAppService;
 
 /**
- * 职责：个人科技三个动作（list / research / cancel）的集成测试（B20 块① 验收 1、2、6 的服务端半边）。
+ * 职责：个人科技四个动作（list / research / cancel / speedUp）的集成测试
+ * （B20 块① 验收 1、2、6 的服务端半边 + 验收 8）。
  * 依赖：Spring Boot Test + test profile（内存存储，不需要 MongoDB / Redis）。
  *
  * <p><b>这里刻意断精确数而不是「变大了」</b>（B20 §一「断言密度」）：13 秒 / 17 秒 / 600 木 / 返还 360
  * 都是**从表里算出来的**数，改了 {@code curve.TECH_TIME} 或 {@code tech.json} 的任意一项，
  * 对应的断言就会红 —— 那正是验收 1 的「改表 ⇒ 时长变」。把它们写成"大于 0"就永远绿，
  * 而"永远绿的断言"是这个项目反复在防的东西。
+ *
+ * <p><b>加速这一族多三条判据</b>（验收 8）：道具<b>只在真的加速成功时才扣</b>（校验失败必须还剩原数）、
+ * <b>减到点就在同一次调用里把等级记进账本</b>（不留给下一次读取，玩家花道具买的就是"现在就完成"）、
+ * 以及<b>两个入口同一条口径</b>（{@code /tech/speedUp} 与背包里的 {@code /item/use} 共用一段核心，
+ * 也共用同一把幂等键）。这三条都是玩家花金币买的东西，
+ * 断"少扣了一个道具"和"没多扣"必须靠同一组用例。
  *
  * <p><b>时间怎么办</b>：test profile 用的是系统时钟，不能拨。所以"研究已完成"这类场景
  * 一律把完成时刻<b>写成过去</b>再走一次读取（{@code PlayerTech.settled} 是惰性的），
@@ -75,6 +89,12 @@ class TechEndpointTest {
     /** city_rule_cancel_refund_ratio = 0.60。 */
     private static final long REFUND_WOOD_L1 = 360L;
     private static final long REFUND_STONE_L1 = 120L;
+    /** 一小时研究令（item.json 的 {@code effectValue=3600}），#46 下架、B20 验收 8 重上架的那一件。 */
+    private static final String RESEARCH_TOKEN = "item_speedup_research_1h";
+    private static final long TOKEN_SECONDS = 3600L;
+    /** 建造令：拿它当「类型对但效果错」的探针（秒数同形，接错域不会报错只会少东西）。 */
+    private static final String BUILD_TOKEN = "item_speedup_build_1h";
+    private static final String RESEARCH_TOKEN_SHELF_ROW = "shop_speedup_research_1h";
 
     @Autowired
     private TechAppService techAppService;
@@ -90,6 +110,12 @@ class TechEndpointTest {
     private QuestAppService quests;
     @Autowired
     private ConfigRegistry configs;
+    /** 背包写入的唯一入口：加速用例要先发道具、再核「扣了几个 / 有没有白扣」。 */
+    @Autowired
+    private RewardPorts.Bag bag;
+    /** 加速道具的第二个入口（{@code /item/use}）：与 {@code /tech/speedUp} 必须同口径、同一条幂等纪律。 */
+    @Autowired
+    private com.ironoath.web.service.BagAppService bagAppService;
 
     @BeforeEach
     void resetStores() {
@@ -160,6 +186,23 @@ class TechEndpointTest {
     private long balance(String playerId, ResourceType resource) {
         return players.findByPlayerId(playerId).orElseThrow()
                 .resource(resource.name()).current();
+    }
+
+    /**
+     * 摆一个「正在研究、还剩 {@code remainingSeconds} 秒」的现场。
+     *
+     * <p>不能靠真等（13 秒一步的研究要测「减一半」得等到天黑），也不能拨系统时钟
+     * （test profile 用真实时钟，全项目没有测试时钟注入点）—— 与 {@code CityEndpointTest}
+     * 造升级中/已完成态同一条路子：直接把完成时刻写到要的位置。
+     */
+    private void putResearching(String playerId, String techId, long totalSeconds, long remainingSeconds) {
+        long now = System.currentTimeMillis();
+        putTech(playerId, new PlayerTech(Map.of(), techId, now + remainingSeconds * 1000L,
+                now - (totalSeconds - remainingSeconds) * 1000L, totalSeconds));
+    }
+
+    private TechSpeedUpResp speedUp(String playerId, String itemId, long count) {
+        return techAppService.speedUp(playerId, new TechSpeedUpReq(requestId(), itemId, count));
     }
 
     // ---------- 表本身 ----------
@@ -405,6 +448,187 @@ class TechEndpointTest {
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).errorCode())
                 .isEqualTo(ErrorCode.TECH_NOT_RESEARCHING);
+    }
+
+    // ---------- 研究加速（验收 8：#46 的闭环） ----------
+
+    @Test
+    @DisplayName("重上架的货架行指的就是本套件花掉的那张令，且定价与限购按 #46 删掉前那一档")
+    void relistedShelfRowPointsAtTheResearchToken() {
+        ShopCfg shelf = configs.all(ShopCfg.class).stream()
+                .filter(row -> RESEARCH_TOKEN_SHELF_ROW.equals(row.id()))
+                .findFirst().orElseThrow(() -> new AssertionError(
+                        "货架行不见了：#46 的下架理由（没有任何东西可加速）已被验收 8 消掉，重上架是它的闭环"));
+        assertThat(shelf.itemId()).isEqualTo(RESEARCH_TOKEN);
+        assertThat(shelf.priceCurrency()).isEqualTo(ShopCfg.PriceCurrency.GOLD);
+        assertThat(shelf.price())
+                .as("50 金 = 这张令自己的回收价，买—卖同价才不会变成套利；三张一小时令里研究最贵（40/45/50）")
+                .isEqualTo(50L);
+        assertThat(shelf.limitCount()).isEqualTo(20L);
+        assertThat(shelf.requireMainLevel()).as("加速道具是付费第一级台阶，不该卡等级").isZero();
+
+        assertThat(configs.get(ItemCfg.class, RESEARCH_TOKEN).effectValue())
+                .as("本套件按 TOKEN_SECONDS 断每一条减时长，这个数必须就是表里的 effectValue")
+                .isEqualTo(TOKEN_SECONDS);
+    }
+
+    @Test
+    @DisplayName("一张令减 3600 秒：完成时刻与总时长一起往前挪，道具正好扣一个")
+    void speedUpSubtractsExactlyOneTokenWorthOfSeconds() {
+        String playerId = newPlayer();
+        putResearching(playerId, WOOD_TECH, 7200L, 7200L);
+        bag.add(playerId, RESEARCH_TOKEN, 3L);
+        long finishAtBefore = techOf(playerId).finishAt();
+
+        TechSpeedUpResp resp = speedUp(playerId, RESEARCH_TOKEN, 1L);
+        assertThat(resp.techId()).isEqualTo(WOOD_TECH);
+        assertThat(resp.reducedSeconds()).isEqualTo(TOKEN_SECONDS);
+        assertThat(resp.remainingSeconds()).isEqualTo(7200L - TOKEN_SECONDS);
+        assertThat(resp.finished()).as("还剩 3600 秒，不该完成").isFalse();
+
+        PlayerTech after = techOf(playerId);
+        assertThat(after.finishAt()).as("完成时刻精确往前挪一小时")
+                .isEqualTo(finishAtBefore - TOKEN_SECONDS * 1000L);
+        assertThat(after.totalSeconds()).as("总时长一并缩短：进度条靠 startedAt + totalSeconds 画，"
+                + "只挪 finishAt 会让玩家看到一条突然多出来的空档").isEqualTo(7200L - TOKEN_SECONDS);
+        assertThat(after.researchingId()).isEqualTo(WOOD_TECH);
+        assertThat(after.levelOf(WOOD_TECH)).as("没到点，等级一位都不涨").isZero();
+        assertThat(bag.countOf(playerId, RESEARCH_TOKEN)).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("一张 8 小时当量的令去加速只剩 10 秒的研究：减 10 秒、就地结算一级、道具照扣")
+    void oversizedTokenSettlesTheLevelInsideTheSameCall() {
+        String playerId = newPlayer();
+        putResearching(playerId, WOOD_TECH, 20L, 10L);
+        bag.add(playerId, RESEARCH_TOKEN, 1L);
+
+        TechSpeedUpResp resp = speedUp(playerId, RESEARCH_TOKEN, 1L);
+        assertThat(resp.reducedSeconds())
+                .as("报实际提前量而不是名义值：报 3600 就等于让玩家看见一次凭空的 3590 秒损失")
+                .isEqualTo(10L);
+        assertThat(resp.remainingSeconds()).isZero();
+        assertThat(resp.finished()).isTrue();
+
+        PlayerTech after = techOf(playerId);
+        assertThat(after.isResearching()).as("完成即腾空队列，不等下一次读取").isFalse();
+        assertThat(after.levelOf(WOOD_TECH)).as("等级在同一把锁里进账本").isEqualTo(1);
+        assertThat(bag.countOf(playerId, RESEARCH_TOKEN)).as("超出的部分不找零，道具按张扣").isZero();
+    }
+
+    @Test
+    @DisplayName("建造令加速不了研究：效果类型不同，接错域不会报错只会白扣东西")
+    void buildTokenCannotSpeedUpResearch() {
+        String playerId = newPlayer();
+        putResearching(playerId, WOOD_TECH, 7200L, 7200L);
+        bag.add(playerId, BUILD_TOKEN, 1L);
+
+        assertThatThrownBy(() -> speedUp(playerId, BUILD_TOKEN, 1L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("REDUCE_BUILD_SECONDS")
+                .hasMessageContaining("不能加速研究")
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.PARAM_INVALID);
+        assertThat(bag.countOf(playerId, BUILD_TOKEN)).as("被拒绝时不能扣道具").isEqualTo(1L);
+        assertThat(techOf(playerId).totalSeconds()).as("队列状态一位没动").isEqualTo(7200L);
+    }
+
+    @Test
+    @DisplayName("非加速道具走到 /tech/speedUp 是 ITEM_CANNOT_USE，不是 500")
+    void resourceItemCannotSpeedUpResearch() {
+        String playerId = newPlayer();
+        putResearching(playerId, WOOD_TECH, 7200L, 7200L);
+        bag.add(playerId, "item_res_wood_10k", 1L);
+
+        assertThatThrownBy(() -> speedUp(playerId, "item_res_wood_10k", 1L))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.ITEM_CANNOT_USE);
+        assertThat(bag.countOf(playerId, "item_res_wood_10k")).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("队列空着时加速：明确失败，且不因为「先扣道具再发现没东西可加速」而白扣")
+    void speedUpWithoutResearchFails() {
+        String playerId = newPlayer();
+        bag.add(playerId, RESEARCH_TOKEN, 1L);
+
+        assertThatThrownBy(() -> speedUp(playerId, RESEARCH_TOKEN, 1L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("队列空着")
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.TECH_NOT_RESEARCHING);
+        assertThat(bag.countOf(playerId, RESEARCH_TOKEN)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("手里没有令：ITEM_NOT_ENOUGH，队列一秒没减")
+    void speedUpWithoutItemsFails() {
+        String playerId = newPlayer();
+        putResearching(playerId, WOOD_TECH, 7200L, 7200L);
+
+        assertThatThrownBy(() -> speedUp(playerId, RESEARCH_TOKEN, 1L))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.ITEM_NOT_ENOUGH);
+        assertThat(techOf(playerId).totalSeconds()).isEqualTo(7200L);
+    }
+
+    @Test
+    @DisplayName("requestId 幂等：同一个键重投只减一次时长、只扣一张令")
+    void speedUpIsIdempotentOnRequestId() {
+        String playerId = newPlayer();
+        putResearching(playerId, WOOD_TECH, 7200L, 7200L);
+        bag.add(playerId, RESEARCH_TOKEN, 2L);
+
+        String key = requestId();
+        techAppService.speedUp(playerId, new TechSpeedUpReq(key, RESEARCH_TOKEN, 1L));
+        assertThat(bag.countOf(playerId, RESEARCH_TOKEN)).isEqualTo(1L);
+        long totalAfterFirst = techOf(playerId).totalSeconds();
+
+        assertThatThrownBy(() -> techAppService.speedUp(playerId, new TechSpeedUpReq(key, RESEARCH_TOKEN, 1L)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.REQUEST_DUPLICATED);
+        assertThat(bag.countOf(playerId, RESEARCH_TOKEN)).as("弱网重投不该白丢一张付费道具").isEqualTo(1L);
+        assertThat(techOf(playerId).totalSeconds())
+                .as("时长也不该被减两次").isEqualTo(totalAfterFirst);
+    }
+
+    @Test
+    @DisplayName("从背包里用研究令：同一个入口的两条性质 —— 真减到研究队列上、且不因弱网重投白扣一张")
+    void tokenSpentThroughTheBackpackRouteHitsTheQueueAndIsIdempotent() {
+        String playerId = newPlayer();
+        putResearching(playerId, WOOD_TECH, 7200L, 7200L);
+        bag.add(playerId, RESEARCH_TOKEN, 2L);
+
+        String key = requestId();
+        ItemUseResp used = bagAppService.useItem(playerId, new ItemUseReq(key, RESEARCH_TOKEN, 1L, null));
+        assertThat(used.reducedSeconds()).as("背包那条路必须与 /tech/speedUp 同口径").isEqualTo(TOKEN_SECONDS);
+        assertThat(bag.countOf(playerId, RESEARCH_TOKEN)).isEqualTo(1L);
+        long totalAfterFirst = techOf(playerId).totalSeconds();
+        assertThat(totalAfterFirst).isEqualTo(7200L - TOKEN_SECONDS);
+
+        assertThatThrownBy(() -> bagAppService.useItem(playerId, new ItemUseReq(key, RESEARCH_TOKEN, 1L, null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.REQUEST_DUPLICATED);
+        assertThat(bag.countOf(playerId, RESEARCH_TOKEN)).as("重投不该白扣一张付费道具").isEqualTo(1L);
+        assertThat(techOf(playerId).totalSeconds()).as("也不该把时长减两次").isEqualTo(totalAfterFirst);
+    }
+
+    @Test
+    @DisplayName("count 为 0 是参数错：不给一条「不扣道具却走到加速核心」的路")
+    void speedUpWithNonPositiveCountFails() {
+        String playerId = newPlayer();
+        putResearching(playerId, WOOD_TECH, 7200L, 7200L);
+        bag.add(playerId, RESEARCH_TOKEN, 1L);
+
+        assertThatThrownBy(() -> speedUp(playerId, RESEARCH_TOKEN, 0L))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.PARAM_INVALID);
+        assertThat(bag.countOf(playerId, RESEARCH_TOKEN)).isEqualTo(1L);
     }
 
     // ---------- 主线断链的那一环 ----------

@@ -113,6 +113,49 @@ public record PlayerTech(Map<String, Integer> levels, String researchingId, Long
     }
 
     /**
+     * 用加速道具推进当前研究（B20 验收 8）。
+     *
+     * <p><b>减到点就地结算，不留一个「finishAt 已被压到 now」的中间态</b>：那种状态会撞上一条
+     * 构造期不变量（{@code finishAt > startedAt}）—— 而"研究刚开局就甩一张大令"恰恰是最常见的
+     * 一次加速。更实的理由是语义：玩家花道具买的就是「现在就完成」，把这一级留给下一次惰性读取，
+     * 响应里的 {@code finished} 与账本里的等级就对不上了。
+     *
+     * <p><b>超出剩余的部分不退还</b>，与城建加速同一口径（一张 8 小时令加速只剩 10 秒的研究，
+     * 提前 10 秒、道具照扣）：按秒找零要发明一种表里没有的道具单位。
+     * {@code reducedSeconds} 报的是<b>实际</b>提前量，所以界面不会显示成玩家亏了 28790 秒。
+     *
+     * @param reduceSeconds 本次投入的总秒数（调用方按 张数 × 单张 {@code effectValue} 算好）
+     * @throws IllegalStateException    队列空着（那是调用方漏了校验）
+     * @throws IllegalArgumentException 秒数不为正（0 张令不该走到这里）
+     */
+    public SpeedUp speedUp(long reduceSeconds, long now) {
+        if (!isResearching()) {
+            throw new IllegalStateException("队列空着，没有可加速的研究");
+        }
+        if (reduceSeconds <= 0L) {
+            throw new IllegalArgumentException("加速秒数必须为正，实际=" + reduceSeconds);
+        }
+        long remaining = remainingSeconds(now);
+        long applied = Math.min(reduceSeconds, remaining);
+        if (applied >= remaining) {
+            Completion done = completed();
+            return new SpeedUp(done.tech(), applied, true);
+        }
+        // 这一支里 applied < remaining <= totalSeconds，所以 totalSeconds 与 finishAt 都还在
+        // 合法区间内（不会归零、也不会退到 startedAt 之前）—— 上面那条不变量由这个不等式守住
+        return new SpeedUp(new PlayerTech(levels, researchingId, finishAt - applied * 1000L,
+                startedAt, totalSeconds - applied), applied, false);
+    }
+
+    /**
+     * @param tech           加速之后的这一位（完成时已是结算后的账本，队列腾空）
+     * @param reducedSeconds 实际提前的秒数（被剩余时间截断，绝不多报）
+     * @param finished       这一级是否因此完成
+     */
+    public record SpeedUp(PlayerTech tech, long reducedSeconds, boolean finished) {
+    }
+
+    /**
      * 到点就结算：把 {@code researchingId} 记成 +1 级并腾空队列。
      *
      * <p>幂等 —— 没到期或本来就空闲时返回 {@code null}，因此读路径上每一次 {@code /tech/list}
@@ -125,6 +168,11 @@ public record PlayerTech(Map<String, Integer> levels, String researchingId, Long
         if (!isResearching() || finishAt > now) {
             return null;
         }
+        return completed();
+    }
+
+    /** 把当前这一行记成 +1 级并腾空队列。两条到点路径（读时结算、加速到点）共用这一个动作。 */
+    private Completion completed() {
         int nextLevel = levelOf(researchingId) + 1;
         Map<String, Integer> after = new LinkedHashMap<>(levels);
         after.put(researchingId, nextLevel);

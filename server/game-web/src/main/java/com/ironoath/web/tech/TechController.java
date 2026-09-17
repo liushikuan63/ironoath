@@ -9,6 +9,8 @@ import com.ironoath.web.dto.generated.TechCancelResp;
 import com.ironoath.web.dto.generated.TechListView;
 import com.ironoath.web.dto.generated.TechResearchReq;
 import com.ironoath.web.dto.generated.TechResearchResp;
+import com.ironoath.web.dto.generated.TechSpeedUpReq;
+import com.ironoath.web.dto.generated.TechSpeedUpResp;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -17,7 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 职责：个人科技的 HTTP 边界（B20 块①）。三个端点，一一对应 {@link TechAppService} 的三个动作。
+ * 职责：个人科技的 HTTP 边界（B20 块①）。四个端点，一一对应 {@link TechAppService} 的四个动作。
  * 依赖：科技服务；身份头沿用 {@link CityController#PLAYER_HEADER}（B15 接微信登录后一起换，不在这里另立一头）。
  *
  * <p>控制器保持极薄：校验、加锁、幂等、扣资源全在 service 里 —— 那些逻辑必须能在没有 HTTP 的
@@ -58,6 +60,14 @@ public class TechController {
                                         @RequestBody TechCancelReq req) {
         requirePlayer(playerId);
         return Result.ok(techAppService.cancel(playerId, req));
+    }
+
+    /** 用研究加速道具推进当前研究（一次一队列，所以请求里不带 techId）。 */
+    @PostMapping("/speedUp")
+    public Result<TechSpeedUpResp> speedUp(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                           @RequestBody TechSpeedUpReq req) {
+        requirePlayer(playerId);
+        return Result.ok(techAppService.speedUp(playerId, req));
     }
 
     private static void requirePlayer(String playerId) {

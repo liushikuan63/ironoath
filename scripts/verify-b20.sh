@@ -140,6 +140,21 @@ post /tech/cancel "$PID_VAL" "$TMP_DIR/cancel.json" > "$TMP_DIR/cancel.resp"
 check "队列空着时取消 → TECH_NOT_RESEARCHING" \
   "$(field "$TMP_DIR/cancel.resp" code)" "$(code_of TECH_NOT_RESEARCHING)"
 
+cat > "$TMP_DIR/speedup_noreq.json" <<EOF
+{"requestId":"","itemId":"item_speedup_research_1h","count":1}
+EOF
+post /tech/speedUp "$PID_VAL" "$TMP_DIR/speedup_noreq.json" > "$TMP_DIR/speedup_noreq.resp"
+check "加速缺 requestId → REQUEST_ID_MISSING（付费道具的写路径也要有幂等键）" \
+  "$(field "$TMP_DIR/speedup_noreq.resp" code)" "$(code_of REQUEST_ID_MISSING)"
+
+cat > "$TMP_DIR/speedup.json" <<EOF
+{"requestId":"s-$RUN_ID","itemId":"item_not_in_table","count":1}
+EOF
+post /tech/speedUp "$PID_VAL" "$TMP_DIR/speedup.json" > "$TMP_DIR/speedup.resp"
+check "队列空着时加速 → TECH_NOT_RESEARCHING 而不是 ITEM_NOT_FOUND：" \
+"$(field "$TMP_DIR/speedup.resp" code)" "$(code_of TECH_NOT_RESEARCHING)"
+echo "     （这一条判的是校验顺序：队列先判、道具后判，顺序倒了就会先扣一张真道具再报配置不存在）"
+
 echo "-- 5. 任务侧的接线在这个进程里也成立 --"
 QUESTS=$(get /quest/list "$PID_VAL"); echo "$QUESTS" > "$TMP_DIR/quest.resp"
 check "quest_main_08 的 goalType 仍是 RESEARCH_TECH、目标指 tech_agri_wood" "$(node -e "

@@ -91,6 +91,7 @@ public class BagAppService {
     private final RewardService rewardService;
     private final CityAppService cityAppService;
     private final ArmyAppService armyAppService;
+    private final com.ironoath.web.tech.TechAppService techAppService;
     private final ServerSeedSource serverSeeds;
     /** 奖励展示名的唯一实现（以前本类自己有一份，与任务侧那份对碎片的处理不一致）。 */
     private final RewardNames names;
@@ -107,7 +108,9 @@ public class BagAppService {
                          PlayerRepository players, PlayerLock playerLock,
                          IdempotencyStore idempotency, TimeService timeService,
                          RewardService rewardService, CityAppService cityAppService,
-                         ArmyAppService armyAppService, ServerSeedSource serverSeeds,
+                         ArmyAppService armyAppService,
+                         com.ironoath.web.tech.TechAppService techAppService,
+                         ServerSeedSource serverSeeds,
                          RewardNames names) {
         this.configs = configs;
         this.inventories = inventories;
@@ -119,6 +122,7 @@ public class BagAppService {
         this.rewardService = rewardService;
         this.cityAppService = cityAppService;
         this.armyAppService = armyAppService;
+        this.techAppService = techAppService;
         this.serverSeeds = serverSeeds;
         this.names = names;
     }
@@ -198,7 +202,8 @@ public class BagAppService {
     /**
      * 使用道具。行为按类型分派（B04 §4 的表格）：
      * <ul>
-     *   <li>加速类 → 必须给 targetId（当前队列里的建筑），转交城建域应用</li>
+     *   <li>加速类 → 按 {@code effectKind} 转交建造 / 训练 / 研究三个域之一；建造与训练必须给
+     *       targetId（要加速的建筑或兵种），研究一次一队列、不给 targetId</li>
      *   <li>资源类 → 直接发放 count × effectValue，支持一次开 N 个</li>
      *   <li>宝箱 → 拒绝并指向 {@code /item/openBatch}，因为它的产出可能不是资源，
      *       塞不进 ItemUseResp.granted 的类型里</li>
@@ -231,14 +236,14 @@ public class BagAppService {
     }
 
     /**
-     * 加速类道具转交城建域。
-     *
-     * <p>不在本类的锁里做：{@link CityAppService#useSpeedUpItem} 需要自己 load 城建存档，
-     * 而幂等与加锁在这里做一遍、在那里再做一遍会直接冲突（同一个 requestId 不能被占用两次）。
-     * 所以整段委托过去，由城建域负责幂等、锁与落库。
-     */
-    /**
      * 加速类道具按 effectKind 分流到对应的域。
+     *
+     * <p>不在本类的锁里做，也<b>不在这里占幂等键</b>：{@code useItem} 对 SPEEDUP 类在这一步就返回了，
+     * 键由被分流到的那个域占（它才知道自己改了什么）。研究这一路 {@code speedUpByItem} 与训练那一路
+     * {@code ArmyAppService.speedUp} 各自占键；<b>建造那一路 {@code CityAppService.useSpeedUpItem}
+     * 没有占</b> —— 那是 B04 时期的既有形状，症状是弱网重投一次 /item/use 会白扣一张付费建造令。
+     * 本轮不改它（改法要在三个域之外统一占键，而训练那一路已经自己占过一遍，同一个键不能占两次），
+     * 记在收口清单本批次行里。
      *
      * <p><b>分流必须在扣道具之前完成</b>：三个域的扣道具与状态变更是同一段事务，
      * 先扣再发现「这个域不认这种道具」就得退还，多一条失败路径。
@@ -248,9 +253,16 @@ public class BagAppService {
      * 等于把「这张令是加速建造还是加速训练」的判断推给客户端，而它只该读配置。
      */
     private ItemUseResp useSpeedUp(String playerId, ItemUseReq req, ItemCfg item, long now) {
-        if (req.targetId() == null || req.targetId().isBlank()) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
-                    "加速道具 " + item.id() + " 必须指定 targetId（要加速的建筑或兵种 id）");
+        // targetId 要不到由效果决定：建造与训练各自可能有多个对象在跑，研究是「一次一队列」
+        // （B20 §五①），队列里那一项就是被加速的那一项 —— 没有可指的对象。
+        // 两个方向都判而不是只判「缺」：静默吞掉多余的 targetId 会掩盖客户端的路由 bug，
+        // 那种 bug 的表现是「加速了另一个东西」，排查时毫无线索。
+        boolean needsTarget = item.effectKind() != ItemCfg.EffectKind.REDUCE_RESEARCH_SECONDS;
+        boolean hasTarget = req.targetId() != null && !req.targetId().isBlank();
+        if (needsTarget != hasTarget) {
+            throw new BizException(ErrorCode.PARAM_INVALID, needsTarget
+                    ? "加速道具 " + item.id() + " 必须指定 targetId（要加速的建筑或兵种 id）"
+                    : "研究加速不需要 targetId（一次一队列，队列里那一项就是被加速的那一项）");
         }
         long reduced = switch (item.effectKind()) {
             case REDUCE_BUILD_SECONDS -> cityAppService.useSpeedUpItem(
@@ -261,8 +273,8 @@ public class BagAppService {
             case REDUCE_TRAIN_SECONDS -> armyAppService.speedUp(playerId,
                     new com.ironoath.web.dto.generated.ArmyUnitReq(
                             req.requestId(), req.targetId(), null, item.id())).reducedSeconds();
-            case REDUCE_RESEARCH_SECONDS -> throw new BizException(ErrorCode.NOT_IMPLEMENTED,
-                    "研究加速属 B12 科技系统，尚未开放");
+            case REDUCE_RESEARCH_SECONDS -> techAppService
+                    .speedUpByItem(playerId, req.requestId(), item.id(), req.count()).reducedSeconds();
             default -> throw new BizException(ErrorCode.ITEM_CANNOT_USE,
                     "道具 " + item.id() + " 标记为加速类但效果是 " + item.effectKind()
                             + "，配置不一致（应为 REDUCE_*_SECONDS 之一）");

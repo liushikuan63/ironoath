@@ -50,6 +50,17 @@
       "why": "训练加速比建造贵 5 金：兵力恢复直接改变 PVP 战力。"
     },
     {
+      "id": "shop_speedup_research_1h",
+      "name": "一小时研究令",
+      "itemId": "item_speedup_research_1h",
+      "priceCurrency": "GOLD",
+      "price": 50,
+      "limitCount": 20,
+      "refreshType": "DAILY",
+      "requireMainLevel": 0,
+      "why": "#46 曾把它下架，理由是「挂在金币货架上卖了必失败，因为没有任何东西可加速」—— B20 验收 8 做完后那个理由不再成立，于是重上架。三张一小时令里它最贵（建造 40 / 训练 45 / 研究 50），因为研究是全游戏最长的一条线：#152 量出来最慢的一步要 2.28 天，同样一小时在这条线上买到的东西最多。日限购 20 与另两张一致，属 designNote 里「加速道具 40~50 金且日限购 20」那一档。"
+    },
+    {
       "id": "shop_res_wood_10k",
       "name": "木材箱(1万)",
       "itemId": "item_res_wood_10k",

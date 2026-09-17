@@ -168,3 +168,29 @@ export interface TechCancelResp {
   /** 返还的资源。比例与城建一致（`city_rule.city_rule_cancel_refund_ratio`，现值 0.60）—— B20 §一 明写「取消返还（比例与城建一致）」，两处各配一个数字迟早会让玩家问「为什么取消建造返 60% 取消研究返 40%」。 */
   refund: ResourceAmount[]
 }
+
+/**
+ * 用研究加速道具推进当前研究（B20 验收 8：`item_speedup_research_1h`，1 小时 = 3600 秒）。
+ */
+export interface TechSpeedUpReq {
+  /** 幂等键。加速是<b>消耗品 + 改状态</b>的双重动作，弱网重投若不去重就是白丢道具。 */
+  requestId: string
+  /** 必须是 `type=SPEEDUP` 且 `effectKind=REDUCE_RESEARCH_SECONDS` 的道具。建造令与训练令走到这里会被拒（与 `CityAppService.speedUpByItem` 同一条：宁可响，也不静默按另一种加速处理）。 */
+  itemId: string
+  /** 用几张。一次多张是有意义的（研究后期一步以天计），与研究令「一张 = effectValue 秒」的定价单位一致。 */
+  count: number
+}
+
+/**
+ * 加速结果。三位各说各的：真扣了多少秒、还剩多少、是否因此研究完。
+ */
+export interface TechSpeedUpResp {
+  /** 被加速的那一行（一次一队列，所以就是队列里那一项）。 */
+  techId: string
+  /** <b>实际</b>提前的秒数：`min(count × 单张效果, 剩余)`。用完一张 8 小时令去加速只剩 10 秒的研究时，reduced 是 10 而不是 28800 —— 面板若显示 28800，玩家就看到了一次凭空的损失。道具仍按张数扣（多出的部分不退还，与城建加速同一口径：买得多是用在别的队列上，不是退款理由）。 */
+  reducedSeconds: number
+  /** 加速后的剩余秒数，绝不为负。 */
+  remainingSeconds: number
+  /** 这一级是否因此完成。<b>为 true 时等级已经在同一把锁内结算进账本</b>（不是「等下次读取再说」）：玩家花道具买的就是「现在就完成」，把它留给下一次惰性读取会让响应与实际状态不一致。 */
+  finished: boolean
+}

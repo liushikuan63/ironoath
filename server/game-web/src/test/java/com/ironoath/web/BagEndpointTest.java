@@ -314,8 +314,8 @@ class BagEndpointTest {
     }
 
     @Test
-    @DisplayName("研究加速仍未开放（B12），且明确拒绝而不是静默按建造加速处理")
-    void researchSpeedUpItemIsNotImplementedYet() {
+    @DisplayName("研究加速道具带上了建筑的 targetId 就拒绝：一次一队列，没有可指的对象")
+    void researchSpeedUpItemRejectsForeignTarget() {
         String playerId = newPlayer();
         giveItems(playerId, "item_speedup_research_1h", 1L);
         CityUpgradeResp upgrade = startUpgrade(playerId, "lumber_camp", 1, 1);
@@ -323,11 +323,27 @@ class BagEndpointTest {
         assertThatThrownBy(() -> bagAppService.useItem(playerId, new ItemUseReq(
                 newRequestId(), "item_speedup_research_1h", 1L, upgrade.buildingId())))
                 .isInstanceOf(BizException.class)
-                .hasMessageContaining("B12")
+                .hasMessageContaining("targetId")
                 .extracting(e -> ((BizException) e).errorCode())
-                .isEqualTo(ErrorCode.NOT_IMPLEMENTED);
+                .isEqualTo(ErrorCode.PARAM_INVALID);
         assertThat(countOf(playerId, "item_speedup_research_1h"))
                 .as("被拒绝时不能扣道具").isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("研究队列空着时用研究令：明确拒绝而不是白扣一张道具")
+    void researchSpeedUpItemNeedsABusyQueue() {
+        String playerId = newPlayer();
+        giveItems(playerId, "item_speedup_research_1h", 1L);
+
+        assertThatThrownBy(() -> bagAppService.useItem(playerId, new ItemUseReq(
+                newRequestId(), "item_speedup_research_1h", 1L, null)))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("队列空着")
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.TECH_NOT_RESEARCHING);
+        assertThat(countOf(playerId, "item_speedup_research_1h"))
+                .as("校验失败不能扣道具").isEqualTo(1L);
     }
 
     @Test

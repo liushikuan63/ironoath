@@ -826,10 +826,10 @@ public class CityAppService {
                     "道具 " + itemId + " 不是加速道具（类型=" + item.type() + "）");
         }
         if (item.effectKind() != ItemCfg.EffectKind.REDUCE_BUILD_SECONDS) {
-            // 训练与研究加速分别属于 B05 与 B12，接口先明确拒绝，不要静默按建造加速处理
+            // 明确拒绝而不是静默按建造加速处理：秒数长得一样，接错域的表现是「扣了研究令却减了建造时间」
             throw new BizException(ErrorCode.NOT_IMPLEMENTED,
-                    "道具 " + itemId + " 的效果类型 " + item.effectKind() + " 尚未开放"
-                            + "（训练加速见 B05、研究加速见 B12）");
+                    "道具 " + itemId + " 的效果类型 " + item.effectKind() + " 不归建造加速"
+                            + "（训练加速走 /item/use、研究加速走 /tech/speedUp 或 /item/use）");
         }
 
         String playerId = ctx.player().playerId();

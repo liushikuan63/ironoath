@@ -87,17 +87,18 @@ class ShopEndpointTest {
     // ---------- 金币页 ----------
 
     @Test
-    @DisplayName("金币货架列出全部 8 行金币商品，价格与限购都来自表；买一单后钱货两讫")
+    @DisplayName("金币货架列出全部 9 行金币商品，价格与限购都来自表；买一单后钱货两讫")
     void goldShelfIsServedFromTheTableAndSettles() throws Exception {
         String playerId = richPlayer();
 
         JsonNode data = okData(perform(get("/shop/list?currency=GOLD").header(PLAYER_HEADER, playerId)));
         assertThat(data.get("currency").asText()).isEqualTo("GOLD");
         assertThat(data.get("open").asBoolean()).isTrue();
-        // 8 而不是 10：下架了两件"用了必失败"的道具（一小时研究加速抛 NOT_IMPLEMENTED，
-        // 两小时集结加成在没有任何表定义它的加成幅度时抛 ITEM_CANNOT_USE）。
-        // 收金币卖一个用了会报错的东西是 B15 的红线，不是待优化的体验问题
-        assertThat(data.get("rows")).hasSize(8);
+        // 9 而不是 10：#46 下架的两件里只回来了一件。一小时研究令回来了（B20 验收 8 做完，
+        // 当初「没有任何东西可加速」的理由不再成立）；两小时集结加成仍不在架上，
+        // 因为**没有任何表定义它的加成幅度** —— 收金币卖一个用了会报错的东西是 B15 的红线，
+        // 不是待优化的体验问题
+        assertThat(data.get("rows")).hasSize(9);
         assertThat(data.get("balance").asLong()).isEqualTo(100_200L);
         JsonNode first = row(data, "shop_speedup_build_1h");
         assertThat(first.get("price").asLong())

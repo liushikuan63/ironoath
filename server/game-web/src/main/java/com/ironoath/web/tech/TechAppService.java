@@ -3,7 +3,9 @@ package com.ironoath.web.tech;
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.num.FixedPoint;
+import com.ironoath.config.ConfigException;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.config.cfg.TechCfg;
 import com.ironoath.core.city.BuildingInstance;
 import com.ironoath.core.city.CityState;
@@ -13,6 +15,7 @@ import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.player.PlayerTech;
 import com.ironoath.core.resource.ResourceIds;
+import com.ironoath.core.reward.RewardPorts;
 import com.ironoath.web.dto.generated.ResourceAmount;
 import com.ironoath.web.dto.generated.ResourceType;
 import com.ironoath.web.dto.generated.TechBlockReason;
@@ -24,6 +27,8 @@ import com.ironoath.web.dto.generated.TechQueueView;
 import com.ironoath.web.dto.generated.TechResearchReq;
 import com.ironoath.web.dto.generated.TechResearchResp;
 import com.ironoath.web.dto.generated.TechSchool;
+import com.ironoath.web.dto.generated.TechSpeedUpReq;
+import com.ironoath.web.dto.generated.TechSpeedUpResp;
 import com.ironoath.web.dto.generated.TechView;
 import com.ironoath.web.service.CityAppService;
 import org.slf4j.Logger;
@@ -36,9 +41,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 职责：个人科技应用服务 —— 列树、开始研究、取消（B20 块①）。
- * 依赖：game-config（tech / curve / building 三张表）、game-core（{@link PlayerTech} 与 {@link Formula}）、
- * 城建服务（加锁 + 分段结算 + 落库的唯一入口）。
+ * 职责：个人科技应用服务 —— 列树、开始研究、取消、加速（B20 块①）。
+ * 依赖：game-config（tech / curve / building / item 四张表）、game-core（{@link PlayerTech} 与 {@link Formula}）、
+ * {@link RewardPorts.Bag}（加速道具的扣减唯一入口）、城建服务（加锁 + 分段结算 + 落库的唯一入口）。
  *
  * <p><b>不自己加锁、不自己 load 存档</b>：与军队同一做法，全部走
  * {@link CityAppService#withSettledCity}。原因有两条，第二条尤其针对科技：
@@ -57,9 +62,8 @@ import java.util.Map;
  * 先回 {@code TECH_QUEUE_BUSY}。要改成多位队列得先有一条裁决与一行真参数，不是在这里改个数字。
  *
  * <p><b>本类没有做的事</b>（各属 B20 的下一步，不在这里半成品地开个头）：
- * 研究加速（要接 {@code REDUCE_RESEARCH_SECONDS} 道具与商店重上架，验收 8）、
- * 四组效果的实际接入（产量/训练/医院/建造，验收 3 —— 那四处今天仍恒为 0，见收口清单 #152 行）、
- * 装备强化与国家科技（块②③）。
+ * 装备强化与国家科技（块②③），以及客户端的科技面板（{@code check-endpoint-paths} 是单向卡口，
+ * 服务端先有端点不算违规）。研究本身四个动作都已落地：列树、开始、取消、加速（验收 8）。
  */
 @Service
 public class TechAppService {
@@ -81,14 +85,17 @@ public class TechAppService {
     private final Formula formula;
     private final CityAppService cityAppService;
     private final IdempotencyStore idempotency;
+    private final RewardPorts.Bag bagPort;
     private final com.ironoath.common.time.TimeService timeService;
 
     public TechAppService(ConfigRegistry configs, Formula formula, CityAppService cityAppService,
-                          IdempotencyStore idempotency, com.ironoath.common.time.TimeService timeService) {
+                          IdempotencyStore idempotency, RewardPorts.Bag bagPort,
+                          com.ironoath.common.time.TimeService timeService) {
         this.configs = configs;
         this.formula = formula;
         this.cityAppService = cityAppService;
         this.idempotency = idempotency;
+        this.bagPort = bagPort;
         this.timeService = timeService;
     }
 
@@ -175,6 +182,126 @@ public class TechAppService {
             LOG.info("取消研究 playerId={} tech={} 返还={}", playerId, cancelled, refund);
             return new TechCancelResp(cancelled, toAmounts(refund));
         }));
+    }
+
+    /**
+     * 用研究加速道具推进当前研究（B20 验收 8 —— {@code item_speedup_research_1h}，#46 闭环的那一件）。
+     *
+     * <p>请求不带 {@code techId}：一次一队列。道具走 {@code /tech/speedUp} 还是 {@code /item/use}
+     * 是同一个动作的两个入口（前者是科技面板上的按钮，后者是背包里的「使用」），两条都落到
+     * {@link #applySpeedUp}，所以减时长的口径只有一处。
+     */
+    public TechSpeedUpResp speedUp(String playerId, TechSpeedUpReq req) {
+        if (req == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请求体不得为空");
+        }
+        String itemId = requireText(req.itemId(), "itemId");
+        return guarded(playerId, req.requestId(), () -> applySpeedUp(playerId, itemId, req.count()));
+    }
+
+    /**
+     * 供 {@code BagAppService} 的 {@code /item/use} 调用：与 {@link #speedUp} 同一个核心、
+     * 同一条幂等纪律，只是请求形状不同（背包那条路带的是道具与张数）。
+     *
+     * <p><b>键必须由本域占，不能指望背包域</b>：{@code BagAppService.useItem} 对 SPEEDUP 类
+     * 在占键之前就 return 了（{@code CityAppService.useSpeedUpItem} 因此也没有去重）。
+     * 症状不是报错而是<b>弱网重投白扣一张付费道具</b>，而这一张是刚重新上架的那件 ——
+     * 训练令那条路恰好相反：{@code ArmyAppService.speedUp} 自己占键，所以背包侧不能提前占，
+     * 否则同一个 requestId 会被 acquire 两次而永久失败。
+     */
+    public TechSpeedUpResp speedUpByItem(String playerId, String requestId, String itemId, long count) {
+        String item = requireText(itemId, "itemId");
+        return guarded(playerId, requestId, () -> applySpeedUp(playerId, item, count));
+    }
+
+    /**
+     * 加速的核心：校验队列 → 校验道具 → 扣道具 → 应用效果。
+     *
+     * <p><b>顺序是「先扣道具再加速」，且加速失败必须退还道具</b> —— 抄 {@code CityAppService.speedUpByItem}
+     * 那条已被论证过的取舍：反过来（先加速再扣）在库存不足时让玩家白拿一次加速，那是能主动刷的漏洞；
+     * 先扣再加速的唯一风险是「扣了但加速失败」，try/catch 退还就能闭合。
+     *
+     * <p><b>道具的持有量校验交给 {@code bagPort.remove} 本身</b>：它是原子的，不足时返回 0 且一个都不扣
+     * （B04 验收 10）。这里不再自己 {@code countOf} 比一遍 —— 那是把同一个判据放两处，
+     * 比对的还是扣减之前的快照。
+     */
+    private TechSpeedUpResp applySpeedUp(String playerId, String itemId, long count) {
+        return cityAppService.withSettledCity(playerId, snap -> {
+            settleDue(snap);
+            PlayerSave player = snap.player();
+            PlayerTech tech = player.tech();
+            if (!tech.isResearching()) {
+                // 队列空着时先把话说明白：不是「道具不能用」，而是「现在没有东西可加速」，
+                // 而这一条必须在扣道具之前判 —— 扣完再拒就得多写一条退还路径去赌异常
+                throw new BizException(ErrorCode.TECH_NOT_RESEARCHING,
+                        "队列空着，没有可加速的研究（先研究一项，或用 /tech/cancel 腾出队列）");
+            }
+            ItemCfg item = requireResearchSpeedUpItem(itemId);
+            if (count <= 0L) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "道具个数必须为正，实际=" + count);
+            }
+            if (bagPort.remove(playerId, itemId, count) == 0L) {
+                throw new BizException(ErrorCode.ITEM_NOT_ENOUGH,
+                        "需要 " + itemId + " " + count + " 个，当前持有 "
+                                + bagPort.countOf(playerId, itemId) + " 个");
+            }
+            PlayerTech.SpeedUp result;
+            try {
+                result = tech.speedUp(item.effectValue() * count, snap.now());
+            } catch (RuntimeException e) {
+                refundItems(playerId, itemId, count);
+                throw e;
+            }
+            player.setTech(result.tech());
+            long remaining = result.tech().remainingSeconds(snap.now());
+            LOG.info("研究加速 playerId={} tech={} item={} 个数={} 提前={}秒 剩余={}秒 是否完成={}",
+                    playerId, tech.researchingId(), itemId, count, result.reducedSeconds(), remaining,
+                    result.finished());
+            return new TechSpeedUpResp(tech.researchingId(), result.reducedSeconds(), remaining,
+                    result.finished());
+        });
+    }
+
+    /**
+     * 只认「加速类 + 减研究秒数」这一种道具。
+     *
+     * <p>两种错位分开报：类型不对（拿资源箱去加速）是 {@code ITEM_CANNOT_USE}，
+     * 类型对但效果是建造/训练（拿建造令去加速研究）是 {@code PARAM_INVALID} 并点名它属于哪个域 ——
+     * 建造令与研究令的 effectValue 都是秒数，<b>静默按另一种加速处理不会报错，只会让玩家以为</b>
+     * 「我扣了一张建造令却减了研究时间」，那正是 {@code CityAppService} 那句拒绝要挡的事。
+     */
+    private ItemCfg requireResearchSpeedUpItem(String itemId) {
+        ItemCfg item;
+        try {
+            item = configs.get(ItemCfg.class, itemId);
+        } catch (ConfigException e) {
+            throw new BizException(ErrorCode.ITEM_NOT_FOUND, "道具配置不存在: " + itemId);
+        }
+        if (item.type() != ItemCfg.Type.SPEEDUP) {
+            throw new BizException(ErrorCode.ITEM_CANNOT_USE,
+                    "道具 " + itemId + " 不是加速道具（类型=" + item.type() + "）");
+        }
+        if (item.effectKind() != ItemCfg.EffectKind.REDUCE_RESEARCH_SECONDS) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "道具 " + itemId + " 的效果类型是 " + item.effectKind() + "，不能加速研究"
+                            + "（建造令走 /city/speedUp、训练令走 /item/use）");
+        }
+        return item;
+    }
+
+    /**
+     * 加速失败时把道具还给玩家。
+     *
+     * <p>退还不足必须留 error 日志：那说明玩家真的丢了道具，而这一位没有任何别的记录能把它找回来。
+     */
+    private void refundItems(String playerId, String itemId, long count) {
+        long back = bagPort.add(playerId, itemId, count);
+        if (back < count) {
+            LOG.error("【研究加速道具退还失败】playerId={} item={} 应退={} 实退={} traceId={} "
+                            + "退还不足说明玩家真的丢了道具，必须人工补偿",
+                    playerId, itemId, count, back,
+                    com.ironoath.common.log.TraceContext.traceId());
+        }
     }
 
     // ---------- 结算 ----------

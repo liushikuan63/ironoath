@@ -151,6 +151,68 @@ class PlayerTechTest {
     }
 
     @Test
+    @DisplayName("加速：完成时刻与总时长一起往前挪同样多的秒数，账本一位不动")
+    void speedUpMovesTheFinishMomentBackByExactlyWhatItClaims() {
+        PlayerTech busy = new PlayerTech(Map.of("tech_mil_atk", 3), "tech_agri_wood",
+                T0 + 7_200_000L, T0, 7_200L);
+
+        PlayerTech.SpeedUp one = busy.speedUp(3_600L, T0);
+        assertThat(one.reducedSeconds()).isEqualTo(3_600L);
+        assertThat(one.finished()).as("还剩 3600 秒").isFalse();
+        assertThat(one.tech().finishAt()).isEqualTo(T0 + 3_600_000L);
+        assertThat(one.tech().totalSeconds()).isEqualTo(3_600L);
+        assertThat(one.tech().startedAt()).as("开始时刻不改：它记的是「什么时候开始的」").isEqualTo(T0);
+        assertThat(one.tech().finishAt() - one.tech().startedAt())
+                .as("不变量 startedAt + totalSeconds×1000 == finishAt：进度条与剩余时间靠同一个式子，"
+                        + "只挪一位会让客户端画出一条对不上的进度")
+                .isEqualTo(one.tech().totalSeconds() * 1000L);
+        assertThat(one.tech().levelOf("tech_mil_atk")).isEqualTo(3);
+        assertThat(one.tech().levelOf("tech_agri_wood")).as("没到点不该涨级").isZero();
+    }
+
+    @Test
+    @DisplayName("一张大令加速只剩 10 秒的研究：减 10 秒而不是 3600 秒，并且就地结算一级")
+    void oversizedTokenTruncatesAndSettlesInTheSameCall() {
+        PlayerTech busy = new PlayerTech(Map.of(), "tech_agri_wood", T0 + 10_000L, T0, 20L);
+
+        PlayerTech.SpeedUp result = busy.speedUp(3_600L, T0);
+        assertThat(result.reducedSeconds()).as("报实际提前量：多出来的 3590 秒不存在，不能报出来").isEqualTo(10L);
+        assertThat(result.finished()).isTrue();
+        assertThat(result.tech().isResearching()).as("就地结算，不留给下一次读取").isFalse();
+        assertThat(result.tech().levelOf("tech_agri_wood")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("不足一秒的尾巴按 ceil 记（剩 10.5 秒报减 11 秒），但绝不落进一个 finishAt==now 的研究中态")
+    void subSecondRemainderStillSettlesInsteadOfBreakingTheInvariant() {
+        // 这条是「为什么完成要就地结算」的唯一机器化表达：如果 speedUp 先构造一个
+        // finishAt = T0 的研究中态再结算，构造期的 finishAt > startedAt 会当场抛，
+        // 症状是「研究刚开局甩一张大令就 500」。
+        PlayerTech busy = new PlayerTech(Map.of(), "tech_agri_wood", T0 + 10_500L, T0, 20L);
+        assertThat(busy.remainingSeconds(T0)).as("10.5 秒向上取整成 11（不足一秒不能显示成已完成）").isEqualTo(11L);
+
+        PlayerTech.SpeedUp result = busy.speedUp(3_600L, T0);
+        assertThat(result.reducedSeconds()).isEqualTo(11L);
+        assertThat(result.finished()).isTrue();
+        assertThat(result.tech().levelOf("tech_agri_wood")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("加速的两条拒绝：队列空着、秒数不为正（那是调用方漏了校验，不是玩家的错）")
+    void speedUpRefusesIdleQueueAndNonPositiveSeconds() {
+        assertThatThrownBy(() -> PlayerTech.empty().speedUp(3_600L, T0))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("队列空着");
+
+        PlayerTech busy = new PlayerTech(Map.of(), "tech_agri_wood", T0 + 13_000L, T0, 13L);
+        assertThatThrownBy(() -> busy.speedUp(0L, T0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("必须为正");
+        assertThatThrownBy(() -> busy.speedUp(-5L, T0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("账本是只读副本：拿到存档外面改不动它")
     void ledgerIsImmutable() {
         PlayerTech one = new PlayerTech(Map.of("tech_agri_wood", 2), null, null, 0L, 0L);
