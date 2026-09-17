@@ -851,6 +851,11 @@ public class SocialAppService {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 Alliance alliance = requireAllianceOf(playerId);
                 long expectedAllianceVersion = alliance.version();
+                // 这一格查的是 perm_alliance_donate（三档都给 ⇒ 今天拦不住任何人）。
+                // 既然现在拦不住，为什么还要查：**这张表是权限的唯一来源**，不查它的后果是
+                // "哪天把 allowMember 改成 false，捐献照旧对所有人开放"，改表的人完全看不出没生效。
+                // 放在取档位与查钱之前：没权限的人不该先被告知"你金币不够"
+                requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "DONATE");
                 Alliance.DonateTier tier = Alliance.donateTierOf(alliance.rules(), req.tier());
                 String reason = "联盟捐献 档位" + req.tier();
                 long goldBalance = balanceOf(playerId, GOLD_RESOURCE_ID, now);

@@ -381,6 +381,26 @@ class SocialEndpointTest {
     }
 
     @Test
+    @DisplayName("普通成员也能捐献：DONATE 权限位三档都给，刚接上的检查不许把人拦在外面")
+    void memberCanDonateUnderThePermissionBit() throws Exception {
+        String boss = newPlayer(10);
+        String allianceId = post200("/alliance/create", boss,
+                new AllianceCreateReq(newRequestId(), "成员捐献盟", "MDO"))
+                .get("alliance").get("id").asText();
+        String member = newPlayer(10);
+        post200("/alliance/apply", member, new AllianceIdReq(newRequestId(), allianceId));
+        post200("/alliance/review", boss, new AllianceReviewReq(newRequestId(), member, true));
+
+        // 先钉身份再钉行为：这条用例的全部意义是"MEMBER 这一档过得去"，
+        // 如果夹具不小心用盟主捐的，那它测的就是上一条例子的事
+        assertThat(get200("/social/summary", member).get("alliance").get("myRole").asText())
+                .isEqualTo("MEMBER");
+        JsonNode resp = post200("/alliance/donate", member, new AllianceDonateReq(newRequestId(), 0));
+        assertThat(resp.get("contributionGained").asLong())
+                .as("成员捐献要真的入账，而不是被权限位误拦").isPositive();
+    }
+
+    @Test
     @DisplayName("每日捐献档数用完后被拒，错误码是「档位已用完」而不是笼统的失败")
     void donateDailyCapIsEnforced() throws Exception {
         String leader = newPlayer(10);
