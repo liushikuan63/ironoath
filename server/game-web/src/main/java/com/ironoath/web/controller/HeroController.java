@@ -91,7 +91,12 @@ public class HeroController {
         return Result.ok(heroAppService.skillUp(playerId, req));
     }
 
-    /** 装备线：穿或卸（B06 §2.5）。equipId 为 null 表示卸下，卸下的装备回到背包。 */
+    /**
+     * 装备线：穿或卸（B06 §2.5）。equipUid 为 null 表示卸下。
+     *
+     * <p><b>"回到背包"这句已从语义里去掉</b>（B20 §五⑤）：装备是按件的实例，
+     * 穿上只是翻 worn 标志，实例一直在背包的账本里；卸下也只是翻回来并占回那一格。
+     */
     @PostMapping("/equip")
     public Result<HeroGrowResp> equip(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
                                       @RequestBody HeroEquipReq req) {

@@ -1,5 +1,6 @@
 package com.ironoath.web.service;
 
+import com.ironoath.common.num.FixedPoint;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.EquipCfg;
 import com.ironoath.config.cfg.EquipSetCfg;
@@ -115,19 +116,22 @@ public class HeroStatsService {
      * 那种分叉的症状是玩家说"我明明 +5 了"，而日志里每一处都是对的。
      */
     public HeroAttrs equipFlat(EquipLedger equips, HeroInstance instance) {
-        long might = 0L;
-        long command = 0L;
-        long wisdom = 0L;
+        long mightFixed = 0L;
+        long commandFixed = 0L;
+        long wisdomFixed = 0L;
         for (String slotValue : instance.equips().values()) {
             EquipLedger.Resolved resolved = equips.resolve(slotValue);
             if (resolved == null) {
                 continue;
             }
-            might += resolved.might();
-            command += resolved.command();
-            wisdom += resolved.wisdom();
+            mightFixed += resolved.mightFixed();
+            commandFixed += resolved.commandFixed();
+            wisdomFixed += resolved.wisdomFixed();
         }
-        return HeroAttrs.of(might, command, wisdom);
+        // 四件的定点值先全加起来，最后只落地一次、向下取整：
+        // 每件各舍一次的话，"取整的位置"就决定了玩家亏多少 —— 而那笔钱是他付过的
+        return HeroAttrs.of(FixedPoint.truncate(mightFixed),
+                FixedPoint.truncate(commandFixed), FixedPoint.truncate(wisdomFixed));
     }
 
     /**

@@ -21,7 +21,7 @@ import java.util.Map;
  * 收成一份快照之后：读一次、判一次、传给需要它的算式，调用处再也不会自己查存储。
  *
  * <p><b>强化等级在这里生效，且只在这里生效</b>：
- * 每级 = 该行三维各 +{@code global.EQUIP_FORGE_ATTR_GAIN}（5%），定点乘算后向下取整一次。
+ * 每级 = 该行三维各 +{@code global.EQUIP_FORGE_ATTR_GAIN}（5%），乘算全程走定点，**不在这里落地成整数** —— 取整只发生一次，位置见 HeroStatsService.equipFlat。
  * 取整放在最后而不是每维各取一次，是为了让「+3 的三围装」不会因为三次独立舍入而少给一截；
  * 向下（而不是四舍五入）是因为属性会进战力，向上取整等于凭空多给。
  *
@@ -43,13 +43,16 @@ public final class EquipLedger {
     private static final Logger LOG = LoggerFactory.getLogger(EquipLedger.class);
 
     /**
-     * 一件装备此刻的属性。
+     * 一件装备此刻的属性，<b>定点万分比</b>（12 点 = 120000）。
+     *
+     * <p>刻意不落成整数：一件 12 点武力的铁剑 +1 是 12.6，在这里取整就变成 12 ——
+     * 玩家花 840 铁买到的答案是"一点没动"，而四件各舍一次还会凭空少给近 2 点。
      *
      * @param equipId    配置行 id（套装件数统计要按它查 {@code setId}）
      * @param forgeLevel 强化等级，老存档路径恒为 0
      */
     public record Resolved(String equipId, int forgeLevel,
-                           long might, long command, long wisdom) {
+                           long mightFixed, long commandFixed, long wisdomFixed) {
     }
 
     private final Map<String, Resolved> byUid;
@@ -131,17 +134,15 @@ public final class EquipLedger {
             return null;
         }
         if (forgeLevel == 0) {
-            return new Resolved(equipId, 0, row.might(), row.command(), row.wisdom());
+            return new Resolved(equipId, 0, FixedPoint.of(row.might()),
+                    FixedPoint.of(row.command()), FixedPoint.of(row.wisdom()));
         }
-        // 1 + 5% × 等级：先加一，再乘等级数，最后一次性落地成整数属性
+        // 1 + 5% × 等级：先加一，再乘等级数，全程定点
         long factor = FixedPoint.ONE + FixedPoint.mul(
                 FixedPoint.of((long) forgeLevel), gainPerLevelFixed);
         return new Resolved(equipId, forgeLevel,
-                multiply(row.might(), factor), multiply(row.command(), factor),
-                multiply(row.wisdom(), factor));
-    }
-
-    private static long multiply(long attribute, long factorFixed) {
-        return FixedPoint.truncate(FixedPoint.mul(FixedPoint.of(attribute), factorFixed));
+                FixedPoint.mul(FixedPoint.of(row.might()), factor),
+                FixedPoint.mul(FixedPoint.of(row.command()), factor),
+                FixedPoint.mul(FixedPoint.of(row.wisdom()), factor));
     }
 }

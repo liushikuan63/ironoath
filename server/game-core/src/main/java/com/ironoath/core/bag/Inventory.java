@@ -317,6 +317,35 @@ public final class Inventory {
         return null;
     }
 
+    /**
+     * 把某一件的强化等级抬一级（B20 §五②：纯消耗、必成，所以这里没有成功率与保底）。
+     *
+     * <p><b>上限由调用方传进来</b>（{@code equip.json.forgeMax}）：本层不读配置，与堆叠上限同一条分工。
+     *
+     * <p><b>到上限是抛而不是静默返回</b>：返回旧值的话，调用方"扣了钱、等级没动"这件事
+     * 在日志里看起来完全正常，而玩家看见的是铁花了 +7 还是 +7。
+     *
+     * @return 抬级之后的那一件
+     * @throws IllegalArgumentException uid 不存在，或已到 {@code forgeMax}
+     */
+    public EquipInstance forge(String uid, int forgeMax) {
+        EquipInstance instance = equips.get(uid);
+        if (instance == null) {
+            throw new IllegalArgumentException("装备实例不存在，无法强化：uid=" + uid);
+        }
+        if (forgeMax < 1) {
+            throw new IllegalArgumentException("forgeMax 必须为正，实际=" + forgeMax);
+        }
+        if (instance.forgeLevel() >= forgeMax) {
+            throw new IllegalArgumentException("装备 " + instance.equipId() + "（uid=" + uid
+                    + "）已到强化上限 " + forgeMax + " 级，不能再抬");
+        }
+        EquipInstance forged = new EquipInstance(instance.uid(), instance.equipId(),
+                instance.forgeLevel() + 1, instance.worn());
+        equips.put(uid, forged);
+        return forged;
+    }
+
     // ---------- uid 的形状（迁移判定靠它，见 isInstanceUid） ----------
 
     /**

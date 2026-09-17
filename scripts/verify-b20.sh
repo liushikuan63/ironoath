@@ -178,6 +178,38 @@ check "POST /nation/tech/research 无国家 → 同一枚码（先定位国家�
 check "对照组：/nation/tech/nope-not-an-endpoint 必须 404" \
   "$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/nation/tech/nope-not-an-endpoint" -H "X-Player-Id: $PID_VAL")" "404"
 
+echo "-- 7. 装备实例与强化（块② S3）：两个新端点存在，而参数与幂等的门在前 --"
+# 正向链路（真的强化一件）在这个进程里做不到：**全仓库没有一张表发放装备**（#165 ⑥），
+# 新号既没有装备也没有跳门槛的后门。所以这里判的是"门在不在对的位置"，
+# 扣铁 / 抬级 / 到上限拒绝那三条在 EquipForgeEndpointTest 里真跑。
+get /equip/instances "$PID_VAL" > "$TMP_DIR/einst.resp"
+check "GET /equip/instances 通（新号实例为空数组而不是 null / 500）" "$(node -e "
+const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
+console.log(d.code===0 && Array.isArray(d.data.instances) && d.data.instances.length===0 ? 'ok' : 'bad:'+d.code);
+" "$TMP_DIR/einst.resp")" "ok"
+
+cat > "$TMP_DIR/eforge.json" <<EOF
+{"requestId":"ef-$RUN_ID","equipUid":"eq_iron_sword"}
+EOF
+post /equip/forge "$PID_VAL" "$TMP_DIR/eforge.json" > "$TMP_DIR/eforge.resp"
+check "传配置行 id 强化 → PARAM_INVALID（强化必须有「是哪一件」的答案）" \
+  "$(field "$TMP_DIR/eforge.resp" code)" "$(code_of PARAM_INVALID)"
+check "错误信息里指明了去哪拿 uid（GET /equip/instances）" "$(node -e "
+const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
+const t=(d.detail||'')+(d.msg||'');
+console.log(t.includes('/equip/instances') ? 'ok' : 'missing:'+t);
+" "$TMP_DIR/eforge.resp")" "ok"
+
+cat > "$TMP_DIR/eforge2.json" <<EOF
+{"equipUid":"e1"}
+EOF
+post /equip/forge "$PID_VAL" "$TMP_DIR/eforge2.json" > "$TMP_DIR/eforge3.resp"
+check "强化不带 requestId → REQUEST_ID_MISSING（花钱动作不许有无去重的那条路）" \
+  "$(field "$TMP_DIR/eforge3.resp" code)" "$(code_of REQUEST_ID_MISSING)"
+
+check "对照组：/equip/nope-not-an-endpoint 必须 404" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/equip/nope-not-an-endpoint" -H "X-Player-Id: $PID_VAL")" "404"
+
 echo
 echo "=== 结果：PASS=$PASS FAIL=$FAIL ==="
 [ "$FAIL" -eq 0 ] || exit 1
