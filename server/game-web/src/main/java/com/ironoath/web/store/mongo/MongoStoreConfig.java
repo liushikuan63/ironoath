@@ -54,9 +54,10 @@ public class MongoStoreConfig {
      * 两个都补上之后，{@code -Dspring-boot.run.profiles=dev,mongo} 才第一次有可能起得来。
      */
     @Bean
-    public com.ironoath.core.bag.InventoryRepository inventoryRepository(MongoTemplate mongo) {
+    public com.ironoath.core.bag.InventoryRepository inventoryRepository(
+            MongoTemplate mongo, com.ironoath.config.ConfigRegistry configs) {
         LOG.info("使用 MongoDB 背包存储");
-        return new MongoInventoryStore(mongo);
+        return new MongoInventoryStore(mongo, configs);
     }
 
     /** 武将存档（养成 + 编队）。契约见 {@code MongoHeroStoreContractTest}。 */

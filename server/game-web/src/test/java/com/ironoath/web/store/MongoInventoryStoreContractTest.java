@@ -40,13 +40,30 @@ class MongoInventoryStoreContractTest extends VersionedStoreContractTest<Invento
         }
     }
 
+    /**
+     * 背包存储现在读一次配置表（哪些 itemId 是"按件持有"的装备 —— 老档迁移的判据）。
+     * 这里现取真表而不是造一份桩：本类的四条契约与"读回来的实例账本对不对"共用同一套夹具，
+     * 桩表会让"迁移只在读档那一步发生"这件事在这里测不到。
+     */
+    private static com.ironoath.config.ConfigRegistry configs() {
+        java.nio.file.Path dir = java.nio.file.Path.of("").toAbsolutePath();
+        while (dir != null) {
+            java.nio.file.Path candidate = dir.resolve("contract/config");
+            if (java.nio.file.Files.isDirectory(candidate)) {
+                return com.ironoath.config.ConfigRegistry.loadFromDirectory(candidate);
+            }
+            dir = dir.getParent();
+        }
+        throw new IllegalStateException("找不到 contract/config 目录");
+    }
+
     @Override protected String storeName() {
         return "MongoInventoryStore";
     }
 
     @Override protected void freshStore() {
         requireMongo();
-        store = new MongoInventoryStore(db.template());
+        store = new MongoInventoryStore(db.template(), configs());
         playerId = "P-bag-" + SEQ.incrementAndGet();
     }
 

@@ -315,7 +315,7 @@ public class MonsterBattleService {
 
         // 三、造双方军队
         HeroRoster roster = heroes.findByPlayerId(playerId).orElseGet(HeroRoster::new);
-        List<HeroSnapshot> heroSnapshots = heroMapper.snapshots(march.heroes(), roster);
+        List<HeroSnapshot> heroSnapshots = heroMapper.snapshots(playerId, march.heroes(), roster);
         CityState city = cities.findByPlayerId(playerId).orElse(null);
         long hospitalCapacity = city == null ? 0L : armyAppService.hospitalCapacity(playerId, city);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(march.units());

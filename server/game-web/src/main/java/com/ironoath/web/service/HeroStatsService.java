@@ -1,17 +1,16 @@
 package com.ironoath.web.service;
 
-import com.ironoath.common.num.FixedPoint;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.EquipCfg;
 import com.ironoath.config.cfg.EquipSetCfg;
 import com.ironoath.config.cfg.HeroCfg;
-import com.ironoath.core.hero.EquipSlot;
 import com.ironoath.core.hero.HeroAttrs;
 import com.ironoath.core.hero.HeroCalculator;
 import com.ironoath.core.hero.HeroInstance;
 import com.ironoath.core.hero.HeroRules;
 import com.ironoath.core.hero.Lineup;
 import com.ironoath.core.hero.HeroRoster;
+import com.ironoath.web.hero.EquipLedger;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -87,33 +86,46 @@ public class HeroStatsService {
         return itemId;
     }
 
-    /** 一名武将的养成后三维属性（含装备固定值）。 */
-    public HeroAttrs finalAttrs(HeroInstance instance) {
+    /**
+     * 一名武将的养成后三维属性（含装备固定值）。
+     *
+     * @param equips 这个玩家的装备快照，见 {@link EquipLedger}（"读一次、判一次"的那个一次）
+     */
+    public HeroAttrs finalAttrs(EquipLedger equips, HeroInstance instance) {
         HeroCfg cfg = heroCfg(instance.heroId());
         HeroAttrs base = HeroAttrs.of(cfg.might(), cfg.command(), cfg.wisdom());
         return HeroCalculator.finalAttrs(base, cfg.growthRate(),
                 instance.level(), instance.star(), instance.awaken(),
-                equipFlat(instance), rules());
+                equipFlat(equips, instance), rules());
     }
 
     /** 一名武将的战力。 */
-    public long power(HeroInstance instance) {
+    public long power(EquipLedger equips, HeroInstance instance) {
         HeroCfg cfg = heroCfg(instance.heroId());
         return HeroCalculator.power(HeroAttrs.of(cfg.might(), cfg.command(), cfg.wisdom()),
                 cfg.growthRate(), instance.level(), instance.star(), instance.awaken(),
-                equipFlat(instance), rules());
+                equipFlat(equips, instance), rules());
     }
 
-    /** 四件装备的固定值之和。空槽与不存在的装备按 0 计。 */
-    public HeroAttrs equipFlat(HeroInstance instance) {
+    /**
+     * 四件装备的固定值之和 —— <b>含每件的强化等级</b>（B20 §五②：每级 +5% 本行三维）。
+     *
+     * <p>空槽与解析不到的小结（悬空 uid）按 0 计。这里<b>不查配置表</b>：从 uid 到属性这条链
+     * 只有一个家（{@link EquipLedger}），否则「面板显示的等级」与「算进属性的等级」会分别长在两处 ——
+     * 那种分叉的症状是玩家说"我明明 +5 了"，而日志里每一处都是对的。
+     */
+    public HeroAttrs equipFlat(EquipLedger equips, HeroInstance instance) {
         long might = 0L;
         long command = 0L;
         long wisdom = 0L;
-        for (Map.Entry<EquipSlot, String> entry : instance.equips().entrySet()) {
-            EquipCfg equip = configs.get(EquipCfg.class, entry.getValue());
-            might += equip.might();
-            command += equip.command();
-            wisdom += equip.wisdom();
+        for (String slotValue : instance.equips().values()) {
+            EquipLedger.Resolved resolved = equips.resolve(slotValue);
+            if (resolved == null) {
+                continue;
+            }
+            might += resolved.might();
+            command += resolved.command();
+            wisdom += resolved.wisdom();
         }
         return HeroAttrs.of(might, command, wisdom);
     }
@@ -124,13 +136,20 @@ public class HeroStatsService {
      * <p>件数按<b>整支队伍</b>统计而不是按单个武将：套装是队伍级的效果，
      * 否则「四个人各穿一件」永远凑不齐，而队伍只有三个武将位、每人四个槽，
      * 按人算的话 4 件套要求一个人穿满同一套 —— 那会让混搭成为唯一选择。
+     *
+     * <p><b>件数按 {@code equipId} 而不是按 {@code uid} 统计</b>：两件同样的破军甲是 2 件破军，
+     * 而它们是两个实例。套装看的是"穿的是哪一行"，强化看的才是"是哪一件"。
      */
-    public long[] equipSetBonuses(Lineup lineup, HeroRoster roster) {
+    public long[] equipSetBonuses(EquipLedger equips, Lineup lineup, HeroRoster roster) {
         Map<String, Integer> pieces = new LinkedHashMap<>();
         for (String heroId : lineup.members()) {
             HeroInstance instance = roster.hero(heroId);
-            for (String equipId : instance.equips().values()) {
-                EquipCfg equip = configs.get(EquipCfg.class, equipId);
+            for (String slotValue : instance.equips().values()) {
+                EquipLedger.Resolved resolved = equips.resolve(slotValue);
+                if (resolved == null) {
+                    continue;
+                }
+                EquipCfg equip = configs.get(EquipCfg.class, resolved.equipId());
                 if (equip.setId() != null) {
                     pieces.merge(equip.setId(), 1, Integer::sum);
                 }
@@ -174,18 +193,18 @@ public class HeroStatsService {
     }
 
     /** 一套编队的完整加成与统帅值。 */
-    public HeroCalculator.TeamBonus teamBonus(Lineup lineup, HeroRoster roster) {
+    public HeroCalculator.TeamBonus teamBonus(EquipLedger equips, Lineup lineup, HeroRoster roster) {
         HeroAttrs main = null;
         List<HeroAttrs> subs = new ArrayList<>();
         if (lineup.isFormed()) {
             // 不再自己写 lineup.main() != null —— "算不算成形"这条规则住在 Lineup.isFormed() 里，
             // 定义哪天收紧（例如要求副将也到位），这里跟着走而不是按旧口径静默算加成
-            main = finalAttrs(roster.hero(lineup.main()));
+            main = finalAttrs(equips, roster.hero(lineup.main()));
         }
         for (String subId : lineup.subs()) {
-            subs.add(subId == null ? null : finalAttrs(roster.hero(subId)));
+            subs.add(subId == null ? null : finalAttrs(equips, roster.hero(subId)));
         }
-        long[] sets = equipSetBonuses(lineup, roster);
+        long[] sets = equipSetBonuses(equips, lineup, roster);
         int bonds = roster.activeBonds(lineup, bondLookup());
         return HeroCalculator.teamBonus(main, subs, sets[0], sets[1], sets[2], bonds, rules());
     }
@@ -201,8 +220,8 @@ public class HeroStatsService {
      *
      * @param presetIndex 用哪套预设；不指定时用第 0 套
      */
-    public long troopCap(HeroRoster roster, int presetIndex) {
+    public long troopCap(EquipLedger equips, HeroRoster roster, int presetIndex) {
         Lineup lineup = roster.lineup(presetIndex, rules());
-        return HeroCalculator.troopCap(teamBonus(lineup, roster).commandValue(), rules());
+        return HeroCalculator.troopCap(teamBonus(equips, lineup, roster).commandValue(), rules());
     }
 }

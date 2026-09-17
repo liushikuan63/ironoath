@@ -10,6 +10,8 @@ import com.ironoath.core.city.CityState;
 import com.ironoath.core.formula.Formula;
 import com.ironoath.core.hero.HeroInstance;
 import com.ironoath.core.hero.HeroRoster;
+import com.ironoath.web.hero.EquipLedger;
+import com.ironoath.web.hero.EquipLedgers;
 import com.ironoath.core.hero.Lineup;
 import com.ironoath.core.power.PowerBandGuard;
 import com.ironoath.core.power.PowerCalculator;
@@ -37,10 +39,13 @@ public class PowerService {
 
     private final ConfigRegistry configs;
     private final HeroStatsService heroStats;
+    private final EquipLedgers equipLedgers;
 
-    public PowerService(ConfigRegistry configs, HeroStatsService heroStats) {
+    public PowerService(ConfigRegistry configs, HeroStatsService heroStats,
+                        EquipLedgers equipLedgers) {
         this.configs = configs;
         this.heroStats = heroStats;
+        this.equipLedgers = equipLedgers;
     }
 
     /** 圈层规则（区间 [0.5x, 2.0x]，集结按 √N 放宽）。 */
@@ -144,16 +149,19 @@ public class PowerService {
      * @param storedPeak        存档里的历史峰值
      * @param daysSincePeakTouch 距上次刷新峰值的天数（惰性衰减，不跑定时器）
      */
-    public PowerCalculator.Result powerOf(CityState city, ArmyState army, HeroRoster roster,
-                                          long storedPeak, int daysSincePeakTouch) {
+    public PowerCalculator.Result powerOf(String playerId, CityState city, ArmyState army,
+                                          HeroRoster roster, long storedPeak, int daysSincePeakTouch) {
+        // 装备是按件记的实例，而实例账本在背包里：武将名档说不出"这些装备属于谁"，只能由调用方给 id。
+        // 不"从 roster 反推"：反推成 null 的症状是这个人装备全部不计，而它看起来只是战力低了一点
+        EquipLedger equips = equipLedgers.of(playerId);
         long building = buildingPower(city);
         long troops = troopsPower(army);
-        long heroes = heroesPower(roster);
+        long heroes = heroesPower(equips, roster);
         // 科技与装备：科技属 B12（PlayerSave 尚无 tech 字段），装备已并入武将战力
         // （HeroCalculator.power 的入参含装备固定值），所以这里不重复计一次
         PowerCalculator.PowerBreakdown breakdown =
                 new PowerCalculator.PowerBreakdown(building, troops, heroes, 0L, 0L);
-        long currentMatch = matchPowerOf(army, roster);
+        long currentMatch = matchPowerOf(equips, army, roster);
         return PowerCalculator.compute(
                 new PowerCalculator.Snapshot(breakdown, currentMatch, storedPeak, daysSincePeakTouch),
                 powerRules());
@@ -185,12 +193,17 @@ public class PowerService {
     }
 
     /** 武将战力：全部已拥有武将之和（含未上阵的 —— 展示战力要反映「我练了多少」）。 */
-    public long heroesPower(HeroRoster roster) {
+    public long heroesPower(EquipLedger equips, HeroRoster roster) {
         long total = 0L;
         for (HeroInstance hero : roster.heroes()) {
-            total += heroStats.power(hero);
+            total += heroStats.power(equips, hero);
         }
         return total;
+    }
+
+    /** 手里只有 id、还没有快照时的入口（战斗那条链就是这个形状）。 */
+    public long matchPowerOf(String playerId, ArmyState army, HeroRoster roster) {
+        return matchPowerOf(equipLedgers.of(playerId), army, roster);
     }
 
     /**
@@ -200,11 +213,11 @@ public class PowerService {
      * 把三套预设都算进去等于让玩家靠「编三套队」虚增匹配战力，
      * 而匹配战力是圈层校验的唯一依据 —— 虚增它就能打超出圈层的对手。
      */
-    public long matchPowerOf(ArmyState army, HeroRoster roster) {
+    public long matchPowerOf(EquipLedger equips, ArmyState army, HeroRoster roster) {
         long match = troopsPower(army);
         Lineup lineup = roster.lineup(0, heroStats.rules());
         for (String heroId : lineup.members()) {
-            match += heroStats.power(roster.hero(heroId));
+            match += heroStats.power(equips, roster.hero(heroId));
         }
         return match;
     }

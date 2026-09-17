@@ -13,6 +13,8 @@ import com.ironoath.core.hero.HeroAttrs;
 import com.ironoath.core.hero.HeroCalculator;
 import com.ironoath.core.hero.HeroInstance;
 import com.ironoath.core.hero.HeroRoster;
+import com.ironoath.web.hero.EquipLedger;
+import com.ironoath.web.hero.EquipLedgers;
 import com.ironoath.web.service.HeroStatsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,10 +53,13 @@ public class HeroBattleMapper {
 
     private final ConfigRegistry configs;
     private final HeroStatsService heroStats;
+    private final EquipLedgers equipLedgers;
 
-    public HeroBattleMapper(ConfigRegistry configs, HeroStatsService heroStats) {
+    public HeroBattleMapper(ConfigRegistry configs, HeroStatsService heroStats,
+                            EquipLedgers equipLedgers) {
         this.configs = configs;
         this.heroStats = heroStats;
+        this.equipLedgers = equipLedgers;
     }
 
     /**
@@ -64,10 +69,12 @@ public class HeroBattleMapper {
      * @param roster  武将存档，用于取等级/星级/觉醒/技能等级
      * @return 与入参顺序一致的快照列表（跳过空位后 slot 仍保留原始下标）
      */
-    public List<HeroSnapshot> snapshots(List<String> heroIds, HeroRoster roster) {
+    public List<HeroSnapshot> snapshots(String playerId, List<String> heroIds, HeroRoster roster) {
         if (roster == null) {
             throw new IllegalArgumentException("roster 不得为 null");
         }
+        // 一份快照服务整支队伍（最多 3 人 × 4 槽）：读一次背包，而不是每个武将各读一次
+        EquipLedger equips = equipLedgers.of(playerId);
         List<HeroSnapshot> out = new ArrayList<>();
         if (heroIds == null) {
             return out;
@@ -78,7 +85,7 @@ public class HeroBattleMapper {
                 continue;   // 副将位可以为空（B06 的 Lineup 允许 null 占位）
             }
             HeroInstance instance = roster.hero(heroId);
-            HeroAttrs attrs = heroStats.finalAttrs(instance);
+            HeroAttrs attrs = heroStats.finalAttrs(equips, instance);
             HeroCfg cfg = heroStats.heroCfg(heroId);
             List<SkillSnapshot> skills = new ArrayList<>(2);
             addSkill(skills, cfg.mainSkill(), instance.mainSkillLevel(), heroId);

@@ -86,11 +86,11 @@ public class PowerRefreshService {
 
             PlayerPvp pvp = save.pvp();
             int days = powerService.daysSince(pvp.peakTouchedAt(), now);
-            PowerCalculator.Result result = powerService.powerOf(
+            PowerCalculator.Result result = powerService.powerOf(playerId,
                     city, army, roster, save.power().peakPower(), days);
             PlayerPower next = new PlayerPower(
                     result.displayPower(), result.matchPower(), result.peakPower());
-            long currentMatch = powerService.matchPowerOf(army, roster);
+            long currentMatch = powerService.matchPowerOf(playerId, army, roster);
             if (next.equals(save.power())) {
                 return new Refreshed(next, result, currentMatch, now);
             }

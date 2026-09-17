@@ -40,6 +40,20 @@ public final class PlayerBag implements RewardPorts.Bag {
         Inventory bag = loadOrCreate(playerId);
         long version = inventories.versionOf(playerId);
 
+        if (isInstanced(itemId)) {
+            // 装备按件铸实例（B20 §五⑤）。**分流写在这里而不是各发放点**：
+            // 发奖器、商店、邮件附件三条链都只说"给这个玩家 itemId × n"，
+            // 分流若放在调用方就会有三份"什么算装备"的判定，漏一处就是装备又回到数量模型
+            long room = Math.max(0L, bag.capacityMax() - bag.capacityUsed());
+            int mint = (int) Math.min(count, room);
+            if (mint <= 0) {
+                return 0L;   // 格子已满，全部溢出 → 发放器转邮件
+            }
+            bag.mintEquips(itemId, mint);
+            inventories.save(playerId, bag, version);
+            return mint;
+        }
+
         // 新道具要先检查格子：容量已满时不能再开新格子，否则「背包满了」这个约束形同虚设
         boolean isNewSlot = bag.countOf(itemId) == 0L;
         if (isNewSlot && bag.capacityUsed() >= bag.capacityMax()) {
@@ -70,6 +84,14 @@ public final class PlayerBag implements RewardPorts.Bag {
             return 0L;
         }
         long version = inventories.versionOf(playerId);
+        if (isInstanced(itemId)) {
+            // 装备按件扣，同样"不足则整笔不扣"：一件带着强化等级的装备不能被扣掉半件
+            int removedCount = bag.removeEquips(itemId, (int) count).size();
+            if (removedCount > 0) {
+                inventories.save(playerId, bag, version);
+            }
+            return removedCount;
+        }
         // Inventory.remove 是原子的：不足则完全不扣，绝不扣成负数（B04 验收 10）
         long removed = bag.remove(itemId, count);
         if (removed > 0L) {
@@ -88,6 +110,16 @@ public final class PlayerBag implements RewardPorts.Bag {
         return inventories.findByPlayerId(playerId)
                 .map(Inventory::capacityMax)
                 .orElse((int) configs.longParam("BAG_INITIAL_CAPACITY"));
+    }
+
+    /**
+     * 这个 itemId 是否应按「一件一个实例」持有 —— 目前只有装备。
+     *
+     * <p>判据取 {@code ItemCfg.type == EQUIP} 而不是「id 以 eq_ 开头」：后者是客户端
+     * {@code HeroPanel} 当年偷懒的猜法，把它抄进服务端就等于把一条命名巧合变成业务规则。
+     */
+    private boolean isInstanced(String itemId) {
+        return configs.get(ItemCfg.class, itemId).type() == ItemCfg.Type.EQUIP;
     }
 
     /** 从 item 表读堆叠上限。道具不在表里就直接报错 —— 静默当成「无上限」会让配置漏填变成刷道具漏洞。 */

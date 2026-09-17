@@ -90,12 +90,18 @@ public final class HeroInstance {
         return subSkillLevel;
     }
 
-    /** 某槽位的装备 id；null 表示空槽。 */
+    /**
+     * 某槽位上<b>那一件</b>装备的实例 uid；null 表示空槽。
+     *
+     * <p>B20 §五⑤ 之前这里存的是 {@code equip.json} 的行 id。形状不同（uid 形如 {@code e7}），
+     * 所以老档里的行 id 能被一眼认出来并按 +0 解析（见 {@code EquipLedger#resolve}），
+     * 不会读成"这个槽位是空的"。
+     */
     public String equipOf(EquipSlot slot) {
         return equips.get(slot);
     }
 
-    /** 四个槽位的只读视图，按 {@link EquipSlot} 声明顺序遍历（EnumMap 保证）。 */
+    /** 四个槽位的只读视图（值 = 实例 uid），按 {@link EquipSlot} 声明顺序遍历（EnumMap 保证）。 */
     public Map<EquipSlot, String> equips() {
         return Collections.unmodifiableMap(equips);
     }
@@ -182,18 +188,20 @@ public final class HeroInstance {
     /**
      * 穿或卸装备。
      *
-     * @param equipId null 表示卸下该槽位（B06 验收 10：卸下后加成必须消失）
-     * @return 被替换下来的装备 id；原本空槽则为 null。调用方负责把它放回背包
+     * @param equipUid 要穿上的那一件的实例 uid；null 表示卸下该槽位（B06 验收 10：卸下后加成必须消失）
+     * @return 被替换下来的那件的 uid；原本空槽则为 null。
+     *         <b>调用方不必"把它放回背包"</b>（§五⑤ 之后实例永不出账本），
+     *         只需要翻掉那一件的 worn 标志 —— 这件事在 {@code EquipWearer} 里与本次改动同批落库
      */
-    public String equip(EquipSlot slot, String equipId) {
+    public String equip(EquipSlot slot, String equipUid) {
         if (slot == null) {
             throw new IllegalArgumentException("slot 不得为 null");
         }
-        if (equipId != null && equipId.isBlank()) {
-            throw new IllegalArgumentException("equipId 不得为空白串，卸下请传 null");
+        if (equipUid != null && equipUid.isBlank()) {
+            throw new IllegalArgumentException("装备 uid 不得为空白串，卸下请传 null");
         }
-        String previous = equips.put(slot, equipId);
-        if (equipId == null) {
+        String previous = equips.put(slot, equipUid);
+        if (equipUid == null) {
             // 空槽要从 map 里真正移除，否则 equips() 会返回一个 value 为 null 的条目，
             // 而「有 4 个条目」会被误读成「穿满了 4 件」
             equips.remove(slot);

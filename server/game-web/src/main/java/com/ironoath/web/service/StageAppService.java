@@ -357,7 +357,7 @@ public class StageAppService {
         long hospitalCapacity = city == null ? 0L : armyAppService.hospitalCapacity(playerId, city);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(units);
         var attacker = armyFactory.toSide(playerId, attackerFold,
-                heroMapper.snapshots(heroIds, roster), 0L,
+                heroMapper.snapshots(playerId, heroIds, roster), 0L,
                 techBonuses.forPlayer(playerId), hospitalCapacity);
         var defender = armyFactory.toSide(stage.id(), armyFactory.fold(enemyArmy(stage)),
                 List.of(), 0L, com.ironoath.battle.TechBonus.none(), 0L);

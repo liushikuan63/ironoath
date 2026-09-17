@@ -42,10 +42,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class HeroBattleMapperTest {
 
     private static final String HERO = "hero_ssr_02";
+    /** 一个没有背包的玩家 id。本类测的是"技能等级与属性进不进战斗快照"，装备这一族必须是空的：
+     *  借用共享存储里恰好存在的装备，症状就是某天气值差对不上而没人能复现 */
+    private static final String PLAYER = "p-battle-mapper-test";
 
     @Autowired private HeroBattleMapper mapper;
     @Autowired private HeroStatsService heroStats;
     @Autowired private ConfigRegistry configs;
+    @Autowired private com.ironoath.web.hero.EquipLedgers equipLedgers;
 
     private HeroRoster rosterWith(String heroId, int level, int star, int awaken,
                                   int mainSkillLevel, int subSkillLevel) {
@@ -59,14 +63,14 @@ class HeroBattleMapperTest {
     @DisplayName("属性按 B06 的口径进乘区：武力→攻击、统率→防御，slot 与入参顺序一致")
     void attributesMapToTheRightMultiplierZones() {
         HeroRoster roster = rosterWith(HERO, 1, 1, 0, 1, 1);
-        List<HeroSnapshot> snapshots = mapper.snapshots(List.of(HERO), roster);
+        List<HeroSnapshot> snapshots = mapper.snapshots(PLAYER, List.of(HERO), roster);
 
         assertThat(snapshots).hasSize(1);
         HeroSnapshot snapshot = snapshots.get(0);
         assertThat(snapshot.heroId()).isEqualTo(HERO);
         assertThat(snapshot.slot()).isZero();
 
-        HeroAttrs attrs = heroStats.finalAttrs(roster.hero(HERO));
+        HeroAttrs attrs = heroStats.finalAttrs(equipLedgers.of(PLAYER), roster.hero(HERO));
         assertThat(snapshot.heroBonusFixed())
                 .as("武力进攻击乘区（B05 的 HeroSnapshot.heroBonusFixed）")
                 .isEqualTo(HeroCalculator.attrToBonus(attrs.might(), heroStats.rules()));
@@ -82,14 +86,14 @@ class HeroBattleMapperTest {
         HeroCfg cfg = configs.get(HeroCfg.class, HERO);
         SkillCfg mainSkill = configs.get(SkillCfg.class, cfg.mainSkill());
 
-        SkillSnapshot level1 = firstSkill(mapper.snapshots(List.of(HERO),
+        SkillSnapshot level1 = firstSkill(mapper.snapshots(PLAYER, List.of(HERO),
                 rosterWith(HERO, 1, 1, 0, 1, 1)));
         assertThat(level1.valueFixed())
                 .as("1 级必须是表值本身，否则基础强度就与策划表对不上")
                 .isEqualTo(mainSkill.value());
 
         int maxLevel = (int) configs.longParam("HERO_SKILL_MAX_LEVEL");
-        SkillSnapshot maxed = firstSkill(mapper.snapshots(List.of(HERO),
+        SkillSnapshot maxed = firstSkill(mapper.snapshots(PLAYER, List.of(HERO),
                 rosterWith(HERO, 1, 1, 0, maxLevel, 1)));
         long step = configs.fixedParam("SKILL_LEVEL_VALUE_STEP");
         long expected = FixedPoint.mul(mainSkill.value(),
@@ -107,9 +111,9 @@ class HeroBattleMapperTest {
         SkillCfg mainSkill = configs.get(SkillCfg.class, cfg.mainSkill());
         int maxLevel = (int) configs.longParam("HERO_SKILL_MAX_LEVEL");
 
-        SkillSnapshot level1 = firstSkill(mapper.snapshots(List.of(HERO),
+        SkillSnapshot level1 = firstSkill(mapper.snapshots(PLAYER, List.of(HERO),
                 rosterWith(HERO, 1, 1, 0, 1, 1)));
-        SkillSnapshot maxed = firstSkill(mapper.snapshots(List.of(HERO),
+        SkillSnapshot maxed = firstSkill(mapper.snapshots(PLAYER, List.of(HERO),
                 rosterWith(HERO, 1, 1, 0, maxLevel, 1)));
 
         assertThat(maxed.chanceFixed()).isEqualTo(level1.chanceFixed()).isEqualTo(mainSkill.chance());
@@ -127,20 +131,20 @@ class HeroBattleMapperTest {
         HeroRoster roster = rosterWith(HERO, 1, 1, 0, 1, 1);
         // 中间留一个空位：slot 必须是 0 与 2，而不是 0 与 1 ——
         // slot 决定站位，站位决定前/中/后排的损失分摊，压缩下标等于把后排兵调到中排去挨打
-        List<HeroSnapshot> snapshots = mapper.snapshots(Arrays.asList(HERO, null, HERO), roster);
+        List<HeroSnapshot> snapshots = mapper.snapshots(PLAYER, Arrays.asList(HERO, null, HERO), roster);
         assertThat(snapshots).hasSize(2);
         assertThat(snapshots.get(0).slot()).isZero();
         assertThat(snapshots.get(1).slot()).isEqualTo(2);
 
-        assertThat(mapper.snapshots(List.of(), roster)).isEmpty();
-        assertThat(mapper.snapshots(null, roster)).isEmpty();
+        assertThat(mapper.snapshots(PLAYER, List.of(), roster)).isEmpty();
+        assertThat(mapper.snapshots(PLAYER, null, roster)).isEmpty();
     }
 
     @Test
     @DisplayName("武将等级/星级/觉醒会抬高属性，因此也抬高战斗乘区（养成链路真的通到战斗）")
     void heroGrowthReachesTheBattle() {
-        HeroSnapshot fresh = mapper.snapshots(List.of(HERO), rosterWith(HERO, 1, 1, 0, 1, 1)).get(0);
-        HeroSnapshot grown = mapper.snapshots(List.of(HERO), rosterWith(HERO, 60, 4, 2, 1, 1)).get(0);
+        HeroSnapshot fresh = mapper.snapshots(PLAYER, List.of(HERO), rosterWith(HERO, 1, 1, 0, 1, 1)).get(0);
+        HeroSnapshot grown = mapper.snapshots(PLAYER, List.of(HERO), rosterWith(HERO, 60, 4, 2, 1, 1)).get(0);
         assertThat(grown.heroBonusFixed())
                 .as("练了 60 级 4 星 2 觉醒，攻击乘区必须比新抽到时高")
                 .isGreaterThan(fresh.heroBonusFixed());

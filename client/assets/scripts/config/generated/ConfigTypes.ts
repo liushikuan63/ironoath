@@ -588,7 +588,7 @@ export type ItemEffectKind =
  * 配置表 item 的一行。
  * 道具表。B02 字段：id/名称/类型/使用效果/堆叠上限/是否可出售。类型五种：加速/资源/宝箱/材料/增益（B02 原文的「加速/资源/宝箱/材料」加上护盾与集结令所需的 BUFF）。
  *
- * 源表 version=6
+ * 源表 version=7
  */
 export interface ItemCfg {
   /** 主键 */

@@ -11,6 +11,8 @@ import com.ironoath.core.bag.InventoryRepository;
 import com.ironoath.core.gacha.GachaLogStore;
 import com.ironoath.core.gacha.GachaStateRepository;
 import com.ironoath.core.gacha.Tier;
+import com.ironoath.core.hero.HeroInstance;
+import com.ironoath.core.hero.HeroRoster;
 import com.ironoath.core.hero.HeroRepository;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.web.dto.generated.AttrTriple;
@@ -89,6 +91,9 @@ class HeroGachaEndpointTest {
     @Autowired private PlayerRepository players;
     @Autowired private InventoryRepository inventories;
     @Autowired private HeroRepository heroes;
+    @Autowired private com.ironoath.core.reward.RewardPorts.Bag bagPort;
+    @Autowired private com.ironoath.web.service.HeroStatsService heroStats;
+    @Autowired private com.ironoath.web.hero.EquipLedgers equipLedgers;
     @Autowired private GachaStateRepository gachaStates;
     @Autowired private GachaLogStore gachaLogs;
 
@@ -515,12 +520,24 @@ class HeroGachaEndpointTest {
         giveItems(playerId, "eq_iron_sword", 1L, "eq_pojun_blade", 1L);
         var slot = com.ironoath.web.dto.generated.EquipSlot.WEAPON;
 
-        heroAppService.equip(playerId, new HeroEquipReq(newRequestId(), "hero_ssr_01", slot, "eq_iron_sword"));
-        assertThat(countOf(playerId, "eq_iron_sword")).isZero();
+        String swordUid = heroAppService.equip(playerId, new HeroEquipReq(
+                newRequestId(), "hero_ssr_01", slot, "eq_iron_sword")).hero().equips().get(0);
+        assertThat(countOf(playerId, "eq_iron_sword"))
+                .as("穿上不等于消失：那一件还在账本里，它带着强化等级，是玩家的财产（§五⑤）")
+                .isEqualTo(1L);
+        assertThat(unwornCount(playerId, "eq_iron_sword"))
+                .as("但它已经不再占背包格子").isZero();
+        assertThat(slotOf(playerId, "hero_ssr_01")).isEqualTo(swordUid);
 
-        heroAppService.equip(playerId, new HeroEquipReq(newRequestId(), "hero_ssr_01", slot, "eq_pojun_blade"));
-        assertThat(countOf(playerId, "eq_iron_sword")).as("换下的铁剑必须回到背包").isEqualTo(1L);
-        assertThat(countOf(playerId, "eq_pojun_blade")).isZero();
+        String bladeUid = heroAppService.equip(playerId, new HeroEquipReq(
+                newRequestId(), "hero_ssr_01", slot, "eq_pojun_blade")).hero().equips().get(0);
+        assertThat(slotOf(playerId, "hero_ssr_01")).as("槽位换成了另一件（uid 不同）").isEqualTo(bladeUid);
+        assertThat(unwornCount(playerId, "eq_iron_sword"))
+                .as("换下来的铁剑重新回到可穿状态并占回那一格").isEqualTo(1L);
+        assertThat(unwornCount(playerId, "eq_pojun_blade")).isZero();
+        assertThat(bagOf(playerId).capacityUsed())
+                .as("两件都在手上、一件穿着 ⇒ 格子数与只有一件未穿时相同")
+                .isEqualTo(1 + nonEquipSlots(playerId));
     }
 
     // ---------- 验收 5 / 8 / 9：编队 ----------
@@ -733,19 +750,18 @@ class HeroGachaEndpointTest {
                 slot == null ? null : com.ironoath.web.dto.generated.SkillSlot.valueOf(slot));
     }
 
+    /**
+     * 夹具发东西。<b>必须走 {@code RewardPorts.Bag}（生产那唯一一条发放口），不能直接改聚合</b>：
+     * 装备的"按件铸实例"分流住在 {@code PlayerBag} 里，绕过它就等于所有装备用例都在测一个
+     * 生产已经不会再产生的形状（{@code eq_xxx: 2} 这种数量条目），
+     * 于是"测试全绿而玩家穿不上装备"。
+     */
     private void giveItems(String playerId, Object... itemIdCountPairs) {
-        Inventory bag = inventories.findByPlayerId(playerId)
-                .orElseGet(() -> Inventory.empty((int) configs.longParam("BAG_INITIAL_CAPACITY")));
         for (int i = 0; i < itemIdCountPairs.length; i += 2) {
             String itemId = (String) itemIdCountPairs[i];
             long count = (Long) itemIdCountPairs[i + 1];
-            long added = bag.add(itemId, count, configs.get(ItemCfg.class, itemId).stackMax());
+            long added = bagPort.add(playerId, itemId, count);
             assertThat(added).as("夹具必须能放下 %s × %d", itemId, count).isEqualTo(count);
-        }
-        if (!inventories.findByPlayerId(playerId).isPresent()) {
-            assertThat(inventories.insertIfAbsent(playerId, bag)).isTrue();
-        } else {
-            inventories.save(playerId, bag, inventories.versionOf(playerId));
         }
     }
 
@@ -756,6 +772,105 @@ class HeroGachaEndpointTest {
                 Math.min(gold.cap(), gold.current() + amount), gold.cap(),
                 gold.protectedAmount(), gold.perHour(), gold.lastSettle()));
         players.save(save);
+    }
+
+    @Test
+    @DisplayName("发两件同名装备得到两个实例、两个 uid（数量模型从此不成立）")
+    void grantingEquipmentMintsOneInstancePerCopy() {
+        String playerId = newPlayer();
+        giveItems(playerId, "eq_iron_sword", 2L);
+
+        Inventory bag = bagOf(playerId);
+        assertThat(bag.equipInstances("eq_iron_sword")).as("两件就是两条实例")
+                .hasSize(2)
+                .extracting(Inventory.EquipInstance::uid).doesNotHaveDuplicates();
+        assertThat(bag.countOf("eq_iron_sword")).as("对外仍然报件数，背包列表不必改").isEqualTo(2L);
+        assertThat(bag.snapshot()).as("装备绝不写进 counts 那张表").doesNotContainKey("eq_iron_sword");
+        assertThat(bag.capacityUsed()).as("按件占格：2 件装备 2 格").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("强化等级作用在装备自己的属性上，且是精确定点值（+4 破军刃武力 45→54）")
+    void forgeLevelRaisesTheOwnStatsExactly() {
+        String playerId = newPlayerWithHero("hero_ssr_01");
+        levelHeroToMidTier(playerId, "hero_ssr_01");
+        // 今天还没有 /equip/forge（S3），所以直接按账本的形状摆一件 +4 的破军刃进去：
+        // 断言的是"等级如何变成属性"，与"谁把等级抬上去"无关，两件事分属两个单元
+        Inventory bag = bagOf(playerId);
+        bag.restore(bag.snapshot(),
+                List.of(new Inventory.EquipInstance("e1", "eq_pojun_blade", 4, false)),
+                bag.capacityMax(), 2, id -> false);
+        inventories.save(playerId, bag, inventories.versionOf(playerId));
+
+        heroAppService.equip(playerId, new HeroEquipReq(newRequestId(), "hero_ssr_01",
+                com.ironoath.web.dto.generated.EquipSlot.WEAPON, "e1"));
+
+        HeroInstance hero = heroes.findByPlayerId(playerId).orElseThrow().hero("hero_ssr_01");
+        var flat = heroStats.equipFlat(equipLedgers.of(playerId), hero);
+        assertThat(flat.might())
+                .as("45 × (1 + 5% × 4) = 54，必须正好是这个数而不是「变大了」")
+                .isEqualTo(54L);
+
+        // 换一件 +3 的：45 × 1.15 = 51.75 ⇒ 向下取整 51（向上等于凭空多给，属性会进战力）
+        Inventory bag2 = bagOf(playerId);
+        bag2.restore(bag2.snapshot(),
+                List.of(new Inventory.EquipInstance("e1", "eq_pojun_blade", 3, true)),
+                bag2.capacityMax(), 2, id -> false);
+        inventories.save(playerId, bag2, inventories.versionOf(playerId));
+        assertThat(heroStats.equipFlat(equipLedgers.of(playerId), hero).might())
+                .as("定点乘完只落地一次，且向下").isEqualTo(51L);
+    }
+
+    @Test
+    @DisplayName("老存档槽位里写的是配置行 id：按 +0 计入属性，绝不读成没穿装备（§五⑤）")
+    void legacySlotValueStillCountsAsEquipment() {
+        String playerId = newPlayerWithHero("hero_ssr_01");
+        HeroRoster roster = heroes.findByPlayerId(playerId).orElseThrow();
+        roster.hero("hero_ssr_01").equip(com.ironoath.core.hero.EquipSlot.WEAPON, "eq_pojun_blade");
+        heroes.save(playerId, roster, heroes.versionOf(playerId));
+
+        var hero = heroes.findByPlayerId(playerId).orElseThrow().hero("hero_ssr_01");
+        assertThat(heroStats.equipFlat(equipLedgers.of(playerId), hero).might())
+                .as("这条链上任何一次读取都不许把装备读成 0 —— 那会让人战力凭空掉一截，"
+                        + "而这份档再落一次库，那件装备就真的没了")
+                .isEqualTo(45L);
+        assertThat(heroAppService.list(playerId).heroes())
+                .as("面板照常出得来，槽位里那一位仍是老字符串（等 S3 的实例清单上线才谈迁移）")
+                .anyMatch(view -> "eq_pojun_blade".equals(view.equips().get(0)));
+    }
+
+    @Test
+    @DisplayName("槽位里的 uid 在账本中不存在：这一格按 0 计，但不抛异常（不让人登录不了）")
+    void danglingUidCountsAsNothingButDoesNotThrow() {
+        String playerId = newPlayerWithHero("hero_ssr_01");
+        HeroRoster roster = heroes.findByPlayerId(playerId).orElseThrow();
+        roster.hero("hero_ssr_01").equip(com.ironoath.core.hero.EquipSlot.WEAPON, "e404");
+        heroes.save(playerId, roster, heroes.versionOf(playerId));
+
+        var hero = heroes.findByPlayerId(playerId).orElseThrow().hero("hero_ssr_01");
+        assertThat(heroStats.equipFlat(equipLedgers.of(playerId), hero).might())
+                .as("悬空 uid 不是老档形状，不能凭空按某一行计").isZero();
+        assertThat(heroAppService.list(playerId).heroes()).hasSize(1);
+    }
+
+    private Inventory bagOf(String playerId) {
+        return inventories.findByPlayerId(playerId).orElseThrow();
+    }
+
+    /** 该行还有几件没穿在身上（= 还能穿的件数）。 */
+    private long unwornCount(String playerId, String equipId) {
+        return bagOf(playerId).equipInstances(equipId).stream()
+                .filter(instance -> !instance.worn()).count();
+    }
+
+    private String slotOf(String playerId, String heroId) {
+        return heroes.findByPlayerId(playerId).orElseThrow().hero(heroId)
+                .equipOf(com.ironoath.core.hero.EquipSlot.WEAPON);
+    }
+
+    /** 背包里非装备占的格子数（容量断言要把它扣掉，否则会被同文件其它道具干扰）。 */
+    private int nonEquipSlots(String playerId) {
+        return (int) bagOf(playerId).snapshot().size();
     }
 
     private long countOf(String playerId, String itemId) {

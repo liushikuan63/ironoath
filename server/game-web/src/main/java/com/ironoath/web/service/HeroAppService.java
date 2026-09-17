@@ -10,6 +10,8 @@ import com.ironoath.config.cfg.EquipCfg;
 import com.ironoath.config.cfg.HeroCfg;
 import com.ironoath.config.cfg.HeroRarityCfg;
 import com.ironoath.config.cfg.ItemCfg;
+import com.ironoath.core.bag.Inventory;
+import com.ironoath.core.bag.InventoryRepository;
 import com.ironoath.core.hero.EquipSlot;
 import com.ironoath.core.hero.HeroAttrs;
 import com.ironoath.core.hero.HeroCalculator;
@@ -26,6 +28,9 @@ import com.ironoath.web.dto.generated.BonusBreak;
 import com.ironoath.web.dto.generated.BonusZone;
 import com.ironoath.web.dto.generated.HeroBonus;
 import com.ironoath.web.dto.generated.HeroEquipReq;
+import com.ironoath.web.hero.EquipLedger;
+import com.ironoath.web.hero.EquipLedgers;
+import com.ironoath.web.hero.EquipWearer;
 import com.ironoath.web.dto.generated.HeroGrowResp;
 import com.ironoath.web.dto.generated.HeroIdReq;
 import com.ironoath.web.dto.generated.HeroItemReq;
@@ -70,17 +75,24 @@ public class HeroAppService {
     private final HeroRepository heroes;
     private final HeroStatsService stats;
     private final RewardPorts.Bag bagPort;
+    private final EquipLedgers equipLedgers;
+    private final EquipWearer wearer;
+    private final InventoryRepository inventories;
     private final PlayerLock playerLock;
     private final IdempotencyStore idempotency;
     private final TimeService timeService;
 
     public HeroAppService(ConfigRegistry configs, HeroRepository heroes, HeroStatsService stats,
-                          RewardPorts.Bag bagPort, PlayerLock playerLock,
+                          RewardPorts.Bag bagPort, EquipLedgers equipLedgers, EquipWearer wearer,
+                          InventoryRepository inventories, PlayerLock playerLock,
                           IdempotencyStore idempotency, TimeService timeService) {
         this.configs = configs;
         this.heroes = heroes;
         this.stats = stats;
         this.bagPort = bagPort;
+        this.equipLedgers = equipLedgers;
+        this.wearer = wearer;
+        this.inventories = inventories;
         this.playerLock = playerLock;
         this.idempotency = idempotency;
         this.timeService = timeService;
@@ -93,16 +105,18 @@ public class HeroAppService {
         long now = timeService.serverNow();
         HeroRoster roster = loadOrCreate(playerId);
         HeroRules rules = stats.rules();
+        // 一份装备快照服务整个响应：几名武将 × 四个槽位都从它读，读一次背包而不是十几次的量
+        EquipLedger equips = equipLedgers.of(playerId);
         List<HeroView> views = new ArrayList<>();
         for (HeroInstance instance : roster.heroes()) {
-            views.add(toView(instance));
+            views.add(toView(equips, instance));
         }
         List<LineupView> lineups = new ArrayList<>();
         for (Lineup lineup : roster.lineups(rules)) {
-            lineups.add(toLineupView(lineup, roster));
+            lineups.add(toLineupView(equips, lineup, roster));
         }
         return new HeroListResp(views, lineups, fragmentBalancesOf(playerId),
-                stats.troopCap(roster, 0), 0L, now);
+                stats.troopCap(equips, roster, 0), 0L, now);
     }
 
     /**
@@ -113,7 +127,7 @@ public class HeroAppService {
      * 那时改成传入 presetIndex 即可，调用方不必改。
      */
     public long troopCap(String playerId) {
-        return stats.troopCap(loadOrCreate(playerId), 0);
+        return stats.troopCap(equipLedgers.of(playerId), loadOrCreate(playerId), 0);
     }
 
     // ---------- 养成五条线 ----------
@@ -161,7 +175,8 @@ public class HeroAppService {
             save(playerId, roster, version);
             LOG.info("武将升级 playerId={} hero={} {}→{} 级 消耗经验={} 道具={}",
                     playerId, req.heroId(), before, instance.level(), totalExp, consumed);
-            return new HeroGrowResp(toView(instance), consumed, timeService.serverNow());
+            return new HeroGrowResp(toView(equipLedgers.of(playerId), instance),
+                    consumed, timeService.serverNow());
         });
     }
 
@@ -196,7 +211,7 @@ public class HeroAppService {
             save(playerId, roster, version);
             LOG.info("碎片合成武将 playerId={} hero={} 消耗碎片={}×{}",
                     playerId, req.heroId(), fragmentItem, need);
-            return new HeroGrowResp(toView(roster.hero(req.heroId())),
+            return new HeroGrowResp(toView(equipLedgers.of(playerId), roster.hero(req.heroId())),
                     List.of(new ItemCount(fragmentItem, need)), timeService.serverNow());
         });
     }
@@ -211,7 +226,17 @@ public class HeroAppService {
         return growByItem(playerId, req, ItemCfg.EffectKind.UP_HERO_SKILL, "skillUp");
     }
 
-    /** 装备线：穿或卸。卸下时装备必须回到背包，否则等于没收玩家的东西。 */
+    /**
+     * 装备线：穿或卸。
+     *
+     * <p><b>穿上的不是"一行装备"而是"某一件"</b>（§五⑤）：请求带的是实例 uid，
+     * 换下来与穿上去的那两件都只是把 {@code worn} 翻一下 —— 实例永不出账本，
+     * 因为它带着强化等级，那是一件装备的财产。旧写法（从背包扣一个数量、卸下时再加回去）
+     * 因此整段消失，连带消失的是"换装时扣了又退"那两处回滚分支。
+     *
+     * <p><b>老客户端传的是配置行 id</b>，那条路今天仍然通（按"该行的第一件未穿"解析并记 ERROR），
+     * 因为界面还列不出"件"。等客户端能列实例了，把那条解析与 {@code firstUnwornEquip} 一起删掉。
+     */
     public HeroGrowResp equip(String playerId, HeroEquipReq req) {
         if (req == null) {
             throw new BizException(ErrorCode.PARAM_INVALID, "请求体不得为空");
@@ -223,27 +248,23 @@ public class HeroAppService {
             HeroInstance instance = requireHero(roster, req.heroId());
             EquipSlot slot = EquipSlot.valueOf(req.slot().name());
 
-            if (req.equipId() == null) {
+            if (req.equipUid() == null) {
                 String removed = instance.equip(slot, null);
                 if (removed != null) {
-                    // 卸下的装备必须回到背包。加不进去（背包满）时要响亮报错，
-                    // 静默丢弃等于没收玩家财产
-                    long back = bagPort.add(playerId, removed, 1L);
-                    if (back < 1L) {
-                        LOG.error("【卸下的装备无法放回背包】playerId={} hero={} slot={} equip={} traceId={}"
-                                        + " 背包已满，必须人工补偿",
-                                playerId, req.heroId(), slot, removed, TraceContext.traceId());
-                        throw new BizException(ErrorCode.ITEM_NOT_ENOUGH,
-                                "背包已满，放不下卸下的 " + removed + "。请先清理背包再卸装备");
-                    }
+                    // 先让背包把格子腾出来（放不下会抛），再落武将的档：
+                    // 顺序反过来会留下"槽位空了，而那件东西既不算穿着也占不到格子"的中间态
+                    wearer.unwear(playerId, removed);
                 }
                 save(playerId, roster, version);
-                LOG.info("卸下装备 playerId={} hero={} slot={} equip={}",
+                LOG.info("卸下装备 playerId={} hero={} slot={} uid={}",
                         playerId, req.heroId(), slot, removed);
-                return new HeroGrowResp(toView(instance), List.of(), timeService.serverNow());
+                return new HeroGrowResp(toView(equipLedgers.of(playerId), instance),
+                        List.of(), timeService.serverNow());
             }
 
-            EquipCfg equipCfg = requireEquip(req.equipId());
+            String uid = resolveWearableUid(playerId, req.equipUid());
+            Inventory.EquipInstance target = wearer.require(playerId, uid);
+            EquipCfg equipCfg = requireEquip(target.equipId());
             if (equipCfg.slot() != EquipCfg.Slot.valueOf(slot.name())) {
                 throw new BizException(ErrorCode.ITEM_CANNOT_USE,
                         "装备 " + equipCfg.name() + " 是 " + equipCfg.slot() + " 槽位的，"
@@ -254,24 +275,20 @@ public class HeroAppService {
                         "需要武将 " + equipCfg.requireLevel() + " 级才能穿 " + equipCfg.name()
                                 + "，当前 " + instance.level() + " 级");
             }
-            // 先扣背包里的装备，再穿；穿失败就退回去
-            consumeItem(playerId, req.equipId(), 1L, equipCfg.name());
-            String replaced;
-            try {
-                replaced = instance.equip(slot, req.equipId());
-            } catch (RuntimeException e) {
-                bagPort.add(playerId, req.equipId(), 1L);
-                throw e;
+            String replaced = instance.equipOf(slot);
+            if (uid.equals(replaced)) {
+                throw new BizException(ErrorCode.ITEM_CANNOT_USE,
+                        "这件装备（uid=" + uid + "）已经穿在 " + slot + " 槽上了，不用重复穿");
             }
-            if (replaced != null && bagPort.add(playerId, replaced, 1L) < 1L) {
-                LOG.error("【换下的装备无法放回背包】playerId={} hero={} slot={} 换下={} traceId={}",
-                        playerId, req.heroId(), slot, replaced, TraceContext.traceId());
-            }
+            // 两件的状态在一次落库里换完；这一步之后武将的档才动，
+            // 所以"背包说它穿着、档说没穿"最多只在异常路径上短暂存在（记在 EquipWearer 的注释里）
+            wearer.wear(playerId, uid, replaced);
+            instance.equip(slot, uid);
             save(playerId, roster, version);
-            LOG.info("穿装备 playerId={} hero={} slot={} equip={} 换下={}",
-                    playerId, req.heroId(), slot, req.equipId(), replaced);
-            return new HeroGrowResp(toView(instance),
-                    List.of(new ItemCount(req.equipId(), 1L)), timeService.serverNow());
+            LOG.info("穿装备 playerId={} hero={} slot={} uid={} 行={} 换下={}",
+                    playerId, req.heroId(), slot, uid, target.equipId(), replaced);
+            return new HeroGrowResp(toView(equipLedgers.of(playerId), instance),
+                    List.of(new ItemCount(target.equipId(), 1L)), timeService.serverNow());
         });
     }
 
@@ -297,12 +314,16 @@ public class HeroAppService {
                 }
                 save(playerId, roster, version);
                 Lineup lineup = roster.lineup(req.presetIndex(), rules);
-                long troopCap = HeroCalculator.troopCap(
-                        stats.teamBonus(lineup, roster).commandValue(), rules);
+                // 统帅值算一次就存进局部变量：原先两处各调一遍 teamBonus，那时只是浪费；
+                // 现在它要读装备账本，两处之间若背包变了，日志里的"统帅值"就会与
+                // 回给客户端的 troopCap 不是同一次算出来的 —— 那种对不上账最难查
+                long commandValue = stats.teamBonus(equipLedgers.of(playerId), lineup, roster)
+                        .commandValue();
+                long troopCap = HeroCalculator.troopCap(commandValue, rules);
                 LOG.info("设置编队 playerId={} preset={} 主将={} 副将=[{}, {}] 统帅值={} 带兵上限={}",
                         playerId, req.presetIndex(), req.main(), req.sub1(), req.sub2(),
-                        stats.teamBonus(lineup, roster).commandValue(), troopCap);
-                return new SetLineupResp(toLineupView(lineup, roster), troopCap,
+                        commandValue, troopCap);
+                return new SetLineupResp(toLineupView(equipLedgers.of(playerId), lineup, roster), troopCap,
                         timeService.serverNow());
             } catch (RuntimeException e) {
                 idempotency.release(req.requestId());
@@ -383,7 +404,7 @@ public class HeroAppService {
             save(playerId, roster, version);
             LOG.info("武将升星 playerId={} hero={} ★{}→★{} 消耗={}×{}",
                     playerId, req.heroId(), before, instance.star(), fragmentItem, need);
-            return new HeroGrowResp(toView(instance),
+            return new HeroGrowResp(toView(equipLedgers.of(playerId), instance),
                     List.of(new ItemCount(fragmentItem, need)), timeService.serverNow());
         });
     }
@@ -456,7 +477,7 @@ public class HeroAppService {
             save(playerId, roster, version);
             LOG.info("武将{} playerId={} hero={} item={} 结果={}",
                     skillUp ? "技能升级" : "觉醒", playerId, req.heroId(), req.itemId(), instance);
-            return new HeroGrowResp(toView(instance),
+            return new HeroGrowResp(toView(equipLedgers.of(playerId), instance),
                     List.of(new ItemCount(req.itemId(), 1L)), timeService.serverNow());
         });
     }
@@ -560,6 +581,29 @@ public class HeroAppService {
         }
     }
 
+    /**
+     * 把"穿哪一件"的请求值解析成 uid。
+     *
+     * <p>两种输入都接受，因为形状本身就能分辨（{@link Inventory#isInstanceUid}）：
+     * uid 直接用；配置行 id 是老客户端的写法，取该行的第一件未穿。
+     * 走后者时打 ERROR：<b>那不是玩家的错，是界面还没跟上"件"这个概念</b>，
+     * 而这条日志就是"还剩多少请求在走老路"的量具 —— 没有它，这条兼容路径永远不会被删掉。
+     */
+    private String resolveWearableUid(String playerId, String requested) {
+        if (Inventory.isInstanceUid(requested)) {
+            return requested;
+        }
+        Inventory bag = inventories.findByPlayerId(playerId).orElse(null);
+        String uid = bag == null ? null : bag.firstUnwornEquip(requested);
+        if (uid == null) {
+            throw new BizException(ErrorCode.ITEM_NOT_FOUND,
+                    "背包里没有可用的 " + requested + "（请传装备实例 uid，或先拿到一件没穿的）");
+        }
+        LOG.error("【穿戴请求传的是配置行 id 而不是 uid】playerId={} equipId={} 本次按未穿的第一件处理"
+                + " uid={} 客户端改传 uid 之后这条兼容解析要一并删掉", playerId, requested, uid);
+        return uid;
+    }
+
     private EquipCfg requireEquip(String equipId) {
         try {
             return configs.get(EquipCfg.class, equipId);
@@ -596,16 +640,19 @@ public class HeroAppService {
         return out;
     }
 
-    private HeroView toView(HeroInstance instance) {
+    private HeroView toView(EquipLedger equips, HeroInstance instance) {
         HeroCfg cfg = stats.heroCfg(instance.heroId());
         HeroRules rules = stats.rules();
         HeroAttrs base = HeroAttrs.of(cfg.might(), cfg.command(), cfg.wisdom());
-        HeroAttrs equipFlat = stats.equipFlat(instance);
+        HeroAttrs equipFlat = stats.equipFlat(equips, instance);
         HeroAttrs finalAttrs = HeroCalculator.finalAttrs(base, cfg.growthRate(),
                 instance.level(), instance.star(), instance.awaken(), equipFlat, rules);
-        List<String> equips = new ArrayList<>(EquipSlot.COUNT);
+        // 定长数组、按槽位顺序、空位为 null —— 那是 HeroView.equips 的契约（客户端按下标取）。
+        // 里面现在装的是实例 uid 而不是行 id：形状没变，语义变了，
+        // 界面要显示"是哪一个 + 强化到几"就必须自己去查实例清单（S3 的那个端点）
+        List<String> wornUids = new ArrayList<>(EquipSlot.COUNT);
         for (EquipSlot slot : EquipSlot.values()) {
-            equips.add(instance.equipOf(slot));
+            wornUids.add(instance.equipOf(slot));
         }
         return new HeroView(cfg.id(), cfg.name(), HeroRarity.valueOf(cfg.rarity().name()),
                 instance.level(), instance.exp(),
@@ -614,12 +661,12 @@ public class HeroAppService {
                 instance.star(), rules.starMax(), instance.awaken(), (int) cfg.awakenMax(),
                 cfg.mainSkill(), instance.mainSkillLevel(),
                 cfg.subSkill(), instance.subSkillLevel(), rules.skillMaxLevel(),
-                equips, toTriple(base), toTriple(finalAttrs),
-                stats.power(instance), cfg.bondWith());
+                wornUids, toTriple(base), toTriple(finalAttrs),
+                stats.power(equips, instance), cfg.bondWith());
     }
 
-    private LineupView toLineupView(Lineup lineup, HeroRoster roster) {
-        HeroCalculator.TeamBonus bonus = stats.teamBonus(lineup, roster);
+    private LineupView toLineupView(EquipLedger equips, Lineup lineup, HeroRoster roster) {
+        HeroCalculator.TeamBonus bonus = stats.teamBonus(equips, lineup, roster);
         List<String> bonds = new ArrayList<>();
         for (String heroId : lineup.members()) {
             String partner = stats.heroCfg(heroId).bondWith();

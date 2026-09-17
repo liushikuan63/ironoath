@@ -236,7 +236,7 @@ public class PlayerCityBattleService {
 
         // ---------- 一、造双方军队 ----------
         HeroRoster attackerRoster = heroes.findByPlayerId(attackerId).orElseGet(HeroRoster::new);
-        List<HeroSnapshot> attackerHeroes = heroMapper.snapshots(march.heroes(), attackerRoster);
+        List<HeroSnapshot> attackerHeroes = heroMapper.snapshots(attackerId, march.heroes(), attackerRoster);
         CityState attackerCity = cities.findByPlayerId(attackerId).orElse(null);
         long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerId, attackerCity);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(march.units());
@@ -247,7 +247,7 @@ public class PlayerCityBattleService {
         Map<String, Long> defenderTroops = new LinkedHashMap<>(defenderArmy.troops());
         HeroRoster defenderRoster = heroes.findByPlayerId(defenderId).orElseGet(HeroRoster::new);
         List<String> defenderHeroIds = defenseLineup(defenderRoster);
-        List<HeroSnapshot> defenderHeroes = heroMapper.snapshots(defenderHeroIds, defenderRoster);
+        List<HeroSnapshot> defenderHeroes = heroMapper.snapshots(defenderId, defenderHeroIds, defenderRoster);
         CityState defenderCity = cities.findByPlayerId(defenderId).orElse(null);
         long defenderHospital = defenderCity == null ? 0L : armyAppService.hospitalCapacity(defenderId, defenderCity);
         BattleArmyFactory.Folded defenderFold = armyFactory.fold(defenderTroops);
@@ -286,8 +286,8 @@ public class PlayerCityBattleService {
         armies.findByPlayerId(attackerId).orElseGet(ArmyState::new).troops()
                 .forEach(attackingForce::add);
         march.units().forEach(attackingForce::add);
-        long attackerMatch = powerService.matchPowerOf(attackingForce, attackerRoster);
-        long defenderMatch = powerService.matchPowerOf(defenderArmy, defenderRoster);
+        long attackerMatch = powerService.matchPowerOf(attackerId, attackingForce, attackerRoster);
+        long defenderMatch = powerService.matchPowerOf(defenderId, defenderArmy, defenderRoster);
 
         // ---------- 五、双方战损 ----------
         applyAttackerLosses(march, attackerFold, result, attackerHospital, attackerId);
@@ -386,7 +386,7 @@ public class PlayerCityBattleService {
 
         // ---------- 一、造双方军队（都来自各自的行军，不是城内军队） ----------
         HeroRoster attackerRoster = heroes.findByPlayerId(attackerId).orElseGet(HeroRoster::new);
-        List<HeroSnapshot> attackerHeroes = heroMapper.snapshots(attacker.heroes(), attackerRoster);
+        List<HeroSnapshot> attackerHeroes = heroMapper.snapshots(attackerId, attacker.heroes(), attackerRoster);
         CityState attackerCity = cities.findByPlayerId(attackerId).orElse(null);
         long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerId, attackerCity);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(attacker.units());
@@ -394,7 +394,7 @@ public class PlayerCityBattleService {
                 techBonuses.forPlayer(attackerId), attackerHospital);
 
         HeroRoster gathererRoster = heroes.findByPlayerId(gathererId).orElseGet(HeroRoster::new);
-        List<HeroSnapshot> gathererHeroes = heroMapper.snapshots(gatherer.heroes(), gathererRoster);
+        List<HeroSnapshot> gathererHeroes = heroMapper.snapshots(gathererId, gatherer.heroes(), gathererRoster);
         CityState gathererCity = cities.findByPlayerId(gathererId).orElse(null);
         long gathererHospital = gathererCity == null ? 0L : armyAppService.hospitalCapacity(gathererId, gathererCity);
         BattleArmyFactory.Folded gathererFold = armyFactory.fold(gatherer.units());
