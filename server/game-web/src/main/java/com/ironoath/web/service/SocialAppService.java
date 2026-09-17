@@ -505,6 +505,60 @@ public class SocialAppService {
     }
 
     /**
+     * 解散小队（B10 验收 2 那条责任链的<b>主动</b>那一半）。
+     *
+     * <p><b>这一格缺了很久而四处都看不出缺</b>：{@code Squad.disband} 早就在领域里、两套存储的
+     * {@code unbindSquadMember} 都写了"小队已解散就把文档删掉"（{@code #onMemberLeftAlliance} 在用）、
+     * {@code role_permission} 有 {@code DISBAND_SQUAD} 行、契约枚举有 {@code SQUAD_DISBANDED}。
+     * 少的是这个入口，症状是队长<b>既解散不了小队也退不出去</b>（{@code leave} 拒绝队长），
+     * 只能先把队长转让给某人 —— 而那等于凭空多一次"换队长"。
+     *
+     * <p>成员名单必须在 {@code disband} <b>之前</b>取走：那一步会 {@code members.clear()}，
+     * 之后再问"影响了谁"只能拿到空表，而解散恰恰是最需要通知其他人的那种操作。
+     */
+    public SocialSummaryResp squadDisband(String playerId, SquadSelfReq req) {
+        long now = timeService.serverNow();
+        acquire(req.requestId(), now);
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+                Squad squad = requireSquad(playerId);
+                long expectedSquadVersion = squad.version();
+                // 队长一人决定小队存亡，队员不投票（perm_squad_disband 的 why：
+                // 5~10 人的熟人圈子里投票，输的那一方会直接退队）
+                requirePermission(PermissionMatrix.Scope.SQUAD, squad.roleOf(playerId), "DISBAND_SQUAD");
+                List<String> members = squad.memberIds();
+                try {
+                    squad.disband(now);
+                } catch (IllegalStateException e) {
+                    // 只剩"已经解散"这一种失败，而那个状态在这里到不了：
+                    // requireSquad 读不到已解散的队（文档已被删），SQUAD_NOT_FOUND 的文案正覆盖这件事
+                    throw new BizException(ErrorCode.SQUAD_NOT_FOUND, e.getMessage());
+                }
+                store.saveSquad(squad, expectedSquadVersion);
+                // 逐个清反查索引：解散把成员一次清空，漏掉谁的索引，他打开面板就"还在队里"，
+                // 而他再点任何小队操作都会打到一支已经不存在的队上
+                for (String member : members) {
+                    store.unbindSquadMember(squad.id(), member);
+                }
+                for (String member : members) {
+                    if (member.equals(playerId)) {
+                        continue;
+                    }
+                    store.pushEvent(member, event("SQUAD_DISBANDED",
+                            "小队「" + squad.name() + "」已被队长解散",
+                            "你可以创建或加入一个独立小队", null, now));
+                }
+                LOG.info("解散小队 squadId={} operator={} 影响成员={}",
+                        squad.id(), playerId, members.size());
+                return summary(playerId, now);
+            });
+        } catch (RuntimeException e) {
+            idempotency.release(req.requestId());
+            throw e;
+        }
+    }
+
+    /**
      * 扩容人数上限（B10 验收 3）。扣的是联盟资金，档位与价格全在 {@code Alliance.Rules} 里，
      * 而"检查 + 扣款 + 抬档"在联盟自己的监视器内原子完成 —— 玩家锁只挡同一个人并发，
      * 挡不住两个官员同时扩同一座联盟。

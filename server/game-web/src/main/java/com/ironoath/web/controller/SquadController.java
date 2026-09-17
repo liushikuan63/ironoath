@@ -62,6 +62,17 @@ public class SquadController {
         return Result.ok(social.squadLeave(playerId, req));
     }
 
+    /**
+     * 解散小队。上面那句「队长必须先转让或解散」里的另一条腿 —— 在这个端点存在之前，
+     * 队长两边都走不通：leave 拒他，而解散没有入口。
+     */
+    @PostMapping("/disband")
+    public Result<SocialSummaryResp> disband(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                             @RequestBody SquadSelfReq req) {
+        requirePlayer(playerId);
+        return Result.ok(social.squadDisband(playerId, req));
+    }
+
     /** 踢人。权限位 SQUAD/KICK_MEMBER 由 role_permission 表裁决（验收 4）。 */
     /**
      * 转让队长。客户端早就绑了 {@code POST /squad/transfer}，在这个端点存在之前，

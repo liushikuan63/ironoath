@@ -189,6 +189,60 @@ class SocialEndpointTest {
     }
 
     @Test
+    @DisplayName("POST /squad/disband：队长主动解散，两边的小队视图都清掉、成员各收一条通知、名字不被墓碑占住")
+    void squadDisbandReleasesEveryoneAndFreesTheName() throws Exception {
+        String leader = newPlayer(10);
+        String squadId = post200("/squad/create", leader, new SquadCreateReq(newRequestId(), "要散的队"))
+                .get("squad").get("id").asText();
+        String mate = newPlayer(10);
+        post200("/squad/join", mate, new SquadIdReq(newRequestId(), squadId));
+
+        post200("/squad/disband", leader, new SquadSelfReq(newRequestId()));
+
+        assertThat(get200("/social/summary", leader).get("squad").isNull())
+                .as("解散者自己要先没队").isTrue();
+        // 这一条是本轮真正的新增判据：反查索引漏清的人，面板上"还在队里"，
+        // 而他之后每一次小队操作都会打到一支已经不存在的队上
+        assertThat(get200("/social/summary", mate).get("squad").isNull())
+                .as("成员的反查索引必须一起清掉").isTrue();
+        assertThat(socialStore.unreadEvents(mate).toString())
+                .as("被动失去小队的人必须被告知，而不是自己发现").contains("SQUAD_DISBANDED");
+
+        // 名字不能跟着解散留在库里：占着的话玩家再也建不出原来那个队名。
+        // 注意小队 id 是从队长 id 推出来的（`squad_<playerId>`），所以重建必然拿到同一个 id ——
+        // "id 变了"不是判据，真正的判据是这条 create 没回 SQUAD_NAME_TAKEN，
+        // 且拿回的是一支只剩队长自己的新队（旧队复活会把两个人一起带回来）
+        JsonNode reborn = post200("/squad/create", leader, new SquadCreateReq(newRequestId(), "要散的队"))
+                .get("squad");
+        assertThat(reborn.get("name").asText()).isEqualTo("要散的队");
+        assertThat(reborn.get("members")).as("重建的是一支只有队长的新队，不是原来那支复活").hasSize(1);
+        assertThat(reborn.get("leaderId").asText()).isEqualTo(leader);
+    }
+
+    @Test
+    @DisplayName("解散是小队里队长一人的权限：队员调这个端点被权限表拦下，且小队一个人都没少")
+    void squadMemberCannotDisband() throws Exception {
+        String leader = newPlayer(10);
+        String squadId = post200("/squad/create", leader, new SquadCreateReq(newRequestId(), "投票队"))
+                .get("squad").get("id").asText();
+        String mate = newPlayer(10);
+        post200("/squad/join", mate, new SquadIdReq(newRequestId(), squadId));
+
+        JsonNode denied = postRaw("/squad/disband", mate, new SquadSelfReq(newRequestId()));
+        assertThat(denied.get("code").asInt()).isEqualTo(ErrorCode.SOCIAL_PERMISSION_DENIED.code());
+        assertThat(get200("/social/summary", leader).get("squad").get("members"))
+                .as("被拒的解散不许动到任何状态，成员还得是两个人").hasSize(2);
+    }
+
+    @Test
+    @DisplayName("没有小队的人调解散：回 SQUAD_NOT_FOUND 而不是 500")
+    void disbandWithoutSquadIsABusinessErrorNotAThrow() throws Exception {
+        String lonely = newPlayer(10);
+        JsonNode resp = postRaw("/squad/disband", lonely, new SquadSelfReq(newRequestId()));
+        assertThat(resp.get("code").asInt()).isEqualTo(ErrorCode.SQUAD_NOT_FOUND.code());
+    }
+
+    @Test
     @DisplayName("POST /alliance/expand：端点存在，领域失败映射成业务码而不是 500/404")
     void allianceExpandSpendsFundAndRaisesCap() throws Exception {
         String leader = newPlayer(10);
