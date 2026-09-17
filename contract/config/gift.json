@@ -1,0 +1,44 @@
+{
+  "table": "gift",
+  "version": 1,
+  "comment": "礼包弹窗表。一行 = 一个礼包：什么时候推、推的是哪一档商品、每天能买几次、弹出后多久内有效。发货内容与价格不在本表（在 product_reward 与 pay_product）。",
+  "designNote": "【为什么这张表只管\"推不推\"，不管\"给什么\"】礼包的发货必须走既有的 pay_product + product_reward 那条链路，\n而不是在礼包里再写一份奖励清单（B19 §四 禁止项「不要为礼包新开第二条发放通路」）。两份内容的后果是\n\"弹窗写 2 张建造令、实际发到 1 张\"，而这条分叉只在玩家付费之后才暴露 —— 那是最容易变成投诉的一类错。\n所以本表这一行只留 productId，内容改一处就两边同改。\n\n【价值 180 金币等值是算出来的，不是拍的】6 元 × 基准 10 金币/元 × 礼包倍率 3 = 180（§五① 换算基准）。\n三档内容各自按 item 表回收价折算都精确等于 180，由 GiftValueConsistencyTest 逐礼包核对。\n不写\"约 180\"：一旦允许凑不齐，下一档内容就会一路\"约\"下去，最后礼包价值比宣传低一档也无人发现。\n\n【trigger 只有三类，且与 §五⑤ 的三类事件源一一对应】STUCK_STAGE=关卡挑战失败、BUILDING_DONE=建筑升级完成、\nBATTLE_LOST=出征战败或城被攻破。§3 原表还列过\"主城等级 / 资源缺口\"两类触发，**本批不做**：那两类是常驻条件\n而非事件，接进同一个频控器会让\"24h ≤ 3 次\"变成按条件重复弹的骚扰（C08 的克制条款）。\n\n【倒计时只有一个用途】offerTtlMinutes=60 是\"这次触发过期后需要重新触发\"，不是常驻挂件。\n§五⑤ 明写不做\"倒计时制造焦虑\"的常驻挂件 —— 玩家不看界面时倒计时照样在走，那是拿焦虑换点击，\n留存上是要还的。过期不买的处理见 S3-ii 的接线说明。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "trigger": "ENUM:STUCK_STAGE,BUILDING_DONE,BATTLE_LOST",
+    "productId": "REF:pay_product",
+    "limitCount": "LONG_POS",
+    "offerTtlMinutes": "LONG_POS",
+    "why": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "popup_stuck_supply",
+      "name": "卡关补给",
+      "trigger": "STUCK_STAGE",
+      "productId": "gift_stuck_supply",
+      "limitCount": 1,
+      "offerTtlMinutes": 60,
+      "why": "卡关那一刻是唯一\"我确实差一点本钱\"的时刻，转化率最高、也最不冤枉：他不买就得继续卡着。 购买限购每礼包每日 1 次（limitCount=1，§五⑤）：日限购是为了不让「弹窗」变成「每天催三次」，而同一档内容一天卖第二次等于把定价当促销用。弹窗本身的频控走既有 PopupThrottle（同礼包 24h ≤ 3 次、全局冷却 10 分钟、首充后 24h 静默）—— 那是「看见几次」，本列是「买到几次」，两个数不同源也不该同源。"
+    },
+    {
+      "id": "popup_building_celebration",
+      "name": "落成贺礼",
+      "trigger": "BUILDING_DONE",
+      "productId": "gift_building_celebration",
+      "limitCount": 1,
+      "offerTtlMinutes": 60,
+      "why": "建筑完成 = 一段等待结束，正处在\"要不要再来一座\"的判断点上。与卡关那一档共用建造令，玩家不会觉得两礼包是两份不同的慷慨。 购买限购每礼包每日 1 次（limitCount=1，§五⑤）：日限购是为了不让「弹窗」变成「每天催三次」，而同一档内容一天卖第二次等于把定价当促销用。弹窗本身的频控走既有 PopupThrottle（同礼包 24h ≤ 3 次、全局冷却 10 分钟、首充后 24h 静默）—— 那是「看见几次」，本列是「买到几次」，两个数不同源也不该同源。"
+    },
+    {
+      "id": "popup_defeat_relief",
+      "name": "战败抚恤",
+      "trigger": "BATTLE_LOST",
+      "productId": "gift_defeat_relief",
+      "limitCount": 1,
+      "offerTtlMinutes": 60,
+      "why": "挨打之后想买的是\"别再挨打\"。这一档也是三类里唯一带保护道具的，理由是它的痛点就在那个形状上。 购买限购每礼包每日 1 次（limitCount=1，§五⑤）：日限购是为了不让「弹窗」变成「每天催三次」，而同一档内容一天卖第二次等于把定价当促销用。弹窗本身的频控走既有 PopupThrottle（同礼包 24h ≤ 3 次、全局冷却 10 分钟、首充后 24h 静默）—— 那是「看见几次」，本列是「买到几次」，两个数不同源也不该同源。"
+    }
+  ]
+}

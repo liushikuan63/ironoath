@@ -93,13 +93,21 @@ class ProductRewardConsistencyTest {
     }
 
     @Test
-    @DisplayName("一个 kind 只有一行商品，且 priceCentsParam 指的是真实存在的 global 参数")
+    @DisplayName("按 kind 反查的那几类商品每类恰好一行；礼包是按 productId 下单的一族，允许多行")
     void oneRowPerKindAndPriceIsAPointerNotACopy() {
+        // 原话是"一个 kind 只有一行"。它的理由到今天仍然成立，但只成立于**按 kind 反查商品**的那几类：
+        // 月卡与基金的领取链走 requireKind(MONTHLY_CARD/GROWTH_FUND)（PaidClaimsAppService），
+        // 同一类出现第二行就没有答案了。礼包不同：弹窗与购买都带 productId，
+        // 三档共用 kind=GIFT 而各自是一档商品 —— 所以这里把范围写准，而不是把断言删掉。
         Map<String, Long> byKind = products().stream()
+                .filter(p -> p.kind() != PayProductCfg.Kind.GIFT)
                 .collect(Collectors.groupingBy(p -> p.kind().name(), Collectors.counting()));
-        assertThat(byKind.values()).as("同一类商品出现两行 ⇒ 下单时按哪个发货没有答案")
+        assertThat(byKind.values()).as("非礼包类商品出现两行 ⇒ requireKind 反查没有答案")
                 .allMatch(n -> n == 1L);
         assertThat(byKind.keySet()).containsExactlyInAnyOrder("MONTHLY_CARD", "GROWTH_FUND", "FIRST_CHARGE");
+        assertThat(products().stream().filter(p -> p.kind() == PayProductCfg.Kind.GIFT).count())
+                .as("礼包一族必须有多行（B19 §五⑤ 首批 3 个），只有一行说明触发点没配齐")
+                .isGreaterThan(1L);
 
         for (PayProductCfg row : products()) {
             assertThat(configs.hasParam(row.priceCentsParam()))

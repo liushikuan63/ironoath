@@ -1,12 +1,12 @@
 {
   "table": "pay_product",
-  "version": 1,
+  "version": 3,
   "comment": "付费商品表（B19 §一.1）。三行 = 支付域唯一在卖的三类商品：月卡 / 成长基金 / 首充。\n本表只放**结构与权益**；价格不放这里（见 designNote 第 1 条：价格住在 global 的 PRODUCT_*_CENTS，本表用 priceCentsParam 指它的名字）。",
   "designNote": "**四条口径**（来源：`收口清单.md` #145 的 B19 裁决 + `B19_付费发货与礼包弹窗.md` §一.1）：\n1. **价格不在本表**：三类商品的价格早已是 `global` 的 `PRODUCT_MONTHLY_CARD_CENTS` / `PRODUCT_GROWTH_FUND_CENTS` / `PRODUCT_FIRST_CHARGE_CENTS`，而 `PayAppService.priceOf` 按 productId 去读。再在本表存一份数字，就是同一个价两个家 —— 改一处另一处不动，症状是「下单按旧价扣钱、界面显示新价」。本表因此只存**参数的名字**（`priceCentsParam`），它是指针不是副本。\n2. **发货内容在 `product_reward` 那张表里**（按本表 id 挂）：月卡的日包、首充的金币与选将、基金的六档，全是「一个商品多行奖励」的形状。为什么不像宝箱那样塞一个 JSON 字段（`chest.json` 的 designNote 当年就为这件事写过理由）：奖励要能被外键卡口逐行验（`rewardId` 打错成不存在的道具，校验器看得见，JSON 看不见），而发错的后果是玩家付费后领到别的东西。\n3. **`grantOccasion` 决定「什么时候发」**，三类各不同且不能混：`ON_PURCHASE` 发货即发（首充）；`DAILY` 有效期内每天领一次（月卡，跨天走 `DayKey` UTC+8）；`TIER` 按主城等级分批领（基金，档位门槛在 `product_reward.requireMainLevel`）。这个位放本表而不是奖励行上，是因为「按什么节奏领」是**商品的属性**：日包三行奖励共享同一个节奏，逐行重复三个一样的值是抄三遍。\n4. **`adFree` / `extraQueues` 只给月卡**（§五②b 的三件套之二）。两条裁决原文留在字段里防误读：\n   · `adFree` 免的是**播放**不是次数 —— `city_rule_ad_speedup_daily_limit`（5 次/日）保留，月卡玩家照样一天最多 5 次，只是不必看广告；把上限一起免掉等于让时间卡点被付费绕过（那条 city_rule 的 why 原文就写着这件事）。\n   · `extraQueues` 是 `city_rule_max_queue_count`（3）之上**临时 +1**，到期只禁新开、不中断在跑的升级（§五②b「到期收回」）。\n\n**礼包不放本表**：礼包弹窗是「触发条件 + 限时 + 限购」那一族（`B19` §一.3），与这三类「一次买断、分批领」的商品语义不同；它随弹窗接线那一批单独成表，避免把两种生命周期塞进同一张表的可选列里。",
   "fieldTypes": {
     "id": "STRING_KEY",
     "name": "STRING",
-    "kind": "ENUM:MONTHLY_CARD,GROWTH_FUND,FIRST_CHARGE",
+    "kind": "ENUM:MONTHLY_CARD,GROWTH_FUND,FIRST_CHARGE,GIFT",
     "priceCentsParam": "STRING",
     "grantOccasion": "ENUM:ON_PURCHASE,DAILY,TIER",
     "durationDays": "?LONG_POS",
@@ -51,6 +51,42 @@
       "extraQueues": 0,
       "heroChoices": "hero_sr_01,hero_sr_02,hero_sr_03",
       "why": "6 元 × 10 金币/元 × `FIRST_CHARGE_MULTIPLIER`(2) = 120 金币（§五①a 定的换算基准与倍率）。**另送一名 SR，三选一**，候选集与 `quest_main_01.rewardHeroChoices` 同一批（不另建名单：两个候选集迟早分叉，而分叉时玩家会问「为什么任务送的和充钱送的不一样」。§五②e 原话）。**这一列与 `quest_main_01.rewardHeroChoices` 是两份字符串**：同源由 `ProductRewardConsistencyTest` 逐字符比对钉住，而不是让付费域去读任务表 —— 一条反向依赖换来的「少一份字符串」，代价是两个系统在编译期绑在一起。金币只给 120 是因为首充的定价价值在武将 —— 金币是添头，不是卖点。"
+    },
+    {
+      "id": "gift_stuck_supply",
+      "name": "卡关补给",
+      "kind": "GIFT",
+      "priceCentsParam": "PRODUCT_GIFT_CENTS",
+      "grantOccasion": "ON_PURCHASE",
+      "durationDays": null,
+      "adFree": false,
+      "extraQueues": 0,
+      "heroChoices": null,
+      "why": "关卡挑战失败时弹窗（B19 §五⑤）。内容 1×1h 建造令 + 2×木材箱 + 2×铁箱 + 70 金币 = 180 金币等值。挑这四件的理由：卡关的人缺的是\"再打一次的本钱\"，建造令与资源包都是立刻能变成战力的东西，而 70 金币是让他顺手把缺的那一格补上。"
+    },
+    {
+      "id": "gift_building_celebration",
+      "name": "落成贺礼",
+      "kind": "GIFT",
+      "priceCentsParam": "PRODUCT_GIFT_CENTS",
+      "grantOccasion": "ON_PURCHASE",
+      "durationDays": null,
+      "adFree": false,
+      "extraQueues": 0,
+      "heroChoices": null,
+      "why": "建筑升级完成时弹窗。内容 2×1h 建造令 + 100 金币 = 180 金币等值。全是建造线相关材料：刚升完一座楼的人下一步必然是继续升，弹窗出现在他最在意这条线的时刻。"
+    },
+    {
+      "id": "gift_defeat_relief",
+      "name": "战败抚恤",
+      "kind": "GIFT",
+      "priceCentsParam": "PRODUCT_GIFT_CENTS",
+      "grantOccasion": "ON_PURCHASE",
+      "durationDays": null,
+      "adFree": false,
+      "extraQueues": 0,
+      "heroChoices": null,
+      "why": "出征战败或城被攻破时弹窗。内容 1×闭城令 8h + 1×木材箱 + 80 金币 = 180 金币等值。第一件是**止损**（八小时不再被连续抢），资源是重建本钱 —— 战败时的痛点顺序就是\"先别再挨打、再补家底\"，所以它排在最前。"
     }
   ]
 }

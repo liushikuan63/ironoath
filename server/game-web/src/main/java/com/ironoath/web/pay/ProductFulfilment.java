@@ -105,7 +105,13 @@ public final class ProductFulfilment implements PayAppService.ProductFulfiller {
             // 登记位排在最前：万一后面的发放中途崩掉，"这个账号已经用掉首充"这件事已经落下，
             // 补单重放时不会把金币再送一遍
             case ON_PURCHASE -> {
-                out.add(new RewardItem(RewardType.PRIVILEGE, product.id(), 1L));
+                // 首充/基金这一类要落一个"账号级登记位"，礼包不在此列：它没有任何永久语义，
+                // 每天可以重买一次同样的内容。给它登记一条 PRIVILEGE 的后果不是多一个字段，
+                // 而是 PaidPrivilegeGrants 的 switch 里没有 GIFT 这一支 ⇒ 默认分支当场抛，
+                // 玩家付了钱而发货失败、进补单队列反复重试。所以这里按 kind 分流。
+                if (product.kind() != PayProductCfg.Kind.GIFT) {
+                    out.add(new RewardItem(RewardType.PRIVILEGE, product.id(), 1L));
+                }
                 out.addAll(catalog.toDomainRewards(
                         catalog.alwaysRows(product.id()), 1L));
                 RewardItem hero = heroChoiceReward(product, line);

@@ -151,6 +151,11 @@ public final class PaidProducts {
             case GROWTH_FUND -> paid.fundPurchased()
                     ? "本账号已经买过成长基金，返还档位是跟着账号的，再买一份不会多出六档" : null;
             case MONTHLY_CARD -> null;
+            // 礼包今天在这里放行：它的限购是「每礼包每日 1 次」而不是「账号一次」。
+            // 判"今天是否已买过"要读订单而不是读 PlayerPaid（礼包没有账号级权益位，见 #169），
+            // 那一步在 S3-iii 与购买入口同批落 —— 现在放行的后果是"能重复买"，
+            // 而它的对立面（写成一个永久标记）是"第二天就再也买不到"，两者都远好于悄悄少卖一天。
+            case GIFT -> null;
         };
     }
 

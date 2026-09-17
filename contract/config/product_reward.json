@@ -1,6 +1,6 @@
 {
   "table": "product_reward",
-  "version": 1,
+  "version": 2,
   "comment": "付费商品的发货内容（B19 §一.1）。一个商品多行奖励：月卡的日包三行、首充的金币一行、成长基金的六档各一行。\n价格与「按什么节奏领」在 `pay_product`，本表只回答「一次发的是哪些东西、各多少个」。",
   "designNote": "**三条口径**：\n1. **为什么拆成行而不是在商品行里塞一个 JSON 字段**：与 `chest.json` / `chest_drop.json` 当年同一条理由 ——\n   奖励要能被外键卡口逐行验。`rewardId` 打错成一个不存在的道具，校验器当场就能拦；\n   塞进 JSON 字段就看不见，只会在玩家付了钱、打开背包那一刻炸出来（付费场景里这是最贵的一种 bug）。\n2. **`rewardType` 与 `rewardId` 成对**（`RESOURCE` 指 `resource` 表、`ITEM` 指 `item` 表）：\n   这条配对由 `check-config-refs` 的规则 3 核 —— 它查得出「写 RESOURCE 而 id 填了道具」这种\n   「两边都存在、只有语义错」的行，而那种行的症状是玩家领到别的东西而不是报错。\n   **为什么不写 `REF:`**：一列指向两张表，校验器的 REF 规则表达不了，退化成 STRING + 配对规则（与 `chest_drop.rewardId` 同一处取舍）。\n3. **`requireMainLevel` 只对基金档位有意义**：`pay_product.grantOccasion=TIER` 的商品按这一列分批解锁；\n   其余行留空表示「没有等级门槛，到点就能领」。同一列两处用（有门槛/无门槛）而不是加两个列，\n   是因为「无门槛」本身就是「门槛为 0」的简写，两个列会造出一个「两列都为空算什么」的空洞。\n\n**金币等值从哪里来**：日包与礼包的「值多少钱」全部按 `shop.json` 的金币价折算（建造令 1h=40、木材包=10、\n练兵令 1h=45、铁包=25、闭城令 8h=90）。这些数不在本表复制，一致性由 `ProductRewardConsistencyTest` 现读两张表算，\n它同时钉住 #145 定的那条换算基准：`价格分 × PAY_BASE_GOLD_PER_YUAN × 各倍率 ÷ 期数 == 组成之和`。",
   "fieldTypes": {
@@ -102,6 +102,87 @@
       "rewardId": "GOLD",
       "count": 1800,
       "why": "尾档 1800（多出的 200 在这里）：六档走完的人是全服投入最深的一批，尾款给得略多重，是「走完」这件事的定价。五档 1600 + 一档 1800 = 9800 = 98 元 × 10 金币/元 × 倍率 10，与 #145 的换算基准逐字对齐。"
+    },
+    {
+      "id": "pr_gift_stuck_supply_1",
+      "productId": "gift_stuck_supply",
+      "requireMainLevel": null,
+      "rewardType": "ITEM",
+      "rewardId": "item_speedup_build_1h",
+      "count": 1,
+      "why": "B19 §五⑤ 首批礼包「gift_stuck_supply」的发货内容一行（一小时建造令一张（等值 40）。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
+    },
+    {
+      "id": "pr_gift_stuck_supply_2",
+      "productId": "gift_stuck_supply",
+      "requireMainLevel": null,
+      "rewardType": "ITEM",
+      "rewardId": "item_res_wood_10k",
+      "count": 2,
+      "why": "B19 §五⑤ 首批礼包「gift_stuck_supply」的发货内容一行（木材箱两个（2×10=20）：木材是建造与造兵的双料瓶颈。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
+    },
+    {
+      "id": "pr_gift_stuck_supply_3",
+      "productId": "gift_stuck_supply",
+      "requireMainLevel": null,
+      "rewardType": "ITEM",
+      "rewardId": "item_res_iron_5k",
+      "count": 2,
+      "why": "B19 §五⑤ 首批礼包「gift_stuck_supply」的发货内容一行（铁箱两个（2×25=50）：铁是容量与产量的双重短板，给到两个才够撑一次反攻。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
+    },
+    {
+      "id": "pr_gift_stuck_supply_4",
+      "productId": "gift_stuck_supply",
+      "requireMainLevel": null,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 70,
+      "why": "B19 §五⑤ 首批礼包「gift_stuck_supply」的发货内容一行（金币 70 补足到 180（40+20+50+70）。留一笔自由钱：卡关的人缺的东西各不相同，替他决定不如让他自己决定。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
+    },
+    {
+      "id": "pr_gift_building_celebration_5",
+      "productId": "gift_building_celebration",
+      "requireMainLevel": null,
+      "rewardType": "ITEM",
+      "rewardId": "item_speedup_build_1h",
+      "count": 2,
+      "why": "B19 §五⑤ 首批礼包「gift_building_celebration」的发货内容一行（两小时建造力（2×40=80）：正处在\"还想再升一座\"的时刻，这是最直接的爽点。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
+    },
+    {
+      "id": "pr_gift_building_celebration_6",
+      "productId": "gift_building_celebration",
+      "requireMainLevel": null,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 100,
+      "why": "B19 §五⑤ 首批礼包「gift_building_celebration」的发货内容一行（金币 100 补到 180。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
+    },
+    {
+      "id": "pr_gift_defeat_relief_7",
+      "productId": "gift_defeat_relief",
+      "requireMainLevel": null,
+      "rewardType": "ITEM",
+      "rewardId": "item_buff_closed_8h",
+      "count": 1,
+      "why": "B19 §五⑤ 首批礼包「gift_defeat_relief」的发货内容一行（八小时闭城死守（等值 90）：**止损优先**——战败后最痛的不是损失本身，是\"还在被连续抢\"。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
+    },
+    {
+      "id": "pr_gift_defeat_relief_8",
+      "productId": "gift_defeat_relief",
+      "requireMainLevel": null,
+      "rewardType": "ITEM",
+      "rewardId": "item_res_wood_10k",
+      "count": 1,
+      "why": "B19 §五⑤ 首批礼包「gift_defeat_relief」的发货内容一行（木材箱一个（10）重建本钱。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
+    },
+    {
+      "id": "pr_gift_defeat_relief_9",
+      "productId": "gift_defeat_relief",
+      "requireMainLevel": null,
+      "rewardType": "RESOURCE",
+      "rewardId": "GOLD",
+      "count": 80,
+      "why": "B19 §五⑤ 首批礼包「gift_defeat_relief」的发货内容一行（金币 80 补到 180（90+10+80）。）。价值一律按 item 表的回收价折算，三行/四行合计必须等于 180 金币等值 = 600 分 × `PAY_BASE_GOLD_PER_YUAN`(10) × `GIFT_VALUE_MULTIPLIER`(3) —— 这个等式由 `GiftValueConsistencyTest` 逐礼包核对，不是写完就散在文档里。"
     }
   ]
 }

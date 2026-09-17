@@ -146,13 +146,21 @@ class PayEndpointTest {
 
         assertThat(data.get("region").asText()).isNotBlank();
         JsonNode products = data.get("products");
-        assertThat(products.size()).as("三类主力商品").isEqualTo(3);
+        assertThat(products.size()).as("三类主力商品 + 三档礼包（B19-S3-i #169）").isEqualTo(6);
+        long giftCents = configs.longParam("PRODUCT_GIFT_CENTS");
+        int giftRows = 0;
         for (JsonNode product : products) {
             String id = product.get("productId").asText();
             long expected = switch (id) {
                 case "monthly_card" -> configs.longParam("PRODUCT_MONTHLY_CARD_CENTS");
                 case "growth_fund" -> configs.longParam("PRODUCT_GROWTH_FUND_CENTS");
                 case "first_charge" -> configs.longParam("PRODUCT_FIRST_CHARGE_CENTS");
+                // 三档礼包共用一枚参数：§五⑤ 说"与首充同档、不新增价格点"，
+                // 而它讲的正是阶梯不许变多 —— 这里就按"三行同一个参数"来钉这句话
+                case "gift_stuck_supply", "gift_building_celebration", "gift_defeat_relief" -> {
+                    giftRows++;
+                    yield giftCents;
+                }
                 default -> throw new AssertionError("未预期的商品 id: " + id);
             };
             assertThat(product.get("cents").asLong())
@@ -164,6 +172,11 @@ class PayEndpointTest {
                             + "序列化可能直接省略 null 字段，所以「缺失」与「JSON null」都算合格")
                     .isTrue();
         }
+        assertThat(giftRows)
+                .as("三档礼包都要出现在价格表里。少一档的常见原因是 PaidProducts.onSale 把它自己的价格参数"
+                        + "校验跳过了（缺参数就跳过），而那种情况下礼包在弹窗里可见、在价格表里查不到 —— "
+                        + "玩家点下去就是一笔下不了的单")
+                .isEqualTo(3);
     }
 
     // ---------- 下单 ----------
