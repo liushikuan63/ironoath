@@ -467,6 +467,30 @@ export interface GachaCfg {
   disclosureText: string
 }
 
+/** gift.giftTrigger 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type GiftTrigger =
+  | 'STUCK_STAGE'
+  | 'BUILDING_DONE'
+  | 'BATTLE_LOST'
+
+/**
+ * 配置表 gift 的一行。
+ * 礼包弹窗表。一行 = 一个礼包：什么时候推、推的是哪一档商品、每天能买几次、弹出后多久内有效。发货内容与价格不在本表（在 product_reward 与 pay_product）。
+ *
+ * 源表 version=1
+ */
+export interface GiftCfg {
+  /** 主键 */
+  id: string
+  name: string
+  /** 枚举，取值见 GiftTrigger */
+  trigger: GiftTrigger
+  /** 外键，指向 pay_product 表的 id */
+  productId: string
+  limitCount: number
+  offerTtlMinutes: number
+}
+
 /** guide.guideTrigger 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type GuideTrigger =
   | 'PANEL_OPEN'
@@ -731,6 +755,7 @@ export type PayProductKind =
   | 'MONTHLY_CARD'
   | 'GROWTH_FUND'
   | 'FIRST_CHARGE'
+  | 'GIFT'
 
 /** pay_product.payProductGrantOccasion 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type PayProductGrantOccasion =
@@ -743,7 +768,7 @@ export type PayProductGrantOccasion =
  * 付费商品表（B19 §一.1）。三行 = 支付域唯一在卖的三类商品：月卡 / 成长基金 / 首充。
  * 本表只放**结构与权益**；价格不放这里（见 designNote 第 1 条：价格住在 global 的 PRODUCT_*_CENTS，本表用 priceCentsParam 指它的名字）。
  *
- * 源表 version=1
+ * 源表 version=3
  */
 export interface PayProductCfg {
   /** 主键 */
@@ -770,7 +795,7 @@ export type ProductRewardRewardType =
  * 付费商品的发货内容（B19 §一.1）。一个商品多行奖励：月卡的日包三行、首充的金币一行、成长基金的六档各一行。
  * 价格与「按什么节奏领」在 `pay_product`，本表只回答「一次发的是哪些东西、各多少个」。
  *
- * 源表 version=1
+ * 源表 version=2
  */
 export interface ProductRewardCfg {
   /** 主键 */
