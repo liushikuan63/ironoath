@@ -55,6 +55,14 @@ public class TechEffects {
     }
 
     /**
+     * 训练速度加成（定点万分比）。由 {@code ArmyAppService} 传进 {@code ArmyState.train}，
+     * 作用在<b>批次总时长</b>上（作用在单兵秒数上会让快兵种完全吃不到加成）。
+     */
+    public long trainSpeedPercent(PlayerTech tech) {
+        return totalPercent(TechCfg.EffectAttr.TRAIN_SPEED, tech);
+    }
+
+    /**
      * 攻击加成（定点万分比）。与联盟科技的同名加成<b>相加</b>后进乘区 B，
      * 合并点在 {@code BattleTechBonuses}（§五④：同类相加成总加成率，作用一次）。
      */

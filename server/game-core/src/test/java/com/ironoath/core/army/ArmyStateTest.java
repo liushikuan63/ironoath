@@ -41,17 +41,36 @@ class ArmyStateTest {
     @DisplayName("B05 §二：训练时间 = 单位时间 × 数量，批量不等于加速")
     void trainingTimeScalesLinearlyWithCount() {
         ArmyState army = army();
-        long finishAt = army.train("unit_infantry_t1", 100L, 60L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        long finishAt = army.train("unit_infantry_t1", 100L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
         assertThat(finishAt - NOW).as("100 个 × 60 秒 = 6000 秒").isEqualTo(6000L * 1000L);
         assertThat(army.totalTraining()).isEqualTo(100L);
         assertThat(army.totalTroops()).as("训练中的兵力还没入账").isZero();
     }
 
     @Test
+    @DisplayName("训练速度作用在<b>批次总时长</b>上：单兵 6 秒 × 10 = 60 秒，减 2% 是 59 秒而不是 60 秒")
+    void trainingSpeedAppliesToBatchTotalOnce() {
+        ArmyState army = army();
+        long finishAt = army.train("unit_infantry_t1", 10L, 6L, 200L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        assertThat(finishAt - NOW)
+                .as("60 × 0.98 = 58.8 秒 → ceil 成 59。若先按单兵取整（6 × 0.98 = 5.88 → 6 秒再乘 10），"
+                        + "加成会被完全吃掉，而这条路径每天在低级兵种上发生无数次")
+                .isEqualTo(59L * 1000L);
+    }
+
+    @Test
+    @DisplayName("加成 100% 也只留 1 秒：0 秒的训练等于没有队列，也没有求助与加速的落点")
+    void trainingSpeedNeverReachesZero() {
+        ArmyState army = army();
+        long finishAt = army.train("unit_infantry_t1", 1L, 1L, 10_000L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        assertThat(finishAt - NOW).isEqualTo(1000L);
+    }
+
+    @Test
     @DisplayName("带兵上限把训练中的兵力也算进去，否则可以「先塞满队列再换低统率武将」绕过它")
     void trainingTroopsCountAgainstCap() {
         ArmyState army = army();
-        army.train("unit_infantry_t1", 90L, 60L, SLOTS, 100L, BATCH_MAX, NOW);
+        army.train("unit_infantry_t1", 90L, 60L, 0L, SLOTS, 100L, BATCH_MAX, NOW);
         assertThat(army.totalTraining()).isEqualTo(90L);
 
         // 上限 100、已占用 90，再来 20 个就超了 —— 即使这 90 个还在训练、一个都没入账
@@ -76,12 +95,12 @@ class ArmyStateTest {
     @DisplayName("队列条数用满后拒绝；同一兵种不能并行两批")
     void queueSlotsAndPerUnitSerializationAreEnforced() {
         ArmyState army = army();
-        army.train("unit_infantry_t1", 10L, 60L, 1, 10_000L, BATCH_MAX, NOW);
+        army.train("unit_infantry_t1", 10L, 60L, 0L, 1, 10_000L, BATCH_MAX, NOW);
         assertThatThrownBy(() -> army.canTrain("unit_cavalry_t1", 10L, 1, 10_000L, BATCH_MAX))
                 .isInstanceOf(BizException.class).hasMessageContaining("训练队列已满");
 
         ArmyState wide = army();
-        wide.train("unit_infantry_t1", 10L, 60L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        wide.train("unit_infantry_t1", 10L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
         assertThatThrownBy(() -> wide.canTrain("unit_infantry_t1", 10L, SLOTS, 10_000L, BATCH_MAX))
                 .isInstanceOf(BizException.class).hasMessageContaining("已在训练中");
         // 额外队列（特权/道具）必须真的放宽上限
@@ -101,7 +120,7 @@ class ArmyStateTest {
     @DisplayName("惰性收割：到点后 collectFinished 把兵入账并释放队列，未到点的一个都不动")
     void finishedTrainingIsHarvestedLazily() {
         ArmyState army = army();
-        army.train("unit_infantry_t1", 100L, 60L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        army.train("unit_infantry_t1", 100L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
         // 100 个 × 60 秒 = 6000 秒。这里的常量都带 MS 后缀：训练时长以秒计、时间戳以毫秒计，
         // 两者混用会让「到点了却没入账」看起来像惰性结算坏了，实际只是差了一千倍
         final long durationMs = 100L * 60L * 1000L;
@@ -121,7 +140,7 @@ class ArmyStateTest {
     @DisplayName("加速会被剩余时间截断，剩余秒数与进度永不为负、永不超 100%")
     void speedUpIsTruncatedAndNeverNegative() {
         ArmyState army = army();
-        army.train("unit_infantry_t1", 10L, 60L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        army.train("unit_infantry_t1", 10L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
 
         assertThat(army.speedUp("unit_infantry_t1", 30L, NOW)).isEqualTo(30L);
         assertThat(army.queue().get("unit_infantry_t1").remainingSeconds(NOW)).isEqualTo(570L);
@@ -139,7 +158,7 @@ class ArmyStateTest {
     @DisplayName("取消训练把任务交回给调用方；已到点的批次直接入账而不是被取消掉")
     void cancelReturnsTaskAndHarvestsIfAlreadyDue() {
         ArmyState army = army();
-        army.train("unit_infantry_t1", 25L, 60L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        army.train("unit_infantry_t1", 25L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
         ArmyState.TrainingTask task = army.cancel("unit_infantry_t1", NOW);
         assertThat(task.count()).isEqualTo(25L);
         assertThat(army.usedSlots()).isZero();
@@ -148,7 +167,7 @@ class ArmyStateTest {
 
         // 已到点却没被收割：直接入账比取消更符合玩家预期，
         // 否则玩家会因为「点取消的那一瞬间刚好训完」而白丢一批兵
-        army.train("unit_cavalry_t1", 7L, 60L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        army.train("unit_cavalry_t1", 7L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
         assertThatThrownBy(() -> army.cancel("unit_cavalry_t1", NOW + 10 * HOUR))
                 .isInstanceOf(BizException.class).hasMessageContaining("已训练完成并已入账");
         assertThat(army.countOf("unit_cavalry_t1")).isEqualTo(7L);
@@ -159,7 +178,7 @@ class ArmyStateTest {
     void helpSpeedUpTrainingUsesOriginalDurationAsBase() {
         ArmyState army = army();
         // 10 个 × 100 秒 = 1000 秒，原始总时长记下来就是帮助的基数
-        army.train("unit_infantry_t1", 10L, 100L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        army.train("unit_infantry_t1", 10L, 100L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
 
         long perHelp = com.ironoath.common.num.FixedPoint.parse("0.01");
         assertThat(army.speedUpTrainingByRatio("unit_infantry_t1", perHelp, NOW))
@@ -304,9 +323,9 @@ class ArmyStateTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("必须为正");
         assertThatThrownBy(() -> army.deduct("u", -1L))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("不得为负");
-        assertThatThrownBy(() -> army.train("u", 0L, 60L, SLOTS, 100L, BATCH_MAX, NOW))
+        assertThatThrownBy(() -> army.train("u", 0L, 60L, 0L, SLOTS, 100L, BATCH_MAX, NOW))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("必须为正");
-        assertThatThrownBy(() -> army.train("u", 1L, 0L, SLOTS, 100L, BATCH_MAX, NOW))
+        assertThatThrownBy(() -> army.train("u", 1L, 0L, 0L, SLOTS, 100L, BATCH_MAX, NOW))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("单位训练时间");
         assertThatThrownBy(() -> army.speedUp("u", 0L, NOW))
                 .isInstanceOf(BizException.class).hasMessageContaining("不在训练队列里");
@@ -321,7 +340,7 @@ class ArmyStateTest {
     void restoreIsSafeWhenGivenItsOwnViews() {
         ArmyState army = army();
         army.add("unit_infantry_t1", 40L);
-        army.train("unit_cavalry_t1", 7L, 60L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        army.train("unit_cavalry_t1", 7L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
         army.admitWounded(Map.of("unit_archer_t1", 12L), 100L);
         army.startTreatment(60L, Map.of("IRON", 300L), NOW);
 

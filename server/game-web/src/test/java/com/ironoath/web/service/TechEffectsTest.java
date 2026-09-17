@@ -1,11 +1,11 @@
 package com.ironoath.web.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,16 +13,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
-import com.ironoath.common.num.FixedPoint;
 import com.ironoath.core.city.BuildingInstance;
 import com.ironoath.core.city.CityState;
+import com.ironoath.core.player.PlayerRepository;
+import com.ironoath.core.player.PlayerResourceState;
+import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.player.PlayerTech;
 import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.core.resource.ResourceOutputCalculator;
+import com.ironoath.web.dto.generated.CityUpgradeReq;
+import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.tech.TechEffects;
 
 /**
- * 职责：科技效果接入的两个消费点（<b>产量</b>与<b>建造速度</b>）的定点值验证（B20 验收 3 的前两格）。
+ * 职责：科技效果接入的消费点（产量、建造速度、训练速度）的定点值验证（B20 验收 3）。
  * 依赖：Spring 上下文（要真配置表）；不碰 MongoDB。
  *
  * <p><b>为什么断精确数而不是"产率变大了"</b>：B20 §一 明写"每处效果用精确定点值断言
@@ -30,9 +34,10 @@ import com.ironoath.web.tech.TechEffects;
  * 更实际的理由是这一族缺陷的形状：加成接错槽位（把科技算进联盟那一行）、
  * 或者在两个地方各乘一次，都不会让"变大了"这条断言变红。
  *
- * <p><b>取整口径也在射程内</b>：{@code shortenByPercent} 那几条用例（7 秒减 50% 得 4 秒、
- * 100% 以上仍留 1 秒）是 §五④ 那句"缩短时长统一 ceil，防 0 秒完成"的唯一机器化表达。
- * 训练速度与行军速度接入时必须复用同一个方法而不是各写一份。
+ * <p><b>本文件测的是"接线"，不是取整口径本身</b>：ceil / HALF_UP 那张表住在
+ * {@code game-common} 的 {@code RatesTest}（口径只有一个家，测试也跟着只写一处）。
+ * 这里测的是「表里的幅度 → 合计率 → 真的落进 finishAt 与产率明细」这条链，
+ * 所以建造速度那一条走的是<b>真升级</b>而不是直接调算式。
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -47,9 +52,37 @@ class TechEffectsTest {
     private TechEffects techEffects;
     @Autowired
     private ResourceRateService resourceRates;
+    @Autowired
+    private CityAppService cityAppService;
+    @Autowired
+    private PlayerInitService playerInitService;
+    @Autowired
+    private PlayerRepository players;
 
     private static PlayerTech techOf(String techId, int level) {
         return new PlayerTech(Map.of(techId, level), null, null, 0L, 0L);
+    }
+
+    private static String requestId() {
+        return "req-" + UUID.randomUUID();
+    }
+
+    /** 新号 + 足够的石头（伐木场 1→2 级只吃石，成本基数 400）。 */
+    private String newPlayerWithStone() {
+        String playerId = playerInitService.init(new PlayerInitReq(
+                requestId(), "dev-" + UUID.randomUUID(), "效果接线", 1_700_000_000_000L, "")).playerId();
+        PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
+        PlayerResourceState stone = save.resource(ResourceIds.STONE);
+        save.putResource(ResourceIds.STONE, new PlayerResourceState(9_000L, Math.max(stone.cap(), 9_000L),
+                Math.min(stone.protectedAmount(), 9_000L), stone.perHour(), stone.lastSettle()));
+        players.save(save);
+        return playerId;
+    }
+
+    private void putTech(String playerId, Map<String, Integer> levels) {
+        PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
+        save.setTech(new PlayerTech(levels, null, null, 0L, 0L));
+        players.save(save);
     }
 
     /** 有一座伐木场（等级 5）的城建状态：木头的<b>基础</b>产出因此非零，百分比那一行才有东西可乘。 */
@@ -134,29 +167,34 @@ class TechEffectsTest {
     }
 
     @Test
-    @DisplayName("缩短按 ceil 取整、最多压到 1 秒，加成非正时原样返回")
-    void shortenRoundsUpAndNeverReachesZero() {
-        assertThat(CityAppService.shortenByPercent(100L, 0L)).as("没有加成就不该动").isEqualTo(100L);
-        assertThat(CityAppService.shortenByPercent(100L, 900L))
-                .as("减 9%：100 × 0.91 = 91 整")
-                .isEqualTo(91L);
-        assertThat(CityAppService.shortenByPercent(100L, 3300L))
-                .as("减 33%：67 整")
-                .isEqualTo(67L);
-        assertThat(CityAppService.shortenByPercent(7L, 5000L))
-                .as("减 50%：3.5 秒 → ceil 成 4 秒（向下取整会少给玩家半秒，而这是每次升级都发生的事）")
-                .isEqualTo(4L);
-        assertThat(CityAppService.shortenByPercent(1L, 5000L))
-                .as("1 秒减一半还是 1 秒：ceil 而不是 0")
-                .isEqualTo(1L);
-        assertThat(CityAppService.shortenByPercent(10L, FixedPoint.ONE))
-                .as("加成 100% 也只压到 1 秒 —— 0 秒队列等于没有队列")
-                .isEqualTo(1L);
-        assertThat(CityAppService.shortenByPercent(10L, FixedPoint.ONE * 3L))
-                .as("配错成 300% 也不该出负数或 0")
-                .isEqualTo(1L);
-        assertThatThrownBy(() -> CityAppService.shortenByPercent(0L, 500L))
-                .as("基础时长为 0 是调用方算错了，不是「这条升级本来就瞬间完成」")
-                .isInstanceOf(IllegalArgumentException.class);
+    @DisplayName("训练速度读的是募兵令那一行（2%/级 × 5 = 1000 万分比）")
+    void trainSpeedPercentReadsItsOwnRow() {
+        assertThat(techEffects.trainSpeedPercent(techOf("tech_mil_train", 5)))
+                .as("募兵令是 +2%/级（tech.json），不是工役的 +3%")
+                .isEqualTo(200L * 5L);
+        assertThat(techEffects.buildSpeedPercent(techOf("tech_mil_train", 5)))
+                .as("两条速度各归各的属性，混了就等于把同一份钱花两次")
+                .isZero();
+    }
+
+    @Test
+    @DisplayName("一次真实升级：工役 10 级把伐木场 1→2 级的 20 秒压成 14 秒（表 → 合计率 → ceil → finishAt）")
+    void buildSpeedActuallyShortensARealUpgrade() {
+        String plain = newPlayerWithStone();
+        long plainFinishAt = cityAppService.upgrade(plain,
+                new CityUpgradeReq(requestId(), "lumber_camp", 2, 2)).finishAt();
+        long plainSeconds = (plainFinishAt - System.currentTimeMillis()) / 1000L;
+        assertThat(plainSeconds)
+                .as("伐木场 timeBaseSec=20，1→2 级取曲线第 1 项 = 20 秒（没有加成时的基数）")
+                .isBetween(19L, 21L);
+
+        String boosted = newPlayerWithStone();
+        putTech(boosted, Map.of("tech_fort_build", 10));
+        long boostedFinishAt = cityAppService.upgrade(boosted,
+                new CityUpgradeReq(requestId(), "lumber_camp", 2, 2)).finishAt();
+        long boostedSeconds = (boostedFinishAt - System.currentTimeMillis()) / 1000L;
+        assertThat(boostedSeconds)
+                .as("工役 10 级 = +30%，ceil(20 × 0.7) = 14 秒：从表到完成时刻只有这一条算式")
+                .isBetween(13L, 15L);
     }
 }

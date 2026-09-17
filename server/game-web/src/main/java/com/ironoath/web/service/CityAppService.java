@@ -4,6 +4,7 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.log.TraceContext;
 import com.ironoath.common.num.FixedPoint;
+import com.ironoath.common.num.Rates;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.BuildingCfg;
@@ -382,25 +383,7 @@ public class CityAppService {
                 ? formula.evaluateSeconds("BUILDING_TIME", Math.max(1, targetLevel - 1))
                 : formula.evaluateSeconds("BUILDING_TIME", FixedPoint.of(cfg.timeBaseSec()),
                         Math.max(1, targetLevel - 1));
-        return shortenByPercent(baseSeconds, techEffects.buildSpeedPercent(tech));
-    }
-
-    /**
-     * 按总加成率缩短一个秒数（定点万分比）。加成 ≥ 100% 时最多压到 1 秒，且<b>永远向上取整</b>。
-     *
-     * <p>包内可见而不是 private：训练速度与行军速度那两处（B20 验收 3 的另外两格）接入时要用<b>同一条</b>
-     * 取整口径 —— 三条速度各写一份 ceil/floor，症状就是「同样 10% 减成，建造少 1 秒、训练多 1 秒」。
-     */
-    static long shortenByPercent(long seconds, long percentFixed) {
-        if (seconds <= 0L) {
-            throw new IllegalArgumentException("基础时长必须为正秒数，实际=" + seconds);
-        }
-        if (percentFixed <= 0L) {
-            return seconds;
-        }
-        long kept = FixedPoint.ONE - Math.min(percentFixed, FixedPoint.ONE);
-        long left = FixedPoint.mul(FixedPoint.of(seconds), kept);
-        return Math.max(1L, (left + FixedPoint.SCALE - 1L) / FixedPoint.SCALE);
+        return Rates.shortenSeconds(baseSeconds, techEffects.buildSpeedPercent(tech));
     }
 
     /** 战力增量：按 POWER_CONTRIB 曲线（指数 1.15）算目标等级与当前等级的差。 */

@@ -4,6 +4,7 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.log.TraceContext;
 import com.ironoath.common.num.FixedPoint;
+import com.ironoath.common.num.Rates;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.ConfigException;
 import com.ironoath.config.cfg.BuildingCfg;
@@ -217,9 +218,11 @@ public class ArmyAppService {
 
             // 扣资源先于入队：反过来在资源不足时会让玩家白训一批（可直接刷的漏洞）
             deduct(snap, cost);
+            long trainSpeedFixed = techEffects.trainSpeedPercent(snap.player().tech());
+            long baseSeconds = unit.trainTimeSec() * req.count();
             long finishAt;
             try {
-                finishAt = army.train(req.unitId(), req.count(), unit.trainTimeSec(),
+                finishAt = army.train(req.unitId(), req.count(), unit.trainTimeSec(), trainSpeedFixed,
                         slots, troopCap, batchMax, snap.now());
             } catch (RuntimeException e) {
                 refund(snap, cost);
@@ -236,9 +239,10 @@ public class ArmyAppService {
             }
 
             long remaining = Math.max(0L, (finishAt - snap.now()) / 1000L);
-            LOG.info("开始训练 playerId={} unit={} 数量={} 耗时={}秒 完成于={} 消耗={} 带兵={}/{}",
-                    playerId, req.unitId(), req.count(), unit.trainTimeSec() * req.count(),
-                    finishAt, cost, army.totalTroops() + army.totalTraining(), troopCap);
+            // 基础与实耗两个都记：只记表里那个数字的话，科技生效与否在日志里根本读不出来
+            LOG.info("开始训练 playerId={} unit={} 数量={} 基础耗时={}秒 实耗={}秒 完成于={} 消耗={} 带兵={}/{}",
+                    playerId, req.unitId(), req.count(), baseSeconds, remaining, finishAt, cost,
+                    army.totalTroops() + army.totalTraining(), troopCap);
             // 开始训练不是加速，reducedSeconds 恒为 0
             return new TrainResp(req.unitId(), req.count(), finishAt, remaining, 0L,
                     toAmounts(cost), army.totalTroops(), troopCap, snap.now());
@@ -469,10 +473,7 @@ public class ArmyAppService {
         }
         PlayerSave save = playerId == null ? null : players.findByPlayerId(playerId).orElse(null);
         long percentFixed = save == null ? 0L : techEffects.hospitalPercent(save.tech());
-        if (percentFixed <= 0L) {
-            return capacity;
-        }
-        return FixedPoint.round(FixedPoint.mul(FixedPoint.of(capacity), FixedPoint.ONE + percentFixed));
+        return Rates.scaleUp(capacity, percentFixed);
     }
 
     /**

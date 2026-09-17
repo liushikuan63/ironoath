@@ -1,6 +1,7 @@
 package com.ironoath.core.army;
 
 import com.ironoath.common.num.FixedPoint;
+import com.ironoath.common.num.Rates;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -191,6 +192,9 @@ public final class ArmyState {
      * @param unitId          兵种配置 id
      * @param count           数量，必须为正且不超过批上限
      * @param perUnitSeconds  单个兵的训练秒数，来自 unit 表 trainTimeSec
+     * @param speedPercentFixed 训练速度加成（<b>已合计</b>的定点万分比，0 = 无加成）。
+     *                          来源与合计都在调用方（个人科技 + 将来的联盟/国家科技先相加再传入），
+     *                          这里只负责"作用一次 + ceil + 下限 1 秒"（B20 §五④）
      * @param availableSlots  可用队列条数（由调用方按基础值 + 特权算好传入）
      * @param troopCap        带兵上限（Σ武将统帅值 × TROOP_PER_COMMAND + 科技加成）
      * @param batchMax        单批上限，来自 global.TRAIN_BATCH_MAX
@@ -198,8 +202,8 @@ public final class ArmyState {
      * @return 完成时刻
      * @throws com.ironoath.common.BizException 队列满、超批上限、超带兵上限、兵种正在训练中
      */
-    public long train(String unitId, long count, long perUnitSeconds, int availableSlots,
-                      long troopCap, long batchMax, long now) {
+    public long train(String unitId, long count, long perUnitSeconds, long speedPercentFixed,
+                      int availableSlots, long troopCap, long batchMax, long now) {
         canTrain(unitId, count, availableSlots, troopCap, batchMax);
         if (perUnitSeconds <= 0L) {
             throw new IllegalArgumentException("单位训练时间必须为正，实际=" + perUnitSeconds);
@@ -211,6 +215,9 @@ public final class ArmyState {
             throw new IllegalArgumentException("训练总时长溢出 long：count=" + count
                     + ", perUnitSeconds=" + perUnitSeconds);
         }
+        // 加成作用在<b>批次总时长</b>上，不是作用在单兵秒数上：后者会让快速兵种吃不到加成
+        // （6 秒减 2% = 5.88 秒，ceil 回 6 秒），而这是每次训练都发生的系统性偏差。
+        totalSeconds = Rates.shortenSeconds(totalSeconds, speedPercentFixed);
         long finishAt = now + totalSeconds * 1000L;
         queue.put(unitId, new TrainingTask(unitId, count, now, finishAt, totalSeconds, totalSeconds));
         return finishAt;
