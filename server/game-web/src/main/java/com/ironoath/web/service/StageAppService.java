@@ -106,7 +106,7 @@ public class StageAppService {
     private final TimeService timeService;
     private final ServerSeedSource seeds;
     private final StaminaService staminaService;
-    private final com.ironoath.web.battle.AllianceTechBonuses techBonuses;
+    private final com.ironoath.web.battle.BattleTechBonuses techBonuses;
 
     /** 任务进度的事件入口（B12 §1）：通关关卡/章节由本服务上报。 */
     private final com.ironoath.web.quest.QuestEvents questEvents;
@@ -122,7 +122,7 @@ public class StageAppService {
                            PlayerLock playerLock, IdempotencyStore idempotency,
                            TimeService timeService, ServerSeedSource seeds,
                            StaminaService staminaService,
-                           com.ironoath.web.battle.AllianceTechBonuses techBonuses,
+                           com.ironoath.web.battle.BattleTechBonuses techBonuses,
                            com.ironoath.web.quest.QuestEvents questEvents) {
         this.configs = configs;
         this.armyFactory = armyFactory;
@@ -354,7 +354,7 @@ public class StageAppService {
                            List<String> heroIds, long seed, long now) {
         HeroRoster roster = heroes.findByPlayerId(playerId).orElseGet(HeroRoster::new);
         CityState city = cities.findByPlayerId(playerId).orElse(null);
-        long hospitalCapacity = city == null ? 0L : armyAppService.hospitalCapacity(city);
+        long hospitalCapacity = city == null ? 0L : armyAppService.hospitalCapacity(playerId, city);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(units);
         var attacker = armyFactory.toSide(playerId, attackerFold,
                 heroMapper.snapshots(heroIds, roster), 0L,
@@ -402,7 +402,7 @@ public class StageAppService {
         attempt.lossesByUnitId().forEach((unitId, count) -> army.deduct(unitId, count));
         if (!attempt.woundedByUnitId().isEmpty()) {
             CityState city = cities.findByPlayerId(playerId).orElse(null);
-            long capacity = city == null ? 0L : armyAppService.hospitalCapacity(city);
+            long capacity = city == null ? 0L : armyAppService.hospitalCapacity(playerId, city);
             long overflow = army.admitWounded(attempt.woundedByUnitId(), capacity);
             if (overflow > 0L) {
                 LOG.info("医院装不下，伤兵转为死亡 playerId={} 溢出={} 容量={}", playerId, overflow, capacity);

@@ -365,7 +365,7 @@ class StageEndpointTest {
             city.restoreBuilding(new BuildingInstance("hospital", "hospital", level, 4, 4));
         }
         cities.save(playerId, city, version);
-        assertThat(armyAppService.hospitalCapacity(cities.findByPlayerId(playerId).orElseThrow()))
+        assertThat(armyAppService.hospitalCapacity(playerId, cities.findByPlayerId(playerId).orElseThrow()))
                 .as("夹具必须真的造出了医院容量，否则无损星永远拿不到而原因看不出来")
                 .isPositive();
     }

@@ -23,4 +23,20 @@ public record TechBonus(long attackFixed, long defenseFixed) {
     public static TechBonus none() {
         return new TechBonus(0L, 0L);
     }
+
+    /**
+     * 合并两个来源的同类加成：<b>相加成一个总率</b>（B20 §五④ 裁决）。
+     *
+     * <p>为什么不各乘一次：乘区 B 在战斗内核里只有一份攻击、一份防御
+     * （{@code ×(1 + 科技加成)}），若联盟科技与个人科技各自成为一个乘区，
+     * 两者相乘会让"两条线都点满"的玩家拿到 1+0.6+0.6+0.36 而不是 1+1.2，
+     * 而这条差异在胜率里看不出来、只在数值追溯时说不清（C01 反直觉条款 7 要防的就是这个）。
+     */
+    public TechBonus plus(TechBonus other) {
+        if (other == null) {
+            return this;
+        }
+        return new TechBonus(Math.addExact(attackFixed, other.attackFixed),
+                Math.addExact(defenseFixed, other.defenseFixed));
+    }
 }

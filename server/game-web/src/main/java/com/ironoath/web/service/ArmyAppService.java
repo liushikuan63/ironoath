@@ -87,13 +87,19 @@ public class ArmyAppService {
     private final com.ironoath.web.social.HelpRequestRegistrar helpRequests;
     /** 任务进度的事件入口（B12 §1）：训练/治疗这类"做完了"才算进展的动作由这里上报。 */
     private final com.ironoath.web.quest.QuestEvents questEvents;
+    /** 读玩家存档用（只为拿科技那一位：医院容量要按 HOSPITAL_CAPACITY 放大）。 */
+    private final com.ironoath.core.player.PlayerRepository players;
+    /** 科技加成的唯一读取口（B20 块①）。 */
+    private final com.ironoath.web.tech.TechEffects techEffects;
 
     public ArmyAppService(ConfigRegistry configs, ArmyRepository armies,
                           CityAppService cityAppService, HeroAppService heroAppService,
                           RewardPorts.Bag bagPort, IdempotencyStore idempotency,
                           com.ironoath.common.time.TimeService timeService,
                           com.ironoath.web.social.HelpRequestRegistrar helpRequests,
-                          com.ironoath.web.quest.QuestEvents questEvents) {
+                          com.ironoath.web.quest.QuestEvents questEvents,
+                          com.ironoath.core.player.PlayerRepository players,
+                          com.ironoath.web.tech.TechEffects techEffects) {
         this.configs = configs;
         this.armies = armies;
         this.cityAppService = cityAppService;
@@ -103,6 +109,8 @@ public class ArmyAppService {
         this.timeService = timeService;
         this.helpRequests = helpRequests;
         this.questEvents = questEvents;
+        this.players = players;
+        this.techEffects = techEffects;
     }
 
     /**
@@ -437,8 +445,15 @@ public class ArmyAppService {
 
     // ---------- 内部：配置解析与数值 ----------
 
-    /** 医院容量 = 医院等级 × woundedCapBase 按 BUILDING_OUTPUT 曲线递增。没建医院则为 0。 */
-    public long hospitalCapacity(CityState city) {
+    /**
+     * 医院容量 = 医院等级 × woundedCapBase 按 BUILDING_OUTPUT 曲线递增，再乘上个人科技的
+     * {@code HOSPITAL_CAPACITY}（定点万分比，作用一次）。没建医院就是 0 —— 加成没有可放大的基数，
+     * 也不该凭空造出容量。
+     *
+     * <p>取整用 HALF_UP 而不是 §五④ 的 ceil：那条裁决管的是<b>缩短时长</b>（BUILD/TRAIN/MARCH 三条），
+     * 向上取整是为了防"0 秒队列"；容量是绝对值，套同一条 ceil 只会让它系统性偏大一截。
+     */
+    public long hospitalCapacity(String playerId, CityState city) {
         long exponent = configs.curve("BUILDING_OUTPUT").exponentFixed();
         long capacity = 0L;
         for (BuildingInstance b : city.buildings()) {
@@ -449,14 +464,25 @@ public class ArmyAppService {
             capacity += FixedPoint.round(Formula.buildingOutput(
                     FixedPoint.of(cfg.woundedCapBase()), b.level(), exponent));
         }
-        return capacity;
+        if (capacity <= 0L) {
+            return 0L;
+        }
+        PlayerSave save = playerId == null ? null : players.findByPlayerId(playerId).orElse(null);
+        long percentFixed = save == null ? 0L : techEffects.hospitalPercent(save.tech());
+        if (percentFixed <= 0L) {
+            return capacity;
+        }
+        return FixedPoint.round(FixedPoint.mul(FixedPoint.of(capacity), FixedPoint.ONE + percentFixed));
     }
 
     /**
      * 兵种阶级是否已解锁（B05 §二：由兵营等级 + 科技共同决定）。
      *
-     * <p>TODO(需确认): 科技那一项要等 B12 科技系统落地（PlayerSave 尚无 tech 字段）。
-     * 届时在这里把「军事学派的阶级解锁科技」加进来即可，签名不必变。
+     * <p><b>「科技」那一半今天接不了，而且不是"等接线"</b>：{@code tech.json} 的
+     * {@code effectAttr} 枚举里没有任何"解锁兵阶"属性（只有产量/攻防/速度/容量/负载十一项），
+     * 所以这里缺的是一行表 + 一个枚举取值 —— 那是设计裁决，不是这里能补的代码。
+     * 曾经这条注释写着"等 B12 科技系统落地"，那是双重失真：科技系统已落地（B20 块①），
+     * 而它没有这一项效果。<b>不要为了让这句话成立而发明一个属性 id。</b>
      */
     public boolean isUnlocked(UnitCfg unit, CityState city) {
         BuildingInstance building = city.findByConfigId(unit.unlockBuilding());
@@ -575,7 +601,7 @@ public class ArmyAppService {
 
     private ArmyListResp toListResp(String playerId, ArmyState army, CityAppService.CitySnapshot snap) {
         long troopCap = heroAppService.troopCap(playerId);
-        long hospitalCap = hospitalCapacity(snap.city());
+        long hospitalCap = hospitalCapacity(playerId, snap.city());
         List<UnitView> units = new ArrayList<>();
         for (UnitCfg unit : configs.all(UnitCfg.class)) {
             ArmyState.TrainingTask task = army.queue().get(unit.id());

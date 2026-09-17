@@ -105,7 +105,7 @@ public class MonsterBattleService {
     private final WorldRepository world;
     private final BattleReportService battleReports;
     private final com.ironoath.web.reward.ServerSeedSource seeds;
-    private final AllianceTechBonuses techBonuses;
+    private final BattleTechBonuses techBonuses;
     /** 本赛季的 id —— 全服 PvE 配额的周期标签。取法只有 {@code SeasonRulesAssembler} 一处。 */
     private final com.ironoath.web.season.SeasonRulesAssembler seasons;
     /**
@@ -123,7 +123,7 @@ public class MonsterBattleService {
                                 DailyCounter dailyCounter, WorldRepository world,
                                 BattleReportService battleReports,
                                 com.ironoath.web.reward.ServerSeedSource seeds,
-                                AllianceTechBonuses techBonuses,
+                                BattleTechBonuses techBonuses,
                                 com.ironoath.web.season.SeasonRulesAssembler seasons,
                                 org.springframework.context.ApplicationEventPublisher events) {
         this.configs = configs;
@@ -317,7 +317,7 @@ public class MonsterBattleService {
         HeroRoster roster = heroes.findByPlayerId(playerId).orElseGet(HeroRoster::new);
         List<HeroSnapshot> heroSnapshots = heroMapper.snapshots(march.heroes(), roster);
         CityState city = cities.findByPlayerId(playerId).orElse(null);
-        long hospitalCapacity = city == null ? 0L : armyAppService.hospitalCapacity(city);
+        long hospitalCapacity = city == null ? 0L : armyAppService.hospitalCapacity(playerId, city);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(march.units());
         ArmySide attacker = armyFactory.toSide(playerId, attackerFold, heroSnapshots, 0L,
                 techBonuses.forPlayer(playerId), hospitalCapacity);

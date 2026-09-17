@@ -14,17 +14,17 @@ import com.ironoath.web.social.SocialStore;
  * 职责：把本盟已研究的联盟科技折成战斗内核的<b>乘区 B</b>（B05 §1.3「×(1 + 科技加成)」那一项）。
  * 依赖：{@link SocialStore}（联盟账本）、{@link ConfigRegistry}（alliance_tech 表）。
  *
- * <p><b>只折算 UNIT_ATTACK 与 UNIT_DEFENSE 两个效果属性</b>，不是偷懒而是这张表目前的全部可接线范围：
- * 内核的乘区 B 就是一份攻击 + 一份防御，而另外四个属性
- * （MARCH_SPEED / LOAD_CAPACITY / HOSPITAL_CAPACITY / BUILD_SPEED）
- * 各自要接的地方都<b>已经有一个数值来源在那里</b>，乘进去之前需要先定组合口径：
+ * <p><b>只折算 UNIT_ATTACK 与 UNIT_DEFENSE 两个属性</b>：乘区 B 在内核里就是一份攻击 + 一份防御，
+ * 多出来的属性不属于它。另外四个属性的<b>消费点在别处</b>，各自接在自己的算式上，
+ * 组合口径由 B20 §五④ 定了（<b>同类加成相加成总加成率、作用于基础值一次、缩短时长一律 ceil</b>）：
  * <ul>
- *   <li>{@code HOSPITAL_CAPACITY} 目前来自城里的医院建筑等级，是相加还是相乘？</li>
- *   <li>{@code MARCH_SPEED} / {@code BUILD_SPEED} 是缩短时长，除法的取整口径要与
- *       {@code MarchAppService}、{@code CityAppService} 现有的取整一致，否则会出现「差一秒」的争议。</li>
+ *   <li>{@code BUILD_SPEED} 已接：{@code CityAppService.shortenByPercent}（#155）；</li>
+ *   <li>{@code HOSPITAL_CAPACITY} 已接：{@code ArmyAppService.hospitalCapacity}（#156）；</li>
+ *   <li>{@code TRAIN_SPEED} / {@code MARCH_SPEED} / {@code LOAD_CAPACITY} 还没接上，
+ *       缺的是消费点而不是裁决 —— 别再写"等口径"，那条已经定了（收口清单 #146 裁④）。</li>
  * </ul>
- * 这些都属于平衡口径，未定之前这里不擅自接（接错了在战斗里看不出来，只体现在胜率上）。
- * 已记在收口清单 #31。
+ * 个人科技与联盟科技的<b>相加</b>发生在 {@code BattleTechBonuses}（本类只管联盟那一份，
+ * 语义不变，下面的既有用例也就仍在原位）。
  *
  * <p><b>{@code RALLY_CAPACITY} 与 {@code HELP_SPEED} 两行已在 2026-09-13 从表里退役</b>
  * （收口清单 §三·补 B10/B11，表 v1→v2）：它们撞的正是上面这条理由 —— 集结人数上限的唯一来源是

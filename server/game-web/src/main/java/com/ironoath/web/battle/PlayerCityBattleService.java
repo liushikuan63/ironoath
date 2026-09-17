@@ -123,7 +123,7 @@ public class PlayerCityBattleService {
     /** 公敌档广播的登记入口（真正发送由视野下发惰性驱动，见该类注释）。 */
     private final com.ironoath.web.service.PublicEnemyBroadcaster publicEnemies;
     /** 乘区 B：双方各自联盟已研究的攻防科技（B05 §1.3）。不查联盟就等于这一路永远没有科技。 */
-    private final AllianceTechBonuses techBonuses;
+    private final BattleTechBonuses techBonuses;
     /**
      * 事件触发的聊天（B11 §四 句库的五个触发场景）。
      *
@@ -147,7 +147,7 @@ public class PlayerCityBattleService {
                                    CounterplayModifiers counterplay,
                                    com.ironoath.web.service.WorldAppService worldAppService,
                                    com.ironoath.web.service.PublicEnemyBroadcaster publicEnemies,
-                                   AllianceTechBonuses techBonuses,
+                                   BattleTechBonuses techBonuses,
                                    org.springframework.context.ApplicationEventPublisher events) {
         this.configs = configs;
         this.armyFactory = armyFactory;
@@ -238,7 +238,7 @@ public class PlayerCityBattleService {
         HeroRoster attackerRoster = heroes.findByPlayerId(attackerId).orElseGet(HeroRoster::new);
         List<HeroSnapshot> attackerHeroes = heroMapper.snapshots(march.heroes(), attackerRoster);
         CityState attackerCity = cities.findByPlayerId(attackerId).orElse(null);
-        long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerCity);
+        long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerId, attackerCity);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(march.units());
         ArmySide attacker = armyFactory.toSide(attackerId, attackerFold, attackerHeroes, 0L,
                 techBonuses.forPlayer(attackerId), attackerHospital);
@@ -249,7 +249,7 @@ public class PlayerCityBattleService {
         List<String> defenderHeroIds = defenseLineup(defenderRoster);
         List<HeroSnapshot> defenderHeroes = heroMapper.snapshots(defenderHeroIds, defenderRoster);
         CityState defenderCity = cities.findByPlayerId(defenderId).orElse(null);
-        long defenderHospital = defenderCity == null ? 0L : armyAppService.hospitalCapacity(defenderCity);
+        long defenderHospital = defenderCity == null ? 0L : armyAppService.hospitalCapacity(defenderId, defenderCity);
         BattleArmyFactory.Folded defenderFold = armyFactory.fold(defenderTroops);
         ArmySide defender = armyFactory.toSide(defenderId, defenderFold, defenderHeroes, 0L,
                 techBonuses.forPlayer(defenderId), defenderHospital);
@@ -388,7 +388,7 @@ public class PlayerCityBattleService {
         HeroRoster attackerRoster = heroes.findByPlayerId(attackerId).orElseGet(HeroRoster::new);
         List<HeroSnapshot> attackerHeroes = heroMapper.snapshots(attacker.heroes(), attackerRoster);
         CityState attackerCity = cities.findByPlayerId(attackerId).orElse(null);
-        long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerCity);
+        long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerId, attackerCity);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(attacker.units());
         ArmySide attackerSide = armyFactory.toSide(attackerId, attackerFold, attackerHeroes, 0L,
                 techBonuses.forPlayer(attackerId), attackerHospital);
@@ -396,7 +396,7 @@ public class PlayerCityBattleService {
         HeroRoster gathererRoster = heroes.findByPlayerId(gathererId).orElseGet(HeroRoster::new);
         List<HeroSnapshot> gathererHeroes = heroMapper.snapshots(gatherer.heroes(), gathererRoster);
         CityState gathererCity = cities.findByPlayerId(gathererId).orElse(null);
-        long gathererHospital = gathererCity == null ? 0L : armyAppService.hospitalCapacity(gathererCity);
+        long gathererHospital = gathererCity == null ? 0L : armyAppService.hospitalCapacity(gathererId, gathererCity);
         BattleArmyFactory.Folded gathererFold = armyFactory.fold(gatherer.units());
         ArmySide gathererSide = armyFactory.toSide(gathererId, gathererFold, gathererHeroes, 0L,
                 techBonuses.forPlayer(gathererId), gathererHospital);

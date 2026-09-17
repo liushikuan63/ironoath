@@ -14,9 +14,10 @@ import org.springframework.stereotype.Component;
  * 表里已经写了（{@code effectAttr} 列）。如果在每个消费点各写一遍 sum 循环，改一次表结构就要改四处，
  * 而漏掉的那一处不会报错 —— 只会<b>少算一种加成</b>。这与 {@code AllianceTechBonuses} 是同一条判断。
  *
- * <p><b>本类刻意只提供有人消费的那两个属性</b>：训练速度、医院容量、行军速度、负载、攻防
- * 现在还没有接入点（B20 验收 3 的另外几处 + 战斗装配点在下一步），先把它们做成公开方法
- * 就是「有名字零调用点」的新一格 —— 那正是本仓库反复在防的形状（见 {@code check-config-consumers}）。
+ * <p><b>本类只提供已经有消费点的那几个属性</b>：产量、建造速度、攻防（乘区 B）、医院容量。
+ * 训练速度、行军速度与负载还没有接入点（B20 验收 3 剩下的两格 + 行军那一条），
+ * 先把它们做成公开方法就是「有名字零调用点」的新一格 —— 那正是本仓库反复在防的形状
+ * （见 {@code check-config-consumers} 防的"表做了机制没做"，同一族）。消费点出现时在这里加一个方法即可。
  *
  * <p><b>返回的都是定点万分比（2000 = +20%）</b>：调用方拿到的是<b>增率</b>，不是倍率。
  * §五④ 裁定"同类加成相加成总加成率，再作用于基础值一次"，所以这里<b>不乘、不加 1.0、不取幂</b>，
@@ -51,6 +52,24 @@ public class TechEffects {
     /** 建造速度加成（定点万分比）。作用于城建时长的那一条算式在 {@code CityAppService}。 */
     public long buildSpeedPercent(PlayerTech tech) {
         return totalPercent(TechCfg.EffectAttr.BUILD_SPEED, tech);
+    }
+
+    /**
+     * 攻击加成（定点万分比）。与联盟科技的同名加成<b>相加</b>后进乘区 B，
+     * 合并点在 {@code BattleTechBonuses}（§五④：同类相加成总加成率，作用一次）。
+     */
+    public long attackPercent(PlayerTech tech) {
+        return totalPercent(TechCfg.EffectAttr.UNIT_ATTACK, tech);
+    }
+
+    /** 防御加成（定点万分比），与 {@link #attackPercent} 同一条口径。 */
+    public long defensePercent(PlayerTech tech) {
+        return totalPercent(TechCfg.EffectAttr.UNIT_DEFENSE, tech);
+    }
+
+    /** 医院容量加成（定点万分比）：放大的是医院建筑的<b>收容量</b>，由 {@code ArmyAppService} 使用。 */
+    public long hospitalPercent(PlayerTech tech) {
+        return totalPercent(TechCfg.EffectAttr.HOSPITAL_CAPACITY, tech);
     }
 
     /** Σ（该属性的每一行：每级幅度 × 当前等级）。没研究过的行按 0 级计（缺失即 0 由账本保证）。 */
