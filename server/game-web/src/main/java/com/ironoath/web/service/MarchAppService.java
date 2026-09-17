@@ -1,6 +1,7 @@
 package com.ironoath.web.service;
 
 import com.ironoath.common.BizException;
+import com.ironoath.common.num.Rates;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.log.TraceContext;
 import com.ironoath.common.time.TimeService;
@@ -126,6 +127,8 @@ public class MarchAppService {
      * 不会白吃真人的被攻击额度。
      */
     private final com.ironoath.web.bot.BotAttackLimiter botAttackLimiter;
+    /** 科技加成的唯一读取口（B20 块①）：行军速度与负载上限都从它来。 */
+    private final com.ironoath.web.tech.TechEffects techEffects;
 
     public MarchAppService(ConfigRegistry configs, MarchRepository marches, MarchDueQueue dueQueue,
                            WorldRepository world, ArmyRepository armies,
@@ -141,7 +144,8 @@ public class MarchAppService {
                            com.ironoath.core.player.PlayerRepository players,
                            ExileAppService exileAppService,
                            com.ironoath.web.quest.QuestEvents questEvents,
-                           com.ironoath.web.bot.BotAttackLimiter botAttackLimiter) {
+                           com.ironoath.web.bot.BotAttackLimiter botAttackLimiter,
+                           com.ironoath.web.tech.TechEffects techEffects) {
         this.configs = configs;
         this.marches = marches;
         this.dueQueue = dueQueue;
@@ -164,6 +168,7 @@ public class MarchAppService {
         this.exileAppService = exileAppService;
         this.questEvents = questEvents;
         this.botAttackLimiter = botAttackLimiter;
+        this.techEffects = techEffects;
     }
 
     // ---------- 出征 ----------
@@ -268,6 +273,13 @@ public class MarchAppService {
         return new MarchResp(toView(march, now), distance, duration, now);
     }
 
+    /** 这个玩家的科技那一位。读不到存档按「一行都没研究」，与战斗装配同一条读法。 */
+    private com.ironoath.core.player.PlayerTech techOf(String playerId) {
+        return players.findByPlayerId(playerId)
+                .map(com.ironoath.core.player.PlayerSave::tech)
+                .orElseGet(com.ironoath.core.player.PlayerTech::empty);
+    }
+
     /**
      * 建一支行军、入库、登记到期队列、解锁沿途迷雾。
      *
@@ -288,15 +300,20 @@ public class MarchAppService {
                               List<String> heroes, March.TargetType targetType, String targetId,
                               March.Action action, int teamSpeed, long loadCap, long now, String rallyId,
                               Runnable commit, Runnable rollback) {
+        // 科技加成只在这一个地方折进来：个人出征与集结共用本方法（理由见方法注释），
+        // 所以「集结队伍比普行快一点」这类漂移在结构上就不可能出现。
+        // 集结按发起者的科技算 —— 一支队伍只有一份速度与负载，这与联盟科技在战斗里同一口径。
+        com.ironoath.core.player.PlayerTech tech = techOf(playerId);
+        long carriedCap = Rates.scaleUp(loadCap, techEffects.loadCapacityPercent(tech));
         int distance = home.distanceTo(target);
         long duration = MarchCalculator.durationSeconds(distance, teamSpeed,
-                configs.fixedParam("MARCH_SECONDS_PER_TILE"), 0L);
+                configs.fixedParam("MARCH_SECONDS_PER_TILE"), techEffects.marchSpeedPercent(tech));
         String marchId = "march_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 
         March march;
         try {
             march = new March(marchId, playerId, home, target, now, now + duration * 1000L,
-                    byUnitId, heroes, loadCap, teamSpeed, targetType, targetId, action);
+                    byUnitId, heroes, carriedCap, teamSpeed, targetType, targetId, action);
             // 必须在入库之前绑定：仓储读写都返回副本，入库之后再改，
             // 已入库的那份副本看不到。而中间只要插进一次到期扫描，
             // 到家时就会按「普通行军」处理 —— 全部幸存兵力记到发起人名下，
@@ -347,7 +364,7 @@ public class MarchAppService {
 
         LOG.info("出征 playerId={} marchId={} {}→{} 距离={}格 速度={} 时长={}秒 兵力={} 负载上限={} 目标={} 行为={}",
                 playerId, marchId, home, target, distance, teamSpeed, duration,
-                byUnitId, loadCap, targetType, action);
+                byUnitId, carriedCap, targetType, action);
         return march;
     }
 

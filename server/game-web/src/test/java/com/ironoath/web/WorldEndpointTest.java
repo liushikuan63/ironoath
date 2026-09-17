@@ -337,6 +337,64 @@ class WorldEndpointTest {
         assertThat(dueQueue.size()).as("到期事件必须已登记").isEqualTo(1);
     }
 
+    /**
+     * 行军速度科技（B20 块①）：同一个兵种、同一格数，时长必须按表里的率缩短。
+     *
+     * <p>断的是"等于按加速率算出来的那个数"而不只是"比 0 加成短"：后者在加速被乘两次时
+     * 仍然成立，而那种错只体现在时长上，战报与日志都看不出异常。
+     */
+    @Test
+    @DisplayName("行军速度科技缩短行军时长：5 级 = +15%，与 MarchCalculator 的加速口径逐项一致")
+    void marchSpeedTechShortensTheTrip() {
+        String playerId = newPlayer();
+        Coord home = worldAppService.homeOf(playerId);
+        giveTroops(playerId, "unit_infantry_t1", 100L);
+        putTech(playerId, java.util.Map.of("tech_com_march", 5));
+
+        MarchResp resp = marchAppService.send(playerId, marchReq(home, 40, MarchAction.STATION, 100L));
+        long perTile = configs.fixedParam("MARCH_SECONDS_PER_TILE");
+        int speed = (int) configs.get(UnitCfg.class, "unit_infantry_t1").speed();
+        long bonus = configs.get(com.ironoath.config.cfg.TechCfg.class, "tech_com_march").effectValue() * 5L;
+        assertThat(bonus).as("行军速度 3%/级 × 5 = 15%").isEqualTo(1500L);
+
+        long plain = com.ironoath.core.march.MarchCalculator
+                .durationSeconds(resp.distance(), speed, perTile, 0L);
+        long expected = com.ironoath.core.march.MarchCalculator
+                .durationSeconds(resp.distance(), speed, perTile, bonus);
+        assertThat(resp.durationSec()).isEqualTo(expected);
+        assertThat(resp.durationSec()).as("加速必须真的生效（而不是只写进表里）").isLessThan(plain);
+    }
+
+    /** 负载科技放大的是"一队能带多少"，不动行军时长，也不动武将的统兵上限。 */
+    @Test
+    @DisplayName("负载科技提高行军载量：5 级 = +20%，HALF_UP 落在整数载量上")
+    void loadCapacityTechRaisesTheCarryLimit() {
+        String playerId = newPlayer();
+        Coord home = worldAppService.homeOf(playerId);
+        giveTroops(playerId, "unit_infantry_t1", 100L);
+        putTech(playerId, java.util.Map.of("tech_com_load", 5));
+
+        MarchResp resp = marchAppService.send(playerId, marchReq(home, 40, MarchAction.STATION, 100L));
+        long unitLoad = configs.get(UnitCfg.class, "unit_infantry_t1").load();
+        long base = 100L * unitLoad;
+        long percent = configs.get(com.ironoath.config.cfg.TechCfg.class, "tech_com_load").effectValue() * 5L;
+        assertThat(percent).as("负载 4%/级 × 5 = 20%").isEqualTo(2000L);
+        long expected = new java.math.BigDecimal(base).multiply(java.math.BigDecimal.ONE
+                        .add(new java.math.BigDecimal("0.2")))
+                .setScale(0, java.math.RoundingMode.HALF_UP).longValue();
+        assertThat(resp.march().loadCap())
+                .as("载量按 HALF_UP 放大（绝对值不套缩短时长那条 ceil）")
+                .isEqualTo(expected);
+        assertThat(resp.march().teamSpeed()).as("载量科技不该改队伍速度").isEqualTo(
+                configs.get(UnitCfg.class, "unit_infantry_t1").speed());
+    }
+
+    private void putTech(String playerId, java.util.Map<String, Integer> levels) {
+        PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
+        save.setTech(new com.ironoath.core.player.PlayerTech(levels, null, null, 0L, 0L));
+        players.save(save);
+    }
+
     @Test
     @DisplayName("出征名额用满后拒绝，且提示可开启额外名额（B15 特权）")
     void marchConcurrencyIsCapped() {

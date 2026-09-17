@@ -80,6 +80,20 @@ public class TechEffects {
         return totalPercent(TechCfg.EffectAttr.HOSPITAL_CAPACITY, tech);
     }
 
+    /**
+     * 行军速度加成（定点万分比）。进 {@code MarchCalculator.durationSeconds} 的
+     * {@code speedBonusFixed} 那一位（它内部是「÷ (1 + 加速) + 至少 1 秒」），
+     * <b>不是</b>改兵种速度本身——队伍速度按最慢兵种取，改它会让"谁在队伍里"变成第二个变量。
+     */
+    public long marchSpeedPercent(PlayerTech tech) {
+        return totalPercent(TechCfg.EffectAttr.MARCH_SPEED, tech);
+    }
+
+    /** 负载上限加成（定点万分比）。放大的是「一队能带多少」，走 {@code Rates.scaleUp}（绝对值，HALF_UP）。 */
+    public long loadCapacityPercent(PlayerTech tech) {
+        return totalPercent(TechCfg.EffectAttr.LOAD_CAPACITY, tech);
+    }
+
     /** Σ（该属性的每一行：每级幅度 × 当前等级）。没研究过的行按 0 级计（缺失即 0 由账本保证）。 */
     private long totalPercent(TechCfg.EffectAttr attr, PlayerTech tech) {
         if (tech == null) {
