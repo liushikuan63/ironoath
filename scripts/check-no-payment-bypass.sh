@@ -17,9 +17,53 @@ SERVER_DIRS=(server/game-common/src/main/java server/game-core/src/main/java
              server/game-web/src/main/java)
 CLIENT_DIR=client/assets/scripts
 
+# ---------- 0. 唯一允许的渠道从表里读，不在脚本里写第二份 ----------
+echo "[check-no-payment-bypass] 读取 PAY_CHANNEL（唯一允许的支付渠道）…"
+ALLOWED=$(node -e "
+const rows = (require('./contract/config/global.json').rows) || [];
+const r = rows.find(x => x.id === 'PAY_CHANNEL');
+process.stdout.write(r ? String(r.value) : '');
+" 2>/dev/null || true)
+if [ -z "$ALLOWED" ]; then
+  echo "[check-no-payment-bypass][FAIL] 从 contract/config/global.json 读不到 PAY_CHANNEL"
+  echo "  这条参数就是本门的白名单来源（它的 why 明写「让 CI 检查能对着它比对」），"
+  echo "  读不到时必须响亮失败，而不是退回脚本里写死的一份 —— 那等于表改了而门还按旧名单放行。"
+  FAIL=1
+fi
+ALLOWED_UPPER=$(printf '%s' "${ALLOWED:-}" | tr '[:lower:]' '[:upper:]')
+case "$ALLOWED_UPPER" in
+  *MIDAS*|*WECHAT*VIRTUAL*)
+    echo "[check-no-payment-bypass] PAY_CHANNEL=$ALLOWED（米大师 / 微信虚拟支付），符合 B15 红线 1。"
+    ;;
+  *)
+    echo "[check-no-payment-bypass][FAIL] PAY_CHANNEL=$ALLOWED 不是米大师 / 微信虚拟支付"
+    echo "  B15 红线 1：必须使用微信虚拟支付（米大师）。真要换渠道（如安卓官服），"
+    echo "  要同时改这条参数、B15 红线与本门下面的名单 —— 不许让它悄悄放行。"
+    FAIL=1
+    ;;
+esac
+
 # ---------- 1. 第三方支付通道 ----------
 echo "[check-no-payment-bypass] 扫描非米大师的支付实现…"
-THIRD_PARTY='alipay|AliPay|ALIPAY|unionpay|UnionPay|applePay|ApplePay|googlePlay|GooglePlay|paypal|PayPal|stripe|Stripe|tenpay|TenPay|midas|以外|charge\.now|paymentwall'
+# 名单里含 midas，而唯一允许渠道的值本身就是 WECHAT_MIDAS —— 不剔掉它自己的名字，
+# 任何一处把 PAY_CHANNEL 的值写进代码的尝试都会被判成绕支付（那条参数因此永远只能零引用）。
+THIRD_PARTY_ALL='alipay|AliPay|ALIPAY|unionpay|UnionPay|applePay|ApplePay|googlePlay|GooglePlay|paypal|PayPal|stripe|Stripe|tenpay|TenPay|midas|以外|charge\.now|paymentwall'
+THIRD_PARTY=''
+OLD_IFS=$IFS
+IFS='|'
+for token in $THIRD_PARTY_ALL; do
+  # 去掉正则转义再比子串（`charge\.now` 这种带反斜杠的本来就不可能是渠道名的一部分）
+  token_upper=$(printf '%s' "$token" | tr '[:lower:]' '[:upper:]' | tr -d '\\')
+  case "$ALLOWED_UPPER" in
+    *"$token_upper"*) continue ;;
+  esac
+  THIRD_PARTY="${THIRD_PARTY:+$THIRD_PARTY|}$token"
+done
+IFS=$OLD_IFS
+if [ -z "$THIRD_PARTY" ]; then
+  echo "[check-no-payment-bypass][FAIL] 剔除允许渠道之后禁用名单空了 —— 名单写得不对，本门等于没在判。"
+  FAIL=1
+fi
 HITS=$(grep -rniE "$THIRD_PARTY" "${SERVER_DIRS[@]}" "$CLIENT_DIR" 2>/dev/null \
        | grep -Ev '^[^:]*:[0-9]+: *(\*|//|/\*)' || true)
 if [ -n "$HITS" ]; then
@@ -110,4 +154,4 @@ if [ "$FAIL" -ne 0 ]; then
   echo "[check-no-payment-bypass] 检查未通过。"
   exit 1
 fi
-echo "[check-no-payment-bypass] 无绕支付检查通过：仅米大师通道、金额为 long 分、回调幂等且不做重逻辑、Bot 被强制拦截。"
+echo "[check-no-payment-bypass] 无绕支付检查通过：通道白名单取自 global.PAY_CHANNEL=${ALLOWED}、金额为 long 分、回调幂等且不做重逻辑、Bot 被强制拦截。"

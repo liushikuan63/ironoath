@@ -133,7 +133,14 @@ const UNREFERENCED = {
   PAY_BASE_GOLD_PER_YUAN: '零引用：B19_付费发货与礼包弹窗.md §五①a（同上：换算基准只在算价时用）',
   FIRST_CHARGE_MULTIPLIER: '零引用：B19_付费发货与礼包弹窗.md §五①a（同上：首充倍率只在算价时用）',
   MONTHLY_CARD_DAILY_MULTIPLIER: '零引用：B19_付费发货与礼包弹窗.md §五①a（同上：月卡倍率只在算价时用）',
-  PAY_CHANNEL: '零引用：#64（渠道写死在支付适配器上，这条参数只起记录作用）',
+  // 2026-09-18 更正：先前那条理由（"渠道写死在支付适配器上，只起记录作用"）是**不成立的** ——
+  // 全仓支付代码里没有任何 channel 字面量（`grep -rni channel game-*/src/main | grep -v ChatChannel` 零命中），
+  // 所以它从来不是"记录用的副本"，而是一条**没人读的白名单来源**。
+  // 现在它的消费者是 scripts/check-no-payment-bypass.sh（B15 红线 1 从表里读它来推禁用名单）。
+  // 但本门的 walk() 只收 .java 与 .ts，**看不见被 shell 卡口消费的参数** —— 这是 #165 ⑦
+  // "只看表不看列"之外另一条盲区，同一条道理：绿不代表有人读，红也不代表没人读。
+  // 因此这条留在例外表里，理由改成"消费者是 CI 脚本"，别当"仍未接线"再加新例外。
+  PAY_CHANNEL: '零引用（运行时代码）：#175（消费者是 scripts/check-no-payment-bypass.sh，本门只扫 java/ts 看不见 shell）',
   // MINOR_PAY_SINGLE_LIMIT_CENTS 与 MINOR_PAY_MONTHLY_LIMIT_CENTS 曾在这里挂着：
   // 那两条不是"设计如此"，而是**没接线**（#64）。现在下单路径
   // （PayAppService#requireWithinMinorLimit）会读它们，例外条目随之删除 ——
