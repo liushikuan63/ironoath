@@ -19,6 +19,7 @@ import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
+import com.ironoath.core.player.PlayerTech;
 import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.web.dto.generated.BuildingView;
@@ -96,6 +97,8 @@ public class CityAppService {
     private final com.ironoath.web.quest.QuestEvents questEvents;
     /** 月卡的建造队列加成从这里推（付费表唯一的读处）。 */
     private final com.ironoath.web.pay.PaidProducts paidProducts;
+    /** 建造速度科技加成的读取口（B20 块①；它只依赖配置表，不构成与 TechAppService 的环）。 */
+    private final com.ironoath.web.tech.TechEffects techEffects;
 
     public CityAppService(ConfigRegistry configs, Formula formula, PlayerRepository players,
                           CityRepository cities, PlayerLock playerLock,
@@ -105,7 +108,8 @@ public class CityAppService {
                           com.ironoath.core.reward.RewardPorts.Bag bagPort,
                           com.ironoath.web.social.HelpRequestRegistrar helpRequests,
                           com.ironoath.web.quest.QuestEvents questEvents,
-                          com.ironoath.web.pay.PaidProducts paidProducts) {
+                          com.ironoath.web.pay.PaidProducts paidProducts,
+                          com.ironoath.web.tech.TechEffects techEffects) {
         this.configs = configs;
         this.formula = formula;
         this.players = players;
@@ -119,6 +123,7 @@ public class CityAppService {
         this.helpRequests = helpRequests;
         this.questEvents = questEvents;
         this.paidProducts = paidProducts;
+        this.techEffects = techEffects;
     }
 
     /**
@@ -232,7 +237,7 @@ public class CityAppService {
         UpgradeAttempt attempt = attemptOf(city, instance, player, rules, now);
         int targetLevel = attempt.targetLevel();
         Map<String, Long> cost = attempt.cost();
-        long durationSeconds = upgradeDuration(cfg, targetLevel);
+        long durationSeconds = upgradeDuration(cfg, targetLevel, player.tech());
 
         attempt.check().orThrow();
 
@@ -365,13 +370,37 @@ public class CityAppService {
         }
     }
 
-    /** 升级耗时（秒）。timeBaseSec=0 表示沿用 curve.BUILDING_TIME 自带的基数 30 秒。 */
-    private long upgradeDuration(BuildingCfg cfg, int targetLevel) {
-        if (cfg.timeBaseSec() == 0L) {
-            return formula.evaluateSeconds("BUILDING_TIME", Math.max(1, targetLevel - 1));
+    /**
+     * 升级耗时（秒）。timeBaseSec=0 表示沿用 curve.BUILDING_TIME 自带的基数 30 秒。
+     *
+     * <p>建造速度按 §五④ 生效：<b>同类加成先加成总率、再作用于基础时长一次、缩短向上取整</b>。
+     * 向上取整不是为了好看 —— 不取整（或按倍率连乘）都会让高加成把一次升级压成 0 秒，
+     * 而 0 秒的队列等于没有队列：玩家可以瞬间连点十级，卡点节奏（B02 定下的第 7 天主城 13 级）就没了。
+     */
+    private long upgradeDuration(BuildingCfg cfg, int targetLevel, PlayerTech tech) {
+        long baseSeconds = cfg.timeBaseSec() == 0L
+                ? formula.evaluateSeconds("BUILDING_TIME", Math.max(1, targetLevel - 1))
+                : formula.evaluateSeconds("BUILDING_TIME", FixedPoint.of(cfg.timeBaseSec()),
+                        Math.max(1, targetLevel - 1));
+        return shortenByPercent(baseSeconds, techEffects.buildSpeedPercent(tech));
+    }
+
+    /**
+     * 按总加成率缩短一个秒数（定点万分比）。加成 ≥ 100% 时最多压到 1 秒，且<b>永远向上取整</b>。
+     *
+     * <p>包内可见而不是 private：训练速度与行军速度那两处（B20 验收 3 的另外两格）接入时要用<b>同一条</b>
+     * 取整口径 —— 三条速度各写一份 ceil/floor，症状就是「同样 10% 减成，建造少 1 秒、训练多 1 秒」。
+     */
+    static long shortenByPercent(long seconds, long percentFixed) {
+        if (seconds <= 0L) {
+            throw new IllegalArgumentException("基础时长必须为正秒数，实际=" + seconds);
         }
-        return formula.evaluateSeconds("BUILDING_TIME", FixedPoint.of(cfg.timeBaseSec()),
-                Math.max(1, targetLevel - 1));
+        if (percentFixed <= 0L) {
+            return seconds;
+        }
+        long kept = FixedPoint.ONE - Math.min(percentFixed, FixedPoint.ONE);
+        long left = FixedPoint.mul(FixedPoint.of(seconds), kept);
+        return Math.max(1L, (left + FixedPoint.SCALE - 1L) / FixedPoint.SCALE);
     }
 
     /** 战力增量：按 POWER_CONTRIB 曲线（指数 1.15）算目标等级与当前等级的差。 */

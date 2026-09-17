@@ -208,7 +208,8 @@ public class PlayerInitService {
      * 传入空城建状态是准确的 —— 新号还没有任何产出建筑，算出来就是配置表的初始值。
      */
     private PlayerSave createNewPlayer(PlayerInitReq req, String accountKey, long now) {
-        ResourceRateService.Rates rates = resourceRates.compute(new com.ironoath.core.city.CityState());
+        ResourceRateService.Rates rates = resourceRates.compute(new com.ironoath.core.city.CityState(),
+                com.ironoath.core.player.PlayerTech.empty());
         Map<String, PlayerResourceState> resources = new LinkedHashMap<>();
         for (ResourceCfg cfg : configs.allResources()) {
             long cap = rates.cap(cfg.id());
