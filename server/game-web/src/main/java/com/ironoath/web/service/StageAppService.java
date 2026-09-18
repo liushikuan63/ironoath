@@ -434,6 +434,19 @@ public class StageAppService {
                 items.add(new RewardItem(RewardType.STAMINA, StaminaService.RESOURCE_ID,
                         chapter.rewardStamina()));
             }
+            // 装备获取来源 (b)：通章给一件（规则见 StageEquipDrop，2026-09-18 裁决）。
+            // **并入同一份 items**：这样它与章节宝箱一起走 rewardService.grant，也一起出现在给客户端的
+            // rewards 视图里 —— 在 grant 之后再往视图里补是发不出去的（那份列表只是回执）。
+            com.ironoath.config.cfg.EquipCfg drop = StageEquipDrop.pick(chapter.chapterNo(),
+                    configs.all(com.ironoath.config.cfg.EquipCfg.class),
+                    configs.longParam("STAGE_EQUIP_SR_FROM_CHAPTER"));
+            if (drop == null) {
+                // 配置缺行的症状要说得清：这一章没发装备，而不是发一件不属于这个档位的
+                LOG.warn("通章奖励没有可选装备：equip 表里缺该稀有度的行 chapter={} 阈值={}",
+                        chapter.chapterNo(), configs.longParam("STAGE_EQUIP_SR_FROM_CHAPTER"));
+            } else {
+                items.add(new RewardItem(RewardType.ITEM, drop.id(), 1L));
+            }
         }
         if (items.isEmpty()) {
             return List.of();

@@ -77,6 +77,7 @@ class StageEndpointTest {
     @Autowired private com.ironoath.core.city.CityRepository cities;
     @Autowired private ArmyRepository armies;
     @Autowired private StageProgressRepository progressRepo;
+    @Autowired private com.ironoath.core.bag.InventoryRepository inventories;
 
     @BeforeEach
     void resetStores() {
@@ -473,5 +474,31 @@ class StageEndpointTest {
 
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
+    }
+
+    @Test
+    @DisplayName("装备获取来源 (b)：通章发一件装备，而且真的进背包（不只是回执里写着）")
+    void clearingAChapterDropsOneEquipment() {
+        String playerId = newPlayer();
+        giveTroops(playerId, Map.of(UNIT, 20_000L));  // 连打整章要吃掉逐关损失，给够（每关申报 5000）
+        giveHospital(playerId, 5);
+        long chapterNo = 1L;
+        com.ironoath.config.cfg.ChapterCfg chapter =
+                configs.all(com.ironoath.config.cfg.ChapterCfg.class).stream()
+                        .filter(c -> c.chapterNo() == chapterNo).findFirst().orElseThrow();
+
+        ChallengeStageResp last = null;
+        for (long no = 1; no <= chapter.stageCount(); no++) {
+            last = stageAppService.challenge(playerId, new ChallengeStageReq(newRequestId(),
+                    "stage_%02d_%02d".formatted(chapterNo, no),
+                    List.of(new StageUnit(UNIT, 5000L)), List.of()));
+        }
+
+        assertThat(last).as("这一章至少要有一关（夹具前提）").isNotNull();
+        long equipInReceipt = last.rewards().stream()
+                .filter(r -> r.id() != null && r.id().startsWith("eq_")).count();
+        assertThat(equipInReceipt).as("最后一次挑战就是通章那一场，回执里应当有那件装备").isEqualTo(1);
+        assertThat(inventories.findByPlayerId(playerId).orElseThrow().equipInstances())
+                .as("通章装备必须真的落到背包里（发奖走过 PlayerBag 的 EQUIP 路由）").hasSize(1);
     }
 }
