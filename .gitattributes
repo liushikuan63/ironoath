@@ -11,3 +11,8 @@
 *.java text eol=lf
 *.sh text eol=lf
 *.md text eol=lf
+# 同一条理由要覆盖到"被代码读"的每一种文件：#213 起，tests/ArtFamilies.test.ts 直接解析
+# *.png.meta 的 border* 对账九宫格几何，量具也现读 tools/*.mjs 与源码里的常量 ——
+# 只要有一份文件在"我的机器是 LF、全新检出是 CRLF"，判据就有第二副面孔。
+*.meta text eol=lf
+*.mjs text eol=lf
