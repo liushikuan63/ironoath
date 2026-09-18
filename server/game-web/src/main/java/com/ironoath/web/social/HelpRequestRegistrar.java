@@ -52,6 +52,18 @@ public class HelpRequestRegistrar {
      */
     public void register(String requestId, String playerId, HelpTargetKind kind, String targetKey,
                          String targetDesc, long finishAt, long now) {
+        // 产品裁决（2026-09-18）：**求助必须有队或盟**，没有组织就不登记、引导玩家先加入。
+        // 为什么拦在这里而不是让三个调用方各自判：求助登记是「升级建筑 / 训练 / 治疗」的**锁内副作用**，
+        // 在调用方抛错误码的后果是「没小队的玩家连建筑都升不了」—— 裁决否掉的是「求助」这件事本身，
+        // 不是那三个动作。今天散人照样登记成功、只是 peerPlayerIds 为空没人被通知：
+        // 那是一次**没有任何人的收到方**的登记，除了在列表里躺着 60 分钟之外没有意义。
+        // 引导加入队的文案由客户端按 /social/summary 里已经下发的 squad/alliance 是否为 null 自己决定 ——
+        // 不在这里加字段：字段只有服务端会写、客户端还没界面读，那就是又一个「有名字零调用点」。
+        if (store.squadOf(playerId).isEmpty() && store.allianceOf(playerId).isEmpty()) {
+            LOG.info("求助未登记：该玩家没有小队也没有同盟，没有人能看到这条求助（引导玩家先加入组织） playerId={} 目标={}",
+                    playerId, targetDesc);
+            return;
+        }
         store.putHelpRequest(new SocialStore.HelpRequest(requestId, playerId,
                 nickname(playerId), kind.name(), targetKey, targetDesc, finishAt, 0));
         String title = nickname(playerId) + " 请求帮助：" + targetDesc;
