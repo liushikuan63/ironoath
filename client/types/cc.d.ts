@@ -297,6 +297,23 @@ declare const wx: {
     success?(res: { code: string; errMsg: string }): void
     fail?(err: { errMsg: string }): void
   }): void
+  /**
+   * wx.requestMidasPayment：拉起米大师支付（B19 S3-iv）。**只有小游戏运行时才有**，
+   * 浏览器/编辑器里不存在 —— 桥用它是否可调用来判"这个环境支持不支持支付"。
+   *
+   * <p>参数与回调形状**须以米大师正式文档复核**（本地没有凭据，验不了真实扣款）。
+   * errCode === -2 是官方"用户取消"的口径。
+   */
+  requestMidasPayment(options: {
+    mode: string
+    offerId: string
+    buyQuantity: string
+    env: string
+    currencyType: string
+    platform?: 'android' | 'ios'
+    success?(): void
+    fail?(err: { errMsg: string; errCode?: number }): void
+  }): void
 }
 
 interface WxSocketTask {

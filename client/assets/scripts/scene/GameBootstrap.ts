@@ -42,6 +42,7 @@ import { TRACK_EVENTS } from '../game/track/TrackEvents'
 import { decideUpdateGate } from '../game/release/UpdateGate'
 import { applySystemUiFont } from './UiFont'
 import { SettingsPanelView } from './SettingsPanelView'
+import { GiftPopupView } from './GiftPopupView'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -552,6 +553,11 @@ export class GameBootstrap extends Component {
     tracker?.track(TRACK_EVENTS.startup, { clientVersion: CLIENT_VERSION })
     const started = await this.root.start(
       this.resolveDeviceId(), this.nickName, await this.resolveWxCode())
+    if (started) {
+      // 登录成功后问一次「这一屏弹不弹」（B19 S3-iv）。弹窗是加法：拉不到就这一屏不弹，
+      // 所以这里不 await、也不接错误 —— 主流程不该被一个可选弹窗拖住
+      void this.root.showGiftPopup()
+    }
     // 启动自检行：在微信开发者工具的 Console 里能一眼看出"到底跑起来没有"。
     // 小游戏没有可编程的自动化接口（miniprogram-automator 连上即断），
     // 所以这条日志就是 DevTools 内验证的入口 —— 它必须一行内给全判断依据：
@@ -840,10 +846,12 @@ export class GameBootstrap extends Component {
     const reports = this.panel(BattleReportPanelView, 'reports')
     const world = this.panel(WorldMap, 'world')
     const settings = this.panel(SettingsPanelView, 'settings')
+    const giftPopup = this.panel(GiftPopupView, 'giftPopup')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
       city, army, hero, bag, stage, reports, social, power, search, quest, mail, world, settings,
+      giftPopup,
     }
     this.panelViews = {
       attempted: Object.keys(views).length,
@@ -851,6 +859,12 @@ export class GameBootstrap extends Component {
     }
     const out: PanelTargets = {
       error: (panel, message) => console.warn(`[${panel}] ${message}`),
+    }
+    if (giftPopup !== null) {
+      out.giftPopup = resp => giftPopup.attach(resp)
+      out.payResult = view => giftPopup.renderResult(view)
+      giftPopup.onBuy = productId => { void this.root?.buyGift(productId) }
+      giftPopup.onClose = () => giftPopup.hide()
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)

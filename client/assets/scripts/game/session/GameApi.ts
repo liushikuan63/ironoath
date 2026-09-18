@@ -73,6 +73,7 @@ import type {
 import type {
   ActivityClaimReq, ActivityClaimResp, ActivityListResp,
 } from '../../net/generated/ActivityProtocol'
+import type { CreateOrderReq, CreateOrderResp, GiftPopupResp, OrderStatusResp } from '../../net/generated/PayProtocol'
 import type {
   GuideProgressReq, GuideProgressResp, GuideScriptResp,
 } from '../../net/generated/GuideProtocol'
@@ -308,6 +309,7 @@ export class GameApi {
       applyExileResult(outcome.data.coord, outcome.data.peaceUntil,
           outcome.data.nextExileAt, outcome.data.serverNow)
     }
+
     // 必须 await：调用方（和单测）在这个函数返回后读到的状态才是一致的那份。
     // 挂在后台刷新，表现就是「失败之后按钮还是亮的」——而它只差一次没被等待的刷新
     await this.marches()
@@ -384,6 +386,30 @@ export class GameApi {
       : { ok: false, message: outcomeMessage(outcome) }
     await this.marches()
     return result
+  }
+  /**
+   * 下单（B19 S3-iv）。**价格与发货内容都由服务端按 productId 现查**，客户端只报"买哪一档"。
+   *
+   * <p>失败要把服务端的话原样带给面板：15011（今天买过了）与 15012（报价过期）都是给玩家写的句子。
+   */
+  /**
+   * 这一屏弹不弹（B19 S3-ii 的端点）。**弹不弹由服务端算**：它读的是触发时刻与频控，
+   * 客户端只把答案交给面板。
+   */
+  async giftPopup(): Promise<NetOutcome<GiftPopupResp>> {
+    return this.read<GiftPopupResp>('/gift/popup')
+  }
+
+  async createPayOrder(productId: string): Promise<NetOutcome<CreateOrderResp>> {
+    return this.mutate<CreateOrderReq, CreateOrderResp>("/pay/order", { productId, count: 1, heroChoice: null })
+  }
+
+  /**
+   * 查订单状态。**发货只认这个端点的回答** —— 拉起支付的返回值只说"渠道侧成没成"，
+   * 而补单是服务端在收到渠道回调之后做的（契约里那句注释就是这条纪律）。
+   */
+  async payOrderStatus(orderId: string): Promise<NetOutcome<OrderStatusResp>> {
+    return this.read<OrderStatusResp>("/pay/order", { orderId })
   }
 
   scoutReports(): Promise<NetOutcome<ScoutListResp>> {

@@ -43,6 +43,10 @@ import type { GuideAction, GuideProgressResp, GuideScriptResp } from '../../net/
 import { claimActivityReq } from '../activity/ActivityPanel'
 import { buildLineupChoices, buildSpeedupChoices } from './Choices'
 import type { LineupChoice, SpeedupChoice } from './Choices'
+import type { GiftPopupResp } from '../../net/generated/PayProtocol'
+import type { PayView } from '../pay/GiftPayFlow'
+import { GiftPayFlow } from '../pay/GiftPayFlow'
+import { requestMidasPayment } from '../../net/MidasPayment'
 import { ClientReddotTree } from '../reddot/ReddotTree'
 
 /** 面板需要落地的一类数据。全部可选：某个场景里没有这个面板时就不实现。 */
@@ -61,6 +65,13 @@ export interface PanelTargets {
    */
   social?(resp: SocialSummaryResp, helps: readonly HelpRequestView[],
     members: readonly AllianceMember[], offsetMs: number): void
+  /**
+   * 礼包弹窗（B19 S3-iv）。`resp.popup=false` 时面板自己藏起来 —— 判"弹不弹"的是服务端，
+   * 客户端只负责画。
+   */
+  giftPopup?(resp: GiftPopupResp, serverNowMs: number): void
+  /** 一次购买的结果（由 `GiftPayFlow` 判定；面板只显示）。 */
+  payResult?(view: PayView): void
   power?(resp: PowerDetailResp): void
   targets?(resp: SearchTargetsResp): void
   /**
@@ -695,5 +706,46 @@ export class AppRoot {
   /** 当前红点树。场景层绑定时读取，避免各面板再维护一份副本。 */
   get reddotTree(): ClientReddotTree {
     return this.reddot
+  }
+
+  /**
+   * 问一次"这一屏弹不弹"，把答案交给面板（B19 S3-iv）。
+   *
+   * <p>**在登录之后、以及每次回到前台时问**：弹窗的时机由服务端的触发与频控决定，
+   * 客户端不轮询也不猜 —— 问早了没触发、问晚了报价过期，两个都由服务端说了算。
+   */
+  async showGiftPopup(): Promise<void> {
+    const outcome = await this.api.giftPopup()
+    if (outcome.kind !== 'ok') {
+      return // 弹窗是加法：拉不到就这一屏不弹，绝不因此报错打断玩家
+    }
+    this.targets.giftPopup?.(outcome.data, outcome.data.serverNow)
+    if (outcome.data.popup) {
+      // 只在「服务端说弹」时记一次：拉到接口但 popup=false 不是一次展示，
+      // 拿它当展示会让漏斗虚高（B19 S3-iv 的埋点口径）
+      this.tracker?.track(TRACK_EVENTS.payPopupShow, {
+        giftId: outcome.data.giftId ?? '',
+        productId: outcome.data.productId ?? '',
+      })
+    }
+  }
+
+  /**
+   * 买一档礼包：下单 → 拉起支付 → 轮询 → 把结果交给面板。
+   *
+   * <p>流程本体在 `GiftPayFlow`（有独立用例），这里只把它需要的四样依赖接上：
+   * 两个网络调用、拉起支付的桥、以及埋点与时钟。
+   */
+  async buyGift(productId: string): Promise<void> {
+    const flow = new GiftPayFlow({
+      createOrder: (id) => this.api.createPayOrder(id),
+      orderStatus: (orderId) => this.api.payOrderStatus(orderId),
+      invokePayment: (params) => requestMidasPayment(params),
+      now: () => Date.now(),
+      delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      track: (name, params) => this.tracker?.track(name, params),
+    })
+    const view = await flow.buy(productId)
+    this.targets.payResult?.(view)
   }
 }

@@ -43,6 +43,8 @@ export const TRACK_EVENTS = {
   speedupUsed: 'speedup_used',
   /** 点击付费入口。 */
   payClick: 'pay_click',
+  /** 礼包弹窗真的显示了一次（B19 S3-iv）。判据是「服务端说弹且面板确实画出来了」，不是「拉到了接口」。 */
+  payPopupShow: 'pay_popup_show',
   /** 支付成功且发货完成。 */
   paySuccess: 'pay_success',
   /** 战斗发起。 */
