@@ -20,25 +20,44 @@ const path = require("path")
 
 const ROOT = "client/assets/scripts/game/session/AppRoot.ts"
 const EVENTS = "client/assets/scripts/game/track/TrackEvents.ts"
-// refresh 是数据拉取而不是玩家动作（登录与首屏各拉一次），不该算按钮
-const SKIP = new Set(["refresh"])
+/**
+ * 不是"面板动作"的公开方法 ⇒ 不需要埋点。每条都要写清为什么，不写理由的豁免等于把门关掉。
+ *
+ * <p>2026-09-19（B22 聊天 UI）两处修正：
+ * ① 发现规则原先只认 `^  [a-z]...`，**整类漏掉 async 方法**（`buyGift`、`sendChat` 这些
+ *    一个都没被检查过）；现在 `async ` 也认。
+ * ② 豁免改成带理由的清单：其中聊天的四个是玩家动作，但 B14 的**字典表里还没有聊天事件**，
+ *    而本脚本头部的纪律写着"为了让清单变绿而发一个假事件，比少一个事件更糟" ——
+ *    要加得先同步 `数据看板需求.md` §七 的字典表，那是一次独立的埋点批次（收口清单 #200 ⑥）。
+ */
+const SKIP = new Set([
+  "refresh", // 数据拉取而不是玩家动作（登录与首屏各拉一次）
+  "bindPush", // 订阅装配：开机接一次，玩家没有对应的按钮
+  "afterForeground", // 平台前台回调（wx.onShow），不是按钮
+  "showGiftPopup", // 读一次"弹不弹"；真正的展示由 pay_popup_show 记
+  "openReport", // 打开回放是读操作，战报的埋点在列表那一侧
+  "openChat",
+  "selectChatChannel",
+  "openConversation",
+  "sendChat",
+])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")
 const methods = []
 let current = null
 let body = []
-const decl = /^  (?!private |get |set |constructor)([a-z][A-Za-z0-9]*)\(/
+const decl = /^ {2}(?:async )?(?!private |get |set |constructor)([a-z][A-Za-z0-9]*)\(/
 for (const line of lines) {
   const m = line.match(decl)
   // 只有以 { 收尾的才是实现；接口成员声明（如 Tracker 里的 track(...)）不是动作
   if (m && line.trimEnd().endsWith("{")) {
-    if (current) methods.push([current, body.some(l => l.includes("this.track("))])
+    if (current) methods.push([current, body.some(l => l.includes(".track("))])
     current = m[1]
     body = []
     continue
   }
   if (current && /^  \}/.test(line)) {
-    methods.push([current, body.some(l => l.includes("this.track("))])
+    methods.push([current, body.some(l => l.includes(".track("))])
     current = null
     body = []
     continue
