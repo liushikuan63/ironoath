@@ -9,6 +9,7 @@
 #       + 错误码唯一性与段位归属（码值重了客户端分不开，跑出错段等于把两个系统的号段混一起）
 #       + 配置表装配（每张表都要有生产代码读它 —— 没人读的表就是"改了不生效、也不报错"的装饰品）。
 #       + 客户端不得对迭代器做 spread（Cocos 的转译不展开迭代器，而单测走 tsc 会真展开 ⇒ 只在真机炸）。
+#       + 服务端不得出现 @Scheduled（惰性驱动是本仓库的时间不变量，B00 陷阱 2）。
 #       + 微信小游戏产物（方向必须横屏；release 首包必须 ≤ 预算；没有产物则跳过）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -29,5 +30,6 @@ bash scripts/check-error-codes.sh
 bash scripts/check-config-consumers.sh
 bash scripts/check-guide-no-copy.sh
 bash scripts/check-client-iter-spread.sh
+bash scripts/check-no-scheduled.sh
 bash scripts/check-wechat-artifact.sh
 echo "[check] 全部静态检查通过。"
