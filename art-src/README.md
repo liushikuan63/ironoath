@@ -15,6 +15,9 @@
     按 `CC开发全流程.md` 阶段 8 的缺口清单挑选），逐项上游路径与用途见 `manifest.json` 的
     `library.gameIconsSystems`，作者署名见 `ATTRIBUTION.md`。
 - 生成资源统一放在 `generated/`，生成提示和最终采用版本记录在 `GENERATION_PROMPTS.md` 与 `manifest.json`。
+  绿底草稿的抠绿/去溢色/裁边/降采样配方已脚本化为 `process_generated.py`
+  （`python art-src/process_generated.py <批次清单.json>`，残留绿 >0.5% 即非零码失败）；
+  2026-09-18 起 B19 弹窗族与 B24 头像框族的草稿批次已按此归档在 `generated/drafts/`，原始图在 `generated/drafts/raw/`。
 - 已从 Game-icons SVG 生成 PNG 与 8 列图集，索引见 `game-icons/icons-atlas.json`；SVG 仍是可追溯源文件，PNG 是运行时候选产物。
   `png/` 与 `png/systems/` 的逐图 PNG 为 256×256、黑底白图（渲染配方：resvg 按 `fitTo width=256`
   直接栅格化 —— 2026-09-16 用既有 `wood.png` 复核过，平均逐像素差 0.34/255，仅抗锯齿差异）。
