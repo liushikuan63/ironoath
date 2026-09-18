@@ -106,6 +106,14 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements PushGa
             send(session, Map.of("type", TYPE_ERROR, "msg", "bind 缺少 playerId"));
             return;
         }
+        if (!WsCredentials.bindsConsistentlyWith(session.getAttributes(), playerId)) {
+            // 握手已经判过身份了，这里再允许 bind 换成别人 = 门从握手收紧、从 bind 开回去：
+            // 握着属于自己的连接，领走别人的定向推送（那是只读外泄，连报错都不会有）
+            LOG.warn("WebSocket 绑定被拒：bind 的 playerId 与握手声明的不是同一个人 bind={} sessionId={}",
+                    playerId, session.getId());
+            send(session, Map.of("type", TYPE_ERROR, "msg", "绑定身份与握手身份不一致"));
+            return;
+        }
         if (identity.productionReady()) {
             // 与 HTTP 侧同一件事：严格实现下，报一个 playerId 不再等于拿到那个人的推送通道。
             // 票据走 bind 消息的 token 字段，客户端在每条连接建立时自动带上（NetModule#sendBind），
