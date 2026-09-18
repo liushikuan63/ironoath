@@ -83,17 +83,34 @@ DEBUG_BUILD=$(node -e '
 ' "$BUILD_DIR/src/settings.json")
 
 FIRST_PACKAGE_MAX=$(param PERF_FIRST_PACKAGE_MAX_BYTES)
-SIZE=$(du -sb "$BUILD_DIR" | cut -f1)
-SIZE_MB=$(node -e 'console.log((Number(process.argv[1]) / 1048576).toFixed(2))' "$SIZE")
-MAX_MB=$(node -e 'console.log((Number(process.argv[1]) / 1048576).toFixed(2))' "$FIRST_PACKAGE_MAX")
-echo "[check-wechat-artifact] 本次是 ${DEBUG_BUILD} 构建；全量产物：${SIZE_MB}MB（预算 ${MAX_MB}MB，来源 global.PERF_FIRST_PACKAGE_MAX_BYTES）"
+# 首包只量「玩家第一次下载就要拿到的那些文件」：subpackages/** 是 wx.loadSubPackage 按需拉的，
+# 算进首包会变成「越分包越红」—— 与 check-package-size.sh 保持同一口径。
+if [ -d "$BUILD_DIR/subpackages" ]; then
+  SIZE=$(du -sb --exclude="$BUILD_DIR/subpackages" "$BUILD_DIR" | cut -f1)
+  SUB_SIZE=$(du -sb "$BUILD_DIR/subpackages" | cut -f1)
+else
+  SIZE=$(du -sb "$BUILD_DIR" | cut -f1)
+  SUB_SIZE=0
+fi
+TOTAL_SIZE=$((SIZE + SUB_SIZE))
+mb() {
+  node -e 'console.log((Number(process.argv[1]) / 1048576).toFixed(2))' "$1"
+}
+SIZE_MB=$(mb "$SIZE")
+SUB_MB=$(mb "$SUB_SIZE")
+TOTAL_MB=$(mb "$TOTAL_SIZE")
+MAX_MB=$(mb "$FIRST_PACKAGE_MAX")
+echo "[check-wechat-artifact] 本次是 ${DEBUG_BUILD} 构建；首包：${SIZE_MB}MB（预算 ${MAX_MB}MB，来源 global.PERF_FIRST_PACKAGE_MAX_BYTES）｜分包：${SUB_MB}MB｜整包：${TOTAL_MB}MB"
+if [ "$SUB_SIZE" -gt 0 ]; then
+  echo "[check-wechat-artifact] 分包目录存在，不计入首包判定；整包上限微信侧另有约束，本仓库暂无对应全局参数，只打印不判红。"
+fi
 
 if [ "$SIZE" -gt "$FIRST_PACKAGE_MAX" ]; then
   if [ "$DEBUG_BUILD" = "true" ]; then
-    echo "[check-wechat-artifact][WARN] debug 包 ${SIZE_MB}MB 超预算 —— 只用于本地开发者工具，不判失败。"
+    echo "[check-wechat-artifact][WARN] debug 包首包 ${SIZE_MB}MB 超预算 —— 只用于本地开发者工具，不判失败。"
     echo "  提审请用 release 构建；release 仍超限时再走分包/远程资源（B16 §1），不要删玩法功能。"
   else
-    echo "[check-wechat-artifact][FAIL] release 产物 ${SIZE_MB}MB 超过 ${MAX_MB}MB。"
+    echo "[check-wechat-artifact][FAIL] release 首包 ${SIZE_MB}MB 超过 ${MAX_MB}MB。"
     echo "  先看构成：cocos-js/（引擎）与 assets/（图集）各占多少，再决定裁剪引擎模块还是把资源分包。"
     FAIL=1
   fi
