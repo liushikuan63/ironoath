@@ -50,8 +50,12 @@ class ConfigTablesAcceptanceTest {
      * 交付完毕的过程」，而 B02 当初预留的 7 张表已经全部被后续批次填上了数据。
      * 保留这个集合而不是删掉它，是因为 B14~B16 仍可能新增预留表，
      * 届时应当加回这里，而不是把断言整段删掉。
+     *
+     * <p><b>holiday（2026-09-19 加入，防沉迷的法定节假日日期表）</b>：它与上面那批的区别是
+     * **数据由运营按年填、不来自任何开发批次** —— 空结构 + 明确的"还没填"就是它的常态。
+     * 判定口径同一条：表里一旦有数据，就不该再留在预留态。
      */
-    private static final Set<String> RESERVED = Set.of();
+    private static final Set<String> RESERVED = Set.of("holiday");
 
     /**
      * B02 建结构、由后续批次填数据的表（B10/B11/B13 已填，所以不再是预留表）。

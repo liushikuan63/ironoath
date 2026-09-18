@@ -575,6 +575,18 @@ export interface HeroRarityCfg {
   starUpFragment: number
 }
 
+/**
+ * 配置表 holiday 的一行。
+ * 法定节假日日期表（未成年时长限制用）。一行 = 一个整天可玩的日期（UTC+8）。**id 就是日期本身**（yyyy-MM-dd），于是重复填同一个日期会被主键唯一性直接拦下 —— 这正是这张表最需要的性质。**预留表**：结构已定稿、数据由运营按年填（不是等后续批次）。
+ *
+ * 源表 version=1
+ */
+export interface HolidayCfg {
+  /** 主键 */
+  id: string
+  name: string
+}
+
 /** item.itemType 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type ItemType =
   | 'SPEEDUP'

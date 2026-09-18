@@ -61,6 +61,7 @@ public class PlayerInitService {
     private final com.ironoath.web.security.ContentSecurityGuard contentSecurity;
     /** 领域事件发布入口（B17 连续签到用 LOGIN_DAY）。名字沿用既有类 —— 它是业务侧发布领域事件的统一入口。 */
     private final com.ironoath.web.quest.QuestEvents domainEvents;
+    private final com.ironoath.web.compliance.MinorPlayGate minorPlay;
 
     public PlayerInitService(ConfigRegistry configs, PlayerRepository players,
                              IdempotencyStore idempotency, TimeService timeService,
@@ -69,7 +70,8 @@ public class PlayerInitService {
                              WeChatCodeExchanger weChat,
                              AuthSessionService sessions,
                              com.ironoath.web.security.ContentSecurityGuard contentSecurity,
-                             com.ironoath.web.quest.QuestEvents domainEvents) {
+                             com.ironoath.web.quest.QuestEvents domainEvents,
+                             com.ironoath.web.compliance.MinorPlayGate minorPlay) {
         this.configs = configs;
         this.players = players;
         this.idempotency = idempotency;
@@ -80,6 +82,7 @@ public class PlayerInitService {
         this.sessions = sessions;
         this.contentSecurity = contentSecurity;
         this.domainEvents = domainEvents;
+        this.minorPlay = minorPlay;
     }
 
     /**
@@ -91,6 +94,9 @@ public class PlayerInitService {
      */
     public PlayerInitResp init(PlayerInitReq req) {
         PlayerInitResp resp = doInit(req);
+        // 未成年时段闸（B15 §合规）：拦在"登录成功"之后 —— 新号此刻才拿到 playerId，而年龄源的键是它。
+        // 放在这里而不是 doInit 之前：拦截一个还没有身份的请求，只能按设备判，而那会与"按账号判"两套口径
+        minorPlay.requirePlayable(resp.playerId(), timeService.serverNow());
         // 登录事件（B17 连续签到）：这里发一次"我登录了"，"同一自然日只算一天"由活动域负责 ——
         // 幂等重投也会再发一次，而那正是那条规则要处理的形状（把它在这里判掉等于把口径搬出活动域）。
         // 建档走同一个出口（doInit 建号成功也返回），所以新号第一天就算上了。
