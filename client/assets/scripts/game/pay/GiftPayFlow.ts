@@ -20,6 +20,7 @@
  */
 import type { NetOutcome } from '../../net/NetModule'
 import type { CreateOrderResp, OrderStatusResp, PayParams } from '../../net/generated/PayProtocol'
+import { TRACK_EVENTS } from '../track/TrackEvents'
 // 结局类型住在支付桥里（net 层），流程只消费它 —— 反过来让 net 依赖 game 就把分层搞倒了
 import type { PaymentOutcome } from '../../net/MidasPayment'
 export type { PaymentOutcome }
@@ -72,7 +73,10 @@ export class GiftPayFlow {
    * 而"失败"本身也是一种要显示的状态。
    */
   async buy(productId: string): Promise<PayView> {
-    this.deps.track('pay_click', { productId })
+    // 用字典里的常量而不是字面量：埋点覆盖率卡口（check-track-coverage）认的是
+    // `TRACK_EVENTS.xxx` 的引用，写字面量会让 `pay_click` 一直挂在"字典里尚无调用点"的清单上，
+    // 而后人据此以为这一环真的没人发
+    this.deps.track(TRACK_EVENTS.payClick, { productId })
 
     const order = await this.deps.createOrder(productId)
     if (order.kind === 'biz') {

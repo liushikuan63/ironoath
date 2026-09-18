@@ -11,8 +11,8 @@
  * 用它算倒计时会让"还剩几分钟"变成一句随时会错的话。
  */
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3 } from 'cc'
-import type { GiftPopupResp } from '../../net/generated/PayProtocol'
-import type { PayView } from '../pay/GiftPayFlow'
+import type { GiftPopupResp } from '../net/generated/PayProtocol'
+import type { PayView } from '../game/pay/GiftPayFlow'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -134,13 +134,15 @@ export class GiftPopupView extends Component {
     const buttonBg = this.buyButton.addComponent(Graphics)
     buttonBg.fillColor = COLOR_BUTTON
     buttonBg.fillRect(-100, -28, 200, 56)
-    this.buyButton.addChild(this.label(this.buyButton, '立即购买', 0, 0, 20, COLOR_TEXT))
+    // label() 自己把节点挂到 parent 上并返回 Label 组件 —— 再 addChild 一次挂的就是
+    // 一个组件而不是节点（真机上是 addChild 直接抛错，而这一步只有真正弹过窗才会走到）
+    this.label(this.buyButton, '立即购买', 0, 0, 20, COLOR_TEXT)
     panel.addChild(this.buyButton)
 
     const close = new Node('close')
     close.addComponent(UITransform).setContentSize(36, 36)
     close.setPosition(new Vec3(PANEL_WIDTH / 2 - 28, PANEL_HEIGHT / 2 - 28, 0))
-    close.addChild(this.label(close, '×', 0, 0, 22, COLOR_TEXT_DIM))
+    this.label(close, '×', 0, 0, 22, COLOR_TEXT_DIM)
     panel.addChild(close)
 
     this.node.active = false
