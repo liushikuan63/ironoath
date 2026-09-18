@@ -1,0 +1,13 @@
+# 行尾策略：仓库内一律以 LF 入库，检出也强制 LF。
+# 为什么不能只靠 text=auto：本机 core.autocrlf=true 时，全新 checkout（CI runner、新同事第一次 clone、
+# git worktree）会把 *.json 落成 CRLF，而测试夹具里有按跨行字面量锚点改配置表内容的写法
+# （如 "id": "TRACK_BATCH_MAX_SIZE",\n "valueType": ...），CRLF 下一个字符都匹配不上 ——
+# 症状是「夹具必须真的改到了那一行」红，看着像业务坏了，其实整条被测路径根本没跑到。
+# 2026-09-19 实测：干净 worktree 里 ConfigRegistryB02Test / PerfBudgetTest / SeasonRulesAssemblerTest
+# 共 4 条用例因行尾失败，主工作区（文件是脚本写的 LF）永远复现不了。
+
+*.json text eol=lf
+*.ts text eol=lf
+*.java text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
