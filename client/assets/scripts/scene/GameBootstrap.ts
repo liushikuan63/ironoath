@@ -558,6 +558,11 @@ export class GameBootstrap extends Component {
       // 所以这里不 await、也不接错误 —— 主流程不该被一个可选弹窗拖住
       void this.root.showGiftPopup()
     }
+    // 回到前台：重校时 + 再问一次弹窗（挂后台期间错过的那次触发要补上）。
+    // 这个回调只有小游戏运行时才有 —— 浏览器里没有 wx，静默跳过
+    if (typeof wx !== 'undefined' && typeof wx.onShow === 'function') {
+      wx.onShow(() => { void this.root.afterForeground() })
+    }
     // 启动自检行：在微信开发者工具的 Console 里能一眼看出"到底跑起来没有"。
     // 小游戏没有可编程的自动化接口（miniprogram-automator 连上即断），
     // 所以这条日志就是 DevTools 内验证的入口 —— 它必须一行内给全判断依据：

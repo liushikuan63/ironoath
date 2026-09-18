@@ -714,6 +714,20 @@ export class AppRoot {
    * <p>**在登录之后、以及每次回到前台时问**：弹窗的时机由服务端的触发与频控决定，
    * 客户端不轮询也不猜 —— 问早了没触发、问晚了报价过期，两个都由服务端说了算。
    */
+  /**
+   * 回到前台要做的事（B19 S3-iv 的再触发）。由平台的前台回调驱动（`wx.onShow`）。
+   *
+   * <p><b>为什么重校时</b>：挂后台期间本地时钟可能漂移，而产出倒计时、弹窗倒计时全靠它；
+   * 断线重连那条路径已经在做同一件事（见 `GameSession.bindNetworkEvents`），这里是第二条入口。
+   *
+   * <p><b>为什么再问一次弹窗</b>：挂后台期间玩家看不到任何东西，而礼包的触发是**有时效**的
+   * （报价 60 分钟）—— 回来不问，那次触发就白过了。
+   */
+  async afterForeground(): Promise<void> {
+    await this.session.syncTime()
+    await this.showGiftPopup()
+  }
+
   async showGiftPopup(): Promise<void> {
     const outcome = await this.api.giftPopup()
     if (outcome.kind !== 'ok') {

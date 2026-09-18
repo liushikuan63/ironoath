@@ -290,6 +290,8 @@ declare const wx: {
     success?(): void
     fail?(err: { errMsg: string }): void
   }): WxSocketTask
+  /** 应用回到前台（小游戏切回前台、浏览器标签页重新可见时会走同一条）。 */
+  onShow(callback: () => void): void
   getStorageSync(key: string): string | undefined
   setStorageSync(key: string, value: string): void
   /** wx.login：取一次性登录凭证 code，服务端用它换 openid（B15 §三）。 */

@@ -36,6 +36,12 @@ const ROUTES: Record<string, unknown> = {
     // 微信登录后服务端签发的会话票据；之后每条请求以 `Authorization: Bearer <票据>` 带上
     authToken: 'session-token-1', serverNow: SERVER_NOW, isNewPlayer: true,
   },
+  '/time/sync': { sync: { offset: 0, syncAt: SERVER_NOW } },
+  // 默认不弹：绝大多数用例不该被一个弹窗干扰；要弹的用例自己用 overrides 覆盖
+  '/gift/popup': {
+    popup: false, giftId: null, productId: null, offerExpireAt: null,
+    cooldownSec: 0, serverNow: SERVER_NOW,
+  },
   '/city/list': {
     buildings: [], buildOptions: [],
     queues: { used: 0, available: 2, max: 3 }, resources: {}, serverNow: SERVER_NOW,
@@ -541,6 +547,22 @@ test('握手完成后立刻申报身份：bind 不能由调用方按顺序排在
   socket.simulateOpen()
   assert.deepEqual(JSON.parse(socket.sent[0] ?? '{}'),
     { type: 'bind', playerId: 'P1', token: 'session-token-1' })
+})
+
+test('回到前台：重校时并再问一次弹窗（挂后台期间触发的那一次不能丢）', async () => {
+  // 为什么必须"再问一次"：弹窗的时机由服务端的触发与频控决定，而挂后台期间玩家看不到任何东西 ——
+  // 回前台不问，那一次触发就白过了（而它可能正是"卡关补给"这种有时效的机会）
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+  const syncsBefore = h.http.countOf('/time/sync')
+  const popupsBefore = h.http.countOf('/gift/popup')
+
+  await h.root.afterForeground()
+
+  assert.equal(h.http.countOf('/time/sync'), syncsBefore + 1,
+    '回前台要重校时：休眠期间本地时钟可能漂移，而产出倒计时全靠它')
+  assert.equal(h.http.countOf('/gift/popup'), popupsBefore + 1,
+    '回前台要再问一次礼包弹窗，否则挂后台错过的那次触发永远看不到')
 })
 
 test('首屏预拉是并发发出的：第一个面板还扣着时，其余十个已经在路上', async () => {
