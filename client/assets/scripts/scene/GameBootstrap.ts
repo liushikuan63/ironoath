@@ -436,7 +436,7 @@ export class GameBootstrap extends Component {
     const deps: NetDeps = {
       http: isWxRuntime() ? new WxHttpTransport(REQUEST_TIMEOUT_MS)
         : new FetchHttpTransport(REQUEST_TIMEOUT_MS),
-      socketFactory: (): SocketTransport => new WxSocketTransport(this.wsUrl),
+      socketFactory: (url: string): SocketTransport => new WxSocketTransport(url),
       now: () => sys.now(),
       delay: (ms: number) => new Promise<void>(resolve => {
         setTimeout(resolve, ms)

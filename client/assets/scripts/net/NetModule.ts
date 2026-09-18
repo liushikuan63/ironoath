@@ -195,9 +195,9 @@ export class NetModule {
   /**
    * 设置后续 HTTP 请求自动携带的玩家身份。
    *
-   * <p>与 {@link #bindPlayer} 是两件事，别合并：`bindPlayer` 是**往 socket 上申报身份**以便服务端
-   * 定向推送，连接没开时它只会返回 false；而这里是本地状态，设上之后每个 HTTP 请求都带，
-   * 与 socket 是否在线无关。登录成功时两个都要调，少调这一个的表现是「登录成功却满屏 400」。
+   * <p>两条通道分开设是刻意的：这里是**本地状态**，设上之后每个 HTTP 请求都带，与 socket
+   * 是否在线无关；socket 那一侧的身份由 {@link #sendBind} 在每条连接建立时自己申报。
+   * 少调这一个的表现是「登录成功却满屏 400」。
    */
   setPlayer(playerId: string | null): void {
     this.playerId = playerId
@@ -205,7 +205,7 @@ export class NetModule {
 
   /**
    * 设置会话票据（B15 §三）。登录成功后由 {@code GameSession} 调用，
-   * 之后每个 HTTP 请求自动带 {@code X-Auth-Token}。
+   * 之后每个 HTTP 请求自动带 `Authorization: Bearer <票据>`。
    *
    * <p>与 {@link #setPlayer} 分开是刻意的：票据由服务端签发，客户端只是搬运工；
    * 把两者塞进一个方法会让人以为票据是本地生成的。
@@ -470,8 +470,16 @@ export class NetModule {
 
   // ---------- WebSocket ----------
 
-  /** 建立长连接。心跳间隔由服务端在 connected 帧里下发，客户端不硬编码。 */
+  /**
+   * 建立长连接。心跳间隔由服务端在 connected 帧里下发，客户端不硬编码。
+   *
+   * <p>已经连着时直接返回：再开一条会把上一根变成孤儿（它还在收推送，但状态已经没人管了）。
+   * 票据换掉之后确实想换一条带新票的连接，先 {@link #disconnect} 再连。
+   */
   connectSocket(): void {
+    if (this.socketOpen) {
+      return
+    }
     this.closedByUser = false
     this.openSocket()
   }
@@ -483,13 +491,43 @@ export class NetModule {
       onClose: (reason) => this.onSocketClose(reason),
       onError: (message) => console.warn(`[NetModule] WebSocket 错误：${message}`),
     }
-    this.socket = this.deps.socketFactory()
+    this.socket = this.deps.socketFactory(this.socketUrl())
     this.socket.connect(callbacks)
+  }
+
+  /**
+   * 这一次握手要连的 URL。
+   *
+   * <p>凭据只能走 query：小游戏与浏览器都**给 WebSocket 设不了自定义头**
+   * （HTTP 侧那套 `Authorization: Bearer` 在这里用不上），而服务端要在握手阶段就认出是谁，
+   * 才不会让一条匿名连接先把资源分配掉、再等 bind 才判身份。
+   *
+   * <p>每次开连接都重算，不在构造时烤死：票据会换（登录、续期、顶号），
+   * 烤死的后果是"重连后一直带第一次那枚旧票"—— 平时看不出来，票据一换就连不上还查不到原因。
+   * 缺哪个就不拼哪个：登录前没有票据，拼一个 `token=` 或 `token=null` 出去，
+   * 服务端要么判格式错、要么把字符串 "null" 当票据，两种都比不拼难查。
+   */
+  private socketUrl(): string {
+    const params: string[] = []
+    if (this.playerId !== null && this.playerId.length > 0) {
+      params.push(`playerId=${encodeURIComponent(this.playerId)}`)
+    }
+    if (this.token !== null && this.token.length > 0) {
+      params.push(`token=${encodeURIComponent(this.token)}`)
+    }
+    if (params.length === 0) {
+      return this.config.wsUrl
+    }
+    const joiner = this.config.wsUrl.includes('?') ? '&' : '?'
+    return `${this.config.wsUrl}${joiner}${params.join('&')}`
   }
 
   private onSocketOpen(): void {
     this.socketOpen = true
     this.online = true
+    // 一开就报身份，每条新连接都要（首连与重连同一条路径）：服务端只认"这条连接报过谁"。
+    // 必须排在 socketOpen 置位之后 —— sendRaw 就是看这个标记决定发得出还是丢掉
+    this.sendBind()
     const wasDisconnected = this.disconnectedAt !== null
     const downtime = this.disconnectedAt === null ? 0 : this.deps.now() - this.disconnectedAt
     this.disconnectedAt = null
@@ -551,15 +589,29 @@ export class NetModule {
     }
   }
 
-  /** 绑定玩家身份，之后服务端才能定向推送。 */
-  bindPlayer(playerId: string): boolean {
-    // 票据跟着 bind 一起发：严格身份模式下服务端会校验它（见 GameWebSocketHandler#bind）。
-    // 漏了这一段的表现是"HTTP 全通、但订阅推送一条都收不到"，而本地宽松实现又不会报错。
-    const message: Record<string, string> = { type: 'bind', playerId }
+  /**
+   * 向服务端申报身份，之后它才能往这条连接上定向推送。
+   *
+   * <p><b>只在连接建立的那一刻由本模块自己调用，不暴露成"谁连完谁记得 bind 一下"</b>：
+   * 握手完成是异步的，调用方按 `connect(); bind();` 这个顺序写过去，那一发 bind 一定撞上
+   * 还没开的连接被静默丢掉 —— 表现是"HTTP 全通、推送一条都收不到"，而用例全绿
+   * （本次就是这样：`connectSocket` 在应用里零调用点，而长连接相关的用例一条条都是绿的）。
+   * 重连同理：服务端在断线那一刻已经丢掉这条连接的订阅关系，所以每一条新连接都要重新申报。
+   *
+   * <p>票据跟着 bind 一起发：严格身份模式下服务端会校验它（见 GameWebSocketHandler#bind）。
+   * 本地宽松实现不校验，漏了也不报错 —— 正因如此它得由机制保证，不能靠调用方记得。
+   */
+  private sendBind(): void {
+    if (this.playerId === null || this.playerId.length === 0) {
+      // 登录前起来的连接：没有身份可报。报一个空 playerId 会被服务端当成一个真实身份去订阅，
+      // 比这条连接什么都收不到更难查
+      return
+    }
+    const message: Record<string, string> = { type: 'bind', playerId: this.playerId }
     if (this.token !== null) {
       message.token = this.token
     }
-    return this.sendRaw(JSON.stringify(message))
+    this.sendRaw(JSON.stringify(message))
   }
 
   private sendRaw(text: string): boolean {

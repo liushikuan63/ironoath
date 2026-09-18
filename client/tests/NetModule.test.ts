@@ -152,7 +152,7 @@ function createHarness(overrides: Partial<NetConfig> = {}): Harness {
   }
   const deps: NetDeps = {
     http,
-    socketFactory: () => new FakeSocket(config.wsUrl),
+    socketFactory: (url) => new FakeSocket(url),
     now: () => clock.now,
     // 记录而不真的等待：退避时长的正确性靠断言 delays 数组验证
     delay: async (ms) => {
@@ -312,9 +312,10 @@ test('身份头只在绑定玩家之后携带，且与 socket 的 bindPlayer 各
   await net.get('/x')
   assert.equal(http.calls[1]?.headers['X-Player-Id'], 'P1')
 
-  // 没有 socket 时 bindPlayer 只会返回 false，但 HTTP 身份依然有效。
-  // 两者若合并成一个动作，表现就是「没连上 WebSocket ⇒ 之后每个请求都 400」
-  assert.equal(net.bindPlayer('P1'), false)
+  // 身份只在 HTTP 这一条通道上生效，socket 那条还关着：没连上 WebSocket 时
+  // 每个请求照样带身份头。两者若合并成一个动作，表现就是
+  // 「没连上 WebSocket ⇒ 之后每个请求都 400」
+  assert.equal(net.connectionOpen(), false)
   await net.get('/x')
   assert.equal(http.calls[2]?.headers['X-Player-Id'], 'P1')
 })
@@ -436,6 +437,45 @@ test('重放途中再次断网：请求被塞回队首，不丢失', async () =>
 
 // ---------- WebSocket ----------
 
+test('握手 URL 带上 playerId 与票据：服务端握手阶段校验要靠它，自定义头在小游戏里设不了', () => {
+  const { net } = createHarness()
+  net.setPlayer('P-1')
+  net.setAuthToken('ticket-A')
+
+  net.connectSocket()
+  const socket = FakeSocket.instances[0]
+  assert.ok(socket !== undefined)
+  assert.ok(socket.url.includes('playerId=P-1'), `URL 要带 playerId，实际 ${socket.url}`)
+  assert.ok(socket.url.includes('token=ticket-A'), `URL 要带票据，实际 ${socket.url}`)
+  net.disconnect()
+})
+
+test('换票后重连用的是新票据：URL 不能烤死第一次打开时的那一枚', () => {
+  const { net } = createHarness()
+  net.setPlayer('P-1')
+  net.setAuthToken('ticket-A')
+  net.connectSocket()
+  net.disconnect()
+
+  net.setAuthToken('ticket-B')
+  net.connectSocket()
+  const second = FakeSocket.instances[1]
+  assert.ok(second !== undefined)
+  assert.ok(second.url.includes('token=ticket-B'), `重连要带新票，实际 ${second.url}`)
+  assert.ok(!second.url.includes('ticket-A'), `旧票不该还留在 URL 上，实际 ${second.url}`)
+  net.disconnect()
+})
+
+test('登录前没有票据：URL 原样，不许拼出 token= 空值或字面量 null', () => {
+  const { net } = createHarness()
+  net.connectSocket()
+  const socket = FakeSocket.instances[0]
+  assert.ok(socket !== undefined)
+  assert.ok(!socket.url.includes('token='), `无票据时不该带 token 参数，实际 ${socket.url}`)
+  assert.ok(!socket.url.includes('null'), `不许把 null 拼进 URL，实际 ${socket.url}`)
+  net.disconnect()
+})
+
 test('连接建立时服务端下发心跳间隔，客户端据此启动心跳（不硬编码 30s）', () => {
   const { net } = createHarness()
   const received: number[] = []
@@ -490,30 +530,30 @@ test('非法 JSON 推送被忽略，不断开连接', () => {
   }
 })
 
-test('bindPlayer 把 playerId 发给服务端，未连接时返回 false', () => {
-  const { net } = createHarness()
-  assert.equal(net.bindPlayer('P1'), false, '未连接时不应假装发送成功')
-
-  net.connectSocket()
-  const socket = FakeSocket.instances[0]
-  assert.ok(socket !== undefined)
-  socket.simulateOpen()
-  assert.equal(net.bindPlayer('P1'), true)
-  assert.deepEqual(JSON.parse(socket.sent[0] ?? '{}'), { type: 'bind', playerId: 'P1' })
-})
-
-test('bindPlayer 带上会话票据：严格身份模式下没有它，推送通道会被服务端拒掉', () => {
+test('长连接一建立就自动申报身份：握手是异步的，调用方"先 connect 再 bind"必然慢一步', () => {
   const { net } = createHarness()
   net.setPlayer('P1')
   net.setAuthToken('session-token-1')
+
   net.connectSocket()
   const socket = FakeSocket.instances[0]
   assert.ok(socket !== undefined)
   socket.simulateOpen()
 
-  assert.equal(net.bindPlayer('P1'), true)
   assert.deepEqual(JSON.parse(socket.sent[0] ?? '{}'),
     { type: 'bind', playerId: 'P1', token: 'session-token-1' })
+  net.disconnect()
+})
+
+test('还没登录时开连接不发 bind：没有身份可报，编一个比沉默更难查', () => {
+  const { net } = createHarness()
+  net.connectSocket()
+  const socket = FakeSocket.instances[0]
+  assert.ok(socket !== undefined)
+  socket.simulateOpen()
+
+  assert.deepEqual(socket.sent, [])
+  net.disconnect()
 })
 
 test('断开后发出 netDisconnected 并自动重连，重连成功发出 netReconnected', async () => {
@@ -543,6 +583,27 @@ test('断开后发出 netDisconnected 并自动重连，重连成功发出 netRe
   assert.equal(net.connectionOpen(), true)
 })
 
+test('重连成功后重新申报身份：服务端在断线那一刻已经丢掉这条连接的订阅关系', async () => {
+  const { net } = createHarness({ retryBaseDelayMs: 1, retryMaxDelayMs: 2 })
+  net.setPlayer('P1')
+  net.setAuthToken('session-token-1')
+  net.connectSocket()
+  const first = FakeSocket.instances[0]
+  assert.ok(first !== undefined)
+  first.simulateOpen()
+  first.simulateClose('网络中断')
+
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  const second = FakeSocket.instances[1]
+  assert.ok(second !== undefined, '应已创建新的连接实例')
+  second.simulateOpen()
+
+  assert.deepEqual(JSON.parse(second.sent[0] ?? '{}'),
+    { type: 'bind', playerId: 'P1', token: 'session-token-1' },
+    '重连出来的是另一条匿名订阅，不重新 bind 就一条推送都收不到')
+  net.disconnect()
+})
+
 test('主动 disconnect 不触发自动重连', async () => {
   const { net } = createHarness({ retryBaseDelayMs: 1, retryMaxDelayMs: 2 })
   net.connectSocket()
@@ -565,7 +626,7 @@ test('构造参数校验：退避与队列上限非法时立刻报错', () => {
   }
   const deps: NetDeps = {
     http,
-    socketFactory: () => new FakeSocket(''),
+    socketFactory: (url) => new FakeSocket(url),
     now: () => 0,
     delay: async () => undefined,
     rng: Prng.of(1),

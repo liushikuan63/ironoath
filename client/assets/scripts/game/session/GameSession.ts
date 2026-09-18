@@ -75,8 +75,9 @@ export class GameSession {
     // 响应里的 serverNow 就是一次免费的时钟校准样本，rtt 用本次请求的实测值
     this.deps.timeSync.offer(rttMs, data.serverNow - request.clientTime)
 
-    // 两个身份动作都做，缺一不可：setPlayer 让之后的每个 HTTP 请求带上服务端必填的身份头，
-    // bindPlayer 只是向 socket 申报「把定向推送发给这个人」，连接没开时它会静默失败
+    // 三个身份动作按这个顺序，缺一不可，且顺序不能反：
+    // setPlayer 让之后的每个 HTTP 请求带上服务端必填的身份头；票据要在开连接之前设好，
+    // 因为握手 URL 与连接建立时那一发 bind 都是从 NetModule 的当前身份现取的
     this.deps.net.setPlayer(data.playerId)
     // 服务端签发的会话票据。旧服务端不带这个字段时退化为空串，
     // 本地宽松身份实现照样放行；严格实现下空票据会被 2006 拒掉，这是应该的
@@ -84,7 +85,9 @@ export class GameSession {
     // 不去改几十个测试夹具 —— 协议是增量字段，客户端必须能滚动升级
     const authToken = data.authToken
     this.deps.net.setAuthToken(typeof authToken === 'string' && authToken.length > 0 ? authToken : null)
-    this.deps.net.bindPlayer(data.playerId)
+    // 长连接由登录这一步开：晚于身份（URL 要带凭据），而"报身份"不用这里操心 ——
+    // 握手是异步的，NetModule 在每条连接建立时（含断线重连）自己发 bind
+    this.deps.net.connectSocket()
     gameBus.emit('playerReady', { playerId: data.playerId, isNewPlayer })
     return outcome
   }

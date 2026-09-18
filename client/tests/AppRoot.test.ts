@@ -13,7 +13,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { NetModule } from '../assets/scripts/net/NetModule'
 import type { NetConfig, NetDeps } from '../assets/scripts/net/NetModule'
-import type { HttpResponse, HttpTransport } from '../assets/scripts/net/NetTransport'
+import type { HttpResponse, HttpTransport, SocketCallbacks, SocketTransport } from '../assets/scripts/net/NetTransport'
 import { Prng } from '../assets/scripts/core/Prng'
 import { TimeSync } from '../assets/scripts/core/TimeSync'
 import { Store } from '../assets/scripts/game/store/Store'
@@ -33,7 +33,7 @@ const ROUTES: Record<string, unknown> = {
   '/player/init': {
     playerId: 'P1', profile: { nickName: '君' }, cityLevel: 1, resources: {},
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, protectUntil: null,
-    // 微信登录后服务端签发的会话票据；之后每条请求都要带 X-Auth-Token
+    // 微信登录后服务端签发的会话票据；之后每条请求以 `Authorization: Bearer <票据>` 带上
     authToken: 'session-token-1', serverNow: SERVER_NOW, isNewPlayer: true,
   },
   '/city/list': {
@@ -212,6 +212,47 @@ interface Call {
   readonly headers: Readonly<Record<string, string>>
 }
 
+/**
+ * 长连接的假对象：只记「被谁建出来、连上之后发了什么」。
+ *
+ * <p>刻意不在 `connect` 里立刻回调 `onOpen`：真实握手的完成是在下一个事件循环里，
+ * 假的一开口就"已连接"会让那种**把 bind 排在 connect 之后、以为顺序到了就发得出去**
+ * 的实现写得过测试、跑在真机上却一条推送都收不到。要 open 必须由用例自己按一下。
+ */
+class RecordingSocket implements SocketTransport {
+  readonly sent: string[] = []
+  open = false
+  private callbacks: SocketCallbacks | null = null
+
+  constructor(readonly url: string) {}
+
+  connect(callbacks: SocketCallbacks): void {
+    this.callbacks = callbacks
+  }
+
+  send(text: string): boolean {
+    if (!this.open) {
+      return false
+    }
+    this.sent.push(text)
+    return true
+  }
+
+  get isOpen(): boolean {
+    return this.open
+  }
+
+  close(): void {
+    this.open = false
+  }
+
+  /** 测试驱动：模拟服务端完成握手。 */
+  simulateOpen(): void {
+    this.open = true
+    this.callbacks?.onOpen()
+  }
+}
+
 class RoutingHttp implements HttpTransport {
   readonly calls: Call[] = []
   /** 下一条写请求返回这个业务错误。用来验「失败不许刷新」。 */
@@ -303,6 +344,8 @@ interface Harness {
 
   readonly root: AppRoot
   readonly http: RoutingHttp
+  /** 长连接实例。用例要靠它按下"服务端完成了握手"（见 {@link RecordingSocket}）。 */
+  readonly sockets: RecordingSocket[]
   readonly store: Store
   readonly errors: Array<[string, string]>
   readonly attached: string[]
@@ -316,6 +359,7 @@ interface Harness {
 function harness(options: { transportFails?: boolean } = {}): Harness {
   resetWorld()
   const http = new RoutingHttp()
+  const sockets: RecordingSocket[] = []
   const transport: HttpTransport = options.transportFails
     ? {
       post: async (): Promise<HttpResponse> => {
@@ -336,8 +380,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   }
   const deps: NetDeps = {
     http: transport,
-    socketFactory: () => {
-      throw new Error('本测试不连 WebSocket')
+    socketFactory: (url: string) => {
+      const socket = new RecordingSocket(url)
+      sockets.push(socket)
+      return socket
     },
     now: () => clock.now,
     delay: async (ms: number) => {
@@ -444,7 +490,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       }
     },
 
-    root, http, store, errors, attached, events,
+    root, http, sockets, store, errors, attached, events,
   }
 }
 
@@ -467,6 +513,34 @@ test('start：先登录，再把十个面板各拉一次，并把家坐标交出
       'stage'])
   assert.equal(h.errors.length, 0)
   assert.equal(h.root.playerId, 'P1')
+})
+
+test('start 之后长连接真的被打开：只调 bindPlayer 而不 connect，推送通道一条消息都收不到', async () => {
+  // 这条用例盯的是一个"全绿但功能是死的"缺陷：GameSession 登录成功后只做了 bindPlayer，
+  // 而 bindPlayer 在没有连接时静默返回 false —— 于是服务端到客户端的推送整条链从未成立，
+  // 而所有 HTTP 用例照旧全过（客户端各面板都是拉出来的，看不出推送断了）。
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+
+  assert.equal(h.sockets.length, 1, '登录成功后应当开且只开一条长连接')
+  const socket = h.sockets[0]
+  assert.ok(socket !== undefined)
+  assert.ok(socket.url.includes('playerId=P1'), `握手 URL 要带 playerId，实际 ${socket.url}`)
+  assert.ok(socket.url.includes('token=session-token-1'), `握手 URL 要带票据，实际 ${socket.url}`)
+})
+
+test('握手完成后立刻申报身份：bind 不能由调用方按顺序排在 connect 之后', async () => {
+  // 握手的 onOpen 是异步到的（默认 harness 里的假连接在 start 返回时还没 open）。
+  // 若谁在 connect 之后顺手 bind 一下就算完，真机上那一发永远发不出去。
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+  const socket = h.sockets[0]
+  assert.ok(socket !== undefined)
+  assert.deepEqual(socket.sent, [], '还没握手成功时不该有任何已发出的帧')
+
+  socket.simulateOpen()
+  assert.deepEqual(JSON.parse(socket.sent[0] ?? '{}'),
+    { type: 'bind', playerId: 'P1', token: 'session-token-1' })
 })
 
 test('首屏预拉是并发发出的：第一个面板还扣着时，其余十个已经在路上', async () => {

@@ -50,5 +50,11 @@ export interface SocketTransport {
   readonly isOpen: boolean
 }
 
-/** 创建 SocketTransport 的工厂。重连时需要一个全新的实例。 */
-export type SocketFactory = () => SocketTransport
+/**
+ * 创建 SocketTransport 的工厂。重连时需要一个全新的实例。
+ *
+ * <p>**参数是"这一次要连的完整 URL"**，而不是让实现自己记住配置里的 `wsUrl`：
+ * 握手 URL 要带 `playerId` 与票据（服务端握手阶段校验用；小游戏 WebSocket 设不了自定义头），
+ * 而票据会换 —— 工厂若被烤成无参，重连就一直带着第一次打开时的那枚旧票。
+ */
+export type SocketFactory = (url: string) => SocketTransport
