@@ -40,6 +40,9 @@ const SKIP = new Set([
   "selectChatChannel",
   "openConversation",
   "sendChat",
+  // 只负责"把选择器弹出来"，真正发出分享的那一步在 shareReport 里打点（report_share）——
+  // 两处都打会让一次分享在看板上记成两次
+  "requestShare",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

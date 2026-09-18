@@ -59,6 +59,11 @@ export interface ChatMessageRow {
   readonly author: string
   readonly mine: boolean
   readonly content: string
+  /**
+   * 这条消息分享了一份战报（B22 §一 2）⇒ 行上要能点开回放。
+   * 正文里的标记由服务端拟（`BattleReportService.shareText`），解析只此一处。
+   */
+  readonly reportId: string | null
   /** 「12:07」；不是今天的补上「9-17 12:07」 */
   readonly timeText: string
 }
@@ -213,8 +218,35 @@ export function buildChatMessages(messages: readonly ChatMessageView[], myPlayer
     author: message.senderId === myPlayerId ? '我' : message.senderName,
     mine: message.senderId === myPlayerId,
     content: message.content,
+    reportId: parseSharedReport(message.content),
     timeText: clockText(message.sentAt, nowServer),
   }))
+}
+
+/**
+ * 从正文里认出"分享了一份战报"，返回被分享的战报 id（不是分享就返回 null）。
+ *
+ * <p><b>认的是结尾的结构化标记</b> `[report:<id>]`，不是前缀文案：前缀是给人读的
+ * （「分享了战报：对手名」），改一个词不该让入口消失。服务端那侧是唯一的生产者
+ * （`BattleReportService.shareText`），两边的约定写在 Schema 的 `ReportShareReq` 注释里。
+ *
+ * <p>标志串**必须完整占一个词**（前后是空白或串首尾），否则一句普通发言里恰好写到
+ * `[report:x]` 也会长出按钮；而按钮点下去会去拉一份不存在的战报（回 5005）。
+ * 解析失败不抛错：聊天记录是玩家自己的话，认不出就当普通消息。
+ */
+export function parseSharedReport(content: string): string | null {
+  const matched = /(?:^|\s)\[report:([A-Za-z0-9_]+)\](?=\s|$)/.exec(content)
+  return matched === null ? null : (matched[1] ?? null)
+}
+
+/** 消息行要显示的文字：把结尾的结构化标记摘掉（它是给代码看的，给人看的是前缀那句）。 */
+export function chatMessageText(row: ChatMessageRow): string {
+  if (row.reportId === null) {
+    return row.content
+  }
+  return row.content
+    .replace(/(?:^|\s)\[report:[A-Za-z0-9_]+\](?=\s|$)/, '')
+    .trim()
 }
 
 /**

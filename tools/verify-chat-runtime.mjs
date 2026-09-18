@@ -188,6 +188,9 @@ async function main() {
   const page = await context.newPage()
 
   let boot = null
+  /** 观到的请求 URL（用来证"点了那条分享真的会去拉回放"，而不只是画了个按钮）。 */
+  const requestedUrls = []
+  page.on('request', (request) => requestedUrls.push(request.url()))
   page.on('console', (msg) => {
     const text = msg.text()
     if (text.startsWith('[boot] ')) {
@@ -311,6 +314,29 @@ async function main() {
   verdict(!openedTexts.some(text => text === '私聊（1）'),
     '打开会话后未读归零（走的是 /social/ackEvents 那本账）',
     `私聊相关文本 → ${openedTexts.filter(t => t.startsWith('私聊')).join('、')}`)
+
+  // ---- 5) 分享入口的客户端半边：同形消息长按钮，点它会去拉回放 ----
+  // 真实分享要从回放页发起，而探针账号是全新号（没有兵力 ⇒ 打不了任何一关 ⇒ 拿不到战报；
+  // 给它开一个发兵/发战报的入口正是被禁止的作弊端点）。所以这里验的是**消费侧**：
+  // 让别人发一条同形的分享消息，看那条消息在面板里长不长「打开」、点下去会不会真去拉回放。
+  const fakeReportId = 'battle_probe_missing'
+  const forged = await postJson(`${BACKEND}/chat/send`, {
+    requestId: `chat-probe-share-${Date.now()}`, channel: 'WORLD',
+    content: `分享验证 [report:${fakeReportId}]`, toPlayerId: null,
+  }, senderId)
+  verdict(forged.root.code === 0, '对照夹具：另一个玩家发一条同形的分享消息', `code=${forged.root.code}`)
+  await tap('Channel_WORLD')
+  const worldTexts = await waitFor(list => list.some(text => text.includes('分享了战报')
+    || text.includes('分享验证')))
+  verdict(worldTexts.some(text => text.includes('分享验证')),
+    '同形消息画进了世界频道（正文里的 [report:] 标记不显示给人看）',
+    `文本 → ${worldTexts.filter(t => t.includes('分享')).join(' | ').slice(0, 100)}`)
+  const openReportTap = await page.evaluate(() => window.__chat.tapRowAction('分享验证'))
+  await page.waitForTimeout(1500)
+  const pulled = requestedUrls.some(url => url.includes('/battle/report') && url.includes(fakeReportId))
+  verdict(openReportTap === 'ok' && pulled,
+    '点那条消息的「打开」真的去拉了回放（假 id 回 5005 是预期的：这只验接线）',
+    `tap=${openReportTap} 请求数=${requestedUrls.filter(u => u.includes('/battle/report')).length}`)
 
   writeFileSync(SHOT, await page.screenshot({ fullPage: false }))
   lines.push(`PASS  截图落盘  ${SHOT}`)

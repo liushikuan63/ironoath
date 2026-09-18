@@ -929,6 +929,8 @@ export class GameBootstrap extends Component {
       social.onChatChannel = channel => { void this.root?.selectChatChannel(channel) }
       social.onChatOpenPeer = peerId => { void this.root?.openConversation(peerId) }
       social.onChatSend = text => { void this.root?.sendChat(text) }
+      // 聊天里点开一条「分享了战报」的消息：与战报列表点开同一路（拉详情 → 回放）
+      social.onChatOpenReport = reportId => { void this.root?.openReport(reportId) }
       social.onRowAction = (kind, id, from) => {
         switch (kind) {
           case 'help':
@@ -978,8 +980,12 @@ export class GameBootstrap extends Component {
       // 回放参数由服务端随战报下发（表里那两个数），这里只装配不写死。
       // 表里写了不支持的倍速时 playbackOptionsOf 会抛 —— 那是一条配置故障，
       // 让它响到崩溃上报里去，而不是让玩家点开一场看到一屏不动的画
-      out.reportReplay = resp => reports.showReplay(resp.result, playbackOptionsOf(resp.playback))
+      out.reportReplay = resp => reports.showReplay(resp.reportId, resp.result,
+        playbackOptionsOf(resp.playback))
       reports.onReplayRequested = reportId => { void this.root?.openReport(reportId) }
+      reports.onShareRequested = reportId => { this.root?.requestShare(reportId) }
+      out.shareChannelChoice = (options, onPick) => reports.showSharePicker(options, onPick)
+      out.reportShared = (text, warning) => reports.showShareOutcome(text, warning)
     }
     if (mail !== null) {
       out.mail = (resp, serverNowMs) => mail.attach(resp, serverNowMs)

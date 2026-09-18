@@ -19,7 +19,7 @@ import { buildSocialPanel, canDo, channelText } from '../game/social/SocialPanel
 import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
 } from '../game/social/SocialPanel'
-import { CHAT_CHANNELS, CHAT_INPUT_MAX_LENGTH } from '../game/social/ChatPanel'
+import { CHAT_CHANNELS, CHAT_INPUT_MAX_LENGTH, chatMessageText } from '../game/social/ChatPanel'
 import type { ChatPanelData } from '../game/social/ChatPanel'
 import type { AllianceMember, ChatChannel, HelpRequestView, SocialSummaryResp } from '../net/generated/SocialProtocol'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
@@ -91,7 +91,7 @@ interface RowDraft {
   readonly actionKind: RowAction
 }
 
-type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer'
+type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -156,6 +156,8 @@ export class SocialPanelView extends Component {
   onChatOpenPeer: ((peerId: string) => void) | null = null
   /** 点发送。文本从输入框读，这里只交出去 */
   onChatSend: ((text: string) => void) | null = null
+  /** 点开一条「分享了战报」的消息：把战报 id 交给编排层去拉回放（B22 §一 2） */
+  onChatOpenReport: ((reportId: string) => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -195,6 +197,7 @@ export class SocialPanelView extends Component {
     this.onChatChannel = null
     this.onChatOpenPeer = null
     this.onChatSend = null
+    this.onChatOpenReport = null
   }
 
   /**
@@ -758,6 +761,10 @@ export class SocialPanelView extends Component {
         this.onChatOpenPeer?.(id)
         return
       }
+      if (kind === 'report') {
+        this.onChatOpenReport?.(id)
+        return
+      }
       if (kind === 'helpAll') {
         this.onHelpAll?.(this.data?.helpAllCount ?? 0)
         return
@@ -803,12 +810,14 @@ function chatDrafts(data: ChatPanelData): RowDraft[] {
     title: message.author,
     // 自己的消息用铜金：一眼能分出"我说的"和"别人说的"，而这一行没有气泡可用
     titleColor: message.mine ? COLOR_COPPER_GOLD : COLOR_TEXT,
-    detail: message.content,
+    // 分享战报的正文里带一段给代码看的标记（[report:id]），显示时摘掉
+    detail: chatMessageText(message),
     value: message.timeText,
-    actionText: null,
-    actionEnabled: false,
-    actionId: null,
-    actionKind: 'none',
+    // 分享的那条能点开回放；普通消息没有可点的地方（按钮不摆出来，而不是摆个灰的）
+    actionText: message.reportId === null ? null : '打开',
+    actionEnabled: message.reportId !== null,
+    actionId: message.reportId,
+    actionKind: message.reportId === null ? 'none' : 'report',
   }))
 }
 

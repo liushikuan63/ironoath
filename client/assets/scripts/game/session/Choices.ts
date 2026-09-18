@@ -7,6 +7,7 @@ import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
 import type { BuildOptionView, CityListResp } from '../../net/generated/CityProtocol'
 import type { HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageUnit } from '../../net/generated/StageProtocol'
+import type { ShareChannel } from '../../net/generated/BattleProtocol'
 
 export interface ChoiceOption {
   readonly id: string
@@ -21,6 +22,23 @@ export interface SpeedupChoice extends ChoiceOption {
 export interface LineupChoice extends ChoiceOption {
   readonly heroes: readonly string[]
   readonly units: readonly StageUnit[]
+}
+
+/** 战报分享的目标频道（B22 §一 2）。只有小队 / 联盟两个：世界频道是陌生人广场，不该贴战报。 */
+export interface ShareChannelChoice extends ChoiceOption {
+  readonly channel: ShareChannel
+}
+
+/**
+ * 分享频道的候选。**不按"我在不在这个组织里"过滤**：那要在客户端存一份组织关系的副本，
+ * 副本过期时玩家会看到两个都点不动的按钮，而服务端本来就会给出一句更准的理由
+ * （未入盟 → `SOCIAL_CHAT_CHANNEL_INVALID`）。与聊天页签的四个频道按钮同一条口径。
+ */
+export function buildShareChannelChoices(): readonly ShareChannelChoice[] {
+  return [
+    { id: 'ALLIANCE', channel: 'ALLIANCE', label: '分享到联盟', detail: '本盟成员都能点开这场回放' },
+    { id: 'SQUAD', channel: 'SQUAD', label: '分享到小队', detail: '本队成员都能点开这场回放' },
+  ]
 }
 
 /** 未放置建筑候选。地块能否放置由玩家点选坐标后交给服务端判定。 */

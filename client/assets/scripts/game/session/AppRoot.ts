@@ -43,13 +43,15 @@ import type { ChatPanelData } from '../social/ChatPanel'
 import { gameBus } from '../../core/EventBus'
 import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
-import type { BattleReportListResp, BattleReportResp } from '../../net/generated/BattleProtocol'
+import type {
+  BattleReportListResp, BattleReportResp, ShareChannel,
+} from '../../net/generated/BattleProtocol'
 import type { MailClaimAllResp, MailListResp } from '../../net/generated/MailProtocol'
 import type { ActivityClaimResp, ActivityListResp } from '../../net/generated/ActivityProtocol'
 import type { GuideAction, GuideProgressResp, GuideScriptResp } from '../../net/generated/GuideProtocol'
 import { claimActivityReq } from '../activity/ActivityPanel'
-import { buildLineupChoices, buildSpeedupChoices } from './Choices'
-import type { LineupChoice, SpeedupChoice } from './Choices'
+import { buildLineupChoices, buildShareChannelChoices, buildSpeedupChoices } from './Choices'
+import type { LineupChoice, ShareChannelChoice, SpeedupChoice } from './Choices'
 import type { GiftPopupResp } from '../../net/generated/PayProtocol'
 import type { PayView } from '../pay/GiftPayFlow'
 import { GiftPayFlow } from '../pay/GiftPayFlow'
@@ -123,6 +125,17 @@ export interface PanelTargets {
   speedupTargetChoice?(options: readonly SpeedupChoice[], onPick: (targetId: string) => void): void
   /** 关卡出战阵容选择器。回调由场景层在选择后触发一次。 */
   lineupChoice?(options: readonly LineupChoice[], onPick: (choice: LineupChoice) => void): void
+  /**
+   * 战报分享的目标频道选择器（B22 §一 2）。与出战阵容同一个形状：
+   * 选项由根给出、场景层只负责画和回调。
+   */
+  shareChannelChoice?(options: readonly ShareChannelChoice[], onPick: (choice: ShareChannelChoice) => void): void
+  /**
+   * 一次分享的结果（成功与失败都走这里）：界面在回放页顶那行显示一句话。
+   * **失败也要走这里**：targets.error 只进 console，玩家看不见 —— 而"分享没成功"
+   * 是玩家必须看得见的一件事（他会以为战友看到了）。
+   */
+  reportShared?(text: string, warning: boolean): void
 }
 
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
@@ -834,6 +847,39 @@ export class AppRoot {
       sentSeq: this.chatSentSeq,
       notice: this.chatNotice,
     }))
+  }
+
+  /**
+   * 点回放里的「分享」（B22 §一 2）：先把目标频道问出来，选中之后才发请求。
+   * 选择器没接上就说清楚，而不是静默什么都不发生（与挑战关卡那条同一条口径）。
+   */
+  requestShare(reportId: string): void {
+    if (this.targets.shareChannelChoice === undefined) {
+      this.rejectNeeds('reports', `分享 "${reportId}" 要先选目标频道，频道选择器未接入`)
+      return
+    }
+    this.targets.shareChannelChoice(buildShareChannelChoices(), (choice) => {
+      void this.shareReport(reportId, choice.channel)
+    })
+  }
+
+  /**
+   * 战报回放里的「分享」（B22 §一 2）。目标频道由场景层用选择器问出来（`shareChannelChoice`），
+   * 这里只负责发出去并把回执交给面板。
+   *
+   * <p>**分享不发奖励**（B15 禁止诱导分享）：成功后只是把那条消息落到频道里，
+   * 客户端这边不做任何奖励或解锁。
+   */
+  async shareReport(reportId: string, channel: ShareChannel): Promise<void> {
+    this.track(TRACK_EVENTS.reportShare, { reportId, channel })
+    const outcome = await this.api.reportShare({ reportId, channel })
+    if (outcome.kind !== 'ok') {
+      this.say('reports', outcome)
+      this.targets.reportShared?.(AppRoot.reason(outcome), true)
+      return
+    }
+    this.targets.reportShared?.(
+      `已分享到${channel === 'ALLIANCE' ? '联盟' : '小队'}频道`, false)
   }
 
   // ---------- 目标搜索与流亡 ----------

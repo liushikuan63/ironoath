@@ -51,6 +51,8 @@ export const TRACK_EVENTS = {
   battleStart: 'battle_start',
   /** 战败。 */
   battleLost: 'battle_lost',
+  /** 把一场战报分享到小队 / 联盟频道（B22 §一 2）。分享率是社交留存的一环，而它**不发奖励**。 */
+  reportShare: 'report_share',
   /** 客户端预判的流失信号（长时间无操作后退出）。 */
   churn: 'churn',
   /** 流亡迁城（B08 §5 反击工具箱）。看板要拿它判断"被追杀到没法玩"的强度。 */

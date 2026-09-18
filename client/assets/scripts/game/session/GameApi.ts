@@ -50,7 +50,9 @@ import type {
   ScoutListResp, ScoutReq,
   SearchTargetsReq, SearchTargetsResp, ViewportReq, ViewportResp,
 } from '../../net/generated/WorldProtocol'
-import type { BattleReportListResp, BattleReportResp } from '../../net/generated/BattleProtocol'
+import type {
+  BattleReportListResp, BattleReportResp, ReportShareReq, ReportShareResp,
+} from '../../net/generated/BattleProtocol'
 import type {
   AppVersionReq, AppVersionResp, CrashReportReq, CrashReportResp, TrackBatchReq, TrackBatchResp, TrackEvent,
 } from '../../net/generated/OpsProtocol'
@@ -462,6 +464,14 @@ export class GameApi {
 
   battleReport(reportId: string): Promise<NetOutcome<BattleReportResp>> {
     return this.read<BattleReportResp>('/battle/report', { reportId })
+  }
+
+  /**
+   * 把一份自己的战报分享到小队 / 联盟频道（B22 §一 2）。
+   * 走 mutate：它会往频道里写一条消息（并过限流与内容送检），是有副作用的一次动作。
+   */
+  reportShare(req: Omit<ReportShareReq, 'requestId'>): Promise<NetOutcome<ReportShareResp>> {
+    return this.mutate<ReportShareReq, ReportShareResp>('/battle/share', req)
   }
 
   // ---------- 关卡（B09） ----------

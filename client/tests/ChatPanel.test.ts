@@ -18,7 +18,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ackablePrivateEventIds, buildChatPanel, buildChatMessages, chatConversations, chatFailureText,
-  chatKey, chatUnreadCount, CHAT_LOCAL_HISTORY_MAX, mergeChatHistory, SOCIAL_CHAT_RATE_LIMITED,
+  chatKey, chatMessageText, chatUnreadCount, CHAT_LOCAL_HISTORY_MAX, mergeChatHistory,
+  parseSharedReport, SOCIAL_CHAT_RATE_LIMITED,
 } from '../assets/scripts/game/social/ChatPanel'
 import type { ChatMessageView, SocialEventView } from '../assets/scripts/net/generated/SocialProtocol'
 
@@ -145,6 +146,22 @@ test('页面数据：notice 进提示行且按告警色画（失败原因是玩�
   })
   assert.equal(data.hintIsWarning, true)
   assert.equal(data.hintText, '慢一点：同一句话 8 秒后才能再发')
+})
+
+test('分享战报的消息：认出结尾的结构化标记，显示时把它摘掉', () => {
+  const shared = '分享了战报：叛军斥候 [report:battle_abc123]'
+  assert.equal(parseSharedReport(shared), 'battle_abc123')
+  assert.equal(chatMessageText(buildChatMessages([
+    message('m1', 0, { content: shared }),
+  ], 'me', 0)[0]!), '分享了战报：叛军斥候')
+
+  // 普通发言不长按钮：没有标记就是一条平常的消息
+  assert.equal(parseSharedReport('大家晚上好'), null)
+  assert.equal(parseSharedReport('看这个 [report:] 好不好'), null)
+  // 标记必须完整占一个词 —— 句子中间夹一个同形串不算分享（点开会去拉一份不存在的战报）
+  assert.equal(parseSharedReport('我写了[report:abc]这样一句话'), null)
+  assert.equal(parseSharedReport('[report:abc]'), 'abc')
+  assert.equal(parseSharedReport('分享 [report:abc]'), 'abc')
 })
 
 test('本地历史按会话分桶：私聊的键要带对象，否则两人的会话会互相覆盖', () => {

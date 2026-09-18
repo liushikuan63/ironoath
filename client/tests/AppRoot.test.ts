@@ -22,7 +22,7 @@ import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
 import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
 import type { PanelTargets } from '../assets/scripts/game/session/AppRoot'
-import type { LineupChoice, SpeedupChoice } from '../assets/scripts/game/session/Choices'
+import type { LineupChoice, ShareChannelChoice, SpeedupChoice } from '../assets/scripts/game/session/Choices'
 import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
@@ -132,6 +132,8 @@ const ROUTES: Record<string, unknown> = {
     ],
     serverNow: SERVER_NOW,
   },
+  // 分享落进频道是服务端的事，这里只回执「贴到哪了」
+  '/battle/share': { reportId: 'r-1', channel: 'ALLIANCE', messageId: 'msg-share-1', serverNow: SERVER_NOW },
   '/battle/report': {
     reportId: 'r-1',
     result: { reportId: 'r-1', battleType: 'PVE', winner: 'ATTACKER', rounds: [],
@@ -375,8 +377,13 @@ interface Harness {
   readonly events: Array<{ name: string, params: Record<string, string> }>
   readonly speedupOptions: readonly SpeedupChoice[]
   readonly lineupOptions: readonly LineupChoice[]
+  /** 最近一次弹出的分享频道候选（没点分享时为空） */
+  readonly shareChannelOptions: readonly ShareChannelChoice[]
+  /** 最近一次分享结果（文本 + 是否告警色） */
+  readonly lastShareOutcome: readonly [string, boolean]
   pickSpeedup(targetId: string): void
   pickLineup(index: number): void
+  pickShareChannel(channel: string): void
 }
 
 function harness(options: { transportFails?: boolean } = {}): Harness {
@@ -432,6 +439,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let activityRows = -1
   let speedupOptions: SpeedupChoice[] = []
   let lineupOptions: LineupChoice[] = []
+  let shareChannelOptions: ShareChannelChoice[] = []
+  let lastShareOutcome: [string, boolean] = ['', false]
+  let shareChannelPick: ((choice: ShareChannelChoice) => void) | null = null
   let speedupPick: ((targetId: string) => void) | null = null
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
@@ -479,6 +489,13 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       lineupOptions = [...options]
       lineupPick = onPick
     },
+    shareChannelChoice: (options, onPick) => {
+      shareChannelOptions = [...options]
+      shareChannelPick = onPick
+    },
+    reportShared: (text, warning) => {
+      lastShareOutcome = [text, warning]
+    },
     error: (panel, message) => errors.push([panel, message]),
   }
   const events: Array<{ name: string, params: Record<string, string> }> = []
@@ -511,6 +528,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     get lineupOptions() {
       return lineupOptions
     },
+    get shareChannelOptions() {
+      return shareChannelOptions
+    },
+    get lastShareOutcome() {
+      return lastShareOutcome
+    },
     pickSpeedup(targetId) {
       speedupPick?.(targetId)
     },
@@ -518,6 +541,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       const choice = lineupOptions[index]
       if (choice !== undefined) {
         lineupPick?.(choice)
+      }
+    },
+    pickShareChannel(channel) {
+      const choice = shareChannelOptions.find(option => option.channel === channel)
+      if (choice !== undefined) {
+        shareChannelPick?.(choice)
       }
     },
 
@@ -1227,6 +1256,28 @@ test('引导：登录后拉一次脚本、上报之后位置跟着回执走、�
   const last = h.events.filter(e => e.name === 'guide_step').pop()
   assert.deepEqual(last?.params, { action: 'skip', stepId: 'g2', guideVersion: '7' },
     '没有 guideVersion，一次热更在看板上会长得像一次流失')
+})
+
+test('分享战报：先问目标频道再发请求；失败也走面板那行提示，而不是只进 console', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+
+  // 点了「分享」才弹选择器；没选之前一个请求都不该发出去
+  h.root.requestShare('r-1')
+  assert.deepEqual(h.shareChannelOptions.map(option => option.channel), ['ALLIANCE', 'SQUAD'])
+  assert.equal(h.http.countOf('/battle/share'), 0, '还没选频道就不该发请求')
+
+  h.pickShareChannel('ALLIANCE')
+  await settle()
+  const call = h.http.calls.find(c => c.path === '/battle/share')
+  assert.equal(call?.body.reportId, 'r-1')
+  assert.equal(call?.body.channel, 'ALLIANCE')
+  assert.deepEqual([...h.lastShareOutcome], ['已分享到联盟频道', false])
+
+  // 失败（未入盟发小队）也要让玩家看见：只说进 console 等于分享没成功而没人知道
+  h.http.bizFailNext = { code: 10046, msg: '你没有在该频道发言的资格', detail: null }
+  await h.root.shareReport('r-2', 'SQUAD')
+  assert.deepEqual([...h.lastShareOutcome], ['你没有在该频道发言的资格', true])
 })
 
 test('浏览器路径：没有 wxCode 时不带该值，登录链路与旧行为完全一致', async () => {
