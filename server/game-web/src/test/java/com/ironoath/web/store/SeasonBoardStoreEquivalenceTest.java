@@ -56,6 +56,40 @@ class SeasonBoardStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("累加型上报两套实现同一条：增量叠加、没有这一行时以增量为初值、负增量被拒")
+    void accumulateAddsUpTheSameWayOnBothStores() {
+        Assumptions.assumeTrue(db != null,
+                "本机连不上 MongoDB（" + TestMongo.uri() + "）：这条等价性今天没被验证，别当成通过");
+
+        for (SeasonBoardStore store : List.of(newMemoryStore(), newMongoStore())) {
+            String who = store.getClass().getSimpleName();
+            store.accumulate(SEASON, Board.KILL, entry("P-1", "老王", 10), 10);
+            store.accumulate(SEASON, Board.KILL, entry("P-1", "老王", 5), 5);
+            store.accumulate(SEASON, Board.KILL, entry("P-2", "小李", 99), 99);
+
+            List<SeasonSettlement.Entry> rows = store.board(SEASON, Board.KILL);
+            assertThat(rows).as(who + " 两个人各一行").hasSize(2);
+            assertThat(rows.get(0).id()).as(who + " 99 > 15，降序").isEqualTo("P-2");
+            assertThat(rows.get(0).score()).as(who + " 没有这一行时以增量为初值").isEqualTo(99L);
+            assertThat(rows.get(1).score()).as(who + " 10 + 5 = 15").isEqualTo(15L);
+
+            // 负增量是调用方的 bug，不是"扣分"：报错而不是静默减分。
+            // 没有这条断言的话，"实现里漏了 delta < 0 的检查"会以「扣了一次分」的形态悄悄上线
+            assertThatThrownBy(() -> store.accumulate(SEASON, Board.KILL, entry("P-1", "老王", -1), -1))
+                    .as(who + " 负增量必须被拒").isInstanceOf(IllegalArgumentException.class);
+            assertThat(store.board(SEASON, Board.KILL).get(1).score())
+                    .as(who + " 被拒的那次没有扣到数").isEqualTo(15L);
+
+            // 与 report 是两种语义：report 覆盖、accumulate 叠加 —— 同同名次下发奖依赖这条
+            store.report(SEASON, Board.KILL, entry("P-3", "老张", 7));
+            store.report(SEASON, Board.KILL, entry("P-3", "老张", 3));
+            assertThat(store.board(SEASON, Board.KILL).stream()
+                    .filter(e -> e.id().equals("P-3")).findFirst().orElseThrow().score())
+                    .as(who + " report 是覆盖（3 而不是 10）").isEqualTo(3L);
+        }
+    }
+
+    @Test
     @DisplayName("两个实现：上报同一份榜得到同一个顺序、同一个名次（同分按 id 升序）")
     void bothImplementationsAgreeOnOrderAndRank() {
         Assumptions.assumeTrue(db != null,

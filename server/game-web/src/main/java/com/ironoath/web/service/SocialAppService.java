@@ -2016,6 +2016,14 @@ public class SocialAppService {
         return players.findByPlayerId(playerId).map(PlayerSave::cityLevel).orElse(0);
     }
 
+    /**
+     * 昵称查询的对外出口。**给战报域上报击杀时借一个名字用**（榜上要显示昵称，而战报域
+     * 没有玩家账户——再建一份查询就是同一件事的第二个家）。
+     */
+    public String nicknameOf(String playerId) {
+        return nickname(playerId);
+    }
+
     private String nickname(String playerId) {
         return players.findByPlayerId(playerId).map(PlayerSave::nickName).orElse(playerId);
     }

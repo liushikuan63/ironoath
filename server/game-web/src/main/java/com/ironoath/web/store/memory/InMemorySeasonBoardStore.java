@@ -41,6 +41,25 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
     }
 
     @Override
+    public void accumulate(String seasonId, SeasonSettlement.Board board,
+                           SeasonSettlement.Entry entry, long delta) {
+        SeasonBoardStore.requireKey(seasonId, board);
+        if (entry == null) {
+            throw new IllegalArgumentException("entry 不得为 null");
+        }
+        if (delta < 0) {
+            throw new IllegalArgumentException("累加型上报的增量不得为负，实际=" + delta);
+        }
+        Map<String, SeasonSettlement.Entry> rows = boards
+                .computeIfAbsent(seasonId, k -> new ConcurrentHashMap<>())
+                .computeIfAbsent(board, k -> new ConcurrentHashMap<>());
+        // compute 的原子性由 ConcurrentHashMap 保证：同一格上的并发累加不会丢一笔
+        rows.compute(entry.id(), (id, old) -> old == null
+                ? new SeasonSettlement.Entry(id, entry.name(), delta)
+                : new SeasonSettlement.Entry(id, entry.name(), old.score() + delta));
+    }
+
+    @Override
     public List<SeasonSettlement.Entry> board(String seasonId, SeasonSettlement.Board board) {
         SeasonBoardStore.requireKey(seasonId, board);
         return sorted(boards.getOrDefault(seasonId, Map.of()).get(board));

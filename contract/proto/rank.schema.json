@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/rank.schema.json",
+  "title": "RankProtocol",
+  "description": "排行榜协议（B23）。四类榜各自一个数据源：POWER 来自战力上报、KILL 来自战斗结算的击杀累计、ALLIANCE / NATION 是成员赛季分的合计（B23 §五 裁决①：与赛季结算同源，不造第二本账）。实时榜只用于展示，结算依据永远是快照（B14 禁止项）。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "RankProtocol",
+  "$defs": {
+    "RankType": {
+      "type": "string",
+      "description": "榜的类型（B23 §一 1）。与 SeasonSettlement.Board 的四个值一一对应 —— 刻意不复用那个枚举：那个是结算侧的领域类型，客户端不该依赖结算的内部形状。",
+      "enum": [
+        "POWER",
+        "KILL",
+        "ALLIANCE",
+        "NATION"
+      ]
+    },
+    "RankEntryView": {
+      "type": "object",
+      "description": "榜上的一条。tag 只对组织榜有意义（联盟缩写），个人榜为 null —— 与联盟成员列表里的 tag 同一套来源。",
+      "additionalProperties": false,
+      "required": [
+        "rank",
+        "id",
+        "name",
+        "value",
+        "tag"
+      ],
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "名次，从 1 起。"
+        },
+        "id": {
+          "type": "string",
+          "description": "主角 id：个人榜是 playerId，组织榜是 allianceId / nationId。"
+        },
+        "name": {
+          "type": "string",
+          "description": "显示名（服务端拼好下发）。"
+        },
+        "value": {
+          "type": "integer",
+          "format": "int64",
+          "description": "榜值：POWER = MatchPower，KILL = 赛季击杀累计，组织榜 = 成员赛季分合计。"
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "组织缩写；个人榜为 null。"
+        }
+      }
+    },
+    "RankListResp": {
+      "type": "object",
+      "description": "GET /rank/list 与 /rank/me 的响应（同形：/rank/me 只带\"我的那一行\"与我的名次）。myRank 为 null 表示未上榜，不许用 0 冒充（B23 验收 2，与赛季 myRank 同一条纪律：0 会与\"第 0 名\"混淆，而名次从 1 起）。",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "entries",
+        "myRank",
+        "myValue",
+        "page",
+        "pageSize",
+        "hasMore"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/RankType",
+          "description": "这一页是哪个榜。"
+        },
+        "entries": {
+          "type": "array",
+          "description": "这一页的行，按名次升序。",
+          "items": {
+            "$ref": "#/$defs/RankEntryView"
+          }
+        },
+        "myRank": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "我的名次；未上榜为 null。"
+        },
+        "myValue": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "我的榜值；未上榜为 null。"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "请求的页码，原样回显（B23 验收 6 的体积判据要靠它复现同一页）。"
+        },
+        "pageSize": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "本次实际生效的每页条数（服务端夹过：上限来自 global.RANK_PAGE_SIZE_MAX）。"
+        },
+        "hasMore": {
+          "type": "boolean",
+          "description": "后面还有没有下一页。"
+        }
+      }
+    }
+  }
+}

@@ -38,6 +38,19 @@ public interface SeasonBoardStore {
     void report(String seasonId, SeasonSettlement.Board board, SeasonSettlement.Entry entry);
 
     /** 某榜的全部条目，按分数降序、同分按 id 升序。 */
+    /**
+     * 累加型上报（B23 的击杀榜）：把 {@code delta} 加到这名玩家在这张榜上的现有值上；没有这一行就建一行。
+     *
+     * <p><b>与 {@link #report} 的差别是语义而不是实现</b>：`report` 说的是"这个值现在是多少"
+     * （战力会涨会跌，取最新一次），`accumulate` 说的是"又发生了多少次"（击杀只增不减）。
+     * 拿 `report` 报击杀就得由调用方自己维护累计总数 —— 而那本账会散在每个调用点上，
+     * 也经不起"两个人同时在同一场结算里加击杀"。
+     *
+     * <p>{@code entry.score()} 在这里是**增量**而不是新值。
+     */
+    void accumulate(String seasonId, SeasonSettlement.Board board, SeasonSettlement.Entry entry,
+                    long delta);
+
     List<SeasonSettlement.Entry> board(String seasonId, SeasonSettlement.Board board);
 
     /** 名次（1 起）；不在榜上返回 0。 */

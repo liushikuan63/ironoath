@@ -67,13 +67,17 @@ public class BattleReportService {
      * 那条路只此一条（见 {@code SocialAppService.postSharedReport} 的注释）。
      */
     private final SocialAppService social;
+    /** 击杀上报（B23 的 KILL 榜）。战报域是所有战斗的唯一漏斗，所以击杀累计挂在这里。 */
+    private final com.ironoath.web.rank.RankBoardService ranks;
 
     public BattleReportService(ConfigRegistry configs, BattleReportStore store,
-                               TimeService timeService, SocialAppService social) {
+                               TimeService timeService, SocialAppService social,
+                               com.ironoath.web.rank.RankBoardService ranks) {
         this.configs = configs;
         this.store = store;
         this.timeService = timeService;
         this.social = social;
+        this.ranks = ranks;
     }
 
     /**
@@ -101,10 +105,19 @@ public class BattleReportService {
                 ownerId, attackerId, defenderId, defenderName, attackerName, battleType,
                 attackerHeroIds, defenderHeroIds, result, now, now + ttlSeconds * 1000L);
         store.save(report);
+        // 击杀累计（B23 §一 1 的 KILL 榜）：**按主人视角**算 —— 战报里攻守两方各存一份，
+        // 所以"对方死掉的那些"才是这份记录主人的击杀。只算阵亡（wounded 是伤兵，治得回来）
+        long kills = ownerId.equals(attackerId) ? result.defDead() : result.atkDead();
+        ranks.reportKills(ownerId, nicknameOf(ownerId), kills);
         LOG.info("战报已落库 reportId={} ownerId={} 类型={} 对手={} 结果={} 回合={} seed={} 过期={}",
                 report.reportId(), ownerId, battleType, defenderId, result.winner(),
                 result.totalRounds(), result.seed(), report.expiresAt());
         return report;
+    }
+
+    /** 上报击杀时用的昵称：战报域不认识玩家账户，从社交域借一个（它已经有这一处查询）。 */
+    private String nicknameOf(String playerId) {
+        return social.nicknameOf(playerId);
     }
 
     /** 我的战报列表（先惰性清理过期的，再返回）。 */

@@ -7,6 +7,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 
 import com.ironoath.core.season.SeasonSettlement;
 import com.ironoath.web.season.SeasonBoardStore;
@@ -40,6 +41,32 @@ public final class MongoSeasonBoardStore implements SeasonBoardStore {
         }
         // save 走 _id upsert：同一个人重复上报只改自己那一行（写路径是热调用，不做整榜重写）
         mongo.save(SeasonBoardDocument.of(seasonId, board, entry), SeasonBoardDocument.COLLECTION);
+    }
+
+    @Override
+    public void accumulate(String seasonId, SeasonSettlement.Board board,
+                           SeasonSettlement.Entry entry, long delta) {
+        SeasonBoardStore.requireKey(seasonId, board);
+        if (entry == null) {
+            throw new IllegalArgumentException("entry 不得为 null");
+        }
+        if (delta < 0) {
+            throw new IllegalArgumentException("累加型上报的增量不得为负，实际=" + delta);
+        }
+        // upsert + $inc：一次原子操作同时覆盖"已有这一行"与"还没有这一行"，
+        // 分两步写会在两个人同时结算时插出两条同一 _id 的文档（第二个人报 DuplicateKey）。
+        //
+        // $setOnInsert 那三个字段是必需的，不是冗余：查询只按 _id 匹配，而 Mongo 插入新文档时
+        // 只从查询的等值条件里取材 —— 少了它们，新插入的这一行只有 _id/score/name，
+        // 而 board() 是按 seasonId+board 查的，于是"第一次击杀的人永远不上榜"。
+        // 用 $setOnInsert 而不是 $set：那是这三个字段**只该在插入时写**（已有行上写同样值是白写）。
+        mongo.upsert(Query.query(Criteria.where("_id")
+                        .is(SeasonBoardDocument.keyOf(seasonId, board, entry.id()))),
+                new Update().inc("score", delta).set("name", entry.name())
+                        .setOnInsert("seasonId", seasonId)
+                        .setOnInsert("board", board.name())
+                        .setOnInsert("playerId", entry.id()),
+                SeasonBoardDocument.class, SeasonBoardDocument.COLLECTION);
     }
 
     @Override
