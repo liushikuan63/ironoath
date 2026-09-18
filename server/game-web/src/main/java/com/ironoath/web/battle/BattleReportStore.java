@@ -29,6 +29,22 @@ public interface BattleReportStore {
     /** 清理过期战报，返回清理条数。惰性调用，不跑定时器（B00 陷阱 2）。 */
     int purgeExpired(long nowMillis);
 
+    /**
+     * 记下「这份战报被分享到了哪个频道」（B22 §一 2）。同一频道重复分享幂等，战报不存在时是空操作。
+     *
+     * <p><b>为什么另立一本账而不是往 {@link BattleReport} 里加字段</b>：战报是不可变记录，
+     * 而 `save` 的语义是"同 reportId 不覆盖"（幂等写入）。把"分享到哪"塞进记录就意味着每次分享
+     * 都要重写整份战报（含完整逐回合战果），且与那条幂等规则正面冲突。
+     * 它是"谁看过"这类追加事实，与战报本身是两份数据。
+     */
+    void markShared(String reportId, String channelKey);
+
+    /**
+     * 这份战报被分享到的频道键，按字典序（两个实现必须给出同一个顺序，否则等价用例是在比运气）。
+     * 没分享过、或战报根本不存在时都返回空表 —— 调用方只需要"能看见它的频道有哪些"。
+     */
+    List<String> sharedChannels(String reportId);
+
     /** 测试辅助：清空。 */
     void clear();
 }

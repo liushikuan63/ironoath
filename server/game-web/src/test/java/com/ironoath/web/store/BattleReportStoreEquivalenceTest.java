@@ -113,6 +113,33 @@ class BattleReportStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("分享账两套实现同一条：追加幂等、按字典序、战报不在册时空操作、清理时一起消失")
+    void shareLedgerBehavesTheSameOnBothStores() {
+        for (BattleReportStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.save(report("r-share", "P-share", "A-1", T0, 1L));
+
+            assertThat(store.sharedChannels("r-share")).as("%s 没分享过就是空表", label).isEmpty();
+            store.markShared("r-share", "SQUAD:s2");
+            store.markShared("r-share", "ALLIANCE:a1");
+            store.markShared("r-share", "SQUAD:s2");
+            assertThat(store.sharedChannels("r-share"))
+                    .as("%s 重复分享同一频道幂等，且必须按字典序返回（不排序的话等价用例是在比运气）",
+                            label)
+                    .containsExactly("ALLIANCE:a1", "SQUAD:s2");
+
+            store.markShared("r-missing", "ALLIANCE:a1");
+            assertThat(store.sharedChannels("r-missing"))
+                    .as("%s 战报不在册时是空操作：不许凭空记住一份不存在的战报", label).isEmpty();
+
+            // 战报被惰性清理时分享账要一起消失：留着它是纯泄漏，而战报没了这本账也回答不了任何问题
+            assertThat(store.purgeExpired(T0 + TTL + 1L)).as("%s 这份战报该被清掉", label).isEqualTo(1);
+            assertThat(store.sharedChannels("r-share"))
+                    .as("%s 战报清掉之后分享账必须跟着空", label).isEmpty();
+        }
+    }
+
+    @Test
     @DisplayName("过期边界两侧同一条：expiresAt == now 就算过期，多一毫秒也不算")
     void expiryBoundaryIsTheSameOnBothStores() {
         for (BattleReportStore store : bothStores()) {

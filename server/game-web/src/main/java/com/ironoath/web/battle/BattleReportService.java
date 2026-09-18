@@ -17,10 +17,14 @@ import com.ironoath.web.dto.generated.BattleReportListResp;
 import com.ironoath.web.dto.generated.BattleReportResp;
 import com.ironoath.web.dto.generated.BattleResultView;
 import com.ironoath.web.dto.generated.BattleSide;
+import com.ironoath.web.dto.generated.ChatChannel;
 import com.ironoath.web.dto.generated.LootEntry;
+import com.ironoath.web.dto.generated.ReportShareReq;
+import com.ironoath.web.dto.generated.ReportShareResp;
 import com.ironoath.web.dto.generated.RoundView;
 import com.ironoath.web.dto.generated.SkillTriggerView;
 import com.ironoath.web.dto.generated.UnitStack;
+import com.ironoath.web.service.SocialAppService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -58,12 +62,18 @@ public class BattleReportService {
     private final ConfigRegistry configs;
     private final BattleReportStore store;
     private final TimeService timeService;
+    /**
+     * 分享要把消息写进组织频道，而频道的资格/限流/送检都在聊天域里 ——
+     * 那条路只此一条（见 {@code SocialAppService.postSharedReport} 的注释）。
+     */
+    private final SocialAppService social;
 
     public BattleReportService(ConfigRegistry configs, BattleReportStore store,
-                               TimeService timeService) {
+                               TimeService timeService, SocialAppService social) {
         this.configs = configs;
         this.store = store;
         this.timeService = timeService;
+        this.social = social;
     }
 
     /**
@@ -132,7 +142,9 @@ public class BattleReportService {
         }
         long now = timeService.serverNow();
         BattleReport report = store.findById(reportId).orElse(null);
-        if (report == null || !report.ownerId().equals(playerId)) {
+        if (report == null || !visibleTo(playerId, report)) {
+            // 不是你的、又没有分享给你 ⇒ 一律按"不存在"回。分开说"存在但不是你的"
+            // 等于给了一条探测别人战报 id 的通道，而玩家从中得不到任何可操作的信息
             throw new BizException(ErrorCode.BATTLE_REPORT_NOT_FOUND, "战报不存在: " + reportId);
         }
         if (report.expired(now)) {
@@ -150,6 +162,77 @@ public class BattleReportService {
                 report.createdAt(), report.expiresAt(), now,
                 new BattlePlaybackParams(configs.longParam("BATTLE_ROUND_DISPLAY_MS"),
                         configs.stringParam("BATTLE_PLAYBACK_SPEEDS")));
+    }
+
+    /**
+     * 把一份自己的战报分享到小队 / 联盟频道（B22 §一 2）。
+     *
+     * <p><b>为什么只能分享自己的</b>：战报里有自己的兵力构成、坐标与上阵武将 ——
+     * 替别人分享等于替别人公开。所以先按 `ownerId` 判归属，再谈频道。
+     *
+     * <p><b>分享不发奖励</b>（B15 禁止诱导分享）：这里没有、也不该有任何 reward 逻辑。
+     * 分享本身只是"把这一场贴给战友看"。
+     *
+     * <p>落地顺序：先写频道（可能因资格/限流/送检失败），成功之后才记账 ——
+     * 反过来的话，一次被限流拒绝的分享也会让这份战报对频道成员可见，
+     * 而那件事没有任何人看得见（消息根本没发出去）。
+     */
+    public ReportShareResp share(String playerId, ReportShareReq req, long now) {
+        requirePlayer(playerId);
+        if (req == null || req.reportId() == null || req.reportId().isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "reportId 不得为空");
+        }
+        if (req.channel() == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "channel 不得为空");
+        }
+        BattleReport report = store.findById(req.reportId()).orElse(null);
+        if (report == null) {
+            throw new BizException(ErrorCode.BATTLE_REPORT_NOT_FOUND, "战报不存在: " + req.reportId());
+        }
+        if (!report.ownerId().equals(playerId)) {
+            throw new BizException(ErrorCode.REPORT_NOT_OWNED, "只能分享自己的战报");
+        }
+        if (report.expired(now)) {
+            throw new BizException(ErrorCode.BATTLE_REPORT_EXPIRED,
+                    "战报已过期（保留 " + configs.longParam("BATTLE_REPORT_TTL_SECONDS") / 3600L
+                            + " 小时），不能分享");
+        }
+        ChatChannel channel = ChatChannel.valueOf(req.channel().name());
+        SocialAppService.SharedPost post =
+                social.postSharedReport(playerId, channel, shareText(report), now);
+        store.markShared(report.reportId(), post.channelKey());
+        LOG.info("战报已分享 reportId={} 分享人={} 频道={} 消息={}",
+                report.reportId(), playerId, channel, post.messageId());
+        return new ReportShareResp(report.reportId(), req.channel(), post.messageId(), now);
+    }
+
+    /**
+     * 分享消息的正文。
+     *
+     * <p><b>格式是契约</b>：客户端靠结尾的 {@code [report:<id>]} 认出"这条可以点开回放"
+     * （`game/social/ChatPanel.parseSharedReport`），显示时会把这一段摘掉。
+     * 前缀可以随便改文案（对手名在后文），**但那一段标记必须原样保留** ——
+     * 它是结构化引用，不是文案。
+     */
+    public static String shareText(BattleReport report) {
+        return "分享了战报：" + report.opponentName() + " [report:" + report.reportId() + "]";
+    }
+
+    /** 这份战报对这名玩家是否可见：本人的，或分享到了他此刻所在的某个频道。 */
+    private boolean visibleTo(String playerId, BattleReport report) {
+        if (report.ownerId().equals(playerId)) {
+            return true;
+        }
+        List<String> shared = store.sharedChannels(report.reportId());
+        if (shared.isEmpty()) {
+            return false;
+        }
+        for (String key : social.channelKeysOf(playerId)) {
+            if (shared.contains(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 清理过期战报。惰性调用（列表与详情入口都会触发），不跑定时器。 */

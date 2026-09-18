@@ -7,8 +7,10 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
@@ -84,6 +86,36 @@ public final class MongoBattleReportStore implements BattleReportStore {
         return (int) mongo.remove(Query.query(
                         Criteria.where(BattleReportDocument.FIELD_EXPIRES_AT).lte(nowMillis)),
                 BattleReportDocument.COLLECTION).getDeletedCount();
+    }
+
+    @Override
+    public void markShared(String reportId, String channelKey) {
+        if (reportId == null || channelKey == null) {
+            throw new IllegalArgumentException("reportId / channelKey 不得为 null");
+        }
+        // 战报不在册时 updateFirst 是空操作 —— 内存版显式判了 byId 的存在性来对齐这一语义，
+        // 两边不一致的表现是"单测记得住一份不存在的战报，线上记不住"
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(reportId)),
+                new Update().addToSet(BattleReportDocument.FIELD_SHARED_CHANNELS, channelKey),
+                BattleReportDocument.COLLECTION);
+    }
+
+    @Override
+    public List<String> sharedChannels(String reportId) {
+        if (reportId == null) {
+            return List.of();
+        }
+        // 只取分享账这一个字段：整份战报含逐回合明细，为了读一个频道键把几十 KB 拉回来不划算
+        Query query = Query.query(Criteria.where("_id").is(reportId));
+        query.fields().include(BattleReportDocument.FIELD_SHARED_CHANNELS);
+        BattleReportDocument doc = mongo.findOne(query, BattleReportDocument.class,
+                BattleReportDocument.COLLECTION);
+        if (doc == null || doc.sharedChannels() == null || doc.sharedChannels().isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(doc.sharedChannels());
+        out.sort(Comparator.naturalOrder());
+        return List.copyOf(out);
     }
 
     @Override

@@ -41,6 +41,13 @@ export type SkillPhase =
   | 'ON_DEATH'
 
 /**
+ * 战报可以分享到的频道（B22 §一 2）。**刻意只有两个**：世界频道是陌生人广场，把战报贴进去等于对全服广播自己的坐标与兵力；私聊是一对一，另有直接说话那条路。分享到组织内部频道（小队/联盟）才是这件事的用途 —— 让战友看见你怎么打的。
+ */
+export type ShareChannel =
+  | 'ALLIANCE'
+  | 'SQUAD'
+
+/**
  * 一个兵种堆叠。<b>客户端渲染的就是这个，不是单个士兵</b>：B05 §三 要求「每排最多渲染 12 个单位，超出用 ×N 图标聚合」，而服务端下发的本来就是按兵种聚合的数量，所以 10 万兵力也只有 4 个堆叠。这是低端机保 60 帧的关键，客户端绝不要试图把它展开成单个单位。
  */
 export interface UnitStack {
@@ -174,4 +181,30 @@ export interface BattlePlaybackParams {
   roundMs: number
   /** 允许的倍速档位，原样下发表里的字符串（形如 "1,2"）。解析在客户端 `BattlePlayback.parseSpeeds`，**只有一处解析**：服务端解析完再拼成数组会把规则复制两份。 */
   speeds: string
+}
+
+/**
+ * POST /battle/share 请求体（B22 §一 2）。**分享不发奖励**：B15 禁止「诱导分享解锁奖励」，所以这里没有、也不该有 reward 字段 —— 分享就是把自己打过的一场战报贴到小队/联盟频道里。
+ */
+export interface ReportShareReq {
+  /** 幂等键。分享重放会让频道里出现两条一样的分享，而聊天限流恰好会把第二条拦成「发得太快」—— 玩家看到的是「我只分享了一次，却提示刷屏」。 */
+  requestId: string
+  /** 要分享的战报 id。**必须是自己的**：服务端按 `ownerId` 校验，别人的回 `REPORT_NOT_OWNED`。战报里有自己的兵力构成与坐标，替别人分享等于替别人公开。 */
+  reportId: string
+  /** 目标频道。发的人必须是那个频道的成员（未入盟发联盟频道回 `SOCIAL_CHAT_CHANNEL_INVALID`）—— 与 `/chat/send` 同一处校验，不另立一套。 */
+  channel: ShareChannel
+}
+
+/**
+ * POST /battle/share 响应体。只回执「贴到哪了、是第几条」，**不回整条消息**：消息的形状属聊天域（`ChatMessageView` 的字段会随聊天演进），在这里复制一份就会分叉 —— 客户端要显示它就去 `/chat/list` 拉那一条。
+ */
+export interface ReportShareResp {
+  /** 被分享的战报 id（原样回执，便于客户端把结果与请求对上）。 */
+  reportId: string
+  /** 落地的频道。 */
+  channel: ShareChannel
+  /** 落在频道里的那条消息 id。客户端据此把「我刚分享的那条」从窗口里认出来，不必按正文反查。 */
+  messageId: string
+  /** 服务端时间戳。 */
+  serverNow: number
 }

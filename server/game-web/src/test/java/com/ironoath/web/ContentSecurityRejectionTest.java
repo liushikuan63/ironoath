@@ -9,7 +9,14 @@ import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.ChatChannel;
 import com.ironoath.web.dto.generated.ChatListReq;
+import com.ironoath.core.army.ArmyRepository;
+import com.ironoath.core.army.ArmyState;
+import com.ironoath.web.dto.generated.AllianceCreateReq;
+import com.ironoath.web.dto.generated.ChallengeStageReq;
 import com.ironoath.web.dto.generated.ChatSendReq;
+import com.ironoath.web.dto.generated.ReportShareReq;
+import com.ironoath.web.dto.generated.ShareChannel;
+import com.ironoath.web.dto.generated.StageUnit;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.SquadCreateReq;
 import com.ironoath.web.security.ContentSecurityClient;
@@ -97,6 +104,7 @@ class ContentSecurityRejectionTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
+    @Autowired private ArmyRepository armies;
     @Autowired private ScriptedContentSecurityClient security;
 
     @BeforeEach
@@ -203,6 +211,48 @@ class ContentSecurityRejectionTest {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    @Test
+    @DisplayName("战报分享：正文过送检（SOCIAL_LOG）；判定违规时那条分享一个字都不进频道")
+    void riskyReportShareIsRejectedAndNotPersisted() throws Exception {
+        String leader = weChatPlayer(10);
+        post200("/alliance/create", leader, new AllianceCreateReq(newRequestId(), "铁誓同盟", "IRON"));
+        String reportId = challengeOnce(leader);
+
+        // 先证"正常分享发得出去"，否则后面的拒绝可能是别的原因（比如频道资格）
+        post200("/battle/share", leader,
+                new ReportShareReq(newRequestId(), reportId, ShareChannel.ALLIANCE));
+        assertThat(messagesIn("/chat/list", leader, ChatChannel.ALLIANCE))
+                .as("正常分享应当落进频道").hasSize(1);
+        assertThat(security.seen())
+                .as("分享的正文必须过送检，且走的是社交日志那个场景")
+                .anyMatch(entry -> entry.startsWith("SOCIAL_LOG:分享了战报："));
+
+        security.script(ContentSecurityClient.Verdict.RISKY);
+        JsonNode rejected = postRaw("/battle/share", leader,
+                new ReportShareReq(newRequestId(), reportId, ShareChannel.ALLIANCE));
+        assertThat(rejected.get("code").asInt())
+                .as("违规内容必须被拒，而不是静默替换成别的字")
+                .isEqualTo(ErrorCode.SOCIAL_CHAT_CONTENT_INVALID.code());
+        assertThat(messagesIn("/chat/list", leader, ChatChannel.ALLIANCE))
+                .as("被拒的分享不许落库 —— 分享这条路径与 /chat/send 走的是同一处送检")
+                .hasSize(1);
+    }
+
+    /** 打一关拿一份真实战报：发一支部队再挑战第一章第一关（输赢都会留下可回放的记录）。 */
+    private String challengeOnce(String playerId) throws Exception {
+        if (armies.findByPlayerId(playerId).isEmpty()) {
+            armies.insertIfAbsent(playerId, new ArmyState());
+        }
+        ArmyState army = armies.findByPlayerId(playerId).orElseThrow();
+        long version = armies.versionOf(playerId);
+        army.add("unit_infantry_t1", 1L);
+        armies.save(playerId, army, version);
+        return okData(postRaw("/stage/challenge", playerId,
+                new ChallengeStageReq(newRequestId(), "stage_01_01",
+                        List.of(new StageUnit("unit_infantry_t1", 1L)), List.of())))
+                .get("reportId").asText();
     }
 
     private List<JsonNode> messagesIn(String url, String playerId, ChatChannel channel)

@@ -8,6 +8,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -24,6 +25,12 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class InMemoryBattleReportStore implements BattleReportStore {
 
     private final Map<String, BattleReport> byId = new ConcurrentHashMap<>();
+
+    /**
+     * reportId → 被分享到的频道键（B22 §一 2）。**另存一份账而不是塞进战报记录**：
+     * 记录不可变、`save` 又是"同 id 不覆盖"，把追加事实塞进去就要整份重写（含完整战果）。
+     */
+    private final Map<String, Set<String>> sharedTo = new ConcurrentHashMap<>();
 
     @Override
     public void save(BattleReport report) {
@@ -66,13 +73,47 @@ public final class InMemoryBattleReportStore implements BattleReportStore {
                 expired.add(id);
             }
         });
-        expired.forEach(byId::remove);
+        expired.forEach(id -> {
+            byId.remove(id);
+            // 分享账要跟着战报一起消失：留着它是纯泄漏，而战报一旦不存在，
+            // 那本账能回答的问题（谁能看它）也不再有人问
+            sharedTo.remove(id);
+        });
         return expired.size();
+    }
+
+    @Override
+    public void markShared(String reportId, String channelKey) {
+        if (reportId == null || channelKey == null) {
+            throw new IllegalArgumentException("reportId / channelKey 不得为 null");
+        }
+        // 战报不在册就不记：Mongo 的 updateFirst 打在空集合上是空操作，两边必须同一语义，
+        // 否则单测（内存版）会"记得住一份不存在的战报"
+        if (!byId.containsKey(reportId)) {
+            return;
+        }
+        sharedTo.computeIfAbsent(reportId, key -> ConcurrentHashMap.newKeySet()).add(channelKey);
+    }
+
+    @Override
+    public List<String> sharedChannels(String reportId) {
+        if (reportId == null) {
+            return List.of();
+        }
+        Set<String> keys = sharedTo.get(reportId);
+        if (keys == null || keys.isEmpty()) {
+            return List.of();
+        }
+        // 字典序返回：Mongo 的 $addToSet 不保证插入顺序，两个实现要么都排序、要么等价用例在比运气
+        List<String> out = new ArrayList<>(keys);
+        out.sort(Comparator.naturalOrder());
+        return List.copyOf(out);
     }
 
     @Override
     public void clear() {
         byId.clear();
+        sharedTo.clear();
     }
 
     public int size() {

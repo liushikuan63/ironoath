@@ -6,7 +6,12 @@ import com.ironoath.common.Result;
 import com.ironoath.web.battle.BattleReportService;
 import com.ironoath.web.dto.generated.BattleReportListResp;
 import com.ironoath.web.dto.generated.BattleReportResp;
+import com.ironoath.web.dto.generated.ReportShareReq;
+import com.ironoath.web.dto.generated.ReportShareResp;
+import com.ironoath.common.time.TimeService;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -29,9 +34,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class BattleController {
 
     private final BattleReportService battleReportService;
+    private final TimeService timeService;
 
-    public BattleController(BattleReportService battleReportService) {
+    public BattleController(BattleReportService battleReportService, TimeService timeService) {
         this.battleReportService = battleReportService;
+        this.timeService = timeService;
     }
 
     /** 我的战报列表，按时间倒序。 */
@@ -49,6 +56,22 @@ public class BattleController {
             @RequestParam("reportId") String reportId) {
         requirePlayer(playerId);
         return Result.ok(battleReportService.open(playerId, reportId));
+    }
+
+    /**
+     * 把一份自己的战报分享到小队 / 联盟频道（B22 §一 2）。
+     *
+     * <p><b>为什么是 POST 而不是 GET</b>：它会往频道里写一条消息（并且要过限流与内容送检），
+     * 是有副作用的一次动作 —— 与 {@code /chat/send} 同一类，而不是列表那种纯读。
+     */
+    @PostMapping("/share")
+    public Result<ReportShareResp> share(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                         @RequestBody ReportShareReq req) {
+        requirePlayer(playerId);
+        if (req.channel() == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "channel 不得为空");
+        }
+        return Result.ok(battleReportService.share(playerId, req, timeService.serverNow()));
     }
 
     private static void requirePlayer(String playerId) {

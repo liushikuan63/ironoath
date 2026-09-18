@@ -1,6 +1,7 @@
 package com.ironoath.web.store.mongo;
 
 import com.ironoath.web.battle.BattleReport;
+import java.util.List;
 import org.springframework.data.annotation.Id;
 
 /**
@@ -18,7 +19,13 @@ import org.springframework.data.annotation.Id;
 public record BattleReportDocument(
         @Id String reportId,
         String ownerId,
-        BattleReport report) {
+        BattleReport report,
+        /**
+         * 这份战报被分享到的频道键（B22 §一 2）。**不在 {@code report} 里面**：记录本身不可变、
+         * 且 `save` 的语义是"同 id 不覆盖"，所以分享是一个独立的追加字段（`$addToSet`）。
+         * 旧文档没有这个字段 ⇒ 读出来是 null，调用方按空表处理。
+         */
+        List<String> sharedChannels) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "battle_report";
@@ -26,9 +33,11 @@ public record BattleReportDocument(
     /** 列表按它倒序；嵌套路径写一次就好，两侧排序口径由等价测试钉住。 */
     public static final String FIELD_CREATED_AT = "report.createdAt";
     public static final String FIELD_EXPIRES_AT = "report.expiresAt";
+    /** 分享账所在字段（分享与校验可见性都按它读写）。 */
+    public static final String FIELD_SHARED_CHANNELS = "sharedChannels";
 
     static BattleReportDocument fromDomain(BattleReport report) {
-        return new BattleReportDocument(report.reportId(), report.ownerId(), report);
+        return new BattleReportDocument(report.reportId(), report.ownerId(), report, List.of());
     }
 
     BattleReport toDomain() {

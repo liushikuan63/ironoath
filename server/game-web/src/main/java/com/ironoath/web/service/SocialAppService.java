@@ -1391,6 +1391,69 @@ public class SocialAppService {
     }
 
     /**
+     * 把一条「分享了战报」的消息写进组织频道（B22 §一 2），返回落地的频道键与消息 id。
+     *
+     * <p><b>为什么由聊天域来写、而不是战报域自己写频道</b>：频道资格、内容送检、限流、
+     * 以及"消息长什么样"这四件事都已经在聊天域里各有一处实现。战报域再写一遍就是同一件事的
+     * 第二个家 —— 改限流窗口时漏改一边，表现是"战报分享不受限流约束"。
+     * 本方法只做一件事：以某个玩家的身份，往他能发言的频道里写一条<b>服务端拟好</b>的正文。
+     *
+     * <p>频道资格沿用 {@link #requireChannelKey}：未入盟的人分享到联盟频道拿到的错误码与
+     * `/chat/send` 完全一致（{@code SOCIAL_CHAT_CHANNEL_INVALID}），而不是一句新造的"不能分享"。
+     */
+    public SharedPost postSharedReport(String playerId, ChatChannel channel, String text, long now) {
+        if (channel == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "channel 不得为空");
+        }
+        String content = text == null ? "" : text.trim();
+        if (content.isEmpty()) {
+            throw new BizException(ErrorCode.SOCIAL_CHAT_CONTENT_INVALID, "分享内容不得为空");
+        }
+        String channelKey = requireChannelKey(channel, playerId, null);
+        contentSecurity.requireClean(playerId,
+                com.ironoath.web.security.ContentSecurityClient.Scene.SOCIAL_LOG,
+                content, ErrorCode.SOCIAL_CHAT_CONTENT_INVALID, "分享的战报");
+        ChatRateLimiter.Verdict verdict = chatLimiter.check(playerId, content, now);
+        if (!verdict.allowed()) {
+            throw new BizException(ErrorCode.SOCIAL_CHAT_RATE_LIMITED,
+                    "同一句话 " + (verdict.retryAfterMillis() / 1000L + 1L) + " 秒后才能再发");
+        }
+        SocialStore.ChatMessage message = new SocialStore.ChatMessage(
+                "msg_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16),
+                channel.name(), playerId, nickname(playerId), content, now);
+        store.appendChat(channelKey, message, (int) configs.longParam("CHAT_LOCAL_HISTORY_MAX"));
+        return new SharedPost(channelKey, message.messageId());
+    }
+
+    /** 分享落地的回执：写进了哪个频道键、那条消息的 id。 */
+    public record SharedPost(String channelKey, String messageId) {
+    }
+
+    /**
+     * 这名玩家此刻能读的频道键（联盟 / 小队各一个；没加入就没有）。
+     *
+     * <p>用来回答"这份战报分享到了他所在的频道吗"（B22 验收 4 的"对方可点开回放"）。
+     * 键的拼法复用 {@link #channelKey}：两处各拼一份的话，`ALLIANCE:a1` 与 `alliance:a1`
+     * 这种偏差会让分享过的战报突然打不开，而两边都不会报错。
+     *
+     * <p><b>按"此刻"算</b>：退了盟、退了队就读不到了 —— 与聊天频道本身同一条口径
+     * （离开组织之后 `/chat/list` 也拉不到那个频道的消息）。可见范围跟着频道走，
+     * 而不是跟着"谁看过"走。
+     */
+    public List<String> channelKeysOf(String playerId) {
+        List<String> keys = new ArrayList<>(2);
+        String alliance = channelKey(ChatChannel.ALLIANCE, playerId, null);
+        if (alliance != null) {
+            keys.add(alliance);
+        }
+        String squad = channelKey(ChatChannel.SQUAD, playerId, null);
+        if (squad != null) {
+            keys.add(squad);
+        }
+        return List.copyOf(keys);
+    }
+
+    /**
      * 取会话键，取不到就说清<b>是哪一种取不到</b>。
      *
      * <p>"没资格发言"与"漏传字段"必须分开说：前者的下一步是去加入组织，后者的下一步是把对象带上。
