@@ -1,11 +1,13 @@
 /**
- * 职责：素材族数据层的磁盘对账 —— 键表、运行时文件、配置表行三者必须互相咬合。
+ * 职责：素材族数据层的磁盘对账 —— 键表、运行时文件、配置表行、九宫格几何必须互相咬合。
  * 依赖：node:test / node:assert / node:fs。
  *
  * <p>为什么每条都值得红：
  * ① 键有、文件没有 ⇒ 面板上是一个永远不出图的空位，而且只有玩家看得见；
  * ② 配置表加了新行、映射表没跟上 ⇒ 静默退回 Graphics 占位，没人会去查；
- * ③ 映射表写了不存在的键 ⇒ applyFamilySprite 永远 false，比没有映射更难发现。
+ * ③ 映射表写了不存在的键 ⇒ applyFamilySprite 永远 false，比没有映射更难发现；
+ * ④ 九宫格的切分几何有两份 ⇒ 后写的那份生效，先写的那份变成"改了没反应"的死字段，
+ *    而布局代码按哪一份排都可能把内容压到角饰下面（收口清单 #211 真咬到过）。
  */
 
 import test from 'node:test'
@@ -14,11 +16,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   FAMILY_ASSETS, EQUIP_ICON_BY_CONFIG, ITEM_ICON_BY_CONFIG, ACTIVITY_ICON_BY_CONFIG,
-  itemArtKeyForConfig, activityIconKey, familyArtKey,
+  itemArtKeyForConfig, activityIconKey, familyArtKey, PANEL_FRAME_BAND,
 } from '../assets/scripts/game/art/ArtFamilies'
 
 const CONFIG_DIR = path.join(repoRoot(), 'contract', 'config')
 const RUNTIME_DIR = path.join(repoRoot(), 'client', 'assets', 'resources')
+const GENERATED_UI = path.join(RUNTIME_DIR, 'ui', 'generated', 'ui')
+const ART_CATALOG_SRC = path.join(repoRoot(), 'client', 'assets', 'scripts', 'scene', 'ArtCatalog.ts')
 
 /** 测试默认跑在 client/ 下（test-client.sh 会 cd），但为别的 cwd 也能跑，逐级向上找仓库根。 */
 function repoRoot(): string {
@@ -99,4 +103,50 @@ test('道具映射表的目标键都真实存在；未覆盖的行明确返回 n
   }
   assert.equal(itemArtKeyForConfig('item_chest_hero'), familyArtKey('item', 'chest_hero'))
   assert.equal(itemArtKeyForConfig('eq_iron_sword'), 'equip:weapon-iron')
+})
+
+/**
+ * 取一张图 spriteFrame 子档的四边边框。
+ * 子档的 key 是内容哈希（`6c48a`/`f9941` 这类），按 `name` 找才不会一重新导入就对不上。
+ */
+function frameBorders(pngBaseName: string): Record<'left' | 'top' | 'right' | 'bottom', number> {
+  const meta = JSON.parse(
+    fs.readFileSync(path.join(GENERATED_UI, `${pngBaseName}.png.meta`), 'utf8'),
+  ) as { subMetas: Record<string, { name?: string, userData?: Record<string, unknown> }> }
+  const sub = Object.values(meta.subMetas).find((entry) => entry.name === 'spriteFrame')
+  assert.ok(sub !== undefined, `${pngBaseName}.png.meta 里没有 spriteFrame 子档`)
+  const data = sub.userData ?? {}
+  const border = (key: string): number => {
+    const value = data[key]
+    assert.equal(typeof value, 'number',
+      `${pngBaseName}：userData.${key} 不是数字，meta 结构变了 —— 本用例的判据要跟着改`)
+    return value as number
+  }
+  return { left: border('borderLeft'), top: border('borderTop'),
+    right: border('borderRight'), bottom: border('borderBottom') }
+}
+
+test('面板框的四角带厚只有一个真源：图的 meta border* ↔ 交给布局的 PANEL_FRAME_BAND', () => {
+  const band = PANEL_FRAME_BAND
+  assert.deepEqual(frameBorders('panel-kingdom-v1'),
+    { left: band, top: band, right: band, bottom: band },
+    `meta 与 PANEL_FRAME_BAND=${band} 不一致：布局按常量让开一圈，画面按 meta 切一角，`
+    + `两者不同值时要么内容压在角饰上，要么白让一圈`)
+})
+
+test('ArtCatalog 不许再抄一份九宫格边框（后写的那份会盖掉 meta，让 meta 变成骗人的死字段）', () => {
+  const src = fs.readFileSync(ART_CATALOG_SRC, 'utf8')
+  assert.equal(/insets\s*:/.test(src), false,
+    'SPECS 里又出现了 insets —— 收口清单 #211 拆掉的就是它：它让 #203 那次改 meta 变成空操作')
+  assert.equal(/\binset(Left|Right|Top|Bottom)\s*=[^=]/.test(src), false,
+    '运行期改写了 SpriteFrame 的边框 ⇒ meta 里的 border 从此不影响画面')
+})
+
+test('按钮四态的九宫格边框住在 meta 里（384×143 母版，端帽横向 54 / 纵向 40）', () => {
+  for (const name of ['button-command-v1', 'button-command-v1-hover',
+    'button-command-v1-pressed', 'button-command-v1-disabled']) {
+    assert.deepEqual(frameBorders(name),
+      { left: 54, top: 40, right: 54, bottom: 40 },
+      `${name}：归零或改小时，26~34px 高的按钮会把圆角端帽横向拉扁（applyCommandButton 的注释）`)
+  }
 })

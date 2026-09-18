@@ -2,9 +2,13 @@
  * 职责：运行期美术资源目录 —— 统一加载 `resources/ui/generated/**` 下的 SpriteFrame。
  * 依赖：cc（resources / Sprite / SpriteFrame / UITransform）。
  *
- * <p>这层存在的意义是把「资源路径、九宫格边界、加载失败兜底」收在一个地方。
+ * <p>这层存在的意义是把「资源路径、加载失败兜底」收在一个地方。
  * 面板代码只写 `applySlicedSprite(node, 'ui.panel.kingdom', ...)`，
  * 不直接拼 `resources.load` 路径，也不自己判断该用普通图还是九宫格。
+ *
+ * <p><b>九宫格的切分几何不在这里</b>：它属于素材本身，写在各图的 `.png.meta`（border*）。
+ * 这里曾经有一份 `insets` 覆盖，而它在 `loadOne` 里<b>后写且生效</b> —— 于是"改 meta 的 border"
+ * 这件事对运行期的画面一个像素都不影响，布局代码里的带厚又和它不一致（收口清单 #211）。
  */
 
 import {
@@ -72,7 +76,6 @@ export type CommandButtonState = 'normal' | 'hover' | 'pressed' | 'disabled'
 
 interface ArtSpec {
   readonly path: string
-  readonly insets?: readonly [left: number, top: number, right: number, bottom: number]
 }
 
 interface IconAtlasItem {
@@ -98,23 +101,18 @@ const TERRAIN_VARIANT_COUNT = TERRAIN_COLUMNS * TERRAIN_ROWS_USED
 const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.panel.kingdom': {
     path: 'ui/generated/ui/panel-kingdom-v1',
-    insets: [51, 47, 51, 47],
   },
   'ui.button.command': {
     path: 'ui/generated/ui/button-command-v1',
-    insets: [54, 40, 54, 40],
   },
   'ui.button.command.hover': {
     path: 'ui/generated/ui/button-command-v1-hover',
-    insets: [54, 40, 54, 40],
   },
   'ui.button.command.pressed': {
     path: 'ui/generated/ui/button-command-v1-pressed',
-    insets: [54, 40, 54, 40],
   },
   'ui.button.command.disabled': {
     path: 'ui/generated/ui/button-command-v1-disabled',
-    insets: [54, 40, 54, 40],
   },
   'map.terrain.grass': { path: TERRAIN_GRASS_PATH },
   'map.entity.city': { path: 'ui/generated/map/map-player-city-v1' },
@@ -212,12 +210,6 @@ function loadOne(key: StaticArtKey, spec: ArtSpec): Promise<boolean> {
     if (frame === null) {
       console.warn(`[ArtCatalog] 资源加载失败：${key}`)
       return false
-    }
-    if (spec.insets !== undefined) {
-      frame.insetLeft = spec.insets[0]
-      frame.insetTop = spec.insets[1]
-      frame.insetRight = spec.insets[2]
-      frame.insetBottom = spec.insets[3]
     }
     frames.set(key, frame)
     return true
@@ -404,7 +396,7 @@ export function applyTerrainSprite(node: Node, index: number,
 
 export function applyCommandButton(node: Node, state: CommandButtonState,
                                    width: number, height: number): boolean {
-  // 按钮母版是 512×191、带圆角描边的九宫格，游戏里却要铺到 26~34px 高；
+  // 按钮母版是 384×143、带圆角描边的九宫格，游戏里却要铺到 26~34px 高；
   // 按 SIMPLE 直接压扁会把四角拉成椭圆。九宫格只拉伸中间，四角保持原比例。
   return applySlicedSprite(node, commandButtonArtKey(state), width, height)
 }

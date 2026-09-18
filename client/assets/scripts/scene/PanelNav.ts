@@ -41,6 +41,13 @@ const COLOR_BAR = new Color(32, 26, 21, 240)
 const COLOR_ACTIVE = new Color(184, 134, 11, 255)
 const COLOR_IDLE = new Color(52, 43, 35, 240)
 const COLOR_TEXT_ACTIVE = new Color(26, 19, 16, 255)
+/**
+ * 画了按钮图时选中态的字色。导航格只有 63×44，而按钮母版是 384×143、端帽就有 54px ——
+ * 九宫格在这个尺寸上退化成"整张图缩小"，格子中心永远是深色皮革。
+ * 于是"选中 = 亮铜底 + 深色字"这条为 Graphics 兜底设计的前提在 art 在时不成立：
+ * 深色字会直接糊进底里（截图实测：选中内城时看不见「内城」两个字，相对亮度 0.079）。
+ */
+const COLOR_TEXT_ACTIVE_ON_ART = new Color(255, 205, 92, 255)
 const COLOR_TEXT_IDLE = new Color(200, 186, 160, 255)
 const COLOR_RED_DOT = new Color(214, 60, 50, 255)
 
@@ -269,10 +276,13 @@ export class PanelNav extends Component {
         continue
       }
       const active = def.key === this.currentKey
-      label.color = active ? COLOR_TEXT_ACTIVE : COLOR_TEXT_IDLE
       const width = this.columnWidth - 6
       const height = BAR_HEIGHT - 8
-      if (applyCommandButton(button, active ? 'hover' : 'normal', width, height)) {
+      const drawnWithArt = applyCommandButton(button, active ? 'hover' : 'normal', width, height)
+      // 字色要等"这格实际是什么底"定了再定：先设色再画图，选中态就是深色字压在深色底上
+      label.color = drawnWithArt && active ? COLOR_TEXT_ACTIVE_ON_ART
+        : (active ? COLOR_TEXT_ACTIVE : COLOR_TEXT_IDLE)
+      if (drawnWithArt) {
         continue
       }
       const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)

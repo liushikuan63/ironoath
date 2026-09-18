@@ -9,6 +9,7 @@
 import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3 } from 'cc'
 import type { MarchPanelAction, MarchPanelRow } from '../game/world/MarchPanel'
 import { applyCommandButton, applySimpleSprite, applySlicedSprite, hasArt } from './ArtCatalog'
+import { PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
 
 const COLOR_BACKDROP = new Color(6, 5, 4, 190)
@@ -22,9 +23,21 @@ const COLOR_DISABLED = new Color(32, 29, 27, 255)
 
 const PANEL_WIDTH = 720
 const PANEL_HEIGHT = 356
-const ROW_WIDTH = PANEL_WIDTH - 28
+/**
+ * 这张面板套的是 `ui.panel.kingdom` 九宫格框，四角带厚 = `PANEL_FRAME_BAND`（真源在该图的
+ * `.png.meta`）。九宫格只固定四角，**带内才是能放内容的地方**：#204 在内城卡片上修过同一类
+ * 冲突（标题压在角饰上），这块是同一张框的第二个消费者，之前按"面板外沿"排，标题与关闭按钮
+ * 整块落在带里。几何断言见 `tools/verify-art-runtime.mjs`。
+ */
+const CONTENT_INSET = PANEL_FRAME_BAND + 4
+const CONTENT_WIDTH = PANEL_WIDTH - CONTENT_INSET * 2
+/** 顶部安全线：带内第一条可用扫描线，标题与关闭按钮都从它往下排。 */
+const SAFE_TOP = PANEL_HEIGHT / 2 - PANEL_FRAME_BAND
+const HEADER_Y = SAFE_TOP - 16
+const ROW_WIDTH = CONTENT_WIDTH
 const ROW_HEIGHT = 68
 const ROW_GAP = 8
+const FIRST_ROW_Y = HEADER_Y - 16 - ROW_HEIGHT / 2
 const MAX_ROWS = 3
 const ACTION_WIDTH = 84
 const ACTION_HEIGHT = 34
@@ -54,9 +67,12 @@ export class MarchPanelView {
   constructor(parent: Node, width: number, height: number) {
     this.backdrop = this.createBackdrop(parent, width, height)
     this.panel = this.createPanel(parent)
-    this.header = this.addLabel(this.panel, 'Header', 0, PANEL_HEIGHT / 2 - 28,
+    this.header = this.addLabel(this.panel, 'Header', 0, HEADER_Y,
       COLOR_COPPER_GOLD, 19)
+    // 这个节点本来就是"没有行军时的那句话"，但 render() 只切 active、从不给它文字 ——
+    // 结果是一支队伍都没有时，面板里是一整块空白（截图实测）。补上文案，位置与颜色不动。
     this.empty = this.addLabel(this.panel, 'Empty', 0, -8, COLOR_TEXT_DIM, 16)
+    this.empty.string = '暂无在外的队伍'
     this.buildCloseButton()
     for (let index = 0; index < MAX_ROWS; index++) {
       this.rows.push(this.buildRow(index))
@@ -181,7 +197,7 @@ export class MarchPanelView {
     const node = new Node('CloseButton')
     node.layer = this.panel.layer
     this.panel.addChild(node)
-    node.setPosition(new Vec3(PANEL_WIDTH / 2 - 48, PANEL_HEIGHT / 2 - 28, 0))
+    node.setPosition(new Vec3(PANEL_WIDTH / 2 - CONTENT_INSET - 32, HEADER_Y, 0))
     node.addComponent(UITransform).setContentSize(new Size(64, 30))
     if (!applyCommandButton(node, 'normal', 64, 30)) {
       const graphics = node.addComponent(Graphics)
@@ -200,7 +216,7 @@ export class MarchPanelView {
     const node = new Node(`MarchRow-${index}`)
     node.layer = this.panel.layer
     this.panel.addChild(node)
-    const y = PANEL_HEIGHT / 2 - 70 - index * (ROW_HEIGHT + ROW_GAP)
+    const y = FIRST_ROW_Y - index * (ROW_HEIGHT + ROW_GAP)
     node.setPosition(new Vec3(0, y, 0))
     node.addComponent(UITransform).setContentSize(new Size(ROW_WIDTH, ROW_HEIGHT))
     const graphics = node.addComponent(Graphics)

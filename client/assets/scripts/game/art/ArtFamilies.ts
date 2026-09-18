@@ -1,5 +1,5 @@
 /**
- * 职责：新素材族（G1~G7 生成批次）的**纯数据层** —— 键、运行时路径、配置表 id → 素材键的映射。
+ * 职责：美术资源的**纯数据层** —— 素材族的键与路径、配置表 id → 素材键的映射、九宫格的几何常量。
  * 依赖：无（刻意不 import 'cc'，让 node 测试能直接扫这张表核对磁盘文件）。
  *
  * <p>为什么单独一层：`ArtCatalog` 绑在 cc 的 SpriteFrame 加载上，测试进不去；
@@ -11,6 +11,16 @@
  */
 
 export type ArtFamily = 'item' | 'equip' | 'hero' | 'activity'
+
+/**
+ * 面板框 `ui/generated/ui/panel-kingdom-v1` 九宫格的**四角带厚**，交给布局用。
+ *
+ * <p>切分几何的唯一真源是那张图的 `.png.meta`（border* 四值）—— 代码里不再抄第二份，
+ * 因为"两份数字"这件事本轮真的咬过一口：`ArtCatalog` 曾有一份 `insets: [51,47,51,47]`
+ * 的覆盖，后写且生效，于是 meta 里的 border 改了个像素都不会变（收口清单 #211）。
+ * 两者现在由 `tests/ArtFamilies.test.ts` 对账：改图不改这里，测试就红。
+ */
+export const PANEL_FRAME_BAND = 44
 
 /**
  * 族内成员 → resources 相对路径（不带 /spriteFrame，那是加载层的事）。

@@ -19,6 +19,7 @@ import { ChoiceOverlay } from './ChoiceOverlay'
 import {
   applyCommandButton, applyIconSprite, applySlicedSprite, buildingIconKey,
 } from './ArtCatalog'
+import { PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -40,11 +41,12 @@ const CELL_GAP = 4
 const CONTENT_WIDTH = CITY_GRID_WIDTH * CELL_WIDTH + (CITY_GRID_WIDTH - 1) * CELL_GAP
 const GRID_HEIGHT = CITY_GRID_HEIGHT * CELL_HEIGHT + (CITY_GRID_HEIGHT - 1) * CELL_GAP
 /**
- * 面板框的四角尺寸，**必须与 `ui/generated/ui/panel-kingdom-v1.png.meta` 的 border* 一致**：
+ * 面板框的四角尺寸：**切分几何的唯一真源是 `ui/generated/ui/panel-kingdom-v1.png.meta` 的 border***，
+ * 这里的常量只是把它交给布局用（两者由 `tests/ArtFamilies.test.ts` 对账，不一致就红）。
  * 九宫格只固定四角，所以卡片里任何内容（标题、资源行、格子列、收割按钮）都得让开这一圈，
  * 否则会压在角饰与侧栏下面 —— 之前按 16px 内缩排，正好被 44px 的角饰吃掉 28px。
  */
-const FRAME_BAND = 44
+const FRAME_BAND = PANEL_FRAME_BAND
 const CARD_INSET = FRAME_BAND + 4
 const CARD_WIDTH = CONTENT_WIDTH + CARD_INSET * 2
 const HEADER_HEIGHT = 128
