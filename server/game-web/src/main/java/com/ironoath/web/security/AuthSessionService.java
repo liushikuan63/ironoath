@@ -62,7 +62,9 @@ public final class AuthSessionService {
     /**
      * 校验票据。失败原因必须能直接给玩家看（"登录已过期，请重新进入游戏" 之类）。
      *
-     * @param claim 请求声称的身份（playerId 来自 {@code X-Player-Id}，token 来自 {@code X-Auth-Token}）
+     * @param claim 请求声称的身份（playerId 来自 {@code X-Player-Id}；token 由
+     *              {@code PlayerIdentityInterceptor} 取：优先标准头 {@code Authorization: Bearer}，
+     *              回退到 {@code X-Auth-Token}。WS 的 bind 消息里也带同一枚，字段名 {@code token}）
      * @param now   当前服务端时间
      */
     public Verdict verify(Claim claim, long now) {

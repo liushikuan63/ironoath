@@ -108,7 +108,8 @@ public class GameWebSocketHandler extends TextWebSocketHandler implements PushGa
         }
         if (identity.productionReady()) {
             // 与 HTTP 侧同一件事：严格实现下，报一个 playerId 不再等于拿到那个人的推送通道。
-            // 票据走 bind 消息的 token 字段（与 HTTP 的 X-Auth-Token 同源，客户端上线时要一起带）
+            // 票据走 bind 消息的 token 字段，客户端已经在带（NetModule#bindPlayer 里 message.token），
+            // 与 HTTP 用的是同一枚会话票据（HTTP 那边优先读 Authorization: Bearer）
             var verdict = identity.verify(new com.ironoath.web.security.PlayerIdentityVerifier.Claim(
                     playerId, node.hasNonNull("token") ? node.get("token").asText() : null,
                     "ws:bind/" + session.getId()));

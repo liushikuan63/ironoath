@@ -10,14 +10,23 @@ package com.ironoath.web.security;
  * 端口版本要求正式环境<b>必须</b>提供一个真实现，否则启动直接被拒
  * （{@code ProductionReadiness} 会因 {@link #productionReady()} 为 false 而拒绝启动）。
  *
- * <p><b>真实实现要做什么</b>（本仓库当前没有微信 AppID/密钥，所以写不了也验不了）：
- * 客户端登录时拿 {@code wx.login} 的 code 换 openid + session_key，服务端换取一个会话票据；
- * 之后每个请求带上该票据（约定头名 {@link #TOKEN_HEADER}），实现里核对该票据 ↔ playerId
- * 是否同一会话，并顺带把实名/年龄结果带出来给 {@code MINOR_PAY_*} 两个限额用（收口清单 #26 ④）。
+ * <p><b>真实实现要做什么</b>：客户端登录时拿 {@code wx.login} 的 code 换 openid + session_key，
+ * 服务端换取一个会话票据；之后每个请求带上该票据，实现里核对该票据 ↔ playerId 是否同一会话，
+ * 并顺带把实名/年龄结果带出来给 {@code MINOR_PAY_*} 两个限额用（收口清单 #26 ④）。
+ * <b>这一半已经写完了</b>：{@code AuthSessionService}（HMAC 票据）+ {@code SessionIdentityVerifier}
+ * （{@code productionReady=true}）都在仓库里，由 {@code SecurityBeansConfig} 在有微信凭据时装配。
+ * 本机验不了的只有 {@code code2session} 那一步（没有真实 AppID/密钥），不是整条鉴权链。
+ *
+ * <p><b>票据怎么带</b>：客户端每个 HTTP 请求带标准头 {@code Authorization: Bearer <token>}，
+ * {@code PlayerIdentityVerifier.TOKEN_HEADER} 只是同一条读取路径上的兼容回退
+ * （见 {@code PlayerIdentityInterceptor#tokenOf}：先 Bearer，再自定义头）。
  */
 public interface PlayerIdentityVerifier {
 
-    /** 会话票据的请求头名。客户端（{@code GameApi}）上线时必须带上它，现在还没有带。 */
+    /**
+     * 会话票据的兼容头名。<b>标准头 {@code Authorization: Bearer} 优先</b> ——
+     * 客户端（{@code NetModule}）每个请求带的是那个，这里留着是给早期联调脚本用。
+     */
     String TOKEN_HEADER = "X-Auth-Token";
 
     /**
