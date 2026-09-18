@@ -19,6 +19,8 @@ client/native/
 
 # 美术生成中间图；最终采用版本在 art-src/generated/accepted/ 入库
 art-src/generated/drafts/
+# ImageGen 的落盘目录：原图会先被复制进上面的 raw 槽再抠绿收编，这里只留一份 3MB 重复体
+vibe_images/
 
 # IDE
 .idea/
