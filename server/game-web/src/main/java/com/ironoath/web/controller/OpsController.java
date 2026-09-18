@@ -58,13 +58,17 @@ public class OpsController {
     private final PayAppService pay;
     private final MailAppService mails;
     private final OpsTokenGuard token;
+    /** 举报留痕的只读出口挂在它上面（B22 §一 3；写入侧在社交域，读侧不该另建一份存储访问）。 */
+    private final com.ironoath.web.service.SocialAppService social;
 
     public OpsController(OpsAppService ops, PayAppService pay, MailAppService mails,
-                         OpsTokenGuard token) {
+                         OpsTokenGuard token,
+                         com.ironoath.web.service.SocialAppService social) {
         this.ops = ops;
         this.pay = pay;
         this.mails = mails;
         this.token = token;
+        this.social = social;
     }
 
     /**
@@ -109,6 +113,26 @@ public class OpsController {
         token.require(opsToken);
         return Result.ok(mails.sendByOps(req));
     }
+
+    /**
+     * 读举报留痕（只读，需运维令牌）：B22 §一 3 的"留痕必须可查"（§五 裁决②：只做留痕 + 只读出口）。
+     *
+     * <p>与 {@code /ops/mail/recent} 同一条纪律：写侧单独存在是不够的 —— 一张只写得进、查不出的表，
+     * 等于把"我上周举报过那个人"这句话交给记忆回答。窗口与条数都回显，空结果才分得清是"没人举报"
+     * 还是"窗口传错了"。
+     *
+     * @param windowSeconds 窗口秒数；不传即查满保留期（30 天），超出部分服务端夹住并打 WARN
+     * @param limit         最多带几条，服务端另有上限夹住
+     */
+    @GetMapping("/report/recent")
+    public Result<com.ironoath.web.dto.generated.OpsReportRecentResp> recentReports(
+            @RequestHeader(value = "X-Ops-Token", required = false) String opsToken,
+            @RequestParam(name = "windowSeconds", required = false) Long windowSeconds,
+            @RequestParam(name = "limit", defaultValue = "20") int limit) {
+        token.require(opsToken);
+        return Result.ok(social.recentReportsForOps(windowSeconds, limit));
+    }
+
 
     /**
      * 读回补发记录（只读，需运维令牌）：谁在什么时候被补了什么、他领了没有、看过没有。

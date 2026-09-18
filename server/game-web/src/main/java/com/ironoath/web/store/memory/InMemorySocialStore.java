@@ -3,12 +3,15 @@ package com.ironoath.web.store.memory;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import com.ironoath.core.social.Alliance;
 import com.ironoath.core.social.Squad;
@@ -510,6 +513,97 @@ public final class InMemorySocialStore implements SocialStore {
         return squadsById.size() + alliancesById.size() + chats.size() + helpRequests.size();
     }
 
+    /** 举报留痕（追加不改）：按插入顺序存，读的时候按时间倒序排。 */
+    private final List<ReportRecord> reports = new ArrayList<>();
+
+    /** 拉黑名单：本人 → 拉黑过的人（LinkedHashSet 保插入序，读取时反转成"最近的在前"）。 */
+    private final Map<String, Set<String>> blocked = new LinkedHashMap<>();
+
+    @Override
+    public void appendReport(ReportRecord report) {
+        if (report == null) {
+            throw new IllegalArgumentException("举报记录不得为 null");
+        }
+        reports.add(report);
+    }
+
+    @Override
+    public List<ReportRecord> reportsSince(long sinceMillis, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        List<ReportRecord> out = new ArrayList<>();
+        for (ReportRecord report : reports) {
+            if (report.createdAt() >= sinceMillis) {
+                out.add(report);
+            }
+        }
+        // 与 Mongo 实现同一个顺序：时间倒序，同刻按 reportId 降序（后落的 id 字典序更大）
+        out.sort(Comparator.comparingLong(ReportRecord::createdAt).reversed()
+                .thenComparing(ReportRecord::reportId, Comparator.reverseOrder()));
+        return List.copyOf(out.subList(0, Math.min(limit, out.size())));
+    }
+
+    @Override
+    public int reportTotalSince(long sinceMillis) {
+        int count = 0;
+        for (ReportRecord report : reports) {
+            if (report.createdAt() >= sinceMillis) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Override
+    public int reportCount(String reporterId, String targetPlayerId, long sinceMillis) {
+        int count = 0;
+        for (ReportRecord report : reports) {
+            if (report.reporterId().equals(reporterId)
+                    && report.targetPlayerId().equals(targetPlayerId)
+                    && report.createdAt() >= sinceMillis) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Override
+    public void block(String playerId, String targetPlayerId) {
+        if (playerId == null || targetPlayerId == null) {
+            throw new IllegalArgumentException("playerId / targetPlayerId 不得为 null");
+        }
+        blocked.computeIfAbsent(playerId, key -> new LinkedHashSet<>()).add(targetPlayerId);
+    }
+
+    @Override
+    public void unblock(String playerId, String targetPlayerId) {
+        if (playerId == null || targetPlayerId == null) {
+            throw new IllegalArgumentException("playerId / targetPlayerId 不得为 null");
+        }
+        Set<String> mine = blocked.get(playerId);
+        if (mine != null) {
+            mine.remove(targetPlayerId);
+        }
+    }
+
+    @Override
+    public List<String> blockedPlayers(String playerId) {
+        Set<String> mine = playerId == null ? null : blocked.get(playerId);
+        if (mine == null || mine.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(mine);
+        Collections.reverse(out);
+        return List.copyOf(out);
+    }
+
+    @Override
+    public boolean hasBlocked(String blocker, String blockedId) {
+        Set<String> mine = blocker == null ? null : blocked.get(blocker);
+        return mine != null && blockedId != null && mine.contains(blockedId);
+    }
+
     /**
      * 清空全部状态。单测在 {@code @BeforeEach} 里调用。
      *
@@ -532,5 +626,7 @@ public final class InMemorySocialStore implements SocialStore {
         chats.clear();
         unreadEvents.clear();
         helpRequests.clear();
+        reports.clear();
+        blocked.clear();
     }
 }

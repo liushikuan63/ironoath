@@ -1,6 +1,7 @@
 package com.ironoath.web.store.mongo;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -504,6 +505,97 @@ public final class MongoSocialStore implements SocialStore {
                 HelpRequestDocument.class, HelpRequestDocument.COLLECTION);
     }
 
+    // ---------- 举报与拉黑（B22 §一 3） ----------
+
+    @Override
+    public void appendReport(ReportRecord report) {
+        if (report == null) {
+            throw new IllegalArgumentException("举报记录不得为 null");
+        }
+        mongo.insert(SocialReportDocument.fromDomain(report), SocialReportDocument.COLLECTION);
+    }
+
+    @Override
+    public List<ReportRecord> reportsSince(long sinceMillis, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        // 排序必须和内存版逐键一致：时间倒序，同刻按 reportId 降序。
+        // 少了第二键，同一毫秒内的两条举报顺序就由 Mongo 自然序决定 —— 两端各自测试都不会红
+        List<SocialReportDocument> docs = mongo.find(
+                Query.query(Criteria.where(SocialReportDocument.FIELD_CREATED_AT).gte(sinceMillis))
+                        .with(Sort.by(Sort.Order.desc(SocialReportDocument.FIELD_CREATED_AT),
+                                Sort.Order.desc("_id"))).limit(limit),
+                SocialReportDocument.class, SocialReportDocument.COLLECTION);
+        List<ReportRecord> out = new ArrayList<>(docs.size());
+        docs.forEach(d -> out.add(d.toDomain()));
+        return List.copyOf(out);
+    }
+
+    @Override
+    public int reportTotalSince(long sinceMillis) {
+        return (int) mongo.count(Query.query(
+                        Criteria.where(SocialReportDocument.FIELD_CREATED_AT).gte(sinceMillis)),
+                SocialReportDocument.COLLECTION);
+    }
+
+    @Override
+    public int reportCount(String reporterId, String targetPlayerId, long sinceMillis) {
+        if (reporterId == null || targetPlayerId == null) {
+            return 0;
+        }
+        return (int) mongo.count(Query.query(Criteria.where(SocialReportDocument.FIELD_REPORTER)
+                        .is(reporterId)
+                        .and(SocialReportDocument.FIELD_TARGET).is(targetPlayerId)
+                        .and(SocialReportDocument.FIELD_CREATED_AT).gte(sinceMillis)),
+                SocialReportDocument.COLLECTION);
+    }
+
+    @Override
+    public void block(String playerId, String targetPlayerId) {
+        if (playerId == null || targetPlayerId == null) {
+            throw new IllegalArgumentException("playerId / targetPlayerId 不得为 null");
+        }
+        // $addToSet 而不是 push：重复拉黑同一个人不该在名单里出现两次；
+        // 而它**保留已有元素的位置**（不会把老条目挪到末尾），与内存版的 LinkedHashSet 同一语义 ——
+        // 否则"最近的在前"这个顺序在两个实现里会不一样
+        mongo.upsert(Query.query(Criteria.where("_id").is(playerId)),
+                new Update().addToSet(SocialPlayerDocument.FIELD_BLOCKED, targetPlayerId),
+                SocialPlayerDocument.class, SocialPlayerDocument.COLLECTION);
+    }
+
+    @Override
+    public void unblock(String playerId, String targetPlayerId) {
+        if (playerId == null || targetPlayerId == null) {
+            throw new IllegalArgumentException("playerId / targetPlayerId 不得为 null");
+        }
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(playerId)),
+                new Update().pull(SocialPlayerDocument.FIELD_BLOCKED, targetPlayerId),
+                SocialPlayerDocument.class, SocialPlayerDocument.COLLECTION);
+    }
+
+    @Override
+    public List<String> blockedPlayers(String playerId) {
+        SocialPlayerDocument document = playerId == null ? null
+                : mongo.findById(playerId, SocialPlayerDocument.class, SocialPlayerDocument.COLLECTION);
+        if (document == null || document.blockedPlayerIds() == null
+                || document.blockedPlayerIds().isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(document.blockedPlayerIds());
+        Collections.reverse(out);
+        return List.copyOf(out);
+    }
+
+    @Override
+    public boolean hasBlocked(String blocker, String blocked) {
+        if (blocker == null || blocked == null) {
+            return false;
+        }
+        List<String> mine = blockedPlayers(blocker);
+        return mine.contains(blocked);
+    }
+
     // ---------- 测试与运维 ----------
 
     /**
@@ -521,6 +613,7 @@ public final class MongoSocialStore implements SocialStore {
 
     @Override
     public void clear() {
+        mongo.remove(new Query(), SocialReportDocument.COLLECTION);
         mongo.remove(new Query(), SquadDocument.COLLECTION);
         mongo.remove(new Query(), AllianceDocument.COLLECTION);
         mongo.remove(new Query(), RallyDocument.COLLECTION);

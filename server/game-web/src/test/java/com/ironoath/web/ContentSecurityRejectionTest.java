@@ -214,6 +214,33 @@ class ContentSecurityRejectionTest {
     }
 
     @Test
+    @DisplayName("举报：补充说明过送检（SOCIAL_LOG）；判定违规时那条留痕一个字都不落")
+    void riskyReportDetailIsRejectedAndNotPersisted() throws Exception {
+        String reporter = weChatPlayer(1);
+        String target = weChatPlayer(1);
+
+        // 先证"正常举报能受理"，否则后面的拒绝可能是别的原因（比如参数错、防刷闸）
+        post200("/social/report", reporter, new com.ironoath.web.dto.generated.ReportReq(
+                newRequestId(), target, null, com.ironoath.web.dto.generated.ReportReason.ABUSE, "正常说明"));
+        assertThat(security.seen())
+                .as("举报说明也要过送检，走的是社交日志那个场景")
+                .anyMatch(entry -> entry.startsWith("SOCIAL_LOG:正常说明"));
+
+        security.script(ContentSecurityClient.Verdict.RISKY);
+        JsonNode rejected = postRaw("/social/report", reporter,
+                new com.ironoath.web.dto.generated.ReportReq(newRequestId(), target, null,
+                        com.ironoath.web.dto.generated.ReportReason.ABUSE, "这条会被拒"));
+        assertThat(rejected.get("code").asInt())
+                .as("违规内容必须被拒，而不是静默替换成别的字")
+                .isEqualTo(ErrorCode.SOCIAL_CHAT_CONTENT_INVALID.code());
+
+        JsonNode ops = get200("/ops/report/recent", "test-ops-token", "X-Ops-Token");
+        assertThat(ops.path("total").asLong())
+                .as("被拒的那条不许留痕：举报框同样是玩家自由输入，不能因为叫\"举报\"就免检")
+                .isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("战报分享：正文过送检（SOCIAL_LOG）；判定违规时那条分享一个字都不进频道")
     void riskyReportShareIsRejectedAndNotPersisted() throws Exception {
         String leader = weChatPlayer(10);
@@ -269,6 +296,11 @@ class ContentSecurityRejectionTest {
 
     private JsonNode get200(String url, String playerId) throws Exception {
         return okData(perform(get(url).header(PLAYER_HEADER, playerId)));
+    }
+
+    /** 带自定义头的 GET（运维只读端点用：它认的是 X-Ops-Token 而不是玩家头）。 */
+    private JsonNode get200(String url, String token, String header) throws Exception {
+        return okData(perform(get(url).header(header, token)));
     }
 
     private JsonNode post200(String url, String playerId, Object req) throws Exception {

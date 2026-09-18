@@ -237,6 +237,57 @@ public interface SocialStore {
     /** 帮助次数 +1。 */
     void markHelped(String requestId);
 
+    // ---------- 举报与拉黑（B22 §一 3） ----------
+
+    /**
+     * 一条举报留痕（B22 §一 3）。**只记不改**：它是运营查证用的台账，
+     * 处理结果（封不封、封多久）不在服务端 —— 那是运营侧的决定（§五 裁决②）。
+     */
+    record ReportRecord(String reportId, String reporterId, String targetPlayerId,
+                        String messageId, String reason, String detail, long createdAt) {
+        public ReportRecord {
+            if (reportId == null || reportId.isBlank()) {
+                throw new IllegalArgumentException("reportId 不得为空");
+            }
+            if (reporterId == null || reporterId.isBlank()) {
+                throw new IllegalArgumentException("reporterId 不得为空");
+            }
+            if (targetPlayerId == null || targetPlayerId.isBlank()) {
+                throw new IllegalArgumentException("targetPlayerId 不得为空");
+            }
+            if (reason == null || reason.isBlank()) {
+                throw new IllegalArgumentException("reason 不得为空");
+            }
+        }
+    }
+
+    /** 落一条举报留痕。 */
+    void appendReport(ReportRecord report);
+
+    /**
+     * {@code sinceMillis} 之后的举报记录，<b>按时间倒序</b>（同刻按 reportId 定序，两个实现必须一致），
+     * 最多 {@code limit} 条。只读出口是运维令牌那一个端点（B22 §一 3 的"留痕必须可查"）。
+     */
+    List<ReportRecord> reportsSince(long sinceMillis, int limit);
+
+    /** {@code sinceMillis} 之后的举报条数，**不受 limit 影响**（运营侧那一行的"窗口内共几条"）。 */
+    int reportTotalSince(long sinceMillis);
+
+    /** 某人在 {@code sinceMillis} 之后举报了某个目标几次（限频防刷用，见 global.SOCIAL_REPORT_DAILY_LIMIT）。 */
+    int reportCount(String reporterId, String targetPlayerId, long sinceMillis);
+
+    /** 拉黑。已在名单里就是幂等成功（不产生第二条账）。 */
+    void block(String playerId, String targetPlayerId);
+
+    /** 取消拉黑。不在名单里也是幂等成功。 */
+    void unblock(String playerId, String targetPlayerId);
+
+    /** 我拉黑的玩家，最近的在前。 */
+    List<String> blockedPlayers(String playerId);
+
+    /** {@code blocker} 是否拉黑了 {@code blocked}（方向敏感：两个方向要分开问，错误文案才说得清是谁拒收了谁）。 */
+    boolean hasBlocked(String blocker, String blocked);
+
     // ---------- 测试与运维 ----------
 
     int counts();

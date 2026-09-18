@@ -15,7 +15,11 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.common.time.TimeService;
+import com.ironoath.web.dto.generated.BlockListView;
+import com.ironoath.web.dto.generated.BlockReq;
 import com.ironoath.web.dto.generated.HelpResp;
+import com.ironoath.web.dto.generated.ReportReq;
+import com.ironoath.web.dto.generated.ReportResp;
 import com.ironoath.core.reddot.ReddotTree;
 import com.ironoath.web.dto.generated.HelpReq;
 import com.ironoath.web.dto.generated.PermissionListResp;
@@ -138,6 +142,42 @@ public class SocialController {
         requirePlayer(playerId);
         List<String> eventIds = req.eventIds() == null ? List.of() : req.eventIds();
         return Result.ok(social.ackEvents(playerId, eventIds, timeService.serverNow()));
+    }
+
+    // ---------- 举报与拉黑（B22 §一 3） ----------
+
+    /**
+     * 举报一个玩家 / 一条消息。**只做留痕**（§五 裁决②）：处置归运营侧。
+     * 同一目标 24 小时内超过 {@code global.SOCIAL_REPORT_DAILY_LIMIT} 次会被防刷闸拦下。
+     */
+    @PostMapping("/report")
+    public Result<ReportResp> report(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                     @RequestBody ReportReq req) {
+        requirePlayer(playerId);
+        return Result.ok(social.report(playerId, req, timeService.serverNow()));
+    }
+
+    /** 拉黑：私聊拒收 + 频道里不再显示他的消息。**不改变任何战斗 / PVP / 外交关系**（B22 §一 3）。 */
+    @PostMapping("/block")
+    public Result<BlockListView> block(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                       @RequestBody BlockReq req) {
+        requirePlayer(playerId);
+        return Result.ok(social.block(playerId, req));
+    }
+
+    /** 取消拉黑。 */
+    @PostMapping("/unblock")
+    public Result<BlockListView> unblock(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                        @RequestBody BlockReq req) {
+        requirePlayer(playerId);
+        return Result.ok(social.unblock(playerId, req));
+    }
+
+    /** 我拉黑了谁。 */
+    @GetMapping("/blocks")
+    public Result<BlockListView> blocks(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(social.blocks(playerId));
     }
 
     private static String requirePlayer(String playerId) {

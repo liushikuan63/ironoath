@@ -95,6 +95,15 @@ export type RallyStatus =
   | 'CANCELLED'
 
 /**
+ * 举报原因（B22 §一 3）。**是枚举而不是自由文本**：留痕表要能按原因聚合（"这周辱骂举报涨了多少"），自由文本答不了这个问题；而玩家要补充的细节另有 detail 字段。CHEAT_SUSPECT 只表示"玩家怀疑"，判定归运营与反作弊，代码不替它下结论。
+ */
+export type ReportReason =
+  | 'ABUSE'
+  | 'SPAM'
+  | 'CHEAT_SUSPECT'
+  | 'OTHER'
+
+/**
  * 一个随军武将位在合并行军里的状态。
  *
  * **为什么必须把落选原因也下发**：武将位按加入顺序抢，成员点完「加入」只看到自己加成功了，如果面板不说他的武将落选以及为什么，他会以为加成生效了 —— 打输之后才发现在白送一次行军。「协商谁能上」是集结的核心社交动作，而协商需要一份看得见的事实。
@@ -630,6 +639,84 @@ export interface HelpResp {
   speedupGranted: number
   /** 服务端时间戳 */
   serverNow: number
+}
+
+/**
+ * POST /social/report 请求体（B22 §一 3）。**举报只做留痕**（§五 裁决②）：服务端记下"谁、举报谁、哪条消息、什么原因、何时"，处置流程归运营侧 —— 代码不替它决定封不封号。
+ */
+export interface ReportReq {
+  /** 幂等键。同一次举报重放会让留痕表多出一条重复记录，而运营看到的是一件事被报了两遍。 */
+  requestId: string
+  /** 被举报的人。<b>必填</b>：留痕与限频都按它记账，而客户端从聊天消息里本来就有发信人 id（`ChatMessageView.senderId`）—— 这不构成负担。"只有消息 id"那条路要在全服消息上建一个 id 索引，而除了它没有任何调用方需要那个索引（B22 §一 3 的原文给 messageId 打了问号，这里按"不留没人读的索引"取舍）。 */
+  targetPlayerId: string
+  /** 被举报的那条聊天消息 id。带上它，运营才能看到"被举报的原话"，否则只有一句转述 —— 而转述正是举报双方会各说各话的地方。 */
+  messageId: string | null
+  /** 举报原因。 */
+  reason: ReportReason
+  /** 补充说明，可空。**会过内容安全送检**（与聊天同一条）：举报框同样是玩家自由输入，不能因为它叫"举报"就免检。 */
+  detail: string | null
+}
+
+/**
+ * POST /social/report 响应体。只回执受理结果，**不回"是否处罚"** —— 那是运营的决定，且举报人也不该从响应里看出处置结果（表现成"报了就一定封"会让举报变成一种攻击工具）。
+ */
+export interface ReportResp {
+  /** 留痕记录 id（运营侧按它查证）。 */
+  reportId: string
+  /** 服务端时间戳。 */
+  serverNow: number
+}
+
+/**
+ * POST /social/block 与 /social/unblock 的请求体（B22 §一 3）。**拉黑不是封禁**：它只切断交流（私聊拒收 + 频道消息过滤），不改变任何战斗 / PVP / 外交关系 —— B13 的冲突优先级写着国家 > 联盟 > 小队，私人恩怨不该凌驾其上。
+ */
+export interface BlockReq {
+  /** 幂等键。重复拉黑同一个人应当是幂等的结果（在名单里就是成功），但重放不该产生两条账。 */
+  requestId: string
+  /** 要拉黑 / 取消拉黑的人。 */
+  targetPlayerId: string
+}
+
+/**
+ * GET /social/blocks 响应体：我拉黑了谁。**只回我自己的名单**：对方拉没拉黑我是看不到的（那会变成一种骚扰反馈），而发消息时服务端会给出"被对方拒收"的说清方向的错误。
+ */
+export interface BlockListView {
+  /** 我拉黑的玩家 id，按加入顺序（最近的在前）。 */
+  blockedPlayerIds: string[]
+}
+
+/**
+ * 一条举报留痕（运营只读出口的行，B22 §一 3 / §五 裁决②）。字段就是运营查证时要看的那几件事：谁报的、报的谁、哪条消息、什么原因、补了什么、什么时候。
+ */
+export interface OpsReportRow {
+  /** 留痕记录 id。 */
+  reportId: string
+  /** 举报人。 */
+  reporterId: string
+  /** 被举报人。 */
+  targetPlayerId: string
+  /** 被举报的消息 id；没带就是 null。带上它运营才能看到被举报的原话。 */
+  messageId: string | null
+  /** 举报原因。 */
+  reason: ReportReason
+  /** 举报人的补充说明；没写就是 null。 */
+  detail: string | null
+  /** 受理时刻（服务端时间戳）。 */
+  createdAt: number
+}
+
+/**
+ * GET /ops/report/recent 响应。**窗口回显**（与 `/ops/mail/recent` 同一条理由）：一个不说明自己看了多大窗口的空结果，区分不开"那段时间没人举报"与"我把窗口传错了"。
+ */
+export interface OpsReportRecentResp {
+  /** 本次实际生效的窗口秒数。超出保留期会被服务端夹住（更早的记录已经不在表里了，给一个大窗口只会得到一张假表）。 */
+  windowSeconds: number
+  /** 窗口内匹配的条数，**不受 limit 影响**。 */
+  total: number
+  /** 本响应实际带出的条数。 */
+  listed: number
+  /** 按受理时刻倒序，最多 limit 条。 */
+  rows: OpsReportRow[]
 }
 
 /**

@@ -37,6 +37,13 @@ import com.ironoath.web.dto.generated.AllianceSelfReq;
 import com.ironoath.web.dto.generated.AllianceTechReq;
 import com.ironoath.web.dto.generated.AllianceTechResp;
 import com.ironoath.web.dto.generated.AllianceView;
+import com.ironoath.web.dto.generated.BlockListView;
+import com.ironoath.web.dto.generated.OpsReportRecentResp;
+import com.ironoath.web.dto.generated.OpsReportRow;
+import com.ironoath.web.dto.generated.ReportReason;
+import com.ironoath.web.dto.generated.BlockReq;
+import com.ironoath.web.dto.generated.ReportReq;
+import com.ironoath.web.dto.generated.ReportResp;
 import com.ironoath.web.dto.generated.ChatChannel;
 import com.ironoath.web.dto.generated.HelpRequestView;
 import com.ironoath.web.dto.generated.HelpTargetKind;
@@ -1327,6 +1334,10 @@ public class SocialAppService {
         contentSecurity.requireClean(playerId,
                 com.ironoath.web.security.ContentSecurityClient.Scene.SOCIAL_LOG,
                 content, ErrorCode.SOCIAL_CHAT_CONTENT_INVALID, "消息内容");
+        if (channel == ChatChannel.PRIVATE) {
+            // 拉黑拦在写之前：拦不住的代价是"消息已经送到对方那儿了再报错"
+            requireNotBlocked(playerId, req.toPlayerId());
+        }
         String channelKey = requireChannelKey(channel, playerId, req.toPlayerId());
         ChatRateLimiter.Verdict verdict = chatLimiter.check(playerId, content, now);
         if (!verdict.allowed()) {
@@ -1382,13 +1393,169 @@ public class SocialAppService {
         String channelKey = requireChannelKey(req.channel(), playerId, req.toPlayerId());
         int limit = (int) Math.min(Math.max(1, req.limit()), configs.longParam("CHAT_LOCAL_HISTORY_MAX"));
         List<SocialStore.ChatMessage> messages =
-                store.chat(channelKey, req.beforeMessageId(), limit);
+                withoutBlocked(store.chat(channelKey, req.beforeMessageId(), limit), playerId);
         List<ChatMessageView> views = new ArrayList<>(messages.size());
         for (SocialStore.ChatMessage message : messages) {
             views.add(toMessageView(message));
         }
         return new ChatListResp(views, store.hasMore(channelKey, req.beforeMessageId(), limit), now);
     }
+
+    // ================= 举报与拉黑（B22 §一 3） =================
+
+    /**
+     * 举报留痕的运维只读出口（B22 §一 3 的"留痕必须可查" + §五 裁决②）。
+     *
+     * <p>窗口回显与 `/ops/mail/recent` 同一条理由：不说明看了多大窗口的空结果，
+     * 区分不开"那段时间没人举报"与"窗口传错了"。
+     */
+    public OpsReportRecentResp recentReportsForOps(Long windowSeconds, int limit) {
+        long now = timeService.serverNow();
+        long maxWindow = REPORT_RETENTION_SECONDS;
+        long window = windowSeconds == null || windowSeconds <= 0 ? maxWindow : windowSeconds;
+        if (window > maxWindow) {
+            LOG.warn("举报只读出口要了 {} 秒窗口，超过保留期 {} 秒，已夹住",
+                    window, maxWindow);
+            window = maxWindow;
+        }
+        int cap = Math.min(Math.max(1, limit), 200);
+        long since = now - window * 1000L;
+        List<SocialStore.ReportRecord> rows = store.reportsSince(since, cap);
+        List<OpsReportRow> out = new ArrayList<>(rows.size());
+        for (SocialStore.ReportRecord record : rows) {
+            out.add(new OpsReportRow(record.reportId(), record.reporterId(),
+                    record.targetPlayerId(), record.messageId(), ReportReason.valueOf(record.reason()),
+                    record.detail() == null || record.detail().isEmpty() ? null : record.detail(),
+                    record.createdAt()));
+        }
+        return new OpsReportRecentResp(window, store.reportTotalSince(since), out.size(), out);
+    }
+
+    /**
+     * 举报留痕的保留期。**与请求窗口的上限是同一个数**：比它更早的记录已经不在表里，
+     * 给一个更大的窗口只会得到一张"没人举报过"的假表。
+     *
+     * <p>取 30 天：客服回查投诉通常在一周内，而运营周报按自然周汇总 —— 30 天覆盖得住，
+     * 同时不至于让这张只会涨的表无限大（真要长期归档是数据侧的事，不是这张表的事）。
+     */
+    private static final long REPORT_RETENTION_SECONDS = 30L * 24 * 3600;
+
+    /**
+     * 举报留痕。**只记不改**（§五 裁决②）：服务端记下"谁、举报谁、哪条、为什么、何时"，
+     * 封不封号是运营的决定 —— 代码不替它下结论，也不把结论回给举报人
+     * （表现成"报了就一定封"会让举报变成一种攻击工具）。
+     */
+    public ReportResp report(String playerId, ReportReq req, long now) {
+        if (req == null || req.reason() == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "reason 不得为空");
+        }
+        String target = req.targetPlayerId();
+        if (target == null || target.isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "targetPlayerId 不得为空");
+        }
+        if (target.equals(playerId)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "不能举报自己");
+        }
+        long limit = configs.longParam("SOCIAL_REPORT_DAILY_LIMIT");
+        long since = now - REPORT_WINDOW_MILLIS;
+        if (store.reportCount(playerId, target, since) >= limit) {
+            throw new BizException(ErrorCode.SOCIAL_REPORT_DUPLICATE,
+                    "同一个人 24 小时内最多举报 " + limit + " 次：前面那条已经记下了，运营会看到");
+        }
+        String detail = req.detail() == null ? null : req.detail().trim();
+        if (detail != null && !detail.isEmpty()) {
+            // 举报框同样是玩家自由输入 —— 不能因为它叫"举报"就免检（B22 验收 8）
+            contentSecurity.requireClean(playerId,
+                    com.ironoath.web.security.ContentSecurityClient.Scene.SOCIAL_LOG,
+                    detail, ErrorCode.SOCIAL_CHAT_CONTENT_INVALID, "举报说明");
+        }
+        String reportId = "report_" + java.util.UUID.randomUUID().toString()
+                .replace("-", "").substring(0, 16);
+        store.appendReport(new SocialStore.ReportRecord(reportId, playerId, target,
+                req.messageId(), req.reason().name(), detail == null ? "" : detail, now));
+        LOG.info("举报已受理 reportId={} 举报人={} 目标={} 原因={} 消息={}",
+                reportId, playerId, target, req.reason(), req.messageId());
+        return new ReportResp(reportId, now);
+    }
+
+    /** 拉黑（幂等：已在名单里就是成功）。返回更新后的名单，界面直接照着画。 */
+    public BlockListView block(String playerId, BlockReq req) {
+        String target = requireBlockTarget(playerId, req);
+        store.block(playerId, target);
+        LOG.info("拉黑 playerId={} 目标={}", playerId, target);
+        return new BlockListView(store.blockedPlayers(playerId));
+    }
+
+    /** 取消拉黑（幂等）。 */
+    public BlockListView unblock(String playerId, BlockReq req) {
+        String target = requireBlockTarget(playerId, req);
+        store.unblock(playerId, target);
+        LOG.info("取消拉黑 playerId={} 目标={}", playerId, target);
+        return new BlockListView(store.blockedPlayers(playerId));
+    }
+
+    /** 我拉黑了谁。**只回我自己的名单**：对方拉没拉黑我是看不到的（那会变成一种骚扰反馈）。 */
+    public BlockListView blocks(String playerId) {
+        requirePlayer(playerId);
+        return new BlockListView(store.blockedPlayers(playerId));
+    }
+
+    private String requireBlockTarget(String playerId, BlockReq req) {
+        requirePlayer(playerId);
+        if (req == null || req.targetPlayerId() == null || req.targetPlayerId().isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "targetPlayerId 不得为空");
+        }
+        if (req.targetPlayerId().equals(playerId)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "不能拉黑自己");
+        }
+        return req.targetPlayerId();
+    }
+
+    /**
+     * 私聊的拉黑拦截（B22 §一 3：私聊拒收 + 不能再发消息给我）。
+     *
+     * <p><b>方向必须说清</b>：能自己解除的那一种（我拉黑了对方）与只能等的那一种（对方拉黑了我），
+     * 下一步完全不同 —— 合成一句"消息被拦截"，前一种玩家会去找客服。
+     */
+    private void requireNotBlocked(String senderId, String recipientId) {
+        if (recipientId == null || recipientId.isBlank() || recipientId.equals(senderId)) {
+            return;
+        }
+        if (store.hasBlocked(senderId, recipientId)) {
+            throw new BizException(ErrorCode.SOCIAL_BLOCKED, "你已拉黑对方，先解除拉黑再发消息");
+        }
+        if (store.hasBlocked(recipientId, senderId)) {
+            throw new BizException(ErrorCode.SOCIAL_BLOCKED, "对方已将你拉黑，消息发不出去");
+        }
+    }
+
+    /**
+     * 频道消息过滤：我拉黑的人说的话，我看不到（B22 §一 3 的"频道过滤"）。
+     *
+     * <p><b>按观察者过滤，而不是从存储里删</b>：拉黑是"我不想看见"，不是"这句话不存在"——
+     * 别人（以及运营）仍然看得到原话，而"举报后消息消失"会让举报变成一种删除工具。
+     *
+     * <p>代价说清楚：过滤发生在取到窗口之后，所以被拉黑的人一多，这一屏能看到的条数会少于 limit
+     * （而 `hasMore` 说的是存储里还有没有）。这是可接受的：窗口本来就是"最近 200 条"的近似，
+     * 想要精确条数就得在存储层做过滤，那会让"某人看到的历史"变成一份需要物化的东西。
+     */
+    private List<SocialStore.ChatMessage> withoutBlocked(List<SocialStore.ChatMessage> messages,
+                                                         String viewerId) {
+        List<String> blocked = store.blockedPlayers(viewerId);
+        if (blocked.isEmpty()) {
+            return messages;
+        }
+        List<SocialStore.ChatMessage> out = new ArrayList<>(messages.size());
+        for (SocialStore.ChatMessage message : messages) {
+            if (!blocked.contains(message.senderId())) {
+                out.add(message);
+            }
+        }
+        return out;
+    }
+
+    /** 举报的限频窗口：24 小时（契约 `SOCIAL_REPORT_DAILY_LIMIT` 的 why 里写着"同一目标 24h 内"）。 */
+    private static final long REPORT_WINDOW_MILLIS = 24L * 3_600_000L;
 
     /**
      * 把一条「分享了战报」的消息写进组织频道（B22 §一 2），返回落地的频道键与消息 id。

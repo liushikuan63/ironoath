@@ -56,6 +56,46 @@ class SocialStoreEquivalenceTest {
         db = TestMongo.tryOpen();
     }
 
+    @Test
+    @DisplayName("举报留痕与拉黑名单两套实现同一条：倒序口径、限频计数、幂等与顺序")
+    void reportsAndBlocksBehaveTheSameOnBothStores() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+
+            // 举报：留痕 + 窗口 + 倒序（同刻按 reportId 降序，后落的 id 更大）
+            store.appendReport(new SocialStore.ReportRecord("report_b", "A", "B", "msg_1", "ABUSE", "先说", T0));
+            store.appendReport(new SocialStore.ReportRecord("report_c", "A", "B", "msg_2", "SPAM", "", T0));
+            store.appendReport(new SocialStore.ReportRecord("report_a", "C", "D", null, "OTHER", "旧的", T0 - 60_000L));
+
+            assertThat(store.reportsSince(T0 - 1L, 10))
+                    .as("%s 只带窗口内的，且最新的在前（同刻按 id 降序）", label)
+                    .extracting(SocialStore.ReportRecord::reportId)
+                    .containsExactly("report_c", "report_b");
+            assertThat(store.reportsSince(T0 - 1L, 1))
+                    .as("%s limit 是硬上限", label).hasSize(1);
+            assertThat(store.reportTotalSince(T0 - 1L))
+                    .as("%s 总数不受 limit 影响", label).isEqualTo(2);
+            assertThat(store.reportCount("A", "B", T0 - 1L))
+                    .as("%s 限频计数按（谁, 谁, 窗口）", label).isEqualTo(2);
+            assertThat(store.reportCount("A", "B", T0 + 1L))
+                    .as("%s 窗口之外的不计", label).isZero();
+
+            // 拉黑：幂等 + 最近的在前 + 方向敏感
+            store.block("A", "B");
+            store.block("A", "C");
+            store.block("A", "B");
+            assertThat(store.blockedPlayers("A")).as("%s 重复拉黑不产生第二条，最近的在最前", label)
+                    .containsExactly("C", "B");
+            assertThat(store.hasBlocked("A", "B")).as("%s 方向敏感", label).isTrue();
+            assertThat(store.hasBlocked("B", "A")).as("%s 反向没拉黑就是没拉黑", label).isFalse();
+            store.unblock("A", "B");
+            assertThat(store.blockedPlayers("A")).as("%s 取消之后只剩一个", label).containsExactly("C");
+            store.unblock("A", "不存在的玩家");
+            assertThat(store.blockedPlayers("A")).as("%s 取消一个不在名单里的人也是幂等的", label)
+                    .containsExactly("C");
+        }
+    }
+
     @BeforeEach
     void clearSocial() {
         if (db != null) {
