@@ -31,6 +31,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.ironoath.web.social.TestSquads;
 
 /**
  * 职责：城建四个端点（list / speedUp / cancel / collect）的集成测试。
@@ -520,6 +521,7 @@ class CityEndpointTest {
     @DisplayName("升级一开始就有求助请求，且带着能落地的 targetKey")
     void upgradeRegistersAHelpRequestWithTarget() {
         String owner = newPlayer();
+        TestSquads.leaderOf(socialStore, owner);
         CityUpgradeResp upgrade = startUpgrade(owner, "lumber_camp", 1, 1);
 
         var request = socialStore.helpRequests().stream()
@@ -537,6 +539,7 @@ class CityEndpointTest {
     @DisplayName("被帮一次，剩余时间真的变短；同一条请求不会被重复计")
     void beingHelpedShortensTheUpgradeForReal() {
         String owner = newPlayer();
+        TestSquads.leaderOf(socialStore, owner);
         CityUpgradeResp upgrade = startUpgrade(owner, "lumber_camp", 1, 1);
         long now = System.currentTimeMillis();
         long before = remainingOf(owner, upgrade.buildingId());
@@ -557,6 +560,7 @@ class CityEndpointTest {
     @DisplayName("取消升级后，求助请求从别人的可帮列表里消失（否则别人会白耗一次每日额度）")
     void cancellingUpgradeWithdrawsItsHelpRequest() {
         String owner = newPlayer();
+        TestSquads.leaderOf(socialStore, owner);
         CityUpgradeResp upgrade = startUpgrade(owner, "lumber_camp", 1, 1);
         assertThat(socialStore.helpRequests().stream()
                 .filter(r -> owner.equals(r.fromPlayerId())).count())

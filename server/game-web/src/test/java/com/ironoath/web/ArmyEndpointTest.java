@@ -51,6 +51,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.ironoath.web.social.TestSquads;
 
 /**
  * 职责：B05 第二步（训练队列、医院、兵种阶级）的端到端验证。
@@ -504,6 +505,7 @@ class ArmyEndpointTest {
     @DisplayName("训练一开始就有求助请求，且带着能落地的 targetKey")
     void trainRegistersAHelpRequestWithTarget() {
         String owner = newPlayer();
+        TestSquads.leaderOf(socialStore, owner);
         prepareBarracks(owner);
         giveResources(owner, 1_000_000L);
         fieldHeroForCap(owner, "hero_ssr_02");
@@ -528,6 +530,7 @@ class ArmyEndpointTest {
     @DisplayName("被帮一次，训练完成时刻真的提前原始时长的 1%；同一条请求不会被重复计")
     void beingHelpedShortensTheTrainingForReal() {
         String owner = newPlayer();
+        TestSquads.leaderOf(socialStore, owner);
         prepareBarracks(owner);
         giveResources(owner, 1_000_000L);
         fieldHeroForCap(owner, "hero_ssr_02");
@@ -564,6 +567,7 @@ class ArmyEndpointTest {
     @DisplayName("治疗一开始就有求助请求，被帮一次完成时刻真的提前；取消训练后请求从可帮列表消失")
     void treatmentRegistersAndTrainingCancelWithdraws() {
         String owner = newPlayer();
+        TestSquads.leaderOf(socialStore, owner);
         prepareBarracks(owner);
         giveResources(owner, 1_000_000L);
         fieldHeroForCap(owner, "hero_ssr_02");

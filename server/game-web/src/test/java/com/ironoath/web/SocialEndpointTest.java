@@ -52,6 +52,7 @@ import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
 import com.ironoath.web.social.SocialStore;
+import com.ironoath.web.social.TestSquads;
 
 /**
  * 职责：B10 社交域的端到端验证 —— 验收 1/2/4/6/7/8/9/10/12 里可以走 HTTP 断言的那些。
@@ -842,6 +843,7 @@ class SocialEndpointTest {
         String helper = newPlayer(10);
         for (int i = 0; i < 3; i++) {
             String target = newPlayer(10);
+        TestSquads.leaderOf(socialStore, target);
             social.registerHelpRequest("hr-" + i, target, HelpTargetKind.BUILDING,
                     "inst_help_" + i, "伐木场 Lv7→8", System.currentTimeMillis() + 3_600_000L,
                     social.summary(target, System.currentTimeMillis()).serverNow());
@@ -866,6 +868,7 @@ class SocialEndpointTest {
     void reddotTreeAggregatesParentChain() throws Exception {
         String helper = newPlayer(10);
         String target = newPlayer(10);
+        TestSquads.leaderOf(socialStore, target);
 
         JsonNode idle = get200("/social/reddot", helper);
         assertThat(idle.get("leafCount").asInt())
@@ -972,7 +975,9 @@ class SocialEndpointTest {
     void helpListAgreesWithTheBadge() throws Exception {
         String helper = newPlayer(10);
         String a = newPlayer(10);
+        TestSquads.leaderOf(socialStore, a);
         String b = newPlayer(10);
+        TestSquads.leaderOf(socialStore, b);
         long now = System.currentTimeMillis();
         long until = now + 3_600_000L;
         social.registerHelpRequest("hl-1", a, HelpTargetKind.BUILDING, "inst_hl_1", "伐木场 Lv7→8", until, now);
@@ -1012,6 +1017,7 @@ class SocialEndpointTest {
     void helpAllSkipsAlreadyHelped() throws Exception {
         String helper = newPlayer(10);
         String target = newPlayer(10);
+        TestSquads.leaderOf(socialStore, target);
         social.registerHelpRequest("hr-dup", target, HelpTargetKind.TREATING, "inst_hr_dup", "治疗伤兵",
                 System.currentTimeMillis() + 3_600_000L, System.currentTimeMillis());
 

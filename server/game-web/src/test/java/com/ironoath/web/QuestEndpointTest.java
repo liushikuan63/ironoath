@@ -37,6 +37,8 @@ import com.ironoath.web.quest.QuestProgressStore;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
 import com.ironoath.web.store.memory.InMemoryQuestProgressStore;
+import com.ironoath.web.social.TestSquads;
+import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：B12 §1 任务系统的端到端验证 —— 面板、领取、跨期清零、状态型目标的数据源覆盖。
@@ -62,6 +64,7 @@ class QuestEndpointTest {
 
     @Autowired private QuestAppService quests;
     @Autowired private QuestProgressStore questStore;
+    @Autowired private SocialStore socialStore;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
     @Autowired private InventoryRepository inventories;
@@ -240,6 +243,7 @@ class QuestEndpointTest {
     void helpPublishesHelpProgress() {
         String helper = newPlayer();
         String owner = newPlayer();
+        TestSquads.leaderOf(socialStore, owner);
         long now = timeService.serverNow();
         helpRegistrar.register("help-quest-test", owner,
                 com.ironoath.web.dto.generated.HelpTargetKind.BUILDING, "inst_quest",
