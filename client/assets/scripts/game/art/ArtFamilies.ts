@@ -10,14 +10,15 @@
  * 新族用 `item:` / `equip:` / `hero:` / `activity:` / `currency:` / `avatar:` 前缀。
  */
 
-export type ArtFamily = 'item' | 'equip'
+export type ArtFamily = 'item' | 'equip' | 'hero'
 
 /**
  * 族内成员 → resources 相对路径（不带 /spriteFrame，那是加载层的事）。
  *
- * <p>本表**只登记已随包下发且已有消费面板的族**（本轮：背包的 item/equip）。
- * 立绘/活动/头像/赛季币/抽卡横幅五族在 art-src 有草稿，但首包预算装不下全部 ——
- * 接它们之前要先做 resources 分包（收口清单 #112 的"下一刀"），
+ * <p>本表**只登记已随包下发且已有消费面板的族**（本轮：背包的 item/equip、武将面板的 hero）。
+ * 活动/头像/赛季币/抽卡横幅/弹窗封面等族在 art-src 有草稿，但首包余量已尽
+ * （G1 接入后 wechat release 实测 3.98MB / 4.00MB）——
+ * 接它们之前必须先做 resources 分包（收口清单 #112 的"下一刀"，进展见 素材缺口清单.md §五），
  * 届时补进本表并同步 tests/ArtFamilies.test.ts 的对账断言。
  */
 export const FAMILY_ASSETS: Record<ArtFamily, Readonly<Record<string, string>>> = {
@@ -54,6 +55,20 @@ export const FAMILY_ASSETS: Record<ArtFamily, Readonly<Record<string, string>>> 
     'tally-xuanwu': 'ui/generated/equip/equip-tally-xuanwu-v1',
     'tally-wenqu': 'ui/generated/equip/equip-tally-wenqu-v1',
   },
+  hero: {
+    hero_ssr_01: 'ui/generated/heroes/hero-ssr-01-v1',
+    hero_ssr_02: 'ui/generated/heroes/hero-ssr-02-v1',
+    hero_ssr_03: 'ui/generated/heroes/hero-ssr-03-v1',
+    hero_sr_01: 'ui/generated/heroes/hero-sr-01-v1',
+    hero_sr_02: 'ui/generated/heroes/hero-sr-02-v1',
+    hero_sr_03: 'ui/generated/heroes/hero-sr-03-v1',
+    hero_r_01: 'ui/generated/heroes/hero-r-01-v1',
+    hero_r_02: 'ui/generated/heroes/hero-r-02-v1',
+    hero_r_03: 'ui/generated/heroes/hero-r-03-v1',
+    hero_n_01: 'ui/generated/heroes/hero-n-01-v1',
+    hero_n_02: 'ui/generated/heroes/hero-n-02-v1',
+    hero_n_03: 'ui/generated/heroes/hero-n-03-v1',
+  },
 }
 
 export function familyArtKey(family: ArtFamily, member: string): string {
@@ -68,6 +83,11 @@ export function itemArtKeyForConfig(configId: string): string | null {
   }
   const item = ITEM_ICON_BY_CONFIG[configId]
   return item ?? null
+}
+
+/** 武将立绘键：hero.json 行 id 就是成员名；没有立绘的行返回 null，行退回稀有度图标。 */
+export function heroPortraitKey(heroConfigId: string): string | null {
+  return FAMILY_ASSETS.hero[heroConfigId] === undefined ? null : `hero:${heroConfigId}`
 }
 
 /** 装备槽位族键：行 id 里认不出家族/槽位组合时返回 null（映射表是唯一真相，不做字符串猜测）。 */

@@ -50,10 +50,16 @@ test('每个族键都有对应的运行时 PNG（键表 → 磁盘）', () => {
   assert.deepEqual(missing, [], `以下键在磁盘上没有图：\n${missing.join('\n')}`)
 })
 
-test('hero.json/activity.json 的行数没有偷偷变化（补族时要同步改本断言）', () => {
-  // 立绘/活动族尚未进运行时（等 resources 分包，见 ArtFamilies 注释），
+test('hero.json 每一行都有立绘，且键表与磁盘文件一一对应', () => {
+  const heroes = configIds('hero.json')
+  assert.equal(heroes.length, 12, 'hero.json 行数变了：素材族要同步补图或改本断言')
+  const unmapped = heroes.filter((id) => FAMILY_ASSETS.hero[id] === undefined)
+  assert.deepEqual(unmapped, [])
+})
+
+test('activity.json 的行数没有偷偷变化（接活动族时要同步改本断言）', () => {
+  // 活动族尚未进运行时（等 resources 分包，见 ArtFamilies 注释），
   // 但表行数若变了，下一轮补图的数量就得跟着变 —— 先钉住现状。
-  assert.equal(configIds('hero.json').length, 12)
   assert.equal(configIds('activity.json').length, 8)
 })
 

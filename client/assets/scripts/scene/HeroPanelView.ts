@@ -19,8 +19,8 @@ import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, 
 import { buildHeroPanel } from '../game/hero/HeroPanel'
 import type { HeroPanelView as HeroPanelData, HeroRow, LineupPanel } from '../game/hero/HeroPanel'
 import type { HeroListResp } from '../net/generated/HeroProtocol'
-import { applyCommandButton, applyIconSprite, rarityIconKey } from './ArtCatalog'
-import type { IconArtKey } from './ArtCatalog'
+import { applyAnyIconSprite, applyCommandButton, ensureFamily, rarityIconKey } from './ArtCatalog'
+import { heroPortraitKey } from '../game/art/ArtFamilies'
 import { NodePool } from './NodePool'
 import { applySystemUiFont } from './UiFont'
 
@@ -89,6 +89,12 @@ export class HeroPanelView extends Component {
     this.buildBackground(size.width, size.height)
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
+    // 立绘族按需拉取：先画一帧稀有度图标，立绘到了补一帧；加载失败就停在图标上
+    ensureFamily('hero').then((loaded) => {
+      if (loaded > 0 && this.isValid) {
+        this.render()
+      }
+    })
     if (this.pending !== null) {
       const pending = this.pending
       this.pending = null
@@ -314,7 +320,7 @@ export class HeroPanelView extends Component {
     const icon = node.getChildByName('Icon')
     if (icon !== null) {
       icon.active = draft.iconKey !== null
-        && applyIconSprite(icon, draft.iconKey, 52, 52)
+        && applyAnyIconSprite(icon, draft.iconKey, 52, 52)
     }
     // 整行点击也要先 off 再 on：节点来自池子，上一条数据留下的回调会指向别的武将/编队，
     // 这类 bug 的表现是「点了第 3 套编队却打开了第 1 套」，而且只在切页时出现，极难复现
@@ -332,7 +338,7 @@ export class HeroPanelView extends Component {
 interface RowDraft {
   readonly lines: readonly string[]
   readonly titleColor: Color
-  readonly iconKey: IconArtKey | null
+  readonly iconKey: string | null
   /** 武将行才有；编队行为 null，据此隐藏养成按钮 */
   readonly heroId: string | null
   /** 编队主行才有；点整行时把它交出去。缘分附注行为 null（点它不该打开编辑面板） */
@@ -350,7 +356,8 @@ function heroDrafts(heroes: readonly HeroRow[]): RowDraft[] {
         .join(' · '),
     ],
     titleColor: rarityColor(hero.rarity),
-    iconKey: rarityIconKey(hero.rarity),
+    // 有立绘用立绘，没有退回稀有度图标 —— 编队/抽卡以后都吃这一条映射
+    iconKey: heroPortraitKey(hero.heroId) ?? rarityIconKey(hero.rarity),
     heroId: hero.heroId,
     presetIndex: null,
   }))

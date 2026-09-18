@@ -96,13 +96,13 @@ async function collectSprites() {
 }
 
 /**
- * 背包两族（items 13 + equip 16）是按需加载，判据用 **resources 包 png 请求数的差值**：
- * 开背包前记一个数，开过背包后再记一个 —— 增量必须恰为 29。
- * 这条能失败的方式：BagPanelView 不再 ensureFamily → 增量为 0；
+ * 按需族（items 13 + equip 16 + hero 12 = 41）的判据用 **resources 包 png 请求数的差值**：
+ * 开背包前记基线，走完背包/武将/世界后记终值 —— 增量必须恰为 41。
+ * 能失败的方式：某面板不再 ensureFamily → 增量缺该族的张数；
  * 族表与磁盘脱节 → 某张 404（增量不足且 catalogWarnings 变红）；
- * 有人把两族塞回启动预载 → city 阶段基线被抬高，增量同样对不上。
+ * 有人把族图塞回启动预载 → city 阶段基线被抬高，增量同样对不上。
  */
-const FAMILY_PNG_EXPECTED = 29
+const FAMILY_PNG_EXPECTED = 41
 const resourcePngRequests = new Set()
 page.on('request', (request) => {
   const url = request.url()
@@ -290,7 +290,8 @@ const resourceRects = new Set(['gold', 'grain', 'iron', 'stamina', 'stone', 'woo
   .map((item) => `${item.x}:${item.y}`))
 const bagResourceIconMapped = bagIcons.some((sprite) => resourceRects.has(`${sprite.x}:${sprite.y}`))
 const armyIcons = army.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
-const heroIcons = hero.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
+const heroIcons = hero.filter((sprite) => sprite.name === 'Icon'
+  && (sprite.height === 128 || sprite.height === 256))
 const terrainTiles = world.filter((sprite) => sprite.name === 'Art' && sprite.width === 64)
 const terrainRects = new Set(terrainTiles.map((sprite) => `${sprite.x}:${sprite.y}`))
 const entityArt = world.filter((sprite) => sprite.name === 'Art' && sprite.width !== 64)
@@ -299,8 +300,10 @@ const iconMappings = {
   cityMain: cityIcons.some((sprite) => sprite.x === 128 && sprite.y === 128),
   bagResourceIcon: bagResourceIconMapped,
   armyInfantry: armyIcons.some((sprite) => sprite.x === 384 && sprite.y === 384),
-  // N 在索引第二行，R/SR/SSR 在第三行；两种都可能被新手池随机抽到。
-  heroRarity: heroIcons.some((sprite) => sprite.y === 128 || sprite.y === 256),
+  // 武将行现在优先画立绘（G1 族，256 高；Cocos 导入会裁透明边所以宽可能 <256），
+  // 稀有度图集图标（128 格）只是无立绘时的退路
+  heroPortrait: heroIcons.some((sprite) => sprite.height === 256)
+    || heroIcons.some((sprite) => sprite.y === 128 || sprite.y === 256),
 }
 const commandButtons = [...city, ...bag, ...army, ...hero, ...world]
   .filter((sprite) => sprite.insetLeft === 54 && sprite.insetTop === 40)
