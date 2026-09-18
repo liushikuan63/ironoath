@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 
@@ -34,9 +34,11 @@ async function inspectPanel(panel) {
     const nav = scene.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('PanelNav')
     return nav?.currentKey ?? null
   })
+  // 先截图再收集：建筑/背包数据可能在两次读之间到达，先收集会把"截图里有图标、计数却是 0"
+  // 的竞态固化成假红（排版轮真撞到过一次）
+  await page.screenshot({ path: path.join(OUT, `art-${panel}-runtime.png`) })
   const sprites = await collectSprites()
   const fonts = await collectFonts()
-  await page.screenshot({ path: path.join(OUT, `art-${panel}-runtime.png`) })
   return { activePanel, sprites, fonts }
 }
 
@@ -198,6 +200,43 @@ const hero = heroResult.sprites
 const world = worldResult.sprites
 
 /**
+ * 名牌与选中环只在放大档出现（zoom 0 按设计不写 caption）。
+ * 调 WorldMap 的公开 zoomIn **一档**后：屏内必须数得到非空名牌文字 —— 数不到就是
+ * drawCaptionPlate 断了线。两档会按设计切进城市档，截出来的就不是世界地图了
+ * （排版轮实测撞到过一次）。截图另存，供人工比对同类 SLG 的名牌观感。
+ */
+await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let map = null
+  const visit = (n) => {
+    if (map !== null) return
+    const c = n.getComponent && n.getComponent('WorldMap')
+    if (c !== null && c !== undefined) { map = c; return }
+    for (const child of n.children) visit(child)
+  }
+  visit(scene)
+  if (map === null) throw new Error('WorldMap 组件不在场景里')
+  map.zoomIn()
+})
+await page.waitForTimeout(900)
+const worldZoom = await collectSprites()
+const worldCaptions = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let count = 0
+  const visit = (n) => {
+    const label = n.getComponent && n.getComponent('cc.Label')
+    if (label !== null && label !== undefined && n.name === 'Caption'
+      && label.string !== '') {
+      count++
+    }
+    for (const child of n.children) visit(child)
+  }
+  visit(scene)
+  return count
+})
+await page.screenshot({ path: path.join(OUT, 'art-world-zoom-runtime.png') })
+
+/**
  * 行级画面判定：重开背包（种子道具已在包里）→ 切"背包"页签 → 逐页统计
  * 画出了 Sprite 的 Icon 行数。四件种子分属不同页签，总和必须 ≥ 4。
  * 能失败的方式：行没接族图（Icon active=false 或无 Sprite）→ 计数 0；
@@ -242,6 +281,14 @@ await page.screenshot({ path: path.join(OUT, 'art-bag-items-runtime.png') })
 
 const cityIcons = city.filter((sprite) => sprite.name === 'BuildingIcon')
 const bagIcons = bag.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
+// 资源行的图集映射断言原来钉死在 grain 的矩形上，而"哪几行在屏内"由服务端 map 顺序决定 ——
+// 换一次 dev 账号数据顺序就假红。改成：任一在屏资源行的图标矩形命中六类资源在图集里的矩形集合。
+const atlasIndex = JSON.parse(readFileSync('client/assets/resources/ui/generated/icons/icons-atlas.json', 'utf8'))
+const resourceRects = new Set(['gold', 'grain', 'iron', 'stamina', 'stone', 'wood']
+  .map((type) => atlasIndex.items.find((item) => item.key === `resources/${type}`))
+  .filter((item) => item !== undefined)
+  .map((item) => `${item.x}:${item.y}`))
+const bagResourceIconMapped = bagIcons.some((sprite) => resourceRects.has(`${sprite.x}:${sprite.y}`))
 const armyIcons = army.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
 const heroIcons = hero.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
 const terrainTiles = world.filter((sprite) => sprite.name === 'Art' && sprite.width === 64)
@@ -250,7 +297,7 @@ const entityArt = world.filter((sprite) => sprite.name === 'Art' && sprite.width
 const catalogWarnings = warnings.filter((message) => message.includes('[ArtCatalog]'))
 const iconMappings = {
   cityMain: cityIcons.some((sprite) => sprite.x === 128 && sprite.y === 128),
-  bagGrain: bagIcons.some((sprite) => sprite.x === 512 && sprite.y === 256),
+  bagResourceIcon: bagResourceIconMapped,
   armyInfantry: armyIcons.some((sprite) => sprite.x === 384 && sprite.y === 384),
   // N 在索引第二行，R/SR/SSR 在第三行；两种都可能被新手池随机抽到。
   heroRarity: heroIcons.some((sprite) => sprite.y === 128 || sprite.y === 256),
@@ -293,6 +340,7 @@ const result = {
     bagTab,
     commandButtons: commandButtons.length,
     fontLabels: fonts.length,
+    worldCaptions,
   },
   commandButtonSizes,
   commandButtonsNotSliced: commandButtonsNotSliced.map((sprite) => sprite.name),
@@ -328,6 +376,7 @@ if (errors.length > 0
   || terrainTiles.length === 0
   || entityArt.length === 0
   || familyAfterBag - familyBeforeBag !== FAMILY_PNG_EXPECTED
+  || worldCaptions === 0
   || bagTab.error !== undefined
   || bagTab.itemRows < 4
   || bagTab.iconRows < 4) {

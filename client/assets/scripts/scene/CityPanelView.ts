@@ -25,7 +25,6 @@ const { ccclass } = _decorator
 
 const COLOR_BACKGROUND = new Color(22, 18, 16, 255)
 const COLOR_PANEL = new Color(40, 33, 27, 255)
-const COLOR_EMPTY = new Color(31, 27, 23, 255)
 const COLOR_BUILDING = new Color(58, 46, 36, 255)
 const COLOR_BUILDING_UPGRADING = new Color(82, 61, 30, 255)
 const COLOR_BUILDING_DONE = new Color(48, 74, 48, 255)
@@ -210,6 +209,7 @@ export class CityPanelView extends Component {
     parent.addChild(grid)
     grid.addComponent(UITransform).setContentSize(new Size(CONTENT_WIDTH, GRID_HEIGHT))
     grid.setPosition(new Vec3(0, CARD_HEIGHT / 2 - PADDING - HEADER_HEIGHT - GRID_HEIGHT / 2, 0))
+    this.buildGround(grid)
     for (let index = 0; index < CITY_GRID_WIDTH * CITY_GRID_HEIGHT; index++) {
       const tile = new Node(`Grid-${index}`)
       tile.layer = grid.layer
@@ -237,6 +237,35 @@ export class CityPanelView extends Component {
       }
       this.gridTiles.push({ node: tile, graphics, icon, nameLabel, levelLabel, statusLabel })
     }
+  }
+
+  /**
+   * 棋盘地基：同类 SLG 的城界语言 —— 先有"地皮"，建筑才是"盖在上面"。
+   * 之前格子直接浮在面板底色上，读起来像表格而不像一座城。
+   */
+  private buildGround(grid: Node): void {
+    const ground = new Node('Ground')
+    ground.layer = grid.layer
+    grid.addChild(ground)
+    ground.addComponent(UITransform)
+    const graphics = ground.addComponent(Graphics)
+    const cellW = CELL_WIDTH + CELL_GAP
+    const cellH = CELL_HEIGHT + CELL_GAP
+    for (let row = 0; row < CITY_GRID_HEIGHT; row++) {
+      for (let column = 0; column < CITY_GRID_WIDTH; column++) {
+        const x = -CONTENT_WIDTH / 2 + column * cellW
+        const y = GRID_HEIGHT / 2 - (row + 1) * cellH
+        graphics.fillColor = (row + column) % 2 === 0
+          ? new Color(36, 30, 25, 255) : new Color(32, 27, 22, 255)
+        graphics.rect(x, y, cellW, cellH)
+        graphics.fill()
+      }
+    }
+    graphics.strokeColor = new Color(120, 92, 40, 120)
+    graphics.lineWidth = 2
+    graphics.roundRect(-CONTENT_WIDTH / 2 - 6, -GRID_HEIGHT / 2 - 6,
+      CONTENT_WIDTH + 12, GRID_HEIGHT + 12, 10)
+    graphics.stroke()
   }
 
   private buildActionBar(parent: Node): void {
@@ -407,34 +436,93 @@ export class CityPanelView extends Component {
     const selected = row !== null && row.id === this.selectedId
     const graphics = tile.graphics
     graphics.clear()
-    graphics.fillColor = row === null
-      ? COLOR_EMPTY
-      : row.collectable ? COLOR_BUILDING_DONE : row.upgrading ? COLOR_BUILDING_UPGRADING : COLOR_BUILDING
+    const left = -CELL_WIDTH / 2 + 2
+    const bottom = -CELL_HEIGHT / 2 + 2
+    const width = CELL_WIDTH - 4
+    const height = CELL_HEIGHT - 4
+    if (row === null) {
+      // 空地：虚线框 + 中央加号。同类 SLG 一眼可读的"这里能盖东西"；
+      // 之前是灰块写着「空地」，玩家要读字才知道那是可建造位
+      graphics.strokeColor = selected ? COLOR_COPPER_GOLD : new Color(96, 82, 66, 220)
+      graphics.lineWidth = 1
+      const dash = 5
+      for (const [x0, y0, x1, y1] of [
+        [left, bottom + height, left + width, bottom + height],
+        [left + width, bottom + height, left + width, bottom],
+        [left + width, bottom, left, bottom],
+        [left, bottom, left, bottom + height],
+      ] as const) {
+        let from = 0
+        const length = Math.hypot(x1 - x0, y1 - y0)
+        while (from < length) {
+          const t0 = from / length
+          const t1 = Math.min(1, (from + dash) / length)
+          graphics.moveTo(x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0)
+          graphics.lineTo(x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1)
+          from += dash * 2
+        }
+      }
+      graphics.stroke()
+      graphics.strokeColor = new Color(120, 106, 90, 200)
+      graphics.lineWidth = 2
+      graphics.moveTo(-6, 0)
+      graphics.lineTo(6, 0)
+      graphics.moveTo(0, -6)
+      graphics.lineTo(0, 6)
+      graphics.stroke()
+      tile.nameLabel.string = ''
+      tile.levelLabel.string = ''
+      tile.statusLabel.string = ''
+      tile.icon.active = false
+      return
+    }
+    graphics.fillColor = row.collectable ? COLOR_BUILDING_DONE
+      : row.upgrading ? COLOR_BUILDING_UPGRADING : COLOR_BUILDING
+    graphics.roundRect(left, bottom, width, height, 6)
+    graphics.fill()
+    // 纵深两笔：下缘投影 + 上缘高光，格子从"贴纸"变成"墩台"
+    graphics.fillColor = new Color(12, 9, 7, 130)
+    graphics.rect(left + 3, bottom, width - 6, 3)
+    graphics.fill()
+    graphics.fillColor = new Color(255, 236, 200, 22)
+    graphics.rect(left + 3, bottom + height - 2, width - 6, 2)
+    graphics.fill()
     graphics.strokeColor = selected ? COLOR_COPPER_GOLD : COLOR_PANEL
     graphics.lineWidth = selected ? 2 : 1
-    graphics.roundRect(-CELL_WIDTH / 2 + 2, -CELL_HEIGHT / 2 + 2, CELL_WIDTH - 4, CELL_HEIGHT - 4, 6)
-    graphics.fill()
+    graphics.roundRect(left, bottom, width, height, 6)
     graphics.stroke()
 
-    tile.nameLabel.string = row === null ? '空地' : shortName(row.configId)
-    tile.levelLabel.string = row === null ? '' : `Lv${row.level}`
-    tile.statusLabel.string = row === null ? '' : tileStatus(row)
-    tile.nameLabel.color = row === null ? COLOR_TEXT_DIM : COLOR_TEXT
-    tile.levelLabel.color = row?.collectable ? COLOR_GOOD : COLOR_TEXT_DIM
+    // 等级圆徽：右上角小铜圈里的数字，同类 SLG 的等级通用落位
+    const badgeX = CELL_WIDTH / 2 - 12
+    const badgeY = CELL_HEIGHT / 2 - 11
+    graphics.fillColor = new Color(16, 13, 11, 235)
+    graphics.circle(badgeX, badgeY, 9)
+    graphics.fill()
+    graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.circle(badgeX, badgeY, 9)
+    graphics.stroke()
+    tile.levelLabel.string = `Lv${row.level}`
+    tile.levelLabel.color = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
+    tile.levelLabel.node.setPosition(new Vec3(badgeX, badgeY, 0))
+    tile.levelLabel.getComponent(UITransform)?.setContentSize(new Size(20, 14))
+
+    tile.nameLabel.string = shortName(row.configId)
+    tile.statusLabel.string = tileStatus(row)
+    tile.nameLabel.color = COLOR_TEXT
     tile.statusLabel.color = row?.paused ? COLOR_WARNING
       : row?.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-    const iconVisible = row !== null
-      && applyIconSprite(tile.icon, buildingIconKey(row.configId), 30, 30)
+    const iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), 30, 30)
     tile.icon.active = iconVisible
 
     if (row?.upgrading) {
       const ratio = row.collectable ? 1 : Math.min(1, Math.max(0, Number.parseInt(row.progressText ?? '0', 10) / 100))
-      const width = CELL_WIDTH - 16
+      const barWidth = CELL_WIDTH - 16
       graphics.fillColor = COLOR_PANEL
-      graphics.rect(-width / 2, -CELL_HEIGHT / 2 + 4, width, 3)
+      graphics.rect(-barWidth / 2, -CELL_HEIGHT / 2 + 4, barWidth, 3)
       graphics.fill()
       graphics.fillColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-      graphics.rect(-width / 2, -CELL_HEIGHT / 2 + 4, width * ratio, 3)
+      graphics.rect(-barWidth / 2, -CELL_HEIGHT / 2 + 4, barWidth * ratio, 3)
       graphics.fill()
     }
   }

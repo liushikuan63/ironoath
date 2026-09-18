@@ -56,6 +56,9 @@ const COLOR_MARCH = new Color(184, 134, 11, 255)
 const COLOR_BUILDING = new Color(58, 86, 120, 255)
 /** 纠偏闪光（B07 验收 10）：位置被服务端校正时短暂提亮，让玩家知道「刚才那一下不是卡了」 */
 const COLOR_CORRECTED = new Color(255, 236, 180, 255)
+/** 名牌底板与边缘：比背景亮一档的暗牌 + 半截铜边，字浮在牌上 */
+const COLOR_PLATE = new Color(14, 12, 10, 225)
+const COLOR_PLATE_EDGE = new Color(120, 92, 40, 200)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 
@@ -102,6 +105,10 @@ interface MarkerRefs {
   readonly graphicsNode: Node
   readonly graphics: Graphics
   readonly label: Label
+  /** 名牌底板：文字后面那块暗底铜边的圆角小牌（同类 SLG 的通用名牌语言） */
+  readonly plate: Graphics
+  /** 最近一次画出的本体尺寸：命中测试与选中环半径都读它，不再各处猜一个 */
+  size: number
 }
 
 @ccclass('WorldMap')
@@ -158,6 +165,16 @@ export class WorldMap extends Component {
   private marchPanel: MarchPanelView | null = null
   private marchButtonCaption: Label | null = null
   private lastMarchButtonCaption = ''
+  /**
+   * 点选中的实体键（`type:id`）。同类 SLG 的通用交互：点地图单位 → 脚下出选中环。
+   * 只做表现，不给任何操作入口 —— 行军/集结仍走 marchPanel，避免在这里长出第二套判定。
+   */
+  private selectedKey: string | null = null
+  private selectionRing: Node | null = null
+  /** 所有行军的轨迹线共用一张 Graphics，每帧重画（与实体同帧，不额外要数据） */
+  private marchLines: Node | null = null
+  /** 单指按下位置与时刻：位移小且快才判成"点击"，否则那是拖动的一部分 */
+  private tapStart: { x: number; y: number; at: number } | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -167,6 +184,8 @@ export class WorldMap extends Component {
     this.tilePool = new NodePool(this.mapLayer, () => this.createMarker(), 9)
     this.entityPool = new NodePool(this.mapLayer, () => this.createMarker())
     this.marchPool = new NodePool(this.mapLayer, () => this.createMarker())
+    this.marchLines = this.createOverlayGraphics('MarchLines')
+    this.selectionRing = this.createOverlayGraphics('SelectionRing')
     this.buildHud(size.width, size.height)
     this.marchPanel = new MarchPanelView(this.hudLayer ?? this.node, size.width, size.height)
     this.marchPanel.onClose = () => {
@@ -320,6 +339,17 @@ export class WorldMap extends Component {
     return node
   }
 
+  /** mapLayer 上的一张共用 Graphics 覆盖层（行军线、选中环这类"每帧重画"的装饰）。 */
+  private createOverlayGraphics(name: string): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.mapLayer?.addChild(node)
+    node.addComponent(UITransform)
+    node.addComponent(Graphics)
+    node.active = false
+    return node
+  }
+
   private buildBackground(width: number, height: number): void {
     const background = new Node('Background')
     background.layer = this.node.layer
@@ -449,6 +479,11 @@ export class WorldMap extends Component {
     node.addChild(graphicsNode)
     graphicsNode.addComponent(UITransform)
     const graphics = graphicsNode.addComponent(Graphics)
+    const plateNode = new Node('CaptionPlate')
+    plateNode.layer = node.layer
+    node.addChild(plateNode)
+    plateNode.addComponent(UITransform)
+    const plate = plateNode.addComponent(Graphics)
     const caption = new Node('Caption')
     caption.layer = node.layer
     node.addChild(caption)
@@ -458,7 +493,7 @@ export class WorldMap extends Component {
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
     label.color = COLOR_TEXT
-    this.refs.set(node, { spriteNode, graphicsNode, graphics, label })
+    this.refs.set(node, { spriteNode, graphicsNode, graphics, label, plate, size: 0 })
     return node
   }
 
@@ -471,9 +506,12 @@ export class WorldMap extends Component {
     this.node.on('touch-start', (event: EventTouch) => {
       this.syncActiveTouches(event)
       if (this.activeTouches.size >= 2) {
+        this.tapStart = null
         this.beginPinch()
         return
       }
+      const start = event.getUILocation()
+      this.tapStart = { x: start.x, y: start.y, at: sys.now() }
       this.pinchAnchorDistance = null
       const suppressed = this.suppressDragUntilRelease
       if (!suppressed) {
@@ -509,7 +547,20 @@ export class WorldMap extends Component {
         }
         return
       }
+      const wasDragging = this.dragging
       this.dragging = false
+      // 一次"点击"= 单指、按下期间没被双指手势污染、位移小于 10px、没超过 400ms。
+      // 判定放这里而不是 touch-end 单独监听：两条通道并存会出现"同一下既算拖又算点"。
+      const tap = this.tapStart
+      this.tapStart = null
+      if (tap !== null && wasDragging && !this.pinchZoomTriggered
+        && this.activeTouches.size === 0) {
+        const end = event.getUILocation()
+        const moved = Math.hypot(end.x - tap.x, end.y - tap.y)
+        if (moved < 10 && sys.now() - tap.at < 400) {
+          this.handleTap(end)
+        }
+      }
       // 双指抬起一根时，getAllTouches 仍可能只剩一根；必须等归零，否则剩余手指会立刻拖动。
       if (this.activeTouches.size === 0) {
         this.pinchAnchorDistance = null
@@ -662,6 +713,7 @@ export class WorldMap extends Component {
     this.renderTiles(frame.tiles, model.chunkSize, cell)
     this.renderEntities(frame.tiles, cell, zoom)
     this.renderMarches(frame.marches, cell)
+    this.updateSelection()
     this.renderHud(frame)
     this.renderMarchPanel(frame.marches)
   }
@@ -745,6 +797,12 @@ export class WorldMap extends Component {
     if (pool === null) {
       return
     }
+    const lines = this.marchLines
+    const lineGraphics = lines !== null ? lines.getComponent(Graphics) : null
+    if (lines !== null && lineGraphics !== null) {
+      lines.active = marches.length > 0
+      lineGraphics.clear()
+    }
     const seen = new Set<string>()
     for (const march of marches) {
       seen.add(march.marchId)
@@ -755,6 +813,9 @@ export class WorldMap extends Component {
       }
       const node = this.acquireInto(pool, this.drawnMarches, march.marchId)
       node.setPosition(new Vec3((march.x + 0.5) * cell, (march.y + 0.5) * cell, 0))
+      if (lines !== null && lineGraphics !== null) {
+        this.drawMarchTrail(lineGraphics, march, cell)
+      }
       const remaining = this.flash.get(march.marchId) ?? 0
       if (remaining > 0) {
         this.flash.set(march.marchId, remaining - 1)
@@ -854,12 +915,12 @@ export class WorldMap extends Component {
     if (refs === undefined) {
       return
     }
+    refs.size = size
     const art = entityArtKey(type)
     if (art !== null && applySimpleSprite(refs.spriteNode, art, size, size)) {
       refs.spriteNode.active = true
       refs.graphicsNode.active = false
-      refs.label.string = caption
-      refs.label.node.setPosition(new Vec3(0, size / 2 + 8, 0))
+      this.drawCaptionPlate(refs, caption, size)
       return
     }
     refs.spriteNode.active = false
@@ -875,8 +936,129 @@ export class WorldMap extends Component {
       graphics.roundRect(-size / 2, -size / 2, size, size, size / 4)
     }
     graphics.fill()
-    refs.label.string = caption
-    refs.label.node.setPosition(new Vec3(0, size / 2 + 8, 0))
+    this.drawCaptionPlate(refs, caption, size)
+  }
+
+  /**
+   * 名牌：暗底 + 铜色描边的圆角小牌，文字浮在牌上 —— 同类 SLG 在大地图上标注
+   * 昵称/等级的统一语言。以前文字直接压在草地上，缩放一档就糊进地形里读不出来。
+   * 宽度按字数估（CJK 12px 字号 ≈ 每字 13px），上限 150，超长的昵称自然截断在牌内。
+   */
+  private drawCaptionPlate(refs: MarkerRefs, caption: string, size: number): void {
+    const label = refs.label
+    const plate = refs.plate
+    const y = size / 2 + 11
+    if (caption === '') {
+      label.string = ''
+      plate.enabled = false
+      return
+    }
+    plate.enabled = true
+    label.string = caption
+    label.node.setPosition(new Vec3(0, y, 0))
+    const width = Math.min(150, 14 + caption.length * 13)
+    plate.clear()
+    plate.fillColor = COLOR_PLATE
+    plate.roundRect(-width / 2, y - 9, width, 18, 5)
+    plate.fill()
+    plate.strokeColor = COLOR_PLATE_EDGE
+    plate.lineWidth = 1
+    plate.roundRect(-width / 2, y - 9, width, 18, 5)
+    plate.stroke()
+  }
+
+  /** 点击命中：把 UI 坐标折进 mapLayer 本地系，找半径内最近的实体。点空处清选中。 */
+  private handleTap(uiLocation: { x: number; y: number }): void {
+    const layer = this.mapLayer
+    const transform = layer !== null ? layer.getComponent(UITransform) : null
+    if (layer === null || transform === null) {
+      return
+    }
+    const local = transform.convertToNodeSpaceAR(new Vec3(uiLocation.x, uiLocation.y, 0))
+    let bestKey: string | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const [key, node] of this.drawnEntities) {
+      const refs = this.refs.get(node)
+      if (refs === undefined) {
+        continue
+      }
+      const distance = Math.hypot(node.position.x - local.x, node.position.y - local.y)
+      if (distance < refs.size * 0.62 + 6 && distance < bestDistance) {
+        bestKey = key
+        bestDistance = distance
+      }
+    }
+    this.selectedKey = bestKey
+  }
+
+  /** 选中环：脚下铜圈 + 四向刻度。实体滑出视野时环跟着藏，滑回来还在 —— 键不清，只藏环。 */
+  private updateSelection(): void {
+    const ring = this.selectionRing
+    if (ring === null) {
+      return
+    }
+    const node = this.selectedKey === null ? undefined : this.drawnEntities.get(this.selectedKey)
+    const refs = node === undefined ? undefined : this.refs.get(node)
+    if (node === undefined || refs === undefined) {
+      ring.active = false
+      return
+    }
+    ring.active = true
+    ring.setPosition(node.position)
+    const graphics = ring.getComponent(Graphics)
+    if (graphics === null) {
+      return
+    }
+    const radius = refs.size * 0.62 + 6
+    graphics.clear()
+    graphics.strokeColor = COLOR_MARCH
+    graphics.lineWidth = 2
+    graphics.circle(0, 0, radius)
+    graphics.stroke()
+    for (const [cos, sin] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      graphics.moveTo(cos * (radius - 4), sin * (radius - 4))
+      graphics.lineTo(cos * (radius + 5), sin * (radius + 5))
+    }
+    graphics.stroke()
+  }
+
+  /**
+   * 一条行军的轨迹：出发→当前画压暗实线（走过的路），当前→目标画虚线（还要走的），
+   * 目标点一个小环。同类 SLG 的行军可读性全靠这三件套 —— 没有线，玩家只剩一个
+   * 不知道从哪来、往哪去的图标。数据全用现帧的插值位置，不另起一条时间线。
+   */
+  private drawMarchTrail(graphics: Graphics, march: MarchRender, cell: number): void {
+    const fx = (march.from.x + 0.5) * cell
+    const fy = (march.from.y + 0.5) * cell
+    const cx = (march.x + 0.5) * cell
+    const cy = (march.y + 0.5) * cell
+    const tx = (march.to.x + 0.5) * cell
+    const ty = (march.to.y + 0.5) * cell
+    graphics.lineWidth = 2
+    graphics.strokeColor = new Color(184, 134, 11, 110)
+    graphics.moveTo(fx, fy)
+    graphics.lineTo(cx, cy)
+    graphics.stroke()
+    graphics.strokeColor = new Color(226, 214, 190, 190)
+    const dx = tx - cx
+    const dy = ty - cy
+    const length = Math.hypot(dx, dy)
+    if (length > 1) {
+      const step = 10
+      const gap = 7
+      let travelled = 0
+      while (travelled < length) {
+        const from = travelled / length
+        const to = Math.min(1, (travelled + step) / length)
+        graphics.moveTo(cx + dx * from, cy + dy * from)
+        graphics.lineTo(cx + dx * to, cy + dy * to)
+        travelled += step + gap
+      }
+      graphics.stroke()
+    }
+    graphics.strokeColor = new Color(226, 214, 190, 150)
+    graphics.circle(tx, ty, Math.max(5, cell * 0.16))
+    graphics.stroke()
   }
 
   /**

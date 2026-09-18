@@ -100,6 +100,8 @@ declare module 'cc' {
      */
     getChildByName(name: string): Node | null
     layer: number
+    /** 局部坐标。地图命中测试要读它，只给 setPosition 不给读是半个 API。 */
+    position: Vec3
     addChild(child: Node): void
     removeFromParent(): void
     destroy(): boolean
@@ -128,6 +130,8 @@ declare module 'cc' {
     setContentSize(size: Size): void
     setContentSize(width: number, height: number): void
     setAnchorPoint(x: number, y: number): void
+    /** 世界（UI 屏幕）坐标折到本节点局部系：地图点选命中用的就是它。 */
+    convertToNodeSpaceAR(worldPoint: Vec3): Vec3
   }
 
   /** 矢量绘图组件。占位美术用它在运行时画纯色块，不需要任何图片资源。 */
@@ -138,6 +142,13 @@ declare module 'cc' {
     clear(): void
     rect(x: number, y: number, w: number, h: number): void
     roundRect(x: number, y: number, w: number, h: number, r: number): void
+    circle(cx: number, cy: number, r: number): void
+    ellipse(cx: number, cy: number, rx: number, ry: number): void
+    arc(cx: number, cy: number, r: number, startAngle: number, endAngle: number,
+        counterclockwise?: boolean): void
+    moveTo(x: number, y: number): void
+    lineTo(x: number, y: number): void
+    close(): void
     fill(): void
     stroke(): void
   }
