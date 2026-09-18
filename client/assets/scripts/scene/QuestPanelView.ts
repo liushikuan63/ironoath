@@ -46,8 +46,11 @@ const HEADER_HEIGHT = 64
 const PADDING = 16
 /** 一屏最多画几行。超出的要靠 ScrollView（编辑器里补），占位期截断显示并说明 */
 const MAX_VISIBLE_ROWS = 8
-/** 活动行左侧图标列的占位（26 宽图标 + 8 间隙）：文本从这一列之后起排 */
-const ACTIVITY_ICON_COLUMN = 34
+/**
+ * 行左侧那一列图标位（26 宽图标 + 8 间隙）。**三个页签共用同一个文本起点**：
+ * 只有活动页真的画图，任务/成就页留空 —— 否则切页签时整列文字会横向跳 34px。
+ */
+const ROW_ICON_COLUMN = 34
 /** 三选一弹窗里每个候选按钮的高度与间距 */
 const OPTION_HEIGHT = 56
 const OPTION_GAP = 8
@@ -211,10 +214,12 @@ export class QuestPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
     graphics.fill()
 
-    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 19)
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, 12, COLOR_TEXT, 19)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
-    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -14, COLOR_TEXT_DIM, 14)
+    title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, -14, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 150, 0, COLOR_TEXT, 15)
     status.horizontalAlign = Label.HorizontalAlign.RIGHT
 
@@ -450,12 +455,12 @@ export class QuestPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
     graphics.fill()
 
-    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + ACTIVITY_ICON_COLUMN, 12, COLOR_TEXT, 19)
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, 12, COLOR_TEXT, 19)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     // 锚点必须挪到左中：addLabel 给的默认锚点是中心，文本框会以 x 为中轴向两边长，
     // 于是四五个字的标题会压到左边那一列图标上（真跑截图里看到的就是这个）。
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + ACTIVITY_ICON_COLUMN, -14, COLOR_TEXT_DIM, 14)
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, -14, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 150, 0, COLOR_TEXT, 15)

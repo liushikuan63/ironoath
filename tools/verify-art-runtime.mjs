@@ -300,8 +300,11 @@ const activityTab = await page.evaluate(() => {
   }
   visit(scene)
   if (panel === null) return { error: 'QuestPanelView 不在场景里' }
+  // 切页签前先记下任务页的文本列起点：三个页签必须共用同一列，否则切页时整列文字横跳
+  const questTitle = panel.drawnRows.length > 0 ? panel.drawnRows[0].getChildByName('Title') : null
+  const questTitleX = questTitle !== null && questTitle !== undefined ? questTitle.position.x : null
   panel.switchTab('activity')
-  return { ok: true }
+  return { ok: true, questTitleX }
 })
 await page.waitForTimeout(1800)
 const activityDrawn = await page.evaluate(() => {
@@ -336,7 +339,14 @@ const activityDrawn = await page.evaluate(() => {
       overlaps++
     }
   }
-  return { activityRows: rows.length, drawnRows: panel.drawnActivity.length, iconRows, overlaps }
+  return {
+    activityRows: rows.length,
+    drawnRows: panel.drawnActivity.length,
+    iconRows,
+    overlaps,
+    activityTitleX: panel.drawnActivity.length > 0
+      ? panel.drawnActivity[0].getChildByName('Title')?.position.x ?? null : null,
+  }
 })
 await page.screenshot({ path: path.join(OUT, 'art-quest-activity-runtime.png') })
 const familyAfterActivity = resourcePngRequests.size
@@ -455,6 +465,9 @@ if (errors.length > 0
   || activityDrawn.error !== undefined
   || activityDrawn.activityRows !== 8
   || activityDrawn.iconRows !== activityDrawn.drawnRows
-  || activityDrawn.overlaps > 0) {
+  || activityDrawn.overlaps > 0
+  || activityTab.questTitleX === null
+  || activityDrawn.activityTitleX === null
+  || Math.abs(activityTab.questTitleX - activityDrawn.activityTitleX) > 0.5) {
   process.exitCode = 1
 }
