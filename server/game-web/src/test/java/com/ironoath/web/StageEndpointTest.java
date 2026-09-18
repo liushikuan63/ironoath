@@ -501,4 +501,18 @@ class StageEndpointTest {
         assertThat(inventories.findByPlayerId(playerId).orElseThrow().equipInstances())
                 .as("通章装备必须真的落到背包里（发奖走过 PlayerBag 的 EQUIP 路由）").hasSize(1);
     }
+
+    @Test
+    @DisplayName("验收8 之一：打输一关真的会记 STUCK_STAGE（触发只记时刻，弹不弹由读时判）")
+    void losingAStageMarksStuckStage() {
+        String playerId = newPlayer();
+        giveTroops(playerId, Map.of(UNIT, 1L));
+
+        ChallengeStageResp lost = stageAppService.challenge(playerId, new ChallengeStageReq(
+                newRequestId(), STAGE_1, List.of(new StageUnit(UNIT, 1L)), List.of()));
+
+        assertThat(lost.stars().cleared()).as("1 个兵打不过第一关（夹具前提）").isFalse();
+        assertThat(players.findByPlayerId(playerId).orElseThrow().giftPopup().triggeredAtOf("STUCK_STAGE"))
+                .as("卡关是三类触发之一，输了就该记下时刻").isPositive();
+    }
 }

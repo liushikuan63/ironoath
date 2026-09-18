@@ -299,6 +299,14 @@ public class CityAppService {
             questEvents.progress(playerId, com.ironoath.core.quest.GoalType.UPGRADE_BUILDING,
                     city.building(instanceId).configId(), 1L, now);
         }
+        if (!settlement.harvested().isEmpty()) {
+            // 建筑落成是一类触发（GiftCfg.Trigger.BUILDING_DONE）。打标打在**手里这份 player** 上，
+            // 由它的持有者持久化（与 PlayerGuide/PlayerPaid/PlayerTech 同一条纪律）。
+            // 为什么打在这里而不是 collect：收割发生在**任意一次结算**里（实测：建造令把剩余打到 0 之后，
+            // 收割是在那次 /item/use 的 load 里完成的），只盯 collect 会漏掉这一类路径
+            com.ironoath.web.pay.GiftTriggerMarks.markOn(player,
+                    com.ironoath.config.cfg.GiftCfg.Trigger.BUILDING_DONE, now);
+        }
         return new Ctx(player, city, rules, cityVersion, settlement);
     }
 
@@ -1007,13 +1015,6 @@ public class CityAppService {
             }
         }
 
-        if (!settlement.harvested().isEmpty()) {
-            // 建筑落成是一类触发（GiftCfg.Trigger.BUILDING_DONE）。打标打在**这份存档**上，
-            // 跟着下面那次 players.save 落库 —— 落点刻意选写路径（collect）：
-            // 读路径（/city/list）也会惰性结算收割，但那份存档不一定被持久化
-            com.ironoath.web.pay.GiftTriggerMarks.markOn(player,
-                    com.ironoath.config.cfg.GiftCfg.Trigger.BUILDING_DONE, now);
-        }
         players.save(player);
         cities.save(playerId, city, ctx.cityVersion());
         LOG.info("收割升级 playerId={} 本次收割={} 入账产出={}",

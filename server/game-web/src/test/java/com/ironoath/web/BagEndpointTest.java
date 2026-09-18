@@ -349,6 +349,24 @@ class BagEndpointTest {
     }
 
     @Test
+    @DisplayName("验收8 之三：建筑落成真的会记 BUILDING_DONE（加速到 0 ⇒ 收割那一刻打标）")
+    void finishingABuildingMarksBuildingDone() {
+        String playerId = newPlayer();
+        CityUpgradeResp upgrade = startUpgrade(playerId, "lumber_camp", 1, 1);
+        extendUpgrade(playerId, upgrade.buildingId(), 10L);
+        giveItems(playerId, "item_speedup_build_8h", 1L);
+        bagAppService.useItem(playerId, new ItemUseReq(
+                newRequestId(), "item_speedup_build_8h", 1L, upgrade.buildingId()));
+        assertThat(remainingOf(playerId, upgrade.buildingId())).as("加速到 0 才算落成（夹具前提）").isZero();
+
+        cityAppService.collect(playerId, new com.ironoath.web.dto.generated.CityCollectReq(
+                newRequestId(), upgrade.buildingId()));
+
+        assertThat(players.findByPlayerId(playerId).orElseThrow().giftPopup().triggeredAtOf("BUILDING_DONE"))
+                .as("落成是一类触发：收割那一刻要记下时刻").isPositive();
+    }
+
+    @Test
     @DisplayName("加速道具不给 targetId 就拒绝：B04 §4 要求先弹出可选目标再由玩家选")
     void speedUpItemRequiresTarget() {
         String playerId = newPlayer();

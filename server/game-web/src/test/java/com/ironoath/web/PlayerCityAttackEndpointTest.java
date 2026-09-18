@@ -483,4 +483,21 @@ class PlayerCityAttackEndpointTest {
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
     }
+
+    @Test
+    @DisplayName("验收8 之二：出征战败真的会记 BATTLE_LOST，而赢的一方不记（平局也不算）")
+    void losingAnAttackMarksBattleLost() {
+        // 必须落在同一个战力圈层内（10 打 5000 会被"无法发起进攻"挡在门外），
+        // 所以「输」用同圈层内的少打多来造：1300 vs 1800（上界是攻方战力的 4 倍，1800 守军贴着线内）
+        Fixture pair = readyPair(1_300L, 1_800L);
+
+        String marchId = sendAttack(pair.attacker(), pair.defenderCoord(),
+                Map.of("unit_infantry_t1", 1_300L));
+        arriveAndProcess(marchId);
+
+        assertThat(players.findByPlayerId(pair.attacker()).orElseThrow().giftPopup().triggeredAtOf("BATTLE_LOST"))
+                .as("输的一方要记下时刻").isPositive();
+        assertThat(players.findByPlayerId(pair.defender()).orElseThrow().giftPopup().triggeredAtOf("BATTLE_LOST"))
+                .as("赢的一方不该被记成战败").isZero();
+    }
 }
