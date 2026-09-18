@@ -23,6 +23,8 @@ import type { ActivityListResp } from '../net/generated/ActivityProtocol'
 import { buildActivityList } from '../game/activity/ActivityPanel'
 import type { ActivityListView, ActivityRow } from '../game/activity/ActivityPanel'
 import { NodePool } from './NodePool'
+import { applyAnyIconSprite, ensureFamily } from './ArtCatalog'
+import { activityIconKey } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -44,6 +46,8 @@ const HEADER_HEIGHT = 64
 const PADDING = 16
 /** 一屏最多画几行。超出的要靠 ScrollView（编辑器里补），占位期截断显示并说明 */
 const MAX_VISIBLE_ROWS = 8
+/** 活动行左侧图标列的占位（26 宽图标 + 8 间隙）：文本从这一列之后起排 */
+const ACTIVITY_ICON_COLUMN = 34
 /** 三选一弹窗里每个候选按钮的高度与间距 */
 const OPTION_HEIGHT = 56
 const OPTION_GAP = 8
@@ -118,6 +122,13 @@ export class QuestPanelView extends Component {
       this.pendingActivity = null
       this.attachActivity(pending.resp, pending.nowMs)
     }
+    // 活动族图不进启动预载（ArtCatalog 的族加载纪律）：面板打开时拉一次，
+    // 到货后重画当前页；拉不到就保持 Graphics 占位，行不会空出来。
+    ensureFamily('activity').then((loaded) => {
+      if (loaded > 0 && this.isValid) {
+        this.render()
+      }
+    })
   }
 
   override onDestroy(): void {
@@ -422,9 +433,14 @@ export class QuestPanelView extends Component {
         button.on('touch-start', (_event: EventTouch) => this.onClaimActivity?.(row.activityId))
       }
     }
+    const icon = node.getChildByName('Icon')
+    if (icon !== null) {
+      const iconKey = activityIconKey(row.activityId)
+      icon.active = iconKey !== null && applyAnyIconSprite(icon, iconKey, 26, 26)
+    }
   }
 
-  /** 活动行的节点：标题 / 进度+剩余 / 状态 / 领取按钮。与任务行同宽同高，视觉上是一条流水线。 */
+  /** 活动行的节点：活动图标 / 标题 / 进度+剩余 / 状态 / 领取按钮。与任务行同宽同高，视觉上是一条流水线。 */
   private createActivityRow(): Node {
     const node = new Node('ActivityRow')
     node.layer = this.node.layer
@@ -434,10 +450,14 @@ export class QuestPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
     graphics.fill()
 
-    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 19)
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + ACTIVITY_ICON_COLUMN, 12, COLOR_TEXT, 19)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
-    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -14, COLOR_TEXT_DIM, 14)
+    // 锚点必须挪到左中：addLabel 给的默认锚点是中心，文本框会以 x 为中轴向两边长，
+    // 于是四五个字的标题会压到左边那一列图标上（真跑截图里看到的就是这个）。
+    title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + ACTIVITY_ICON_COLUMN, -14, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 150, 0, COLOR_TEXT, 15)
     status.horizontalAlign = Label.HorizontalAlign.RIGHT
 
@@ -455,6 +475,12 @@ export class QuestPanelView extends Component {
     buttonGraphics.stroke()
     const caption = this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 15)
     caption.string = '领取'
+    // Icon 挂在最后：renderActivityRow 按 children 下标取文本，插在中间会错位。
+    const icon = new Node('Icon')
+    icon.layer = node.layer
+    node.addChild(icon)
+    icon.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + 13, 0, 0))
+    icon.addComponent(UITransform).setContentSize(new Size(26, 26))
     return node
   }
 

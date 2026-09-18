@@ -103,6 +103,8 @@ async function collectSprites() {
  * 有人把族图塞回启动预载 → city 阶段基线被抬高，增量同样对不上。
  */
 const FAMILY_PNG_EXPECTED = 41
+/** 活动族（activity.json 八行）单独量：任务面板在 bag/hero 之后才打开，混进上面那条会互相遮蔽。 */
+const ACTIVITY_PNG_EXPECTED = 8
 const resourcePngRequests = new Set()
 page.on('request', (request) => {
   const url = request.url()
@@ -279,6 +281,66 @@ const bagTab = await page.evaluate(() => {
 await page.waitForTimeout(400)
 await page.screenshot({ path: path.join(OUT, 'art-bag-items-runtime.png') })
 
+/**
+ * G4 活动族：任务面板的"活动"页签（活动列表在面板 onShow 时由 AppRoot 拉，不用自己发请求）。
+ * 切页签 → 等数据到货 → 数"画出 Sprite 的 Icon 行数"。
+ * 能失败的方式：行没接族图 → iconRows 为 0；族表与磁盘脱节 → png 请求数不足 8 且 catalogWarnings 变红；
+ * activity.json 加了新行而映射没跟上 → 那一行走 null 图标，iconRows < activityRows。
+ */
+const familyBeforeActivity = resourcePngRequests.size
+await inspectPanel('quest')
+const activityTab = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let panel = null
+  const visit = (n) => {
+    if (panel !== null) return
+    const c = n.getComponent && n.getComponent('QuestPanelView')
+    if (c !== null && c !== undefined) { panel = c; return }
+    for (const child of n.children) visit(child)
+  }
+  visit(scene)
+  if (panel === null) return { error: 'QuestPanelView 不在场景里' }
+  panel.switchTab('activity')
+  return { ok: true }
+})
+await page.waitForTimeout(1800)
+const activityDrawn = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let panel = null
+  const visit = (n) => {
+    if (panel !== null) return
+    const c = n.getComponent && n.getComponent('QuestPanelView')
+    if (c !== null && c !== undefined) { panel = c; return }
+    for (const child of n.children) visit(child)
+  }
+  visit(scene)
+  if (panel === null) return { error: 'QuestPanelView 不在场景里' }
+  const rows = panel.activity === null || panel.activity === undefined ? [] : panel.activity.rows
+  let iconRows = 0
+  // 图标列与文本列的几何关系：只数"图标画出来了"会漏掉"图标压在标题上"这种排版事故
+  // （活动行第一版就是这样，截图里标题被图标糊住）。
+  let overlaps = 0
+  for (const row of panel.drawnActivity) {
+    const icon = row.getChildByName('Icon')
+    const title = row.getChildByName('Title')
+    const sprite = icon !== null && icon !== undefined ? icon.getComponent('cc.Sprite') : null
+    if (icon !== null && icon.active === true && sprite !== null
+        && sprite.enabled === true && sprite.spriteFrame !== null) {
+      iconRows++
+    }
+    if (icon === null || title === null) continue
+    const iconBox = icon.getComponent('cc.UITransform')
+    const titleBox = title.getComponent('cc.UITransform')
+    if (iconBox === null || titleBox === null) continue
+    if (icon.position.x + iconBox.width / 2 > title.position.x - titleBox.width * titleBox.anchorX) {
+      overlaps++
+    }
+  }
+  return { activityRows: rows.length, drawnRows: panel.drawnActivity.length, iconRows, overlaps }
+})
+await page.screenshot({ path: path.join(OUT, 'art-quest-activity-runtime.png') })
+const familyAfterActivity = resourcePngRequests.size
+
 const cityIcons = city.filter((sprite) => sprite.name === 'BuildingIcon')
 const bagIcons = bag.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
 // 资源行的图集映射断言原来钉死在 grain 的矩形上，而"哪几行在屏内"由服务端 map 顺序决定 ——
@@ -341,6 +403,10 @@ const result = {
     familyAfterBag,
     familyExpected: FAMILY_PNG_EXPECTED,
     bagTab,
+    familyBeforeActivity,
+    familyAfterActivity,
+    activityTab,
+    activityDrawn,
     commandButtons: commandButtons.length,
     fontLabels: fonts.length,
     worldCaptions,
@@ -357,6 +423,7 @@ const result = {
     army: path.join(OUT, 'art-army-runtime.png'),
     hero: path.join(OUT, 'art-hero-runtime.png'),
     world: path.join(OUT, 'art-world-runtime.png'),
+    questActivity: path.join(OUT, 'art-quest-activity-runtime.png'),
   },
   errors,
   catalogWarnings,
@@ -382,6 +449,12 @@ if (errors.length > 0
   || worldCaptions === 0
   || bagTab.error !== undefined
   || bagTab.itemRows < 4
-  || bagTab.iconRows < 4) {
+  || bagTab.iconRows < 4
+  || familyAfterActivity - familyBeforeActivity !== ACTIVITY_PNG_EXPECTED
+  || activityTab.error !== undefined
+  || activityDrawn.error !== undefined
+  || activityDrawn.activityRows !== 8
+  || activityDrawn.iconRows !== activityDrawn.drawnRows
+  || activityDrawn.overlaps > 0) {
   process.exitCode = 1
 }

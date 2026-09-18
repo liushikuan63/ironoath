@@ -10,16 +10,19 @@
  * 新族用 `item:` / `equip:` / `hero:` / `activity:` / `currency:` / `avatar:` 前缀。
  */
 
-export type ArtFamily = 'item' | 'equip' | 'hero'
+export type ArtFamily = 'item' | 'equip' | 'hero' | 'activity'
 
 /**
  * 族内成员 → resources 相对路径（不带 /spriteFrame，那是加载层的事）。
  *
- * <p>本表**只登记已随包下发且已有消费面板的族**（本轮：背包的 item/equip、武将面板的 hero）。
- * 活动/头像/赛季币/抽卡横幅/弹窗封面等族在 art-src 有草稿，但首包余量已尽
- * （G1 接入后 wechat release 实测 3.98MB / 4.00MB）——
- * 接它们之前必须先做 resources 分包（收口清单 #112 的"下一刀"，进展见 素材缺口清单.md §五），
- * 届时补进本表并同步 tests/ArtFamilies.test.ts 的对账断言。
+ * <p>本表**只登记已随包下发且已有消费面板的族**（背包的 item/equip、武将面板的 hero、
+ * 任务面板活动页的 activity）。收进包里这一步走 `art-src/accept_to_runtime.py`
+ * （512px RGBA 草稿 → 128/256px 调色板图），resources 已配成微信小游戏分包，
+ * 这些图不进首包（收口清单 #196）。
+ *
+ * <p>剩下的族（头像框/立绘封面/学派徽/战令/赛季币）缺的不是包体余量而是**消费位**：
+ * 社交行没有头像槽、活动/战令/科技面板还没建。按 art-src/README 的纪律
+ * 不预接没人消费的资源，等各自功能批次再登记。
  */
 export const FAMILY_ASSETS: Record<ArtFamily, Readonly<Record<string, string>>> = {
   item: {
@@ -69,6 +72,16 @@ export const FAMILY_ASSETS: Record<ArtFamily, Readonly<Record<string, string>>> 
     hero_n_02: 'ui/generated/heroes/hero-n-02-v1',
     hero_n_03: 'ui/generated/heroes/hero-n-03-v1',
   },
+  activity: {
+    login_7d: 'ui/generated/activities/activity-login-7d-v1',
+    login_30d: 'ui/generated/activities/activity-login-30d-v1',
+    monster_hunt: 'ui/generated/activities/activity-monster-hunt-v1',
+    rally_week: 'ui/generated/activities/activity-rally-week-v1',
+    donate_week: 'ui/generated/activities/activity-donate-week-v1',
+    pvp_win: 'ui/generated/activities/activity-pvp-win-v1',
+    build_sprint: 'ui/generated/activities/activity-build-sprint-v1',
+    squad_help: 'ui/generated/activities/activity-squad-help-v1',
+  },
 }
 
 export function familyArtKey(family: ArtFamily, member: string): string {
@@ -88,6 +101,11 @@ export function itemArtKeyForConfig(configId: string): string | null {
 /** 武将立绘键：hero.json 行 id 就是成员名；没有立绘的行返回 null，行退回稀有度图标。 */
 export function heroPortraitKey(heroConfigId: string): string | null {
   return FAMILY_ASSETS.hero[heroConfigId] === undefined ? null : `hero:${heroConfigId}`
+}
+
+/** 活动行图标键：activity.json 行 id 去掉 `activity_` 前缀就是成员名，认不出来的返回 null（行继续用 Graphics 占位）。 */
+export function activityIconKey(activityConfigId: string): string | null {
+  return ACTIVITY_ICON_BY_CONFIG[activityConfigId] ?? null
 }
 
 /** 装备槽位族键：行 id 里认不出家族/槽位组合时返回 null（映射表是唯一真相，不做字符串猜测）。 */
@@ -126,4 +144,16 @@ export const ITEM_ICON_BY_CONFIG: Readonly<Record<string, string>> = {
   item_hero_exp_s: 'item:book_exp_s',
   item_hero_exp_m: 'item:book_exp_m',
   item_hero_exp_l: 'item:book_exp_m',
+}
+
+/** activity.json 八行 → 活动族键。表里加行而这里没跟上时，tests/ArtFamilies.test.ts 的对账会红。 */
+export const ACTIVITY_ICON_BY_CONFIG: Readonly<Record<string, string>> = {
+  activity_login_7d: 'activity:login_7d',
+  activity_login_30d: 'activity:login_30d',
+  activity_monster_hunt: 'activity:monster_hunt',
+  activity_rally_week: 'activity:rally_week',
+  activity_donate_week: 'activity:donate_week',
+  activity_pvp_win: 'activity:pvp_win',
+  activity_build_sprint: 'activity:build_sprint',
+  activity_squad_help: 'activity:squad_help',
 }

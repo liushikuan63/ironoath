@@ -13,8 +13,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  FAMILY_ASSETS, EQUIP_ICON_BY_CONFIG, ITEM_ICON_BY_CONFIG,
-  itemArtKeyForConfig, familyArtKey,
+  FAMILY_ASSETS, EQUIP_ICON_BY_CONFIG, ITEM_ICON_BY_CONFIG, ACTIVITY_ICON_BY_CONFIG,
+  itemArtKeyForConfig, activityIconKey, familyArtKey,
 } from '../assets/scripts/game/art/ArtFamilies'
 
 const CONFIG_DIR = path.join(repoRoot(), 'contract', 'config')
@@ -57,10 +57,19 @@ test('hero.json 每一行都有立绘，且键表与磁盘文件一一对应', (
   assert.deepEqual(unmapped, [])
 })
 
-test('activity.json 的行数没有偷偷变化（接活动族时要同步改本断言）', () => {
-  // 活动族尚未进运行时（等 resources 分包，见 ArtFamilies 注释），
-  // 但表行数若变了，下一轮补图的数量就得跟着变 —— 先钉住现状。
-  assert.equal(configIds('activity.json').length, 8)
+test('activity.json 八行 ↔ 映射表 ↔ 族键四方咬合（表里多一行少一行都会红在这里）', () => {
+  const ids = configIds('activity.json')
+  assert.equal(ids.length, 8, 'activity.json 行数变了：素材族要同步补图或改本断言')
+  const unmapped = ids.filter((id) => activityIconKey(id) === null)
+  assert.deepEqual(unmapped, [], '表里有行没有图标键 —— 界面上就是一个空位')
+  const orphans = Object.keys(ACTIVITY_ICON_BY_CONFIG).filter((id) => !ids.includes(id))
+  assert.deepEqual(orphans, [], '映射表指到了 activity.json 已删掉的行')
+  for (const [id, key] of Object.entries(ACTIVITY_ICON_BY_CONFIG)) {
+    assert.ok(key.startsWith('activity:'), `${id} 指到了非 activity 族：${key}`)
+    assert.ok(FAMILY_ASSETS.activity[key.slice('activity:'.length)] !== undefined,
+      `${id} → ${key} 在族表里没有这个成员`)
+  }
+  assert.equal(activityIconKey('activity_not_a_real_row'), null, '认不出的行必须退回占位，不能蹭图')
 })
 
 test('item.json 的每个 eq_* 行都在装备映射表里，且目标键真实存在', () => {
