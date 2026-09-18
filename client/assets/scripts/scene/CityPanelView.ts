@@ -39,7 +39,14 @@ const CELL_HEIGHT = 46
 const CELL_GAP = 4
 const CONTENT_WIDTH = CITY_GRID_WIDTH * CELL_WIDTH + (CITY_GRID_WIDTH - 1) * CELL_GAP
 const GRID_HEIGHT = CITY_GRID_HEIGHT * CELL_HEIGHT + (CITY_GRID_HEIGHT - 1) * CELL_GAP
-const CARD_WIDTH = CONTENT_WIDTH + 32
+/**
+ * 面板框的四角尺寸，**必须与 `ui/generated/ui/panel-kingdom-v1.png.meta` 的 border* 一致**：
+ * 九宫格只固定四角，所以卡片里任何内容（标题、资源行、格子列、收割按钮）都得让开这一圈，
+ * 否则会压在角饰与侧栏下面 —— 之前按 16px 内缩排，正好被 44px 的角饰吃掉 28px。
+ */
+const FRAME_BAND = 44
+const CARD_INSET = FRAME_BAND + 4
+const CARD_WIDTH = CONTENT_WIDTH + CARD_INSET * 2
 const HEADER_HEIGHT = 128
 const ACTION_HEIGHT = 76
 const CARD_HEIGHT = HEADER_HEIGHT + GRID_HEIGHT + ACTION_HEIGHT + 108
@@ -184,15 +191,16 @@ export class CityPanelView extends Component {
       ? null
       : frame.addComponent(Graphics)
 
-    const top = CARD_HEIGHT / 2 - PADDING
-    this.headerLabel = this.addLabel(card, 'Header', 0, top - 22, COLOR_COPPER_GOLD, 22)
-    this.queueLabel = this.addLabel(card, 'Queue', 0, top - 54, COLOR_TEXT, 16)
+    // 头部整块从"框的四角带"下面开始排（原来从卡片外沿往下 16px 起排，标题正好压在角饰上）
+    const top = CARD_HEIGHT / 2 - FRAME_BAND
+    this.headerLabel = this.addLabel(card, 'Header', 0, top - 14, COLOR_COPPER_GOLD, 22)
+    this.queueLabel = this.addLabel(card, 'Queue', 0, top - 38, COLOR_TEXT, 16)
 
     const columnWidth = CONTENT_WIDTH / 3
     for (let row = 0; row < 2; row++) {
       for (let column = 0; column < 3; column++) {
         const x = -CONTENT_WIDTH / 2 + columnWidth * (column + 0.5)
-        const y = top - 84 - row * 20
+        const y = top - 62 - row * 18
         this.resourceLabels.push(this.addLabel(
           card, `Resource-${row}-${column}`, x, y, COLOR_TEXT_DIM, 14))
       }
@@ -200,7 +208,8 @@ export class CityPanelView extends Component {
 
     this.buildGrid(card)
     this.buildActionBar(card)
-    this.messageLabel = this.addLabel(card, 'Message', 0, -CARD_HEIGHT / 2 + 18, COLOR_WARNING, 15)
+    this.messageLabel = this.addLabel(card, 'Message', 0,
+      -CARD_HEIGHT / 2 + FRAME_BAND + 10, COLOR_WARNING, 15)
   }
 
   private buildGrid(parent: Node): void {
@@ -299,7 +308,9 @@ export class CityPanelView extends Component {
     const collectAll = new Node('CollectAllButton')
     collectAll.layer = parent.layer
     parent.addChild(collectAll)
-    collectAll.setPosition(new Vec3(CONTENT_WIDTH / 2 - 76, CARD_HEIGHT / 2 - PADDING - 22, 0))
+    // 落在四角带之内：贴着内容区右上，不压角饰
+    collectAll.setPosition(new Vec3(
+      CARD_WIDTH / 2 - FRAME_BAND - 76, CARD_HEIGHT / 2 - FRAME_BAND - 20, 0))
     collectAll.addComponent(UITransform).setContentSize(new Size(132, 34))
     if (!applyCommandButton(collectAll, 'normal', 132, 34)) {
       const collectGraphics = collectAll.addComponent(Graphics)
