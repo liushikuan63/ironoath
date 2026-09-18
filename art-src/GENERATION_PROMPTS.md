@@ -100,3 +100,26 @@ Avoid: neon, glossy candy mobile styling, blue sci-fi accents, photorealism
   （抠绿 alpha 过渡 → 去绿边溢色 → 裁边留 6px → 方形化 → LANCZOS 压到 512×512；残留绿像素 >0.5% 即非零码失败）。
 - 产物在 `generated/drafts/b19-gift/` 与 `generated/drafts/b24-avatar-frames/`，九张残留绿均 0.000%、四张框中心 alpha 全 0；
   **尚未筛选采用**，采纳后进 `accepted/` 并按功能批次接 `ArtCatalog`。
+
+## 7. 整体界面缺料 G1~G7（2026-09-18，全 UI 构建用）
+
+范围与判据见 `素材缺口清单.md`；共用 §5 的绿底风格约束，两处与单图不同的硬规则：
+
+- **母版拆格**（G2 装备 4×4、G3 道具 4×4、G4 活动 4×2、G5 学派 2×2、G6 战令 2×1、G7 头像 2×2）：
+  提示词必须写明"每格一个物体、包围盒在水平与垂直投影上互不重叠、格间留宽绿带"——
+  首版 G4 母版因长矛斜穿投影列失败（脚本按绿色间隔带投影切格，分段数≠网格数即报错，绝不静默等分），
+  重生成 v1 通过。拆格产物逐格再裁边方形化到 512。
+- **半身立绘**（G1 ×12）：允许主体触底（胸部截断），抠绿取样点因此用"上边+两侧 5 点"而非四角。
+
+| 族 | 内容 | 产物目录 |
+|---|---|---|
+| G1 | hero.json 12 武将半身立绘（SSR 金甲/SR 铜甲/R 铁甲/N 布衣，档位靠甲胄华朴） | `drafts/g1-hero-portraits/` |
+| G2 | equip.json 16 行 = 4 槽（武器/甲/马/符节）× 4 家族（铁/破军/玄武/文曲） | `drafts/g2-equip-icons/` |
+| G3 | 道具 16：加速令×4、建造/募兵令、抽卡券、武将/资源匣、SR/SSR 碎片、免战/封库/集结、经验书 S/M | `drafts/g3-item-icons/` |
+| G4 | 赛季币 + activity.json 8 行活动图标 | `drafts/g4-currency/`、`drafts/g4-activity-icons/` |
+| G5 | 农/军/商/工四学派徽记 + 国旗底样（中央留空可换纹） | `drafts/g5-school-crests/`、`drafts/g5-nation/` |
+| G6 | 战令免费/付费双轨徽、抽卡横幅背景（plain 直存 1280×731，不抠绿）、限时绶带角标 | `drafts/g6-*/` |
+| G7 | 默认头像 4：男女君主/盟管/系统信使 | `drafts/g7-avatars/` |
+
+- 批次清单：`generated/drafts/batch-2026-09-18-ui-full.json`（G4 已钉到 v1 母版）；运行日志 `batch-run.log`，全量 `ALL_OK`。
+- 已知取舍：经验书 L 档复用 M 档图（母版只画了单本与三本两格）；G3 碎片刻意不用紫/蓝稀有度色（与头像框同族语言）。
