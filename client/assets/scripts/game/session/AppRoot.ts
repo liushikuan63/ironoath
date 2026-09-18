@@ -32,7 +32,7 @@ import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagPro
 import type { HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageListResp } from '../../net/generated/StageProtocol'
 import type {
-  AllianceMember, AllianceSyncResp, ChatChannel, ChatMessageView, HelpRequestView,
+  AllianceMember, AllianceSyncResp, ChatChannel, ChatMessageView, HelpRequestView, ReportReason,
   SocialEventView, SocialSummaryResp,
 } from '../../net/generated/SocialProtocol'
 import {
@@ -50,8 +50,12 @@ import type { MailClaimAllResp, MailListResp } from '../../net/generated/MailPro
 import type { ActivityClaimResp, ActivityListResp } from '../../net/generated/ActivityProtocol'
 import type { GuideAction, GuideProgressResp, GuideScriptResp } from '../../net/generated/GuideProtocol'
 import { claimActivityReq } from '../activity/ActivityPanel'
-import { buildLineupChoices, buildShareChannelChoices, buildSpeedupChoices } from './Choices'
-import type { LineupChoice, ShareChannelChoice, SpeedupChoice } from './Choices'
+import {
+  buildChatActionChoices, buildLineupChoices, buildShareChannelChoices, buildSpeedupChoices,
+} from './Choices'
+import type {
+  ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
+} from './Choices'
 import type { GiftPopupResp } from '../../net/generated/PayProtocol'
 import type { PayView } from '../pay/GiftPayFlow'
 import { GiftPayFlow } from '../pay/GiftPayFlow'
@@ -79,6 +83,11 @@ export interface PanelTargets {
    * 拆成多个回调就会出现"未读变了但会话列表还停在旧数"这类两半不同步。
    */
   chat?(data: ChatPanelData): void
+  /**
+   * 聊天消息行上能做什么（B22 §一 3）：举报的四种原因 + 拉黑/取消拉黑，一层选择器里全给出。
+   * 选项由根给出（它才知道我拉黑过谁），场景层只画和回调。
+   */
+  chatActionChoice?(options: readonly ChatActionChoice[], onPick: (choice: ChatActionChoice) => void): void
   /**
    * 礼包弹窗（B19 S3-iv）。`resp.popup=false` 时面板自己藏起来 —— 判"弹不弹"的是服务端，
    * 客户端只负责画。
@@ -187,6 +196,10 @@ export class AppRoot {
   private chatNotice: string | null = null
   /** 成功发送的计数：面板靠它决定"这一次该把输入框清空了"（失败时不清，玩家要能重试） */
   private chatSentSeq = 0
+  /** 我拉黑的名单（B22 §一 3）。菜单里显示"拉黑"还是"取消拉黑"要看它 */
+  private myBlocked: readonly string[] = []
+  /** 名单是否已经从服务端取过。懒取：首屏不必为它多打一轮请求 */
+  private blocksLoaded = false
 
   constructor(deps: {
     api: GameApi
@@ -846,7 +859,145 @@ export class AppRoot {
       localNow: Date.now(),
       sentSeq: this.chatSentSeq,
       notice: this.chatNotice,
+      blockedCount: this.myBlocked.length,
     }))
+  }
+
+  // ---------- 举报与拉黑（B22 §一 3） ----------
+
+  /**
+   * 点了某条别人发的消息上的动作按钮：先把"这条消息能做什么"问出来
+   * （举报的四种原因 + 拉黑/取消拉黑），选中之后再发请求。
+   *
+   * <p>名单是懒取的（第一次点才拉）：它只在生成选项时需要，而首屏那 13 次拉取每一次都要钱。
+   */
+  async openChatActions(senderId: string, messageId: string): Promise<void> {
+    if (senderId === this.playerId) {
+      // 自己的消息没有可举报/拉黑的：按钮本来就不该出现在那一行（面板已按 mine 过滤）
+      return
+    }
+    if (this.targets.chatActionChoice === undefined) {
+      this.rejectNeeds('chat', '这条消息能举报或拉黑，但动作选择器未接入')
+      return
+    }
+    await this.ensureBlocks()
+    this.targets.chatActionChoice(buildChatActionChoices(this.myBlocked.includes(senderId)),
+      (choice) => {
+        if (choice.kind === 'REPORT' && choice.reason !== null) {
+          void this.reportMessage(senderId, messageId, choice.reason)
+        } else if (choice.kind === 'BLOCK') {
+          void this.blockPlayer(senderId)
+        } else {
+          void this.unblockPlayer(senderId)
+        }
+      })
+  }
+
+  /**
+   * 举报一条消息（B22 §一 3）。**只做留痕**：回执只说"记下了"，不说"会不会封"
+   * （说成"报了就封"会让举报变成一种攻击工具）。
+   */
+  async reportMessage(senderId: string, messageId: string, reason: ReportReason): Promise<void> {
+    this.track(TRACK_EVENTS.reportSubmit, { reason })
+    const outcome = await this.api.socialReport({
+      targetPlayerId: senderId, messageId, reason, detail: null,
+    })
+    if (outcome.kind !== 'ok') {
+      this.say('chat', outcome)
+      this.chatNotice = AppRoot.reason(outcome)
+      this.deliverChat()
+      return
+    }
+    this.chatNotice = '举报已受理，运营会看到这条记录'
+    this.deliverChat()
+  }
+
+  /** 拉黑（幂等）。拉黑之后他的消息在我的频道里立刻消失 —— 本地那份缓存也要一起丢。 */
+  async blockPlayer(targetId: string): Promise<void> {
+    this.track(TRACK_EVENTS.blockChanged, { action: 'add' })
+    const outcome = await this.api.socialBlock({ targetPlayerId: targetId })
+    if (outcome.kind !== 'ok') {
+      this.say('chat', outcome)
+      this.chatNotice = AppRoot.reason(outcome)
+      this.deliverChat()
+      return
+    }
+    this.applyBlockList(outcome.data.blockedPlayerIds)
+    // 先重拉再写提示：loadChat 成功时会把提示行清空（它自己的规矩），
+    // 顺序反了的话玩家看不到"已拉黑"这一句
+    await this.reloadChatAfterFilterChange()
+    this.chatNotice = '已拉黑，他的消息不再显示（不影响战斗）'
+    this.deliverChat()
+  }
+
+  /** 取消拉黑（幂等）。 */
+  async unblockPlayer(targetId: string): Promise<void> {
+    this.track(TRACK_EVENTS.blockChanged, { action: 'remove' })
+    const outcome = await this.api.socialUnblock({ targetPlayerId: targetId })
+    if (outcome.kind !== 'ok') {
+      this.say('chat', outcome)
+      this.chatNotice = AppRoot.reason(outcome)
+      this.deliverChat()
+      return
+    }
+    this.applyBlockList(outcome.data.blockedPlayerIds)
+    await this.reloadChatAfterFilterChange()
+    this.chatNotice = '已取消拉黑'
+    this.deliverChat()
+  }
+
+  /**
+   * 打开黑名单（B22 §一 3 的"本人列表（加/删）"里的删）：**这是解除拉黑的唯一入口**。
+   *
+   * <p>为什么不复用消息行：拉黑之后那个人的消息就看不见了，"再点他一条消息"根本够不着。
+   */
+  async manageBlocks(): Promise<void> {
+    await this.ensureBlocks()
+    if (this.targets.chatActionChoice === undefined) {
+      this.rejectNeeds('chat', '黑名单要先接入动作选择器才能解除')
+      return
+    }
+    if (this.myBlocked.length === 0) {
+      this.chatNotice = '黑名单是空的'
+      this.deliverChat()
+      return
+    }
+    const options = this.myBlocked.map((id) => ({
+      id, kind: 'UNBLOCK' as const, reason: null,
+      label: `取消拉黑：${id}`, detail: '恢复与他的私聊与频道可见',
+    }))
+    this.targets.chatActionChoice(options, (choice) => {
+      void this.unblockPlayer(choice.id)
+    })
+  }
+
+  private applyBlockList(ids: readonly string[]): void {
+    this.myBlocked = [...ids]
+    this.blocksLoaded = true
+  }
+
+  private async ensureBlocks(): Promise<void> {
+    if (this.blocksLoaded) {
+      return
+    }
+    const outcome = await this.api.socialBlocks()
+    if (outcome.kind === 'ok') {
+      this.applyBlockList(outcome.data.blockedPlayerIds)
+    }
+    // 拉不到就按"没拉黑过任何人"生成选项：点在"拉黑"上仍然会被服务端受理（幂等），
+    // 而如果已经拉黑过，菜单会多出一个"拉黑"项 —— 它点了也只是幂等地再拉一次，不会出错
+  }
+
+  /**
+   * 拉黑状态变了之后重拉当前频道的消息。
+   *
+   * <p>**本地缓存要整份丢掉**：过滤发生在服务端，而 `mergeChatHistory` 只增不减 ——
+   * 不丢缓存的话，被拉黑的人刚才那几句仍然挂在我的聊天记录里，
+   * 玩家会以为"拉黑没生效"（而服务端已经滤掉了）。
+   */
+  private async reloadChatAfterFilterChange(): Promise<void> {
+    this.chatHistory.clear()
+    await this.loadChat(this.chatChannel, this.chatPeerId)
   }
 
   /**

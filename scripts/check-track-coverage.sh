@@ -43,6 +43,10 @@ const SKIP = new Set([
   // 只负责"把选择器弹出来"，真正发出分享的那一步在 shareReport 里打点（report_share）——
   // 两处都打会让一次分享在看板上记成两次
   "requestShare",
+  // 同上：这两条只是把动作菜单弹出来，真正的动作（举报 / 拉黑）各自在 reportMessage /
+  // blockPlayer / unblockPlayer 里打点
+  "openChatActions",
+  "manageBlocks",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

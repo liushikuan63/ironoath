@@ -931,6 +931,12 @@ export class GameBootstrap extends Component {
       social.onChatSend = text => { void this.root?.sendChat(text) }
       // 聊天里点开一条「分享了战报」的消息：与战报列表点开同一路（拉详情 → 回放）
       social.onChatOpenReport = reportId => { void this.root?.openReport(reportId) }
+      // 消息行上的动作（举报 / 拉黑）：目标与原因都由编排层决定，场景层只交出发信人与消息 id
+      social.onChatAction = (senderId, messageId) => {
+        void this.root?.openChatActions(senderId, messageId)
+      }
+      out.chatActionChoice = (options, onPick) => social.showChatActionPicker(options, onPick)
+      social.onChatManageBlocks = () => { void this.root?.manageBlocks() }
       social.onRowAction = (kind, id, from) => {
         switch (kind) {
           case 'help':

@@ -143,6 +143,52 @@ function installHelpers() {
       const box = node === null ? null : node.getComponent('cc.EditBox')
       return box === null || box === undefined ? '' : String(box.string)
     },
+    /** 选择器（ChoiceOverlay）里当前显示的选项标题。 */
+    choiceTitles: () => {
+      const scene = window.cc.director.getScene()
+      const titles = []
+      const stack = [...scene.children]
+      while (stack.length > 0) {
+        const node = stack.pop()
+        if (node.name.startsWith('Choice-') && node.activeInHierarchy) {
+          const texts = []
+          for (const child of node.children) {
+            const label = child.getComponent ? child.getComponent('cc.Label') : null
+            if (label !== null && label !== undefined && label.string !== '') {
+              texts.push(label.string)
+            }
+          }
+          if (texts.length > 0) {
+            titles.push(texts[0])
+          }
+        }
+        for (const child of node.children) stack.push(child)
+      }
+      return titles
+    },
+    /** 点选择器里标题包含某段文字的那一项。 */
+    tapChoice: (contains) => {
+      const scene = window.cc.director.getScene()
+      const stack = [...scene.children]
+      while (stack.length > 0) {
+        const node = stack.pop()
+        if (node.name.startsWith('Choice-') && node.activeInHierarchy) {
+          const texts = []
+          for (const child of node.children) {
+            const label = child.getComponent ? child.getComponent('cc.Label') : null
+            if (label !== null && label !== undefined && label.string !== '') {
+              texts.push(label.string)
+            }
+          }
+          if (texts.some((text) => text.includes(contains))) {
+            node.emit('touch-start')
+            return 'ok'
+          }
+        }
+        for (const child of node.children) stack.push(child)
+      }
+      return 'no-choice:' + contains
+    },
     chatControlsActive: () => {
       const node = findNode('ChatControls')
       return node !== null && node.active === true
@@ -337,6 +383,67 @@ async function main() {
   verdict(openReportTap === 'ok' && pulled,
     '点那条消息的「打开」真的去拉了回放（假 id 回 5005 是预期的：这只验接线）',
     `tap=${openReportTap} 请求数=${requestedUrls.filter(u => u.includes('/battle/report')).length}`)
+
+  // ---- 6) 举报与拉黑（B22 §一 3）：从聊天行走完整条链，最后从黑名单入口撤销 ----
+  const blockText = `拉黑验证-${Date.now() % 100000}`
+  await postJson(`${BACKEND}/chat/send`, {
+    requestId: `chat-probe-block-${Date.now()}`, channel: 'WORLD', content: blockText,
+    toPlayerId: null,
+  }, senderId)
+  await tap('Channel_WORLD')
+  await waitFor(list => list.some(text => text.includes(blockText)))
+
+  const menuTap = await page.evaluate(() => window.__chat.tapRowAction('拉黑验证'))
+  // 选择器是下一帧才画出来的：点完立刻读会拿到空列表（这一条踩过一次）
+  await page.waitForTimeout(700)
+  const menuTitles = await page.evaluate(() => window.__chat.choiceTitles())
+  verdict(menuTap === 'ok' && menuTitles.length === 4
+    && menuTitles.some(t => t.includes('举报：辱骂')) && menuTitles.some(t => t.includes('举报：刷屏'))
+    && menuTitles.some(t => t.includes('举报：疑似作弊')) && menuTitles.some(t => t.includes('举报：其他')),
+  '消息行的按钮弹出一层选择器：第一页是四种举报原因（拉黑在第 2 页，与选择器 4 项/页一致）',
+  `tap=${menuTap} 选项=${menuTitles.join(' / ').slice(0, 90)}`)
+
+  await page.evaluate(() => window.__chat.tapChoice('举报：刷屏'))
+  await page.waitForTimeout(400)
+  const reported = await waitFor(list => list.some(text => text.includes('举报已受理')))
+  verdict(reported.some(text => text.includes('举报已受理')),
+    '选了原因后回执写在提示行上（只说记下了，不说会不会封）',
+    `文本 → ${reported.filter(t => t.includes('举报')).join(' | ').slice(0, 80)}`)
+
+  await page.evaluate(() => window.__chat.tapRowAction('拉黑验证'))
+  await page.waitForTimeout(700)
+  // 选择器一页放 4 项（OPTIONS_PER_PAGE），拉黑在第 2 页 —— 与玩家走的路径一致：翻一页再点
+  await page.evaluate(() => window.__chat.tapNode('ChoiceNext'))
+  await page.waitForTimeout(500)
+  const blockTap = await page.evaluate(() => window.__chat.tapChoice('拉黑'))
+  await page.waitForTimeout(1200)
+  const afterBlock = await page.evaluate(() => window.__chat.textsUnder('social'))
+  verdict(blockTap === 'ok' && !afterBlock.some(text => text.includes(blockText)),
+    '拉黑之后那条消息立刻从我的频道里消失（本地缓存整份丢掉重拉）',
+    `tap=${blockTap} 文本 ${afterBlock.length} 条`)
+  const myWorld = await postJson(`${BACKEND}/chat/list`,
+    { channel: 'WORLD', toPlayerId: null, beforeMessageId: null, limit: 50 }, playerId)
+  verdict(!(myWorld.root.data.messages ?? []).some(m => m.content === blockText),
+    '服务端 /chat/list 也不回他的消息（面板消失不等于服务端过滤）',
+    `条数=${(myWorld.root.data.messages ?? []).length}`)
+  const otherWorld = await postJson(`${BACKEND}/chat/list`,
+    { channel: 'WORLD', toPlayerId: null, beforeMessageId: null, limit: 50 }, senderId)
+  verdict((otherWorld.root.data.messages ?? []).some(m => m.content === blockText),
+    '对照组：他自己还看得到那条（拉黑是观察者过滤，不是删消息）',
+    `条数=${(otherWorld.root.data.messages ?? []).length}`)
+
+  await tap('Channel_PRIVATE')
+  await waitFor(list => list.some(text => text.includes('黑名单')))
+  const manageTap = await page.evaluate(() => window.__chat.tapRowAction('黑名单'))
+  await page.waitForTimeout(700)
+  const manageTitles = await page.evaluate(() => window.__chat.choiceTitles())
+  await page.evaluate(() => window.__chat.tapChoice('取消拉黑'))
+  await page.waitForTimeout(1200)
+  await tap('Channel_WORLD')
+  const restored = await waitFor(list => list.some(text => text.includes(blockText)))
+  verdict(manageTap === 'ok' && restored.some(text => text.includes(blockText)),
+    '黑名单入口能撤销拉黑，那条消息又回来了（拉黑是可逆的，入口够得着）',
+    `tap=${manageTap} 选项=${manageTitles.join(' / ').slice(0, 60)}`)
 
   writeFileSync(SHOT, await page.screenshot({ fullPage: false }))
   lines.push(`PASS  截图落盘  ${SHOT}`)

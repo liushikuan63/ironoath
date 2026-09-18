@@ -117,6 +117,7 @@ test('页面数据：私聊未选会话画会话列表，选中后画消息，�
   const base = {
     messages: [message('m1', 100)], events, myPlayerId: 'me',
     peerNames: new Map<string, string>(), offsetMs: 0, localNow: 200, sentSeq: 0, notice: null,
+    blockedCount: 0,
   }
   const list = buildChatPanel({ ...base, channel: 'PRIVATE', peerId: null })
   assert.equal(list.mode, 'conversations')
@@ -141,7 +142,7 @@ test('页面数据：私聊未选会话画会话列表，选中后画消息，�
 test('页面数据：notice 进提示行且按告警色画（失败原因是玩家唯一看得见的落点）', () => {
   const data = buildChatPanel({
     channel: 'SQUAD', peerId: null, messages: [], events: [], myPlayerId: 'me',
-    peerNames: new Map(), offsetMs: 0, localNow: 0, sentSeq: 0,
+    peerNames: new Map(), offsetMs: 0, localNow: 0, sentSeq: 0, blockedCount: 0,
     notice: '慢一点：同一句话 8 秒后才能再发',
   })
   assert.equal(data.hintIsWarning, true)
@@ -162,6 +163,23 @@ test('分享战报的消息：认出结尾的结构化标记，显示时把它�
   assert.equal(parseSharedReport('我写了[report:abc]这样一句话'), null)
   assert.equal(parseSharedReport('[report:abc]'), 'abc')
   assert.equal(parseSharedReport('分享 [report:abc]'), 'abc')
+})
+
+test('黑名单入口：私聊列表顶部多一行（拉黑后那条消息够不着，解除只能从这里进）', () => {
+  const base = {
+    channel: 'PRIVATE' as const, peerId: null, messages: [], events: [],
+    myPlayerId: 'me', peerNames: new Map<string, string>(), offsetMs: 0, localNow: 0,
+    sentSeq: 0, notice: null,
+  }
+  const empty = buildChatPanel({ ...base, blockedCount: 0 })
+  assert.equal(empty.conversations.some(row => row.peerId === 'blocks'), false,
+    '一个人都没拉黑时不摆这一行')
+  const withBlocked = buildChatPanel({
+    ...base,
+    blockedCount: 2,
+    events: [privateEvent('e1', 'p1', 100)],
+  })
+  assert.equal(withBlocked.blockedCount, 2, '面板照着计数画「黑名单（2）」')
 })
 
 test('本地历史按会话分桶：私聊的键要带对象，否则两人的会话会互相覆盖', () => {

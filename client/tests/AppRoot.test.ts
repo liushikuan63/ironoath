@@ -22,7 +22,9 @@ import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
 import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
 import type { PanelTargets } from '../assets/scripts/game/session/AppRoot'
-import type { LineupChoice, ShareChannelChoice, SpeedupChoice } from '../assets/scripts/game/session/Choices'
+import type {
+  ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
+} from '../assets/scripts/game/session/Choices'
 import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
@@ -132,6 +134,10 @@ const ROUTES: Record<string, unknown> = {
     ],
     serverNow: SERVER_NOW,
   },
+  '/social/report': { reportId: 'report_1', serverNow: SERVER_NOW },
+  '/social/blocks': { blockedPlayerIds: [] },
+  '/social/block': { blockedPlayerIds: ['P2'] },
+  '/social/unblock': { blockedPlayerIds: [] },
   // 分享落进频道是服务端的事，这里只回执「贴到哪了」
   '/battle/share': { reportId: 'r-1', channel: 'ALLIANCE', messageId: 'msg-share-1', serverNow: SERVER_NOW },
   '/battle/report': {
@@ -379,10 +385,13 @@ interface Harness {
   readonly lineupOptions: readonly LineupChoice[]
   /** 最近一次弹出的分享频道候选（没点分享时为空） */
   readonly shareChannelOptions: readonly ShareChannelChoice[]
+  /** 最近一次弹出的聊天动作候选（举报原因 / 拉黑） */
+  readonly chatActionOptions: readonly ChatActionChoice[]
   /** 最近一次分享结果（文本 + 是否告警色） */
   readonly lastShareOutcome: readonly [string, boolean]
   pickSpeedup(targetId: string): void
   pickLineup(index: number): void
+  pickChatAction(id: string): void
   pickShareChannel(channel: string): void
 }
 
@@ -440,6 +449,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let speedupOptions: SpeedupChoice[] = []
   let lineupOptions: LineupChoice[] = []
   let shareChannelOptions: ShareChannelChoice[] = []
+  let chatActionOptions: ChatActionChoice[] = []
+  let chatActionPick: ((choice: ChatActionChoice) => void) | null = null
   let lastShareOutcome: [string, boolean] = ['', false]
   let shareChannelPick: ((choice: ShareChannelChoice) => void) | null = null
   let speedupPick: ((targetId: string) => void) | null = null
@@ -493,6 +504,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       shareChannelOptions = [...options]
       shareChannelPick = onPick
     },
+    chatActionChoice: (options, onPick) => {
+      chatActionOptions = [...options]
+      chatActionPick = onPick
+    },
     reportShared: (text, warning) => {
       lastShareOutcome = [text, warning]
     },
@@ -531,6 +546,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     get shareChannelOptions() {
       return shareChannelOptions
     },
+    get chatActionOptions() {
+      return chatActionOptions
+    },
     get lastShareOutcome() {
       return lastShareOutcome
     },
@@ -541,6 +559,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       const choice = lineupOptions[index]
       if (choice !== undefined) {
         lineupPick?.(choice)
+      }
+    },
+    pickChatAction(id) {
+      const choice = chatActionOptions.find(option => option.id === id)
+      if (choice !== undefined) {
+        chatActionPick?.(choice)
       }
     },
     pickShareChannel(channel) {
@@ -1278,6 +1302,48 @@ test('分享战报：先问目标频道再发请求；失败也走面板那行�
   h.http.bizFailNext = { code: 10046, msg: '你没有在该频道发言的资格', detail: null }
   await h.root.shareReport('r-2', 'SQUAD')
   assert.deepEqual([...h.lastShareOutcome], ['你没有在该频道发言的资格', true])
+})
+
+test('举报与拉黑：一层选择器里给出原因与拉黑；拉黑后本地缓存要丢掉重拉（否则旧消息还挂着）', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+  h.http.overrides.set('/chat/list', {
+    messages: [
+      { messageId: 'm1', channel: 'WORLD', senderId: 'P2', senderName: '乙', content: '卖号加我', sentAt: SERVER_NOW - 1000 },
+    ],
+    hasMore: false, serverNow: SERVER_NOW,
+  })
+  await h.root.openChat()
+  assert.equal(h.lastChat?.messages.length, 1)
+
+  // 点别人那条消息上的按钮：先懒取名单（首屏不为它多打一轮），再给出选项
+  await h.root.openChatActions('P2', 'm1')
+  assert.equal(h.http.countOf('/social/blocks'), 1, '第一次点才拉名单')
+  assert.deepEqual(h.chatActionOptions.map(option => option.kind),
+    ['REPORT', 'REPORT', 'REPORT', 'REPORT', 'BLOCK'])
+
+  // 举报：只记不留（回执说"运营会看到"，不说会不会封）
+  h.pickChatAction('REPORT_SPAM')
+  await settle()
+  const reportCall = h.http.calls.find(c => c.path === '/social/report')
+  assert.equal(reportCall?.body.targetPlayerId, 'P2')
+  assert.equal(reportCall?.body.messageId, 'm1')
+  assert.equal(reportCall?.body.reason, 'SPAM')
+  assert.equal(h.lastChat?.hintText, '举报已受理，运营会看到这条记录')
+
+  // 拉黑：名单跟着服务端回执更新，且**本地历史整份丢掉重拉** ——
+  // 不丢的话，被拉黑的人刚才那几句还挂在聊天记录里，玩家会以为拉黑没生效
+  h.http.overrides.set('/chat/list', { messages: [], hasMore: false, serverNow: SERVER_NOW })
+  await h.root.blockPlayer('P2')
+  assert.equal(h.http.calls.filter(c => c.path === '/chat/list').length, 2, '拉黑后要重拉当前频道')
+  assert.equal(h.lastChat?.messages.length, 0, '被拉黑的人的消息立刻从视图里消失')
+
+  // 再点一次：菜单里变成「取消拉黑」
+  await h.root.openChatActions('P2', 'm1')
+  assert.equal(h.chatActionOptions[4]?.kind, 'UNBLOCK')
+  h.pickChatAction('UNBLOCK')
+  await settle()
+  assert.equal(h.lastChat?.hintText, '已取消拉黑')
 })
 
 test('浏览器路径：没有 wxCode 时不带该值，登录链路与旧行为完全一致', async () => {

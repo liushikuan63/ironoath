@@ -8,6 +8,7 @@ import type { BuildOptionView, CityListResp } from '../../net/generated/CityProt
 import type { HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageUnit } from '../../net/generated/StageProtocol'
 import type { ShareChannel } from '../../net/generated/BattleProtocol'
+import type { ReportReason } from '../../net/generated/SocialProtocol'
 
 export interface ChoiceOption {
   readonly id: string
@@ -152,4 +153,31 @@ function formatSeconds(seconds: number): string {
     return `${minutes}分${rest}秒`
   }
   return `${rest}秒`
+}
+
+/** 聊天消息行上的动作（B22 §一 3）。举报的四种原因与拉黑合并成一层选择：多一层嵌套选择器只会让人放弃。 */
+export interface ChatActionChoice extends ChoiceOption {
+  /** 'REPORT' 走举报（带 reason），'BLOCK'/'UNBLOCK' 走拉黑名单 */
+  readonly kind: 'REPORT' | 'BLOCK' | 'UNBLOCK'
+  readonly reason: ReportReason | null
+}
+
+/**
+ * 一条别人发的消息能做什么。
+ *
+ * <p>**举报的原因直接摆在选项里**（而不是先选"举报"再选原因）：举报是一个需要当场完成的小动作，
+ * 两层选择器的第二层会让一半人放弃 —— 而放弃的那一半就变成了运营永远看不到的骚扰。
+ *
+ * <p>`blocked` 由调用方从服务端名单里读（组合根持有），这里不猜。
+ */
+export function buildChatActionChoices(blocked: boolean): readonly ChatActionChoice[] {
+  return [
+    { id: 'REPORT_ABUSE', kind: 'REPORT', reason: 'ABUSE', label: '举报：辱骂', detail: '人身攻击、恶意谩骂' },
+    { id: 'REPORT_SPAM', kind: 'REPORT', reason: 'SPAM', label: '举报：刷屏', detail: '广告、复读、无意义刷屏' },
+    { id: 'REPORT_CHEAT', kind: 'REPORT', reason: 'CHEAT_SUSPECT', label: '举报：疑似作弊', detail: '交给运营与反作弊判定' },
+    { id: 'REPORT_OTHER', kind: 'REPORT', reason: 'OTHER', label: '举报：其他', detail: '说不上来但觉得不对' },
+    blocked
+      ? { id: 'UNBLOCK', kind: 'UNBLOCK', reason: null, label: '取消拉黑', detail: '恢复与他的私聊' }
+      : { id: 'BLOCK', kind: 'BLOCK', reason: null, label: '拉黑', detail: '不再看到他的消息（不影响战斗）' },
+  ]
 }

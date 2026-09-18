@@ -60,6 +60,10 @@ import type {
   ChallengeStageReq, ChallengeStageResp, StageListResp, SweepReq, SweepResp,
 } from '../../net/generated/StageProtocol'
 import type {
+  BlockListView,
+  BlockReq,
+  ReportReq,
+  ReportResp,
   AllianceCreateReq, AllianceDonateReq, AllianceDonateResp, AllianceIdReq, AllianceMemberReq,
   AllianceReviewReq, AllianceRoleReq, AllianceSelfReq, AllianceSyncReq, AllianceSyncResp,
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
@@ -659,6 +663,26 @@ export class GameApi {
    */
   chatSend(req: Omit<ChatSendReq, 'requestId'>): Promise<NetOutcome<ChatSendResp>> {
     return this.mutate<ChatSendReq, ChatSendResp>('/chat/send', req)
+  }
+
+  /** 举报一个玩家 / 一条消息（B22 §一 3）。 */
+  socialReport(req: Omit<ReportReq, 'requestId'>): Promise<NetOutcome<ReportResp>> {
+    return this.mutate<ReportReq, ReportResp>('/social/report', req)
+  }
+
+  /** 拉黑（幂等）。回的是更新后的名单，界面直接照着画。 */
+  socialBlock(req: Omit<BlockReq, 'requestId'>): Promise<NetOutcome<BlockListView>> {
+    return this.mutate<BlockReq, BlockListView>('/social/block', req)
+  }
+
+  /** 取消拉黑。 */
+  socialUnblock(req: Omit<BlockReq, 'requestId'>): Promise<NetOutcome<BlockListView>> {
+    return this.mutate<BlockReq, BlockListView>('/social/unblock', req)
+  }
+
+  /** 我拉黑了谁。 */
+  socialBlocks(): Promise<NetOutcome<BlockListView>> {
+    return this.read<BlockListView>('/social/blocks')
   }
 
   chatList(req: ChatListReq): Promise<NetOutcome<ChatListResp>> {

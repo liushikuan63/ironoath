@@ -20,6 +20,8 @@ import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
 } from '../game/social/SocialPanel'
 import { CHAT_CHANNELS, CHAT_INPUT_MAX_LENGTH, chatMessageText } from '../game/social/ChatPanel'
+import { ChoiceOverlay } from './ChoiceOverlay'
+import type { ChatActionChoice } from '../game/session/Choices'
 import type { ChatPanelData } from '../game/social/ChatPanel'
 import type { AllianceMember, ChatChannel, HelpRequestView, SocialSummaryResp } from '../net/generated/SocialProtocol'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
@@ -92,6 +94,7 @@ interface RowDraft {
 }
 
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
+  | 'chatMenu' | 'blocks'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -134,6 +137,8 @@ export class SocialPanelView extends Component {
   private chatSentSeq = -1
   /** 频道切换条 + 输入行的整块容器：只在聊天页签里显示 */
   private chatControls: Node | null = null
+  /** 消息行上的动作选择器（举报原因 / 拉黑）：与出战阵容同一个组件 */
+  private chatActionPicker: ChoiceOverlay | null = null
   private readonly chatChannelButtons = new Map<ChatChannel, { node: Node, label: Label }>()
   private chatInput: EditBox | null = null
   private sendButton: Node | null = null
@@ -158,6 +163,10 @@ export class SocialPanelView extends Component {
   onChatSend: ((text: string) => void) | null = null
   /** 点开一条「分享了战报」的消息：把战报 id 交给编排层去拉回放（B22 §一 2） */
   onChatOpenReport: ((reportId: string) => void) | null = null
+  /** 点别人发的那条消息上的动作按钮（B22 §一 3：举报 / 拉黑） */
+  onChatAction: ((senderId: string, messageId: string) => void) | null = null
+  /** 点私聊列表顶部那条「黑名单」（解除拉黑的唯一入口） */
+  onChatManageBlocks: (() => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -198,6 +207,10 @@ export class SocialPanelView extends Component {
     this.onChatOpenPeer = null
     this.onChatSend = null
     this.onChatOpenReport = null
+    this.onChatAction = null
+    this.onChatManageBlocks = null
+    this.chatActionPicker?.hide()
+    this.chatActionPicker = null
   }
 
   /**
@@ -515,6 +528,33 @@ export class SocialPanelView extends Component {
     this.sendButton = send
   }
 
+  /**
+   * 消息行上的动作选择器（B22 §一 3）。选项由编排层给出（它才知道我拉黑过谁），这里只画和回调。
+   */
+  showChatActionPicker(options: readonly ChatActionChoice[],
+                       onPick: (choice: ChatActionChoice) => void): void {
+    if (this.chatActionPicker === null) {
+      this.chatActionPicker = new ChoiceOverlay(this.node, '这条消息', 620)
+    }
+    this.chatActionPicker.show(options, (id) => {
+      const choice = options.find((option) => option.id === id)
+      if (choice !== undefined) {
+        onPick(choice)
+      }
+    })
+  }
+
+  /** 行里带的 id 是 messageId，而举报要连发信人一起交出去 —— 从最近一次聊天数据里查即可。 */
+  private senderIdOf(messageId: string): string {
+    for (const row of this.chatData?.messages ?? []) {
+      if (row.messageId === messageId) {
+        return row.senderId
+      }
+    }
+    return ''
+  }
+
+
   /** 把输入框里的文字交出去。**不清空**：清不清由组合根说了算（失败要留着让玩家重试）。 */
   private sendChatDraft(): void {
     this.onChatSend?.(this.chatInput?.string ?? '')
@@ -765,6 +805,14 @@ export class SocialPanelView extends Component {
         this.onChatOpenReport?.(id)
         return
       }
+      if (kind === 'chatMenu') {
+        this.onChatAction?.(this.senderIdOf(id), id)
+        return
+      }
+      if (kind === 'blocks') {
+        this.onChatManageBlocks?.()
+        return
+      }
       if (kind === 'helpAll') {
         this.onHelpAll?.(this.data?.helpAllCount ?? 0)
         return
@@ -789,10 +837,7 @@ export class SocialPanelView extends Component {
  */
 function chatDrafts(data: ChatPanelData): RowDraft[] {
   if (data.mode === 'conversations') {
-    if (data.conversations.length === 0) {
-      return [infoRow(data.emptyText)]
-    }
-    return data.conversations.map((row): RowDraft => ({
+    const rows = data.conversations.map((row): RowDraft => ({
       title: row.label,
       titleColor: row.unread > 0 ? COLOR_TEXT : COLOR_TEXT_DIM,
       detail: row.unread > 0 ? `未读 ${row.unread} 条` : '已读',
@@ -802,6 +847,23 @@ function chatDrafts(data: ChatPanelData): RowDraft[] {
       actionId: row.peerId,
       actionKind: 'chatPeer',
     }))
+    if (data.blockedCount > 0) {
+      // 解除拉黑的唯一入口：拉黑之后那个人的消息就看不见了，"再点他一条消息"是够不着的
+      rows.unshift({
+        title: `黑名单（${data.blockedCount}）`,
+        titleColor: COLOR_TEXT_DIM,
+        detail: '点开可以取消拉黑',
+        value: '',
+        actionText: '管理',
+        actionEnabled: true,
+        actionId: 'blocks',
+        actionKind: 'blocks',
+      })
+    }
+    if (rows.length === 0) {
+      return [infoRow(data.emptyText)]
+    }
+    return rows
   }
   if (data.messages.length === 0) {
     return [infoRow(data.emptyText)]
@@ -813,11 +875,11 @@ function chatDrafts(data: ChatPanelData): RowDraft[] {
     // 分享战报的正文里带一段给代码看的标记（[report:id]），显示时摘掉
     detail: chatMessageText(message),
     value: message.timeText,
-    // 分享的那条能点开回放；普通消息没有可点的地方（按钮不摆出来，而不是摆个灰的）
-    actionText: message.reportId === null ? null : '打开',
-    actionEnabled: message.reportId !== null,
-    actionId: message.reportId,
-    actionKind: message.reportId === null ? 'none' : 'report',
+    // 别人发的消息统一带一个动作按钮：分享战报的那条是「打开」，其余是「举报」（拉黑在它旁边一层选择里）
+    actionText: message.reportId !== null ? '打开' : (message.mine ? null : '举报'),
+    actionEnabled: true,
+    actionId: message.reportId !== null ? message.reportId : message.messageId,
+    actionKind: message.reportId !== null ? 'report' : (message.mine ? 'none' : 'chatMenu'),
   }))
 }
 

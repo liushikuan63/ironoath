@@ -55,6 +55,11 @@ export function chatKey(channel: ChatChannel, peerId: string | null): string {
 /** 一条消息行。 */
 export interface ChatMessageRow {
   readonly messageId: string
+  /**
+   * 发信人 id。举报与拉黑都要连人一起交出去（B22 §一 3），
+   * 而面板行里带的 id 是消息 id —— 两件事都得有，所以这里显式带上。
+   */
+  readonly senderId: string
   /** 自己发的写「我」—— 每一行都重复一遍自己的昵称是噪音 */
   readonly author: string
   readonly mine: boolean
@@ -96,6 +101,12 @@ export interface ChatViewInput {
   readonly sentSeq: number
   /** 上一次失败的可读原因（限流、没资格…）。成功一次或切换频道后由调用方清空 */
   readonly notice: string | null
+  /**
+   * 我拉黑了几个（B22 §一 3）。**大于 0 时私聊列表顶部多一行「黑名单」**：
+   * 拉黑之后那个人的消息就看不见了，而"解除拉黑"的入口只能在这里 ——
+   * 只靠"再点他一条消息"是够不着的（那条消息已经不在屏幕上了）。
+   */
+  readonly blockedCount: number
 }
 
 /** 聊天页签的展示数据。 */
@@ -113,6 +124,8 @@ export interface ChatPanelData {
   readonly conversations: readonly ChatConversationRow[]
   readonly peerId: string | null
   readonly peerLabel: string | null
+  /** 我拉黑了几个（>0 时私聊列表多一行「黑名单」入口） */
+  readonly blockedCount: number
   /** 原样带过去给面板比对（见 {@link ChatViewInput.sentSeq}） */
   readonly sentSeq: number
   /** 输入行提示 */
@@ -215,6 +228,7 @@ export function buildChatMessages(messages: readonly ChatMessageView[], myPlayer
                                   nowServer: number): ChatMessageRow[] {
   return messages.map((message): ChatMessageRow => ({
     messageId: message.messageId,
+    senderId: message.senderId,
     author: message.senderId === myPlayerId ? '我' : message.senderName,
     mine: message.senderId === myPlayerId,
     content: message.content,
@@ -286,6 +300,7 @@ export function buildChatPanel(input: ChatViewInput): ChatPanelData {
     conversations,
     peerId: input.peerId,
     peerLabel,
+    blockedCount: input.blockedCount,
     sentSeq: input.sentSeq,
     hintText: input.notice ?? idleHint(input.channel, peerLabel),
     hintIsWarning: input.notice !== null,
