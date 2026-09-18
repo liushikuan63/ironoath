@@ -148,7 +148,7 @@ class PlayerPaidEquivalenceTest {
     @DisplayName("老存档没有这一位：读成「什么都没买过」，不挡登录")
     void missingPaidReadsAsEmpty() {
         PlayerDocument noPaid = new PlayerDocument("P-old", "dev-old", "老号", 1, NOW, NOW, 1,
-                Map.of(), null, null, null, null, null, null, null, 0L);
+                Map.of(), null, null, null, null, null, null, null, null, 0L);
         assertThat(PlayerDocumentMapper.toDomain(noPaid).paid())
                 .as("B19 之前建的号压根没存过付费权益").isEqualTo(PlayerPaid.empty());
     }
@@ -158,7 +158,7 @@ class PlayerPaidEquivalenceTest {
     void dirtyPaidThrowsInsteadOfVanishingThePurchase() {
         PlayerDocument dirty = new PlayerDocument("P-bad", "dev-bad", "脏数据", 1, NOW, NOW, 1,
                 Map.of(), null, null, null, null, null,
-                new PlayerDocument.PaidDoc(0L, null, null, List.of(), null, List.of()), null, 0L);
+                new PlayerDocument.PaidDoc(0L, null, null, List.of(), null, List.of()), null, null, 0L);
 
         assertThatThrownBy(() -> PlayerDocumentMapper.toDomain(dirty))
                 .as("这一位与荣耀/引导不同：那两位是派生缓存，读不懂能重算；"

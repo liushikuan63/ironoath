@@ -1007,6 +1007,13 @@ public class CityAppService {
             }
         }
 
+        if (!settlement.harvested().isEmpty()) {
+            // 建筑落成是一类触发（GiftCfg.Trigger.BUILDING_DONE）。打标打在**这份存档**上，
+            // 跟着下面那次 players.save 落库 —— 落点刻意选写路径（collect）：
+            // 读路径（/city/list）也会惰性结算收割，但那份存档不一定被持久化
+            com.ironoath.web.pay.GiftTriggerMarks.markOn(player,
+                    com.ironoath.config.cfg.GiftCfg.Trigger.BUILDING_DONE, now);
+        }
         players.save(player);
         cities.save(playerId, city, ctx.cityVersion());
         LOG.info("收割升级 playerId={} 本次收割={} 入账产出={}",

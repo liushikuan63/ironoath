@@ -232,6 +232,16 @@ public class StageAppService {
         boolean firstClear = attempt.won() && !clearedBefore;
         boolean newBest = attempt.won() && record.stars() == earned && earned > 0;
         saveProgress(playerId, progress);
+        if (!attempt.won()) {
+            // 卡关=关卡挑战失败（gift.json 口径；打野失败不在三类里）。这条路径手里没有 PlayerSave
+            // （它写的是 StageProgress），所以就地读一次、打标、存回：同一把锁内，且此刻没有别人的
+            // 存档副本在飞（发奖与体力那两段都已各自结束）
+            players.findByPlayerId(playerId).ifPresent(save -> {
+                com.ironoath.web.pay.GiftTriggerMarks.markOn(save,
+                        com.ironoath.config.cfg.GiftCfg.Trigger.STUCK_STAGE, now);
+                players.save(save);
+            });
+        }
 
         String reportId = battleReports.record(playerId, playerId, stage.id(), stage.name(), null,
                 BattleType.PVE, req.heroes() == null ? List.of() : req.heroes(), List.of(),

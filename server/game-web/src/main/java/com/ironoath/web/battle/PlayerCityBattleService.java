@@ -320,6 +320,9 @@ public class PlayerCityBattleService {
         BattleReport defenderReport = battleReports.record(defenderId, attackerId, defenderId,
                 defenderName, attackerName, battleTypeOf(march), march.heroes(), defenderHeroIds,
                 result, now);
+        // 战败是三类触发之一：只给**输的那一方**记，平局不算（"谁输了"只有 BattleReport.won() 一个定义）
+        markBattleLost(attackerReport, now);
+        markBattleLost(defenderReport, now);
 
         // ---------- 十、通知守方的盟友（B10 验收 5）----------
         // 这是 notifyMemberAttacked 的唯一调用点：盟友被攻击这件事只有战斗结算方知道。
@@ -456,6 +459,9 @@ public class PlayerCityBattleService {
         BattleReport gathererReport = battleReports.record(gathererId, attackerId, gathererId,
                 gathererName, attackerName, battleTypeOf(attacker), attacker.heroes(), gatherer.heroes(),
                 result, now);
+        // 战败是三类触发之一：只给**输的那一方**记，平局不算（"谁输了"只有 BattleReport.won() 一个定义）
+        markBattleLost(attackerReport, now);
+        markBattleLost(gathererReport, now);
 
         // 事件触发的聊天：拦截也是「我出征打了一仗」，攻方按胜负挑一句；
         // 被拦的采集者那边同样收到 ATTACKED（他的队伍在野外被打，与城被攻是同一类事）
@@ -738,5 +744,17 @@ public class PlayerCityBattleService {
             }
         }
         return total;
+    }
+
+    /** 输了才记 BATTLE_LOST（平局不算：won() 对 DRAW 也返回 false，但打平不是战败）。 */
+    private void markBattleLost(BattleReport report, long now) {
+        if (report.won() || report.result().winner() == com.ironoath.battle.Winner.DRAW) {
+            return;
+        }
+        players.findByPlayerId(report.ownerId()).ifPresent(save -> {
+            com.ironoath.web.pay.GiftTriggerMarks.markOn(save,
+                    com.ironoath.config.cfg.GiftCfg.Trigger.BATTLE_LOST, now);
+            players.save(save);
+        });
     }
 }

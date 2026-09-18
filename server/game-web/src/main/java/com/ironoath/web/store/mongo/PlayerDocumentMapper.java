@@ -56,6 +56,8 @@ public final class PlayerDocumentMapper {
                 toPaidDoc(save.paid()),
                 // 同上：一行都没研究、队列空着，也是一个明确写下来的值而不是缺列
                 toTechDoc(save.tech()),
+                // 同上：一次都没弹、没触发过，也是一个明确写下来的值而不是缺列（S3-ii）
+                toGiftPopupDoc(save.giftPopup()),
                 save.version());
     }
 
@@ -145,11 +147,41 @@ public final class PlayerDocumentMapper {
                     researching == null ? 0L : td.totalSeconds());
         }
 
+        // 礼包弹窗：缺子文档 = S3-ii 之前的老号，读成「一次都没弹、也没触发过」。
+        // 这一位读不懂也不要紧：丢的最多是一次弹窗记账（重启后多弹一次），不是玩家资产 ——
+        // 与付费/科技那两位「读不懂就抛」的纪律不同档，所以这里全程容 null。
+        PlayerDocument.GiftPopupDoc gd = doc.giftPopup();
+        com.ironoath.core.player.PlayerGiftPopup giftPopup = gd == null
+                ? com.ironoath.core.player.PlayerGiftPopup.empty()
+                : new com.ironoath.core.player.PlayerGiftPopup(gd.lastShowAt(), safeShows(gd.showsByGift()),
+                        gd.triggeredAt() == null ? java.util.Map.of() : gd.triggeredAt());
+
         PlayerSave save = new PlayerSave();
         save.restore(doc.playerId(), doc.deviceId(), doc.nickName(), doc.avatarId(),
                 doc.createdAt(), doc.lastLoginAt(), doc.cityLevel(), resources,
-                power, pvp, doc.protectUntil(), glory, guide, paid, tech, doc.version());
+                power, pvp, doc.protectUntil(), glory, guide, paid, tech, giftPopup, doc.version());
         return save;
+    }
+
+    /** 存档那位 -> 文档子结构。一位不漏地写，见 {@link PlayerDocument.GiftPopupDoc} 的读法说明。 */
+    private static PlayerDocument.GiftPopupDoc toGiftPopupDoc(
+            com.ironoath.core.player.PlayerGiftPopup popup) {
+        return new PlayerDocument.GiftPopupDoc(popup.lastShowAt(), popup.showsByGift(), popup.triggeredAt());
+    }
+
+    /** 弹出时刻表：整列缺席（老文档）读成空表，单个礼包的列表缺席也照样跳过而不是抛。 */
+    private static java.util.Map<String, java.util.List<Long>> safeShows(
+            java.util.Map<String, java.util.List<Long>> source) {
+        if (source == null || source.isEmpty()) {
+            return java.util.Map.of();
+        }
+        java.util.Map<String, java.util.List<Long>> copy = new java.util.LinkedHashMap<>();
+        source.forEach((giftId, times) -> {
+            if (giftId != null && times != null && !times.isEmpty()) {
+                copy.put(giftId, java.util.List.copyOf(times));
+            }
+        });
+        return copy;
     }
 
     /** null 容忍：老文档里这两个列表可以整个缺席（{@code PlayerPaid} 自己会把 null 读成空集）。 */

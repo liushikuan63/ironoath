@@ -120,7 +120,7 @@ class PlayerTechEquivalenceTest {
     @DisplayName("老存档没有这一位：读成「一行都没研究」，绝不挡住登录")
     void missingTechReadsAsEmpty() {
         PlayerDocument noTech = new PlayerDocument("P-old", "dev-old", "老号", 1, NOW, NOW, 1,
-                Map.of(), null, null, null, null, null, null, null, 0L);
+                Map.of(), null, null, null, null, null, null, null, null, 0L);
         assertThat(PlayerDocumentMapper.toDomain(noTech).tech())
                 .as("B20 之前建的号压根没存过科技").isEqualTo(PlayerTech.empty());
     }
@@ -133,7 +133,7 @@ class PlayerTechEquivalenceTest {
         dirty.put("tech_mil_atk", 2);
         PlayerDocument withZero = new PlayerDocument("P-zero", "dev-zero", "脏账本", 1, NOW, NOW, 1,
                 Map.of(), null, null, null, null, null, null,
-                new PlayerDocument.TechDoc(dirty, null, null, 0L, 0L), 0L);
+                new PlayerDocument.TechDoc(dirty, null, null, 0L, 0L), null, 0L);
         PlayerTech read = PlayerDocumentMapper.toDomain(withZero).tech();
         assertThat(read.levels())
                 .as("0 与「这一行没研究过」是同一件事，读回来不该占一位")
@@ -142,7 +142,7 @@ class PlayerTechEquivalenceTest {
 
         PlayerDocument torn = new PlayerDocument("P-torn", "dev-torn", "脏队列", 1, NOW, NOW, 1,
                 Map.of(), null, null, null, null, null, null,
-                new PlayerDocument.TechDoc(Map.of(), "tech_agri_wood", null, NOW, 13L), 0L);
+                new PlayerDocument.TechDoc(Map.of(), "tech_agri_wood", null, NOW, 13L), null, 0L);
         assertThatThrownBy(() -> PlayerDocumentMapper.toDomain(torn))
                 .as("有 researchingId 却没完成时刻：静默读成空闲等于把玩家已经等掉的时间扔掉，宁可炸出来")
                 .isInstanceOf(IllegalArgumentException.class);

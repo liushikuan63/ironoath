@@ -30,10 +30,6 @@ const UNWIRED = {
   MatchRuleCfg: '零装配：#60（匹配规则表没读，圈层与集结校验走 global 参数那条路，B08）',
   // 与上面几条同一条规矩：接上读它的人之后必须删除，别把例外当借口。
   // S3-i（#169）只落了表、发货内容与价格参数；读它的是 S3-ii 的弹窗判定
-  // （事件源接线 + PopupThrottle + GET /gift/popup），那时本行随之删除。
-  // 注意本表只到"列"以上：礼包的 trigger 与 offerTtlMinutes 在 S3-ii 之前无人读，
-  // 而这张卡口看不见那一级（#165 ⑦ 同一条盲区）。
-  GiftCfg: '零装配：#169（B19-S3-i 只落 gift.json 与三档商品的发货内容，弹窗判定与事件源在 S3-ii）',
   // NationTechCfg 曾挂在这里（B20 块③ 的 S1 只落了表与契约）：S2 的 Nation.techLevels 账本 +
   // researchTech 走 sink:NATIONAL_TECH 核销 + /nation/tech 两个端点 + NationTechBonuses 那一个读取口
   // 让它真的被生产代码读了，例外随之删除 —— 与上面 TechCfg / GuideCfg / PayProductCfg 同一条规矩。

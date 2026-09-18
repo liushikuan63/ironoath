@@ -59,6 +59,15 @@ public final class PlayerSave {
      * 「一行都没研究、队列空着」是唯一正确的读法（与 {@link #guide}、{@link #paid} 同一条纪律）。
      */
     private PlayerTech tech = PlayerTech.empty();
+    /**
+     * 礼包弹窗（B19 S3-ii）：最近一次弹出时刻、每个礼包最近的弹出时刻、三类触发各自的最近触发时刻。
+     *
+     * <p>默认 {@link PlayerGiftPopup#empty()} 而不是 null：S3-ii 之前的号本来就没弹过礼包，
+     * 「一次都没弹、也没被任何事件触发过」是唯一正确的读法（与 {@link #guide}、{@link #paid}、
+     * {@link #tech} 同一条纪律）。<b>频控状态住这里而不是 {@code PopupThrottle} 的堆内 Map</b>：
+     * 后者会让「重启即清零」与「多实例各弹各的」变成默认行为。
+     */
+    private PlayerGiftPopup giftPopup = PlayerGiftPopup.empty();
     /** 乐观锁版本号，每次持久化自增。 */
     private long version;
 
@@ -171,6 +180,11 @@ public final class PlayerSave {
     /** 新手引导进度。永不为 null（没走过引导就是 {@link PlayerGuide#empty()}）。 */
     public PlayerGuide guide() {
         return guide;
+    }
+
+    /** 礼包弹窗状态。永不为 null（一次都没弹过就是 {@link PlayerGiftPopup#empty()}）。 */
+    public PlayerGiftPopup giftPopup() {
+        return giftPopup;
     }
 
     /** 付费权益。永不为 null（什么都没买过就是 {@link PlayerPaid#empty()}）。 */
@@ -292,6 +306,20 @@ public final class PlayerSave {
      * 其他系统要给人加权益，请走 {@code RewardType.PRIVILEGE} 而不是直接写这一位 ——
      * 绕过发放器就等于绕过了幂等账本与溢出转邮件。
      */
+    /**
+     * 覆盖礼包弹窗这一位。<b>写者只有付费弹窗域，且必须在玩家锁内</b>（与 {@link #setPaid} 同一条纪律：
+     * 仓储返回深拷贝，锁外写就是两个域各改各的、后写覆盖前写）。
+     *
+     * <p>整位替换：{@link PlayerGiftPopup} 不可变，触发与弹出都返回新的一位 —— 漏写回会留在存档上，
+     * 「改了但没 save」这类问题在结构上就不可能出现。
+     */
+    public void setGiftPopup(PlayerGiftPopup giftPopup) {
+        if (giftPopup == null) {
+            throw new IllegalArgumentException("礼包弹窗状态不得为 null（一次都没弹过请传 PlayerGiftPopup.empty()）");
+        }
+        this.giftPopup = giftPopup;
+    }
+
     public void setPaid(PlayerPaid paid) {
         if (paid == null) {
             throw new IllegalArgumentException("付费权益不得为 null（什么都没买过请传 PlayerPaid.empty()）");
@@ -351,7 +379,8 @@ public final class PlayerSave {
                         Map<String, PlayerResourceState> restoredResources,
                         PlayerPower restoredPower, PlayerPvp restoredPvp,
                         Long protectUntil, PlayerGlory restoredGlory, PlayerGuide restoredGuide,
-                        PlayerPaid restoredPaid, PlayerTech restoredTech, long version) {
+                        PlayerPaid restoredPaid, PlayerTech restoredTech,
+                        PlayerGiftPopup restoredGiftPopup, long version) {
         this.playerId = playerId;
         this.deviceId = deviceId;
         this.nickName = nickName;
@@ -375,6 +404,8 @@ public final class PlayerSave {
         this.paid = restoredPaid == null ? PlayerPaid.empty() : restoredPaid;
         // B20 之前的号没有科技这一位：读成「一行都没研究、队列空着」，而不是抛或留 null
         this.tech = restoredTech == null ? PlayerTech.empty() : restoredTech;
+        // S3-ii 之前的号没有这一位：读成「一次都没弹、也没触发过」，而不是抛或留 null
+        this.giftPopup = restoredGiftPopup == null ? PlayerGiftPopup.empty() : restoredGiftPopup;
         this.version = version;
     }
 
@@ -388,7 +419,7 @@ public final class PlayerSave {
     public PlayerSave copy() {
         PlayerSave copy = new PlayerSave();
         copy.restore(playerId, deviceId, nickName, avatarId, createdAt, lastLoginAt, cityLevel,
-                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, tech, version);
+                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, tech, giftPopup, version);
         return copy;
     }
 }

@@ -81,18 +81,95 @@ public final class PopupThrottle {
     }
 
     private final Rules rules;
-    /** playerId → 首次付费时刻。0 表示从未付费 */
-    private final Map<String, Long> firstPayAt = new HashMap<>();
+    /**
+     * 首次付费时刻（0 = 从未付费）。<b>不是 Map，因为它没有资格自己存一份</b>：
+     * 真值住在 {@code PlayerPaid.firstChargedAt}（已持久化），本类只在按玩家回灌时接过来用一次。
+     * 自己再存一份就是同一个事实两处存 —— 收口清单 #168 那轮抓出来的毛病。
+     */
+    private final long firstPayAtMillis;
+    /** 上面那时刻属于谁。null = 这份静默期谁都不属于（共享 bean 的默认状态）。 */
+    private final String firstPayOwner;
     /** "playerId:giftId" → 最近 24h 的弹出时刻 */
     private final Map<String, java.util.Deque<Long>> giftShows = new LinkedHashMap<>();
     /** playerId → 上一次弹出任意礼包的时刻 */
     private final Map<String, Long> lastShowAt = new HashMap<>();
+    /**
+     * 回灌时带进来的触发时刻。快照必须把它原样带回去：事件源在别的请求里写它，
+     * 弹出记账这一路要清空它，下一次 GET 就再也看不到触发 ⇒ 礼包永远弹不出来。
+     */
+    private Map<String, Long> triggeredAt = Map.of();
 
     public PopupThrottle(Rules rules) {
+        this(rules, null, 0L);
+    }
+
+    private PopupThrottle(Rules rules, String firstPayOwner, long firstPayAtMillis) {
         if (rules == null) {
             throw new IllegalArgumentException("rules 不得为 null");
         }
+        if (firstPayAtMillis < 0L) {
+            throw new IllegalArgumentException("首次付费时刻不得为负，实际=" + firstPayAtMillis);
+        }
         this.rules = rules;
+        this.firstPayOwner = firstPayOwner;
+        this.firstPayAtMillis = firstPayAtMillis;
+    }
+
+    /**
+     * 按玩家回灌一个判定器：<b>频控的真值住在存档（{@link com.ironoath.core.player.PlayerGiftPopup}），
+     * 本类只是那一份状态上的一次判定</b>。
+     *
+     * <p>为什么不在这里持久化：策略要留在 game-core（零框架、可脱离容器单测），
+     * 而持久化必须走「读档 → 改 → 写档 + 玩家锁」。所以调用方在锁内 {@code forPlayer} 判一次，
+     * 再把 {@link #snapshotOf} 的结果写回存档那一位。
+     *
+     * @param firstPayAtMillis 首充时刻，读自 {@code PlayerPaid.firstChargedAt}（null 传 0）
+     */
+    public static PopupThrottle forPlayer(Rules rules, String playerId,
+                                          com.ironoath.core.player.PlayerGiftPopup state,
+                                          long firstPayAtMillis) {
+        if (playerId == null || playerId.isBlank()) {
+            throw new IllegalArgumentException("playerId 不得为空");
+        }
+        PopupThrottle throttle = new PopupThrottle(rules, playerId, firstPayAtMillis);
+        com.ironoath.core.player.PlayerGiftPopup stored =
+                state == null ? com.ironoath.core.player.PlayerGiftPopup.empty() : state;
+        if (stored.lastShowAt() > 0L) {
+            throttle.lastShowAt.put(playerId, stored.lastShowAt());
+        }
+        throttle.triggeredAt = stored.triggeredAt();
+        stored.showsByGift().forEach((giftId, times) -> {
+            java.util.Deque<Long> deque = new java.util.ArrayDeque<>();
+            times.forEach(deque::addLast);
+            throttle.giftShows.put(playerId + ":" + giftId, deque);
+        });
+        return throttle;
+    }
+
+    /**
+     * 把某个玩家当前的频控状态导出成存档那一位（配 {@link #forPlayer} 用）。
+     *
+     * <p><b>只导 24h 窗口内还需要记的那些时刻</b>：滑窗已经把它们淘汰完了，
+     * 原样写回就等于让存档跟着会话长度长。
+     */
+    public com.ironoath.core.player.PlayerGiftPopup snapshotOf(String playerId, long now) {
+        java.util.Map<String, java.util.List<Long>> shows = new java.util.LinkedHashMap<>();
+        String prefix = playerId + ":";
+        giftShows.forEach((key, deque) -> {
+            if (key.startsWith(prefix)) {
+                java.util.List<Long> kept = new java.util.ArrayList<>();
+                deque.forEach(at -> {
+                    if (at > now - 24L * 3600_000L) {
+                        kept.add(at);
+                    }
+                });
+                if (!kept.isEmpty()) {
+                    shows.put(key.substring(prefix.length()), java.util.Collections.unmodifiableList(kept));
+                }
+            }
+        });
+        return new com.ironoath.core.player.PlayerGiftPopup(
+                lastShowAt.getOrDefault(playerId, 0L), shows, triggeredAt);
     }
 
     /**
@@ -113,7 +190,8 @@ public final class PopupThrottle {
             return Verdict.deny("Bot 不得出现在任何付费弹窗场景（B11 §七 合规红线）", 0L);
         }
 
-        long firstPay = firstPayAt.getOrDefault(playerId, 0L);
+        // 只有这份静默期确实属于被问的那个玩家时才生效：共享实例上拿别人的首充压制他是错的
+        long firstPay = playerId.equals(firstPayOwner) ? firstPayAtMillis : 0L;
         if (firstPay > 0 && now - firstPay < rules.firstPayQuietMillis()) {
             long remain = rules.firstPayQuietMillis() - (now - firstPay);
             return Verdict.deny("首次付费后 " + (rules.firstPayQuietMillis() / 3600_000L)
@@ -152,19 +230,6 @@ public final class PopupThrottle {
         }
         giftShows.computeIfAbsent(playerId + ":" + giftId, k -> new java.util.ArrayDeque<>()).addLast(now);
         lastShowAt.put(playerId, now);
-    }
-
-    /** 记录首次付费时刻。只会记第一次 —— 「首次付费后 24 小时」指的是历史上第一次。 */
-    public void recordFirstPay(String playerId, long now) {
-        if (playerId == null || playerId.isBlank()) {
-            throw new IllegalArgumentException("playerId 不得为空");
-        }
-        firstPayAt.putIfAbsent(playerId, now);
-    }
-
-    /** 某个玩家的首次付费时刻；从未付费为 0。 */
-    public long firstPayAt(String playerId) {
-        return firstPayAt.getOrDefault(playerId, 0L);
     }
 
     /**
@@ -230,7 +295,6 @@ public final class PopupThrottle {
 
     /** 清理某个玩家的状态（退号、跨赛季）。 */
     public void forget(String playerId) {
-        firstPayAt.remove(playerId);
         lastShowAt.remove(playerId);
         giftShows.keySet().removeIf(key -> key.startsWith(playerId + ":"));
     }

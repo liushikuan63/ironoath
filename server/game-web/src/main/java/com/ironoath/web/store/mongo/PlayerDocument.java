@@ -33,10 +33,27 @@ public record PlayerDocument(
         GuideDoc guide,
         PaidDoc paid,
         TechDoc tech,
+        GiftPopupDoc giftPopup,
         long version) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "player";
+    /**
+     * 礼包弹窗的持久化形态（B19 S3-ii：弹出记账 + 触发时刻）。
+     *
+     * <p><b>可空</b>：S3-ii 之前建的号没有这一位，读回来补 {@code PlayerGiftPopup.empty()} ——
+     * 与 {@link PaidDoc}、{@link TechDoc} 缺失时同一条读法。
+     *
+     * @param lastShowAt 最近一次弹出任意礼包的时刻；0 = 从未弹过
+     * @param showsByGift 礼包 id 到最近弹出时刻列表
+     * @param triggeredAt 触发类型名到最近触发时刻（事件源写它，报价 TTL 从它算）
+     */
+    public record GiftPopupDoc(
+            long lastShowAt,
+            Map<String, java.util.List<Long>> showsByGift,
+            Map<String, Long> triggeredAt) {
+    }
+
 
     /**
      * 个人科技的持久化形态（B20 块①：已研究等级 + 当前研究槽四位）。

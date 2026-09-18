@@ -384,32 +384,34 @@ class PaySystemTest {
     @Test
     @DisplayName("验收6：首次付费后 24 小时内不弹任何付费弹窗（对所有礼包生效）")
     void firstPurchaseStartsQuietPeriod() {
-        PopupThrottle throttle = throttle();
-        throttle.recordFirstPay("p1", 1000L);
+        // 静默期不再由本类自己记：首充时刻的真值住在 PlayerPaid.firstChargedAt，回灌时接过来用一次
+        PopupThrottle throttle = PopupThrottle.forPlayer(
+                new PopupThrottle.Rules(24 * HOUR, 3, 10 * MINUTE), "p1",
+                com.ironoath.core.player.PlayerGiftPopup.empty(), 1000L);
 
         PopupThrottle.Verdict verdict = throttle.shouldShow("p1", "gift_a", false, 1000L + HOUR);
         assertThat(verdict.allowed()).isFalse();
         assertThat(verdict.reason()).contains("首次付费");
         assertThat(verdict.retryAfterMillis()).as("要告诉调用方多久后再试").isPositive();
 
-        // 换个礼包也一样：静默期是全局的，不是按礼包的
-        assertThat(throttle.shouldShow("p1", "gift_b", false, 1000L + HOUR).allowed()).isFalse();
-        // 24 小时之后恢复
-        assertThat(throttle.shouldShow("p1", "gift_a", false, 1000L + DAY + 1).allowed()).isTrue();
-        // 没付过费的人不受影响
-        assertThat(throttle.shouldShow("p2", "gift_a", false, 1000L).allowed()).isTrue();
-    }
+        assertThat(throttle.shouldShow("p1", "gift_b", false, 1000L + 25 * HOUR).allowed())
+                .as("静默期对每个礼包都生效，24 小时之后才放行").isTrue();
+}
 
     @Test
-    @DisplayName("首次付费时刻只记第一次：第二次付费不会重置静默期")
-    void quietPeriodAnchorsOnFirstEverPurchase() {
-        PopupThrottle throttle = throttle();
-        throttle.recordFirstPay("p1", 1000L);
-        throttle.recordFirstPay("p1", 1000L + 2 * DAY);
-        assertThat(throttle.firstPayAt("p1")).isEqualTo(1000L);
-        assertThat(throttle.shouldShow("p1", "gift_a", false, 1000L + DAY + 1).allowed())
-                .as("第二次付费不该把静默期又延长 24 小时").isTrue();
-    }
+    @DisplayName("静默期只属于首充的那个人：共享实例不得拿甲的首充压制乙（回灌后 owner 才生效）")
+    void quietPeriodOnlyAppliesToTheOwnerOfThatFirstPay() {
+        // 共享实例上拿甲的首充压制乙是错的：静默期必须问"这一位是不是这个玩家的"
+        PopupThrottle shared = new PopupThrottle(new PopupThrottle.Rules(24 * HOUR, 3, 10 * MINUTE));
+        assertThat(shared.shouldShow("p9", "gift_a", false, 1000L).allowed())
+                .as("没有回灌任何首充时刻时不该凭空压制").isTrue();
+
+        PopupThrottle mine = PopupThrottle.forPlayer(
+                new PopupThrottle.Rules(24 * HOUR, 3, 10 * MINUTE), "p1",
+                com.ironoath.core.player.PlayerGiftPopup.empty(), 1000L);
+        assertThat(mine.shouldShow("p2", "gift_a", false, 1000L + HOUR).allowed())
+                .as("别人的首充不该压在 p2 头上").isTrue();
+}
 
     @Test
     @DisplayName("验收7：同一礼包 24 小时最多 3 次，第 4 次被压制并给出可重试时刻")
@@ -560,12 +562,13 @@ class PaySystemTest {
     @Test
     @DisplayName("清理玩家状态：退号后频控记录与首次付费时刻都不该留着")
     void forgetClearsPlayerState() {
-        PopupThrottle throttle = throttle();
-        throttle.recordFirstPay("p1", 1000L);
+        PopupThrottle throttle = PopupThrottle.forPlayer(
+                new PopupThrottle.Rules(24 * HOUR, 3, 10 * MINUTE), "p1",
+                com.ironoath.core.player.PlayerGiftPopup.empty(), 0L);
         throttle.recordShown("p1", "gift_a", 1000L);
         throttle.forget("p1");
-        assertThat(throttle.firstPayAt("p1")).isZero();
-        assertThat(throttle.shouldShow("p1", "gift_a", false, 1000L + MINUTE).allowed())
-                .as("清理后全局冷却也不再生效").isTrue();
-    }
+        assertThat(throttle.shouldShow("p1", "gift_a", false, 1000L + 11 * MINUTE).allowed())
+                .as("清理后全局冷却也不再生效（间隔要大于 10 分钟冷却）").isTrue();
+        // 首充时刻现在住 PlayerPaid（持久真值），forget 不再也不该动它
+}
 }
