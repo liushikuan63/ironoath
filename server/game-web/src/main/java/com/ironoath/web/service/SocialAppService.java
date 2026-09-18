@@ -1291,8 +1291,12 @@ public class SocialAppService {
             store.pushEvent(peer, record);
         }
         // WebSocket 推送是在线那条路（验收 5：3 秒内收到）。异步、有界、满了就丢 ——
-        // 本方法在业务线程里被调用，而广播绝不能阻塞它（B10 禁止项）
-        pushPublisher.publish("MEMBER_ATTACKED", peers, record);
+        // 本方法在业务线程里被调用，而广播绝不能阻塞它（B10 禁止项）。
+        // **推的是视图而不是存储记录**：两个 record 的字段名不同（记录是 coordX/coordY + expireAt，
+        // 视图是 coord + expired），而验收 5/12 明写"推送与离线补偿共用同一结构、内容必须一致"。
+        // 此前这里直接发了存储记录 —— 两条路各自都"看起来对"，所以没有任何用例会红；
+        // 第一个把两路放进同一个列表的消费者（B22 聊天页签的未读账）会读到 undefined
+        pushPublisher.publish("MEMBER_ATTACKED", peers, toEventView(record, now));
         LOG.info("盟友被攻击推送 victim={} 通知人数={} 支援窗口至={} 推送预算={}ms",
                 victimId, peers.size(), expireAt, rules.attackPushDeadlineMillis());
     }
@@ -1368,7 +1372,9 @@ public class SocialAppService {
         SocialStore.SocialEvent record = event("PRIVATE_MESSAGE",
                 nickname(senderId) + " 给你发来一条私信", null, senderId, now);
         store.pushEvent(recipientId, record);
-        pushPublisher.publish("PRIVATE_MESSAGE", List.of(recipientId), record);
+        // 与 MEMBER_ATTACKED 同一处理由：推送与离线补偿必须是同一个形状，
+        // 否则把两路事件合并读的客户端会在缺席字段上拿到 undefined
+        pushPublisher.publish("PRIVATE_MESSAGE", List.of(recipientId), toEventView(record, now));
     }
 
     /** 拉取某频道的最近消息。 */
