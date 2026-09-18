@@ -14,12 +14,14 @@
  * 长列表 ScrollView、正式美术与红点图标。占位期用 Graphics 色块 + Label，item 已池化。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
-import { buildSocialPanel, canDo } from '../game/social/SocialPanel'
+import { _decorator, Color, Component, EditBox, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
+import { buildSocialPanel, canDo, channelText } from '../game/social/SocialPanel'
 import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
 } from '../game/social/SocialPanel'
-import type { AllianceMember, HelpRequestView, SocialSummaryResp } from '../net/generated/SocialProtocol'
+import { CHAT_CHANNELS, CHAT_INPUT_MAX_LENGTH } from '../game/social/ChatPanel'
+import type { ChatPanelData } from '../game/social/ChatPanel'
+import type { AllianceMember, ChatChannel, HelpRequestView, SocialSummaryResp } from '../net/generated/SocialProtocol'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
 import { applyCommandButton } from './ArtCatalog'
 import { NodePool } from './NodePool'
@@ -48,14 +50,32 @@ const HEADER_HEIGHT = 104
 const PADDING = 16
 /** 一屏最多画几行。150 人的联盟名单要靠 ScrollView（编辑器资产） */
 const MAX_VISIBLE_ROWS = 8
+/** 聊天页签要多留两条横条（频道切换 + 输入行），所以一屏少画三行（实测面板可视高 540） */
+const CHAT_VISIBLE_ROWS = 5
+/** 聊天页签里消息行整体下移的高度：上面要给频道切换条让位（页签行底 159 / 频道条 122~154） */
+const CHAT_TOP_OFFSET = 32
+const CHANNEL_BUTTON_WIDTH = 92
+const CHANNEL_BUTTON_HEIGHT = 32
+const SEND_BUTTON_WIDTH = 92
+const SEND_BUTTON_HEIGHT = 36
+/**
+ * 输入行底边距面板底边的距离。
+ *
+ * <p>不能贴底：底部导航条（`NavBar`，y=-236、高 52）压在最上面，
+ * 量出来的自由区到 -210 为止。72 让输入行落在 -198 之上，与导航留 12px 缝。
+ */
+const CHAT_INPUT_BOTTOM = 72
 
-type Tab = 'squad' | 'alliance' | 'help' | 'events'
+type Tab = 'squad' | 'alliance' | 'help' | 'events' | 'chat'
 
 const TABS: ReadonlyArray<{ tab: Tab; text: string; reddotKey: string | null }> = [
   { tab: 'squad', text: '小队', reddotKey: null },
   { tab: 'alliance', text: '联盟', reddotKey: 'social/invite' },
   { tab: 'help', text: '互助', reddotKey: 'social/help' },
   { tab: 'events', text: '事件', reddotKey: 'social/events' },
+  // 聊天页签（B22 §五 裁决①：进社交面板的页签，导航 13 项不再加）。
+  // 角标读的是既有的事件叶：私信未读本身就是一条未读事件，两处各算一次就会漂移
+  { tab: 'chat', text: '聊天', reddotKey: 'social/events' },
 ]
 
 /** 一行要画的内容。四个页签共用同一套节点结构。 */
@@ -71,7 +91,7 @@ interface RowDraft {
   readonly actionKind: RowAction
 }
 
-type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate'
+type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -106,6 +126,18 @@ export class SocialPanelView extends Component {
   /** 与服务端整树下发保持同一个实例；每次刷新后只重画角标。 */
   private reddot: ClientReddotTree | null = null
 
+  // ---------- 聊天页签（B22 §一 1） ----------
+
+  /** 聊天页签的数据。由组合根每次状态变化后整份递过来（面板不自己拼） */
+  private chatData: ChatPanelData | null = null
+  /** 上一次见到的成功发送计数：变了说明「刚才那条发出去了」，于是清空输入框 */
+  private chatSentSeq = -1
+  /** 频道切换条 + 输入行的整块容器：只在聊天页签里显示 */
+  private chatControls: Node | null = null
+  private readonly chatChannelButtons = new Map<ChatChannel, { node: Node, label: Label }>()
+  private chatInput: EditBox | null = null
+  private sendButton: Node | null = null
+
   /**
    * 点某一行的动作按钮。权限已由服务端下发的列表裁决过，这里只把 id 与页签归属交出去；
    * 踢人需要知道从小队还是联盟发起，组合根不猜当前组织。
@@ -116,11 +148,21 @@ export class SocialPanelView extends Component {
   /** 点某个捐献档位 */
   onDonate: ((tier: number) => void) | null = null
 
+  /** 进聊天页签（首次画之前先拉一次历史） */
+  onChatEnter: (() => void) | null = null
+  /** 切频道（世界/联盟/小队/私聊） */
+  onChatChannel: ((channel: ChatChannel) => void) | null = null
+  /** 点开一个私聊会话 */
+  onChatOpenPeer: ((peerId: string) => void) | null = null
+  /** 点发送。文本从输入框读，这里只交出去 */
+  onChatSend: ((text: string) => void) | null = null
+
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
+    this.buildChatControls(size.height)
     if (this.pending !== null) {
       const pending = this.pending
       this.pending = null
@@ -144,6 +186,15 @@ export class SocialPanelView extends Component {
     this.onRowAction = null
     this.onHelpAll = null
     this.onDonate = null
+    this.chatData = null
+    this.chatControls = null
+    this.chatInput = null
+    this.sendButton = null
+    this.chatChannelButtons.clear()
+    this.onChatEnter = null
+    this.onChatChannel = null
+    this.onChatOpenPeer = null
+    this.onChatSend = null
   }
 
   /**
@@ -207,6 +258,27 @@ export class SocialPanelView extends Component {
   }
 
   /**
+   * 装载聊天页签的数据（B22 §一 1）。组合根每次状态变化后整份递过来。
+   *
+   * <p>这里**不回拉任何东西**：频道、会话、消息、提示行全是组合根算好的结论。
+   * 面板自己判断"要不要再拉一次"就会与组合根各记一份状态，
+   * 之后必然出现"徽标说 2 条、列表只画 1 条"这类两处不同步。
+   */
+  attachChat(data: ChatPanelData): void {
+    this.chatData = data
+    if (data.sentSeq !== this.chatSentSeq) {
+      this.chatSentSeq = data.sentSeq
+      // 只有发送成功才会推进 sentSeq：失败时玩家打的字要留着（重打一遍是最烦人的失败）
+      if (this.chatInput !== null) {
+        this.chatInput.string = ''
+      }
+    }
+    if (this.tab === 'chat') {
+      this.render()
+    }
+  }
+
+  /**
    * 绑定服务端权威红点树。
    *
    * <p>社交摘要里的 `redDots` 仍用于文案与动作计数，但页签是否亮只读红点树：
@@ -225,6 +297,10 @@ export class SocialPanelView extends Component {
       return
     }
     this.tab = tab
+    if (tab === 'chat') {
+      // 进聊天页签拉一次（世界/联盟/小队三条没有推送，离开又回来的消息只能靠这一拉补上）
+      this.onChatEnter?.()
+    }
     this.render()
   }
 
@@ -329,6 +405,118 @@ export class SocialPanelView extends Component {
     return node
   }
 
+  /**
+   * 聊天页签的频道切换条与输入行（B22 §一 1）。
+   *
+   * <p>两块一起建、一起显隐：**输入框是整块面板里唯一会吃掉键盘的东西**，
+   * 在别的页签上还留着它，玩家在城建页里就会莫名其妙地弹出键盘。
+   *
+   * <p>占位期用运行时构造的 `EditBox`（不依赖编辑器资产）：它自己会补一个
+   * TEXT_LABEL / PLACEHOLDER_LABEL 子节点，背景由我们自己画一块色块 ——
+   * 正式输入框与键盘行为仍要在编辑器/真机里过一遍。
+   */
+  private buildChatControls(height: number): void {
+    const container = new Node('ChatControls')
+    container.layer = this.node.layer
+    this.node.addChild(container)
+    container.active = false
+    this.chatControls = container
+
+    // 频道切换条：页签行（159~193）之下、消息行（122 起）之上
+    const top = height / 2 - PADDING
+    const barY = top - HEADER_HEIGHT - ROW_HEIGHT / 2 + 14
+    const startX = -(CHAT_CHANNELS.length - 1) * CHANNEL_BUTTON_WIDTH / 2
+    CHAT_CHANNELS.forEach((channel, index) => {
+      const node = new Node(`Channel_${channel.key}`)
+      node.layer = container.layer
+      container.addChild(node)
+      node.setPosition(new Vec3(startX + index * CHANNEL_BUTTON_WIDTH, barY, 0))
+      node.addComponent(UITransform).setContentSize(new Size(CHANNEL_BUTTON_WIDTH - 6,
+        CHANNEL_BUTTON_HEIGHT))
+      if (!applyCommandButton(node, 'normal', CHANNEL_BUTTON_WIDTH - 6, CHANNEL_BUTTON_HEIGHT)) {
+        const graphics = node.addComponent(Graphics)
+        graphics.fillColor = COLOR_PANEL
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.roundRect(-(CHANNEL_BUTTON_WIDTH - 6) / 2, -CHANNEL_BUTTON_HEIGHT / 2,
+          CHANNEL_BUTTON_WIDTH - 6, CHANNEL_BUTTON_HEIGHT, 5)
+        graphics.fill()
+        graphics.stroke()
+      }
+      const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT_DIM, 15)
+      label.string = channel.text
+      this.chatChannelButtons.set(channel.key, { node, label })
+      node.on('touch-start', (_event: EventTouch) => this.onChatChannel?.(channel.key), this)
+    })
+
+    // 输入行：屏幕底部，左输入框右发送
+    const inputY = -height / 2 + CHAT_INPUT_BOTTOM + SEND_BUTTON_HEIGHT / 2
+    const inputWidth = PANEL_WIDTH - SEND_BUTTON_WIDTH - 32
+    const background = new Node('ChatInputBg')
+    background.layer = container.layer
+    container.addChild(background)
+    background.setPosition(new Vec3(-(SEND_BUTTON_WIDTH + 16) / 2, inputY, 0))
+    background.addComponent(UITransform).setContentSize(new Size(inputWidth, SEND_BUTTON_HEIGHT))
+    const backgroundGraphics = background.addComponent(Graphics)
+    backgroundGraphics.fillColor = COLOR_PANEL
+    backgroundGraphics.strokeColor = COLOR_COPPER_GOLD
+    backgroundGraphics.lineWidth = 1
+    backgroundGraphics.roundRect(-inputWidth / 2, -SEND_BUTTON_HEIGHT / 2, inputWidth,
+      SEND_BUTTON_HEIGHT, 5)
+    backgroundGraphics.fill()
+    backgroundGraphics.stroke()
+
+    const input = new Node('ChatInput')
+    input.layer = container.layer
+    container.addChild(input)
+    input.setPosition(new Vec3(-(SEND_BUTTON_WIDTH + 16) / 2, inputY, 0))
+    input.addComponent(UITransform).setContentSize(new Size(inputWidth - 16, SEND_BUTTON_HEIGHT))
+    const box = input.addComponent(EditBox)
+    box.placeholder = '说点什么…'
+    box.inputMode = EditBox.InputMode.SINGLE_LINE
+    // **必须显式设置**：真实实现的默认上限是 20 个字符，不设就会把玩家的半句话静默截断
+    box.maxLength = CHAT_INPUT_MAX_LENGTH
+    if (box.textLabel !== null) {
+      applySystemUiFont(box.textLabel)
+      box.textLabel.fontSize = 16
+      box.textLabel.color = COLOR_TEXT
+      box.textLabel.overflow = Label.Overflow.SHRINK
+    }
+    if (box.placeholderLabel !== null) {
+      applySystemUiFont(box.placeholderLabel)
+      box.placeholderLabel.fontSize = 16
+      box.placeholderLabel.color = COLOR_TEXT_DIM
+    }
+    // 键盘上的"发送/回车"与右侧按钮走同一条路：单行输入里回车就是发送
+    input.on(EditBox.EventType.EDITING_RETURN, () => this.sendChatDraft(), this)
+    this.chatInput = box
+
+    const send = new Node('ChatSend')
+    send.layer = container.layer
+    container.addChild(send)
+    send.setPosition(new Vec3((PANEL_WIDTH - SEND_BUTTON_WIDTH) / 2 - 8, inputY, 0))
+    send.addComponent(UITransform).setContentSize(new Size(SEND_BUTTON_WIDTH, SEND_BUTTON_HEIGHT))
+    if (!applyCommandButton(send, 'normal', SEND_BUTTON_WIDTH, SEND_BUTTON_HEIGHT)) {
+      const graphics = send.addComponent(Graphics)
+      graphics.fillColor = COLOR_PANEL
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1
+      graphics.roundRect(-SEND_BUTTON_WIDTH / 2, -SEND_BUTTON_HEIGHT / 2, SEND_BUTTON_WIDTH,
+        SEND_BUTTON_HEIGHT, 5)
+      graphics.fill()
+      graphics.stroke()
+    }
+    const sendLabel = this.addLabel(send, 'Caption', 0, 0, COLOR_TEXT, 16)
+    sendLabel.string = '发送'
+    send.on('touch-start', (_event: EventTouch) => this.sendChatDraft(), this)
+    this.sendButton = send
+  }
+
+  /** 把输入框里的文字交出去。**不清空**：清不清由组合根说了算（失败要留着让玩家重试）。 */
+  private sendChatDraft(): void {
+    this.onChatSend?.(this.chatInput?.string ?? '')
+  }
+
   private addLabel(parent: Node, name: string, x: number, y: number, color: Color, fontSize: number): Label {
     const node = new Node(name)
     node.layer = parent.layer
@@ -353,6 +541,25 @@ export class SocialPanelView extends Component {
       return
     }
     this.renderTabs()
+    this.renderChatControls()
+
+    if (this.tab === 'chat') {
+      const chat = this.chatData
+      if (this.headerLabel !== null) {
+        this.headerLabel.string = chat === null ? '聊天' : `聊天 · ${channelText(chat.channel)}`
+      }
+      if (this.hintLabel !== null) {
+        // 失败原因（限流、没资格）就画在这一行上：面板里没有别的地方能承载它
+        this.hintLabel.string = chat?.hintText ?? '聊天加载中…'
+        this.hintLabel.color = chat?.hintIsWarning === true ? COLOR_WARNING : COLOR_TEXT_DIM
+      }
+      // 只画**最近**这一屏：消息按时间升序，而聊天要看的永远是"最新的几条" ——
+      // 直接 slice(0, n) 会画最早的那几条，症状是"自己刚发的消息不出现"（世界频道一热闹就必现）。
+      // 探针 tools/verify-chat-runtime.mjs 逮到过这一条：别人的历史一多，新消息就掉出窗口
+      const drafts = chat === null ? [] : chatDrafts(chat)
+      this.drawRows(drafts.slice(-CHAT_VISIBLE_ROWS), CHAT_VISIBLE_ROWS, CHAT_TOP_OFFSET)
+      return
+    }
 
     const drafts = this.draftsFor(data)
     if (this.headerLabel !== null) {
@@ -362,19 +569,62 @@ export class SocialPanelView extends Component {
       this.hintLabel.string = this.hintText(data)
       this.hintLabel.color = this.socialReddotLit() ? COLOR_WARNING : COLOR_TEXT_DIM
     }
+    this.drawRows(drafts, MAX_VISIBLE_ROWS, 0)
+  }
 
+  /** 池化地画一批行。`topOffset` 给聊天页签上面的频道条让出位置。 */
+  private drawRows(drafts: readonly RowDraft[], limit: number, topOffset: number): void {
+    const pool = this.rowPool
+    if (pool === null) {
+      return
+    }
     const size = view.getVisibleSize()
-    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2 - topOffset
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
     this.rowActionIds.clear()
 
-    drafts.slice(0, MAX_VISIBLE_ROWS).forEach((draft, index) => {
+    drafts.slice(0, limit).forEach((draft, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
       this.renderRow(node, draft, index)
     })
+  }
+
+  /**
+   * 频道切换条与输入组的显隐与状态。
+   *
+   * <p>未读数直接写在按钮上（B22 验收 2：私聊页签亮红点 + 未读数 +1）——
+   * 红点是"有没有"，里那一层要的是"有几条"。
+   */
+  private renderChatControls(): void {
+    const visible = this.tab === 'chat'
+    if (this.chatControls !== null) {
+      this.chatControls.active = visible
+    }
+    if (!visible) {
+      return
+    }
+    const data = this.chatData
+    for (const channel of CHAT_CHANNELS) {
+      const item = this.chatChannelButtons.get(channel.key)
+      if (item === undefined) {
+        continue
+      }
+      const tab = data?.channelTabs.find(candidate => candidate.key === channel.key)
+      const selected = tab?.selected === true
+      const unread = tab?.unread ?? 0
+      item.label.string = unread > 0 ? `${channel.text}（${unread}）` : channel.text
+      item.label.color = selected ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+      applyCommandButton(item.node, selected ? 'hover' : 'normal', CHANNEL_BUTTON_WIDTH - 6,
+        CHANNEL_BUTTON_HEIGHT)
+    }
+    if (this.sendButton !== null) {
+      // 私聊没选对象时发送是灰的：那一次请求在结构上就缺 toPlayerId
+      applyCommandButton(this.sendButton, data?.canSend === true ? 'normal' : 'disabled',
+        SEND_BUTTON_WIDTH, SEND_BUTTON_HEIGHT)
+    }
   }
 
   private renderTabs(): void {
@@ -412,6 +662,9 @@ export class SocialPanelView extends Component {
         return `互助 · ${data.helpRemainingText}`
       case 'events':
         return `社交事件 ${data.events.length} 条`
+      case 'chat':
+        // 聊天页签的表头在 render 里单独给（它要的是频道名，不是社交区块）
+        return '聊天'
     }
   }
 
@@ -431,6 +684,8 @@ export class SocialPanelView extends Component {
           : '没有可帮助的请求'
       case 'events':
         return '过期事件已置灰：三小时前的求援已经支援不上了'
+      case 'chat':
+        return ''
     }
   }
 
@@ -444,6 +699,9 @@ export class SocialPanelView extends Component {
         return helpDrafts(data.helpRows)
       case 'events':
         return eventDrafts(data.events)
+      case 'chat':
+        // 聊天页签的行来自聊天数据（chatDrafts），这里不会再被调到
+        return []
     }
   }
 
@@ -496,6 +754,10 @@ export class SocialPanelView extends Component {
     const kind = draft.actionKind
     this.rowActionIds.set(node, id)
     button.on('touch-start', (_event: EventTouch) => {
+      if (kind === 'chatPeer') {
+        this.onChatOpenPeer?.(id)
+        return
+      }
       if (kind === 'helpAll') {
         this.onHelpAll?.(this.data?.helpAllCount ?? 0)
         return
@@ -510,6 +772,53 @@ export class SocialPanelView extends Component {
 }
 
 // ---------- 各页签的行组装 ----------
+
+/**
+ * 聊天页签的行。
+ *
+ * <p>两种形态：私聊未选对象时画**会话列表**（按对象分组 + 未读计数），其余画**消息**。
+ * 消息正文放在 detail 槽而不是 title：它是长文本，而 title 是大字号，
+ * 长消息在 title 里会被 SHRINK 缩到看不清（多行气泡与 ScrollView 属编辑器资产那一批）。
+ */
+function chatDrafts(data: ChatPanelData): RowDraft[] {
+  if (data.mode === 'conversations') {
+    if (data.conversations.length === 0) {
+      return [infoRow(data.emptyText)]
+    }
+    return data.conversations.map((row): RowDraft => ({
+      title: row.label,
+      titleColor: row.unread > 0 ? COLOR_TEXT : COLOR_TEXT_DIM,
+      detail: row.unread > 0 ? `未读 ${row.unread} 条` : '已读',
+      value: row.timeText,
+      actionText: '打开',
+      actionEnabled: true,
+      actionId: row.peerId,
+      actionKind: 'chatPeer',
+    }))
+  }
+  if (data.messages.length === 0) {
+    return [infoRow(data.emptyText)]
+  }
+  return data.messages.map((message): RowDraft => ({
+    title: message.author,
+    // 自己的消息用铜金：一眼能分出"我说的"和"别人说的"，而这一行没有气泡可用
+    titleColor: message.mine ? COLOR_COPPER_GOLD : COLOR_TEXT,
+    detail: message.content,
+    value: message.timeText,
+    actionText: null,
+    actionEnabled: false,
+    actionId: null,
+    actionKind: 'none',
+  }))
+}
+
+/** 一行不可点的说明（空列表）。面板没有别的空态展示位。 */
+function infoRow(text: string): RowDraft {
+  return {
+    title: text, titleColor: COLOR_TEXT_DIM, detail: '', value: '',
+    actionText: null, actionEnabled: false, actionId: null, actionKind: 'none',
+  }
+}
 
 function memberDrafts(members: readonly SocialMemberRow[], mayKick: boolean): RowDraft[] {
   return members.map((member): RowDraft => ({

@@ -32,8 +32,15 @@ import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagPro
 import type { HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageListResp } from '../../net/generated/StageProtocol'
 import type {
-  AllianceMember, AllianceSyncResp, HelpRequestView, SocialSummaryResp,
+  AllianceMember, AllianceSyncResp, ChatChannel, ChatMessageView, HelpRequestView,
+  SocialEventView, SocialSummaryResp,
 } from '../../net/generated/SocialProtocol'
+import {
+  ackablePrivateEventIds, buildChatPanel, chatFailureText, chatKey, CHAT_LOCAL_HISTORY_MAX,
+  mergeChatHistory,
+} from '../social/ChatPanel'
+import type { ChatPanelData } from '../social/ChatPanel'
+import { gameBus } from '../../core/EventBus'
 import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
 import type { BattleReportListResp, BattleReportResp } from '../../net/generated/BattleProtocol'
@@ -65,6 +72,11 @@ export interface PanelTargets {
    */
   social?(resp: SocialSummaryResp, helps: readonly HelpRequestView[],
     members: readonly AllianceMember[], offsetMs: number): void
+  /**
+   * 聊天页签（B22 §一 1）。频道、会话列表、消息与提示行都从这一份数据来 ——
+   * 拆成多个回调就会出现"未读变了但会话列表还停在旧数"这类两半不同步。
+   */
+  chat?(data: ChatPanelData): void
   /**
    * 礼包弹窗（B19 S3-iv）。`resp.popup=false` 时面板自己藏起来 —— 判"弹不弹"的是服务端，
    * 客户端只负责画。
@@ -138,10 +150,30 @@ export class AppRoot {
   private memberVersion = 0
   private allianceMembers: AllianceMember[] = []
   private helpRequests: HelpRequestView[] = []
+
   /** 二级选择器的最近一次权威响应；不参与任何数值判断。 */
   private cityResp: CityListResp | null = null
   private armyResp: ArmyListResp | null = null
   private heroResp: HeroListResp | null = null
+
+  // ---------- 聊天状态（B22 §一 1） ----------
+
+  /** 当前频道；私聊且 `chatPeerId` 为 null 时画会话列表 */
+  private chatChannel: ChatChannel = 'WORLD'
+  private chatPeerId: string | null = null
+  /** 各频道/会话已拉到的历史，键见 `chatKey`。**只在内存里**：B10 §5 说的"本地保留 200 条"是本次会话的窗口，不落盘 */
+  private readonly chatHistory = new Map<string, ChatMessageView[]>()
+  /** 已学到的昵称（打开过会话就从消息里学到）。会话列表没有它时只能显示事件标题 */
+  private readonly chatPeerNames = new Map<string, string>()
+  /**
+   * 未读社交事件。**推送与离线补偿共用这一份**（服务端两条路发的是同一个对象）：
+   * 分开存两份就会出现"推送加过、离线又加一遍"的重复计数。
+   */
+  private unreadEvents: SocialEventView[] = []
+  /** 上一次聊天失败的可读原因（限流/没资格）。成功一次或切频道后清空 */
+  private chatNotice: string | null = null
+  /** 成功发送的计数：面板靠它决定"这一次该把输入框清空了"（失败时不清，玩家要能重试） */
+  private chatSentSeq = 0
 
   constructor(deps: {
     api: GameApi
@@ -291,7 +323,11 @@ export class AppRoot {
         }
         // 面板照常落地：摘要本身是好的。让整块不显示等于把"网络抖了一下"
         // 升级成"我好像没进联盟"，而玩家会去做一件本来不必要的事（重新申请）
+        // 同一份摘要也是聊天页签的未读账本（不另发一次请求）：两处读同一份数据，
+        // 就不会出现"事件页签说 3 条、聊天徽标说 2 条"
+        this.unreadEvents = summary.data.events
         this.targets.social?.(summary.data, this.helpRequests, this.allianceMembers, offsetMs)
+        this.deliverChat()
         if (degraded.length > 0) {
           this.targets.error?.('social', `${degraded.join('、')}，稍后会自动重试`)
         }
@@ -619,6 +655,187 @@ export class AppRoot {
       ['social', 'reddot'])
   }
 
+  // ---------- 聊天（B22 §一 1） ----------
+
+  /**
+   * 进聊天页签：拉当前这条会话/频道的历史。
+   *
+   * <p>每次进都拉一次（而不是"拉过就不拉"）：聊天没有推送的是世界/联盟/小队三条，
+   * 离开又回来时那三条的消息只能靠这一拉补上。私聊那条虽然有推送，推送也只说"有人找你"
+   * 不带正文（C23 的刻意设计），正文同样得从这里拉。
+   */
+  async openChat(): Promise<void> {
+    await this.loadChat(this.chatChannel, this.chatPeerId)
+  }
+
+  /**
+   * 切频道。**一律回到"未选会话"**：私聊的会话键由双方 id 拼成，
+   * 留着上一个对象就等于在联盟频道里悄悄带着别人的 id 发消息。
+   */
+  async selectChatChannel(channel: ChatChannel): Promise<void> {
+    this.chatChannel = channel
+    this.chatPeerId = null
+    this.chatNotice = null
+    await this.loadChat(channel, null)
+  }
+
+  /**
+   * 打开一个私聊会话，并把它标记为已读。
+   *
+   * <p>消账走 `/social/ackEvents`（服务端那本账），消完由 `refresh('social')` 的返回值
+   * 把新的未读账本送回面板 —— 客户端不在本地把未读减一：减错了没人能发现，
+   * 而红点亮着、计数为零正是这条的典型症状。
+   */
+  async openConversation(peerId: string): Promise<void> {
+    this.chatChannel = 'PRIVATE'
+    this.chatPeerId = peerId
+    this.chatNotice = null
+    await this.loadChat('PRIVATE', peerId)
+    const eventIds = ackablePrivateEventIds(this.unreadEvents, peerId)
+    if (eventIds.length > 0) {
+      await this.ackEvents(eventIds)
+    }
+  }
+
+  /**
+   * 发一条消息。
+   *
+   * <p>失败**不吞**：原因写进提示行（限流那句"慢一点"是可读文案），成功才清输入框 ——
+   * 失败时把玩家打的字清掉，等于让他重打一遍。
+   */
+  async sendChat(text: string): Promise<void> {
+    const content = text.trim()
+    if (content === '' || (this.chatChannel === 'PRIVATE' && this.chatPeerId === null)) {
+      return
+    }
+    const outcome = await this.api.chatSend({
+      channel: this.chatChannel,
+      content,
+      toPlayerId: this.chatChannel === 'PRIVATE' ? this.chatPeerId : null,
+    })
+    if (outcome.kind !== 'ok') {
+      this.chatNotice = outcome.kind === 'biz'
+        ? chatFailureText(outcome.code, outcome.detail, outcome.msg)
+        : AppRoot.reason(outcome)
+      // 面板的提示行是玩家唯一看得见这句话的地方（targets.error 只进 console），
+      // 所以这里既要 say（埋点/日志）也要 deliverChat（提示行）
+      this.say('chat', outcome)
+      this.deliverChat()
+      return
+    }
+    const key = chatKey(this.chatChannel, this.chatPeerId)
+    // 用服务端回执里的那条消息，而不是本地拼一条：id 与时刻都是权威的，
+    // 本地拼的那条会在下一次拉取时与本尊撞成两条
+    this.chatHistory.set(key,
+      mergeChatHistory(this.chatHistory.get(key) ?? [], [outcome.data.message]))
+    this.chatNotice = null
+    this.chatSentSeq += 1
+    this.deliverChat()
+  }
+
+  /**
+   * 订阅服务端推送（B22 §一 1 的"最后一公里"）。
+   *
+   * <p>此前 `gameBus.serverPush` 全仓库零订阅：服务端两条路都发了，帧到了客户端被直接丢掉。
+   * 私聊是唯一会推的聊天事件（C23），它**不带正文** —— 所以这里收到事件只加未读账
+   * 并把红点树刷成服务端的结论，不顺手去拉正文（那是"信标"这个设计要避免的事）。
+   *
+   * <p>返回退订函数：`gameBus` 是模块级单例，重登/切场景会再构造一个组合根，
+   * 不退订就会在同一条推送上被调 N 次（红点变成"第 N 次才亮"）。
+   */
+  bindPush(): () => void {
+    const offPush = gameBus.on('serverPush', (push) => {
+      if (push.type !== 'PRIVATE_MESSAGE') {
+        return
+      }
+      this.absorbPrivateEvent(push.data)
+    })
+    const offReconnected = gameBus.on('netReconnected', () => {
+      // 断线期间的推送全丢了，B01 要求走 HTTP 补拉。不补拉的话未读账会一直缺一块，
+      // 直到玩家下一次手动刷新社交面板才可能被纠正
+      void this.refresh('social', 'reddot')
+    })
+    return () => {
+      offPush()
+      offReconnected()
+    }
+  }
+
+  /**
+   * 把一条推送的私信事件并进未读账。
+   *
+   * <p>**同一 eventId 只记一次**：重连之后补拉（`/social/summary`）与推送可能带来同一条事件，
+   * 不去重就会数出两条未读。
+   */
+  private absorbPrivateEvent(payload: unknown): void {
+    const event = asPrivateMessageEvent(payload)
+    if (event === null) {
+      return
+    }
+    if (this.unreadEvents.some((item) => item.eventId === event.eventId)) {
+      return
+    }
+    this.unreadEvents = [...this.unreadEvents, event]
+    // 页签上那颗红点只读服务端权威树 —— 推送把树刷一次，而不是在客户端替它点亮
+    void this.refresh('reddot')
+    this.deliverChat()
+  }
+
+  /** 拉一段历史并并进本地缓存。`PRIVATE` 且没有对象时只画会话列表，不发请求。 */
+  private async loadChat(channel: ChatChannel, peerId: string | null): Promise<void> {
+    this.deliverChat()
+    if (channel === 'PRIVATE' && peerId === null) {
+      return
+    }
+    const outcome = await this.api.chatList({
+      channel,
+      toPlayerId: channel === 'PRIVATE' ? peerId : null,
+      beforeMessageId: null,
+      limit: CHAT_LOCAL_HISTORY_MAX,
+    })
+    if (outcome.kind !== 'ok') {
+      // 没资格看这个频道（未入盟看联盟频道）走的就是这一支：服务端的 detail
+      // 比一句"加载失败"有用得多，直接摆在提示行上
+      this.chatNotice = outcome.kind === 'biz'
+        ? chatFailureText(outcome.code, outcome.detail, outcome.msg)
+        : AppRoot.reason(outcome)
+      this.say('chat', outcome)
+      this.deliverChat()
+      return
+    }
+    const key = chatKey(channel, peerId)
+    this.chatHistory.set(key,
+      mergeChatHistory(this.chatHistory.get(key) ?? [], outcome.data.messages))
+    this.learnPeerNames(outcome.data.messages)
+    this.chatNotice = null
+    this.deliverChat()
+  }
+
+  /** 从拉到的人消息里学昵称。会话列表在没学到之前只能显示事件标题（「X 给你发来一条私信」）。 */
+  private learnPeerNames(messages: readonly ChatMessageView[]): void {
+    for (const message of messages) {
+      if (message.senderId !== this.playerId) {
+        this.chatPeerNames.set(message.senderId, message.senderName)
+      }
+    }
+  }
+
+  /** 组装并递一次聊天页签的数据。任何一处状态变了都走这里，面板因此永远只有一份输入。 */
+  private deliverChat(): void {
+    this.targets.chat?.(buildChatPanel({
+      channel: this.chatChannel,
+      peerId: this.chatPeerId,
+      messages: this.chatHistory.get(chatKey(this.chatChannel, this.chatPeerId)) ?? [],
+      events: this.unreadEvents,
+      myPlayerId: this.playerId,
+      peerNames: this.chatPeerNames,
+      offsetMs: this.timeSync.offsetMs(),
+      localNow: Date.now(),
+      sentSeq: this.chatSentSeq,
+      notice: this.chatNotice,
+    }))
+  }
+
   // ---------- 目标搜索与流亡 ----------
 
   searchTargets(radius: number): Promise<void> {
@@ -762,4 +979,30 @@ export class AppRoot {
     const view = await flow.buy(productId)
     this.targets.payResult?.(view)
   }
+}
+
+/**
+ * 推送帧的最小校验，通过则按事件使用。
+ *
+ * <p>WS 帧是外部输入（服务端序列化 → 网络 → `JSON.parse`），字段缺失在这里是可能的，
+ * 而缺一个字段的症状不是报错、是"未读账少一块"。所以按**我们要用的那几个字段**逐个确认；
+ * 形状不对就当没收到：
+ * 一条数得出来却读不出的未读，比少一条难查得多（前者永远清不掉）。
+ *
+ * <p>其余字段原样使用：服务端两条路（推送 / 离线补偿）发的是同一个视图结构
+ * （`SocialEventView`，有 `coord` 与 `expired`），这一点由 `SocialPushShapeTest` 钉住 ——
+ * 客户端不替它兜底重造字段，否则两边的形状会越走越远。
+ */
+function asPrivateMessageEvent(payload: unknown): SocialEventView | null {
+  if (typeof payload !== 'object' || payload === null) {
+    return null
+  }
+  const it = payload as Record<string, unknown>
+  if (it.type !== 'PRIVATE_MESSAGE' || typeof it.eventId !== 'string'
+      || typeof it.title !== 'string' || typeof it.relatedId !== 'string'
+      || typeof it.occurredAt !== 'number') {
+    console.warn('[chat] 私聊推送的字段不全，已忽略（未读账宁可少一条，也不能数出一条读不出的）')
+    return null
+  }
+  return payload as SocialEventView
 }

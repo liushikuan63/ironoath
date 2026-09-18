@@ -183,6 +183,8 @@ export class GameBootstrap extends Component {
   /** 引导层（B18）：整屏遮罩 + 气泡，挂在所有面板与导航条之上。 */
   private guide: GuideView | null = null
   private unsubscribeNetworkEvents: (() => void) | null = null
+  /** 推送订阅的退订句柄。`gameBus` 是模块级单例，不退订会让重登的第二个根也被调一次。 */
+  private unsubscribePush: (() => void) | null = null
   private booting = false
   private destroyed = false
   private trackClient: TrackClient | null = null
@@ -407,6 +409,8 @@ export class GameBootstrap extends Component {
     }
     this.unsubscribeNetworkEvents?.()
     this.unsubscribeNetworkEvents = null
+    this.unsubscribePush?.()
+    this.unsubscribePush = null
     this.net?.disconnect()
     this.net = null
     this.nav = null
@@ -549,6 +553,9 @@ export class GameBootstrap extends Component {
     }
     this.root = new AppRoot({ api, session, store: gameStore, timeSync, targets: this.targets(),
       tracker: activity })
+    // 推送订阅在根构造之后立刻接上（B22 §一 1）：它把私聊「有人找你」的信标变成
+    // 未读账 +1 与一次红点刷新。没接之前，服务端两路都发了、帧到了客户端被直接丢掉
+    this.unsubscribePush = this.root.bindPush()
     this.lastActionAt = sys.now()
     tracker?.track(TRACK_EVENTS.startup, { clientVersion: CLIENT_VERSION })
     const started = await this.root.start(
@@ -559,9 +566,11 @@ export class GameBootstrap extends Component {
       void this.root.showGiftPopup()
     }
     // 回到前台：重校时 + 再问一次弹窗（挂后台期间错过的那次触发要补上）。
-    // 这个回调只有小游戏运行时才有 —— 浏览器里没有 wx，静默跳过
-    if (typeof wx !== 'undefined' && typeof wx.onShow === 'function') {
-      wx.onShow(() => { void this.root.afterForeground() })
+    // 这个回调只有小游戏运行时才有 —— 浏览器里没有 wx，静默跳过。
+    // 根先取到局部变量：闭包里拿 this.root 会让类型收窄失效（它可能是 null）
+    const foregroundRoot = this.root
+    if (typeof wx !== 'undefined' && typeof wx.onShow === 'function' && foregroundRoot !== null) {
+      wx.onShow(() => { void foregroundRoot.afterForeground() })
     }
     // 启动自检行：在微信开发者工具的 Console 里能一眼看出"到底跑起来没有"。
     // 小游戏没有可编程的自动化接口（miniprogram-automator 连上即断），
@@ -913,8 +922,13 @@ export class GameBootstrap extends Component {
     }
     if (social !== null) {
       out.social = (resp, helps, members, offsetMs) => social.attach(resp, helps, members, offsetMs)
+      out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }
       social.onDonate = tier => { void this.root?.donate(tier) }
+      social.onChatEnter = () => { void this.root?.openChat() }
+      social.onChatChannel = channel => { void this.root?.selectChatChannel(channel) }
+      social.onChatOpenPeer = peerId => { void this.root?.openConversation(peerId) }
+      social.onChatSend = text => { void this.root?.sendChat(text) }
       social.onRowAction = (kind, id, from) => {
         switch (kind) {
           case 'help':
@@ -930,6 +944,8 @@ export class GameBootstrap extends Component {
           case 'none':
           case 'helpAll':
           case 'donate':
+          // 聊天会话行由面板自己分流到 onChatOpenPeer（它带的是会话对象，不是社交动作）
+          case 'chatPeer':
             return
         }
       }

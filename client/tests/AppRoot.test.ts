@@ -23,6 +23,7 @@ import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
 import type { PanelTargets } from '../assets/scripts/game/session/AppRoot'
 import type { LineupChoice, SpeedupChoice } from '../assets/scripts/game/session/Choices'
+import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
 
@@ -179,6 +180,15 @@ const ROUTES: Record<string, unknown> = {
     ],
     pendingHelps: 1, helpRemainingToday: 5, serverNow: SERVER_NOW,
   },
+  // 聊天（B22）：默认给一段空历史 —— 有内容的用例自己用 overrides 覆盖
+  '/chat/list': { messages: [], hasMore: false, serverNow: SERVER_NOW },
+  '/chat/send': {
+    message: {
+      messageId: 'msg-1', channel: 'WORLD', senderId: 'P1', senderName: '君', content: '大家好',
+      sentAt: SERVER_NOW,
+    },
+    serverNow: SERVER_NOW,
+  },
   '/alliance/sync': {
     version: 7, unchanged: false, removedMemberIds: [], fund: 100, level: 1, memberCount: 2,
     announcement: '', serverNow: SERVER_NOW,
@@ -256,6 +266,11 @@ class RecordingSocket implements SocketTransport {
   simulateOpen(): void {
     this.open = true
     this.callbacks?.onOpen()
+  }
+
+  /** 测试驱动：模拟服务端推来一帧（业务推送就是从这里变成 `serverPush` 的）。 */
+  simulateMessage(payload: unknown): void {
+    this.callbacks?.onMessage(JSON.stringify(payload))
   }
 }
 
@@ -341,6 +356,8 @@ interface Harness {
   readonly lastSocialMembers: string[]
   /** 最近一次落地给社交面板的互助请求 id 列表。 */
   readonly lastSocialHelps: string[]
+  /** 最近一次落地给聊天页签的数据（B22）—— 频道、会话、消息、提示行都看它。 */
+  readonly lastChat: ChatPanelData | null
   /** 最近一次落地给活动页的服务端时刻（断言"剩余时间来自服务端"用）。 */
   readonly lastActivityNow: number
   /** 最近一次落地给活动页的行数。 */
@@ -409,6 +426,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   const attached: string[] = []
   let socialMembers: string[] = []
   let socialHelps: string[] = []
+  let lastChat: ChatPanelData | null = null
   let reddotTree: ClientReddotTree | null = null
   let activityNow = -1
   let activityRows = -1
@@ -429,6 +447,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       attached.push('social')
       socialMembers = members.map(m => m.id)
       socialHelps = helps.map(h => h.requestId)
+    },
+    chat: (data) => {
+      attached.push('chat')
+      lastChat = data
     },
     reddot: (tree) => {
       attached.push('reddot')
@@ -467,6 +489,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   return {
     get lastSocialMembers() {
       return socialMembers
+    },
+    get lastChat() {
+      return lastChat
     },
     get lastActivityNow() {
       return activityNow
@@ -515,8 +540,8 @@ test('start：先登录，再把十个面板各拉一次，并把家坐标交出
   // 把首屏可交互推到 3.9 秒越过预算）。所以这里按集合比：新增或删掉一次拉取仍然会被看见，
   // 但谁先谁后不再断言 —— 那个顺序没有任何调用方在读，钉住它只会让并发化变成一次假红。
   assert.deepEqual(Array.from(h.attached).sort(),
-    ['army', 'bag', 'city', 'hero', 'home', 'power', 'quest', 'reddot', 'resources', 'social',
-      'stage'])
+    ['army', 'bag', 'chat', 'city', 'hero', 'home', 'power', 'quest', 'reddot', 'resources',
+      'social', 'stage'])
   assert.equal(h.errors.length, 0)
   assert.equal(h.root.playerId, 'P1')
 })
@@ -1036,8 +1061,9 @@ test('一键帮助成功后重拉红点树：已消失的父链和叶子同轮�
     '处理完不重拉，导航会一直亮到玩家刷新页面')
   assert.equal(h.reddotTree?.isLit('social/help'), false)
   assert.equal(h.reddotTree?.isLit('social'), false)
-  assert.deepEqual(h.attached.slice(-4), ['social', 'army', 'city', 'reddot'],
-    '互助动作结束后，社交与红点都应收到权威结果')
+  // 聊天页签与社交面板共用同一份摘要（未读账），所以它紧跟在 social 之后落地
+  assert.deepEqual(h.attached.slice(-5), ['social', 'chat', 'army', 'city', 'reddot'],
+    '互助动作结束后，社交、聊天与红点都应收到权威结果')
 })
 
 test('单条帮助也重拉红点树：处理一行后不用刷新页面才熄灭', async () => {
@@ -1076,7 +1102,7 @@ test('事件标记已读后重拉红点树：未读事件叶子与社交父链�
     '启动、制造未读事件、标记已读各拉一次')
   assert.equal(h.reddotTree?.isLit('social/events'), false)
   assert.equal(h.reddotTree?.isLit('social'), false)
-  assert.deepEqual(h.attached.slice(-2), ['social', 'reddot'])
+  assert.deepEqual(h.attached.slice(-3), ['social', 'chat', 'reddot'])
 })
 
 test('社交面板的成员走 diff 通道真拉得到：首次 version=0，之后带上服务端给的版本号', async () => {
@@ -1211,4 +1237,201 @@ test('浏览器路径：没有 wxCode 时不带该值，登录链路与旧行为
   assert.ok(init !== undefined)
   assert.equal(init.body.wxCode, '',
     '浏览器/编辑器预览必须发空串（服务端按空白判定），而不是让字段缺省成 undefined')
+})
+
+// ---------- 聊天（B22 §一 1） ----------
+
+/** 私信事件。字段与 `/social/summary` 和推送两路一致（形状由 SocialPushShapeTest 钉住）。 */
+function privateEvent(eventId: string, peerId: string, occurredAt: number): Record<string, unknown> {
+  return {
+    eventId, type: 'PRIVATE_MESSAGE', title: `${peerId} 给你发来一条私信`, body: null,
+    coord: null, relatedId: peerId, occurredAt, expired: false,
+  }
+}
+
+function summaryWithEvents(events: Array<Record<string, unknown>>): Record<string, unknown> {
+  return { ...(ROUTES['/social/summary'] as Record<string, unknown>), events }
+}
+
+/** 等异步的推送处理跑完（推送 → 刷新红点 → 落地数据这条链是异步的）。 */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 12; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+}
+
+test('聊天：进页签拉当前频道历史，画成消息行；切到私聊未选会话时改画会话列表且不发请求', async () => {
+  const h = harness()
+  h.http.overrides.set('/chat/list', {
+    messages: [
+      { messageId: 'm1', channel: 'WORLD', senderId: 'P2', senderName: '乙', content: '有人吗', sentAt: SERVER_NOW - 60_000 },
+      { messageId: 'm2', channel: 'WORLD', senderId: 'P1', senderName: '君', content: '在', sentAt: SERVER_NOW - 30_000 },
+    ],
+    hasMore: false, serverNow: SERVER_NOW,
+  })
+  assert.equal(await h.root.start('dev-1', '君'), true)
+
+  await h.root.openChat()
+  assert.equal(h.lastChat?.mode, 'messages')
+  assert.deepEqual(h.lastChat?.messages.map(m => m.author), ['乙', '我'],
+    '自己的消息写「我」，别人的用服务端昵称')
+  const listCall = h.http.calls.filter(c => c.path === '/chat/list').pop()
+  assert.equal(listCall?.body.channel, 'WORLD')
+  assert.equal(listCall?.body.toPlayerId, null, '非私聊频道不带对象')
+
+  const before = h.http.countOf('/chat/list')
+  await h.root.selectChatChannel('PRIVATE')
+  assert.equal(h.lastChat?.mode, 'conversations', '私聊未选对象 = 画会话列表')
+  assert.equal(h.http.countOf('/chat/list'), before,
+    '没有对象就没有会话键，这一问必然被服务端拒绝 —— 不发这一次注定失败的请求')
+  assert.equal(h.lastChat?.canSend, false, '没选对象时结构上发不出去')
+})
+
+test('聊天：打开私聊会话拉那一段历史，并把该发信人的未读消账（别人的未读不动）', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/summary',
+    summaryWithEvents([privateEvent('e-p2', 'P2', SERVER_NOW - 10_000), privateEvent('e-p3', 'P3', SERVER_NOW - 9_000)]))
+  assert.equal(await h.root.start('dev-1', '君'), true)
+  assert.equal(h.lastChat?.channelTabs.find(t => t.key === 'PRIVATE')?.unread, 2)
+
+  await h.root.selectChatChannel('PRIVATE')
+  assert.equal(h.lastChat?.mode, 'conversations')
+  assert.deepEqual((h.lastChat?.conversations ?? []).map(c => c.peerId), ['P3', 'P2'],
+    '最近说话的排在前面')
+
+  h.http.overrides.set('/chat/list', {
+    messages: [
+      { messageId: 'm9', channel: 'PRIVATE', senderId: 'P2', senderName: '乙', content: '来帮我', sentAt: SERVER_NOW - 10_000 },
+    ],
+    hasMore: false, serverNow: SERVER_NOW,
+  })
+  await h.root.openConversation('P2')
+
+  const listCall = h.http.calls.filter(c => c.path === '/chat/list').pop()
+  assert.equal(listCall?.body.channel, 'PRIVATE')
+  assert.equal(listCall?.body.toPlayerId, 'P2')
+  assert.equal(h.lastChat?.mode, 'messages')
+  assert.equal(h.lastChat?.peerLabel, '乙', '打开一次就从消息里学到了昵称')
+  const ack = h.http.calls.find(c => c.path === '/social/ackEvents')
+  assert.deepEqual(ack?.body.eventIds, ['e-p2'],
+    '只消这一个发信人的未读：把别人的一起清了会让对方那条永远消失')
+})
+
+test('聊天：私聊推送到达 ⇒ 未读账 +1 且红点按服务端结论刷新（此前这条链整条是死的）', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+  const socket = h.sockets[0]
+  assert.ok(socket !== undefined)
+  socket.simulateOpen()
+
+  const reddotsBefore = h.http.countOf('/social/reddot')
+  const off = h.root.bindPush()
+  try {
+    socket.simulateMessage({
+      type: 'PRIVATE_MESSAGE', serverNow: SERVER_NOW,
+      data: privateEvent('e-1', 'P2', SERVER_NOW),
+    })
+    await settle()
+
+    assert.equal(h.http.countOf('/social/reddot'), reddotsBefore + 1,
+      '红点只读服务端权威树：推送到了要问一次树，而不是客户端自己点亮')
+    assert.equal(h.lastChat?.channelTabs.find(t => t.key === 'PRIVATE')?.unread, 1)
+    assert.equal(h.lastChat?.conversations.length, 1)
+
+    // 同一条事件重复到达（重连补拉 + 推送）只算一次：数成两条就永远清不掉
+    socket.simulateMessage({
+      type: 'PRIVATE_MESSAGE', serverNow: SERVER_NOW,
+      data: privateEvent('e-1', 'P2', SERVER_NOW),
+    })
+    await settle()
+    assert.equal(h.lastChat?.channelTabs.find(t => t.key === 'PRIVATE')?.unread, 1)
+
+    // 别的推送类型不掺和聊天
+    socket.simulateMessage({ type: 'MEMBER_ATTACKED', serverNow: SERVER_NOW, data: {} })
+    await settle()
+    assert.equal(h.lastChat?.channelTabs.find(t => t.key === 'PRIVATE')?.unread, 1)
+  } finally {
+    off()
+  }
+
+  // 退订之后再来一条：不再进账（gameBus 是单例，不退订会让重登的第二个根被调一次）
+  socket.simulateMessage({
+    type: 'PRIVATE_MESSAGE', serverNow: SERVER_NOW,
+    data: privateEvent('e-2', 'P2', SERVER_NOW),
+  })
+  await settle()
+  assert.equal(h.lastChat?.channelTabs.find(t => t.key === 'PRIVATE')?.unread, 1)
+})
+
+test('聊天：形状不对的推送当没收到（数得出来又读不出的未读比少一条更难查）', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+  const socket = h.sockets[0]
+  assert.ok(socket !== undefined)
+  socket.simulateOpen()
+
+  const originalWarn = console.warn
+  console.warn = () => undefined
+  try {
+    const off = h.root.bindPush()
+    // 存储记录形状（coordX/expireAt、没有 title/relatedId 的推送曾经真的发过）
+    socket.simulateMessage({ type: 'PRIVATE_MESSAGE', serverNow: SERVER_NOW, data: { eventId: 'e-1', coordX: 1 } })
+    await settle()
+    off()
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.equal(h.lastChat?.channelTabs.find(t => t.key === 'PRIVATE')?.unread, 0,
+    '字段不全就整条丢掉：记进去会让这条未读永远清不掉')
+})
+
+test('聊天：发送成功用服务端回执落地并让面板清输入框；限流失败给可读提示且不清', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+
+  await h.root.sendChat('  大家好  ')
+  const sendCall = h.http.calls.find(c => c.path === '/chat/send')
+  assert.equal(sendCall?.body.channel, 'WORLD')
+  assert.equal(sendCall?.body.toPlayerId, null)
+  assert.equal(sendCall?.body.content, '大家好', '两头的空白要去掉，否则服务端的"同内容"限流判两句话')
+  assert.equal(h.lastChat?.messages.length, 1, '落地的是服务端回执那条（有权威 id 与时刻）')
+  assert.equal(h.lastChat?.messages[0]?.author, '我')
+  assert.equal(h.lastChat?.sentSeq, 1, 'sentSeq 变了 ⇒ 面板清输入框')
+
+  h.http.bizFailNext = { code: 10044, msg: '同一句话发得太快，请稍后再试', detail: '同一句话 8 秒后才能再发' }
+  await h.root.sendChat('大家好')
+  assert.equal(h.lastChat?.sentSeq, 1, '失败时 sentSeq 不动：玩家打的字不能被清掉')
+  assert.equal(h.lastChat?.hintIsWarning, true)
+  assert.equal(h.lastChat?.hintText, '慢一点：同一句话 8 秒后才能再发',
+    '限流要翻成"慢一点"，不是把服务端的错误原文甩给玩家')
+})
+
+test('聊天：未入盟看联盟频道，服务端的拒绝理由原样进提示行（客户端不预判资格）', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+  h.http.failPaths.add('/chat/list')
+
+  await h.root.selectChatChannel('ALLIANCE')
+  assert.equal(h.lastChat?.hintIsWarning, true)
+  assert.equal(h.lastChat?.hintText, '服务繁忙',
+    'detail 为空时退回 msg；有 detail 就用 detail（服务端已经把下一步写清楚了）')
+  assert.equal(h.http.countOf('/chat/list') >= 1, true, '客户端要先敢发出去，才谈得上被服务端裁决')
+})
+
+test('聊天：断线重连补拉未读（推送在断线期间全丢了，B01 要求走 HTTP 补拉）', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+  const reddotsBefore = h.http.countOf('/social/reddot')
+
+  const off = h.root.bindPush()
+  try {
+    // 重连事件由 NetModule 在重连成功时发出；这里直接驱动同一根线
+    const { gameBus } = await import('../assets/scripts/core/EventBus')
+    gameBus.emit('netReconnected', { downtimeMs: 5_000 })
+    await settle()
+  } finally {
+    off()
+  }
+  assert.equal(h.http.countOf('/social/summary') >= 2, true, '重连要补拉一次摘要（未读账的家）')
+  assert.equal(h.http.countOf('/social/reddot'), reddotsBefore + 1, '顺带把红点树问一次')
 })

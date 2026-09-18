@@ -141,6 +141,8 @@ declare module 'cc' {
     lineWidth: number
     clear(): void
     rect(x: number, y: number, w: number, h: number): void
+    /** 实心矩形。与 rect()+fill() 相同，只是少一步（真实 API 两者都有）。 */
+    fillRect(x: number, y: number, w: number, h: number): void
     roundRect(x: number, y: number, w: number, h: number, r: number): void
     circle(cx: number, cy: number, r: number): void
     ellipse(cx: number, cy: number, rx: number, ry: number): void
@@ -212,6 +214,30 @@ declare module 'cc' {
 
   export class Canvas extends Component {
     static readonly designResolution: Size
+  }
+
+  /**
+   * 文本输入框（B22 聊天用）。桩只声明本工程用到的面：文本、占位符、上限、
+   * 标签、单行模式与三个事件名，其余（密码位、Tab 序、回车类型）不声明 ——
+   * 需要时应在编辑器里对着真实声明补。
+   *
+   * <p>**`maxLength` 必须显式设置**：真实实现的默认上限是 20 个字符，
+   * 不设就等于把玩家的半句话静默截断（口径见 `game/social/ChatPanel.CHAT_INPUT_MAX_LENGTH`）。
+   */
+  export class EditBox extends Component {
+    string: string
+    placeholder: string
+    maxLength: number
+    textLabel: Label | null
+    placeholderLabel: Label | null
+    inputMode: number
+    static InputMode: { ANY: number; SINGLE_LINE: number }
+    static EventType: {
+      EDITING_DID_BEGAN: string
+      EDITING_DID_ENDED: string
+      TEXT_CHANGED: string
+      EDITING_RETURN: string
+    }
   }
 
   export class Widget extends Component {
