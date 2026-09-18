@@ -98,6 +98,12 @@ public final class PopupThrottle {
      * 弹出记账这一路要清空它，下一次 GET 就再也看不到触发 ⇒ 礼包永远弹不出来。
      */
     private Map<String, Long> triggeredAt = Map.of();
+    /**
+     * 回灌时带进来的购买账本（S3-iii）。**与触发时刻同一条纪律：快照必须原样带回** ——
+     * 弹出记账这一路要是清空了它，玩家的当日限购就白买了（下一次还能再买一份）。
+     */
+    private String purchaseDayKey;
+    private Map<String, Long> purchasedCountByGift = Map.of();
 
     public PopupThrottle(Rules rules) {
         this(rules, null, 0L);
@@ -138,6 +144,8 @@ public final class PopupThrottle {
             throttle.lastShowAt.put(playerId, stored.lastShowAt());
         }
         throttle.triggeredAt = stored.triggeredAt();
+        throttle.purchaseDayKey = stored.purchaseDayKey();
+        throttle.purchasedCountByGift = stored.purchasedCountByGift();
         stored.showsByGift().forEach((giftId, times) -> {
             java.util.Deque<Long> deque = new java.util.ArrayDeque<>();
             times.forEach(deque::addLast);
@@ -169,7 +177,8 @@ public final class PopupThrottle {
             }
         });
         return new com.ironoath.core.player.PlayerGiftPopup(
-                lastShowAt.getOrDefault(playerId, 0L), shows, triggeredAt);
+                lastShowAt.getOrDefault(playerId, 0L), shows, triggeredAt,
+                purchaseDayKey, purchasedCountByGift);
     }
 
     /**

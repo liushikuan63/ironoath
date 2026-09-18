@@ -153,8 +153,11 @@ public final class PlayerDocumentMapper {
         PlayerDocument.GiftPopupDoc gd = doc.giftPopup();
         com.ironoath.core.player.PlayerGiftPopup giftPopup = gd == null
                 ? com.ironoath.core.player.PlayerGiftPopup.empty()
-                : new com.ironoath.core.player.PlayerGiftPopup(gd.lastShowAt(), safeShows(gd.showsByGift()),
-                        gd.triggeredAt() == null ? java.util.Map.of() : gd.triggeredAt());
+                : new com.ironoath.core.player.PlayerGiftPopup(gd.lastShowAt(),
+                        gd.showsByGift() == null ? java.util.Map.of() : gd.showsByGift(),
+                        gd.triggeredAt() == null ? java.util.Map.of() : gd.triggeredAt(),
+                        gd.purchaseDayKey(),
+                        gd.purchasedCountByGift() == null ? java.util.Map.of() : gd.purchasedCountByGift());
 
         PlayerSave save = new PlayerSave();
         save.restore(doc.playerId(), doc.deviceId(), doc.nickName(), doc.avatarId(),
@@ -166,7 +169,8 @@ public final class PlayerDocumentMapper {
     /** 存档那位 -> 文档子结构。一位不漏地写，见 {@link PlayerDocument.GiftPopupDoc} 的读法说明。 */
     private static PlayerDocument.GiftPopupDoc toGiftPopupDoc(
             com.ironoath.core.player.PlayerGiftPopup popup) {
-        return new PlayerDocument.GiftPopupDoc(popup.lastShowAt(), popup.showsByGift(), popup.triggeredAt());
+        return new PlayerDocument.GiftPopupDoc(popup.lastShowAt(), popup.showsByGift(), popup.triggeredAt(),
+                popup.purchaseDayKey(), popup.purchasedCountByGift());
     }
 
     /** 弹出时刻表：整列缺席（老文档）读成空表，单个礼包的列表缺席也照样跳过而不是抛。 */

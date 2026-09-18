@@ -51,7 +51,9 @@ public record PlayerDocument(
     public record GiftPopupDoc(
             long lastShowAt,
             Map<String, java.util.List<Long>> showsByGift,
-            Map<String, Long> triggeredAt) {
+            Map<String, Long> triggeredAt,
+            String purchaseDayKey,
+            Map<String, Long> purchasedCountByGift) {
     }
 
 

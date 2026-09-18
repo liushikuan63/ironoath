@@ -30,6 +30,10 @@ import com.ironoath.web.dto.generated.PayRetryReq;
 import com.ironoath.web.dto.generated.PayRewardItem;
 import com.ironoath.web.dto.generated.PricesResp;
 import com.ironoath.web.dto.generated.ProductPrice;
+import com.ironoath.config.cfg.GiftCfg;
+import com.ironoath.config.cfg.PayProductCfg;
+import com.ironoath.core.player.PlayerGiftPopup;
+import com.ironoath.core.player.PlayerSave;
 
 /**
  * 职责：B15 商业化域应用服务 —— 价格表、下单、支付回调、补单、订单状态。
@@ -227,6 +231,9 @@ public class PayAppService {
                 // 不在这里扫，「下了单没付」的记录就只增不减（PAY_ORDER_TTL_HOURS 的 why 就是这条）
                 expireUnpaidOrders(now);
                 PayProductCfg product = requireBuyable(playerId, req);
+                // 礼包的两道闸在**下单时**判（工单 6.1 S3-iii）：拦在发货就晚了 —— 玩家已经付过钱，
+                // 而"已付不退"是一条绝对纪律（§四 禁止项）。
+                requireGiftSellable(playerId, product, now);
                 long cents = catalog.priceCents(product);
                 String orderId = "order_" + playerId + "_" + now + "_"
                         + Long.toHexString(req.requestId().hashCode());
@@ -242,6 +249,7 @@ public class PayAppService {
                 PayOrder order = PayOrder.create(orderId, playerId, line);
                 requireWithinMinorLimit(playerId, line.totalCents(), now);
                 orders.insert(order);
+                recordGiftPurchaseIfAny(playerId, product, now);
                 LOG.info("下单 orderId={} playerId={} 商品={} 份数={} 金额={}分 选将={}",
                         orderId, playerId, line.productId(), line.count(), line.totalCents(),
                         line.heroChoice());
@@ -264,6 +272,75 @@ public class PayAppService {
      * <p>{@code PAY_MINOR_LIMIT} 的 {@code msg} 是给玩家看的那句话（prod 不下发 {@code detail}，
      * 把可执行的提示写进 msg 才能让玩家知道下一步做什么）；具体金额进 {@code detail} 供排查与客服。
      */
+    /**
+     * 礼包的两道下单闸（S3-iii）：**报价没过期** 且 **今天没买满**。
+     *
+     * <p><b>为什么读的是"弹窗那一位"而不是订单表</b>：一天的事实写在本来就要读的这一位上，
+     * 比给订单表新开一条按 productId 的索引便宜，也少一次跨集合查询（工单里的优先项）。
+     *
+     * <p><b>为什么在 orders.insert 之前判</b>：与 {@link #requireWithinMinorLimit} 同一条理由 ——
+     * 拦下了却留一条 PENDING 订单，对账与僵尸单清理都会把它当真实交易看。
+     */
+    private void requireGiftSellable(String playerId, PayProductCfg product, long now) {
+        if (product.kind() != PayProductCfg.Kind.GIFT) {
+            return;
+        }
+        GiftCfg gift = giftOf(product);
+        if (gift == null) {
+            // GIFT 档却不在 gift 表里 = 这一期没有在推它：按"暂不可购买"回，而不是编一个礼包
+            throw new BizException(ErrorCode.PAY_PRODUCT_OFFLINE,
+                    "这一档礼包当前不在推送列表里：productId=" + product.id());
+        }
+        PlayerGiftPopup state = giftStateOf(playerId);
+        long triggerAt = state.triggeredAtOf(gift.trigger().name());
+        long ttlMillis = gift.offerTtlMinutes() * 60_000L;
+        if (triggerAt <= 0L || now - triggerAt >= ttlMillis) {
+            throw new BizException(ErrorCode.PAY_GIFT_OFFER_EXPIRED,
+                    "触发时刻=" + triggerAt + " 有效期(分)=" + gift.offerTtlMinutes() + " 现在=" + now);
+        }
+        long boughtToday = state.purchasedTodayOf(gift.id(), com.ironoath.common.time.DayKey.of(now));
+        if (boughtToday >= gift.limitCount()) {
+            throw new BizException(ErrorCode.PAY_GIFT_DAILY_LIMIT,
+                    "今日已购=" + boughtToday + " 上限=" + gift.limitCount() + " 礼包=" + gift.id());
+        }
+    }
+
+    private GiftCfg giftOf(PayProductCfg product) {
+        for (GiftCfg row : configs.all(GiftCfg.class)) {
+            if (row.productId().equals(product.id())) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    private PlayerGiftPopup giftStateOf(String playerId) {
+        return players.findByPlayerId(playerId)
+                .orElseThrow(() -> new BizException(ErrorCode.PLAYER_NOT_FOUND, "玩家不存在：" + playerId))
+                .giftPopup();
+    }
+
+    /**
+     * 下单成功后记一次购买（**记在下单这一刻，不记在发货**）。
+     *
+     * <p>不记的后果很具体：玩家可以在同一分钟内连下两单、都付款成功 ——
+     * 限购在下一单的下单时才发现已经买过，而钱已经收了。记在下单侧的代价是
+     * "下单没付"也会占掉当日额度（订单 TTL 2 小时），这一侧是保守的、可解释的。
+     */
+    private void recordGiftPurchaseIfAny(String playerId, PayProductCfg product, long now) {
+        if (product.kind() != PayProductCfg.Kind.GIFT) {
+            return;
+        }
+        GiftCfg gift = giftOf(product);
+        if (gift == null) {
+            return;
+        }
+        PlayerSave save = players.findByPlayerId(playerId)
+                .orElseThrow(() -> new BizException(ErrorCode.PLAYER_NOT_FOUND, "玩家不存在：" + playerId));
+        save.setGiftPopup(save.giftPopup().withPurchased(gift.id(), com.ironoath.common.time.DayKey.of(now)));
+        players.save(save);
+    }
+
     private void requireWithinMinorLimit(String playerId, long amountCents, long now) {
         Boolean minor = minorPolicy.minorFlagOf(playerId);
         if (minor == null) {
