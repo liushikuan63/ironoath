@@ -1,0 +1,54 @@
+# 职责：把仓库里那 18 道"卡口"第一次接到一个**不由任何人记得不记得**的执行者身上。
+#
+# 为什么现在才补：`scripts/check-package-size.sh` 的开头写着
+#   「为什么这条必须是 CI 卡口而不是人工检查：首包超限…是在最后一次塞资源进包的时候悄悄越界的」
+# —— 这个前提此前从未成立：仓库里没有任何 CI 配置，所有门都只在主工作区被手工跑过。
+# 直接后果是 2026-09-19 那批只在**全新检出**才现形的缺陷（core.autocrlf ⇒ config 表落成 CRLF ⇒
+# 夹具的跨行锚点匹配不上，4 条用例假红/假绿互见）在主工作区永远看不见。
+#
+# 为什么跑在 ubuntu 而不是 windows runner：ubuntu 更干净也更便宜，而且**它必然是一次全新检出**，
+# 行尾、大小写、路径分隔符这类"只在我这台机器上成立"的问题会当场暴露 —— 这正是本文件存在的理由。
+# 代价：Cocos Creator 构建不在这里跑（要登录与许可），所以产物类门会打 SKIPPED，
+# 提审前仍须在装了编辑器的机器上构建后复跑（见 scripts/check-wechat-artifact.sh 的 SKIPPED 分支）。
+name: build-and-gates
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # env.sh 先看 JAVA_HOME 是否已是 17，是就直接用 —— setup-java 正好把 JAVA_HOME 指过去。
+      # 版本必须与 server/pom.xml 的 <maven.compiler.release>17</maven.compiler.release> 一致。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # 客户端工具链只有 typescript + @types/node；有 package-lock.json 所以用 ci 而不是 install。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client toolchain
+        run: npm ci
+        working-directory: client
+
+      # 全量 = 代码生成 + 分层 + 契约一致 + 服务端编译打包 + 客户端 tsc + 服务端/客户端全套测试。
+      # 注意 build.sh 只到"编译 + 测试"，静态门在下一步；两者合起来才是这个仓库的"全绿"。
+      - name: Full build and tests
+        run: bash scripts/build.sh
+
+      # 18 道静态门（含台账形状与编号唯一性、埋点覆盖、端点路径、配置消费、合规红线）。
+      # 产物类门在没有 Cocos 构建时会打 [SKIPPED] 并说明"这不是通过"。
+      - name: Static gates
+        run: bash scripts/check.sh

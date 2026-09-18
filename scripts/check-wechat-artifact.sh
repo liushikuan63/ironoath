@@ -13,6 +13,17 @@ BUILD_DIR="client/build/wechatgame"
 GAME_JSON="$BUILD_DIR/game.json"
 GLOBAL_JSON="contract/config/global.json"
 
+# 没有产物就没有可判的东西：本门三条判据（横屏方向、首包预算、三个构建后补丁）全部住在产物文件里。
+# 与 check-package-size.sh 缺产物时"退到源码下界 + 大声警告"是同一条口径 ——
+# 要紧的是**把这次没量到东西说出来**，而不是静默 exit 0 让人以为过了。
+# CI 上没有 Cocos Creator（构建要登录与许可），所以这条在 CI 里必然走这个分支。
+if [ ! -f "$GAME_JSON" ]; then
+  echo "[check-wechat-artifact][SKIPPED] 找不到 $GAME_JSON：这个检出里没做过 wechatgame 构建。"
+  echo "  本门校验的是**产物形状**，没有产物即无从判定 —— 这**不是通过**。"
+  echo "  提审前必须在装了 Cocos Creator 的机器上构建后复跑本脚本（上线检查清单相应项），不能拿这条 SKIPPED 交差。"
+  exit 0
+fi
+
 param() {
   node -e '
     const fs = require("fs")
