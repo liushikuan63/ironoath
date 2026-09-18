@@ -17,8 +17,8 @@ import { buildBagPanel, buildResourcePanel } from '../game/bag/BagPanel'
 import type { BagItemRow, BagPanelView as BagPanelData, ResourcePanelView, ResourceRow } from '../game/bag/BagPanel'
 import type { SpeedupChoice } from '../game/session/Choices'
 import type { BagListResp, ResourceDetailResp } from '../net/generated/BagProtocol'
-import { applyCommandButton, applyIconSprite, resourceIconKey } from './ArtCatalog'
-import type { IconArtKey } from './ArtCatalog'
+import { applyAnyIconSprite, applyCommandButton, ensureFamily, resourceIconKey } from './ArtCatalog'
+import { itemArtKeyForConfig } from '../game/art/ArtFamilies'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
 import { applySystemUiFont } from './UiFont'
@@ -82,6 +82,12 @@ export class BagPanelView extends Component {
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
     this.targetPicker = new ChoiceOverlay(this.node, '选择加速目标', 760)
+    // 道具/装备两族图按需拉取；先画一帧 Graphics 占位，图到了再补一帧 —— 加载失败就停在占位上
+    Promise.all([ensureFamily('item'), ensureFamily('equip')]).then(() => {
+      if (this.isValid) {
+        this.render()
+      }
+    })
     this.render()
     // 消费挂载前的数据。顺序与 AppRoot.refresh 一致（bag 在前、resources 在后），
     // 保证 tab 仍由 resources 决定 —— 两处顺序不一致会让面板开在错误的页签上
@@ -348,7 +354,7 @@ export class BagPanelView extends Component {
     }
     if (icon !== null) {
       icon.active = row.iconKey !== null
-        && applyIconSprite(icon, row.iconKey, 26, 26)
+        && applyAnyIconSprite(icon, row.iconKey, 26, 26)
     }
     // 前三个子节点是文本，后两个是使用/出售按钮 —— 只有背包页的道具行才显示
     const useButton = node.children[3]
@@ -440,7 +446,8 @@ export class BagPanelView extends Component {
         .join(' · '),
       detailColor: COLOR_TEXT_DIM,
       value: item.rarityText,
-      iconKey: null,
+      // 行 id → 族图键（映射表在 ArtFamilies，认不出的行继续用 Graphics 占位）
+      iconKey: itemArtKeyForConfig(item.itemId),
       itemId: item.itemId,
       needsTarget: item.needsTarget,
       sellable: item.sellText !== null,
@@ -461,7 +468,8 @@ interface RowDraft {
   readonly detail: string
   readonly detailColor: Color
   readonly value: string
-  readonly iconKey: IconArtKey | null
+  /** `icon:`（图集）或族键（`item:`/`equip:`）；null 表示这一行没有图，用 Graphics 占位 */
+  readonly iconKey: string | null
   /** 道具行才有；资源行为 null，据此隐藏使用/出售按钮 */
   readonly itemId: string | null
   readonly needsTarget: boolean

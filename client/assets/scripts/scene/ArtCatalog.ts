@@ -11,6 +11,7 @@ import {
   Graphics, JsonAsset, Node, Rect, resources, Size, Sprite, SpriteFrame, Texture2D,
   UITransform, Vec2,
 } from 'cc'
+import { ArtFamily, FAMILY_ASSETS } from '../game/art/ArtFamilies'
 
 type StaticArtKey =
   | 'ui.panel.kingdom'
@@ -125,6 +126,61 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
 
 const frames = new Map<ArtKey, SpriteFrame>()
 let preloadPromise: Promise<boolean> | null = null
+
+/**
+ * 新素材族（G1~G7，见 art-src/素材缺口清单.md）**不进启动预载**：
+ * 首包预算与 bootMs 都只养得起现有 40 键；族图由消费面板在打开前 ensureFamily 一次，
+ * 加载失败保留 Graphics 占位（与 loadOne 同一兜底纪律）。
+ */
+const familyFrames = new Map<string, SpriteFrame>()
+const familyLoads = new Map<ArtFamily, Promise<number>>()
+
+export function ensureFamily(family: ArtFamily): Promise<number> {
+  const cached = familyLoads.get(family)
+  if (cached !== undefined) {
+    return cached
+  }
+  const run = (async () => {
+    const entries = Object.entries(FAMILY_ASSETS[family])
+    const results: number[] = await Promise.all(entries.map(([member, path]) =>
+      loadFrame(path).then((frame) => {
+        if (frame === null) {
+          console.warn(`[ArtCatalog] 族资源加载失败：${family}:${member}`)
+          return 0
+        }
+        familyFrames.set(`${family}:${member}`, frame)
+        return 1
+      })))
+    return results.reduce((a, b) => a + b, 0)
+  })()
+  familyLoads.set(family, run)
+  return run
+}
+
+export function familyFrame(key: string): SpriteFrame | null {
+  return familyFrames.get(key) ?? null
+}
+
+/** 用族图铺满节点（SIMPLE）；键未加载或加载失败返回 false，调用方继续走 Graphics 占位。 */
+export function applyFamilySprite(node: Node, key: string, width: number, height: number): boolean {
+  const frame = familyFrame(key)
+  if (frame === null) {
+    return false
+  }
+  paintSprite(node, frame, Sprite.Type.SIMPLE, width, height)
+  return true
+}
+
+/**
+ * 行图标统一入口：`icon:` 前缀走启动预载的图标图集，其余（`item:`/`equip:` 等）走按需族图。
+ * 背包这类"两种来源混排"的列表只认这一个函数，避免每个面板自己分辨前缀。
+ */
+export function applyAnyIconSprite(node: Node, key: string, width: number, height: number): boolean {
+  if (key.startsWith('icon:')) {
+    return applyIconSprite(node, key as IconArtKey, width, height)
+  }
+  return applyFamilySprite(node, key, width, height)
+}
 
 /**
  * 预加载第一套资源。任何单张失败都只告警并保留 Graphics 兜底，不阻断登录。
@@ -368,11 +424,18 @@ export function clearSprite(node: Node): void {
 function applySprite(node: Node, key: ArtKey, type: number,
                      width: number, height: number): boolean {
   const frame = artFrame(key)
-  const graphics = node.getComponent(Graphics)
   if (frame === null) {
     clearSprite(node)
     return false
   }
+  paintSprite(node, frame, type, width, height)
+  return true
+}
+
+/** 把一张 SpriteFrame 铺到节点上，并显式关掉 Graphics 底画。 */
+function paintSprite(node: Node, frame: SpriteFrame, type: number,
+                     width: number, height: number): void {
+  const graphics = node.getComponent(Graphics)
   const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite)
   sprite.spriteFrame = frame
   sprite.type = type
@@ -385,5 +448,4 @@ function applySprite(node: Node, key: ArtKey, type: number,
     graphics.clear()
     graphics.enabled = false
   }
-  return true
 }

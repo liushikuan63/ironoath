@@ -93,7 +93,24 @@ async function collectSprites() {
   })
 }
 
+/**
+ * 背包两族（items 13 + equip 16）是按需加载，判据用 **resources 包 png 请求数的差值**：
+ * 开背包前记一个数，开过背包后再记一个 —— 增量必须恰为 29。
+ * 这条能失败的方式：BagPanelView 不再 ensureFamily → 增量为 0；
+ * 族表与磁盘脱节 → 某张 404（增量不足且 catalogWarnings 变红）；
+ * 有人把两族塞回启动预载 → city 阶段基线被抬高，增量同样对不上。
+ */
+const FAMILY_PNG_EXPECTED = 29
+const resourcePngRequests = new Set()
+page.on('request', (request) => {
+  const url = request.url()
+  if (url.includes('/assets/resources/') && url.endsWith('.png')) {
+    resourcePngRequests.add(url)
+  }
+})
+
 const cityResult = await inspectPanel('city')
+const familyBeforeBag = resourcePngRequests.size
 const bagResult = await inspectPanel('bag')
 const armyResult = await inspectPanel('army')
 const city = cityResult.sprites
@@ -131,10 +148,97 @@ const drawResult = await page.evaluate(async ({ playerId }) => {
 if (drawResult.code !== 0) {
   errors.push(`新号首抽失败：${drawResult.msg ?? JSON.stringify(drawResult)}`)
 }
+const OPS_TOKEN = process.env.ART_VERIFY_OPS_TOKEN ?? 'art-verify-local'
+
+/**
+ * 行级画面验证：新号背包是空的，行图标画没画出来根本看不到。
+ * 用 /ops/mail/send（运维补发，本机 dev 令牌）塞四件已映射道具 → claimAll 落包 →
+ * 重开背包切到"背包"页签。判据：页签内"有 Sprite 的行数 ≥ 道具行数 ≥ 4"。
+ * （曾试过塞 eq_iron_sword：装备行走 #166 的实例账本，不在背包页渲染 —— 装备图标的
+ * 行级验证属装备面板批次，此处由 tests/ArtFamilies.test.ts 的映射对账兜底。）
+ */
+const seeded = await page.evaluate(async ({ playerId, token }) => {
+  const init = await (await fetch('http://localhost:8080/player/init', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: `art-seed-init-${Date.now()}`, deviceId: playerId,
+      nickName: 'ArtSeed', clientTime: Date.now() }),
+  })).json()
+  if (init.code !== 0) return { step: 'init', init }
+  const mail = await (await fetch('http://localhost:8080/ops/mail/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Ops-Token': token },
+    body: JSON.stringify({
+      requestId: `art-seed-${Date.now()}`, playerId: init.data.playerId,
+      title: '美术验证附件', text: '行图标验证用', actor: 'art-verify',
+      rewards: [
+        { type: 'ITEM', id: 'item_chest_hero', count: 1, name: '武将匣' },
+        { type: 'ITEM', id: 'item_chest_resource', count: 1, name: '资源匣' },
+        { type: 'ITEM', id: 'item_speedup_build_1h', count: 2, name: '建造加速' },
+        { type: 'ITEM', id: 'item_buff_peace_24h', count: 1, name: '免战牌' },
+      ],
+    }),
+  })).json()
+  if (mail.code !== 0) return { step: 'mail', mail }
+  const claim = await (await fetch('http://localhost:8080/mail/claimAll', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Player-Id': init.data.playerId },
+    body: JSON.stringify({ requestId: `art-claim-${Date.now()}` }),
+  })).json()
+  if (claim.code !== 0) return { step: 'claim', claim }
+  return { ok: true, playerId: init.data.playerId, claimed: claim.data.claimed }
+}, { playerId: deviceId, token: OPS_TOKEN })
+if (seeded.ok !== true) {
+  errors.push(`背包道具种子失败：${JSON.stringify(seeded)}`)
+}
+
 const heroResult = await inspectPanel('hero')
 const worldResult = await inspectPanel('world')
+const familyAfterBag = resourcePngRequests.size
 const hero = heroResult.sprites
 const world = worldResult.sprites
+
+/**
+ * 行级画面判定：重开背包（种子道具已在包里）→ 切"背包"页签 → 逐页统计
+ * 画出了 Sprite 的 Icon 行数。四件种子分属不同页签，总和必须 ≥ 4。
+ * 能失败的方式：行没接族图（Icon active=false 或无 Sprite）→ 计数 0；
+ * 映射表错 → 某件道具落在 null 图标上 → 计数不足。
+ */
+await inspectPanel('bag')
+const bagTab = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let panel = null
+  const visit = (n) => {
+    if (panel !== null) return
+    const c = n.getComponent && n.getComponent('BagPanelView')
+    if (c !== null && c !== undefined) { panel = c; return }
+    for (const child of n.children) visit(child)
+  }
+  visit(scene)
+  if (panel === null) return { error: 'BagPanelView 不在场景里' }
+  panel.switchTab('bag')
+  const pages = panel.bag === null ? [] : panel.bag.pages
+  let iconRows = 0
+  let itemRows = 0
+  for (const page of pages) {
+    panel.selectBagPage(page.type)
+    itemRows += page.items.length
+    for (const row of panel.drawnRows) {
+      const icon = row.getChildByName('Icon')
+      const sprite = icon !== null && icon !== undefined
+        ? icon.getComponent('cc.Sprite') : null
+      if (icon !== null && icon.active === true && sprite !== null
+          && sprite.enabled === true && sprite.spriteFrame !== null) {
+        iconRows++
+      }
+    }
+  }
+  if (pages.length > 0) {
+    panel.selectBagPage(pages[0].type)
+  }
+  return { iconRows, itemRows, pages: pages.map(p => ({ type: p.type, items: p.items.length })) }
+})
+await page.waitForTimeout(400)
+await page.screenshot({ path: path.join(OUT, 'art-bag-items-runtime.png') })
 
 const cityIcons = city.filter((sprite) => sprite.name === 'BuildingIcon')
 const bagIcons = bag.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
@@ -183,6 +287,10 @@ const result = {
     terrainTiles: terrainTiles.length,
     terrainVariants: terrainRects.size,
     entityArt: entityArt.length,
+    familyBeforeBag,
+    familyAfterBag,
+    familyExpected: FAMILY_PNG_EXPECTED,
+    bagTab,
     commandButtons: commandButtons.length,
     fontLabels: fonts.length,
   },
@@ -218,6 +326,10 @@ if (errors.length > 0
   || fonts.length === 0
   || fontPolicyFailures.length > 0
   || terrainTiles.length === 0
-  || entityArt.length === 0) {
+  || entityArt.length === 0
+  || familyAfterBag - familyBeforeBag !== FAMILY_PNG_EXPECTED
+  || bagTab.error !== undefined
+  || bagTab.itemRows < 4
+  || bagTab.iconRows < 4) {
   process.exitCode = 1
 }

@@ -123,3 +123,5 @@ Avoid: neon, glossy candy mobile styling, blue sci-fi accents, photorealism
 
 - 批次清单：`generated/drafts/batch-2026-09-18-ui-full.json`（G4 已钉到 v1 母版）；运行日志 `batch-run.log`，全量 `ALL_OK`。
 - 已知取舍：经验书 L 档复用 M 档图（母版只画了单本与三本两格）；G3 碎片刻意不用紫/蓝稀有度色（与头像框同族语言）。
+- **接线轮（同日第二轮）**：G2 全部 16 + G3 的 13 张已量化进 `client/assets/resources/ui/generated/{equip,items}/`
+  并接 `BagPanelView`（真跑判据见 `素材缺口清单.md` §五）；`scroll_march`、`decree_×2` 无消费点留在草稿。

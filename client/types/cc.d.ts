@@ -73,6 +73,8 @@ declare module 'cc' {
   export class Component {
     node: Node
     enabled: boolean
+    /** Cocos 真实属性：组件所属节点树尚未销毁时为 true。异步回调回来先问它。 */
+    isValid: boolean
     onLoad?(): void
     start?(): void
     update?(deltaTime: number): void

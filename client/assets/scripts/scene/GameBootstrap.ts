@@ -26,6 +26,7 @@ import { FetchHttpTransport } from '../net/FetchTransport'
 import { NetModule } from '../net/NetModule'
 import type { NetConfig, NetDeps } from '../net/NetModule'
 import { WxHttpTransport, WxSocketTransport } from '../net/WxTransport'
+import { BrowserSocketTransport } from '../net/BrowserTransport'
 import type { SocketTransport } from '../net/NetTransport'
 import { Prng } from '../core/Prng'
 import { TimeSync } from '../core/TimeSync'
@@ -436,7 +437,8 @@ export class GameBootstrap extends Component {
     const deps: NetDeps = {
       http: isWxRuntime() ? new WxHttpTransport(REQUEST_TIMEOUT_MS)
         : new FetchHttpTransport(REQUEST_TIMEOUT_MS),
-      socketFactory: (url: string): SocketTransport => new WxSocketTransport(url),
+      socketFactory: (url: string): SocketTransport =>
+        isWxRuntime() ? new WxSocketTransport(url) : new BrowserSocketTransport(url),
       now: () => sys.now(),
       delay: (ms: number) => new Promise<void>(resolve => {
         setTimeout(resolve, ms)

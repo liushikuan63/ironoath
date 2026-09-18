@@ -1,0 +1,134 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "38f92b2f-69bd-4683-9935-53e299f6796d",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "importer": "texture",
+      "uuid": "38f92b2f-69bd-4683-9935-53e299f6796d@6c48a",
+      "displayName": "equip-weapon-iron-v1",
+      "id": "6c48a",
+      "name": "texture",
+      "userData": {
+        "wrapModeS": "clamp-to-edge",
+        "wrapModeT": "clamp-to-edge",
+        "imageUuidOrDatabaseUri": "38f92b2f-69bd-4683-9935-53e299f6796d",
+        "isUuid": true,
+        "visible": false,
+        "minfilter": "linear",
+        "magfilter": "linear",
+        "mipfilter": "none",
+        "anisotropy": 0
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "f9941": {
+      "importer": "sprite-frame",
+      "uuid": "38f92b2f-69bd-4683-9935-53e299f6796d@f9941",
+      "displayName": "equip-weapon-iron-v1",
+      "id": "f9941",
+      "name": "spriteFrame",
+      "userData": {
+        "trimThreshold": 1,
+        "rotated": false,
+        "offsetX": -0.5,
+        "offsetY": -0.5,
+        "trimX": 5,
+        "trimY": 2,
+        "width": 117,
+        "height": 125,
+        "rawWidth": 128,
+        "rawHeight": 128,
+        "borderTop": 0,
+        "borderBottom": 0,
+        "borderLeft": 0,
+        "borderRight": 0,
+        "packable": true,
+        "pixelsToUnit": 100,
+        "pivotX": 0.5,
+        "pivotY": 0.5,
+        "meshType": 0,
+        "vertices": {
+          "rawPosition": [
+            -58.5,
+            -62.5,
+            0,
+            58.5,
+            -62.5,
+            0,
+            -58.5,
+            62.5,
+            0,
+            58.5,
+            62.5,
+            0
+          ],
+          "indexes": [
+            0,
+            1,
+            2,
+            2,
+            1,
+            3
+          ],
+          "uv": [
+            5,
+            126,
+            122,
+            126,
+            5,
+            1,
+            122,
+            1
+          ],
+          "nuv": [
+            0.0390625,
+            0.0078125,
+            0.953125,
+            0.0078125,
+            0.0390625,
+            0.984375,
+            0.953125,
+            0.984375
+          ],
+          "minPos": [
+            -58.5,
+            -62.5,
+            0
+          ],
+          "maxPos": [
+            58.5,
+            62.5,
+            0
+          ]
+        },
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "38f92b2f-69bd-4683-9935-53e299f6796d@6c48a",
+        "atlasUuid": "",
+        "trimType": "auto"
+      },
+      "ver": "1.0.12",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "type": "sprite-frame",
+    "hasAlpha": true,
+    "fixAlphaTransparencyArtifacts": false,
+    "redirect": "38f92b2f-69bd-4683-9935-53e299f6796d@6c48a"
+  }
+}
