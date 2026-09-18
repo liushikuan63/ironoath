@@ -29,7 +29,9 @@ import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
 
-const ROOT = path.resolve('client/build/web-mobile')
+// 产物目录可以用 CHAT_ROOT 换：两个会话同时构建时，主产物目录会被另一边清空重建
+// （Cocos 的 web-mobile 构建先删后写），本工具指向自己的那份就不会互相踩
+const ROOT = path.resolve(process.env.CHAT_ROOT ?? 'client/build/web-mobile')
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.CHAT_PORT ?? 8094)
 const SHOT = process.env.CHAT_SHOT ?? 'D:/tmp/chat-panel.png'
@@ -444,6 +446,31 @@ async function main() {
   verdict(manageTap === 'ok' && restored.some(text => text.includes(blockText)),
     '黑名单入口能撤销拉黑，那条消息又回来了（拉黑是可逆的，入口够得着）',
     `tap=${manageTap} 选项=${manageTitles.join(' / ').slice(0, 60)}`)
+
+  // ---- 7) 关注（B22 §一 4）：关注之后私聊页出现他，点一下就能开一段会话 ----
+  await tap('Channel_WORLD')
+  await waitFor(list => list.some(text => text.includes(blockText)))
+  await page.evaluate(() => window.__chat.tapRowAction('拉黑验证'))
+  await page.waitForTimeout(700)
+  await page.evaluate(() => window.__chat.tapNode('ChoiceNext'))
+  await page.waitForTimeout(500)
+  const followTap = await page.evaluate(() => window.__chat.tapChoice('关注他'))
+  await page.waitForTimeout(1000)
+  const afterFollow = await page.evaluate(() => window.__chat.textsUnder('social'))
+  verdict(followTap === 'ok' && afterFollow.some(text => text.includes('已关注')),
+    '消息菜单里能关注他（关注是单向的：对方不需要做任何事）',
+    `tap=${followTap} 文本 → ${afterFollow.filter(t => t.includes('关注')).join(' | ').slice(0, 70)}`)
+
+  await tap('Channel_PRIVATE')
+  const friendListTexts = await waitFor(list => list.some(text => text.includes('关注的人')))
+  verdict(friendListTexts.some(text => text.includes('关注的人')),
+    '私聊页列出关注的人（会话列表只有别人先找过我的那些，主动找谁只能靠这里）',
+    `文本 → ${friendListTexts.filter(t => t.includes('关注') || t.includes('推送验证')).join(' | ').slice(0, 80)}`)
+  const privateTap = await page.evaluate(() => window.__chat.tapRowAction('关注的人'))
+  const openedPrivate = await waitFor(list => list.some(text => text.includes('私聊中')), 15000)
+  verdict(privateTap === 'ok' && openedPrivate.some(text => text.includes('私聊中')),
+    '点关注列表里那一行就能开一段私聊（这就是 S1 里刻意留下的发起入口）',
+    `tap=${privateTap} 文本 → ${openedPrivate.filter(t => t.includes('私聊')).join(' | ').slice(0, 70)}`)
 
   writeFileSync(SHOT, await page.screenshot({ fullPage: false }))
   lines.push(`PASS  截图落盘  ${SHOT}`)

@@ -18,7 +18,9 @@
  */
 
 import { channelText } from './SocialPanel'
-import type { ChatChannel, ChatMessageView, SocialEventView } from '../../net/generated/SocialProtocol'
+import type {
+  ChatChannel, ChatMessageView, FriendView, SocialEventView,
+} from '../../net/generated/SocialProtocol'
 
 /**
  * 客户端每个频道本地保留的历史条数上限。
@@ -73,6 +75,18 @@ export interface ChatMessageRow {
   readonly timeText: string
 }
 
+/**
+ * 一条关注（B22 §一 4）。**它是私聊的发起入口**：会话列表只列出"有人给我发过私信"的人，
+ * 想主动找谁说话，就得先关注他 —— 这也是 S1 里刻意留给这一块的那半件事。
+ */
+export interface FriendRow {
+  readonly peerId: string
+  readonly name: string
+  readonly online: boolean
+  /** 「在线」/「3 小时前」 */
+  readonly presenceText: string
+}
+
 /** 一个私聊会话。 */
 export interface ChatConversationRow {
   readonly peerId: string
@@ -107,6 +121,8 @@ export interface ChatViewInput {
    * 只靠"再点他一条消息"是够不着的（那条消息已经不在屏幕上了）。
    */
   readonly blockedCount: number
+  /** 我关注的人，最近关注的在前（服务端给的顺序） */
+  readonly friends: readonly FriendView[]
 }
 
 /** 聊天页签的展示数据。 */
@@ -126,6 +142,8 @@ export interface ChatPanelData {
   readonly peerLabel: string | null
   /** 我拉黑了几个（>0 时私聊列表多一行「黑名单」入口） */
   readonly blockedCount: number
+  /** 我关注的人（私聊页用来发起会话） */
+  readonly friends: readonly FriendRow[]
   /** 原样带过去给面板比对（见 {@link ChatViewInput.sentSeq}） */
   readonly sentSeq: number
   /** 输入行提示 */
@@ -301,6 +319,13 @@ export function buildChatPanel(input: ChatViewInput): ChatPanelData {
     peerId: input.peerId,
     peerLabel,
     blockedCount: input.blockedCount,
+    friends: input.friends.map((friend): FriendRow => ({
+      peerId: friend.playerId,
+      name: friend.name,
+      online: friend.online,
+      // 在线状态就是"现在能不能聊上"：绿点说在线，离线说多久没来
+      presenceText: friend.online ? '在线' : agoTextOf(friend.lastSeenAt, input.localNow + input.offsetMs),
+    })),
     sentSeq: input.sentSeq,
     hintText: input.notice ?? idleHint(input.channel, peerLabel),
     hintIsWarning: input.notice !== null,
@@ -311,6 +336,22 @@ export function buildChatPanel(input: ChatViewInput): ChatPanelData {
       ? '还没有人给你发过私信'
       : `还没有${channelText(input.channel)}频道的消息`,
   }
+}
+
+function agoTextOf(at: number, nowServer: number): string {
+  const ago = Math.max(0, nowServer - at)
+  if (ago < 60_000) {
+    return '刚刚来过'
+  }
+  const minutes = Math.floor(ago / 60_000)
+  if (minutes < 60) {
+    return `${minutes} 分钟前`
+  }
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    return `${hours} 小时前`
+  }
+  return `${Math.floor(hours / 24)} 天前`
 }
 
 function idleHint(channel: ChatChannel, peerLabel: string | null): string {

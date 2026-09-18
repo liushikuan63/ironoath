@@ -135,6 +135,11 @@ const ROUTES: Record<string, unknown> = {
     serverNow: SERVER_NOW,
   },
   '/social/report': { reportId: 'report_1', serverNow: SERVER_NOW },
+  '/social/follows': { friends: [] },
+  '/social/follow': {
+    friends: [{ playerId: 'P2', name: '乙', online: false, lastSeenAt: SERVER_NOW - 3600_000 }],
+  },
+  '/social/unfollow': { friends: [] },
   '/social/blocks': { blockedPlayerIds: [] },
   '/social/block': { blockedPlayerIds: ['P2'] },
   '/social/unblock': { blockedPlayerIds: [] },
@@ -1319,8 +1324,9 @@ test('举报与拉黑：一层选择器里给出原因与拉黑；拉黑后本�
   // 点别人那条消息上的按钮：先懒取名单（首屏不为它多打一轮），再给出选项
   await h.root.openChatActions('P2', 'm1')
   assert.equal(h.http.countOf('/social/blocks'), 1, '第一次点才拉名单')
+  // 一页放 4 项，所以顺序是：4 种举报原因 → 私聊他 → 关注/取关 → 拉黑/取消拉黑
   assert.deepEqual(h.chatActionOptions.map(option => option.kind),
-    ['REPORT', 'REPORT', 'REPORT', 'REPORT', 'BLOCK'])
+    ['REPORT', 'REPORT', 'REPORT', 'REPORT', 'PRIVATE', 'FOLLOW', 'BLOCK'])
 
   // 举报：只记不留（回执说"运营会看到"，不说会不会封）
   h.pickChatAction('REPORT_SPAM')
@@ -1340,10 +1346,36 @@ test('举报与拉黑：一层选择器里给出原因与拉黑；拉黑后本�
 
   // 再点一次：菜单里变成「取消拉黑」
   await h.root.openChatActions('P2', 'm1')
-  assert.equal(h.chatActionOptions[4]?.kind, 'UNBLOCK')
+  assert.equal(h.chatActionOptions.some(option => option.kind === 'UNBLOCK'), true)
   h.pickChatAction('UNBLOCK')
   await settle()
   assert.equal(h.lastChat?.hintText, '已取消拉黑')
+})
+
+test('关注与私聊发起：菜单里关注他 → 私聊页出现他 → 点开就是一段空会话（名字来自关注列表）', async () => {
+  const h = harness()
+  assert.equal(await h.root.start('dev-1', '君'), true)
+
+  await h.root.openChatActions('P2', 'm1')
+  assert.equal(h.chatActionOptions.some(option => option.kind === 'FOLLOW'), true,
+    '菜单里要有「关注他」（第 2 页，与拉黑并列）')
+  assert.equal(h.chatActionOptions.some(option => option.kind === 'PRIVATE'), true,
+    '以及「私聊他」——这是 S1 里刻意留给关注那块的私聊发起入口')
+
+  h.pickChatAction('FOLLOW')
+  await settle()
+  const followCall = h.http.calls.find(c => c.path === '/social/follow')
+  assert.equal(followCall?.body.targetPlayerId, 'P2')
+  assert.equal(h.lastChat?.friends.length, 1)
+  assert.equal(h.lastChat?.friends[0]?.name, '乙')
+  assert.equal(h.lastChat?.hintText, '已关注，打开私聊页就能找到他')
+
+  // 从关注列表发起私聊：切到私聊频道 + 拉一段（这次是空的）历史，名字由关注列表喂进昵称表
+  h.http.overrides.set('/chat/list', { messages: [], hasMore: false, serverNow: SERVER_NOW })
+  await h.root.openConversation('P2')
+  assert.equal(h.lastChat?.channel, 'PRIVATE')
+  assert.equal(h.lastChat?.peerLabel, '乙', '没有历史消息时名字只能来自关注列表')
+  assert.equal(h.lastChat?.messages.length, 0, '新会话是空的 —— 这正是"发起"与"回复"的区别')
 })
 
 test('浏览器路径：没有 wxCode 时不带该值，登录链路与旧行为完全一致', async () => {

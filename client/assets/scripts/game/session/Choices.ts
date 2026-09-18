@@ -157,8 +157,8 @@ function formatSeconds(seconds: number): string {
 
 /** 聊天消息行上的动作（B22 §一 3）。举报的四种原因与拉黑合并成一层选择：多一层嵌套选择器只会让人放弃。 */
 export interface ChatActionChoice extends ChoiceOption {
-  /** 'REPORT' 走举报（带 reason），'BLOCK'/'UNBLOCK' 走拉黑名单 */
-  readonly kind: 'REPORT' | 'BLOCK' | 'UNBLOCK'
+  /** 'REPORT' 走举报（带 reason），其余分别走拉黑名单、关注与私聊 */
+  readonly kind: 'REPORT' | 'BLOCK' | 'UNBLOCK' | 'FOLLOW' | 'UNFOLLOW' | 'PRIVATE'
   readonly reason: ReportReason | null
 }
 
@@ -170,12 +170,16 @@ export interface ChatActionChoice extends ChoiceOption {
  *
  * <p>`blocked` 由调用方从服务端名单里读（组合根持有），这里不猜。
  */
-export function buildChatActionChoices(blocked: boolean): readonly ChatActionChoice[] {
+export function buildChatActionChoices(blocked: boolean, following = false): readonly ChatActionChoice[] {
   return [
     { id: 'REPORT_ABUSE', kind: 'REPORT', reason: 'ABUSE', label: '举报：辱骂', detail: '人身攻击、恶意谩骂' },
     { id: 'REPORT_SPAM', kind: 'REPORT', reason: 'SPAM', label: '举报：刷屏', detail: '广告、复读、无意义刷屏' },
     { id: 'REPORT_CHEAT', kind: 'REPORT', reason: 'CHEAT_SUSPECT', label: '举报：疑似作弊', detail: '交给运营与反作弊判定' },
     { id: 'REPORT_OTHER', kind: 'REPORT', reason: 'OTHER', label: '举报：其他', detail: '说不上来但觉得不对' },
+    { id: 'PRIVATE', kind: 'PRIVATE', reason: null, label: '私聊他', detail: '直接开一段一对一会话' },
+    following
+      ? { id: 'UNFOLLOW', kind: 'UNFOLLOW', reason: null, label: '取消关注', detail: '不再出现在我的关注列表里' }
+      : { id: 'FOLLOW', kind: 'FOLLOW', reason: null, label: '关注他', detail: '看他在不在线，随时找他说话' },
     blocked
       ? { id: 'UNBLOCK', kind: 'UNBLOCK', reason: null, label: '取消拉黑', detail: '恢复与他的私聊' }
       : { id: 'BLOCK', kind: 'BLOCK', reason: null, label: '拉黑', detail: '不再看到他的消息（不影响战斗）' },

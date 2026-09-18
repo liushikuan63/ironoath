@@ -117,7 +117,7 @@ test('页面数据：私聊未选会话画会话列表，选中后画消息，�
   const base = {
     messages: [message('m1', 100)], events, myPlayerId: 'me',
     peerNames: new Map<string, string>(), offsetMs: 0, localNow: 200, sentSeq: 0, notice: null,
-    blockedCount: 0,
+    blockedCount: 0, friends: [],
   }
   const list = buildChatPanel({ ...base, channel: 'PRIVATE', peerId: null })
   assert.equal(list.mode, 'conversations')
@@ -142,7 +142,7 @@ test('页面数据：私聊未选会话画会话列表，选中后画消息，�
 test('页面数据：notice 进提示行且按告警色画（失败原因是玩家唯一看得见的落点）', () => {
   const data = buildChatPanel({
     channel: 'SQUAD', peerId: null, messages: [], events: [], myPlayerId: 'me',
-    peerNames: new Map(), offsetMs: 0, localNow: 0, sentSeq: 0, blockedCount: 0,
+    peerNames: new Map(), offsetMs: 0, localNow: 0, sentSeq: 0, blockedCount: 0, friends: [],
     notice: '慢一点：同一句话 8 秒后才能再发',
   })
   assert.equal(data.hintIsWarning, true)
@@ -169,7 +169,7 @@ test('黑名单入口：私聊列表顶部多一行（拉黑后那条消息够�
   const base = {
     channel: 'PRIVATE' as const, peerId: null, messages: [], events: [],
     myPlayerId: 'me', peerNames: new Map<string, string>(), offsetMs: 0, localNow: 0,
-    sentSeq: 0, notice: null,
+    sentSeq: 0, notice: null, friends: [],
   }
   const empty = buildChatPanel({ ...base, blockedCount: 0 })
   assert.equal(empty.conversations.some(row => row.peerId === 'blocks'), false,
@@ -180,6 +180,20 @@ test('黑名单入口：私聊列表顶部多一行（拉黑后那条消息够�
     events: [privateEvent('e1', 'p1', 100)],
   })
   assert.equal(withBlocked.blockedCount, 2, '面板照着计数画「黑名单（2）」')
+})
+
+test('关注列表：进私聊页就能看到，带在线状态（会话列表只有别人先找过我的那些人）', () => {
+  const data = buildChatPanel({
+    channel: 'PRIVATE', peerId: null, messages: [], events: [], myPlayerId: 'me',
+    peerNames: new Map(), offsetMs: 0, localNow: 1000, sentSeq: 0, notice: null, blockedCount: 0,
+    friends: [
+      { playerId: 'f1', name: '老王', online: true, lastSeenAt: 1000 },
+      { playerId: 'f2', name: '小李', online: false, lastSeenAt: 1000 - 3 * 3600_000 },
+    ],
+  })
+  assert.deepEqual(data.friends.map(f => f.name), ['老王', '小李'])
+  assert.equal(data.friends[0]?.presenceText, '在线')
+  assert.equal(data.friends[1]?.presenceText, '3 小时前')
 })
 
 test('本地历史按会话分桶：私聊的键要带对象，否则两人的会话会互相覆盖', () => {

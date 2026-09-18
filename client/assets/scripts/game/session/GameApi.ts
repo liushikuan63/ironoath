@@ -62,6 +62,8 @@ import type {
 import type {
   BlockListView,
   BlockReq,
+  FollowReq,
+  FriendListView,
   ReportReq,
   ReportResp,
   AllianceCreateReq, AllianceDonateReq, AllianceDonateResp, AllianceIdReq, AllianceMemberReq,
@@ -683,6 +685,21 @@ export class GameApi {
   /** 我拉黑了谁。 */
   socialBlocks(): Promise<NetOutcome<BlockListView>> {
     return this.read<BlockListView>('/social/blocks')
+  }
+
+  /** 关注一个人（单向，B22 §一 4）。对方不会收到通知。 */
+  socialFollow(req: Omit<FollowReq, 'requestId'>): Promise<NetOutcome<FriendListView>> {
+    return this.mutate<FollowReq, FriendListView>('/social/follow', req)
+  }
+
+  /** 取消关注。 */
+  socialUnfollow(req: Omit<FollowReq, 'requestId'>): Promise<NetOutcome<FriendListView>> {
+    return this.mutate<FollowReq, FriendListView>('/social/unfollow', req)
+  }
+
+  /** 我关注的人（带在线状态）。 */
+  socialFollows(): Promise<NetOutcome<FriendListView>> {
+    return this.read<FriendListView>('/social/follows')
   }
 
   chatList(req: ChatListReq): Promise<NetOutcome<ChatListResp>> {

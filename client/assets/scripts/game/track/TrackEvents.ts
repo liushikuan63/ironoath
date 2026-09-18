@@ -57,6 +57,8 @@ export const TRACK_EVENTS = {
   reportSubmit: 'report_submit',
   /** 拉黑 / 取消拉黑（B22 §一 3）。它只影响交流，不动战斗 —— 这个数突然涨说明社区氛围出了问题。 */
   blockChanged: 'block_changed',
+  /** 关注 / 取消关注（B22 §一 4）。关注是"我想再找他"，它的涨落比拉黑更早反映社交温度。 */
+  followChanged: 'follow_changed',
   /** 客户端预判的流失信号（长时间无操作后退出）。 */
   churn: 'churn',
   /** 流亡迁城（B08 §5 反击工具箱）。看板要拿它判断"被追杀到没法玩"的强度。 */

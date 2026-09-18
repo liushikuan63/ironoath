@@ -94,7 +94,7 @@ interface RowDraft {
 }
 
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
-  | 'chatMenu' | 'blocks'
+  | 'chatMenu' | 'blocks' | 'friend'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -797,7 +797,7 @@ export class SocialPanelView extends Component {
     const kind = draft.actionKind
     this.rowActionIds.set(node, id)
     button.on('touch-start', (_event: EventTouch) => {
-      if (kind === 'chatPeer') {
+      if (kind === 'chatPeer' || kind === 'friend') {
         this.onChatOpenPeer?.(id)
         return
       }
@@ -847,6 +847,19 @@ function chatDrafts(data: ChatPanelData): RowDraft[] {
       actionId: row.peerId,
       actionKind: 'chatPeer',
     }))
+    for (const friend of data.friends) {
+      // 关注列表是**发起**私聊的入口：会话列表只有"别人先找过我"的那些人
+      rows.push({
+        title: friend.online ? `${friend.name} · 在线` : friend.name,
+        titleColor: friend.online ? COLOR_GOOD : COLOR_TEXT,
+        detail: `关注的人 · ${friend.presenceText}`,
+        value: '',
+        actionText: '私聊',
+        actionEnabled: true,
+        actionId: friend.peerId,
+        actionKind: 'friend',
+      })
+    }
     if (data.blockedCount > 0) {
       // 解除拉黑的唯一入口：拉黑之后那个人的消息就看不见了，"再点他一条消息"是够不着的
       rows.unshift({

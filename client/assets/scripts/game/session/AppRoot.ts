@@ -32,8 +32,8 @@ import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagPro
 import type { HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageListResp } from '../../net/generated/StageProtocol'
 import type {
-  AllianceMember, AllianceSyncResp, ChatChannel, ChatMessageView, HelpRequestView, ReportReason,
-  SocialEventView, SocialSummaryResp,
+  AllianceMember, AllianceSyncResp, ChatChannel, ChatMessageView, FriendView, HelpRequestView,
+  ReportReason, SocialEventView, SocialSummaryResp,
 } from '../../net/generated/SocialProtocol'
 import {
   ackablePrivateEventIds, buildChatPanel, chatFailureText, chatKey, CHAT_LOCAL_HISTORY_MAX,
@@ -200,6 +200,9 @@ export class AppRoot {
   private myBlocked: readonly string[] = []
   /** 名单是否已经从服务端取过。懒取：首屏不必为它多打一轮请求 */
   private blocksLoaded = false
+  /** 我关注的人（B22 §一 4）。与黑名单同一套懒取策略：第一次点消息菜单时才拉 */
+  private myFriends: readonly FriendView[] = []
+  private friendsLoaded = false
 
   constructor(deps: {
     api: GameApi
@@ -860,6 +863,7 @@ export class AppRoot {
       sentSeq: this.chatSentSeq,
       notice: this.chatNotice,
       blockedCount: this.myBlocked.length,
+      friends: this.myFriends,
     }))
   }
 
@@ -880,17 +884,89 @@ export class AppRoot {
       this.rejectNeeds('chat', '这条消息能举报或拉黑，但动作选择器未接入')
       return
     }
-    await this.ensureBlocks()
-    this.targets.chatActionChoice(buildChatActionChoices(this.myBlocked.includes(senderId)),
+    await this.ensureChatLists()
+    const following = this.myFriends.some((friend) => friend.playerId === senderId)
+    this.targets.chatActionChoice(buildChatActionChoices(this.myBlocked.includes(senderId), following),
       (choice) => {
         if (choice.kind === 'REPORT' && choice.reason !== null) {
           void this.reportMessage(senderId, messageId, choice.reason)
         } else if (choice.kind === 'BLOCK') {
           void this.blockPlayer(senderId)
+        } else if (choice.kind === 'FOLLOW') {
+          void this.followPlayer(senderId)
+        } else if (choice.kind === 'UNFOLLOW') {
+          void this.unfollowPlayer(senderId)
         } else {
           void this.unblockPlayer(senderId)
         }
       })
+  }
+
+  /**
+   * 关注一个人（B22 §一 4，单向）。**不通知对方**：关注是"我想看他在不在线、想随时找他"，
+   * 通知就成了请求，而请求那套流程联盟入盟已经有一份了。
+   */
+  async followPlayer(targetId: string): Promise<void> {
+    this.track(TRACK_EVENTS.followChanged, { action: 'add' })
+    const outcome = await this.api.socialFollow({ targetPlayerId: targetId })
+    if (outcome.kind !== 'ok') {
+      this.say('chat', outcome)
+      this.chatNotice = AppRoot.reason(outcome)
+      this.deliverChat()
+      return
+    }
+    this.applyFriends(outcome.data.friends)
+    this.chatNotice = '已关注，打开私聊页就能找到他'
+    this.deliverChat()
+  }
+
+  /** 取消关注（幂等）。 */
+  async unfollowPlayer(targetId: string): Promise<void> {
+    this.track(TRACK_EVENTS.followChanged, { action: 'remove' })
+    const outcome = await this.api.socialUnfollow({ targetPlayerId: targetId })
+    if (outcome.kind !== 'ok') {
+      this.say('chat', outcome)
+      this.chatNotice = AppRoot.reason(outcome)
+      this.deliverChat()
+      return
+    }
+    this.applyFriends(outcome.data.friends)
+    this.chatNotice = '已取消关注'
+    this.deliverChat()
+  }
+
+  /**
+   * 从关注列表发起一段私聊（B22 §一 4 的"互相发私聊入口"，也是 S1 里刻意留下的那半件事）。
+   *
+   * <p>与"点开一个已有会话"走同一条路（{@link openConversation}），唯一的差别是这次没有历史消息：
+   * `/chat/list` 会回一个空列表，而名字来自关注列表 —— 所以关注的人要先喂进昵称表，
+   * 否则会话页会显示成一串 id。
+   */
+  private applyFriends(friends: readonly FriendView[]): void {
+    this.myFriends = [...friends]
+    this.friendsLoaded = true
+    for (const friend of friends) {
+      this.chatPeerNames.set(friend.playerId, friend.name)
+    }
+  }
+
+  /**
+   * 动作菜单要知道两件事：我拉黑过谁（决定显示"拉黑"还是"取消拉黑"）与我关注过谁（同理）。
+   * 两份都懒取 —— 首屏那十几次拉取每一次都要钱，而这两份只有点开消息菜单时才用得上。
+   */
+  private async ensureChatLists(): Promise<void> {
+    if (!this.blocksLoaded) {
+      const blocks = await this.api.socialBlocks()
+      if (blocks.kind === 'ok') {
+        this.applyBlockList(blocks.data.blockedPlayerIds)
+      }
+    }
+    if (!this.friendsLoaded) {
+      const follows = await this.api.socialFollows()
+      if (follows.kind === 'ok') {
+        this.applyFriends(follows.data.friends)
+      }
+    }
   }
 
   /**
