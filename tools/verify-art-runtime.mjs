@@ -267,6 +267,9 @@ async function collectNavContrast() {
         key: cell.name.slice('Nav-'.length),
         background: sprite !== null && sprite.enabled === true && sprite.spriteFrame !== null
           ? 'art' : (graphics !== null && graphics.enabled === true ? 'graphics' : 'none'),
+        frameName: sprite !== null && sprite.spriteFrame !== null
+          ? `${sprite.spriteFrame.name}|${sprite.spriteFrame.texture ? sprite.spriteFrame.texture.name : ''}`
+          : null,
         luminance: Number(lum.toFixed(3)),
         color: `${c.r},${c.g},${c.b}`,
         active: nav !== null && nav !== undefined && nav.current() === cell.name.slice('Nav-'.length),
@@ -287,6 +290,16 @@ const navActiveIndistinguishable = (navContrast.cells ?? []).length > 0
     .every((cell) => (navContrast.cells ?? [])
       .filter((other) => !other.active)
       .every((other) => other.color === cell.color))
+/**
+ * 页签图真的铺上了没（G8）：13 格都必须是 nav-tab，且选中那一格必须换成 selected 变体。
+ * 能失败的方式：PanelNav 退回按钮九宫格（帧名对不上）、selected 键没进启动预载（帧为 null）。
+ */
+const navTabMissing = (navContrast.cells ?? [])
+  .filter((cell) => cell.frameName === null || !cell.frameName.includes('nav-tab'))
+  .map((cell) => `${cell.key}=${cell.frameName}`)
+const navSelectedWrongFrame = (navContrast.cells ?? [])
+  .filter((cell) => cell.active && cell.frameName !== null && !cell.frameName.includes('selected'))
+  .map((cell) => `选中格 ${cell.key} 用的还是 ${cell.frameName}`)
 const familyBeforeBag = resourcePngRequests.size
 const bagResult = await inspectPanel('bag')
 const armyResult = await inspectPanel('army')
@@ -646,6 +659,8 @@ const result = {
     expected: NAV_CELLS_EXPECTED,
     lowContrast: navLowContrast,
     activeIndistinguishable: navActiveIndistinguishable,
+    tabMissing: navTabMissing,
+    selectedWrongFrame: navSelectedWrongFrame,
   },
   screenshots: {
     city: path.join(OUT, 'art-city-runtime.png'),
@@ -677,6 +692,8 @@ if (errors.length > 0
   || (navContrast.cells ?? []).length < NAV_CELLS_EXPECTED
   || navLowContrast.length > 0
   || navActiveIndistinguishable
+  || navTabMissing.length > 0
+  || navSelectedWrongFrame.length > 0
   || cityIcons.length === 0
   || bagIcons.length === 0
   || armyIcons.length === 0

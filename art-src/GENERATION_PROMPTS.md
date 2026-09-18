@@ -120,8 +120,12 @@ Avoid: neon, glossy candy mobile styling, blue sci-fi accents, photorealism
 | G5 | 农/军/商/工四学派徽记 + 国旗底样（中央留空可换纹） | `drafts/g5-school-crests/`、`drafts/g5-nation/` |
 | G6 | 战令免费/付费双轨徽、抽卡横幅背景（plain 直存 1280×731，不抠绿）、限时绶带角标 | `drafts/g6-*/` |
 | G7 | 默认头像 4：男女君主/盟管/系统信使 | `drafts/g7-avatars/` |
+| G8 | 底部导航页签 2 态：暗铁铆钉常态 + 金框红底选中态，**按格子比例 4:3 画满整幅**（不走九宫格，整图等比缩放） | `drafts/g8-nav-tab/` |
 
 - 批次清单：`generated/drafts/batch-2026-09-18-ui-full.json`（G4 已钉到 v1 母版）；运行日志 `batch-run.log`，全量 `ALL_OK`。
+- **G8 批次清单（2026-09-19）**：`generated/drafts/batch-2026-09-19-g8-nav-tab.json`，两张都 `residual_green=0.000%`。
+  收编用 `accept_to_runtime.py --size 128x96` —— **`--size` 现在支持 `WxH`**：非方形目标会先按 alpha bbox
+  裁掉方形化补的透明边再铺满，且素材自身长宽比与目标差超过 3% 直接失败（防止把图压扁收进包）。
 - 已知取舍：经验书 L 档复用 M 档图（母版只画了单本与三本两格）；G3 碎片刻意不用紫/蓝稀有度色（与头像框同族语言）。
 - **接线轮（同日第二轮）**：G2 全部 16 + G3 的 13 张已量化进 `client/assets/resources/ui/generated/{equip,items}/`
   并接 `BagPanelView`；G1 的 12 张立绘（256px）进 `heroes/` 并接 `HeroPanelView`（真跑判据见 `素材缺口清单.md` §五）；

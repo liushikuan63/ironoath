@@ -23,6 +23,8 @@ type StaticArtKey =
   | 'ui.button.command.hover'
   | 'ui.button.command.pressed'
   | 'ui.button.command.disabled'
+  | 'ui.nav.tab'
+  | 'ui.nav.tab.selected'
   | 'map.terrain.grass'
   | 'map.entity.city'
   | 'map.entity.monster'
@@ -113,6 +115,12 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
   },
   'ui.button.command.disabled': {
     path: 'ui/generated/ui/button-command-v1-disabled',
+  },
+  'ui.nav.tab': {
+    path: 'ui/generated/ui/nav-tab-v1',
+  },
+  'ui.nav.tab.selected': {
+    path: 'ui/generated/ui/nav-tab-selected-v1',
   },
   'map.terrain.grass': { path: TERRAIN_GRASS_PATH },
   'map.entity.city': { path: 'ui/generated/map/map-player-city-v1' },
@@ -399,6 +407,15 @@ export function applyCommandButton(node: Node, state: CommandButtonState,
   // 按钮母版是 384×143、带圆角描边的九宫格，游戏里却要铺到 26~34px 高；
   // 按 SIMPLE 直接压扁会把四角拉成椭圆。九宫格只拉伸中间，四角保持原比例。
   return applySlicedSprite(node, commandButtonArtKey(state), width, height)
+}
+
+/**
+ * 底部导航格的页签图。刻意**不**走九宫格：格子尺寸由条宽 ÷ 格数定死（≈63×44），
+ * 而按钮母版的端帽就有 54px —— 九宫格在那个尺寸上退化成"整张图缩小"，画出来是一朵花
+ * （收口清单 #213 的截图）。页签母版本来就是按这个比例画的，等比铺满即可。
+ */
+export function applyNavTab(node: Node, selected: boolean, width: number, height: number): boolean {
+  return applySimpleSprite(node, selected ? 'ui.nav.tab.selected' : 'ui.nav.tab', width, height)
 }
 
 /** 回到 Graphics 画面。池化节点在不同实体之间复用时必须显式切回，避免残留上一张图。 */

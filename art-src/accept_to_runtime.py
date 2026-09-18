@@ -32,11 +32,32 @@ def runtime_name(draft_name: str) -> str:
     return stem + ".png"
 
 
-def accept(src: str, dst: str, size: int) -> int:
+def parse_size(text: str):
+    """`128` = 方形，沿用草稿方形化留下的透明留白（图标族一直这么做，等比缩到 N×N 不变形）。
+    `128x96` = 非方形素材（页签、面板这类）：先按 alpha bbox 裁掉方形化补出来的边，再铺满这个框。
+    这时如果素材自身长宽比和目标差超过 3%，直接失败 —— 那是在把图压扁，不是收编。"""
+    if "x" in text.lower():
+        w, h = (int(part) for part in text.lower().split("x"))
+        return (w, h)
+    side = int(text)
+    return (side, side)
+
+
+def accept(src: str, dst: str, target) -> int:
     with Image.open(src) as im:
         rgba = im.convert("RGBA")
-    # 草稿已由 process_generated.py 方形化，这里只等比缩放，不再裁切。
-    rgba = rgba.resize((size, size), Image.LANCZOS)
+    if target[0] != target[1]:
+        bbox = rgba.split()[3].getbbox()
+        if bbox is None:
+            raise SystemExit(f"[FAIL] {os.path.basename(src)} 全透明，没有可裁的内容")
+        rgba = rgba.crop(bbox)
+        src_ratio = rgba.width / rgba.height
+        dst_ratio = target[0] / target[1]
+        if abs(src_ratio - dst_ratio) / dst_ratio > 0.03:
+            raise SystemExit(f"[FAIL] {os.path.basename(src)} 长宽比 {src_ratio:.3f} 与目标 "
+                             f"{dst_ratio:.3f} 差超过 3% —— 换目标尺寸或换素材，不要压扁")
+    # 草稿已由 process_generated.py 方形化，方形目标只做等比缩放，不再裁切。
+    rgba = rgba.resize(target, Image.LANCZOS)
     # FASTOCTREE 是 PIL 里唯一能吃 alpha 的量化方法；MEDIANCUT 会先把 alpha 丢掉。
     pal = rgba.quantize(colors=255, method=Image.Quantize.FASTOCTREE)
     pal.save(dst, optimize=True)
@@ -47,8 +68,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--drafts", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--size", type=int, required=True)
+    ap.add_argument("--size", required=True, help="方形边长（128）或 WxH（128x96，见 parse_size）")
     args = ap.parse_args()
+    target = parse_size(args.size)
 
     if not os.path.isdir(args.drafts):
         print(f"[accept][FAIL] 草稿目录不存在：{args.drafts}", file=sys.stderr)
@@ -63,7 +85,7 @@ def main() -> int:
     total = 0
     for name in names:
         dst = os.path.join(args.out, runtime_name(name))
-        size = accept(os.path.join(args.drafts, name), dst, args.size)
+        size = accept(os.path.join(args.drafts, name), dst, target)
         total += size
         print(f"  {os.path.basename(dst):<34} {size / 1024:6.1f}KB")
     print(f"[accept] {len(names)} 张 → {args.out}，合计 {total / 1024:.1f}KB")
