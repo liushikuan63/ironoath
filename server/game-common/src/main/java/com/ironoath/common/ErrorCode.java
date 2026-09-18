@@ -209,6 +209,13 @@ public enum ErrorCode {
     RALLY_NOT_INITIATOR(10055, "只有发起人能取消这次集结"),
     RALLY_NO_TROOP(10056, "未承诺任何兵力"),
     RALLY_PREPARE_INVALID(10057, "准备时长不在允许区间内"),
+    /**
+     * 关注列表已达上限（B22 §一 4，上限来自 {@code global.SOCIAL_FOLLOW_MAX}）。
+     *
+     * <p>与"兵力不足"同一类：这是**容量**问题，不是权限问题 —— 文案要说清"先取关几个"，
+     * 而不是一句"操作失败"（玩家会以为是网络坏了而反复点）。
+     */
+    SOCIAL_FOLLOW_LIMIT(10059, "关注的人已达上限"),
 
     // ---------- 11xxx Bot 生态（B11） ----------
     /**

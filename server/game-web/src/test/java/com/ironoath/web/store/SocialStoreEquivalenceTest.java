@@ -96,6 +96,33 @@ class SocialStoreEquivalenceTest {
         }
     }
 
+    @Test
+    @DisplayName("关注名单两套实现同一条：幂等、最近的在前、取关与再关注的位置语义")
+    void followListBehavesTheSameOnBothStores() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            assertThat(store.followedPlayers("A")).as("%s 没关注过就是空表", label).isEmpty();
+
+            store.follow("A", "B");
+            store.follow("A", "C");
+            store.follow("A", "B");
+            assertThat(store.followedPlayers("A"))
+                    .as("%s 重复关注不产生第二条，最近的在最前", label).containsExactly("C", "B");
+            assertThat(store.followedPlayers("B")).as("%s 单向：对方那边什么都没有", label).isEmpty();
+
+            store.unfollow("A", "B");
+            assertThat(store.followedPlayers("A")).as("%s 取关之后只剩一个", label).containsExactly("C");
+            store.unfollow("A", "不在名单里的人");
+            assertThat(store.followedPlayers("A")).as("%s 取关一个没关注的人也是幂等的", label)
+                    .containsExactly("C");
+
+            // 取关再关注：位置语义必须一致（两边都是"重新排到最前"）
+            store.follow("A", "B");
+            assertThat(store.followedPlayers("A")).as("%s 再关注会排到最前", label)
+                    .containsExactly("B", "C");
+        }
+    }
+
     @BeforeEach
     void clearSocial() {
         if (db != null) {

@@ -720,6 +720,40 @@ export interface OpsReportRecentResp {
 }
 
 /**
+ * POST /social/follow 与 /social/unfollow 的请求体（B22 §一 4 的"关注"，§五 裁决④：单向，不做双向申请）。
+ *
+ * **为什么单向**：双向申请就是第二套审批流程，而联盟入盟/申请已经把"请求-同意"这条路走通了；关注是一层更轻的社交（我想看他在不在线、想随时私聊他），**对方不需要做任何事**。
+ */
+export interface FollowReq {
+  /** 幂等键：重复关注同一个人应当是幂等的结果，但重放不该产生第二条账。 */
+  requestId: string
+  /** 要关注 / 取消关注的玩家。 */
+  targetPlayerId: string
+}
+
+/**
+ * 一条关注（B22 §二 草案的 FriendView，按要求带上在线状态）。**没有 "互相关注" 这个状态**：单向关注不构成关系，服务端也不知道对方是否也关注你（知道也不该说 —— 那等于把"谁在看你"透给被看的人）。
+ */
+export interface FriendView {
+  /** 被关注的玩家 id。 */
+  playerId: string
+  /** 昵称（服务端拼好下发）。 */
+  name: string
+  /** 此刻是否在线（来自 WS 网关的在线快照）。 */
+  online: boolean
+  /** 最近活跃时刻；在线时为当前时刻。 */
+  lastSeenAt: number
+}
+
+/**
+ * GET /social/follows 响应体：我关注的人，最近关注的在前。
+ */
+export interface FriendListView {
+  /** 关注列表。**上限由 global.SOCIAL_FOLLOW_MAX 管**，超了在关注时就拒（见那边的 why）。 */
+  friends: FriendView[]
+}
+
+/**
  * POST /chat/send 请求体。
  */
 export interface ChatSendReq {

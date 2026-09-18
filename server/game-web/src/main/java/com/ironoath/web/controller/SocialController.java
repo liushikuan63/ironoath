@@ -16,6 +16,8 @@ import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.web.dto.generated.BlockListView;
+import com.ironoath.web.dto.generated.FollowReq;
+import com.ironoath.web.dto.generated.FriendListView;
 import com.ironoath.web.dto.generated.BlockReq;
 import com.ironoath.web.dto.generated.HelpResp;
 import com.ironoath.web.dto.generated.ReportReq;
@@ -178,6 +180,29 @@ public class SocialController {
     public Result<BlockListView> blocks(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
         requirePlayer(playerId);
         return Result.ok(social.blocks(playerId));
+    }
+
+    /** 关注一个人（单向，B22 §一 4）。**对方不会收到通知**。 */
+    @PostMapping("/follow")
+    public Result<FriendListView> follow(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                         @RequestBody FollowReq req) {
+        requirePlayer(playerId);
+        return Result.ok(social.follow(playerId, req));
+    }
+
+    /** 取消关注。 */
+    @PostMapping("/unfollow")
+    public Result<FriendListView> unfollow(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                          @RequestBody FollowReq req) {
+        requirePlayer(playerId);
+        return Result.ok(social.unfollow(playerId, req));
+    }
+
+    /** 我关注的人（最近关注的在前），带在线状态。 */
+    @GetMapping("/follows")
+    public Result<FriendListView> follows(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(social.follows(playerId));
     }
 
     private static String requirePlayer(String playerId) {

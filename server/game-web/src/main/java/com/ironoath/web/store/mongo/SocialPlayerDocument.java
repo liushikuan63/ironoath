@@ -23,12 +23,16 @@ public record SocialPlayerDocument(
          * 拉黑名单（B22 §一 3）：我拉黑过的人，按加入顺序。旧文档没有这个字段 ⇒ 读出来是 null，
          * 按空表处理（与其它可选字段同一条约定）。
          */
-        List<String> blockedPlayerIds) {
+        List<String> blockedPlayerIds,
+        /** 关注名单（B22 §一 4）：我关注过的人，按加入顺序。旧文档没有 ⇒ null，按空表处理。 */
+        List<String> followedPlayerIds) {
 
     public static final String COLLECTION = "social_player";
 
     /** 拉黑名单字段（拉黑与取消拉黑都按它读写）。 */
     public static final String FIELD_BLOCKED = "blockedPlayerIds";
+    /** 关注名单字段（关注与取关都按它读写）。 */
+    public static final String FIELD_FOLLOWED = "followedPlayerIds";
 
     record EventEntry(String eventId, String type, String title, String body,
                       Long coordX, Long coordY, String relatedId, long occurredAt, long expireAt) {

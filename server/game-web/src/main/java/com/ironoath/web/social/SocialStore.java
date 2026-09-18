@@ -288,6 +288,22 @@ public interface SocialStore {
     /** {@code blocker} 是否拉黑了 {@code blocked}（方向敏感：两个方向要分开问，错误文案才说得清是谁拒收了谁）。 */
     boolean hasBlocked(String blocker, String blocked);
 
+    // ---------- 关注（B22 §一 4） ----------
+
+    /**
+     * 关注一个人（单向）。已经在名单里就是幂等成功。
+     *
+     * <p>**单向**（§五 裁决④）：对方不需要做任何事，也不会收到"谁关注了你" ——
+     * 那等于把"谁在看你"透出去，而关注是轻社交，不是互加好友的半步审批。
+     */
+    void follow(String playerId, String targetPlayerId);
+
+    /** 取消关注。不在名单里也是幂等成功。 */
+    void unfollow(String playerId, String targetPlayerId);
+
+    /** 我关注的人，最近关注的在前。 */
+    List<String> followedPlayers(String playerId);
+
     // ---------- 测试与运维 ----------
 
     int counts();

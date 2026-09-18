@@ -38,6 +38,9 @@ import com.ironoath.web.dto.generated.AllianceTechReq;
 import com.ironoath.web.dto.generated.AllianceTechResp;
 import com.ironoath.web.dto.generated.AllianceView;
 import com.ironoath.web.dto.generated.BlockListView;
+import com.ironoath.web.dto.generated.FollowReq;
+import com.ironoath.web.dto.generated.FriendListView;
+import com.ironoath.web.dto.generated.FriendView;
 import com.ironoath.web.dto.generated.OpsReportRecentResp;
 import com.ironoath.web.dto.generated.OpsReportRow;
 import com.ironoath.web.dto.generated.ReportReason;
@@ -152,6 +155,8 @@ public class SocialAppService {
     private final org.springframework.context.ApplicationEventPublisher events;
     /** 内容安全：小队名/联盟名/聊天三处玩家可自由填写的内容都要送检（上线检查清单 §二 7）。 */
     private final com.ironoath.web.security.ContentSecurityGuard contentSecurity;
+    /** 关注列表的"在线"来自它（WS 网关的在线快照，见 {@link #follows}）。 */
+    private final com.ironoath.web.ws.PushGateway pushGateway;
 
     public SocialAppService(SocialStore store, SocialRulesAssembler rules, PlayerRepository players,
                             PlayerLock playerLock, IdempotencyStore idempotency, TimeService timeService,
@@ -167,7 +172,8 @@ public class SocialAppService {
                             HeroAppService heroAppService,
                             com.ironoath.web.quest.QuestEvents questEvents,
                             org.springframework.context.ApplicationEventPublisher events,
-                            com.ironoath.web.security.ContentSecurityGuard contentSecurity) {
+                            com.ironoath.web.security.ContentSecurityGuard contentSecurity,
+                            com.ironoath.web.ws.PushGateway pushGateway) {
         this.store = store;
         this.rules = rules;
         this.players = players;
@@ -187,6 +193,7 @@ public class SocialAppService {
         this.questEvents = questEvents;
         this.events = events;
         this.contentSecurity = contentSecurity;
+        this.pushGateway = pushGateway;
         this.chatLimiter = new ChatRateLimiter(rules.chatRules());
         this.helpLedger = new HelpLedger(rules.helpRules());
     }
@@ -1402,6 +1409,68 @@ public class SocialAppService {
     }
 
     // ================= 举报与拉黑（B22 §一 3） =================
+
+    // ================= 关注（B22 §一 4） =================
+
+    /**
+     * 关注一个人（单向，§五 裁决④）。**对方不会收到任何通知**：关注是"我想看他在不在线、
+     * 想随时私聊他"，不是请求 —— 通知对方就等于把"谁在看你"透出去。
+     */
+    public FriendListView follow(String playerId, FollowReq req) {
+        String target = requireFollowTarget(playerId, req);
+        if (!store.followedPlayers(playerId).contains(target)) {
+            long cap = configs.longParam("SOCIAL_FOLLOW_MAX");
+            if (store.followedPlayers(playerId).size() >= cap) {
+                throw new BizException(ErrorCode.SOCIAL_FOLLOW_LIMIT,
+                        "最多关注 " + cap + " 人，先取关几个");
+            }
+        }
+        store.follow(playerId, target);
+        LOG.info("已关注 playerId={} 目标={}", playerId, target);
+        return follows(playerId);
+    }
+
+    /** 取消关注（幂等）。 */
+    public FriendListView unfollow(String playerId, FollowReq req) {
+        String target = requireFollowTarget(playerId, req);
+        store.unfollow(playerId, target);
+        LOG.info("已取消关注 playerId={} 目标={}", playerId, target);
+        return follows(playerId);
+    }
+
+    /**
+     * 我关注的人（最近关注的在前），带昵称、在线状态与最近活跃时刻。
+     *
+     * <p><b>在线是 WS 网关此刻的快照</b>（{@code PushGateway.isOnline}）：它是"现在能不能立刻聊上"的
+     * 唯一可靠来源 —— 客户端自己猜（比如按 lastSeenAt 小于 5 分钟算在线）会在网络抖动时给出假的绿点，
+     * 而"看到人在线"正是这一列表存在的理由。
+     */
+    public FriendListView follows(String playerId) {
+        requirePlayer(playerId);
+        long now = timeService.serverNow();
+        List<String> ids = store.followedPlayers(playerId);
+        List<FriendView> out = new ArrayList<>(ids.size());
+        for (String id : ids) {
+            PlayerSave save = players.findByPlayerId(id).orElse(null);
+            boolean online = pushGateway.isOnline(id);
+            out.add(new FriendView(id,
+                    save == null ? id : save.nickName(),
+                    online,
+                    online ? now : (save == null ? 0L : save.lastLoginAt())));
+        }
+        return new FriendListView(out);
+    }
+
+    private String requireFollowTarget(String playerId, FollowReq req) {
+        requirePlayer(playerId);
+        if (req == null || req.targetPlayerId() == null || req.targetPlayerId().isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "targetPlayerId 不得为空");
+        }
+        if (req.targetPlayerId().equals(playerId)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "不能关注自己");
+        }
+        return req.targetPlayerId();
+    }
 
     /**
      * 举报留痕的运维只读出口（B22 §一 3 的"留痕必须可查" + §五 裁决②）。

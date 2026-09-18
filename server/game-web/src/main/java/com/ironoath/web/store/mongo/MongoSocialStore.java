@@ -588,6 +588,40 @@ public final class MongoSocialStore implements SocialStore {
     }
 
     @Override
+    public void follow(String playerId, String targetPlayerId) {
+        if (playerId == null || targetPlayerId == null) {
+            throw new IllegalArgumentException("playerId / targetPlayerId 不得为 null");
+        }
+        // 与拉黑同一套语义：$addToSet 幂等且保留已有元素的位置（"最近的在前"靠读取时反转）
+        mongo.upsert(Query.query(Criteria.where("_id").is(playerId)),
+                new Update().addToSet(SocialPlayerDocument.FIELD_FOLLOWED, targetPlayerId),
+                SocialPlayerDocument.class, SocialPlayerDocument.COLLECTION);
+    }
+
+    @Override
+    public void unfollow(String playerId, String targetPlayerId) {
+        if (playerId == null || targetPlayerId == null) {
+            throw new IllegalArgumentException("playerId / targetPlayerId 不得为 null");
+        }
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(playerId)),
+                new Update().pull(SocialPlayerDocument.FIELD_FOLLOWED, targetPlayerId),
+                SocialPlayerDocument.class, SocialPlayerDocument.COLLECTION);
+    }
+
+    @Override
+    public List<String> followedPlayers(String playerId) {
+        SocialPlayerDocument document = playerId == null ? null
+                : mongo.findById(playerId, SocialPlayerDocument.class, SocialPlayerDocument.COLLECTION);
+        if (document == null || document.followedPlayerIds() == null
+                || document.followedPlayerIds().isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(document.followedPlayerIds());
+        Collections.reverse(out);
+        return List.copyOf(out);
+    }
+
+    @Override
     public boolean hasBlocked(String blocker, String blocked) {
         if (blocker == null || blocked == null) {
             return false;

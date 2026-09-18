@@ -604,6 +604,39 @@ public final class InMemorySocialStore implements SocialStore {
         return mine != null && blockedId != null && mine.contains(blockedId);
     }
 
+    /** 关注名单：本人 → 关注过的人（与拉黑同一副形状）。 */
+    private final Map<String, Set<String>> followed = new LinkedHashMap<>();
+
+    @Override
+    public void follow(String playerId, String targetPlayerId) {
+        if (playerId == null || targetPlayerId == null) {
+            throw new IllegalArgumentException("playerId / targetPlayerId 不得为 null");
+        }
+        followed.computeIfAbsent(playerId, key -> new LinkedHashSet<>()).add(targetPlayerId);
+    }
+
+    @Override
+    public void unfollow(String playerId, String targetPlayerId) {
+        if (playerId == null || targetPlayerId == null) {
+            throw new IllegalArgumentException("playerId / targetPlayerId 不得为 null");
+        }
+        Set<String> mine = followed.get(playerId);
+        if (mine != null) {
+            mine.remove(targetPlayerId);
+        }
+    }
+
+    @Override
+    public List<String> followedPlayers(String playerId) {
+        Set<String> mine = playerId == null ? null : followed.get(playerId);
+        if (mine == null || mine.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(mine);
+        Collections.reverse(out);
+        return List.copyOf(out);
+    }
+
     /**
      * 清空全部状态。单测在 {@code @BeforeEach} 里调用。
      *
@@ -628,5 +661,6 @@ public final class InMemorySocialStore implements SocialStore {
         helpRequests.clear();
         reports.clear();
         blocked.clear();
+        followed.clear();
     }
 }
