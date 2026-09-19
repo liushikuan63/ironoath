@@ -71,6 +71,8 @@ import { EMPTY_PERMISSIONS, withPermissionScope } from '../social/PermissionGate
 import type { PermissionState } from '../social/PermissionGates'
 import { buildCreateForm, createEntries } from '../social/SocialCreate'
 import type { CreateEntry, CreateForm, CreateScope } from '../social/SocialCreate'
+import { buildDiscovery, canApply, EMPTY_DISCOVERY } from '../social/AllianceDiscovery'
+import type { DiscoveryView } from '../social/AllianceDiscovery'
 import type { ExitAction, ExitKey, ExitScope } from '../social/SocialExit'
 import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
@@ -284,6 +286,8 @@ export interface PanelTargets {
   socialExit?(armed: ExitKey | null): void
   /** 转让里"已按下第一下"的那个成员（null = 没有）。 */
   socialTransfer?(armed: { scope: ExitScope, memberId: string } | null): void
+  /** 可申请联盟那一屏（B26 S6）：行与那句总量说明都由纯逻辑算好。 */
+  allianceDiscovery?(view: DiscoveryView): void
   /**
    * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
@@ -474,6 +478,8 @@ export class AppRoot {
   private armedExit: ExitKey | null = null
   /** 转让里已经按下第一下的那个成员（B26 S4，同样两下才算数）。 */
   private armedTransfer: { scope: ExitScope, memberId: string } | null = null
+  /** 可申请联盟那一屏（B26 S6）。只在"没有联盟"的时候拉，入盟的人不需要看别人家。 */
+  private discovery: DiscoveryView = EMPTY_DISCOVERY
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
@@ -730,6 +736,14 @@ export class AppRoot {
         // 同一份摘要也是聊天页签的未读账本（不另发一次请求）：两处读同一份数据，
         // 就不会出现"事件页签说 3 条、聊天徽标说 2 条"
         this.unreadEvents = summary.data.events
+        // 可申请联盟：只在"我没有联盟"的时候拉（B26 S6）。入盟的人看别人家的列表没有意义，
+        // 而未入盟的那一屏此前只有一句「未加入联盟」—— 除了自己花钱建，没有任何路可走
+        if (summary.data.alliance === null) {
+          await this.loadAllianceDiscovery()
+        } else {
+          this.discovery = EMPTY_DISCOVERY
+        }
+        this.targets.allianceDiscovery?.(this.discovery)
         this.targets.social?.(summary.data, this.helpRequests, this.allianceMembers, offsetMs)
         this.deliverChat()
         // 权限两份：只在**玩家真进过社交页之后**才跟着社交页一起刷。
@@ -1519,6 +1533,32 @@ export class AppRoot {
   expandAlliance(): Promise<void> {
     this.track(TRACK_EVENTS.allianceExpand)
     return this.write('social', this.api.allianceExpand({}), ['social', 'reddot'])
+  }
+
+  /**
+   * 拉可申请联盟列表（B26 S6）。读不到就写「读取中」，不把空表当成"没有联盟可加"——
+   * 那是两件事：前者过一会儿会自己好，后者会让人放弃找队。
+   */
+  private async loadAllianceDiscovery(): Promise<void> {
+    const outcome = await this.api.allianceList()
+    if (outcome.kind === 'ok') {
+      this.discovery = buildDiscovery(outcome.data)
+      return
+    }
+    this.say('social', outcome)
+    this.discovery = buildDiscovery(null)
+  }
+
+  /**
+   * 申请加入某个联盟（B26 S6）。灰态（已满 / 已申请）由服务端那两个布尔决定，
+   * 客户端只在"这一行现在能点"时发请求；其余判断（是否还在人数上限内）由服务端裁决。
+   */
+  applyToAlliance(allianceId: string): Promise<void> {
+    if (!canApply(this.discovery, allianceId)) {
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.allianceApply, { allianceId: trackParam(allianceId) })
+    return this.write('social', this.api.allianceApply({ allianceId }), ['social', 'reddot'])
   }
 
   /** 表单没开着就不发视图（开着才画，避免每次刷新都弹人一脸表单）。 */

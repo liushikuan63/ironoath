@@ -1296,6 +1296,9 @@ export class GameBootstrap extends Component {
       }
       // 扩建（B26 S5）：花联盟资金，一按就发，与捐献同一条纪律
       social.onSocialExpand = () => { void this.root?.expandAlliance() }
+      // 可申请联盟（B26 S6）：行与那句总量说明都由编排层算好
+      out.allianceDiscovery = view => social.attachDiscovery(view)
+      social.onSocialApply = allianceId => { void this.root?.applyToAlliance(allianceId) }
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }
       social.onDonate = tier => { void this.root?.donate(tier) }

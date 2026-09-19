@@ -74,7 +74,8 @@ import type {
   ReportReq,
   ReportResp,
   AllianceCreateReq, AllianceDonateReq, AllianceDonateResp, AllianceIdReq, AllianceMemberReq,
-  AllianceReviewReq, AllianceRoleReq, AllianceSelfReq, AllianceSyncReq, AllianceSyncResp,
+  AllianceListResp, AllianceReviewReq, AllianceRoleReq, AllianceSelfReq, AllianceSyncReq,
+  AllianceSyncResp,
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
   HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyResp, SocialEventAckReq,
   SocialCreatePolicyResp, SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq,
@@ -628,6 +629,16 @@ export class GameApi {
    */
   socialCreatePolicy(): Promise<NetOutcome<SocialCreatePolicyResp>> {
     return this.read<SocialCreatePolicyResp>('/social/createPolicy')
+  }
+
+  /**
+   * GET /alliance/list（B26 S6）。可申请联盟的前 N 个。
+   *
+   * <p>没有这一条的时候 `/alliance/apply` 是死的：端点在、用例在，但玩家读不到"有哪些联盟可申"，
+   * 只能自己花金币建一个，或者根本不知道联盟玩法能进。
+   */
+  allianceList(): Promise<NetOutcome<AllianceListResp>> {
+    return this.read<AllianceListResp>('/alliance/list')
   }
 
   /** POST /social/help。帮助一次，消耗共用的每日额度。 */

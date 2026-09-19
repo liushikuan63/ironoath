@@ -121,6 +121,8 @@ export const TRACK_EVENTS = {
   socialTransfer: 'social_transfer',
   /** 扩联盟人数上限（B26 S5）：中后期最大的资金消耗点，它为零说明没人把联盟当长期投入。 */
   allianceExpand: 'alliance_expand',
+  /** 申请加入一个联盟（B26 S6）。它与 alliance_create 的比例就是"这个世界里加入比建团容易多少"。 */
+  allianceApply: 'alliance_apply',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

@@ -39,6 +39,7 @@ import type { LineupEditView } from '../assets/scripts/game/hero/LineupEdit'
 import type { PermissionState } from '../assets/scripts/game/social/PermissionGates'
 import type { CreateEntry, CreateForm, CreateScope } from '../assets/scripts/game/social/SocialCreate'
 import type { ExitKey } from '../assets/scripts/game/social/SocialExit'
+import type { DiscoveryView } from '../assets/scripts/game/social/AllianceDiscovery'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -103,6 +104,9 @@ const ROUTES: Record<string, unknown> = {
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
+  // 可申请联盟（B26 S6）。默认给"一个都没有"：这条读口在真服务端永远存在，
+  // 桩里缺它会让所有"未入盟"的用例都多走一次失败上报（实测踩过：那正是 fixture 没镜像真实接线）
+  '/alliance/list': { alliances: [], total: 0, limit: 20, serverNow: 1_788_000_000_000 },
   '/social/summary': {
     squad: null,
     // 默认按「已在盟」给：摘要里的 alliance 是否为 null，是客户端决定「要不要拉成员」的
@@ -548,6 +552,8 @@ interface Harness {
   readonly lastCreateForm: CreateForm | null
   /** 最近一次推给面板的"已按下第一下"的那一行（B26 S3）。 */
   readonly lastExitArmed: ExitKey | null
+  /** 最近一次推给面板的可申请联盟那一屏（B26 S6）。 */
+  readonly lastDiscovery: DiscoveryView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -649,6 +655,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastCreateEntries: Record<CreateScope, CreateEntry> | null = null
   let lastCreateForm: CreateForm | null = null
   let lastExitArmed: ExitKey | null = null
+  let lastDiscovery: DiscoveryView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -732,6 +739,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     socialExit: armed => {
       lastExitArmed = armed
+    },
+    allianceDiscovery: view => {
+      lastDiscovery = view
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -839,6 +849,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastExitArmed() {
       return lastExitArmed
+    },
+    get lastDiscovery() {
+      return lastDiscovery
     },
     get lastCompose() {
       return lastCompose
@@ -2718,6 +2731,57 @@ test('转让小队队长：第一下只改字，换个人按就重新数，第�
   assert.equal(sent.length, 1)
   assert.equal(sent[0]?.body.memberId, 'p_member_b')
   assert.equal(h.http.countOf('/social/createPolicy'), 2, '转让之后自己的职位变了，门得重拉')
+})
+
+test('可申请联盟：没入盟才拉列表，灰行点了不发，能申的那行发一条并回读列表', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/summary',
+    Object.assign({}, ROUTES['/social/summary'], { alliance: null }))
+  h.http.overrides.set('/alliance/list', {
+    alliances: [
+      { id: 'al_open', name: '铁誓', tag: 'TS', level: 3, memberCount: 4, memberCap: 30,
+        full: false, applied: false },
+      { id: 'al_full', name: '铜雀', tag: 'QQ', level: 1, memberCount: 30, memberCap: 30,
+        full: true, applied: false },
+    ],
+    total: 2, limit: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/alliance/apply', summaryBody())
+  await h.root.start('dev-1', '君')
+  assert.equal(h.http.countOf('/alliance/list'), 1, '摘要说我没有联盟 ⇒ 该拉一次可申请列表')
+  assert.deepEqual(h.lastDiscovery?.rows.map(r => [r.titleText, r.actionText, r.enabled]), [
+    ['[TS] 铁誓', '申请加入', true],
+    ['[QQ] 铜雀', '已满', false],
+  ])
+
+  await h.root.applyToAlliance('al_full')
+  assert.equal(h.http.countOf('/alliance/apply'), 0, '服务端说满了还发，等于把拒绝当正常流程')
+  const readsBefore = h.http.countOf('/social/summary')
+  await h.root.applyToAlliance('al_open')
+  const sent = h.http.calls.filter(c => c.path === '/alliance/apply')
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.body.allianceId, 'al_open')
+  assert.ok(h.http.countOf('/social/summary') > readsBefore, '申请完要回读：那一行得从「申请加入」变成「已申请」')
+  assert.ok(h.http.countOf('/alliance/list') >= 2, '列表也要重拉（applied 那一项是它给的）')
+})
+
+test('已经在联盟里的人不再拉可申请列表：那一屏他看不见，一次请求都不该发', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/summary', {
+    squad: null,
+    alliance: {
+      id: 'al_mine', name: '铁誓', tag: 'TS', leaderId: 'p_me', level: 3, exp: 100,
+      memberCap: 30, memberCount: 4, fund: 800, techs: [], territoryCount: 1, territoryCap: 12,
+      myRole: 'MEMBER', myContribution: 20, myDonateToday: 0, donateTiersUsed: [],
+      donateDailyCap: 3, announcement: '', version: 1, serverNow: SERVER_NOW,
+    },
+    nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 20,
+    events: [], serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  assert.equal(h.http.countOf('/alliance/list'), 0,
+    '入盟的人看别人家的列表没有意义，白占一次请求')
+  assert.deepEqual(h.lastDiscovery?.rows ?? [], [])
 })
 
 test('解散小队走的是 /squad/disband（这个端点早就有，客户端此前连方法都没有）', async () => {

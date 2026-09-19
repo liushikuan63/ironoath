@@ -69,6 +69,12 @@ const fixture = {
   canCreate: false,
   createCalls: [],
   policyReads: 0,
+  /** 可申请列表被读了几次（E8 要证明申请完真的重拉） */
+  listReads: 0,
+  /** 申请那一枪打桩收到的 body */
+  applyCalls: [],
+  /** 桩这边记的"我申请过哪些"，用来让下一次列表把那一行翻成「已申请」 */
+  appliedIds: [],
 }
 
 const policyBody = (scope) => ({
@@ -248,6 +254,30 @@ const TAP_ROW = (index) => `(() => {
   return 'tapped'
 })()`
 
+/** 按按钮文字找那一行再点它（列表行序与状态有关，按索引点会点错）。 */
+const TAP_CAPTION = (text) => `(() => {
+  const game = ${NODE_PATH}
+  const root = game.children.find((c) => c.name === 'social')
+  if (!root) return 'missing-root'
+  const rows = []
+  const walk = (n) => {
+    if (!n.activeInHierarchy) return
+    if (n.name === 'SocialRow') rows.push(n)
+    for (const child of n.children) walk(child)
+  }
+  walk(root)
+  for (const row of rows) {
+    const button = row.children.find((c) => c.name === 'ActionButton')
+    const caption = button ? button.children.find((c) => c.name === 'Caption') : null
+    const label = caption ? caption.getComponent('cc.Label') : null
+    if (label && label.string === ${JSON.stringify(text)} && button.active) {
+      button.emit('touch-start')
+      return 'tapped'
+    }
+  }
+  return 'no-row'
+})()`
+
 /** 聚焦某个输入框（真键盘要引擎自己建的那个 DOM 输入框拿到焦点）。 */
 const FOCUS_FIELD = (nodeName) => `(() => {
   const game = ${NODE_PATH}
@@ -325,6 +355,15 @@ checkTrue('A8 未入盟的联盟页**不再是一片空白**：有一行「创�
 checkTrue('A9 那一行灰着，且 detail 就是服务端那句（客户端不重写门槛）',
   JSON.stringify(createA?.color) === JSON.stringify(DIM)
     && String(createA?.detail ?? '').includes('主城 10 级'))
+const realList = await fetch(`${BACKEND}/alliance/list`, { headers: { 'X-Player-Id': playerId } })
+  .then((r) => r.json())
+check('A9b 真服务端答这条发现型读口（code 0）', realList.code, 0)
+checkTrue('A9c 响应有界：带 total 与 limit（界面才写得出"共 X 个，只显示前 Y 个"）',
+  typeof realList.data?.total === 'number' && typeof realList.data?.limit === 'number'
+    && Array.isArray(realList.data?.alliances)
+    && realList.data.alliances.length <= realList.data.limit)
+checkTrue('A9d 未入盟那一屏把"有没有得申请"说清楚了（不是只有一句"未加入联盟"）',
+  (snapA?.labels ?? []).some(text => /^还没有人建立联盟$|^共 \d+ 个联盟，这里只显示前 \d+ 个$/.test(text)))
 const callsBeforeA = fixture.createCalls.length
 await page.evaluate(TAP_ROW(0))
 await page.waitForTimeout(900)
@@ -434,6 +473,77 @@ check('C2 只填名字不给确认', allianceForm.submitTouched, false)
 checkTrue('C3 行上写的是政策的消耗（500 金币起步，客户端不抄表；余额不够时后面还会跟「还差 N」）',
   allianceForm.labels.some(l => l.text.startsWith('消耗 500 金币')))
 await shot('C-alliance-form')
+
+// ============================ E 相：可申请联盟那一屏（列表夹具 + 申请打桩） ============================
+// 真服务端此刻一个联盟都没有（A9d 刚验过那句"还没有人建立联盟"），
+// 而"满 / 已申请 / 能申"三种状态要同时出现才验得出判定，所以这里换一份列表夹具；
+// 申请那一枪打到桩上，**服务端存档不动**。
+await context.route('**/alliance/list*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  fixture.listReads += 1
+  await reply(route, {
+    alliances: [
+      { id: 'al_probe_open', name: '铁誓', tag: 'TS', level: 3, memberCount: 4, memberCap: 30,
+        full: false, applied: fixture.appliedIds.includes('al_probe_open') },
+      { id: 'al_probe_full', name: '铜雀', tag: 'QQ', level: 5, memberCount: 60, memberCap: 60,
+        full: true, applied: false },
+      { id: 'al_probe_applied', name: '雪岭', tag: 'XL', level: 2, memberCount: 12, memberCap: 20,
+        full: false, applied: true },
+    ],
+    total: 57, limit: 20, serverNow: Date.now(),
+  })
+})
+await context.route('**/alliance/apply*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  const body = JSON.parse(request.postData() ?? '{}')
+  fixture.applyCalls.push(body)
+  if (!fixture.appliedIds.includes(body.allianceId)) {
+    fixture.appliedIds.push(body.allianceId)
+  }
+  await reply(route, {
+    squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+    helpRemainingToday: 20, events: [], serverNow: Date.now(),
+  })
+})
+
+fixture.canCreate = false
+await openSocial()
+await page.evaluate(TAP_NAMED('social', 'Tab_alliance'))
+const snapE = await waitForRows(rows => rows.some(r => r.caption === '申请加入'))
+const rowTexts = (snapE?.rows ?? []).map(r => `${r.title}|${r.caption}|${r.detail}`)
+checkTrue('E1 三种状态三样按钮：能申的那行亮着「申请加入」',
+  rowTexts.some(t => t.includes('[TS] 铁誓') && t.includes('|申请加入|')))
+checkTrue('E2 「已满」那行灰着并写原因（不是只把按钮灰掉让玩家猜）',
+  (snapE?.rows ?? []).some(r => r.caption === '已满'
+    && JSON.stringify(r.color) === JSON.stringify(DIM)
+    && r.detail.includes('位置满了')))
+checkTrue('E3 「已申请」那行灰着并写「等盟主或官员审核」',
+  (snapE?.rows ?? []).some(r => r.caption === '已申请' && r.detail.includes('等盟主或官员审核')))
+checkTrue('E4 有界列表说清了总量（屏上该有那句「共 57 个联盟，这里只显示前 3 个」）'
+  + ` 实际带"联盟"的标签=${JSON.stringify((snapE?.labels ?? []).filter(t => t.includes('联盟')).slice(0, 6))}`,
+  (snapE?.labels ?? []).some(text => text.includes('共 57 个联盟')))
+const applyBefore = fixture.applyCalls.length
+await page.evaluate(TAP_CAPTION('已满'))
+await page.waitForTimeout(800)
+check('E5 点「已满」那一行不发请求', fixture.applyCalls.length, applyBefore)
+await page.evaluate(TAP_CAPTION('申请加入'))
+await page.waitForTimeout(1_600)
+check('E6 点「申请加入」发恰好一条', fixture.applyCalls.length - applyBefore, 1)
+check('E7 请求体带的是列表里那个联盟的 id', fixture.applyCalls[applyBefore]?.allianceId, 'al_probe_open')
+checkTrue('E8 申请完列表重拉，那一行自己变成「已申请」（不是客户端本地改的字）',
+  fixture.listReads >= 2
+    && ((await readRows())?.rows ?? []).some(r => r.title.includes('[TS] 铁誓') && r.caption === '已申请'))
+checkTrue('E9 屏上不出现联盟 id 与字段名（id 只进请求，不进玩家的眼睛）',
+  ((await readRows())?.labels ?? []).every(text => !/al_probe|memberCap|applied/.test(text)))
+await shot('E-discovery-apply')
 
 // ============================ D 相：版面与错误 ============================
 // 只比"要点要填"的那几块板：标题/消耗/提示三条 Label 的盒本来就是整幅宽，
