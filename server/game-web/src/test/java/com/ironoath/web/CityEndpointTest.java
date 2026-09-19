@@ -49,6 +49,9 @@ class CityEndpointTest {
     private CityAppService cityAppService;
 
     @Autowired
+    private com.ironoath.config.ConfigRegistry configs;
+
+    @Autowired
     private PlayerInitService playerInitService;
 
     @Autowired
@@ -103,6 +106,10 @@ class CityEndpointTest {
 
         assertThat(resp.buildings()).as("新号只有中心格的主城").hasSize(1);
         assertThat(resp.buildings().get(0).configId()).isEqualTo("main_city");
+        // 显示名必须由服务端下发：客户端拿不到 building.json 的数据（生成的只有类型、没有表数据），
+        // 之前它只能把 configId 拆下划线印到屏幕上，内城就写着 "main_city Lv1"。
+        // 这条断言就是那个缺陷的反面，而且它以前是**没人管的空档** —— 客户端单测当时绿着。
+        assertThat(resp.buildings().get(0).name()).isEqualTo("主城");
         assertThat(resp.buildings().get(0).level()).isEqualTo(1);
         assertThat(resp.buildings().get(0).status()).isEqualTo(BuildingStatus.IDLE);
         assertThat(resp.buildings().get(0).gridX()).isEqualTo(3);
@@ -124,6 +131,34 @@ class CityEndpointTest {
         // 资源条会同时出现在城建快照、产出明细与掠夺结算里，加一种不是改一个数字那么小
         assertThat(resp.resources()).hasSize(6);
         assertThat(resp.serverNow()).isPositive();
+    }
+
+    /**
+     * 整表判据，不是抽查一行。
+     *
+     * <p>为什么值得单独立一条：显示名这件事在客户端**没有第二道防线** —— 它没有表数据，
+     * 服务端给什么就印什么。少配一行的症状是"那一格印着 lumber_camp"，只在玩家眼里暴露，
+     * 而 {@code toView} 用的是同一句 {@code cfg.name()}，逐行写测试也测不出漏配。
+     *
+     * <p>条数写死 15 是为了让"某行被删掉"不能靠"循环变短"蒙混过去 —— 循环空转也是绿的话，
+     * 这条判据就是假的。
+     */
+    @Test
+    @DisplayName("每一行建筑配置都带得出中文显示名：漏一行就是界面上一个印配置 id 的格子")
+    void everyBuildingConfigCarriesAChineseDisplayName() {
+        var rows = configs.all(com.ironoath.config.cfg.BuildingCfg.class);
+        assertThat(rows).as("building.json 的行数变了要显式确认：内城格子、建造选择器、加速列表都吃这张表")
+                .hasSize(15);
+        for (var cfg : rows) {
+            assertThat(cfg.name())
+                    .as("building.json 的 %s 行没有显示名", cfg.id())
+                    .isNotBlank()
+                    .isNotEqualTo(cfg.id());
+            assertThat(cfg.name())
+                    .as("building.json 的 %s 行显示名「%s」仍是 ASCII，玩家读不出它是什么",
+                            cfg.id(), cfg.name())
+                    .containsPattern("\\p{IsHan}");
+        }
     }
 
     @Test

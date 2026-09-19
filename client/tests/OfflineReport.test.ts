@@ -38,10 +38,10 @@ function sources(overrides: Partial<OfflineSources> = {}): OfflineSources {
 test('验收 6：事件类条目逐条对得上面板里那一笔（条数、胜负、跳转目标）', () => {
   const items = buildOfflineItems(sources({
     buildings: [
-      { id: 'b1', configId: 'lumber_camp', level: 8, gridX: 1, gridY: 1, status: 'UPGRADING',
+      { id: 'b1', configId: 'lumber_camp', name: '伐木场', level: 8, gridX: 1, gridY: 1, status: 'UPGRADING',
         finishAt: NOW_MS - 60_000, remainingSeconds: 0, progress: 10000,
         startedAt: NOW_MS - HOUR, totalSeconds: 3600, helpCount: 0 },
-      { id: 'b2', configId: 'barracks', level: 3, gridX: 2, gridY: 2, status: 'IDLE',
+      { id: 'b2', configId: 'barracks', name: '兵营', level: 3, gridX: 2, gridY: 2, status: 'IDLE',
         finishAt: null, remainingSeconds: null, progress: 0,
         startedAt: 0, totalSeconds: 0, helpCount: 0 },
     ],

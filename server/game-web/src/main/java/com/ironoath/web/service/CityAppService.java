@@ -1068,11 +1068,16 @@ public class CityAppService {
         return out;
     }
 
-    private static BuildingView toView(BuildingInstance b, long now) {
+    private BuildingView toView(BuildingInstance b, long now) {
         // startedAt 与 totalSeconds 一起下发：进度是"响应那一刻"的快照，而倒计时在客户端本地走，
         // 只给快照会让进度条停在原地（时间在动、百分比不动）。客户端用这两个字段复刻
         // progressFixed 的同一条公式：elapsed = nowServer - startedAt，progress = elapsed / total。
-        return new BuildingView(b.instanceId(), b.configId(), b.level(), b.gridX(), b.gridY(),
+        //
+        // name 也一起下发：客户端拿不到 building.json 的数据（ConfigTypes 里只有类型），
+        // 之前只能把 configId 拆下划线当名字用，主城里就印出了 "main city" 这种英文串。
+        // 背包那侧早定了同一口径 —— 显示名由服务端下发，客户端不得自行翻译。
+        BuildingCfg cfg = configs.get(BuildingCfg.class, b.configId());
+        return new BuildingView(b.instanceId(), b.configId(), cfg.name(), b.level(), b.gridX(), b.gridY(),
                 com.ironoath.web.dto.generated.BuildingStatus.valueOf(b.status().name()),
                 b.upgradeFinishAt(), b.remainingSeconds(now), b.progressFixed(now),
                 b.upgradeStartedAt(), b.upgradeTotalSeconds(), b.helpCount());

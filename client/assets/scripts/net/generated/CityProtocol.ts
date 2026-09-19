@@ -73,6 +73,8 @@ export interface BuildingView {
   id: string
   /** 配置表 building.json 的行 id */
   configId: string
+  /** 建筑中文名，取自配置表 building.json 的 name。下发而不是让客户端自己翻译：客户端只有 ConfigTypes 里的类型、没有表数据，而背包那侧早已定了同一口径（来源标签由服务端下发，客户端不得自行翻译） */
+  name: string
   level: number
   gridX: number
   gridY: number

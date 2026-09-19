@@ -25,6 +25,7 @@ function building(overrides: Partial<BuildingView> = {}): BuildingView {
   return {
     id: 'b1',
     configId: 'building_wood',
+    name: '伐木场',
     level: 6,
     gridX: 1,
     gridY: 2,
@@ -129,7 +130,26 @@ test('PAUSED 不显示倒计时：服务端对暂停建筑的 remainingSeconds �
 
 test('level 显示的是已达成的等级：升级途中不显示目标等级，否则玩家会以为已经拿到新等级的产量', () => {
   const row = buildBuildingRow(building({ level: 6, status: 'UPGRADING', finishAt: 10_000 }), 0, 0)
-  assert.equal(row.title, 'building_wood Lv6')
+  assert.equal(row.title, '伐木场 Lv6')
+})
+
+/**
+ * 这一条曾经**是绿的并且把缺陷钉在原地**：它断言的是 `'building_wood Lv6'`，
+ * 于是"玩家看得见 configId"这件事被测试背书了。现在反过来钉它的反面。
+ */
+test('玩家看得见的地方一个字都不许出现 configId：显示名只从服务端下发的 name 来', () => {
+  const view = building({ level: 6 })
+  const row = buildBuildingRow(view, 0, 0)
+  assert.equal(row.title.includes(view.configId), false,
+    `标题里漏出了配置 id「${view.configId}」—— 主城里就会印成 "building wood" 这种英文串`)
+  assert.equal(row.name, '伐木场')
+
+  // 收割播报是这条缺陷的另一个出口；加速选项的标签在 Choices.test.ts 里钉
+  const collect = collectMessage({ collected: [view], output: [], serverNow: 0 })
+  assert.ok(collect !== null)
+  assert.equal(collect.text.includes(view.configId), false,
+    `收割播报里漏出了配置 id「${view.configId}」`)
+  assert.match(collect.text, /伐木场 Lv6/)
 })
 
 test('倒计时与百分比必须同步推进：进度不能停在响应那一刻的快照上', () => {
@@ -181,7 +201,7 @@ test('收割响应分两态：没有建筑升级时绝不报「升级完成」',
     collected: [building({ level: 7 })], output: [], serverNow: 0,
   })
   assert.equal(done?.kind, 'done')
-  assert.equal(done?.text, '升级完成 building_wood Lv7')
+  assert.equal(done?.text, '升级完成 伐木场 Lv7')
 })
 // ---------- 进度（验收 3） ----------
 

@@ -25,6 +25,8 @@ import type {
 export interface BuildingRow {
   readonly id: string
   readonly configId: string
+  /** 服务端下发的建筑中文名（来自 building.json 的 name）。客户端不自己翻译：表数据不在包里 */
+  readonly name: string
   readonly level: number
   readonly gridX: number
   readonly gridY: number
@@ -130,12 +132,13 @@ export function buildBuildingRow(building: BuildingView, offsetMs: number, local
   return {
     id: building.id,
     configId: building.configId,
+    name: building.name,
     level: building.level,
     gridX: building.gridX,
     gridY: building.gridY,
     // level 是<b>已达成</b>的等级：升级途中它仍是旧等级，完成收割后才 +1。
     // 把它显示成目标等级会让玩家在升级途中就以为已经拿到了新等级的产量
-    title: `${building.configId} Lv${building.level}`,
+    title: `${building.name} Lv${building.level}`,
     statusText: statusText(building.status, done),
     countdownText: countdown === null ? null : formatCountdown(countdown),
     progressText: upgrading ? `${formatPercent(localProgressFixed(building, offsetMs, localNow))}%` : null,
@@ -218,7 +221,7 @@ export interface CollectMessage {
 export function collectMessage(resp: CityCollectResp): CollectMessage | null {
   const output = outputText(resp.output)
   if (resp.collected.length > 0) {
-    const names = resp.collected.map((building) => `${building.configId} Lv${building.level}`).join(' · ')
+    const names = resp.collected.map((building) => `${building.name} Lv${building.level}`).join(' · ')
     return { text: `升级完成 ${names}${output === null ? '' : ` · ${output}`}`, kind: 'done' }
   }
   return output === null ? null : { text: output, kind: 'output' }

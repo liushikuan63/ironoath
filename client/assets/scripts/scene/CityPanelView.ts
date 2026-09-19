@@ -538,7 +538,7 @@ export class CityPanelView extends Component {
     tile.levelLabel.node.setPosition(new Vec3(badgeX, badgeY, 0))
     tile.levelLabel.getComponent(UITransform)?.setContentSize(new Size(20, 14))
 
-    tile.nameLabel.string = shortName(row.configId)
+    tile.nameLabel.string = row.name
     tile.statusLabel.string = tileStatus(row)
     tile.nameLabel.color = COLOR_TEXT
     tile.statusLabel.color = row?.paused ? COLOR_WARNING
@@ -633,11 +633,6 @@ export class CityPanelView extends Component {
     this.messageLabel.string = text
     this.messageLabel.color = color
   }
-}
-
-function shortName(configId: string): string {
-  const name = configId.replace(/^building_/, '').replace(/_/g, ' ')
-  return name.length > 12 ? `${name.slice(0, 11)}…` : name
 }
 
 function tileStatus(row: BuildingRow): string {

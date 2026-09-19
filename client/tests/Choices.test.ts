@@ -10,8 +10,8 @@ import type { HeroListResp } from '../assets/scripts/net/generated/HeroProtocol'
 test('加速道具目标只列正在升级或训练的队列，已完成的不能选', () => {
   const city = {
     buildings: [
-      { id: 'b1', configId: 'main_city', level: 2, status: 'UPGRADING', remainingSeconds: 125 },
-      { id: 'b2', configId: 'farm', level: 1, status: 'IDLE', remainingSeconds: null },
+      { id: 'b1', configId: 'main_city', name: '主城', level: 2, status: 'UPGRADING', remainingSeconds: 125 },
+      { id: 'b2', configId: 'farm', name: '农田', level: 1, status: 'IDLE', remainingSeconds: null },
     ],
   } as unknown as CityListResp
   const army = {
@@ -25,6 +25,8 @@ test('加速道具目标只列正在升级或训练的队列，已完成的不�
   assert.deepEqual(choices.map((choice) => choice.targetId), ['b1', 'unit_infantry_t1'])
   assert.match(choices[0]?.detail ?? '', /2分5秒/)
   assert.match(choices[1]?.detail ?? '', /5分0秒/)
+  // 标签是玩家看得见的：用配置 id 会印成 "main_city Lv2"，缺 name 会印成 "undefined Lv2"
+  assert.equal(choices[0]?.label, '主城 Lv2')
 })
 
 test('出战阵容只列已编成的主将队，携带当前全部可用兵力', () => {

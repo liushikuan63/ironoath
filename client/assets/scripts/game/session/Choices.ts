@@ -67,7 +67,7 @@ export function buildSpeedupChoices(city: CityListResp | null,
       out.push({
         id: building.id,
         targetId: building.id,
-        label: `${building.configId} Lv${building.level}`,
+        label: `${building.name} Lv${building.level}`,
         detail: `建筑升级 · 剩余 ${formatSeconds(building.remainingSeconds)}`,
       })
     }
