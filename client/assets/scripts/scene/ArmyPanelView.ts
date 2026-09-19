@@ -24,6 +24,7 @@ import type { ArmyListResp, UnitType } from '../net/generated/ArmyProtocol'
 import { applyCommandButton, applyIconSprite, unitIconKey } from './ArtCatalog'
 import { NodePool } from './NodePool'
 import { applySystemUiFont } from './UiFont'
+import { truncatedNotice } from '../game/ui/TruncatedList'
 
 const { ccclass } = _decorator
 
@@ -44,21 +45,22 @@ const ROW_HEIGHT = 62
 const ROW_GAP = 5
 /**
  * 表头高度（导航条之上留给"带兵/医院/页签/两个按钮/自动续训那一条"的那一块）。
- *
- * <p>从 150 加到 176 是为了给自动续训的状态行腾一行（B25-S2d）。加高的余量是量出来的：
- * 行区从 `height/2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT/2` 往下排，设计分辨率 640 高、
- * 导航条占 y ∈ [-312, -260]，所以 176 之下仍放得下 6 行（最后一行的底 = -229 > -260）。
+ * 从 150 加到 176 是为了给自动续训的状态行腾一行（B25-S2d）。
  */
 const HEADER_HEIGHT = 176
 const PADDING = 16
 /**
- * 一屏最多画几行。按兵种分页后每页最多 5 个阶级；第 6 行是"全兵种"页的余量。
+ * 屏幕底部要给导航条让出的高度 = 8（下边距）+ 52（`PanelNav.BAR_HEIGHT`）+ 8（安全间隙）。
  *
- * <p><b>6 而不是 7</b>：第 7 行的底边会落到导航条底下（行中心 = height/2 - PADDING -
- * HEADER_HEIGHT - ROW_HEIGHT/2 - i × (ROW_HEIGHT + ROW_GAP)，i=6 时底边 = -296 < -260），
- * 也就是"画了但被导航条盖住"。这一条是 B25-S2d 修状态行时顺手量出来的。
+ * <p>这两个数是**量出来的**，不是抄的：设计分辨率 960×640、`PanelNav` 把导航条摆在
+ * `y ∈ [-h/2+8, -h/2+8+52]`，而面板画的是整屏矩形，所以行区一旦越界就会被导航条盖住。
  */
-const MAX_VISIBLE_ROWS = 6
+const BOTTOM_RESERVED = 68
+/**
+ * 池子开多大。一屏画几行是**按实际可视高度算**的（见 render），所以这里给的是池子容量：
+ * 按类型分页后每页最多 5 个阶级，容量留到 6 就够；画不下的行会被数出来并告诉玩家（"另有 N 项未显示"）。
+ */
+const ROW_POOL_SIZE = 6
 /**
  * 训练数量的两个快捷档。
  *
@@ -109,7 +111,7 @@ export class ArmyPanelView extends Component {
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
-    this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
+    this.rowPool = new NodePool(this.node, () => this.createRow(), ROW_POOL_SIZE)
     this.buildHeader(size.height)
     if (this.pending !== null) {
       const pending = this.pending
@@ -192,6 +194,9 @@ export class ArmyPanelView extends Component {
   private buildHeader(height: number): void {
     const top = height / 2 - PADDING
     this.headerLabel = this.addLabel(this.node, 'Header', 0, top - 20, COLOR_COPPER_GOLD, 20)
+    // 限宽 + SHRINK：这一行现在会带上「另有 N 项未显示」，不限宽就会顶出面板（#221 同族的排版溢出）
+    this.headerLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 26))
+    this.headerLabel.overflow = Label.Overflow.SHRINK
     this.hospitalLabel = this.addLabel(this.node, 'Hospital', 0, top - 48, COLOR_TEXT, 17)
     this.warningLabel = this.addLabel(this.node, 'Warning', 0, top - 74, COLOR_WARNING, 15)
 
@@ -361,8 +366,26 @@ export class ArmyPanelView extends Component {
       applyCommandButton(node, key === (this.filter ?? 'ALL') ? 'hover' : 'normal', 70, 32)
     }
 
+    // 行区排布先算出来：表头那一行要顺带说「还有几项没画下」，所以它得先知道画得下几行
+    const rows = panel.rows.filter((row) => this.matchesFilter(row))
+    const size = view.getVisibleSize()
+    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+
+    // 一屏画几行**按实际可视高度算**，不是一个写死的数：
+    //   ① 可视高度随窗口/机型变（设计分辨率 960×640 只是基准，等宽适配下窗口越扁可视高度越小）；
+    //   ② 多画的行会被底部导航条盖住 —— 那是"画了但玩家看不见"，比少画一行更难发现。
+    // 写死 7 的那一版在 1280×720 下把第 5 行压掉了一半（B25-S2d 的探针量到最低行底边 -319 < 导航条上沿 -210）。
+    const navTop = -size.height / 2 + BOTTOM_RESERVED
+    const usable = topY + ROW_HEIGHT / 2 - navTop
+    const maxRows = Math.max(1, Math.floor(usable / (ROW_HEIGHT + ROW_GAP)))
+    const drawn = Math.min(rows.length, maxRows)
+
     if (this.headerLabel !== null) {
+      // 「还有几项没画下」挂在这一行（本面板的汇总行）：只显示 4 行时玩家得知道下面还有，
+      // 而不是以为这个类型就只有这几种兵。分隔符得自己补 —— 那一句是给独立一行用的
+      const truncated = truncatedNotice('项', rows.length - drawn)
       this.headerLabel.string = `${panel.troopCapText} · ${panel.queueText}`
+        + (truncated === '' ? '' : ` · ${truncated}`)
       this.headerLabel.color = panel.troopCapFull ? COLOR_WARNING : COLOR_COPPER_GOLD
     }
     if (this.hospitalLabel !== null) {
@@ -401,13 +424,9 @@ export class ArmyPanelView extends Component {
         : autoTrain.stopText !== null ? COLOR_WARNING : COLOR_TEXT_DIM
     }
 
-    const rows = panel.rows.filter((row) => this.matchesFilter(row))
-    const size = view.getVisibleSize()
-    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
-
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
-    rows.slice(0, MAX_VISIBLE_ROWS).forEach((row, index) => {
+    rows.slice(0, drawn).forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
