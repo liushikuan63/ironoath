@@ -115,6 +115,8 @@ interface MarkerRefs {
 export class WorldMap extends Component {
   /** 放大到城市档时由组合根切到现有内城面板；本场景不直接 loadScene。 */
   onEnterCity: (() => void) | null = null
+  /** 空态那个「再次出征」按钮：转发给 GameBootstrap 去调编排层。 */
+  onRepeatLastMarch: (() => void) | null = null
 
   private readonly refs = new Map<Node, MarkerRefs>()
   /** 已画出的实体：键 → 节点。每帧与渲染帧做差集，决定谁复用、谁归还 */
@@ -194,6 +196,8 @@ export class WorldMap extends Component {
       this.suppressDragUntilRelease = true
     }
     this.marchPanel.onAction = (action, marchId) => this.requestMarchAction(action, marchId)
+    // 「再次出征」（B25-S1 裁决②(a)）：地图不认识编排层，只把意图转出去（同 onEnterCity 那条形状）
+    this.marchPanel.onRepeat = () => this.onRepeatLastMarch?.()
     this.bindInput(size.height)
     this.bindModel()
   }

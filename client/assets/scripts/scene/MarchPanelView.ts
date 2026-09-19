@@ -58,6 +58,7 @@ export class MarchPanelView {
   private readonly panel: Node
   private readonly header: Label
   private readonly empty: Label
+  private readonly repeatButton: Label
   private readonly rows: RowRefs[] = []
   private visible = false
 
@@ -73,6 +74,12 @@ export class MarchPanelView {
     // 结果是一支队伍都没有时，面板里是一整块空白（截图实测）。补上文案，位置与颜色不动。
     this.empty = this.addLabel(this.panel, 'Empty', 0, -8, COLOR_TEXT_DIM, 16)
     this.empty.string = '暂无在外的队伍'
+    // 「再次出征」（B25-S1 裁决②(a)）只在空态出现：有队伍在外时这一格该留给"处理这支队伍"，
+    // 而不是再塞一个"再派一支"的入口（那正是把人往兵力超发上推）
+    this.repeatButton = this.addLabel(this.panel, 'RepeatLast', 0, -44, COLOR_COPPER_GOLD, 16)
+    this.repeatButton.string = '再次出征'
+    this.repeatButton.node.on('touch-start', () => this.onRepeat?.(), this)
+    this.repeatButton.node.active = false
     this.buildCloseButton()
     for (let index = 0; index < MAX_ROWS; index++) {
       this.rows.push(this.buildRow(index))
@@ -108,6 +115,7 @@ export class MarchPanelView {
   render(rows: readonly MarchPanelRow[], requesting: ReadonlySet<string>): void {
     this.header.string = `行军队伍 ${rows.length}`
     this.empty.node.active = rows.length === 0
+    this.repeatButton.node.active = rows.length === 0
     this.rows.forEach((refs, index) => {
       const row = rows[index]
       refs.node.active = row !== undefined
@@ -157,6 +165,7 @@ export class MarchPanelView {
 
   destroy(): void {
     this.onAction = null
+    this.onRepeat = null
     this.onClose = null
     this.rows.length = 0
     this.backdrop.destroy()

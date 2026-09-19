@@ -1021,6 +1021,8 @@ export class GameBootstrap extends Component {
       out.home = (x, y) => world.focusHome(x, y)
       // 放大到城市档只切内城面板；不要再加载不存在的 MainCity.scene。
       world.onEnterCity = () => this.nav?.show('city')
+      // 空态的「再次出征」：够不够、发不发由编排层判（表现层不碰这些）
+      world.onRepeatLastMarch = () => { void this.root?.repeatLastMarch() }
     }
     return out
   }
