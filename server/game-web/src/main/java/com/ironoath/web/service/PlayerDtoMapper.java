@@ -3,6 +3,7 @@ package com.ironoath.web.service;
 import com.ironoath.core.player.PlayerPower;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
+import com.ironoath.web.dto.generated.OfflineReportView;
 import com.ironoath.web.dto.generated.PlayerInitResp;
 import com.ironoath.web.dto.generated.PlayerProfile;
 import com.ironoath.web.dto.generated.PowerSnapshot;
@@ -49,6 +50,19 @@ public final class PlayerDtoMapper {
     public static PlayerInitResp toInitResp(PlayerSave save, long serverNow,
                                             Map<String, PlayerResourceState> resources,
                                             String authToken) {
+        return toInitResp(save, serverNow, null, resources, authToken, 0L, 1L);
+    }
+
+    /**
+     * 带「自上次登录以来」边界与阈值的完整版本（B25-S3）。
+     *
+     * @param previousLoginAt 上次登录时刻；**新号传 null**（没有「上一次」可言）
+     * @param minIdleMinutes  距上次登录不足这么多分钟就不打扰，来源 global 表
+     * @param minItems        至少这么多条明细才值得弹，来源 global 表
+     */
+    public static PlayerInitResp toInitResp(PlayerSave save, long serverNow, Long previousLoginAt,
+                                            Map<String, PlayerResourceState> resources,
+                                            String authToken, long minIdleMinutes, long minItems) {
         Map<ResourceType, ResourceState> views = new LinkedHashMap<>();
         for (Map.Entry<String, PlayerResourceState> e : resources.entrySet()) {
             PlayerResourceState s = e.getValue();
@@ -63,8 +77,11 @@ public final class PlayerDtoMapper {
         PlayerPower p = save.power();
         PowerSnapshot power = new PowerSnapshot(p.displayPower(), p.matchPower(), p.peakPower());
 
+        OfflineReportView offlineReport = new OfflineReportView(
+                previousLoginAt, minIdleMinutes, (int) minItems);
+
         return new PlayerInitResp(
                 save.playerId(), authToken == null ? "" : authToken, serverNow, profile, save.cityLevel(),
-                views, power, save.protectUntil());
+                views, power, save.protectUntil(), offlineReport);
     }
 }

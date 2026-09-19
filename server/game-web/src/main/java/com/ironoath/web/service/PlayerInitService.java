@@ -124,6 +124,9 @@ public class PlayerInitService {
         Optional<PlayerSave> existing = players.findByDeviceId(accountKey);
         if (existing.isPresent()) {
             PlayerSave save = existing.get();
+            // 「自上次登录以来」的起点必须在**推进之前**取（B25-S3 裁决①(a)）：
+            // touchLogin 之后存档里的 lastLoginAt 已是本次登录，拿它算出来永远是 0 秒
+            Long previousLoginAt = save.lastLoginAt();
             // 定向更新登录时间戳，不走乐观锁：lastLoginAt 是单调可交换字段，
             // 用「读-改-写 + 版本校验」会让并发登录互相冲突，玩家在开局第一秒就看到登录失败
             players.touchLogin(save.playerId(), now);
@@ -135,7 +138,7 @@ public class PlayerInitService {
             }
             LOG.info("玩家登录成功 playerId={} cityLevel={} 重复requestId={}",
                     save.playerId(), save.cityLevel(), !firstAttempt);
-            return initResp(save, now);
+            return initResp(save, now, previousLoginAt);
         }
 
         if (!firstAttempt) {
@@ -155,12 +158,18 @@ public class PlayerInitService {
                                 "deviceId 唯一索引冲突但读不到存档，deviceId=" + accountKey));
                 LOG.info("并发建号竞态，改用已存在的存档 playerId={} deviceId={}",
                         winner.playerId(), accountKey);
-                return initResp(winner, now);
+                // 竞态败者：这份存档是另一个请求刚刚建的 ⇒ 它自己的 lastLoginAt 就是"上一次"（约等于现在），
+                // 于是"距上次登录"≈0 分钟，客户端不会弹汇总 —— 这正是这个形状该有的结果
+                return initResp(winner, now, winner.lastLoginAt());
             }
             TraceContext.bindPlayer(save.playerId());
             LOG.info("新玩家创建成功 playerId={} nickName={} 资源种类={} 保护到期={}",
                     save.playerId(), save.nickName(), save.resources().size(), save.protectUntil());
-            return PlayerDtoMapper.toInitResp(save, now, sessions.issue(save.playerId(), now));
+            // 新号没有「上一次登录」可言：previousLoginAt 传 null，客户端据此不弹汇总。
+            // 资源用存档里那一份（刚建档算出来的，与 now 同源），不走结算
+            return PlayerDtoMapper.toInitResp(save, now, null, save.resources(),
+                    sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
+                    configs.longParam("OFFLINE_REPORT_MIN_ITEMS"));
         } catch (RuntimeException e) {
             // 建号失败必须释放幂等键：副作用没有产生，让客户端能安全重试
             idempotency.release(req.requestId());
@@ -180,12 +189,21 @@ public class PlayerInitService {
      * 而登录做读-改-写会让并发重登互撞乐观锁）。城还没建起来的玩家同样结算 ——
      * 沿用存档里的产率与容量，只推进时间轴。
      */
-    private PlayerInitResp initResp(PlayerSave save, long now) {
+    private PlayerInitResp initResp(PlayerSave save, long now, Long previousLoginAt) {
         // 读不到城时传 null：settledView 会沿用存档里的产率与容量、只结算时间轴，
         // 而不是干脆不结算（那等于让新号登录返回一份停在建档时刻的存量）
-        return PlayerDtoMapper.toInitResp(save, now, resourceRates.settledView(
+        return PlayerDtoMapper.toInitResp(save, now, previousLoginAt, resourceRates.settledView(
                 save, cities.findByPlayerId(save.playerId()).orElse(null), now),
-                sessions.issue(save.playerId(), now));
+                sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
+                configs.longParam("OFFLINE_REPORT_MIN_ITEMS"));
+    }
+
+    /**
+     * 距上次登录不足这么多分钟就不弹汇总。**值来自表**（裁决：服务端下发阈值、客户端判定）——
+     * 客户端读不到 global 表，所以这两个数只能由这里下发，别处不得写死。
+     */
+    private long offlineMinIdleMinutes() {
+        return configs.longParam("OFFLINE_REPORT_MIN_IDLE_MINUTES");
     }
 
     /**

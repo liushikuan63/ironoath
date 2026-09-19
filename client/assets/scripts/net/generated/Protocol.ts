@@ -135,6 +135,8 @@ export interface PlayerInitResp {
   power: PowerSnapshot
   /** 新手保护到期时间（服务端毫秒时间戳）；null 表示无保护 */
   protectUntil: number | null
+  /** 「自上次登录以来」的汇总**判定依据**（B25-S3）。下发的是时间边界与两个阈值，不是一个算好的汇总 —— 汇总由客户端从它已经拉到的面板数据里聚合（裁决①(a)：只聚合既有账本，不新造第二本账） */
+  offlineReport: OfflineReportView
 }
 
 /**
@@ -194,6 +196,18 @@ export interface StaminaBuyReq {
   requestId: string
   /** 购买几次；null 表示 1 次。合并成一次请求是为了让「连买 5 次」只扣一次锁、只写一次存档，而不是五次读改写打架 */
   times: number | null
+}
+
+/**
+ * 离线汇总的边界与阈值。「自上次登录以来」的起点是 previousLoginAt（**不是** profile.lastLoginAt —— 那个值在本次登录时已被推进成现在，拿它算出来永远是 0）。两个阈值来自 global 表（OFFLINE_REPORT_MIN_IDLE_MINUTES / OFFLINE_REPORT_MIN_ITEMS），客户端只按它们判定「值不值得弹」，不自己填数。
+ */
+export interface OfflineReportView {
+  /** 上次登录时刻（服务端毫秒时间戳）。**新号是 null** —— 没有「上一次」可言，此时汇总没有起点，客户端不该弹 */
+  previousLoginAt: number | null
+  /** 距上次登录不足这么多分钟就不打扰（来源：global.OFFLINE_REPORT_MIN_IDLE_MINUTES） */
+  minIdleMinutes: number
+  /** 至少要有这么多条可汇总的明细才值得弹（来源：global.OFFLINE_REPORT_MIN_ITEMS） */
+  minItems: number
 }
 
 /**

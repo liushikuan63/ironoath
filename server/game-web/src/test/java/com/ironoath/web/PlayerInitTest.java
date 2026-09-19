@@ -177,6 +177,35 @@ class PlayerInitTest {
     }
 
     @Test
+    @DisplayName("B25-S3：「自上次登录以来」的起点是上一次登录（不是本次），新号是 null，阈值来自表")
+    void offlineReportCarriesThePreviousLoginAndTableThresholds() throws Exception {
+        String deviceId = newDeviceId();
+        JsonNode first = JsonUtils.readTree(postInit(new PlayerInitReq(
+                newRequestId(), deviceId, "离线王裔", 1_700_000_000_000L, ""))).get("data");
+
+        JsonNode firstReport = first.get("offlineReport");
+        assertThat(firstReport).as("登录响应必须带这一位（B25-S3 裁决①(a)）").isNotNull();
+        assertThat(firstReport.get("previousLoginAt").isNull())
+                .as("新号没有「上一次登录」可言 —— 这份汇总没有起点，客户端据此不弹").isTrue();
+        assertThat(firstReport.get("minIdleMinutes").asLong())
+                .as("阈值来自 global 表：客户端读不到那张表，值只能由服务端下发")
+                .isEqualTo(configs.longParam("OFFLINE_REPORT_MIN_IDLE_MINUTES"));
+        assertThat(firstReport.get("minItems").asInt())
+                .isEqualTo((int) configs.longParam("OFFLINE_REPORT_MIN_ITEMS"));
+
+        // 第二次登录：previousLoginAt 必须等于**上一次**的登录时刻，而不是本次刷新后的那个值
+        long firstLoginAt = first.get("profile").get("lastLoginAt").asLong();
+        JsonNode second = JsonUtils.readTree(postInit(new PlayerInitReq(
+                newRequestId(), deviceId, "离线王裔", 1_700_000_000_500L, ""))).get("data");
+        assertThat(second.get("offlineReport").get("previousLoginAt").asLong())
+                .as("取的是推进之前的旧值：touchLogin 之后存档里那一格已经是本次登录了")
+                .isEqualTo(firstLoginAt);
+        assertThat(second.get("profile").get("lastLoginAt").asLong())
+                .as("而本次登录时刻必须真的被推进了（否则上面那条会被一个没动的值蒙对）")
+                .isGreaterThanOrEqualTo(firstLoginAt);
+    }
+
+    @Test
     @DisplayName("登录响应带回挂机期间的产出，且读路径不写存档")
     void loginResponseSettlesResourcesWithoutPersisting() throws Exception {
         String deviceId = newDeviceId();
