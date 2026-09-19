@@ -4,7 +4,8 @@ package com.ironoath.core.hero;
  * 职责：装备槽位（B06 §2.5：4 槽位 + 套装效果）。
  * 依赖：无（纯 Java）。
  *
- * <p><b>声明顺序即 {@code HeroView.equips} 数组的下标顺序</b>，也与 equip 表的 slot 列取值一致。
+ * <p><b>与 equip 表的 slot 列取值一致</b>。{@code HeroView.equips} 现在只列穿着的装备，
+ * 每项自带 slot，不再依赖本枚举的声明顺序当数组下标。
  * 用定长数组而不是 Map 下发是为了让客户端不必猜键名顺序（B06 契约里的 equips 字段）。
  */
 public enum EquipSlot {

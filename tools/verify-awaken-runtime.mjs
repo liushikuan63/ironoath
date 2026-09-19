@@ -67,7 +67,7 @@ const heroView = () => ({
   heroId: HERO_ID, name: '关羽', rarity: 'SSR', level: 40, exp: 1200, expToNext: 800,
   maxLevel: 60, star: 3, maxStar: 5, awaken: fixture.awaken, maxAwaken: fixture.maxAwaken,
   mainSkillId: 'skill_guanyu_main', mainSkillName: '武圣激将', mainSkillLevel: 3,
-  subSkillId: 'skill_guanyu_sub', subSkillName: '偃月蓄势', subSkillLevel: 1, maxSkillLevel: 10, equips: [null, null, null, null],
+  subSkillId: 'skill_guanyu_sub', subSkillName: '偃月蓄势', subSkillLevel: 1, maxSkillLevel: 10, equips: [],
   baseAttrs: { might: 96, command: 92, wisdom: 75 },
   finalAttrs: { might: 96, command: 92, wisdom: 75 },
   power: 12345, bondWith: null,

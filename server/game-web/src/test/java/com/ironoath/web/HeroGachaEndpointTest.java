@@ -17,6 +17,8 @@ import com.ironoath.core.hero.HeroRepository;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.web.dto.generated.AttrTriple;
 import com.ironoath.web.dto.generated.BonusZone;
+import com.ironoath.web.dto.generated.EquipInstanceView;
+import com.ironoath.web.dto.generated.EquipSlot;
 import com.ironoath.web.dto.generated.GachaDrawReq;
 import com.ironoath.web.dto.generated.GachaDrawResp;
 import com.ironoath.web.dto.generated.GachaProbItem;
@@ -31,6 +33,8 @@ import com.ironoath.web.dto.generated.ItemCount;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.SetLineupReq;
 import com.ironoath.web.dto.generated.SetLineupResp;
+import com.ironoath.web.dto.generated.WornEquip;
+import com.ironoath.web.equip.EquipAppService;
 import com.ironoath.web.reward.ServerSeedSource;
 import com.ironoath.web.service.GachaAppService;
 import com.ironoath.web.service.GachaPoolFactory;
@@ -85,6 +89,7 @@ class HeroGachaEndpointTest {
     }
 
     @Autowired private HeroAppService heroAppService;
+    @Autowired private EquipAppService equipAppService;
     @Autowired private GachaAppService gachaAppService;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private ConfigRegistry configs;
@@ -489,7 +494,10 @@ class HeroGachaEndpointTest {
         HeroGrowResp fourth = heroAppService.equip(playerId, new HeroEquipReq(newRequestId(), main,
                 com.ironoath.web.dto.generated.EquipSlot.ACCESSORY, "eq_pojun_tiger_tally"));
         var fourPiece = fourth.hero();
-        assertThat(fourPiece.equips()).as("四个槽位都该穿上").doesNotContainNull();
+        assertThat(fourPiece.equips())
+                .as("四个槽位都该穿上，每项自带 slot")
+                .extracting(WornEquip::slot)
+                .containsExactlyInAnyOrder(EquipSlot.values());
         long setWith4 = bonusOf(heroAppService.list(playerId), 0).equipSetAtkFixedOf();
 
         assertThat(setWith3).as("3 件只触发 2 件套（+6%）").isEqualTo(600L);
@@ -544,7 +552,7 @@ class HeroGachaEndpointTest {
         var slot = com.ironoath.web.dto.generated.EquipSlot.WEAPON;
 
         String swordUid = heroAppService.equip(playerId, new HeroEquipReq(
-                newRequestId(), "hero_ssr_01", slot, "eq_iron_sword")).hero().equips().get(0);
+                newRequestId(), "hero_ssr_01", slot, "eq_iron_sword")).hero().equips().get(0).uid();
         assertThat(countOf(playerId, "eq_iron_sword"))
                 .as("穿上不等于消失：那一件还在账本里，它带着强化等级，是玩家的财产（§五⑤）")
                 .isEqualTo(1L);
@@ -553,7 +561,7 @@ class HeroGachaEndpointTest {
         assertThat(slotOf(playerId, "hero_ssr_01")).isEqualTo(swordUid);
 
         String bladeUid = heroAppService.equip(playerId, new HeroEquipReq(
-                newRequestId(), "hero_ssr_01", slot, "eq_pojun_blade")).hero().equips().get(0);
+                newRequestId(), "hero_ssr_01", slot, "eq_pojun_blade")).hero().equips().get(0).uid();
         assertThat(slotOf(playerId, "hero_ssr_01")).as("槽位换成了另一件（uid 不同）").isEqualTo(bladeUid);
         assertThat(unwornCount(playerId, "eq_iron_sword"))
                 .as("换下来的铁剑重新回到可穿状态并占回那一格").isEqualTo(1L);
@@ -561,6 +569,32 @@ class HeroGachaEndpointTest {
         assertThat(bagOf(playerId).capacityUsed())
                 .as("两件都在手上、一件穿着 ⇒ 格子数与只有一件未穿时相同")
                 .isEqualTo(1 + nonEquipSlots(playerId));
+    }
+
+    @Test
+    @DisplayName("武将页的装备语义与 /equip/instances 那一行逐字一致：名字、强化等级、槽位都不是客户端自己猜的")
+    void wornEquipmentCarriesPlayerFacingNameAndForgeLevel() {
+        String playerId = newPlayerWithHero("hero_ssr_01");
+        levelHeroToMidTier(playerId, "hero_ssr_01");
+        Inventory bag = bagOf(playerId);
+        bag.restore(bag.snapshot(),
+                List.of(new Inventory.EquipInstance("e1", "eq_iron_sword", 2, false)),
+                bag.capacityMax(), 2, id -> false);
+        inventories.save(playerId, bag, inventories.versionOf(playerId));
+
+        WornEquip worn = heroAppService.equip(playerId, new HeroEquipReq(
+                newRequestId(), "hero_ssr_01", EquipSlot.WEAPON, "e1")).hero().equips().get(0);
+        EquipInstanceView row = equipAppService.list(playerId).instances().stream()
+                .filter(instance -> "e1".equals(instance.uid()))
+                .findFirst().orElseThrow();
+
+        assertThat(worn.uid()).isEqualTo(row.uid()).isEqualTo("e1");
+        assertThat(worn.slot()).isEqualTo(row.slot()).isEqualTo(EquipSlot.WEAPON);
+        assertThat(worn.equipId()).isEqualTo(row.equipId()).isEqualTo("eq_iron_sword");
+        assertThat(worn.name()).as("玩家看到的是配置表里的装备中文名")
+                .isEqualTo(row.name()).isEqualTo("铁剑");
+        assertThat(worn.name()).doesNotContain("eq_").doesNotContain("equip_");
+        assertThat(worn.forgeLevel()).isEqualTo(row.forgeLevel()).isEqualTo(2);
     }
 
     // ---------- 验收 5 / 8 / 9：编队 ----------
@@ -668,7 +702,7 @@ class HeroGachaEndpointTest {
         // 装备固定值直接相加（不被养成因子放大），裸装时为 0
         assertThat(view.finalAttrs().might() >= expected.might())
                 .as("裸装时应当恰好相等；穿了装备则高出装备的固定值").isTrue();
-        if (view.equips().stream().allMatch(java.util.Objects::isNull)) {
+        if (view.equips().isEmpty()) {
             assertThat(view.finalAttrs()).isEqualTo(expected);
         }
         assertThat(view.baseAttrs()).isEqualTo(new AttrTriple(might, command, wisdom));
@@ -858,8 +892,11 @@ class HeroGachaEndpointTest {
                         + "而这份档再落一次库，那件装备就真的没了")
                 .isEqualTo(45L);
         assertThat(heroAppService.list(playerId).heroes())
-                .as("面板照常出得来，槽位里那一位仍是老字符串（等 S3 的实例清单上线才谈迁移）")
-                .anyMatch(view -> "eq_pojun_blade".equals(view.equips().get(0)));
+                .as("面板照常出得来，老行 id 被解析成可读装备语义，但不会把内部 id 当名字画出去")
+                .anyMatch(view -> view.equips().stream().anyMatch(equip ->
+                        "eq_pojun_blade".equals(equip.equipId())
+                                && "破军刃".equals(equip.name())
+                                && equip.forgeLevel() == 0));
     }
 
     @Test

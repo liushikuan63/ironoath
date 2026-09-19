@@ -111,8 +111,8 @@ export interface HeroView {
   subSkillName: string
   subSkillLevel: number
   maxSkillLevel: number
-  /** 四个槽位的装备 id，按 EquipSlot 声明顺序（WEAPON/ARMOR/MOUNT/ACCESSORY），空槽为 null。用定长数组而不是 Map 是为了让客户端不必猜键名顺序。 */
-  equips: (string | null)[]
+  /** 这个武将身上穿着的装备，**每项自带槽位**（见 WornEquip）。 **为什么不再是定长 4 格**：原先是 `(string|null)[]`，装的是**实例 uid**， 于是武将页那一行只能印 `武器：eq-7f3a…` —— 把内部编号印给玩家（#255/#268/#278/#281 同族第五处）。 要带上名字与强化等级就得让每项是个对象，而 JSON Schema 表达不出「对象或 null」的数组元素 （`type` 数组只能列标量、生成器也没实现 `oneOf`）；把空槽写成「一个名字为空的 WornEquip」 又会把「没穿」和「穿了个没名字的」混成同一个值。所以改成**只列穿着的**：空槽＝数组里没有那一项， 客户端按 `slot` 落到四格里。原描述「定长数组是为了让客户端不必猜键名顺序」这条理由仍然成立 —— 每项自己写着槽位。 */
+  equips: WornEquip[]
   baseAttrs: AttrTriple
   finalAttrs: AttrTriple
   /** 该武将的战力贡献，走 curve.HERO_GROWTH（幂律），仅用于展示与 B08 圈层匹配，不进战斗公式 */
@@ -173,6 +173,22 @@ export interface FragmentView {
   /** 道具中文名，服务端按 itemId 查 item 表的 name 列（与 RewardNames 对碎片的取法同源） */
   name: string
   count: number
+}
+
+/**
+ * 身上穿着的一件装备实例。**只列穿着的**，空槽不出现在数组里（见 HeroView.equips 的理由）。
+ */
+export interface WornEquip {
+  /** 穿在哪个槽位。客户端按它把这一件落到四格里，所以数组可以是 0~4 项 */
+  slot: EquipSlot
+  /** 实例 uid —— 换装与卸下要按它发请求。**只用于请求，不许出现在画面上**（玩家读不懂一个内部编号） */
+  uid: string
+  /** equip 表的行 id（同一行可以有多件实例，套装与筛选按它查） */
+  equipId: string
+  /** 装备中文名，服务端按 equipId 查 equip 表的 name 列（#255 起那条「名字由服务端下发」的口径） */
+  name: string
+  /** 强化等级。玩家真正要看的「+2」是它，不是 uid */
+  forgeLevel: number
 }
 
 /**

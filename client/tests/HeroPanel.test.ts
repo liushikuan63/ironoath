@@ -40,7 +40,10 @@ function hero(overrides: Partial<HeroView> = {}): HeroView {
     subSkillName: '铁壁',
     subSkillLevel: 1,
     maxSkillLevel: 5,
-    equips: ['equip_weapon_01', null, 'equip_mount_01', null],
+    equips: [
+      { slot: 'WEAPON', uid: 'eq-7f3a', equipId: 'equip_weapon_01', name: '铁剑', forgeLevel: 2 },
+      { slot: 'MOUNT', uid: 'eq-8b21', equipId: 'equip_mount_01', name: '照夜玉狮子', forgeLevel: 0 },
+    ],
     baseAttrs: { might: 100, command: 80, wisdom: 60 },
     finalAttrs: { might: 162, command: 120, wisdom: 78 },
     power: 4200,
@@ -116,15 +119,27 @@ test('满级时不再显示经验条（expToNext 为 0，显示「经验 0/0」�
   assert.equal(buildHeroRow(hero({ level: 12, maxLevel: 60 }), NAMES).expText, '经验 120/800')
 })
 
-test('装备四槽按 WEAPON/ARMOR/MOUNT/ACCESSORY 顺序，空槽显示「空」并计数', () => {
+test('装备四槽按 WEAPON/ARMOR/MOUNT/ACCESSORY 落位：空槽显示「空」，穿着的显示名字与强化等级', () => {
   const row = buildHeroRow(hero(), NAMES)
-  assert.deepEqual(row.equipTexts, ['武器：equip_weapon_01', '护甲：空', '坐骑：equip_mount_01', '饰品：空'])
+  assert.deepEqual(row.equipTexts, ['武器：铁剑 +2', '护甲：空', '坐骑：照夜玉狮子', '饰品：空'],
+    '这一条原先钉的是 equip_weapon_01（把行 id / 实例 uid 印给玩家）；+0 不写加号')
   assert.equal(row.emptyEquipSlots, 2)
+  const onScreen = row.equipTexts.join('｜')
+  assert.equal(onScreen.includes('eq-') || onScreen.includes('equip_'), false,
+    '画面上不许出现实例 uid 或 equip 表行 id（#255/#268/#278/#281 同族第五处）')
 
-  const full = buildHeroRow(hero({ equips: ['a', 'b', 'c', 'd'] }), NAMES)
+  // 新形状只列穿着的，所以"满"与"裸"分别是 4 项与 0 项
+  const full = buildHeroRow(hero({
+    equips: [
+      { slot: 'WEAPON', uid: 'a', equipId: 'e1', name: '一', forgeLevel: 0 },
+      { slot: 'ARMOR', uid: 'b', equipId: 'e2', name: '二', forgeLevel: 1 },
+      { slot: 'MOUNT', uid: 'c', equipId: 'e3', name: '三', forgeLevel: 0 },
+      { slot: 'ACCESSORY', uid: 'd', equipId: 'e4', name: '四', forgeLevel: 0 },
+    ],
+  }), NAMES)
   assert.equal(full.emptyEquipSlots, 0)
-  const bare = buildHeroRow(hero({ equips: [null, null, null, null] }), NAMES)
-  assert.equal(bare.emptyEquipSlots, 4)
+  assert.equal(full.equipTexts[1], '护甲：二 +1')
+  assert.equal(buildHeroRow(hero({ equips: [] }), NAMES).emptyEquipSlots, 4)
 })
 
 test('缘分对象显示名字而不是 id；查不到名字时原样显示 id（静默变空白会让玩家以为没缘分）', () => {

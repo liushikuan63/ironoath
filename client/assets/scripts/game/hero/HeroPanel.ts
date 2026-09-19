@@ -20,7 +20,7 @@
 
 import * as FixedPoint from '../../core/FixedPoint'
 import type {
-  BonusZone, HeroListResp, HeroView, LineupView,
+  BonusZone, EquipSlot, HeroListResp, HeroView, LineupView,
 } from '../../net/generated/HeroProtocol'
 
 /** 一名武将在面板上的一行。 */
@@ -78,7 +78,8 @@ export interface HeroPanelView {
 /** 稀有度展示顺序。列表按它排？不 —— 顺序照搬服务端，这里只用于分页页签。 */
 const RARITY_ORDER: readonly string[] = ['SSR', 'SR', 'R', 'N']
 
-/** 装备槽顺序。协议明写 equips 是定长数组、按 EquipSlot 声明顺序，所以这里只是给槽位起名。 */
+/** 四个槽位（键与名字按契约 `EquipSlot` 的声明顺序成对）。 */
+const EQUIP_SLOT_KEYS: readonly EquipSlot[] = ['WEAPON', 'ARMOR', 'MOUNT', 'ACCESSORY']
 const EQUIP_SLOT_NAMES: readonly string[] = ['武器', '护甲', '坐骑', '饰品']
 
 /** 组装整个武将面板。 */
@@ -106,19 +107,19 @@ export function buildHeroRow(hero: HeroView, nameById: ReadonlyMap<string, strin
     throw new Error('hero 不得为空')
   }
   const maxLevel = hero.level >= hero.maxLevel
-  const equipTexts = hero.equips.map((equip, index) => {
+  // `equips` 只列**穿着的**、每项自带 slot ⇒ 四格要自己按槽位落。
+  // 空槽＝没有那一项，这是"没穿"的唯一表示（原先 `(string|null)[]` 里装的是实例 uid，
+  // 于是那一行只能印 `武器：eq-7f3a…`，见台账 #282）
+  const worn = new Map(hero.equips.map((item) => [item.slot, item]))
+  const equipTexts = EQUIP_SLOT_KEYS.map((key, index) => {
     const slot = EQUIP_SLOT_NAMES[index] ?? `槽位${index + 1}`
-    if (equip === null) {
+    const item = worn.get(key)
+    if (item === undefined) {
       return `${slot}：空`
     }
-    return `${slot}：${equip}`
+    return `${slot}：${item.name}${item.forgeLevel > 0 ? ` +${item.forgeLevel}` : ''}`
   })
-  let empty = 0
-  for (const equip of hero.equips) {
-    if (equip === null) {
-      empty++
-    }
-  }
+  const empty = EQUIP_SLOT_KEYS.length - worn.size
   return {
     heroId: hero.heroId,
     name: hero.name,

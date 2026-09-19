@@ -44,6 +44,7 @@ import com.ironoath.web.dto.generated.ItemCount;
 import com.ironoath.web.dto.generated.LineupView;
 import com.ironoath.web.dto.generated.SetLineupReq;
 import com.ironoath.web.dto.generated.SetLineupResp;
+import com.ironoath.web.dto.generated.WornEquip;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -682,12 +683,27 @@ public class HeroAppService {
         HeroAttrs equipFlat = stats.equipFlat(equips, instance);
         HeroAttrs finalAttrs = HeroCalculator.finalAttrs(base, cfg.growthRate(),
                 instance.level(), instance.star(), instance.awaken(), equipFlat, rules);
-        // 定长数组、按槽位顺序、空位为 null —— 那是 HeroView.equips 的契约（客户端按下标取）。
-        // 里面现在装的是实例 uid 而不是行 id：形状没变，语义变了，
-        // 界面要显示"是哪一个 + 强化到几"就必须自己去查实例清单（S3 的那个端点）
-        List<String> wornUids = new ArrayList<>(EquipSlot.COUNT);
+        // 只列**穿着的**：空槽不出现在数组里，每项自己带着 slot（形状的理由写在 HeroView.equips 的契约描述里）。
+        // 老存档那一路（槽位值直接是行 id）由 EquipLedger#resolve 按 +0 解析，照样会出现在这里 ——
+        // 那是"玩家穿着东西"的既有事实，不能因为形状换了就当没穿
+        List<WornEquip> worn = new ArrayList<>(EquipSlot.COUNT);
         for (EquipSlot slot : EquipSlot.values()) {
-            wornUids.add(instance.equipOf(slot));
+            String slotValue = instance.equipOf(slot);
+            if (slotValue == null || slotValue.isBlank()) {
+                continue;
+            }
+            EquipLedger.Resolved resolved = equips.resolve(slotValue);
+            if (resolved == null) {
+                // 悬空引用（EquipLedger 已经打过 ERROR）：宁可少画一项，
+                // 也不画一件不存在的东西 —— 更不能把那个 uid 印到玩家眼前
+                continue;
+            }
+            worn.add(new WornEquip(
+                    // 域内那份 EquipSlot 与契约生成的那份是两个类型（常量与顺序同源），DTO 要后者。
+                    // 用 valueOf 而不是 ordinal：哪天两边对不上，宁可当场炸也不要静默错位一格
+                    com.ironoath.web.dto.generated.EquipSlot.valueOf(slot.name()),
+                    slotValue, resolved.equipId(),
+                    equipName(resolved.equipId()), resolved.forgeLevel()));
         }
         return new HeroView(cfg.id(), cfg.name(), HeroRarity.valueOf(cfg.rarity().name()),
                 instance.level(), instance.exp(),
@@ -696,8 +712,18 @@ public class HeroAppService {
                 instance.star(), rules.starMax(), instance.awaken(), (int) cfg.awakenMax(),
                 cfg.mainSkill(), skillName(cfg.mainSkill()), instance.mainSkillLevel(),
                 cfg.subSkill(), skillName(cfg.subSkill()), instance.subSkillLevel(), rules.skillMaxLevel(),
-                wornUids, toTriple(base), toTriple(finalAttrs),
+                worn, toTriple(base), toTriple(finalAttrs),
                 stats.power(equips, instance), cfg.bondWith());
+    }
+
+    /** 装备中文名；查不到退回行 id 并打 ERROR（同 {@link #skillName}：不空页，也不静默印 id）。 */
+    private String equipName(String equipId) {
+        try {
+            return configs.get(EquipCfg.class, equipId).name();
+        } catch (ConfigException e) {
+            LOG.error("【equip 表查不到这一行】equipId={} 界面会退回显示这个行 id", equipId);
+            return equipId;
+        }
     }
 
     private LineupView toLineupView(EquipLedger equips, Lineup lineup, HeroRoster roster) {

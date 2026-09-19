@@ -60,7 +60,8 @@ const heroView = () => ({
   maxLevel: 60, star: 3, maxStar: 5, awaken: 0, maxAwaken: 3,
   mainSkillId: 'skill_guanyu_main', mainSkillName: '武圣激将', mainSkillLevel: fixture.mainLevel,
   subSkillId: 'skill_guanyu_sub', subSkillName: '偃月蓄势', subSkillLevel: fixture.subLevel, maxSkillLevel: fixture.maxLevel,
-  equips: [null, null, null, null],
+  // 穿一件在身上：这一格的验收点就是那一行印的是名字与 +N，而不是 uid / 行 id
+  equips: [{ slot: 'WEAPON', uid: 'eq-7f3a', equipId: 'eq_iron_sword', name: '铁剑', forgeLevel: 2 }],
   baseAttrs: { might: 96, command: 92, wisdom: 75 },
   finalAttrs: { might: 96, command: 92, wisdom: 75 },
   power: 12345, bondWith: null,
@@ -235,6 +236,9 @@ checkTrue('夹具里那个武将进画面', has(hero, '关羽'))
 checkTrue('行上带主技能当前等级', has(hero, `Lv${fixture.mainLevel}/`))
 checkTrue('技能那一行印的是中文名（服务端随视图下发的 mainSkillName）', has(hero, '武圣激将'))
 check('画面上不出现 skill 表的行 id（#255 同族第三处的回归位）', has(hero, 'skill_guanyu_main'), false)
+checkTrue('装备那一行印的是名字与强化等级（同族第五处）', has(hero, '武器：铁剑 +2'))
+check('那一行不出现实例 uid 与 equip 行 id',
+  has(hero, 'eq-7f3a') || has(hero, 'eq_iron_sword'), false)
 // 弹层会盖住武将行，那张截图看不到技能那一行 —— 进弹层之前先留一张没遮挡的
 await page.screenshot({ path: path.join(OUT, 'hero-row.png') })
 
