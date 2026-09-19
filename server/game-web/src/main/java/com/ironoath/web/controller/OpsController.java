@@ -60,15 +60,19 @@ public class OpsController {
     private final OpsTokenGuard token;
     /** 举报留痕的只读出口挂在它上面（B22 §一 3；写入侧在社交域，读侧不该另建一份存储访问）。 */
     private final com.ironoath.web.service.SocialAppService social;
+    /** 每日快照的全量出口挂在它上面（B23 裁决③：玩家只能查自己，运营要全量）。 */
+    private final com.ironoath.web.rank.RankBoardService ranks;
 
     public OpsController(OpsAppService ops, PayAppService pay, MailAppService mails,
                          OpsTokenGuard token,
-                         com.ironoath.web.service.SocialAppService social) {
+                         com.ironoath.web.service.SocialAppService social,
+                         com.ironoath.web.rank.RankBoardService ranks) {
         this.ops = ops;
         this.pay = pay;
         this.mails = mails;
         this.token = token;
         this.social = social;
+        this.ranks = ranks;
     }
 
     /**
@@ -131,6 +135,30 @@ public class OpsController {
             @RequestParam(name = "limit", defaultValue = "20") int limit) {
         token.require(opsToken);
         return Result.ok(social.recentReportsForOps(windowSeconds, limit));
+    }
+
+    /**
+     * 读某一天的每日快照全量（只读，需运维令牌）：B23 裁决③ 的"运营侧走 ops 只读端点全量"。
+     *
+     * <p><b>为什么玩家那个端点不够</b>：{@code /rank/snapshot} 只回自己（裁决③），
+     * 而申诉时要回答的是"那天第 37 名是多少分"—— 一句话里就带着两个人的名次。
+     * 没有这个出口，"运营能查证申诉"就只剩一句文档承诺。
+     *
+     * @param dayKey 日期键 yyyyMMdd（UTC+8）；格式不对回参数错误，"那天没拍过"回 RANK_SNAPSHOT_EMPTY（detail 带可选的最早一天）
+     */
+    @GetMapping("/rank/snapshot")
+    public Result<com.ironoath.web.dto.generated.OpsRankSnapshotResp> rankSnapshot(
+            @RequestHeader(value = "X-Ops-Token", required = false) String opsToken,
+            @RequestParam("type") String type,
+            @RequestParam("dayKey") String dayKey,
+            @RequestParam(name = "page", defaultValue = "1") int page) {
+        token.require(opsToken);
+        return Result.ok(ranks.opsSnapshot(parseRankType(type), dayKey, page));
+    }
+
+    /** 榜类型的解析只有一处实现：与 {@code RankController} 同一个口径（写在那边，这里复用）。 */
+    private static com.ironoath.web.dto.generated.RankType parseRankType(String raw) {
+        return com.ironoath.web.rank.RankBoardService.parseType(raw);
     }
 
 

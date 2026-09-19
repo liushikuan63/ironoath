@@ -1,6 +1,7 @@
 package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -27,6 +28,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.json.JsonUtils;
 import com.ironoath.common.time.TimeService;
@@ -38,7 +40,10 @@ import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
 import com.ironoath.web.dto.generated.NationFoundReq;
+import com.ironoath.web.dto.generated.OpsRankSnapshotResp;
 import com.ironoath.web.dto.generated.PlayerInitReq;
+import com.ironoath.web.dto.generated.RankEntryView;
+import com.ironoath.web.dto.generated.RankSnapshotResp;
 import com.ironoath.web.dto.generated.RankType;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.rank.RankBoardService;
@@ -59,7 +64,9 @@ import com.ironoath.web.store.memory.InMemorySeasonBoardStore;
  * <p><b>为什么赛季锚点要自己搭一份</b>：`SEASON_START_AT` 是部署参数、不在表里（`SeasonStatusTest` 同一处理），
  * 而"没有赛季就没有榜"是**本批的前提**：锚点缺省时上报会静默返回（那是设计，不是缺陷），
  * 所以四类榜的数据源测试必须自带一份锚好的 `ConfigRegistry`（与 `SeasonSettlementTest` 同一手法）。
- * 端点层的校验用例则用 Spring 那份未锚定的配置 —— 它顺带钉住"没有赛季时榜是空的、不是报错"。
+ * 端点层的校验用例则用 Spring 那份未锚定的配置 —— 它顺带钉住"没人上报时榜是空的、不是报错"。
+ * 注意别把它读成"seasonId 为空"：seasonId 来自 season 表首行 id，**恒非空**
+ * （表为空时 timelineRules 直接抛），空的是榜不是赛季。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -68,6 +75,8 @@ class RankEndpointTest {
 
     private static final String PLAYER_HEADER = "X-Player-Id";
     private static final long SEASON_START = 1_757_000_000_000L;
+    /** 运维令牌的测试值（与其它 ops 只读端点同一条：测试 profile 里配的就是它）。 */
+    private static final String OPS_TOKEN = "test-ops-token";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
@@ -93,7 +102,7 @@ class RankEndpointTest {
         ConfigRegistry anchored = anchoredConfigs();
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
         SeasonBoardStore boards = new InMemorySeasonBoardStore();
-        ranks = new RankBoardService(boards, socialStore, nationStore, players, bots, anchored, assembler);
+        ranks = new RankBoardService(boards, socialStore, nationStore, players, bots, anchored, assembler, timeService);
         settlements = new SeasonSettlementService(anchored, timeService, assembler, players,
                 rewardService, new com.ironoath.web.store.memory.InMemorySeasonLedger(), boards,
                 new com.ironoath.web.store.memory.InMemoryIdempotencyStore(), bots);
@@ -182,15 +191,15 @@ class RankEndpointTest {
                 new SeasonSettlement.Entry(botId, "老 Bot", 888_888L));
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchoredConfigs());
         var readSide = new RankBoardService(boards, socialStore, nationStore, players, bots,
-                anchoredConfigs(), assembler);
+                anchoredConfigs(), assembler, timeService);
         assertThat(readSide.list(human, RankType.POWER, 1).entries().stream().map(e -> e.id()).toList())
                 .as("读侧：只有 Bot 在榜时，榜是空的（而不是把 Bot 顶到第 1）")
                 .isEmpty();
     }
 
     @Test
-    @DisplayName("端点：不认识的榜类型回参数错误（空榜会被读成「这个榜还没人」），没有赛季时榜是空的")
-    void endpointRejectsUnknownTypeAndStaysEmptyWithoutSeason() throws Exception {
+    @DisplayName("端点：不认识的榜类型回参数错误（空榜会被读成「这个榜还没人」），没锚点时榜是空的")
+    void endpointRejectsUnknownTypeAndShowsAnEmptyBoardWhenNothingWasReported() throws Exception {
         String player = newPlayer(1);
 
         JsonNode bad = getRaw("/rank/list?type=NOPE", player);
@@ -231,6 +240,142 @@ class RankEndpointTest {
         assertThat(kill.entries().get(0).value()).isEqualTo(400L);
         assertThat(ranks.me(winner, RankType.POWER).myRank())
                 .as("击杀与战力是两本账：这一场不会给战力榜添行").isNull();
+    }
+
+    @Test
+    @DisplayName("验收 4：每日快照一天只拍一份（重复读不刷新它）；跨天后的第一次读补拍一份新的")
+    void dailySnapshotIsOncePerDayAndRefreshedAfterTheDayTurns() {
+        String human = newPlayer(16);
+        String other = newPlayer(16);
+        // 可控时钟：本用例要跨天，而"跨天"在这个仓库里只能靠把时钟推过去（不许 sleep、不许定时器）
+        long[] now = {SEASON_START + 3600_000L};
+        TimeService clock = new TimeService(() -> now[0]);
+        ConfigRegistry anchored = anchoredConfigs();
+        SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
+        InMemorySeasonBoardStore boards = new InMemorySeasonBoardStore();
+        RankBoardService svc = new RankBoardService(boards, socialStore, nationStore, players, bots,
+                anchored, assembler, clock);
+
+        String day1 = com.ironoath.common.time.DayKey.of(now[0]);
+        boards.report(seasonId, SeasonSettlement.Board.POWER,
+                new SeasonSettlement.Entry(human, "老王", 500L));
+        boards.report(seasonId, SeasonSettlement.Board.POWER,
+                new SeasonSettlement.Entry(other, "小李", 100L));
+        svc.list(human, RankType.POWER, 1);
+
+        SeasonSettlement.Snapshot first = boards.daily(seasonId, SeasonSettlement.Board.POWER, day1);
+        assertThat(first).as("读一次榜就把今天的拍上了（惰性，无定时器）").isNotNull();
+        assertThat(first.snapshotAt()).isEqualTo(now[0]);
+        assertThat(first.rankOf(human)).as("那一刻的名次被冻住").isEqualTo(1);
+
+        // 同一天晚些时候再读：榜变了，但今天那份**不许**跟着变（它记的是那一刻的名次）
+        now[0] += 3600_000L;
+        boards.report(seasonId, SeasonSettlement.Board.POWER,
+                new SeasonSettlement.Entry(human, "老王", 50L));
+        svc.list(human, RankType.POWER, 1);
+        SeasonSettlement.Snapshot again = boards.daily(seasonId, SeasonSettlement.Board.POWER, day1);
+        assertThat(again.snapshotAt()).as("同一天重复读不刷新拍摄时刻").isEqualTo(first.snapshotAt());
+        assertThat(again.rankOf(human)).as("内容也是那一刻的：他掉分了，但快照里仍是第 1")
+                .isEqualTo(1);
+        assertThat(boards.dailyDays(seasonId, SeasonSettlement.Board.POWER)).as("仍然只有一天")
+                .containsExactly(day1);
+
+        // 跨天：第一次读补一份新的，内容是新值
+        now[0] += 24L * 3600_000L;
+        String day2 = com.ironoath.common.time.DayKey.of(now[0]);
+        assertThat(day2).as("夹具前提：时钟确实跨了一天").isNotEqualTo(day1);
+        svc.list(other, RankType.POWER, 1);
+        assertThat(boards.dailyDays(seasonId, SeasonSettlement.Board.POWER))
+                .as("第二天补一份新的，且第一天那份还在（这就是时间线）")
+                .containsExactly(day1, day2);
+        SeasonSettlement.Snapshot second = boards.daily(seasonId, SeasonSettlement.Board.POWER, day2);
+        assertThat(second.snapshotAt()).isEqualTo(now[0]);
+        assertThat(second.rankOf(other)).as("新那份记的是新一天的榜（小李 100 > 老王 50）")
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("每日快照只回自己：同一个日期，两个人各查各的；运营侧才给全量")
+    void snapshotReturnsOnlyTheCallersOwnRow() {
+        String human = newPlayer(16);
+        String other = newPlayer(16);
+        long[] now = {SEASON_START + 3600_000L};
+        TimeService clock = new TimeService(() -> now[0]);
+        ConfigRegistry anchored = anchoredConfigs();
+        SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
+        InMemorySeasonBoardStore boards = new InMemorySeasonBoardStore();
+        RankBoardService svc = new RankBoardService(boards, socialStore, nationStore, players, bots,
+                anchored, assembler, clock);
+
+        String day = com.ironoath.common.time.DayKey.of(now[0]);
+        boards.report(seasonId, SeasonSettlement.Board.KILL,
+                new SeasonSettlement.Entry(human, "老王", 30L));
+        svc.list(human, RankType.KILL, 1);
+
+        RankSnapshotResp mine = svc.snapshot(human, RankType.KILL, day);
+        assertThat(mine.myRank()).as("我在那天是第 1").isEqualTo(1);
+        assertThat(mine.myValue()).isEqualTo(30L);
+        assertThat(mine.snapshotAt()).isEqualTo(now[0]);
+        // 别人查同一天：拿到的是"那天榜上没有我"，而不是我的名次（裁决③：只能查自己）
+        RankSnapshotResp theirs = svc.snapshot(other, RankType.KILL, day);
+        assertThat(theirs.myRank()).as("没上过榜的人查回来是 null").isNull();
+        assertThat(theirs.myValue()).isNull();
+
+        // 运营看的是全量（同一个快照，多少人都看得到）
+        OpsRankSnapshotResp ops = svc.opsSnapshot(RankType.KILL, day, 1);
+        assertThat(ops.totalPeople()).isEqualTo(1);
+        assertThat(ops.entries()).extracting(RankEntryView::id).containsExactly(human);
+
+        // 没拍过的那天：明确拒绝，且 detail 要说清"可查的最早一天"是哪天
+        assertThatThrownBy(() -> svc.snapshot(human, RankType.KILL, "20200101"))
+                .as("那天没有快照 → RANK_SNAPSHOT_EMPTY（不是 200 空数据）")
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("最早一天")
+                .hasMessageContaining(day);
+        // 日期键格式不对是**参数问题**，不是"那天没快照"：两者的下一步完全不同
+        assertThatThrownBy(() -> svc.snapshot(human, RankType.KILL, "2026-09-19"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("8 位日期");
+    }
+
+    @Test
+    @DisplayName("端点：/rank/snapshot 查今天会把今天补拍上、查没拍过的过去某天明确拒绝；/ops/rank/snapshot 没令牌读不到（对照）")
+    void snapshotEndpointsExposeOnlyWhatTheyShould() throws Exception {
+        String player = newPlayer(1);
+        // 今天：第一次读就把今天这份拍上（惰性拍摄的 HTTP 面）——
+        // 本进程的 seasonId 来自 season 表（不是部署锚点），所以"有赛季"这一半在这里恒成立
+        String today = com.ironoath.common.time.DayKey.of(timeService.serverNow());
+        JsonNode mine = get200("/rank/snapshot?type=POWER&dayKey=" + today, player);
+        assertThat(mine.get("dayKey").asText()).isEqualTo(today);
+        assertThat(mine.get("snapshotAt").asLong()).as("快照真的被拍了（时刻非 0）").isPositive();
+        assertThat(mine.get("myRank").isNull()).as("新号没上报过战力 ⇒ 那天榜上没有他").isTrue();
+
+        // 这一天现在有快照了，但它里面一个人都没有 —— 运营侧读得出来"拍了但是空的"
+        String opsEmpty = mockMvc.perform(get("/ops/rank/snapshot?type=POWER&dayKey=" + today)
+                        .header("X-Ops-Token", OPS_TOKEN))
+                .andExpect(status().isOk()).andReturn()
+                .getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(JsonUtils.readTree(opsEmpty).path("data").get("totalPeople").asInt())
+                .as("拍了但那天榜上没人：0 而不是查不到").isZero();
+
+        // 没拍过的那一天：明确拒绝，detail 带上"可查的最早一天"（现在确实有那一天：今天）
+        JsonNode missing = getRaw("/rank/snapshot?type=POWER&dayKey=20200101", player);
+        assertThat(missing.get("code").asInt()).isEqualTo(ErrorCode.RANK_SNAPSHOT_EMPTY.code());
+        assertThat(missing.path("detail").asText()).contains("最早一天").contains(today);
+
+        // 日期键格式错 → 参数错误（与上一条分开：这条的下一步是改参数，那条是选个别的日期）
+        JsonNode badDay = getRaw("/rank/snapshot?type=POWER&dayKey=2026-09-19", player);
+        assertThat(badDay.get("code").asInt()).isEqualTo(ErrorCode.PARAM_INVALID.code());
+
+        // 运营那个出口没有令牌必须读不到（没有对照组的话，"端点存在"与"谁都能读"分不清）。
+        // 注意判据是**错误码**而不是 HTTP 状态码：本仓库的 ops 闸门走 BizException ⇒ 200 + OPS_UNAUTHORIZED，
+        // 与"端点不存在"（1000）和"端点通了"（0）都能分开
+        String noToken = mockMvc.perform(get("/ops/rank/snapshot?type=POWER&dayKey=" + today))
+                .andExpect(status().isOk()).andReturn()
+                .getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(JsonUtils.readTree(noToken).get("code").asInt())
+                .as("没令牌读不到（对照组：上面带令牌那次读到了 totalPeople）")
+                .isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
     }
 
     // ---------- 夹具 ----------

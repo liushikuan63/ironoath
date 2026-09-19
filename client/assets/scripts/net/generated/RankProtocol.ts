@@ -49,3 +49,41 @@ export interface RankListResp {
   /** 后面还有没有下一页。 */
   hasMore: boolean
 }
+
+/**
+ * GET /rank/snapshot 的响应 —— 某一天的每日快照里**我的那一行**。刻意没有 entries：裁决③（可见性）定的是"玩家只能查自己"，全服历史名次是情报（与"不下发精确距离"同一条思路）。运营要全量走 /ops/rank/snapshot。
+ */
+export interface RankSnapshotResp {
+  /** 查的是哪个榜。 */
+  type: RankType
+  /** 日期键，yyyyMMdd（UTC+8，与全项目同一个 DayKey —— 不许出现第二个日切轴）。 */
+  dayKey: string
+  /** 这一份快照的拍摄时刻（毫秒）。同一天重复读不会刷新它 —— 「同一天只拍一份」的唯一可证形态。 */
+  snapshotAt: number
+  /** 我在那一天的榜上名次；那天榜上没有我时为 null（不许用 0 冒充）。 */
+  myRank: number | null
+  /** 我在那一天的榜值；未上榜为 null。 */
+  myValue: number | null
+}
+
+/**
+ * GET /ops/rank/snapshot 的响应 —— 某一天某张榜的**全量**与分页（裁决③：运营侧走 ops 只读端点全量）。申诉时要能回答"那天第 37 名是多少分"，所以这里必须给出整榜而不是某一个人。
+ */
+export interface OpsRankSnapshotResp {
+  /** 哪张榜。 */
+  type: RankType
+  /** 日期键，yyyyMMdd（UTC+8）。 */
+  dayKey: string
+  /** 这份快照的拍摄时刻（毫秒）。 */
+  snapshotAt: number
+  /** 这一页的行，按名次升序。 */
+  entries: RankEntryView[]
+  /** 这一天这张榜上共有多少人（分页之外的第二信息：运营要一眼看出那天有多热闹）。 */
+  totalPeople: number
+  /** 请求的页码，原样回显。 */
+  page: number
+  /** 本次实际生效的每页条数。 */
+  pageSize: number
+  /** 后面还有没有下一页。 */
+  hasMore: boolean
+}

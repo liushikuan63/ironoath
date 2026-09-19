@@ -27,6 +27,15 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
             new ConcurrentHashMap<>();
     /** seasonId:board → 快照。key 拼法与 mongo 实现的 _id 同一条，便于两边对着读 */
     private final Map<String, SeasonSettlement.Snapshot> snapshots = new ConcurrentHashMap<>();
+    /**
+     * seasonId:board:dayKey → 每日快照。
+     *
+     * <p><b>为什么不与上面那张表共用</b>：裁决②明写每日快照与结算快照**不同集合**。
+     * 共用一张表时两者的清理策略会互相牵制（结算快照只该在归档时消失，而每日快照还有保留期这回事），
+     * 而且 {@code snapshot()} 会开始能把每日快照读成结算快照 —— 那是把"付钱依据"与"申诉时间线"
+     * 混成一份数据，属于本档最不该出现的一种错。
+     */
+    private final Map<String, SeasonSettlement.Snapshot> dailies = new ConcurrentHashMap<>();
 
     @Override
     public void report(String seasonId, SeasonSettlement.Board board, SeasonSettlement.Entry entry) {
@@ -92,6 +101,40 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
     }
 
     @Override
+    public boolean saveDailyIfAbsent(String seasonId, SeasonSettlement.Board board, String dayKey,
+                                     SeasonSettlement.Snapshot snapshot) {
+        if (snapshot == null) {
+            throw new IllegalArgumentException("snapshot 不得为 null");
+        }
+        SeasonBoardStore.requireKey(seasonId, board);
+        SeasonBoardStore.requireDayKey(dayKey);
+        return dailies.putIfAbsent(dailyKeyOf(seasonId, board, dayKey), snapshot) == null;
+    }
+
+    @Override
+    public SeasonSettlement.Snapshot daily(String seasonId, SeasonSettlement.Board board,
+                                           String dayKey) {
+        SeasonBoardStore.requireKey(seasonId, board);
+        SeasonBoardStore.requireDayKey(dayKey);
+        return dailies.get(dailyKeyOf(seasonId, board, dayKey));
+    }
+
+    @Override
+    public List<String> dailyDays(String seasonId, SeasonSettlement.Board board) {
+        SeasonBoardStore.requireKey(seasonId, board);
+        String prefix = seasonId + ":" + board + ":";
+        List<String> days = new ArrayList<>();
+        for (String key : dailies.keySet()) {
+            if (key.startsWith(prefix)) {
+                days.add(key.substring(prefix.length()));
+            }
+        }
+        // 升序：调用方（错误详情的"最早一天"）要的就是最早那天，让它自己排序就等于把这个口径复制到第二处
+        days.sort(Comparator.naturalOrder());
+        return List.copyOf(days);
+    }
+
+    @Override
     public int purgeSeason(String seasonId) {
         int removed = 0;
         Map<SeasonSettlement.Board, Map<String, SeasonSettlement.Entry>> boardsOfSeason =
@@ -111,6 +154,15 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
                 removed++;
             }
         }
+        // 每日快照是第四处：它不在 snapshots 那张表里（裁决②：与结算快照不同集合），
+        // 所以上面那段前缀清理扫不到它 —— 漏掉这一段的表现是"申诉期早过了，时间线还占着存储"
+        List<String> dailyKeys = new ArrayList<>(dailies.keySet());
+        for (String key : dailyKeys) {
+            if (key.startsWith(prefix)) {
+                dailies.remove(key);
+                removed++;
+            }
+        }
         return removed;
     }
 
@@ -118,11 +170,17 @@ public final class InMemorySeasonBoardStore implements SeasonBoardStore {
     public void clear() {
         boards.clear();
         snapshots.clear();
+        dailies.clear();
     }
 
     /** 与 {@code SeasonBoardSnapshotDocument} 的 _id 同一条拼法。 */
     static String keyOf(String seasonId, SeasonSettlement.Board board) {
         return seasonId + ":" + board;
+    }
+
+    /** 与 {@code SeasonDailyBoardDocument} 的 _id 同一条拼法（第三段是日期键）。 */
+    static String dailyKeyOf(String seasonId, SeasonSettlement.Board board, String dayKey) {
+        return seasonId + ":" + board + ":" + dayKey;
     }
 
     /** 榜单排序的唯一实现（与领域层的口径逐字一致：分数降序、同分按 id 升序）。 */

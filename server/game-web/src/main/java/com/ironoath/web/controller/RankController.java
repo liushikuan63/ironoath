@@ -10,6 +10,7 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.web.dto.generated.RankListResp;
+import com.ironoath.web.dto.generated.RankSnapshotResp;
 import com.ironoath.web.dto.generated.RankType;
 import com.ironoath.web.rank.RankBoardService;
 
@@ -50,16 +51,23 @@ public class RankController {
         return Result.ok(ranks.me(playerId, parseType(type)));
     }
 
+    /**
+     * 某一天的每日快照里**我的那一行**（B23 §一 2：申诉读取）。
+     *
+     * <p><b>只回自己</b>（裁决③）：全服历史名次是情报，运营要全量走 {@code /ops/rank/snapshot}。
+     * 所以这个响应里没有 entries 字段 —— 不是"隐藏了"，而是这个端点从不持有别人的行。
+     */
+    @GetMapping("/snapshot")
+    public Result<RankSnapshotResp> snapshot(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestParam("type") String type,
+            @RequestParam("dayKey") String dayKey) {
+        requirePlayer(playerId);
+        return Result.ok(ranks.snapshot(playerId, parseType(type), dayKey));
+    }
+
     private static RankType parseType(String raw) {
-        if (raw == null || raw.isBlank()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "type 不得为空");
-        }
-        try {
-            return RankType.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
-                    "不认识的榜类型：" + raw + "（可选 POWER / KILL / ALLIANCE / NATION）");
-        }
+        return RankBoardService.parseType(raw);
     }
 
     private static void requirePlayer(String playerId) {

@@ -67,11 +67,35 @@ public interface SeasonBoardStore {
     boolean saveSnapshotIfAbsent(String seasonId, SeasonSettlement.Snapshot snapshot);
 
     /**
-     * 删掉一个赛季的<b>榜与快照</b>。返回删掉的条目 + 快照文档总数。
+     * 存下**每日**快照（B23 裁决②）。键是 {@code seasonId:board:dayKey}，与结算快照
+     * <b>不同集合</b>：结算是"付钱依据"，每日快照是"申诉时间线"，同集合会让两套清理策略互相牵制。
+     * <b>已有则返回 false</b>（与 {@link #saveSnapshotIfAbsent} 同一条幂等语义）——
+     * "同一天重复读只拍一份"就靠它，而不是靠调用方先查后写（那在并发下会拍出两份）。
+     *
+     * @param dayKey 日期键 {@code yyyyMMdd}（UTC+8，来自 {@code DayKey}）
+     */
+    boolean saveDailyIfAbsent(String seasonId, SeasonSettlement.Board board, String dayKey,
+                              SeasonSettlement.Snapshot snapshot);
+
+    /** 某一天的每日快照；那天没拍过返回 null（读侧宽容）。 */
+    SeasonSettlement.Snapshot daily(String seasonId, SeasonSettlement.Board board, String dayKey);
+
+    /**
+     * 这一天以前拍过的所有日期键，**升序**（最早的一天在前）。
+     *
+     * <p>存在的理由只有一个但很硬：{@code RANK_SNAPSHOT_EMPTY} 的 detail 要给出
+     * "可选的最早一天"，否则玩家翻到一个没有快照的日期时只能看到一句"查不到"，
+     * 既不知道是自己记错了还是那天本来就没有。
+     */
+    List<String> dailyDays(String seasonId, SeasonSettlement.Board board);
+
+    /**
+     * 删掉一个赛季的**榜、结算快照与每日快照**。返回删掉的条目 + 快照文档总数（含每日）。
      *
      * <p>与 {@link SeasonLedgerStore#purgeSeason} 配对使用：归档保留策略说「留 3 个赛季」，
-     * 而一个赛季的归档由账本 + 榜 + 快照三处组成，漏掉任何一处的表现都不是报错，
-     * 而是「旧季一半还在库里」。
+     * 而一个赛季的归档由账本 + 榜 + 结算快照 + 每日快照四处组成，漏掉任何一处的表现都不是报错，
+     * 而是「旧季一半还在库里」—— 而每日快照是这四处里最新的一处，
+     * 漏掉它的症状是"申诉期早过了，时间线还占着存储"。
      */
     int purgeSeason(String seasonId);
 
@@ -85,6 +109,16 @@ public interface SeasonBoardStore {
         }
         if (board == null) {
             throw new IllegalArgumentException("board 不得为 null：一季有多张榜，缺了它读到的会是另一张");
+        }
+    }
+
+    /**
+     * 日期键的写侧校验（每日快照专用）。空日期键会在存储里造出一行"谁也命不中"的孤儿数据 ——
+     * 与 {@link #requireKey} 同一条理由，也同一条形状：判定只有一处实现，两个实现都调它。
+     */
+    static void requireDayKey(String dayKey) {
+        if (dayKey == null || dayKey.isBlank()) {
+            throw new IllegalArgumentException("dayKey 不得为空：每日快照的键里有它");
         }
     }
 }

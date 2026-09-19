@@ -44,10 +44,12 @@ const fs = require("fs");
 const src = fs.readFileSync(process.argv[1] + "/server/game-common/src/main/java/com/ironoath/common/ErrorCode.java", "utf8");
 const out = {};
 for (const m of src.matchAll(/([A-Z][A-Z][A-Z0-9_]+)\s*\(\s*(\d+)\s*,\s*"/g)) out[m[1]] = m[2];
-process.stdout.write((out.PARAM_INVALID || "?") + " " + (out.PLAYER_NOT_FOUND || "?"));
+process.stdout.write((out.PARAM_INVALID || "?") + " " + (out.PLAYER_NOT_FOUND || "?") + " "
+  + (out.RANK_SNAPSHOT_EMPTY || "?"));
 ' "$ROOT_DIR")"
-PARAM_INVALID="${CODES%% *}"
-PLAYER_NOT_FOUND="${CODES##* }"
+PARAM_INVALID="$(echo "$CODES" | cut -d" " -f1)"
+PLAYER_NOT_FOUND="$(echo "$CODES" | cut -d" " -f2)"
+RANK_SNAPSHOT_EMPTY="$(echo "$CODES" | cut -d" " -f3)"
 
 # 每页条数是**从表里现读**的，不写 20：脚本里写死一个数字，改了表它照样绿，那是假绿
 # （表结构是 table/version/fieldTypes/rows —— 行在 rows 里，不是 params）
@@ -159,6 +161,76 @@ const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 process.stdout.write(String(j.code));
 ' "$TMP_DIR/empty-type.json")"
 check "空 type 回的是 PARAM_INVALID" "$EMPTY_TYPE_CODE" "$PARAM_INVALID"
+
+# ---------- 每日快照（B23-S2）：查今天会把今天补拍上；查没拍过的过去某天明确拒绝 ----------
+echo "[验收 4] 每日快照：今天补拍、过去没拍过的那天说清楚"
+TODAY="$(node -e 'process.stdout.write(new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10).replace(/-/g, ""))')"
+CODE="$(get_rank "/rank/snapshot?type=POWER&dayKey=$TODAY" snapshot-today.json)"
+check "GET /rank/snapshot（今天）的 HTTP 码" "$CODE" "200"
+read -r SNAP_DAY SNAP_AT SNAP_RANK <<EOF
+$(node -e '
+const fs = require("fs");
+const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const d = j.data || {};
+process.stdout.write(String(d.dayKey) + " " + (d.snapshotAt > 0) + " " + String(d.myRank));
+' "$TMP_DIR/snapshot-today.json")
+EOF
+check "回显的 dayKey 就是请求的那天" "$SNAP_DAY" "$TODAY"
+check "快照真被拍下了（snapshotAt > 0）" "$SNAP_AT" "true"
+check "新号那天没上过榜 ⇒ myRank 是 null（不是 0）" "$SNAP_RANK" "null"
+# 同一天再查一次：拍的仍是同一份（幂等）。判据是**时刻不变**，不是"没报错"
+sleep 1
+CODE="$(get_rank "/rank/snapshot?type=POWER&dayKey=$TODAY" snapshot-today2.json)"
+SECOND_AT="$(node -e '
+const fs = require("fs");
+const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(String((j.data || {}).snapshotAt));
+' "$TMP_DIR/snapshot-today2.json")"
+FIRST_AT="$(node -e '
+const fs = require("fs");
+const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(String((j.data || {}).snapshotAt));
+' "$TMP_DIR/snapshot-today.json")"
+check "同一天第二次读，快照时刻不变（一天只拍一份）" "$SECOND_AT" "$FIRST_AT"
+
+CODE="$(get_rank '/rank/snapshot?type=POWER&dayKey=20200101' snapshot-old.json)"
+check "查没拍过的过去某天：HTTP 码" "$CODE" "200"
+OLD_CODE="$(node -e '
+const fs = require("fs");
+const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(String(j.code));
+' "$TMP_DIR/snapshot-old.json")"
+check "那天没快照回的是 RANK_SNAPSHOT_EMPTY" "$OLD_CODE" "$RANK_SNAPSHOT_EMPTY"
+OLD_DETAIL="$(node -e '
+const fs = require("fs");
+const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const d = String(j.detail || "");
+process.stdout.write(d.includes("最早一天") && d.includes(process.argv[2]) ? "yes" : "no");
+' "$TMP_DIR/snapshot-old.json" "$TODAY")"
+check "拒绝的 detail 说清可查的最早一天" "$OLD_DETAIL" "yes"
+
+CODE="$(get_rank '/rank/snapshot?type=POWER&dayKey=2026-09-19' snapshot-badday.json)"
+BAD_DAY_CODE="$(node -e '
+const fs = require("fs");
+const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(String(j.code));
+' "$TMP_DIR/snapshot-badday.json")"
+check "日期格式不对回的是 PARAM_INVALID（与「那天没拍过」分开）" "$BAD_DAY_CODE" "$PARAM_INVALID"
+
+# 运营出口：没令牌读不到、带令牌读得到（两条一起才说明"闸门在令牌那一道"）
+CODE="$(curl -s --max-time 10 -o "$TMP_DIR/ops-no-token.json" -w '%{http_code}' \
+  "$BASE_URL/ops/rank/snapshot?type=POWER&dayKey=$TODAY")"
+check "GET /ops/rank/snapshot 的 HTTP 码" "$CODE" "200"
+OPS_NO_TOKEN="$(node -e '
+const fs = require("fs");
+const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(String(j.code));
+' "$TMP_DIR/ops-no-token.json")"
+if [ "$OPS_NO_TOKEN" = "0" ]; then
+  bad "对照组：没令牌的 ops 快照居然读到了数据"
+else
+  ok "对照组：没令牌读不到（code=$OPS_NO_TOKEN，与"读到数据"分得开）"
+fi
 
 # ---------- 对照组：一条不存在的路径必须不通 ----------
 # 没有这一条的话，"所有请求都被某个通配处理器接住并回 200"这种坏法在本脚本里照样全绿

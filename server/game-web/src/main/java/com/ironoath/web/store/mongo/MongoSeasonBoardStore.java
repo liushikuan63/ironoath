@@ -129,19 +129,69 @@ public final class MongoSeasonBoardStore implements SeasonBoardStore {
     }
 
     @Override
+    public boolean saveDailyIfAbsent(String seasonId, SeasonSettlement.Board board, String dayKey,
+                                     SeasonSettlement.Snapshot snapshot) {
+        if (snapshot == null) {
+            throw new IllegalArgumentException("snapshot 不得为 null");
+        }
+        SeasonBoardStore.requireKey(seasonId, board);
+        SeasonBoardStore.requireDayKey(dayKey);
+        try {
+            mongo.insert(SeasonDailyBoardDocument.of(seasonId, board, dayKey, snapshot),
+                    SeasonDailyBoardDocument.COLLECTION);
+            return true;
+        } catch (DuplicateKeyException e) {
+            // 撞号 = 今天已经有人拍过了。与 saveSnapshotIfAbsent 同一条语义：
+            // 并发下的两个读请求只会有一份留下，另一份丢掉即可（内容本该一致）
+            return false;
+        }
+    }
+
+    @Override
+    public SeasonSettlement.Snapshot daily(String seasonId, SeasonSettlement.Board board,
+                                           String dayKey) {
+        SeasonBoardStore.requireKey(seasonId, board);
+        SeasonBoardStore.requireDayKey(dayKey);
+        SeasonDailyBoardDocument doc = mongo.findById(
+                SeasonDailyBoardDocument.keyOf(seasonId, board, dayKey),
+                SeasonDailyBoardDocument.class, SeasonDailyBoardDocument.COLLECTION);
+        return doc == null ? null : doc.toSnapshot();
+    }
+
+    @Override
+    public List<String> dailyDays(String seasonId, SeasonSettlement.Board board) {
+        SeasonBoardStore.requireKey(seasonId, board);
+        // 只取 dayKey 一列（每天一份文档，每份里嵌着整榜，读回来再丢是白花带宽）。
+        //
+        // **这里刻意用原始 Document 而不是映射回 SeasonDailyBoardDocument**：record 的构造器
+        // 要全部参数，字段裁剪之后映射器会拿 null 去凑，直接抛 MappingInstantiationException
+        // （本实现的第一版就是这么炸的 —— 而它只在"库里真有数据"时才炸，等价用例正是因为这个才值钱）。
+        Query query = Query.query(Criteria.where("seasonId").is(seasonId)
+                        .and("board").is(board.name()))
+                .with(Sort.by(Sort.Order.asc("dayKey")));
+        query.fields().include("dayKey");
+        return mongo.find(query, org.bson.Document.class, SeasonDailyBoardDocument.COLLECTION)
+                .stream().map(doc -> doc.getString("dayKey")).toList();
+    }
+
+    @Override
     public int purgeSeason(String seasonId) {
-        // 两个集合都要删：只删榜不删快照，表现是旧季的名次查不到了但"那一季最终榜"还能被读出来，
-        // 一个说不清自己保留了什么的库比一个明确没清的库更难查
+        // 三个集合都要删：只删榜不删快照，表现是旧季的名次查不到了但"那一季最终榜"还能被读出来，
+        // 一个说不清自己保留了什么的库比一个明确没清的库更难查；每日快照是第四个面（B23 裁决②），
+        // 漏掉它的症状是"申诉期早过了，时间线还占着存储"
         long entries = mongo.remove(Query.query(Criteria.where("seasonId").is(seasonId)),
                 SeasonBoardDocument.COLLECTION).getDeletedCount();
         long snapshots = mongo.remove(Query.query(Criteria.where("seasonId").is(seasonId)),
                 SeasonBoardSnapshotDocument.COLLECTION).getDeletedCount();
-        return Math.toIntExact(entries + snapshots);
+        long dailies = mongo.remove(Query.query(Criteria.where("seasonId").is(seasonId)),
+                SeasonDailyBoardDocument.COLLECTION).getDeletedCount();
+        return Math.toIntExact(entries + snapshots + dailies);
     }
 
     @Override
     public void clear() {
         mongo.remove(new Query(), SeasonBoardDocument.COLLECTION);
         mongo.remove(new Query(), SeasonBoardSnapshotDocument.COLLECTION);
+        mongo.remove(new Query(), SeasonDailyBoardDocument.COLLECTION);
     }
 }

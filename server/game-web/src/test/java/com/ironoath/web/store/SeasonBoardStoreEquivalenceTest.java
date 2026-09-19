@@ -212,6 +212,82 @@ class SeasonBoardStoreEquivalenceTest {
         }
     }
 
+    @Test
+    @DisplayName("每日快照两套实现同一条：同一天只留一份、跨天各一份、按天升序列出、归档时一起删")
+    void dailySnapshotsBehaveTheSameOnBothStores() {
+        Assumptions.assumeTrue(db != null,
+                "本机连不上 MongoDB（" + TestMongo.uri() + "）：这条等价性今天没被验证，别当成通过");
+
+        for (SeasonBoardStore store : List.of(newMemoryStore(), newMongoStore())) {
+            String who = store.getClass().getSimpleName();
+            SeasonSettlement.Snapshot first = new SeasonSettlement.Snapshot(Board.POWER, 111L,
+                    List.of(entry("a", "甲", 300), entry("b", "乙", 100)));
+            SeasonSettlement.Snapshot sameDayLater = new SeasonSettlement.Snapshot(Board.POWER, 222L,
+                    List.of(entry("a", "甲", 999)));
+
+            assertThat(store.saveDailyIfAbsent(SEASON, Board.POWER, "20260901", first))
+                    .as(who + " 第一次拍").isTrue();
+            // 同一天再拍一份：必须被拒（"同一天只拍一份"是验收 4 的一半）
+            assertThat(store.saveDailyIfAbsent(SEASON, Board.POWER, "20260901", sameDayLater))
+                    .as(who + " 同一天第二份必须被拒").isFalse();
+            assertThat(store.daily(SEASON, Board.POWER, "20260901").snapshotAt())
+                    .as(who + " 读回来的仍是第一份").isEqualTo(111L);
+            assertThat(store.daily(SEASON, Board.POWER, "20260901").rankOf("b"))
+                    .as(who + " 名次按内嵌顺序算").isEqualTo(2);
+
+            // 换一天：各一份，互不影响
+            assertThat(store.saveDailyIfAbsent(SEASON, Board.POWER, "20260902", sameDayLater))
+                    .as(who + " 第二天是另一份").isTrue();
+            assertThat(store.daily(SEASON, Board.POWER, "20260902").snapshotAt()).isEqualTo(222L);
+            // 另一张榜、另一季都不该混进来（少了这条，"按前缀列天数"写错也照样全绿）
+            store.saveDailyIfAbsent(SEASON, Board.KILL, "20260901",
+                    new SeasonSettlement.Snapshot(Board.KILL, 333L, List.of(entry("k", "杀", 7))));
+            store.saveDailyIfAbsent(OTHER, Board.POWER, "20260901",
+                    new SeasonSettlement.Snapshot(Board.POWER, 444L, List.of(entry("z", "别季", 1))));
+
+            assertThat(store.dailyDays(SEASON, Board.POWER)).as(who + " 按天升序")
+                    .containsExactly("20260901", "20260902");
+            assertThat(store.dailyDays(SEASON, Board.KILL)).as(who + " 另一张榜就一天")
+                    .containsExactly("20260901");
+            assertThat(store.daily(SEASON, Board.POWER, "20260903")).as(who + " 没拍过的那天")
+                    .isNull();
+            assertThat(store.daily(SEASON, Board.POWER, "20260201")).as(who + " 别季的同一日期")
+                    .isNull();
+
+            // 空日期键当场拒绝：它在键里，空值会造出一行谁也命不中的孤儿数据
+            assertThatThrownBy(() -> store.daily(SEASON, Board.POWER, " "))
+                    .as(who + " 空 dayKey 的读").isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.saveDailyIfAbsent(SEASON, Board.POWER, null, first))
+                    .as(who + " 空 dayKey 的写").isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    @DisplayName("归档清理要连每日快照一起删（第四处），而邻季一天都不能少")
+    void purgeSeasonRemovesDailySnapshotsToo() {
+        Assumptions.assumeTrue(db != null,
+                "本机连不上 MongoDB（" + TestMongo.uri() + "）：这条等价性今天没被验证，别当成通过");
+
+        for (SeasonBoardStore store : List.of(newMemoryStore(), newMongoStore())) {
+            String who = store.getClass().getSimpleName();
+            store.report(SEASON, Board.POWER, entry("a", "甲", 300));
+            store.saveDailyIfAbsent(SEASON, Board.POWER, "20260901",
+                    new SeasonSettlement.Snapshot(Board.POWER, 111L, List.of(entry("a", "甲", 300))));
+            store.saveDailyIfAbsent(SEASON, Board.POWER, "20260902",
+                    new SeasonSettlement.Snapshot(Board.POWER, 112L, List.of(entry("a", "甲", 310))));
+            // 邻季必须有每日快照：少了它，"按 seasonId 前缀删"写错（连邻季一起删）也照样全绿
+            store.saveDailyIfAbsent(OTHER, Board.POWER, "20260901",
+                    new SeasonSettlement.Snapshot(Board.POWER, 444L, List.of(entry("z", "别季", 1))));
+
+            assertThat(store.purgeSeason(SEASON))
+                    .as(who + " 要报告删了多少（榜 1 条 + 每日快照 2 份）").isEqualTo(3);
+            assertThat(store.dailyDays(SEASON, Board.POWER)).as(who + " 本季的每日快照已清空").isEmpty();
+            assertThat(store.daily(OTHER, Board.POWER, "20260901")).as(who + " 不许碰邻季")
+                    .isNotNull();
+            assertThat(store.purgeSeason(SEASON)).as(who + " 重复清理必须是 0").isZero();
+        }
+    }
+
     // ---------- 夹具 ----------
 
     private static InMemorySeasonBoardStore newMemoryStore() {

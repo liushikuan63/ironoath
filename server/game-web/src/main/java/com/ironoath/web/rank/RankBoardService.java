@@ -9,13 +9,19 @@ import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
+import com.ironoath.common.BizException;
+import com.ironoath.common.ErrorCode;
+import com.ironoath.common.time.DayKey;
+import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.bot.BotRegistry;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.season.SeasonSettlement;
+import com.ironoath.web.dto.generated.OpsRankSnapshotResp;
 import com.ironoath.web.dto.generated.RankEntryView;
 import com.ironoath.web.dto.generated.RankListResp;
+import com.ironoath.web.dto.generated.RankSnapshotResp;
 import com.ironoath.web.dto.generated.RankType;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.season.SeasonBoardStore;
@@ -49,10 +55,11 @@ public class RankBoardService {
     private final BotRegistry bots;
     private final ConfigRegistry configs;
     private final SeasonRulesAssembler assembler;
+    private final TimeService time;
 
     public RankBoardService(SeasonBoardStore boards, SocialStore social, NationStore nations,
                             PlayerRepository players, BotRegistry bots, ConfigRegistry configs,
-                            SeasonRulesAssembler assembler) {
+                            SeasonRulesAssembler assembler, TimeService time) {
         this.boards = boards;
         this.social = social;
         this.nations = nations;
@@ -60,6 +67,7 @@ public class RankBoardService {
         this.bots = bots;
         this.configs = configs;
         this.assembler = assembler;
+        this.time = time;
     }
 
     /**
@@ -85,6 +93,7 @@ public class RankBoardService {
 
     /** 一页榜 + 我的名次（未上榜时名次为 null，不用 0 冒充 —— 验收 2）。 */
     public RankListResp list(String playerId, RankType type, int page) {
+        captureTodayIfAbsent(type);
         List<SeasonSettlement.Entry> rows = rankedEntries(type);
         int pageSize = (int) configs.longParam("RANK_PAGE_SIZE_MAX");
         int totalPages = Math.max(1, (rows.size() + pageSize - 1) / pageSize);
@@ -113,6 +122,169 @@ public class RankBoardService {
         }
         int pageSize = (int) configs.longParam("RANK_PAGE_SIZE_MAX");
         return list(playerId, type, (mine.rank() - 1) / pageSize + 1);
+    }
+
+    /**
+     * 某一天的每日快照里**我的那一行**（B23 §一 2 的申诉读取）。
+     *
+     * <p><b>只回自己</b>（裁决③）：全服历史名次是情报（与"不下发精确距离"同一条思路），
+     * 运营要全量走 {@link #opsSnapshot}。所以这个返回值里刻意**没有 entries** ——
+     * 一个"有 entries 字段但恒为空"的响应会让人以为"那天榜上没人"，那是句假话。
+     *
+     * @param dayKey 日期键 {@code yyyyMMdd}（UTC+8）。查今天会顺手把今天的补拍上
+     *               （与 {@link #list} 同一条惰性先例）
+     */
+    public RankSnapshotResp snapshot(String playerId, RankType type, String dayKey) {
+        String seasonId = seasonIdOrNull();
+        if (seasonId == null) {
+            throw snapshotMissing("本赛季还没开始，暂时没有快照", dayKey);
+        }
+        String day = requireDayKey(dayKey);
+        SeasonSettlement.Board board = boardOf(type);
+        if (day.equals(todayKey())) {
+            captureTodayIfAbsent(type);
+        }
+        SeasonSettlement.Snapshot taken = boards.daily(seasonId, board, day);
+        if (taken == null) {
+            throw snapshotMissing(detailForMissingDay(seasonId, board, day), day);
+        }
+        SeasonSettlement.Entry mine = entryOf(taken, type, playerId);
+        return new RankSnapshotResp(type, day, taken.snapshotAt(),
+                mine == null ? null : taken.rankOf(mine.id()),
+                mine == null ? null : mine.score());
+    }
+
+    /**
+     * 某一天某张榜的**全量**（运营只读，裁决③：运营侧走 ops 全量）。
+     *
+     * <p>申诉时要能回答"那天第 37 名是多少分"，所以这里给整榜而不是某一个人；
+     * 分页沿用实时榜那套（同一张表里的每页条数），免得出现"榜上一页 20、快照一页 50"两套口径。
+     */
+    public OpsRankSnapshotResp opsSnapshot(RankType type, String dayKey, int page) {
+        String seasonId = seasonIdOrNull();
+        if (seasonId == null) {
+            throw snapshotMissing("本赛季还没开始，暂时没有快照", dayKey);
+        }
+        String day = requireDayKey(dayKey);
+        SeasonSettlement.Board board = boardOf(type);
+        SeasonSettlement.Snapshot taken = boards.daily(seasonId, board, day);
+        if (taken == null) {
+            throw snapshotMissing(detailForMissingDay(seasonId, board, day), day);
+        }
+        List<SeasonSettlement.Entry> rows = taken.entries();
+        int pageSize = (int) configs.longParam("RANK_PAGE_SIZE_MAX");
+        int totalPages = Math.max(1, (rows.size() + pageSize - 1) / pageSize);
+        int safePage = Math.min(Math.max(1, page), totalPages);
+        int from = (safePage - 1) * pageSize;
+        int to = Math.min(rows.size(), from + pageSize);
+        List<RankEntryView> entries = new ArrayList<>(Math.max(0, to - from));
+        for (int i = from; i < to; i++) {
+            entries.add(toView(i + 1, rows.get(i), type));
+        }
+        return new OpsRankSnapshotResp(type, day, taken.snapshotAt(), entries, rows.size(),
+                safePage, pageSize, to < rows.size());
+    }
+
+    /**
+     * 惰性补拍今天的快照（B23 §一 2 的拍摄时机）。<b>不跑定时器</b>（B14 禁止项）：
+     * 判"该榜今天还没拍过就补一份"，与战报过期清理、邮件过期同一形状。
+     *
+     * <p><b>拍的是读侧同一份内容</b>：Bot 已被摘掉（读侧兜底那一段），组织榜是当时的投影。
+     * 若拍的是"库里的原始行"，玩家会看到"榜上没有某个名字，但快照里有" —— 而快照是给申诉用的，
+     * 它必须与玩家当时看到的一致。
+     *
+     * <p><b>先查再写不是竞态</b>：查只是省下一次全榜写；两个并发读即使都走到写，落库的也只有一份
+     * （{@code saveDailyIfAbsent} 按 _id 撞号判断），所以"同一天只拍一份"不依赖这段查询。
+     */
+    private void captureTodayIfAbsent(RankType type) {
+        String seasonId = seasonIdOrNull();
+        if (seasonId == null) {
+            return;
+        }
+        SeasonSettlement.Board board = boardOf(type);
+        String day = todayKey();
+        if (boards.daily(seasonId, board, day) != null) {
+            return;
+        }
+        List<SeasonSettlement.Entry> rows = rankedEntries(type);
+        boards.saveDailyIfAbsent(seasonId, board, day,
+                new SeasonSettlement.Snapshot(board, time.serverNow(), rows));
+    }
+
+    /** 榜类型 → 存储里的 board。名字逐字对应（契约里刻意与领域枚举同形，见 rank.schema.json 的说明）。 */
+    private static SeasonSettlement.Board boardOf(RankType type) {
+        return SeasonSettlement.Board.valueOf(type.name());
+    }
+
+    /**
+     * 协议里的榜类型字符串 → 枚举。<b>解析只有这一处实现</b>（{@code RankController} 与
+     * {@code OpsController} 都调它）：两个入口各写一份的话，某个入口迟早会开始接受
+     * 一种另一个入口不认的写法（多一个空格、小写、别名），而那种不一致只在客户端换入口时才暴露。
+     *
+     * <p>认不出来回**参数错误**而不是空榜：一个拼错的 type 给一张空榜，客户端会把它画成
+     * "这个榜还没有人"，而实际是名字写错了。
+     */
+    public static RankType parseType(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "type 不得为空");
+        }
+        try {
+            return RankType.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "不认识的榜类型：" + raw + "（可选 POWER / KILL / ALLIANCE / NATION）");
+        }
+    }
+
+    private String todayKey() {
+        return DayKey.of(time.serverNow());
+    }
+
+    /**
+     * 日期键校验。格式不对是**参数问题**，不是"那天没有快照" —— 后者会误导玩家去翻别的日期，
+     * 而这里他该做的是看看自己传了什么。
+     */
+    private static String requireDayKey(String dayKey) {
+        if (dayKey == null || dayKey.isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "dayKey 不得为空（形如 20260919）");
+        }
+        String trimmed = dayKey.trim();
+        if (!trimmed.matches("\\d{8}")) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "dayKey 必须是 8 位日期（形如 20260919），实际=" + dayKey);
+        }
+        return trimmed;
+    }
+
+    /** 那一天没有快照时的 detail：把"可选的最早一天"带上（没有就明说还没拍过任何一天）。 */
+    private String detailForMissingDay(String seasonId, SeasonSettlement.Board board, String day) {
+        List<String> days = boards.dailyDays(seasonId, board);
+        if (days.isEmpty()) {
+            return "这一天没有快照，而且本赛季还没有任何一天拍过快照（快照是在有人读榜时惰性补拍的）";
+        }
+        return "这一天没有快照；可查的最早一天是 " + days.get(0) + "，最近一天是 "
+                + days.get(days.size() - 1);
+    }
+
+    private static BizException snapshotMissing(String detail, String dayKey) {
+        return new BizException(ErrorCode.RANK_SNAPSHOT_EMPTY, detail + "（dayKey=" + dayKey + "）");
+    }
+
+    /** 我在某份快照里的那一行；组织榜要找的是我所在组织。 */
+    private SeasonSettlement.Entry entryOf(SeasonSettlement.Snapshot taken, RankType type,
+                                           String playerId) {
+        String myId = type == RankType.ALLIANCE || type == RankType.NATION
+                ? orgIdOf(playerId, type)
+                : playerId;
+        if (myId == null) {
+            return null;
+        }
+        for (SeasonSettlement.Entry entry : taken.entries()) {
+            if (entry.id().equals(myId)) {
+                return entry;
+            }
+        }
+        return null;
     }
 
     /** 我在这张榜上的行（不排序、不分页）：组织榜回的是我所在组织那一行。 */

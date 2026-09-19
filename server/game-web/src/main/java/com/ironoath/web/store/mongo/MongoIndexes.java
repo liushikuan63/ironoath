@@ -129,6 +129,15 @@ public final class MongoIndexes {
                 .on("board", Sort.Direction.ASC)
                 .on("score", Sort.Direction.DESC)
                 .named("idx_season_board_score"));
+        // 每日快照（B23 裁决②）：按 _id 点查那一路不需要索引，这条服务的是另外两条 ——
+        // 「这一季这张榜都拍过哪些天」（dailyDays，按 dayKey 升序）与归档清理（按 seasonId 前缀删）。
+        // 两者都是 index 的前缀，一条索引同时覆盖。
+        IndexOperations seasonDailyIndexes = mongo.indexOps(SeasonDailyBoardDocument.COLLECTION);
+        String bySeasonDailyDay = seasonDailyIndexes.ensureIndex(new Index()
+                .on("seasonId", Sort.Direction.ASC)
+                .on("board", Sort.Direction.ASC)
+                .on("dayKey", Sort.Direction.ASC)
+                .named("idx_season_daily_day"));
         // 世界：world_city 的 coordKey **必须唯一** —— 一个玩家一份文档的 design 之所以安全，
         // 全靠这条索引挡住"两家人落在同一格"（内存版靠 ConcurrentHashMap 的 putIfAbsent 达到同效）。
         // 缺了它，mongo 模式下会出现两城叠一格、viewport 只下发其一，而写入侧一次都没报错。
@@ -236,6 +245,8 @@ public final class MongoIndexes {
                 + bySeasonAndPlayer
                 + "；" + SeasonBoardDocument.COLLECTION + ".{seasonId,board,score} → "
                 + bySeasonBoardScore
+                + "；" + SeasonDailyBoardDocument.COLLECTION + ".{seasonId,board,dayKey} → "
+                + bySeasonDailyDay
                 + "；" + WorldCityDocument.COLLECTION + " → " + uniqueCoord
                 + "；" + WorldCellDocument.COLLECTION + " → " + byCellChunk
                 + "；" + ScoutReportDocument.COLLECTION + " → " + myReports + " / " + reportExpiry
