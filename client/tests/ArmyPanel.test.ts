@@ -182,6 +182,34 @@ test('20 个兵种（4 类型 × 5 阶级）全部进面板，含未解锁的 �
   assert.equal(panel.hospital.capacityText, '医院 200/1000')
 })
 
+// ---------- 自动续训那一条（B25-S2） ----------
+
+/** 造一份「后端根本没下发 autoTrain」的响应 —— 那是这个字段上线之前的版本会回的东西。 */
+function respWithoutPolicy(): ArmyListResp {
+  const bare = { ...armyResp([unit()]) } as Partial<ArmyListResp>
+  delete bare.autoTrain
+  return bare as ArmyListResp
+}
+
+test('策略缺失或为 null 时整块军队面板照常画，那一条按「没开」渲染', () => {
+  for (const [label, resp] of [['整个字段没下发', respWithoutPolicy()],
+    ['服务端显式给 null', armyResp([unit()], { autoTrain: null as never })]] as const) {
+    const panel = buildArmyPanel(resp, 0, 0)
+    assert.equal(panel.rows.length, 1, `${label}：兵种行不能因为策略缺失一起消失`)
+    assert.equal(panel.autoTrain.enabled, false, label)
+    assert.equal(panel.autoTrain.caption, '自动续训', label)
+    assert.equal(panel.autoTrain.runningText, null, `${label}：没开就不该有"正在盯着什么"`)
+    assert.equal(panel.autoTrain.stopText, null, label)
+  }
+})
+
+test('缺字段兜底之后那几条文案仍不露内部 id 与工程黑话', () => {
+  const at = buildArmyPanel(respWithoutPolicy(), 0, 0).autoTrain
+  const playerFacing = [at.caption, at.runningText ?? '', at.stopText ?? '', at.blockedReason ?? ''].join(' ')
+  assert.doesNotMatch(playerFacing, /unit_|_t\d/, `露出内部 id：${playerFacing}`)
+  assert.doesNotMatch(playerFacing, /未接入|未实现|接口|字段|下发|选择器/, `黑话：${playerFacing}`)
+})
+
 // ---------- 预估 ----------
 
 test('训练时长预估 = 单个秒数 × 数量：协议明写「批量不等于加速」', () => {

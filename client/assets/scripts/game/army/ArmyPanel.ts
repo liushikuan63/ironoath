@@ -26,6 +26,7 @@ import { countdownMs, formatCountdown as formatCountdownOf } from '../../core/Co
 import * as FixedPoint from '../../core/FixedPoint'
 import {
   autoTrainBlockedReason, autoTrainRunningText, autoTrainStopText, autoTrainToggleCaption,
+  NO_AUTO_TRAIN_POLICY,
 } from './AutoTrain'
 import type { TrainMemory } from './AutoTrain'
 import type { ArmyListResp, HospitalView, UnitType, UnitView } from '../../net/generated/ArmyProtocol'
@@ -136,10 +137,13 @@ export function buildArmyPanel(resp: ArmyListResp, offsetMs: number, localNow: n
  *
  * <p>兵种名从**响应里的 rows** 取（服务端下发的名字），取不到时退回一个明确的说法而不是露出
  * `unit_infantry_t1` 这样的内部 id —— 玩家读到的每一句都该是人话（见 `check-player-copy-jargon`）。
+ *
+ * <p>策略缺失时按「没开」渲染：契约把 `autoTrain` 列成 required，但对着还没上线这个字段的旧版后端时，
+ * 整块面板不该因此崩掉 —— 编排层 {@code AppRoot} 早就是 `?? null` 的口径。
  */
 export function buildAutoTrainPanel(resp: ArmyListResp,
                                     trainMemory: TrainMemory | null): AutoTrainPanel {
-  const policy = resp.autoTrain
+  const policy = resp.autoTrain ?? NO_AUTO_TRAIN_POLICY
   const unit = resp.units.find((u: UnitView) => u.unitId === policy.unitId) ?? null
   const unitName = unit === null ? '这个兵种' : unit.name
   return {

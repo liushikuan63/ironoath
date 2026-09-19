@@ -49,6 +49,14 @@ export function rememberTrain(unitId: string, count: number): TrainMemory {
   return { unitId, count }
 }
 
+/**
+ * 「没有策略」长什么样 —— 与 {@code AppRoot} 里那份空响应占位、服务端 {@code AutoTrainPolicy.off()}
+ * 同一个形状，收在一处免得三份各写各的。
+ */
+export const NO_AUTO_TRAIN_POLICY: AutoTrainView = {
+  enabled: false, unitId: '', batchCount: 0, batchBudget: 0, targetCount: 0, stopReason: null,
+}
+
 /** 开关按钮上的字：开着还是关着，一眼看出来。 */
 export function autoTrainToggleCaption(policy: AutoTrainView): string {
   return policy.enabled ? '停止自动' : '自动续训'
