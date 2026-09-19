@@ -92,6 +92,8 @@ export function costTextOf(view: EquipInstanceView): string | null {
 export interface EquipRow {
   readonly uid: string
   readonly name: string
+  /** 原始槽位：视图要用它发换装请求（`slotText` 是给人看的，别拿它反推） */
+  readonly slot: EquipSlot
   readonly slotText: string
   readonly rarityText: string
   /** 「强化 +2 / 20」 */
@@ -153,6 +155,7 @@ export function buildEquipPanel(resp: EquipInstanceListView | null,
     return {
       uid: item.uid,
       name: item.name,
+      slot: item.slot,
       slotText: slotLabel(item.slot),
       rarityText: rarityLabel(item.rarity),
       forgeText: forgeTextOf(item),

@@ -10,6 +10,7 @@
  */
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
 import type { EquipPanelView as EquipViewData, EquipRow } from '../game/equip/EquipPanel'
+import type { EquipSlot } from '../net/generated/EquipProtocol'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -37,6 +38,12 @@ export class EquipPanelView extends Component {
 
   private readonly rows: Node[] = []
   private viewData: EquipViewData | null = null
+
+  /**
+   * 行内动作回调：`takeOff=false` 表示穿上这一件，`true` 表示卸下该槽位。
+   * 表现层只喊一声，请求由编排层发（铁律 2）。
+   */
+  onRowAction: ((uid: string, slot: EquipSlot, takeOff: boolean) => void) | null = null
 
   /** 下发一份视图即显示。**每次都重画**：穿戴与强化都会改这里的数据。 */
   render(view: EquipViewData): void {
@@ -84,7 +91,14 @@ export class EquipPanelView extends Component {
 
   private drawTitle(y: number): number {
     this.label('装 备', COLOR_COPPER_GOLD, 26, -CARD_WIDTH / 2 + PADDING, y - 12, 'left')
-    const summary = this.viewData?.summaryText ?? ''
+    const view = this.viewData
+    if (view?.targetText !== null && view?.targetText !== undefined) {
+      // 换装模式：右边写"给谁换"，汇总行另起一行（这两件事都要看得见，谁都不该把谁顶掉）
+      this.label(view.targetText, COLOR_TEXT, 18, CARD_WIDTH / 2 - PADDING, y - 12, 'right')
+      this.label(view.summaryText, COLOR_TEXT_DIM, 15, -CARD_WIDTH / 2 + PADDING, y - 34, 'left')
+      return y - 52
+    }
+    const summary = view?.summaryText ?? ''
     if (summary !== '') {
       this.label(summary, COLOR_TEXT_DIM, 18, CARD_WIDTH / 2 - PADDING, y - 12, 'right')
     }
@@ -139,13 +153,24 @@ export class EquipPanelView extends Component {
       18, left, y - 12, 'left')
     this.label(`${row.slotText} · ${row.forgeText}`, COLOR_TEXT_DIM, 14, left + 210, y - 12, 'left')
     this.label(row.statsText, COLOR_TEXT_DIM, 14, left, y - 31, 'left')
-    const tail = row.canForge ? '可强化' : (row.reasonText ?? '')
-    if (tail !== '') {
-      this.label(tail, row.canForge ? COLOR_GOOD : COLOR_TEXT_DIM, 15, right, y - 12, 'right')
+    // 右列第一行：有换装动作时先给动作（那是玩家进来要干的事），否则给强化状态
+    if (row.actionText !== null) {
+      this.label(row.actionText, COLOR_COPPER_GOLD, 17, right, y - 12, 'right')
+    } else {
+      const tail = row.canForge ? '可强化' : (row.reasonText ?? '')
+      if (tail !== '') {
+        this.label(tail, row.canForge ? COLOR_GOOD : COLOR_TEXT_DIM, 15, right, y - 12, 'right')
+      }
     }
     const cost = row.worn ? `${row.wornText}${row.costText === null ? '' : ` · ${row.costText}`}`
       : (row.costText ?? row.wornText)
     this.label(cost, COLOR_TEXT_DIM, 14, right, y - 31, 'right')
+
+    // 只有**给得出动作**的行才吃触摸：没有动作的行不该长得像能点（点了没反应比不给按钮更糟）
+    if (row.actionText !== null) {
+      const takeOff = row.actionText === '卸下'
+      node.on('touch-start', () => this.onRowAction?.(row.uid, row.slot, takeOff))
+    }
   }
 
   private drawClose(): void {

@@ -996,6 +996,10 @@ export class GameBootstrap extends Component {
     if (equip !== null) {
       // 打开由编排层发起（`AppRoot.openEquip`，入口在武将页）；这里只把"画"接上
       out.equip = view => equip.render(view)
+      // 行内动作（V03-d 第一批）：表现层只喊一声，请求由编排层发
+      equip.onRowAction = (uid, slot, takeOff) => {
+        void (takeOff ? this.root?.equipTakeOff(slot) : this.root?.equipWear(uid, slot))
+      }
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
