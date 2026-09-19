@@ -30,6 +30,7 @@ import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { RankBoardView } from '../assets/scripts/game/power/RankBoard'
 import type { SeasonPanelView } from '../assets/scripts/game/season/SeasonPanel'
 import type { TechPanelView } from '../assets/scripts/game/tech/TechPanel'
+import type { EquipPanelView } from '../assets/scripts/game/equip/EquipPanel'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
@@ -143,6 +144,21 @@ const ROUTES: Record<string, unknown> = {
     ],
     queue: { techId: null, finishAt: null, startedAt: 0, totalSeconds: 0, remainingSeconds: 0 },
     academyLevel: 2,
+    serverNow: SERVER_NOW,
+  },
+  '/equip/instances': {
+    instances: [
+      {
+        uid: 'eq-1', equipId: 'equip_sword_01', name: '铁脊剑', slot: 'WEAPON', rarity: 'R',
+        forgeLevel: 2, forgeMax: 20, mightFixed: 120_000, commandFixed: 0, wisdomFixed: 0,
+        nextCostIron: 480, canForge: true, blockReason: 'NONE', wornByHeroId: null,
+      },
+      {
+        uid: 'eq-2', equipId: 'equip_armor_01', name: '锁子甲', slot: 'ARMOR', rarity: 'SR',
+        forgeLevel: 20, forgeMax: 20, mightFixed: 0, commandFixed: 90_000, wisdomFixed: 0,
+        nextCostIron: 0, canForge: false, blockReason: 'MAX_LEVEL', wornByHeroId: 'hero_guanyu',
+      },
+    ],
     serverNow: SERVER_NOW,
   },
   '/world/marches': {
@@ -498,6 +514,7 @@ interface Harness {
   readonly lastRank: RankBoardView | null
   readonly lastSeason: SeasonPanelView | null
   readonly lastTech: TechPanelView | null
+  readonly lastEquip: EquipPanelView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -588,6 +605,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastRank: RankBoardView | null = null
   let lastSeason: SeasonPanelView | null = null
   let lastTech: TechPanelView | null = null
+  let lastEquip: EquipPanelView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -639,6 +657,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     tech: (view) => {
       attached.push('tech')
       lastTech = view
+    },
+    equip: (view) => {
+      attached.push('equip')
+      lastEquip = view
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -713,6 +735,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastTech() {
       return lastTech
+    },
+    get lastEquip() {
+      return lastEquip
     },
     get lastCompose() {
       return lastCompose
@@ -1922,6 +1947,37 @@ test('研究页：拉不到时理由原样进说明行，且不把上一次那�
   assert.equal(h.lastTech?.noticeText, '服务繁忙', '服务端给的理由原样进说明行')
   assert.equal(h.lastTech?.rows.length, 2, '拉不到不等于科技树没了：上一次那份留着')
   assert.equal(h.errors.some(e => e[0] === 'tech'), true, '面板读取失败也要进统一的上报口')
+})
+
+test('装备页：打开才拉 /equip/instances、上报 equip_view，穿没穿不印 heroId', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  assert.equal(h.http.countOf('/equip/instances'), 0, '没打开装备页不该拉实例列表')
+
+  h.events.length = 0
+  await h.root.openEquip()
+  assert.equal(h.http.countOf('/equip/instances'), 1)
+  assert.deepEqual(h.events.map(e => e.name), ['equip_view'], '打开装备页要上报')
+  assert.equal(h.lastEquip?.rows.length, 2)
+  assert.equal(h.lastEquip?.summaryText, '已装备 1 / 共 2 件')
+  assert.equal(h.lastEquip?.rows[0]?.costText, '强化消耗 铁矿 480')
+  assert.equal(h.lastEquip?.rows[1]?.reasonText, '已满级', '拒绝原因来自服务端的 blockReason')
+  assert.equal(h.lastEquip?.rows[1]?.wornText, '已装备')
+  assert.equal(JSON.stringify(h.lastEquip?.rows).includes('hero_guanyu'), false,
+    '面板数据里不许出现 heroId（id 不是名字，#255 同族）')
+})
+
+test('装备页：拉不到时理由原样进说明行，且不把上一次那份清空', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.openEquip()
+  assert.equal(h.lastEquip?.noticeText, null)
+
+  h.http.failPaths.add('/equip/instances')
+  await h.root.openEquip()
+  assert.equal(h.lastEquip?.noticeText, '服务繁忙')
+  assert.equal(h.lastEquip?.rows.length, 2, '拉不到不等于装备没了：上一次那份留着')
+  assert.equal(h.errors.some(e => e[0] === 'equip'), true, '面板读取失败也要进统一的上报口')
 })
 
 test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {

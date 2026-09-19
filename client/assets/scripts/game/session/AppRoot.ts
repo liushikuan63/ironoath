@@ -53,6 +53,9 @@ import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
 import { buildTechPanel } from '../tech/TechPanel'
 import type { TechPanelView } from '../tech/TechPanel'
 import type { TechListView } from '../../net/generated/TechProtocol'
+import { buildEquipPanel } from '../equip/EquipPanel'
+import type { EquipPanelView } from '../equip/EquipPanel'
+import type { EquipInstanceListView } from '../../net/generated/EquipProtocol'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -213,6 +216,10 @@ export interface PanelTargets {
    */
   tech?(view: TechPanelView): void
   /**
+   * 装备实例页（V03-b-S1）。入口在武将页：装备穿在武将身上，需要它的人就在那一页。
+   */
+  equip?(view: EquipPanelView): void
+  /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
@@ -278,7 +285,7 @@ export interface PanelTargets {
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
-  | 'battlePass' | 'rallies' | 'tech'
+  | 'battlePass' | 'rallies' | 'tech' | 'equip'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -365,6 +372,9 @@ export class AppRoot {
   /** 最近一次 `/tech/list` 的响应与失败原因（V03-a-S1）。同样：失败只加一行理由，不清空 */
   private techResp: TechListView | null = null
   private techNotice: string | null = null
+  /** 最近一次 `/equip/instances` 的响应与失败原因（V03-b-S1）。同样：失败只加一行理由，不清空 */
+  private equipResp: EquipInstanceListView | null = null
+  private equipNotice: string | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -621,6 +631,9 @@ export class AppRoot {
         return
       case 'tech':
         await this.loadTech()
+        return
+      case 'equip':
+        await this.loadEquip()
         return
       case 'quest':
         this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
@@ -1542,6 +1555,35 @@ export class AppRoot {
       this.say('tech', outcome)
     }
     this.targets.tech?.(buildTechPanel(this.techResp, this.techNotice))
+  }
+
+  // ---------- 装备实例页（V03-b-S1 读侧） ----------
+
+  /**
+   * 打开装备页。入口在武将页（由编排层发起）。**每次打开都重拉**：
+   * 穿戴与强化都会改这里的数据（`wornByHeroId` / `forgeLevel`），复用旧值会显示一件已经被换下的装备。
+   */
+  async openEquip(): Promise<void> {
+    this.track(TRACK_EVENTS.equipView)
+    await this.loadEquip()
+  }
+
+  /**
+   * 拉一次装备实例并下发整块视图。失败时理由原样进说明行、**不清空手里那份**（与科技/榜/赛季同一条纪律）。
+   * "能不能强化"的判定全部来自响应的 `canForge`/`blockReason`，本方法不自己判。
+   */
+  private async loadEquip(): Promise<void> {
+    const outcome = await this.api.equipInstances()
+    if (outcome.kind === 'ok') {
+      this.equipResp = outcome.data
+      this.equipNotice = null
+    } else {
+      this.equipNotice = outcome.kind === 'biz'
+        ? (outcome.detail ?? outcome.msg)
+        : AppRoot.reason(outcome)
+      this.say('equip', outcome)
+    }
+    this.targets.equip?.(buildEquipPanel(this.equipResp, this.equipNotice))
   }
 
   // ---------- 聊天（B22 §一 1） ----------

@@ -97,6 +97,7 @@ import type {
 } from '../../net/generated/RankProtocol'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
 import type { TechListView } from '../../net/generated/TechProtocol'
+import type { EquipInstanceListView } from '../../net/generated/EquipProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -165,6 +166,15 @@ export class GameApi {
    */
   techList(): Promise<NetOutcome<TechListView>> {
     return this.read<TechListView>('/tech/list')
+  }
+
+  /**
+   * GET /equip/instances（V03-b-S1 读侧）。**要身份**：这些是"我拥有的装备实例"。
+   *
+   * <p>响应里已经带了 `canForge` / `blockReason` / `nextCostIron` —— 客户端不再自己判前置、不重算铁耗曲线。
+   */
+  equipInstances(): Promise<NetOutcome<EquipInstanceListView>> {
+    return this.read<EquipInstanceListView>('/equip/instances')
   }
 
   /** POST /stamina/buy。扣金币与体力上限判定都在服务端。 */
