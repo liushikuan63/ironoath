@@ -10,7 +10,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildSeasonPanel, phaseLabel, remainTextOf, SEASON_KEEP_NOTE,
+  buildSeasonPanel, phaseLabel, remainTextOf, SEASON_KEEP_NOTE, tierLabel,
 } from '../assets/scripts/game/season/SeasonPanel'
 import type { SeasonStatusResp } from '../assets/scripts/net/generated/SeasonProtocol'
 
@@ -55,6 +55,15 @@ test('阶段名是玩家语言，五个取值都有（含休赛期）', () => {
   assert.equal(phaseLabel(null), '')
 })
 
+test('段位是 B14 的原词，不是枚举名：六个档次都对，未知取值退回原文而不是空白', () => {
+  assert.deepEqual(
+    (['BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND', 'KING'] as const).map((t) => tierLabel(t)),
+    ['青铜', '白银', '黄金', '铂金', '钻石', '王者'],
+  )
+  assert.equal(tierLabel(null), '')
+  assert.equal(tierLabel('MYTHIC' as never), 'MYTHIC', '新档位上线时显示陌生的词，而不是空行')
+})
+
 test('倒计时用服务端两个时刻相减（铁律 5）：天/小时/即将切换三档，不给负数', () => {
   assert.equal(remainTextOf(NOW + 5 * 86_400_000, NOW), '还剩 5 天')
   assert.equal(remainTextOf(NOW + 3 * 3_600_000, NOW), '还剩 3 小时')
@@ -78,7 +87,7 @@ test('名次与荣耀：没上榜（0）或没带身份（null）都不显示名
   const ranked = buildSeasonPanel(resp({ myRank: 12 }))
   assert.equal(ranked.rankText, '我的名次：第 12 名')
   assert.equal(ranked.noticeText, null)
-  assert.equal(ranked.gloryText, '荣耀 3 级 · 最高段位 GOLD · 徽章 3 枚')
+  assert.equal(ranked.gloryText, '荣耀 3 级 · 最高段位 黄金 · 徽章 3 枚')
 
   const unranked = buildSeasonPanel(resp({ myRank: 0 }))
   assert.equal(unranked.rankText, null, '0 名不是"第 0 名"，是没上榜')

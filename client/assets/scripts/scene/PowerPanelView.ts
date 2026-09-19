@@ -176,6 +176,10 @@ export class PowerPanelView extends Component {
   private drawWideLine(text: string, color: Color, y: number): number {
     const label = this.createLabel(text, color, 18)
     this.node.addChild(label.node)
+    // 锚点必须是**左中**而不是默认的中心：Label 的框按文字长度自己长，
+    // 中心锚点下每一行的左边界会随句子长短左右漂 —— 三行闸门看起来像随手摆的。
+    // 同一个根因在收口清单 #199 记过一次（标题框以 x 为中轴往外长，压在图标上）。
+    label.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     label.node.setPosition(new Vec3(-(PANEL_WIDTH - PADDING * 2) / 2 + 12, y - 12, 0))
     label.horizontalAlign = Label.HorizontalAlign.LEFT
     this.rows.push(label.node)

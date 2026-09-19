@@ -16,7 +16,9 @@
  * 赛季徽章」，归档保留 3 季（申诉需要），段位按规则降 1~2 段（保留部分进度，降低挫败感）。
  */
 
-import type { SeasonGloryView, SeasonPhase, SeasonStatusResp } from '../../net/generated/SeasonProtocol'
+import type {
+  SeasonGloryView, SeasonPhase, SeasonStatusResp, SeasonTier,
+} from '../../net/generated/SeasonProtocol'
 
 /** 赛季阶段名（玩家语言）。表里没有的取值退回枚举名，不显示空白。 */
 export function phaseLabel(phase: SeasonPhase | null): string {
@@ -33,6 +35,32 @@ export function phaseLabel(phase: SeasonPhase | null): string {
       return '休赛期'
     default:
       return phase === null ? '' : String(phase)
+  }
+}
+
+/**
+ * 段位名（B14 §二 的原词：青铜 / 白银 / 黄金 / 铂金 / 钻石 / 王者）。
+ *
+ * <p>**不许把枚举名直接印到面板上**：`GOLD` 是给代码看的，玩家互相报的是"黄金"。
+ * 表里没有的取值退回枚举名而不是空白 —— 与 {@link phaseLabel} 同一条纪律：
+ * 新档位上线时玩家看到的是一个陌生的英文词，而不是一个空的行。
+ */
+export function tierLabel(tier: SeasonTier | null): string {
+  switch (tier) {
+    case 'BRONZE':
+      return '青铜'
+    case 'SILVER':
+      return '白银'
+    case 'GOLD':
+      return '黄金'
+    case 'PLATINUM':
+      return '铂金'
+    case 'DIAMOND':
+      return '钻石'
+    case 'KING':
+      return '王者'
+    default:
+      return tier === null ? '' : String(tier)
   }
 }
 
@@ -86,7 +114,7 @@ function gloryTextOf(glory: SeasonGloryView | null | undefined): string | null {
   if (glory === null || glory === undefined) {
     return null
   }
-  return `荣耀 ${glory.gloryLevel} 级 · 最高段位 ${glory.highestTier} · 徽章 ${glory.badges.length} 枚`
+  return `荣耀 ${glory.gloryLevel} 级 · 最高段位 ${tierLabel(glory.highestTier)} · 徽章 ${glory.badges.length} 枚`
 }
 
 /**
