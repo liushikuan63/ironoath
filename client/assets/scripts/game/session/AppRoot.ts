@@ -65,6 +65,8 @@ import type { SkillPickView, SkillStage } from '../hero/SkillPick'
 import { buildComposeView } from '../hero/HeroCompose'
 import type { HeroComposeView } from '../hero/HeroCompose'
 import { buildHeroPanel } from '../hero/HeroPanel'
+import { buildLineupEdit, lineupBody } from '../hero/LineupEdit'
+import type { LineupEditView, LineupSlot } from '../hero/LineupEdit'
 import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
 import { buildDisclosure } from '../gacha/GachaDisclosure'
@@ -259,6 +261,11 @@ export interface PanelTargets {
    */
   gacha?(view: GachaPanelView): void
   /**
+   * 编队编辑弹层（`POST /hero/lineup` 的唯一入口）。整块视图由编排层组装：
+   * 三槽现在站着谁、正在选哪一槽、名单里谁灰、能不能保存 —— 视图只画。
+   */
+  lineupEdit?(view: LineupEditView): void
+  /**
    * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
    */
@@ -431,6 +438,12 @@ export class AppRoot {
   private skillPick: { heroId: string, heroName: string, stage: SkillStage, itemId: string | null } | null = null
   /** 合成弹层的状态：选了哪个**还没拥有**的武将。null = 没开着 */
   private composePick: { heroId: string | null } | null = null
+  /** 编队编辑的状态：改哪一队、三槽站着谁（编辑中，未提交）、正在选哪一槽。null = 没开着 */
+  private lineupEdit: {
+    presetIndex: number,
+    slots: Record<LineupSlot, string | null>,
+    pickingSlot: LineupSlot | null
+  } | null = null
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
@@ -1962,6 +1975,115 @@ export class AppRoot {
   /** 取消：关掉弹层，什么都不发。 */
   cancelComposePick(): void {
     this.composePick = null
+  }
+
+  // ---------- 编队编辑（B06 §4：三套预设 × 每队三人；`/hero/lineup` 此前生产零调用点） ----------
+
+  /**
+   * 打开某一队的编辑器。槽位从手里那份 `/hero/list` 的 `lineups` 起步 ——
+   * 编队行本来就是从那份响应画出来的，再拉一次只是多一个请求与一次不一致的机会。
+   */
+  async openLineupEdit(presetIndex: number): Promise<void> {
+    if (this.heroResp === null) {
+      await this.refresh('hero')
+    }
+    const resp = this.heroResp
+    if (resp === null) {
+      return
+    }
+    const lineup = resp.lineups.find((row) => row.presetIndex === presetIndex)
+    this.lineupEdit = {
+      presetIndex,
+      slots: {
+        main: lineup?.main ?? null,
+        sub1: lineup?.sub1 ?? null,
+        sub2: lineup?.sub2 ?? null,
+      },
+      pickingSlot: null,
+    }
+    this.deliverLineupEdit()
+  }
+
+  /** 点某一槽 = 要换这一槽的人。名单由纯逻辑出（谁灰、为什么灰、谁在别的队）。 */
+  pickLineupSlot(slot: LineupSlot): void {
+    if (this.lineupEdit === null) {
+      return
+    }
+    this.lineupEdit = { ...this.lineupEdit, pickingSlot: slot }
+    this.deliverLineupEdit()
+  }
+
+  /** 换上新选的人（只改编辑中的槽位，**不发请求**：编队是"改完一起提交"的动作）。 */
+  chooseLineupHero(heroId: string): void {
+    const state = this.lineupEdit
+    if (state === null || state.pickingSlot === null) {
+      return
+    }
+    this.lineupEdit = {
+      ...state,
+      slots: { ...state.slots, [state.pickingSlot]: heroId },
+      pickingSlot: null,
+    }
+    this.deliverLineupEdit()
+  }
+
+  /** 清空正在选的那一槽（服务端接受 null = 这一位没人）。 */
+  clearLineupSlot(): void {
+    const state = this.lineupEdit
+    if (state === null || state.pickingSlot === null) {
+      return
+    }
+    this.lineupEdit = {
+      ...state,
+      slots: { ...state.slots, [state.pickingSlot]: null },
+      pickingSlot: null,
+    }
+    this.deliverLineupEdit()
+  }
+
+  /**
+   * 保存这一队：一次发出三槽的最终状态。
+   *
+   * <p>**逐次换人不逐次发**：每换一次就发一次的后果是中途失败时存档停在"半支队"，
+   * 而玩家以为保存过了。发不出去的那两种（名册没读到 / 选的人不在名册里）只说理由，不发。
+   */
+  saveLineup(): Promise<void> {
+    const state = this.lineupEdit
+    const resp = this.heroResp
+    if (state === null || resp === null) {
+      return Promise.resolve()
+    }
+    const view = buildLineupEdit(resp.heroes, resp.lineups, state.presetIndex,
+      state.slots, state.pickingSlot)
+    if (!view.canSave) {
+      this.rejectNeeds('hero', view.saveText)
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.heroLineupSave, {
+      presetIndex: trackParam(String(state.presetIndex)),
+      main: trackParam(state.slots.main ?? ''),
+      sub1: trackParam(state.slots.sub1 ?? ''),
+      sub2: trackParam(state.slots.sub2 ?? ''),
+    })
+    this.lineupEdit = null
+    return this.write('hero',
+      this.api.heroSetLineup(lineupBody(state.presetIndex, state.slots)), ['hero'])
+  }
+
+  /** 取消：关掉编辑器。编辑中的槽位随之丢弃（没保存过就不该有任何东西被改）。 */
+  cancelLineupEdit(): void {
+    this.lineupEdit = null
+  }
+
+  /** 组装并下发编队编辑视图。 */
+  private deliverLineupEdit(): void {
+    const state = this.lineupEdit
+    const resp = this.heroResp
+    if (state === null || resp === null) {
+      return
+    }
+    this.targets.lineupEdit?.(buildLineupEdit(resp.heroes, resp.lineups,
+      state.presetIndex, state.slots, state.pickingSlot))
   }
 
   // ---------- 抽卡（B06 §2 抽取与 §6 合规公示；公示那半在 scene/GachaDisclosureView） ----------

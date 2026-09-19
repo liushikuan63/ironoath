@@ -51,6 +51,7 @@ import { SkillPickOverlay } from './SkillPickOverlay'
 import { ComposePickOverlay } from './ComposePickOverlay'
 import { RecruitPanelView } from './RecruitPanelView'
 import { GachaDisclosureView } from './GachaDisclosureView'
+import { LineupEditOverlay } from './LineupEditOverlay'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -1023,6 +1024,23 @@ export class GameBootstrap extends Component {
   }
 
   /**
+   * 编队编辑弹层（B06 §4）。与合成弹层同样挂在二级弹层，不占导航项 ——
+   * 入口在武将页的**编队那一页签**（点某一套编队的行）。
+   */
+  private mountLineupEditOverlay(): void {
+    if (this.node.getChildByName('lineupEdit') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('lineupEdit')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(LineupEditOverlay)
+    node.active = false
+  }
+
+  /**
    * 合规公示那一屏（B06 §6「原文呈现」）。挂成浮层而不是导航项：它是招募页的一个链接，
    * 而这一屏此前从未被挂载过 —— 它的组装函数原先吃配置行，客户端只有类型没有数据。
    */
@@ -1048,6 +1066,7 @@ export class GameBootstrap extends Component {
     this.mountAwakenPickOverlay()
     this.mountSkillPickOverlay()
     this.mountComposePickOverlay()
+    this.mountLineupEditOverlay()
     this.mountGachaDisclosure()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
@@ -1073,6 +1092,7 @@ export class GameBootstrap extends Component {
     const skillPick = this.panel(SkillPickOverlay, 'skillPick')
     const composePick = this.panel(ComposePickOverlay, 'composePick')
     const recruit = this.panel(RecruitPanelView, 'gacha')
+    const lineupEdit = this.panel(LineupEditOverlay, 'lineupEdit')
     const gachaDisclosure = this.panel(GachaDisclosureView, 'gachaDisclosure')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
@@ -1132,6 +1152,15 @@ export class GameBootstrap extends Component {
       composePick.onPick = heroId => this.root?.pickComposeHero(heroId)
       composePick.onConfirm = () => { void this.root?.confirmComposePick() }
       composePick.onCancel = () => this.root?.cancelComposePick()
+    }
+    if (lineupEdit !== null) {
+      // 打开由编排层发起（`AppRoot.openLineupEdit`，入口在武将页的编队页签）；这里只把"画"与四声"喊"接上
+      out.lineupEdit = viewData => lineupEdit.render(viewData)
+      lineupEdit.onPickSlot = slot => this.root?.pickLineupSlot(slot)
+      lineupEdit.onChoose = heroId => this.root?.chooseLineupHero(heroId)
+      lineupEdit.onClear = () => this.root?.clearLineupSlot()
+      lineupEdit.onSave = () => { void this.root?.saveLineup() }
+      lineupEdit.onCancel = () => this.root?.cancelLineupEdit()
     }
     if (recruit !== null) {
       // 打开由导航那一格驱动（`nav.onShow` 里调 `AppRoot.openGacha`）；这里只把"画"与三声"喊"接上
@@ -1202,6 +1231,9 @@ export class GameBootstrap extends Component {
       }
       // 页眉那颗「碎片合成」：合的是还没拥有的武将，所以它不带 heroId（见 HeroPanelView.onCompose）
       hero.onCompose = () => { void this.root?.openComposePick() }
+      // 编队页签里点某一套编队的行：这一条此前**从来没接过** ⇒ 玩家点编队行什么都不发生，
+      // 而 `heroSetLineup` 是"有契约、有端点、有方法，生产零调用点"的那一族（台账 #287）
+      hero.onLineupEdit = presetIndex => { void this.root?.openLineupEdit(presetIndex) }
     }
     if (bag !== null) {
       out.bag = resp => bag.attachBag(resp)

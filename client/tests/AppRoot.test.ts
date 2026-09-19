@@ -35,6 +35,7 @@ import type { ExpPickView } from '../assets/scripts/game/hero/ExpPick'
 import type { AwakenPickView } from '../assets/scripts/game/hero/AwakenPick'
 import type { HeroComposeView } from '../assets/scripts/game/hero/HeroCompose'
 import type { GachaPanelView } from '../assets/scripts/game/gacha/GachaPanel'
+import type { LineupEditView } from '../assets/scripts/game/hero/LineupEdit'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -95,6 +96,7 @@ const ROUTES: Record<string, unknown> = {
   '/hero/awaken': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/skillUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/compose': { hero: {}, consumed: [], serverNow: SERVER_NOW },
+  '/hero/lineup': { lineups: [], troopCap: 360, serverNow: SERVER_NOW },
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
@@ -533,6 +535,8 @@ interface Harness {
   readonly lastComposePick: { readonly view: HeroComposeView, readonly purse: readonly string[] } | null
   /** 最近一次推给抽卡面板的整块视图。 */
   readonly lastGacha: GachaPanelView | null
+  /** 最近一次推给编队编辑弹层的整块视图。 */
+  readonly lastLineupEdit: LineupEditView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -629,6 +633,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastSkillPick: { view: SkillPickView, heroName: string } | null = null
   let lastComposePick: { view: HeroComposeView, purse: readonly string[] } | null = null
   let lastGacha: GachaPanelView | null = null
+  let lastLineupEdit: LineupEditView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -699,6 +704,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     gacha: (view) => {
       lastGacha = view
+    },
+    lineupEdit: (view) => {
+      lastLineupEdit = view
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -791,6 +799,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastGacha() {
       return lastGacha
+    },
+    get lastLineupEdit() {
+      return lastLineupEdit
     },
     get lastCompose() {
       return lastCompose
@@ -2378,6 +2389,100 @@ test('抽卡：换池后十抽不够就不发、单抽够就发一条，并回�
     `抽完之后最后一次读应是卡池重拉，实际是 ${h.http.calls.at(-1)?.path}`)
   assert.equal(h.lastGacha?.resultTexts?.[0], '李劲 · 新武将（保底）',
     '抽到了什么必须写在屏上，否则玩家不知道那一下换来了什么')
+})
+
+/** 三名已拥有武将 + 三套编队（第 1 队只有主将程远，第 2 队主将沈牧，第 3 队空）。 */
+function lineupHeroList(): Record<string, unknown> {
+  const hero = (heroId: string, name: string) => ({
+    heroId, name, rarity: 'SR', level: 30, exp: 0, expToNext: 500, maxLevel: 60,
+    star: 1, maxStar: 5, awaken: 0, maxAwaken: 2,
+    mainSkillId: 'skill_a', mainSkillName: '破阵', mainSkillLevel: 1,
+    subSkillId: 'skill_b', subSkillName: '蓄势', subSkillLevel: 1, maxSkillLevel: 10,
+    equips: [], baseAttrs: { might: 80, command: 70, wisdom: 60 },
+    finalAttrs: { might: 80, command: 70, wisdom: 60 }, power: 1200, bondWith: null,
+  })
+  const lineup = (presetIndex: number, main: string | null, sub1: string | null,
+    sub2: string | null) => ({
+    presetIndex, main, sub1, sub2,
+    bonus: { atkFixed: 0, defFixed: 0, skillFixed: 0, commandValue: 0, capped: false, breakdown: [] },
+    activeBonds: [],
+  })
+  return {
+    heroes: [hero('h1', '程远'), hero('h2', '沈牧'), hero('h3', '李劲')],
+    lineups: [lineup(0, 'h1', null, null), lineup(1, 'h2', null, null), lineup(2, null, null, null)],
+    fragments: [], troopCap: 360, troopsInUse: 0, serverNow: SERVER_NOW,
+  }
+}
+
+test('编队编辑：换槽位只改界面不发请求，保存才发一条三槽最终态并回读', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', lineupHeroList())
+  await h.root.refresh('hero')
+
+  await h.root.openLineupEdit(0)
+  assert.deepEqual(h.lastLineupEdit?.slots.map((r) => [r.slot, r.heroName]),
+    [['main', '程远'], ['sub1', null], ['sub2', null]], '三槽按存档起步')
+  // 这里用 length 而不是 deepEqual：`assert.deepEqual` 带 `asserts actual is T`，
+  // 拿 `[]` 去比会把后面同一属性的类型收窄成 `never[]`，下一句 `.map()` 就报"属性不存在"
+  assert.equal(h.lastLineupEdit?.picks.length, 0, '没点任何一槽就不该摊出名单')
+
+  h.root.pickLineupSlot('sub1')
+  assert.deepEqual(h.lastLineupEdit?.picks.map((r) => [r.heroId, r.usable, r.note]),
+    [['h2', true, '已在第 2 队'], ['h3', true, null], ['h1', false, null]],
+    '程远在本队主将位 ⇒ 灰；沈牧在别的队 ⇒ **照常能点**，只标注')
+  h.root.chooseLineupHero('h2')
+  assert.equal(h.http.countOf('/hero/lineup'), 0, '逐次换人不逐次发：中途失败不该留下半支队')
+  assert.equal(h.lastLineupEdit?.slots[1]?.heroName, '沈牧', '换完立刻看得见')
+  assert.equal(h.lastLineupEdit?.saveText, '保存 · 2 名')
+
+  h.events.length = 0
+  const readsBefore = h.http.countOf('/hero/list')
+  await h.root.saveLineup()
+  const call = h.http.calls.filter((c) => c.path === '/hero/lineup').at(-1)
+  assert.deepEqual(
+    { presetIndex: call?.body.presetIndex, main: call?.body.main, sub1: call?.body.sub1, sub2: call?.body.sub2 },
+    { presetIndex: 0, main: 'h1', sub1: 'h2', sub2: null }, '发的是三槽的最终态')
+  assert.equal(typeof call?.body.requestId, 'string')
+  assert.deepEqual(h.events.filter((e) => e.name === 'hero_lineup_save').map((e) => e.params),
+    [{ presetIndex: '0', main: 'h1', sub1: 'h2', sub2: '' }], '空位上报空串而不是 null 字符串')
+  assert.equal(h.http.countOf('/hero/list'), readsBefore + 1, '保存完重读武将（编队与加成都在那份里）')
+
+  await h.root.saveLineup()
+  assert.equal(h.http.countOf('/hero/lineup'), 1, '保存即关编辑器：再点不该发出第二条')
+})
+
+test('编队编辑：清空一槽是合法意图，三槽全空保存写「清空这一队」', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', lineupHeroList())
+  await h.root.refresh('hero')
+
+  await h.root.openLineupEdit(0)
+  h.root.pickLineupSlot('main')
+  h.root.clearLineupSlot()
+  assert.equal(h.lastLineupEdit?.slots[0]?.empty, true)
+  assert.equal(h.lastLineupEdit?.saveText, '保存（清空这一队）')
+  await h.root.saveLineup()
+  const call = h.http.calls.filter((c) => c.path === '/hero/lineup').at(-1)
+  assert.deepEqual(
+    { main: call?.body.main, sub1: call?.body.sub1, sub2: call?.body.sub2 },
+    { main: null, sub1: null, sub2: null }, '服务端接受 null = 这一位没人')
+})
+
+test('编队编辑：名册没读到时保存是空操作，并把理由说给玩家', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', {
+    heroes: [], lineups: [], fragments: [], troopCap: 0, troopsInUse: 0, serverNow: SERVER_NOW,
+  })
+  await h.root.refresh('hero')
+
+  await h.root.openLineupEdit(0)
+  h.errors.length = 0
+  await h.root.saveLineup()
+  assert.equal(h.http.countOf('/hero/lineup'), 0)
+  assert.deepEqual(h.errors.at(-1), ['hero', '武将列表还没读到'])
 })
 
 /** 两本标了主/副的技能书 + 一本没标的（同 effectKind，只有 effectTarget 分得开）。 */

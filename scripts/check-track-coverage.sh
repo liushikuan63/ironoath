@@ -90,6 +90,13 @@ const SKIP = new Set([
   "selectGachaPool",
   // 概率公示是一次读（B06 §6 的合规屏），不是玩家意图；要量"有没有人看公示"是独立的埋点设计
   "openGachaProbability",
+  // 编队编辑器同一条口径：意图是"把这一队提交上去"（saveLineup 里打 hero_lineup_save）。
+  // 开编辑器是去看现在怎么排的，点槽位与换选中都是同一次编辑的中间态（什么都没改到存档）
+  "openLineupEdit",
+  "pickLineupSlot",
+  "chooseLineupHero",
+  "clearLineupSlot",
+  "cancelLineupEdit",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")
