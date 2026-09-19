@@ -230,10 +230,16 @@ nextCostIron, canForge, blockReason, wornByHeroId}`。
 而"哪一阶认哪块石"这条规则住在 `HeroAppService#growByItem` 里（判的是**稀有度**），客户端要灰化按钮就得抄一遍 ——
 抄的代价与保险都写在 `game/hero/AwakenPick.ts` 头上，保险那条用例直接读服务端源码，镜像失效先红。
 
-**下一格 = 技能（V03-d 四条里的最后一条）**：`HeroItemReq.skillSlot` 多一步选槽位，
-`UP_HERO_SKILL` 的两本书各带 `effectTarget`（MAIN / SUB）⇒ 候选按 effectKind 筛、槽位按 effectTarget 对上，
-服务端对不上就拒（`growByItem` 里那句 `target != null && !target.equals(skillSlot.name())`）。
-「卸下」那条走的是装备库那一页（`265ee34`/`90d8a8d` 已接），不在这一格。
+**已收：技能（`13dd9a5`，台账 #276）⇒ V03-d-S1 四条选择动作全部落地**（升星 / 升级 / 觉醒 / 技能 / 换装 / 卸下，
+`hero.onHeroAction` 六个分支都有落点）。这一条的关键不是弹层，是**槽位归谁决定**：
+`HeroItemReq.skillSlot` 必须与那本书的 `effectTarget` 对上（`growByItem` 里那句会拒），
+而两本书在 `type` 与 `effectKind` 两列下完全同型 ⇒ 契约再补一列 `BagItem.effectTarget`，
+**书决定槽位**，不是玩家先选一个槽再赌一本对得上的书。没标注的书直接灰掉说明"是配置的事"，不猜。
+这一格**没有抄任何服务端规则**（与觉醒 #273 相反）：满级判定 `level < maxSkillLevel` 的两个数都来自 `HeroView`。
+
+**V03-d 剩下的只有真跑复验**：dev 上把号养成"有武将 + 有材料"后，
+`EQUIP_BACKEND=… node tools/verify-equip-runtime.mjs` 把两条 SKIP 变 PASS（#267 与换装那格欠的）；
+真机 / 微信开发者工具那一跑仍欠（卡 `--ironoath.ops.token`）。
 
 
 ### V04 · 赛季手册、当前目标与资产去向
