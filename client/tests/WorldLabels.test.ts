@@ -19,8 +19,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { WorldEntity } from '../assets/scripts/net/generated/WorldProtocol'
-import { entityCaption } from '../assets/scripts/game/world/WorldLabels'
+import type { WorldEntity, WorldEntityType } from '../assets/scripts/net/generated/WorldProtocol'
+import {
+  CAPTION_PLATE_HEIGHT, captionBox, captionPlateWidth, captionPriority, entityCaption,
+  pickVisibleCaptions,
+} from '../assets/scripts/game/world/WorldLabels'
+import type { CaptionCandidate } from '../assets/scripts/game/world/WorldLabels'
 
 function repoRoot(): string {
   let dir = process.cwd()
@@ -97,4 +101,91 @@ test('任何一类实体的文案都不会是 undefined / null 的字面量形�
     const caption = entityCaption(entity({ type }))
     assert.ok(!/^(null|undefined)$/i.test(caption), `${type} 在字段全空时印出了「${caption}」`)
   }
+})
+
+// ---------- 名牌藏牌口径（#275 实测：缩放 1 一格 30px、最窄的牌 40px，横向相邻两格放不下两张牌） ----------
+
+/** 缩放 1 的真实尺度：一格 30px，牌高 18px。 */
+const CELL = 30
+
+function plate(key: string, type: WorldEntityType, centerX: number, caption: string, pinned = false): CaptionCandidate {
+  return { key, type, box: captionBox(centerX, 0, 15, caption), pinned }
+}
+
+function keptKeys(candidates: readonly CaptionCandidate[]): string[] {
+  return Array.from(pickVisibleCaptions(candidates)).sort()
+}
+
+test('牌盒尺寸由文案算出：宽按字数、高就是画出来的那一条', () => {
+  const box = captionBox(100, 0, 15, '石料')
+  assert.equal(box.width, captionPlateWidth('石料'))
+  assert.equal(box.height, CAPTION_PLATE_HEIGHT)
+  assert.equal(box.x, 100 - box.width / 2, '盒子要以实体为心，否则判交判偏')
+  assert.ok(CAPTION_PLATE_HEIGHT > 0 && CAPTION_PLATE_HEIGHT <= 24,
+    `板高 ${CAPTION_PLATE_HEIGHT} 已经高过一格的三分之一，藏牌会藏得比看见的多`)
+})
+
+test('横向相邻两格的两张牌放不下：必藏其一（这条就是 #275 量到的那 4 对的形状）', () => {
+  const kept = keptKeys([
+    plate('RESOURCE:a', 'RESOURCE', 0, '石料'),
+    plate('RESOURCE:b', 'RESOURCE', CELL, '木材'),
+  ])
+  assert.equal(kept.length, 1, `相邻两格留了 ${kept.length} 张牌，两盒原点只差 ${CELL}px`)
+})
+
+test('隔一格就能放下两张：藏牌不是"无脑藏一半"（阈值判错时这条会红）', () => {
+  const kept = keptKeys([
+    plate('RESOURCE:a', 'RESOURCE', 0, '石料'),
+    plate('RESOURCE:b', 'RESOURCE', CELL * 2, '木材'),
+  ])
+  assert.deepEqual(kept, ['RESOURCE:a', 'RESOURCE:b'])
+})
+
+test('连排六格：留下的任意两张牌都不相交，且至少留下一张', () => {
+  const row = Array.from({ length: 6 }, (_, i) =>
+    plate(`RESOURCE:r${i}`, 'RESOURCE', i * CELL, '粮草'))
+  const visible = pickVisibleCaptions(row)
+  assert.ok(visible.size >= 1, '一整排牌全被藏了，那一屏等于没有标注')
+  const boxes = row.filter((entry) => visible.has(entry.key)).map((entry) => entry.box)
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i] as { x: number, y: number, width: number, height: number }
+      const b = boxes[j] as { x: number, y: number, width: number, height: number }
+      const ox = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
+      const oy = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+      assert.ok(!(ox > 1 && oy > 1), `留下的两张牌仍相交 ${Math.round(ox)}×${Math.round(oy)} —— 藏牌没生效`)
+    }
+  }
+})
+
+test('挤的时候按 城 > 资源 > 联盟建筑 > 怪物 > 行军 留牌', () => {
+  assert.ok(captionPriority('CITY') < captionPriority('RESOURCE'))
+  assert.ok(captionPriority('RESOURCE') < captionPriority('BUILDING'))
+  assert.ok(captionPriority('BUILDING') < captionPriority('MONSTER'))
+  assert.ok(captionPriority('MONSTER') < captionPriority('MARCH'))
+  // 同一点上城与资源挤：留城
+  assert.deepEqual(keptKeys([
+    plate('MONSTER:m', 'MONSTER', 0, 'Lv5'),
+    plate('CITY:c', 'CITY', 0, '无名君主'),
+    plate('RESOURCE:r', 'RESOURCE', 0, '铁矿'),
+  ]), ['CITY:c'])
+})
+
+test('玩家选中的那一张一定留，即使它优先级最低（选中项被藏起来读起来像"点没生效"）', () => {
+  assert.deepEqual(keptKeys([
+    plate('CITY:c', 'CITY', 0, '无名君主'),
+    plate('MARCH:m', 'MARCH', 0, '1200', true),
+  ]), ['MARCH:m'])
+})
+
+test('结果与输入顺序无关：同一帧重画不能让牌子闪来闪去', () => {
+  const candidates = [
+    plate('RESOURCE:a', 'RESOURCE', 0, '石料'),
+    plate('MONSTER:b', 'MONSTER', CELL, 'Lv5'),
+    plate('RESOURCE:c', 'RESOURCE', CELL * 2, '木材'),
+    plate('MONSTER:d', 'MONSTER', CELL * 3, 'Lv9'),
+  ]
+  const forward = keptKeys(candidates)
+  const backward = keptKeys([...candidates].reverse())
+  assert.deepEqual(backward, forward, '倒序输入选出另一批牌 ⇒ 每帧谁先占位是随机的')
 })

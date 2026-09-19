@@ -35,7 +35,9 @@ import { MarchPanelView } from './MarchPanelView'
 import { applySimpleSprite, applyTerrainSprite, applyTiledSprite } from './ArtCatalog'
 import type { ArtKey } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
-import { entityCaption } from '../game/world/WorldLabels'
+import {
+  CAPTION_PLATE_HEIGHT, captionBox, captionPlateWidth, entityCaption, pickVisibleCaptions,
+} from '../game/world/WorldLabels'
 import type { Unsubscribe } from '../core/EventBus'
 
 const { ccclass } = _decorator
@@ -790,6 +792,18 @@ export class WorldMap extends Component {
       return
     }
     const seen = new Set<string>()
+    /**
+     * 两趟：先把这一帧要画的实体连名牌盒子一起摆好，再决定哪几张牌写字。
+     * 缩放 1 时一格 30px、一张牌最窄 40px，横向相邻两格**放不下两张牌**（实测 4 对压叠），
+     * 所以藏牌的口径走 `pickVisibleCaptions`（引擎无关、可单测），不在这里判。
+     */
+    const placed: readonly {
+      readonly key: string
+      readonly node: Node
+      readonly type: WorldEntityType
+      readonly size: number
+      readonly caption: string
+    }[] = []
     for (const tile of tiles) {
       if (tile.fogged) {
         // 迷雾块的实体服务端本来就不下发，这里再挡一道：万一哪天下发了也不能画出来
@@ -799,9 +813,24 @@ export class WorldMap extends Component {
         const key = `${entity.type}:${entity.id}`
         seen.add(key)
         const node = this.acquireInto(pool, this.drawnEntities, key)
-        node.setPosition(new Vec3((entity.x + 0.5) * cell, (entity.y + 0.5) * cell, 0))
-        this.drawMarker(node, entity.type, entitySize(entity.type, cell), entityColor(entity.type), zoom > 0 ? entityCaption(entity) : '')
+        const x = (entity.x + 0.5) * cell
+        const y = (entity.y + 0.5) * cell
+        node.setPosition(new Vec3(x, y, 0))
+        const size = entitySize(entity.type, cell)
+        placed.push({
+          key, node, type: entity.type, size, caption: zoom > 0 ? entityCaption(entity) : '',
+        })
       }
+    }
+    const visible = pickVisibleCaptions(placed.filter((entry) => entry.caption !== '').map((entry) => ({
+      key: entry.key,
+      type: entry.type,
+      box: captionBox(entry.node.position.x, entry.node.position.y, entry.size, entry.caption),
+      pinned: entry.key === this.selectedKey,
+    })))
+    for (const entry of placed) {
+      this.drawMarker(entry.node, entry.type, entry.size, entityColor(entry.type),
+        visible.has(entry.key) ? entry.caption : '')
     }
     this.recycle(pool, this.drawnEntities, seen)
   }
@@ -961,23 +990,37 @@ export class WorldMap extends Component {
   private drawCaptionPlate(refs: MarkerRefs, caption: string, size: number): void {
     const label = refs.label
     const plate = refs.plate
+    const plateNode = plate.node
+    const plateBox = plateNode.getComponent(UITransform)
     const y = size / 2 + 11
     if (caption === '') {
       label.string = ''
       plate.enabled = false
+      // 板子盒子归零：池化节点会带着上一位的尺寸复用，留着旧盒子就等于"藏起来的牌还在占位"
+      plateBox?.setContentSize(new Size(0, 0))
       return
     }
     plate.enabled = true
     label.string = caption
     label.node.setPosition(new Vec3(0, y, 0))
-    const width = Math.min(150, 14 + caption.length * 13)
+    const width = captionPlateWidth(caption)
+    /**
+     * 板子节点自己承担"画出来的那一块"的几何：节点移到 y、盒子设成 width×板高、图形在自身中心画。
+     *
+     * <p>原来节点停在 (0,0)、图形按 `y-9` 偏着画，于是 `CaptionPlate` 的盒子与实际板子分家；
+     * 而 `Caption` 节点的 `UITransform` 由 `Label` 每帧按文字重写（实测 24×50 —— 那是**文字盒**，
+     * 不是板子）。两处都不能用来判"两张牌压不压叠"，#275 第一次量出的"2 对压叠"就是拿文字盒量的。
+     */
+    plateBox?.setAnchorPoint(0.5, 0.5)
+    plateBox?.setContentSize(new Size(width, CAPTION_PLATE_HEIGHT))
+    plateNode.setPosition(new Vec3(0, y, 0))
     plate.clear()
     plate.fillColor = COLOR_PLATE
-    plate.roundRect(-width / 2, y - 9, width, 18, 5)
+    plate.roundRect(-width / 2, -CAPTION_PLATE_HEIGHT / 2, width, CAPTION_PLATE_HEIGHT, 5)
     plate.fill()
     plate.strokeColor = COLOR_PLATE_EDGE
     plate.lineWidth = 1
-    plate.roundRect(-width / 2, y - 9, width, 18, 5)
+    plate.roundRect(-width / 2, -CAPTION_PLATE_HEIGHT / 2, width, CAPTION_PLATE_HEIGHT, 5)
     plate.stroke()
   }
 

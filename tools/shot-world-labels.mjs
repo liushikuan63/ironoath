@@ -42,11 +42,19 @@ const PORT = Number(process.env.WORLD_SHOT_PORT ?? 8197)
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
 
+/**
+ * 账号必须是**固定的夹具号**，不能每跑一个新号。
+ *
+ * <p>每跑一个新号 ⇒ 家坐标随机 ⇒ 落在地图边角的那些号，`computeViewportKeys` 会按世界边界
+ * 把 3×3 裁成 2×3（实测连测三趟有两趟只到 6 块）。那不是缺陷，是**视野本来就被裁了**，
+ * 而覆盖率判据要的是"完整窗口"。固定号让家坐标不变，读数才可复现。
+ */
+const DEVICE = process.env.WORLD_LABEL_DEVICE ?? 'world-label-fixture-1'
 const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
-}, `world-label-${Date.now()}`)
+}, DEVICE)
 const page = await context.newPage()
 const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
@@ -72,15 +80,40 @@ const sawCaption = await page.waitForFunction(() => {
 }, { timeout: 25000, polling: 500 }).then((h) => h.jsonValue()).catch(() => 0)
 
 /**
- * 等地图**稳定**再拍。首跑只等到"有文字"就拍，结果拍到的是分块还在流式加载的中间态：
- * 屏幕只有左上角一小块地形、其余全黑、读数写着"缩放 0"、一个资源标签都没有 ——
- * 那既不是缺陷也不是通过，是**没拍完**。分块加载是异步的，只能等它自己停。
+ * 等地图**画满该画的那些块**再拍，而不是"等它不动了"。
  *
- * <p>判稳口径要盯**被测对象本身**：先前数的是 `name === 'Art'` 的后代节点总数（地形 + 实体混在一起），
- * 实测会"稳定"在块还没发全的时候 —— 有一跑数到 55 就判稳，那时 `drawnTiles` 只有 6 块，
- * 于是把 2×3 的中间态量成"短板 67%、地图铺不满"的假红。现在直接数 `drawnTiles`：
- * 外接盒、尺寸分堆用的都是它，判稳与判据看同一个对象才不会错开。
+ * <p>三次改错的经过（都记进台账，别再改回前两种）：
+ * ① 等"有文字"—— 拍到的是分块还在流式下发的中间态，屏幕只有左上角一小块地形、其余全黑；
+ * ② 数 `name === 'Art'` 的后代节点数判稳 —— 那个数把地形与实体混在一起，能在块没发全时
+ * 连着三次不变（实测判稳在 55，那时只有 6 块），于是把中间态量成"短板 67% 铺不满"的假红；
+ * ③ 数 `drawnTiles.size` 判稳 —— 对象对了，**"不动了"这个判据本身还是错的**：服务端分两批
+ * 下发（先 6 块、再补 3 块），中间有超过一个采样窗口的停顿，2026-09-19 23:1x 实测又量到一次 6 块。
+ *
+ * <p>正确口径是等**期望值**：期望块数 = `CHUNKS_PER_SIDE_ON_SCREEN²`，那个常数从
+ * `game/world/WorldZoom.ts` 现读（与视图同一真源，工具里不抄第二份）。
+ * 到不了期望值就退 2 说清"只到 k 块"—— 那是前置没满足（家落在地图边角时视野本来就会被裁），
+ * 不是判据失败，不许拿它当"地图铺不满"报缺陷。
  */
+const EXPECTED_TILES = (() => {
+  const src = readFileSync(
+    path.resolve(process.cwd(), 'client/assets/scripts/game/world/WorldZoom.ts'), 'utf8')
+  const hit = /CHUNKS_PER_SIDE_ON_SCREEN\s*=\s*(\d+)/.exec(src)
+  const side = Number(hit?.[1] ?? 0)
+  if (side < 1) {
+    console.error('[world][前置] 从 WorldZoom.ts 里读不到 CHUNKS_PER_SIDE_ON_SCREEN —— 判据的期望值没有来源了')
+    return 0
+  }
+  return side * side
+})()
+
+/** 板高也从真源现读（`WorldLabels.ts`），工具里不抄第二份数字。 */
+const PLATE_HEIGHT = (() => {
+  const src = readFileSync(
+    path.resolve(process.cwd(), 'client/assets/scripts/game/world/WorldLabels.ts'), 'utf8')
+  const hit = /CAPTION_PLATE_HEIGHT\s*=\s*(\d+)/.exec(src)
+  return Number(hit?.[1] ?? 0)
+})()
+
 async function countTiles() {
   return page.evaluate(() => {
     let map = null
@@ -94,15 +127,25 @@ async function countTiles() {
     return map === null ? -1 : map.drawnTiles.size
   })
 }
-let stable = 0
 let last = -1
-for (let attempt = 0; attempt < 30 && stable < 3; attempt += 1) {
-  await page.waitForTimeout(700)
-  const now = await countTiles()
-  stable = now === last && now > 0 ? stable + 1 : 0
-  last = now
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  await page.waitForTimeout(500)
+  last = await countTiles()
+  if (last >= EXPECTED_TILES) break
 }
-console.log(`[world] 地形块数稳定在 ${last} 块（连续 ${stable} 次未变）`)
+console.log(`[world] 地形块数 ${last} / 期望 ${EXPECTED_TILES}（期望值取自 WorldZoom 的每边块数）`)
+if (EXPECTED_TILES === 0) {
+  await browser.close()
+  await preview.close()
+  process.exit(2)
+}
+if (last < EXPECTED_TILES) {
+  console.error(`[world][前置] 只画到 ${last} 块（期望 ${EXPECTED_TILES}）—— 分块没发全或家落在地图边角被裁，`
+    + '覆盖率判据走不到，不要把这条读成"地图铺不满"')
+  await browser.close()
+  await preview.close()
+  process.exit(2)
+}
 if (last <= 0) {
   console.error('[world][前置] 一个地形块都没有 —— 地图没画出来，判据走不到')
   await browser.close()
@@ -246,7 +289,7 @@ if (!zoomed) {
 // 放大之后要等块与标签重新落定，否则读到的是半屏中间态（#272 那条假红的同一个形状）。
 for (let attempt = 0; attempt < 20; attempt += 1) {
   await page.waitForTimeout(500)
-  if ((await countTiles()) === 9) break
+  if ((await countTiles()) >= EXPECTED_TILES) break
 }
 const zoomAfter = await page.evaluate(() => {
   let hit = null
@@ -321,16 +364,27 @@ const overlap = await page.evaluate(() => {
     for (const c of node.children) visit(c)
   }
   visit(window.cc.director.getScene())
-  if (map === null) return { boxes: 0, pairs: 0, examples: [] }
+  if (map === null) return { boxes: 0, pairs: 0, examples: [], heights: {} }
   const boxes = []
+  // 高度分堆：板子画的是 18 高，若这里冒出 50（文字盒）或 100（池默认）就说明量的又不是画出来的那块
+  // —— #271/#272/#275 三次都栽在这条上，所以把分堆打在输出里当自检。
+  const heights = {}
   for (const node of map.drawnEntities.values()) {
+    /**
+     * 量 `CaptionPlate`（板子本体），不量 `Caption`：后者挂着 `Label`，它的 `UITransform`
+     * 每帧被组件按文字尺寸重写（实测 24×50），量到的不是玩家看见的那块牌。
+     */
+    const plateNode = node.getChildByName('CaptionPlate')
+    const box = plateNode !== null ? plateNode.getComponent('cc.UITransform') : null
     const caption = node.getChildByName('Caption')
-    const box = caption !== null ? caption.getComponent('cc.UITransform') : null
     const label = caption !== null ? caption.getComponent('cc.Label') : null
     if (box === null || label === null || label.string === '') continue
-    if (!node.activeInHierarchy) continue
+    if (!node.activeInHierarchy || !box.node.activeInHierarchy) continue
     const r = box.getBoundingBoxToWorld()
+    if (r.width <= 0 || r.height <= 0) continue
     boxes.push({ text: label.string, x: r.x, y: r.y, w: r.width, h: r.height })
+    const key = `${Math.round(r.width)}x${Math.round(r.height)}`
+    heights[key] = (heights[key] ?? 0) + 1
   }
   const hits = []
   let pairs = 0
@@ -342,16 +396,35 @@ const overlap = await page.evaluate(() => {
       if (ox > 1 && oy > 1) {
         pairs += 1
         if (hits.length < 5) hits.push(`${a.text} × ${b.text}（压 ${Math.round(ox)}×${Math.round(oy)}）`
-          + ` @(${Math.round(a.x)},${Math.round(a.y)})/(${Math.round(b.x)},${Math.round(b.y)})`)
+          + ` 盒 ${Math.round(a.w)}×${Math.round(a.h)}@(${Math.round(a.x)},${Math.round(a.y)})`
+          + ` / ${Math.round(b.w)}×${Math.round(b.h)}@(${Math.round(b.x)},${Math.round(b.y)})`)
       }
     }
   }
-  return { boxes: boxes.length, pairs, examples: hits }
+  return { boxes: boxes.length, pairs, examples: hits, heights }
 })
 await browser.close()
 await preview.close()
-console.log(`[world] 放大档在屏实体标签 ${overlap.boxes} 个，两两压叠 ${overlap.pairs} 对`
+console.log(`[world] 放大档在屏实体标签 ${overlap.boxes} 个，按盒子尺寸分堆 ${JSON.stringify(overlap.heights)}`)
+console.log(`[world] 两两压叠 ${overlap.pairs} 对`
   + `${overlap.examples.length > 0 ? `：${overlap.examples.join('；')}` : ''}`)
+/**
+ * 分堆自检：牌盒只可能是"字数 × 板高"这几种，出现 50（文字盒）或 100（池默认）
+ * 说明量的又不是画出来的那块 —— 这条判据已经错过三次（#271/#272/#275），所以钉成门。
+ */
+const badBoxes = PLATE_HEIGHT === 0 ? [] : Object.keys(overlap.heights).filter((key) => Number(key.split('x')[1]) !== PLATE_HEIGHT)
+if (PLATE_HEIGHT === 0) {
+  console.error('[world][前置] 从 WorldLabels.ts 里读不到 CAPTION_PLATE_HEIGHT —— 分堆自检没有基准，不判')
+} else if (badBoxes.length > 0) {
+  console.error(`[world] 判据失败：名牌盒分堆里出现非板高（${PLATE_HEIGHT}）的尺寸 ${badBoxes.join('、')} `
+    + '—— 量的又不是画出来的那块了，压叠对数不可信')
+  process.exit(1)
+}
+if (overlap.pairs > 0) {
+  console.error(`[world] 判据失败：仍有 ${overlap.pairs} 对名牌压叠（藏牌口径 `
+    + 'game/world/WorldLabels.ts#pickVisibleCaptions 未生效或被绕过）')
+  process.exit(1)
+}
 
 const captionTexts = captions.map((entry) => entry[0])
 const visibleCaptions = captions.filter((entry) => entry[1]).length
