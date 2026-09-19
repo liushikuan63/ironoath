@@ -110,6 +110,9 @@ public final class MongoSocialStore implements SocialStore {
      * 成员离开后的收尾。Mongo 侧没有独立的 playerId → squadId 索引（成员查询直接扫 members 数组），
      * 所以只有"小队已解散"这一半需要动作：整档删除，名字唯一索引随之释放。
      * 普通离队/被踢的成员表已经在 {@code saveSquad} 里更新过。
+     *
+     * <p>identity-exempt: 参数里的 playerId 在这份实现里没有可做的事 —— 端口要清的那张反查索引
+     * 只有内存版才有（见 {@code InMemorySocialStore}），这里"什么都不做"才是与内存版等价。
      */
     @Override
     public void unbindSquadMember(String squadId, String playerId) {
@@ -202,7 +205,12 @@ public final class MongoSocialStore implements SocialStore {
                 AllianceDocument.class, AllianceDocument.COLLECTION);
     }
 
-    /** Mongo 侧成员查询直接走 members 数组，没有需要解绑的独立索引。 */
+    /**
+     * Mongo 侧成员查询直接走 members 数组，没有需要解绑的独立索引。
+     *
+     * <p>identity-exempt: 与 {@link #unbindSquadMember} 同一条 —— 端口那个参数是为内存版的
+     * 反查索引准备的，这里刻意什么都不做（做一次删除反而会掩盖"忘记 save"的错误）。
+     */
     @Override
     public void unbindAllianceMember(String allianceId, String playerId) {
         // 有意为空：这只是内存实现里那张反查索引的收尾动作。

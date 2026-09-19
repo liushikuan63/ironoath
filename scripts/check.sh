@@ -12,6 +12,7 @@
 #       + 服务端不得出现 @Scheduled（惰性驱动是本仓库的时间不变量，B00 陷阱 2）。
 #       + 玩家可见文案禁工程黑话（这类字符串没有功能影响，只有玩家会读到 —— 见 #217）。
 #       + 图标在背包显示尺寸 26px 下两两可辨（母版一眼能分的两张图缩到 26px 可能完全同形 —— 见 #228）。
+#       + public 方法不许收了 playerId 却不用它（身份被静默丢弃 = 越权读改，编译与单测都看不见 —— 见 #256）。
 #       + Mongo 存档的 save 必须覆盖 Document 的每个字段（白名单漏一个 = 只在真 Mongo 上静默丢档）。
 #       + 微信小游戏产物（方向必须横屏；release 首包必须 ≤ 预算；没有产物则跳过）。
 set -euo pipefail
@@ -37,6 +38,7 @@ bash scripts/check-player-copy-jargon.sh
 bash scripts/check-icon-legibility.sh
 bash scripts/check-no-scheduled.sh
 bash scripts/check-mongo-set-coverage.sh
+bash scripts/check-identity-used.sh
 bash scripts/check-rank-payload.sh
 bash scripts/check-wechat-artifact.sh
 echo "[check] 全部静态检查通过。"
