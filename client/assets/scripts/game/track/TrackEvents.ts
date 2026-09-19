@@ -119,6 +119,8 @@ export const TRACK_EVENTS = {
   socialDisband: 'social_disband',
   /** 把队长/盟主交给某个成员（B26 S4）。带 memberId：转让去向集中在少数人身上就是"队长在培养接班人"的信号。 */
   socialTransfer: 'social_transfer',
+  /** 扩联盟人数上限（B26 S5）：中后期最大的资金消耗点，它为零说明没人把联盟当长期投入。 */
+  allianceExpand: 'alliance_expand',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

@@ -1512,6 +1512,15 @@ export class AppRoot {
       ['social', 'reddot'])
   }
 
+  /**
+   * 扩建联盟人数上限（B26 S5）：花联盟资金，不改成员，所以与捐献一样一按就发，
+   * 不做"两下才算数"（那套是给不可逆的组织去留用的）。
+   */
+  expandAlliance(): Promise<void> {
+    this.track(TRACK_EVENTS.allianceExpand)
+    return this.write('social', this.api.allianceExpand({}), ['social', 'reddot'])
+  }
+
   /** 表单没开着就不发视图（开着才画，避免每次刷新都弹人一脸表单）。 */
   private deliverSocialCreate(): void {
     const form = this.creating

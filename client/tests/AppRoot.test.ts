@@ -2687,6 +2687,19 @@ test('解散换一行按就是重新数第一下（按过退队再按解散，�
   assert.equal(h.http.countOf('/alliance/leave'), 0, '两行各数各的，不该串台')
 })
 
+test('扩建联盟：一按就发一条，并发完重拉社交页（上限变了概况行要说得出新数字）', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/alliance/expand', summaryBody())
+  await h.root.start('dev-1', '君')
+  await h.root.expandAlliance()
+  const sent = h.http.calls.filter(c => c.path === '/alliance/expand')
+  assert.equal(sent.length, 1)
+  assert.ok(sent[0]?.body.requestId !== undefined, '扣联盟资金的写口必须带幂等键')
+  assert.equal(h.http.countOf('/social/summary') >= 2, true, '扩完要重读摘要：概况行上的上限是它给的')
+})
+
 test('转让小队队长：第一下只改字，换个人按就重新数，第二下才发且带上目标成员 id', async () => {
   const h = harness()
   h.http.overrides.set('/social/permissions', permissionBody())

@@ -1294,6 +1294,8 @@ export class GameBootstrap extends Component {
       social.onSocialTransfer = (scope, memberId) => {
         void this.root?.requestTransfer(scope, memberId)
       }
+      // 扩建（B26 S5）：花联盟资金，一按就发，与捐献同一条纪律
+      social.onSocialExpand = () => { void this.root?.expandAlliance() }
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }
       social.onDonate = tier => { void this.root?.donate(tier) }

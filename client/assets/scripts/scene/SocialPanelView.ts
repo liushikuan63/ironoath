@@ -119,7 +119,7 @@ interface RowDraft {
 
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
   | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
-  | 'socialExit'
+  | 'socialExit' | 'socialExpand'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -191,6 +191,8 @@ export class SocialPanelView extends Component {
   onSocialExit: ((scope: ExitScope, action: ExitAction) => void) | null = null
   /** 点成员行上的「转让」（B26 S4）：同样两下才算数，目标就是这一行的人。 */
   onSocialTransfer: ((scope: ExitScope, memberId: string) => void) | null = null
+  /** 点概况行的「扩建」（B26 S5）：花联盟资金扩人数上限，一按就发（与捐献同一条纪律）。 */
+  onSocialExpand: (() => void) | null = null
 
   /** 进聊天页签（首次画之前先拉一次历史） */
   onChatEnter: (() => void) | null = null
@@ -248,6 +250,7 @@ export class SocialPanelView extends Component {
     this.onSocialCreate = null
     this.onSocialExit = null
     this.onSocialTransfer = null
+    this.onSocialExpand = null
     this.chatData = null
     this.chatControls = null
     this.chatInput = null
@@ -1078,6 +1081,10 @@ export class SocialPanelView extends Component {
         this.onSocialCreate?.(id === 'squad' ? 'squad' : 'alliance')
         return
       }
+      if (kind === 'socialExpand') {
+        this.onSocialExpand?.()
+        return
+      }
       if (kind === 'socialExit') {
         // 这两行只在各自那一页画出来，所以层级由当前页签给，动作由行给
         this.onSocialExit?.(this.tab === 'squad' ? 'squad' : 'alliance',
@@ -1262,17 +1269,20 @@ function allianceDrafts(alliance: AllianceSection, permissions: PermissionState,
   if (!alliance.joined) {
     return out
   }
+  // 扩建挂在概况行的按钮上（B26 S5）：它花的是联盟资金、不改成员，所以不需要"两下才算数"，
+  // 与捐献同一条纪律；能不能扩看 EXPAND_CAPACITY 那一位，由服务端下发
+  const expandGate = gate(permissions, 'ALLIANCE', 'EXPAND_CAPACITY')
   out.push({
     title: `${alliance.levelText} · ${alliance.memberText}`,
     titleColor: COLOR_COPPER_GOLD,
-    detail: [alliance.territoryText, alliance.myRoleText, alliance.expandText]
+    detail: [alliance.territoryText, alliance.myRoleText, alliance.expandText, expandGate.reason]
       .filter((part): part is string => part !== null && part.length > 0)
       .join(' · '),
     value: alliance.fundText,
-    actionText: null,
-    actionEnabled: false,
-    actionId: null,
-    actionKind: 'none',
+    actionText: '扩建',
+    actionEnabled: expandGate.allowed,
+    actionId: 'expand',
+    actionKind: 'socialExpand',
   })
   // 捐献三档：档位用完了就不摆按钮，摆了点了只会看到报错
   const tierNames = ['免费捐献', '资源捐献', '金币捐献']

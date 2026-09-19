@@ -71,6 +71,8 @@ const fixture = {
   leaveCalls: [],
   /** 转让发出去的那几枪（B26 S4） */
   transferCalls: [],
+  /** 扩建发出去的那几枪（B26 S5） */
+  expandCalls: [],
   /** 夹具成员数：D 相把它撑到 2，用来看那句"一屏画不下"的提示 */
   members: 1,
   summaryReads: 0,
@@ -112,7 +114,7 @@ const permissions = (scope) => (fixture.mode === 'leader'
   ? {
     scope, role: 'LEADER',
     permissions: ['DONATE', 'KICK_MEMBER', 'INVITE', 'APPROVE', 'EXPAND_TERRITORY',
-      'DISBAND_ALLIANCE', 'DISBAND_SQUAD', 'TRANSFER_LEADER'],
+      'DISBAND_ALLIANCE', 'DISBAND_SQUAD', 'TRANSFER_LEADER', 'EXPAND_CAPACITY'],
     serverNow: SERVER_NOW(),
   }
   : { scope, role: 'NONE', permissions: [], serverNow: SERVER_NOW() })
@@ -412,6 +414,27 @@ await context.route('**/social/permissions*', async (route) => {
     body: JSON.stringify({ code: 0, msg: '成功', data: permissions(scope), serverNow: SERVER_NOW() }),
   })
 })
+// 扩建打桩（B26 S5）
+await context.route('**/alliance/expand*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  fixture.expandCalls.push(JSON.parse(request.postData() ?? '{}'))
+  await route.fulfill({
+    status: 200,
+    headers: { ...cors(request), 'content-type': 'application/json' },
+    body: JSON.stringify({
+      code: 0, msg: '成功',
+      data: {
+        squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+        helpRemainingToday: 20, events: [], serverNow: SERVER_NOW(),
+      },
+      serverNow: SERVER_NOW(),
+    }),
+  })
+})
 // 转让打桩（B26 S4）
 await context.route('**/alliance/transfer*', async (route) => {
   const request = route.request()
@@ -556,10 +579,16 @@ check('B26 恰好一条 /alliance/transfer，且带的就是那一行的成员 i
   `1/${MEMBER.id}`)
 await shot('B-two-step-transfer')
 const headerAfter = ((await readRows())?.rows ?? []).find(r => r.title.startsWith('Lv3'))
-checkTrue('B27 联盟概况行上一颗按钮都不该有（池化复用：上一行留下的那颗「转让」必须显式收起 —— '
-  + '第一版就是凭空多出一颗转让键，而所有读数都是绿的）',
+checkTrue('B27 联盟概况行上只有一颗「扩建」，绝不带着上一行留下的那颗「转让」（池化复用不重置就等于还挂着）',
   headerAfter !== undefined && headerAfter.secondActive === false
-    && headerAfter.buttonActive === false)
+    && headerAfter.caption === '扩建')
+const expandBefore = fixture.expandCalls.length
+check('B28 点概况行的「扩建」（花联盟资金，一按就发，不做两下）',
+  await page.evaluate(TAP_CAPTION('扩建')), 'tapped')
+await page.waitForTimeout(1_500)
+check('B29 恰好一条 /alliance/expand，带幂等键',
+  `${fixture.expandCalls.length - expandBefore}/${(fixture.expandCalls[0]?.requestId ?? '').length >= 8}`,
+  '1/true')
 
 // ============================ 相位 C：同一份摘要，权限换成空表 ============================
 fixture.mode = 'none'
@@ -592,6 +621,11 @@ checkTrue('C7 同一行第二颗「解散联盟」灰着并写原因（DISBAND_A
   leaveC !== undefined && JSON.stringify(leaveC.color2) === JSON.stringify([DIM.r, DIM.g, DIM.b])
     && leaveC.detail.includes('你当前的职位不能做这件事'))
 const memberC = (snapC?.rows ?? []).find(r => r.caption === '踢出')
+const headerC = (snapC?.rows ?? []).find(r => r.title.startsWith('Lv3'))
+checkTrue('C8b 权限清空后「扩建」灰着并写原因（EXPAND_CAPACITY 是服务端下发的位）',
+  headerC !== undefined && headerC.caption === '扩建'
+    && JSON.stringify(headerC.color) === JSON.stringify([DIM.r, DIM.g, DIM.b])
+    && headerC.detail.includes('你当前的职位不能做这件事'))
 checkTrue('C8 「转让」跟着权限一起灰（它看的是 TRANSFER_LEADER 那一位，不是"我是盟主"这句猜测）',
   memberC !== undefined && memberC.caption2Text === '转让'
     && JSON.stringify(memberC.color2) === JSON.stringify([DIM.r, DIM.g, DIM.b]))
