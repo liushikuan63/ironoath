@@ -25,12 +25,11 @@ const ROOTS = ['client/assets/scripts/scene', 'client/assets/scripts/game']
 // 与台账编号豁免清单同一条纪律：**这个清单应当长期为空** —— 留着已经失效的条目，
 // 等于给下一次"顺手写句黑话"开后门。清掉时连注释里的日期一起删。
 const KNOWN_DEBT = [
-  // 2026-09-20（台账 #289/#290 那两格的副产物）：`AppRoot.rejectNeeds` 五句「…选择器未接入」，
-  // 其中两句还把 `stageId`/`reportId` 印进玩家提示（874/905/1987/2136/2188 行）。
-  // **这个文件此刻正被并行会话持有**（heroCompose 编排在途），不由本门代改 ⇒ 只挂豁免，不改文案。
-  // 接手那一格的人：把五句改成玩家读得懂的话，然后**连这两条豁免与这段注释一起删掉**。
-  { file: 'game/session/AppRoot.ts', word: '未接入' },
-  { file: 'game/session/AppRoot.ts', word: '选择器' },
+  // 2026-09-19：曾挂过一条 `AppRoot.sellItem` 的「服务端还没有出售接口」——
+  // B24 裁决④把出售整条撤下（按钮与表列一起删），那句话随之消失，豁免当场清空。
+  // 2026-09-20：同样形状又清掉一次 —— `AppRoot.rejectNeeds` 那五句「…选择器未接入」（其中两句把
+  // `stageId`/`reportId` 印进提示）改走 `game/ui/BlockedPickCopy.ts`，豁免与文案**同批**删除。
+  // 留空不是形式：这一栏一旦长期为空，说明"文件正被别人改"不再是留下黑话的理由。
 ]
 
 function* walk(dir) {

@@ -86,6 +86,7 @@ import type { PayView } from '../pay/GiftPayFlow'
 import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
 import { ClientReddotTree } from '../reddot/ReddotTree'
+import { pickUnavailable, actionUnavailable } from '../ui/BlockedPickCopy'
 import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army/AutoTrain'
 import { buildShopPanel, buyBodyOf, buyResultText, shopRowStateText } from '../shop/ShopPanel'
 import type { ShopPanelView } from '../shop/ShopPanel'
@@ -871,7 +872,7 @@ export class AppRoot {
         return Promise.resolve()
       }
       if (this.targets.speedupTargetChoice === undefined) {
-        this.rejectNeeds('bag', '这个道具要先选择目标，目标选择器未接入')
+        this.rejectNeeds('bag', pickUnavailable('加速的队列'))
         return Promise.resolve()
       }
       this.targets.speedupTargetChoice(options, (picked) => {
@@ -902,7 +903,7 @@ export class AppRoot {
     }
     if (this.targets.lineupChoice === undefined) {
       this.track(TRACK_EVENTS.battleStart, { battleType: 'stage', stageId, blocked: 'lineup_picker' })
-      this.rejectNeeds('stage', `挑战 "${stageId}" 要先选出战阵容，阵容选择器未接入`)
+      this.rejectNeeds('stage', pickUnavailable('出战阵容'))
       return
     }
     this.track(TRACK_EVENTS.battleStart, { battleType: 'stage', stageId, blocked: 'lineup_picker' })
@@ -1984,7 +1985,7 @@ export class AppRoot {
       return
     }
     if (this.targets.chatActionChoice === undefined) {
-      this.rejectNeeds('chat', '这条消息能举报或拉黑，但动作选择器未接入')
+      this.rejectNeeds('chat', actionUnavailable('举报或拉黑'))
       return
     }
     await this.ensureChatLists()
@@ -2133,7 +2134,7 @@ export class AppRoot {
   async manageBlocks(): Promise<void> {
     await this.ensureBlocks()
     if (this.targets.chatActionChoice === undefined) {
-      this.rejectNeeds('chat', '黑名单要先接入动作选择器才能解除')
+      this.rejectNeeds('chat', actionUnavailable('解除拉黑'))
       return
     }
     if (this.myBlocked.length === 0) {
@@ -2185,7 +2186,7 @@ export class AppRoot {
    */
   requestShare(reportId: string): void {
     if (this.targets.shareChannelChoice === undefined) {
-      this.rejectNeeds('reports', `分享 "${reportId}" 要先选目标频道，频道选择器未接入`)
+      this.rejectNeeds('reports', pickUnavailable('发到哪个频道'))
       return
     }
     this.targets.shareChannelChoice(buildShareChannelChoices(), (choice) => {
