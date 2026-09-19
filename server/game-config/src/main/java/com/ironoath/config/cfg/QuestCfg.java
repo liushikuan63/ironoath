@@ -4,7 +4,7 @@ package com.ironoath.config.cfg;
 
 /**
  * 配置表 quest 的一行。
- * 任务表。B02 字段：目标类型/目标值/奖励，四类主/支/日/周常。goalTarget 指向具体配置 id（建筑/兵种/野怪/章节/卡池）；无特定目标的任务（如「打野 3 次」不限定哪只怪）直接省略该字段，而不是填空串——空串是一个「看起来有值但没值」的状态，会让读取方分不清是漏填还是本就不需要。
+ * 任务表。B02 字段：目标类型/目标值/奖励，四类主/支/日/周常。goalTarget 指向具体配置 id（建筑/兵种/野怪/章节/卡池）；无特定目标的任务（如「打野 3 次」不限定哪只怪）直接省略该字段，而不是填空串——空串是一个「看起来有值但没值」的状态，会让读取方分不清是漏填还是本就不需要。 battlePassPoints 列（B24 S-d-c）：每次领取这条任务给多少战令积分。战令没有自己的任务体系 —— 分值挂在既有的任务上，是裁决② 的原话；日常 20 分意味着「每天清完日常约 60 分」，45 天赛季靠日常就能打满 3000 分。
  *
  * <p>本类型由生成器产出，<b>禁止手改</b>：改 {@code contract/config/quest.json} 的 fieldTypes 后运行 {@code npm run gen}。
  */
@@ -23,7 +23,8 @@ public record QuestCfg(
         RewardFragmentRarity rewardFragmentRarity,   // 枚举，取值见 QuestRewardFragmentRarity
         String rewardHeroId,   // 外键，指向 hero 表的 id
         String rewardHeroChoices,
-        String preQuest)   // 外键，指向 quest 表的 id
+        String preQuest,   // 外键，指向 quest 表的 id
+        long battlePassPoints)
 {
     /** 枚举取值与配置表 fieldTypes 中的 ENUM 声明完全一致（CI 校验）。 */
     public enum QuestType {

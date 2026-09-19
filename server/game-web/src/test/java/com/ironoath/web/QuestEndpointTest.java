@@ -70,6 +70,7 @@ class QuestEndpointTest {
     @Autowired private InventoryRepository inventories;
     @Autowired private TimeService timeService;
     @Autowired private com.ironoath.config.ConfigRegistry configs;
+    @Autowired private com.ironoath.web.battlepass.BattlePassService battlePass;
     @Autowired private com.ironoath.core.event.GameEventBus bus;
     @Autowired private com.ironoath.web.service.GachaAppService gachaAppService;
     @Autowired private com.ironoath.web.service.SocialAppService social;
@@ -122,6 +123,7 @@ class QuestEndpointTest {
     void claimPaysExactlyOnce() {
         String playerId = newPlayer();
         long goldBefore = goldOf(playerId);
+        long pointsBefore = battlePass.status(playerId).points();
         seedComplete(playerId, "quest_side_01");   // 支线、无前置、奖励 50 金
 
         QuestListResp before = quests.list(playerId);
@@ -133,6 +135,10 @@ class QuestEndpointTest {
         assertThat(claimed.rewards()).as("回执里有实际发放的明细").hasSize(1);
         assertThat(goldOf(playerId)).as("奖励必须真的到账 —— 只推进状态等于玩家点了个寂寞")
                 .isEqualTo(goldBefore + 50L);
+        long pointsAfter = battlePass.status(playerId).points();
+        assertThat(pointsAfter - pointsBefore)
+                .as("B24 S-d-c：领一次任务就给战令加分，加多少由 quest 表那一列给")
+                .isEqualTo(configs.get(com.ironoath.config.cfg.QuestCfg.class, "quest_side_01").battlePassPoints());
         assertThat(claimed.claimableCount()).as("领完就没有可领的了").isZero();
         assertThat(quests.list(playerId).claimableCount()).isZero();
 
@@ -142,6 +148,7 @@ class QuestEndpointTest {
                 .as("重复领取必须被拒（与「没完成」分开的码）")
                 .isEqualTo(ErrorCode.QUEST_ALREADY_CLAIMED.code());
         assertThat(goldOf(playerId)).as("被拒的那次不能发钱").isEqualTo(goldBefore + 50L);
+        assertThat(battlePass.status(playerId).points()).as("被拒的那次也不能加分").isEqualTo(pointsAfter);
     }
 
     @Test

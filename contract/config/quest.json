@@ -1,7 +1,7 @@
 {
   "table": "quest",
   "version": 3,
-  "comment": "任务表。B02 字段：目标类型/目标值/奖励，四类主/支/日/周常。goalTarget 指向具体配置 id（建筑/兵种/野怪/章节/卡池）；无特定目标的任务（如「打野 3 次」不限定哪只怪）直接省略该字段，而不是填空串——空串是一个「看起来有值但没值」的状态，会让读取方分不清是漏填还是本就不需要。",
+  "comment": "任务表。B02 字段：目标类型/目标值/奖励，四类主/支/日/周常。goalTarget 指向具体配置 id（建筑/兵种/野怪/章节/卡池）；无特定目标的任务（如「打野 3 次」不限定哪只怪）直接省略该字段，而不是填空串——空串是一个「看起来有值但没值」的状态，会让读取方分不清是漏填还是本就不需要。 battlePassPoints 列（B24 S-d-c）：每次领取这条任务给多少战令积分。战令没有自己的任务体系 —— 分值挂在既有的任务上，是裁决② 的原话；日常 20 分意味着「每天清完日常约 60 分」，45 天赛季靠日常就能打满 3000 分。",
   "designNote": "10 条主线严格复刻 B00 的五分钟体验与首日目标，顺序不可调：落地建城→秒升2级→首战全胜→首抽武将→加入小队→完成第一章→加入联盟。两处排序理由：首抽武将排在首战之后（先证明兵力有用，再给武将这个放大器）；加入小队排在首抽之后（有值得炫耀的东西才愿意社交）。日/周常每条精确对应一个系统（PVE/兵力/社交/组织），没有一条是登录即完成的凑数任务。\n【rewardFragmentRarity（2026-09-11 加列）】四行带碎片的任务原本只写了数量、没写哪一档，而发碎片必须指定稀有度（RewardType.HERO_FRAGMENT 的 id 就是稀有度）。取值来源：quest_main_09 的 why 自己写着「2 个 SR 碎片」，其余三行取 N —— item 表 item_mat_hero_frag_n 的 why 明写「N 档碎片投放上给最宽松的渠道（签到与主线）」。不带碎片奖励的行留空（不是 \"N\"）：空表示这一行不发碎片，而 N 表示发 N 档 —— 两者混起来会让「多发了一种奖励」看不出来。\n【rewardHeroId / rewardHeroChoices（2026-09-12 加列）】B06 §1「主线赠送：首日必得 1 名 SR」此前零实现，表现是 troopCap 恒为 0（新号没武将 ⇒ 训不了兵 ⇒ quest_main_03 死锁）。两列分工：rewardHeroId = 直接送这名武将（ref 指向 hero 表，单值）；rewardHeroChoices = 逗号分隔的候选武将 id，领奖时由玩家挑一个（首日送将按裁决走这条）。两者互斥（一行不许同时写）——同一份奖励既指定又让挑，语义无从判断。",
   "fieldTypes": {
     "id": "STRING_KEY",
@@ -20,7 +20,8 @@
     "rewardHeroChoices": "?STRING",
     "preQuest": "?REF:quest",
     "why": "?STRING",
-    "todo": "?STRING"
+    "todo": "?STRING",
+    "battlePassPoints": "LONG_NONNEG"
   },
   "rows": [
     {
@@ -37,7 +38,8 @@
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
       "why": "第一个主线任务只要求「把主城升级 2 次」—— 口径是**次数**（GoalType.UPGRADE_BUILDING 是累加型，事件带 1），与 B12 原文「升级建筑 N 次」一致。**2026-09-12 改文案**：此前这里写的是「只要求主城 2 级」，而累加语义下主城升到 2 级只算 1 次、升到 3 级才算完成 —— 一句撒谎的 why 会让下一个人以为代码错了。目标仍然是「小到玩家在看懂界面前就已经完成」：两次升级的资源来自初始库存（各 1000 木石，1→2 级与 2→3 级都在其上），第一次正反馈给得毫不费力。 【2026-09-12 加列：本任务额外赠送一名 SR（三选一）】B06 §1 明写「主线赠送：首日必得 1 名 SR」。挂在这一条而不是更晚的任务上，是因为 B00 的漏斗顺序是「首战野怪全胜 → 拿到首抽武将」，而打野要兵、兵要 troopCap、troopCap 要武将 —— 赠送必须发生在训练之前，否则 quest_main_03（训练 20 个 T1）永远做不完。候选给三名 SR 而不是固定一名：让玩家做一次有意义的选择，而三名的统率接近（65/65/70），无论选谁都不会让首日强度失衡。",
-      "rewardHeroChoices": "hero_sr_01,hero_sr_02,hero_sr_03"
+      "rewardHeroChoices": "hero_sr_01,hero_sr_02,hero_sr_03",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_02",
@@ -53,7 +55,8 @@
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
       "why": "让玩家第一次注意到粮草这条线，为后面养兵吃粮做铺垫。",
-      "preQuest": "quest_main_01"
+      "preQuest": "quest_main_01",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_03",
@@ -69,7 +72,8 @@
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
       "why": "20 个 T1 步兵是首战野怪的最小可用兵力（1 级野怪战力 50，新号 matchPower 100）。",
-      "preQuest": "quest_main_02"
+      "preQuest": "quest_main_02",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_04",
@@ -85,7 +89,8 @@
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
       "why": "B00 五分钟体验第四步「首战野怪全胜」。这一战必须赢——第一次战斗就输的玩家留存率会断崖。",
-      "preQuest": "quest_main_03"
+      "preQuest": "quest_main_03",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_05",
@@ -101,7 +106,8 @@
       "rewardHeroFragment": 1,
       "rewardFragmentRarity": "N",
       "why": "B00 五分钟体验第五步「拿到首抽武将」。送 1 次新手池抽卡。",
-      "preQuest": "quest_main_04"
+      "preQuest": "quest_main_04",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_06",
@@ -116,7 +122,8 @@
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
       "why": "B00 五分钟体验第六步「加入小队」。注意它排在首抽之后：手里有了值得炫耀的东西，玩家才愿意交朋友。",
-      "preQuest": "quest_main_05"
+      "preQuest": "quest_main_05",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_07",
@@ -132,7 +139,8 @@
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
       "why": "把兵营升级 5 次（首建算第 1 次）—— 兵营 5 级解锁 T2 兵种，把玩家从「有兵」推进到「兵种养成」。**2026-09-12 改文案**：此前写的是「兵营 5 级」，而口径是次数（首建后兵营为 1 级，第 5 次升完也正好是 5 级 —— 两者数值上等价，但措辞必须与 `GoalType.UPGRADE_BUILDING` 的累加语义一致，免得下一个人照字面去改代码）。",
-      "preQuest": "quest_main_06"
+      "preQuest": "quest_main_06",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_08",
@@ -148,7 +156,8 @@
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
       "why": "让玩家接触科技线。选屯田令是因为它门槛最低（学院 1 级）。",
-      "preQuest": "quest_main_07"
+      "preQuest": "quest_main_07",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_09",
@@ -164,7 +173,8 @@
       "rewardHeroFragment": 2,
       "rewardFragmentRarity": "SR",
       "why": "B00 首日目标「完成第一章主线」。奖励 500 金 + 2 个 SR 碎片，给首日一个明确的收尾感。",
-      "preQuest": "quest_main_08"
+      "preQuest": "quest_main_08",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_main_10",
@@ -179,7 +189,8 @@
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
       "why": "首日之后的第一个目标：联盟（主城 10 级 + D3）。主线到此把玩家完整交接给社交系统。",
-      "preQuest": "quest_main_09"
+      "preQuest": "quest_main_09",
+      "battlePassPoints": 25
     },
     {
       "id": "quest_side_01",
@@ -194,7 +205,8 @@
       "rewardGrain": 0,
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
-      "why": "支线：补资源缺口用的软引导。"
+      "why": "支线：补资源缺口用的软引导。",
+      "battlePassPoints": 15
     },
     {
       "id": "quest_side_02",
@@ -209,7 +221,8 @@
       "rewardGrain": 0,
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
-      "why": "支线：把城墙升级 3 次（城墙只能建在格子边缘，首建算第 1 次 —— 主城 4 级解锁建造资格）。城墙是「被打之后守住家」的关键，不能只靠玩家自己发现。**2026-09-12 改文案**：此前写的是「城墙 3 级」，而口径是次数（理由同 quest_main_07）；措辞改动不改数值、不改机制，只是让 why 与 `GoalType.UPGRADE_BUILDING` 的累加语义一致。"
+      "why": "支线：把城墙升级 3 次（城墙只能建在格子边缘，首建算第 1 次 —— 主城 4 级解锁建造资格）。城墙是「被打之后守住家」的关键，不能只靠玩家自己发现。**2026-09-12 改文案**：此前写的是「城墙 3 级」，而口径是次数（理由同 quest_main_07）；措辞改动不改数值、不改机制，只是让 why 与 `GoalType.UPGRADE_BUILDING` 的累加语义一致。",
+      "battlePassPoints": 15
     },
     {
       "id": "quest_daily_01",
@@ -223,7 +236,8 @@
       "rewardGrain": 0,
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
-      "why": "日常锚定 PVE 循环。3 次是一两分钟能做完但不会瞬间完成的量。"
+      "why": "日常锚定 PVE 循环。3 次是一两分钟能做完但不会瞬间完成的量。",
+      "battlePassPoints": 20
     },
     {
       "id": "quest_daily_02",
@@ -237,7 +251,8 @@
       "rewardGrain": 0,
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
-      "why": "日常锚定兵力补充。C00 公理四要求兵永远要补，日常把这个循环变成习惯。"
+      "why": "日常锚定兵力补充。C00 公理四要求兵永远要补，日常把这个循环变成习惯。",
+      "battlePassPoints": 20
     },
     {
       "id": "quest_daily_03",
@@ -251,7 +266,8 @@
       "rewardGrain": 0,
       "rewardHeroFragment": 0,
       "rewardFragmentRarity": null,
-      "why": "日常里塞一条社交任务：互助是小队最轻的互动，用它养成上线先看队友的习惯。"
+      "why": "日常里塞一条社交任务：互助是小队最轻的互动，用它养成上线先看队友的习惯。",
+      "battlePassPoints": 20
     },
     {
       "id": "quest_weekly_01",
@@ -265,7 +281,8 @@
       "rewardGrain": 0,
       "rewardHeroFragment": 1,
       "rewardFragmentRarity": "N",
-      "why": "周常锚定组织行为。集结是弱者唯一的出路（C00 公理一），必须用任务反复提醒玩家这条路存在。"
+      "why": "周常锚定组织行为。集结是弱者唯一的出路（C00 公理一），必须用任务反复提醒玩家这条路存在。",
+      "battlePassPoints": 60
     },
     {
       "id": "quest_weekly_02",
@@ -279,7 +296,8 @@
       "rewardGrain": 0,
       "rewardHeroFragment": 1,
       "rewardFragmentRarity": "N",
-      "why": "周常锚定 PVE 进度。"
+      "why": "周常锚定 PVE 进度。",
+      "battlePassPoints": 60
     }
   ]
 }

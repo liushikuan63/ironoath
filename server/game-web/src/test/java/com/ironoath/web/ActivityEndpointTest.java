@@ -57,6 +57,7 @@ class ActivityEndpointTest {
     @Autowired private ActivityProgressStore store;
     @Autowired private QuestEvents events;
     @Autowired private ConfigRegistry configs;
+    @Autowired private com.ironoath.web.battlepass.BattlePassService battlePass;
 
     @BeforeEach
     void resetStores() {
@@ -136,6 +137,7 @@ class ActivityEndpointTest {
         long now = System.currentTimeMillis();
         events.progress(playerId, GoalType.KILL_MONSTER, "m1", 50L, now);
         long goldBefore = goldOf(playerId);
+        long pointsBefore = battlePass.status(playerId).points();
 
         String requestId = "req-" + UUID.randomUUID();
         JsonNode first = claim(playerId, "activity_monster_hunt", requestId);
@@ -146,10 +148,15 @@ class ActivityEndpointTest {
         long goldAfter = goldOf(playerId);
         assertThat(goldAfter).as("500 金币必须真的到账").isEqualTo(goldBefore + 500L);
         assertThat(first.get("data").get("rewards")).isNotEmpty();
+        long pointsAfter = battlePass.status(playerId).points();
+        assertThat(pointsAfter - pointsBefore)
+                .as("B24 S-d-c：领一次活动就给战令加分，加多少由 activity 表那一列给")
+                .isEqualTo(configs.get(com.ironoath.config.cfg.ActivityCfg.class, "activity_monster_hunt").battlePassPoints());
 
         // 同 requestId 重投：拒，且不再发货
         assertThat(codeOf(claim(playerId, "activity_monster_hunt", requestId))).isEqualTo(1002);
         assertThat(goldOf(playerId)).as("重投不能再发一次奖").isEqualTo(goldAfter);
+        assertThat(battlePass.status(playerId).points()).as("重投也不能再加一次分").isEqualTo(pointsAfter);
 
         // 换 requestId 再领：同窗口重复领取被拒（12006），detail 说清是"已领过"
         JsonNode again = claim(playerId, "activity_monster_hunt", "req-" + UUID.randomUUID());

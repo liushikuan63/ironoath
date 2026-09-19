@@ -58,11 +58,14 @@ public class ActivityAppService {
     private final PlayerLock playerLock;
     private final TimeService timeService;
     private final ConfigRegistry configs;
+    /** 战令积分（B24 S-d-c）。与任务那条同源：分值挂在既有活动上，不新增任务体系。 */
+    private final com.ironoath.web.battlepass.BattlePassService battlePass;
 
     public ActivityAppService(ActivityProgressStore store, ActivityRulesAssembler assembler,
                               ActivityAnchors anchors, RewardService rewardService, RewardNames names,
                               IdempotencyStore idempotency, PlayerLock playerLock,
-                              TimeService timeService, ConfigRegistry configs) {
+                              TimeService timeService, ConfigRegistry configs,
+                              com.ironoath.web.battlepass.BattlePassService battlePass) {
         this.store = store;
         this.assembler = assembler;
         this.anchors = anchors;
@@ -72,6 +75,7 @@ public class ActivityAppService {
         this.playerLock = playerLock;
         this.timeService = timeService;
         this.configs = configs;
+        this.battlePass = battlePass;
     }
 
     /** 活动列表。顺序 = 表序；含 EXPIRED 的行（轮到下一轮之前它看得见、领不了）。 */
@@ -139,7 +143,12 @@ public class ActivityAppService {
                             playerId, req.activityId(), rewards, result.compensationId());
                 }
             }
-            LOG.info("活动奖励已领取 playerId={} activityId={} 奖励={}", playerId, req.activityId(), granted);
+            // 战令积分：只在领取成功这一下加（重放请求在 acquire(requestId) 那一步就被挡掉了）
+            long points = configs.get(com.ironoath.config.cfg.ActivityCfg.class, req.activityId()).battlePassPoints();
+            if (points > 0L) {
+                battlePass.addPoints(playerId, points, "activity:" + req.activityId());
+            }
+            LOG.info("活动奖励已领取 playerId={} activityId={} 奖励={} 战令积分+{}", playerId, req.activityId(), granted, points);
             return new ActivityClaimResp(true, granted,
                     stateOf(progress.phaseOf(req.activityId(), now, playerAnchor)));
         });

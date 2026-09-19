@@ -27,6 +27,7 @@ import com.ironoath.core.reward.RewardContext;
 import com.ironoath.core.reward.RewardItem;
 import com.ironoath.core.reward.RewardType;
 import com.ironoath.core.reward.RewardService;
+import com.ironoath.web.battlepass.BattlePassService;
 import com.ironoath.web.dto.generated.QuestClaimReq;
 import com.ironoath.web.dto.generated.QuestClaimResp;
 import com.ironoath.web.dto.generated.QuestListResp;
@@ -79,6 +80,8 @@ public class QuestAppService {
     private final QuestProgressStore store;
     private final TimeService timeService;
     private final RewardService rewardService;
+    /** 战令积分（B24 S-d-c）。战令没有自己的任务体系：积分就长在任务领取这一下上。 */
+    private final BattlePassService battlePass;
     private final IdempotencyStore idempotency;
     private final PlayerRepository players;
     private final SocialStore socialStore;
@@ -87,7 +90,8 @@ public class QuestAppService {
 
     public QuestAppService(ConfigRegistry configs, QuestRulesAssembler assembler,
                            QuestProgressStore store, TimeService timeService,
-                           RewardService rewardService, IdempotencyStore idempotency,
+                           RewardService rewardService, BattlePassService battlePass,
+                           IdempotencyStore idempotency,
                            PlayerRepository players, SocialStore socialStore,
                            PlayerLock playerLock, RewardNames names) {
         this.configs = configs;
@@ -95,6 +99,7 @@ public class QuestAppService {
         this.store = store;
         this.timeService = timeService;
         this.rewardService = rewardService;
+        this.battlePass = battlePass;
         this.idempotency = idempotency;
         this.players = players;
         this.socialStore = socialStore;
@@ -172,7 +177,13 @@ public class QuestAppService {
                                 playerId, questId, rewards, result.compensationId());
                     }
                 }
-                LOG.info("任务奖励已领取 playerId={} questId={} 奖励={}", playerId, questId, granted);
+                // 战令积分：**只在领取成功这一下加**，加多少由 quest 表那一列给。
+                // 幂等不必在这里再做一次：重放请求在时 acquire(requestId) 就被挡掉了，走不到这里
+                long points = configs.get(com.ironoath.config.cfg.QuestCfg.class, questId).battlePassPoints();
+                if (points > 0L) {
+                    battlePass.addPoints(playerId, points, "quest:" + questId);
+                }
+                LOG.info("任务奖励已领取 playerId={} questId={} 奖励={} 战令积分+{}", playerId, questId, granted, points);
                 return new QuestClaimResp(questId, rewardViews(granted), progress.claimableCount(), now);
             });
         } catch (RuntimeException e) {

@@ -31,7 +31,7 @@ export type ActivityConditionType =
 
 /**
  * 配置表 activity 的一行。
- * 活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。
+ * 活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。 battlePassPoints 列（B24 S-d-c）：领取这条活动奖励时给多少战令积分。与任务那条同源：分值挂既有活动上，不新增任务体系。
  *
  * 源表 version=1
  */
@@ -49,6 +49,7 @@ export interface ActivityCfg {
   /** 外键，指向 item 表的 id */
   rewardItemId: string
   rewardItemCount: number
+  battlePassPoints: number
 }
 
 /**
@@ -918,7 +919,7 @@ export type QuestRewardFragmentRarity =
 
 /**
  * 配置表 quest 的一行。
- * 任务表。B02 字段：目标类型/目标值/奖励，四类主/支/日/周常。goalTarget 指向具体配置 id（建筑/兵种/野怪/章节/卡池）；无特定目标的任务（如「打野 3 次」不限定哪只怪）直接省略该字段，而不是填空串——空串是一个「看起来有值但没值」的状态，会让读取方分不清是漏填还是本就不需要。
+ * 任务表。B02 字段：目标类型/目标值/奖励，四类主/支/日/周常。goalTarget 指向具体配置 id（建筑/兵种/野怪/章节/卡池）；无特定目标的任务（如「打野 3 次」不限定哪只怪）直接省略该字段，而不是填空串——空串是一个「看起来有值但没值」的状态，会让读取方分不清是漏填还是本就不需要。 battlePassPoints 列（B24 S-d-c）：每次领取这条任务给多少战令积分。战令没有自己的任务体系 —— 分值挂在既有的任务上，是裁决② 的原话；日常 20 分意味着「每天清完日常约 60 分」，45 天赛季靠日常就能打满 3000 分。
  *
  * 源表 version=3
  */
@@ -944,6 +945,7 @@ export interface QuestCfg {
   rewardHeroChoices?: string
   /** 外键，指向 quest 表的 id */
   preQuest?: string
+  battlePassPoints: number
 }
 
 /** resource.resourceKind 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
