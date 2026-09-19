@@ -85,6 +85,9 @@ import type { CreateOrderReq, CreateOrderResp, GiftPopupResp, OrderStatusResp } 
 import type {
   GuideProgressReq, GuideProgressResp, GuideScriptResp,
 } from '../../net/generated/GuideProtocol'
+import type {
+  RankListResp, RankSnapshotResp, RankType,
+} from '../../net/generated/RankProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -116,6 +119,21 @@ export class GameApi {
   /** GET /stamina/view（B09 §5）。 */
   staminaView(): Promise<NetOutcome<StaminaResp>> {
     return this.read<StaminaResp>('/stamina')
+  }
+
+  /**
+   * GET /rank/list?type=&page=（B23 §一 1）。纯读，客户端不做任何名次计算（B23 禁止项）。
+   *
+   * <p>`page` 出界由服务端夹到最后一页（而不是回空页）：所以这里不预判范围，
+   * 直接把服务端回显的 `page` 写进界面 —— 玩家点"下一页"点到头时，看到的是最后一页而不是一片空白。
+   */
+  rankList(type: RankType, page: number, size: number): Promise<NetOutcome<RankListResp>> {
+    return this.read<RankListResp>('/rank/list', { type, page, size })
+  }
+
+  /** GET /rank/snapshot?type=&dayKey=（B23 §一 2 的申诉读取；只回自己那一行）。 */
+  rankSnapshot(type: RankType, dayKey: string): Promise<NetOutcome<RankSnapshotResp>> {
+    return this.read<RankSnapshotResp>('/rank/snapshot', { type, dayKey })
   }
 
   /** POST /stamina/buy。扣金币与体力上限判定都在服务端。 */

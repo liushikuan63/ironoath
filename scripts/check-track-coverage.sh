@@ -47,6 +47,11 @@ const SKIP = new Set([
   // blockPlayer / unblockPlayer 里打点
   "openChatActions",
   "manageBlocks",
+  // 翻页是同一次阅读的延续：
+  // 打开榜那一下已经用 rank_view 记了类型，翻页再记会把一次浏览记成多次，而看板上要答的
+  // 「哪张榜有人看」已经答了；真要量"翻到第几页就没人翻了"，那是独立一格的埋点设计
+  "rankNextPage",
+  "rankPrevPage",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

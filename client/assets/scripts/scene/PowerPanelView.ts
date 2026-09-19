@@ -17,6 +17,8 @@
 
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3 } from 'cc'
 import { buildPowerPanel } from '../game/power/PowerPanel'
+import { RANK_TABS } from '../game/power/RankBoard'
+import type { RankBoardView, RankTabKey } from '../game/power/RankBoard'
 import type { PowerDetailResp } from '../net/generated/Protocol'
 import { applySystemUiFont } from './UiFont'
 
@@ -32,19 +34,24 @@ const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_ROW_ALT = new Color(48, 39, 33, 255)
 const COLOR_TOTAL = new Color(62, 44, 26, 255)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
+/** 我自己那一行：与其它行的底色区分开（玩家一眼就能找到自己） */
+const COLOR_ROW_SELF = new Color(72, 52, 24, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(158, 146, 128, 255)
 const COLOR_HINT = new Color(120, 168, 196, 255)
 
 const PANEL_WIDTH = 520
-const PANEL_HEIGHT = 620
-const ROW_HEIGHT = 40
+const PANEL_HEIGHT = 600
+const ROW_HEIGHT = 36
 const PADDING = 20
 
 @ccclass('PowerPanelView')
 export class PowerPanelView extends Component {
 
   private readonly rows: Node[] = []
+  /** 明细那份响应与榜单那份视图各存一份：它们来自两个端点，一个回来不该把另一个抹掉 */
+  private powerResp: PowerDetailResp | null = null
+  private rankView: RankBoardView | null = null
 
   /**
    * 渲染一次面板。
@@ -56,12 +63,57 @@ export class PowerPanelView extends Component {
    * 比不显示更糟。
    */
   render(resp: PowerDetailResp): void {
+    this.powerResp = resp
+    this.redraw()
+  }
+
+  /**
+   * 榜单那一块（B23 §一 3）。**整块视图由编排层组装好**：本文件不排页签顺序、不算名次、
+   * 不判断能不能翻页 —— 它只把 {@link RankBoardView} 画出来。
+   *
+   * <p>与 {@link render} 分开是两个数据源（明细来自 `/player/power`，榜来自 `/rank/list`），
+   * 其中一个回来时不能把另一个抹掉：合成一个入口的话，每次拉榜都会把明细画没。
+   */
+  renderRank(view: RankBoardView): void {
+    this.rankView = view
+    this.redraw()
+  }
+
+  /** 页签点击回调，由编排层注入（表现层不认识任何端点）。 */
+  onRankTab: ((key: RankTabKey) => void) | null = null
+  /** 翻页回调：-1 上一页 / +1 下一页。能不能翻由视图里的 canNext/canPrev 决定（服务端说了算） */
+  onRankPage: ((delta: number) => void) | null = null
+
+  /**
+   * 整块重画。
+   *
+   * <p>两个数据源各存一份、每次重画都从它们合成：这样"榜回来了但明细还没回来"不会互相覆盖。
+   */
+  private redraw(): void {
     this.clearRows()
-    const view = buildPowerPanel(resp)
     this.drawBackground()
 
     let y = PANEL_HEIGHT / 2 - PADDING
-    y = this.drawTitle('战力明细', y)
+    y = this.drawTitle(this.rankView?.activeKey === 'DETAIL' || this.rankView === null
+      ? '战力明细'
+      : '排行榜', y)
+    y = this.drawTabs(y)
+
+    if (this.rankView !== null && this.rankView.activeKey !== 'DETAIL') {
+      this.drawRankArea(this.rankView, y)
+      return
+    }
+    if (this.powerResp === null) {
+      this.drawHint('正在载入…', y)
+      return
+    }
+    this.drawDetail(this.powerResp, y)
+  }
+
+  /** 明细那一页：五行 + 总计 + 三个总览数（原来就是这个页面，一行没少）。 */
+  private drawDetail(resp: PowerDetailResp, startY: number): void {
+    const view = buildPowerPanel(resp)
+    let y = startY
 
     // 五行明细：顺序由逻辑层决定（建筑/部队/武将/科技/装备），表现层不重排。
     // 交替底色只是为了让五行在色块占位美术下还能分清行，正式美术会换成描边
@@ -85,6 +137,103 @@ export class PowerPanelView extends Component {
       y = this.drawHint(view.peakMemoryHint, y)
     }
     void y
+  }
+
+  /** 榜那一页：置顶的我的名次 + 行 + 翻页 + 说明。 */
+  private drawRankArea(view: RankBoardView, startY: number): void {
+    let y = startY
+    if (view.mine !== null) {
+      // 我的名次**恒在顶部**：玩家打开榜的第一个动作就是找自己，而自己在第 37 名
+      // 意味着要翻好几页 —— 置顶这一行让他一眼看到（数值全部来自服务端下发的 myRank/myValue）
+      y = this.drawRow(`我的名次 ${view.mine.rankText}`,
+        `${view.mine.valueLabel} ${view.mine.valueText}`,
+        COLOR_TOTAL, COLOR_COPPER_GOLD, y)
+    } else if (view.notRankedText !== null) {
+      y = this.drawHint(view.notRankedText, y)
+    }
+
+    for (const row of view.rows) {
+      // 只画 name：组织榜的名字里**服务端已经拼进了缩写**（`铁血盟[TTX]`），
+      // 再把 tag 附一次就成了「铁血盟[TTX][TTX]」—— tag 字段留着给正式美术做角标
+      y = this.drawRow(`${row.rankText}  ${row.name}`, row.valueText,
+        row.mine ? COLOR_ROW_SELF : COLOR_ROW, row.mine ? COLOR_COPPER_GOLD : COLOR_TEXT, y)
+    }
+    if (view.emptyText !== null) {
+      y = this.drawHint(view.emptyText, y)
+    }
+    if (view.noticeText !== null) {
+      y = this.drawHint(view.noticeText, y)
+    }
+    void y
+    this.drawPager(view)
+  }
+
+  /**
+   * 翻页：两个按钮 + 页号。灰掉的那一个不吃触摸（点了也不会发请求）。
+   *
+   * <p>纵向位置是**量出来的、不是按面板高度推的**：底部导航条占 -262..-210（与聊天面板那次
+   * 同一条实测，见收口清单 #200），画在 -250 时两个按钮整块压在导航条后面 —— 玩家点不到，
+   * 而「按钮画出来了」这类读数照样全绿。所以这里落在 -190（导航条上方 20）。
+   */
+  private drawPager(view: RankBoardView): void {
+    const bottom = -190
+    const label = this.createLabel(view.pageText, COLOR_TEXT_DIM, 18)
+    this.node.addChild(label.node)
+    label.node.setPosition(new Vec3(0, bottom, 0))
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    this.rows.push(label.node)
+
+    this.drawPagerButton('上一页', -140, bottom, view.canPrev, () => this.onRankPage?.(-1))
+    this.drawPagerButton('下一页', 140, bottom, view.canNext, () => this.onRankPage?.(1))
+  }
+
+  private drawPagerButton(text: string, x: number, y: number, enabled: boolean,
+    onClick: () => void): void {
+    const button = new Node('pager')
+    this.node.addChild(button)
+    const transform = button.addComponent(UITransform)
+    transform.setContentSize(120, 36)
+    button.setPosition(new Vec3(x, y, 0))
+    const graphics = button.addComponent(Graphics)
+    graphics.fillColor = enabled ? COLOR_ROW : COLOR_ROW_ALT
+    graphics.rect(-60, -18, 120, 36)
+    graphics.fill()
+
+    const label = this.createLabel(text, enabled ? COLOR_TEXT : COLOR_TEXT_DIM, 18)
+    button.addChild(label.node)
+    label.node.setPosition(new Vec3(0, 0, 0))
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    if (enabled) {
+      button.on('touch-start', () => onClick())
+    }
+    this.rows.push(button)
+  }
+
+  /** 页签条：五个页签等宽排开，当前那个用高亮底色（点击回调交给编排层）。 */
+  private drawTabs(y: number): number {
+    const tabs = this.rankView?.tabs ?? RANK_TABS.map(tab => ({
+      key: tab.key, label: tab.label, active: tab.key === 'DETAIL',
+    }))
+    const width = (PANEL_WIDTH - PADDING * 2) / tabs.length
+    tabs.forEach((tab, index) => {
+      const node = new Node(`tab-${tab.key}`)
+      this.node.addChild(node)
+      const transform = node.addComponent(UITransform)
+      transform.setContentSize(width - 4, 34)
+      node.setPosition(new Vec3(
+        -(PANEL_WIDTH - PADDING * 2) / 2 + width * index + width / 2, y - 17, 0))
+      const graphics = node.addComponent(Graphics)
+      graphics.fillColor = tab.active ? COLOR_TOTAL : COLOR_ROW
+      graphics.rect(-(width - 4) / 2, -17, width - 4, 34)
+      graphics.fill()
+
+      const label = this.createLabel(tab.label, tab.active ? COLOR_COPPER_GOLD : COLOR_TEXT, 17)
+      node.addChild(label.node)
+      label.horizontalAlign = Label.HorizontalAlign.CENTER
+      node.on('touch-start', () => this.onRankTab?.(tab.key))
+      this.rows.push(node)
+    })
+    return y - 34 - 10
   }
 
   /**

@@ -110,6 +110,12 @@ export const TRACK_EVENTS = {
    * 没有它，一次热更会在看板上长得像一次流失。
    */
   guideStep: 'guide_step',
+
+  /**
+   * 打开了一张榜（B23 §一 3）。参数是榜的类型 —— 看板上问的是"玩家到底看哪张榜"，
+   * 那决定了下一批内容往哪张榜上投人。翻页不发（同一次浏览的延续，发了会把一次阅读记成多次）。
+   */
+  rankView: 'rank_view',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

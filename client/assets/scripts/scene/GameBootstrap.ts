@@ -965,6 +965,13 @@ export class GameBootstrap extends Component {
     }
     if (power !== null) {
       out.power = resp => power.render(resp)
+      // 榜单与明细共用「战力」这一页（B23 裁决④）：页签与翻页的意图交给编排层，
+      // 面板自己不发请求也不判断能不能翻（能翻与否由服务端的 hasMore 决定）
+      out.rank = view => power.renderRank(view)
+      power.onRankTab = key => { void this.root?.openRankTab(key) }
+      power.onRankPage = delta => {
+        void (delta < 0 ? this.root?.rankPrevPage() : this.root?.rankNextPage())
+      }
     }
     if (search !== null) {
       out.targets = resp => search.attach(resp)

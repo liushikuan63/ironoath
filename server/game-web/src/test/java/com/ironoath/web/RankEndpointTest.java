@@ -127,26 +127,26 @@ class RankEndpointTest {
         ranks.reportKills(king, "老王", 30L);
         ranks.reportKills(mate, "小李", 200L);
 
-        var power = ranks.list(king, RankType.POWER, 1);
+        var power = ranks.list(king, RankType.POWER, 1, 0);
         assertThat(power.entries().stream().map(e -> e.id()).toList())
                 .as("战力榜按 MatchPower 降序").containsExactly(king, mate);
         assertThat(power.entries().get(0).value()).isEqualTo(9_000L);
 
-        var kill = ranks.list(king, RankType.KILL, 1);
+        var kill = ranks.list(king, RankType.KILL, 1, 0);
         assertThat(kill.entries().get(0).id())
                 .as("击杀榜：累加型，两次上报要加成一条").isEqualTo(mate);
         assertThat(kill.entries().get(0).value()).isEqualTo(200L);
         assertThat(kill.entries().get(1).value())
                 .as("同一人的两次击杀累加（120 + 30）").isEqualTo(150L);
 
-        var alliance = ranks.list(king, RankType.ALLIANCE, 1);
+        var alliance = ranks.list(king, RankType.ALLIANCE, 1, 0);
         assertThat(alliance.entries()).as("联盟榜：成员赛季分合计").hasSize(1);
         assertThat(alliance.entries().get(0).id()).isEqualTo(allianceId);
         assertThat(alliance.entries().get(0).value())
                 .as("12,000 = 9,000 + 3,000，不是任何一个人的分").isEqualTo(12_000L);
         assertThat(alliance.entries().get(0).tag()).as("联盟榜带缩写").isNotBlank();
 
-        var nation = ranks.list(king, RankType.NATION, 1);
+        var nation = ranks.list(king, RankType.NATION, 1, 0);
         assertThat(nation.entries()).as("国家榜：成员联盟的合计").hasSize(1);
         assertThat(nation.entries().get(0).value()).isEqualTo(12_000L);
 
@@ -163,7 +163,7 @@ class RankEndpointTest {
     @DisplayName("验收 2：未上榜给 null，不用 0 冒充（0 会与「第 0 名」混淆）")
     void unrankedPlayerGetsNullNotZero() throws Exception {
         String nobody = newPlayer(1);
-        var resp = ranks.list(nobody, RankType.POWER, 1);
+        var resp = ranks.list(nobody, RankType.POWER, 1, 0);
         assertThat(resp.entries()).as("没人上报过 ⇒ 空榜").isEmpty();
         assertThat(resp.myRank()).isNull();
         assertThat(resp.myValue()).isNull();
@@ -180,7 +180,7 @@ class RankEndpointTest {
         settlements.report(human, "真人", 5_000L);
         settlements.report(botId, "邻居", 999_999L);
 
-        var power = ranks.list(human, RankType.POWER, 1);
+        var power = ranks.list(human, RankType.POWER, 1, 0);
         assertThat(power.entries().stream().map(e -> e.id()).toList())
                 .as("写入侧：Bot 的战力上报被拦在门外").containsExactly(human);
         assertThat(power.entries()).noneMatch(entry -> entry.id().equals(botId));
@@ -192,7 +192,7 @@ class RankEndpointTest {
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchoredConfigs());
         var readSide = new RankBoardService(boards, socialStore, nationStore, players, bots,
                 anchoredConfigs(), assembler, timeService);
-        assertThat(readSide.list(human, RankType.POWER, 1).entries().stream().map(e -> e.id()).toList())
+        assertThat(readSide.list(human, RankType.POWER, 1, 0).entries().stream().map(e -> e.id()).toList())
                 .as("读侧：只有 Bot 在榜时，榜是空的（而不是把 Bot 顶到第 1）")
                 .isEmpty();
     }
@@ -234,7 +234,7 @@ class RankEndpointTest {
         reports.record(winner, winner, loser, "守方", null,
                 com.ironoath.battle.BattleType.PVE, List.of(), List.of(), result, timeService.serverNow());
 
-        var kill = ranks.list(winner, RankType.KILL, 1);
+        var kill = ranks.list(winner, RankType.KILL, 1, 0);
         assertThat(kill.entries()).as("记一份战报 ⇒ 主人的击杀榜上多出 400（对方的阵亡数）")
                 .hasSize(1);
         assertThat(kill.entries().get(0).value()).isEqualTo(400L);
@@ -261,7 +261,7 @@ class RankEndpointTest {
                 new SeasonSettlement.Entry(human, "老王", 500L));
         boards.report(seasonId, SeasonSettlement.Board.POWER,
                 new SeasonSettlement.Entry(other, "小李", 100L));
-        svc.list(human, RankType.POWER, 1);
+        svc.list(human, RankType.POWER, 1, 0);
 
         SeasonSettlement.Snapshot first = boards.daily(seasonId, SeasonSettlement.Board.POWER, day1);
         assertThat(first).as("读一次榜就把今天的拍上了（惰性，无定时器）").isNotNull();
@@ -272,7 +272,7 @@ class RankEndpointTest {
         now[0] += 3600_000L;
         boards.report(seasonId, SeasonSettlement.Board.POWER,
                 new SeasonSettlement.Entry(human, "老王", 50L));
-        svc.list(human, RankType.POWER, 1);
+        svc.list(human, RankType.POWER, 1, 0);
         SeasonSettlement.Snapshot again = boards.daily(seasonId, SeasonSettlement.Board.POWER, day1);
         assertThat(again.snapshotAt()).as("同一天重复读不刷新拍摄时刻").isEqualTo(first.snapshotAt());
         assertThat(again.rankOf(human)).as("内容也是那一刻的：他掉分了，但快照里仍是第 1")
@@ -284,7 +284,7 @@ class RankEndpointTest {
         now[0] += 24L * 3600_000L;
         String day2 = com.ironoath.common.time.DayKey.of(now[0]);
         assertThat(day2).as("夹具前提：时钟确实跨了一天").isNotEqualTo(day1);
-        svc.list(other, RankType.POWER, 1);
+        svc.list(other, RankType.POWER, 1, 0);
         assertThat(boards.dailyDays(seasonId, SeasonSettlement.Board.POWER))
                 .as("第二天补一份新的，且第一天那份还在（这就是时间线）")
                 .containsExactly(day1, day2);
@@ -310,7 +310,7 @@ class RankEndpointTest {
         String day = com.ironoath.common.time.DayKey.of(now[0]);
         boards.report(seasonId, SeasonSettlement.Board.KILL,
                 new SeasonSettlement.Entry(human, "老王", 30L));
-        svc.list(human, RankType.KILL, 1);
+        svc.list(human, RankType.KILL, 1, 0);
 
         RankSnapshotResp mine = svc.snapshot(human, RankType.KILL, day);
         assertThat(mine.myRank()).as("我在那天是第 1").isEqualTo(1);
@@ -378,8 +378,28 @@ class RankEndpointTest {
                 .isEqualTo(ErrorCode.OPS_UNAUTHORIZED.code());
     }
 
-    // ---------- 夹具 ----------
+    @Test
+    @DisplayName("每页条数：客户端按一屏能画几行来要，服务端按上限夹（体积预算不因客户端乱填而失效）")
+    void clientPicksPageSizeButTheServerClampsIt() {
+        String king = newPlayer(16);
+        String mate = newPlayer(16);
+        settlements.report(king, "老王", 9_000L);
+        settlements.report(mate, "小李", 3_000L);
+        int cap = (int) anchoredConfigs().longParam("RANK_PAGE_SIZE_MAX");
 
+        assertThat(ranks.list(king, RankType.POWER, 1, 1).pageSize())
+                .as("要 1 条就给它 1 条：一屏画得下几行是客户端的显示需要").isEqualTo(1);
+        assertThat(ranks.list(king, RankType.POWER, 1, 1).entries())
+                .as("这一页真的只有 1 行").hasSize(1);
+        assertThat(ranks.list(king, RankType.POWER, 1, 1).hasMore())
+                .as("榜上还有第 2 个人，所以还有下一页").isTrue();
+        assertThat(ranks.list(king, RankType.POWER, 1, 200).pageSize())
+                .as("要 200 条只会拿到上限：验收 6 的体积预算是服务端守的，不是客户端自律").isEqualTo(cap);
+        assertThat(ranks.list(king, RankType.POWER, 1, 0).pageSize())
+                .as("0（或不传）表示用上限").isEqualTo(cap);
+    }
+
+    // ---------- 夹具 ----------
     private String newPlayer(int cityLevel) {
         String playerId = playerInitService.init(new PlayerInitReq("req-" + UUID.randomUUID(),
                 "dev-" + UUID.randomUUID(), "榜测试", 1_700_000_000_000L, "")).playerId();

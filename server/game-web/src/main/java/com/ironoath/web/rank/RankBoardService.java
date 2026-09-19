@@ -91,11 +91,18 @@ public class RankBoardService {
                 new SeasonSettlement.Entry(playerId, name == null ? playerId : name, kills), kills);
     }
 
-    /** 一页榜 + 我的名次（未上榜时名次为 null，不用 0 冒充 —— 验收 2）。 */
-    public RankListResp list(String playerId, RankType type, int page) {
+    /**
+     * 一页榜 + 我的名次（未上榜时名次为 null，不用 0 冒充 —— 验收 2）。
+     *
+     * <p>{@code size} 是**客户端按自己一屏能画几条**来要的（面板放不下 20 行时，
+     * 显示 20 行里的前 8 行会让第 9~20 名永远看不到，翻页又会跳过它们）。0 表示"用上限"。
+     * 上限仍是 {@code RANK_PAGE_SIZE_MAX} 且**由服务端夹**：客户端要 200 条只会拿到 20 条 ——
+     * 于是验收 6 的体积预算不会因为客户端乱填而失效。
+     */
+    public RankListResp list(String playerId, RankType type, int page, int size) {
         captureTodayIfAbsent(type);
         List<SeasonSettlement.Entry> rows = rankedEntries(type);
-        int pageSize = (int) configs.longParam("RANK_PAGE_SIZE_MAX");
+        int pageSize = effectivePageSize(size);
         int totalPages = Math.max(1, (rows.size() + pageSize - 1) / pageSize);
         int safePage = Math.min(Math.max(1, page), totalPages);
         int from = (safePage - 1) * pageSize;
@@ -118,10 +125,10 @@ public class RankBoardService {
         List<SeasonSettlement.Entry> rows = rankedEntries(type);
         MyRow mine = myRowOf(playerId, type, rows);
         if (mine.rank() == null) {
-            return list(playerId, type, 1);
+            return list(playerId, type, 1, 0);
         }
-        int pageSize = (int) configs.longParam("RANK_PAGE_SIZE_MAX");
-        return list(playerId, type, (mine.rank() - 1) / pageSize + 1);
+        int pageSize = effectivePageSize(0);
+        return list(playerId, type, (mine.rank() - 1) / pageSize + 1, 0);
     }
 
     /**
@@ -172,7 +179,7 @@ public class RankBoardService {
             throw snapshotMissing(detailForMissingDay(seasonId, board, day), day);
         }
         List<SeasonSettlement.Entry> rows = taken.entries();
-        int pageSize = (int) configs.longParam("RANK_PAGE_SIZE_MAX");
+        int pageSize = effectivePageSize(0);
         int totalPages = Math.max(1, (rows.size() + pageSize - 1) / pageSize);
         int safePage = Math.min(Math.max(1, page), totalPages);
         int from = (safePage - 1) * pageSize;
@@ -209,6 +216,20 @@ public class RankBoardService {
         List<SeasonSettlement.Entry> rows = rankedEntries(type);
         boards.saveDailyIfAbsent(seasonId, board, day,
                 new SeasonSettlement.Snapshot(board, time.serverNow(), rows));
+    }
+
+    /**
+     * 实际生效的每页条数：0（或不传）用上限，其余**夹**在 [1, 上限] 之内。
+     *
+     * <p>客户端要几条是**显示需要**（一屏能画几行），上限是**体积预算**（验收 6）——
+     * 两者不是同一个约束，所以夹取必须在服务端做，而且只有这一处实现。
+     */
+    private int effectivePageSize(int requested) {
+        int cap = (int) configs.longParam("RANK_PAGE_SIZE_MAX");
+        if (requested <= 0) {
+            return cap;
+        }
+        return Math.min(requested, cap);
     }
 
     /** 榜类型 → 存储里的 board。名字逐字对应（契约里刻意与领域枚举同形，见 rank.schema.json 的说明）。 */

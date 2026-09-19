@@ -40,6 +40,9 @@ import {
   mergeChatHistory,
 } from '../social/ChatPanel'
 import type { ChatPanelData } from '../social/ChatPanel'
+import { buildRankBoard } from '../power/RankBoard'
+import type { RankBoardView, RankTabKey } from '../power/RankBoard'
+import type { RankListResp } from '../../net/generated/RankProtocol'
 import { gameBus } from '../../core/EventBus'
 import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -97,6 +100,11 @@ export interface PanelTargets {
   payResult?(view: PayView): void
   power?(resp: PowerDetailResp): void
   targets?(resp: SearchTargetsResp): void
+  /**
+   * 排行榜面板（B23 §一 3）。**整块视图由编排层组装好下发**（名次、页号、我的名次都在里面）：
+   * 表现层只画，不做任何名次计算 —— 客户端算一遍的结局是与服务端差一位，而名次决定发不发奖。
+   */
+  rank?(view: RankBoardView): void
   /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
@@ -177,6 +185,24 @@ export class AppRoot {
   private cityResp: CityListResp | null = null
   private armyResp: ArmyListResp | null = null
   private heroResp: HeroListResp | null = null
+
+  // ---------- 排行榜状态（B23 §一 3） ----------
+
+  /**
+   * 一屏要几条。**按面板能画几行来要**，不是按服务端上限：面板放不下 20 行时，
+   * 显示 20 行里的前 8 行会让第 9~20 名永远看不到，而翻页又会跳过它们。
+   * 服务端仍会把它夹在上限内（上限管的是体积预算，见 RankBoardService#effectivePageSize）。
+   */
+  private static readonly RANK_SCREEN_ROWS = 8
+
+  /** 当前页签。默认停在「明细」：那是这个页面原本的内容，四类榜是新加的邻居 */
+  private rankTab: RankTabKey = 'DETAIL'
+  /** 最近一次 `/rank/list` 的响应。**只有当前页签那一张**（切页签就换掉，不缓存多张 —— 榜是会变的） */
+  private rankResp: RankListResp | null = null
+  /** 请求的页码。由服务端回显的 `page` 推进，**不自己加一**（出界时服务端会夹到最后一页） */
+  private rankPage = 1
+  /** 拉榜失败的可读原因（限流/断网）；成功一次或切页签后清空 */
+  private rankNotice: string | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -364,6 +390,9 @@ export class AppRoot {
       }
       case 'power':
         this.deliver('power', await this.api.playerPower(), r => this.targets.power?.(r))
+        // 榜单与明细同一个面板：打开战力页时，顺手把当前页签（若是一张榜）拉回来。
+        // 明细页签不需要请求 —— 但那时也不该显示上一次留下的榜，所以照发一次视图（空榜）
+        await this.loadRankIfBoard()
         return
       case 'quest':
         this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
@@ -848,6 +877,77 @@ export class AppRoot {
       }
     }
   }
+
+  // ---------- 排行榜（B23 §一 3） ----------
+
+  /**
+   * 切页签。点「明细」不发请求（那一页由 `/player/power` 供数），点四类榜才拉 `/rank/list`。
+   *
+   * <p>**页码回到第 1 页**：换了一张榜还停在第 5 页，会让玩家看到某个榜的第 5 页却说不出为什么。
+   */
+  async openRankTab(key: RankTabKey): Promise<void> {
+    if (key !== 'DETAIL') {
+      // 榜的关注度只有这里能答（明细页是原本就有的页面，不算"看榜"这个动作）
+      this.track(TRACK_EVENTS.rankView, { type: trackParam(key) })
+    }
+    this.rankTab = key
+    this.rankPage = 1
+    this.rankNotice = null
+    await this.loadRankIfBoard()
+  }
+
+  /** 下一页。能不能翻**由服务端的 hasMore 决定**（客户端不猜最后一页在哪）。 */
+  async rankNextPage(): Promise<void> {
+    if (this.rankResp === null || !this.rankResp.hasMore) {
+      return
+    }
+    this.rankPage = this.rankResp.page + 1
+    await this.loadRankIfBoard()
+  }
+
+  /** 上一页。第 1 页时什么都不做（面板也会把按钮画灰）。 */
+  async rankPrevPage(): Promise<void> {
+    if (this.rankResp === null || this.rankResp.page <= 1) {
+      return
+    }
+    this.rankPage = this.rankResp.page - 1
+    await this.loadRankIfBoard()
+  }
+
+  /**
+   * 按当前页签拉一次榜并下发视图。<b>明细页签只重画不拉榜</b>。
+   *
+   * <p>失败时把服务端的理由原样放进 notice 那一行（限流/断网）：榜拉不到不该清空面板 ——
+   * 清空会让玩家以为"榜没了"，而实际只是这一次没拉到。
+   */
+  private async loadRankIfBoard(): Promise<void> {
+    if (this.rankTab === 'DETAIL') {
+      this.rankResp = null
+      this.deliverRank()
+      return
+    }
+    const outcome = await this.api.rankList(this.rankTab, this.rankPage, AppRoot.RANK_SCREEN_ROWS)
+    if (outcome.kind === 'ok') {
+      this.rankResp = outcome.data
+      this.rankNotice = null
+    } else {
+      // 榜拉不到时把服务端给的**理由**原样放上提示行（业务拒绝看 detail，网络失败看 reason）。
+      // 不自己编一句"加载失败"：限流与断网的下一步动作完全不同（等一会儿 / 检查网络）
+      this.rankNotice = outcome.kind === 'biz'
+        ? (outcome.detail ?? outcome.msg)
+        : AppRoot.reason(outcome)
+      this.say('rank', outcome)
+    }
+    this.deliverRank()
+  }
+
+  /** 组装并下发整块视图。表现层不参与任何计算（名次/页号全部来自上面那份响应）。 */
+  private deliverRank(): void {
+    this.targets.rank?.(buildRankBoard(this.rankResp, this.rankTab, this.playerId ?? '',
+      this.rankNotice))
+  }
+
+  // ---------- 聊天（B22 §一 1） ----------
 
   /** 组装并递一次聊天页签的数据。任何一处状态变了都走这里，面板因此永远只有一份输入。 */
   private deliverChat(): void {

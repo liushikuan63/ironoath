@@ -26,6 +26,7 @@ import type {
   ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
 } from '../assets/scripts/game/session/Choices'
 import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
+import type { RankBoardView } from '../assets/scripts/game/power/RankBoard'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
 
@@ -78,6 +79,14 @@ const ROUTES: Record<string, unknown> = {
       ] },
     ],
     leafCount: 4, serverNow: SERVER_NOW,
+  },
+  '/rank/list': {
+    type: 'POWER',
+    entries: [
+      { rank: 1, id: 'P9', name: '老王', value: 12345, tag: null },
+      { rank: 2, id: 'P1', name: '君', value: 900, tag: null },
+    ],
+    myRank: 2, myValue: 900, page: 1, pageSize: 20, hasMore: false,
   },
   '/player/power': {
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, serverNow: SERVER_NOW, lines: [],
@@ -236,6 +245,8 @@ function reddotResponse(socialLit: boolean, helpLit: boolean) {
 interface Call {
   readonly method: 'GET' | 'POST'
   readonly path: string
+  /** 查询串。分页/类型这类参数只在 URL 上（GET 没有 body），不记下来就没法断言。 */
+  readonly query: URLSearchParams
   readonly body: Record<string, unknown>
   /** 请求头。登录票据（X-Auth-Token）是 B15 之后每条请求都要带的身份凭证。 */
   readonly headers: Readonly<Record<string, string>>
@@ -329,10 +340,12 @@ class RoutingHttp implements HttpTransport {
 
   private async reply(method: 'GET' | 'POST', url: string, bodyText: string,
                       headers: Readonly<Record<string, string>>): Promise<HttpResponse> {
-    const path = new URL(url).pathname
+    const parsed = new URL(url)
+    const path = parsed.pathname
     this.calls.push({
       method,
       path,
+      query: parsed.searchParams,
       body: bodyText === '' ? {} : JSON.parse(bodyText) as Record<string, unknown>,
       headers,
     })
@@ -371,6 +384,8 @@ interface Harness {
   readonly lastSocialHelps: string[]
   /** 最近一次落地给聊天页签的数据（B22）—— 频道、会话、消息、提示行都看它。 */
   readonly lastChat: ChatPanelData | null
+  /** 最近一次落地给榜单面板的整块视图。 */
+  readonly lastRank: RankBoardView | null
   /** 最近一次落地给活动页的服务端时刻（断言"剩余时间来自服务端"用）。 */
   readonly lastActivityNow: number
   /** 最近一次落地给活动页的行数。 */
@@ -448,6 +463,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let socialMembers: string[] = []
   let socialHelps: string[] = []
   let lastChat: ChatPanelData | null = null
+  let lastRank: RankBoardView | null = null
   let reddotTree: ClientReddotTree | null = null
   let activityNow = -1
   let activityRows = -1
@@ -483,6 +499,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       reddotTree = tree
     },
     power: () => attached.push('power'),
+    rank: (view) => {
+      attached.push('rank')
+      lastRank = view
+    },
     targets: () => attached.push('targets'),
     quest: () => attached.push('quest'),
     mail: () => attached.push('mail'),
@@ -529,6 +549,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastChat() {
       return lastChat
+    },
+    get lastRank() {
+      return lastRank
     },
     get lastActivityNow() {
       return activityNow
@@ -598,8 +621,8 @@ test('start：先登录，再把十个面板各拉一次，并把家坐标交出
   // 把首屏可交互推到 3.9 秒越过预算）。所以这里按集合比：新增或删掉一次拉取仍然会被看见，
   // 但谁先谁后不再断言 —— 那个顺序没有任何调用方在读，钉住它只会让并发化变成一次假红。
   assert.deepEqual(Array.from(h.attached).sort(),
-    ['army', 'bag', 'chat', 'city', 'hero', 'home', 'power', 'quest', 'reddot', 'resources',
-      'social', 'stage'])
+    ['army', 'bag', 'chat', 'city', 'hero', 'home', 'power', 'quest', 'rank', 'reddot',
+      'resources', 'social', 'stage'])
   assert.equal(h.errors.length, 0)
   assert.equal(h.root.playerId, 'P1')
 })
@@ -1583,4 +1606,69 @@ test('聊天：断线重连补拉未读（推送在断线期间全丢了，B01 �
   }
   assert.equal(h.http.countOf('/social/summary') >= 2, true, '重连要补拉一次摘要（未读账的家）')
   assert.equal(h.http.countOf('/social/reddot'), reddotsBefore + 1, '顺带把红点树问一次')
+})
+
+test('榜单面板：明细页签不发请求，切到榜才拉，且页码回到第 1 页', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  // 打开战力页：默认停在「明细」，那一页由 /player/power 供数 —— 榜单请求一次都不该发
+  await h.root.refresh('power')
+  assert.equal(h.http.countOf('/rank/list'), 0, '明细页签不该请求榜单')
+  assert.equal(h.lastRank?.activeKey, 'DETAIL')
+  assert.equal(h.lastRank?.rows.length, 0, '明细页签一行榜行都不画')
+
+  await h.root.openRankTab('POWER')
+  assert.equal(h.http.countOf('/rank/list'), 1)
+  const call = h.http.calls.filter(c => c.path === '/rank/list').at(-1)
+  assert.equal(call?.query.get('type'), 'POWER')
+  assert.equal(call?.query.get('page'), '1', '第一次进来必须是第 1 页')
+  assert.equal(h.lastRank?.rows.length, 2)
+  assert.equal(h.lastRank?.mine?.rankText, '第 2 名', '我的名次来自服务端下发的 myRank')
+  assert.deepEqual(h.lastRank?.rows.map(r => r.mine), [false, true], '按 id 标出我自己那一行')
+})
+
+test('分页：下一页按服务端回显的 page 推进；hasMore=false 时再点也不发请求', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/rank/list', {
+    type: 'KILL', entries: [{ rank: 21, id: 'P7', name: '丙', value: 5, tag: null }],
+    myRank: 21, myValue: 5, page: 1, pageSize: 20, hasMore: true,
+  })
+  await h.root.openRankTab('KILL')
+  assert.equal(h.lastRank?.canNext, true, '服务端说还有下一页')
+
+  // 第二页：服务端把这页回成 2，并且没有更多了
+  h.http.overrides.set('/rank/list', {
+    type: 'KILL', entries: [{ rank: 41, id: 'P8', name: '丁', value: 4, tag: null }],
+    myRank: 21, myValue: 5, page: 2, pageSize: 20, hasMore: false,
+  })
+  await h.root.rankNextPage()
+  const second = h.http.calls.filter(c => c.path === '/rank/list').at(-1)
+  assert.equal(second?.query.get('page'), '2')
+  assert.equal(h.lastRank?.pageText, '第 2 页')
+  assert.equal(h.lastRank?.canNext, false)
+
+  // 到底了再点：不发请求（客户端只是照 hasMore 办事，不猜最后一页在哪）
+  const before = h.http.countOf('/rank/list')
+  await h.root.rankNextPage()
+  assert.equal(h.http.countOf('/rank/list'), before, 'hasMore=false 时翻页是空操作')
+
+  // 换一张榜：页码必须回到第 1 页，否则玩家会看到某张榜的"第 2 页"却说不出为什么
+  await h.root.openRankTab('ALLIANCE')
+  const switched = h.http.calls.filter(c => c.path === '/rank/list').at(-1)
+  assert.equal(switched?.query.get('page'), '1')
+  assert.equal(switched?.query.get('type'), 'ALLIANCE')
+})
+
+test('榜拉不到时：把服务端的理由放到提示行，且不把上一份榜清空（清空会被读成"榜没了"）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.openRankTab('POWER')
+  assert.equal(h.lastRank?.noticeText, null)
+
+  h.http.failPaths.add('/rank/list')
+  await h.root.openRankTab('POWER')
+  assert.equal(h.lastRank?.noticeText, '服务繁忙', '业务拒绝的理由原样进提示行')
+  assert.equal(h.lastRank?.rows.length, 2, '拉不到不等于榜没了：上一次的行留在原地')
+  assert.equal(h.errors.some(e => e[0] === 'rank'), true, '面板读取失败也要进统一的上报口')
 })

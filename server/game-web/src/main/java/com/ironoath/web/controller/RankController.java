@@ -34,13 +34,19 @@ public class RankController {
         this.ranks = ranks;
     }
 
-    /** 一页榜。page 从 1 起，超出范围会被夹到最后一页（而不是回空页）。 */
+    /**
+     * 一页榜。page 从 1 起，超出范围会被夹到最后一页（而不是回空页）。
+     *
+     * <p>{@code size} 是客户端按一屏能画几行要的条数；不传或 0 表示用上限，
+     * 超出上限由服务端夹住（体积预算不因客户端乱填而失效）。详见 {@code RankBoardService#list}。
+     */
     @GetMapping("/list")
     public Result<RankListResp> list(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
                                      @RequestParam("type") String type,
-                                     @RequestParam(name = "page", defaultValue = "1") int page) {
+                                     @RequestParam(name = "page", defaultValue = "1") int page,
+                                     @RequestParam(name = "size", defaultValue = "0") int size) {
         requirePlayer(playerId);
-        return Result.ok(ranks.list(playerId, parseType(type), page));
+        return Result.ok(ranks.list(playerId, parseType(type), page, size));
     }
 
     /** 我的名次（未上榜时 myRank 为 null）。回的那一页是**我所在的那一页**。 */
