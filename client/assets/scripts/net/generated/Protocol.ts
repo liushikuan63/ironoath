@@ -199,6 +199,49 @@ export interface StaminaBuyReq {
 }
 
 /**
+ * 头像框（B24 块③ 外观）的一行。**只有展示字段**：外观不参与任何数值判定（B15 §一 第 7 条 + 公理一），所以这里既没有战力也没有属性，客户端按 placeholderColor 画占位框。
+ */
+export interface AvatarFrameView {
+  /** avatar_frame 表的行 id */
+  frameId: string
+  /** 显示名，服务端下发（改名字不该发一次版） */
+  name: string
+  /** 稀有度，取值与 avatar_frame 表的 rarity 列一致（N/R/SR/SSR） */
+  rarity: string
+  /** 占位框的颜色（#RRGGBB）。素材到位后这一列换成贴图键，客户端的画法跟着换，判定与协议不动 */
+  placeholderColor: string
+  /** 是否已拥有。**拥有是永久事实**：卸下之后它仍然是 true */
+  owned: boolean
+  /** 是否正戴着。**佩戴是当下选择**：与 owned 是两位，合成一位会让「卸下 = 失去」 */
+  worn: boolean
+}
+
+/**
+ * GET /player/frames 响应体：**全部**头像框（含没拥有的）。没拥有的也要下发 —— 让玩家看见有什么可拿，正是收集类外观存在的意义（与商店把等级不够的货也列出来同一条口径）。
+ */
+export interface AvatarFrameListResp {
+  frames: AvatarFrameView[]
+  serverNow: number
+}
+
+/**
+ * POST /player/frame 请求体：佩戴或卸下。【frameId】为 null 表示卸下 —— 与「戴一个空框」区分开。
+ */
+export interface WearFrameReq {
+  requestId: string
+  /** 要戴上的头像框 id；null = 卸下 */
+  frameId: string | null
+}
+
+/**
+ * POST /player/frame 响应体：操作之后的完整框列表（客户端照它重画，不自己改本地状态）。
+ */
+export interface WearFrameResp {
+  frames: AvatarFrameView[]
+  serverNow: number
+}
+
+/**
  * 离线汇总的边界与阈值。「自上次登录以来」的起点是 previousLoginAt（**不是** profile.lastLoginAt —— 那个值在本次登录时已被推进成现在，拿它算出来永远是 0）。两个阈值来自 global 表（OFFLINE_REPORT_MIN_IDLE_MINUTES / OFFLINE_REPORT_MIN_ITEMS），客户端只按它们判定「值不值得弹」，不自己填数。
  */
 export interface OfflineReportView {

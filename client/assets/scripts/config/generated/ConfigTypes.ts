@@ -100,6 +100,28 @@ export interface AllianceTechCfg {
   costBaseDonation: number
 }
 
+/** avatar_frame.avatarFrameRarity 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type AvatarFrameRarity =
+  | 'N'
+  | 'R'
+  | 'SR'
+  | 'SSR'
+
+/**
+ * 配置表 avatar_frame 的一行。
+ * 头像框（B24 块③ 外观）。外观只卖表现、不许碰数值（B15 §一 第 7 条 + 公理一），所以这张表里**只有展示字段**：名字、稀有度、占位色。占位色是给运行时 Graphics 画的占位框用的 —— 素材库今天没有头像框这一族（find client/assets -iname "*frame*" 零命中），所以 2026-09-19 裁决走「占位拼一版，先把链打通」：先做真的链（拥有/穿戴/卸下/零数值影响）、假的图，美术到位后把这一列换成贴图键即可，判定与协议都不动。
+ *
+ * 源表 version=1
+ */
+export interface AvatarFrameCfg {
+  /** 主键 */
+  id: string
+  name: string
+  /** 枚举，取值见 AvatarFrameRarity */
+  rarity: AvatarFrameRarity
+  placeholderColor: string
+}
+
 /** bot_archetype.botArchetypePlayStyle 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type BotArchetypePlayStyle =
   | 'FARMER'

@@ -6,6 +6,7 @@ import com.ironoath.common.Result;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.PlayerInitResp;
 import com.ironoath.web.dto.generated.PowerDetailResp;
+import com.ironoath.web.service.AvatarFrameService;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.service.PowerRefreshService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,9 +30,11 @@ public class PlayerController {
 
     private final PlayerInitService playerInitService;
     private final PowerRefreshService powerRefreshService;
+    private final AvatarFrameService avatarFrames;
 
-    public PlayerController(PlayerInitService playerInitService,
+    public PlayerController(AvatarFrameService avatarFrames, PlayerInitService playerInitService,
                             PowerRefreshService powerRefreshService) {
+        this.avatarFrames = avatarFrames;
         this.playerInitService = playerInitService;
         this.powerRefreshService = powerRefreshService;
     }
@@ -56,6 +59,26 @@ public class PlayerController {
      * 恰好就是刚做完那件事、最想看到变化的时刻。
      * 与 {@code /city/list}、{@code /army/list} 是同一套口径。
      */
+    /**
+     * 全部头像框（含没拥有的）+ 我拥有/戴着哪几个（B24 块③ 外观）。
+     *
+     * <p>**外观不参与任何数值**：这里返回的每个字段都只是展示用的（名字/稀有度/占位色/两位状态），
+     * 谁日后往这条通路里塞一个战力字段，{@code AvatarFrameEndpointTest} 的判别性用例会当场红。
+     */
+    @GetMapping("/frames")
+    public Result<com.ironoath.web.dto.generated.AvatarFrameListResp> frames(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        return Result.ok(avatarFrames.list(playerId));
+    }
+
+    /** 佩戴（frameId=null = 卸下）。只接受已拥有的框 —— 没拿到就戴得上等于白送。 */
+    @PostMapping("/frame")
+    public Result<com.ironoath.web.dto.generated.WearFrameResp> wearFrame(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestBody com.ironoath.web.dto.generated.WearFrameReq req) {
+        return Result.ok(avatarFrames.wear(playerId, req));
+    }
+
     @GetMapping("/power")
     public Result<PowerDetailResp> power(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
         if (playerId == null || playerId.isBlank()) {

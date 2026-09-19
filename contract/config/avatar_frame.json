@@ -1,0 +1,29 @@
+{
+  "table": "avatar_frame",
+  "version": 1,
+  "comment": "头像框（B24 块③ 外观）。外观只卖表现、不许碰数值（B15 §一 第 7 条 + 公理一），所以这张表里**只有展示字段**：名字、稀有度、占位色。占位色是给运行时 Graphics 画的占位框用的 —— 素材库今天没有头像框这一族（find client/assets -iname \"*frame*\" 零命中），所以 2026-09-19 裁决走「占位拼一版，先把链打通」：先做真的链（拥有/穿戴/卸下/零数值影响）、假的图，美术到位后把这一列换成贴图键即可，判定与协议都不动。",
+  "designNote": "本表的行数与商店货架没有绑定关系：一个框可以今天不上架、放进活动或成就里发（表是「有哪些框」，货架是「现在卖哪个」）。客户端读的是 /player/frames 下发的视图（名字与颜色都在那里），不自己内置 —— 改名字不该发一次版。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "rarity": "ENUM:N,R,SR,SSR",
+    "placeholderColor": "STRING",
+    "why": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "frame_season_s1",
+      "name": "赛季征战框",
+      "rarity": "SR",
+      "placeholderColor": "#C8A24B",
+      "why": "S1 赛季的限定框，500 赛季币（shop_season_frame）。金色描边是对「赛季前 100 名」这个获取门槛的视觉交代：赛季币只发给排名靠前的人，所以这个框本身就是一枚纪念章，而不是流通货币能买到的东西。占位色取铜金（与全作面板配色同源），换素材时这一行只改本列。"
+    },
+    {
+      "id": "frame_founder_n",
+      "name": "拓荒者框",
+      "rarity": "N",
+      "placeholderColor": "#8C7A5B",
+      "why": "占位第二枚：给「注册即得」这类不花钱的出口留一行，也是双框测试（拥有 A 不等于拥有 B）的夹具。颜色取暗铜，与赛季框在 26px 下可分辨（占位阶段的判别交给 scripts/check-icon-legibility.sh 那一族，但今天它只扫图片文件、扫不到 Graphics 画的框 —— 换贴图时才会进那一门）。"
+    }
+  ]
+}
