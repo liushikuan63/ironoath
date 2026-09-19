@@ -55,6 +55,10 @@ const SKIP = new Set([
   // 出征的准备步骤：开编成面板 / 改数量 / 取消都不是"出征意图"，
   // 真正发兵那一下在 confirmMarch 里打 march_send —— 三处都打会把一次出征记成多次
   "beginMarchCompose",
+  // 同一条理由（V02-S1 的集结）：`beginRallyCompose` 只是把编成面板弹出来，
+  // 真正"把兵压上去"那一下在 `confirmRallyJoin` 里打 `rally_join` ——
+  // 两处都打会把一次加入记成两次
+  "beginRallyCompose",
   "pickMarchUnit",
   "cancelMarchCompose",
 ])
