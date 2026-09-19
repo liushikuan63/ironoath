@@ -1,69 +1,39 @@
 package com.ironoath.web.reward;
 
-import com.ironoath.core.reward.RewardContext;
 import com.ironoath.core.reward.RewardItem;
 import com.ironoath.core.reward.RewardPorts;
 import com.ironoath.core.reward.RewardType;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 职责：邮箱、补偿队列、非资源非道具奖励这三个端口的<b>过渡实现</b>。
+ * 职责：非资源非道具奖励这一类端口的<b>过渡实现</b>（目前只剩 {@link UnsupportedExtras} 一件）。
  * 依赖：game-core 的端口（纯 Java + slf4j）。
  *
- * <p>⚠️ <b>三者都还不是生产可用的实现</b>，各自的缺口与归属批次写在下面。
- * 之所以现在就接上而不是留空：发放器的三段式结果（granted / overflow / compensationId）
- * 必须能被端到端验证，否则 B04 的核心逻辑等于没测过。
+ * <h2>这里的东西为什么可以「只是过渡」</h2>
+ * 发放器的三段式结果（granted / overflow / compensationId）必须能被端到端验证，
+ * 所以过渡实现不能留空 —— 但<b>过渡不等于可以静默</b>：本类留下的每一件事都有响亮的失败。
  *
- * <h2>缺口清单</h2>
+ * <h2>两件已经从这里搬走的事（记下来防有人再搬回来）</h2>
  * <ol>
- *   <li><b>已闭环（B12 §2）</b>：溢出邮件原来就在本类里，返回的 {@code mail_overflow_1} 这种
- *       进程内序号谁都查不回来。现在走 {@code StoreMailbox} + {@code MailStore}，
+ *   <li><b>溢出邮件</b>（B12 §2）：原来就在本类里，返回 {@code mail_overflow_1} 这种进程内序号，
+ *       谁都查不回来。现在走 {@code StoreMailbox} + {@code MailStore}，
  *       邮件是可查询、按 MAIL_RETENTION_DAYS 过期的真记录。</li>
- *   <li>{@link TransientCompensation}：补偿记录同样只在内存与日志里。
- *       B12 必须换成持久化 + 可人工重放的实现 —— 这是「发奖失败不静默」的最后兜底，
- *       丢了就等于把玩家的投诉变成无据可查。</li>
- *   <li>{@link UnsupportedExtras}：武将碎片 / 体力 / 特权<b>故意抛异常</b>。
- *       抛异常会被发放器捕获并写进补偿队列，这是设计好的路径 ——
- *       未实现的奖励类型必须<b>响亮地失败</b>并进补偿，而不是静默返回「发放成功」。
- *       后者会让玩家看到「已获得 SSR 碎片 ×5」但账户里什么都没有。
- *       B06（武将）/ B09（体力）/ B03（队列特权）各自落地后替换对应分支。</li>
+ *   <li><b>补偿队列</b>（B04 验收 7）：原来是一份 {@code TransientCompensation}，
+ *       记录只在内存与日志里，且 id 用实例内自增序号 —— 重启后序号从 1 重来，
+ *       新实例的第一笔欠账会被当成"重复写入"静默丢掉。
+ *       现在走 {@link StoreCompensation} + {@link RewardCompensationStore}，
+ *       这是「发奖失败不静默」的最后兜底，也是玩家投诉唯一查得回来的依据。</li>
  * </ol>
  *
- * <p>剩下的两件事各自有响亮的失败：补偿队列启动时打 ERROR，体力/特权在发放时抛出去并进补偿 ——
- * 任何人跑起服务端都会看到这些缺口，缺口的正确表达是响亮的失败而不是静默降级。
+ * <p>搬走之后本类只剩 {@link UnsupportedExtras} 一件，而它<b>不是待补的洞</b>：
+ * 未实现的奖励类型必须响亮地失败并进补偿台账，静默返回「发放成功」会让玩家看到
+ * 「已获得 SSR 碎片 ×5」但账户里什么都没有。B06（武将）与 B15（特权）已各自接上真实现，
+ * 剩下的体力（B09）落地前，走到这里仍然应当抛。
  */
 public final class TransientRewardPorts {
 
     private TransientRewardPorts() {
-    }
-
-    /** 补偿队列的内存实现。 */
-    public static final class TransientCompensation implements RewardPorts.Compensation {
-
-        private static final Logger LOG = LoggerFactory.getLogger(TransientCompensation.class);
-        private final AtomicLong seq = new AtomicLong();
-        private final Map<String, List<RewardItem>> pending = new ConcurrentHashMap<>();
-
-        @Override
-        public String record(String playerId, List<RewardItem> failed, RewardContext ctx, Throwable cause) {
-            String id = "comp_" + seq.incrementAndGet();
-            pending.put(id, failed);
-            LOG.error("【未持久化】发奖失败已进补偿队列 playerId={} compensationId={} source={} traceId={} "
-                            + "失败明细={} 原因={} —— 本实现重启即丢，B12 必须换成持久化且可人工重放",
-                    playerId, id, ctx.source(), ctx.traceId(), failed,
-                    cause == null ? "业务校验未通过" : cause.getMessage());
-            return id;
-        }
-
-        public Map<String, List<RewardItem>> pending() {
-            return Map.copyOf(pending);
-        }
     }
 
     /**

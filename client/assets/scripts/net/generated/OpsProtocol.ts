@@ -94,6 +94,80 @@ export interface DebtOrderView {
 }
 
 /**
+ * GET /ops/reward/compensation 响应：发奖失败欠下的账（只读，需运维令牌）。
+ *
+ * **为什么必须有出口**：B04 验收 7 要求「grantReward 异常时不静默：落日志 + 补偿队列有记录」。日志那一半早就有了，记录这一半此前只在内存里 —— 重启之后连「欠过谁」都查不出来，玩家投诉变成无据可查。只读、不改任何状态，所以这条端点不新增任何写路径（与 /ops/pay/debt 同一条纪律）。
+ */
+export interface CompensationResp {
+  /** 还没处理的总笔数（不受 limit 影响）。**对账口径与支付负债一样：这个数必须最终归零**。与 listed 分开给，是为了不让「只列了 20 条」被读成「一共只有 20 笔」。 */
+  pendingCount: number
+  /** 本响应实际带出的条数（受 limit 约束）。 */
+  listed: number
+  /** 待处理的欠账，**最旧的在前**（运维按先欠先处理的顺序清账）。 */
+  rows: CompensationRow[]
+}
+
+/**
+ * 一笔发奖欠账。给的是「够不够按原样补发」：谁、哪次发奖、哪几件没出去、为什么。
+ */
+export interface CompensationRow {
+  /** 台账主键，形如 comp_xxx。销账时要带它。 */
+  compensationId: string
+  /** 欠谁的。 */
+  playerId: string
+  /** 来源系统（quest / activity / battle / mail / shop …）。风控归因按它，不看这个就只知道玩家多了少了不知道是哪个系统发的。 */
+  source: string
+  /** 来源的具体引用（任务 id、订单 id…），没有时是空串而不是 null —— 空串表示「这条链路本来就没有引用」，null 会被读成「字段没写全」。 */
+  sourceRef: string | null
+  /** 当时那次请求的链路 id（铁律 10）。拿它可以把日志里那条 ERROR 与这一行对上。 */
+  traceId: string
+  /** 失败原因摘要，没有原因时是「业务校验未通过」。**给运维看的一句人话，不是异常栈** —— 栈在日志里，按 traceId 找。 */
+  reason: string | null
+  /** 记账时刻（毫秒）。欠了多久是排优先级的第一依据，与支付负债同一口径。 */
+  createdAt: number
+  /** 没发出去的明细。**至少一条**：一条「欠 0 件」的记录只会来自把已发放误当待补偿的调用点，那种错误在记账当场就该响。 */
+  items: CompensationRewardView[]
+}
+
+/**
+ * 一条待补发的奖励。字段与 game-core 的 RewardItem 一一对应（type 是裸字符串，与 PayRewardItem 同一处理，理由见 pay.schema.json 顶部第 4 条）。
+ */
+export interface CompensationRewardView {
+  /** 奖励类型：RESOURCE / ITEM / HERO / HERO_FRAGMENT / STAMINA / PRIVILEGE。 */
+  type: string
+  /** 目标 id，语义随 type 变化。 */
+  id: string
+  /** 数量，恒为正。全程 64 位整数，禁止浮点（B04 禁止项）。 */
+  count: number
+}
+
+/**
+ * POST /ops/reward/compensation/resolve 请求：把一笔欠账标成已处理。
+ *
+ * **为什么只有人工销账、没有自动重投**：一次发放失败的原因大多是「这个玩家此刻放不下」而不是「再试一次就好」，盲目重投会把一次失败变成 N 次重复发放（那是经济口子）。兑付走已经带幂等键与审计的 POST /ops/mail/send，销账时把那封邮件的 id 写进 resolution —— 于是台账留下的是一条可核对的凭证，不是一句「处理过了」。
+ */
+export interface CompensationResolveReq {
+  /** 要销的那一条。 */
+  compensationId: string
+  /** 处理人标识。**不许留空**：「谁把这笔债销掉的」与「谁欠的」同样重要，否则这张表变成一个可以悄悄抹平的地方。 */
+  actor: string
+  /** 处理说明，期望写成兑付通路留下的凭证（如 mail_xxx）。 */
+  resolution: string
+}
+
+/**
+ * 销账结果。
+ */
+export interface CompensationResolveResp {
+  /** 被销的那一条。 */
+  compensationId: string
+  /** 这一次是否真正完成了状态翻转。**只有从「未处理」翻到「已处理」的那一次是 true** —— 两个人同时处理同一条时，第二个人拿到 false，才知道自己那封补发邮件是重复的。 */
+  resolved: boolean
+  /** 销账之后还剩几笔没处理（让调用方一次请求就能确认自己在往下走）。 */
+  pendingCount: number
+}
+
+/**
  * POST /ops/crash 请求体（B16 §6 全局错误捕获 + 上报，验收 9：后台能收到完整堆栈 + traceId）。
  *
  * **traceId 是这个契约存在的理由**：没有它，后台收到的是一堆匿名堆栈，而线上排查的第一步永远是「这个玩家当时在做什么」。禁止项写死了「不要让日志无 traceId」。

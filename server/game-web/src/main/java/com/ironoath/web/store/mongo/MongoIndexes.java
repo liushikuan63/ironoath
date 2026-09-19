@@ -184,6 +184,15 @@ public final class MongoIndexes {
         String mailExpiry = mailIndexes.ensureIndex(new Index()
                 .on(MailDocument.FIELD_EXPIRE_AT, Sort.Direction.ASC)
                 .named("idx_mail_expire_at"));
+        // 补偿台账：唯一的读路径是运维面板上那条「还没处理的、最旧的 N 笔」，
+        // 它每次都带 resolvedAt 为空这个条件并按 createdAt 排序 —— 没有索引就是整集合扫 + 内存排序。
+        // 只建这一条：已处理的那些今天没有任何查询入口（台账按 _id 点查走主键），
+        // 多一个索引只是让每次记账多维护一份。
+        String compensationPending = mongo.indexOps(RewardCompensationDocument.COLLECTION)
+                .ensureIndex(new Index()
+                        .on(RewardCompensationDocument.FIELD_RESOLVED_AT, Sort.Direction.ASC)
+                        .on(RewardCompensationDocument.FIELD_CREATED_AT, Sort.Direction.ASC)
+                        .named("idx_reward_compensation_resolved_at_created_at"));
         // 活动进度：一个玩家一份文档，_id 就是 playerId，所以点查不需要额外索引；
         // 但没有索引时"这个服的进度分布"这类运营查询会整集合扫，
         // 而 windowStart 是那些查询唯一会过滤的字段（哪一轮、转没转过去）
@@ -253,6 +262,7 @@ public final class MongoIndexes {
                 + "；" + TrackEventDocument.COLLECTION + " → " + byTrackPlayer + " / " + trackExpiry
                 + "；" + TrackCrashDocument.COLLECTION + " → " + crashExpiry
                 + "；" + MailDocument.COLLECTION + " → " + byMailPlayer + " / " + mailExpiry
+                + "；" + RewardCompensationDocument.COLLECTION + " → " + compensationPending
                 + "；" + ActivityProgressDocument.COLLECTION + " → " + byActivityWindow
                 + "；" + SquadDocument.COLLECTION + " → " + uniqueSquadName + " / " + bySquadMember
                 + "；" + AllianceDocument.COLLECTION + " → " + uniqueAllianceName + " / "

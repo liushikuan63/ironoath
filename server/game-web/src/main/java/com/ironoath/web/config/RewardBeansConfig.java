@@ -10,9 +10,12 @@ import com.ironoath.core.reward.RewardService;
 import com.ironoath.web.reward.ServerSeedSource;
 import com.ironoath.web.reward.PlayerBag;
 import com.ironoath.web.reward.PlayerWallet;
-import com.ironoath.web.reward.TransientRewardPorts;
+import com.ironoath.web.reward.RewardCompensationStore;
+import com.ironoath.web.reward.StoreCompensation;
+import com.ironoath.web.store.memory.InMemoryRewardCompensationStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -72,18 +75,46 @@ public class RewardBeansConfig {
      * 体力（B09）与特权（B15）仍由 Extras 实现抛异常并进补偿队列。
      */
     /**
+     * 补偿台账的存储。<b>与邮箱同一套约定</b>：dev/test 用内存版，
+     * {@code ironoath.storage=mongo} 时换 {@code MongoRewardCompensationStore}。
+     *
+     * <p>内存版重启即丢，而这里装的是「玩家该得、当下没拿到」的明细 —— 所以它打 WARN。
+     * 判据与 {@code MailBeansConfig#mailStore} 完全一致：<b>不可重算的资产不许只放在进程里</b>。
+     */
+    @Bean
+    @ConditionalOnProperty(name = "ironoath.storage",
+            havingValue = GameProperties.STORAGE_MEMORY, matchIfMissing = true)
+    public RewardCompensationStore rewardCompensationStore() {
+        LOG.warn("使用内存补偿台账：重启后「发奖失败欠了谁、欠哪几件」会一起消失，"
+                + "玩家的投诉将无据可查 —— 生产请设 ironoath.storage=mongo（实现已在 MongoRewardCompensationStore）");
+        return new InMemoryRewardCompensationStore();
+    }
+
+    /**
      * 补偿队列。<b>提到独立的 {@code @Bean} 而不是在 {@code rewardService} 里内联 new</b>：
      * 商店兑换在「钱已扣、发货抛出实现故障」时也要把这笔债记进<b>同一个</b>队列
      * （见 {@code ShopAppService#deliver}），而内联出来的那份实例别人拿不到 ——
-     * 结果会是两处各有一个只在内存里、谁也看不见谁的补偿队列。
+     * 结果会是两处各自记一本谁也看不见谁的账。
+     *
+     * <p>它此前是 {@code TransientRewardPorts.TransientCompensation}：只在内存与日志里，
+     * 且 id 是<b>实例内自增序号</b>。现在这层只做「写台账 + 打日志」，事实交给存储端口，
+     * 于是 B04 验收 7 的后半句（补偿队列要有记录）在重启之后仍然成立。
      *
      * <p>声明类型这里用端口而不是具体类：与收口清单 #15 那个坑相反的方向才安全。
      * 那个坑的形状是「{@code @Bean} 声明成端口、<b>消费者按具体类注入</b>」；
      * 本类的消费者（RewardGrantor 与 ShopAppService）全部按端口注入，不存在类型预测问题。
      */
     @Bean
-    public RewardPorts.Compensation rewardCompensation() {
-        return new TransientRewardPorts.TransientCompensation();
+    public RewardPorts.Compensation rewardCompensation(RewardCompensationStore store,
+                                                       TimeService timeService) {
+        return new StoreCompensation(store, timeService);
+    }
+
+    /** 台账的运维出口（{@code GET /ops/reward/compensation} 与 {@code .../resolve}）。 */
+    @Bean
+    public com.ironoath.web.reward.RewardCompensationAdminService rewardCompensationAdmin(
+            RewardCompensationStore store, TimeService timeService) {
+        return new com.ironoath.web.reward.RewardCompensationAdminService(store, timeService);
     }
 
     @Bean
@@ -93,8 +124,9 @@ public class RewardBeansConfig {
                                        RewardPorts.Extras extras,
                                        RewardPorts.Compensation rewardCompensation,
                                        TimeService timeService) {
-        LOG.warn("补偿队列当前仍是内存实现（重启即丢），B12 必须换成可人工重放的持久化实现；"
-                + "体力/特权两类奖励仍会响亮失败并进补偿队列，B09/B15 落地前不得对玩家开放。"
+        LOG.warn("体力（STAMINA）一类的奖励仍会响亮失败并记进补偿台账，B09 落地前不得对玩家开放；"
+                + "欠账本身已经持久化（B04 验收 7），运维从 GET /ops/reward/compensation 看、"
+                + "按明细用 POST /ops/mail/send 补发后回到 POST /ops/reward/compensation/resolve 销账。"
                 + "溢出邮件已接真邮箱（B12 §2，见 MailBeansConfig#rewardMailbox）。");
         return new RewardGrantor(
                 playerWallet,

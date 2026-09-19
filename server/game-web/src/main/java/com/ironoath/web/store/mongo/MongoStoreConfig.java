@@ -189,6 +189,18 @@ public class MongoStoreConfig {
     }
 
     /**
+     * 发奖失败的补偿台账（B04 验收 7）。这一档防的与邮件是同一件事，但位置更靠前：
+     * 台账里装着<b>发放器已经认账、却一次也没发出去</b>的明细 —— 它此前只在内存里，
+     * 重启之后连"欠过谁"都查不出来，玩家投诉就变成无据可查。
+     * 契约见 {@code RewardCompensationStoreEquivalenceTest}。
+     */
+    @Bean
+    public com.ironoath.web.reward.RewardCompensationStore rewardCompensationStore(MongoTemplate mongo) {
+        LOG.info("使用 MongoDB 补偿台账（发奖失败的欠账不再随进程消失）");
+        return new MongoRewardCompensationStore(mongo);
+    }
+
+    /**
      * 活动进度（B17）。这一档防的是「连续签到天数与活动进度随进程消失」——
      * 两类都无法从当前状态反推（日子过去了、怪已经死了），所以只能在事件发生那一刻记下来。
      * 契约见 {@code ActivityStoreEquivalenceTest}。

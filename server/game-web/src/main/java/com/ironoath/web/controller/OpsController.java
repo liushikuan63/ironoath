@@ -62,17 +62,21 @@ public class OpsController {
     private final com.ironoath.web.service.SocialAppService social;
     /** 每日快照的全量出口挂在它上面（B23 裁决③：玩家只能查自己，运营要全量）。 */
     private final com.ironoath.web.rank.RankBoardService ranks;
+    /** 奖励欠账台账（B04 验收 7 的出口）。与支付负债分开挂：一本欠的是货，一本欠的是奖励。 */
+    private final com.ironoath.web.reward.RewardCompensationAdminService rewards;
 
     public OpsController(OpsAppService ops, PayAppService pay, MailAppService mails,
                          OpsTokenGuard token,
                          com.ironoath.web.service.SocialAppService social,
-                         com.ironoath.web.rank.RankBoardService ranks) {
+                         com.ironoath.web.rank.RankBoardService ranks,
+                         com.ironoath.web.reward.RewardCompensationAdminService rewards) {
         this.ops = ops;
         this.pay = pay;
         this.mails = mails;
         this.token = token;
         this.social = social;
         this.ranks = ranks;
+        this.rewards = rewards;
     }
 
     /**
@@ -274,6 +278,34 @@ public class OpsController {
             @RequestParam(name = "limit", defaultValue = "20") int limit) {
         token.require(opsToken);
         return Result.ok(pay.debt(limit));
+    }
+
+    /**
+     * 发奖欠账台账（只读，需运维令牌）：谁、哪次发奖、哪几件没出去、为什么。
+     *
+     * <p>存在理由与 {@code /pay/debt} 同一条且更硬：B04 验收 7 要求「不静默 = 落日志 + 有记录」，
+     * 而记录此前只在内存里，重启后连"欠过谁"都查不出来。
+     *
+     * @param limit 明细最多带几条，服务端另有上限夹住
+     */
+    @GetMapping("/reward/compensation")
+    public Result<com.ironoath.web.dto.generated.CompensationResp> rewardCompensation(
+            @RequestHeader(name = OpsTokenGuard.HEADER, required = false) String opsToken,
+            @RequestParam(name = "limit", defaultValue = "20") int limit) {
+        token.require(opsToken);
+        return Result.ok(rewards.list(limit));
+    }
+
+    /**
+     * 销一笔发奖欠账（需运维令牌）。<b>只翻状态，不发放任何东西</b> ——
+     * 兑付走 {@code /mail/send} 那条已带幂等键与审计的通路，销账时把邮件 id 写进 resolution。
+     */
+    @PostMapping("/reward/compensation/resolve")
+    public Result<com.ironoath.web.dto.generated.CompensationResolveResp> resolveRewardCompensation(
+            @RequestHeader(name = OpsTokenGuard.HEADER, required = false) String opsToken,
+            @RequestBody com.ironoath.web.dto.generated.CompensationResolveReq req) {
+        token.require(opsToken);
+        return Result.ok(rewards.resolve(req));
     }
 
     /** 崩溃上报（B16 §6，验收 9：后台能收到完整堆栈 + traceId）。 */
