@@ -96,7 +96,12 @@ for (const root of ROOTS) {
         inThrowStatement = !trimmed.endsWith(';')
         return
       }
-      const literals = line.match(/`[^`]*`|"[^"]*"|'[^']*'/g) || []
+      const literals = line
+        // 节点名不是玩家可见文案：`new Node(` 里那个字面量是给编辑器与探针看的层级标识，
+        // 屏幕上不出现。不剔掉就会误报（2026-09-20 实测把 `new Node(`Plan-${configId}`)`
+        // 报成"文案里有 configId"，害得下一条真缺陷要人去改一句根本看不见的字符串）。
+        .replace(/new Node\(\s*(?:`[^`]*`|'[^']*'|"[^"]*")\s*\)/g, '')
+        .match(/`[^`]*`|"[^"]*"|'[^']*'/g) || []
       for (const literal of literals) {
         const probe = literal.replace(/隐私协议/g, '')
         const hit = JARGON.find((word) => probe.includes(word))

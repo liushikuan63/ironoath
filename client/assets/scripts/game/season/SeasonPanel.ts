@@ -144,7 +144,11 @@ export function buildSeasonPanel(resp: SeasonStatusResp | null,
   const days = `${(resp.dayIndex ?? 0) + 1} / ${resp.totalDays}`
   return {
     visible: true,
-    titleText: `${resp.seasonId} 赛季 · 第 ${days} 天`,
+    // 不印 `resp.seasonId`：那是 season 表的行 id（真值形如 `season_01_phase_1`），玩家读不懂，
+    // 而赛季**中文名在表里、不在响应里** —— 客户端只有 ConfigTypes 类型没有表数据，
+    // 不许自己查表拼一个（#255 建筑名 / #268 资源名 / #278 技能名 / #281 碎片名同族第五处）。
+    // 正解是 `SeasonStatusResp` 带 name，那是契约改动，单独排队；在此之前标题只说玩家看得懂的部分。
+    titleText: `赛季 · 第 ${days} 天`,
     phaseText: `${phaseLabel(resp.phase)} · ${remainTextOf(resp.phaseEndAt, now)}`,
     gates: [
       { allowed: resp.allowsPvp, text: resp.allowsPvp ? '可以攻击其他玩家' : '当前阶段禁止玩家间攻击' },

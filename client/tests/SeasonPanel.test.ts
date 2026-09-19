@@ -44,7 +44,20 @@ test('列表还没拉回来时画一句说明，不画一个假赛季', () => {
 test('天数按 1 起算：dayIndex 是 0-based（第 12 天 = dayIndex 11）', () => {
   const view = buildSeasonPanel(resp())
   assert.equal(view.visible, true)
-  assert.equal(view.titleText, 'season_01 赛季 · 第 12 / 45 天')
+  assert.equal(view.titleText, '赛季 · 第 12 / 45 天')
+})
+
+/**
+ * 这一条**以前是反的**：它原来断言 `titleText === 'season_01 赛季 · …'`，
+ * 也就是把"把 season 表行 id 印给玩家"钉成了规格（与 #268 那两条 `'WOOD 12000/12000'`、
+ * #255 的 `'building_wood Lv6'` 同一种绿灯替缺陷作证）。
+ * 赛季中文名在表里而响应没带 ⇒ 客户端不许自己查表拼（只有类型没有数据），
+ * 在 `SeasonStatusResp` 补 name 之前，标题里就不该出现任何行 id。
+ */
+test('标题不印 season 表行 id（客户端也不许自己查表拼名字）', () => {
+  const view = buildSeasonPanel(resp({ seasonId: 'season_01_phase_3' }))
+  assert.ok(!/season_\d/.test(view.titleText), `标题里漏出行 id：「${view.titleText}」`)
+  assert.ok(!view.titleText.includes('phase_'), `标题里漏出阶段行 id：「${view.titleText}」`)
 })
 
 test('阶段名是玩家语言，五个取值都有（含休赛期）', () => {
