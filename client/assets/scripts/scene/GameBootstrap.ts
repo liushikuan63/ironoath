@@ -46,6 +46,7 @@ import { GiftPopupView } from './GiftPopupView'
 import { TechPanelView } from './TechPanelView'
 import { EquipPanelView } from './EquipPanelView'
 import { ExpPickOverlay } from './ExpPickOverlay'
+import { AwakenPickOverlay } from './AwakenPickOverlay'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -948,6 +949,22 @@ export class GameBootstrap extends Component {
   }
 
   /**
+   * 觉醒选石头的弹层（V03-d 第二条）。与升级弹层同样挂在这一层的二级弹层，不占导航项。
+   */
+  private mountAwakenPickOverlay(): void {
+    if (this.node.getChildByName('awakenPick') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('awakenPick')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(AwakenPickOverlay)
+    node.active = false
+  }
+
+  /**
    * 装备实例页（V03-b-S1）。与研究页同一做法：从**武将页**点出来的二级页，不占导航项。
    */
   private mountEquipPanel(): void {
@@ -969,6 +986,7 @@ export class GameBootstrap extends Component {
     this.mountTechPanel()
     this.mountEquipPanel()
     this.mountExpPickOverlay()
+    this.mountAwakenPickOverlay()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -989,6 +1007,7 @@ export class GameBootstrap extends Component {
     const tech = this.panel(TechPanelView, 'techPanel')
     const equip = this.panel(EquipPanelView, 'equipPanel')
     const expPick = this.panel(ExpPickOverlay, 'expPick')
+    const awakenPick = this.panel(AwakenPickOverlay, 'awakenPick')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -1026,6 +1045,13 @@ export class GameBootstrap extends Component {
       expPick.onBump = (itemId, delta) => this.root?.bumpExpPick(itemId, delta)
       expPick.onConfirm = () => { void this.root?.confirmExpPick() }
       expPick.onCancel = () => this.root?.cancelExpPick()
+    }
+    if (awakenPick !== null) {
+      // 觉醒弹层（V03-d）：单选一块石，选中与确认都由编排层处理，视图只喊一声
+      out.awakenPick = (view, heroName) => awakenPick.render(view, heroName)
+      awakenPick.onPick = itemId => this.root?.pickAwakenItem(itemId)
+      awakenPick.onConfirm = () => { void this.root?.confirmAwakenPick() }
+      awakenPick.onCancel = () => this.root?.cancelAwakenPick()
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
@@ -1066,7 +1092,12 @@ export class GameBootstrap extends Component {
           void this.root?.openExpPick(heroId)
           return
         }
-        // 升级要喂经验道具、觉醒与技能要选道具、装备要选装备实例 —— 这四条各需要一个选择弹层，
+        if (action === 'awaken') {
+          // 觉醒要先选哪块石（V03-d 第二条）：两块石同一时刻只有一块点亮，判据在纯逻辑里
+          void this.root?.openAwakenPick(heroId)
+          return
+        }
+        // 技能要选升哪个技能位（还得对上书的主/副）、卸下要选下掉哪一件实例 —— 各要一个选择弹层，
         // 是独立的一格（队列里记着）。这里如实说明，不做"点了没反应"的静默失败。
         console.warn(`[hero] "${action}" 需要先选道具/技能槽（选择弹层还没做），暂时不可用`)
       }

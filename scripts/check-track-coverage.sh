@@ -70,6 +70,11 @@ const SKIP = new Set([
   "openExpPick",
   "bumpExpPick",
   "cancelExpPick", // 取消 = 关掉弹层、什么都没发生，没有可上报的东西
+  // 觉醒弹层同一条口径：意图是"用掉这块石"那一下（confirmAwakenPick 里打 hero_awaken），
+  // 开弹层 / 换一块石 / 取消都不是意图
+  "openAwakenPick",
+  "pickAwakenItem",
+  "cancelAwakenPick",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

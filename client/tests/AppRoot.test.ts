@@ -32,6 +32,7 @@ import type { SeasonPanelView } from '../assets/scripts/game/season/SeasonPanel'
 import type { TechPanelView } from '../assets/scripts/game/tech/TechPanel'
 import type { EquipPanelView } from '../assets/scripts/game/equip/EquipPanel'
 import type { ExpPickView } from '../assets/scripts/game/hero/ExpPick'
+import type { AwakenPickView } from '../assets/scripts/game/hero/AwakenPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
@@ -88,6 +89,7 @@ const ROUTES: Record<string, unknown> = {
   '/hero/starUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/equip': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/levelUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
+  '/hero/awaken': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
@@ -520,6 +522,7 @@ interface Harness {
   readonly lastTech: TechPanelView | null
   readonly lastEquip: EquipPanelView | null
   readonly lastExpPick: { readonly view: ExpPickView, readonly heroName: string } | null
+  readonly lastAwakenPick: { readonly view: AwakenPickView, readonly heroName: string } | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -612,6 +615,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastTech: TechPanelView | null = null
   let lastEquip: EquipPanelView | null = null
   let lastExpPick: { view: ExpPickView, heroName: string } | null = null
+  let lastAwakenPick: { view: AwakenPickView, heroName: string } | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -670,6 +674,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     expPick: (view, heroName) => {
       lastExpPick = { view, heroName }
+    },
+    awakenPick: (view, heroName) => {
+      lastAwakenPick = { view, heroName }
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -750,6 +757,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastExpPick() {
       return lastExpPick
+    },
+    get lastAwakenPick() {
+      return lastAwakenPick
     },
     get lastCompose() {
       return lastCompose
@@ -2102,6 +2112,78 @@ test('升级弹层：一件都没选时确认是空操作（不发一个注定�
   await h.root.confirmExpPick()
   assert.equal(h.http.countOf('/hero/levelUp'), before, '全 0 不发')
   assert.equal(h.lastExpPick?.view.canSend, false, '弹层上那个键也该是灰的')
+})
+
+/** 两块觉醒石 + 一件同 type 的经验书（后者不该进觉醒候选）。 */
+function awakenBag(): Record<string, unknown> {
+  return {
+    items: [
+      { itemId: 'item_hero_awaken_1', name: '觉醒石·初阶', type: 'MATERIAL', rarity: 'SR',
+        obtainFrom: '赛季通行证', count: 4, stackMax: 999, sortKey: 10, effectKind: 'AWAKEN_HERO' },
+      { itemId: 'item_hero_awaken_2', name: '觉醒石·高阶', type: 'MATERIAL', rarity: 'SSR',
+        obtainFrom: '限定活动', count: 1, stackMax: 999, sortKey: 11, effectKind: 'AWAKEN_HERO' },
+      { itemId: 'item_hero_exp_s', name: '小经验书', type: 'MATERIAL', rarity: 'R',
+        obtainFrom: '主线任务', count: 5, stackMax: 99, sortKey: 12, effectKind: 'GRANT_HERO_EXP' },
+    ],
+  }
+}
+
+test('觉醒弹层：两块石都列出来但只点亮这一阶认的那块，确认发一条 /hero/awaken 并回读两边', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', {
+    heroes: [{ heroId: 'hero_guanyu', name: '关羽', awaken: 0, maxAwaken: 3 }], lineups: [],
+  })
+  h.http.overrides.set('/bag/list', awakenBag())
+  await h.root.refresh('hero')
+  await h.root.refresh('bag')
+
+  await h.root.openAwakenPick('hero_guanyu')
+  assert.equal(h.lastAwakenPick?.heroName, '关羽', '名字取自服务端给的武将列表')
+  assert.deepEqual(h.lastAwakenPick?.view.rows.map(r => [r.itemId, r.usable]),
+    [['item_hero_awaken_1', true], ['item_hero_awaken_2', false]],
+    '第 1 阶只认初阶石，而经验书压根不进候选')
+  assert.equal(h.lastAwakenPick?.view.stageText, '第 0 阶 → 第 1 阶（共 3 阶）',
+    '进度两个数都来自 HeroView，客户端不自己臆造上限')
+  assert.equal(h.lastAwakenPick?.view.canSend, false, '还没选石不给发')
+
+  h.root.pickAwakenItem('item_hero_awaken_2')
+  assert.equal(h.lastAwakenPick?.view.selectedItemId, null,
+    '灰掉的那块点了也不算选中：发出去只是白拿一条拒绝')
+  h.root.pickAwakenItem('item_hero_awaken_1')
+  assert.equal(h.lastAwakenPick?.view.canSend, true)
+
+  h.events.length = 0
+  await h.root.confirmAwakenPick()
+  const call = h.http.calls.filter(c => c.path === '/hero/awaken').at(-1)
+  assert.equal(call?.body.heroId, 'hero_guanyu')
+  assert.equal(call?.body.itemId, 'item_hero_awaken_1', '单选：只带选中的那一块')
+  assert.equal(call?.body.skillSlot, null, 'skillSlot 归技能线用，觉醒必须显式给 null')
+  assert.equal(h.http.countOf('/hero/list') >= 2, true, '觉醒完重读武将（阶数变了）')
+  assert.equal(h.http.countOf('/bag/list') >= 2, true, '觉醒完重读背包（石头少了）')
+  assert.deepEqual(h.events.filter(e => e.name === 'hero_awaken').map(e => e.params),
+    [{ heroId: 'hero_guanyu', itemId: 'item_hero_awaken_1', tier: '1' }])
+})
+
+test('觉醒弹层：已达上限时两块石都灰、确认是空操作（不发注定被拒的请求）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', {
+    heroes: [{ heroId: 'hero_guanyu', name: '关羽', awaken: 3, maxAwaken: 3 }], lineups: [],
+  })
+  h.http.overrides.set('/bag/list', awakenBag())
+  await h.root.refresh('hero')
+  await h.root.refresh('bag')
+
+  await h.root.openAwakenPick('hero_guanyu')
+  assert.equal(h.lastAwakenPick?.view.stageText, '已达觉醒上限 3 阶',
+    '满阶还写"第 3 阶 → 第 4 阶"就是把玩家往一个注定失败的请求上推')
+  assert.equal(h.lastAwakenPick?.view.rows.every(r => !r.usable), true)
+  h.root.pickAwakenItem('item_hero_awaken_1')
+
+  const before = h.http.countOf('/hero/awaken')
+  await h.root.confirmAwakenPick()
+  assert.equal(h.http.countOf('/hero/awaken'), before)
 })
 
 test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {

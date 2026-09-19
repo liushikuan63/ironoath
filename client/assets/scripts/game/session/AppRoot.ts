@@ -58,6 +58,8 @@ import type { EquipPanelView } from '../equip/EquipPanel'
 import type { EquipInstanceListView, EquipSlot } from '../../net/generated/EquipProtocol'
 import { buildExpPick, bumpPick, expPickRows, pickedPayload } from '../hero/ExpPick'
 import type { ExpPickView } from '../hero/ExpPick'
+import { buildAwakenPick } from '../hero/AwakenPick'
+import type { AwakenPickView, AwakenStage } from '../hero/AwakenPick'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -227,6 +229,11 @@ export interface PanelTargets {
    */
   expPick?(view: ExpPickView, heroName: string): void
   /**
+   * 觉醒选石头的弹层（V03-d）。与升级弹层同形：**每次都带一份完整视图**，
+   * 哪块石点亮由纯逻辑按当前这一阶判（`game/hero/AwakenPick.ts`）。
+   */
+  awakenPick?(view: AwakenPickView, heroName: string): void
+  /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
@@ -388,6 +395,8 @@ export class AppRoot {
   private bagResp: BagListResp | null = null
   /** 升级弹层的状态：给谁喂、每样选了几件。null = 没开着 */
   private expPick: { heroId: string, heroName: string, picks: Record<string, number> } | null = null
+  /** 觉醒弹层的状态：给谁觉醒、选了哪块石（单选）。null = 没开着 */
+  private awakenPick: { heroId: string, heroName: string, stage: AwakenStage, itemId: string | null } | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -1696,6 +1705,77 @@ export class AppRoot {
   /** 取消：关掉弹层，什么都不发（选择清掉，重开是干净的一份）。 */
   cancelExpPick(): void {
     this.expPick = null
+  }
+
+  // ---------- 武将觉醒（V03-d 第二条：一次只吃一块石，所以是单选） ----------
+
+  /**
+   * 打开觉醒弹层。候选取手里那份背包，"这一阶认哪块石"取手里那份 `/hero/list` 的两个数 ——
+   * 都不额外发请求（武将页上那个「觉醒」按钮只会来自 heroResp，所以它必然已在）。
+   */
+  async openAwakenPick(heroId: string): Promise<void> {
+    if (this.bagResp === null) {
+      await this.refresh('bag')
+    }
+    const hero = this.heroResp?.heroes.find((h) => h.heroId === heroId)
+    if (hero === undefined) {
+      // 列表里没这个人就弹一个空弹层，比不弹更糟：玩家会以为觉醒线坏了
+      return
+    }
+    this.awakenPick = {
+      heroId, heroName: hero.name,
+      stage: { awaken: hero.awaken, maxAwaken: hero.maxAwaken }, itemId: null,
+    }
+    this.deliverAwakenPick()
+  }
+
+  /** 选哪块石。**这里不判可用不可用**：判据在纯逻辑里，灰掉的行既点不动也发不出去。 */
+  pickAwakenItem(itemId: string): void {
+    if (this.awakenPick === null) {
+      return
+    }
+    this.awakenPick = { ...this.awakenPick, itemId }
+    this.deliverAwakenPick()
+  }
+
+  /**
+   * 确认觉醒：只带**选中的那一块**发上去。没选中可用的石就不发
+   * （服务端对未知 itemId 一律拒绝，发了只是把一次误点变成一条提示）。
+   *
+   * <p>提交后即关掉：成功后 `hero` 与 `bag` 都要重读（觉醒阶数与石头余数各在一边）。
+   */
+  confirmAwakenPick(): Promise<void> {
+    const state = this.awakenPick
+    if (state === null) {
+      return Promise.resolve()
+    }
+    const view = buildAwakenPick(this.bagResp?.items ?? [], state.stage, state.itemId)
+    const itemId = view.selectedItemId
+    if (itemId === null) {
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.heroAwaken, {
+      heroId: trackParam(state.heroId), itemId: trackParam(itemId),
+      tier: trackParam(state.stage.awaken + 1),
+    })
+    this.awakenPick = null
+    return this.write('hero', this.api.heroAwaken({ heroId: state.heroId, itemId, skillSlot: null }),
+      ['hero', 'bag'])
+  }
+
+  /** 组装并下发弹层视图（哪块点亮、进度那一行，全在纯逻辑里判）。 */
+  private deliverAwakenPick(): void {
+    const state = this.awakenPick
+    if (state === null) {
+      return
+    }
+    this.targets.awakenPick?.(buildAwakenPick(this.bagResp?.items ?? [], state.stage, state.itemId),
+      state.heroName)
+  }
+
+  /** 取消：关掉弹层，什么都不发。 */
+  cancelAwakenPick(): void {
+    this.awakenPick = null
   }
 
   /**
