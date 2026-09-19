@@ -47,6 +47,13 @@ test('拉不到时把服务端给的理由原样放上说明行（与赛季/榜�
   assert.equal(stale.rows.length, 1, '拉不到不等于列表没了：上一次那份留着')
 })
 
+test('空科技树写实话，不写"正在载入"（与装备页同一条）', () => {
+  const view = buildTechPanel(list({ techs: [] }))
+  assert.equal(view.rows.length, 0)
+  assert.equal(view.noticeText, '还没有可研究的科技')
+  assert.equal(/正在载入/.test(view.noticeText ?? ''), false)
+})
+
 test('一行把等级、效果、成本、耗时都摊开，效果是定点百分比不是小数', () => {
   const view = buildTechPanel(list())
   const row = view.rows[0]

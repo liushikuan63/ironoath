@@ -149,6 +149,8 @@ export function buildEquipPanel(resp: EquipInstanceListView | null,
   return {
     rows,
     summaryText: `已装备 ${wornCount} / 共 ${rows.length} 件`,
-    noticeText: failureNotice ?? null,
+    // 空列表要说实话：**"正在载入…"是给"还没拉回来"用的**，一件都没有时写它会让人一直等
+    // （这条是探针截图里看出来的：新号 instances=0，而面板写着"正在载入…"）
+    noticeText: failureNotice ?? (rows.length === 0 ? '还没有装备' : null),
   }
 }

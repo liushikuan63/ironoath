@@ -82,6 +82,14 @@ test('汇总行数得清：已装备几件 / 共几件', () => {
   assert.equal(view.summaryText, '已装备 1 / 共 3 件')
 })
 
+test('空列表写实话"还没有装备"，不写"正在载入"（探针截图里抓到的）', () => {
+  const view = buildEquipPanel(list({ instances: [] }))
+  assert.equal(view.rows.length, 0)
+  assert.equal(view.summaryText, '已装备 0 / 共 0 件')
+  assert.equal(view.noticeText, '还没有装备')
+  assert.equal(/正在载入/.test(view.noticeText ?? ''), false, '"正在载入"是给"还没拉回来"用的')
+})
+
 test('顺序照抄服务端，不按"未装备排前面"重排', () => {
   const view = buildEquipPanel(list({
     instances: [

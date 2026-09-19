@@ -194,6 +194,7 @@ export function buildTechPanel(resp: TechListView | null,
     rows,
     academyText: `学院 ${resp.academyLevel} 级`,
     queueText: queueTextOf(resp.queue, nameOf),
-    noticeText: failureNotice ?? null,
+    // 空列表要说实话（与装备页同一条）："正在载入…"只用于"还没拉回来"
+    noticeText: failureNotice ?? (rows.length === 0 ? '还没有可研究的科技' : null),
   }
 }
