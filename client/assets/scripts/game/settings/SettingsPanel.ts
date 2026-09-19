@@ -15,15 +15,16 @@ import type { PrivacyPlan } from '../privacy/PrivacyConsent'
 
 /** 设置页的一行。 */
 export interface SettingsRow {
-  readonly key: 'support' | 'refund' | 'privacy'
+  readonly key: 'audio' | 'support' | 'refund' | 'privacy'
   readonly title: string
   readonly subtitle: string
   /** 点下去会发生什么；恒非空 —— 未配置时是一条说明，不是一个死按钮 */
   readonly action: SettingsAction
 }
 
-/** 点击行为。两种都"有反应"，区别只是反应是什么。 */
+/** 点击行为。三种都"有反应"，区别只是反应是什么。 */
 export type SettingsAction =
+  | { readonly kind: 'toggle-audio' }
   | { readonly kind: 'open-customer-service'; readonly corpId: string; readonly url: string }
   | { readonly kind: 'open-privacy-contract' }
   | { readonly kind: 'message'; readonly text: string }
@@ -45,11 +46,20 @@ export function buildSettingsView(
   resp: AppVersionResp | null,
   clientVersion: string,
   privacy: PrivacyPlan = { request: false, contractName: null, apiAvailable: false },
+  audioMuted = false,
 ): SettingsView {
   const support = resp?.support ?? null
   const latest = resp?.latest ?? null
   return {
     rows: [
+      {
+        // 音效开关排第一：它是这一页里唯一"点了立刻能听见"的东西，
+        // 放在客服/退款下面，玩家会先划过去而以为游戏没有这个设置
+        key: 'audio',
+        title: '音效',
+        subtitle: audioMuted ? '当前：静音（点一下恢复声音）' : '当前：开（点一下静音）',
+        action: { kind: 'toggle-audio' },
+      },
       {
         key: 'support',
         title: '联系客服',

@@ -46,16 +46,16 @@ test('未配置客服时入口照样在，点下去说明未配置（不是死�
   const view = buildSettingsView(resp({ support: null }), '1.0.0', noPrivacyApi)
 
   const keys = view.rows.map(r => r.key)
-  assert.deepEqual(keys, ['support', 'refund', 'privacy'],
-    '客服、退款、隐私三个入口都要一级可见（提审按 §二 5/8/9 查）')
+  assert.deepEqual(keys, ['audio', 'support', 'refund', 'privacy'],
+    '音效 + 客服、退款、隐私四个入口都要一级可见（提审按 §二 5/8/9 查）')
 
-  for (const row of view.rows.filter(r => r.key !== 'privacy')) {
+  for (const row of view.rows.filter(r => r.key === 'support' || r.key === 'refund')) {
     assert.equal(row.action.kind, 'message',
       `${row.key} 在未配置时也该有反应：点了什么都不发生会被当成 bug`)
     assert.ok(row.action.kind === 'message' && row.action.text.includes('未配置'),
       `${row.key} 的说明要说清是「没配置」而不是「坏了」：` + JSON.stringify(row.action))
   }
-  assert.equal(view.rows[0]?.subtitle, '本环境未配置客服')
+  assert.equal(view.rows.find(r => r.key === 'support')?.subtitle, '本环境未配置客服')
 })
 
 test('配置了客服 ⇒ 两个入口都走 open-customer-service，并原样带上 corpId 与 url', () => {
@@ -63,21 +63,36 @@ test('配置了客服 ⇒ 两个入口都走 open-customer-service，并原样�
     support: { corpId: 'corp-x', url: 'https://work.weixin.qq.com/kf/x' },
   }), '1.0.0')
 
-  for (const row of view.rows.filter(r => r.key !== 'privacy')) {
+  for (const row of view.rows.filter(r => r.key === 'support' || r.key === 'refund')) {
     assert.equal(row.action.kind, 'open-customer-service', row.key + ' 应当直接打开客服')
     assert.ok(row.action.kind === 'open-customer-service')
     assert.equal(row.action.corpId, 'corp-x')
     assert.equal(row.action.url, 'https://work.weixin.qq.com/kf/x')
   }
   // 退款与客服同路（B15 §3 的「退款通道」就是客服），所以两行的目标是同一个
-  assert.deepEqual(view.rows[0]?.action, view.rows[1]?.action)
+  const supportRow = view.rows.find(r => r.key === 'support')
+  const refundRow = view.rows.find(r => r.key === 'refund')
+  assert.deepEqual(supportRow?.action, refundRow?.action)
 })
 
 test('服务端版本没拿到时页面照常能用：入口还在，版本行只报当前版本', () => {
   const view = buildSettingsView(null, '1.0.0')
 
-  assert.equal(view.rows.length, 3, '拿不到版本响应不该让设置页空掉（三个入口照常）')
+  assert.equal(view.rows.length, 4, '拿不到版本响应不该让设置页空掉（四个入口照常）')
   assert.equal(view.versionText, '当前版本 1.0.0', '没有服务端版本就不显示「最新」，不编一个')
+})
+
+test('音效行：默认开、排第一、点下去是 toggle-audio（不是一句"请去系统设置"）', () => {
+  const on = buildSettingsView(null, '1.0.0')
+  const off = buildSettingsView(null, '1.0.0', noPrivacyApi, true)
+
+  // 排第一是有意的：这一页只有它是"点了立刻能听见"的，藏在客服下面玩家会以为游戏没有音效开关
+  assert.equal(on.rows[0]?.key, 'audio')
+  assert.equal(on.rows[0]?.action.kind, 'toggle-audio')
+  assert.ok(on.rows[0]?.subtitle.includes('开'), '默认状态要写在副标题里，不能只靠一个看不懂的勾选框')
+  assert.ok(off.rows[0]?.subtitle.includes('静音'), '静音后副标题必须换成"当前静音"，否则下次进来不知道刚才点没点上')
+  assert.notDeepEqual(on.rows[0]?.subtitle, off.rows[0]?.subtitle,
+    '两态文案一模一样 ⇒ 这一行等于没反馈')
 })
 
 test('版本行：与服务端一致时只显示当前版本，不一致时把两个都写出来', () => {

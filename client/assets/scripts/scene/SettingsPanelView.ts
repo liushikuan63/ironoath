@@ -40,9 +40,10 @@ export class SettingsPanelView extends Component {
   onSupport: ((row: SettingsRow) => void) | null = null
 
   render(resp: AppVersionResp | null, clientVersion: string,
-    privacy: PrivacyPlan = { request: false, contractName: null, apiAvailable: false }): void {
+    privacy: PrivacyPlan = { request: false, contractName: null, apiAvailable: false },
+    audioMuted = false): void {
     this.clearRows()
-    const view = buildSettingsView(resp, clientVersion, privacy)
+    const view = buildSettingsView(resp, clientVersion, privacy, audioMuted)
     this.drawBackground()
 
     let y = PANEL_HEIGHT / 2 - PADDING

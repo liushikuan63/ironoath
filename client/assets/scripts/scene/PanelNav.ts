@@ -17,6 +17,7 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { playSfx } from './AudioService'
 import { CityPanelView } from './CityPanelView'
 import { ArmyPanelView } from './ArmyPanelView'
 import { HeroPanelView } from './HeroPanelView'
@@ -155,6 +156,9 @@ export class PanelNav extends Component {
       this.onShow?.(key)
       return
     }
+    // 换页有声：这是唯一一处"玩家主动换了屏"的事实，音效层挂在这里，
+    // 二十个视图不需要知道音频存在
+    playSfx('nav')
     for (const [panelKey, node] of this.panelNodes) {
       node.active = panelKey === key
     }

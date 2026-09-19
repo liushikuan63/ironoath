@@ -119,7 +119,7 @@
             "_value": false
           },
           "audio": {
-            "_value": false
+            "_value": true
           },
           "video": {
             "_value": false
@@ -193,6 +193,7 @@
         "includeModules": [
           "2d",
           "affine-transform",
+          "audio",
           "base",
           "custom-pipeline",
           "gfx-webgl",

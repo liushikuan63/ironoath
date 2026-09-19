@@ -67,6 +67,7 @@ import { TargetSearchView } from './TargetSearchView'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
 import { WorldMap } from './WorldMap'
 import { PanelNav } from './PanelNav'
+import { installAudio, isMuted, playSfx, setMuted } from './AudioService'
 import { preloadRuntimeArt } from './ArtCatalog'
 import { claimReceiptText } from '../game/activity/ActivityPanel'
 
@@ -283,6 +284,8 @@ export class GameBootstrap extends Component {
     // 导航层：由它建出各面板节点（初始未激活，因此不会九个面板一起画满屏背景），
     // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
     this.nav = this.node.addComponent(PanelNav)
+    // 音效层挂在同一个 host 上：AudioSource 必须属于活跃场景，否则 playOneShot 一声不出且不报错
+    installAudio(this.node)
     this.buildGuideLayer()
     // 邮件不占首屏：多一个并发请求会挤那 3 秒预算（首屏判据是「可交互」而不是「可见」），
     // 而邮箱不在可交互的必需项里 —— 玩家点开那一格才拉第一次。onShow 这个钩子此前挂着没人用。
@@ -651,6 +654,15 @@ export class GameBootstrap extends Component {
    * 否则他的体感是「点了没反应」，而那会被当成 bug 报上来。
    */
   private handleSettingsAction(action: SettingsAction): void {
+    if (action.kind === 'toggle-audio') {
+      const next = !isMuted()
+      setMuted(next)
+      // 立刻重画那一行：文案不跟着翻，玩家会以为自己点错了地方。
+      // 这里**不**补一声提示音 —— 刚静音就响，等于告诉玩家开关没生效。
+      this.panel(SettingsPanelView, 'settings')
+        ?.render(this.appVersion, CLIENT_VERSION, this.privacyPlan, next)
+      return
+    }
     if (action.kind === 'open-privacy-contract') {
       openPrivacyContract()
       return
@@ -686,6 +698,8 @@ export class GameBootstrap extends Component {
    * 而一个挂在画布上的 Label 就是它的全部实现。
    */
   private showHint(text: string): void {
+    // 有话要说就要有声音：这条是"结果提示"的唯一出口，音效挂在这里而不是挂在各视图的失败分支上
+    playSfx('alert')
     const canvas = this.node.parent ?? this.node
     const hint = new Node('SettingsHint')
     canvas.addChild(hint)
@@ -887,7 +901,7 @@ export class GameBootstrap extends Component {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
       // 数据在 GameBootstrap 手里（版本响应是它拉的），所以这里直接推一次；
       // 面板没有 pending 通道可走 —— 那套是给 AppRoot 预拉的面板用的
-      settings.render(this.appVersion, CLIENT_VERSION, this.privacyPlan)
+      settings.render(this.appVersion, CLIENT_VERSION, this.privacyPlan, isMuted())
     }
     if (city !== null) {
       out.city = (resp, offsetMs) => city.attach(resp, offsetMs)
