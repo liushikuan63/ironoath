@@ -30,8 +30,12 @@ const COLOR_HINT = new Color(120, 168, 196, 255)
 
 const CARD_WIDTH = 560
 const CARD_HEIGHT = 600
-const ROW_HEIGHT = 38
-const GROUP_HEIGHT = 22
+/**
+ * 行高按"11 项全部画得下"定的（实测：38 会挤掉最后一项，而这一页**没有滚动**，
+ * 挤掉就等于那一项玩家永远够不到）。表里现在 11 行，再加行就得配翻页 —— 到那时改这里并让探针跟着改。
+ */
+const ROW_HEIGHT = 34
+const GROUP_HEIGHT = 20
 const PADDING = 16
 /** 底部留给关闭按钮的高度：行画到这儿就停，剩下的如实报"还有几项"（不硬塞、不静默截断）。 */
 const BOTTOM_RESERVED = 56
@@ -165,17 +169,17 @@ export class TechPanelView extends Component {
 
     const left = -usable / 2 + 10
     const right = usable / 2 - 10
-    this.label(row.name, row.canResearch ? COLOR_TEXT : COLOR_TEXT_DIM, 18, left, y - 11, 'left')
-    this.label(row.levelText, COLOR_TEXT_DIM, 15, left + 150, y - 11, 'left')
-    this.label(row.costText, COLOR_TEXT_DIM, 15, right, y - 11, 'right')
+    this.label(row.name, row.canResearch ? COLOR_TEXT : COLOR_TEXT_DIM, 18, left, y - 10, 'left')
+    this.label(row.levelText, COLOR_TEXT_DIM, 14, left + 150, y - 10, 'left')
+    this.label(row.costText, COLOR_TEXT_DIM, 14, right, y - 10, 'right')
     const second = row.effectText === null
       ? (row.timeText === null ? '' : `耗时 ${row.timeText}`)
       : `${row.effectText}${row.timeText === null ? '' : ` · 耗时 ${row.timeText}`}`
-    this.label(second, COLOR_TEXT_DIM, 15, left, y - 28, 'left')
+    this.label(second, COLOR_TEXT_DIM, 14, left, y - 25, 'left')
     if (row.canResearch) {
-      this.label('可研究', COLOR_GOOD, 16, right, y - 28, 'right')
+      this.label('可研究', COLOR_GOOD, 15, right, y - 25, 'right')
     } else if (row.reasonText !== null) {
-      this.label(row.reasonText, COLOR_TEXT_DIM, 16, right, y - 28, 'right')
+      this.label(row.reasonText, COLOR_TEXT_DIM, 15, right, y - 25, 'right')
     }
   }
 
