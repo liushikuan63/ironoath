@@ -84,6 +84,7 @@ const ROUTES: Record<string, unknown> = {
     serverNow: SERVER_NOW,
   },
   '/hero/list': { heroes: [], lineups: [] },
+  '/hero/starUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
@@ -1978,6 +1979,33 @@ test('装备页：拉不到时理由原样进说明行，且不把上一次那�
   assert.equal(h.lastEquip?.noticeText, '服务繁忙')
   assert.equal(h.lastEquip?.rows.length, 2, '拉不到不等于装备没了：上一次那份留着')
   assert.equal(h.errors.some(e => e[0] === 'equip'), true, '面板读取失败也要进统一的上报口')
+})
+
+test('武将升星：点一下发 /hero/starUp 并回读武将与背包（碎片扣了要看得见）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.events.length = 0
+
+  await h.root.heroStarUp('hero_1')
+  const call = h.http.calls.filter(c => c.path === '/hero/starUp').at(-1)
+  assert.equal(call?.body.heroId, 'hero_1', '升星只带 heroId（不需要先选道具）')
+  assert.match(String(call?.body.requestId), /^req-/, '幂等键由编排层注入，不给面板漏填的机会')
+  assert.equal(h.http.countOf('/hero/list') >= 1, true, '升星后重读武将列表')
+  assert.equal(h.http.countOf('/bag/list') >= 1, true, '碎片在背包里：不重读背包玩家会看到碎片没扣')
+  assert.deepEqual(
+    h.events.filter(e => e.name === 'hero_star_up').map(e => e.params.heroId), ['hero_1'])
+})
+
+test('武将升星被拒时把服务端的理由报出来，且不假装刷新过', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.failPaths.add('/hero/starUp')
+  const heroBefore = h.http.countOf('/hero/list')
+
+  await h.root.heroStarUp('hero_1')
+  assert.equal(h.errors.some(e => e[0] === 'hero' && e[1] === '服务繁忙'), true,
+    '失败要把服务端给的理由放进统一上报口')
+  assert.equal(h.http.countOf('/hero/list'), heroBefore, '被拒时不重读列表（不掩盖失败，也省一次请求）')
 })
 
 test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {

@@ -1026,8 +1026,14 @@ export class GameBootstrap extends Component {
           void this.root?.openEquip()
           return
         }
-        console.warn(`[hero] "${action}" 需要额外的选择输入（道具/技能槽），编排层还没有对应动作`)
-        void heroId
+        if (action === 'starUp') {
+          // 升星是六条养成里两条"不需要先选道具"的动作之一，可以直连
+          void this.root?.heroStarUp(heroId)
+          return
+        }
+        // 升级要喂经验道具、觉醒与技能要选道具、装备要选装备实例 —— 这四条各需要一个选择弹层，
+        // 是独立的一格（队列里记着）。这里如实说明，不做"点了没反应"的静默失败。
+        console.warn(`[hero] "${action}" 需要先选道具/技能槽（选择弹层还没做），暂时不可用`)
       }
     }
     if (bag !== null) {

@@ -753,6 +753,20 @@ export class AppRoot {
       ['city', 'resources', 'reddot'], r => this.targets.cityCollect?.(r))
   }
 
+  // ---------- 武将养成（V03 前置：把已有的养成能力接到玩家手上） ----------
+
+  /**
+   * 武将升星。**只带 heroId** —— 六条养成接口里只有升星与碎片合成不需要先选道具/技能槽，
+   * 所以这两个能从武将行直接点出去；升级（要喂经验道具）、觉醒与技能（要选道具）、装备（要选装备）
+   * 各自的"选择输入"是独立的一格（现在点它们仍只打日志，见 `GameBootstrap` 的派发）。
+   *
+   * 刷新 `hero` 与 `bag`：升星吃的是碎片（在背包里），不刷背包玩家会看到碎片没扣。
+   */
+  heroStarUp(heroId: string): Promise<void> {
+    this.track(TRACK_EVENTS.heroStarUp, { heroId: trackParam(heroId) })
+    return this.write('hero', this.api.heroStarUp({ heroId }), ['hero', 'bag'])
+  }
+
   // ---------- 军队 ----------
 
   train(unitId: string, count: number): Promise<void> {
