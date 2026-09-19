@@ -46,6 +46,8 @@ const ARMY_FOR_MARCH = {
   troopCap: 1000, troopsInUse: 0, trainingInUse: 0, queueSlots: 0, queueSlotsMax: 2,
   hospital: { capacity: 0, used: 0, treating: false, treatFinishAt: null, treatRemainingSeconds: 0,
     treatSecondsPerWounded: 0, treatCostRatio: 0 },
+  autoTrain: { enabled: false, unitId: 'none', batchCount: 1, batchBudget: 0, targetCount: 0,
+    stopReason: null },
   serverNow: SERVER_NOW,
 }
 
@@ -69,7 +71,10 @@ const ROUTES: Record<string, unknown> = {
   },
   '/army/list': {
     units: [], troopCap: 0, troopsInUse: 0, trainingInUse: 0,
-    queueSlots: 0, queueSlotsMax: 0, hospital: {}, serverNow: SERVER_NOW,
+    queueSlots: 0, queueSlotsMax: 0, hospital: {},
+    autoTrain: { enabled: false, unitId: 'none', batchCount: 1, batchBudget: 0, targetCount: 0,
+      stopReason: null },
+    serverNow: SERVER_NOW,
   },
   '/hero/list': { heroes: [], lineups: [] },
   '/bag/list': { items: [] },
@@ -121,6 +126,12 @@ const ROUTES: Record<string, unknown> = {
   '/city/speedUp': { remainingSeconds: 0, serverNow: SERVER_NOW },
   '/city/collect': { collected: {}, entries: [], serverNow: SERVER_NOW },
   '/army/train': { started: 1, serverNow: SERVER_NOW },
+  // 开关自动续训（B25-S2d）：回一份「开着、还剩 2 批」的策略，够编排用例读回执
+  '/army/autoTrain': {
+    autoTrain: { enabled: true, unitId: 'unit_infantry_t1', batchCount: 50, batchBudget: 2,
+      targetCount: 0, stopReason: null },
+    serverNow: SERVER_NOW,
+  },
   '/army/treat': { treated: {}, serverNow: SERVER_NOW },
   '/item/use': { used: 1, remaining: 0, effects: [], serverNow: SERVER_NOW },
   '/stage/sweep': { results: {}, rewards: [], serverNow: SERVER_NOW },
@@ -760,7 +771,6 @@ test('首次建造把玩家选中的 gridX/gridY 原样送进 /city/upgrade', as
   h.events.length = 0
 
   await h.root.upgradeBuilding('lumber_camp', 3, 4)
-
   const call = h.http.calls.find(c => c.path === '/city/upgrade')
   assert.equal(call?.body.gridX, 3)
   assert.equal(call?.body.gridY, 4)
@@ -1831,4 +1841,62 @@ test('再次出征：把上一次成功的队伍原样重发，且兵力不足�
   assert.equal(h.http.countOf('/world/march'), beforeShrunk, '凑不齐就不发')
   assert.match(h.lastCompose?.notice ?? '', /30/)
   assert.match(h.lastCompose?.notice ?? '', /5/)
+})
+
+test('自动续训：没训过就不发请求（续的是哪一批只有玩家自己知道），训过之后按那一批发', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+
+  // 还没训过任何一批：明确说清，一次请求都不发
+  await h.root.toggleAutoTrain()
+  assert.equal(h.http.countOf('/army/autoTrain'), 0, '没有可续的那一批就不发')
+  assert.match(String(h.errors.at(-1)?.[1]), /先手动训一批/)
+
+  // 手动训一批（成功），再开自动续训
+  await h.root.train('unit_infantry_t1', 50)
+  await h.root.toggleAutoTrain()
+
+  const call = h.http.calls.find(c => c.path === '/army/autoTrain')
+  assert.notEqual(call, undefined)
+  assert.equal(call?.body.enabled, true)
+  assert.equal(call?.body.unitId, 'unit_infantry_t1', '续的是刚才那一批的兵种')
+  assert.equal(call?.body.count, 50, '数量也一样 —— 自动续训 = 按同样的兵种与数量再排一批')
+  assert.ok(Number(call?.body.batchBudget) > 0, '开的时候必须带预算：不能是"只要资源够就一直训"')
+  assert.equal(call?.body.targetCount, null, '不是补兵模式，没有目标数量')
+  assert.match(String(call?.body.requestId), /^req-/, '幂等键由编排层注入')
+  assert.equal(h.events.at(-1)?.name, 'auto_train')
+  assert.deepEqual(h.events.at(-1)?.params, { on: 'true' })
+})
+
+test('自动续训：开着的时候点一下就是关，且只发 enabled:false', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  // 服务端说它开着（这份策略来自 /army/list，不是客户端自己记的）
+  h.http.overrides.set('/army/list', { ...ARMY_FOR_MARCH,
+    autoTrain: { enabled: true, unitId: 'unit_infantry_t1', batchCount: 50, batchBudget: 2,
+      targetCount: 0, stopReason: null } })
+  await h.root.refresh('army')
+
+  await h.root.toggleAutoTrain()
+
+  const call = h.http.calls.find(c => c.path === '/army/autoTrain')
+  assert.equal(call?.body.enabled, false)
+  assert.equal(call?.body.unitId, null, '关掉不必再报一遍目标（契约明写）')
+  assert.equal(call?.body.batchBudget, null)
+  assert.deepEqual(h.events.at(-1)?.params, { on: 'false' })
+})
+
+test('自动续训：被拒时把服务端的理由原样说出去，不静默', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.train('unit_infantry_t1', 50)
+
+  h.http.bizFailNext = { code: 1001, msg: '请求参数不合法', detail: '一次最多自动排 5 批，请求了 6 批' }
+  await h.root.toggleAutoTrain()
+
+  assert.deepEqual(h.errors.at(-1), ['army', '一次最多自动排 5 批，请求了 6 批'])
 })

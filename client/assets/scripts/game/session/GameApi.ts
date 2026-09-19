@@ -39,7 +39,8 @@ import type {
   BagListResp, ItemUseReq, ItemUseResp, OpenBatchReq, OpenBatchResp,
 } from '../../net/generated/BagProtocol'
 import type {
-  ArmyListResp, ArmyUnitReq, TrainCancelResp, TrainReq, TrainResp, TreatReq, TreatResp,
+  ArmyListResp, ArmyUnitReq, AutoTrainReq, AutoTrainResp, TrainCancelResp, TrainReq, TrainResp,
+  TreatReq, TreatResp,
 } from '../../net/generated/ArmyProtocol'
 import type {
   GachaDrawReq, GachaDrawResp, GachaProbResp, HeroEquipReq, HeroGrowResp, HeroIdReq, HeroItemReq,
@@ -224,6 +225,17 @@ export class GameApi {
 
   armyCollectTreated(req: Omit<TreatReq, 'requestId'>): Promise<NetOutcome<TreatResp>> {
     return this.mutate<TreatReq, TreatResp>('/army/collectTreated', req)
+  }
+
+  /**
+   * 开关自动续训 / 自动补兵（B25-S2d）。
+   *
+   * <p>它是**策略**而不是一次性动作：服务端保存它、并在军队结算那次读里惰性执行
+   * （真扣资源、真占队列，与手动训练同一条路径）。开起来之后这批兵的账单是持续的，
+   * 所以面板上要写清"还剩几批"与"为什么停了"。
+   */
+  armyAutoTrain(req: Omit<AutoTrainReq, 'requestId'>): Promise<NetOutcome<AutoTrainResp>> {
+    return this.mutate<AutoTrainReq, AutoTrainResp>('/army/autoTrain', req)
   }
 
   // ---------- 武将与抽卡（B06） ----------

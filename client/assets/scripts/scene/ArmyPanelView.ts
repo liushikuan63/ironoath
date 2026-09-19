@@ -17,6 +17,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
 import { buildArmyPanel, estimateTrainMs, estimateTreatMs } from '../game/army/ArmyPanel'
+import type { TrainMemory } from '../game/army/AutoTrain'
 import { formatCountdown } from '../core/Countdown'
 import type { ArmyPanelView as ArmyPanelData, UnitRow } from '../game/army/ArmyPanel'
 import type { ArmyListResp, UnitType } from '../net/generated/ArmyProtocol'
@@ -41,10 +42,23 @@ const COLOR_GOOD = new Color(120, 176, 96, 255)
 const PANEL_WIDTH = 680
 const ROW_HEIGHT = 62
 const ROW_GAP = 5
-const HEADER_HEIGHT = 150
+/**
+ * 表头高度（导航条之上留给"带兵/医院/页签/两个按钮/自动续训那一条"的那一块）。
+ *
+ * <p>从 150 加到 176 是为了给自动续训的状态行腾一行（B25-S2d）。加高的余量是量出来的：
+ * 行区从 `height/2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT/2` 往下排，设计分辨率 640 高、
+ * 导航条占 y ∈ [-312, -260]，所以 176 之下仍放得下 6 行（最后一行的底 = -229 > -260）。
+ */
+const HEADER_HEIGHT = 176
 const PADDING = 16
-/** 一屏最多画几行。按兵种分页后每页最多 5 个阶级，留两行余量 */
-const MAX_VISIBLE_ROWS = 7
+/**
+ * 一屏最多画几行。按兵种分页后每页最多 5 个阶级；第 6 行是"全兵种"页的余量。
+ *
+ * <p><b>6 而不是 7</b>：第 7 行的底边会落到导航条底下（行中心 = height/2 - PADDING -
+ * HEADER_HEIGHT - ROW_HEIGHT/2 - i × (ROW_HEIGHT + ROW_GAP)，i=6 时底边 = -296 < -260），
+ * 也就是"画了但被导航条盖住"。这一条是 B25-S2d 修状态行时顺手量出来的。
+ */
+const MAX_VISIBLE_ROWS = 6
 /**
  * 训练数量的两个快捷档。
  *
@@ -67,6 +81,8 @@ const TYPE_TABS: ReadonlyArray<{ type: UnitType | null; text: string }> = [
 export class ArmyPanelView extends Component {
   private resp: ArmyListResp | null = null
   private panel: ArmyPanelData | null = null
+  /** 编排层递进来的「上一次成功训练」；只用于自动续训那一句提示（B25-S2d） */
+  private trainMemory: TrainMemory | null = null
   private offsetMs = 0
   private filter: UnitType | null = null
   private lastRenderedSecond = -1
@@ -79,11 +95,16 @@ export class ArmyPanelView extends Component {
   private headerLabel: Label | null = null
   private hospitalLabel: Label | null = null
   private warningLabel: Label | null = null
+  private autoTrainButton: Node | null = null
+  private autoTrainCaption: Label | null = null
+  private autoTrainStatus: Label | null = null
 
   /** 点「训练」。数量只可能是 TRAIN_ONCE 或 TRAIN_BULK（正式输入控件属编辑器资产） */
   onTrain: ((unitId: string, count: number) => void) | null = null
   /** 点「治疗」。治哪些伤兵由服务端裁定，本场景只表达意图 */
   onTreat: (() => void) | null = null
+  /** 点「自动续训 / 停止自动」。能不能开、续的是哪一批由编排层判定（B25-S2d） */
+  onToggleAutoTrain: (() => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -112,15 +133,18 @@ export class ArmyPanelView extends Component {
    *
    * @param offsetMs 服务端时刻 - 本地时刻，来源 core/TimeSync。<b>不能省</b>：
    *                 直接拿本地 Date 与 finishAt 相减，玩家把手机时间调快就能让训练立刻完成（铁律 5）
+   * @param trainMemory 客户端记住的上一次成功训练（B25-S2d）。只影响「自动续训现在能不能开」那一句提示；
+   *                    策略本身（开着吗、还剩几批、为什么停）全部来自 resp
    */
-  attach(resp: ArmyListResp, offsetMs: number): void {
+  attach(resp: ArmyListResp, offsetMs: number, trainMemory: TrainMemory | null = null): void {
     this.offsetMs = offsetMs
+    this.trainMemory = trainMemory
     if (this.rowPool === null) {
       this.pending = resp
       return
     }
     this.resp = resp
-    this.panel = buildArmyPanel(resp, offsetMs, sys.now())
+    this.panel = buildArmyPanel(resp, offsetMs, sys.now(), this.trainMemory)
     this.lastRenderedSecond = -1
     this.render()
   }
@@ -148,7 +172,7 @@ export class ArmyPanelView extends Component {
     if (second === this.lastRenderedSecond) {
       return
     }
-    this.panel = buildArmyPanel(resp, this.offsetMs, now)
+    this.panel = buildArmyPanel(resp, this.offsetMs, now, this.trainMemory)
     this.render()
   }
 
@@ -214,6 +238,33 @@ export class ArmyPanelView extends Component {
     const treatCaption = this.addLabel(treat, 'Caption', 0, 0, COLOR_TEXT, 15)
     treatCaption.string = '治疗伤兵'
     treat.on('touch-start', (_event: EventTouch) => this.onTreat?.(), this)
+
+    // 「自动续训」放在治疗按钮的对面（同一行）：两个都是"整支军队"的动作，
+    // 和上面那排页签（筛选）与下面那排行内按钮（单个兵种）都不同类
+    const autoTrain = new Node('AutoTrainButton')
+    autoTrain.layer = this.node.layer
+    this.node.addChild(autoTrain)
+    autoTrain.setPosition(new Vec3(-PANEL_WIDTH / 2 + 60, top - 138, 0))
+    autoTrain.addComponent(UITransform).setContentSize(new Size(110, 34))
+    if (!applyCommandButton(autoTrain, 'normal', 110, 34)) {
+      const autoGraphics = autoTrain.addComponent(Graphics)
+      autoGraphics.fillColor = COLOR_PANEL
+      autoGraphics.strokeColor = COLOR_COPPER_GOLD
+      autoGraphics.lineWidth = 2
+      autoGraphics.roundRect(-55, -17, 110, 34, 5)
+      autoGraphics.fill()
+      autoGraphics.stroke()
+    }
+    this.autoTrainCaption = this.addLabel(autoTrain, 'Caption', 0, 0, COLOR_TEXT, 14)
+    autoTrain.on('touch-start', (_event: EventTouch) => this.onToggleAutoTrain?.(), this)
+    this.autoTrainButton = autoTrain
+
+    // 状态行：「重步兵 ×50 · 还剩 2 批」/ 停止原因 / 还没有可续的那一批。
+    // 它读的是服务端下发的那份策略 —— 自动续训的账单是持续的，玩家必须能一眼看到它现在在做什么
+    this.autoTrainStatus = this.addLabel(this.node, 'AutoTrainStatus', 0, top - 164, COLOR_TEXT_DIM, 14)
+    this.autoTrainStatus.node.getComponent(UITransform)
+      ?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
+    this.autoTrainStatus.overflow = Label.Overflow.SHRINK
   }
 
   private createRow(): Node {
@@ -331,6 +382,23 @@ export class ArmyPanelView extends Component {
       this.warningLabel.string = hospital.warningText ?? ''
       // capacity == 0 是最严重的一档：所有伤兵都会直接死亡（B05 §1.5）
       this.warningLabel.color = hospital.noCapacity ? COLOR_WARNING : COLOR_GOOD
+    }
+
+    // 自动续训那一条：按钮说开还是关，状态行说它此刻在做什么 / 为什么停了 / 现在还开不了
+    const autoTrain = panel.autoTrain
+    if (this.autoTrainCaption !== null) {
+      this.autoTrainCaption.string = autoTrain.caption
+      this.autoTrainCaption.color = autoTrain.enabled ? COLOR_GOOD : COLOR_TEXT
+    }
+    if (this.autoTrainButton !== null) {
+      applyCommandButton(this.autoTrainButton, autoTrain.enabled ? 'hover' : 'normal', 110, 34)
+    }
+    if (this.autoTrainStatus !== null) {
+      // 三选一：正在续的那一批 > 停下来的原因 > 还不能开的原因。都为空就是空行
+      this.autoTrainStatus.string = autoTrain.runningText ?? autoTrain.stopText
+        ?? autoTrain.blockedReason ?? ''
+      this.autoTrainStatus.color = autoTrain.runningText !== null ? COLOR_COPPER_GOLD
+        : autoTrain.stopText !== null ? COLOR_WARNING : COLOR_TEXT_DIM
     }
 
     const rows = panel.rows.filter((row) => this.matchesFilter(row))

@@ -24,6 +24,10 @@
 
 import { countdownMs, formatCountdown as formatCountdownOf } from '../../core/Countdown'
 import * as FixedPoint from '../../core/FixedPoint'
+import {
+  autoTrainBlockedReason, autoTrainRunningText, autoTrainStopText, autoTrainToggleCaption,
+} from './AutoTrain'
+import type { TrainMemory } from './AutoTrain'
 import type { ArmyListResp, HospitalView, UnitType, UnitView } from '../../net/generated/ArmyProtocol'
 
 /** 一个兵种在面板上的一行。 */
@@ -62,6 +66,25 @@ export interface HospitalPanel {
   readonly treatCostRatioText: string
 }
 
+/**
+ * 自动续训 / 自动补兵那一条（B25-S2）。
+ *
+ * <p>四个字段全是**服务端下发那份策略的翻译**，客户端不自己算：
+ * 按钮说什么、正在续哪一批、还剩几批、为什么停。唯一的例外是 `blockedReason` ——
+ * 它来自"客户端记不记得上一次训练"，见 `game/army/AutoTrain.ts` 的说明。
+ */
+export interface AutoTrainPanel {
+  /** 按钮上的字：自动续训 / 停止自动 */
+  readonly caption: string
+  readonly enabled: boolean
+  /** 开着时的「重步兵 ×50 · 还剩 2 批」；没开为 null */
+  readonly runningText: string | null
+  /** 停下来的原因（服务端原话）；没停为 null */
+  readonly stopText: string | null
+  /** 现在开不了的原因（没有可续的那一批）；可以开为 null */
+  readonly blockedReason: string | null
+}
+
 /** 整个军队面板。 */
 export interface ArmyPanelView {
   readonly rows: readonly UnitRow[]
@@ -77,16 +100,21 @@ export interface ArmyPanelView {
   readonly queueText: string
   /** 已到上限时为 true，面板据此标红 */
   readonly troopCapFull: boolean
+  /** 自动续训那一条（B25-S2） */
+  readonly autoTrain: AutoTrainPanel
 }
 
 /**
  * 组装军队面板。
  *
- * @param resp     GET /army/list 的响应
- * @param offsetMs 服务端时刻 - 本地时刻，来源 core/TimeSync
- * @param localNow 当前本地时刻
+ * @param resp        GET /army/list 的响应
+ * @param offsetMs    服务端时刻 - 本地时刻，来源 core/TimeSync
+ * @param localNow    当前本地时刻
+ * @param trainMemory 客户端记住的上一次成功训练（`game/army/AutoTrain.ts`）。它只影响
+ *                    「现在能不能开自动续训」这一句提示；策略本身全部来自响应
  */
-export function buildArmyPanel(resp: ArmyListResp, offsetMs: number, localNow: number): ArmyPanelView {
+export function buildArmyPanel(resp: ArmyListResp, offsetMs: number, localNow: number,
+                               trainMemory: TrainMemory | null = null): ArmyPanelView {
   if (resp === undefined || resp === null) {
     throw new Error('resp 不得为空')
   }
@@ -99,6 +127,27 @@ export function buildArmyPanel(resp: ArmyListResp, offsetMs: number, localNow: n
       + (resp.trainingInUse > 0 ? `（含训练中 ${resp.trainingInUse}）` : ''),
     queueText: `训练队列 ${resp.queueSlots}/${resp.queueSlotsMax}`,
     troopCapFull: resp.troopCap > 0 && inUse >= resp.troopCap,
+    autoTrain: buildAutoTrainPanel(resp, trainMemory),
+  }
+}
+
+/**
+ * 组装自动续训那一条。
+ *
+ * <p>兵种名从**响应里的 rows** 取（服务端下发的名字），取不到时退回一个明确的说法而不是露出
+ * `unit_infantry_t1` 这样的内部 id —— 玩家读到的每一句都该是人话（见 `check-player-copy-jargon`）。
+ */
+export function buildAutoTrainPanel(resp: ArmyListResp,
+                                    trainMemory: TrainMemory | null): AutoTrainPanel {
+  const policy = resp.autoTrain
+  const unit = resp.units.find((u: UnitView) => u.unitId === policy.unitId) ?? null
+  const unitName = unit === null ? '这个兵种' : unit.name
+  return {
+    caption: autoTrainToggleCaption(policy),
+    enabled: policy.enabled,
+    runningText: autoTrainRunningText(policy, unitName),
+    stopText: autoTrainStopText(policy),
+    blockedReason: autoTrainBlockedReason(trainMemory),
   }
 }
 

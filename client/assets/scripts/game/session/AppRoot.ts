@@ -68,6 +68,8 @@ import type { PayView } from '../pay/GiftPayFlow'
 import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
 import { ClientReddotTree } from '../reddot/ReddotTree'
+import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army/AutoTrain'
+import type { TrainMemory } from '../army/AutoTrain'
 
 /**
  * 军队还没拉到时用的空样本：编成面板在拿到真实军队之前也要能画出来（全 0、不可提交），
@@ -102,7 +104,11 @@ export interface PanelTargets {
   city?(resp: CityListResp, offsetMs: number): void
   /** 一次收割的即时结果（要立刻飘字，之后再被 city 列表覆盖）。 */
   cityCollect?(resp: CityCollectResp): void
-  army?(resp: ArmyListResp, offsetMs: number): void
+  /**
+   * 军队面板。`trainMemory` 是客户端记住的上一次成功训练 —— 面板只用它决定
+   * 「自动续训」现在能不能开（开关本身的策略全部来自响应，见 game/army/AutoTrain.ts）。
+   */
+  army?(resp: ArmyListResp, offsetMs: number, trainMemory: TrainMemory | null): void
   hero?(resp: HeroListResp): void
   resources?(resp: ResourceDetailResp): void
   bag?(resp: BagListResp): void
@@ -221,6 +227,11 @@ export class AppRoot {
   /** 二级选择器的最近一次权威响应；不参与任何数值判断。 */
   private cityResp: CityListResp | null = null
   private armyResp: ArmyListResp | null = null
+  /**
+   * 客户端记住的「上一次成功训练」，自动续训要续的就是这一批（B25-S2d）。
+   * 只在内存里：换设备后没有它，玩家重新训一批即可 —— 与「上一次出征」同一条口径（裁决②(a)）。
+   */
+  private lastTrain: TrainMemory | null = null
   /** 最近一次目标搜索的结果：出征要知道目标的坐标，而坐标只在下发的 brief 里（B25-S1） */
   private searchResp: SearchTargetsResp | null = null
   /** 当前正在编成的目标；没有编成时为 null */
@@ -373,7 +384,7 @@ export class AppRoot {
       case 'army':
         this.deliver('army', await this.api.armyList(), r => {
           this.armyResp = r
-          this.targets.army?.(r, offsetMs)
+          this.targets.army?.(r, offsetMs, this.lastTrain)
         })
         return
       case 'hero':
@@ -539,7 +550,37 @@ export class AppRoot {
 
   train(unitId: string, count: number): Promise<void> {
     this.track(TRACK_EVENTS.armyTrain, { unitId, count: trackParam(count) })
-    return this.write('army', this.api.armyTrain({ unitId, count }), ['army'])
+    return this.write('army', this.api.armyTrain({ unitId, count }), ['army'], () => {
+      // 只记**成功**的那一批：被拒的训练（兵营没到级、队列满）不该成为"要续的那一批"，
+      // 否则玩家之后开的自动续训会一直盯着一支永远排不出来的兵种
+      this.lastTrain = rememberTrain(unitId, count)
+    })
+  }
+
+  /**
+   * 开关自动续训 / 自动补兵（B25-S2d）。
+   *
+   * <p><b>续的是哪一批</b>由 {@link lastTrain} 决定 —— 服务端保存的是一份策略，
+   * 而"哪一批值得重复"只有玩家的上一手操作知道（裁决③(a) 把策略放服务端，
+   * 裁决②(a) 把"上一次"放客户端）。没训过就没有可续的那一批：明确说清，不发一个必然被拒的请求。
+   *
+   * <p>关掉只发 `enabled:false`（契约明写不必再报一遍目标）—— 也因此关得掉这件事不依赖任何本地记忆。
+   */
+  toggleAutoTrain(): Promise<void> {
+    const policy = this.armyResp?.autoTrain ?? null
+    if (policy === null) {
+      this.rejectNeeds('army', '军队数据还没到，稍后再试')
+      return Promise.resolve()
+    }
+    if (!policy.enabled) {
+      const blocked = autoTrainBlockedReason(this.lastTrain)
+      if (blocked !== null) {
+        this.rejectNeeds('army', blocked)
+        return Promise.resolve()
+      }
+    }
+    this.track(TRACK_EVENTS.autoTrain, { on: trackParam(!policy.enabled) })
+    return this.write('army', this.api.armyAutoTrain(autoTrainRequest(policy, this.lastTrain)), ['army'])
   }
 
   /** 治哪些伤兵由服务端裁定（面板只给一个「治疗伤兵」按钮），所以这里不挑。 */

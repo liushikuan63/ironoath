@@ -67,6 +67,11 @@ export const TRACK_EVENTS = {
   gatherCollect: 'gather_collect',
   /** 开始训练士兵。 */
   armyTrain: 'army_train',
+  /**
+   * 开关自动续训 / 自动补兵（B25-S2d）。
+   * `on=true/false` 分开看：开得多说明减负被接受，关得多多半是"资源被自动花掉"这类反馈。
+   */
+  autoTrain: 'auto_train',
   /** 治疗伤兵。 */
   armyTreat: 'army_treat',
   /** 使用道具（含因缺选择器而被挡下的那一次点击）。 */

@@ -913,9 +913,10 @@ export class GameBootstrap extends Component {
       city.onCollect = buildingId => { void this.root?.collect(buildingId) }
     }
     if (army !== null) {
-      out.army = (resp, offsetMs) => army.attach(resp, offsetMs)
+      out.army = (resp, offsetMs, trainMemory) => army.attach(resp, offsetMs, trainMemory)
       army.onTrain = (unitId, count) => { void this.root?.train(unitId, count) }
       army.onTreat = () => { void this.root?.treatWounded() }
+      army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
     }
     if (hero !== null) {
       out.hero = resp => hero.attach(resp)
