@@ -21,7 +21,7 @@ import { GameApi } from '../assets/scripts/game/session/GameApi'
 import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
 import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
-import type { OfflineReportPopup, PanelTargets } from '../assets/scripts/game/session/AppRoot'
+import type { OfflineReportPopup, PanelTargets, ShopView } from '../assets/scripts/game/session/AppRoot'
 import type {
   ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
 } from '../assets/scripts/game/session/Choices'
@@ -136,6 +136,20 @@ const ROUTES: Record<string, unknown> = {
     serverNow: SERVER_NOW,
   },
   '/army/treat': { treated: {}, serverNow: SERVER_NOW },
+  // 商店（B24 S-b）：金币页一行可兑换、一行被等级锁；赛季币页用另一份响应覆盖
+  '/shop/list': {
+    currency: 'GOLD', open: true, notice: null, balance: 1200, serverNow: SERVER_NOW,
+    rows: [
+      { rowId: 'shop_speedup_build_1h', itemId: 'item_speedup_build_1h', name: '建造加速 1 小时',
+        currency: 'GOLD', price: 300, refreshType: 'DAILY', limitCount: 2, used: 1,
+        remaining: 1, requireMainLevel: 0, purchasable: true, lockReason: null },
+      { rowId: 'shop_res_wood_10k', itemId: 'item_res_wood_10k', name: '木材包',
+        currency: 'GOLD', price: 500, refreshType: 'NONE', limitCount: 20, used: 0,
+        remaining: 20, requireMainLevel: 5, purchasable: false, lockReason: '主城 5 级解锁' },
+    ],
+  },
+  '/shop/buy': { rowId: 'shop_speedup_build_1h', itemId: 'item_speedup_build_1h', count: 1,
+    currency: 'GOLD', spent: 300, balance: 900, used: 2, remaining: 0, serverNow: SERVER_NOW },
   '/item/use': { used: 1, remaining: 0, effects: [], serverNow: SERVER_NOW },
   '/stage/sweep': { results: {}, rewards: [], serverNow: SERVER_NOW },
   '/stage/challenge': {
@@ -427,6 +441,8 @@ interface Harness {
   readonly lastRank: RankBoardView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
+  /** 最近一次推给商店面板的整块视图。 */
+  readonly lastShop: ShopView | null
   /** 最近一次推给「自上次登录以来」那一屏的条目（没弹过就是 null）。 */
   readonly lastOfflineReport: OfflineReportPopup | null
   /** 汇总里点过的跳转目标（按点击顺序）。 */
@@ -510,6 +526,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastChat: ChatPanelData | null = null
   let lastRank: RankBoardView | null = null
   let lastCompose: MarchComposeView | null = null
+  let lastShop: ShopView | null = null
   let lastOfflineReport: OfflineReportPopup | null = null
   const offlineJumps: string[] = []
   let reddotTree: ClientReddotTree | null = null
@@ -555,6 +572,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     marchCompose: (view) => {
       attached.push('marchCompose')
       lastCompose = view
+    },
+    shop: view => {
+      attached.push('shop')
+      lastShop = view
     },
     offlineReport: view => {
       attached.push('offlineReport')
@@ -614,6 +635,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastCompose() {
       return lastCompose
+    },
+    get lastShop() {
+      return lastShop
     },
     get lastOfflineReport() {
       return lastOfflineReport
@@ -1998,4 +2022,67 @@ test('点汇总里的一条：跳转意图转给场景层，并记一次"点了�
 
   assert.deepEqual(h.events.at(-1), { name: 'offline_report_jump', params: { target: 'reports' } })
   assert.deepEqual(h.offlineJumps, ['reports'], '跳转交给场景层执行（导航条在那边）')
+})
+
+test('商店：按页签拉货架，切页签重拉；余额与限购都来自服务端，客户端不算', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.attached.length = 0
+
+  await h.root.refresh('shop')
+  assert.equal(h.lastShop?.currency, 'GOLD')
+  assert.equal(h.lastShop?.balanceText, '1200 金币')
+  assert.equal(h.lastShop?.rows[0]?.priceText, '300 金币')
+  assert.equal(h.lastShop?.rows[0]?.limitText, '今日限 2，已买 1')
+  assert.equal(h.lastShop?.rows[1]?.purchasable, false, '等级不够那一行由服务端判 false')
+  assert.equal(h.lastShop?.rows[1]?.lockReason, '主城 5 级解锁')
+
+  // 切到赛季币：请求带上新页签，且用那一页的响应覆盖（夹具里用 override 换成另一份）
+  h.http.overrides.set('/shop/list', {
+    currency: 'SEASON_COIN', open: true, notice: null, balance: 200, serverNow: SERVER_NOW,
+    rows: [{ rowId: 'shop_season_boost', itemId: 'item_speedup_build_8h', name: '赛季加速令',
+      currency: 'SEASON_COIN', price: 100, refreshType: 'SEASON', limitCount: 1, used: 0,
+      remaining: 1, requireMainLevel: 0, purchasable: true, lockReason: null }],
+  })
+  await h.root.openShopTab('SEASON_COIN')
+
+  const call = h.http.calls.filter(c => c.path === '/shop/list').at(-1)
+  assert.equal(call?.query.get('currency'), 'SEASON_COIN')
+  assert.equal(h.lastShop?.balanceText, '200 赛季币')
+  assert.equal(h.lastShop?.rows[0]?.limitText, '本赛季限 1，已买 0', '限购周期是赛季，文案要说出来')
+  assert.deepEqual(h.events.at(-1), { name: 'shop_tab', params: { currency: 'SEASON_COIN' } })
+})
+
+test('商店：兑换一次带 currency+rowId+count，成功后四样都重拉，提示用服务端回执的花费', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.refresh('shop')
+  h.attached.length = 0
+
+  await h.root.buyShopRow('shop_speedup_build_1h')
+
+  const call = h.http.calls.find(c => c.path === '/shop/buy')
+  assert.notEqual(call, undefined)
+  assert.equal(call?.body.currency, 'GOLD', '带上"我以为在哪个页"——与服务端不一致会被拒（防错价）')
+  assert.equal(call?.body.rowId, 'shop_speedup_build_1h')
+  assert.equal(call?.body.count, 1)
+  assert.match(String(call?.body.requestId), /^req-/, '幂等键由编排层注入')
+  assert.deepEqual(h.events.at(-1), { name: 'shop_buy', params: { currency: 'GOLD', rowId: 'shop_speedup_build_1h' } })
+  assert.ok(h.attached.filter(a => a === 'shop').length >= 1, '货架重拉（限购与余额变了）')
+  for (const panel of ['bag', 'resources', 'reddot']) {
+    assert.ok(h.attached.includes(panel), `${panel} 要跟着重拉`)
+  }
+  assert.equal(h.lastShop?.notice, '已兑换 建造加速 1 小时，花费 300', '花费取服务端回执')
+})
+
+test('商店：不能兑换的那一行不发请求，把服务端给的原因说出去', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.refresh('shop')
+  const before = h.http.countOf('/shop/buy')
+
+  await h.root.buyShopRow('shop_res_wood_10k')
+
+  assert.equal(h.http.countOf('/shop/buy'), before, '锁定行不发请求（发了也会被同一套规则拒）')
+  assert.deepEqual(h.errors.at(-1), ['shop', '主城 5 级解锁'])
 })

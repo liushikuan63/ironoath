@@ -83,6 +83,10 @@ export const TRACK_EVENTS = {
   armyTreat: 'army_treat',
   /** 使用道具（含因缺选择器而被挡下的那一次点击）。 */
   itemUse: 'item_use',
+  /** 兑换一行商品（B24 商店）。currency+rowId 分开看：哪一页被换得多、哪一行最常被换。 */
+  shopBuy: 'shop_buy',
+  /** 切商店页签。四个币种的余额与限购各是各的账本，各页的流量是要分开看的。 */
+  shopTab: 'shop_tab',
   /** 尝试卖出道具。服务端还没有出售端点，所以这个名字同时也是那条缺口的计数器。 */
   /** 踢成员。`from` 区分小队与联盟。 */
   memberKick: 'member_kick',

@@ -69,6 +69,9 @@ import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
 import { ClientReddotTree } from '../reddot/ReddotTree'
 import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army/AutoTrain'
+import { buildShopPanel, buyBodyOf, buyResultText, shopRowStateText } from '../shop/ShopPanel'
+import type { ShopPanelView } from '../shop/ShopPanel'
+import type { ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import { buildOfflineItems, offlineReportGate } from '../offline/OfflineReport'
 import type { OfflineItem } from '../offline/OfflineReport'
 import type { TrainMemory } from '../army/AutoTrain'
@@ -100,6 +103,11 @@ export interface MarchComposeView {
   readonly notice: string | null
   /** 正在提交（面板据此禁用确认键，防双击发两份） */
   readonly submitting: boolean
+}
+
+/** 商店面板：货架那块来自 game/shop/ShopPanel.ts，notice 是**上一次兑换的结果**（临时提示）。 */
+export interface ShopView extends ShopPanelView {
+  readonly notice: string | null
 }
 
 /** 「自上次登录以来」那一屏：只装条目，判定与阈值全在 game/offline/OfflineReport.ts 里。 */
@@ -172,6 +180,8 @@ export interface PanelTargets {
   offlineReport?(view: OfflineReportPopup): void
   /** 汇总里点了一条：跳到那一页（key 与 PanelNav 的 key 一致）。 */
   offlineJump?(key: string): void
+  /** 商店面板（B24 S-b）。整块视图由编排层组装好递过来。 */
+  shop?(view: ShopView): void
   /** 一场的完整战果 + 回放参数。回放怎么演由 {@code playbackOptionsOf} 装配，本类不算。 */
   reportReplay?(resp: BattleReportResp): void
   /**
@@ -212,7 +222,7 @@ export interface PanelTargets {
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
-  | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide'
+  | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -238,6 +248,10 @@ export class AppRoot {
   /** 二级选择器的最近一次权威响应；不参与任何数值判断。 */
   private cityResp: CityListResp | null = null
   private armyResp: ArmyListResp | null = null
+  /** 商店：当前页签与最近一次兑换的临时提示。货架来自 /shop/list 的响应，不缓存计算 */
+  private shopTab: ShopCurrency = 'GOLD'
+  private shopResp: ShopListResp | null = null
+  private shopNotice: string | null = null
   /** 服务端给的边界与阈值（init 响应里那一块）；登录失败时为 null。 */
   private offlineConfig: OfflineReportView | null = null
   /** 已经给玩家看过的那一批明细的指纹：同一批不再弹（明细变了 = 指纹变了，会再弹一次）。 */
@@ -536,6 +550,12 @@ export class AppRoot {
         this.deliver('reports', await this.api.battleReports(),
           r => this.targets.reports?.(r, this.timeSync.serverNow()))
         return
+      case 'shop':
+        this.deliver('shop', await this.api.shopList(this.shopTab), r => {
+          this.shopResp = r
+          this.deliverShop()
+        })
+        return
       case 'mail':
         this.deliver('mail', await this.api.mailList(),
           r => this.targets.mail?.(r, this.timeSync.serverNow()))
@@ -813,6 +833,56 @@ export class AppRoot {
    * 点开一封未读邮件。重拉一次列表而不是本地把那行改成已读：
    * 未读封数是服务端算的（红点与列表同源），本地改法迟早和徽标各说一套。
    */
+  /** 组装并递一次商店视图。`notice` 是**上一次兑换的结果**，进货架时一并带上（面板只画一次）。 */
+  private deliverShop(): void {
+    const resp = this.shopResp
+    if (resp === null) {
+      return
+    }
+    this.targets.shop?.({ ...buildShopPanel(resp, this.shopTab), notice: this.shopNotice })
+  }
+
+  /**
+   * 切商店页签（B24 S-b）。切完重拉那一页 —— 四个币种的余额与限购各是各的账本，
+   * 客户端不能拿金币页的数据去画赛季币页。
+   */
+  openShopTab(currency: ShopCurrency): Promise<void> {
+    this.shopTab = currency
+    this.shopNotice = null
+    this.track(TRACK_EVENTS.shopTab, { currency })
+    return this.refresh('shop')
+  }
+
+  /**
+   * 兑换一行。一次点一个（数量选择器属编辑器资产，见 `game/shop/ShopPanel.ts`）。
+   *
+   * <p><b>不能兑换的那一行不发请求</b>：服务端已经把原因（等级/限购/余额/不在盟里）算好了，
+   * 直接说给玩家听比发一次注定被拒的请求好；真发了也会被同一套规则拒。
+   *
+   * <p>成功后重拉**四样**：货架（限购与余额变了）、背包（拿到了道具）、资源（金币页会扣金币）、
+   * 红点（部分货品的获得会点亮对应入口）。
+   */
+  buyShopRow(rowId: string): Promise<void> {
+    const resp = this.shopResp
+    if (resp === null) {
+      this.rejectNeeds('shop', '货架还没拉回来，稍后再试')
+      return Promise.resolve()
+    }
+    const view = buildShopPanel(resp, this.shopTab)
+    const body = buyBodyOf(view, rowId)
+    if (body === null) {
+      const row = view.rows.find((candidate) => candidate.rowId === rowId)
+      this.rejectNeeds('shop', row === undefined ? '这一行不在货架上了' : shopRowStateText(row))
+      return Promise.resolve()
+    }
+    const name = view.rows.find((candidate) => candidate.rowId === rowId)?.name ?? ''
+    this.track(TRACK_EVENTS.shopBuy, { currency: body.currency, rowId })
+    return this.write('shop', this.api.shopBuy(body), ['shop', 'bag', 'resources', 'reddot'], r => {
+      // 花费与余额都取服务端回执：本地那份表可能已经过期（热更），自己乘出来的数字会和实际扣的对不上
+      this.shopNotice = buyResultText(name, r.spent)
+    })
+  }
+
   /**
    * 点开一场战报进回放。走 {@link deliver} 而不是 {@link write}：拉详情没有副作用，
    * 成功后也不重拉列表 —— 列表刚刚拉过，而重拉会把玩家正看着的那一屏换掉。
