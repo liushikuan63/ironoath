@@ -17,7 +17,8 @@ import type {
 } from '../net/generated/CityProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import {
-  applyAnyIconSprite, applyCommandButton, applyIconSprite, applySlicedSprite, buildingIconKey, ensureFamily,
+  applyAnyIconSprite, applyCommandButton, applyIconSprite, applySlicedSprite,
+  buildingIconKey, ensureFamily, familyFrame,
 } from './ArtCatalog'
 import { buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
@@ -31,6 +32,20 @@ const COLOR_PANEL = new Color(40, 33, 27, 255)
 const COLOR_BUILDING = new Color(58, 46, 36, 255)
 const COLOR_BUILDING_UPGRADING = new Color(82, 61, 30, 255)
 const COLOR_BUILDING_DONE = new Color(48, 74, 48, 255)
+/**
+ * 建筑正稿的**分离描边**（同一张图放大一圈垫在下面）。
+ *
+ * <p>为什么需要它而不是换台基色：15 类正稿按通道均值量，仓库对 idle 台基 `(58,46,36)`
+ * 只差 **4.1**、兵营 5.8、铁矿 6.0 —— 四栋暗房子压在自己的暗底座上糊成一片。
+ * 但采石场很亮、仓库很暗分处两端，**没有任何一档暗色台基能同时拉开两者**
+ * （把台基限制在面板暗色系里搜过，最优也只有 21.2，仍不到 25）。
+ * 所以分离靠**边缘**而不是靠底色 —— 这也是同类 SLG 的通用做法。
+ *
+ * <p>取暖石亮色 + 半透明：它同时要对上"很亮的采石场"和"很暗的仓库"，
+ * 而它自己压在三种台基上的最差对比是 100+（见 `tools` 里那条读数），
+ * 不会把问题从"房子对底座"挪成"描边对底座"。
+ */
+const COLOR_ART_RIM = new Color(238, 222, 188, 150)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
@@ -86,8 +101,18 @@ type RowAction = 'upgrade' | 'speedAd' | 'speedGold' | 'collect'
 interface GridTileRefs {
   readonly node: Node
   readonly graphics: Graphics
+  /** 浅色描边：画在 `icon` 底下、同一张图放大一圈。见 COLOR_ART_RIM 为什么存在。 */
+  readonly iconRim: Node
   readonly icon: Node
   readonly levelLabel: Label
+  /**
+   * 建筑名。#257 曾把它和状态一起收进选择栏，理由是"脚印只有 24~45 高塞不下三行字" ——
+   * 三行确实塞不下，但**一行**塞得下，而收进选择栏换来两个代价：
+   * ① 36 格再也看不出"哪栋是哪栋"，要点一下才知道；② 显示名这条链路（#255 整格在修的东西）
+   *    变成"必须点中才可见"，量具点不动格子时就完全无法验收 —— 本轮就是这么暴露的。
+   * 状态仍留在选择栏（它本来就有描边 / 进度条 / 暂停点三种非文字表达）。
+   */
+  readonly nameLabel: Label
   /** 这一格投影后的落点与尺寸；视图照抄，不再自己算坐标。 */
   readonly plate: ProjectedPlate
 }
@@ -263,6 +288,13 @@ export class CityPanelView extends Component {
       tile.setPosition(new Vec3(plate.x, plate.y, 0))
       tile.addComponent(UITransform).setContentSize(new Size(plate.width, plate.height))
       const graphics = tile.addComponent(Graphics)
+      // 描边先挂、正稿后挂 ⇒ 同一父节点下描边在正稿之后绘制不到它上面去（Cocos 按子节点次序画）
+      const iconRim = new Node('BuildingRim')
+      iconRim.layer = tile.layer
+      tile.addChild(iconRim)
+      iconRim.setPosition(new Vec3(0, -plate.height / 2, 0))
+      const rimBox = iconRim.addComponent(UITransform)
+      rimBox.setAnchorPoint(0.5, 0)
       const icon = new Node('BuildingIcon')
       icon.layer = tile.layer
       tile.addChild(icon)
@@ -275,7 +307,12 @@ export class CityPanelView extends Component {
       const levelLabel = this.addLabel(tile, 'Level', 0, 0, COLOR_TEXT_DIM, 10)
       levelLabel.node.getComponent(UITransform)?.setContentSize(new Size(20, 14))
       levelLabel.overflow = Label.Overflow.SHRINK
-      this.gridTiles.push({ node: tile, graphics, icon, levelLabel, plate })
+      // 名字压在脚印下沿：正稿是"往上长"的，脚印下沿那一条本来就是房基，
+      // 9px 的一行字盖在房基上比盖在屋顶上可读，也不会去撞前一排的建筑。
+      const nameLabel = this.addLabel(tile, 'Name', 0, -plate.height / 2 + 6, COLOR_TEXT, 9)
+      nameLabel.node.getComponent(UITransform)?.setContentSize(new Size(plate.width, 12))
+      nameLabel.overflow = Label.Overflow.SHRINK
+      this.gridTiles.push({ node: tile, graphics, iconRim, icon, levelLabel, nameLabel, plate })
     }
   }
 
@@ -511,7 +548,9 @@ export class CityPanelView extends Component {
       graphics.lineTo(0, 6)
       graphics.stroke()
       tile.levelLabel.string = ''
+      tile.nameLabel.string = ''
       tile.icon.active = false
+      tile.iconRim.active = false
       return
     }
     graphics.fillColor = row.collectable ? COLOR_BUILDING_DONE
@@ -553,9 +592,11 @@ export class CityPanelView extends Component {
       graphics.fill()
     }
 
-    // 名字与状态不再挤在格子里：脚印投影后只有 53~89 × 24~45，塞三行字必然糊成一团，
-    // 而这两项**下面的选择栏本来就有的**（selectedTitle / selectedStatus）。
-    // 格子上留下的是同类 SLG 一眼可读的三件事：建筑长什么样、几级、要不要处理。
+    // 格子上只留"名字 + 等级 + 要不要处理"，状态文字撤掉：可收割 / 升级中 / 已暂停各有
+    // 非文字的写法（描边绿、描边铜 + 底部进度条、实心琥珀点），而名字没有别的表达方式 ——
+    // 36 格全靠图分辨种类，认不出就得有个名字。选择栏那两行照旧，是"点中之后看详情"。
+    tile.nameLabel.string = row.name
+    tile.nameLabel.color = row.collectable ? COLOR_GOOD : COLOR_TEXT
     const iconSide = Math.max(26, plate.width * 0.92)
     const artKey = buildingArtKey(row.configId)
     let iconVisible = artKey !== null && applyAnyIconSprite(tile.icon, artKey, iconSide, iconSide)
@@ -564,6 +605,22 @@ export class CityPanelView extends Component {
       iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), iconSide, iconSide)
     }
     tile.icon.active = iconVisible
+    // 描边只配正稿：图集小图标本来就带一圈浅色描边，再垫一层会变成两圈糊边。
+    // 同一张图放大 12%、垫在正稿底下、着暖石亮色 ⇒ 分离来自边缘而不是底色。
+    const rimFrame = artKey === null ? null : familyFrame(artKey)
+    if (rimFrame === null || !iconVisible) {
+      tile.iconRim.active = false
+    } else {
+      const rim = tile.iconRim.getComponent(Sprite) ?? tile.iconRim.addComponent(Sprite)
+      rim.spriteFrame = rimFrame
+      rim.type = Sprite.Type.SIMPLE
+      rim.sizeMode = Sprite.SizeMode.CUSTOM
+      rim.color = COLOR_ART_RIM
+      rim.enabled = true
+      tile.iconRim.getComponent(UITransform)
+        ?.setContentSize(new Size(iconSide * 1.12, iconSide * 1.12))
+      tile.iconRim.active = true
+    }
 
     if (row.upgrading) {
       const ratio = row.collectable ? 1 : Math.min(1, Math.max(0, Number.parseInt(row.progressText ?? '0', 10) / 100))

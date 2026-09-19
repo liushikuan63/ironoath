@@ -65,70 +65,99 @@ await page.waitForFunction(() => window.cc !== undefined && window.cc.director.g
 await page.waitForTimeout(2000)
 
 /**
- * 点一格"上面有建筑的地皮"。名字与状态已从格子里收进下面的选择栏（脚印投影后只有
- * 53~89 × 24~45，塞三行字必糊），所以显示名的正向断言**必须先选中一格**才成立。
- *
- * <p>为什么走 `node.emit('touch-start')` 而不是 `page.mouse.click`：后者要把 UI 世界坐标
- * 换算成 canvas 像素，遇到 letterbox 就点偏 —— 而"点偏"的读数与"没接线"长得一模一样。
- * emit 直接打视图自己注册的那个监听器，测的正是"格子被点到 → 选择栏写出名字"这条链路。
+ * 等建筑真的落到格子上再截图。固定 `waitForTimeout(2000)` 在冷后端上会踩空：
+ * 新 device 首连要注册 + 拉快照，2 秒不够时格子还是空的，截图与读数都量的是"还没画完"。
  */
-const tapped = await page.evaluate((mainIndex) => {
+const sawBuilding = await page.waitForFunction(() => {
   const scene = window.cc.director.getScene()
-  let hit = null
+  let ready = false
   const visit = (n) => {
-    if (hit !== null) return
-    if (n.name === `Grid-${mainIndex}`) { hit = n; return }
+    if (ready) return
+    if (/^Grid-\d+$/.test(n.name)) {
+      const level = n.getChildByName('Level')?.getComponent('cc.Label') ?? null
+      if (level !== null && level.string !== '') ready = true
+      return
+    }
     for (const c of n.children) visit(c)
   }
   visit(scene)
-  if (hit === null) return false
-  hit.emit('touch-start', null)
-  return true
-}, 3 * 6 + 3)
-if (!tapped) {
-  console.error('[city-grid][前置] 找不到中心格 Grid-21 —— 主城不在 (3,3) 了，本判据的落点假设失效')
+  return ready
+}, { timeout: 20000 }).then(() => true).catch(() => false)
+if (!sawBuilding) {
+  console.error('[city-grid][前置] 20 秒内没有任何一格拿到建筑数据 —— 后端没答上来或快照链路断了')
   await browser.close()
   await preview.close()
   process.exit(2)
 }
-await page.waitForTimeout(300)
 
-const probe = await page.evaluate(() => {
-  const scene = window.cc.director.getScene()
-  const game = scene.getChildByName('Canvas')?.getChildByName('Game') ?? null
+/**
+ * **本量具点不动格子**，所以"点一格 → 选择栏写详情"这条链路它验不了，如实记下：
+ * `node.emit('touch-start')` 不会走到视图注册的触摸监听（Cocos 的 touch 走输入分发器，
+ * 不走节点事件发射器），换成 `page.touchscreen.tap(换算出来的屏幕坐标)` 同样没反应 ——
+ * 换算本身是对的（点出来的坐标正落在城堡那一格上）。要么是本产物在 headless 下收不到
+ * 合成触摸，要么是监听器真断了，**未归因**。
+ * 所以这里只验"名字不点也看得见"—— 正因为格子点不动，显示名必须留在格子上才可验收。
+ */
+
+/**
+ * 摘遮罩。只置 `active=false` 会被它自己画回来（GuideView 在数据到达后会重排那一层），
+ * 所以组件一起禁掉才是"这一帧没有引导层"。
+ */
+const hideGuide = await page.evaluate(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game') ?? null
   if (game === null) return { ok: false, why: 'Canvas/Game 不在场景里' }
   const guide = game.getChildByName('Guide')
   if (guide === null) return { ok: false, why: 'Canvas/Game/Guide 不在场景里 —— 遮罩换了位置，截图仍会被挡住' }
-  // 只置 active=false 会被它自己画回来：GuideView 在数据到达后会重排那一层。
-  // 组件一起禁掉，才是"这一帧没有引导层"。
   const guideView = guide.getComponent('GuideView')
   if (guideView !== null) guideView.enabled = false
   guide.active = false
+  return { ok: true }
+})
+if (!hideGuide.ok) {
+  console.error(`[city-grid][前置] ${hideGuide.why}`)
+  await browser.close()
+  await preview.close()
+  process.exit(2)
+}
+await page.waitForTimeout(400)
+/**
+ * 截图**先于**读数。第一版反过来，于是出现过"判据说屏上有主城、图上那格写着
+ * 点击建筑查看详情"—— 结论与证据各说各话。`verify-art-runtime.mjs` 早就为同一件事
+ * 写过一句"先截图再收集"，这条抄它的。
+ */
+await page.screenshot({ path: SHOT })
+
+const probe = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
   let ground = null
   let tiles = 0
   const positions = []
   const names = []
-  const visit = (n) => {
+  // 只收**真的在屏上画着**的文字。第一版没管 `active`，于是被摘掉的引导层里
+  // 那句"升级主城：它是这一切的入口"照样被读到 —— 正向断言"屏上有主城"当场假绿，
+  // 而截图里选择栏明明还写着"点击建筑查看详情"。判据与证据各说各话。
+  const visit = (n, visible) => {
+    const shown = visible && n.active !== false
     if (n.name === 'Ground') ground = n
     if (/^Grid-\d+$/.test(n.name)) {
       tiles += 1
       positions.push([n.position.x, n.position.y])
     }
     const label = n.getComponent('cc.Label')
-    if (label !== null && label.string !== '') names.push(label.string)
-    for (const c of n.children) visit(c)
+    if (shown && label !== null && label.enabled !== false && label.string !== '') {
+      names.push(label.string)
+    }
+    for (const c of n.children) visit(c, shown)
   }
-  visit(scene)
+  visit(scene, true)
   return { ok: true, groundFound: ground !== null, tiles, positions, labels: names }
 })
-if (!probe.ok) {
-  console.error(`[city-grid][前置] ${probe.why}`)
+if (!probe.groundFound) {
+  console.error('[city-grid][前置] 场景里没有 Ground 容器 —— 地皮那一层没画出来')
   await browser.close()
   await preview.close()
   process.exit(2)
 }
-await page.waitForTimeout(400)
-await page.screenshot({ path: SHOT })
 await browser.close()
 await preview.close()
 

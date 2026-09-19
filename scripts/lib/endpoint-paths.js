@@ -12,7 +12,15 @@
 const fs = require('fs')
 const path = require('path')
 
-const CONTROLLER_DIR = 'server/game-web/src/main/java/com/ironoath/web/controller'
+/**
+ * 扫整棵服务端源码树，但**只认声明了控制器注解的文件**。
+ *
+ * <p>原来只扫 `web/controller/` 那一个目录，于是控制器住在别处时它的端点就被当成"不存在"：
+ * `TechController` 在 `web/tech/`、`MarchController` 一类同理。客户端一绑 `/tech/list`
+ * 这条门就红了，而端点其实好端端挂在那里 —— 假红比漏报更毒，它教人忽略这道门。
+ * 按注解认而不是按目录认，才是"这是一个控制器"的判据。
+ */
+const SERVER_ROOT = 'server/game-web/src/main/java'
 const CLIENT_API = 'client/assets/scripts/game/session/GameApi.ts'
 
 function walkJava(dir, out = []) {
@@ -27,8 +35,9 @@ function walkJava(dir, out = []) {
 /** 服务端声明的全部 HTTP 路径。 */
 function serverPaths() {
   const found = new Set()
-  for (const file of walkJava(CONTROLLER_DIR)) {
+  for (const file of walkJava(SERVER_ROOT)) {
     const src = fs.readFileSync(file, 'utf8')
+    if (!/@(?:Rest)?Controller\b/.test(src)) continue
     const pre = (src.match(/@RequestMapping\("([^"]*)"\)/) || [, ''])[1]
     for (const m of src.matchAll(/@(?:Get|Post|Put|Delete|Patch)Mapping\(\s*(?:value\s*=\s*)?"([^"]*)"/g)) {
       found.add(pre + m[1])
