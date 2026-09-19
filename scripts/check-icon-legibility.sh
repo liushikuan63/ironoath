@@ -16,4 +16,15 @@ for DIR in items equip heroes activities; do
     break
   fi
 done
+
+# A18 建筑正稿按**它自己的显示尺寸**判，不蹭上面那条 26px：
+# 城景格子投影后的脚印宽是 53~89，图标边长 = max(26, 宽 × 0.92)，最小那档只有 48px。
+# 拿 26 判会把本来就画得开的图误判成撞脸，拿 128（源文件尺寸）判则等于没判。
+if [ "$STATUS" -eq 0 ]; then
+  PYTHONIOENCODING=utf-8 python art-src/check_icon_legibility.py \
+    --dir client/assets/resources/ui/generated/buildings --px 48 || STATUS=$?
+  if [ "$STATUS" -ne 0 ]; then
+    echo "[icon-legibility] buildings 族在 48px（最小那一档城格）下未通过（退出码 $STATUS）"
+  fi
+fi
 exit "$STATUS"

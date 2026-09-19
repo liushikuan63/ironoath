@@ -18,6 +18,12 @@ import argparse
 import os
 import sys
 
+# Windows 控制台默认按 GBK 编码，而本脚本的输出里有中文与 `↔`。
+# 这不是洁癖：全绿时那句"最近跨族对 … ↔ …"会直接 UnicodeEncodeError 崩掉，
+# 把"通过"报成"量具坏了"（2026-09-19 在 buildings 族上第一次跑到这条）。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 try:
     from PIL import Image
 except ImportError:  # 前置不满足 ≠ 判据失败

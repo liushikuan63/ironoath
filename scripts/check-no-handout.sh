@@ -91,6 +91,34 @@ elif [ "$total_ratio_reads" -ne "$allowed_ratio_reads" ]; then
   echo "$raw_ratio_uses" >&2
 fi
 
+# 战力区间的归属：B08 §146 说「系数全部从 match_rule 读取，不硬编码」，而 #259 起
+# PowerService 只认 mr_scenario_normal_attack 那一行声明的两个引用。
+# 原来那段"只允许装配处读这两个字面参数"的判定在接线之后会**恒真**（全仓一个字面读取都没有），
+# 所以这里换成一对能失败的双向判据：代码不许再写死名字，表也不许不再声明这两个引用。
+band_row=$(grep -A10 '"id": "mr_scenario_normal_attack"' contract/config/match_rule.json || true)
+band_missing=""
+for ref in PVP_POWER_MIN_RATIO PVP_POWER_MAX_RATIO; do
+  echo "$band_row" | grep -q "$ref" || band_missing="$band_missing $ref"
+done
+if [ -n "$band_missing" ]; then
+  err "match_rule 的 mr_scenario_normal_attack 行不再声明$band_missing —— 而 PowerService 只从那一行取区间，"
+  err "表一撤声明，战力区间就变成「没人知道从哪来」的东西（起不来比默认好）"
+fi
+# `|| true` 不是和稀泥：本文件开了 `set -euo pipefail`，而"字面读取 0 处"正是**干净状态** ——
+# 没有这半句，最后那道 `grep -vE` 空匹配会让整条管道退 1，脚本在打印任何结论之前就死掉，
+# 于是"没有违规"被报成"门坏了"（2026-09-19 实测：`literal_band=0` 之后整个 check.sh 直接断在这里）。
+# 违规只能由下面的 `err` 报出来，计数管道本身永远不许判红。
+literal_band=$(grep -rnE '(fixedParam|longParam)\("PVP_POWER_(MIN|MAX)_RATIO"\)' \
+  server --include='*.java' | grep -v '/test/' | grep -vE "$COMMENT_LINE_FILTER" | wc -l | tr -d ' ' || true)
+if [ "$literal_band" -gt 0 ]; then
+  err "战力区间又被按字面参数名读了 $literal_band 处：绕过 match_rule 就等于把「改表生效」改回「改代码才行」"
+  grep -rnE '(fixedParam|longParam)\("PVP_POWER_(MIN|MAX)_RATIO"\)' server --include='*.java' \
+    | grep -v '/test/' | grep -vE "$COMMENT_LINE_FILTER" >&2
+fi
+grep -q "MatchRuleCfg.class" server/game-web/src/main/java/com/ironoath/web/service/PowerService.java \
+  || err "PowerService 没在按行取 match_rule（找 MatchRuleCfg.class 的调用）：战力区间的归属又回到代码里了"
+report "战力区间归属：表声明 + 代码只按行读（字面读取 $literal_band 处）"
+
 # B08 禁止项：√N 必须用 FixedPoint.sqrt，禁止 Math.sqrt(double)。
 # 只对「圈层路径上的文件」生效 —— FogOfWar 用 Math.sqrt 算 chunk 网格边长是合法的，
 # 那是一个显示用的整数边长，不参与任何判定；而圈层的边界值判定差 1 个定点单位
