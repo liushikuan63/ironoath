@@ -45,6 +45,7 @@ import { SettingsPanelView } from './SettingsPanelView'
 import { GiftPopupView } from './GiftPopupView'
 import { TechPanelView } from './TechPanelView'
 import { EquipPanelView } from './EquipPanelView'
+import { ExpPickOverlay } from './ExpPickOverlay'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -931,6 +932,22 @@ export class GameBootstrap extends Component {
   }
 
   /**
+   * 升级喂道具的弹层（V03-d）。挂在这一层的二级弹层（不占导航项）。
+   */
+  private mountExpPickOverlay(): void {
+    if (this.node.getChildByName('expPick') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('expPick')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(ExpPickOverlay)
+    node.active = false
+  }
+
+  /**
    * 装备实例页（V03-b-S1）。与研究页同一做法：从**武将页**点出来的二级页，不占导航项。
    */
   private mountEquipPanel(): void {
@@ -951,6 +968,7 @@ export class GameBootstrap extends Component {
     this.mountGiftPopup()
     this.mountTechPanel()
     this.mountEquipPanel()
+    this.mountExpPickOverlay()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -970,6 +988,7 @@ export class GameBootstrap extends Component {
     const giftPopup = this.panel(GiftPopupView, 'giftPopup')
     const tech = this.panel(TechPanelView, 'techPanel')
     const equip = this.panel(EquipPanelView, 'equipPanel')
+    const expPick = this.panel(ExpPickOverlay, 'expPick')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -1000,6 +1019,13 @@ export class GameBootstrap extends Component {
       equip.onRowAction = (uid, slot, takeOff) => {
         void (takeOff ? this.root?.equipTakeOff(slot) : this.root?.equipWear(uid, slot))
       }
+    }
+    if (expPick !== null) {
+      // 升级弹层（V03-d）：视图只喊一声，加减与确认都由编排层处理
+      out.expPick = (view, heroName) => expPick.render(view, heroName)
+      expPick.onBump = (itemId, delta) => this.root?.bumpExpPick(itemId, delta)
+      expPick.onConfirm = () => { void this.root?.confirmExpPick() }
+      expPick.onCancel = () => this.root?.cancelExpPick()
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
@@ -1033,6 +1059,11 @@ export class GameBootstrap extends Component {
         if (action === 'starUp') {
           // 升星是六条养成里两条"不需要先选道具"的动作之一，可以直连
           void this.root?.heroStarUp(heroId)
+          return
+        }
+        if (action === 'levelUp') {
+          // 升级要先选喂哪些经验道具（V03-d，口径＝逐件选数量）：弹层由编排层出数据
+          void this.root?.openExpPick(heroId)
           return
         }
         // 升级要喂经验道具、觉醒与技能要选道具、装备要选装备实例 —— 这四条各需要一个选择弹层，

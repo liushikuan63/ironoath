@@ -56,6 +56,8 @@ import type { TechListView } from '../../net/generated/TechProtocol'
 import { buildEquipPanel } from '../equip/EquipPanel'
 import type { EquipPanelView } from '../equip/EquipPanel'
 import type { EquipInstanceListView, EquipSlot } from '../../net/generated/EquipProtocol'
+import { buildExpPick, bumpPick, expPickRows, pickedPayload } from '../hero/ExpPick'
+import type { ExpPickView } from '../hero/ExpPick'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -220,6 +222,11 @@ export interface PanelTargets {
    */
   equip?(view: EquipPanelView): void
   /**
+   * 升级喂道具的弹层（V03-d）。**每次都带一份完整视图**：加减之后编排层会重发一次，
+   * 视图不认识计数规则（夹取/全 0 能不能发都在纯逻辑里）。
+   */
+  expPick?(view: ExpPickView, heroName: string): void
+  /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
@@ -377,6 +384,10 @@ export class AppRoot {
   private equipNotice: string | null = null
   /** 换装目标（V03-d 第一批）：从武将行进装备库时带上的那个武将；null = 只读浏览 */
   private equipTarget: { heroId: string, heroName: string } | null = null
+  /** 最近一次 `/bag/list` 的响应（V03-d）：升级弹层的候选取它，不额外发请求 */
+  private bagResp: BagListResp | null = null
+  /** 升级弹层的状态：给谁喂、每样选了几件。null = 没开着 */
+  private expPick: { heroId: string, heroName: string, picks: Record<string, number> } | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -573,7 +584,11 @@ export class AppRoot {
         })
         return
       case 'bag':
-        this.deliver('bag', await this.api.bagList(), r => this.targets.bag?.(r))
+        this.deliver('bag', await this.api.bagList(), r => {
+          // 存一份给升级弹层用（V03-d）：它按 effectKind 筛候选，不额外发请求
+          this.bagResp = r
+          this.targets.bag?.(r)
+        })
         return
       case 'resources':
         this.deliver('resources', await this.api.resourceDetail(), r => this.targets.resources?.(r))
@@ -1619,6 +1634,68 @@ export class AppRoot {
     }
     this.track(TRACK_EVENTS.heroEquip, { heroId, slot: trackParam(slot), action: 'takeOff' })
     return this.write('equip', this.api.heroEquip({ heroId, slot, equipUid: null }), ['hero', 'equip'])
+  }
+
+  // ---------- 武将升级（V03-d：口径＝逐件选数量） ----------
+
+  /**
+   * 打开升级弹层。候选是背包里 `effectKind = GRANT_HERO_EXP` 的行 —— **不额外发请求**：
+   * 背包没拉过就先拉一次（弹层空着比多一个请求更糟）。
+   */
+  async openExpPick(heroId: string): Promise<void> {
+    if (this.bagResp === null) {
+      await this.refresh('bag')
+    }
+    this.expPick = { heroId, heroName: this.heroNameOf(heroId), picks: {} }
+    this.deliverExpPick()
+  }
+
+  /** 加减一件。夹取在纯逻辑里做（按到边界再按一下是正常操作，不该报错）。 */
+  bumpExpPick(itemId: string, delta: number): void {
+    if (this.expPick === null) {
+      return
+    }
+    const rows = expPickRows(this.bagResp?.items ?? [])
+    this.expPick = { ...this.expPick, picks: bumpPick(rows, itemId, delta) }
+    this.deliverExpPick()
+  }
+
+  /**
+   * 确认喂：只带**选了**的那些发上去。全 0 不发（服务端要求 `expItems` 非空，
+   * 发了只是把一次失误变成一条错误提示）。
+   *
+   * <p>提交后即清空选择：失败（道具不够/已满级）时服务端的理由走统一上报口，
+   * 玩家重新点「升级」会拿到一份干净的候选（而不是一份"上次选了但没发出去"的残留）。
+   */
+  confirmExpPick(): Promise<void> {
+    const state = this.expPick
+    if (state === null) {
+      return Promise.resolve()
+    }
+    const payload = pickedPayload(expPickRows(this.bagResp?.items ?? [], state.picks))
+    if (payload.length === 0) {
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.heroLevelUp, {
+      heroId: trackParam(state.heroId), kinds: trackParam(payload.length),
+    })
+    this.expPick = null
+    return this.write('hero', this.api.heroLevelUp({ heroId: state.heroId, expItems: [...payload] }),
+      ['hero', 'bag'])
+  }
+
+  /** 组装并下发弹层视图。视图不认识计数规则（夹取 / 全 0 能不能发都在纯逻辑里）。 */
+  private deliverExpPick(): void {
+    if (this.expPick === null) {
+      return
+    }
+    const view = buildExpPick(this.bagResp?.items ?? [], this.expPick.picks)
+    this.targets.expPick?.(view, this.expPick.heroName)
+  }
+
+  /** 取消：关掉弹层，什么都不发（选择清掉，重开是干净的一份）。 */
+  cancelExpPick(): void {
+    this.expPick = null
   }
 
   /**

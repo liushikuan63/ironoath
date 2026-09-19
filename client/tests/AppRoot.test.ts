@@ -31,6 +31,7 @@ import type { RankBoardView } from '../assets/scripts/game/power/RankBoard'
 import type { SeasonPanelView } from '../assets/scripts/game/season/SeasonPanel'
 import type { TechPanelView } from '../assets/scripts/game/tech/TechPanel'
 import type { EquipPanelView } from '../assets/scripts/game/equip/EquipPanel'
+import type { ExpPickView } from '../assets/scripts/game/hero/ExpPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
@@ -86,6 +87,7 @@ const ROUTES: Record<string, unknown> = {
   '/hero/list': { heroes: [], lineups: [] },
   '/hero/starUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/equip': { hero: {}, consumed: [], serverNow: SERVER_NOW },
+  '/hero/levelUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
@@ -517,6 +519,7 @@ interface Harness {
   readonly lastSeason: SeasonPanelView | null
   readonly lastTech: TechPanelView | null
   readonly lastEquip: EquipPanelView | null
+  readonly lastExpPick: { readonly view: ExpPickView, readonly heroName: string } | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -608,6 +611,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastSeason: SeasonPanelView | null = null
   let lastTech: TechPanelView | null = null
   let lastEquip: EquipPanelView | null = null
+  let lastExpPick: { view: ExpPickView, heroName: string } | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -663,6 +667,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     equip: (view) => {
       attached.push('equip')
       lastEquip = view
+    },
+    expPick: (view, heroName) => {
+      lastExpPick = { view, heroName }
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -740,6 +747,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastEquip() {
       return lastEquip
+    },
+    get lastExpPick() {
+      return lastExpPick
     },
     get lastCompose() {
       return lastCompose
@@ -2038,6 +2048,60 @@ test('装备库：带着武将进来才出换装动作，穿/卸各发一条 /he
   assert.equal(off?.body.equipUid, null, '卸下 = equipUid 为 null（服务端口径）')
   assert.deepEqual(
     h.events.filter(e => e.name === 'hero_equip').map(e => e.params.action), ['wear', 'takeOff'])
+})
+
+test('升级弹层：候选只取经验道具，加减后确认发一条 /hero/levelUp 并回读武将与背包', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', {
+    heroes: [{ heroId: 'hero_guanyu', name: '关羽' }], lineups: [],
+  })
+  await h.root.refresh('hero')
+  h.http.overrides.set('/bag/list', {
+    items: [
+      { itemId: 'item_hero_exp_s', name: '小经验书', type: 'MATERIAL', rarity: 'R',
+        obtainFrom: '主线任务', count: 5, stackMax: 99, sortKey: 10, effectKind: 'GRANT_HERO_EXP' },
+      { itemId: 'item_hero_skillbook_main', name: '技能书', type: 'MATERIAL', rarity: 'R',
+        obtainFrom: '活动', count: 3, stackMax: 99, sortKey: 11, effectKind: 'UP_HERO_SKILL' },
+    ],
+  })
+  await h.root.refresh('bag')
+
+  await h.root.openExpPick('hero_guanyu')
+  assert.equal(h.lastExpPick?.heroName, '关羽', '名字取自服务端给的武将列表')
+  assert.deepEqual(h.lastExpPick?.view.rows.map(r => r.itemId), ['item_hero_exp_s'],
+    '同 type 的技能书不进候选（按 effectKind 筛）')
+  assert.equal(h.lastExpPick?.view.canSend, false, '默认全 0，不发')
+
+  h.root.bumpExpPick('item_hero_exp_s', 1)
+  assert.equal(h.lastExpPick?.view.totalPicked, 1)
+  assert.equal(h.lastExpPick?.view.canSend, true)
+
+  h.events.length = 0
+  await h.root.confirmExpPick()
+  const call = h.http.calls.filter(c => c.path === '/hero/levelUp').at(-1)
+  assert.equal(call?.body.heroId, 'hero_guanyu')
+  assert.deepEqual(call?.body.expItems, [{ itemId: 'item_hero_exp_s', count: 1 }],
+    '只带选了的那些（0 的不上报）')
+  assert.equal(h.http.countOf('/hero/list') >= 2, true, '喂完重读武将（等级变了）')
+  assert.equal(h.http.countOf('/bag/list') >= 2, true, '喂完重读背包（书少了）')
+  assert.deepEqual(h.events.filter(e => e.name === 'hero_level_up').map(e => e.params.kinds), ['1'])
+})
+
+test('升级弹层：一件都没选时确认是空操作（不发一个注定被拒的请求）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/bag/list', {
+    items: [{ itemId: 'item_hero_exp_s', name: '小经验书', type: 'MATERIAL', rarity: 'R',
+      obtainFrom: '主线任务', count: 5, stackMax: 99, sortKey: 10, effectKind: 'GRANT_HERO_EXP' }],
+  })
+  await h.root.refresh('bag')
+  await h.root.openExpPick('hero_1')
+
+  const before = h.http.countOf('/hero/levelUp')
+  await h.root.confirmExpPick()
+  assert.equal(h.http.countOf('/hero/levelUp'), before, '全 0 不发')
+  assert.equal(h.lastExpPick?.view.canSend, false, '弹层上那个键也该是灰的')
 })
 
 test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {

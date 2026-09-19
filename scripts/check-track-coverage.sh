@@ -65,6 +65,11 @@ const SKIP = new Set([
   "beginRallyCompose",
   "pickMarchUnit",
   "cancelMarchCompose",
+  // 升级弹层的"开弹层"与"加减一件"：真正要量的是"喂下去"那一下（在 confirmExpPick 里打 hero_level_up），
+  // 开弹层与步进都还不是意图 —— 与上面的 beginMarchCompose / pickMarchUnit 同一条理由
+  "openExpPick",
+  "bumpExpPick",
+  "cancelExpPick", // 取消 = 关掉弹层、什么都没发生，没有可上报的东西
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")
