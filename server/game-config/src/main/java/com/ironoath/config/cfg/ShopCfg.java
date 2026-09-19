@@ -30,7 +30,8 @@ public record ShopCfg(
     public enum RefreshType {
         NONE,
         DAILY,
-        WEEKLY
+        WEEKLY,
+        SEASON
     }
 
 }

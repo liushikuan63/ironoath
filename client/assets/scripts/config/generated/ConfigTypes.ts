@@ -980,6 +980,7 @@ export type ShopRefreshType =
   | 'NONE'
   | 'DAILY'
   | 'WEEKLY'
+  | 'SEASON'
 
 /**
  * 配置表 shop 的一行。

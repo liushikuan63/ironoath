@@ -54,6 +54,27 @@ public interface SeasonLedgerStore {
     /** @return 没有记录时返回 null（不是抛，也不是空对象 —— "没结算过"是一个必须能表达的状态） */
     Record find(String seasonId, String playerId);
 
+    /**
+     * 这一季这个人已经花掉多少赛季币（B24 裁决① 的赛季商店）。
+     *
+     * <p><b>余额是算出来的，不是存出来的</b>：`Record.seasonCoin` 是这一季结算发的数（只写一次、不可改），
+     * 花掉的部分记在一条 `spent` 计数上 ⇒ 余额 = 发的 − 花的。刻意不加一个"余额字段"：
+     * 两个数（发的、余额）同时存在就一定会有一天对不上，而对不上的时候没人知道该信哪个。
+     *
+     * @return 没结算过、或没花过时都是 0（"还没发钱"与"还没花钱"在这里是同一件事：可花的都是 0）
+     */
+    long spentOf(String seasonId, String playerId);
+
+    /**
+     * 原子地扣一笔赛季币：余额不足时返回 false，**绝不做部分扣款**（花了钱什么也没拿到是最坏的一种失败）。
+     *
+     * <p><b>必须与 {@link #spentOf} 在同一个存储上原子完成</b>：两个实现都用"同一条记录上的计数"，
+     * 所以校验与扣减落在同一个文档里。跨存储"先查余额再扣"两个人同时买就会双花。
+     *
+     * @param amount 必须为正；非正数抛（静默接受 0 会让调用方以为扣成功了）
+     */
+    boolean spend(String seasonId, String playerId, long amount);
+
     /** 一个赛季的完整结算记录，按 playerId 索引。归档与申诉还原读它。 */
     Map<String, Record> seasonRecords(String seasonId);
 

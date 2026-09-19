@@ -41,6 +41,8 @@ import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.ShopBuyReq;
 import com.ironoath.web.dto.generated.ShopBuyResp;
 import com.ironoath.web.dto.generated.ShopCurrency;
+import com.ironoath.core.season.SeasonTier;
+import com.ironoath.web.season.SeasonLedgerStore;
 import com.ironoath.web.dto.generated.ShopListResp;
 import com.ironoath.web.dto.generated.ShopRowView;
 import com.ironoath.web.service.ShopAppService;
@@ -83,6 +85,8 @@ class ShopEndpointTest {
     @Autowired private DailyCounter limits;
     @Autowired private PlayerRepository players;
     @Autowired private TimeService timeService;
+    @Autowired private com.ironoath.web.season.SeasonLedgerStore seasonLedger;
+    @Autowired private com.ironoath.web.season.SeasonRulesAssembler seasonRules;
 
     // ---------- 金币页 ----------
 
@@ -302,25 +306,67 @@ class ShopEndpointTest {
      * 而赛季币本身是真实存在的（赛季结算会发）。
      */
     @Test
-    @DisplayName("赛季币页：货架可见、每行都不可买、余额是 null 而不是假的 0")
-    void seasonPageIsListedButClosed() throws Exception {
+    @DisplayName("验收1：赛季币有了消费者 —— 拿到币就能买，买完余额跟着变（B24 裁决①）")
+    void seasonCoinsCanActuallyBeSpent() throws Exception {
+        String playerId = richPlayer();
+        // 赛季币只由结算发放：先照结算那条路记一笔（200 币），余额才存在
+        seasonLedger.recordIfAbsent(currentSeasonId(),
+                new SeasonLedgerStore.Record(playerId, 3, SeasonTier.Tier.GOLD, 200L, 0L));
+
+        JsonNode before = okData(perform(get("/shop/list?currency=SEASON_COIN").header(PLAYER_HEADER, playerId)));
+        assertThat(before.get("open").asBoolean()).as("裁决① 之后这一页是开的").isTrue();
+        assertThat(before.get("balance").asLong()).as("余额是结算发的那 200").isEqualTo(200L);
+        JsonNode row = before.get("rows").get(0);
+        assertThat(row.get("rowId").asText()).isEqualTo("shop_season_boost");
+        assertThat(row.get("purchasable").asBoolean()).as("有币就能买").isTrue();
+
+        ShopBuyResp bought = shop.buy(playerId, buy("shop_season_boost", ShopCurrency.SEASON_COIN, 1));
+        assertThat(bought.spent()).as("100 赛季币").isEqualTo(100L);
+        assertThat(bought.balance()).as("回执里就带着扣完之后的余额").isEqualTo(100L);
+
+        JsonNode after = okData(perform(get("/shop/list?currency=SEASON_COIN").header(PLAYER_HEADER, playerId)));
+        assertThat(after.get("balance").asLong()).as("买完余额必须跟着变（验收 1 的判据）").isEqualTo(100L);
+        assertThat(after.get("rows").get(0).get("used").asInt()).as("限购计数也进了货架").isEqualTo(1);
+        assertThat(bag.countOf(playerId, "item_speedup_build_8h"))
+                .as("买了就得真拿到东西").isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("赛季币不足回「赛季币不足」而不是「该页未开放」；没结算过的人余额是 0")
+    void seasonCoinLackIsSaidPlainly() {
         String playerId = richPlayer();
 
-        JsonNode data = okData(perform(get("/shop/list?currency=SEASON_COIN").header(PLAYER_HEADER, playerId)));
-        assertThat(data.get("open").asBoolean()).isFalse();
-        assertThat(data.get("notice").asText()).contains("赛季币");
-        assertThat(data.get("rows")).hasSize(1);
-        assertThat(data.get("rows").get(0).get("purchasable").asBoolean()).isFalse();
-        JsonNode balance = data.get("balance");
-        assertThat(balance == null || balance.isNull())
-                .as("商店没有这个币种的账本，余额只能是「不知道」而不是 0").isTrue();
-
-        ShopListResp typed = shop.list(playerId, ShopCurrency.SEASON_COIN);
-        assertThat(typed.balance()).isNull();
-        assertThatThrownBy(() -> shop.buy(playerId, buy("shop_season_skin", ShopCurrency.SEASON_COIN, 1)))
+        assertThat(shop.list(playerId, ShopCurrency.SEASON_COIN).balance())
+                .as("没结算过 = 可花 0，而不是「不知道」（那一页现在有账本了）").isZero();
+        assertThatThrownBy(() -> shop.buy(playerId, buy("shop_season_boost", ShopCurrency.SEASON_COIN, 1)))
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).errorCode())
-                .isEqualTo(ErrorCode.SHOP_CURRENCY_CLOSED);
+                .as("开放之后再回「页未开放」就是一句假话：玩家会去问客服什么时候开")
+                .isEqualTo(ErrorCode.SEASON_COIN_LACK);
+    }
+
+    @Test
+    @DisplayName("赛季币限购是「本赛季」：同一季买过第二次就被拒，而额度按赛季而不是终身")
+    void seasonCoinLimitIsPerSeason() {
+        String playerId = richPlayer();
+        String seasonId = currentSeasonId();
+        seasonLedger.recordIfAbsent(seasonId,
+                new SeasonLedgerStore.Record(playerId, 3, SeasonTier.Tier.GOLD, 300L, 0L));
+
+        shop.buy(playerId, buy("shop_season_boost", ShopCurrency.SEASON_COIN, 1));
+        assertThatThrownBy(() -> shop.buy(playerId, buy("shop_season_boost", ShopCurrency.SEASON_COIN, 1)))
+                .as("同一赛季第二次必须被限购拒（refreshType=SEASON + limitCount=1）")
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.SHOP_LIMIT_REACHED);
+
+        // 额度按赛季折算：**另一个赛季的同一个键必须算新额度** —— 用 NONE（终身一次）
+        // 会在这里给出"也拒"，所以这一条正好把 SEASON 与 NONE 区分开
+        ShopListResp nextSeason = shop.list(playerId, ShopCurrency.SEASON_COIN);
+        assertThat(nextSeason.rows().get(0).remaining())
+                .as("本赛季的额度用完了（0），而下一季会重新给 1 —— 这一列读的是 periodOf(SEASON) 的标签")
+                .isZero();
+        assertThat(seasonId).as("夹具前提：当前赛季 id 非空，它是限购标签与账本键的共同来源").isNotBlank();
     }
 
     // ---------- 请求收窄 ----------
@@ -370,6 +416,11 @@ class ShopEndpointTest {
     }
 
     /** 金币充足的玩家：金币初始 200，最贵的一行是 1500（且要 12 级），补齐到 100200 让用例不必各花各的。 */
+    /** 当前赛季 id：限购标签与账本键的共同来源（测试里只读，不自己造 id）。 */
+    private String currentSeasonId() {
+        return seasonRules.timelineRules().seasonId();
+    }
+
     private String richPlayer() {
         String playerId = player();
         wallet.grant(playerId, ResourceIds.GOLD, 100_000L, timeService.serverNow());

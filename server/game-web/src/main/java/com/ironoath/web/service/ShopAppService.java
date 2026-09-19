@@ -70,13 +70,16 @@ public class ShopAppService {
     /** 永久额度（{@code refreshType=NONE}）的周期标签：固定串，跨期不会换键。 */
     private static final String LIFETIME_PERIOD = "lifetime";
     /**
-     * 尚未开放兑换的页签。SEASON_COIN 的账本只进不出（{@code SeasonLedgerStore} 没有扣减入口），
-     * 它的用途口径本身还没裁决（收口清单 #6b），唯一那一行的货品效果也没有定义数值（#19）——
-     * 三件事都指向「先别开」。<b>但它仍然是货架的一部分</b>：列表照给、每行 purchasable=false，
-     * 因为「还没开」与「不存在」对玩家是两句话。
+     * 尚未开放兑换的页签。**今天为空**：B24 裁决①（2026-09-19）把赛季币的用途定成赛季商店、
+     * 账本也有了扣减入口，四个币种全部开放。
+     *
+     * <p>机制留着而不是删掉：它是"关一页"的**唯一**表达（列表照给、每行 `purchasable=false`、
+     * `open=false` + 一句说明），而"某一页要不要关"这件事将来一定还会被问到（某货币退役那次）。
+     * 删掉它等于让下一个人重新想一遍"关页该长什么样"，而契约里的 `open`/`notice` 两个字段
+     * 也正为此保留着。
      */
-    private static final List<ShopCurrency> CLOSED_CURRENCIES = List.of(ShopCurrency.SEASON_COIN);
-    private static final String CLOSED_NOTICE = "赛季币的用途尚未定案（等收口清单 #6b 裁决），本页暂不能兑换";
+    private static final List<ShopCurrency> CLOSED_CURRENCIES = List.of();
+    private static final String CLOSED_NOTICE = "";
 
     private final ConfigRegistry configs;
     private final RewardPorts.Wallet wallet;
@@ -88,11 +91,17 @@ public class ShopAppService {
     private final PlayerLock playerLock;
     private final IdempotencyStore idempotency;
     private final TimeService timeService;
+    /** 赛季币的账本（B24 裁决①）：余额与扣减都走它，商店不自己记一份。 */
+    private final com.ironoath.web.season.SeasonLedgerStore seasonLedger;
+    /** 当前赛季 id 的来源：限购周期与账本键都要用它，两边必须是同一个值。 */
+    private final com.ironoath.web.season.SeasonRulesAssembler seasonRules;
 
     public ShopAppService(ConfigRegistry configs, RewardPorts.Wallet wallet, RewardService rewardService,
                           RewardPorts.Compensation compensation, DailyCounter limits,
                           SocialStore social, PlayerRepository players, PlayerLock playerLock,
-                          IdempotencyStore idempotency, TimeService timeService) {
+                          IdempotencyStore idempotency, TimeService timeService,
+                          com.ironoath.web.season.SeasonLedgerStore seasonLedger,
+                          com.ironoath.web.season.SeasonRulesAssembler seasonRules) {
         this.configs = configs;
         this.wallet = wallet;
         this.rewardService = rewardService;
@@ -103,6 +112,8 @@ public class ShopAppService {
         this.playerLock = playerLock;
         this.idempotency = idempotency;
         this.timeService = timeService;
+        this.seasonLedger = seasonLedger;
+        this.seasonRules = seasonRules;
     }
 
     /** 不能买的原因，连同该回哪个错误码。<b>两者必须一起算</b>：只返回字符串的话调用方得靠前缀猜错误码。 */
@@ -237,7 +248,7 @@ public class ShopAppService {
             case GOLD -> ErrorCode.RESOURCE_NOT_ENOUGH;
             case ALLIANCE_COIN -> ErrorCode.ALLIANCE_CONTRIBUTION_LACK;
             case SQUAD_COIN -> ErrorCode.SOCIAL_SQUAD_COIN_LACK;
-            case SEASON_COIN -> ErrorCode.SHOP_CURRENCY_CLOSED;
+            case SEASON_COIN -> ErrorCode.SEASON_COIN_LACK;
         };
     }
 
@@ -246,6 +257,7 @@ public class ShopAppService {
         return switch (row.refreshType()) {
             case DAILY -> "今日";
             case WEEKLY -> "本周";
+            case SEASON -> "本赛季";
             case NONE -> "永久";
         };
     }
@@ -255,15 +267,15 @@ public class ShopAppService {
             case GOLD -> "金币";
             case ALLIANCE_COIN -> "贡献值";
             case SQUAD_COIN -> "小队币";
-            // 该页签不可购买（CLOSED_CURRENCIES）。走到这里说明 CLOSED 名单漏了它 —— 宁可文案别扭，
-            // 也不要在这里悄悄卖出一个没有账本的货币
-            case SEASON_COIN -> "赛季币（该页签尚未开放）";
+            case SEASON_COIN -> "赛季币";
         };
     }
 
     private BizException closedCurrency(ShopCurrency currency) {
+        // 关页名单今天为空（四个币种全开），但这句话留着：真要关某页时它得有说法，
+        // 而不是拼出一句以冒号结尾的残句
         return new BizException(ErrorCode.SHOP_CURRENCY_CLOSED,
-                currency + " 页当前不开放兑换：" + CLOSED_NOTICE);
+                currency + " 页当前不开放兑换" + (CLOSED_NOTICE.isBlank() ? "" : "：" + CLOSED_NOTICE));
     }
 
     // ---------- 内部：账本 ----------
@@ -276,9 +288,8 @@ public class ShopAppService {
                     .map(alliance -> alliance.contributionOf(playerId)).orElse(0L);
             case SQUAD_COIN -> social.squadOf(playerId)
                     .map(squad -> squad.squadCoinOf(playerId)).orElse(0L);
-            // 列表在 open=false 时不会调到这里（余额回 null），购买在 requireRow 处已拒绝。
-            // 返回 0 而不是抛，是为了让「页签没开」这一件事只由 CLOSED_CURRENCIES 一处表达
-            case SEASON_COIN -> 0L;
+            // 赛季币的余额是**算出来的**：这一季结算发的 − 已经花掉的（账本上那两个数）
+            case SEASON_COIN -> seasonCoinBalance(playerId);
         };
     }
 
@@ -316,7 +327,13 @@ public class ShopAppService {
                 }
                 social.saveSquad(squad, expectedSquadVersion);
             }
-            case SEASON_COIN -> throw closedCurrency(ShopCurrency.SEASON_COIN);
+            case SEASON_COIN -> {
+                // 账本一条原子操作完成"校验余额 + 扣减"：不足返回 false，绝不做部分扣款
+                if (!seasonLedger.spend(currentSeasonId(), playerId, spent)) {
+                    throw new BizException(ErrorCode.SEASON_COIN_LACK,
+                            "赛季币不足：需要 " + spent + "，当前 " + seasonCoinBalance(playerId));
+                }
+            }
         }
     }
 
@@ -383,6 +400,24 @@ public class ShopAppService {
         return ShopRefresh.valueOf(row.refreshType().name());
     }
 
+    /**
+     * 当前赛季 id。**只有这一处读**：限购周期与账本键必须是同一个值 ——
+     * 各读一次的话，季与季交界那一刻会出现"额度按新季算、扣的是旧季的币"这种没人查得出来的错账。
+     */
+    private String currentSeasonId() {
+        return seasonRules.timelineRules().seasonId();
+    }
+
+    /** 本赛季可花的赛季币 = 结算发的 − 已经花掉的（没结算过就是 0）。 */
+    private long seasonCoinBalance(String playerId) {
+        String seasonId = currentSeasonId();
+        var record = seasonLedger.find(seasonId, playerId);
+        if (record == null) {
+            return 0L;
+        }
+        return Math.max(0L, record.seasonCoin() - seasonLedger.spentOf(seasonId, playerId));
+    }
+
     private static String scopeOf(ShopCfg row) {
         return "shop:" + row.id();
     }
@@ -391,10 +426,12 @@ public class ShopAppService {
      * 周期标签。DAILY/WEEKLY/NONE 三种都走同一个计数器，区别只在标签怎么算 ——
      * 计数器本身不理解日期（见 {@code DailyCounter} 的类注释），所以「什么叫本周」在全项目只有一份。
      */
-    private static String periodOf(ShopCfg row, long now) {
+    private String periodOf(ShopCfg row, long now) {
         return switch (row.refreshType()) {
             case DAILY -> DayKey.of(now);
             case WEEKLY -> WeekKey.of(now);
+            // 赛季口径用**当前赛季 id**：与账本键同源，所以"新赛季 = 新额度"是自动成立的
+            case SEASON -> currentSeasonId();
             case NONE -> LIFETIME_PERIOD;
         };
     }

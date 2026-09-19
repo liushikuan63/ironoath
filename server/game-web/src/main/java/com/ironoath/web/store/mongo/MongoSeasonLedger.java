@@ -80,6 +80,49 @@ public final class MongoSeasonLedger implements SeasonLedgerStore {
     }
 
     @Override
+    public long spentOf(String seasonId, String playerId) {
+        if (seasonId == null || playerId == null) {
+            return 0L;
+        }
+        SeasonLedgerDocument doc = mongo.findById(SeasonLedgerDocument.keyOf(seasonId, playerId),
+                SeasonLedgerDocument.class, SeasonLedgerDocument.COLLECTION);
+        return doc == null ? 0L : doc.spentOrZero();
+    }
+
+    @Override
+    public boolean spend(String seasonId, String playerId, long amount) {
+        if (seasonId == null || seasonId.isBlank() || playerId == null || playerId.isBlank()) {
+            throw new IllegalArgumentException("赛季币的季与人都不得为空");
+        }
+        if (amount <= 0L) {
+            throw new IllegalArgumentException("扣减金额必须为正，实际=" + amount);
+        }
+        SeasonLedgerDocument doc = mongo.findById(SeasonLedgerDocument.keyOf(seasonId, playerId),
+                SeasonLedgerDocument.class, SeasonLedgerDocument.COLLECTION);
+        if (doc == null) {
+            return false;   // 没结算过 ⇒ 没有可花的币
+        }
+        long cap = doc.record().seasonCoin() - amount;   // 扣完这一笔之后 spent 的上界
+        if (cap < 0L) {
+            return false;
+        }
+        // 一条带守卫的原子自增：条件里**必须显式包含"spent 字段不存在"那一支** ——
+        // 这一列是后加的，老文档没有它，而 Mongo 的比较运算符对缺失字段一律不匹配，
+        // 漏了那一支的症状是"老号永远买不成"，而且只有老号会中招（新号有字段，测不出来）
+        Query guarded = Query.query(new Criteria().andOperator(
+                Criteria.where("_id").is(SeasonLedgerDocument.keyOf(seasonId, playerId)),
+                new Criteria().orOperator(
+                        Criteria.where("spent").exists(false),
+                        Criteria.where("spent").lte(cap))));
+        var result = mongo.findAndModify(guarded,
+                new org.springframework.data.mongodb.core.query.Update().inc("spent", amount),
+                org.springframework.data.mongodb.core.FindAndModifyOptions.options().returnNew(true),
+                SeasonLedgerDocument.class, SeasonLedgerDocument.COLLECTION);
+        // 有返回 = 守卫通过、这笔扣成了；没有 = 余额不够（或这一刻被另一个人先扣走了）
+        return result != null;
+    }
+
+    @Override
     public int purgeSeason(String seasonId) {
         // 按 seasonId 整季删：保留策略的口径是"几个赛季"，不是"多少天"
         long deleted = mongo.remove(Query.query(Criteria.where("seasonId").is(seasonId)),

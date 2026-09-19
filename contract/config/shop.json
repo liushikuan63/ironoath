@@ -10,7 +10,7 @@
     "priceCurrency": "ENUM:GOLD,ALLIANCE_COIN,SQUAD_COIN,SEASON_COIN",
     "price": "LONG_POS",
     "limitCount": "LONG_POS",
-    "refreshType": "ENUM:NONE,DAILY,WEEKLY",
+    "refreshType": "ENUM:NONE,DAILY,WEEKLY,SEASON",
     "requireMainLevel": "LONG_NONNEG",
     "why": "?STRING",
     "todo": "?STRING"
@@ -138,15 +138,15 @@
       "why": "小队币商店。小队币只能靠互助获得，不可充值——熟人圈子的货币一旦能买，互助就退化成了交易。"
     },
     {
-      "id": "shop_season_skin",
-      "name": "赛季旗帜外观",
-      "itemId": "item_buff_rally_2h",
+      "id": "shop_season_boost",
+      "name": "赛季加速令",
+      "itemId": "item_speedup_build_8h",
       "priceCurrency": "SEASON_COIN",
-      "price": 500,
+      "price": 100,
       "limitCount": 1,
-      "refreshType": "NONE",
-      "requireMainLevel": 16,
-      "why": "赛季币商店的外观位。B00 付费点排序最后一位是皮肤/外观，用赛季币而非金币计价，让它成为赛季参与的纪念而不是直接的付费项。"
+      "refreshType": "SEASON",
+      "requireMainLevel": 0,
+      "why": "B24 裁决① 的第二件货品：100 赛季币、每赛季限 1。赛季币只发给赛季榜前 100 名（SEASON_REWARDED_TOP_N），是纪念币不是流通币 —— 100 币约等于榜尾一名的结算所得，买到金币货架 300 的那档加速令，读起来像\"这一季的名次换来一件像样的东西\"。取 8h 那档而不是 1h：可调，改表即可，不动代码。限购周期是 SEASON（本赛季），不是 NONE：NONE 是终身一次，那是比裁决更严的口径，属于悄悄改口径。"
     }
   ]
 }

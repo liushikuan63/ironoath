@@ -24,7 +24,13 @@ public record SeasonLedgerDocument(
         @Id String id,
         String seasonId,
         String playerId,
-        SeasonLedgerStore.Record record) {
+        SeasonLedgerStore.Record record,
+        /**
+         * 已花掉的赛季币（B24 裁决① 的赛季商店）。**可空**：这一列是后加的，
+         * 库里已有的文档没有它 —— 读出来是 null 就当 0，而扣减那条查询必须显式带上"字段缺失"那一支，
+         * 否则老号永远扣不动（这是这一列最容易漏的地方）。
+         */
+        Long spent) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "season_ledger";
@@ -36,6 +42,11 @@ public record SeasonLedgerDocument(
 
     static SeasonLedgerDocument of(String seasonId, SeasonLedgerStore.Record record) {
         return new SeasonLedgerDocument(keyOf(seasonId, record.playerId()), seasonId,
-                record.playerId(), record);
+                record.playerId(), record, null);
+    }
+
+    /** 已花掉的数（缺字段 = 没花过）。 */
+    long spentOrZero() {
+        return spent == null ? 0L : spent;
     }
 }

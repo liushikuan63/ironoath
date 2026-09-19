@@ -272,6 +272,77 @@ class SeasonLedgerStoreEquivalenceTest {
         }
     }
 
+    @Test
+    @DisplayName("赛季币的扣减两套实现同一条：余额 = 发的 − 花的、不足被拒、没结算过就扣不动")
+    void spendingSeasonCoinsBehavesTheSameOnBothStores() {
+        for (SeasonLedgerStore store : bothStores()) {
+            String who = store.getClass().getSimpleName();
+            // 没结算过 = 没有可花的币（返回 false 而不是抛：余额为 0 不是错误）
+            assertThat(store.spentOf(SEASON, "P-none")).as(who + " 没结算过时已花为 0").isZero();
+            assertThat(store.spend(SEASON, "P-none", 1L))
+                    .as(who + " 没结算过的人扣不动").isFalse();
+
+            assertThat(store.recordIfAbsent(SEASON,
+                    record("P-spend", 3, SeasonTier.Tier.GOLD, 200L, 0L))).isTrue();
+
+            assertThat(store.spend(SEASON, "P-spend", 120L)).as(who + " 余额够就扣成").isTrue();
+            assertThat(store.spentOf(SEASON, "P-spend")).as(who + " 已花累加").isEqualTo(120L);
+            assertThat(store.spend(SEASON, "P-spend", 100L))
+                    .as(who + " 只剩 80，扣 100 必须被拒（绝不做部分扣款）").isFalse();
+            assertThat(store.spentOf(SEASON, "P-spend")).as(who + " 被拒的那次没有留下痕迹")
+                    .isEqualTo(120L);
+
+            assertThat(store.spend(SEASON, "P-spend", 80L)).as(who + " 刚好扣到 0").isTrue();
+            assertThat(store.spentOf(SEASON, "P-spend")).as(who + " 扣到 0").isEqualTo(200L);
+            assertThat(store.spend(SEASON, "P-spend", 1L)).as(who + " 0 之后一分也扣不动").isFalse();
+
+            // 非正数当场抛：静默接受 0 会让调用方以为扣成功了
+            assertThatThrownBy(() -> store.spend(SEASON, "P-spend", 0L))
+                    .as(who + " 扣 0").isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.spend(SEASON, "P-spend", -5L))
+                    .as(who + " 扣负数").isInstanceOf(IllegalArgumentException.class);
+
+            // 季与人是两把分开的钥匙：另一季的同一个 playerId 有它自己的 0 起点
+            assertThat(store.spentOf("season_20260401", "P-spend")).as(who + " 别季互不影响").isZero();
+        }
+    }
+
+    @Test
+    @DisplayName("扣减的并发：八线程抢同一笔余额，只有总和不超发的那些成功（两套实现都别双花）")
+    void concurrentSpendsCannotDoubleSpend() throws Exception {
+        for (SeasonLedgerStore store : bothStores()) {
+            String who = store.getClass().getSimpleName();
+            assertThat(store.recordIfAbsent(SEASON,
+                    record("P-race", 1, SeasonTier.Tier.GOLD, 100L, 0L))).isTrue();
+            int threads = 8;
+            java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicInteger ok = new java.util.concurrent.atomic.AtomicInteger();
+            List<Thread> workers = new java.util.ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                Thread worker = new Thread(() -> {
+                    try {
+                        start.await();
+                        if (store.spend(SEASON, "P-race", 30L)) {
+                            ok.incrementAndGet();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+                workers.add(worker);
+                worker.start();
+            }
+            start.countDown();
+            for (Thread worker : workers) {
+                worker.join();
+            }
+            // 余额 100、每笔 30 ⇒ 最多 3 笔；成功数必须正好是 3，且已花正好 90
+            assertThat(ok.get()).as(who + " 最多只能扣成 3 笔（100/30）").isEqualTo(3);
+            assertThat(store.spentOf(SEASON, "P-race")).as(who + " 已花 = 3 × 30，没有超发")
+                    .isEqualTo(90L);
+        }
+    }
+
     // ---------- 夹具 ----------
 
     private List<SeasonLedgerStore> bothStores() {

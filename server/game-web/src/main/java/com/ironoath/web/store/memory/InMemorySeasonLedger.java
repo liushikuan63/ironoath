@@ -27,6 +27,20 @@ public class InMemorySeasonLedger implements SeasonLedgerStore {
     private final Map<String, Map<String, Record>> bySeason = new ConcurrentHashMap<>();
 
     /**
+     * seasonId:playerId → 已花掉的赛季币（B24 裁决① 的赛季商店）。
+     *
+     * <p>与记录分开一张表、但**键同构**：记录那边 putIfAbsent 之后不可改，花掉的部分只增不减，
+     * 于是「余额 = 记录里发的 − 这里花的」在任何时刻都只有一个答案。
+     * 两件事都放进同一个文档（Mongo 侧）或同一把 compute（内存侧），"校验 + 扣减"才是原子的。
+     */
+    private final Map<String, Long> spent = new ConcurrentHashMap<>();
+
+    /** 与 Mongo 文档的 {@code _id} 同一条拼法：两边对着读时不用做心算映射。 */
+    static String keyOf(String seasonId, String playerId) {
+        return seasonId + ":" + playerId;
+    }
+
+    /**
      * 两个写方法都先过端口上那份校验（{@link SeasonLedgerStore#requireWriteKey}）：
      * 文案只有一份，两侧不可能各说各话；而 null 键在 Mongo 侧会被拼进 {@code _id} 留下垃圾档。
      */
@@ -74,13 +88,58 @@ public class InMemorySeasonLedger implements SeasonLedgerStore {
     }
 
     @Override
+    public long spentOf(String seasonId, String playerId) {
+        requireSpendArgs(seasonId, playerId, 1L);
+        return spent.getOrDefault(keyOf(seasonId, playerId), 0L);
+    }
+
+    @Override
+    public boolean spend(String seasonId, String playerId, long amount) {
+        requireSpendArgs(seasonId, playerId, amount);
+        Record record = find(seasonId, playerId);
+        if (record == null) {
+            return false;   // 没结算过 = 没有可花的币（不是错误，是余额为 0）
+        }
+        // compute 的原子性由 ConcurrentHashMap 保证：两个人同时买不会双花
+        long[] leftAfter = { -1L };
+        spent.compute(keyOf(seasonId, playerId), (key, old) -> {
+            long used = old == null ? 0L : old;
+            if (used + amount > record.seasonCoin()) {
+                return old;   // 余额不足：原样保留，交给下面的判定
+            }
+            leftAfter[0] = record.seasonCoin() - used - amount;
+            return used + amount;
+        });
+        return leftAfter[0] >= 0L;
+    }
+
+    private static void requireSpendArgs(String seasonId, String playerId, long amount) {
+        if (seasonId == null || seasonId.isBlank() || playerId == null || playerId.isBlank()) {
+            throw new IllegalArgumentException("赛季币的季与人都不得为空");
+        }
+        if (amount <= 0L) {
+            throw new IllegalArgumentException("扣减金额必须为正，实际=" + amount);
+        }
+    }
+
+    @Override
     public int purgeSeason(String seasonId) {
         Map<String, Record> removed = bySeason.remove(seasonId);
+        // 花掉的那本账也要一起删：留着它，下一季若复用同一个 seasonId（重开季）就会带着上一轮的消费记录
+        String prefix = seasonId + ":";
+        List<String> staleKeys = new ArrayList<>();
+        for (String key : spent.keySet()) {
+            if (key.startsWith(prefix)) {
+                staleKeys.add(key);
+            }
+        }
+        staleKeys.forEach(spent::remove);
         return removed == null ? 0 : removed.size();
     }
 
     @Override
     public void clear() {
         bySeason.clear();
+        spent.clear();
     }
 }
