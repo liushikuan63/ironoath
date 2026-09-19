@@ -90,19 +90,44 @@ test('item.json 的每个 eq_* 行都在装备映射表里，且目标键真实�
   assert.deepEqual(bad, [])
 })
 
-test('道具映射表的目标键都真实存在；未覆盖的行明确返回 null（不静默指错图）', () => {
+test('道具映射表的目标键都真实存在；item.json 每一行都有图（A10/A11 后覆盖满了）', () => {
+  // 目标键有两种来源：族图（`item:` / `equip:`）与启动图标图集（`icon:`，A11 的资源箱走这条）。
+  // 两种都要对账到真实存在的文件 —— 只认前一种会让"复用图集图标"这条正路被自己的测试判违规。
+  const atlasKeys = new Set(
+    (JSON.parse(fs.readFileSync(path.join(RUNTIME_DIR,
+      'ui/generated/icons/icons-atlas.json'), 'utf8')).items as { key: string }[])
+      .map((item) => item.key),
+  )
   for (const [id, key] of Object.entries(ITEM_ICON_BY_CONFIG)) {
+    if (key.startsWith('icon:')) {
+      assert.ok(atlasKeys.has(key.slice('icon:'.length)),
+        `${id} → ${key} 在启动图标图集里没有这一枚（icons-atlas.json 对不上）`)
+      continue
+    }
     assert.ok(key.startsWith('item:'), `${id} 指到了非 item 族：${key}`)
     assert.ok(FAMILY_ASSETS.item[key.slice('item:'.length)] !== undefined,
       `${id} → ${key} 在族表里没有这个成员`)
   }
-  // 这些行还没有图（技能书/觉醒券/R·N 碎片）—— 必须走 null 占位，而不是蹭一张错图
-  for (const id of ['item_hero_skillbook_main', 'item_hero_awaken_1',
-    'item_mat_hero_frag_r', 'item_mat_hero_frag_n', 'item_gold_1000']) {
-    assert.equal(itemArtKeyForConfig(id), null, `${id} 不该有映射`)
-  }
+  // A10（4 张原创 + 2 张调色派生）与 A11（5 行复用图集图标）把最后 9 行无图行补齐了。
+  // 从此这条不是"记着哪些行还没图"，而是**覆盖满则新行必须登记**：
+  // item.json 加一行而映射表没跟上 ⇒ 背包里是一个 Graphics 占位方块，只有玩家看得见。
+  const noIcon = configIds('item.json').filter((id) => itemArtKeyForConfig(id) === null)
+  assert.deepEqual(noIcon, [], 'item.json 里有行没有图标键 —— 补图或复用图集图标，别让它退回占位')
+  // 反向也要咬住：映射表指到 item.json 已删掉的行，是一句永远不会命中的死代码
+  const orphans = Object.keys(ITEM_ICON_BY_CONFIG).filter((id) => id.startsWith('item_')
+    && !configIds('item.json').includes(id))
+  assert.deepEqual(orphans, [], '映射表指到了 item.json 已删掉的行')
+  // A11 的五行按文档"零新增纹理"复用图集资源图标，包装量由文字 Label 表达
+  assert.equal(itemArtKeyForConfig('item_gold_1000'), 'icon:resources/gold')
+  assert.equal(itemArtKeyForConfig('item_res_wood_10k'), 'icon:resources/wood')
+  // A10 的新行确实指到自己的图，不是蹭了一张近亲
+  assert.equal(itemArtKeyForConfig('item_mat_hero_frag_r'), familyArtKey('item', 'shard_r'))
+  assert.equal(itemArtKeyForConfig('item_hero_skillbook_main'),
+    familyArtKey('item', 'skillbook_main'))
   assert.equal(itemArtKeyForConfig('item_chest_hero'), familyArtKey('item', 'chest_hero'))
   assert.equal(itemArtKeyForConfig('eq_iron_sword'), 'equip:weapon-iron')
+  assert.equal(itemArtKeyForConfig('item_not_a_real_row'), null,
+    '认不出的 id 必须退回 null（占位），不能蹭一张图')
 })
 
 /**

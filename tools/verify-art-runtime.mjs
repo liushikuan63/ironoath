@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
@@ -113,13 +113,29 @@ async function collectSprites() {
 }
 
 /**
- * 按需族（items 13 + equip 16 + hero 12 = 41）的判据用 **resources 包 png 请求数的差值**：
- * 开背包前记基线，走完背包/武将/世界后记终值 —— 增量必须恰为 41。
+ * 按需族（背包 items + 装备 equip + 武将 heroes）的判据用 **resources 包 png 请求数的差值**：
+ * 开背包前记基线，走完背包/武将/世界后记终值 —— 增量必须恰为该三族在磁盘上的 png 张数。
+ * 期望值**从磁盘算**而不是抄一个数：A10 一次加六张图，抄的那个数当场就过期了
+ * （报 41 而真跑 47，看着像"多加载了六张不知哪来的图"，实际是我自己没跟上）。
  * 能失败的方式：某面板不再 ensureFamily → 增量缺该族的张数；
  * 族表与磁盘脱节 → 某张 404（增量不足且 catalogWarnings 变红）；
  * 有人把族图塞回启动预载 → city 阶段基线被抬高，增量同样对不上。
+ * 代价（如实记下）：从**磁盘**删一张图会让期望值跟着降，本判据不再红 ——
+ * 那一半由 `tests/ArtFamilies.test.ts` 的"族键 → 磁盘 PNG"对账管着，两条合起来才闭环。
  */
-const FAMILY_PNG_EXPECTED = 41
+const FAMILY_SOURCE_DIRS = [
+  'client/assets/resources/ui/generated/items',
+  'client/assets/resources/ui/generated/equip',
+  'client/assets/resources/ui/generated/heroes',
+]
+const missingFamilyDirs = FAMILY_SOURCE_DIRS.filter((dir) => !existsSync(dir))
+if (missingFamilyDirs.length > 0) {
+  // 前置不满足 ≠ 判据失败：退 2 并说出缺什么，别让"目录没找到"读成"图没加载"
+  console.error(`[verify-art][前置] 族目录不存在：${missingFamilyDirs.join(', ')}（在仓库根跑本工具）`)
+  process.exit(2)
+}
+const FAMILY_PNG_EXPECTED = FAMILY_SOURCE_DIRS
+  .reduce((sum, dir) => sum + readdirSync(dir).filter((n) => n.endsWith('.png')).length, 0)
 /** 活动族（activity.json 八行）单独量：任务面板在 bag/hero 之后才打开，混进上面那条会互相遮蔽。 */
 const ACTIVITY_PNG_EXPECTED = 8
 const resourcePngRequests = new Set()

@@ -41,6 +41,8 @@ export const FAMILY_ASSETS: Record<ArtFamily, Readonly<Record<string, string>>> 
     scroll_research: 'ui/generated/items/item-scroll-research-v1',
     chest_hero: 'ui/generated/items/item-chest-hero-v1',
     chest_resource: 'ui/generated/items/item-chest-resource-v1',
+    shard_n: 'ui/generated/items/item-shard-n-v1',
+    shard_r: 'ui/generated/items/item-shard-r-v1',
     shard_sr: 'ui/generated/items/item-shard-sr-v1',
     shard_ssr: 'ui/generated/items/item-shard-ssr-v1',
     shield_peace: 'ui/generated/items/item-shield-peace-v1',
@@ -49,6 +51,14 @@ export const FAMILY_ASSETS: Record<ArtFamily, Readonly<Record<string, string>>> 
     book_exp_s: 'ui/generated/items/item-book-exp-s-v1',
     book_exp_m: 'ui/generated/items/item-book-exp-m-v1',
     ticket_gacha: 'ui/generated/items/item-ticket-gacha-v1',
+    // A10（素材缺口清单 §六）：技能书与觉醒令此前在背包里是**无色占位方块**，
+    // 碎片四档只有 SR/SSR 两张 —— N/R 蹭不到图（宁可空也不能指错）。
+    // R/N 碎片由 SR 母图 HSV 派生（art-src/derive_rarity_variant.py），不另一次生成，
+    // 因为两次独立生成必然画成两枚不同的碎片，四档并排时读起来是四个道具而不是一条稀有度阶梯。
+    skillbook_main: 'ui/generated/items/item-skillbook-main-v1',
+    skillbook_sub: 'ui/generated/items/item-skillbook-sub-v1',
+    awaken_1: 'ui/generated/items/item-awaken-1-v1',
+    awaken_2: 'ui/generated/items/item-awaken-2-v1',
   },
   equip: {
     'weapon-iron': 'ui/generated/equip/equip-weapon-iron-v1',
@@ -98,7 +108,8 @@ export function familyArtKey(family: ArtFamily, member: string): string {
   return `${family}:${member}`
 }
 
-/** 道具行 id → 图标键。eq_* 走装备族；映射不到的（技能书/觉醒券/R·N 碎片）返回 null，行继续用 Graphics 占位。 */
+/** 道具行 id → 图标键。eq_* 走装备族。A10/A11 之后 item.json 全部 42 行都有图；
+ *  表里新加一行而映射没跟上时返回 null，行退回 Graphics 占位 —— 这条由 tests/ArtFamilies.test.ts 卡住。 */
 export function itemArtKeyForConfig(configId: string): string | null {
   const equip = EQUIP_ICON_BY_CONFIG[configId]
   if (equip !== undefined) {
@@ -154,6 +165,22 @@ export const ITEM_ICON_BY_CONFIG: Readonly<Record<string, string>> = {
   item_hero_exp_s: 'item:book_exp_s',
   item_hero_exp_m: 'item:book_exp_m',
   item_hero_exp_l: 'item:book_exp_m',
+  // A10：R/N 两档碎片的图是从 SR 母图调色派生的，不是独立生成（见 FAMILY_ASSETS.item 注释）。
+  item_mat_hero_frag_r: 'item:shard_r',
+  item_mat_hero_frag_n: 'item:shard_n',
+  // A10：技能书主/副、觉醒令一/二段。主/副与一/二段各自共用一张母题、靠配色区分，
+  // 背包 26px 下真正要分开的是"这是技能书"还是"这是经验书"，不是主副。
+  item_hero_skillbook_main: 'item:skillbook_main',
+  item_hero_skillbook_sub: 'item:skillbook_sub',
+  item_hero_awaken_1: 'item:awaken_1',
+  item_hero_awaken_2: 'item:awaken_2',
+  // A11（素材缺口清单 §六）：资源箱/袋**不新增纹理** —— 背包行用启动图集里那五枚资源图标，
+  // 数量与包装（1万 / 5千 / 袋）由行上的名称与数量 Label 表达，不烘焙进图片。
+  item_res_wood_10k: 'icon:resources/wood',
+  item_res_stone_10k: 'icon:resources/stone',
+  item_res_iron_5k: 'icon:resources/iron',
+  item_res_grain_20k: 'icon:resources/grain',
+  item_gold_1000: 'icon:resources/gold',
 }
 
 /** activity.json 八行 → 活动族键。表里加行而这里没跟上时，tests/ArtFamilies.test.ts 的对账会红。 */

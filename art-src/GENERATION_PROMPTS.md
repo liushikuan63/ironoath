@@ -134,3 +134,51 @@ Avoid: neon, glossy candy mobile styling, blue sci-fi accents, photorealism
 - **接线轮（同日第二轮）**：G2 全部 16 + G3 的 13 张已量化进 `client/assets/resources/ui/generated/{equip,items}/`
   并接 `BagPanelView`；G1 的 12 张立绘（256px）进 `heroes/` 并接 `HeroPanelView`（真跑判据见 `素材缺口清单.md` §五）；
   `scroll_march`、`decree_×2` 无消费点留在草稿。
+
+## 8. A10 补最后 9 行无图道具（2026-09-19 生成并收编）
+
+`item.json` 到本轮前只剩 9 行没有图标（背包里是 Graphics 占位方块）。9 行拆成三条路，
+**分路依据是行名自己怎么说**，不是"要不要省一次生成"：
+
+**① 2 张原创：主技能秘卷 / 副技能残卷**
+名字是"秘卷 / 残卷"两个不同物件，所以各画一个轮廓：主卷 = **铜箍扎起、垂一条红缎签的完整卷轴**，
+副卷 = **边缘撕缺、只用麻绳捆住的残片**。这两张**不派生** —— 派生会把"残"这个信息整个丢掉。
+与经验书 `item-book-exp-*` 的区分靠形：经验书是叠放的手抄本，技能卷是卷轴。
+
+**② 4 张派生：觉醒石两档 + R/N 碎片两档**
+- 碎片 R / N 从 SR 母图 `g3-item-shard_sr-v0.png` 调色：R 苔绿 h92、N 冷灰（饱和 ×0.16）。
+- 觉醒石两档**都从同一张红晶母图**（`drafts/a10-item-variants/item-awaken-2-v0.png`）调色：
+  初阶 = 铜 h14、高阶 = 金 h23。铁爪座因为明度低、几乎不掉色 ⇒ 两档轮廓 100% 一致，只有晶体在走稀有度色。
+
+理由与 G9 的 hover/disabled 同一条：**两次独立生成必然画成两件形状不同的东西**，并排时读起来是
+两个无关道具而不是一条阶梯。首轮这里确实独立生成了两张觉醒石（一簇烟晶原矿 / 一枚爪座红晶），
+收编前对着图自查发现"初阶 / 高阶"读不成同族，于是废弃重做为派生；被废的那张留在
+`a10-item-variants/` 里当母版，不进包。
+N 档取低饱和而不是灰掉：完全去彩会和"未激活"态同形。
+
+命令：`python art-src/derive_rarity_variant.py <母版> <输出> <预设名 | H:Sat:Val>`
+（预设 `r/n/awaken_sr/awaken_ssr/scroll_train/scroll_research`；三元组写法留给"不属于稀有度阶梯、
+只是要换个色族"的场合，见下面卷轴那一段。）
+
+**③ 5 行零新增纹理**（资源袋 / 金币，A11）：复用启动图集里已有的
+`icon:resources/{wood,stone,iron,grain,gold}`，包装量（1 万 / 5 千 / 袋）由行上的名称与数量表达，
+不烘焙进图片。这五行一张图都没加。
+
+**顺带修掉一个新量具查出来的旧缺陷**：为 A10 写的 `art-src/check_icon_legibility.py`（把图缩到背包
+**真实显示尺寸 26px** 再两两算距离，见收口清单 #228）第一次跑就报
+`scroll_research ↔ scroll_train` Δ=11.9、`scroll_build ↔ scroll_{train,research}` Δ≈17.5 ——
+**G3 那批三张加速令在 26px 下是撞脸的**：三者的区别只在火漆印图案，而印在 26px 里只占 3~4px。
+改成按用途分色（建造 = 原铜黄不动、募兵 = 苔绿 h78、研究 = 钢蓝 h158，母题与印都不动）后
+items 族最近跨族对升到 **Δ=33.6**；四族在阈值 12 下全绿，最紧的是
+`equip-mount-pojun ↔ equip-mount-xuanwu` Δ=17.1（余量 1.4 倍，下次加装备图要盯这条）。
+
+- 批次清单：`generated/drafts/batch-2026-09-19-a10.json`，绿底原始图在 `raw/2026-09-19/`；
+  四张 `residual_green` 全 0.000%，bbox 分别为 (887,599)/(390,890)/(739,638)/(372,895)。
+- 收编：`accept_to_runtime.py --drafts art-src/generated/drafts/a10-final --size 128`
+  → 六张共 **28.6KB** 进 `items/`；两张改色卷轴另走
+  `--drafts art-src/generated/drafts/a10-scroll-recolour`（覆盖 `item-scroll-{train,research}-v1.png`，10.2KB）。
+- 登记进 `FAMILY_ASSETS.item`（`shard_n` / `shard_r` 按稀有度升序插在 `shard_sr` 前）与
+  `ITEM_ICON_BY_CONFIG`。此后 `tests/ArtFamilies.test.ts` 里那条断言从"记着哪些行还没图"升级为
+  **覆盖满 ⇒ item.json 新加一行不登记就红**，反向（映射指到已删行）同时咬住。
+
+
