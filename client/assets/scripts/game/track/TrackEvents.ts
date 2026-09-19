@@ -117,6 +117,8 @@ export const TRACK_EVENTS = {
   socialLeave: 'social_leave',
   /** 解散组织（B26 S3，不可逆）。它和 social_leave 分开：一个是走人，一个是把房子拆了。 */
   socialDisband: 'social_disband',
+  /** 把队长/盟主交给某个成员（B26 S4）。带 memberId：转让去向集中在少数人身上就是"队长在培养接班人"的信号。 */
+  socialTransfer: 'social_transfer',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

@@ -2687,6 +2687,26 @@ test('解散换一行按就是重新数第一下（按过退队再按解散，�
   assert.equal(h.http.countOf('/alliance/leave'), 0, '两行各数各的，不该串台')
 })
 
+test('转让小队队长：第一下只改字，换个人按就重新数，第二下才发且带上目标成员 id', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/squad/transfer', summaryBody())
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+
+  await h.root.requestTransfer('squad', 'p_member_a')
+  assert.equal(h.http.countOf('/squad/transfer'), 0, '一次误触就把队长交出去，这动作不可逆')
+
+  await h.root.requestTransfer('squad', 'p_member_b')
+  assert.equal(h.http.countOf('/squad/transfer'), 0, '换了目标就是重新数第一下，不该接着上次的')
+  await h.root.requestTransfer('squad', 'p_member_b')
+  const sent = h.http.calls.filter(c => c.path === '/squad/transfer')
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.body.memberId, 'p_member_b')
+  assert.equal(h.http.countOf('/social/createPolicy'), 2, '转让之后自己的职位变了，门得重拉')
+})
+
 test('解散小队走的是 /squad/disband（这个端点早就有，客户端此前连方法都没有）', async () => {
   const h = harness()
   h.http.overrides.set('/social/permissions', permissionBody())

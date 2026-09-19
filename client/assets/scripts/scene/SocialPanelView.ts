@@ -20,9 +20,9 @@ import { EMPTY_PERMISSIONS, gate } from '../game/social/PermissionGates'
 import type { Gate, PermissionState } from '../game/social/PermissionGates'
 import { createEntries } from '../game/social/SocialCreate'
 import type { CreateEntry, CreateScope } from '../game/social/SocialCreate'
-import { exitEntry } from '../game/social/SocialExit'
+import { exitEntry, transferEntry } from '../game/social/SocialExit'
 import { truncatedNotice } from '../game/ui/TruncatedList'
-import type { ExitAction, ExitKey, ExitScope } from '../game/social/SocialExit'
+import type { ExitAction, ExitEntry, ExitKey, ExitScope } from '../game/social/SocialExit'
 import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
 } from '../game/social/SocialPanel'
@@ -109,7 +109,12 @@ interface RowDraft {
    * <p>为什么不是两行：一屏画得下 6 行（可视高 540 实测），而联盟页已经有概况 + 三档捐献 + 成员名单，
    * 再加两行就必然挤掉成员那一行 —— 挤掉的是"看得见的功能"，比省一行严重得多。
    */
-  readonly action2?: { readonly text: string, readonly enabled: boolean, readonly id: string } | null
+  readonly action2?: {
+    readonly text: string
+    readonly enabled: boolean
+    readonly id: string
+    readonly kind: RowAction
+  } | null
 }
 
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
@@ -131,6 +136,8 @@ export class SocialPanelView extends Component {
   private create: Record<CreateScope, CreateEntry> = createEntries(null, null, null)
   /** 退出/解散里已经按下第一下的那一行（第二下才发请求）。 */
   private armedExit: ExitKey | null = null
+  /** 转让已经按下第一下的那个成员（B26 S4）。 */
+  private armedTransfer: { scope: ExitScope, memberId: string } | null = null
   /** 联盟成员缓存。汇总接口不下发它，只有 /alliance/sync 的 diff 会更新它 */
   private readonly allianceMembers: AllianceMember[] = []
   /** 重建面板所需的上一次原始输入。diff 到达时要用它们重新组装，而不是去改已组装好的 data */
@@ -182,6 +189,8 @@ export class SocialPanelView extends Component {
   onSocialCreate: ((scope: CreateScope) => void) | null = null
   /** 点「退出 / 解散」那一行（B26 S3）：第一下由编排层把行改成"确认…"，第二下才发请求。 */
   onSocialExit: ((scope: ExitScope, action: ExitAction) => void) | null = null
+  /** 点成员行上的「转让」（B26 S4）：同样两下才算数，目标就是这一行的人。 */
+  onSocialTransfer: ((scope: ExitScope, memberId: string) => void) | null = null
 
   /** 进聊天页签（首次画之前先拉一次历史） */
   onChatEnter: (() => void) | null = null
@@ -225,6 +234,7 @@ export class SocialPanelView extends Component {
     this.permissions = EMPTY_PERMISSIONS
     this.create = createEntries(null, null, null)
     this.armedExit = null
+    this.armedTransfer = null
     this.allianceMembers.length = 0
     this.lastResp = null
     this.lastHelps = []
@@ -237,6 +247,7 @@ export class SocialPanelView extends Component {
     this.onDonate = null
     this.onSocialCreate = null
     this.onSocialExit = null
+    this.onSocialTransfer = null
     this.chatData = null
     this.chatControls = null
     this.chatInput = null
@@ -325,6 +336,21 @@ export class SocialPanelView extends Component {
     this.render()
   }
 
+  /** 同上，管的是成员行上的「转让」（B26 S4）。 */
+  attachTransferArmed(armed: { scope: ExitScope, memberId: string } | null): void {
+    this.armedTransfer = armed
+    this.render()
+  }
+
+  /** 某个层级里"转让给这一行那个人"那颗键现在的样子。 */
+  private transferFor(scope: ExitScope): (memberId: string) => ExitEntry {
+    const gateOf = gate(this.permissions, scope === 'squad' ? 'SQUAD' : 'ALLIANCE',
+      'TRANSFER_LEADER')
+    return (memberId: string): ExitEntry => transferEntry(gateOf,
+      this.armedTransfer !== null && this.armedTransfer.scope === scope
+        && this.armedTransfer.memberId === memberId)
+  }
+
   /**
    * 装载聊天页签的数据（B22 §一 1）。组合根每次状态变化后整份递过来。
    *
@@ -378,6 +404,7 @@ export class SocialPanelView extends Component {
     this.tab = tab
     // 换页签就撤销"已按下第一下"：那一行不在这页上了，留着会让下一次点击把另一页的动作发出去
     this.armedExit = null
+    this.armedTransfer = null
     if (tab === 'rally') {
       // 集结的剩余时间随时在走：每次进来都重拉一次（缓存会显示过期的倒计时）
       this.onRallyEnter?.()
@@ -888,7 +915,12 @@ export class SocialPanelView extends Component {
       actionEnabled: leave.enabled,
       actionId: 'leave',
       actionKind: 'socialExit',
-      action2: { text: disband.actionText, enabled: disband.enabled, id: 'disband' },
+      action2: {
+        text: disband.actionText,
+        enabled: disband.enabled,
+        id: 'disband',
+        kind: 'socialExit',
+      },
     }
   }
 
@@ -898,14 +930,17 @@ export class SocialPanelView extends Component {
         // 没加入时这一页此前**整块空白**（成员行是空的，别的东西也没有）：
         // 看不见功能存在，玩家会以为这个游戏没有小队
         return data.squad.joined
-          ? [this.exitRow('squad'), ...memberDrafts(data.squad.members,
-            gate(this.permissions, 'SQUAD', 'KICK_MEMBER'))]
+          ? [
+            this.exitRow('squad'),
+            ...memberDrafts(data.squad.members,
+              gate(this.permissions, 'SQUAD', 'KICK_MEMBER'), this.transferFor('squad')),
+          ]
           : [createDraft('squad', data.squad.title, this.create.squad)]
       case 'alliance': {
         if (!data.alliance.joined) {
           return [createDraft('alliance', data.alliance.title, this.create.alliance)]
         }
-        const rows = allianceDrafts(data.alliance, this.permissions)
+        const rows = allianceDrafts(data.alliance, this.permissions, this.transferFor('alliance'))
         // 插在联盟概况那一行之后、捐献与成员名单之前（名单是不定长的，固定那一行不能排在它后面）
         rows.splice(1, 0, this.exitRow('alliance'))
         return rows
@@ -952,21 +987,9 @@ export class SocialPanelView extends Component {
       return
     }
     button.off('touch-start')
-    const visible = draft.actionText !== null
-    button.active = visible
-    if (!visible) {
-      return
-    }
-    applyCommandButton(button, draft.actionEnabled ? 'normal' : 'disabled', 72, 30)
-    const caption = button.children[0]?.getComponent(Label)
-    if (caption !== undefined && caption !== null) {
-      caption.string = draft.actionText
-      // 置灰而不是隐藏：权限不足时玩家要看得见这个功能存在，
-      // 否则他会以为整个游戏没有这个玩法
-      caption.color = draft.actionEnabled ? COLOR_TEXT : COLOR_TEXT_DIM
-    }
-    // 第二颗按钮（只有「退出与解散」那一行有）。放在下面那几句 return **之前**：
-    // 第一颗灰掉不影响第二颗的显隐
+    // 第二颗按钮要先处理，而且**必须在下面那句 `if (!visible) return` 之前**：
+    // 行是池化复用的，概况行（没有按钮）一旦提前 return，上一行留下的那颗「转让」就还挂在屏上
+    // —— 截图抓到过：联盟概况行右边凭空多出一颗转让键
     const second = node.children[4]
     const hasSecond = draft.action2 !== null && draft.action2 !== undefined
     // 两颗并排在行右侧：有第二颗时第一颗往左挪一格，否则它们会叠在同一个点上（池化行复用的老毛病）
@@ -983,13 +1006,30 @@ export class SocialPanelView extends Component {
           secondCaption.string = secondDraft.text
           secondCaption.color = secondDraft.enabled ? COLOR_TEXT : COLOR_TEXT_DIM
         }
-        if (secondDraft.enabled && draft.actionKind === 'socialExit') {
+        if (secondDraft.enabled) {
           const scope = this.tab === 'squad' ? 'squad' : 'alliance'
           second.on('touch-start', (_event: EventTouch) => {
+            if (secondDraft.kind === 'socialTransfer') {
+              this.onSocialTransfer?.(scope, secondDraft.id)
+              return
+            }
             this.onSocialExit?.(scope, secondDraft.id === 'disband' ? 'disband' : 'leave')
           }, this)
         }
       }
+    }
+    const visible = draft.actionText !== null
+    button.active = visible
+    if (!visible) {
+      return
+    }
+    applyCommandButton(button, draft.actionEnabled ? 'normal' : 'disabled', 72, 30)
+    const caption = button.children[0]?.getComponent(Label)
+    if (caption !== undefined && caption !== null) {
+      caption.string = draft.actionText
+      // 置灰而不是隐藏：权限不足时玩家要看得见这个功能存在，
+      // 否则他会以为整个游戏没有这个玩法
+      caption.color = draft.actionEnabled ? COLOR_TEXT : COLOR_TEXT_DIM
     }
     if (!draft.actionEnabled || draft.actionId === null) {
       return
@@ -1184,27 +1224,40 @@ function createDraft(scope: CreateScope, sectionTitle: string, entry: CreateEntr
   }
 }
 
-function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate): RowDraft[] {  return members.map((member): RowDraft => ({
-    title: `${member.name} · ${member.roleText}`,
-    // 不活跃的成员标灰：盟主/队长据此决定要不要补人，
-    // 而一个挂名不上线的成员提供不了任何庇护（B10 关键设计点 2）
-    titleColor: member.inactive ? COLOR_TEXT_DIM : COLOR_TEXT,
-    detail: [member.powerText, member.activeText, member.squadText, member.contributionText,
-      kickGate.reason]
-      .filter((part): part is string => part !== null && part.length > 0)
-      .join(' · '),
-    value: '',
-    actionText: '踢出',
-    // 能不能踢由服务端下发的权限列表裁决（验收 4）。
-    // 置灰而不是隐藏：看不见「踢人」这个功能存在，玩家会以为游戏根本没有它；
-    // 灰的时候把"为什么不行"写在 detail 上，否则只剩一个点不动的按钮
-    actionEnabled: kickGate.allowed,
-    actionId: member.id,
-    actionKind: 'kick',
-  }))
+function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate,
+                      transfer: (memberId: string) => ExitEntry): RowDraft[] {
+  return members.map((member): RowDraft => {
+    const transferEntry = transfer(member.id)
+    return {
+      title: `${member.name} · ${member.roleText}`,
+      // 不活跃的成员标灰：盟主/队长据此决定要不要补人，
+      // 而一个挂名不上线的成员提供不了任何庇护（B10 关键设计点 2）
+      titleColor: member.inactive ? COLOR_TEXT_DIM : COLOR_TEXT,
+      detail: [member.powerText, member.activeText, member.squadText, member.contributionText,
+        kickGate.reason, transferEntry.detailText]
+        .filter((part): part is string => part !== null && part !== undefined && part.length > 0)
+        .join(' · '),
+      value: '',
+      actionText: '踢出',
+      // 能不能踢由服务端下发的权限列表裁决（验收 4）。
+      // 置灰而不是隐藏：看不见「踢人」这个功能存在，玩家会以为游戏根本没有它；
+      // 灰的时候把"为什么不行"写在 detail 上，否则只剩一个点不动的按钮
+      actionEnabled: kickGate.allowed,
+      actionId: member.id,
+      actionKind: 'kick',
+      // 转让挂在成员行上（B26 S4）：目标就是这一行的人，不需要再开一个选人弹层
+      action2: {
+        text: transferEntry.actionText,
+        enabled: transferEntry.enabled,
+        id: member.id,
+        kind: 'socialTransfer',
+      },
+    }
+  })
 }
 
-function allianceDrafts(alliance: AllianceSection, permissions: PermissionState): RowDraft[] {
+function allianceDrafts(alliance: AllianceSection, permissions: PermissionState,
+                        transfer: (memberId: string) => ExitEntry): RowDraft[] {
   const out: RowDraft[] = []
   if (!alliance.joined) {
     return out
@@ -1240,7 +1293,7 @@ function allianceDrafts(alliance: AllianceSection, permissions: PermissionState)
   })
   const mayKick = gate(permissions, 'ALLIANCE', 'KICK_MEMBER')
   for (const member of alliance.members) {
-    out.push(...memberDrafts([member], mayKick))
+    out.push(...memberDrafts([member], mayKick, transfer))
   }
   return out
 }

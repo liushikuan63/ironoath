@@ -69,6 +69,8 @@ const fixture = {
   donateCalls: [],
   /** 退出联盟发出去的那几枪（B26 S3 的"两步行内确认"要数它） */
   leaveCalls: [],
+  /** 转让发出去的那几枪（B26 S4） */
+  transferCalls: [],
   /** 夹具成员数：D 相把它撑到 2，用来看那句"一屏画不下"的提示 */
   members: 1,
   summaryReads: 0,
@@ -110,7 +112,7 @@ const permissions = (scope) => (fixture.mode === 'leader'
   ? {
     scope, role: 'LEADER',
     permissions: ['DONATE', 'KICK_MEMBER', 'INVITE', 'APPROVE', 'EXPAND_TERRITORY',
-      'DISBAND_ALLIANCE', 'DISBAND_SQUAD'],
+      'DISBAND_ALLIANCE', 'DISBAND_SQUAD', 'TRANSFER_LEADER'],
     serverNow: SERVER_NOW(),
   }
   : { scope, role: 'NONE', permissions: [], serverNow: SERVER_NOW() })
@@ -234,6 +236,30 @@ const TAP_NAMED = (name) => `(() => {
   if (found === null) return 'no-node'
   found.emit('touch-start')
   return 'tapped'
+})()`
+
+/** 点某一行的**第二颗**按钮（转让挂在成员行上）。 */
+const TAP_CAPTION2 = (text) => `(() => {
+  const game = ${NODE_PATH}
+  const root = game.children.find((c) => c.name === 'social')
+  if (!root) return 'missing-root'
+  const rows = []
+  const walk = (n) => {
+    if (!n.activeInHierarchy) return
+    if (n.name === 'SocialRow') rows.push(n)
+    for (const child of n.children) walk(child)
+  }
+  walk(root)
+  for (const row of rows) {
+    const second = row.children.find((c) => c.name === 'ActionButton2')
+    const caption = second ? second.children.find((c) => c.name === 'Caption') : null
+    const label = caption ? caption.getComponent('cc.Label') : null
+    if (label && label.string === ${JSON.stringify(text)} && second.active) {
+      second.emit('touch-start')
+      return 'tapped'
+    }
+  }
+  return 'no-row'
 })()`
 
 /** 按按钮文字找到那一行再点它（行序会随权限与捐献档位变化，按文字找才不脆）。 */
@@ -386,6 +412,27 @@ await context.route('**/social/permissions*', async (route) => {
     body: JSON.stringify({ code: 0, msg: '成功', data: permissions(scope), serverNow: SERVER_NOW() }),
   })
 })
+// 转让打桩（B26 S4）
+await context.route('**/alliance/transfer*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  fixture.transferCalls.push(JSON.parse(request.postData() ?? '{}'))
+  await route.fulfill({
+    status: 200,
+    headers: { ...cors(request), 'content-type': 'application/json' },
+    body: JSON.stringify({
+      code: 0, msg: '成功',
+      data: {
+        squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+        helpRemainingToday: 20, events: [], serverNow: SERVER_NOW(),
+      },
+      serverNow: SERVER_NOW(),
+    }),
+  })
+})
 // 退出联盟打桩：B26 S3 的"两步行内确认"要数它发了几枪
 await context.route('**/alliance/leave*', async (route) => {
   const request = route.request()
@@ -489,7 +536,30 @@ checkTrue('B18 第一下之后那一行改字成「确认退出联盟」并写�
 check('B19 第二下才真发', await page.evaluate(TAP_CAPTION('确认退出联盟')), 'tapped')
 await page.waitForTimeout(1_200)
 check('B20 恰好一条 /alliance/leave', fixture.leaveCalls.length - leaveCallsBefore, 1)
-await shot('B-two-step-leave')
+await shot('B-after-leave')
+// ---- B26 S4：成员行上的「转让」（第二颗按钮） ----
+const memberB = (afterDonate?.rows ?? []).find(r => r.caption === '踢出')
+checkTrue('B21 成员行第二颗是「转让」且亮着（夹具给了 TRANSFER_LEADER）',
+  memberB !== undefined && memberB.caption2Text === '转让'
+    && JSON.stringify(memberB.color2) === JSON.stringify([LIT.r, LIT.g, LIT.b]))
+const transferBefore = fixture.transferCalls.length
+check('B22 第一下', await page.evaluate(TAP_CAPTION2('转让')), 'tapped')
+await page.waitForTimeout(900)
+check('B23 第一下不发请求', fixture.transferCalls.length, transferBefore)
+const armedTransferRow = ((await readRows())?.rows ?? []).find(r => r.caption2Text === '确认转让')
+checkTrue('B24 第一下之后那颗键改字成「确认转让」并写清后果',
+  armedTransferRow !== undefined && armedTransferRow.detail.includes('自己降为成员'))
+check('B25 第二下才真发', await page.evaluate(TAP_CAPTION2('确认转让')), 'tapped')
+await page.waitForTimeout(1_200)
+check('B26 恰好一条 /alliance/transfer，且带的就是那一行的成员 id',
+  `${fixture.transferCalls.length - transferBefore}/${fixture.transferCalls[0]?.memberId}`,
+  `1/${MEMBER.id}`)
+await shot('B-two-step-transfer')
+const headerAfter = ((await readRows())?.rows ?? []).find(r => r.title.startsWith('Lv3'))
+checkTrue('B27 联盟概况行上一颗按钮都不该有（池化复用：上一行留下的那颗「转让」必须显式收起 —— '
+  + '第一版就是凭空多出一颗转让键，而所有读数都是绿的）',
+  headerAfter !== undefined && headerAfter.secondActive === false
+    && headerAfter.buttonActive === false)
 
 // ============================ 相位 C：同一份摘要，权限换成空表 ============================
 fixture.mode = 'none'
@@ -521,6 +591,10 @@ checkTrue('C6 权限清空后「退出联盟」**仍然亮** —— 这条就是
 checkTrue('C7 同一行第二颗「解散联盟」灰着并写原因（DISBAND_ALLIANCE 是服务端下发的位，不是客户端猜的职位）',
   leaveC !== undefined && JSON.stringify(leaveC.color2) === JSON.stringify([DIM.r, DIM.g, DIM.b])
     && leaveC.detail.includes('你当前的职位不能做这件事'))
+const memberC = (snapC?.rows ?? []).find(r => r.caption === '踢出')
+checkTrue('C8 「转让」跟着权限一起灰（它看的是 TRANSFER_LEADER 那一位，不是"我是盟主"这句猜测）',
+  memberC !== undefined && memberC.caption2Text === '转让'
+    && JSON.stringify(memberC.color2) === JSON.stringify([DIM.r, DIM.g, DIM.b]))
 
 // ============================ 相位 D：版面与错误 ============================
 /**

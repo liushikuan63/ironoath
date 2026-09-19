@@ -60,3 +60,21 @@ export interface ExitKey {
   readonly scope: ExitScope
   readonly action: ExitAction
 }
+
+/**
+ * 「转让」那颗键（B26 S4）：看的是 `TRANSFER_LEADER` 这一位，服务端判位不判职位名。
+ *
+ * <p>与退出/解散同族 —— 不可逆，所以同样两下才算数；差别只在它挂在**每个成员行**上，
+ * 目标是谁由那一行给，不需要再开一个选人弹层。
+ */
+export function transferEntry(gate: Gate | null, armed: boolean): ExitEntry {
+  const text = armed ? '确认转让' : '转让'
+  if (gate !== null && !gate.allowed) {
+    return { actionText: text, enabled: false, detailText: gate.reason ?? '现在不能转让' }
+  }
+  return {
+    actionText: text,
+    enabled: true,
+    detailText: armed ? '再点一次队长/盟主就换人，自己降为成员' : '',
+  }
+}

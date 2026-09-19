@@ -1289,6 +1289,11 @@ export class GameBootstrap extends Component {
       // 退出与解散（B26 S3）：第一下只把行改成"确认…"，第二下才发请求 —— 分流在编排层
       out.socialExit = armed => social.attachExitArmed(armed)
       social.onSocialExit = (scope, action) => { void this.root?.requestExit(scope, action) }
+      // 转让（B26 S4）：挂在成员行上，目标就是那一行的人，同样两下才算数
+      out.socialTransfer = armed => social.attachTransferArmed(armed)
+      social.onSocialTransfer = (scope, memberId) => {
+        void this.root?.requestTransfer(scope, memberId)
+      }
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }
       social.onDonate = tier => { void this.root?.donate(tier) }

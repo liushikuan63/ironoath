@@ -282,6 +282,8 @@ export interface PanelTargets {
   socialCreate?(form: CreateForm | null): void
   /** 退出/解散里"已按下第一下"的那一行（null = 没有）。视图只改字，不发请求。 */
   socialExit?(armed: ExitKey | null): void
+  /** 转让里"已按下第一下"的那个成员（null = 没有）。 */
+  socialTransfer?(armed: { scope: ExitScope, memberId: string } | null): void
   /**
    * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
@@ -470,6 +472,8 @@ export class AppRoot {
   private creating: { scope: CreateScope, name: string, tag: string } | null = null
   /** 退出/解散里已经按下第一下的那一行（第二下才真发请求，见 `SocialExit` 的那条不对称）。 */
   private armedExit: ExitKey | null = null
+  /** 转让里已经按下第一下的那个成员（B26 S4，同样两下才算数）。 */
+  private armedTransfer: { scope: ExitScope, memberId: string } | null = null
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
@@ -1484,8 +1488,33 @@ export class AppRoot {
     return this.write('social', call, ['social', 'reddot'])
   }
 
+  /**
+   * 按下「转让」（B26 S4）：与退出/解散同样两下才算数 —— 转让之后自己降为成员，
+   * 想反悔就得求新队长把人换回来，所以它和那两条一样不可逆。
+   */
+  requestTransfer(scope: ExitScope, memberId: string): Promise<void> {
+    const armed = this.armedTransfer
+    if (armed === null || armed.scope !== scope || armed.memberId !== memberId) {
+      this.armedTransfer = { scope, memberId }
+      this.targets.socialTransfer?.(this.armedTransfer)
+      return Promise.resolve()
+    }
+    this.armedTransfer = null
+    this.targets.socialTransfer?.(null)
+    this.track(TRACK_EVENTS.socialTransfer, {
+      scope: trackParam(scope === 'squad' ? 'SQUAD' : 'ALLIANCE'),
+      memberId: trackParam(memberId),
+    })
+    return this.write('social',
+      scope === 'squad'
+        ? this.api.squadTransfer({ memberId })
+        : this.api.allianceTransfer({ memberId }),
+      ['social', 'reddot'])
+  }
+
   /** 表单没开着就不发视图（开着才画，避免每次刷新都弹人一脸表单）。 */
-  private deliverSocialCreate(): void {    const form = this.creating
+  private deliverSocialCreate(): void {
+    const form = this.creating
     if (form === null) {
       this.targets.socialCreate?.(null)
       return

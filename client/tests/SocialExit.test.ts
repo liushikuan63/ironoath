@@ -8,7 +8,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { exitEntry, exitLabel } from '../assets/scripts/game/social/SocialExit'
+import { exitEntry, exitLabel, transferEntry } from '../assets/scripts/game/social/SocialExit'
 import type { Gate } from '../assets/scripts/game/social/PermissionGates'
 
 const ALLOWED: Gate = { allowed: true, reason: null }
@@ -48,4 +48,20 @@ test('armed 只点亮被按过的那一行（按了退队不会让解散键也�
   const disband = exitEntry('squad', 'disband', true, ALLOWED, false)
   assert.equal(leave.actionText, '确认退出小队')
   assert.equal(disband.actionText, '解散小队')
+})
+
+test('转让看 TRANSFER_LEADER 那一位：没有它就灰着并写原因（服务端判位不判职位名）', () => {
+  const denied = transferEntry(DENIED, false)
+  assert.equal(denied.enabled, false)
+  assert.equal(denied.actionText, '转让')
+  assert.equal(denied.detailText, '你当前的职位不能做这件事')
+  const ok = transferEntry(ALLOWED, false)
+  assert.equal(ok.enabled, true)
+  assert.equal(ok.detailText, '', '没按下第一下就不该占着一行字')
+})
+
+test('转让同样两下才算数：第一下只改字并说清"自己降为成员"', () => {
+  const armed = transferEntry(ALLOWED, true)
+  assert.equal(armed.actionText, '确认转让')
+  assert.ok(armed.detailText.includes('自己降为成员'), armed.detailText)
 })
