@@ -18,9 +18,9 @@ const ROOTS = ['client/assets/scripts/scene', 'client/assets/scripts/game']
 // 与台账编号豁免清单同一条纪律：**这个清单应当长期为空** —— 留着已经失效的条目，
 // 等于给下一次"顺手写句黑话"开后门。清掉时连注释里的日期一起删。
 const KNOWN_DEBT = [
-  // 2026-09-19：`AppRoot.sellItem` 的拒绝文案「服务端还没有出售接口」。
-  // 等卖出端点真的落地时，这句话整条会重写，届时删掉本豁免。
-  { file: 'client/assets/scripts/game/session/AppRoot.ts', word: '服务端' },
+  // 2026-09-19：曾挂过一条 `AppRoot.sellItem` 的「服务端还没有出售接口」——
+  // B24 裁决④把出售整条撤下（按钮与表列一起删），那句话随之消失，豁免当场清空。
+  // 留空不是形式：这一栏一旦长期为空，说明"文件正被别人改"不再是留下黑话的理由。
 ]
 
 function* walk(dir) {
