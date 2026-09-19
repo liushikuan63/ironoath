@@ -32,7 +32,6 @@
       "additionalProperties": false,
       "required": [
         "rowId",
-        "itemId",
         "name",
         "currency",
         "price",
@@ -49,8 +48,18 @@
           "description": "`shop` 表的行 id（如 `shop_speedup_build_1h`）。**下单用它是唯一的**：用 itemId 定位会命中同一件道具的多行价格，而那正是「一条商品行一个价格」要防的形状。"
         },
         "itemId": {
-          "type": "string",
-          "description": "买到的道具 id（`item` 表的行 id）。与 rowId 是两个东西，所以两个字段都在。"
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "买到的**道具** id（`item` 表的行 id）；卖外观时为 null（见 frameId）。与 rowId 是两个东西，所以两个字段都在。"
+        },
+        "frameId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "买到的**头像框** id（`avatar_frame` 表的行 id）；卖道具时为 null。外观不是道具，所以不能塞进 itemId 里假装是道具 —— 那正是验收 5 说的「假指向」"
         },
         "name": {
           "type": "string",
@@ -183,7 +192,6 @@
       "additionalProperties": false,
       "required": [
         "rowId",
-        "itemId",
         "count",
         "currency",
         "spent",
@@ -198,8 +206,18 @@
           "description": "买的是哪一行。"
         },
         "itemId": {
-          "type": "string",
-          "description": "实际入账的道具 id。与请求里的 rowId 一起构成「花在哪、拿到什么」的完整凭据 —— 客服处理「我买了但背包里没有」时要的就是这两个加上 requestId。"
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "实际入账的**道具** id；买外观时为 null（见 frameId）。与请求里的 rowId 一起构成「花在哪、拿到什么」的完整凭据 —— 客服处理「我买了但背包里没有」时要的就是这两个加上 requestId。"
+        },
+        "frameId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "实际解锁的**头像框** id；买道具时为 null。"
         },
         "count": {
           "type": "integer",

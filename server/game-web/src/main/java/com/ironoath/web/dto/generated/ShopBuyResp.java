@@ -7,7 +7,8 @@ package com.ironoath.web.dto.generated;
  */
 public record ShopBuyResp(
         String rowId,   // 买的是哪一行。
-        String itemId,   // 实际入账的道具 id。与请求里的 rowId 一起构成「花在哪、拿到什么」的完整凭据 —— 客服处理「我买了但背包里没有」时要的就是这两个加上 requestId。
+        String itemId,   // 实际入账的**道具** id；买外观时为 null（见 frameId）。与请求里的 rowId 一起构成「花在哪、拿到什么」的完整凭据 —— 客服处理「我买了但背包里没有」时要的就是这两个加上 requestId。
+        String frameId,   // 实际解锁的**头像框** id；买道具时为 null。
         int count,   // 实际成交个数。
         ShopCurrency currency,   // 实际扣的货币。
         long spent,   // 实际扣掉的总额 = price × count。**回显它而不是让客户端按自己那份表快照乘**：热更之后两边算出的总价一旦不同，客户端显示的会比实际扣的多/少，而差额的投诉只会打给客服。乘积用 int64（两个 long 相乘的结果必须是 long）。

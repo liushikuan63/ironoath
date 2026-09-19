@@ -84,6 +84,8 @@ public class ShopAppService {
     private final ConfigRegistry configs;
     private final RewardPorts.Wallet wallet;
     private final RewardService rewardService;
+    /** 外观货（B24 块③）：头像框不是道具，发货走它自己那条「记下拥有」的路。 */
+    private final AvatarFrameService avatarFrames;
     private final RewardPorts.Compensation compensation;
     private final DailyCounter limits;
     private final SocialStore social;
@@ -97,7 +99,7 @@ public class ShopAppService {
     private final com.ironoath.web.season.SeasonRulesAssembler seasonRules;
 
     public ShopAppService(ConfigRegistry configs, RewardPorts.Wallet wallet, RewardService rewardService,
-                          RewardPorts.Compensation compensation, DailyCounter limits,
+                          AvatarFrameService avatarFrames, RewardPorts.Compensation compensation, DailyCounter limits,
                           SocialStore social, PlayerRepository players, PlayerLock playerLock,
                           IdempotencyStore idempotency, TimeService timeService,
                           com.ironoath.web.season.SeasonLedgerStore seasonLedger,
@@ -105,6 +107,7 @@ public class ShopAppService {
         this.configs = configs;
         this.wallet = wallet;
         this.rewardService = rewardService;
+        this.avatarFrames = avatarFrames;
         this.compensation = compensation;
         this.limits = limits;
         this.social = social;
@@ -142,7 +145,7 @@ public class ShopAppService {
             long used = limits.used(scopeOf(row), playerId, periodOf(row, now));
             Block block = open ? blockOf(playerId, row, used, cityLevel, balance.longValue())
                     : new Block(ErrorCode.SHOP_CURRENCY_CLOSED, CLOSED_NOTICE);
-            rows.add(new ShopRowView(row.id(), row.itemId(), row.name(), currency,
+            rows.add(new ShopRowView(row.id(), row.itemId(), row.frameId(), row.name(), currency,
                     row.price(), refreshOf(row), (int) row.limitCount(), (int) used,
                     (int) Math.max(0L, row.limitCount() - used), (int) row.requireMainLevel(),
                     block == null, block == null ? null : block.reason()));
@@ -179,6 +182,14 @@ public class ShopAppService {
                     throw new BizException(block.code(), block.reason());
                 }
 
+                if (row.frameId() != null && alreadyOwnsFrame(playerId, row.frameId())) {
+                    // **限购是周期性的、拥有是永久性的**：赛季重置会放开 limitCount，
+                    // 那时若不判"已拥有"，玩家会第二次掏钱买一个已经戴在身上的框。
+                    // 下单处拦（与一次性档同一条纪律：别的分支都在下单处拦，不在发货处兜）
+                    throw new BizException(ErrorCode.PARAM_INVALID,
+                            "这个头像框已经拥有了，不用再换");
+                }
+
                 int consumed = consumeSlots(row, playerId, period, req.count());
                 long spent = row.price() * req.count();
                 try {
@@ -194,7 +205,8 @@ public class ShopAppService {
                 LOG.info("商店兑换 playerId={} 行={} 道具={} 个数={} 币种={} 花费={} 余额={} 本周期已用={}/{}",
                         playerId, row.id(), row.itemId(), req.count(), row.priceCurrency(),
                         spent, balance, used, row.limitCount());
-                return new ShopBuyResp(row.id(), row.itemId(), req.count(), req.currency(), spent,
+                return new ShopBuyResp(row.id(), row.itemId(), row.frameId(), req.count(),
+                        req.currency(), spent,
                         balance, (int) used, (int) Math.max(0L, row.limitCount() - used), now);
             });
         } catch (RuntimeException e) {
@@ -337,12 +349,32 @@ public class ShopAppService {
         }
     }
 
+    /** 这个玩家是否已经拥有那个头像框（读存档，不缓存 —— 缓存会让"刚买完又买一次"漏过检查）。 */
+    private boolean alreadyOwnsFrame(String playerId, String frameId) {
+        return players.findByPlayerId(playerId)
+                .map(save -> save.ownedAvatarFrames().contains(frameId))
+                .orElse(false);
+    }
+
     /**
      * 发货。见类注释第 3 条：<b>失败不退钱，而是把该发的记进补偿队列</b>。
      */
     private void deliver(String playerId, ShopCfg row, ShopBuyReq req, long spent) {
-        List<RewardItem> goods = List.of(new RewardItem(RewardType.ITEM, row.itemId(), req.count()));
         RewardContext ctx = RewardContext.toMail("shop", row.id(), req.requestId());
+        if (row.frameId() != null) {
+            // 外观不是道具：不往背包里塞东西，而是把"拥有"记在存档上（B24 块③）。
+            // 这一步失败同样由补偿队列兜 —— 与道具那条路同一条纪律：收了钱就一定要有交代
+            try {
+                avatarFrames.grant(playerId, row.frameId());
+            } catch (RuntimeException e) {
+                String compensationId = compensation.record(playerId,
+                        List.of(new RewardItem(RewardType.ITEM, row.frameId(), req.count())), ctx, e);
+                LOG.error("商店已扣款但外观解锁失败 playerId={} 行={} 框={} 花费={} 补偿单={}",
+                        playerId, row.id(), row.frameId(), spent, compensationId, e);
+            }
+            return;
+        }
+        List<RewardItem> goods = List.of(new RewardItem(RewardType.ITEM, row.itemId(), req.count()));
         try {
             GrantResult result = rewardService.grant(playerId, goods, ctx);
             if (result.hasCompensation()) {

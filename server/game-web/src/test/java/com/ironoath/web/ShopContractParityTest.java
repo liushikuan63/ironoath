@@ -16,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.AvatarFrameCfg;
 import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.config.cfg.ShopCfg;
 import com.ironoath.web.dto.generated.PlayerInitReq;
@@ -95,14 +96,36 @@ class ShopContractParityTest {
                 .containsExactlyInAnyOrderElementsOf(inTable);
     }
 
+    /**
+     * 每一行必须**恰好**指向一个真实存在的交付物：要么是道具（itemId），要么是外观（frameId）。
+     *
+     * <p>这条从「指向真道具」扩成「指向真交付物」的理由就是外观那一行：头像框不是道具，
+     * 把它塞进 itemId 里伪造一个道具正是 B24 验收 5 说的假指向（`shop_season_skin` 当年
+     * 名字说皮肤、给的却是集结加成道具）。所以这里同时钉三件事：两种指向**互斥**
+     * （都填 = 买一次发两份，都不填 = 买了什么都拿不到）、各自必须能在对应的表里查到。
+     */
     @Test
-    @DisplayName("每一行的 itemId 都必须在 item 表里真实存在")
-    void everyRowPointsAtARealItem() {
+    @DisplayName("每一行要么指向真道具、要么指向真头像框，且不能既指道具又指外观或两者都不指")
+    void everyRowPointsAtSomethingReal() {
         Set<String> items = configs.all(ItemCfg.class).stream().map(ItemCfg::id)
                 .collect(Collectors.toSet());
+        Set<String> frames = configs.all(AvatarFrameCfg.class).stream().map(AvatarFrameCfg::id)
+                .collect(Collectors.toSet());
         for (ShopCfg row : configs.all(ShopCfg.class)) {
-            assertThat(items).as("商店行 %s 指向一个不存在的道具：买了会发不出东西", row.id())
-                    .contains(row.itemId());
+            boolean hasItem = row.itemId() != null && !row.itemId().isBlank();
+            boolean hasFrame = row.frameId() != null && !row.frameId().isBlank();
+            assertThat(hasItem ^ hasFrame)
+                    .as("商店行 %s 的交付物指向不唯一（itemId=%s, frameId=%s）："
+                            + "两者都填等于一次购买发两份，都不填等于花钱什么都拿不到",
+                            row.id(), row.itemId(), row.frameId())
+                    .isTrue();
+            if (hasItem) {
+                assertThat(items).as("商店行 %s 指向一个不存在的道具：买了会发不出东西", row.id())
+                        .contains(row.itemId());
+            } else {
+                assertThat(frames).as("商店行 %s 指向一个不存在的头像框：买了会戴不上", row.id())
+                        .contains(row.frameId());
+            }
         }
     }
 

@@ -33,8 +33,10 @@ export type ShopRefresh =
 export interface ShopRowView {
   /** `shop` 表的行 id（如 `shop_speedup_build_1h`）。**下单用它是唯一的**：用 itemId 定位会命中同一件道具的多行价格，而那正是「一条商品行一个价格」要防的形状。 */
   rowId: string
-  /** 买到的道具 id（`item` 表的行 id）。与 rowId 是两个东西，所以两个字段都在。 */
-  itemId: string
+  /** 买到的**道具** id（`item` 表的行 id）；卖外观时为 null（见 frameId）。与 rowId 是两个东西，所以两个字段都在。 */
+  itemId: string | null
+  /** 买到的**头像框** id（`avatar_frame` 表的行 id）；卖道具时为 null。外观不是道具，所以不能塞进 itemId 里假装是道具 —— 那正是验收 5 说的「假指向」 */
+  frameId: string | null
   /** 表里的显示名。**下发它而不是让客户端内置**：改个名字不该发一次版。 */
   name: string
   /** 这一行花哪种货币。客户端应当据此决定显示哪个余额（金币在资源条上、贡献值在联盟面板里、小队币在小队面板里）。 */
@@ -95,8 +97,10 @@ export interface ShopBuyReq {
 export interface ShopBuyResp {
   /** 买的是哪一行。 */
   rowId: string
-  /** 实际入账的道具 id。与请求里的 rowId 一起构成「花在哪、拿到什么」的完整凭据 —— 客服处理「我买了但背包里没有」时要的就是这两个加上 requestId。 */
-  itemId: string
+  /** 实际入账的**道具** id；买外观时为 null（见 frameId）。与请求里的 rowId 一起构成「花在哪、拿到什么」的完整凭据 —— 客服处理「我买了但背包里没有」时要的就是这两个加上 requestId。 */
+  itemId: string | null
+  /** 实际解锁的**头像框** id；买道具时为 null。 */
+  frameId: string | null
   /** 实际成交个数。 */
   count: number
   /** 实际扣的货币。 */

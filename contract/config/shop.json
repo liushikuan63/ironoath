@@ -6,7 +6,8 @@
   "fieldTypes": {
     "id": "STRING_KEY",
     "name": "STRING",
-    "itemId": "REF:item",
+    "itemId": "?REF:item",
+    "frameId": "?REF:avatar_frame",
     "priceCurrency": "ENUM:GOLD,ALLIANCE_COIN,SQUAD_COIN,SEASON_COIN",
     "price": "LONG_POS",
     "limitCount": "LONG_POS",
@@ -147,6 +148,17 @@
       "refreshType": "SEASON",
       "requireMainLevel": 0,
       "why": "B24 裁决① 的第二件货品：100 赛季币、每赛季限 1。赛季币只发给赛季榜前 100 名（SEASON_REWARDED_TOP_N），是纪念币不是流通币 —— 100 币约等于榜尾一名的结算所得，买到金币货架 300 的那档加速令，读起来像\"这一季的名次换来一件像样的东西\"。取 8h 那档而不是 1h：可调，改表即可，不动代码。限购周期是 SEASON（本赛季），不是 NONE：NONE 是终身一次，那是比裁决更严的口径，属于悄悄改口径。"
+    },
+    {
+      "id": "shop_season_frame",
+      "name": "赛季征战框",
+      "frameId": "frame_season_s1",
+      "priceCurrency": "SEASON_COIN",
+      "price": 500,
+      "limitCount": 1,
+      "refreshType": "SEASON",
+      "requireMainLevel": 0,
+      "why": "赛季限定头像框（B24 块③ 外观），500 赛季币、本赛季限 1 —— 与 shop_season_boost 同一个币种、同一个限购周期：赛季币只发给赛季前 100 名，所以这一页的两件货都是纪念品而不是流通货。价格沿用被撤下的 shop_season_skin 的 500（那个数字当时就是按'一枚赛季纪念品'定的），并把它从一个假指向（item_buff_rally_2h）改成一个真外观。**外观不许带任何数值**（B15 §一 第 7 条）：这张表只卖「看得见」，戴上它不改战力。"
     }
   ]
 }

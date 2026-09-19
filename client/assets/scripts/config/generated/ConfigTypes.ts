@@ -1015,7 +1015,9 @@ export interface ShopCfg {
   id: string
   name: string
   /** 外键，指向 item 表的 id */
-  itemId: string
+  itemId?: string
+  /** 外键，指向 avatar_frame 表的 id */
+  frameId?: string
   /** 枚举，取值见 ShopPriceCurrency */
   priceCurrency: ShopPriceCurrency
   price: number

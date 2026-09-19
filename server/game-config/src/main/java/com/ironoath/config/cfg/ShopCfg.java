@@ -12,6 +12,7 @@ public record ShopCfg(
         String id,   // 主键
         String name,
         String itemId,   // 外键，指向 item 表的 id
+        String frameId,   // 外键，指向 avatar_frame 表的 id
         PriceCurrency priceCurrency,   // 枚举，取值见 ShopPriceCurrency
         long price,
         long limitCount,

@@ -18,7 +18,8 @@ const NOW = 1_700_000_000_000
 
 function row(overrides: Partial<ShopRowView> = {}): ShopRowView {
   return {
-    rowId: 'shop_speedup_build_1h', itemId: 'item_speedup_build_1h', name: '建造加速 1 小时',
+    rowId: 'shop_speedup_build_1h', itemId: 'item_speedup_build_1h', frameId: null,
+    name: '建造加速 1 小时',
     currency: 'GOLD', price: 300, refreshType: 'NONE', limitCount: 20, used: 3, remaining: 17,
     requireMainLevel: 0, purchasable: true, lockReason: null, ...overrides,
   }

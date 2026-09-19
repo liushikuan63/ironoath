@@ -7,7 +7,8 @@ package com.ironoath.web.dto.generated;
  */
 public record ShopRowView(
         String rowId,   // `shop` 表的行 id（如 `shop_speedup_build_1h`）。**下单用它是唯一的**：用 itemId 定位会命中同一件道具的多行价格，而那正是「一条商品行一个价格」要防的形状。
-        String itemId,   // 买到的道具 id（`item` 表的行 id）。与 rowId 是两个东西，所以两个字段都在。
+        String itemId,   // 买到的**道具** id（`item` 表的行 id）；卖外观时为 null（见 frameId）。与 rowId 是两个东西，所以两个字段都在。
+        String frameId,   // 买到的**头像框** id（`avatar_frame` 表的行 id）；卖道具时为 null。外观不是道具，所以不能塞进 itemId 里假装是道具 —— 那正是验收 5 说的「假指向」
         String name,   // 表里的显示名。**下发它而不是让客户端内置**：改个名字不该发一次版。
         ShopCurrency currency,   // 这一行花哪种货币。客户端应当据此决定显示哪个余额（金币在资源条上、贡献值在联盟面板里、小队币在小队面板里）。
         long price,   // 单价（货币单位，不是「分」—— 金币/贡献值/小队币都是游戏内计数，只有真实支付金额才用分）。**总花费 = price × count，由服务端算**。 标 int64 的理由与 balance 同一条：它是表里的 LONG 列，而服务端要拿它做乘法 —— 用 int 承接一个 long 列，等于把「以后有人把价格配得很大」变成一次静默溢出而不是一个类型错误。

@@ -87,6 +87,7 @@ class ShopEndpointTest {
     @Autowired private TimeService timeService;
     @Autowired private com.ironoath.web.season.SeasonLedgerStore seasonLedger;
     @Autowired private com.ironoath.web.season.SeasonRulesAssembler seasonRules;
+    @Autowired private com.ironoath.web.service.AvatarFrameService avatarFrames;
 
     // ---------- 金币页 ----------
 
@@ -329,6 +330,49 @@ class ShopEndpointTest {
         assertThat(after.get("rows").get(0).get("used").asInt()).as("限购计数也进了货架").isEqualTo(1);
         assertThat(bag.countOf(playerId, "item_speedup_build_8h"))
                 .as("买了就得真拿到东西").isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("验收 4：头像框是「买一次就永久拥有」—— 买完戴得上，再买被拒（限购会随赛季重置，拥有不会）")
+    void avatarFrameIsOwnedForeverAfterOnePurchase() {
+        String playerId = richPlayer();
+        // 赛季币只由结算发放：先照结算那条路记一笔（1000 币，够买两枚）
+        seasonLedger.recordIfAbsent(currentSeasonId(),
+                new SeasonLedgerStore.Record(playerId, 3, SeasonTier.Tier.GOLD, 1000L, 0L));
+
+        ShopBuyResp bought = shop.buy(playerId, buy("shop_season_frame", ShopCurrency.SEASON_COIN, 1));
+        assertThat(bought.frameId()).as("卖的是外观：回执给的是 frameId 而不是道具 id（验收 5 的假指向在这里被断掉）")
+                .isEqualTo("frame_season_s1");
+        assertThat(bought.itemId()).as("外观不是道具，所以 itemId 是 null").isNull();
+        assertThat(bought.spent()).as("500 赛季币").isEqualTo(500L);
+        assertThat(bought.balance()).isEqualTo(500L);
+        assertThat(players.findByPlayerId(playerId).orElseThrow().ownedAvatarFrames())
+                .as("买完就拥有（这就是验收 4 要的「已拥有状态落库」）").contains("frame_season_s1");
+        assertThat(bag.countOf(playerId, "frame_season_s1"))
+                .as("外观不该被塞进背包当道具").isZero();
+
+        // 同一赛季里再买一次：先撞上的是限购（表里 limitPerSeason=1 给的），不是「已拥有」
+        assertThatThrownBy(() -> shop.buy(playerId, buy("shop_season_frame", ShopCurrency.SEASON_COIN, 1)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .isEqualTo(ErrorCode.SHOP_LIMIT_REACHED);
+        assertThat(seasonLedger.spentOf(currentSeasonId(), playerId))
+                .as("被拒的那次不能扣钱").isEqualTo(500L);
+
+        // 但限购会随赛季重置、「已拥有」不会 —— 第二道防线得单独验：给新号直接发框
+        // （绕过购买 ⇒ 他本赛季一次没买过，限购放行），此时能拦住他的只有「已拥有」
+        String owner = richPlayer();
+        seasonLedger.recordIfAbsent(currentSeasonId(),
+                new SeasonLedgerStore.Record(owner, 3, SeasonTier.Tier.GOLD, 1000L, 0L));
+        avatarFrames.grant(owner, "frame_season_s1");
+        assertThat(seasonLedger.spentOf(currentSeasonId(), owner))
+                .as("只发了框、没花过钱").isZero();
+        assertThatThrownBy(() -> shop.buy(owner, buy("shop_season_frame", ShopCurrency.SEASON_COIN, 1)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).errorCode())
+                .as("赛季换了限购就放开，这一层还得在").isEqualTo(ErrorCode.PARAM_INVALID);
+        assertThat(seasonLedger.spentOf(currentSeasonId(), owner))
+                .as("已经拥有还收钱 = 玩家白掏 500 赛季币").isZero();
     }
 
     @Test
