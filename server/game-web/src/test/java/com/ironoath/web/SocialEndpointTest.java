@@ -1379,6 +1379,9 @@ class SocialEndpointTest {
         assertThat(policy.get("alliance").get("reason").asText()).contains("主城 10 级");
         assertThat(policy.get("alliance").get("costGold").asLong())
                 .as("global.ALLIANCE_CREATE_COST_GOLD，客户端抄一份就是第二真相").isEqualTo(500L);
+        assertThat(policy.get("alliance").get("costResource").asText())
+                .as("下发的是资源类型而不是名字：资源中文名在客户端只有 `ui/ResourceNames.ts` 那一份")
+                .isEqualTo("GOLD");
     }
 
     @Test

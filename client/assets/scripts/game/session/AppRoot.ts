@@ -33,7 +33,7 @@ import type { GachaDrawResp, GachaPoolsResp, HeroListResp } from '../../net/gene
 import type { StageListResp } from '../../net/generated/StageProtocol'
 import type {
   AllianceMember, AllianceSyncResp, ChatChannel, ChatMessageView, FriendView, HelpRequestView,
-  ReportReason, SocialEventView, SocialSummaryResp,
+  ReportReason, SocialCreatePolicy, SocialCreatePolicyResp, SocialEventView, SocialSummaryResp,
 } from '../../net/generated/SocialProtocol'
 import {
   ackablePrivateEventIds, buildChatPanel, chatFailureText, chatKey, CHAT_LOCAL_HISTORY_MAX,
@@ -69,6 +69,8 @@ import { buildLineupEdit, lineupBody } from '../hero/LineupEdit'
 import type { LineupEditView, LineupSlot } from '../hero/LineupEdit'
 import { EMPTY_PERMISSIONS, withPermissionScope } from '../social/PermissionGates'
 import type { PermissionState } from '../social/PermissionGates'
+import { buildCreateForm, createEntries } from '../social/SocialCreate'
+import type { CreateEntry, CreateForm, CreateScope } from '../social/SocialCreate'
 import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
 import { buildDisclosure } from '../gacha/GachaDisclosure'
@@ -268,12 +270,15 @@ export interface PanelTargets {
    */
   lineupEdit?(view: LineupEditView): void
   /**
-   * 社交权限（B26 S1）：两个 scope 各一份，面板按页签分别门控。
+   * 社交页的三道门（B26 S1 + S2）：两个 scope 的权限、一份创建政策。两者总是同时到齐，
+   * 所以走同一个回调 —— 分成两条就会有一条先到，面板按半份数据画一次。
    *
-   * <p>这一条接不上时的症状很隐蔽：`permissions` 永远是空数组 ⇒ 已经接好线的
-   * 「踢出」「捐献」行**永远置灰**，玩家看得见按钮却永远点不动，界面还不说原因。
+   * <p>接不上时的症状很隐蔽：`permissions` 永远是空数组 ⇒ 已经接好线的「踢出」「捐献」行
+   * **永远置灰**，玩家看得见按钮却永远点不动，界面还不说原因。
    */
-  permissions?(state: PermissionState): void
+  socialGates?(state: PermissionState, create: Record<CreateScope, CreateEntry>): void
+  /** 创建小队/联盟那一屏（null = 关掉）。全部文字与「确认」能不能点都由编排层算好。 */
+  socialCreate?(form: CreateForm | null): void
   /**
    * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
@@ -456,6 +461,10 @@ export class AppRoot {
   /** 社交权限（两个 scope 各一份）。`permissionsLoaded` 只在拉过之后为 true（见 'social' 那一支的注释） */
   private permissions: PermissionState = EMPTY_PERMISSIONS
   private permissionsLoaded = false
+  /** 创建小队/联盟的门槛与消耗（B26 S2），一份回两个层级；没读到就是 null（行上写「读取中」） */
+  private createPolicy: SocialCreatePolicyResp | null = null
+  /** 创建表单开着时的输入态（null = 没开）。打字只改这里，一条请求都不发。 */
+  private creating: { scope: CreateScope, name: string, tag: string } | null = null
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
@@ -719,7 +728,7 @@ export class AppRoot {
         // 而一旦拉过，之后的每次 `refresh('social')`（踢人、捐献、退盟之后）都顺手刷新 ——
         // 职位变了权限就变了，缓存会让"刚刚被降职的人还能看到能点的按钮"。
         if (this.permissionsLoaded) {
-          await this.loadSocialPermissions()
+          await this.loadSocialGates()
         }
         if (degraded.length > 0) {
           this.targets.error?.('social', `${degraded.join('、')}，稍后会自动重试`)
@@ -1353,15 +1362,16 @@ export class AppRoot {
   }
 
   /**
-   * 拉两个 scope 的权限（B26 S1）。服务端一次只回一个 scope，所以是两次读。
+   * 拉社交页的三道门（B26 S1 + S2）：两个 scope 的权限、一份创建政策（一次回两个层级）。
    *
-   * <p>两份都到齐才把 `loaded` 置 true：只拿到一半就放开按钮，等于拿缺的那一半去猜。
+   * <p>权限两份都到齐才把 `loaded` 置 true：只拿到一半就放开按钮，等于拿缺的那一半去猜。
    * 失败时保持原样并说一句"暂时拉不到"—— 灰着的按钮比一个点了会被拒的按钮诚实。
    */
-  async loadSocialPermissions(): Promise<void> {
+  async loadSocialGates(): Promise<void> {
     this.permissionsLoaded = true
-    const [squad, alliance] = await Promise.all([
+    const [squad, alliance, create] = await Promise.all([
       this.api.socialPermissions('SQUAD'), this.api.socialPermissions('ALLIANCE'),
+      this.api.socialCreatePolicy(),
     ])
     let state = EMPTY_PERMISSIONS
     if (squad.kind === 'ok') {
@@ -1375,8 +1385,102 @@ export class AppRoot {
     } else {
       this.say('social', alliance)
     }
+    if (create.kind === 'ok') {
+      this.createPolicy = create.data
+    } else {
+      this.say('social', create)
+    }
     this.permissions = state
-    this.targets.permissions?.(this.permissions)
+    this.targets.socialGates?.(this.permissions, createEntries(this.createPolicy,
+      this.createBalance('squad'), this.createBalance('alliance')))
+    this.deliverSocialCreate()
+  }
+
+  /**
+   * 打开创建表单（B26 S2）。
+   *
+   * <p>余额没拉过就在这里补一次：这一屏要比「够不够扣」，而 `/resource/detail` 不在首屏预拉里
+   * （与抽卡/商店同一条预算纪律）。拉不到也只是少一句「还差多少」，不挡着表单。
+   */
+  async openSocialCreate(scope: CreateScope): Promise<void> {
+    this.creating = { scope, name: '', tag: '' }
+    if (this.resourceResp === null) {
+      await this.refresh('resources')
+    }
+    this.deliverSocialCreate()
+  }
+
+  /** 打字不是意图动作：只改界面，一条请求都不发。 */
+  typeSocialCreate(field: 'name' | 'tag', value: string): void {
+    if (this.creating === null) {
+      return
+    }
+    this.creating = field === 'name'
+      ? { ...this.creating, name: value }
+      : { ...this.creating, tag: value }
+    this.deliverSocialCreate()
+  }
+
+  cancelSocialCreate(): void {
+    this.creating = null
+    this.deliverSocialCreate()
+  }
+
+  async submitSocialCreate(): Promise<void> {
+    const form = this.creating
+    if (form === null) {
+      return
+    }
+    const view = buildCreateForm(form.scope, this.policyOf(form.scope),
+      this.createBalance(form.scope), form.name, form.tag)
+    if (!view.canSubmit) {
+      // 灰着的确认点了不该发那一枪（与抽卡"钱不够就不发"同一条）
+      this.rejectNeeds('social', view.hint)
+      return
+    }
+    this.track(TRACK_EVENTS.socialCreate, {
+      scope: trackParam(form.scope === 'squad' ? 'SQUAD' : 'ALLIANCE'),
+    })
+    const name = form.name.trim()
+    return this.write('social',
+      form.scope === 'squad'
+        ? this.api.squadCreate({ name })
+        : this.api.allianceCreate({ name, tag: form.tag.trim() }),
+      // 'social' 那一路会顺手重拉门（权限与创建政策）：刚建成盟主，按钮必须当场亮起来
+      ['social', 'resources', 'reddot'],
+      () => {
+        this.creating = null
+        this.deliverSocialCreate()
+      })
+  }
+
+  /** 表单没开着就不发视图（开着才画，避免每次刷新都弹人一脸表单）。 */
+  private deliverSocialCreate(): void {
+    const form = this.creating
+    if (form === null) {
+      this.targets.socialCreate?.(null)
+      return
+    }
+    this.targets.socialCreate?.(buildCreateForm(form.scope, this.policyOf(form.scope),
+      this.createBalance(form.scope), form.name, form.tag))
+  }
+
+  private policyOf(scope: CreateScope): SocialCreatePolicy | null {
+    if (this.createPolicy === null) {
+      return null
+    }
+    return scope === 'squad' ? this.createPolicy.squad : this.createPolicy.alliance
+  }
+
+  /** 创建消耗那种资源的余额；没读到返回 null（读不到不等于零，不能因此把确认按死）。 */
+  private createBalance(scope: CreateScope): number | null {
+    const cost = this.policyOf(scope)?.costResource
+    const rows = this.resourceResp?.resources
+    if (cost === undefined || cost === null || rows === undefined) {
+      return null
+    }
+    const row = rows.find(r => r.type === cost)
+    return row === undefined ? null : row.current
   }
 
   /** 踢人必须知道从哪个组织踢：View 的两个页签共用一个行内回调，分流由调用方给 `from`。 */

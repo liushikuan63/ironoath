@@ -111,6 +111,8 @@ export const TRACK_EVENTS = {
   targetsSearch: 'targets_search',
   /** 捐献联盟。 */
   allianceDonate: 'alliance_donate',
+  /** 建了一个组织（B26 S2）。带 scope：小队与联盟是两条完全不同的漏斗，混在一起就看不出卡在哪。 */
+  socialCreate: 'social_create',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

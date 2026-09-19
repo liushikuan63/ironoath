@@ -97,8 +97,13 @@ const SKIP = new Set([
   "chooseLineupHero",
   "clearLineupSlot",
   "cancelLineupEdit",
-  // 拉权限是一次读（进社交页时顺带），不是玩家意图；按钮灰不灰的结论由这份数据决定
-  "loadSocialPermissions",
+  // 拉权限与创建政策是一次读（进社交页时顺带），不是玩家意图；按钮灰不灰的结论由这份数据决定
+  "loadSocialGates",
+  // 打开创建表单与打字与取消都不是那一次提交：埋点只在 social_create 上记"真的建了一个组织"，
+  // 把开合也记进去会让漏斗第一格永远比最后一格大，看不出卡在哪
+  "openSocialCreate",
+  "typeSocialCreate",
+  "cancelSocialCreate",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

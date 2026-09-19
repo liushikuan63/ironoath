@@ -37,6 +37,7 @@ import type { HeroComposeView } from '../assets/scripts/game/hero/HeroCompose'
 import type { GachaPanelView } from '../assets/scripts/game/gacha/GachaPanel'
 import type { LineupEditView } from '../assets/scripts/game/hero/LineupEdit'
 import type { PermissionState } from '../assets/scripts/game/social/PermissionGates'
+import type { CreateEntry, CreateForm, CreateScope } from '../assets/scripts/game/social/SocialCreate'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -540,6 +541,10 @@ interface Harness {
   readonly lastLineupEdit: LineupEditView | null
   /** 最近一次推给面板层的社交权限状态（两个 scope 合并后的那一份）。 */
   readonly lastPermissions: PermissionState | null
+  /** 最近一次推给面板层的两行「创建」（B26 S2）。 */
+  readonly lastCreateEntries: Record<CreateScope, CreateEntry> | null
+  /** 最近一次推给创建弹层的表单（null = 关掉）。 */
+  readonly lastCreateForm: CreateForm | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -638,6 +643,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastGacha: GachaPanelView | null = null
   let lastLineupEdit: LineupEditView | null = null
   let lastPermissions: PermissionState | null = null
+  let lastCreateEntries: Record<CreateScope, CreateEntry> | null = null
+  let lastCreateForm: CreateForm | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -712,8 +719,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     lineupEdit: (view) => {
       lastLineupEdit = view
     },
-    permissions: (state) => {
+    socialGates: (state, create) => {
       lastPermissions = state
+      lastCreateEntries = create
+    },
+    socialCreate: form => {
+      lastCreateForm = form
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -812,6 +823,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastPermissions() {
       return lastPermissions
+    },
+    get lastCreateEntries() {
+      return lastCreateEntries
+    },
+    get lastCreateForm() {
+      return lastCreateForm
     },
     get lastCompose() {
       return lastCompose
@@ -2495,41 +2512,163 @@ test('编队编辑：名册没读到时保存是空操作，并把理由说给�
   assert.deepEqual(h.errors.at(-1), ['hero', '武将列表还没读到'])
 })
 
-test('社交权限：两个 scope 各拉一次、两份都到齐才放开按钮，且首屏预拉不占这两条请求', async () => {
+test('社交三道门：两个 scope 各拉一次 + 一份创建政策，两份权限都到齐才放开按钮，且首屏不占这三条请求', async () => {
   const h = harness()
-  h.http.overrides.set('/social/permissions', {
-    scope: 'ALLIANCE', role: 'LEADER', permissions: ['KICK_MEMBER', 'DONATE'], serverNow: SERVER_NOW,
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  // 首屏预拉里就有 /resource/detail：余额 200 而联盟要 500 ⇒ 行上该写「还差 300」
+  h.http.overrides.set('/resource/detail', {
+    resources: [{
+      type: 'GOLD', current: 200, cap: 100_000, protectedAmount: 0, perHour: 0,
+      lastSettle: SERVER_NOW, full: false, breakdown: [],
+    }],
+    serverNow: SERVER_NOW,
   })
   await h.root.start('dev-1', '君')
-  // 首屏预算：社交页的权限不在预拉里（与邮件/商店/外观同一条纪律）
+  // 首屏预算：社交页的三道门不在预拉里（与邮件/商店/外观同一条纪律）
   assert.equal(h.http.countOf('/social/permissions'), 0,
     '开局多两条并发请求会挤那 3 秒可交互预算')
+  assert.equal(h.http.countOf('/social/createPolicy'), 0)
 
-  await h.root.loadSocialPermissions()
+  await h.root.loadSocialGates()
   const scopeCalls = h.http.calls.filter((c) => c.path === '/social/permissions')
   assert.deepEqual(scopeCalls.map((c) => c.query.get('scope')), ['SQUAD', 'ALLIANCE'],
     '服务端一次只回一个 scope，只拉一次就等于只验了一半')
   assert.equal(h.lastPermissions?.loaded, true)
   assert.deepEqual(h.lastPermissions?.alliance, ['KICK_MEMBER', 'DONATE'])
   assert.equal(h.lastPermissions?.squadRole, 'LEADER')
+  assert.equal(h.lastCreateEntries?.alliance.enabled, true,
+    '政策说能建，那一行就得是亮的')
+  assert.equal(h.lastCreateEntries?.alliance.detailText, '消耗 500 金币 · 还差 300',
+    '钱不够的差额写在行上：数额与类型都来自政策，客户端不抄表')
+  assert.equal(h.lastCreateEntries?.squad.detailText, '不消耗资源')
 
-  // 拉过一次之后，社交页每次刷新都顺手刷新权限：职位变了按钮就得跟着变
+  // 拉过一次之后，社交页每次刷新都顺手刷新这三道门：职位变了按钮就得跟着变
   const before = h.http.countOf('/social/permissions')
   await h.root.refresh('social')
   assert.equal(h.http.countOf('/social/permissions'), before + 2)
+  assert.equal(h.http.countOf('/social/createPolicy'), 2)
 })
 
-test('社交权限：只拉到一个 scope 时不放行，理由走统一上报口', async () => {
+test('社交三道门：拉不到时不放行也不猜，理由走统一上报口', async () => {
   const h = harness()
   await h.root.start('dev-1', '君')
   h.http.failPaths.add('/social/permissions')
+  h.http.failPaths.add('/social/createPolicy')
   h.errors.length = 0
-  await h.root.loadSocialPermissions()
+  await h.root.loadSocialGates()
   assert.equal(h.lastPermissions?.loaded, false,
     '拿缺的那一半去猜就是放行：按钮亮了而服务端会拒')
   assert.equal(h.lastPermissions?.squad.length, 0)
+  assert.equal(h.lastCreateEntries?.alliance.enabled, false)
+  assert.equal(h.lastCreateEntries?.alliance.detailText, '创建条件读取中',
+    '没读到就说没读到，不把"我没查到"说成"你不能建"')
   assert.ok(h.errors.some(([panel]) => panel === 'social'), '读失败要有一条能追到的说法')
 })
+
+test('创建联盟：开表单只拉余额，打字只改界面，确认才发那一枪，发完三道门跟着重拉', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/alliance/create', summaryBody())
+  h.http.overrides.set('/resource/detail', {
+    resources: [{
+      type: 'GOLD', current: 900, cap: 100_000, protectedAmount: 0, perHour: 0,
+      lastSettle: SERVER_NOW, full: false, breakdown: [],
+    }],
+    serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+
+  await h.root.openSocialCreate('alliance')
+  assert.equal(h.lastCreateForm?.titleText, '创建联盟')
+  assert.equal(h.lastCreateForm?.tagLabel, '联盟标签', '联盟要标签，小队不要')
+  assert.equal(h.lastCreateForm?.costText, '消耗 500 金币 · 我有 900')
+  assert.equal(h.http.countOf('/social/createPolicy'), 1, '余额已拉到 ⇒ 开表单不该再补一次资源')
+
+  h.errors.length = 0
+  await h.root.submitSocialCreate()
+  assert.equal(h.http.countOf('/alliance/create'), 0, '名字都没填就发请求，等于把服务端的拒绝当正常流程')
+  assert.deepEqual(h.errors.at(-1), ['social', '先给联盟起个名字'])
+
+  h.root.typeSocialCreate('name', '  ')
+  assert.equal(h.lastCreateForm?.canSubmit, false, '纯空格服务端 trim 完就是空')
+  h.root.typeSocialCreate('name', '铁誓')
+  h.root.typeSocialCreate('tag', 'TS')
+  assert.equal(h.lastCreateForm?.name, '铁誓', '输入态回显：不回显的话打字会把字吃掉')
+  assert.equal(h.lastCreateForm?.canSubmit, true)
+  assert.equal(h.http.countOf('/alliance/create'), 0, '打字一条都不发')
+
+  const gatesBefore = h.http.countOf('/social/createPolicy')
+  await h.root.submitSocialCreate()
+  const sent = h.http.calls.filter((c) => c.path === '/alliance/create')
+  assert.equal(sent.length, 1)
+  const body = sent[0]?.body ?? {}
+  assert.deepEqual([body.name, body.tag], ['铁誓', 'TS'], '发出去的是 trim 过的那一份')
+  assert.equal(h.lastCreateForm, null, '建成即关表单：留着会让玩家再点一次')
+  assert.equal(h.http.countOf('/social/createPolicy'), gatesBefore + 1,
+    '刚建成盟主，按钮必须当场亮起来 —— 不重拉就还是"你现在不能做这件事"')
+})
+
+test('创建小队：没有标签这一栏，名字填上就能确认（服务端也不判长度，客户端不加假门槛）', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/squad/create', summaryBody())
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+  await h.root.openSocialCreate('squad')
+  assert.equal(h.lastCreateForm?.tagLabel, null)
+  h.root.typeSocialCreate('name', '五个人的队')
+  assert.equal(h.lastCreateForm?.canSubmit, true)
+  await h.root.submitSocialCreate()
+  assert.equal(h.http.countOf('/squad/create'), 1)
+  assert.equal(h.http.countOf('/alliance/create'), 0, '两个层级走两条路，不该顺带各发一次')
+})
+
+test('取消创建：丢掉输入，一条请求都不发', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+  await h.root.openSocialCreate('alliance')
+  h.root.typeSocialCreate('name', '还没想好')
+  h.root.cancelSocialCreate()
+  assert.equal(h.lastCreateForm, null)
+  await h.root.submitSocialCreate()
+  assert.equal(h.http.countOf('/alliance/create'), 0, '表单都关了还发请求，就是凭空建了个联盟')
+})
+
+/** 一份能建的创建政策（两个层级都放行；联盟收 500 金币，小队不要钱）。 */
+function createPolicyBody(): Record<string, unknown> {  return {
+    squad: { canCreate: true, costGold: 0, costResource: 'GOLD', reason: null },
+    alliance: { canCreate: true, costGold: 500, costResource: 'GOLD', reason: null },
+    serverNow: SERVER_NOW,
+  }
+}
+
+/**
+ * 一份「我是盟主，能踢人能捐献」的权限响应。
+ *
+ * <p>桩里 `/social/permissions` **没有默认路由**：不设这条覆盖，读会失败并走重试，
+ * 于是同一个 scope 在调用列表里出现好几次，"各拉一次"那条断言就数错了（实测踩过）。
+ * 同一条也适用于 `/social/createPolicy` 与两个 create 写口 —— 桩里都是新路径。
+ */
+function permissionBody(): Record<string, unknown> {
+  return {
+    scope: 'ALLIANCE', role: 'LEADER', permissions: ['KICK_MEMBER', 'DONATE'], serverNow: SERVER_NOW,
+  }
+}
+
+/** 一份空的社交摘要（创建成功的响应就是它；这里只当"成功了"的信封用）。 */
+function summaryBody(): Record<string, unknown> {
+  return {
+    squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+    helpRemainingToday: 20, events: [], serverNow: SERVER_NOW,
+  }
+}
 
 /** 两本标了主/副的技能书 + 一本没标的（同 effectKind，只有 effectTarget 分得开）。 */
 function skillBag(): Record<string, unknown> {

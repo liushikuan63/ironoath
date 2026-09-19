@@ -1040,9 +1040,9 @@ public class SocialAppService {
         }
         CreateBlock squadBlocked = squadCreateBlock(playerId, save, now);
         return new SocialCreatePolicyResp(
-                new SocialCreatePolicy(squadBlocked == null, 0L,
+                new SocialCreatePolicy(squadBlocked == null, 0L, GOLD_RESOURCE_ID,
                         squadBlocked == null ? null : squadBlocked.reason()),
-                new SocialCreatePolicy(allianceBlocked == null, cost,
+                new SocialCreatePolicy(allianceBlocked == null, cost, GOLD_RESOURCE_ID,
                         allianceBlocked == null ? null : allianceBlocked.reason()),
                 now);
     }

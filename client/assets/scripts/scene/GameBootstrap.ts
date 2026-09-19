@@ -52,6 +52,7 @@ import { ComposePickOverlay } from './ComposePickOverlay'
 import { RecruitPanelView } from './RecruitPanelView'
 import { GachaDisclosureView } from './GachaDisclosureView'
 import { LineupEditOverlay } from './LineupEditOverlay'
+import { SocialCreateOverlay } from './SocialCreateOverlay'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -324,7 +325,7 @@ export class GameBootstrap extends Component {
       // 社交页的按钮门控靠权限列表（B26 S1）。此前这一条从来没拉过 ⇒ 面板里
       // 已经接好线的「踢出」「捐献」**永远置灰**，玩家看得见却永远点不动，界面还不说原因。
       if (key === 'social') {
-        void this.root?.loadSocialPermissions()
+        void this.root?.loadSocialGates()
       }
       // 外观同理（B24 块③），而且它更该每次打开都拉：框的「佩戴中」是这里唯一的状态来源，
       // 缓存会让"刚刚在商店买的那一枚"迟到（看着像买了没到账）
@@ -1045,6 +1046,20 @@ export class GameBootstrap extends Component {
     node.active = false
   }
 
+  /** 创建小队/联盟那一屏（B26 S2）：挂成浮层，入口是社交面板里「未加入」那行的按钮。 */
+  private mountSocialCreateOverlay(): void {
+    if (this.node.getChildByName('socialCreate') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('socialCreate')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(SocialCreateOverlay)
+    node.active = false
+  }
+
   /**
    * 合规公示那一屏（B06 §6「原文呈现」）。挂成浮层而不是导航项：它是招募页的一个链接，
    * 而这一屏此前从未被挂载过 —— 它的组装函数原先吃配置行，客户端只有类型没有数据。
@@ -1072,6 +1087,7 @@ export class GameBootstrap extends Component {
     this.mountSkillPickOverlay()
     this.mountComposePickOverlay()
     this.mountLineupEditOverlay()
+    this.mountSocialCreateOverlay()
     this.mountGachaDisclosure()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
@@ -1098,6 +1114,7 @@ export class GameBootstrap extends Component {
     const composePick = this.panel(ComposePickOverlay, 'composePick')
     const recruit = this.panel(RecruitPanelView, 'gacha')
     const lineupEdit = this.panel(LineupEditOverlay, 'lineupEdit')
+    const socialCreate = this.panel(SocialCreateOverlay, 'socialCreate')
     const gachaDisclosure = this.panel(GachaDisclosureView, 'gachaDisclosure')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
@@ -1254,8 +1271,21 @@ export class GameBootstrap extends Component {
     }
     if (social !== null) {
       out.social = (resp, helps, members, offsetMs) => social.attach(resp, helps, members, offsetMs)
-      // 权限两份（小队 / 联盟各一份）：面板按页签分别门控，缺的那一份不拿来猜
-      out.permissions = state => social.attachPermissions(state)
+      // 三道门一起到：权限两份（小队 / 联盟各一份）+ 创建政策。面板按页签分别门控，缺的那一份不拿来猜
+      out.socialGates = (state, create) => social.attachSocialGates(state, create)
+      if (socialCreate !== null) {
+        out.socialCreate = form => {
+          if (form === null) {
+            socialCreate.hide()
+            return
+          }
+          socialCreate.render(form)
+        }
+        socialCreate.onType = (field, value) => this.root?.typeSocialCreate(field, value)
+        socialCreate.onSubmit = () => { void this.root?.submitSocialCreate() }
+        socialCreate.onCancel = () => this.root?.cancelSocialCreate()
+      }
+      social.onSocialCreate = scope => { void this.root?.openSocialCreate(scope) }
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }
       social.onDonate = tier => { void this.root?.donate(tier) }

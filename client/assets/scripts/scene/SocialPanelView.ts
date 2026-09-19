@@ -18,6 +18,8 @@ import { _decorator, Color, Component, EditBox, EventTouch, Graphics, Label, Nod
 import { buildSocialPanel, channelText } from '../game/social/SocialPanel'
 import { EMPTY_PERMISSIONS, gate } from '../game/social/PermissionGates'
 import type { Gate, PermissionState } from '../game/social/PermissionGates'
+import { createEntries } from '../game/social/SocialCreate'
+import type { CreateEntry, CreateScope } from '../game/social/SocialCreate'
 import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
 } from '../game/social/SocialPanel'
@@ -101,7 +103,7 @@ interface RowDraft {
 }
 
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
-  | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel'
+  | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -114,6 +116,8 @@ export class SocialPanelView extends Component {
    * 而「置灰而不是隐藏」正是本项目对不可用功能的统一做法。
    */
   private permissions: PermissionState = EMPTY_PERMISSIONS
+  /** 两行「创建」（B26 S2）。没读到政策时它们是「创建条件读取中」的灰行，不是没有行。 */
+  private create: Record<CreateScope, CreateEntry> = createEntries(null, null, null)
   /** 联盟成员缓存。汇总接口不下发它，只有 /alliance/sync 的 diff 会更新它 */
   private readonly allianceMembers: AllianceMember[] = []
   /** 重建面板所需的上一次原始输入。diff 到达时要用它们重新组装，而不是去改已组装好的 data */
@@ -161,6 +165,8 @@ export class SocialPanelView extends Component {
   onHelpAll: ((count: number) => void) | null = null
   /** 点某个捐献档位 */
   onDonate: ((tier: number) => void) | null = null
+  /** 点「创建小队 / 创建联盟」那一行（B26 S2）：由编排层打开表单弹层。 */
+  onSocialCreate: ((scope: CreateScope) => void) | null = null
 
   /** 进聊天页签（首次画之前先拉一次历史） */
   onChatEnter: (() => void) | null = null
@@ -202,6 +208,7 @@ export class SocialPanelView extends Component {
     this.drawnRows.length = 0
     this.rowActionIds.clear()
     this.permissions = EMPTY_PERMISSIONS
+    this.create = createEntries(null, null, null)
     this.allianceMembers.length = 0
     this.lastResp = null
     this.lastHelps = []
@@ -212,6 +219,7 @@ export class SocialPanelView extends Component {
     this.onRowAction = null
     this.onHelpAll = null
     this.onDonate = null
+    this.onSocialCreate = null
     this.chatData = null
     this.chatControls = null
     this.chatInput = null
@@ -283,13 +291,14 @@ export class SocialPanelView extends Component {
   }
 
   /**
-   * 装载两个 scope 的权限（GET /social/permissions 各拉一次）。
+   * 装载社交页的三道门（B26 S1 + S2）：两个 scope 各一份权限、两行「创建」的可用性。
    *
    * <p>**不许合成一份**：小队与联盟都有 `KICK_MEMBER`，合成后"小队能踢人"会让联盟那一页的按钮
    * 也跟着亮 —— 玩家点下去拿到的正是服务端那句拒绝。
    */
-  attachPermissions(state: PermissionState): void {
+  attachSocialGates(state: PermissionState, create: Record<CreateScope, CreateEntry>): void {
     this.permissions = state
+    this.create = create
     this.render()
   }
 
@@ -755,6 +764,10 @@ export class SocialPanelView extends Component {
   private hintText(data: SocialData): string {
     switch (this.tab) {
       case 'squad':
+        // 没加入时那句门槛由服务端下发（创建那一行的 detail），这里不再印客户端抄的那份
+        if (!data.squad.joined) {
+          return ''
+        }
         // 验收 1：分队身份要与小队身份并列显示，而不是把小队藏进联盟
         return data.squad.subSquadText ?? data.squad.capHint ?? ''
       case 'alliance': {
@@ -779,9 +792,15 @@ export class SocialPanelView extends Component {
   private draftsFor(data: SocialData): RowDraft[] {
     switch (this.tab) {
       case 'squad':
-        return memberDrafts(data.squad.members, gate(this.permissions, 'SQUAD', 'KICK_MEMBER'))
+        // 没加入时这一页此前**整块空白**（成员行是空的，别的东西也没有）：
+        // 看不见功能存在，玩家会以为这个游戏没有小队
+        return data.squad.joined
+          ? memberDrafts(data.squad.members, gate(this.permissions, 'SQUAD', 'KICK_MEMBER'))
+          : [createDraft('squad', data.squad.title, this.create.squad)]
       case 'alliance':
-        return allianceDrafts(data.alliance, this.permissions)
+        return data.alliance.joined
+          ? allianceDrafts(data.alliance, this.permissions)
+          : [createDraft('alliance', data.alliance.title, this.create.alliance)]
       case 'help':
         return helpDrafts(data.helpRows)
       case 'events':
@@ -878,6 +897,10 @@ export class SocialPanelView extends Component {
       }
       if (kind === 'donate') {
         this.onDonate?.(Number(id))
+        return
+      }
+      if (kind === 'socialCreate') {
+        this.onSocialCreate?.(id === 'squad' ? 'squad' : 'alliance')
         return
       }
       this.onRowAction?.(kind, id, this.tab === 'alliance' ? 'alliance' : 'squad')
@@ -1003,8 +1026,24 @@ function infoRow(text: string): RowDraft {
   }
 }
 
-function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate): RowDraft[] {
-  return members.map((member): RowDraft => ({
+/**
+ * 「创建小队 / 创建联盟」那一行（B26 S2）。亮灰与那句原因都由服务端下发的政策决定 ——
+ * 客户端不写"主城 5 级"这类门槛，抄一份就会在表改动的那天变成假话。
+ */
+function createDraft(scope: CreateScope, sectionTitle: string, entry: CreateEntry): RowDraft {
+  return {
+    title: sectionTitle,
+    titleColor: COLOR_TEXT_DIM,
+    detail: entry.detailText,
+    value: '',
+    actionText: entry.actionText,
+    actionEnabled: entry.enabled,
+    actionId: scope,
+    actionKind: 'socialCreate',
+  }
+}
+
+function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate): RowDraft[] {  return members.map((member): RowDraft => ({
     title: `${member.name} · ${member.roleText}`,
     // 不活跃的成员标灰：盟主/队长据此决定要不要补人，
     // 而一个挂名不上线的成员提供不了任何庇护（B10 关键设计点 2）

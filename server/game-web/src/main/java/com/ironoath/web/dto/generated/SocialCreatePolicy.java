@@ -7,7 +7,8 @@ package com.ironoath.web.dto.generated;
  */
 public record SocialCreatePolicy(
         boolean canCreate,   // 现在能不能创建。为 false 时 reason 一定带着给人看的那句原因
-        long costGold,   // 创建消耗的金币（global.ALLIANCE_CREATE_COST_GOLD；小队创建不要钱，回 0）。下发数额而不是让客户端读表：定价权在服务端
+        long costGold,   // 创建要扣的数额（global.ALLIANCE_CREATE_COST_GOLD；小队创建不要钱，回 0）。下发数额而不是让客户端读表：定价权在服务端
+        String costResource,   // 上面那笔数额扣的是**哪种资源**（ResourceType 取值，如 GOLD）。只下发类型不下发名字：资源中文名在客户端有唯一一份 `game/ui/ResourceNames.ts`（那份文件自己写着「在契约把名字下发之前它是唯一真源，不许再抄第四份」），服务端再下发一份就是两个真相
         String reason)   // 不能创建时给人看的说法，与写路径抛出去的那条是**同一份字符串**（判定只写一遍）：「需要主城 5 级，当前 1 级」/「你已经在联盟「铁誓」里」/「还需等待 86400 秒」。能创建时不下发这个字段
 {
 }

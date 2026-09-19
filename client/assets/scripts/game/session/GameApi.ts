@@ -77,7 +77,8 @@ import type {
   AllianceReviewReq, AllianceRoleReq, AllianceSelfReq, AllianceSyncReq, AllianceSyncResp,
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
   HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyResp, SocialEventAckReq,
-  SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq, SquadMemberReq, SquadRallyReq,
+  SocialCreatePolicyResp, SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq,
+  SquadMemberReq, SquadRallyReq,
   SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp,
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
@@ -617,6 +618,16 @@ export class GameApi {
    */
   socialPermissions(scope: 'SQUAD' | 'ALLIANCE'): Promise<NetOutcome<PermissionListResp>> {
     return this.read<PermissionListResp>('/social/permissions', { scope })
+  }
+
+  /**
+   * GET /social/createPolicy（B26 S2）。一次回两个层级的创建门槛与消耗。
+   *
+   * <p>面板要写「创建联盟：需要主城 10 级，当前 4 级」和「消耗 500 金币」，而这些数字全在
+   * squad_config/alliance_config 与 global 表里 —— 客户端一份都不抄，抄了就是第二真相。
+   */
+  socialCreatePolicy(): Promise<NetOutcome<SocialCreatePolicyResp>> {
+    return this.read<SocialCreatePolicyResp>('/social/createPolicy')
   }
 
   /** POST /social/help。帮助一次，消耗共用的每日额度。 */

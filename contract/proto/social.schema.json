@@ -1742,7 +1742,8 @@
       "additionalProperties": false,
       "required": [
         "canCreate",
-        "costGold"
+        "costGold",
+        "costResource"
       ],
       "properties": {
         "canCreate": {
@@ -1752,7 +1753,11 @@
         "costGold": {
           "type": "integer",
           "format": "int64",
-          "description": "创建消耗的金币（global.ALLIANCE_CREATE_COST_GOLD；小队创建不要钱，回 0）。下发数额而不是让客户端读表：定价权在服务端"
+          "description": "创建要扣的数额（global.ALLIANCE_CREATE_COST_GOLD；小队创建不要钱，回 0）。下发数额而不是让客户端读表：定价权在服务端"
+        },
+        "costResource": {
+          "type": "string",
+          "description": "上面那笔数额扣的是**哪种资源**（ResourceType 取值，如 GOLD）。只下发类型不下发名字：资源中文名在客户端有唯一一份 `game/ui/ResourceNames.ts`（那份文件自己写着「在契约把名字下发之前它是唯一真源，不许再抄第四份」），服务端再下发一份就是两个真相"
         },
         "reason": {
           "type": "string",
