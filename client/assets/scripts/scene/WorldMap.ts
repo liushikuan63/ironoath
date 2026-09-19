@@ -20,7 +20,7 @@
  * {@link WorldMap#zoomOut} / {@link WorldMap#focusHome} 三个公开方法作为它们的接入点。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, UITransform, Vec3, sys, view } from 'cc'
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
 import { exileSnapshot, worldModel, worldRequester } from '../game/world/WorldContext'
 import type { ExileSnapshot } from '../game/world/WorldContext'
 import { exileCanRequest, exileLabel } from '../game/world/ExileAction'
@@ -743,6 +743,10 @@ export class WorldMap extends Component {
       }
       const size = chunkSize * cell
       node.setPosition(new Vec3((tile.cx + 0.5) * size, (tile.cy + 0.5) * size, 0))
+      // 节点盒子要跟上画出来的边长：地形按 size 画，UITransform 却停在池默认的 100×100。
+      // 今天没有一条命中线读块盒子（点选是把 UI 坐标折进 mapLayer 后按半径找实体），
+      // 但"可见范围与节点范围分家"这件事一旦哪天被裁剪或命中读到，就是个查不出来的缺陷。
+      node.getComponent(UITransform)?.setContentSize(new Size(size, size))
       const refs = this.refs.get(node)
       if (refs === undefined) {
         continue

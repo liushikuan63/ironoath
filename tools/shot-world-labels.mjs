@@ -72,30 +72,36 @@ const sawCaption = await page.waitForFunction(() => {
  * 等地图**稳定**再拍。首跑只等到"有文字"就拍，结果拍到的是分块还在流式加载的中间态：
  * 屏幕只有左上角一小块地形、其余全黑、读数写着"缩放 0"、一个资源标签都没有 ——
  * 那既不是缺陷也不是通过，是**没拍完**。分块加载是异步的，只能等它自己停。
- * 判稳口径：地形节点数连续三次（每 700ms 一次）不变。
+ *
+ * <p>判稳口径要盯**被测对象本身**：先前数的是 `name === 'Art'` 的后代节点总数（地形 + 实体混在一起），
+ * 实测会"稳定"在块还没发全的时候 —— 有一跑数到 55 就判稳，那时 `drawnTiles` 只有 6 块，
+ * 于是把 2×3 的中间态量成"短板 67%、地图铺不满"的假红。现在直接数 `drawnTiles`：
+ * 外接盒、尺寸分堆用的都是它，判稳与判据看同一个对象才不会错开。
  */
-async function countTerrain() {
+async function countTiles() {
   return page.evaluate(() => {
-    let n = 0
+    let map = null
     const visit = (node) => {
-      if (node.name === 'Art') n += 1
+      if (map !== null) return
+      const comp = node.getComponent('WorldMap')
+      if (comp !== null) { map = comp; return }
       for (const c of node.children) visit(c)
     }
     visit(window.cc.director.getScene())
-    return n
+    return map === null ? -1 : map.drawnTiles.size
   })
 }
 let stable = 0
 let last = -1
 for (let attempt = 0; attempt < 30 && stable < 3; attempt += 1) {
   await page.waitForTimeout(700)
-  const now = await countTerrain()
-  stable = now === last ? stable + 1 : 0
+  const now = await countTiles()
+  stable = now === last && now > 0 ? stable + 1 : 0
   last = now
 }
-console.log(`[world] 地形节点稳定在 ${last} 个（连续 ${stable} 次未变）`)
-if (last === 0) {
-  console.error('[world][前置] 一个地形节点都没有 —— 地图没画出来，判据走不到')
+console.log(`[world] 地形块数稳定在 ${last} 块（连续 ${stable} 次未变）`)
+if (last <= 0) {
+  console.error('[world][前置] 一个地形块都没有 —— 地图没画出来，判据走不到')
   await browser.close()
   await preview.close()
   process.exit(2)
@@ -104,49 +110,51 @@ await page.screenshot({ path: OUT })
 console.log(`[world] 截图：${OUT}`)
 
 /**
- * 视口覆盖率：把所有地形块在 UI 空间里的外接盒并起来，与可见尺寸比。
+ * 视口覆盖率：把**地形块**在 UI 空间里的外接盒与可见尺寸比。
  *
  * <p>为什么量这个而不是量像素：WebGL 画布默认不保留绘制缓冲，`toDataURL` 拿到的可能是黑的，
  * 那种"量不出来"会被读成"覆盖率为 0"。外接盒是从**真正会画出来的节点**上读的，
  * 与 #269 那条"地图只占中间约 350×350"是同一件事，但它可以失败。
+ *
+ * <p>块节点从 `WorldMap.drawnTiles` 直接拿，**不再按节点名找**：这一格在同一个判据上错过三次，
+ * 三次都是"用名字猜对象"——① 按 `name === 'Art'` 找，命中的是地形块的**子节点**和实体块
+ * （两者同名都叫 `Art`），于是把 8 个 `100×100` 的默认盒子当成了"8 块没画出来的地图"；
+ * ② 拿各节点自己的 UITransform 并外接盒，块节点没设尺寸时并出来的是 100 而不是 320；
+ * ③ 用面积比，把"740×740 摆在 960×600 上"判成 102% 通过，而它左右其实有黑边。
+ * 现在：对象由渲染器自己给（唯一真源），外接盒按**块中心跨度 + 一块的真实边长**算，按轴取短板。
  */
 const coverage = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   const visible = window.cc.view.getVisibleSize()
-  let minCx = Infinity; let minCy = Infinity; let maxCx = -Infinity; let maxCy = -Infinity
-  let tiles = 0
-  // 归因读数：地形块与实体块**同名 `Art`**，先按尺寸分堆才知道"横向到底铺了几块"。
-  const sizes = {}
-  const visit = (n) => {
-    if (n.name === 'Art') {
-      const box = n.getComponent('cc.UITransform')
-      if (box !== null) {
-        const w = n.getWorldPosition(new window.cc.Vec3())
-        minCx = Math.min(minCx, w.x); maxCx = Math.max(maxCx, w.x)
-        minCy = Math.min(minCy, w.y); maxCy = Math.max(maxCy, w.y)
-        const key = `${Math.round(box.width)}x${Math.round(box.height)}`
-        sizes[key] = (sizes[key] ?? 0) + 1
-        tiles += 1
-      }
-    }
-    for (const c of n.children) visit(c)
+  let map = null
+  const findMap = (n) => {
+    if (map !== null) return
+    const comp = n.getComponent('WorldMap')
+    if (comp !== null) { map = comp; return }
+    for (const c of n.children) findMap(c)
   }
-  visit(scene)
-  if (tiles === 0) return { tiles: 0, widthRatio: 0, heightRatio: 0, sizes: {} }
-  /**
-   * 外接盒要按**块中心跨度 + 一块的真实边长**算，不能拿各节点自己的 UITransform 并集。
-   *
-   * <p>两个都错过：① 用面积比会把"740×740 摆在 960×600 上"判成 102% 通过，而它左右其实有黑边 ——
-   * 宽度够不够只能按轴看。② 地形块的可见范围是 `Graphics` 画出来的 `chunkSize × cell` 方块，
-   * 而块节点自己的 UITransform 从没设过尺寸、停在默认的 100×100（实测分堆就是
-   * `{"100x100": 8, "320x320": 1, ...}` —— 8 个块节点 + 1 个真正贴上了地形图的子节点）。
-   * 拿 100 去并外接盒会把 960 的视野量成 740，看着像"地图铺不满"，其实是量错了对象。
-   */
-  const chunkSide = Math.max(...Object.keys(sizes).map((k) => Number(k.split('x')[0])))
+  findMap(scene)
+  if (map === null) return { missing: 'WorldMap' }
+  const tiles = Array.from(map.drawnTiles.values())
+  const sizes = {}
+  let minCx = Infinity; let minCy = Infinity; let maxCx = -Infinity; let maxCy = -Infinity
+  let chunkSide = 0
+  for (const node of tiles) {
+    const box = node.getComponent('cc.UITransform')
+    if (box === null) continue
+    const w = node.getWorldPosition(new window.cc.Vec3())
+    minCx = Math.min(minCx, w.x); maxCx = Math.max(maxCx, w.x)
+    minCy = Math.min(minCy, w.y); maxCy = Math.max(maxCy, w.y)
+    const key = `${Math.round(box.width)}x${Math.round(box.height)}`
+    sizes[key] = (sizes[key] ?? 0) + 1
+    chunkSide = Math.max(chunkSide, box.width)
+  }
+  if (tiles.length === 0) return { tiles: 0, keys: [], widthRatio: 0, heightRatio: 0, sizes: {} }
   const boxW = (maxCx - minCx) + chunkSide
   const boxH = (maxCy - minCy) + chunkSide
   return {
-    tiles,
+    tiles: tiles.length,
+    keys: Array.from(map.drawnTiles.keys()).sort(),
     chunkSide,
     boxW, boxH,
     viewW: visible.width, viewH: visible.height,
@@ -155,12 +163,36 @@ const coverage = await page.evaluate(() => {
     sizes,
   }
 })
+if (coverage.missing !== undefined) {
+  console.error(`[world] 判据失败：场景里找不到 ${coverage.missing} 组件 —— 量具与渲染器的接线断了，不是地图有问题`)
+  await browser.close()
+  await preview.close()
+  process.exit(2)
+}
 const cover = Math.min(coverage.widthRatio, coverage.heightRatio)
-console.log(`[world] 地形 ${coverage.tiles} 块，外接盒 ${Math.round(coverage.boxW ?? 0)}×${Math.round(coverage.boxH ?? 0)}`
+console.log(`[world] 地形 ${coverage.tiles} 块，块中心跨度 + 一块边长 = 外接盒 ${Math.round(coverage.boxW ?? 0)}×${Math.round(coverage.boxH ?? 0)}`
   + ` vs 视口 ${Math.round(coverage.viewW ?? 0)}×${Math.round(coverage.viewH ?? 0)}`
   + ` ⇒ 宽 ${(coverage.widthRatio * 100).toFixed(0)}% / 高 ${(coverage.heightRatio * 100).toFixed(0)}%`
   + ` / 取短板 ${(cover * 100).toFixed(0)}%`)
-console.log(`[world] Art 节点按尺寸分堆：${JSON.stringify(coverage.sizes)}`)
+console.log(`[world] 块节点 UITransform 按尺寸分堆：${JSON.stringify(coverage.sizes)}`)
+// 归因读数：`drawnTiles` 的键就是 `cx:cy`，直接打出来才知道"少了一列"还是"少了一整行"。
+console.log(`[world] 视野内的块键：${coverage.keys.join(' ')}`)
+/**
+ * 块节点的盒子必须跟上手绘地形的边长。原来 `renderTiles` 只 `setPosition` 不设尺寸，
+ * 于是地形看得见 320×320、`UITransform` 却还是池默认的 100×100 ——
+ * 触摸命中按节点盒子算的话，"点地块边缘点不中"就是可能的形状。
+ * 这一条把"默认盒子"钉成缺陷：分堆里不该再出现 `100x100`。
+ *
+ * <p>对象取自 `drawnTiles`，所以这一条不再是"从一堆同名节点里挑出不是 100 的那些"那种
+ * 自己选自己、恒真的写法。
+ */
+if (coverage.sizes['100x100'] !== undefined) {
+  console.error(`[world] 判据失败：还有 ${coverage.sizes['100x100']} 个块节点停在池默认 100×100`
+    + ' —— 手绘地形与节点盒子不一致，命中范围与可见范围就会分家')
+  await browser.close()
+  await preview.close()
+  process.exit(1)
+}
 if (cover < 0.98) {
   console.error(`[world] 判据失败：短板方向只铺到 ${(cover * 100).toFixed(0)}%`
     + ' —— 屏幕会露出一圈纯黑，读起来像"地图到此为止"')
