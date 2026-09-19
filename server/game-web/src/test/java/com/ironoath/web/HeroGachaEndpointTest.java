@@ -247,7 +247,7 @@ class HeroGachaEndpointTest {
     void newbiePoolLifetimeLimitIsEnforced() {
         String playerId = newPlayer();
         giveItems(playerId, "item_gold_1000", 1L);
-        // 新手池用 GOLD 计价、costCount=300，先给足金币
+        // 新手池用 GOLD 计价（gacha 表里 costCount=150），先给足金币
         grantGold(playerId, 1000L);
 
         gachaAppService.draw(playerId, new GachaDrawReq(newRequestId(), "gacha_pool_newbie", 1));
@@ -444,6 +444,54 @@ class HeroGachaEndpointTest {
         assertThat(countOf(playerId, "item_mat_hero_frag_sr"))
                 .as("下发给客户端的门槛必须等于实扣的数，否则「还差几片」是句假话")
                 .isEqualTo(before);
+    }
+
+    @Test
+    @DisplayName("卡池列表整表对账：行、名字、消耗、上限全照 gacha 表，已抽次数照池状态，计价列恰好一个非空")
+    void poolListMatchesTheTable() {
+        String playerId = newPlayer();
+        List<com.ironoath.config.cfg.GachaCfg> table = configs.all(com.ironoath.config.cfg.GachaCfg.class);
+        List<com.ironoath.web.dto.generated.GachaPoolSummary> pools = gachaAppService.pools(playerId).pools();
+
+        assertThat(pools).as("一行池都不许漏，也不许凭空多").hasSize(table.size());
+        for (int i = 0; i < table.size(); i++) {
+            com.ironoath.config.cfg.GachaCfg row = table.get(i);
+            com.ironoath.web.dto.generated.GachaPoolSummary pool = pools.get(i);
+            assertThat(pool.poolId()).as("顺序照 gacha 表的行序（客户端不自己排）").isEqualTo(row.id());
+            assertThat(pool.name()).isEqualTo(row.name());
+            assertThat(pool.name()).as("池名要玩家读得出来，不许退回行 id").doesNotStartWith("gacha_");
+            assertThat(pool.poolType()).isEqualTo(row.poolType().name());
+            assertThat(pool.costCount()).isEqualTo(row.costCount());
+            assertThat(pool.lifetimeLimit()).isEqualTo(row.lifetimeLimit());
+            assertThat(pool.lifetimeDraws()).as("新号在哪个池都还没抽过").isZero();
+            // 与 GachaProbResp 同一条不变式：道具计价与资源计价恰好一个非空，两个都填或都不填都是配置错
+            assertThat((pool.costItemId() == null) ^ (pool.costResource() == null))
+                    .as("%s 的 costItemId 与 costResource 必须恰好一个非空", pool.poolId()).isTrue();
+            if (pool.costItemId() == null) {
+                assertThat(pool.costItemName()).as("按资源计价的池没有道具名可给").isNull();
+            } else {
+                // #255/#268/#278/#281/#291 同族：那一行要写「1 个 招募宝箱」而不是 item_chest_hero
+                assertThat(pool.costItemName())
+                        .as("%s 的消耗道具必须带着中文名", pool.poolId())
+                        .isEqualTo(configs.get(com.ironoath.config.cfg.ItemCfg.class,
+                                pool.costItemId()).name());
+                assertThat(pool.costItemName()).doesNotStartWith("item_");
+            }
+        }
+
+        // 抽一次新手池（终身限 1）：那一行的"已抽次数"必须跟着动，否则界面永远显示一个能点的页签
+        giveItems(playerId, "item_gold_1000", 1L);
+        grantGold(playerId, 1000L);
+        gachaAppService.draw(playerId, new GachaDrawReq(newRequestId(), "gacha_pool_newbie", 1));
+        List<com.ironoath.web.dto.generated.GachaPoolSummary> after =
+                gachaAppService.pools(playerId).pools();
+        com.ironoath.web.dto.generated.GachaPoolSummary newbie = after.stream()
+                .filter(s -> s.poolId().equals("gacha_pool_newbie")).findFirst().orElseThrow();
+        assertThat(newbie.lifetimeDraws()).as("已抽次数与 doDraw 那句超限拒绝读的是同一个数")
+                .isEqualTo(1L);
+        assertThat(after).filteredOn(s -> !s.poolId().equals("gacha_pool_newbie"))
+                .allSatisfy(s -> assertThat(s.lifetimeDraws())
+                        .as("%s 不该跟着涨", s.poolId()).isZero());
     }
 
     @Test

@@ -18,7 +18,8 @@
  * 用 double 会在 0.02 这种值上得到 1.9999999%，而公示文案里写的是 2%（B06 禁止项：不要用 double 表示概率）。
  */
 
-import type { GachaCfg } from '../../config/generated/ConfigTypes'
+import type { GachaProbResp } from '../../net/generated/HeroProtocol'
+import { resourceName } from '../ui/ResourceNames'
 
 /** 稀有度档位。顺序即公示顺序（从高到低），与 Tier / HeroRarity 一致。 */
 export type Rarity = 'SSR' | 'SR' | 'R' | 'N'
@@ -71,46 +72,60 @@ export function formatRate(rateFixed: number): string {
   return trimmed.length === 0 ? `${whole}%` : `${whole}.${trimmed}%`
 }
 
-/** 从 gacha 表的一行组装公示面板。 */
-export function buildDisclosure(pool: GachaCfg): GachaDisclosure {
-  if (pool === undefined || pool === null) {
-    throw new Error('pool 不得为空')
+/**
+ * 由 `/gacha/probability` 的响应组装公示面板。
+ *
+ * <p><b>入参为什么是响应而不是配置行</b>：这一层原先吃的是 `GachaCfg` —— 客户端只有那份表的
+ * **类型**、没有数据，所以它在运行期根本喂不进来，于是 `GachaDisclosureView` 从建好那天起没被挂过，
+ * 合规要求的"原文呈现"停在"有视图无接线"。改成吃响应，才真能在抽卡界面上画出来。
+ */
+export function buildDisclosure(resp: GachaProbResp): GachaDisclosure {
+  if (resp === undefined || resp === null) {
+    throw new Error('resp 不得为空：没有公示数据就没什么可展示')
   }
-  const tiers: TierDisclosure[] = [
-    { rarity: 'SSR', rateFixed: pool.ssrChance, text: formatRate(pool.ssrChance) },
-    { rarity: 'SR', rateFixed: pool.srChance, text: formatRate(pool.srChance) },
-    { rarity: 'R', rateFixed: pool.rChance, text: formatRate(pool.rChance) },
-    { rarity: 'N', rateFixed: pool.nChance, text: formatRate(pool.nChance) },
-  ]
+  const byRarity = new Map<string, number>()
+  for (const tier of resp.tierRates ?? []) {
+    byRarity.set(tier.rarity, tier.rateFixed)
+  }
+  // 档位顺序是展示约定（从高到低），不跟着服务端数组走：服务端换了枚举声明顺序，
+  // 面板上 SSR 也不该跑到 N 下面去
+  const tiers: TierDisclosure[] = (['SSR', 'SR', 'R', 'N'] as readonly Rarity[]).map((rarity) => {
+    const rateFixed = byRarity.get(rarity) ?? 0
+    return { rarity, rateFixed, text: formatRate(rateFixed) }
+  })
   const sum = tiers.reduce((acc, t) => acc + t.rateFixed, 0)
   if (sum !== 10000) {
     // 四档之和必须恰为 100%。这条在服务端也有断言，客户端再查一次是刻意的：
     // 面板是玩家唯一能看到的数字，配置被改坏时这里应当立刻炸，
     // 而不是把一个加起来 99% 的面板摆到玩家面前
-    throw new Error(`卡池 ${pool.id} 四档公示概率之和必须恰为 10000（100%），实际=${sum}`)
+    throw new Error(`卡池 ${resp.poolId} 四档公示概率之和必须恰为 10000（100%），实际=${sum}`)
   }
-  if (pool.disclosureText === undefined || pool.disclosureText.trim().length === 0) {
-    throw new Error(`卡池 ${pool.id} 缺少公示文案，合规要求必须原文展示`)
+  if (resp.disclosureText === undefined || resp.disclosureText.trim().length === 0) {
+    throw new Error(`卡池 ${resp.poolId} 缺少公示文案，合规要求必须原文展示`)
   }
 
-  const hasItem = pool.costItemId !== undefined && pool.costItemId !== null
-  const hasResource = pool.costResource !== undefined && pool.costResource !== null
+  const hasItem = resp.costItemId !== undefined && resp.costItemId !== null
+  const hasResource = resp.costResource !== undefined && resp.costResource !== null
   if (hasItem === hasResource) {
-    throw new Error(`卡池 ${pool.id} 必须恰好指定一种计价方式：`
-      + `costItemId=${pool.costItemId}, costResource=${pool.costResource}`)
+    throw new Error(`卡池 ${resp.poolId} 必须恰好指定一种计价方式：`
+      + `costItemId=${resp.costItemId}, costResource=${resp.costResource}`)
   }
-  const costText = `${pool.costCount} ${hasResource ? pool.costResource : pool.costItemId}`
+  // 名字一律用随行下发的那一份：原先这里拼的是 `${costCount} ${costResource}`，画出来就是
+  // 「150 GOLD」/「1 item_chest_hero」—— #268 那一族，而它一直没上屏只是因为没人挂载这块面板
+  const unit = hasItem ? (resp.costItemName ?? resp.costItemId)
+    : resourceName(String(resp.costResource))
+  const costText = `${resp.costCount} ${unit}`
 
   return {
-    poolId: pool.id,
-    poolName: pool.name,
+    poolId: resp.poolId,
+    poolName: resp.name,
     tiers,
-    ssrPity: pool.ssrPity,
-    srPity: pool.srPity,
+    ssrPity: resp.pityRule.ssrPity,
+    srPity: resp.pityRule.srPity,
     costText,
-    lifetimeLimitText: pool.lifetimeLimit > 0
-      ? `每个账号限抽 ${pool.lifetimeLimit} 次`
+    lifetimeLimitText: resp.lifetimeLimit > 0
+      ? `每个账号限抽 ${resp.lifetimeLimit} 次`
       : '不限次数',
-    disclosureText: pool.disclosureText,
+    disclosureText: resp.disclosureText,
   }
 }

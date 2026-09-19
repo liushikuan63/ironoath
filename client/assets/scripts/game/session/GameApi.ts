@@ -49,7 +49,7 @@ import type {
   TreatReq, TreatResp,
 } from '../../net/generated/ArmyProtocol'
 import type {
-  GachaDrawReq, GachaDrawResp, GachaProbResp, HeroEquipReq, HeroGrowResp, HeroIdReq, HeroItemReq,
+  GachaDrawReq, GachaDrawResp, GachaPoolsResp, GachaProbResp, HeroEquipReq, HeroGrowResp, HeroIdReq, HeroItemReq,
   HeroLevelUpReq, HeroListResp, SetLineupReq, SetLineupResp,
 } from '../../net/generated/HeroProtocol'
 import type {
@@ -320,6 +320,14 @@ export class GameApi {
    */
   gachaDraw(req: Omit<GachaDrawReq, 'requestId'>): Promise<NetOutcome<GachaDrawResp>> {
     return this.mutate<GachaDrawReq, GachaDrawResp>('/gacha/draw', req)
+  }
+
+  /**
+   * GET /gacha/pools。有哪些池、叫什么、抽一次花什么、这个号在该池抽过几次 ——
+   * 没有这一份，poolId 就只能硬编码进客户端（= 抄 gacha 表），而上一个新池就得发一次版本。
+   */
+  gachaPools(): Promise<NetOutcome<GachaPoolsResp>> {
+    return this.read<GachaPoolsResp>('/gacha/pools')
   }
 
   /** GET /gacha/probability。合规公示的数据源，必须原文展示（B06 §6）。 */

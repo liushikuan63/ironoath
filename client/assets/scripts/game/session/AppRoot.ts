@@ -29,7 +29,7 @@ import type { OfflineReportView, PowerDetailResp } from '../../net/generated/Pro
 import type { CityCollectResp, CityListResp, SpeedUpSource } from '../../net/generated/CityProtocol'
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
 import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
-import type { HeroListResp } from '../../net/generated/HeroProtocol'
+import type { GachaDrawResp, GachaPoolsResp, HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageListResp } from '../../net/generated/StageProtocol'
 import type {
   AllianceMember, AllianceSyncResp, ChatChannel, ChatMessageView, FriendView, HelpRequestView,
@@ -65,6 +65,8 @@ import type { SkillPickView, SkillStage } from '../hero/SkillPick'
 import { buildComposeView } from '../hero/HeroCompose'
 import type { HeroComposeView } from '../hero/HeroCompose'
 import { buildHeroPanel } from '../hero/HeroPanel'
+import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
+import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -250,6 +252,11 @@ export interface PanelTargets {
    */
   composePick?(view: HeroComposeView, purse: readonly string[]): void
   /**
+   * 抽卡面板（抽卡入口）。整块视图由编排层组装：池页签、两个键亮不亮、余额、上一次抽到了什么。
+   * 表现层只画不判 —— 判"够不够"的数全在 `game/gacha/GachaPanel.ts`，而那些数全来自服务端。
+   */
+  gacha?(view: GachaPanelView): void
+  /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
@@ -315,7 +322,7 @@ export interface PanelTargets {
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
-  | 'battlePass' | 'rallies' | 'tech' | 'equip'
+  | 'battlePass' | 'rallies' | 'tech' | 'equip' | 'gacha'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -417,6 +424,13 @@ export class AppRoot {
   private skillPick: { heroId: string, heroName: string, stage: SkillStage, itemId: string | null } | null = null
   /** 合成弹层的状态：选了哪个**还没拥有**的武将。null = 没开着 */
   private composePick: { heroId: string | null } | null = null
+  /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
+  private gachaResp: GachaPoolsResp | null = null
+  private resourceResp: ResourceDetailResp | null = null
+  /** 抽卡面板：选中哪个池、上一次抽取的结果、上一次失败的理由 */
+  private gachaPoolId: string | null = null
+  private gachaLast: GachaDrawResp | null = null
+  private gachaNotice: string | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -620,7 +634,11 @@ export class AppRoot {
         })
         return
       case 'resources':
-        this.deliver('resources', await this.api.resourceDetail(), r => this.targets.resources?.(r))
+        this.deliver('resources', await this.api.resourceDetail(), r => {
+          // 存一份给抽卡面板比余额（按资源计价的池）：与 bagResp 同一条做法，不额外发请求
+          this.resourceResp = r
+          this.targets.resources?.(r)
+        })
         return
       case 'stage':
         this.deliver('stage', await this.api.stageList(), r => this.targets.stage?.(r))
@@ -692,6 +710,12 @@ export class AppRoot {
         this.deliver('shop', await this.api.shopList(this.shopTab), r => {
           this.shopResp = r
           this.deliverShop()
+        })
+        return
+      case 'gacha':
+        this.deliver('gacha', await this.api.gachaPools(), r => {
+          this.gachaResp = r
+          this.deliverGacha()
         })
         return
       case 'rallies':
@@ -1931,6 +1955,92 @@ export class AppRoot {
   /** 取消：关掉弹层，什么都不发。 */
   cancelComposePick(): void {
     this.composePick = null
+  }
+
+  // ---------- 抽卡（B06 §2 抽取与 §6 合规公示；公示那半在 scene/GachaDisclosureView） ----------
+
+  /**
+   * 打开抽卡面板。卡池与两份余额各存一份快照，缺哪一份补哪一份 ——
+   * 首屏预拉通常已经带着 bag 与 resources，所以正常路径这里是**零额外请求**。
+   */
+  async openGacha(): Promise<void> {
+    if (this.gachaResp === null) {
+      await this.refresh('gacha')
+    }
+    if (this.resourceResp === null) {
+      await this.refresh('resources')
+    }
+    if (this.bagResp === null) {
+      await this.refresh('bag')
+    }
+    this.deliverGacha()
+  }
+
+  /** 换选中哪个池：只重画，不发请求（概率那一屏走「概率公示」，是另一次读）。 */
+  selectGachaPool(poolId: string): void {
+    this.gachaPoolId = poolId
+    this.gachaNotice = null
+    this.deliverGacha()
+  }
+
+  /**
+   * 抽一次 / 抽十次。
+   *
+   * <p><b>灰掉的键不发请求</b>：抽满与余额不足这两种情况服务端都算好了理由，
+   * 客户端把同一句原样说出来即可（与商店那条纪律同一句），发一次只是多一条拒绝日志。
+   *
+   * <p><b>失败的理由要进面板</b>，不能只进 console：抽卡是花钱的动作，"为什么没抽成"
+   * 玩家必须看得见 —— 而 `write` 的统一出口只到 `targets.error`（那里是 console.warn）。
+   * 成功后重拉四样：卡池（已抽次数变了）、武将（新将进名册）、背包与资源（扣的与转的各在一边）。
+   */
+  async drawGacha(count: number): Promise<void> {
+    const resp = this.gachaResp
+    if (resp === null) {
+      this.rejectNeeds('gacha', '卡池还没拉回来，稍后再试')
+      return
+    }
+    const view = buildGachaPanel(resp.pools, this.gachaBalances(), this.gachaPoolId)
+    const row = view.selected
+    if (row === null) {
+      this.rejectNeeds('gacha', '先选一个卡池')
+      return
+    }
+    const reason = count === TEN_DRAW_COUNT ? row.tenReason : row.onceReason
+    if (reason !== null) {
+      this.rejectNeeds('gacha', reason)
+      return
+    }
+    this.track(TRACK_EVENTS.gachaDraw, {
+      poolId: trackParam(row.poolId), count: trackParam(String(count)),
+    })
+    const outcome = await this.api.gachaDraw({ poolId: row.poolId, count })
+    if (outcome.kind !== 'ok') {
+      this.gachaNotice = AppRoot.reason(outcome)
+      this.say('gacha', outcome)
+      this.deliverGacha()
+      return
+    }
+    this.gachaLast = outcome.data
+    this.gachaNotice = null
+    await this.refresh('gacha', 'hero', 'bag', 'resources', 'reddot')
+  }
+
+  /** 抽卡面板比余额要的那两份快照。缺哪份就是真没读到，纯逻辑会写成"余额还没读到"。 */
+  private gachaBalances(): GachaBalances {
+    return {
+      resources: this.resourceResp?.resources ?? [],
+      items: this.bagResp?.items ?? [],
+    }
+  }
+
+  /** 组装并递一次抽卡面板。 */
+  private deliverGacha(): void {
+    const resp = this.gachaResp
+    if (resp === null) {
+      return
+    }
+    this.targets.gacha?.(buildGachaPanel(resp.pools, this.gachaBalances(),
+      this.gachaPoolId, this.gachaNotice, this.gachaLast))
   }
 
   /**

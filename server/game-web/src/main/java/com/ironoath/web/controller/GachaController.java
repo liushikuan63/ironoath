@@ -39,6 +39,22 @@ public class GachaController {
     }
 
     /**
+     * 卡池列表 —— 抽卡界面第一屏。没有这一份，客户端就只能把 poolId 硬编码（= 抄 gacha 表）。
+     *
+     * <p>只给名字、消耗与**这个号已抽过几次**，<b>不给概率</b>：概率必须走
+     * {@code /gacha/probability} 那份原文公示，两处各写一份就会分叉，而分叉的那一份是要拿去对监管的。
+     */
+    @GetMapping("/pools")
+    public Result<com.ironoath.web.dto.generated.GachaPoolsResp> pools(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        if (playerId == null || playerId.isBlank()) {
+            throw new BizException(ErrorCode.PLAYER_NOT_FOUND,
+                    "缺少 " + CityController.PLAYER_HEADER + " 头");
+        }
+        return Result.ok(gachaAppService.pools(playerId));
+    }
+
+    /**
      * 概率公示。返回<b>公示概率</b>（综合概率，含保底）与逐武将概率、保底规则、公示原文。
      *
      * <p>{@code disclosureText} 必须原样展示：gacha 表里明写

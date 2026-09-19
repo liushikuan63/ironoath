@@ -84,6 +84,10 @@ const SKIP = new Set([
   "openComposePick",
   "pickComposeHero",
   "cancelComposePick",
+  // 抽卡面板同一条口径：意图是"花掉这一档资源/道具换一批武将"（drawGacha 里打 gacha_draw）。
+  // 开面板是去看有什么池，换选中是同一意图的中间态（都不花钱、都不改存档）
+  "openGacha",
+  "selectGachaPool",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

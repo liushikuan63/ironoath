@@ -16,6 +16,7 @@ public record GachaProbResp(
         PityRule pityRule,
         String disclosureText,   // 合规公示原文，客户端必须原样展示
         String costItemId,   // 以道具计价的池子（限定池）填这里，否则为 null。与 costResource 恰好一个非空。
+        String costItemName,   // `costItemId` 那一行的中文名（服务端查 item 表）；按资源计价时为 null。与 `GachaPoolSummary.costItemName` 同一条理由：公示面板那一行要写「1 个 招募宝箱」，而客户端手里只有行 id —— 印出去就是 #268 那一族。
         long costCount,   // 单抽消耗
         long lifetimeLimit,   // 该池的账号终身抽取次数上限；0 表示不限
         long serverNow,

@@ -34,6 +34,7 @@ import type { EquipPanelView } from '../assets/scripts/game/equip/EquipPanel'
 import type { ExpPickView } from '../assets/scripts/game/hero/ExpPick'
 import type { AwakenPickView } from '../assets/scripts/game/hero/AwakenPick'
 import type { HeroComposeView } from '../assets/scripts/game/hero/HeroCompose'
+import type { GachaPanelView } from '../assets/scripts/game/gacha/GachaPanel'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -530,6 +531,8 @@ interface Harness {
   readonly lastSkillPick: { readonly view: SkillPickView, readonly heroName: string } | null
   /** 最近一次推给碎片合成弹层的视图与那几行钱包。 */
   readonly lastComposePick: { readonly view: HeroComposeView, readonly purse: readonly string[] } | null
+  /** 最近一次推给抽卡面板的整块视图。 */
+  readonly lastGacha: GachaPanelView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -625,6 +628,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastAwakenPick: { view: AwakenPickView, heroName: string } | null = null
   let lastSkillPick: { view: SkillPickView, heroName: string } | null = null
   let lastComposePick: { view: HeroComposeView, purse: readonly string[] } | null = null
+  let lastGacha: GachaPanelView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -692,6 +696,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     composePick: (view, purse) => {
       lastComposePick = { view, purse }
+    },
+    gacha: (view) => {
+      lastGacha = view
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -781,6 +788,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastComposePick() {
       return lastComposePick
+    },
+    get lastGacha() {
+      return lastGacha
     },
     get lastCompose() {
       return lastCompose
@@ -2280,6 +2290,90 @@ test('合成弹层：一档都没凑够时确认是空操作（不发注定被�
   await h.root.confirmComposePick()
   assert.equal(h.http.countOf('/hero/compose'), before,
     '碎片为 0 还发请求，等于把玩家送去挨一条拒绝')
+})
+
+/** 两个池：新手池已抽满（限 1），标准池单抽够、十抽不够。余额 5000 金币。 */
+function gachaPoolsFixture(): Record<string, unknown> {
+  return {
+    serverNow: SERVER_NOW,
+    pools: [
+      {
+        poolId: 'gacha_pool_newbie', name: '新手招募池', poolType: 'NEWBIE',
+        costItemId: null, costItemName: null, costCount: 150,
+        lifetimeLimit: 1, lifetimeDraws: 1, costResource: 'GOLD',
+      },
+      {
+        poolId: 'gacha_pool_standard', name: '标准招募池', poolType: 'STANDARD',
+        costItemId: null, costItemName: null, costCount: 1200,
+        lifetimeLimit: 0, lifetimeDraws: 0, costResource: 'GOLD',
+      },
+    ],
+  }
+}
+
+test('抽卡面板：两个池都列出来，抽满的那个点不动也不发请求', async () => {
+  const h = harness()
+  // override 必须在 start 之前：start 的预拉会填 resourceResp，之后再改 override 就永远读不到那份夹具
+  h.http.overrides.set('/gacha/pools', gachaPoolsFixture())
+  h.http.overrides.set('/resource/detail', {
+    resources: [{ type: 'GOLD', current: 5000, cap: 100000, protectedAmount: 0,
+      perHour: 0, lastSettle: 0, full: false, breakdown: [] }],
+    serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+
+  await h.root.openGacha()
+  const view = h.lastGacha
+  assert.deepEqual(view?.rows.map(r => [r.poolId, r.onceReason === null]),
+    [['gacha_pool_newbie', false], ['gacha_pool_standard', true]],
+    '抽满过的那一行灰掉，理由写"已抽满"')
+  assert.equal(view?.selectedPoolId, 'gacha_pool_newbie', '默认取服务端给的第一行')
+  assert.equal(view?.balanceText, '5000 金币', '余额取快照，不再多打一次接口')
+
+  const before = h.http.countOf('/gacha/draw')
+  h.errors.length = 0
+  await h.root.drawGacha(1)
+  assert.equal(h.http.countOf('/gacha/draw'), before, '抽满还发请求，等于把玩家送去挨一条拒绝')
+  assert.deepEqual(h.errors.at(-1), ['gacha', '这个号在该池已抽满'])
+})
+
+test('抽卡：换池后十抽不够就不发、单抽够就发一条，并回读四样与结果行', async () => {
+  const h = harness()
+  h.http.overrides.set('/gacha/pools', gachaPoolsFixture())
+  h.http.overrides.set('/resource/detail', {
+    resources: [{ type: 'GOLD', current: 5000, cap: 100000, protectedAmount: 0,
+      perHour: 0, lastSettle: 0, full: false, breakdown: [] }],
+    serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/gacha/draw', {
+    results: [{ heroId: 'hero_ssr_01', name: '李劲', rarity: 'SSR',
+      isNew: true, isPity: true, fragments: 0 }],
+    ssrPityCounter: 0, srPityCounter: 4, fragmentsAwarded: 0,
+    costItemId: null, costCount: 1200, seed: 7, serverNow: SERVER_NOW, costResource: 'GOLD',
+  })
+  await h.root.start('dev-1', '君')
+  await h.root.openGacha()
+  h.root.selectGachaPool('gacha_pool_standard')
+  assert.equal(h.lastGacha?.selected?.tenReason, '还差 7000 金币', '5000 金币抽不了十连')
+
+  const before = h.http.countOf('/gacha/draw')
+  h.errors.length = 0
+  await h.root.drawGacha(10)
+  assert.equal(h.http.countOf('/gacha/draw'), before, '钱不够就不发')
+  assert.deepEqual(h.errors.at(-1), ['gacha', '还差 7000 金币'])
+
+  h.events.length = 0
+  const poolsBefore = h.http.countOf('/gacha/pools')
+  await h.root.drawGacha(1)
+  const call = h.http.calls.filter(c => c.path === '/gacha/draw').at(-1)
+  assert.equal(h.http.countOf('/gacha/draw'), before + 1)
+  assert.equal(call?.body.poolId, 'gacha_pool_standard')
+  assert.equal(call?.body.count, 1)
+  assert.deepEqual(h.events.filter(e => e.name === 'gacha_draw').map(e => e.params),
+    [{ poolId: 'gacha_pool_standard', count: '1' }])
+  assert.equal(h.http.countOf('/gacha/pools'), poolsBefore + 1, '抽完重拉卡池（已抽次数变了）')
+  assert.equal(h.lastGacha?.resultTexts?.[0], '李劲 · 新武将（保底）',
+    '抽到了什么必须写在屏上，否则玩家不知道那一下换来了什么')
 })
 
 /** 两本标了主/副的技能书 + 一本没标的（同 effectKind，只有 effectTarget 分得开）。 */

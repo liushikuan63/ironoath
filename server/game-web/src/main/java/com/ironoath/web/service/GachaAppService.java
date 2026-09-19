@@ -10,6 +10,7 @@ import com.ironoath.config.ConfigException;
 import com.ironoath.config.cfg.GachaCfg;
 import com.ironoath.config.cfg.HeroCfg;
 import com.ironoath.config.cfg.HeroRarityCfg;
+import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.core.gacha.GachaEngine;
 import com.ironoath.core.gacha.GachaLogStore;
 import com.ironoath.core.gacha.GachaState;
@@ -27,6 +28,8 @@ import com.ironoath.core.reward.RewardService;
 import com.ironoath.core.reward.RewardType;
 import com.ironoath.web.dto.generated.GachaDrawReq;
 import com.ironoath.web.dto.generated.GachaDrawResp;
+import com.ironoath.web.dto.generated.GachaPoolSummary;
+import com.ironoath.web.dto.generated.GachaPoolsResp;
 import com.ironoath.web.dto.generated.GachaProbItem;
 import com.ironoath.web.dto.generated.GachaProbResp;
 import com.ironoath.web.dto.generated.GachaResult;
@@ -108,6 +111,50 @@ public class GachaAppService {
         this.questEvents = questEvents;
     }
 
+    // ---------- 卡池列表（抽卡界面的第一屏） ----------
+
+    /**
+     * 全部可抽卡池，顺序照 gacha 表的行序。
+     *
+     * <p><b>为什么要有这一份</b>：{@code /gacha/probability} 与 {@code /gacha/draw} 都要带 poolId，
+     * 而客户端对「有哪些池」的唯一知情来源是 gacha 表。没有这个读口，池 id 就只能硬编码进客户端 ——
+     * 那既是 B06 §6 禁止的抄表，又让「上一个新池」必须发一次客户端版本。
+     *
+     * <p>这里刻意<b>不</b>替玩家挑一个默认池、也不排序：客户端照这份顺序画页签，
+     * 谁该先看到哪个池是运营在表里定的事，不是代码里的事。
+     *
+     * <p>{@code lifetimeDraws} 取的是**这个号**在该池的累计次数，与 {@code doDraw} 里那句超限拒绝
+     * 同一个数 —— 新手池上限是 1，只下发上限不下发已抽次数，界面就只能让一个抽满过的玩家
+     * 对着一个照常能点的页签，点下去吃一条拒绝。
+     */
+    public GachaPoolsResp pools(String playerId) {
+        List<GachaPoolSummary> out = new ArrayList<>();
+        for (GachaCfg pool : configs.all(GachaCfg.class)) {
+            long drawn = gachaStates.find(playerId, pool.id())
+                    .map(GachaState::lifetimeDraws).orElse(0L);
+            out.add(new GachaPoolSummary(pool.id(), pool.name(), pool.poolType().name(),
+                    pool.costItemId(),
+                    pool.costItemId() == null ? null : itemName(pool.costItemId()),
+                    pool.costCount(), pool.lifetimeLimit(), drawn, pool.costResource()));
+        }
+        return new GachaPoolsResp(out, timeService.serverNow());
+    }
+
+    /**
+     * 道具中文名；查不到退回 id 并打 ERROR。
+     *
+     * <p>与 {@code HeroAppService#itemName} 同一条口径（不空页、也不静默把行 id 印给玩家）：
+     * 限定池那一行要写「1 个 招募宝箱」，客户端手里只有 `item_chest_hero`。
+     */
+    private String itemName(String itemId) {
+        try {
+            return configs.get(ItemCfg.class, itemId).name();
+        } catch (ConfigException e) {
+            LOG.error("【item 表查不到这一行】itemId={} 界面会退回显示这个 id", itemId);
+            return itemId;
+        }
+    }
+
     // ---------- 概率公示（B06 §2：客户端面板读这个，与服务端同一份配置） ----------
 
     /**
@@ -162,6 +209,7 @@ public class GachaAppService {
                 items, tierRates,
                 new PityRule(pool.ssrPity(), pool.srPity(), ssrUpGuarantee),
                 pool.disclosureText(), pool.costItemId(),
+                pool.costItemId() == null ? null : itemName(pool.costItemId()),
                 pool.costCount(), pool.lifetimeLimit(), timeService.serverNow(),
                 pool.costResource());
     }
