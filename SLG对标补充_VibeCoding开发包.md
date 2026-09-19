@@ -241,6 +241,10 @@ nextCostIron, canForge, blockReason, wornByHeroId}`。
 `EQUIP_BACKEND=… node tools/verify-equip-runtime.mjs` 把两条 SKIP 变 PASS（#267 与换装那格欠的）；
 真机 / 微信开发者工具那一跑仍欠（卡 `--ironoath.ops.token`）。
 
+**留给 `heroCompose` 的一条（2026-09-20 现查）**：`HeroPanel.ts:75 fragmentTexts` 有字段、有测试（`HeroPanel.test.ts:215`），
+但 `HeroPanelView.ts` 的 `heroDrafts()` 四行里没有它 ⇒ 玩家看不见。它的数据源是 `HeroListResp.fragments`（**碎片钱包，不是某一行的属性**），
+所以不该塞进武将行，正确落点是碎片合成那一屏：**合成页顺手把它画出来，别删字段**（删了就是把读侧又断一次）。
+
 
 ### V04 · 赛季手册、当前目标与资产去向
 
