@@ -3,6 +3,7 @@ package com.ironoath.web.controller;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -17,6 +18,7 @@ import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.AllianceDonateReq;
 import com.ironoath.web.dto.generated.AllianceDonateResp;
 import com.ironoath.web.dto.generated.AllianceIdReq;
+import com.ironoath.web.dto.generated.AllianceListResp;
 import com.ironoath.web.dto.generated.AllianceMemberReq;
 import com.ironoath.web.dto.generated.AllianceRoleReq;
 import com.ironoath.web.dto.generated.AllianceMember;
@@ -65,6 +67,16 @@ public class AllianceController {
                                             @RequestBody AllianceCreateReq req) {
         requirePlayer(playerId);
         return Result.ok(social.allianceCreate(playerId, req));
+    }
+
+    /**
+     * 可申请联盟的列表（B26 S6）。这是「申请加入」那一颗按钮的唯一数据来源 ——
+     * 在它存在之前，没有联盟的玩家读不到"有哪些联盟可申"，只能自己花金币建一个。
+     */
+    @GetMapping("/list")
+    public Result<AllianceListResp> list(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(social.allianceList(playerId, timeService.serverNow()));
     }
 
     /** 申请入盟。 */

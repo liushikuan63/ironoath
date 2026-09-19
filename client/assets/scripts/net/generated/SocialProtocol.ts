@@ -854,6 +854,42 @@ export interface SocialCreatePolicyResp {
 }
 
 /**
+ * 可申请联盟列表的一行（B26 S6）。**只下发结论字段**：满不满、我有没有申请过、上限是多少都由服务端算 —— 客户端自己拿 memberCount 与 effectiveMemberCap 比会漏掉「队长临时提过的上限」这类只有服务端知道的口径。
+ */
+export interface AllianceDiscoveryView {
+  /** 联盟 id，申请时原样带回 */
+  id: string
+  /** 联盟名（建盟时填的那个） */
+  name: string
+  /** 标签（显示在昵称后那几个字） */
+  tag: string
+  /** 联盟等级 */
+  level: number
+  /** 当前人数 */
+  memberCount: number
+  /** 当前人数上限（含盟主扩容后的值，不是等级表默认值） */
+  memberCap: number
+  /** 是否已满：服务端算的，客户端不再自己比 */
+  full: boolean
+  /** 我已经申请过这个联盟（服务端的应用账本）。没有这一项，界面就只能让玩家再吃一条「申请已提交，等待审核」 */
+  applied: boolean
+}
+
+/**
+ * GET /alliance/list 响应体（B26 S6）：可申请联盟的**前 limit 个**。这一版不做翻页 —— 联盟是玩家花金币建的、没有机器人批量造，总量天然小；但响应必须有界，所以按等级、人数降序取前 N 个，并把 total 一起下发，界面写「共 X 个，只显示前 Y 个」。
+ */
+export interface AllianceListResp {
+  /** 行，按等级降序、同级按人数降序 */
+  alliances: AllianceDiscoveryView[]
+  /** 服务器上共有多少个联盟（不是本页条数） */
+  total: number
+  /** 本次实际生效的条数上限（global.ALLIANCE_LIST_LIMIT） */
+  limit: number
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
  * POST /alliance/tech 请求体（用联盟资金研究科技）。
  */
 export interface AllianceTechReq {

@@ -1431,6 +1431,60 @@ class SocialEndpointTest {
                 .contains("还需等待");
     }
 
+    // ---------- B26 S6：可申请联盟列表（GET /alliance/list） ----------
+
+    @Test
+    @DisplayName("联盟列表把「满不满」与「我申请过没有」一起下发：申请过一次之后再列，那一行就带着已申请")
+    void allianceListCarriesTheAppliedFlag() throws Exception {
+        String leader = newPlayer(10);
+        String allianceId = post200("/alliance/create", leader,
+                new AllianceCreateReq(newRequestId(), "铁誓", "TS"))
+                .get("alliance").get("id").asText();
+        String stranger = newPlayer(1);
+
+        JsonNode before = okData(perform(get("/alliance/list").header(PLAYER_HEADER, stranger)));
+        assertThat(before.get("total").asInt()).isEqualTo(1);
+        assertThat(before.get("limit").asLong())
+                .as("上限来自 global.ALLIANCE_LIST_LIMIT，不写在代码里")
+                .isEqualTo(20L);
+        JsonNode row = before.get("alliances").get(0);
+        assertThat(row.get("id").asText()).isEqualTo(allianceId);
+        assertThat(row.get("name").asText() + row.get("tag").asText()).isEqualTo("铁誓TS");
+        assertThat(row.get("full").asBoolean()).isFalse();
+        assertThat(row.get("applied").asBoolean()).isFalse();
+
+        post200("/alliance/apply", stranger, new AllianceIdReq(newRequestId(), allianceId));
+        JsonNode after = okData(perform(get("/alliance/list").header(PLAYER_HEADER, stranger)));
+        assertThat(after.get("alliances").get(0).get("applied").asBoolean())
+                .as("没有这一项，界面就只能让玩家再吃一条「申请已提交，等待审核」")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("等级相同时人多那个排前面：玩家挑的就是「哪家有人、哪家还有位置」")
+    void allianceListOrdersByMemberCountWhenLevelsMatch() throws Exception {
+        Quartet big = allianceWithThreeMembers();
+        String smallLeader = newPlayer(10);
+        post200("/alliance/create", smallLeader, new AllianceCreateReq(newRequestId(), "铜雀", "QQ"));
+
+        JsonNode list = okData(perform(get("/alliance/list").header(PLAYER_HEADER, newPlayer(1))));
+        assertThat(list.get("total").asInt()).isEqualTo(2);
+        JsonNode first = list.get("alliances").get(0);
+        assertThat(first.get("id").asText())
+                .as("四人那个在前（同等级、人数降序）").isEqualTo(big.allianceId());
+        assertThat(first.get("memberCount").asInt()).isEqualTo(4);
+        assertThat(list.get("alliances").get(1).get("memberCount").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("列表有界：一行都不给的时候 total 为 0，而不是把响应撑成不可控的大小")
+    void allianceListIsEmptyBeforeAnyoneBuildsOne() throws Exception {
+        JsonNode list = okData(perform(get("/alliance/list").header(PLAYER_HEADER, newPlayer(1))));
+        assertThat(list.get("total").asInt()).isZero();
+        assertThat(list.get("alliances")).isEmpty();
+        assertThat(list.get("alliances").size()).isLessThanOrEqualTo(list.get("limit").asInt());
+    }
+
     private String newPlayer(int cityLevel) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "社交测试", 1_700_000_000_000L, ""))

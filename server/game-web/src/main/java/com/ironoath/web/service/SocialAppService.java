@@ -30,6 +30,8 @@ import com.ironoath.web.dto.generated.AllianceDonateReq;
 import com.ironoath.web.dto.generated.AllianceDonateResp;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceMember;
+import com.ironoath.web.dto.generated.AllianceDiscoveryView;
+import com.ironoath.web.dto.generated.AllianceListResp;
 import com.ironoath.web.dto.generated.AllianceMemberReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
 import com.ironoath.web.dto.generated.AllianceRoleReq;
@@ -391,6 +393,32 @@ public class SocialAppService {
             idempotency.release(req.requestId());
             throw e;
         }
+    }
+
+    /**
+     * GET /alliance/list（B26 S6）：可申请联盟的**前 N 个**。
+     *
+     * <p>这一格的存在理由：`/alliance/apply` 早就有，但客户端连"有哪些联盟可申"都读不到 ⇒
+     * 没有联盟的玩家只能自己花 500 金建一个，或者根本不知道联盟玩法能进。
+     *
+     * <p>排序按等级降序、同级人数降序（玩家挑的就是"哪家打得动、哪家还有位置"）。
+     * 条数上限是 global.ALLIANCE_LIST_LIMIT：响应必须有界，这一版不做翻页，
+     * 但把 total 一起下发，界面才写得出「共 X 个，只显示前 Y 个」而不是假装这就是全部。
+     */
+    public AllianceListResp allianceList(String playerId, long now) {
+        int limit = (int) configs.longParam("ALLIANCE_LIST_LIMIT");
+        List<Alliance> all = new ArrayList<>(store.allAlliances());
+        all.sort(java.util.Comparator.comparingInt(Alliance::level).reversed()
+                .thenComparing(java.util.Comparator.comparingInt(Alliance::memberCount).reversed()));
+        List<AllianceDiscoveryView> rows = new ArrayList<>();
+        for (Alliance alliance : all.subList(0, Math.min(limit, all.size()))) {
+            rows.add(new AllianceDiscoveryView(alliance.id(), alliance.name(), alliance.tag(),
+                    alliance.level(), alliance.memberCount(), alliance.effectiveMemberCap(),
+                    // 满不满、申请过没有都由服务端算：客户端自己比会漏掉"队长刚扩过容"这种只有这里有账的口径
+                    alliance.memberCount() >= alliance.effectiveMemberCap(),
+                    store.hasApplication(alliance.id(), playerId)));
+        }
+        return new AllianceListResp(rows, all.size(), limit, now);
     }
 
     /** 申请入盟。 */
