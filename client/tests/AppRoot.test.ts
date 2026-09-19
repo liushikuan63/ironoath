@@ -33,6 +33,7 @@ import type { TechPanelView } from '../assets/scripts/game/tech/TechPanel'
 import type { EquipPanelView } from '../assets/scripts/game/equip/EquipPanel'
 import type { ExpPickView } from '../assets/scripts/game/hero/ExpPick'
 import type { AwakenPickView } from '../assets/scripts/game/hero/AwakenPick'
+import type { HeroComposeView } from '../assets/scripts/game/hero/HeroCompose'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -92,6 +93,7 @@ const ROUTES: Record<string, unknown> = {
   '/hero/levelUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/awaken': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/skillUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
+  '/hero/compose': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
@@ -526,6 +528,8 @@ interface Harness {
   readonly lastExpPick: { readonly view: ExpPickView, readonly heroName: string } | null
   readonly lastAwakenPick: { readonly view: AwakenPickView, readonly heroName: string } | null
   readonly lastSkillPick: { readonly view: SkillPickView, readonly heroName: string } | null
+  /** 最近一次推给碎片合成弹层的视图与那几行钱包。 */
+  readonly lastComposePick: { readonly view: HeroComposeView, readonly purse: readonly string[] } | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -620,6 +624,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastExpPick: { view: ExpPickView, heroName: string } | null = null
   let lastAwakenPick: { view: AwakenPickView, heroName: string } | null = null
   let lastSkillPick: { view: SkillPickView, heroName: string } | null = null
+  let lastComposePick: { view: HeroComposeView, purse: readonly string[] } | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -684,6 +689,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     skillPick: (view, heroName) => {
       lastSkillPick = { view, heroName }
+    },
+    composePick: (view, purse) => {
+      lastComposePick = { view, purse }
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -770,6 +778,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastSkillPick() {
       return lastSkillPick
+    },
+    get lastComposePick() {
+      return lastComposePick
     },
     get lastCompose() {
       return lastCompose
@@ -2194,6 +2205,81 @@ test('觉醒弹层：已达上限时两块石都灰、确认是空操作（不�
   const before = h.http.countOf('/hero/awaken')
   await h.root.confirmAwakenPick()
   assert.equal(h.http.countOf('/hero/awaken'), before)
+})
+
+/** 一档还差 38 片、一档刚好凑够（两名候选），外加一名已被排除的假设：候选由服务端给，这里不判拥有与否。 */
+function composeHeroList(): Record<string, unknown> {
+  return {
+    heroes: [], lineups: [], troopCap: 360, troopsInUse: 0, serverNow: SERVER_NOW,
+    fragments: [
+      {
+        itemId: 'item_mat_hero_frag_sr', name: 'SR 武将碎片', count: 12, composeFragment: 50,
+        candidates: [{ heroId: 'hero_sr_01', name: '程远' }],
+      },
+      {
+        itemId: 'item_mat_hero_frag_ssr', name: 'SSR 武将碎片', count: 80, composeFragment: 80,
+        candidates: [{ heroId: 'hero_ssr_01', name: '李劲' }, { heroId: 'hero_ssr_02', name: '周柯' }],
+      },
+    ],
+  }
+}
+
+test('合成弹层：三行都列出来但只点亮凑够的那两档，确认发一条 /hero/compose 并回读两边', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', composeHeroList())
+  await h.root.refresh('hero')
+
+  await h.root.openComposePick()
+  assert.deepEqual(h.lastComposePick?.view.rows.map(r => [r.heroId, r.usable]),
+    [['hero_ssr_01', true], ['hero_ssr_02', true], ['hero_sr_01', false]],
+    '凑够的两名浮到前面：一屏画不下时，被截断的只能是灰行，不能是能点的那一名')
+  assert.equal(h.lastComposePick?.view.rows[2]?.detailText, 'SR 武将碎片 需 50 片 · 还差 38 片',
+    '差几片由服务端下发的门槛与余额相减，玩家据此决定还刷不刷')
+  assert.deepEqual(h.lastComposePick?.purse, ['SR 武将碎片 ×12', 'SSR 武将碎片 ×80'],
+    '钱包那几行取自 HeroPanel.fragmentTexts —— #281 欠的那个消费者就是这里（弹层不另起一份格式化）')
+  assert.equal(h.lastComposePick?.view.canSend, false, '还没挑人不给发')
+
+  h.root.pickComposeHero('hero_sr_01')
+  assert.equal(h.lastComposePick?.view.selectedHeroId, null,
+    '灰掉的行点了也不算选中：发出去只是白拿一条拒绝')
+  h.root.pickComposeHero('hero_ssr_01')
+  assert.equal(h.lastComposePick?.view.canSend, true)
+
+  h.events.length = 0
+  const heroReads = h.http.countOf('/hero/list')
+  const bagReads = h.http.countOf('/bag/list')
+  await h.root.confirmComposePick()
+  const call = h.http.calls.filter(c => c.path === '/hero/compose').at(-1)
+  assert.equal(call?.body.heroId, 'hero_ssr_01', '只带选中的那一名')
+  assert.equal(h.http.countOf('/hero/list'), heroReads + 1, '合成完重读武将（名册多了一个人）')
+  assert.equal(h.http.countOf('/bag/list'), bagReads + 1, '碎片从背包扣，钱包要重读')
+  assert.deepEqual(h.events.filter(e => e.name === 'hero_compose').map(e => e.params),
+    [{ heroId: 'hero_ssr_01' }])
+
+  // 确认即关弹层：再点一次不该发出第二条（同一次意图记两次会把漏斗做歪）
+  const after = h.http.countOf('/hero/compose')
+  await h.root.confirmComposePick()
+  assert.equal(h.http.countOf('/hero/compose'), after)
+})
+
+test('合成弹层：一档都没凑够时确认是空操作（不发注定被拒的请求）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  const resp = composeHeroList()
+  resp.fragments = (resp.fragments as Record<string, unknown>[]).map(f => ({ ...f, count: 0 }))
+  h.http.overrides.set('/hero/list', resp)
+  await h.root.refresh('hero')
+
+  await h.root.openComposePick()
+  assert.equal(h.lastComposePick?.view.rows.every(r => !r.usable), true)
+  assert.equal(h.lastComposePick?.view.sendText, '先选一名武将')
+  h.root.pickComposeHero('hero_ssr_01')
+
+  const before = h.http.countOf('/hero/compose')
+  await h.root.confirmComposePick()
+  assert.equal(h.http.countOf('/hero/compose'), before,
+    '碎片为 0 还发请求，等于把玩家送去挨一条拒绝')
 })
 
 /** 两本标了主/副的技能书 + 一本没标的（同 effectKind，只有 effectTarget 分得开）。 */

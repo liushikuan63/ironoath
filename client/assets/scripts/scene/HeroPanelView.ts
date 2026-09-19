@@ -84,6 +84,15 @@ export class HeroPanelView extends Component {
    */
   onLineupEdit: ((presetIndex: number) => void) | null = null
 
+  /**
+   * 点页眉那颗「合成」—— 打开碎片合成弹层。
+   *
+   * <p><b>为什么它在页眉而不在武将行上</b>：合成得到的是玩家**还没有**的那个武将，
+   * 而行上每一个都是已有的（服务端对已拥有直接拒绝）。行上的五个按钮答的是
+   * "这名武将怎么继续养"，这一颗答的是"我还能得到谁"。
+   */
+  onCompose: (() => void) | null = null
+
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
@@ -111,6 +120,7 @@ export class HeroPanelView extends Component {
     this.tabButtons.clear()
     this.onHeroAction = null
     this.onLineupEdit = null
+    this.onCompose = null
   }
 
   /** 装载武将列表（GET /hero/list）。 */
@@ -175,6 +185,26 @@ export class HeroPanelView extends Component {
       const tab = item.tab
       node.on('touch-start', (_event: EventTouch) => this.switchTab(tab), this)
     }
+
+    // 页眉右侧那颗「合成」：V03-d 第六条线（碎片换一名未拥有的武将）的入口。
+    // 放页眉而不是行上，理由见 {@link onCompose}。
+    const compose = new Node('ComposeEntry')
+    compose.layer = this.node.layer
+    this.node.addChild(compose)
+    compose.setPosition(new Vec3(PANEL_WIDTH / 2 - 55, top - 74, 0))
+    compose.addComponent(UITransform).setContentSize(new Size(94, 34))
+    if (!applyCommandButton(compose, 'normal', 94, 34)) {
+      const graphics = compose.addComponent(Graphics)
+      graphics.fillColor = COLOR_PANEL
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1
+      graphics.roundRect(-47, -17, 94, 34, 5)
+      graphics.fill()
+      graphics.stroke()
+    }
+    const composeLabel = this.addLabel(compose, 'Caption', 0, 0, COLOR_TEXT, 16)
+    composeLabel.string = '碎片合成'
+    compose.on('touch-start', (_event: EventTouch) => this.onCompose?.(), this)
   }
 
   private createRow(): Node {
@@ -316,8 +346,10 @@ export class HeroPanelView extends Component {
       label.string = draft.lines[line] ?? ''
       label.color = line === 0 ? draft.titleColor : COLOR_TEXT_DIM
     }
-    // 前四个子节点是文本行，后面是养成按钮。编队页不给养成按钮（改阵容走整行点击）
-    for (const button of node.children.slice(4, 8)) {
+    // 前四个子节点是文本行，后面是养成按钮。编队页不给养成按钮（改阵容走整行点击）。
+    // 按名字挑而不是 slice(4, 8)：多一个按钮就漏一个 —— 「技能」那颗在编队页上
+    // 一直亮着（点它没反应，因为 rowHeroes 里没有这一行），加「装备库」时没人发现。
+    for (const button of node.children.filter((child) => child.name.endsWith('Button'))) {
       button.active = draft.heroId !== null
     }
     const icon = node.getChildByName('Icon')

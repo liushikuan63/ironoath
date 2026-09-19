@@ -81,7 +81,14 @@ function lineup(overrides: Partial<LineupView> = {}): LineupView {
 }
 
 function heroResp(heroes: HeroView[], lineups: LineupView[] = []): HeroListResp {
-  return { heroes, lineups, fragments: [{ itemId: 'item_mat_hero_frag_h1', name: '胡车儿碎片', count: 12 }], troopCap: 2400, troopsInUse: 800, serverNow: 0 }
+  return {
+    heroes, lineups, troopCap: 2400, troopsInUse: 800, serverNow: 0,
+    fragments: [{
+      itemId: 'item_mat_hero_frag_h1', name: '胡车儿碎片', count: 12,
+      // 门槛与候选随行下发（V03-d 第六条线）：本用例只验钱包那一行，候选给一档就够
+      composeFragment: 50, candidates: [{ heroId: 'hero_h2', name: '沈砚' }],
+    }],
+  }
 }
 
 // ---------- 五条养成线 ----------

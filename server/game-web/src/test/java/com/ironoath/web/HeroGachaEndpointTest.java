@@ -17,8 +17,10 @@ import com.ironoath.core.hero.HeroRepository;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.web.dto.generated.AttrTriple;
 import com.ironoath.web.dto.generated.BonusZone;
+import com.ironoath.web.dto.generated.ComposeCandidate;
 import com.ironoath.web.dto.generated.EquipInstanceView;
 import com.ironoath.web.dto.generated.EquipSlot;
+import com.ironoath.web.dto.generated.FragmentView;
 import com.ironoath.web.dto.generated.GachaDrawReq;
 import com.ironoath.web.dto.generated.GachaDrawResp;
 import com.ironoath.web.dto.generated.GachaProbItem;
@@ -397,6 +399,51 @@ class HeroGachaEndpointTest {
                 .hasMessageContaining("已拥有");
         assertThat(countOf(playerId, "item_mat_hero_frag_sr"))
                 .as("被拒绝时碎片不能被扣").isEqualTo(need);
+    }
+
+    @Test
+    @DisplayName("碎片行带合成门槛与「还没拥有」的候选：客户端不抄 hero / hero_rarity 表也能说出还差几片")
+    void fragmentRowsCarryComposeThresholdAndUnownedCandidates() {
+        String playerId = newPlayerWithHero("hero_sr_01");
+        List<FragmentView> rows = heroAppService.list(playerId).fragments();
+
+        // 每一档的门槛都照 hero_rarity 那一列，且候选都落在自己那一档里
+        for (FragmentView f : rows) {
+            String rarity = configs.get(ItemCfg.class, f.itemId()).rarity().name();
+            assertThat(f.composeFragment()).as("%s 的门槛取自 hero_rarity 的 %s 行", f.itemId(), rarity)
+                    .isEqualTo(configs.get(com.ironoath.config.cfg.HeroRarityCfg.class, rarity)
+                            .composeFragment());
+            assertThat(f.candidates()).as("%s 的候选必须是同一档的武将", f.itemId())
+                    .allSatisfy(c -> assertThat(configs.get(HeroCfg.class, c.heroId()).rarity().name())
+                            .isEqualTo(rarity));
+        }
+
+        FragmentView sr = rows.stream()
+                .filter(f -> f.itemId().equals("item_mat_hero_frag_sr"))
+                .findFirst().orElseThrow();
+        // 已拥有的那名不进候选：/hero/compose 对已拥有直接拒绝，列出来就是让玩家点一行注定失败的武将
+        assertThat(sr.candidates()).extracting(ComposeCandidate::heroId).doesNotContain("hero_sr_01");
+        assertThat(sr.candidates()).extracting(ComposeCandidate::heroId)
+                .as("候选＝hero 表这一档的全部减去已拥有的，顺序照表")
+                .containsExactlyElementsOf(configs.all(HeroCfg.class).stream()
+                        .filter(h -> h.rarity() == HeroCfg.Rarity.SR && !h.id().equals("hero_sr_01"))
+                        .map(HeroCfg::id).toList());
+        for (ComposeCandidate c : sr.candidates()) {
+            assertThat(c.name()).as("候选行要带玩家读得出的中文名（#255/#268/#278/#281 同族）")
+                    .doesNotStartWith("hero_").isNotEqualTo(c.heroId());
+        }
+
+        // 真的合成一名之后：那一行少一个候选，而扣掉的碎片正好等于随行下发的那个门槛
+        long before = countOf(playerId, "item_mat_hero_frag_sr");
+        giveItems(playerId, "item_mat_hero_frag_sr", sr.composeFragment());
+        String composed = sr.candidates().get(0).heroId();
+        heroAppService.compose(playerId, new HeroIdReq(newRequestId(), composed));
+        FragmentView after = heroAppService.list(playerId).fragments().stream()
+                .filter(f -> f.itemId().equals("item_mat_hero_frag_sr")).findFirst().orElseThrow();
+        assertThat(after.candidates()).extracting(ComposeCandidate::heroId).doesNotContain(composed);
+        assertThat(countOf(playerId, "item_mat_hero_frag_sr"))
+                .as("下发给客户端的门槛必须等于实扣的数，否则「还差几片」是句假话")
+                .isEqualTo(before);
     }
 
     @Test

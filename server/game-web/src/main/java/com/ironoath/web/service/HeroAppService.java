@@ -27,6 +27,7 @@ import com.ironoath.core.reward.RewardPorts;
 import com.ironoath.web.dto.generated.AttrTriple;
 import com.ironoath.web.dto.generated.BonusBreak;
 import com.ironoath.web.dto.generated.BonusZone;
+import com.ironoath.web.dto.generated.ComposeCandidate;
 import com.ironoath.web.dto.generated.FragmentView;
 import com.ironoath.web.dto.generated.HeroBonus;
 import com.ironoath.web.dto.generated.HeroEquipReq;
@@ -118,7 +119,7 @@ public class HeroAppService {
         for (Lineup lineup : roster.lineups(rules)) {
             lineups.add(toLineupView(equips, lineup, roster));
         }
-        return new HeroListResp(views, lineups, fragmentBalancesOf(playerId),
+        return new HeroListResp(views, lineups, fragmentBalancesOf(playerId, roster),
                 stats.troopCap(equips, roster, 0), 0L, now);
     }
 
@@ -651,9 +652,18 @@ public class HeroAppService {
      * <p><b>名字随行下发</b>（#255 建筑名、#268 资源名、#278 技能名之后的同族第四处）：
      * 这一行**包含余数为 0 的档**，而背包只列余数大于 0 的行 ——
      * 让客户端去 join 背包的结果是"越没有越看不见名字"，正好退回印行 id。
+     *
+     * <p><b>门槛与候选也随行下发</b>（V03-d 第六条线：碎片合成武将）：玩家要说的是"还差 38 片就能合成典韦"，
+     * 而这句话要的三个数（余额、门槛、可合成名单）客户端一个都不该自己算 ——
+     * 门槛在 hero_rarity 表里，名单在 hero 表里，未拥有与否在存档里。
+     * 客户端抄表的后果是表一改就见人说"够了"，然后被服务端拒绝。
+     *
+     * @param roster 该玩家当前的武将名册，用于排除已拥有的（`compose` 对已拥有直接拒绝，
+     *               留着只会让玩家点一行注定失败的武将）
      */
-    public List<FragmentView> fragmentBalancesOf(String playerId) {
+    public List<FragmentView> fragmentBalancesOf(String playerId, HeroRoster roster) {
         List<FragmentView> out = new ArrayList<>();
+        List<HeroCfg> allHeroes = configs.all(HeroCfg.class);
         for (HeroCfg.Rarity rarity : HeroCfg.Rarity.values()) {
             String itemId;
             try {
@@ -661,7 +671,14 @@ public class HeroAppService {
             } catch (ConfigException e) {
                 continue;
             }
-            out.add(new FragmentView(itemId, itemName(itemId), bagPort.countOf(playerId, itemId)));
+            List<ComposeCandidate> candidates = new ArrayList<>();
+            for (HeroCfg hero : allHeroes) {
+                if (hero.rarity() == rarity && !roster.owns(hero.id())) {
+                    candidates.add(new ComposeCandidate(hero.id(), hero.name()));
+                }
+            }
+            out.add(new FragmentView(itemId, itemName(itemId), bagPort.countOf(playerId, itemId),
+                    rarityEconomy(rarity).composeFragment(), candidates));
         }
         return out;
     }

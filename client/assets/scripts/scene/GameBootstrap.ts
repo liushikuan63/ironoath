@@ -48,6 +48,7 @@ import { EquipPanelView } from './EquipPanelView'
 import { ExpPickOverlay } from './ExpPickOverlay'
 import { AwakenPickOverlay } from './AwakenPickOverlay'
 import { SkillPickOverlay } from './SkillPickOverlay'
+import { ComposePickOverlay } from './ComposePickOverlay'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -982,6 +983,23 @@ export class GameBootstrap extends Component {
   }
 
   /**
+   * 碎片合成弹层（V03-d 第六条线）。与觉醒/技能弹层同样挂在二级弹层，不占导航项 ——
+   * 但它**不依附于任何一行武将**（合的是还没拥有的那个），所以入口在武将页页眉。
+   */
+  private mountComposePickOverlay(): void {
+    if (this.node.getChildByName('composePick') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('composePick')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(ComposePickOverlay)
+    node.active = false
+  }
+
+  /**
    * 装备实例页（V03-b-S1）。与研究页同一做法：从**武将页**点出来的二级页，不占导航项。
    */
   private mountEquipPanel(): void {
@@ -1005,6 +1023,7 @@ export class GameBootstrap extends Component {
     this.mountExpPickOverlay()
     this.mountAwakenPickOverlay()
     this.mountSkillPickOverlay()
+    this.mountComposePickOverlay()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -1027,6 +1046,7 @@ export class GameBootstrap extends Component {
     const expPick = this.panel(ExpPickOverlay, 'expPick')
     const awakenPick = this.panel(AwakenPickOverlay, 'awakenPick')
     const skillPick = this.panel(SkillPickOverlay, 'skillPick')
+    const composePick = this.panel(ComposePickOverlay, 'composePick')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -1078,6 +1098,13 @@ export class GameBootstrap extends Component {
       skillPick.onPick = itemId => this.root?.pickSkillItem(itemId)
       skillPick.onConfirm = () => { void this.root?.confirmSkillPick() }
       skillPick.onCancel = () => this.root?.cancelSkillPick()
+    }
+    if (composePick !== null) {
+      // 打开由编排层发起（`AppRoot.openComposePick`，入口在武将页页眉）；这里只把"画"与"喊一声"接上
+      out.composePick = (viewData, purse) => composePick.render(viewData, purse)
+      composePick.onPick = heroId => this.root?.pickComposeHero(heroId)
+      composePick.onConfirm = () => { void this.root?.confirmComposePick() }
+      composePick.onCancel = () => this.root?.cancelComposePick()
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
@@ -1132,6 +1159,8 @@ export class GameBootstrap extends Component {
         // 这里兜的是"动作有名字但没接上"，如实说明，不做"点了没反应"的静默失败。
         console.warn(`[hero] "${action}" 需要先选道具/技能槽（选择弹层还没做），暂时不可用`)
       }
+      // 页眉那颗「碎片合成」：合的是还没拥有的武将，所以它不带 heroId（见 HeroPanelView.onCompose）
+      hero.onCompose = () => { void this.root?.openComposePick() }
     }
     if (bag !== null) {
       out.bag = resp => bag.attachBag(resp)

@@ -62,6 +62,9 @@ import { buildAwakenPick } from '../hero/AwakenPick'
 import type { AwakenPickView, AwakenStage } from '../hero/AwakenPick'
 import { buildSkillPick } from '../hero/SkillPick'
 import type { SkillPickView, SkillStage } from '../hero/SkillPick'
+import { buildComposeView } from '../hero/HeroCompose'
+import type { HeroComposeView } from '../hero/HeroCompose'
+import { buildHeroPanel } from '../hero/HeroPanel'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -241,6 +244,11 @@ export interface PanelTargets {
    */
   skillPick?(view: SkillPickView, heroName: string): void
   /**
+   * 碎片合成弹层（V03-d 第六条线）。第二个参数是**碎片钱包**那几行（各档持有多少），
+   * 由 `HeroPanel.fragmentTexts` 给出 —— 同一个格式化函数只有一份，弹层不重抄一遍（#281 那笔账）。
+   */
+  composePick?(view: HeroComposeView, purse: readonly string[]): void
+  /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
@@ -406,6 +414,8 @@ export class AppRoot {
   private awakenPick: { heroId: string, heroName: string, stage: AwakenStage, itemId: string | null } | null = null
   /** 技能弹层的状态：给谁升、选了哪本书（槽位由那本书决定）。null = 没开着 */
   private skillPick: { heroId: string, heroName: string, stage: SkillStage, itemId: string | null } | null = null
+  /** 合成弹层的状态：选了哪个**还没拥有**的武将。null = 没开着 */
+  private composePick: { heroId: string | null } | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -1854,6 +1864,72 @@ export class AppRoot {
   /** 取消：关掉弹层，什么都不发。 */
   cancelSkillPick(): void {
     this.skillPick = null
+  }
+
+  // ---------- 武将碎片合成（V03-d 第六条线：合的是"还没有的武将"，所以入口在页眉、不在行上） ----------
+
+  /**
+   * 打开合成弹层。门槛、余额、候选名单全取手里那份 `/hero/list` —— 不额外发请求
+   * （入口按钮就在武将页页眉，heroResp 必然已在）。
+   *
+   * <p><b>为什么这里没有 heroId 参数</b>：合成得到的是玩家**没有**的那个武将，而武将页每一行
+   * 都是已有的 —— 从行进出的话第一下就撞上服务端那句"已拥有不能重复合成"。
+   */
+  async openComposePick(): Promise<void> {
+    if (this.heroResp === null) {
+      await this.refresh('hero')
+    }
+    if (this.heroResp === null) {
+      // 读不到武将列表就弹一个空弹层，比不弹更糟：玩家会以为合成线坏了
+      return
+    }
+    this.composePick = { heroId: null }
+    this.deliverComposePick()
+  }
+
+  /** 选哪个武将。**这里不判够不够**：判据在纯逻辑里，灰掉的行既点不动也发不出去。 */
+  pickComposeHero(heroId: string): void {
+    if (this.composePick === null) {
+      return
+    }
+    this.composePick = { heroId }
+    this.deliverComposePick()
+  }
+
+  /**
+   * 确认合成：只带**选中的那个武将**发上去。碎片不够的那一行压根发不出去 ——
+   * 服务端按 hero_rarity 扣碎片、扣不动就拒绝，客户端不该把一次误点变成一条拒绝提示。
+   *
+   * <p>成功后 `hero` 与 `bag` 都要重读：新武将进名册、碎片从背包扣，一边一样。
+   */
+  confirmComposePick(): Promise<void> {
+    const state = this.composePick
+    if (state === null) {
+      return Promise.resolve()
+    }
+    const view = buildComposeView(this.heroResp?.fragments ?? [], state.heroId)
+    const heroId = view.selectedHeroId
+    if (heroId === null) {
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.heroCompose, { heroId: trackParam(heroId) })
+    this.composePick = null
+    return this.write('hero', this.api.heroCompose({ heroId }), ['hero', 'bag'])
+  }
+
+  /** 组装并下发弹层视图（够不够、键上写什么，全在纯逻辑里判）。 */
+  private deliverComposePick(): void {
+    const resp = this.heroResp
+    if (this.composePick === null || resp === null) {
+      return
+    }
+    this.targets.composePick?.(buildComposeView(resp.fragments, this.composePick.heroId),
+      buildHeroPanel(resp).fragmentTexts)
+  }
+
+  /** 取消：关掉弹层，什么都不发。 */
+  cancelComposePick(): void {
+    this.composePick = null
   }
 
   /**

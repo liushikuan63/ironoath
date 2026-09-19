@@ -79,6 +79,11 @@ const SKIP = new Set([
   "openSkillPick",
   "pickSkillItem",
   "cancelSkillPick",
+  // 合成弹层同一条口径：意图是"花掉这一档碎片换一名武将"（confirmComposePick 里打 hero_compose）。
+  // 开弹层只是去看还有谁可合成，换选中是同一意图的中间态，取消=什么都没发生
+  "openComposePick",
+  "pickComposeHero",
+  "cancelComposePick",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")
