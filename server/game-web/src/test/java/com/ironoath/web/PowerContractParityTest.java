@@ -41,6 +41,35 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PowerContractParityTest {
 
     @Autowired private ConfigRegistry configs;
+    @Autowired private com.ironoath.web.service.PowerService power;
+
+    /**
+     * 战力区间两头对账：表那一行声明什么、global 里那两个参数是多少、装配出来的 Rules 是多少。
+     *
+     * <p><b>为什么值得单独一条</b>：把表的引用改指到别的参数之后重跑，本仓库原有的测试
+     * <b>一条都不会红</b>（2026-09-19 实测，见台账「战力区间接表」那一格）—— 也就是说
+     * "改表能不能生效"这件事此前只有 CI 的 grep 判据在守，没有任何行为断言。
+     * 这条用例补的就是那一半：表侧一改指向就红（前两条断言），代码侧若绕过表写死字面名，
+     * 由 check-no-handout 红（那条测不到，因为两侧数值恰好相同 —— 数值相同的情况下
+     * 任何值断言都分不出"跟着表"还是"跟着字面量"，所以两头各守一个方向）。
+     */
+    @Test
+    @DisplayName("战力区间两头对账：表声明哪两个参数，装配出来的区间就必须是哪两个数")
+    void bandRangeComesFromTheMatchRuleRow() {
+        MatchRuleCfg band = configs.all(MatchRuleCfg.class).stream()
+                .filter(row -> "mr_scenario_normal_attack".equals(row.id()))
+                .findFirst().orElseThrow();
+
+        assertThat(band.powerMinParam())
+                .as("表的区间行不再指向这个参数，而文档与用例都还说区间来自表 —— 两边必须同时改")
+                .isEqualTo("PVP_POWER_MIN_RATIO");
+        assertThat(band.powerMaxParam()).isEqualTo("PVP_POWER_MAX_RATIO");
+
+        com.ironoath.core.power.PowerBandGuard.Rules rules = power.bandRules();
+        assertThat(rules.lowerRatioFixed()).isEqualTo(configs.fixedParam("PVP_POWER_MIN_RATIO"));
+        assertThat(rules.upperRatioFixed()).isEqualTo(configs.fixedParam("PVP_POWER_MAX_RATIO"));
+        assertThat(rules.rallyBandSqrt()).as("集结按 √N 放宽，不是可配置项").isTrue();
+    }
 
     @Test
     @DisplayName("协议 TyrannyLevel 与 game-core 的 Tyranny.Level 完全一致（含顺序）")

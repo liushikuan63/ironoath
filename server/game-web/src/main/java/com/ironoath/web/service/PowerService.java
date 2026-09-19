@@ -3,6 +3,7 @@ package com.ironoath.web.service;
 import com.ironoath.common.num.FixedPoint;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.BuildingCfg;
+import com.ironoath.config.cfg.MatchRuleCfg;
 import com.ironoath.config.cfg.UnitCfg;
 import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.city.BuildingInstance;
@@ -27,9 +28,11 @@ import java.util.Map;
  * 依赖：game-config（读表）、game-core（纯计算）。
  *
  * <p><b>圈层规则只能在这一处装配</b>（B08 禁止项：不要新增绕过统一中间件校验的代码路径）。
- * PVP_POWER_MIN_RATIO / PVP_POWER_MAX_RATIO 这两个参数只允许被本类读取，
- * CI 的 check-no-handout.sh 会扫主源码里对它们的直接读取并提示复核 ——
- * 因为任何一处「自己算区间」都意味着绕过了 √N 破圈与峰值记忆。
+ * 战力区间的两个倍率<b>不再由本类按字面参数名读</b>：本类只认 {@code match_rule} 里
+ * {@value #BAND_SCENARIO_ROW} 那一行声明的引用（B08 §146 要求系数从表里读）。
+ * CI 的 check-no-handout.sh 两头都盯：<b>写死字面名算违规</b>（那等于绕过表自己算区间），
+ * <b>表里那一行没声明这两个引用也算违规</b>（那说明"表是配置源"这句注释已经过期）。
+ * 任何一处「自己算区间」都意味着绕过了 √N 破圈与峰值记忆。
  *
  * <p><b>展示战力与匹配战力分开算</b>，理由见 {@link PowerCalculator} 的类注释：
  * 用展示战力做圈层校验会立刻被「卸兵压分」套利。
@@ -48,15 +51,46 @@ public class PowerService {
         this.equipLedgers = equipLedgers;
     }
 
-    /** 圈层规则（区间 [0.5x, 2.0x]，集结按 √N 放宽）。 */
+    /**
+     * 圈层规则（区间 [0.5x, 2.0x]，集结按 √N 放宽）。
+     *
+     * <p><b>区间读哪两个参数由 {@code match_rule} 那一行说了算，不由本类写死</b>（B08 §146
+     * 「系数全部从 match_rule 读取，不硬编码」）。此前这里是 `fixedParam("PVP_POWER_MIN_RATIO")`，
+     * 而表的 `mr_scenario_normal_attack` 行同时声明着同一件事 —— 两处主张、一处生效，
+     * 症状是运营改表里那两格毫无反应、改 global 才动，而没有任何一行日志说为什么。
+     * 现在表是归属的声明处，global 仍然是数值的家（表里只有参数 id，不存数值，
+     * 所以这次接线没有造出第二个家）。
+     */
     public PowerBandGuard.Rules bandRules() {
+        return bandRulesOf(configs.get(MatchRuleCfg.class, BAND_SCENARIO_ROW), configs::fixedParam);
+    }
+
+    /** 战力区间那一行的 id。改名属于契约变更：这一行找不到时必须响亮失败，不许退回写死的名字。 */
+    static final String BAND_SCENARIO_ROW = "mr_scenario_normal_attack";
+
+    /**
+     * {@link #bandRules()} 的纯函数版本，<b>单独存在只为了被测到</b>：
+     * 若把解析内联在 {@code bandRules()} 里，能写的断言只有"结果等于 global 里那两个数"——
+     * 而那行断言在代码仍然写死参数名时同样成立（值本来就是从同一处读来的），
+     * 也就是说它会**给被替换掉的旧写法作证**。喂一行假的引用进这个函数，
+     * 才能当场区分"跟着表走"与"跟着字面量走"。
+     */
+    static PowerBandGuard.Rules bandRulesOf(MatchRuleCfg row, java.util.function.ToLongFunction<String> fixedParam) {
         return new PowerBandGuard.Rules(
-                configs.fixedParam("PVP_POWER_MIN_RATIO"),
-                configs.fixedParam("PVP_POWER_MAX_RATIO"),
+                fixedParam.applyAsLong(requireRef(row, row.powerMinParam(), "powerMinParam")),
+                fixedParam.applyAsLong(requireRef(row, row.powerMaxParam(), "powerMaxParam")),
                 // B08 禁止项：集结门槛不得用 N 而要用 √N，所以这里恒为 true。
                 // 不读配置是刻意的 —— 把它做成可配置就等于留了一个「一键改成线性放宽」的开关，
                 // 而那个开关一旦被打开，高战集结会无限膨胀，且没有任何测试会变红
                 true);
+    }
+
+    private static String requireRef(MatchRuleCfg row, String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("match_rule 的 " + row.id() + " 行没写 " + field
+                    + "：战力区间从此无从解析（宁可起不来，也不要悄悄退回某个默认倍率）");
+        }
+        return value;
     }
 
     /** 峰值记忆规则。 */

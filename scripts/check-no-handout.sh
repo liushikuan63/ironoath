@@ -91,7 +91,7 @@ elif [ "$total_ratio_reads" -ne "$allowed_ratio_reads" ]; then
   echo "$raw_ratio_uses" >&2
 fi
 
-# 战力区间的归属：B08 §146 说「系数全部从 match_rule 读取，不硬编码」，而 #259 起
+# 战力区间的归属：B08 §146 说「系数全部从 match_rule 读取，不硬编码」，而 #262 起
 # PowerService 只认 mr_scenario_normal_attack 那一行声明的两个引用。
 # 原来那段"只允许装配处读这两个字面参数"的判定在接线之后会**恒真**（全仓一个字面读取都没有），
 # 所以这里换成一对能失败的双向判据：代码不许再写死名字，表也不许不再声明这两个引用。

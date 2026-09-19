@@ -26,9 +26,9 @@ const UNWIRED = {
   // ActivityCfg 曾挂在这里（#60「活动与七日登录只有表，没有推进与领取路径」）：
   // 2026-09-16 的 B17（ActivityRulesAssembler + ActivityEventListener + /activity/*）让它真的被读了，
   // 例外条目随之删除 —— 与下面 BotArchetypeCfg 那条同一条规矩，别照着 #60 加回来。
-  QuestCfg: '零装配：#60（任务只有表与 core 领域模型，没有装配与端点，B12 §1）',
-  MatchRuleCfg: '零装配：#60（匹配规则表没读，圈层与集结校验走 global 参数那条路，B08）',
-  // 与上面几条同一条规矩：接上读它的人之后必须删除，别把例外当借口。
+  // QuestCfg 与 MatchRuleCfg 曾挂在这里：#87 的 QuestRulesAssembler / QuestAppService 让任务表真的被读了；
+  // MatchRuleCfg 由 #262 接上（PowerService 的战力区间改成只认 mr_scenario_normal_attack 那一行的引用）。
+  // 与下面 BotArchetypeCfg 那条同一条规矩：接上读它的人之后必须删除，别把例外当借口。
   // S3-i（#169）只落了表、发货内容与价格参数；读它的是 S3-ii 的弹窗判定
   // NationTechCfg 曾挂在这里（B20 块③ 的 S1 只落了表与契约）：S2 的 Nation.techLevels 账本 +
   // researchTech 走 sink:NATIONAL_TECH 核销 + /nation/tech 两个端点 + NationTechBonuses 那一个读取口
