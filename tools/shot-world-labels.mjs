@@ -35,6 +35,9 @@ const ENUM_NAMES = RESOURCE_ROWS.map((row) => row.id)
 
 const OUT = process.env.WORLD_SHOT_OUT
   ?? path.resolve(process.cwd(), 'client/build/art-verify/world-label-check.png')
+/** 放大档那张：默认档不画资源标签，正向文案判据与标签压叠都要看这一张。 */
+const OUT_ZOOM = process.env.WORLD_SHOT_ZOOM_OUT
+  ?? path.resolve(process.cwd(), 'client/build/art-verify/world-label-check-zoom1.png')
 const PORT = Number(process.env.WORLD_SHOT_PORT ?? 8197)
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
@@ -202,6 +205,70 @@ if (cover < 0.98) {
 }
 
 /**
+ * 用场景组件**本来就公开的入口**放大，不靠触摸。
+ *
+ * <p>#269/#272 里这道门永远走不到正向分支，根因是"headless 送不进触摸 + 默认档不画资源标签"
+ * （`renderEntities` 里 `zoom > 0 ? entityCaption(entity) : ''`）。但 `WorldMap.zoomIn()` 是
+ * 给平台适配层准备的公开方法（HUD 那颗「放大」按钮调的就是它），量具调它**不是开后门**，
+ * 也不给 shipped 客户端新增任何能从外部拿到游戏态的面。
+ *
+ * <p>判据要能失败：调完必须看到"缩放 N"的读数真的变了，否则这条只是"我调了一个不存在的方法"。
+ */
+const zoomBefore = await page.evaluate(() => {
+  let hit = null
+  const visit = (n) => {
+    const label = n.getComponent('cc.Label')
+    if (label !== null && /缩放 \d/.test(label.string)) hit = label.string
+    for (const c of n.children) visit(c)
+  }
+  visit(window.cc.director.getScene())
+  return hit ?? '(读不到缩放读数)'
+})
+const zoomed = await page.evaluate(() => {
+  let map = null
+  const visit = (node) => {
+    if (map !== null) return
+    const comp = node.getComponent('WorldMap')
+    if (comp !== null) { map = comp; return }
+    for (const c of node.children) visit(c)
+  }
+  visit(window.cc.director.getScene())
+  if (map === null || typeof map.zoomIn !== 'function') return false
+  map.zoomIn()
+  return true
+})
+if (!zoomed) {
+  console.error('[world][前置] 场景里没有可调 zoomIn() 的 WorldMap 组件 —— 量具与视图的接线断了')
+  await browser.close()
+  await preview.close()
+  process.exit(2)
+}
+// 放大之后要等块与标签重新落定，否则读到的是半屏中间态（#272 那条假红的同一个形状）。
+for (let attempt = 0; attempt < 20; attempt += 1) {
+  await page.waitForTimeout(500)
+  if ((await countTiles()) === 9) break
+}
+const zoomAfter = await page.evaluate(() => {
+  let hit = null
+  const visit = (n) => {
+    const label = n.getComponent('cc.Label')
+    if (label !== null && /缩放 \d/.test(label.string)) hit = label.string
+    for (const c of n.children) visit(c)
+  }
+  visit(window.cc.director.getScene())
+  return hit ?? '(读不到缩放读数)'
+})
+console.log(`[world] 调 zoomIn()：「${zoomBefore}」→「${zoomAfter}」`)
+if (zoomAfter === zoomBefore) {
+  console.error('[world] 判据失败：调了 zoomIn() 而缩放读数没变 —— 放大这条路径坏了（或读数不是那个 Label）')
+  await browser.close()
+  await preview.close()
+  process.exit(1)
+}
+await page.screenshot({ path: OUT_ZOOM })
+console.log(`[world] 截图（放大档）：${OUT_ZOOM}`)
+
+/**
  * 读**所有**实体标签节点的文本，不管它当前可不可见。
  *
  * <p>为什么这里不按可见性过滤（与上面那段"可见文字"的口径相反）：本判据要回答的是
@@ -237,8 +304,54 @@ const labels = await page.evaluate(() => {
   visit(scene, true)
   return out
 })
+/**
+ * 标签压叠**读数**（这一趟只打数字，不当门）。
+ *
+ * <p>#269 目视到的形状是"同一处两个 `石料` 叠在一起、`粮草` 压在 `无名君主` 上"。
+ * 先把"到底几对、压了多少像素"量出来再决定改哪一侧 —— 这条判据链上刚连着错过三次
+ * （面积比、`UITransform`、按节点名找对象，见 #270/#271/#272），**没有数字就先不立门**。
+ * 对象仍从渲染器拿：`drawnEntities` 的 `Caption` 子节点，外接盒用 `getBoundingBoxToWorld()`。
+ */
+const overlap = await page.evaluate(() => {
+  let map = null
+  const visit = (node) => {
+    if (map !== null) return
+    const comp = node.getComponent('WorldMap')
+    if (comp !== null) { map = comp; return }
+    for (const c of node.children) visit(c)
+  }
+  visit(window.cc.director.getScene())
+  if (map === null) return { boxes: 0, pairs: 0, examples: [] }
+  const boxes = []
+  for (const node of map.drawnEntities.values()) {
+    const caption = node.getChildByName('Caption')
+    const box = caption !== null ? caption.getComponent('cc.UITransform') : null
+    const label = caption !== null ? caption.getComponent('cc.Label') : null
+    if (box === null || label === null || label.string === '') continue
+    if (!node.activeInHierarchy) continue
+    const r = box.getBoundingBoxToWorld()
+    boxes.push({ text: label.string, x: r.x, y: r.y, w: r.width, h: r.height })
+  }
+  const hits = []
+  let pairs = 0
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i]; const b = boxes[j]
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+      const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+      if (ox > 1 && oy > 1) {
+        pairs += 1
+        if (hits.length < 5) hits.push(`${a.text} × ${b.text}（压 ${Math.round(ox)}×${Math.round(oy)}）`
+          + ` @(${Math.round(a.x)},${Math.round(a.y)})/(${Math.round(b.x)},${Math.round(b.y)})`)
+      }
+    }
+  }
+  return { boxes: boxes.length, pairs, examples: hits }
+})
 await browser.close()
 await preview.close()
+console.log(`[world] 放大档在屏实体标签 ${overlap.boxes} 个，两两压叠 ${overlap.pairs} 对`
+  + `${overlap.examples.length > 0 ? `：${overlap.examples.join('；')}` : ''}`)
 
 const captionTexts = captions.map((entry) => entry[0])
 const visibleCaptions = captions.filter((entry) => entry[1]).length
