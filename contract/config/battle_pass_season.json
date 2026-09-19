@@ -1,0 +1,19 @@
+{
+  "table": "battle_pass_season",
+  "version": 1,
+  "comment": "每个赛季的战令限定外观（B24 块②）：买了本赛季战令就立即到手的那一枚头像框。一行一个赛季，id 就是 SeasonTimeline.seasonId() 的取值（由 season.json 的行 id 前缀推出，如 season_01_phase_3 ⇒ season_01）。",
+  "designNote": "为什么外观不写在 battle_pass.json 的档位表里：那张表是**跨赛季共用**的 20 档线性奖励带，而限定外观每个赛季都不一样 —— 把某一枚框写成「第 20 档付费奖励」会让换赛季那天出现「表说送 S1 的框、玩家在 S2 买」的错位。而外观本身就该是「买了立即到账」而不是「攒到某一档才给」的东西：买断制下玩家掏钱那一刻要看到东西。所以它单独成表：换赛季加一行，发货时按当前赛季 id 查这一行。奖励类型只允许 RESOURCE/ITEM 的那条纪律在这里不适用（本表不发 RewardItem，由发货链路直接调外观域的授予）。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "frameId": "REF:avatar_frame",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "season_01",
+      "frameId": "frame_season_s1",
+      "why": "S1 的战令限定框与赛季商店卖的那一枚**是同一枚**（`shop_season_frame`，500 赛季币）：两条路径都通到同一个「已拥有」位，而 `ownedAvatarFrames` 是幂等的 —— 先买了战令再拿赛季币换它不会二次扣费，先换过的人再买战令也不会重复获得（送礼包时那一步会当场发现已拥有）。为什么允许两条路径：赛季币只发给赛季前 100 名，没进榜的人不该被断了收集路；而进了榜的人也不该因为「反正能用币换」就觉得买战令亏了。"
+    }
+  ]
+}

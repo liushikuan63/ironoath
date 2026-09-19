@@ -146,6 +146,16 @@ public class MongoStoreConfig {
     }
 
     /**
+     * 战令进度（B24 块②）。契约见 {@code BattlePassStoreEquivalenceTest}。
+     * 内存版重启即空，而空进度意味着<b>已领过的档位重新变成可领</b> —— 那一发就是重复发奖。
+     */
+    @Bean
+    public com.ironoath.web.battlepass.BattlePassStore battlePassStore(MongoTemplate mongo) {
+        LOG.info("使用 MongoDB 战令进度（打过的分与领过的档位不再随进程消失）");
+        return new MongoBattlePassStore(mongo);
+    }
+
+    /**
      * 赛季榜与快照。契约见 {@code SeasonBoardStoreEquivalenceTest}。
      * 这一档防的是「按一张冷榜结算」：快照不可重拍（申诉依据），而账本会把算错的名次记成
      * "已经付过" ⇒ 本该拿奖的人从此拿不到。落库之后，同样的输入重跑一次才是同样的结果。

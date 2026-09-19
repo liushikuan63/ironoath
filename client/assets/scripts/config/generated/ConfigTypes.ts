@@ -122,6 +122,50 @@ export interface AvatarFrameCfg {
   placeholderColor: string
 }
 
+/** battle_pass.battlePassFreeRewardType 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type BattlePassFreeRewardType =
+  | 'RESOURCE'
+  | 'ITEM'
+
+/** battle_pass.battlePassPaidRewardType 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type BattlePassPaidRewardType =
+  | 'RESOURCE'
+  | 'ITEM'
+
+/**
+ * 配置表 battle_pass 的一行。
+ * 赛季战令的档位表（B24 块②）。20 档、每档 150 分，两轨奖励各一行 —— 免费线给资源与加速，付费线给金币与抽卡券。本表**不含赛季字段**：进度按赛季隔离（键取 SeasonTimeline.seasonId()），换赛季只是换一本账，不需要清理任务；而本赛季的限定外观**不在这张表里**（它随购买立即到账，见 battle_pass_season.json）——把外观写成第 20 档奖励会让"买了却拿不到"变成一种正常状态。
+ *
+ * 源表 version=1
+ */
+export interface BattlePassCfg {
+  /** 主键 */
+  id: string
+  tier: number
+  requiredPoints: number
+  /** 枚举，取值见 BattlePassFreeRewardType */
+  freeRewardType: BattlePassFreeRewardType
+  freeRewardId: string
+  freeRewardCount: number
+  /** 枚举，取值见 BattlePassPaidRewardType */
+  paidRewardType: BattlePassPaidRewardType
+  paidRewardId: string
+  paidRewardCount: number
+}
+
+/**
+ * 配置表 battle_pass_season 的一行。
+ * 每个赛季的战令限定外观（B24 块②）：买了本赛季战令就立即到手的那一枚头像框。一行一个赛季，id 就是 SeasonTimeline.seasonId() 的取值（由 season.json 的行 id 前缀推出，如 season_01_phase_3 ⇒ season_01）。
+ *
+ * 源表 version=1
+ */
+export interface BattlePassSeasonCfg {
+  /** 主键 */
+  id: string
+  /** 外键，指向 avatar_frame 表的 id */
+  frameId: string
+}
+
 /** bot_archetype.botArchetypePlayStyle 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type BotArchetypePlayStyle =
   | 'FARMER'
