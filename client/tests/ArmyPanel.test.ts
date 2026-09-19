@@ -108,8 +108,15 @@ test('未解锁兵种的提示原样透传：一个灰掉的兵种不说明为�
   assert.equal(buildUnitRow(unit(), 0, 0).unlockHint, null)
 })
 
-test('训练消耗按配置表顺序列出，名字用服务端下发的资源 id', () => {
-  assert.equal(buildUnitRow(unit(), 0, 0).trainCostText, 'GRAIN 10 · IRON 5')
+test('训练消耗按配置表顺序列出，名字走 `ui/ResourceNames` 那份唯一真源', () => {
+  assert.equal(buildUnitRow(unit(), 0, 0).trainCostText, '粮草 10 · 铁矿 5')
+})
+
+test('兵种行的任何一处文案都不许出现资源枚举原文（#268 同族，客户端唯一真源在 ui/ResourceNames）', () => {
+  const row = buildUnitRow(unit({ wounded: 3, training: 10 }), 0, 0)
+  const playerFacing = [row.tierText, row.countText, row.woundedText ?? '', row.trainingText ?? '',
+    row.countdownText ?? '', row.unlockHint ?? '', row.trainCostText, row.name].join(' ')
+  assert.doesNotMatch(playerFacing, /\b(WOOD|STONE|IRON|GRAIN|GOLD|STAMINA)\b/, playerFacing)
 })
 
 // ---------- 医院（B05 §1.5、验收 7） ----------

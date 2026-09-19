@@ -24,6 +24,7 @@
 
 import { countdownMs, formatCountdown as formatCountdownOf } from '../../core/Countdown'
 import * as FixedPoint from '../../core/FixedPoint'
+import { resourceName } from '../ui/ResourceNames'
 import {
   autoTrainBlockedReason, autoTrainRunningText, autoTrainStopText, autoTrainToggleCaption,
   NO_AUTO_TRAIN_POLICY,
@@ -174,7 +175,8 @@ export function buildUnitRow(unit: UnitView, offsetMs: number, localNow: number)
     unlocked: unit.unlocked,
     unlockHint: unit.unlockHint,
     trainTimeSec: unit.trainTimeSec,
-    trainCostText: unit.trainCost.map((cost) => `${cost.type} ${cost.amount}`).join(' · '),
+    trainCostText: unit.trainCost
+      .map((cost) => `${resourceName(cost.type)} ${cost.amount}`).join(' · '),
   }
 }
 

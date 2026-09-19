@@ -194,7 +194,7 @@ test('收割响应分两态：没有建筑升级时绝不报「升级完成」',
     collected: [], output: [{ type: 'WOOD', amount: 800 }], serverNow: 0,
   })
   assert.equal(onlyOutput?.kind, 'output')
-  assert.equal(onlyOutput?.text, '补结算产出 WOOD +800',
+  assert.equal(onlyOutput?.text, '补结算产出 木材 +800',
     '一键收割常常只结算离线产出 —— 这种时候报「升级完成」就是假成功')
 
   const done = collectMessage({
@@ -283,7 +283,7 @@ test('有建筑到点未收割时，顶部给出收割提示并说明收割同�
 test('收割产出为空时不显示「补结算产出」这一行', () => {
   assert.equal(outputText([]), null)
   assert.equal(outputText([{ type: 'WOOD', amount: 800 }, { type: 'GRAIN', amount: 200 }]),
-    '补结算产出 WOOD +800 · GRAIN +200')
+    '补结算产出 木材 +800 · 粮草 +200', '资源名走 `ui/ResourceNames`，不印枚举原文')
 })
 
 test('帮助次数为 0 时不显示（「已获帮助 0 次」只是噪音）', () => {

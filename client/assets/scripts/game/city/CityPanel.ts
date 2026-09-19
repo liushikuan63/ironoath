@@ -270,7 +270,7 @@ export function outputText(output: readonly ResourceAmount[]): string | null {
   if (output.length === 0) {
     return null
   }
-  return `补结算产出 ${output.map((entry) => `${entry.type} +${entry.amount}`).join(' · ')}`
+  return `补结算产出 ${output.map((entry) => `${resourceName(entry.type)} +${entry.amount}`).join(' · ')}`
 }
 
 /**
