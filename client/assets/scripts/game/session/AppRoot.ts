@@ -50,6 +50,9 @@ import type { RankListResp } from '../../net/generated/RankProtocol'
 import { buildSeasonPanel } from '../season/SeasonPanel'
 import type { SeasonPanelView } from '../season/SeasonPanel'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
+import { buildTechPanel } from '../tech/TechPanel'
+import type { TechPanelView } from '../tech/TechPanel'
+import type { TechListView } from '../../net/generated/TechProtocol'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -205,6 +208,11 @@ export interface PanelTargets {
    */
   season?(view: SeasonPanelView): void
   /**
+   * 研究页（V03-a-S1）。入口在内城「学院」：学院等级就是科技的前置，
+   * 玩家问"我这学院能研究什么"的地方就在那儿。
+   */
+  tech?(view: TechPanelView): void
+  /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
@@ -270,7 +278,7 @@ export interface PanelTargets {
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
-  | 'battlePass' | 'rallies'
+  | 'battlePass' | 'rallies' | 'tech'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -354,6 +362,9 @@ export class AppRoot {
   /** 最近一次 `/season/status` 的响应与失败原因（V04-S1）。与榜同一条纪律：失败不清空上一次的 */
   private seasonResp: SeasonStatusResp | null = null
   private seasonNotice: string | null = null
+  /** 最近一次 `/tech/list` 的响应与失败原因（V03-a-S1）。同样：失败只加一行理由，不清空 */
+  private techResp: TechListView | null = null
+  private techNotice: string | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -607,6 +618,9 @@ export class AppRoot {
         // 榜单与明细同一个面板：打开战力页时，顺手把当前页签（若是一张榜）拉回来。
         // 明细页签不需要请求 —— 但那时也不该显示上一次留下的榜，所以照发一次视图（空榜）
         await this.loadRankIfBoard()
+        return
+      case 'tech':
+        await this.loadTech()
         return
       case 'quest':
         this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
@@ -1497,6 +1511,37 @@ export class AppRoot {
     if (this.rankTab === 'SEASON') {
       this.targets.season?.(buildSeasonPanel(this.seasonResp, undefined, this.seasonNotice))
     }
+  }
+
+  // ---------- 研究页（V03-a-S1 读侧） ----------
+
+  /**
+   * 打开研究页。入口在内城「学院」（由编排层发起）。**每次打开都重拉**：
+   * 队列剩余时间会走，复用上一次的值会显示一个过期的「还剩 N 分」。
+   */
+  async openTech(): Promise<void> {
+    this.track(TRACK_EVENTS.techView)
+    await this.loadTech()
+  }
+
+  /**
+   * 拉一次研究列表并下发整块视图。
+   *
+   * <p>失败时把服务端的理由原样放到说明行，**不清空手里那份**：研究进度不会因为一次限流就消失
+   * （与榜/赛季同一条纪律）。"能不能研究"的判定全部来自响应，本方法不自己判一遍。
+   */
+  private async loadTech(): Promise<void> {
+    const outcome = await this.api.techList()
+    if (outcome.kind === 'ok') {
+      this.techResp = outcome.data
+      this.techNotice = null
+    } else {
+      this.techNotice = outcome.kind === 'biz'
+        ? (outcome.detail ?? outcome.msg)
+        : AppRoot.reason(outcome)
+      this.say('tech', outcome)
+    }
+    this.targets.tech?.(buildTechPanel(this.techResp, this.techNotice))
   }
 
   // ---------- 聊天（B22 §一 1） ----------

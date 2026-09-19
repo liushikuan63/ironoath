@@ -96,6 +96,7 @@ import type {
   RankListResp, RankSnapshotResp, RankType,
 } from '../../net/generated/RankProtocol'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
+import type { TechListView } from '../../net/generated/TechProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -153,6 +154,17 @@ export class GameApi {
    */
   seasonStatus(): Promise<NetOutcome<SeasonStatusResp>> {
     return this.read<SeasonStatusResp>('/season/status')
+  }
+
+  /**
+   * GET /tech/list（V03-a-S1 研究页读侧）。**要身份**：`level` 是"我研究到几级了"，
+   * 与阶段那种全服信息不同。
+   *
+   * <p>响应里已经带了 `canResearch` / `blockedReason` / `nextCost` / `nextTimeSec` ——
+   * 客户端不再自己判前置、不算曲线（判一遍只会与服务器分叉）。
+   */
+  techList(): Promise<NetOutcome<TechListView>> {
+    return this.read<TechListView>('/tech/list')
   }
 
   /** POST /stamina/buy。扣金币与体力上限判定都在服务端。 */

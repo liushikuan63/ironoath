@@ -29,6 +29,7 @@ import type {
 import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { RankBoardView } from '../assets/scripts/game/power/RankBoard'
 import type { SeasonPanelView } from '../assets/scripts/game/season/SeasonPanel'
+import type { TechPanelView } from '../assets/scripts/game/tech/TechPanel'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
@@ -124,6 +125,25 @@ const ROUTES: Record<string, unknown> = {
   },
   '/player/power': {
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, serverNow: SERVER_NOW, lines: [],
+  },
+  '/tech/list': {
+    techs: [
+      {
+        techId: 'tech_agri_wood', name: '屯田令', school: 'AGRICULTURE', effectAttr: 'WOOD_OUTPUT',
+        effectValuePerLevelFixed: 400, level: 3, maxLevel: 30, requireAcademyLevel: 2,
+        nextTimeSec: 5, nextCost: [{ type: 'WOOD', amount: 600 }],
+        researching: false, canResearch: true, blockedReason: 'NONE',
+      },
+      {
+        techId: 'tech_mil_attack', name: '锻兵令', school: 'MILITARY', effectAttr: 'UNIT_ATTACK',
+        effectValuePerLevelFixed: 300, level: 0, maxLevel: 30, requireAcademyLevel: 6,
+        nextTimeSec: 12, nextCost: [{ type: 'IRON', amount: 900 }],
+        researching: false, canResearch: false, blockedReason: 'ACADEMY_LOW',
+      },
+    ],
+    queue: { techId: null, finishAt: null, startedAt: 0, totalSeconds: 0, remainingSeconds: 0 },
+    academyLevel: 2,
+    serverNow: SERVER_NOW,
   },
   '/world/marches': {
     marches: [], home: { x: 48, y: 48 }, maxConcurrent: 3,
@@ -477,6 +497,7 @@ interface Harness {
   /** 最近一次落地给榜单面板的整块视图。 */
   readonly lastRank: RankBoardView | null
   readonly lastSeason: SeasonPanelView | null
+  readonly lastTech: TechPanelView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -566,6 +587,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastChat: ChatPanelData | null = null
   let lastRank: RankBoardView | null = null
   let lastSeason: SeasonPanelView | null = null
+  let lastTech: TechPanelView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -613,6 +635,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     season: (view) => {
       attached.push('season')
       lastSeason = view
+    },
+    tech: (view) => {
+      attached.push('tech')
+      lastTech = view
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -684,6 +710,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastSeason() {
       return lastSeason
+    },
+    get lastTech() {
+      return lastTech
     },
     get lastCompose() {
       return lastCompose
@@ -1864,6 +1893,35 @@ test('赛季页：拉不到时理由原样进说明行且不清空；未启用�
   assert.equal(h.lastSeason?.visible, false)
   assert.match(h.lastSeason?.noticeText ?? '', /尚未启用赛季/)
   assert.equal(h.lastSeason?.titleText, '', '收起时不留一个"第 0 天"的标题')
+})
+
+test('研究页：打开才拉 /tech/list、上报 tech_view，判定字段原样下发（客户端不自己判）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  assert.equal(h.http.countOf('/tech/list'), 0, '没打开研究页不该拉科技列表')
+
+  h.events.length = 0
+  await h.root.openTech()
+  assert.equal(h.http.countOf('/tech/list'), 1)
+  assert.deepEqual(h.events.map(e => e.name), ['tech_view'], '打开研究页要上报')
+  assert.equal(h.lastTech?.rows.length, 2, '行数与服务端给的条数一致（未解锁的也画）')
+  assert.equal(h.lastTech?.academyText, '学院 2 级')
+  assert.equal(h.lastTech?.rows[0]?.effectText, '木材产量 +4%/级')
+  assert.equal(h.lastTech?.rows[1]?.reasonText, '学院等级不足', '拒绝原因来自服务端的 blockedReason')
+  assert.equal(h.lastTech?.rows[1]?.costText, '铁矿 900', '被拒的行也把成本摊开')
+})
+
+test('研究页：拉不到时理由原样进说明行，且不把上一次那份清空', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.openTech()
+  assert.equal(h.lastTech?.noticeText, null)
+
+  h.http.failPaths.add('/tech/list')
+  await h.root.openTech()
+  assert.equal(h.lastTech?.noticeText, '服务繁忙', '服务端给的理由原样进说明行')
+  assert.equal(h.lastTech?.rows.length, 2, '拉不到不等于科技树没了：上一次那份留着')
+  assert.equal(h.errors.some(e => e[0] === 'tech'), true, '面板读取失败也要进统一的上报口')
 })
 
 test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {
