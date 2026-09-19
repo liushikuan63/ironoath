@@ -106,6 +106,13 @@ export interface EquipRow {
   readonly canForge: boolean
   /** 不能强化的原因（能强化时为 null） */
   readonly reasonText: string | null
+  /**
+   * 对**当前选中的武将**可执行的动作：「装备」/「卸下」；没选武将、或这件穿在别人身上时为 null。
+   *
+   * <p>这里只做**显示层的比较**（行上的 `wornByHeroId` 与目标武将是不是同一个 id），
+   * 不判"这仗能不能打"：真正允不允许穿由服务端说了算，客户端筛错的下场只是一次被拒。
+   */
+  readonly actionText: string | null
 }
 
 export interface EquipPanelView {
@@ -114,6 +121,8 @@ export interface EquipPanelView {
   readonly summaryText: string
   /** 拉取失败或还没拉回来时的说明行 */
   readonly noticeText: string | null
+  /** 选中的武将（「给 关羽 换装」）；没选时为 null，此时所有行都不给动作 */
+  readonly targetText: string | null
 }
 
 /**
@@ -121,16 +130,26 @@ export interface EquipPanelView {
  *
  * @param resp          GET /equip/instances 的响应；null = 还没拉回来
  * @param failureNotice 拉取失败时服务端给的理由，原样进说明行（**不清空手里那份**）
+ * @param target          换装目标：`{ heroId, heroName }`。给了才在行上出「装备/卸下」动作
+ *                        （入口是武将行 → 装备库，所以玩家多数时候带着一个具体武将进来）
  */
 export function buildEquipPanel(resp: EquipInstanceListView | null,
-  failureNotice?: string | null): EquipPanelView {
+  failureNotice?: string | null,
+  target?: { readonly heroId: string, readonly heroName: string } | null): EquipPanelView {
+  const targetHeroId = target?.heroId ?? null
   if (resp === null || resp === undefined) {
     return {
       rows: [], summaryText: '', noticeText: failureNotice ?? '装备列表还没拉回来，稍后再试',
+      targetText: target === null || target === undefined ? null : `给 ${target.heroName} 换装`,
     }
   }
   const rows = resp.instances.map((item: EquipInstanceView): EquipRow => {
     const worn = item.wornByHeroId !== null && item.wornByHeroId !== undefined
+    // 动作只对"这件是我要换的那个武将的、或者还没人穿"有意义；穿在别人身上时给不出动作
+    // （要换下来得先让那个人脱下 —— 那是另一条路，不在本格）
+    const actionText = targetHeroId === null
+      ? null
+      : (worn ? (item.wornByHeroId === targetHeroId ? '卸下' : null) : '装备')
     return {
       uid: item.uid,
       name: item.name,
@@ -143,6 +162,7 @@ export function buildEquipPanel(resp: EquipInstanceListView | null,
       worn,
       canForge: item.canForge,
       reasonText: item.canForge ? null : blockReasonText(item.blockReason),
+      actionText,
     }
   })
   const wornCount = rows.filter((row) => row.worn).length
@@ -152,5 +172,6 @@ export function buildEquipPanel(resp: EquipInstanceListView | null,
     // 空列表要说实话：**"正在载入…"是给"还没拉回来"用的**，一件都没有时写它会让人一直等
     // （这条是探针截图里看出来的：新号 instances=0，而面板写着"正在载入…"）
     noticeText: failureNotice ?? (rows.length === 0 ? '还没有装备' : null),
+    targetText: target === null || target === undefined ? null : `给 ${target.heroName} 换装`,
   }
 }

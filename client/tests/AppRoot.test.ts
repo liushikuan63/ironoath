@@ -85,6 +85,7 @@ const ROUTES: Record<string, unknown> = {
   },
   '/hero/list': { heroes: [], lineups: [] },
   '/hero/starUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
+  '/hero/equip': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
@@ -2006,6 +2007,37 @@ test('武将升星被拒时把服务端的理由报出来，且不假装刷新�
   assert.equal(h.errors.some(e => e[0] === 'hero' && e[1] === '服务繁忙'), true,
     '失败要把服务端给的理由放进统一上报口')
   assert.equal(h.http.countOf('/hero/list'), heroBefore, '被拒时不重读列表（不掩盖失败，也省一次请求）')
+})
+
+test('装备库：带着武将进来才出换装动作，穿/卸各发一条 /hero/equip 并回读两边', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', {
+    heroes: [{ heroId: 'hero_guanyu', name: '关羽' }], lineups: [],
+  })
+  await h.root.refresh('hero')
+
+  await h.root.openEquip('hero_guanyu')
+  assert.equal(h.lastEquip?.targetText, '给 关羽 换装', '名字来自服务端给的武将列表，不印 id')
+  assert.deepEqual(h.lastEquip?.rows.map(r => r.actionText), ['装备', '卸下'])
+
+  h.events.length = 0
+  await h.root.equipWear('eq-1', 'WEAPON')
+  const wear = h.http.calls.filter(c => c.path === '/hero/equip').at(-1)
+  assert.equal(wear?.body.heroId, 'hero_guanyu')
+  assert.equal(wear?.body.slot, 'WEAPON')
+  assert.equal(wear?.body.equipUid, 'eq-1')
+  assert.equal(h.http.countOf('/equip/instances') >= 2, true, '穿完要重读装备库（这件在谁身上）')
+  assert.equal(h.http.countOf('/hero/list') >= 2, true, '穿完要重读武将列表（谁穿了什么）')
+  assert.deepEqual(
+    h.events.filter(e => e.name === 'hero_equip').map(e => [e.params.action, e.params.slot]),
+    [['wear', 'WEAPON']])
+
+  await h.root.equipTakeOff('ARMOR')
+  const off = h.http.calls.filter(c => c.path === '/hero/equip').at(-1)
+  assert.equal(off?.body.equipUid, null, '卸下 = equipUid 为 null（服务端口径）')
+  assert.deepEqual(
+    h.events.filter(e => e.name === 'hero_equip').map(e => e.params.action), ['wear', 'takeOff'])
 })
 
 test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {

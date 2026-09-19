@@ -55,7 +55,7 @@ import type { TechPanelView } from '../tech/TechPanel'
 import type { TechListView } from '../../net/generated/TechProtocol'
 import { buildEquipPanel } from '../equip/EquipPanel'
 import type { EquipPanelView } from '../equip/EquipPanel'
-import type { EquipInstanceListView } from '../../net/generated/EquipProtocol'
+import type { EquipInstanceListView, EquipSlot } from '../../net/generated/EquipProtocol'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -375,6 +375,8 @@ export class AppRoot {
   /** 最近一次 `/equip/instances` 的响应与失败原因（V03-b-S1）。同样：失败只加一行理由，不清空 */
   private equipResp: EquipInstanceListView | null = null
   private equipNotice: string | null = null
+  /** 换装目标（V03-d 第一批）：从武将行进装备库时带上的那个武将；null = 只读浏览 */
+  private equipTarget: { heroId: string, heroName: string } | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -1577,9 +1579,46 @@ export class AppRoot {
    * 打开装备页。入口在武将页（由编排层发起）。**每次打开都重拉**：
    * 穿戴与强化都会改这里的数据（`wornByHeroId` / `forgeLevel`），复用旧值会显示一件已经被换下的装备。
    */
-  async openEquip(): Promise<void> {
+  async openEquip(heroId?: string): Promise<void> {
     this.track(TRACK_EVENTS.equipView)
+    this.equipTarget = heroId === undefined
+      ? null
+      : { heroId, heroName: this.heroNameOf(heroId) }
     await this.loadEquip()
+  }
+
+  /**
+   * 武将名字从**服务端给的武将列表**里查，查不到也不印 id（#255 的同一根因：id 不是名字）。
+   */
+  private heroNameOf(heroId: string): string {
+    const hero = this.heroResp?.heroes?.find((h) => h.heroId === heroId)
+    return hero === undefined ? '该武将' : hero.name
+  }
+
+  /**
+   * 给选中的武将穿上某件（`uid`/`slot` 来自装备库那一行）。
+   * 刷新 `hero` 与 `equip`：一行是"谁穿了什么"，另一行是"这件在谁身上"，两边都得跟着变。
+   */
+  equipWear(uid: string, slot: EquipSlot): Promise<void> {
+    const heroId = this.equipTarget?.heroId
+    if (heroId === undefined) {
+      // 只有带着武将进来时视图才会给动作，这里不会发生；真发生了也什么都不发（不发一个注定被拒的请求）
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.heroEquip, { heroId, slot: trackParam(slot), action: 'wear' })
+    return this.write('equip', this.api.heroEquip({ heroId, slot, equipUid: uid }), ['hero', 'equip'])
+  }
+
+  /**
+   * 从选中武将身上卸下某个槽位（`equipUid: null` 就是卸下 —— 服务端的口径）。
+   */
+  equipTakeOff(slot: EquipSlot): Promise<void> {
+    const heroId = this.equipTarget?.heroId
+    if (heroId === undefined) {
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.heroEquip, { heroId, slot: trackParam(slot), action: 'takeOff' })
+    return this.write('equip', this.api.heroEquip({ heroId, slot, equipUid: null }), ['hero', 'equip'])
   }
 
   /**
@@ -1597,7 +1636,7 @@ export class AppRoot {
         : AppRoot.reason(outcome)
       this.say('equip', outcome)
     }
-    this.targets.equip?.(buildEquipPanel(this.equipResp, this.equipNotice))
+    this.targets.equip?.(buildEquipPanel(this.equipResp, this.equipNotice, this.equipTarget))
   }
 
   // ---------- 聊天（B22 §一 1） ----------

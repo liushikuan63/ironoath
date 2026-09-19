@@ -1022,8 +1022,8 @@ export class GameBootstrap extends Component {
       out.hero = resp => hero.attach(resp)
       hero.onHeroAction = (heroId, action) => {
         if (action === 'armory') {
-          // V03-b-S1 的入口：装备库是只读页，不需要 heroId（"这个武将身上穿什么"看行上的已装备标记）
-          void this.root?.openEquip()
+          // V03-b-S1 的入口：带着这个武将进装备库 —— 行上才会出「装备/卸下」（V03-d 第一批）
+          void this.root?.openEquip(heroId)
           return
         }
         if (action === 'starUp') {

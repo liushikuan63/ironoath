@@ -82,6 +82,25 @@ test('汇总行数得清：已装备几件 / 共几件', () => {
   assert.equal(view.summaryText, '已装备 1 / 共 3 件')
 })
 
+test('带武将进来才出行内动作：未装备→「装备」、他穿的→「卸下」、别人穿的→不给动作', () => {
+  const target = { heroId: 'hero_1', heroName: '关羽' }
+  const mine = buildEquipPanel(list({
+    instances: [
+      instance({ uid: 'idle' }),
+      instance({ uid: 'worn-by-target', wornByHeroId: 'hero_1' }),
+      instance({ uid: 'worn-by-other', wornByHeroId: 'hero_2' }),
+    ],
+  }), null, target)
+  assert.equal(mine.targetText, '给 关羽 换装')
+  assert.deepEqual(mine.rows.map((r) => r.actionText), ['装备', '卸下', null],
+    '穿在别人身上的那件给不出动作（要换下来得先让那个人脱）')
+
+  // 不带武将进来 = 只读浏览（V03-b-S1 那一版的行为，一行都不给动作）
+  const browse = buildEquipPanel(list({ instances: [instance({ uid: 'idle' })] }))
+  assert.equal(browse.targetText, null)
+  assert.equal(browse.rows[0]?.actionText, null)
+})
+
 test('空列表写实话"还没有装备"，不写"正在载入"（探针截图里抓到的）', () => {
   const view = buildEquipPanel(list({ instances: [] }))
   assert.equal(view.rows.length, 0)

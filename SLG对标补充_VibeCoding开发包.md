@@ -202,6 +202,30 @@ nextCostIron, canForge, blockReason, wornByHeroId}`。
 探针盯"行数与响应一致、拒绝原因来自服务端、零页面错误"。
 **边界**：**`/equip/forge` 写动作不在 S1**；强化成功的演出与数值对账留给 V03-b-S2。
 
+**V03-d-S1 武将养成可操作面（第二批：选择弹层 + 四条写动作）开工单（2026-09-19 现跑核对，台账 #268 起）**：
+
+**为什么**：武将页动作行五个按钮原先全部派发到 `console.warn`，而 `GameApi` 侧 `heroLevelUp`/`heroStarUp`/`heroCompose`/
+`heroAwaken`/`heroSkillUp`/`heroEquip` **六条绑定零调用点**（第 5 处"有 API 无消费者"）。第一批已接上**升星**与
+**装备库入口**（`c9907b1`/`265ee34`）；这一批做剩下四条：**升级 / 觉醒 / 技能 / 装备**。
+
+**现跑核实（这次要看的是"输入从哪来"）**：
+- 四条动作都需要先选东西：升级 `HeroLevelUpReq.expItems: ItemCount[]`；觉醒/技能 `HeroItemReq{heroId, itemId, skillSlot}`；
+  装备 `HeroEquipReq`。
+- **合法道具能从服务端给的行里筛出来**：`BagItem.type`（string）与 `item.json` 的 type 列同源 ⇒ 不需要在客户端硬编码 itemId
+  （服务端还各自校验 effectKind，例如升级要求 `GRANT_HERO_EXP` —— 客户端筛错的下场只是一次被拒，不会扣错东西）。
+- **通用选择器已经有一个**：`BagPanelView.showTargetPicker(options, onPick)`（当前参数类型是 `SpeedupChoice`）⇒ 抽成通用即可复用，不必新写弹层。
+- **技能要技能槽**：`HeroItemReq.skillSlot: SkillSlot | null` ⇒ 「技能」这条比其它三条多一步"选槽位"。
+
+**三条纪律**：① 候选道具**从服务端行里筛**（按 `type`），不硬编码 id；② 弹层不自己判"够不够/行不行" ——
+服务端拒了就把理由原样报出来（与升星同一路径）；③ 刷新面按动作给全：升级/觉醒/技能 → `hero` + `bag`；装备 → `hero` + `equip`。
+
+**推荐顺序（先易后难，每步都能单独收）**：① **装备**（复用刚建好的装备库页：行上加「装备到该武将」，`equipUid` 从行拿）；
+② **升级**（一条直连 + 一个道具弹层，最简）；③ **觉醒**（同类道具弹层）；④ **技能**（多一步选槽位）。
+
+**验收边界（如实）**：dev 新号 `heroes=0` ⇒ "点得动"这条真跑仍打 SKIP（与 V03-b 同一道门）；
+纯逻辑（筛道具 / 拼请求 / 理由文本）与编排用例可以全绿，探针等 dev 有武将再补齐。
+
+
 ### V04 · 赛季手册、当前目标与资产去向
 
 **现状**：`controller/SeasonController.java:50/68` 与 `SeasonProtocol.ts:52` 有状态/结算；本轮客户端 `GameApi.ts` 未绑定 `/season/status`。赛季服务与排行榜已存在，但不代表玩家看得到赛季规则。B14 的归档描述不是“删除主存档所有资产”的授权。
