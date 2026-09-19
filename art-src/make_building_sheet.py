@@ -42,7 +42,7 @@ PAD = 8
 PLATES = {"idle": (58, 46, 36), "upgrading": (82, 61, 30), "collectable": (48, 74, 48)}
 # 与 CityPanelView.COLOR_ART_RIM 同值（半透明暖石色，垫在正稿底下放大 12%）
 RIM = (238, 222, 188)
-RIM_SCALE = 1.12
+RIM_SCALE = float(os.environ.get("RIM_SCALE", "1.12"))
 SIZES = (48, 82)
 
 
