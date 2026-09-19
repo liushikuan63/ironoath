@@ -271,11 +271,14 @@ if (bareEnums.length > 0) {
   process.exit(1)
 }
 // **正向判据要有对象才成立**：默认缩放这一屏只画得出玩家自己那座城（实测 1 条实体标签"无名君主"），
-// 资源格的标签根本不画，而 headless 点不动"放大"。没有资源标签时判"必须有中文资源名"，
-// 等于拿工具的无能当产品的缺陷 —— 退 2 说清去核哪张图。
+// 资源格的标签根本不画（`renderEntities` 只在 `zoom > 0` 时给文案），而 headless 点不动"放大"。
+// 没有资源标签时判"必须有中文资源名"，等于拿工具的无能当产品的缺陷 —— 退 2 说清**谁在判**。
+// 正向那一半已经有能自动跑的形态了：`entityCaption` 抽进引擎无关的 `game/world/WorldLabels.ts`，
+// 由 `client/tests/WorldLabels.test.ts` 每次 `npm test` 判 —— 不需要浏览器、不需要缩放、不需要触摸。
 if (cnHits.length === 0) {
   console.error('[world][前置] 这一屏没有资源格标签可核（默认缩放不画资源标签，本工具又点不动"放大"）。'
-    + '负向判据已过（无枚举原文）；正向请核 `art-verify/art-world-zoom-runtime.png`')
+    + '负向判据已过（无枚举原文）；正向由 `client/tests/WorldLabels.test.ts` 判，人工图见 '
+    + '`art-verify/art-world-zoom-runtime.png`')
   process.exit(2)
 }
 console.log(`[world] 全绿：地图实体标签写的都是中文资源名（${cnHits.length}/${entityCaptions.length} 条）`)

@@ -29,13 +29,13 @@ import type { WorldViewModel } from '../game/world/WorldViewModel'
 import type { WorldFrame, ChunkTile, MarchRender } from '../game/world/WorldViewModel'
 import { buildMarchPanel } from '../game/world/MarchPanel'
 import type { MarchPanelAction } from '../game/world/MarchPanel'
-import type { WorldEntity, WorldEntityType } from '../net/generated/WorldProtocol'
+import type { WorldEntityType } from '../net/generated/WorldProtocol'
 import { NodePool } from './NodePool'
 import { MarchPanelView } from './MarchPanelView'
 import { applySimpleSprite, applyTerrainSprite, applyTiledSprite } from './ArtCatalog'
 import type { ArtKey } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
-import { resourceName } from '../game/ui/ResourceNames'
+import { entityCaption } from '../game/world/WorldLabels'
 import type { Unsubscribe } from '../core/EventBus'
 
 const { ccclass } = _decorator
@@ -1224,30 +1224,6 @@ function terrainVariantForChunk(cx: number, cy: number): number {
 function entitySize(type: WorldEntityType, cell: number): number {
   const ratio = type === 'CITY' || type === 'BUILDING' ? CITY_SIZE_RATIO : ENTITY_SIZE_RATIO
   return cell * ratio
-}
-
-/**
- * 实体上的文字。只搬运服务端已经下发的字段，不做任何加工判定：
- * 等级、昵称、资源类型都照原样显示。
- */
-function entityCaption(entity: WorldEntity): string {
-  const level = entity.level === null ? '' : `Lv${entity.level}`
-  switch (entity.type) {
-    case 'CITY':
-      return entity.ownerName ?? level
-    case 'MONSTER':
-      return level
-    case 'RESOURCE':
-      // 服务端只给 `WOOD/STONE/IRON/GRAIN` 这个枚举，格子上印原文玩家读不出（#255 同族）
-      return entity.resourceType === null ? '' : resourceName(entity.resourceType)
-    case 'BUILDING':
-      return entity.allianceTag ?? level
-    case 'MARCH':
-      return entity.load === null ? '' : `${entity.load}`
-    case 'EMPTY':
-    default:
-      return ''
-  }
 }
 
 /**
