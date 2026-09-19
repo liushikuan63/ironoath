@@ -29,6 +29,7 @@ import { ShopPanelView } from './ShopPanelView'
 import { AvatarFramePanelView } from './AvatarFramePanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { QuestPanelView } from './QuestPanelView'
+import { BattlePassPanelView } from './BattlePassPanelView'
 import { MailPanelView } from './MailPanelView'
 import { BattleReportPanelView } from './BattleReportPanelView'
 import { WorldMap } from './WorldMap'
@@ -79,6 +80,9 @@ const PANELS: readonly PanelDef[] = [
   // 战报紧跟关卡：都是「打完之后回来看」的入口，且它的数据在 dev 里真的会有（打野就产生战报）。
   { key: 'reports', label: '战报', view: BattleReportPanelView, reddotKey: null },
   { key: 'quest', label: '任务', view: QuestPanelView, reddotKey: null },
+  // 战令紧跟任务（B24 S-d-e）：它的积分只来自任务与活动 —— 两个入口挨着，
+  // 「分从哪来」就不需要在界面上解释一遍
+  { key: 'battlePass', label: '战令', view: BattlePassPanelView, reddotKey: null },
   // 邮件紧跟任务：两者都是「每天进来清一次」的入口，而它的角标绑在服务端 mail/unread 叶子上
   // （B12 §4：红点判据只有一处，客户端不参与算）。
   { key: 'mail', label: '邮件', view: MailPanelView, reddotKey: 'mail' },

@@ -75,6 +75,8 @@ import type { ShopCurrency, ShopListResp } from '../../net/generated/ShopProtoco
 import { buildAvatarFramePanel, wearBodyOf, wearResultText } from '../avatar/AvatarFramePanel'
 import type { AvatarFramePanelView } from '../avatar/AvatarFramePanel'
 import type { AvatarFrameListResp } from '../../net/generated/Protocol'
+import type { BattlePassStatusResp, BattlePassTrack } from '../../net/generated/BattlePassProtocol'
+import { buildBattlePassPanel, claimBodyOf, claimResultText } from '../battlePass/BattlePassPanel'
 import { buildOfflineItems, offlineReportGate } from '../offline/OfflineReport'
 import type { OfflineItem } from '../offline/OfflineReport'
 import type { TrainMemory } from '../army/AutoTrain'
@@ -120,6 +122,16 @@ export interface OfflineReportPopup {
 
 /** 外观面板（B24 块③ 头像框）：框列表那块来自 game/avatar/AvatarFramePanel.ts，notice 是上一次操作的结果。 */
 export interface AvatarFramesView extends AvatarFramePanelView {
+  readonly notice: string | null
+}
+
+/**
+ * 战令面板（B24 S-d-e）。**递的是原始响应 + 提示行**，不是组装好的视图：
+ * 一屏画几档取决于实测可视高度（只有视图知道），所以窗口在视图里现算 ——
+ * 在编排层算死会让"窗口高度变了"这件事在换设备时静默错位。
+ */
+export interface BattlePassPanelData {
+  readonly source: BattlePassStatusResp
   readonly notice: string | null
 }
 
@@ -192,6 +204,8 @@ export interface PanelTargets {
   shop?(view: ShopView): void
   /** 外观面板（B24 块③）。同形：整块视图由编排层组装好递过来。 */
   avatarFrames?(view: AvatarFramesView): void
+  /** 战令面板（B24 S-d-e）：原始响应 + 上一次领取的结果。 */
+  battlePass?(data: BattlePassPanelData): void
   /** 一场的完整战果 + 回放参数。回放怎么演由 {@code playbackOptionsOf} 装配，本类不算。 */
   reportReplay?(resp: BattleReportResp): void
   /**
@@ -233,6 +247,7 @@ export interface PanelTargets {
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
+  | 'battlePass'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -267,6 +282,9 @@ export class AppRoot {
   private frameNotice: string | null = null
   /** 预览头像上那个字用的昵称（登录时玩家填的那个） */
   private nickName = ''
+  /** 战令：最近一次状态与上一次领取的结果（临时提示）。**进度两位都取自响应，本地不改**。 */
+  private battlePassResp: BattlePassStatusResp | null = null
+  private battlePassNotice: string | null = null
   /** 服务端给的边界与阈值（init 响应里那一块）；登录失败时为 null。 */
   private offlineConfig: OfflineReportView | null = null
   /** 已经给玩家看过的那一批明细的指纹：同一批不再弹（明细变了 = 指纹变了，会再弹一次）。 */
@@ -570,6 +588,12 @@ export class AppRoot {
         this.deliver('shop', await this.api.shopList(this.shopTab), r => {
           this.shopResp = r
           this.deliverShop()
+        })
+        return
+      case 'battlePass':
+        this.deliver('battlePass', await this.api.battlePassStatus(), r => {
+          this.battlePassResp = r
+          this.deliverBattlePass()
         })
         return
       case 'avatarFrames':
@@ -902,6 +926,49 @@ export class AppRoot {
     return this.write('shop', this.api.shopBuy(body), ['shop', 'bag', 'resources', 'reddot'], r => {
       // 花费与余额都取服务端回执：本地那份表可能已经过期（热更），自己乘出来的数字会和实际扣的对不上
       this.shopNotice = buyResultText(name, r.spent)
+    })
+  }
+
+  /** 组装并递一次战令视图（窗口由视图按实测高度现算，这里只递原始响应与提示行）。 */
+  private deliverBattlePass(): void {
+    const resp = this.battlePassResp
+    if (resp === null) {
+      return
+    }
+    this.targets.battlePass?.({ source: resp, notice: this.battlePassNotice })
+  }
+
+  /**
+   * 领某一档的某一条线（B24 S-d-e）。`track` 是 `FREE` / `PAID`。
+   *
+   * <p><b>不能领的那一次不发请求</b>：服务端已经把原因算好了（没达成 / 没买战令 / 已领），
+   * 面板根本不给不可领的那条线画亮按钮（见 `game/battlePass/BattlePassPanel.ts`），
+   * 这里是第二道：真点到了也只是提示一句，不发请求。
+   *
+   * <p>成功后用**回执里的全量状态**重画（不再多发一次 GET），并顺带刷新背包与资源 ——
+   * 奖励进的是那两个地方，不刷会让玩家在背包里看不见刚到的东西。
+   */
+  claimBattlePassTier(tier: number, track: BattlePassTrack): Promise<void> {
+    const resp = this.battlePassResp
+    if (resp === null) {
+      this.rejectNeeds('battlePass', '战令进度还没拉回来，稍后再试')
+      return Promise.resolve()
+    }
+    const view = buildBattlePassPanel(resp, resp.tiers.length)
+    const row = view.rows.find((candidate) => candidate.tier === tier) ?? null
+    const body = row === null ? null : claimBodyOf(row, track)
+    if (body === null) {
+      this.rejectNeeds('battlePass', track === 'PAID'
+        ? '付费线现在还领不了 —— 要么这一档还没达成，要么本赛季战令还没买'
+        : '这一档现在还领不了 —— 要么还没达成，要么已经领过了')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.battlePassClaim, { tier: String(tier), track })
+    return this.write('battlePass', this.api.battlePassClaim(body), ['bag', 'resources'], r => {
+      // 回执里的 status 就是领取之后的全量状态：直接落进缓存并重画，不再多发一次 GET
+      this.battlePassResp = r.status
+      this.battlePassNotice = claimResultText(r.reward)
+      this.deliverBattlePass()
     })
   }
 

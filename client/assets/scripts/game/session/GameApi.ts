@@ -34,6 +34,9 @@ import type {
   WearFrameResp,
 } from '../../net/generated/Protocol'
 import type {
+  BattlePassClaimReq, BattlePassClaimResp, BattlePassStatusResp,
+} from '../../net/generated/BattlePassProtocol'
+import type {
   CityCancelReq, CityCancelResp, CityCollectReq, CityCollectResp, CityListResp, CityUpgradeReq,
   CityUpgradeResp, SpeedUpReq, SpeedUpResp,
 } from '../../net/generated/CityProtocol'
@@ -777,6 +780,25 @@ export class GameApi {
    */
   wearFrame(req: Omit<WearFrameReq, 'requestId'>): Promise<NetOutcome<WearFrameResp>> {
     return this.mutate<WearFrameReq, WearFrameResp>('/player/frame', req)
+  }
+
+  /**
+   * GET /battlePass/status：本赛季战令全貌（积分、付费线解锁位、20 档含未达成的）。
+   *
+   * <p>能不能领由服务端算好（`reached` / `freeClaimed` / `paidClaimed`）—— 客户端**不自己比积分**：
+   * 它比不了"这一档我领过没有"，猜的结果是按钮亮着、点下去报错。
+   */
+  battlePassStatus(): Promise<NetOutcome<BattlePassStatusResp>> {
+    return this.read<BattlePassStatusResp>('/battlePass/status')
+  }
+
+  /**
+   * POST /battlePass/claim：领某一档的某一条线。会往背包/资源里写东西，所以必须带幂等键。
+   *
+   * <p>回执里带**领取之后的全量状态**：客户端照它重画，不在本地把那一档翻成已领。
+   */
+  battlePassClaim(req: Omit<BattlePassClaimReq, 'requestId'>): Promise<NetOutcome<BattlePassClaimResp>> {
+    return this.mutate<BattlePassClaimReq, BattlePassClaimResp>('/battlePass/claim', req)
   }
 
   // ---------- 内部 ----------

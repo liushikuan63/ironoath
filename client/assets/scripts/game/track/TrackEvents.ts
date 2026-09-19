@@ -92,6 +92,10 @@ export const TRACK_EVENTS = {
    * 两者分开看才知道玩家是在收集还是在退坑。
    */
   frameWear: 'frame_wear',
+  /**
+   * 领一档战令奖励（B24）。 区分免费/付费 —— 两条线的领取比例是'付费线值不值'的第一手证据。
+   */
+  battlePassClaim: 'battle_pass_claim',
   /** 尝试卖出道具。服务端还没有出售端点，所以这个名字同时也是那条缺口的计数器。 */
   /** 踢成员。`from` 区分小队与联盟。 */
   memberKick: 'member_kick',

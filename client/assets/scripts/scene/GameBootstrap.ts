@@ -65,6 +65,7 @@ import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { ShopPanelView } from './ShopPanelView'
 import { AvatarFramePanelView } from './AvatarFramePanelView'
+import { BattlePassPanelView } from './BattlePassPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
 import { OfflineReportOverlay } from './OfflineReportOverlay'
@@ -310,6 +311,10 @@ export class GameBootstrap extends Component {
       // 缓存会让"刚刚在商店买的那一枚"迟到（看着像买了没到账）
       if (key === 'avatarFrames') {
         void this.root?.refresh('avatarFrames')
+      }
+      // 战令同理（B24 S-d-e）：它的进度由任务与活动推进，缓存会让"刚刚领任务加的分"迟到
+      if (key === 'battlePass') {
+        void this.root?.refresh('battlePass')
       }
       // 引导的每一步都是"在某面板上弹"，所以换面板要重算一次该不该画（判定在驱动器里，这里只触发）
       this.guide?.repaint()
@@ -919,12 +924,13 @@ export class GameBootstrap extends Component {
     const settings = this.panel(SettingsPanelView, 'settings')
     const shop = this.panel(ShopPanelView, 'shop')
     const avatarFrames = this.panel(AvatarFramePanelView, 'avatarFrames')
+    const battlePass = this.panel(BattlePassPanelView, 'battlePass')
     const giftPopup = this.panel(GiftPopupView, 'giftPopup')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
       city, army, hero, bag, stage, reports, social, power, search, quest, mail, world, settings,
-      shop, avatarFrames, giftPopup,
+      shop, avatarFrames, battlePass, giftPopup,
     }
     this.panelViews = {
       attempted: Object.keys(views).length,
@@ -1077,6 +1083,10 @@ export class GameBootstrap extends Component {
       out.shop = view => shop.attach(view)
       shop.onTab = currency => { void this.root?.openShopTab(currency) }
       shop.onBuy = rowId => { void this.root?.buyShopRow(rowId) }
+    }
+    if (battlePass !== null) {
+      out.battlePass = data => battlePass.attach(data)
+      battlePass.onClaim = (tier, track) => { void this.root?.claimBattlePassTier(tier, track) }
     }
     if (avatarFrames !== null) {
       out.avatarFrames = view => avatarFrames.attach(view)
