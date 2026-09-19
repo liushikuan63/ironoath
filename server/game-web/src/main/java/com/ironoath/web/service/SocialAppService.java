@@ -50,6 +50,8 @@ import com.ironoath.web.dto.generated.ReportResp;
 import com.ironoath.web.dto.generated.ChatChannel;
 import com.ironoath.web.dto.generated.HelpRequestView;
 import com.ironoath.web.dto.generated.HelpTargetKind;
+import com.ironoath.web.dto.generated.SocialCreatePolicy;
+import com.ironoath.web.dto.generated.SocialCreatePolicyResp;
 import com.ironoath.web.dto.generated.SocialHelpListResp;
 import com.ironoath.web.dto.generated.ChatListReq;
 import com.ironoath.web.dto.generated.ChatListResp;
@@ -207,13 +209,9 @@ public class SocialAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 PlayerSave save = requirePlayer(playerId);
-                String blocked = Squad.checkUnlock(save.cityLevel(), dayOffset(now), rules.squadRules());
+                CreateBlock blocked = squadCreateBlock(playerId, save, now);
                 if (blocked != null) {
-                    throw new BizException(ErrorCode.SQUAD_LOCKED, blocked);
-                }
-                if (store.squadOf(playerId).isPresent()) {
-                    throw new BizException(ErrorCode.SQUAD_ALREADY_IN, "你已经在小队「"
-                            + store.squadOf(playerId).map(Squad::name).orElse("") + "」里");
+                    throw new BizException(blocked.code(), blocked.reason());
                 }
                 String name = req.name() == null ? "" : req.name().trim();
                 if (name.isEmpty()) {
@@ -334,18 +332,9 @@ public class SocialAppService {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 PlayerSave save = requirePlayer(playerId);
                 Alliance.Rules allianceRules = rules.allianceRules();
-                long protectedUntil = store.disbandProtectedUntil(playerId);
-                if (now < protectedUntil) {
-                    throw new BizException(ErrorCode.ALLIANCE_DISBAND_PROTECTED,
-                            "还需等待 " + ((protectedUntil - now + 999L) / 1000L) + " 秒");
-                }
-                String blocked = Alliance.checkUnlock(save.cityLevel(), dayOffset(now), allianceRules);
+                CreateBlock blocked = allianceCreateBlock(playerId, save, now);
                 if (blocked != null) {
-                    throw new BizException(ErrorCode.ALLIANCE_LOCKED, blocked);
-                }
-                if (store.allianceOf(playerId).isPresent()) {
-                    throw new BizException(ErrorCode.ALLIANCE_ALREADY_IN, "你已经在联盟「"
-                            + store.allianceOf(playerId).map(Alliance::name).orElse("") + "」里");
+                    throw new BizException(blocked.code(), blocked.reason());
                 }
                 String name = trim(req.name());
                 String tag = trim(req.tag());
@@ -366,9 +355,9 @@ public class SocialAppService {
                 }
                 long cost = Alliance.createCost(allianceRules);
                 long balance = balanceOf(playerId, GOLD_RESOURCE_ID, now);
-                if (balance < cost) {
-                    throw new BizException(ErrorCode.ALLIANCE_CREATE_COST_LACK,
-                            "需要金币 " + cost + "，当前 " + balance);
+                CreateBlock costLack = costLack(cost, balance);
+                if (costLack != null) {
+                    throw new BizException(costLack.code(), costLack.reason());
                 }
                 // 先扣款再建盟：反过来的话建盟失败会留下一笔已扣的钱，
                 // 或者建盟成功而钱没扣 —— 后者等于白送一个联盟
@@ -1032,6 +1021,68 @@ public class SocialAppService {
                 helpLedger.remainingToday(playerId, now),
                 events,
                 now);
+    }
+
+    /**
+     * GET /social/createPolicy（B26 S2）：创建小队/联盟之前那几道门的**结论**。
+     *
+     * <p>客户端拿不到 squad_config/alliance_config 的表，也不该拿：门槛是"主城几级、开服第几天"，
+     * 消耗是 global 里的金币数额，客户端抄一份就是第二真相 —— 表一改，界面会写着「还差 2 级」
+     * 而服务端其实已经放行（反过来会把能点的人挡在门外）。所以结论与那句给人看的原因一起下发。
+     */
+    public SocialCreatePolicyResp createPolicy(String playerId, long now) {
+        PlayerSave save = requirePlayer(playerId);
+        long cost = Alliance.createCost(rules.allianceRules());
+        CreateBlock allianceBlocked = allianceCreateBlock(playerId, save, now);
+        if (allianceBlocked == null) {
+            // 门都过了才问钱：与写路径同一个顺序，否则"名字没填"会被"金币不足"抢先盖掉
+            allianceBlocked = costLack(cost, balanceOf(playerId, GOLD_RESOURCE_ID, now));
+        }
+        CreateBlock squadBlocked = squadCreateBlock(playerId, save, now);
+        return new SocialCreatePolicyResp(
+                new SocialCreatePolicy(squadBlocked == null, 0L,
+                        squadBlocked == null ? null : squadBlocked.reason()),
+                new SocialCreatePolicy(allianceBlocked == null, cost,
+                        allianceBlocked == null ? null : allianceBlocked.reason()),
+                now);
+    }
+
+    /** 一条创建门的结论：错误码留给写路径抛异常，读路径只取那句人话。 */
+    private record CreateBlock(ErrorCode code, String reason) {
+    }
+
+    private CreateBlock squadCreateBlock(String playerId, PlayerSave save, long now) {
+        String locked = Squad.checkUnlock(save.cityLevel(), dayOffset(now), rules.squadRules());
+        if (locked != null) {
+            return new CreateBlock(ErrorCode.SQUAD_LOCKED, locked);
+        }
+        return store.squadOf(playerId)
+                .map(squad -> new CreateBlock(ErrorCode.SQUAD_ALREADY_IN,
+                        "你已经在小队「" + squad.name() + "」里"))
+                .orElse(null);
+    }
+
+    private CreateBlock allianceCreateBlock(String playerId, PlayerSave save, long now) {
+        long protectedUntil = store.disbandProtectedUntil(playerId);
+        if (now < protectedUntil) {
+            return new CreateBlock(ErrorCode.ALLIANCE_DISBAND_PROTECTED,
+                    "还需等待 " + ((protectedUntil - now + 999L) / 1000L) + " 秒");
+        }
+        String locked = Alliance.checkUnlock(save.cityLevel(), dayOffset(now), rules.allianceRules());
+        if (locked != null) {
+            return new CreateBlock(ErrorCode.ALLIANCE_LOCKED, locked);
+        }
+        return store.allianceOf(playerId)
+                .map(alliance -> new CreateBlock(ErrorCode.ALLIANCE_ALREADY_IN,
+                        "你已经在联盟「" + alliance.name() + "」里"))
+                .orElse(null);
+    }
+
+    private static CreateBlock costLack(long cost, long balance) {
+        return balance < cost
+                ? new CreateBlock(ErrorCode.ALLIANCE_CREATE_COST_LACK,
+                        "需要金币 " + cost + "，当前 " + balance)
+                : null;
     }
 
     /** GET /social/permissions（验收 4）。下发结论而不是矩阵。 */

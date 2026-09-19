@@ -1363,6 +1363,71 @@ class SocialEndpointTest {
         return new Quartet(leader, b, c, d, allianceId);
     }
 
+    // ---------- B26 S2：创建政策读口（GET /social/createPolicy） ----------
+
+    @Test
+    @DisplayName("创建政策把两道主城门槛与消耗一起下发（客户端不抄 squad_config/alliance_config）")
+    void createPolicyReportsBothCityLevelGates() throws Exception {
+        String player = newPlayer(4);
+        JsonNode policy = get200("/social/createPolicy", player);
+        assertThat(policy.get("squad").get("canCreate").asBoolean()).isFalse();
+        assertThat(policy.get("squad").get("reason").asText())
+                .as("那句原因要能直接印到界面上").contains("主城 5 级", "当前 4 级");
+        assertThat(policy.get("squad").get("costGold").asLong())
+                .as("小队创建不要钱：数额由服务端下发，客户端不猜").isZero();
+        assertThat(policy.get("alliance").get("canCreate").asBoolean()).isFalse();
+        assertThat(policy.get("alliance").get("reason").asText()).contains("主城 10 级");
+        assertThat(policy.get("alliance").get("costGold").asLong())
+                .as("global.ALLIANCE_CREATE_COST_GOLD，客户端抄一份就是第二真相").isEqualTo(500L);
+    }
+
+    @Test
+    @DisplayName("主城够了 ⇒ 两个层级都放行，且不带 reason 字段（有原因=不能创建）")
+    void createPolicyOpensWhenGatesClear() throws Exception {
+        String player = newPlayer(10);
+        JsonNode policy = get200("/social/createPolicy", player);
+        assertThat(policy.get("squad").get("canCreate").asBoolean()).isTrue();
+        assertThat(policy.get("alliance").get("canCreate").asBoolean()).isTrue();
+        assertThat(policy.get("squad").path("reason").isNull()).isTrue();
+    }
+
+    @Test
+    @DisplayName("政策里那句原因与写路径抛出去的是同一份：照着政策做不会被第二条说法打脸")
+    void createPolicyReasonEqualsWritePathRejection() throws Exception {
+        String player = newPlayer(4);
+        String reason = get200("/social/createPolicy", player).get("squad").get("reason").asText();
+        JsonNode denied = postRaw("/squad/create", player, new SquadCreateReq(newRequestId(), "五个人"));
+        assertThat(denied.get("code").asInt()).isEqualTo(ErrorCode.SQUAD_LOCKED.code());
+        assertThat(denied.path("detail").asText())
+                .as("判定只写一遍：读路径与写路径必须给同一句话").isEqualTo(reason);
+    }
+
+    @Test
+    @DisplayName("已经在小队里 ⇒ 政策改口说「你已经在小队「X」里」，而不是继续报主城不够")
+    void createPolicySwitchesToAlreadyIn() throws Exception {
+        String player = newPlayer(5);
+        post200("/squad/create", player, new SquadCreateReq(newRequestId(), "五个人的队"));
+        JsonNode policy = get200("/social/createPolicy", player);
+        assertThat(policy.get("squad").get("canCreate").asBoolean()).isFalse();
+        assertThat(policy.get("squad").get("reason").asText())
+                .contains("已经在小队", "五个人的队");
+    }
+
+    @Test
+    @DisplayName("解散联盟后的保护期由政策提前下发倒计时（此前只有点下去才知道）")
+    void createPolicyReportsDisbandProtection() throws Exception {
+        String player = newPlayer(10);
+        JsonNode created = post200("/alliance/create", player,
+                new AllianceCreateReq(newRequestId(), "铁誓", "TS"));
+        assertThat(created.path("alliance").isMissingNode()).isFalse();
+        post200("/alliance/disband", player, new AllianceSelfReq(newRequestId()));
+        JsonNode policy = get200("/social/createPolicy", player);
+        assertThat(policy.get("alliance").get("canCreate").asBoolean()).isFalse();
+        assertThat(policy.get("alliance").get("reason").asText())
+                .as("解散保护期是三道门里最先的一道，顺序与写路径一致")
+                .contains("还需等待");
+    }
+
     private String newPlayer(int cityLevel) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "社交测试", 1_700_000_000_000L, ""))

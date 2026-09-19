@@ -28,6 +28,7 @@ import com.ironoath.web.dto.generated.PermissionListResp;
 import com.ironoath.web.dto.generated.ReddotNodeView;
 import com.ironoath.web.dto.generated.ReddotTreeResp;
 import com.ironoath.web.dto.generated.SocialEventAckReq;
+import com.ironoath.web.dto.generated.SocialCreatePolicyResp;
 import com.ironoath.web.dto.generated.SocialHelpListResp;
 import com.ironoath.web.dto.generated.SocialSummaryResp;
 import com.ironoath.web.service.SocialAppService;
@@ -89,6 +90,17 @@ public class SocialController {
     @GetMapping("/summary")
     public Result<SocialSummaryResp> summary(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
         return Result.ok(social.summary(requirePlayer(playerId), timeService.serverNow()));
+    }
+
+    /**
+     * 创建小队/联盟之前那几道门的结论（B26 S2）。
+     *
+     * <p>门槛（主城几级、开服第几天）与消耗数额都由服务端算：客户端抄表就是第二真相。
+     */
+    @GetMapping("/createPolicy")
+    public Result<SocialCreatePolicyResp> createPolicy(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        return Result.ok(social.createPolicy(requirePlayer(playerId), timeService.serverNow()));
     }
 
     /**

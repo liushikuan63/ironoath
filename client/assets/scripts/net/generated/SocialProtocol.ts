@@ -828,6 +828,30 @@ export interface PermissionListResp {
 }
 
 /**
+ * 创建小队/联盟之前玩家要知道的那几件事（B26 S2）。**门槛与消耗全部由服务端算**：解锁要的主城等级与开服天数写在 squad_config/alliance_config 里，客户端抄一份就是第二真相 —— 表一改，界面会写着「还差 2 级」而服务端其实已经放行（反过来也一样）。
+ */
+export interface SocialCreatePolicy {
+  /** 现在能不能创建。为 false 时 reason 一定带着给人看的那句原因 */
+  canCreate: boolean
+  /** 创建消耗的金币（global.ALLIANCE_CREATE_COST_GOLD；小队创建不要钱，回 0）。下发数额而不是让客户端读表：定价权在服务端 */
+  costGold: number
+  /** 不能创建时给人看的说法，与写路径抛出去的那条是**同一份字符串**（判定只写一遍）：「需要主城 5 级，当前 1 级」/「你已经在联盟「铁誓」里」/「还需等待 86400 秒」。能创建时不下发这个字段 */
+  reason: string | null
+}
+
+/**
+ * GET /social/createPolicy 响应体（B26 S2）。一次回两个层级：社交面板本来就要同时画小队与联盟两页，分两次拉会让两页的可用性来自不同时刻。
+ */
+export interface SocialCreatePolicyResp {
+  /** 小队创建政策 */
+  squad: SocialCreatePolicy
+  /** 联盟创建政策 */
+  alliance: SocialCreatePolicy
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
  * POST /alliance/tech 请求体（用联盟资金研究科技）。
  */
 export interface AllianceTechReq {
