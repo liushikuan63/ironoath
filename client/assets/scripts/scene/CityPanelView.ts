@@ -21,6 +21,8 @@ import {
 } from './ArtCatalog'
 import { PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
+import { DISTRICT_TINT_RGB, sceneAnchorAt } from '../game/city/CitySceneAnchors'
+import type { SceneDistrict } from '../game/city/CitySceneAnchors'
 
 const { ccclass } = _decorator
 
@@ -37,6 +39,18 @@ const COLOR_GOOD = new Color(120, 176, 96, 255)
 
 const CELL_WIDTH = 86
 const CELL_HEIGHT = 46
+
+/**
+ * 五区地皮色。色值真源在 `CitySceneAnchors.DISTRICT_TINT_RGB`（引擎无关层），
+ * 这里只把它包成 `cc.Color` 给 Graphics 用 —— "同区同色、不成棋盘"是数据属性，
+ * 放在能跑 node:test 的那一层才真的会失败（见 `tests/CityGroundTint.test.ts`）。
+ *
+ * <p>区**只决定这块地长什么样，不否决能建什么** —— 老号把农田建在台基上，就照画农田 + 台基地皮。
+ */
+const GROUND_BY_DISTRICT = Object.fromEntries(
+  (Object.keys(DISTRICT_TINT_RGB) as SceneDistrict[])
+    .map((district) => [district, new Color(...DISTRICT_TINT_RGB[district], 255)]),
+) as Readonly<Record<SceneDistrict, Color>>
 const CELL_GAP = 4
 const CONTENT_WIDTH = CITY_GRID_WIDTH * CELL_WIDTH + (CITY_GRID_WIDTH - 1) * CELL_GAP
 const GRID_HEIGHT = CITY_GRID_HEIGHT * CELL_HEIGHT + (CITY_GRID_HEIGHT - 1) * CELL_GAP
@@ -268,8 +282,10 @@ export class CityPanelView extends Component {
       for (let column = 0; column < CITY_GRID_WIDTH; column++) {
         const x = -CONTENT_WIDTH / 2 + column * cellW
         const y = GRID_HEIGHT / 2 - (row + 1) * cellH
-        graphics.fillColor = (row + column) % 2 === 0
-          ? new Color(36, 30, 25, 255) : new Color(32, 27, 22, 255)
+        // 地皮颜色按**所在区**给，不再按奇偶交替：奇偶交替就是棋盘，
+        // 而规格 §3.3 明令"不允许把 36 个锚点仍均匀排成棋盘，再称为完成城景化"。
+        graphics.fillColor = GROUND_BY_DISTRICT[
+          sceneAnchorAt(column, row)?.district ?? 'wall']
         graphics.rect(x, y, cellW, cellH)
         graphics.fill()
       }

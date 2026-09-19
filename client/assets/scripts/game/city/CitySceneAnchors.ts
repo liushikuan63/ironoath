@@ -29,6 +29,35 @@ export const DISTRICT_NAMES: Readonly<Record<SceneDistrict, string>> = {
   wall: '城郭与通道',
 }
 
+/**
+ * 各区地皮的底色（RGB 0-255）。放在引擎无关层，是为了让"同区同色、不成棋盘"
+ * 能被 `tests/CityGroundTint.test.ts` 真的判失败 —— 那是一条数据属性，
+ * 写在视图里就只能靠人眼看截图。视图侧用 `new Color(...tint, 255)` 包一层。
+ *
+ * <p>色相按区的功能走，并且**每两区之间拉开到可辨**（单测判欧氏距离 ≥12）：
+ * 王庭暖棕（石台 + 火光，R 明显压过 G/B）、行政区蓝灰（B 最高）、军事区暗红（R 压过 B 和 G）、
+ * 城郊墨绿（G 双高）、城郭通道中性灰（三者接近）。第一版把王庭和军事区都写成暗棕，
+ * 距离只有 6.6 —— 在地面上就是同一块泥，新加的判据当场把它判红了。
+ */
+export const DISTRICT_TINT_RGB: Readonly<Record<SceneDistrict, readonly [number, number, number]>> = {
+  crown: [52, 38, 22],
+  civic: [26, 38, 50],
+  military: [46, 22, 26],
+  suburb: [28, 44, 26],
+  wall: [40, 38, 44],
+}
+
+/** 36 格地皮颜色，按 `row` 主序、`column` 次序铺开；越界格退回 `wall`。 */
+export function groundTintGrid(): readonly (readonly [number, number, number])[] {
+  const out: (readonly [number, number, number])[] = []
+  for (let row = 0; row < SCENE_GRID_HEIGHT; row += 1) {
+    for (let column = 0; column < SCENE_GRID_WIDTH; column += 1) {
+      out.push(DISTRICT_TINT_RGB[sceneAnchorAt(column, row)?.district ?? 'wall'])
+    }
+  }
+  return out
+}
+
 export interface SceneAnchor {
   /** 稳定 id：由格位算出，**不是数组下标** —— 加格删格不会让老建筑跳到别处。 */
   readonly anchorId: string
