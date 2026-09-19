@@ -143,6 +143,64 @@ P0 内部也串行交付：V01/V02 是玩法闭环，V09 是内城视觉基线�
 开工输出：先对照服务端实际响应给字段清单和一个读侧面板验收，再接写动作。
 ```
 
+**V03-a-S1 开工单（2026-09-19 现跑核对，台账 #264 起）**：
+
+**为什么是这一格**：V03 卡片的现状说得直白 ——「不能把'服务端完成'记成'玩家已能研究'」。现跑核对：`GameApi.ts` 里
+**个人科技/国家科技/装备强化一条绑定都没有**（只有旧的 `/alliance/tech`），`client/assets/scripts/game/` 下**没有 `tech/` 模块**，
+`PanelNav` 16 项里**没有研究入口**；而服务端 `TechController` 四个端点（`/tech/list`、`/tech/research`、`/tech/cancel`、`/tech/speedUp`）都在。
+这就是 #222/#225/#245 记过的同一族缺口（有 API 无消费者），也是 V03 说的"把已有能力交到玩家手中"。
+
+**读侧字段清单（现读 `client/assets/scripts/net/generated/TechProtocol.ts`）**：
+- `TechListView`：`techs[]` / `queue` / `academyLevel` / `serverNow`
+- `TechView`：`techId` `name` `school` `effectAttr` `effectValuePerLevelFixed` `level` `maxLevel`
+  `requireAcademyLevel` `nextTimeSec` `nextCost[]`（`ResourceAmount`）`researching` `canResearch` `blockedReason`
+- `TechQueueView`：`techId` `finishAt` `startedAt` `totalSeconds` `remainingSeconds`
+
+**三条纪律（与赛季页同源，不重犯）**：① `canResearch` + `blockedReason` 是**服务端的权威答案** ⇒ 客户端只把原因翻成句子，
+不自己再判一遍学院等级/资源/队列（第二套判定只会与服务器分叉，症状是"列表里能点、点了被拒"）；
+② 倒计时用**服务端两个时刻**（`remainingSeconds` / `finishAt` + `serverNow`），不用本地时钟（铁律 5）；
+③ `nextCost` / `nextTimeSec` 用服务端给的数，`effectValuePerLevelFixed` 是定点数（走 `core/FixedPoint.format`），不在客户端重算曲线。
+
+**入口方案（卡面要求"先给方案"，三选一）**：
+- **(a) 内城「学院」建筑 → 选中后动作栏「研究」（推荐）**：`requireAcademyLevel` 与 `academyLevel` 正好是科技的前置，
+  玩家问"我这学院能研究什么"的地方就在内城；与 V04-S1 同一条思路（不新增导航项）。代价：要动 `CityPanelView.ts` 的选中栏动作行。
+- (b) 战力页再加一个页签「研究」：不动别人的文件，但科技既不是榜也不属于赛季，语义弱。
+- (c) 新增导航第 17 项：卡面明确禁止（"不再往底栏机械追加每个子系统"）。
+
+**这一格要交的（纯客户端）**：① `game/tech/TechPanel.ts` 纯逻辑（按学派分组的行、下一级成本/时长/效果、队列行与倒计时、
+`blockedReason` 的句子）+ 用例；② `GameApi.techList()` + `AppRoot.refresh('tech')` + 目标面板（埋点 `tech_view`）；
+③ 视图 + 入口 (a)；④ 探针 `tools/verify-tech-runtime.mjs`（真产物 + 独占后端 + 截图）。
+
+**判据**：纯逻辑用例盯「缺资源 / 队列占用 / 等级封顶 / 前置不足各有各的话、倒计时来自服务端、没解锁的行也画出来」；
+探针盯「面板画得出来、行数与响应一致、拒绝原因来自服务端、零页面错误」。
+
+**边界（如实）**：**写动作（research/cancel/speedUp）不在 S1** —— 卡面的"开工输出"就是"先给读侧面板验收，再接写动作"。
+装备强化（V03-b）与国家科技（V03-c）各自单独收口。
+
+**V03-b-S1 开工单（2026-09-19 现跑核对，台账 #265 起）**：
+
+**现跑核实**：服务端 `EquipController` 有 `GET /equip/instances` 与 `POST /equip/forge`；`EquipProtocol.ts` 五个类型齐备
+（`EquipInstanceView` / `EquipInstanceListView` / `EquipForgeReq` / `EquipForgeResp` + 三个枚举）；客户端 `GameApi` 里
+**`/equip/instances` 与 `/equip/forge` 一条绑定都没有**（只有早年给武将穿装备的 `/hero/equip`）⇒ 与 V03-a 同一族缺口。
+
+**读侧字段清单（现读）**：`EquipInstanceListView{instances[], serverNow}`；
+`EquipInstanceView{uid, equipId, name, slot, rarity, forgeLevel, forgeMax, mightFixed, commandFixed, wisdomFixed,
+nextCostIron, canForge, blockReason, wornByHeroId}`。
+
+**四条纪律**：① `canForge` + `blockReason`（`NONE`/`MAX_LEVEL`/`IRON_LOW`）是服务端权威，客户端只翻句子；
+② `nextCostIron` 用服务端给的数，不在客户端算铁耗曲线；③ 三个 `*Fixed` 是定点（×10000）⇒ 走 `FixedPoint.format`，
+**不是** `percentText`（那是比率）；④ **不许把 `wornByHeroId` 印到面板上** —— 那是 id，不是名字（#255 的同一根因），
+读侧只写「已装备/未装备」，"穿在谁身上"由武将页那一侧回答。
+
+**入口方案**：**武将页**（宿主推荐）—— 装备穿在武将身上，`/hero/equip` 那条链路已经在武将页；
+面板里按"未装备 → 已装备"两段列出实例，行上先只读（本格不做强化按钮）。
+
+**这一格要交的**：`game/equip/EquipPanel.ts` 纯逻辑 + 用例 → `GameApi.equipInstances()` + `AppRoot` 接线（埋点 `equip_view`）
+→ 视图 + 入口 → 探针 `tools/verify-equip-runtime.mjs`（照 `verify-tech-runtime.mjs` 写）。
+**判据**：纯逻辑盯"满级/铁不足各有各的话、成本与加点用服务端数、槽位与稀有度是玩家语言、只读态不给按钮"；
+探针盯"行数与响应一致、拒绝原因来自服务端、零页面错误"。
+**边界**：**`/equip/forge` 写动作不在 S1**；强化成功的演出与数值对账留给 V03-b-S2。
+
 ### V04 · 赛季手册、当前目标与资产去向
 
 **现状**：`controller/SeasonController.java:50/68` 与 `SeasonProtocol.ts:52` 有状态/结算；本轮客户端 `GameApi.ts` 未绑定 `/season/status`。赛季服务与排行榜已存在，但不代表玩家看得到赛季规则。B14 的归档描述不是“删除主存档所有资产”的授权。
