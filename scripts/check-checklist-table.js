@@ -23,7 +23,11 @@ const KNOWN_DUPLICATE_NUMBERS = {
 }
 
 const isSeparator = (line) => /^\|[\s:|-]+\|$/.test(line.trim())
-const splitCells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|')
+// 转义过的 `\|` 是**单元格内部**的竖线（Markdown 就把它渲染成一个 | 字符），不能当分隔符。
+// 本门的报错原文自己建议"改用「与」或转义 \\|"，所以它必须认这个转义 ——
+// 2026-09-19 实测：#220 那行按建议写了 `grep "a\|b"`，三个转义竖线被当成三格，门把
+// 照建议写的写法判成违规（假红比漏报更糟：它会让开始忽略门的人变成作者本人）。
+const splitCells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/)
 const cells = (line) => splitCells(line).length
 const firstCell = (line) => splitCells(line)[0].trim()
 
