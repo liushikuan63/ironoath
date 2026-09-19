@@ -225,6 +225,16 @@ nextCostIron, canForge, blockReason, wornByHeroId}`。
 **验收边界（如实）**：dev 新号 `heroes=0` ⇒ "点得动"这条真跑仍打 SKIP（与 V03-b 同一道门）；
 纯逻辑（筛道具 / 拼请求 / 理由文本）与编排用例可以全绿，探针等 dev 有武将再补齐。
 
+**已收：升级（`534e806`/`89ba381`/`9612eba`）与觉醒（`518f319`，台账 #273）**。觉醒那一格补一句上面没写到的事实：
+`type` **筛不出觉醒石** —— 两块石与三本经验书同为 MATERIAL，缺的是判别列，故契约补了 `BagItem.effectKind`（#255 同族）。
+而"哪一阶认哪块石"这条规则住在 `HeroAppService#growByItem` 里（判的是**稀有度**），客户端要灰化按钮就得抄一遍 ——
+抄的代价与保险都写在 `game/hero/AwakenPick.ts` 头上，保险那条用例直接读服务端源码，镜像失效先红。
+
+**下一格 = 技能（V03-d 四条里的最后一条）**：`HeroItemReq.skillSlot` 多一步选槽位，
+`UP_HERO_SKILL` 的两本书各带 `effectTarget`（MAIN / SUB）⇒ 候选按 effectKind 筛、槽位按 effectTarget 对上，
+服务端对不上就拒（`growByItem` 里那句 `target != null && !target.equals(skillSlot.name())`）。
+「卸下」那条走的是装备库那一页（`265ee34`/`90d8a8d` 已接），不在这一格。
+
 
 ### V04 · 赛季手册、当前目标与资产去向
 

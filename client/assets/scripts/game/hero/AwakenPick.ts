@@ -65,7 +65,7 @@ export function awakenRows(items: readonly BagItem[], stage: AwakenStage): reado
     .map((item) => {
       const highTierStone = item.rarity === FINAL_TIER_STONE_RARITY
       if (atMax) {
-        // 原因写在进度那一行，不在每一块石上重复一遍（两块石都挂同一句是噪音，见台账 #272 那张截图）
+        // 原因写在进度那一行，不在每一块石上重复一遍（两块石都挂同一句是噪音，见台账 #273 那张截图）
         return { ...bare(item), usable: false, reason: null }
       }
       if (highTierStone === finalTier) {
