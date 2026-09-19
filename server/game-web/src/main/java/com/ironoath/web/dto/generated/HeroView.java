@@ -20,8 +20,10 @@ public record HeroView(
         int awaken,
         int maxAwaken,   // 来自 hero 表 awakenMax，逐武将不同（SSR 3 / SR 2 / R 1）
         String mainSkillId,
+        String mainSkillName,   // 主技能的中文名（skill 表的 name 列，服务端按 mainSkillId 查表随视图下发）。 **为什么名字要服务端给**：武将页那一行原先直接印 `skill_guanyu_main Lv3/10` —— 把配置行 id 印给玩家。 这与 #255（建筑显示名）、#268（资源中文名）同一族，裁决早就定了：客户端不许自己拼名字、也不许抄一份第二真源。
         int mainSkillLevel,
         String subSkillId,
+        String subSkillName,   // 副技能的中文名，取法与 mainSkillName 完全一致（同一行代码写出来的两个字段，不该有一个是 id）。
         int subSkillLevel,
         int maxSkillLevel,
         List<String> equips,   // 四个槽位的装备 id，按 EquipSlot 声明顺序（WEAPON/ARMOR/MOUNT/ACCESSORY），空槽为 null。用定长数组而不是 Map 是为了让客户端不必猜键名顺序。

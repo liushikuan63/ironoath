@@ -10,6 +10,7 @@ import com.ironoath.config.cfg.EquipCfg;
 import com.ironoath.config.cfg.HeroCfg;
 import com.ironoath.config.cfg.HeroRarityCfg;
 import com.ironoath.config.cfg.ItemCfg;
+import com.ironoath.config.cfg.SkillCfg;
 import com.ironoath.core.bag.Inventory;
 import com.ironoath.core.bag.InventoryRepository;
 import com.ironoath.core.hero.EquipSlot;
@@ -604,6 +605,25 @@ public class HeroAppService {
         return uid;
     }
 
+    /**
+     * 技能中文名，随 {@code HeroView} 下发（#255 建筑名、#268 资源名之后的第三处配置 id 外泄）。
+     *
+     * <p>查不到就退回 id 并打 ERROR：少一行名字不该让整张武将页画不出来，
+     * 但**也不能静默把 id 印给玩家** —— 那条日志就是"还有几行没配名字"的量具
+     * （与 {@link #resolveWearableUid} 那条兼容路径同一做法）。
+     */
+    private String skillName(String skillId) {
+        if (skillId == null || skillId.isBlank()) {
+            return "";
+        }
+        try {
+            return configs.get(SkillCfg.class, skillId).name();
+        } catch (ConfigException e) {
+            LOG.error("【skill 表查不到这一行】skillId={} 界面会退回显示这个 id", skillId);
+            return skillId;
+        }
+    }
+
     private EquipCfg requireEquip(String equipId) {
         try {
             return configs.get(EquipCfg.class, equipId);
@@ -659,8 +679,8 @@ public class HeroAppService {
                 rules.expToNext(instance.level(), (int) cfg.maxLevel()),
                 (int) cfg.maxLevel(),
                 instance.star(), rules.starMax(), instance.awaken(), (int) cfg.awakenMax(),
-                cfg.mainSkill(), instance.mainSkillLevel(),
-                cfg.subSkill(), instance.subSkillLevel(), rules.skillMaxLevel(),
+                cfg.mainSkill(), skillName(cfg.mainSkill()), instance.mainSkillLevel(),
+                cfg.subSkill(), skillName(cfg.subSkill()), instance.subSkillLevel(), rules.skillMaxLevel(),
                 wornUids, toTriple(base), toTriple(finalAttrs),
                 stats.power(equips, instance), cfg.bondWith());
     }

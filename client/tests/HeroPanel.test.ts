@@ -34,8 +34,10 @@ function hero(overrides: Partial<HeroView> = {}): HeroView {
     awaken: 1,
     maxAwaken: 3,
     mainSkillId: 'skill_break_cavalry',
+    mainSkillName: '破骑',
     mainSkillLevel: 3,
     subSkillId: 'skill_iron_wall',
+    subSkillName: '铁壁',
     subSkillLevel: 1,
     maxSkillLevel: 5,
     equips: ['equip_weapon_01', null, 'equip_mount_01', null],
@@ -88,10 +90,21 @@ test('武将行把五条养成线（等级/星级/觉醒/技能/装备）与属�
   assert.equal(row.levelText, 'Lv60/60')
   assert.equal(row.starText, '★★★★☆')
   assert.equal(row.awakenText, '觉醒 1/3')
-  assert.equal(row.mainSkillText, 'skill_break_cavalry Lv3/5')
+  assert.equal(row.mainSkillText, '破骑 Lv3/5',
+    '名字取自服务端下发的 mainSkillName —— 这一条原先钉的是 skill_break_cavalry（把配置 id 印给玩家）')
   assert.equal(row.powerText, '战力 4200')
   // 基础与养成后都显示，玩家才看得出养成到底涨了多少
   assert.equal(row.attrText, '武力 100→162 统率 80→120 智力 60→78')
+})
+
+test('技能那一行不出现配置行 id（#255 建筑名、#268 资源名之后的第三处外泄）', () => {
+  const row = buildHeroRow(hero(), NAMES)
+  const onScreen = `${row.mainSkillText}｜${row.subSkillText}`
+  for (const leaked of ['skill_break_cavalry', 'skill_iron_wall']) {
+    assert.equal(onScreen.includes(leaked), false, `技能行把 ${leaked} 直接印给了玩家`)
+  }
+  assert.equal(onScreen.includes('破骑') && onScreen.includes('铁壁'), true,
+    '两条都要有名字，缺一条就是"只改了主技能"')
 })
 
 test('副技能文案必须写明「仅副将位生效」（B06 §2.4）：不写玩家会把主将放副将位，然后以为技能坏了', () => {

@@ -125,10 +125,12 @@ export function buildHeroRow(hero: HeroView, nameById: ReadonlyMap<string, strin
     expText: maxLevel ? null : `经验 ${hero.exp}/${hero.expToNext}`,
     starText: starText(hero.star, hero.maxStar),
     awakenText: `觉醒 ${hero.awaken}/${hero.maxAwaken}`,
-    mainSkillText: `${hero.mainSkillId} Lv${hero.mainSkillLevel}/${hero.maxSkillLevel}`,
+    // 技能名字由服务端随视图下发（`mainSkillName`）—— 这一行原先印的是 `skill_guanyu_main`，
+    // 与 #255 建筑名、#268 资源名同一族的配置 id 外泄（#276 的截图里看见的）
+    mainSkillText: `${hero.mainSkillName} Lv${hero.mainSkillLevel}/${hero.maxSkillLevel}`,
     // 副技能只在副将位生效（B06 §2.4）。不写明的话玩家会把主将放在副将位，
     // 然后发现技能没触发，认为技能是坏的
-    subSkillText: `${hero.subSkillId} Lv${hero.subSkillLevel}/${hero.maxSkillLevel}（仅副将位生效）`,
+    subSkillText: `${hero.subSkillName} Lv${hero.subSkillLevel}/${hero.maxSkillLevel}（仅副将位生效）`,
     equipTexts,
     emptyEquipSlots: empty,
     attrText: `武力 ${hero.baseAttrs.might}→${hero.finalAttrs.might}`

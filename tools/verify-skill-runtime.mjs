@@ -58,8 +58,8 @@ const fixture = {
 const heroView = () => ({
   heroId: HERO_ID, name: '关羽', rarity: 'SSR', level: 40, exp: 1200, expToNext: 800,
   maxLevel: 60, star: 3, maxStar: 5, awaken: 0, maxAwaken: 3,
-  mainSkillId: 'skill_guanyu_main', mainSkillLevel: fixture.mainLevel,
-  subSkillId: 'skill_guanyu_sub', subSkillLevel: fixture.subLevel, maxSkillLevel: fixture.maxLevel,
+  mainSkillId: 'skill_guanyu_main', mainSkillName: '武圣激将', mainSkillLevel: fixture.mainLevel,
+  subSkillId: 'skill_guanyu_sub', subSkillName: '偃月蓄势', subSkillLevel: fixture.subLevel, maxSkillLevel: fixture.maxLevel,
   equips: [null, null, null, null],
   baseAttrs: { might: 96, command: 92, wisdom: 75 },
   finalAttrs: { might: 96, command: 92, wisdom: 75 },
@@ -233,6 +233,10 @@ const hero = await page.evaluate(SNAPSHOT('hero'))
 checkTrue('武将页挂上了', hero !== null)
 checkTrue('夹具里那个武将进画面', has(hero, '关羽'))
 checkTrue('行上带主技能当前等级', has(hero, `Lv${fixture.mainLevel}/`))
+checkTrue('技能那一行印的是中文名（服务端随视图下发的 mainSkillName）', has(hero, '武圣激将'))
+check('画面上不出现 skill 表的行 id（#255 同族第三处的回归位）', has(hero, 'skill_guanyu_main'), false)
+// 弹层会盖住武将行，那张截图看不到技能那一行 —— 进弹层之前先留一张没遮挡的
+await page.screenshot({ path: path.join(OUT, 'hero-row.png') })
 
 const before = await page.evaluate(SNAPSHOT('skillPick'))
 checkTrue('技能弹层挂上了（skillPick 节点在）', before !== null)

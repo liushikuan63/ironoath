@@ -390,6 +390,24 @@ class HeroGachaEndpointTest {
     }
 
     @Test
+    @DisplayName("武将视图带的是技能中文名（skill 表的 name 列），不是行 id —— #255 同族第三处")
+    void heroViewCarriesSkillNamesNotIds() {
+        String playerId = newPlayerWithHero("hero_ssr_01");
+        HeroView view = heroOf(heroAppService.list(playerId), "hero_ssr_01");
+        com.ironoath.config.cfg.SkillCfg main =
+                configs.get(com.ironoath.config.cfg.SkillCfg.class, view.mainSkillId());
+        com.ironoath.config.cfg.SkillCfg sub =
+                configs.get(com.ironoath.config.cfg.SkillCfg.class, view.subSkillId());
+
+        assertThat(view.mainSkillName()).isEqualTo(main.name());
+        assertThat(view.subSkillName()).isEqualTo(sub.name());
+        // 名字必须是玩家读得出的中文：退回成 id 的那条兜底路径不该在正常配置下被走到
+        assertThat(view.mainSkillName()).as("主技能名里不该有 skill_ 前缀的行 id")
+                .doesNotStartWith("skill_").isNotEqualTo(view.mainSkillId());
+        assertThat(view.subSkillName()).doesNotStartWith("skill_").isNotEqualTo(view.subSkillId());
+    }
+
+    @Test
     @DisplayName("觉醒分初阶/高阶石：最后一阶只能用高阶石，用错明确拒绝")
     void awakenRequiresTheRightStoneTier() {
         String playerId = newPlayerWithHero("hero_ssr_01");   // awakenMax = 3
