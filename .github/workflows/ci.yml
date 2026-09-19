@@ -21,6 +21,22 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # 等价性测试（内存实现 vs 真 Mongo）要一个真的 MongoDB。没有它时它们会打「跳过即未验证」，
+    # 而 `InventoryEquipEquivalenceTest` 那一族是**故意 fail-closed** 的（"别让绿色冒充覆盖"）⇒
+    # 2026-09-19 起 master 上常驻一条红（台账 #233）。给它一个服务容器，比把那条用例改成跳过对：
+    # 跳过会让 185 条等价性承诺永远不成立，而这一整个仓库的存储层正确性就架在它们身上。
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        # 镜像自带没有 HEALTHCHECK，Actions 只会等"容器起来了"；而 Mongo 起来到能接命令之间
+        # 还差一两秒 —— 不等它，测试会正好卡在那条 fail-closed 的用例上（同一个红，换个原因）
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -48,7 +64,7 @@ jobs:
       - name: Full build and tests
         run: bash scripts/build.sh
 
-      # 18 道静态门（含台账形状与编号唯一性、埋点覆盖、端点路径、配置消费、合规红线）。
+      # 全部静态门（含台账形状与编号唯一性、埋点覆盖、端点路径、配置消费、合规红线、Mongo 写入清单）。
       # 产物类门在没有 Cocos 构建时会打 [SKIPPED] 并说明"这不是通过"。
       - name: Static gates
         run: bash scripts/check.sh
