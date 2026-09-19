@@ -27,6 +27,7 @@ import com.ironoath.core.reward.RewardPorts;
 import com.ironoath.web.dto.generated.AttrTriple;
 import com.ironoath.web.dto.generated.BonusBreak;
 import com.ironoath.web.dto.generated.BonusZone;
+import com.ironoath.web.dto.generated.FragmentView;
 import com.ironoath.web.dto.generated.HeroBonus;
 import com.ironoath.web.dto.generated.HeroEquipReq;
 import com.ironoath.web.hero.EquipLedger;
@@ -645,9 +646,13 @@ public class HeroAppService {
      * 某个玩家各稀有度的碎片余额，直接读背包 —— 碎片是道具，背包是唯一真相。
      *
      * <p>某一档没有对应碎片道具时跳过（例如 N 档可能不投放碎片），那不是配置错误。
+     *
+     * <p><b>名字随行下发</b>（#255 建筑名、#268 资源名、#278 技能名之后的同族第四处）：
+     * 这一行**包含余数为 0 的档**，而背包只列余数大于 0 的行 ——
+     * 让客户端去 join 背包的结果是"越没有越看不见名字"，正好退回印行 id。
      */
-    public List<ItemCount> fragmentBalancesOf(String playerId) {
-        List<ItemCount> out = new ArrayList<>();
+    public List<FragmentView> fragmentBalancesOf(String playerId) {
+        List<FragmentView> out = new ArrayList<>();
         for (HeroCfg.Rarity rarity : HeroCfg.Rarity.values()) {
             String itemId;
             try {
@@ -655,9 +660,19 @@ public class HeroAppService {
             } catch (ConfigException e) {
                 continue;
             }
-            out.add(new ItemCount(itemId, bagPort.countOf(playerId, itemId)));
+            out.add(new FragmentView(itemId, itemName(itemId), bagPort.countOf(playerId, itemId)));
         }
         return out;
+    }
+
+    /** 道具中文名；查不到就退回 id 并打 ERROR（同 {@link #skillName}：不空页，也不静默印 id）。 */
+    private String itemName(String itemId) {
+        try {
+            return configs.get(ItemCfg.class, itemId).name();
+        } catch (ConfigException e) {
+            LOG.error("【item 表查不到这一行】itemId={} 界面会退回显示这个 id", itemId);
+            return itemId;
+        }
     }
 
     private HeroView toView(EquipLedger equips, HeroInstance instance) {

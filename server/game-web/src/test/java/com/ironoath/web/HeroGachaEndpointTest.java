@@ -308,6 +308,11 @@ class HeroGachaEndpointTest {
         for (var f : heroAppService.list(playerId).fragments()) {
             assertThat(f.count()).as("%s 的余额必须与背包一致", f.itemId())
                     .isEqualTo(countOf(playerId, f.itemId()));
+            // 名字随行下发（#255/#268/#278 同族第四处）：这一行含余数为 0 的档，
+            // 背包只列余数大于 0 的行 —— 客户端 join 不到，所以必须服务端给
+            assertThat(f.name()).as("%s 必须带着 item 表里的中文名", f.itemId())
+                    .isEqualTo(configs.get(com.ironoath.config.cfg.ItemCfg.class, f.itemId()).name());
+            assertThat(f.name()).doesNotStartWith("item_");
             bagFragments += f.count();
         }
         assertThat(bagFragments)

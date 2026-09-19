@@ -78,7 +78,7 @@ function lineup(overrides: Partial<LineupView> = {}): LineupView {
 }
 
 function heroResp(heroes: HeroView[], lineups: LineupView[] = []): HeroListResp {
-  return { heroes, lineups, fragments: [{ itemId: 'item_mat_hero_frag_h1', count: 12 }], troopCap: 2400, troopsInUse: 800, serverNow: 0 }
+  return { heroes, lineups, fragments: [{ itemId: 'item_mat_hero_frag_h1', name: '胡车儿碎片', count: 12 }], troopCap: 2400, troopsInUse: 800, serverNow: 0 }
 }
 
 // ---------- 五条养成线 ----------
@@ -197,7 +197,10 @@ test('面板汇总：武将数、带兵上限、碎片持有量都照服务端�
   assert.equal(panel.heroes.length, 2)
   assert.equal(panel.lineups.length, 1)
   assert.equal(panel.troopCapText, '带兵上限 2400（已用 800）')
-  assert.deepEqual(panel.fragmentTexts, ['item_mat_hero_frag_h1 ×12'])
+  assert.deepEqual(panel.fragmentTexts, ['胡车儿碎片 ×12'],
+    '碎片行印的是服务端下发的名字 —— 这一条原先钉的是 item_mat_hero_frag_h1（把行 id 印给玩家）')
+  assert.equal(panel.fragmentTexts.join('｜').includes('item_mat_'), false,
+    '画面上不许出现 item 表的行 id（#255/#268/#278 同族第四处）')
 })
 
 test('一个武将都没有时也能组装（刚建号还没抽到）', () => {

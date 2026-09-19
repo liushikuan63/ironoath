@@ -94,7 +94,9 @@ export function buildHeroPanel(resp: HeroListResp): HeroPanelView {
     heroes: resp.heroes.map((hero: HeroView): HeroRow => buildHeroRow(hero, nameById)),
     lineups: resp.lineups.map((lineup: LineupView): LineupPanel => buildLineupPanel(lineup, nameById)),
     troopCapText: `带兵上限 ${resp.troopCap}（已用 ${resp.troopsInUse}）`,
-    fragmentTexts: resp.fragments.map((item) => `${item.itemId} ×${item.count}`),
+    // 名字随行下发（`FragmentView.name`）：这一行含余数为 0 的档，背包不列 0 余数的行，
+    // 客户端 join 不到 —— 原先印的是 `item_mat_hero_frag_sr ×12`（#255/#268/#278 同族第四处）
+    fragmentTexts: resp.fragments.map((item) => `${item.name} ×${item.count}`),
   }
 }
 

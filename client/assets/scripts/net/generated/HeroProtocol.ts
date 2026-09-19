@@ -141,8 +141,8 @@ export interface LineupView {
 export interface HeroListResp {
   heroes: HeroView[]
   lineups: LineupView[]
-  /** 各稀有度的碎片持有量。碎片是道具（item 表的 item_mat_hero_frag_*），所以走 ItemCount 而不是新造一个类型 */
-  fragments: ItemCount[]
+  /** 各稀有度的碎片持有量。碎片是道具（item 表的 item_mat_hero_frag_*），行里连名字一起下发 —— 这一行**包含余数为 0 的档**，客户端没法从背包 join 到名字（背包不列 0 余数的行），见 FragmentView 的理由 */
+  fragments: FragmentView[]
   /** 当前带兵上限 = Σ上阵武将统帅值 × TROOP_PER_COMMAND + 科技加成（B05 §二） */
   troopCap: number
   /** 已占用的兵力。B05 第二步落地训练系统前恒为 0 */
@@ -155,6 +155,23 @@ export interface HeroListResp {
  */
 export interface ItemCount {
   itemId: string
+  count: number
+}
+
+/**
+ * 一档稀有度的碎片余额，**带中文名**。
+ *
+ * **为什么不复用 ItemCount**（原先这里写的正是「走 ItemCount 而不是新造一个类型」）：
+ * 武将页那一行要把碎片展示给玩家，而 `ItemCount` 只有 `itemId` ⇒ 画面上出来的是
+ * `item_mat_hero_frag_sr ×12` 这种行 id（#255 建筑名、#268 资源名、#278 技能名之后的同族第四处）。
+ * **也不许客户端拿背包去 join**：本响应的碎片行**包含余数为 0 的档**（某一档没攒过也要让玩家看到 0），
+ * 而背包只列余数大于 0 的行 —— join 的结果是「越没有越看不见名字」，症状正是退回印 id。
+ */
+export interface FragmentView {
+  /** item 表的行 id（item_mat_hero_frag_*） */
+  itemId: string
+  /** 道具中文名，服务端按 itemId 查 item 表的 name 列（与 RewardNames 对碎片的取法同源） */
+  name: string
   count: number
 }
 
