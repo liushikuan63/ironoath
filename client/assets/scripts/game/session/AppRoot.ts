@@ -42,7 +42,7 @@ import {
 import type { ChatPanelData } from '../social/ChatPanel'
 import { buildRankBoard } from '../power/RankBoard'
 import {
-  buildCompose, marchUnitsOf, rememberMarch, setPick,
+  buildCompose, marchUnitsOf, rememberMarch, repeatBlockedReason, setPick,
 } from '../world/MarchCompose'
 import type { ComposeView, MarchSpec } from '../world/MarchCompose'
 import type { RankBoardView, RankTabKey } from '../power/RankBoard'
@@ -1337,6 +1337,53 @@ export class AppRoot {
       : AppRoot.reason(outcome)
     this.say('targets', outcome)
     this.deliverCompose()
+  }
+
+  /**
+   * 「再次出征」：把**上一次成功**那支队伍原样重发（裁决②(a)）。
+   *
+   * <p><b>业务字段照搬、键由 GameApi 新生成</b>：复用旧键的语义是"这个键用过了"（`REQUEST_DUPLICATED`），
+   * 不是幂等回放 —— 所以每次点都算一次新意图。
+   *
+   * <p><b>凑不齐就不发</b>：上一次带 800 兵、现在只剩 300 时**明确说清**（`repeatBlockedReason`），
+   * 而不是按现有的数量发出去 —— 后者在玩家眼里是"我点的是同一支队伍，怎么输了"，
+   * 而原因（兵力不够）他永远看不到。
+   */
+  async repeatLastMarch(): Promise<void> {
+    const blocked = repeatBlockedReason(this.lastMarch, this.armyResp)
+    if (blocked !== null) {
+      this.targets.marchCompose?.({
+        targetId: '', targetName: '', coordText: '',
+        compose: buildCompose(this.armyResp ?? EMPTY_ARMY, {}),
+        notice: blocked, submitting: false,
+      })
+      return
+    }
+    const spec = this.lastMarch as MarchSpec
+    const outcome = await this.api.worldMarch({
+      toX: spec.toX, toY: spec.toY, units: [...spec.units], heroes: [...spec.heroes],
+      action: spec.action,
+    })
+    if (outcome.kind === 'ok') {
+      this.track(TRACK_EVENTS.marchSend, {
+        action: trackParam(spec.action),
+        troops: trackParam(spec.units.reduce((sum, unit) => sum + unit.count, 0)),
+      })
+      this.targets.marchCompose?.({
+        targetId: '', targetName: '', coordText: '',
+        compose: buildCompose(this.armyResp ?? EMPTY_ARMY, {}),
+        notice: `已再次出征：${spec.toX}, ${spec.toY}`, submitting: false,
+      })
+      void this.refresh('world')
+      return
+    }
+    this.say('targets', outcome)
+    this.targets.marchCompose?.({
+      targetId: '', targetName: '', coordText: '',
+      compose: buildCompose(this.armyResp ?? EMPTY_ARMY, {}),
+      notice: outcome.kind === 'biz' ? (outcome.detail ?? outcome.msg) : AppRoot.reason(outcome),
+      submitting: false,
+    })
   }
 
   /** 把编成整块推给面板。**没有编成目标时也推一次**，面板据此收起。 */

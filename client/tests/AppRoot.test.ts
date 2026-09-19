@@ -1785,3 +1785,50 @@ test('服务端拒绝时：提示原文、编成不收起（玩家能改完再�
   assert.equal(h.lastCompose?.submitting, false, '提交态要复位，否则按钮永远灰着')
   assert.equal(h.http.countOf('/world/march'), 1, '一次确认只发一枪')
 })
+
+test('再次出征：把上一次成功的队伍原样重发，且兵力不足时明确拒绝而不是改小', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+
+  // 还没出征过：再次出征给的是"没有可以重复的队伍"，且一个请求都不发
+  const before = h.http.countOf('/world/march')
+  await h.root.repeatLastMarch()
+  assert.equal(h.http.countOf('/world/march'), before, '没有上一次就不该发请求')
+  assert.match(h.lastCompose?.notice ?? '', /还没有成功出征过/)
+
+  // 先成功出征一次，再重复
+  h.root.beginMarchCompose('P9')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  await h.root.confirmMarch()
+  await h.root.repeatLastMarch()
+
+  const repeats = h.http.calls.filter(c => c.path === '/world/march')
+  assert.equal(repeats.length, 2, '确认一次 + 重复一次 = 两枪')
+  const first = repeats[0]!.body
+  const second = repeats[1]!.body
+  assert.deepEqual(second.units, first.units, '重复的是同一支队伍（业务字段照搬）')
+  assert.equal(second.toX, first.toX)
+  assert.equal(second.toY, first.toY)
+  assert.equal(second.action, first.action)
+  assert.notEqual(second.requestId, first.requestId, '每次点都是新键：复用旧键会被 REQUEST_DUPLICATED 拒')
+
+  // 兵力不够了：说清差多少，且不发第三枪
+  const shrunk = { ...ARMY_FOR_MARCH, units: [{ ...ARMY_FOR_MARCH.units[0]!, count: 5 },
+    ARMY_FOR_MARCH.units[1]!] }
+  h.http.overrides.set('/army/list', shrunk)
+  await h.root.refresh('army')
+  const beforeShrunk = h.http.countOf('/world/march')
+  await h.root.repeatLastMarch()
+  assert.equal(h.http.countOf('/world/march'), beforeShrunk, '凑不齐就不发')
+  assert.match(h.lastCompose?.notice ?? '', /30/)
+  assert.match(h.lastCompose?.notice ?? '', /5/)
+})
