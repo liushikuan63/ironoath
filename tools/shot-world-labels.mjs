@@ -115,6 +115,9 @@ const coverage = await page.evaluate(() => {
   const visible = window.cc.view.getVisibleSize()
   let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity
   let tiles = 0
+  // 归因读数：地形块与实体块**同名 `Art`**，先按尺寸分堆才知道"横向到底铺了几块"。
+  // 上一格那句"可能是没下发满 9 块"就是没数过才猜的。
+  const sizes = {}
   const visit = (n) => {
     if (n.name === 'Art') {
       const box = n.getComponent('cc.UITransform')
@@ -123,22 +126,25 @@ const coverage = await page.evaluate(() => {
         const halfW = box.width / 2; const halfH = box.height / 2
         minX = Math.min(minX, w.x - halfW); maxX = Math.max(maxX, w.x + halfW)
         minY = Math.min(minY, w.y - halfH); maxY = Math.max(maxY, w.y + halfH)
+        const key = `${Math.round(box.width)}x${Math.round(box.height)}`
+        sizes[key] = (sizes[key] ?? 0) + 1
         tiles += 1
       }
     }
     for (const c of n.children) visit(c)
   }
   visit(scene)
-  if (tiles === 0) return { tiles: 0, widthRatio: 0, heightRatio: 0 }
+  if (tiles === 0) return { tiles: 0, widthRatio: 0, heightRatio: 0, sizes: {} }
   return {
     tiles,
     boxW: maxX - minX, boxH: maxY - minY,
     viewW: visible.width, viewH: visible.height,
-    // **按轴判，不按面积判**：面积比会把"768×768 摆在 960×600 上"算成 102%（通过），
-    // 而那一屏左右各有一条 96px 的黑边 —— 面积是够的，宽度不够。
+    // **按轴判，不按面积判**：面积比会把"740×740 摆在 960×600 上"算成 102%（通过），
+    // 而那一屏左右各有一条黑边 —— 面积是够的，宽度不够。
     // 这正是旧口径（写死 8px）的实际形态，用面积比就抓不到它。
     widthRatio: (maxX - minX) / visible.width,
     heightRatio: (maxY - minY) / visible.height,
+    sizes,
   }
 })
 const cover = Math.min(coverage.widthRatio, coverage.heightRatio)
@@ -146,6 +152,7 @@ console.log(`[world] 地形 ${coverage.tiles} 块，外接盒 ${Math.round(cover
   + ` vs 视口 ${Math.round(coverage.viewW ?? 0)}×${Math.round(coverage.viewH ?? 0)}`
   + ` ⇒ 宽 ${(coverage.widthRatio * 100).toFixed(0)}% / 高 ${(coverage.heightRatio * 100).toFixed(0)}%`
   + ` / 取短板 ${(cover * 100).toFixed(0)}%`)
+console.log(`[world] Art 节点按尺寸分堆：${JSON.stringify(coverage.sizes)}`)
 if (cover < 0.98) {
   console.error(`[world] 判据失败：短板方向只铺到 ${(cover * 100).toFixed(0)}%`
     + ' —— 屏幕会露出一圈纯黑，读起来像"地图到此为止"')
