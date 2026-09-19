@@ -322,7 +322,9 @@ bash scripts/check.sh
 #225 商店、更早的 connectSocket 推送），也就是说 **V02 的 P0 核心「集结可发起与加入」今天在客户端完全不存在**：
 服务端端点可用、契约完整、类型齐全，而玩家点不到。
 
-**这一格要交的（客户端入口，不重写服务端）**：
+**这一格要交的（只有客户端；服务端的六个写口 + 两个读口都已就绪）**：
+0. 先跑一次 `GET /rally/list` 的实跑验收（对照：不存在的 `/rally/listX` 必须 404），确认读侧在本轮构建上真的可用 ——
+   不要拿"代码里有"当"跑得通"（同族的教训见 `verify-before-claim`）。
 1. `game/social/RallyPanel.ts`（纯逻辑）：从 `RallyView` 组装展示数据 —— 目标坐标与类型（「目标：野外怪 (433,95)」）、
    发起人、参战人数 `n / maxMembers`、剩余时间（服务端时刻相减）、我参没参（`myJoined` 一类字段）、
    以及三个动作的**可点性与原因**（发起要"我有队/我有盟"、加入要"不是发起人且没满"、退出要"我参了"）。
@@ -337,6 +339,11 @@ bash scripts/check.sh
 **开工前必须复核的两件事**（避免造出第二个"点不到"）：
 - `/rally/join` 的请求体要不要带兵力（`RallyJoinReq` 里有承诺兵力与武将位）⇒ **要**，那么"加入"必须先能编队 ——
   这与 V01 的编成能力是同一块，**先看 `MarchComposeOverlay` 能不能复用**（同一份编成界面、同一个 `MarchSpec`）。
-- 服务端的集结**列表**从哪读 —— **已核实：没有**。`RallyController` 只有四个端点（`/rally/squad`、`/rally/alliance`、`/rally/join`、`/rally/quit`，全是写口），全仓没有任何读侧。
-  后果：玩家发起了集结，**同队/同盟的人看不到它**，"加入"没有入口 —— 集结闭环断在读侧。所以这一格的第一件事是**补一个读端点**
-  （`GET /rally/list`：本队/本盟当前进行中的集结，含人数、目标、剩余时间、我参没参），再做客户端入口。
+- 服务端的集结**列表**从哪读 —— **更正（2026-09-19 同轮）：读侧早就存在**。`RallyController` 一共七个端点：
+  `POST /rally/squad`、`POST /rally/alliance`、`POST /rally/join`、`POST /rally/quit`、`POST /rally/cancel`、
+  `GET /rally?rallyId=`（单条视图）、**`GET /rally/list`（`RallyController:92` → `SocialAppService.preparingRallies`，
+  返回本队/本盟进行中的集结 `RallyListResp`）**。
+  **我第一版开工单写成"全仓没有读侧"是错的**，错因值得记住：那条结论来自一句 `grep -n "Mapping|public Result" … | head -12` ——
+  输出正好在四个 POST 之后被 `head` 截断，于是把"没看到"当成了"不存在"。**缺失类断言必须用不截断的全量检索**
+  （`grep -n "GetMapping" 该文件` 一行就够，或直接按方法名反查 `preparingRallies`），这是本轮踩到的第二个"假结论"形状。
+  所以这一格的工作量比原先估的小得多：**服务端不用动，缺的只有客户端** —— 玩家点不到那个列表，也发不出集结。
