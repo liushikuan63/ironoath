@@ -113,6 +113,10 @@ export const TRACK_EVENTS = {
   allianceDonate: 'alliance_donate',
   /** 建了一个组织（B26 S2）。带 scope：小队与联盟是两条完全不同的漏斗，混在一起就看不出卡在哪。 */
   socialCreate: 'social_create',
+  /** 离开组织（B26 S3）。第一下"确认…"不计数 —— 只记真发出去的那一枪。 */
+  socialLeave: 'social_leave',
+  /** 解散组织（B26 S3，不可逆）。它和 social_leave 分开：一个是走人，一个是把房子拆了。 */
+  socialDisband: 'social_disband',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

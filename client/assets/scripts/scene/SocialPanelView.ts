@@ -20,6 +20,9 @@ import { EMPTY_PERMISSIONS, gate } from '../game/social/PermissionGates'
 import type { Gate, PermissionState } from '../game/social/PermissionGates'
 import { createEntries } from '../game/social/SocialCreate'
 import type { CreateEntry, CreateScope } from '../game/social/SocialCreate'
+import { exitEntry } from '../game/social/SocialExit'
+import { truncatedNotice } from '../game/ui/TruncatedList'
+import type { ExitAction, ExitKey, ExitScope } from '../game/social/SocialExit'
 import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
 } from '../game/social/SocialPanel'
@@ -100,10 +103,18 @@ interface RowDraft {
   readonly actionEnabled: boolean
   readonly actionId: string | null
   readonly actionKind: RowAction
+  /**
+   * 第二个按钮（只有「退出与解散」那一行用）。
+   *
+   * <p>为什么不是两行：一屏画得下 6 行（可视高 540 实测），而联盟页已经有概况 + 三档捐献 + 成员名单，
+   * 再加两行就必然挤掉成员那一行 —— 挤掉的是"看得见的功能"，比省一行严重得多。
+   */
+  readonly action2?: { readonly text: string, readonly enabled: boolean, readonly id: string } | null
 }
 
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
   | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
+  | 'socialExit'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -118,6 +129,8 @@ export class SocialPanelView extends Component {
   private permissions: PermissionState = EMPTY_PERMISSIONS
   /** 两行「创建」（B26 S2）。没读到政策时它们是「创建条件读取中」的灰行，不是没有行。 */
   private create: Record<CreateScope, CreateEntry> = createEntries(null, null, null)
+  /** 退出/解散里已经按下第一下的那一行（第二下才发请求）。 */
+  private armedExit: ExitKey | null = null
   /** 联盟成员缓存。汇总接口不下发它，只有 /alliance/sync 的 diff 会更新它 */
   private readonly allianceMembers: AllianceMember[] = []
   /** 重建面板所需的上一次原始输入。diff 到达时要用它们重新组装，而不是去改已组装好的 data */
@@ -167,6 +180,8 @@ export class SocialPanelView extends Component {
   onDonate: ((tier: number) => void) | null = null
   /** 点「创建小队 / 创建联盟」那一行（B26 S2）：由编排层打开表单弹层。 */
   onSocialCreate: ((scope: CreateScope) => void) | null = null
+  /** 点「退出 / 解散」那一行（B26 S3）：第一下由编排层把行改成"确认…"，第二下才发请求。 */
+  onSocialExit: ((scope: ExitScope, action: ExitAction) => void) | null = null
 
   /** 进聊天页签（首次画之前先拉一次历史） */
   onChatEnter: (() => void) | null = null
@@ -209,6 +224,7 @@ export class SocialPanelView extends Component {
     this.rowActionIds.clear()
     this.permissions = EMPTY_PERMISSIONS
     this.create = createEntries(null, null, null)
+    this.armedExit = null
     this.allianceMembers.length = 0
     this.lastResp = null
     this.lastHelps = []
@@ -220,6 +236,7 @@ export class SocialPanelView extends Component {
     this.onHelpAll = null
     this.onDonate = null
     this.onSocialCreate = null
+    this.onSocialExit = null
     this.chatData = null
     this.chatControls = null
     this.chatInput = null
@@ -302,6 +319,12 @@ export class SocialPanelView extends Component {
     this.render()
   }
 
+  /** 编排层告知"哪一行已经按下第一下"（null = 没有）。只改字，不发请求。 */
+  attachExitArmed(armed: ExitKey | null): void {
+    this.armedExit = armed
+    this.render()
+  }
+
   /**
    * 装载聊天页签的数据（B22 §一 1）。组合根每次状态变化后整份递过来。
    *
@@ -353,6 +376,8 @@ export class SocialPanelView extends Component {
       return
     }
     this.tab = tab
+    // 换页签就撤销"已按下第一下"：那一行不在这页上了，留着会让下一次点击把另一页的动作发出去
+    this.armedExit = null
     if (tab === 'rally') {
       // 集结的剩余时间随时在走：每次进来都重拉一次（缓存会显示过期的倒计时）
       this.onRallyEnter?.()
@@ -462,6 +487,25 @@ export class SocialPanelView extends Component {
     }
     const caption = this.addLabel(action, 'Caption', 0, 0, COLOR_TEXT, 13)
     caption.string = ''
+
+    // 第二颗（只有「退出与解散」那一行会画它）：默认不激活，renderRow 按行决定
+    const second = new Node('ActionButton2')
+    second.layer = node.layer
+    node.addChild(second)
+    second.setPosition(new Vec3(PANEL_WIDTH / 2 - 44, 0, 0))
+    second.addComponent(UITransform).setContentSize(new Size(72, 30))
+    if (!applyCommandButton(second, 'normal', 72, 30)) {
+      const secondGraphics = second.addComponent(Graphics)
+      secondGraphics.fillColor = COLOR_PANEL
+      secondGraphics.strokeColor = COLOR_COPPER_GOLD
+      secondGraphics.lineWidth = 1
+      secondGraphics.roundRect(-36, -15, 72, 30, 4)
+      secondGraphics.fill()
+      secondGraphics.stroke()
+    }
+    const secondCaption = this.addLabel(second, 'Caption', 0, 0, COLOR_TEXT, 13)
+    secondCaption.string = ''
+    second.active = false
     return node
   }
 
@@ -656,11 +700,25 @@ export class SocialPanelView extends Component {
       this.hintLabel.color = this.socialReddotLit() ? COLOR_WARNING : COLOR_TEXT_DIM
     }
     if (this.tab === 'rally') {
-      this.drawRows(this.rallyRows(), MAX_VISIBLE_ROWS, 0)
+      this.drawRows(this.rallyRows(), this.rowCapacity(0), 0)
       this.setHint(this.rallyHint())
       return
     }
-    this.drawRows(drafts, MAX_VISIBLE_ROWS, 0)
+    this.drawRows(drafts, this.rowCapacity(0), 0)
+  }
+
+  /**
+   * 一屏画得下几行：**按可视高度现算**，不写死。
+   *
+   * <p>写死 8 行那一版在 1280×720 的窗口里可视高只有 540，第 6 行起就压到导航条上
+   * （本仓库在军队页与编队弹层各踩过一次，同一条教训）。底部让出的高度 = 8（下边距）
+   * + 52（`PanelNav.BAR_HEIGHT`）+ 8（安全间隙），与 `ArmyPanelView` 用的是同一个口径。
+   */
+  private rowCapacity(topOffset: number): number {
+    const size = view.getVisibleSize()
+    const firstRowBottom = size.height / 2 - PADDING - HEADER_HEIGHT - topOffset - ROW_HEIGHT
+    const room = firstRowBottom - (-size.height / 2 + 8 + 52 + 8)
+    return Math.max(1, Math.min(MAX_VISIBLE_ROWS, Math.floor(room / (ROW_HEIGHT + ROW_GAP)) + 1))
   }
 
   /** 池化地画一批行。`topOffset` 给聊天页签上面的频道条让出位置。 */
@@ -675,7 +733,23 @@ export class SocialPanelView extends Component {
     this.drawnRows.length = 0
     this.rowActionIds.clear()
 
-    drafts.slice(0, limit).forEach((draft, index) => {
+    // 装不下时**必须说出来**：静默截断等于把行藏起来，玩家不知道下面还有人（#296 同一条教训）。
+    // 那句话用 `game/ui/TruncatedList.ts` 里那一份 —— 同一个提示原先在七个视图里各写一遍，
+    // 而且八处都带着「（编辑器资产）」这类工程术语，`check-player-copy-jargon` 就是盯这个的。
+    const shown = drafts.slice(0, limit)
+    if (drafts.length > limit) {
+      shown[limit - 1] = {
+        title: truncatedNotice('项', drafts.length - limit + 1),
+        titleColor: COLOR_TEXT_DIM,
+        detail: '',
+        value: '',
+        actionText: null,
+        actionEnabled: false,
+        actionId: null,
+        actionKind: 'none',
+      }
+    }
+    shown.forEach((draft, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
@@ -789,18 +863,53 @@ export class SocialPanelView extends Component {
     }
   }
 
+  /**
+   * 「退出与解散」那一行（B26 S3）：**两颗按钮共用一行**。
+   *
+   * <p>解散看权限位（服务端有 `DISBAND_SQUAD` / `DISBAND_ALLIANCE`），退出谁都能点 ——
+   * 表里根本没有 LEAVE 这一位，把两条写成同一个门槛等于把想走的人关在队里。
+   *
+   * <p>为什么不做成两行：一屏画得下 6 行（可视高 540 实测），而联盟页已经有概况 + 三档捐献 +
+   * 成员名单；再多一行就会把成员行挤出去 —— **挤掉一个看得见的功能，比省一行严重得多**。
+   */
+  private exitRow(scope: ExitScope): RowDraft {
+    const disbandGate = gate(this.permissions, scope === 'squad' ? 'SQUAD' : 'ALLIANCE',
+      scope === 'squad' ? 'DISBAND_SQUAD' : 'DISBAND_ALLIANCE')
+    const isArmed = (action: ExitAction) =>
+      this.armedExit !== null && this.armedExit.scope === scope && this.armedExit.action === action
+    const leave = exitEntry(scope, 'leave', true, null, isArmed('leave'))
+    const disband = exitEntry(scope, 'disband', true, disbandGate, isArmed('disband'))
+    return {
+      title: '退出与解散',
+      titleColor: COLOR_TEXT,
+      detail: [leave.detailText, disband.detailText].filter(text => text.length > 0).join(' · '),
+      value: '',
+      actionText: leave.actionText,
+      actionEnabled: leave.enabled,
+      actionId: 'leave',
+      actionKind: 'socialExit',
+      action2: { text: disband.actionText, enabled: disband.enabled, id: 'disband' },
+    }
+  }
+
   private draftsFor(data: SocialData): RowDraft[] {
     switch (this.tab) {
       case 'squad':
         // 没加入时这一页此前**整块空白**（成员行是空的，别的东西也没有）：
         // 看不见功能存在，玩家会以为这个游戏没有小队
         return data.squad.joined
-          ? memberDrafts(data.squad.members, gate(this.permissions, 'SQUAD', 'KICK_MEMBER'))
+          ? [this.exitRow('squad'), ...memberDrafts(data.squad.members,
+            gate(this.permissions, 'SQUAD', 'KICK_MEMBER'))]
           : [createDraft('squad', data.squad.title, this.create.squad)]
-      case 'alliance':
-        return data.alliance.joined
-          ? allianceDrafts(data.alliance, this.permissions)
-          : [createDraft('alliance', data.alliance.title, this.create.alliance)]
+      case 'alliance': {
+        if (!data.alliance.joined) {
+          return [createDraft('alliance', data.alliance.title, this.create.alliance)]
+        }
+        const rows = allianceDrafts(data.alliance, this.permissions)
+        // 插在联盟概况那一行之后、捐献与成员名单之前（名单是不定长的，固定那一行不能排在它后面）
+        rows.splice(1, 0, this.exitRow('alliance'))
+        return rows
+      }
       case 'help':
         return helpDrafts(data.helpRows)
       case 'events':
@@ -856,6 +965,32 @@ export class SocialPanelView extends Component {
       // 否则他会以为整个游戏没有这个玩法
       caption.color = draft.actionEnabled ? COLOR_TEXT : COLOR_TEXT_DIM
     }
+    // 第二颗按钮（只有「退出与解散」那一行有）。放在下面那几句 return **之前**：
+    // 第一颗灰掉不影响第二颗的显隐
+    const second = node.children[4]
+    const hasSecond = draft.action2 !== null && draft.action2 !== undefined
+    // 两颗并排在行右侧：有第二颗时第一颗往左挪一格，否则它们会叠在同一个点上（池化行复用的老毛病）
+    button.setPosition(new Vec3(PANEL_WIDTH / 2 - (hasSecond ? 124 : 44), 0, 0))
+    if (second !== undefined) {
+      second.off('touch-start')
+      second.setPosition(new Vec3(PANEL_WIDTH / 2 - 44, 0, 0))
+      second.active = hasSecond
+      const secondDraft = draft.action2 ?? null
+      if (secondDraft !== null) {
+        applyCommandButton(second, secondDraft.enabled ? 'normal' : 'disabled', 72, 30)
+        const secondCaption = second.children[0]?.getComponent(Label)
+        if (secondCaption !== undefined && secondCaption !== null) {
+          secondCaption.string = secondDraft.text
+          secondCaption.color = secondDraft.enabled ? COLOR_TEXT : COLOR_TEXT_DIM
+        }
+        if (secondDraft.enabled && draft.actionKind === 'socialExit') {
+          const scope = this.tab === 'squad' ? 'squad' : 'alliance'
+          second.on('touch-start', (_event: EventTouch) => {
+            this.onSocialExit?.(scope, secondDraft.id === 'disband' ? 'disband' : 'leave')
+          }, this)
+        }
+      }
+    }
     if (!draft.actionEnabled || draft.actionId === null) {
       return
     }
@@ -901,6 +1036,12 @@ export class SocialPanelView extends Component {
       }
       if (kind === 'socialCreate') {
         this.onSocialCreate?.(id === 'squad' ? 'squad' : 'alliance')
+        return
+      }
+      if (kind === 'socialExit') {
+        // 这两行只在各自那一页画出来，所以层级由当前页签给，动作由行给
+        this.onSocialExit?.(this.tab === 'squad' ? 'squad' : 'alliance',
+          id === 'disband' ? 'disband' : 'leave')
         return
       }
       this.onRowAction?.(kind, id, this.tab === 'alliance' ? 'alliance' : 'squad')

@@ -664,6 +664,14 @@ export class GameApi {
     return this.mutate<SquadSelfReq, SocialSummaryResp>('/squad/leave', req)
   }
 
+  /**
+   * POST /squad/disband（B26 S3）。端点早就有（`SocialEndpointTest` 里那三条解散用例一直在打它），
+   * 客户端却连方法都没有 —— 于是队长只能退队、不能解散，而这两条在服务端是两套账。
+   */
+  squadDisband(req: Omit<SquadSelfReq, 'requestId'>): Promise<NetOutcome<SocialSummaryResp>> {
+    return this.mutate<SquadSelfReq, SocialSummaryResp>('/squad/disband', req)
+  }
+
   squadKick(req: Omit<SquadMemberReq, 'requestId'>): Promise<NetOutcome<SocialSummaryResp>> {
     return this.mutate<SquadMemberReq, SocialSummaryResp>('/squad/kick', req)
   }

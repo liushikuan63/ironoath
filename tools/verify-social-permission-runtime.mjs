@@ -67,12 +67,21 @@ const fixture = {
   /** 今天捐过哪几档（捐一次加一档，用来验"用完的档位不再摆按钮"） */
   donatedTiers: [],
   donateCalls: [],
+  /** 退出联盟发出去的那几枪（B26 S3 的"两步行内确认"要数它） */
+  leaveCalls: [],
+  /** 夹具成员数：D 相把它撑到 2，用来看那句"一屏画不下"的提示 */
+  members: 1,
   summaryReads: 0,
 }
 
 const MEMBER = {
   id: 'p_probe_member', name: '周校', power: 18_400, role: 'MEMBER', contribution: 620,
   lastActiveAt: SERVER_NOW() - 3_600_000, squadId: null,
+}
+/** 第二个成员：只用来把名单撑到"一屏画不下"，验那句截断提示（D 相）。 */
+const MEMBER2 = {
+  id: 'p_probe_member_two', name: '吴顺', power: 9_100, role: 'MEMBER', contribution: 130,
+  lastActiveAt: SERVER_NOW() - 7_200_000, squadId: null,
 }
 
 const allianceView = (version) => ({
@@ -100,7 +109,8 @@ const summary = () => ({
 const permissions = (scope) => (fixture.mode === 'leader'
   ? {
     scope, role: 'LEADER',
-    permissions: ['DONATE', 'KICK_MEMBER', 'INVITE', 'APPROVE', 'EXPAND_TERRITORY'],
+    permissions: ['DONATE', 'KICK_MEMBER', 'INVITE', 'APPROVE', 'EXPAND_TERRITORY',
+      'DISBAND_ALLIANCE', 'DISBAND_SQUAD'],
     serverNow: SERVER_NOW(),
   }
   : { scope, role: 'NONE', permissions: [], serverNow: SERVER_NOW() })
@@ -172,18 +182,26 @@ const ROWS = `(() => {
         return label && label.string ? label.string : ''
       }
       const button = pick('ActionButton')
+      const second = pick('ActionButton2')
       const captionNode = button ? button.children.find((c) => c.name === 'Caption') : null
       const caption = captionNode ? captionNode.getComponent('cc.Label') : null
+      const secondNode = second ? second.children.find((c) => c.name === 'Caption') : null
+      const caption2 = secondNode ? secondNode.getComponent('cc.Label') : null
       const t = n.getComponent('cc.UITransform')
       const bt = button ? button.getComponent('cc.UITransform') : null
+      const b2t = second ? second.getComponent('cc.UITransform') : null
       rows.push({
         y: n.getPosition().y,
         title: text('Title'), detail: text('Detail'), value: text('Value'),
         buttonActive: button ? button.active === true : false,
         caption: caption && caption.string ? caption.string : '',
         color: caption ? [caption.color.r, caption.color.g, caption.color.b] : null,
+        secondActive: second ? second.active === true : false,
+        caption2Text: caption2 && caption2.string ? caption2.string : '',
+        color2: caption2 ? [caption2.color.r, caption2.color.g, caption2.color.b] : null,
         rowPlate: t ? { ...world(n), w: t.contentSize.width, h: t.contentSize.height } : null,
         buttonPlate: bt ? { ...world(button), w: bt.contentSize.width, h: bt.contentSize.height } : null,
+        button2Plate: b2t ? { ...world(second), w: b2t.contentSize.width, h: b2t.contentSize.height } : null,
       })
     }
     for (const child of n.children) walk(child)
@@ -218,8 +236,8 @@ const TAP_NAMED = (name) => `(() => {
   return 'tapped'
 })()`
 
-/** 第 index 行的 ActionButton（行序与 ROWS 一致：按 y 从大到小）。 */
-const TAP_ROW = (index) => `(() => {
+/** 按按钮文字找到那一行再点它（行序会随权限与捐献档位变化，按文字找才不脆）。 */
+const TAP_CAPTION = (text) => `(() => {
   const game = ${NODE_PATH}
   const root = game.children.find((c) => c.name === 'social')
   if (!root) return 'missing-root'
@@ -230,13 +248,16 @@ const TAP_ROW = (index) => `(() => {
     for (const child of n.children) walk(child)
   }
   walk(root)
-  rows.sort((a, b) => b.getPosition().y - a.getPosition().y)
-  const row = rows[${index}]
-  if (row === undefined) return 'no-row'
-  const button = row.children.find((c) => c.name === 'ActionButton')
-  if (button === undefined || !button.active) return 'no-button'
-  button.emit('touch-start')
-  return 'tapped'
+  for (const row of rows) {
+    const button = row.children.find((c) => c.name === 'ActionButton')
+    const caption = button ? button.children.find((c) => c.name === 'Caption') : null
+    const label = caption ? caption.getComponent('cc.Label') : null
+    if (label && label.string === ${JSON.stringify(text)} && button.active) {
+      button.emit('touch-start')
+      return 'tapped'
+    }
+  }
+  return 'no-row'
 })()`
 
 const readRows = async () => page.evaluate(ROWS)
@@ -341,7 +362,9 @@ await context.route('**/alliance/sync*', async (route) => {
     body: JSON.stringify({
       code: 0, msg: '成功',
       data: {
-        version: 7, unchanged: false, changedMembers: [MEMBER], removedMemberIds: [],
+        version: 7, unchanged: false,
+        changedMembers: [MEMBER, ...(fixture.members === 2 ? [MEMBER2] : [])],
+        removedMemberIds: [],
         fund: 8_400 + 200 * fixture.donatedTiers.length,
         level: 3, memberCount: 2, announcement: '每晚八点集结',
         serverNow: SERVER_NOW(),
@@ -361,6 +384,27 @@ await context.route('**/social/permissions*', async (route) => {
     status: 200,
     headers: { ...cors(request), 'content-type': 'application/json' },
     body: JSON.stringify({ code: 0, msg: '成功', data: permissions(scope), serverNow: SERVER_NOW() }),
+  })
+})
+// 退出联盟打桩：B26 S3 的"两步行内确认"要数它发了几枪
+await context.route('**/alliance/leave*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  fixture.leaveCalls.push(JSON.parse(request.postData() ?? '{}'))
+  await route.fulfill({
+    status: 200,
+    headers: { ...cors(request), 'content-type': 'application/json' },
+    body: JSON.stringify({
+      code: 0, msg: '成功',
+      data: {
+        squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+        helpRemainingToday: 20, events: [], serverNow: SERVER_NOW(),
+      },
+      serverNow: SERVER_NOW(),
+    }),
   })
 })
 await context.route('**/alliance/donate*', async (route) => {
@@ -388,8 +432,7 @@ await context.route('**/alliance/donate*', async (route) => {
   })
 })
 
-// ============================ 相位 B：已入盟 + 有权限 ============================
-fixture.mode = 'leader'
+// ============================ 相位 B：已入盟 + 有权限 ============================fixture.mode = 'leader'
 fixture.donatedTiers = []
 await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
 await bootIn()
@@ -412,7 +455,7 @@ checkTrue('B7 屏上不出现权限码字样（下发的是结论，不是给玩
 await shot('B-leader-permissions')
 
 const donateCallsBefore = fixture.donateCalls.length
-const tapB = await page.evaluate(TAP_ROW(1))
+const tapB = await page.evaluate(TAP_CAPTION('捐献'))
 await page.waitForTimeout(1_500)
 check('B8 点「免费捐献」那行 ⇒ 真的发出写请求（这一步此前是死的）', tapB, 'tapped')
 check('B9 捐献恰好一条', fixture.donateCalls.length - donateCallsBefore, 1)
@@ -426,6 +469,27 @@ checkTrue('B12 捐完那一档不再摆按钮（夹具摘要 donateTiersUsed 已
 checkTrue('B13 捐完资金与贡献值跟着走：画的是**重读摘要**里的那份 8600，不是本地加一笔',
   (afterDonate?.rows ?? []).some((r) => r.value.includes('8600')))
 await shot('B-after-donate')
+
+// ---- B26 S3：退出与解散那一行（一行两颗按钮） ----
+const exitB = (afterDonate?.rows ?? []).find(r => r.caption === '退出联盟')
+checkTrue('B14 「退出联盟」亮着（服务端没有 LEAVE 这一位，那是每个成员的权利）',
+  exitB !== undefined && JSON.stringify(exitB.color) === JSON.stringify([LIT.r, LIT.g, LIT.b]))
+checkTrue('B15 同一行第二颗「解散联盟」也亮：夹具这次给了 DISBAND_ALLIANCE',
+  exitB !== undefined && exitB.secondActive === true
+    && JSON.stringify(exitB.color2) === JSON.stringify([LIT.r, LIT.g, LIT.b]))
+checkTrue('B15b 两颗按钮不叠在同一个点上（池化行复用的老毛病：第二颗默认与第一颗同位）',
+  exitB !== undefined && Math.abs(exitB.buttonPlate.x - exitB.button2Plate.x) >= 70)
+const leaveCallsBefore = fixture.leaveCalls.length
+check('B16 点「退出联盟」第一下', await page.evaluate(TAP_CAPTION('退出联盟')), 'tapped')
+await page.waitForTimeout(900)
+check('B17 第一下不发请求（不可逆动作不该一次误触就生效）', fixture.leaveCalls.length, leaveCallsBefore)
+const armedRow = (await readRows())?.rows?.find(r => r.caption === '确认退出联盟')
+checkTrue('B18 第一下之后那一行改字成「确认退出联盟」并写着下一次会发生什么',
+  armedRow !== undefined && armedRow.detail.includes('再点一次真的离开'))
+check('B19 第二下才真发', await page.evaluate(TAP_CAPTION('确认退出联盟')), 'tapped')
+await page.waitForTimeout(1_200)
+check('B20 恰好一条 /alliance/leave', fixture.leaveCalls.length - leaveCallsBefore, 1)
+await shot('B-two-step-leave')
 
 // ============================ 相位 C：同一份摘要，权限换成空表 ============================
 fixture.mode = 'none'
@@ -445,13 +509,72 @@ checkTrue('C4 成员行的「踢出」同样灰，并且理由写在同一行上
   kickC !== undefined && JSON.stringify(kickC.color) === JSON.stringify([DIM.r, DIM.g, DIM.b])
     && kickC.detail.includes('不能做这件事'))
 const callsBeforeC = fixture.donateCalls.length
-await page.evaluate(TAP_ROW(1))
+await page.evaluate(TAP_CAPTION('捐献'))
 await page.waitForTimeout(1_200)
 check('C5 灰着的那一行点了不发请求（B 相与 C 相只差权限载荷）',
   fixture.donateCalls.length, callsBeforeC)
 await shot('C-no-permissions')
+const leaveC = (snapC?.rows ?? []).find(r => r.caption === '退出联盟')
+checkTrue('C6 权限清空后「退出联盟」**仍然亮** —— 这条就是那条不对称的运行时证据：'
+  + '把退出也挂到权限上，就会把成员关在他想退的联盟里',
+  leaveC !== undefined && JSON.stringify(leaveC.color) === JSON.stringify([LIT.r, LIT.g, LIT.b]))
+checkTrue('C7 同一行第二颗「解散联盟」灰着并写原因（DISBAND_ALLIANCE 是服务端下发的位，不是客户端猜的职位）',
+  leaveC !== undefined && JSON.stringify(leaveC.color2) === JSON.stringify([DIM.r, DIM.g, DIM.b])
+    && leaveC.detail.includes('你当前的职位不能做这件事'))
 
 // ============================ 相位 D：版面与错误 ============================
+/**
+ * 最后一行与导航条：导航条的上沿**从场景里实测**（写死数字就是松判据 —— 本仓库在别的面板
+ * 踩过"写死 7 行把第 5 行压进导航条"）。C 相那一屏有 6 行（三档捐献 + 成员 + 退出 + 解散），
+ * 正是行数最多的一屏。
+ */
+const NAV = `(() => {
+  const scene = window.cc.director.getScene()
+  let nav = null
+  const find = (n) => {
+    if (nav !== null) return
+    if (n.name === 'NavBar') { nav = n; return }
+    for (const c of n.children) find(c)
+  }
+  find(scene)
+  if (nav === null) return null
+  const nt = nav.getComponent('cc.UITransform')
+  const np = nav.getWorldPosition()
+  const game = scene.getChildByName('Canvas').getChildByName('Game')
+  const root = game.children.find((c) => c.name === 'social')
+  let lowest = null
+  const walk = (n) => {
+    if (!n.activeInHierarchy) return
+    if (n.name === 'SocialRow') {
+      const t = n.getComponent('cc.UITransform')
+      const p = n.getWorldPosition()
+      const bottom = p.y - t.contentSize.height / 2
+      if (lowest === null || bottom < lowest) lowest = bottom
+    }
+    for (const c of n.children) walk(c)
+  }
+  if (root !== undefined) walk(root)
+  return { navTop: np.y + nt.contentSize.height / 2, lowestRowBottom: lowest }
+})()`
+const nav = await page.evaluate(NAV)
+checkTrue(`D0 最后一行不被导航条压住（实测：导航条上沿 ${nav?.navTop?.toFixed(1)}，`
+  + `行底 ${nav?.lowestRowBottom?.toFixed(1)}）`,
+  nav !== null && nav.lowestRowBottom !== null && nav.lowestRowBottom > nav.navTop)
+const exitD = (snapC?.rows ?? []).find(r => r.caption === '退出联盟')
+checkTrue('D0b 固定那一行（退出与解散）排在成员名单之前，名单再长也挤不掉它',
+  exitD !== undefined && exitD.secondActive === true)
+// 把名单撑到两个人：一屏只有 6 格，画不下的那一格必须换成提示，而不是静默少画一行
+fixture.members = 2
+await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
+await bootIn()
+await openAllianceTab()
+const snapD = await waitForRows(rows => rows.some(r => /^另有 \d+ 项未显示/.test(r.title)))
+checkTrue('D0c 装不下时最后一格改成「另有 N 项未显示」（静默截等于把功能藏起来）',
+  (snapD?.rows ?? []).some(r => /^另有 \d+ 项未显示/.test(r.title)))
+checkTrue('D0d 被挤掉的只能是不定长的名单：固定那一行仍在屏上',
+  (snapD?.rows ?? []).some(r => r.caption === '退出联盟'))
+await shot('D-truncated-list')
+fixture.members = 1
 const plates = (snapC?.rows ?? []).filter((r) => r.buttonPlate !== null)
 let overlap = 0
 for (let i = 0; i < plates.length; i += 1) {

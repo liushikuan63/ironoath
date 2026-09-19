@@ -104,6 +104,8 @@ const SKIP = new Set([
   "openSocialCreate",
   "typeSocialCreate",
   "cancelSocialCreate",
+  // 退出/解散的第一下只是把那一行改成"确认…"，一个字节都没发出去；真发出去那一枪另有 social_leave / social_disband
+  "requestExit",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

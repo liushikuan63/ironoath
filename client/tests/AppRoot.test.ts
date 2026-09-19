@@ -38,6 +38,7 @@ import type { GachaPanelView } from '../assets/scripts/game/gacha/GachaPanel'
 import type { LineupEditView } from '../assets/scripts/game/hero/LineupEdit'
 import type { PermissionState } from '../assets/scripts/game/social/PermissionGates'
 import type { CreateEntry, CreateForm, CreateScope } from '../assets/scripts/game/social/SocialCreate'
+import type { ExitKey } from '../assets/scripts/game/social/SocialExit'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -545,6 +546,8 @@ interface Harness {
   readonly lastCreateEntries: Record<CreateScope, CreateEntry> | null
   /** 最近一次推给创建弹层的表单（null = 关掉）。 */
   readonly lastCreateForm: CreateForm | null
+  /** 最近一次推给面板的"已按下第一下"的那一行（B26 S3）。 */
+  readonly lastExitArmed: ExitKey | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -645,6 +648,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastPermissions: PermissionState | null = null
   let lastCreateEntries: Record<CreateScope, CreateEntry> | null = null
   let lastCreateForm: CreateForm | null = null
+  let lastExitArmed: ExitKey | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -725,6 +729,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     socialCreate: form => {
       lastCreateForm = form
+    },
+    socialExit: armed => {
+      lastExitArmed = armed
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -829,6 +836,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastCreateForm() {
       return lastCreateForm
+    },
+    get lastExitArmed() {
+      return lastExitArmed
     },
     get lastCompose() {
       return lastCompose
@@ -2639,6 +2649,54 @@ test('取消创建：丢掉输入，一条请求都不发', async () => {
   assert.equal(h.lastCreateForm, null)
   await h.root.submitSocialCreate()
   assert.equal(h.http.countOf('/alliance/create'), 0, '表单都关了还发请求，就是凭空建了个联盟')
+})
+
+test('退出联盟：第一下只把行改成"确认…"，第二下才发那一枪，发完三道门重拉', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/alliance/leave', summaryBody())
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+
+  await h.root.requestExit('alliance', 'leave')
+  assert.deepEqual(h.lastExitArmed, { scope: 'alliance', action: 'leave' })
+  assert.equal(h.http.countOf('/alliance/leave'), 0, '第一下就发请求，等于把不可逆动作交给一次误触')
+
+  await h.root.requestExit('alliance', 'leave')
+  assert.equal(h.lastExitArmed, null, '发完就把"确认"态收掉：下一次点击要重新数第一下')
+  assert.equal(h.http.countOf('/alliance/leave'), 1)
+  assert.equal(h.http.countOf('/social/createPolicy'), 2,
+    '退完权限就该空掉 —— 不重拉的话屏幕上还留着盟主的亮按钮')
+})
+
+test('解散换一行按就是重新数第一下（按过退队再按解散，不该直接发出去）', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/alliance/disband', summaryBody())
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+
+  await h.root.requestExit('alliance', 'leave')
+  await h.root.requestExit('alliance', 'disband')
+  assert.deepEqual(h.lastExitArmed, { scope: 'alliance', action: 'disband' })
+  assert.equal(h.http.countOf('/alliance/disband'), 0)
+  await h.root.requestExit('alliance', 'disband')
+  assert.equal(h.http.countOf('/alliance/disband'), 1)
+  assert.equal(h.http.countOf('/alliance/leave'), 0, '两行各数各的，不该串台')
+})
+
+test('解散小队走的是 /squad/disband（这个端点早就有，客户端此前连方法都没有）', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/squad/disband', summaryBody())
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+  await h.root.requestExit('squad', 'disband')
+  await h.root.requestExit('squad', 'disband')
+  assert.equal(h.http.countOf('/squad/disband'), 1)
 })
 
 /** 一份能建的创建政策（两个层级都放行；联盟收 500 金币，小队不要钱）。 */

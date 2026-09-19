@@ -71,6 +71,7 @@ import { EMPTY_PERMISSIONS, withPermissionScope } from '../social/PermissionGate
 import type { PermissionState } from '../social/PermissionGates'
 import { buildCreateForm, createEntries } from '../social/SocialCreate'
 import type { CreateEntry, CreateForm, CreateScope } from '../social/SocialCreate'
+import type { ExitAction, ExitKey, ExitScope } from '../social/SocialExit'
 import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
 import { buildDisclosure } from '../gacha/GachaDisclosure'
@@ -279,6 +280,8 @@ export interface PanelTargets {
   socialGates?(state: PermissionState, create: Record<CreateScope, CreateEntry>): void
   /** 创建小队/联盟那一屏（null = 关掉）。全部文字与「确认」能不能点都由编排层算好。 */
   socialCreate?(form: CreateForm | null): void
+  /** 退出/解散里"已按下第一下"的那一行（null = 没有）。视图只改字，不发请求。 */
+  socialExit?(armed: ExitKey | null): void
   /**
    * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
@@ -465,6 +468,8 @@ export class AppRoot {
   private createPolicy: SocialCreatePolicyResp | null = null
   /** 创建表单开着时的输入态（null = 没开）。打字只改这里，一条请求都不发。 */
   private creating: { scope: CreateScope, name: string, tag: string } | null = null
+  /** 退出/解散里已经按下第一下的那一行（第二下才真发请求，见 `SocialExit` 的那条不对称）。 */
+  private armedExit: ExitKey | null = null
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
@@ -1454,9 +1459,33 @@ export class AppRoot {
       })
   }
 
+  /**
+   * 按下「退出 / 解散」：第一下只把那一行改成"确认…"，第二下才真发请求（B26 S3）。
+   *
+   * <p>解散与退队都不可逆，一键生效的代价是整个联盟没了；而"要不要再确认一次"是界面行为，
+   * 不该为此在服务端请求里多塞一个参数。换一行按就等于重新数第一下。
+   */
+  requestExit(scope: ExitScope, action: ExitAction): Promise<void> {
+    const armed = this.armedExit
+    if (armed === null || armed.scope !== scope || armed.action !== action) {
+      this.armedExit = { scope, action }
+      this.targets.socialExit?.(this.armedExit)
+      return Promise.resolve()
+    }
+    this.armedExit = null
+    this.targets.socialExit?.(null)
+    this.track(action === 'leave' ? TRACK_EVENTS.socialLeave : TRACK_EVENTS.socialDisband, {
+      scope: trackParam(scope === 'squad' ? 'SQUAD' : 'ALLIANCE'),
+    })
+    const call = scope === 'squad'
+      ? (action === 'leave' ? this.api.squadLeave({}) : this.api.squadDisband({}))
+      : (action === 'leave' ? this.api.allianceLeave({}) : this.api.allianceDisband({}))
+    // 'social' 那一路顺手重拉三道门：退了队权限就该空掉，解散之后连"未加入"那一行都要换字
+    return this.write('social', call, ['social', 'reddot'])
+  }
+
   /** 表单没开着就不发视图（开着才画，避免每次刷新都弹人一脸表单）。 */
-  private deliverSocialCreate(): void {
-    const form = this.creating
+  private deliverSocialCreate(): void {    const form = this.creating
     if (form === null) {
       this.targets.socialCreate?.(null)
       return
