@@ -90,7 +90,7 @@ export class GiftPayFlow {
     const paid = await this.deps.invokePayment(order.data.payParams)
     if (paid === 'unsupported') {
       // 浏览器/编辑器：不给死按钮，明确说清这一步在开发环境里做不了
-      return failed('当前环境不支持支付', '请在微信小游戏里打开本游戏；浏览器/编辑器仅供开发调试')
+      return failed('当前环境不支持支付', '请在微信小游戏里打开本游戏；浏览器仅供开发调试')
     }
     if (paid === 'failed') {
       // 拉起支付本身失败（非用户取消，例如余额不足/风控拦截）：**不能去轮询** ——

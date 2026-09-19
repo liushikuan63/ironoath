@@ -74,7 +74,7 @@ export function exileHint(f: ExileFacts): string {
     case 'troops-away':
       return '有队伍在门外，搬家会让它回到一个已经没有你的格子，先召回'
     case 'requesting':
-      return '正在请求服务端落点'
+      return '正在申请新的安家地点…'
     case 'ready':
       return ''
   }

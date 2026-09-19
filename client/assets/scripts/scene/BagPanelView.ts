@@ -14,6 +14,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildBagPanel, buildResourcePanel } from '../game/bag/BagPanel'
+import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { BagItemRow, BagPanelView as BagPanelData, ResourcePanelView, ResourceRow } from '../game/bag/BagPanel'
 import type { SpeedupChoice } from '../game/session/Choices'
 import type { BagListResp, ResourceDetailResp } from '../net/generated/BagProtocol'
@@ -326,7 +327,7 @@ export class BagPanelView extends Component {
     if (this.bag?.capacityFull === true) {
       return '背包已满，再获得道具可能无法入包'
     }
-    return hidden > 0 ? `另有 ${hidden} 项未显示（长列表需要 ScrollView，属编辑器资产）` : ''
+    return truncatedNotice('项', hidden)
   }
 
   private renderRow(node: Node, row: RowDraft, index: number): void {

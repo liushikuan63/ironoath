@@ -14,6 +14,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildReportList } from '../game/battle/BattleReportPanel'
+import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { ReportListView, ReportRow } from '../game/battle/BattleReportPanel'
 import { BattlePlaybackView } from './BattlePlaybackView'
 import type { BattleReportListResp, BattleResultView } from '../net/generated/BattleProtocol'
@@ -293,9 +294,7 @@ export class BattleReportPanelView extends Component {
     })
     if (this.overflowLabel !== null) {
       const hidden = list.rows.length - visible.length
-      this.overflowLabel.string = hidden > 0
-        ? `另有 ${hidden} 场未显示（长列表需要 ScrollView，属编辑器资产）`
-        : ''
+      this.overflowLabel.string = truncatedNotice('场', hidden)
     }
   }
 

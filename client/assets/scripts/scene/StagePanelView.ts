@@ -22,6 +22,7 @@ import {
   buildChallengeSummary, buildStageList, buildSweepSummary,
 } from '../game/stage/StagePanel'
 import type { StageListView, StageRow } from '../game/stage/StagePanel'
+import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { LineupChoice } from '../game/session/Choices'
 import type { ChallengeStageResp, StageListResp, SweepResp } from '../net/generated/StageProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
@@ -300,9 +301,7 @@ export class StagePanelView extends Component {
 
     if (this.overflowLabel !== null) {
       const hidden = list.rows.length - visible.length
-      this.overflowLabel.string = hidden > 0
-        ? `另有 ${hidden} 关未显示（长列表需要 ScrollView，属编辑器资产）`
-        : ''
+      this.overflowLabel.string = truncatedNotice('关', hidden)
     }
   }
 

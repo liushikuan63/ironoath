@@ -201,10 +201,12 @@ export class CityPanelView extends Component {
     const columnWidth = CONTENT_WIDTH / 3
     for (let row = 0; row < 2; row++) {
       for (let column = 0; column < 3; column++) {
-        const x = -CONTENT_WIDTH / 2 + columnWidth * (column + 0.5)
-        const y = top - 62 - row * 18
+        // 左对齐 + 限定列宽：数值位数由服务端算，不可控（"1000000" 和 "200" 同栏）。
+        // 中心锚点的长值会一路顶到九宫格的右侧装饰带里 —— 量具在真实数据下实测到右压带 17.3px。
         this.resourceLabels.push(this.addLabel(
-          card, `Resource-${row}-${column}`, x, y, COLOR_TEXT_DIM, 14))
+          card, `Resource-${row}-${column}`,
+          -CONTENT_WIDTH / 2 + columnWidth * column, top - 62 - row * 18,
+          COLOR_TEXT_DIM, 14, true, columnWidth - 8))
       }
     }
 
@@ -601,7 +603,9 @@ export class CityPanelView extends Component {
     }
     if (maxWidth > 0) {
       transform.setContentSize(new Size(maxWidth, fontSize * 1.6))
-      label.overflow = Label.Overflow.CLAMP
+      // SHRINK 而不是 CLAMP：这里装的是资源数值，裁掉尾数会读成另一个数（10000 变 1000），
+      // 字变小至少还是那个值。
+      label.overflow = Label.Overflow.SHRINK
     }
     return label
   }

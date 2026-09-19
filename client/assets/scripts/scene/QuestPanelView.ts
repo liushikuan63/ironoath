@@ -17,6 +17,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildQuestList, candidateLabel, chosenClaimReq, claimIntentOf } from '../game/quest/QuestPanel'
+import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { ClaimIntent, HeroChoicePrompt, QuestListView, QuestRow } from '../game/quest/QuestPanel'
 import type { QuestListResp } from '../net/generated/QuestProtocol'
 import type { ActivityListResp } from '../net/generated/ActivityProtocol'
@@ -369,9 +370,7 @@ export class QuestPanelView extends Component {
 
     if (this.overflowLabel !== null) {
       const hidden = rows.length - visible.length
-      this.overflowLabel.string = hidden > 0
-        ? `另有 ${hidden} 条未显示（长列表需要 ScrollView，属编辑器资产）`
-        : ''
+      this.overflowLabel.string = truncatedNotice('条', hidden)
     }
   }
 
@@ -409,9 +408,7 @@ export class QuestPanelView extends Component {
     })
     if (this.overflowLabel !== null) {
       const hidden = data.rows.length - visible.length
-      this.overflowLabel.string = hidden > 0
-        ? `另有 ${hidden} 条未显示（长列表需要 ScrollView，属编辑器资产）`
-        : ''
+      this.overflowLabel.string = truncatedNotice('条', hidden)
     }
   }
 

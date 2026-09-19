@@ -15,6 +15,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildMailPanel, claimOutcomeText } from '../game/mail/MailPanel'
+import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { MailPanelView as MailPanelData, MailRow } from '../game/mail/MailPanel'
 import type { MailClaimAllResp, MailListResp } from '../net/generated/MailProtocol'
 import { NodePool } from './NodePool'
@@ -224,9 +225,7 @@ export class MailPanelView extends Component {
 
     if (this.overflowLabel !== null) {
       const hidden = data.rows.length - visible.length
-      this.overflowLabel.string = hidden > 0
-        ? `另有 ${hidden} 封未显示（长列表需要 ScrollView，属编辑器资产）`
-        : ''
+      this.overflowLabel.string = truncatedNotice('封', hidden)
     }
   }
 

@@ -19,6 +19,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildTargetRows, formatPower } from '../game/power/PowerPanel'
+import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { TargetRow } from '../game/power/PowerPanel'
 import type { SearchTargetsResp } from '../net/generated/WorldProtocol'
 import { NodePool } from './NodePool'
@@ -243,9 +244,7 @@ export class TargetSearchView extends Component {
 
     if (this.overflowLabel !== null) {
       const hidden = this.rows.length - visible.length
-      this.overflowLabel.string = hidden > 0
-        ? `另有 ${hidden} 个目标未显示（长列表需要 ScrollView，属编辑器资产）`
-        : ''
+      this.overflowLabel.string = truncatedNotice('个目标', hidden)
     }
   }
 
