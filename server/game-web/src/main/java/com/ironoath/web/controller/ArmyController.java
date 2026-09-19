@@ -5,6 +5,8 @@ import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.web.dto.generated.ArmyListResp;
 import com.ironoath.web.dto.generated.ArmyUnitReq;
+import com.ironoath.web.dto.generated.AutoTrainReq;
+import com.ironoath.web.dto.generated.AutoTrainResp;
 import com.ironoath.web.dto.generated.TrainCancelResp;
 import com.ironoath.web.dto.generated.TrainReq;
 import com.ironoath.web.dto.generated.TrainResp;
@@ -53,6 +55,20 @@ public class ArmyController {
                                    @RequestBody TrainReq req) {
         requirePlayer(playerId);
         return Result.ok(armyAppService.train(playerId, req));
+    }
+
+    /**
+     * 开关自动续训 / 自动补兵（B25 裁决③(a)）。
+     *
+     * <p>它保存的是一份**有预算的策略**（兵种、每批数量、还剩几批、补兵目标、停止原因），
+     * 不是一个布尔开关；执行发生在 {@code /army/list} 那次惰性结算里，走的是真人那条
+     * {@code train}（真扣资源、真占队列、真算时长）—— 自动只是"谁按的确认键"不同。
+     */
+    @PostMapping("/autoTrain")
+    public Result<AutoTrainResp> autoTrain(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                           @RequestBody AutoTrainReq req) {
+        requirePlayer(playerId);
+        return Result.ok(armyAppService.autoTrain(playerId, req));
     }
 
     /** 取消训练，按比例返还资源（与城建取消同一口径）。 */

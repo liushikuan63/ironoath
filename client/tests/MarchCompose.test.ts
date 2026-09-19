@@ -24,7 +24,10 @@ function unit(overrides: Partial<UnitView> & { unitId: string }): UnitView {
 
 function army(units: UnitView[]): ArmyListResp {
   return { units, troopCap: 1000, troopsInUse: 0, trainingInUse: 0, queueSlots: 0, queueSlotsMax: 2,
-    hospital: { capacity: 0, wounded: 0 } as never, serverNow: 1 } as ArmyListResp
+    hospital: { capacity: 0, wounded: 0 } as never,
+    autoTrain: { enabled: false, unitId: '', batchCount: 0, batchBudget: 0, targetCount: 0,
+      stopReason: null },
+    serverNow: 1 } as ArmyListResp
 }
 
 const T1 = unit({ unitId: 'unit_infantry_t1', name: '重步', count: 500 })

@@ -1,5 +1,7 @@
 package com.ironoath.web.store;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterAll;
@@ -97,5 +99,39 @@ class MongoPlayerStoreContractTest extends VersionedStoreContractTest<PlayerSave
         Assumptions.assumeTrue(db != null,
                 "跳过即未验证：内存与 Mongo 的语义等价没有被检查。"
                         + "补跑方式：起一个本地 MongoDB，或 -Dironoath.test.mongo.uri=... 指向一台");
+    }
+
+    /**
+     * 礼包弹窗那一位（弹出记账 + **当日限购账本**）必须整份落库。
+     *
+     * <p>抓的是「`save` 是 $set 白名单、而内存实现直接存对象」这个形状：
+     * 漏一行不会让任何一条用例变红（内存版照样绿），只有真 Mongo 上会每次重读都归零 ——
+     * 症状是「内存 dev 里每日限购买一次就灰、生产里同一天可以一直买」。
+     * 同一族的机械检查是 {@code scripts/check-mongo-set-coverage.sh}。
+     */
+    @Test
+    @DisplayName("礼包弹窗与限购账本整份落库：弹出时刻、触发时刻、当日已购次数一个都不能丢")
+    void giftPopupLedgerSurvivesTheRoundTrip() {
+        requireMongo();
+        freshStore();
+        insertInitialState();
+
+        PlayerSave save = read().state();
+        save.setGiftPopup(save.giftPopup()
+                .withShown("gift_first_charge", 1_700_000_000_000L)
+                .withTriggered("FIRST_CHARGE", 1_700_000_000_500L)
+                .withPurchased("gift_first_charge", "2026-09-19")
+                .withPurchased("gift_first_charge", "2026-09-19"));
+        persist(new StoreHandle<>(save, save.version()));
+
+        var back = read().state().giftPopup();
+        assertThat(back.lastShowAt()).as("最近一次弹出时刻").isEqualTo(1_700_000_000_000L);
+        assertThat(back.showsByGift().get("gift_first_charge"))
+                .as("每个礼包各自的弹出时刻").containsExactly(1_700_000_000_000L);
+        assertThat(back.triggeredAt().get("FIRST_CHARGE")).isEqualTo(1_700_000_000_500L);
+        assertThat(back.purchaseDayKey())
+                .as("限购账本所属的自然日：丢了它，「今天买过几次」就永远读成 0").isEqualTo("2026-09-19");
+        assertThat(back.purchasedTodayOf("gift_first_charge", "2026-09-19"))
+                .as("当日已购次数").isEqualTo(2L);
     }
 }

@@ -79,7 +79,49 @@ export interface HospitalView {
 }
 
 /**
- * GET /army/list 响应体。这个「读」接口有副作用：它会顺带收割到点的训练与治疗（惰性结算，服务端不跑定时器）。
+ * 自动续训 / 自动补兵的策略视图（B25 裁决③(a)）。它是一个**有预算的策略**，不是一个布尔开关：玩家关掉游戏去睡觉时，它能自动排的批数是有上限的，用尽即停并把 stopReason 留给玩家读 —— 而不是悄悄把攒下的资源花光。
+ */
+export interface AutoTrainView {
+  /** 玩家是否开着它 */
+  enabled: boolean
+  /** 续训 / 补回哪个兵种 */
+  unitId: string
+  /** 每批训多少 */
+  batchCount: number
+  /** 还允许自动排几批。**这是预算本身，不是已排数**；0 表示已用尽 */
+  batchBudget: number
+  /** 补兵模式的目标兵力（把该兵种补回这个数）；0 = 续训模式（不设目标，每批 batchCount，排到预算用尽） */
+  targetCount: number
+  /** 停下来时的原因（玩家可读，如「预算用完了」「资源不够」）；正在跑或在等队列时为 null */
+  stopReason: string | null
+}
+
+/**
+ * POST /army/autoTrain 请求体。开启（enabled=true）时必须给全 unitId / count / batchBudget；关闭只需要 requestId 与 enabled=false —— 关闭时不必再报一遍目标，否则玩家会以为关不掉。
+ */
+export interface AutoTrainReq {
+  requestId: string
+  enabled: boolean
+  /** 续训哪个兵种；enabled=true 时必填 */
+  unitId: string | null
+  /** 每批数量；enabled=true 时必填 */
+  count: number | null
+  /** 最多自动排几批；enabled=true 时必填，上限见 global.json 的 AUTO_TRAIN_MAX_BATCHES */
+  batchBudget: number | null
+  /** 补兵模式的目标兵力；传 null / 不传 = 续训模式（不设目标） */
+  targetCount: number | null
+}
+
+/**
+ * POST /army/autoTrain 响应体：落库后的策略本身，客户端照它重画开关与停止原因。
+ */
+export interface AutoTrainResp {
+  autoTrain: AutoTrainView
+  serverNow: number
+}
+
+/**
+ * GET /army/list 响应体。这个「读」接口有副作用：它会顺带收割到点的训练与治疗（惰性结算，服务端不跑定时器），并在自动续训/补兵开着时排下一批（同样真扣资源、真占队列）。
  */
 export interface ArmyListResp {
   /** 全部 20 个兵种（4 类型 × 5 阶级），含未解锁的 */
@@ -92,6 +134,8 @@ export interface ArmyListResp {
   queueSlots: number
   queueSlotsMax: number
   hospital: HospitalView
+  /** 自动续训 / 补兵的当前策略。**必须在列表里下发**：这个开关的效果（排了下一批）恰好也发生在列表这个读上，玩家要能一眼看出刚才那批是自动排的、还剩几批预算、为什么停了 */
+  autoTrain: AutoTrainView
   serverNow: number
 }
 

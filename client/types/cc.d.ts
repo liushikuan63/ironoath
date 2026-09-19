@@ -260,6 +260,37 @@ declare module 'cc' {
     getDesignResolutionSize(): Size
   }
 
+  /**
+   * 音频资源与播放组件（A14）。桩里补它们是因为 `scene/AudioService.ts` 用到了，
+   * 而 headless 类型检查会把「真有的引擎 API」报成属性不存在（与 getChildByName 同一条注释）。
+   */
+  export class AudioClip {
+  }
+
+  export class AudioSource extends Component {
+    clip: AudioClip | null
+    /** 挂上就播。音效层要求它必须是 false（播放时机由 `Sfx` 的三个角色决定）。 */
+    playOnAwake: boolean
+    loop: boolean
+    playOneShot(clip: AudioClip, volume?: number): void
+  }
+
+  /** 引擎级输入：全仓库唯一的音效接点挂在它的 TOUCH_START 上。 */
+  export class Input {
+    static EventType: { TOUCH_START: string; TOUCH_MOVE: string; TOUCH_END: string }
+  }
+
+  export const input: {
+    on<T>(type: string, callback: (event: T, ...args: unknown[]) => void, target?: unknown): void
+    off<T>(type: string, callback?: (event: T, ...args: unknown[]) => void, target?: unknown): void
+  }
+
+  /** 应用级事件（`Game.EVENT_HIDE` 之类）。回前台补播抑制读的就是 EVENT_HIDE。 */
+  export class Game {
+    static readonly EVENT_HIDE: string
+    static readonly EVENT_SHOW: string
+  }
+
   export const director: {
     getScene(): Node | null
     loadScene(sceneName: string, onComplete?: (error: Error | null) => void): void

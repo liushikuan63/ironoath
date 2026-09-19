@@ -135,6 +135,10 @@ public final class MongoPlayerStore implements PlayerRepository {
                 .set("paid", doc.paid())
                 // 科技同理：漏这一行，研究出来的等级只在内存版活得下来 —— 生产每次重启回到「一行都没研究」
                 .set("tech", doc.tech())
+                // 礼包弹窗同理，而且这一位是**限购账本**（purchaseDayKey + purchasedCountByGift）：
+                // 漏这一行的症状不是报错，而是「内存 dev 里每日限购买一次就灰、生产里同一天可以一直买」——
+                // insertIfAbsent 走整篇文档，所以新号看起来一切正常，只有更新路径在丢
+                .set("giftPopup", doc.giftPopup())
                 .inc("version", 1);
 
         UpdateResult result = mongo.updateFirst(query, update, PlayerDocument.class, PlayerDocument.COLLECTION);

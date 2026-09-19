@@ -59,6 +59,10 @@ public final class MongoArmyStore implements ArmyRepository {
         }
         ArmyDocument doc = ArmyDocument.fromDomain(playerId, expectedVersion, army);
         Query query = Query.query(Criteria.where("_id").is(playerId).and("version").is(expectedVersion));
+        // **每加一个 ArmyDocument 字段都必须在这里补一行**：这是 $set 白名单而不是整份替换，
+        // 漏一个既不会报错也不会让任何用例变红（内存实现照样全绿），只会在 Mongo 上静默丢档。
+        // B25 的自动续训策略就这么丢过一次：开关打开、下次读回来是关的，像坏了一样。
+        // 兜底是 MongoArmyStoreContractTest#autoTrainPolicySurvivesTheRoundTrip 那条逐字段往返。
         Update update = new Update()
                 .set("troops", doc.troops())
                 .set("queue", doc.queue())
@@ -68,6 +72,7 @@ public final class MongoArmyStore implements ArmyRepository {
                 .set("treatOriginalSeconds", doc.treatOriginalSeconds())
                 .set("treatCost", doc.treatCost())
                 .set("extraSlots", doc.extraSlots())
+                .set("autoTrain", doc.autoTrain())
                 .inc("version", 1L);
         UpdateResult result = mongo.updateFirst(query, update, ArmyDocument.class, ArmyDocument.COLLECTION);
         if (result.getMatchedCount() == 0L) {

@@ -19,9 +19,11 @@ import java.util.Map;
  */
 public record PlayerDocument(
         @Id String playerId,
+        /** 建号时写入、之后不再改：mongo-save-exempt: 设备绑定是身份字段，改它等于换号（没有这条链路）。 */
         String deviceId,
         String nickName,
         int avatarId,
+        /** 建号时写入、之后不再改：mongo-save-exempt: 注册时刻是身份字段，只增不改。 */
         long createdAt,
         long lastLoginAt,
         int cityLevel,

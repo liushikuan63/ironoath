@@ -5,7 +5,7 @@ package com.ironoath.web.dto.generated;
 import java.util.List;
 
 /**
- * GET /army/list 响应体。这个「读」接口有副作用：它会顺带收割到点的训练与治疗（惰性结算，服务端不跑定时器）。
+ * GET /army/list 响应体。这个「读」接口有副作用：它会顺带收割到点的训练与治疗（惰性结算，服务端不跑定时器），并在自动续训/补兵开着时排下一批（同样真扣资源、真占队列）。
  */
 public record ArmyListResp(
         List<UnitView> units,   // 全部 20 个兵种（4 类型 × 5 阶级），含未解锁的
@@ -15,6 +15,7 @@ public record ArmyListResp(
         int queueSlots,
         int queueSlotsMax,
         HospitalView hospital,
+        AutoTrainView autoTrain,   // 自动续训 / 补兵的当前策略。**必须在列表里下发**：这个开关的效果（排了下一批）恰好也发生在列表这个读上，玩家要能一眼看出刚才那批是自动排的、还剩几批预算、为什么停了
         long serverNow)
 {
 }

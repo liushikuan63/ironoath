@@ -191,9 +191,127 @@
         }
       }
     },
+    "AutoTrainView": {
+      "type": "object",
+      "description": "自动续训 / 自动补兵的策略视图（B25 裁决③(a)）。它是一个**有预算的策略**，不是一个布尔开关：玩家关掉游戏去睡觉时，它能自动排的批数是有上限的，用尽即停并把 stopReason 留给玩家读 —— 而不是悄悄把攒下的资源花光。",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "unitId",
+        "batchCount",
+        "batchBudget",
+        "targetCount"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "玩家是否开着它"
+        },
+        "unitId": {
+          "type": "string",
+          "description": "续训 / 补回哪个兵种"
+        },
+        "batchCount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 1,
+          "description": "每批训多少"
+        },
+        "batchBudget": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 0,
+          "description": "还允许自动排几批。**这是预算本身，不是已排数**；0 表示已用尽"
+        },
+        "targetCount": {
+          "type": "integer",
+          "format": "int64",
+          "minimum": 0,
+          "description": "补兵模式的目标兵力（把该兵种补回这个数）；0 = 续训模式（不设目标，每批 batchCount，排到预算用尽）"
+        },
+        "stopReason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "停下来时的原因（玩家可读，如「预算用完了」「资源不够」）；正在跑或在等队列时为 null"
+        }
+      }
+    },
+    "AutoTrainReq": {
+      "type": "object",
+      "description": "POST /army/autoTrain 请求体。开启（enabled=true）时必须给全 unitId / count / batchBudget；关闭只需要 requestId 与 enabled=false —— 关闭时不必再报一遍目标，否则玩家会以为关不掉。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "enabled"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "unitId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "续训哪个兵种；enabled=true 时必填"
+        },
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "minimum": 1,
+          "description": "每批数量；enabled=true 时必填"
+        },
+        "batchBudget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "minimum": 1,
+          "description": "最多自动排几批；enabled=true 时必填，上限见 global.json 的 AUTO_TRAIN_MAX_BATCHES"
+        },
+        "targetCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "minimum": 1,
+          "description": "补兵模式的目标兵力；传 null / 不传 = 续训模式（不设目标）"
+        }
+      }
+    },
+    "AutoTrainResp": {
+      "type": "object",
+      "description": "POST /army/autoTrain 响应体：落库后的策略本身，客户端照它重画开关与停止原因。",
+      "additionalProperties": false,
+      "required": [
+        "autoTrain",
+        "serverNow"
+      ],
+      "properties": {
+        "autoTrain": {
+          "$ref": "#/$defs/AutoTrainView"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
     "ArmyListResp": {
       "type": "object",
-      "description": "GET /army/list 响应体。这个「读」接口有副作用：它会顺带收割到点的训练与治疗（惰性结算，服务端不跑定时器）。",
+      "description": "GET /army/list 响应体。这个「读」接口有副作用：它会顺带收割到点的训练与治疗（惰性结算，服务端不跑定时器），并在自动续训/补兵开着时排下一批（同样真扣资源、真占队列）。",
       "additionalProperties": false,
       "required": [
         "units",
@@ -203,6 +321,7 @@
         "queueSlots",
         "queueSlotsMax",
         "hospital",
+        "autoTrain",
         "serverNow"
       ],
       "properties": {
@@ -242,6 +361,10 @@
         },
         "hospital": {
           "$ref": "#/$defs/HospitalView"
+        },
+        "autoTrain": {
+          "$ref": "#/$defs/AutoTrainView",
+          "description": "自动续训 / 补兵的当前策略。**必须在列表里下发**：这个开关的效果（排了下一批）恰好也发生在列表这个读上，玩家要能一眼看出刚才那批是自动排的、还剩几批预算、为什么停了"
         },
         "serverNow": {
           "type": "integer",

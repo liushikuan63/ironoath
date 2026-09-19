@@ -63,6 +63,9 @@ function armyResp(units: UnitView[], overrides: Partial<ArmyListResp> = {}): Arm
     queueSlots: 1,
     queueSlotsMax: 3,
     hospital: hospital(),
+    autoTrain: {
+      enabled: false, unitId: '', batchCount: 0, batchBudget: 0, targetCount: 0, stopReason: null,
+    },
     serverNow: 0,
     ...overrides,
   }

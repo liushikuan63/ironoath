@@ -134,6 +134,36 @@ class MongoArmyStoreContractTest extends VersionedStoreContractTest<ArmyState> {
     }
 
     @Test
+    @DisplayName("自动续训策略整份落库：目标、预算、停止原因一个都不能丢（丢了玩家会以为开关坏了）")
+    void autoTrainPolicySurvivesTheRoundTrip() {
+        requireMongo();
+        freshStore();
+        insertInitialState();
+
+        StoreHandle<ArmyState> handle = read();
+        handle.state().setAutoTrain(com.ironoath.core.army.AutoTrainPolicy.refill(
+                "unit_infantry_t2", 900L, 250L, 4));
+        persist(handle);
+
+        var policy = read().state().autoTrain();
+        assertThat(policy.enabled()).isTrue();
+        assertThat(policy.unitId()).isEqualTo("unit_infantry_t2");
+        assertThat(policy.batchCount()).isEqualTo(250L);
+        assertThat(policy.batchBudget()).as("剩下的预算不能丢，丢了会变成无限支出").isEqualTo(4);
+        assertThat(policy.targetCount())
+                .as("补兵目标不能丢：丢了就从「补回编成」变成「一直训下去」").isEqualTo(900L);
+        assertThat(policy.stopReason()).isNull();
+
+        // 停下来的原因同样要存住：玩家回来要读到「为什么停了」，而不是一个悄悄变 false 的开关
+        StoreHandle<ArmyState> stopped = read();
+        stopped.state().setAutoTrain(stopped.state().autoTrain().stoppedBecause("已经补到目标了"));
+        persist(stopped);
+        var after = read().state().autoTrain();
+        assertThat(after.enabled()).isFalse();
+        assertThat(after.stopReason()).isEqualTo("已经补到目标了");
+    }
+
+    @Test
     @DisplayName("Mongo 必须真的可达：否则「语义等价」这条承诺今天没有被验证过")
     void mongoMustBeReachableOrTheClaimIsUnverified() {
         Assumptions.assumeTrue(db != null,

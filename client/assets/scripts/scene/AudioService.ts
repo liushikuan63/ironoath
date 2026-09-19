@@ -18,7 +18,7 @@
  *    所以走 `sys.localStorage`（与 deviceId 同一条通路），不上服务端。
  */
 
-import { AudioClip, EventTouch, Game, Input, Node, AudioSource, game, input, resources, sys } from 'cc'
+import { AudioClip, Game, Input, Node, AudioSource, game, input, resources, sys } from 'cc'
 import {
   MUTE_STORAGE_KEY, SFX_CLIP, SfxKey, readMuted, shouldPlay, tapVariant, writeMuted,
 } from '../game/audio/Sfx'
@@ -136,7 +136,7 @@ function readStored(): string | null {
 
 /** 全局触摸接线单独拆出来：一次点击只登记一次监听，装不上就该在日志里看见。 */
 function bindGlobalTouch(): void {
-  input.on(Input.EventType.TOUCH_START, (event: EventTouch) => {
+  input.on(Input.EventType.TOUCH_START, () => {
     if (!armed) {
       // 第一次触摸是"解锁音频"那一下，不配音效：平台在这一刻才允许出声，
       // 强行放会有一声被丢，玩家听到的是"第一下没反应，后面才有"

@@ -79,6 +79,9 @@ const EMPTY_ARMY: ArmyListResp = {
     capacity: 0, used: 0, treating: false, treatFinishAt: null, treatRemainingSeconds: 0,
     treatSecondsPerWounded: 0, treatCostRatio: 0,
   },
+  autoTrain: {
+    enabled: false, unitId: '', batchCount: 0, batchBudget: 0, targetCount: 0, stopReason: null,
+  },
   serverNow: 0,
 }
 

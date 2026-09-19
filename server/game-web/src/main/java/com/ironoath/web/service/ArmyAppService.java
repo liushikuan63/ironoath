@@ -12,6 +12,7 @@ import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.config.cfg.UnitCfg;
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
+import com.ironoath.core.army.AutoTrainPolicy;
 import com.ironoath.core.city.BuildingInstance;
 import com.ironoath.core.city.CityState;
 import com.ironoath.core.formula.Formula;
@@ -22,6 +23,9 @@ import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.core.reward.RewardPorts;
 import com.ironoath.web.dto.generated.ArmyListResp;
 import com.ironoath.web.dto.generated.ArmyUnitReq;
+import com.ironoath.web.dto.generated.AutoTrainReq;
+import com.ironoath.web.dto.generated.AutoTrainResp;
+import com.ironoath.web.dto.generated.AutoTrainView;
 import com.ironoath.web.dto.generated.HospitalView;
 import com.ironoath.web.dto.generated.ResourceAmount;
 import com.ironoath.web.dto.generated.ResourceType;
@@ -145,12 +149,123 @@ public class ArmyAppService {
     /**
      * 军队总览。
      *
-     * <p>这是个有副作用的「读」：它会顺带收割到点的训练与治疗。
-     * 服务端不跑定时器，状态只能在有人读的时候被推进（B00 陷阱 2）。
+     * <p>这是个有副作用的「读」：它会顺带收割到点的训练与治疗，并在自动续训/补兵开着时
+     * 排下一批（B25 裁决③(a) 的惰性执行）。服务端不跑定时器，状态只能在有人读的时候被推进（B00 陷阱 2）。
      */
     public ArmyListResp list(String playerId) {
-        return cityAppService.withSettledCity(playerId, snap ->
-                toListResp(playerId, settledArmy(playerId, snap.now()), snap));
+        return cityAppService.withSettledCity(playerId, snap -> {
+            ArmyState army = settledArmy(playerId, snap.now());
+            runAutoTrainIfDue(playerId, army, snap);
+            return toListResp(playerId, army, snap);
+        });
+    }
+
+    // ---------- 自动续训 / 补兵（B25 裁决③(a)）----------
+
+    /**
+     * 开关自动续训 / 补兵。
+     *
+     * <p>开启时用 {@link AutoTrainPolicy#on}（续训：每批 batchCount，排到预算用尽）或
+     * {@link AutoTrainPolicy#refill}（补兵：把该兵种补回目标数）；关闭时就是把策略清成
+     * {@link AutoTrainPolicy#off()} —— <b>关闭不需要再报一遍目标</b>，否则玩家会以为关不掉。
+     *
+     * <p>开启的当口就按同一条策略试排第一批：玩家会在队列空着的时候开这个开关，
+     * 那批正好就是他开开关的直接理由，等下一次读才排会让人以为没生效。
+     */
+    public AutoTrainResp autoTrain(String playerId, AutoTrainReq req) {
+        validateRequest(playerId, req == null ? null : req.requestId());
+        if (req.enabled()) {
+            if (req.unitId() == null || req.unitId().isBlank()) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "开启自动续训必须指定 unitId");
+            }
+            if (req.count() == null || req.count() <= 0L) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "每批数量必须为正");
+            }
+            if (req.batchBudget() == null || req.batchBudget() <= 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "批次预算必须为正");
+            }
+            long maxBatches = configs.longParam("AUTO_TRAIN_MAX_BATCHES");
+            if (req.batchBudget() > maxBatches) {
+                throw new BizException(ErrorCode.PARAM_INVALID,
+                        "一次最多自动排 " + maxBatches + " 批，请求了 " + req.batchBudget() + " 批");
+            }
+            if (req.targetCount() != null && req.targetCount() <= 0L) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "补兵目标必须为正");
+            }
+        }
+
+        return guarded(playerId, req.requestId(), () -> cityAppService.withSettledCity(playerId, snap -> {
+            ArmyState army = loadOrCreate(playerId);
+            long version = armies.versionOf(playerId);
+            army.collectFinished(snap.now());
+            if (req.enabled()) {
+                UnitCfg unit = requireUnit(req.unitId());
+                requireUnlocked(unit, snap.city());
+                army.setAutoTrain(req.targetCount() == null
+                        ? AutoTrainPolicy.on(req.unitId(), req.count(), req.batchBudget())
+                        : AutoTrainPolicy.refill(req.unitId(), req.targetCount(), req.count(),
+                                req.batchBudget()));
+            } else {
+                army.setAutoTrain(AutoTrainPolicy.off());
+            }
+            armies.save(playerId, army, version);
+            runAutoTrainIfDue(playerId, army, snap);
+            LOG.info("自动续训开关 playerId={} enabled={} 策略={}", playerId, req.enabled(),
+                    army.autoTrain());
+            return new AutoTrainResp(toAutoTrainView(army.autoTrain()), snap.now());
+        }));
+    }
+
+    /**
+     * 自动续训 / 补兵的**惰性执行**：此刻该不该排下一批，该就真的排一批。
+     *
+     * <p><b>为什么只能在"读"里执行</b>：服务端不跑定时器，一切随时间推进的状态都只能在有人读的
+     * 时候被推进（B00 陷阱 2）—— /city/list 的产出、/army/list 的收割都是这条纪律。自动续训也一样：
+     * 它的触发时刻是"上一批训完了"，而这件事恰恰只在结算那一瞬间才被服务端知道。
+     *
+     * <p><b>它走的是真人那条排队路径</b>（{@link #queueBatch}）：同一条阶级解锁与队列/带兵上限校验、
+     * 同一条资源扣减、同一份训练时长（科技加成也在内）、同样登记联盟求助。红线（§8.8.3 P1）：
+     * 自动续训**不得变成免资源或免冷却** —— 这里没有任何"免费"分支，唯一差别是谁按的确认键。
+     *
+     * <p><b>失败不能把读打挂</b>：这是 /army/list 的路径，玩家来看一眼军队不该收到 500。排队失败
+     * （带兵上限满了、队列被别的批次占着、资源刚被别处花掉）时把策略落成"已停止 + 原因"，
+     * 让玩家在列表里读到一句能照着做的提示。
+     *
+     * <p><b>调用方必须已经持有该玩家的锁</b>，且应当在调用前完成收割 —— 否则"上一批训完了"
+     * 这件事还没被推进到军队状态里，判定会基于一个过期的队列。
+     *
+     * @return 有没有改动军队状态（决定要不要再落一次库）
+     */
+    private boolean runAutoTrainIfDue(String playerId, ArmyState army, CityAppService.CitySnapshot snap) {
+        AutoTrainPolicy policy = army.autoTrain();
+        if (!policy.enabled()) {
+            return false;   // 绝大多数玩家走这条：没开开关就没有任何额外开销
+        }
+        AutoTrainPolicy.Outcome outcome;
+        try {
+            UnitCfg unit = requireUnit(policy.unitId());
+            ArmyState.TrainingTask task = army.queue().get(policy.unitId());
+            long current = army.countOf(policy.unitId()) + (task == null ? 0L : task.count());
+            long want = policy.nextBatchCount(current);
+            outcome = policy.plan(current, !army.queue().isEmpty(),
+                    want > 0L && affordable(snap.player(), trainCost(unit, want)));
+            if (outcome.decision() == AutoTrainPolicy.AutoTrainDecision.QUEUE_NEXT) {
+                long finishAt = queueBatch(snap, army, unit, outcome.count(), snap.now());
+                LOG.info("自动续训排下一批 playerId={} unit={} 数量={} 完成于={} 剩余预算={}批",
+                        playerId, unit.id(), outcome.count(), finishAt, outcome.next().batchBudget());
+            }
+        } catch (BizException e) {
+            // 排队失败不是玩家的操作错误，而是"这一刻排不了"：把原因留在策略上，让他在列表里读到
+            outcome = new AutoTrainPolicy.Outcome(AutoTrainPolicy.AutoTrainDecision.STOPPED, 0L,
+                    policy.stoppedBecause("自动续训已停下：" + e.getMessage()));
+            LOG.info("自动续训停下 playerId={} 原因={}", playerId, e.getMessage());
+        }
+        if (outcome.next().equals(policy)) {
+            return false;
+        }
+        army.setAutoTrain(outcome.next());
+        armies.save(playerId, army, armies.versionOf(playerId));
+        return true;
     }
 
     /**
@@ -211,48 +326,68 @@ public class ArmyAppService {
             long version = armies.versionOf(playerId);
             army.collectFinished(snap.now());
 
-            requireUnlocked(unit, snap.city());
-            long troopCap = heroAppService.troopCap(playerId);
-            int slots = availableSlots(army);
-            long batchMax = configs.longParam("TRAIN_BATCH_MAX");
-            // 校验先于扣费：玩家应当先看到「队列已满」「超出带兵上限」这种可操作的提示，
-            // 而不是「资源不足」—— 后者会让人以为去攒资源就行，实际问题是队列或统帅值
-            army.canTrain(req.unitId(), req.count(), slots, troopCap, batchMax);
-            Map<String, Long> cost = trainCost(unit, req.count());
-
-            // 扣资源先于入队：反过来在资源不足时会让玩家白训一批（可直接刷的漏洞）
-            deduct(snap, cost);
-            // §五④：个人与国家两份**相加**成总率，再由 ArmyState 作用在批次总时长上（只作用一次）
-            long trainSpeedFixed = techEffects.trainSpeedPercent(snap.player().tech())
-                    + nationTechBonuses.trainSpeedPercent(snap.player().playerId());
-            long baseSeconds = unit.trainTimeSec() * req.count();
-            long finishAt;
-            try {
-                finishAt = army.train(req.unitId(), req.count(), unit.trainTimeSec(), trainSpeedFixed,
-                        slots, troopCap, batchMax, snap.now());
-            } catch (RuntimeException e) {
-                refund(snap, cost);
-                throw e;
-            }
+            long finishAt = queueBatch(snap, army, unit, req.count(), snap.now());
             armies.save(playerId, army, version);
 
-            // 训练一开始就登记求助请求（B10 §2）：别人帮一次就真的缩短这批训练的完成时刻。
-            // targetKey 用 unitId —— 训练队列就是按兵种主键的，它就是这个目标的身份
-            if (finishAt > snap.now()) {
-                helpRequests.register(TRAIN_HELP_PREFIX + playerId + "_" + req.unitId() + "_" + finishAt,
-                        playerId, com.ironoath.web.dto.generated.HelpTargetKind.TRAINING,
-                        req.unitId(), unit.name() + " ×" + req.count(), finishAt, snap.now());
-            }
-
+            long baseSeconds = unit.trainTimeSec() * req.count();
             long remaining = Math.max(0L, (finishAt - snap.now()) / 1000L);
+            Map<String, Long> cost = trainCost(unit, req.count());
             // 基础与实耗两个都记：只记表里那个数字的话，科技生效与否在日志里根本读不出来
             LOG.info("开始训练 playerId={} unit={} 数量={} 基础耗时={}秒 实耗={}秒 完成于={} 消耗={} 带兵={}/{}",
                     playerId, req.unitId(), req.count(), baseSeconds, remaining, finishAt, cost,
-                    army.totalTroops() + army.totalTraining(), troopCap);
+                    army.totalTroops() + army.totalTraining(), heroAppService.troopCap(playerId));
             // 开始训练不是加速，reducedSeconds 恒为 0
             return new TrainResp(req.unitId(), req.count(), finishAt, remaining, 0L,
-                    toAmounts(cost), army.totalTroops(), troopCap, snap.now());
+                    toAmounts(cost), army.totalTroops(), heroAppService.troopCap(playerId), snap.now());
         }));
+    }
+
+    /**
+     * 真正把一批兵排进队列：阶级解锁 → 队列/带兵上限 → 扣资源 → 入队 → 登记求助。
+     *
+     * <p><b>真人那条 {@link #train} 与自动续训共用这一份</b>（B25 裁决③(a) 的红线：自动续训
+     * 不得变成免资源或免冷却）。两条路径的差别只有"谁按的确认键"，其余一律相同：同一条资源校验
+     * 与扣减、同一条队列与带兵上限、同一份训练时长（含科技加成）、同一份联盟求助。
+     *
+     * <p><b>调用方必须已经持有该玩家的锁</b>（两个调用方都在 {@code withSettledCity} 里面），
+     * 并负责在返回后落库 —— 这里只改内存里的聚合与快照。
+     *
+     * @return 这批训练的完成时刻
+     */
+    private long queueBatch(CityAppService.CitySnapshot snap, ArmyState army, UnitCfg unit,
+                            long count, long now) {
+        String playerId = snap.player().playerId();
+        requireUnlocked(unit, snap.city());
+        long troopCap = heroAppService.troopCap(playerId);
+        int slots = availableSlots(army);
+        long batchMax = configs.longParam("TRAIN_BATCH_MAX");
+        // 校验先于扣费：玩家应当先看到「队列已满」「超出带兵上限」这种可操作的提示，
+        // 而不是「资源不足」—— 后者会让人以为去攒资源就行，实际问题是队列或统帅值
+        army.canTrain(unit.id(), count, slots, troopCap, batchMax);
+        Map<String, Long> cost = trainCost(unit, count);
+
+        // 扣资源先于入队：反过来在资源不足时会让玩家白训一批（可直接刷的漏洞）
+        deduct(snap, cost);
+        // §五④：个人与国家两份**相加**成总率，再由 ArmyState 作用在批次总时长上（只作用一次）
+        long trainSpeedFixed = techEffects.trainSpeedPercent(snap.player().tech())
+                + nationTechBonuses.trainSpeedPercent(playerId);
+        long finishAt;
+        try {
+            finishAt = army.train(unit.id(), count, unit.trainTimeSec(), trainSpeedFixed,
+                    slots, troopCap, batchMax, now);
+        } catch (RuntimeException e) {
+            refund(snap, cost);
+            throw e;
+        }
+
+        // 训练一开始就登记求助请求（B10 §2）：别人帮一次就真的缩短这批训练的完成时刻。
+        // targetKey 用 unitId —— 训练队列就是按兵种主键的，它就是这个目标的身份
+        if (finishAt > now) {
+            helpRequests.register(TRAIN_HELP_PREFIX + playerId + "_" + unit.id() + "_" + finishAt,
+                    playerId, com.ironoath.web.dto.generated.HelpTargetKind.TRAINING,
+                    unit.id(), unit.name() + " ×" + count, finishAt, now);
+        }
+        return finishAt;
     }
 
     /** 取消一批训练，按比例返还资源（与城建取消同一口径，比例来自 city_rule）。 */
@@ -628,7 +763,14 @@ public class ArmyAppService {
                 army.treatRemainingSeconds(snap.now()),
                 secondsPerWounded, configs.fixedParam("TREAT_COST_RATIO"));
         return new ArmyListResp(units, troopCap, army.totalTroops(), army.totalTraining(),
-                army.usedSlots(), availableSlots(army), hospital, snap.now());
+                army.usedSlots(), availableSlots(army), hospital, toAutoTrainView(army.autoTrain()),
+                snap.now());
+    }
+
+    /** 策略 → 视图。字段一一对应，不做加工：客户端要读的就是服务端真正在按它执行的那份策略。 */
+    private static AutoTrainView toAutoTrainView(AutoTrainPolicy policy) {
+        return new AutoTrainView(policy.enabled(), policy.unitId(), policy.batchCount(),
+                policy.batchBudget(), policy.targetCount(), policy.stopReason());
     }
 
     private TreatResp toTreatResp(ArmyState army, Map<String, Long> cost,

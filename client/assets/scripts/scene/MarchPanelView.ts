@@ -64,6 +64,8 @@ export class MarchPanelView {
 
   onAction: ((action: MarchPanelAction, marchId: string) => void) | null = null
   onClose: (() => void) | null = null
+  /** 「再次出征」：只在空态可点；能不能真的再派一支由编排层决定（B25 裁决②(a)）。 */
+  onRepeat: (() => void) | null = null
 
   constructor(parent: Node, width: number, height: number) {
     this.backdrop = this.createBackdrop(parent, width, height)
