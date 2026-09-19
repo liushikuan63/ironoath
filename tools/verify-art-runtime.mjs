@@ -138,6 +138,17 @@ const FAMILY_PNG_EXPECTED = FAMILY_SOURCE_DIRS
   .reduce((sum, dir) => sum + readdirSync(dir).filter((n) => n.endsWith('.png')).length, 0)
 /** 活动族（activity.json 八行）单独量：任务面板在 bag/hero 之后才打开，混进上面那条会互相遮蔽。 */
 const ACTIVITY_PNG_EXPECTED = 8
+/**
+ * A18 的 15 张建筑正稿**不按 URL 数**：Cocos 打包后 resources 里的图落在
+ * `/assets/resources/<bundle>/<hash>/…-<hash>.png` 这种路径上，源目录
+ * `ui/generated/buildings/` 在 URL 里一个字都不出现（实测按目录与前缀两种过滤都是 0，
+ * 而帧名断言与 `familyBeforeBag` 的增量都说明 15 张确实下发了）。
+ * 这一族的加载判据换成两条更硬的：
+ * ① `iconMappings.cityMain` —— 主城格子上画的是 `building-main-city-v1` 这张**正稿**，
+ *    不是图集小图标（按帧名认，不按矩形位置认，理由见那里）；
+ * ② `catalogWarnings` 为空 —— `ensureFamily` 对**每一个成员**单独告警，
+ *    15 张里任何一张拉不到都会在这里红，比数 URL 更直接。
+ */
 const resourcePngRequests = new Set()
 page.on('request', (request) => {
   const url = request.url()
@@ -630,7 +641,9 @@ const terrainRects = new Set(terrainTiles.map((sprite) => `${sprite.x}:${sprite.
 const entityArt = world.filter((sprite) => sprite.name === 'Art' && sprite.width !== 64)
 const catalogWarnings = warnings.filter((message) => message.includes('[ArtCatalog]'))
 const iconMappings = {
-  cityMain: cityIcons.some((sprite) => sprite.x === 128 && sprite.y === 128),
+  // A18 之后内城格子优先画**正稿**，所以主城的身份是它的帧名，不再是图集里的矩形位置
+  // （独立 PNG 的 rect 恒为 0:0，拿位置当身份会把"正稿没加载、退回图集小图标"也判成绿）。
+  cityMain: cityIcons.some((sprite) => /^building-main-city/.test(sprite.frameName ?? '')),
   bagResourceIcon: bagResourceIconMapped,
   armyInfantry: armyIcons.some((sprite) => sprite.x === 384 && sprite.y === 384),
   // 武将行现在优先画立绘（G1 族，256 高；Cocos 导入会裁透明边所以宽可能 <256），

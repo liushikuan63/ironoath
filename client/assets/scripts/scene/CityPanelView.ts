@@ -17,9 +17,9 @@ import type {
 } from '../net/generated/CityProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import {
-  applyCommandButton, applyIconSprite, applySlicedSprite, buildingIconKey,
+  applyAnyIconSprite, applyCommandButton, applyIconSprite, applySlicedSprite, buildingIconKey, ensureFamily,
 } from './ArtCatalog'
-import { PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
+import { buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
 import { DISTRICT_TINT_RGB, projectSceneLayout } from '../game/city/CitySceneAnchors'
 import type { ProjectedPlate, SceneDistrict } from '../game/city/CitySceneAnchors'
@@ -129,6 +129,13 @@ export class CityPanelView extends Component {
     this.buildCard()
     this.layoutCard()
     this.buildPicker = new ChoiceOverlay(card, '选择要建造的建筑', CARD_WIDTH - 24)
+    // 建筑正稿族按需拉取：先画一帧图集小图标，正稿到了补一帧；拉不到就停在图集上。
+    // 不进启动预载 —— 15 张 107.6KB 全在分包里，内城不是所有人的第一屏。
+    ensureFamily('building').then((loaded) => {
+      if (loaded > 0 && this.isValid) {
+        this.render()
+      }
+    })
     this.renderGrid(buildCityGrid([]))
     this.renderSelection(null)
 
@@ -550,7 +557,12 @@ export class CityPanelView extends Component {
     // 而这两项**下面的选择栏本来就有的**（selectedTitle / selectedStatus）。
     // 格子上留下的是同类 SLG 一眼可读的三件事：建筑长什么样、几级、要不要处理。
     const iconSide = Math.max(26, plate.width * 0.92)
-    const iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), iconSide, iconSide)
+    const artKey = buildingArtKey(row.configId)
+    let iconVisible = artKey !== null && applyAnyIconSprite(tile.icon, artKey, iconSide, iconSide)
+    if (!iconVisible) {
+      // 没有正稿、或族图这一次没拉到：退回图集小图标，而不是留一个空格子
+      iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), iconSide, iconSide)
+    }
     tile.icon.active = iconVisible
 
     if (row.upgrading) {

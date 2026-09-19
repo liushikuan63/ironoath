@@ -10,7 +10,7 @@
  * 新族用 `item:` / `equip:` / `hero:` / `activity:` / `currency:` / `avatar:` 前缀。
  */
 
-export type ArtFamily = 'item' | 'equip' | 'hero' | 'activity'
+export type ArtFamily = 'item' | 'equip' | 'hero' | 'activity' | 'building'
 
 /**
  * 面板框 `ui/generated/ui/panel-kingdom-v1` 九宫格的**四角带厚**，交给布局用。
@@ -102,6 +102,29 @@ export const FAMILY_ASSETS: Record<ArtFamily, Readonly<Record<string, string>>> 
     build_sprint: 'ui/generated/activities/activity-build-sprint-v1',
     squad_help: 'ui/generated/activities/activity-squad-help-v1',
   },
+  /**
+   * A18：内城 15 种建筑的等距正稿（`art-src/generated/drafts/a18-masters`）。
+   * 成员名就是 `building.json` 的行 id，所以 `buildingArtKey` 不需要第二张映射表 ——
+   * 表里加一行而图没跟上时 `applyAnyIconSprite` 返回 false，格子退回图集小图标，
+   * 而 `tests/ArtFamilies.test.ts` 会把"有行没有图"当场判红。
+   */
+  building: {
+    main_city: 'ui/generated/buildings/building-main-city-v1',
+    lumber_camp: 'ui/generated/buildings/building-lumber-camp-v1',
+    quarry: 'ui/generated/buildings/building-quarry-v1',
+    farm: 'ui/generated/buildings/building-farm-v1',
+    iron_mine: 'ui/generated/buildings/building-iron-mine-v1',
+    warehouse: 'ui/generated/buildings/building-warehouse-v1',
+    barracks: 'ui/generated/buildings/building-barracks-v1',
+    stable: 'ui/generated/buildings/building-stable-v1',
+    archery_range: 'ui/generated/buildings/building-archery-range-v1',
+    siege_workshop: 'ui/generated/buildings/building-siege-workshop-v1',
+    drill_ground: 'ui/generated/buildings/building-drill-ground-v1',
+    hospital: 'ui/generated/buildings/building-hospital-v1',
+    wall: 'ui/generated/buildings/building-wall-v1',
+    academy: 'ui/generated/buildings/building-academy-v1',
+    embassy: 'ui/generated/buildings/building-embassy-v1',
+  },
 }
 
 export function familyArtKey(family: ArtFamily, member: string): string {
@@ -117,6 +140,15 @@ export function itemArtKeyForConfig(configId: string): string | null {
   }
   const item = ITEM_ICON_BY_CONFIG[configId]
   return item ?? null
+}
+
+/**
+ * 内城建筑正稿键：`building.json` 行 id 就是成员名。没有正稿的行返回 null，
+ * 格子退回图集小图标（不是退回空白），所以"新加一行建筑"不会立刻在城景里开个洞。
+ */
+export function buildingArtKey(buildingConfigId: string): string | null {
+  return FAMILY_ASSETS.building[buildingConfigId] === undefined
+    ? null : `building:${buildingConfigId}`
 }
 
 /** 武将立绘键：hero.json 行 id 就是成员名；没有立绘的行返回 null，行退回稀有度图标。 */

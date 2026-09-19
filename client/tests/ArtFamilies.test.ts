@@ -16,7 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   FAMILY_ASSETS, EQUIP_ICON_BY_CONFIG, ITEM_ICON_BY_CONFIG, ACTIVITY_ICON_BY_CONFIG,
-  itemArtKeyForConfig, activityIconKey, familyArtKey, PANEL_FRAME_BAND,
+  itemArtKeyForConfig, activityIconKey, buildingArtKey, familyArtKey, PANEL_FRAME_BAND,
 } from '../assets/scripts/game/art/ArtFamilies'
 
 const CONFIG_DIR = path.join(repoRoot(), 'contract', 'config')
@@ -40,6 +40,16 @@ function configIds(file: string): string[] {
   const rows = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, file), 'utf8')).rows
   return rows.map((row: { id: string }) => row.id)
 }
+
+test('building.json 每一行都有内城正稿键，且键表没有指向已删掉的行', () => {
+  // A18：城景化之后格子上的图就是这一族。少一行的症状是"那栋楼退回图集小图标"，
+  // 在满屏正稿里很显眼，但只有真跑才看得见 —— 所以在这里钉住。
+  const ids = configIds('building.json')
+  const noArt = ids.filter((id) => buildingArtKey(id) === null)
+  assert.deepEqual(noArt, [], 'building.json 里有行没有正稿 —— 补图，别让它退回小图标')
+  const orphans = Object.keys(FAMILY_ASSETS.building).filter((member) => !ids.includes(member))
+  assert.deepEqual(orphans, [], '建筑族里挂着 building.json 已删掉的行（白占分包体积）')
+})
 
 test('每个族键都有对应的运行时 PNG（键表 → 磁盘）', () => {
   const missing: string[] = []
