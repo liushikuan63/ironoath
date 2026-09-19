@@ -113,19 +113,17 @@ console.log(`[world] 截图：${OUT}`)
 const coverage = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   const visible = window.cc.view.getVisibleSize()
-  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity
+  let minCx = Infinity; let minCy = Infinity; let maxCx = -Infinity; let maxCy = -Infinity
   let tiles = 0
   // 归因读数：地形块与实体块**同名 `Art`**，先按尺寸分堆才知道"横向到底铺了几块"。
-  // 上一格那句"可能是没下发满 9 块"就是没数过才猜的。
   const sizes = {}
   const visit = (n) => {
     if (n.name === 'Art') {
       const box = n.getComponent('cc.UITransform')
       if (box !== null) {
         const w = n.getWorldPosition(new window.cc.Vec3())
-        const halfW = box.width / 2; const halfH = box.height / 2
-        minX = Math.min(minX, w.x - halfW); maxX = Math.max(maxX, w.x + halfW)
-        minY = Math.min(minY, w.y - halfH); maxY = Math.max(maxY, w.y + halfH)
+        minCx = Math.min(minCx, w.x); maxCx = Math.max(maxCx, w.x)
+        minCy = Math.min(minCy, w.y); maxCy = Math.max(maxCy, w.y)
         const key = `${Math.round(box.width)}x${Math.round(box.height)}`
         sizes[key] = (sizes[key] ?? 0) + 1
         tiles += 1
@@ -135,15 +133,25 @@ const coverage = await page.evaluate(() => {
   }
   visit(scene)
   if (tiles === 0) return { tiles: 0, widthRatio: 0, heightRatio: 0, sizes: {} }
+  /**
+   * 外接盒要按**块中心跨度 + 一块的真实边长**算，不能拿各节点自己的 UITransform 并集。
+   *
+   * <p>两个都错过：① 用面积比会把"740×740 摆在 960×600 上"判成 102% 通过，而它左右其实有黑边 ——
+   * 宽度够不够只能按轴看。② 地形块的可见范围是 `Graphics` 画出来的 `chunkSize × cell` 方块，
+   * 而块节点自己的 UITransform 从没设过尺寸、停在默认的 100×100（实测分堆就是
+   * `{"100x100": 8, "320x320": 1, ...}` —— 8 个块节点 + 1 个真正贴上了地形图的子节点）。
+   * 拿 100 去并外接盒会把 960 的视野量成 740，看着像"地图铺不满"，其实是量错了对象。
+   */
+  const chunkSide = Math.max(...Object.keys(sizes).map((k) => Number(k.split('x')[0])))
+  const boxW = (maxCx - minCx) + chunkSide
+  const boxH = (maxCy - minCy) + chunkSide
   return {
     tiles,
-    boxW: maxX - minX, boxH: maxY - minY,
+    chunkSide,
+    boxW, boxH,
     viewW: visible.width, viewH: visible.height,
-    // **按轴判，不按面积判**：面积比会把"740×740 摆在 960×600 上"算成 102%（通过），
-    // 而那一屏左右各有一条黑边 —— 面积是够的，宽度不够。
-    // 这正是旧口径（写死 8px）的实际形态，用面积比就抓不到它。
-    widthRatio: (maxX - minX) / visible.width,
-    heightRatio: (maxY - minY) / visible.height,
+    widthRatio: boxW / visible.width,
+    heightRatio: boxH / visible.height,
     sizes,
   }
 })
