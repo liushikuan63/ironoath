@@ -29,7 +29,10 @@ import {
   applyExileResult, bindWorldRequester, feedMarches, feedTimeOffset, feedViewport, initializeWorld,
 } from '../world/WorldContext'
 import type { WorldActionResult } from '../world/WorldContext'
-import type { PowerDetailResp, StaminaBuyReq, StaminaBuyResp, StaminaResp } from '../../net/generated/Protocol'
+import type {
+  AvatarFrameListResp, PowerDetailResp, StaminaBuyReq, StaminaBuyResp, StaminaResp, WearFrameReq,
+  WearFrameResp,
+} from '../../net/generated/Protocol'
 import type {
   CityCancelReq, CityCancelResp, CityCollectReq, CityCollectResp, CityListResp, CityUpgradeReq,
   CityUpgradeResp, SpeedUpReq, SpeedUpResp,
@@ -754,6 +757,26 @@ export class GameApi {
    */
   shopBuy(req: Omit<ShopBuyReq, 'requestId'>): Promise<NetOutcome<ShopBuyResp>> {
     return this.mutate<ShopBuyReq, ShopBuyResp>('/shop/buy', req)
+  }
+
+  /**
+   * GET /player/frames：全部头像框（含没拥有的）。
+   *
+   * <p>没拥有的也要下发 —— 让玩家看见有什么可收集，正是外观存在的意义（与商店把
+   * 等级不够的货列出来同一条口径）。
+   */
+  playerFrames(): Promise<NetOutcome<AvatarFrameListResp>> {
+    return this.read<AvatarFrameListResp>('/player/frames')
+  }
+
+  /**
+   * POST /player/frame：戴上或卸下（`frameId: null` = 卸下）。
+   *
+   * <p>响应是操作之后的**完整列表**：客户端照它重画，不自己在本地那份上改一位 ——
+   * 本地改法在「服务端拒了但界面已经翻过去了」时会让玩家以为戴上了。
+   */
+  wearFrame(req: Omit<WearFrameReq, 'requestId'>): Promise<NetOutcome<WearFrameResp>> {
+    return this.mutate<WearFrameReq, WearFrameResp>('/player/frame', req)
   }
 
   // ---------- 内部 ----------

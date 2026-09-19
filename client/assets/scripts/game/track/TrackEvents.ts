@@ -87,6 +87,11 @@ export const TRACK_EVENTS = {
   shopBuy: 'shop_buy',
   /** 切商店页签。四个币种的余额与限购各是各的账本，各页的流量是要分开看的。 */
   shopTab: 'shop_tab',
+  /**
+   * 戴上 / 卸下头像框（B24 块③）。`frameId` 是那一枚的 id，卸下记 `none` ——
+   * 两者分开看才知道玩家是在收集还是在退坑。
+   */
+  frameWear: 'frame_wear',
   /** 尝试卖出道具。服务端还没有出售端点，所以这个名字同时也是那条缺口的计数器。 */
   /** 踢成员。`from` 区分小队与联盟。 */
   memberKick: 'member_kick',

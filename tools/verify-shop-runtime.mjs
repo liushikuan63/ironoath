@@ -29,6 +29,9 @@ const PORT = Number(process.env.SHOP_PORT ?? 8098)
 const SHOT_DIR = path.resolve('client/build/shop-verify')
 /** 屏幕底部要给导航条让出的高度（与面板里的常量同源：8 + 52 + 8）。 */
 const BOTTOM_RESERVED = 68
+/** 行高与行距（与 `ShopPanelView` 的常量同源）。用来判"行是不是真的按序号排开了"。 */
+const ROW_HEIGHT = 62
+const ROW_GAP = 5
 
 const failures = []
 const lines = []
@@ -42,7 +45,7 @@ function verdict(ok, label, detail) {
 /** 读商店那一格：页签文字、表头与余额/提示、每一行的文字、最低行底边、当前导航格。 */
 function readShop() {
   const out = { found: false, active: false, currentKey: null, tabs: [], labels: [], rows: [],
-    lowestRowBottom: null, visibleHeight: null, tabPositions: [] }
+    rowYs: [], lowestRowBottom: null, visibleHeight: null, tabPositions: [] }
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas')?.getChildByName('Game')
   out.currentKey = game?.getComponent('PanelNav')?.currentKey ?? null
@@ -82,6 +85,7 @@ function readShop() {
         if (label !== null && label !== undefined && label.string !== '') texts.push(label.string)
       }
       out.rows.push(texts.join(' / '))
+      out.rowYs.push(child.position.y)
       const bottom = child.position.y - 31
       if (out.lowestRowBottom === null || bottom < out.lowestRowBottom) out.lowestRowBottom = bottom
       continue
@@ -160,6 +164,16 @@ async function main() {
   verdict(read?.lowestRowBottom !== null && read.lowestRowBottom > navTop,
     '最低那一行仍然在导航条之上（行数按实测可视高度算）',
     `最低行底边=${read?.lowestRowBottom} 导航条上沿=${navTop} 可视高=${read?.visibleHeight}`)
+  /**
+   * 行**真的按序号排开了**：池化节点建出来都在 y=0，忘了摆就是所有行叠在同一处。
+   * 这一条是补的 —— 原来的判据只问"最低行在不在导航条之上"，而叠在 y=0 反而更靠上，
+   * 于是"表头说 4 件、屏幕上只看得见 1 件"这个缺陷能从判据底下走过去（见收口清单 #244）。
+   */
+  const ys = read?.rowYs ?? []
+  const spacing = ROW_HEIGHT + ROW_GAP
+  const spaced = ys.length >= 2 && ys.every((y, i) => i === 0 || Math.abs((ys[i - 1] - y) - spacing) < 0.5)
+  verdict(spaced, '画出来的每一行按行高 + 行距真的排开了（不是叠在 y=0）',
+    `各行的 y=${JSON.stringify(ys)}（期望间距 ${spacing}）`)
 
   const shot1 = path.join(SHOT_DIR, 'shop-gold.png')
   await page.screenshot({ path: shot1 })

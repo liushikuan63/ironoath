@@ -270,6 +270,10 @@ export class ShopPanelView extends Component {
         this.rowIds[index] = null
         return
       }
+      // 行必须**按序号往下排**：池化节点建出来都在 y=0，不摆就是所有行叠在同一处 ——
+      // 表现是"表头说 4 件、屏幕上只看得见 1 件"，而单测、类型检查、构建全绿
+      // （2026-09-19 由帧探针的截图发现，见收口清单 #244）
+      node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.rowIds[index] = row.rowId
       const graphics = node.getComponent(Graphics)
       if (graphics !== null) {

@@ -72,6 +72,9 @@ import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army
 import { buildShopPanel, buyBodyOf, buyResultText, shopRowStateText } from '../shop/ShopPanel'
 import type { ShopPanelView } from '../shop/ShopPanel'
 import type { ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
+import { buildAvatarFramePanel, wearBodyOf, wearResultText } from '../avatar/AvatarFramePanel'
+import type { AvatarFramePanelView } from '../avatar/AvatarFramePanel'
+import type { AvatarFrameListResp } from '../../net/generated/Protocol'
 import { buildOfflineItems, offlineReportGate } from '../offline/OfflineReport'
 import type { OfflineItem } from '../offline/OfflineReport'
 import type { TrainMemory } from '../army/AutoTrain'
@@ -113,6 +116,11 @@ export interface ShopView extends ShopPanelView {
 /** 「自上次登录以来」那一屏：只装条目，判定与阈值全在 game/offline/OfflineReport.ts 里。 */
 export interface OfflineReportPopup {
   readonly items: readonly OfflineItem[]
+}
+
+/** 外观面板（B24 块③ 头像框）：框列表那块来自 game/avatar/AvatarFramePanel.ts，notice 是上一次操作的结果。 */
+export interface AvatarFramesView extends AvatarFramePanelView {
+  readonly notice: string | null
 }
 
 export interface PanelTargets {
@@ -182,6 +190,8 @@ export interface PanelTargets {
   offlineJump?(key: string): void
   /** 商店面板（B24 S-b）。整块视图由编排层组装好递过来。 */
   shop?(view: ShopView): void
+  /** 外观面板（B24 块③）。同形：整块视图由编排层组装好递过来。 */
+  avatarFrames?(view: AvatarFramesView): void
   /** 一场的完整战果 + 回放参数。回放怎么演由 {@code playbackOptionsOf} 装配，本类不算。 */
   reportReplay?(resp: BattleReportResp): void
   /**
@@ -222,7 +232,7 @@ export interface PanelTargets {
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
-  | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop'
+  | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -252,6 +262,11 @@ export class AppRoot {
   private shopTab: ShopCurrency = 'GOLD'
   private shopResp: ShopListResp | null = null
   private shopNotice: string | null = null
+  /** 外观：最近一次框列表与上一次操作的结果。拥有/佩戴两位都取自响应，本地不改。 */
+  private frameResp: AvatarFrameListResp | null = null
+  private frameNotice: string | null = null
+  /** 预览头像上那个字用的昵称（登录时玩家填的那个） */
+  private nickName = ''
   /** 服务端给的边界与阈值（init 响应里那一块）；登录失败时为 null。 */
   private offlineConfig: OfflineReportView | null = null
   /** 已经给玩家看过的那一批明细的指纹：同一批不再弹（明细变了 = 指纹变了，会再弹一次）。 */
@@ -361,6 +376,7 @@ export class AppRoot {
    * 表现会是「一进游戏就被七八个错误弹窗糊住」。
    */
   async start(deviceId: string, nickName: string, wxCode: string | null = null): Promise<boolean> {
+    this.nickName = nickName
     const outcome = await this.session.login(deviceId, nickName, wxCode)
     if (outcome.kind !== 'ok') {
       this.say('session', outcome)
@@ -554,6 +570,12 @@ export class AppRoot {
         this.deliver('shop', await this.api.shopList(this.shopTab), r => {
           this.shopResp = r
           this.deliverShop()
+        })
+        return
+      case 'avatarFrames':
+        this.deliver('avatarFrames', await this.api.playerFrames(), r => {
+          this.frameResp = r
+          this.deliverAvatarFrames()
         })
         return
       case 'mail':
@@ -880,6 +902,54 @@ export class AppRoot {
     return this.write('shop', this.api.shopBuy(body), ['shop', 'bag', 'resources', 'reddot'], r => {
       // 花费与余额都取服务端回执：本地那份表可能已经过期（热更），自己乘出来的数字会和实际扣的对不上
       this.shopNotice = buyResultText(name, r.spent)
+    })
+  }
+
+  /** 组装并递一次外观视图。`notice` 是**上一次操作的结果**，进面板时一并带上（面板只画一次）。 */
+  private deliverAvatarFrames(): void {
+    const resp = this.frameResp
+    if (resp === null) {
+      return
+    }
+    this.targets.avatarFrames?.({
+      ...buildAvatarFramePanel(resp, this.nickName), notice: this.frameNotice,
+    })
+  }
+
+  /**
+   * 戴上 / 卸下（B24 块③）。`frameId` 为 null = 卸下。
+   *
+   * <p><b>没拥有的框不发请求</b>：服务端已经把 `owned` 算好下发，点一颗注定被拒的按钮
+   * 只会换来一句报错 —— 面板根本不给未拥有的行画按钮（见 `game/avatar/AvatarFramePanel.ts`），
+   * 这里是第二道：真点到了也只是提示一句，不发请求。
+   *
+   * <p>成功后重画**整块视图**（响应本身就是操作之后的完整列表，不再多发一次 GET）：
+   * 面板上的「佩戴中」、预览圈的颜色、按钮文案全都跟着这份响应走，
+   * 客户端一处都不在本地翻状态 —— 本地翻法在「服务端拒了但界面已经翻过去了」时会骗人。
+   */
+  wearFrame(frameId: string | null): Promise<void> {
+    const resp = this.frameResp
+    if (resp === null) {
+      this.rejectNeeds('avatarFrames', '外观列表还没拉回来，稍后再试')
+      return Promise.resolve()
+    }
+    const view = buildAvatarFramePanel(resp, this.nickName)
+    const target = frameId === null
+      ? view.rows.find((row) => row.worn) ?? null
+      : view.rows.find((row) => row.frameId === frameId) ?? null
+    const body = target === null ? null : wearBodyOf(target)
+    if (body === null) {
+      this.rejectNeeds('avatarFrames', target === null
+        ? '这一枚不在外观列表里了'
+        : '这一枚还没有拿到 —— 先在商店里兑换')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.frameWear, { frameId: frameId ?? 'none' })
+    return this.write('avatarFrames', this.api.wearFrame(body), [], r => {
+      // 回执就是操作之后的完整列表：直接落进缓存并重画，不再多发一次 GET
+      this.frameResp = { frames: r.frames, serverNow: r.serverNow }
+      this.frameNotice = wearResultText(r.frames)
+      this.deliverAvatarFrames()
     })
   }
 

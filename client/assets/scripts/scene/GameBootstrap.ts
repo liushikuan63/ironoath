@@ -64,6 +64,7 @@ import { playbackOptionsOf } from '../game/battle/BattleReportPanel'
 import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { ShopPanelView } from './ShopPanelView'
+import { AvatarFramePanelView } from './AvatarFramePanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
 import { OfflineReportOverlay } from './OfflineReportOverlay'
@@ -304,6 +305,11 @@ export class GameBootstrap extends Component {
       // 商店不占首屏：多一个并发请求会挤那 3 秒预算，而货架不在可交互的必需项里
       if (key === 'shop') {
         void this.root?.refresh('shop')
+      }
+      // 外观同理（B24 块③），而且它更该每次打开都拉：框的「佩戴中」是这里唯一的状态来源，
+      // 缓存会让"刚刚在商店买的那一枚"迟到（看着像买了没到账）
+      if (key === 'avatarFrames') {
+        void this.root?.refresh('avatarFrames')
       }
       // 引导的每一步都是"在某面板上弹"，所以换面板要重算一次该不该画（判定在驱动器里，这里只触发）
       this.guide?.repaint()
@@ -869,8 +875,35 @@ export class GameBootstrap extends Component {
     return new TrackClient(rules, new ApiTrackTransport(api, CLIENT_VERSION), () => sys.now())
   }
 
+  /**
+   * 把礼包弹窗的节点挂上（B19 S3-iv 那一屏的宿主）。
+   *
+   * <p><b>为什么在代码里建</b>：本项目的场景文件里没有任何面板节点 —— 十五个面板全是
+   * `PanelNav` 按清单建出来的，而礼包弹窗不在导航条上（它是模态弹窗，不该占一格），
+   * 于是它成了唯一一个"只有视图类、没有宿主节点"的面板。`GiftPopupView` 的头注释写着
+   * 「必须在编辑器里补 `giftPopup` 节点」，在这个工程里那句话的执行方式就是这里 ——
+   * 缺了它的症状不是崩溃而是**那一屏永远不出现**（`/gift/popup` 的答案没有地方画），
+   * 而启动自检行会如实报 `missing="giftPopup"`（探针把它当判据之后才有人看这一行）。
+   *
+   * <p>建出来先 `active = false`：显不显示由 `attach` 按服务端的答案决定，
+   * 节点在登录成功之前就在场景里（与离线汇总那一层同一条纪律：别等要弹的时候才建）。
+   */
+  private mountGiftPopup(): void {
+    if (this.node.getChildByName('giftPopup') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('giftPopup')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(GiftPopupView)
+    node.active = false
+  }
+
   /** 本节点上挂了哪些面板，就接哪些。没挂的面板不会被假装接上（根只会少发那份请求的落地）。 */
   private targets(): PanelTargets {
+    this.mountGiftPopup()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -885,12 +918,13 @@ export class GameBootstrap extends Component {
     const world = this.panel(WorldMap, 'world')
     const settings = this.panel(SettingsPanelView, 'settings')
     const shop = this.panel(ShopPanelView, 'shop')
+    const avatarFrames = this.panel(AvatarFramePanelView, 'avatarFrames')
     const giftPopup = this.panel(GiftPopupView, 'giftPopup')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
       city, army, hero, bag, stage, reports, social, power, search, quest, mail, world, settings,
-      giftPopup,
+      shop, avatarFrames, giftPopup,
     }
     this.panelViews = {
       attempted: Object.keys(views).length,
@@ -1043,6 +1077,11 @@ export class GameBootstrap extends Component {
       out.shop = view => shop.attach(view)
       shop.onTab = currency => { void this.root?.openShopTab(currency) }
       shop.onBuy = rowId => { void this.root?.buyShopRow(rowId) }
+    }
+    if (avatarFrames !== null) {
+      out.avatarFrames = view => avatarFrames.attach(view)
+      // 卸下也走同一条：null 就是"卸下"，与协议的 WearFrameReq 同形
+      avatarFrames.onWear = frameId => { void this.root?.wearFrame(frameId) }
     }
     if (mail !== null) {
       out.mail = (resp, serverNowMs) => mail.attach(resp, serverNowMs)
