@@ -75,6 +75,10 @@ const SKIP = new Set([
   "openAwakenPick",
   "pickAwakenItem",
   "cancelAwakenPick",
+  // 技能弹层同一条口径：意图是"用掉这本书"（confirmSkillPick 里打 hero_skill_up）
+  "openSkillPick",
+  "pickSkillItem",
+  "cancelSkillPick",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

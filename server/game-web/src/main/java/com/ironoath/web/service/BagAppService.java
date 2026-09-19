@@ -198,7 +198,10 @@ public class BagAppService {
                 sortKey(rarity, cfg.type(), count),
                 // 判别字段随行下发（V03-d）：客户端按它筛"哪些道具能喂武将/能觉醒"
                 // —— `type` 太粗（三本经验书都是 MATERIAL，底下还有 11 种别的材料）
-                cfg.effectKind().name());
+                cfg.effectKind().name(),
+                // 判别字段的**宾语**（V03-d 最后一条）：两本技能书在 type 与 effectKind 两列下完全同型，
+                // 只有这一列知道自己是主技能书还是副技能书 —— 而 skillUp 的 skillSlot 不许客户端猜
+                cfg.effectTarget());
     }
 
     // ---------- B04 §4：使用道具 ----------

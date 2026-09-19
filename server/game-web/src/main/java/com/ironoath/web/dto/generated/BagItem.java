@@ -16,6 +16,7 @@ public record BagItem(
         long count,
         long stackMax,
         long sortKey,   // 服务端算好的排序键（稀有度>类型>数量），客户端按它升序展示即可
-        String effectKind)   // 这道具用下去是干什么的（item 表 effectKind 列的原值，如 GRANT_HERO_EXP / AWAKEN_HERO / UP_HERO_SKILL / COMPOSE_HERO）。 **为什么必须下发**：`type` 太粗 —— 三本经验书是 MATERIAL，而 MATERIAL 底下还有 11 种别的材料。「哪个道具能喂武将」这种问题不该由客户端按 id 硬编码回答（与 #255「名字不许客户端自己拼」同一根因，只是这次缺的是**判别字段**而不是名字）。武将养成的四个选择弹层按这一列筛候选，筛错的下场只是一次被拒（服务端仍各自校验）。
+        String effectKind,   // 这道具用下去是干什么的（item 表 effectKind 列的原值，如 GRANT_HERO_EXP / AWAKEN_HERO / UP_HERO_SKILL / COMPOSE_HERO）。 **为什么必须下发**：`type` 太粗 —— 三本经验书是 MATERIAL，而 MATERIAL 底下还有 11 种别的材料。「哪个道具能喂武将」这种问题不该由客户端按 id 硬编码回答（与 #255「名字不许客户端自己拼」同一根因，只是这次缺的是**判别字段**而不是名字）。武将养成的四个选择弹层按这一列筛候选，筛错的下场只是一次被拒（服务端仍各自校验）。
+        String effectTarget)   // effectKind 的**宾语**（item 表 effectTarget 列的原值，未配置时不下发）：资源类填 WOOD/STONE/…，技能书填 MAIN/SUB。 **为什么技能弹层非要有它**：`POST /hero/skillUp` 的 `skillSlot` 不许客户端猜 —— `HeroAppService#growByItem` 里那句 `target != null && !target.equals(skillSlot.name())` 会把猜错的拒掉，而「这本是主技能书」这件事只有这一列知道（`type` 与 `effectKind` 两列下两本书完全同型）。有了它，弹层是**书决定槽位**，而不是让玩家选一个槽位再赌一本对得上的书。
 {
 }

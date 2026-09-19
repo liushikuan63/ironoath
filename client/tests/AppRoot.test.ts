@@ -33,6 +33,7 @@ import type { TechPanelView } from '../assets/scripts/game/tech/TechPanel'
 import type { EquipPanelView } from '../assets/scripts/game/equip/EquipPanel'
 import type { ExpPickView } from '../assets/scripts/game/hero/ExpPick'
 import type { AwakenPickView } from '../assets/scripts/game/hero/AwakenPick'
+import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
@@ -90,6 +91,7 @@ const ROUTES: Record<string, unknown> = {
   '/hero/equip': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/levelUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/hero/awaken': { hero: {}, consumed: [], serverNow: SERVER_NOW },
+  '/hero/skillUp': { hero: {}, consumed: [], serverNow: SERVER_NOW },
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
@@ -523,6 +525,7 @@ interface Harness {
   readonly lastEquip: EquipPanelView | null
   readonly lastExpPick: { readonly view: ExpPickView, readonly heroName: string } | null
   readonly lastAwakenPick: { readonly view: AwakenPickView, readonly heroName: string } | null
+  readonly lastSkillPick: { readonly view: SkillPickView, readonly heroName: string } | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -616,6 +619,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastEquip: EquipPanelView | null = null
   let lastExpPick: { view: ExpPickView, heroName: string } | null = null
   let lastAwakenPick: { view: AwakenPickView, heroName: string } | null = null
+  let lastSkillPick: { view: SkillPickView, heroName: string } | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -677,6 +681,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     awakenPick: (view, heroName) => {
       lastAwakenPick = { view, heroName }
+    },
+    skillPick: (view, heroName) => {
+      lastSkillPick = { view, heroName }
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -760,6 +767,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastAwakenPick() {
       return lastAwakenPick
+    },
+    get lastSkillPick() {
+      return lastSkillPick
     },
     get lastCompose() {
       return lastCompose
@@ -2184,6 +2194,82 @@ test('觉醒弹层：已达上限时两块石都灰、确认是空操作（不�
   const before = h.http.countOf('/hero/awaken')
   await h.root.confirmAwakenPick()
   assert.equal(h.http.countOf('/hero/awaken'), before)
+})
+
+/** 两本标了主/副的技能书 + 一本没标的（同 effectKind，只有 effectTarget 分得开）。 */
+function skillBag(): Record<string, unknown> {
+  return {
+    items: [
+      { itemId: 'item_hero_skillbook_main', name: '主技能秘卷', type: 'MATERIAL', rarity: 'SR',
+        obtainFrom: '章节宝箱', count: 3, stackMax: 999, sortKey: 10,
+        effectKind: 'UP_HERO_SKILL', effectTarget: 'MAIN' },
+      { itemId: 'item_hero_skillbook_sub', name: '副技能残卷', type: 'MATERIAL', rarity: 'R',
+        obtainFrom: '剿匪掉落', count: 2, stackMax: 999, sortKey: 11,
+        effectKind: 'UP_HERO_SKILL', effectTarget: 'SUB' },
+      { itemId: 'item_hero_skillbook_odd', name: '无字残页', type: 'MATERIAL', rarity: 'R',
+        obtainFrom: '未知', count: 1, stackMax: 999, sortKey: 12,
+        effectKind: 'UP_HERO_SKILL', effectTarget: null },
+    ],
+  }
+}
+
+test('技能弹层：槽位跟着书走，确认发的 skillSlot 就是那本书标的那一路', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', {
+    heroes: [{
+      heroId: 'hero_guanyu', name: '关羽',
+      mainSkillLevel: 3, subSkillLevel: 10, maxSkillLevel: 10,
+    }], lineups: [],
+  })
+  h.http.overrides.set('/bag/list', skillBag())
+  await h.root.refresh('hero')
+  await h.root.refresh('bag')
+
+  await h.root.openSkillPick('hero_guanyu')
+  assert.equal(h.lastSkillPick?.heroName, '关羽')
+  assert.deepEqual(h.lastSkillPick?.view.rows.map(r => [r.itemId, r.slot, r.usable]),
+    [['item_hero_skillbook_main', 'MAIN', true],
+      // 副技能已经 10/10 ⇒ 那本该灰；没标的该灰并说明是配置的事
+      ['item_hero_skillbook_sub', 'SUB', false],
+      ['item_hero_skillbook_odd', null, false]])
+  assert.equal(h.lastSkillPick?.view.sendText, '先选技能书')
+
+  h.root.pickSkillItem('item_hero_skillbook_sub')
+  assert.equal(h.lastSkillPick?.view.selectedItemId, null, '满级那本点了不该成为选中项')
+  h.root.pickSkillItem('item_hero_skillbook_main')
+  assert.equal(h.lastSkillPick?.view.selectedSlot, 'MAIN')
+
+  h.events.length = 0
+  const heroReads = h.http.countOf('/hero/list')
+  await h.root.confirmSkillPick()
+  const call = h.http.calls.filter(c => c.path === '/hero/skillUp').at(-1)
+  assert.equal(call?.body.heroId, 'hero_guanyu')
+  assert.equal(call?.body.itemId, 'item_hero_skillbook_main')
+  assert.equal(call?.body.skillSlot, 'MAIN', 'skillSlot 取自那本书的 effectTarget，不是客户端猜的')
+  assert.equal(h.http.countOf('/hero/list') > heroReads, true, '升完重读武将（技能等级变了）')
+  assert.equal(h.http.countOf('/bag/list') >= 2, true, '升完重读背包（书少了）')
+  assert.deepEqual(h.events.filter(e => e.name === 'hero_skill_up').map(e => e.params),
+    [{ heroId: 'hero_guanyu', itemId: 'item_hero_skillbook_main', slot: 'MAIN' }])
+})
+
+test('技能弹层：两路都满级时确认是空操作，键上也写着"没有可用技能书"', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/hero/list', {
+    heroes: [{ heroId: 'hero_guanyu', name: '关羽', mainSkillLevel: 10, subSkillLevel: 10,
+      maxSkillLevel: 10 }], lineups: [],
+  })
+  h.http.overrides.set('/bag/list', skillBag())
+  await h.root.refresh('hero')
+  await h.root.refresh('bag')
+
+  await h.root.openSkillPick('hero_guanyu')
+  assert.equal(h.lastSkillPick?.view.sendText, '没有可用技能书')
+  h.root.pickSkillItem('item_hero_skillbook_main')
+  const before = h.http.countOf('/hero/skillUp')
+  await h.root.confirmSkillPick()
+  assert.equal(h.http.countOf('/hero/skillUp'), before, '满级不该发出升级请求')
 })
 
 test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {

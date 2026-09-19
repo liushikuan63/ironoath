@@ -191,6 +191,30 @@ class BagEndpointTest {
     }
 
     @Test
+    @DisplayName("两本技能书在 type 与 effectKind 两列下完全同型，只有 effectTarget 分得开（V03-d 最后一条）")
+    void bagItemCarriesEffectTargetSoSkillBooksKnowTheirSlot() {
+        String playerId = newPlayer();
+        giveItems(playerId, "item_hero_skillbook_main", 3L, "item_hero_skillbook_sub", 4L,
+                "item_hero_exp_s", 1L);
+
+        var items = bagAppService.list(playerId, BagAppService.PAGE_ALL).items();
+        // 三行**同 type 且两两同 effectKind**：这正是"客户端猜不出该发哪个 skillSlot"的现场
+        assertThat(items).hasSize(3);
+        assertThat(items).filteredOn(i -> i.itemId().startsWith("item_hero_skillbook"))
+                .extracting(i -> i.effectKind())
+                .containsOnly("UP_HERO_SKILL");
+        assertThat(items).filteredOn(i -> i.itemId().equals("item_hero_skillbook_main"))
+                .singleElement().satisfies(i ->
+                        assertThat(i.effectTarget()).as("弹层靠这一列定 skillSlot，而不是让玩家选一个槽再赌")
+                                .isEqualTo("MAIN"));
+        assertThat(items).filteredOn(i -> i.itemId().equals("item_hero_skillbook_sub"))
+                .singleElement().satisfies(i -> assertThat(i.effectTarget()).isEqualTo("SUB"));
+        // 没配 target 的行下发 null（不是空串）：客户端按 null 判"这本没标主副"
+        assertThat(items).filteredOn(i -> i.itemId().equals("item_hero_exp_s"))
+                .singleElement().satisfies(i -> assertThat(i.effectTarget()).isNull());
+    }
+
+    @Test
     @DisplayName("背包按类型分页；拼错的类型名报错而不是静默返回空列表")
     void bagListFiltersByType() {
         String playerId = newPlayer();

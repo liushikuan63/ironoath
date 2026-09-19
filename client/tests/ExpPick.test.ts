@@ -16,7 +16,8 @@ function item(overrides: Partial<BagItem> = {}): BagItem {
   return {
     itemId: 'item_hero_exp_s', name: '小经验书', type: 'MATERIAL', rarity: 'R',
     obtainFrom: '主线任务', count: 5, stackMax: 99, sortKey: 100,
-    effectKind: HERO_EXP_KIND, ...overrides,
+    effectKind: HERO_EXP_KIND,
+    effectTarget: null, ...overrides,
   }
 }
 

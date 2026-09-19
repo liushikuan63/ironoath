@@ -47,6 +47,7 @@ import { TechPanelView } from './TechPanelView'
 import { EquipPanelView } from './EquipPanelView'
 import { ExpPickOverlay } from './ExpPickOverlay'
 import { AwakenPickOverlay } from './AwakenPickOverlay'
+import { SkillPickOverlay } from './SkillPickOverlay'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -965,6 +966,22 @@ export class GameBootstrap extends Component {
   }
 
   /**
+   * 技能选书的弹层（V03-d 最后一条）。与觉醒弹层同样挂在二级弹层，不占导航项。
+   */
+  private mountSkillPickOverlay(): void {
+    if (this.node.getChildByName('skillPick') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('skillPick')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(SkillPickOverlay)
+    node.active = false
+  }
+
+  /**
    * 装备实例页（V03-b-S1）。与研究页同一做法：从**武将页**点出来的二级页，不占导航项。
    */
   private mountEquipPanel(): void {
@@ -987,6 +1004,7 @@ export class GameBootstrap extends Component {
     this.mountEquipPanel()
     this.mountExpPickOverlay()
     this.mountAwakenPickOverlay()
+    this.mountSkillPickOverlay()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -1008,6 +1026,7 @@ export class GameBootstrap extends Component {
     const equip = this.panel(EquipPanelView, 'equipPanel')
     const expPick = this.panel(ExpPickOverlay, 'expPick')
     const awakenPick = this.panel(AwakenPickOverlay, 'awakenPick')
+    const skillPick = this.panel(SkillPickOverlay, 'skillPick')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -1053,6 +1072,13 @@ export class GameBootstrap extends Component {
       awakenPick.onConfirm = () => { void this.root?.confirmAwakenPick() }
       awakenPick.onCancel = () => this.root?.cancelAwakenPick()
     }
+    if (skillPick !== null) {
+      // 技能弹层（V03-d 最后一条）：选一本书，升哪一路是那本书的 effectTarget 决定的
+      out.skillPick = (view, heroName) => skillPick.render(view, heroName)
+      skillPick.onPick = itemId => this.root?.pickSkillItem(itemId)
+      skillPick.onConfirm = () => { void this.root?.confirmSkillPick() }
+      skillPick.onCancel = () => this.root?.cancelSkillPick()
+    }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
       // 数据在 GameBootstrap 手里（版本响应是它拉的），所以这里直接推一次；
@@ -1097,8 +1123,13 @@ export class GameBootstrap extends Component {
           void this.root?.openAwakenPick(heroId)
           return
         }
-        // 技能要选升哪个技能位（还得对上书的主/副）、卸下要选下掉哪一件实例 —— 各要一个选择弹层，
-        // 是独立的一格（队列里记着）。这里如实说明，不做"点了没反应"的静默失败。
+        if (action === 'skillUp') {
+          // 技能要先选哪本书（V03-d 最后一条）：升哪一路由那本书的 effectTarget 决定
+          void this.root?.openSkillPick(heroId)
+          return
+        }
+        // 卸下要选下掉哪一件实例 —— 那一条走装备库那一页（行上直接给「卸下」）。
+        // 这里兜的是"动作有名字但没接上"，如实说明，不做"点了没反应"的静默失败。
         console.warn(`[hero] "${action}" 需要先选道具/技能槽（选择弹层还没做），暂时不可用`)
       }
     }

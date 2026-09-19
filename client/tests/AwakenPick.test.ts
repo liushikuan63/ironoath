@@ -22,7 +22,8 @@ function stone(overrides: Partial<BagItem> = {}): BagItem {
   return {
     itemId: 'item_hero_awaken_1', name: '觉醒石·初阶', type: 'MATERIAL', rarity: 'SR',
     obtainFrom: '赛季通行证', count: 4, stackMax: 999, sortKey: 100,
-    effectKind: AWAKEN_KIND, ...overrides,
+    effectKind: AWAKEN_KIND,
+    effectTarget: null, ...overrides,
   }
 }
 

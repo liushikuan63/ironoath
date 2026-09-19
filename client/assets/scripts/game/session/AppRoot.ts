@@ -60,6 +60,8 @@ import { buildExpPick, bumpPick, expPickRows, pickedPayload } from '../hero/ExpP
 import type { ExpPickView } from '../hero/ExpPick'
 import { buildAwakenPick } from '../hero/AwakenPick'
 import type { AwakenPickView, AwakenStage } from '../hero/AwakenPick'
+import { buildSkillPick } from '../hero/SkillPick'
+import type { SkillPickView, SkillStage } from '../hero/SkillPick'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -234,6 +236,11 @@ export interface PanelTargets {
    */
   awakenPick?(view: AwakenPickView, heroName: string): void
   /**
+   * 技能选书的弹层（V03-d 最后一条）。行上带 `slot` —— **槽位是那本书决定的**（`effectTarget`），
+   * 不是玩家先选一个再赌一本对得上的书。
+   */
+  skillPick?(view: SkillPickView, heroName: string): void
+  /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
@@ -397,6 +404,8 @@ export class AppRoot {
   private expPick: { heroId: string, heroName: string, picks: Record<string, number> } | null = null
   /** 觉醒弹层的状态：给谁觉醒、选了哪块石（单选）。null = 没开着 */
   private awakenPick: { heroId: string, heroName: string, stage: AwakenStage, itemId: string | null } | null = null
+  /** 技能弹层的状态：给谁升、选了哪本书（槽位由那本书决定）。null = 没开着 */
+  private skillPick: { heroId: string, heroName: string, stage: SkillStage, itemId: string | null } | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -1776,6 +1785,75 @@ export class AppRoot {
   /** 取消：关掉弹层，什么都不发。 */
   cancelAwakenPick(): void {
     this.awakenPick = null
+  }
+
+  // ---------- 武将技能（V03-d 最后一条：选一本书，槽位由那本书决定） ----------
+
+  /**
+   * 打开技能弹层。候选取手里那份背包，两路技能的当前等级与上限取手里那份 `/hero/list` ——
+   * 都不额外发请求（武将页上那个「技能」按钮只会来自 heroResp）。
+   */
+  async openSkillPick(heroId: string): Promise<void> {
+    if (this.bagResp === null) {
+      await this.refresh('bag')
+    }
+    const hero = this.heroResp?.heroes.find((h) => h.heroId === heroId)
+    if (hero === undefined) {
+      return
+    }
+    this.skillPick = {
+      heroId, heroName: hero.name,
+      stage: { mainLevel: hero.mainSkillLevel, subLevel: hero.subSkillLevel, maxLevel: hero.maxSkillLevel },
+      itemId: null,
+    }
+    this.deliverSkillPick()
+  }
+
+  /** 选哪本书。**这里不判可用不可用**：判据在纯逻辑里，灰掉的行既点不动也发不出去。 */
+  pickSkillItem(itemId: string): void {
+    if (this.skillPick === null) {
+      return
+    }
+    this.skillPick = { ...this.skillPick, itemId }
+    this.deliverSkillPick()
+  }
+
+  /**
+   * 确认升技能：`skillSlot` **只从选中的那本书拿**（`effectTarget`）——
+   * 客户端先选槽位再挑一本书，就是把自己送进服务端那句"书与槽位不一致"的拒绝里。
+   */
+  confirmSkillPick(): Promise<void> {
+    const state = this.skillPick
+    if (state === null) {
+      return Promise.resolve()
+    }
+    const view = buildSkillPick(this.bagResp?.items ?? [], state.stage, state.itemId)
+    const itemId = view.selectedItemId
+    const slot = view.selectedSlot
+    if (itemId === null || slot === null) {
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.heroSkillUp, {
+      heroId: trackParam(state.heroId), itemId: trackParam(itemId), slot: trackParam(slot),
+    })
+    this.skillPick = null
+    return this.write('hero', this.api.heroSkillUp({ heroId: state.heroId, itemId, skillSlot: slot }),
+      ['hero', 'bag'])
+  }
+
+  /** 组装并下发弹层视图（哪一本点亮、升哪一路，全在纯逻辑里判）。 */
+  private deliverSkillPick(): void {
+    const state = this.skillPick
+    if (state === null) {
+      return
+    }
+    this.targets.skillPick?.(buildSkillPick(this.bagResp?.items ?? [], state.stage, state.itemId),
+      state.heroName)
+  }
+
+  /** 取消：关掉弹层，什么都不发。 */
+  cancelSkillPick(): void {
+    this.skillPick = null
   }
 
   /**
