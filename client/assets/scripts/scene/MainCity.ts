@@ -16,6 +16,7 @@ import type { GameState } from '../game/store/Store'
 import type { Unsubscribe } from '../core/EventBus'
 import type { ResourceState } from '../net/generated/Protocol'
 import { applySystemUiFont } from './UiFont'
+import { resourceName } from '../game/ui/ResourceNames'
 
 const { ccclass } = _decorator
 
@@ -190,11 +191,12 @@ export class MainCity extends Component {
     for (const [type, label] of this.resourceLabels) {
       const value = resources[type]
       if (value === undefined) {
-        label.string = `${type} --`
+        label.string = `${resourceName(type)} --`
         continue
       }
       // 只做展示格式化，不做任何数值判定：容量、产量、保护量全部照服务端给的原样显示
-      label.string = `${type} ${value.current}/${value.cap}`
+      // —— 但**资源名要翻成中文**：`WOOD 5000/20000` 里前面那截是枚举原文，玩家读不出（#255 同族）
+      label.string = `${resourceName(type)} ${value.current}/${value.cap}`
       label.color = value.current >= value.cap ? COLOR_WARNING : COLOR_COPPER_GOLD
     }
   }

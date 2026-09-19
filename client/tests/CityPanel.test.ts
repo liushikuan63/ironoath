@@ -248,14 +248,16 @@ test('满仓资源要标出来：产出停了而玩家不知道，他会以为�
     WOOD: resource(12000, 12000),
     STONE: resource(300, 12000),
   }), 0, 0)
-  assert.deepEqual(panel.resourceLines, ['WOOD 12000/12000（已满，停产）', 'STONE 300/12000'])
+  // 这两条原来断言的是 `'WOOD 12000/12000…'` / `'STAMINA 100/100'` —— 把枚举原文当成规格钉着，
+  // 与 #255 内城标题是同一条缺陷。现在钉它的反面：资源条必须走 `game/ui/ResourceNames`。
+  assert.deepEqual(panel.resourceLines, ['木材 12000/12000（已满，停产）', '石料 300/12000'])
 })
 
 test('不参与生产的资源到上限不报“停产”：体力满不代表产出停了', () => {
   const panel = buildCityPanel(cityResp([], QUEUE, {
     STAMINA: resource(100, 100, 0),
   }), 0, 0)
-  assert.deepEqual(panel.resourceLines, ['STAMINA 100/100'])
+  assert.deepEqual(panel.resourceLines, ['体力 100/100'])
 })
 
 test('旧服务端缺 buildOptions 时按空候选处理，滚动升级期间面板不能崩', () => {

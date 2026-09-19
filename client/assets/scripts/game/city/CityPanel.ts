@@ -16,6 +16,7 @@
  * </ol>
  */
 
+import { resourceName } from '../ui/ResourceNames'
 import { countdownMs, formatCountdown as formatCountdownOf } from '../../core/Countdown'
 import type {
   BuildingView, BuildOptionView, CityCollectResp, CityListResp, ErrorDetail, QueueView, ResourceAmount,
@@ -104,7 +105,9 @@ export function buildCityPanel(resp: CityListResp, offsetMs: number, localNow: n
     // 满仓要标出来：产出停了而玩家不知道，他会以为产量被偷偷改了（B04 验收 1 的同一条纪律）。
     // 但体力这类不参与生产的资源到上限不代表停产，不能把“满了”说成“停产”。
     const full = state.perHour > 0 && state.current >= state.cap
-    resources.push(`${type} ${state.current}/${state.cap}${full ? '（已满，停产）' : ''}`)
+    // 名字走 `game/ui/ResourceNames`（客户端唯一一份），不打 `WOOD` 这种枚举原文 ——
+    // 那和 #255 内城印 `main_city` 是同一条缺陷，只是这次漏在资源条上。
+    resources.push(`${resourceName(type)} ${state.current}/${state.cap}${full ? '（已满，停产）' : ''}`)
   }
 
   return {

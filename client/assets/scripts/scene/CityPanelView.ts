@@ -6,7 +6,9 @@
  * 本场景仍然不做任何数值判断：升级、加速、收割全部由现有回调交给 AppRoot 和服务端裁定。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
+import {
+  _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, sys, view,
+} from 'cc'
 import {
   CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, collectMessage, errorText,
 } from '../game/city/CityPanel'

@@ -34,6 +34,7 @@ import { MarchPanelView } from './MarchPanelView'
 import { applySimpleSprite, applyTerrainSprite, applyTiledSprite } from './ArtCatalog'
 import type { ArtKey } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
+import { resourceName } from '../game/ui/ResourceNames'
 import type { Unsubscribe } from '../core/EventBus'
 
 const { ccclass } = _decorator
@@ -1235,7 +1236,8 @@ function entityCaption(entity: WorldEntity): string {
     case 'MONSTER':
       return level
     case 'RESOURCE':
-      return entity.resourceType ?? ''
+      // 服务端只给 `WOOD/STONE/IRON/GRAIN` 这个枚举，格子上印原文玩家读不出（#255 同族）
+      return entity.resourceType === null ? '' : resourceName(entity.resourceType)
     case 'BUILDING':
       return entity.allianceTag ?? level
     case 'MARCH':
