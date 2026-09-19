@@ -1002,6 +1002,15 @@ export class GameBootstrap extends Component {
       }
       out.chatActionChoice = (options, onPick) => social.showChatActionPicker(options, onPick)
       social.onChatManageBlocks = () => { void this.root?.manageBlocks() }
+      // 集结页签（V02-S1）：列表与三个动作都经编排层 —— 面板判不了"我参没参"，也发不出 join（要带兵）
+      out.rallies = data => social.attachRallies(data)
+      social.onRallyEnter = () => { void this.root?.refresh('rallies') }
+      social.onRallyJoin = rallyId => {
+        // 加入要走编队（协议里 join 必须带承诺兵力），所以这里打开的是出征那套编成面板
+        this.root?.beginRallyCompose(rallyId)
+      }
+      social.onRallyQuit = rallyId => { void this.root?.quitRally(rallyId) }
+      social.onRallyCancel = rallyId => { void this.root?.cancelRally(rallyId) }
       social.onRowAction = (kind, id, from) => {
         switch (kind) {
           case 'help':

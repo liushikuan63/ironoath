@@ -27,6 +27,8 @@ import type { AllianceMember, ChatChannel, HelpRequestView, SocialSummaryResp } 
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
 import { applyCommandButton } from './ArtCatalog'
 import { NodePool } from './NodePool'
+import { buildRallyPanel } from '../game/social/RallyPanel'
+import type { RallyPanelData } from '../game/session/AppRoot'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -68,7 +70,7 @@ const SEND_BUTTON_HEIGHT = 36
  */
 const CHAT_INPUT_BOTTOM = 72
 
-type Tab = 'squad' | 'alliance' | 'help' | 'events' | 'chat'
+type Tab = 'squad' | 'alliance' | 'help' | 'events' | 'chat' | 'rally'
 
 const TABS: ReadonlyArray<{ tab: Tab; text: string; reddotKey: string | null }> = [
   { tab: 'squad', text: '小队', reddotKey: null },
@@ -78,6 +80,9 @@ const TABS: ReadonlyArray<{ tab: Tab; text: string; reddotKey: string | null }> 
   // 聊天页签（B22 §五 裁决①：进社交面板的页签，导航 13 项不再加）。
   // 角标读的是既有的事件叶：私信未读本身就是一条未读事件，两处各算一次就会漂移
   { tab: 'chat', text: '聊天', reddotKey: 'social/events' },
+  // 集结（V02）：与「谁一起打」同族 —— 它要的是队/盟里的具体一支队伍，
+  // 而不是另一套社交关系，所以放在社交面板里而不是导航第 17 项
+  { tab: 'rally', text: '集结', reddotKey: null },
 ]
 
 /** 一行要画的内容。四个页签共用同一套节点结构。 */
@@ -94,7 +99,7 @@ interface RowDraft {
 }
 
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
-  | 'chatMenu' | 'blocks' | 'friend'
+  | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -114,6 +119,8 @@ export class SocialPanelView extends Component {
   private lastHelps: HelpRequestView[] = []
   private lastOffsetMs = 0
   private tab: Tab = 'squad'
+  /** 集结页签的数据（响应 + 我的 id + 提示行）；组合根整份递过来。 */
+  private rallyData: RallyPanelData | null = null
   private pending: {
     resp: SocialSummaryResp; helps: HelpRequestView[]; members: AllianceMember[]; offsetMs: number
   } | null = null
@@ -155,6 +162,12 @@ export class SocialPanelView extends Component {
 
   /** 进聊天页签（首次画之前先拉一次历史） */
   onChatEnter: (() => void) | null = null
+  /** 进集结页签拉一次（集结状态随时间推进，缓存会显示过期的"准备还剩"）。 */
+  onRallyEnter: (() => void) | null = null
+  /** 加入：走编队（`/rally/join` 要带承诺兵力），由编排层打开编成面板。 */
+  onRallyJoin: ((rallyId: string) => void) | null = null
+  onRallyQuit: ((rallyId: string) => void) | null = null
+  onRallyCancel: ((rallyId: string) => void) | null = null
   /** 切频道（世界/联盟/小队/私聊） */
   onChatChannel: ((channel: ChatChannel) => void) | null = null
   /** 点开一个私聊会话 */
@@ -308,11 +321,26 @@ export class SocialPanelView extends Component {
     }
   }
 
+  /**
+   * 装载集结页签的数据（V02-S1）。与聊天同一条纪律：面板不回拉任何东西，
+   * 展示数据与"能不能点"全由组合根算好。
+   */
+  attachRallies(data: RallyPanelData): void {
+    this.rallyData = data
+    if (this.tab === 'rally') {
+      this.render()
+    }
+  }
+
   switchTab(tab: Tab): void {
     if (this.tab === tab) {
       return
     }
     this.tab = tab
+    if (tab === 'rally') {
+      // 集结的剩余时间随时在走：每次进来都重拉一次（缓存会显示过期的倒计时）
+      this.onRallyEnter?.()
+    }
     if (tab === 'chat') {
       // 进聊天页签拉一次（世界/联盟/小队三条没有推送，离开又回来的消息只能靠这一拉补上）
       this.onChatEnter?.()
@@ -554,7 +582,6 @@ export class SocialPanelView extends Component {
     return ''
   }
 
-
   /** 把输入框里的文字交出去。**不清空**：清不清由组合根说了算（失败要留着让玩家重试）。 */
   private sendChatDraft(): void {
     this.onChatSend?.(this.chatInput?.string ?? '')
@@ -611,6 +638,11 @@ export class SocialPanelView extends Component {
     if (this.hintLabel !== null) {
       this.hintLabel.string = this.hintText(data)
       this.hintLabel.color = this.socialReddotLit() ? COLOR_WARNING : COLOR_TEXT_DIM
+    }
+    if (this.tab === 'rally') {
+      this.drawRows(this.rallyRows(), MAX_VISIBLE_ROWS, 0)
+      this.setHint(this.rallyHint())
+      return
     }
     this.drawRows(drafts, MAX_VISIBLE_ROWS, 0)
   }
@@ -708,6 +740,8 @@ export class SocialPanelView extends Component {
       case 'chat':
         // 聊天页签的表头在 render 里单独给（它要的是频道名，不是社交区块）
         return '聊天'
+      case 'rally':
+        return '集结'
     }
   }
 
@@ -729,6 +763,9 @@ export class SocialPanelView extends Component {
         return '过期事件已置灰：三小时前的求援已经支援不上了'
       case 'chat':
         return ''
+      case 'rally':
+        // 集结的顶部那句由专门的方法给（提示行 > 空态 > 通用说明）
+        return this.rallyHint()
     }
   }
 
@@ -744,6 +781,9 @@ export class SocialPanelView extends Component {
         return eventDrafts(data.events)
       case 'chat':
         // 聊天页签的行来自聊天数据（chatDrafts），这里不会再被调到
+        return []
+      case 'rally':
+        // 集结的行在 render 里单独画（它要的是点一下就进编队的动作，见 rallyRows）
         return []
     }
   }
@@ -817,12 +857,64 @@ export class SocialPanelView extends Component {
         this.onHelpAll?.(this.data?.helpAllCount ?? 0)
         return
       }
+      if (kind === 'rallyJoin') {
+        this.onRallyJoin?.(id)
+        return
+      }
+      if (kind === 'rallyQuit') {
+        this.onRallyQuit?.(id)
+        return
+      }
+      if (kind === 'rallyCancel') {
+        this.onRallyCancel?.(id)
+        return
+      }
       if (kind === 'donate') {
         this.onDonate?.(Number(id))
         return
       }
       this.onRowAction?.(kind, id, this.tab === 'alliance' ? 'alliance' : 'squad')
     }, this)
+  }
+
+  /**
+   * 集结页签的行：展示数据由纯逻辑层组装（`game/social/RallyPanel.ts`），
+   * 这里只把它的结论翻译成面板的行模型 —— 判定一处都不重复。
+   */
+  private rallyRows(): RowDraft[] {
+    const data = this.rallyData
+    if (data === null) {
+      return []
+    }
+    const view = buildRallyPanel(data.source, data.myPlayerId)
+    return view.rows.map((row) => ({
+      title: row.targetText,
+      titleColor: row.mine ? COLOR_COPPER_GOLD : COLOR_TEXT,
+      detail: `${row.scopeText} · ${row.partyText}`,
+      value: row.mine ? `${row.remainText}（我已加入）` : row.remainText,
+      actionText: row.actionText,
+      actionEnabled: row.action !== null,
+      actionId: row.rallyId,
+      actionKind: row.action === 'join' ? 'rallyJoin'
+        : (row.action === 'quit' ? 'rallyQuit' : (row.action === 'cancel' ? 'rallyCancel' : 'none')),
+    }))
+  }
+
+  /** 集结页签顶部那句：提示行优先，其次空态说明，最后是通用标题。 */
+  private rallyHint(): string {
+    const data = this.rallyData
+    if (data === null) {
+      return '集结列表还没拉回来'
+    }
+    const view = buildRallyPanel(data.source, data.myPlayerId)
+    return data.notice ?? view.emptyText ?? '准备中的集结会统一出发，加入要带兵'
+  }
+
+  /** 顶部提示行（各页签共用一处写入，免得某个页签改颜色时漏掉）。 */
+  private setHint(text: string): void {
+    if (this.hintLabel !== null) {
+      this.hintLabel.string = text
+    }
   }
 }
 
