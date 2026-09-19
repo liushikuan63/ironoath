@@ -7,7 +7,7 @@
  * ② 配置表加了新行、映射表没跟上 ⇒ 静默退回 Graphics 占位，没人会去查；
  * ③ 映射表写了不存在的键 ⇒ applyFamilySprite 永远 false，比没有映射更难发现；
  * ④ 九宫格的切分几何有两份 ⇒ 后写的那份生效，先写的那份变成"改了没反应"的死字段，
- *    而布局代码按哪一份排都可能把内容压到角饰下面（收口清单 #211 真咬到过）。
+ *    而布局代码按哪一份排都可能把内容压到角饰下面（收口清单 #213 真咬到过）。
  */
 
 import test from 'node:test'
@@ -126,6 +126,15 @@ function frameBorders(pngBaseName: string): Record<'left' | 'top' | 'right' | 'b
     right: border('borderRight'), bottom: border('borderBottom') }
 }
 
+test('薄边 chip 四边都是 12：它是"装饰母版装不下的格子"那一路的唯一尺寸来源', () => {
+  for (const name of ['button-chip-v1', 'button-chip-hover-v1', 'button-chip-disabled-v1']) {
+    assert.deepEqual(frameBorders(name),
+      { left: 12, top: 12, right: 12, bottom: 12 },
+      `${name}：边框 12 ⇒ 最小可画 24×24，正好覆盖 46×26 这批小按钮；`
+      + '改大就会把 #216 那条"九宫格退化"判据重新引回来')
+  }
+})
+
 test('面板框的四角带厚只有一个真源：图的 meta border* ↔ 交给布局的 PANEL_FRAME_BAND', () => {
   const band = PANEL_FRAME_BAND
   assert.deepEqual(frameBorders('panel-kingdom-v1'),
@@ -137,16 +146,15 @@ test('面板框的四角带厚只有一个真源：图的 meta border* ↔ 交�
 test('ArtCatalog 不许再抄一份九宫格边框（后写的那份会盖掉 meta，让 meta 变成骗人的死字段）', () => {
   const src = fs.readFileSync(ART_CATALOG_SRC, 'utf8')
   assert.equal(/insets\s*:/.test(src), false,
-    'SPECS 里又出现了 insets —— 收口清单 #211 拆掉的就是它：它让 #203 那次改 meta 变成空操作')
+    'SPECS 里又出现了 insets —— 收口清单 #213 拆掉的就是它：它让 #203 那次改 meta 变成空操作')
   assert.equal(/\binset(Left|Right|Top|Bottom)\s*=[^=]/.test(src), false,
     '运行期改写了 SpriteFrame 的边框 ⇒ meta 里的 border 从此不影响画面')
 })
 
-test('按钮四态的九宫格边框住在 meta 里（384×143 母版，端帽横向 54 / 纵向 40）', () => {
-  for (const name of ['button-command-v1', 'button-command-v1-hover',
-    'button-command-v1-pressed', 'button-command-v1-disabled']) {
-    assert.deepEqual(frameBorders(name),
-      { left: 54, top: 40, right: 54, bottom: 40 },
-      `${name}：归零或改小时，26~34px 高的按钮会把圆角端帽横向拉扁（applyCommandButton 的注释）`)
-  }
+test('运行时的 ui 图只剩三族：面板框、chip、页签（装饰母版已因零消费退出包）', () => {
+  const pngs = fs.readdirSync(GENERATED_UI).filter((name) => name.endsWith('.png')).sort()
+  assert.deepEqual(pngs, [
+    'button-chip-disabled-v1.png', 'button-chip-hover-v1.png', 'button-chip-v1.png',
+    'nav-tab-selected-v1.png', 'nav-tab-v1.png', 'panel-kingdom-v1.png',
+  ], '包里多了/少了 ui 图 —— 加图要连同消费点与判据一起进来，删图要确认零消费（#216 的口径）')
 })

@@ -8,7 +8,7 @@
 
 import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3 } from 'cc'
 import type { MarchPanelAction, MarchPanelRow } from '../game/world/MarchPanel'
-import { applyCommandButton, applySimpleSprite, applySlicedSprite, hasArt } from './ArtCatalog'
+import { applyCommandButton, applySlicedSprite, hasArt } from './ArtCatalog'
 import { PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
 
@@ -128,9 +128,9 @@ export class MarchPanelView {
       const hasAction = row.action !== null && row.actionText !== null
       refs.action.active = hasAction
       refs.action.off('touch-start')
-      if (!applySimpleSprite(refs.action,
-        pending ? 'ui.button.command.disabled' : 'ui.button.command',
-        ACTION_WIDTH, ACTION_HEIGHT)) {
+      // 按钮家族只有两态图：pending 时不换图，靠"处理中"文案与字色区分（disabled 图已随
+      // 装饰母版一起退出运行时，理由见 ArtCatalog.applyCommandButton）
+      if (!applyCommandButton(refs.action, 'normal', ACTION_WIDTH, ACTION_HEIGHT)) {
         const graphics = refs.action.getComponent(Graphics) ?? refs.action.addComponent(Graphics)
         graphics.clear()
         graphics.fillColor = pending ? COLOR_DISABLED : COLOR_ROW_ALT
@@ -233,7 +233,7 @@ export class MarchPanelView {
     node.addChild(action)
     action.setPosition(new Vec3(ROW_WIDTH / 2 - 52, -6, 0))
     action.addComponent(UITransform).setContentSize(new Size(ACTION_WIDTH, ACTION_HEIGHT))
-    if (!hasArt('ui.button.command')) {
+    if (!hasArt('ui.button.chip')) {
       action.addComponent(Graphics)
     }
     const actionCaption = this.addLabel(action, 'Caption', 0, 0, COLOR_TEXT, 13)

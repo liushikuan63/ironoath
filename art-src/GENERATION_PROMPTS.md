@@ -90,6 +90,9 @@ Avoid: neon, glossy candy mobile styling, blue sci-fi accents, photorealism
 
 - `ui-panel-kingdom-v1.png`：1024×1024 低质量草稿，抠绿、裁边后压到 512×354。
 - `ui-button-command-v1*.png`：按钮母版抠绿、裁边后压到 512×191，并派生 hover / pressed / disabled。
+  **2026-09-19 已退出运行时**（母稿留这里）：端帽 54 / 边框 40 决定了它最小只能画 120×88，
+  而全仓库 24 个按钮消费点高度都只有 26~34 —— 它从来没有被九宫格画过，四张 300KB 变成零消费装饰；
+  接班的是下面 G9 的薄边 chip。判据见 `tools/verify-art-runtime.mjs` 的 `degenerateSlices`（收口清单 #216）。
 - `map-terrain-atlas-v1.png`：4×4 地块图集，最终压缩到 512×512，单元格 128×128。
 - `map-player-city-v1.png`、`map-monster-camp-v1.png`、`map-resource-point-v1.png`、`map-alliance-building-v1.png`、`map-march-marker-v1.png`：3×2 母版拆成 5 张 256×256 透明 PNG。
 
@@ -121,6 +124,7 @@ Avoid: neon, glossy candy mobile styling, blue sci-fi accents, photorealism
 | G6 | 战令免费/付费双轨徽、抽卡横幅背景（plain 直存 1280×731，不抠绿）、限时绶带角标 | `drafts/g6-*/` |
 | G7 | 默认头像 4：男女君主/盟管/系统信使 | `drafts/g7-avatars/` |
 | G8 | 底部导航页签 2 态：暗铁铆钉常态 + 金框红底选中态，**按格子比例 4:3 画满整幅**（不走九宫格，整图等比缩放） | `drafts/g8-nav-tab/` |
+| G9 | 薄边小按钮 chip 3 态：整幅 3.08:1 长条，铜色斜面边框约占高度 7.1%、四角铆钉；hover 与 disabled **都由常态派生**（`derive_button_states.py`，亮度/饱和两组系数写死在脚本里），不再生成第二张以免造型漂移。第一版边框只占 1.7%，铺到 32px 高的格子会消失，作废重出 | `drafts/g9-button-chip/` |
 
 - 批次清单：`generated/drafts/batch-2026-09-18-ui-full.json`（G4 已钉到 v1 母版）；运行日志 `batch-run.log`，全量 `ALL_OK`。
 - **G8 批次清单（2026-09-19）**：`generated/drafts/batch-2026-09-19-g8-nav-tab.json`，两张都 `residual_green=0.000%`。

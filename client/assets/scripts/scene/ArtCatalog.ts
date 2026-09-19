@@ -8,7 +8,7 @@
  *
  * <p><b>九宫格的切分几何不在这里</b>：它属于素材本身，写在各图的 `.png.meta`（border*）。
  * 这里曾经有一份 `insets` 覆盖，而它在 `loadOne` 里<b>后写且生效</b> —— 于是"改 meta 的 border"
- * 这件事对运行期的画面一个像素都不影响，布局代码里的带厚又和它不一致（收口清单 #211）。
+ * 这件事对运行期的画面一个像素都不影响，布局代码里的带厚又和它不一致（收口清单 #213）。
  */
 
 import {
@@ -19,10 +19,9 @@ import { ArtFamily, FAMILY_ASSETS } from '../game/art/ArtFamilies'
 
 type StaticArtKey =
   | 'ui.panel.kingdom'
-  | 'ui.button.command'
-  | 'ui.button.command.hover'
-  | 'ui.button.command.pressed'
-  | 'ui.button.command.disabled'
+  | 'ui.button.chip'
+  | 'ui.button.chip.hover'
+  | 'ui.button.chip.disabled'
   | 'ui.nav.tab'
   | 'ui.nav.tab.selected'
   | 'map.terrain.grass'
@@ -74,7 +73,12 @@ export type TerrainArtKey =
   | 'map.terrain.7'
 
 export type ArtKey = StaticArtKey | IconArtKey | TerrainArtKey
-export type CommandButtonState = 'normal' | 'hover' | 'pressed' | 'disabled'
+/**
+ * 按钮的三态。`hover` 在这里的含义是"这一格是当前选中项"，不是鼠标悬停；
+ * `disabled` 是"点不动"（灰掉但仍是按钮形状）。没有 pressed：全仓库零消费，
+ * 要做触摸反馈得先补图并同步 derive_button_states.py 的 STATES。
+ */
+export type CommandButtonState = 'normal' | 'hover' | 'disabled'
 
 interface ArtSpec {
   readonly path: string
@@ -104,17 +108,14 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.panel.kingdom': {
     path: 'ui/generated/ui/panel-kingdom-v1',
   },
-  'ui.button.command': {
-    path: 'ui/generated/ui/button-command-v1',
+  'ui.button.chip': {
+    path: 'ui/generated/ui/button-chip-v1',
   },
-  'ui.button.command.hover': {
-    path: 'ui/generated/ui/button-command-v1-hover',
+  'ui.button.chip.hover': {
+    path: 'ui/generated/ui/button-chip-hover-v1',
   },
-  'ui.button.command.pressed': {
-    path: 'ui/generated/ui/button-command-v1-pressed',
-  },
-  'ui.button.command.disabled': {
-    path: 'ui/generated/ui/button-command-v1-disabled',
+  'ui.button.chip.disabled': {
+    path: 'ui/generated/ui/button-chip-disabled-v1',
   },
   'ui.nav.tab': {
     path: 'ui/generated/ui/nav-tab-v1',
@@ -365,19 +366,6 @@ export function rarityIconKey(rarity: string): IconArtKey {
   return iconArtKey(`rarity/${rarity.toLowerCase()}`)
 }
 
-export function commandButtonArtKey(state: CommandButtonState = 'normal'): ArtKey {
-  switch (state) {
-    case 'hover':
-      return 'ui.button.command.hover'
-    case 'pressed':
-      return 'ui.button.command.pressed'
-    case 'disabled':
-      return 'ui.button.command.disabled'
-    default:
-      return 'ui.button.command'
-  }
-}
-
 /** 用九宫格 Sprite 替换节点背景；加载失败时返回 false，调用方继续走 Graphics 兜底。 */
 export function applySlicedSprite(node: Node, key: ArtKey, width: number, height: number): boolean {
   return applySprite(node, key, Sprite.Type.SLICED, width, height)
@@ -402,17 +390,33 @@ export function applyTerrainSprite(node: Node, index: number,
   return applyTiledSprite(node, terrainArtKey(index), width, height)
 }
 
+/**
+ * 游戏里的按钮一律走这张薄边 chip（meta 边框 12 ⇒ 最小可画 24×24，覆盖 46×26 ~ 132×34 全部消费点）。
+ *
+ * <p>原来这里是一张 384×143 的装饰母版，左右端帽各 54、上下边框各 40 —— 而实际格子最高的只有 34，
+ * 也就是说**它从来没有被九宫格画过**，引擎只能整图缩小，观感就是一团缩小的花纹（#216 的
+ * `degenerateSlices` 判据当场列出 24 个消费点全中）。母版四态图合计 **300KB**（分包 1.65MB 的 18%）
+ * 在改完之后就剩零消费，已退出运行时；母稿仍在 `art-src`，将来真出现 ≥120×88 的大按钮再收回来，
+ * 不要提前留在包里。
+ *
+ * <p>三张状态图都由同一张常态**派生**（`art-src/derive_button_states.py`）：两次生成必然漂移造型，
+ * 摆在一起就是两套按钮。没有 pressed —— 全仓库零消费，要做得先补图并同步这里与 STATES。
+ */
+function chipArtKey(state: CommandButtonState): StaticArtKey {
+  if (state === 'hover') {
+    return 'ui.button.chip.hover'
+  }
+  return state === 'disabled' ? 'ui.button.chip.disabled' : 'ui.button.chip'
+}
 export function applyCommandButton(node: Node, state: CommandButtonState,
                                    width: number, height: number): boolean {
-  // 按钮母版是 384×143、带圆角描边的九宫格，游戏里却要铺到 26~34px 高；
-  // 按 SIMPLE 直接压扁会把四角拉成椭圆。九宫格只拉伸中间，四角保持原比例。
-  return applySlicedSprite(node, commandButtonArtKey(state), width, height)
+  return applySlicedSprite(node, chipArtKey(state), width, height)
 }
 
 /**
  * 底部导航格的页签图。刻意**不**走九宫格：格子尺寸由条宽 ÷ 格数定死（≈63×44），
  * 而按钮母版的端帽就有 54px —— 九宫格在那个尺寸上退化成"整张图缩小"，画出来是一朵花
- * （收口清单 #213 的截图）。页签母版本来就是按这个比例画的，等比铺满即可。
+ * （收口清单 #215 的截图）。页签母版本来就是按这个比例画的，等比铺满即可。
  */
 export function applyNavTab(node: Node, selected: boolean, width: number, height: number): boolean {
   return applySimpleSprite(node, selected ? 'ui.nav.tab.selected' : 'ui.nav.tab', width, height)

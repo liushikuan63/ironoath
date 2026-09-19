@@ -17,7 +17,7 @@ export type ArtFamily = 'item' | 'equip' | 'hero' | 'activity'
  *
  * <p>切分几何的唯一真源是那张图的 `.png.meta`（border* 四值）—— 代码里不再抄第二份，
  * 因为"两份数字"这件事本轮真的咬过一口：`ArtCatalog` 曾有一份 `insets: [51,47,51,47]`
- * 的覆盖，后写且生效，于是 meta 里的 border 改了个像素都不会变（收口清单 #211）。
+ * 的覆盖，后写且生效，于是 meta 里的 border 改了个像素都不会变（收口清单 #213）。
  * 两者现在由 `tests/ArtFamilies.test.ts` 对账：改图不改这里，测试就红。
  */
 export const PANEL_FRAME_BAND = 44

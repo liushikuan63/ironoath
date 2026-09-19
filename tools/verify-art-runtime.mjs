@@ -91,6 +91,7 @@ async function collectSprites() {
           name: node.name,
           enabled: sprite.enabled,
           type: sprite.type,
+          frameName: sprite.spriteFrame.name,
           typeName: Object.keys(spriteTypes).find((key) => spriteTypes[key] === sprite.type) ?? null,
           contentWidth: transform !== null && transform !== undefined ? transform.width : null,
           contentHeight: transform !== null && transform !== undefined ? transform.height : null,
@@ -133,7 +134,7 @@ page.on('request', (request) => {
  * 九宫格框的**带内排版**判定。两张套 `ui.panel.kingdom` 的框（内城卡片 / 行军面板）里，
  * 每个带内容（Label 或 Sprite）的节点矩形都必须落在"四角带以内"。
  *
- * <p>为什么几何判据而不是截图比对：#204 在内城修过"标题压在角饰上"，#211 在行军面板上
+ * <p>为什么几何判据而不是截图比对：#204 在内城修过"标题压在角饰上"，#213 在行军面板上
  * 又出现一次同一形状 —— 只数"画没画出来"永远看不见"画对了但盖在装饰上"。
  *
  * <p>带厚从源码现读（`PANEL_FRAME_BAND`），并和**运行期 SpriteFrame 的实际 insets** 对账：
@@ -571,6 +572,30 @@ await page.screenshot({ path: path.join(OUT, 'art-quest-activity-runtime.png') }
 const familyAfterActivity = resourcePngRequests.size
 
 
+/**
+ * **九宫格退化**判定（本轮的通则判据，先于任何具体修复存在）。
+ * 一张按 SLICED 铺的图，若目标尺寸小于它自己左右（或上下）边框之和，引擎就只能把整张图缩小 ——
+ * 画出来不再是"能拉伸的按钮"，而是一团缩小的装饰。#215 的导航格（63×44 配 54px 端帽）
+ * 就是这个形状第一次现形；同一条规则也解释了面板里那批 46×26 / 78×28 的小按钮。
+ * 能失败的方式：任何消费者把大边框母版铺到小格子上；素材改了 border 却没同步尺寸。
+ */
+function findDegenerateSlices(sprites) {
+  return sprites
+    .filter((sprite) => sprite.typeName === 'SLICED' && sprite.contentWidth > 0)
+    .filter((sprite) => sprite.contentWidth < sprite.insetLeft + sprite.insetRight
+      || sprite.contentHeight < sprite.insetTop + sprite.insetBottom)
+    .map((sprite) => `${sprite.name} ${sprite.contentWidth.toFixed(1)}x${sprite.contentHeight.toFixed(1)}`
+      + ` 小于自身边框 ${sprite.insetLeft + sprite.insetRight}x${sprite.insetTop + sprite.insetBottom}`)
+}
+const degenerateSlices = Array.from(new Set([
+  ...findDegenerateSlices(city),
+  ...findDegenerateSlices(bag),
+  ...findDegenerateSlices(army),
+  ...findDegenerateSlices(hero),
+  ...findDegenerateSlices(world),
+  ...findDegenerateSlices(worldZoom),
+]))
+
 const cityIcons = city.filter((sprite) => sprite.name === 'BuildingIcon')
 const bagIcons = bag.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
 // 资源行的图集映射断言原来钉死在 grain 的矩形上，而"哪几行在屏内"由服务端 map 顺序决定 ——
@@ -597,11 +622,13 @@ const iconMappings = {
   heroPortrait: heroIcons.some((sprite) => sprite.height === 256)
     || heroIcons.some((sprite) => sprite.y === 128 || sprite.y === 256),
 }
-const commandButtons = [...city, ...bag, ...army, ...hero, ...world]
-  .filter((sprite) => sprite.insetLeft === 54 && sprite.insetTop === 40)
-const commandButtonSizes = Array.from(new Set(commandButtons
+// 按钮按**帧名**认，不按 insets 认 —— insets 各家族不同（面板框 44、chip 12），
+// 拿一个数字当身份就是给下一个家族埋雷（#213 那条判据的同族教训）。
+const chipButtons = [...city, ...bag, ...army, ...hero, ...world]
+  .filter((sprite) => /^button-chip/.test(sprite.frameName ?? ''))
+const chipButtonSizes = Array.from(new Set(chipButtons
   .map((sprite) => `${sprite.contentWidth}x${sprite.contentHeight}`)))
-const commandButtonsNotSliced = commandButtons.filter((sprite) => sprite.typeName !== 'SLICED')
+const chipButtonsNotSliced = chipButtons.filter((sprite) => sprite.typeName !== 'SLICED')
 const panelResults = {
   city: cityResult,
   bag: bagResult,
@@ -637,16 +664,17 @@ const result = {
     familyAfterActivity,
     activityTab,
     activityDrawn,
-    commandButtons: commandButtons.length,
+    chips: chipButtons.length,
     fontLabels: fonts.length,
     worldCaptions,
   },
-  commandButtonSizes,
-  commandButtonsNotSliced: commandButtonsNotSliced.map((sprite) => sprite.name),
+  chipButtonSizes,
+  chipButtonsNotSliced: chipButtonsNotSliced.map((sprite) => sprite.name),
   iconMappings,
   fontFamilies,
   fontPolicyFailures: fontPolicyFailures.map((font) => font.name),
   panelMismatches,
+  degenerateSlices,
   frame: {
     bandFromSource: FRAME_BAND,
     march: frameMarch,
@@ -688,6 +716,7 @@ if (errors.length > 0
   || frameCity.error !== undefined || frameCity.counted < 20
   || frameBandDrift.length > 0
   || frameOverlaps.length > 0
+  || degenerateSlices.length > 0
   || navContrast.error !== undefined
   || (navContrast.cells ?? []).length < NAV_CELLS_EXPECTED
   || navLowContrast.length > 0
@@ -699,8 +728,8 @@ if (errors.length > 0
   || armyIcons.length === 0
   || heroIcons.length === 0
   || Object.values(iconMappings).some((matched) => !matched)
-  || commandButtons.length === 0
-  || commandButtonsNotSliced.length > 0
+  || chipButtons.length < 20
+  || chipButtonsNotSliced.length > 0
   || fonts.length === 0
   || fontPolicyFailures.length > 0
   || terrainTiles.length === 0
