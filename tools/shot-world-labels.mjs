@@ -55,10 +55,62 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 900 
 await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
 }, DEVICE)
+/**
+ * 行军牌需要一条**真运行时证据**：#279 把藏牌口径跨到行军那个池，而夹具号名下没有在途行军
+ * （dev 新号无兵无将）—— 扫不到行军牌就等于"那半边从没判过"，`drawBody` 拆错了也没人报。
+ *
+ * <p>照仓库既有做法（#273 / #276 那两格）：**替换读接口，不改视图、不开调试出口**。
+ * 先 `route.fetch()` 拿真响应，只往 `marches` 里追加一条 —— 这样 `home / serverNow / worldSize /
+ * chunkSize` 全是服务端给的真值，夹具不假装自己知道世界参数。
+ * 位置算成"出发与目标的中点"（`startAt` 与 `arriveAt` 关于 now 对称 ⇒ 进度 0.5 ⇒ 距家 6 格 = 180px），
+ * 刻意离城牌远一点：贴着城放就会必然被藏，那测的是"藏了"而不是"这条路径通"。
+ */
+await context.route('**/world/marches', async (route) => {
+  const response = await route.fetch()
+  const envelope = await response.json()
+  /**
+   * 线上格式是信封 `{ code, msg, data, serverNow }`，业务负载在 **`data` 里**。
+   * 首跑直接把 `marches` 写在信封顶层 ⇒ 客户端读到的还是空列表，而 `body.home` 是 undefined，
+   * 夹具就被放到世界坐标 (0,0)（视野外），症状是"行军牌一张都没画"，看着像产品缺陷。
+   */
+  const payload = envelope?.data ?? null
+  if (payload === null || typeof payload !== 'object') {
+    console.log(`[world][夹具] /world/marches 响应不是 code/data 信封（code=${envelope?.code}），不注入`)
+    await route.fulfill({ response })
+    return
+  }
+  const now = Number(payload.serverNow ?? envelope.serverNow ?? Date.now())
+  const home = payload.home ?? { x: 0, y: 0 }
+  payload.marches = [{
+    marchId: 'fixture-march-1',
+    from: { x: home.x, y: home.y },
+    to: { x: home.x + 12, y: home.y },
+    status: 'MARCHING',
+    targetType: 'RESOURCE',
+    targetId: null,
+    rallyId: null,
+    action: 'GATHER',
+    startAt: now - 180000,
+    arriveAt: now + 180000,
+    returnStartAt: null,
+    returnArriveAt: null,
+    units: [],
+    heroes: [],
+    load: 1200,
+    loadCap: 3000,
+    teamSpeed: 10,
+    position: { x: home.x + 6, y: home.y },
+    progressFixed: 5000,
+    gatherFinishAt: null,
+    serverNow: now,
+  }]
+  await route.fulfill({ response, json: envelope })
+  console.log(`[world][夹具] /world/marches 已注入 1 支行军（home=${JSON.stringify(home)} serverNow=${now}）`)
+})
+
 const page = await context.newPage()
 const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
-
 const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'world')
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
@@ -370,8 +422,10 @@ const overlap = await page.evaluate(() => {
   // —— #271/#272/#275 三次都栽在这条上，所以把分堆打在输出里当自检。
   const heights = {}
   // 两个池都要扫：藏牌口径现在是跨实体与行军一起判的，只扫实体就等于"门看不见行军牌"。
-  const markers = [...map.drawnEntities.values(), ...map.drawnMarches.values()]
-  for (const node of markers) {
+  const markers = [...map.drawnEntities.values()].map((node) => ({ node, march: false }))
+    .concat([...map.drawnMarches.values()].map((node) => ({ node, march: true })))
+  const marchPlates = []
+  for (const { node, march } of markers) {
     /**
      * 量 `CaptionPlate`（板子本体），不量 `Caption`：后者挂着 `Label`，它的 `UITransform`
      * 每帧被组件按文字尺寸重写（实测 24×50），量到的不是玩家看见的那块牌。
@@ -385,6 +439,7 @@ const overlap = await page.evaluate(() => {
     const r = box.getBoundingBoxToWorld()
     if (r.width <= 0 || r.height <= 0) continue
     boxes.push({ text: label.string, x: r.x, y: r.y, w: r.width, h: r.height })
+    if (march) marchPlates.push(label.string)
     const key = `${Math.round(r.width)}x${Math.round(r.height)}`
     heights[key] = (heights[key] ?? 0) + 1
   }
@@ -403,11 +458,30 @@ const overlap = await page.evaluate(() => {
       }
     }
   }
-  return { boxes: boxes.length, pairs, examples: hits, heights }
+  return {
+    boxes: boxes.length, pairs, examples: hits, heights,
+    marches: map.drawnMarches.size, marchPlates,
+  }
 })
 await browser.close()
 await preview.close()
 console.log(`[world] 放大档在屏名牌（实体 + 行军）${overlap.boxes} 张，按盒子尺寸分堆 ${JSON.stringify(overlap.heights)}`)
+console.log(`[world] 行军：在屏 ${overlap.marches} 支，画出名牌 ${overlap.marchPlates.length} 张`
+  + `（${overlap.marchPlates.join('、') || '无'}）`)
+/**
+ * 夹具行军没到 ≠ 产品坏了：WS 的 marches 推送可能覆盖掉 HTTP 那份，或路由没命中。
+ * 那是**前置没满足**（判据走不到），不许读成"行军牌不画"这个缺陷。
+ */
+if (overlap.marches === 0) {
+  console.error('[world][前置] 夹具行军没到屏（`/world/marches` 的替换被 WS 覆盖或路由没命中）'
+    + ' —— 行军那一侧的判据走不到，不要把这条读成"行军牌不画"')
+  process.exit(2)
+}
+if (overlap.marchPlates.length === 0) {
+  console.error(`[world] 判据失败：有 ${overlap.marches} 支行军在屏，却没有一张行军名牌`
+    + ' —— 两个池共用的那条候选表漏了行军那一侧（#279 拆 drawMarker 时最容易漏的半边）')
+  process.exit(1)
+}
 console.log(`[world] 两两压叠 ${overlap.pairs} 对`
   + `${overlap.examples.length > 0 ? `：${overlap.examples.join('；')}` : ''}`)
 /**
