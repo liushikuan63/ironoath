@@ -46,10 +46,13 @@ echo "[build-wechatgame] CocosCreator: $COCOS_CREATOR"
 echo "[build-wechatgame] startScene: $BOOT_UUID"
 echo "[build-wechatgame] debug: $COCOS_DEBUG"
 
+# showFPS 跟着 debug 走：命令行构建的默认值是 **true**，于是 release 包里也带着引擎 profiler
+# 浮层（FPS / Draw call 那一整块），玩家看到的就是这块调试面板 —— #280 的地图截图抓到过。
+# debug 包留着才有用（B07-4 那条"地图 ≥ 40 FPS"要量），所以不是写死 false。
 set +e
 "$COCOS_CREATOR" \
   --project "$PROJECT_DIR" \
-  --build "platform=wechatgame;debug=$COCOS_DEBUG;startScene=$BOOT_UUID" \
+  --build "platform=wechatgame;debug=$COCOS_DEBUG;showFPS=$COCOS_DEBUG;startScene=$BOOT_UUID" \
   --force
 COCOS_STATUS=$?
 set -e

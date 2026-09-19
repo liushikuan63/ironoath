@@ -93,6 +93,15 @@ DEBUG_BUILD=$(node -e '
   process.stdout.write(settings.engine && settings.engine.debug ? "true" : "false")
 ' "$BUILD_DIR/src/settings.json")
 
+# 发布包里不许带着引擎 profiler 浮层：#280 那张地图截图左下角就是它（FPS / Draw call 一整块），
+# 而玩家看到的正是这块调试面板。debug 包留着才有意义 —— B07-4 那条"地图 ≥ 40 FPS"要量它。
+if [ "$DEBUG_BUILD" = "false" ] && [ -f "$BUILD_DIR/application.js" ] \
+  && grep -q "this.showFPS = true" "$BUILD_DIR/application.js"; then
+  echo "[check-wechat-artifact][FAIL] release 产物里 showFPS 是 true —— 玩家会看到引擎 profiler 浮层"
+  echo "  构建要带 showFPS=false（scripts/build-wechatgame.sh 已按 COCOS_DEBUG 一起传）。"
+  exit 1
+fi
+
 FIRST_PACKAGE_MAX=$(param PERF_FIRST_PACKAGE_MAX_BYTES)
 # 首包只量「玩家第一次下载就要拿到的那些文件」：subpackages/** 是 wx.loadSubPackage 按需拉的，
 # 算进首包会变成「越分包越红」—— 与 check-package-size.sh 保持同一口径。
