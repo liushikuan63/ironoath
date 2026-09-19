@@ -15,7 +15,9 @@
  */
 
 import { _decorator, Color, Component, EditBox, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
-import { buildSocialPanel, canDo, channelText } from '../game/social/SocialPanel'
+import { buildSocialPanel, channelText } from '../game/social/SocialPanel'
+import { EMPTY_PERMISSIONS, gate } from '../game/social/PermissionGates'
+import type { Gate, PermissionState } from '../game/social/PermissionGates'
 import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
 } from '../game/social/SocialPanel'
@@ -105,13 +107,13 @@ type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'ch
 export class SocialPanelView extends Component {
   private data: SocialData | null = null
   /**
-   * 我在各层级拥有的权限码，来自 GET /social/permissions。
+   * 我在两个层级各自的权限码与职位，来自 GET /social/permissions（一次一个 scope，拉两回）。
    *
    * <p>验收 4 要求权限完全配置化，客户端据此置灰按钮。
    * 没有它的话，无权的人点下去只会收到一个 SOCIAL_PERMISSION_DENIED 报错 ——
    * 而「置灰而不是隐藏」正是本项目对不可用功能的统一做法。
    */
-  private permissions: readonly string[] = []
+  private permissions: PermissionState = EMPTY_PERMISSIONS
   /** 联盟成员缓存。汇总接口不下发它，只有 /alliance/sync 的 diff 会更新它 */
   private readonly allianceMembers: AllianceMember[] = []
   /** 重建面板所需的上一次原始输入。diff 到达时要用它们重新组装，而不是去改已组装好的 data */
@@ -199,7 +201,7 @@ export class SocialPanelView extends Component {
     this.rowPool = null
     this.drawnRows.length = 0
     this.rowActionIds.clear()
-    this.permissions = []
+    this.permissions = EMPTY_PERMISSIONS
     this.allianceMembers.length = 0
     this.lastResp = null
     this.lastHelps = []
@@ -280,9 +282,14 @@ export class SocialPanelView extends Component {
     this.render()
   }
 
-  /** 装载权限列表（GET /social/permissions）。小队与联盟的权限码合在一起传入即可。 */
-  attachPermissions(permissions: readonly string[]): void {
-    this.permissions = [...permissions]
+  /**
+   * 装载两个 scope 的权限（GET /social/permissions 各拉一次）。
+   *
+   * <p>**不许合成一份**：小队与联盟都有 `KICK_MEMBER`，合成后"小队能踢人"会让联盟那一页的按钮
+   * 也跟着亮 —— 玩家点下去拿到的正是服务端那句拒绝。
+   */
+  attachPermissions(state: PermissionState): void {
+    this.permissions = state
     this.render()
   }
 
@@ -772,7 +779,7 @@ export class SocialPanelView extends Component {
   private draftsFor(data: SocialData): RowDraft[] {
     switch (this.tab) {
       case 'squad':
-        return memberDrafts(data.squad.members, canDo(this.permissions, 'KICK_MEMBER'))
+        return memberDrafts(data.squad.members, gate(this.permissions, 'SQUAD', 'KICK_MEMBER'))
       case 'alliance':
         return allianceDrafts(data.alliance, this.permissions)
       case 'help':
@@ -996,26 +1003,28 @@ function infoRow(text: string): RowDraft {
   }
 }
 
-function memberDrafts(members: readonly SocialMemberRow[], mayKick: boolean): RowDraft[] {
+function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate): RowDraft[] {
   return members.map((member): RowDraft => ({
     title: `${member.name} · ${member.roleText}`,
     // 不活跃的成员标灰：盟主/队长据此决定要不要补人，
     // 而一个挂名不上线的成员提供不了任何庇护（B10 关键设计点 2）
     titleColor: member.inactive ? COLOR_TEXT_DIM : COLOR_TEXT,
-    detail: [member.powerText, member.activeText, member.squadText, member.contributionText]
+    detail: [member.powerText, member.activeText, member.squadText, member.contributionText,
+      kickGate.reason]
       .filter((part): part is string => part !== null && part.length > 0)
       .join(' · '),
     value: '',
     actionText: '踢出',
     // 能不能踢由服务端下发的权限列表裁决（验收 4）。
-    // 置灰而不是隐藏：看不见「踢人」这个功能存在，玩家会以为游戏根本没有它
-    actionEnabled: mayKick,
+    // 置灰而不是隐藏：看不见「踢人」这个功能存在，玩家会以为游戏根本没有它；
+    // 灰的时候把"为什么不行"写在 detail 上，否则只剩一个点不动的按钮
+    actionEnabled: kickGate.allowed,
     actionId: member.id,
     actionKind: 'kick',
   }))
 }
 
-function allianceDrafts(alliance: AllianceSection, permissions: readonly string[]): RowDraft[] {
+function allianceDrafts(alliance: AllianceSection, permissions: PermissionState): RowDraft[] {
   const out: RowDraft[] = []
   if (!alliance.joined) {
     return out
@@ -1034,20 +1043,22 @@ function allianceDrafts(alliance: AllianceSection, permissions: readonly string[
   })
   // 捐献三档：档位用完了就不摆按钮，摆了点了只会看到报错
   const tierNames = ['免费捐献', '资源捐献', '金币捐献']
-  const mayDonate = canDo(permissions, 'DONATE')
+  const donateGate = gate(permissions, 'ALLIANCE', 'DONATE')
   alliance.donateTiersAvailable.forEach((tier) => {
     out.push({
       title: tierNames[tier] ?? `捐献档位 ${tier}`,
       titleColor: COLOR_TEXT,
-      detail: '资金与贡献值同步增加（验收 8）',
+      detail: donateGate.reason === null
+        ? '资金与贡献值同步增加（验收 8）'
+        : `资金与贡献值同步增加 · ${donateGate.reason}`,
       value: '',
       actionText: '捐献',
-      actionEnabled: mayDonate,
+      actionEnabled: donateGate.allowed,
       actionId: String(tier),
       actionKind: 'donate',
     })
   })
-  const mayKick = canDo(permissions, 'KICK_MEMBER')
+  const mayKick = gate(permissions, 'ALLIANCE', 'KICK_MEMBER')
   for (const member of alliance.members) {
     out.push(...memberDrafts([member], mayKick))
   }

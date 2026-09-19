@@ -36,6 +36,7 @@ import type { AwakenPickView } from '../assets/scripts/game/hero/AwakenPick'
 import type { HeroComposeView } from '../assets/scripts/game/hero/HeroCompose'
 import type { GachaPanelView } from '../assets/scripts/game/gacha/GachaPanel'
 import type { LineupEditView } from '../assets/scripts/game/hero/LineupEdit'
+import type { PermissionState } from '../assets/scripts/game/social/PermissionGates'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -537,6 +538,8 @@ interface Harness {
   readonly lastGacha: GachaPanelView | null
   /** 最近一次推给编队编辑弹层的整块视图。 */
   readonly lastLineupEdit: LineupEditView | null
+  /** 最近一次推给面板层的社交权限状态（两个 scope 合并后的那一份）。 */
+  readonly lastPermissions: PermissionState | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -634,6 +637,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastComposePick: { view: HeroComposeView, purse: readonly string[] } | null = null
   let lastGacha: GachaPanelView | null = null
   let lastLineupEdit: LineupEditView | null = null
+  let lastPermissions: PermissionState | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -707,6 +711,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     lineupEdit: (view) => {
       lastLineupEdit = view
+    },
+    permissions: (state) => {
+      lastPermissions = state
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -802,6 +809,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastLineupEdit() {
       return lastLineupEdit
+    },
+    get lastPermissions() {
+      return lastPermissions
     },
     get lastCompose() {
       return lastCompose
@@ -2483,6 +2493,42 @@ test('编队编辑：名册没读到时保存是空操作，并把理由说给�
   await h.root.saveLineup()
   assert.equal(h.http.countOf('/hero/lineup'), 0)
   assert.deepEqual(h.errors.at(-1), ['hero', '武将列表还没读到'])
+})
+
+test('社交权限：两个 scope 各拉一次、两份都到齐才放开按钮，且首屏预拉不占这两条请求', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'LEADER', permissions: ['KICK_MEMBER', 'DONATE'], serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  // 首屏预算：社交页的权限不在预拉里（与邮件/商店/外观同一条纪律）
+  assert.equal(h.http.countOf('/social/permissions'), 0,
+    '开局多两条并发请求会挤那 3 秒可交互预算')
+
+  await h.root.loadSocialPermissions()
+  const scopeCalls = h.http.calls.filter((c) => c.path === '/social/permissions')
+  assert.deepEqual(scopeCalls.map((c) => c.query.get('scope')), ['SQUAD', 'ALLIANCE'],
+    '服务端一次只回一个 scope，只拉一次就等于只验了一半')
+  assert.equal(h.lastPermissions?.loaded, true)
+  assert.deepEqual(h.lastPermissions?.alliance, ['KICK_MEMBER', 'DONATE'])
+  assert.equal(h.lastPermissions?.squadRole, 'LEADER')
+
+  // 拉过一次之后，社交页每次刷新都顺手刷新权限：职位变了按钮就得跟着变
+  const before = h.http.countOf('/social/permissions')
+  await h.root.refresh('social')
+  assert.equal(h.http.countOf('/social/permissions'), before + 2)
+})
+
+test('社交权限：只拉到一个 scope 时不放行，理由走统一上报口', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.failPaths.add('/social/permissions')
+  h.errors.length = 0
+  await h.root.loadSocialPermissions()
+  assert.equal(h.lastPermissions?.loaded, false,
+    '拿缺的那一半去猜就是放行：按钮亮了而服务端会拒')
+  assert.equal(h.lastPermissions?.squad.length, 0)
+  assert.ok(h.errors.some(([panel]) => panel === 'social'), '读失败要有一条能追到的说法')
 })
 
 /** 两本标了主/副的技能书 + 一本没标的（同 effectKind，只有 effectTarget 分得开）。 */

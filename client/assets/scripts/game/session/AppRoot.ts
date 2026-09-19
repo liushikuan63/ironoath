@@ -67,6 +67,8 @@ import type { HeroComposeView } from '../hero/HeroCompose'
 import { buildHeroPanel } from '../hero/HeroPanel'
 import { buildLineupEdit, lineupBody } from '../hero/LineupEdit'
 import type { LineupEditView, LineupSlot } from '../hero/LineupEdit'
+import { EMPTY_PERMISSIONS, withPermissionScope } from '../social/PermissionGates'
+import type { PermissionState } from '../social/PermissionGates'
 import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
 import { buildDisclosure } from '../gacha/GachaDisclosure'
@@ -266,6 +268,13 @@ export interface PanelTargets {
    */
   lineupEdit?(view: LineupEditView): void
   /**
+   * 社交权限（B26 S1）：两个 scope 各一份，面板按页签分别门控。
+   *
+   * <p>这一条接不上时的症状很隐蔽：`permissions` 永远是空数组 ⇒ 已经接好线的
+   * 「踢出」「捐献」行**永远置灰**，玩家看得见按钮却永远点不动，界面还不说原因。
+   */
+  permissions?(state: PermissionState): void
+  /**
    * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
    */
@@ -444,6 +453,9 @@ export class AppRoot {
     slots: Record<LineupSlot, string | null>,
     pickingSlot: LineupSlot | null
   } | null = null
+  /** 社交权限（两个 scope 各一份）。`permissionsLoaded` 只在拉过之后为 true（见 'social' 那一支的注释） */
+  private permissions: PermissionState = EMPTY_PERMISSIONS
+  private permissionsLoaded = false
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
@@ -702,6 +714,13 @@ export class AppRoot {
         this.unreadEvents = summary.data.events
         this.targets.social?.(summary.data, this.helpRequests, this.allianceMembers, offsetMs)
         this.deliverChat()
+        // 权限两份：只在**玩家真进过社交页之后**才跟着社交页一起刷。
+        // 放进首屏预拉会挤那 3 秒可交互预算（与邮件/商店/外观同一条纪律）；
+        // 而一旦拉过，之后的每次 `refresh('social')`（踢人、捐献、退盟之后）都顺手刷新 ——
+        // 职位变了权限就变了，缓存会让"刚刚被降职的人还能看到能点的按钮"。
+        if (this.permissionsLoaded) {
+          await this.loadSocialPermissions()
+        }
         if (degraded.length > 0) {
           this.targets.error?.('social', `${degraded.join('、')}，稍后会自动重试`)
         }
@@ -1331,6 +1350,33 @@ export class AppRoot {
   donate(tier: number): Promise<void> {
     this.track(TRACK_EVENTS.allianceDonate, { tier: trackParam(tier) })
     return this.write('social', this.api.allianceDonate({ tier }), ['social', 'resources'])
+  }
+
+  /**
+   * 拉两个 scope 的权限（B26 S1）。服务端一次只回一个 scope，所以是两次读。
+   *
+   * <p>两份都到齐才把 `loaded` 置 true：只拿到一半就放开按钮，等于拿缺的那一半去猜。
+   * 失败时保持原样并说一句"暂时拉不到"—— 灰着的按钮比一个点了会被拒的按钮诚实。
+   */
+  async loadSocialPermissions(): Promise<void> {
+    this.permissionsLoaded = true
+    const [squad, alliance] = await Promise.all([
+      this.api.socialPermissions('SQUAD'), this.api.socialPermissions('ALLIANCE'),
+    ])
+    let state = EMPTY_PERMISSIONS
+    if (squad.kind === 'ok') {
+      state = withPermissionScope(state, 'SQUAD', squad.data.permissions, squad.data.role, false)
+    } else {
+      this.say('social', squad)
+    }
+    if (alliance.kind === 'ok') {
+      state = withPermissionScope(state, 'ALLIANCE', alliance.data.permissions,
+        alliance.data.role, squad.kind === 'ok' && alliance.kind === 'ok')
+    } else {
+      this.say('social', alliance)
+    }
+    this.permissions = state
+    this.targets.permissions?.(this.permissions)
   }
 
   /** 踢人必须知道从哪个组织踢：View 的两个页签共用一个行内回调，分流由调用方给 `from`。 */

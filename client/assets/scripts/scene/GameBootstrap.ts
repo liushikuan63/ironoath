@@ -321,6 +321,11 @@ export class GameBootstrap extends Component {
       if (key === 'gacha') {
         void this.root?.openGacha()
       }
+      // 社交页的按钮门控靠权限列表（B26 S1）。此前这一条从来没拉过 ⇒ 面板里
+      // 已经接好线的「踢出」「捐献」**永远置灰**，玩家看得见却永远点不动，界面还不说原因。
+      if (key === 'social') {
+        void this.root?.loadSocialPermissions()
+      }
       // 外观同理（B24 块③），而且它更该每次打开都拉：框的「佩戴中」是这里唯一的状态来源，
       // 缓存会让"刚刚在商店买的那一枚"迟到（看着像买了没到账）
       if (key === 'avatarFrames') {
@@ -1249,6 +1254,8 @@ export class GameBootstrap extends Component {
     }
     if (social !== null) {
       out.social = (resp, helps, members, offsetMs) => social.attach(resp, helps, members, offsetMs)
+      // 权限两份（小队 / 联盟各一份）：面板按页签分别门控，缺的那一份不拿来猜
+      out.permissions = state => social.attachPermissions(state)
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }
       social.onDonate = tier => { void this.root?.donate(tier) }

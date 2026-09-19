@@ -97,6 +97,8 @@ const SKIP = new Set([
   "chooseLineupHero",
   "clearLineupSlot",
   "cancelLineupEdit",
+  // 拉权限是一次读（进社交页时顺带），不是玩家意图；按钮灰不灰的结论由这份数据决定
+  "loadSocialPermissions",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

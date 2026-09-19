@@ -607,13 +607,16 @@ export class GameApi {
   }
 
   /**
-   * GET /social/permissions（验收 4）。
+   * GET /social/permissions（验收 4）。**一次只回一个 scope**（服务端默认 ALLIANCE）。
    *
    * <p>下发的是「我能做什么」的结论列表，不是整张权限矩阵：
    * 把矩阵给客户端等于把权限模型交出去，而客户端的任何判断都可以被绕过。
+   *
+   * <p>两个 scope 都要各拉一次：小队与联盟的权限码**同名不同授予**（两边都有 `KICK_MEMBER`），
+   * 合成一份的话就是"这一页能踢人，那一页的按钮也跟着亮"。
    */
-  socialPermissions(): Promise<NetOutcome<PermissionListResp>> {
-    return this.read<PermissionListResp>('/social/permissions')
+  socialPermissions(scope: 'SQUAD' | 'ALLIANCE'): Promise<NetOutcome<PermissionListResp>> {
+    return this.read<PermissionListResp>('/social/permissions', { scope })
   }
 
   /** POST /social/help。帮助一次，消耗共用的每日额度。 */
