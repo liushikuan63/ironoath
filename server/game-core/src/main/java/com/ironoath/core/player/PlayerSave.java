@@ -68,6 +68,20 @@ public final class PlayerSave {
      * 后者会让「重启即清零」与「多实例各弹各的」变成默认行为。
      */
     private PlayerGiftPopup giftPopup = PlayerGiftPopup.empty();
+    /**
+     * 当前佩戴的头像框 id（B24 块③）。null = 没戴。
+     *
+     * <p><b>外观只在这里，不参与任何数值</b>：B15 §一 第 7 条与公理一都写明外观不能碰战力/属性/产出，
+     * 而"逐字段相等"的判别性用例就是这条红线的机器判据（见 AvatarFrameZeroImpactTest）。
+     */
+    private String avatarFrame;
+    /**
+     * 已拥有的头像框 id（B24 块③）。
+     *
+     * <p><b>为什么要与"佩戴"分开两位</b>：合成一位的话，卸下就等于失去 —— 玩家再想戴回去得再买一次，
+     * 那是把一次购买变成了一次"占用"。拥有是永久的事实，佩戴是当下的选择。
+     */
+    private java.util.Set<String> ownedAvatarFrames = java.util.Set.of();
     /** 乐观锁版本号，每次持久化自增。 */
     private long version;
 
@@ -313,6 +327,31 @@ public final class PlayerSave {
      * <p>整位替换：{@link PlayerGiftPopup} 不可变，触发与弹出都返回新的一位 —— 漏写回会留在存档上，
      * 「改了但没 save」这类问题在结构上就不可能出现。
      */
+    /** 当前佩戴的头像框；没戴时为 null。 */
+    public String avatarFrame() {
+        return avatarFrame;
+    }
+
+    /** 佩戴（null = 卸下）。**是否已拥有由调用方判** —— 本类不做跨域的资格判定。 */
+    public void setAvatarFrame(String avatarFrame) {
+        this.avatarFrame = avatarFrame;
+    }
+
+    /** 已拥有的头像框（不可变视图）。 */
+    public java.util.Set<String> ownedAvatarFrames() {
+        return java.util.Set.copyOf(ownedAvatarFrames);
+    }
+
+    /** 记下"这个人拥有这个框"（幂等）。 */
+    public void ownAvatarFrame(String frameId) {
+        if (frameId == null || frameId.isBlank()) {
+            throw new IllegalArgumentException("头像框 id 不得为空");
+        }
+        java.util.Set<String> next = new java.util.LinkedHashSet<>(ownedAvatarFrames);
+        next.add(frameId);
+        this.ownedAvatarFrames = java.util.Set.copyOf(next);
+    }
+
     public void setGiftPopup(PlayerGiftPopup giftPopup) {
         if (giftPopup == null) {
             throw new IllegalArgumentException("礼包弹窗状态不得为 null（一次都没弹过请传 PlayerGiftPopup.empty()）");
@@ -380,7 +419,8 @@ public final class PlayerSave {
                         PlayerPower restoredPower, PlayerPvp restoredPvp,
                         Long protectUntil, PlayerGlory restoredGlory, PlayerGuide restoredGuide,
                         PlayerPaid restoredPaid, PlayerTech restoredTech,
-                        PlayerGiftPopup restoredGiftPopup, long version) {
+                        PlayerGiftPopup restoredGiftPopup, String restoredAvatarFrame,
+                        java.util.Set<String> restoredOwnedAvatarFrames, long version) {
         this.playerId = playerId;
         this.deviceId = deviceId;
         this.nickName = nickName;
@@ -406,6 +446,10 @@ public final class PlayerSave {
         this.tech = restoredTech == null ? PlayerTech.empty() : restoredTech;
         // S3-ii 之前的号没有这一位：读成「一次都没弹、也没触发过」，而不是抛或留 null
         this.giftPopup = restoredGiftPopup == null ? PlayerGiftPopup.empty() : restoredGiftPopup;
+        // 老存档没有外观这两格（B24 之前不存在）：读成"没戴、一个都没拥有"
+        this.avatarFrame = restoredAvatarFrame;
+        this.ownedAvatarFrames = restoredOwnedAvatarFrames == null
+                ? java.util.Set.of() : java.util.Set.copyOf(restoredOwnedAvatarFrames);
         this.version = version;
     }
 
@@ -419,7 +463,8 @@ public final class PlayerSave {
     public PlayerSave copy() {
         PlayerSave copy = new PlayerSave();
         copy.restore(playerId, deviceId, nickName, avatarId, createdAt, lastLoginAt, cityLevel,
-                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, tech, giftPopup, version);
+                new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, tech, giftPopup,
+                avatarFrame, ownedAvatarFrames, version);
         return copy;
     }
 }

@@ -36,6 +36,10 @@ public record PlayerDocument(
         PaidDoc paid,
         TechDoc tech,
         GiftPopupDoc giftPopup,
+        /** 当前佩戴的头像框（B24 块③）；null = 没戴。老文档没有这一位 ⇒ 读成没戴。 */
+        String avatarFrame,
+        /** 已拥有的头像框 id（B24 块③）；老文档没有这一位 ⇒ 读成一个都没拥有。 */
+        java.util.List<String> ownedAvatarFrames,
         long version) {
 
     /** 集合名。集中定义避免各处散落字符串。 */

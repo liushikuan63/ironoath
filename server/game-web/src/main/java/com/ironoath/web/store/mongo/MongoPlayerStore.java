@@ -139,6 +139,10 @@ public final class MongoPlayerStore implements PlayerRepository {
                 // 漏这一行的症状不是报错，而是「内存 dev 里每日限购买一次就灰、生产里同一天可以一直买」——
                 // insertIfAbsent 走整篇文档，所以新号看起来一切正常，只有更新路径在丢
                 .set("giftPopup", doc.giftPopup())
+                // 外观两位（B24 块③）：漏一行的症状与 giftPopup 同族 —— 内存版一切正常，真 Mongo 上
+                // 「买过的头像框下次重读就不见了」。第 21 道门 check-mongo-set-coverage 会盯着这一对
+                .set("avatarFrame", doc.avatarFrame())
+                .set("ownedAvatarFrames", doc.ownedAvatarFrames())
                 .inc("version", 1);
 
         UpdateResult result = mongo.updateFirst(query, update, PlayerDocument.class, PlayerDocument.COLLECTION);

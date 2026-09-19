@@ -58,6 +58,9 @@ public final class PlayerDocumentMapper {
                 toTechDoc(save.tech()),
                 // 同上：一次都没弹、没触发过，也是一个明确写下来的值而不是缺列（S3-ii）
                 toGiftPopupDoc(save.giftPopup()),
+                // 外观两位（B24 块③）：没戴 / 一个都没拥有，也都是明确写下来的值而不是缺列
+                save.avatarFrame(),
+                toOwnedFrames(save.ownedAvatarFrames()),
                 save.version());
     }
 
@@ -162,8 +165,17 @@ public final class PlayerDocumentMapper {
         PlayerSave save = new PlayerSave();
         save.restore(doc.playerId(), doc.deviceId(), doc.nickName(), doc.avatarId(),
                 doc.createdAt(), doc.lastLoginAt(), doc.cityLevel(), resources,
-                power, pvp, doc.protectUntil(), glory, guide, paid, tech, giftPopup, doc.version());
+                power, pvp, doc.protectUntil(), glory, guide, paid, tech, giftPopup,
+                doc.avatarFrame(),
+                doc.ownedAvatarFrames() == null ? java.util.Set.of()
+                        : new java.util.LinkedHashSet<>(doc.ownedAvatarFrames()),
+                doc.version());
         return save;
+    }
+
+    /** 外观那两位 -> 文档字段（佩戴 + 已拥有）。**一位都不能漏**：漏了就是"内存全绿、真 Mongo 每次重读都丢掉已购买的外观"。 */
+    private static java.util.List<String> toOwnedFrames(java.util.Set<String> owned) {
+        return owned == null ? java.util.List.of() : java.util.List.copyOf(owned);
     }
 
     /** 存档那位 -> 文档子结构。一位不漏地写，见 {@link PlayerDocument.GiftPopupDoc} 的读法说明。 */

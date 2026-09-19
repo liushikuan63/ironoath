@@ -88,6 +88,40 @@ class MongoPlayerStoreContractTest extends VersionedStoreContractTest<PlayerSave
     }
 
     /**
+     * 外观两位（B24 块③）必须整份落库，而且**佩戴与拥有是两件事**。
+     *
+     * <p>漏字段的症状与 giftPopup 同族：内存版一切正常，真 Mongo 上「买过的头像框下次重读就不见了」；
+     * 而把两位合成一位的症状更隐蔽 —— 玩家卸下之后再想戴回去，得再买一次。
+     */
+    @Test
+    @DisplayName("外观两位整份落库：佩戴与已拥有各自都要回来，卸下不等于失去")
+    void avatarFramesSurviveTheRoundTrip() {
+        requireMongo();
+        freshStore();
+        insertInitialState();
+
+        PlayerSave save = read().state();
+        save.ownAvatarFrame("frame_season_s1");
+        save.setAvatarFrame("frame_season_s1");
+        persist(new StoreHandle<>(save, save.version()));
+
+        PlayerSave back = read().state();
+        assertThat(back.ownedAvatarFrames()).as("已拥有要落库（验收 4 的判据就是它）")
+                .containsExactly("frame_season_s1");
+        assertThat(back.avatarFrame()).as("佩戴也要落库").isEqualTo("frame_season_s1");
+
+        // 卸下：仍然拥有 —— 这正是"两位而不是一位"的理由
+        PlayerSave worn = read().state();
+        worn.setAvatarFrame(null);
+        persist(new StoreHandle<>(worn, worn.version()));
+
+        PlayerSave off = read().state();
+        assertThat(off.avatarFrame()).as("卸下之后没戴").isNull();
+        assertThat(off.ownedAvatarFrames())
+                .as("卸下不等于失去：否则玩家再想戴回去得再买一次").containsExactly("frame_season_s1");
+    }
+
+    /**
      * 这条不测仓储，只测「上面四条到底跑没跑」。
      *
      * <p>没有它的话，一次"全绿"里可能藏着四条被跳过的等价性检查 —— 而本项目最怕的就是
