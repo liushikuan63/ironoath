@@ -41,6 +41,10 @@ import {
 } from '../social/ChatPanel'
 import type { ChatPanelData } from '../social/ChatPanel'
 import { buildRankBoard } from '../power/RankBoard'
+import {
+  buildCompose, marchUnitsOf, rememberMarch, setPick,
+} from '../world/MarchCompose'
+import type { ComposeView, MarchSpec } from '../world/MarchCompose'
 import type { RankBoardView, RankTabKey } from '../power/RankBoard'
 import type { RankListResp } from '../../net/generated/RankProtocol'
 import { gameBus } from '../../core/EventBus'
@@ -65,7 +69,32 @@ import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
 import { ClientReddotTree } from '../reddot/ReddotTree'
 
+/**
+ * 军队还没拉到时用的空样本：编成面板在拿到真实军队之前也要能画出来（全 0、不可提交），
+ * 而不是等到拉完才第一次出现 —— 面板突然弹出的观感比"先画个空的"差得多。
+ */
+const EMPTY_ARMY: ArmyListResp = {
+  units: [], troopCap: 0, troopsInUse: 0, trainingInUse: 0, queueSlots: 0, queueSlotsMax: 0,
+  hospital: {
+    capacity: 0, used: 0, treating: false, treatFinishAt: null, treatRemainingSeconds: 0,
+    treatSecondsPerWounded: 0, treatCostRatio: 0,
+  },
+  serverNow: 0,
+}
+
 /** 面板需要落地的一类数据。全部可选：某个场景里没有这个面板时就不实现。 */
+/** 出征编成面板的整块视图：目标 + 编成 + 提示。 */
+export interface MarchComposeView {
+  readonly targetId: string
+  readonly targetName: string
+  readonly coordText: string
+  readonly compose: ComposeView
+  /** 提交失败/成功后的提示行；没有时为 null */
+  readonly notice: string | null
+  /** 正在提交（面板据此禁用确认键，防双击发两份） */
+  readonly submitting: boolean
+}
+
 export interface PanelTargets {
   city?(resp: CityListResp, offsetMs: number): void
   /** 一次收割的即时结果（要立刻飘字，之后再被 city 列表覆盖）。 */
@@ -100,6 +129,11 @@ export interface PanelTargets {
   payResult?(view: PayView): void
   power?(resp: PowerDetailResp): void
   targets?(resp: SearchTargetsResp): void
+  /**
+   * 出征编成（B25-S1 首次出征入口）。整块视图由编排层组装：目标是谁、可带哪些兵、够不够提交，
+   * 表现层只画不判。**没有这个回调时确认键不会扣兵也不会发请求**（裁决：确认之前不发请求）。
+   */
+  marchCompose?(view: MarchComposeView): void
   /**
    * 排行榜面板（B23 §一 3）。**整块视图由编排层组装好下发**（名次、页号、我的名次都在里面）：
    * 表现层只画，不做任何名次计算 —— 客户端算一遍的结局是与服务端差一位，而名次决定发不发奖。
@@ -184,6 +218,16 @@ export class AppRoot {
   /** 二级选择器的最近一次权威响应；不参与任何数值判断。 */
   private cityResp: CityListResp | null = null
   private armyResp: ArmyListResp | null = null
+  /** 最近一次目标搜索的结果：出征要知道目标的坐标，而坐标只在下发的 brief 里（B25-S1） */
+  private searchResp: SearchTargetsResp | null = null
+  /** 当前正在编成的目标；没有编成时为 null */
+  private composeTarget: { id: string; name: string; x: number; y: number } | null = null
+  /** 编成的勾选表（unitId → 数量）。**由本层持有**：面板重画时不能丢，也不该由表现层记 */
+  private composePicks: Record<string, number> = {}
+  private composeNotice: string | null = null
+  private composeSubmitting = false
+  /** 最后一次**成功**出征的参数（裁决②(a)）；「再次出征」重发它 */
+  private lastMarch: MarchSpec | null = null
   private heroResp: HeroListResp | null = null
 
   // ---------- 排行榜状态（B23 §一 3） ----------
@@ -1203,12 +1247,127 @@ export class AppRoot {
       `已分享到${channel === 'ALLIANCE' ? '联盟' : '小队'}频道`, false)
   }
 
+  // ---------- 出征编成（B25-S1 首次出征入口；裁决④(b) 手动编成、②(a) 记成功参数） ----------
+
+  /**
+   * 点一个搜索到的目标 → 拉起编成面板。**只准备数据，不发任何请求**（裁决：确认之前不扣兵、不发请求）。
+   *
+   * <p>目标从最近一次搜索结果里找：搜到的目标都是**玩家城**（那份 brief 的 id 就是 playerId，
+   * 见 `TargetSearchService.briefOf`），所以行动恒为 ATTACK —— 客户端不需要猜目标类型。
+   */
+  beginMarchCompose(targetId: string): void {
+    const brief = this.searchResp?.targets.find(candidate => candidate.id === targetId)
+    if (brief === undefined) {
+      this.say('targets', {
+        kind: 'biz', code: 0, msg: '目标不在最近一次搜索结果里', detail: '请重新搜索', traceId: '',
+      })
+      return
+    }
+    if (this.armyResp === null) {
+      this.composeNotice = '军队信息还没拉到，先等一下'
+      return
+    }
+    this.composeTarget = { id: brief.id, name: brief.name, x: brief.coord.x, y: brief.coord.y }
+    this.composePicks = {}
+    this.composeNotice = null
+    this.deliverCompose()
+  }
+
+  /** 勾选/改数量。夹取在纯逻辑里做（表现层不做夹取，也不做判定）。 */
+  pickMarchUnit(unitId: string, count: number): void {
+    if (this.armyResp === null || this.composeTarget === null) {
+      return
+    }
+    this.composePicks = setPick(this.armyResp, this.composePicks, unitId, count)
+    this.deliverCompose()
+  }
+
+  /** 关掉编成面板（不扣兵、不发请求）。 */
+  cancelMarchCompose(): void {
+    this.composeTarget = null
+    this.composePicks = {}
+    this.composeNotice = null
+    this.deliverCompose()
+  }
+
+  /**
+   * 确认出征：把编成拼成 `MarchReq` 交给服务端。
+   *
+   * <p><b>requestId 由 GameApi 每次新生成</b>，本层不碰 —— 一次确认 = 一次新意图；**成功之后才记**
+   * 「上一次」，失败不记（记了会让「再次出征」重发一支本来就发不出去的队伍，第二次失败是纯噪声）。
+   */
+  async confirmMarch(): Promise<void> {
+    if (this.composeTarget === null || this.armyResp === null || this.composeSubmitting) {
+      return
+    }
+    const compose = buildCompose(this.armyResp, this.composePicks)
+    if (!compose.canSubmit) {
+      this.composeNotice = compose.blockedReason
+      this.deliverCompose()
+      return
+    }
+    const units = marchUnitsOf(compose)
+    const target = this.composeTarget
+    // 打点是"真的发出去"这一下：被 blockedReason 拦住的那些不计（它们不是出征意图）
+    this.track(TRACK_EVENTS.marchSend, {
+      action: 'ATTACK',
+      troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
+    })
+    this.composeSubmitting = true
+    this.composeNotice = null
+    this.deliverCompose()
+
+    const outcome = await this.api.worldMarch({
+      toX: target.x, toY: target.y, units, heroes: [], action: 'ATTACK',
+    })
+    this.composeSubmitting = false
+    if (outcome.kind === 'ok') {
+      this.lastMarch = rememberMarch(this.lastMarch, {
+        toX: target.x, toY: target.y, units, heroes: [], action: 'ATTACK',
+      })
+      this.composeTarget = null
+      this.composePicks = {}
+      this.composeNotice = `已出征：${target.name}`
+      this.deliverCompose()
+      void this.refresh('world')
+      return
+    }
+    this.composeNotice = outcome.kind === 'biz'
+      ? (outcome.detail ?? outcome.msg)
+      : AppRoot.reason(outcome)
+    this.say('targets', outcome)
+    this.deliverCompose()
+  }
+
+  /** 把编成整块推给面板。**没有编成目标时也推一次**，面板据此收起。 */
+  private deliverCompose(): void {
+    const compose = buildCompose(this.armyResp ?? EMPTY_ARMY, this.composePicks)
+    if (this.composeTarget === null) {
+      this.targets.marchCompose?.({
+        targetId: '', targetName: '', coordText: '', compose,
+        notice: this.composeNotice, submitting: false,
+      })
+      return
+    }
+    this.targets.marchCompose?.({
+      targetId: this.composeTarget.id,
+      targetName: this.composeTarget.name,
+      coordText: `${this.composeTarget.x}, ${this.composeTarget.y}`,
+      compose,
+      notice: this.composeNotice,
+      submitting: this.composeSubmitting,
+    })
+  }
+
   // ---------- 目标搜索与流亡 ----------
 
   searchTargets(radius: number): Promise<void> {
     this.track(TRACK_EVENTS.targetsSearch, { radius: trackParam(radius) })
     return this.write('targets', this.api.searchTargets({ radius, maxCount: 30 }), [],
-      r => this.targets.targets?.(r))
+      r => {
+        this.searchResp = r
+        this.targets.targets?.(r)
+      })
   }
 
   /**

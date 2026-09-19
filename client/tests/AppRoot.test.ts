@@ -27,10 +27,27 @@ import type {
 } from '../assets/scripts/game/session/Choices'
 import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { RankBoardView } from '../assets/scripts/game/power/RankBoard'
+import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
 
 const SERVER_NOW = 1_788_000_000_000
+
+/** 出征编成那三条用例的军队：两个兵种，其中一个未解锁（顺带钉住编排层也不放它出去）。 */
+const ARMY_FOR_MARCH = {
+  units: [
+    { unitId: 'unit_infantry_t1', name: '重步', type: 'INFANTRY', tier: 1, count: 500, wounded: 0,
+      training: 0, finishAt: null, remainingSeconds: null, unlocked: true, unlockHint: null,
+      trainTimeSec: 10 },
+    { unitId: 'unit_cavalry_t3', name: '铁骑', type: 'CAVALRY', tier: 3, count: 80, wounded: 0,
+      training: 0, finishAt: null, remainingSeconds: null, unlocked: false,
+      unlockHint: '需要马厩 10 级，当前 6 级', trainTimeSec: 30 },
+  ],
+  troopCap: 1000, troopsInUse: 0, trainingInUse: 0, queueSlots: 0, queueSlotsMax: 2,
+  hospital: { capacity: 0, used: 0, treating: false, treatFinishAt: null, treatRemainingSeconds: 0,
+    treatSecondsPerWounded: 0, treatCostRatio: 0 },
+  serverNow: SERVER_NOW,
+}
 
 /** 每个端点的响应。只给「代码真的会读到的字段」，其余留空对象。 */
 const ROUTES: Record<string, unknown> = {
@@ -120,6 +137,14 @@ const ROUTES: Record<string, unknown> = {
   '/alliance/kick': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
   '/alliance/donate': { tier: 1, donated: {}, contribution: 0, fund: 0, serverNow: SERVER_NOW },
   '/world/searchTargets': { targets: [], selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW },
+  '/world/march': {
+    march: { marchId: 'm-1', from: { x: 48, y: 48 }, to: { x: 60, y: 60 }, status: 'MARCHING',
+      targetType: 'CITY', targetId: 'P9', rallyId: null, action: 'ATTACK', startAt: SERVER_NOW,
+      arriveAt: SERVER_NOW + 60000, returnStartAt: null, returnArriveAt: null, units: [], heroes: [],
+      load: 0, loadCap: 0, teamSpeed: 0, position: { x: 48, y: 48 }, progressFixed: 0,
+      gatherFinishAt: null, serverNow: SERVER_NOW },
+    distance: 24, durationSec: 60, serverNow: SERVER_NOW,
+  },
   '/activity/list': { activities: [], serverNow: SERVER_NOW, claimableCount: 0 },
   '/activity/claim': { claimed: true, state: 'RUNNING', rewards: [], serverNow: SERVER_NOW },
   '/quest/list': {
@@ -386,6 +411,8 @@ interface Harness {
   readonly lastChat: ChatPanelData | null
   /** 最近一次落地给榜单面板的整块视图。 */
   readonly lastRank: RankBoardView | null
+  /** 最近一次推给出征编成面板的整块视图。 */
+  readonly lastCompose: MarchComposeView | null
   /** 最近一次落地给活动页的服务端时刻（断言"剩余时间来自服务端"用）。 */
   readonly lastActivityNow: number
   /** 最近一次落地给活动页的行数。 */
@@ -464,6 +491,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let socialHelps: string[] = []
   let lastChat: ChatPanelData | null = null
   let lastRank: RankBoardView | null = null
+  let lastCompose: MarchComposeView | null = null
   let reddotTree: ClientReddotTree | null = null
   let activityNow = -1
   let activityRows = -1
@@ -504,6 +532,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       lastRank = view
     },
     targets: () => attached.push('targets'),
+    marchCompose: (view) => {
+      attached.push('marchCompose')
+      lastCompose = view
+    },
     quest: () => attached.push('quest'),
     mail: () => attached.push('mail'),
     activity: (resp, serverNowMs) => {
@@ -552,6 +584,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastRank() {
       return lastRank
+    },
+    get lastCompose() {
+      return lastCompose
     },
     get lastActivityNow() {
       return activityNow
@@ -1670,4 +1705,83 @@ test('榜拉不到时：把服务端的理由放到提示行，且不把上一�
   assert.equal(h.lastRank?.noticeText, '服务繁忙', '业务拒绝的理由原样进提示行')
   assert.equal(h.lastRank?.rows.length, 2, '拉不到不等于榜没了：上一次的行留在原地')
   assert.equal(h.errors.some(e => e[0] === 'rank'), true, '面板读取失败也要进统一的上报口')
+})
+
+test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  const before = h.http.calls.length
+
+  h.root.beginMarchCompose('P9')
+
+  assert.equal(h.http.calls.length, before, '编成只是准备数据：确认之前不发请求、不扣兵')
+  assert.equal(h.lastCompose?.targetName, '邻居')
+  assert.equal(h.lastCompose?.coordText, '60, 60')
+  assert.equal(h.lastCompose?.compose.options.length, 2, '可选项来自军队列表')
+  assert.deepEqual(h.lastCompose?.compose.options.map(o => o.selected), [0, 0],
+    '不自动勾选全军（裁决④(b)）')
+  assert.equal(h.lastCompose?.compose.canSubmit, false)
+})
+
+test('勾选后确认 → POST /world/march 只带选中的行、坐标是目标的、requestId 是新生成的', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  const marchesBefore = h.http.countOf('/world/marches')
+
+  await h.root.confirmMarch()
+
+  const sent = h.http.calls.filter(c => c.path === '/world/march').at(-1)
+  assert.ok(sent, '确认必须真的发出出征请求')
+  assert.equal(sent?.body.toX, 60)
+  assert.equal(sent?.body.toY, 60)
+  assert.equal(sent?.body.action, 'ATTACK', '搜到的目标都是玩家城，行动是 ATTACK')
+  assert.deepEqual(sent?.body.units, [{ unitId: 'unit_infantry_t1', count: 30 }],
+    '只带选中的行（带 0 会被服务端回「数量必须为正」）')
+  assert.match(String(sent?.body.requestId), /^req-\d+$/, '键由 GameApi 每次新生成')
+  assert.equal(h.lastCompose?.targetId, '', '成功之后编成收起')
+  assert.equal(h.http.countOf('/world/marches'), marchesBefore + 1, '出征后要刷一次行军列表')
+})
+
+test('服务端拒绝时：提示原文、编成不收起（玩家能改完再发），且不发第二枪', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  h.root.pickMarchUnit('unit_infantry_t1', 10)
+
+  h.http.bizFailNext = { code: 6004, msg: '战力圈层校验未通过', detail: '对方实力远弱于你' }
+  await h.root.confirmMarch()
+
+  assert.equal(h.lastCompose?.notice, '对方实力远弱于你', '服务端的理由原样进提示行')
+  assert.equal(h.lastCompose?.targetId, 'P9', '被拒之后编成不收起：玩家要能改完再发')
+  assert.equal(h.lastCompose?.submitting, false, '提交态要复位，否则按钮永远灰着')
+  assert.equal(h.http.countOf('/world/march'), 1, '一次确认只发一枪')
 })

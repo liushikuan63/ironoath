@@ -115,6 +115,14 @@ export const TRACK_EVENTS = {
    * 那决定了下一批内容往哪张榜上投人。翻页不发（同一次浏览的延续，发了会把一次阅读记成多次）。
    */
   rankView: 'rank_view',
+
+  /**
+   * 发起一次出征（B25-S1 的首次出征入口）。参数是行动类型与带兵总数 ——
+   * 看板上要答的是"玩家一次派多少兵出门"，那是"倾巢还是试探"的唯一直接读数。
+   * **准备步骤（开编成面板 / 改数量 / 取消）不单独上报**：它们不是出征意图，
+   * 上报会把一次出征记成多次。
+   */
+  marchSend: 'march_send',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

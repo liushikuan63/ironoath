@@ -87,7 +87,10 @@ export function buildCompose(army: ArmyListResp, picked: Readonly<Record<string,
     totalText: `${total}`,
     hasTroops,
     canSubmit: hasTroops,
-    blockedReason: hasTroops ? null : '至少带一个兵才能出征（不带兵的队伍会在服务端被拒）',
+    blockedReason: hasTroops
+      ? null
+      // 玩家可见的一句，不提"服务端"（那道判定在服务端，但那是实现细节）
+      : '至少带一个兵才能出征',
   }
 }
 

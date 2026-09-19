@@ -52,6 +52,11 @@ const SKIP = new Set([
   // 「哪张榜有人看」已经答了；真要量"翻到第几页就没人翻了"，那是独立一格的埋点设计
   "rankNextPage",
   "rankPrevPage",
+  // 出征的准备步骤：开编成面板 / 改数量 / 取消都不是"出征意图"，
+  // 真正发兵那一下在 confirmMarch 里打 march_send —— 三处都打会把一次出征记成多次
+  "beginMarchCompose",
+  "pickMarchUnit",
+  "cancelMarchCompose",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")
