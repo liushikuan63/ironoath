@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 583" width="2000" height="1166" font-family="sans-serif">
+<rect width="1000" height="583" fill="#141210"/>
+<polygon points="70,250 150,120 420,60 760,70 930,170 945,350 905,480 620,552 330,552 90,470" fill="none" stroke="#555560" stroke-width="3" stroke-dasharray="14 8" opacity="0.75"/>
+<text x="16" y="574" fill="#8b8b96" font-size="12">虚线 = 城郭边界（静态舞台，不代表已建 wall）</text>
+<ellipse cx="250" cy="225" rx="64" ry="37" fill="#3a2f1e" opacity="0.85"/>
+<ellipse cx="400" cy="214" rx="83" ry="46" fill="#3a2f1e" opacity="0.85"/>
+<ellipse cx="566" cy="214" rx="83" ry="46" fill="#3a2f1e" opacity="0.85"/>
+<ellipse cx="716" cy="227" rx="64" ry="37" fill="#3a2f1e" opacity="0.85"/>
+<ellipse cx="392" cy="313" rx="72" ry="39" fill="#3a2f1e" opacity="0.85"/>
+<ellipse cx="556" cy="313" rx="72" ry="39" fill="#3a2f1e" opacity="0.85"/>
+<ellipse cx="244" cy="318" rx="66" ry="38" fill="#26333c" opacity="0.85"/>
+<ellipse cx="712" cy="322" rx="66" ry="38" fill="#26333c" opacity="0.85"/>
+<ellipse cx="250" cy="402" rx="67" ry="38" fill="#26333c" opacity="0.85"/>
+<ellipse cx="398" cy="397" rx="69" ry="39" fill="#26333c" opacity="0.85"/>
+<ellipse cx="560" cy="397" rx="69" ry="39" fill="#26333c" opacity="0.85"/>
+<ellipse cx="716" cy="402" rx="67" ry="38" fill="#26333c" opacity="0.85"/>
+<ellipse cx="718" cy="473" rx="66" ry="37" fill="#26333c" opacity="0.85"/>
+<ellipse cx="116" cy="398" rx="58" ry="34" fill="#33211f" opacity="0.85"/>
+<ellipse cx="122" cy="471" rx="60" ry="35" fill="#33211f" opacity="0.85"/>
+<ellipse cx="256" cy="473" rx="66" ry="37" fill="#33211f" opacity="0.85"/>
+<ellipse cx="404" cy="478" rx="68" ry="38" fill="#33211f" opacity="0.85"/>
+<ellipse cx="562" cy="478" rx="68" ry="38" fill="#33211f" opacity="0.85"/>
+<ellipse cx="262" cy="539" rx="60" ry="31" fill="#33211f" opacity="0.85"/>
+<ellipse cx="132" cy="141" rx="56" ry="31" fill="#242e21" opacity="0.85"/>
+<ellipse cx="268" cy="128" rx="60" ry="32" fill="#242e21" opacity="0.85"/>
+<ellipse cx="700" cy="133" rx="64" ry="33" fill="#242e21" opacity="0.85"/>
+<ellipse cx="858" cy="146" rx="60" ry="32" fill="#242e21" opacity="0.85"/>
+<ellipse cx="118" cy="234" rx="58" ry="34" fill="#242e21" opacity="0.85"/>
+<ellipse cx="868" cy="246" rx="58" ry="34" fill="#242e21" opacity="0.85"/>
+<ellipse cx="128" cy="534" rx="56" ry="30" fill="#242e21" opacity="0.85"/>
+<ellipse cx="716" cy="539" rx="60" ry="31" fill="#242e21" opacity="0.85"/>
+<ellipse cx="872" cy="534" rx="56" ry="30" fill="#242e21" opacity="0.85"/>
+<ellipse cx="402" cy="112" rx="52" ry="28" fill="#2a2a30" opacity="0.85"/>
+<ellipse cx="556" cy="112" rx="52" ry="28" fill="#2a2a30" opacity="0.85"/>
+<ellipse cx="112" cy="320" rx="54" ry="32" fill="#2a2a30" opacity="0.85"/>
+<ellipse cx="872" cy="326" rx="54" ry="32" fill="#2a2a30" opacity="0.85"/>
+<ellipse cx="876" cy="402" rx="54" ry="32" fill="#2a2a30" opacity="0.85"/>
+<ellipse cx="878" cy="474" rx="54" ry="32" fill="#2a2a30" opacity="0.85"/>
+<ellipse cx="410" cy="548" rx="62" ry="28" fill="#2a2a30" opacity="0.85"/>
+<ellipse cx="560" cy="548" rx="62" ry="28" fill="#2a2a30" opacity="0.85"/>
+<polyline points="486,563 486,500 478,430 474,356 476,300 482,246 484,176" fill="none" stroke="#b9a077" stroke-width="13" stroke-linecap="round" opacity="0.55"/>
+<polyline points="486,563 486,500 478,430 474,356 476,300 482,246 484,176" fill="none" stroke="#e6d3a8" stroke-width="2" stroke-dasharray="9 11" opacity="0.7"/>
+<polygon points="84,118 132,95 180,118 132,164" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="132" y="122" fill="#f0e6cf" font-size="11" text-anchor="middle">p00</text>
+<text x="132" y="135" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g0,0</text>
+<polygon points="216,104 268,80 320,104 268,152" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="268" y="108" fill="#f0e6cf" font-size="11" text-anchor="middle">p01</text>
+<text x="268" y="121" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g1,0</text>
+<polygon points="358,92 402,72 446,92 402,132" fill="#555560" fill-opacity="0.34" stroke="#555560" stroke-width="1.6"/>
+<text x="402" y="96" fill="#f0e6cf" font-size="11" text-anchor="middle">p02</text>
+<text x="402" y="109" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g2,0</text>
+<polygon points="512,92 556,72 600,92 556,132" fill="#555560" fill-opacity="0.34" stroke="#555560" stroke-width="1.6"/>
+<text x="556" y="96" fill="#f0e6cf" font-size="11" text-anchor="middle">p03</text>
+<text x="556" y="109" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g3,0</text>
+<polygon points="644,108 700,83 756,108 700,158" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="700" y="112" fill="#f0e6cf" font-size="11" text-anchor="middle">p04</text>
+<text x="700" y="125" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g4,0</text>
+<polygon points="806,122 858,98 910,122 858,170" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="858" y="126" fill="#f0e6cf" font-size="11" text-anchor="middle">p05</text>
+<text x="858" y="139" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g5,0</text>
+<polygon points="68,208 118,182 168,208 118,260" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="118" y="212" fill="#f0e6cf" font-size="11" text-anchor="middle">p10</text>
+<text x="118" y="225" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g0,1</text>
+<polygon points="194,196 250,167 306,196 250,254" fill="#7a5a22" fill-opacity="0.34" stroke="#7a5a22" stroke-width="1.6"/>
+<text x="250" y="200" fill="#f0e6cf" font-size="11" text-anchor="middle">p11</text>
+<text x="250" y="213" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g1,1</text>
+<polygon points="325,176 400,138 475,176 400,252" fill="#7a5a22" fill-opacity="0.34" stroke="#7a5a22" stroke-width="1.6"/>
+<text x="400" y="180" fill="#f0e6cf" font-size="11" text-anchor="middle">p12</text>
+<text x="400" y="193" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g2,1</text>
+<polygon points="491,176 566,138 641,176 566,252" fill="#7a5a22" fill-opacity="0.34" stroke="#7a5a22" stroke-width="1.6"/>
+<text x="566" y="180" fill="#f0e6cf" font-size="11" text-anchor="middle">p13</text>
+<text x="566" y="193" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g3,1</text>
+<polygon points="660,198 716,169 772,198 716,256" fill="#7a5a22" fill-opacity="0.34" stroke="#7a5a22" stroke-width="1.6"/>
+<text x="716" y="202" fill="#f0e6cf" font-size="11" text-anchor="middle">p14</text>
+<text x="716" y="215" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g4,1</text>
+<polygon points="818,220 868,194 918,220 868,272" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="868" y="224" fill="#f0e6cf" font-size="11" text-anchor="middle">p15</text>
+<text x="868" y="237" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g5,1</text>
+<polygon points="66,296 112,272 158,296 112,344" fill="#555560" fill-opacity="0.34" stroke="#555560" stroke-width="1.6"/>
+<text x="112" y="300" fill="#f0e6cf" font-size="11" text-anchor="middle">p20</text>
+<text x="112" y="313" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g0,2</text>
+<polygon points="186,288 244,258 302,288 244,348" fill="#3f5a6b" fill-opacity="0.34" stroke="#3f5a6b" stroke-width="1.6"/>
+<text x="244" y="292" fill="#f0e6cf" font-size="11" text-anchor="middle">p21</text>
+<text x="244" y="305" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g1,2</text>
+<polygon points="328,282 392,251 456,282 392,344" fill="#7a5a22" fill-opacity="0.34" stroke="#7a5a22" stroke-width="1.6"/>
+<text x="392" y="286" fill="#f0e6cf" font-size="11" text-anchor="middle">p22</text>
+<text x="392" y="299" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g2,2</text>
+<polygon points="492,282 556,251 620,282 556,344" fill="#7a5a22" fill-opacity="0.34" stroke="#7a5a22" stroke-width="1.6"/>
+<text x="556" y="286" fill="#f0e6cf" font-size="11" text-anchor="middle">p23</text>
+<text x="556" y="299" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g3,2</text>
+<polygon points="654,292 712,262 770,292 712,352" fill="#3f5a6b" fill-opacity="0.34" stroke="#3f5a6b" stroke-width="1.6"/>
+<text x="712" y="296" fill="#f0e6cf" font-size="11" text-anchor="middle">p24</text>
+<text x="712" y="309" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g4,2</text>
+<polygon points="826,302 872,278 918,302 872,350" fill="#555560" fill-opacity="0.34" stroke="#555560" stroke-width="1.6"/>
+<text x="872" y="306" fill="#f0e6cf" font-size="11" text-anchor="middle">p25</text>
+<text x="872" y="319" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g5,2</text>
+<polygon points="66,372 116,346 166,372 116,424" fill="#6b2f2a" fill-opacity="0.34" stroke="#6b2f2a" stroke-width="1.6"/>
+<text x="116" y="376" fill="#f0e6cf" font-size="11" text-anchor="middle">p30</text>
+<text x="116" y="389" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g0,3</text>
+<polygon points="191,372 250,342 309,372 250,432" fill="#3f5a6b" fill-opacity="0.34" stroke="#3f5a6b" stroke-width="1.6"/>
+<text x="250" y="376" fill="#f0e6cf" font-size="11" text-anchor="middle">p31</text>
+<text x="250" y="389" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g1,3</text>
+<polygon points="337,366 398,335 459,366 398,428" fill="#3f5a6b" fill-opacity="0.34" stroke="#3f5a6b" stroke-width="1.6"/>
+<text x="398" y="370" fill="#f0e6cf" font-size="11" text-anchor="middle">p32</text>
+<text x="398" y="383" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g2,3</text>
+<polygon points="499,366 560,335 621,366 560,428" fill="#3f5a6b" fill-opacity="0.34" stroke="#3f5a6b" stroke-width="1.6"/>
+<text x="560" y="370" fill="#f0e6cf" font-size="11" text-anchor="middle">p33</text>
+<text x="560" y="383" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g3,3</text>
+<polygon points="657,372 716,342 775,372 716,432" fill="#3f5a6b" fill-opacity="0.34" stroke="#3f5a6b" stroke-width="1.6"/>
+<text x="716" y="376" fill="#f0e6cf" font-size="11" text-anchor="middle">p34</text>
+<text x="716" y="389" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g4,3</text>
+<polygon points="830,378 876,354 922,378 876,426" fill="#555560" fill-opacity="0.34" stroke="#555560" stroke-width="1.6"/>
+<text x="876" y="382" fill="#f0e6cf" font-size="11" text-anchor="middle">p35</text>
+<text x="876" y="395" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g5,3</text>
+<polygon points="70,444 122,417 174,444 122,498" fill="#6b2f2a" fill-opacity="0.34" stroke="#6b2f2a" stroke-width="1.6"/>
+<text x="122" y="448" fill="#f0e6cf" font-size="11" text-anchor="middle">p40</text>
+<text x="122" y="461" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g0,4</text>
+<polygon points="198,444 256,415 314,444 256,502" fill="#6b2f2a" fill-opacity="0.34" stroke="#6b2f2a" stroke-width="1.6"/>
+<text x="256" y="448" fill="#f0e6cf" font-size="11" text-anchor="middle">p41</text>
+<text x="256" y="461" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g1,4</text>
+<polygon points="344,448 404,418 464,448 404,508" fill="#6b2f2a" fill-opacity="0.34" stroke="#6b2f2a" stroke-width="1.6"/>
+<text x="404" y="452" fill="#f0e6cf" font-size="11" text-anchor="middle">p42</text>
+<text x="404" y="465" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g2,4</text>
+<polygon points="502,448 562,418 622,448 562,508" fill="#6b2f2a" fill-opacity="0.34" stroke="#6b2f2a" stroke-width="1.6"/>
+<text x="562" y="452" fill="#f0e6cf" font-size="11" text-anchor="middle">p43</text>
+<text x="562" y="465" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g3,4</text>
+<polygon points="660,444 718,415 776,444 718,502" fill="#3f5a6b" fill-opacity="0.34" stroke="#3f5a6b" stroke-width="1.6"/>
+<text x="718" y="448" fill="#f0e6cf" font-size="11" text-anchor="middle">p44</text>
+<text x="718" y="461" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g4,4</text>
+<polygon points="832,450 878,426 924,450 878,498" fill="#555560" fill-opacity="0.34" stroke="#555560" stroke-width="1.6"/>
+<text x="878" y="454" fill="#f0e6cf" font-size="11" text-anchor="middle">p45</text>
+<text x="878" y="467" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g5,4</text>
+<polygon points="80,512 128,490 176,512 128,556" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="128" y="516" fill="#f0e6cf" font-size="11" text-anchor="middle">p50</text>
+<text x="128" y="529" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g0,5</text>
+<polygon points="210,516 262,493 314,516 262,562" fill="#6b2f2a" fill-opacity="0.34" stroke="#6b2f2a" stroke-width="1.6"/>
+<text x="262" y="520" fill="#f0e6cf" font-size="11" text-anchor="middle">p51</text>
+<text x="262" y="533" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g1,5</text>
+<polygon points="356,528 410,508 464,528 410,568" fill="#555560" fill-opacity="0.34" stroke="#555560" stroke-width="1.6"/>
+<text x="410" y="532" fill="#f0e6cf" font-size="11" text-anchor="middle">p52</text>
+<text x="410" y="545" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g2,5</text>
+<polygon points="506,528 560,508 614,528 560,568" fill="#555560" fill-opacity="0.34" stroke="#555560" stroke-width="1.6"/>
+<text x="560" y="532" fill="#f0e6cf" font-size="11" text-anchor="middle">p53</text>
+<text x="560" y="545" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g3,5</text>
+<polygon points="664,516 716,493 768,516 716,562" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="716" y="520" fill="#f0e6cf" font-size="11" text-anchor="middle">p54</text>
+<text x="716" y="533" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g4,5</text>
+<polygon points="824,512 872,490 920,512 872,556" fill="#3f5c38" fill-opacity="0.34" stroke="#3f5c38" stroke-width="1.6"/>
+<text x="872" y="516" fill="#f0e6cf" font-size="11" text-anchor="middle">p55</text>
+<text x="872" y="529" fill="#c9bfa6" font-size="8.5" text-anchor="middle">g5,5</text>
+<text x="16" y="16" fill="#f0e6cf" font-size="14">A16 · 建筑热区与道路图（36 格 → 非均匀锚点；区只决定地面与路，不否决可建类型）</text>
+<rect x="16" y="20" width="13" height="13" fill="#7a5a22"/>
+<text x="35" y="31" fill="#d8cfb8" font-size="11.5">王庭高地 · crown · 6 格</text>
+<rect x="16" y="37" width="13" height="13" fill="#3f5a6b"/>
+<text x="35" y="48" fill="#d8cfb8" font-size="11.5">行政与民生区 · civic · 7 格</text>
+<rect x="16" y="54" width="13" height="13" fill="#6b2f2a"/>
+<text x="35" y="65" fill="#d8cfb8" font-size="11.5">城门与军事区 · military · 6 格</text>
+<rect x="16" y="71" width="13" height="13" fill="#3f5c38"/>
+<text x="35" y="82" fill="#d8cfb8" font-size="11.5">城郊生产带 · suburb · 9 格</text>
+<rect x="16" y="88" width="13" height="13" fill="#555560"/>
+<text x="35" y="99" fill="#d8cfb8" font-size="11.5">城郭与通道 · wall · 8 格</text>
+<text x="640" y="574" fill="#9a927e" font-size="12">主轴：城门 → 市集广场 → 台基台阶 → 主堡（视线自下而上）</text>
+</svg>

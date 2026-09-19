@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 583" width="2000" height="1166" font-family="sans-serif">
+<rect width="1000" height="583" fill="#141210"/>
+<text x="16" y="20" fill="#f0e6cf" font-size="14">A16 · 拆层示意（由后向前，每层单独交付；底图里烘焙功能楼 = 重影 + 无法表达"未建"）</text>
+<g transform="translate(40,44)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#2b3a4a" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L0 远景</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">山脊/远村/坡地，只给纵深与尺度参照</text>
+</g>
+<g transform="translate(102,102)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#3a3226" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L1 地表与道路</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">地坪、主轴、支路、田块畦纹（图案属于地表，不成棋盘）</text>
+</g>
+<g transform="translate(164,160)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#4a4a55" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L2 后侧城墙</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">北垣与东西墙根，被建筑压住的部分不画</text>
+</g>
+<g transform="translate(226,218)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#241f1a" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L3 建筑阴影</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">统一左上光源 ⇒ 阴影一律落在右下</text>
+</g>
+<g transform="translate(288,276)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#6b5a3a" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L4 建筑主体</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">15 类功能楼，按基座落地点（不是图片中心）做深度排序</text>
+</g>
+<g transform="translate(350,334)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#55555f" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L5 前侧城墙与前景</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">近景墙可淡化/避让，绝不抢触摸</text>
+</g>
+<g transform="translate(412,392)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#8a6b2f" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L6 状态标识</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">脚手架、可收取、暂停、选中光圈 —— 程序绘制优先</text>
+</g>
+<g transform="translate(474,450)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#4f6b45" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L7 合法空地提示</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">仅建造模式下显示柔和轮廓</text>
+</g>
+<g transform="translate(536,508)">
+<rect x="0" y="0" width="380" height="42" rx="4" fill="#6b3a35" stroke="#0e0d0c" stroke-width="1.5"/>
+<text x="12" y="19" fill="#f4ead2" font-size="13">L8 HUD 与详情</text>
+<text x="12" y="34" fill="#cfc4ac" font-size="10">资源条/队列条/详情卡沿用现有资产，主堡轮廓不得被截断</text>
+</g>
+<text x="470" y="84" fill="#9a927e" font-size="11.5">遮挡规则</text>
+<text x="470" y="106" fill="#bdb39c" font-size="11">· 同层按基座落地点排序，不按图片中心</text>
+<text x="470" y="125" fill="#bdb39c" font-size="11">· 高塔可视觉压住后方楼，但不能截断它唯一的可点入口</text>
+<text x="470" y="144" fill="#bdb39c" font-size="11">· 透明留白不参与命中：热区 = 脚印多边形，不是矩形图片</text>
+<text x="470" y="163" fill="#bdb39c" font-size="11">· 近景墙与前景必须避开可交互区，否则&quot;点不动&quot;看起来像卡死</text>
+<text x="470" y="182" fill="#bdb39c" font-size="11">· 背景与建筑分开出图：功能建筑不许烘焙进底图</text>
+<text x="470" y="201" fill="#bdb39c" font-size="11">· 水面/断崖这类装饰格不响应建造，建造模式下也不给轮廓</text>
+<text x="470" y="230" fill="#8f8770" font-size="10.5">层数与顺序取自 内城场景美术_VibeCoding规格.md §3.1；改层要同步改本图与 §3.1。</text>
+</svg>
