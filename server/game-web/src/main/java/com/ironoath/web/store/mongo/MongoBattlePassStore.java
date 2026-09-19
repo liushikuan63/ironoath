@@ -43,6 +43,23 @@ public final class MongoBattlePassStore implements BattlePassStore {
     }
 
     @Override
+    public List<String> playerIdsOf(String seasonId) {
+        if (seasonId == null) {
+            return List.of();
+        }
+        // 只投影 playerId 一列：补发只关心"这一季有谁"，把整份进度读回来是白读
+        Query query = Query.query(Criteria.where("seasonId").is(seasonId));
+        query.fields().include("playerId");
+        List<String> out = new java.util.ArrayList<>();
+        for (BattlePassDocument doc : mongo.find(query, BattlePassDocument.class,
+                BattlePassDocument.COLLECTION)) {
+            out.add(doc.playerId());
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    @Override
     public Progress load(String seasonId, String playerId) {
         if (seasonId == null || playerId == null) {
             return Progress.empty();

@@ -42,6 +42,22 @@ public class InMemoryBattlePassStore implements BattlePassStore {
     }
 
     @Override
+    public java.util.List<String> playerIdsOf(String seasonId) {
+        if (seasonId == null) {
+            return java.util.List.of();
+        }
+        String prefix = seasonId + ":";
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String key : byKey.keySet()) {
+            if (key.startsWith(prefix)) {
+                out.add(key.substring(prefix.length()));
+            }
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    @Override
     public Progress update(String seasonId, String playerId, UnaryOperator<Progress> change) {
         if (seasonId == null || seasonId.isBlank() || playerId == null || playerId.isBlank()) {
             throw new IllegalArgumentException("战令进度的键不得为空：seasonId=" + seasonId + " playerId=" + playerId);

@@ -67,6 +67,12 @@ public interface BattlePassStore {
         }
     }
 
+    /**
+     * 这一季有过进度的所有人。**只给赛季结束的补发用**（它是唯一一处需要按赛季枚举玩家的地方）：
+     * 走榜单枚举不到"打过战令但没上榜"的人，而正是他们最容易留下没领的档位。
+     */
+    java.util.List<String> playerIdsOf(String seasonId);
+
     /** 没有记录时返回 {@link Progress#empty()}（不是 null、也不是抛：没打过战令是一个正常状态）。 */
     Progress load(String seasonId, String playerId);
 

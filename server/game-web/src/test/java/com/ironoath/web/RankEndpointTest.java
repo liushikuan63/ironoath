@@ -73,6 +73,10 @@ import com.ironoath.web.store.memory.InMemorySeasonBoardStore;
 @ActiveProfiles("test")
 class RankEndpointTest {
 
+    /** 结算里会触发战令的赛季末补发（B24）：这里的用例不关心补发，但构造要真的传进去 —— 传 null 会让"结算顺手补发"这条路径在测试里被静默跳过。 */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.ironoath.web.battlepass.BattlePassService battlePass;
+
     private static final String PLAYER_HEADER = "X-Player-Id";
     private static final long SEASON_START = 1_757_000_000_000L;
     /** 运维令牌的测试值（与其它 ops 只读端点同一条：测试 profile 里配的就是它）。 */
@@ -105,7 +109,7 @@ class RankEndpointTest {
         ranks = new RankBoardService(boards, socialStore, nationStore, players, bots, anchored, assembler, timeService);
         settlements = new SeasonSettlementService(anchored, timeService, assembler, players,
                 rewardService, new com.ironoath.web.store.memory.InMemorySeasonLedger(), boards,
-                new com.ironoath.web.store.memory.InMemoryIdempotencyStore(), bots);
+                new com.ironoath.web.store.memory.InMemoryIdempotencyStore(), bots, battlePass);
         seasonId = assembler.timelineRules().seasonId();
         assertThat(seasonId).as("夹具前提：锚点生效后时间轴给出赛季 id").isNotBlank();
     }

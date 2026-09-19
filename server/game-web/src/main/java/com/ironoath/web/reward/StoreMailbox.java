@@ -70,6 +70,39 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         return mailId;
     }
 
+    /**
+     * 主动把一批奖励发进邮箱（不是溢出、也不是补偿）。
+     *
+     * <p><b>与 {@link #sendOverflow} 分开的理由是正文</b>：溢出那封要告诉玩家「背包满了，清一清」——
+     * 那是他可以去处理的事；而赛季结束未领的奖励与背包状态毫无关系，正文写"放不下"就是一句假话，
+     * 玩家会去背包里翻一个根本不存在的容量问题。两件事在数据上同形、在对玩家的解释上完全不同，
+     * 所以宁可多一个方法，也不让同一封邮件说两种话。
+     *
+     * @return 邮件 id
+     */
+    public String sendGrant(String playerId, String kind, String title, List<RewardItem> items,
+                            String reason, RewardContext ctx) {
+        long now = timeService.serverNow();
+        int days = retentionDays();
+        List<RewardLine> lines = new ArrayList<>(items.size());
+        for (RewardItem item : items) {
+            lines.add(new RewardLine(item.type().name(), item.id(), item.count(), names.nameOf(item)));
+        }
+        String mailId = "mail_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        // 正文必须逐条写出「什么、多少」：只写"有 N 档没领"的邮件等于让玩家拿着信去问客服 ——
+        // 而这封信正是为了"不静默作废"才发的，说不清内容就失败了
+        StringBuilder text = new StringBuilder(reason);
+        for (RewardLine line : lines) {
+            text.append("\n· ").append(line.name()).append(" ×").append(line.count());
+        }
+        text.append("\n请在 ").append(days).append(" 天内领取。");
+        store.save(new MailRecord(mailId, playerId, kind, title, text.toString(), lines,
+                ctx.source() + ':' + ctx.sourceRef(), now, now + days * 86_400_000L, null, null));
+        LOG.info("奖励已发进邮箱 playerId={} mailId={} 类型={} 来源={}({}) 条数={} 保留={}天",
+                playerId, mailId, kind, ctx.source(), ctx.sourceRef(), lines.size(), days);
+        return mailId;
+    }
+
     /** 正文：逐条写「什么、多少」，再写一句为什么与多久之内要领。 */
     private static String bodyOf(List<RewardLine> lines, RewardContext ctx, int days) {
         StringBuilder text = new StringBuilder("这次发放有一部分放不下（背包或仓库已满、或资源超过上限），"

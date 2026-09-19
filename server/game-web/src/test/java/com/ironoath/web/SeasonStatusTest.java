@@ -58,6 +58,10 @@ import com.ironoath.web.season.SeasonSettlementService;
 @ActiveProfiles("test")
 class SeasonStatusTest {
 
+    /** 结算里会触发战令的赛季末补发（B24）：这里的用例不关心补发，但构造要真的传进去 —— 传 null 会让"结算顺手补发"这条路径在测试里被静默跳过。 */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.ironoath.web.battlepass.BattlePassService battlePass;
+
     private static final long DAY = 86_400_000L;
 
     @Autowired private TimeService timeService;
@@ -302,7 +306,7 @@ class SeasonStatusTest {
                 new com.ironoath.web.bot.BotRulesAssembler(registry));
         SeasonSettlementService settlements = new SeasonSettlementService(registry, clock,
                 assembler, players, rewardService, new InMemorySeasonLedger(),
-                new com.ironoath.web.store.memory.InMemorySeasonBoardStore(), idempotency, bots);
+                new com.ironoath.web.store.memory.InMemorySeasonBoardStore(), idempotency, bots, battlePass);
         return new Wiring(new SeasonAppService(registry, clock, assembler, settlements),
                 settlements);
     }

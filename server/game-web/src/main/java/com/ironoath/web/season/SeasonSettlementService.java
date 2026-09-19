@@ -71,6 +71,17 @@ public class SeasonSettlementService {
      * 所以排除只能长在 web 这一侧的榜入口上。
      */
     private final com.ironoath.web.bot.BotRegistry bots;
+    /**
+     * 战令的赛季末补发（B24 验收 2：未领的奖励不静默作废）。
+     *
+     * <p><b>为什么挂在结算这一步而不是战令自己的读路径</b>：补发的前提是"这个赛季结束了"，
+     * 而赛季结束这件事只有结算知道（`SeasonTimeline` 是纯时间轴，它不知道有没有人来结算过）。
+     * 结算一年只跑一次、且已经带幂等键，所以这里不需要第二套触发机制。
+     *
+     * <p><b>受众与榜单不同</b>：结算的循环走的是榜单前 N 名，而战令的受众是本赛季打过分的所有人 ——
+     * 所以补发按战令存储枚举，与上面那个循环各自独立。
+     */
+    private final com.ironoath.web.battlepass.BattlePassService battlePass;
 
     /** 当前赛季的结算器。赛季 id 变了就换一个新的（B14 §4：一赛季一份独立数据）。 */
     private volatile SeasonSettlement current;
@@ -79,7 +90,8 @@ public class SeasonSettlementService {
                                    SeasonRulesAssembler assembler, PlayerRepository players,
                                    RewardService rewardService, SeasonLedgerStore ledger,
                                    SeasonBoardStore boards, IdempotencyStore idempotency,
-                                   com.ironoath.web.bot.BotRegistry bots) {
+                                   com.ironoath.web.bot.BotRegistry bots,
+                                   com.ironoath.web.battlepass.BattlePassService battlePass) {
         this.configs = configs;
         this.timeService = timeService;
         this.assembler = assembler;
@@ -89,6 +101,7 @@ public class SeasonSettlementService {
         this.boards = boards;
         this.idempotency = idempotency;
         this.bots = bots;
+        this.battlePass = battlePass;
     }
 
     /**
@@ -245,6 +258,15 @@ public class SeasonSettlementService {
         purgeArchivedSeasons(settlement.seasonId(), settlement.rules().archiveCollections());
         LOG.info("赛季结算 seasonId={} 本次新结算={}人 发金币={} 发赛季币={} 依据快照={} 榜单人数={}",
                 settlement.seasonId(), fresh, goldTotal, coinTotal, snapshotAt, entries.size());
+        // 战令：把"已达成但没领"的档位奖励按档发进邮箱。**补发失败不回滚结算** ——
+        // 结算发的是赛季币与金币（账本是凭据），战令补发是另一本账；
+        // 让一个域的失败挡住另一个域已经落库的发奖，只会让"结算了一半"变成常态
+        try {
+            battlePass.sweepSeasonToMail(settlement.seasonId());
+        } catch (RuntimeException e) {
+            LOG.error("战令赛季末补发失败 seasonId={}：结算已完成，补发可以重跑"
+                    + "（补发的幂等靠战令进度里的已领标记，重跑不会重复发）", settlement.seasonId(), e);
+        }
         return new SeasonSettleResp(settlement.seasonId(), fresh, coinTotal, goldTotal,
                 snapshotAt, now);
     }

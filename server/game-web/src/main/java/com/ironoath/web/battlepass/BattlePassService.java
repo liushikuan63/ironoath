@@ -18,6 +18,7 @@ import com.ironoath.web.dto.generated.BattlePassStatusResp;
 import com.ironoath.web.dto.generated.BattlePassTierView;
 import com.ironoath.web.dto.generated.BattlePassTrack;
 import com.ironoath.web.reward.RewardNames;
+import com.ironoath.web.reward.StoreMailbox;
 import com.ironoath.web.service.ServerCalendar;
 
 import org.slf4j.Logger;
@@ -56,10 +57,12 @@ public class BattlePassService {
     private final PlayerLock playerLock;
     private final TimeService timeService;
     private final ConfigRegistry configs;
+    /** 赛季结束时把没领的档位奖励发进邮箱（B24 验收 2 的后半句：不静默作废）。 */
+    private final StoreMailbox mailbox;
 
     public BattlePassService(BattlePassStore store, BattlePassRules rules, RewardService rewardService,
                              RewardNames rewardNames, PlayerLock playerLock, TimeService timeService,
-                             ConfigRegistry configs) {
+                             ConfigRegistry configs, StoreMailbox mailbox) {
         this.store = store;
         this.rules = rules;
         this.rewardService = rewardService;
@@ -67,6 +70,7 @@ public class BattlePassService {
         this.playerLock = playerLock;
         this.timeService = timeService;
         this.configs = configs;
+        this.mailbox = mailbox;
     }
 
     /** 本赛季战令全貌（20 档 + 三个结论位）。 */
@@ -134,6 +138,73 @@ public class BattlePassService {
     /** 本赛季付费线解锁了没有（下单前的第二道检查用，第一道在读状态时）。 */
     public boolean paidUnlocked(String playerId) {
         return store.load(rules.seasonId(), playerId).paidUnlocked();
+    }
+
+    /**
+     * 赛季结束时把**已达成但未领**的档位奖励按档发进邮箱。返回发出去多少封。
+     *
+     * <p><b>为什么按战令存储枚举玩家而不是按榜单</b>：榜单只有前 N 名，而"打过战令但没上榜"的人
+     * 恰恰最容易留下没领的档位。{@code playerIdsOf} 是这一季参与者的唯一可枚举出口。
+     *
+     * <p><b>幂等靠把档位标成已领</b>（不是靠结算的 requestId：重跑会换一个键，那样每次重跑都会再发一遍）：
+     * 补发之后这些档位就是已领状态 —— 那是事实，奖励确实发出去了。
+     *
+     * <p><b>发的是邮件而不是直接入账</b>：赛季结束那一刻玩家可能已经很久不上线，直接塞进背包会有
+     * "背包满而静默丢失"的风险，而邮件有保留期与领取记录，符合裁决② 的「不静默作废」。
+     */
+    public int sweepSeasonToMail(String seasonId) {
+        if (seasonId == null || seasonId.isBlank()) {
+            return 0;
+        }
+        List<BattlePassCfg> tiers = rules.tiers();
+        int sent = 0;
+        for (String playerId : store.playerIdsOf(seasonId)) {
+            BattlePassStore.Progress progress = store.load(seasonId, playerId);
+            for (BattlePassTrack track : BattlePassTrack.values()) {
+                List<RewardItem> pending = new ArrayList<>();
+                List<Integer> pendingTiers = new ArrayList<>();
+                for (BattlePassCfg row : tiers) {
+                    if (progress.points() < row.requiredPoints()) {
+                        continue;   // 没达成的不补发：不能靠"补发"绕过积分
+                    }
+                    if (track == BattlePassTrack.PAID && !progress.paidUnlocked()) {
+                        continue;   // 没买的不补发：那是没买过的东西
+                    }
+                    if (progress.claimed((int) row.tier(), track)) {
+                        continue;   // 已经领过的不再发
+                    }
+                    pending.add(rewardItemOf(row, track));
+                    pendingTiers.add((int) row.tier());
+                }
+                if (pending.isEmpty()) {
+                    continue;
+                }
+                BattlePassStore.Progress after = store.update(seasonId, playerId, cur -> {
+                    BattlePassStore.Progress next = cur;
+                    for (Integer tier : pendingTiers) {
+                        next = next.withClaimed(tier, track);
+                    }
+                    return next;
+                });
+                boolean marked = pendingTiers.stream()
+                        .allMatch(tier -> after.claimed(tier, track));
+                if (!marked) {
+                    LOG.error("补发标记没落库，本档跳过（宁可这一档不发，也不能发两次）playerId={} 赛季={} 轨道={}",
+                            playerId, seasonId, track);
+                    continue;
+                }
+                mailbox.sendGrant(playerId, "BATTLE_PASS", "赛季战令奖励补发", pending,
+                        "赛季结束时有 " + pending.size() + " 档"
+                                + (track == BattlePassTrack.PAID ? "付费" : "免费") + "奖励还没领，已按档补发：",
+                        // overflowToMail=false：这批东西**已经**在邮件里了，没有第二处可落
+                        new RewardContext("battlePass", seasonId + ":" + track.name(),
+                                "seasonEnd:" + seasonId + ":" + playerId, false));
+                sent++;
+            }
+        }
+        LOG.info("战令赛季末补发完成 赛季={} 发出邮件={} 封（覆盖 {} 名参与者）",
+                seasonId, sent, store.playerIdsOf(seasonId).size());
+        return sent;
     }
 
     // ---------- 组装 ----------
