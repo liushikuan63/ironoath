@@ -43,6 +43,7 @@ import { decideUpdateGate } from '../game/release/UpdateGate'
 import { applySystemUiFont } from './UiFont'
 import { SettingsPanelView } from './SettingsPanelView'
 import { GiftPopupView } from './GiftPopupView'
+import { TechPanelView } from './TechPanelView'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -911,9 +912,27 @@ export class GameBootstrap extends Component {
     node.active = false
   }
 
+  /**
+   * 研究页（V03-a-S1）。**不占导航第 17 项**：它从内城「学院」点出来，是二级页，
+   * 所以与礼包弹窗同一做法 —— 挂在这一层、初始不激活，找得到就接、找不到就少一份。
+   */
+  private mountTechPanel(): void {
+    if (this.node.getChildByName('techPanel') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('techPanel')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(TechPanelView)
+    node.active = false
+  }
+
   /** 本节点上挂了哪些面板，就接哪些。没挂的面板不会被假装接上（根只会少发那份请求的落地）。 */
   private targets(): PanelTargets {
     this.mountGiftPopup()
+    this.mountTechPanel()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -931,6 +950,7 @@ export class GameBootstrap extends Component {
     const avatarFrames = this.panel(AvatarFramePanelView, 'avatarFrames')
     const battlePass = this.panel(BattlePassPanelView, 'battlePass')
     const giftPopup = this.panel(GiftPopupView, 'giftPopup')
+    const tech = this.panel(TechPanelView, 'techPanel')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -949,6 +969,10 @@ export class GameBootstrap extends Component {
       out.payResult = view => giftPopup.renderResult(view)
       giftPopup.onBuy = productId => { void this.root?.buyGift(productId) }
       giftPopup.onClose = () => giftPopup.hide()
+    }
+    if (tech !== null) {
+      // 打开由编排层发起（`AppRoot.openTech`，入口在内城「学院」）；这里只把"画"接上
+      out.tech = view => tech.render(view)
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
