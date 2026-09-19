@@ -13,6 +13,8 @@ client/library/
 client/local/
 client/profiles/
 client/native/
+# Cocos 服务插件面板在本机生成的占位（game.name=未知游戏、app_id=UNKNOW），与上面几项同性质：换台机器就换一个内容
+client/settings/v2/packages/cocos-service.json
 
 # 代码生成器输出（生成物入库，但临时对比目录不入库）
 .tmp-contract-check/
