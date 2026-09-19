@@ -59,6 +59,16 @@ jobs:
         run: npm ci
         working-directory: client
 
+      # `check-icon-legibility` 是 Python + Pillow（它把每张图标缩到 26px 逐对算像素差）。
+      # 缺 Pillow 时那一门**故意退 2（前置不满足）而不是退 0** —— 那是"没验"不是"通过"，
+      # 而 runner 上默认没有 Pillow ⇒ 静态门这一步必红。给它装上，让这门真的跑起来。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python deps for the art gates
+        run: pip install pillow
+
       # 全量 = 代码生成 + 分层 + 契约一致 + 服务端编译打包 + 客户端 tsc + 服务端/客户端全套测试。
       # 注意 build.sh 只到"编译 + 测试"，静态门在下一步；两者合起来才是这个仓库的"全绿"。
       - name: Full build and tests
