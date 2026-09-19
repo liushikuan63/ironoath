@@ -1015,11 +1015,16 @@ export class AppRoot {
    * <p><b>为什么加入要先编队</b>：`/rally/join` 要带 `troops`（服务端要按这份承诺锁兵），
    * 所以"点一下加入"在协议上根本不成立 —— 那是另一支队伍的兵力构成，不能空手加入。
    */
-  beginRallyCompose(rallyId: string): void {
+  async beginRallyCompose(rallyId: string): Promise<void> {
     const rally = this.rallyResp?.rallies.find((it) => it.rallyId === rallyId) ?? null
     if (rally === null) {
       this.rejectNeeds('rallies', '这一支集结已经结束了')
       return
+    }
+    // 编成面板要军队列表才画得出来。玩家可能是**先点集结、还没进过军队面板**才来加入的，
+    // 那一刻 armyResp 还是 null —— 少了这一句，点「加入」什么都不弹（探针首跑抓到的真缺陷）
+    if (this.armyResp === null) {
+      await this.refresh('army')
     }
     this.composeRallyId = rallyId
     this.composeTarget = { id: rallyId, name: '集结目标', x: rally.targetCoord.x, y: rally.targetCoord.y }

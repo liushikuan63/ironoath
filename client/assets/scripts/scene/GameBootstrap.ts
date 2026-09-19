@@ -1007,7 +1007,7 @@ export class GameBootstrap extends Component {
       social.onRallyEnter = () => { void this.root?.refresh('rallies') }
       social.onRallyJoin = rallyId => {
         // 加入要走编队（协议里 join 必须带承诺兵力），所以这里打开的是出征那套编成面板
-        this.root?.beginRallyCompose(rallyId)
+        void this.root?.beginRallyCompose(rallyId)
       }
       social.onRallyQuit = rallyId => { void this.root?.quitRally(rallyId) }
       social.onRallyCancel = rallyId => { void this.root?.cancelRally(rallyId) }
