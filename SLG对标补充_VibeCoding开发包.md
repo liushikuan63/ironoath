@@ -187,6 +187,21 @@ P0 内部也串行交付：V01/V02 是玩法闭环，V09 是内城视觉基线�
 
 **判断口径（不许自己发明）**：`readOnly` 期间"不产生新的赛季行为"这句要照实说；`allowsPvp=false` 时不能写成"维护中"；
 荣耀与名次的来源是账本（`SeasonSettlementService.gloryOf`），客户端只照抄。
+
+**V04-S1 已收（2026-09-19，台账 #262；提交 `0e9e12f` 契约 / `91bf5eb` 纯逻辑 / `38bb495` 接线 / `1bdebd5` 段位与锚点 / `c4876df` 探针）**：
+1. **入口**=战力页第 6 个页签「赛季」，不加导航第 17 项 —— 四张榜的榜值本来就叫"赛季分"（击杀/联盟/国家），
+   玩家看完榜的下一句正是"还剩几天、现在能干什么、赛季结束我丢什么"。`isBoardTab` 与 `buildRankBoard`
+   双双排除 `SEASON`，榜行不会漏到赛季页签下。
+2. **先撞出来的是一条契约缺陷**：`SeasonStatusResp.phase` 被列在 `required` 里，而服务端未启用赛季时**确实下发 null**；
+   生成器的可空判据是"不在 required = 可空"，于是 TS 侧一直读作 `phase: SeasonPhase`。已从 `required` 移出并重生成，
+   同时删掉 `glory` 上没人读的 `nullable: true`（它会把下一个人引到错的方向）。
+3. **判据**：`client/tests/SeasonPanel.test.ts` 9 条 + `AppRoot.test.ts` 2 条 + `RankBoard.test.ts` 1 条；
+   `tools/verify-season-runtime.mjs` 两种模式（**未启用 17/17、启用 24/24**，含"客户端时钟拨快 100 天倒计时不变"的对照，
+   期望值由探针直连后端独立算，不从页面抄）；`tools/verify-rank-runtime.mjs` 回归 **27/27**。
+   启用那一态用**临时 config-dir**（`--ironoath.config-dir=`）起第二台后端，真源与现有后端一行未动。
+4. **仍未做（如实）**：真机与微信开发者工具那一跑；`REST`（休赛期）与倒计时"小时"档只由纯逻辑用例覆盖；
+   服务端结算端点本轮未碰。
+
 ### V05 · 减负必须有范围、账本和停止条件
 
 **现状**：B25 的服务端重复出征守卫用例存在；首次出征客户端缺失。`PlayerInitService.java:129` 更新登录时间，`:183~188` 已通过 `resourceRates.settledView` 返回纯读结算后的资源视图，并非只有登录时间变更；`/city/list` 等读取另有惰性结算路径。缺口是汇总边界、明细归属和展示，不是再造结算；上次登录仍不等于离线起点。
