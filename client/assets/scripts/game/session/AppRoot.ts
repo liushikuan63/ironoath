@@ -48,7 +48,7 @@ import type { ComposeView, MarchSpec } from '../world/MarchCompose'
 import type { RankBoardView, RankTabKey } from '../power/RankBoard'
 import type { RankListResp } from '../../net/generated/RankProtocol'
 import { gameBus } from '../../core/EventBus'
-import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
+import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
 import type {
   BattleReportBrief, BattleReportListResp, BattleReportResp, ShareChannel,
@@ -76,6 +76,7 @@ import { buildAvatarFramePanel, wearBodyOf, wearResultText } from '../avatar/Ava
 import type { AvatarFramePanelView } from '../avatar/AvatarFramePanel'
 import type { AvatarFrameListResp } from '../../net/generated/Protocol'
 import type { BattlePassStatusResp, BattlePassTrack } from '../../net/generated/BattlePassProtocol'
+import type { RallyListResp } from '../../net/generated/SocialProtocol'
 import { buildBattlePassPanel, claimBodyOf, claimResultText } from '../battlePass/BattlePassPanel'
 import { buildOfflineItems, offlineReportGate } from '../offline/OfflineReport'
 import type { OfflineItem } from '../offline/OfflineReport'
@@ -132,6 +133,18 @@ export interface AvatarFramesView extends AvatarFramePanelView {
  */
 export interface BattlePassPanelData {
   readonly source: BattlePassStatusResp
+  readonly notice: string | null
+}
+
+/**
+ * 集结面板（V02-S1）：原始响应 + 我自己的 playerId + 上一次动作的结果。
+ *
+ * <p>**playerId 必须由编排层给**：`RallyView.members` 是服务端下发的权威名单，
+ * 而"我是谁"只有登录响应里有 —— 纯逻辑层拿它去对名单，不重新判任何规则。
+ */
+export interface RallyPanelData {
+  readonly source: RallyListResp
+  readonly myPlayerId: string
   readonly notice: string | null
 }
 
@@ -206,6 +219,8 @@ export interface PanelTargets {
   avatarFrames?(view: AvatarFramesView): void
   /** 战令面板（B24 S-d-e）：原始响应 + 上一次领取的结果。 */
   battlePass?(data: BattlePassPanelData): void
+  /** 集结面板（V02-S1）。 */
+  rallies?(data: RallyPanelData): void
   /** 一场的完整战果 + 回放参数。回放怎么演由 {@code playbackOptionsOf} 装配，本类不算。 */
   reportReplay?(resp: BattleReportResp): void
   /**
@@ -247,7 +262,7 @@ export interface PanelTargets {
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
-  | 'battlePass'
+  | 'battlePass' | 'rallies'
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
 export interface Tracker {
@@ -282,6 +297,11 @@ export class AppRoot {
   private frameNotice: string | null = null
   /** 预览头像上那个字用的昵称（登录时玩家填的那个） */
   private nickName = ''
+  /** 集结：最近一次列表与上一次动作的结果（临时提示）。 */
+  private rallyResp: RallyListResp | null = null
+  private rallyNotice: string | null = null
+  /** 正在为哪一支集结编队；null = 普通出征的编成。**加入集结必须带兵力**（服务端要锁兵）。 */
+  private composeRallyId: string | null = null
   /** 战令：最近一次状态与上一次领取的结果（临时提示）。**进度两位都取自响应，本地不改**。 */
   private battlePassResp: BattlePassStatusResp | null = null
   private battlePassNotice: string | null = null
@@ -588,6 +608,12 @@ export class AppRoot {
         this.deliver('shop', await this.api.shopList(this.shopTab), r => {
           this.shopResp = r
           this.deliverShop()
+        })
+        return
+      case 'rallies':
+        this.deliver('rallies', await this.api.rallyList(), r => {
+          this.rallyResp = r
+          this.deliverRallies()
         })
         return
       case 'battlePass':
@@ -927,6 +953,102 @@ export class AppRoot {
       // 花费与余额都取服务端回执：本地那份表可能已经过期（热更），自己乘出来的数字会和实际扣的对不上
       this.shopNotice = buyResultText(name, r.spent)
     })
+  }
+
+  /** 组装并递一次集结视图。 */
+  private deliverRallies(): void {
+    const resp = this.rallyResp
+    if (resp === null) {
+      return
+    }
+    this.targets.rallies?.({
+      source: resp,
+      myPlayerId: this.playerId ?? '',
+      notice: this.rallyNotice,
+    })
+  }
+
+  /**
+   * 交上去：把编好的队伍作为**加入集结的承诺兵力**（服务端按这份锁兵）。
+   *
+   * <p>与出征只差三处：路径不同、带 `rallyId`、武将位留空（集结的武将位按加入顺序抢，
+   * 那一点由服务端判，客户端不预占）。
+   */
+  private async confirmRallyJoin(rallyId: string, units: readonly MarchUnit[]): Promise<void> {
+    this.composeSubmitting = true
+    this.composeNotice = null
+    this.deliverCompose()
+    this.track(TRACK_EVENTS.rallyJoin, {
+      rallyId,
+      troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
+    })
+    const troops = units.map((unit) => ({ unitId: unit.unitId, count: unit.count }))
+    const outcome = await this.api.rallyJoin({ rallyId, troops, heroes: null })
+    this.composeSubmitting = false
+    this.composeRallyId = null
+    if (outcome.kind === 'ok') {
+      // 回执里就是这一支的最新样子：先就地并进本地列表并立刻重画（玩家这一刻要看到"我加进去了"），
+      // 再在后台跟服务端对一次齐 —— 只依赖那次网络往返的话，提示行要等它回来才出现
+      this.rallyResp = {
+        rallies: this.replaceRally(outcome.data.rally),
+        serverNow: outcome.data.serverNow,
+      }
+      this.rallyNotice = '已加入集结：承诺的兵力已锁定'
+      this.composeTarget = null
+      this.composePicks = {}
+      this.composeNotice = '已加入集结'
+      this.deliverCompose()
+      this.deliverRallies()
+      void this.refresh('rallies')
+      return
+    }
+    this.composeNotice = outcome.kind === 'biz'
+      ? (outcome.detail ?? outcome.msg)
+      : AppRoot.reason(outcome)
+    this.say('rallies', outcome)
+    this.deliverCompose()
+  }
+
+  /**
+   * 为「加入集结」编队：复用出征那套编成面板（同一个 `composeTarget` 与同一份勾选表）。
+   *
+   * <p><b>为什么加入要先编队</b>：`/rally/join` 要带 `troops`（服务端要按这份承诺锁兵），
+   * 所以"点一下加入"在协议上根本不成立 —— 那是另一支队伍的兵力构成，不能空手加入。
+   */
+  beginRallyCompose(rallyId: string): void {
+    const rally = this.rallyResp?.rallies.find((it) => it.rallyId === rallyId) ?? null
+    if (rally === null) {
+      this.rejectNeeds('rallies', '这一支集结已经结束了')
+      return
+    }
+    this.composeRallyId = rallyId
+    this.composeTarget = { id: rallyId, name: '集结目标', x: rally.targetCoord.x, y: rally.targetCoord.y }
+    this.composeNotice = null
+    this.deliverCompose()
+  }
+
+  /** 退出一支集结（自己走，队伍还在）。 */
+  quitRally(rallyId: string): Promise<void> {
+    this.track(TRACK_EVENTS.rallyQuit, { rallyId })
+    return this.write('rallies', this.api.rallyQuit({ rallyId, troops: [], heroes: null }), ['rallies'], r => {
+      this.rallyResp = { rallies: r.rally ? this.replaceRally(r.rally) : (this.rallyResp?.rallies ?? []), serverNow: r.serverNow }
+      this.rallyNotice = '已退出集结'
+    })
+  }
+
+  /** 发起人取消整支集结（与退出分开：这一下会退掉所有人承诺的兵）。 */
+  cancelRally(rallyId: string): Promise<void> {
+    this.track(TRACK_EVENTS.rallyCancel, { rallyId })
+    return this.write('rallies', this.api.rallyCancel({ rallyId }), ['rallies'], () => {
+      this.rallyNotice = '已取消集结（大家承诺的兵已退回）'
+    })
+  }
+
+  /** 把服务端回执里的那一支替换进本地列表（退出之后它可能就不在列表里了）。 */
+  private replaceRally(updated: RallyListResp['rallies'][number]): RallyListResp['rallies'] {
+    const current = this.rallyResp?.rallies ?? []
+    const others = current.filter((it) => it.rallyId !== updated.rallyId)
+    return [...others, updated]
   }
 
   /** 组装并递一次战令视图（窗口由视图按实测高度现算，这里只递原始响应与提示行）。 */
@@ -1636,6 +1758,12 @@ export class AppRoot {
     }
     const units = marchUnitsOf(compose)
     const target = this.composeTarget
+    // 编队的目的地决定这条命令发给谁：给集结编队就发 join（承诺的兵力由服务端锁），
+    // 否则还是普通出征。两条路的入参形状一样（unitId + count），但语义完全不同
+    if (this.composeRallyId !== null) {
+      await this.confirmRallyJoin(this.composeRallyId, units)
+      return
+    }
     // 打点是"真的发出去"这一下：被 blockedReason 拦住的那些不计（它们不是出征意图）
     this.track(TRACK_EVENTS.marchSend, {
       action: 'ATTACK',

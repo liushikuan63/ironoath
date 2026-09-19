@@ -92,6 +92,12 @@ export const TRACK_EVENTS = {
    * 两者分开看才知道玩家是在收集还是在退坑。
    */
   frameWear: 'frame_wear',
+  /** 加入一支集结（V02）。承诺的兵力会被锁住，所以这是"真的投入"而不是浏览。 */
+  rallyJoin: 'rally_join',
+  /** 退出一支集结（自己走，队伍还在）。 */
+  rallyQuit: 'rally_quit',
+  /** 发起人取消整支集结（与退出分开：这一下会退掉所有人的承诺兵力）。 */
+  rallyCancel: 'rally_cancel',
   /**
    * 领一档战令奖励（B24）。 区分免费/付费 —— 两条线的领取比例是'付费线值不值'的第一手证据。
    */

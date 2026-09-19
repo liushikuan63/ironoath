@@ -78,7 +78,7 @@ import type {
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
   HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyResp, SocialEventAckReq,
   SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq, SquadMemberReq, SquadRallyReq,
-  SquadSelfReq, AllianceRallyReq, ReddotTreeResp,
+  SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp,
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import type { QuestClaimReq, QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
@@ -688,6 +688,24 @@ export class GameApi {
 
   rallyQuit(req: Omit<RallyJoinReq, 'requestId'>): Promise<NetOutcome<RallyResp>> {
     return this.mutate<RallyJoinReq, RallyResp>('/rally/quit', req)
+  }
+
+  /**
+   * GET /rally/list：我所在的小队与联盟里**进行中**的集结（面板列表）。
+   *
+   * <p>这个读口此前在客户端零调用点 —— 服务端一直有（`RallyController` 的 `GET /rally/list`），
+   * 所以玩家发起了集结，同队/同盟的人看不到它。
+   */
+  rallyList(): Promise<NetOutcome<RallyListResp>> {
+    return this.read<RallyListResp>('/rally/list')
+  }
+
+  /**
+   * POST /rally/cancel：发起人取消整支集结（与「退出」是两条路 —— 退出是成员自己走，
+   * 取消是把大家召集的这波解散掉，服务端要退掉所有人承诺的兵）。
+   */
+  rallyCancel(req: { rallyId: string }): Promise<NetOutcome<RallyResp>> {
+    return this.mutate<{ rallyId: string } & { requestId: string }, RallyResp>('/rally/cancel', req)
   }
 
   /**

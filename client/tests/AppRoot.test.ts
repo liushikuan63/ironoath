@@ -21,6 +21,7 @@ import { GameApi } from '../assets/scripts/game/session/GameApi'
 import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
 import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
+import type { RallyPanelData } from '../assets/scripts/game/session/AppRoot'
 import type { OfflineReportPopup, PanelTargets, ShopView } from '../assets/scripts/game/session/AppRoot'
 import type {
   ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
@@ -173,6 +174,34 @@ const ROUTES: Record<string, unknown> = {
       gatherFinishAt: null, serverNow: SERVER_NOW },
     distance: 24, durationSec: 60, serverNow: SERVER_NOW,
   },
+  '/rally/list': { rallies: [{
+    rallyId: 'r-1', scope: 'SQUAD', groupId: 'sq-1', initiatorId: 'P-leader',
+    targetCoord: { x: 60, y: 60 }, targetType: 'MONSTER', maxMembers: 10,
+    joinedCount: 1, totalTroops: 0, prepareUntil: SERVER_NOW + 120000,
+    departAt: SERVER_NOW + 120000, status: 'PREPARING', members: ['P-leader'],
+    heroSlots: [], serverNow: SERVER_NOW,
+  }], serverNow: SERVER_NOW },
+  '/rally/join': { rally: {
+    rallyId: 'r-1', scope: 'SQUAD', groupId: 'sq-1', initiatorId: 'P-leader',
+    targetCoord: { x: 60, y: 60 }, targetType: 'MONSTER', maxMembers: 10,
+    joinedCount: 2, totalTroops: 30, prepareUntil: SERVER_NOW + 120000,
+    departAt: SERVER_NOW + 120000, status: 'PREPARING', members: ['P-leader', 'me'],
+    heroSlots: [], serverNow: SERVER_NOW,
+  }, serverNow: SERVER_NOW },
+  '/rally/quit': { rally: {
+    rallyId: 'r-1', scope: 'SQUAD', groupId: 'sq-1', initiatorId: 'P-leader',
+    targetCoord: { x: 60, y: 60 }, targetType: 'MONSTER', maxMembers: 10,
+    joinedCount: 1, totalTroops: 0, prepareUntil: SERVER_NOW + 120000,
+    departAt: SERVER_NOW + 120000, status: 'PREPARING', members: ['P-leader'],
+    heroSlots: [], serverNow: SERVER_NOW,
+  }, serverNow: SERVER_NOW },
+  '/rally/cancel': { rally: {
+    rallyId: 'r-1', scope: 'SQUAD', groupId: 'sq-1', initiatorId: 'me',
+    targetCoord: { x: 60, y: 60 }, targetType: 'MONSTER', maxMembers: 10,
+    joinedCount: 0, totalTroops: 0, prepareUntil: SERVER_NOW + 120000,
+    departAt: SERVER_NOW + 120000, status: 'CANCELLED', members: [],
+    heroSlots: [], serverNow: SERVER_NOW,
+  }, serverNow: SERVER_NOW },
   '/activity/list': { activities: [], serverNow: SERVER_NOW, claimableCount: 0 },
   '/activity/claim': { claimed: true, state: 'RUNNING', rewards: [], serverNow: SERVER_NOW },
   '/quest/list': {
@@ -443,6 +472,8 @@ interface Harness {
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
   readonly lastShop: ShopView | null
+  /** 最近一次推给集结面板的整块数据（响应 + 我的 id + 提示行）。 */
+  readonly lastRallies: RallyPanelData | null
   /** 最近一次推给「自上次登录以来」那一屏的条目（没弹过就是 null）。 */
   readonly lastOfflineReport: OfflineReportPopup | null
   /** 汇总里点过的跳转目标（按点击顺序）。 */
@@ -527,6 +558,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastRank: RankBoardView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
+  let lastRallies: RallyPanelData | null = null
   let lastOfflineReport: OfflineReportPopup | null = null
   const offlineJumps: string[] = []
   let reddotTree: ClientReddotTree | null = null
@@ -576,6 +608,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     shop: view => {
       attached.push('shop')
       lastShop = view
+    },
+    rallies: data => {
+      lastRallies = data
     },
     offlineReport: view => {
       attached.push('offlineReport')
@@ -638,6 +673,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastShop() {
       return lastShop
+    },
+    get lastRallies() {
+      return lastRallies
     },
     get lastOfflineReport() {
       return lastOfflineReport
@@ -1786,6 +1824,49 @@ test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一
   assert.deepEqual(h.lastCompose?.compose.options.map(o => o.selected), [0, 0],
     '不自动勾选全军（裁决④(b)）')
   assert.equal(h.lastCompose?.compose.canSubmit, false)
+})
+
+test('V02-S1：集结列表递下来时带上我的 id —— 「我参没参」要用它去对服务端给的名单', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.refresh('rallies')
+  assert.equal(h.lastRallies?.source.rallies.length, 1)
+  assert.equal(h.lastRallies?.myPlayerId, h.store.getState().playerId,
+    'playerId 由编排层给（纯逻辑层拿它去对 members）')
+  assert.equal(h.lastRallies?.notice, null)
+})
+
+test('V02-S1：给集结编队后确认 → POST /rally/join 带 rallyId 与承诺的兵力，并重拉列表', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.refresh('rallies')
+  const before = h.http.countOf('/rally/join')
+  h.root.beginRallyCompose('r-1')
+  assert.equal(h.http.countOf('/rally/join'), before, '编队只是准备：确认之前不发请求')
+  assert.equal(h.lastCompose?.targetName, '集结目标')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  await h.root.confirmMarch()
+  const sent = h.http.calls.filter(c => c.path === '/rally/join').at(-1)
+  assert.equal(sent?.body.rallyId, 'r-1', '带的是那一支集结的 id')
+  assert.deepEqual(sent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }],
+    '承诺的兵力来自编队勾选（形状与出征一致）')
+  assert.equal(sent?.body.heroes, null, '武将位留给服务端按加入顺序抢，客户端不预占')
+  assert.equal(h.lastRallies?.notice, '已加入集结：承诺的兵力已锁定')
+  assert.equal(h.http.countOf('/rally/list') > 1, true, '成功之后重拉列表（人数变了）')
+})
+
+test('V02-S1：退出与取消是两条路 —— 发起人「取消」不该被当成「退出」', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.refresh('rallies')
+  await h.root.quitRally('r-1')
+  assert.equal(h.http.countOf('/rally/quit'), 1)
+  await h.root.cancelRally('r-1')
+  assert.equal(h.http.countOf('/rally/cancel'), 1)
+  assert.equal(h.http.countOf('/rally/quit'), 1, '取消走的是另一条路，不该顺带发一次退出')
+  assert.equal(h.http.calls.filter(c => c.path === '/rally/cancel').at(-1)?.body.rallyId, 'r-1')
 })
 
 test('勾选后确认 → POST /world/march 只带选中的行、坐标是目标的、requestId 是新生成的', async () => {
