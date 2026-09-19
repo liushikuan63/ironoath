@@ -49,6 +49,8 @@ import { ExpPickOverlay } from './ExpPickOverlay'
 import { AwakenPickOverlay } from './AwakenPickOverlay'
 import { SkillPickOverlay } from './SkillPickOverlay'
 import { ComposePickOverlay } from './ComposePickOverlay'
+import { RecruitPanelView } from './RecruitPanelView'
+import { GachaDisclosureView } from './GachaDisclosureView'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -312,6 +314,11 @@ export class GameBootstrap extends Component {
       // 商店不占首屏：多一个并发请求会挤那 3 秒预算，而货架不在可交互的必需项里
       if (key === 'shop') {
         void this.root?.refresh('shop')
+      }
+      // 招募同理，而且它每次打开都要重拉：卡池那一行的「还剩几次」是服务端算的，
+      // 缓存会让刚刚抽掉的那一次迟到（表现是"明明抽过了还让我抽"）
+      if (key === 'gacha') {
+        void this.root?.openGacha()
       }
       // 外观同理（B24 块③），而且它更该每次打开都拉：框的「佩戴中」是这里唯一的状态来源，
       // 缓存会让"刚刚在商店买的那一枚"迟到（看着像买了没到账）
@@ -1015,6 +1022,23 @@ export class GameBootstrap extends Component {
     node.active = false
   }
 
+  /**
+   * 合规公示那一屏（B06 §6「原文呈现」）。挂成浮层而不是导航项：它是招募页的一个链接，
+   * 而这一屏此前从未被挂载过 —— 它的组装函数原先吃配置行，客户端只有类型没有数据。
+   */
+  private mountGachaDisclosure(): void {
+    if (this.node.getChildByName('gachaDisclosure') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('gachaDisclosure')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(GachaDisclosureView)
+    node.active = false
+  }
+
   /** 本节点上挂了哪些面板，就接哪些。没挂的面板不会被假装接上（根只会少发那份请求的落地）。 */
   private targets(): PanelTargets {
     this.mountGiftPopup()
@@ -1024,6 +1048,7 @@ export class GameBootstrap extends Component {
     this.mountAwakenPickOverlay()
     this.mountSkillPickOverlay()
     this.mountComposePickOverlay()
+    this.mountGachaDisclosure()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -1047,6 +1072,8 @@ export class GameBootstrap extends Component {
     const awakenPick = this.panel(AwakenPickOverlay, 'awakenPick')
     const skillPick = this.panel(SkillPickOverlay, 'skillPick')
     const composePick = this.panel(ComposePickOverlay, 'composePick')
+    const recruit = this.panel(RecruitPanelView, 'gacha')
+    const gachaDisclosure = this.panel(GachaDisclosureView, 'gachaDisclosure')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -1105,6 +1132,20 @@ export class GameBootstrap extends Component {
       composePick.onPick = heroId => this.root?.pickComposeHero(heroId)
       composePick.onConfirm = () => { void this.root?.confirmComposePick() }
       composePick.onCancel = () => this.root?.cancelComposePick()
+    }
+    if (recruit !== null) {
+      // 打开由导航那一格驱动（`nav.onShow` 里调 `AppRoot.openGacha`）；这里只把"画"与三声"喊"接上
+      out.gacha = viewData => recruit.attach(viewData)
+      recruit.onPickPool = poolId => this.root?.selectGachaPool(poolId)
+      recruit.onDraw = count => { void this.root?.drawGacha(count) }
+      recruit.onProbability = () => { void this.root?.openGachaProbability() }
+    }
+    if (gachaDisclosure !== null) {
+      out.gachaDisclosure = disclosure => {
+        gachaDisclosure.node.active = true
+        gachaDisclosure.attach(disclosure)
+      }
+      gachaDisclosure.onClose = () => gachaDisclosure.node.active = false
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)

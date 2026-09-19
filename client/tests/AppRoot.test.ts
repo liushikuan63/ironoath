@@ -2372,6 +2372,10 @@ test('抽卡：换池后十抽不够就不发、单抽够就发一条，并回�
   assert.deepEqual(h.events.filter(e => e.name === 'gacha_draw').map(e => e.params),
     [{ poolId: 'gacha_pool_standard', count: '1' }])
   assert.equal(h.http.countOf('/gacha/pools'), poolsBefore + 1, '抽完重拉卡池（已抽次数变了）')
+  // 卡池必须**最后**重拉：`refresh` 是顺序 await 的，先重拉就会用抽之前的余额快照去画面板
+  // （表现是"刚抽掉的那 1200 金币还在"，要等下一次重画才对得上）
+  assert.equal(h.http.calls.at(-1)?.path, '/gacha/pools',
+    `抽完之后最后一次读应是卡池重拉，实际是 ${h.http.calls.at(-1)?.path}`)
   assert.equal(h.lastGacha?.resultTexts?.[0], '李劲 · 新武将（保底）',
     '抽到了什么必须写在屏上，否则玩家不知道那一下换来了什么')
 })

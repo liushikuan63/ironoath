@@ -67,6 +67,8 @@ import type { HeroComposeView } from '../hero/HeroCompose'
 import { buildHeroPanel } from '../hero/HeroPanel'
 import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
+import { buildDisclosure } from '../gacha/GachaDisclosure'
+import type { GachaDisclosure } from '../gacha/GachaDisclosure'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -256,6 +258,11 @@ export interface PanelTargets {
    * 表现层只画不判 —— 判"够不够"的数全在 `game/gacha/GachaPanel.ts`，而那些数全来自服务端。
    */
   gacha?(view: GachaPanelView): void
+  /**
+   * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
+   * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
+   */
+  gachaDisclosure?(view: GachaDisclosure): void
   /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
@@ -2022,7 +2029,9 @@ export class AppRoot {
     }
     this.gachaLast = outcome.data
     this.gachaNotice = null
-    await this.refresh('gacha', 'hero', 'bag', 'resources', 'reddot')
+    // 'gacha' 放最后：`refresh` 是**顺序** await 的，先重拉卡池就会用抽之前的余额快照去画
+    // （表现是"刚抽完那 1200 金币还在"，要等下一次重画才对得上）
+    await this.refresh('hero', 'bag', 'resources', 'reddot', 'gacha')
   }
 
   /** 抽卡面板比余额要的那两份快照。缺哪份就是真没读到，纯逻辑会写成"余额还没读到"。 */
@@ -2030,6 +2039,38 @@ export class AppRoot {
     return {
       resources: this.resourceResp?.resources ?? [],
       items: this.bagResp?.items ?? [],
+    }
+  }
+
+  /**
+   * 拉选中那个池的概率公示并交给合规那一屏（B06 §6：原文呈现，不得删减或折叠）。
+   *
+   * <p>每次点都拉而不是缓存：公示数字是"服务端此刻怎么说"，缓存到热更之后就会与
+   * 真实掉率脱节 —— 而脱节的公示是要被追责的那一份。
+   */
+  async openGachaProbability(): Promise<void> {
+    const resp = this.gachaResp
+    if (resp === null) {
+      this.rejectNeeds('gacha', '卡池还没拉回来，稍后再试')
+      return
+    }
+    const view = buildGachaPanel(resp.pools, this.gachaBalances(), this.gachaPoolId)
+    const poolId = view.selectedPoolId
+    if (poolId === null) {
+      this.rejectNeeds('gacha', '没有可公示的卡池')
+      return
+    }
+    const outcome = await this.api.gachaProbability(poolId)
+    if (outcome.kind !== 'ok') {
+      this.say('gacha', outcome)
+      return
+    }
+    // 四档之和与"恰好一种计价"那两条断言在 buildDisclosure 里，它可能抛：
+    // 抛出来就是公示不实，宁可一句错误糊在脸上，也不要把加起来 99% 的面板摆给玩家
+    try {
+      this.targets.gachaDisclosure?.(buildDisclosure(outcome.data))
+    } catch (error) {
+      this.rejectNeeds('gacha', `概率公示数据异常：${(error as Error).message}`)
     }
   }
 

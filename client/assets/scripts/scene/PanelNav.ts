@@ -28,6 +28,7 @@ import { PowerPanelView } from './PowerPanelView'
 import { ShopPanelView } from './ShopPanelView'
 import { AvatarFramePanelView } from './AvatarFramePanelView'
 import { TargetSearchView } from './TargetSearchView'
+import { RecruitPanelView } from './RecruitPanelView'
 import { QuestPanelView } from './QuestPanelView'
 import { BattlePassPanelView } from './BattlePassPanelView'
 import { MailPanelView } from './MailPanelView'
@@ -75,6 +76,8 @@ const PANELS: readonly PanelDef[] = [
   { key: 'city', label: '内城', view: CityPanelView, reddotKey: 'city' },
   { key: 'army', label: '军队', view: ArmyPanelView, reddotKey: null },
   { key: 'hero', label: '武将', view: HeroPanelView, reddotKey: null },
+  // 招募紧跟武将：抽出来的人就在隔壁那一页看 —— "抽到了什么去哪确认"只隔一次点击
+  { key: 'gacha', label: '招募', view: RecruitPanelView, reddotKey: null },
   { key: 'bag', label: '背包', view: BagPanelView, reddotKey: null },
   { key: 'stage', label: '关卡', view: StagePanelView, reddotKey: null },
   // 战报紧跟关卡：都是「打完之后回来看」的入口，且它的数据在 dev 里真的会有（打野就产生战报）。

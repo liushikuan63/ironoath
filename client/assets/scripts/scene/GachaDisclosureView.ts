@@ -51,6 +51,9 @@ export class GachaDisclosureView extends Component {
   private disclosureLabel: Label | null = null
   private panelGraphics: Graphics | null = null
 
+  /** 玩家按「关闭」时喊一声（外层可以顺手清掉选中态；本组件自己已经把节点置为未激活）。 */
+  onClose: (() => void) | null = null
+
   override onLoad(): void {
     this.buildPanel()
     if (this.pending !== null) {
@@ -123,6 +126,27 @@ export class GachaDisclosureView extends Component {
     this.disclosureLabel.overflow = Label.Overflow.RESIZE_HEIGHT
     this.disclosureLabel.node.addComponent(UITransform).setContentSize(
       new Size(PANEL_WIDTH - PADDING * 2, ROW_HEIGHT))
+
+    // 「关闭」：这一屏是从招募页点进来的浮层，没有出口就会把玩家困在一屏只读的文字里。
+    // 此前它根本没有宿主节点（组装函数吃的是配置行，运行期喂不进来），所以也没人需要关闭。
+    const close = new Node('close')
+    close.layer = this.node.layer
+    this.node.addChild(close)
+    close.addComponent(UITransform).setContentSize(new Size(160, 40))
+    close.setPosition(new Vec3(0, -view.getVisibleSize().height / 2 + 52, 0))
+    const closeGraphics = close.addComponent(Graphics)
+    closeGraphics.fillColor = COLOR_ROW
+    closeGraphics.rect(-80, -20, 160, 40)
+    closeGraphics.fill()
+    const closeLabel = this.addLabel(close, 'Caption', 0, 0, COLOR_COPPER_GOLD, 18)
+    closeLabel.string = '关闭'
+    close.on('touch-start', () => this.close(), this)
+  }
+
+  /** 收起这一屏（由外层挂成浮层时置 active=false；单测里没挂出去就只是回调）。 */
+  close(): void {
+    this.node.active = false
+    this.onClose?.()
   }
 
   private addLabel(parent: Node, name: string, x: number, y: number, color: Color, fontSize: number): Label {
@@ -226,6 +250,9 @@ export class GachaDisclosureView extends Component {
     cursor -= PADDING
 
     if (this.footerLabel !== null) {
+      // 行高必须钉成排版用的那个数：Label 默认按字体的 1.7 倍给行高（18 号 ≈ 31），
+      // 而这里按 26 算盒子 —— 不钉行高时三行字会比盒子高 15px，第一行就压到档位板的下沿
+      this.footerLabel.lineHeight = FOOTER_LINE_HEIGHT
       cursor -= footerHeight / 2
       this.footerLabel.node.setPosition(new Vec3(0, cursor, 0))
       this.footerLabel.node.getComponent(UITransform)?.setContentSize(
@@ -235,6 +262,9 @@ export class GachaDisclosureView extends Component {
     }
 
     if (this.disclosureLabel !== null) {
+      // 与 estimateTextHeight 的口径钉成同一个行高（16 号按 ceil(16×1.4)=23）：
+      // 不钉时 Label 自己按 1.7 倍排（≈27），算出来的盒子比实际内容矮，原文最后一行会溢出面板
+      this.disclosureLabel.lineHeight = Math.ceil(16 * 1.4)
       this.disclosureLabel.node.getComponent(UITransform)?.setContentSize(
         new Size(PANEL_WIDTH - PADDING * 2, disclosureHeight))
       cursor -= disclosureHeight / 2

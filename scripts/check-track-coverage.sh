@@ -88,6 +88,8 @@ const SKIP = new Set([
   // 开面板是去看有什么池，换选中是同一意图的中间态（都不花钱、都不改存档）
   "openGacha",
   "selectGachaPool",
+  // 概率公示是一次读（B06 §6 的合规屏），不是玩家意图；要量"有没有人看公示"是独立的埋点设计
+  "openGachaProbability",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")
