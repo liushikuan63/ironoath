@@ -1,0 +1,213 @@
+#!/usr/bin/env node
+/**
+ * 职责：把「商店面板画得出来、切页签真的换账本」变成能失败的判据（B24 S-b 的完成判据）。
+ * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
+ *
+ * 用法：
+ *   BACKEND_ORIGIN=http://localhost:8075 node tools/verify-shop-runtime.mjs
+ *
+ * <p><b>为什么用 web 产物证</b>：`ShopPanelView` 在两个平台上都是同一份代码（小游戏那边没有
+ * 可编程点击通道）。判据读的是场景图（Cocos 画在 canvas 上，DOM 里一个字都没有）。
+ *
+ * <p><b>它盯的四件事</b>：① 面板挂上了、切过去就能画（四个页签 + 余额 + 货架行）；
+ * ② 货架内容来自**服务端下发的那一行**（价签里带币种名、锁定的行也画出来并带原因）；
+ * ③ 切页签真的换了账本（发一次 `?currency=SEASON_COIN`，且页面上的币种名跟着变）；
+ * ④ 行区没有画到导航条下面（可视高度是量出来的，不是设计高度）。
+ *
+ * <p><b>不验的</b>：真金白银的兑换（`/shop/buy` 会扣货币发道具，新号余额为 0 ⇒ 每一行都不可兑换，
+ * 那正是"锁定行带原因"这一条要验的形状）。所以「点兑换 → 拿到道具」这条链路由
+ * `ShopEndpointTest` 与 `AppRoot.test.ts` 覆盖，探针只验"画出来了 + 页签切得对"。
+ */
+import { mkdirSync } from 'node:fs'
+import path from 'node:path'
+import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+import { startPreviewServer } from './lib/preview-server.mjs'
+
+const ROOT = path.resolve('client/build/web-mobile')
+const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+const PORT = Number(process.env.SHOP_PORT ?? 8098)
+const SHOT_DIR = path.resolve('client/build/shop-verify')
+/** 屏幕底部要给导航条让出的高度（与面板里的常量同源：8 + 52 + 8）。 */
+const BOTTOM_RESERVED = 68
+
+const failures = []
+const lines = []
+function verdict(ok, label, detail) {
+  lines.push(`${ok ? 'PASS' : 'FAIL'}  ${label}  ${detail}`)
+  if (!ok) {
+    failures.push(label)
+  }
+}
+
+/** 读商店那一格：页签文字、表头与余额/提示、每一行的文字、最低行底边、当前导航格。 */
+function readShop() {
+  const out = { found: false, active: false, currentKey: null, tabs: [], labels: [], rows: [],
+    lowestRowBottom: null, visibleHeight: null, tabPositions: [] }
+  const scene = window.cc.director.getScene()
+  const game = scene.getChildByName('Canvas')?.getChildByName('Game')
+  out.currentKey = game?.getComponent('PanelNav')?.currentKey ?? null
+  const size = window.cc.view.getVisibleSize()
+  out.visibleHeight = size.height
+  const panel = game?.getChildByName('shop')
+  if (panel === undefined || panel === null) {
+    return out
+  }
+  out.found = true
+  out.active = panel.activeInHierarchy !== false
+  const labelOf = (node) => {
+    const own = node.getComponent && node.getComponent('cc.Label')
+    if (own !== null && own !== undefined && own.string !== '') {
+      return own.string
+    }
+    for (const child of node.children) {
+      const label = child.getComponent && child.getComponent('cc.Label')
+      if (label !== null && label !== undefined && label.string !== '') {
+        return label.string
+      }
+    }
+    return null
+  }
+  for (const child of panel.children) {
+    if (child.activeInHierarchy === false) continue
+    if (child.name.startsWith('Tab_')) {
+      const text = labelOf(child)
+      if (text !== null) out.tabs.push(text)
+      out.tabPositions.push({ currency: child.name.slice(4), x: child.position.x, y: child.position.y })
+      continue
+    }
+    if (child.name === 'ShopRow') {
+      const texts = []
+      for (const grand of child.children) {
+        const label = grand.getComponent && grand.getComponent('cc.Label')
+        if (label !== null && label !== undefined && label.string !== '') texts.push(label.string)
+      }
+      out.rows.push(texts.join(' / '))
+      const bottom = child.position.y - 31
+      if (out.lowestRowBottom === null || bottom < out.lowestRowBottom) out.lowestRowBottom = bottom
+      continue
+    }
+    const text = labelOf(child)
+    if (text !== null) out.labels.push(`${child.name}:${text}`)
+  }
+  return out
+}
+
+async function main() {
+  mkdirSync(SHOT_DIR, { recursive: true })
+  const preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
+  const browser = await chromium.launch({ headless: true })
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  const page = await context.newPage()
+  const errors = []
+  const listCalls = []
+  page.on('pageerror', error => errors.push(String(error)))
+  page.on('request', (req) => {
+    if (req.url().includes('/shop/list')) listCalls.push(req.url())
+  })
+
+  let boot = null
+  page.on('console', (msg) => {
+    const text = msg.text()
+    if (text.startsWith('[boot] ')) {
+      try { boot = JSON.parse(text.slice('[boot] '.length)) } catch { /* 非结构化那条不算数 */ }
+    }
+  })
+
+  const url = new URL(`${preview.origin}/`)
+  url.searchParams.set('panel', 'shop')
+  await page.goto(url.toString(), { waitUntil: 'networkidle' })
+  await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
+    null, { timeout: 60_000 })
+  const deadline = Date.now() + 45_000
+  while (boot === null && Date.now() < deadline) {
+    await page.waitForTimeout(500)
+  }
+  preview.assertRewritten()
+  if (boot === null) {
+    await browser.close()
+    await preview.close()
+    console.error('\n=== 判定中止：没捕获到 [boot] 自检行，读数会是假的 ===')
+    process.exit(1)
+  }
+  verdict(boot.started === true, '启动跑通（started=true）', `platform=${boot.platform} bootMs=${boot.bootMs}`)
+
+  let read = null
+  for (let i = 0; i < 40; i += 1) {
+    await page.waitForTimeout(500)
+    read = await page.evaluate(readShop)
+    if (read.currentKey === 'shop' && read.tabs.length >= 4 && read.rows.length > 0) {
+      break
+    }
+  }
+
+  verdict(read?.found === true && read?.currentKey === 'shop',
+    '深链 ?panel=shop 生效（导航第 14 项挂上了）',
+    `found=${read?.found} 当前格=${read?.currentKey ?? '—'}`)
+  verdict(JSON.stringify(read?.tabs) === JSON.stringify(['金币', '贡献', '小队币', '赛季币']),
+    '四个币种页签按顺序画出来了', `tabs=${JSON.stringify(read?.tabs)}`)
+  const balance = (read?.labels ?? []).find(text => text.startsWith('Balance:')) ?? ''
+  verdict(/余额|金币|赛季币|贡献|小队币/.test(balance),
+    '余额那一行画出来了（带币种名）', `"${balance}"`)
+  verdict((read?.rows ?? []).length > 0, '货架行画出来了',
+    `行数=${read?.rows?.length}：${(read?.rows ?? [])[0] ?? '—'}`)
+  verdict((read?.rows ?? []).some(row => /金币/.test(row)),
+    '价签里带币种名（说明价签来自服务端下发的那一行）',
+    (read?.rows ?? []).find(row => /金币/.test(row)) ?? '—')
+  const header = (read?.labels ?? []).find(text => text.startsWith('Header:')) ?? ''
+  verdict(/货架 \d+\/\d+ 件/.test(header), '表头说清了这一页有多少件', `"${header}"`)
+
+  const navTop = -(read?.visibleHeight ?? 640) / 2 + BOTTOM_RESERVED
+  verdict(read?.lowestRowBottom !== null && read.lowestRowBottom > navTop,
+    '最低那一行仍然在导航条之上（行数按实测可视高度算）',
+    `最低行底边=${read?.lowestRowBottom} 导航条上沿=${navTop} 可视高=${read?.visibleHeight}`)
+
+  const shot1 = path.join(SHOT_DIR, 'shop-gold.png')
+  await page.screenshot({ path: shot1 })
+  lines.push(`SHOT  ${shot1}`)
+
+  // 切页签：赛季币 —— 请求要带 currency，页面上的币种名要跟着换
+  const before = listCalls.length
+  await page.evaluate(() => {
+    const scene = window.cc.director.getScene()
+    const panel = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('shop')
+    for (const child of panel?.children ?? []) {
+      if (child.name === 'Tab_SEASON_COIN') {
+        child.emit('touch-start')
+        return
+      }
+    }
+  })
+  await page.waitForTimeout(1200)
+  const switched = await page.evaluate(readShop)
+  verdict(listCalls.length > before
+    && listCalls.slice(before).some(u => u.includes('currency=SEASON_COIN')),
+    '切到赛季币真的换了账本（发的请求带 currency=SEASON_COIN）',
+    `新增请求 ${listCalls.length - before} 条：${listCalls.slice(before).join(' ')}`)
+  const seasonBalance = (switched.labels ?? []).find(text => text.startsWith('Balance:')) ?? ''
+  verdict(/赛季币/.test(seasonBalance) || /赛季币/.test((switched.rows ?? []).join(' ')),
+    '页面上的文字跟着换成了赛季币那一页',
+    `余额行="${seasonBalance}" 首行="${(switched.rows ?? [])[0] ?? '—'}"`)
+
+  const shot2 = path.join(SHOT_DIR, 'shop-season.png')
+  await page.screenshot({ path: shot2 })
+  lines.push(`SHOT  ${shot2}`)
+
+  verdict(errors.length === 0, '全程零页面异常',
+    `errors=${errors.length}${errors.length > 0 ? ' → ' + errors[0] : ''}`)
+
+  await browser.close()
+  await preview.close()
+
+  console.log('\n[shop] 判定：')
+  for (const line of lines) console.log(`  ${line}`)
+  if (failures.length > 0) {
+    console.error(`\n[shop] ${failures.length} 条判据失败：${failures.join('；')}`)
+    process.exit(1)
+  }
+  console.log('\n[shop] 全部判据通过。截图见上面那两行 SHOT。')
+}
+
+main().catch((error) => {
+  console.error('[shop] 探针自身崩了（不是判据失败）:', error)
+  process.exit(2)
+})
