@@ -369,7 +369,9 @@ const overlap = await page.evaluate(() => {
   // 高度分堆：板子画的是 18 高，若这里冒出 50（文字盒）或 100（池默认）就说明量的又不是画出来的那块
   // —— #271/#272/#275 三次都栽在这条上，所以把分堆打在输出里当自检。
   const heights = {}
-  for (const node of map.drawnEntities.values()) {
+  // 两个池都要扫：藏牌口径现在是跨实体与行军一起判的，只扫实体就等于"门看不见行军牌"。
+  const markers = [...map.drawnEntities.values(), ...map.drawnMarches.values()]
+  for (const node of markers) {
     /**
      * 量 `CaptionPlate`（板子本体），不量 `Caption`：后者挂着 `Label`，它的 `UITransform`
      * 每帧被组件按文字尺寸重写（实测 24×50），量到的不是玩家看见的那块牌。
@@ -405,7 +407,7 @@ const overlap = await page.evaluate(() => {
 })
 await browser.close()
 await preview.close()
-console.log(`[world] 放大档在屏实体标签 ${overlap.boxes} 个，按盒子尺寸分堆 ${JSON.stringify(overlap.heights)}`)
+console.log(`[world] 放大档在屏名牌（实体 + 行军）${overlap.boxes} 张，按盒子尺寸分堆 ${JSON.stringify(overlap.heights)}`)
 console.log(`[world] 两两压叠 ${overlap.pairs} 对`
   + `${overlap.examples.length > 0 ? `：${overlap.examples.join('；')}` : ''}`)
 /**

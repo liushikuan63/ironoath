@@ -723,8 +723,13 @@ export class WorldMap extends Component {
     this.mapLayer.setPosition(new Vec3(-(cameraX + 0.5) * cell, -(cameraY + 0.5) * cell, 0))
 
     this.renderTiles(frame.tiles, model.chunkSize, cell)
+    // 候选表每帧在实体与行军两侧**之前**清空（放在任何一侧里都会漏：那一侧提前 return 时，
+    // 上一帧的 refs 会被当成这一帧的候选重画一遍）
+    this.pendingPlates.length = 0
     this.renderEntities(frame.tiles, cell, zoom)
     this.renderMarches(frame.marches, cell)
+    // 藏牌要**跨两个池**一起判：行军牌画在实体牌之后，各判各的就会留下"自家队伍的牌压在资源牌上"
+    this.applyCaptions()
     this.updateSelection()
     this.renderHud(frame)
     this.renderMarchPanel(frame.marches)
@@ -792,18 +797,6 @@ export class WorldMap extends Component {
       return
     }
     const seen = new Set<string>()
-    /**
-     * 两趟：先把这一帧要画的实体连名牌盒子一起摆好，再决定哪几张牌写字。
-     * 缩放 1 时一格 30px、一张牌最窄 40px，横向相邻两格**放不下两张牌**（实测 4 对压叠），
-     * 所以藏牌的口径走 `pickVisibleCaptions`（引擎无关、可单测），不在这里判。
-     */
-    const placed: readonly {
-      readonly key: string
-      readonly node: Node
-      readonly type: WorldEntityType
-      readonly size: number
-      readonly caption: string
-    }[] = []
     for (const tile of tiles) {
       if (tile.fogged) {
         // 迷雾块的实体服务端本来就不下发，这里再挡一道：万一哪天下发了也不能画出来
@@ -817,22 +810,45 @@ export class WorldMap extends Component {
         const y = (entity.y + 0.5) * cell
         node.setPosition(new Vec3(x, y, 0))
         const size = entitySize(entity.type, cell)
-        placed.push({
-          key, node, type: entity.type, size, caption: zoom > 0 ? entityCaption(entity) : '',
+        this.drawBody(node, entity.type, size, entityColor(entity.type))
+        this.pendingPlates.push({
+          refs: this.refs.get(node), key, type: entity.type, size, x, y,
+          caption: zoom > 0 ? entityCaption(entity) : '',
         })
       }
     }
-    const visible = pickVisibleCaptions(placed.filter((entry) => entry.caption !== '').map((entry) => ({
+    this.recycle(pool, this.drawnEntities, seen)
+  }
+
+  /**
+   * 一帧里所有名牌的候选：实体与行军**合在一起判**才藏得干净 ——
+   * 行军牌画在实体牌之后，各判各的就留下"自家队伍的 `3分12秒` 压在资源牌上"这种形状。
+   */
+  private readonly pendingPlates: {
+    refs: MarkerRefs | undefined
+    key: string
+    type: WorldEntityType
+    size: number
+    x: number
+    y: number
+    caption: string
+  }[] = []
+
+  /** 藏牌口径在 `game/world/WorldLabels.ts`（引擎无关、可单测），这里只负责"按结论画或不画"。 */
+  private applyCaptions(): void {
+    const withCaption = this.pendingPlates.filter((entry) => entry.caption !== '')
+    const visible = pickVisibleCaptions(withCaption.map((entry) => ({
       key: entry.key,
       type: entry.type,
-      box: captionBox(entry.node.position.x, entry.node.position.y, entry.size, entry.caption),
+      box: captionBox(entry.x, entry.y, entry.size, entry.caption),
       pinned: entry.key === this.selectedKey,
     })))
-    for (const entry of placed) {
-      this.drawMarker(entry.node, entry.type, entry.size, entityColor(entry.type),
-        visible.has(entry.key) ? entry.caption : '')
+    for (const entry of this.pendingPlates) {
+      if (entry.refs === undefined) {
+        continue
+      }
+      this.drawCaptionPlate(entry.refs, visible.has(entry.key) ? entry.caption : '', entry.size)
     }
-    this.recycle(pool, this.drawnEntities, seen)
   }
 
   private renderMarches(marches: readonly MarchRender[], cell: number): void {
@@ -866,7 +882,14 @@ export class WorldMap extends Component {
         this.flash.delete(march.marchId)
       }
       const color = remaining > 0 ? COLOR_CORRECTED : COLOR_MARCH
-      this.drawMarker(node, 'MARCH', cell * MARCH_SIZE_RATIO, color, formatRemaining(march.remainingMs))
+      const size = cell * MARCH_SIZE_RATIO
+      const x = (march.x + 0.5) * cell
+      const y = (march.y + 0.5) * cell
+      this.drawBody(node, 'MARCH', size, color)
+      this.pendingPlates.push({
+        refs: this.refs.get(node), key: `MARCH:${march.marchId}`, type: 'MARCH', size, x, y,
+        caption: formatRemaining(march.remainingMs),
+      })
     }
         for (const marchId of Array.from(this.flash.keys())) {
       if (!seen.has(marchId)) {
@@ -953,7 +976,8 @@ export class WorldMap extends Component {
     }
   }
 
-  private drawMarker(node: Node, type: WorldEntityType, size: number, color: Color, caption: string): void {
+  /** 只画图标那一块。名牌不在这里画 —— 它要等一整帧的候选凑齐后由 {@link applyCaptions} 统一判。 */
+  private drawBody(node: Node, type: WorldEntityType, size: number, color: Color): void {
     const refs = this.refs.get(node)
     if (refs === undefined) {
       return
@@ -963,7 +987,6 @@ export class WorldMap extends Component {
     if (art !== null && applySimpleSprite(refs.spriteNode, art, size, size)) {
       refs.spriteNode.active = true
       refs.graphicsNode.active = false
-      this.drawCaptionPlate(refs, caption, size)
       return
     }
     refs.spriteNode.active = false
@@ -979,7 +1002,6 @@ export class WorldMap extends Component {
       graphics.roundRect(-size / 2, -size / 2, size, size, size / 4)
     }
     graphics.fill()
-    this.drawCaptionPlate(refs, caption, size)
   }
 
   /**
