@@ -11,6 +11,7 @@
 #       + 客户端不得对迭代器做 spread（Cocos 的转译不展开迭代器，而单测走 tsc 会真展开 ⇒ 只在真机炸）。
 #       + 服务端不得出现 @Scheduled（惰性驱动是本仓库的时间不变量，B00 陷阱 2）。
 #       + 玩家可见文案禁工程黑话（这类字符串没有功能影响，只有玩家会读到 —— 见 #217）。
+#       + 图标在背包显示尺寸 26px 下两两可辨（母版一眼能分的两张图缩到 26px 可能完全同形 —— 见 #228）。
 #       + 微信小游戏产物（方向必须横屏；release 首包必须 ≤ 预算；没有产物则跳过）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -32,6 +33,7 @@ bash scripts/check-config-consumers.sh
 bash scripts/check-guide-no-copy.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-player-copy-jargon.sh
+bash scripts/check-icon-legibility.sh
 bash scripts/check-no-scheduled.sh
 bash scripts/check-rank-payload.sh
 bash scripts/check-wechat-artifact.sh
