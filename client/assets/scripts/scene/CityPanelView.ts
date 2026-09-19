@@ -21,8 +21,8 @@ import {
 } from './ArtCatalog'
 import { PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
-import { DISTRICT_TINT_RGB, sceneAnchorAt } from '../game/city/CitySceneAnchors'
-import type { SceneDistrict } from '../game/city/CitySceneAnchors'
+import { DISTRICT_TINT_RGB, projectSceneLayout } from '../game/city/CitySceneAnchors'
+import type { ProjectedPlate, SceneDistrict } from '../game/city/CitySceneAnchors'
 
 const { ccclass } = _decorator
 
@@ -55,6 +55,14 @@ const CELL_GAP = 4
 const CONTENT_WIDTH = CITY_GRID_WIDTH * CELL_WIDTH + (CITY_GRID_WIDTH - 1) * CELL_GAP
 const GRID_HEIGHT = CITY_GRID_HEIGHT * CELL_HEIGHT + (CITY_GRID_HEIGHT - 1) * CELL_GAP
 /**
+ * 36 格地皮的**落点**：由 A16 的锚点表等比投影进这块内容区，不再是均匀棋盘。
+ *
+ * <p>内容区尺寸仍按"6×6 每格 86×46"算 —— 那是卡片留给这一层的框，不是格子的排法。
+ * 投影本身在引擎无关层（`CitySceneAnchors.projectSceneLayout`），
+ * 判据（全在框内 / 互不重叠 / 不成棋盘）在 `tests/CitySceneProjection.test.ts`。
+ */
+const SCENE_LAYOUT = projectSceneLayout(CONTENT_WIDTH, GRID_HEIGHT, 6)
+/**
  * 面板框的四角尺寸：**切分几何的唯一真源是 `ui/generated/ui/panel-kingdom-v1.png.meta` 的 border***，
  * 这里的常量只是把它交给布局用（两者由 `tests/ArtFamilies.test.ts` 对账，不一致就红）。
  * 九宫格只固定四角，所以卡片里任何内容（标题、资源行、格子列、收割按钮）都得让开这一圈，
@@ -79,9 +87,9 @@ interface GridTileRefs {
   readonly node: Node
   readonly graphics: Graphics
   readonly icon: Node
-  readonly nameLabel: Label
   readonly levelLabel: Label
-  readonly statusLabel: Label
+  /** 这一格投影后的落点与尺寸；视图照抄，不再自己算坐标。 */
+  readonly plate: ProjectedPlate
 }
 
 @ccclass('CityPanelView')
@@ -237,37 +245,35 @@ export class CityPanelView extends Component {
     grid.addComponent(UITransform).setContentSize(new Size(CONTENT_WIDTH, GRID_HEIGHT))
     grid.setPosition(new Vec3(0, CARD_HEIGHT / 2 - PADDING - HEADER_HEIGHT - GRID_HEIGHT / 2, 0))
     this.buildGround(grid)
-    for (let index = 0; index < CITY_GRID_WIDTH * CITY_GRID_HEIGHT; index++) {
+    // 按格位排序后再挂：Cocos 按子节点次序绘制，靠城门（y 大）的格子要后画才压得住前面的
+    const ordered = [...SCENE_LAYOUT.plates]
+      .sort((a, b) => (a.gridY * CITY_GRID_WIDTH + a.gridX) - (b.gridY * CITY_GRID_WIDTH + b.gridX))
+    for (const plate of ordered) {
+      const index = plate.gridY * CITY_GRID_WIDTH + plate.gridX
       const tile = new Node(`Grid-${index}`)
       tile.layer = grid.layer
       grid.addChild(tile)
-      const column = index % CITY_GRID_WIDTH
-      const rowFromTop = Math.floor(index / CITY_GRID_WIDTH)
-      tile.setPosition(new Vec3(
-        -CONTENT_WIDTH / 2 + CELL_WIDTH / 2 + column * (CELL_WIDTH + CELL_GAP),
-        GRID_HEIGHT / 2 - CELL_HEIGHT / 2 - rowFromTop * (CELL_HEIGHT + CELL_GAP),
-        0,
-      ))
-      tile.addComponent(UITransform).setContentSize(new Size(CELL_WIDTH, CELL_HEIGHT))
+      tile.setPosition(new Vec3(plate.x, plate.y, 0))
+      tile.addComponent(UITransform).setContentSize(new Size(plate.width, plate.height))
       const graphics = tile.addComponent(Graphics)
       const icon = new Node('BuildingIcon')
       icon.layer = tile.layer
       tile.addChild(icon)
-      icon.setPosition(new Vec3(-23, 0, 0))
-      icon.addComponent(UITransform).setContentSize(new Size(32, 32))
-      const nameLabel = this.addLabel(tile, 'Name', 17, 10, COLOR_TEXT, 10)
-      const levelLabel = this.addLabel(tile, 'Level', 17, -5, COLOR_TEXT_DIM, 10)
-      const statusLabel = this.addLabel(tile, 'Status', 17, -17, COLOR_TEXT_DIM, 9)
-      for (const label of [nameLabel, levelLabel, statusLabel]) {
-        label.node.getComponent(UITransform)?.setContentSize(new Size(50, 14))
-        label.overflow = Label.Overflow.SHRINK
-      }
-      this.gridTiles.push({ node: tile, graphics, icon, nameLabel, levelLabel, statusLabel })
+      // 图标**底边贴在脚印下沿**、向上长出格子 —— 等距城景里建筑是"立在地上"的，
+      // 居中塞进脚印会把屋顶压扁。压叠由上面的绘制次序兜住。
+      icon.setPosition(new Vec3(0, -plate.height / 2, 0))
+      const iconBox = icon.addComponent(UITransform)
+      iconBox.setAnchorPoint(0.5, 0)
+      iconBox.setContentSize(new Size(plate.width, plate.width))
+      const levelLabel = this.addLabel(tile, 'Level', 0, 0, COLOR_TEXT_DIM, 10)
+      levelLabel.node.getComponent(UITransform)?.setContentSize(new Size(20, 14))
+      levelLabel.overflow = Label.Overflow.SHRINK
+      this.gridTiles.push({ node: tile, graphics, icon, levelLabel, plate })
     }
   }
 
   /**
-   * 棋盘地基：同类 SLG 的城界语言 —— 先有"地皮"，建筑才是"盖在上面"。
+   * 城界地基：同类 SLG 的城界语言 —— 先有"地皮"，建筑才是"盖在上面"。
    * 之前格子直接浮在面板底色上，读起来像表格而不像一座城。
    */
   private buildGround(grid: Node): void {
@@ -276,19 +282,12 @@ export class CityPanelView extends Component {
     grid.addChild(ground)
     ground.addComponent(UITransform)
     const graphics = ground.addComponent(Graphics)
-    const cellW = CELL_WIDTH + CELL_GAP
-    const cellH = CELL_HEIGHT + CELL_GAP
-    for (let row = 0; row < CITY_GRID_HEIGHT; row++) {
-      for (let column = 0; column < CITY_GRID_WIDTH; column++) {
-        const x = -CONTENT_WIDTH / 2 + column * cellW
-        const y = GRID_HEIGHT / 2 - (row + 1) * cellH
-        // 地皮颜色按**所在区**给，不再按奇偶交替：奇偶交替就是棋盘，
-        // 而规格 §3.3 明令"不允许把 36 个锚点仍均匀排成棋盘，再称为完成城景化"。
-        graphics.fillColor = GROUND_BY_DISTRICT[
-          sceneAnchorAt(column, row)?.district ?? 'wall']
-        graphics.rect(x, y, cellW, cellH)
-        graphics.fill()
-      }
+    for (const plate of SCENE_LAYOUT.plates) {
+      // 地皮颜色按**所在区**给、落点按**锚点投影**给：按奇偶交替就是棋盘，
+      // 而规格 §3.3 明令"不允许把 36 个锚点仍均匀排成棋盘，再称为完成城景化"。
+      graphics.fillColor = GROUND_BY_DISTRICT[plate.district]
+      graphics.rect(plate.x - plate.width / 2, plate.y - plate.height / 2, plate.width, plate.height)
+      graphics.fill()
     }
     graphics.strokeColor = new Color(120, 92, 40, 120)
     graphics.lineWidth = 2
@@ -430,15 +429,17 @@ export class CityPanelView extends Component {
   }
 
   private renderGrid(grid: CityGrid): void {
-    this.gridTiles.forEach((tile, index) => {
+    this.gridTiles.forEach((tile) => {
+      // 按格位取格子，不按数组下标：下标一旦和锚点表的顺序耦合，改投影就会改玩法
+      const index = tile.plate.gridY * CITY_GRID_WIDTH + tile.plate.gridX
       const row = grid.cells[index] ?? null
       tile.node.off('touch-start')
       this.paintTile(tile, row)
       if (row === null) {
         const panel = this.panel
         if (panel !== null && panel.buildOptions.length > 0) {
-          const gridX = index % CITY_GRID_WIDTH
-          const gridY = Math.floor(index / CITY_GRID_WIDTH)
+          const gridX = tile.plate.gridX
+          const gridY = tile.plate.gridY
           tile.node.on('touch-start', (_event: EventTouch) => {
             this.openBuildPicker(gridX, gridY)
           }, this)
@@ -467,10 +468,11 @@ export class CityPanelView extends Component {
     const selected = row !== null && row.id === this.selectedId
     const graphics = tile.graphics
     graphics.clear()
-    const left = -CELL_WIDTH / 2 + 2
-    const bottom = -CELL_HEIGHT / 2 + 2
-    const width = CELL_WIDTH - 4
-    const height = CELL_HEIGHT - 4
+    const plate = tile.plate
+    const left = -plate.width / 2 + 1
+    const bottom = -plate.height / 2 + 1
+    const width = plate.width - 2
+    const height = plate.height - 2
     if (row === null) {
       // 空地：虚线框 + 中央加号。同类 SLG 一眼可读的"这里能盖东西"；
       // 之前是灰块写着「空地」，玩家要读字才知道那是可建造位
@@ -501,9 +503,7 @@ export class CityPanelView extends Component {
       graphics.moveTo(0, -6)
       graphics.lineTo(0, 6)
       graphics.stroke()
-      tile.nameLabel.string = ''
       tile.levelLabel.string = ''
-      tile.statusLabel.string = ''
       tile.icon.active = false
       return
     }
@@ -524,8 +524,8 @@ export class CityPanelView extends Component {
     graphics.stroke()
 
     // 等级圆徽：右上角小铜圈里的数字，同类 SLG 的等级通用落位
-    const badgeX = CELL_WIDTH / 2 - 12
-    const badgeY = CELL_HEIGHT / 2 - 11
+    const badgeX = plate.width / 2 - 10
+    const badgeY = plate.height / 2 - 9
     graphics.fillColor = new Color(16, 13, 11, 235)
     graphics.circle(badgeX, badgeY, 9)
     graphics.fill()
@@ -538,22 +538,29 @@ export class CityPanelView extends Component {
     tile.levelLabel.node.setPosition(new Vec3(badgeX, badgeY, 0))
     tile.levelLabel.getComponent(UITransform)?.setContentSize(new Size(20, 14))
 
-    tile.nameLabel.string = row.name
-    tile.statusLabel.string = tileStatus(row)
-    tile.nameLabel.color = COLOR_TEXT
-    tile.statusLabel.color = row?.paused ? COLOR_WARNING
-      : row?.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-    const iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), 30, 30)
+    // 暂停没有文字可写了（名字与状态都收进下面的选择栏），所以给它一枚实心琥珀点。
+    // 少这一个记号就等于"暂停与升级中在城景里长得一样"，而玩家下一步要做的两件事不同。
+    if (row.paused) {
+      graphics.fillColor = COLOR_WARNING
+      graphics.circle(badgeX - 22, badgeY, 4)
+      graphics.fill()
+    }
+
+    // 名字与状态不再挤在格子里：脚印投影后只有 53~89 × 24~45，塞三行字必然糊成一团，
+    // 而这两项**下面的选择栏本来就有的**（selectedTitle / selectedStatus）。
+    // 格子上留下的是同类 SLG 一眼可读的三件事：建筑长什么样、几级、要不要处理。
+    const iconSide = Math.max(26, plate.width * 0.92)
+    const iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), iconSide, iconSide)
     tile.icon.active = iconVisible
 
-    if (row?.upgrading) {
+    if (row.upgrading) {
       const ratio = row.collectable ? 1 : Math.min(1, Math.max(0, Number.parseInt(row.progressText ?? '0', 10) / 100))
-      const barWidth = CELL_WIDTH - 16
+      const barWidth = plate.width - 10
       graphics.fillColor = COLOR_PANEL
-      graphics.rect(-barWidth / 2, -CELL_HEIGHT / 2 + 4, barWidth, 3)
+      graphics.rect(-barWidth / 2, -plate.height / 2 + 3, barWidth, 3)
       graphics.fill()
       graphics.fillColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-      graphics.rect(-barWidth / 2, -CELL_HEIGHT / 2 + 4, barWidth * ratio, 3)
+      graphics.rect(-barWidth / 2, -plate.height / 2 + 3, barWidth * ratio, 3)
       graphics.fill()
     }
   }
@@ -633,19 +640,6 @@ export class CityPanelView extends Component {
     this.messageLabel.string = text
     this.messageLabel.color = color
   }
-}
-
-function tileStatus(row: BuildingRow): string {
-  if (row.collectable) {
-    return '可收割'
-  }
-  if (row.upgrading) {
-    return row.progressText === null ? '升级中' : `升级 ${row.progressText}`
-  }
-  if (row.paused) {
-    return '已暂停'
-  }
-  return '空闲'
 }
 
 function selectionStatus(row: BuildingRow): string {

@@ -64,6 +64,35 @@ await page.goto(url.toString(), { waitUntil: 'networkidle' })
 await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
 await page.waitForTimeout(2000)
 
+/**
+ * 点一格"上面有建筑的地皮"。名字与状态已从格子里收进下面的选择栏（脚印投影后只有
+ * 53~89 × 24~45，塞三行字必糊），所以显示名的正向断言**必须先选中一格**才成立。
+ *
+ * <p>为什么走 `node.emit('touch-start')` 而不是 `page.mouse.click`：后者要把 UI 世界坐标
+ * 换算成 canvas 像素，遇到 letterbox 就点偏 —— 而"点偏"的读数与"没接线"长得一模一样。
+ * emit 直接打视图自己注册的那个监听器，测的正是"格子被点到 → 选择栏写出名字"这条链路。
+ */
+const tapped = await page.evaluate((mainIndex) => {
+  const scene = window.cc.director.getScene()
+  let hit = null
+  const visit = (n) => {
+    if (hit !== null) return
+    if (n.name === `Grid-${mainIndex}`) { hit = n; return }
+    for (const c of n.children) visit(c)
+  }
+  visit(scene)
+  if (hit === null) return false
+  hit.emit('touch-start', null)
+  return true
+}, 3 * 6 + 3)
+if (!tapped) {
+  console.error('[city-grid][前置] 找不到中心格 Grid-21 —— 主城不在 (3,3) 了，本判据的落点假设失效')
+  await browser.close()
+  await preview.close()
+  process.exit(2)
+}
+await page.waitForTimeout(300)
+
 const probe = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas')?.getChildByName('Game') ?? null
@@ -77,16 +106,20 @@ const probe = await page.evaluate(() => {
   guide.active = false
   let ground = null
   let tiles = 0
+  const positions = []
   const names = []
   const visit = (n) => {
     if (n.name === 'Ground') ground = n
-    if (/^Grid-\d+$/.test(n.name)) tiles += 1
+    if (/^Grid-\d+$/.test(n.name)) {
+      tiles += 1
+      positions.push([n.position.x, n.position.y])
+    }
     const label = n.getComponent('cc.Label')
     if (label !== null && label.string !== '') names.push(label.string)
     for (const c of n.children) visit(c)
   }
   visit(scene)
-  return { ok: true, groundFound: ground !== null, tiles, labels: names }
+  return { ok: true, groundFound: ground !== null, tiles, positions, labels: names }
 })
 if (!probe.ok) {
   console.error(`[city-grid][前置] ${probe.why}`)
@@ -126,7 +159,7 @@ console.log(`[city-grid] 格子节点 ${probe.tiles} 个，引导层已摘除`)
  * ④ 一条非 ASCII 文本都没有 ⇒ 面板没渲染，判据走不到，退 2 不算绿。
  */
 const labels = probe.labels
-const undefinedTokens = labels.filter((s) => /^(undefined|null)$/.test(s))
+const undefinedTokens = labels.filter((s) => s.includes('undefined') || s.includes('null'))
 const asciiTokens = labels.filter((s) => /^[A-Za-z0-9_ ]+$/.test(s) && s.includes('_'))
 // 非 ASCII 即"有中文"—— 用范围而不是码点区间，免得脚本编码一换就静默失配
 const hanTokens = labels.filter((s) => /[^\x00-\x7F]/.test(s))
@@ -136,8 +169,9 @@ if (hanTokens.length === 0) {
   process.exit(2)
 }
 const failures = []
-if (!labels.includes(MAIN_CITY_NAME)) {
-  failures.push(`屏幕上找不到「${MAIN_CITY_NAME}」这栋建筑的名字 —— name 没下发时这里就该红，`
+// 子串匹配，不是全等：选择栏的标题是「主城 Lv1」这种"名字 + 等级"的形状
+if (!labels.some((s) => s.includes(MAIN_CITY_NAME))) {
+  failures.push(`屏幕上找不到含「${MAIN_CITY_NAME}」的文本 —— name 没下发时这里就该红，`
     + `而不是等下划线判据去猜`)
 }
 if (undefinedTokens.length > 0) {
@@ -152,3 +186,33 @@ if (failures.length > 0) {
 }
 console.log(`[city-grid] 全绿：「${MAIN_CITY_NAME}」由服务端下发的 name 渲染出来了，`
   + '屏上没有 undefined、没有配置 id')
+
+/**
+ * 落点读数：单测判的是"投影函数对不对"，判不到"视图有没有照它摆"。
+ * 所以这里从**运行期场景**读 36 个格子的位置，要求至少有一行的水平间距不全相等 ——
+ * 全相等就是均匀棋盘（规格 §3.3 禁止的形态），也是"改了投影但 buildGrid 没接线"的症状。
+ */
+const rows = new Map()
+for (const [x, y] of probe.positions) {
+  const key = Math.round(y / 4)
+  if (!rows.has(key)) rows.set(key, [])
+  rows.get(key).push(x)
+}
+const uniformRows = [...rows.values()].filter((xs) => {
+  if (xs.length < 3) return false
+  const sorted = [...xs].sort((a, b) => a - b)
+  const gaps = sorted.slice(1).map((v, i) => Math.round((v - sorted[i]) * 10) / 10)
+  return new Set(gaps).size === 1
+})
+const distinctX = new Set(probe.positions.map((p) => Math.round(p[0]))).size
+console.log(`[city-grid] 格子 ${probe.positions.length} 个，横向落点 ${distinctX} 种，`
+  + `纵向 ${rows.size} 档，其中间距全等的行 ${uniformRows.length} 个`)
+if (probe.positions.length !== 36) {
+  console.error(`[city-grid] 判据失败：场景里 ${probe.positions.length} 个格子，应为 36`)
+  process.exit(1)
+}
+if (distinctX < 12) {
+  console.error(`[city-grid] 判据失败：36 格只有 ${distinctX} 种横向落点 —— 视图没照投影摆，仍是均匀棋盘`)
+  process.exit(1)
+}
+console.log('[city-grid] 落点全绿：视图按锚点投影摆放，不是均匀棋盘')

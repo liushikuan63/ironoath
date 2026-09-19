@@ -135,3 +135,65 @@ export function sceneAnchorAt(gridX: number, gridY: number): SceneAnchor | null 
 /** 工作视图尺寸，供视图算统一缩放。 */
 export const SCENE_VIEW_WIDTH = 1000
 export const SCENE_VIEW_HEIGHT = 563
+
+/** 一格地皮投影到面板之后的落点与尺寸（面板局部坐标：x 右正、y 上正，原点在内容区中心）。 */
+export interface ProjectedPlate {
+  readonly gridX: number
+  readonly gridY: number
+  readonly district: SceneDistrict
+  readonly road: string
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+  /** 离城门的远近（工作视图 y，越大越靠画面下方）。建筑压叠时的绘制次序按它排。 */
+  readonly depth: number
+}
+
+export interface SceneLayout {
+  /** 工作视图 → 面板的统一缩放。 */
+  readonly scale: number
+  readonly plates: readonly ProjectedPlate[]
+}
+
+/**
+ * 把 36 个锚点**等比**投影进面板的一块矩形内容区。
+ *
+ * <p>为什么放在引擎无关层：投影是"格位 → 落点"的唯一换算，视图只照抄。
+ * 让它留在 `CityPanelView` 里的话，"退回均匀棋盘"这件事没有任何东西拦得住 ——
+ * 而规格 §3.3 禁的正是那个。`tests/CitySceneProjection.test.ts` 判四件事：
+ * 全部落在区内、互不重叠、行列间距不再全等、缩放是各向同性（不拉伸）。
+ *
+ * <p>坐标口径：锚点 `x/y` 是**落地中心**、`footprintDepth` 向画面下方延伸，
+ * 所以脚印在源里占 `y-h/2 … y+h/2`（与 A16 热区图同源）；面板 y 轴朝上，故取负。
+ *
+ * @param padding 内容区内缩边距，给描边与选中框留位置
+ */
+export function projectSceneLayout(
+  areaWidth: number, areaHeight: number, padding = 0,
+): SceneLayout {
+  const innerWidth = areaWidth - padding * 2
+  const innerHeight = areaHeight - padding * 2
+  const left = Math.min(...SCENE_ANCHORS.map((a) => a.x - a.footprintWidth / 2))
+  const right = Math.max(...SCENE_ANCHORS.map((a) => a.x + a.footprintWidth / 2))
+  const top = Math.min(...SCENE_ANCHORS.map((a) => a.y - a.footprintDepth / 2))
+  const bottom = Math.max(...SCENE_ANCHORS.map((a) => a.y + a.footprintDepth / 2))
+  // 各向同性：两个轴共用一个缩放，否则城会被拉扁——横看是"所有屋顶都变椭圆"
+  const scale = Math.min(innerWidth / (right - left), innerHeight / (bottom - top))
+  const centerX = (left + right) / 2
+  const centerY = (top + bottom) / 2
+  return {
+    scale,
+    plates: SCENE_ANCHORS.map((anchor) => ({
+      gridX: anchor.gridX,
+      gridY: anchor.gridY,
+      district: anchor.district,
+      road: anchor.road,
+      x: (anchor.x - centerX) * scale,
+      y: -(anchor.y - centerY) * scale,
+      width: anchor.footprintWidth * scale,
+      height: anchor.footprintDepth * scale,
+      depth: anchor.y,
+    })),
+  }
+}
