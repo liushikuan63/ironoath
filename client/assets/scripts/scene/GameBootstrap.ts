@@ -64,6 +64,7 @@ import { playbackOptionsOf } from '../game/battle/BattleReportPanel'
 import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
+import { MarchComposeOverlay } from './MarchComposeOverlay'
 import { WorldMap } from './WorldMap'
 import { PanelNav } from './PanelNav'
 import { preloadRuntimeArt } from './ArtCatalog'
@@ -180,6 +181,8 @@ export class GameBootstrap extends Component {
 
   private net: NetModule | null = null
   private nav: PanelNav | null = null
+  /** 出征编成弹层（B25-S1）。它是弹层不是面板，所以不走 `panel()` 那张按名字查表的通道。 */
+  private marchCompose: MarchComposeOverlay | null = null
   /** 引导层（B18）：整屏遮罩 + 气泡，挂在所有面板与导航条之上。 */
   private guide: GuideView | null = null
   private unsubscribeNetworkEvents: (() => void) | null = null
@@ -975,7 +978,15 @@ export class GameBootstrap extends Component {
     if (search !== null) {
       out.targets = resp => search.attach(resp)
       search.onSearchRequested = radius => { void this.root?.searchTargets(radius) }
+      // 点一行就是把"打他"这个意图交出去：编成由编排层准备，这里不拼任何请求
+      search.onTargetSelected = targetId => this.root?.beginMarchCompose(targetId)
     }
+    // 出征编成弹层（B25-S1）：挂在最上层，编排层给什么画什么；它是弹层不是面板，所以不走 panel()
+    this.marchCompose = new MarchComposeOverlay(this.node)
+    this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
+    this.marchCompose.onConfirm = () => { void this.root?.confirmMarch() }
+    this.marchCompose.onCancel = () => this.root?.cancelMarchCompose()
+    out.marchCompose = view => this.marchCompose?.render(view)
     if (this.guide !== null) {
       // 步骤、文案、遮罩、能不能跳，一个字段都不在客户端（验收 1）
       out.guide = resp => this.guide?.attach(resp)
