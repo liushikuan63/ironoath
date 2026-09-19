@@ -41,4 +41,5 @@ bash scripts/check-mongo-set-coverage.sh
 bash scripts/check-identity-used.sh
 bash scripts/check-rank-payload.sh
 bash scripts/check-wechat-artifact.sh
+bash scripts/check-web-artifact.sh
 echo "[check] 全部静态检查通过。"
