@@ -52,6 +52,7 @@ function item(overrides: Partial<BagItem> = {}): BagItem {
     count: 3,
     stackMax: 10,
     sortKey: 100,
+    effectKind: 'REDUCE_BUILD_SECONDS',
     ...overrides,
   }
 }

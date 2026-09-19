@@ -166,6 +166,31 @@ class BagEndpointTest {
     }
 
     @Test
+    @DisplayName("判别字段随行下发：三本经验书是 MATERIAL，只靠 type 分不出来（V03-d）")
+    void bagItemCarriesEffectKindSoClientsCanTellExpBooksApart() {
+        String playerId = newPlayer();
+        giveItems(playerId, "item_hero_exp_s", 2L, "item_hero_skillbook_main", 5L);
+
+        // 两行**同 type**（都是 MATERIAL）—— 这正是客户端筛不出"能喂武将的道具"的原因；
+        // 判据落在 effectKind 上：经验书是 GRANT_HERO_EXP，另一件材料不是
+        assertThat(bagAppService.list(playerId, BagAppService.PAGE_ALL).items())
+                .filteredOn(i -> i.itemId().equals("item_hero_exp_s"))
+                .singleElement()
+                .satisfies(i -> {
+                    assertThat(i.type()).isEqualTo("MATERIAL");
+                    assertThat(i.effectKind()).as("客户端按这一列筛升级弹层的候选")
+                            .isEqualTo(ItemCfg.EffectKind.GRANT_HERO_EXP.name());
+                });
+        assertThat(bagAppService.list(playerId, BagAppService.PAGE_ALL).items())
+                .filteredOn(i -> i.itemId().equals("item_hero_skillbook_main"))
+                .singleElement()
+                .satisfies(i -> assertThat(i.effectKind()).isNotEqualTo("GRANT_HERO_EXP"));
+        // 整表都带这一列（没有 null 行）——列可空的话客户端到处判空
+        assertThat(configs.all(ItemCfg.class))
+                .allSatisfy(cfg -> assertThat(cfg.effectKind()).as(cfg.id()).isNotNull());
+    }
+
+    @Test
     @DisplayName("背包按类型分页；拼错的类型名报错而不是静默返回空列表")
     void bagListFiltersByType() {
         String playerId = newPlayer();

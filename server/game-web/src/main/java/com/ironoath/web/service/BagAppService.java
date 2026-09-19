@@ -195,7 +195,10 @@ public class BagAppService {
         return new BagItem(cfg.id(), cfg.name(), cfg.type().name(), rarity,
                 cfg.obtainFrom() == null ? "" : cfg.obtainFrom(),
                 count, cfg.stackMax(),
-                sortKey(rarity, cfg.type(), count));
+                sortKey(rarity, cfg.type(), count),
+                // 判别字段随行下发（V03-d）：客户端按它筛"哪些道具能喂武将/能觉醒"
+                // —— `type` 太粗（三本经验书都是 MATERIAL，底下还有 11 种别的材料）
+                cfg.effectKind().name());
     }
 
     // ---------- B04 §4：使用道具 ----------
