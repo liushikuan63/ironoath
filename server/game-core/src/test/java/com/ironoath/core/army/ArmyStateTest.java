@@ -373,4 +373,25 @@ class ArmyStateTest {
         assertThatThrownBy(() -> new ArmyState.TrainingTask("u", 10L, NOW, NOW - 1L, 100L, 100L))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("完成时刻");
     }
+
+    @Test
+    @DisplayName("自动续训策略随快照往返；老档没有这一项时默认是关的（不会读一次档就开始花钱）")
+    void autoTrainPolicySurvivesTheSnapshotAndDefaultsOff() {
+        ArmyState army = new ArmyState();
+        assertThat(army.autoTrain().enabled()).as("新号默认关").isFalse();
+
+        army.setAutoTrain(AutoTrainPolicy.on("unit_infantry_t1", 120L, 3));
+        ArmyState reloaded = ArmyState.fromSnapshot(army.snapshot());
+        assertThat(reloaded.autoTrain().enabled()).isTrue();
+        assertThat(reloaded.autoTrain().unitId()).isEqualTo("unit_infantry_t1");
+        assertThat(reloaded.autoTrain().batchCount()).isEqualTo(120L);
+        assertThat(reloaded.autoTrain().batchBudget()).isEqualTo(3);
+
+        // 老档路径：快照里这一项是 null（库里没有那一列）⇒ 当作关
+        ArmyState.Snapshot legacy = new ArmyState.Snapshot(army.troops(), army.snapshot().queue(),
+                army.wounded(), null, 0L, 0L, Map.of(), 0, null);
+        assertThat(ArmyState.fromSnapshot(legacy).autoTrain().enabled())
+                .as("老档读出来必须是关的：从没开过自动的号不该因为一次读档就花钱")
+                .isFalse();
+    }
 }

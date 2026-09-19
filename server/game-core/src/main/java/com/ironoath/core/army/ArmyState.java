@@ -36,6 +36,11 @@ public final class ArmyState {
 
     private final Map<String, Long> troops = new LinkedHashMap<>();
     private final Map<String, TrainingTask> queue = new LinkedHashMap<>();
+    /**
+     * 自动续训的策略（B25 裁决③(a)）。**老档没有这一项 ⇒ 默认关**（{@link AutoTrainPolicy#off()}）：
+     * 一个从没开过自动的号，读档后也不会突然开始花钱训兵。
+     */
+    private AutoTrainPolicy autoTrain = AutoTrainPolicy.off();
     private final Map<String, Long> wounded = new LinkedHashMap<>();
     /** 治疗完成时刻；null 表示没有在治疗。 */
     private Long treatFinishAt;
@@ -131,6 +136,19 @@ public final class ArmyState {
      */
     public long treatOriginalSeconds() {
         return treatOriginalSeconds;
+    }
+
+    /** 当前的自动续训策略（恒非 null；没开过就是 {@link AutoTrainPolicy#off()}）。 */
+    public AutoTrainPolicy autoTrain() {
+        return autoTrain;
+    }
+
+    /** 覆盖策略。合法性由 {@link AutoTrainPolicy} 自己的构造器保证。 */
+    public void setAutoTrain(AutoTrainPolicy next) {
+        if (next == null) {
+            throw new IllegalArgumentException("自动续训策略不得为 null（关闭请用 AutoTrainPolicy.off()）");
+        }
+        this.autoTrain = next;
     }
 
     // ---------- 训练 ----------
@@ -569,13 +587,27 @@ public final class ArmyState {
      */
     public record Snapshot(Map<String, Long> troops, List<TrainingTask> queue, Map<String, Long> wounded,
                            Long treatFinishAt, long treatTotalSeconds, long treatOriginalSeconds,
-                           Map<String, Long> treatCost, int extraSlots) {
+                           Map<String, Long> treatCost, int extraSlots, AutoTrainPolicy autoTrain) {
+
+        public Snapshot {
+            // 老档（或还没写这一项的新档）读出来是 null ⇒ 当作"关"：一个从没开过自动的号
+            // 不该因为一次读档就开始花钱
+            autoTrain = autoTrain == null ? AutoTrainPolicy.off() : autoTrain;
+        }
+
+        /** 不带自动策略的 8 参写法（旧调用点与只关心兵力/队列的测试用）。 */
+        public Snapshot(Map<String, Long> troops, List<TrainingTask> queue, Map<String, Long> wounded,
+                        Long treatFinishAt, long treatTotalSeconds, long treatOriginalSeconds,
+                        Map<String, Long> treatCost, int extraSlots) {
+            this(troops, queue, wounded, treatFinishAt, treatTotalSeconds, treatOriginalSeconds,
+                    treatCost, extraSlots, AutoTrainPolicy.off());
+        }
     }
 
     /** 取出完整快照（不可变，可安全跨线程/跨存储传递）。 */
     public Snapshot snapshot() {
         return new Snapshot(troops(), List.copyOf(queue().values()), wounded(), treatFinishAt(),
-                treatTotalSeconds(), treatOriginalSeconds(), treatCost(), extraSlots());
+                treatTotalSeconds(), treatOriginalSeconds(), treatCost(), extraSlots(), autoTrain);
     }
 
     /** 由快照重建。写入语义完全交给 {@link #restore} —— 那里已有"入参可能是内部视图"的防护。 */
@@ -591,6 +623,8 @@ public final class ArmyState {
         state.restore(snapshot.troops(), keyed, snapshot.wounded(), snapshot.treatFinishAt(),
                 snapshot.treatTotalSeconds(), snapshot.treatOriginalSeconds(),
                 snapshot.treatCost(), snapshot.extraSlots());
+        // 策略单独设：restore 的签名是四个调用点共用的（测试直接用），不为一个新字段去动它
+        state.setAutoTrain(snapshot.autoTrain());
         return state;
     }
 

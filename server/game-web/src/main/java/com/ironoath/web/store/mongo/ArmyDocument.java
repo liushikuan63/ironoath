@@ -35,7 +35,12 @@ public record ArmyDocument(
         long treatTotalSeconds,
         long treatOriginalSeconds,
         Map<String, Long> treatCost,
-        int extraSlots) {
+        int extraSlots,
+        /**
+         * 自动续训策略（B25 裁决③(a)）。**可空**：这一列是后加的，老文档没有它 ——
+         * 领域侧的 {@code Snapshot} 会把 null 当成"关"，所以老号读档后不会突然开始花钱训兵。
+         */
+        com.ironoath.core.army.AutoTrainPolicy autoTrain) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "army";
@@ -44,12 +49,12 @@ public record ArmyDocument(
         ArmyState.Snapshot s = army.snapshot();
         return new ArmyDocument(playerId, version, s.troops(), s.queue(), s.wounded(),
                 s.treatFinishAt(), s.treatTotalSeconds(), s.treatOriginalSeconds(),
-                s.treatCost(), s.extraSlots());
+                s.treatCost(), s.extraSlots(), s.autoTrain());
     }
 
     /** 每次调用都新建一份，所以读出去的不是库里的活对象。 */
     ArmyState toDomain() {
         return ArmyState.fromSnapshot(new ArmyState.Snapshot(troops, queue, wounded, treatFinishAt,
-                treatTotalSeconds, treatOriginalSeconds, treatCost, extraSlots));
+                treatTotalSeconds, treatOriginalSeconds, treatCost, extraSlots, autoTrain));
     }
 }
