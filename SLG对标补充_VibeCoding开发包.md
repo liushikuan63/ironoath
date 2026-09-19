@@ -193,7 +193,8 @@ nextCostIron, canForge, blockReason, wornByHeroId}`。
 读侧只写「已装备/未装备」，"穿在谁身上"由武将页那一侧回答。
 
 **入口方案**：**武将页**（宿主推荐）—— 装备穿在武将身上，`/hero/equip` 那条链路已经在武将页；
-面板里按"未装备 → 已装备"两段列出实例，行上先只读（本格不做强化按钮）。
+面板逐行标「已装备/未装备」但**顺序照抄服务端**（不按穿没穿重排：重排是用客户端口径覆盖服务端的编排，
+与科技树/榜单同一条纪律），行上先只读（本格不做强化按钮）。
 
 **这一格要交的**：`game/equip/EquipPanel.ts` 纯逻辑 + 用例 → `GameApi.equipInstances()` + `AppRoot` 接线（埋点 `equip_view`）
 → 视图 + 入口 → 探针 `tools/verify-equip-runtime.mjs`（照 `verify-tech-runtime.mjs` 写）。
