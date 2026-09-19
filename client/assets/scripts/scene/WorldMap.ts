@@ -24,6 +24,7 @@ import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, UITran
 import { exileSnapshot, worldModel, worldRequester } from '../game/world/WorldContext'
 import type { ExileSnapshot } from '../game/world/WorldContext'
 import { exileCanRequest, exileLabel } from '../game/world/ExileAction'
+import { baseCellPixels, cellPixels } from '../game/world/WorldZoom'
 import type { WorldViewModel } from '../game/world/WorldViewModel'
 import type { WorldFrame, ChunkTile, MarchRender } from '../game/world/WorldViewModel'
 import { buildMarchPanel } from '../game/world/MarchPanel'
@@ -64,14 +65,9 @@ const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 
 /**
- * 各缩放档位下「一格等于多少像素」。
- *
- * <p>档位 0 的取值让 3×3 块正好铺满一屏：3 块 × 32 格 × 8px = 768px ≈ 设计分辨率宽度。
- * 客户端手里永远只有 9 个块（B07 红线：绝不一次性下发整张地图），
- * 所以「世界档」的含义不是「看见全世界」，而是「看见自己这 9 块的全貌」。
- * 档位 1 放大 3 倍，一屏约一块，便于点选具体格子。档位 2 切换到城内场景，不画地图。
+ * 缩放换算本体在 `game/world/WorldZoom.ts`（引擎无关、可单测）。
+ * 这里只留一句为什么不在视图里写死：见那个模块的头注释。
  */
-const CELL_PIXELS_BY_ZOOM: readonly number[] = [8, 24]
 
 /** 实体色块的边长占一格的比例。留出缝隙才能看清格子边界，也避免相邻实体糊成一片。 */
 const ENTITY_SIZE_RATIO = 0.72
@@ -643,7 +639,7 @@ export class WorldMap extends Component {
     if (model === null) {
       return
     }
-    const cell = cellPixels(model.currentZoom())
+    const cell = cellPixels(model.currentZoom(), this.baseCell(model))
     const delta = event.getDelta()
     // 手指向右拖，地图跟着向右走 ⇒ 相机向左移，所以取负
     this.panAccumX += -delta.x / cell
@@ -704,10 +700,19 @@ export class WorldMap extends Component {
 
   // ---------- 渲染 ----------
 
+  /**
+   * 当前画布下"铺满一屏"对应的一格像素。每次渲染现读可见尺寸，
+   * 这样窗口尺寸、设计分辨率适配、以及以后加分屏/横竖屏切换都不用再回来改常量。
+   */
+  private baseCell(model: WorldViewModel): number {
+    const size = view.getVisibleSize()
+    return baseCellPixels(size.width, size.height, model.chunkSize)
+  }
+
   private render(frame: WorldFrame, model: WorldViewModel): void {
     this.bindModel()
     const zoom = frame.zoom
-    const cell = cellPixels(zoom)
+    const cell = cellPixels(zoom, this.baseCell(model))
     if (this.mapLayer === null) {
       return
     }
@@ -1158,13 +1163,6 @@ export class WorldMap extends Component {
 }
 
 // ---------- 纯函数（表现层常量与格式化） ----------
-
-/** 某缩放档位下一格的像素边长。档位 2 不画地图，退化到最大档避免除零。 */
-function cellPixels(zoom: number): number {
-  const index = Math.min(Math.max(zoom, 0), CELL_PIXELS_BY_ZOOM.length - 1)
-  // noUncheckedIndexedAccess 让下标访问变成 number|undefined；常量表长度固定，兜底值只为类型收窄
-  return CELL_PIXELS_BY_ZOOM[index] ?? CELL_PIXELS_BY_ZOOM[0] ?? 8
-}
 
 function tileColor(tile: ChunkTile): Color {
   if (tile.fogged) {

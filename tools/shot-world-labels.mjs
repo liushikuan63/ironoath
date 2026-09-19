@@ -104,6 +104,57 @@ await page.screenshot({ path: OUT })
 console.log(`[world] 截图：${OUT}`)
 
 /**
+ * 视口覆盖率：把所有地形块在 UI 空间里的外接盒并起来，与可见尺寸比。
+ *
+ * <p>为什么量这个而不是量像素：WebGL 画布默认不保留绘制缓冲，`toDataURL` 拿到的可能是黑的，
+ * 那种"量不出来"会被读成"覆盖率为 0"。外接盒是从**真正会画出来的节点**上读的，
+ * 与 #269 那条"地图只占中间约 350×350"是同一件事，但它可以失败。
+ */
+const coverage = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  const visible = window.cc.view.getVisibleSize()
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity
+  let tiles = 0
+  const visit = (n) => {
+    if (n.name === 'Art') {
+      const box = n.getComponent('cc.UITransform')
+      if (box !== null) {
+        const w = n.getWorldPosition(new window.cc.Vec3())
+        const halfW = box.width / 2; const halfH = box.height / 2
+        minX = Math.min(minX, w.x - halfW); maxX = Math.max(maxX, w.x + halfW)
+        minY = Math.min(minY, w.y - halfH); maxY = Math.max(maxY, w.y + halfH)
+        tiles += 1
+      }
+    }
+    for (const c of n.children) visit(c)
+  }
+  visit(scene)
+  if (tiles === 0) return { tiles: 0, widthRatio: 0, heightRatio: 0 }
+  return {
+    tiles,
+    boxW: maxX - minX, boxH: maxY - minY,
+    viewW: visible.width, viewH: visible.height,
+    // **按轴判，不按面积判**：面积比会把"768×768 摆在 960×600 上"算成 102%（通过），
+    // 而那一屏左右各有一条 96px 的黑边 —— 面积是够的，宽度不够。
+    // 这正是旧口径（写死 8px）的实际形态，用面积比就抓不到它。
+    widthRatio: (maxX - minX) / visible.width,
+    heightRatio: (maxY - minY) / visible.height,
+  }
+})
+const cover = Math.min(coverage.widthRatio, coverage.heightRatio)
+console.log(`[world] 地形 ${coverage.tiles} 块，外接盒 ${Math.round(coverage.boxW ?? 0)}×${Math.round(coverage.boxH ?? 0)}`
+  + ` vs 视口 ${Math.round(coverage.viewW ?? 0)}×${Math.round(coverage.viewH ?? 0)}`
+  + ` ⇒ 宽 ${(coverage.widthRatio * 100).toFixed(0)}% / 高 ${(coverage.heightRatio * 100).toFixed(0)}%`
+  + ` / 取短板 ${(cover * 100).toFixed(0)}%`)
+if (cover < 0.98) {
+  console.error(`[world] 判据失败：短板方向只铺到 ${(cover * 100).toFixed(0)}%`
+    + ' —— 屏幕会露出一圈纯黑，读起来像"地图到此为止"')
+  await browser.close()
+  await preview.close()
+  process.exit(1)
+}
+
+/**
  * 读**所有**实体标签节点的文本，不管它当前可不可见。
  *
  * <p>为什么这里不按可见性过滤（与上面那段"可见文字"的口径相反）：本判据要回答的是
