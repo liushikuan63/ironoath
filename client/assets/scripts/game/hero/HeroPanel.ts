@@ -109,7 +109,7 @@ export function buildHeroRow(hero: HeroView, nameById: ReadonlyMap<string, strin
   const maxLevel = hero.level >= hero.maxLevel
   // `equips` 只列**穿着的**、每项自带 slot ⇒ 四格要自己按槽位落。
   // 空槽＝没有那一项，这是"没穿"的唯一表示（原先 `(string|null)[]` 里装的是实例 uid，
-  // 于是那一行只能印 `武器：eq-7f3a…`，见台账 #282）
+  // 于是那一行只能印 `武器：eq-7f3a…`，见台账 #284）
   const worn = new Map(hero.equips.map((item) => [item.slot, item]))
   const equipTexts = EQUIP_SLOT_KEYS.map((key, index) => {
     const slot = EQUIP_SLOT_NAMES[index] ?? `槽位${index + 1}`
