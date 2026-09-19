@@ -530,12 +530,6 @@ export class AppRoot {
       ['bag', 'city', 'army', 'reddot'])
   }
 
-  /** 卖出：服务端没有对应端点（`GameApi` 里也没有 `bagSell`），所以只能明确拒绝而不是静默。 */
-  sellItem(itemId: string): void {
-    this.track(TRACK_EVENTS.itemSell, { itemId })
-    this.rejectNeeds('bag', `"${itemId}" 暂时不能卖：服务端还没有出售接口`)
-  }
-
   // ---------- 关卡 ----------
 
   /** 先选一套已编成的阵容，再把当前全部可用兵力交给服务端裁定。 */

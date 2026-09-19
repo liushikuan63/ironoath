@@ -67,7 +67,7 @@ class HeroRarityFragmentConsistencyTest {
     }
 
     @Test
-    @DisplayName("碎片道具本身必须自洽：MATERIAL 类型、稀有度与档位一致、不可出售")
+    @DisplayName("碎片道具本身必须自洽：MATERIAL 类型、稀有度与档位一致")
     void fragmentItemsAreSelfConsistent() {
         for (HeroRarityCfg rarity : registry.all(HeroRarityCfg.class)) {
             ItemCfg item = registry.get(ItemCfg.class, fragmentItemId(rarity.id()));
@@ -76,10 +76,9 @@ class HeroRarityFragmentConsistencyTest {
             assertThat(item.rarity().name())
                     .as("%s 的稀有度必须与它所属的档位一致，否则背包排序与品质框都会错", item.id())
                     .isEqualTo(rarity.id());
-            assertThat(item.sellable())
-                    .as("%s 不可出售：碎片一旦能卖成金币，玩家就会算出「卖碎片换金币再抽卡」"
-                            + "是否比直接升星更优，那条线会从养成变成套利题", item.id())
-                    .isFalse();
+            // 「碎片不可出售」这条断言 2026-09-19 随 B24 裁决④ 撤掉：出售整条撤下、
+            // item 表的 sellable 列已删 ⇒ "碎片能卖"这件事在数据模型里**不可能存在**，
+            // 留一条断言去证一个不存在的字段，只会让人以为还有一条出售通路
             assertThat(item.stackMax())
                     .as("%s 的堆叠上限必须容得下一次十连的碎片产出", item.id())
                     .isGreaterThanOrEqualTo(rarity.dupFragment() * 10L);

@@ -63,7 +63,6 @@ export interface BagItemRow {
   readonly stackText: string
   /** 来源提示（B04 §3：长按显示「来自：第七章宝箱」）。未配置为 null */
   readonly obtainText: string | null
-  readonly sellText: string | null
   /**
    * 使用时是否必须先选目标（B04 §4：加速类道具必须给 targetId）。
    *
@@ -202,15 +201,15 @@ export function buildBagPanel(resp: BagListResp): BagPanelView {
 }
 
 /**
- * 出售能力整条撤下（2026-09-13 裁决）：**服务端不再下发 `sellable` / `sellPriceGold`**
- * （协议里已删，见 bag.schema.json 的说明），因为服务端没有 `/bag/sell` 端点、
- * B04 整篇没有「出售」这条规则（什么档能卖、按表价还是折扣、金币走不走每日保护额度、
- * 能不能买低卖高刷金，全是空的 —— 收口清单 #47 ③）。
+ * 出售整条撤下（2026-09-13 撤下按钮与协议字段，2026-09-19 B24 裁决④ 连表列一起删）。
  *
- * <p>原先的形态是「表里有字段 + 协议里有字段 + UI 有个开关关着的按钮」，
- * 那是最容易被人顺手实现成刷金入口的形状；现在只剩「表里有数据 + 文档里无规则」，
- * 定完规则再让字段随协议回来。`sellText` 这个行字段保留（视图据此决定按钮亮不亮），
- * 但在这里就是恒 null —— 一份不存在的能力不该有第二条通路。
+ * <p><b>现在的形状是"这件事在数据模型里不存在"</b>：`item` 表的 `sellable` / `sellPriceGold`
+ * 两列已删（`check-contract-sync` 与配置生成都在这一轮重跑过），协议里从来没有过，
+ * 客户端这一层的 `sellText` 字段与"出售"按钮也一并删掉了 ——
+ * 撤下就要撤干净：留一个恒 false 的开关，下一个人只会把它接上。
+ *
+ * <p>若将来要做：先按 B24 裁决④ 的 A 案补 B04 规格（白名单 ≤ 只卖资源箱、折扣系数进 `global`、
+ * 回收价 ≤ 买入价），规则定案之后字段与入口一起回来。
  */
 export function buildItemRow(item: BagItem): BagItemRow {
   if (item === undefined || item === null) {
@@ -225,7 +224,6 @@ export function buildItemRow(item: BagItem): BagItemRow {
     obtainText: item.obtainFrom === null || item.obtainFrom.length === 0
       ? null
       : `来自：${item.obtainFrom}`,
-    sellText: null,
     needsTarget: item.type === 'SPEEDUP',
   }
 }

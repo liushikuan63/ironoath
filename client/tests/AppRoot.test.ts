@@ -966,15 +966,14 @@ test('信息不足的动作不发请求，只说清缺什么（替玩家挑阵�
 
   h.root.challenge('s1')
   await h.root.useItem('item_speedup', true)
-  h.root.sellItem('item_wood')
 
-  assert.equal(h.http.calls.length, total, '三个动作都不该发出请求')
-  assert.equal(h.errors.length, 3, '三个动作各一条说明；首屏的降级提示是另一条用例的桩造的，不在这里')
+  assert.equal(h.http.calls.length, total, '两个动作都不该发出请求')
+  assert.equal(h.errors.length, 2, '两个动作各一条说明；首屏的降级提示是另一条用例的桩造的，不在这里')
 // 按内容找而不是按下标：首屏可能再插进别面板的降级提示，下标不是契约
   const messages = h.errors.map(e => e[1]).join('\n')
   assert.match(messages, /阵容/)
   assert.match(messages, /目标/)
-  assert.match(messages, /出售/)
+  // 「出售」那条断言随 B24 裁决④ 撤掉：出售整条撤下（连表列都删了），不再有点了被拒这条通路
 })
 
 test('加速道具先展示真实队列，选中建筑后才带 targetId 发请求', async () => {

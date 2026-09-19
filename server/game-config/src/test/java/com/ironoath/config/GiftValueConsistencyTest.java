@@ -20,6 +20,7 @@ import com.ironoath.config.cfg.GiftCfg;
 import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.config.cfg.PayProductCfg;
 import com.ironoath.config.cfg.ProductRewardCfg;
+import com.ironoath.config.cfg.ShopCfg;
 
 /**
  * 职责：守住 B19 §五⑤ 那三个礼包的三件事 —— <b>价值凑得满、触发不重复、发货走的是同一条链路</b>。
@@ -31,9 +32,11 @@ import com.ironoath.config.cfg.ProductRewardCfg;
  * 而且那时没人能回答"是哪一次改表改少的"。与 #152（时长基数）/#165（强化基数）同一条判断：
  * <b>量出来的数要变成回归卡口，否则它就只是一句现在成立的话</b>。
  *
- * <p><b>折算口径用的是 item 表的回收价 {@code sellPriceGold}</b>：货架价与回收价在 B15/B19 里刻意同值
- * （买—卖同价才不给"买了再卖"留套利口子），所以它是全表唯一一个"玩家也能看到这个数"的价格，
- * 拿它折算的等值玩家能自己核对。金币按 1:1 计入。
+ * <p><b>折算口径 2026-09-19 换成商店的货架价</b>（B24 裁决④把 item 表的 {@code sellable}/{@code sellPriceGold}
+ * 两列彻底删了：出售整条撤下）：原先拿"回收价"折算的理由是"货架价与回收价刻意同值、且玩家看得见"，
+ * 现在回收价不存在了，而**货架价正好接下这两个性质** —— 它同样是玩家在商店里能看到的数，
+ * 折算出来的等值仍然可自查。换锚后数字不变（换锚时现跑核过：四个礼包道具的货架价与当年的回收价逐个相等），
+ * 但判据更强了一点：以前那个锚允许"货架价与回收价不一致"（只要有回收价就能过），现在锚就是货架价本身。
  */
 class GiftValueConsistencyTest {
 
@@ -50,7 +53,7 @@ class GiftValueConsistencyTest {
                 .toList();
     }
 
-    /** 一档商品的金币等值：ITEM 按回收价、RESOURCE 里的金币按 1:1，其他资源不计（礼包内容里不该出现）。 */
+    /** 一档商品的金币等值：ITEM 按商店货架价、RESOURCE 里的金币按 1:1，其他资源不计（礼包内容里不该出现）。 */
     private long goldEquivalent(ProductRewardCfg row) {
         if (row.rewardType() == ProductRewardCfg.RewardType.RESOURCE) {
             assertThat(row.rewardId()).as("礼包内容里的资源只允许 GOLD（别的资源没有统一的金币价）")
@@ -58,10 +61,24 @@ class GiftValueConsistencyTest {
             return row.count();
         }
         ItemCfg item = configs.get(ItemCfg.class, row.rewardId());
-        assertThat(item.sellPriceGold())
-                .as("道具 %s 没有回收价就没法折算，等值算式会静默按 0 计", item.id())
+        long shelfPrice = goldShelfPriceOf(item.id());
+        assertThat(shelfPrice)
+                .as("道具 %s 不在金币货架上就没法折算，等值算式会静默按 0 计", item.id())
                 .isPositive();
-        return item.sellPriceGold() * row.count();
+        return shelfPrice * row.count();
+    }
+
+    /**
+     * 某个道具的金币货架价。礼包的价值口径必须落在"玩家能在商店里看到的那个数"上 ——
+     * 换锚前用的是回收价，而那一列已经随 B24 裁决④ 删除（出售整条撤下）。
+     */
+    private long goldShelfPriceOf(String itemId) {
+        for (ShopCfg row : configs.all(ShopCfg.class)) {
+            if (row.priceCurrency() == ShopCfg.PriceCurrency.GOLD && itemId.equals(row.itemId())) {
+                return row.price();
+            }
+        }
+        return 0L;
     }
 
     /** 裁决给的应有价值：600 分 × 基准 10 金币/元 × 礼包倍率 3 = 180（三个参数全现读，不写死）。 */

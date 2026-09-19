@@ -3,8 +3,6 @@ package com.ironoath.web;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,13 +17,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.json.JsonUtils;
 import com.ironoath.config.ConfigRegistry;
-import com.ironoath.config.model.GlobalCfg;
 import com.ironoath.core.world.Coord;
 import com.ironoath.web.dto.generated.MarchAction;
 import com.ironoath.web.dto.generated.MarchReq;
@@ -126,25 +120,32 @@ class MarchRepeatInvariantsTest {
     }
 
     @Test
-    @DisplayName("并发上限就是重复出征要受的那道闸：占满之后再发回 MARCH_QUEUE_FULL")
+    @DisplayName("并发上限就是重复出征要受的那道闸：占满之后再发一支回 MARCH_QUEUE_FULL")
     void theConcurrencyCapStillBitesOnRepeats() throws Exception {
-        // 把上限覆写成 1：只有把上限挪到夹具的边界上，「占满之后被拒」才可判定
-        overrideMaxConcurrent(1);
         String self = newPlayerAt(256, 256);
         giveTroops(self, 100L);
         String enemy = newPlayerAt(262, 256, "靶子", true);
         giveTroops(enemy, 1L);
         setMatchPower(enemy, 6_000L);   // 落进自己的可攻击区间（新号带 100 兵约 4000）
 
-        assertThat(march(self, new MarchReq(newRequestId(), 262, 256,
-                List.of(new MarchUnit(UNIT, 10L)), List.of(), MarchAction.ATTACK)))
-                .as("第一支（上限 1）应当出发").isNotEmpty();
+        // **不覆写配置**：上限就按表里的值（现跑 3 支），占满它比改它更接近真人的处境 ——
+        // 而这个类的夹具**不该动共享的 ConfigRegistry**：上一版把 MARCH_MAX_CONCURRENT 覆写成 1
+        // 且没有还原，同一个 JVM 里后面跑的 OpsEndpointTest 立刻红在"没有文件改动就该是空数组"
+        // （配置指纹多出一个 global）——跨用例污染，全量轮才逮到，单跑这个类永远看不见
+        long cap = configs.longParam("MARCH_MAX_CONCURRENT");
+        for (long i = 0; i < cap; i++) {
+            assertThat(march(self, new MarchReq(newRequestId(), 262, 256,
+                    List.of(new MarchUnit(UNIT, 10L)), List.of(), MarchAction.ATTACK)))
+                    .as("第 %d 支（上限 %d）应当出发", i + 1, cap).isNotEmpty();
+        }
+        assertThat(marches.activeCountOf(self)).as("已经占满上限").isEqualTo(cap);
+
         int code = postCode(self, new MarchReq(newRequestId(), 262, 256,
                 List.of(new MarchUnit(UNIT, 10L)), List.of(), MarchAction.ATTACK));
         assertThat(code)
-                .as("占满上限之后第二次必须是 MARCH_QUEUE_FULL：重复出征不享有任何豁免")
+                .as("占满上限之后再发一支必须是 MARCH_QUEUE_FULL：重复出征不享有任何豁免")
                 .isEqualTo(ErrorCode.MARCH_QUEUE_FULL.code());
-        assertThat(marches.activeCountOf(self)).as("仍然只有一支").isEqualTo(1);
+        assertThat(marches.activeCountOf(self)).as("被拒的那支没有挤进来").isEqualTo(cap);
     }
 
     @Test
@@ -171,43 +172,6 @@ class MarchRepeatInvariantsTest {
     }
 
     // ---------- 夹具 ----------
-
-    /** 覆盖 {@code MARCH_MAX_CONCURRENT}（找不到那一行会抛：夹具静默不生效是最坏的一种测试）。 */
-    private void overrideMaxConcurrent(int maxConcurrent) {
-        try {
-            ObjectMapper mapper = new ObjectMapper();
-            ObjectNode table = (ObjectNode) mapper.readTree(Files.readString(
-                    locateConfigDir().resolve("global.json"), StandardCharsets.UTF_8));
-            ArrayNode rows = (ArrayNode) table.get("rows");
-            boolean replaced = false;
-            for (int i = 0; i < rows.size(); i++) {
-                ObjectNode existing = (ObjectNode) rows.get(i);
-                if ("MARCH_MAX_CONCURRENT".equals(existing.path("id").asText())) {
-                    existing.put("value", maxConcurrent);
-                    replaced = true;
-                }
-            }
-            if (!replaced) {
-                throw new IllegalStateException("global 表里没有 MARCH_MAX_CONCURRENT，覆写夹具失效");
-            }
-            configs.reload(ConfigRegistry.TABLE_GLOBAL, GlobalCfg.class,
-                    mapper.writeValueAsString(table));
-        } catch (Exception e) {
-            throw new IllegalStateException("无法覆写 MARCH_MAX_CONCURRENT", e);
-        }
-    }
-
-    private static Path locateConfigDir() {
-        Path dir = Path.of("").toAbsolutePath();
-        while (dir != null) {
-            Path candidate = dir.resolve("contract/config");
-            if (Files.isDirectory(candidate)) {
-                return candidate;
-            }
-            dir = dir.getParent();
-        }
-        throw new IllegalStateException("找不到 contract/config 目录");
-    }
 
     private static MarchReq withRequestId(MarchReq template, String requestId) {
         return new MarchReq(requestId, template.toX(), template.toY(), template.units(),

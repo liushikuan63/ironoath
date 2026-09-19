@@ -639,8 +639,6 @@ export interface ItemCfg {
   effectValue: number
   effectTarget?: string
   stackMax: number
-  sellable: boolean
-  sellPriceGold: number
   obtainFrom?: string
 }
 

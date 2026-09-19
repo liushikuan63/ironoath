@@ -12,8 +12,6 @@
     "effectValue": "LONG_POS",
     "effectTarget": "?STRING",
     "stackMax": "LONG_POS",
-    "sellable": "BOOL",
-    "sellPriceGold": "LONG_NONNEG",
     "obtainFrom": "?STRING",
     "why": "?STRING",
     "todo": "?STRING"
@@ -27,8 +25,6 @@
       "effectKind": "REDUCE_BUILD_SECONDS",
       "effectValue": 300,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 5,
       "obtainFrom": "主线任务、每日签到、军资补给箱",
       "why": "BUILD_SPEED 类道具的最小单位。5 分钟对应主城 1~5 级的单级耗时，是新手段最有用的一档。"
     },
@@ -40,8 +36,6 @@
       "effectKind": "REDUCE_BUILD_SECONDS",
       "effectValue": 3600,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 40,
       "obtainFrom": "第七章宝箱、商店、联盟帮助礼包",
       "why": "B00 付费点排序第一是「加速道具」，这一档是主力商品。"
     },
@@ -53,8 +47,6 @@
       "effectKind": "REDUCE_BUILD_SECONDS",
       "effectValue": 28800,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 300,
       "obtainFrom": "赛季通行证、限时活动",
       "why": "覆盖一次睡眠时长。设计上让玩家「睡前用一个、醒来接着玩」，是留存钩子而不是单纯的数值商品。"
     },
@@ -66,8 +58,6 @@
       "effectKind": "REDUCE_TRAIN_SECONDS",
       "effectValue": 3600,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 45,
       "obtainFrom": "第十一章宝箱、商店",
       "why": "训练加速比建造加速略贵：兵力恢复直接改变 PVP 战力，建造只改变内政进度。"
     },
@@ -79,8 +69,6 @@
       "effectKind": "REDUCE_RESEARCH_SECONDS",
       "effectValue": 3600,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 50,
       "obtainFrom": "学院任务、商店",
       "why": "研究加速最贵，因为 TECH_TIME 的 1.28 比率让科技后期耗时最长，加速的边际价值最高。"
     },
@@ -92,8 +80,6 @@
       "effectKind": "GRANT_RESOURCE",
       "effectValue": 10000,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 10,
       "obtainFrom": "军资补给箱、任务奖励",
       "why": "资源包类道具。B00 付费点排序第二。",
       "effectTarget": "WOOD"
@@ -106,8 +92,6 @@
       "effectKind": "GRANT_RESOURCE",
       "effectValue": 10000,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 10,
       "obtainFrom": "军资补给箱、任务奖励",
       "why": "与木材箱等价，保持双资源同构。",
       "effectTarget": "STONE"
@@ -120,8 +104,6 @@
       "effectKind": "GRANT_RESOURCE",
       "effectValue": 5000,
       "stackMax": 500,
-      "sellable": true,
-      "sellPriceGold": 25,
       "obtainFrom": "军资补给箱、剿匪掉落",
       "why": "铁箱容量只有木石的一半、价格却是 2.5 倍：铁稀缺，这必须体现在道具定价上，否则玩家会用金币批量换铁绕过产量限制。",
       "effectTarget": "IRON"
@@ -134,8 +116,6 @@
       "effectKind": "GRANT_RESOURCE",
       "effectValue": 20000,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 8,
       "obtainFrom": "军资补给箱、任务奖励",
       "why": "粮草最便宜，因为它是持续消耗品，卖贵了会让玩家觉得「养兵被反复收割」。",
       "effectTarget": "GRAIN"
@@ -148,8 +128,6 @@
       "effectKind": "GRANT_RESOURCE",
       "effectValue": 1000,
       "stackMax": 999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "每日签到、章节宝箱、活动",
       "why": "不可出售：金币是货币，能卖就等于把货币换成货币，白占一个背包格且制造套利空间。",
       "effectTarget": "GOLD"
@@ -162,8 +140,6 @@
       "effectKind": "OPEN_GACHA",
       "effectValue": 1,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 0,
       "obtainFrom": "限定池奖励、赛季通行证",
       "why": "开箱即一次招募。不可出售，避免玩家把抽卡机会变现成金币从而绕过保底计数。",
       "effectTarget": "HERO_POOL_STANDARD"
@@ -176,8 +152,6 @@
       "effectKind": "GRANT_RANDOM_RESOURCE",
       "effectValue": 1,
       "stackMax": 999,
-      "sellable": true,
-      "sellPriceGold": 15,
       "obtainFrom": "剿匪掉落、第七章宝箱、联盟商店",
       "why": "随机资源箱。随机结果由服务端 Rng 决定（铁律 4），客户端不得自行 roll。"
     },
@@ -189,8 +163,6 @@
       "effectKind": "COMPOSE_HERO",
       "effectValue": 1,
       "stackMax": 9999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "SR 武将重复抽取转化、联盟商店",
       "why": "碎片凑满合成武将。不可出售：可出售就等于碎片有了金币定价，玩家会算「卖碎片还是合成」，把养成决策变成套利计算。",
       "effectTarget": "SR"
@@ -203,8 +175,6 @@
       "effectKind": "COMPOSE_HERO",
       "effectValue": 1,
       "stackMax": 9999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "SSR 武将重复抽取转化、赛季通行证",
       "why": "同上，SSR 版本。",
       "effectTarget": "SSR"
@@ -217,8 +187,6 @@
       "effectKind": "GRANT_SHIELD",
       "effectValue": 86400,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 200,
       "obtainFrom": "商店、新手保护到期补偿",
       "why": "护盾道具。堆叠上限只有 10 且价格高：C00 公理二要求保护规则不超过三条，免战牌属于「连续受害护盾」那条的付费加速版，不能让玩家靠囤货永久免战——那会把游戏做成单机。"
     },
@@ -230,8 +198,6 @@
       "effectKind": "CLOSE_CITY",
       "effectValue": 28800,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 90,
       "obtainFrom": "商店、防守活动",
       "why": "B08 §5 弱者的第二条出路：知道要被报复的人主动关门。代价必须是真的 —— 闭城期间不可出兵采集（见 MarchAppService 的派遣禁令），所以它不是「免费的 8 小时无敌」，而是「用产出换安全」。比 24h 免战牌便宜一半、时长也短一半，两个道具按代价定价，避免出现「买贵的那个反而更划算」的倒挂。"
     },
@@ -243,8 +209,6 @@
       "effectKind": "GRANT_RALLY_BONUS",
       "effectValue": 7200,
       "stackMax": 20,
-      "sellable": true,
-      "sellPriceGold": 120,
       "obtainFrom": "联盟战活动、商店",
       "why": "集结期间全员加成。这是「弱者的组织优势」的付费入口：卖的是组团能力，不是个人战力（C00 公理一）。"
     },
@@ -256,8 +220,6 @@
       "effectKind": "GRANT_HERO_EXP",
       "effectValue": 500,
       "stackMax": 9999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "主线任务、每日签到、剿匪掉落",
       "why": "武将养成·等级线（B06 §2.1）：单个 500 经验。前期一级只需 20 经验，所以一本书能连升数级 —— 首日就要让玩家感到武将在变强。"
     },
@@ -269,8 +231,6 @@
       "effectKind": "GRANT_HERO_EXP",
       "effectValue": 2000,
       "stackMax": 9999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "章节宝箱、活动、联盟商店",
       "why": "武将养成·等级线（B06 §2.1）：单个 2000 经验，是小的 4 倍而不是 10 倍：档位差距太大会让小书彻底失去意义，玩家会把低档奖励全当垃圾，而低档奖励正是日常任务的主要投放物。"
     },
@@ -282,8 +242,6 @@
       "effectKind": "GRANT_HERO_EXP",
       "effectValue": 10000,
       "stackMax": 9999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "赛季通行证、限时活动、商店",
       "why": "武将养成·等级线（B06 §2.1）：单个 10000 经验。满级累计约 54.9 万 ⇒ 约 55 本，这是「一个赛季练满一名武将」的投放量级。"
     },
@@ -295,8 +253,6 @@
       "effectKind": "UP_HERO_SKILL",
       "effectValue": 1,
       "stackMax": 999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "章节宝箱、赛季通行证、商店",
       "why": "武将养成·技能线（B06 §2.4）：升 1 级主技能。主技能全队生效（B06 §4），所以它的书比副技能书稀有度高一档，投放也更紧 —— 否则玩家会无脑只堆主技能，副技能位失去意义。",
       "effectTarget": "MAIN"
@@ -309,8 +265,6 @@
       "effectKind": "UP_HERO_SKILL",
       "effectValue": 1,
       "stackMax": 999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "任务奖励、剿匪掉落、联盟商店",
       "why": "武将养成·技能线（B06 §2.4）：升 1 级副技能。副技能只在副将位生效，价值低于主技能，故稀有度与投放都低一档。",
       "effectTarget": "SUB"
@@ -323,8 +277,6 @@
       "effectKind": "AWAKEN_HERO",
       "effectValue": 1,
       "stackMax": 999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "赛季通行证、限时活动",
       "why": "武将养成·觉醒线（B06 §2.3）：推进 1 阶觉醒。觉醒每阶 +8%（HERO_AWAKEN_STEP），SSR 上限 3 阶 ⇒ 最多 +24%。刻意做得比升星弱：觉醒材料是稀缺投放，若单阶收益过高，「抽到重复武将转碎片升星」这条线就会被架空。"
     },
@@ -336,8 +288,6 @@
       "effectKind": "AWAKEN_HERO",
       "effectValue": 1,
       "stackMax": 999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "赛季通行证、限定活动",
       "why": "武将养成·觉醒线（B06 §2.3）：第 3 阶（最后一阶）觉醒专用。把最后一阶单独拆一种材料，是为了让「差一步满觉醒」成为一个明确的、可付费补齐的目标，而不是让玩家在同一份材料上无限等待。"
     },
@@ -349,8 +299,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 24,
       "obtainFrom": "主线任务、剿匪掉落、商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：无套装的入门武器。必须存在：新号第一天就要能穿满 4 个槽位，否则装备界面是空的，玩家学不会这套系统。",
       "effectTarget": "WEAPON"
@@ -363,8 +311,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 20,
       "obtainFrom": "主线任务、剿匪掉落、商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：入门护甲，给统率。统率同时抬带兵上限，所以它对新号的实际价值高于同数值的武力装。",
       "effectTarget": "ARMOR"
@@ -377,8 +323,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 20,
       "obtainFrom": "主线任务、剿匪掉落、商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：入门坐骑，双属性各给一点。要求武将 5 级 —— 让「升级解锁更好装备」这条反馈在首日就出现一次。",
       "effectTarget": "MOUNT"
@@ -391,8 +335,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 20,
       "obtainFrom": "主线任务、剿匪掉落、商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：入门饰品，给智力。四个槽位的入门装加起来三维都有，避免新号只堆单一属性。",
       "effectTarget": "ACCESSORY"
@@ -405,8 +347,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 225,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：破军套武器，单件武力最高的入门套装件。20 级门槛对应零氪第 2~3 天的武将等级。",
       "effectTarget": "WEAPON"
@@ -419,8 +359,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 175,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：破军套护甲。武力为主、附带统率：套装件不该是纯单属性，否则换套就等于把另一个属性清零。",
       "effectTarget": "ARMOR"
@@ -433,8 +371,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 150,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：破军套坐骑。",
       "effectTarget": "MOUNT"
@@ -447,8 +383,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 175,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：破军套饰品。附带智力，让武力套在智力型武将身上也不至于完全浪费。",
       "effectTarget": "ACCESSORY"
@@ -461,8 +395,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 200,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：玄武套武器。武力统率对半：坦克型武将也要打人，纯统率武器会让它在输出上完全无用。",
       "effectTarget": "WEAPON"
@@ -475,8 +407,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 250,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：玄武套护甲，单件统率最高。",
       "effectTarget": "ARMOR"
@@ -489,8 +419,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 200,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：玄武套坐骑。",
       "effectTarget": "MOUNT"
@@ -503,8 +431,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 200,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：玄武套饰品。",
       "effectTarget": "ACCESSORY"
@@ -517,8 +443,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 200,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：文曲套武器。40 级门槛让三套装备形成 20/30/40 的阶梯，玩家有明确的换装节奏。",
       "effectTarget": "WEAPON"
@@ -531,8 +455,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 225,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：文曲套护甲。",
       "effectTarget": "ARMOR"
@@ -545,8 +467,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 200,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：文曲套坐骑。",
       "effectTarget": "MOUNT"
@@ -559,8 +479,6 @@
       "effectKind": "EQUIP_HERO",
       "effectValue": 1,
       "stackMax": 10,
-      "sellable": true,
-      "sellPriceGold": 225,
       "obtainFrom": "章节宝箱、赛季通行证、联盟商店",
       "why": "装备本体登记在 equip 表（槽位/三维/套装/等级门槛），但「能不能被拥有、能不能放进背包、能不能发放」由 item 表决定 —— 两张表共用同一个 id。不登记进 item 表的话，PlayerBag 读不到 stackMax，奖励发放器也无法发放它，装备就会变成一个只能在配置里存在、玩家永远拿不到的东西。\nstackMax=10：**这句话在 B20 §五⑤ 之后换了意思** —— 装备现在按件持有（每件一个实例 uid，强化等级挂在件上，同 id 的两件不再等价），所以 10 是「同一行最多能攒几件」的持有上限，而不是旧的「一格装 10 个」：**一件占一格**（见 Inventory.capacityUsed）。数值沿用 10 不改，是因为它原本就同时承担两件事：给屯装备留一条上限、别挤掉消耗品的位置。\nsellable=true 且售价由「三维总量 × 稀有度系数」算出，让分解装备成为一条真实的资源回收路径（B06 的五条养成线都要吃材料），同时避免逐件拍脑袋定价导致「同属性两件价格不同」这种玩家一眼看穿的破绽。\n本件：文曲套饰品，单件智力最高。",
       "effectTarget": "ACCESSORY"
@@ -573,8 +491,6 @@
       "effectKind": "COMPOSE_HERO",
       "effectValue": 1,
       "stackMax": 9999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "任务奖励、剿匪掉落、章节宝箱",
       "why": "R 档碎片。必须有：hero_rarity 表给四档都配了 dupFragment，而抽卡里 R 档占 30%（标准池）—— 缺了这一档，玩家抽到重复 R 武将时奖励发放器会因为找不到对应道具而抛异常，碎片进补偿队列而不是背包。这种缺口的表现是「抽卡结果写着 +8 碎片，背包里却没有」，而且日志里只有一条 ERROR，玩家侧完全看不出问题。",
       "effectTarget": "R"
@@ -587,8 +503,6 @@
       "effectKind": "COMPOSE_HERO",
       "effectValue": 1,
       "stackMax": 9999,
-      "sellable": false,
-      "sellPriceGold": 0,
       "obtainFrom": "每日签到、主线任务、剿匪掉落",
       "why": "N 档碎片。N 档在标准池占 58%，是玩家最常抽到的档位，所以它同时也是「重复武将转碎片」这条线最常被触发的一档 —— 缺了它，新手第一次十连就会撞上发放失败。投放上给最宽松的渠道（签到与主线），因为 N 档碎片的作用是让玩家在新手期就完整体验一次「攒碎片 → 合成武将」的循环。",
       "effectTarget": "N"

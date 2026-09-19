@@ -75,7 +75,6 @@ export class BagPanelView extends Component {
    */
   onUseItem: ((itemId: string, needsTarget: boolean) => void) | null = null
   /** 点「出售」。价格由服务端算好下发，本场景不参与定价 */
-  onSellItem: ((itemId: string) => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -113,7 +112,6 @@ export class BagPanelView extends Component {
     this.targetPicker?.hide()
     this.targetPicker = null
     this.onUseItem = null
-    this.onSellItem = null
   }
 
   /** 装载资源产出明细（GET /resource/detail）。 */
@@ -230,9 +228,10 @@ export class BagPanelView extends Component {
     value.horizontalAlign = Label.HorizontalAlign.RIGHT
     value.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
 
+    // 只有"使用"一个按钮：出售整条撤下（2026-09-13 撤按钮，2026-09-19 B24 裁决④ 连表列一起删），
+    // 所以它居中到原来的两个按钮之间，而不是留一个空位假装那边还有东西
     const buttons: Array<{ name: string; text: string; x: number }> = [
-      { name: 'UseButton', text: '使用', x: PANEL_WIDTH / 2 - 74 },
-      { name: 'SellButton', text: '出售', x: PANEL_WIDTH / 2 - 22 },
+      { name: 'UseButton', text: '使用', x: PANEL_WIDTH / 2 - 48 },
     ]
     for (const button of buttons) {
       const buttonNode = new Node(button.name)
@@ -357,9 +356,8 @@ export class BagPanelView extends Component {
       icon.active = row.iconKey !== null
         && applyAnyIconSprite(icon, row.iconKey, 26, 26)
     }
-    // 前三个子节点是文本，后两个是使用/出售按钮 —— 只有背包页的道具行才显示
+    // 前三个子节点是文本，后一个是使用按钮 —— 只有背包页的道具行才显示
     const useButton = node.children[3]
-    const sellButton = node.children[4]
     if (useButton !== undefined) {
       useButton.active = row.itemId !== null
       useButton.off('touch-start')
@@ -368,16 +366,6 @@ export class BagPanelView extends Component {
         const needsTarget = row.needsTarget
         useButton.on('touch-start', (_event: EventTouch) => {
           this.onUseItem?.(itemId, needsTarget)
-        }, this)
-      }
-    }
-    if (sellButton !== undefined) {
-      sellButton.active = row.sellable
-      sellButton.off('touch-start')
-      if (row.sellable && row.itemId !== null) {
-        const itemId = row.itemId
-        sellButton.on('touch-start', (_event: EventTouch) => {
-          this.onSellItem?.(itemId)
         }, this)
       }
     }
@@ -408,7 +396,6 @@ export class BagPanelView extends Component {
           iconKey: null,
           itemId: null,
           needsTarget: false,
-          sellable: false,
         })
       }
       out.push({
@@ -421,7 +408,6 @@ export class BagPanelView extends Component {
         iconKey: null,
         itemId: null,
         needsTarget: false,
-        sellable: false,
       })
     }
     return out
@@ -442,7 +428,7 @@ export class BagPanelView extends Component {
     return page.items.map((item: BagItemRow): RowDraft => ({
       title: item.title,
       titleColor: COLOR_TEXT,
-      detail: [item.stackText, item.obtainText, item.sellText]
+      detail: [item.stackText, item.obtainText]
         .filter((part): part is string => part !== null)
         .join(' · '),
       detailColor: COLOR_TEXT_DIM,
@@ -451,7 +437,6 @@ export class BagPanelView extends Component {
       iconKey: itemArtKeyForConfig(item.itemId),
       itemId: item.itemId,
       needsTarget: item.needsTarget,
-      sellable: item.sellText !== null,
     }))
   }
 
@@ -474,7 +459,6 @@ interface RowDraft {
   /** 道具行才有；资源行为 null，据此隐藏使用/出售按钮 */
   readonly itemId: string | null
   readonly needsTarget: boolean
-  readonly sellable: boolean
 }
 
 function resourceSummaryDraft(resource: ResourceRow): RowDraft {
@@ -495,6 +479,5 @@ function resourceSummaryDraft(resource: ResourceRow): RowDraft {
     iconKey: resourceIconKey(resource.type),
     itemId: null,
     needsTarget: false,
-    sellable: false,
   }
 }

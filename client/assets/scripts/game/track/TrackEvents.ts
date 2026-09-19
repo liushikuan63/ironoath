@@ -72,7 +72,6 @@ export const TRACK_EVENTS = {
   /** 使用道具（含因缺选择器而被挡下的那一次点击）。 */
   itemUse: 'item_use',
   /** 尝试卖出道具。服务端还没有出售端点，所以这个名字同时也是那条缺口的计数器。 */
-  itemSell: 'item_sell',
   /** 踢成员。`from` 区分小队与联盟。 */
   memberKick: 'member_kick',
   /** 社交事件标记已读（红点与离线补偿同一本账）。 */

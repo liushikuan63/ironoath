@@ -17,8 +17,6 @@ public record ItemCfg(
         long effectValue,
         String effectTarget,
         long stackMax,
-        boolean sellable,
-        long sellPriceGold,
         String obtainFrom)
 {
     /** 枚举取值与配置表 fieldTypes 中的 ENUM 声明完全一致（CI 校验）。 */

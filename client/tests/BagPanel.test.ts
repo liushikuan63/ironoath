@@ -159,13 +159,6 @@ test('来源提示：配置了才显示，未配置（null 或空串）不显示
   assert.equal(buildItemRow(item({ obtainFrom: '' })).obtainText, null)
 })
 
-test('出售整条撤下：协议里没有 sellable 可判，行不可能出现售价文案', () => {
-  // 2026-09-13 裁决：服务端不再下发 sellable / sellPriceGold（没有 /bag/sell 端点、
-  // B04 没有出售规则，收口清单 #47 ③），所以这两个字段连夹具都构造不出来 ——
-  // tsc 对字面量多余属性会直接报错，这条用例因此同时是"协议真的删干净了"的证据
-  assert.equal(buildItemRow(item()).sellText, null)
-})
-
 test('道具名字照搬服务端下发的中文，客户端不翻译', () => {
   assert.equal(buildItemRow(item({ name: '加速 60 分钟', count: 3 })).title, '加速 60 分钟 ×3')
   assert.equal(buildItemRow(item()).stackText, '3/10')
