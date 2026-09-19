@@ -65,7 +65,6 @@
       "additionalProperties": false,
       "required": [
         "seasonId",
-        "phase",
         "totalDays",
         "allowsPvp",
         "allowsCapitalWar",
@@ -79,7 +78,7 @@
         },
         "phase": {
           "$ref": "#/$defs/SeasonPhase",
-          "description": "当前规则阶段；null = 赛季未启用（没配 SEASON_START_AT）。"
+          "description": "当前规则阶段；**null = 赛季未启用**（没配 SEASON_START_AT），不是「第 0 天」。这一位不在 required 里 —— 生成器按「非必填 = 可空」产出 `SeasonPhase | null`，可空性由所在位置声明而不是 $defs 里那个 type 数组（那个数组对枚举不起作用）。此前它被列进 required，于是生成出来的类型说非空而 SeasonAppService#status 会下发 null：客户端 `switch (resp.phase)` 照样编译通过，把 null 当成兜底分支。"
         },
         "seasonStartAt": {
           "type": [
@@ -123,8 +122,7 @@
         },
         "glory": {
           "$ref": "#/$defs/SeasonGloryView",
-          "nullable": true,
-          "description": "我的荣耀三件套。<b>需要身份</b>：没带 {@code X-Player-Id} 时为 null（与本接口的 {@code myRank} 同一条规则 —— 全服信息不该被身份门槛挡住，属于个人的东西才要身份）。\n\n服务端优先读主存档里的那份派生缓存；缓存缺失或落后于账本时（重启、或结算写缓存失败过），以赛季账本为准重算并就地修一次。"
+          "description": "我的荣耀三件套。<b>需要身份</b>：没带 {@code X-Player-Id} 时为 null（与本接口的 {@code myRank} 同一条规则 —— 全服信息不该被身份门槛挡住，属于个人的东西才要身份）。可空由「不在 required 里」声明；这里曾写过一个 {@code nullable: true}，但生成器不读它，留着只会让人以为那是开关。\n\n服务端优先读主存档里的那份派生缓存；缓存缺失或落后于账本时（重启、或结算写缓存失败过），以赛季账本为准重算并就地修一次。"
         },
         "myRank": {
           "type": [
