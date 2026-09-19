@@ -45,6 +45,7 @@ class PayMinorLimitTest {
     private static final long BASE = 1_700_000_000_000L;
 
     @Autowired private ConfigRegistry configs;
+    @Autowired private com.ironoath.web.battlepass.BattlePassService battlePass;
     @Autowired private PayAppService.SignatureVerifier verifier;
     @Autowired private PayAppService.ProductFulfiller fulfiller;
     @Autowired private PlayerLock playerLock;
@@ -64,7 +65,7 @@ class PayMinorLimitTest {
         AtomicLong clock = new AtomicLong(BASE);
         return new PayAppService(orders, verifier, fulfiller, configs, playerLock, idempotency,
                 new TimeService(clock::get), environment, throttle(), policy,
-                new com.ironoath.web.pay.PaidProducts(configs), players);
+                new com.ironoath.web.pay.PaidProducts(configs, battlePass), players);
     }
 
     /** 频控那三条口径与生产装配同源，不为测试另编一套数。 */

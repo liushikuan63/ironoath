@@ -35,12 +35,20 @@ import com.ironoath.web.dto.generated.PayRewardItem;
 public final class PaidProducts {
 
     private final ConfigRegistry configs;
+    /**
+     * 战令的解锁位读它（B24 S-d-c）。**为什么下单前要读存储**：战令是「每赛季一次」的商品，
+     * 而「本赛季买过没有」这件事只在战令进度里 —— PlayerPaid 里没有它（进度按赛季分账，
+     * 混进主存档就意味着每赛季要有人记得清）。
+     */
+    private final com.ironoath.web.battlepass.BattlePassService battlePass;
 
-    public PaidProducts(ConfigRegistry configs) {
-        if (configs == null) {
-            throw new IllegalArgumentException("ConfigRegistry 不得为 null");
+    public PaidProducts(ConfigRegistry configs,
+                        com.ironoath.web.battlepass.BattlePassService battlePass) {
+        if (configs == null || battlePass == null) {
+            throw new IllegalArgumentException("ConfigRegistry 与 BattlePassService 都不得为 null");
         }
         this.configs = configs;
+        this.battlePass = battlePass;
     }
 
     // ---------- 商品 ----------
@@ -141,10 +149,11 @@ public final class PaidProducts {
      *
      * <p>月卡不在其列：§五②c 裁的是"未到期再买直接 +30 天，不设上限"，续期是正常业务。
      */
-    public String alreadyOwned(PlayerPaid paid, PayProductCfg product) {
+    public String alreadyOwned(String playerId, PlayerPaid paid, PayProductCfg product) {
         if (paid == null) {
             return null;
         }
+        // 战令的已经拥有不看 PlayerPaid 而看本赛季的解锁位（下同：每赛季一次，赛季一换就重新可以买）
         return switch (product.kind()) {
             case FIRST_CHARGE -> paid.firstCharged()
                     ? "本账号已经完成过首充，这一档是一次性的（不是下架，是这一档只送一次）" : null;
@@ -156,6 +165,9 @@ public final class PaidProducts {
             // 那一步在 S3-iii 与购买入口同批落 —— 现在放行的后果是"能重复买"，
             // 而它的对立面（写成一个永久标记）是"第二天就再也买不到"，两者都远好于悄悄少卖一天。
             case GIFT -> null;
+            // 战令：**本赛季**已经解开了就不再卖（换了赛季自然又变成可买，与赛季商店的 SEASON 限购同源）
+            case BATTLE_PASS -> battlePass.paidUnlocked(playerId)
+                    ? "本赛季的战令已经买过了：它跟赛季走，下个赛季重新开始" : null;
         };
     }
 

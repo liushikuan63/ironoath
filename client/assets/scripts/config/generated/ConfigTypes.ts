@@ -833,6 +833,7 @@ export type PayProductKind =
   | 'GROWTH_FUND'
   | 'FIRST_CHARGE'
   | 'GIFT'
+  | 'BATTLE_PASS'
 
 /** pay_product.payProductGrantOccasion 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type PayProductGrantOccasion =

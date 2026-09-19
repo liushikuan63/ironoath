@@ -104,7 +104,10 @@ class ProductRewardConsistencyTest {
                 .collect(Collectors.groupingBy(p -> p.kind().name(), Collectors.counting()));
         assertThat(byKind.values()).as("非礼包类商品出现两行 ⇒ requireKind 反查没有答案")
                 .allMatch(n -> n == 1L);
-        assertThat(byKind.keySet()).containsExactlyInAnyOrder("MONTHLY_CARD", "GROWTH_FUND", "FIRST_CHARGE");
+        // BATTLE_PASS（B24 块②）也在这一族里：它按 kind 反查（战令域读 require("battle_pass") 与
+        // 解锁位），一个 kind 只能有一行 —— 出现第二行时"本赛季的解锁位是哪一个商品买的"就没有答案。
+        assertThat(byKind.keySet()).containsExactlyInAnyOrder(
+                "MONTHLY_CARD", "GROWTH_FUND", "FIRST_CHARGE", "BATTLE_PASS");
         assertThat(products().stream().filter(p -> p.kind() == PayProductCfg.Kind.GIFT).count())
                 .as("礼包一族必须有多行（B19 §五⑤ 首批 3 个），只有一行说明触发点没配齐")
                 .isGreaterThan(1L);
@@ -199,10 +202,25 @@ class ProductRewardConsistencyTest {
                 .as("尾档给得略多（§五②d 的 1600×5 + 1800）").isGreaterThan(tiers.get(0).count());
     }
 
+    /**
+     * 发货内容在 `product_reward` 之外的商品：**发货清单不是空的，只是它的内容住在别的表里**。
+     * 每条都要写清"内容在哪张表"，因为这张名单的用途正是"别让一个商品静默地什么都不发"。
+     */
+    private static final java.util.Map<String, String> CONTENT_ELSEWHERE = java.util.Map.of(
+            "battle_pass", "档位奖励在 battle_pass 表（20 档，领取时才发）；购买只发解锁位 —— "
+                    + "grantOccasion=TIER 时 plannedRewards 会给一条 PRIVILEGE，所以发货不是空清单");
+
     @Test
-    @DisplayName("每个商品都得有发货内容；没有奖励行的商品就是「收了钱不发东西」")
+    @DisplayName("每个商品都得有发货内容；没有奖励行的商品就是「收了钱不发东西」（内容在别处要写明是哪张表）")
     void everyProductHasRewardLines() {
         for (PayProductCfg row : products()) {
+            if (CONTENT_ELSEWHERE.containsKey(row.id())) {
+                assertThat(row.grantOccasion())
+                        .as("%s 登记为「内容在别处」，那它的发货节奏必须是 TIER（购买只发权限位，"
+                                + "内容由所属域按进度发），否则那句登记就是假的", row.id())
+                        .isEqualTo(PayProductCfg.GrantOccasion.TIER);
+                continue;
+            }
             assertThat(rewards()).filteredOn(r -> r.productId().equals(row.id()))
                     .as("%s 没有任何奖励行：下单会成功、发货会发出一份空清单", row.id())
                     .isNotEmpty();

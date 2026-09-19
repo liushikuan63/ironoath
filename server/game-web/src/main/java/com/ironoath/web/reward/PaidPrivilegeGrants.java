@@ -28,12 +28,27 @@ import com.ironoath.core.player.PlayerSave;
  */
 public final class PaidPrivilegeGrants {
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(PaidPrivilegeGrants.class);
+
     private static final long MILLIS_PER_DAY = TimeUnit.DAYS.toMillis(1);
 
     private final PlayerRepository players;
     private final ConfigRegistry configs;
+    /**
+     * 战令解锁位与当季限定外观（B24 S-d-c）。
+     *
+     * <p><b>这里注入的是存储与规则，不是服务</b>：BattlePassService 依赖 RewardService，
+     * 而本类是 RewardService 发放 PRIVILEGE 时的落库口 —— 注入服务会绕成一个环。
+     * 于是「战令解锁位只有一个写者」这条落在本类上：谁都不该在别处写这一位。
+     */
+    private final com.ironoath.web.battlepass.BattlePassStore battlePassStore;
+    private final com.ironoath.web.battlepass.BattlePassRules battlePassRules;
 
-    public PaidPrivilegeGrants(PlayerRepository players, ConfigRegistry configs) {
+    public PaidPrivilegeGrants(PlayerRepository players, ConfigRegistry configs,
+                               com.ironoath.web.battlepass.BattlePassStore battlePassStore,
+                               com.ironoath.web.battlepass.BattlePassRules battlePassRules) {
+        this.battlePassStore = battlePassStore;
+        this.battlePassRules = battlePassRules;
         if (players == null || configs == null) {
             throw new IllegalArgumentException("PlayerRepository / ConfigRegistry 不得为 null");
         }
@@ -72,6 +87,22 @@ public final class PaidPrivilegeGrants {
             case FIRST_CHARGE -> {
                 requireSingle(product, count);
                 save.setPaid(paid.withFirstCharged(now));
+            }
+            // 战令：解锁位落在战令进度里（按赛季分账），而当季限定外观随购买立即到账 ——
+            // 「买了就有」是外观该有的语义，攒到某一档才给会让买断的人觉得自己被吊着
+            case BATTLE_PASS -> {
+                requireSingle(product, count);
+                String seasonId = battlePassRules.seasonId();
+                battlePassStore.update(seasonId, playerId,
+                        cur -> cur.paidUnlocked() ? cur : cur.withPaidUnlocked());
+                String frameId = battlePassRules.seasonFrameId();
+                if (frameId == null) {
+                    LOG.warn("本赛季（{}）在 battle_pass_season 表里没有配限定外观："
+                            + "战令买了但这一季没有外观可送（playerId={}）", seasonId, playerId);
+                } else if (!save.ownedAvatarFrames().contains(frameId)) {
+                    save.ownAvatarFrame(frameId);
+                    LOG.info("战令限定外观已到账 playerId={} 赛季={} 外观={}", playerId, seasonId, frameId);
+                }
             }
             default -> throw new IllegalArgumentException("未支持的付费商品类别 " + product.kind()
                     + "（pay_product 新增 kind 时要在 " + getClass().getSimpleName() + " 里登记它怎么落库）");

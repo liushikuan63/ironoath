@@ -106,8 +106,9 @@ public class PayBeansConfig {
      * 价格、发货内容、当前权益三件事必须由同一份读法算出来，否则"表改了一列"只会有一处跟着改。
      */
     @Bean
-    public com.ironoath.web.pay.PaidProducts paidProducts(com.ironoath.config.ConfigRegistry configs) {
-        return new com.ironoath.web.pay.PaidProducts(configs);
+    public com.ironoath.web.pay.PaidProducts paidProducts(com.ironoath.config.ConfigRegistry configs,
+            com.ironoath.web.battlepass.BattlePassService battlePass) {
+        return new com.ironoath.web.pay.PaidProducts(configs, battlePass);
     }
 
     /**

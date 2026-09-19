@@ -25,7 +25,8 @@ public record PayProductCfg(
         MONTHLY_CARD,
         GROWTH_FUND,
         FIRST_CHARGE,
-        GIFT
+        GIFT,
+        BATTLE_PASS
     }
 
     /** 枚举取值与配置表 fieldTypes 中的 ENUM 声明完全一致（CI 校验）。 */

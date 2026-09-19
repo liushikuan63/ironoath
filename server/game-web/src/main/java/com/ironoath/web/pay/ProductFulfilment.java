@@ -74,7 +74,7 @@ public final class ProductFulfilment implements PayAppService.ProductFulfiller {
         // 一次性商品被买第二次（下单处已拦，这里是补单/并发下的第二道）：
         // 返回失败让订单留在 PAID_UNFULFILLED —— 钱收了但这份权益本账号已经用掉了，
         // 那是客服要看得见的一笔，不是一个可以静默吞掉的边角
-        String alreadyOwned = catalog.alreadyOwned(save.paid(), product);
+        String alreadyOwned = catalog.alreadyOwned(playerId, save.paid(), product);
         if (alreadyOwned != null) {
             return Result.failure(alreadyOwned);
         }

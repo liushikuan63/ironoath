@@ -56,6 +56,11 @@ class BattlePassEndpointTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private BattlePassService battlePass;
     @Autowired private PlayerInitService playerInitService;
+    /** 购买战令的落库口。**测试走生产入口**（不是直接改写进度位）：
+     *  「买了战令」这件事在生产里只有这一条路，绕开它就等于测一个不存在的形状。 */
+    @Autowired private com.ironoath.web.reward.PaidPrivilegeGrants privilegeGrants;
+    @Autowired private com.ironoath.core.player.PlayerRepository players;
+    @Autowired private com.ironoath.web.pay.PaidProducts catalog;
     @Autowired private RewardPorts.Bag bag;
     @Autowired private RewardPorts.Wallet wallet;
 
@@ -136,7 +141,8 @@ class BattlePassEndpointTest {
     void theTwoTracksDoNotConsumeEachOther() {
         String playerId = player();
         battlePass.addPoints(playerId, 150L, "test");
-        battlePass.unlockPaid(playerId);
+        // 走生产入口：付费发货时 PRIVILEGE 的落库口（与 rewardService.grant 里那条分支同一个方法）
+        privilegeGrants.grant(playerId, "battle_pass", 1L, 1_700_000_000_000L);
 
         battlePass.claim(playerId, new BattlePassClaimReq(newId(), 1L, BattlePassTrack.FREE));
         BattlePassStatusResp afterFree = battlePass.status(playerId);
@@ -177,6 +183,23 @@ class BattlePassEndpointTest {
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).errorCode())
                 .isEqualTo(ErrorCode.PARAM_INVALID);
+    }
+
+    @Test
+    @DisplayName("买一次战令：付费线解锁 + 当季限定外观立即到账；本赛季再买一次被 alreadyOwned 拦下")
+    void buyingThePassUnlocksThePaidTrackAndHandsOverTheSeasonFrame() {
+        String playerId = player();
+        assertThat(players.findByPlayerId(playerId).orElseThrow().ownedAvatarFrames())
+                .as("买之前没有这枚框").doesNotContain("frame_season_s1");
+
+        privilegeGrants.grant(playerId, "battle_pass", 1L, 1_700_000_000_000L);
+
+        assertThat(battlePass.status(playerId).paidUnlocked()).as("付费线解锁了").isTrue();
+        assertThat(players.findByPlayerId(playerId).orElseThrow().ownedAvatarFrames())
+                .as("当季限定外观随购买立即到账（不是攒到第 20 档才给）").contains("frame_season_s1");
+        assertThat(catalog.alreadyOwned(playerId, players.findByPlayerId(playerId).orElseThrow().paid(),
+                catalog.require("battle_pass")))
+                .as("本赛季已经买过：再买一次会被拦下（换赛季自然又能买）").isNotNull();
     }
 
     // ---------- 辅助 ----------

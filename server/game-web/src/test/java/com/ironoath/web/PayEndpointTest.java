@@ -121,6 +121,7 @@ class PayEndpointTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private ConfigRegistry configs;
+    @Autowired private com.ironoath.web.battlepass.BattlePassService battlePass;
     @Autowired private PayOrder.Registry orders;
     @Autowired private PayAppService.SignatureVerifier verifier;
     @Autowired private PayAppService.ProductFulfiller fulfiller;
@@ -146,7 +147,10 @@ class PayEndpointTest {
 
         assertThat(data.get("region").asText()).isNotBlank();
         JsonNode products = data.get("products");
-        assertThat(products.size()).as("三类主力商品 + 三档礼包（B19-S3-i #169）").isEqualTo(6);
+        assertThat(products.size())
+                .as("四类主力商品（月卡/基金/首充/战令）+ 三档礼包（B19-S3-i #169；"
+                        + "战令是 B24 块② 加的第四个主力商品，与月卡同价）")
+                .isEqualTo(7);
         long giftCents = configs.longParam("PRODUCT_GIFT_CENTS");
         int giftRows = 0;
         for (JsonNode product : products) {
@@ -155,6 +159,7 @@ class PayEndpointTest {
                 case "monthly_card" -> configs.longParam("PRODUCT_MONTHLY_CARD_CENTS");
                 case "growth_fund" -> configs.longParam("PRODUCT_GROWTH_FUND_CENTS");
                 case "first_charge" -> configs.longParam("PRODUCT_FIRST_CHARGE_CENTS");
+                case "battle_pass" -> configs.longParam("PRODUCT_BATTLE_PASS_CENTS");
                 // 三档礼包共用一枚参数：§五⑤ 说"与首充同档、不新增价格点"，
                 // 而它讲的正是阶梯不许变多 —— 这里就按"三行同一个参数"来钉这句话
                 case "gift_stuck_supply", "gift_building_celebration", "gift_defeat_relief" -> {
@@ -399,7 +404,7 @@ class PayEndpointTest {
                         configs.longParam("PAY_POPUP_GLOBAL_COOLDOWN_MINUTES") * 60_000L)),
                 // UNKNOWN 就是生产默认 bean：年龄未知 ⇒ 限额不拦，本用例的下单路径不会碰到 throttle
                 com.ironoath.web.pay.MinorPaymentPolicy.UNKNOWN,
-                new com.ironoath.web.pay.PaidProducts(configs), players);
+                new com.ironoath.web.pay.PaidProducts(configs, battlePass), players);
     }
 
     @Test

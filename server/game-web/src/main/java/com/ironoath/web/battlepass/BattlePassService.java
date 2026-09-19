@@ -131,18 +131,6 @@ public class BattlePassService {
         });
     }
 
-    /**
-     * 解锁本赛季的付费线（由付费发货路径调用）。幂等：重复发货不会把进度改坏。
-     *
-     * <p><b>它是"买了战令"这件事唯一的落库点</b>：付费线能不能领只读这一位，
-     * 而这一位只能由发货写 —— 客户端说自己买了不算数（与月卡/基金同一条口径）。
-     */
-    public void unlockPaid(String playerId) {
-        String seasonId = rules.seasonId();
-        store.update(seasonId, playerId, cur -> cur.paidUnlocked() ? cur : cur.withPaidUnlocked());
-        LOG.info("战令付费线已解锁 playerId={} 赛季={}", playerId, seasonId);
-    }
-
     /** 本赛季付费线解锁了没有（下单前的第二道检查用，第一道在读状态时）。 */
     public boolean paidUnlocked(String playerId) {
         return store.load(rules.seasonId(), playerId).paidUnlocked();

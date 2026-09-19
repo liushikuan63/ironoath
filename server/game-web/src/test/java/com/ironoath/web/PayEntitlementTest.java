@@ -266,7 +266,7 @@ class PayEntitlementTest {
                 .as("第一笔首充的货发出去之后，账号上必须留下首充标记 —— 第二笔的拒单全靠它")
                 .isTrue();
         int ledgerBefore = player(playerId).paid().fulfilledOrderIds().size();
-        assertThat(catalog.alreadyOwned(player(playerId).paid(), catalog.require("first_charge")))
+        assertThat(catalog.alreadyOwned(playerId, player(playerId).paid(), catalog.require("first_charge")))
                 .as("判定本身要能认出「这一档本账号已经用掉」，否则问题在读法而不是规则")
                 .isNotNull();
 

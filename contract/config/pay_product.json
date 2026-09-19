@@ -6,7 +6,7 @@
   "fieldTypes": {
     "id": "STRING_KEY",
     "name": "STRING",
-    "kind": "ENUM:MONTHLY_CARD,GROWTH_FUND,FIRST_CHARGE,GIFT",
+    "kind": "ENUM:MONTHLY_CARD,GROWTH_FUND,FIRST_CHARGE,GIFT,BATTLE_PASS",
     "priceCentsParam": "STRING",
     "grantOccasion": "ENUM:ON_PURCHASE,DAILY,TIER",
     "durationDays": "?LONG_POS",
@@ -39,6 +39,18 @@
       "extraQueues": 0,
       "heroChoices": null,
       "why": "98 元 × 10 金币/元 × `PRODUCT_GROWTH_FUND_RETURN_RATIO`(10) = 9800 金币，分六档发（1600×5 + 1800，见 `product_reward`）。**不带有效期**（durationDays 为空）：§五②d 裁的是「永久有效」—— 一次性付费的权益不设过期，否则「买了没练到等级就作废」会直接变成退款工单。档位锚点取 10/16/22/28/34/40：10 级是入盟门槛、16 级是建国门槛，其余三档对齐赛季内的成长节奏，最后一档给 1800 是尾档补偿（走完六档的人是最投入的那批）。"
+    },
+    {
+      "id": "battle_pass",
+      "name": "赛季战令",
+      "kind": "BATTLE_PASS",
+      "priceCentsParam": "PRODUCT_BATTLE_PASS_CENTS",
+      "grantOccasion": "TIER",
+      "durationDays": null,
+      "adFree": false,
+      "extraQueues": 0,
+      "heroChoices": null,
+      "why": "战令的付费线买断（30 元，与月卡同价）。发货只买到**解锁位**：20 档奖励仍然按积分一档一档领，所以 grantOccasion 取 TIER（与成长基金同一形状，`PaidClaimsAppService.claimFund` 是先例）—— 一次性把 20 档全发出去等于把战令变成\"花 30 元买一包东西\"，而它的留存理由全在\"下一档就差一点\"上。本赛季的限定外观**随购买立即到账**（见 `battle_pass_season` 表）：那是\"买了就有\"的东西，不该排在某一档后面。"
     },
     {
       "id": "first_charge",

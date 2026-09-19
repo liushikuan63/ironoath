@@ -635,7 +635,7 @@ public class PayAppService {
         // 而这条判定的目的（别收第二次钱）由发货处的第二道同样挡得住 ——
         // 更要紧的是，发货时会因为"存档不存在"直接失败进补单队列，那才是这道题的响亮答案
         PlayerPaid paid = players.findByPlayerId(playerId).map(PlayerSave::paid).orElse(null);
-        String alreadyOwned = catalog.alreadyOwned(paid, product);
+        String alreadyOwned = catalog.alreadyOwned(playerId, paid, product);
         if (alreadyOwned != null) {
             throw new BizException(ErrorCode.PAY_NOT_ENTITLED,
                     "商品 " + product.id() + "：" + alreadyOwned);

@@ -104,8 +104,10 @@ public class HeroBeansConfig {
     @Bean
     public com.ironoath.web.reward.PaidPrivilegeGrants paidPrivilegeGrants(
             com.ironoath.core.player.PlayerRepository players,
-            com.ironoath.config.ConfigRegistry configs) {
-        return new com.ironoath.web.reward.PaidPrivilegeGrants(players, configs);
+            com.ironoath.config.ConfigRegistry configs,
+            com.ironoath.web.battlepass.BattlePassStore battlePassStore,
+            com.ironoath.web.battlepass.BattlePassRules battlePassRules) {
+        return new com.ironoath.web.reward.PaidPrivilegeGrants(players, configs, battlePassStore, battlePassRules);
     }
 
     @Bean
