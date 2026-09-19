@@ -25,7 +25,7 @@ import type { GameSession } from './GameSession'
 import type { NetOutcome } from '../../net/NetModule'
 import type { Store } from '../store/Store'
 import type { TimeSync } from '../../core/TimeSync'
-import type { PowerDetailResp } from '../../net/generated/Protocol'
+import type { OfflineReportView, PowerDetailResp } from '../../net/generated/Protocol'
 import type { CityCollectResp, CityListResp, SpeedUpSource } from '../../net/generated/CityProtocol'
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
 import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
@@ -51,7 +51,7 @@ import { gameBus } from '../../core/EventBus'
 import type { SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
 import type {
-  BattleReportListResp, BattleReportResp, ShareChannel,
+  BattleReportBrief, BattleReportListResp, BattleReportResp, ShareChannel,
 } from '../../net/generated/BattleProtocol'
 import type { MailClaimAllResp, MailListResp } from '../../net/generated/MailProtocol'
 import type { ActivityClaimResp, ActivityListResp } from '../../net/generated/ActivityProtocol'
@@ -69,6 +69,8 @@ import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
 import { ClientReddotTree } from '../reddot/ReddotTree'
 import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army/AutoTrain'
+import { buildOfflineItems, offlineReportGate } from '../offline/OfflineReport'
+import type { OfflineItem } from '../offline/OfflineReport'
 import type { TrainMemory } from '../army/AutoTrain'
 
 /**
@@ -98,6 +100,11 @@ export interface MarchComposeView {
   readonly notice: string | null
   /** 正在提交（面板据此禁用确认键，防双击发两份） */
   readonly submitting: boolean
+}
+
+/** 「自上次登录以来」那一屏：只装条目，判定与阈值全在 game/offline/OfflineReport.ts 里。 */
+export interface OfflineReportPopup {
+  readonly items: readonly OfflineItem[]
 }
 
 export interface PanelTargets {
@@ -161,6 +168,10 @@ export interface PanelTargets {
   activity?(resp: ActivityListResp, serverNowMs: number): void
   /** 战报列表（B12 §3）。时刻由外层给：列表里每行都写着「N 天后过期」，那是相对时间。 */
   reports?(resp: BattleReportListResp, serverNowMs: number): void
+  /** 「自上次登录以来」那一屏（B25-S3）。条目为空时编排层不会调它 —— 一个空面板比不弹更糟。 */
+  offlineReport?(view: OfflineReportPopup): void
+  /** 汇总里点了一条：跳到那一页（key 与 PanelNav 的 key 一致）。 */
+  offlineJump?(key: string): void
   /** 一场的完整战果 + 回放参数。回放怎么演由 {@code playbackOptionsOf} 装配，本类不算。 */
   reportReplay?(resp: BattleReportResp): void
   /**
@@ -227,6 +238,10 @@ export class AppRoot {
   /** 二级选择器的最近一次权威响应；不参与任何数值判断。 */
   private cityResp: CityListResp | null = null
   private armyResp: ArmyListResp | null = null
+  /** 服务端给的边界与阈值（init 响应里那一块）；登录失败时为 null。 */
+  private offlineConfig: OfflineReportView | null = null
+  /** 已经给玩家看过的那一批明细的指纹：同一批不再弹（明细变了 = 指纹变了，会再弹一次）。 */
+  private offlineShownFingerprint: string | null = null
   /**
    * 客户端记住的「上一次成功训练」，自动续训要续的就是这一批（B25-S2d）。
    * 只在内存里：换设备后没有它，玩家重新训一批即可 —— 与「上一次出征」同一条口径（裁决②(a)）。
@@ -341,9 +356,71 @@ export class AppRoot {
       playerId: outcome.data.playerId,
       mainLevel: trackParam(this.store.getState().cityLevel),
     })
+    // 边界与阈值随登录一起下发（B25-S3）：previousLoginAt 是"自上次登录以来"的起点，
+    // 而 profile.lastLoginAt 此刻已被推进成现在 —— 两者差一个"永远是 0 秒"的 bug
+    this.offlineConfig = outcome.data.offlineReport ?? null
     await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power',
       'world', 'quest', 'reddot')
+    // 首屏拉齐之后再弹「自上次登录以来」（B25-S3）：它要读城市/社交那两份已到的数据，
+    // 早于首屏弹会少条目 —— 而少条目正是这个功能最容易骗人的地方
+    await this.deliverOfflineReport()
     return true
+  }
+
+  /**
+   * 「自上次登录以来」那一屏（B25-S3，裁决①(a)）。
+   *
+   * <p><b>它只做取数与投递</b>：判定（四条闸门）与条目组装全在 `game/offline/OfflineReport.ts`
+   * 那份纯逻辑里，阈值来自服务端随登录下发的两个数（客户端一个都不填）。
+   *
+   * <p><b>战报是这一屏唯一的额外请求</b>，而且只在"过了时长门槛"时才发 ——
+   * 几分钟内切号重连的人不该为一份不会弹的汇总多打一次接口。拉不到就不列那一条
+   * （留痕但不上报错），因为把登录后的第一屏变成错误弹窗，比少说一场仗糟得多。
+   */
+  private async deliverOfflineReport(): Promise<void> {
+    const boundary = this.offlineConfig
+    if (boundary === null || boundary.previousLoginAt === null) {
+      return   // 新号（或老服务端）：没有「上一次」可言，这一屏没有起点
+    }
+    const idleMinutes = Math.floor((this.timeSync.serverNow() - boundary.previousLoginAt) / 60_000)
+    if (idleMinutes < boundary.minIdleMinutes) {
+      return   // 离得太近：连战报都不拉，免得为一份不会弹的汇总多打一次接口
+    }
+    let reports: readonly BattleReportBrief[] = []
+    const outcome = await this.api.battleReports()
+    if (outcome.kind === 'ok') {
+      reports = outcome.data.reports
+    } else {
+      console.warn('[offline] 战报拉不到，这一屏会少一条明细', outcome.kind)
+    }
+    const serverNow = this.timeSync.serverNow()
+    const items = buildOfflineItems({
+      offlineReport: boundary,
+      serverNow,
+      resources: this.cityResp?.resources ?? {},
+      buildings: this.cityResp?.buildings ?? [],
+      reports,
+      events: this.unreadEvents,
+    })
+    const gate = offlineReportGate(boundary, items, serverNow, this.offlineShownFingerprint)
+    if (!gate.show) {
+      console.log(`[offline] 这一屏不弹：${gate.reason ?? ''}`)
+      return
+    }
+    this.offlineShownFingerprint = gate.fingerprint
+    this.track(TRACK_EVENTS.offlineReport, { items: trackParam(items.length) })
+    this.targets.offlineReport?.({ items })
+  }
+
+  /**
+   * 点汇总里的一条：跳到那一页。
+   *
+   * <p>跳转由场景层执行（导航条在那边），这里只把意图转出去并记一次 ——
+   * 看板据此能回答"哪一类汇总最常被点开"，那正是这个功能值不值得继续投的方向。
+   */
+  offlineReportJump(jump: string): void {
+    this.track(TRACK_EVENTS.offlineReportJump, { target: jump })
+    this.targets.offlineJump?.(jump)
   }
 
   /**

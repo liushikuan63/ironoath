@@ -21,7 +21,7 @@ import { GameApi } from '../assets/scripts/game/session/GameApi'
 import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
 import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
-import type { PanelTargets } from '../assets/scripts/game/session/AppRoot'
+import type { OfflineReportPopup, PanelTargets } from '../assets/scripts/game/session/AppRoot'
 import type {
   ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
 } from '../assets/scripts/game/session/Choices'
@@ -56,6 +56,9 @@ const ROUTES: Record<string, unknown> = {
   '/player/init': {
     playerId: 'P1', profile: { nickName: '君' }, cityLevel: 1, resources: {},
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, protectUntil: null,
+    // 默认给一份"没有上一次"的边界（= 新号）：绝大多数用例不该被一屏汇总干扰，
+    // 要弹的用例自己用 overrides 覆盖成过门槛的边界
+    offlineReport: { previousLoginAt: null, minIdleMinutes: 10, minItems: 1 },
     // 微信登录后服务端签发的会话票据；之后每条请求以 `Authorization: Bearer <票据>` 带上
     authToken: 'session-token-1', serverNow: SERVER_NOW, isNewPlayer: true,
   },
@@ -424,6 +427,10 @@ interface Harness {
   readonly lastRank: RankBoardView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
+  /** 最近一次推给「自上次登录以来」那一屏的条目（没弹过就是 null）。 */
+  readonly lastOfflineReport: OfflineReportPopup | null
+  /** 汇总里点过的跳转目标（按点击顺序）。 */
+  readonly offlineJumps: readonly string[]
   /** 最近一次落地给活动页的服务端时刻（断言"剩余时间来自服务端"用）。 */
   readonly lastActivityNow: number
   /** 最近一次落地给活动页的行数。 */
@@ -503,6 +510,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastChat: ChatPanelData | null = null
   let lastRank: RankBoardView | null = null
   let lastCompose: MarchComposeView | null = null
+  let lastOfflineReport: OfflineReportPopup | null = null
+  const offlineJumps: string[] = []
   let reddotTree: ClientReddotTree | null = null
   let activityNow = -1
   let activityRows = -1
@@ -546,6 +555,13 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     marchCompose: (view) => {
       attached.push('marchCompose')
       lastCompose = view
+    },
+    offlineReport: view => {
+      attached.push('offlineReport')
+      lastOfflineReport = view
+    },
+    offlineJump: key => {
+      offlineJumps.push(key)
     },
     quest: () => attached.push('quest'),
     mail: () => attached.push('mail'),
@@ -598,6 +614,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastCompose() {
       return lastCompose
+    },
+    get lastOfflineReport() {
+      return lastOfflineReport
+    },
+    get offlineJumps() {
+      return offlineJumps
     },
     get lastActivityNow() {
       return activityNow
@@ -1899,4 +1921,81 @@ test('自动续训：被拒时把服务端的理由原样说出去，不静默',
   await h.root.toggleAutoTrain()
 
   assert.deepEqual(h.errors.at(-1), ['army', '一次最多自动排 5 批，请求了 6 批'])
+})
+
+test('「自上次登录以来」：过了门槛且真有明细 ⇒ 弹一屏，条目与来源对得上', async () => {
+  const h = harness()
+  const hour = 3_600_000
+  // 边界与明细都用**本地此刻**推出来的时刻：harness 的 time/sync offset 是 0，
+  // 所以客户端算出的"服务端时刻"就是 Date.now() —— 用固定常量 SERVER_NOW 当边界，
+  // 窗口会与"现在"差上几年，条目会被窗口过滤光（第一版就是这么写错的）
+  const now = Date.now()
+  h.http.overrides.set('/player/init', {
+    ...(ROUTES['/player/init'] as Record<string, unknown>),
+    offlineReport: { previousLoginAt: now - hour, minIdleMinutes: 10, minItems: 1 },
+  })
+  // 一处"到点待收割"的建筑 + 一封窗口内的战报 + 一条窗口内的社交动态
+  h.http.overrides.set('/city/list', {
+    ...(ROUTES['/city/list'] as Record<string, unknown>),
+    buildings: [{ id: 'b1', configId: 'lumber_camp', level: 8, gridX: 1, gridY: 1,
+      status: 'UPGRADING', finishAt: now - 60_000, remainingSeconds: 0, progress: 10000,
+      startedAt: now - hour, totalSeconds: 3600, helpCount: 0 }],
+    resources: { WOOD: { current: 5000, cap: 20000, protectedAmount: 0, perHour: 200,
+      lastSettle: now } },
+  })
+  h.http.overrides.set('/battle/reports', {
+    reports: [{ reportId: 'r1', battleType: 'PVE', opponentId: null, opponentName: '营地',
+      winner: 'ATTACKER', won: true, totalRounds: 5, attackerLoss: 3, defenderLoss: 30,
+      createdAt: now - 30 * 60_000, expiresAt: now + hour }],
+    serverNow: now,
+  })
+  h.http.overrides.set('/social/summary', {
+    ...(ROUTES['/social/summary'] as Record<string, unknown>),
+    events: [{ eventId: 'e1', type: 'MEMBER_ATTACKED', title: '盟友 张三 正在被攻击', body: null,
+      coord: null, relatedId: null, occurredAt: now - 30 * 60_000, expired: false }],
+  })
+
+  await h.root.start('dev-1', '君')
+
+  assert.notEqual(h.lastOfflineReport, null, '过门槛且有明细 ⇒ 该弹')
+  const items = h.lastOfflineReport?.items ?? []
+  const keys = items.map(i => i.key)
+  assert.ok(keys.includes('buildings'), '到点待收割的建筑要列')
+  assert.ok(keys.some(k => k.startsWith('battles:')), '窗口内的战报要列')
+  assert.ok(keys.some(k => k.startsWith('social:')), '窗口内的社交动态要列')
+  assert.ok(keys.includes('resources'), '资源那一行也要有（文案里带"约"）')
+  assert.equal(items.find(i => i.key === 'buildings')?.jump, 'city')
+  assert.equal(items.find(i => i.key.startsWith('battles:'))?.jump, 'reports')
+  assert.deepEqual(h.events.at(-1)?.params, { items: String(items.length) })
+})
+
+test('「自上次登录以来」：没到时长门槛 ⇒ 不弹，而且连战报都不拉（不白打一次接口）', async () => {
+  const h = harness()
+  // 阈值取一个**不可能被任何时钟凑到**的数（十亿分钟 ≈ 1900 年）：夹具里 TimeSync 的偏移是从
+  // 固定常量 syncAt 推的，客户端算出的"服务端时刻"会落在很远的未来（实测 idle 约 2800 万分钟），
+  // 拿 10 分钟这类具体值表达"过不了门槛"只会把这个用例变脆。
+  // 门槛的语义本身由纯逻辑用例（OfflineReport.test.ts）按确定数字逐条覆盖
+  h.http.overrides.set('/player/init', {
+    ...(ROUTES['/player/init'] as Record<string, unknown>),
+    offlineReport: { previousLoginAt: Date.now() - 60_000, minIdleMinutes: 1_000_000_000, minItems: 1 },
+  })
+
+  await h.root.start('dev-1', '君')
+
+  assert.equal(h.lastOfflineReport, null, '过不了时长门槛 ⇒ 不弹')
+  assert.equal(h.http.countOf('/battle/reports'), 0, '战报只在要弹的时候才拉')
+})
+
+test('点汇总里的一条：跳转意图转给场景层，并记一次"点了哪一类"', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/player/init', {
+    ...(ROUTES['/player/init'] as Record<string, unknown>),
+    offlineReport: { previousLoginAt: SERVER_NOW - 3_600_000, minIdleMinutes: 10, minItems: 1 },
+  })
+
+  h.root.offlineReportJump('reports')
+
+  assert.deepEqual(h.events.at(-1), { name: 'offline_report_jump', params: { target: 'reports' } })
+  assert.deepEqual(h.offlineJumps, ['reports'], '跳转交给场景层执行（导航条在那边）')
 })

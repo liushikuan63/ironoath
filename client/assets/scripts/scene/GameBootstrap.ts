@@ -65,6 +65,7 @@ import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
+import { OfflineReportOverlay } from './OfflineReportOverlay'
 import { WorldMap } from './WorldMap'
 import { PanelNav } from './PanelNav'
 import { installAudio, isMuted, playSfx, setMuted } from './AudioService'
@@ -184,6 +185,7 @@ export class GameBootstrap extends Component {
   private nav: PanelNav | null = null
   /** 出征编成弹层（B25-S1）。它是弹层不是面板，所以不走 `panel()` 那张按名字查表的通道。 */
   private marchCompose: MarchComposeOverlay | null = null
+  private offlineReport: OfflineReportOverlay | null = null
   /** 引导层（B18）：整屏遮罩 + 气泡，挂在所有面板与导航条之上。 */
   private guide: GuideView | null = null
   private unsubscribeNetworkEvents: (() => void) | null = null
@@ -997,11 +999,17 @@ export class GameBootstrap extends Component {
       search.onTargetSelected = targetId => this.root?.beginMarchCompose(targetId)
     }
     // 出征编成弹层（B25-S1）：挂在最上层，编排层给什么画什么；它是弹层不是面板，所以不走 panel()
+    // 「自上次登录以来」那一屏（B25-S3）：挂在导航之后 ⇒ 同层兄弟里它排在更后，遮罩压得住面板与导航条
+    this.offlineReport = new OfflineReportOverlay(this.node)
+    this.offlineReport.onJump = jump => this.root?.offlineReportJump(jump)
     this.marchCompose = new MarchComposeOverlay(this.node)
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
     this.marchCompose.onConfirm = () => { void this.root?.confirmMarch() }
     this.marchCompose.onCancel = () => this.root?.cancelMarchCompose()
     out.marchCompose = view => this.marchCompose?.render(view)
+    out.offlineReport = view => this.offlineReport?.render(view)
+    // 点汇总里的一条：跳页面这件事只有场景层知道怎么做（导航条在它手里）
+    out.offlineJump = key => this.nav?.show(key)
     if (this.guide !== null) {
       // 步骤、文案、遮罩、能不能跳，一个字段都不在客户端（验收 1）
       out.guide = resp => this.guide?.attach(resp)

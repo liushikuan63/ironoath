@@ -72,6 +72,13 @@ export const TRACK_EVENTS = {
    * `on=true/false` 分开看：开得多说明减负被接受，关得多多半是"资源被自动花掉"这类反馈。
    */
   autoTrain: 'auto_train',
+  /**
+   * 弹出「自上次登录以来」那一屏（B25-S3）。items 是条目数 ——
+   * 它一直是 0 或 1 说明阈值把绝大多数登录都挡掉了，那是调参信号而不是"没人看"。
+   */
+  offlineReport: 'offline_report',
+  /** 点开汇总里的某一条（target 是那一条跳去的页）。哪一类最常被点开决定这个功能往哪投。 */
+  offlineReportJump: 'offline_report_jump',
   /** 治疗伤兵。 */
   armyTreat: 'army_treat',
   /** 使用道具（含因缺选择器而被挡下的那一次点击）。 */
