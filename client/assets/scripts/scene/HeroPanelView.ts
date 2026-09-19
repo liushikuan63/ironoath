@@ -53,7 +53,7 @@ const MAX_VISIBLE_ROWS = 5
 type Tab = 'heroes' | 'lineups'
 
 /** 行内按钮对应的养成动作。 */
-type HeroAction = 'levelUp' | 'starUp' | 'awaken' | 'skillUp' | 'equip'
+type HeroAction = 'levelUp' | 'starUp' | 'awaken' | 'skillUp' | 'equip' | 'armory'
 
 @ccclass('HeroPanelView')
 export class HeroPanelView extends Component {
@@ -202,6 +202,9 @@ export class HeroPanelView extends Component {
     }
 
     const actions: Array<{ name: string; text: string; x: number; action: HeroAction }> = [
+      // 「装备库」是 V03-b-S1 的入口：装备穿在武将身上，"我有哪些装备、要不要强化"就在这一页问
+      // （不进底栏导航：它是武将页的二级页）。其余四个动作的落地另记在队列里 —— 今天它们只打日志。
+      { name: 'ArmoryButton', text: '装备库', x: PANEL_WIDTH / 2 - 228, action: 'armory' },
       { name: 'LevelUpButton', text: '升级', x: PANEL_WIDTH / 2 - 176, action: 'levelUp' },
       { name: 'StarUpButton', text: '升星', x: PANEL_WIDTH / 2 - 124, action: 'starUp' },
       { name: 'AwakenButton', text: '觉醒', x: PANEL_WIDTH / 2 - 72, action: 'awaken' },

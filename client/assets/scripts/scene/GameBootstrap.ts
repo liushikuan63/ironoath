@@ -44,6 +44,7 @@ import { applySystemUiFont } from './UiFont'
 import { SettingsPanelView } from './SettingsPanelView'
 import { GiftPopupView } from './GiftPopupView'
 import { TechPanelView } from './TechPanelView'
+import { EquipPanelView } from './EquipPanelView'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -929,10 +930,27 @@ export class GameBootstrap extends Component {
     node.active = false
   }
 
+  /**
+   * 装备实例页（V03-b-S1）。与研究页同一做法：从**武将页**点出来的二级页，不占导航项。
+   */
+  private mountEquipPanel(): void {
+    if (this.node.getChildByName('equipPanel') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('equipPanel')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(EquipPanelView)
+    node.active = false
+  }
+
   /** 本节点上挂了哪些面板，就接哪些。没挂的面板不会被假装接上（根只会少发那份请求的落地）。 */
   private targets(): PanelTargets {
     this.mountGiftPopup()
     this.mountTechPanel()
+    this.mountEquipPanel()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -951,6 +969,7 @@ export class GameBootstrap extends Component {
     const battlePass = this.panel(BattlePassPanelView, 'battlePass')
     const giftPopup = this.panel(GiftPopupView, 'giftPopup')
     const tech = this.panel(TechPanelView, 'techPanel')
+    const equip = this.panel(EquipPanelView, 'equipPanel')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -973,6 +992,10 @@ export class GameBootstrap extends Component {
     if (tech !== null) {
       // 打开由编排层发起（`AppRoot.openTech`，入口在内城「学院」）；这里只把"画"接上
       out.tech = view => tech.render(view)
+    }
+    if (equip !== null) {
+      // 打开由编排层发起（`AppRoot.openEquip`，入口在武将页）；这里只把"画"接上
+      out.equip = view => equip.render(view)
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
@@ -998,6 +1021,11 @@ export class GameBootstrap extends Component {
     if (hero !== null) {
       out.hero = resp => hero.attach(resp)
       hero.onHeroAction = (heroId, action) => {
+        if (action === 'armory') {
+          // V03-b-S1 的入口：装备库是只读页，不需要 heroId（"这个武将身上穿什么"看行上的已装备标记）
+          void this.root?.openEquip()
+          return
+        }
         console.warn(`[hero] "${action}" 需要额外的选择输入（道具/技能槽），编排层还没有对应动作`)
         void heroId
       }
