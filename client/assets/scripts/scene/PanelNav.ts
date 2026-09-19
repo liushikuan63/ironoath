@@ -25,6 +25,7 @@ import { BagPanelView } from './BagPanelView'
 import { StagePanelView } from './StagePanelView'
 import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
+import { ShopPanelView } from './ShopPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { QuestPanelView } from './QuestPanelView'
 import { MailPanelView } from './MailPanelView'
@@ -82,6 +83,9 @@ const PANELS: readonly PanelDef[] = [
   { key: 'mail', label: '邮件', view: MailPanelView, reddotKey: 'mail' },
   { key: 'social', label: '社交', view: SocialPanelView, reddotKey: 'social' },
   { key: 'power', label: '战力', view: PowerPanelView, reddotKey: null },
+  // 商店紧跟战力（B24 S-b）：都是"点开看一眼、顺手做一件事"的常驻入口；它不占首屏，
+  // 玩家点开这一格时由 onShow 拉第一次（与邮件同一条纪律）
+  { key: 'shop', label: '商店', view: ShopPanelView, reddotKey: null },
   { key: 'targets', label: '搜索', view: TargetSearchView, reddotKey: null },
   // 地图放最后：它是唯一带镜头与拖拽的面板，数据流（viewport/marches 订阅）也与其余面板不同。
   // enterWorld 在登录时已由 AppRoot 拉过，这里挂上即能渲染。

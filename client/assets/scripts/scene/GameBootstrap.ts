@@ -63,6 +63,7 @@ import { BattleReportPanelView } from './BattleReportPanelView'
 import { playbackOptionsOf } from '../game/battle/BattleReportPanel'
 import { SocialPanelView } from './SocialPanelView'
 import { PowerPanelView } from './PowerPanelView'
+import { ShopPanelView } from './ShopPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
 import { OfflineReportOverlay } from './OfflineReportOverlay'
@@ -299,6 +300,10 @@ export class GameBootstrap extends Component {
       // 每次打开都拉而不是"只拉一次"：读取路径在服务端会顺手同步窗口，缓存会让 EXPIRED 迟到
       if (key === 'quest') {
         void this.root?.refresh('activity')
+      }
+      // 商店不占首屏：多一个并发请求会挤那 3 秒预算，而货架不在可交互的必需项里
+      if (key === 'shop') {
+        void this.root?.refresh('shop')
       }
       // 引导的每一步都是"在某面板上弹"，所以换面板要重算一次该不该画（判定在驱动器里，这里只触发）
       this.guide?.repaint()
@@ -879,6 +884,7 @@ export class GameBootstrap extends Component {
     const reports = this.panel(BattleReportPanelView, 'reports')
     const world = this.panel(WorldMap, 'world')
     const settings = this.panel(SettingsPanelView, 'settings')
+    const shop = this.panel(ShopPanelView, 'shop')
     const giftPopup = this.panel(GiftPopupView, 'giftPopup')
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
@@ -1032,6 +1038,11 @@ export class GameBootstrap extends Component {
       reports.onShareRequested = reportId => { this.root?.requestShare(reportId) }
       out.shareChannelChoice = (options, onPick) => reports.showSharePicker(options, onPick)
       out.reportShared = (text, warning) => reports.showShareOutcome(text, warning)
+    }
+    if (shop !== null) {
+      out.shop = view => shop.attach(view)
+      shop.onTab = currency => { void this.root?.openShopTab(currency) }
+      shop.onBuy = rowId => { void this.root?.buyShopRow(rowId) }
     }
     if (mail !== null) {
       out.mail = (resp, serverNowMs) => mail.attach(resp, serverNowMs)
