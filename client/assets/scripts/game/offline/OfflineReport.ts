@@ -20,6 +20,7 @@
 
 import type { OfflineReportView } from '../../net/generated/Protocol'
 import type { BuildingView, ResourceStateView } from '../../net/generated/CityProtocol'
+import { RESOURCE_NAMES } from '../ui/ResourceNames'
 import type { BattleReportBrief } from '../../net/generated/BattleProtocol'
 import type { SocialEventView } from '../../net/generated/SocialProtocol'
 
@@ -50,10 +51,6 @@ export interface OfflineSources {
   readonly reports: readonly BattleReportBrief[]
   /** `/social/summary` 的未读事件 */
   readonly events: readonly SocialEventView[]
-}
-
-const RESOURCE_NAMES: Record<string, string> = {
-  WOOD: '木材', STONE: '石料', IRON: '铁矿', GRAIN: '粮草', GOLD: '金币', STAMINA: '体力',
 }
 
 /**
