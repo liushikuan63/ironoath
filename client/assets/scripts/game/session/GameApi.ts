@@ -95,6 +95,7 @@ import type {
 import type {
   RankListResp, RankSnapshotResp, RankType,
 } from '../../net/generated/RankProtocol'
+import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -141,6 +142,17 @@ export class GameApi {
   /** GET /rank/snapshot?type=&dayKey=（B23 §一 2 的申诉读取；只回自己那一行）。 */
   rankSnapshot(type: RankType, dayKey: string): Promise<NetOutcome<RankSnapshotResp>> {
     return this.read<RankSnapshotResp>('/rank/snapshot', { type, dayKey })
+  }
+
+  /**
+   * GET /season/status（V04-S1）。**不要求身份**：阶段与时限是全服信息，
+   * 带身份时才多回 `myRank` 与荣耀三件套。
+   *
+   * <p>未启用赛季时服务端把 `phase` / 日期一律回 null（不是 0）——
+   * 客户端按 null 把整块收起，不显示"第 0 天"。
+   */
+  seasonStatus(): Promise<NetOutcome<SeasonStatusResp>> {
+    return this.read<SeasonStatusResp>('/season/status')
   }
 
   /** POST /stamina/buy。扣金币与体力上限判定都在服务端。 */

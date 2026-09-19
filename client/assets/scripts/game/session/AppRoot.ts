@@ -47,6 +47,9 @@ import {
 import type { ComposeView, MarchSpec } from '../world/MarchCompose'
 import type { RankBoardView, RankTabKey } from '../power/RankBoard'
 import type { RankListResp } from '../../net/generated/RankProtocol'
+import { buildSeasonPanel } from '../season/SeasonPanel'
+import type { SeasonPanelView } from '../season/SeasonPanel'
+import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -197,6 +200,11 @@ export interface PanelTargets {
    */
   rank?(view: RankBoardView): void
   /**
+   * 赛季页（V04-S1）。与榜同一个面板的第六个页签，但**数据源不同**：
+   * 阶段/时限/三条闸门来自 `/season/status`，不是从榜里推的。
+   */
+  season?(view: SeasonPanelView): void
+  /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
@@ -343,6 +351,9 @@ export class AppRoot {
   private rankPage = 1
   /** 拉榜失败的可读原因（限流/断网）；成功一次或切页签后清空 */
   private rankNotice: string | null = null
+  /** 最近一次 `/season/status` 的响应与失败原因（V04-S1）。与榜同一条纪律：失败不清空上一次的 */
+  private seasonResp: SeasonStatusResp | null = null
+  private seasonNotice: string | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -1379,13 +1390,31 @@ export class AppRoot {
    * <p>**页码回到第 1 页**：换了一张榜还停在第 5 页，会让玩家看到某个榜的第 5 页却说不出为什么。
    */
   async openRankTab(key: RankTabKey): Promise<void> {
-    if (key !== 'DETAIL') {
+    if (key === 'SEASON') {
+      // 赛季页不是一张榜：混进 rank_view 会让"玩家看哪张榜"那一栏多出一个假榜
+      this.track(TRACK_EVENTS.seasonView)
+    } else if (key !== 'DETAIL') {
       // 榜的关注度只有这里能答（明细页是原本就有的页面，不算"看榜"这个动作）
       this.track(TRACK_EVENTS.rankView, { type: trackParam(key) })
     }
     this.rankTab = key
     this.rankPage = 1
     this.rankNotice = null
+    await this.loadRankIfBoard()
+  }
+
+  /**
+   * 面板每次被打开时重拉当前页签那一份（榜或赛季）。
+   *
+   * <p>为什么必须重拉而不是复用上一次：赛季页那一行是**倒计时**，而面板节点是常驻的、
+   * 不会自己重画 —— 复用旧值会显示一个已经过期的「还剩 N 天」，而玩家正好会拿它决定
+   * 今天要不要把这一仗打完。榜那一侧同理（名次一直在变）。
+   * 明细页不在此列：它的数字由既有的 `refresh('power')` 那条通路负责。
+   */
+  async reloadRankTab(): Promise<void> {
+    if (this.rankTab === 'DETAIL') {
+      return
+    }
     await this.loadRankIfBoard()
   }
 
@@ -1419,6 +1448,13 @@ export class AppRoot {
       this.deliverRank()
       return
     }
+    if (this.rankTab === 'SEASON') {
+      // 赛季页与榜无关：手里那份榜响应属于别的页签，留着会在赛季页签下画出一张榜
+      this.rankResp = null
+      await this.loadSeason()
+      this.deliverRank()
+      return
+    }
     const outcome = await this.api.rankList(this.rankTab, this.rankPage, AppRoot.RANK_SCREEN_ROWS)
     if (outcome.kind === 'ok') {
       this.rankResp = outcome.data
@@ -1434,10 +1470,33 @@ export class AppRoot {
     this.deliverRank()
   }
 
-  /** 组装并下发整块视图。表现层不参与任何计算（名次/页号全部来自上面那份响应）。 */
+  /**
+   * 拉一次赛季状态（V04-S1）。失败时把服务端给的理由原样放到说明行，
+   * **不清空手里那一份**：赛季阶段不会因为一次限流就变成"不存在"，
+   * 清空会让玩家以为赛季没了（与榜同一条纪律）。
+   */
+  private async loadSeason(): Promise<void> {
+    const outcome = await this.api.seasonStatus()
+    if (outcome.kind === 'ok') {
+      this.seasonResp = outcome.data
+      this.seasonNotice = null
+    } else {
+      this.seasonNotice = outcome.kind === 'biz'
+        ? (outcome.detail ?? outcome.msg)
+        : AppRoot.reason(outcome)
+      this.say('season', outcome)
+    }
+  }
+
+  /** 组装并下发整块视图。表现层不参与任何计算（名次/页号/倒计时全部来自上面那两份响应）。 */
   private deliverRank(): void {
     this.targets.rank?.(buildRankBoard(this.rankResp, this.rankTab, this.playerId ?? '',
       this.rankNotice))
+    // 赛季页与榜同屏（第六个页签），但正文来自另一份响应：页签高亮与正文必须同一次下发，
+    // 否则会出现"赛季页签亮着、正文还是上一张榜"
+    if (this.rankTab === 'SEASON') {
+      this.targets.season?.(buildSeasonPanel(this.seasonResp, undefined, this.seasonNotice))
+    }
   }
 
   // ---------- 聊天（B22 §一 1） ----------

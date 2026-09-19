@@ -94,20 +94,22 @@ function gloryTextOf(glory: SeasonGloryView | null | undefined): string | null {
  *
  * @param resp      GET /season/status 的响应；null = 还没拉回来（画一句说明，不画一个假赛季）
  * @param serverNow 用于倒计时的服务端时刻（优先用响应自带的 `serverNow`，见下）
+ * @param failureNotice 拉取失败时服务端给的理由（限流/断网），原样写进说明行。
+ *                  **失败不清空面板**：手里那份还在就继续显示，只在下面加一行"这次没拉到"
  */
 export function buildSeasonPanel(resp: SeasonStatusResp | null,
-  serverNow?: number): SeasonPanelView {
+  serverNow?: number, failureNotice?: string | null): SeasonPanelView {
   if (resp === null || resp === undefined) {
     return {
       visible: false, titleText: '', phaseText: '', gates: [], rankText: null, gloryText: null,
-      keepText: SEASON_KEEP_NOTE, noticeText: '赛季信息还没拉回来，稍后再试',
+      keepText: SEASON_KEEP_NOTE, noticeText: failureNotice ?? '赛季信息还没拉回来，稍后再试',
     }
   }
   // 未启用：相位为 null 就是权威答案（服务端口径），整块收起
   if (resp.phase === null || resp.dayIndex === null) {
     return {
       visible: false, titleText: '', phaseText: '', gates: [], rankText: null, gloryText: null,
-      keepText: SEASON_KEEP_NOTE, noticeText: '本服尚未启用赛季',
+      keepText: SEASON_KEEP_NOTE, noticeText: failureNotice ?? '本服尚未启用赛季',
     }
   }
   const now = serverNow ?? resp.serverNow
@@ -126,8 +128,8 @@ export function buildSeasonPanel(resp: SeasonStatusResp | null,
       : `我的名次：第 ${resp.myRank} 名`,
     gloryText: gloryTextOf(resp.glory),
     keepText: SEASON_KEEP_NOTE,
-    noticeText: resp.myRank === null || resp.myRank === undefined
+    noticeText: failureNotice ?? (resp.myRank === null || resp.myRank === undefined
       ? '带上身份才看得到自己的名次与荣耀'
-      : null,
+      : null),
   }
 }

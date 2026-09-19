@@ -316,6 +316,11 @@ export class GameBootstrap extends Component {
       if (key === 'battlePass') {
         void this.root?.refresh('battlePass')
       }
+      // 战力页重拉"当前页签那一份"：赛季页那一行是倒计时，而面板节点常驻、不会自己重画，
+      // 复用上一次的值会显示一个已经过期的「还剩 N 天」（榜那一侧同理，名次一直在变）
+      if (key === 'power') {
+        void this.root?.reloadRankTab()
+      }
       // 引导的每一步都是"在某面板上弹"，所以换面板要重算一次该不该画（判定在驱动器里，这里只触发）
       this.guide?.repaint()
     }
@@ -1042,6 +1047,8 @@ export class GameBootstrap extends Component {
       // 榜单与明细共用「战力」这一页（B23 裁决④）：页签与翻页的意图交给编排层，
       // 面板自己不发请求也不判断能不能翻（能翻与否由服务端的 hasMore 决定）
       out.rank = view => power.renderRank(view)
+      // 赛季页也挂在这一页里（V04-S1 定的是"不加导航第 17 项"）：第六个页签，另一个数据源
+      out.season = view => power.renderSeason(view)
       power.onRankTab = key => { void this.root?.openRankTab(key) }
       power.onRankPage = delta => {
         void (delta < 0 ? this.root?.rankPrevPage() : this.root?.rankNextPage())

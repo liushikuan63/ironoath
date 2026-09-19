@@ -18,8 +18,8 @@
 
 import type { RankEntryView, RankListResp, RankSnapshotResp, RankType } from '../../net/generated/RankProtocol'
 
-/** 页签的键：四张榜 + 原来那一页「战力明细」。 */
-export type RankTabKey = RankType | 'DETAIL'
+/** 页签的键：四张榜 + 原来那一页「战力明细」+ V04 的「赛季」。 */
+export type RankTabKey = RankType | 'DETAIL' | 'SEASON'
 
 /**
  * 页签定义：顺序即面板顺序。
@@ -28,6 +28,11 @@ export type RankTabKey = RankType | 'DETAIL'
  * 而 B23 §一 3 要的是"四类榜都能看"。若严格按四个 tab 实现（战力/击杀/联盟/国家），
  * 第一个 tab 要么是明细（那 POWER 榜没地方放）、要么是 POWER 榜（那 B08 的战力明细被挤掉）。
  * 所以第一个页签叫「明细」，后面四个是四类榜 —— **能力一个不少，页签多一个**。
+ *
+ * <p><b>为什么赛季也放这一页</b>：V04-S1 的入口定了「不加导航第 17 项、先看信息架构」。
+ * 四张榜都是**赛季账**（击杀榜、联盟榜、国家榜的榜值就叫"赛季分"），
+ * 而玩家要问的下一句恰好是「这个赛季还剩几天、现在能干什么、赛季结束我会丢什么」——
+ * 那是同一屏的问题。放进设置页会把它藏进一个和赛季无关的地方。
  */
 export const RANK_TABS: readonly { readonly key: RankTabKey; readonly label: string }[] = [
   { key: 'DETAIL', label: '明细' },
@@ -35,11 +40,12 @@ export const RANK_TABS: readonly { readonly key: RankTabKey; readonly label: str
   { key: 'KILL', label: '击杀榜' },
   { key: 'ALLIANCE', label: '联盟榜' },
   { key: 'NATION', label: '国家榜' },
+  { key: 'SEASON', label: '赛季' },
 ]
 
-/** 这个页签是不是一张榜（明细页不画榜）。 */
+/** 这个页签是不是一张榜（明细页与赛季页不画榜）。 */
 export function isBoardTab(key: RankTabKey): key is RankType {
-  return key !== 'DETAIL'
+  return key !== 'DETAIL' && key !== 'SEASON'
 }
 
 /** 一个页签。 */
@@ -164,8 +170,9 @@ export function buildRankBoard(resp: RankListResp | null, active: RankTabKey,
     emptyText,
     noticeText: notice,
   })
-  // 明细页不画榜：这一页的数字来自 /player/power，与榜无关（两张数据源不同，混着画会串台）
-  if (active === 'DETAIL') {
+  // 明细页与赛季页都不画榜：这两页的数字分别来自 /player/power 与 /season/status，
+  // 与榜无关（数据源不同，混着画会串台）
+  if (active === 'DETAIL' || active === 'SEASON') {
     return blank(null)
   }
   // 响应与页签不是同一张榜时**按"还在载入"处理**：切页签的那一刻，手里那份响应属于上一张榜，

@@ -28,6 +28,7 @@ import type {
 } from '../assets/scripts/game/session/Choices'
 import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { RankBoardView } from '../assets/scripts/game/power/RankBoard'
+import type { SeasonPanelView } from '../assets/scripts/game/season/SeasonPanel'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
@@ -113,6 +114,13 @@ const ROUTES: Record<string, unknown> = {
       { rank: 2, id: 'P1', name: '君', value: 900, tag: null },
     ],
     myRank: 2, myValue: 900, page: 1, pageSize: 20, hasMore: false,
+  },
+  '/season/status': {
+    seasonId: 'season_01', phase: 'EXPAND', seasonStartAt: SERVER_NOW - 12 * 86_400_000,
+    dayIndex: 11, totalDays: 45, phaseEndAt: SERVER_NOW + 5 * 86_400_000,
+    allowsPvp: true, allowsCapitalWar: false, readOnly: false,
+    glory: { gloryLevel: 3, highestTier: 'GOLD', badges: ['season_01'] },
+    myRank: 12, serverNow: SERVER_NOW,
   },
   '/player/power': {
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, serverNow: SERVER_NOW, lines: [],
@@ -468,6 +476,7 @@ interface Harness {
   readonly lastChat: ChatPanelData | null
   /** 最近一次落地给榜单面板的整块视图。 */
   readonly lastRank: RankBoardView | null
+  readonly lastSeason: SeasonPanelView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -556,6 +565,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let socialHelps: string[] = []
   let lastChat: ChatPanelData | null = null
   let lastRank: RankBoardView | null = null
+  let lastSeason: SeasonPanelView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -599,6 +609,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     rank: (view) => {
       attached.push('rank')
       lastRank = view
+    },
+    season: (view) => {
+      attached.push('season')
+      lastSeason = view
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -667,6 +681,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastRank() {
       return lastRank
+    },
+    get lastSeason() {
+      return lastSeason
     },
     get lastCompose() {
       return lastCompose
@@ -1799,6 +1816,54 @@ test('榜拉不到时：把服务端的理由放到提示行，且不把上一�
   assert.equal(h.lastRank?.noticeText, '服务繁忙', '业务拒绝的理由原样进提示行')
   assert.equal(h.lastRank?.rows.length, 2, '拉不到不等于榜没了：上一次的行留在原地')
   assert.equal(h.errors.some(e => e[0] === 'rank'), true, '面板读取失败也要进统一的上报口')
+})
+
+test('赛季页：切到赛季页签才拉 /season/status，不拉榜，也不把上一张榜带过来', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.refresh('power')
+  assert.equal(h.http.countOf('/season/status'), 0, '打开战力页不该顺手拉赛季（首屏预算）')
+
+  await h.root.openRankTab('POWER')
+  assert.equal(h.http.countOf('/season/status'), 0, '看榜不拉赛季（两个数据源各管各的）')
+
+  h.events.length = 0
+  await h.root.openRankTab('SEASON')
+  assert.equal(h.http.countOf('/season/status'), 1)
+  assert.equal(h.http.countOf('/rank/list'), 1, '赛季页不发榜单请求')
+  assert.equal(h.lastRank?.activeKey, 'SEASON')
+  assert.equal(h.lastRank?.rows.length, 0, '赛季页签下不画榜行（手里那张榜属于上一个页签）')
+  assert.equal(h.lastSeason?.visible, true)
+  assert.deepEqual(h.lastSeason?.gates.map(g => g.allowed), [true, false, true])
+  assert.equal(h.lastSeason?.phaseText, '立盟期 · 还剩 5 天', '倒计时用服务端两个时刻相减')
+  assert.equal(h.events.some(e => e.name === 'season_view'), true, '看赛季页要上报')
+  assert.equal(h.events.some(e => e.name === 'rank_view' && e.params.type === 'SEASON'), false,
+    'season_view 不许混进 rank_view（看板上"哪张榜"那一栏会多出一个假榜）')
+})
+
+test('赛季页：拉不到时理由原样进说明行且不清空；未启用赛季时整块收起（不画"第 0 天"）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.openRankTab('SEASON')
+  assert.equal(h.lastSeason?.visible, true)
+
+  h.http.failPaths.add('/season/status')
+  await h.root.openRankTab('SEASON')
+  assert.match(h.lastSeason?.noticeText ?? '', /服务繁忙/, '服务端的理由原样进说明行')
+  assert.equal(h.lastSeason?.visible, true, '拉不到不等于赛季没了：上一次那份留在原地')
+  assert.equal(h.errors.some(e => e[0] === 'season'), true, '面板读取失败也要进统一的上报口')
+
+  // 未启用赛季：phase 与日期一律 null（服务端口径），面板整块收起
+  h.http.failPaths.delete('/season/status')
+  h.http.overrides.set('/season/status', {
+    seasonId: '', phase: null, seasonStartAt: null, dayIndex: null, totalDays: 45,
+    phaseEndAt: null, allowsPvp: true, allowsCapitalWar: false, readOnly: false,
+    glory: null, myRank: null, serverNow: SERVER_NOW,
+  })
+  await h.root.openRankTab('SEASON')
+  assert.equal(h.lastSeason?.visible, false)
+  assert.match(h.lastSeason?.noticeText ?? '', /尚未启用赛季/)
+  assert.equal(h.lastSeason?.titleText, '', '收起时不留一个"第 0 天"的标题')
 })
 
 test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一个请求都不发', async () => {

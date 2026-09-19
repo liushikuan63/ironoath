@@ -85,7 +85,7 @@ test('空榜与未加载：各有各的说明，且空榜会告诉玩家这个�
   const loading = buildRankBoard(null, 'KILL', 'P-1')
   assert.equal(loading.emptyText, '正在载入…')
   assert.equal(loading.rows.length, 0)
-  assert.deepEqual(loading.tabs.map(t => t.active), [false, false, true, false, false])
+  assert.deepEqual(loading.tabs.map(t => t.active), [false, false, true, false, false, false])
 })
 
 test('明细页签不画榜：那是 /player/power 的地盘，串台会让玩家以为榜值是自己的战力明细', () => {
@@ -104,12 +104,14 @@ test('响应与页签不是同一张榜时按载入中处理：绝不在 KILL �
   assert.equal(stale.rows.length, 0)
   assert.equal(stale.emptyText, '正在载入…')
   assert.equal(stale.mine, null, '上一张榜的我的名次也不许带过来')
-  assert.deepEqual(stale.tabs.map(t => t.active), [false, false, true, false, false])
+  assert.deepEqual(stale.tabs.map(t => t.active), [false, false, true, false, false, false])
 })
 
-test('页签顺序固定（明细 + 四类榜），标签与量纲一一对应 —— 顺序变了玩家的肌肉记忆就废了', () => {
-  assert.deepEqual(RANK_TABS.map(t => t.key), ['DETAIL', 'POWER', 'KILL', 'ALLIANCE', 'NATION'])
+test('页签顺序固定（明细 + 四类榜 + 赛季），标签与量纲一一对应 —— 顺序变了玩家的肌肉记忆就废了', () => {
+  assert.deepEqual(RANK_TABS.map(t => t.key),
+    ['DETAIL', 'POWER', 'KILL', 'ALLIANCE', 'NATION', 'SEASON'])
   assert.equal(isBoardTab('DETAIL'), false)
+  assert.equal(isBoardTab('SEASON'), false, '赛季页不是一张榜：它由 /season/status 供数')
   assert.equal(isBoardTab('KILL'), true)
   const labels = (['POWER', 'KILL', 'ALLIANCE', 'NATION'] as const).map(k => valueLabelOf(k))
   assert.deepEqual(labels, ['匹配战力', '赛季击杀', '联盟赛季分', '国家赛季分'])
@@ -117,6 +119,16 @@ test('页签顺序固定（明细 + 四类榜），标签与量纲一一对应 �
   assert.match(boardHintOf('POWER'), /匹配战力/)
   assert.match(boardHintOf('KILL'), /击杀/)
   assert.throws(() => valueLabelOf('NOPE' as never), /不认识的榜类型/)
+})
+
+test('赛季页签不画榜：手里那张榜的响应绝不会漏到赛季页签下面', () => {
+  const season = buildRankBoard(list({ type: 'POWER' }), 'SEASON', 'P-1')
+  assert.equal(season.rows.length, 0)
+  assert.equal(season.mine, null, '别把上一张榜的"我的名次"带到赛季页')
+  assert.equal(season.emptyText, null, '赛季页的正文由赛季视图画，榜这边连说明都不留')
+  assert.equal(season.tabs.length, 6)
+  assert.equal(season.tabs[5]?.key, 'SEASON')
+  assert.equal(season.tabs[5]?.active, true)
 })
 
 test('拉榜失败时那一行提示由编排层给，原样透传（客户端不重写服务端的理由）', () => {

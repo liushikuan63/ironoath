@@ -19,6 +19,7 @@ import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3 
 import { buildPowerPanel } from '../game/power/PowerPanel'
 import { RANK_TABS } from '../game/power/RankBoard'
 import type { RankBoardView, RankTabKey } from '../game/power/RankBoard'
+import type { SeasonPanelView } from '../game/season/SeasonPanel'
 import type { PowerDetailResp } from '../net/generated/Protocol'
 import { applySystemUiFont } from './UiFont'
 
@@ -84,22 +85,37 @@ export class PowerPanelView extends Component {
   /** 翻页回调：-1 上一页 / +1 下一页。能不能翻由视图里的 canNext/canPrev 决定（服务端说了算） */
   onRankPage: ((delta: number) => void) | null = null
 
+  /** 赛季页那一份视图（V04-S1）。与明细、榜各存一份：三个数据源来自三个端点，互相不覆盖。 */
+  private seasonView: SeasonPanelView | null = null
+
+  /**
+   * 赛季页（第六个页签）。**整块视图由编排层组装好**：本文件不判断赛季开没开、
+   * 不把相位翻成中文、不算还剩几天 —— 它只把 {@link SeasonPanelView} 画出来。
+   */
+  renderSeason(view: SeasonPanelView): void {
+    this.seasonView = view
+    this.redraw()
+  }
+
   /**
    * 整块重画。
    *
-   * <p>两个数据源各存一份、每次重画都从它们合成：这样"榜回来了但明细还没回来"不会互相覆盖。
+   * <p>三个数据源各存一份、每次重画都从它们合成：这样"榜回来了但明细还没回来"不会互相覆盖。
    */
   private redraw(): void {
     this.clearRows()
     this.drawBackground()
 
+    const active = this.rankView?.activeKey ?? 'DETAIL'
     let y = PANEL_HEIGHT / 2 - PADDING
-    y = this.drawTitle(this.rankView?.activeKey === 'DETAIL' || this.rankView === null
-      ? '战力明细'
-      : '排行榜', y)
+    y = this.drawTitle(this.titleOf(active), y)
     y = this.drawTabs(y)
 
-    if (this.rankView !== null && this.rankView.activeKey !== 'DETAIL') {
+    if (active === 'SEASON') {
+      this.drawSeasonArea(this.seasonView, y)
+      return
+    }
+    if (this.rankView !== null && active !== 'DETAIL') {
       this.drawRankArea(this.rankView, y)
       return
     }
@@ -108,6 +124,62 @@ export class PowerPanelView extends Component {
       return
     }
     this.drawDetail(this.powerResp, y)
+  }
+
+  /** 一页一个标题：明细/榜/赛季是三件不同的事，标题必须说清现在在哪一页。 */
+  private titleOf(active: RankTabKey): string {
+    if (active === 'SEASON') {
+      return this.seasonView?.titleText ?? '赛季'
+    }
+    return active === 'DETAIL' ? '战力明细' : '排行榜'
+  }
+
+  /**
+   * 赛季那一页：阶段与倒计时、三条闸门、我的名次与荣耀、以及保留项说明。
+   *
+   * <p><b>未启用赛季时整块收起</b>（`visible=false`）：只留一行说明，绝不画"第 0 天"——
+   * 那会让玩家以为赛季坏了，比什么都不显示更糟。
+   */
+  private drawSeasonArea(view: SeasonPanelView | null, startY: number): void {
+    if (view === null) {
+      this.drawHint('正在载入…', startY)
+      return
+    }
+    if (!view.visible) {
+      this.drawHint(view.noticeText ?? '本服尚未启用赛季', startY)
+      return
+    }
+    let y = startY
+    y = this.drawRow('阶段', view.phaseText, COLOR_TOTAL, COLOR_COPPER_GOLD, y)
+    // 三条闸门各占一整行：句子要写清"什么时候能用"，塞进 label/value 的窄格子里会被截断，
+    // 而截断后的「中央王城尚未开放（问…」比不写更让人困惑
+    for (const gate of view.gates) {
+      y = this.drawWideLine(gate.text, gate.allowed ? COLOR_TEXT : COLOR_TEXT_DIM, y)
+    }
+    y = this.drawSeparator(y)
+    if (view.rankText !== null) {
+      y = this.drawWideLine(view.rankText, COLOR_COPPER_GOLD, y)
+    }
+    if (view.gloryText !== null) {
+      y = this.drawWideLine(view.gloryText, COLOR_TEXT, y)
+    }
+    y = this.drawSeparator(y)
+    // 保留项永远画：玩家最怕的是"我攒的东西会不会没"，这一句是他愿意读完的全部理由
+    y = this.drawHint(view.keepText, y)
+    if (view.noticeText !== null) {
+      y = this.drawHint(view.noticeText, y)
+    }
+    void y
+  }
+
+  /** 整行左对齐的一行（不分成 label/value 两格：句子里本来就带了自己的主语）。 */
+  private drawWideLine(text: string, color: Color, y: number): number {
+    const label = this.createLabel(text, color, 18)
+    this.node.addChild(label.node)
+    label.node.setPosition(new Vec3(-(PANEL_WIDTH - PADDING * 2) / 2 + 12, y - 12, 0))
+    label.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.rows.push(label.node)
+    return y - 24
   }
 
   /** 明细那一页：五行 + 总计 + 三个总览数（原来就是这个页面，一行没少）。 */
