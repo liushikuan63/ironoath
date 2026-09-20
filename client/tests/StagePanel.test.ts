@@ -59,7 +59,7 @@ function challengeResp(overrides: Partial<ChallengeStageResp> = {}): ChallengeSt
     starsEarned: 2,
     newBest: true,
     rewards: [reward('WOOD', '木材', 100)],
-    losses: [{ unitId: 'unit_infantry_t1', count: 3 }],
+    losses: [{ unitId: 'unit_infantry_t1', name: '重步兵', count: 3 }],
     staminaCost: 6,
     staminaCharged: 6,
     progress: progress(2, 5, 1700000000000),
@@ -206,14 +206,19 @@ test('通关时不算「退回体力」，即使实扣恰好为 0（免费关卡
   assert.equal(summary.staminaText, '体力 应扣 0 / 实扣 0')
 })
 
-test('损失逐阶级列出：只给总数的话玩家看不出掉的是 T1 还是 T5', () => {
+test('损失逐阶级列出且用服务端下发的名字：只给总数的话玩家看不出掉的是 T1 还是 T5', () => {
   const summary = buildChallengeSummary(challengeResp({
     losses: [
-      { unitId: 'unit_infantry_t1', count: 30 },
-      { unitId: 'unit_siege_t5', count: 2 },
+      { unitId: 'unit_infantry_t1', name: '重步兵', count: 30 },
+      { unitId: 'unit_siege_t5', name: '重型投石车', count: 2 },
     ],
   }))
-  assert.deepEqual(summary.lossLines, ['unit_infantry_t1 −30', 'unit_siege_t5 −2'])
+  assert.deepEqual(summary.lossLines, ['重步兵 −30', '重型投石车 −2'])
+  // 这一族第七次复发的形态就是把 unitId 印给玩家（#255/#268/#278/#281/#288/#290）。
+  // 原来这条断言写的正是缺陷本身（'unit_infantry_t1 −30'），所以它一直绿。
+  for (const line of summary.lossLines) {
+    assert.doesNotMatch(line, /unit_|_t\d/, `损失行里露出内部 id：${line}`)
+  }
   assert.match(summary.starsText, /2 星（历史最好）/)
   assert.equal(summary.reportId, 'r1')
 })

@@ -211,7 +211,7 @@ export function buildChallengeSummary(resp: ChallengeStageResp): ChallengeSummar
     newBest: resp.newBest,
     conditionText: starConditionText(resp.stars.cleared, resp.stars.noLoss, resp.stars.withinRounds),
     rewardLines: resp.rewards.map((reward) => `${reward.name} ×${reward.count}`),
-    lossLines: resp.losses.map((loss) => `${loss.unitId} −${loss.count}`),
+    lossLines: resp.losses.map((loss) => `${loss.name} −${loss.count}`),
     // 两个字段都摆出来：应扣与实扣不一致（失败）时，玩家必须能看见「没扣」这件事
     staminaText: `体力 应扣 ${resp.staminaCost} / 实扣 ${resp.staminaCharged}`,
     refunded,

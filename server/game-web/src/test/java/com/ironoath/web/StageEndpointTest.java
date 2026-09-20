@@ -108,6 +108,21 @@ class StageEndpointTest {
         assertThat(won.stars().total()).as("三星应当全部拿到").isEqualTo(3);
         assertThat(won.progress().stars()).isEqualTo(3);
         assertThat(won.starsEarned()).isEqualTo(3);
+        // 损失行是**直接画给玩家看**的：客户端没有 unit 表数据（B00 铁律），服务端不给名字，
+        // 界面就只能印 `unit_infantry_t1 −1` —— #255 建筑名 / #268 资源名 / #278 技能名 /
+        // #281 碎片名 / #288 赛季行 id 同族第八处。
+        // 挂在胜方这一仗而不是败方：5000 打 10 会留下伤兵（上面 noLoss 那条注释算过，
+        // 下面 retry 也按"上一场有 1 个兵进了医院"取数），而 1 打 10 是打到回合上限判负、零损失，
+        // 拿空集合断言"每行都带名字"是恒真的假绿。
+        assertThat(won.losses())
+                .as("这一仗有伤兵，损失行必须非空（否则下面的逐行断言就是空判）")
+                .isNotEmpty()
+                .allSatisfy(loss -> {
+                    assertThat(loss.name()).as("展示名由服务端下发，且不许混进内部编号").isNotBlank();
+                    assertThat(loss.name()).doesNotContain("unit_");
+                    assertThat(loss.unitId()).as("id 仍然带着，供客户端定位是哪一行（只是不印给玩家）")
+                            .startsWith("unit_");
+                });
         assertThat(won.staminaCharged())
                 .as("胜利才扣体力（B09 验收 1）").isEqualTo(stageOf(STAGE_1).staminaCost());
 

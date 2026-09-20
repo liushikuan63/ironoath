@@ -96,6 +96,17 @@ export interface StageUnit {
 }
 
 /**
+ * 关卡结算里的一行损失：StageUnit 的两个字段 + 一份**服务端下发的展示名**。为什么不复用 StageUnit：那个类型同时充当「玩家派出去的兵」（ChallengeStageReq.units）的载荷，给它加 name 等于要求客户端上传一个它根本没有的字段（客户端不持有 unit 表数据，B00 铁律）。而损失行是直接画给玩家看的 —— 印 unit_infantry_t3 就是把内部编号端上屏（#255 建筑名 / #268 资源名 / #278 技能名 / #281 碎片名 / #288 赛季行 id 同族第八处）。
+ */
+export interface StageLoss {
+  /** unit 表的行 id，含阶级（如 unit_infantry_t3）。与 StageUnit/MarchUnit 同名同义 */
+  unitId: string
+  count: number
+  /** 兵种展示名，取自 unit 表的 name 列。客户端不得自行翻译表文案，也不得拿另一次响应里的名字在本地 join（那是第二真源，且损失的兵种可能早已不在编成里） */
+  name: string
+}
+
+/**
  * 奖励条目。与 bag 协议的 RewardItemView 形状相同，但生成器只支持同文件 $ref，所以这里各有一份。**两份的字段与枚举取值必须一致**，由 StageContractParityTest 断言 —— 复制而不校验才是真正的危险：漂移的症状是服务端下发的字符串在客户端解析成 undefined，而 TS 侧不会报错，UI 只会空白。
  */
 export interface StageReward {
@@ -133,8 +144,8 @@ export interface ChallengeStageResp {
   /** 本次是否刷新了历史最好成绩。客户端据此播放「新纪录」动效 */
   newBest: boolean
   rewards: StageReward[]
-  /** 本次损失，unitId → 数量。**必须逐阶级下发**：只给一个总数的话，玩家看不出自己掉的是 T1 还是 T5，而这两者的代价差一个数量级 */
-  losses: StageUnit[]
+  /** 本次损失，unitId → 数量 + 展示名。**必须逐阶级下发**：只给一个总数的话，玩家看不出自己掉的是 T1 还是 T5，而这两者的代价差一个数量级 */
+  losses: StageLoss[]
   staminaCost: number
   /** 实扣体力。失败时为 0（B09 验收 1）—— 两个字段都下发是为了让「失败不扣体力」这条规则在客户端可见，否则玩家会以为体力被偷扣了 */
   staminaCharged: number

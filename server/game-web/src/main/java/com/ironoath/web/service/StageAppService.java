@@ -40,6 +40,7 @@ import com.ironoath.web.dto.generated.ChallengeStageReq;
 import com.ironoath.web.dto.generated.ChallengeStageResp;
 import com.ironoath.web.dto.generated.StageEntry;
 import com.ironoath.web.dto.generated.StageListResp;
+import com.ironoath.web.dto.generated.StageLoss;
 import com.ironoath.web.dto.generated.StageReward;
 import com.ironoath.web.dto.generated.StageStars;
 import com.ironoath.web.dto.generated.StageUnit;
@@ -267,7 +268,7 @@ public class StageAppService {
         return new ChallengeStageResp(reportId,
                 stars(attempt.won(), attempt.noLoss(), attempt.withinRounds()),
                 earned, newBest, toRewardViews(rewards),
-                toStageUnits(attempt.lossesByUnitId()), stage.staminaCost(), charged,
+                toStageLosses(attempt.lossesByUnitId()), stage.staminaCost(), charged,
                 view(stage.id(), progress.of(stage.id())), now);
     }
 
@@ -689,9 +690,17 @@ public class StageAppService {
                 record.bestRounds(), record.clearedAt(), record.sweepCount());
     }
 
-    private static List<StageUnit> toStageUnits(Map<String, Long> units) {
-        List<StageUnit> out = new ArrayList<>(units.size());
-        units.forEach((unitId, count) -> out.add(new StageUnit(unitId, count)));
+    /**
+     * 组装损失行。展示名**在这里**取，不让客户端去 join：客户端没有 unit 表数据（B00 铁律），
+     * 而这一行是直接画给玩家看的 —— 印 {@code unit_infantry_t3} 等于把内部编号端上屏
+     * （#255 建筑名 / #268 资源名 / #278 技能名 / #281 碎片名 / #288 赛季行 id 同族第八处）。
+     * 返回 {@link StageLoss} 而不是 {@link StageUnit}：后者同时是「玩家派出去的兵」的请求载荷，
+     * 请求侧不该带一个客户端没有的字段。
+     */
+    private List<StageLoss> toStageLosses(Map<String, Long> units) {
+        List<StageLoss> out = new ArrayList<>(units.size());
+        units.forEach((unitId, count) ->
+                out.add(new StageLoss(unitId, count, configs.get(UnitCfg.class, unitId).name())));
         return out;
     }
 

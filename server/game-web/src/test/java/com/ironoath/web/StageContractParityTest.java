@@ -4,6 +4,7 @@ import com.ironoath.web.dto.generated.BossMechanic;
 import com.ironoath.web.dto.generated.MarchUnit;
 import com.ironoath.web.dto.generated.RewardItemView;
 import com.ironoath.web.dto.generated.RewardType;
+import com.ironoath.web.dto.generated.StageLoss;
 import com.ironoath.web.dto.generated.StageReward;
 import com.ironoath.web.dto.generated.StageUnit;
 import com.ironoath.web.dto.generated.UnitRestriction;
@@ -64,6 +65,23 @@ class StageContractParityTest {
                         + "两者漂移的话，客户端为行军写的渲染代码用到关卡上就会拿到 undefined")
                 .isEqualTo(shapeOf(MarchUnit.class));
         assertThat(shapeOf(StageUnit.class)).containsExactly("unitId:String", "count:long");
+    }
+
+    @Test
+    @DisplayName("StageLoss 只比 StageUnit 多一个展示名 name：共有字段必须逐位一致")
+    void stageLossIsStageUnitPlusName() {
+        // 结算里的损失行是**直接画给玩家看**的，而客户端没有 unit 表数据（B00 铁律），
+        // 印 unitId 等于把内部编号端上屏 —— #255 建筑名 / #268 资源名 / #278 技能名 /
+        // #281 碎片名 / #288 赛季行 id 同族第八处，修法是服务端把名字带下来。
+        // 不复用 StageUnit 是因为它同时充当「玩家派出去的兵」的请求载荷：
+        // 请求侧带一个客户端没有的字段，等于要求客户端上传它翻译不出来的东西。
+        List<String> shared = shapeOf(StageUnit.class);
+        assertThat(shapeOf(StageLoss.class).subList(0, shared.size()))
+                .as("unitId/count 与 StageUnit 逐位一致，客户端那份行军渲染代码才可能直接复用")
+                .isEqualTo(shared);
+        assertThat(shapeOf(StageLoss.class))
+                .as("StageLoss 只允许比 StageUnit 多一个 name；再加字段必须先说清谁在用")
+                .containsExactly("unitId:String", "count:long", "name:String");
     }
 
     @Test
