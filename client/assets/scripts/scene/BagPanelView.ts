@@ -13,11 +13,11 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
-import { buildBagPanel, buildResourcePanel } from '../game/bag/BagPanel'
+import { buildBagPanel, buildResourcePanel, chestReceiptText } from '../game/bag/BagPanel'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { BagItemRow, BagPanelView as BagPanelData, ResourcePanelView, ResourceRow } from '../game/bag/BagPanel'
-import type { SpeedupChoice } from '../game/session/Choices'
-import type { BagListResp, ResourceDetailResp } from '../net/generated/BagProtocol'
+import type { ChoiceOption, SpeedupChoice } from '../game/session/Choices'
+import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../net/generated/BagProtocol'
 import { applyAnyIconSprite, applyCommandButton, ensureFamily, resourceIconKey } from './ArtCatalog'
 import { itemArtKeyForConfig } from '../game/art/ArtFamilies'
 import { ChoiceOverlay } from './ChoiceOverlay'
@@ -68,6 +68,12 @@ export class BagPanelView extends Component {
   private pendingResources: ResourceDetailResp | null = null
   private pendingBag: BagListResp | null = null
   private targetPicker: ChoiceOverlay | null = null
+  /** 宝箱那一行的「开几个」。与加速目标是两个弹层：标题不同，且同时只可能开着一个 */
+  private openPicker: ChoiceOverlay | null = null
+  /** 最近一次开箱的回执。切页签或换类型页就丢掉（那时它已经从"刚才那一下"变成过期信息） */
+  private receipt: string | null = null
+  /** 玩家自己点过页签没有。点过之后，资源明细的再挂载就不许把面板切回那一页 */
+  private tabChosen = false
 
   /**
    * 点「使用」。needsTarget 为 true 时（加速类道具）由外层弹出目标选择再发请求
@@ -82,6 +88,7 @@ export class BagPanelView extends Component {
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
     this.targetPicker = new ChoiceOverlay(this.node, '选择加速目标', 760)
+    this.openPicker = new ChoiceOverlay(this.node, '开几个', 520)
     // 道具/装备两族图按需拉取；先画一帧 Graphics 占位，图到了再补一帧 —— 加载失败就停在占位上
     Promise.all([ensureFamily('item'), ensureFamily('equip')]).then(() => {
       if (this.isValid) {
@@ -111,6 +118,8 @@ export class BagPanelView extends Component {
     this.tabButtons.clear()
     this.targetPicker?.hide()
     this.targetPicker = null
+    this.openPicker?.hide()
+    this.openPicker = null
     this.onUseItem = null
   }
 
@@ -121,7 +130,11 @@ export class BagPanelView extends Component {
       return
     }
     this.resources = buildResourcePanel(resp)
-    this.tab = 'resource'
+    // 只在玩家**还没自己选过页签**时把面板开到资源明细那页（登录后第一次挂载就是给首屏用的）。
+    // 原来这里无条件 `tab = 'resource'`：开一次箱会重拉资源，玩家就被从「背包」页甩回「资源明细」页
+    if (!this.tabChosen) {
+      this.tab = 'resource'
+    }
     this.render()
   }
 
@@ -144,6 +157,8 @@ export class BagPanelView extends Component {
       return
     }
     this.tab = tab
+    this.tabChosen = true
+    this.receipt = null
     this.render()
   }
 
@@ -156,6 +171,24 @@ export class BagPanelView extends Component {
         onPick(targetId)
       }
     })
+  }
+
+  /** 宝箱的「开几个」选择器：选项由编排层按手里有几个给，本面板只画与回抛。 */
+  showChestOpenPicker(options: readonly ChoiceOption[], onPick: (id: string) => void): void {
+    this.openPicker?.show(options, onPick)
+  }
+
+  /**
+   * 一次开箱的回执写在同一块说明行的位置上（那里本来就是"这一屏有件事要说"）。
+   * 颜色换成绿：同一行既报"背包已满"也报"开出了什么"时，玩家靠颜色分得清是好是坏。
+   */
+  showChestReceipt(resp: OpenBatchResp): void {
+    this.receipt = chestReceiptText(resp)
+    if (this.warningLabel !== null) {
+      // 同一行既报"背包已满"也报"开出了什么"时，玩家靠颜色分得清是好是坏
+      this.warningLabel.color = COLOR_PERCENT
+    }
+    this.render()
   }
 
   // ---------- 搭建 ----------
@@ -310,6 +343,11 @@ export class BagPanelView extends Component {
   }
 
   private warningText(visibleCount: number): string {
+    // 开箱回执优先占这一行：`render()` 每次都会重算说明行，直接写 Label 会被下一次渲染抹掉
+    // （实测：开完 5 个箱，那行字变成了资源页的「STAMINA 已满仓」）
+    if (this.receipt !== null && this.tab === 'bag') {
+      return this.receipt
+    }
     if (this.tab === 'resource') {
       const full = this.resources?.fullWarning ?? null
       if (full !== null) {
@@ -443,6 +481,7 @@ export class BagPanelView extends Component {
   /** 切换到背包里的某个类型页。由编辑器的页签控件调用。 */
   selectBagPage(type: string | null): void {
     this.bagPageType = type
+    this.receipt = null
     this.render()
   }
 }

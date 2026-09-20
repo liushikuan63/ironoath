@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildArmyQueueChoices, buildBuildChoices, buildLineupChoices, buildSpeedupChoices,
+  buildArmyQueueChoices, buildBuildChoices, buildChestOpenChoices, buildLineupChoices,
+  buildSpeedupChoices,
 } from '../assets/scripts/game/session/Choices'
 import type { ArmyListResp } from '../assets/scripts/net/generated/ArmyProtocol'
 import type { CityListResp } from '../assets/scripts/net/generated/CityProtocol'
@@ -100,4 +101,18 @@ test('取消那条要说清退的是什么：数量与兵种名都取自服务�
   assert.match(detail, /30/, '把还在练的数量写出来，玩家才知道取消掉的是哪一口')
   assert.match(detail, /重步/)
   assert.match(detail, /按比例退回/, '退多少由服务端按配置算，这里只说口径不说数字')
+})
+
+test('开宝箱的档位只按"手里有几个"给，不抄逐箱上限', () => {
+  assert.deepEqual(buildChestOpenChoices(0), [], '没有就不画菜单')
+  assert.deepEqual(buildChestOpenChoices(3).map(o => o.id), ['1'],
+    '手里 3 个就不该给"开 5 个"—— 那是一颗必然被服务端拒的选项')
+  assert.deepEqual(buildChestOpenChoices(12).map(o => o.id), ['1', '5', '10', 'all'])
+})
+
+test('手里超过协议天花板时，「全开」说的是天花板而不是持有数', () => {
+  const all = buildChestOpenChoices(250).find(o => o.id === 'all')
+  assert.equal(all?.label, '全开 100 个')
+  assert.match(all?.detail ?? '', /协议单次上限 100/,
+    '要说清为什么是 100 而不是 250，否则玩家以为另外 150 个被吞了')
 })

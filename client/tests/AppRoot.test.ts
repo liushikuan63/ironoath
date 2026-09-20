@@ -240,6 +240,10 @@ const ROUTES: Record<string, unknown> = {
   '/shop/buy': { rowId: 'shop_speedup_build_1h', itemId: 'item_speedup_build_1h', count: 1,
     currency: 'GOLD', spent: 300, balance: 900, used: 2, remaining: 0, serverNow: SERVER_NOW },
   '/item/use': { used: 1, remaining: 0, effects: [], serverNow: SERVER_NOW },
+  '/item/openBatch': {
+    consumed: 5, results: [{ type: 'RESOURCE', id: 'WOOD', count: 500, name: '木材' }],
+    overflow: [], mailId: null, seed: 7, serverNow: SERVER_NOW,
+  },
   '/stage/sweep': { results: {}, rewards: [], serverNow: SERVER_NOW },
   '/stage/challenge': {
     reportId: 'r1', stars: { cleared: true, noLoss: true, withinRounds: true, total: 3 },
@@ -558,6 +562,11 @@ interface Harness {
   readonly lastChat: ChatPanelData | null
   /** 最近一次递给体力那条的三份数：当前 / 上限 / 金币（金币为 null 表示资源明细还没到） */
   readonly lastStamina: { current: number, cap: number, gold: number | null } | null
+  /** 最近一次递给「开几个」选择器的选项 */
+  readonly chestOptions: readonly ChoiceOption[]
+  /** 点「开几个」里的一条 */
+  pickChest(id: string): void
+  readonly lastChest: { consumed: number, overflow: number } | null
   /** 最近一次购买回执里服务端说的到账与扣币 */
   readonly lastStaminaBought: { granted: number, costGold: number } | null
   /** 最近一次落地给榜单面板的整块视图。 */
@@ -714,6 +723,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastShareOutcome: [string, boolean] = ['', false]
   let shareChannelPick: ((choice: ShareChannelChoice) => void) | null = null
   let speedupPick: ((targetId: string) => void) | null = null
+  let chestOptions: ChoiceOption[] = []
+  let chestPick: ((id: string) => void) | null = null
+  let lastChest: { consumed: number, overflow: number } | null = null
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
   const targets: PanelTargets = {
@@ -834,6 +846,14 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     speedupTargetChoice: (options, onPick) => {
       speedupOptions = [...options]
       speedupPick = onPick
+    },
+    chestOpenChoice: (options, onPick) => {
+      chestOptions = [...options]
+      chestPick = onPick
+    },
+    chestOpened: (resp) => {
+      attached.push('chestOpened')
+      lastChest = { consumed: resp.consumed, overflow: resp.overflow.length }
     },
     armyQueueChoice: (options, onPick) => {
       queueOptions = [...options]
@@ -960,6 +980,15 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get speedupOptions() {
       return speedupOptions
+    },
+    get chestOptions() {
+      return chestOptions
+    },
+    pickChest(id) {
+      chestPick?.(id)
+    },
+    get lastChest() {
+      return lastChest
     },
     get lineupOptions() {
       return lineupOptions
@@ -3959,4 +3988,64 @@ test('B26 S18：命令三态互斥 —— 切侦察会把集结清掉，切回�
   assert.equal(h.http.countOf('/rally/squad'), 0, '切换不发任何写请求')
   assert.ok(h.http.countOf('/rally/policy') <= 1, '政策只在进集结态时补拉一次，来回切不重复拉')
   assert.ok(h.http.calls.length - before <= 5, '切换本身不吃网络（允许多的那几条是政策补拉）')
+})
+
+// ---------- 开箱（B04 §2：/item/use 对宝箱直接拒绝，玩家此前根本开不了箱） ----------
+
+function chestBag(count: number): Record<string, unknown> {
+  return {
+    items: [{
+      itemId: 'item_chest_basic', name: '基础宝箱', type: 'CHEST', rarity: 'RARE',
+      count, stackMax: 99, sortKey: 10, effectKind: null, effectTarget: null, effectValue: 0,
+    }],
+    capacityUsed: 1, capacityMax: 100, serverNow: SERVER_NOW,
+  }
+}
+
+test('宝箱那一行按「使用」不去打那条必然被服务端拒的 /item/use，而是先问开几个', async () => {
+  const h = harness()
+  h.http.overrides.set('/bag/list', chestBag(12))
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  await h.root.useItem('item_chest_basic', false)
+
+  assert.equal(h.http.calls.length, total, '问"开几个"之前一个写请求都不该发')
+  assert.deepEqual(h.chestOptions.map(o => o.id), ['1', '5', '10', 'all'],
+    '档位按手里有几个给（12 个 ⇒ 1/5/10/全开）')
+})
+
+test('选「开 5 个」：一次 /item/openBatch、带幂等键，回执交给面板', async () => {
+  const h = harness()
+  h.http.overrides.set('/bag/list', chestBag(12))
+  await h.root.start('dev-1', '君')
+
+  await h.root.useItem('item_chest_basic', false)
+  h.pickChest('5')
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  const opens = h.http.calls.filter(c => c.path === '/item/openBatch')
+  assert.equal(opens.length, 1)
+  assert.equal(opens[0]?.body.count, 5)
+  assert.equal(opens[0]?.body.itemId, 'item_chest_basic')
+  assert.ok(typeof opens[0]?.body.requestId === 'string' && opens[0].body.requestId.length > 0,
+    '开箱是有副作用的写：没有幂等键，断网重放会让玩家白丢一箱')
+  assert.equal(h.http.countOf('/item/use'), 0, '宝箱不该再走 /item/use')
+  assert.deepEqual(h.lastChest, { consumed: 5, overflow: 0 })
+  // 开出什么会动到背包、资源与武将碎片；溢出那部分由红点报（邮件不在首屏预拉里，不为一件
+  // 玩家可能不看的事多塞一次请求）
+  for (const path of ['/bag/list', '/resource/detail', '/hero/list', '/social/reddot']) {
+    assert.equal(h.http.countOf(path) >= 2, true, `开完要重拉 ${path}`)
+  }
+  assert.equal(h.http.countOf('/mail/list'), 0, '开箱不顺手拉邮件：那是点开那一格才拉的')
+})
+
+test('手里只剩 1 个时不画"开 5 个"那颗必然被拒的选项', async () => {
+  const h = harness()
+  h.http.overrides.set('/bag/list', chestBag(1))
+  await h.root.start('dev-1', '君')
+
+  await h.root.useItem('item_chest_basic', false)
+
+  assert.deepEqual(h.chestOptions.map(o => o.id), ['1'])
 })

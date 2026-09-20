@@ -22,7 +22,8 @@
 
 import * as FixedPoint from '../../core/FixedPoint'
 import type {
-  BagItem, BagListResp, OutputBreak, ResourceDetail, ResourceDetailResp,
+  BagItem, BagListResp, OpenBatchResp, OutputBreak, ResourceDetail, ResourceDetailResp,
+  RewardItemView,
 } from '../../net/generated/BagProtocol'
 
 /** 产出明细的一行。 */
@@ -244,4 +245,19 @@ export function itemTypeText(type: string): string {
     case 'BUFF': return '增益'
     default: return type
   }
+}
+
+/**
+ * 一次开箱的回执那一句话。三件必须说的事都来自服务端：实际开了几个（`consumed`）、
+ * 开出了什么（`results` 已按稀有度聚合，名字服务端下发，不自己翻译）、
+ * **装不下的那部分去哪了**（`overflow` 已转邮件 —— 不说就等于玩家以为道具丢了）。
+ */
+export function chestReceiptText(resp: OpenBatchResp): string {
+  const line = (items: readonly RewardItemView[]): string =>
+    items.map((r) => `${r.name} ×${r.count}`).join(' · ')
+  const got = line(resp.results)
+  const head = `开了 ${resp.consumed} 个：${got === '' ? '什么都没有' : got}`
+  return resp.overflow.length === 0
+    ? head
+    : `${head}；${line(resp.overflow)} 装不下，已转邮件`
 }

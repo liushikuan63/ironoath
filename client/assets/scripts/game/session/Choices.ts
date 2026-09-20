@@ -20,6 +20,9 @@ export interface SpeedupChoice extends ChoiceOption {
   readonly targetId: string
 }
 
+/** 一次开宝箱的协议天花板（`OpenBatchReq.count` 的上界，B04 验收 3 按它定的）。 */
+const CHEST_BATCH_CEILING = 100
+
 export interface LineupChoice extends ChoiceOption {
   readonly heroes: readonly string[]
   readonly units: readonly StageUnit[]
@@ -64,6 +67,38 @@ export function buildArmyQueueChoices(army: ArmyListResp | null,
     // 一行放得下才算写完：选择器每行只有 ~14 个字的宽度，长了会折到下一行与下一条撞在一起
     detail: `${unit.training} 个${unit.name} · 资源按比例退回`,
   }]
+}
+
+/**
+ * 一次开几个宝箱的候选。
+ *
+ * <p><b>为什么把"这一种宝箱单次最多开几个"留给服务端</b>：那个上限在 `chest` 表里
+ * （`maxBatchCount`），响应没下发给客户端。客户端要么抄配置、要么猜 —— 两条都是本仓库
+ * 反复抓的那类"把判定搬过来"。所以这里只按**玩家手里有几个**给档位，
+ * 超了服务端会明确拒绝（它刻意不静默截断：只开一部分却扣全部等于吞道具），
+ * 那句"单次最多开 X 个"原样显示给玩家，他照着改一次就行。
+ *
+ * @param held 背包里这一种宝箱的数量（服务端下发，不自己数）
+ */
+export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
+  if (held <= 0) {
+    return []
+  }
+  const out: ChoiceOption[] = []
+  for (const n of [1, 5, 10]) {
+    if (n <= held) {
+      out.push({ id: String(n), label: `开 ${n} 个`, detail: `还剩 ${held - n} 个没开` })
+    }
+  }
+  const all = Math.min(held, CHEST_BATCH_CEILING)
+  if (all > 10) {
+    out.push({
+      id: 'all',
+      label: `全开 ${all} 个`,
+      detail: all === held ? '一次开完手里这些' : `手里 ${held} 个，协议单次上限 ${CHEST_BATCH_CEILING} 个`,
+    })
+  }
+  return out
 }
 
 /** 未放置建筑候选。地块能否放置由玩家点选坐标后交给服务端判定。 */

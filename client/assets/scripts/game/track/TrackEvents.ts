@@ -288,6 +288,11 @@ export const TRACK_EVENTS = {
    * "卡在哪一级不再动"只有从等级分布才看得出来。
    */
   techResearch: 'tech_research',
+  /**
+   * 开一批宝箱（B04 §2）。带 `count`：开箱是产出与付费的交汇点，
+   * "一次开 1 个"与"一次开 100 个"在运营曲线上是两种玩家。
+   */
+  chestOpen: 'chest_open',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

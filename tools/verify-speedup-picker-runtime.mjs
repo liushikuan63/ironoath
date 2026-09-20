@@ -79,8 +79,28 @@ await context.route('**/bag/list*', async (route) => {
       obtainFrom: null, count: 3, stackMax: 99, sortKey: 10, effectKind: 'SPEEDUP',
       effectTarget: null, effectValue: 3600, description: null, expiresAt: null,
       usableIn: ['CITY', 'ARMY'], artKey: null, opened: 0,
+    }, {
+      itemId: 'item_chest_basic', name: '基础宝箱', type: 'CHEST', rarity: 'RARE',
+      obtainFrom: null, count: 12, stackMax: 99, sortKey: 11, effectKind: 'CHEST',
+      effectTarget: null, effectValue: 0, description: null, expiresAt: null,
+      usableIn: ['CITY'], artKey: null, opened: 0,
     }],
-    capacityUsed: 1, capacityMax: 100, serverNow: now,
+    capacityUsed: 2, capacityMax: 100, serverNow: now,
+  })
+})
+const opened = []
+await context.route('**/item/openBatch*', async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  opened.push(JSON.parse(route.request().postData() ?? '{}'))
+  await reply(route, {
+    consumed: 5,
+    results: [{ type: 'RESOURCE', id: 'WOOD', count: 5000, name: '木材' },
+      { type: 'HERO_FRAGMENT', id: 'hero_wei', count: 3, name: '卫无咎碎片' }],
+    overflow: [{ type: 'ITEM', id: 'item_speedup_1h', count: 2, name: '加速道具（1 小时）' }],
+    mailId: 'm-1', seed: 42, serverNow: Date.now(),
   })
 })
 await context.route('**/army/list*', async (route) => {
@@ -234,6 +254,121 @@ await page.screenshot({ path: path.join(OUT, 'speedup-picker.png') })
 console.log(`  截图：${path.join(OUT, 'speedup-picker.png')}`)
 
 check('没选目标就不发 /item/use（选了才吃道具）', used.length, 0)
+
+// ---------- 宝箱那一行：先问「开几个」，选完才发 /item/openBatch ----------
+
+const CHEST = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('bag')
+  let overlay = null
+  const find = (n) => {
+    if (n.name === 'ChoiceOverlay' && n.active) overlay = n
+    for (const c of n.children) if (c.active) find(c)
+  }
+  find(panel)
+  const row = (panel?.children || []).find((c) => c.name === 'Row' && c.active
+    && (c.children || []).some((k) => (k.getComponent('cc.Label')?.string ?? '').includes('宝箱')))
+  const texts = overlay === null ? [] : (() => {
+    const out = []
+    const walk = (n) => {
+      const t = n.getComponent('cc.Label')?.string ?? ''
+      if (t.length > 0) out.push(t)
+      for (const c of n.children) walk(c)
+    }
+    walk(overlay)
+    return out
+  })()
+  let cover = -1
+  if (overlay !== null && overlay.parent !== null) {
+    const at = overlay.getSiblingIndex()
+    cover = 0
+    for (const sib of overlay.parent.children) {
+      if (sib.active && sib.getSiblingIndex() > at) cover += 1
+    }
+  }
+  return { hasRow: row !== undefined && row !== null, pickerOpen: overlay !== null, texts, cover }
+})()`
+
+// 先把上面那个「选择加速目标」收掉：探针是按节点名直接 emit 的，绕过了命中测试，
+// 不收的话下一段截图里会留着上一层弹层（看着像宝箱的选择器还开着）
+await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('bag')
+  let hit = null
+  const walk = (n) => {
+    if (n.name === 'ChoiceCancel' && n.active) hit = n
+    for (const c of n.children) if (c.active) walk(c)
+  }
+  walk(panel)
+  if (hit !== null) hit.emit('touch-start')
+  return hit !== null
+})()`)
+await page.waitForTimeout(400)
+
+// 背包按**道具类型分页**（`buildBagPanel` 分组），而类型页签是编辑器里的控件、代码里不建节点，
+// 所以探针直接调真实的那个切换方法（与页签点下去走的是同一条），不猜第几页是什么
+await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('bag')
+  panel?.getComponent('BagPanelView')?.selectBagPage('CHEST')
+})()`)
+await page.waitForTimeout(500)
+
+const chestTapped = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('bag')
+  const row = (panel?.children || []).find((c) => c.name === 'Row' && c.active
+    && (c.children || []).some((k) => (k.getComponent('cc.Label')?.string ?? '').includes('宝箱')))
+  const btn = (row?.children || []).find((c) => c.name === 'UseButton')
+  if (btn === undefined) return false
+  btn.emit('touch-start')
+  return true
+})()`)
+checkTrue('宝箱那一行上有可点的键', chestTapped)
+await page.waitForTimeout(700)
+const chest = await page.evaluate(CHEST)
+checkTrue('按「使用」先问「开几个」（服务端对宝箱的 /item/use 是直接拒绝的）',
+  chest?.pickerOpen === true && chest?.texts.some((t) => t === '开几个'))
+checkTrue('档位按手里有几个给：1 / 5 / 10 / 全开 12', chest !== null
+  && chest.texts.some((t) => t === '开 5 个') && chest.texts.some((t) => t === '全开 12 个'))
+check('「开几个」这个弹层也没被行盖住', chest?.cover, 0)
+check('问「开几个」之前不发 /item/use', used.length, 0)
+await page.screenshot({ path: path.join(OUT, 'chest-count-picker.png') })
+console.log(`  截图：${path.join(OUT, 'chest-count-picker.png')}`)
+
+await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('bag')
+  let hit = null
+  const walk = (n) => {
+    if (n.name.startsWith('Choice-') && n.active
+      && (n.children || []).some((k) => (k.getComponent('cc.Label')?.string ?? '') === '开 5 个')) hit = n
+    for (const c of n.children) if (c.active) walk(c)
+  }
+  walk(panel)
+  if (hit !== null) hit.emit('touch-start')
+  return hit !== null
+})()`)
+await page.waitForTimeout(1500)
+check('选「开 5 个」恰好发一条 /item/openBatch', opened.length, 1)
+check('请求体里 count=5', opened[0]?.count, 5)
+checkTrue('开箱带幂等键（断网重放会让玩家白丢一箱）',
+  typeof opened[0]?.requestId === 'string' && opened[0].requestId.length > 0)
+check('宝箱那条不走 /item/use', used.length, 0)
+const receipt = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('bag')
+  let hit = ''
+  const walk = (n) => { if (n.name === 'Warning') hit = n.getComponent('cc.Label')?.string ?? ''; for (const c of n.children) walk(c) }
+  walk(panel)
+  return hit
+})()`)
+checkTrue('回执把"开了几个 / 开出什么 / 装不下的已转邮件"三件都说清：' + receipt,
+  receipt.includes('开了 5 个') && receipt.includes('卫无咎碎片 ×3')
+    && receipt.includes('加速道具（1 小时） ×2 装不下，已转邮件'))
+await page.screenshot({ path: path.join(OUT, 'chest-receipt.png') })
+console.log(`  截图：${path.join(OUT, 'chest-receipt.png')}`)
+
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {
   for (const message of errors.slice(0, 3)) console.log(`    error: ${message.slice(0, 160)}`)

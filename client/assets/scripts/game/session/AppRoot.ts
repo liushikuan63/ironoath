@@ -28,7 +28,7 @@ import type { TimeSync } from '../../core/TimeSync'
 import type { OfflineReportView, PowerDetailResp, StaminaBuyResp, StaminaResp } from '../../net/generated/Protocol'
 import type { CityCollectResp, CityListResp, SpeedUpSource } from '../../net/generated/CityProtocol'
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
-import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
+import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
 import type { GachaDrawResp, GachaPoolsResp, HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageListResp } from '../../net/generated/StageProtocol'
 import type {
@@ -100,8 +100,8 @@ import type { ActivityClaimResp, ActivityListResp } from '../../net/generated/Ac
 import type { GuideAction, GuideProgressResp, GuideScriptResp } from '../../net/generated/GuideProtocol'
 import { claimActivityReq } from '../activity/ActivityPanel'
 import {
-  buildArmyQueueChoices, buildChatActionChoices, buildLineupChoices, buildShareChannelChoices,
-  buildSpeedupChoices,
+  buildArmyQueueChoices, buildChestOpenChoices, buildChatActionChoices, buildLineupChoices,
+  buildShareChannelChoices, buildSpeedupChoices,
 } from './Choices'
 import type {
   ChatActionChoice, ChoiceOption, LineupChoice, ShareChannelChoice, SpeedupChoice,
@@ -387,6 +387,10 @@ export interface PanelTargets {
   speedupTargetChoice?(options: readonly SpeedupChoice[], onPick: (targetId: string) => void): void
   /** 军队那一行的「队列」菜单（B26 S15）：选项与"点了做什么"都由编排层给，面板只画与回抛 */
   armyQueueChoice?(options: readonly ChoiceOption[], onPick: (id: string) => void): void
+  /** 宝箱那一行的「开几个」选择器。选项按手里有几个给（逐箱上限在 chest 表里，没下发）。 */
+  chestOpenChoice?(options: readonly ChoiceOption[], onPick: (id: string) => void): void
+  /** 一次开箱的回执：实际开了几个、开出什么、装不下的那部分转了邮件。 */
+  chestOpened?(resp: OpenBatchResp): void
   /** 关卡出战阵容选择器。回调由场景层在选择后触发一次。 */
   lineupChoice?(options: readonly LineupChoice[], onPick: (choice: LineupChoice) => void): void
   /**
@@ -408,8 +412,10 @@ export type PanelKey =
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
   | 'battlePass' | 'rallies' | 'tech' | 'equip' | 'gacha'
 
-/** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
-export interface Tracker {
+/** 「全开」这一档的天花板：`OpenBatchReq.count` 的协议上界（逐箱上限由服务端判，超了会明确拒）。 */
+const CHEST_OPEN_CEILING = 100
+
+/** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */export interface Tracker {
   track(name: string, params?: Record<string, string>): void
 }
 
@@ -1075,11 +1081,32 @@ export class AppRoot {
   // ---------- 背包 ----------
 
   /**
-   * 使用道具。`needsTarget` 为真时（加速类）需要目标选择器，而它还没有 ——
+   * 使用道具。加速类（`needsTarget`）先要一个目标选择器，而它还没有 ——
    * 明说比替玩家挑一个目标好：猜错目标消耗掉的是真金白银买来的道具，且不会有任何报错。
+   *
+   * <p>宝箱类走另一条路：服务端对宝箱的 `/item/use` **直接拒绝**并写明"请走 /item/openBatch"
+   * （它的产出可能是道具或武将碎片，不是资源），所以这一按过去只会拿到一句报错。
    */
   useItem(itemId: string, needsTarget: boolean,
           targetId: string | null = null): Promise<void> {
+    const held = this.bagResp?.items.find((it) => it.itemId === itemId)
+    if (held !== undefined && held.type === 'CHEST') {
+      this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'chest_picker' })
+      const options = buildChestOpenChoices(held.count)
+      if (options.length === 0) {
+        this.rejectNeeds('bag', '手里这一种宝箱已经没有了')
+        return Promise.resolve()
+      }
+      if (this.targets.chestOpenChoice === undefined) {
+        this.rejectNeeds('bag', pickUnavailable('开几个'))
+        return Promise.resolve()
+      }
+      this.targets.chestOpenChoice(options, (picked) => {
+        void this.openChest(itemId, picked === 'all'
+          ? Math.min(held.count, CHEST_OPEN_CEILING) : Number(picked))
+      })
+      return Promise.resolve()
+    }
     if (needsTarget && targetId === null) {
       this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'picker' })
       const options = buildSpeedupChoices(this.cityResp, this.armyResp)
@@ -1099,6 +1126,20 @@ export class AppRoot {
     this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'false' })
     return this.write('bag', this.api.itemUse({ itemId, count: 1, targetId }),
       ['bag', 'city', 'army', 'reddot'])
+  }
+
+  /**
+   * 开 N 个宝箱。随机、逐箱上限、溢出转邮件全在服务端（B04 禁止项：不得在客户端本地开箱），
+   * 本层只发一次请求、把回执交给面板，并重拉那四本账（背包 / 资源 / 武将碎片 / 红点）。
+   *
+   * <p>**不重拉邮件**：邮件本来就不在首屏预拉里（点开那一格才拉），溢出那件事由红点那条通路
+   * 告诉玩家就够了 —— 为一件玩家可能根本不看的事多塞一次首屏预算外的请求，是本仓库反复避的那种浪费。
+   */
+  openChest(itemId: string, count: number): Promise<void> {
+    this.track(TRACK_EVENTS.chestOpen, { itemId, count: trackParam(count) })
+    return this.write('bag', this.api.itemOpenBatch({ itemId, count }),
+      ['bag', 'resources', 'hero', 'reddot'],
+      (resp) => this.targets.chestOpened?.(resp))
   }
 
   // ---------- 关卡 ----------
