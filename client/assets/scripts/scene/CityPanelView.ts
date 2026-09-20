@@ -144,6 +144,8 @@ export class CityPanelView extends Component {
   onUpgrade: ((configId: string, gridX?: number, gridY?: number) => void) | null = null
   onSpeedUp: ((buildingId: string, source: SpeedUpSource) => void) | null = null
   onCollect: ((buildingId: string | null) => void) | null = null
+  /** 右上角那颗「学院 · 研究」：打开全局研究页（V03-a-S1 的读侧 + #323 的写侧都在那一页） */
+  onOpenTech: (() => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -181,6 +183,7 @@ export class CityPanelView extends Component {
     this.onUpgrade = null
     this.onSpeedUp = null
     this.onCollect = null
+    this.onOpenTech = null
   }
 
   attach(resp: CityListResp, offsetMs: number): void {
@@ -388,6 +391,27 @@ export class CityPanelView extends Component {
     }
     this.addLabel(collectAll, 'Caption', 0, 0, COLOR_TEXT, 15).string = '一键收割'
     collectAll.on('touch-start', (_event: EventTouch) => this.onCollect?.(null), this)
+
+    // 「研究」与「一键收割」同一角带：研究页是**全局一页一队列**，不是某个建筑的属性 ——
+    // 挂在学院行上会带来两个够不着的时刻（没选中学院、学院正在升级把按钮条占满）。
+    // 学院等级仍是服务端的真门槛（TECH_ACADEMY_REQUIRED 会把原因原样送回来）。
+    const tech = new Node('TechOpenButton')
+    tech.layer = parent.layer
+    parent.addChild(tech)
+    tech.setPosition(new Vec3(
+      CARD_WIDTH / 2 - FRAME_BAND - 216, CARD_HEIGHT / 2 - FRAME_BAND - 20, 0))
+    tech.addComponent(UITransform).setContentSize(new Size(132, 34))
+    if (!applyCommandButton(tech, 'normal', 132, 34)) {
+      const techGraphics = tech.addComponent(Graphics)
+      techGraphics.fillColor = COLOR_PANEL
+      techGraphics.strokeColor = COLOR_COPPER_GOLD
+      techGraphics.lineWidth = 2
+      techGraphics.roundRect(-66, -17, 132, 34, 6)
+      techGraphics.fill()
+      techGraphics.stroke()
+    }
+    this.addLabel(tech, 'Caption', 0, 0, COLOR_TEXT, 15).string = '学院 · 研究'
+    tech.on('touch-start', (_event: EventTouch) => this.onOpenTech?.(), this)
   }
 
   private createActionButton(parent: Node, name: string, text: string, x: number,

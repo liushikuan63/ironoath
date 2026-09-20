@@ -170,9 +170,11 @@ export class TechPanelView extends Component {
 
     const left = -usable / 2 + 10
     const right = usable / 2 - 10
+    // 可研究那一行的成本要让开键位（键占右边 76 宽）：写在同一头会把"木材 600"压掉半截
+    const costRight = row.canResearch ? right - 84 : right
     this.label(row.name, row.canResearch ? COLOR_TEXT : COLOR_TEXT_DIM, 18, left, y - 10, 'left')
     this.label(row.levelText, COLOR_TEXT_DIM, 14, left + 150, y - 10, 'left')
-    this.label(row.costText, COLOR_TEXT_DIM, 14, right, y - 10, 'right')
+    this.label(row.costText, COLOR_TEXT_DIM, 14, costRight, y - 10, 'right')
     const second = row.effectText === null
       ? (row.timeText === null ? '' : `耗时 ${row.timeText}`)
       : `${row.effectText}${row.timeText === null ? '' : ` · 耗时 ${row.timeText}`}`
@@ -180,7 +182,7 @@ export class TechPanelView extends Component {
     if (row.canResearch) {
       // 「可研究」以前只是一句字 —— 玩家看得见这一行能做，但点下去什么都没有发生。
       // 现在它是一颗键，按下去发 POST /tech/research
-      this.drawResearch(row.techId, right, y - 25)
+      this.drawResearch(row.techId, right, y - 10)
     } else if (row.reasonText !== null) {
       this.label(row.reasonText, COLOR_TEXT_DIM, 15, right, y - 25, 'right')
     }

@@ -939,8 +939,12 @@ export class GameBootstrap extends Component {
   }
 
   /**
-   * 研究页（V03-a-S1）。**不占导航第 17 项**：它从内城「学院」点出来，是二级页，
-   * 所以与礼包弹窗同一做法 —— 挂在这一层、初始不激活，找得到就接、找不到就少一份。
+   * 研究页（V03-a-S1）。**不占导航第 17 项**：它是内城右上角那颗常驻「学院 · 研究」点出来的二级页，
+   * 与礼包弹窗同一做法 —— 挂在这一层、初始不激活，找得到就接、找不到就少一份。
+   *
+   * <p>原注释写的是"从内城「学院」点出来"，量过之后按实际改了：详情按钮条只有 536 宽，
+   * 学院升级中那一行已经要放两颗加速键，第三颗放不下（#330）。研究页本身是全局一页一队列，
+   * 常驻一颗比"挂在某个建筑上"更对得上玩家要做的事。
    */
   private mountTechPanel(): void {
     if (this.node.getChildByName('techPanel') !== null) {
@@ -1220,6 +1224,8 @@ export class GameBootstrap extends Component {
       }
       city.onSpeedUp = (buildingId, source) => { void this.root?.speedUpBuilding(buildingId, source) }
       city.onCollect = buildingId => { void this.root?.collect(buildingId) }
+      // 内城右上角那颗「学院 · 研究」：研究页此前根本没有玩家入口（`openTech()` 零调用方）
+      city.onOpenTech = () => { void this.root?.openTech() }
     }
     if (army !== null) {
       out.army = (resp, offsetMs, trainMemory) => army.attach(resp, offsetMs, trainMemory)
