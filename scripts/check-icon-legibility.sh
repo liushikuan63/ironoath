@@ -7,9 +7,17 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# CI 的 setup-python 会把 `python` 放上 PATH，但**一台普通 Linux 只有 `python3`** ——
+# 那里跑这道门会得到 127（命令不存在），报成"这一族未通过"，看着像图标撞脸其实什么都没跑。
+PY="$(command -v python || command -v python3 || true)"
+if [ -z "$PY" ]; then
+  echo "[icon-legibility] 找不到 python / python3 —— 前置不满足，这**不是通过**（退出码 2）"
+  exit 2
+fi
+
 STATUS=0
 for DIR in items equip heroes activities; do
-  PYTHONIOENCODING=utf-8 python art-src/check_icon_legibility.py \
+  PYTHONIOENCODING=utf-8 "$PY" art-src/check_icon_legibility.py \
     --dir "client/assets/resources/ui/generated/$DIR" || STATUS=$?
   if [ "$STATUS" -ne 0 ]; then
     echo "[icon-legibility] $DIR 族未通过（退出码 $STATUS）"
@@ -21,7 +29,7 @@ done
 # 城景格子投影后的脚印宽是 53~89，图标边长 = max(26, 宽 × 0.92)，最小那档只有 48px。
 # 拿 26 判会把本来就画得开的图误判成撞脸，拿 128（源文件尺寸）判则等于没判。
 if [ "$STATUS" -eq 0 ]; then
-  PYTHONIOENCODING=utf-8 python art-src/check_icon_legibility.py \
+  PYTHONIOENCODING=utf-8 "$PY" art-src/check_icon_legibility.py \
     --dir client/assets/resources/ui/generated/buildings --px 48 || STATUS=$?
   if [ "$STATUS" -ne 0 ]; then
     echo "[icon-legibility] buildings 族在 48px（最小那一档城格）下未通过（退出码 $STATUS）"

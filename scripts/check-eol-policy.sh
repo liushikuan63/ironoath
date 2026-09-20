@@ -17,8 +17,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-git ls-files --eol | awk '
-BEGIN { FS = "\t"; bad = 0 }
+git ls-files --eol | awk -v have_git="${1:-yes}" '
+BEGIN { FS = "\t"; bad = 0; seen = 0 }
 {
   path = $2
   if (path == "") next
@@ -28,16 +28,24 @@ BEGIN { FS = "\t"; bad = 0 }
   for (i = 3; i <= n; i++) attr = attr " " f[i]
   if (idx != "i/lf" && idx != "i/mixed") next
   if (attr ~ /-text/) next
+  seen++
   if (attr ~ /eol=lf/) next
   bad++
   if (bad <= 15) printf "  %s | %s |%s\n", idx, path, attr
 }
 END {
+  # 一条都没读到就报"通过"，是这道门最坏的失败方式（2026-09-21 在 Linux 容器里实测到：
+  # 没有 .git 时 `git ls-files` 直接 fatal，awk 收到空输入 ⇒ 打出绿字，只靠 pipefail 才没溜过去）。
+  if (seen == 0) {
+    print "[check-eol-policy] 一个文本 blob 都没读到 —— 多半是不在 git 工作区里跑（`git ls-files` 空或 fatal）。"
+    print "  这**不是通过**，不许拿这条绿字交差。"
+    exit 1
+  }
   if (bad > 0) {
-    printf "[check-eol-policy] %s 个文本文件没被强制 eol=lf（上面列前 15 个）\n", bad
-    print "  修法：在 .gitattributes 里补规则；本仓库的口径是 `* text=auto eol=lf` + 给真正的资产显式 -text，"
+    printf "[check-eol-policy] %d 个文本文件里 %s 个没被强制 eol=lf（上面列前 15 个）\n", seen, bad
+    print "  修法：本仓库的口径是 `* text=auto eol=lf` + 给真正的资产显式 -text，"
     print "  而不是继续按扩展名点名 —— 点名这张表今天已经漏了 767 个，下一门新语言又会漏。"
     exit 1
   }
-  print "[check-eol-policy] 每个文本 blob 都被强制 eol=lf（全新检出与本机同源）。"
+  printf "[check-eol-policy] %d 个文本 blob 全部被强制 eol=lf（全新检出与本机同源）。\n", seen
 }'
