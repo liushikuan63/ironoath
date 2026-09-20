@@ -1344,6 +1344,55 @@ class SocialEndpointTest {
                 .isEqualTo(ErrorCode.REQUEST_DUPLICATED.code());
     }
 
+    // ---------- B26 S8：本盟待审申请（GET /alliance/applications） ----------
+
+    @Test
+    @DisplayName("申请名单带昵称与主城等级：只回 id 的列表等于让盟主对着一串 p_xxx 点批准")
+    void applicationsCarryTheNicknameTheClientCannotDerive() throws Exception {
+        String leader = newPlayer(10);
+        String allianceId = post200("/alliance/create", leader,
+                new AllianceCreateReq(newRequestId(), "铁誓", "TS"))
+                .get("alliance").get("id").asText();
+        String applicant = newPlayer(3);
+        post200("/alliance/apply", applicant, new AllianceIdReq(newRequestId(), allianceId));
+
+        JsonNode list = okData(perform(get("/alliance/applications").header(PLAYER_HEADER, leader)));
+        assertThat(list.get("limit").asLong())
+                .as("上限来自 global.ALLIANCE_APPLICATION_LIST_LIMIT")
+                .isEqualTo(50L);
+        assertThat(list.get("total").asInt()).isEqualTo(1);
+        JsonNode row = list.get("applicants").get(0);
+        assertThat(row.get("playerId").asText()).isEqualTo(applicant);
+        assertThat(row.get("nickname").asText())
+                .as("昵称是服务端查的那一份，不是把 id 换个字段名再印一遍")
+                .isEqualTo("社交测试").isNotEqualTo(applicant);
+        assertThat(row.get("mainCityLevel").asInt())
+                .as("审核要看的就是这个人现在什么水平")
+                .isEqualTo(3);
+
+        post200("/alliance/review", leader, new AllianceReviewReq(newRequestId(), applicant, true));
+        JsonNode after = okData(perform(get("/alliance/applications").header(PLAYER_HEADER, leader)));
+        assertThat(after.get("total").asInt()).as("批完要归零，否则那一行一直挂着").isZero();
+        assertThat(after.get("applicants")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("普通成员读不到申请名单：这条下发的是别人的身份，读口不许比写口松")
+    void applicationsAreGatedByTheSamePermissionAsReview() throws Exception {
+        Quartet q = allianceWithThreeMembers();
+        String stranger = newPlayer(1);
+        post200("/alliance/apply", stranger, new AllianceIdReq(newRequestId(), q.allianceId()));
+
+        JsonNode denied = getRaw("/alliance/applications", q.b());
+        assertThat(denied.get("code").asInt())
+                .as("同一份 role_permission 的 APPROVE_APPLICATION：成员能申别人，不能看谁申了")
+                .isEqualTo(ErrorCode.SOCIAL_PERMISSION_DENIED.code());
+        assertThat(denied.has("applicants"))
+                .as("被拒时一个字段都不许漏出去")
+                .isFalse();
+        assertThat(okData(perform(get("/alliance/applications")
+                .header(PLAYER_HEADER, q.leader()))).get("total").asInt()).isEqualTo(1);
+    }
     private record Quartet(String leader, String b, String c, String d, String allianceId) {
     }
 
@@ -1621,6 +1670,10 @@ class SocialEndpointTest {
         return okData(postRawNode(url, playerId, req));
     }
 
+    /** GET 的原始响应（不预设业务码为 0）：读口被权限挡下时，`okData` 会先自己断言炸掉。 */
+    private JsonNode getRaw(String url, String playerId) throws Exception {
+        return perform(get(url).header(PLAYER_HEADER, playerId));
+    }
     private JsonNode postRaw(String url, String playerId, Object req) throws Exception {
         return postRawNode(url, playerId, req);
     }

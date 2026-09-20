@@ -18,6 +18,7 @@ import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.AllianceDonateReq;
 import com.ironoath.web.dto.generated.AllianceDonateResp;
 import com.ironoath.web.dto.generated.AllianceIdReq;
+import com.ironoath.web.dto.generated.AllianceApplicationListResp;
 import com.ironoath.web.dto.generated.AllianceListResp;
 import com.ironoath.web.dto.generated.AllianceMemberReq;
 import com.ironoath.web.dto.generated.AllianceRoleReq;
@@ -77,6 +78,19 @@ public class AllianceController {
     public Result<AllianceListResp> list(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
         requirePlayer(playerId);
         return Result.ok(social.allianceList(playerId, timeService.serverNow()));
+    }
+
+    /**
+     * 本盟待审申请（B26 S8）。审核那一颗按钮的唯一数据来源 —— 在它之前服务端只数得出几条、
+     * 问不出是谁，于是 {@code /alliance/review} 是一个玩家永远打不到的端点。
+     *
+     * <p>读口与写口同一条权限门（{@code APPROVE_APPLICATION}）：这条下发的是别人的身份。
+     */
+    @GetMapping("/applications")
+    public Result<AllianceApplicationListResp> applications(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(social.allianceApplications(playerId, timeService.serverNow()));
     }
 
     /** 申请入盟。 */

@@ -155,6 +155,18 @@ public interface SocialStore {
     /** 某个联盟的待处理申请数（红点数据源之一）。 */
     int pendingApplicationCount(String allianceId);
 
+    /**
+     * 本盟待处理的申请（申请人 id，升序）。
+     *
+     * <p>给「入盟申请审核」那一屏用（收口清单 B26 S8）：{@code /alliance/review} 早就有，
+     * 但整个存储端口只能问"这个人申过没有"和"一共几条"，问不出"申的是谁" ⇒
+     * 那颗批准按钮在任何客户端上都按不下去。
+     *
+     * <p>排序按 id 升序（与 {@link #allAlliances()} 同一条理由）：同一份库存上每次读出来的
+     * 顺序一致，"为什么这批先审谁"才可复现。
+     */
+    List<String> applicantsOf(String allianceId);
+
     // ---------- 聊天 ----------
 
     /**

@@ -922,6 +922,32 @@ export interface AllianceListResp {
 }
 
 /**
+ * 一条入盟申请（B26 S8）。**昵称与主城等级由服务端一起下发**：审核要看的正是「这个人现在什么水平」，而客户端既没有玩家表也不该拿 id 去猜 —— 只回 id 的列表等于让盟主对着一串 p_1a2b 点批准。
+ */
+export interface ApplicantView {
+  /** 申请人 id，审核时原样带回 */
+  playerId: string
+  /** 申请人昵称（服务端查的那一份，客户端不自己拼） */
+  nickname: string
+  /** 申请人主城等级 */
+  mainCityLevel: number
+}
+
+/**
+ * GET /alliance/applications 响应体（B26 S8）：**本盟**待处理申请的前 limit 条。存在的理由与另两份发现口同族 —— `/alliance/review` 早就有，但没有任何地方能列出「谁申了」，于是那颗批准按钮永远按不下去。这一条**只对能审核的人开**（服务端按 role_permission 的 APPROVE_APPLICATION 判），因为它下发的是别人的身份。
+ */
+export interface AllianceApplicationListResp {
+  /** 行，按申请人 id 升序（同一份库存上可复现） */
+  applicants: ApplicantView[]
+  /** 本盟待处理申请总数（与徽标那个数同源，不是本页条数） */
+  total: number
+  /** 本次实际生效的条数上限（global.ALLIANCE_APPLICATION_LIST_LIMIT） */
+  limit: number
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
  * POST /alliance/tech 请求体（用联盟资金研究科技）。
  */
 export interface AllianceTechReq {

@@ -276,6 +276,18 @@ public final class MongoSocialStore implements SocialStore {
     }
 
     @Override
+    public List<String> applicantsOf(String allianceId) {
+        // 按 _id（= allianceId + ":" + playerId）升序：与内存版同一句"按 id 升序"的口径
+        Query query = new Query(Criteria.where("allianceId").is(allianceId))
+                .with(Sort.by(Sort.Direction.ASC, "_id"));
+        List<String> out = new ArrayList<>();
+        for (SocialApplicationDocument document : mongo.find(query, SocialApplicationDocument.class,
+                SocialApplicationDocument.COLLECTION)) {
+            out.add(document.playerId());
+        }
+        return List.copyOf(out);
+    }
+    @Override
     public boolean removeApplication(String allianceId, String playerId) {
         return mongo.remove(Query.query(Criteria.where("_id")
                         .is(SocialApplicationDocument.keyOf(allianceId, playerId))),

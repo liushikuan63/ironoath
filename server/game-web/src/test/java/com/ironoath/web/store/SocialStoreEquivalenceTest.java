@@ -565,6 +565,28 @@ class SocialStoreEquivalenceTest {
         }
     }
 
+    @Test
+    @DisplayName("applicantsOf：两版都按申请人 id 升序给出本盟待审的人，别盟的不混进来（B26 S8 的审核口）")
+    void applicantsOfMatchOnOrderAndScope() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveAlliance(richAlliance("AL-1", "铁盟", "IRON"), 0L);
+            store.saveAlliance(richAlliance("AL-2", "铜盟", "COPPER"), 0L);
+            assertThat(store.addApplication("AL-1", "P-9")).as("%s：首次申请算新增", label).isTrue();
+            assertThat(store.addApplication("AL-1", "P-9")).as("%s：重复申请算 false（同一条申请不该记两次）", label).isFalse();
+            store.addApplication("AL-1", "P-2");
+            store.addApplication("AL-2", "P-7");
+
+            assertThat(store.applicantsOf("AL-1"))
+                    .as("%s：只给本盟的、按 id 升序", label)
+                    .containsExactly("P-2", "P-9");
+            store.removeApplication("AL-1", "P-2");
+            assertThat(store.applicantsOf("AL-1")).as("%s：批完就要少一条", label)
+                    .containsExactly("P-9");
+            assertThat(store.applicantsOf("AL-2")).as("%s：别盟的不受影响", label)
+                    .containsExactly("P-7");
+        }
+    }
     // ---------- 夹具 ----------
 
     /** 两个实现都要跑：内存版恒定，Mongo 版在本机没有 Mongo 时整体跳过（Skipped 会显示出来）。 */

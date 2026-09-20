@@ -244,6 +244,18 @@ public final class InMemorySocialStore implements SocialStore {
     }
 
     @Override
+    public synchronized List<String> applicantsOf(String allianceId) {
+        List<String> out = new java.util.ArrayList<>();
+        String prefix = allianceId + ":";
+        for (String applicationKey : pendingApplications.keySet()) {
+            if (applicationKey.startsWith(prefix)) {
+                out.add(pendingApplications.get(applicationKey));
+            }
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+    @Override
     public synchronized boolean removeApplication(String allianceId, String playerId) {
         return pendingApplications.remove(key(allianceId, playerId)) != null;
     }

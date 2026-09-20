@@ -30,7 +30,9 @@ import com.ironoath.web.dto.generated.AllianceDonateReq;
 import com.ironoath.web.dto.generated.AllianceDonateResp;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceMember;
+import com.ironoath.web.dto.generated.AllianceApplicationListResp;
 import com.ironoath.web.dto.generated.AllianceDiscoveryView;
+import com.ironoath.web.dto.generated.ApplicantView;
 import com.ironoath.web.dto.generated.AllianceListResp;
 import com.ironoath.web.dto.generated.AllianceMemberReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
@@ -503,6 +505,30 @@ public class SocialAppService {
     }
 
     /** 审核入盟申请。拒绝也要显式调用 —— 只是不处理会让申请者永远不知道自己被忽略了。 */
+    /**
+     * GET /alliance/applications（B26 S8）：本盟待审申请的前 N 条。
+     *
+     * <p>这一格是"有写口没发现口"那一族的第三处：{@code /alliance/review} 早就有，
+     * 而存储端口只问得出「这个人申过没有」与「一共几条」，问不出「申的是谁」⇒
+     * 那颗批准按钮在任何客户端上都按不下去，而申请的人以为盟主已经看见了。
+     *
+     * <p><b>只对能审核的人开</b>：这条下发的是别人的身份（昵称 + 主城等级），
+     * 判据与写口用同一个权限码 {@code APPROVE_APPLICATION} —— 读口比写口松，
+     * 等于任何成员都能把申请名单当花名册读。
+     */
+    public AllianceApplicationListResp allianceApplications(String playerId, long now) {
+        Alliance alliance = requireAllianceOf(playerId);
+        requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId),
+                "APPROVE_APPLICATION");
+        int limit = (int) configs.longParam("ALLIANCE_APPLICATION_LIST_LIMIT");
+        List<String> applicantIds = store.applicantsOf(alliance.id());
+        List<ApplicantView> rows = new ArrayList<>();
+        for (String applicantId : applicantIds.subList(0, Math.min(limit, applicantIds.size()))) {
+            // 昵称与城等都走服务端那一份：客户端没有玩家表，拿 id 猜出来的名字就是第二真源
+            rows.add(new ApplicantView(applicantId, nickname(applicantId), cityLevelOf(applicantId)));
+        }
+        return new AllianceApplicationListResp(rows, applicantIds.size(), limit, now);
+    }
     public SocialSummaryResp allianceReview(String playerId, AllianceReviewReq req) {
         long now = timeService.serverNow();
         acquire(req.requestId(), now);
