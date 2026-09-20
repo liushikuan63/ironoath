@@ -277,12 +277,17 @@ const TAP_CAPTION = (text) => `(() => {
   }
   walk(root)
   for (const row of rows) {
-    const button = row.children.find((c) => c.name === 'ActionButton')
-    const caption = button ? button.children.find((c) => c.name === 'Caption') : null
-    const label = caption ? caption.getComponent('cc.Label') : null
-    if (label && label.string === ${JSON.stringify(text)} && button.active) {
-      button.emit('touch-start')
-      return 'tapped'
+    // 一行有两颗按钮：ActionButton 与 ActionButton2（转让、解散、拒绝、下一页都在第二颗上）。
+    // 以前这里只 find 第一颗，于是所有点第二颗的判据其实**什么都没点**——
+    // 而「点了不发请求」那条断言照样绿：典型的空转假绿。
+    const buttons = row.children.filter((c) => c.name === 'ActionButton' || c.name === 'ActionButton2')
+    for (const button of buttons) {
+      const caption = button.children.find((c) => c.name === 'Caption')
+      const label = caption ? caption.getComponent('cc.Label') : null
+      if (label && label.string === ${JSON.stringify(text)} && button.active) {
+        button.emit('touch-start')
+        return 'tapped'
+      }
     }
   }
   return 'no-row'
@@ -676,12 +681,24 @@ fixture.members = 2
 await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
 await bootIn()
 await openAllianceTab()
-const snapD = await waitForRows(rows => rows.some(r => /^另有 \d+ 项未显示/.test(r.title)))
-checkTrue('D0c 装不下时最后一格改成「另有 N 项未显示」（静默截等于把功能藏起来）',
-  (snapD?.rows ?? []).some(r => /^另有 \d+ 项未显示/.test(r.title)))
+// D0c 原来盯的是那句「另有 N 项未显示」—— 话说诚实，但被挤掉的名单**永远拿不到**。
+// 行区加分页之后（B26 S10），那一格换成翻页行，判据也跟着升级成"翻一页必须看见新的行"。
+const snapD = await waitForRows(rows => rows.some(r => /^第 \d+\/\d+ 页$/.test(r.title)))
+checkTrue('D0c 装不下时那一格是翻页行（下面的东西现在够得着，不只是一句「另有 N 项未显示」）',
+  (snapD?.rows ?? []).some(r => /^第 \d+\/\d+ 页$/.test(r.title)))
 checkTrue('D0d 被挤掉的只能是不定长的名单：固定那一行仍在屏上',
   (snapD?.rows ?? []).some(r => r.caption === '退出联盟'))
-await shot('D-truncated-list')
+await shot('D-paged-list-page1')
+const page1Titles = (snapD?.rows ?? []).map(r => r.title)
+check('D0e 点「下一页」真的点到第二颗按钮上', await page.evaluate(TAP_CAPTION('下一页')), 'tapped')
+await page.waitForTimeout(1_200)
+const snapD2 = await readRows()
+const page2Titles = (snapD2?.rows ?? []).map(r => r.title)
+checkTrue(`D0f 翻一页必须看见原本被截断的行（第二屏有第一屏没有的行）：page1=${JSON.stringify(page1Titles)} page2=${JSON.stringify(page2Titles)}`,
+  page2Titles.some(t => !page1Titles.includes(t)))
+checkTrue('D0g 翻页不吞固定行：退出那一行在第二屏仍在或已按页翻过，但页码一定跟着变',
+  (snapD2?.rows ?? []).some(r => /^第 2\/\d+ 页$/.test(r.title)))
+await shot('D-paged-list-page2')
 fixture.members = 1
 const plates = (snapC?.rows ?? []).filter((r) => r.buttonPlate !== null)
 let overlap = 0

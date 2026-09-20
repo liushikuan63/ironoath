@@ -296,12 +296,17 @@ const TAP_CAPTION = (text) => `(() => {
   }
   walk(root)
   for (const row of rows) {
-    const button = row.children.find((c) => c.name === 'ActionButton')
-    const caption = button ? button.children.find((c) => c.name === 'Caption') : null
-    const label = caption ? caption.getComponent('cc.Label') : null
-    if (label && label.string === ${JSON.stringify(text)} && button.active) {
-      button.emit('touch-start')
-      return 'tapped'
+    // 一行有两颗按钮：ActionButton 与 ActionButton2（转让、解散、拒绝、下一页都在第二颗上）。
+    // 以前这里只 find 第一颗，于是所有点第二颗的判据其实**什么都没点**——
+    // 而「点了不发请求」那条断言照样绿：典型的空转假绿。
+    const buttons = row.children.filter((c) => c.name === 'ActionButton' || c.name === 'ActionButton2')
+    for (const button of buttons) {
+      const caption = button.children.find((c) => c.name === 'Caption')
+      const label = caption ? caption.getComponent('cc.Label') : null
+      if (label && label.string === ${JSON.stringify(text)} && button.active) {
+        button.emit('touch-start')
+        return 'tapped'
+      }
     }
   }
   return 'no-row'
@@ -808,21 +813,49 @@ checkTrue('H2 名字与价格都用表里那一份（客户端没有 alliance_te
 checkTrue('H3 已到本盟上限的那行灰着并说「提升联盟等级」，不是只灰一颗按钮',
   (snapH?.rows ?? []).some(r => r.caption === '已满' && JSON.stringify(r.color) === JSON.stringify(DIM)
     && r.detail.includes('本盟等级下已经研究到头了')))
-// H4/H5 原来盯的是"钱不够那一行"与"0 级那一行"画没画 —— 实测这两行都被截断在屏外：
-// 联盟页签一屏只画得下 5 行，而概况/退出/申请/科技 6 项/捐献 3 项/成员若干根本放不下。
-// 那两条语义判据交给单测（AllianceTechCatalog.test.ts 里"三条门各说一句话"与"0 级照画"都在）
-// 与服务端用例（techs 恒为 6 行）。屏上这里只问两件真能失败的事：截断有没有说实话、账对不对得上。
-const hiddenNotice = ((snapH?.labels ?? []).find(text => text.includes('未显示')) ?? '')
-const hiddenCount = Number((hiddenNotice.match(/另有 (\d+) 项未显示/) ?? [])[1] ?? -1)
-checkTrue(`H4 目录被截断时屏上说实话（那句「另有 N 项未显示」在，而不是静默少画）：实际=${JSON.stringify(hiddenNotice)}`,
-  hiddenCount >= 0)
-const drawnTechs = (snapH?.rows ?? []).filter(r => /联盟锋刃|联盟壁垒|联盟疾行/.test(r.title)).length
-check(`H5 账对得上：屏上画出的科技行 + 明说没画的 = 目录全量 6 项（不是「假装这就是全部」）`,
-  drawnTechs + hiddenCount, 6)
+// H4/H5 盯的是"下面的东西拿不拿得到"。以前那一屏只说「另有 N 项未显示」就完事（#307），
+// 玩家看得见这句话但永远够不着下面那几行 —— 于是这一格给行区加了真分页，判据也跟着换成
+// "翻一页之后，被藏起来的那一项必须出现"。这条是可失败的：分页算错、按钮没接、行序变了都会红。
+const pagerRow = (snapH?.rows ?? []).find(r => /^第 \d+\/\d+ 页$/.test(r.title))
+checkTrue(`H4 第一屏底部有翻页那一行（而不是只有一句「另有 N 项未显示」）：实际=${JSON.stringify(pagerRow?.title ?? null)}`,
+  pagerRow !== undefined)
+check('H5 第一页时「上一页」是灰的（没有第 0 页可回）', pagerRow?.caption, '上一页')
+const techsBefore = fixture.techCalls.length
+const reviewsBefore = fixture.reviewCalls.length
+await page.evaluate(TAP_CAPTION('上一页'))
+await page.waitForTimeout(600)
+check('H6 点灰着的「上一页」不发任何请求', fixture.techCalls.length, techsBefore)
+await page.evaluate(TAP_CAPTION('下一页'))
+await page.waitForTimeout(1_200)
+const snapH2 = await readRows()
+checkTrue('H7 翻到第二页：那一行自己变成「第 2/2 页」',
+  (snapH2?.rows ?? []).some(r => r.title === '第 2/2 页'))
+checkTrue('H7 翻到第二页：那一行自己变成「第 2/2 页」',
+  (snapH2?.rows ?? []).some(r => r.title === '第 2/2 页'))
+checkTrue('H8 被藏起来的那一项现在看得见：0 级的「联盟疾行」画出来了（这一格的存在理由）',
+  (snapH2?.rows ?? []).some(r => r.title === '联盟疾行' && r.detail.includes('Lv0/20')))
+checkTrue('H9 第二页那句说的是钱不是等级（三条门各说一句话，屏上也成立）',
+  (snapH2?.rows ?? []).some(r => r.title === '联盟疾行' && r.caption === '钱不够'
+    && r.detail.includes('联盟资金还不够')))
+// 读取器每行只回第一颗按钮的字，所以"下一页灰着"在屏上量不出来 ——
+// 改成问一件量得出、又会失败的事：在最后一页再点一次，页码不许变成第 3 页（那是一页空白）。
+await page.evaluate(TAP_CAPTION('下一页'))
+await page.waitForTimeout(1_000)
+const snapH3 = await readRows()
+checkTrue('H10 最后一页再点「下一页」不会翻出空白页（页码仍是 2/2）',
+  (snapH3?.rows ?? []).some(r => r.title === '第 2/2 页')
+    && !(snapH3?.rows ?? []).some(r => /^第 \d+\/3 页$/.test(r.title)))
+await page.evaluate(TAP_CAPTION('下一页'))
+await page.waitForTimeout(800)
+check('H11 翻页全程零写请求（分页是一次浏览，不是玩家意图）', fixture.techCalls.length, techsBefore)
+check('H12 也不动审核那一枪', fixture.reviewCalls.length, reviewsBefore)
+await shot('H-alliance-tech-page2')
+await page.evaluate(TAP_CAPTION('上一页'))
+await page.waitForTimeout(1_000)
 const techBefore = fixture.techCalls.length
 await page.evaluate(TAP_CAPTION('钱不够'))
 await page.waitForTimeout(800)
-check('H6 点灰着的那行不发请求', fixture.techCalls.length, techBefore)
+check('H13 点灰着的科技行不发请求（分页之前那条）', fixture.techCalls.length, techBefore)
 await page.evaluate(TAP_CAPTION('研究'))
 await page.waitForTimeout(1_600)
 check('H7 点「研究」发恰好一条', fixture.techCalls.length - techBefore, 1)

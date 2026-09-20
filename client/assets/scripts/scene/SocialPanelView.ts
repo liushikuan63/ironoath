@@ -28,7 +28,7 @@ import { buildTechRows } from '../game/social/AllianceTechCatalog'
 import type { ApplicationView } from '../game/social/AllianceApplications'
 import type { DiscoveryView } from '../game/social/AllianceDiscovery'
 import type { SquadListView } from '../game/social/SquadDiscovery'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import { clampPage, pageNotice, pageCount, pageWindow } from '../game/ui/PanelPaging'
 import type { ExitAction, ExitEntry, ExitKey, ExitScope } from '../game/social/SocialExit'
 import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
@@ -127,7 +127,7 @@ interface RowDraft {
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
   | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
   | 'socialExit' | 'socialExpand' | 'socialApply' | 'socialTransfer' | 'socialJoin'
-  | 'socialReview' | 'socialReject' | 'socialResearch'
+  | 'socialReview' | 'socialReject' | 'socialResearch' | 'pagePrev' | 'pageNext'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -152,6 +152,8 @@ export class SocialPanelView extends Component {
   private squadDiscovery: SquadListView = EMPTY_SQUAD_DISCOVERY
   /** 入盟申请名单（B26 S8）。没有审核权时恒为空，这一段就不画。 */
   private applications: ApplicationView = EMPTY_APPLICATIONS
+  /** 行区当前页（B26 S10）。换页签不重置：越界由 clampPage 夹回，玩家停在哪页就还在哪页。 */
+  private page = 0
 
   /** 联盟成员缓存。汇总接口不下发它，只有 /alliance/sync 的 diff 会更新它 */
   private readonly allianceMembers: AllianceMember[] = []
@@ -812,21 +814,31 @@ export class SocialPanelView extends Component {
     this.drawnRows.length = 0
     this.rowActionIds.clear()
 
-    // 装不下时**必须说出来**：静默截断等于把行藏起来，玩家不知道下面还有人（#296 同一条教训）。
-    // 那句话用 `game/ui/TruncatedList.ts` 里那一份 —— 同一个提示原先在七个视图里各写一遍，
-    // 而且八处都带着「（编辑器资产）」这类工程术语，`check-player-copy-jargon` 就是盯这个的。
-    const shown = drafts.slice(0, limit)
-    if (drafts.length > limit) {
-      shown[limit - 1] = {
-        title: truncatedNotice('项', drafts.length - limit + 1),
+    // 装不下时以前是"最后一格换成那句『另有 N 项未显示』"—— 话说诚实了，但下面的东西**永远拿不到**，
+    // 于是"功能看不见"换了件衣服回来（收口清单 #307 的科技目录就是这么被整段截到屏外的）。
+    // 现在改成真分页：那一格留给翻页行（复用池化行与它的两颗按钮，不动任何布局），
+    // 所以内容行少一行、但每一行都够得着。
+    const pages = pageCount(drafts.length, Math.max(1, limit - (drafts.length > limit ? 1 : 0)))
+    this.page = clampPage(this.page, drafts.length, Math.max(1, limit - (drafts.length > limit ? 1 : 0)))
+    const sliceWindow = pageWindow(drafts.length, this.page, Math.max(1, limit - (drafts.length > limit ? 1 : 0)))
+    const shown = drafts.slice(sliceWindow.start, sliceWindow.end)
+    if (pages > 1) {
+      shown.push({
+        title: pageNotice(this.page, pages),
         titleColor: COLOR_TEXT_DIM,
-        detail: '',
+        detail: `共 ${drafts.length} 项`,
         value: '',
-        actionText: null,
-        actionEnabled: false,
-        actionId: null,
-        actionKind: 'none',
-      }
+        actionText: '上一页',
+        actionEnabled: this.page > 0,
+        actionId: 'prev',
+        actionKind: 'pagePrev',
+        action2: {
+          text: '下一页',
+          enabled: this.page < pages - 1,
+          id: 'next',
+          kind: 'pageNext',
+        },
+      })
     }
     shown.forEach((draft, index) => {
       const node = pool.acquire()
@@ -1159,14 +1171,7 @@ export class SocialPanelView extends Component {
           secondCaption.color = secondDraft.enabled ? COLOR_TEXT : COLOR_TEXT_DIM
         }
         if (secondDraft.enabled) {
-          const scope = this.tab === 'squad' ? 'squad' : 'alliance'
-          second.on('touch-start', (_event: EventTouch) => {
-            if (secondDraft.kind === 'socialTransfer') {
-              this.onSocialTransfer?.(scope, secondDraft.id)
-              return
-            }
-            this.onSocialExit?.(scope, secondDraft.id === 'disband' ? 'disband' : 'leave')
-          }, this)
+          second.on('touch-start', () => this.dispatchRow(secondDraft.kind, secondDraft.id), this)
         }
       }
     }
@@ -1189,75 +1194,96 @@ export class SocialPanelView extends Component {
     const id = draft.actionId
     const kind = draft.actionKind
     this.rowActionIds.set(node, id)
-    button.on('touch-start', (_event: EventTouch) => {
-      if (kind === 'chatPeer' || kind === 'friend') {
-        this.onChatOpenPeer?.(id)
-        return
-      }
-      if (kind === 'report') {
-        this.onChatOpenReport?.(id)
-        return
-      }
-      if (kind === 'chatMenu') {
-        this.onChatAction?.(this.senderIdOf(id), id)
-        return
-      }
-      if (kind === 'blocks') {
-        this.onChatManageBlocks?.()
-        return
-      }
-      if (kind === 'helpAll') {
-        this.onHelpAll?.(this.data?.helpAllCount ?? 0)
-        return
-      }
-      if (kind === 'rallyJoin') {
-        this.onRallyJoin?.(id)
-        return
-      }
-      if (kind === 'rallyQuit') {
-        this.onRallyQuit?.(id)
-        return
-      }
-      if (kind === 'rallyCancel') {
-        this.onRallyCancel?.(id)
-        return
-      }
-      if (kind === 'donate') {
-        this.onDonate?.(Number(id))
-        return
-      }
-      if (kind === 'socialCreate') {
-        this.onSocialCreate?.(id === 'squad' ? 'squad' : 'alliance')
-        return
-      }
-      if (kind === 'socialExpand') {
-        this.onSocialExpand?.()
-        return
-      }
-      if (kind === 'socialApply') {
-        this.onSocialApply?.(id)
-        return
-      }
-      if (kind === 'socialJoin') {
-        this.onSocialJoin?.(id)
-        return
-      }
-      if (kind === 'socialResearch') {
-        this.onSocialResearch?.(id)
+    button.on('touch-start', () => this.dispatchRow(kind, id), this)
+  }
+
+  /**
+   * 行上两颗按钮共用的分流器（B26 S10 抽出来）。
+   *
+   * <p>原来第二颗按钮自己写了一套 if：只认「转让」，其余一律当成退出/解散 ——
+   * 于是给它挂任何一种新动作（这一格挂的是「下一页」）都会**误发一条离队请求**。
+   * 一份映射放两处用，才不会再出现"第一颗按钮能做的事第二颗要重写一遍且写歪"。
+   */
+  private dispatchRow(kind: RowAction, id: string): void {
+        if (kind === 'chatPeer' || kind === 'friend') {
+          this.onChatOpenPeer?.(id)
+          return
+        }
+        if (kind === 'report') {
+          this.onChatOpenReport?.(id)
+          return
+        }
+        if (kind === 'chatMenu') {
+          this.onChatAction?.(this.senderIdOf(id), id)
+          return
+        }
+        if (kind === 'blocks') {
+          this.onChatManageBlocks?.()
+          return
+        }
+        if (kind === 'helpAll') {
+          this.onHelpAll?.(this.data?.helpAllCount ?? 0)
+          return
+        }
+        if (kind === 'rallyJoin') {
+          this.onRallyJoin?.(id)
+          return
+        }
+        if (kind === 'rallyQuit') {
+          this.onRallyQuit?.(id)
+          return
+        }
+        if (kind === 'rallyCancel') {
+          this.onRallyCancel?.(id)
+          return
+        }
+        if (kind === 'donate') {
+          this.onDonate?.(Number(id))
+          return
+        }
+        if (kind === 'socialCreate') {
+          this.onSocialCreate?.(id === 'squad' ? 'squad' : 'alliance')
+          return
+        }
+        if (kind === 'socialExpand') {
+          this.onSocialExpand?.()
+          return
+        }
+        if (kind === 'socialApply') {
+          this.onSocialApply?.(id)
+          return
+        }
+        if (kind === 'socialJoin') {
+          this.onSocialJoin?.(id)
+          return
+        }
+        if (kind === 'pagePrev' || kind === 'pageNext') {
+          // 翻页不是玩家意图，是一次浏览：不发请求、不打埋点，只重画
+          this.page = kind === 'pagePrev' ? this.page - 1 : this.page + 1
+          this.render()
+          return
+        }
+        if (kind === 'socialResearch') {
+          this.onSocialResearch?.(id)
+          return
+        }
+        if (kind === 'socialTransfer') {
+        // 这一条原来只写在第二颗按钮里；抽成共用分流器时必须搬过来，
+        // 否则「转让」就没人处理了 —— 权限探针的 B24/B25/B26 正是这么抓红的
+        this.onSocialTransfer?.(this.tab === 'squad' ? 'squad' : 'alliance', id)
         return
       }
       if (kind === 'socialReview' || kind === 'socialReject') {
-        this.onSocialReview?.(id, kind === 'socialReview')
-        return
-      }
-      if (kind === 'socialExit') {
-        // 这两行只在各自那一页画出来，所以层级由当前页签给，动作由行给
-        this.onSocialExit?.(this.tab === 'squad' ? 'squad' : 'alliance',
-          id === 'disband' ? 'disband' : 'leave')
-        return
-      }
-      this.onRowAction?.(kind, id, this.tab === 'alliance' ? 'alliance' : 'squad')
-    }, this)
+          this.onSocialReview?.(id, kind === 'socialReview')
+          return
+        }
+        if (kind === 'socialExit') {
+          // 这两行只在各自那一页画出来，所以层级由当前页签给，动作由行给
+          this.onSocialExit?.(this.tab === 'squad' ? 'squad' : 'alliance',
+            id === 'disband' ? 'disband' : 'leave')
+          return
+        }
+        this.onRowAction?.(kind, id, this.tab === 'alliance' ? 'alliance' : 'squad')
   }
 
   /**
