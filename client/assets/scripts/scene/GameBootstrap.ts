@@ -1280,6 +1280,9 @@ export class GameBootstrap extends Component {
       out.stage = resp => stage.attach(resp)
       stage.onChallenge = stageId => { this.root?.challenge(stageId) }
       stage.onSweep = (stageId, count) => { void this.root?.sweep(stageId, count) }
+      out.stamina = (resp, gold) => stage.attachStamina(resp, gold)
+      out.staminaBought = resp => stage.attachStaminaBuy(resp)
+      stage.onBuyStamina = () => { void this.root?.buyStamina() }
       out.lineupChoice = (options, onPick) => stage.showLineupPicker(options, onPick)
     }
     if (social !== null) {

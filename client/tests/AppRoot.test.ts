@@ -107,6 +107,18 @@ const ROUTES: Record<string, unknown> = {
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
+  // 体力那一屏（B26 S22）。默认"恢复中、买得动"：满与买满是另外三条用例专门演的
+  '/stamina': {
+    current: 84, cap: 120, recoverPerHour: 5, nextPointAt: SERVER_NOW + 192_000,
+    boughtToday: 2, buyCostGold: 20, serverNow: SERVER_NOW,
+  },
+  '/stamina/buy': {
+    stamina: {
+      current: 104, cap: 120, recoverPerHour: 5, nextPointAt: SERVER_NOW + 192_000,
+      boughtToday: 3, buyCostGold: 40, serverNow: SERVER_NOW,
+    },
+    granted: 20, costGold: 20, boughtToday: 3,
+  },
   // 可申请联盟（B26 S6）。默认给"一个都没有"：这条读口在真服务端永远存在，
   // 桩里缺它会让所有"未入盟"的用例都多走一次失败上报（实测踩过：那正是 fixture 没镜像真实接线）
   '/alliance/list': { alliances: [], total: 0, limit: 20, serverNow: 1_788_000_000_000 },
@@ -540,6 +552,10 @@ interface Harness {
   readonly lastSocialHelps: string[]
   /** 最近一次落地给聊天页签的数据（B22）—— 频道、会话、消息、提示行都看它。 */
   readonly lastChat: ChatPanelData | null
+  /** 最近一次递给体力那条的三份数：当前 / 上限 / 金币（金币为 null 表示资源明细还没到） */
+  readonly lastStamina: { current: number, cap: number, gold: number | null } | null
+  /** 最近一次购买回执里服务端说的到账与扣币 */
+  readonly lastStaminaBought: { granted: number, costGold: number } | null
   /** 最近一次落地给榜单面板的整块视图。 */
   readonly lastRank: RankBoardView | null
   readonly lastSeason: SeasonPanelView | null
@@ -657,6 +673,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let socialMembers: string[] = []
   let socialHelps: string[] = []
   let lastChat: ChatPanelData | null = null
+  let lastStamina: { current: number, cap: number, gold: number | null } | null = null
+  let lastStaminaBought: { granted: number, costGold: number } | null = null
   let lastRank: RankBoardView | null = null
   let lastSeason: SeasonPanelView | null = null
   let lastTech: TechPanelView | null = null
@@ -702,6 +720,14 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     resources: () => attached.push('resources'),
     bag: () => attached.push('bag'),
     stage: () => attached.push('stage'),
+    stamina: (resp, gold) => {
+      attached.push('stamina')
+      lastStamina = { current: resp.current, cap: resp.cap, gold }
+    },
+    staminaBought: (resp) => {
+      attached.push('staminaBought')
+      lastStaminaBought = { granted: resp.granted, costGold: resp.costGold }
+    },
     social: (_resp, helps, members) => {
       attached.push('social')
       socialMembers = members.map(m => m.id)
@@ -838,6 +864,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     get lastChat() {
       return lastChat
     },
+    get lastStamina() {
+      return lastStamina
+    },
+    get lastStaminaBought() {
+      return lastStaminaBought
+    },
     get lastRank() {
       return lastRank
     },
@@ -965,9 +997,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
 
 // 登录 1 条 + 首屏面板请求。社交面板是三条（摘要 + 成员 diff + 互助列表），
 // 2026-09-12 加任务面板（B12 §1 + 收口清单 #98 的三选一送将）后再 +1，
-// 阶段 3.4 再把红点树作为独立首屏拉取项 +1 ——
+// 阶段 3.4 再把红点树作为独立首屏拉取项 +1，B26 S22 加体力那条（`/stamina` 是会写库的读，
+// 不能蹭 `/stage/list` 那份只带 current 的数）再 +1 ——
 // 这个数被断言写死正是为了让每一次新增都要被看见并解释
-const PANEL_PULLS = 13
+const PANEL_PULLS = 14
 
 test('start：先登录，再把十个面板各拉一次，并把家坐标交出去', async () => {
   const h = harness()
@@ -979,7 +1012,7 @@ test('start：先登录，再把十个面板各拉一次，并把家坐标交出
   // 但谁先谁后不再断言 —— 那个顺序没有任何调用方在读，钉住它只会让并发化变成一次假红。
   assert.deepEqual(Array.from(h.attached).sort(),
     ['army', 'bag', 'chat', 'city', 'hero', 'home', 'power', 'quest', 'rank', 'reddot',
-      'resources', 'social', 'stage'])
+      'resources', 'social', 'stage', 'stamina'])
   assert.equal(h.errors.length, 0)
   assert.equal(h.root.playerId, 'P1')
 })
@@ -1041,7 +1074,7 @@ test('首屏预拉是并发发出的：第一个面板还扣着时，其余十�
   const paths = h.http.calls.map(c => c.path)
   assert.equal(paths.includes('/city/list'), true, '第一个面板得先发出去（并且被扣着）')
   for (const path of ['/army/list', '/hero/list', '/bag/list', '/resource/detail', '/stage/list',
-    '/social/summary', '/player/power', '/world/marches', '/quest/list', '/social/reddot']) {
+    '/stamina', '/social/summary', '/player/power', '/world/marches', '/quest/list', '/social/reddot']) {
     assert.equal(paths.includes(path), true,
       `第一个面板还卡着时 ${path} 就该已经发出：串行会把这些请求排成一串，`
       + '首屏可交互时间就是它们的和')
@@ -1315,6 +1348,65 @@ test('×10 扫荡只发一个 count=10 的请求（拆成十个请求，弱网�
   const sweeps = h.http.calls.filter(c => c.path === '/stage/sweep')
   assert.equal(sweeps.length, 1)
   assert.equal(sweeps[0]?.body.count, 10)
+})
+
+test('买体力：一次请求、回执照服务端说的念、买完重拉那三份账', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.buyStamina()
+
+  const buys = h.http.calls.filter(c => c.path === '/stamina/buy')
+  assert.equal(buys.length, 1)
+  assert.equal(buys[0]?.body.times, 1)
+  assert.ok(typeof buys[0]?.body.requestId === 'string' && buys[0].body.requestId.length > 0,
+    '扣金币的写口没有幂等键 = 允许重放刷体力')
+  // 到账与扣币都取响应里的数，客户端不自己算
+  assert.deepEqual(h.lastStaminaBought, { granted: 20, costGold: 20 })
+  // 买完的体力与金币都必须重拉：不重拉的话面板停在买之前的余额上，玩家以为没扣
+  assert.equal(h.http.countOf('/stamina'), 2, '买完要重读 `/stamina`')
+  assert.equal(h.http.calls.filter(c => c.path === '/resource/detail').length, 2,
+    '买完要重读资源明细（金币余额）')
+})
+
+test('体力已满时点买：一个请求都不发，并把「白扣金币」说在按下去之前', async () => {
+  const h = harness()
+  h.http.overrides.set('/stamina', {
+    current: 120, cap: 120, recoverPerHour: 5, nextPointAt: null,
+    boughtToday: 1, buyCostGold: 20, serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  await h.root.buyStamina()
+
+  assert.equal(h.http.calls.length, total, '满了就不该发出这一按的请求')
+  assert.match(h.errors.map(e => e[1]).join('\n'), /白扣金币/)
+})
+
+test('今日买满（价格下发 0）：同样不发请求，说的是今日上限', async () => {
+  const h = harness()
+  h.http.overrides.set('/stamina', {
+    current: 40, cap: 120, recoverPerHour: 5, nextPointAt: SERVER_NOW + 60_000,
+    boughtToday: 5, buyCostGold: 0, serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  await h.root.buyStamina()
+
+  assert.equal(h.http.calls.length, total)
+  assert.match(h.errors.map(e => e[1]).join('\n'), /今日购买次数已达上限/)
+})
+
+test('买体力是一条埋点：付费点没有漏斗就没人知道它卡在哪一步', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.buyStamina()
+
+  assert.deepEqual(h.events.filter(e => e.name === 'stamina_buy'),
+    [{ name: 'stamina_buy', params: { priceGold: '20' } }])
 })
 
 test('信息不足的动作不发请求，只说清缺什么（替玩家挑阵容消耗的是他的兵和体力，且不会报错）', async () => {

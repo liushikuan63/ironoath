@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * 职责：把「关卡结算摘要的多行文本不再被挤进 100 宽的默认盒子」变成能失败的判据。
+ * 职责：关卡面板两件事的运行判据 —— ①「结算摘要与行标签的版式不再靠默认 100×100 盒子」；
+ *       ②「体力那一条真的画得出来，点「买体力」真的发一次带幂等键的请求」。
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
@@ -11,11 +12,11 @@
  * 那个助手只 `addComponent(UITransform)` 不给尺寸，于是默认 100×100 —— 摘要是五行上下的多行文本
  * （结算 / 体力 / 差额 / 奖励 / 损失），100 宽会把每一行再挤成两三行。
  *
- * <p><b>它盯的三件事</b>：① 摘要标签的盒子真的按面板内框给了（宽度不再是 100，且不超过面板）；
- * ② 摘要显示时面板本身在（不是靠"看不见"当"没溢出"）；③ 截图目视每行是一行。
+ * <p><b>对照组是这份量具的关键一条</b>：探针里现建一个裸 `UITransform` 读出默认宽就是 100。
+ * 没有它，"`w > 400` 说明修过了"只是我的断言而不是证据（默认值万一不是 100，判据永远为真）。
  *
- * <p><b>合成数据说明</b>：摘要文本由 `showSummary` 直接喂进真实渲染路径（关卡扫荡要真打过才出摘要，
- * 那是服务端口径、`StageEndpointTest` 那头已验）。这里验的是**版式**，喂的是仿真的五行文案。
+ * <p><b>体力那三份读口都被钉死</b>（`/stamina`、`/stamina/buy`、`/resource/detail`）：
+ * dev 新号的金币与今日已购是随机的，不钉死的话"点一下能不能买成"这条判据每次跑都在换前提。
  */
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
@@ -26,6 +27,8 @@ const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.STAGE_PORT ?? 8195)
 const OUT = path.resolve(process.cwd(), 'client/build/stage-summary-verify')
 mkdirSync(OUT, { recursive: true })
+/** 记录发出去的 `POST /stamina/buy` 请求体，用来断言"这一按真的发出去了、且带了幂等键" */
+const BUY_CALLS = []
 
 let pass = 0
 let fail = 0
@@ -48,6 +51,67 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 900 
 await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
 }, `stage-summary-${Date.now()}`)
+
+const cors = (request) => ({
+  'access-control-allow-origin': request.headers()['origin'] ?? '*',
+  'access-control-allow-headers': '*',
+  'access-control-allow-methods': 'GET,POST,OPTIONS',
+})
+const reply = async (route, data) => route.fulfill({
+  status: 200,
+  headers: { ...cors(route.request()), 'content-type': 'application/json' },
+  body: JSON.stringify({ code: 0, msg: '成功', data, serverNow: Date.now() }),
+})
+const passthrough = async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return true
+  }
+  return false
+}
+const STAMINA_NOW = Date.now()
+/**
+ * 体力的"当前状态"，会被 `/stamina/buy` 推进 —— 面板买完之后必须**重读**才拿得到新值，
+ * 所以这份夹具不能是静态的：静态的话"重读到了吗"这条判据根本测不出来（实测就是这样：
+ * 第一版把三份读口都写死，买完那一条永远显示 84/120，看着像客户端没刷新）。
+ */
+const STAMINA = {
+  current: 84, cap: 120, recoverPerHour: 5, nextPointAt: STAMINA_NOW + 192_000,
+  boughtToday: 2, buyCostGold: 20,
+}
+const staminaBody = () => ({ ...STAMINA, serverNow: Date.now() })
+// 体力三份读口都钉死：dev 新号的金币与今日已购是随机的，
+// 不钉死的话"点一下能不能买成"这条判据每次跑都在换前提
+await context.route('**/stamina/buy*', async (route) => {
+  if (await passthrough(route)) return
+  BUY_CALLS.push(JSON.parse(route.request().postData() ?? '{}'))
+  STAMINA.current = 104
+  STAMINA.boughtToday = 3
+  STAMINA.buyCostGold = 40
+  await reply(route, {
+    stamina: staminaBody(),
+    granted: 20, costGold: 20, boughtToday: 3,
+  })
+})
+await context.route('**/stamina*', async (route) => {
+  if (await passthrough(route)) return
+  // `**/stamina*` 也吃得到 `/stamina/buy`，让给上面那条处理
+  if (route.request().url().includes('/stamina/buy')) {
+    await route.fallback()
+    return
+  }
+  await reply(route, staminaBody())
+})
+await context.route('**/resource/detail*', async (route) => {
+  if (await passthrough(route)) return
+  await reply(route, {
+    resources: [{
+      type: 'GOLD', current: 5000, cap: 100000, protectedAmount: 0,
+      perHour: 0, lastSettle: STAMINA_NOW, full: false, breakdown: [],
+    }],
+    serverNow: STAMINA_NOW,
+  })
+})
 const page = await context.newPage()
 const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
@@ -228,6 +292,102 @@ checkTrue('截断通知在最后一行之下、摘要框之上（没飘进摘要
   notice !== null && notice.y < notice.lastRowBottom && notice.y > notice.summaryTop)
 await page.screenshot({ path: path.join(OUT, 'stage-summary.png') })
 console.log(`  截图：${path.join(OUT, 'stage-summary.png')}`)
+
+// ---------- 体力那一条 + 买一次（B26 S22：`staminaView` / `staminaBuy` 第一次有玩家入口） ----------
+
+const BAND = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('stage')
+  if (panel === undefined || panel === null) return { found: false }
+  const text = (name) => {
+    let hit = null
+    const walk = (node) => {
+      if (node.name === name) hit = node.getComponent('cc.Label')?.string ?? ''
+      for (const c of node.children) walk(c)
+    }
+    walk(panel)
+    return hit
+  }
+  let band = null
+  let button = null
+  const spans = []
+  const find = (node) => {
+    if (node.name === 'StaminaBand') band = node
+    if (node.name === 'BuyStaminaButton') button = node
+    if (node.name === 'StaminaText' || node.name === 'BuyText') {
+      const t = node.getComponent('cc.UITransform')
+      spans.push({
+        name: node.name,
+        left: node.worldPosition.x - t.width * t.anchorX,
+        right: node.worldPosition.x + t.width * (1 - t.anchorX),
+        top: node.worldPosition.y + t.height * (1 - t.anchorY),
+        bottom: node.worldPosition.y - t.height * t.anchorY,
+      })
+    }
+    for (const c of node.children) find(c)
+  }
+  find(panel)
+  const a = spans.find((s) => s.name === 'StaminaText')
+  const b = spans.find((s) => s.name === 'BuyText')
+  // 两行都左对齐上下排：横向重叠本来就该有，但**纵向**不许重叠（同一条水平线上撞成一坨就是先前那版）
+  const stacked = a === undefined || b === undefined ? null : (a.bottom >= b.top || b.bottom >= a.top)
+  return {
+    found: true,
+    bandActive: band !== null && band.active,
+    hasButton: button !== null,
+    stacked,
+    // 左对齐真的设上了：addLabel 默认是 CENTER，忘了改会把两行文字往中间飘
+    textInset: (a !== undefined && band !== null)
+      ? a.left - (band.worldPosition.x - band.getComponent('cc.UITransform').width / 2) : null,
+    staminaText: text('StaminaText'),
+    buyText: text('BuyText'),
+    headerText: text('Header'),
+  }
+})()`
+
+let band = null
+for (let i = 0; i < 40; i += 1) {
+  await page.waitForTimeout(500)
+  band = await page.evaluate(BAND)
+  if (band?.bandActive === true) break
+}
+check('体力那一条画出来了（`/stamina` 到手且带子激活）', band?.bandActive, true)
+check('那一条的两行是上下排的（同一水平线上会撞成一坨，先前那版就是这样）', band?.stacked, true)
+checkTrue('两行都从带子的左内边起笔（没留在默认的中心对齐上）',
+  band !== null && band.textInset >= 0 && band.textInset <= 40)
+checkTrue('那一条写的是当前/上限与恢复倒计时（不是只有个数字）',
+  band !== null && band.staminaText.includes('84/120') && band.staminaText.includes('后 +1'))
+checkTrue('价格、今日已购与金币余额都摆出来了', band !== null
+  && band.buyText.includes('20 金币') && band.buyText.includes('今日已购 2 次')
+  && band.buyText.includes('金币 5000'))
+check('表头不再同屏印第二个「体力」（谁新听谁的，两个数迟早有一个是旧的）',
+  band?.headerText.includes('体力'), false)
+
+const tappedBuy = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('stage')
+  let hit = null
+  const walk = (node) => { if (node.name === 'BuyStaminaButton') hit = node; for (const c of node.children) walk(c) }
+  walk(panel)
+  if (hit === null) return false
+  hit.emit('touch-start')
+  return true
+})()`)
+checkTrue('按得到那颗「买体力」', tappedBuy)
+await page.waitForTimeout(1500)
+check('点一次只发一个 `/stamina/buy`', BUY_CALLS.length, 1)
+check('请求体里是 times=1', BUY_CALLS[0]?.times, 1)
+checkTrue('扣金币的写口带了幂等键（没带就等于允许重放刷体力）',
+  typeof BUY_CALLS[0]?.requestId === 'string' && BUY_CALLS[0].requestId.length > 0)
+const after2 = await page.evaluate(BAND)
+checkTrue('买完那一条按重读到的响应更新（104/120、今日已购 3 次、下一次 40 金币）',
+  after2 !== null && after2.staminaText.includes('104/120')
+    && after2.buyText.includes('今日已购 3 次') && after2.buyText.includes('40 金币'))
+const receipt = await page.evaluate(BOX)
+checkTrue('回执写在摘要带上：到账与扣币都照服务端说的念',
+  (receipt?.text ?? '').includes('到账 20 体力 · 扣 20 金币'))
+await page.screenshot({ path: path.join(OUT, 'stage-stamina-bought.png') })
+console.log(`  截图：${path.join(OUT, 'stage-stamina-bought.png')}`)
 
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {

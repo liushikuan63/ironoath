@@ -278,6 +278,11 @@ export const TRACK_EVENTS = {
    * 派一支小队出去 —— 这条与 `march_send` 的比例看得出玩家是不是把侦察当成免费情报。
    */
   scoutSend: 'scout_send',
+  /**
+   * 用金币买一次体力（B09 §5）。带**当时的单价**而不只是"买了"：体力是付费点，
+   * 单价随当日已购次数递增，这条与 `login` 的比例才看得出玩家在什么价位上开始嫌贵。
+   */
+  staminaBuy: 'stamina_buy',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

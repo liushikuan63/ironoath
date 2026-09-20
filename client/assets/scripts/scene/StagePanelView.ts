@@ -22,6 +22,9 @@ import {
   buildChallengeSummary, buildStageList, buildSweepSummary,
 } from '../game/stage/StagePanel'
 import type { StageListView, StageRow } from '../game/stage/StagePanel'
+import { buildStaminaBoard } from '../game/stage/StaminaBoard'
+import type { StaminaBoardView } from '../game/stage/StaminaBoard'
+import type { StaminaBuyResp, StaminaResp } from '../net/generated/Protocol'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { LineupChoice } from '../game/session/Choices'
 import type { ChallengeStageResp, StageListResp, SweepResp } from '../net/generated/StageProtocol'
@@ -46,7 +49,12 @@ const COLOR_GOOD = new Color(120, 176, 96, 255)
 const PANEL_WIDTH = 680
 const ROW_HEIGHT = 74
 const ROW_GAP = 6
-const HEADER_HEIGHT = 72
+/** 体力那一条的高度（两行左对齐文字 + 右边一颗键） */
+const BAND_HEIGHT = 60
+/** 顶部占位 = 表头那一行 + 与体力条的间距 + 体力条 + 它下面的间距 */
+const HEADER_HEIGHT = 22 + 20 + BAND_HEIGHT + 20
+/** 体力条里两行文字的可用宽：右边还要留给「买体力」那颗键 */
+const BAND_TEXT_WIDTH = 520
 const PADDING = 16
 /** 一屏最多画几行。超出的要靠 ScrollView（编辑器里补），占位期截断显示并说明 */
 const MAX_VISIBLE_ROWS = 7
@@ -84,23 +92,41 @@ export class StagePanelView extends Component {
   private summaryLabel: Label | null = null
   private summaryPanel: Node | null = null
   private lineupPicker: ChoiceOverlay | null = null
+  /** 体力那一屏。null = `/stamina` 还没到 —— 此时表头继续用它自己那份 `体力 N` */
+  private stamina: StaminaBoardView | null = null
+  private pendingStamina: StaminaResp | null = null
+  private pendingStaminaGold: number | null = null
+  private staminaLabel: Label | null = null
+  private buyLabel: Label | null = null
+  private buyButton: Node | null = null
+  private buyCaption: Label | null = null
+  private staminaBand: Node | null = null
 
   /** 玩家点了某一关的「挑战」。派兵阵容由外层选择后再发请求，本场景不管阵容 */
   onChallenge: ((stageId: string) => void) | null = null
   /** 玩家点了「扫荡」。count 只会是 SWEEP_ONCE 或 SWEEP_MAX */
   onSweep: ((stageId: string, count: number) => void) | null = null
+  /** 玩家点了「买体力」。买不买得动由外层按 `/stamina` 那份判定，本场景只画和回调 */
+  onBuyStamina: (() => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
+    this.buildStaminaBand(size.width, size.height)
     this.buildSummary(size.width, size.height)
     this.lineupPicker = new ChoiceOverlay(this.node, '选择出战阵容', 760)
     if (this.pendingList !== null) {
       const pending = this.pendingList
       this.pendingList = null
       this.attach(pending)
+    }
+    if (this.pendingStamina !== null) {
+      const pending = this.pendingStamina
+      const gold = this.pendingStaminaGold
+      this.pendingStamina = null
+      this.attachStamina(pending, gold)
     }
   }
 
@@ -113,6 +139,8 @@ export class StagePanelView extends Component {
     this.lineupPicker = null
     this.onChallenge = null
     this.onSweep = null
+    this.onBuyStamina = null
+    this.buyButton = null
   }
 
   /** 装载关卡列表。行顺序照搬服务端，本场景不排序、不过滤。 */
@@ -124,6 +152,31 @@ export class StagePanelView extends Component {
     this.list = buildStageList(resp)
     this.hideSummary()
     this.render()
+  }
+
+  /**
+   * 装载体力那一屏。`/stamina` 是个会写库的读（惰性恢复在这里推进），
+   * 所以它比 `/stage/list` 那份 `stamina` 更新 —— 到手后表头就不再印自己那个数，
+   * 屏幕上同一时刻只有一个「体力 N」。
+   */
+  attachStamina(resp: StaminaResp, gold: number | null): void {
+    if (this.rowPool === null) {
+      this.pendingStamina = resp
+      this.pendingStaminaGold = gold
+      return
+    }
+    this.stamina = buildStaminaBoard(resp, gold)
+    this.render()
+    // 两次读谁先到都要能画：关卡列表没到时 `render()` 会早退，这一条不能跟着不画
+    this.renderStamina()
+  }
+
+  /** 一次购买的回执。到账与扣币都照服务端说的念，本场景不算。 */
+  attachStaminaBuy(resp: StaminaBuyResp): void {
+    this.showSummary([
+      `到账 ${resp.granted} 体力 · 扣 ${resp.costGold} 金币`,
+      `今日已购 ${resp.boughtToday} 次`,
+    ], COLOR_GOOD)
   }
 
   /** 装载一次挑战的结算。 */
@@ -201,6 +254,52 @@ export class StagePanelView extends Component {
       COLOR_TEXT_DIM, 14)
   }
 
+  /**
+   * 体力那一条：左边「体力 84/120 · 每小时 +5 · 3 分 12 秒后 +1」，右边价格与今日已购 + 一颗「买体力」。
+   *
+   * <p>没读到 `/stamina` 之前整条藏起来（`active=false`）—— 摆一条空带子比不摆更糟，
+   * 玩家会以为体力就是没有。此时表头继续印它自己那份 `体力 N`。
+   */
+  private buildStaminaBand(width: number, height: number): void {
+    const band = new Node('StaminaBand')
+    band.layer = this.node.layer
+    this.node.addChild(band)
+    const innerW = width - PADDING * 2
+    band.setPosition(new Vec3(0, height / 2 - PADDING - 22 - 20 - BAND_HEIGHT / 2, 0))
+    band.addComponent(UITransform).setContentSize(new Size(innerW, BAND_HEIGHT))
+    const graphics = band.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.roundRect(-innerW / 2, -BAND_HEIGHT / 2, innerW, BAND_HEIGHT, 6)
+    graphics.fill()
+
+    // 两行都左对齐、上下排：一行放"体力与恢复"，一行放"价格 / 今日已购 / 金币"。
+    // 先前那版把第二行右对齐放在同一水平线上，两条长文案在中间撞成一坨（截图抓到）
+    this.staminaLabel = this.addLabel(band, 'StaminaText', -innerW / 2 + PADDING, 14, COLOR_TEXT, 17)
+    this.staminaLabel.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.sizeLeft(this.staminaLabel, BAND_TEXT_WIDTH, 24)
+    this.buyLabel = this.addLabel(band, 'BuyText', -innerW / 2 + PADDING, -14, COLOR_COPPER_GOLD, 15)
+    this.buyLabel.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.sizeLeft(this.buyLabel, BAND_TEXT_WIDTH, 22)
+    this.buyButton = new Node('BuyStaminaButton')
+    this.buyButton.layer = band.layer
+    band.addChild(this.buyButton)
+    this.buyButton.setPosition(new Vec3(innerW / 2 - 66, 0, 0))
+    this.buyButton.addComponent(UITransform).setContentSize(new Size(104, 30))
+    const buttonGraphics = this.buyButton.addComponent(Graphics)
+    buttonGraphics.fillColor = COLOR_ROW
+    buttonGraphics.strokeColor = COLOR_COPPER_GOLD
+    buttonGraphics.lineWidth = 1
+    buttonGraphics.roundRect(-52, -15, 104, 30, 4)
+    buttonGraphics.fill()
+    buttonGraphics.stroke()
+    const caption = this.addLabel(this.buyButton, 'Caption', 0, 0, COLOR_TEXT, 15)
+    caption.string = '买体力'
+    this.buyCaption = caption
+    this.buyButton.on('touch-start', (_event: EventTouch) => this.onBuyStamina?.(), this)
+    this.staminaBand = band
+    band.active = false
+  }
+
   private buildSummary(width: number, height: number): void {
     const panel = new Node('SummaryPanel')
     panel.layer = this.node.layer
@@ -244,9 +343,9 @@ export class StagePanelView extends Component {
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     const extra = this.addLabel(node, 'Extra', -PANEL_WIDTH / 2 + PADDING, -24, COLOR_WARNING, 13)
     extra.horizontalAlign = Label.HorizontalAlign.LEFT
-    this.sizeLeft(title, 24)
-    this.sizeLeft(detail, 20)
-    this.sizeLeft(extra, 18)
+    this.sizeLeft(title, ROW_TEXT_WIDTH, 24)
+    this.sizeLeft(detail, ROW_TEXT_WIDTH, 20)
+    this.sizeLeft(extra, ROW_TEXT_WIDTH, 18)
     const stars = this.addLabel(node, 'Stars', PANEL_WIDTH / 2 - 96, 16, COLOR_STAR, 20)
     stars.horizontalAlign = Label.HorizontalAlign.RIGHT
 
@@ -281,13 +380,13 @@ export class StagePanelView extends Component {
    * 于是文字的起点跑到行的左边界外面 —— 实测标题「Chapter_01 · 第 1 关」的开头被屏幕裁掉。
    * 与军队 / 背包 / 战报 / 编成弹层那几处「标签没盒子」同族（#316、#319、#320、#321）。
    */
-  private sizeLeft(label: Label, height: number): void {
+  private sizeLeft(label: Label, width: number, height: number): void {
     const transform = label.node.getComponent(UITransform)
     if (transform === null) {
       return
     }
     transform.setAnchorPoint(0, 0.5)
-    transform.setContentSize(new Size(ROW_TEXT_WIDTH, height))
+    transform.setContentSize(new Size(width, height))
     label.overflow = Label.Overflow.SHRINK
   }
 
@@ -315,10 +414,14 @@ export class StagePanelView extends Component {
       return
     }
     if (this.headerLabel !== null) {
+      // 体力那一条到手后，表头不再印自己那份 `体力 N`：同屏两个"体力"迟早有一个是旧的，
+      // 而 `/stamina` 是会写库的读、比 `/stage/list` 那份新 —— 留新的那个。
+      const staminaText = this.stamina === null ? ` · ${list.staminaText}` : ''
       this.headerLabel.string = list.lockedCountText === null
-        ? `关卡 ${list.rows.length} 个 · ${list.staminaText}`
-        : `关卡 ${list.rows.length} 个 · ${list.staminaText} · ${list.lockedCountText}`
+        ? `关卡 ${list.rows.length} 个${staminaText}`
+        : `关卡 ${list.rows.length} 个${staminaText} · ${list.lockedCountText}`
     }
+    this.renderStamina()
 
     const size = view.getVisibleSize()
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
@@ -363,6 +466,29 @@ export class StagePanelView extends Component {
     }
     const fit = (topY - ROW_HEIGHT / 2 - floor) / (ROW_HEIGHT + ROW_GAP) + 1
     return Math.max(1, Math.min(MAX_VISIBLE_ROWS, Math.floor(fit)))
+  }
+
+  /**
+   * 画体力那一条。单独一个方法而不是并进 `render()`：`/stamina` 与 `/stage/list` 是两次读，
+   * 谁先到都要能把自己那半画出来（并进 `render()` 的话，关卡列表失败时体力那条永远不出现）。
+   */
+  private renderStamina(): void {
+    const board = this.stamina
+    if (this.staminaBand !== null) {
+      this.staminaBand.active = board !== null
+    }
+    if (board === null || this.staminaLabel === null || this.buyLabel === null) {
+      return
+    }
+    this.staminaLabel.string = `${board.valueText} · ${board.recoverText}`
+    this.buyLabel.string = board.buyBlocked
+      ? `${board.buyText} · ${board.buyBlockedReason ?? '现在买不了'}`
+      : `${board.buyText} · ${board.goldText}`
+    this.buyLabel.color = board.buyBlocked ? COLOR_TEXT_DIM : COLOR_COPPER_GOLD
+    const caption = this.buyCaption
+    if (caption !== null) {
+      caption.color = board.buyBlocked ? COLOR_TEXT_DIM : COLOR_TEXT
+    }
   }
 
   private renderRow(node: Node, row: StageRow): void {

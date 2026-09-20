@@ -25,7 +25,7 @@ import type { GameSession } from './GameSession'
 import type { NetOutcome } from '../../net/NetModule'
 import type { Store } from '../store/Store'
 import type { TimeSync } from '../../core/TimeSync'
-import type { OfflineReportView, PowerDetailResp } from '../../net/generated/Protocol'
+import type { OfflineReportView, PowerDetailResp, StaminaBuyResp, StaminaResp } from '../../net/generated/Protocol'
 import type { CityCollectResp, CityListResp, SpeedUpSource } from '../../net/generated/CityProtocol'
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
 import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
@@ -42,6 +42,7 @@ import {
 } from '../social/ChatPanel'
 import type { ChatPanelData } from '../social/ChatPanel'
 import { buildRankBoard } from '../power/RankBoard'
+import { buildStaminaBoard } from '../stage/StaminaBoard'
 import {
   adjustRallyNumber, buildCompose, marchUnitsOf, rallyFormBlocked, rallyFormOf, rallyNumbersOf,
   rallySwitchBlocked, rememberMarch, repeatBlockedReason, setPick,
@@ -224,6 +225,13 @@ export interface PanelTargets {
   bag?(resp: BagListResp): void
   stage?(resp: StageListResp): void
   /**
+   * 体力那一屏（画在关卡面板表头下面）。`gold` 由本层从资源明细里取来 ——
+   * 场景层不参与"够不够"的算账，它只把 `StaminaBoard` 给的字画出来。
+   */
+  stamina?(resp: StaminaResp, gold: number | null): void
+  /** 一次购买的回执（到账 / 扣币 / 今日已购）。画在关卡面板那条摘要带上。 */
+  staminaBought?(resp: StaminaBuyResp): void
+  /**
    * 社交面板。`members` 走 `/alliance/sync` 的 diff 通道，`helps` 走
    * `/social/helpRequests`；两者都由服务端给出，客户端只转手，不自己拼列表。
    */
@@ -396,7 +404,7 @@ export interface PanelTargets {
 
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
-  'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
+  'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'stamina' | 'social' | 'power' | 'world'
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
   | 'battlePass' | 'rallies' | 'tech' | 'equip' | 'gacha'
 
@@ -546,6 +554,8 @@ export class AppRoot {
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
+  /** 最近一次 `/stamina`：买不买得动由它决定，买完之后服务端回的那一份立刻覆盖它 */
+  private staminaResp: StaminaResp | null = null
   /** 抽卡面板：选中哪个池、上一次抽取的结果、上一次失败的理由 */
   private gachaPoolId: string | null = null
   private gachaLast: GachaDrawResp | null = null
@@ -634,7 +644,7 @@ export class AppRoot {
     // 边界与阈值随登录一起下发（B25-S3）：previousLoginAt 是"自上次登录以来"的起点，
     // 而 profile.lastLoginAt 此刻已被推进成现在 —— 两者差一个"永远是 0 秒"的 bug
     this.offlineConfig = outcome.data.offlineReport ?? null
-    await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power',
+    await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'stamina', 'social', 'power',
       'world', 'quest', 'reddot')
     // 首屏拉齐之后再弹「自上次登录以来」（B25-S3）：它要读城市/社交那两份已到的数据，
     // 早于首屏弹会少条目 —— 而少条目正是这个功能最容易骗人的地方
@@ -761,6 +771,14 @@ export class AppRoot {
         return
       case 'stage':
         this.deliver('stage', await this.api.stageList(), r => this.targets.stage?.(r))
+        return
+      case 'stamina':
+        // `GET /stamina` 是个会写库的读（惰性恢复与容量随主城等级变化都在这里推进），
+        // 所以它必须与 `/stage/list` 分开拉：关卡列表只带 current，不带 cap / 价格 / 今日已购。
+        this.deliver('stamina', await this.api.staminaView(), r => {
+          this.staminaResp = r
+          this.targets.stamina?.(r, this.goldBalance())
+        })
         return
       case 'social': {
         const summary = await this.api.socialSummary()
@@ -1129,6 +1147,39 @@ export class AppRoot {
   sweep(stageId: string, count: number): Promise<void> {
     this.track(TRACK_EVENTS.battleStart, { battleType: 'sweep', stageId, count: trackParam(count) })
     return this.write('stage', this.api.stageSweep({ stageId, count }), ['stage'])
+  }
+
+  // ---------- 体力（B09 §5） ----------
+
+  /**
+   * 买一次体力。买不买得动、扣多少金币、实际到账多少全由服务端裁定，本层只做协议
+   * 明确要求客户端做的两件事：① 买不动时把原因说在按下去<b>之前</b>（体力已满还要买是
+   * 「到账 0、金币照扣、溢出永久损失」，协议注释点名要客户端先提示）；② 买完把响应里
+   * 的 {@code granted / costGold / boughtToday} 照实念出来，不自己算。
+   */
+  buyStamina(): Promise<void> {
+    const resp = this.staminaResp
+    if (resp === null) {
+      // 「还没读到」与「买不了」是两件事：把读侧故障写成玩家没金币，他会去做一件不必要的事
+      this.rejectNeeds('stage', '体力信息还没读到，稍后再试')
+      return Promise.resolve()
+    }
+    const board = buildStaminaBoard(resp, this.goldBalance())
+    if (board.buyBlocked) {
+      this.rejectNeeds('stage', board.buyBlockedReason ?? '现在买不了')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.staminaBuy, { priceGold: trackParam(resp.buyCostGold) })
+    return this.write('stage', this.api.staminaBuy({ times: 1 }), ['stamina', 'resources', 'stage'],
+      (outcome) => this.targets.staminaBought?.(outcome))
+  }
+
+  /** 金币余额：资源明细里那一行。读不到返回 null，<b>不当 0 用</b>（那会把有钱的玩家灰掉）。 */
+  private goldBalance(): number | null {
+    // `?? []` 与 `gachaBalances` 同一条：协议类型写着 resources 必有，但一份缺字段的响应
+    // 不该把整个体力那条炸掉（实测：桩里给的是 entries 时这里直接 TypeError）
+    const row = (this.resourceResp?.resources ?? []).find((r) => r.type === 'GOLD')
+    return row === undefined ? null : row.current
   }
 
   // ---------- 任务（B12 §1） ----------
