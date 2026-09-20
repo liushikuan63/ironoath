@@ -13,11 +13,13 @@
  * 只显示"选中"又看不出还能加多少。两个数并排，点 ＋ 时玩家眼睛不用来回找。
  */
 
-import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3 } from 'cc'
+import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { MarchComposeView } from '../game/session/AppRoot'
 import { applySystemUiFont } from './UiFont'
 
 const COLOR_MASK = new Color(12, 10, 9, 232)
+/** 整屏遮罩色，与 `AwakenPickOverlay` / `ComposePickOverlay` 同一份参数 */
+const COLOR_SCRIM = new Color(0, 0, 0, 170)
 const COLOR_PANEL = new Color(43, 36, 29, 255)
 const COLOR_ROW = new Color(59, 48, 38, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
@@ -65,6 +67,14 @@ export class MarchComposeOverlay {
       /* 只吞不处理 */
     }, this)
     const background = this.node.addComponent(Graphics)
+    // 整屏遮罩，与 AwakenPick / ComposePick / Choice 三处同一惯例（COLOR_SCRIM 同色同参）。
+    // 缺了它，弹层打开时底下的搜索面板照常亮着：标题「出征：某城」会和「半径 – 搜索」那行
+    // 抢同一块像素，两层字叠在一起读不了（12:40 的 `compose-mode-*.png` 两张都拍到了）。
+    // 只画不改命中区域：遮罩上点击该不该关闭弹层是 UX 口径，另记一格，不在这里顺手定。
+    const screen = view.getVisibleSize()
+    background.fillColor = COLOR_SCRIM
+    background.rect(-screen.width / 2, -screen.height / 2, screen.width, screen.height)
+    background.fill()
     background.fillColor = COLOR_MASK
     background.roundRect(-width / 2, -PANEL_HEIGHT / 2, width, PANEL_HEIGHT, 10)
     background.fill()
