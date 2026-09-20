@@ -190,6 +190,9 @@ const ROUTES: Record<string, unknown> = {
     techId: 'tech_agri_wood', level: 4, finishAt: SERVER_NOW + 300_000,
     cost: [{ type: 'WOOD', amount: 600 }], timeSec: 300,
   },
+  '/tech/cancel': {
+    techId: 'tech_agri_wood', refund: [{ type: 'WOOD', amount: 360 }],
+  },
   '/equip/instances': {
     instances: [
       {
@@ -567,6 +570,8 @@ interface Harness {
   /** 点「开几个」里的一条 */
   pickChest(id: string): void
   readonly lastChest: { consumed: number, overflow: number } | null
+  /** 最近一次取消研究里服务端回的 techId 与那份返还 */
+  readonly lastTechCancel: { techId: string, refund: number } | null
   /** 最近一次购买回执里服务端说的到账与扣币 */
   readonly lastStaminaBought: { granted: number, costGold: number } | null
   /** 最近一次落地给榜单面板的整块视图。 */
@@ -726,6 +731,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let chestOptions: ChoiceOption[] = []
   let chestPick: ((id: string) => void) | null = null
   let lastChest: { consumed: number, overflow: number } | null = null
+  let lastTechCancel: { techId: string, refund: number } | null = null
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
   const targets: PanelTargets = {
@@ -854,6 +860,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     chestOpened: (resp) => {
       attached.push('chestOpened')
       lastChest = { consumed: resp.consumed, overflow: resp.overflow.length }
+    },
+    techCancelled: (resp) => {
+      attached.push('techCancelled')
+      lastTechCancel = { techId: resp.techId, refund: resp.refund[0]?.amount ?? 0 }
     },
     armyQueueChoice: (options, onPick) => {
       queueOptions = [...options]
@@ -989,6 +999,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastChest() {
       return lastChest
+    },
+    get lastTechCancel() {
+      return lastTechCancel
     },
     get lineupOptions() {
       return lineupOptions
@@ -4048,4 +4061,38 @@ test('手里只剩 1 个时不画"开 5 个"那颗必然被拒的选项', async 
   await h.root.useItem('item_chest_basic', false)
 
   assert.deepEqual(h.chestOptions.map(o => o.id), ['1'])
+})
+
+test('取消研究：请求不带 techId（一次一队列），返还照服务端念', async () => {
+  const h = harness()
+  h.http.overrides.set('/tech/list', {
+    ...(ROUTES['/tech/list'] as Record<string, unknown>),
+    queue: {
+      techId: 'tech_agri_wood', finishAt: SERVER_NOW + 300_000, startedAt: SERVER_NOW,
+      totalSeconds: 300, remainingSeconds: 300,
+    },
+  })
+  await h.root.openTech()
+
+  await h.root.cancelResearch()
+
+  const calls = h.http.calls.filter(c => c.path === '/tech/cancel')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.techId, undefined, '取消哪一行由服务端按队列定，客户端不该再传一个')
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
+    '退资源是写操作，重放会退两次')
+  // 返还比例（与城建同一份配置）由服务端算，客户端只念回来的数
+  assert.deepEqual(h.lastTechCancel, { techId: 'tech_agri_wood', refund: 360 })
+  assert.equal(h.http.countOf('/tech/list'), 2, '取消完要重拉列表（队列那一行清空是服务端算的）')
+})
+
+test('没在研究时点取消：一个请求都不发，说的是"不用取消"而不是报错', async () => {
+  const h = harness()
+  await h.root.openTech()
+  const total = h.http.calls.length
+
+  await h.root.cancelResearch()
+
+  assert.equal(h.http.calls.length, total, '队列空着就不该发这一按')
+  assert.match(h.errors.map(e => e[1]).join('\n'), /没有在研究的项目/)
 })

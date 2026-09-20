@@ -10,8 +10,10 @@
  *
  * <p>占位美术用 Graphics 画纯色块（与战力页同一套做法）：正式美术到位只换绘制部分。
  */
-import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
+import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { techCancelText } from '../game/tech/TechPanel'
 import type { TechPanelView as TechViewData, TechRow } from '../game/tech/TechPanel'
+import type { TechCancelResp } from '../net/generated/TechProtocol'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -26,6 +28,7 @@ const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 const COLOR_HINT = new Color(120, 168, 196, 255)
+const COLOR_GOOD = new Color(120, 176, 96, 255)
 
 const CARD_WIDTH = 560
 const CARD_HEIGHT = 600
@@ -46,6 +49,17 @@ export class TechPanelView extends Component {
   private viewData: TechViewData | null = null
   /** 玩家点了某一行的「研究」。发不发、能不能发由外层按服务端那份 `canResearch` 判 */
   onResearch: ((techId: string) => void) | null = null
+  /** 玩家点了队列那一行的「取消研究」。返还多少由服务端算，本场景只把回执念出来 */
+  onCancelResearch: (() => void) | null = null
+  /** 取消之后那句回执。占的是队列那一行的位置（取消完就没有在研项了），关掉这一页才清 */
+  private receipt: string | null = null
+
+  /** 取消研究的回执。名字从当前那份列表里查（服务端只回 techId，中文名在行的 name 上）。 */
+  attachTechCancelled(resp: TechCancelResp): void {
+    const name = this.viewData?.rows.find((row) => row.techId === resp.techId)?.name ?? resp.techId
+    this.receipt = techCancelText(name, resp.refund)
+    this.redraw()
+  }
 
   /** 下发一份视图即显示。**每次都重画**：队列剩余时间会走，复用旧值会显示过期数字。 */
   render(view: TechViewData): void {
@@ -55,6 +69,7 @@ export class TechPanelView extends Component {
   }
 
   hide(): void {
+    this.receipt = null
     this.node.active = false
   }
 
@@ -107,9 +122,28 @@ export class TechPanelView extends Component {
   private drawQueue(y: number): number {
     const text = this.viewData?.queueText ?? null
     if (text === null) {
+      // 没有在研项时这一行留给"刚刚取消了什么、退回多少"—— 那是玩家按完最需要立刻看到的一句
+      if (this.receipt !== null) {
+        this.label(this.receipt, COLOR_GOOD, 16, -CARD_WIDTH / 2 + PADDING, y - 10, 'left')
+        return y - 26
+      }
       return y
     }
+    this.receipt = null
     this.label(text, COLOR_HINT, 18, -CARD_WIDTH / 2 + PADDING, y - 10, 'left')
+    // 队列一占就再也动不了是这一页原来最大的坑（服务端有 `/tech/cancel`，客户端连方法都没有）。
+    // 键放在队列那一行右侧：它取消的就是这一行说的那件事，位置要跟着那行出现与消失
+    const button = new Node('CancelResearchButton')
+    this.node.addChild(button)
+    button.addComponent(UITransform).setContentSize(new Size(96, 26))
+    button.setPosition(new Vec3(CARD_WIDTH / 2 - PADDING - 48, y - 10, 0))
+    const graphics = button.addComponent(Graphics)
+    graphics.fillColor = COLOR_BUTTON
+    graphics.rect(-48, -13, 96, 26)
+    graphics.fill()
+    button.on('touch-start', () => this.onCancelResearch?.())
+    this.rows.push(button)
+    this.label('取消研究', COLOR_TEXT, 14, CARD_WIDTH / 2 - PADDING - 48, y - 10, 'center')
     return y - 26
   }
 

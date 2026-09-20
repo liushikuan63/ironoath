@@ -289,6 +289,11 @@ export const TRACK_EVENTS = {
    */
   techResearch: 'tech_research',
   /**
+   * 取消当前研究（B20 §一）。带被取消的 techId：取消率与"卡在哪一行"合起来才看得出
+   * 是队列排太长，还是玩家被某一级的前置挡住了。
+   */
+  techCancel: 'tech_cancel',
+  /**
    * 开一批宝箱（B04 §2）。带 `count`：开箱是产出与付费的交汇点，
    * "一次开 1 个"与"一次开 100 个"在运营曲线上是两种玩家。
    */

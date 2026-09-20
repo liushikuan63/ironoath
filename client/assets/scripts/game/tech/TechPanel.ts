@@ -119,6 +119,15 @@ export function costTextOf(costs: readonly ResourceAmount[]): string {
   return parts.length === 0 ? '无需资源' : parts.join(' · ')
 }
 
+/**
+ * 取消研究的回执那一行。返还比例由服务端按城建同一份配置算（`city_rule_cancel_refund_ratio`），
+ * 这里只把 `refund` 念出来 —— 客户端自己按比例重算就是第二个真相，
+ * 而"为什么取消建造返 60% 取消研究返 40%"这类问题正是各配一个数字迟早会引来的。
+ */
+export function techCancelText(techName: string, refund: readonly ResourceAmount[]): string {
+  return `已取消「${techName}」 · 退回 ${costTextOf(refund)}`
+}
+
 /** 队列行：正在研究哪一项、还剩多久。没有在研项时回 null。 */
 export function queueTextOf(queue: TechQueueView,
   nameOf: (techId: string) => string): string | null {

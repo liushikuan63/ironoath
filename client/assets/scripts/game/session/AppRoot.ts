@@ -58,7 +58,7 @@ import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
 import type { ScoutListResp } from '../../net/generated/WorldProtocol'
 import { blockReasonText, buildTechPanel } from '../tech/TechPanel'
 import type { TechPanelView } from '../tech/TechPanel'
-import type { TechListView } from '../../net/generated/TechProtocol'
+import type { TechCancelResp, TechListView } from '../../net/generated/TechProtocol'
 import { buildEquipPanel } from '../equip/EquipPanel'
 import type { EquipPanelView } from '../equip/EquipPanel'
 import type { EquipInstanceListView, EquipSlot } from '../../net/generated/EquipProtocol'
@@ -231,6 +231,8 @@ export interface PanelTargets {
   stamina?(resp: StaminaResp, gold: number | null): void
   /** 一次购买的回执（到账 / 扣币 / 今日已购）。画在关卡面板那条摘要带上。 */
   staminaBought?(resp: StaminaBuyResp): void
+  /** 取消研究的回执：取消了哪一行、退回来多少资源（比例服务端算，与城建同一份配置）。 */
+  techCancelled?(resp: TechCancelResp): void
   /**
    * 社交面板。`members` 走 `/alliance/sync` 的 diff 通道，`helps` 走
    * `/social/helpRequests`；两者都由服务端给出，客户端只转手，不自己拼列表。
@@ -2276,6 +2278,30 @@ export class AppRoot {
     }
     this.track(TRACK_EVENTS.techResearch, { techId, nextLevel: trackParam(row.level + 1) })
     return this.write('tech', this.api.techResearch({ techId }), ['tech', 'resources'])
+  }
+
+  /**
+   * 取消当前研究。请求不带 techId（一次一队列，服务端知道是哪一行），返还比例与城建共用一份配置，
+   * 客户端只把服务端回的那份 `refund` 念出来 —— 自己按比例重算就是第二个真相。
+   *
+   * <p>**回执在重拉之后才交**：那句回执占的正是队列那一行的位置，而重拉会把这一行重画一遍 ——
+   * 走 `write()` 的 `onOk`（在刷新之前）会被紧接着的渲染清掉（实测：取消成功了但屏幕上什么都没有）。
+   */
+  async cancelResearch(): Promise<void> {
+    const queueId = this.techResp?.queue.techId ?? null
+    if (queueId === null || queueId === undefined) {
+      // "没在研究"与"取消失败"是两件事：前者不该发请求，后者由服务端说原因
+      this.rejectNeeds('tech', '现在没有在研究的项目，不用取消')
+      return
+    }
+    this.track(TRACK_EVENTS.techCancel, { techId: queueId })
+    const outcome = await this.api.techCancel()
+    if (outcome.kind !== 'ok') {
+      this.say('tech', outcome)
+      return
+    }
+    await this.refresh('tech', 'resources')
+    this.targets.techCancelled?.(outcome.data)
   }
 
   // ---------- 装备实例页（V03-b-S1 读侧） ----------

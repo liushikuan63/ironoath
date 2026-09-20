@@ -70,6 +70,7 @@ const passthrough = async (route) => {
 
 const NOW = Date.now()
 const RESEARCH_CALLS = []
+const CANCEL_CALLS = []
 let techPulls = 0
 /**
  * 研究状态会被 `/tech/research` 推进 —— 夹具不能是静态的：静态的话"发完重拉到了新状态"这条
@@ -108,6 +109,12 @@ await context.route('**/tech/research*', async (route) => {
     techId: 'tech_agri_wood', level: 4, finishAt: Date.now() + 300_000,
     cost: [{ type: 'WOOD', amount: 600 }], timeSec: 300,
   })
+})
+await context.route('**/tech/cancel*', async (route) => {
+  if (await passthrough(route)) return
+  CANCEL_CALLS.push(JSON.parse(route.request().postData() ?? '{}'))
+  TECH_STATE.started = false
+  await reply(route, { techId: 'tech_agri_wood', refund: [{ type: 'WOOD', amount: 360 }] })
 })
 await context.route('**/tech/list*', async (route) => {
   if (await passthrough(route)) return
@@ -210,6 +217,32 @@ check('开始研究之后那一行的键收掉了（一次一队列，再点必�
   (read?.buttons ?? []).join(','), '')
 await page.screenshot({ path: path.join(OUT, 'tech-research-sent.png') })
 console.log(`  截图：${path.join(OUT, 'tech-research-sent.png')}`)
+
+// ---------- 队列那一行的「取消研究」：现在能进来了，就得能反悔 ----------
+const cancelTapped = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let hit = null
+  const walk = (n) => { if (n.name === 'CancelResearchButton' && n.active) hit = n; for (const c of n.children) if (c.active) walk(c) }
+  walk(game)
+  if (hit === null) return false
+  hit.emit('touch-start')
+  return true
+})()`)
+checkTrue('在研那一行旁边有颗「取消研究」且按得到', cancelTapped)
+await page.waitForTimeout(1_500)
+check('恰好发出一条 POST /tech/cancel', CANCEL_CALLS.length, 1)
+check('请求不带 techId（一次一队列，取消哪一行由服务端按队列定）',
+  CANCEL_CALLS[0]?.techId, undefined)
+checkTrue('取消也带幂等键（退资源是写操作，重放会退两次）',
+  typeof CANCEL_CALLS[0]?.requestId === 'string' && CANCEL_CALLS[0].requestId.length > 0)
+read = await page.evaluate(READ)
+checkTrue('取消完那句回执照服务端给的数念（返还比例与城建同一份配置，客户端不重算）：'
+  + JSON.stringify(read?.texts ?? []).slice(0, 140),
+  read !== null && read.texts.some((t) => t.includes('已取消「屯田令」')
+    && t.includes('退回 木材 360')))
+check('取消完那一行的键又回来了（队列空出来了）', (read?.buttons ?? []).join(','), 'research-tech_agri_wood')
+await page.screenshot({ path: path.join(OUT, 'tech-cancelled.png') })
+console.log(`  截图：${path.join(OUT, 'tech-cancelled.png')}`)
 
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {

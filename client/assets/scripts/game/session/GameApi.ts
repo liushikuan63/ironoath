@@ -99,7 +99,9 @@ import type {
   RankListResp, RankSnapshotResp, RankType,
 } from '../../net/generated/RankProtocol'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
-import type { TechListView, TechResearchReq, TechResearchResp } from '../../net/generated/TechProtocol'
+import type {
+  TechCancelReq, TechCancelResp, TechListView, TechResearchReq, TechResearchResp,
+} from '../../net/generated/TechProtocol'
 import type { EquipInstanceListView } from '../../net/generated/EquipProtocol'
 
 export interface GameApiDeps {
@@ -179,6 +181,14 @@ export class GameApi {
    */
   techResearch(req: Omit<TechResearchReq, 'requestId'>): Promise<NetOutcome<TechResearchResp>> {
     return this.mutate<TechResearchReq, TechResearchResp>('/tech/research', req)
+  }
+
+  /**
+   * 取消当前研究。**请求里没有 techId**：一次一队列，队列里那一项就是被取消的那一项 ——
+   * 让客户端再传一次等于给它一个说错的机会。返还比例与城建共用一份配置（服务端算，客户端只念）。
+   */
+  techCancel(): Promise<NetOutcome<TechCancelResp>> {
+    return this.mutate<TechCancelReq, TechCancelResp>('/tech/cancel', {})
   }
 
   /**
