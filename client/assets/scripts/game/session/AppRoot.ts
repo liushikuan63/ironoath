@@ -56,7 +56,7 @@ import { buildSeasonPanel } from '../season/SeasonPanel'
 import type { SeasonPanelView } from '../season/SeasonPanel'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
 import type { ScoutListResp } from '../../net/generated/WorldProtocol'
-import { buildTechPanel } from '../tech/TechPanel'
+import { blockReasonText, buildTechPanel } from '../tech/TechPanel'
 import type { TechPanelView } from '../tech/TechPanel'
 import type { TechListView } from '../../net/generated/TechProtocol'
 import { buildEquipPanel } from '../equip/EquipPanel'
@@ -2214,6 +2214,27 @@ export class AppRoot {
       this.say('tech', outcome)
     }
     this.targets.tech?.(buildTechPanel(this.techResp, this.techNotice))
+  }
+
+  /**
+   * 开始研究一行科技（V03-a-S1 只接了读侧，这一按才是玩家真正要做的动作）。
+   *
+   * <p>点之前先看服务端怎么说这一行：`canResearch=false` 就把那句原因报出去、**不发请求** ——
+   * 灰着的行点下去只换来一个报错，那是本仓库反复在抓的"界面画了但动作是死的"。
+   * 判定本身仍在服务端（它会再校验一遍队列 / 学院等级 / 资源），这里只是不让人对着一句"不行"再按一次。
+   */
+  researchTech(techId: string): Promise<void> {
+    const row = this.techResp?.techs.find((t) => t.techId === techId)
+    if (row === undefined) {
+      this.rejectNeeds('tech', '这一行研究项还没拉到，稍后再试')
+      return Promise.resolve()
+    }
+    if (!row.canResearch) {
+      this.rejectNeeds('tech', blockReasonText(row.blockedReason) ?? '这一行现在研究不了')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.techResearch, { techId, nextLevel: trackParam(row.level + 1) })
+    return this.write('tech', this.api.techResearch({ techId }), ['tech', 'resources'])
   }
 
   // ---------- 装备实例页（V03-b-S1 读侧） ----------

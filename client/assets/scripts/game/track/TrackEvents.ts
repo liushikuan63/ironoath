@@ -283,6 +283,11 @@ export const TRACK_EVENTS = {
    * 单价随当日已购次数递增，这条与 `login` 的比例才看得出玩家在什么价位上开始嫌贵。
    */
   staminaBuy: 'stamina_buy',
+  /**
+   * 开始研究一行科技（V03-a-S2）。带目标等级：科技是长线养成，
+   * "卡在哪一级不再动"只有从等级分布才看得出来。
+   */
+  techResearch: 'tech_research',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

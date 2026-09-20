@@ -99,7 +99,7 @@ import type {
   RankListResp, RankSnapshotResp, RankType,
 } from '../../net/generated/RankProtocol'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
-import type { TechListView } from '../../net/generated/TechProtocol'
+import type { TechListView, TechResearchReq, TechResearchResp } from '../../net/generated/TechProtocol'
 import type { EquipInstanceListView } from '../../net/generated/EquipProtocol'
 
 export interface GameApiDeps {
@@ -169,6 +169,16 @@ export class GameApi {
    */
   techList(): Promise<NetOutcome<TechListView>> {
     return this.read<TechListView>('/tech/list')
+  }
+
+  /**
+   * POST /tech/research（V03-a-S1 只接了读侧，这一条是玩家真正要的那一半）。
+   *
+   * <p>服务端依次校验：行存在 → 未满级 → 队列空 → 学院等级够 → 资源够，顺序与城建一致
+   * （先把"不该花的钱"挡住再扣）。响应带回扣掉的资源与算出的时长，界面据此更新，不必再拉一次列表。
+   */
+  techResearch(req: Omit<TechResearchReq, 'requestId'>): Promise<NetOutcome<TechResearchResp>> {
+    return this.mutate<TechResearchReq, TechResearchResp>('/tech/research', req)
   }
 
   /**

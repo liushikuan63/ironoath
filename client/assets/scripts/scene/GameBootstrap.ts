@@ -1145,6 +1145,7 @@ export class GameBootstrap extends Component {
     if (tech !== null) {
       // 打开由编排层发起（`AppRoot.openTech`，入口在内城「学院」）；这里只把"画"接上
       out.tech = view => tech.render(view)
+      tech.onResearch = techId => { void this.root?.researchTech(techId) }
     }
     if (equip !== null) {
       // 打开由编排层发起（`AppRoot.openEquip`，入口在武将页）；这里只把"画"接上

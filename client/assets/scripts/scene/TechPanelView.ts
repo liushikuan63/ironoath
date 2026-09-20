@@ -25,7 +25,6 @@ const COLOR_BUTTON = new Color(62, 44, 26, 255)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
-const COLOR_GOOD = new Color(120, 176, 96, 255)
 const COLOR_HINT = new Color(120, 168, 196, 255)
 
 const CARD_WIDTH = 560
@@ -45,6 +44,8 @@ export class TechPanelView extends Component {
 
   private readonly rows: Node[] = []
   private viewData: TechViewData | null = null
+  /** 玩家点了某一行的「研究」。发不发、能不能发由外层按服务端那份 `canResearch` 判 */
+  onResearch: ((techId: string) => void) | null = null
 
   /** 下发一份视图即显示。**每次都重画**：队列剩余时间会走，复用旧值会显示过期数字。 */
   render(view: TechViewData): void {
@@ -177,10 +178,27 @@ export class TechPanelView extends Component {
       : `${row.effectText}${row.timeText === null ? '' : ` · 耗时 ${row.timeText}`}`
     this.label(second, COLOR_TEXT_DIM, 14, left, y - 25, 'left')
     if (row.canResearch) {
-      this.label('可研究', COLOR_GOOD, 15, right, y - 25, 'right')
+      // 「可研究」以前只是一句字 —— 玩家看得见这一行能做，但点下去什么都没有发生。
+      // 现在它是一颗键，按下去发 POST /tech/research
+      this.drawResearch(row.techId, right, y - 25)
     } else if (row.reasonText !== null) {
       this.label(row.reasonText, COLOR_TEXT_DIM, 15, right, y - 25, 'right')
     }
+  }
+
+  /** 行上的「研究」键。命名带 techId，运行时探针才按得到具体那一行。 */
+  private drawResearch(techId: string, right: number, y: number): void {
+    const node = new Node(`research-${techId}`)
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(76, 24)
+    node.setPosition(new Vec3(right - 38, y, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_BUTTON
+    graphics.rect(-38, -12, 76, 24)
+    graphics.fill()
+    node.on('touch-start', () => this.onResearch?.(techId))
+    this.rows.push(node)
+    this.label('研究', COLOR_COPPER_GOLD, 15, right - 38, y, 'center')
   }
 
   private drawClose(): void {
@@ -228,5 +246,6 @@ export class TechPanelView extends Component {
 
   override onDestroy(): void {
     this.clearRows()
+    this.onResearch = null
   }
 }

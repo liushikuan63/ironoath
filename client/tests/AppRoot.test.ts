@@ -186,6 +186,10 @@ const ROUTES: Record<string, unknown> = {
     academyLevel: 2,
     serverNow: SERVER_NOW,
   },
+  '/tech/research': {
+    techId: 'tech_agri_wood', level: 4, finishAt: SERVER_NOW + 300_000,
+    cost: [{ type: 'WOOD', amount: 600 }], timeSec: 300,
+  },
   '/equip/instances': {
     instances: [
       {
@@ -2184,6 +2188,46 @@ test('研究页：打开才拉 /tech/list、上报 tech_view，判定字段原�
   assert.equal(h.lastTech?.rows[0]?.effectText, '木材产量 +4%/级')
   assert.equal(h.lastTech?.rows[1]?.reasonText, '学院等级不足', '拒绝原因来自服务端的 blockedReason')
   assert.equal(h.lastTech?.rows[1]?.costText, '铁矿 900', '被拒的行也把成本摊开')
+})
+
+test('点「研究」：一次 POST、带幂等键，成功后重拉列表与资源两份账', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.openTech()
+
+  await h.root.researchTech('tech_agri_wood')
+
+  const calls = h.http.calls.filter(c => c.path === '/tech/research')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.techId, 'tech_agri_wood')
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
+    '扣资源的写口没有幂等键 = 弱网重投会扣两次')
+  // 队列与余额都变了：不重拉的话面板停在"没在研究、钱还在"的旧世界上
+  assert.equal(h.http.countOf('/tech/list'), 2, '开始研究后要重拉列表（队列那一行是服务端算的）')
+  assert.equal(h.http.countOf('/resource/detail'), 2, '开始研究后要重拉资源（扣了钱）')
+})
+
+test('服务端说不能研究的那一行：一个请求都不发，把那句原因原样报出来', async () => {
+  const h = harness()
+  await h.root.openTech()
+  const total = h.http.calls.length
+
+  await h.root.researchTech('tech_mil_attack')
+
+  assert.equal(h.http.calls.length, total, '灰着的行点下去不该发出请求')
+  assert.equal(h.errors.length, 1)
+  assert.equal(h.errors[0]?.[1], '学院等级不足', '原因用服务端给的那句，不自己编')
+})
+
+test('研究一行是一条埋点，带目标等级（长线养成要看卡在哪一级不动）', async () => {
+  const h = harness()
+  await h.root.openTech()
+  h.events.length = 0
+
+  await h.root.researchTech('tech_agri_wood')
+
+  assert.deepEqual(h.events.filter(e => e.name === 'tech_research'),
+    [{ name: 'tech_research', params: { techId: 'tech_agri_wood', nextLevel: '4' } }])
 })
 
 test('研究页：拉不到时理由原样进说明行，且不把上一次那份清空', async () => {
