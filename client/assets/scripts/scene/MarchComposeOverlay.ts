@@ -60,6 +60,19 @@ function panelLift(visibleHeight: number): number {
   return Math.max(0, PANEL_HEIGHT / 2 - (visibleHeight / 2 - NAV_CLEARANCE))
 }
 const ROW_HEIGHT = 44
+/** 行条宽（面板左右各内缩 24）。行内四件事的落点全部从它推，不各写一个魔数 */
+const ROW_WIDTH = PANEL_WIDTH - 48
+/**
+ * 兵种名**左对齐**贴行条左内缩。原先它是中心对齐、却放在同一个左内缩点上
+ * ⇒ 文字以那个点为中心向两边铺开，实测左边缘在世界 -411 而面板左边在 -310，
+ * 101px 名字直接画到面板外面（截图上名字越过了圆角边框）。
+ */
+const ROW_NAME_X = -ROW_WIDTH / 2 + 14
+/** 两颗步进键挪到行条右侧（原先在 -96/-50，正好压在长名字要占的那一段） */
+const ROW_PLUS_X = ROW_WIDTH / 2 - 19 - 8
+const ROW_MINUS_X = ROW_PLUS_X - 38 - 6
+/** 数量右对齐，落在「−」的左边 */
+const ROW_COUNT_X = ROW_MINUS_X - 19 - 12
 const VISIBLE_ROWS = 5
 /** 一次点 ＋/− 走多少：10 是"来回点几下就能调到位"与"点一下不心疼"之间的取中值。 */
 const STEP = 10
@@ -164,9 +177,14 @@ export class MarchComposeOverlay {
     const row = new Node('编成集结参数')
     this.node.addChild(row)
     row.setPosition(new Vec3(0, RALLY_ROW_Y, 0))
-    const members = this.stepper(row, '集结人数', -152, -236, -72,
+    /**
+     * 两组各占半行：`−` 在最外、`＋` 在内侧，标签左对齐夹在中间。
+     * 原先标签是中心对齐放在两颗键中间（-152 / +152），而它自己就有约 150px 宽
+     * ⇒ 左右各压上一颗键。探针的"行内两两不相交"现在会一起管这一行。
+     */
+    const members = this.stepper(row, '集结人数', -262, -291, -19,
       () => this.onRallyAdjust?.('members', -1), () => this.onRallyAdjust?.('members', 1))
-    const prepare = this.stepper(row, '准备时长', 152, 68, 232,
+    const prepare = this.stepper(row, '准备时长', 48, 19, 291,
       () => this.onRallyAdjust?.('prepare', -1), () => this.onRallyAdjust?.('prepare', 1))
     this.rallyMembersLabel = members.label
     this.rallyMembersMinus = members.minus
@@ -179,7 +197,7 @@ export class MarchComposeOverlay {
 
   private stepper(parent: Node, name: string, labelX: number, minusX: number, plusX: number,
     onDown: () => void, onUp: () => void): { label: Label; minus: Node; plus: Node } {
-    const label = this.childLabel(parent, labelX, 0, 17, COLOR_TEXT)
+    const label = this.childLabel(parent, labelX, 0, 17, COLOR_TEXT, 0)
     const minus = this.rowButton(parent, minusX, 0, '−', onDown, `${name}减`)
     const plus = this.rowButton(parent, plusX, 0, '＋', onUp, `${name}加`)
     return { label, minus, plus }
@@ -259,15 +277,15 @@ export class MarchComposeOverlay {
     graphics.roundRect(-(PANEL_WIDTH - 48) / 2, -ROW_HEIGHT, PANEL_WIDTH - 48, ROW_HEIGHT, 6)
     graphics.fill()
 
-    const name = this.childLabel(node, -(PANEL_WIDTH - 48) / 2 + 14, -ROW_HEIGHT / 2, 17, COLOR_TEXT)
-    const count = this.childLabel(node, 0, -ROW_HEIGHT / 2, 17, COLOR_GOLD)
-    const minus = this.rowButton(node, -(PANEL_WIDTH - 48) / 2 + 190, -ROW_HEIGHT / 2, '−', () => {
+    const name = this.childLabel(node, ROW_NAME_X, -ROW_HEIGHT / 2, 17, COLOR_TEXT, 0)
+    const count = this.childLabel(node, ROW_COUNT_X, -ROW_HEIGHT / 2, 17, COLOR_GOLD, 1)
+    const minus = this.rowButton(node, ROW_MINUS_X, -ROW_HEIGHT / 2, '−', () => {
       const option = this.view?.compose.options[index]
       if (option !== undefined) {
         this.onPick?.(option.unitId, option.selected - STEP)
       }
     })
-    const plus = this.rowButton(node, -(PANEL_WIDTH - 48) / 2 + 236, -ROW_HEIGHT / 2, '＋', () => {
+    const plus = this.rowButton(node, ROW_PLUS_X, -ROW_HEIGHT / 2, '＋', () => {
       const option = this.view?.compose.options[index]
       if (option !== undefined) {
         this.onPick?.(option.unitId, option.selected + STEP)
@@ -280,16 +298,19 @@ export class MarchComposeOverlay {
     return this.childLabel(this.node, x, y, fontSize, color)
   }
 
-  private childLabel(parent: Node, x: number, y: number, fontSize: number, color: Color): Label {
+  private childLabel(parent: Node, x: number, y: number, fontSize: number, color: Color,
+    anchorX = 0.5): Label {
     const node = new Node('label')
     parent.addChild(node)
-    node.addComponent(UITransform)
+    // 锚点必须一起改：只挪 x 不设 anchorX，文字盒仍会以节点为中心再推出去半个宽度
+    node.addComponent(UITransform).setAnchorPoint(anchorX, 0.5)
     node.setPosition(new Vec3(x, y, 0))
     const label = applySystemUiFont(node.addComponent(Label))
     label.color = color
     label.fontSize = fontSize
     label.lineHeight = fontSize + 6
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.horizontalAlign = anchorX === 0 ? Label.HorizontalAlign.LEFT
+      : anchorX === 1 ? Label.HorizontalAlign.RIGHT : Label.HorizontalAlign.CENTER
     return label
   }
 

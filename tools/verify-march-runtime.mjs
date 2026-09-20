@@ -366,12 +366,71 @@ const tapRallyButton = (name) => page.evaluate(`(() => {
   return true
 })()`)
 
+/**
+ * 行内盒子两两判交：名字压出面板、标签压在步进键上，这类缺陷文字快照一个都看不见。
+ * 只比横向 —— 这些盒子都在同一条基线上，而兵种底板是"挂在节点下沿"画的，比纵向会假红。
+ */
+const BOXES = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const overlay = game?.getChildByName('MarchCompose')
+  if (!overlay) return null
+  const span = (n) => {
+    const t = n.getComponent('cc.UITransform')
+    const left = n.position.x - t.width * t.anchorX
+    return { name: n.name + '#' + t.width.toFixed(0), left: left, right: left + t.width }
+  }
+  const rows = []
+  overlay.children.forEach((c) => {
+    if (!c.active) { return }
+    const isRow = /^composeRow\\d+$/.test(c.name)
+    if (!isRow && c.name !== '编成集结参数') { return }
+    rows.push({
+      row: c.name,
+      limit: isRow ? c.getComponent('cc.UITransform').width / 2 : 310,
+      kids: c.children.filter((k) => k.active).map(span),
+    })
+  })
+  return rows
+})()`
+
+const boxProblems = (rows) => {
+  const out = []
+  for (const row of rows ?? []) {
+    for (const k of row.kids) {
+      if (k.left < -row.limit - 1 || k.right > row.limit + 1) {
+        out.push(row.row + '：' + k.name + ' 越出边框 [' + k.left.toFixed(0) + ', '
+          + k.right.toFixed(0) + '] vs ±' + row.limit)
+      }
+    }
+    for (let i = 0; i < row.kids.length; i++) {
+      for (let j = i + 1; j < row.kids.length; j++) {
+        const a = row.kids[i]
+        const b = row.kids[j]
+        if (a.left < b.right - 1 && b.left < a.right - 1) {
+          out.push(row.row + '：' + a.name + ' 与 ' + b.name + ' 横向压叠')
+        }
+      }
+    }
+  }
+  return out
+}
+const reportBoxes = async (label, expectRows) => {
+  const rows = await page.evaluate(BOXES)
+  const scanned = (rows ?? []).reduce((n, r) => n + r.kids.length, 0)
+  // 先证明"这一把真扫到了东西"：只报"问题数 0"的判据，在读取器返回空数组时同样绿（假绿）
+  check('扫到的行数符合预期（' + label + '）', (rows ?? []).length, expectRows)
+  const problems = boxProblems(rows)
+  check('编成弹层行内没有越框、也没有两两压叠（' + label + '）', problems.length, 0)
+  for (const line of problems.slice(0, 4)) console.log('    ' + line)
+}
+
 const march = await page.evaluate(COMPOSE)
 check('编成弹层节点在', march?.found, true)
 check('点目标行后弹层真的打开（active）', march?.active, true)
 check('出征态的标题前缀是「出征」', march?.titleHead, '出征')
 check('出征态下切种类那颗写明下一档是「小队集结」', march?.toggleText, '改成小队集结')
 check('出征那一档没有参数行：出征不吃"等人"这个维度', march?.rallyActive, false)
+await reportBoxes('出征态', 5)
 checkTrue('弹层底部三颗键都没压到导航条', march?.clearsNav === true,
   `最低 ${march?.lowestButton} vs 导航条上沿 ${march?.navTop}（可视高 ${march?.designHeight}）`)
 checkTrue('遮罩命中框盖住整屏（边缘那一条不再穿透）',
@@ -432,6 +491,7 @@ checkTrue('参数行的两个数来自读口（20 人 / 120 分钟，不是客�
   `实际：${JSON.stringify(alliance?.rallyText)}`)
 await page.screenshot({ path: path.join(OUT, 'compose-mode-rally.png') })
 console.log(`  截图：${path.join(OUT, 'compose-mode-rally.png')}`)
+await reportBoxes('联盟档（含参数行）', 6)
 
 checkTrue('按得动「集结人数减」', await tapRallyButton('集结人数减'))
 await page.waitForTimeout(400)
@@ -477,17 +537,6 @@ await page.waitForTimeout(500)
 const scrim = await page.evaluate(COMPOSE)
 check('点遮罩空白处不关闭弹层（口径：关闭只走「编成取消」那颗键）', scrim?.active, true)
 check('点遮罩空白处也不穿透打到导航条（没换页）', await page.evaluate(NAV), navBefore)
-
-// 兵种名压出面板那条只**记录量到的数**，不判红：修法要连 −/＋ 两颗键一起重排，是另一格
-const OVERFLOW = `(() => {
-  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
-  const overlay = game?.getChildByName('MarchCompose')
-  const row = overlay?.children.find((c) => c.name === 'composeRow0')
-  const label = row?.children[0]
-  const t = label?.getComponent('cc.UITransform')
-  return { labelLeft: label ? label.position.x - t.width / 2 : null, panelLeft: -310 }
-})()`
-console.log('  量测（未判据）：兵种名左边缘 vs 面板左边缘 =', JSON.stringify(await page.evaluate(OVERFLOW)))
 
 await page.screenshot({ path: path.join(OUT, 'compose-scrim-click.png') })
 console.log(`  截图：${path.join(OUT, 'compose-scrim-click.png')}`)
