@@ -44,6 +44,7 @@ import type { SquadListView } from '../assets/scripts/game/social/SquadDiscovery
 import type { ApplicationView } from '../assets/scripts/game/social/AllianceApplications'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
+import type { ChoiceOption } from '../assets/scripts/game/session/Choices'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
 
@@ -589,6 +590,10 @@ interface Harness {
   readonly errors: Array<[string, string]>
   readonly attached: string[]
   readonly events: Array<{ name: string, params: Record<string, string> }>
+  /** 最近一次弹出的军队「队列」菜单选项（B26 S15） */
+  readonly queueOptions: readonly ChoiceOption[]
+  /** 点「队列」菜单里的一条 */
+  pickQueue(id: string): void
   readonly speedupOptions: readonly SpeedupChoice[]
   readonly lineupOptions: readonly LineupChoice[]
   /** 最近一次弹出的分享频道候选（没点分享时为空） */
@@ -676,6 +681,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let reddotTree: ClientReddotTree | null = null
   let activityNow = -1
   let activityRows = -1
+  let queueOptions: ChoiceOption[] = []
+  let queuePick: ((id: string) => void) | null = null
   let speedupOptions: SpeedupChoice[] = []
   let lineupOptions: LineupChoice[] = []
   let shareChannelOptions: ShareChannelChoice[] = []
@@ -797,6 +804,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       speedupOptions = [...options]
       speedupPick = onPick
     },
+    armyQueueChoice: (options, onPick) => {
+      queueOptions = [...options]
+      queuePick = onPick
+    },
     lineupChoice: (options, onPick) => {
       lineupOptions = [...options]
       lineupPick = onPick
@@ -903,6 +914,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get reddotTree() {
       return reddotTree
+    },
+    get queueOptions() {
+      return queueOptions
+    },
+    pickQueue(id: string) {
+      queuePick?.(id)
     },
     get speedupOptions() {
       return speedupOptions
@@ -3674,4 +3691,67 @@ test('商店：不能兑换的那一行不发请求，把服务端给的原因�
 
   assert.equal(h.http.countOf('/shop/buy'), before, '锁定行不发请求（发了也会被同一套规则拒）')
   assert.deepEqual(h.errors.at(-1), ['shop', '主城 5 级解锁'])
+})
+
+// ---------- B26 S15：军队行上的「队列」菜单与取消训练 ----------
+
+/** 一口在练、一口没练的军队数据。 */
+function armyWithQueue(): Record<string, unknown> {
+  return {
+    units: [
+      { unitId: 'unit_infantry_t1', name: '重步', type: 'INFANTRY', tier: 1, count: 100,
+        wounded: 0, training: 30, finishAt: SERVER_NOW + 600_000, remainingSeconds: 600,
+        unlocked: true, unlockHint: null, trainTimeSec: 10 },
+      { unitId: 'unit_archer_t1', name: '长弓', type: 'ARCHER', tier: 1, count: 50,
+        wounded: 0, training: 0, finishAt: null, remainingSeconds: null,
+        unlocked: true, unlockHint: null, trainTimeSec: 12 },
+    ],
+    troopCap: 1000, troopsInUse: 0, trainingInUse: 30, queueSlots: 1, queueSlotsMax: 2,
+    hospital: { capacity: 100, used: 0, treating: false, treatFinishAt: null,
+      treatRemainingSeconds: 0, treatCostRatio: 0 },
+    autoTrain: { enabled: false, unitId: 'none', batchCount: 1, batchBudget: 0, targetCount: 0,
+      stopReason: null },
+    serverNow: SERVER_NOW,
+  }
+}
+
+test('B26 S15：点「队列」把菜单递给面板，选「取消」才打 POST /army/cancel 并带 unitId', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/army/list', armyWithQueue())
+  h.http.overrides.set('/army/cancel', {
+    unitId: 'unit_infantry_t1', count: 30, refund: [], serverNow: SERVER_NOW,
+  })
+  await h.root.refresh('army')
+  h.root.openArmyQueue('unit_infantry_t1')
+  assert.deepEqual(h.queueOptions.map((it) => it.id), ['CANCEL_TRAIN'])
+  assert.equal(h.http.countOf('/army/cancel'), 0, '打开菜单不是下命令：这一下一条请求都不该发')
+
+  const armyBefore = h.http.countOf('/army/list')
+  h.events.length = 0
+  h.pickQueue('CANCEL_TRAIN')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const sent = h.http.calls.filter(c => c.path === '/army/cancel').at(-1)
+  assert.ok(sent !== undefined, '选了取消就要真发出去')
+  assert.equal(sent?.body.unitId, 'unit_infantry_t1')
+  assert.equal(sent?.body.seconds, null, '取消不带加速参数：这一口是"不练了"，不是"练快点"')
+  assert.equal(sent?.body.itemId, null)
+  assert.ok(typeof sent?.body.requestId === 'string', '取消退资源，重放等于退两次')
+  assert.ok(h.http.countOf('/army/list') >= armyBefore + 1,
+    '取消退了资源，军队与资源两本账都要重拉')
+  assert.deepEqual(h.events.find(e => e.name === 'army_train_cancel')?.params,
+    { unitId: 'unit_infantry_t1' }, '取消集中在同一兵种就是训练时长配得不合适')
+})
+
+test('B26 S15：没有在训练的那一口不弹空菜单，只说一句原因、一条请求都不发', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/army/list', armyWithQueue())
+  await h.root.refresh('army')
+  h.errors.length = 0
+  const before = h.http.calls.length
+  h.root.openArmyQueue('unit_archer_t1')
+  assert.deepEqual(h.queueOptions, [], '不画一张什么都没有的菜单')
+  assert.equal(h.http.calls.length, before, '没有可取消的东西就不该有任何请求')
+  assert.deepEqual(h.errors.at(-1), ['army', '这一口没有在训练的队伍'])
 })

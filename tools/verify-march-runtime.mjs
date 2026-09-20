@@ -72,19 +72,18 @@ const reply = async (route, data) => route.fulfill({
 // ---------- 相位 C 的军队夹具（B26 S14）——必须挂在 goto 之前 ----------
 // 军队读口在登录响应之后立刻发出：桩挂晚了等于没挂，编成面板吃的是 dev 新号那份
 // 「五口兵全不可出征」，勾不出兵也发不出集结（第一次跑就是这么红的）。
-await context.route('**/army/list*', async (route) => {
-  if (route.request().method() === 'OPTIONS') {
-    await route.fulfill({ status: 204, headers: cors(route.request()) })
-    return
-  }
-  await reply(route, {
+/** 相位 D 会就地把第一口改成"正在训练"，所以夹具放在回调外面（回调里每次读都要重建就没法改状态） */
+const ARMY_FIXTURE = {
     units: [
       { unitId: 'unit_infantry_t1', name: '重步', type: 'INFANTRY', tier: 1, count: 500,
         wounded: 0, training: 0, finishAt: null, remainingSeconds: null, unlocked: true,
-        unlockHint: null, trainTimeSec: 10 },
+        unlockHint: null, trainTimeSec: 10,
+        // 军队面板那一行会把 trainCost 拼成文案（缺了就是一条 undefined.map，整页崩）
+        trainCost: [{ type: 'FOOD', amount: 20 }, { type: 'GOLD', amount: 5 }] },
       { unitId: 'unit_archer_t2', name: '长弓', type: 'ARCHER', tier: 2, count: 200,
         wounded: 0, training: 0, finishAt: null, remainingSeconds: null, unlocked: true,
-        unlockHint: null, trainTimeSec: 12 },
+        unlockHint: null, trainTimeSec: 12,
+        trainCost: [{ type: 'FOOD', amount: 30 }, { type: 'GOLD', amount: 8 }] },
     ],
     troopCap: 1000, troopsInUse: 0, trainingInUse: 0, queueSlots: 0, queueSlotsMax: 2,
     hospital: { capacity: 0, used: 0, treating: false, treatFinishAt: null,
@@ -92,7 +91,13 @@ await context.route('**/army/list*', async (route) => {
     autoTrain: { enabled: false, unitId: 'none', batchCount: 1, batchBudget: 0, targetCount: 0,
       stopReason: null },
     serverNow: Date.now(),
-  })
+}
+await context.route('**/army/list*', async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  await reply(route, ARMY_FIXTURE)
 })
 
 const url = new URL(`${preview.origin}/`)
@@ -535,6 +540,184 @@ console.log(`  截图：${path.join(OUT, 'march-search-rows.png')}`)
 
 await page.screenshot({ path: path.join(OUT, 'march-search-panel.png') })
 console.log(`  截图：${path.join(OUT, 'march-search-panel.png')}`)
+// ---------- 相位 D：军队行上的「队列」菜单与取消训练（B26 S15）----------
+// 另开一页走 ?panel=army：前面那页停在搜索/编成那一屏，切页签要摸导航条的节点名，
+// 而深链本来就是这一格的入口。军队数据用相位 C 那份夹具，就地把第一口改成"正在训练"。
+ARMY_FIXTURE.units[0].training = 30
+ARMY_FIXTURE.units[0].remainingSeconds = 600
+ARMY_FIXTURE.units[0].finishAt = Date.now() + 600000
+const sentCancels = []
+await context.route('**/army/cancel*', async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  sentCancels.push(JSON.parse(route.request().postData() ?? '{}'))
+  await reply(route, { unitId: 'unit_infantry_t1', count: 30, refund: [], serverNow: Date.now() })
+})
+
+const page2 = await context.newPage()
+page2.on('pageerror', (error) => errors.push(error.message))
+page2.on('console', (message) => {
+  if (message.type() === 'error') errors.push(message.text())
+})
+const url2 = new URL(`${preview.origin}/`)
+url2.searchParams.set('panel', 'army')
+await page2.goto(url2.toString(), { waitUntil: 'networkidle' })
+await page2.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+/** 整棵树里找同名节点（面板节点名不写死，免得换个名字就假红），并把那一行的直接子节点盒子一起带回来 */
+const SCAN = `(() => {
+  const root = window.cc.director.getScene().getChildByName('Canvas')
+  const out = []
+  const walk = (node, depth) => {
+    if (node.name === 'QueueButton') {
+      const row = node.parent
+      const box = (n) => {
+        const t = n.getComponent('cc.UITransform')
+        return {
+          name: n.name,
+          left: n.position.x - t.width / 2, right: n.position.x + t.width / 2,
+          top: n.position.y + t.height / 2, bottom: n.position.y - t.height / 2,
+        }
+      }
+      out.push({
+        active: node.active,
+        rowTitle: row?.getChildByName('Title')?.getComponent('cc.Label')?.string ?? '',
+        boxes: row === null || row === undefined ? [] : row.children
+          .filter((c) => c.active && c.getComponent('cc.UITransform') !== null)
+          .map((c) => box(c)),
+      })
+    }
+    for (const child of node.children) walk(child, depth + 1)
+  }
+  walk(root, 0)
+  return out
+})()`
+// 轮询到行真的画出来为止（固定等 2.5 秒是抖动源：登录慢一点就整相全红）
+let queueRows = []
+for (let i = 0; i < 40; i += 1) {
+  await page2.waitForTimeout(500)
+  queueRows = await page2.evaluate(SCAN)
+  if (queueRows.length > 0) {
+    break
+  }
+}
+
+
+
+check('两行兵都画出了「队列」这颗键（可见性由渲染决定，节点先都在）', queueRows?.length, 2)
+check('只有正在练的那一口把键点亮，另一口收起',
+  JSON.stringify(queueRows?.map((it) => it.active)), JSON.stringify([true, false]))
+check('点亮的那一行是重步（读的是行自己的标题，不是按下标认行）',
+  (queueRows?.find((it) => it.active)?.rowTitle ?? '').includes('重步'), true)
+// 版式判据：**键与字、键与键**两两不重叠（字与字是行内三行紧排，本来就上下相接，不算撞）。
+// 编成弹层那一排就是被"值全对但字压字"坑过一次，所以这里按盒子量，不按眼睛。
+const litBoxes = queueRows?.find((it) => it.active)?.boxes ?? []
+const isButton = (name) => /Button$/.test(name)
+const overlaps = []
+for (let i = 0; i < litBoxes.length; i++) {
+  for (let j = i + 1; j < litBoxes.length; j++) {
+    const a = litBoxes[i]
+    const b = litBoxes[j]
+    if (!isButton(a.name) && !isButton(b.name)) continue
+    if (a.left < b.right && b.left < a.right && a.bottom < b.top && b.bottom < a.top) {
+      overlaps.push(`${a.name}×${b.name}`)
+    }
+  }
+}
+check('点亮那一行里「键压字 / 键压键」的重叠为零', JSON.stringify(overlaps), '[]')
+checkTrue('这一行至少排开了 6 件东西（三行字 + 三颗键），判据不是空转', litBoxes.length >= 6)
+
+const tappedQueue = await page2.evaluate(`(() => {
+  const root = window.cc.director.getScene().getChildByName('Canvas')
+  let hit = null
+  const walk = (node) => {
+    if (node.name === 'QueueButton' && node.active && hit === null) hit = node
+    for (const child of node.children) walk(child)
+  }
+  walk(root)
+  if (hit === null) return false
+  hit.emit('touch-start')
+  return true
+})()`)
+checkTrue('按得到那颗「队列」', tappedQueue)
+await page2.waitForTimeout(500)
+
+const MENU = `(() => {
+  const root = window.cc.director.getScene().getChildByName('Canvas')
+  let overlay = null
+  const findOverlay = (node) => {
+    if (node.name === 'ChoiceOverlay' && node.active) overlay = node
+    for (const child of node.children) findOverlay(child)
+  }
+  findOverlay(root)
+  if (overlay === null) return { found: false, texts: [], parentName: null }
+  // 弹层必须排在宿主子节点的最后一位：列表行是渲染时才加进同一个父节点的，
+  // 加得晚就压在菜单上面（军队那格实测被挡住半截，读数却全绿）
+  const parentName = overlay.parent?.name ?? ''
+  const texts = []
+  const collect = (node) => {
+    const label = node.getComponent('cc.Label')
+    if (label !== null && label.string.length > 0) texts.push(label.string)
+    for (const child of node.children) collect(child)
+  }
+  collect(overlay)
+  return { found: true, texts, parentName }
+})()`
+const DIAG = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const names = (game?.children || []).map((c) => c.name)
+  let overlay = null
+  const find = (n) => { if (n.name === 'ChoiceOverlay' && n.active) overlay = n; for (const c of n.children) find(c) }
+  find(game)
+  let rowParent = null
+  const findRow = (n) => { if (n.name === 'QueueButton' && n.active) rowParent = [n.parent?.name, n.parent?.parent?.name, n.parent?.getSiblingIndex()].join(">"); for (const c of n.children) findRow(c) }
+  findRow(game)
+  return { gameChildren: names, overlayParent: overlay?.parent?.name ?? null,
+    overlayIndex: overlay?.getSiblingIndex() ?? null, overlayLayer: overlay?.layer ?? null,
+    gameLayer: game?.layer ?? null, rowParent }
+})()`
+console.log('  诊断：', JSON.stringify(await page2.evaluate(DIAG)))
+const menu = await page2.evaluate(MENU)
+checkTrue('菜单真的弹出来了（ChoiceOverlay 激活）', menu?.found === true)
+check('菜单挂在场景层（Game 节点）：面板每秒为倒计时重挂行，建在面板里的弹层会被压住',
+  menu?.parentName, 'Game')
+checkTrue('菜单里那条写的是「取消这一口训练」，并把在练的数量说清了',
+  (menu?.texts ?? []).some((t) => t.includes('取消这一口训练'))
+    && (menu?.texts ?? []).some((t) => t.includes('30') && t.includes('重步')), true)
+await page2.screenshot({ path: path.join(OUT, 'army-queue-menu.png') })
+console.log(`  截图：${path.join(OUT, 'army-queue-menu.png')}`)
+
+const picked = await page2.evaluate(`(() => {
+  const root = window.cc.director.getScene().getChildByName('Canvas')
+  let target = null
+  const walk = (node) => {
+    const label = node.getComponent('cc.Label')
+    if (label !== null && (label.string ?? '').includes('取消这一口训练')) target = node
+    for (const child of node.children) walk(child)
+  }
+  walk(root)
+  if (target === null) return false
+  // 可点的那一层是行的父节点：从字往上连发三次，谁挂了监听谁收到
+  let node = target
+  for (let i = 0; i < 3 && node !== null && node !== undefined; i++) {
+    node.emit('touch-start')
+    node = node.parent
+  }
+  return true
+})()`)
+checkTrue('按得到菜单里那条「取消这一口训练」', picked)
+await page2.waitForTimeout(900)
+const cancel = sentCancels.at(-1) ?? null
+check('取消真的发出去了（一次点选一条请求）', sentCancels.length, 1)
+check('打的是取消那一口：unitId 是点亮那行的兵种', cancel?.unitId, 'unit_infantry_t1')
+check('不带加速参数（这一口是"不练了"，不是"练快点"）',
+  JSON.stringify([cancel?.seconds, cancel?.itemId]), JSON.stringify([null, null]))
+checkTrue('幂等键在（取消会退资源，重放等于退两次）',
+  typeof cancel?.requestId === 'string' && (cancel?.requestId ?? '').length > 0)
+await page2.screenshot({ path: path.join(OUT, 'army-queue-cancelled.png') })
+console.log(`  截图：${path.join(OUT, 'army-queue-cancelled.png')}`)
+
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {
   for (const message of errors.slice(0, 3)) console.log(`    error: ${message.slice(0, 160)}`)

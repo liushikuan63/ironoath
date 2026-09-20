@@ -98,10 +98,11 @@ import type { ActivityClaimResp, ActivityListResp } from '../../net/generated/Ac
 import type { GuideAction, GuideProgressResp, GuideScriptResp } from '../../net/generated/GuideProtocol'
 import { claimActivityReq } from '../activity/ActivityPanel'
 import {
-  buildChatActionChoices, buildLineupChoices, buildShareChannelChoices, buildSpeedupChoices,
+  buildArmyQueueChoices, buildChatActionChoices, buildLineupChoices, buildShareChannelChoices,
+  buildSpeedupChoices,
 } from './Choices'
 import type {
-  ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
+  ChatActionChoice, ChoiceOption, LineupChoice, ShareChannelChoice, SpeedupChoice,
 } from './Choices'
 import type { GiftPopupResp } from '../../net/generated/PayProtocol'
 import type { PayView } from '../pay/GiftPayFlow'
@@ -373,6 +374,8 @@ export interface PanelTargets {
   home?(x: number, y: number): void
   /** 加速道具目标选择器。回调由场景层在选择后触发一次。 */
   speedupTargetChoice?(options: readonly SpeedupChoice[], onPick: (targetId: string) => void): void
+  /** 军队那一行的「队列」菜单（B26 S15）：选项与"点了做什么"都由编排层给，面板只画与回抛 */
+  armyQueueChoice?(options: readonly ChoiceOption[], onPick: (id: string) => void): void
   /** 关卡出战阵容选择器。回调由场景层在选择后触发一次。 */
   lineupChoice?(options: readonly LineupChoice[], onPick: (choice: LineupChoice) => void): void
   /**
@@ -974,6 +977,40 @@ export class AppRoot {
       // 否则玩家之后开的自动续训会一直盯着一支永远排不出来的兵种
       this.lastTrain = rememberTrain(unitId, count)
     })
+  }
+
+  /**
+   * 打开某一行的「队列」菜单（B26 S15）。
+   *
+   * <p>没有可做的动作时回一句人话，**不画一颗空菜单**：点了什么都不发生的键，
+   * 在玩家眼里就是"这功能坏了"（与 `useItem` 那条"没有可用目标就明说"同一口径）。
+   */
+  openArmyQueue(unitId: string): void {
+    if (this.armyResp === null) {
+      this.rejectNeeds('army', '军队数据还没到，稍后再试')
+      return
+    }
+    const options = buildArmyQueueChoices(this.armyResp, unitId)
+    if (options.length === 0) {
+      this.rejectNeeds('army', '这一口没有在训练的队伍')
+      return
+    }
+    if (this.targets.armyQueueChoice === undefined) {
+      this.rejectNeeds('army', pickUnavailable('取消哪一口训练'))
+      return
+    }
+    this.targets.armyQueueChoice(options, (id) => {
+      if (id === 'CANCEL_TRAIN') {
+        void this.cancelTrain(unitId)
+      }
+    })
+  }
+
+  /** 取消某一口的训练。退多少由服务端按比例算（配置来的），客户端不参与计算也不猜。 */
+  cancelTrain(unitId: string): Promise<void> {
+    this.track(TRACK_EVENTS.armyTrainCancel, { unitId })
+    return this.write('army', this.api.armyCancel({ unitId, seconds: null, itemId: null }),
+      ['army', 'resources'])
   }
 
   /**

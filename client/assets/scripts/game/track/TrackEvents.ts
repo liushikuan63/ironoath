@@ -68,6 +68,11 @@ export const TRACK_EVENTS = {
   /** 开始训练士兵。 */
   armyTrain: 'army_train',
   /**
+   * 取消某一口的训练（B26 S15）。带 unitId：取消一直集中在同一兵种上，
+   * 说明那一口的时长或队列容量配得不合适（玩家排了又后悔）。
+   */
+  armyTrainCancel: 'army_train_cancel',
+  /**
    * 开关自动续训 / 自动补兵（B25-S2d）。
    * `on=true/false` 分开看：开得多说明减负被接受，关得多多半是"资源被自动花掉"这类反馈。
    */

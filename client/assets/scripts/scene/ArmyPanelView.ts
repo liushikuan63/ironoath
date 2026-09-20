@@ -105,6 +105,8 @@ export class ArmyPanelView extends Component {
   onTrain: ((unitId: string, count: number) => void) | null = null
   /** 点「治疗」。治哪些伤兵由服务端裁定，本场景只表达意图 */
   onTreat: (() => void) | null = null
+  /** 点行上的「队列」（B26 S15）：这一口在练什么、能不能取消，全由编排层判，这里只回抛 unitId */
+  onQueue: ((unitId: string) => void) | null = null
   /** 点「自动续训 / 停止自动」。能不能开、续的是哪一批由编排层判定（B25-S2d） */
   onToggleAutoTrain: (() => void) | null = null
 
@@ -285,22 +287,25 @@ export class ArmyPanelView extends Component {
       16, COLOR_TEXT, 18)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    title.node.getComponent(UITransform)?.setContentSize(new Size(400, 26))
+    title.node.getComponent(UITransform)?.setContentSize(new Size(330, 26))
     title.overflow = Label.Overflow.SHRINK
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + 42,
       -4, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(450, 22))
+    detail.node.getComponent(UITransform)?.setContentSize(new Size(330, 22))
     detail.overflow = Label.Overflow.SHRINK
     const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING + 42,
       -22, COLOR_COPPER_GOLD, 13)
     countdown.horizontalAlign = Label.HorizontalAlign.LEFT
     countdown.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    countdown.node.getComponent(UITransform)?.setContentSize(new Size(450, 20))
+    countdown.node.getComponent(UITransform)?.setContentSize(new Size(330, 20))
     countdown.overflow = Label.Overflow.SHRINK
 
     const buttons: Array<{ name: string; text: string; x: number; count: number | null }> = [
+      // 「队列」排在两颗训练键左边：它管的是**已经在练的那一口**（取消），与"再练多少"不同类。
+      // 三颗键各占 78，字那三行限到 330 宽，盒子互不重叠（量具按盒子量，不按眼睛）
+      { name: 'QueueButton', text: '队列', x: PANEL_WIDTH / 2 - 212, count: null },
       { name: 'TrainOnceButton', text: '训练×1', x: PANEL_WIDTH / 2 - 128, count: TRAIN_ONCE },
       { name: 'TrainBulkButton', text: '训练×100', x: PANEL_WIDTH / 2 - 44, count: TRAIN_BULK },
     ]
@@ -325,8 +330,13 @@ export class ArmyPanelView extends Component {
       this.trainButtons.set(buttonNode, null)
       buttonNode.on('touch-start', (_event: EventTouch) => {
         const row = this.trainButtons.get(buttonNode)
-        if (row !== undefined && row !== null) {
-          this.onTrain?.(row.unitId, button.count ?? TRAIN_ONCE)
+        if (row === undefined || row === null) {
+          return
+        }
+        if (button.count === null) {
+          this.onQueue?.(row.unitId)
+        } else {
+          this.onTrain?.(row.unitId, button.count)
         }
       }, this)
     }
@@ -491,10 +501,19 @@ export class ArmyPanelView extends Component {
       icon.active = applyIconSprite(icon, unitIconKey(row.unitType), 34, 34)
     }
 
-    // 未解锁的兵种不给训练按钮：留着可点的按钮却只会被服务端拒绝，比灰掉更糟
-    for (const button of node.children.slice(3, 5)) {
-      this.trainButtons.set(button, row.unlocked ? row : null)
-      button.active = row.unlocked
+    // 未解锁的兵种不给训练按钮：留着可点的按钮却只会被服务端拒绝，比灰掉更糟。
+    // 按名字挑而不是按下标：行里加了第三颗键之后，`children.slice(3, 5)` 会把「队列」
+    // 当成训练键（#291 那一格就是被这种按下标挑法坑过一次）
+    const rowButtons = ['QueueButton', 'TrainOnceButton', 'TrainBulkButton']
+      .map((name) => node.getChildByName(name))
+      .filter((it): it is Node => it !== null)
+    for (const button of rowButtons) {
+      const usable = button.name === 'QueueButton'
+        // 只有真的一口在练时才给「队列」：没有可取消的东西，点下去就是一张空菜单
+        ? row.trainingText !== null
+        : row.unlocked
+      this.trainButtons.set(button, usable ? row : null)
+      button.active = usable
     }
   }
 

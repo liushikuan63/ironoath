@@ -70,6 +70,9 @@ const SKIP = new Set([
   // （参数带 scope=SQUAD/ALLIANCE，层级本身已经分得开）—— 这里再打会把一次发起记成三四次
   "setComposeRallyScope",
   "adjustComposeRallyNumber",
+  // 军队行上「队列」（B26 S15）同一条口径：打开菜单只是把候选摆出来，
+  // 真正"取消这一口训练"那一下在 cancelTrain 里打 `army_train_cancel` —— 两处都打会把一次取消记成两次
+  "openArmyQueue",
   // 升级弹层的"开弹层"与"加减一件"：真正要量的是"喂下去"那一下（在 confirmExpPick 里打 hero_level_up），
   // 开弹层与步进都还不是意图 —— 与上面的 beginMarchCompose / pickMarchUnit 同一条理由
   "openExpPick",

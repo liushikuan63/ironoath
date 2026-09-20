@@ -42,6 +42,30 @@ export function buildShareChannelChoices(): readonly ShareChannelChoice[] {
   ]
 }
 
+/**
+ * 军队那一行的「队列」菜单（B26 S15）。
+ *
+ * <p>今天只有一条：取消这一口训练。另外两条看着像缺口的（`/army/speedUp`、
+ * `/army/treatSpeedUp`）**不放进这里** —— 服务端要求加速必须带 `itemId`，
+ * 而"用加速道具 + 选一个正在训练的队列"在背包那条路已经接通了（`useItem` 的
+ * `buildSpeedupChoices` 里就含训练队列），再摆一颗键等于给同一件事两个入口。
+ *
+ * <p>没有可做的动作时返回空数组，由编排层回一句人话，而不是画一颗点了没反应的键。
+ */
+export function buildArmyQueueChoices(army: ArmyListResp | null,
+                                      unitId: string): readonly ChoiceOption[] {
+  const unit = army === null ? undefined : army.units.find((it) => it.unitId === unitId)
+  if (unit === undefined || unit.training <= 0) {
+    return []
+  }
+  return [{
+    id: 'CANCEL_TRAIN',
+    label: '取消这一口训练',
+    // 一行放得下才算写完：选择器每行只有 ~14 个字的宽度，长了会折到下一行与下一条撞在一起
+    detail: `${unit.training} 个${unit.name} · 资源按比例退回`,
+  }]
+}
+
 /** 未放置建筑候选。地块能否放置由玩家点选坐标后交给服务端判定。 */
 export function buildBuildChoices(city: CityListResp | null): readonly ChoiceOption[] {
   if (city === null) {

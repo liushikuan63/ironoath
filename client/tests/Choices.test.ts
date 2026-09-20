@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildBuildChoices, buildLineupChoices, buildSpeedupChoices,
+  buildArmyQueueChoices, buildBuildChoices, buildLineupChoices, buildSpeedupChoices,
 } from '../assets/scripts/game/session/Choices'
 import type { ArmyListResp } from '../assets/scripts/net/generated/ArmyProtocol'
 import type { CityListResp } from '../assets/scripts/net/generated/CityProtocol'
@@ -75,4 +75,29 @@ test('首次建造候选保留配置门槛，未放置建筑按服务端顺序�
   assert.deepEqual(choices.map((choice) => choice.id), ['lumber_camp', 'academy'])
   assert.match(choices[1]?.detail ?? '', /需要主城 3 级/)
   assert.match(choices[1]?.detail ?? '', /前置 main_city/)
+})
+
+// ---------- 军队「队列」菜单（B26 S15）----------
+
+const queueArmy = {
+  units: [
+    { unitId: 'unit_infantry_t1', name: '重步', training: 30, remainingSeconds: 600 },
+    { unitId: 'unit_archer_t1', name: '长弓', training: 0, remainingSeconds: null },
+  ],
+} as unknown as ArmyListResp
+
+test('队列菜单只在那一口真的在练时给出「取消」，练完或没练就是空的', () => {
+  assert.deepEqual(buildArmyQueueChoices(queueArmy, 'unit_infantry_t1').map((it) => it.id),
+    ['CANCEL_TRAIN'])
+  assert.deepEqual(buildArmyQueueChoices(queueArmy, 'unit_archer_t1'), [],
+    '没有可取消的东西就画一张空菜单，等于一颗点了没反应的键')
+  assert.deepEqual(buildArmyQueueChoices(queueArmy, 'unit_ghost'), [], '军队里没这个兵种也不给菜单')
+  assert.deepEqual(buildArmyQueueChoices(null, 'unit_infantry_t1'), [], '军队数据还没到不猜')
+})
+
+test('取消那条要说清退的是什么：数量与兵种名都取自服务端下发的行', () => {
+  const detail = buildArmyQueueChoices(queueArmy, 'unit_infantry_t1')[0]?.detail ?? ''
+  assert.match(detail, /30/, '把还在练的数量写出来，玩家才知道取消掉的是哪一口')
+  assert.match(detail, /重步/)
+  assert.match(detail, /按比例退回/, '退多少由服务端按配置算，这里只说口径不说数字')
 })

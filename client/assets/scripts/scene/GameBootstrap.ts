@@ -77,6 +77,7 @@ import { ShopPanelView } from './ShopPanelView'
 import { AvatarFramePanelView } from './AvatarFramePanelView'
 import { BattlePassPanelView } from './BattlePassPanelView'
 import { TargetSearchView } from './TargetSearchView'
+import { ChoiceOverlay } from './ChoiceOverlay'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
 import { OfflineReportOverlay } from './OfflineReportOverlay'
 import { WorldMap } from './WorldMap'
@@ -198,6 +199,9 @@ export class GameBootstrap extends Component {
   private nav: PanelNav | null = null
   /** 出征编成弹层（B25-S1）。它是弹层不是面板，所以不走 `panel()` 那张按名字查表的通道。 */
   private marchCompose: MarchComposeOverlay | null = null
+  /** 军队行上「队列」的菜单（B26 S15）。挂在 Game 节点上，不挂在军队面板里：
+   * 面板每为倒计时重渲染一次就会把行 addChild 到父节点末尾，建在面板里的弹层必然被压住 */
+  private armyQueue: ChoiceOverlay | null = null
   private offlineReport: OfflineReportOverlay | null = null
   /** 引导层（B18）：整屏遮罩 + 气泡，挂在所有面板与导航条之上。 */
   private guide: GuideView | null = null
@@ -1221,6 +1225,18 @@ export class GameBootstrap extends Component {
       army.onTrain = (unitId, count) => { void this.root?.train(unitId, count) }
       army.onTreat = () => { void this.root?.treatWounded() }
       army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
+      // 行上「队列」→ 编排层判有没有可取消的那一口，菜单再由本层画（B26 S15）
+      army.onQueue = unitId => this.root?.openArmyQueue(unitId)
+      out.armyQueueChoice = (options, onPick) => {
+        const picker = this.armyQueue
+        if (picker === null) {
+          return
+        }
+        // 先把弹层抬到父节点最后再显示：各面板与列表行都是按需 addChild 的，加得晚会压在它上面
+        // （军队面板每为倒计时重渲染一次就把行挪到末尾，实测菜单被挡住半截而读数全绿）
+        picker.raise()
+        picker.show(options, onPick)
+      }
     }
     if (hero !== null) {
       out.hero = resp => hero.attach(resp)
@@ -1385,6 +1401,7 @@ export class GameBootstrap extends Component {
     // 「自上次登录以来」那一屏（B25-S3）：挂在导航之后 ⇒ 同层兄弟里它排在更后，遮罩压得住面板与导航条
     this.offlineReport = new OfflineReportOverlay(this.node)
     this.offlineReport.onJump = jump => this.root?.offlineReportJump(jump)
+    this.armyQueue = new ChoiceOverlay(this.node, '这一口队列')
     this.marchCompose = new MarchComposeOverlay(this.node)
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
       // 出征 / 发起集结 的切换（B26 S12）：编成与目标都不变，只换命令种类

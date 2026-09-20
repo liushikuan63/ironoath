@@ -62,6 +62,9 @@ export class ChoiceOverlay {
     })
     this.createCommandButton('ChoiceCancel', '取消', 150, -170, () => this.hide())
     this.node.active = false
+    // 建好就收起：构造里不关的话，一份没用到的选择器会一直画在界面上
+    // （军队那格的菜单被一条空带横切，就是背包那份常驻导致的）
+    this.node.active = false
   }
 
   show(options: readonly ChoiceOption[], onPick: (id: string) => void): void {
@@ -70,6 +73,14 @@ export class ChoiceOverlay {
     this.onPick = onPick
     this.node.active = true
     this.renderPage()
+  }
+
+  /** 抬到父节点最后：各面板与列表行都是按需 addChild 的，加得比弹层晚就会压在菜单上面 */
+  raise(): void {
+    const parent = this.node.parent
+    if (parent !== null && parent !== undefined) {
+      parent.addChild(this.node)
+    }
   }
 
   hide(): void {
