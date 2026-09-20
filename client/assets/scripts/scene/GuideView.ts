@@ -285,14 +285,26 @@ export class GuideView extends Component {
     return node
   }
 
-  /** 气泡贴着洞的下沿放；洞不在了（全屏面板）就贴屏幕底部。 */
+  /**
+   * 气泡贴着洞的**上沿**放；洞不在了（全屏面板）就贴屏幕顶部。
+   *
+   * <p>为什么不是下沿（原写法）：气泡不透明，落在洞里就是一块"看不见的遮挡"。本游戏的面板把
+   * **可点的动作键排在卡片底部**（详情条：升级 / 加速 / 收取 / 取消），而引导每一步要玩家做的正是按那颗键 ——
+   * 贴下沿就是"引导把它让你按的东西挡住"。世界矩形实测：气泡 y 72..222 把「升级」那颗（88..165）整个盖住。
+   *
+   * <p>为什么贴顶不是"换个地方挡"：屏幕 960×640、底部导航条实测只有 52 高（y 8..60）、卡片 608 高 ——
+   * **没有任何一个位置能既放得下 150 高的气泡又不碰到卡片**（贴屏幕底部时气泡占 y 8..158，
+   * 照样压进动作条 88..165 里）。所以只能选挡住什么：
+   * 顶部那一条是标题 / 队列 / 资源读数（读一次就够，且引导文案本身就在说要做的事），
+   * 底部那一条是**这一步要按的键**（按不到就推不下去）。取前者。
+   */
   private placeBubble(height: number, hole: GuideRect): void {
     if (this.bubble === null) {
       return
     }
-    const anchorBottom = hole.y > -height / 2 ? hole.y : -height / 2
-    const y = anchorBottom + BUBBLE_HEIGHT / 2 + 12
-    this.bubble.setPosition(new Vec3(0, Math.min(y, height / 2 - BUBBLE_HEIGHT / 2 - 8), 0))
+    const anchorTop = hole.y + hole.height < height / 2 ? hole.y + hole.height : height / 2
+    const y = anchorTop - BUBBLE_HEIGHT / 2 - 12
+    this.bubble.setPosition(new Vec3(0, Math.max(y, -height / 2 + BUBBLE_HEIGHT / 2 + 8), 0))
     const row = this.bubble.getChildByName('GuideButtons')
     if (row !== null && this.skipButton !== null && this.nextButton !== null) {
       this.nextButton.setPosition(new Vec3(-(BUTTON_WIDTH + 12) / 2, 0, 0))
