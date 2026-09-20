@@ -188,6 +188,12 @@ declare module 'cc' {
 
   export class Sprite extends Component {
     spriteFrame: SpriteFrame | null
+    /**
+     * 真实引擎里 `Sprite extends UIRenderer`，`color` 是 UIRenderer 上的属性（染色用），
+     * 桩里漏了它会把"用了个真有的引擎方法"报成属性不存在 —— 与 `setSiblingIndex`、
+     * `getChildByName` 同一条：那是桩的缺口，不是调用方写错（本项目的 scene/ 层在 Creator 里能编过）。
+     */
+    color: Color
     type: number
     sizeMode: number
     static Type: {

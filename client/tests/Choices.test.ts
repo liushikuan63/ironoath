@@ -110,9 +110,11 @@ test('开宝箱的档位只按"手里有几个"给，不抄逐箱上限', () => 
   assert.deepEqual(buildChestOpenChoices(12).map(o => o.id), ['1', '5', '10', 'all'])
 })
 
-test('手里超过协议天花板时，「全开」说的是天花板而不是持有数', () => {
+test('手里超过一次上限时，「全开」说的是上限而不是持有数', () => {
   const all = buildChestOpenChoices(250).find(o => o.id === 'all')
   assert.equal(all?.label, '全开 100 个')
-  assert.match(all?.detail ?? '', /协议单次上限 100/,
+  assert.match(all?.detail ?? '', /一次最多开 100 个/,
     '要说清为什么是 100 而不是 250，否则玩家以为另外 150 个被吞了')
+  // 这句是给玩家看的，工程词不能上屏（第 12 道门盯这条；上一版这条断言把「协议」钉成了规格）
+  assert.doesNotMatch(all?.detail ?? '', /协议|服务端|下发|幂等/)
 })

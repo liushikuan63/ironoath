@@ -95,7 +95,7 @@ export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
     out.push({
       id: 'all',
       label: `全开 ${all} 个`,
-      detail: all === held ? '一次开完手里这些' : `手里 ${held} 个，协议单次上限 ${CHEST_BATCH_CEILING} 个`,
+      detail: all === held ? '一次开完手里这些' : `手里 ${held} 个，一次最多开 ${CHEST_BATCH_CEILING} 个`,
     })
   }
   return out
