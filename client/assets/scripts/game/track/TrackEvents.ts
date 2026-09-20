@@ -303,6 +303,11 @@ export const TRACK_EVENTS = {
    * "一次开 1 个"与"一次开 100 个"在运营曲线上是两种玩家。
    */
   chestOpen: 'chest_open',
+  /**
+   * 取消一格建造（B03 §2）。带 buildingId：取消率按建筑拆开才看得出是"玩家排错了"
+   * 还是"某一种建筑的排队代价让人反复反悔"。
+   */
+  buildingCancel: 'building_cancel',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

@@ -72,6 +72,7 @@ const NOW = Date.now()
 const RESEARCH_CALLS = []
 const CANCEL_CALLS = []
 const SPEEDUP_CALLS = []
+const CANCEL_BUILD_CALLS = []
 let techPulls = 0
 /**
  * 研究状态会被 `/tech/research` 推进 —— 夹具不能是静态的：静态的话"发完重拉到了新状态"这条
@@ -146,6 +147,25 @@ await context.route('**/bag/list*', async (route) => {
   })
 })
 
+// 「取消」那颗键只在**正在升级**的那一格上出现，dev 新号没有在建工程 ⇒ 城市列表也钉成夹具
+await context.route('**/city/cancel*', async (route) => {
+  if (await passthrough(route)) return
+  CANCEL_BUILD_CALLS.push(JSON.parse(route.request().postData() ?? '{}'))
+  await reply(route, { buildingId: 'b_academy', refund: [{ type: 'WOOD', amount: 300 }] })
+})
+await context.route('**/city/list*', async (route) => {
+  if (await passthrough(route)) return
+  await reply(route, {
+    buildings: [{
+      id: 'b_academy', configId: 'academy', name: '学院', level: 2, gridX: 3, gridY: 3,
+      status: 'UPGRADING', finishAt: NOW + 60_000, remainingSeconds: 60, progress: 500,
+      startedAt: NOW - 60_000, totalSeconds: 120, helpCount: 0,
+    }],
+    buildOptions: [], queues: { used: 1, available: 1, max: 2 },
+    resources: {}, serverNow: NOW,
+  })
+})
+
 const page = await context.newPage()
 const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
@@ -157,6 +177,34 @@ const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'city')
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
 await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+
+/**
+ * 开局把引导层摘掉。
+ *
+ * <p>第 1 步（`panelKey=city`、`skippable=false`，见 `contract/config/guide.json`）的气泡贴着内城
+ * 可用区的下沿，正好压住那一格的动作条；判据是 `quest_main_01` 完成，玩家在这一刻既点不掉也跳不掉，
+ * 所以每一次截图都会拍到气泡。这份量具验的不是引导（它有 `verify-guide-runtime.mjs` 自己那份），
+ * 只是不让它挡住目视 —— 摘完之后按键、读数、请求走的都还是生产代码。
+ * 遮罩本身该不该给动作条让位，另记一格判断。
+ */
+await page.waitForFunction(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  return game?.getChildByName('Guide') !== undefined && game.getChildByName('Guide') !== null
+}, { timeout: 20_000 }).catch(() => undefined)
+const guideGone = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const guide = game?.getChildByName('Guide')
+  if (guide === undefined || guide === null) return false
+  const layer = guide.getComponent('GuideView')
+  if (layer === null || layer === undefined) return false
+  // 只把节点 active 置 false 没用：切面板 / 回执都会 repaint，有帧就重新画回来。
+  // 摘驱动器（没帧就 clearLayer）+ 让后续下发不再装上，这一层才真的不再出现。
+  layer.driver = null
+  layer.attach = () => undefined
+  layer.repaint()
+  return !guide.active
+})()`)
+checkTrue('引导层已摘除，不再挡住内城动作条', guideGone)
 
 /** 内城那一页的节点 + 研究页的节点，一次读回来 */
 const READ = `(() => {
@@ -328,6 +376,76 @@ checkTrue('取消完那句回执照服务端给的数念（返还比例与城建
 check('取消完那一行的键又回来了（队列空出来了）', (read?.buttons ?? []).join(','), 'research-tech_agri_wood')
 await page.screenshot({ path: path.join(OUT, 'tech-cancelled.png') })
 console.log(`  截图：${path.join(OUT, 'tech-cancelled.png')}`)
+
+// ---------- 内城那格「取消建造」：/city/cancel 此前是零调用点，建造只能开始不能反悔 ----------
+// 先把研究页关掉：它盖在内城上面，不关的话这一步的截图拍到的是上一页，
+// 读数虽然是对的（按节点名直接读内城子树）但**目视**就成了自欺
+await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let hit = null
+  const walk = (n) => { if (n.name === 'close') hit = n; for (const c of n.children) walk(c) }
+  walk(game?.getChildByName('techPanel') ?? game)
+  if (hit !== null) hit.emit('touch-start')
+  return hit !== null
+})()`)
+await page.waitForTimeout(600)
+checkTrue('研究页关得掉（那颗「关闭」按得到）', await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const tech = game?.getChildByName('techPanel')
+  return tech !== undefined && tech !== null && !tech.active
+})()`))
+const CITY_BAR = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('city')
+  let cancel = null
+  let upgrade = null
+  const texts = []
+  const walk = (n) => {
+    if (n.name === 'DetailCancelButton') cancel = n
+    if (n.name === 'DetailUpgradeButton') upgrade = n
+    const t = n.getComponent('cc.Label')?.string ?? ''
+    if (t.length > 0) texts.push(t)
+    for (const c of n.children) walk(c)
+  }
+  walk(panel)
+  return {
+    hasCancel: cancel !== null,
+    cancelVisible: cancel !== null && cancel.active,
+    upgradeVisible: upgrade !== null && upgrade.active,
+    texts,
+  }
+})()`
+let cityBar = null
+for (let i = 0; i < 20; i += 1) {
+  cityBar = await page.evaluate(CITY_BAR)
+  if (cityBar?.hasCancel === true) break
+  await page.waitForTimeout(500)
+}
+check('在升级那一格的动作条上有「取消」键', cityBar?.cancelVisible, true)
+check('同一槽位的「升级」让位给「取消」（这一格已经在建，不能再开一次）',
+  cityBar?.upgradeVisible, false)
+const cancelBuildTapped = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('city')
+  let hit = null
+  const walk = (n) => { if (n.name === 'DetailCancelButton' && n.active) hit = n; for (const c of n.children) if (c.active) walk(c) }
+  walk(panel)
+  if (hit === null) return false
+  hit.emit('touch-start')
+  return true
+})()`)
+checkTrue('按得到那颗「取消」', cancelBuildTapped)
+await page.waitForTimeout(1_500)
+check('恰好发出一条 POST /city/cancel', CANCEL_BUILD_CALLS.length, 1)
+check('请求体里是那一格的 buildingId', CANCEL_BUILD_CALLS[0]?.buildingId, 'b_academy')
+checkTrue('取消建造带幂等键（退资源是写操作，重放会退两次）',
+  typeof CANCEL_BUILD_CALLS[0]?.requestId === 'string' && CANCEL_BUILD_CALLS[0].requestId.length > 0)
+cityBar = await page.evaluate(CITY_BAR)
+checkTrue('底部把"退回来多少"照服务端给的数念出来：'
+  + JSON.stringify((cityBar?.texts ?? []).filter((t) => t.includes('退回') || t.includes('取消'))),
+  (cityBar?.texts ?? []).some((t) => t.includes('已取消建造') && t.includes('退回 木材 +300')))
+await page.screenshot({ path: path.join(OUT, 'city-cancel-build.png') })
+console.log(`  截图：${path.join(OUT, 'city-cancel-build.png')}`)
 
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {

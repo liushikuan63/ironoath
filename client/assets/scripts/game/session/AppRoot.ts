@@ -26,7 +26,9 @@ import type { NetOutcome } from '../../net/NetModule'
 import type { Store } from '../store/Store'
 import type { TimeSync } from '../../core/TimeSync'
 import type { OfflineReportView, PowerDetailResp, StaminaBuyResp, StaminaResp } from '../../net/generated/Protocol'
-import type { CityCollectResp, CityListResp, SpeedUpSource } from '../../net/generated/CityProtocol'
+import type {
+  CityCancelResp, CityCollectResp, CityListResp, SpeedUpSource,
+} from '../../net/generated/CityProtocol'
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
 import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
 import type { GachaDrawResp, GachaPoolsResp, HeroListResp } from '../../net/generated/HeroProtocol'
@@ -217,6 +219,8 @@ export interface PanelTargets {
   city?(resp: CityListResp, offsetMs: number): void
   /** 一次收割的即时结果（要立刻飘字，之后再被 city 列表覆盖）。 */
   cityCollect?(resp: CityCollectResp): void
+  /** 一次取消建造的即时回执（退回来多少，照服务端给的数念）。 */
+  cityCancelled?(resp: CityCancelResp): void
   /**
    * 军队面板。`trainMemory` 是客户端记住的上一次成功训练 —— 面板只用它决定
    * 「自动续训」现在能不能开（开关本身的策略全部来自响应，见 game/army/AutoTrain.ts）。
@@ -994,6 +998,26 @@ export class AppRoot {
     this.track(TRACK_EVENTS.gatherCollect, { buildingId: trackParam(buildingId), all: trackParam(buildingId === null) })
     return this.write('city', this.api.cityCollect({ buildingId }),
       ['city', 'resources', 'reddot'], r => this.targets.cityCollect?.(r))
+  }
+
+  /**
+   * 取消一格建造。按钮只在服务端说"这一格在升级"时才存在（`BuildingRow.upgrading`），
+   * 所以这里不再自己判一遍该不该让按 —— 但**列表还没到手时不能放行**，
+   * 那等于把一次读侧故障变成一次注定失败的写请求。
+   */
+  cancelBuild(buildingId: string): Promise<void> {
+    const row = this.cityResp?.buildings.find((b) => b.id === buildingId)
+    if (row === undefined) {
+      this.rejectNeeds('city', '这一格的状态还没读到，稍后再试')
+      return Promise.resolve()
+    }
+    if (row.status !== 'UPGRADING') {
+      this.rejectNeeds('city', '这一格现在没有在建，不用取消')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.buildingCancel, { buildingId })
+    return this.write('city', this.api.cityCancel({ buildingId }),
+      ['city', 'resources', 'reddot'], r => this.targets.cityCancelled?.(r))
   }
 
   // ---------- 武将养成（V03 前置：把已有的养成能力接到玩家手上） ----------

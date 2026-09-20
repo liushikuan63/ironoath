@@ -223,6 +223,7 @@ const ROUTES: Record<string, unknown> = {
   '/city/upgrade': { accepted: true, serverNow: SERVER_NOW },
   '/city/speedUp': { remainingSeconds: 0, serverNow: SERVER_NOW },
   '/city/collect': { collected: {}, entries: [], serverNow: SERVER_NOW },
+  '/city/cancel': { buildingId: 'b1', refund: [{ type: 'WOOD', amount: 300 }] },
   '/army/train': { started: 1, serverNow: SERVER_NOW },
   // 开关自动续训（B25-S2d）：回一份「开着、还剩 2 批」的策略，够编排用例读回执
   '/army/autoTrain': {
@@ -575,6 +576,8 @@ interface Harness {
   readonly lastChest: { consumed: number, overflow: number } | null
   /** 最近一次取消研究里服务端回的 techId 与那份返还 */
   readonly lastTechCancel: { techId: string, refund: number } | null
+  /** 最近一次取消建造里服务端回的返还量 */
+  readonly lastCityCancel: number | null
   /** 递给「用哪一张加速」的候选，以及点其中一张 */
   readonly researchSpeedupOptions: readonly ResearchSpeedupChoice[]
   pickResearchSpeedup(itemId: string, count: number): void
@@ -739,6 +742,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let chestPick: ((id: string) => void) | null = null
   let lastChest: { consumed: number, overflow: number } | null = null
   let lastTechCancel: { techId: string, refund: number } | null = null
+  let lastCityCancel: number | null = null
   let researchSpeedupOptions: ResearchSpeedupChoice[] = []
   let researchSpeedupPick: ((choice: ResearchSpeedupChoice) => void) | null = null
   let lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null = null
@@ -747,6 +751,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   const targets: PanelTargets = {
     city: () => attached.push('city'),
     cityCollect: () => attached.push('cityCollect'),
+    cityCancelled: (resp) => {
+      attached.push('cityCancelled')
+      lastCityCancel = resp.refund[0]?.amount ?? 0
+    },
     army: () => attached.push('army'),
     hero: () => attached.push('hero'),
     resources: () => attached.push('resources'),
@@ -1022,6 +1030,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastTechCancel() {
       return lastTechCancel
+    },
+    get lastCityCancel() {
+      return lastCityCancel
     },
     get researchSpeedupOptions() {
       return researchSpeedupOptions
@@ -4198,4 +4209,57 @@ test('背包那份还没读到时说"还没读到"，不说成"手里没有"', a
   h.root.requestResearchSpeedUp()
 
   assert.match(h.errors.map(e => e[1]).join('\n'), /道具清单还没读到/)
+})
+
+// ---------- 取消建造（B03 §2：`/city/cancel` 一直有，客户端零调用点） ----------
+
+const upgradingCity = {
+  buildings: [
+    { id: 'b1', configId: 'academy', name: '学院', level: 2, gridX: 3, gridY: 3,
+      status: 'UPGRADING', finishAt: SERVER_NOW + 60_000, remainingSeconds: 60,
+      progress: 500, startedAt: SERVER_NOW - 60_000, totalSeconds: 120, helpCount: 0 },
+    { id: 'b2', configId: 'farm', name: '农田', level: 1, gridX: 1, gridY: 1,
+      status: 'IDLE', finishAt: null, remainingSeconds: null, progress: 0,
+      startedAt: null, totalSeconds: 0, helpCount: 0 },
+  ],
+  buildOptions: [],
+  queues: { used: 1, available: 1, max: 2 },
+  resources: {}, serverNow: SERVER_NOW,
+}
+
+test('取消建造：一次 POST 带幂等键，返还量照服务端念', async () => {
+  const h = harness()
+  h.http.overrides.set('/city/list', upgradingCity)
+  await h.root.start('dev-1', '君')
+
+  await h.root.cancelBuild('b1')
+
+  const calls = h.http.calls.filter(c => c.path === '/city/cancel')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.buildingId, 'b1')
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
+    '取消退资源是写操作，重放不去重就是退两次')
+  assert.equal(h.lastCityCancel, 300, '退多少由服务端算（比例与城建共用一份配置），客户端不重算')
+  assert.equal(h.http.countOf('/city/list') >= 2, true, '取消完要重拉城市列表（队列槽位空出来了）')
+})
+
+test('没在建的那一格点取消：一个请求都不发，说的是"不用取消"', async () => {
+  const h = harness()
+  h.http.overrides.set('/city/list', upgradingCity)
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  await h.root.cancelBuild('b2')
+
+  assert.equal(h.http.calls.length, total, 'IDLE 那一格不该发出取消请求')
+  assert.ok(h.errors.some(e => /没有在建/.test(e[1])))
+})
+
+test('列表还没读到时不说成"没在建"：那是读侧故障，不是玩家的问题', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.cancelBuild('b9')
+
+  assert.ok(h.errors.some(e => /状态还没读到/.test(e[1])))
 })

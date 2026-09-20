@@ -1229,6 +1229,8 @@ export class GameBootstrap extends Component {
       }
       city.onSpeedUp = (buildingId, source) => { void this.root?.speedUpBuilding(buildingId, source) }
       city.onCollect = buildingId => { void this.root?.collect(buildingId) }
+      city.onCancelBuild = buildingId => { void this.root?.cancelBuild(buildingId) }
+      out.cityCancelled = resp => city.attachCancel(resp)
       // 内城右上角那颗「学院 · 研究」：研究页此前根本没有玩家入口（`openTech()` 零调用方）
       city.onOpenTech = () => { void this.root?.openTech() }
     }

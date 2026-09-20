@@ -10,12 +10,13 @@ import {
   _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, sys, view,
 } from 'cc'
 import {
-  CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, collectMessage, errorText,
+  CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, cancelMessage, collectMessage,
+  errorText,
 } from '../game/city/CityPanel'
 import type { BuildingRow, CityGrid, CityPanelView as CityPanelData } from '../game/city/CityPanel'
 import { buildBuildChoices } from '../game/session/Choices'
 import type {
-  CityCollectResp, CityListResp, ErrorDetail, SpeedUpSource,
+  CityCancelResp, CityCollectResp, CityListResp, ErrorDetail, SpeedUpSource,
 } from '../net/generated/CityProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import {
@@ -98,7 +99,7 @@ const MAX_SCALE = 1.4
 const ACTION_BUTTON_WIDTH = 82
 const ACTION_BUTTON_HEIGHT = 32
 
-type RowAction = 'upgrade' | 'speedAd' | 'speedGold' | 'collect'
+type RowAction = 'upgrade' | 'speedAd' | 'speedGold' | 'collect' | 'cancel'
 
 interface GridTileRefs {
   readonly node: Node
@@ -144,6 +145,8 @@ export class CityPanelView extends Component {
   onUpgrade: ((configId: string, gridX?: number, gridY?: number) => void) | null = null
   onSpeedUp: ((buildingId: string, source: SpeedUpSource) => void) | null = null
   onCollect: ((buildingId: string | null) => void) | null = null
+  /** 玩家点了「取消」这一行的建造。返还多少由服务端算，本场景只把回执念出来 */
+  onCancelBuild: ((buildingId: string) => void) | null = null
   /** 右上角那颗「学院 · 研究」：打开全局研究页（V03-a-S1 的读侧 + #323 的写侧都在那一页） */
   onOpenTech: (() => void) | null = null
 
@@ -183,6 +186,7 @@ export class CityPanelView extends Component {
     this.onUpgrade = null
     this.onSpeedUp = null
     this.onCollect = null
+    this.onCancelBuild = null
     this.onOpenTech = null
   }
 
@@ -200,6 +204,11 @@ export class CityPanelView extends Component {
 
   updateOffset(offsetMs: number): void {
     this.offsetMs = offsetMs
+  }
+
+  /** 取消建造的回执：退回来多少，照服务端给的数念。 */
+  attachCancel(resp: CityCancelResp): void {
+    this.showMessage(cancelMessage(resp), COLOR_GOOD)
   }
 
   attachCollect(resp: CityCollectResp): void {
@@ -370,6 +379,9 @@ export class CityPanelView extends Component {
 
     this.createActionButton(bar, 'DetailUpgradeButton', '升级', -12, 'upgrade')
     this.createActionButton(bar, 'DetailCollectButton', '收割', -12, 'collect')
+    // 「取消」与「升级」互斥（升级中才谈得上取消），所以共用同一个槽位 ——
+    // 按钮条只有 536 宽，升级中那一行已经排了两颗加速键，再加第三颗就溢出条外
+    this.createActionButton(bar, 'DetailCancelButton', '取消', -12, 'cancel')
     this.createActionButton(bar, 'DetailSpeedAdButton', '广告加速', 78, 'speedAd')
     this.createActionButton(bar, 'DetailSpeedGoldButton', '金币加速', 168, 'speedGold')
 
@@ -678,8 +690,9 @@ export class CityPanelView extends Component {
     for (const [button, kind] of Array.from(this.actionButtons)) {
       button.off('touch-start')
       const visible = row !== null && (kind === 'collect' ? row.collectable
-        : kind === 'upgrade' ? !row.upgrading && !row.collectable && !row.paused
-          : row.upgrading && !row.collectable)
+        : kind === 'cancel' ? row.upgrading
+          : kind === 'upgrade' ? !row.upgrading && !row.collectable && !row.paused
+            : row.upgrading && !row.collectable)
       button.active = visible
       if (!visible || row === null) {
         continue
@@ -697,6 +710,9 @@ export class CityPanelView extends Component {
             return
           case 'collect':
             this.onCollect?.(row.id)
+            return
+          case 'cancel':
+            this.onCancelBuild?.(row.id)
             return
         }
       }, this)
