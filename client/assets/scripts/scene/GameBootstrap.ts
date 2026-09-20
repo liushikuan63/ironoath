@@ -1387,6 +1387,8 @@ export class GameBootstrap extends Component {
     this.offlineReport.onJump = jump => this.root?.offlineReportJump(jump)
     this.marchCompose = new MarchComposeOverlay(this.node)
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
+      // 出征 / 发起集结 的切换（B26 S12）：编成与目标都不变，只换命令种类
+    this.marchCompose.onToggleMode = () => { void this.root?.toggleComposeRally() }
     this.marchCompose.onConfirm = () => { void this.root?.confirmMarch() }
     this.marchCompose.onCancel = () => this.root?.cancelMarchCompose()
     out.marchCompose = view => this.marchCompose?.render(view)

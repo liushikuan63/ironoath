@@ -142,6 +142,11 @@ export const TRACK_EVENTS = {
    * 或几乎只往 MEMBER 方向走（一直在撤职），都是联盟人事出问题的信号。
    */
   allianceSetRole: 'alliance_set_role',
+  /**
+   * 发起一次集结（B26 S12）。带层级与兵力：集结发起率与"有没有人加入"合看，
+   * 才知道这玩法是没人用还是用了凑不齐人。
+   */
+  rallyInitiate: 'rally_initiate',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

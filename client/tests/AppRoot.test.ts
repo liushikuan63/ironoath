@@ -3076,6 +3076,83 @@ test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一
   assert.equal(h.lastCompose?.compose.canSubmit, false)
 })
 
+test('B26 S12：编成里切到集结再确认 → 发 /rally/squad 而不是 /world/march，带目标与承诺的兵', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'LEADER', permissions: ['START_RALLY'], serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
+    squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
+  }))
+  h.http.overrides.set('/rally/squad', { rally: rallyShape(), serverNow: SERVER_NOW })
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  await h.root.loadSocialGates()
+  await h.root.refresh('social')
+  h.root.beginMarchCompose('P9')
+  assert.equal(h.lastCompose?.mode ?? 'MARCH', 'MARCH', '默认还是出征')
+  h.root.toggleComposeRally()
+  assert.equal(h.lastCompose?.mode, 'RALLY')
+  assert.equal(h.lastCompose?.submitLabel, '发起集结', '确认键上的字跟着变，玩家才知道自己按的是哪种命令')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  await h.root.confirmMarch()
+  assert.equal(h.http.countOf('/world/march'), 0, '切了集结就不该再走普通出征')
+  const sent = h.http.calls.filter(c => c.path === '/rally/squad').at(-1)
+  assert.ok(sent !== undefined, '集结那一枪要真发出去')
+  assert.deepEqual(sent?.body.targetCoord, { x: 60, y: 60 }, '目标是编成前选的那个')
+  assert.equal(sent?.body.targetType, 'PLAYER_CITY', '搜索结果都是玩家城，类型由编排层定而不是猜')
+  assert.deepEqual(sent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }],
+    '发起人自己的兵必须随这一枪交出去：服务端拿它建第一个参与者')
+  assert.ok(typeof sent?.body.requestId === 'string', '集结建的是公共事务，重放等于多开一支')
+})
+
+test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只说一句原因', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'MEMBER', permissions: [], serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
+    squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
+  }))
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  await h.root.loadSocialGates()
+  await h.root.refresh('social')
+  h.root.beginMarchCompose('P9')
+  h.events.length = 0
+  const before = h.http.calls.length
+  h.root.toggleComposeRally()
+  assert.equal(h.http.calls.length, before, '切换不吃网络：它既不是命令也不该预拉')
+  assert.equal(h.events.length, 0, '换种类是一次选择，不是那一次提交')
+  assert.equal(h.lastCompose?.mode ?? 'MARCH', 'MARCH', '被挡住就不切')
+  assert.ok((h.lastCompose?.notice ?? '').length > 0, '要说出为什么切不动')
+})
+
+/** 集结那一枪的响应体（面板只把它当"成功了"的信封用）。 */
+function rallyShape(): Record<string, unknown> {
+  return {
+    id: 'r_new', leaderId: 'p_me', allianceId: null, scope: 'SQUAD',
+    targetType: 'PLAYER_CITY', targetCoord: { x: 60, y: 60 }, targetName: '邻居',
+    state: 'PREPARING', departAt: SERVER_NOW + 600000, prepareMinutes: 10,
+    maxMembers: 5, memberCount: 1, troops: 30, myPlayerId: 'p_me',
+  }
+}
 test('V02-S1：集结列表递下来时带上我的 id —— 「我参没参」要用它去对服务端给的名单', async () => {
   const h = harness()
   await h.root.start('dev-1', '君')

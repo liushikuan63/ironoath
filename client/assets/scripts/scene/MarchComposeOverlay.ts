@@ -45,11 +45,14 @@ export class MarchComposeOverlay {
   private readonly rowMinusNodes: Node[] = []
   private readonly confirmNode: Node
   private readonly confirmLabel: Label
+  private readonly toggleLabel!: Label
   private view: MarchComposeView | null = null
 
   /** 勾选意图（unitId 与它要变成的数量）；由编排层夹取后再回来重画。 */
   onPick: ((unitId: string, count: number) => void) | null = null
   onConfirm: (() => void) | null = null
+  /** 在出征与发起集结之间来回切（B26 S12）。**换种类不是下命令**，所以它不打埋点 */
+  onToggleMode: (() => void) | null = null
   onCancel: (() => void) | null = null
 
   constructor(parent: Node, width = PANEL_WIDTH) {
@@ -86,6 +89,10 @@ export class MarchComposeOverlay {
       COLOR_GOLD, COLOR_MASK, () => this.onConfirm?.())
     this.confirmNode = confirm.node
     this.confirmLabel = confirm.label
+    // 中间那颗切种类：同一份兵、同一个目标，只是命令种类不同
+    const toggle = this.createButton('编成种类', '改成集结', 0, -PANEL_HEIGHT / 2 + 28,
+      COLOR_ROW, COLOR_TEXT, () => this.onToggleMode?.())
+    this.toggleLabel = toggle.label
 
     this.node.active = false
   }
@@ -101,7 +108,7 @@ export class MarchComposeOverlay {
       return
     }
     this.node.active = true
-    this.titleLabel.string = `出征：${view.targetName}`
+    this.titleLabel.string = `${view.mode === 'RALLY' ? '集结' : '出征'}：${view.targetName}`
     this.coordLabel.string = `坐标 ${view.coordText}`
     this.totalLabel.string = `共派 ${view.compose.totalText} 兵`
     this.noticeLabel.string = view.notice ?? ''
@@ -125,7 +132,12 @@ export class MarchComposeOverlay {
     })
 
     // 提交态：确认键灰掉且不吃触摸（双击发两份是最容易被投诉的"自动"类缺陷）
-    this.confirmLabel.string = view.submitting ? '出征中…' : '出征'
+    this.confirmLabel.string = view.submitting
+      ? (view.mode === 'RALLY' ? '发起中…' : '出征中…')
+      : (view.submitLabel ?? '出征')
+    // 切种类那颗**永远可点**：被挡住时点它是要看那句原因的，
+    // 置灰反而把原因一起藏了（玩家只会以为按钮坏了）
+    this.toggleLabel.string = view.mode === 'RALLY' ? '改回出征' : '改成集结'
     this.confirmLabel.color = view.submitting ? COLOR_DIM : COLOR_MASK
     this.confirmNode.active = !view.submitting
   }
