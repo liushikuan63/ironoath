@@ -26,7 +26,7 @@
   "rows": [
     {
       "id": "unit_infantry_t1",
-      "name": "重步兵",
+      "name": "重步兵 T1",
       "type": "INFANTRY",
       "tier": 1,
       "attack": 8,
@@ -117,7 +117,7 @@
     },
     {
       "id": "unit_cavalry_t1",
-      "name": "轻骑兵",
+      "name": "轻骑兵 T1",
       "type": "CAVALRY",
       "tier": 1,
       "attack": 12,
@@ -208,7 +208,7 @@
     },
     {
       "id": "unit_archer_t1",
-      "name": "弓兵",
+      "name": "弓兵 T1",
       "type": "ARCHER",
       "tier": 1,
       "attack": 14,
@@ -299,7 +299,7 @@
     },
     {
       "id": "unit_siege_t1",
-      "name": "攻城器",
+      "name": "攻城器 T1",
       "type": "SIEGE",
       "tier": 1,
       "attack": 7,

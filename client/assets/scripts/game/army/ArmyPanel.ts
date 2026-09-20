@@ -39,7 +39,6 @@ export interface UnitRow {
   readonly name: string
   /** 兵种类型。面板按它分页；放在行数据里是为了不用回查原响应 */
   readonly unitType: UnitType
-  readonly tierText: string
   readonly countText: string
   readonly woundedText: string | null
   /** 训练中文本；未在训练为 null */
@@ -167,7 +166,6 @@ export function buildUnitRow(unit: UnitView, offsetMs: number, localNow: number)
     unitId: unit.unitId,
     name: unit.name,
     unitType: unit.type,
-    tierText: `T${unit.tier}`,
     countText: `可用 ${unit.count}`,
     woundedText: unit.wounded > 0 ? `伤兵 ${unit.wounded}` : null,
     trainingText: training ? `训练中 ${unit.training}` : null,

@@ -377,4 +377,19 @@ class ConfigTablesAcceptanceTest {
         }
         throw new IllegalStateException("未找到 contract/config");
     }
+
+    @Test
+    @DisplayName("unit 表每行的展示名都以 T<tier> 结尾：军队行只印 name，不再由客户端拼档位前缀")
+    void unitNamesCarryTheirTier() {
+        // 视图 ArmyPanelView 现在直接印 row.name（客户端不自己翻译表文案，B00 铁律）。
+        // 表里一旦又出现「重步兵」这种不带档位的名字，T1 行就没有档位、T2~T5 有；
+        // 而客户端若再加前缀，T2~T5 会印成「T2 重步兵 T2」—— 这一族的成因就是表自身不一致，
+        // 所以把它做成门，而不是靠人记得对齐（收口清单里"档位名统一"那条）。
+        for (UnitCfg unit : registry.all(UnitCfg.class)) {
+            assertThat(unit.name())
+                    .as("兵种 %s 的展示名要自带档位（tier=%d ⇒ 以 T%d 结尾），否则军队行会缺档位或重复档位",
+                            unit.id(), unit.tier(), unit.tier())
+                    .endsWith("T" + unit.tier());
+        }
+    }
 }

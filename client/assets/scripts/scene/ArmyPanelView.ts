@@ -454,7 +454,9 @@ export class ArmyPanelView extends Component {
     const icon = node.getChildByName('Icon')
 
     if (title !== undefined && title !== null) {
-      title.string = `${row.tierText} ${row.name}`
+      // 名字自带档位（表里就是「重步兵 T2」）：客户端不再拼 `T${tier}` 前缀，
+      // 否则 T2~T5 会印成「T2 重步兵 T2」而 T1 又不会 —— 显示名归服务端（收口清单里"档位名统一"那条）
+      title.string = row.name
       title.color = row.unlocked ? COLOR_TEXT : COLOR_TEXT_DIM
     }
     if (detail !== undefined && detail !== null) {

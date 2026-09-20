@@ -82,7 +82,6 @@ test('训练中的兵种显示数量与本地倒计时；未训练时两者都�
   assert.equal(training.woundedText, '伤兵 40')
   assert.equal(training.countText, '可用 500')
   assert.equal(training.unitType, 'INFANTRY')
-  assert.equal(training.tierText, 'T1')
 
   const idle = buildUnitRow(unit(), 0, 5_000)
   assert.equal(idle.trainingText, null)
@@ -114,7 +113,7 @@ test('训练消耗按配置表顺序列出，名字走 `ui/ResourceNames` 那份
 
 test('兵种行的任何一处文案都不许出现资源枚举原文（#268 同族，客户端唯一真源在 ui/ResourceNames）', () => {
   const row = buildUnitRow(unit({ wounded: 3, training: 10 }), 0, 0)
-  const playerFacing = [row.tierText, row.countText, row.woundedText ?? '', row.trainingText ?? '',
+  const playerFacing = [row.countText, row.woundedText ?? '', row.trainingText ?? '',
     row.countdownText ?? '', row.unlockHint ?? '', row.trainCostText, row.name].join(' ')
   assert.doesNotMatch(playerFacing, /\b(WOOD|STONE|IRON|GRAIN|GOLD|STAMINA)\b/, playerFacing)
 })
