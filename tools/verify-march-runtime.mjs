@@ -314,7 +314,13 @@ const COMPOSE = `(() => {
     return overlay.position.y + n.position.y - n.getComponent('cc.UITransform').height / 2
   })
   const panel = overlay.getComponent('cc.UITransform')
-  const panelBottom = overlay.position.y - panel.height / 2
+  // 节点的 UITransform 现在是**遮罩命中框**（整屏），不是面板那一块 ⇒ 面板边界只能从内容量：
+  // 取最上面那条标题（玩家必须看见的第一行）
+  const titleNode = (overlay.children || [])
+    .filter((c) => c.name === 'label' && (c.getComponent('cc.Label')?.string ?? '').includes('：'))
+    .at(0)
+  const titleTop = titleNode === undefined ? null
+    : overlay.position.y + titleNode.position.y + titleNode.getComponent('cc.UITransform').height / 2
   return {
     found: true,
     active: overlay.active,
@@ -327,9 +333,11 @@ const COMPOSE = `(() => {
     lowestButton: Math.min(...bottoms),
     designHeight: size.height,
     clearsNav: Math.min(...bottoms) >= (-size.height / 2 + 8 + 52),
-    // 抬起面板不能把头顶那一条遮罩漏掉：遮罩矩形跟着节点走，反向偏移错了就会露一条没盖住的底图
-    panelBottom,
-    panelTop: overlay.position.y + panel.height / 2,
+    // 命中框现在就是整屏：它盖不住屏幕边缘的话，边缘那一条仍然会穿透到底下的面板
+    scrimBottom: overlay.position.y - panel.height / 2,
+    scrimTop: overlay.position.y + panel.height / 2,
+    // 抬起之后玩家第一眼那行字不能被顶出可视区
+    titleTop,
     designTop: size.height / 2,
     rallyActive: rallyRow ? rallyRow.active : null,
     rallyText: rallyRow ? rallyRow.children
@@ -366,11 +374,12 @@ check('出征态下切种类那颗写明下一档是「小队集结」', march?.
 check('出征那一档没有参数行：出征不吃"等人"这个维度', march?.rallyActive, false)
 checkTrue('弹层底部三颗键都没压到导航条', march?.clearsNav === true,
   `最低 ${march?.lowestButton} vs 导航条上沿 ${march?.navTop}（可视高 ${march?.designHeight}）`)
-checkTrue('抬起面板没有把它顶出可视区（那会在遮罩上漏出一条底图）',
-  march !== null && march.panelTop <= march.designTop + 1,
-  `面板顶 ${march?.panelTop} vs 可视顶 ${march?.designTop}`)
-checkTrue('面板底边正好落在导航条之上', march !== null && march.panelBottom >= march.navTop - 1,
-  `面板底 ${march?.panelBottom} vs 条上沿 ${march?.navTop}`)
+checkTrue('遮罩命中框盖住整屏（边缘那一条不再穿透）',
+  march !== null && march.scrimBottom <= -march.designTop + 1 && march.scrimTop >= march.designTop - 1,
+  `命中框 [${march?.scrimBottom}, ${march?.scrimTop}] vs 屏幕 [${-march?.designTop}, ${march?.designTop}]`)
+checkTrue('抬起后标题仍在可视区内（第一眼那行字不能被顶掉）',
+  march !== null && march.titleTop !== null && march.titleTop <= march.designTop - 1,
+  `标题顶 ${march?.titleTop} vs 可视顶 ${march?.designTop}`)
 await page.screenshot({ path: path.join(OUT, 'compose-mode-march.png') })
 console.log(`  截图：${path.join(OUT, 'compose-mode-march.png')}`)
 
@@ -446,6 +455,42 @@ const backToMarch = await page.evaluate(COMPOSE)
 check('切回出征后参数行整条收起', backToMarch?.rallyActive, false)
 check('确认键回到「出征」', backToMarch?.confirmText, '出征')
 checkTrue('加高之后弹层底部仍然不压导航条（三态各测一次）', backToMarch?.clearsNav === true)
+
+// ---------- 相位 B3：遮罩的命中区域（真指针事件，不是 emit touch-start）----------
+// 只 emit 事件证明不了"命中区盖住整屏"——那正是这条要验的东西，必须按屏幕坐标真点一下。
+const clickAt = async (dx, dy) => {
+  const box = await page.locator('canvas').boundingBox()
+  if (!box) {
+    throw new Error('找不到 canvas，无法按屏幕坐标点击')
+  }
+  const scale = box.width / 960
+  await page.mouse.click(box.x + box.width / 2 + dx * scale, box.y + box.height / 2 - dy * scale)
+}
+const NAV = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  return game?.getComponent('PanelNav')?.current() ?? null
+})()`
+const navBefore = await page.evaluate(NAV)
+// 面板之外的一个点：面板占 y ∈ [-234,294]，-285 落在它下面的导航条上
+await clickAt(0, -285)
+await page.waitForTimeout(500)
+const scrim = await page.evaluate(COMPOSE)
+check('点遮罩空白处不关闭弹层（口径：关闭只走「编成取消」那颗键）', scrim?.active, true)
+check('点遮罩空白处也不穿透打到导航条（没换页）', await page.evaluate(NAV), navBefore)
+
+// 兵种名压出面板那条只**记录量到的数**，不判红：修法要连 −/＋ 两颗键一起重排，是另一格
+const OVERFLOW = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const overlay = game?.getChildByName('MarchCompose')
+  const row = overlay?.children.find((c) => c.name === 'composeRow0')
+  const label = row?.children[0]
+  const t = label?.getComponent('cc.UITransform')
+  return { labelLeft: label ? label.position.x - t.width / 2 : null, panelLeft: -310 }
+})()`
+console.log('  量测（未判据）：兵种名左边缘 vs 面板左边缘 =', JSON.stringify(await page.evaluate(OVERFLOW)))
+
+await page.screenshot({ path: path.join(OUT, 'compose-scrim-click.png') })
+console.log(`  截图：${path.join(OUT, 'compose-scrim-click.png')}`)
 
 await page.screenshot({ path: path.join(OUT, 'march-search-rows.png') })
 console.log(`  截图：${path.join(OUT, 'march-search-rows.png')}`)

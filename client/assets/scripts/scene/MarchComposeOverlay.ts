@@ -101,18 +101,21 @@ export class MarchComposeOverlay {
     this.node = new Node('MarchCompose')
     this.node.layer = parent.layer
     parent.addChild(this.node)
-    this.node.addComponent(UITransform).setContentSize(new Size(width, PANEL_HEIGHT))
-    // 吞掉遮罩点击：否则点空白处会穿到下面的地图上（等于在地图上乱点）
+    const screen = view.getVisibleSize()
+    const lift = panelLift(screen.height)
+    // 命中区域 = **整屏**，不是面板那一块。原先按 620×PANEL_HEIGHT 设，遮罩画满了整屏而
+    // 命中只有面板那么大 ⇒ 点暗处会穿透打到底下已经"看不见"的搜索行（整屏压暗却仍可点，
+    // 是不一致）。口径已定：遮罩上点击**不关闭**弹层，所以这里只吞不处理。
+    // 节点被抬起 lift，所以高度两侧各补 lift 才能仍然盖住整屏。
+    this.node.addComponent(UITransform)
+      .setContentSize(new Size(screen.width, screen.height + 2 * lift))
     this.node.on('touch-start', (_event: EventTouch) => {
-      /* 只吞不处理 */
+      /* 只吞不处理：关闭走「编成取消」那颗键 */
     }, this)
     const background = this.node.addComponent(Graphics)
     // 整屏遮罩，与 AwakenPick / ComposePick / Choice 三处同一惯例（COLOR_SCRIM 同色同参）。
     // 缺了它，弹层打开时底下的搜索面板照常亮着：标题「出征：某城」会和「半径 – 搜索」那行
     // 抢同一块像素，两层字叠在一起读不了（12:40 的 `compose-mode-*.png` 两张都拍到了）。
-    // 只画不改命中区域：遮罩上点击该不该关闭弹层是 UX 口径，另记一格，不在这里顺手定。
-    const screen = view.getVisibleSize()
-    const lift = panelLift(screen.height)
     background.fillColor = COLOR_SCRIM
     // 遮罩画在**屏幕**上，而本节点已经按 lift 抬起来了 ⇒ 矩形要反向偏移，
     // 否则抬起多少，屏幕底下就漏掉多宽一条没遮住的搜索面板
