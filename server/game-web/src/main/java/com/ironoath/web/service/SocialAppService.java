@@ -1947,16 +1947,30 @@ public class SocialAppService {
      * 它缺的只有「本盟到哪一级了」。把 8 行全量塞进联盟视图等于把表的副本再传一遍，
      * 而联盟视图是按 version 做 diff 同步的（B10 验收 10：不要让联盟数据每帧全量同步）。
      */
+    /**
+     * 联盟科技目录（B26 S9）。<b>0 级的那几项也要下发</b>：原来写成 `level <= 0 → continue`，
+     * 于是一个刚建的盟拿到的是空列表 —— 玩家既看不见"这游戏有联盟科技"，也永远点不到
+     * `/alliance/tech` 那颗按钮（有写口没发现口那一族的第四处）；而且旧版只给 id 不给名字，
+     * 画出来就是一串 `atech_atk`。
+     *
+     * <p>`canResearch` 只判两条：<b>没到本盟上限</b> 与 <b>资金够下一级</b>，用的是与写口同一句
+     * 比较（`researchCost(base, id, 1)`）—— 差一条就是"界面亮着、点下去回 ALLIANCE_FUND_LACK"。
+     * 职位能不能研究不在这里判：那份结论在 `/social/permissions` 的 `RESEARCH_TECH` 里，
+     * 两处各说一件事才不会互相打脸。
+     */
     private List<com.ironoath.web.dto.generated.AllianceTechView> allianceTechViews(Alliance alliance) {
         List<com.ironoath.web.dto.generated.AllianceTechView> out = new ArrayList<>();
         for (com.ironoath.config.cfg.AllianceTechCfg tech
                 : configs.all(com.ironoath.config.cfg.AllianceTechCfg.class)) {
             int level = alliance.techLevel(tech.id());
-            if (level <= 0) {
-                continue;
-            }
-            out.add(new com.ironoath.web.dto.generated.AllianceTechView(tech.id(), level,
-                    alliance.techLevelCap((int) tech.maxLevel()), tech.effectValue() * level));
+            int cap = alliance.techLevelCap((int) tech.maxLevel());
+            long nextCost = alliance.researchCost(tech.costBaseDonation(), tech.id(), 1);
+            boolean atCap = level >= cap;
+            boolean affordable = alliance.fund() >= nextCost;
+            out.add(new com.ironoath.web.dto.generated.AllianceTechView(tech.id(), level, cap,
+                    tech.effectValue() * level, tech.name(), nextCost, !atCap && affordable,
+                    atCap ? "本盟等级下已经研究到头了，提升联盟等级才能继续"
+                            : affordable ? null : "联盟资金还不够，多捐一些就能研究"));
         }
         return List.copyOf(out);
     }

@@ -478,9 +478,16 @@ class SocialEndpointTest {
 
         JsonNode view = get200("/social/summary", leader);
         JsonNode techs = view.get("alliance").get("techs");
-        assertThat(techs).as("科技进度只有服务端知道，必须能从视图里读到").hasSize(1);
-        assertThat(techs.get(0).get("techId").asText()).isEqualTo("atech_atk");
-        assertThat(techs.get(0).get("level").asInt()).isEqualTo(1);
+        assertThat(techs).as("目录必须完整：0 级的那几项也在内，否则玩家看不见有这功能")
+                .hasSize(6);
+        assertThat(techRow(techs, "atech_atk").get("level").asInt())
+                .as("科技进度只有服务端知道，必须能从视图里读到").isEqualTo(1);
+        assertThat(techRow(techs, "atech_atk").get("name").asText())
+                .as("名字由服务端下发：客户端没有 alliance_tech 表，自己翻就是第二真源")
+                .isEqualTo("联盟锋刃");
+        assertThat(techRow(techs, "atech_def").get("nextLevelCost").asLong())
+                .as("价格一起下发：没有它玩家只能点一枪才知道钱不够，而那一枪扣的是全盟公账")
+                .isEqualTo(2000L);
     }
 
     @Test
@@ -512,7 +519,7 @@ class SocialEndpointTest {
         assertThat(root.get("detail").asText()).contains("需要 2000");
 
         JsonNode view = get200("/social/summary", leader);
-        assertThat(view.get("alliance").get("techs")).as("失败的不得记账").isEmpty();
+        assertThat(researchedCount(view.get("alliance").get("techs"))).as("失败的不得记账").isZero();
         assertThat(view.get("alliance").get("fund").asLong()).as("公账仍是 0，不能出现负数").isZero();
     }
 
@@ -535,7 +542,8 @@ class SocialEndpointTest {
         }
 
         JsonNode view = get200("/social/summary", leader);
-        assertThat(view.get("alliance").get("techs")).as("两次被拒都不该留下科技记录").isEmpty();
+        assertThat(researchedCount(view.get("alliance").get("techs")))
+                .as("两次被拒都不该留下科技记录").isZero();
         assertThat(view.get("alliance").get("fund").asLong()).as("一分钱都不能扣").isZero();
     }
 
@@ -549,7 +557,8 @@ class SocialEndpointTest {
                 new com.ironoath.web.dto.generated.AllianceTechReq(newRequestId(), "atech_atk", 999));
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.ALLIANCE_TECH_LEVEL_MAX.code());
         assertThat(root.get("detail").asText()).contains("最多只能研究");
-        assertThat(get200("/social/summary", leader).get("alliance").get("techs")).isEmpty();
+        assertThat(researchedCount(get200("/social/summary", leader).get("alliance").get("techs")))
+                .as("超上限那一枪整条不生效").isZero();
     }
 
     @Test
@@ -578,7 +587,10 @@ class SocialEndpointTest {
         JsonNode view = get200("/social/summary", leader);
         assertThat(view.get("alliance").get("fund").asLong())
                 .as("重放不得再扣一次公共资产").isEqualTo(fundAfterFirst);
-        assertThat(view.get("alliance").get("techs").get(0).get("level").asInt()).isEqualTo(1);
+        assertThat(techRow(view.get("alliance").get("techs"), "atech_def").get("level").asInt())
+                .as("重放只研究了一级").isEqualTo(1);
+        assertThat(techRow(view.get("alliance").get("techs"), "atech_atk").get("level").asInt())
+                .as("没碰过的那一项仍是 0 级（目录全量下发之后，这一条才终于可断言）").isZero();
     }
 
     // ---------- 钱包真扣款（骨架期是占位：恒返回「够」且不真的扣） ----------
@@ -1660,6 +1672,27 @@ class SocialEndpointTest {
 
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
+    }
+
+    /** 目录里某一行的科技（B26 S9 之后 `techs` 恒为全量，不能再按下标取）。 */
+    private static JsonNode techRow(JsonNode techs, String techId) {
+        for (JsonNode row : techs) {
+            if (techId.equals(row.get("techId").asText())) {
+                return row;
+            }
+        }
+        throw new AssertionError("目录里没有这一行科技：" + techId);
+    }
+
+    /** 已经研究过（level > 0）的科技有几项 —— 判「失败的不得记账」用的就是它。 */
+    private static int researchedCount(JsonNode techs) {
+        int count = 0;
+        for (JsonNode row : techs) {
+            if (row.get("level").asInt() > 0) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private JsonNode get200(String url, String playerId) throws Exception {
