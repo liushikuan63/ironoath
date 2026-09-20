@@ -64,6 +64,15 @@ export class ChoiceOverlay {
       }
     })
     this.createCommandButton('ChoiceCancel', '取消', 150, -170, () => this.hide())
+    // 行是从 NodePool 里 acquire 出来的：宿主每次渲染都把行重新 addChild 到父节点末尾，
+    // 而弹层建得比它们早 —— 于是"后加的压在弹层上面"。抬层不能只靠 `show()`（渲染发生在
+    // 它之后，背包实测），也不能靠八个宿主各自记得抬一次（漏一个就是一个玩家可见缺陷）。
+    // 谁往父节点后面加东西，就把自己的序号顶回末位；弹层没显示时不动。
+    parent.on('child-added', (node: Node) => {
+      if (node !== this.node && this.node.active) {
+        this.raise()
+      }
+    }, this)
     this.node.active = false
   }
 
@@ -81,10 +90,10 @@ export class ChoiceOverlay {
   }
 
   /**
-   * 抬到父节点最后：列表行是宿主渲染时才 addChild 的，加得比弹层晚就会压在菜单上面。
-   * `show()` 自己会抬一次；**宿主每次重排子节点后要再抬一次**（背包就是这么漏的）。
+   * 抬到父节点最后。两个时机自己会抬：`show()` 打开时，以及父节点后面又长了别的子节点时
+   * （见构造函数里那条 `child-added`）—— 宿主不需要记得抬，也不该各自记一次。
    */
-  raise(): void {
+  private raise(): void {
     const parent = this.node.parent
     if (parent === null || parent === undefined) {
       return

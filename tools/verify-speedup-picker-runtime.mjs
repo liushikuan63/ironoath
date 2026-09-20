@@ -19,7 +19,8 @@
  * 弹层在 `onLoad` 建、行在每次渲染才 addChild，行排在后面就把「选择加速目标」的标题盖掉；
  * 而既有的 `ChoiceOverlay.raise()` 用的是 `parent.addChild(自己)`，在 3.8.7 里对同一父节点
  * 是空操作（实测 children 为 A,B 时再 addChild(A) 仍是 A,B），抬层一直没生效。
- * 修法：`raise()` 改 `setSiblingIndex(末位)` + `show()` 抬一次 + 宿主重排子节点后再抬一次。
+ * 修法：`raise()` 改 `setSiblingIndex(末位)`，`show()` 抬一次，父节点 `child-added` 时
+ * 弹层自己顶回末位 —— 八个宿主不需要各自记得抬（宿主侧那一行删掉后本探针仍全绿，就是判据）。
  *
  * <p><b>不验的</b>：真的把道具用掉、队列真的少多少时间 —— 那是服务端 `ItemAppService`
  * 与 `ItemEndpointTest` 那一头；这里的道具与训练队列都是**读接口夹具**（dev 新号两样都没有）。
