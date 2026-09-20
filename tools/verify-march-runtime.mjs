@@ -58,6 +58,43 @@ page.on('console', (message) => {
   if (message.type() === 'error') errors.push(message.text())
 })
 
+const cors = (request) => ({
+  'access-control-allow-origin': request.headers()['origin'] ?? '*',
+  'access-control-allow-headers': '*',
+  'access-control-allow-methods': 'GET,POST,OPTIONS',
+})
+const reply = async (route, data) => route.fulfill({
+  status: 200,
+  headers: { ...cors(route.request()), 'content-type': 'application/json' },
+  body: JSON.stringify({ code: 0, msg: '成功', data, serverNow: Date.now() }),
+})
+
+// ---------- 相位 C 的军队夹具（B26 S14）——必须挂在 goto 之前 ----------
+// 军队读口在登录响应之后立刻发出：桩挂晚了等于没挂，编成面板吃的是 dev 新号那份
+// 「五口兵全不可出征」，勾不出兵也发不出集结（第一次跑就是这么红的）。
+await context.route('**/army/list*', async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  await reply(route, {
+    units: [
+      { unitId: 'unit_infantry_t1', name: '重步', type: 'INFANTRY', tier: 1, count: 500,
+        wounded: 0, training: 0, finishAt: null, remainingSeconds: null, unlocked: true,
+        unlockHint: null, trainTimeSec: 10 },
+      { unitId: 'unit_archer_t2', name: '长弓', type: 'ARCHER', tier: 2, count: 200,
+        wounded: 0, training: 0, finishAt: null, remainingSeconds: null, unlocked: true,
+        unlockHint: null, trainTimeSec: 12 },
+    ],
+    troopCap: 1000, troopsInUse: 0, trainingInUse: 0, queueSlots: 0, queueSlotsMax: 2,
+    hospital: { capacity: 0, used: 0, treating: false, treatFinishAt: null,
+      treatRemainingSeconds: 0, treatSecondsPerWounded: 0, treatCostRatio: 0 },
+    autoTrain: { enabled: false, unitId: 'none', batchCount: 1, batchBudget: 0, targetCount: 0,
+      stopReason: null },
+    serverNow: Date.now(),
+  })
+})
+
 const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'targets')
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
@@ -88,16 +125,6 @@ check('搜索面板是打开的（探针进的这一页）', probe.searchActive,
 // 替换的是**读接口**（网络层响应），视图与被测代码一行没换：这一相要问的正是
 // 「真数据到位后，TargetSearchView 画不画得出行」。
 const fixture = { count: 1 }
-const cors = (request) => ({
-  'access-control-allow-origin': request.headers()['origin'] ?? '*',
-  'access-control-allow-headers': '*',
-  'access-control-allow-methods': 'GET,POST,OPTIONS',
-})
-const reply = async (route, data) => route.fulfill({
-  status: 200,
-  headers: { ...cors(route.request()), 'content-type': 'application/json' },
-  body: JSON.stringify({ code: 0, msg: '成功', data, serverNow: Date.now() }),
-})
 await context.route('**/world/searchTargets*', async (route) => {
   if (route.request().method() === 'OPTIONS') {
     await route.fulfill({ status: 204, headers: cors(route.request()) })
@@ -111,6 +138,39 @@ await context.route('**/world/searchTargets*', async (route) => {
     })),
     selfMatchPower: 10_000, bandLower: 8_000, bandUpper: 15_000, serverNow: Date.now(),
   })
+})
+
+// ---------- 相位 C 的前置夹具：集结政策（B26 S14）----------
+// 换的是**读接口**（网络层响应），视图与编排一行没换：dev 新号没有联盟，
+// 真政策会是「你还没有联盟」那句 ⇒ 永远切不到联盟层，这一相要问的是切过去之后画不画得出来。
+const POLICY_FIXTURE = {
+  squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+    defaultPrepareMinutes: 30, canStart: true, reason: null },
+  alliance: { minMembers: 2, maxMembers: 12, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+    defaultPrepareMinutes: 30, canStart: true, reason: null },
+  serverNow: Date.now(),
+}
+await context.route('**/rally/policy*', async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  await reply(route, POLICY_FIXTURE)
+})
+/** 发出去的联盟集结请求体（写口用夹具回执：真建集结由 RallyEndpointTest 那一头盯）。 */
+const sentRallies = []
+await context.route('**/rally/alliance*', async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  sentRallies.push(JSON.parse(route.request().postData() ?? '{}'))
+  await reply(route, { rally: {
+    id: 'fixture-rally-alliance', leaderId: 'me', allianceId: 'AL_FIX', scope: 'ALLIANCE',
+    targetType: 'PLAYER_CITY', targetCoord: { x: 100, y: 77 }, targetName: '测试城·1',
+    state: 'PREPARING', departAt: Date.now() + 600000, prepareMinutes: 25,
+    maxMembers: 12, memberCount: 1, troops: 10, myPlayerId: 'me',
+  }, serverNow: Date.now() })
 })
 
 /** 一次快照同时读「节点树」与「组件自己的账」——只看树分不出没画过还是画过又收回 */
@@ -308,6 +368,167 @@ check('切成集结后标题前缀跟着变（同一份兵、同一个目标，�
 check('切过去之后那颗写「改回出征」（切种类不是下命令，必须能反悔）', rally?.toggleText, '改回出征')
 await page.screenshot({ path: path.join(OUT, 'compose-mode-rally.png') })
 console.log(`  截图：${path.join(OUT, 'compose-mode-rally.png')}`)
+
+// ---------- 相位 C：联盟层（B26 S14 的"玩家真够得着"）----------
+// 相位 B 只证明"能切成集结"。这一相盯的是：层级切得动、政策给的两个数画得出来、
+// 越界那一侧的键不画、按节点名读得到（#291 的教训：只量中心在板内抓不到被切掉的半截字）。
+const BAND = `(() => {
+  const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('MarchCompose')
+  const band = overlay?.getChildByName('rallyBand')
+  if (!band) return { found: false }
+  const labelOf = (name) => band.getChildByName(name)?.getComponent('cc.Label')?.string ?? null
+  const chipText = (scope) => band.getChildByName('层级-' + scope)
+    ?.getChildByName('label')?.getComponent('cc.Label')?.string ?? null
+  const isActive = (name) => band.getChildByName(name)?.active ?? null
+  const box = (node) => {
+    const t = node.getComponent('cc.UITransform')
+    return { top: node.position.y, bottom: node.position.y - t.height }
+  }
+  const rows = (overlay.children || []).filter((c) => /^composeRow\\d+$/.test(c.name) && c.active)
+  const footer = ['编成取消', '编成出征', '编成种类'].map((n) => overlay.getChildByName(n)).filter(Boolean)
+  return {
+    found: true,
+    active: band.active,
+    chips: [chipText('SQUAD'), chipText('ALLIANCE')],
+    numbersShown: [isActive('数-0-数'), isActive('数-1-数')],
+    values: [labelOf('数-0-数'), labelOf('数-1-数')],
+    steps: [[isActive('数-0-减'), isActive('数-0-加')], [isActive('数-1-减'), isActive('数-1-加')]],
+    bandTop: box(band).top,
+    bandBottom: box(band).bottom,
+    lastRowBottom: rows.length === 0 ? null : Math.min(...rows.map((r) => box(r).bottom)),
+    footerTop: footer.length === 0 ? null : Math.max(...footer.map((f) => box(f).top)),
+    totalText: (overlay.children || [])
+      .filter((c) => c.name === 'label')
+      .map((c) => c.getComponent('cc.Label')?.string ?? '')
+      .find((s) => s.startsWith('共派')) ?? '',
+  }
+})()`
+
+/** 从编成弹层往下按节点名找（路径（'rallyBand/层级-ALLIANCE'）并喂一次 touch-start */
+const tapCompose = (trail) => page.evaluate(`(() => {
+  const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('MarchCompose')
+  let node = overlay
+  for (const part of '${trail}'.split('/')) { node = node?.getChildByName(part) }
+  if (!node) return false
+  node.emit('touch-start')
+  return true
+})()`)
+
+const squadBand = await page.evaluate(BAND)
+check('集结态下那一条真的画出来了（rallyBand active）', squadBand?.active, true)
+check('两颗层级键上的字来自政策', JSON.stringify(squadBand?.chips), JSON.stringify(['小队', '联盟']))
+check('小队层不画那两个数（服务端自己定，客户端没有可填的字段）',
+  JSON.stringify(squadBand?.numbersShown), JSON.stringify([false, false]))
+await page.screenshot({ path: path.join(OUT, 'compose-rally-squad.png') })
+console.log(`  截图：${path.join(OUT, 'compose-rally-squad.png')}`)
+
+checkTrue('按得到「联盟」那颗', await tapCompose('rallyBand/层级-ALLIANCE'))
+await page.waitForTimeout(400)
+const allianceBand = await page.evaluate(BAND)
+check('切到联盟层后两个数都画出来了', JSON.stringify(allianceBand?.numbersShown),
+  JSON.stringify([true, true]))
+check('两个数的起始值照政策：12 是"此刻实际人数"，30 是服务端给的默认等待档',
+  JSON.stringify(allianceBand?.values), JSON.stringify(['12/12人', '30分']))
+check('两个数此刻都停在政策的上界 ⇒ 两颗 ＋ 都不画（发了也会被服务端夹回去）',
+  JSON.stringify(allianceBand?.steps), JSON.stringify([[true, false], [true, false]]))
+checkTrue('那条带压在最后一行兵力行之下',
+  allianceBand !== null && allianceBand.lastRowBottom !== null
+    && allianceBand.bandTop <= allianceBand.lastRowBottom)
+checkTrue('那条带压在页脚三颗键之上（不盖住确认）',
+  allianceBand !== null && allianceBand.bandBottom >= allianceBand.footerTop)
+await page.screenshot({ path: path.join(OUT, 'compose-rally-alliance.png') })
+console.log(`  截图：${path.join(OUT, 'compose-rally-alliance.png')}`)
+
+/**
+ * 那条带内部的版式：把所有可见控件（两颗层级键 + 每组的 表头/数/−/＋）的盒子取出来两两比对。
+ * 截图抓到的第一版是「−/＋ 上印着引擎默认的 label 字样、还压在数字头上」——
+ * 那种缺陷读数全绿（值对、位置在板内），只有量盒子或看画面才抓得到。
+ */
+const BAND_LAYOUT = `(() => {
+  const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('MarchCompose')
+  const band = overlay?.getChildByName('rallyBand')
+  if (!band) return null
+  const boxes = []
+  for (const child of band.children) {
+    if (!child.active) continue
+    const t = child.getComponent('cc.UITransform')
+    const isButton = /^(层级|数)-/.test(child.name) && child.name !== undefined
+      && child.getComponent('cc.Label') === null
+    const label = child.getComponent('cc.Label')
+    if (!isButton && label === null) continue
+    boxes.push({
+      name: child.name,
+      text: isButton ? (child.getChildByName('label')?.getComponent('cc.Label')?.string ?? '')
+        : (label?.string ?? ''),
+      left: child.position.x - t.width / 2, right: child.position.x + t.width / 2,
+      top: child.position.y + t.height / 2, bottom: child.position.y - t.height / 2,
+    })
+  }
+  const overlaps = []
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i]; const b = boxes[j]
+      if (a.left < b.right && b.left < a.right && a.bottom < b.top && b.bottom < a.top) {
+        overlaps.push(a.name + '×' + b.name)
+      }
+    }
+  }
+  const leaked = boxes.filter((b) => b.text === 'label' || b.text === '').map((b) => b.name)
+  const half = band.getComponent('cc.UITransform').width / 2
+  const outside = boxes.filter((b) => Math.abs(b.left) > half || Math.abs(b.right) > half)
+    .map((b) => b.name)
+  return { count: boxes.length, overlaps, leaked, outside }
+})()`
+
+const layout = await page.evaluate(BAND_LAYOUT)
+check('那条带里画得出 8 件东西（两颗层级键 + 两组 表头/数/−/＋ 里没被界挡住的）',
+  layout?.count, 8)
+check('带内控件两两不重叠（第一版 −/＋ 压在数字头上）',
+  JSON.stringify(layout?.overlaps), '[]')
+check('没有引擎默认的 label 字样漏到屏幕上', JSON.stringify(layout?.leaked), '[]')
+check('所有控件整盒落在带内（不是只量中心在板内）', JSON.stringify(layout?.outside), '[]')
+
+checkTrue('按得到「等待时长 −」', await tapCompose('rallyBand/数-1-减'))
+await page.waitForTimeout(300)
+const afterStep = await page.evaluate(BAND)
+check('时长按 5 分钟一跳（政策给的界内）', afterStep?.values?.[1], '25分')
+check('离开上界之后 ＋ 又画回来了（键随界走，不是点了没反应）',
+  JSON.stringify(afterStep?.steps?.[1]), JSON.stringify([true, true]))
+checkTrue('按得到「人数上限 +」（已在界上，加不动）', await tapCompose('rallyBand/数-0-加'))
+await page.waitForTimeout(300)
+check('人数停在上界不越界（越界的数发出去会被服务端夹回去）',
+  (await page.evaluate(BAND))?.values?.[0], '12/12人')
+
+const tapRowPlus = await page.evaluate(`(() => {
+  const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('MarchCompose')
+  const row = (overlay?.children || []).find((c) => c.name === 'composeRow0')
+  const plus = row?.getChildByName('row-＋')
+  if (!plus) return false
+  plus.emit('touch-start')
+  return true
+})()`)
+checkTrue('按得到第一行兵力的「＋」', tapRowPlus)
+await page.waitForTimeout(300)
+const armed = await page.evaluate(BAND)
+check('兵力合计跟着勾选走', (armed?.totalText ?? '').includes('10'), true)
+
+checkTrue('按得到「发起集结」', await tapCompose('编成出征'))
+await page.waitForTimeout(900)
+const sent = sentRallies.at(-1) ?? null
+check('真的打到了 POST /rally/alliance（一次确认一条）', sentRallies.length, 1)
+check('请求带的是屏幕上那两个数', JSON.stringify([sent?.maxMembers, sent?.prepareMinutes]),
+  JSON.stringify([12, 25]))
+check('承诺的兵力随这一枪交出去（服务端拿它建第一个参与者）',
+  JSON.stringify(sent?.troops), JSON.stringify([{ unitId: 'unit_infantry_t1', count: 10 }]))
+check('目标是编成前点的那一座', JSON.stringify(sent?.targetCoord), JSON.stringify({ x: 100, y: 77 }))
+check('幂等键由 GameApi 新生成（重放等于多开一支集结）',
+  typeof sent?.requestId === 'string' && (sent?.requestId ?? '').length > 0, true)
+await page.screenshot({ path: path.join(OUT, 'compose-rally-submitted.png') })
+console.log(`  截图：${path.join(OUT, 'compose-rally-submitted.png')}`)
 
 await page.screenshot({ path: path.join(OUT, 'march-search-rows.png') })
 console.log(`  截图：${path.join(OUT, 'march-search-rows.png')}`)

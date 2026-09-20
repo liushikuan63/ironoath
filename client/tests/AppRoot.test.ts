@@ -252,6 +252,7 @@ const ROUTES: Record<string, unknown> = {
     departAt: SERVER_NOW + 120000, status: 'PREPARING', members: ['P-leader'],
     heroSlots: [], serverNow: SERVER_NOW,
   }], serverNow: SERVER_NOW },
+  '/rally/policy': rallyPolicyBody(),
   '/rally/join': { rally: {
     rallyId: 'r-1', scope: 'SQUAD', groupId: 'sq-1', initiatorId: 'P-leader',
     targetCoord: { x: 60, y: 60 }, targetType: 'MONSTER', maxMembers: 10,
@@ -2558,10 +2559,11 @@ test('编队编辑：名册没读到时保存是空操作，并把理由说给�
   assert.deepEqual(h.errors.at(-1), ['hero', '武将列表还没读到'])
 })
 
-test('社交三道门：两个 scope 各拉一次 + 一份创建政策，两份权限都到齐才放开按钮，且首屏不占这三条请求', async () => {
+test('社交四道门：两个 scope 各拉一次 + 创建政策 + 集结政策，两份权限都到齐才放开按钮，且首屏不占这几条请求', async () => {
   const h = harness()
   h.http.overrides.set('/social/permissions', permissionBody())
   h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/rally/policy', rallyPolicyBody())
   // 首屏预拉里就有 /resource/detail：余额 200 而联盟要 500 ⇒ 行上该写「还差 300」
   h.http.overrides.set('/resource/detail', {
     resources: [{
@@ -2571,12 +2573,14 @@ test('社交三道门：两个 scope 各拉一次 + 一份创建政策，两份�
     serverNow: SERVER_NOW,
   })
   await h.root.start('dev-1', '君')
-  // 首屏预算：社交页的三道门不在预拉里（与邮件/商店/外观同一条纪律）
+  // 首屏预算：社交页的四道门不在预拉里（与邮件/商店/外观同一条纪律）
   assert.equal(h.http.countOf('/social/permissions'), 0,
     '开局多两条并发请求会挤那 3 秒可交互预算')
   assert.equal(h.http.countOf('/social/createPolicy'), 0)
+  assert.equal(h.http.countOf('/rally/policy'), 0, '集结政策与创建政策同一条预算纪律')
 
   await h.root.loadSocialGates()
+  assert.equal(h.http.countOf('/rally/policy'), 1, '一次并发拉齐，两个层级一份响应')
   const scopeCalls = h.http.calls.filter((c) => c.path === '/social/permissions')
   assert.deepEqual(scopeCalls.map((c) => c.query.get('scope')), ['SQUAD', 'ALLIANCE'],
     '服务端一次只回一个 scope，只拉一次就等于只验了一半')
@@ -2594,6 +2598,7 @@ test('社交三道门：两个 scope 各拉一次 + 一份创建政策，两份�
   await h.root.refresh('social')
   assert.equal(h.http.countOf('/social/permissions'), before + 2)
   assert.equal(h.http.countOf('/social/createPolicy'), 2)
+  assert.equal(h.http.countOf('/rally/policy'), 2, '职位/人数变了那两个数也跟着变，不能留在旧政策上')
 })
 
 test('社交三道门：拉不到时不放行也不猜，理由走统一上报口', async () => {
@@ -2955,6 +2960,20 @@ function createPolicyBody(): Record<string, unknown> {  return {
 }
 
 /**
+ * 一份两层都放行、联盟能凑满 12 人的集结政策（B26 S14）。
+ *
+ * <p>数字刻意与 global 表的配置上限（20）不同：**这是"此刻按联盟实际人数算出来的上界"**，
+ * 用例里要断言客户端下发的是政策那个 12，而不是抄表抄来的 20。
+ */
+function rallyPolicyBody(): Record<string, unknown> {
+  const view = (maxMembers: number): Record<string, unknown> => ({
+    minMembers: 2, maxMembers, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+    defaultPrepareMinutes: 30, canStart: true, reason: null,
+  })
+  return { squad: view(5), alliance: view(12), serverNow: SERVER_NOW }
+}
+
+/**
  * 一份「我是盟主，能踢人能捐献」的权限响应。
  *
  * <p>桩里 `/social/permissions` **没有默认路由**：不设这条覆盖，读会失败并走重试，
@@ -3142,6 +3161,168 @@ test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只�
   assert.equal(h.events.length, 0, '换种类是一次选择，不是那一次提交')
   assert.equal(h.lastCompose?.mode ?? 'MARCH', 'MARCH', '被挡住就不切')
   assert.ok((h.lastCompose?.notice ?? '').length > 0, '要说出为什么切不动')
+})
+
+// ---------- B26 S14：编成面板上的联盟集结（层级 + 那两个数） ----------
+
+/**
+ * 一支已经按下「改成集结」的编成面板。
+ *
+ * @param policy 覆盖 `/rally/policy` 的响应；不给就用路由表里那份（两层都放行、联盟上界 12 人）
+ */
+async function rallyComposeHarness(policy?: Record<string, unknown>): Promise<Harness> {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'LEADER', permissions: ['START_RALLY'], serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
+    squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
+  }))
+  h.http.overrides.set('/rally/squad', { rally: rallyShape(), serverNow: SERVER_NOW })
+  h.http.overrides.set('/rally/alliance', { rally: rallyShape(), serverNow: SERVER_NOW })
+  if (policy !== undefined) {
+    h.http.overrides.set('/rally/policy', policy)
+  }
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  await h.root.loadSocialGates()
+  await h.root.refresh('social')
+  h.root.beginMarchCompose('P9')
+  h.root.toggleComposeRally()
+  return h
+}
+
+test('B26 S14：编成里的层级两行都在，小队层不带数字，切到联盟就按政策填出那两个数', async () => {
+  const h = await rallyComposeHarness()
+  assert.equal(h.lastCompose?.mode, 'RALLY')
+  assert.deepEqual(h.lastCompose?.rallyScopes?.map(row => [row.scope, row.label, row.blocked]),
+    [['SQUAD', '小队', null], ['ALLIANCE', '联盟', null]],
+    '两行都带服务端那句"能不能发起"，客户端不再判第二遍')
+  assert.equal(h.lastCompose?.rallyScope, 'SQUAD', '进集结态先停在玩家已经点过的那条路（小队）')
+  assert.equal(h.lastCompose?.rallyNumbers?.length, 0, '小队层的上限与时长由服务端自己定，没有可填的数')
+
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyScope, 'ALLIANCE')
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => [row.field, row.text]),
+    [['maxMembers', '12/12人'], ['prepareMinutes', '30分']],
+    '起始值取自政策：上界是"此刻按实际人数算出来的 12"而不是 global 表里的 20，时长是服务端给的 defaultPrepareMinutes')
+  assert.equal(h.http.countOf('/rally/alliance'), 0, '选层级不发请求')
+})
+
+test('B26 S14：联盟层确认 → 发 /rally/alliance 带那两个数与承诺的兵，不再走小队口', async () => {
+  const h = await rallyComposeHarness()
+  h.root.setComposeRallyScope('ALLIANCE')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  h.events.length = 0
+  await h.root.confirmMarch()
+  const sent = h.http.calls.filter(c => c.path === '/rally/alliance').at(-1)
+  assert.ok(sent !== undefined, '联盟集结要真发出去')
+  assert.deepEqual(sent?.body.targetCoord, { x: 60, y: 60 })
+  assert.equal(sent?.body.targetType, 'PLAYER_CITY')
+  assert.equal(sent?.body.maxMembers, 12, '人数上限照政策那一刻的值')
+  assert.equal(sent?.body.prepareMinutes, 30)
+  assert.deepEqual(sent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }],
+    '发起人的兵只有这一个入口')
+  assert.equal(h.http.countOf('/rally/squad'), 0, '选了联盟层就不该打到小队口')
+  assert.equal(h.http.countOf('/world/march'), 0)
+  assert.deepEqual(h.events.find(e => e.name === 'rally_initiate')?.params,
+    { scope: 'ALLIANCE', troops: '30' }, '层级要分得开：看板靠它才知道联盟集结有没有人用')
+})
+
+test('B26 S14：政策说这一层发起不了 → 点「联盟」不切过去，把那一句人话写在提示行', async () => {
+  const h = await rallyComposeHarness({
+    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: true, reason: null },
+    alliance: { minMembers: 2, maxMembers: 2, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: false,
+      reason: '你还没有联盟，先申请加入或建一个再发起集结' },
+    serverNow: SERVER_NOW,
+  })
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyScope, 'SQUAD', '政策说不能就不切层')
+  assert.equal(h.lastCompose?.notice, '你还没有联盟，先申请加入或建一个再发起集结',
+    '原因是服务端那句原话，客户端不另写一遍')
+  assert.equal(h.http.countOf('/rally/alliance'), 0)
+})
+
+test('B26 S14：那两个数夹在政策的界内，越界的按键直接不画', async () => {
+  const h = await rallyComposeHarness()
+  h.root.setComposeRallyScope('ALLIANCE')
+  h.root.adjustComposeRallyNumber('maxMembers', 1)
+  assert.equal(h.lastCompose?.rallyNumbers?.[0]?.value, 12, '已经在上界 ⇒ 加不动（发出去必然被服务端夹回去）')
+  h.root.adjustComposeRallyNumber('prepareMinutes', -1)
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => row.value), [12, 25])
+  for (let i = 0; i < 30; i++) {
+    // 远超下界：夹住而不是绕回，也不是靠表现层少画一颗键来"挡"
+    h.root.adjustComposeRallyNumber('prepareMinutes', -1)
+    h.root.adjustComposeRallyNumber('maxMembers', -1)
+  }
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => row.value), [2, 10],
+    '下界是政策的最少人数与最短时长（一个人「集结」就是普通出征）')
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => [row.value > row.min, row.value < row.max]),
+    [[false, true], [false, true]], '到界那一侧的键不画：灰键会让玩家以为坏了')
+})
+
+test('B26 S14：政策还没拉到时不猜数 —— 层级切得过去，但确认拦成一句人话、一条写请求都不发', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'LEADER', permissions: ['START_RALLY'], serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
+    squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
+  }))
+  h.http.failPaths.add('/rally/policy')
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  h.root.toggleComposeRally()
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyScope, 'ALLIANCE', '读不到政策不是"你不行"，不挡着玩家选')
+  assert.equal(h.lastCompose?.rallyNumbers?.length, 0, '没有政策就没有界 ⇒ 一行数都不画，不猜一组')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  await h.root.confirmMarch()
+  assert.equal(h.http.countOf('/rally/alliance'), 0, '猜出来的数不许真的发出去')
+  assert.ok((h.lastCompose?.notice ?? '').includes('还没拉到'), '要说清为什么按不动，以及缺的是哪一样')
+})
+
+test('B26 S14：从没开过社交页的玩家切进集结态会补拉一次政策；政策已在手上就不重复拉', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  assert.equal(h.http.countOf('/rally/policy'), 0, '政策不在首屏预拉里（与创建政策同一条预算纪律）')
+  await h.root.toggleComposeRally()
+  assert.equal(h.http.countOf('/rally/policy'), 1,
+    '不补这一次，玩家看到的是「没有层级可切、两个数一行都不画」的面板')
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyNumbers?.length, 2, '补拉到的政策当场就把两行数字画上')
+  h.root.toggleComposeRally()
+  await h.root.toggleComposeRally()
+  assert.equal(h.http.countOf('/rally/policy'), 1, '已经在手上就不重复拉')
 })
 
 /** 集结那一枪的响应体（面板只把它当"成功了"的信封用）。 */

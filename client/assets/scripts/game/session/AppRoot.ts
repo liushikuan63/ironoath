@@ -33,7 +33,8 @@ import type { GachaDrawResp, GachaPoolsResp, HeroListResp } from '../../net/gene
 import type { StageListResp } from '../../net/generated/StageProtocol'
 import type {
   AllianceMember, AllianceRole, AllianceSyncResp, ChatChannel, ChatMessageView, FriendView, HelpRequestView,
-  ReportReason, SocialCreatePolicy, SocialCreatePolicyResp, SocialEventView, SocialSummaryResp,
+  ReportReason, RallyPolicyResp, RallyPolicyView, SocialCreatePolicy, SocialCreatePolicyResp,
+  SocialEventView, SocialSummaryResp,
 } from '../../net/generated/SocialProtocol'
 import {
   ackablePrivateEventIds, buildChatPanel, chatFailureText, chatKey, CHAT_LOCAL_HISTORY_MAX,
@@ -42,9 +43,12 @@ import {
 import type { ChatPanelData } from '../social/ChatPanel'
 import { buildRankBoard } from '../power/RankBoard'
 import {
-  buildCompose, marchUnitsOf, rememberMarch, repeatBlockedReason, setPick,
+  adjustRallyNumber, buildCompose, marchUnitsOf, rallyFormBlocked, rallyFormOf, rallyNumbersOf,
+  rallySwitchBlocked, rememberMarch, repeatBlockedReason, setPick,
 } from '../world/MarchCompose'
-import type { ComposeView, MarchSpec } from '../world/MarchCompose'
+import type {
+  ComposeView, MarchSpec, RallyField, RallyForm, RallyNumberRow, RallyScope, RallyScopeRow,
+} from '../world/MarchCompose'
 import type { RankBoardView, RankTabKey } from '../power/RankBoard'
 import type { RankListResp } from '../../net/generated/RankProtocol'
 import { buildSeasonPanel } from '../season/SeasonPanel'
@@ -155,6 +159,16 @@ export interface MarchComposeView {
   readonly submitLabel?: string
   /** 不能发起集结时那句原因（读不到权限时**不为它**置灰：那是"暂时不知道"，不是"你不行"） */
   readonly rallyBlocked?: string | null
+  /**
+   * 集结态下的两个层级入口（B26 S14）。出征态不画这一行，所以省略即"没有层级可选"。
+   * 「联盟集结要收两个数」这件事不能让玩家在别处填 —— 同一份兵、同一个目标，
+   * 换的只是命令种类与召集范围，所以层级就摆在编成面板里。
+   */
+  readonly rallyScopes?: readonly RallyScopeRow[]
+  /** 当前选中的层级（省略 = 小队，与 `mode` 省略等于 MARCH 同一口径） */
+  readonly rallyScope?: RallyScope
+  /** 联盟层的两个数（含界）；政策还没拉到时是空数组，面板就少画两行而不是画一对猜出来的数 */
+  readonly rallyNumbers?: readonly RallyNumberRow[]
 }
 
 /** 商店面板：货架那块来自 game/shop/ShopPanel.ts，notice 是**上一次兑换的结果**（临时提示）。 */
@@ -420,6 +434,15 @@ export class AppRoot {
   private composeRallyId: string | null = null
   /** 编成面板当前是"发起小队集结"还是"出征"（B26 S12）。换目标就回到出征 */
   private composeRally = false
+  /** 集结发给哪一层（B26 S14）。每次进集结态都从小队层起步：那是玩家已经点过的那条路 */
+  private composeRallyScope: RallyScope = 'SQUAD'
+  /**
+   * 联盟集结那两个数（人数上限 / 等待时长）。null = 还没按政策填出来，
+   * 而 null 会让确认键拦下一句人话 —— 猜一组数发出去是最坏的结果。
+   */
+  private rallyForm: RallyForm | null = null
+  /** 集结政策（B26 S13 的读口）：两个层级的界、起始值、此刻能不能发起。没拉到是 null */
+  private rallyPolicy: RallyPolicyResp | null = null
   /** 战令：最近一次状态与上一次领取的结果（临时提示）。**进度两位都取自响应，本地不改**。 */
   private battlePassResp: BattlePassStatusResp | null = null
   private battlePassNotice: string | null = null
@@ -1419,7 +1442,8 @@ export class AppRoot {
   }
 
   /**
-   * 拉社交页的三道门（B26 S1 + S2）：两个 scope 的权限、一份创建政策（一次回两个层级）。
+   * 拉社交页的四道门（B26 S1 + S2 + S14）：两个 scope 的权限、一份创建政策、一份集结政策
+   * （各一次回两个层级）。
    *
    * <p>权限两份都到齐才把 `loaded` 置 true：只拿到一半就放开按钮，等于拿缺的那一半去猜。
    * 失败时保持原样并说一句"暂时拉不到"—— 灰着的按钮比一个点了会被拒的按钮诚实。
@@ -1435,9 +1459,9 @@ export class AppRoot {
     return this.gatesFlight
   }
 
-  private async pullSocialGates(): Promise<void> {    const [squad, alliance, create] = await Promise.all([
+  private async pullSocialGates(): Promise<void> {    const [squad, alliance, create, rally] = await Promise.all([
       this.api.socialPermissions('SQUAD'), this.api.socialPermissions('ALLIANCE'),
-      this.api.socialCreatePolicy(),
+      this.api.socialCreatePolicy(), this.api.rallyPolicy(),
     ])
     let state = EMPTY_PERMISSIONS
     if (squad.kind === 'ok') {
@@ -1456,10 +1480,21 @@ export class AppRoot {
     } else {
       this.say('social', create)
     }
+    if (rally.kind === 'ok') {
+      this.rallyPolicy = rally.data
+      // 编成面板正停在联盟层等这两个数：政策晚到一步就要立刻补上，否则那一屏停在"读取中"
+      if (this.rallyForm === null && this.composeRally && this.composeRallyScope === 'ALLIANCE') {
+        this.rallyForm = rallyFormOf(this.rallyPolicyOf('ALLIANCE'))
+      }
+    } else {
+      this.say('social', rally)
+    }
     this.permissions = state
     this.targets.socialGates?.(this.permissions, createEntries(this.createPolicy,
       this.createBalance('squad'), this.createBalance('alliance')))
     this.deliverSocialCreate()
+    // 编成面板可能正停在联盟层等那两个数：政策晚到也要立刻补上那一屏
+    this.deliverCompose()
   }
 
   /**
@@ -2931,6 +2966,8 @@ export class AppRoot {
     }
     this.composeTarget = { id: brief.id, name: brief.name, x: brief.coord.x, y: brief.coord.y }
     this.composeRally = false
+    this.composeRallyScope = 'SQUAD'
+    this.rallyForm = null
     this.composePicks = {}
     this.composeNotice = null
     this.deliverCompose()
@@ -2947,7 +2984,7 @@ export class AppRoot {
    * 因为"权限还没拉到"不是"你不行"（同一口径见 PermissionGates 的注释），
    * 真发出去由服务端裁决并回一句人话。
    */
-  toggleComposeRally(): void {
+  async toggleComposeRally(): Promise<void> {
     if (this.composeTarget === null) {
       return
     }
@@ -2960,6 +2997,58 @@ export class AppRoot {
       }
     }
     this.composeRally = !this.composeRally
+    if (!this.composeRally) {
+      // 切回出征：层级与那两个数一起收掉，下次进集结态从小队层起步
+      this.composeRallyScope = 'SQUAD'
+      this.rallyForm = null
+    }
+    this.composeNotice = null
+    this.deliverCompose()
+    // 从来没开过社交页的玩家手里没有政策：不补这一次，他看到的就是一个
+    // 「没有层级可切、两个数一行都不画」的集结面板，而缺的那一样看起来像功能坏了。
+    // 放在切完之后：被门挡住的那一下不该预拉（与上面 rallyBlockedReason 同一条预算）。
+    if (this.composeRally && this.rallyPolicy === null) {
+      await this.loadSocialGates()
+    }
+  }
+
+  /** 某一层级的政策；还没拉到就是 null（面板不为它猜界）。 */
+  private rallyPolicyOf(scope: RallyScope): RallyPolicyView | null {
+    if (this.rallyPolicy === null) {
+      return null
+    }
+    return scope === 'SQUAD' ? this.rallyPolicy.squad : this.rallyPolicy.alliance
+  }
+
+  /**
+   * 换集结的召集范围：小队 / 联盟（B26 S14）。
+   *
+   * <p>政策说不能时才拦下并给服务端那句原因；**政策没拉到时不拦**（"暂时不知道"不是"你不行"，
+   * 同一口径见 {@link rallyBlockedReason}）。切到联盟才填那两个数：小队层的上限与时长
+   * 由服务端按自己的配置定，客户端没有可填的字段。
+   */
+  setComposeRallyScope(scope: RallyScope): void {
+    if (this.composeTarget === null || !this.composeRally || scope === this.composeRallyScope) {
+      return
+    }
+    const blocked = rallySwitchBlocked(this.rallyPolicyOf(scope))
+    if (blocked !== null) {
+      this.composeNotice = blocked
+      this.deliverCompose()
+      return
+    }
+    this.composeRallyScope = scope
+    this.rallyForm = scope === 'ALLIANCE' ? rallyFormOf(this.rallyPolicyOf(scope)) : null
+    this.composeNotice = null
+    this.deliverCompose()
+  }
+
+  /** 把人数上限 / 等待时长调一档。夹取在纯逻辑里按政策的界做，表现层不自己算。 */
+  adjustComposeRallyNumber(field: RallyField, direction: number): void {
+    if (!this.composeRally || this.composeRallyScope !== 'ALLIANCE') {
+      return
+    }
+    this.rallyForm = adjustRallyNumber(this.rallyForm, this.rallyPolicyOf('ALLIANCE'), field, direction)
     this.composeNotice = null
     this.deliverCompose()
   }
@@ -3012,6 +3101,52 @@ export class AppRoot {
     this.deliverCompose()
   }
 
+  /**
+   * 发起联盟集结（B26 S14）。与小队那条的唯一差别是请求多带两个数，而那两个数的界
+   * 来自 `/rally/policy`：客户端不抄 global 表，也不自己挑默认值（挑出来的数会真的发出去，
+   * 玩家以为自己设了 30 人而服务端夹成 4 人）。
+   *
+   * <p>政策还没拉到时**不猜**：拦成一句人话，确认键按不下去。
+   */
+  private async confirmAllianceRally(target: { x: number, y: number, name: string },
+                                     units: readonly { unitId: string, count: number }[]): Promise<void> {
+    const form = this.rallyForm
+    if (form === null) {
+      this.composeNotice = rallyFormBlocked(form)
+      this.deliverCompose()
+      return
+    }
+    this.track(TRACK_EVENTS.rallyInitiate, {
+      scope: trackParam('ALLIANCE'),
+      troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
+    })
+    this.composeSubmitting = true
+    this.composeNotice = null
+    this.deliverCompose()
+    const outcome = await this.api.allianceRally({
+      targetCoord: { x: target.x, y: target.y }, targetType: 'PLAYER_CITY',
+      maxMembers: form.maxMembers, prepareMinutes: form.prepareMinutes,
+      troops: units.map(unit => ({ ...unit })), heroes: [],
+    })
+    this.composeSubmitting = false
+    if (outcome.kind === 'ok') {
+      this.composeRally = false
+      this.composeRallyScope = 'SQUAD'
+      this.rallyForm = null
+      this.composeTarget = null
+      this.composePicks = {}
+      this.composeNotice = `已发起联盟集结：${target.name}`
+      this.deliverCompose()
+      void this.refresh('social')
+      return
+    }
+    this.composeNotice = outcome.kind === 'biz'
+      ? (outcome.detail ?? outcome.msg)
+      : AppRoot.reason(outcome)
+    this.say('targets', outcome)
+    this.deliverCompose()
+  }
+
   /** 勾选/改数量。夹取在纯逻辑里做（表现层不做夹取，也不做判定）。 */
   pickMarchUnit(unitId: string, count: number): void {
     if (this.armyResp === null || this.composeTarget === null) {
@@ -3024,6 +3159,9 @@ export class AppRoot {
   /** 关掉编成面板（不扣兵、不发请求）。 */
   cancelMarchCompose(): void {
     this.composeTarget = null
+    this.composeRally = false
+    this.composeRallyScope = 'SQUAD'
+    this.rallyForm = null
     this.composePicks = {}
     this.composeNotice = null
     this.deliverCompose()
@@ -3054,7 +3192,11 @@ export class AppRoot {
       return
     }
     if (this.composeRally) {
-      await this.confirmSquadRally(target, units)
+      if (this.composeRallyScope === 'ALLIANCE') {
+        await this.confirmAllianceRally(target, units)
+      } else {
+        await this.confirmSquadRally(target, units)
+      }
       return
     }
     // 打点是"真的发出去"这一下：被 blockedReason 拦住的那些不计（它们不是出征意图）
@@ -3156,7 +3298,23 @@ export class AppRoot {
       mode: this.composeRally ? 'RALLY' : 'MARCH',
       submitLabel: this.composeRally ? '发起集结' : '出征',
       rallyBlocked: this.rallyBlockedReason(),
+      rallyScope: this.composeRallyScope,
+      rallyScopes: this.composeRally ? this.rallyScopeRows() : [],
+      rallyNumbers: this.composeRally && this.composeRallyScope === 'ALLIANCE'
+        ? rallyNumbersOf(this.rallyForm, this.rallyPolicyOf('ALLIANCE'))
+        : [],
     })
+  }
+
+  /**
+   * 集结态下的两行层级入口。原因直接抄政策那句（服务端已经把"不在盟/职位不够/人数不够"
+   * 说成人话了，客户端不再判第二遍）。政策没拉到时两行都不带原因 —— 点下去由服务端裁决。
+   */
+  private rallyScopeRows(): RallyScopeRow[] {
+    const rowOf = (scope: RallyScope, label: string): RallyScopeRow => ({
+      scope, label, blocked: rallySwitchBlocked(this.rallyPolicyOf(scope)),
+    })
+    return [rowOf('SQUAD', '小队'), rowOf('ALLIANCE', '联盟')]
   }
 
   // ---------- 目标搜索与流亡 ----------

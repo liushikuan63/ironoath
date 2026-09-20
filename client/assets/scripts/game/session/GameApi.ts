@@ -78,7 +78,7 @@ import type {
   AllianceListResp, AllianceReviewReq, AllianceRoleReq, AllianceSelfReq, AllianceSyncReq,
   AllianceSyncResp,
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
-  HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyResp, SocialEventAckReq,
+  HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyPolicyResp, RallyResp, SocialEventAckReq,
   SocialCreatePolicyResp, SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq,
   SquadListResp, SquadMemberReq, SquadRallyReq,
   SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp,
@@ -794,6 +794,17 @@ export class GameApi {
    */
   rallyList(): Promise<NetOutcome<RallyListResp>> {
     return this.read<RallyListResp>('/rally/list')
+  }
+
+  /**
+   * GET /rally/policy：两个层级各自的人数与等待时长上下界、滑条起始值、此刻能不能发起。
+   *
+   * <p>联盟集结要收 `maxMembers` 与 `prepareMinutes` 两个数，而界都在 global 表里 ——
+   * 不读它就只剩两个坏选项：客户端抄一份表（表一动就开始撒谎），或画一条界不明的滑条
+   * 让玩家以为自己设了 30 人而服务端悄悄夹成 4 人。
+   */
+  rallyPolicy(): Promise<NetOutcome<RallyPolicyResp>> {
+    return this.read<RallyPolicyResp>('/rally/policy')
   }
 
   /**
