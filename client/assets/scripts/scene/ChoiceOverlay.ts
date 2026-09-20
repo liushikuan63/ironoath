@@ -68,6 +68,11 @@ export class ChoiceOverlay {
   }
 
   show(options: readonly ChoiceOption[], onPick: (id: string) => void): void {
+    // 显示前先抬到父节点最后：弹层在各面板 `onLoad` 就建好了，而列表行是每次渲染才
+    // addChild 的 —— 加得晚就压在菜单上面。背包那格实测：道具行（含「使用」键）横盖住
+    // 「选择加速目标」的标题，读数全绿而玩家看到的是半截字。放在这里而不是每个调用方
+    // 各喊一次，是因为八个使用者都有同一条时序，漏一个就是一个玩家可见缺陷。
+    this.raise()
     this.options = Array.from(options)
     this.page = 0
     this.onPick = onPick
@@ -75,12 +80,19 @@ export class ChoiceOverlay {
     this.renderPage()
   }
 
-  /** 抬到父节点最后：各面板与列表行都是按需 addChild 的，加得比弹层晚就会压在菜单上面 */
+  /**
+   * 抬到父节点最后：列表行是宿主渲染时才 addChild 的，加得比弹层晚就会压在菜单上面。
+   * `show()` 自己会抬一次；**宿主每次重排子节点后要再抬一次**（背包就是这么漏的）。
+   */
   raise(): void {
     const parent = this.node.parent
-    if (parent !== null && parent !== undefined) {
-      parent.addChild(this.node)
+    if (parent === null || parent === undefined) {
+      return
     }
+    // 不能用 `parent.addChild(this.node)`：3.8.7 里"已经是这个父节点的子节点"时它是空操作
+    // （实测：父节点 children 为 A,B，再 addChild(A) 仍是 A,B）。只有 setSiblingIndex 真挪位置，
+    // 所以这条抬层此前一直静默失效，背包的弹层被道具行压住才把它暴露出来。
+    this.node.setSiblingIndex(parent.children.length - 1)
   }
 
   hide(): void {

@@ -103,6 +103,12 @@ declare module 'cc' {
     /** 局部坐标。地图命中测试要读它，只给 setPosition 不给读是半个 API。 */
     position: Vec3
     addChild(child: Node): void
+    /**
+     * 改兄弟序号（越大越靠后、画得越上面）。真实引擎有，桩里此前漏了它 ——
+     * 于是弹层抬层只能用 `parent.addChild(自己)`，而那在 3.8.7 里对同一父节点是空操作
+     * （实测 children 为 A,B 时再 addChild(A) 仍是 A,B），抬层一直没生效。
+     */
+    setSiblingIndex(siblingIndex: number): void
     removeFromParent(): void
     destroy(): boolean
     setPosition(position: Vec3): void

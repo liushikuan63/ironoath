@@ -301,6 +301,11 @@ export class BagPanelView extends Component {
       this.renderRow(node, row, index)
     })
 
+    // 行是从 NodePool 里 acquire 出来的，每次重渲染都重新 addChild 到面板末尾 ——
+    // 目标选择器建得比它们早，于是道具行（含「使用」键）横压在「选择加速目标」的标题上
+    // （2026-09-21 运行截图抓到；`show()` 抬过一次也不够，因为渲染发生在其后）。
+    this.targetPicker?.raise()
+
     if (this.headerLabel !== null) {
       this.headerLabel.string = this.tab === 'resource' ? '资源产出明细' : (this.bag?.capacityText ?? '背包')
     }

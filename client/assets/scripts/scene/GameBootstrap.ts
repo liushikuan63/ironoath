@@ -1228,14 +1228,8 @@ export class GameBootstrap extends Component {
       // 行上「队列」→ 编排层判有没有可取消的那一口，菜单再由本层画（B26 S15）
       army.onQueue = unitId => this.root?.openArmyQueue(unitId)
       out.armyQueueChoice = (options, onPick) => {
-        const picker = this.armyQueue
-        if (picker === null) {
-          return
-        }
-        // 先把弹层抬到父节点最后再显示：各面板与列表行都是按需 addChild 的，加得晚会压在它上面
-        // （军队面板每为倒计时重渲染一次就把行挪到末尾，实测菜单被挡住半截而读数全绿）
-        picker.raise()
-        picker.show(options, onPick)
+        // 抬层已由 `ChoiceOverlay.show()` 自己负责（八个使用者同一条时序，不在这里各喊一次）
+        this.armyQueue?.show(options, onPick)
       }
     }
     if (hero !== null) {
