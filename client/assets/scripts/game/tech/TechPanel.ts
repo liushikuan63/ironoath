@@ -16,7 +16,8 @@
 import * as FixedPoint from '../../core/FixedPoint'
 import { resourceName } from '../ui/ResourceNames'
 import type {
-  ResourceAmount, TechBlockReason, TechEffectAttr, TechListView, TechQueueView, TechSchool, TechView,
+  ResourceAmount, TechBlockReason, TechEffectAttr, TechListView, TechQueueView,
+  TechSchool, TechSpeedUpResp, TechView,
 } from '../../net/generated/TechProtocol'
 
 /** 学派名（B20 的四个学派）。表里没有的取值退回枚举名，不显示空白。 */
@@ -126,6 +127,16 @@ export function costTextOf(costs: readonly ResourceAmount[]): string {
  */
 export function techCancelText(techName: string, refund: readonly ResourceAmount[]): string {
   return `已取消「${techName}」 · 退回 ${costTextOf(refund)}`
+}
+
+/**
+ * 一次研究加速的回执那一行。三个数全部照服务端说的念：减了多少、还剩多少、有没有因此完成 ——
+ * 客户端自己拿 `remainingSeconds - reduced` 推一遍，就是第二个真相（服务端算完还会再校验）。
+ */
+export function techSpeedUpText(resp: TechSpeedUpResp, techName: string): string {
+  return resp.finished
+    ? `已减 ${resp.reducedSeconds} 秒 · 「${techName}」研究完成`
+    : `已减 ${resp.reducedSeconds} 秒 · 还剩 ${resp.remainingSeconds} 秒`
 }
 
 /** 队列行：正在研究哪一项、还剩多久。没有在研项时回 null。 */

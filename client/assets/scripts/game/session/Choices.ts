@@ -4,6 +4,7 @@
  */
 
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
+import type { BagListResp } from '../../net/generated/BagProtocol'
 import type { BuildOptionView, CityListResp } from '../../net/generated/CityProtocol'
 import type { HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageUnit } from '../../net/generated/StageProtocol'
@@ -99,6 +100,27 @@ export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
     })
   }
   return out
+}
+
+/**
+ * 能推进当前研究的那一种道具。筛的是服务端下发的 `effectKind` 这一列，**不按 id 硬编码**：
+ * `type=SPEEDUP` 底下还有建造令与训练令，走到 `/tech/speedUp` 会被服务端拒 ——
+ * 与其让玩家挑一颗必然被拒的，不如在这一层就不列出来（协议注释：宁可响，也不静默按另一种加速处理）。
+ */
+export function buildResearchSpeedupChoices(bag: BagListResp | null): readonly SpeedupChoice[] {
+  if (bag === null) {
+    return []
+  }
+  return bag.items
+    .filter((item) => item.type === 'SPEEDUP' && item.effectKind === 'REDUCE_RESEARCH_SECONDS')
+    .map((item) => ({
+      id: item.itemId,
+      targetId: item.itemId,
+      label: item.name,
+      // `BagItem` 里没有 `effectValue` —— 一张减多少秒**没下发**，所以这句不许编：
+      // 只说手里有几张，减多少由服务端的回执说（用之前想知道就去道具详情那条读口）
+      detail: `持有 ${item.count} 张`,
+    }))
 }
 
 /** 未放置建筑候选。地块能否放置由玩家点选坐标后交给服务端判定。 */

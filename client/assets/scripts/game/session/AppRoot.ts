@@ -58,7 +58,9 @@ import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
 import type { ScoutListResp } from '../../net/generated/WorldProtocol'
 import { blockReasonText, buildTechPanel } from '../tech/TechPanel'
 import type { TechPanelView } from '../tech/TechPanel'
-import type { TechCancelResp, TechListView } from '../../net/generated/TechProtocol'
+import type {
+  TechCancelResp, TechListView, TechSpeedUpResp,
+} from '../../net/generated/TechProtocol'
 import { buildEquipPanel } from '../equip/EquipPanel'
 import type { EquipPanelView } from '../equip/EquipPanel'
 import type { EquipInstanceListView, EquipSlot } from '../../net/generated/EquipProtocol'
@@ -101,7 +103,7 @@ import type { GuideAction, GuideProgressResp, GuideScriptResp } from '../../net/
 import { claimActivityReq } from '../activity/ActivityPanel'
 import {
   buildArmyQueueChoices, buildChestOpenChoices, buildChatActionChoices, buildLineupChoices,
-  buildShareChannelChoices, buildSpeedupChoices,
+  buildResearchSpeedupChoices, buildShareChannelChoices, buildSpeedupChoices,
 } from './Choices'
 import type {
   ChatActionChoice, ChoiceOption, LineupChoice, ShareChannelChoice, SpeedupChoice,
@@ -233,6 +235,10 @@ export interface PanelTargets {
   staminaBought?(resp: StaminaBuyResp): void
   /** 取消研究的回执：取消了哪一行、退回来多少资源（比例服务端算，与城建同一份配置）。 */
   techCancelled?(resp: TechCancelResp): void
+  /** 研究加速用哪一张（候选按 `effectKind` 筛，不按 id 硬编码）。 */
+  researchSpeedupChoice?(options: readonly SpeedupChoice[], onPick: (itemId: string) => void): void
+  /** 一次研究加速的回执：减了多少秒、还剩多少、是否因此完成。 */
+  techSpeededUp?(resp: TechSpeedUpResp): void
   /**
    * 社交面板。`members` 走 `/alliance/sync` 的 diff 通道，`helps` 走
    * `/social/helpRequests`；两者都由服务端给出，客户端只转手，不自己拼列表。
@@ -2302,6 +2308,52 @@ export class AppRoot {
     }
     await this.refresh('tech', 'resources')
     this.targets.techCancelled?.(outcome.data)
+  }
+
+  /**
+   * 用一张研究加速道具推进当前研究。候选由 `effectKind` 筛（不按 id 硬编码），
+   * 减多少秒、还剩多少秒、有没有完成都由服务端回。
+   *
+   * <p>与 `cancelResearch()` 同一条时序教训：**回执在重拉之后交**，因为它占的是队列那一行的位置。
+   */
+  async speedUpResearch(itemId: string): Promise<void> {
+    this.track(TRACK_EVENTS.techSpeedUp, { itemId })
+    const outcome = await this.api.techSpeedUp({ itemId, count: 1 })
+    if (outcome.kind !== 'ok') {
+      this.say('tech', outcome)
+      return
+    }
+    await this.refresh('tech', 'bag', 'resources')
+    this.targets.techSpeededUp?.(outcome.data)
+  }
+
+  /**
+   * 玩家点了队列那一行的「加速」：先问用哪一张（只有 `REDUCE_RESEARCH_SECONDS` 那一种能用），
+   * 手里一张都没有就明说 —— 不给一颗点开只会失败的键。
+   */
+  requestResearchSpeedUp(): void {
+    const queueId = this.techResp?.queue.techId ?? null
+    if (queueId === null || queueId === undefined) {
+      this.rejectNeeds('tech', '现在没有在研究的项目，用不了加速')
+      return
+    }
+    if (this.bagResp === null) {
+      // "还没读到"与"手里没有"是两句话：写成后者会把一次读侧故障说成玩家的错
+      this.rejectNeeds('tech', '道具清单还没读到，稍后再试')
+      return
+    }
+    const options = buildResearchSpeedupChoices(this.bagResp)
+    if (options.length === 0) {
+      this.rejectNeeds('tech', '手里没有研究加速道具（建造令与训练令用不到研究上）')
+      return
+    }
+    if (this.targets.researchSpeedupChoice === undefined) {
+      this.rejectNeeds('tech', pickUnavailable('加速道具'))
+      return
+    }
+    this.targets.researchSpeedupChoice(options, (picked) => {
+      void this.speedUpResearch(picked)
+    })
   }
 
   // ---------- 装备实例页（V03-b-S1 读侧） ----------

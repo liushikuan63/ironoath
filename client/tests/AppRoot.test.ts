@@ -193,6 +193,9 @@ const ROUTES: Record<string, unknown> = {
   '/tech/cancel': {
     techId: 'tech_agri_wood', refund: [{ type: 'WOOD', amount: 360 }],
   },
+  '/tech/speedUp': {
+    techId: 'tech_agri_wood', reducedSeconds: 3600, remainingSeconds: 0, finished: true,
+  },
   '/equip/instances': {
     instances: [
       {
@@ -572,6 +575,10 @@ interface Harness {
   readonly lastChest: { consumed: number, overflow: number } | null
   /** 最近一次取消研究里服务端回的 techId 与那份返还 */
   readonly lastTechCancel: { techId: string, refund: number } | null
+  /** 递给「用哪一张加速」的候选，以及点其中一张 */
+  readonly researchSpeedupOptions: readonly SpeedupChoice[]
+  pickResearchSpeedup(itemId: string): void
+  readonly lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null
   /** 最近一次购买回执里服务端说的到账与扣币 */
   readonly lastStaminaBought: { granted: number, costGold: number } | null
   /** 最近一次落地给榜单面板的整块视图。 */
@@ -732,6 +739,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let chestPick: ((id: string) => void) | null = null
   let lastChest: { consumed: number, overflow: number } | null = null
   let lastTechCancel: { techId: string, refund: number } | null = null
+  let researchSpeedupOptions: SpeedupChoice[] = []
+  let researchSpeedupPick: ((itemId: string) => void) | null = null
+  let lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null = null
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
   const targets: PanelTargets = {
@@ -864,6 +874,16 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     techCancelled: (resp) => {
       attached.push('techCancelled')
       lastTechCancel = { techId: resp.techId, refund: resp.refund[0]?.amount ?? 0 }
+    },
+    researchSpeedupChoice: (options, onPick) => {
+      researchSpeedupOptions = [...options]
+      researchSpeedupPick = onPick
+    },
+    techSpeededUp: (resp) => {
+      attached.push('techSpeededUp')
+      lastTechSpeedUp = {
+        reduced: resp.reducedSeconds, remaining: resp.remainingSeconds, finished: resp.finished,
+      }
     },
     armyQueueChoice: (options, onPick) => {
       queueOptions = [...options]
@@ -1002,6 +1022,15 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastTechCancel() {
       return lastTechCancel
+    },
+    get researchSpeedupOptions() {
+      return researchSpeedupOptions
+    },
+    pickResearchSpeedup(itemId) {
+      researchSpeedupPick?.(itemId)
+    },
+    get lastTechSpeedUp() {
+      return lastTechSpeedUp
     },
     get lineupOptions() {
       return lineupOptions
@@ -4095,4 +4124,76 @@ test('没在研究时点取消：一个请求都不发，说的是"不用取消"
 
   assert.equal(h.http.calls.length, total, '队列空着就不该发这一按')
   assert.match(h.errors.map(e => e[1]).join('\n'), /没有在研究的项目/)
+})
+
+test('研究加速：先问用哪一张，选完发一条带幂等键的 POST 并重拉', async () => {
+  const h = harness()
+  h.http.overrides.set('/tech/list', {
+    ...(ROUTES['/tech/list'] as Record<string, unknown>),
+    queue: {
+      techId: 'tech_agri_wood', finishAt: SERVER_NOW + 300_000, startedAt: SERVER_NOW,
+      totalSeconds: 300, remainingSeconds: 300,
+    },
+  })
+  h.http.overrides.set('/bag/list', {
+    items: [{
+      itemId: 'item_speedup_research_1h', name: '研究令', type: 'SPEEDUP', rarity: 'R',
+      count: 2, stackMax: 99, sortKey: 1, effectKind: 'REDUCE_RESEARCH_SECONDS', effectTarget: null,
+    }],
+    capacityUsed: 1, capacityMax: 100, serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  await h.root.openTech()
+
+  h.root.requestResearchSpeedUp()
+  assert.deepEqual(h.researchSpeedupOptions.map(o => o.id), ['item_speedup_research_1h'],
+    '候选来自背包那一份（`bagResp` 在首屏预拉里，没 start 就是 null）')
+  assert.equal(h.http.countOf('/tech/speedUp'), 0, '没选之前不能吃道具')
+
+  h.pickResearchSpeedup('item_speedup_research_1h')
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  const calls = h.http.calls.filter(c => c.path === '/tech/speedUp')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.itemId, 'item_speedup_research_1h')
+  assert.equal(calls[0]?.body.count, 1)
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
+    '加速是"消耗品 + 改状态"的双重动作，重放不去重就是白丢一张')
+  assert.equal(h.http.countOf('/bag/list') >= 2, true, '吃过一张要重拉背包')
+  assert.deepEqual(h.lastTechSpeedUp, { reduced: 3600, remaining: 0, finished: true })
+})
+
+test('手里没有研究令：一个请求都不发，并说清建造令训练令用不到研究上', async () => {
+  const h = harness()
+  h.http.overrides.set('/tech/list', {
+    ...(ROUTES['/tech/list'] as Record<string, unknown>),
+    queue: {
+      techId: 'tech_agri_wood', finishAt: SERVER_NOW + 300_000, startedAt: SERVER_NOW,
+      totalSeconds: 300, remainingSeconds: 300,
+    },
+  })
+  await h.root.start('dev-1', '君')
+  await h.root.openTech()
+  const total = h.http.calls.length
+
+  h.root.requestResearchSpeedUp()
+
+  assert.equal(h.http.calls.length, total)
+  assert.match(h.errors.map(e => e[1]).join('\n'), /没有研究加速道具/)
+})
+
+test('背包那份还没读到时说"还没读到"，不说成"手里没有"', async () => {
+  const h = harness()
+  h.http.overrides.set('/tech/list', {
+    ...(ROUTES['/tech/list'] as Record<string, unknown>),
+    queue: {
+      techId: 'tech_agri_wood', finishAt: SERVER_NOW + 300_000, startedAt: SERVER_NOW,
+      totalSeconds: 300, remainingSeconds: 300,
+    },
+  })
+  await h.root.openTech()
+
+  h.root.requestResearchSpeedUp()
+
+  assert.match(h.errors.map(e => e[1]).join('\n'), /道具清单还没读到/)
 })

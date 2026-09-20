@@ -294,6 +294,11 @@ export const TRACK_EVENTS = {
    */
   techCancel: 'tech_cancel',
   /**
+   * 用一张研究加速道具（B20 §一）。带 itemId：三种加速令分别通向建造 / 训练 / 研究三个出口，
+   * "玩家把研究令用在哪"只有这条能回答。
+   */
+  techSpeedUp: 'tech_speed_up',
+  /**
    * 开一批宝箱（B04 §2）。带 `count`：开箱是产出与付费的交汇点，
    * "一次开 1 个"与"一次开 100 个"在运营曲线上是两种玩家。
    */

@@ -11,9 +11,11 @@
  * <p>占位美术用 Graphics 画纯色块（与战力页同一套做法）：正式美术到位只换绘制部分。
  */
 import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
-import { techCancelText } from '../game/tech/TechPanel'
+import { techCancelText, techSpeedUpText } from '../game/tech/TechPanel'
 import type { TechPanelView as TechViewData, TechRow } from '../game/tech/TechPanel'
-import type { TechCancelResp } from '../net/generated/TechProtocol'
+import type { TechCancelResp, TechSpeedUpResp } from '../net/generated/TechProtocol'
+import type { SpeedupChoice } from '../game/session/Choices'
+import { ChoiceOverlay } from './ChoiceOverlay'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -51,13 +53,35 @@ export class TechPanelView extends Component {
   onResearch: ((techId: string) => void) | null = null
   /** 玩家点了队列那一行的「取消研究」。返还多少由服务端算，本场景只把回执念出来 */
   onCancelResearch: (() => void) | null = null
+  /** 玩家点了队列那一行的「加速」。用哪一张由外层筛（`effectKind`），本场景只回抛一个"我要加速" */
+  onSpeedUpResearch: (() => void) | null = null
+
+  /** 用哪一张研究加速。选项由外层按 `effectKind` 筛好，本面板只画与回抛。 */
+  showSpeedupPicker(options: readonly SpeedupChoice[], onPick: (itemId: string) => void): void {
+    // 这一页是按需挂的（没有 onLoad 建节点那一步），所以弹层第一次要用时才建
+    if (this.speedupPicker === null) {
+      this.speedupPicker = new ChoiceOverlay(this.node, '用哪一张加速', 620)
+    }
+    this.speedupPicker.show(options, onPick)
+  }
+
+  /** 一次加速的回执：减了多少、还剩多少、有没有因此完成。三个数都照服务端念。 */
+  attachTechSpeedUp(resp: TechSpeedUpResp): void {
+    this.receipt = techSpeedUpText(resp, this.nameOf(resp.techId))
+    this.redraw()
+  }
+
+  private nameOf(techId: string): string {
+    return this.viewData?.rows.find((row) => row.techId === techId)?.name ?? techId
+  }
   /** 取消之后那句回执。占的是队列那一行的位置（取消完就没有在研项了），关掉这一页才清 */
   private receipt: string | null = null
+  /** 「用哪一张加速」的弹层 */
+  private speedupPicker: ChoiceOverlay | null = null
 
   /** 取消研究的回执。名字从当前那份列表里查（服务端只回 techId，中文名在行的 name 上）。 */
   attachTechCancelled(resp: TechCancelResp): void {
-    const name = this.viewData?.rows.find((row) => row.techId === resp.techId)?.name ?? resp.techId
-    this.receipt = techCancelText(name, resp.refund)
+    this.receipt = techCancelText(this.nameOf(resp.techId), resp.refund)
     this.redraw()
   }
 
@@ -129,8 +153,27 @@ export class TechPanelView extends Component {
       }
       return y
     }
-    this.receipt = null
     this.label(text, COLOR_HINT, 18, -CARD_WIDTH / 2 + PADDING, y - 10, 'left')
+    // 队列还在跑时回执画在它**下面一行** —— 抢掉队列那一行会让"还剩多久"看不见，
+    // 而玩家刚用完一张加速，两件事都要看（清空只在 hide 时做）
+    let consumed = 26
+    if (this.receipt !== null) {
+      this.label(this.receipt, COLOR_GOOD, 15, -CARD_WIDTH / 2 + PADDING, y - 30, 'left')
+      // 多占一行：回执下面紧接着是学派分组标题，不挪的话两者叠在同一处（截图抓到）
+      consumed = 46
+    }
+    // 「取消研究」左边再一颗「加速」：队列这一行说的两件事（反悔 / 提前）都该在这儿办完
+    const speed = new Node('SpeedUpResearchButton')
+    this.node.addChild(speed)
+    speed.addComponent(UITransform).setContentSize(new Size(96, 26))
+    speed.setPosition(new Vec3(CARD_WIDTH / 2 - PADDING - 152, y - 10, 0))
+    const speedGraphics = speed.addComponent(Graphics)
+    speedGraphics.fillColor = COLOR_BUTTON
+    speedGraphics.rect(-48, -13, 96, 26)
+    speedGraphics.fill()
+    speed.on('touch-start', () => this.onSpeedUpResearch?.())
+    this.rows.push(speed)
+    this.label('加速', COLOR_TEXT, 14, CARD_WIDTH / 2 - PADDING - 152, y - 10, 'center')
     // 队列一占就再也动不了是这一页原来最大的坑（服务端有 `/tech/cancel`，客户端连方法都没有）。
     // 键放在队列那一行右侧：它取消的就是这一行说的那件事，位置要跟着那行出现与消失
     const button = new Node('CancelResearchButton')
@@ -144,7 +187,7 @@ export class TechPanelView extends Component {
     button.on('touch-start', () => this.onCancelResearch?.())
     this.rows.push(button)
     this.label('取消研究', COLOR_TEXT, 14, CARD_WIDTH / 2 - PADDING - 48, y - 10, 'center')
-    return y - 26
+    return y - consumed
   }
 
   /**
@@ -283,5 +326,7 @@ export class TechPanelView extends Component {
   override onDestroy(): void {
     this.clearRows()
     this.onResearch = null
+    this.onCancelResearch = null
+    this.onSpeedUpResearch = null
   }
 }

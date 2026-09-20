@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildArmyQueueChoices, buildBuildChoices, buildChestOpenChoices, buildLineupChoices,
+  buildResearchSpeedupChoices,
   buildSpeedupChoices,
 } from '../assets/scripts/game/session/Choices'
 import type { ArmyListResp } from '../assets/scripts/net/generated/ArmyProtocol'
@@ -117,4 +118,28 @@ test('手里超过一次上限时，「全开」说的是上限而不是持有�
     '要说清为什么是 100 而不是 250，否则玩家以为另外 150 个被吞了')
   // 这句是给玩家看的，工程词不能上屏（第 12 道门盯这条；上一版这条断言把「协议」钉成了规格）
   assert.doesNotMatch(all?.detail ?? '', /协议|服务端|下发|幂等/)
+})
+
+test('研究加速只列 effectKind 对得上的那一种令，建造令与训练令不出现', () => {
+  const bag = {
+    items: [
+      { itemId: 'i_research', name: '研究令', type: 'SPEEDUP', effectKind: 'REDUCE_RESEARCH_SECONDS', count: 3 },
+      { itemId: 'i_build', name: '建造令', type: 'SPEEDUP', effectKind: 'REDUCE_BUILD_SECONDS', count: 9 },
+      { itemId: 'i_train', name: '训练令', type: 'SPEEDUP', effectKind: 'REDUCE_TRAIN_SECONDS', count: 2 },
+    ],
+  } as never
+  assert.deepEqual(buildResearchSpeedupChoices(bag).map((o) => o.id), ['i_research'],
+    '走错一种会被服务端拒（它宁可响也不静默按另一种加速处理），所以干脆不列出来')
+  assert.deepEqual(buildResearchSpeedupChoices(null), [], '背包没读到不猜')
+})
+
+test('候选里不许编"一张减多少秒"——BagItem 没下发 effectValue', () => {
+  const one = buildResearchSpeedupChoices({
+    items: [{
+      itemId: 'i_research', name: '研究令', type: 'SPEEDUP',
+      effectKind: 'REDUCE_RESEARCH_SECONDS', count: 3,
+    }],
+  } as never)[0]
+  assert.equal(/减|分|秒/.test(one?.detail ?? ''), false, `detail 写的是「${one?.detail}」`)
+  assert.match(one?.detail ?? '', /持有 3 张/)
 })

@@ -1151,7 +1151,10 @@ export class GameBootstrap extends Component {
       out.tech = view => tech.render(view)
       tech.onResearch = techId => { void this.root?.researchTech(techId) }
       tech.onCancelResearch = () => { void this.root?.cancelResearch() }
+      tech.onSpeedUpResearch = () => this.root?.requestResearchSpeedUp()
       out.techCancelled = resp => tech.attachTechCancelled(resp)
+      out.techSpeededUp = resp => tech.attachTechSpeedUp(resp)
+      out.researchSpeedupChoice = (options, onPick) => tech.showSpeedupPicker(options, onPick)
     }
     if (equip !== null) {
       // 打开由编排层发起（`AppRoot.openEquip`，入口在武将页）；这里只把"画"接上

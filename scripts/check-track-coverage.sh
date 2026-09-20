@@ -75,6 +75,9 @@ const SKIP = new Set([
   // 军队行上「队列」（B26 S15）同一条口径：打开菜单只是把候选摆出来，
   // 真正"取消这一口训练"那一下在 cancelTrain 里打 `army_train_cancel` —— 两处都打会把一次取消记成两次
   "openArmyQueue",
+  // 研究那一行的「加速」（B20）同一条口径：它只是问"用哪一张"，
+  // 真正"吃掉一张推进研究"那一下在 speedUpResearch 里打 `tech_speed_up` —— 两处都打会把一张记成两张
+  "requestResearchSpeedUp",
   // 升级弹层的"开弹层"与"加减一件"：真正要量的是"喂下去"那一下（在 confirmExpPick 里打 hero_level_up），
   // 开弹层与步进都还不是意图 —— 与上面的 beginMarchCompose / pickMarchUnit 同一条理由
   "openExpPick",

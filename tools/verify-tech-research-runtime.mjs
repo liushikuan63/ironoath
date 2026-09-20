@@ -71,6 +71,7 @@ const passthrough = async (route) => {
 const NOW = Date.now()
 const RESEARCH_CALLS = []
 const CANCEL_CALLS = []
+const SPEEDUP_CALLS = []
 let techPulls = 0
 /**
  * 研究状态会被 `/tech/research` 推进 —— 夹具不能是静态的：静态的话"发完重拉到了新状态"这条
@@ -110,6 +111,13 @@ await context.route('**/tech/research*', async (route) => {
     cost: [{ type: 'WOOD', amount: 600 }], timeSec: 300,
   })
 })
+await context.route('**/tech/speedUp*', async (route) => {
+  if (await passthrough(route)) return
+  SPEEDUP_CALLS.push(JSON.parse(route.request().postData() ?? '{}'))
+  await reply(route, {
+    techId: 'tech_mil_attack', reducedSeconds: 3600, remainingSeconds: 120, finished: false,
+  })
+})
 await context.route('**/tech/cancel*', async (route) => {
   if (await passthrough(route)) return
   CANCEL_CALLS.push(JSON.parse(route.request().postData() ?? '{}'))
@@ -120,6 +128,22 @@ await context.route('**/tech/list*', async (route) => {
   if (await passthrough(route)) return
   techPulls += 1
   await reply(route, techBody())
+})
+
+// 「用哪一张加速」的候选来自背包那一份：给一张研究令 + 一张建造令，
+// 后者必须**不出现**在候选里（服务端会拒它，宁可不列也不给一颗必然失败的选项）
+await context.route('**/bag/list*', async (route) => {
+  if (await passthrough(route)) return
+  await reply(route, {
+    items: [{
+      itemId: 'item_speedup_research_1h', name: '研究令', type: 'SPEEDUP', rarity: 'R',
+      count: 2, stackMax: 99, sortKey: 1, effectKind: 'REDUCE_RESEARCH_SECONDS', effectTarget: null,
+    }, {
+      itemId: 'item_speedup_build_1h', name: '建造令', type: 'SPEEDUP', rarity: 'R',
+      count: 5, stackMax: 99, sortKey: 2, effectKind: 'REDUCE_BUILD_SECONDS', effectTarget: null,
+    }],
+    capacityUsed: 2, capacityMax: 100, serverNow: NOW,
+  })
 })
 
 const page = await context.newPage()
@@ -217,6 +241,60 @@ check('开始研究之后那一行的键收掉了（一次一队列，再点必�
   (read?.buttons ?? []).join(','), '')
 await page.screenshot({ path: path.join(OUT, 'tech-research-sent.png') })
 console.log(`  截图：${path.join(OUT, 'tech-research-sent.png')}`)
+
+// ---------- 「加速」：先问用哪一张，建造令不许出现在候选里 ----------
+const speedTapped = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let hit = null
+  const walk = (n) => { if (n.name === 'SpeedUpResearchButton' && n.active) hit = n; for (const c of n.children) if (c.active) walk(c) }
+  walk(game)
+  if (hit === null) return false
+  hit.emit('touch-start')
+  return true
+})()`)
+checkTrue('队列那一行旁边有颗「加速」且按得到', speedTapped)
+await page.waitForTimeout(800)
+const picker = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let overlay = null
+  const find = (n) => { if (n.name === 'ChoiceOverlay' && n.active) overlay = n; for (const c of n.children) if (c.active) find(c) }
+  find(game)
+  if (overlay === null) return { open: false, texts: [] }
+  const texts = []
+  const walk = (n) => {
+    const t = n.getComponent('cc.Label')?.string ?? ''
+    if (t.length > 0) texts.push(t)
+    for (const c of n.children) walk(c)
+  }
+  walk(overlay)
+  return { open: true, texts }
+})()`)
+checkTrue('先问「用哪一张加速」，候选里只有研究令：' + JSON.stringify(picker?.texts ?? []).slice(0, 140),
+  picker?.open === true && picker.texts.some((t) => t === '用哪一张加速')
+    && picker.texts.some((t) => t.includes('研究令')) && !picker.texts.some((t) => t.includes('建造令')))
+check('问用哪一张之前不吃道具', SPEEDUP_CALLS.length, 0)
+await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let hit = null
+  const walk = (n) => {
+    if (n.name.startsWith('Choice-') && n.active
+      && (n.children || []).some((k) => (k.getComponent('cc.Label')?.string ?? '').includes('研究令'))) hit = n
+    for (const c of n.children) if (c.active) walk(c)
+  }
+  walk(game)
+  if (hit !== null) hit.emit('touch-start')
+})()`)
+await page.waitForTimeout(1_500)
+check('恰好发出一条 POST /tech/speedUp', SPEEDUP_CALLS.length, 1)
+check('一次用一张', SPEEDUP_CALLS[0]?.count, 1)
+checkTrue('带幂等键（消耗品 + 改状态，重放不去重就是白丢一张）',
+  typeof SPEEDUP_CALLS[0]?.requestId === 'string' && SPEEDUP_CALLS[0].requestId.length > 0)
+read = await page.evaluate(READ)
+checkTrue('加速那句回执照服务端给的数念（队列还在跑，回执画在队列那一行下面一行）：'
+  + JSON.stringify(read?.texts ?? []).slice(-160),
+  read !== null && read.texts.some((t) => t.includes('已减 3600 秒') && t.includes('还剩 120 秒')))
+await page.screenshot({ path: path.join(OUT, 'tech-speeded-up.png') })
+console.log(`  截图：${path.join(OUT, 'tech-speeded-up.png')}`)
 
 // ---------- 队列那一行的「取消研究」：现在能进来了，就得能反悔 ----------
 const cancelTapped = await page.evaluate(`(() => {

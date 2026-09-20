@@ -101,6 +101,7 @@ import type {
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
 import type {
   TechCancelReq, TechCancelResp, TechListView, TechResearchReq, TechResearchResp,
+  TechSpeedUpReq, TechSpeedUpResp,
 } from '../../net/generated/TechProtocol'
 import type { EquipInstanceListView } from '../../net/generated/EquipProtocol'
 
@@ -189,6 +190,15 @@ export class GameApi {
    */
   techCancel(): Promise<NetOutcome<TechCancelResp>> {
     return this.mutate<TechCancelReq, TechCancelResp>('/tech/cancel', {})
+  }
+
+  /**
+   * 用研究加速道具推进当前研究。道具必须是 `type=SPEEDUP` 且 `effectKind=REDUCE_RESEARCH_SECONDS`
+   * 那一种 —— 建造令与训练令走到这里会被服务端拒（它宁可响一声，也不静默按另一种加速处理），
+   * 所以候选由 `effectKind` 这一列筛，不按 id 硬编码。
+   */
+  techSpeedUp(req: Omit<TechSpeedUpReq, 'requestId'>): Promise<NetOutcome<TechSpeedUpResp>> {
+    return this.mutate<TechSpeedUpReq, TechSpeedUpResp>('/tech/speedUp', req)
   }
 
   /**
