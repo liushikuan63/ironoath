@@ -3090,16 +3090,14 @@ export class AppRoot {
     this.deliverCompose()
   }
 
-  /** 发起不了集结时那句原因；null = 可以发起（或暂时读不到门，交给服务端判）。 */
+  /**
+   * 发起不了集结时那句原因；null = 可以发起（或政策还没拉到，交给服务端判）。
+   *
+   * <p>这一句**只能来自 `/rally/policy`**：客户端先前自己按权限位与摘要拼过一份同样的判定，
+   * 那是把服务端已经写成人话的东西再翻一遍 —— 两边一漂，玩家看到的原因就和被拒的原因不是一回事。
+   */
   private rallyBlockedReason(): string | null {
-    if (!this.permissions.loaded) {
-      return null
-    }
-    if (this.lastSocialSummary !== null && this.lastSocialSummary.squad === null) {
-      return '你还没有小队，先加入或建一支再发起集结'
-    }
-    const rallyGate = gate(this.permissions, 'SQUAD', 'START_RALLY')
-    return rallyGate.allowed ? null : (rallyGate.reason ?? '你当前的职位不能发起集结')
+    return rallySwitchBlocked(this.rallyPolicyOf('SQUAD'))
   }
 
   /**

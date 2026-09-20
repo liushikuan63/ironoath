@@ -3166,6 +3166,14 @@ test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只�
   h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
     squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
   }))
+  // 「能不能发起」这一句现在只有一个出处：`/rally/policy`。客户端不再按权限位自己拼一份
+  h.http.overrides.set('/rally/policy', {
+    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: false, reason: '你当前的职位不能发起集结' },
+    alliance: { minMembers: 2, maxMembers: 20, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: false, reason: '你当前的职位不能发起集结' },
+    serverNow: SERVER_NOW,
+  })
   await h.root.refresh('army')
   await h.root.searchTargets(64)
   await h.root.loadSocialGates()
@@ -3177,7 +3185,8 @@ test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只�
   assert.equal(h.http.calls.length, before, '切换不吃网络：它既不是命令也不该预拉')
   assert.equal(h.events.length, 0, '换种类是一次选择，不是那一次提交')
   assert.equal(h.lastCompose?.mode ?? 'MARCH', 'MARCH', '被挡住就不切')
-  assert.ok((h.lastCompose?.notice ?? '').length > 0, '要说出为什么切不动')
+  assert.equal(h.lastCompose?.notice, '你当前的职位不能发起集结',
+    '原因用服务端那句原话：客户端自己拼的那份一旦和权限表漂了，玩家看到的和被拒的就不是同一句')
 })
 
 // ---------- B26 S14：编成面板上的联盟集结（层级 + 那两个数） ----------
