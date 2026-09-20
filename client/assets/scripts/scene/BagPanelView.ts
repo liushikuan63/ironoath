@@ -40,10 +40,14 @@ const COLOR_PERCENT = new Color(120, 176, 96, 255)
 const PANEL_WIDTH = 680
 const ROW_HEIGHT = 46
 const ROW_GAP = 4
-const HEADER_HEIGHT = 96
+const HEADER_HEIGHT = 134
+/** 类型页签那一条：整条可用宽、单颗高、颗间距 */
+const PAGE_STRIP_WIDTH = 640
+const PAGE_HEIGHT = 30
+const PAGE_GAP = 6
 const PADDING = 16
 /** 一屏最多画几行。资源明细页每行还会展开若干条加成，所以留得比背包页少 */
-const MAX_VISIBLE_ROWS = 8
+const MAX_VISIBLE_ROWS = 7
 
 type Tab = 'resource' | 'bag'
 
@@ -59,6 +63,8 @@ export class BagPanelView extends Component {
   private readonly drawnRows: Node[] = []
   private headerLabel: Label | null = null
   private warningLabel: Label | null = null
+  /** 类型页签那一条的容器（里面每类一颗） */
+  private pageHolder: Node | null = null
   private readonly tabLabels = new Map<Tab, Label>()
   private readonly tabButtons = new Map<Tab, Node>()
   /**
@@ -87,6 +93,7 @@ export class BagPanelView extends Component {
     this.buildBackground(size.width, size.height)
     this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
     this.buildHeader(size.height)
+    this.buildBagPages(size.height)
     this.targetPicker = new ChoiceOverlay(this.node, '选择加速目标', 760)
     this.openPicker = new ChoiceOverlay(this.node, '开几个', 520)
     // 道具/装备两族图按需拉取；先画一帧 Graphics 占位，图到了再补一帧 —— 加载失败就停在占位上
@@ -192,6 +199,65 @@ export class BagPanelView extends Component {
   }
 
   // ---------- 搭建 ----------
+
+  /**
+   * 道具类型页签（加速 / 宝箱 / 材料…）。**代码里必须自己建**：
+   * `selectBagPage` 原先只写着"由编辑器的页签控件调用"，而 Web 产物里那个控件不存在，
+   * 于是玩家只看得到第一类道具的行 —— 其余类型"看得见数量、够不着行"（#326 现跑抓到）。
+   */
+  private buildBagPages(height: number): void {
+    const holder = new Node('BagPages')
+    holder.layer = this.node.layer
+    this.node.addChild(holder)
+    holder.setPosition(new Vec3(0, height / 2 - PADDING - 114, 0))
+    holder.addComponent(UITransform).setContentSize(new Size(PAGE_STRIP_WIDTH, PAGE_HEIGHT))
+    holder.active = false
+    this.pageHolder = holder
+  }
+
+  /** 按当前那一页的类型集合重排页签。类型最多五种，所以不池化。 */
+  private renderBagPages(): void {
+    const holder = this.pageHolder
+    const pages = this.bag?.pages ?? []
+    if (holder === null) {
+      return
+    }
+    // 先一份份拆掉再重建（`children` 是引擎内部那个数组的只读视图，边遍历边删会跳项）
+    for (const child of holder.children.slice()) {
+      child.destroy()
+    }
+    // 只有一类道具时不占这一条：一排只有一个键的页签比没有更让人以为"只有这一页"
+    holder.active = this.tab === 'bag' && pages.length > 1
+    if (!holder.active) {
+      return
+    }
+    const width = Math.min(112, (PAGE_STRIP_WIDTH - (pages.length - 1) * PAGE_GAP) / pages.length)
+    const total = pages.length * width + (pages.length - 1) * PAGE_GAP
+    pages.forEach((page, index) => {
+      const node = new Node(`Page_${page.type}`)
+      node.layer = holder.layer
+      holder.addChild(node)
+      node.setPosition(new Vec3(-total / 2 + width / 2 + index * (width + PAGE_GAP), 0, 0))
+      node.addComponent(UITransform).setContentSize(new Size(width, PAGE_HEIGHT))
+      const selected = page.type === this.bagPageType
+      if (!applyCommandButton(node, selected ? 'hover' : 'normal', width, PAGE_HEIGHT)) {
+        const graphics = node.addComponent(Graphics)
+        graphics.fillColor = COLOR_PANEL
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.roundRect(-width / 2, -PAGE_HEIGHT / 2, width, PAGE_HEIGHT, 5)
+        graphics.fill()
+        graphics.stroke()
+      }
+      const label = this.addLabel(node, 'Caption', 0, 0,
+        selected ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 15)
+      // 名字自带数量：玩家不用点进去就知道这一类有几个（`items.length` 是服务端那份的行数）
+      label.string = `${page.typeText} ${page.items.length}`
+      label.overflow = Label.Overflow.SHRINK
+      node.getComponent(UITransform)?.setContentSize(new Size(width, PAGE_HEIGHT))
+      node.on('touch-start', (_event: EventTouch) => this.selectBagPage(page.type), this)
+    })
+  }
 
   private buildBackground(width: number, height: number): void {
     const node = new Node('Background')
@@ -340,6 +406,7 @@ export class BagPanelView extends Component {
     if (this.warningLabel !== null) {
       this.warningLabel.string = this.warningText(rows.length)
     }
+    this.renderBagPages()
   }
 
   private warningText(visibleCount: number): string {

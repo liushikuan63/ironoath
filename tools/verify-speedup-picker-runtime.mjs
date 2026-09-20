@@ -305,14 +305,41 @@ await page.evaluate(`(() => {
 })()`)
 await page.waitForTimeout(400)
 
-// 背包按**道具类型分页**（`buildBagPanel` 分组），而类型页签是编辑器里的控件、代码里不建节点，
-// 所以探针直接调真实的那个切换方法（与页签点下去走的是同一条），不猜第几页是什么
-await page.evaluate(`(() => {
+// #327 之前这里直接调 `selectBagPage('CHEST')` 绕过去了 —— 那等于把"玩家到不了这一页"当成前提。
+// 现在按真实路径：类型页签是代码建出来的节点，按它切到「宝箱」页
+const pageTapped = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const panel = game?.getChildByName('bag')
-  panel?.getComponent('BagPanelView')?.selectBagPage('CHEST')
+  let hit = null
+  const walk = (n) => {
+    if (n.name === 'Page_CHEST' && n.active) hit = n
+    for (const c of n.children) if (c.active) walk(c)
+  }
+  walk(panel)
+  if (hit === null) return false
+  hit.emit('touch-start')
+  return true
 })()`)
+checkTrue('类型页签里有「宝箱」那一颗，按得动', pageTapped)
 await page.waitForTimeout(500)
+const strip = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('bag')
+  let holder = null
+  const find = (n) => { if (n.name === 'BagPages') holder = n; for (const c of n.children) find(c) }
+  find(panel)
+  if (holder === null) return { found: false }
+  const caps = []
+  const walk = (n) => {
+    if (n.name === 'Caption' && n.active) caps.push(n.getComponent('cc.Label')?.string ?? '')
+    for (const c of n.children) if (c.active) walk(c)
+  }
+  walk(holder)
+  return { found: true, active: holder.active, caps }
+})()`)
+check('类型页签那一条在（两种道具 ⇒ 该出现）', strip?.active, true)
+checkTrue('每颗都带数量，玩家不点也知道这一类有几个：' + JSON.stringify(strip?.caps ?? []),
+  strip !== null && strip.caps.some((c) => c.includes('宝箱') && /\d/.test(c)))
 
 const chestTapped = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')

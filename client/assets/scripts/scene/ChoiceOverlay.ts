@@ -154,7 +154,8 @@ export class ChoiceOverlay {
 
   private renderPage(): void {
     const pages = this.pageCount()
-    this.pageLabel.string = pages <= 1 ? `${this.options.length} 个可选目标` : `第 ${this.page + 1}/${pages} 页`
+    // 措辞要中立：这一层共用八个地方，"可选目标"对加速目标是通的，对「开几个」那种档位就是错的
+    this.pageLabel.string = pages <= 1 ? `${this.options.length} 个可选项` : `第 ${this.page + 1}/${pages} 页`
     const pageOptions = this.options.slice(
       this.page * OPTIONS_PER_PAGE, (this.page + 1) * OPTIONS_PER_PAGE)
     for (let index = 0; index < OPTIONS_PER_PAGE; index++) {
