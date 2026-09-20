@@ -62,6 +62,8 @@ const SERVER_NOW = () => Date.now()
 
 /** 夹具状态：三相对照只动这两个字段，摘要与成员行完全一致。 */
 const fixture = {
+  /** I 相：任命那一枪收到的 body */
+  setRoleCalls: [],
   /** 'leader' = 服务端说有权限；'none' = 说没权限（同一个职位 NONE、空表） */
   mode: 'leader',
   /** 今天捐过哪几档（捐一次加一档，用来验"用完的档位不再摆按钮"） */
@@ -114,7 +116,8 @@ const permissions = (scope) => (fixture.mode === 'leader'
   ? {
     scope, role: 'LEADER',
     permissions: ['DONATE', 'KICK_MEMBER', 'INVITE', 'APPROVE', 'EXPAND_TERRITORY',
-      'DISBAND_ALLIANCE', 'DISBAND_SQUAD', 'TRANSFER_LEADER', 'EXPAND_CAPACITY'],
+      'DISBAND_ALLIANCE', 'DISBAND_SQUAD', 'TRANSFER_LEADER', 'EXPAND_CAPACITY',
+      'RESEARCH_TECH', 'SET_ROLE'],
     serverNow: SERVER_NOW(),
   }
   : { scope, role: 'NONE', permissions: [], serverNow: SERVER_NOW() })
@@ -241,6 +244,74 @@ const TAP_NAMED = (name) => `(() => {
 })()`
 
 /** 点某一行的**第二颗**按钮（转让挂在成员行上）。 */
+/** 整棵社交子树里按文字找到那颗按钮并点它（任命弹层的选项不是 SocialRow 上的行）。 */
+const TAP_ANY = (text) => `(() => {
+  const game = ${NODE_PATH}
+  const root = game.children.find((c) => c.name === 'social')
+  if (!root) return 'missing-root'
+  let hit = null
+  const walk = (n) => {
+    if (hit !== null || !n.activeInHierarchy) return
+    const label = n.getComponent('cc.Label')
+    if (label && label.string === ${JSON.stringify(text)}) hit = n
+    for (const child of n.children) walk(child)
+  }
+  walk(root)
+  if (hit === null) return 'no-label'
+  // 行上的按钮与弹层里的选项都是"节点自己接了 touch-start"，**没有 cc.Button 组件**
+  // （applyCommandButton 拿不到引擎按钮时就退化成 Graphics + 手写监听），
+  // 所以这里按节点名往上找那颗可点的壳，而不是找组件。
+  let node = hit
+  while (node !== null && !/^(ActionButton|ActionButton2|ActionButton3|Choice-)/.test(node.name)) {
+    node = node.parent
+  }
+  if (node === null) return 'no-button'
+  node.emit('touch-start')
+  return 'tapped'
+})()`
+/** 只扫 `ChoiceOverlay` 那棵子树的标签：`readRows()` 看的是面板行，拿它判弹层等于什么都没判。 */
+const OVERLAY_LABELS = `(() => {
+  const game = ${NODE_PATH}
+  const root = game.children.find((c) => c.name === 'social')
+  if (!root) return { error: 'missing-root', labels: [] }
+  let overlay = null
+  const find = (n) => {
+    if (overlay !== null || !n.activeInHierarchy) return
+    if (n.name === 'ChoiceOverlay') { overlay = n; return }
+    for (const child of n.children) find(child)
+  }
+  find(root)
+  if (overlay === null) return { error: 'no-overlay', labels: [] }
+  const labels = []
+  const walk = (n) => {
+    const label = n.getComponent('cc.Label')
+    if (label && label.string.length > 0) labels.push(label.string)
+    for (const child of n.children) walk(child)
+  }
+  walk(overlay)
+  return { error: null, labels }
+})()`
+const BUTTON_DUMP = `(() => {
+  const game = ${NODE_PATH}
+  const root = game.children.find((c) => c.name === 'social')
+  const out = []
+  const walk = (n) => {
+    if (!n.activeInHierarchy) return
+    if (n.name === 'SocialRow') {
+      const cells = []
+      for (const child of n.children) {
+        if (!/^ActionButton/.test(child.name)) continue
+        const cap = child.children[0]
+        const label = cap ? cap.getComponent('cc.Label') : null
+        cells.push(child.name + '@' + Math.round(child.position.x) + ':' + (child.active ? 'on' : 'off') + ':' + (label ? label.string : '-'))
+      }
+      out.push(cells.join(" | "))
+    }
+    for (const child of n.children) walk(child)
+  }
+  if (root) walk(root)
+  return out
+})()`
 const TAP_CAPTION2 = (text) => `(() => {
   const game = ${NODE_PATH}
   const root = game.children.find((c) => c.name === 'social')
@@ -717,6 +788,68 @@ checkTrue('D2 按钮板不出行板（72×30 的按钮在行右侧，越界就�
     Math.abs(r.buttonPlate.y - r.rowPlate.y) <= r.rowPlate.h / 2))
 check('D3 全程零页面错误', errors.length, 0)
 
+// ============================ I 相：任命职位（B26 S11） ============================
+// 成员行的第三颗按钮 + 一个小弹层。要证明的是"选完真的发那一枪、而且带对了人"，
+// 以及**盟主不在选项里**（把盟主给出去是转让那件事，该走两下确认那条路）。
+await context.route('**/alliance/setRole*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  fixture.setRoleCalls.push(JSON.parse(request.postData() ?? '{}'))
+  await route.fulfill({
+    status: 200,
+    headers: { ...cors(request), 'content-type': 'application/json' },
+    body: JSON.stringify({ code: 0, msg: '成功', data: summary(), serverNow: SERVER_NOW() }),
+  })
+})
+
+fixture.mode = 'leader'
+await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
+await bootIn()
+await openAllianceTab()
+await page.waitForTimeout(1_400)
+check('I1 盟主看得见成员行上的「设职」', await page.evaluate(TAP_ANY('设职')), 'tapped')
+await page.waitForTimeout(1_000)
+const picker = await page.evaluate(OVERLAY_LABELS)
+checkTrue(`I2 弹层真的开着且给出三个可任命职位：labels=${JSON.stringify(picker?.labels ?? [])}`,
+  picker?.error === null && (picker?.labels ?? []).some(t => t === '副盟主')
+    && (picker?.labels ?? []).some(t => t === '长老')
+    && (picker?.labels ?? []).some(t => /^成员/.test(t)))
+checkTrue('I3 盟主**不在**选项里：转让是另一件事，不混在一颗按钮上',
+  !((picker?.labels ?? []).some(t => t === '盟主' || t === '盟主（现任）')))
+const before = fixture.setRoleCalls.length
+check('I4 选「副盟主」', await page.evaluate(TAP_ANY('副盟主')), 'tapped')
+await page.waitForTimeout(1_600)
+check('I5 恰好发出一条任命', fixture.setRoleCalls.length - before, 1)
+checkTrue('I6 请求带目标成员、新任与幂等键（任命改的是联盟人事，重放等于批两次）',
+  typeof fixture.setRoleCalls[before]?.memberId === 'string'
+    && fixture.setRoleCalls[before]?.memberId.length > 0
+    && fixture.setRoleCalls[before]?.role === 'OFFICER'
+    && typeof fixture.setRoleCalls[before]?.requestId === 'string')
+// 三颗按钮必须各占一格：转让与设职叠在同一个点上时，屏上看着只有一颗（本轮真栽过一次，
+// 是靠量具把 x 坐标打出来才发现的，光看截图只会以为是没有转让这一颗）
+const memberRow = ((await page.evaluate(BUTTON_DUMP)) ?? []).find(r => r.includes("踢出")) ?? ''
+const xs = (memberRow.match(/@\d+(?=:)/g) ?? []).map(t => t.slice(1))
+checkTrue(`I9 成员行三颗按钮各占一格（x 不重叠）：${memberRow}`, new Set(xs).size === 3 && xs.length === 3)
+
+await shot('I-role-picker-leader')
+
+// 反向：没有 SET_ROLE 的人（普通成员）看得见那颗按钮，但点了什么都不发
+fixture.mode = 'member'
+await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
+await bootIn()
+await openAllianceTab()
+await page.waitForTimeout(1_400)
+const callsBeforeMember = fixture.setRoleCalls.length
+await page.evaluate(TAP_ANY('设职'))
+await page.waitForTimeout(1_000)
+check('I7 没有 SET_ROLE 时点「设职」不发任命（置灰而不是隐藏：看不见会以为没这功能）',
+  fixture.setRoleCalls.length, callsBeforeMember)
+checkTrue('I8 也不弹选项窗（灰着的按钮不该开一个选完必然失败的窗）',
+  ((await page.evaluate(OVERLAY_LABELS)).error) === 'no-overlay')
+await shot('I-role-picker-member')
 await browser.close()
 await preview.close()
 

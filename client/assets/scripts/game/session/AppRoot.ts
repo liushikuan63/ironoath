@@ -32,7 +32,7 @@ import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagPro
 import type { GachaDrawResp, GachaPoolsResp, HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageListResp } from '../../net/generated/StageProtocol'
 import type {
-  AllianceMember, AllianceSyncResp, ChatChannel, ChatMessageView, FriendView, HelpRequestView,
+  AllianceMember, AllianceRole, AllianceSyncResp, ChatChannel, ChatMessageView, FriendView, HelpRequestView,
   ReportReason, SocialCreatePolicy, SocialCreatePolicyResp, SocialEventView, SocialSummaryResp,
 } from '../../net/generated/SocialProtocol'
 import {
@@ -1652,6 +1652,19 @@ export class AppRoot {
   researchAllianceTech(techId: string): Promise<void> {
     this.track(TRACK_EVENTS.allianceResearch, { techId: trackParam(techId) })
     return this.write('social', this.api.allianceResearchTech({ techId, levels: 1 }),
+      ['social', 'reddot'])
+  }
+
+  /**
+   * 任命联盟成员（B26 S11）。职位能不能给、压不压得下去都由服务端裁决
+   * （表里的 SET_ROLE 位 + `Alliance.setRole` 的域内规则），客户端只负责把这一枪发出去。
+   */
+  setAllianceRole(memberId: string, role: AllianceRole): Promise<void> {
+    this.track(TRACK_EVENTS.allianceSetRole, {
+      memberId: trackParam(memberId),
+      role: trackParam(role),
+    })
+    return this.write('social', this.api.allianceSetRole({ memberId, role }),
       ['social', 'reddot'])
   }
 

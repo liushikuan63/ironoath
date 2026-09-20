@@ -2915,6 +2915,25 @@ test('没有审核权的人一次都不拉申请名单：读口比写口松就�
     'permissionBody 里没有 APPROVE_APPLICATION ⇒ 这一问根本不该发')
   assert.deepEqual(h.lastApplications?.rows ?? [], [])
 })
+test('任命职位发一条 /alliance/setRole，带目标与新任（能不能任命由服务端说）', async () => {
+  const h = harness()
+  h.http.overrides.set('/alliance/setRole', summaryBody())
+  await h.root.setAllianceRole('p_member_b', 'OFFICER')
+  const sent = h.http.calls.filter(c => c.path === '/alliance/setRole')
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.body.memberId, 'p_member_b')
+  assert.equal(sent[0]?.body.role, 'OFFICER')
+  assert.ok(sent[0]?.body.requestId !== undefined, '任命改的是联盟人事，重放等于把同一职位批两次')
+})
+
+test('任命要留痕：事件名与两个参数都得进埋点', async () => {
+  const h = harness()
+  h.http.overrides.set('/alliance/setRole', summaryBody())
+  h.events.length = 0
+  await h.root.setAllianceRole('p_member_c', 'MEMBER')
+  assert.deepEqual(h.events, [{ name: 'alliance_set_role',
+    params: { memberId: 'p_member_c', role: 'MEMBER' } }])
+})
 test('解散小队走的是 /squad/disband（这个端点早就有，客户端此前连方法都没有）', async () => {
   const h = harness()
   h.http.overrides.set('/social/permissions', permissionBody())

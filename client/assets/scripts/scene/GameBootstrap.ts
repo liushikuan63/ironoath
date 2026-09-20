@@ -1310,6 +1310,8 @@ export class GameBootstrap extends Component {
       social.onSocialReview = (applicantId, approve) => { void this.root?.reviewApplication(applicantId, approve) }
       // 联盟科技（B26 S9）：目录由摘要带下来，这里只接"研究一级"那一枪
       social.onSocialResearch = techId => { void this.root?.researchAllianceTech(techId) }
+      // 任命职位（B26 S11）：弹层在视图里，选项由纯逻辑给；这里只接"选完之后的那一枪"
+      social.onSocialSetRole = (memberId, role) => { void this.root?.setAllianceRole(memberId, role) }
 
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }

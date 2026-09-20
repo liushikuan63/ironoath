@@ -25,6 +25,8 @@ import { EMPTY_DISCOVERY } from '../game/social/AllianceDiscovery'
 import { EMPTY_SQUAD_DISCOVERY } from '../game/social/SquadDiscovery'
 import { EMPTY_APPLICATIONS } from '../game/social/AllianceApplications'
 import { buildTechRows } from '../game/social/AllianceTechCatalog'
+import { roleChoices } from '../game/social/AllianceRoles'
+import type { RoleChoice } from '../game/social/AllianceRoles'
 import type { ApplicationView } from '../game/social/AllianceApplications'
 import type { DiscoveryView } from '../game/social/AllianceDiscovery'
 import type { SquadListView } from '../game/social/SquadDiscovery'
@@ -37,7 +39,9 @@ import { CHAT_CHANNELS, CHAT_INPUT_MAX_LENGTH, chatMessageText } from '../game/s
 import { ChoiceOverlay } from './ChoiceOverlay'
 import type { ChatActionChoice } from '../game/session/Choices'
 import type { ChatPanelData } from '../game/social/ChatPanel'
-import type { AllianceMember, ChatChannel, HelpRequestView, SocialSummaryResp } from '../net/generated/SocialProtocol'
+import type {
+  AllianceMember, AllianceRole, ChatChannel, HelpRequestView, SocialSummaryResp,
+} from '../net/generated/SocialProtocol'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
 import { applyCommandButton } from './ArtCatalog'
 import { NodePool } from './NodePool'
@@ -116,6 +120,13 @@ interface RowDraft {
    * <p>为什么不是两行：一屏画得下 6 行（可视高 540 实测），而联盟页已经有概况 + 三档捐献 + 成员名单，
    * 再加两行就必然挤掉成员那一行 —— 挤掉的是"看得见的功能"，比省一行严重得多。
    */
+  /** 第三颗（B26 S11「设职」）：一颗都不许漏复位，池化行会带着上一行的字过来 */
+  readonly action3?: {
+    readonly text: string
+    readonly enabled: boolean
+    readonly id: string
+    readonly kind: RowAction
+  }
   readonly action2?: {
     readonly text: string
     readonly enabled: boolean
@@ -128,6 +139,7 @@ type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'ch
   | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
   | 'socialExit' | 'socialExpand' | 'socialApply' | 'socialTransfer' | 'socialJoin'
   | 'socialReview' | 'socialReject' | 'socialResearch' | 'pagePrev' | 'pageNext'
+  | 'socialSetRole'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -189,6 +201,8 @@ export class SocialPanelView extends Component {
   private chatControls: Node | null = null
   /** 消息行上的动作选择器（举报原因 / 拉黑）：与出战阵容同一个组件 */
   private chatActionPicker: ChoiceOverlay | null = null
+  /** 任命职位的小弹层（B26 S11）。选项由纯逻辑给出，这里只画与回调。 */
+  private rolePicker: ChoiceOverlay | null = null
   private readonly chatChannelButtons = new Map<ChatChannel, { node: Node, label: Label }>()
   private chatInput: EditBox | null = null
   private sendButton: Node | null = null
@@ -216,6 +230,8 @@ export class SocialPanelView extends Component {
   onSocialJoin: ((squadId: string) => void) | null = null
   /** 批准 / 拒绝某一条申请（B26 S8）：一按就发，不做两下确认。 */
   onSocialReview: ((applicantId: string, approve: boolean) => void) | null = null
+  /** 点成员行的「设职」（B26 S11）：由视图开选人弹层，编排层只负责发那一枪。 */
+  onSocialSetRole: ((memberId: string, role: AllianceRole) => void) | null = null
   /** 点某一行的「研究」（B26 S9）：一次一级，扣的是联盟公账。 */
   onSocialResearch: ((techId: string) => void) | null = null
 
@@ -284,6 +300,7 @@ export class SocialPanelView extends Component {
     this.onSocialJoin = null
     this.onSocialReview = null
     this.onSocialResearch = null
+    this.onSocialSetRole = null
     this.chatData = null
     this.chatControls = null
     this.chatInput = null
@@ -587,6 +604,25 @@ export class SocialPanelView extends Component {
     const secondCaption = this.addLabel(second, 'Caption', 0, 0, COLOR_TEXT, 13)
     secondCaption.string = ''
     second.active = false
+
+    // 第三颗（B26 S11）：成员行的「设职」。同样默认不激活，由 renderRow 按行决定
+    const third = new Node('ActionButton3')
+    third.layer = node.layer
+    node.addChild(third)
+    third.setPosition(new Vec3(PANEL_WIDTH / 2 - 44, 0, 0))
+    third.addComponent(UITransform).setContentSize(new Size(72, 30))
+    if (!applyCommandButton(third, 'normal', 72, 30)) {
+      const thirdGraphics = third.addComponent(Graphics)
+      thirdGraphics.fillColor = COLOR_PANEL
+      thirdGraphics.strokeColor = COLOR_COPPER_GOLD
+      thirdGraphics.lineWidth = 1
+      thirdGraphics.roundRect(-36, -15, 72, 30, 4)
+      thirdGraphics.fill()
+      thirdGraphics.stroke()
+    }
+    const thirdCaption = this.addLabel(third, 'Caption', 0, 0, COLOR_TEXT, 13)
+    thirdCaption.string = ''
+    third.active = false
     return node
   }
 
@@ -700,6 +736,27 @@ export class SocialPanelView extends Component {
   /**
    * 消息行上的动作选择器（B22 §一 3）。选项由编排层给出（它才知道我拉黑过谁），这里只画和回调。
    */
+  /**
+   * 「设职」弹层（B26 S11）。盟主不在选项里 —— 把盟主给出去是转让那件事，
+   * 一颗按钮管两种后果完全不同的操作，迟早有人误点。
+   */
+  showRolePicker(currentRole: string | null, onPick: (choice: RoleChoice) => void): void {
+    if (this.rolePicker === null) {
+      this.rolePicker = new ChoiceOverlay(this.node, '任命职位', 560)
+    }
+    const options = roleChoices(currentRole)
+    this.rolePicker.show(options.map((choice) => ({
+      id: choice.id,
+      label: choice.current ? `${choice.label}（现任）` : choice.label,
+      detail: choice.detail,
+    })), (id) => {
+      const choice = options.find((option) => option.id === id)
+      if (choice !== undefined) {
+        onPick(choice)
+      }
+    })
+  }
+
   showChatActionPicker(options: readonly ChatActionChoice[],
                        onPick: (choice: ChatActionChoice) => void): void {
     if (this.chatActionPicker === null) {
@@ -1085,7 +1142,7 @@ export class SocialPanelView extends Component {
           ? [
             this.exitRow('squad'),
             ...memberDrafts(data.squad.members,
-              gate(this.permissions, 'SQUAD', 'KICK_MEMBER'), this.transferFor('squad')),
+              gate(this.permissions, 'SQUAD', 'KICK_MEMBER'), this.transferFor('squad'), null),
           ]
           : [
             createDraft('squad', data.squad.title, this.create.squad),
@@ -1155,12 +1212,32 @@ export class SocialPanelView extends Component {
     // 行是池化复用的，概况行（没有按钮）一旦提前 return，上一行留下的那颗「转让」就还挂在屏上
     // —— 截图抓到过：联盟概况行右边凭空多出一颗转让键
     const second = node.children[4]
+    const third = node.children[5]
     const hasSecond = draft.action2 !== null && draft.action2 !== undefined
-    // 两颗并排在行右侧：有第二颗时第一颗往左挪一格，否则它们会叠在同一个点上（池化行复用的老毛病）
-    button.setPosition(new Vec3(PANEL_WIDTH / 2 - (hasSecond ? 124 : 44), 0, 0))
+    const hasThird = draft.action3 !== null && draft.action3 !== undefined
+    // 三颗从右往左排：有幾颗就往前挪幾格，否则它们会叠在同一个点上（池化行复用的老毛病）
+    const slots = 1 + (hasSecond ? 1 : 0) + (hasThird ? 1 : 0)
+    button.setPosition(new Vec3(PANEL_WIDTH / 2 - 44 - (slots - 1) * 80, 0, 0))
+
+    if (third !== undefined) {
+      third.off('touch-start')
+      third.active = hasThird
+      const thirdDraft = draft.action3 ?? null
+      if (thirdDraft !== null) {
+        applyCommandButton(third, thirdDraft.enabled ? 'normal' : 'disabled', 72, 30)
+        const thirdCaption = third.children[0]?.getComponent(Label)
+        if (thirdCaption !== undefined && thirdCaption !== null) {
+          thirdCaption.string = thirdDraft.text
+          thirdCaption.color = thirdDraft.enabled ? COLOR_TEXT : COLOR_TEXT_DIM
+        }
+        if (thirdDraft.enabled) {
+          third.on('touch-start', () => this.dispatchRow(thirdDraft.kind, thirdDraft.id), this)
+        }
+      }
+    }
     if (second !== undefined) {
       second.off('touch-start')
-      second.setPosition(new Vec3(PANEL_WIDTH / 2 - 44, 0, 0))
+      second.setPosition(new Vec3(PANEL_WIDTH / 2 - (hasThird ? 124 : 44), 0, 0))
       second.active = hasSecond
       const secondDraft = draft.action2 ?? null
       if (secondDraft !== null) {
@@ -1267,7 +1344,14 @@ export class SocialPanelView extends Component {
           this.onSocialResearch?.(id)
           return
         }
-        if (kind === 'socialTransfer') {
+        if (kind === 'socialSetRole') {
+        const row = (this.data?.alliance.members ?? []).find(m => m.id === id)
+        this.showRolePicker(row?.role ?? null, (choice) => {
+          this.onSocialSetRole?.(id, choice.id)
+        })
+        return
+      }
+      if (kind === 'socialTransfer') {
         // 这一条原来只写在第二颗按钮里；抽成共用分流器时必须搬过来，
         // 否则「转让」就没人处理了 —— 权限探针的 B24/B25/B26 正是这么抓红的
         this.onSocialTransfer?.(this.tab === 'squad' ? 'squad' : 'alliance', id)
@@ -1438,7 +1522,8 @@ function dedupe(parts: readonly (string | null | undefined)[]): string[] {
 }
 
 function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate,
-                      transfer: (memberId: string) => ExitEntry): RowDraft[] {
+                      transfer: (memberId: string) => ExitEntry,
+                      setRole: Gate | null): RowDraft[] {
   return members.map((member): RowDraft => {
     const transferEntry = transfer(member.id)
     return {
@@ -1463,6 +1548,18 @@ function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate,
         id: member.id,
         kind: 'socialTransfer',
       },
+      // 第三颗（B26 S11）：只有联盟侧有 SET_ROLE 这一位，小队侧传 null 就不画。
+      // 灰不灰仍由服务端那份权限码说，客户端不自己按职位推。
+      // 没有第三颗时**不给这个键**（`exactOptionalPropertyTypes` 会拦显式 undefined，
+      // 而池化行按"有没有这个键"决定画不画）
+      ...(setRole === null ? {} : {
+        action3: {
+          text: '设职',
+          enabled: setRole.allowed,
+          id: member.id,
+          kind: 'socialSetRole' as RowAction,
+        },
+      }),
     }
   })
 }
@@ -1507,7 +1604,8 @@ function allianceDrafts(alliance: AllianceSection, permissions: PermissionState,
   })
   const mayKick = gate(permissions, 'ALLIANCE', 'KICK_MEMBER')
   for (const member of alliance.members) {
-    out.push(...memberDrafts([member], mayKick, transfer))
+    out.push(...memberDrafts([member], mayKick, transfer,
+      gate(permissions, 'ALLIANCE', 'SET_ROLE')))
   }
   return out
 }

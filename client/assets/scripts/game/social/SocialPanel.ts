@@ -68,6 +68,8 @@ export interface SocialMemberRow {
   readonly id: string
   readonly name: string
   readonly roleText: string
+  /** 原职位枚举值（B26 S11）：弹层要标出「现任」，行标签继续用上面那份中文 */
+  readonly role: string
   readonly powerText: string
   /** 最近活跃时间文本。不活跃的成员要能被一眼看出来（盟主据此决定补人） */
   readonly activeText: string
@@ -194,6 +196,7 @@ export function buildSquadSection(squad: SquadView | null): SquadSection {
       id: member.id,
       name: member.name,
       roleText: squadRoleText(member.role),
+      role: String(member.role),
       powerText: `战力 ${member.power}`,
       activeText: activeText(member.lastActiveAt, squad.serverNow),
       inactive: squad.serverNow - member.lastActiveAt > INACTIVE_MILLIS,
@@ -275,6 +278,7 @@ export function buildAllianceSection(alliance: AllianceView | null,
       id: member.id,
       name: member.name,
       roleText: allianceRoleText(member.role),
+      role: String(member.role),
       powerText: `战力 ${member.power}`,
       activeText: activeText(member.lastActiveAt, alliance.serverNow),
       inactive: alliance.serverNow - member.lastActiveAt > INACTIVE_MILLIS,

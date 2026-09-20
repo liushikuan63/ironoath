@@ -137,6 +137,11 @@ export const TRACK_EVENTS = {
    * 研究一级联盟科技（B26 S9）。带 techId：哪几项一直没人研究，就是这份科技表该不该重做的依据。
    */
   allianceResearch: 'alliance_research',
+  /**
+   * 任命一个联盟成员的职位（B26 S11）。带目标与新任：任命集中在少数人身上、
+   * 或几乎只往 MEMBER 方向走（一直在撤职），都是联盟人事出问题的信号。
+   */
+  allianceSetRole: 'alliance_set_role',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */
