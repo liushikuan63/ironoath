@@ -282,6 +282,17 @@ const OVERLAY_LABELS = `(() => {
   }
   find(root)
   if (overlay === null) return { error: 'no-overlay', labels: [] }
+  // #320 那条同族判据：弹层是宿主 onLoad 建的，列表行是每次渲染才 addChild 的，
+  // 加得晚就排在弹层后面把它盖住。中央修法之后弹层会在 child-added 时自己顶回末位，
+  // 这条断言盯的就是"它真的顶回去了"—— 社交这一页每次刷新都重排行，是最容易复现的宿主
+  const parent = overlay.parent
+  let rowsAbove = 0
+  if (parent !== null) {
+    const at = overlay.getSiblingIndex()
+    for (const sibling of parent.children) {
+      if (sibling.active && sibling.getSiblingIndex() > at) rowsAbove += 1
+    }
+  }
   const labels = []
   const walk = (n) => {
     const label = n.getComponent('cc.Label')
@@ -289,7 +300,7 @@ const OVERLAY_LABELS = `(() => {
     for (const child of n.children) walk(child)
   }
   walk(overlay)
-  return { error: null, labels }
+  return { error: null, labels, rowsAbove }
 })()`
 const BUTTON_DUMP = `(() => {
   const game = ${NODE_PATH}
@@ -819,6 +830,8 @@ checkTrue(`I2 弹层真的开着且给出三个可任命职位：labels=${JSON.s
     && (picker?.labels ?? []).some(t => /^成员/.test(t)))
 checkTrue('I3 盟主**不在**选项里：转让是另一件事，不混在一颗按钮上',
   !((picker?.labels ?? []).some(t => t === '盟主' || t === '盟主（现任）')))
+check('I3b 弹层没有被后加进来的行盖住（#320 那条同族判据，社交是最容易复现的宿主）',
+  picker?.rowsAbove, 0)
 const before = fixture.setRoleCalls.length
 check('I4 选「副盟主」', await page.evaluate(TAP_ANY('副盟主')), 'tapped')
 await page.waitForTimeout(1_600)
