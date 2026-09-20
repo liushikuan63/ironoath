@@ -1401,7 +1401,7 @@ export class GameBootstrap extends Component {
     // 「自上次登录以来」那一屏（B25-S3）：挂在导航之后 ⇒ 同层兄弟里它排在更后，遮罩压得住面板与导航条
     this.offlineReport = new OfflineReportOverlay(this.node)
     this.offlineReport.onJump = jump => this.root?.offlineReportJump(jump)
-    this.armyQueue = new ChoiceOverlay(this.node, '这一口队列')
+    this.armyQueue = new ChoiceOverlay(this.node, '这一口队列', 520)
     this.marchCompose = new MarchComposeOverlay(this.node)
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
       // 出征 / 发起集结 的切换（B26 S12）：编成与目标都不变，只换命令种类

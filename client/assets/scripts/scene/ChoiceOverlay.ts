@@ -20,10 +20,13 @@ export class ChoiceOverlay {
   private readonly optionTitleLabels: Label[] = []
   private readonly optionDetailLabels: Label[] = []
   private options: ChoiceOption[] = []
+  /** 面板宽：行的色带与两个标签都按它排，写死 700 会让窄面板溢出 */
+  private readonly width: number
   private page = 0
   private onPick: ((id: string) => void) | null = null
 
   constructor(parent: Node, title: string, width = 760) {
+    this.width = width
     this.node = new Node('ChoiceOverlay')
     this.node.layer = parent.layer
     parent.addChild(this.node)
@@ -62,9 +65,6 @@ export class ChoiceOverlay {
     })
     this.createCommandButton('ChoiceCancel', '取消', 150, -170, () => this.hide())
     this.node.active = false
-    // 建好就收起：构造里不关的话，一份没用到的选择器会一直画在界面上
-    // （军队那格的菜单被一条空带横切，就是背包那份常驻导致的）
-    this.node.active = false
   }
 
   show(options: readonly ChoiceOption[], onPick: (id: string) => void): void {
@@ -94,13 +94,19 @@ export class ChoiceOverlay {
     node.layer = this.node.layer
     this.node.addChild(node)
     node.setPosition(new Vec3(0, 92 - index * 60, 0))
-    node.addComponent(UITransform).setContentSize(new Size(700, 52))
+    const bandWidth = this.width - 40
+    node.addComponent(UITransform).setContentSize(new Size(bandWidth, 52))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW
-    graphics.roundRect(-350, -26, 700, 52, 6)
+    graphics.roundRect(-bandWidth / 2, -26, bandWidth, 52, 6)
     graphics.fill()
     const title = this.addLabelTo(node, 0, 8, 17, COLOR_TEXT)
     const detail = this.addLabelTo(node, 0, -12, 13, COLOR_DIM)
+    // 标签要自己有宽度：addLabelTo 挂的 UITransform 是默认的 100×100，而 overflow=SHRINK
+    // 是按盒子排的 —— 不设就会把一句 17 号的标题挤成两三行（军队那格实测：
+    // 「取消这一口训练」被拆成两行，与下面那条的说明叠在一起）
+    title.node.getComponent(UITransform)?.setContentSize(new Size(bandWidth - 24, 24))
+    detail.node.getComponent(UITransform)?.setContentSize(new Size(bandWidth - 24, 18))
     title.overflow = Label.Overflow.SHRINK
     detail.overflow = Label.Overflow.SHRINK
     return { node, title, detail }

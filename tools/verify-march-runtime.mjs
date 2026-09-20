@@ -682,6 +682,23 @@ const menu = await page2.evaluate(MENU)
 checkTrue('菜单真的弹出来了（ChoiceOverlay 激活）', menu?.found === true)
 check('菜单挂在场景层（Game 节点）：面板每秒为倒计时重挂行，建在面板里的弹层会被压住',
   menu?.parentName, 'Game')
+const oneLine = await page2.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let overlay = null
+  const find = (n) => { if (n.name === 'ChoiceOverlay' && n.active) overlay = n; for (const c of n.children) find(c) }
+  find(game)
+  if (overlay === null) return null
+  const panelW = overlay.getComponent('cc.UITransform')?.width ?? 0
+  const row = (overlay.children || []).find((c) => c.name === 'Choice-0')
+  const title = (row?.children || []).find((c) => (c.getComponent('cc.Label')?.string ?? '').includes('取消'))
+  const t = title?.getComponent('cc.UITransform')
+  const band = row?.getComponent('cc.UITransform')
+  return { panelW, titleH: t?.height ?? null, titleW: t?.width ?? null, bandW: band?.width ?? null }
+})()`)
+checkTrue('选项标题是一行（盒子高度不超过一行 17 号字）：被挤成两行就是版式没吃到面板宽',
+  oneLine !== null && oneLine.titleH !== null && oneLine.titleH <= 26)
+checkTrue('行的色带与标题盒子都在面板内（窄面板不再溢出）',
+  oneLine !== null && oneLine.bandW <= oneLine.panelW && oneLine.titleW <= oneLine.panelW)
 checkTrue('菜单里那条写的是「取消这一口训练」，并把在练的数量说清了',
   (menu?.texts ?? []).some((t) => t.includes('取消这一口训练'))
     && (menu?.texts ?? []).some((t) => t.includes('30') && t.includes('重步')), true)
