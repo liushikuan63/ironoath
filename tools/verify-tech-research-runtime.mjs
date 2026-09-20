@@ -8,7 +8,7 @@
  *
  * <p><b>为什么单独跑这一份</b>：#323 接了写侧（行上一颗「研究」键 + `AppRoot.researchTech`），
  * 但当时**整页没有玩家入口**（`openTech()` 零调用方），所以那一格的运行时目视是显式标注"未做"的 ——
- * 拿不到可失败证据的结论不许说成完成。#330 把入口补上（内城右上角「学院 · 研究」），这份量具才第一次
+ * 拿不到可失败证据的结论不许说成完成。#330 把入口补上（内城「学院 · 研究」那颗键），这份量具才第一次
  * 能沿**真实玩家路径**走：内城 → 按那颗键 → 研究页出现 → 按行上的「研究」→ 看请求。
  *
  * <p><b>它盯的几件事</b>：① 入口按得动且真的把那一页显示出来（不是只点亮一个空壳）；
@@ -241,7 +241,7 @@ for (let i = 0; i < 40; i += 1) {
   read = await page.evaluate(READ)
   if (read?.entryActive === true) break
 }
-check('内城右上角有那颗「学院 · 研究」且看得见', read?.entryActive, true)
+check('内城有那颗「学院 · 研究」且看得见', read?.entryActive, true)
 check('研究页此刻还没打开（不是一开始就盖在内城上）', read?.pageActive, false)
 
 await page.evaluate(`(() => {
@@ -394,6 +394,36 @@ checkTrue('研究页关得掉（那颗「关闭」按得到）', await page.eval
   const tech = game?.getChildByName('techPanel')
   return tech !== undefined && tech !== null && !tech.active
 })()`))
+// ---------- 内城顶部那一行的版式：标题、队列行、两颗常驻角标各占其位 ----------
+// #330 加第二颗角标时只按常量算过水平位置，没量矩形 —— 这张图才看出标题被压住。
+// 判据按世界坐标的包围盒算，不按常量：常量对了不代表引擎排出来的对。
+const RECTS = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('city')
+  const rectOf = (name) => {
+    let hit = null
+    const walk = (n) => { if (n.name === name) hit = n; for (const c of n.children) walk(c) }
+    walk(panel)
+    if (hit === null) return null
+    const box = hit.getComponent('cc.UITransform')?.getBoundingBox()
+    if (box === undefined || box === null) return null
+    return { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height) }
+  }
+  return {
+    header: rectOf('Header'), queue: rectOf('Queue'),
+    tech: rectOf('TechOpenButton'), collect: rectOf('CollectAllButton'),
+    bar: rectOf('SelectionBar'), message: rectOf('Message'),
+  }
+})()`
+const rects = await page.evaluate(RECTS)
+const overlaps = (a, b) => a !== null && b !== null
+  && !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y)
+console.log(`  顶部那一行量到的矩形：${JSON.stringify(rects)}`)
+check('标题不被「学院 · 研究」那颗压住', overlaps(rects?.header, rects?.tech), false)
+check('标题不被「一键收割」角标压住', overlaps(rects?.header, rects?.collect), false)
+check('队列那一行不被两颗常驻键压住',
+  overlaps(rects?.queue, rects?.tech) === true || overlaps(rects?.queue, rects?.collect) === true, false)
+
 const CITY_BAR = `(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const panel = game?.getChildByName('city')
@@ -444,6 +474,12 @@ cityBar = await page.evaluate(CITY_BAR)
 checkTrue('底部把"退回来多少"照服务端给的数念出来：'
   + JSON.stringify((cityBar?.texts ?? []).filter((t) => t.includes('退回') || t.includes('取消'))),
   (cityBar?.texts ?? []).some((t) => t.includes('已取消建造') && t.includes('退回 木材 +300')))
+// 回执画出来之后再量一次：那句回执与那颗键都在卡片底部，空文本时量不到（w=0 是假绿）。
+const afterCancel = await page.evaluate(RECTS)
+console.log(`  底部那一条量到的矩形：${JSON.stringify(afterCancel?.message)} vs 键 ${JSON.stringify(afterCancel?.tech)}`)
+check('「学院 · 研究」不压选中详情条（压住就等于压住升级/取消那几颗能点的键）',
+  overlaps(afterCancel?.bar, afterCancel?.tech), false)
+check('「学院 · 研究」不压底部那句回执', overlaps(afterCancel?.message, afterCancel?.tech), false)
 await page.screenshot({ path: path.join(OUT, 'city-cancel-build.png') })
 console.log(`  截图：${path.join(OUT, 'city-cancel-build.png')}`)
 

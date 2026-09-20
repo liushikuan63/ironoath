@@ -98,6 +98,16 @@ const CARD_OFFSET = 24
 const MAX_SCALE = 1.4
 const ACTION_BUTTON_WIDTH = 82
 const ACTION_BUTTON_HEIGHT = 32
+/** 右上角那颗「一键收割」的宽与中心 x（中心由 76 这个贴边量决定）—— 头部那一块要让到它的左沿之前 */
+const CORNER_KEY_WIDTH = 132
+const CORNER_KEY_CENTER_X = CARD_WIDTH / 2 - FRAME_BAND - 76
+/**
+ * 标题与队列行能用的宽度：内容区左沿到「一键收割」左沿，再留 8 的缝。
+ *
+ * <p>这两个数不是估的：世界矩形实测「一键收割」占 x 130..262，队列行 317 宽居中排时
+ * 右端顶到 159 —— 被压住 29px（#335 的截图才看出来：机器全绿、眼睛看得见）。
+ */
+const HEADER_TEXT_WIDTH = CONTENT_WIDTH / 2 + CORNER_KEY_CENTER_X - CORNER_KEY_WIDTH / 2 - 8
 
 type RowAction = 'upgrade' | 'speedAd' | 'speedGold' | 'collect' | 'cancel'
 
@@ -147,7 +157,7 @@ export class CityPanelView extends Component {
   onCollect: ((buildingId: string | null) => void) | null = null
   /** 玩家点了「取消」这一行的建造。返还多少由服务端算，本场景只把回执念出来 */
   onCancelBuild: ((buildingId: string) => void) | null = null
-  /** 右上角那颗「学院 · 研究」：打开全局研究页（V03-a-S1 的读侧 + #323 的写侧都在那一页） */
+  /** 卡片左下角那颗「学院 · 研究」：打开全局研究页（V03-a-S1 的读侧 + #323 的写侧都在那一页） */
   onOpenTech: (() => void) | null = null
 
   override onLoad(): void {
@@ -261,10 +271,14 @@ export class CityPanelView extends Component {
       ? null
       : frame.addComponent(Graphics)
 
-    // 头部整块从"框的四角带"下面开始排（原来从卡片外沿往下 16px 起排，标题正好压在角饰上）
+    // 头部整块从"框的四角带"下面开始排（原来从卡片外沿往下 16px 起排，标题正好压在角饰上）。
+    // **左对齐 + 限定宽度**：居中排时队列行的右端顶进右上角那颗「一键收割」里 29px（实测），
+    // 而这一行最长的那句（队列 + 可开启 + 坐标异常）会随服务端给的数变长 —— 让位给键，长句交给 SHRINK。
     const top = CARD_HEIGHT / 2 - FRAME_BAND
-    this.headerLabel = this.addLabel(card, 'Header', 0, top - 14, COLOR_COPPER_GOLD, 22)
-    this.queueLabel = this.addLabel(card, 'Queue', 0, top - 38, COLOR_TEXT, 16)
+    this.headerLabel = this.addLabel(card, 'Header', -CONTENT_WIDTH / 2, top - 14,
+      COLOR_COPPER_GOLD, 22, true, HEADER_TEXT_WIDTH)
+    this.queueLabel = this.addLabel(card, 'Queue', -CONTENT_WIDTH / 2, top - 38,
+      COLOR_TEXT, 16, true, HEADER_TEXT_WIDTH)
 
     const columnWidth = CONTENT_WIDTH / 3
     for (let row = 0; row < 2; row++) {
@@ -390,35 +404,41 @@ export class CityPanelView extends Component {
     parent.addChild(collectAll)
     // 落在四角带之内：贴着内容区右上，不压角饰
     collectAll.setPosition(new Vec3(
-      CARD_WIDTH / 2 - FRAME_BAND - 76, CARD_HEIGHT / 2 - FRAME_BAND - 20, 0))
-    collectAll.addComponent(UITransform).setContentSize(new Size(132, 34))
-    if (!applyCommandButton(collectAll, 'normal', 132, 34)) {
+      CORNER_KEY_CENTER_X, CARD_HEIGHT / 2 - FRAME_BAND - 20, 0))
+    collectAll.addComponent(UITransform).setContentSize(new Size(CORNER_KEY_WIDTH, 34))
+    if (!applyCommandButton(collectAll, 'normal', CORNER_KEY_WIDTH, 34)) {
       const collectGraphics = collectAll.addComponent(Graphics)
       collectGraphics.fillColor = COLOR_PANEL
       collectGraphics.strokeColor = COLOR_COPPER_GOLD
       collectGraphics.lineWidth = 2
-      collectGraphics.roundRect(-66, -17, 132, 34, 6)
+      collectGraphics.roundRect(-CORNER_KEY_WIDTH / 2, -17, CORNER_KEY_WIDTH, 34, 6)
       collectGraphics.fill()
       collectGraphics.stroke()
     }
     this.addLabel(collectAll, 'Caption', 0, 0, COLOR_TEXT, 15).string = '一键收割'
     collectAll.on('touch-start', (_event: EventTouch) => this.onCollect?.(null), this)
 
-    // 「研究」与「一键收割」同一角带：研究页是**全局一页一队列**，不是某个建筑的属性 ——
-    // 挂在学院行上会带来两个够不着的时刻（没选中学院、学院正在升级把按钮条占满）。
-    // 学院等级仍是服务端的真门槛（TECH_ACADEMY_REQUIRED 会把原因原样送回来）。
+    // 研究页是**全局一页一队列**，不是某个建筑的属性 ⇒ 不挂在学院行上（挂上去会带来两个够不着的
+    // 时刻：没选中学院、学院正在升级把按钮条占满）。学院等级仍是服务端的真门槛
+    // （TECH_ACADEMY_REQUIRED 会把原因原样送回来）。
+    //
+    // 落点是**卡片底部左角**。顶部那一行放不下第二颗常驻键：标题 161 + 队列行 317 + 两颗键 272 = 750，
+    // 而内容区只有 532 —— 这是几何问题，不是把 x 挪一挪能解决的（#335 的截图量出来的世界矩形：
+    // 标题被压住 91px）。底部那一条只有居中的回执（约 230 宽），左角本来就空着。
+    // y 取"贴内容区下沿、下半截进四角带"：再往上 5px 就压到选中详情条（它的下沿在 −236，
+    // 而这颗键有 34 高，详情条与内容区下沿之间只剩 24px，塞不下）—— 让开可点的详情条，宁可压装饰带。
     const tech = new Node('TechOpenButton')
     tech.layer = parent.layer
     parent.addChild(tech)
     tech.setPosition(new Vec3(
-      CARD_WIDTH / 2 - FRAME_BAND - 216, CARD_HEIGHT / 2 - FRAME_BAND - 20, 0))
-    tech.addComponent(UITransform).setContentSize(new Size(132, 34))
-    if (!applyCommandButton(tech, 'normal', 132, 34)) {
+      -CARD_WIDTH / 2 + FRAME_BAND + 76, -CARD_HEIGHT / 2 + FRAME_BAND + 2, 0))
+    tech.addComponent(UITransform).setContentSize(new Size(CORNER_KEY_WIDTH, 34))
+    if (!applyCommandButton(tech, 'normal', CORNER_KEY_WIDTH, 34)) {
       const techGraphics = tech.addComponent(Graphics)
       techGraphics.fillColor = COLOR_PANEL
       techGraphics.strokeColor = COLOR_COPPER_GOLD
       techGraphics.lineWidth = 2
-      techGraphics.roundRect(-66, -17, 132, 34, 6)
+      techGraphics.roundRect(-CORNER_KEY_WIDTH / 2, -17, CORNER_KEY_WIDTH, 34, 6)
       techGraphics.fill()
       techGraphics.stroke()
     }
