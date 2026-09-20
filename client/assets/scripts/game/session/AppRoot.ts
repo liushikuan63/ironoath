@@ -72,7 +72,9 @@ import type { PermissionState } from '../social/PermissionGates'
 import { buildCreateForm, createEntries } from '../social/SocialCreate'
 import type { CreateEntry, CreateForm, CreateScope } from '../social/SocialCreate'
 import { buildDiscovery, canApply, EMPTY_DISCOVERY } from '../social/AllianceDiscovery'
+import { buildSquadDiscovery, canJoin, EMPTY_SQUAD_DISCOVERY } from '../social/SquadDiscovery'
 import type { DiscoveryView } from '../social/AllianceDiscovery'
+import type { SquadListView } from '../social/SquadDiscovery'
 import type { ExitAction, ExitKey, ExitScope } from '../social/SocialExit'
 import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
@@ -288,6 +290,8 @@ export interface PanelTargets {
   socialTransfer?(armed: { scope: ExitScope, memberId: string } | null): void
   /** 可申请联盟那一屏（B26 S6）：行与那句总量说明都由纯逻辑算好。 */
   allianceDiscovery?(view: DiscoveryView): void
+  /** 可加入小队那一屏（B26 S7）：同一族，只是小队不要审核。 */
+  squadDiscovery?(view: SquadListView): void
   /**
    * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
@@ -480,6 +484,12 @@ export class AppRoot {
   private armedTransfer: { scope: ExitScope, memberId: string } | null = null
   /** 可申请联盟那一屏（B26 S6）。只在"没有联盟"的时候拉，入盟的人不需要看别人家。 */
   private discovery: DiscoveryView = EMPTY_DISCOVERY
+  /** 可加入小队那一屏（B26 S7）。同样只在没有小队的时候拉。 */
+  private squadDiscoveryView: SquadListView = EMPTY_SQUAD_DISCOVERY
+  /** 玩家是否真进过社交页（决定两份发现型列表拉不拉，见 loadSocialDiscovery）。 */
+  private socialVisited = false
+  /** 最近一次社交摘要：发现型列表要按它决定拉哪一份（没队才拉小队列表）。 */
+  private lastSocialSummary: SocialSummaryResp | null = null
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
@@ -736,14 +746,16 @@ export class AppRoot {
         // 同一份摘要也是聊天页签的未读账本（不另发一次请求）：两处读同一份数据，
         // 就不会出现"事件页签说 3 条、聊天徽标说 2 条"
         this.unreadEvents = summary.data.events
-        // 可申请联盟：只在"我没有联盟"的时候拉（B26 S6）。入盟的人看别人家的列表没有意义，
-        // 而未入盟的那一屏此前只有一句「未加入联盟」—— 除了自己花钱建，没有任何路可走
-        if (summary.data.alliance === null) {
-          await this.loadAllianceDiscovery()
+        this.lastSocialSummary = summary.data
+        // 两份发现型列表（可申请联盟 B26 S6 / 可加入小队 B26 S7）都**不在这里拉**：
+        // 这一支是首屏预取批次的一员，而「没队又没盟」恰好是新号的默认状态 ——
+        // 挂在这里等于给每一个新玩家的首屏多加两条他还没点开的请求（实测：那条预算门从 14 变 15）。
+        // 只在玩家真进过社交页之后，才跟着社交页一起刷（与上面的权限门同一条纪律）。
+        if (this.socialVisited) {
+          await this.loadSocialDiscovery()
         } else {
-          this.discovery = EMPTY_DISCOVERY
+          this.deliverDiscovery(EMPTY_DISCOVERY, EMPTY_SQUAD_DISCOVERY)
         }
-        this.targets.allianceDiscovery?.(this.discovery)
         this.targets.social?.(summary.data, this.helpRequests, this.allianceMembers, offsetMs)
         this.deliverChat()
         // 权限两份：只在**玩家真进过社交页之后**才跟着社交页一起刷。
@@ -1547,6 +1559,64 @@ export class AppRoot {
     }
     this.say('social', outcome)
     this.discovery = buildDiscovery(null)
+  }
+
+  /**
+   * 拉可加入小队列表（B26 S7）。与联盟那一条同样的分工：读不到写「读取中」，
+   * 不把空表当成「没人建队」。
+   */
+  /**
+   * 拉那两份发现型列表（B26 S6 + S7），由「玩家打开社交页」触发。
+   *
+   * <p>为什么不是一个公共方法两次内部调用就完事：这一条同时是**首屏预算的边界**。
+   * 摘要说 squad / alliance 为 null 就是权威答案，只拉缺的那一份 —— 已经有队的人
+   * 一次请求都不该为别人家的名单发。
+   */
+  async loadSocialDiscovery(): Promise<void> {
+    this.socialVisited = true
+    const summary = this.lastSocialSummary
+    if (summary === null) {
+      // 摘要还没落地（首屏还在飞）：先记下"玩家进来了"，等这一轮刷完自然带上
+      return
+    }
+    if (summary.alliance === null) {
+      await this.loadAllianceDiscovery()
+    } else {
+      this.discovery = EMPTY_DISCOVERY
+    }
+    if (summary.squad === null) {
+      await this.loadSquadDiscovery()
+    } else {
+      this.squadDiscoveryView = EMPTY_SQUAD_DISCOVERY
+    }
+    this.deliverDiscovery(this.discovery, this.squadDiscoveryView)
+  }
+
+  private deliverDiscovery(alliance: DiscoveryView, squad: SquadListView): void {
+    this.targets.allianceDiscovery?.(alliance)
+    this.targets.squadDiscovery?.(squad)
+  }
+
+  private async loadSquadDiscovery(): Promise<void> {
+    const outcome = await this.api.squadList()
+    if (outcome.kind === 'ok') {
+      this.squadDiscoveryView = buildSquadDiscovery(outcome.data)
+      return
+    }
+    this.say('social', outcome)
+    this.squadDiscoveryView = buildSquadDiscovery(null)
+  }
+
+  /**
+   * 加入某一支小队（B26 S7）。满不满由服务端那个布尔决定，客户端只判断
+   * 「这一行现在能不能发」；进了队之后能不能用，是摘要里那一份 squad 说话。
+   */
+  joinSquad(squadId: string): Promise<void> {
+    if (!canJoin(this.squadDiscoveryView, squadId)) {
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.squadJoin, { squadId: trackParam(squadId) })
+    return this.write('social', this.api.squadJoin({ squadId }), ['social', 'reddot'])
   }
 
   /**

@@ -326,6 +326,9 @@ export class GameBootstrap extends Component {
       // 已经接好线的「踢出」「捐献」**永远置灰**，玩家看得见却永远点不动，界面还不说原因。
       if (key === 'social') {
         void this.root?.loadSocialGates()
+        // 两份发现型列表（可申请联盟 / 可加入小队）也在这里拉，**不在首屏批次里**：
+        // 新号默认既没队也没盟，挂在首屏等于白加两条他还没点开的请求
+        void this.root?.loadSocialDiscovery()
       }
       // 外观同理（B24 块③），而且它更该每次打开都拉：框的「佩戴中」是这里唯一的状态来源，
       // 缓存会让"刚刚在商店买的那一枚"迟到（看着像买了没到账）
@@ -1299,6 +1302,9 @@ export class GameBootstrap extends Component {
       // 可申请联盟（B26 S6）：行与那句总量说明都由编排层算好
       out.allianceDiscovery = view => social.attachDiscovery(view)
       social.onSocialApply = allianceId => { void this.root?.applyToAlliance(allianceId) }
+      // 可加入小队（B26 S7）：同一族的第二处，小队不要审核所以只有一态「能加 / 已满」
+      out.squadDiscovery = view => social.attachSquadDiscovery(view)
+      social.onSocialJoin = squadId => { void this.root?.joinSquad(squadId) }
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }
       social.onDonate = tier => { void this.root?.donate(tier) }

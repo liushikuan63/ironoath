@@ -123,6 +123,11 @@ export const TRACK_EVENTS = {
   allianceExpand: 'alliance_expand',
   /** 申请加入一个联盟（B26 S6）。它与 alliance_create 的比例就是"这个世界里加入比建团容易多少"。 */
   allianceApply: 'alliance_apply',
+  /**
+   * 加入一支小队（B26 S7）。它与 socialCreate{scope:squad} 分开计：加入是零成本的，
+   * 两个人数靠得最近的动作混在一个事件里，就看不出新人到底是被"找队"还是"建队"卡住的。
+   */
+  squadJoin: 'squad_join',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

@@ -99,6 +99,9 @@ const SKIP = new Set([
   "cancelLineupEdit",
   // 拉权限与创建政策是一次读（进社交页时顺带），不是玩家意图；按钮灰不灰的结论由这份数据决定
   "loadSocialGates",
+  // 同上：两份发现型列表（可申请联盟 / 可加入小队）也是"打开社交页"这一动作带出来的读，
+  // 玩家意图落在 joinSquad / applyToAlliance 那一枪上。把读也记一条，漏斗第一格就会虚高
+  "loadSocialDiscovery",
   // 打开创建表单与打字与取消都不是那一次提交：埋点只在 social_create 上记"真的建了一个组织"，
   // 把开合也记进去会让漏斗第一格永远比最后一格大，看不出卡在哪
   "openSocialCreate",

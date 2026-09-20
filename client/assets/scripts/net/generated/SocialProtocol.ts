@@ -422,6 +422,38 @@ export interface SquadCreateReq {
 }
 
 /**
+ * 可加入小队列表的一行（B26 S7）。与联盟那一行同一条纪律：**满不满由服务端算**，客户端不拿 memberCount 与 memberCap 自己比 —— 小队上限的第二档挂在**队长主城等级**上，那份读数只有服务端拿得到。
+ */
+export interface SquadDiscoveryView {
+  /** 小队 id，加入时原样带回 */
+  id: string
+  /** 小队名（建队时填的那个） */
+  name: string
+  /** 小队等级 */
+  level: number
+  /** 当前人数 */
+  memberCount: number
+  /** 当前人数上限（按队长主城等级算出的生效值，不是等级表第一档） */
+  memberCap: number
+  /** 是否已满：与 Squad.join 会拒绝的条件同一次计算，界面据此把按钮灰掉 */
+  full: boolean
+}
+
+/**
+ * GET /squad/list 响应体（B26 S7）：可加入小队的前 limit 个。存在的理由与 /alliance/list 同一条 —— 加入是**直接进、不需要审核**的，但玩家连「世界上有哪些小队」都读不到，就只能自己建一支。响应必须有界，所以按等级、人数降序取前 N 个，并把 total 一起下发。
+ */
+export interface SquadListResp {
+  /** 行，按等级降序、同级按人数降序；已解散的小队不在内 */
+  squads: SquadDiscoveryView[]
+  /** 服务器上共有多少个未解散小队（不是本页条数） */
+  total: number
+  /** 本次实际生效的条数上限（global.SQUAD_LIST_LIMIT） */
+  limit: number
+  /** 服务端时间戳 */
+  serverNow: number
+}
+
+/**
  * 只带小队 id 的请求（加入、邀请）。
  */
 export interface SquadIdReq {

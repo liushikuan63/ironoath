@@ -40,6 +40,7 @@ import type { PermissionState } from '../assets/scripts/game/social/PermissionGa
 import type { CreateEntry, CreateForm, CreateScope } from '../assets/scripts/game/social/SocialCreate'
 import type { ExitKey } from '../assets/scripts/game/social/SocialExit'
 import type { DiscoveryView } from '../assets/scripts/game/social/AllianceDiscovery'
+import type { SquadListView } from '../assets/scripts/game/social/SquadDiscovery'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -107,6 +108,9 @@ const ROUTES: Record<string, unknown> = {
   // 可申请联盟（B26 S6）。默认给"一个都没有"：这条读口在真服务端永远存在，
   // 桩里缺它会让所有"未入盟"的用例都多走一次失败上报（实测踩过：那正是 fixture 没镜像真实接线）
   '/alliance/list': { alliances: [], total: 0, limit: 20, serverNow: 1_788_000_000_000 },
+  // 可加入小队（B26 S7）：默认桩里必须有这一条，否则所有 squad=null 的用例都会为它发一次
+  // 注定失败的读请求并重试 —— 实测过一次，重试把「每个 scope 只拉一次」那条断言打成了假红
+  '/squad/list': { squads: [], total: 0, limit: 20, serverNow: 1_788_000_000_000 },
   '/social/summary': {
     squad: null,
     // 默认按「已在盟」给：摘要里的 alliance 是否为 null，是客户端决定「要不要拉成员」的
@@ -554,6 +558,7 @@ interface Harness {
   readonly lastExitArmed: ExitKey | null
   /** 最近一次推给面板的可申请联盟那一屏（B26 S6）。 */
   readonly lastDiscovery: DiscoveryView | null
+  readonly lastSquadDiscovery: SquadListView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -656,6 +661,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastCreateForm: CreateForm | null = null
   let lastExitArmed: ExitKey | null = null
   let lastDiscovery: DiscoveryView | null = null
+  let lastSquadDiscovery: SquadListView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -742,6 +748,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     allianceDiscovery: view => {
       lastDiscovery = view
+    },
+    squadDiscovery: view => {
+      lastSquadDiscovery = view
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -852,6 +861,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastDiscovery() {
       return lastDiscovery
+    },
+    get lastSquadDiscovery() {
+      return lastSquadDiscovery
     },
     get lastCompose() {
       return lastCompose
@@ -2748,7 +2760,10 @@ test('可申请联盟：没入盟才拉列表，灰行点了不发，能申的�
   })
   h.http.overrides.set('/alliance/apply', summaryBody())
   await h.root.start('dev-1', '君')
-  assert.equal(h.http.countOf('/alliance/list'), 1, '摘要说我没有联盟 ⇒ 该拉一次可申请列表')
+  assert.equal(h.http.countOf('/alliance/list'), 0,
+    '首屏不为一个玩家还没点开的页签拉列表（那条预算门量的是玩家等白屏的时间）')
+  await h.root.loadSocialDiscovery()
+  assert.equal(h.http.countOf('/alliance/list'), 1, '进了社交页、摘要又说我没联盟 ⇒ 该拉一次可申请列表')
   assert.deepEqual(h.lastDiscovery?.rows.map(r => [r.titleText, r.actionText, r.enabled]), [
     ['[TS] 铁誓', '申请加入', true],
     ['[QQ] 铜雀', '已满', false],
@@ -2782,6 +2797,49 @@ test('已经在联盟里的人不再拉可申请列表：那一屏他看不见�
   assert.equal(h.http.countOf('/alliance/list'), 0,
     '入盟的人看别人家的列表没有意义，白占一次请求')
   assert.deepEqual(h.lastDiscovery?.rows ?? [], [])
+})
+
+test('可加入小队：没入队才拉列表，满行点了不发，能加的那行发一条并回读列表', async () => {
+  const h = harness()
+  h.http.overrides.set('/squad/list', {
+    squads: [
+      { id: 'sq_open', name: '铁血队', level: 2, memberCount: 3, memberCap: 5, full: false },
+      { id: 'sq_full', name: '雪岭队', level: 1, memberCount: 5, memberCap: 5, full: true },
+    ],
+    total: 2, limit: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/squad/join', summaryBody())
+  await h.root.start('dev-1', '君')
+  assert.equal(h.http.countOf('/squad/list'), 0, '同联盟那一条：发现型列表不进首屏批次')
+  await h.root.loadSocialDiscovery()
+  assert.equal(h.http.countOf('/squad/list'), 1, '进了社交页、摘要又说我没小队 ⇒ 该拉一次可加入列表')
+  assert.deepEqual(h.lastSquadDiscovery?.rows.map(r => [r.titleText, r.actionText, r.enabled]), [
+    ['铁血队', '加入', true],
+    ['雪岭队', '已满', false],
+  ])
+
+  await h.root.joinSquad('sq_full')
+  assert.equal(h.http.countOf('/squad/join'), 0, '服务端说满了还发，等于把拒绝当正常流程')
+  const readsBefore = h.http.countOf('/social/summary')
+  await h.root.joinSquad('sq_open')
+  const sent = h.http.calls.filter(c => c.path === '/squad/join')
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.body.squadId, 'sq_open')
+  assert.ok(h.http.countOf('/social/summary') > readsBefore, '加入完要回读：页签要从别人家的名单换成我的队')
+  assert.ok(h.http.countOf('/squad/list') >= 2, '列表也要重拉：加入失败时那一行的 full 可能已经变了')
+})
+
+test('已经在小队里的人不再拉可加入列表：那一屏他看不见，一次请求都不该发', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/summary',
+    Object.assign({}, ROUTES['/social/summary'], {
+      squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
+    }))
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialDiscovery()
+  assert.equal(h.http.countOf('/squad/list'), 0,
+    '进了社交页也不拉：有队的人看别人家的名单没有意义，一次请求都不该发')
+  assert.deepEqual(h.lastSquadDiscovery?.rows ?? [], [])
 })
 
 test('解散小队走的是 /squad/disband（这个端点早就有，客户端此前连方法都没有）', async () => {

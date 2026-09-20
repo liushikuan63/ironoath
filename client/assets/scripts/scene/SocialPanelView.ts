@@ -22,7 +22,9 @@ import { createEntries } from '../game/social/SocialCreate'
 import type { CreateEntry, CreateScope } from '../game/social/SocialCreate'
 import { exitEntry, transferEntry } from '../game/social/SocialExit'
 import { EMPTY_DISCOVERY } from '../game/social/AllianceDiscovery'
+import { EMPTY_SQUAD_DISCOVERY } from '../game/social/SquadDiscovery'
 import type { DiscoveryView } from '../game/social/AllianceDiscovery'
+import type { SquadListView } from '../game/social/SquadDiscovery'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { ExitAction, ExitEntry, ExitKey, ExitScope } from '../game/social/SocialExit'
 import type {
@@ -121,7 +123,7 @@ interface RowDraft {
 
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
   | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
-  | 'socialExit' | 'socialExpand' | 'socialApply' | 'socialTransfer'
+  | 'socialExit' | 'socialExpand' | 'socialApply' | 'socialTransfer' | 'socialJoin'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -142,6 +144,8 @@ export class SocialPanelView extends Component {
   private armedTransfer: { scope: ExitScope, memberId: string } | null = null
   /** 可申请联盟那一屏（B26 S6）。没读到是「读取中」，不等于"没有联盟可加"。 */
   private discovery: DiscoveryView = EMPTY_DISCOVERY
+  /** 可加入小队那一屏（B26 S7）。同一族的判断：没读到不等于没人建队。 */
+  private squadDiscovery: SquadListView = EMPTY_SQUAD_DISCOVERY
   /** 联盟成员缓存。汇总接口不下发它，只有 /alliance/sync 的 diff 会更新它 */
   private readonly allianceMembers: AllianceMember[] = []
   /** 重建面板所需的上一次原始输入。diff 到达时要用它们重新组装，而不是去改已组装好的 data */
@@ -199,6 +203,8 @@ export class SocialPanelView extends Component {
   onSocialExpand: (() => void) | null = null
   /** 点「申请加入」那一行（B26 S6）：由编排层发那一枪。 */
   onSocialApply: ((allianceId: string) => void) | null = null
+  /** 点「加入」那一行（B26 S7）：小队这一路不要审核，一按就是真进队。 */
+  onSocialJoin: ((squadId: string) => void) | null = null
 
   /** 进聊天页签（首次画之前先拉一次历史） */
   onChatEnter: (() => void) | null = null
@@ -244,6 +250,7 @@ export class SocialPanelView extends Component {
     this.armedExit = null
     this.armedTransfer = null
     this.discovery = EMPTY_DISCOVERY
+    this.squadDiscovery = EMPTY_SQUAD_DISCOVERY
     this.allianceMembers.length = 0
     this.lastResp = null
     this.lastHelps = []
@@ -259,6 +266,7 @@ export class SocialPanelView extends Component {
     this.onSocialTransfer = null
     this.onSocialExpand = null
     this.onSocialApply = null
+    this.onSocialJoin = null
     this.chatData = null
     this.chatControls = null
     this.chatInput = null
@@ -350,6 +358,12 @@ export class SocialPanelView extends Component {
   /** 可申请联盟那一屏（B26 S6）：行与那句总量说明都由编排层算好，这里只画。 */
   attachDiscovery(view: DiscoveryView): void {
     this.discovery = view
+    this.render()
+  }
+
+  /** 可加入小队那一屏（B26 S7）：与上面同一族，小队页签用。 */
+  attachSquadDiscovery(view: SquadListView): void {
+    this.squadDiscovery = view
     this.render()
   }
 
@@ -961,6 +975,25 @@ export class SocialPanelView extends Component {
       : [...rows, infoRow(this.discovery.notice)]
   }
 
+  /**
+   * 可加入小队那几行（B26 S7）。与联盟那一段同一条形状：行 + 那句「这不是全部」。
+   */
+  private squadDiscoveryRows(): RowDraft[] {
+    const rows = this.squadDiscovery.rows.map((row): RowDraft => ({
+      title: row.titleText,
+      titleColor: row.enabled ? COLOR_TEXT : COLOR_TEXT_DIM,
+      detail: row.reason.length > 0 ? `${row.memberText} · ${row.reason}` : row.memberText,
+      value: '',
+      actionText: row.actionText,
+      actionEnabled: row.enabled,
+      actionId: row.id,
+      actionKind: 'socialJoin',
+    }))
+    return this.squadDiscovery.notice.length === 0
+      ? rows
+      : [...rows, infoRow(this.squadDiscovery.notice)]
+  }
+
   private draftsFor(data: SocialData): RowDraft[] {
     switch (this.tab) {
       case 'squad':
@@ -972,7 +1005,10 @@ export class SocialPanelView extends Component {
             ...memberDrafts(data.squad.members,
               gate(this.permissions, 'SQUAD', 'KICK_MEMBER'), this.transferFor('squad')),
           ]
-          : [createDraft('squad', data.squad.title, this.create.squad)]
+          : [
+            createDraft('squad', data.squad.title, this.create.squad),
+            ...this.squadDiscoveryRows(),
+          ]
       case 'alliance': {
         if (!data.alliance.joined) {
           return [
@@ -1126,6 +1162,10 @@ export class SocialPanelView extends Component {
         this.onSocialApply?.(id)
         return
       }
+      if (kind === 'socialJoin') {
+        this.onSocialJoin?.(id)
+        return
+      }
       if (kind === 'socialExit') {
         // 这两行只在各自那一页画出来，所以层级由当前页签给，动作由行给
         this.onSocialExit?.(this.tab === 'squad' ? 'squad' : 'alliance',
@@ -1272,6 +1312,21 @@ function createDraft(scope: CreateScope, sectionTitle: string, entry: CreateEntr
   }
 }
 
+/**
+ * 行内 detail 的拼接：去空、**并且去重**。踢人与转让两道门用的是同一句话
+ * （「你当前的职位不能做这件事」），不去重就会在行里连写两遍 —— 玩家读到第二遍会以为
+ * 界面坏了，而这两颗按钮的权限码其实是两回事。
+ */
+function dedupe(parts: readonly (string | null | undefined)[]): string[] {
+  const out: string[] = []
+  for (const part of parts) {
+    if (part !== null && part !== undefined && part.length > 0 && !out.includes(part)) {
+      out.push(part)
+    }
+  }
+  return out
+}
+
 function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate,
                       transfer: (memberId: string) => ExitEntry): RowDraft[] {
   return members.map((member): RowDraft => {
@@ -1281,10 +1336,8 @@ function memberDrafts(members: readonly SocialMemberRow[], kickGate: Gate,
       // 不活跃的成员标灰：盟主/队长据此决定要不要补人，
       // 而一个挂名不上线的成员提供不了任何庇护（B10 关键设计点 2）
       titleColor: member.inactive ? COLOR_TEXT_DIM : COLOR_TEXT,
-      detail: [member.powerText, member.activeText, member.squadText, member.contributionText,
-        kickGate.reason, transferEntry.detailText]
-        .filter((part): part is string => part !== null && part !== undefined && part.length > 0)
-        .join(' · '),
+      detail: dedupe([member.powerText, member.activeText, member.squadText,
+        member.contributionText, kickGate.reason, transferEntry.detailText]).join(' · '),
       value: '',
       actionText: '踢出',
       // 能不能踢由服务端下发的权限列表裁决（验收 4）。

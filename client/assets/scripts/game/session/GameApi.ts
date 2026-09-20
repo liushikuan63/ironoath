@@ -79,7 +79,7 @@ import type {
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
   HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyResp, SocialEventAckReq,
   SocialCreatePolicyResp, SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq,
-  SquadMemberReq, SquadRallyReq,
+  SquadListResp, SquadMemberReq, SquadRallyReq,
   SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp,
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
@@ -665,6 +665,15 @@ export class GameApi {
 
   squadCreate(req: Omit<SquadCreateReq, 'requestId'>): Promise<NetOutcome<SocialSummaryResp>> {
     return this.mutate<SquadCreateReq, SocialSummaryResp>('/squad/create', req)
+  }
+
+  /**
+   * GET /squad/list（B26 S7）。可加入小队的前 N 个 —— 与 `/alliance/list` 同一族：
+   * 加入是不要审核、也不要金币的那一种，却是这三格里最容易被玩家忽略的一条路，
+   * 因为没有发现口的时候，那一屏只有一句「未加入小队」。
+   */
+  squadList(): Promise<NetOutcome<SquadListResp>> {
+    return this.read<SquadListResp>('/squad/list')
   }
 
   squadJoin(req: Omit<SquadIdReq, 'requestId'>): Promise<NetOutcome<SocialSummaryResp>> {

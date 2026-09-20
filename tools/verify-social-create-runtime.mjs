@@ -75,6 +75,12 @@ const fixture = {
   applyCalls: [],
   /** 桩这边记的"我申请过哪些"，用来让下一次列表把那一行翻成「已申请」 */
   appliedIds: [],
+  /** F 相：可加入小队列表被读了几次、加入那一枪收到的 body */
+  squadListReads: 0,
+  joinCalls: [],
+  summaryHits: 0,
+  /** F 相：桩这边记的"我已经进了哪支"，摘要据此决定还拉不拉列表 */
+  joinedId: null,
 }
 
 const policyBody = (scope) => ({
@@ -380,6 +386,14 @@ checkTrue('A11 小队页同一套（那句是 5 级，不是把联盟那句复�
     && !String(createASquad?.detail ?? '').includes('主城 10 级'))
 checkTrue('A12 屏上不出现资源枚举与权限码原文（名字走 `ui/ResourceNames` 那唯一一份）',
   (snapASquad?.labels ?? []).every(text => !/\bGOLD\b|\bSQUAD\b|\bALLIANCE\b|KICK_MEMBER/.test(text)))
+// 这一条只走真后端：夹具里再怎么写都不证明那个端点真的在、真的回得来。
+const squadListFired = sent.filter(c => c.path === '/squad/list').length
+checkTrue(`A13 打开社交页真的发了一次 GET /squad/list（实测 ${squadListFired} 次）`,
+  squadListFired >= 1)
+checkTrue('A14 真后端上的小队页：要么列出可加入的队，要么老实说「还没有人建立小队」——'
+  + '两种都是真话，画一张既没行也没说明的空屏才是假话',
+  (snapASquad?.rows ?? []).some(r => r.caption === '加入')
+    || (snapASquad?.labels ?? []).some(text => text.includes('还没有人建立小队')))
 
 // ============================ B 相：政策换成"能建"，写请求打桩 ============================
 const cors = (request) => ({
@@ -544,6 +558,99 @@ checkTrue('E8 申请完列表重拉，那一行自己变成「已申请」（不
 checkTrue('E9 屏上不出现联盟 id 与字段名（id 只进请求，不进玩家的眼睛）',
   ((await readRows())?.labels ?? []).every(text => !/al_probe|memberCap|applied/.test(text)))
 await shot('E-discovery-apply')
+
+// ============================ F 相：可加入小队那一屏（B26 S7）============================
+// 与 E 相同一族：真后端上凑不出「能加 + 已满」两态（要么没人建队，要么只有别的探针留下的队），
+// 所以列表换夹具、加入那一枪打桩。**桩回的摘要带上一支真小队** —— 只有这样才验得到
+// 「进了队之后那一屏自己收起」，而不只是列表画得对。
+await context.route('**/squad/list*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  fixture.squadListReads += 1
+  await reply(route, {
+    squads: [
+      { id: 'sq_probe_open', name: '铁血队', level: 2, memberCount: 3, memberCap: 5,
+        full: false },
+      { id: 'sq_probe_full', name: '雪岭队', level: 4, memberCount: 10, memberCap: 10,
+        full: true },
+    ],
+    total: 31, limit: 20, serverNow: Date.now(),
+  })
+})
+await context.route('**/squad/join*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  const body = JSON.parse(request.postData() ?? '{}')
+  fixture.joinCalls.push(body)
+  fixture.joinedId = body.squadId
+  await reply(route, joinedSummary(false))
+})
+// 摘要必须是状态相关的桩：加入之后服务端就会说"我有队了"，客户端正是读这一项决定
+// 「可加入那一屏要不要收起来、还要不要再拉列表」。上一版只把 /squad/join 打了桩、
+// 摘要仍走真服务端（它当然还说没队），于是"那一屏该收起"永远验不到 —— F8 就是这么红的。
+await context.route('**/social/summary*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  fixture.summaryHits += 1
+  await reply(route, joinedSummary(fixture.joinedId === null))
+})
+/** 加入前后的同一份摘要：`squadless=true` 就按"我还没队"回，否则回我刚进的那支队。 */
+const joinedSummary = (squadless) => ({
+  squad: squadless ? null : {
+    id: 'sq_probe_mine', name: '铁血队', leaderId: 'p_other',
+    members: [{ id: 'p_other', name: '阿铁', power: 12_400, lastActiveAt: Date.now() - 60_000,
+      role: 'LEADER', mainCityLevel: 8 }],
+    level: 2, exp: 60, expToNext: 140, memberCap: 5, shopLevel: 1, squadCoin: 0,
+    allianceId: null, isSubSquad: false, dailyQuestProgress: 0, dailyQuestTarget: 20,
+    serverNow: Date.now(),
+  },
+  alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+  helpRemainingToday: 20, events: [], serverNow: Date.now(),
+})
+
+fixture.canCreate = false
+await openSocial()
+await page.evaluate(TAP_NAMED('social', 'Tab_squad'))
+const snapF = await waitForRows(rows => rows.some(r => r.caption === '加入'))
+checkTrue('F1 小队页有两种按钮：能加的那行亮着「加入」',
+  (snapF?.rows ?? []).some(r => r.title.includes('铁血队') && r.caption === '加入'
+    && JSON.stringify(r.color) === JSON.stringify(LIT)))
+checkTrue('F2 「已满」那行灰着并写原因（上限挂在队长主城等级上，客户端算不出，只能由服务端说）',
+  (snapF?.rows ?? []).some(r => r.caption === '已满' && JSON.stringify(r.color) === JSON.stringify(DIM)
+    && r.detail.includes('位置满了') && r.detail.includes('10/10 人')))
+checkTrue('F3 有界列表说清总量（那句「共 31 支小队，这里只显示前 2 支」）',
+  (snapF?.labels ?? []).some(text => text.includes('共 31 支小队')))
+await shot('F-squad-discovery-list')
+const joinBefore = fixture.joinCalls.length
+await page.evaluate(TAP_CAPTION('已满'))
+await page.waitForTimeout(800)
+check('F4 点「已满」那一行不发请求', fixture.joinCalls.length, joinBefore)
+await page.evaluate(TAP_CAPTION('加入'))
+await page.waitForTimeout(1_600)
+check('F5 点「加入」发恰好一条', fixture.joinCalls.length - joinBefore, 1)
+check('F6 请求体带的是列表里那支小队的 id', fixture.joinCalls[joinBefore]?.squadId, 'sq_probe_open')
+checkTrue('F7 请求带幂等键（加入会改组织成员表，重放等于多占一个位置）',
+  typeof fixture.joinCalls[joinBefore]?.requestId === 'string')
+const readsAfterJoin = fixture.squadListReads
+await page.evaluate(TAP_NAMED('social', 'Tab_alliance'))
+await page.evaluate(TAP_NAMED('social', 'Tab_squad'))
+await page.waitForTimeout(1_200)
+const snapF2 = await readRows()
+const f8Clean = !(snapF2?.rows ?? []).some(r => r.caption === '加入' || r.caption === '已满')
+checkTrue(`F8 进了队之后那一屏自己收起：不再画「加入」「已满」那些行（诊断 joinedId=${fixture.joinedId} summaryHits=${fixture.summaryHits} captions=${JSON.stringify((snapF2?.rows ?? []).map(r => r.caption))}）`, f8Clean)
+check('F9 有队之后不再拉可加入列表（换两次页签，一次都不发）', fixture.squadListReads, readsAfterJoin)
+checkTrue('F10 屏上不出现小队 id 与字段名',
+  ((await readRows())?.labels ?? []).every(text => !/sq_probe|memberCap|isSubSquad/.test(text)))
+await shot('F-squad-discovery-joined')
 
 // ============================ D 相：版面与错误 ============================
 // 只比"要点要填"的那几块板：标题/消耗/提示三条 Label 的盒本来就是整幅宽，
