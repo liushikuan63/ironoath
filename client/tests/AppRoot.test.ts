@@ -254,6 +254,7 @@ const ROUTES: Record<string, unknown> = {
     heroSlots: [], serverNow: SERVER_NOW,
   }], serverNow: SERVER_NOW },
   '/rally/policy': rallyPolicyBody(),
+  '/world/reports': { reports: [], serverNow: SERVER_NOW },
   '/rally/join': { rally: {
     rallyId: 'r-1', scope: 'SQUAD', groupId: 'sq-1', initiatorId: 'P-leader',
     targetCoord: { x: 60, y: 60 }, targetType: 'MONSTER', maxMembers: 10,
@@ -1228,6 +1229,8 @@ test('战报列表：refresh 只发一次 GET，回执落到面板（GameApi 那
   await h.root.refresh('reports')
 
   assert.equal(h.http.calls.filter(c => c.path === '/battle/reports').length, 1)
+  assert.equal(h.http.calls.filter(c => c.path === '/world/reports').length, 1,
+    '敌情与战报是同一块面板的两个页签：一次刷新各拉一次，不多发也不漏发')
   assert.equal(h.attached.includes('reports'), true)
   assert.equal(h.errors.length, 0)
 })

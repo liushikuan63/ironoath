@@ -673,20 +673,6 @@ const MENU = `(() => {
   collect(overlay)
   return { found: true, texts, parentName }
 })()`
-const DIAG = `(() => {
-  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
-  const names = (game?.children || []).map((c) => c.name)
-  let overlay = null
-  const find = (n) => { if (n.name === 'ChoiceOverlay' && n.active) overlay = n; for (const c of n.children) find(c) }
-  find(game)
-  let rowParent = null
-  const findRow = (n) => { if (n.name === 'QueueButton' && n.active) rowParent = [n.parent?.name, n.parent?.parent?.name, n.parent?.getSiblingIndex()].join(">"); for (const c of n.children) findRow(c) }
-  findRow(game)
-  return { gameChildren: names, overlayParent: overlay?.parent?.name ?? null,
-    overlayIndex: overlay?.getSiblingIndex() ?? null, overlayLayer: overlay?.layer ?? null,
-    gameLayer: game?.layer ?? null, rowParent }
-})()`
-console.log('  诊断：', JSON.stringify(await page2.evaluate(DIAG)))
 const menu = await page2.evaluate(MENU)
 checkTrue('菜单真的弹出来了（ChoiceOverlay 激活）', menu?.found === true)
 check('菜单挂在场景层（Game 节点）：面板每秒为倒计时重挂行，建在面板里的弹层会被压住',
@@ -843,6 +829,7 @@ checkTrue('确认键的字在侦察态写「派侦察」',
   (footScout?.boxes ?? []).some((b) => b.name === '编成出征' && b.caption === '派侦察'))
 await page.screenshot({ path: path.join(OUT, 'compose-scout-mode.png') })
 console.log(`  截图：${path.join(OUT, 'compose-scout-mode.png')}`)
+
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {
   for (const message of errors.slice(0, 3)) console.log(`    error: ${message.slice(0, 160)}`)

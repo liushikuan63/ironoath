@@ -1431,6 +1431,7 @@ export class GameBootstrap extends Component {
     }
     if (reports !== null) {
       out.reports = (resp, serverNowMs) => reports.attach(resp, serverNowMs)
+      out.scoutIntel = (resp, serverNowMs) => reports.attachScouts(resp, serverNowMs)
       // 回放参数由服务端随战报下发（表里那两个数），这里只装配不写死。
       // 表里写了不支持的倍速时 playbackOptionsOf 会抛 —— 那是一条配置故障，
       // 让它响到崩溃上报里去，而不是让玩家点开一场看到一屏不动的画

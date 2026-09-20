@@ -54,6 +54,7 @@ import type { RankListResp } from '../../net/generated/RankProtocol'
 import { buildSeasonPanel } from '../season/SeasonPanel'
 import type { SeasonPanelView } from '../season/SeasonPanel'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
+import type { ScoutListResp } from '../../net/generated/WorldProtocol'
 import { buildTechPanel } from '../tech/TechPanel'
 import type { TechPanelView } from '../tech/TechPanel'
 import type { TechListView } from '../../net/generated/TechProtocol'
@@ -340,6 +341,8 @@ export interface PanelTargets {
   activity?(resp: ActivityListResp, serverNowMs: number): void
   /** 战报列表（B12 §3）。时刻由外层给：列表里每行都写着「N 天后过期」，那是相对时间。 */
   reports?(resp: BattleReportListResp, serverNowMs: number): void
+  /** 敌情列表（B26 S19）：与战报同一块面板的第二个页签，同样由视图自己装配 */
+  scoutIntel?(resp: ScoutListResp, serverNowMs: number): void
   /** 「自上次登录以来」那一屏（B25-S3）。条目为空时编排层不会调它 —— 一个空面板比不弹更糟。 */
   offlineReport?(view: OfflineReportPopup): void
   /** 汇总里点了一条：跳到那一页（key 与 PanelNav 的 key 一致）。 */
@@ -835,10 +838,14 @@ export class AppRoot {
       case 'quest':
         this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
         return
-      case 'reports':
-        this.deliver('reports', await this.api.battleReports(),
-          r => this.targets.reports?.(r, this.timeSync.serverNow()))
+      case 'reports': {
+        // 战报与敌情同一次刷新一起拉（B26 S19）：它们是同一块面板的两个页签，
+        // 分两次进就会让玩家切页签时看到「读取中」
+        const [battles, scouts] = await Promise.all([this.api.battleReports(), this.api.scoutReports()])
+        this.deliver('reports', battles, r => this.targets.reports?.(r, this.timeSync.serverNow()))
+        this.deliver('reports', scouts, r => this.targets.scoutIntel?.(r, this.timeSync.serverNow()))
         return
+      }
       case 'shop':
         this.deliver('shop', await this.api.shopList(this.shopTab), r => {
           this.shopResp = r
