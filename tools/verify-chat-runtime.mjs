@@ -168,6 +168,29 @@ function installHelpers() {
       }
       return titles
     },
+    /**
+     * 弹层有没有被后加进来的兄弟盖住（#320 那条同族判据）：
+     * 聊天行与消息行都是每次刷新重新 addChild 的，排在弹层后面就把它压住。
+     */
+    pickerCovered: () => {
+      const scene = window.cc.director.getScene()
+      const stack = [...scene.children]
+      while (stack.length > 0) {
+        const node = stack.pop()
+        if (node.name === 'ChoiceOverlay' && node.activeInHierarchy) {
+          const parent = node.parent
+          if (parent === null) return 0
+          const at = node.getSiblingIndex()
+          let above = 0
+          for (const sibling of parent.children) {
+            if (sibling.active && sibling.getSiblingIndex() > at) above += 1
+          }
+          return above
+        }
+        for (const child of node.children) stack.push(child)
+      }
+      return null
+    },
     /** 点选择器里标题包含某段文字的那一项。 */
     tapChoice: (contains) => {
       const scene = window.cc.director.getScene()
@@ -404,6 +427,10 @@ async function main() {
     && menuTitles.some(t => t.includes('举报：疑似作弊')) && menuTitles.some(t => t.includes('举报：其他')),
   '消息行的按钮弹出一层选择器：第一页是四种举报原因（拉黑在第 2 页，与选择器 4 项/页一致）',
   `tap=${menuTap} 选项=${menuTitles.join(' / ').slice(0, 90)}`)
+
+  const covered = await page.evaluate(() => window.__chat.pickerCovered())
+  verdict(covered === 0, '选择器没有被后加进来的消息行盖住（#320 同族判据，聊天是第四个宿主）',
+    `排在弹层之后的激活兄弟=${covered}`)
 
   await page.evaluate(() => window.__chat.tapChoice('举报：刷屏'))
   await page.waitForTimeout(400)
