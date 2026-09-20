@@ -1308,6 +1308,8 @@ export class GameBootstrap extends Component {
       // 入盟申请（B26 S8）：能不能审由服务端那份权限码说，没有权限时这一份根本不拉、这一段根本不画
       out.allianceApplications = view => social.attachApplications(view)
       social.onSocialReview = (applicantId, approve) => { void this.root?.reviewApplication(applicantId, approve) }
+      // 联盟科技（B26 S9）：目录由摘要带下来，这里只接"研究一级"那一枪
+      social.onSocialResearch = techId => { void this.root?.researchAllianceTech(techId) }
 
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }

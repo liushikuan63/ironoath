@@ -90,6 +90,18 @@ const fixture = {
   ],
   appReads: 0,
   reviewCalls: [],
+  /** H 相：联盟科技目录（服务端那份的桩），研究一枪会把对应那行抬一级 */
+  techs: [
+    { techId: 'atech_atk', level: 1, levelCap: 40, effectFixed: 150,
+      name: '联盟锋刃', nextLevelCost: 2000, canResearch: true, reason: null },
+    { techId: 'atech_def', level: 40, levelCap: 40, effectFixed: 6000,
+      name: '联盟壁垒', nextLevelCost: 2000, canResearch: false,
+      reason: '本盟等级下已经研究到头了，提升联盟等级才能继续' },
+    { techId: 'atech_spd', level: 0, levelCap: 20, effectFixed: 0,
+      name: '联盟疾行', nextLevelCost: 9000, canResearch: false,
+      reason: '联盟资金还不够，多捐一些就能研究' },
+  ],
+  techCalls: [],
   /** F 相：桩这边记的"我已经进了哪支"，摘要据此决定还拉不拉列表 */
   joinedId: null,
 }
@@ -628,6 +640,8 @@ const joinedSummary = (squadless) => ({
     id: 'al_probe_mine', name: '铁誓', tag: 'TS', leaderId: 'p_me', level: 3, exp: 120,
     memberCap: 30, memberCount: 4, fund: 900, techs: [], territoryCount: 1, territoryCap: 12,
     myRole: 'LEADER', myContribution: 40, myDonateToday: 0, donateTiersUsed: [],
+    // 目录恒为全量：0 级那几项也在内，否则整个功能在界面上等于不存在
+    techs: fixture.techs.map((row) => ({ ...row })),
     donateDailyCap: 3, announcement: '', version: 2, serverNow: Date.now(),
   } : null,
   nationId: null, pendingInvites: 0, pendingHelps: 0,
@@ -682,7 +696,7 @@ await context.route('**/social/permissions*', async (route) => {
   await reply(route, {
     scope, role: scope === 'SQUAD' ? 'MEMBER' : 'LEADER',
     permissions: fixture.canReview
-      ? ['KICK_MEMBER', 'DONATE', 'APPROVE_APPLICATION']
+      ? ['KICK_MEMBER', 'DONATE', 'APPROVE_APPLICATION', 'RESEARCH_TECH']
       : ['KICK_MEMBER', 'DONATE'],
     serverNow: Date.now(),
   })
@@ -750,6 +764,79 @@ check('G8 没有 APPROVE_APPLICATION 时一次都不拉申请名单（读口与�
 checkTrue('G9 屏上也不出现「批准」那颗按钮（看不见功能存在与看得见但不能点是两回事，这里是前者：这一屏本来就不该给他）',
   !((await readRows())?.rows ?? []).some(r => r.caption === '批准'))
 await shot('G-applications-review')
+// ============================ H 相：联盟科技那一屏（B26 S9） ============================
+// 这一格修的是"0 级被服务端滤掉 ⇒ 功能在界面上不存在"，所以三态要同时出现：
+// 能研究、已到本盟上限、资金不够。研究那一枪打桩并真的抬一级 —— 才能证明那一行是自己变的。
+await context.route('**/alliance/tech*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  const body = JSON.parse(request.postData() ?? '{}')
+  fixture.techCalls.push(body)
+  fixture.techs = fixture.techs.map((row) => {
+    if (row.techId !== body.techId) {
+      return row
+    }
+    const level = row.level + body.levels
+    const atCap = level >= row.levelCap
+    return {
+      ...row, level, effectFixed: row.effectFixed + 150,
+      canResearch: !atCap && fixture.techFund >= row.nextLevelCost,
+      reason: atCap ? '本盟等级下已经研究到头了，提升联盟等级才能继续' : row.reason,
+    }
+  })
+  await reply(route, {
+    techId: body.techId, level: fixture.techs.find(r => r.techId === body.techId).level,
+    levelCap: 40, fundCost: 2000, fund: fixture.techFund, effectValue: 300, serverNow: Date.now(),
+  })
+})
+
+fixture.allianceVisible = true
+fixture.canReview = true
+fixture.joinedId = null
+fixture.techFund = 5000
+await openSocial()
+await page.evaluate(TAP_NAMED('social', 'Tab_alliance'))
+const snapH = await waitForRows(rows => rows.some(r => r.caption === '研究'))
+checkTrue('H1 目录里三态同时出现：能研究的那行亮着「研究」',
+  (snapH?.rows ?? []).some(r => r.title.includes('联盟锋刃') && r.caption === '研究'
+    && JSON.stringify(r.color) === JSON.stringify(LIT)))
+checkTrue('H2 名字与价格都用表里那一份（客户端没有 alliance_tech 表，自己翻就是第二真源）',
+  (snapH?.rows ?? []).some(r => r.title === '联盟锋刃' && r.detail.includes('下一级 2000')))
+checkTrue('H3 已到本盟上限的那行灰着并说「提升联盟等级」，不是只灰一颗按钮',
+  (snapH?.rows ?? []).some(r => r.caption === '已满' && JSON.stringify(r.color) === JSON.stringify(DIM)
+    && r.detail.includes('本盟等级下已经研究到头了')))
+// H4/H5 原来盯的是"钱不够那一行"与"0 级那一行"画没画 —— 实测这两行都被截断在屏外：
+// 联盟页签一屏只画得下 5 行，而概况/退出/申请/科技 6 项/捐献 3 项/成员若干根本放不下。
+// 那两条语义判据交给单测（AllianceTechCatalog.test.ts 里"三条门各说一句话"与"0 级照画"都在）
+// 与服务端用例（techs 恒为 6 行）。屏上这里只问两件真能失败的事：截断有没有说实话、账对不对得上。
+const hiddenNotice = ((snapH?.labels ?? []).find(text => text.includes('未显示')) ?? '')
+const hiddenCount = Number((hiddenNotice.match(/另有 (\d+) 项未显示/) ?? [])[1] ?? -1)
+checkTrue(`H4 目录被截断时屏上说实话（那句「另有 N 项未显示」在，而不是静默少画）：实际=${JSON.stringify(hiddenNotice)}`,
+  hiddenCount >= 0)
+const drawnTechs = (snapH?.rows ?? []).filter(r => /联盟锋刃|联盟壁垒|联盟疾行/.test(r.title)).length
+check(`H5 账对得上：屏上画出的科技行 + 明说没画的 = 目录全量 6 项（不是「假装这就是全部」）`,
+  drawnTechs + hiddenCount, 6)
+const techBefore = fixture.techCalls.length
+await page.evaluate(TAP_CAPTION('钱不够'))
+await page.waitForTimeout(800)
+check('H6 点灰着的那行不发请求', fixture.techCalls.length, techBefore)
+await page.evaluate(TAP_CAPTION('研究'))
+await page.waitForTimeout(1_600)
+check('H7 点「研究」发恰好一条', fixture.techCalls.length - techBefore, 1)
+check('H8 请求体是这一行那项科技、一次一级（扣的是全盟公账）',
+  `${fixture.techCalls[techBefore]?.techId}|${fixture.techCalls[techBefore]?.levels}`,
+  'atech_atk|1')
+checkTrue('H9 请求带幂等键（重放等于全盟被多扣一次资金）',
+  typeof fixture.techCalls[techBefore]?.requestId === 'string')
+checkTrue('H10 研究完那一行自己升到 Lv2（重读摘要，不是客户端本地改字）',
+  ((await readRows())?.rows ?? []).some(r => r.title === '联盟锋刃' && r.detail.includes('Lv2/40')))
+checkTrue('H11 屏上不出现科技 id 与权限码（atech_* 与 RESEARCH_TECH 只进请求与日志）',
+  ((await readRows())?.labels ?? []).every(text => !/atech_|RESEARCH_TECH|nextLevelCost/.test(text)))
+await shot('H-alliance-tech')
+
 // ============================ D 相：版面与错误 ============================
 // 只比"要点要填"的那几块板：标题/消耗/提示三条 Label 的盒本来就是整幅宽，
 // 把它们算进压叠判定必然报红 —— 那是量具算错，不是排版错

@@ -133,6 +133,10 @@ export const TRACK_EVENTS = {
    * 而这一条为零、申请数却在涨，说明门槛外的人一直进不来。
    */
   allianceReview: 'alliance_review',
+  /**
+   * 研究一级联盟科技（B26 S9）。带 techId：哪几项一直没人研究，就是这份科技表该不该重做的依据。
+   */
+  allianceResearch: 'alliance_research',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

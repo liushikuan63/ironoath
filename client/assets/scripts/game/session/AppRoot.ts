@@ -1645,6 +1645,16 @@ export class AppRoot {
    * 审核一条申请（B26 S8）。批准与拒绝都是真动作，一按就发：不做"两下才算数"，
    那套只留给不可逆的组织去留（退盟 / 解散 / 转让）。
    */
+  /**
+   * 研究一级联盟科技（B26 S9）。一次一级、扣的是全盟公账，所以带幂等键；
+   * 灰态（到上限 / 资金不够 / 职位不够）由服务端那两条结论决定，客户端只在"这一行现在能发"时发。
+   */
+  researchAllianceTech(techId: string): Promise<void> {
+    this.track(TRACK_EVENTS.allianceResearch, { techId: trackParam(techId) })
+    return this.write('social', this.api.allianceResearchTech({ techId, levels: 1 }),
+      ['social', 'reddot'])
+  }
+
   reviewApplication(applicantId: string, approve: boolean): Promise<void> {
     this.track(TRACK_EVENTS.allianceReview, {
       applicantId: trackParam(applicantId),

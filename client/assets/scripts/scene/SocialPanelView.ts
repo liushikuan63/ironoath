@@ -24,6 +24,7 @@ import { exitEntry, transferEntry } from '../game/social/SocialExit'
 import { EMPTY_DISCOVERY } from '../game/social/AllianceDiscovery'
 import { EMPTY_SQUAD_DISCOVERY } from '../game/social/SquadDiscovery'
 import { EMPTY_APPLICATIONS } from '../game/social/AllianceApplications'
+import { buildTechRows } from '../game/social/AllianceTechCatalog'
 import type { ApplicationView } from '../game/social/AllianceApplications'
 import type { DiscoveryView } from '../game/social/AllianceDiscovery'
 import type { SquadListView } from '../game/social/SquadDiscovery'
@@ -126,7 +127,7 @@ interface RowDraft {
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
   | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
   | 'socialExit' | 'socialExpand' | 'socialApply' | 'socialTransfer' | 'socialJoin'
-  | 'socialReview' | 'socialReject'
+  | 'socialReview' | 'socialReject' | 'socialResearch'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -213,6 +214,8 @@ export class SocialPanelView extends Component {
   onSocialJoin: ((squadId: string) => void) | null = null
   /** 批准 / 拒绝某一条申请（B26 S8）：一按就发，不做两下确认。 */
   onSocialReview: ((applicantId: string, approve: boolean) => void) | null = null
+  /** 点某一行的「研究」（B26 S9）：一次一级，扣的是联盟公账。 */
+  onSocialResearch: ((techId: string) => void) | null = null
 
 
   /** 进聊天页签（首次画之前先拉一次历史） */
@@ -278,6 +281,7 @@ export class SocialPanelView extends Component {
     this.onSocialApply = null
     this.onSocialJoin = null
     this.onSocialReview = null
+    this.onSocialResearch = null
     this.chatData = null
     this.chatControls = null
     this.chatInput = null
@@ -1042,6 +1046,24 @@ export class SocialPanelView extends Component {
       : [...rows, infoRow(this.applications.notice)]
   }
 
+  /**
+   * 联盟科技那几行（B26 S9）。灰态原因分两条门说：职位不能研究 vs 此刻研究不动（上限/资金），
+   * 混成一条会让人去捐一笔本不需要的钱。
+   */
+  private techRows(alliance: AllianceSection): RowDraft[] {
+    const researchGate = gate(this.permissions, 'ALLIANCE', 'RESEARCH_TECH')
+    return buildTechRows(alliance.techs, researchGate).map((row): RowDraft => ({
+      title: row.titleText,
+      titleColor: row.enabled ? COLOR_TEXT : COLOR_TEXT_DIM,
+      detail: row.reason === null ? row.detailText : `${row.detailText} · ${row.reason}`,
+      value: '',
+      actionText: row.actionText,
+      actionEnabled: row.enabled,
+      actionId: row.id,
+      actionKind: 'socialResearch',
+    }))
+  }
+
   private draftsFor(data: SocialData): RowDraft[] {
     switch (this.tab) {
       case 'squad':
@@ -1069,6 +1091,10 @@ export class SocialPanelView extends Component {
         rows.splice(1, 0, this.exitRow('alliance'))
         // 待审申请紧跟概况行（B26 S8）：成员名单是不定长的，固定那一行不能排在它后面
         rows.splice(2, 0, ...this.applicationRows())
+        // 科技目录紧跟在申请行之后（B26 S9）。**不能 push 到最后**：一屏只画得下六行，
+        // 而捐献三行 + 成员若干行本来就排在后面 —— 排最后等于永远截断在屏外，
+        // 这一格要修的"功能看不见"就以另一种形式回来了。
+        rows.splice(2 + this.applicationRows().length, 0, ...this.techRows(data.alliance))
         return rows
       }
       case 'help':
@@ -1214,6 +1240,10 @@ export class SocialPanelView extends Component {
       }
       if (kind === 'socialJoin') {
         this.onSocialJoin?.(id)
+        return
+      }
+      if (kind === 'socialResearch') {
+        this.onSocialResearch?.(id)
         return
       }
       if (kind === 'socialReview' || kind === 'socialReject') {

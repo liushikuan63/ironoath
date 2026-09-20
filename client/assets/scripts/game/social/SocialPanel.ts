@@ -22,7 +22,8 @@
 import { formatCountdown } from '../../core/Countdown'
 import * as FixedPoint from '../../core/FixedPoint'
 import type {
-  AllianceMember, AllianceRole, AllianceView, ChatChannel, ChatMessageView, HelpRequestView,
+  AllianceMember, AllianceRole, AllianceTechView, AllianceView, ChatChannel, ChatMessageView,
+  HelpRequestView,
   RallyScope, RallyStatus, RallyView, SocialEventView, SocialEventType, SocialSummaryResp, SquadView,
 } from '../../net/generated/SocialProtocol'
 
@@ -57,6 +58,8 @@ export interface AllianceSection {
   readonly donateText: string
   readonly donateTiersAvailable: readonly number[]
   readonly myRoleText: string
+  /** 联盟科技目录（B26 S9）：服务端那份原样转手，行怎么画由 AllianceTechCatalog 判 */
+  readonly techs: readonly AllianceTechView[]
   readonly members: readonly SocialMemberRow[]
 }
 
@@ -242,6 +245,7 @@ export function buildAllianceSection(alliance: AllianceView | null,
       donateText: '',
       donateTiersAvailable: [],
       myRoleText: '',
+      techs: [],
       members: [],
     }
   }
@@ -265,6 +269,8 @@ export function buildAllianceSection(alliance: AllianceView | null,
     donateTiersAvailable: Array.from({ length: cap }, (_, tier) => tier)
       .filter((tier) => !usedTiers.includes(tier)),
     myRoleText: allianceRoleText(alliance.myRole),
+    // 0 级的那几项也在内：以前这里被服务端滤掉，整个功能在界面上等于不存在
+    techs: alliance.techs,
     members: members.map((member: AllianceMember): SocialMemberRow => ({
       id: member.id,
       name: member.name,
