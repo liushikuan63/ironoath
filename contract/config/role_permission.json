@@ -226,6 +226,16 @@
       "why": "全国邮件会打扰 800 人，官员专属。"
     },
     {
+      "id": "perm_alliance_set_role",
+      "scope": "ALLIANCE",
+      "permission": "SET_ROLE",
+      "permissionName": "任命职位",
+      "allowLeader": true,
+      "allowOfficer": false,
+      "allowMember": false,
+      "why": "只有盟主能任命副盟主与长老。给副盟主也开这一位的后果是任命链变成两级传销：官员可以互相抬对方为副盟主，而盟主对联盟人事失去唯一控制权——联盟人事是 SLG 里最容易被拉帮结派腐化的地方。域内另有一条更细的规则（不能任命高于自己的档位、不能降级盟主），那条留在 Alliance.setRole 里，这一位只管「你有没有资格开这个口」。"
+    },
+    {
       "id": "perm_alliance_transfer_leader",
       "scope": "ALLIANCE",
       "permission": "TRANSFER_LEADER",

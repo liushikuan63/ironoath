@@ -805,22 +805,27 @@ public class SocialAppService {
                 // 不另加一份 requireText：空或非法的 memberId 本来就不是成员，
                 // 下面那条 ALLIANCE_NOT_MEMBER 是更一致的答案（控制器里已有三份私有实现，够了）
                 String target = req.memberId();
+                // 表里先判「你有没有资格开这个口」（B26 S11 新增 SET_ROLE 位）：原来只靠域内那条
+                // "不能任命高于自己"，于是普通成员也看得见「设职」那颗按钮，点下去拿到一条
+                // SOCIAL_PERMISSION_DENIED —— 看得见却永远点不动，正是这一串格子在修的东西
+                requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "SET_ROLE");
                 if (req.role() == null) {
                     throw new BizException(ErrorCode.PARAM_INVALID, "role 不得为空");
                 }
                 if (!alliance.isMember(target)) {
                     throw new BizException(ErrorCode.ALLIANCE_NOT_MEMBER, "memberId=" + target);
                 }
+                com.ironoath.core.social.AllianceRole newRole =
+                        com.ironoath.core.social.AllianceRole.valueOf(req.role().name());
                 try {
-                    alliance.setRole(playerId, target,
-                            com.ironoath.core.social.AllianceRole.valueOf(req.role().name()));
+                    alliance.setRole(playerId, target, newRole);
                 } catch (IllegalStateException e) {
                     // 域内的规则全是权限问题（任命低于自己、不能降级盟主），统一翻成权限码
                     throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED, e.getMessage());
                 }
                 store.saveAlliance(alliance, expectedAllianceVersion);
                 store.pushEvent(target, event("ALLIANCE_ROLE_SET",
-                        "你在联盟「" + alliance.name() + "」的职位变为 " + req.role().name(),
+                        "你在联盟「" + alliance.name() + "」的职位变为 " + newRole.displayName(),
                         null, alliance.id(), now));
                 LOG.info("联盟任命 allianceId={} 操作者={} 职位={} 目标={} 新职位={}：审计留痕",
                         alliance.id(), playerId, alliance.roleOf(playerId), target, req.role());

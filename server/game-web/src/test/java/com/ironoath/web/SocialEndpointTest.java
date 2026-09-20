@@ -32,6 +32,7 @@ import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.AllianceDonateReq;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceMemberReq;
+import com.ironoath.web.dto.generated.AllianceRole;
 import com.ironoath.web.dto.generated.AllianceRoleReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
 import com.ironoath.web.dto.generated.AllianceSelfReq;
@@ -1675,6 +1676,44 @@ class SocialEndpointTest {
     }
 
     /** 目录里某一行的科技（B26 S9 之后 `techs` 恒为全量，不能再按下标取）。 */
+    // ---------- B26 S11：任命职位（SET_ROLE 权限位 + 通知里的中文职位名） ----------
+
+    @Test
+    @DisplayName("普通成员点「设职」被响亮拒绝，理由说的是查表得出的 SET_ROLE 那一位")
+    void setRoleRequiresTheNewPermissionBit() throws Exception {
+        Quartet q = allianceWithThreeMembers();
+        JsonNode denied = postRaw("/alliance/setRole", q.b(),
+                new AllianceRoleReq(newRequestId(), q.c(), AllianceRole.OFFICER));
+        assertThat(denied.get("code").asInt()).isEqualTo(ErrorCode.SOCIAL_PERMISSION_DENIED.code());
+        assertThat(denied.get("detail").asText())
+                .as("缺哪个权限位要说出来：这是 role_permission 表算的，不该硬编在文案里")
+                .contains("SET_ROLE");
+    }
+
+    @Test
+    @DisplayName("盟主任命成功，而且给当事人的那条通知写的是「副盟主」，不是 OFFICER（显示名同族第九处）")
+    void leaderAppointsAndTheEventCarriesTheChineseName() throws Exception {
+        Quartet q = allianceWithThreeMembers();
+        post200("/alliance/setRole", q.leader(),
+                new AllianceRoleReq(newRequestId(), q.b(), AllianceRole.OFFICER));
+
+        JsonNode events = get200("/social/summary", q.b()).get("events");
+        String text = events.toString();
+        assertThat(text).as("通知里必须是玩家读得懂的那两个字").contains("副盟主");
+        assertThat(text).as("枚举原值不许上屏").doesNotContain("OFFICER");
+    }
+
+    @Test
+    @DisplayName("副盟主没有这一位（表里 allowOfficer=false）：任命链不许变成两级传销")
+    void officerCannotAppointEither() throws Exception {
+        Quartet q = allianceWithThreeMembers();
+        post200("/alliance/setRole", q.leader(),
+                new AllianceRoleReq(newRequestId(), q.b(), AllianceRole.OFFICER));
+        JsonNode denied = postRaw("/alliance/setRole", q.b(),
+                new AllianceRoleReq(newRequestId(), q.c(), AllianceRole.ELDER));
+        assertThat(denied.get("code").asInt())
+                .as("副盟主在表里落在 OFFICER 档，而 SET_ROLE 只给盟主").isEqualTo(ErrorCode.SOCIAL_PERMISSION_DENIED.code());
+    }
     private static JsonNode techRow(JsonNode techs, String techId) {
         for (JsonNode row : techs) {
             if (techId.equals(row.get("techId").asText())) {

@@ -26,6 +26,27 @@ public enum AllianceRole {
     /** 普通成员。 */
     MEMBER;
 
+    /**
+     * 给玩家看的那两个字（收口清单 B26 S11）。
+     *
+     * <p>为什么放在枚举上而不是放在调用它的地方各写一遍：任命通知原来写成
+     * `"职位变为 " + req.role().name()`，玩家收到的是「职位变为 OFFICER」——
+     * 与 #255 / #281 / #303 同一族缺陷的第九处。名字只有一个落点，改词才不会再漏一处。
+     */
+    public String displayName() {
+        switch (this) {
+            case LEADER:
+                return "盟主";
+            case OFFICER:
+                return "副盟主";
+            case ELDER:
+                return "长老";
+            case MEMBER:
+                return "成员";
+        }
+        throw new IllegalStateException("AllianceRole 多出了没配名字的档位：" + this);
+    }
+
     /** 映射到权限矩阵的档位。 */
     public PermissionMatrix.Tier tier() {
         return switch (this) {
