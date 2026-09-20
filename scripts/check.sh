@@ -19,6 +19,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 bash scripts/check-layering.sh
 bash scripts/check-contract-sync.sh
+bash scripts/check-eol-policy.sh
 bash scripts/check-contract-defs.sh
 bash scripts/check-no-handout.sh
 bash scripts/check-no-bot-privilege.sh
