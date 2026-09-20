@@ -41,6 +41,7 @@ import type { CreateEntry, CreateForm, CreateScope } from '../assets/scripts/gam
 import type { ExitKey } from '../assets/scripts/game/social/SocialExit'
 import type { DiscoveryView } from '../assets/scripts/game/social/AllianceDiscovery'
 import type { SquadListView } from '../assets/scripts/game/social/SquadDiscovery'
+import type { ApplicationView } from '../assets/scripts/game/social/AllianceApplications'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
@@ -111,6 +112,8 @@ const ROUTES: Record<string, unknown> = {
   // 可加入小队（B26 S7）：默认桩里必须有这一条，否则所有 squad=null 的用例都会为它发一次
   // 注定失败的读请求并重试 —— 实测过一次，重试把「每个 scope 只拉一次」那条断言打成了假红
   '/squad/list': { squads: [], total: 0, limit: 20, serverNow: 1_788_000_000_000 },
+  // 入盟申请（B26 S8）：同上，缺这一条会让重试计数虚高
+  '/alliance/applications': { applicants: [], total: 0, limit: 50, serverNow: 1_788_000_000_000 },
   '/social/summary': {
     squad: null,
     // 默认按「已在盟」给：摘要里的 alliance 是否为 null，是客户端决定「要不要拉成员」的
@@ -559,6 +562,7 @@ interface Harness {
   /** 最近一次推给面板的可申请联盟那一屏（B26 S6）。 */
   readonly lastDiscovery: DiscoveryView | null
   readonly lastSquadDiscovery: SquadListView | null
+  readonly lastApplications: ApplicationView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
   /** 最近一次推给商店面板的整块视图。 */
@@ -662,6 +666,7 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastExitArmed: ExitKey | null = null
   let lastDiscovery: DiscoveryView | null = null
   let lastSquadDiscovery: SquadListView | null = null
+  let lastApplications: ApplicationView | null = null
   let lastCompose: MarchComposeView | null = null
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
@@ -751,6 +756,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     squadDiscovery: view => {
       lastSquadDiscovery = view
+    },
+    allianceApplications: view => {
+      lastApplications = view
     },
     targets: () => attached.push('targets'),
     marchCompose: (view) => {
@@ -864,6 +872,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastSquadDiscovery() {
       return lastSquadDiscovery
+    },
+    get lastApplications() {
+      return lastApplications
     },
     get lastCompose() {
       return lastCompose
@@ -2842,6 +2853,68 @@ test('已经在小队里的人不再拉可加入列表：那一屏他看不见�
   assert.deepEqual(h.lastSquadDiscovery?.rows ?? [], [])
 })
 
+test('入盟申请：有 APPROVE_APPLICATION 才拉名单，批准发一条并回读', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'LEADER',
+    permissions: ['KICK_MEMBER', 'DONATE', 'APPROVE_APPLICATION'], serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary']))
+  h.http.overrides.set('/alliance/applications', {
+    applicants: [
+      { playerId: 'p_apply_a', nickname: '阿铁', mainCityLevel: 7 },
+      { playerId: 'p_apply_b', nickname: '老周', mainCityLevel: 3 },
+    ],
+    total: 2, limit: 50, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/alliance/review', ROUTES['/social/summary'])
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+  assert.equal(h.http.countOf('/alliance/applications'), 0, '拉门那一轮之后还不该读名单')
+  await h.root.loadSocialDiscovery()
+  assert.equal(h.http.countOf('/alliance/applications'), 1,
+    '有 APPROVE_APPLICATION ⇒ 才拉这一份（它给的是别人的身份）')
+  assert.deepEqual(h.lastApplications?.rows.map(r => [r.titleText, r.detailText]), [
+    ['阿铁', '主城 7 级'],
+    ['老周', '主城 3 级'],
+  ])
+  await h.root.reviewApplication('p_apply_b', false)
+  const sent = h.http.calls.filter(c => c.path === '/alliance/review')
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.body.applicantId, 'p_apply_b')
+  assert.equal(sent[0]?.body.approve, false)
+  assert.ok(h.http.countOf('/alliance/applications') >= 2, '批完要重拉：那一行得自己消失')
+})
+
+test('只调 loadSocialDiscovery（不先拉门）也要能审：门要自己补上，否则名单一次都不发', async () => {
+  // 现场缺陷由探针 G 相抓到：社交页打开时 loadSocialGates 与 loadSocialDiscovery 是并发跑的，
+  // 权限还没回来就把 APPROVE_APPLICATION 判成"不能"，那一屏安静得像"没人申过"。
+  const h = harness()
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'LEADER',
+    permissions: ['KICK_MEMBER', 'DONATE', 'APPROVE_APPLICATION'], serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/alliance/applications', {
+    applicants: [{ playerId: 'p_x', nickname: '阿铁', mainCityLevel: 7 }],
+    total: 1, limit: 50, serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialDiscovery()
+  assert.equal(h.http.countOf('/social/permissions') >= 2, true, '门没拉过就要先补两层的门')
+  assert.equal(h.http.countOf('/alliance/applications'), 1,
+    '补完门之后这一问该发出去：顺序错了它就是 0，而 0 看着像「没人申」')
+  assert.equal(h.lastApplications?.rows[0]?.titleText, '阿铁')
+})
+test('没有审核权的人一次都不拉申请名单：读口比写口松就等于把申请人当花名册发', async () => {
+  const h = harness()
+  h.http.overrides.set('/social/permissions', permissionBody())
+  await h.root.start('dev-1', '君')
+  await h.root.loadSocialGates()
+  await h.root.loadSocialDiscovery()
+  assert.equal(h.http.countOf('/alliance/applications'), 0,
+    'permissionBody 里没有 APPROVE_APPLICATION ⇒ 这一问根本不该发')
+  assert.deepEqual(h.lastApplications?.rows ?? [], [])
+})
 test('解散小队走的是 /squad/disband（这个端点早就有，客户端此前连方法都没有）', async () => {
   const h = harness()
   h.http.overrides.set('/social/permissions', permissionBody())

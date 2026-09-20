@@ -128,6 +128,11 @@ export const TRACK_EVENTS = {
    * 两个人数靠得最近的动作混在一个事件里，就看不出新人到底是被"找队"还是"建队"卡住的。
    */
   squadJoin: 'squad_join',
+  /**
+   * 审核一条入盟申请（B26 S8）。带 approve：批准与拒绝的比例看得出盟主是在挑人还是在清队列，
+   * 而这一条为零、申请数却在涨，说明门槛外的人一直进不来。
+   */
+  allianceReview: 'alliance_review',
   /** 帮助一次队友的请求。 */
   socialHelp: 'social_help',
   /** 一键帮助全部。 */

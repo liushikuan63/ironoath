@@ -23,6 +23,8 @@ import type { CreateEntry, CreateScope } from '../game/social/SocialCreate'
 import { exitEntry, transferEntry } from '../game/social/SocialExit'
 import { EMPTY_DISCOVERY } from '../game/social/AllianceDiscovery'
 import { EMPTY_SQUAD_DISCOVERY } from '../game/social/SquadDiscovery'
+import { EMPTY_APPLICATIONS } from '../game/social/AllianceApplications'
+import type { ApplicationView } from '../game/social/AllianceApplications'
 import type { DiscoveryView } from '../game/social/AllianceDiscovery'
 import type { SquadListView } from '../game/social/SquadDiscovery'
 import { truncatedNotice } from '../game/ui/TruncatedList'
@@ -124,6 +126,7 @@ interface RowDraft {
 type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'chatPeer' | 'report'
   | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
   | 'socialExit' | 'socialExpand' | 'socialApply' | 'socialTransfer' | 'socialJoin'
+  | 'socialReview' | 'socialReject'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -146,6 +149,9 @@ export class SocialPanelView extends Component {
   private discovery: DiscoveryView = EMPTY_DISCOVERY
   /** 可加入小队那一屏（B26 S7）。同一族的判断：没读到不等于没人建队。 */
   private squadDiscovery: SquadListView = EMPTY_SQUAD_DISCOVERY
+  /** 入盟申请名单（B26 S8）。没有审核权时恒为空，这一段就不画。 */
+  private applications: ApplicationView = EMPTY_APPLICATIONS
+
   /** 联盟成员缓存。汇总接口不下发它，只有 /alliance/sync 的 diff 会更新它 */
   private readonly allianceMembers: AllianceMember[] = []
   /** 重建面板所需的上一次原始输入。diff 到达时要用它们重新组装，而不是去改已组装好的 data */
@@ -205,6 +211,9 @@ export class SocialPanelView extends Component {
   onSocialApply: ((allianceId: string) => void) | null = null
   /** 点「加入」那一行（B26 S7）：小队这一路不要审核，一按就是真进队。 */
   onSocialJoin: ((squadId: string) => void) | null = null
+  /** 批准 / 拒绝某一条申请（B26 S8）：一按就发，不做两下确认。 */
+  onSocialReview: ((applicantId: string, approve: boolean) => void) | null = null
+
 
   /** 进聊天页签（首次画之前先拉一次历史） */
   onChatEnter: (() => void) | null = null
@@ -251,6 +260,7 @@ export class SocialPanelView extends Component {
     this.armedTransfer = null
     this.discovery = EMPTY_DISCOVERY
     this.squadDiscovery = EMPTY_SQUAD_DISCOVERY
+    this.applications = EMPTY_APPLICATIONS
     this.allianceMembers.length = 0
     this.lastResp = null
     this.lastHelps = []
@@ -267,6 +277,7 @@ export class SocialPanelView extends Component {
     this.onSocialExpand = null
     this.onSocialApply = null
     this.onSocialJoin = null
+    this.onSocialReview = null
     this.chatData = null
     this.chatControls = null
     this.chatInput = null
@@ -362,6 +373,12 @@ export class SocialPanelView extends Component {
   }
 
   /** 可加入小队那一屏（B26 S7）：与上面同一族，小队页签用。 */
+  /** 入盟申请那一屏（B26 S8）：行与那句说明都由编排层算好，这里只画。 */
+  attachApplications(view: ApplicationView): void {
+    this.applications = view
+    this.render()
+  }
+
   attachSquadDiscovery(view: SquadListView): void {
     this.squadDiscovery = view
     this.render()
@@ -994,6 +1011,37 @@ export class SocialPanelView extends Component {
       : [...rows, infoRow(this.squadDiscovery.notice)]
   }
 
+  /**
+   * 待审申请那几行（B26 S8）。一行两颗按钮：批准与拒绝都是真动作。
+   * 空表也画一句「暂时没有待处理的申请」—— 不画的话，盟主分不清"没人申"和"这功能没有"。
+   */
+  private applicationRows(): RowDraft[] {
+    if (this.applications.rows.length === 0) {
+      return this.applications.notice.length === 0
+        ? []
+        : [infoRow(this.applications.notice)]
+    }
+    const rows = this.applications.rows.map((row): RowDraft => ({
+      title: row.titleText,
+      titleColor: COLOR_TEXT,
+      detail: row.detailText,
+      value: '',
+      actionText: '批准',
+      actionEnabled: true,
+      actionId: row.id,
+      actionKind: 'socialReview',
+      action2: {
+        text: '拒绝',
+        enabled: true,
+        id: row.id,
+        kind: 'socialReject',
+      },
+    }))
+    return this.applications.notice.length === 0
+      ? rows
+      : [...rows, infoRow(this.applications.notice)]
+  }
+
   private draftsFor(data: SocialData): RowDraft[] {
     switch (this.tab) {
       case 'squad':
@@ -1019,6 +1067,8 @@ export class SocialPanelView extends Component {
         const rows = allianceDrafts(data.alliance, this.permissions, this.transferFor('alliance'))
         // 插在联盟概况那一行之后、捐献与成员名单之前（名单是不定长的，固定那一行不能排在它后面）
         rows.splice(1, 0, this.exitRow('alliance'))
+        // 待审申请紧跟概况行（B26 S8）：成员名单是不定长的，固定那一行不能排在它后面
+        rows.splice(2, 0, ...this.applicationRows())
         return rows
       }
       case 'help':
@@ -1164,6 +1214,10 @@ export class SocialPanelView extends Component {
       }
       if (kind === 'socialJoin') {
         this.onSocialJoin?.(id)
+        return
+      }
+      if (kind === 'socialReview' || kind === 'socialReject') {
+        this.onSocialReview?.(id, kind === 'socialReview')
         return
       }
       if (kind === 'socialExit') {

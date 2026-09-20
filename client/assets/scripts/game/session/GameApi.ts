@@ -73,7 +73,8 @@ import type {
   FriendListView,
   ReportReq,
   ReportResp,
-  AllianceCreateReq, AllianceDonateReq, AllianceDonateResp, AllianceIdReq, AllianceMemberReq,
+  AllianceApplicationListResp, AllianceCreateReq, AllianceDonateReq, AllianceDonateResp,
+  AllianceIdReq, AllianceMemberReq,
   AllianceListResp, AllianceReviewReq, AllianceRoleReq, AllianceSelfReq, AllianceSyncReq,
   AllianceSyncResp,
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
@@ -639,6 +640,17 @@ export class GameApi {
    */
   allianceList(): Promise<NetOutcome<AllianceListResp>> {
     return this.read<AllianceListResp>('/alliance/list')
+  }
+
+  /**
+   * GET /alliance/applications（B26 S8）。本盟待审申请 —— `/alliance/review` 那颗按钮的
+   * 唯一数据来源：在它之前服务端只数得出几条、问不出是谁，盟主谁都批不了。
+   *
+   * <p>读口与写口同一条权限门（`APPROVE_APPLICATION`），所以**没有权限的人根本不该发这一问**：
+   * 拿到的是一份别人身份的名单，被拒只是把一次注定失败的请求写进日志。
+   */
+  allianceApplications(): Promise<NetOutcome<AllianceApplicationListResp>> {
+    return this.read<AllianceApplicationListResp>('/alliance/applications')
   }
 
   /** POST /social/help。帮助一次，消耗共用的每日额度。 */

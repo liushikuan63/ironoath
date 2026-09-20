@@ -79,6 +79,17 @@ const fixture = {
   squadListReads: 0,
   joinCalls: [],
   summaryHits: 0,
+  /** G 相：摘要里要不要带上"我有一个联盟"（审核只对本盟开放） */
+  allianceVisible: false,
+  /** G 相：有没有 APPROVE_APPLICATION 这一位 */
+  canReview: true,
+  /** 桩这边的待审队列（批一条少一条，用来证明那一行是自己消失的） */
+  applicants: [
+    { playerId: 'p_probe_a', nickname: '阿铁', mainCityLevel: 7 },
+    { playerId: 'p_probe_b', nickname: '老周', mainCityLevel: 3 },
+  ],
+  appReads: 0,
+  reviewCalls: [],
   /** F 相：桩这边记的"我已经进了哪支"，摘要据此决定还拉不拉列表 */
   joinedId: null,
 }
@@ -613,7 +624,13 @@ const joinedSummary = (squadless) => ({
     allianceId: null, isSubSquad: false, dailyQuestProgress: 0, dailyQuestTarget: 20,
     serverNow: Date.now(),
   },
-  alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0,
+  alliance: fixture.allianceVisible ? {
+    id: 'al_probe_mine', name: '铁誓', tag: 'TS', leaderId: 'p_me', level: 3, exp: 120,
+    memberCap: 30, memberCount: 4, fund: 900, techs: [], territoryCount: 1, territoryCap: 12,
+    myRole: 'LEADER', myContribution: 40, myDonateToday: 0, donateTiersUsed: [],
+    donateDailyCap: 3, announcement: '', version: 2, serverNow: Date.now(),
+  } : null,
+  nationId: null, pendingInvites: 0, pendingHelps: 0,
   helpRemainingToday: 20, events: [], serverNow: Date.now(),
 })
 
@@ -652,6 +669,87 @@ checkTrue('F10 屏上不出现小队 id 与字段名',
   ((await readRows())?.labels ?? []).every(text => !/sq_probe|memberCap|isSubSquad/.test(text)))
 await shot('F-squad-discovery-joined')
 
+// ============================ G 相：入盟申请那一屏（B26 S8） ============================
+// 审核只对"本盟 + 有 APPROVE_APPLICATION"的人开放，所以这一相要把摘要换成"我有一个联盟"
+// （F 相结束时玩家刚进了一支独立小队），并把权限桩换成带审核位的。
+await context.route('**/social/permissions*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  const scope = request.url().includes('scope=SQUAD') ? 'SQUAD' : 'ALLIANCE'
+  await reply(route, {
+    scope, role: scope === 'SQUAD' ? 'MEMBER' : 'LEADER',
+    permissions: fixture.canReview
+      ? ['KICK_MEMBER', 'DONATE', 'APPROVE_APPLICATION']
+      : ['KICK_MEMBER', 'DONATE'],
+    serverNow: Date.now(),
+  })
+})
+await context.route('**/alliance/applications*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  fixture.appReads += 1
+  await reply(route, {
+    applicants: fixture.applicants.map(a => ({ ...a })),
+    total: fixture.applicants.length, limit: 50, serverNow: Date.now(),
+  })
+})
+await context.route('**/alliance/review*', async (route) => {
+  const request = route.request()
+  if (request.method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(request) })
+    return
+  }
+  const body = JSON.parse(request.postData() ?? '{}')
+  fixture.reviewCalls.push(body)
+  // 批准与拒绝都会把这一条从待审队列里拿掉（服务端两条路都 removeApplication），
+  // 所以这里不分支：G6 要证的是"那一行是自己消失的"，不是本地抹掉。
+  fixture.applicants = fixture.applicants.filter(a => a.playerId !== body.applicantId)
+  await reply(route, joinedSummary(fixture.joinedId === null))
+})
+
+fixture.allianceVisible = true
+fixture.canReview = true
+await openSocial()
+await page.evaluate(TAP_NAMED('social', 'Tab_alliance'))
+const snapG = await waitForRows(rows => rows.some(r => r.caption === '批准'))
+checkTrue('G1 联盟页签画出待审申请：昵称与主城等级都用服务端那一份（客户端没有玩家表）',
+  (snapG?.rows ?? []).some(r => r.title.includes('阿铁') && r.detail.includes('主城 7 级'))
+    && (snapG?.rows ?? []).some(r => r.title.includes('老周') && r.detail.includes('主城 3 级')))
+checkTrue('G2 一行两颗按钮：批准与拒绝都亮着（都是真动作，不做两下确认）',
+  (snapG?.rows ?? []).some(r => r.caption === '批准'
+    && JSON.stringify(r.color) === JSON.stringify(LIT)))
+checkTrue('G3 屏上不出现申请人 id 与字段名（id 只进请求）',
+  ((snapG?.labels ?? []).every(text => !/p_probe|playerId|mainCityLevel/.test(text))))
+const reviewBefore = fixture.reviewCalls.length
+await page.evaluate(TAP_CAPTION('批准'))
+await page.waitForTimeout(1_600)
+check('G4 点「批准」发恰好一条', fixture.reviewCalls.length - reviewBefore, 1)
+check('G5 请求体带的是那一行的申请人且 approve=true',
+  `${fixture.reviewCalls[reviewBefore]?.applicantId}|${fixture.reviewCalls[reviewBefore]?.approve}`,
+  'p_probe_a|true')
+checkTrue('G6 批完那一行自己消失（重拉名单，不是客户端本地抹掉）',
+  fixture.appReads >= 2 && !((await readRows())?.rows ?? []).some(r => r.title.includes('阿铁')))
+await shot('G-applications-list')
+checkTrue('G7 剩下那条还在（只批掉点的那一个，不是一键清空）',
+  (await readRows())?.rows.some(r => r.title.includes('老周')) === true)
+
+// 反向：把审核位撤掉，重进社交页 —— 这一段不该画，那一问也不该发
+fixture.canReview = false
+const readsBeforeG8 = fixture.appReads
+await openSocial()
+await page.evaluate(TAP_NAMED('social', 'Tab_alliance'))
+await page.waitForTimeout(1_400)
+check('G8 没有 APPROVE_APPLICATION 时一次都不拉申请名单（读口与写口同一条门）',
+  fixture.appReads, readsBeforeG8)
+checkTrue('G9 屏上也不出现「批准」那颗按钮（看不见功能存在与看得见但不能点是两回事，这里是前者：这一屏本来就不该给他）',
+  !((await readRows())?.rows ?? []).some(r => r.caption === '批准'))
+await shot('G-applications-review')
 // ============================ D 相：版面与错误 ============================
 // 只比"要点要填"的那几块板：标题/消耗/提示三条 Label 的盒本来就是整幅宽，
 // 把它们算进压叠判定必然报红 —— 那是量具算错，不是排版错

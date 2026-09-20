@@ -1305,6 +1305,10 @@ export class GameBootstrap extends Component {
       // 可加入小队（B26 S7）：同一族的第二处，小队不要审核所以只有一态「能加 / 已满」
       out.squadDiscovery = view => social.attachSquadDiscovery(view)
       social.onSocialJoin = squadId => { void this.root?.joinSquad(squadId) }
+      // 入盟申请（B26 S8）：能不能审由服务端那份权限码说，没有权限时这一份根本不拉、这一段根本不画
+      out.allianceApplications = view => social.attachApplications(view)
+      social.onSocialReview = (applicantId, approve) => { void this.root?.reviewApplication(applicantId, approve) }
+
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }
       social.onDonate = tier => { void this.root?.donate(tier) }

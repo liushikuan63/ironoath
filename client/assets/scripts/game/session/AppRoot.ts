@@ -67,7 +67,7 @@ import type { HeroComposeView } from '../hero/HeroCompose'
 import { buildHeroPanel } from '../hero/HeroPanel'
 import { buildLineupEdit, lineupBody } from '../hero/LineupEdit'
 import type { LineupEditView, LineupSlot } from '../hero/LineupEdit'
-import { EMPTY_PERMISSIONS, withPermissionScope } from '../social/PermissionGates'
+import { EMPTY_PERMISSIONS, gate, withPermissionScope } from '../social/PermissionGates'
 import type { PermissionState } from '../social/PermissionGates'
 import { buildCreateForm, createEntries } from '../social/SocialCreate'
 import type { CreateEntry, CreateForm, CreateScope } from '../social/SocialCreate'
@@ -75,6 +75,9 @@ import { buildDiscovery, canApply, EMPTY_DISCOVERY } from '../social/AllianceDis
 import { buildSquadDiscovery, canJoin, EMPTY_SQUAD_DISCOVERY } from '../social/SquadDiscovery'
 import type { DiscoveryView } from '../social/AllianceDiscovery'
 import type { SquadListView } from '../social/SquadDiscovery'
+import { buildApplications, EMPTY_APPLICATIONS } from '../social/AllianceApplications'
+import type { ApplicationView } from '../social/AllianceApplications'
+
 import type { ExitAction, ExitKey, ExitScope } from '../social/SocialExit'
 import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
@@ -292,6 +295,9 @@ export interface PanelTargets {
   allianceDiscovery?(view: DiscoveryView): void
   /** 可加入小队那一屏（B26 S7）：同一族，只是小队不要审核。 */
   squadDiscovery?(view: SquadListView): void
+  /** 入盟申请那一屏（B26 S8）：**只有能审核的人才拿得到这一份**，画不画由有没有行决定。 */
+  allianceApplications?(view: ApplicationView): void
+
   /**
    * 合规公示那一屏（B06 §6「原文呈现」）。**没有这个回调时按钮不会发请求**：
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
@@ -474,6 +480,8 @@ export class AppRoot {
   /** 社交权限（两个 scope 各一份）。`permissionsLoaded` 只在拉过之后为 true（见 'social' 那一支的注释） */
   private permissions: PermissionState = EMPTY_PERMISSIONS
   private permissionsLoaded = false
+  /** 正在飞的那一次权限拉取（并发调用共享同一份，见 loadSocialGates） */
+  private gatesFlight: Promise<void> | null = null
   /** 创建小队/联盟的门槛与消耗（B26 S2），一份回两个层级；没读到就是 null（行上写「读取中」） */
   private createPolicy: SocialCreatePolicyResp | null = null
   /** 创建表单开着时的输入态（null = 没开）。打字只改这里，一条请求都不发。 */
@@ -486,6 +494,9 @@ export class AppRoot {
   private discovery: DiscoveryView = EMPTY_DISCOVERY
   /** 可加入小队那一屏（B26 S7）。同样只在没有小队的时候拉。 */
   private squadDiscoveryView: SquadListView = EMPTY_SQUAD_DISCOVERY
+  /** 入盟申请名单（B26 S8）。没权限时恒为空 —— 这一段根本不该出现。 */
+  private applications: ApplicationView = EMPTY_APPLICATIONS
+
   /** 玩家是否真进过社交页（决定两份发现型列表拉不拉，见 loadSocialDiscovery）。 */
   private socialVisited = false
   /** 最近一次社交摘要：发现型列表要按它决定拉哪一份（没队才拉小队列表）。 */
@@ -1402,9 +1413,18 @@ export class AppRoot {
    * <p>权限两份都到齐才把 `loaded` 置 true：只拿到一半就放开按钮，等于拿缺的那一半去猜。
    * 失败时保持原样并说一句"暂时拉不到"—— 灰着的按钮比一个点了会被拒的按钮诚实。
    */
-  async loadSocialGates(): Promise<void> {
+  loadSocialGates(): Promise<void> {
+    if (this.gatesFlight !== null) {
+      return this.gatesFlight
+    }
     this.permissionsLoaded = true
-    const [squad, alliance, create] = await Promise.all([
+    this.gatesFlight = this.pullSocialGates().finally(() => {
+      this.gatesFlight = null
+    })
+    return this.gatesFlight
+  }
+
+  private async pullSocialGates(): Promise<void> {    const [squad, alliance, create] = await Promise.all([
       this.api.socialPermissions('SQUAD'), this.api.socialPermissions('ALLIANCE'),
       this.api.socialCreatePolicy(),
     ])
@@ -1574,6 +1594,12 @@ export class AppRoot {
    */
   async loadSocialDiscovery(): Promise<void> {
     this.socialVisited = true
+    // 门要先于名单：社交页打开时 loadSocialGates 与这一条是并发跑的，权限还没回来就把
+    // APPROVE_APPLICATION 判成"不能"，结果是那一问一次都不发、而屏上安静得像"没人申过"。
+    // 实测踩过：探针 G 相六条全红，而三条"不该出现"的断言反而全绿 —— 那是空转，不是通过。
+    if (!this.permissions.loaded) {
+      await this.loadSocialGates()
+    }
     const summary = this.lastSocialSummary
     if (summary === null) {
       // 摘要还没落地（首屏还在飞）：先记下"玩家进来了"，等这一轮刷完自然带上
@@ -1589,7 +1615,43 @@ export class AppRoot {
     } else {
       this.squadDiscoveryView = EMPTY_SQUAD_DISCOVERY
     }
+    // 入盟申请（B26 S8）：能不能审由服务端那份权限码说，客户端不自己按职位推。
+    // 没有这一问的时候 `/alliance/review` 是玩家永远打不到的端点 —— 名单读不出来，批谁？
+    if (gate(this.permissions, 'ALLIANCE', 'APPROVE_APPLICATION').allowed) {
+      await this.loadApplications()
+    } else {
+      this.applications = EMPTY_APPLICATIONS
+    }
     this.deliverDiscovery(this.discovery, this.squadDiscoveryView)
+    this.targets.allianceApplications?.(this.applications)
+
+  }
+
+  /**
+   * 拉本盟待审申请（B26 S8）。读不到写「读取中」，不把空表当成"没人申" ——
+   * 盟主据此决定要不要去喊人，写错一句就会让人去做一件本来不必要的事。
+   */
+  private async loadApplications(): Promise<void> {
+    const outcome = await this.api.allianceApplications()
+    if (outcome.kind === 'ok') {
+      this.applications = buildApplications(outcome.data)
+      return
+    }
+    this.say('social', outcome)
+    this.applications = buildApplications(null)
+  }
+
+  /**
+   * 审核一条申请（B26 S8）。批准与拒绝都是真动作，一按就发：不做"两下才算数"，
+   那套只留给不可逆的组织去留（退盟 / 解散 / 转让）。
+   */
+  reviewApplication(applicantId: string, approve: boolean): Promise<void> {
+    this.track(TRACK_EVENTS.allianceReview, {
+      applicantId: trackParam(applicantId),
+      approve: trackParam(approve ? 'yes' : 'no'),
+    })
+    return this.write('social', this.api.allianceReview({ applicantId, approve }),
+      ['social', 'reddot'])
   }
 
   private deliverDiscovery(alliance: DiscoveryView, squad: SquadListView): void {
