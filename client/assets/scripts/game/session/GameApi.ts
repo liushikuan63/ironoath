@@ -81,7 +81,7 @@ import type {
   HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyResp, SocialEventAckReq,
   SocialCreatePolicyResp, SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq,
   SquadListResp, SquadMemberReq, SquadRallyReq,
-  SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp,
+  SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp, RallyPolicyResp,
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import type { QuestClaimReq, QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
@@ -710,6 +710,17 @@ export class GameApi {
 
   squadTransfer(req: Omit<SquadMemberReq, 'requestId'>): Promise<NetOutcome<SocialSummaryResp>> {
     return this.mutate<SquadMemberReq, SocialSummaryResp>('/squad/transfer', req)
+  }
+
+  /**
+   * GET /rally/policy（B26 S13a 落的服务端，S13b 接上消费者）。
+   *
+   * <p>一次回小队与联盟两档的**上下界、默认值、能不能发起与不能发起的原因**。编成弹层上
+   * 那两格可调项的界与起点只能来自这里：抄 `global.RALLY_*` 就是留第二个真源，
+   * 而写口会把越界的值夹掉，界一旦对不上，滑条就显示一个必然被改掉的数。
+   */
+  rallyPolicy(): Promise<NetOutcome<RallyPolicyResp>> {
+    return this.read<RallyPolicyResp>('/rally/policy')
   }
 
   /** POST /squad/rally。人数上限由服务端按 global.RALLY_MAX_SIZE_SQUAD 夹，客户端不自己夹。 */

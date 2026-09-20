@@ -14,6 +14,7 @@
  */
 
 import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { kindTitle, kindToggleLabel } from '../game/social/RallyCompose'
 import type { MarchComposeView } from '../game/session/AppRoot'
 import { applySystemUiFont } from './UiFont'
 
@@ -28,7 +29,36 @@ const COLOR_GOLD = new Color(184, 134, 11, 255)
 const COLOR_WARN = new Color(198, 90, 70, 255)
 
 const PANEL_WIDTH = 620
-const PANEL_HEIGHT = 460
+/**
+ * 460 → 528：三态化之后编成那一行下面还要多一行「集结人数 / 准备时长」，
+ * 而兵种那五行是核心信息不能为它让位（缩到四行就等于第五个兵种永远派不出去）。
+ * 按"扩展空间而不是藏内容"处理，多出来的高度全部给底部那一叠。
+ *
+ * <p>底部四件（参数行 / 合计 / 提示 / 三颗键）的位置在这里逐个点名，而不是继续写
+ * `-PANEL_HEIGHT/2 + 28` 那种"跟着面板底边走"的算式 —— 加高会连带把三颗键往下推，
+ * 而它们下面就是导航条。探针的「弹层底部三颗键都没压到导航条」钉的是这件事。
+ */
+const PANEL_HEIGHT = 528
+/** 底部四件各自的落点（面板内坐标，半面板高 264） */
+const BUTTON_Y = -222
+const NOTICE_Y = -186
+const TOTAL_Y = -158
+/** 集结参数那一行的中心：行高 44，所以它占 [-144,-100]，上面留 42 给兵种行的最后一格 */
+const RALLY_ROW_Y = -122
+/** 底部导航条吃掉的高度：下边距 8 + 条高 52（`PanelNav` 的条占 y ∈ [-h/2+8, -h/2+60]） */
+const NAV_CLEARANCE = 8 + 52
+/**
+ * 面板要整块落在导航条之上。浏览器窗口是 1.6:1 时 `view.getVisibleSize()` 给的是
+ * **960×600 而不是设计的 960×640**（按宽适配，高度被裁），540 高的面板居中就会
+ * 有 2px 沉到导航条上（探针实测最低键 -242 vs 条上沿 -240）。
+ * 所以必要时把整块面板往上抬，而不是把内容再挤扁 —— 上面还有的是空间。
+ *
+ * <p><b>必须在构造函数里现算</b>：模块顶层求值时画布还没适配完，那时读到的可视高
+ * 与遮罩用的不是同一个数（实测抬起量算成 38，面板反而顶出可视区 8px）。
+ */
+function panelLift(visibleHeight: number): number {
+  return Math.max(0, PANEL_HEIGHT / 2 - (visibleHeight / 2 - NAV_CLEARANCE))
+}
 const ROW_HEIGHT = 44
 const VISIBLE_ROWS = 5
 /** 一次点 ＋/− 走多少：10 是"来回点几下就能调到位"与"点一下不心疼"之间的取中值。 */
@@ -48,13 +78,23 @@ export class MarchComposeOverlay {
   private readonly confirmNode: Node
   private readonly confirmLabel: Label
   private readonly toggleLabel!: Label
+  /** 集结参数那一行：人数与准备时长各一格 −/＋。界与默认值都由服务端下发，本类只显示。 */
+  private readonly rallyRow: Node
+  private rallyMembersLabel: Label | null = null
+  private rallyPrepareLabel: Label | null = null
+  private rallyMembersMinus: Node | null = null
+  private rallyMembersPlus: Node | null = null
+  private rallyPrepareMinus: Node | null = null
+  private rallyPreparePlus: Node | null = null
   private view: MarchComposeView | null = null
 
   /** 勾选意图（unitId 与它要变成的数量）；由编排层夹取后再回来重画。 */
   onPick: ((unitId: string, count: number) => void) | null = null
   onConfirm: (() => void) | null = null
-  /** 在出征与发起集结之间来回切（B26 S12）。**换种类不是下命令**，所以它不打埋点 */
+  /** 在出征 / 小队集结 / 联盟集结之间循环（B26 S12 两态 → S13b 三态）。**换种类不是下命令**，所以它不打埋点 */
   onToggleMode: (() => void) | null = null
+  /** 调集结参数。**同理不是意图**：玩家还在试数，真正花代价的是确认键那一下 */
+  onRallyAdjust: ((field: 'members' | 'prepare', direction: number) => void) | null = null
   onCancel: (() => void) | null = null
 
   constructor(parent: Node, width = PANEL_WIDTH) {
@@ -72,17 +112,21 @@ export class MarchComposeOverlay {
     // 抢同一块像素，两层字叠在一起读不了（12:40 的 `compose-mode-*.png` 两张都拍到了）。
     // 只画不改命中区域：遮罩上点击该不该关闭弹层是 UX 口径，另记一格，不在这里顺手定。
     const screen = view.getVisibleSize()
+    const lift = panelLift(screen.height)
     background.fillColor = COLOR_SCRIM
-    background.rect(-screen.width / 2, -screen.height / 2, screen.width, screen.height)
+    // 遮罩画在**屏幕**上，而本节点已经按 lift 抬起来了 ⇒ 矩形要反向偏移，
+    // 否则抬起多少，屏幕底下就漏掉多宽一条没遮住的搜索面板
+    background.rect(-screen.width / 2, -screen.height / 2 - lift, screen.width, screen.height)
     background.fill()
     background.fillColor = COLOR_MASK
     background.roundRect(-width / 2, -PANEL_HEIGHT / 2, width, PANEL_HEIGHT, 10)
     background.fill()
+    this.node.setPosition(new Vec3(0, lift, 0))
 
     this.titleLabel = this.addLabel(0, PANEL_HEIGHT / 2 - 28, 22, COLOR_GOLD)
     this.coordLabel = this.addLabel(0, PANEL_HEIGHT / 2 - 56, 15, COLOR_DIM)
-    this.totalLabel = this.addLabel(0, -PANEL_HEIGHT / 2 + 92, 17, COLOR_TEXT)
-    this.noticeLabel = this.addLabel(0, -PANEL_HEIGHT / 2 + 66, 15, COLOR_WARN)
+    this.totalLabel = this.addLabel(0, TOTAL_Y, 17, COLOR_TEXT)
+    this.noticeLabel = this.addLabel(0, NOTICE_Y, 15, COLOR_WARN)
 
     for (let index = 0; index < VISIBLE_ROWS; index++) {
       const row = this.createRow(index)
@@ -93,18 +137,49 @@ export class MarchComposeOverlay {
       this.rowPlusNodes.push(row.plus)
     }
 
-    this.createButton('编成取消', '取消', -140, -PANEL_HEIGHT / 2 + 28, COLOR_ROW, COLOR_TEXT,
+    this.createButton('编成取消', '取消', -140, BUTTON_Y, COLOR_ROW, COLOR_TEXT,
       () => this.onCancel?.())
-    const confirm = this.createButton('编成出征', '出征', 140, -PANEL_HEIGHT / 2 + 28,
+    const confirm = this.createButton('编成出征', '出征', 140, BUTTON_Y,
       COLOR_GOLD, COLOR_MASK, () => this.onConfirm?.())
     this.confirmNode = confirm.node
     this.confirmLabel = confirm.label
     // 中间那颗切种类：同一份兵、同一个目标，只是命令种类不同
-    const toggle = this.createButton('编成种类', '改成集结', 0, -PANEL_HEIGHT / 2 + 28,
+    const toggle = this.createButton('编成种类', '改成集结', 0, BUTTON_Y,
       COLOR_ROW, COLOR_TEXT, () => this.onToggleMode?.())
     this.toggleLabel = toggle.label
 
+    this.rallyRow = this.buildRallyRow()
+
     this.node.active = false
+  }
+
+  /**
+   * 集结参数那一行（B26 S13b）。出征时整条不画 —— 出征没有"等人"这个维度，
+   * 留两格灰着的加减号会让人以为出征也能设人数。
+   */
+  private buildRallyRow(): Node {
+    const row = new Node('编成集结参数')
+    this.node.addChild(row)
+    row.setPosition(new Vec3(0, RALLY_ROW_Y, 0))
+    const members = this.stepper(row, '集结人数', -152, -236, -72,
+      () => this.onRallyAdjust?.('members', -1), () => this.onRallyAdjust?.('members', 1))
+    const prepare = this.stepper(row, '准备时长', 152, 68, 232,
+      () => this.onRallyAdjust?.('prepare', -1), () => this.onRallyAdjust?.('prepare', 1))
+    this.rallyMembersLabel = members.label
+    this.rallyMembersMinus = members.minus
+    this.rallyMembersPlus = members.plus
+    this.rallyPrepareLabel = prepare.label
+    this.rallyPrepareMinus = prepare.minus
+    this.rallyPreparePlus = prepare.plus
+    return row
+  }
+
+  private stepper(parent: Node, name: string, labelX: number, minusX: number, plusX: number,
+    onDown: () => void, onUp: () => void): { label: Label; minus: Node; plus: Node } {
+    const label = this.childLabel(parent, labelX, 0, 17, COLOR_TEXT)
+    const minus = this.rowButton(parent, minusX, 0, '−', onDown, `${name}减`)
+    const plus = this.rowButton(parent, plusX, 0, '＋', onUp, `${name}加`)
+    return { label, minus, plus }
   }
 
   /**
@@ -118,7 +193,7 @@ export class MarchComposeOverlay {
       return
     }
     this.node.active = true
-    this.titleLabel.string = `${view.mode === 'RALLY' ? '集结' : '出征'}：${view.targetName}`
+    this.titleLabel.string = `${kindTitle(view.kind ?? 'MARCH')}：${view.targetName}`
     this.coordLabel.string = `坐标 ${view.coordText}`
     this.totalLabel.string = `共派 ${view.compose.totalText} 兵`
     this.noticeLabel.string = view.notice ?? ''
@@ -142,14 +217,31 @@ export class MarchComposeOverlay {
     })
 
     // 提交态：确认键灰掉且不吃触摸（双击发两份是最容易被投诉的"自动"类缺陷）
+    const rallyMode = (view.kind ?? 'MARCH') !== 'MARCH'
     this.confirmLabel.string = view.submitting
-      ? (view.mode === 'RALLY' ? '发起中…' : '出征中…')
+      ? (rallyMode ? '发起中…' : '出征中…')
       : (view.submitLabel ?? '出征')
     // 切种类那颗**永远可点**：被挡住时点它是要看那句原因的，
     // 置灰反而把原因一起藏了（玩家只会以为按钮坏了）
-    this.toggleLabel.string = view.mode === 'RALLY' ? '改回出征' : '改成集结'
+    this.toggleLabel.string = kindToggleLabel(view.kind ?? 'MARCH')
     this.confirmLabel.color = view.submitting ? COLOR_DIM : COLOR_MASK
     this.confirmNode.active = !view.submitting
+    this.paintRallyRow(view)
+  }
+
+  /** 集结参数那一行：出征或读口没到时整条收起，其余情况只显示服务端给的那两个数。 */
+  private paintRallyRow(view: MarchComposeView): void {
+    const rally = view.rally ?? null
+    this.rallyRow.active = rally !== null
+    if (rally === null) {
+      return
+    }
+    this.rallyMembersLabel!.string = `集结人数 ${rally.members.value} 人`
+    this.rallyPrepareLabel!.string = `准备 ${rally.prepare.value} 分钟`
+    this.rallyMembersMinus!.active = rally.members.value > rally.members.min
+    this.rallyMembersPlus!.active = rally.members.value < rally.members.max
+    this.rallyPrepareMinus!.active = rally.prepare.value > rally.prepare.min
+    this.rallyPreparePlus!.active = rally.prepare.value < rally.prepare.max
   }
 
 
@@ -198,8 +290,9 @@ export class MarchComposeOverlay {
     return label
   }
 
-  private rowButton(parent: Node, x: number, y: number, text: string, onTap: () => void): Node {
-    const node = new Node(`row-${text}`)
+  private rowButton(parent: Node, x: number, y: number, text: string, onTap: () => void,
+    name = `row-${text}`): Node {
+    const node = new Node(name)
     parent.addChild(node)
     node.setPosition(new Vec3(x, y, 0))
     node.addComponent(UITransform).setContentSize(new Size(38, 30))

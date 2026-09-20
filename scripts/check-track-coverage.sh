@@ -105,6 +105,11 @@ const SKIP = new Set([
   // 在出征与发起集结之间来回切是一次选择，不是那一次提交：意图记在 rally_initiate 上，
   // 把切换也记进漏斗会让"看了又放弃"的人被算成发起过
   "toggleComposeRally",
+  // 调集结人数/准备时长同样是"还在试数"：真正花代价的是确认键那一下（rally_initiate
+  // 已经把最终的 members 与 prepareMinutes 带上了），把每一下加减都记进漏斗会把它冲垮
+  "adjustRallyParams",
+  // 政策读口是打开编成时的后台补拉，玩家没有做任何动作；它失败也不改变任何意图
+  "loadRallyPolicy",
   // 打开创建表单与打字与取消都不是那一次提交：埋点只在 social_create 上记"真的建了一个组织"，
   // 把开合也记进去会让漏斗第一格永远比最后一格大，看不出卡在哪
   "openSocialCreate",

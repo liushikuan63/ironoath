@@ -73,6 +73,10 @@ import { buildCreateForm, createEntries } from '../social/SocialCreate'
 import type { CreateEntry, CreateForm, CreateScope } from '../social/SocialCreate'
 import { buildDiscovery, canApply, EMPTY_DISCOVERY } from '../social/AllianceDiscovery'
 import { buildSquadDiscovery, canJoin, EMPTY_SQUAD_DISCOVERY } from '../social/SquadDiscovery'
+import {
+  blockedReason, defaultParams, kindSubmitLabel, nextKind, rebind, stepControl,
+} from '../social/RallyCompose'
+import type { RallyKind, RallyParams } from '../social/RallyCompose'
 import type { DiscoveryView } from '../social/AllianceDiscovery'
 import type { SquadListView } from '../social/SquadDiscovery'
 import { buildApplications, EMPTY_APPLICATIONS } from '../social/AllianceApplications'
@@ -113,7 +117,7 @@ import { buildAvatarFramePanel, wearBodyOf, wearResultText } from '../avatar/Ava
 import type { AvatarFramePanelView } from '../avatar/AvatarFramePanel'
 import type { AvatarFrameListResp } from '../../net/generated/Protocol'
 import type { BattlePassStatusResp, BattlePassTrack } from '../../net/generated/BattlePassProtocol'
-import type { RallyListResp } from '../../net/generated/SocialProtocol'
+import type { RallyListResp, RallyPolicyResp } from '../../net/generated/SocialProtocol'
 import { buildBattlePassPanel, claimBodyOf, claimResultText } from '../battlePass/BattlePassPanel'
 import { buildOfflineItems, offlineReportGate } from '../offline/OfflineReport'
 import type { OfflineItem } from '../offline/OfflineReport'
@@ -147,14 +151,19 @@ export interface MarchComposeView {
   /** 正在提交（面板据此禁用确认键，防双击发两份） */
   readonly submitting: boolean
   /**
-   * 这一份编成是要**发起集结**还是普通出征（B26 S12）。省略等于 MARCH：
+   * 这一份编成是哪一种命令（B26 S12 两态 → S13b 三态）。省略等于 MARCH：
    * 「再次出征」那几条提示走的是同一个面板，它们永远不出集结，就不该各自补一遍字段。
    */
-  readonly mode?: 'MARCH' | 'RALLY'
-  /** 确认键上的字（出征 / 发起集结）。面板不自己翻，免得两处写两份 */
+  readonly kind?: RallyKind
+  /** 确认键上的字（出征 / 发起小队集结 / 发起联盟集结）。面板不自己翻，免得两处写两份 */
   readonly submitLabel?: string
-  /** 不能发起集结时那句原因（读不到权限时**不为它**置灰：那是"暂时不知道"，不是"你不行"） */
+  /** 不能发起集结时那句原因（读不到政策时**不为它**置灰：那是"暂时不知道"，不是"你不行"） */
   readonly rallyBlocked?: string | null
+  /**
+   * 集结参数那一行（人数 / 准备时长）。MARCH 或读口没到时为 null ⇒ 那一行整条不画。
+   * 界与默认值都是服务端给的，面板只显示、不夹取。
+   */
+  readonly rally?: RallyParams | null
 }
 
 /** 商店面板：货架那块来自 game/shop/ShopPanel.ts，notice 是**上一次兑换的结果**（临时提示）。 */
@@ -418,8 +427,16 @@ export class AppRoot {
   private rallyNotice: string | null = null
   /** 正在为哪一支集结编队；null = 普通出征的编成。**加入集结必须带兵力**（服务端要锁兵）。 */
   private composeRallyId: string | null = null
-  /** 编成面板当前是"发起小队集结"还是"出征"（B26 S12）。换目标就回到出征 */
-  private composeRally = false
+  /** 编成面板当前是哪一种命令（B26 S12 两态 → S13b 三态）。换目标就回到出征 */
+  private composeKind: RallyKind = 'MARCH'
+  /**
+   * 发起集结的政策读口（`GET /rally/policy`，B26 S13a 落的服务端）。
+   * 人数与准备时长的**上下界和默认值**全从这里来 —— 客户端不抄 `global.RALLY_*`，
+   * 也不自己挑一个默认时长（那是"显示名必须服务端下发"同族的第十条：入参上下界同属必须下发）。
+   */
+  private rallyPolicyResp: RallyPolicyResp | null = null
+  /** 面板上那两个可调项当前的值；null = 当前这一档没有参数（出征）或读口还没到 */
+  private rallyParams: RallyParams | null = null
   /** 战令：最近一次状态与上一次领取的结果（临时提示）。**进度两位都取自响应，本地不改**。 */
   private battlePassResp: BattlePassStatusResp | null = null
   private battlePassNotice: string | null = null
@@ -2930,74 +2947,116 @@ export class AppRoot {
       return
     }
     this.composeTarget = { id: brief.id, name: brief.name, x: brief.coord.x, y: brief.coord.y }
-    this.composeRally = false
+    this.composeKind = 'MARCH'
+    this.rallyParams = null
     this.composePicks = {}
     this.composeNotice = null
+    this.deliverCompose()
+    // 政策在打开编成之后才拉：它只决定"能不能切、界是多少"，晚到只会让那一行晚点出现，
+    // 不该把玩家点开面板这一下挡在后面
+    void this.loadRallyPolicy()
+  }
+
+  /**
+   * 拉一次发起集结的政策。公开是为了**用例能 await 它**：`beginMarchCompose` 里那一发是
+   * 后台补拉，用例不等它就永远读不到政策，"切到联盟档要长出参数行"这条断言就只能靠时序碰运气。
+   * 失败不弹错误条：这一格读不到只是"暂时不知道能不能"，不是玩家做错了什么。
+   */
+  async loadRallyPolicy(): Promise<void> {
+    const outcome = await this.api.rallyPolicy()
+    if (outcome.kind !== 'ok') {
+      return
+    }
+    this.rallyPolicyResp = outcome.data
+    if (this.rallyParams !== null) {
+      this.rallyParams = rebind(this.rallyParams, this.composeKind, outcome.data)
+    }
     this.deliverCompose()
   }
 
   /**
-   * 在编成面板上把这条命令从"出征"切成"发起小队集结"（B26 S12）。
+   * 在编成面板上循环切换命令种类：出征 → 小队集结 → 联盟集结 → 出征（B26 S12 两态扩成 S13b 三态）。
    *
    * <p>为什么放在编成面板而不是在目标行上再加一颗按钮：同一份兵、同一个目标，
    * 换的只是**命令种类** —— 在目标行上摆两颗键会把"我打他"这件事拆成两个入口，
    * 而玩家在选目标那一刻通常还没决定要派多少兵。
    *
-   * <p>能不能发起：读得到权限就按 `START_RALLY` 那一位说；**读不到不置灰**，
-   * 因为"权限还没拉到"不是"你不行"（同一口径见 PermissionGates 的注释），
-   * 真发出去由服务端裁决并回一句人话。
+   * <p>能不能发起：改由 `GET /rally/policy` 判（组织在不在、职位有没有那一位、人数够不够最低档
+   * 三条都在服务端算），**政策读不到时不置灰**，因为"还没拉到"不是"你不行"
+   * （同一口径见 PermissionGates 的注释），真发出去由服务端裁决并回一句人话。
    */
   toggleComposeRally(): void {
     if (this.composeTarget === null) {
       return
     }
-    if (!this.composeRally) {
-      const blocked = this.rallyBlockedReason()
+    const next = nextKind(this.composeKind)
+    if (next !== 'MARCH') {
+      const blocked = blockedReason(next, this.rallyPolicyResp)
       if (blocked !== null) {
         this.composeNotice = blocked
         this.deliverCompose()
         return
       }
     }
-    this.composeRally = !this.composeRally
+    this.composeKind = next
+    this.rallyParams = defaultParams(next, this.rallyPolicyResp)
     this.composeNotice = null
     this.deliverCompose()
   }
 
-  /** 发起不了集结时那句原因；null = 可以发起（或暂时读不到门，交给服务端判）。 */
-  private rallyBlockedReason(): string | null {
-    if (!this.permissions.loaded) {
-      return null
+  /** 调人数或准备时长。± 越界是夹住（夹取在纯逻辑里做，表现层不夹、判定在服务端）。 */
+  adjustRallyParams(field: 'members' | 'prepare', direction: number): void {
+    if (this.rallyParams === null) {
+      return
     }
-    if (this.lastSocialSummary !== null && this.lastSocialSummary.squad === null) {
-      return '你还没有小队，先加入或建一支再发起集结'
+    this.rallyParams = {
+      ...this.rallyParams,
+      [field]: stepControl(this.rallyParams[field], direction),
     }
-    const rallyGate = gate(this.permissions, 'SQUAD', 'START_RALLY')
-    return rallyGate.allowed ? null : (rallyGate.reason ?? '你当前的职位不能发起集结')
+    this.deliverCompose()
   }
 
   /**
-   * 发起小队集结（B26 S12）。目标与兵力用的是与出征同一份编成，只是命令种类不同：
+   * 发起集结（B26 S12 小队 / S13b 联盟）。目标与兵力用的是与出征同一份编成，只是命令种类不同：
    * 出征是"我打他"，集结是"我打他，等人一起"。发起人自己的兵在这一枪里就交出去
    * （服务端把发起人算作第一个参与者，之后他不能再 join 自己的集结），所以缺了这份兵
    * 一次集结永远只能带别人的兵出发。
    */
-  private async confirmSquadRally(target: { x: number, y: number, name: string },
+  private async confirmStartRally(target: { x: number, y: number, name: string },
                                   units: readonly { unitId: string, count: number }[]): Promise<void> {
+    const alliance = this.composeKind === 'ALLIANCE_RALLY'
+    const params = this.rallyParams
+    if (alliance && params === null) {
+      // 只有联盟档吃这两个数。读口没到就点发起：不猜一个人数发出去，也不静默失败，
+      // 直接把"再等一下"说清楚。小队档本来就没有参数行，不能被这条挡住。
+      this.composeNotice = '集结的人数与时长还没拉到，稍等一下再发'
+      this.deliverCompose()
+      return
+    }
     this.track(TRACK_EVENTS.rallyInitiate, {
-      scope: trackParam('SQUAD'),
+      scope: trackParam(alliance ? 'ALLIANCE' : 'SQUAD'),
       troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
+      // 只有联盟档真的带了这两个数；小队档写 0 会在看板上读成"0 人集结"
+      ...(alliance && params !== null ? {
+        members: trackParam(params.members.value),
+        prepareMinutes: trackParam(params.prepare.value),
+      } : {}),
     })
     this.composeSubmitting = true
     this.composeNotice = null
     this.deliverCompose()
-    const outcome = await this.api.squadRally({
-      targetCoord: { x: target.x, y: target.y }, targetType: 'PLAYER_CITY',
+    const body = {
+      targetCoord: { x: target.x, y: target.y }, targetType: 'PLAYER_CITY' as const,
       troops: units.map(unit => ({ ...unit })), heroes: [],
-    })
+    }
+    const outcome = alliance && params !== null
+      ? await this.api.allianceRally({ ...body, maxMembers: params.members.value,
+        prepareMinutes: params.prepare.value })
+      : await this.api.squadRally(body)
     this.composeSubmitting = false
     if (outcome.kind === 'ok') {
-      this.composeRally = false
+      this.composeKind = 'MARCH'
+      this.rallyParams = null
       this.composeTarget = null
       this.composePicks = {}
       this.composeNotice = `已发起集结：${target.name}`,
@@ -3053,8 +3112,8 @@ export class AppRoot {
       await this.confirmRallyJoin(this.composeRallyId, units)
       return
     }
-    if (this.composeRally) {
-      await this.confirmSquadRally(target, units)
+    if (this.composeKind !== 'MARCH') {
+      await this.confirmStartRally(target, units)
       return
     }
     // 打点是"真的发出去"这一下：被 blockedReason 拦住的那些不计（它们不是出征意图）
@@ -3142,7 +3201,7 @@ export class AppRoot {
       this.targets.marchCompose?.({
         targetId: '', targetName: '', coordText: '', compose,
         notice: this.composeNotice, submitting: false,
-        mode: 'MARCH', submitLabel: '出征', rallyBlocked: null,
+        kind: 'MARCH', submitLabel: '出征', rallyBlocked: null, rally: null,
       })
       return
     }
@@ -3153,9 +3212,10 @@ export class AppRoot {
       compose,
       notice: this.composeNotice,
       submitting: this.composeSubmitting,
-      mode: this.composeRally ? 'RALLY' : 'MARCH',
-      submitLabel: this.composeRally ? '发起集结' : '出征',
-      rallyBlocked: this.rallyBlockedReason(),
+      kind: this.composeKind,
+      submitLabel: kindSubmitLabel(this.composeKind),
+      rallyBlocked: blockedReason(this.composeKind, this.rallyPolicyResp),
+      rally: this.rallyParams,
     })
   }
 

@@ -3067,7 +3067,11 @@ test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一
 
   h.root.beginMarchCompose('P9')
 
-  assert.equal(h.http.calls.length, before, '编成只是准备数据：确认之前不发请求、不扣兵')
+  const writes = h.http.calls.slice(before).filter(c => c.method === 'POST')
+  assert.deepEqual(writes.map(c => c.path), [],
+    '编成只是准备数据：确认之前不发任何写请求、不扣兵')
+  assert.deepEqual(h.http.calls.slice(before).map(c => c.path), ['/rally/policy'],
+    '打开编成只多这一发读（发起集结的界与默认值）；哪天这里冒出第二发，就是有人往准备阶段塞了动作')
   assert.equal(h.lastCompose?.targetName, '邻居')
   assert.equal(h.lastCompose?.coordText, '60, 60')
   assert.equal(h.lastCompose?.compose.options.length, 2, '可选项来自军队列表')
@@ -3093,25 +3097,66 @@ test('B26 S12：编成里切到集结再确认 → 发 /rally/squad 而不是 /w
     squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
   }))
   h.http.overrides.set('/rally/squad', { rally: rallyShape(), serverNow: SERVER_NOW })
+  h.http.overrides.set('/rally/policy', {
+    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 5, maxPrepareMinutes: 60,
+      defaultPrepareMinutes: 60, canStart: true, reason: null },
+    alliance: { minMembers: 3, maxMembers: 20, minPrepareMinutes: 10, maxPrepareMinutes: 120,
+      defaultPrepareMinutes: 120, canStart: true, reason: null },
+    serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/rally/alliance', { rally: rallyShape(), serverNow: SERVER_NOW })
   await h.root.refresh('army')
   await h.root.searchTargets(64)
   await h.root.loadSocialGates()
   await h.root.refresh('social')
   h.root.beginMarchCompose('P9')
-  assert.equal(h.lastCompose?.mode ?? 'MARCH', 'MARCH', '默认还是出征')
+  await h.root.loadRallyPolicy()
+  assert.equal(h.lastCompose?.kind ?? 'MARCH', 'MARCH', '默认还是出征')
+  // 用局部变量接住再判空：`assert.ok(h.lastCompose?.rally === null)` 会沿这条属性路径
+  // 把 `rally` 永久收窄成 null，后面再取 `.members` 就成了 never
+  const marchRally = h.lastCompose?.rally
+  assert.ok(marchRally === null, '出征没有"等人"这个维度，那一行整条不该在')
+
   h.root.toggleComposeRally()
-  assert.equal(h.lastCompose?.mode, 'RALLY')
-  assert.equal(h.lastCompose?.submitLabel, '发起集结', '确认键上的字跟着变，玩家才知道自己按的是哪种命令')
+  assert.equal(h.lastCompose?.kind, 'SQUAD_RALLY')
+  assert.equal(h.lastCompose?.submitLabel, '发起小队集结')
+  const squadParams = h.lastCompose?.rally
+  assert.ok(squadParams === null,
+    'SquadRallyReq 不吃人数与时长 ⇒ 那一档画参数行就是一组点了什么都不发生的控件')
+
+  h.root.toggleComposeRally()
+  assert.equal(h.lastCompose?.kind, 'ALLIANCE_RALLY')
+  assert.equal(h.lastCompose?.submitLabel, '发起联盟集结')
+  assert.equal(h.lastCompose?.rally?.members.max, 20, '上界来自读口，不是客户端抄 global')
+  assert.equal(h.lastCompose?.rally?.members.value, 20, '默认值也来自读口')
+  assert.equal(h.lastCompose?.rally?.prepare.value, 120)
+
+  h.root.adjustRallyParams('members', -1)
+  h.root.adjustRallyParams('prepare', -1)
+  assert.equal(h.lastCompose?.rally?.members.value, 18, '步长由上下界推出（跨度 17 ⇒ 每下 2）')
+  assert.equal(h.lastCompose?.rally?.prepare.value, 109, '跨度 110 ⇒ 每下一步走 11 分钟')
   h.root.pickMarchUnit('unit_infantry_t1', 30)
   await h.root.confirmMarch()
   assert.equal(h.http.countOf('/world/march'), 0, '切了集结就不该再走普通出征')
-  const sent = h.http.calls.filter(c => c.path === '/rally/squad').at(-1)
-  assert.ok(sent !== undefined, '集结那一枪要真发出去')
-  assert.deepEqual(sent?.body.targetCoord, { x: 60, y: 60 }, '目标是编成前选的那个')
-  assert.equal(sent?.body.targetType, 'PLAYER_CITY', '搜索结果都是玩家城，类型由编排层定而不是猜')
-  assert.deepEqual(sent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }],
+  const allianceSent = h.http.calls.filter(c => c.path === '/rally/alliance').at(-1)
+  assert.ok(allianceSent !== undefined, '联盟集结那一枪要真发出去')
+  assert.equal(allianceSent?.body.maxMembers, 18, '发出去的是玩家调过的那个值')
+  assert.equal(allianceSent?.body.prepareMinutes, 109)
+  assert.equal(h.http.countOf('/rally/squad'), 0, '联盟档不该同时打小队那一枪')
+  assert.deepEqual(allianceSent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }],
     '发起人自己的兵必须随这一枪交出去：服务端拿它建第一个参与者')
-  assert.ok(typeof sent?.body.requestId === 'string', '集结建的是公共事务，重放等于多开一支')
+
+  // 发起成功会收起面板；重开一次再走小队档，确认 S12 那条原路径没被三态化挡死
+  // （小队档没有参数行，若沿用联盟那条"参数没到先别发"的守卫就会被永久挡住）
+  h.root.beginMarchCompose('P9')
+  await h.root.loadRallyPolicy()
+  h.root.toggleComposeRally()
+  assert.equal(h.lastCompose?.kind, 'SQUAD_RALLY')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  await h.root.confirmMarch()
+  const squadSent = h.http.calls.filter(c => c.path === '/rally/squad').at(-1)
+  assert.ok(squadSent !== undefined, '小队档仍然发得出去')
+  assert.equal(squadSent?.body.maxMembers, undefined, '小队请求里没有这两个字段')
 })
 
 test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只说一句原因', async () => {
@@ -3130,18 +3175,28 @@ test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只�
   h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
     squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
   }))
+  h.http.overrides.set('/rally/policy', {
+    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 5, maxPrepareMinutes: 60,
+      defaultPrepareMinutes: 60, canStart: false, reason: '你还没有小队，先加入或建一支再发起集结' },
+    alliance: { minMembers: 3, maxMembers: 20, minPrepareMinutes: 10, maxPrepareMinutes: 120,
+      defaultPrepareMinutes: 120, canStart: true, reason: null },
+    serverNow: SERVER_NOW,
+  })
   await h.root.refresh('army')
   await h.root.searchTargets(64)
   await h.root.loadSocialGates()
   await h.root.refresh('social')
   h.root.beginMarchCompose('P9')
+  await h.root.loadRallyPolicy()
   h.events.length = 0
   const before = h.http.calls.length
   h.root.toggleComposeRally()
   assert.equal(h.http.calls.length, before, '切换不吃网络：它既不是命令也不该预拉')
   assert.equal(h.events.length, 0, '换种类是一次选择，不是那一次提交')
-  assert.equal(h.lastCompose?.mode ?? 'MARCH', 'MARCH', '被挡住就不切')
+  assert.equal(h.lastCompose?.kind ?? 'MARCH', 'MARCH', '被挡住就不切')
   assert.ok((h.lastCompose?.notice ?? '').length > 0, '要说出为什么切不动')
+  assert.ok((h.lastCompose?.notice ?? '').includes('先加入或建一支'),
+    '那句原因是读口给的原文，客户端不自己翻译一遍')
 })
 
 /** 集结那一枪的响应体（面板只把它当"成功了"的信封用）。 */
