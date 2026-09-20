@@ -103,6 +103,23 @@ public final class InMemorySocialStore implements SocialStore {
         return Optional.ofNullable(squadsById.get(squadId)).map(Squad::copy);
     }
 
+    /**
+     * 全部未解散小队，按 id 升序。解散的那一档在这里就滤掉：内存版要等
+     * {@code unbindSquadMember} 才把它从表里摘掉，不滤的话解散掉的小队会继续出现在
+     * 「可加入小队」列表里，玩家点下去吃一条 squadId 找不到的错。
+     */
+    @Override
+    public synchronized List<Squad> allSquads() {
+        List<Squad> out = new java.util.ArrayList<>(squadsById.size());
+        for (Squad squad : squadsById.values()) {
+            if (!squad.isDisbanded()) {
+                out.add(squad.copy());
+            }
+        }
+        out.sort(java.util.Comparator.comparing(Squad::id));
+        return out;
+    }
+
     @Override
     public synchronized boolean squadNameTaken(String name) {
         return squadIdByName.containsKey(name);

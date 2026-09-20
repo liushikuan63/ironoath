@@ -86,6 +86,19 @@ public interface SocialStore {
 
     Optional<Squad> squadById(String squadId);
 
+    /**
+     * 全部**未解散**小队，按 id 升序（稳定顺序）。
+     *
+     * <p>给「可加入小队」列表用（收口清单 B26 S7）：在这之前 `/squad/join` 有写口、没发现口，
+     * 玩家只能自己建一支。排序按 id 而不是按热度 —— 上层要按等级/人数重排，这里只保证
+     * 同一份库存上每次读出来的起点一致（与 {@link #allAlliances()} 同一条理由）。
+     *
+     * <p>解散判据在这里过滤而不是交给调用方：内存版把已解散小队留在表里直到
+     * {@link #unbindSquadMember} 收尾，Mongo 版则是整档删除 —— 两边过滤口径统一，
+     * 才不会出现"同一支解散小队在一边看得见、另一边看不见"。
+     */
+    List<Squad> allSquads();
+
     boolean squadNameTaken(String name);
 
     /** 成员离开小队后清掉他的反查索引；小队解散时清掉全部成员与名字。 */

@@ -549,6 +549,22 @@ class SocialStoreEquivalenceTest {
         }
     }
 
+    @Test
+    @DisplayName("allSquads：两版都按 id 升序给出未解散小队，解散掉的那一档不出现（B26 S7 的发现口）")
+    void allSquadsMatchOnOrderAndDisbandFilter() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            // 故意倒着存：判的是"按 id 升序"这条稳定顺序，不是插入顺序
+            store.saveSquad(richSquad("SQ-2", "第二队"), 0L);
+            store.saveSquad(richSquad("SQ-1", "第一队"), 0L);
+            store.saveSquad(disbandedSquad("SQ-3", "已经没了"), 0L);
+
+            assertThat(store.allSquads().stream().map(Squad::id).toList())
+                    .as("%s：解散的那支不许留在列表里，否则玩家点它吃一条 squadId 找不到", label)
+                    .containsExactly("SQ-1", "SQ-2");
+        }
+    }
+
     // ---------- 夹具 ----------
 
     /** 两个实现都要跑：内存版恒定，Mongo 版在本机没有 Mongo 时整体跳过（Skipped 会显示出来）。 */
@@ -579,6 +595,14 @@ class SocialStoreEquivalenceTest {
         coins.put("P-3", 0L);
         return Squad.restore(id, name, "P-1", rules.squadRules(), members, 3, 250L,
                 "AL-1", coins, 10L, 4L, 0L, 7L);
+    }
+
+    /** 已解散的小队：档案还在库里（内存版要等 unbindSquadMember 才摘），但发现列表不该再给出它。 */
+    private static Squad disbandedSquad(String id, String name) {
+        Map<String, SquadRole> members = new LinkedHashMap<>();
+        members.put("P-1", SquadRole.LEADER);
+        return Squad.restore(id, name, "P-1", rules.squadRules(), members, 1, 0L,
+                null, Map.of(), 0L, 0L, T0, 1L);
     }
 
     /** 富状态联盟：含当日捐献与科技两张容易被旧 restore 丢掉的表。 */

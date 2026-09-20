@@ -1485,6 +1485,109 @@ class SocialEndpointTest {
         assertThat(list.get("alliances").size()).isLessThanOrEqualTo(list.get("limit").asInt());
     }
 
+    // ---------- B26 S7：可加入小队列表（GET /squad/list） ----------
+
+    @Test
+    @DisplayName("小队列表说「已满」的那一行，真去加入一定被同一条 SQUAD_FULL 拒掉")
+    void squadListFullFlagMatchesTheWritePath() throws Exception {
+        String leader = newPlayer(5);
+        String squadId = post200("/squad/create", leader, new SquadCreateReq(newRequestId(), "满员队"))
+                .get("squad").get("id").asText();
+        String stranger = newPlayer(5);
+
+        JsonNode row = okData(perform(get("/squad/list").header(PLAYER_HEADER, stranger)))
+                .get("squads").get(0);
+        assertThat(row.get("id").asText()).isEqualTo(squadId);
+        assertThat(row.get("name").asText())
+                .as("名字由服务端下发：客户端没有 squad 表，自己拼就是第二真源")
+                .isEqualTo("满员队");
+        assertThat(row.get("full").asBoolean()).isFalse();
+        assertThat(row.get("memberCap").asInt())
+                .as("上限按队长主城等级现算（5 级是第一档 5 人），不是写死在客户端")
+                .isEqualTo(5);
+
+        for (int i = 0; i < 4; i++) {
+            post200("/squad/join", newPlayer(5), new SquadIdReq(newRequestId(), squadId));
+        }
+        JsonNode after = okData(perform(get("/squad/list").header(PLAYER_HEADER, stranger)));
+        assertThat(after.get("squads").get(0).get("full").asBoolean())
+                .as("灰掉那一行的按钮所依据的，就是写路径会拒的那一次比较")
+                .isTrue();
+        JsonNode rejected = postRaw("/squad/join", stranger, new SquadIdReq(newRequestId(), squadId));
+        assertThat(rejected.get("code").asInt()).isEqualTo(ErrorCode.SQUAD_FULL.code());
+    }
+
+    @Test
+    @DisplayName("解散掉的小队不再出现在列表里：内存版把它留在表里等收尾，不滤就是给玩家一颗必然报错的按钮")
+    void squadListDropsDisbandedSquads() throws Exception {
+        String leader = newPlayer(5);
+        String squadId = post200("/squad/create", leader, new SquadCreateReq(newRequestId(), "短命队"))
+                .get("squad").get("id").asText();
+        assertThat(okData(perform(get("/squad/list").header(PLAYER_HEADER, newPlayer(1))))
+                .get("total").asInt()).isEqualTo(1);
+
+        post200("/squad/disband", leader, new SquadSelfReq(newRequestId()));
+
+        JsonNode after = okData(perform(get("/squad/list").header(PLAYER_HEADER, newPlayer(1))));
+        assertThat(after.get("total").asInt())
+                .as("解散判据在存储层过滤，两支实现走同一句（见 SocialStoreEquivalenceTest）")
+                .isZero();
+        assertThat(after.get("squads")).isEmpty();
+        assertThat(after.hasNonNull("squads")).isTrue();
+    }
+
+    @Test
+    @DisplayName("小队列表按人数降序、上限从 global.SQUAD_LIST_LIMIT 取，不写在代码里")
+    void squadListOrdersBySizeAndReadsItsLimitFromConfig() throws Exception {
+        String bigLeader = newPlayer(5);
+        String bigSquad = post200("/squad/create", bigLeader, new SquadCreateReq(newRequestId(), "人多队"))
+                .get("squad").get("id").asText();
+        for (int i = 0; i < 2; i++) {
+            post200("/squad/join", newPlayer(5), new SquadIdReq(newRequestId(), bigSquad));
+        }
+        post200("/squad/create", newPlayer(5), new SquadCreateReq(newRequestId(), "独苗队"));
+
+        JsonNode list = okData(perform(get("/squad/list").header(PLAYER_HEADER, newPlayer(1))));
+        assertThat(list.get("limit").asLong()).isEqualTo(20L);
+        assertThat(list.get("total").asInt()).isEqualTo(2);
+        assertThat(list.get("squads").get(0).get("memberCount").asInt())
+                .as("三人那支在前 —— 玩家挑的就是「哪队有人」")
+                .isEqualTo(3);
+        assertThat(list.get("squads").get(0).get("name").asText()).isEqualTo("人多队");
+        assertThat(list.get("squads").get(1).get("memberCount").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("自己已经在的那支小队不再列进「可加入」：一颗点了必然被拒的按钮比没有按钮更糟")
+    void squadListSkipsTheSquadIAmAlreadyIn() throws Exception {
+        String leader = newPlayer(5);
+        String squadId = post200("/squad/create", leader, new SquadCreateReq(newRequestId(), "铁血队"))
+                .get("squad").get("id").asText();
+        String member = newPlayer(5);
+        post200("/squad/join", member, new SquadIdReq(newRequestId(), squadId));
+
+        JsonNode mine = okData(perform(get("/squad/list").header(PLAYER_HEADER, member)));
+        assertThat(mine.get("squads")).isEmpty();
+        assertThat(mine.get("total").asInt())
+                .as("total 仍是全服口径（世界上有 1 支），滤掉的只是我自己那一行")
+                .isEqualTo(1);
+        assertThat(okData(perform(get("/squad/list").header(PLAYER_HEADER, newPlayer(1))))
+                .get("squads")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("同族那一处：我已经在的联盟也不给一颗「申请加入」")
+    void allianceListSkipsTheAllianceIAmAlreadyIn() throws Exception {
+        String leader = newPlayer(10);
+        String allianceId = post200("/alliance/create", leader,
+                new AllianceCreateReq(newRequestId(), "铁誓", "TS"))
+                .get("alliance").get("id").asText();
+
+        JsonNode hisOwn = okData(perform(get("/alliance/list").header(PLAYER_HEADER, leader)));
+        assertThat(hisOwn.get("alliances")).isEmpty();
+        assertThat(hisOwn.get("total").asInt()).isEqualTo(1);
+        assertThat(allianceId).isNotBlank();
+    }
     private String newPlayer(int cityLevel) {
         String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "社交测试", 1_700_000_000_000L, ""))

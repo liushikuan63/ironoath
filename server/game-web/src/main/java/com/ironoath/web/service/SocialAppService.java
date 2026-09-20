@@ -82,7 +82,9 @@ import com.ironoath.web.dto.generated.SquadRallyReq;
 import com.ironoath.web.dto.generated.SocialEventView;
 import com.ironoath.web.dto.generated.SocialSummaryResp;
 import com.ironoath.web.dto.generated.SquadCreateReq;
+import com.ironoath.web.dto.generated.SquadDiscoveryView;
 import com.ironoath.web.dto.generated.SquadIdReq;
+import com.ironoath.web.dto.generated.SquadListResp;
 import com.ironoath.web.dto.generated.SquadMember;
 import com.ironoath.web.dto.generated.SquadMemberReq;
 import com.ironoath.web.dto.generated.SquadSelfReq;
@@ -268,6 +270,43 @@ public class SocialAppService {
         }
     }
 
+    /**
+     * GET /squad/list（B26 S7）：可加入小队的前 N 个。
+     *
+     * <p>这一格与 {@link #allianceList} 是同一个缺陷的第二处：{@code /squad/join} 早就有，
+     * 但客户端连"世界上有哪些小队"都读不到 ⇒ 没有小队的玩家那一屏只有一句「未加入小队」，
+     * 除了自己建一支没有别的路走。小队比联盟更缺这一口：<b>加入小队不要审核、也不要金币</b>，
+     * 它是新手最容易走进去的组织，而它恰好是最难被看见的。
+     *
+     * <p>我自己已经在的那一支<b>不列</b>（{@code total} 仍是全服未解散数，它是"世界上有多少支"的口径）：
+     * 一颗点了只会回 SQUAD_ALREADY_IN 的按钮，比没有那颗按钮更糟。
+     *
+     * <p>{@code memberCap} 按<b>队长</b>主城等级现算（{@link Squad#memberCap} 的口径，
+     * 传给错的人会让人数上限永远停在 5），{@code full} 就用同一个数比 ——
+     * 于是"界面上亮着的那一行点下去一定不会被拒"是这里算出来的，不是客户端猜的。
+     */
+    public SquadListResp squadList(String playerId, long now) {
+        int limit = (int) configs.longParam("SQUAD_LIST_LIMIT");
+        List<Squad> all = new ArrayList<>(store.allSquads());
+        all.sort(java.util.Comparator.comparingInt(Squad::level).reversed()
+                .thenComparing(java.util.Comparator.comparingInt(Squad::memberCount).reversed()));
+        List<SquadDiscoveryView> rows = new ArrayList<>();
+        for (Squad squad : all) {
+            if (rows.size() >= limit) {
+                break;
+            }
+            if (squad.isMember(playerId)) {
+                // 自己已经在的那一支不列：加入那一枪会回 SQUAD_ALREADY_IN，
+                // 而界面上一颗点了只会吃错的按钮比没有按钮更糟（客户端只是不画，权威在这里）
+                continue;
+            }
+            int cap = squad.memberCap(cityLevelOf(squad.leaderId()));
+            rows.add(new SquadDiscoveryView(squad.id(), squad.name(), squad.level(),
+                    squad.memberCount(), cap, squad.memberCount() >= cap));
+        }
+        return new SquadListResp(rows, all.size(), limit, now);
+    }
+
     /** 退出小队。队长不能直接退（先转让或解散），否则小队会剩下没有责任人的成员。 */
     public SocialSummaryResp squadLeave(String playerId, SquadSelfReq req) {
         long now = timeService.serverNow();
@@ -411,7 +450,15 @@ public class SocialAppService {
         all.sort(java.util.Comparator.comparingInt(Alliance::level).reversed()
                 .thenComparing(java.util.Comparator.comparingInt(Alliance::memberCount).reversed()));
         List<AllianceDiscoveryView> rows = new ArrayList<>();
-        for (Alliance alliance : all.subList(0, Math.min(limit, all.size()))) {
+        for (Alliance alliance : all) {
+            if (rows.size() >= limit) {
+                break;
+            }
+            if (alliance.isMember(playerId)) {
+                // 与 squadList 同一条（B26 S7 一起扫出来的同族）：我已经在的那个盟不列，
+                // 否则那一行写着「申请加入」而点下去必然被拒
+                continue;
+            }
             rows.add(new AllianceDiscoveryView(alliance.id(), alliance.name(), alliance.tag(),
                     alliance.level(), alliance.memberCount(), alliance.effectiveMemberCap(),
                     // 满不满、申请过没有都由服务端算：客户端自己比会漏掉"队长刚扩过容"这种只有这里有账的口径

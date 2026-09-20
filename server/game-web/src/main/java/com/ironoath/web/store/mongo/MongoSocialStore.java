@@ -100,6 +100,27 @@ public final class MongoSocialStore implements SocialStore {
                 .map(document -> document.toDomain(rules.squadRules()));
     }
 
+    /**
+     * 全部未解散小队，按 id 升序。
+     *
+     * <p>解散的判据放在 Java 侧（读档之后）而不是写进 {@code Criteria}：这份库里存量档的
+     * {@code disbandedAt} 依赖 {@code saveSquad} 的 {@code $set} 白名单，白名单漏一次字段
+     * （B25-S2 的 {@code autoTrain} 就是这么栽的）就会让查询条件对老档恒不成立 —— 而那样
+     * 错掉的方向是「列表少一行」，比内存版安静。判据写在领域对象上是两版共用的同一句。
+     */
+    @Override
+    public List<Squad> allSquads() {
+        Query query = new Query().with(Sort.by(Sort.Direction.ASC, "_id"));
+        List<Squad> out = new ArrayList<>();
+        for (SquadDocument document : mongo.find(query, SquadDocument.class, SquadDocument.COLLECTION)) {
+            Squad squad = document.toDomain(rules.squadRules());
+            if (!squad.isDisbanded()) {
+                out.add(squad);
+            }
+        }
+        return List.copyOf(out);
+    }
+
     @Override
     public boolean squadNameTaken(String name) {
         return mongo.exists(Query.query(Criteria.where("name").is(name)),

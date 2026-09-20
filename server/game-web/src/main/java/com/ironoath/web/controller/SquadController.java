@@ -1,5 +1,6 @@
 package com.ironoath.web.controller;
 
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -9,9 +10,11 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
+import com.ironoath.common.time.TimeService;
 import com.ironoath.web.dto.generated.SocialSummaryResp;
 import com.ironoath.web.dto.generated.SquadCreateReq;
 import com.ironoath.web.dto.generated.SquadIdReq;
+import com.ironoath.web.dto.generated.SquadListResp;
 import com.ironoath.web.dto.generated.SquadMemberReq;
 import com.ironoath.web.dto.generated.SquadSelfReq;
 import com.ironoath.web.service.SocialAppService;
@@ -25,16 +28,19 @@ import com.ironoath.web.service.SocialAppService;
  * 返回局部视图的话客户端要再拉一次汇总才能对齐 —— 而那次拉取在弱网下可能失败，
  * 于是面板上会出现「成员列表已经更新了但红点还是旧的」这种半新半旧的状态。
  *
- * <p>所有端点都是写操作，一律要 requestId（B00 陷阱 3：没有幂等就等于允许重放）。
+ * <p>写端点一律要 requestId（B00 陷阱 3：没有幂等就等于允许重放）；
+ * 唯一的例外是 {@code GET /list} —— 它不改状态，见那个方法。
  */
 @RestController
 @RequestMapping("/squad")
 public class SquadController {
 
     private final SocialAppService social;
+    private final TimeService timeService;
 
-    public SquadController(SocialAppService social) {
+    public SquadController(SocialAppService social, TimeService timeService) {
         this.social = social;
+        this.timeService = timeService;
     }
 
     /** 创建小队。前置：主城 5 级 + 开服 D1（B10 §1）。 */
@@ -43,6 +49,18 @@ public class SquadController {
                                             @RequestBody SquadCreateReq req) {
         requirePlayer(playerId);
         return Result.ok(social.squadCreate(playerId, req));
+    }
+
+    /**
+     * 可加入小队的列表（B26 S7）。这是「加入」那一颗按钮的唯一数据来源 ——
+     * 在它之前 `/squad/join` 有写口没发现口，没小队的玩家只能自己建一支。
+     *
+     * <p>本类里唯一的读端点，所以不要 requestId：它不改任何状态，重放只是再读一次。
+     */
+    @GetMapping("/list")
+    public Result<SquadListResp> list(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(social.squadList(playerId, timeService.serverNow()));
     }
 
     /** 加入小队。人数上限按「小队等级 + 队长主城等级」两个条件算（验收 3）。 */
