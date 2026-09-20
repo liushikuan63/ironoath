@@ -36,6 +36,7 @@ bash scripts/check-guide-no-copy.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-client-typecheck.sh
 bash scripts/check-player-copy-jargon.sh
+bash scripts/check-track-dictionary.sh
 bash scripts/check-icon-legibility.sh
 bash scripts/check-no-scheduled.sh
 bash scripts/check-mongo-set-coverage.sh

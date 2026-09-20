@@ -272,21 +272,28 @@ const picker = await page.evaluate(`(() => {
 checkTrue('先问「用哪一张加速」，候选里只有研究令：' + JSON.stringify(picker?.texts ?? []).slice(0, 140),
   picker?.open === true && picker.texts.some((t) => t === '用哪一张加速')
     && picker.texts.some((t) => t.includes('研究令')) && !picker.texts.some((t) => t.includes('建造令')))
+checkTrue('给两个档位：用 1 张与全用（用超了服务端会退剩下的张数，所以不用玩家算账）',
+  picker !== null && picker.texts.some((t) => t === '用 1 张 · 持有 2 张')
+    && picker.texts.some((t) => t === '一次用掉 2 张 · 用不完的会退回'))
 check('问用哪一张之前不吃道具', SPEEDUP_CALLS.length, 0)
-await page.evaluate(`(() => {
+// 按**明写着"用 1 张"的那一档**：按文字找容易撞名（「研究令」与「研究令 全用」都含同一个前缀），
+// 所以按说明行定位，并把命中的说明行回读进断言里
+const tappedTier = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   let hit = null
   const walk = (n) => {
     if (n.name.startsWith('Choice-') && n.active
-      && (n.children || []).some((k) => (k.getComponent('cc.Label')?.string ?? '').includes('研究令'))) hit = n
+      && (n.children || []).some((k) => (k.getComponent('cc.Label')?.string ?? '') === '用 1 张 · 持有 2 张')) hit = n
     for (const c of n.children) if (c.active) walk(c)
   }
   walk(game)
   if (hit !== null) hit.emit('touch-start')
+  return hit !== null
 })()`)
+checkTrue('按得到「用 1 张」那一档', tappedTier)
 await page.waitForTimeout(1_500)
 check('恰好发出一条 POST /tech/speedUp', SPEEDUP_CALLS.length, 1)
-check('一次用一张', SPEEDUP_CALLS[0]?.count, 1)
+check('那一档说的是 count=1', SPEEDUP_CALLS[0]?.count, 1)
 checkTrue('带幂等键（消耗品 + 改状态，重放不去重就是白丢一张）',
   typeof SPEEDUP_CALLS[0]?.requestId === 'string' && SPEEDUP_CALLS[0].requestId.length > 0)
 read = await page.evaluate(READ)

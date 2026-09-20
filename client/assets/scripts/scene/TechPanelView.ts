@@ -14,7 +14,7 @@ import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform,
 import { techCancelText, techSpeedUpText } from '../game/tech/TechPanel'
 import type { TechPanelView as TechViewData, TechRow } from '../game/tech/TechPanel'
 import type { TechCancelResp, TechSpeedUpResp } from '../net/generated/TechProtocol'
-import type { SpeedupChoice } from '../game/session/Choices'
+import type { ResearchSpeedupChoice } from '../game/session/Choices'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { applySystemUiFont } from './UiFont'
 
@@ -56,13 +56,20 @@ export class TechPanelView extends Component {
   /** 玩家点了队列那一行的「加速」。用哪一张由外层筛（`effectKind`），本场景只回抛一个"我要加速" */
   onSpeedUpResearch: (() => void) | null = null
 
-  /** 用哪一张研究加速。选项由外层按 `effectKind` 筛好，本面板只画与回抛。 */
-  showSpeedupPicker(options: readonly SpeedupChoice[], onPick: (itemId: string) => void): void {
+  /** 用哪一张研究加速。选项由外层按 `effectKind` 筛好，本面板只画与回抛整份选项。 */
+  showSpeedupPicker(options: readonly ResearchSpeedupChoice[],
+                    onPick: (choice: ResearchSpeedupChoice) => void): void {
     // 这一页是按需挂的（没有 onLoad 建节点那一步），所以弹层第一次要用时才建
     if (this.speedupPicker === null) {
       this.speedupPicker = new ChoiceOverlay(this.node, '用哪一张加速', 620)
     }
-    this.speedupPicker.show(options, onPick)
+    const byId = new Map(options.map((option) => [option.id, option]))
+    this.speedupPicker.show(options, (id) => {
+      const choice = byId.get(id)
+      if (choice !== undefined) {
+        onPick(choice)
+      }
+    })
   }
 
   /** 一次加速的回执：减了多少、还剩多少、有没有因此完成。三个数都照服务端念。 */

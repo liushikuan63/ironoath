@@ -106,7 +106,7 @@ import {
   buildResearchSpeedupChoices, buildShareChannelChoices, buildSpeedupChoices,
 } from './Choices'
 import type {
-  ChatActionChoice, ChoiceOption, LineupChoice, ShareChannelChoice, SpeedupChoice,
+  ChatActionChoice, ChoiceOption, LineupChoice, ResearchSpeedupChoice, ShareChannelChoice, SpeedupChoice,
 } from './Choices'
 import type { GiftPopupResp } from '../../net/generated/PayProtocol'
 import type { PayView } from '../pay/GiftPayFlow'
@@ -235,8 +235,9 @@ export interface PanelTargets {
   staminaBought?(resp: StaminaBuyResp): void
   /** 取消研究的回执：取消了哪一行、退回来多少资源（比例服务端算，与城建同一份配置）。 */
   techCancelled?(resp: TechCancelResp): void
-  /** 研究加速用哪一张（候选按 `effectKind` 筛，不按 id 硬编码）。 */
-  researchSpeedupChoice?(options: readonly SpeedupChoice[], onPick: (itemId: string) => void): void
+  /** 研究加速用哪一张（候选按 `effectKind` 筛，不按 id 硬编码；一份选项自带张数）。 */
+  researchSpeedupChoice?(options: readonly ResearchSpeedupChoice[],
+    onPick: (choice: ResearchSpeedupChoice) => void): void
   /** 一次研究加速的回执：减了多少秒、还剩多少、是否因此完成。 */
   techSpeededUp?(resp: TechSpeedUpResp): void
   /**
@@ -2316,9 +2317,9 @@ export class AppRoot {
    *
    * <p>与 `cancelResearch()` 同一条时序教训：**回执在重拉之后交**，因为它占的是队列那一行的位置。
    */
-  async speedUpResearch(itemId: string): Promise<void> {
-    this.track(TRACK_EVENTS.techSpeedUp, { itemId })
-    const outcome = await this.api.techSpeedUp({ itemId, count: 1 })
+  async speedUpResearch(itemId: string, count: number): Promise<void> {
+    this.track(TRACK_EVENTS.techSpeedUp, { itemId, count: trackParam(count) })
+    const outcome = await this.api.techSpeedUp({ itemId, count })
     if (outcome.kind !== 'ok') {
       this.say('tech', outcome)
       return
@@ -2352,7 +2353,7 @@ export class AppRoot {
       return
     }
     this.targets.researchSpeedupChoice(options, (picked) => {
-      void this.speedUpResearch(picked)
+      void this.speedUpResearch(picked.itemId, picked.count)
     })
   }
 

@@ -24,7 +24,7 @@ import { AppRoot } from '../assets/scripts/game/session/AppRoot'
 import type { RallyPanelData } from '../assets/scripts/game/session/AppRoot'
 import type { OfflineReportPopup, PanelTargets, ShopView } from '../assets/scripts/game/session/AppRoot'
 import type {
-  ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
+  ChatActionChoice, LineupChoice, ResearchSpeedupChoice, ShareChannelChoice, SpeedupChoice,
 } from '../assets/scripts/game/session/Choices'
 import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { RankBoardView } from '../assets/scripts/game/power/RankBoard'
@@ -576,8 +576,8 @@ interface Harness {
   /** 最近一次取消研究里服务端回的 techId 与那份返还 */
   readonly lastTechCancel: { techId: string, refund: number } | null
   /** 递给「用哪一张加速」的候选，以及点其中一张 */
-  readonly researchSpeedupOptions: readonly SpeedupChoice[]
-  pickResearchSpeedup(itemId: string): void
+  readonly researchSpeedupOptions: readonly ResearchSpeedupChoice[]
+  pickResearchSpeedup(itemId: string, count: number): void
   readonly lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null
   /** 最近一次购买回执里服务端说的到账与扣币 */
   readonly lastStaminaBought: { granted: number, costGold: number } | null
@@ -739,8 +739,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let chestPick: ((id: string) => void) | null = null
   let lastChest: { consumed: number, overflow: number } | null = null
   let lastTechCancel: { techId: string, refund: number } | null = null
-  let researchSpeedupOptions: SpeedupChoice[] = []
-  let researchSpeedupPick: ((itemId: string) => void) | null = null
+  let researchSpeedupOptions: ResearchSpeedupChoice[] = []
+  let researchSpeedupPick: ((choice: ResearchSpeedupChoice) => void) | null = null
   let lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null = null
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
@@ -1026,8 +1026,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     get researchSpeedupOptions() {
       return researchSpeedupOptions
     },
-    pickResearchSpeedup(itemId) {
-      researchSpeedupPick?.(itemId)
+    pickResearchSpeedup(itemId, count) {
+      const choice = researchSpeedupOptions.find(o => o.itemId === itemId && o.count === count)
+      if (choice !== undefined) researchSpeedupPick?.(choice)
     },
     get lastTechSpeedUp() {
       return lastTechSpeedUp
@@ -4146,17 +4147,18 @@ test('研究加速：先问用哪一张，选完发一条带幂等键的 POST �
   await h.root.openTech()
 
   h.root.requestResearchSpeedUp()
-  assert.deepEqual(h.researchSpeedupOptions.map(o => o.id), ['item_speedup_research_1h'],
-    '候选来自背包那一份（`bagResp` 在首屏预拉里，没 start 就是 null）')
+  assert.deepEqual(h.researchSpeedupOptions.map(o => `${o.count}:${o.detail}`),
+    ['1:用 1 张 · 持有 2 张', '2:一次用掉 2 张 · 用不完的会退回'],
+    '两个档位都给出（研究后期一步以天计，一张一张点是折磨；用超了服务端会退剩下的张数）')
   assert.equal(h.http.countOf('/tech/speedUp'), 0, '没选之前不能吃道具')
 
-  h.pickResearchSpeedup('item_speedup_research_1h')
+  h.pickResearchSpeedup('item_speedup_research_1h', 2)
   await new Promise(resolve => setTimeout(resolve, 0))
 
   const calls = h.http.calls.filter(c => c.path === '/tech/speedUp')
   assert.equal(calls.length, 1)
   assert.equal(calls[0]?.body.itemId, 'item_speedup_research_1h')
-  assert.equal(calls[0]?.body.count, 1)
+  assert.equal(calls[0]?.body.count, 2, '选的是「全用」那一档 ⇒ 手里两张一次交完')
   assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
     '加速是"消耗品 + 改状态"的双重动作，重放不去重就是白丢一张')
   assert.equal(h.http.countOf('/bag/list') >= 2, true, '吃过一张要重拉背包')

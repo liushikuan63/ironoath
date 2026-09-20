@@ -128,9 +128,20 @@ test('研究加速只列 effectKind 对得上的那一种令，建造令与训�
       { itemId: 'i_train', name: '训练令', type: 'SPEEDUP', effectKind: 'REDUCE_TRAIN_SECONDS', count: 2 },
     ],
   } as never
-  assert.deepEqual(buildResearchSpeedupChoices(bag).map((o) => o.id), ['i_research'],
+  assert.deepEqual(buildResearchSpeedupChoices(bag).map((o) => `${o.itemId}:${o.count}`),
+    ['i_research:1', 'i_research:3'],
     '走错一种会被服务端拒（它宁可响也不静默按另一种加速处理），所以干脆不列出来')
   assert.deepEqual(buildResearchSpeedupChoices(null), [], '背包没读到不猜')
+})
+
+test('只剩一张时不给「全用」那一档（两档内容一样，多一颗没意义的键）', () => {
+  const only = buildResearchSpeedupChoices({
+    items: [{
+      itemId: 'i_research', name: '研究令', type: 'SPEEDUP',
+      effectKind: 'REDUCE_RESEARCH_SECONDS', count: 1,
+    }],
+  } as never)
+  assert.deepEqual(only.map((o) => o.count), [1])
 })
 
 test('候选里不许编"一张减多少秒"——BagItem 没下发 effectValue', () => {

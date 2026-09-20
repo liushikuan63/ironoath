@@ -21,6 +21,12 @@ export interface SpeedupChoice extends ChoiceOption {
   readonly targetId: string
 }
 
+/** 研究加速的一项：用哪个道具、用几张。选择器回抛的就是这一整份，不做字符串反解。 */
+export interface ResearchSpeedupChoice extends ChoiceOption {
+  readonly itemId: string
+  readonly count: number
+}
+
 /** 一次开宝箱的协议天花板（`OpenBatchReq.count` 的上界，B04 验收 3 按它定的）。 */
 const CHEST_BATCH_CEILING = 100
 
@@ -103,24 +109,39 @@ export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
 }
 
 /**
- * 能推进当前研究的那一种道具。筛的是服务端下发的 `effectKind` 这一列，**不按 id 硬编码**：
- * `type=SPEEDUP` 底下还有建造令与训练令，走到 `/tech/speedUp` 会被服务端拒 ——
- * 与其让玩家挑一颗必然被拒的，不如在这一层就不列出来（协议注释：宁可响，也不静默按另一种加速处理）。
+ * 能推进当前研究的那一种道具，一次给两个档位：**用 1 张**与**把手里的全用掉**。
+ *
+ * <p><b>为什么敢给"全用"</b>：服务端对 `count` 只校验"为正"与"背包里够"，而且**用超了会退**
+ * （`TechAppService.applySpeedUp` 里那句 `refundItems`：研究提前完成后剩下的张数原路归还），
+ * 所以"一次交完"不需要玩家自己算账 —— 协议注释也写明研究后期一步以天计，一张一张点才是折磨。
+ *
+ * <p><b>筛的是服务端下发的 `effectKind` 这一列，不按 id 硬编码</b>：`type=SPEEDUP` 底下还有建造令与
+ * 训练令，走到 `/tech/speedUp` 会被服务端拒（协议注释：宁可响，也不静默按另一种加速处理）——
+ * 与其让玩家挑一颗必然被拒的，不如在这一层就不列出来。
  */
-export function buildResearchSpeedupChoices(bag: BagListResp | null): readonly SpeedupChoice[] {
+export function buildResearchSpeedupChoices(bag: BagListResp | null): readonly ResearchSpeedupChoice[] {
   if (bag === null) {
     return []
   }
-  return bag.items
-    .filter((item) => item.type === 'SPEEDUP' && item.effectKind === 'REDUCE_RESEARCH_SECONDS')
-    .map((item) => ({
-      id: item.itemId,
-      targetId: item.itemId,
-      label: item.name,
-      // `BagItem` 里没有 `effectValue` —— 一张减多少秒**没下发**，所以这句不许编：
-      // 只说手里有几张，减多少由服务端的回执说（用之前想知道就去道具详情那条读口）
-      detail: `持有 ${item.count} 张`,
-    }))
+  const out: ResearchSpeedupChoice[] = []
+  for (const item of bag.items) {
+    if (item.type !== 'SPEEDUP' || item.effectKind !== 'REDUCE_RESEARCH_SECONDS') {
+      continue
+    }
+    // `BagItem` 里没有 `effectValue` —— 一张减多少秒**没下发**，所以这句不许编：
+    // 只说手里有几张，减多少由服务端的回执说（想知道单价去道具详情那条读口）
+    out.push({
+      id: `${item.itemId}:one`, itemId: item.itemId, count: 1,
+      label: item.name, detail: `用 1 张 · 持有 ${item.count} 张`,
+    })
+    if (item.count > 1) {
+      out.push({
+        id: `${item.itemId}:all`, itemId: item.itemId, count: item.count,
+        label: `${item.name} 全用`, detail: `一次用掉 ${item.count} 张 · 用不完的会退回`,
+      })
+    }
+  }
+  return out
 }
 
 /** 未放置建筑候选。地块能否放置由玩家点选坐标后交给服务端判定。 */
