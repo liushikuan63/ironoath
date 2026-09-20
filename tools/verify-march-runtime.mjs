@@ -346,6 +346,11 @@ const COMPOSE = `(() => {
     active: overlay.active,
     titleHead: title.slice(0, 2),
     toggleText: textOf('编成种类'),
+    toggleGold: (() => {
+      const c = overlay?.getChildByName('编成种类')?.getChildByName('label')
+        ?.getComponent('cc.Label')?.color
+      return c === null || c === undefined ? null : (c.r === 184 && c.g === 134 && c.b === 11)
+    })(),
     confirmText: textOf('编成出征'),
   }
 })()`
@@ -354,7 +359,9 @@ const march = await page.evaluate(COMPOSE)
 check('编成弹层节点在', march?.found, true)
 check('点目标行后弹层真的打开（active）', march?.active, true)
 check('出征态的标题前缀是「出征」', march?.titleHead, '出征')
-check('出征态下切种类那颗写「改成集结」', march?.toggleText, '改成集结')
+check('出征态下那颗命令键写「集结」（三态各一颗，不再用带方向的"改成X"措辞）',
+  march?.toggleText, '集结')
+check('出征态下「集结」不是选中色（选中的是出征那颗）', march?.toggleGold, false)
 await page.screenshot({ path: path.join(OUT, 'compose-mode-march.png') })
 console.log(`  截图：${path.join(OUT, 'compose-mode-march.png')}`)
 
@@ -366,11 +373,13 @@ const tapped = await page.evaluate(`(() => {
   toggle.emit('touch-start')
   return true
 })()`)
-checkTrue('按得到「改成集结」那一颗', tapped)
+checkTrue('按得到「集结」那一颗', tapped)
 await page.waitForTimeout(500)
 const rally = await page.evaluate(COMPOSE)
 check('切成集结后标题前缀跟着变（同一份兵、同一个目标，只换命令种类）', rally?.titleHead, '集结')
-check('切过去之后那颗写「改回出征」（切种类不是下命令，必须能反悔）', rally?.toggleText, '改回出征')
+check('切过去之后那颗仍写「集结」，选中态靠字色标出来', rally?.toggleText, '集结')
+check('切到集结后「集结」那颗变成选中色（再点一次会回出征，所以字面不需要反过来写）',
+  rally?.toggleGold, true)
 await page.screenshot({ path: path.join(OUT, 'compose-mode-rally.png') })
 console.log(`  截图：${path.join(OUT, 'compose-mode-rally.png')}`)
 
@@ -735,6 +744,105 @@ checkTrue('幂等键在（取消会退资源，重放等于退两次）',
 await page2.screenshot({ path: path.join(OUT, 'army-queue-cancelled.png') })
 console.log(`  截图：${path.join(OUT, 'army-queue-cancelled.png')}`)
 
+// ---------- 相位 E：编成面板的第三种命令 —— 派侦察（B26 S18）----------
+// 页脚从三颗键变四颗（取消 / 侦察 / 集结 / 出征）：旧版三颗 180 宽摆在 -140/0/140，
+// 盒子彼此压了 40px —— 加第四颗时才量出来，所以这一相顺手把"页脚不重叠"也钉成判据。
+const sentScouts = []
+await context.route('**/world/scout*', async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  sentScouts.push(JSON.parse(route.request().postData() ?? '{}'))
+  await reply(route, {
+    march: {
+      marchId: 'fixture-scout-1', from: { x: 48, y: 48 }, to: { x: 100, y: 77 }, status: 'MARCHING',
+      targetType: 'CITY', targetId: 'fixture-target-1', rallyId: null, action: 'SCOUT',
+      startAt: Date.now(), arriveAt: Date.now() + 60000, returnStartAt: null, returnArriveAt: null,
+      units: [], heroes: [], load: 0, loadCap: 0, teamSpeed: 0, position: { x: 60, y: 60 },
+      progressFixed: 0, gatherFinishAt: null, serverNow: Date.now(),
+    },
+    distance: 24, durationSec: 60, serverNow: Date.now(),
+  })
+})
+
+const FOOT = `(() => {
+  const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('MarchCompose')
+  if (!overlay) return null
+  const names = [\x27编成取消\x27, \x27编成侦察\x27, \x27编成种类\x27, \x27编成出征\x27]
+  const boxes = names.map((n) => {
+    const node = overlay.getChildByName(n)
+    if (!node) return null
+    const t = node.getComponent(\x27cc.UITransform\x27)
+    return {
+      name: n, left: node.position.x - t.width / 2, right: node.position.x + t.width / 2,
+      bottom: node.position.y - t.height / 2, top: node.position.y + t.height / 2,
+      caption: node.getChildByName(\x27label\x27)?.getComponent(\x27cc.Label\x27)?.string ?? null,
+    }
+  }).filter((b) => b !== null)
+  const half = window.cc.view.getVisibleSize().width / 2
+  return { boxes, screenHalf: half }
+})()`
+
+// 重新点一行拉起编成面板（相位 C 提交后已经收起）
+await page.evaluate(`(() => {
+  const targets = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('targets')
+  const row = targets?.children.find((c) => c.name === 'TargetRow')
+  if (row) row.emit('touch-start')
+  return row !== null && row !== undefined
+})()`)
+await page.waitForTimeout(700)
+
+const footBefore = await page.evaluate(FOOT)
+check('页脚四颗键都在（取消 / 侦察 / 集结 / 出征）', footBefore?.boxes?.length, 4)
+const footOverlap = []
+for (let i = 0; i < (footBefore?.boxes ?? []).length; i++) {
+  for (let j = i + 1; j < (footBefore?.boxes ?? []).length; j++) {
+    const a = footBefore.boxes[i]
+    const b = footBefore.boxes[j]
+    if (a.left < b.right && b.left < a.right && a.bottom < b.top && b.bottom < a.top) {
+      footOverlap.push(`${a.name}×${b.name}`)
+    }
+  }
+}
+check('页脚四颗键两两不重叠（旧版三颗 180 宽摆 -140/0/140 会互压 40px）',
+  JSON.stringify(footOverlap), '[]')
+check('出征态下那颗命令键写「集结」（不再是\u300c改成集结\u300d这种带方向的措辞）',
+  JSON.stringify(footBefore?.boxes?.map((b) => b.caption)),
+  JSON.stringify(['取消', '侦察', '集结', '出征']))
+
+checkTrue('按得到「侦察」那颗', await tapCompose('编成侦察'))
+await page.waitForTimeout(400)
+const scoutState = await page.evaluate(COMPOSE)
+check('切成侦察后标题前缀跟着变', scoutState?.titleHead, '侦察')
+const footScout = await page.evaluate(FOOT)
+await page.screenshot({ path: path.join(OUT, 'compose-scout-selected.png') })
+console.log('  截图：' + path.join(OUT, 'compose-scout-selected.png'))
+
+checkTrue('按得到第一行兵力的「＋」', await page.evaluate(`(() => {
+  const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('MarchCompose')
+  const row = (overlay?.children || []).find((c) => c.name === 'composeRow0')
+  const plus = row?.getChildByName('row-＋')
+  if (!plus) return false
+  plus.emit('touch-start')
+  return true
+})()`))
+await page.waitForTimeout(300)
+checkTrue('按得到「派侦察」（确认键的字跟着命令种类走）', await tapCompose('编成出征'))
+await page.waitForTimeout(900)
+check('真的打到 POST /world/scout（一次确认一条）', sentScouts.length, 1)
+const scout = sentScouts.at(-1) ?? null
+check('侦察带的是屏幕上这一队', JSON.stringify(scout?.units),
+  JSON.stringify([{ unitId: 'unit_infantry_t1', count: 10 }]))
+checkTrue('侦察目标是编成前点的那一座',
+  scout?.toX === 100 && scout?.toY === 77)
+checkTrue('确认键的字在侦察态写「派侦察」',
+  (footScout?.boxes ?? []).some((b) => b.name === '编成出征' && b.caption === '派侦察'))
+await page.screenshot({ path: path.join(OUT, 'compose-scout-mode.png') })
+console.log(`  截图：${path.join(OUT, 'compose-scout-mode.png')}`)
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {
   for (const message of errors.slice(0, 3)) console.log(`    error: ${message.slice(0, 160)}`)

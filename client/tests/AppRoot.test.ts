@@ -3764,3 +3764,60 @@ test('B26 S15：没有在训练的那一口不弹空菜单，只说一句原因�
   assert.equal(h.http.calls.length, before, '没有可取消的东西就不该有任何请求')
   assert.deepEqual(h.errors.at(-1), ['army', '这一口没有在训练的队伍'])
 })
+
+// ---------- B26 S18：编成面板的第三种命令 —— 派侦察 ----------
+
+test('B26 S18：切成侦察再确认 → 发 /world/scout 带同一份编成，不再走 /world/march', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/world/scout', ROUTES['/world/march'])
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  h.root.toggleComposeScout()
+  assert.equal(h.lastCompose?.mode, 'SCOUT')
+  assert.equal(h.lastCompose?.submitLabel, '派侦察', '确认键上的字要说清这一下发的是侦察队')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  h.events.length = 0
+  await h.root.confirmMarch()
+  const sent = h.http.calls.filter(c => c.path === '/world/scout').at(-1)
+  assert.ok(sent !== undefined, '侦察那一枪要真发出去')
+  assert.deepEqual([sent?.body.toX, sent?.body.toY], [60, 60], '目标是编成前选的那个')
+  assert.deepEqual(sent?.body.units, [{ unitId: 'unit_infantry_t1', count: 30 }],
+    '侦察队会被打：交出去的就是玩家编的这一队，不是免费的看一眼')
+  assert.equal(h.http.countOf('/world/march'), 0, '切了侦察就不该再走普通出征')
+  assert.deepEqual(h.events.find(e => e.name === 'scout_send')?.params, { troops: '30' })
+})
+
+test('B26 S18：命令三态互斥 —— 切侦察会把集结清掉，切回来反之，切换本身不吃网络', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  const before = h.http.calls.length
+  h.root.toggleComposeScout()
+  assert.equal(h.lastCompose?.mode, 'SCOUT')
+  h.root.toggleComposeRally()
+  assert.equal(h.lastCompose?.mode, 'RALLY', '切集结要赢过侦察')
+  assert.equal(h.lastCompose?.rallyScope, 'SQUAD')
+  h.root.toggleComposeScout()
+  assert.equal(h.lastCompose?.mode, 'SCOUT', '再切侦察要把集结清掉（一条命令只有一个种类）')
+  assert.equal(h.http.countOf('/rally/squad'), 0, '切换不发任何写请求')
+  assert.ok(h.http.countOf('/rally/policy') <= 1, '政策只在进集结态时补拉一次，来回切不重复拉')
+  assert.ok(h.http.calls.length - before <= 5, '切换本身不吃网络（允许多的那几条是政策补拉）')
+})

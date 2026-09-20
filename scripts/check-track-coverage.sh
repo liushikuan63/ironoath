@@ -70,6 +70,8 @@ const SKIP = new Set([
   // （参数带 scope=SQUAD/ALLIANCE，层级本身已经分得开）—— 这里再打会把一次发起记成三四次
   "setComposeRallyScope",
   "adjustComposeRallyNumber",
+  // 侦察那颗也是**换命令种类**（B26 S18）：真正"把侦察队发出去"那一下在 confirmScout 里打 `scout_send`
+  "toggleComposeScout",
   // 军队行上「队列」（B26 S15）同一条口径：打开菜单只是把候选摆出来，
   // 真正"取消这一口训练"那一下在 cancelTrain 里打 `army_train_cancel` —— 两处都打会把一次取消记成两次
   "openArmyQueue",

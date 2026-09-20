@@ -49,6 +49,7 @@ export class MarchComposeOverlay {
   private readonly confirmNode: Node
   private readonly confirmLabel: Label
   private readonly toggleLabel!: Label
+  private readonly scoutLabel!: Label
   /** 集结态下顶替第 5 行的那一条：层级两颗键 + 联盟那两个数的加减（B26 S14） */
   private readonly bandNode: Node
   private readonly bandChips: {
@@ -64,6 +65,8 @@ export class MarchComposeOverlay {
   onConfirm: (() => void) | null = null
   /** 在出征与发起集结之间来回切（B26 S12）。**换种类不是下命令**，所以它不打埋点 */
   onToggleMode: (() => void) | null = null
+  /** 在出征与侦察之间切（同一条理由：换的是命令种类，不是下命令） */
+  onScout: (() => void) | null = null
   /** 换召集范围（B26 S14）。与切种类同一条理由：按下这一下还没下命令，不打埋点 */
   onPickScope: ((scope: RallyScope) => void) | null = null
   /** 人数上限 / 等待时长加减一档（direction = ±1）。同样不发请求 */
@@ -145,16 +148,22 @@ export class MarchComposeOverlay {
     }
     this.bandNode.active = false
 
-    this.createButton('编成取消', '取消', -140, -PANEL_HEIGHT / 2 + 28, COLOR_ROW, COLOR_TEXT,
+    // 页脚四颗键各 140 宽、间距 143：面板净宽 572，四颗正好排开且互不重叠。
+    // 旧版是三颗 180 宽摆在 -140/0/140 —— 盒子彼此压了 40px（加侦察这颗时才量出来）
+    const footY = -PANEL_HEIGHT / 2 + 28
+    this.createButton('编成取消', '取消', -214, footY, 140, COLOR_ROW, COLOR_TEXT,
       () => this.onCancel?.())
-    const confirm = this.createButton('编成出征', '出征', 140, -PANEL_HEIGHT / 2 + 28,
+    const scout = this.createButton('编成侦察', '侦察', -71, footY, 140,
+      COLOR_ROW, COLOR_TEXT, () => this.onScout?.())
+    this.scoutLabel = scout.label
+    // 中间那颗切集结：同一份兵、同一个目标，只是命令种类不同
+    const toggle = this.createButton('编成种类', '改成集结', 71, footY, 140,
+      COLOR_ROW, COLOR_TEXT, () => this.onToggleMode?.())
+    this.toggleLabel = toggle.label
+    const confirm = this.createButton('编成出征', '出征', 214, footY, 140,
       COLOR_GOLD, COLOR_MASK, () => this.onConfirm?.())
     this.confirmNode = confirm.node
     this.confirmLabel = confirm.label
-    // 中间那颗切种类：同一份兵、同一个目标，只是命令种类不同
-    const toggle = this.createButton('编成种类', '改成集结', 0, -PANEL_HEIGHT / 2 + 28,
-      COLOR_ROW, COLOR_TEXT, () => this.onToggleMode?.())
-    this.toggleLabel = toggle.label
 
     this.node.active = false
   }
@@ -175,7 +184,7 @@ export class MarchComposeOverlay {
     // 那一条只顶替最下面一行：兵力行少一眼能看完一种兵，
     // 但召集范围与那两个数没得选就发不出去 —— 两害相权取能发出去的那一个
     const visibleRows = scopes.length === 0 ? VISIBLE_ROWS : VISIBLE_ROWS - 1
-    this.titleLabel.string = `${view.mode === 'RALLY' ? '集结' : '出征'}：${view.targetName}`
+    this.titleLabel.string = `${view.mode === 'SCOUT' ? '侦察' : view.mode === 'RALLY' ? '集结' : '出征'}：${view.targetName}`
     this.coordLabel.string = `坐标 ${view.coordText}`
     const hidden = Math.max(0, view.compose.options.length - visibleRows)
     this.totalLabel.string = `共派 ${view.compose.totalText} 兵`
@@ -203,11 +212,15 @@ export class MarchComposeOverlay {
 
     // 提交态：确认键灰掉且不吃触摸（双击发两份是最容易被投诉的"自动"类缺陷）
     this.confirmLabel.string = view.submitting
-      ? (view.mode === 'RALLY' ? '发起中…' : '出征中…')
+      ? (view.mode === 'RALLY' ? '发起中…' : view.mode === 'SCOUT' ? '侦察中…' : '出征中…')
       : (view.submitLabel ?? '出征')
-    // 切种类那颗**永远可点**：被挡住时点它是要看那句原因的，
-    // 置灰反而把原因一起藏了（玩家只会以为按钮坏了）
-    this.toggleLabel.string = view.mode === 'RALLY' ? '改回出征' : '改成集结'
+    // 两颗命令键**永远可点**：被挡住时点它是要看那句原因的，
+    // 置灰反而把原因一起藏了（玩家只会以为按钮坏了）。
+    // 当前是哪一种命令用字色标出（选中=金色）：不重画底色，免得为一颗键的状态把整块 Graphics 再描一遍
+    this.toggleLabel.string = '集结'
+    this.toggleLabel.color = view.mode === 'RALLY' ? COLOR_GOLD : COLOR_TEXT
+    this.scoutLabel.string = '侦察'
+    this.scoutLabel.color = view.mode === 'SCOUT' ? COLOR_GOLD : COLOR_TEXT
     this.confirmLabel.color = view.submitting ? COLOR_DIM : COLOR_MASK
     this.confirmNode.active = !view.submitting
   }
@@ -340,15 +353,16 @@ export class MarchComposeOverlay {
     return node
   }
 
-  private createButton(name: string, text: string, x: number, y: number, background: Color,
+  private createButton(name: string, text: string, x: number, y: number, width: number,
+    background: Color,
     foreground: Color, onTap: () => void): { node: Node; label: Label } {
     const node = new Node(name)
     this.node.addChild(node)
     node.setPosition(new Vec3(x, y, 0))
-    node.addComponent(UITransform).setContentSize(new Size(180, 40))
+    node.addComponent(UITransform).setContentSize(new Size(width, 40))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = background
-    graphics.roundRect(-90, -20, 180, 40, 8)
+    graphics.roundRect(-width / 2, -20, width, 40, 8)
     graphics.fill()
     const label = this.childLabel(node, 0, 0, 19, foreground)
     label.string = text

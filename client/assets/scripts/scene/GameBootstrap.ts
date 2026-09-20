@@ -1406,6 +1406,8 @@ export class GameBootstrap extends Component {
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
       // 出征 / 发起集结 的切换（B26 S12）：编成与目标都不变，只换命令种类
     this.marchCompose.onToggleMode = () => { void this.root?.toggleComposeRally() }
+      // 出征 / 侦察 也是换命令种类（B26 S18）：同一份兵、同一个目标
+    this.marchCompose.onScout = () => { void this.root?.toggleComposeScout() }
       // 换召集范围 / 调那两个数（B26 S14）：都只改这一屏，一条请求都不发
     this.marchCompose.onPickScope = scope => this.root?.setComposeRallyScope(scope)
     this.marchCompose.onAdjustNumber = (field, direction) =>

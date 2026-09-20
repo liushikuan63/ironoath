@@ -152,10 +152,10 @@ export interface MarchComposeView {
   /** 正在提交（面板据此禁用确认键，防双击发两份） */
   readonly submitting: boolean
   /**
-   * 这一份编成是要**发起集结**还是普通出征（B26 S12）。省略等于 MARCH：
-   * 「再次出征」那几条提示走的是同一个面板，它们永远不出集结，就不该各自补一遍字段。
+   * 这一份编成是要**发起集结**、**派侦察**还是普通出征（B26 S12 / B26 S18）。省略等于 MARCH：
+   * 「再次出征」那几条提示走的是同一个面板，它们永远不出集结也不派侦察，就不该各自补一遍字段。
    */
-  readonly mode?: 'MARCH' | 'RALLY'
+  readonly mode?: 'MARCH' | 'RALLY' | 'SCOUT'
   /** 确认键上的字（出征 / 发起集结）。面板不自己翻，免得两处写两份 */
   readonly submitLabel?: string
   /** 不能发起集结时那句原因（读不到权限时**不为它**置灰：那是"暂时不知道"，不是"你不行"） */
@@ -437,6 +437,8 @@ export class AppRoot {
   private composeRallyId: string | null = null
   /** 编成面板当前是"发起小队集结"还是"出征"（B26 S12）。换目标就回到出征 */
   private composeRally = false
+  /** 这一份编成是派去侦察的（B26 S18）。与集结互斥：一条命令只有一个种类 */
+  private composeScout = false
   /** 集结发给哪一层（B26 S14）。每次进集结态都从小队层起步：那是玩家已经点过的那条路 */
   private composeRallyScope: RallyScope = 'SQUAD'
   /**
@@ -3003,6 +3005,7 @@ export class AppRoot {
     }
     this.composeTarget = { id: brief.id, name: brief.name, x: brief.coord.x, y: brief.coord.y }
     this.composeRally = false
+    this.composeScout = false
     this.composeRallyScope = 'SQUAD'
     this.rallyForm = null
     this.composePicks = {}
@@ -3034,6 +3037,9 @@ export class AppRoot {
       }
     }
     this.composeRally = !this.composeRally
+    if (this.composeRally) {
+      this.composeScout = false
+    }
     if (!this.composeRally) {
       // 切回出征：层级与那两个数一起收掉，下次进集结态从小队层起步
       this.composeRallyScope = 'SQUAD'
@@ -3098,6 +3104,57 @@ export class AppRoot {
    */
   private rallyBlockedReason(): string | null {
     return rallySwitchBlocked(this.rallyPolicyOf('SQUAD'))
+  }
+
+  /**
+   * 在出征与派侦察之间切（B26 S18）。
+   *
+   * <p>落点与集结同一条理由：同一份兵、同一个目标，换的只是命令种类 —— `ScoutReq.units`
+   * 要的就是玩家正在编的这一队，另开一屏只会让他再编一遍。
+   * 这里不判"能不能侦察"（体力、目标合法性都在服务端），点下去由服务端裁决并回一句人话。
+   */
+  toggleComposeScout(): void {
+    if (this.composeTarget === null) {
+      return
+    }
+    this.composeScout = !this.composeScout
+    if (this.composeScout) {
+      this.composeRally = false
+      this.composeRallyScope = 'SQUAD'
+      this.rallyForm = null
+    }
+    this.composeNotice = null
+    this.deliverCompose()
+  }
+
+  /**
+   * 派侦察（B26 S18）。交出去的仍是这一份编成 —— 侦察队会被打，打光了就是打光了，
+   * 所以"随手派个侦察"在数值上和派一支小队出去是一回事，不能当成免费的看一眼。
+   */
+  private async confirmScout(target: { x: number, y: number, name: string },
+                             units: readonly { unitId: string, count: number }[]): Promise<void> {
+    this.track(TRACK_EVENTS.scoutSend, {
+      troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
+    })
+    this.composeSubmitting = true
+    this.composeNotice = null
+    this.deliverCompose()
+    const outcome = await this.api.worldScout({
+      toX: target.x, toY: target.y, units: units.map(unit => ({ ...unit })),
+    })
+    this.composeSubmitting = false
+    if (outcome.kind === 'ok') {
+      this.composeScout = false
+      this.composeNotice = `侦察队已出发：${target.name}`
+      this.deliverCompose()
+      void this.refresh('army')
+      return
+    }
+    this.composeNotice = outcome.kind === 'biz'
+      ? (outcome.detail ?? outcome.msg)
+      : AppRoot.reason(outcome)
+    this.say('targets', outcome)
+    this.deliverCompose()
   }
 
   /**
@@ -3166,6 +3223,7 @@ export class AppRoot {
     this.composeSubmitting = false
     if (outcome.kind === 'ok') {
       this.composeRally = false
+      this.composeScout = false
       this.composeRallyScope = 'SQUAD'
       this.rallyForm = null
       this.composeTarget = null
@@ -3195,6 +3253,7 @@ export class AppRoot {
   cancelMarchCompose(): void {
     this.composeTarget = null
     this.composeRally = false
+    this.composeScout = false
     this.composeRallyScope = 'SQUAD'
     this.rallyForm = null
     this.composePicks = {}
@@ -3224,6 +3283,10 @@ export class AppRoot {
     // 否则还是普通出征。两条路的入参形状一样（unitId + count），但语义完全不同
     if (this.composeRallyId !== null) {
       await this.confirmRallyJoin(this.composeRallyId, units)
+      return
+    }
+    if (this.composeScout) {
+      await this.confirmScout(target, units)
       return
     }
     if (this.composeRally) {
@@ -3330,8 +3393,8 @@ export class AppRoot {
       compose,
       notice: this.composeNotice,
       submitting: this.composeSubmitting,
-      mode: this.composeRally ? 'RALLY' : 'MARCH',
-      submitLabel: this.composeRally ? '发起集结' : '出征',
+      mode: this.composeScout ? 'SCOUT' : this.composeRally ? 'RALLY' : 'MARCH',
+      submitLabel: this.composeScout ? '派侦察' : this.composeRally ? '发起集结' : '出征',
       rallyBlocked: this.rallyBlockedReason(),
       rallyScope: this.composeRallyScope,
       rallyScopes: this.composeRally ? this.rallyScopeRows() : [],

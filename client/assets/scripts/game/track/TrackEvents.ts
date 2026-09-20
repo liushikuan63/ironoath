@@ -273,6 +273,11 @@ export const TRACK_EVENTS = {
    * 上报会把一次出征记成多次。
    */
   marchSend: 'march_send',
+  /**
+   * 派出一支侦察队（B26 S18）。带承诺兵力：侦察队会被打，"随手看一眼"在数值上就是
+   * 派一支小队出去 —— 这条与 `march_send` 的比例看得出玩家是不是把侦察当成免费情报。
+   */
+  scoutSend: 'scout_send',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]
