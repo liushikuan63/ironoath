@@ -17,6 +17,18 @@ export function pageCount(total: number, perPage: number): number {
   return Math.ceil(total / Math.max(1, perPage))
 }
 
+/**
+ * 本页真正放得下几条**内容**。装不下时把最后一格让给页码行：内容行少一行，
+ * 但每一行都够得着。
+ *
+ * <p>为什么单列：这条算式原先在社交面板里抄了三遍、又在目标搜索面板里抄了两遍。
+ * 共几页、夹到哪一页、切哪一段必须用**同一个** perPage，抄一份就是留一个将来会分叉的口径。
+ */
+export function contentPerPage(total: number, capacity: number): number {
+  const safe = Math.max(1, capacity)
+  return Math.max(1, total > safe ? safe - 1 : safe)
+}
+
 /** 页码越界就夹回来：换页签、批完一条申请、科技少了一行之后，都不该停在空白页上。 */
 export function clampPage(page: number, total: number, perPage: number): number {
   const last = pageCount(total, perPage) - 1

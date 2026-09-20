@@ -19,6 +19,7 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildTargetRows, formatPower } from '../game/power/PowerPanel'
+import { clampPage, contentPerPage, pageCount, pageNotice, pageWindow } from '../game/ui/PanelPaging'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { TargetRow } from '../game/power/PowerPanel'
 import type { SearchTargetsResp } from '../net/generated/WorldProtocol'
@@ -44,8 +45,22 @@ const ROW_HEIGHT = 52
 const ROW_GAP = 6
 const HEADER_HEIGHT = 96
 const PADDING = 16
-/** 一屏最多画几行。超出的部分要靠 ScrollView（编辑器里补），占位期先截断显示并说明 */
+/** 一屏最多画几行。这是池的预热量与容量的上界，真实容量由 {@link rowCapacity} 按可视高现算 */
 const MAX_VISIBLE_ROWS = 8
+/** 控件条（半径 −/+、搜索、翻页）的高度。行区要从它的下沿之外开始，否则第一行盖住按钮 */
+const CONTROL_HEIGHT = 40
+/**
+ * 控件条中心到顶边的距离。**只在这里算一次**：原先按钮用
+ * `height/2 - PADDING - HEADER_HEIGHT + 8`、行区用 `height/2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT/2`，
+ * 两条独立算式在 960×540 下实测重叠 12px（截图里第一行把三颗按钮的下半截吃掉了）。
+ */
+const CONTROL_CENTER_FROM_TOP = PADDING + HEADER_HEIGHT - 8
+/** 第一行中心到顶边的距离 = 控件条下沿 + 一行间距 + 半行高 */
+const FIRST_ROW_FROM_TOP = CONTROL_CENTER_FROM_TOP + CONTROL_HEIGHT / 2 + ROW_GAP + ROW_HEIGHT / 2
+/** 行区下界 = 底部导航条上沿再留 8px（与 `ArmyPanelView`、`SocialPanelView` 同一个口径） */
+const NAV_BAR_HEIGHT = 52
+const NAV_BAR_BOTTOM = 8
+const NAV_SAFE_GAP = 8
 
 @ccclass('TargetSearchView')
 export class TargetSearchView extends Component {
@@ -69,6 +84,10 @@ export class TargetSearchView extends Component {
 
   private rowPool: NodePool | null = null
   private readonly drawnRows: Node[] = []
+  /** 当前页（0 起）。新搜索结果到达时归零，翻页只改它。 */
+  private page = 0
+  private prevPageLabel: Label | null = null
+  private nextPageLabel: Label | null = null
   private headerLabel: Label | null = null
   private bandLabel: Label | null = null
   private overflowLabel: Label | null = null
@@ -112,6 +131,8 @@ export class TargetSearchView extends Component {
     }
     this.response = resp
     this.rows = buildTargetRows(resp)
+    // 新一次搜索回到第一页：停在第 3 页等一份只有 1 个目标的结果，表现是"搜索没结果"
+    this.page = 0
     this.render()
   }
 
@@ -140,32 +161,44 @@ export class TargetSearchView extends Component {
     this.headerLabel = this.addLabel(this.node, 'Header', 0, height / 2 - PADDING - 24, COLOR_COPPER_GOLD, 22)
     this.bandLabel = this.addLabel(this.node, 'Band', 0, height / 2 - PADDING - 56, COLOR_TEXT_DIM, 16)
 
-    const controls: Array<{ name: string; text: string; dx: number; onTap: () => void }> = [
-      { name: 'RadiusDown', text: '半径 −', dx: -120, onTap: () => this.changeRadius(-1) },
-      { name: 'RadiusUp', text: '半径 +', dx: 0, onTap: () => this.changeRadius(1) },
-      { name: 'SearchButton', text: '搜索', dx: 120, onTap: () => this.requestSearch() },
+    /**
+     * 五颗按钮一条线排开：翻页在最外两侧，半径与搜索居中三颗。
+     * 面板半宽 330，留 8 边距后可用 ±322；总宽 476 + 四个 42 的间隙正好铺满，
+     * 再宽就出框 —— 所以这里不是随手挑的数。
+     */
+    const controls: Array<{ name: string; text: string; dx: number; w: number; size: number; onTap: () => void }> = [
+      { name: 'PrevPageButton', text: '上一页', dx: -278, w: 88, size: 16, onTap: () => this.changePage(-1) },
+      { name: 'RadiusDown', text: '半径 −', dx: -142, w: 100, size: 18, onTap: () => this.changeRadius(-1) },
+      { name: 'RadiusUp', text: '半径 +', dx: 0, w: 100, size: 18, onTap: () => this.changeRadius(1) },
+      { name: 'SearchButton', text: '搜索', dx: 142, w: 100, size: 18, onTap: () => this.requestSearch() },
+      { name: 'NextPageButton', text: '下一页', dx: 278, w: 88, size: 16, onTap: () => this.changePage(1) },
     ]
     for (const control of controls) {
       const node = new Node(control.name)
       node.layer = this.node.layer
       this.node.addChild(node)
-      node.setPosition(new Vec3(control.dx, height / 2 - PADDING - HEADER_HEIGHT + 8, 0))
-      node.addComponent(UITransform).setContentSize(new Size(110, 40))
+      node.setPosition(new Vec3(control.dx, height / 2 - CONTROL_CENTER_FROM_TOP, 0))
+      node.addComponent(UITransform).setContentSize(new Size(control.w, CONTROL_HEIGHT))
       const graphics = node.addComponent(Graphics)
       graphics.fillColor = COLOR_PANEL
       graphics.strokeColor = COLOR_COPPER_GOLD
       graphics.lineWidth = 2
-      graphics.roundRect(-55, -20, 110, 40, 6)
+      graphics.roundRect(-control.w / 2, -CONTROL_HEIGHT / 2, control.w, CONTROL_HEIGHT, 6)
       graphics.fill()
       graphics.stroke()
       node.on('touch-start', (_event: EventTouch) => control.onTap(), this)
-      const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 18)
+      const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, control.size)
       caption.string = control.text
+      if (control.name === 'PrevPageButton') {
+        this.prevPageLabel = caption
+      }
+      if (control.name === 'NextPageButton') {
+        this.nextPageLabel = caption
+      }
     }
 
-    this.overflowLabel = this.addLabel(this.node, 'Overflow', 0,
-      height / 2 - PADDING - HEADER_HEIGHT - MAX_VISIBLE_ROWS * (ROW_HEIGHT + ROW_GAP) - 12,
-      COLOR_TEXT_DIM, 14)
+    // 位置每次 render 现算（它要贴着本页最后一行的下沿，页码变了它就变了）
+    this.overflowLabel = this.addLabel(this.node, 'Overflow', 0, 0, COLOR_TEXT_DIM, 14)
   }
 
   private createRow(): Node {
@@ -223,18 +256,25 @@ export class TargetSearchView extends Component {
     }
 
     const size = view.getVisibleSize()
-    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     const pool = this.rowPool
     if (pool === null) {
       return
     }
 
     // 先把上一帧的行全部归还，再按新数据取：列表长度每次都可能变，
-    // 逐个 diff 的收益抵不过它的复杂度，而行数被 MAX_VISIBLE_ROWS 封顶
+    // 逐个 diff 的收益抵不过它的复杂度，而行数被可视高封顶
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
 
-    const visible = this.rows.slice(0, MAX_VISIBLE_ROWS)
+    const total = this.rows.length
+    const capacity = this.rowCapacity()
+    const perPage = contentPerPage(total, capacity)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slot = pageWindow(total, this.page, perPage)
+    const visible = this.rows.slice(slot.start, slot.end)
+
+    const topY = size.height / 2 - FIRST_ROW_FROM_TOP
     visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
@@ -243,9 +283,40 @@ export class TargetSearchView extends Component {
     })
 
     if (this.overflowLabel !== null) {
-      const hidden = this.rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice('个目标', hidden)
+      // 贴着本页最后一行的下沿，而不是按"最多八行"算：写死八行时这行字在 960×540
+      // 下落在 y=-318，屏幕下边界是 -270，玩家从来没见过它
+      this.overflowLabel.node.setPosition(
+        new Vec3(0, topY - visible.length * (ROW_HEIGHT + ROW_GAP), 0),
+      )
+      this.overflowLabel.string = pages > 1
+        ? `${pageNotice(this.page, pages)} · 共 ${total} 个`
+        : truncatedNotice('个目标', total - visible.length)
     }
+    this.paintPageButtons(pages)
+  }
+
+  /** 不可翻的那一侧按灰，别让玩家点了没反应。 */
+  private paintPageButtons(pages: number): void {
+    if (this.prevPageLabel !== null) {
+      const usable = pages > 1 && this.page > 0
+      this.prevPageLabel.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
+    if (this.nextPageLabel !== null) {
+      const usable = pages > 1 && this.page < pages - 1
+      this.nextPageLabel.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
+  }
+
+  /**
+   * 本页画得下几行。**按可视高现算，不写死**：写死 8 行时第 6 行起就压到底部导航条上
+   * （本仓库在军队页、编队弹层、社交面板各踩过一次，同一条教训）。
+   */
+  private rowCapacity(): number {
+    const size = view.getVisibleSize()
+    const firstRowBottom = size.height / 2 - FIRST_ROW_FROM_TOP - ROW_HEIGHT / 2
+    const bottom = -size.height / 2 + NAV_BAR_BOTTOM + NAV_BAR_HEIGHT + NAV_SAFE_GAP
+    const room = firstRowBottom - bottom
+    return Math.max(1, Math.min(MAX_VISIBLE_ROWS, Math.floor(room / (ROW_HEIGHT + ROW_GAP)) + 1))
   }
 
   private renderRow(node: Node, row: TargetRow): void {
@@ -304,6 +375,15 @@ export class TargetSearchView extends Component {
 
   private requestSearch(): void {
     this.onSearchRequested?.(this.radius)
+  }
+
+  private changePage(direction: number): void {
+    if (this.response === null) {
+      return
+    }
+    const capacity = this.rowCapacity()
+    this.page = clampPage(this.page + direction, this.rows.length, contentPerPage(this.rows.length, capacity))
+    this.render()
   }
 }
 

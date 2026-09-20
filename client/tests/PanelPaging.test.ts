@@ -8,7 +8,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { clampPage, pageNotice, pageCount, pageWindow } from '../assets/scripts/game/ui/PanelPaging'
+import { clampPage, contentPerPage, pageNotice, pageCount, pageWindow } from '../assets/scripts/game/ui/PanelPaging'
 
 test('空列表算 1 页：0 页会让页码显示成 1/0 并让"上一页"除零', () => {
   assert.equal(pageCount(0, 5), 1)
@@ -38,4 +38,22 @@ test('区间是半开的、且不越界：直接喂给 slice 就能用', () => {
 test('页码那句话从 1 开始数：玩家不数 0', () => {
   assert.equal(pageNotice(0, 3), '第 1/3 页')
   assert.equal(pageNotice(2, 3), '第 3/3 页')
+})
+
+test('装得下时不必让格：一行都不该被页码行吃掉', () => {
+  assert.equal(contentPerPage(0, 6), 6)
+  assert.equal(contentPerPage(6, 6), 6, '正好装满也还是一页')
+  assert.equal(contentPerPage(7, 6), 5, '多一条就把最后一格让给页码行')
+})
+
+test('容量退化到 1 时不再往下减：减成 0 会让 pageCount 除零、翻页死循环', () => {
+  assert.equal(contentPerPage(9, 1), 1)
+  assert.equal(contentPerPage(9, 0), 1, '可视高算出 0 也是 1，不许出现 0 行一页')
+  assert.equal(contentPerPage(9, -3), 1)
+})
+
+test('让出来的那一格确实把内容搬到了第二页：这是"每一行都够得着"的判据', () => {
+  const perPage = contentPerPage(7, 6)
+  assert.equal(pageCount(7, perPage), 2)
+  assert.deepEqual(pageWindow(7, 1, perPage), { start: 5, end: 7 })
 })

@@ -30,7 +30,7 @@ import type { RoleChoice } from '../game/social/AllianceRoles'
 import type { ApplicationView } from '../game/social/AllianceApplications'
 import type { DiscoveryView } from '../game/social/AllianceDiscovery'
 import type { SquadListView } from '../game/social/SquadDiscovery'
-import { clampPage, pageNotice, pageCount, pageWindow } from '../game/ui/PanelPaging'
+import { clampPage, contentPerPage, pageNotice, pageCount, pageWindow } from '../game/ui/PanelPaging'
 import type { ExitAction, ExitEntry, ExitKey, ExitScope } from '../game/social/SocialExit'
 import type {
   AllianceSection, EventRow, HelpRow, SocialMemberRow, SocialPanelView as SocialData,
@@ -875,9 +875,12 @@ export class SocialPanelView extends Component {
     // 于是"功能看不见"换了件衣服回来（收口清单 #307 的科技目录就是这么被整段截到屏外的）。
     // 现在改成真分页：那一格留给翻页行（复用池化行与它的两颗按钮，不动任何布局），
     // 所以内容行少一行、但每一行都够得着。
-    const pages = pageCount(drafts.length, Math.max(1, limit - (drafts.length > limit ? 1 : 0)))
-    this.page = clampPage(this.page, drafts.length, Math.max(1, limit - (drafts.length > limit ? 1 : 0)))
-    const sliceWindow = pageWindow(drafts.length, this.page, Math.max(1, limit - (drafts.length > limit ? 1 : 0)))
+    // 三处必须用同一个 perPage，原先各抄一遍 `Math.max(1, limit - (...))`：
+    // 抄漏一处就是"共几页"与"切哪一段"对不上，翻页会翻出空白页
+    const perPage = contentPerPage(drafts.length, limit)
+    const pages = pageCount(drafts.length, perPage)
+    this.page = clampPage(this.page, drafts.length, perPage)
+    const sliceWindow = pageWindow(drafts.length, this.page, perPage)
     const shown = drafts.slice(sliceWindow.start, sliceWindow.end)
     if (pages > 1) {
       shown.push({
