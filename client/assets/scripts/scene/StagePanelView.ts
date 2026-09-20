@@ -50,6 +50,16 @@ const HEADER_HEIGHT = 72
 const PADDING = 16
 /** 一屏最多画几行。超出的要靠 ScrollView（编辑器里补），占位期截断显示并说明 */
 const MAX_VISIBLE_ROWS = 7
+/** 摘要出现时行区留给文字的右边界：再往右是星级与按钮那一列 */
+const ROW_TEXT_WIDTH = PANEL_WIDTH - PADDING * 2 - 150
+/** 结算摘要那块框的高度：它占掉底部，行区就要按剩下的空间收 */
+const SUMMARY_HEIGHT = 240
+/**
+ * 屏幕底部要给导航条让出的高度 = 8（下边距）+ 52（`PanelNav.BAR_HEIGHT`）+ 8（安全间隙）。
+ * 与 `ArmyPanelView` 里那个同名常量是同一次量出来的（设计分辨率 960×640，面板画的是整屏矩形，
+ * 越界的内容会被导航条盖住 —— "画了但玩家看不见"）。
+ */
+const BOTTOM_RESERVED = 68
 /**
  * 扫荡按钮的两个次数。上下界来自协议对 SweepReq.count 的约束（1~10，超过直接拒绝）：
  * 「1」是单次确认，「10」是上限一键。这不是游戏数值，是协议允许的输入范围的两个端点。
@@ -195,18 +205,24 @@ export class StagePanelView extends Component {
     const panel = new Node('SummaryPanel')
     panel.layer = this.node.layer
     this.node.addChild(panel)
-    panel.setPosition(new Vec3(0, -height / 2 + 150, 0))
-    panel.addComponent(UITransform).setContentSize(new Size(width - PADDING * 2, 240))
+    panel.setPosition(new Vec3(0, -height / 2 + BOTTOM_RESERVED + SUMMARY_HEIGHT / 2, 0))
+    panel.addComponent(UITransform).setContentSize(new Size(width - PADDING * 2, SUMMARY_HEIGHT))
     const graphics = panel.addComponent(Graphics)
     graphics.fillColor = COLOR_PANEL
     graphics.strokeColor = COLOR_COPPER_GOLD
     graphics.lineWidth = 2
-    graphics.roundRect(-(width - PADDING * 2) / 2, -120, width - PADDING * 2, 240, 8)
+    graphics.roundRect(-(width - PADDING * 2) / 2, -SUMMARY_HEIGHT / 2,
+      width - PADDING * 2, SUMMARY_HEIGHT, 8)
     graphics.fill()
     graphics.stroke()
     this.summaryPanel = panel
 
     this.summaryLabel = this.addLabel(panel, 'SummaryText', 0, 0, COLOR_TEXT, 17)
+    // SHRINK 是按盒子排的，而 `addLabel` 挂的 UITransform 是默认的 100×100 —— 这段摘要是
+    // 多行文本（结算 / 体力 / 差额 / 奖励 / 损失），100 宽会把每一行再挤成两三行。
+    // 盒子按摘要面板的内框给，与军队/背包/战报那三处「标签没盒子」同族（#316、#319、#320）。
+    this.summaryLabel.node.getComponent(UITransform)?.setContentSize(
+      new Size(width - PADDING * 4, SUMMARY_HEIGHT - PADDING * 2))
     this.summaryLabel.horizontalAlign = Label.HorizontalAlign.LEFT
     this.summaryLabel.verticalAlign = Label.VerticalAlign.CENTER
     this.summaryLabel.overflow = Label.Overflow.SHRINK
@@ -228,6 +244,9 @@ export class StagePanelView extends Component {
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     const extra = this.addLabel(node, 'Extra', -PANEL_WIDTH / 2 + PADDING, -24, COLOR_WARNING, 13)
     extra.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.sizeLeft(title, 24)
+    this.sizeLeft(detail, 20)
+    this.sizeLeft(extra, 18)
     const stars = this.addLabel(node, 'Stars', PANEL_WIDTH / 2 - 96, 16, COLOR_STAR, 20)
     stars.horizontalAlign = Label.HorizontalAlign.RIGHT
 
@@ -255,6 +274,21 @@ export class StagePanelView extends Component {
       this.buttonKinds.set(buttonNode, button.kind)
     }
     return node
+  }
+
+  /**
+   * 左对齐的行标签必须自己有盒子：`addLabel` 挂的 UITransform 是默认 100×100 且锚点在中心，
+   * 于是文字的起点跑到行的左边界外面 —— 实测标题「Chapter_01 · 第 1 关」的开头被屏幕裁掉。
+   * 与军队 / 背包 / 战报 / 编成弹层那几处「标签没盒子」同族（#316、#319、#320、#321）。
+   */
+  private sizeLeft(label: Label, height: number): void {
+    const transform = label.node.getComponent(UITransform)
+    if (transform === null) {
+      return
+    }
+    transform.setAnchorPoint(0, 0.5)
+    transform.setContentSize(new Size(ROW_TEXT_WIDTH, height))
+    label.overflow = Label.Overflow.SHRINK
   }
 
   private addLabel(parent: Node, name: string, x: number, y: number, color: Color, fontSize: number): Label {
@@ -291,7 +325,13 @@ export class StagePanelView extends Component {
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
 
-    const visible = list.rows.slice(0, MAX_VISIBLE_ROWS)
+    let capacity = this.rowCapacity(topY)
+    // 有截断就要把最后一格让给"另有 N 关未显示"：通知压在摘要框上等于没写，
+    // 而玩家会把"画出来的这两关"读成"关卡只有这两关"
+    if (list.rows.length > capacity) {
+      capacity = Math.max(1, capacity - 1)
+    }
+    const visible = list.rows.slice(0, capacity)
     visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
@@ -302,7 +342,27 @@ export class StagePanelView extends Component {
     if (this.overflowLabel !== null) {
       const hidden = list.rows.length - visible.length
       this.overflowLabel.string = truncatedNotice('关', hidden)
+      // 通知跟着行区最后一行走：容量是按摘要与窗口高度算出来的，钉在「7 行下面」
+      // 就会飘到摘要框里 —— 玩家看到的是"关卡只有这两关"，而实际是被截断的 48 关
+      this.overflowLabel.node.setPosition(new Vec3(0,
+        topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 14, 0))
     }
+  }
+
+  /**
+   * 行区能画几行 —— 按几何算，不写死数字：设计高度会随窗口变，写死的行数在 640 高下
+   * 会把最后几行推到导航条底下（画了但玩家看不见），在 900 高下又白留一截空位。
+   * 下界取「导航条上沿」与「摘要框上沿（摘要显示时）」里更高的那个。
+   */
+  private rowCapacity(topY: number): number {
+    const navTop = -view.getVisibleSize().height / 2 + BOTTOM_RESERVED
+    let floor = navTop
+    const panel = this.summaryPanel
+    if (panel !== null && panel.active) {
+      floor = Math.max(navTop, panel.position.y + SUMMARY_HEIGHT / 2 + ROW_GAP)
+    }
+    const fit = (topY - ROW_HEIGHT / 2 - floor) / (ROW_HEIGHT + ROW_GAP) + 1
+    return Math.max(1, Math.min(MAX_VISIBLE_ROWS, Math.floor(fit)))
   }
 
   private renderRow(node: Node, row: StageRow): void {
@@ -392,11 +452,15 @@ export class StagePanelView extends Component {
     this.summaryLabel.string = lines.join('\n')
     this.summaryLabel.color = color
     this.summaryPanel.active = true
+    // 摘要占掉底部那一块，行区要立刻收进去 —— 不重排的话最后三行会压在摘要上，
+    // 两层半透明文字叠在一起（2026-09-21 运行截图抓到的就是这一坨）
+    this.render()
   }
 
   private hideSummary(): void {
     if (this.summaryPanel !== null) {
       this.summaryPanel.active = false
+      this.render()
     }
   }
 }
