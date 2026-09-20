@@ -11,9 +11,11 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
+import com.ironoath.common.time.TimeService;
 import com.ironoath.web.dto.generated.AllianceRallyReq;
 import com.ironoath.web.dto.generated.RallyJoinReq;
 import com.ironoath.web.dto.generated.RallyListResp;
+import com.ironoath.web.dto.generated.RallyPolicyResp;
 import com.ironoath.web.dto.generated.RallyResp;
 import com.ironoath.web.dto.generated.SquadRallyReq;
 import com.ironoath.web.service.SocialAppService;
@@ -35,9 +37,23 @@ import com.ironoath.web.service.SocialAppService;
 public class RallyController {
 
     private final SocialAppService social;
+    private final TimeService timeService;
 
-    public RallyController(SocialAppService social) {
+    public RallyController(SocialAppService social, TimeService timeService) {
         this.social = social;
+        this.timeService = timeService;
+    }
+
+    /**
+     * 发起集结的政策（B26 S13）：人数与准备时长的上下界、此刻能不能发起。
+     *
+     * <p>读口与两条写口用的是同一份 role_permission 与同一句夹取式子 —— 不一致时
+     * 滑条上亮着的数字就是假的（写口会悄悄把它夹掉，玩家以为自己设过了）。
+     */
+    @GetMapping("/policy")
+    public Result<RallyPolicyResp> policy(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(social.rallyPolicy(playerId, timeService.serverNow()));
     }
 
     /** 发起小队集结。权限位 perm_squad_start_rally（队长与副队长，普通队员不行）。 */

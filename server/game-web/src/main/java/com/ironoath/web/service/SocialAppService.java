@@ -84,6 +84,8 @@ import com.ironoath.web.dto.generated.SquadRallyReq;
 import com.ironoath.web.dto.generated.SocialEventView;
 import com.ironoath.web.dto.generated.SocialSummaryResp;
 import com.ironoath.web.dto.generated.SquadCreateReq;
+import com.ironoath.web.dto.generated.RallyPolicyResp;
+import com.ironoath.web.dto.generated.RallyPolicyView;
 import com.ironoath.web.dto.generated.SquadDiscoveryView;
 import com.ironoath.web.dto.generated.SquadIdReq;
 import com.ironoath.web.dto.generated.SquadListResp;
@@ -2255,6 +2257,74 @@ public class SocialAppService {
             idempotency.release(req.requestId());
             throw e;
         }
+    }
+
+    /**
+     * GET /rally/policy（B26 S13）：小队与联盟两份集结政策一次给全。
+     *
+     * <p>存在的理由与 {@code /social/createPolicy} 同一条：联盟集结要收 {@code maxMembers}
+     * 与 {@code prepareMinutes} 两个数，而它们的上下界都在 global 表里。客户端不许抄表，
+     * 也不许自己挑默认值 —— 否则滑条显示 30 人、服务端悄悄夹成 4 人，玩家以为自己设过了。
+     *
+     * <p>{@code maxMembers} 给的是<b>此刻</b>的上限：取「配置上限」与「我这个组织实际人数」
+     * 的小值 —— 与 {@link #allianceRally} 里那句夹取同一个式子。写口夹什么，读口就说什么，
+     * 两条不一致时界面上亮着的数字就是假的。
+     */
+    public RallyPolicyResp rallyPolicy(String playerId, long now) {
+        return new RallyPolicyResp(squadPolicy(playerId, now), alliancePolicy(playerId), now);
+    }
+
+    /** 小队那一层的政策。组织不在、职位不够、人数不够，都在这一个地方说成一句人话。 */
+    private RallyPolicyView squadPolicy(String playerId, long now) {
+        Rally.Rules rulesOf = this.rules.squadRallyRules();
+        int cap = this.rules.rallyMaxSize(Rally.Scope.SQUAD);
+        Squad squad = store.squadOf(playerId).orElse(null);
+        if (squad == null) {
+            return policyView(rulesOf, cap, false, "你还没有小队，先加入或建一支再发起集结");
+        }
+        if (!mayStartRally(PermissionMatrix.Scope.SQUAD, String.valueOf(squad.roleOf(playerId)))) {
+            return policyView(rulesOf, cap, false, "你当前的职位不能发起集结");
+        }
+        int room = Math.min(cap, squad.memberCount());
+        if (room < rulesOf.minMembers()) {
+            return policyView(rulesOf, cap, false,
+                    "小队现在只有 " + squad.memberCount() + " 个人，凑不满一次集结的最少人数");
+        }
+        return policyView(rulesOf, room, true, null);
+    }
+
+    /** 联盟那一层。口径与小队完全一致：先看在不在，再看职位，最后看人数。 */
+    private RallyPolicyView alliancePolicy(String playerId) {
+        Rally.Rules rulesOf = this.rules.allianceRallyRules();
+        int cap = this.rules.rallyMaxSize(Rally.Scope.ALLIANCE);
+        Alliance alliance = store.allianceOf(playerId).orElse(null);
+        if (alliance == null) {
+            return policyView(rulesOf, cap, false, "你还没有联盟，先申请加入或建一个再发起集结");
+        }
+        if (!mayStartRally(PermissionMatrix.Scope.ALLIANCE, String.valueOf(alliance.roleOf(playerId)))) {
+            return policyView(rulesOf, cap, false, "你当前的职位不能发起集结");
+        }
+        int room = Math.min(cap, alliance.memberIds().size());
+        if (room < rulesOf.minMembers()) {
+            return policyView(rulesOf, cap, false,
+                    "联盟现在只有 " + alliance.memberIds().size() + " 个人，凑不满一次集结的最少人数");
+        }
+        return policyView(rulesOf, room, true, null);
+    }
+
+    /** 权限位查表，与写口用的是同一份 role_permission（B10 验收 4：新增角色只改配置）。 */
+    private boolean mayStartRally(PermissionMatrix.Scope scope, String role) {
+        PermissionMatrix.Tier tier = tierOf(scope, role);
+        return tier != null && rules.permissions().allows(scope, tier, "START_RALLY");
+    }
+
+    private static RallyPolicyView policyView(Rally.Rules rulesOf, int maxMembers, boolean canStart,
+                                             String reason) {
+        long minMinutes = rulesOf.prepareMinMillis() / 60_000L;
+        long maxMinutes = rulesOf.prepareMaxMillis() / 60_000L;
+        // 起始值给最长那一档：集结成败取决于等人，配置的最大窗口就是设计者认定的「值得等」的上限
+        return new RallyPolicyView(rulesOf.minMembers(), Math.max(maxMembers, rulesOf.minMembers()),
+                (int) minMinutes, (int) maxMinutes, (int) maxMinutes, canStart, reason);
     }
 
     /** 发起联盟集结。人数上限与准备时长都按配置夹住，越界不拒绝（理由见 Rally.initiate 的注释）。 */

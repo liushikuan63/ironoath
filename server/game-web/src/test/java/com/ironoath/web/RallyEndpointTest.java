@@ -267,6 +267,79 @@ class RallyEndpointTest {
     }
 
     /** 一个两人小队：队长 + 一名队员（都 10 级城、解除新手保护、各有一支军队）。 */
+    // ---------- B26 S13：发起集结的政策读口（GET /rally/policy） ----------
+
+    @Test
+    @DisplayName("谁都不在的时候两份政策都说不行，而且理由是人话：不出现权限码与字段名")
+    void policyExplainsWhyNobodyCanStart() throws Exception {
+        String lonely = newPlayer(10);
+        JsonNode policy = get200("/rally/policy", lonely);
+
+        assertThat(policy.path("squad").path("canStart").asBoolean()).isFalse();
+        assertThat(policy.path("alliance").path("canStart").asBoolean()).isFalse();
+        String reasons = policy.path("squad").path("reason").asText()
+                + " / " + policy.path("alliance").path("reason").asText();
+        assertThat(reasons).as("两句都得有内容").doesNotContain("null");
+        assertThat(reasons).as("权限码与字段名不许上屏（同族见 #268 / #288）")
+                .doesNotContain("START_RALLY").doesNotContain("canStart").doesNotContain("maxMembers");
+    }
+
+    @Test
+    @DisplayName("两个人的小队：canStart 为真，且 maxMembers 是「配置上限」与「实际人数」的小值")
+    void policyCapsMembersAtTheRealHeadcount() throws Exception {
+        Squad squad = twoMemberSquad();
+        JsonNode view = get200("/rally/policy", squad.leader).path("squad");
+
+        assertThat(view.path("canStart").asBoolean())
+                .as("两个人刚好够最低档").isTrue();
+        assertThat(view.path("minMembers").asInt()).isEqualTo(2);
+        assertThat(view.path("maxMembers").asInt())
+                .as("配置是 5，但这个小队只有 2 个人 —— 给 5 就是让滑条显示一个必然被夹掉的上限")
+                .isEqualTo(2);
+        assertThat(view.path("minPrepareMinutes").asInt())
+                .as("时长区间来自 global.RALLY_PREPARE_*").isEqualTo(10);
+        assertThat(view.path("maxPrepareMinutes").asInt()).isEqualTo(30);
+        assertThat(view.path("defaultPrepareMinutes").asInt())
+                .as("起始值由服务端给（最长那一档），客户端不自己挑数").isEqualTo(30);
+
+        giveTroops(squad.leader, 500L);
+        JsonNode rally = post200("/rally/squad", squad.leader,
+                new SquadRallyReq(newRequestId(), coordOf(squad.leader),
+                        SocialTargetType.PLAYER_CITY, List.of(new RallyTroop(UNIT, 300L)),
+                        java.util.List.of()));
+        assertThat(rally.path("rally").path("maxMembers").asInt())
+                .as("按读口给的数发起，写口就不会再把它夹掉（读口与写口同一条式子）")
+                .isEqualTo(view.path("maxMembers").asInt());
+    }
+
+    @Test
+    @DisplayName("一个人的小队：人数凑不满最低档，政策说不行并给出那句人数原因（而不是让人去调滑条）")
+    void policyRefusesASquadTooSmallToRally() throws Exception {
+        String leader = newPlayer(10);
+        post200("/squad/create", leader, new SquadCreateReq(newRequestId(), "光杆队"));
+        JsonNode view = get200("/rally/policy", leader).path("squad");
+
+        assertThat(view.path("canStart").asBoolean()).isFalse();
+        assertThat(view.path("reason").asText()).contains("1 个人");
+    }
+
+    @Test
+    @DisplayName("普通队员看到的 canStart 是 false：读口与写口同一条权限门，不是只有发起时才被拒")
+    void policyGatesTheMemberTheSameWayTheWritePathDoes() throws Exception {
+        Squad squad = twoMemberSquad();
+        JsonNode view = get200("/rally/policy", squad.mate).path("squad");
+
+        assertThat(view.path("canStart").asBoolean()).isFalse();
+        assertThat(view.path("reason").asText()).contains("职位");
+        giveTroops(squad.mate, 500L);
+        JsonNode rejected = postRaw("/rally/squad", squad.mate,
+                new SquadRallyReq(newRequestId(), coordOf(squad.mate),
+                        SocialTargetType.PLAYER_CITY, List.of(new RallyTroop(UNIT, 100L)),
+                        java.util.List.of()));
+        assertThat(rejected.get("code").asInt())
+                .as("读口说不能，写口就真的会拒 —— 两边不一致时界面上那个数字是假的")
+                .isEqualTo(ErrorCode.SOCIAL_PERMISSION_DENIED.code());
+    }
     private Squad twoMemberSquad() throws Exception {
         String leader = newPlayer(10);
         String mate = newPlayer(10);
