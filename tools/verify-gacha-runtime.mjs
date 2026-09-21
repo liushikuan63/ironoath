@@ -26,7 +26,12 @@ import { startPreviewServer } from './lib/preview-server.mjs'
 const OUT = process.env.GACHA_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/gacha-verify')
 mkdirSync(OUT, { recursive: true })
 const PORT = Number(process.env.GACHA_PROBE_PORT ?? 8193)
-const BACKEND = process.env.GACHA_BACKEND ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.GACHA_BACKEND ?? (() => {
+  console.error('[gacha] 缺 GACHA_BACKEND：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const ARTIFACT = process.env.GACHA_ARTIFACT_ROOT ?? 'client/build/web-mobile'
 
 const STANDARD = 'gacha_pool_standard'
@@ -260,6 +265,9 @@ page.on('console', (message) => {
 // 从内城进招募：真人走的就是导航条那一格，所以这里也点它（不是 ?panel= 的调试出口）
 const url = new URL(`${preview.origin}/`)
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
+// 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+// 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+preview.assertRewritten()
 await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
 await page.waitForTimeout(2500)
 

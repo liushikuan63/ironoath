@@ -35,7 +35,12 @@ import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf8
 import { startPreviewServer } from './lib/preview-server.mjs'
 
 const ARTIFACT = path.resolve(process.env.SOCIAL_PERM_ARTIFACT_ROOT ?? 'client/build/web-mobile')
-const BACKEND = process.env.SOCIAL_PERM_BACKEND ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.SOCIAL_PERM_BACKEND ?? (() => {
+  console.error('[social-permission] 缺 SOCIAL_PERM_BACKEND：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.SOCIAL_PERM_PORT ?? 8197)
 const OUT = process.env.SOCIAL_PERM_OUT ?? path.resolve(process.cwd(), 'client/build/social-perm-verify')
 mkdirSync(OUT, { recursive: true })
@@ -423,6 +428,9 @@ console.log(`=== 社交权限门运行时验收：产物经 ${preview.origin}，
 
 // ============================ 相位 A：真后端、真账号 ============================
 await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
+// 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+// 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+preview.assertRewritten()
 await bootIn()
 const playerId = typeof boot?.playerId === 'string' ? boot.playerId : ''
 checkTrue(`A1 启动跑通且拿到 playerId（platform=${boot?.platform ?? '—'}）`,
