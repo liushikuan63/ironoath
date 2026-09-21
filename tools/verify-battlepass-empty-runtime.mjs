@@ -82,6 +82,9 @@ console.log(`  相位 A 读数：rows=${readA?.rows} header=${JSON.stringify(rea
 
 // 反空转：面板没画起来的话，下面那条双向不变量毫无意义（#347 就是这么把假绿抓出来的）
 check('相位 A：战令面板真的画起来了（header 非空）', (readA?.header ?? '') !== '', true)
+// 反向那一半：修悬空分隔符不能修成"永远不拼"。有档位时区间那串必须还在表头里。
+check('相位 A：有档位时表头仍带区间那串（不能把分隔符一律去掉）',
+  readA?.header?.startsWith('赛季战令 · ') ?? false, true)
 check('相位 A：零档位时那一格写「暂无档位」；有档位时不许写（双向一致，两个方向都能红）',
   (readA?.rows ?? -1) === 0 ? readA?.notice === '暂无档位' : readA?.notice !== '暂无档位', true)
 await pageA.screenshot({ path: path.join(OUT, 'battlepass-empty-or-rows.png') })
@@ -119,6 +122,12 @@ console.log(`  相位 B 读数：rows=${readB?.rows} header=${JSON.stringify(rea
 check('相位 B：夹具真的改写过读口（命中数 > 0；为 0 说明下面的零行是别的原因）', stubbed > 0, true)
 check('相位 B：面板真的画起来了（header 非空 —— 没画过则下面两条会静默判绿）',
   (readB?.header ?? '') !== '', true)
+// #349 目视抓到的缺陷：`BattlePassPanelView` 无条件拼 `赛季战令 · ${rangeText}`，而零档位时
+// rangeText 是空串 ⇒ 表头尾巴挂着一个没有内容的分隔符。两条一起钉：一条盯精确文案，
+// 一条盯"任何以分隔符结尾"的写法（换成别的空段也不会放过）。
+check('相位 B：零档位时表头就是「赛季战令」，不带悬空分隔符', readB?.header, '赛季战令')
+check('相位 B：表头不以分隔符结尾（盯的是形状，不只是这一句文案）',
+  /[·•]\s*$/.test(readB?.header ?? ''), false)
 check('相位 B：零档位时行数是 0', readB?.rows, 0)
 check('相位 B：那一格写「暂无档位」而不是一片空白', readB?.notice, '暂无档位')
 await pageB.screenshot({ path: path.join(OUT, 'battlepass-zero-tiers.png') })
