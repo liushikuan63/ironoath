@@ -398,11 +398,15 @@ async function main() {
   const openTap = await page.evaluate(() => window.__chat.tapRowAction('给你发来一条私信'))
   const openedTexts = await waitFor(list => list.some(text => text.includes(privateText)))
   verdict(openTap === 'ok' && openedTexts.some(text => text.includes(privateText)),
-    '点「打开」后拉到了那条私聊正文，且未读清零',
+    '点「打开」后拉到了那条私聊正文',
     `tap=${openTap} 私聊按钮=${openedTexts.filter(t => t.startsWith('私聊')).join('、')}`)
-  verdict(!openedTexts.some(text => text === '私聊（1）'),
+  // 未读数要等 `/social/ackEvents` 回写完才刷，和"正文出现在屏上"之间没有任何先后保证 ——
+  // 拿上一格的快照判这一格就是三次里翻红一次的那个竞态（#416）：判据必须自己轮询到状态。
+  // 轮询超时返回**最后一次读数**（不是返回"满足"），所以真不消账时这一格仍然红。
+  const clearedTexts = await waitFor(list => !list.some(text => text === '私聊（1）'))
+  verdict(!clearedTexts.some(text => text === '私聊（1）'),
     '打开会话后未读归零（走的是 /social/ackEvents 那本账）',
-    `私聊相关文本 → ${openedTexts.filter(t => t.startsWith('私聊')).join('、')}`)
+    `私聊相关文本 → ${clearedTexts.filter(t => t.startsWith('私聊')).join('、')}`)
 
   // ---- 5) 分享入口的客户端半边：同形消息长按钮，点它会去拉回放 ----
   // 真实分享要从回放页发起，而探针账号是全新号（没有兵力 ⇒ 打不了任何一关 ⇒ 拿不到战报；
