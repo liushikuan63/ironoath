@@ -48,6 +48,13 @@ public final class BuildingInstance {
      * 若整段都按新等级追溯，玩家就能靠「离线期间完成一次升级」白拿整个离线窗口的高等级产量。
      */
     private long lastFinishedAt;
+    /**
+     * 暂停时刻；0 表示当前没在暂停。
+     *
+     * <p>它存在的唯一理由是"暂停要真的停下来"：恢复时按 `now - pausedAt` 顺延 finishAt / startedAt，
+     * 把暂停的那段时间还给这栋楼（B03 §2）。不记这个时刻的话，暂停只是不显示倒计时，时钟照走。
+     */
+    private long pausedAt;
 
     public BuildingInstance(String instanceId, String configId, int level, int gridX, int gridY) {
         if (instanceId == null || instanceId.isBlank()) {
@@ -152,7 +159,9 @@ public final class BuildingInstance {
         if (totalMs <= 0L) {
             return com.ironoath.common.num.FixedPoint.ONE;
         }
-        long elapsedMs = Math.max(0L, now - upgradeStartedAt);
+        // 暂停期间用**暂停时刻**算已用时长：否则进度条会在暂停时自己往前爬（时钟还在走）。
+        long clock = status == BuildingStatus.PAUSED && pausedAt > 0L ? pausedAt : now;
+        long elapsedMs = Math.max(0L, clock - upgradeStartedAt);
         return com.ironoath.common.num.FixedPoint.div(
                 com.ironoath.common.num.FixedPoint.of(elapsedMs),
                 com.ironoath.common.num.FixedPoint.of(totalMs));
@@ -233,18 +242,38 @@ public final class BuildingInstance {
         helpCount = 0;
     }
 
-    void pause() {
+    /**
+     * 暂停（B03 §2："队列中可暂停 / 取消"）。
+     *
+     * <p><b>为什么要记 `pausedAt`</b>：单把状态翻成 PAUSED 只是"不显示倒计时"，**时钟还在走** ——
+     * 恢复时 `upgradeFinishAt` 早已过期，建筑会立刻完工，玩家暂停了个寂寞。
+     * 所以暂停要记下时刻，恢复时把 finishAt / startedAt 一起往后挪那一段（见 {@link #resume(long)}）。
+     */
+    void pause(long now) {
         if (status != BuildingStatus.UPGRADING) {
             throw new IllegalStateException("只有升级中的建筑能暂停，instanceId=" + instanceId);
         }
         status = BuildingStatus.PAUSED;
+        pausedAt = now;
     }
 
-    void resume() {
+    /** 恢复：把暂停的那段时间**还**给这栋楼（finishAt 与 startedAt 同步顺延，剩余时间不变）。 */
+    void resume(long now) {
         if (status != BuildingStatus.PAUSED) {
             throw new IllegalStateException("只有已暂停的建筑能恢复，instanceId=" + instanceId);
         }
+        if (pausedAt > 0L && upgradeFinishAt != null) {
+            long frozen = Math.max(0L, now - pausedAt);
+            upgradeFinishAt = upgradeFinishAt + frozen;
+            upgradeStartedAt = upgradeStartedAt + frozen;
+        }
+        pausedAt = 0L;
         status = BuildingStatus.UPGRADING;
+    }
+
+    /** 暂停时刻；0 表示当前没在暂停。 */
+    public long pausedAt() {
+        return pausedAt;
     }
 
     void moveTo(int newX, int newY, long now) {
@@ -257,6 +286,14 @@ public final class BuildingInstance {
     public void restore(int level, int gridX, int gridY, BuildingStatus status, Long upgradeFinishAt,
                         long upgradeStartedAt, long upgradeTotalSeconds, long upgradeOriginalSeconds,
                         int helpCount, long lastMovedAt, long lastFinishedAt) {
+        restore(level, gridX, gridY, status, upgradeFinishAt, upgradeStartedAt, upgradeTotalSeconds,
+                upgradeOriginalSeconds, helpCount, lastMovedAt, lastFinishedAt, 0L);
+    }
+
+    /** 供仓储反序列化写回（带暂停时刻的完整版本）。业务代码不要用。 */
+    public void restore(int level, int gridX, int gridY, BuildingStatus status, Long upgradeFinishAt,
+                        long upgradeStartedAt, long upgradeTotalSeconds, long upgradeOriginalSeconds,
+                        int helpCount, long lastMovedAt, long lastFinishedAt, long pausedAt) {
         this.level = level;
         this.gridX = gridX;
         this.gridY = gridY;
@@ -268,5 +305,6 @@ public final class BuildingInstance {
         this.helpCount = helpCount;
         this.lastMovedAt = lastMovedAt;
         this.lastFinishedAt = lastFinishedAt;
+        this.pausedAt = pausedAt;
     }
 }

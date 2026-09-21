@@ -51,7 +51,7 @@ public final class CityState {
     public record BuildingSnapshot(String instanceId, String configId, int level, int gridX, int gridY,
                                    BuildingStatus status, Long upgradeFinishAt, long upgradeStartedAt,
                                    long upgradeTotalSeconds, long upgradeOriginalSeconds,
-                                   int helpCount, long lastMovedAt, long lastFinishedAt) {
+                                   int helpCount, long lastMovedAt, long lastFinishedAt, long pausedAt) {
     }
 
     /**
@@ -76,7 +76,8 @@ public final class CityState {
         for (BuildingInstance b : buildings.values()) {
             out.add(new BuildingSnapshot(b.instanceId(), b.configId(), b.level(), b.gridX(), b.gridY(),
                     b.status(), b.upgradeFinishAt(), b.upgradeStartedAt(), b.upgradeTotalSeconds(),
-                    b.upgradeOriginalSeconds(), b.helpCount(), b.lastMovedAt(), b.lastFinishedAt()));
+                    b.upgradeOriginalSeconds(), b.helpCount(), b.lastMovedAt(), b.lastFinishedAt(),
+                    b.pausedAt()));
         }
         return new Snapshot(List.copyOf(out), extraQueues);
     }
@@ -98,7 +99,7 @@ public final class CityState {
                     b.level(), b.gridX(), b.gridY());
             instance.restore(b.level(), b.gridX(), b.gridY(), b.status(), b.upgradeFinishAt(),
                     b.upgradeStartedAt(), b.upgradeTotalSeconds(), b.upgradeOriginalSeconds(),
-                    b.helpCount(), b.lastMovedAt(), b.lastFinishedAt());
+                    b.helpCount(), b.lastMovedAt(), b.lastFinishedAt(), b.pausedAt());
             state.restoreBuilding(instance);
         }
         if (snapshot.extraQueues() > 0) {
@@ -446,12 +447,19 @@ public final class CityState {
         return refund;
     }
 
-    public void pause(String instanceId) {
-        building(instanceId).pause();
+    /**
+     * 暂停升级（B03 §2："队列中可暂停 / 取消"）。
+     *
+     * <p>收 `now` 是必须的：暂停要记下时刻，恢复时才会把这段时间还给这栋楼。
+     * 早先那版没有 `now`，于是"暂停"只是不显示倒计时 —— 时钟照走，恢复即完工。
+     */
+    public void pause(String instanceId, long now) {
+        building(instanceId).pause(now);
     }
 
-    public void resume(String instanceId) {
-        building(instanceId).resume();
+    /** 恢复升级：把暂停的那段时间还给这栋楼（剩余时间不变）。 */
+    public void resume(String instanceId, long now) {
+        building(instanceId).resume(now);
     }
 
     /**
