@@ -933,6 +933,58 @@ for (let i = 0; i < (footBefore?.boxes ?? []).length; i++) {
 }
 check('页脚四颗键两两不重叠（旧版三颗 180 宽摆 -140/0/140 会互压 40px）',
   JSON.stringify(footOverlap), '[]')
+
+// ---------- 军队表头那两行：医院与警告（#362 补的宽度守卫，判据要能守住它） ----------
+// 同一屏的 header 早就限过宽（`ArmyPanelView` 第 207 行的注释引着 #22x 教训），
+// 而紧挨着的 Hospital / Warning 两行没有限 —— 两行都是居中的、垂直间距只有 26px，
+// 长文案一旦换行就会互相压住，或顶出面板。这里量世界矩形，不按常数推算。
+const HEADER_ROWS = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('army')
+  if (!panel) return null
+  const size = window.cc.view.getVisibleSize()
+  const pick = (name) => {
+    let hit = null
+    const walk = (n) => { if (hit === null && n.name === name) hit = n; for (const c of n.children) walk(c) }
+    walk(panel)
+    if (hit === null) return null
+    const t = hit.getComponent('cc.UITransform')
+    const w = t.getBoundingBoxToWorld()
+    return { text: hit.getComponent('cc.Label')?.string ?? '',
+      l: w.x, r: w.x + w.width, b: w.y, t: w.y + w.height,
+      boxW: Math.round(t.width), overflowing: w.x < 0 || w.x + w.width > size.width }
+  }
+  const hospital = pick('Hospital')
+  const warning = pick('Warning')
+  const overlaps = hospital !== null && warning !== null
+    && hospital.l < warning.r && warning.l < hospital.r
+    && hospital.b < warning.t && warning.b < hospital.t
+  return {
+    found: hospital !== null && warning !== null,
+    // 守卫生效的判据是「两行被限成同一个宽」：没限时各自按文本自适应，宽度必然不同
+    // （2026-09-21 实测：医院行 280、警告行 418）。只判"宽度大于 100"是假判据 ——
+    // 自适应出来的宽度本来就大于 100，守卫缺失照样绿
+    boxesGuarded: hospital !== null && warning !== null
+      && hospital.boxW > 100 && warning.boxW > 100
+      && hospital.boxW === warning.boxW,
+    boxWidths: [hospital ? hospital.boxW : null, warning ? warning.boxW : null],
+    overlaps,
+    outside: [hospital, warning].filter((x) => x !== null && x.overflowing)
+      .map((x) => x.text.slice(0, 18)),
+  }
+})()`
+// ⚠ 必须用 `page2`：军队那一屏是第 691 行为它另开的一页（`?panel=army`），
+// 写成 `page` 会找不到 army 面板 ⇒ 判据在基线假红（本轮实测踩过，别当成产品缺陷）。
+const headerRows = await page2.evaluate(HEADER_ROWS)
+
+// 反空转前置：两行都得在树里（`addLabel` 建的节点名就是 Hospital / Warning），否则后面全是读空集合
+checkTrue('军队表头那两行都在（医院行与警告行）', headerRows?.found === true)
+checkTrue('两行被限成同一个宽度（守卫生效；没限时各自按文本自适应，宽度必然不同）',
+  headerRows?.boxesGuarded === true)
+  // ⚠ 这一族还差一条：两行的盒子实测各高 50px，而中心距只有 26px ⇒ 警告行换行时**必然压到医院行**
+  //   （2026-09-21 量出：医院 t=561/b=511，警告 t=535/b=485）。这条判据**故意没写**——
+  //   把缺陷断言成现状等于把它钉成规格（#356 同一处置）。修法与取证记在台账 #362 与队列冷启动。
+check('两行都不顶出屏幕宽度', JSON.stringify(headerRows?.outside ?? null), '[]')
 check('出征态下那颗命令键写「集结」（不再是\u300c改成集结\u300d这种带方向的措辞）',
   JSON.stringify(footBefore?.boxes?.map((b) => b.caption)),
   JSON.stringify(['取消', '侦察', '集结', '出征']))

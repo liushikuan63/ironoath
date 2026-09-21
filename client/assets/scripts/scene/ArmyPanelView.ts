@@ -208,6 +208,17 @@ export class ArmyPanelView extends Component {
     this.headerLabel.overflow = Label.Overflow.SHRINK
     this.hospitalLabel = this.addLabel(this.node, 'Hospital', 0, top - 48, COLOR_TEXT, 17)
     this.warningLabel = this.addLabel(this.node, 'Warning', 0, top - 74, COLOR_WARNING, 15)
+    // 同一条 #22x 教训：上面那颗 header 已经限了宽，这两行却漏了 —— 它们同样会带长文案
+    // （医院那行会拼「另有 N 项未显示」，警告那行是整句话），不限宽就顶出面板。
+    // ⚠ 限宽**不等于限高**：#362 实测这两行的盒子仍会被 Label 按文本重算成 50 高，
+    //   而两行中心距只有 26px ⇒ 警告行一换行就压到医院行。那条垂直重叠记台账 #362 未做①，
+    //   修它要连 `HEADER_HEIGHT` 一起改，不能只挪 y。
+    this.hospitalLabel.node.getComponent(UITransform)?.setContentSize(
+      new Size(PANEL_WIDTH - 2 * PADDING, 23))
+    this.hospitalLabel.overflow = Label.Overflow.SHRINK
+    this.warningLabel.node.getComponent(UITransform)?.setContentSize(
+      new Size(PANEL_WIDTH - 2 * PADDING, 21))
+    this.warningLabel.overflow = Label.Overflow.SHRINK
 
     // 兵种页签。20 个兵种（4 类型 × 5 阶级）一屏放不下，按类型分页
     const tabWidth = 76
