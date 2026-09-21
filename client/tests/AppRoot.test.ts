@@ -3641,6 +3641,22 @@ test('V02-S1：集结列表递下来时带上我的 id —— 「我参没参」
   assert.equal(h.lastRallies?.notice, null)
 })
 
+test('集结列表里已经没有这一支时点加入：不发请求，原因要写进列表那条说明', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.refresh('rallies')
+  const before = h.http.calls.length
+
+  // 真实竞态：列表拉回来之后、玩家点下去之前那一支正好结束了
+  await h.root.beginRallyCompose('rally-already-over')
+
+  assert.equal(h.http.calls.length, before, '列表里没有这一支，一个请求都不该多发')
+  assert.deepEqual(h.errors.at(-1), ['rallies', '这一支集结已经结束了'])
+  // console 那条只有开发者看得见（#356/#357/#358）；同一句话要落到列表那条 `notice` 上，
+  // 走的是 `deliverRallies` 这条**纯重递**（上面那条 calls.length 不变就是它没顺手重拉）
+  assert.equal(h.lastRallies?.notice, '这一支集结已经结束了')
+})
+
 test('V02-S1：给集结编队后确认 → POST /rally/join 带 rallyId 与承诺的兵力，并重拉列表', async () => {
   const h = harness()
   await h.root.start('dev-1', '君')
