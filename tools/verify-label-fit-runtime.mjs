@@ -21,8 +21,10 @@
  * 修好一处却忘了删基线行也红（逼着每格把成果落进这张表）。清零之后这份量具就恒绿，
  * 并继续挡住"再拿 SHRINK 猜盒高"这条回头路。
  *
- * <p><b>覆盖边界</b>：只量"新号一进这一格就画出来"的行。背包/邮件等格在空态下只有几颗 Label，
- * 有数据之后的行不在这份清单里 —— 那些要等带数据的宿主探针，别把这里的"没点到"读成"没问题"。
+ * <p><b>覆盖边界</b>：只量"这一格进得去的那些行"。**挂了读接口夹具的格**（背包、邮件 #394）连
+ * "有数据之后才画出来的行"一起量 —— 没桩的那些（战报 / 社交 …）在 dev 新号上是空态，只有几颗
+ * Label，那里的"零缺陷"是读空集合读来的，别当成"没问题"。每一格读到几颗 Label 由 `READ` 行如实
+ * 打印，`LABEL_FLOORS` 再钉一条下限挡住"夹具静默掉线"。
  */
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
@@ -51,6 +53,15 @@ const KEYS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest
 const BASELINE = new Set([
   "city/Lv1(14<27,字10)"
 ])
+
+/**
+ * 夹具反空转下限：某格"有数据才画行"，读口的桩一旦掉线就退回空态，那时"零缺陷"是读空集合得来的。
+ * 下限**取自面板自己的行结构**（不是照抄某次实测）：`MailPanelView.createRow` 每颗 Label 都算上文本的
+ * 有 4 个（Title/Detail/Status/Expiry），夹具给 8 封而面板按可视高截断 ⇒ 取"至少画满 2 行"= 8 颗。
+ * 空态实测 2 颗（表头 + 回执），差 4 倍以上，所以桩掉了这一条一定红；
+ * 上限故意不设：画几行随视口高度变，钉死会把量具变成"只能在这台机器上绿"。
+ */
+const LABEL_FLOORS = { mail: 2 * 4 }
 
 let pass = 0
 let fail = 0
@@ -208,6 +219,17 @@ const reply = async (route, data) => route.fulfill({
   body: JSON.stringify({ code: 0, msg: '成功', data, serverNow: Date.now() }),
 })
 /**
+ * 挂一份读接口夹具：OPTIONS 先回 204，其余用 `reply` 包成 `{code:0,data}`。
+ * 必须在 `page.goto` **之前**挂上（深链进面板就发请求，晚挂等于这一格读到空态）。
+ */
+const stubRead = (pattern, data) => context.route(pattern, async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  await reply(route, data)
+})
+/**
  * 背包夹具：新号一进这一格只有 3 颗 Label（空态），量不到"有货之后才画出来的行"。
  * 字段逐条对着 `contract/proto/bag.schema.json` 的 `BagItem.required` 给
  * （itemId/name/type/rarity/count/stackMax/sortKey/effectKind）—— 少一个就是"fixture 没镜像真实接线"，
@@ -217,12 +239,53 @@ const BAG_ITEMS = ['木材箱(1万)', '强化石 ×12', '限时头像框体验�
   itemId: `probe_item_${i}`, name, type: 'RESOURCE', rarity: i === 2 ? 'SR' : 'N',
   count: i + 1, stackMax: 99, sortKey: i, effectKind: 'NONE',
 }))
-await context.route('**/bag/list*', async (route) => {
-  if (route.request().method() === 'OPTIONS') {
-    await route.fulfill({ status: 204, headers: cors(route.request()) })
-    return
-  }
-  await reply(route, { items: BAG_ITEMS, capacityUsed: BAG_ITEMS.length, capacityMax: 60 })
+await stubRead('**/bag/list*', {
+  items: BAG_ITEMS, capacityUsed: BAG_ITEMS.length, capacityMax: 60,
+})
+/**
+ * 邮件夹具：`MailPanelView` 每封画 Title/Detail/Status/Expiry 四颗 Label，空态整块不画
+ * —— 实测（台账 #394 前）这一格只有 2 颗，"零缩字缺陷"是读空集合读出来的。
+ * 字段照 `contract/proto/mail.schema.json` 的 `MailView.required` 给全：
+ * mailId/kind/title/text/rewards/claimed/read/createdAt/expireAt/sourceRef。
+ * 三态都要有，因为 `MailPanel.buildRow` 对它们是三条不同的文案：可领（未 claimed）、
+ * 已领（claimed 且有附件）、纯通知（rewards 为空 ⇒ 状态写「纯通知」）。
+ */
+const DAY = 86_400_000
+const MAIL_ITEMS = [
+  { mailId: 'probe_mail_0', kind: 'SYSTEM', title: '开服庆：全体统帅补给', text: '感谢你在这个王国扎根，这份补给不必客气。',
+    rewards: [{ type: 'RESOURCE', id: 'wood', count: 100000, name: '木材' }, { type: 'ITEM', id: 'stamina_potion', count: 5, name: '体力药剂' }],
+    claimed: false, read: false },
+  { mailId: 'probe_mail_1', kind: 'OVERFLOW', title: '背包满了，先给你存着', text: '仓库容量已满，本次发奖溢出的 3 项已暂存于此，清理背包后再领即可。',
+    rewards: [{ type: 'ITEM', id: 'stone', count: 12, name: '强化石' }, { type: 'HERO_FRAGMENT', id: 'hero_ye', count: 30, name: '叶将军残卷' }],
+    claimed: false, read: true },
+  { mailId: 'probe_mail_2', kind: 'SYSTEM', title: '赛季政策已生效', text: '「屯田令」已开始影响你的内城产出。',
+    rewards: [], claimed: true, read: true },
+  { mailId: 'probe_mail_3', kind: 'SYSTEM', title: '联盟互助奖励已发放，请在三天内领取以免过期', text: '你为盟军提供的支援已结算。',
+    rewards: [{ type: 'PRIVILEGE', id: 'march_banner', count: 1, name: '行军旗（三日）' }],
+    claimed: true, read: false },
+  { mailId: 'probe_mail_4', kind: 'OVERFLOW', title: '关卡补给溢出补发', text: '第三关首通奖励中的 2 项未能入库。',
+    rewards: [{ type: 'STAMINA', id: 'stamina', count: 60, name: '体力' }],
+    claimed: false, read: false },
+  // 再多三封，是为了把行数顶到面板的写死上限（`MailPanelView.MAX_VISIBLE_ROWS = 7`）：
+  // 只画 5 封时"最后一行落在哪里"永远量不到，而 #389 那处缺陷正是第 8 行被导航条盖住。
+  { mailId: 'probe_mail_5', kind: 'SYSTEM', title: '每日补给已到账', text: '今日登录补给已发放，连续七日另有阶梯奖励。',
+    rewards: [{ type: 'RESOURCE', id: 'coin', count: 5000, name: '银币' }],
+    claimed: false, read: false },
+  { mailId: 'probe_mail_6', kind: 'SYSTEM', title: '联盟集结：你被选为支援者', text: '盟军发起了一次集结，你的部队被编入支援序列。',
+    rewards: [], claimed: true, read: false },
+  { mailId: 'probe_mail_7', kind: 'OVERFLOW', title: '赛季商店兑换溢出', text: '仓库已满，兑换到的 1 项暂存于此。',
+    rewards: [{ type: 'ITEM', id: 'banner', count: 1, name: '王旗涂装' }],
+    claimed: true, read: true },
+].map((mail, i) => ({
+  ...mail,
+  createdAt: Date.now() - (i + 1) * 3_600_000,
+  expireAt: Date.now() + (i === 3 ? 2 * DAY : 7 * DAY),
+  sourceRef: `probe:${mail.kind.toLowerCase()}_${i}`,
+}))
+await stubRead('**/mail/list*', {
+  mails: MAIL_ITEMS,
+  unreadCount: MAIL_ITEMS.filter((m) => !m.read).length,
+  claimedCount: MAIL_ITEMS.filter((m) => m.claimed || m.rewards.length === 0).length,
 })
 
 const offenders = []
@@ -231,6 +294,8 @@ const crowded = []
 const underNavAll = []
 let navFound = 0
 const reached = []
+/** 每一格读到的 Label 颗数：夹具反空转判据读它（见 `LABEL_FLOORS`）。 */
+const labelsBy = new Map()
 let totalLabels = 0
 let totalShrink = 0
 
@@ -284,6 +349,7 @@ for (const key of KEYS) {
     console.log(`  SKIP  ${key}：这一格没画出来（深链没生效或面板名不是节点名）`)
   } else {
     reached.push(key)
+    labelsBy.set(key, read.seen)
     totalLabels += read.seen
     totalShrink += read.shrink
     for (const x of read.out) offenders.push(`${key}/${x.text}(${x.h}<${x.floor},字${x.want})`)
@@ -402,6 +468,12 @@ if (process.argv.includes('--print-baseline')) {
 // 反空转前置：每格都要走到、且真的读到过 Label —— 否则"零缺陷"是在读空集合
 check('每一格都走到位（漏格会让这份清单假绿）', reached.length, KEYS.length)
 checkTrue('这些格里确实读到过 Label（读到 0 颗说明遍历写错了）', totalLabels > 100)
+// 「有夹具的格必须真的画出数据行」：`--print-baseline` 与 `--calibrate` 提前退出，够不到这里，
+// 所以"桩掉线了"只能由这一条挡（否则它会安静地退回空态、报一片绿）。
+for (const [panel, floor] of Object.entries(LABEL_FLOORS)) {
+  check(`${panel} 的读接口夹具还画出 ${floor} 颗以上 Label（掉线会退回空态）`,
+    (labelsBy.get(panel) ?? 0) >= floor, true)
+}
 // 恒真的"totalShrink >= 0"不写：清单不能靠一个不会失败的条件交差。
 // 这条要能失败：基线里有点名行、却一颗 SHRINK 都没量到 ⇒ 遍历或枚举值变了，读的是空集合。
 checkTrue('基线不是在读空集合（有基线行就必须量到 SHRINK 行）',
