@@ -71,6 +71,7 @@ const WALK = `(() => {
   if (panel === undefined || !panel.activeInHierarchy) return null
   const out = []
   const stretched = []
+  const geo = []
   let shrink = 0
   let seen = 0
   const walk = (n) => {
@@ -79,6 +80,18 @@ const WALK = `(() => {
       const str = lb ? (lb.string ?? '') : ''
       if (str.length > 0) {
         seen += 1
+        // 字形横向范围：盒子按锚点摆，字按对齐方式在盒子里摆。宽度按字符类别加权：
+        // 汉字一个全角、ASCII（数字/斜杠/空格）约半角 —— 一律按全角算会把"体力 100/10000"
+        // 估成两倍宽，把并排的资源项报成相碰（第一版就是这么错的）。
+        const ut = n.getComponent('cc.UITransform')
+        const wp = n.worldPosition ?? n.position
+        let units = 0
+        for (let k = 0; k < str.length; k++) units += str.charCodeAt(k) < 128 ? 0.55 : 1
+        const est = units * lb.fontSize
+        const left = wp.x - ut.anchorPoint.x * ut.width
+        const align = lb.horizontalAlign
+        const x0 = align === 0 ? left : (align === 2 ? left + ut.width - est : left + (ut.width - est) / 2)
+        geo.push({ text: str.slice(0, 8), x0, x1: x0 + est, y: wp.y, font: lb.fontSize })
         // 2 = Label.Overflow.SHRINK；盒高用本地值（字号也是本地单位）
         if (lb.overflow === 2) {
           shrink += 1
@@ -106,7 +119,20 @@ const WALK = `(() => {
     for (const c of n.children) walk(c)
   }
   walk(panel)
-  return { seen, shrink, out, stretched }
+  // 相碰 = 字形横向真的压上 + 纵向字形带相交（带 = 两字号均值再留 4px）。
+  const crowd = []
+  for (let i = 0; i < geo.length; i++) {
+    for (let j = i + 1; j < geo.length; j++) {
+      const a = geo[i]
+      const b = geo[j]
+      if (a.x0 >= b.x1 || b.x0 >= a.x1) continue
+      const band = (a.font + b.font) / 2 + 4
+      const dy = Math.abs(a.y - b.y)
+      if (dy >= band) continue
+      crowd.push(a.text + '×' + b.text + '(Δy' + Math.round(dy) + '<带' + Math.round(band) + ')')
+    }
+  }
+  return { seen, shrink, out, stretched, crowd }
 })()`
 
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
@@ -148,6 +174,7 @@ await context.route('**/bag/list*', async (route) => {
 
 const offenders = []
 const stretched = []
+const crowded = []
 const reached = []
 let totalLabels = 0
 let totalShrink = 0
@@ -183,6 +210,11 @@ for (const key of KEYS) {
         if (!have.has(x.text + '@' + x.h)) read[list].push(x)
       }
     }
+    read.crowd = read.crowd ?? []
+    const haveCrowd = new Set(read.crowd)
+    for (const x of again.crowd ?? []) {
+      if (!haveCrowd.has(x)) read.crowd.push(x)
+    }
   }
   if (read === null) {
     console.log(`  SKIP  ${key}：这一格没画出来（深链没生效或面板名不是节点名）`)
@@ -192,7 +224,9 @@ for (const key of KEYS) {
     totalShrink += read.shrink
     for (const x of read.out) offenders.push(`${key}/${x.text}(${x.h}<${x.floor},字${x.want})`)
     for (const x of read.stretched ?? []) stretched.push(`${key}/${x.text}(${x.h}>${x.floor}+8,字${x.want},估宽${x.est}/盒${x.boxW})`)
-    console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗，疑似被放大 ${(read.stretched ?? []).length} 颗`)
+    for (const x of read.crowd ?? []) crowded.push(`${key}/${x}`)
+    console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗，`
+      + `疑似被放大 ${(read.stretched ?? []).length} 颗，字形相碰 ${(read.crowd ?? []).length} 对`)
   }
   // 每格落一张图：这一族改的是"盒高 + 对齐"，判据全绿也可能把字挪位，必须目视
   await page.screenshot({ path: path.join(OUT, `${key}.png`) })
@@ -274,6 +308,10 @@ if (process.argv.includes("--calibrate")) {
 if (stretched.length > 0) {
   console.log('\n=== 疑似被盒子放大的行（只报不改，等逐屏判断：见台账 #377） ===')
   for (const line of stretched) console.log('  ' + line)
+}
+if (crowded.length > 0) {
+  console.log('\n=== 字形相碰的对（只报不判红：估宽是字宽上限的近似，先要人确认哪几对真看得见） ===')
+  for (const line of [...new Set(crowded)]) console.log('  ' + line)
 }
 if (process.argv.includes('--print-baseline')) {
   console.log('\n// --- BASELINE 片段（贴进源文件替换 BASELINE 的构造）---')
