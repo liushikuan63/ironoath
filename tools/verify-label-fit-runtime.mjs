@@ -528,6 +528,8 @@ const crowded = []
 const underNavAll = []
 /** 像素法报出来的"字被后画的底板盖住"（>0 的都列出来，便于逐张目视）。 */
 const covered = []
+/** 像素法真的量过几相（每一相都要过，漏接会静默不量） */
+let plateAttempts = 0
 /** 其中达到判红下限的那些 —— 这一维**判红**，标定见台账 #399/#400。 */
 const coveredRed = []
 /**
@@ -597,6 +599,48 @@ async function walkPhase(page, key) {
   return read
 }
 
+/**
+ * 像素法"底板压字"一趟：一张全图基线 + 每块候选底板一张（**按底板分组，不是一颗 Label 一张**），
+ * 差在内存里裁字形带算。`tag` 让默认相与页签相位共用同一份实现（#409 把这一维推到那六屏上）。
+ * 调用时机必须在该相已经渲染完、且在留档截图之前 —— 它会逐块禁用再还原 `Graphics`，
+ * 中途截的图不是玩家看到的样子。
+ */
+async function platePass(page, key, tag) {
+  if (process.env.LABELFIT_PLATES === '0') return
+  const plan = await page.evaluate(planPlateCoverage, key)
+  if (plan === null) return
+  plateAttempts += 1
+  if (plan.plates.length === 0) {
+    // 0 候选也要打一行：不然"这一相根本没有后画底板"和"这一相没被像素法量过"在输出里长得一样
+    console.log(`  PLATE ${tag}: 候选底板 0 块、字形带 ${plan.bands.length} 条，报出 0 处`)
+    return
+  }
+  const base = decodePng(await page.screenshot())
+  let hits = 0
+  for (const plate of plan.plates) {
+    await page.evaluate((h) => {
+      window.__plateNodes[h].getComponent('cc.Graphics').enabled = false
+    }, plate.handle)
+    await page.waitForTimeout(120)
+    const after = decodePng(await page.screenshot())
+    await page.evaluate((h) => {
+      window.__plateNodes[h].getComponent('cc.Graphics').enabled = true
+    }, plate.handle)
+    await page.waitForTimeout(80)
+    for (const bi of plate.bands) {
+      const b = plan.bands[bi]
+      const d = diffRegion(base, after, b.rect, 24)
+      if (d.changed > 0) {
+        const line = `${tag}/${b.text}←「${plate.name}」变了 ${d.changed}/${d.total} 像元`
+        covered.push(line)
+        hits += 1
+        if (d.changed >= PLATE_MIN_RED) coveredRed.push(line)
+      }
+    }
+  }
+  console.log(`  PLATE ${tag}: 候选底板 ${plan.plates.length} 块、字形带 ${plan.bands.length} 条，报出 ${hits} 处`)
+}
+
 for (const key of KEYS) {
   const page = await context.newPage()
   const url = new URL(`${preview.origin}/`)
@@ -623,32 +667,8 @@ for (const key of KEYS) {
       + `疑似被放大 ${(read.stretched ?? []).length} 颗，字形相碰 ${(read.crowd ?? []).length} 对，`
       + `压进导航条 ${(read.underNav ?? []).length} 颗`)
   }
-  // 像素法：底板压字。**只在默认相量**（切页签后那一屏另说），且只报不判红。
-  // 一张全图基线 + 每块候选底板一张（按底板分组，不是一颗 Label 一张），差在内存里裁字形带算。
-  if (process.env.LABELFIT_PLATES !== '0') {
-    const plan = await page.evaluate(planPlateCoverage, key)
-    if (plan !== null && plan.plates.length > 0) {
-      const base = decodePng(await page.screenshot())
-      for (const plate of plan.plates) {
-        await page.evaluate((h) => { window.__plateNodes[h].getComponent('cc.Graphics').enabled = false }, plate.handle)
-        await page.waitForTimeout(120)
-        const after = decodePng(await page.screenshot())
-        await page.evaluate((h) => { window.__plateNodes[h].getComponent('cc.Graphics').enabled = true }, plate.handle)
-        await page.waitForTimeout(80)
-        for (const bi of plate.bands) {
-          const b = plan.bands[bi]
-          const d = diffRegion(base, after, b.rect, 24)
-          if (d.changed > 0) {
-            const line = `${key}/${b.text}←「${plate.name}」变了 ${d.changed}/${d.total} 像元`
-            covered.push(line)
-            if (d.changed >= PLATE_MIN_RED) coveredRed.push(line)
-          }
-        }
-      }
-      console.log(`  PLATE ${key}: 候选底板 ${plan.plates.length} 块、字形带 ${plan.bands.length} 条，`
-        + `报出 ${covered.filter((x) => x.startsWith(`${key}/`)).length} 处`)
-    }
-  }
+  // 像素法：底板压字（默认相一趟；页签相位各一趟，见下面 phase 循环）
+  await platePass(page, key, key)
   // 每格落一张图：这一族改的是"盒高 + 对齐"，判据全绿也可能把字挪位，必须目视
   await page.screenshot({ path: path.join(OUT, `${key}.png`) })
   // 页签相位：切过去再量一趟，读数**并进本格**（同一块面板的另一相），同时单独打一行便于比对涨幅
@@ -680,6 +700,8 @@ for (const key of KEYS) {
     for (const x of pr.crowd ?? []) crowded.push(`${tag}/${x}`)
     for (const x of pr.underNav ?? []) underNavAll.push(`${tag}/${x}`)
     mergeRead(read, pr)
+    // 这一维也推到页签相位：那六屏的桩早就挂上了，之前只有默认相被像素法看过（#409）
+    await platePass(page, key, tag)
     await page.screenshot({ path: shot })
   }
   if (typeof read?.navTop === 'number') navFound += 1
@@ -824,6 +846,10 @@ check('没有一屏把字画进底部导航条（写死行数那一族的通用�
 // 像素法这一维的判红。它**有前置条件**：`LABELFIT_PLATES=0` 会整段跳过，那时这一条是空跑的恒真 ——
 // 所以连"跑没跑"一起断言（同一份 covered 数组，跳过时长度必为 0）。
 if (process.env.LABELFIT_PLATES !== '0') {
+  // 覆盖判据：默认相 17 格 + 页签相位若干，每一相都要真过一遍像素法。
+  // 没有这条，将来谁把 phase 循环里那句 platePass 删掉，输出只是少几行，判据照绿。
+  check('每一相都过了像素法（默认相 + 页签相位；漏接会静默不量）',
+    plateAttempts, reached.length + phasesReached)
   check('没有一处字被后画的图形底板盖住（像素法，达 ' + PLATE_MIN_RED + ' 像元判红）',
     new Set(coveredRed).size, 0)
 } else {
