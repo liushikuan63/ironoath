@@ -261,7 +261,14 @@ class SocialRulesAssemblerTest {
         assertThat(matrix.permissionsOf(PermissionMatrix.Scope.SQUAD, PermissionMatrix.Tier.MEMBER))
                 .containsExactlyInAnyOrder("INVITE_MEMBER", "CALL_FOR_HELP");
         assertThat(matrix.permissionCount(PermissionMatrix.Scope.SQUAD)).isEqualTo(7);
-        assertThat(matrix.permissionCount(PermissionMatrix.Scope.ALLIANCE)).isEqualTo(12);
+        // 13 = 首个提交时的 12 个 + `9964488`（B26 S11）为「任命职位」新加的 SET_ROLE。
+        // **这个数字必须跟着表走**：它写死的用途就是"新增权限位时必须有人来解释一次"，
+        // 而不是"表永远停在 12"。2026-09-21 复核过表与这一行的对应关系
+        // （`contract/config/role_permission.json` 的 ALLIANCE 行数 = 13，逐个列过）。
+        // 表里 SET_ROLE 只给 LEADER 档，那条闸门另有 `SocialEndpointTest` 的两条用例在现场判。
+        assertThat(matrix.permissionCount(PermissionMatrix.Scope.ALLIANCE)).isEqualTo(13);
+        assertThat(matrix.permissionsOf(PermissionMatrix.Scope.ALLIANCE, PermissionMatrix.Tier.LEADER))
+                .contains("SET_ROLE");
     }
 
     // ---------- 互助 / 聊天 / 集结 ----------
