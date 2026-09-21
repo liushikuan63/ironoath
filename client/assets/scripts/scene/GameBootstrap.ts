@@ -1217,6 +1217,9 @@ export class GameBootstrap extends Component {
       }
       city.onSpeedUp = (buildingId, source) => { void this.root?.speedUpBuilding(buildingId, source) }
       city.onCollect = buildingId => { void this.root?.collect(buildingId) }
+      // 暂停/恢复（B03 §2，收口清单 #324）：动作本身在服务端，这里只把两条回调送到 AppRoot
+      city.onPause = buildingId => { void this.root?.pauseBuilding(buildingId) }
+      city.onResume = buildingId => { void this.root?.resumeBuilding(buildingId) }
     }
     if (army !== null) {
       out.army = (resp, offsetMs, trainMemory) => army.attach(resp, offsetMs, trainMemory)

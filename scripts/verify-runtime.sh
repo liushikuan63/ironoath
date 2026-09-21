@@ -28,6 +28,15 @@ if [ ! -f "$JAR" ]; then
   echo "[runtime][前置] 后端 jar 不存在：$JAR —— 先跑 mvn -f server/pom.xml -pl game-web -am -DskipTests package"
   exit 2
 fi
+# **jar 必须比源码新**（2026-09-22 补：这条我自己踩过）。
+# 症状：新加了一个端点、只 `mvn test/compile` 没 `package`，随后照旧起 jar 跑量具 ——
+# 客户端点到那个端点拿到 404，界面上"点了没反应"，看起来像前端没接线（我为此查了三轮）。
+# 复用旧产物会造出"编译绿而运行红"的假证据，所以这里直接失败，而不是打印一句 WARN。
+NEWEST_SOURCE=$(find server -name '*.java' -newer "$JAR" -print -quit 2>/dev/null || true)
+if [ -n "$NEWEST_SOURCE" ]; then
+  echo "[runtime][前置] $JAR 比源码旧（例如 $NEWEST_SOURCE）—— 先重新 package，否则量的是旧产物"
+  exit 2
+fi
 mkdir -p "$(dirname "$LOG")"
 
 # 端口必须是**我们自己的**：先探一下，被占就明确失败，不去杀别人的进程。

@@ -76,6 +76,13 @@ await context.addInitScript((value) => localStorage.setItem('ironoath.deviceId',
 const page = await context.newPage()
 const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
+/** 本次跑过的 /city/* POST —— 用来分辨"点了按钮没反应"是"事件没到"还是"回调没接上"。 */
+const cityPosts = []
+page.on('request', (request) => {
+  if (request.method() === 'POST' && request.url().includes('/city/')) {
+    cityPosts.push(request.url().split('/city/')[1])
+  }
+})
 
 const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'city')
@@ -159,6 +166,56 @@ const tileOf = (frame, name) => {
   return null
 }
 
+/**
+ * 通过**节点名**取屏幕坐标并点它（与 `verify-city-multi-types` 同一套换算）。
+ *
+ * <p>为什么要有它：暂停/恢复是两个按钮，判据必须"真点下去" —— 直接调 JS 改状态等于绕开被测的那条路径。
+ */
+const clickNode = (nodeName) => page.evaluate((name) => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  let target = null
+  const visit = (node) => {
+    if (node.name === name) target = node
+    for (const child of node.children) visit(child)
+  }
+  visit(scene)
+  if (target === null) return null
+  const box = target.getComponent('cc.UITransform')
+  const camera = scene.getComponentInChildren('cc.Camera')
+  if (box === null || camera === null) return null
+  const screen = camera.worldToScreen(box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
+  const rect = document.querySelector('canvas').getBoundingClientRect()
+  const pixel = cc.view.getVisibleSizeInPixel()
+  return {
+    x: rect.left + (screen.x / pixel.width) * rect.width,
+    y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
+  }
+}, nodeName)
+
+/** 动作栏两只按钮的可见性 + 选择栏两行文本（暂停这一态的判据全从这里读）。 */
+const pauseReadout = () => page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let pause = null
+  let resume = null
+  let title = null
+  let status = null
+  const visit = (node) => {
+    if (node.name === 'DetailPauseButton') pause = node.activeInHierarchy === true
+    if (node.name === 'DetailResumeButton') resume = node.activeInHierarchy === true
+    if (node.name === 'SelectedTitle' || node.name === 'SelectedStatus') {
+      const label = node.getComponent('cc.Label')
+      if (label !== null && label !== undefined) {
+        if (node.name === 'SelectedTitle') title = label.string
+        else status = label.string
+      }
+    }
+    for (const child of node.children) visit(child)
+  }
+  visit(scene)
+  return { pause, resume, title, status }
+})
+
 /** 摘掉引导层：它压在画面正中央，会把"建筑状态"这一半证据挡住（别的内城探针都这么做）。 */
 const clearGuide = () => page.evaluate((source) => {
   const re = new RegExp(source)
@@ -193,12 +250,56 @@ console.log(`[state] 升级中帧：屏上文本 ${upgrading.texts.length} 条�
   + ` 正稿=${campA?.iconActive} 等级色=${campA?.levelColor}`)
 console.log(`[state]   队列行=${upgrading.texts.find((t) => t.includes('建造队列')) ?? '(无)'}`)
 
+// ---------- 态零：暂停 / 恢复（B03 §2，收口缺口 #324）----------
+//
+// 顺序放在"拦 /city/list"之前：暂停/恢复要走服务端（也要读回执刷新），拦了列表就读不到真实状态。
+// 选中那一格 → 点「暂停」→ 读面板 → 点「恢复」→ 读面板；全程真点按钮，不走后门。
+const pausePhase = { clicked: false, paused: null, resumed: null, pausedMs: 0 }
+if (campA !== null) {
+  const point = await clickNode(campA.key)
+  if (point !== null) {
+    await page.mouse.click(point.x, point.y)
+    await page.waitForTimeout(600)
+  }
+  const beforePause = await pauseReadout()
+  console.log(`[state] 选中 ${campA.key}：暂停键=${beforePause.pause} 恢复键=${beforePause.resume}`
+    + ` 选择栏=「${beforePause.title ?? ''}」「${beforePause.status ?? ''}」`)
+  const postsBefore = cityPosts.length
+  const pausePoint = await clickNode('DetailPauseButton')
+  if (beforePause.pause === true && pausePoint !== null) {
+    const pausedAt = Date.now()
+    await page.mouse.click(pausePoint.x, pausePoint.y)
+    await page.waitForTimeout(1200)
+    pausePhase.paused = await pauseReadout()
+    pausePhase.pausedMs = Date.now() - pausedAt
+    // 每步都打**整条**请求列表：点了没反应时，第一个要回答的问题是"请求到底出去了没有"
+    console.log(`[state] 诊断：点「暂停」@(${pausePoint.x},${pausePoint.y}) 后 /city/* =`
+      + ` [${cityPosts.join('、') || '(无)'}]（本次新增 ${cityPosts.length - postsBefore} 条）`)
+    await page.screenshot({ path: path.join(OUT, '10-city-paused.png') })
+    console.log(`[state] 暂停后：暂停键=${pausePhase.paused.pause} 恢复键=${pausePhase.paused.resume}`
+      + ` 选择栏=「${pausePhase.paused.title ?? ''}」「${pausePhase.paused.status ?? ''}」`)
+    const resumePoint = await clickNode('DetailResumeButton')
+    if (pausePhase.paused.resume === true && resumePoint !== null) {
+      await page.mouse.click(resumePoint.x, resumePoint.y)
+      await page.waitForTimeout(1200)
+      pausePhase.resumed = await pauseReadout()
+      pausePhase.pausedMs = Date.now() - pausedAt
+      console.log(`[state] 恢复后：暂停键=${pausePhase.resumed.pause} 恢复键=${pausePhase.resumed.resume}`
+        + ` 选择栏=「${pausePhase.resumed.title ?? ''}」「${pausePhase.resumed.status ?? ''}」`
+        + ` 请求=[${cityPosts.join('、') || '(无)'}]`)
+    }
+  }
+  pausePhase.clicked = pausePoint !== null
+}
+
+
 // ---------- 拦掉 /city/list：让"到点"只发生在客户端 ----------
 await page.route('**/city/list*', (route) => route.abort())
 console.log('[state] 已拦掉 /city/list —— 保证"到点未收割"这一态不被服务端的自动收割吃掉')
 
 // ---------- 态二：可收取（同一帧内等本地倒计时归零）----------
-const remain = buildMs - (Date.now() - startedAt) + 3000
+// 暂停了多久，完成时刻就被服务端顺延了多久（这正是"把暂停的时间还回来"），所以等待要加回去。
+const remain = buildMs - (Date.now() - startedAt) + 3000 + pausePhase.pausedMs
 await page.waitForTimeout(Math.max(1000, remain))
 const harvestable = await snapshot()
 await page.screenshot({ path: path.join(OUT, '12-city-harvestable.png') })
@@ -221,6 +322,33 @@ console.log(`[state] JS 堆=${harvestable.heapMb}MB；底图纹理=${JSON.string
 console.log(`[state] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
 
 const failures = []
+// 暂停/恢复（#324）：三条都要有 —— 点得下去、面板变「已暂停」且不给倒计时、恢复回「升级中」
+if (!pausePhase.clicked) {
+  failures.push('连格子都没点中，暂停这一态根本没量到（判据走不到不许当绿）')
+} else if (pausePhase.paused === null) {
+  failures.push('升级中那一帧的「暂停」键没出现 —— 暂停这个动作在界面上不可达')
+} else {
+  if (pausePhase.paused.pause === true) {
+    failures.push('点了暂停之后「暂停」键仍在 —— 状态没跟着服务端回执走')
+  }
+  if (pausePhase.paused.resume !== true) {
+    failures.push('暂停后「恢复」键没出现 —— 玩家会卡在暂停态里出不来')
+  }
+  const pausedText = `${pausePhase.paused.title ?? ''} ${pausePhase.paused.status ?? ''}`
+  if (!pausedText.includes('已暂停')) {
+    failures.push(`暂停后选择栏里没有「已暂停」：${JSON.stringify(pausedText)}`)
+  }
+  if (/\d+:\d+/.test(pausedText)) {
+    failures.push(`暂停中仍显示倒计时「${pausedText}」—— 那个表永远不走，是 B03 明令不许的`)
+  }
+  if (pausePhase.resumed === null) {
+    failures.push('「恢复」点下去之后没读回面板 —— 恢复这条路没走完')
+  } else if (pausePhase.resumed.pause !== true || pausePhase.resumed.resume === true) {
+    failures.push(`恢复后按钮没切回来：暂停键=${pausePhase.resumed.pause} 恢复键=${pausePhase.resumed.resume}`)
+  } else if (!(pausePhase.resumed.status ?? '').includes('升级中')) {
+    failures.push(`恢复后选择栏不是「升级中」：${JSON.stringify(pausePhase.resumed.status)}`)
+  }
+}
 if (!upgrading.texts.some((t) => /建造队列\s*1\s*\//.test(t))) {
   failures.push('升级中帧的队列行不是 1/N —— 这一帧没量到"正在建造"')
 }

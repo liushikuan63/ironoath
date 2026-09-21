@@ -947,8 +947,24 @@ export class AppRoot {
       ['city', 'resources', 'reddot'], r => this.targets.cityCollect?.(r))
   }
 
-  // ---------- 武将养成（V03 前置：把已有的养成能力接到玩家手上） ----------
+  /**
+   * 暂停一栋正在升级的建筑（B03 §2："队列中可暂停 / 取消"，收口清单 #324）。
+   *
+   * <p>与升级/收割同一套路：**只发请求、按服务端回执刷新**，客户端不自己改本地那一行 ——
+   * 暂停要冻的是服务端的剩余时间，本地改状态只会让两边不一致（面板显示的"已暂停"必须来自服务端）。
+   */
+  pauseBuilding(buildingId: string): Promise<void> {
+    this.track(TRACK_EVENTS.buildingUpgradeStart, { target: buildingId, action: 'pause' })
+    return this.write('city', this.api.cityPause({ buildingId }), ['city', 'reddot'])
+  }
 
+  /** 恢复一栋已暂停的建筑：服务端会把暂停的那段时间还给这栋楼。 */
+  resumeBuilding(buildingId: string): Promise<void> {
+    this.track(TRACK_EVENTS.buildingUpgradeStart, { target: buildingId, action: 'resume' })
+    return this.write('city', this.api.cityResume({ buildingId }), ['city', 'reddot'])
+  }
+
+  // ---------- 武将养成（V03 前置：把已有的养成能力接到玩家手上） ----------
   /**
    * 武将升星。**只带 heroId** —— 六条养成接口里只有升星与碎片合成不需要先选道具/技能槽，
    * 所以这两个能从武将行直接点出去；升级（要喂经验道具）、觉醒与技能（要选道具）、装备（要选装备）
