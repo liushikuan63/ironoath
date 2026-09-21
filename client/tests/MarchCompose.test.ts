@@ -9,9 +9,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildCompose, marchUnitsOf, rememberMarch, repeatBlockedReason, repeatRequestOf, setPick,
+  adjustRallyNumber, buildCompose, marchUnitsOf, rallyFormBlocked, rallyFormOf, rallyNumbersOf,
+  rallySwitchBlocked, rememberMarch, repeatBlockedReason, repeatRequestOf, setPick,
 } from '../assets/scripts/game/world/MarchCompose'
-import type { MarchSpec } from '../assets/scripts/game/world/MarchCompose'
+import type { MarchSpec, RallyForm } from '../assets/scripts/game/world/MarchCompose'
+import type { RallyPolicyView } from '../assets/scripts/net/generated/SocialProtocol'
 import type { ArmyListResp, UnitView } from '../assets/scripts/net/generated/ArmyProtocol'
 
 function unit(overrides: Partial<UnitView> & { unitId: string }): UnitView {
@@ -109,4 +111,61 @@ test('过时的队伍不静默改小：凑不齐时说清差多少，而不是�
   // 情况不变（数量足够）时没有理由拦：再次出征应当可发
   const enough = army([unit({ unitId: 'unit_infantry_t1', name: '重步', count: 800 })])
   assert.equal(repeatBlockedReason(spec, enough), null)
+})
+
+// ---------- B26 S14：层级与那两个数（界全部来自服务端政策）----------
+
+/** 一份联盟层的政策。默认「此刻只有 12 人可召集」，与 global 表的 20 刻意不同。 */
+function policy(overrides: Partial<RallyPolicyView> = {}): RallyPolicyView {
+  return {
+    minMembers: 2, maxMembers: 12, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+    defaultPrepareMinutes: 30, canStart: true, reason: null, ...overrides,
+  } as RallyPolicyView
+}
+
+test('那两个数的起始值照政策取：上界是"此刻实际人数"12，不是 global 表里的配置上限', () => {
+  assert.deepEqual(rallyFormOf(policy()), { maxMembers: 12, prepareMinutes: 30 })
+  assert.equal(rallyFormOf(null), null, '政策没拉到 ⇒ 不猜一组数')
+  // 政策本身越界（配置改过、旧响应还在飞）时按界夹，不把越界的数带到写口
+  assert.deepEqual(rallyFormOf(policy({ maxMembers: 1, defaultPrepareMinutes: 999 })),
+    { maxMembers: 1, prepareMinutes: 30 })
+})
+
+test('政策说这一层发起不了 ⇒ 用它那句原话；政策没拉到不是"你不行"', () => {
+  assert.equal(rallySwitchBlocked(policy()), null)
+  assert.equal(rallySwitchBlocked(policy({ canStart: false, reason: '你还没有联盟' })), '你还没有联盟')
+  assert.equal(rallySwitchBlocked(policy({ canStart: false, reason: null })),
+    '现在还不能发起这一层的集结', '服务端偶尔不给句子 ⇒ 客户端要有兜底文案，不能显示空')
+  assert.equal(rallySwitchBlocked(null), null)
+})
+
+test('加减一档夹在政策的界内：人数按 1 走、分钟按 5 走，越界不绕回', () => {
+  const pol = policy({ maxMembers: 5, defaultPrepareMinutes: 12 })
+  let form = rallyFormOf(pol) as RallyForm
+  form = adjustRallyNumber(form, pol, 'maxMembers', 1) as RallyForm
+  assert.equal(form.maxMembers, 5, '已经在上界 ⇒ 加不动（越界的数发出去会被服务端夹回去，玩家以为设了 8 人）')
+  form = adjustRallyNumber(form, pol, 'maxMembers', -1) as RallyForm
+  assert.equal(form.maxMembers, 4)
+  for (let i = 0; i < 20; i++) {
+    form = adjustRallyNumber(form, pol, 'maxMembers', -1) as RallyForm
+  }
+  assert.equal(form.maxMembers, 2, '下界是最少参与人数：一个人「集结」就是普通出征')
+  assert.equal(adjustRallyNumber({ maxMembers: 4, prepareMinutes: 12 }, pol, 'prepareMinutes', -1)?.prepareMinutes,
+    10, '最短那一档')
+  assert.equal(adjustRallyNumber({ maxMembers: 4, prepareMinutes: 12 }, pol, 'prepareMinutes', 1)?.prepareMinutes,
+    17, '一分钟一分钟地磨太累：时长按 5 分跳')
+  assert.equal(adjustRallyNumber(null, pol, 'maxMembers', 1), null)
+  assert.equal(adjustRallyNumber({ maxMembers: 4, prepareMinutes: 12 }, null, 'maxMembers', 1)?.maxMembers, 4,
+    '没有界就不动')
+})
+
+test('画出来的两行带界与格式化好的字：数字与上界同屏，玩家才知道自己被夹在哪一档', () => {
+  const rows = rallyNumbersOf({ maxMembers: 7, prepareMinutes: 20 }, policy())
+  assert.deepEqual(rows.map(r => [r.field, r.caption, r.text]),
+    [['maxMembers', '人数', '7/12人'], ['prepareMinutes', '等待', '20分']])
+  assert.deepEqual(rows.map(r => [r.min, r.max]), [[2, 12], [10, 30]])
+  assert.deepEqual(rallyNumbersOf(null, policy()), [], '表单没填出来就一行都不画')
+  assert.deepEqual(rallyNumbersOf({ maxMembers: 7, prepareMinutes: 20 }, null), [])
+  assert.equal(rallyFormBlocked({ maxMembers: 7, prepareMinutes: 20 }), null)
+  assert.match(rallyFormBlocked(null) ?? '', /还没拉到/)
 })

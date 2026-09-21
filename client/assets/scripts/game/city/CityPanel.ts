@@ -19,7 +19,8 @@
 import { resourceName } from '../ui/ResourceNames'
 import { countdownMs, formatCountdown as formatCountdownOf } from '../../core/Countdown'
 import type {
-  BuildingView, BuildOptionView, CityCollectResp, CityListResp, ErrorDetail, QueueView, ResourceAmount,
+  BuildingView, BuildOptionView, CityCancelResp, CityCollectResp, CityListResp, ErrorDetail, QueueView,
+  ResourceAmount,
 } from '../../net/generated/CityProtocol'
 
 /** 一栋建筑在面板上的一行。 */
@@ -203,6 +204,21 @@ export function localProgressFixed(building: BuildingView, offsetMs: number, loc
   }
   const elapsed = Math.max(0, localNow + offsetMs - startedAt)
   return Math.min(10000, Math.floor((elapsed / totalMs) * 10000))
+}
+
+/**
+ * 取消建造的响应 → 底部提示。
+ *
+ * <p>**返还量照服务端给的念**：比例在 `city_rule.city_rule_cancel_refund_ratio`（现值 0.60），
+ * 与研究共用同一份（B20 §一 明写"两处各配一个数字迟早会让玩家问为什么"）。
+ * 客户端自己拿 `progress × 0.6` 重算就是第二个真相，而且算不出来"扣到哪去了"。
+ */
+export function cancelMessage(resp: CityCancelResp): string {
+  const refund = resp.refund.filter((entry) => entry.amount > 0)
+    .map((entry) => `${resourceName(entry.type)} +${entry.amount}`)
+    .join(' · ')
+  // 一分没退也要说话（刚点下升级就取消，进度接近 0）—— 静默会让玩家以为键没生效
+  return refund === '' ? '已取消建造，本次没有可返还的资源' : `已取消建造 · 退回 ${refund}`
 }
 
 /** 收割响应 → 底部提示。 */

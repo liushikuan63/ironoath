@@ -39,7 +39,7 @@ class TargetSearchTest {
     /** 与 global 表 v18 一致的搜索规则。 */
     private static TargetSearch.Rules rules() {
         return new TargetSearch.Rules(
-                128, 48L * 3600_000L, 20, 50,
+                128, 48, 48L * 3600_000L, 20, 50,
                 FixedPoint.parse("0.35"), FixedPoint.parse("0.25"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.15"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.60"),
@@ -243,6 +243,40 @@ class TargetSearchTest {
                 .as("maxCount 超上限被截断").hasSize(50);
     }
 
+    @Test
+    @DisplayName("请求没带半径时用 SEARCH_DEFAULT_RADIUS —— 夹成 1 格会让第一次搜索必然空手")
+    void nullRadiusUsesTheDefaultRatherThanCollapsingToOneTile() {
+        TargetSearch.Rules rules = rules();
+        assertThat(rules.resolveRadius(null)).as("null 用默认半径，与 maxCount 同一条口径")
+                .isEqualTo(48);
+        assertThat(rules.resolveRadius(0))
+                .as("0 不是「没给」，它是一个越界值：夹到地板值。0 格只有自家那一格，而自己会被剔除")
+                .isEqualTo(TargetSearch.MIN_RADIUS);
+        assertThat(rules.resolveRadius(99999)).as("超上限夹到 maxRadius").isEqualTo(128);
+
+        List<TargetSearch.Candidate> pool = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            pool.add(new TargetSearch.Candidate("p" + i, Coord.of(256 + (i % 20), 256 + (i / 20)),
+                    SELF_POWER, false, null, NOW, FixedPoint.parse("0.5"), 0L));
+        }
+        List<String> byDefault = idsOf(TargetSearch.search(self(), pool,
+                new TargetSearch.Request(null, 50, rules.activeCutoff(NOW)), rules, band(), Rng.of(1L)));
+        List<String> byExplicit = idsOf(TargetSearch.search(self(), pool,
+                new TargetSearch.Request(48, 50, rules.activeCutoff(NOW)), rules, band(), Rng.of(1L)));
+
+        assertThat(byDefault)
+                .as("默认半径那一相必须搜得到人：客户端在拿到第一份响应之前发不出数字，"
+                        + "这条落空就等于「玩家点搜索 → 永远空列表」")
+                .isNotEmpty();
+        assertThat(byDefault)
+                .as("null 与显式传默认值必须逐条同形（同种子同顺序）")
+                .isEqualTo(byExplicit);
+        assertThat(idsOf(TargetSearch.search(self(), pool,
+                new TargetSearch.Request(0, 50, rules.activeCutoff(NOW)), rules, band(), Rng.of(1L))))
+                .as("旧客户端那种「半径 0」只能摸到紧邻四格 —— 这就是面板永远空着的成因")
+                .hasSizeLessThan(byDefault.size());
+    }
+
     // ---------- 分档 ----------
 
     @Test
@@ -340,7 +374,7 @@ class TargetSearchTest {
     @DisplayName("四项权重之和必须正好是 1.0，否则调一个权重的效果取决于其余三个的和")
     void rulesRejectUnbalancedWeights() {
         assertThatThrownBy(() -> new TargetSearch.Rules(
-                128, 48L * 3600_000L, 20, 50,
+                128, 48, 48L * 3600_000L, 20, 50,
                 FixedPoint.parse("0.35"), FixedPoint.parse("0.25"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.20"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.60"),
@@ -351,10 +385,34 @@ class TargetSearchTest {
     }
 
     @Test
+    @DisplayName("默认半径必须落在 [1, maxRadius]：配错成 0 就是一次永远为空的搜索")
+    void rulesRejectDefaultRadiusOutsideTheRange() {
+        assertThatThrownBy(() -> new TargetSearch.Rules(
+                128, 0, 48L * 3600_000L, 20, 50,
+                FixedPoint.parse("0.35"), FixedPoint.parse("0.25"),
+                FixedPoint.parse("0.25"), FixedPoint.parse("0.15"),
+                FixedPoint.parse("0.25"), FixedPoint.parse("0.60"),
+                FixedPoint.parse("0.70"), FixedPoint.parse("0.30"),
+                FixedPoint.parse("0.71"), FixedPoint.parse("1.41")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("默认半径");
+        assertThatThrownBy(() -> new TargetSearch.Rules(
+                128, 129, 48L * 3600_000L, 20, 50,
+                FixedPoint.parse("0.35"), FixedPoint.parse("0.25"),
+                FixedPoint.parse("0.25"), FixedPoint.parse("0.15"),
+                FixedPoint.parse("0.25"), FixedPoint.parse("0.60"),
+                FixedPoint.parse("0.70"), FixedPoint.parse("0.30"),
+                FixedPoint.parse("0.71"), FixedPoint.parse("1.41")))
+                .as("默认值比上限还大不会报错给运营，只会被夹到上限 —— 于是「默认」永远是「最大」")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("默认半径");
+    }
+
+    @Test
     @DisplayName("同段位区间必须包含 1.0，活跃窗口必须为正，档位阈值必须递增")
     void rulesRejectDegenerateConfiguration() {
         assertThatThrownBy(() -> new TargetSearch.Rules(
-                128, 48L * 3600_000L, 20, 50,
+                128, 48, 48L * 3600_000L, 20, 50,
                 FixedPoint.parse("0.35"), FixedPoint.parse("0.25"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.15"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.60"),
@@ -364,7 +422,7 @@ class TargetSearchTest {
                 .as("同段位区间不含 1.0 的话，「势均力敌」永远不算同段位，验收 11 的占比会恒为 0")
                 .hasMessageContaining("1.0");
         assertThatThrownBy(() -> new TargetSearch.Rules(
-                128, 0L, 20, 50,
+                128, 48, 0L, 20, 50,
                 FixedPoint.parse("0.35"), FixedPoint.parse("0.25"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.15"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.60"),
@@ -374,7 +432,7 @@ class TargetSearchTest {
                 .as("窗口为 0 会把所有候选判成不活跃，搜索永远返回空列表且没有任何异常")
                 .hasMessageContaining("活跃窗口");
         assertThatThrownBy(() -> new TargetSearch.Rules(
-                128, 48L * 3600_000L, 50, 20,
+                128, 48, 48L * 3600_000L, 50, 20,
                 FixedPoint.parse("0.35"), FixedPoint.parse("0.25"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.15"),
                 FixedPoint.parse("0.25"), FixedPoint.parse("0.60"),

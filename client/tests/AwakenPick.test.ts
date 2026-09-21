@@ -63,6 +63,8 @@ test('已达觉醒上限：两块都灰、不发，进度行与确认键都说�
   const view = buildAwakenPick([stone(), highStone], { awaken: 3, maxAwaken: 3 },
     'item_hero_awaken_1')
   assert.equal(view.stageText, '已达觉醒上限 3 阶')
+  // 喂进去两块石头就得画出两行：`every` 在空数组上恒真（#342 同族）
+  assert.equal(view.rows.length, 2, '两块材料都要出现在行里，否则下面两句恒真')
   assert.ok(view.rows.every((r) => !r.usable), '两块都该灰')
   assert.equal(view.rows.every((r) => r.reason === null), true,
     '满阶的原因写在进度那一行，不在每块石上重复一遍')

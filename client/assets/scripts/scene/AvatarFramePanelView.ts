@@ -18,7 +18,7 @@
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { AvatarFrameRow } from '../game/avatar/AvatarFramePanel'
 import type { AvatarFramesView } from '../game/session/AppRoot'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 
 const { ccclass } = _decorator
@@ -145,8 +145,7 @@ export class AvatarFramePanelView extends Component {
     this.wornLabel = this.addLabel('Worn', 0, previewY - FRAME_SIZE / 2 - 20, COLOR_TEXT, 16)
     // 这一行两用：列表还没拉回来时的那句话，或上一次操作的结果
     this.noticeLabel = this.addLabel('Notice', 0, previewY - FRAME_SIZE / 2 - 44, COLOR_TEXT_DIM, 14)
-    this.noticeLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
-    this.noticeLabel.overflow = Label.Overflow.SHRINK
+    capWidth(this.noticeLabel, PANEL_WIDTH - 2 * PADDING)
 
     for (let index = 0; index < ROW_POOL_SIZE; index++) {
       const row = this.createRow(index)
@@ -186,13 +185,11 @@ export class AvatarFramePanelView extends Component {
     const name = this.addLabel('Name', -PANEL_WIDTH / 2 + PADDING + 36, 10, COLOR_TEXT, 17, node)
     name.horizontalAlign = Label.HorizontalAlign.LEFT
     name.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    name.node.getComponent(UITransform)?.setContentSize(new Size(260, 22))
-    name.overflow = Label.Overflow.SHRINK
+    capWidth(name, 260)
     const rarity = this.addLabel('Rarity', -PANEL_WIDTH / 2 + PADDING + 36, -12, COLOR_TEXT_DIM, 14, node)
     rarity.horizontalAlign = Label.HorizontalAlign.LEFT
     rarity.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    rarity.node.getComponent(UITransform)?.setContentSize(new Size(260, 20))
-    rarity.overflow = Label.Overflow.SHRINK
+    capWidth(rarity, 260)
     const state = this.addLabel('State', 90, 0, COLOR_TEXT_DIM, 15, node)
 
     const button = new Node('WearButton')

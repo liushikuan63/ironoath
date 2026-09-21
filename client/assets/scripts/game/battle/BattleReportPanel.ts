@@ -10,6 +10,7 @@
  * **不新造数**，也不把它们抄进客户端常量（那会变成第二个家，改了表也不会跟着动）。
  */
 import type { BattleReportListResp, BattlePlaybackParams } from '../../net/generated/BattleProtocol'
+import type { ScoutListResp } from '../../net/generated/WorldProtocol'
 import { parseSpeeds } from './BattlePlayback'
 import type { PlaybackOptions } from './BattlePlayback'
 
@@ -101,4 +102,68 @@ function expiresInText(millis: number): string {
     return `${Math.floor(millis / HOUR)} 小时后`
   }
   return `${Math.floor(millis / DAY)} 天后`
+}
+
+// ---------- 侦察情报（B26 S19：`GET /world/reports` 的读者）----------
+
+/** 指标名的中文表。表里没有的名字原样透出（宁可生僻，也不猜一个错的）。 */
+const METRIC_LABEL: Record<string, string> = {
+  power: '战力', totalUnits: '总兵力', infantry: '步兵', cavalry: '骑兵', archer: '弓手',
+  siege: '攻城', wood: '木材', stone: '石料', iron: '铁', grain: '粮草', gold: '金币',
+}
+
+/** 一行侦察情报。`outcome` 放在最右边那一格：过期与否是"这份还能不能用"的第一读数。 */
+export interface ScoutRow {
+  readonly reportId: string
+  readonly title: string
+  readonly detail: string
+  readonly outcome: string
+  readonly expired: boolean
+}
+
+export interface ScoutListView {
+  readonly rows: readonly ScoutRow[]
+  readonly headerText: string
+  readonly emptyText: string
+}
+
+/** 一万以上折成「1.2 万」：情报里的兵力动辄上万，一长串数字反而读不出量级。 */
+function compactCount(value: number): string {
+  return value >= 10_000 ? `${(Math.round(value / 100) / 100).toFixed(1)} 万` : `${value}`
+}
+
+/**
+ * 把敌情报告列表摊成面板数据。
+ *
+ * <p><b>误差幅度必须和数字贴在一起</b>（B07 验收 9）：分开写玩家就会把「兵力 1.2 万」当成
+ * 精确值来做决策，那比没有情报更糟。`errorFixed` 是定点（10000 = 100%），这里只除成百分数。
+ *
+ * <p><b>过期的那份不藏起来</b>：服务端连 `expired=true` 一起回，就是让玩家知道"我侦察过、
+ * 但那份已经不作数了"，而不是让列表凭空少一条。
+ */
+export function buildScoutIntel(resp: ScoutListResp | null, now: number): ScoutListView {
+  if (resp === null) {
+    return { rows: [], headerText: '侦察情报', emptyText: '敌情读取中' }
+  }
+  const rows = resp.reports.map((report) => {
+    const errorPercent = Math.round(report.errorFixed / 100)
+    const metrics = report.metrics.slice(0, 3)
+      .map(metric => `${METRIC_LABEL[metric.name] ?? metric.name} ${compactCount(metric.value)}`)
+      .join(' · ')
+    const observed = metrics.length === 0 ? '没有观测项' : `${metrics} · ±${errorPercent}%`
+    return {
+      reportId: report.reportId,
+      title: `侦察：${report.target.x}, ${report.target.y} · ${report.targetLevel} 级`,
+      detail: report.expired ? `已过期，不能再拿来定打法 · ${observed}`
+        : `${observed} · ${expiresInText(report.expiresAt - now)}过期`,
+      outcome: report.expired ? '过期' : '有效',
+      expired: report.expired,
+    }
+  })
+  const live = rows.filter(row => !row.expired).length
+  return {
+    rows,
+    headerText: rows.length === 0 ? '侦察情报' : `侦察情报 ${rows.length} 份（${live} 份还有效）`,
+    emptyText: '还没有敌情：在出征编成里把命令切成「侦察」，派一队去看',
+  }
 }

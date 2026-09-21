@@ -19,6 +19,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 bash scripts/check-layering.sh
 bash scripts/check-contract-sync.sh
+bash scripts/check-eol-policy.sh
 bash scripts/check-contract-defs.sh
 bash scripts/check-no-handout.sh
 bash scripts/check-no-bot-privilege.sh
@@ -36,11 +37,14 @@ bash scripts/check-guide-no-copy.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-client-typecheck.sh
 bash scripts/check-player-copy-jargon.sh
+bash scripts/check-track-dictionary.sh
+bash scripts/check-track-params.sh
 bash scripts/check-icon-legibility.sh
 bash scripts/check-no-scheduled.sh
 bash scripts/check-mongo-set-coverage.sh
 bash scripts/check-identity-used.sh
 bash scripts/check-rank-payload.sh
 bash scripts/check-wechat-artifact.sh
+bash scripts/check-search-radius.sh
 bash scripts/check-web-artifact.sh
 echo "[check] 全部静态检查通过。"

@@ -261,7 +261,11 @@ class SocialRulesAssemblerTest {
         assertThat(matrix.permissionsOf(PermissionMatrix.Scope.SQUAD, PermissionMatrix.Tier.MEMBER))
                 .containsExactlyInAnyOrder("INVITE_MEMBER", "CALL_FOR_HELP");
         assertThat(matrix.permissionCount(PermissionMatrix.Scope.SQUAD)).isEqualTo(7);
-        assertThat(matrix.permissionCount(PermissionMatrix.Scope.ALLIANCE)).isEqualTo(12);
+        // 13 而不是 12：`9964488` 给联盟加了 `perm_alliance_set_role`（任命官员那一步的权限位），
+        // 这张表的行数就是结论的数量 —— 改表必须同时改这里，这道断言是"有人悄悄加位"的哨兵。
+        // 它为什么曾经长期是红的却没人看见：`scripts/check.sh` 与 `test-client.sh` 都不跑 Java 套件，
+        // 只有 `scripts/build.sh`（= CI 的 "Full build and tests" 那一步）会跑到。
+        assertThat(matrix.permissionCount(PermissionMatrix.Scope.ALLIANCE)).isEqualTo(13);
     }
 
     // ---------- 互助 / 聊天 / 集结 ----------

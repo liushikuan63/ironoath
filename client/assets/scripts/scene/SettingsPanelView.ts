@@ -16,7 +16,7 @@ import { buildSettingsView } from '../game/settings/SettingsPanel'
 import type { SettingsRow } from '../game/settings/SettingsPanel'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
 import type { AppVersionResp } from '../net/generated/OpsProtocol'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, oneLineFloorHeight } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -131,12 +131,18 @@ export class SettingsPanelView extends Component {
   private createLabel(text: string, color: Color, size: number): Label {
     const node = new Node('label')
     node.layer = this.node.layer
-    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, size + 8)
+    // 盒高用 `oneLineFloorHeight`：这里原本是 `size + 8`，而 SHRINK 的盒高就是字形缩放系数，
+    // 于是每一行都常态性小一号（台账 #367 点名 10 行，最狠的 13 号字只画到 21/30）。
+    // 同时**不再显式设 lineHeight** —— 单行 Label 用它只会让"自然行高"多一个变量，
+    // 引擎默认值参与算出来的高度才与 `oneLineFloorHeight` 的实测口径一致。
+    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, oneLineFloorHeight())
     const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.fontSize = size
-    label.lineHeight = size + 6
     label.color = color
+    // 盒高变大了，对齐必须跟着钉成居中：这里原本是默认的 TOP 对齐，字形贴在盒子上沿，
+    // 只抬盒高就会把整行字往上挪。居中锚 + CENTER 对齐才做到"改了盒子、字形一格都不动"。
+    label.verticalAlign = Label.VerticalAlign.CENTER
     label.overflow = Label.Overflow.SHRINK
     return label
   }

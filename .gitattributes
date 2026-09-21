@@ -16,3 +16,19 @@
 # 只要有一份文件在"我的机器是 LF、全新检出是 CRLF"，判据就有第二副面孔。
 *.meta text eol=lf
 *.mjs text eol=lf
+
+# **政策改成"默认全部 LF"，不再按扩展名点名**（2026-09-21 现数）：上面这张点名表漏了 **767 个文本文件** ——
+# `scripts/*.js`（17 个静态门脚本自己）、`art-src/*.py`（图标可读性那两门的实现）、`*.yml`（含
+# `.github/workflows/ci.yml`）、`pom.xml`、`Makefile`、`.gitignore`，连本文件自己都在漏网之列。
+# 漏一个的代价就是 2026-09-19 那批的形状：本机 LF、全新检出 CRLF，判据有第二副面孔。
+# 新加一门 `scripts/check-eol-policy.sh` 盯着这件事：文本 blob 没被强制 eol=lf 就红。
+* text=auto eol=lf
+
+# 真资产不参与换行转换。`text=auto` 本来就会认出它们（现数 2760 个 png 全是 `i/-text`），
+# 写死是为了不让"某个 png 恰好没有 NUL 字节"变成一次静默改二进制。
+# ⚠ **不要给 `*.txt` 加 text 规则**：仓库里有 2 个 .txt 被 git 判成二进制，加了就会被转换。
+*.png -text
+*.ogg -text
+*.swf -text
+*.ttf -text
+*.ai -text

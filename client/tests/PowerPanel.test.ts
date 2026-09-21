@@ -14,7 +14,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as PowerPanel from '../assets/scripts/game/power/PowerPanel'
-import { buildPowerPanel, buildTargetRows, formatPower, formatRatio } from '../assets/scripts/game/power/PowerPanel'
+import { buildPowerPanel, buildTargetRows, formatPower, formatRatio, targetSearchNotice } from '../assets/scripts/game/power/PowerPanel'
 import type { PowerDetailResp } from '../assets/scripts/net/generated/Protocol'
 import type { SearchTargetsResp, TargetBrief } from '../assets/scripts/net/generated/WorldProtocol'
 
@@ -45,7 +45,10 @@ function target(overrides: Partial<TargetBrief> = {}): TargetBrief {
 }
 
 function searchResp(targets: TargetBrief[]): SearchTargetsResp {
-  return { targets, selfMatchPower: 10000, bandLower: 5000, bandUpper: 20000, serverNow: 1 }
+  return {
+    targets, selfMatchPower: 10000, bandLower: 5000, bandUpper: 20000,
+    radiusMin: 1, radiusDefault: 48, radiusMax: 128, serverNow: 1,
+  }
 }
 
 // ---------- 数字格式化 ----------
@@ -149,6 +152,19 @@ test('服务端发来未知暴虐档位时原样显示，而不是崩在 undefin
 test('坐标照实显示（客户端本来就能算距离，藏坐标没有意义）', () => {
   const rows = buildTargetRows(searchResp([target({ coord: { x: 12, y: 340 } })]))
   assert.equal(rows[0]?.coordText, '(12, 340)')
+})
+
+// ---------- 空态那句文案：三相都要钉 ----------
+
+test('targetSearchNotice 只在「搜过且零行」那一相说话，另两相必须闭嘴', () => {
+  // ① 还没搜过：`rows` 的初值就是空数组，光看行数分不出这一相与 ②，所以 searched 要单独传
+  assert.equal(targetSearchNotice(false, 0), '',
+    '搜索前就印「没有目标」，玩家按下搜索会以为自己在跟一面墙较劲')
+  // ② 搜过了、确实一个没有：不说等于把「一片空行区」留给玩家自己猜
+  assert.equal(targetSearchNotice(true, 0), '这一带没有可打的目标')
+  // ③ 搜过且有行：有行还印这句等于自己打自己的脸
+  assert.equal(targetSearchNotice(true, 3), '')
+  assert.equal(targetSearchNotice(true, 1), '', '一页正好一条时也不算"没有目标"')
 })
 
 // ---------- 禁止项：客户端零校验 ----------

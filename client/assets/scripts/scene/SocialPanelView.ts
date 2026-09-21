@@ -47,7 +47,7 @@ import { applyCommandButton } from './ArtCatalog'
 import { NodePool } from './NodePool'
 import { buildRallyPanel } from '../game/social/RallyPanel'
 import type { RallyPanelData } from '../game/session/AppRoot'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -336,31 +336,6 @@ export class SocialPanelView extends Component {
     this.rebuild()
   }
 
-  /**
-   * 装载一次 /alliance/sync 的结果（验收 10：只下发 diff）。
-   *
-   * <p>客户端把 changed 合进缓存、把 removed 从缓存里摘掉，
-   * 然后用合并后的全量列表重画。合并是客户端的职责，
-   * 但「谁变了」完全由服务端说了算 —— 本方法不比较任何字段。
-   */
-  applyAllianceDiff(changed: readonly AllianceMember[], removedIds: readonly string[]): void {
-    for (const member of changed) {
-      const index = this.allianceMembers.findIndex((item) => item.id === member.id)
-      if (index >= 0) {
-        this.allianceMembers[index] = member
-      } else {
-        this.allianceMembers.push(member)
-      }
-    }
-    for (const id of removedIds) {
-      const index = this.allianceMembers.findIndex((item) => item.id === id)
-      if (index >= 0) {
-        this.allianceMembers.splice(index, 1)
-      }
-    }
-    this.rebuild()
-  }
-
   /** 用缓存里的成员列表重新组装一次面板。没有原始响应时什么也不做。 */
   private rebuild(): void {
     if (this.lastResp === null) {
@@ -558,13 +533,11 @@ export class SocialPanelView extends Component {
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 11, COLOR_TEXT, 17)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    title.node.getComponent(UITransform)?.setContentSize(new Size(380, 24))
-    title.overflow = Label.Overflow.SHRINK
+    capWidth(title, 380)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -11, COLOR_TEXT_DIM, 13)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(380, 20))
-    detail.overflow = Label.Overflow.SHRINK
+    capWidth(detail, 380)
     const value = this.addLabel(node, 'Value', PANEL_WIDTH / 2 - 120, 0, COLOR_COPPER_GOLD, 15)
     value.horizontalAlign = Label.HorizontalAlign.RIGHT
     value.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)

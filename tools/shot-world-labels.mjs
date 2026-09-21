@@ -39,7 +39,12 @@ const OUT = process.env.WORLD_SHOT_OUT
 const OUT_ZOOM = process.env.WORLD_SHOT_ZOOM_OUT
   ?? path.resolve(process.cwd(), 'client/build/art-verify/world-label-check-zoom1.png')
 const PORT = Number(process.env.WORLD_SHOT_PORT ?? 8197)
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[shot-world-labels] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
 
 /**

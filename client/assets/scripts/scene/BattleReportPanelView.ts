@@ -13,16 +13,17 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
-import { buildReportList } from '../game/battle/BattleReportPanel'
+import { buildReportList, buildScoutIntel } from '../game/battle/BattleReportPanel'
 import { truncatedNotice } from '../game/ui/TruncatedList'
-import type { ReportListView, ReportRow } from '../game/battle/BattleReportPanel'
+import type { ReportListView, ReportRow, ScoutRow, ScoutListView } from '../game/battle/BattleReportPanel'
 import { BattlePlaybackView } from './BattlePlaybackView'
 import type { BattleReportListResp, BattleResultView } from '../net/generated/BattleProtocol'
+import type { ScoutListResp } from '../net/generated/WorldProtocol'
 import type { PlaybackOptions } from '../game/battle/BattlePlayback'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import type { ShareChannelChoice } from '../game/session/Choices'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -41,8 +42,16 @@ const PANEL_WIDTH = 680
 const ROW_HEIGHT = 60
 const ROW_GAP = 6
 const PADDING = 16
+
+/** 左边两行文字能给到的宽度：右边还要留给「有效 / 胜 / 败」那一格 */
+const TEXT_WIDTH = PANEL_WIDTH - 2 * PADDING - 150
 const HEADER_HEIGHT = 64
+/** 池的预热行数；真正画几行由 `render` 按可视高算（与 MailPanelView #394 同一口径）。 */
 const MAX_VISIBLE_ROWS = 8
+/** 底部导航条占掉的高度，与 QuestPanelView / ArmyPanelView / MailPanelView 同一个口径。 */
+const BOTTOM_RESERVED = 68
+/** 右列（胜 / 败 / 有效 / 过期）的槽宽：`TEXT_WIDTH` 从行宽里扣掉的那一段，再留 12 的缝。 */
+const OUTCOME_SLOT = PANEL_WIDTH - 2 * PADDING - TEXT_WIDTH - 12
 
 @ccclass('BattleReportPanelView')
 export class BattleReportPanelView extends Component {
@@ -53,6 +62,11 @@ export class BattleReportPanelView extends Component {
   private rowPool: NodePool | null = null
   private readonly drawnRows: Node[] = []
   private headerLabel: Label | null = null
+  /** 敌情那一份列表（B26 S19）。与战报同一块面板、同一个行池，但字段是情报的字段 */
+  private scouts: ScoutListView | null = null
+  private intel: 'BATTLE' | 'SCOUT' = 'BATTLE'
+  private battleTabLabel: Label | null = null
+  private scoutTabLabel: Label | null = null
   private emptyLabel: Label | null = null
   private overflowLabel: Label | null = null
   private backLabel: Label | null = null
@@ -134,6 +148,43 @@ export class BattleReportPanelView extends Component {
     this.render()
   }
 
+  /** 敌情那一份列表到了就换上去（B26 S19）。不在这个方法里判"该显示哪一页"，页签是谁选的就画谁。 */
+  attachScouts(resp: ScoutListResp, now: number): void {
+    this.scouts = buildScoutIntel(resp, now)
+    this.render()
+  }
+
+  /** 切页签。侦察情报那页的行不可点：没有回放可看。 */
+  private pickIntel(intel: 'BATTLE' | 'SCOUT'): void {
+    this.intel = intel
+    this.render()
+  }
+
+  private renderScoutRow(node: Node, row: ScoutRow): void {
+    const graphics = node.getComponent(Graphics)
+    if (graphics !== null) {
+      graphics.clear()
+      // 过期的情报压暗：它不能再拿来定打法，混在有效情报里比没有更危险（B07 验收 9）
+      graphics.fillColor = row.expired ? COLOR_ROW_LOST : COLOR_ROW
+      graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
+      graphics.fill()
+    }
+    const title = node.children[0]?.getComponent(Label)
+    const detail = node.children[1]?.getComponent(Label)
+    const outcome = node.children[2]?.getComponent(Label)
+    if (title !== undefined && title !== null) {
+      title.string = row.title
+    }
+    if (detail !== undefined && detail !== null) {
+      detail.string = row.detail
+    }
+    if (outcome !== undefined && outcome !== null) {
+      outcome.string = row.outcome
+      outcome.color = row.expired ? COLOR_LOSE : COLOR_WIN
+    }
+    node.off('touch-start')
+  }
+
   /**
    * 把一场战果交给回放视图。回放组件是**第一次用到时才挂**的：
    * 它 onLoad 会建整屏背景与节点，没放过战报就不该有这些开销。
@@ -194,6 +245,12 @@ export class BattleReportPanelView extends Component {
     this.listNode = list
 
     this.headerLabel = this.addLabel(list, 'Header', 0, height / 2 - PADDING - 20, COLOR_COPPER_GOLD, 22)
+    this.battleTabLabel = this.addLabel(list, 'TabBattle', -70, height / 2 - PADDING - 48, COLOR_COPPER_GOLD, 15)
+    this.battleTabLabel.string = '战报'
+    this.battleTabLabel.node.on('touch-start', (_event: EventTouch) => this.pickIntel('BATTLE'), this)
+    this.scoutTabLabel = this.addLabel(list, 'TabScout', 70, height / 2 - PADDING - 48, COLOR_TEXT_DIM, 15)
+    this.scoutTabLabel.string = '侦察情报'
+    this.scoutTabLabel.node.on('touch-start', (_event: EventTouch) => this.pickIntel('SCOUT'), this)
     this.emptyLabel = this.addLabel(list, 'Empty', 0, 40, COLOR_TEXT_DIM, 17)
     this.overflowLabel = this.addLabel(list, 'Overflow', 0,
       -height / 2 + PADDING + 18, COLOR_TEXT_DIM, 14)
@@ -237,17 +294,32 @@ export class BattleReportPanelView extends Component {
     this.currentReportId = null
   }
 
+  /** 左对齐标签：锚点挪到左中，宽度交给 `UiFont.capWidth`（盒高它钉 27，正好是"一行不被压小"的下限） */
+  private sizeLeftLabel(label: Label, width: number): void {
+    const transform = label.node.getComponent(UITransform)
+    transform?.setAnchorPoint(0, 0.5)
+    capWidth(label, width)
+  }
+
   private createRow(): Node {
     const node = new Node('ReportRow')
     node.layer = this.node.layer
     node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, ROW_HEIGHT))
     node.addComponent(Graphics)
-    this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 18).horizontalAlign
-      = Label.HorizontalAlign.LEFT
-    this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -12, COLOR_TEXT_DIM, 14).horizontalAlign
-      = Label.HorizontalAlign.LEFT
-    this.addLabel(node, 'Outcome', PANEL_WIDTH / 2 - PADDING, 0, COLOR_TEXT, 18).horizontalAlign
-      = Label.HorizontalAlign.RIGHT
+    // 两个左对齐的标签必须有真实宽度和锚点：addLabel 给的 UITransform 是默认 100×100 居中锚点，
+    // 于是长文案（敌情那一行的观测值 + 误差 + 剩余时间）会从盒子左边溢出、左半边被裁掉
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 18)
+    title.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.sizeLeftLabel(title, TEXT_WIDTH)
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -12, COLOR_TEXT_DIM, 14)
+    detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.sizeLeftLabel(detail, TEXT_WIDTH)
+    // 右列同样要限宽：它只有"胜 / 败 / 有效 / 过期"四个短值，但值是服务端装配的，
+    // 不限宽就等于赌它一直短（锚点翻到右边，盒子往左长，才不会顶出卡片）
+    const outcome = this.addLabel(node, 'Outcome', PANEL_WIDTH / 2 - PADDING, 0, COLOR_TEXT, 18)
+    outcome.horizontalAlign = Label.HorizontalAlign.RIGHT
+    outcome.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    capWidth(outcome, OUTCOME_SLOT)
     return node
   }
 
@@ -271,30 +343,57 @@ export class BattleReportPanelView extends Component {
   private render(): void {
     const list = this.list
     const pool = this.rowPool
-    if (list === null || pool === null) {
+    if ((this.intel === 'BATTLE' && list === null) || (this.intel === 'SCOUT' && this.scouts === null)
+      || pool === null) {
       return
     }
+    const scoutMode = this.intel === 'SCOUT'
+    if (this.battleTabLabel !== null) {
+      this.battleTabLabel.color = scoutMode ? COLOR_TEXT_DIM : COLOR_COPPER_GOLD
+    }
+    if (this.scoutTabLabel !== null) {
+      this.scoutTabLabel.color = scoutMode ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+    }
     const height = view.getVisibleSize().height
-    if (this.headerLabel !== null) {
-      this.headerLabel.string = list.headerText
+    const source = scoutMode ? this.scouts : list
+    if (source === null) {
+      return
     }
     if (this.emptyLabel !== null) {
-      this.emptyLabel.string = list.emptyText
+      this.emptyLabel.string = source?.emptyText ?? ''
+      // 有行的时候必须藏起来：敌情页第一版就是两行情报下面还挂着「还没有敌情」，
+      // 读数全绿（只判了文字内容），画面自相矛盾
+      this.emptyLabel.node.active = source.rows.length === 0
     }
 
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
     const topY = height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
-    const visible = list.rows.slice(0, MAX_VISIBLE_ROWS)
-    visible.forEach((row, index) => {
+    // 行数按实测可视高度算，不写死（与 MailPanelView #394 同一处修法）：写死 8 行时第 6~8 行
+    // 连同"另有 N 场未显示"一起落到导航条底下 —— 量具现在看得见这一条了（#390 升成判据）。
+    const navTop = -height / 2 + BOTTOM_RESERVED
+    const maxRows = Math.max(1,
+      Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
+    const visible = source.rows.slice(0, maxRows)
+    visible.forEach((row: ReportRow | ScoutRow, index: number) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
-      this.renderRow(node, row)
+      if (scoutMode) {
+        this.renderScoutRow(node, row as ScoutRow)
+      } else {
+        this.renderRow(node, row as ReportRow)
+      }
     })
+    // 「另有几场没画下」挂在表头那一行（军队/任务/邮件同一口径）：单独占一行要么吃掉一排的位置，
+    // 要么落到导航条底下 —— 两种都是"玩家看不见这条提示"。
+    const truncated = truncatedNotice(scoutMode ? '份' : '场', source.rows.length - visible.length)
+    if (this.headerLabel !== null) {
+      const base = source.headerText
+      this.headerLabel.string = truncated === '' ? base : `${base} · ${truncated}`
+    }
     if (this.overflowLabel !== null) {
-      const hidden = list.rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice('场', hidden)
+      this.overflowLabel.string = ''
     }
   }
 

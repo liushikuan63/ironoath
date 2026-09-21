@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * 职责：在真实渲染里验新手引导那一层「画出来了、并且遮罩挡在该挡的地方」（B18 验收 6 的界面面）。
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 GUIDE_PORT（默认 8094，同机并发时换一个）
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  *
  * <p><b>为什么需要它，而不是只看单测</b>：{@code GuideDriver} 的判定在 CI 里（441 条客户端用例的一部分），
@@ -23,13 +24,18 @@
  *   BACKEND_ORIGIN=http://localhost:8161 GUIDE_OPS_UNUSED=1 node tools/verify-devtools-guide.mjs
  * </pre>
  */
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
 
 const ROOT = path.resolve('client/build/web-mobile')
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[devtools-guide] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.GUIDE_PORT ?? 8094)
 const TABLE = 'contract/config/guide.json'
 
@@ -60,6 +66,7 @@ function readGuideLayer({ texts }) {
   const worldRect = (node) => node.getComponent('cc.UITransform')?.getBoundingBoxToWorld() ?? null
   const center = (rect) => new window.cc.Vec3(rect.x + rect.width / 2, rect.y + rect.height / 2, 0)
   const gameHeight = game.getComponent('cc.UITransform')?.height ?? 0
+  const gameWidth = game.getComponent('cc.UITransform')?.width ?? 0
 
   const maskRects = guide.children
     .filter(node => node.name === 'GuideMask')
@@ -104,6 +111,36 @@ function readGuideLayer({ texts }) {
   out.counter = counter
   out.skipVisible = guide.getChildByName('GuideBubble')
     ?.getChildByName('GuideButtons')?.getChildByName('GuideSkip')?.active ?? null
+
+  // **气泡自己也是遮挡源**：它不透明，落在洞里面就把洞里的按钮盖住。第 1 步要玩家按「升级」，
+  // 而气泡正好贴着可用区下沿画 —— 于是"引导让你按的那颗键被引导自己挡住"。
+  // 上面那两条只量遮罩（mask），量不到这件事。
+  const bubble = guide.getChildByName('GuideBubble')
+  const bubbleRect = bubble === null || bubble === undefined ? null : worldRect(bubble)
+  out.bubbleFound = bubbleRect !== null
+  const findNamed = (name) => {
+    let hit = null
+    const walk2 = (n) => {
+      if (n.name === name) hit = n
+      for (const c of n.children ?? []) walk2(c)
+    }
+    walk2(game)
+    return hit
+  }
+  const intersects = (a, b) => a !== null && b !== null
+    && !(a.x + a.width <= b.x || b.x + b.width <= a.x
+      || a.y + a.height <= b.y || b.y + b.height <= a.y)
+  const target = findNamed('DetailUpgradeButton')
+  const targetRect = target === null ? null : worldRect(target)
+  out.targetFound = targetRect !== null
+  out.barRect = barRect === null ? null
+    : { x: barRect.x, y: barRect.y, w: barRect.width, h: barRect.height }
+  out.bubbleRect = bubbleRect === null ? null
+    : { x: bubbleRect.x, y: bubbleRect.y, w: bubbleRect.width, h: bubbleRect.height }
+  out.targetRect = targetRect === null ? null
+    : { x: targetRect.x, y: targetRect.y, w: targetRect.width, h: targetRect.height }
+  out.screen = { w: gameWidth, h: gameHeight }
+  out.bubbleCoversTarget = intersects(bubbleRect, targetRect)
   return out
 }
 
@@ -115,6 +152,9 @@ async function main() {
   let failures = 0
 
   await page.goto(`${preview.origin}/`, { waitUntil: 'networkidle' })
+  // 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+  // 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+  preview.assertRewritten()
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
   // 引导层要等登录后那一次 /guide/script 才会画：等它出现而不是等固定毫秒
@@ -149,6 +189,17 @@ async function main() {
   failures += verdict(read?.barBlocked === true, '验收 6：导航条中心被遮罩盖住（引导期间切不走面板）')
   failures += verdict(read?.holeBlocked === false && (read?.maskCount ?? 0) >= 1,
     '验收 6：确实拼出了遮罩，而洞的中心不在任何遮罩里（这一步要点的按钮还点得到）', 'maskCount=' + read?.maskCount)
+  failures += verdict(read?.bubbleFound === true, '反空转：气泡画出来了（量不到就无从判遮挡）')
+  failures += verdict(read?.targetFound === true, '这一步要玩家按的那颗键找得到（内城「升级」）')
+  failures += verdict(read?.bubbleCoversTarget === false,
+    '验收 6 补：气泡不压住这一步要玩家按的那颗键（气泡不透明，压住就是挡住操作）',
+    'bubble=' + JSON.stringify(read?.bubbleRect) + ' target=' + JSON.stringify(read?.targetRect)
+    + ' nav=' + JSON.stringify(read?.barRect) + ' screen=' + JSON.stringify(read?.screen))
+
+  const shots = 'client/build/guide-verify'
+  mkdirSync(shots, { recursive: true })
+  await page.screenshot({ path: path.join(shots, 'guide-step-1.png') })
+  console.log('  截图：' + path.join(shots, 'guide-step-1.png'))
 
   await browser.close()
   await preview.close()

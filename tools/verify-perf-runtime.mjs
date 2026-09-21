@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * 职责：在真实浏览器里量客户端运行期的四项性能指标，并按 `global.json` 的阈值判定。
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 PERF_PORT（默认 8092，同机并发时换一个）
  * 依赖：node、playwright、**已启动的 dev 服务端（默认 8080）**、已构建的 `client/build/web-mobile`。
  *
  * <p>对应 `CC开发全流程.md` 阶段 6 里能在这台机器上做的四项：
@@ -34,7 +35,12 @@ const require = createRequire(import.meta.url)
 const { clientBoundPaths } = require('../scripts/lib/endpoint-paths.js')
 
 const ROOT = path.resolve('client/build/web-mobile')
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[perf] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.PERF_PORT ?? 8092)
 const SOAK_SECONDS = Number(process.env.PERF_SOAK_SECONDS ?? 600)
 const FPS_SAMPLE_MS = Number(process.env.PERF_FPS_SAMPLE_MS ?? 5000)
@@ -82,6 +88,9 @@ const browser = await chromium.launch({ headless: true, args: ['--enable-precise
   let warmed = false
   warmPage.on('console', (m) => { if (m.text().includes('[boot]')) warmed = true })
   await warmPage.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' })
+  // 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+  // 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+  preview.assertRewritten()
   const deadline = Date.now() + 30_000
   while (!warmed && Date.now() < deadline) await warmPage.waitForTimeout(200)
   await warmContext.close()

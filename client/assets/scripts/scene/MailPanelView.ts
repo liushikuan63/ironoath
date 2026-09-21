@@ -19,7 +19,7 @@ import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { MailPanelView as MailPanelData, MailRow } from '../game/mail/MailPanel'
 import type { MailClaimAllResp, MailListResp } from '../net/generated/MailProtocol'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -38,8 +38,14 @@ const ROW_GAP = 6
 const PADDING = 16
 const HEADER_HEIGHT = 64
 const BUTTON_HEIGHT = 40
-/** 一屏最多画几行。超出的要靠 ScrollView（编辑器里补），占位期截断显示并说明。 */
+/** 池的预热行数：真正画几行由 `render` 按可视高算（下面 `BOTTOM_RESERVED` 那条理由）。 */
 const MAX_VISIBLE_ROWS = 7
+/** 底部导航条占掉的高度，与 QuestPanelView / ArmyPanelView 同一个口径（#389 定下的写法）。 */
+const BOTTOM_RESERVED = 68
+/** 右槽（状态 / 到期）：「6 天后到期」13 号字占约 78，留 140 给更长的下发文案。 */
+const RIGHT_SLOT = 140
+/** 左槽（标题 / 附件）吃掉剩下的宽度，中间留 12 的缝 —— 两槽相碰就是量具那一维的"字形相碰"。 */
+const LEFT_SLOT = PANEL_WIDTH - 2 * PADDING - RIGHT_SLOT - 12
 
 @ccclass('MailPanelView')
 export class MailPanelView extends Component {
@@ -163,14 +169,25 @@ export class MailPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
     graphics.fill()
 
+    // 四个槽位各自限宽（军队/背包同一口径：锚点定边 + `capWidth`）。
+    // 不限宽时 Label 在 `overflow = NONE` 下把盒子撑成文本那么宽、又绕节点中心铺开 ——
+    // 长标题会往左顶出卡片甚至顶出屏幕（台账 #394 目视 `label-fit-verify/mail.png` 抓到的那一行）。
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 16, COLOR_TEXT, 19)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
+    title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    capWidth(title, LEFT_SLOT)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -8, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    capWidth(detail, LEFT_SLOT)
     const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - PADDING, 12, COLOR_TEXT, 15)
     status.horizontalAlign = Label.HorizontalAlign.RIGHT
+    status.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    capWidth(status, RIGHT_SLOT)
     const expiry = this.addLabel(node, 'Expiry', PANEL_WIDTH / 2 - PADDING, -14, COLOR_TEXT_DIM, 13)
     expiry.horizontalAlign = Label.HorizontalAlign.RIGHT
+    expiry.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    capWidth(expiry, RIGHT_SLOT)
     return node
   }
 
@@ -198,9 +215,6 @@ export class MailPanelView extends Component {
     if (data === null || pool === null) {
       return
     }
-    if (this.headerLabel !== null) {
-      this.headerLabel.string = data.headerText
-    }
     if (this.claimButton !== null && this.claimCaption !== null) {
       // 没有可领的东西时按钮灰着且点不动：亮着却拿到一个空响应会让玩家以为卡了
       this.claimButton.off('touch-start')
@@ -213,9 +227,15 @@ export class MailPanelView extends Component {
     }
 
     const rowsTop = height / 2 - PADDING - HEADER_HEIGHT - BUTTON_HEIGHT - 16 - ROW_HEIGHT / 2
+    // 行数按实测可视高度算，不写死（与 QuestPanelView #389 同一处修法）：写死 7 行时第 5~7 行
+    // 连同"另有 N 封未显示"一起落到导航条底下 —— 那是"画了但玩家看不见"，比少画一行更难发现。
+    // 这一格原本量不到：dev 新号邮箱是空的，横扫只读到 2 颗 Label（台账 #394）。
+    const navTop = -height / 2 + BOTTOM_RESERVED
+    const maxRows = Math.max(1,
+      Math.floor((rowsTop + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
-    const visible = data.rows.slice(0, MAX_VISIBLE_ROWS)
+    const visible = data.rows.slice(0, maxRows)
     visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, rowsTop - index * (ROW_HEIGHT + ROW_GAP), 0))
@@ -223,9 +243,16 @@ export class MailPanelView extends Component {
       this.renderRow(node, row)
     })
 
+    // 「另有几封没画下」挂在表头那一行（军队/任务同一口径）：单独占一行要么吃掉一排的位置，
+    // 要么落到导航条底下 —— 两种都是"玩家看不见这条提示"。
+    const truncated = truncatedNotice('封', data.rows.length - visible.length)
+    if (this.headerLabel !== null) {
+      this.headerLabel.string = truncated === ''
+        ? data.headerText
+        : `${data.headerText} · ${truncated}`
+    }
     if (this.overflowLabel !== null) {
-      const hidden = data.rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice('封', hidden)
+      this.overflowLabel.string = ''
     }
   }
 

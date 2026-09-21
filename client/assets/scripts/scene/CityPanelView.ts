@@ -10,12 +10,12 @@ import {
   _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, sys, view,
 } from 'cc'
 import {
-  CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, collectMessage, errorText,
+  CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, cancelMessage, collectMessage,
 } from '../game/city/CityPanel'
 import type { BuildingRow, CityGrid, CityPanelView as CityPanelData } from '../game/city/CityPanel'
 import { buildBuildChoices } from '../game/session/Choices'
 import type {
-  CityCollectResp, CityListResp, ErrorDetail, SpeedUpSource,
+  CityCancelResp, CityCollectResp, CityListResp, SpeedUpSource,
 } from '../net/generated/CityProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import {
@@ -23,7 +23,7 @@ import {
   buildingIconKey, ensureFamily, familyFrame,
 } from './ArtCatalog'
 import { buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth, oneLineFloorHeight } from './UiFont'
 import { DISTRICT_TINT_RGB, projectSceneLayout } from '../game/city/CitySceneAnchors'
 import type { ProjectedPlate, SceneDistrict } from '../game/city/CitySceneAnchors'
 
@@ -97,8 +97,18 @@ const CARD_OFFSET = 24
 const MAX_SCALE = 1.4
 const ACTION_BUTTON_WIDTH = 82
 const ACTION_BUTTON_HEIGHT = 32
+/** 右上角那颗「一键收割」的宽与中心 x（中心由 76 这个贴边量决定）—— 头部那一块要让到它的左沿之前 */
+const CORNER_KEY_WIDTH = 132
+const CORNER_KEY_CENTER_X = CARD_WIDTH / 2 - FRAME_BAND - 76
+/**
+ * 标题与队列行能用的宽度：内容区左沿到「一键收割」左沿，再留 8 的缝。
+ *
+ * <p>这两个数不是估的：世界矩形实测「一键收割」占 x 130..262，队列行 317 宽居中排时
+ * 右端顶到 159 —— 被压住 29px（#335 的截图才看出来：机器全绿、眼睛看得见）。
+ */
+const HEADER_TEXT_WIDTH = CONTENT_WIDTH / 2 + CORNER_KEY_CENTER_X - CORNER_KEY_WIDTH / 2 - 8
 
-type RowAction = 'upgrade' | 'speedAd' | 'speedGold' | 'collect'
+type RowAction = 'upgrade' | 'speedAd' | 'speedGold' | 'collect' | 'cancel'
 
 interface GridTileRefs {
   readonly node: Node
@@ -130,6 +140,8 @@ export class CityPanelView extends Component {
   private card: Node | null = null
   private frameGraphics: Graphics | null = null
   private headerLabel: Label | null = null
+  /** 资源行数超过那 6 颗固定 Label 时，多出来的部分在这里显式说一句，不静默丢 */
+  private resourceOverflowLabel: Label | null = null
   private queueLabel: Label | null = null
   private readonly resourceLabels: Label[] = []
   private messageLabel: Label | null = null
@@ -144,6 +156,10 @@ export class CityPanelView extends Component {
   onUpgrade: ((configId: string, gridX?: number, gridY?: number) => void) | null = null
   onSpeedUp: ((buildingId: string, source: SpeedUpSource) => void) | null = null
   onCollect: ((buildingId: string | null) => void) | null = null
+  /** 玩家点了「取消」这一行的建造。返还多少由服务端算，本场景只把回执念出来 */
+  onCancelBuild: ((buildingId: string) => void) | null = null
+  /** 卡片左下角那颗「学院 · 研究」：打开全局研究页（V03-a-S1 的读侧 + #323 的写侧都在那一页） */
+  onOpenTech: (() => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -181,6 +197,8 @@ export class CityPanelView extends Component {
     this.onUpgrade = null
     this.onSpeedUp = null
     this.onCollect = null
+    this.onCancelBuild = null
+    this.onOpenTech = null
   }
 
   attach(resp: CityListResp, offsetMs: number): void {
@@ -199,16 +217,17 @@ export class CityPanelView extends Component {
     this.offsetMs = offsetMs
   }
 
+  /** 取消建造的回执：退回来多少，照服务端给的数念。 */
+  attachCancel(resp: CityCancelResp): void {
+    this.showMessage(cancelMessage(resp), COLOR_GOOD)
+  }
+
   attachCollect(resp: CityCollectResp): void {
     const message = collectMessage(resp)
     if (message === null) {
       return
     }
     this.showMessage(message.text, message.kind === 'done' ? COLOR_GOOD : COLOR_TEXT_DIM)
-  }
-
-  showError(detail: ErrorDetail | null, fallback: string): void {
-    this.showMessage(errorText(detail, fallback), COLOR_WARNING)
   }
 
   override update(): void {
@@ -249,10 +268,14 @@ export class CityPanelView extends Component {
       ? null
       : frame.addComponent(Graphics)
 
-    // 头部整块从"框的四角带"下面开始排（原来从卡片外沿往下 16px 起排，标题正好压在角饰上）
+    // 头部整块从"框的四角带"下面开始排（原来从卡片外沿往下 16px 起排，标题正好压在角饰上）。
+    // **左对齐 + 限定宽度**：居中排时队列行的右端顶进右上角那颗「一键收割」里 29px（实测），
+    // 而这一行最长的那句（队列 + 可开启 + 坐标异常）会随服务端给的数变长 —— 让位给键，长句交给 SHRINK。
     const top = CARD_HEIGHT / 2 - FRAME_BAND
-    this.headerLabel = this.addLabel(card, 'Header', 0, top - 14, COLOR_COPPER_GOLD, 22)
-    this.queueLabel = this.addLabel(card, 'Queue', 0, top - 38, COLOR_TEXT, 16)
+    this.headerLabel = this.addLabel(card, 'Header', -CONTENT_WIDTH / 2, top - 14,
+      COLOR_COPPER_GOLD, 22, true, HEADER_TEXT_WIDTH)
+    this.queueLabel = this.addLabel(card, 'Queue', -CONTENT_WIDTH / 2, top - 38,
+      COLOR_TEXT, 16, true, HEADER_TEXT_WIDTH)
 
     const columnWidth = CONTENT_WIDTH / 3
     for (let row = 0; row < 2; row++) {
@@ -265,6 +288,10 @@ export class CityPanelView extends Component {
           COLOR_TEXT_DIM, 14, true, columnWidth - 8))
       }
     }
+
+    // 资源行超过 6 项时的兜底那一行（平时是空串，不占视觉）
+    this.resourceOverflowLabel = this.addLabel(
+      card, 'ResourceOverflow', -CONTENT_WIDTH / 2, top - 98, COLOR_TEXT_DIM, 12, true, CONTENT_WIDTH)
 
     this.buildGrid(card)
     this.buildActionBar(card)
@@ -307,13 +334,14 @@ export class CityPanelView extends Component {
       iconBox.setAnchorPoint(0.5, 0)
       iconBox.setContentSize(new Size(plate.width, plate.width))
       const levelLabel = this.addLabel(tile, 'Level', 0, 0, COLOR_TEXT_DIM, 10)
+      // 这颗字**画在半径 9 的徽章圆盘里**（`drawTileBadge` 把位置钉到圆心、盒子钉到 20×14），
+      // 抬到 27 的地板就会让字长出圆盘。它是 27 地板的一条有意例外，留在横扫基线里。
       levelLabel.node.getComponent(UITransform)?.setContentSize(new Size(20, 14))
       levelLabel.overflow = Label.Overflow.SHRINK
       // 名字压在脚印下沿：正稿是"往上长"的，脚印下沿那一条本来就是房基，
       // 9px 的一行字盖在房基上比盖在屋顶上可读，也不会去撞前一排的建筑。
       const nameLabel = this.addLabel(tile, 'Name', 0, -plate.height / 2 + 6, COLOR_TEXT, 9)
-      nameLabel.node.getComponent(UITransform)?.setContentSize(new Size(plate.width, 12))
-      nameLabel.overflow = Label.Overflow.SHRINK
+      capWidth(nameLabel, plate.width)
       this.gridTiles.push({ node: tile, graphics, iconRim, icon, levelLabel, nameLabel, plate })
     }
   }
@@ -367,6 +395,9 @@ export class CityPanelView extends Component {
 
     this.createActionButton(bar, 'DetailUpgradeButton', '升级', -12, 'upgrade')
     this.createActionButton(bar, 'DetailCollectButton', '收割', -12, 'collect')
+    // 「取消」与「升级」互斥（升级中才谈得上取消），所以共用同一个槽位 ——
+    // 按钮条只有 536 宽，升级中那一行已经排了两颗加速键，再加第三颗就溢出条外
+    this.createActionButton(bar, 'DetailCancelButton', '取消', -12, 'cancel')
     this.createActionButton(bar, 'DetailSpeedAdButton', '广告加速', 78, 'speedAd')
     this.createActionButton(bar, 'DetailSpeedGoldButton', '金币加速', 168, 'speedGold')
 
@@ -375,19 +406,46 @@ export class CityPanelView extends Component {
     parent.addChild(collectAll)
     // 落在四角带之内：贴着内容区右上，不压角饰
     collectAll.setPosition(new Vec3(
-      CARD_WIDTH / 2 - FRAME_BAND - 76, CARD_HEIGHT / 2 - FRAME_BAND - 20, 0))
-    collectAll.addComponent(UITransform).setContentSize(new Size(132, 34))
-    if (!applyCommandButton(collectAll, 'normal', 132, 34)) {
+      CORNER_KEY_CENTER_X, CARD_HEIGHT / 2 - FRAME_BAND - 20, 0))
+    collectAll.addComponent(UITransform).setContentSize(new Size(CORNER_KEY_WIDTH, 34))
+    if (!applyCommandButton(collectAll, 'normal', CORNER_KEY_WIDTH, 34)) {
       const collectGraphics = collectAll.addComponent(Graphics)
       collectGraphics.fillColor = COLOR_PANEL
       collectGraphics.strokeColor = COLOR_COPPER_GOLD
       collectGraphics.lineWidth = 2
-      collectGraphics.roundRect(-66, -17, 132, 34, 6)
+      collectGraphics.roundRect(-CORNER_KEY_WIDTH / 2, -17, CORNER_KEY_WIDTH, 34, 6)
       collectGraphics.fill()
       collectGraphics.stroke()
     }
     this.addLabel(collectAll, 'Caption', 0, 0, COLOR_TEXT, 15).string = '一键收割'
     collectAll.on('touch-start', (_event: EventTouch) => this.onCollect?.(null), this)
+
+    // 研究页是**全局一页一队列**，不是某个建筑的属性 ⇒ 不挂在学院行上（挂上去会带来两个够不着的
+    // 时刻：没选中学院、学院正在升级把按钮条占满）。学院等级仍是服务端的真门槛
+    // （TECH_ACADEMY_REQUIRED 会把原因原样送回来）。
+    //
+    // 落点是**卡片底部左角**。顶部那一行放不下第二颗常驻键：标题 161 + 队列行 317 + 两颗键 272 = 750，
+    // 而内容区只有 532 —— 这是几何问题，不是把 x 挪一挪能解决的（#335 的截图量出来的世界矩形：
+    // 标题被压住 91px）。底部那一条只有居中的回执（约 230 宽），左角本来就空着。
+    // y 取"贴内容区下沿、下半截进四角带"：再往上 5px 就压到选中详情条（它的下沿在 −236，
+    // 而这颗键有 34 高，详情条与内容区下沿之间只剩 24px，塞不下）—— 让开可点的详情条，宁可压装饰带。
+    const tech = new Node('TechOpenButton')
+    tech.layer = parent.layer
+    parent.addChild(tech)
+    tech.setPosition(new Vec3(
+      -CARD_WIDTH / 2 + FRAME_BAND + 76, -CARD_HEIGHT / 2 + FRAME_BAND + 2, 0))
+    tech.addComponent(UITransform).setContentSize(new Size(CORNER_KEY_WIDTH, 34))
+    if (!applyCommandButton(tech, 'normal', CORNER_KEY_WIDTH, 34)) {
+      const techGraphics = tech.addComponent(Graphics)
+      techGraphics.fillColor = COLOR_PANEL
+      techGraphics.strokeColor = COLOR_COPPER_GOLD
+      techGraphics.lineWidth = 2
+      techGraphics.roundRect(-CORNER_KEY_WIDTH / 2, -17, CORNER_KEY_WIDTH, 34, 6)
+      techGraphics.fill()
+      techGraphics.stroke()
+    }
+    this.addLabel(tech, 'Caption', 0, 0, COLOR_TEXT, 15).string = '学院 · 研究'
+    tech.on('touch-start', (_event: EventTouch) => this.onOpenTech?.(), this)
   }
 
   private createActionButton(parent: Node, name: string, text: string, x: number,
@@ -469,6 +527,21 @@ export class CityPanelView extends Component {
         label.string = line
       }
     })
+    // 尾部要清：`resources` 是服务端按玩家状态拼的 map（`CityAppService.toResourceMap`），
+    // 键数不固定 —— 只写不清的话，条数一变短，后面那几颗就还留着**上一次的旧数值**，
+    // 玩家读到的是"我还有 8000 石头"，而那个数属于上一帧。
+    for (let index = panel.resourceLines.length; index < this.resourceLabels.length; index++) {
+      const stale = this.resourceLabels[index]
+      if (stale !== undefined && stale.string !== '') {
+        stale.string = ''
+      }
+    }
+    // 比槽位多的那一截不能静默丢掉（丢了就是"资源少了一种"却没有任何地方说），
+    // 但也绝不因此撑破头部那一块 —— 交给 `resourceOverflowLabel` 显式说一句还有几项没画。
+    if (this.resourceOverflowLabel !== null) {
+      const hidden = panel.resourceLines.length - this.resourceLabels.length
+      this.resourceOverflowLabel.string = hidden > 0 ? `另有 ${hidden} 项资源未显示` : ''
+    }
 
     this.renderGrid(grid)
     this.renderSelection(selected)
@@ -654,8 +727,9 @@ export class CityPanelView extends Component {
     for (const [button, kind] of Array.from(this.actionButtons)) {
       button.off('touch-start')
       const visible = row !== null && (kind === 'collect' ? row.collectable
-        : kind === 'upgrade' ? !row.upgrading && !row.collectable && !row.paused
-          : row.upgrading && !row.collectable)
+        : kind === 'cancel' ? row.upgrading
+          : kind === 'upgrade' ? !row.upgrading && !row.collectable && !row.paused
+            : row.upgrading && !row.collectable)
       button.active = visible
       if (!visible || row === null) {
         continue
@@ -673,6 +747,9 @@ export class CityPanelView extends Component {
             return
           case 'collect':
             this.onCollect?.(row.id)
+            return
+          case 'cancel':
+            this.onCancelBuild?.(row.id)
             return
         }
       }, this)
@@ -696,12 +773,25 @@ export class CityPanelView extends Component {
       transform.setAnchorPoint(0, 0.5)
     }
     if (maxWidth > 0) {
-      transform.setContentSize(new Size(maxWidth, fontSize * 1.6))
+      // 盒高用量出来的下限：`字号 × 1.6` 在 16 号字上只有 26，而 SHRINK 会把字形压到 26/30
+      // —— 那一行本来就是常态性小一号（台账 #366/#367 实测，`tools/verify-label-fit-runtime.mjs` 会点名）
+      transform.setContentSize(new Size(maxWidth, oneLineFloorHeight()))
       // SHRINK 而不是 CLAMP：这里装的是资源数值，裁掉尾数会读成另一个数（10000 变 1000），
       // 字变小至少还是那个值。
       label.overflow = Label.Overflow.SHRINK
     }
     return label
+  }
+
+  /**
+   * 适配层把「这件事现在做不了」写到那条文案带上（#356/#357：以前只进 console.warn）。
+   *
+   * <p>与 #355 删掉的那颗 `showError` 不是一回事：那颗是**视图自己另开的一条错误通路**，
+   * 会绕过 `AppRoot.say` 那个既显示又上报的收口点；这一颗是**收口点下面的落点**，
+   * 只有适配层会调它，本场景不判断任何"能不能"。
+   */
+  showBlocked(message: string): void {
+    this.showMessage(message, COLOR_WARNING)
   }
 
   private showMessage(text: string, color: Color): void {

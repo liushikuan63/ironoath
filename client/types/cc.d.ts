@@ -103,6 +103,12 @@ declare module 'cc' {
     /** 局部坐标。地图命中测试要读它，只给 setPosition 不给读是半个 API。 */
     position: Vec3
     addChild(child: Node): void
+    /**
+     * 改兄弟序号（越大越靠后、画得越上面）。真实引擎有，桩里此前漏了它 ——
+     * 于是弹层抬层只能用 `parent.addChild(自己)`，而那在 3.8.7 里对同一父节点是空操作
+     * （实测 children 为 A,B 时再 addChild(A) 仍是 A,B），抬层一直没生效。
+     */
+    setSiblingIndex(siblingIndex: number): void
     removeFromParent(): void
     destroy(): boolean
     setPosition(position: Vec3): void
@@ -182,6 +188,12 @@ declare module 'cc' {
 
   export class Sprite extends Component {
     spriteFrame: SpriteFrame | null
+    /**
+     * 真实引擎里 `Sprite extends UIRenderer`，`color` 是 UIRenderer 上的属性（染色用），
+     * 桩里漏了它会把"用了个真有的引擎方法"报成属性不存在 —— 与 `setSiblingIndex`、
+     * `getChildByName` 同一条：那是桩的缺口，不是调用方写错（本项目的 scene/ 层在 Creator 里能编过）。
+     */
+    color: Color
     type: number
     sizeMode: number
     static Type: {
@@ -207,6 +219,7 @@ declare module 'cc' {
     horizontalAlign: number
     verticalAlign: number
     overflow: number
+    enableWrapText: boolean
     static HorizontalAlign: { LEFT: number; CENTER: number; RIGHT: number }
     static VerticalAlign: { TOP: number; CENTER: number; BOTTOM: number }
     static Overflow: { NONE: number; CLAMP: number; SHRINK: number; RESIZE_HEIGHT: number }

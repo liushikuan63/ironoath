@@ -31,6 +31,12 @@ test('未启用赛季时整块收起：不显示"第 0 天"（相位为 null 是
   const view = buildSeasonPanel(resp({ phase: null, seasonStartAt: null, dayIndex: null, phaseEndAt: null }))
   assert.equal(view.visible, false)
   assert.equal(view.titleText, '')
+  // 这一条钉的是分隔符：`phaseLabel(null)` 与 `remainTextOf(null, …)` 都返回空串，
+  // 而 `phaseText` 是无条件拼 `${相位} · ${倒计时}` 的 —— 少了上面那个提前返回，
+  // 玩家读到的就是「 · 」两个标点（同族缺陷在战令那一格真的发生过，见收口清单 #351）。
+  // 服务端两个 null 成对出现（`SeasonTimeline.phaseEndAt` 返回原始 long，启用时不可能为 null），
+  // 所以今天不可达；这条判据要防的是以后有人把提前返回拆掉。
+  assert.equal(view.phaseText, '', '未启用时相位那一格必须是空串，不能是悬空分隔符')
   assert.deepEqual(view.gates, [])
   assert.match(view.noticeText ?? '', /尚未启用赛季/)
 })

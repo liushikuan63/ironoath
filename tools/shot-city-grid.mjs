@@ -40,7 +40,12 @@ const PORT = Number(process.env.CITY_SHOT_PORT ?? 8192)
  * 那一台：契约刚加了 `BuildingView.name`，老后端不会下发这个字段，屏幕上会印出 `undefined Lv1` ——
  * 拿老后端跑这一格只会得到一个看不出名堂的读数。
  */
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[shot-city-grid] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 /**
  * 截图默认带上后端端口：跑对照组（老后端）时不会把主证据那张图盖掉。
  * 本轮真的踩过 —— 控制组后跑，把"已修复"那张图换成了 `undefined Lv1` 那张。

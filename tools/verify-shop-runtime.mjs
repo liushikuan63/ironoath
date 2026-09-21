@@ -4,6 +4,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 SHOP_PORT（默认 8098，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8075 node tools/verify-shop-runtime.mjs
  *
  * <p><b>为什么用 web 产物证</b>：`ShopPanelView` 在两个平台上都是同一份代码（小游戏那边没有
@@ -24,7 +25,12 @@ import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf8
 import { startPreviewServer } from './lib/preview-server.mjs'
 
 const ROOT = path.resolve('client/build/web-mobile')
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[verify-shop-runtime] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.SHOP_PORT ?? 8098)
 const SHOT_DIR = path.resolve('client/build/shop-verify')
 /** 屏幕底部要给导航条让出的高度（与面板里的常量同源：8 + 52 + 8）。 */
@@ -92,6 +98,42 @@ function readShop() {
     }
     const text = labelOf(child)
     if (text !== null) out.labels.push(`${child.name}:${text}`)
+  }
+  return out
+}
+
+/**
+ * 货架文字的几何：一颗 Label 的盒子高度低于 27 就会被引擎**按比例缩字**
+ * （`overflow=SHRINK` 把盒子当缩放系数，常数见收口清单 #381）。
+ * 只查这一件事；"字与字有没有碰上"交给横扫量具，它已经按估宽算过了。
+ */
+function readGeometry() {
+  const FLOOR = 27
+  const out = { labels: 0, tight: [] }
+  const scene = window.cc.director.getScene()
+  const panel = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('shop')
+  if (panel === null || panel === undefined) return out
+  const shots = []
+  const walk = (node, depth) => {
+    if (node.activeInHierarchy === false || depth > 12) return
+    const label = node.getComponent && node.getComponent('cc.Label')
+    if (label !== null && label !== undefined && label.string !== '') {
+      const box = node.getComponent('cc.UITransform')
+      shots.push({
+        text: label.string.slice(0, 22),
+        h: box !== null && box !== undefined ? box.height : 0,
+        font: label.fontSize,
+        shrink: label.overflow === 2,
+      })
+    }
+    for (const child of node.children) walk(child, depth + 1)
+  }
+  walk(panel, 0)
+  out.labels = shots.length
+  for (const s of shots) {
+    if (s.shrink && s.h < FLOOR) {
+      out.tight.push(s.text + '(' + Math.round(s.h) + '<' + FLOOR + ',字' + s.font + ')')
+    }
   }
   return out
 }
@@ -174,6 +216,16 @@ async function main() {
   const spaced = ys.length >= 2 && ys.every((y, i) => i === 0 || Math.abs((ys[i - 1] - y) - spacing) < 0.5)
   verdict(spaced, '画出来的每一行按行高 + 行距真的排开了（不是叠在 y=0）',
     `各行的 y=${JSON.stringify(ys)}（期望间距 ${spacing}）`)
+
+  /**
+   * 盒子矮于 27 引擎就缩字——横扫量具的那 15 条商店基线全在这一族。
+   * 只查"矮"这一件事，配一条"真的读到过 Label"的正向断言，否则空集合会假绿。
+   */
+  const geo = await page.evaluate(readGeometry)
+  verdict(geo.labels > 0, '几何这一支真的读到了 Label（读到 0 颗说明遍历写错，判据会假绿）',
+    `shop 子树下 ${geo.labels} 颗`)
+  verdict(geo.tight.length === 0, '没有一颗字被盒子压小（盒高 < 27 即按比例缩字）',
+    geo.tight.length === 0 ? `${geo.labels} 颗全部不低于 27` : `${geo.tight.length} 颗：${geo.tight.slice(0, 8).join('、')}`)
 
   const shot1 = path.join(SHOT_DIR, 'shop-gold.png')
   await page.screenshot({ path: shot1 })

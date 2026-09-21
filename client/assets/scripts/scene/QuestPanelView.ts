@@ -43,8 +43,14 @@ const COLOR_CLAIMABLE = new Color(120, 176, 96, 255)
 const PANEL_WIDTH = 680
 const ROW_HEIGHT = 62
 const ROW_GAP = 6
-const HEADER_HEIGHT = 64
+/**
+ * 顶部带的高度：表头 + 页签行。64 时表头（22 号）与页签行（14 号）的字形带只差 21px，
+ * 小于 (22+14)/2+4 = 23 —— 页签底板还会压住表名下沿（横扫的"字形相碰"那一维量出来的，见台账 #388）。
+ */
+const HEADER_HEIGHT = 76
 const PADDING = 16
+/** 底部导航条留出来的高度（与军队/商店/战令同一口径）：多画的行会被它盖住。 */
+const BOTTOM_RESERVED = 68
 /** 一屏最多画几行。超出的要靠 ScrollView（编辑器里补），占位期截断显示并说明 */
 const MAX_VISIBLE_ROWS = 8
 /**
@@ -158,6 +164,9 @@ export class QuestPanelView extends Component {
       return
     }
     this.list = buildQuestList(resp)
+    // 与 #354 那条「回执被自己触发的刷新抹掉」同形状，但这一处是良性的，判据两条：
+    // 三选一是玩家点「领取」时按 intent 现算出来的（`handleClaimClick`），不来自任何写回执；
+    // 而能刷新到这里的地方只有 `claimQuest`（选完才发请求，此时关掉弹窗正是对的）与登录预拉（弹窗还不存在）。
     this.hidePrompt()
     this.render()
   }
@@ -350,28 +359,32 @@ export class QuestPanelView extends Component {
     const rows = list.rows.filter(row => this.tab === 'achievement'
       ? row.type === 'ACHIEVEMENT'
       : row.type !== 'ACHIEVEMENT')
+    const size = view.getVisibleSize()
+    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    // 行数按实测可视高度算，不写死：① 可视高度随窗口/机型变；② 多画的行会被底部导航条盖住，
+    // 那是"画了但玩家看不见"，比少画一行更难发现（表头带抬到 76 之后这一屏更矮了一档）。
+    const navTop = -size.height / 2 + BOTTOM_RESERVED
+    const maxRows = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
+    const visible = rows.slice(0, maxRows)
     if (this.headerLabel !== null) {
       const scope = this.tab === 'achievement' ? '成就' : '任务'
       const claimable = this.tab === 'achievement' ? null : list.claimableText
-      this.headerLabel.string = claimable === null
-        ? `${scope} ${rows.length} 条`
-        : `${scope} ${rows.length} 条 · ${claimable}`
+      // 「另有几条没画下」挂在表头那一行（军队同一口径）：单独占一行要么吃掉一排的位置，
+      // 要么落到导航条底下 —— 两种都是"玩家看不见这条提示"。
+      const truncated = truncatedNotice('条', rows.length - visible.length)
+      this.headerLabel.string = `${scope} ${rows.length} 条`
+        + (claimable === null ? '' : ` · ${claimable}`)
+        + (truncated === '' ? '' : ` · ${truncated}`)
     }
-
-    const size = view.getVisibleSize()
-    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
-    const visible = rows.slice(0, MAX_VISIBLE_ROWS)
+    if (this.overflowLabel !== null) {
+      this.overflowLabel.string = ''
+    }
     visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
       this.renderRow(node, row)
     })
-
-    if (this.overflowLabel !== null) {
-      const hidden = rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice('条', hidden)
-    }
   }
 
   /**
@@ -384,32 +397,36 @@ export class QuestPanelView extends Component {
       return
     }
     const data = this.activity
-    if (this.headerLabel !== null) {
-      this.headerLabel.string = data === null
-        ? '活动 加载中'
-        : (data.claimableText === null
-            ? `活动 ${data.rows.length} 条`
-            : `活动 ${data.rows.length} 条 · ${data.claimableText}`)
-    }
     const size = view.getVisibleSize()
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     if (data === null) {
+      if (this.headerLabel !== null) {
+        this.headerLabel.string = '活动 加载中'
+      }
       if (this.overflowLabel !== null) {
         this.overflowLabel.string = '正在拉取活动列表…'
       }
       return
     }
-    const visible = data.rows.slice(0, MAX_VISIBLE_ROWS)
+    // 与任务那一页同一口径：行数按实测可视高度算，"另有几条没画下"挂在表头上
+    const navTop = -size.height / 2 + BOTTOM_RESERVED
+    const maxRows = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
+    const visible = data.rows.slice(0, maxRows)
+    if (this.headerLabel !== null) {
+      const truncated = truncatedNotice('条', data.rows.length - visible.length)
+      this.headerLabel.string = `活动 ${data.rows.length} 条`
+        + (data.claimableText === null ? '' : ` · ${data.claimableText}`)
+        + (truncated === '' ? '' : ` · ${truncated}`)
+    }
+    if (this.overflowLabel !== null) {
+      this.overflowLabel.string = ''
+    }
     visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnActivity.push(node)
       this.renderActivityRow(node, row)
     })
-    if (this.overflowLabel !== null) {
-      const hidden = data.rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice('条', hidden)
-    }
   }
 
   private renderActivityRow(node: Node, row: ActivityRow): void {

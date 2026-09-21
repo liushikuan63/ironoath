@@ -16,14 +16,14 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
-import { buildArmyPanel, estimateTrainMs, estimateTreatMs } from '../game/army/ArmyPanel'
+import { buildArmyPanel, estimateTrainMs } from '../game/army/ArmyPanel'
 import type { TrainMemory } from '../game/army/AutoTrain'
 import { formatCountdown } from '../core/Countdown'
 import type { ArmyPanelView as ArmyPanelData, UnitRow } from '../game/army/ArmyPanel'
 import type { ArmyListResp, UnitType } from '../net/generated/ArmyProtocol'
 import { applyCommandButton, applyIconSprite, unitIconKey } from './ArtCatalog'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth, keepOneLine } from './UiFont'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 
 const { ccclass } = _decorator
@@ -95,6 +95,8 @@ export class ArmyPanelView extends Component {
   private readonly trainButtons = new Map<Node, UnitRow | null>()
   private readonly tabButtons = new Map<string, Node>()
   private headerLabel: Label | null = null
+  /** 筛选后一行都不剩时的那句话：没有它，玩家看到的是一整块空白（与 MarchPanelView 同族） */
+  private emptyLabel: Label | null = null
   private hospitalLabel: Label | null = null
   private warningLabel: Label | null = null
   private autoTrainButton: Node | null = null
@@ -105,6 +107,8 @@ export class ArmyPanelView extends Component {
   onTrain: ((unitId: string, count: number) => void) | null = null
   /** 点「治疗」。治哪些伤兵由服务端裁定，本场景只表达意图 */
   onTreat: (() => void) | null = null
+  /** 点行上的「队列」（B26 S15）：这一口在练什么、能不能取消，全由编排层判，这里只回抛 unitId */
+  onQueue: ((unitId: string) => void) | null = null
   /** 点「自动续训 / 停止自动」。能不能开、续的是哪一批由编排层判定（B25-S2d） */
   onToggleAutoTrain: (() => void) | null = null
 
@@ -194,11 +198,24 @@ export class ArmyPanelView extends Component {
   private buildHeader(height: number): void {
     const top = height / 2 - PADDING
     this.headerLabel = this.addLabel(this.node, 'Header', 0, top - 20, COLOR_COPPER_GOLD, 20)
-    // 限宽 + SHRINK：这一行现在会带上「另有 N 项未显示」，不限宽就会顶出面板（#221 同族的排版溢出）
-    this.headerLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 26))
-    this.headerLabel.overflow = Label.Overflow.SHRINK
+    // 空态那一行落在**第一行该在的位置**（同一套 topY 算法），不是随便挑的一个 y
+    this.emptyLabel = this.addLabel(this.node, 'Empty', 0,
+      top - HEADER_HEIGHT - ROW_HEIGHT / 2, COLOR_TEXT_DIM, 16)
+    this.emptyLabel.string = ''
+    this.emptyLabel.node.active = false
+    // 限成一行：过去这里写成「SHRINK + 猜的盒高 26」，而 SHRINK 是拿**缩放字形**去服从盒子的
+    // —— 页内实测这一行设定 20 号字落地只有 17（战令表头同形，五行 17/13/10/10/9，台账 #366
+    // 附了盒高→落地字号的迁移曲线）。关掉换行才是不碰字号地把"就一行"说出来。
+    // 这一行现在会带上「另有 N 项未显示」，不限一行就会顶出面板（#221 同族的排版溢出），
+    // 顶出去由 `verify-march-runtime.mjs` 的宽度判据兜住。
+    keepOneLine(this.headerLabel, 20)
     this.hospitalLabel = this.addLabel(this.node, 'Hospital', 0, top - 48, COLOR_TEXT, 17)
     this.warningLabel = this.addLabel(this.node, 'Warning', 0, top - 74, COLOR_WARNING, 15)
+    // 同一条 #22x 教训：这两行同样会带长文案（医院行拼「另有 N 项未显示」、警告行是整句话）。
+    // ⚠ 限宽**不等于限一行**：#362 实测这两行的盒子会被 Label 按文本重算成 50 高，
+    //   而两行中心距只有 26px ⇒ 警告行一换行就压到医院行（那条垂直重叠记台账 #362 未做①）。
+    keepOneLine(this.hospitalLabel, 17)
+    keepOneLine(this.warningLabel, 15)
 
     // 兵种页签。20 个兵种（4 类型 × 5 阶级）一屏放不下，按类型分页
     const tabWidth = 76
@@ -267,9 +284,7 @@ export class ArmyPanelView extends Component {
     // 状态行：「重步兵 ×50 · 还剩 2 批」/ 停止原因 / 还没有可续的那一批。
     // 它读的是服务端下发的那份策略 —— 自动续训的账单是持续的，玩家必须能一眼看到它现在在做什么
     this.autoTrainStatus = this.addLabel(this.node, 'AutoTrainStatus', 0, top - 164, COLOR_TEXT_DIM, 14)
-    this.autoTrainStatus.node.getComponent(UITransform)
-      ?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
-    this.autoTrainStatus.overflow = Label.Overflow.SHRINK
+    capWidth(this.autoTrainStatus, PANEL_WIDTH - 2 * PADDING)
   }
 
   private createRow(): Node {
@@ -285,22 +300,22 @@ export class ArmyPanelView extends Component {
       16, COLOR_TEXT, 18)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    title.node.getComponent(UITransform)?.setContentSize(new Size(400, 26))
-    title.overflow = Label.Overflow.SHRINK
+    capWidth(title, 330)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + 42,
       -4, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(450, 22))
-    detail.overflow = Label.Overflow.SHRINK
+    capWidth(detail, 330)
     const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING + 42,
       -22, COLOR_COPPER_GOLD, 13)
     countdown.horizontalAlign = Label.HorizontalAlign.LEFT
     countdown.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    countdown.node.getComponent(UITransform)?.setContentSize(new Size(450, 20))
-    countdown.overflow = Label.Overflow.SHRINK
+    capWidth(countdown, 330)
 
     const buttons: Array<{ name: string; text: string; x: number; count: number | null }> = [
+      // 「队列」排在两颗训练键左边：它管的是**已经在练的那一口**（取消），与"再练多少"不同类。
+      // 三颗键各占 78，字那三行限到 330 宽，盒子互不重叠（量具按盒子量，不按眼睛）
+      { name: 'QueueButton', text: '队列', x: PANEL_WIDTH / 2 - 212, count: null },
       { name: 'TrainOnceButton', text: '训练×1', x: PANEL_WIDTH / 2 - 128, count: TRAIN_ONCE },
       { name: 'TrainBulkButton', text: '训练×100', x: PANEL_WIDTH / 2 - 44, count: TRAIN_BULK },
     ]
@@ -325,8 +340,13 @@ export class ArmyPanelView extends Component {
       this.trainButtons.set(buttonNode, null)
       buttonNode.on('touch-start', (_event: EventTouch) => {
         const row = this.trainButtons.get(buttonNode)
-        if (row !== undefined && row !== null) {
-          this.onTrain?.(row.unitId, button.count ?? TRAIN_ONCE)
+        if (row === undefined || row === null) {
+          return
+        }
+        if (button.count === null) {
+          this.onQueue?.(row.unitId)
+        } else {
+          this.onTrain?.(row.unitId, button.count)
         }
       }, this)
     }
@@ -368,6 +388,14 @@ export class ArmyPanelView extends Component {
 
     // 行区排布先算出来：表头那一行要顺带说「还有几项没画下」，所以它得先知道画得下几行
     const rows = panel.rows.filter((row) => this.matchesFilter(row))
+    // 零行必须说句话：按兵种筛到没有时，行区是一片空白，而表头讲的是兵力与队列 ——
+    // 玩家分不清"这一类确实没有兵"与"面板没加载出来"（MarchPanelView:77 同一形状）。
+    if (this.emptyLabel !== null) {
+      // 没筛 = 页签停在「全部」，此时 `filter` 是 null（`UnitType | null`，没有 'ALL' 这个值）
+      const all = this.filter === null
+      this.emptyLabel.string = all ? '暂无部队' : '暂无这一类部队'
+      this.emptyLabel.node.active = rows.length === 0
+    }
     const size = view.getVisibleSize()
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
 
@@ -491,19 +519,19 @@ export class ArmyPanelView extends Component {
       icon.active = applyIconSprite(icon, unitIconKey(row.unitType), 34, 34)
     }
 
-    // 未解锁的兵种不给训练按钮：留着可点的按钮却只会被服务端拒绝，比灰掉更糟
-    for (const button of node.children.slice(3, 5)) {
-      this.trainButtons.set(button, row.unlocked ? row : null)
-      button.active = row.unlocked
+    // 未解锁的兵种不给训练按钮：留着可点的按钮却只会被服务端拒绝，比灰掉更糟。
+    // 按名字挑而不是按下标：行里加了第三颗键之后，`children.slice(3, 5)` 会把「队列」
+    // 当成训练键（#291 那一格就是被这种按下标挑法坑过一次）
+    const rowButtons = ['QueueButton', 'TrainOnceButton', 'TrainBulkButton']
+      .map((name) => node.getChildByName(name))
+      .filter((it): it is Node => it !== null)
+    for (const button of rowButtons) {
+      const usable = button.name === 'QueueButton'
+        // 只有真的一口在练时才给「队列」：没有可取消的东西，点下去就是一张空菜单
+        ? row.trainingText !== null
+        : row.unlocked
+      this.trainButtons.set(button, usable ? row : null)
+      button.active = usable
     }
-  }
-
-  /** 治疗耗时预估。暴露出来供编辑器的治疗确认弹窗使用。 */
-  treatEstimateText(wounded: number): string {
-    const resp = this.resp
-    if (resp === null || wounded <= 0) {
-      return ''
-    }
-    return `约 ${formatCountdown(estimateTreatMs(resp.hospital, wounded), '已完成')}`
   }
 }

@@ -4,6 +4,7 @@
  */
 
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
+import type { BagListResp } from '../../net/generated/BagProtocol'
 import type { BuildOptionView, CityListResp } from '../../net/generated/CityProtocol'
 import type { HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageUnit } from '../../net/generated/StageProtocol'
@@ -19,6 +20,15 @@ export interface ChoiceOption {
 export interface SpeedupChoice extends ChoiceOption {
   readonly targetId: string
 }
+
+/** 研究加速的一项：用哪个道具、用几张。选择器回抛的就是这一整份，不做字符串反解。 */
+export interface ResearchSpeedupChoice extends ChoiceOption {
+  readonly itemId: string
+  readonly count: number
+}
+
+/** 一次开宝箱的协议天花板（`OpenBatchReq.count` 的上界，B04 验收 3 按它定的）。 */
+const CHEST_BATCH_CEILING = 100
 
 export interface LineupChoice extends ChoiceOption {
   readonly heroes: readonly string[]
@@ -40,6 +50,98 @@ export function buildShareChannelChoices(): readonly ShareChannelChoice[] {
     { id: 'ALLIANCE', channel: 'ALLIANCE', label: '分享到联盟', detail: '本盟成员都能点开这场回放' },
     { id: 'SQUAD', channel: 'SQUAD', label: '分享到小队', detail: '本队成员都能点开这场回放' },
   ]
+}
+
+/**
+ * 军队那一行的「队列」菜单（B26 S15）。
+ *
+ * <p>今天只有一条：取消这一口训练。另外两条看着像缺口的（`/army/speedUp`、
+ * `/army/treatSpeedUp`）**不放进这里** —— 服务端要求加速必须带 `itemId`，
+ * 而"用加速道具 + 选一个正在训练的队列"在背包那条路已经接通了（`useItem` 的
+ * `buildSpeedupChoices` 里就含训练队列），再摆一颗键等于给同一件事两个入口。
+ *
+ * <p>没有可做的动作时返回空数组，由编排层回一句人话，而不是画一颗点了没反应的键。
+ */
+export function buildArmyQueueChoices(army: ArmyListResp | null,
+                                      unitId: string): readonly ChoiceOption[] {
+  const unit = army === null ? undefined : army.units.find((it) => it.unitId === unitId)
+  if (unit === undefined || unit.training <= 0) {
+    return []
+  }
+  return [{
+    id: 'CANCEL_TRAIN',
+    label: '取消这一口训练',
+    // 一行放得下才算写完：选择器每行只有 ~14 个字的宽度，长了会折到下一行与下一条撞在一起
+    detail: `${unit.training} 个${unit.name} · 资源按比例退回`,
+  }]
+}
+
+/**
+ * 一次开几个宝箱的候选。
+ *
+ * <p><b>为什么把"这一种宝箱单次最多开几个"留给服务端</b>：那个上限在 `chest` 表里
+ * （`maxBatchCount`），响应没下发给客户端。客户端要么抄配置、要么猜 —— 两条都是本仓库
+ * 反复抓的那类"把判定搬过来"。所以这里只按**玩家手里有几个**给档位，
+ * 超了服务端会明确拒绝（它刻意不静默截断：只开一部分却扣全部等于吞道具），
+ * 那句"单次最多开 X 个"原样显示给玩家，他照着改一次就行。
+ *
+ * @param held 背包里这一种宝箱的数量（服务端下发，不自己数）
+ */
+export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
+  if (held <= 0) {
+    return []
+  }
+  const out: ChoiceOption[] = []
+  for (const n of [1, 5, 10]) {
+    if (n <= held) {
+      out.push({ id: String(n), label: `开 ${n} 个`, detail: `还剩 ${held - n} 个没开` })
+    }
+  }
+  const all = Math.min(held, CHEST_BATCH_CEILING)
+  if (all > 10) {
+    out.push({
+      id: 'all',
+      label: `全开 ${all} 个`,
+      detail: all === held ? '一次开完手里这些' : `手里 ${held} 个，一次最多开 ${CHEST_BATCH_CEILING} 个`,
+    })
+  }
+  return out
+}
+
+/**
+ * 能推进当前研究的那一种道具，一次给两个档位：**用 1 张**与**把手里的全用掉**。
+ *
+ * <p><b>为什么敢给"全用"</b>：服务端对 `count` 只校验"为正"与"背包里够"，而且**用超了会退**
+ * （`TechAppService.applySpeedUp` 里那句 `refundItems`：研究提前完成后剩下的张数原路归还），
+ * 所以"一次交完"不需要玩家自己算账 —— 协议注释也写明研究后期一步以天计，一张一张点才是折磨。
+ *
+ * <p><b>筛的是服务端下发的 `effectKind` 这一列，不按 id 硬编码</b>：`type=SPEEDUP` 底下还有建造令与
+ * 训练令，走到 `/tech/speedUp` 会被服务端拒（协议注释：宁可响，也不静默按另一种加速处理）——
+ * 与其让玩家挑一颗必然被拒的，不如在这一层就不列出来。
+ */
+export function buildResearchSpeedupChoices(bag: BagListResp | null): readonly ResearchSpeedupChoice[] {
+  if (bag === null) {
+    return []
+  }
+  const out: ResearchSpeedupChoice[] = []
+  for (const item of bag.items) {
+    if (item.type !== 'SPEEDUP' || item.effectKind !== 'REDUCE_RESEARCH_SECONDS') {
+      continue
+    }
+    // `BagItem` 里没有 `effectValue` —— 一张减多少秒**没下发**，所以这句不许编：
+    // 只说手里有几张，减多少由服务端的回执说（想知道单价去道具详情那条读口）
+    out.push({
+      id: `${item.itemId}:one`, itemId: item.itemId, count: 1,
+      label: item.name, detail: `用 1 张 · 持有 ${item.count} 张`,
+    })
+    if (item.count > 1) {
+      out.push({
+        id: `${item.itemId}:all`, itemId: item.itemId, count: item.count,
+        label: `${item.name} 全用`, detail: `一次用掉 ${item.count} 张 · 用不完的会退回`,
+      })
+    }
+  }
+  return out
 }
 
 /** 未放置建筑候选。地块能否放置由玩家点选坐标后交给服务端判定。 */

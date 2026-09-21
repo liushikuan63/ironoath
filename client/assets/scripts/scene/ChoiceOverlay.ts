@@ -20,10 +20,13 @@ export class ChoiceOverlay {
   private readonly optionTitleLabels: Label[] = []
   private readonly optionDetailLabels: Label[] = []
   private options: ChoiceOption[] = []
+  /** 面板宽：行的色带与两个标签都按它排，写死 700 会让窄面板溢出 */
+  private readonly width: number
   private page = 0
   private onPick: ((id: string) => void) | null = null
 
   constructor(parent: Node, title: string, width = 760) {
+    this.width = width
     this.node = new Node('ChoiceOverlay')
     this.node.layer = parent.layer
     parent.addChild(this.node)
@@ -61,15 +64,44 @@ export class ChoiceOverlay {
       }
     })
     this.createCommandButton('ChoiceCancel', '取消', 150, -170, () => this.hide())
+    // 行是从 NodePool 里 acquire 出来的：宿主每次渲染都把行重新 addChild 到父节点末尾，
+    // 而弹层建得比它们早 —— 于是"后加的压在弹层上面"。抬层不能只靠 `show()`（渲染发生在
+    // 它之后，背包实测），也不能靠八个宿主各自记得抬一次（漏一个就是一个玩家可见缺陷）。
+    // 谁往父节点后面加东西，就把自己的序号顶回末位；弹层没显示时不动。
+    parent.on('child-added', (node: Node) => {
+      if (node !== this.node && this.node.active) {
+        this.raise()
+      }
+    }, this)
     this.node.active = false
   }
 
   show(options: readonly ChoiceOption[], onPick: (id: string) => void): void {
+    // 显示前先抬到父节点最后：弹层在各面板 `onLoad` 就建好了，而列表行是每次渲染才
+    // addChild 的 —— 加得晚就压在菜单上面。背包那格实测：道具行（含「使用」键）横盖住
+    // 「选择加速目标」的标题，读数全绿而玩家看到的是半截字。放在这里而不是每个调用方
+    // 各喊一次，是因为八个使用者都有同一条时序，漏一个就是一个玩家可见缺陷。
+    this.raise()
     this.options = Array.from(options)
     this.page = 0
     this.onPick = onPick
     this.node.active = true
     this.renderPage()
+  }
+
+  /**
+   * 抬到父节点最后。两个时机自己会抬：`show()` 打开时，以及父节点后面又长了别的子节点时
+   * （见构造函数里那条 `child-added`）—— 宿主不需要记得抬，也不该各自记一次。
+   */
+  private raise(): void {
+    const parent = this.node.parent
+    if (parent === null || parent === undefined) {
+      return
+    }
+    // 不能用 `parent.addChild(this.node)`：3.8.7 里"已经是这个父节点的子节点"时它是空操作
+    // （实测：父节点 children 为 A,B，再 addChild(A) 仍是 A,B）。只有 setSiblingIndex 真挪位置，
+    // 所以这条抬层此前一直静默失效，背包的弹层被道具行压住才把它暴露出来。
+    this.node.setSiblingIndex(parent.children.length - 1)
   }
 
   hide(): void {
@@ -83,13 +115,19 @@ export class ChoiceOverlay {
     node.layer = this.node.layer
     this.node.addChild(node)
     node.setPosition(new Vec3(0, 92 - index * 60, 0))
-    node.addComponent(UITransform).setContentSize(new Size(700, 52))
+    const bandWidth = this.width - 40
+    node.addComponent(UITransform).setContentSize(new Size(bandWidth, 52))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW
-    graphics.roundRect(-350, -26, 700, 52, 6)
+    graphics.roundRect(-bandWidth / 2, -26, bandWidth, 52, 6)
     graphics.fill()
     const title = this.addLabelTo(node, 0, 8, 17, COLOR_TEXT)
     const detail = this.addLabelTo(node, 0, -12, 13, COLOR_DIM)
+    // 标签要自己有宽度：addLabelTo 挂的 UITransform 是默认的 100×100，而 overflow=SHRINK
+    // 是按盒子排的 —— 不设就会把一句 17 号的标题挤成两三行（军队那格实测：
+    // 「取消这一口训练」被拆成两行，与下面那条的说明叠在一起）
+    title.node.getComponent(UITransform)?.setContentSize(new Size(bandWidth - 24, 24))
+    detail.node.getComponent(UITransform)?.setContentSize(new Size(bandWidth - 24, 18))
     title.overflow = Label.Overflow.SHRINK
     detail.overflow = Label.Overflow.SHRINK
     return { node, title, detail }
@@ -116,7 +154,8 @@ export class ChoiceOverlay {
 
   private renderPage(): void {
     const pages = this.pageCount()
-    this.pageLabel.string = pages <= 1 ? `${this.options.length} 个可选目标` : `第 ${this.page + 1}/${pages} 页`
+    // 措辞要中立：这一层共用八个地方，"可选目标"对加速目标是通的，对「开几个」那种档位就是错的
+    this.pageLabel.string = pages <= 1 ? `${this.options.length} 个可选项` : `第 ${this.page + 1}/${pages} 页`
     const pageOptions = this.options.slice(
       this.page * OPTIONS_PER_PAGE, (this.page + 1) * OPTIONS_PER_PAGE)
     for (let index = 0; index < OPTIONS_PER_PAGE; index++) {
