@@ -28,6 +28,23 @@ public final class PlayerDtoMapper {
     }
 
     /**
+     * 名单里那个 id 查不到存档时显示什么 —— **一句人话，绝不回内部编号**（收口清单 #323）。
+     *
+     * <p>为什么单独抽出来：关注列表 / 小队成员 / 联盟成员三处原先都写着
+     * {@code save == null ? id : save.nickName()}，于是"这个人查不到"在界面上就表现成一串
+     * {@code P9179c…}；三份各写各的，改法也会各改各的。这里收成唯一一份真源，
+     * 配 {@code PlayerDtoMapperTest} 里一条可失败用例（含"不许等于 id 形态"的正则）。
+     */
+    public static final String UNKNOWN_PLAYER_NAME = "未知玩家";
+
+    /** 名单里的人名：找到存档用昵称，找不到用 {@link #UNKNOWN_PLAYER_NAME}。
+     * 不额外判"昵称为空"—— `PlayerSave` 在创建与 `setNickName` 两处都有 {@code requireText}
+     * 不变量，空昵称构造不出来，那条分支写了也永远走不到（两边都算过的分支等于没写）。 */
+    public static String displayName(PlayerSave save) {
+        return save == null ? UNKNOWN_PLAYER_NAME : save.nickName();
+    }
+
+    /**
      * 组装 {@code /player/init} 的响应，资源取存档原样快照。
      *
      * <p>只适用于<b>存档本身就是刚算好的</b>那条路径（新号建档）。登录与并发建号兜底

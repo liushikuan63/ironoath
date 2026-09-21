@@ -203,8 +203,15 @@ class ReportBlockEndpointTest {
                 .as("拉黑是观察者自己的过滤：别人还看得到原话（所以举报才有证据）")
                 .hasSize(1);
         // 名单能在界面上看到（加/删都要看得见自己拉黑了谁）
+        // 2026-09-22（#322）：名单从"一串 id"改成对象列表 —— 界面上要显示名字，
+        // 而客户端不查表，所以名字必须由服务端解析好下发。
         JsonNode mine = get200("/social/blocks", blocker, PLAYER_HEADER);
-        assertThat(mine.get("blockedPlayerIds").get(0).asText()).isEqualTo(blocked);
+        assertThat(mine.get("blocked").get(0).get("playerId").asText()).isEqualTo(blocked);
+        String blockedName = players.findByPlayerId(blocked).orElseThrow().nickName();
+        assertThat(mine.get("blocked").get(0).get("name").asText())
+                .as("显示名就是那个人的昵称，服务端解析、客户端不查表").isEqualTo(blockedName);
+        assertThat(mine.get("blocked").get(0).get("name").asText())
+                .as("名字不许等于 id —— 那正是 #322 的形态").isNotEqualTo(blocked);
     }
 
     @Test

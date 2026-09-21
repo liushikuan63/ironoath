@@ -302,9 +302,9 @@ const ROUTES: Record<string, unknown> = {
     friends: [{ playerId: 'P2', name: '乙', online: false, lastSeenAt: SERVER_NOW - 3600_000 }],
   },
   '/social/unfollow': { friends: [] },
-  '/social/blocks': { blockedPlayerIds: [] },
-  '/social/block': { blockedPlayerIds: ['P2'] },
-  '/social/unblock': { blockedPlayerIds: [] },
+  '/social/blocks': { blocked: [] },
+  '/social/block': { blocked: [{ playerId: 'P2', name: '乙' }] },
+  '/social/unblock': { blocked: [] },
   // 分享落进频道是服务端的事，这里只回执「贴到哪了」
   '/battle/share': { reportId: 'r-1', channel: 'ALLIANCE', messageId: 'msg-share-1', serverNow: SERVER_NOW },
   '/battle/report': {

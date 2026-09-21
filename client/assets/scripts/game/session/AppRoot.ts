@@ -557,6 +557,8 @@ export class AppRoot {
   private chatSentSeq = 0
   /** 我拉黑的名单（B22 §一 3）。菜单里显示"拉黑"还是"取消拉黑"要看它 */
   private myBlocked: readonly string[] = []
+  /** 名单里的显示名（服务端解析好下发，见 #322）；id → 名字，只给"取消拉黑"那一行用。 */
+  private myBlockedNames: ReadonlyMap<string, string> = new Map()
   /** 名单是否已经从服务端取过。懒取：首屏不必为它多打一轮请求 */
   private blocksLoaded = false
   /** 我关注的人（B22 §一 4）。与黑名单同一套懒取策略：第一次点消息菜单时才拉 */
@@ -2775,7 +2777,7 @@ export class AppRoot {
     if (!this.blocksLoaded) {
       const blocks = await this.api.socialBlocks()
       if (blocks.kind === 'ok') {
-        this.applyBlockList(blocks.data.blockedPlayerIds)
+        this.applyBlockList(blocks.data.blocked)
       }
     }
     if (!this.friendsLoaded) {
@@ -2815,7 +2817,7 @@ export class AppRoot {
       this.deliverChat()
       return
     }
-    this.applyBlockList(outcome.data.blockedPlayerIds)
+    this.applyBlockList(outcome.data.blocked)
     // 先重拉再写提示：loadChat 成功时会把提示行清空（它自己的规矩），
     // 顺序反了的话玩家看不到"已拉黑"这一句
     await this.reloadChatAfterFilterChange()
@@ -2833,7 +2835,7 @@ export class AppRoot {
       this.deliverChat()
       return
     }
-    this.applyBlockList(outcome.data.blockedPlayerIds)
+    this.applyBlockList(outcome.data.blocked)
     await this.reloadChatAfterFilterChange()
     this.chatNotice = '已取消拉黑'
     this.deliverChat()
@@ -2855,21 +2857,23 @@ export class AppRoot {
       this.deliverChat()
       return
     }
-    // 名单里只有 playerId（`/social/blocks` 只回 id）——**不许把 id 拼进这一行**：
-    // 那串 `P9179c…` 是内部编号，印给玩家就是 #255 同族（2026-09-21 普查抓到）。
-    // 服务端补显示名之前，这里按"名单里的第几位"给一句人话：玩家仍能逐条解除，
-    // 只是暂时看不出是谁；这条升级已记进收口清单（要动协议形状，需拍板）。
+    // 2026-09-22（收口清单 #322）：名单现在是**对象列表**，显示名由服务端解析好下发 ——
+    // 所以这一行印真名（「取消拉黑：卫无咎」）。旧服务端只回 id 列表时退回"名单第 N 位"，
+    // **绝不把 id 拼进这一行**（那串 `P9179c…` 是内部编号，印给玩家就是 #255 同族）。
     const options = this.myBlocked.map((id, index) => ({
       id, kind: 'UNBLOCK' as const, reason: null,
-      label: `取消拉黑：名单第 ${index + 1} 位`, detail: '恢复与他的私聊与频道可见',
+      label: `取消拉黑：${this.myBlockedNames.get(id) ?? `名单第 ${index + 1} 位`}`,
+      detail: '恢复与他的私聊与频道可见',
     }))
     this.targets.chatActionChoice(options, (choice) => {
       void this.unblockPlayer(choice.id)
     })
   }
 
-  private applyBlockList(ids: readonly string[]): void {
-    this.myBlocked = [...ids]
+  private applyBlockList(blocked: readonly { playerId: string, name: string }[]): void {
+    this.myBlocked = blocked.map((entry) => entry.playerId)
+    // 名字单独存一份：门控逻辑只认 id（`includes`），显示那一行才要名字。
+    this.myBlockedNames = new Map(blocked.map((entry) => [entry.playerId, entry.name]))
     this.blocksLoaded = true
   }
 
@@ -2879,7 +2883,7 @@ export class AppRoot {
     }
     const outcome = await this.api.socialBlocks()
     if (outcome.kind === 'ok') {
-      this.applyBlockList(outcome.data.blockedPlayerIds)
+      this.applyBlockList(outcome.data.blocked)
     }
     // 拉不到就按"没拉黑过任何人"生成选项：点在"拉黑"上仍然会被服务端受理（幂等），
     // 而如果已经拉黑过，菜单会多出一个"拉黑"项 —— 它点了也只是幂等地再拉一次，不会出错
