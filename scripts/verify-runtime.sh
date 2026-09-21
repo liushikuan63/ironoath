@@ -77,6 +77,7 @@ TOOLS=(
   "tools/verify-city-states.mjs"
   "tools/verify-city-build-many.mjs"
   "tools/verify-city-multi-types.mjs"
+  "tools/verify-city-phone.mjs"
   "tools/verify-gift-popup.mjs"
 )
 FAILED=()
