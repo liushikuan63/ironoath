@@ -43,6 +43,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -598,12 +599,21 @@ public class CityAppService {
                 buildings.add(toView(b, now));
             }
             List<BuildOptionView> buildOptions = new ArrayList<>();
+            // 前置建筑的**显示名**：客户端不查表，缺了它只能把行 id 印给玩家
+            // （「前置 main_city」是 #255 同族的形态，2026-09-21 复检在 Choices.buildOptionDetail 上抓到）。
+            // 名字从同一次遍历里取，不另开一次查表；查不到就回 null，**不回 id**。
+            Map<String, String> buildingNames = new HashMap<>();
+            for (BuildingCfg cfg : configs.all(BuildingCfg.class)) {
+                buildingNames.put(cfg.id(), cfg.name());
+            }
             for (BuildingCfg cfg : configs.all(BuildingCfg.class)) {
                 if (city.findByConfigId(cfg.id()) != null) {
                     continue;
                 }
+                String requireName = cfg.requireBuilding() == null
+                        ? null : buildingNames.get(cfg.requireBuilding());
                 buildOptions.add(new BuildOptionView(cfg.id(), cfg.name(), cfg.type().name(),
-                        (int) cfg.requireMainLevel(), cfg.requireBuilding()));
+                        (int) cfg.requireMainLevel(), cfg.requireBuilding(), requireName));
             }
             QueueView queues = new QueueView(city.usedQueues(),
                     rules.availableQueues(isInNewbieProtect(player, now), city.extraQueues()),

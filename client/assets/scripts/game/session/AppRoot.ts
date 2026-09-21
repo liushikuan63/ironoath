@@ -2855,9 +2855,13 @@ export class AppRoot {
       this.deliverChat()
       return
     }
-    const options = this.myBlocked.map((id) => ({
+    // 名单里只有 playerId（`/social/blocks` 只回 id）——**不许把 id 拼进这一行**：
+    // 那串 `P9179c…` 是内部编号，印给玩家就是 #255 同族（2026-09-21 普查抓到）。
+    // 服务端补显示名之前，这里按"名单里的第几位"给一句人话：玩家仍能逐条解除，
+    // 只是暂时看不出是谁；这条升级已记进收口清单（要动协议形状，需拍板）。
+    const options = this.myBlocked.map((id, index) => ({
       id, kind: 'UNBLOCK' as const, reason: null,
-      label: `取消拉黑：${id}`, detail: '恢复与他的私聊与频道可见',
+      label: `取消拉黑：名单第 ${index + 1} 位`, detail: '恢复与他的私聊与频道可见',
     }))
     this.targets.chatActionChoice(options, (choice) => {
       void this.unblockPlayer(choice.id)

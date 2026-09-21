@@ -155,7 +155,10 @@ export function buildLineupPanel(lineup: LineupView, nameById: ReadonlyMap<strin
   const slotNames = ['主将', '副将', '副将']
   const slotTexts = slots.map((heroId, index) => {
     const position = slotNames[index] ?? `位置${index + 1}`
-    return heroId === null ? `${position}：空` : `${position}：${nameById.get(heroId) ?? heroId}`
+    // 名册里读不到名字时**不许退回印 heroId**：那是把内部编号写进队伍栏
+    // （与 `LineupEdit`「宁可少画一个，也不印内部编号」同一条口径）。
+    // 这里不写"空"——槽位确实有人，写空是另一种谎话；写「未知武将」是实话。
+    return heroId === null ? `${position}：空` : `${position}：${nameById.get(heroId) ?? '未知武将'}`
   })
   let empty = 0
   for (const heroId of slots) {

@@ -7,6 +7,26 @@ import type { ArmyListResp } from '../assets/scripts/net/generated/ArmyProtocol'
 import type { CityListResp } from '../assets/scripts/net/generated/CityProtocol'
 import type { HeroListResp } from '../assets/scripts/net/generated/HeroProtocol'
 
+test('建造候选的详情走中文类型名，不许把配置枚举原文印给玩家', () => {
+  const city = {
+    buildOptions: [
+      { configId: 'lumber_camp', name: '伐木场', type: 'RESOURCE', requireMainLevel: 1, requireBuilding: null },
+      { configId: 'barracks', name: '兵营', type: 'MILITARY', requireMainLevel: 2, requireBuilding: null },
+    ],
+  } as unknown as CityListResp
+
+  const choices = buildBuildChoices(city)
+  assert.equal(choices[0]?.label, '伐木场')
+  assert.equal(choices[0]?.detail, '资源 · 需要主城 1 级')
+  assert.equal(choices[1]?.detail, '军事 · 需要主城 2 级')
+  // 这条判据要能失败：详情以全大写 ASCII 开头就说明又走了枚举原文
+  // （现场症状正是选择器上印出「RESOURCE · 需要主城 1 级」）
+  for (const choice of choices) {
+    assert.ok(!/^[A-Z][A-Z_]*\b/.test(choice.detail),
+      `详情以配置枚举开头：${choice.detail}`)
+  }
+})
+
 test('加速道具目标只列正在升级或训练的队列，已完成的不能选', () => {
   const city = {
     buildings: [
@@ -62,11 +82,11 @@ test('首次建造候选保留配置门槛，未放置建筑按服务端顺序�
     buildOptions: [
       {
         configId: 'lumber_camp', name: '伐木场', type: 'RESOURCE',
-        requireMainLevel: 1, requireBuilding: null,
+        requireMainLevel: 1, requireBuilding: null, requireBuildingName: null,
       },
       {
         configId: 'academy', name: '学院', type: 'SCIENCE',
-        requireMainLevel: 3, requireBuilding: 'main_city',
+        requireMainLevel: 3, requireBuilding: 'main_city', requireBuildingName: '主城',
       },
     ],
   } as unknown as CityListResp
@@ -74,5 +94,27 @@ test('首次建造候选保留配置门槛，未放置建筑按服务端顺序�
   const choices = buildBuildChoices(city)
   assert.deepEqual(choices.map((choice) => choice.id), ['lumber_camp', 'academy'])
   assert.match(choices[1]?.detail ?? '', /需要主城 3 级/)
-  assert.match(choices[1]?.detail ?? '', /前置 main_city/)
+  // 前置建筑显示的是**服务端下发的显示名**，不是 building.json 的行 id。
+  // 这条断言原先写的是 /前置 main_city/ —— 那正是把内部编号印给玩家的形态（#255 同族，
+  // 2026-09-21 复检在 buildOptionDetail 上抓到），现在钉它的反面。
+  assert.match(choices[1]?.detail ?? '', /前置 主城/)
+  assert.ok(!/main_city/.test(choices[1]?.detail ?? ''),
+    `详情里出现了配置行 id：${choices[1]?.detail}`)
+})
+
+test('前置建筑的名字缺失时退成「前置建筑」这句人话，绝不退回印 id', () => {
+  const city = {
+    buildOptions: [
+      {
+        configId: 'academy', name: '学院', type: 'SCIENCE',
+        requireMainLevel: 3, requireBuilding: 'main_city',
+        // 老服务端不下发这一位（滚动升级期）
+        requireBuildingName: null,
+      },
+    ],
+  } as unknown as CityListResp
+
+  const detail = buildBuildChoices(city)[0]?.detail ?? ''
+  assert.match(detail, /前置建筑/, '缺名字时要给一句人话')
+  assert.ok(!/main_city/.test(detail), `缺名字时把 id 印了出来：${detail}`)
 })

@@ -9,6 +9,7 @@ import type { HeroListResp } from '../../net/generated/HeroProtocol'
 import type { StageUnit } from '../../net/generated/StageProtocol'
 import type { ShareChannel } from '../../net/generated/BattleProtocol'
 import type { ReportReason } from '../../net/generated/SocialProtocol'
+import { buildingTypeName } from '../ui/ResourceNames'
 
 export interface ChoiceOption {
   readonly id: string
@@ -134,9 +135,16 @@ export function buildLineupChoices(heroes: HeroListResp | null,
 }
 
 function buildOptionDetail(option: BuildOptionView): string {
-  const parts = [option.type, `需要主城 ${option.requireMainLevel} 级`]
+  // `option.type` 是配置表的枚举原文（RESOURCE / MILITARY …），直接印出来就是玩家读到英文枚举 ——
+  // 与收口清单 #255 的 `main_city` 同类。走 `buildingTypeName` 这一份映射。
+  const parts = [buildingTypeName(option.type), `需要主城 ${option.requireMainLevel} 级`]
   if (option.requireBuilding !== null && option.requireBuilding.length > 0) {
-    parts.push(`前置 ${option.requireBuilding}`)
+    // **显示名走服务端下发的 `requireBuildingName`，绝不印 `requireBuilding`**：
+    // 后者是 building.json 的行 id，拼上屏就是「前置 main_city」——#255 同族。
+    // 旧服务端缺这一位时退成「前置建筑」这句人话：少一点提示只是信息少，多一个编号是界面在说黑话
+    // （与 `QuestPanel.preQuestLabel` 同一条口径）。
+    const name = option.requireBuildingName
+    parts.push(name !== null && name.length > 0 ? `前置 ${name}` : '前置建筑')
   }
   return parts.join(' · ')
 }

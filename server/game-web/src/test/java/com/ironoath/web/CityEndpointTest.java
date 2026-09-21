@@ -121,7 +121,6 @@ class CityEndpointTest {
         assertThat(resp.buildOptions())
                 .anyMatch(option -> option.configId().equals("lumber_camp")
                         && option.name().equals("伐木场"));
-
         assertThat(resp.queues().used()).isZero();
         assertThat(resp.queues().available()).as("新号在保护期内应有 2 个队列").isEqualTo(2);
         assertThat(resp.queues().max()).isEqualTo(3);
@@ -631,6 +630,70 @@ class CityEndpointTest {
     }
 
     // ---------- 辅助 ----------
+
+    /**
+     * 前置建筑的**显示名**（`requireBuildingName`）必须下发。
+     *
+     * <p>为什么要在单测里改表：现网 `building.json` 的 15 行**没有任何一行带前置**
+     * （`requireBuilding` 全为 null）⇒ 这条路径平时走不到，端到端也点不出来。
+     * 所以按生产同一条热更入口 `ConfigRegistry.reload` 先造一个前置出来，再问一次 `/city/list`，
+     * `finally` 里还原（同 `PayEntitlementTest` 的做法：不把改过的表留给后面的用例）。
+     */
+    @Test
+    @DisplayName("前置建筑下发的是中文显示名，不是 building.json 的行 id")
+    void buildOptionCarriesThePrerequisiteDisplayName() throws Exception {
+        String original = readContractTable("building.json");
+        configs.reload("building", com.ironoath.config.cfg.BuildingCfg.class,
+                withPrerequisite(original, "academy", "main_city"));
+        try {
+            CityListResp resp = cityAppService.list(newPlayer());
+            var academy = resp.buildOptions().stream()
+                    .filter(option -> option.configId().equals("academy"))
+                    .findFirst().orElseThrow();
+            assertThat(academy.requireBuilding()).as("id 仍要下发：服务端校验与埋点用它")
+                    .isEqualTo("main_city");
+            assertThat(academy.requireBuildingName())
+                    .as("显示名就是 building.json 那一行的 name").isEqualTo("主城");
+            assertThat(academy.requireBuildingName())
+                    .as("名字不许等于 id —— 那正是「前置 main_city」这条外泄的形态")
+                    .isNotEqualTo(academy.requireBuilding());
+        } finally {
+            configs.reload("building", com.ironoath.config.cfg.BuildingCfg.class, original);
+        }
+    }
+
+    /** 把某一行加上前置建筑（只改内存里那份 JSON 文本，不动 contract/config 的文件）。 */
+    private static String withPrerequisite(String json, String rowId, String prerequisite)
+            throws Exception {
+        com.fasterxml.jackson.databind.JsonNode root =
+                com.ironoath.common.json.JsonUtils.readTree(json);
+        com.fasterxml.jackson.databind.node.ObjectNode out =
+                (com.fasterxml.jackson.databind.node.ObjectNode) root;
+        com.fasterxml.jackson.databind.JsonNode rows = out.get("rows");
+        for (com.fasterxml.jackson.databind.JsonNode row : rows) {
+            if (rowId.equals(row.get("id").asText())) {
+                ((com.fasterxml.jackson.databind.node.ObjectNode) row)
+                        .put("requireBuilding", prerequisite);
+            }
+        }
+        return com.ironoath.common.json.JsonUtils.toJson(out);
+    }
+
+    /** surefire 的工作目录是被测模块目录，按仓库根相对路径读会 NoSuchFile —— 向上找到 contract/ 再拼。 */
+    private static String readContractTable(String fileName) throws java.io.IOException {
+        java.nio.file.Path dir = java.nio.file.Path.of("").toAbsolutePath();
+        for (int i = 0; i < 6; i++) {
+            java.nio.file.Path candidate = dir.resolve("contract").resolve("config").resolve(fileName);
+            if (java.nio.file.Files.exists(candidate)) {
+                return java.nio.file.Files.readString(candidate, java.nio.charset.StandardCharsets.UTF_8);
+            }
+            dir = dir.getParent();
+            if (dir == null) {
+                break;
+            }
+        }
+        throw new java.io.IOException("找不到 contract/config/" + fileName);
+    }
 
     /** 某建筑此刻的剩余秒数。读仓储而不是手里那份 —— 读端口给的是副本。 */
     private long remainingOf(String playerId, String buildingId) {
