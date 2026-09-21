@@ -964,6 +964,17 @@ export class AppRoot {
     return this.write('city', this.api.cityResume({ buildingId }), ['city', 'reddot'])
   }
 
+  /**
+   * 取消升级，按 B03 §2 返还 60% 资源（这一半规格原先也只有服务端）。
+   *
+   * <p>刷新里**必须带 resources**：取消会真的把资源退回来，不刷资源玩家会以为白扣了。
+   * 与暂停一样，客户端不自己算返还额 —— 退多少由服务端算好，界面照着刷新即可。
+   */
+  cancelBuilding(buildingId: string): Promise<void> {
+    this.track(TRACK_EVENTS.buildingUpgradeStart, { target: buildingId, action: 'cancel' })
+    return this.write('city', this.api.cityCancel({ buildingId }), ['city', 'resources', 'reddot'])
+  }
+
   // ---------- 武将养成（V03 前置：把已有的养成能力接到玩家手上） ----------
   /**
    * 武将升星。**只带 heroId** —— 六条养成接口里只有升星与碎片合成不需要先选道具/技能槽，

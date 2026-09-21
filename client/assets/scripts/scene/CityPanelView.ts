@@ -189,7 +189,7 @@ const ACTION_BUTTON_HEIGHT = 32
  */
 const NAV_BAR_HEIGHT = 76
 
-type RowAction = 'build' | 'upgrade' | 'speedAd' | 'speedGold' | 'collect' | 'pause' | 'resume'
+type RowAction = 'build' | 'upgrade' | 'speedAd' | 'speedGold' | 'collect' | 'pause' | 'resume' | 'cancel'
 
 interface GridTileRefs {
   readonly node: Node
@@ -255,6 +255,8 @@ export class CityPanelView extends Component {
   /** 暂停/恢复升级（B03 §2）。两个回调分开：面板不做"当前该发哪个"的判断，状态由服务端说了算。 */
   onPause: ((buildingId: string) => void) | null = null
   onResume: ((buildingId: string) => void) | null = null
+  /** 取消升级（B03 §2 的另一半，返还 60%）。返还额由服务端算，这里只负责把意图发出去。 */
+  onCancel: ((buildingId: string) => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -747,6 +749,7 @@ export class CityPanelView extends Component {
     // 与「升级 / 收割」共用 -12 是同一个做法。
     this.createActionButton(bar, 'DetailPauseButton', '暂停', 258, 'pause')
     this.createActionButton(bar, 'DetailResumeButton', '恢复', 258, 'resume')
+    this.createActionButton(bar, 'DetailCancelButton', '取消', 348, 'cancel')
 
     const collectAll = new Node('CollectAllButton')
     collectAll.layer = parent.layer
@@ -1000,8 +1003,12 @@ export class CityPanelView extends Component {
       tile.iconRim.active = false
     } else {
       const artKey = buildingArtKey(row.configId)
-      let iconVisible = artKey !== null && applyAnyIconSprite(tile.icon, artKey, iconSide, iconSide)
-      if (!iconVisible) {
+      // **未建成的楼不画**：取消首次放置之后，实例会留在 Lv0 + 空闲（服务端没有"移除建筑"的口子），
+      // 那种格子如果照画正稿，玩家会看到一栋自己从没建成的楼（2026-09-22 取消功能上线后实测到）。
+      // 口径与 build-many 那条判据一致：升级中 / 已暂停 / 待收割 / 已建成 才画。
+      const built = row.level > 0 || row.upgrading || row.paused || row.collectable
+      let iconVisible = built && artKey !== null && applyAnyIconSprite(tile.icon, artKey, iconSide, iconSide)
+      if (!iconVisible && built) {
         // 没有正稿、或族图这一次没拉到：退回图集小图标，而不是留一个空格子
         iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), iconSide, iconSide)
       }
@@ -1073,7 +1080,10 @@ export class CityPanelView extends Component {
             // 暂停：只有"正在升级且还没到点"才可暂停；已暂停的那一行给「恢复」
             : kind === 'pause' ? row.upgrading && !row.collectable && !row.paused
               : kind === 'resume' ? row.paused
-                : row.upgrading && !row.collectable)
+                // 取消：升级中与已暂停都能取消（服务端口径 isUpgrading = UPGRADING 或 PAUSED），
+                // 但到点待收割的那一格不给取消 —— 那时候收下来就是收益，取消等于白干。
+                : kind === 'cancel' ? (row.upgrading || row.paused) && !row.collectable
+                  : row.upgrading && !row.collectable)
       button.active = visible
       if (!visible || (row === null && kind !== 'build')) {
         continue
@@ -1108,6 +1118,9 @@ export class CityPanelView extends Component {
             return
           case 'resume':
             this.onResume?.(row.id)
+            return
+          case 'cancel':
+            this.onCancel?.(row.id)
             return
         }
       }, this)

@@ -127,11 +127,16 @@ const snapshot = () => page.evaluate(() => {
       const icon = node.getChildByName('BuildingIcon')
       const levelLabel = node.getChildByName('Level')?.getComponent('cc.Label') ?? null
       const nameLabel = node.getChildByName('Name')?.getComponent('cc.Label') ?? null
+      const iconSprite = icon === null ? null : icon.getComponent('cc.Sprite')
       const rgb = (color) => color === null || color === undefined
         ? null : `${color.r},${color.g},${color.b}`
       tiles[node.name] = {
         labels: own,
         iconActive: icon === null ? null : icon.active,
+        // 帧名才是"画的是不是正稿"的判据：`icon.active` 只说明那个节点开着，
+        // 图集兜底图标 / 未建占位都可能让它为 true（第一版就是拿它当判据，取消后误报）。
+        frameName: iconSprite === null || iconSprite.spriteFrame === null
+          ? null : iconSprite.spriteFrame.name,
         // 到点未收割时**格子上不写状态字**（状态在选择栏里，见 paintTile 的注释），
         // 它改的是等级徽章与名字的**颜色**（COLOR_GOOD = 120,176,96）—— 所以颜色就是这一态的机器判据。
         levelColor: rgb(levelLabel?.color),
@@ -193,8 +198,31 @@ const clickNode = (nodeName) => page.evaluate((name) => {
   }
 }, nodeName)
 
-/** 动作栏两只按钮的可见性 + 选择栏两行文本（暂停这一态的判据全从这里读）。 */
-const pauseReadout = () => page.evaluate(() => {
+/** 取消这一态的读数：选择栏两行 + 「取消」键还在不在。 */
+const cancelReadout = () => page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let cancel = null
+  let title = null
+  let status = null
+  const visit = (node) => {
+    if (node.name === 'DetailCancelButton') cancel = node.activeInHierarchy === true
+    if (node.name === 'SelectedTitle' || node.name === 'SelectedStatus') {
+      const label = node.getComponent('cc.Label')
+      if (label !== null && label !== undefined) {
+        if (node.name === 'SelectedTitle') title = label.string
+        else status = label.string
+      }
+    }
+    for (const child of node.children) visit(child)
+  }
+  visit(scene)
+  return { cancel, title, status }
+})
+
+/** configId → 中文名（格子是按显示名找的）。 */
+const NAME_OF = { lumber_camp: '伐木场', quarry: '采石场' }
+
+/** 动作栏两只按钮的可见性 + 选择栏两行文本（暂停这一态的判据全从这里读）。 */const pauseReadout = () => page.evaluate(() => {
   const scene = window.cc.director.getScene()
   let pause = null
   let resume = null
@@ -311,6 +339,71 @@ console.log(`[state]   伐木场格=${campB?.key ?? '(没找到)'} ${JSON.string
 console.log(`[state]   队列行=${harvestable.texts.find((t) => t.includes('建造队列')) ?? '(无)'}`
   + `（对照：升级中帧是 ${upgrading.texts.find((t) => t.includes('建造队列')) ?? '(无)'}）`)
 
+// ---------- 态三：取消升级（B03 §2 的另一半："取消返还 60%"）----------
+//
+// 放在最后：它要真的取消掉一栋楼，会把前面两态的状态搅乱。
+// 而且必须先**放开 /city/list 的拦截** —— 取消要读回执刷新，拦着列表面板就不会更新。
+const cancelled = { clicked: false, readout: null, stoneBefore: null, stoneAfter: null }
+await page.unroute('**/city/list*')
+// 第二栋用 HTTP 起（第一栋这时候已到点待收割，队列归零，位置够）
+const secondConfig = 'quarry'
+const secondGrid = [3, 1]
+const secondStart = await post('/city/upgrade',
+  { requestId: `state-cancel-${Date.now()}`, configId: secondConfig, gridX: secondGrid[0], gridY: secondGrid[1] },
+  { 'X-Player-Id': playerId })
+if (secondStart.code !== 0) {
+  console.log(`[state] 第二栋没起来（${secondConfig}@${secondGrid}）：${secondStart.code} ${secondStart.msg} —— 态三跳过`)
+} else {
+  // 重载让面板看见新建筑（客户端不会主动去拉列表）
+  await page.reload({ waitUntil: 'networkidle' })
+  await waitPanel()
+  await clearGuide()
+  await page.waitForTimeout(800)
+  const beforeFrame = await snapshot()
+  const tile = tileOf(beforeFrame, NAME_OF[secondConfig] ?? secondConfig)
+  // 资源行的格式是「石料 4601/20000」——**必须用正则取第一个数字**：
+  // 第一版把非数字全去掉再切前 6 位，得到 "460120"（把分子分母拼起来了），
+  // 于是"退了 240"被判成"退了 0"。
+  // 返还进哪个资源取决于这栋楼的造价：采石场耗的是**木材**（`costBaseWood: 400`），
+  // 第一版读的是石料行，于是"退了 240 木材"被判成"退了 0"。
+  const resourceOf = (frame, label) => {
+    const row = frame.texts.find((text) => text.startsWith(label)) ?? ''
+    const match = new RegExp(`${label}\\s*(\\d+)`).exec(row)
+    return match === null ? null : Number.parseInt(match[1], 10)
+  }
+  cancelled.stoneBefore = resourceOf(beforeFrame, '木材')
+  cancelled.label = '木材'
+  const postsBefore = cityPosts.length
+  if (tile !== null) {
+    const tilePoint = await clickNode(tile.key)
+    if (tilePoint !== null) {
+      await page.mouse.click(tilePoint.x, tilePoint.y)
+      await page.waitForTimeout(700)
+    }
+    const cancelPoint = await clickNode('DetailCancelButton')
+    if (cancelPoint !== null) {
+      await page.mouse.click(cancelPoint.x, cancelPoint.y)
+      await page.waitForTimeout(1500)
+      cancelled.clicked = true
+      cancelled.readout = await cancelReadout()
+      const afterFrame = await snapshot()
+      cancelled.stoneAfter = resourceOf(afterFrame, '木材')
+      const afterTile = tileOf(afterFrame, NAME_OF[secondConfig] ?? secondConfig)
+      cancelled.tileIcon = afterTile?.iconActive ?? null
+      cancelled.tileFrame = afterTile?.frameName ?? null
+      cancelled.queue = afterFrame.texts.find((text) => text.includes('建造队列')) ?? '(无)'
+      await page.screenshot({ path: path.join(OUT, '15-city-cancelled.png') })
+      console.log(`[state] 取消：点「取消」@(${cancelPoint.x},${cancelPoint.y}) 后 /city/* 新增`
+        + ` [${cityPosts.slice(postsBefore).join('、') || '(无)'}]`
+        + ` 选择栏=「${cancelled.readout.title ?? ''}」「${cancelled.readout.status ?? ''}」`)
+      console.log(`[state]   ${cancelled.label} ${cancelled.stoneBefore} → ${cancelled.stoneAfter}`
+        + `（+${(cancelled.stoneAfter ?? 0) - (cancelled.stoneBefore ?? 0)}，B03 §2 应退 60%）`
+        + ` 格子正稿=${cancelled.tileIcon === true ? (cancelled.tileFrame ?? '(激活但无帧)') : '已摘掉'}`
+        + ` 队列=${cancelled.queue}`)
+    }
+  }
+}
+
 await browser.close()
 await preview.close()
 
@@ -351,6 +444,34 @@ if (!pausePhase.clicked) {
 }
 if (!upgrading.texts.some((t) => /建造队列\s*1\s*\//.test(t))) {
   failures.push('升级中帧的队列行不是 1/N —— 这一帧没量到"正在建造"')
+}
+// 取消（B03 §2 的另一半）：请求要出去、面板要回「空闲」、格子正稿要撤掉、队列要归零、资源要退回来
+if (!cancelled.clicked) {
+  failures.push('态三（取消升级）根本没跑到 —— 判据走不到不许当绿')
+} else {
+  if (!cityPosts.includes('cancel')) {
+    failures.push('点了「取消」但没有 /city/cancel 请求 —— 按钮没接上')
+  }
+  const cancelText = `${cancelled.readout?.title ?? ''} ${cancelled.readout?.status ?? ''}`
+  if (!cancelText.includes('空闲')) {
+    failures.push(`取消后选择栏不是「空闲」：${JSON.stringify(cancelText)}`)
+  }
+  // 判据要**同时看 active 与帧名**：图标节点关掉之后 spriteFrame 不会清空，
+  // 只读帧名会把"已经摘掉的图"当成"还画着"（第一版就是这么误报的；
+  // 与 multi-types 里 `iconActive === true && frameName !== null` 是同一条口径）。
+  if (cancelled.tileIcon === true && /^building-/.test(cancelled.tileFrame ?? '')) {
+    failures.push(`取消后格子上仍画着正稿（${cancelled.tileFrame}）—— 那栋楼应该已经回到未建状态`)
+  }
+  if (cancelled.stoneBefore === null || cancelled.stoneAfter === null) {
+    failures.push('木材那一行没读到，返还这条判据走不到（不许当绿）')
+  }
+  if (!/建造队列\s*0\s*\//.test(cancelled.queue ?? '')) {
+    failures.push(`取消后队列没归零：${cancelled.queue}`)
+  }
+  const refund = (cancelled.stoneAfter ?? 0) - (cancelled.stoneBefore ?? 0)
+  if (!(refund >= 200)) {
+    failures.push(`取消返还的木材只有 ${refund}（B03 §2 要求退 60%，按 400 石料算应约 240）`)
+  }
 }
 if (campA === null || !campA.labels.some((t) => /^Lv0$/.test(t))) {
   failures.push(`升级中帧找不到"伐木场 + Lv0"：${JSON.stringify(campA?.labels ?? null)}`)
