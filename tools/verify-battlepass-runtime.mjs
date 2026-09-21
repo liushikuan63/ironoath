@@ -226,6 +226,44 @@ async function main() {
     '点一颗灰的领取键：不发请求（不可领的线在面板层就不该可点）',
     `新增请求 ${statusCalls.length - before} 条：${statusCalls.slice(before).join(' ')}`)
 
+  // ---------- 表头那五行：会不会互相叠（#363 在军队表头量出同一形状） ----------
+  // `BattlePassPanelView` 第 107-112 行五行都是居中的固定 y（间距 24~28），
+  // 却没有一行有 `setContentSize` —— 而 Label 会按文本把盒子撑高，撑到两行就必然叠。
+  const HEAD5 = `(() => {
+    const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    const panel = game?.getChildByName('battlePass')
+    if (!panel) return null
+    const names = ['Header', 'Points', 'Claimed', 'Remain', 'Notice']
+    const rows = []
+    for (const name of names) {
+      const node = panel.getChildByName(name)
+      if (node === null || node === undefined) continue
+      const w = node.getComponent('cc.UITransform').getBoundingBoxToWorld()
+      rows.push({ name, text: node.getComponent('cc.Label')?.string ?? '',
+        l: w.x, r: w.x + w.width, b: w.y, t: w.y + w.height, h: Math.round(w.height) })
+    }
+    const hits = []
+    for (let a = 0; a < rows.length; a++) {
+      for (let c = a + 1; c < rows.length; c++) {
+        const x = rows[a], y = rows[c]
+        if (x.l < y.r && y.l < x.r && x.b < y.t && y.b < x.t) hits.push(x.name + ' × ' + y.name)
+      }
+    }
+    return { count: rows.length, hits,
+      tooTall: rows.filter((x) => x.h > 30).map((x) => x.name + '=' + x.h),
+      withText: rows.filter((x) => x.text.length > 0).length }
+  })()`
+  const head5 = await page.evaluate(HEAD5)
+  verdict(head5 !== null && head5.count === 5 && head5.withText >= 3,
+    '反空转前置：表头五行都在且至少三行有内容',
+    `count=${head5?.count} withText=${head5?.withText}`)
+  verdict(head5 !== null && head5.tooTall.length === 0,
+    '表头每行的盒子都不超过一行高（>30 就是被文本撑开了，#363 同形）',
+    `tooTall=${head5?.tooTall.join(',')}`)
+  verdict(head5 !== null && head5.hits.length === 0,
+    '表头五行两两不相交（间距只有 24~28px）',
+    `hits=${head5?.hits.join(',')}`)
+
   verdict(errors.length === 0, '全程零页面异常',
     `errors=${errors.length}${errors.length > 0 ? ' → ' + errors[0] : ''}`)
 

@@ -108,6 +108,16 @@ export class BattlePassPanelView extends Component {
     this.pointsLabel = this.addLabel('Points', 0, top - 48, COLOR_TEXT, 17)
     this.claimedLabel = this.addLabel('Claimed', 0, top - 72, COLOR_TEXT_DIM, 15)
     this.remainLabel = this.addLabel('Remain', 0, top - 96, COLOR_TEXT_DIM, 15)
+    // 这五行都是居中的固定 y（间距只有 24~28），而 Label 会按文本把盒子撑高 ——
+    // 撑到两行就直接叠在邻居身上（#363 在军队表头量出过同一形状，实测 hits 真出现）。
+    // 钉住「内宽 + 一行高」让 SHRINK 去缩字，而不是让两行半透明文字叠成一坨。
+    this.capLine(this.headerLabel, 20)
+    this.capLine(this.pointsLabel, 17)
+    this.capLine(this.claimedLabel, 15)
+    this.capLine(this.remainLabel, 15)
+    // 这五行都是居中的固定 y（间距只有 24~28），而 Label 会按文本把盒子撑高 ——
+    // 撑到两行就直接叠在邻居身上（#363 在军队表头量出过同一形状，实测 hits 真出现）。
+    // 钉住"内宽 + 一行高"让 SHRINK 去缩字，而不是让两行半透明文字叠成一坨。
     // 这一行两用：列表还没拉回来时的那句话，或（未解锁时）付费线为什么是灰的
     this.noticeLabel = this.addLabel('Notice', 0, top - 124, COLOR_TEXT_DIM, 14)
     this.noticeLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
@@ -194,6 +204,19 @@ export class BattlePassPanelView extends Component {
     graphics.fillColor = fill
     graphics.roundRect(-BUTTON_WIDTH / 2, -BUTTON_HEIGHT / 2, BUTTON_WIDTH, BUTTON_HEIGHT, 5)
     graphics.fill()
+  }
+
+  /**
+   * 把表头那一行钉成「面板内宽 × 一行高」，超出的部分交给 SHRINK 缩字号。
+   *
+   * <p>不设的话 Label 会按文本自适应：长文案换行后盒子被撑到两行高，
+   * 而表头五行的中心距只有 24~28px ⇒ 相邻两行直接叠在一起
+   * （#363 在军队表头量出过同一形状，本行是照那条的成例补的）。
+   */
+  private capLine(label: Label, fontSize: number): void {
+    label.node.getComponent(UITransform)?.setContentSize(
+      new Size(PANEL_WIDTH - 2 * PADDING, fontSize + 6))
+    label.overflow = Label.Overflow.SHRINK
   }
 
   private addLabel(name: string, x: number, y: number, color: Color, fontSize: number,
