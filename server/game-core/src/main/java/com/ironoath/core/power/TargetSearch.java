@@ -30,6 +30,18 @@ import java.util.List;
  */
 public final class TargetSearch {
 
+    /**
+     * 半径地板值：任何一次搜索至少覆盖 1 格。
+     *
+     * <p><b>为什么是 1 而不是 0</b>：曼哈顿距离 0 只有玩家自己那一格，而 {@link #search} 的循环
+     * 第一步就把 `candidate.playerId().equals(self.playerId())` 排除掉 —— 半径 0 的搜索在定义上
+     * 必然返回空列表，服务端却会把它当成「这一带没有目标」报给玩家。
+     *
+     * <p><b>为什么还要下发</b>：这个数同时是客户端 ± 键的下沿。让它跟着响应走，
+     * 是为了下沿与真正的截断口径同源 —— 客户端自己写死一个 1，服务端改夹取规则后界面就开始说谎。
+     */
+    public static final int MIN_RADIUS = 1;
+
     /** 距离档位。与协议里的 DistanceBand 一一对应（由 PowerContractParityTest 断言）。 */
     public enum DistanceBand {
         NEAR, MID, FAR
@@ -87,19 +99,23 @@ public final class TargetSearch {
     /**
      * 一次搜索请求。
      *
-     * @param radius        请求半径，会被截断到 [1, maxRadius]
+     * @param radius        请求半径，会被截断到 [{@link #MIN_RADIUS}, maxRadius]；
+     *                      null 用 {@link Rules#defaultRadius()} —— 与 maxCount 同一条口径：
+     *                      客户端在第一次响应之前拿不到上下界，不许它自己猜一个数
      * @param maxCount      请求数量，null 用默认值，超过上限会被截断
      * @param activeCutoff  活跃截止时刻：{@code lastActiveAt} 早于它的候选一律剔除。
      *                      由调用方用 {@code now - SEARCH_ACTIVE_WINDOW} 算好传进来 ——
      *                      本类不读时钟（铁律 5）
      */
-    public record Request(int radius, Integer maxCount, long activeCutoff) {
+    public record Request(Integer radius, Integer maxCount, long activeCutoff) {
     }
 
     /**
      * 搜索规则。全部来自 global 表（铁律 1：不硬编码），装配处在 game-web 的 PowerService。
      *
      * @param maxRadius          半径上限（SEARCH_MAX_RADIUS）
+     * @param defaultRadius      请求没带半径时用的默认半径（SEARCH_DEFAULT_RADIUS）。
+     *                           客户端在第一次响应之前不知道上下界，发的是 null（先例：defaultCount 之于 maxCount）
      * @param activeWindowMillis 活跃窗口（SEARCH_ACTIVE_WINDOW_HOURS），仅供调用方算 activeCutoff
      * @param defaultCount       maxCount 缺省时的返回数量（SEARCH_DEFAULT_COUNT）
      * @param maxCount           返回数量硬上限（SEARCH_MAX_COUNT）
@@ -115,6 +131,7 @@ public final class TargetSearch {
      * @param peerRatioMax       同段位上界（SEARCH_PEER_RATIO_MAX = 1.25）
      */
     public record Rules(int maxRadius,
+                        int defaultRadius,
                         long activeWindowMillis,
                         int defaultCount,
                         int maxCount,
@@ -132,6 +149,12 @@ public final class TargetSearch {
         public Rules {
             if (maxRadius < 1) {
                 throw new IllegalArgumentException("搜索半径上限必须 >= 1：" + maxRadius);
+            }
+            if (defaultRadius < MIN_RADIUS || defaultRadius > maxRadius) {
+                // 默认值落在区间外不会报错给运营，只会让玩家的第一次搜索被夹到边界上：
+                // 默认 0 就是今天的样子 —— 夹成 1 格、列表恒空，而界面看起来一切正常
+                throw new IllegalArgumentException("默认半径必须落在 [MIN_RADIUS, maxRadius]："
+                        + "default=" + defaultRadius + ", max=" + maxRadius);
             }
             if (activeWindowMillis <= 0L) {
                 // 窗口为 0 会把所有候选判成「不活跃」，搜索永远返回空列表 ——
@@ -172,6 +195,19 @@ public final class TargetSearch {
                 throw new IllegalArgumentException("同段位区间必须包含 1.0（势均力敌）：min="
                         + peerRatioMin + ", max=" + peerRatioMax);
             }
+        }
+
+        /**
+         * 把「玩家/客户端要的那个半径」定下来：没给就用默认，给了就夹进区间。
+         *
+         * <p><b>为什么单独一个方法</b>：候选池按半径过滤坐标（web 层）与候选按半径剔除（本类的
+         * 排序循环）用的是同一个数，两处各自夹一遍就会在改口径时错开 —— 错开的表现是
+         * 「池里有、列表里没有」，而那只会被当成「搜索不稳定」。
+         */
+        public int resolveRadius(Integer requested) {
+            return requested == null
+                    ? defaultRadius
+                    : Math.max(MIN_RADIUS, Math.min(requested, maxRadius));
         }
 
         private static void requireUnitRatio(long fixed, String name) {
@@ -253,7 +289,7 @@ public final class TargetSearch {
         if (rng == null) {
             throw new IllegalArgumentException("rng 不得为 null（随机权重必须可复现，铁律 4）");
         }
-        int radius = Math.max(1, Math.min(request.radius(), rules.maxRadius()));
+        int radius = rules.resolveRadius(request.radius());
         int limit = request.maxCount() == null
                 ? rules.defaultCount()
                 : Math.max(1, Math.min(request.maxCount(), rules.maxCount()));

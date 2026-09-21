@@ -45,7 +45,10 @@ function target(overrides: Partial<TargetBrief> = {}): TargetBrief {
 }
 
 function searchResp(targets: TargetBrief[]): SearchTargetsResp {
-  return { targets, selfMatchPower: 10000, bandLower: 5000, bandUpper: 20000, serverNow: 1 }
+  return {
+    targets, selfMatchPower: 10000, bandLower: 5000, bandUpper: 20000,
+    radiusMin: 1, radiusDefault: 48, radiusMax: 128, serverNow: 1,
+  }
 }
 
 // ---------- 数字格式化 ----------

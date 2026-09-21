@@ -3640,7 +3640,8 @@ export class AppRoot {
 
   // ---------- 目标搜索与流亡 ----------
 
-  searchTargets(radius: number): Promise<void> {
+  /** `radius` 为 null = 客户端还不知道上下界（第一次搜索），服务端按 SEARCH_DEFAULT_RADIUS 搜。 */
+  searchTargets(radius: number | null): Promise<void> {
     this.track(TRACK_EVENTS.targetsSearch, { radius: trackParam(radius) })
     return this.write('targets', this.api.searchTargets({ radius, maxCount: 30 }), [],
       r => {

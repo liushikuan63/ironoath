@@ -82,14 +82,14 @@ export class TargetSearchView extends Component {
   /**
    * 当前搜索半径（格）。只用于回传给服务端，本场景不拿它算任何东西。
    *
-   * <p>半径的取值范围必须由适配层通过 {@link TargetSearchView#setRadiusBounds} 注入：
-   * 上界来源 global.SEARCH_MAX_RADIUS，下界是服务端 TargetSearchService 用的地板值 1
-   * （服务端把请求夹成 max(1, min(radius, SEARCH_MAX_RADIUS))，越界只截断并记日志、不拒绝）。
-   * 没注入时 min=max=0，加减按钮就是一个静默的 no-op —— 这是刻意的：
-   * 铁律 1 不允许在场景里写死搜索半径，宁可按钮暂时不灵，
-   * 也不要在表现层留一个和配置表对不上的数字。
+   * <p>null = 还没收到任何一次响应，因此还不知道上下界。上下界必须由适配层从
+   * {@link SearchTargetsResp} 里取出来注入 {@link setRadiusBounds}
+   * （三个数分别是服务端的地板值、global.SEARCH_DEFAULT_RADIUS、global.SEARCH_MAX_RADIUS）。
+   *
+   * <p>没注入时两颗 ± 键是<b>藏起来</b>的，不是留着不灵：铁律 1 不允许在场景里写死搜索半径，
+   * 而一颗按了没反应的按钮只会让玩家以为搜索坏了（#345 对翻页键定的就是同一条口径）。
    */
-  private radius = 0
+  private radius: number | null = null
   private radiusMin = 0
   private radiusMax = 0
   private radiusStep = 1
@@ -103,6 +103,9 @@ export class TargetSearchView extends Component {
   /** 两颗翻页键的壳：只有一页时整颗收掉（只改字色等于留着两颗点了没反应的按钮） */
   private prevPageNode: Node | null = null
   private nextPageNode: Node | null = null
+  /** 两颗半径键的壳：还不知道上下界时同样整颗收掉，理由与翻页键一致 */
+  private radiusDownNode: Node | null = null
+  private radiusUpNode: Node | null = null
   private headerLabel: Label | null = null
   private bandLabel: Label | null = null
   private overflowLabel: Label | null = null
@@ -114,8 +117,13 @@ export class TargetSearchView extends Component {
    * 换传输实现（微信 / 浏览器 / 编辑器预览）不用动表现层。
    */
   onTargetSelected: ((targetId: string) => void) | null = null
-  /** 玩家改了搜索半径后要求重新搜索。同样只是表达意图，不自己发请求。 */
-  onSearchRequested: ((radius: number) => void) | null = null
+  /**
+   * 玩家改了搜索半径后要求重新搜索。同样只是表达意图，不自己发请求。
+   *
+   * <p>参数为 null 表示「客户端还不知道该用多大半径」，服务端按 SEARCH_DEFAULT_RADIUS 搜
+   * （契约里 maxCount 的 null 同一条口径）。第一次搜索就是这种情形。
+   */
+  onSearchRequested: ((radius: number | null) => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -153,12 +161,20 @@ export class TargetSearchView extends Component {
     this.render()
   }
 
-  /** 设置搜索半径的初始值与步进范围。三个数都来自 global.json，由调用方注入。 */
-  setRadiusBounds(radius: number, min: number, max: number): void {
-    this.radius = clamp(radius, min, max)
+  /**
+   * 注入半径的起点与上下界。三个数取自响应（值本身在 global 表，由服务端随结果下发）。
+   *
+   * <p>只在玩家还没自己选过半径时采纳 initial：按过 ± 之后又被每次响应抹回默认值，
+   * 表现是「我把半径调小了，再搜一次它自己弹回去」。
+   */
+  setRadiusBounds(initial: number, min: number, max: number): void {
     this.radiusMin = min
     this.radiusMax = max
     this.radiusStep = Math.max(1, Math.ceil((max - min) / 10))
+    if (this.radius === null) {
+      this.radius = clamp(initial, min, max)
+    }
+    this.paintRadiusControls()
   }
 
   // ---------- 搭建 ----------
@@ -214,7 +230,15 @@ export class TargetSearchView extends Component {
         this.nextPageLabel = caption
         this.nextPageNode = node
       }
+      if (control.name === 'RadiusDown') {
+        this.radiusDownNode = node
+      }
+      if (control.name === 'RadiusUp') {
+        this.radiusUpNode = node
+      }
     }
+    // 建完就判一次：第一次搜索之前上下界还不知道，两颗半径键不该露着
+    this.paintRadiusControls()
 
     // 位置每次 render 现算（它要贴着本页最后一行的下沿，页码变了它就变了）
     this.overflowLabel = this.addLabel(this.node, 'Overflow', 0, 0, COLOR_TEXT_DIM, 14)
@@ -270,8 +294,9 @@ export class TargetSearchView extends Component {
     }
     if (this.bandLabel !== null) {
       // 圈层区间照服务端给的原样显示。玩家看到「为什么只有这些」时，这两个数就是答案
+      // 半径没注入过就不写那半句：写 0 会让玩家以为半径真是 0，而服务端其实按默认值搜的
       this.bandLabel.string = `圈层范围 ${formatPower(resp.bandLower)} ~ ${formatPower(resp.bandUpper)}`
-        + ` · 搜索半径 ${this.radius} 格`
+        + (this.radius === null ? '' : ` · 搜索半径 ${this.radius} 格`)
     }
 
     const size = view.getVisibleSize()
@@ -346,6 +371,23 @@ export class TargetSearchView extends Component {
   }
 
   /**
+   * 还不知道半径上下界时（第一次响应之前）把两颗 ± 键整颗收掉。
+   *
+   * <p>与 {@link paintPageButtons} 同一条口径：留着两颗按了没反应的按钮，玩家读到的是
+   * 「这功能坏了」，而不是「还没轮到它生效」。而且这两颗键在 min=max=0 时连灰都灰得
+   * 看不出来（值永远不动），比翻页键更像坏了。
+   */
+  private paintRadiusControls(): void {
+    const known = this.radius !== null
+    if (this.radiusDownNode !== null && this.radiusDownNode.active !== known) {
+      this.radiusDownNode.active = known
+    }
+    if (this.radiusUpNode !== null && this.radiusUpNode.active !== known) {
+      this.radiusUpNode.active = known
+    }
+  }
+
+  /**
    * 本页画得下几行。**按可视高现算，不写死**：写死 8 行时第 6 行起就压到底部导航条上
    * （本仓库在军队页、编队弹层、社交面板各踩过一次，同一条教训）。
    */
@@ -403,6 +445,10 @@ export class TargetSearchView extends Component {
   // ---------- 半径控制 ----------
 
   private changeRadius(direction: number): void {
+    if (this.radius === null) {
+      // 上下界没注入时两颗键是收着的，真实点击走不到这里；这一行只是把 null 收窄
+      return
+    }
     this.radius = clamp(this.radius + direction * this.radiusStep, this.radiusMin, this.radiusMax)
     // 半径变了要重画表头（上面写着当前半径），但不自动发起搜索 ——
     // 玩家可能还在调，每调一格就请求一次会打爆服务端

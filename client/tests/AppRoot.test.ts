@@ -264,7 +264,8 @@ const ROUTES: Record<string, unknown> = {
   '/squad/kick': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
   '/alliance/kick': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
   '/alliance/donate': { tier: 1, donated: {}, contribution: 0, fund: 0, serverNow: SERVER_NOW },
-  '/world/searchTargets': { targets: [], selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW },
+  '/world/searchTargets': { targets: [], selfMatchPower: 10, lowerBound: 5, upperBound: 20,
+    radiusMin: 1, radiusDefault: 48, radiusMax: 128, serverNow: SERVER_NOW },
   '/world/march': {
     march: { marchId: 'm-1', from: { x: 48, y: 48 }, to: { x: 60, y: 60 }, status: 'MARCHING',
       targetType: 'CITY', targetId: 'P9', rallyId: null, action: 'ATTACK', startAt: SERVER_NOW,
@@ -1608,6 +1609,18 @@ test('搜索：半径由面板给、maxCount 由根定，响应回到目标列�
   assert.equal(call?.body.radius, 64)
   assert.equal(typeof call?.body.maxCount, 'number')
   assert.deepEqual(h.attached, ['targets'])
+})
+
+test('搜索：还不知道半径时发 null，不是一个猜出来的 0', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.searchTargets(null)
+
+  const call = h.http.calls.find(c => c.path === '/world/searchTargets')
+  // 发 0 会被服务端夹成地板值 1 格（上下左右四格邻居），玩家读到的是空列表 + 一个说不清的理由。
+  // null 才是「按 SEARCH_DEFAULT_RADIUS 搜」的那个意思 —— 与 maxCount 的 null 同一条口径
+  assert.strictEqual(call?.body.radius, null)
 })
 
 test('每个面板动作都要留下一个事件（B16 验收 3 的客户端半边，卡口比对的就是这件事）', async () => {

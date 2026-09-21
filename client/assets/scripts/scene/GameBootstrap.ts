@@ -1405,7 +1405,12 @@ export class GameBootstrap extends Component {
       }
     }
     if (search !== null) {
-      out.targets = resp => search.attach(resp)
+      // 半径的上下界与起点只在服务端的 global 表里（客户端的 config/generated 只有类型没有值），
+      // 所以随响应注入。顺序不能反：先注入再 attach，表头第一次画出来就是真正用过的那个半径
+      out.targets = resp => {
+        search.setRadiusBounds(resp.radiusDefault, resp.radiusMin, resp.radiusMax)
+        search.attach(resp)
+      }
       search.onSearchRequested = radius => { void this.root?.searchTargets(radius) }
       // 点一行就是把"打他"这个意图交出去：编成由编排层准备，这里不拼任何请求
       search.onTargetSelected = targetId => this.root?.beginMarchCompose(targetId)

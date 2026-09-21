@@ -144,6 +144,9 @@ const BEFORE = `(() => {
     noticeText: notice?.getComponent('cc.Label')?.string ?? null,
     searched: view2 ? view2.searched === true : null,
     rowsLen: view2 && view2.rows ? view2.rows.length : null,
+    radius: view2 ? view2.radius ?? null : undefined,
+    downActive: panel?.getChildByName('RadiusDown')?.active ?? null,
+    upActive: panel?.getChildByName('RadiusUp')?.active ?? null,
   }
 })()`
 const before = await page.evaluate(BEFORE)
@@ -152,6 +155,9 @@ checkTrue('搜索前：面板、视图组件、Overflow 那一格都在（否则
 checkTrue('搜索前：那一格还没有话（控件在、字确实是空的）', before?.noticeText === '')
 check('搜索前：rows 是空数组（所以"行数为零"本身不能当"搜过"的证据）', before?.rowsLen, 0)
 check('搜索前：searched 仍是 false', before?.searched, false)
+check('搜索前：半径还没有值（上下界只在响应里，客户端不猜）', before?.radius, null)
+check('搜索前：两颗 ± 键收着（还不知道范围的两颗键比不画更误导）', before?.downActive, false)
+check('搜索前：「半径 +」同样收着', before?.upActive, false)
 
 // ---------- 夹具相：dev 服上没有对手，所以把搜索结果换成一条真形状的回包 ----------
 // 替换的是**读接口**（网络层响应），视图与被测代码一行没换：这一相要问的正是
@@ -159,19 +165,27 @@ check('搜索前：searched 仍是 false', before?.searched, false)
 /** 夹具回包命中次数：零行那一相到底是"夹具回了空列表"还是"夹具没命中"，靠这个数分。 */
 const fixtureHits = { search: 0 }
 const fixture = { count: 1 }
+/** 半径上下界与起点：夹具故意用 1/48/128 三个互不相同的数，界面写错来源立刻能对出来。 */
+const RADIUS_FIXTURE = { min: 1, default: 48, max: 128 }
+/** 客户端每次搜索真正发出去的 radius（null = 交给服务端默认）。"屏上写的数==发出去的数"靠它比对。 */
+const sentRadii = []
 await context.route('**/world/searchTargets*', async (route) => {
   if (route.request().method() === 'OPTIONS') {
     await route.fulfill({ status: 204, headers: cors(route.request()) })
     return
   }
   fixtureHits.search += 1
+  sentRadii.push(JSON.parse(route.request().postData() ?? '{}').radius ?? null)
   await reply(route, {
     targets: Array.from({ length: fixture.count }, (_, i) => ({
       id: `fixture-target-${i + 1}`, name: `测试城·${i + 1}`, coord: { x: 100 + i, y: 77 },
       matchPower: 12_000, powerRatio: 12_000, distanceBand: 'NEAR',
       resourceHint: 'NORMAL', isShielded: false, tyrannyLevel: null,
     })),
-    selfMatchPower: 10_000, bandLower: 8_000, bandUpper: 15_000, serverNow: Date.now(),
+    selfMatchPower: 10_000, bandLower: 8_000, bandUpper: 15_000,
+    radiusMin: RADIUS_FIXTURE.min, radiusDefault: RADIUS_FIXTURE.default,
+    radiusMax: RADIUS_FIXTURE.max,
+    serverNow: Date.now(),
   })
 })
 
@@ -252,6 +266,64 @@ check('300ms：树里 TargetRow 节点数', late?.rowNodes, 1)
 check('2.0s：池里在用的节点数', late?.poolLive, 1)
 check('2.0s：drawnRows 记账', late?.drawnLen, 1)
 checkTrue('表头按夹具数据更新', (late?.header ?? '').includes('可攻击目标 1 个'))
+
+// ---------- 相位 A1：半径的上下界与起点必须来自那份响应 ----------
+// 这一相盯的是「两颗 ± 键到底动不动」和「屏上写的数是不是真发出去的那个数」。
+// 在注入之前它永远停在 0（setRadiusBounds 零调用点），0 到服务端被夹成 1 格 ⇒
+// 候选只剩上下左右四格 ⇒ 面板永远空着，而屏幕上没有任何一处说明半径其实是 1。
+const RADIUS_SNAP = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('targets')
+  const view2 = panel?.getComponent('TargetSearchView')
+  return {
+    radius: view2 ? view2.radius ?? null : undefined,
+    band: panel?.getChildByName('Band')?.getComponent('cc.Label')?.string ?? '',
+    downActive: panel?.getChildByName('RadiusDown')?.active ?? null,
+    upActive: panel?.getChildByName('RadiusUp')?.active ?? null,
+  }
+})()`
+/** 把同一颗半径键按 N 次（Cocos 的 node.emit 不看 active，所以次数就是步数）。 */
+const tapRadius = (name, times) => page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const button = game?.getChildByName('targets')?.getChildByName('${name}')
+  if (!button) return false
+  for (let i = 0; i < ${times}; i++) button.emit('touch-start')
+  return true
+})()`)
+
+const bounds = await page.evaluate(RADIUS_SNAP)
+check('第一次搜索发出去的是 null（半径起点由服务端定，客户端不猜）', sentRadii[0], null)
+check('响应里的默认半径变成了屏上那个数', bounds?.radius, 48)
+checkTrue('那一行说明写的是同一个数（不再是「搜索半径 0 格」那种谎）',
+  (bounds?.band ?? '').includes('搜索半径 48 格'))
+check('上下界到位后「半径 −」回来了', bounds?.downActive, true)
+check('上下界到位后「半径 +」回来了', bounds?.upActive, true)
+await page.screenshot({ path: path.join(OUT, 'march-search-radius-live.png') })
+
+checkTrue('按得到「半径 +」那一颗', await tapRadius('RadiusUp', 1))
+const stepped = await page.evaluate(RADIUS_SNAP)
+check('按一次 + 真的推进了一步（min=max=0 的旧版里它永远停在原地）', stepped?.radius, 61)
+
+const retapped = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const button = game?.getChildByName('targets')?.getChildByName('SearchButton')
+  if (!button) return false
+  button.emit('touch-start')
+  return true
+})()`)
+checkTrue('按得到「搜索」（把调好的半径发出去）', retapped)
+await page.waitForTimeout(300)
+const shownAfterTap = (await page.evaluate(RADIUS_SNAP)).radius
+check('发出去的半径等于屏上写的那个数（旧版发 0、显示 0，这条抓不到东西）',
+  sentRadii[sentRadii.length - 1], shownAfterTap)
+check('而且它就是刚按出来的 61，不是又弹回默认值', sentRadii[sentRadii.length - 1], 61)
+
+checkTrue('把「半径 +」连按 12 次', await tapRadius('RadiusUp', 12))
+check('连按 + 停在下发的上界 128（越界只会让服务端截断并记日志）',
+  (await page.evaluate(RADIUS_SNAP)).radius, 128)
+checkTrue('把「半径 −」连按 20 次', await tapRadius('RadiusDown', 20))
+check('连按 − 停在下发的地板值 1，不是 0（0 会被服务端当成「没给半径」）',
+  (await page.evaluate(RADIUS_SNAP)).radius, 1)
 
 // ---------- 相位 A2：行区的几何与分页（这一相盯的是"看得见"而不是"存在"）----------
 // 相位 A 只证明树里有 TargetRow；行压不压控件条、装不下的那些翻不翻得到，
