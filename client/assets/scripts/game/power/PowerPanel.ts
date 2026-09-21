@@ -142,6 +142,20 @@ export function buildTargetRows(resp: SearchTargetsResp): readonly TargetRow[] {
 }
 
 /**
+ * 目标搜索那一格该对玩家说什么 —— 只有「搜过了、且一个目标都没有」才给那句话。
+ *
+ * <p>为什么 `searched` 要单独传进来、不看 `total === 0` 就完事：`rows` 的初值就是空数组，
+ * 光看行数分不出「面板还没搜过」与「搜过、确实一个没有」，而只有后者需要一句话解释。
+ * 少了这个状态，要么搜索前就先印上「没有目标」（玩家以为自己在瞎搜），
+ * 要么零结果时整块空白（他以为搜索坏了）—— 两句都错在同一个地方。
+ *
+ * <p>句式照房规 `MarchPanelView:77`「暂无在外的队伍」。返回空串时调用方直接画，不用再判一次。
+ */
+export function targetSearchNotice(searched: boolean, total: number): string {
+  return searched && total === 0 ? '这一带没有可打的目标' : ''
+}
+
+/**
  * 大数缩写：1234567 ⇒ "123.4万"，123456789 ⇒ "1.2亿"，9999 以下原样。
  *
  * <p>全程整数运算。用 {@code (v / 10000).toFixed(1)} 会在 19999 上得到 "2.0万"

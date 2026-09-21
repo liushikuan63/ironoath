@@ -126,15 +126,45 @@ check('编成弹层节点存在（MarchCompose）', probe.overlayFound, true)
 check('弹层默认是收起的（没点目标就不该弹）', probe.overlayActive, false)
 check('搜索面板是打开的（探针进的这一页）', probe.searchActive, true)
 
+// ---------- 相位 A0：一次搜索都还没发出去时，行区那一格必须空着 ----------
+// 这一相是三相判据里的第一相：少了它，"永远印着那句话"与"只在零结果时印"在读数上同形，
+// 后面那两条"没有这句话"就抓不到任何缺陷。面板不会自动搜索（搜索只由 SearchButton 触发），
+// 所以此刻真的还没搜过。
+// 反空转前置：先证明 Overflow 那颗控件在树里、视图组件真的装配上了 ——
+// 否则"字是空串"可能只是因为压根没那个节点（#347 的整块没画就是这个形状）。
+const BEFORE = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('targets')
+  const notice = panel?.getChildByName('Overflow')
+  const view2 = panel?.getComponent('TargetSearchView')
+  return {
+    panelFound: panel !== null && panel !== undefined,
+    viewFound: view2 !== null && view2 !== undefined,
+    noticeFound: notice !== null && notice !== undefined,
+    noticeText: notice?.getComponent('cc.Label')?.string ?? null,
+    searched: view2 ? view2.searched === true : null,
+    rowsLen: view2 && view2.rows ? view2.rows.length : null,
+  }
+})()`
+const before = await page.evaluate(BEFORE)
+checkTrue('搜索前：面板、视图组件、Overflow 那一格都在（否则"空串"是假绿）',
+  before?.panelFound === true && before?.viewFound === true && before?.noticeFound === true)
+checkTrue('搜索前：那一格还没有话（控件在、字确实是空的）', before?.noticeText === '')
+check('搜索前：rows 是空数组（所以"行数为零"本身不能当"搜过"的证据）', before?.rowsLen, 0)
+check('搜索前：searched 仍是 false', before?.searched, false)
+
 // ---------- 夹具相：dev 服上没有对手，所以把搜索结果换成一条真形状的回包 ----------
 // 替换的是**读接口**（网络层响应），视图与被测代码一行没换：这一相要问的正是
 // 「真数据到位后，TargetSearchView 画不画得出行」。
+/** 夹具回包命中次数：零行那一相到底是"夹具回了空列表"还是"夹具没命中"，靠这个数分。 */
+const fixtureHits = { search: 0 }
 const fixture = { count: 1 }
 await context.route('**/world/searchTargets*', async (route) => {
   if (route.request().method() === 'OPTIONS') {
     await route.fulfill({ status: 204, headers: cors(route.request()) })
     return
   }
+  fixtureHits.search += 1
   await reply(route, {
     targets: Array.from({ length: fixture.count }, (_, i) => ({
       id: `fixture-target-${i + 1}`, name: `测试城·${i + 1}`, coord: { x: 100 + i, y: 77 },
@@ -256,6 +286,10 @@ const GEO = `(() => {
     noticeText: notice?.getComponent('cc.Label')?.string ?? '',
     noticeBottom: notice === null ? null : box(notice).bottom,
     screenBottom: -size.height / 2,
+    // 反空转用：这一格控件在不在、表头有没有真画过、视图自己记的"搜过没有"
+    noticeFound: notice !== null && notice !== undefined,
+    header: panel.getChildByName('Header')?.getComponent('cc.Label')?.string ?? '',
+    searched: view2 ? view2.searched === true : null,
   }
 })()`
 
@@ -284,6 +318,31 @@ checkTrue('行没有压住控件条（第一行上沿在按钮下沿之下）',
 checkTrue('行没有压到底部导航条', geo1 !== null && geo1.lastRowBottom >= geo1.navTop)
 checkTrue('页码那行字落在屏幕内（写死八行时它在 y=-318，玩家从来没见过）',
   geo1 !== null && geo1.noticeBottom > geo1.screenBottom)
+// 三相判据的第三相：有行时那句话必须不出现（有行还印"没有目标"等于自己打自己）
+checkTrue('有行（1 行）时那一格不写空态那句话', (geo1?.noticeText ?? '') !== '这一带没有可打的目标')
+check('有行时那一格仍是空的（一行正好画得下，既没有页码也没有截断提示）', geo1?.noticeText, '')
+
+// ---------- 相位 A3：搜过且零目标 ----------
+// dev 新号真后端对搜索就是回 `targets: []`（本探针开头记的实测），所以把夹具条数换成 0
+// 不是造一个到不了的状态，而是把那个到得了的状态稳定下来量。
+const zeroBefore = fixtureHits.search
+const zero = await searchWith(0)
+// 反空转前置（#347 那条假绿的成因就是"整块没画"与"画了但没数据"同形）：
+// 先证明这一相真的走完了"发请求 → 夹具回包 → 视图落地"，再让零行类判据计分。
+checkTrue('零目标相：夹具确实命中过（searchTargets 又打了一次，不是读到的旧状态）',
+  fixtureHits.search > zeroBefore)
+checkTrue('零目标相：表头真的画了（面板渲染过，不是整块没画）', (zero?.header ?? '') !== '')
+checkTrue('零目标相：表头写着 0 个、战力是夹具那个数（空列表真落进了视图）',
+  (zero?.header ?? '').includes('可攻击目标 0 个') && (zero?.header ?? '').includes('我的匹配战力'))
+check('零目标相：searched 已置真（这一相与"没搜过"的区分全靠它）', zero?.searched, true)
+check('零目标相：行区一行都没画', zero?.rowCount, 0)
+checkTrue('零目标相：那一格控件在、话也真印出来了（不是空串冒充）',
+  zero?.noticeFound === true && (zero?.noticeText ?? '') === '这一带没有可打的目标')
+check('零目标相：两颗翻页键仍收着（#345 的口径没被这次改动带坏）', zero?.pagerActive, 0)
+checkTrue('零目标相：那句话落在屏幕内（复用 Overflow 那一格，不动几何）',
+  zero !== null && zero.noticeBottom > zero.screenBottom)
+await page.screenshot({ path: path.join(OUT, 'march-search-zero-targets.png') })
+console.log(`  截图：${path.join(OUT, 'march-search-zero-targets.png')}`)
 
 const nine = await searchWith(9)
 const indexOf = (name) => Number(String(name ?? '').replace(/\D+/g, ''))
@@ -316,6 +375,7 @@ checkTrue('翻回第一页了', /^第 1\/\d+ 页/.test((await page.evaluate(GEO)
 // 重新搜索必须回到第一页：停在第 2 页等一份只有 1 条的结果，表现是"搜索没结果"
 const back = await searchWith(1)
 check('重搜后回到第一页且只画一行', back?.rowCount, 1)
+check('零目标相之后重搜到有行：那句话跟着清掉（空态文案不许常驻）', back?.noticeText, '')
 await page.screenshot({ path: path.join(OUT, 'march-search-paging.png') })
 console.log(`  截图：${path.join(OUT, 'march-search-paging.png')}`)
 

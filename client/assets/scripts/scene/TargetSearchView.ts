@@ -18,7 +18,7 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
-import { buildTargetRows, formatPower } from '../game/power/PowerPanel'
+import { buildTargetRows, formatPower, targetSearchNotice } from '../game/power/PowerPanel'
 import { clampPage, contentPerPage, pageCount, pageNotice, pageWindow } from '../game/ui/PanelPaging'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { TargetRow } from '../game/power/PowerPanel'
@@ -65,6 +65,18 @@ const NAV_SAFE_GAP = 8
 @ccclass('TargetSearchView')
 export class TargetSearchView extends Component {
   private rows: readonly TargetRow[] = []
+  /**
+   * 有没有一次搜索响应真的落进过这块视图。
+   *
+   * <p>`rows` 的初值就是空数组，光看它分不出「还没搜过」与「搜过且 0 个」，
+   * 而只有后者需要对玩家说那句话（文案口径在 `targetSearchNotice`，不在这里）。
+   *
+   * <p>**只在 {@link attach} 里、响应真的换成行的那一步置真，不在请求发出时置**：
+   * 请求失败或还在飞的时候就置真，零行会被当成「搜过了、确实没有目标」，
+   * 界面于是安静地对玩家撒谎 —— 本仓库在 `loadSocialGates()` 上踩过同一个形状
+   * （方法开头置真，权限数组还在飞时被当成"已就绪"，一次请求都不发）。
+   */
+  private searched = false
   private response: SearchTargetsResp | null = null
   private pending: SearchTargetsResp | null = null
   /**
@@ -134,6 +146,8 @@ export class TargetSearchView extends Component {
     }
     this.response = resp
     this.rows = buildTargetRows(resp)
+    // 响应真的换成行了才算"搜过"：请求发出时置真会把失败与在途当成"搜过且没有目标"
+    this.searched = true
     // 新一次搜索回到第一页：停在第 3 页等一份只有 1 个目标的结果，表现是"搜索没结果"
     this.page = 0
     this.render()
@@ -293,9 +307,15 @@ export class TargetSearchView extends Component {
       this.overflowLabel.node.setPosition(
         new Vec3(0, topY - visible.length * (ROW_HEIGHT + ROW_GAP), 0),
       )
-      this.overflowLabel.string = pages > 1
-        ? `${pageNotice(this.page, pages)} · 共 ${total} 个`
-        : truncatedNotice('个目标', total - visible.length)
+      // 零目标时这一格本来就是空的（页码那串要 pages > 1，截断提示在 remaining <= 0 时返回空串），
+      // 所以借它说那句话：不新增控件、不动任何几何 —— #348 战令那一格同一做法。
+      // 不说玩家读到的就是"一片空白 + 两颗收掉的翻页键"，那副长相是"搜索坏了"。
+      const emptyNotice = targetSearchNotice(this.searched, total)
+      this.overflowLabel.string = emptyNotice !== ''
+        ? emptyNotice
+        : pages > 1
+          ? `${pageNotice(this.page, pages)} · 共 ${total} 个`
+          : truncatedNotice('个目标', total - visible.length)
     }
     this.paintPageButtons(pages)
   }
