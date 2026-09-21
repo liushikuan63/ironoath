@@ -1,5 +1,5 @@
 /**
- * 职责：证明像素法那一维在**每一个页签相位**上都不是瞎的 —— 逐个相位运行时植入一块
+ * 职责：证明像素法那一维在**每一个被量的相位**（17 个默认相 + 6 个页签相）上都不是瞎的 —— 逐个相位运行时植入一块
  * "DFS 次序排在文字之后"的 `Graphics` 底板（#389 那处缺陷的形状），看它报不报得出来。
  * 依赖：node、playwright、已构建的 `client/build/web-mobile`、已启动的后端（数据来自 #395/#396 的桩）。
  *
@@ -14,6 +14,7 @@ import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf8
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { decodePng, diffRegion } from './lib/png-diff.mjs'
 import { planPlateCoverage } from './lib/plate-coverage.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
   console.error('[plant] 缺 LABELFIT_BACKEND（dev 约定 http://localhost:8199）')
@@ -21,7 +22,16 @@ const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
 })()
 const PORT = Number(process.env.PLANT_PORT ?? 8197)
 
-/** 六个相位：`panel` 是深链键，`tab` 是要点的页签节点名（null = 默认相就在那块面板上）。 */
+/**
+ * 六个页签相位 + 17 个默认相，全部要做正例：只在 quest 上标定过的话，
+ * 其余各屏的"0 处"就仍然只是"没量出东西"而不是"证明了没有"（台账 #411/#412）。
+ * `tab` 为 null 表示默认相（不点页签）。
+ */
+const DEFAULT_PANELS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest',
+  'battlePass', 'mail', 'social', 'power', 'shop', 'avatarFrames', 'targets', 'world', 'settings']
+  .map((panel) => ({ tag: panel, panel, tab: null }))
+
+/** 每个相位：`panel` 是深链键，`tab` 是要点的页签节点名（null = 默认相）。 */
 const PHASES = [
   { tag: 'reports/scout', panel: 'reports', tab: 'TabScout' },
   { tag: 'social/alliance', panel: 'social', tab: 'Tab_alliance' },
@@ -29,6 +39,7 @@ const PHASES = [
   { tag: 'social/events', panel: 'social', tab: 'Tab_events' },
   { tag: 'social/chat', panel: 'social', tab: 'Tab_chat' },
   { tag: 'social/rally', panel: 'social', tab: 'Tab_rally' },
+  ...DEFAULT_PANELS,
 ]
 
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
@@ -71,7 +82,9 @@ for (const phase of PHASES) {
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
   await page.waitForTimeout(2500)
-  const switched = await page.evaluate((tabName) => {
+  // 先藏新手引导板：不藏的话植入可能落在引导遮罩底下，像素不变 ⇒ 假失败
+  await hideGuideOverlay(page)
+  const switched = phase.tab === null || await page.evaluate((tabName) => {
     const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     let hit = null
     const find = (n) => {
@@ -144,6 +157,6 @@ for (const phase of PHASES) {
 await browser.close()
 await preview.close()
 const bad = results.filter((r) => !r.ok)
-console.log(`\n[plant] 六相位：合格 ${results.length - bad.length} / ${results.length}`)
+console.log(`\n[plant] 全部相位：合格 ${results.length - bad.length} / ${results.length}`)
 for (const b of bad) console.log(`  不合格 ${b.tag}：${JSON.stringify(b)}`)
 process.exit(bad.length === 0 ? 0 : 1)
