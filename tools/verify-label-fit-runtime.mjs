@@ -62,7 +62,14 @@ const BASELINE = new Set([
  * 空态实测邮件 2 颗 / 战报 3 颗，差 3~10 倍，所以桩掉了这一条一定红；
  * 上限故意不设：画几行随视口高度变，钉死会把量具变成"只能在这台机器上绿"。
  */
-const LABEL_FLOORS = { mail: 2 * 4, reports: 2 * 3 }
+const LABEL_FLOORS = { mail: 2 * 4, reports: 2 * 3, social: 2 * 4 }
+
+/**
+ * 正向断言（比数颗数更硬）：这些串**只在夹具数据里**，空态画不出来。
+ * 社交那一格尤其需要 —— 它空态本来就有 11 颗 Label（页签条 + 「创建小队」那一行），
+ * 光看颗数会把"桩掉线"读成"覆盖还在"。
+ */
+const STUB_MARKS = { mail: '开服庆', reports: '野匪', social: '铁砧前哨' }
 
 let pass = 0
 let fail = 0
@@ -88,6 +95,8 @@ const WALK = `(() => {
   const stretched = []
   const geo = []
   const underNav = []
+  /** 这一屏画出来的每一句原文（正向断言读它：夹具的桩掉线时这里就没有夹具的字）。 */
+  const texts = []
   let shrink = 0
   let seen = 0
   // 底部导航条的真实上沿（不是抄常量）：#389 那一处"第 8 行被导航条盖住"是看截图才发现的，
@@ -109,6 +118,7 @@ const WALK = `(() => {
       const str = lb ? (lb.string ?? '') : ''
       if (str.length > 0) {
         seen += 1
+        texts.push(str)
         // **全程用世界矩形**：面板按视口缩放过，拿"世界坐标 − 本地盒宽"会混两套单位
         // （第一版就是这么把内城资源条报成互相压上的）。缩放比用盒子高之比反推。
         const ut = n.getComponent('cc.UITransform')
@@ -170,7 +180,7 @@ const WALK = `(() => {
       crowd.push(a.text + '×' + b.text + '(Δy' + Math.round(dy) + '<带' + Math.round(band) + ')')
     }
   }
-  return { seen, shrink, out, stretched, crowd, underNav, navTop }
+  return { seen, shrink, out, stretched, crowd, underNav, navTop, texts }
 })()`
 
 /**
@@ -222,13 +232,14 @@ const reply = async (route, data) => route.fulfill({
 /**
  * 挂一份读接口夹具：OPTIONS 先回 204，其余用 `reply` 包成 `{code:0,data}`。
  * 必须在 `page.goto` **之前**挂上（深链进面板就发请求，晚挂等于这一格读到空态）。
+ * `data` 给函数时按请求 URL 现算 —— 同一个端点带不同参数（`/social/permissions?scope=`）要能各回各的。
  */
 const stubRead = (pattern, data) => context.route(pattern, async (route) => {
   if (route.request().method() === 'OPTIONS') {
     await route.fulfill({ status: 204, headers: cors(route.request()) })
     return
   }
-  await reply(route, data)
+  await reply(route, typeof data === 'function' ? data(route.request().url()) : data)
 })
 /**
  * 背包夹具：新号一进这一格只有 3 颗 Label（空态），量不到"有货之后才画出来的行"。
@@ -325,6 +336,61 @@ const SCOUT_REPORTS = [
   remainingMs: (i + 2) * HOUR, errorFixed: 800, seed: 1000 + i, serverNow: Date.now(), ...s,
 }))
 await stubRead('**/world/reports*', { reports: SCOUT_REPORTS, serverNow: Date.now() })
+/**
+ * 社交夹具。这一格与邮件/战报不同：**空态本来就有 11 颗 Label**（页签条 + 那一行「创建小队」），
+ * 光数 Label 挡不住"桩掉线"，所以另配一条正向断言 `STUB_MARKS`（夹具里的队名必须真画出来）。
+ * 摘要给一支 6 人小队（`SquadView.required` 那 14 个字段一个不少），联盟留 null ——
+ * 非 null 会让 `AppRoot.refresh('social')` 追加一次 `/alliance/sync`，那是另一条链路，不属这一格。
+ */
+const SQUAD_MEMBERS = [
+  { name: '铁砧·玛尔达', role: 'LEADER', power: 128400, mainCityLevel: 18 },
+  { name: '石锤·乌尔', role: 'MEMBER', power: 74200, mainCityLevel: 14 },
+  { name: '灰隼·雷恩', role: 'MEMBER', power: 69850, mainCityLevel: 13 },
+  { name: '柳岸·希达', role: 'MEMBER', power: 51200, mainCityLevel: 12 },
+  { name: '守誓者贝尔', role: 'MEMBER', power: 47600, mainCityLevel: 11 },
+  { name: '麦田·奥登', role: 'MEMBER', power: 33100, mainCityLevel: 9 },
+].map((m, i) => ({ id: `probe_squad_p${i}`, lastActiveAt: Date.now() - i * 600_000, ...m }))
+await stubRead('**/social/summary*', {
+  squad: {
+    id: 'probe_squad_1', name: '铁砧前哨', leaderId: 'probe_squad_p0', members: SQUAD_MEMBERS,
+    level: 6, exp: 1240, expToNext: 2000, memberCap: 10, shopLevel: 3, squadCoin: 4820,
+    allianceId: null, isSubSquad: false, dailyQuestProgress: 3, dailyQuestTarget: 8,
+    serverNow: Date.now(),
+  },
+  alliance: null, nationId: null,
+  pendingInvites: 0, pendingHelps: 2, helpRemainingToday: 3,
+  events: [], serverNow: Date.now(),
+})
+await stubRead('**/social/helpRequests*', {
+  requests: [
+    { requestId: 'probe_help_0', fromPlayerId: 'probe_squad_p1', fromPlayerName: '石锤·乌尔',
+      kind: 'BUILDING', targetDesc: '兵营 Lv12 升级中', remainingSeconds: 1500, helpedCount: 2, alreadyHelped: false },
+    { requestId: 'probe_help_1', fromPlayerId: 'probe_squad_p2', fromPlayerName: '灰隼·雷恩',
+      kind: 'TRAINING', targetDesc: '重步兵 ×400', remainingSeconds: 600, helpedCount: 5, alreadyHelped: true },
+  ],
+  pendingHelps: 2, helpRemainingToday: 3, serverNow: Date.now(),
+})
+// 权限按 scope 各问一次：响应里的 `scope` 必须跟着请求走，写死一份等于让两页共用同一套权限位
+await stubRead('**/social/permissions*', (url) => ({
+  scope: url.includes('ALLIANCE') ? 'ALLIANCE' : 'SQUAD',
+  role: 'LEADER',
+  permissions: ['KICK_MEMBER', 'START_RALLY', 'DISBAND', 'DONATE'],
+  serverNow: Date.now(),
+}))
+// 发现型列表与聊天：这一格不量它们（要点页签才画行），但桩住才不会让 dev 新号的真实空响应混进读数 ——
+// `/alliance/list` 对没入盟的号回 10010，客户端会把那句「稍后会自动重试」画到屏幕上，量具就读成了另一屏
+await stubRead('**/alliance/list*', { alliances: [], total: 0, limit: 20, serverNow: Date.now() })
+await stubRead('**/squad/list*', { squads: [], total: 0, limit: 20, serverNow: Date.now() })
+await stubRead('**/alliance/applications*', { applicants: [], total: 0, limit: 20, serverNow: Date.now() })
+await stubRead('**/chat/list*', {
+  messages: [
+    { messageId: 'probe_chat_0', channel: 'SQUAD', senderId: 'probe_squad_p1',
+      senderName: '石锤·乌尔', content: '集合点定在河谷渡口，我先过去了', sentAt: Date.now() - 240_000 },
+    { messageId: 'probe_chat_1', channel: 'SQUAD', senderId: 'probe_squad_p0',
+      senderName: '铁砧·玛尔达', content: '等你到整点，路上把侦察发一份过来', sentAt: Date.now() - 120_000 },
+  ],
+  hasMore: false, serverNow: Date.now(),
+})
 
 const offenders = []
 const stretched = []
@@ -334,6 +400,8 @@ let navFound = 0
 const reached = []
 /** 每一格读到的 Label 颗数：夹具反空转判据读它（见 `LABEL_FLOORS`）。 */
 const labelsBy = new Map()
+/** 每一格画出来的原文：正向断言读它（见 `STUB_MARKS`）。 */
+const textsBy = new Map()
 let totalLabels = 0
 let totalShrink = 0
 
@@ -374,6 +442,7 @@ for (const key of KEYS) {
     }
     read.crowd = read.crowd ?? []
     read.underNav = read.underNav ?? []
+    read.texts = [...new Set([...(read.texts ?? []), ...(again.texts ?? [])])]
     const haveCrowd = new Set(read.crowd)
     for (const x of again.crowd ?? []) {
       if (!haveCrowd.has(x)) read.crowd.push(x)
@@ -388,6 +457,7 @@ for (const key of KEYS) {
   } else {
     reached.push(key)
     labelsBy.set(key, read.seen)
+    textsBy.set(key, read.texts ?? [])
     totalLabels += read.seen
     totalShrink += read.shrink
     for (const x of read.out) offenders.push(`${key}/${x.text}(${x.h}<${x.floor},字${x.want})`)
@@ -511,6 +581,11 @@ checkTrue('这些格里确实读到过 Label（读到 0 颗说明遍历写错了
 for (const [panel, floor] of Object.entries(LABEL_FLOORS)) {
   check(`${panel} 的读接口夹具还画出 ${floor} 颗以上 Label（掉线会退回空态）`,
     (labelsBy.get(panel) ?? 0) >= floor, true)
+}
+// 颗数只证明"画了点什么"，这一条证明"画的是夹具那份数据"（社交页空态本来就有 11 颗）
+for (const [panel, mark] of Object.entries(STUB_MARKS)) {
+  check(`${panel} 的夹具文字真的画到了屏幕上（找「${mark}」）`,
+    (textsBy.get(panel) ?? []).some((t) => t.includes(mark)), true)
 }
 // 恒真的"totalShrink >= 0"不写：清单不能靠一个不会失败的条件交差。
 // 这条要能失败：基线里有点名行、却一颗 SHRINK 都没量到 ⇒ 遍历或枚举值变了，读的是空集合。
