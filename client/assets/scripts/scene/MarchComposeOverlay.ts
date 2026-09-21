@@ -31,6 +31,19 @@ const COLOR_WARN = new Color(198, 90, 70, 255)
 const PANEL_WIDTH = 620
 const PANEL_HEIGHT = 460
 const ROW_HEIGHT = 44
+/** 行条宽（面板左右各内缩 24）：行内四件事的落点全部从它推，不各写一个魔数。 */
+const ROW_WIDTH = PANEL_WIDTH - 48
+/**
+ * 兵种名**左对齐**贴行条左内缩。原先它是中心对齐、却放在同一个左内缩点上
+ * ⇒ 文字以那个点为中心向两边铺开，条带左边缘挡不住它（master 5b7bc28 同一处，
+ * 本地这条线不抬面板，所以只搬落点、不搬 `panelLift`）。
+ */
+const ROW_NAME_X = -ROW_WIDTH / 2 + 14
+/** 两颗步进键挪到行条右侧（原先在左起 190 / 236，正好压在长名字要占的那一段） */
+const ROW_PLUS_X = ROW_WIDTH / 2 - 19 - 8
+const ROW_MINUS_X = ROW_PLUS_X - 38 - 6
+/** 数量右对齐，落在「−」的左边 */
+const ROW_COUNT_X = ROW_MINUS_X - 19 - 12
 const VISIBLE_ROWS = 5
 /** 一次点 ＋/− 走多少：10 是"来回点几下就能调到位"与"点一下不心疼"之间的取中值。 */
 const STEP = 10
@@ -77,17 +90,19 @@ export class MarchComposeOverlay {
     this.node = new Node('MarchCompose')
     this.node.layer = parent.layer
     parent.addChild(this.node)
-    this.node.addComponent(UITransform).setContentSize(new Size(width, PANEL_HEIGHT))
+    const screen = view.getVisibleSize()
+    // 命中区域 = **整屏**，与它画出来的范围一致。原先按 `width × PANEL_HEIGHT`（实测 620×460）设，
+    // 而遮罩画的是整屏（960×600）⇒ 点暗处会穿透打到底下已经"看不见"的搜索行：整屏压暗却仍可点，
+    // 是不一致（master 73de878 同一处；本地这条线不抬面板，所以不需要它那句 `+2 * lift`）。
+    this.node.addComponent(UITransform).setContentSize(new Size(screen.width, screen.height))
     // 吞掉遮罩点击：否则点空白处会穿到下面的地图上（等于在地图上乱点）
     this.node.on('touch-start', (_event: EventTouch) => {
-      /* 只吞不处理 */
+      /* 只吞不处理：关闭走「编成取消」那颗键（口径已定，不在遮罩上顺手做关闭） */
     }, this)
     const background = this.node.addComponent(Graphics)
     // 整屏遮罩，与 AwakenPick / ComposePick / Choice 三处同一惯例（COLOR_SCRIM 同色同参）。
     // 缺了它，弹层打开时底下的搜索面板照常亮着：标题「出征：某城」会和「半径 – 搜索」那行
     // 抢同一块像素，两层字叠在一起读不了（12:40 的 `compose-mode-*.png` 两张都拍到了）。
-    // 只画不改命中区域：遮罩上点击该不该关闭弹层是 UX 口径，另记一格，不在这里顺手定。
-    const screen = view.getVisibleSize()
     background.fillColor = COLOR_SCRIM
     background.rect(-screen.width / 2, -screen.height / 2, screen.width, screen.height)
     background.fill()
@@ -298,21 +313,21 @@ export class MarchComposeOverlay {
     this.node.addChild(node)
     const y = PANEL_HEIGHT / 2 - 92 - index * (ROW_HEIGHT + 4)
     node.setPosition(new Vec3(0, y, 0))
-    node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH - 48, ROW_HEIGHT))
+    node.addComponent(UITransform).setContentSize(new Size(ROW_WIDTH, ROW_HEIGHT))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW
-    graphics.roundRect(-(PANEL_WIDTH - 48) / 2, -ROW_HEIGHT, PANEL_WIDTH - 48, ROW_HEIGHT, 6)
+    graphics.roundRect(-ROW_WIDTH / 2, -ROW_HEIGHT, ROW_WIDTH, ROW_HEIGHT, 6)
     graphics.fill()
 
-    const name = this.childLabel(node, -(PANEL_WIDTH - 48) / 2 + 14, -ROW_HEIGHT / 2, 17, COLOR_TEXT)
-    const count = this.childLabel(node, 0, -ROW_HEIGHT / 2, 17, COLOR_GOLD)
-    const minus = this.rowButton(node, -(PANEL_WIDTH - 48) / 2 + 190, -ROW_HEIGHT / 2, '−', () => {
+    const name = this.childLabel(node, ROW_NAME_X, -ROW_HEIGHT / 2, 17, COLOR_TEXT, 0)
+    const count = this.childLabel(node, ROW_COUNT_X, -ROW_HEIGHT / 2, 17, COLOR_GOLD, 1)
+    const minus = this.rowButton(node, ROW_MINUS_X, -ROW_HEIGHT / 2, '−', () => {
       const option = this.view?.compose.options[index]
       if (option !== undefined) {
         this.onPick?.(option.unitId, option.selected - STEP)
       }
     })
-    const plus = this.rowButton(node, -(PANEL_WIDTH - 48) / 2 + 236, -ROW_HEIGHT / 2, '＋', () => {
+    const plus = this.rowButton(node, ROW_PLUS_X, -ROW_HEIGHT / 2, '＋', () => {
       const option = this.view?.compose.options[index]
       if (option !== undefined) {
         this.onPick?.(option.unitId, option.selected + STEP)
@@ -325,16 +340,19 @@ export class MarchComposeOverlay {
     return this.childLabel(this.node, x, y, fontSize, color)
   }
 
-  private childLabel(parent: Node, x: number, y: number, fontSize: number, color: Color): Label {
+  private childLabel(parent: Node, x: number, y: number, fontSize: number, color: Color,
+    anchorX = 0.5): Label {
     const node = new Node('label')
     parent.addChild(node)
-    node.addComponent(UITransform)
+    // 锚点必须跟着改：只挪 x 不设 anchorX，文字盒仍以节点为中心再推出去半个宽度
+    node.addComponent(UITransform).setAnchorPoint(anchorX, 0.5)
     node.setPosition(new Vec3(x, y, 0))
     const label = applySystemUiFont(node.addComponent(Label))
     label.color = color
     label.fontSize = fontSize
     label.lineHeight = fontSize + 6
-    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.horizontalAlign = anchorX === 0 ? Label.HorizontalAlign.LEFT
+      : anchorX === 1 ? Label.HorizontalAlign.RIGHT : Label.HorizontalAlign.CENTER
     return label
   }
 

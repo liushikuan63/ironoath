@@ -532,6 +532,48 @@ check('切到集结后「集结」那颗变成选中色（再点一次会回出�
 await page.screenshot({ path: path.join(OUT, 'compose-mode-rally.png') })
 console.log(`  截图：${path.join(OUT, 'compose-mode-rally.png')}`)
 
+// ---------- 行内落点与遮罩命中区（master 5b7bc28 / 73de878 那一族，按本地"不抬面板"的模型重做）----------
+// 名字那颗按**锚点**判、不按当前数据长短判：dev 新号只有两种兵、名字两个字，"越界多少 px"量不出来
+// （实测 nameLeft == barLeft、0 越界），只盯墨迹会把"中心对齐放在左内缩点上"这个结构性缺陷读成正常。
+const ROW_BOXES = await page.evaluate(`(() => {
+  const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('MarchCompose')
+  const rows = (overlay?.children ?? []).filter((c) => /^composeRow\\d+$/.test(c.name) && c.active)
+  return rows.map((r) => {
+    const bar = r.getComponent('cc.UITransform').getBoundingBoxToWorld()
+    const kids = r.children.map((k) => {
+      const t = k.getComponent('cc.UITransform')
+      const b = t.getBoundingBoxToWorld()
+      return { text: (k.getComponent('cc.Label')?.string ?? '').slice(0, 10),
+        left: b.x, right: b.x + b.width, anchorX: t.anchorX }
+    })
+    return { barLeft: bar.x, barRight: bar.x + bar.width, name: kids[0], kids }
+  })
+})()`)
+const spilledLeft = ROW_BOXES.filter((r) => r.name !== undefined && r.name.left < r.barLeft - 1)
+const spilledRight = ROW_BOXES.filter((r) => r.kids.some((k) => k.right > r.barRight + 1))
+const nameAnchors = ROW_BOXES.map((r) => r.name?.anchorX ?? null)
+console.log(`  行内落点：读到 ${ROW_BOXES.length} 行；名字锚点 ${JSON.stringify(nameAnchors)}；`
+  + `越左 ${spilledLeft.length} 行、越右 ${spilledRight.length} 行`)
+checkTrue('编成行读到了（一行都没有则下面几条都是空跑）', ROW_BOXES.length >= 1)
+check('兵种名是左锚点（中心锚点放在左内缩点上，名字一长就画出条带）',
+    nameAnchors.length > 0 && nameAnchors.every((a) => a === 0), true)
+check('兵种名不画出条带左边', spilledLeft.length, 0)
+check('行内没有东西画出条带右边', spilledRight.length, 0)
+// 遮罩的命中区必须与它画出来的范围一致：画整屏、命中只有面板 ⇒ 点暗处穿透打到底下已经看不见的行
+const scrim = await page.evaluate(`(() => {
+  const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('MarchCompose')
+  if (!overlay) return null
+  const t = overlay.getComponent('cc.UITransform')
+  const vis = window.cc.view.getVisibleSize()
+  return { w: t.width, h: t.height, screenW: vis.width, screenH: vis.height }
+})()`)
+console.log(`  遮罩命中区：${JSON.stringify(scrim)}`)
+check('遮罩命中区宽 = 整屏宽（原先按面板宽设，画满整屏却只吞面板那一片）',
+  scrim !== null && scrim.w >= scrim.screenW - 1, true)
+check('遮罩命中区高 = 整屏高', scrim !== null && scrim.h >= scrim.screenH - 1, true)
+
 // ---------- 相位 C：联盟层（B26 S14 的"玩家真够得着"）----------
 // 相位 B 只证明"能切成集结"。这一相盯的是：层级切得动、政策给的两个数画得出来、
 // 越界那一侧的键不画、按节点名读得到（#291 的教训：只量中心在板内抓不到被切掉的半截字）。
