@@ -30,7 +30,7 @@ import type { LineupChoice } from '../game/session/Choices'
 import type { ChallengeStageResp, StageListResp, SweepResp } from '../net/generated/StageProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, oneLineFloorHeight } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -299,10 +299,10 @@ export class StagePanelView extends Component {
     // 先前那版把第二行右对齐放在同一水平线上，两条长文案在中间撞成一坨（截图抓到）
     this.staminaLabel = this.addLabel(band, 'StaminaText', -innerW / 2 + PADDING, 14, COLOR_TEXT, 17)
     this.staminaLabel.horizontalAlign = Label.HorizontalAlign.LEFT
-    this.sizeLeft(this.staminaLabel, BAND_TEXT_WIDTH, 24)
+    this.sizeLeft(this.staminaLabel, BAND_TEXT_WIDTH)
     this.buyLabel = this.addLabel(band, 'BuyText', -innerW / 2 + PADDING, -14, COLOR_COPPER_GOLD, 15)
     this.buyLabel.horizontalAlign = Label.HorizontalAlign.LEFT
-    this.sizeLeft(this.buyLabel, BAND_TEXT_WIDTH, 22)
+    this.sizeLeft(this.buyLabel, BAND_TEXT_WIDTH)
     this.buyButton = new Node('BuyStaminaButton')
     this.buyButton.layer = band.layer
     band.addChild(this.buyButton)
@@ -366,9 +366,9 @@ export class StagePanelView extends Component {
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     const extra = this.addLabel(node, 'Extra', -PANEL_WIDTH / 2 + PADDING, -24, COLOR_WARNING, 13)
     extra.horizontalAlign = Label.HorizontalAlign.LEFT
-    this.sizeLeft(title, ROW_TEXT_WIDTH, 24)
-    this.sizeLeft(detail, ROW_TEXT_WIDTH, 20)
-    this.sizeLeft(extra, ROW_TEXT_WIDTH, 18)
+    this.sizeLeft(title, ROW_TEXT_WIDTH)
+    this.sizeLeft(detail, ROW_TEXT_WIDTH)
+    this.sizeLeft(extra, ROW_TEXT_WIDTH)
     const stars = this.addLabel(node, 'Stars', PANEL_WIDTH / 2 - 96, 16, COLOR_STAR, 20)
     stars.horizontalAlign = Label.HorizontalAlign.RIGHT
 
@@ -403,13 +403,15 @@ export class StagePanelView extends Component {
    * 于是文字的起点跑到行的左边界外面 —— 实测标题「Chapter_01 · 第 1 关」的开头被屏幕裁掉。
    * 与军队 / 背包 / 战报 / 编成弹层那几处「标签没盒子」同族（#316、#319、#320、#321）。
    */
-  private sizeLeft(label: Label, width: number, height: number): void {
+  private sizeLeft(label: Label, width: number): void {
     const transform = label.node.getComponent(UITransform)
     if (transform === null) {
       return
     }
     transform.setAnchorPoint(0, 0.5)
-    transform.setContentSize(new Size(width, height))
+    // 高度不再让调用方各写一个数（原来 24/22/24/20/18 五处，全低于一行字的实测下限，
+    // 于是 SHRINK 常态性把字压小 —— 台账 #367 点名关卡 14 行）。宽度才是这里要限的东西。
+    transform.setContentSize(new Size(width, oneLineFloorHeight(label.fontSize)))
     label.overflow = Label.Overflow.SHRINK
   }
 

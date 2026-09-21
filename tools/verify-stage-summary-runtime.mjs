@@ -367,6 +367,7 @@ const BAND = `(() => {
       const t = node.getComponent('cc.UITransform')
       spans.push({
         name: node.name,
+        want: node.getComponent('cc.Label')?.fontSize ?? 0,
         left: node.worldPosition.x - t.width * t.anchorX,
         right: node.worldPosition.x + t.width * (1 - t.anchorX),
         top: node.worldPosition.y + t.height * (1 - t.anchorY),
@@ -378,13 +379,23 @@ const BAND = `(() => {
   find(panel)
   const a = spans.find((s) => s.name === 'StaminaText')
   const b = spans.find((s) => s.name === 'BuyText')
-  // 两行都左对齐上下排：横向重叠本来就该有，但**纵向**不许重叠（同一条水平线上撞成一坨就是先前那版）
-  const stacked = a === undefined || b === undefined ? null : (a.bottom >= b.top || b.bottom >= a.top)
+  // 两行都左对齐上下排：横向重叠本来就该有，但**字形带**不许撞上。
+  // 下限按字号（em）算而不是按行盒：行盒 ≈ 字号×1.5，两行行盒相切并不代表玩家看见字叠
+  // （#365 的教训）。#368/#369 把盒高抬到"装得下一行字"的实测下限之后，这条按行盒写的判据
+  // 把中心距 28px、字号 17/15 的健康两行判成了红 —— 红的是判据，不是版式。
+  const need = ((a?.want ?? 0) + (b?.want ?? 0)) / 2 + 4
+  const centerGap = (a === undefined || b === undefined)
+    ? null : Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2)
+  const stacked = centerGap === null ? null : centerGap >= need
   return {
     found: true,
     bandActive: band !== null && band.active,
     hasButton: button !== null,
     stacked,
+    wantA: a?.want ?? 0,
+    wantB: b?.want ?? 0,
+    centerGap: centerGap === null ? null : Math.round(centerGap),
+    need: Math.round(need),
     // 左对齐真的设上了：addLabel 默认是 CENTER，忘了改会把两行文字往中间飘
     textInset: (a !== undefined && band !== null)
       ? a.left - (band.worldPosition.x - band.getComponent('cc.UITransform').width / 2) : null,
@@ -401,7 +412,11 @@ for (let i = 0; i < 40; i += 1) {
   if (band?.bandActive === true) break
 }
 check('体力那一条画出来了（`/stamina` 到手且带子激活）', band?.bandActive, true)
-check('那一条的两行是上下排的（同一水平线上会撞成一坨，先前那版就是这样）', band?.stacked, true)
+check('那一条的两行字形带不相交（中心距 ≥ 两行字号之和的一半 + 4；行盒相交不算，#365）',
+  band?.stacked, true)
+// 字号读成 0 时上一条的 `need` 会小到恒真 ⇒ 先自证两个数都读到了
+checkTrue('反空转前置：两行的字号都读到了（读不到则上一条恒真）',
+  band !== null && band.wantA > 0 && band.wantB > 0)
 checkTrue('两行都从带子的左内边起笔（没留在默认的中心对齐上）',
   band !== null && band.textInset >= 0 && band.textInset <= 40)
 checkTrue('那一条写的是当前/上限与恢复倒计时（不是只有个数字）',

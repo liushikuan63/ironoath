@@ -52,11 +52,6 @@ const BASELINE = new Set([
   "battlePass/还差 300 分(20<30,字13)",
   "battlePass/还差 450 分(20<30,字13)",
   "battlePass/还差 600 分(20<30,字13)",
-  "stage/chapter_01(24<33,字19)",
-  "stage/三星条件：通关 / (20<30,字14)",
-  "stage/买 1 次 · 50(22<30,字15)",
-  "stage/体力 100/100(24<31,字17)",
-  "stage/需要主城 5 级（当(18<30,字13)",
 ])
 
 let pass = 0
