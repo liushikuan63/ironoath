@@ -940,6 +940,24 @@ export class AppRoot {
       ['city', 'reddot'])
   }
 
+  /** 军队：加速正在训练的那一批（B05）。`seconds` 与 `itemId` 由服务端按来源裁定，客户端不自己算时长。 */
+  speedUpTraining(unitId: string): Promise<void> {
+    this.track(TRACK_EVENTS.speedupUsed, { target: unitId, source: 'TRAIN' })
+    return this.write('army', this.api.armySpeedUp({ unitId, seconds: null, itemId: null }),
+      ['army', 'reddot'])
+  }
+
+  /**
+   * 军队：取消正在训练的那一批（B05），按规格返还一部分资源。
+   *
+   * <p>刷新里带 resources：退的资源要让玩家立刻看见（与城建那边的取消同一条口径）。
+   */
+  cancelTraining(unitId: string): Promise<void> {
+    this.track(TRACK_EVENTS.armyTrain, { unitId, action: 'cancel' })
+    return this.write('army', this.api.armyCancel({ unitId, seconds: null, itemId: null }),
+      ['army', 'resources', 'reddot'])
+  }
+
   /** 顶栏的「一键收割」= `buildingId: null`，由服务端裁定收哪些；具体行则收那一格。 */
   collect(buildingId: string | null): Promise<void> {
     this.track(TRACK_EVENTS.gatherCollect, { buildingId: trackParam(buildingId), all: trackParam(buildingId === null) })

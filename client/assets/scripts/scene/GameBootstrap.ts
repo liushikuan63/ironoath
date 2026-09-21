@@ -1225,6 +1225,10 @@ export class GameBootstrap extends Component {
     if (army !== null) {
       out.army = (resp, offsetMs, trainMemory) => army.attach(resp, offsetMs, trainMemory)
       army.onTrain = (unitId, count) => { void this.root?.train(unitId, count) }
+      // 训练队列的两个动作（收口清单"客户端发送口缺口"·军队四格的头两个）：
+      // 服务端与协议早就有 `/army/cancel`、`/army/speedUp`，缺的只是这两条回调
+      army.onSpeedUpTrain = unitId => { void this.root?.speedUpTraining(unitId) }
+      army.onCancelTrain = unitId => { void this.root?.cancelTraining(unitId) }
       army.onTreat = () => { void this.root?.treatWounded() }
       army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
     }
