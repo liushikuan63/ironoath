@@ -148,6 +148,21 @@ await context.route('**/bag/list*', async (route) => {
 })
 
 // 「取消」那颗键只在**正在升级**的那一格上出现，dev 新号没有在建工程 ⇒ 城市列表也钉成夹具
+//
+// 资源那一条还要测"变短"：服务端 `resources` 是按玩家状态拼的 map，键数不固定，
+// 而面板用的是 6 颗固定 Label —— 只写不清就会把上一帧的数值留在屏幕上。
+// 所以这里给一个可翻转的相位：先给满 6 项，取消建造触发重拉时缩到 2 项。
+const CITY_STATE = { shrunk: false }
+// 键取 `contract/config/resource.json` 里真实那六种（WOOD/STONE/IRON/GRAIN/GOLD/STAMINA）——
+// 面板的名字走 `game/ui/ResourceNames` 这一份，编一个不存在的键会让量具测的是一个生产不会产生的形状。
+const SIX_RESOURCES = {
+  WOOD: { current: 8000, cap: 24000, protectedAmount: 0, perHour: 500, lastSettle: NOW },
+  STONE: { current: 2400, cap: 24000, protectedAmount: 0, perHour: 260, lastSettle: NOW },
+  IRON: { current: 5200, cap: 24000, protectedAmount: 0, perHour: 400, lastSettle: NOW },
+  GRAIN: { current: 3100, cap: 30000, protectedAmount: 0, perHour: 300, lastSettle: NOW },
+  GOLD: { current: 1500, cap: 100000, protectedAmount: 0, perHour: 120, lastSettle: NOW },
+  STAMINA: { current: 900, cap: 5000, protectedAmount: 0, perHour: 60, lastSettle: NOW },
+}
 await context.route('**/city/cancel*', async (route) => {
   if (await passthrough(route)) return
   CANCEL_BUILD_CALLS.push(JSON.parse(route.request().postData() ?? '{}'))
@@ -162,7 +177,10 @@ await context.route('**/city/list*', async (route) => {
       startedAt: NOW - 60_000, totalSeconds: 120, helpCount: 0,
     }],
     buildOptions: [], queues: { used: 1, available: 1, max: 2 },
-    resources: {}, serverNow: NOW,
+    resources: CITY_STATE.shrunk
+      ? { WOOD: SIX_RESOURCES.WOOD, IRON: SIX_RESOURCES.IRON }
+      : SIX_RESOURCES,
+    serverNow: NOW,
   })
 })
 
@@ -430,11 +448,14 @@ const CITY_BAR = `(() => {
   let cancel = null
   let upgrade = null
   const texts = []
+  const resourceSlots = []
   const walk = (n) => {
     if (n.name === 'DetailCancelButton') cancel = n
     if (n.name === 'DetailUpgradeButton') upgrade = n
     const t = n.getComponent('cc.Label')?.string ?? ''
     if (t.length > 0) texts.push(t)
+    const slot = /^Resource-([0-9])-([0-9])$/.exec(n.name)
+    if (slot !== null) resourceSlots[Number(slot[1]) * 3 + Number(slot[2])] = t
     for (const c of n.children) walk(c)
   }
   walk(panel)
@@ -442,6 +463,13 @@ const CITY_BAR = `(() => {
     hasCancel: cancel !== null,
     cancelVisible: cancel !== null && cancel.active,
     upgradeVisible: upgrade !== null && upgrade.active,
+    resourceSlots,
+    overflow: (() => {
+      let hit = ''
+      const find = (n) => { if (n.name === 'ResourceOverflow') hit = n.getComponent('cc.Label')?.string ?? ''; for (const c of n.children) find(c) }
+      find(panel)
+      return hit
+    })(),
     texts,
   }
 })()`
@@ -454,6 +482,13 @@ for (let i = 0; i < 20; i += 1) {
 check('在升级那一格的动作条上有「取消」键', cityBar?.cancelVisible, true)
 check('同一槽位的「升级」让位给「取消」（这一格已经在建，不能再开一次）',
   cityBar?.upgradeVisible, false)
+// 先量"满 6 种"这一相：六颗固定 Label 都有字，且不许冒出"另有 N 项"那句
+check('六种资源时六颗槽位都画上（对照组：不是只有前两颗有字）',
+  (cityBar?.resourceSlots ?? []).filter((t) => (t ?? '').length > 0).length, 6)
+check('装得下时不许多出"另有 N 项资源未显示"那句', cityBar?.overflow, '')
+// 下一枪（取消建造）会重拉 /city/list —— 这一相服务端只给两种资源，
+// 面板要是只写不清，尾部那四颗就会留着上一帧的 8000/2400/5200/3100。
+CITY_STATE.shrunk = true
 const cancelBuildTapped = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const panel = game?.getChildByName('city')
@@ -480,6 +515,13 @@ console.log(`  底部那一条量到的矩形：${JSON.stringify(afterCancel?.me
 check('「学院 · 研究」不压选中详情条（压住就等于压住升级/取消那几颗能点的键）',
   overlaps(afterCancel?.bar, afterCancel?.tech), false)
 check('「学院 · 研究」不压底部那句回执', overlaps(afterCancel?.message, afterCancel?.tech), false)
+// 重拉之后量"变短"这一相：尾部四颗必须被清空，留下的两颗得是当帧的数
+const shrunkSlots = cityBar?.resourceSlots ?? []
+console.log(`  资源槽位（缩到两种之后）：${JSON.stringify(shrunkSlots)}`)
+check('资源从六种缩到两种后，尾部那四颗被清空（不是留着上一帧的 2400/5200/3100/1500）',
+  [2, 3, 4, 5].every((i) => (shrunkSlots[i] ?? 'x') === ''), true)
+check('留下的两颗是当帧的数（木材 8000、铁矿 5200）',
+  (shrunkSlots[0] ?? '').includes('8000') === true && (shrunkSlots[1] ?? '').includes('5200') === true, true)
 await page.screenshot({ path: path.join(OUT, 'city-cancel-build.png') })
 console.log(`  截图：${path.join(OUT, 'city-cancel-build.png')}`)
 

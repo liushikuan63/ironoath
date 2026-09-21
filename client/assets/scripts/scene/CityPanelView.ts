@@ -141,6 +141,8 @@ export class CityPanelView extends Component {
   private card: Node | null = null
   private frameGraphics: Graphics | null = null
   private headerLabel: Label | null = null
+  /** 资源行数超过那 6 颗固定 Label 时，多出来的部分在这里显式说一句，不静默丢 */
+  private resourceOverflowLabel: Label | null = null
   private queueLabel: Label | null = null
   private readonly resourceLabels: Label[] = []
   private messageLabel: Label | null = null
@@ -291,6 +293,10 @@ export class CityPanelView extends Component {
           COLOR_TEXT_DIM, 14, true, columnWidth - 8))
       }
     }
+
+    // 资源行超过 6 项时的兜底那一行（平时是空串，不占视觉）
+    this.resourceOverflowLabel = this.addLabel(
+      card, 'ResourceOverflow', -CONTENT_WIDTH / 2, top - 98, COLOR_TEXT_DIM, 12, true, CONTENT_WIDTH)
 
     this.buildGrid(card)
     this.buildActionBar(card)
@@ -525,6 +531,21 @@ export class CityPanelView extends Component {
         label.string = line
       }
     })
+    // 尾部要清：`resources` 是服务端按玩家状态拼的 map（`CityAppService.toResourceMap`），
+    // 键数不固定 —— 只写不清的话，条数一变短，后面那几颗就还留着**上一次的旧数值**，
+    // 玩家读到的是"我还有 8000 石头"，而那个数属于上一帧。
+    for (let index = panel.resourceLines.length; index < this.resourceLabels.length; index++) {
+      const stale = this.resourceLabels[index]
+      if (stale !== undefined && stale.string !== '') {
+        stale.string = ''
+      }
+    }
+    // 比槽位多的那一截不能静默丢掉（丢了就是"资源少了一种"却没有任何地方说），
+    // 但也绝不因此撑破头部那一块 —— 交给 `resourceOverflowLabel` 显式说一句还有几项没画。
+    if (this.resourceOverflowLabel !== null) {
+      const hidden = panel.resourceLines.length - this.resourceLabels.length
+      this.resourceOverflowLabel.string = hidden > 0 ? `另有 ${hidden} 项资源未显示` : ''
+    }
 
     this.renderGrid(grid)
     this.renderSelection(selected)
