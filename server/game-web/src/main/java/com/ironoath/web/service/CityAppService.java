@@ -1039,12 +1039,20 @@ public class CityAppService {
         for (Map.Entry<String, Long> e : refund.entrySet()) {
             grantResource(player, e.getKey(), e.getValue());
         }
+        // 取消**首次放置**（还停在 Lv0）要把实例一起摘掉，那格才算真的回到未建（#328）。
+        // 取消一次"既有建筑的升级"不走这条路：那栋楼本来就在，等级不变、原地留着。
+        boolean slotFreed = false;
+        if (instance.level() == 0 && instance.status() == com.ironoath.core.city.BuildingStatus.IDLE) {
+            city.removeUnbuilt(req.buildingId());
+            slotFreed = true;
+        }
         players.save(player);
         cities.save(playerId, city, ctx.cityVersion());
         // 取消之后目标就不在了，请求也不能留在别人的可帮列表里 ——
         // 留着就会有人帮一栋已经停工的楼：额度与事件都真的发生，而时长一秒都不会少
         helpRequests.withdraw(playerId, req.buildingId());
-        LOG.info("取消升级 playerId={} building={} 返还={}", playerId, req.buildingId(), refund);
+        LOG.info("取消升级 playerId={} building={} 返还={}{}", playerId, req.buildingId(), refund,
+                slotFreed ? "（首次放置，格子已释放）" : "");
         return new CityCancelResp(req.buildingId(), toAmountList(refund));
     }
 

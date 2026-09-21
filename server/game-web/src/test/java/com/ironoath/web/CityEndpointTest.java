@@ -100,8 +100,49 @@ class CityEndpointTest {
                 new CityUpgradeReq(newRequestId(), configId, x, y));
     }
 
-    // ---------- /city/list ----------
+    @Test
+    @DisplayName("取消首次放置：那栋楼从列表里消失、格子能原地再建、返还照旧（#328）")
+    void cancelFirstPlacementFreesTheSlot() {
+        String playerId = newPlayer();
+        CityUpgradeResp first = startUpgrade(playerId, "lumber_camp", 1, 1);
+        long woodBefore = cityAppService.list(playerId)
+                .resources().get(com.ironoath.web.dto.generated.ResourceType.STONE).current();
 
+        cityAppService.cancel(playerId, new CityCancelReq(newRequestId(), first.buildingId()));
+
+        CityListResp afterCancel = cityAppService.list(playerId);
+        assertThat(afterCancel.buildings())
+                .as("取消首次放置之后那栋楼不该还占着列表 —— 它从没建成过")
+                .noneMatch(view -> view.id().equals(first.buildingId()));
+        assertThat(afterCancel.buildings()).as("主城还在").hasSize(1);
+        assertThat(cityAppService.list(playerId)
+                .resources().get(com.ironoath.web.dto.generated.ResourceType.STONE).current())
+                .as("返还照旧（石料退回）").isGreaterThan(woodBefore);
+        assertThat(afterCancel.queues().used()).as("队列也腾空了").isZero();
+
+        // 同一格能重新建 —— 这是"格子真的释放了"最直接的证据（占用没释放会报网格冲突）。
+        // 注意实例 id 是**按玩家+配置定的**（不是随机），所以重建拿到的 id 与原来相同，这不算判据问题。
+        CityUpgradeResp again = startUpgrade(playerId, "lumber_camp", 1, 1);
+        assertThat(again.buildingId()).isNotBlank();
+        assertThat(cityAppService.list(playerId).buildings())
+                .as("重新建起来之后列表里应当有它").anyMatch(view -> view.id().equals(again.buildingId()));
+        // 取消"既有建筑的升级"不走摘除这条路：楼本来就该留着。
+        // 先把它真的建成（金币加速提前 1 小时 → 收割），再升 2 级、取消那次升级。
+        cityAppService.speedUp(playerId, new SpeedUpReq(newRequestId(), again.buildingId(),
+                SpeedUpSource.GOLD, null));
+        cityAppService.collect(playerId, new com.ironoath.web.dto.generated.CityCollectReq(newRequestId(), again.buildingId()));
+        assertThat(cities.findByPlayerId(playerId).orElseThrow()
+                .building(again.buildingId()).level()).as("夹具前提：先建到 Lv1").isEqualTo(1);
+
+        CityUpgradeResp toLevel2 = cityAppService.upgrade(playerId,
+                new CityUpgradeReq(newRequestId(), "lumber_camp", null, null));
+        cityAppService.cancel(playerId, new CityCancelReq(newRequestId(), toLevel2.buildingId()));
+        assertThat(cityAppService.list(playerId).buildings())
+                .as("已经建成的楼被取消升级后必须还在（不能被当成未建成摘掉）")
+                .anyMatch(view -> view.id().equals(again.buildingId()));
+    }
+
+    // ---------- /city/list ----------
     @Test
     @DisplayName("list 返回主城、队列视图（含新手期的 2 个队列）与五种资源的结算结果")
     void listReturnsFullCitySnapshot() {
@@ -517,7 +558,11 @@ class CityEndpointTest {
 
         CityState city = cities.findByPlayerId(playerId).orElseThrow();
         assertThat(city.usedQueues()).as("取消后队列应释放").isZero();
-        assertThat(city.building(upgrade.buildingId()).level()).as("取消不得保留等级").isZero();
+        // 2026-09-22（#328 之后）：取消的是**首次放置**（还停在 Lv0），实例被一并摘掉 ——
+        // 原先这里断言"等级归零"，那钉的是旧语义（格子被一栋从没建成的楼占着）。
+        assertThat(city.buildings()).as("首次放置被取消后不该还占着格子")
+                .noneMatch(b -> b.instanceId().equals(upgrade.buildingId()));
+        assertThat(cityAppService.list(playerId).buildings()).as("列表里也只剩主城").hasSize(1);
     }
 
     @Test

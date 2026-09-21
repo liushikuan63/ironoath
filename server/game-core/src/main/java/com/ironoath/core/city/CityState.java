@@ -193,6 +193,29 @@ public final class CityState {
     }
 
     /**
+     * 摘掉一栋**从未建成**的建筑（取消首次放置时用，收口清单 #328）。
+     *
+     * <p>为什么需要它：`/city/cancel` 把实例留在 `Lv0 + IDLE`，而 `CityState` 原先只有"登记"没有"摘除"
+     * —— 于是那格从此被一栋从没建成的楼占着、表头「建筑 N/36」也算它一栋。取消首次放置的语义
+     * 应是**真正回到未建**（返还 60% 是"放弃这次建造"，不是"买个空地占着"）。
+     *
+     * <p>守卫写得很窄，是故意的：只接受 `Lv0 + IDLE`。建成的楼要拆是另一个功能（要退多少、
+     * 要不要冷却、要不要确认），不能靠这个方法顺手实现。
+     */
+    public void removeUnbuilt(String instanceId) {
+        BuildingInstance instance = building(instanceId);
+        if (instance.level() > 0) {
+            throw new IllegalStateException("这栋楼已经建成（Lv" + instance.level() + "），不能按未建成摘掉："
+                    + instanceId);
+        }
+        if (instance.isUpgrading()) {
+            throw new IllegalStateException("这栋楼正在升级（含暂停），先取消再摘：" + instanceId);
+        }
+        buildings.remove(instanceId);
+        gridOccupancy.remove(gridKey(instance.gridX(), instance.gridY()));
+    }
+
+    /**
      * 地块合法性校验（B03 §1：城内固定网格、边缘格才能建城墙、中心格固定为主城）。
      *
      * @throws com.ironoath.common.BizException 带结构化 need/current 的错误

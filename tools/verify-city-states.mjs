@@ -373,6 +373,14 @@ if (secondStart.code !== 0) {
   }
   cancelled.stoneBefore = resourceOf(beforeFrame, '木材')
   cancelled.label = '木材'
+  // 表头「内城 · 建筑 N/36」在取消前后应当**正好差 1**：这一栋从没建成，取消它就等于没放过。
+  // （别写死 1/36 —— 这时候城里还有态二里那栋已经建成的伐木场，它本来就该算一栋。）
+  cancelled.headerBefore = beforeFrame.texts.find((text) => text.includes('内城 · 建筑')) ?? '(无)'
+  const buildingCount = (text) => {
+    const match = /建筑\s*(\d+)\s*\/\s*(\d+)/.exec(text ?? '')
+    return match === null ? null : Number.parseInt(match[1], 10)
+  }
+  cancelled.countBefore = buildingCount(cancelled.headerBefore)
   const postsBefore = cityPosts.length
   if (tile !== null) {
     const tilePoint = await clickNode(tile.key)
@@ -391,6 +399,11 @@ if (secondStart.code !== 0) {
       const afterTile = tileOf(afterFrame, NAME_OF[secondConfig] ?? secondConfig)
       cancelled.tileIcon = afterTile?.iconActive ?? null
       cancelled.tileFrame = afterTile?.frameName ?? null
+      // #328 之后：取消**首次放置**要把实例一起摘掉 ⇒ 那一格连名字都不该再有了
+      cancelled.tileStillNamed = afterTile !== null
+      cancelled.headerAfter = afterFrame.texts.find((text) => text.includes('内城 · 建筑')) ?? '(无)'
+      cancelled.countAfter = /建筑\s*(\d+)\s*\/\s*(\d+)/.exec(cancelled.headerAfter) === null
+        ? null : Number.parseInt(/建筑\s*(\d+)\s*\/\s*(\d+)/.exec(cancelled.headerAfter)[1], 10)
       cancelled.queue = afterFrame.texts.find((text) => text.includes('建造队列')) ?? '(无)'
       await page.screenshot({ path: path.join(OUT, '15-city-cancelled.png') })
       console.log(`[state] 取消：点「取消」@(${cancelPoint.x},${cancelPoint.y}) 后 /city/* 新增`
@@ -398,8 +411,7 @@ if (secondStart.code !== 0) {
         + ` 选择栏=「${cancelled.readout.title ?? ''}」「${cancelled.readout.status ?? ''}」`)
       console.log(`[state]   ${cancelled.label} ${cancelled.stoneBefore} → ${cancelled.stoneAfter}`
         + `（+${(cancelled.stoneAfter ?? 0) - (cancelled.stoneBefore ?? 0)}，B03 §2 应退 60%）`
-        + ` 格子正稿=${cancelled.tileIcon === true ? (cancelled.tileFrame ?? '(激活但无帧)') : '已摘掉'}`
-        + ` 队列=${cancelled.queue}`)
+        + ` 那一格还有名字=${cancelled.tileStillNamed} 表头=${cancelled.headerAfter} 队列=${cancelled.queue}`)
     }
   }
 }
@@ -453,14 +465,17 @@ if (!cancelled.clicked) {
     failures.push('点了「取消」但没有 /city/cancel 请求 —— 按钮没接上')
   }
   const cancelText = `${cancelled.readout?.title ?? ''} ${cancelled.readout?.status ?? ''}`
-  if (!cancelText.includes('空闲')) {
-    failures.push(`取消后选择栏不是「空闲」：${JSON.stringify(cancelText)}`)
+  // #328 之后取消首次放置会把实例摘掉：那一格连名字都不该再有（格子真的空出来了）
+  if (cancelled.tileStillNamed === true) {
+    failures.push('取消首次放置后那一格还挂着建筑名 —— 实例没被摘掉，格子仍被占着')
   }
-  // 判据要**同时看 active 与帧名**：图标节点关掉之后 spriteFrame 不会清空，
-  // 只读帧名会把"已经摘掉的图"当成"还画着"（第一版就是这么误报的；
-  // 与 multi-types 里 `iconActive === true && frameName !== null` 是同一条口径）。
-  if (cancelled.tileIcon === true && /^building-/.test(cancelled.tileFrame ?? '')) {
-    failures.push(`取消后格子上仍画着正稿（${cancelled.tileFrame}）—— 那栋楼应该已经回到未建状态`)
+  if (cancelled.countBefore === null || cancelled.countAfter === null) {
+    failures.push('表头「建筑 N/36」没读到，格子释放这条判据走不到（不许当绿）')
+  } else if (cancelled.countBefore - cancelled.countAfter !== 1) {
+    failures.push(`取消首次放置后表头应当正好少一栋：${cancelled.headerBefore} → ${cancelled.headerAfter}`)
+  }
+  if (cancelText.includes('采石场')) {
+    failures.push(`取消后选择栏还提着一栋已经不存在的楼：${JSON.stringify(cancelText)}`)
   }
   if (cancelled.stoneBefore === null || cancelled.stoneAfter === null) {
     failures.push('木材那一行没读到，返还这条判据走不到（不许当绿）')

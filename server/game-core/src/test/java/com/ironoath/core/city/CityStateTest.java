@@ -600,7 +600,37 @@ class CityStateTest {
     }
 
     @Test
-    @DisplayName("暂停时刻进快照、能跨存档重建（否则重启一次暂停就白停了）")
+    @DisplayName("取消首次放置后摘掉未建成的楼：格子真的空出来、能原地再放（#328）")
+    void removeUnbuiltFreesTheSlot() {
+        CityState city = cityWith("main_city", "barracks");
+        long now = 1_700_000_000_000L;
+        city.startUpgrade("inst_barracks", 600L, 1, now);
+        city.cancelUpgrade("inst_barracks", Map.of("STONE", 400L), rules());
+        assertThat(city.building("inst_barracks").level()).isZero();
+
+        city.removeUnbuilt("inst_barracks");
+        assertThat(city.buildings()).as("摘掉之后城里不该还有它")
+                .noneMatch(b -> b.instanceId().equals("inst_barracks"));
+        // 占用释放了才可能在同一格再放一个 —— 不放的话这条测不出"格子真空出来"
+        city.place("inst_barracks_again", "barracks", 1, 1, rules(), false, false);
+        assertThat(city.building("inst_barracks_again").level()).isZero();
+    }
+
+    @Test
+    @DisplayName("摘除的守卫很窄：升级中的与已建成的都不许按未建成摘掉")
+    void removeUnbuiltRefusesUpgradingAndBuilt() {
+        CityState city = cityWith("main_city", "barracks");
+        long now = 1_700_000_000_000L;
+        city.startUpgrade("inst_barracks", 1L, 1, now);
+        assertThatThrownBy(() -> city.removeUnbuilt("inst_barracks"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("先取消");
+        // 建完（Lv1）之后更不许摘
+        assertThat(city.collectFinished(now + 5_000L)).containsExactly("inst_barracks");
+        assertThat(city.building("inst_barracks").level()).isEqualTo(1);
+        assertThatThrownBy(() -> city.removeUnbuilt("inst_barracks"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("已经建成");
+    }
+
     void pausedAtSurvivesSnapshotRoundTrip() {
         CityState city = cityWith("main_city", "barracks");
         long now = 1_700_000_000_000L;
