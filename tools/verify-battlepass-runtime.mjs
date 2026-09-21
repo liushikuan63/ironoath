@@ -284,8 +284,8 @@ async function main() {
       // 且这个点不随字号走 —— 所以取 max(字号+14, 30) 这条保守界。
       // ⚠ 不要用 actualFontSize 当这条的判据：同一视觉状态在两棵构建上分别读过
       //   17/13/10/10/9 与 26/22/20/20/19（本轮植入实测），它不是"落地字号"。
-      shrunk: rows.filter((x) => x.ov === 2 && x.text.length > 0 && x.h < Math.max(x.want + 14, 30))
-        .map((x) => x.name + '=盒' + x.h + '<' + Math.max(x.want + 14, 30)),
+      shrunk: rows.filter((x) => x.ov === 2 && x.text.length > 0 && x.h < 27)
+        .map((x) => x.name + '=盒' + x.h + '<' + 27),
       shrinkRows: rows.filter((x) => x.ov === 2).length,
       // 一行的高度上限：NONE 模式实测给 1.54~1.79×字号，换成两行就是 2× 以上
       tooTall: rows.filter((x) => x.want > 0 && x.h > x.want * 2 + 8)

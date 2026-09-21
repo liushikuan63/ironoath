@@ -135,7 +135,7 @@ export class SettingsPanelView extends Component {
     // 于是每一行都常态性小一号（台账 #367 点名 10 行，最狠的 13 号字只画到 21/30）。
     // 同时**不再显式设 lineHeight** —— 单行 Label 用它只会让"自然行高"多一个变量，
     // 引擎默认值参与算出来的高度才与 `oneLineFloorHeight` 的实测口径一致。
-    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, oneLineFloorHeight(size))
+    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, oneLineFloorHeight())
     const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.fontSize = size

@@ -49,16 +49,15 @@ export function keepOneLine(label: Label, fontSize: number): Label {
  * 或者卡片宽度写死）的行用 —— 那种地方只能 `overflow = SHRINK`（裁成 CLAMP 会把数字读成
  * 另一个数），而 SHRINK 的盒高就是字形缩放系数。
  *
- * <p>下限是量出来的（台账 #366 的迁移曲线，系统字体）：14~20 号字都要盒高 **30** 才等于设定
- * 字号，且这个 30 不随字号走（`lineHeight` 没设时引擎拿默认 40 参与）；更大字号按比例走，
- * 26 号实测要 40。所以取 `max(字号 + 14, 30)`。
+ * <p>下限是量出来的，而且**与字号无关**：`--calibrate` 逐字号扫"落地尺寸回到设定值"的交点，
+ * 9/10/12/13/14/15/16/17/18/19/20/22/26 号字**全部 = 27**（`lineHeight` 没设时引擎的默认行高主导）。
+ * 曾经用过的 `max(字号 + 14, 30)` 与 `字号 × 1.6` 都是**猜的**，且都高于交点 ——
+ * 14 号字钉 30 是 +11%、20 号字钉 34 是 +26%，等于把字放大（台账 #379 推翻 #368~#370 的常数）。
  *
- * <p>低于这条就是常态性把每一行压小（实测 `字号 + 6` 与 `字号 × 1.6` 都不够：战令五行落地
- * 17/13/10/10/9 对设定 20/17/15/15/14）；高于这条则会**反向放大**（20 号字给 36 高 → 落地 24）。
- * 用它的地方把盒高写死成这个返回值，别自己再乘一个系数。
+ * <p>低于这条 SHRINK 会缩字，高于这条会放大字，两个方向都偏离设计值 —— 所以钉**正好**这条。
  */
-export function oneLineFloorHeight(fontSize: number): number {
-  return Math.max(fontSize + 14, 30)
+export function oneLineFloorHeight(): number {
+  return 27
 }
 
 /**
@@ -73,7 +72,7 @@ export function oneLineFloorHeight(fontSize: number): number {
  */
 export function capWidth(label: Label, width: number): Label {
   const transform = label.node.getComponent(UITransform)
-  transform?.setContentSize(new Size(width, oneLineFloorHeight(label.fontSize)))
+  transform?.setContentSize(new Size(width, oneLineFloorHeight()))
   label.verticalAlign = Label.VerticalAlign.CENTER
   label.overflow = Label.Overflow.SHRINK
   return label

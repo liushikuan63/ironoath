@@ -411,7 +411,7 @@ export class StagePanelView extends Component {
     transform.setAnchorPoint(0, 0.5)
     // 高度不再让调用方各写一个数（原来 24/22/24/20/18 五处，全低于一行字的实测下限，
     // 于是 SHRINK 常态性把字压小 —— 台账 #367 点名关卡 14 行）。宽度才是这里要限的东西。
-    transform.setContentSize(new Size(width, oneLineFloorHeight(label.fontSize)))
+    transform.setContentSize(new Size(width, oneLineFloorHeight()))
     label.overflow = Label.Overflow.SHRINK
   }
 

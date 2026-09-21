@@ -774,7 +774,7 @@ export class CityPanelView extends Component {
     if (maxWidth > 0) {
       // 盒高用量出来的下限：`字号 × 1.6` 在 16 号字上只有 26，而 SHRINK 会把字形压到 26/30
       // —— 那一行本来就是常态性小一号（台账 #366/#367 实测，`tools/verify-label-fit-runtime.mjs` 会点名）
-      transform.setContentSize(new Size(maxWidth, oneLineFloorHeight(fontSize)))
+      transform.setContentSize(new Size(maxWidth, oneLineFloorHeight()))
       // SHRINK 而不是 CLAMP：这里装的是资源数值，裁掉尾数会读成另一个数（10000 变 1000），
       // 字变小至少还是那个值。
       label.overflow = Label.Overflow.SHRINK

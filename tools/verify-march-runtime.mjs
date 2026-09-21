@@ -1002,8 +1002,8 @@ const HEADER_ROWS = `(() => {
     // ⚠ 别改用 actualFontSize：本轮植入实测它在翻转 overflow 后给的是**上一个模式的残值**
     //   （NONE 的 1.5×字号），判据会恒绿 —— 是能骗过眼睛的那种假绿。
     shrunk: [hospital, warning].filter((x) => x !== null && x.ov === 2 && x.text.length > 0
-      && (x.t - x.b) < Math.max(x.want + 14, 30))
-      .map((x) => x.text.slice(0, 6) + '=盒' + Math.round(x.t - x.b) + '<' + Math.max(x.want + 14, 30)),
+      && (x.t - x.b) < 27)
+      .map((x) => x.text.slice(0, 6) + '=盒' + Math.round(x.t - x.b) + '<' + 27),
     rowHeights: [hospital, warning].filter((x) => x !== null)
       .map((x) => Math.round(x.t - x.b) + '@' + x.want),
     crowd,
