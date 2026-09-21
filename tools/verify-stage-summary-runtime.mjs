@@ -80,6 +80,53 @@ const STAMINA = {
   boughtToday: 2, buyCostGold: 20,
 }
 const staminaBody = () => ({ ...STAMINA, serverNow: Date.now() })
+/** 真点「挑战」那一相：发出去的请求体（要数次数、要核幂等键） */
+const CHALLENGE_CALLS = []
+/** 夹具到底改没改到第一关 —— 没改到的话后面那几条"结算亮着"就都是在读一个没发生过的状态 */
+const stageFlip = { attempted: false, done: false }
+await context.route('**/stage/list*', async (route) => {
+  if (await passthrough(route)) return
+  const upstream = await route.fetch()
+  const envelope = await upstream.json()
+  stageFlip.attempted = true
+  const data = envelope.data ?? envelope
+  if (Array.isArray(data.stages) && data.stages.length > 0) {
+    // 只把第一关翻成"可挑战"，其余照真数据原样回：手写整份 StageListResp
+    // 会造出一个现实中不存在的形状（#347 的教训），而这一相要问的正是真数据到位后画不画得出来
+    data.stages[0] = { ...data.stages[0], unlocked: true, lockedReason: null }
+    stageFlip.done = true
+  }
+  await reply(route, data)
+})
+// 挑战要先有编好的阵容才会弹三选一（`buildLineupChoices` 只认 `lineup.main !== null`）。
+// dev 新号可能一个编队都没设主将，所以这里同样**抓真响应改最小一处**：有编队就把第一支的主将补上，
+// 一个都没有时不硬造（造出来的 `bonus` 是现实中不存在的形状，#347 的教训），下面那一相改走"被挡下"的分支。
+const heroFlip = { lineups: 0, mainSet: false }
+await context.route('**/hero/list*', async (route) => {
+  if (await passthrough(route)) return
+  const upstream = await route.fetch()
+  const envelope = await upstream.json()
+  const data = envelope.data ?? envelope
+  const lineups = Array.isArray(data.lineups) ? data.lineups : []
+  heroFlip.lineups = lineups.length
+  if (lineups.length > 0) {
+    const firstHero = (Array.isArray(data.heroes) ? data.heroes : [])[0]
+    if (firstHero?.id !== undefined && firstHero !== null) {
+      lineups[0] = { ...lineups[0], main: lineups[0].main ?? firstHero.id }
+      heroFlip.mainSet = lineups[0].main !== null && lineups[0].main !== undefined
+    }
+  }
+  await reply(route, data)
+})
+// 挑战**不打桩**：把请求记下来、把服务端的真响应原样转回去。这一相要验的正是
+// 「真结算到手后摘要带亮不亮」，用夹具替掉它等于把要验的那一段抽走。
+await context.route('**/stage/challenge*', async (route) => {
+  if (await passthrough(route)) return
+  CHALLENGE_CALLS.push(JSON.parse(route.request().postData() ?? '{}'))
+  const upstream = await route.fetch()
+  const envelope = await upstream.json()
+  await reply(route, envelope.data ?? envelope)
+})
 // 体力三份读口都钉死：dev 新号的金币与今日已购是随机的，
 // 不钉死的话"点一下能不能买成"这条判据每次跑都在换前提
 await context.route('**/stamina/buy*', async (route) => {
@@ -392,6 +439,93 @@ checkTrue('摘要面板此刻还亮着（等得到刷新回来，回执不会被
   receipt?.active === true)
 await page.screenshot({ path: path.join(OUT, 'stage-stamina-bought.png') })
 console.log(`  截图：${path.join(OUT, 'stage-stamina-bought.png')}`)
+
+// ---------- 真点一次「挑战」：结算要走到摘要带上（#354 只钉到"送到了"，这一相钉"看得见"） ----------
+// 反空转前置：夹具没真的把第一关翻成可挑战，下面每一条读的都是一个从没发生过的状态。
+checkTrue('夹具确实把第一关翻成可挑战（`/stage/list` 真回过、真改到了一行）',
+  stageFlip.attempted === true && stageFlip.done === true)
+
+const tappedChallenge = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('stage')
+  if (!panel) return false
+  let hit = null
+  const walk = (node) => {
+    if (hit === null && node.name === 'ChallengeButton' && node.activeInHierarchy) hit = node
+    for (const c of node.children) walk(c)
+  }
+  walk(panel)
+  if (hit === null) return false
+  hit.emit('touch-start')
+  return true
+})()`)
+checkTrue('按得到某一关那颗「挑战」', tappedChallenge)
+await page.waitForTimeout(600)
+
+const picker = await page.evaluate(`(() => {
+  let overlay = null
+  const walk = (node) => {
+    if (overlay === null && node.name === 'ChoiceOverlay' && node.activeInHierarchy) overlay = node
+    for (const c of node.children) walk(c)
+  }
+  walk(window.cc.director.getScene())
+  if (overlay === null) return null
+  const row = overlay.getChildByName('Choice-0')
+  return {
+    rowCount: overlay.children.filter((c) => /^Choice-[0-9]+$/.test(c.name)).length,
+    firstRowText: row?.getComponent('cc.Label')?.string
+      ?? row?.children.map((c) => c.getComponent('cc.Label')?.string ?? '').join(' ') ?? '',
+  }
+})()`)
+
+if (heroFlip.mainSet) {
+  // ---- 分支 A：dev 号有编队 ⇒ 走完整路径（弹窗 → 选 → 一个请求 → 真结算看得见）----
+  checkTrue('点挑战弹出的是阵容三选一（ChoiceOverlay 亮着且有候选行）',
+    picker !== null && picker.rowCount > 0)
+  checkTrue('候选那一行有字（空行等于弹层没数据也判绿）', (picker?.firstRowText ?? '').length > 0)
+
+  const pickedLineup = await page.evaluate(`(() => {
+    let overlay = null
+    const walk = (node) => {
+      if (overlay === null && node.name === 'ChoiceOverlay' && node.activeInHierarchy) overlay = node
+      for (const c of node.children) walk(c)
+    }
+    walk(window.cc.director.getScene())
+    const row = overlay?.getChildByName('Choice-0')
+    if (!row) return false
+    row.emit('touch-start')
+    return true
+  })()`)
+  checkTrue('按得到候选那一行', pickedLineup)
+  await page.waitForTimeout(1500)
+
+  check('选完阵容只发一个 `/stage/challenge`（拆成多个请求会在弱网下只成一半）',
+    CHALLENGE_CALLS.length, 1)
+  checkTrue('打阵容的写口带了幂等键',
+    typeof CHALLENGE_CALLS[0]?.requestId === 'string' && CHALLENGE_CALLS[0].requestId.length > 0)
+  checkTrue('请求带上了刚选的那个阵容（heroes 或 units 至少一样非空）',
+    (CHALLENGE_CALLS[0]?.units?.length ?? 0) > 0 || (CHALLENGE_CALLS[0]?.heroes?.length ?? 0) > 0)
+
+  const settled = await page.evaluate(BOX)
+  checkTrue('结算摘要**亮着**（不是字留在树里而面板已 hide —— #354 那条假绿的教训）',
+    settled?.active === true)
+  checkTrue('摘要里念的是这次结算（星级与体力都在服务端那份响应里）',
+    (settled?.text ?? '').includes('星') && (settled?.text ?? '').includes('体力'))
+} else {
+  // ---- 分支 B：dev 号连一支编队都没有 ⇒ 走不到弹窗，但**被挡下这件事本身要说得出、看得见**----
+  // 这一支不是降级凑数：`rejectNeeds('stage', ...)` 走的就是 #354 修的那条摘要带，
+  // 挡下的话没画出来，玩家按「挑战」就会得到"没反应"——正是这一族最坏的样子。
+  console.log(`  注：dev 号 lineups=${heroFlip.lineups}，走「被挡下」分支（未验证完整挑战路径，见台账未做①）`)
+  check('这一支不该发出挑战请求', CHALLENGE_CALLS.length, 0)
+  // 这里**刻意不断言摘要带**：`rejectNeeds` 走的是 `targets.error`，而那条口的落点是 console.warn
+  // （`AppRoot.say` 上方的注释自己就写了"只有开发者看得见"）⇒ 玩家按「挑战」得到的是完全无声。
+  // 上一版在这里断言"带子亮着"判绿了 —— 那是**上一相买体力留下的字**，不是这次的回执，
+  // 一条"读起来像断言、实际什么都没读"的判据比没有判据更坏。缺陷本身记台账，修的时候连判据一起补。
+  const stillThere = await page.evaluate(BOX)
+  console.log(`  现状（缺陷，非判据）：被挡下之后摘要带仍是上一相的文字 —— ${(stillThere?.text ?? '').slice(0, 40)}`)
+}
+await page.screenshot({ path: path.join(OUT, 'stage-challenge-settled.png') })
+console.log(`  截图：${path.join(OUT, 'stage-challenge-settled.png')}`)
 
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {
