@@ -88,6 +88,9 @@ export class TargetSearchView extends Component {
   private page = 0
   private prevPageLabel: Label | null = null
   private nextPageLabel: Label | null = null
+  /** 两颗翻页键的壳：只有一页时整颗收掉（只改字色等于留着两颗点了没反应的按钮） */
+  private prevPageNode: Node | null = null
+  private nextPageNode: Node | null = null
   private headerLabel: Label | null = null
   private bandLabel: Label | null = null
   private overflowLabel: Label | null = null
@@ -191,9 +194,11 @@ export class TargetSearchView extends Component {
       caption.string = control.text
       if (control.name === 'PrevPageButton') {
         this.prevPageLabel = caption
+        this.prevPageNode = node
       }
       if (control.name === 'NextPageButton') {
         this.nextPageLabel = caption
+        this.nextPageNode = node
       }
     }
 
@@ -295,14 +300,27 @@ export class TargetSearchView extends Component {
     this.paintPageButtons(pages)
   }
 
-  /** 不可翻的那一侧按灰，别让玩家点了没反应。 */
+  /**
+   * 只有一页（含零行）时把两颗翻页键整颗收掉；真有多页时才留下它们，并把不可翻的那一侧按灰。
+   *
+   * <p>为什么不是"只变灰"：零目标时屏幕上只剩"上一页 / 下一页"两颗灰键 + 一片空行，
+   * 玩家读出来的是"搜索坏了 / 没加载出来"，而不是"这一带确实没有目标"。
+   * 与 `BagPanelView` 那条同一口径（单页时整条页签带 `active = false`）。
+   */
   private paintPageButtons(pages: number): void {
+    const paged = pages > 1
+    if (this.prevPageNode !== null && this.prevPageNode.active !== paged) {
+      this.prevPageNode.active = paged
+    }
+    if (this.nextPageNode !== null && this.nextPageNode.active !== paged) {
+      this.nextPageNode.active = paged
+    }
     if (this.prevPageLabel !== null) {
-      const usable = pages > 1 && this.page > 0
+      const usable = paged && this.page > 0
       this.prevPageLabel.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
     if (this.nextPageLabel !== null) {
-      const usable = pages > 1 && this.page < pages - 1
+      const usable = paged && this.page < pages - 1
       this.nextPageLabel.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
   }

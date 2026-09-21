@@ -238,10 +238,14 @@ const GEO = `(() => {
   const rows = panel.children.filter((c) => c.name === 'TargetRow')
   const controls = ['PrevPageButton', 'RadiusDown', 'RadiusUp', 'SearchButton', 'NextPageButton']
     .map((name) => panel.getChildByName(name)).filter((n) => n !== null && n !== undefined)
+  const pagerActive = controls
+    .filter((n) => n.name === 'PrevPageButton' || n.name === 'NextPageButton')
+    .filter((n) => n.active === true).length
   const notice = panel.getChildByName('Overflow')
   const view2 = panel.getComponent('TargetSearchView')
   return {
     rowCount: rows.length,
+    pagerActive,
     // 容量按可视高现算，探针不猜那个数：判据写成"和容量的关系"，改窗口也不会假红
     capacity: view2 ? view2.rowCapacity() : null,
     rowNames: rows.map((c) => c.children[0]?.getComponent('cc.Label')?.string ?? ''),
@@ -274,6 +278,7 @@ const searchWith = async (count) => {
 }
 
 const geo1 = await searchWith(1)
+check('只有一页（1 个目标）时两颗翻页键收掉，不留点了没反应的按钮', geo1?.pagerActive, 0)
 checkTrue('行没有压住控件条（第一行上沿在按钮下沿之下）',
   geo1 !== null && geo1.topRowTop <= geo1.lowestControlBottom)
 checkTrue('行没有压到底部导航条', geo1 !== null && geo1.lastRowBottom >= geo1.navTop)
@@ -294,6 +299,7 @@ console.log(`  截图：${path.join(OUT, 'march-search-page1.png')}`)
 checkTrue('按得到「下一页」那一颗', await tapPanelButton('NextPageButton'))
 await page.waitForTimeout(400)
 const nine2 = await page.evaluate(GEO)
+check('真有多页时两颗翻页键又回来（收掉是为了不误导，不是为了少画）', nine2?.pagerActive, 2)
 checkTrue('第二页页码跟着变', /^第 2\/\d+ 页/.test(nine2?.noticeText ?? ''))
 // 这一条才是"每一行都够得着"的真判据：两页并起来必须正好覆盖 1..9 且顺序不断。
 // 只判"第二页有行"不够 —— 漏一条、重一条、顺序错一条，它都照样绿。
