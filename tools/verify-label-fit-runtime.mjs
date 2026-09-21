@@ -35,24 +35,14 @@ mkdirSync(OUT, { recursive: true })
 const KEYS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest', 'battlePass',
   'mail', 'social', 'power', 'shop', 'avatarFrames', 'targets', 'world', 'settings']
 
-/** 已知仍在被压小的行（`面板/文本前缀(盒高<下限,字号)`）。每修一行删一条，删干净为止。 */
-const BASELINE = new Set([
-  "avatarFrames/N · 外观(20<30,字14)",
-  "avatarFrames/SR · 外观(20<30,字14)",
-  "avatarFrames/拓荒者框(22<31,字17)",
-  "avatarFrames/赛季征战框(22<31,字17)",
-  "avatarFrames/还没有拿到任何头像框(20<30,字14)",
-  "battlePass/付费：金币 ×50 (20<30,字14)",
-  "battlePass/免费：木材箱(1万)(20<30,字14)",
-  "battlePass/第 1 档 · 15(22<31,字17)",
-  "battlePass/第 2 档 · 30(22<31,字17)",
-  "battlePass/第 3 档 · 45(22<31,字17)",
-  "battlePass/第 4 档 · 60(22<31,字17)",
-  "battlePass/还差 150 分(20<30,字13)",
-  "battlePass/还差 300 分(20<30,字13)",
-  "battlePass/还差 450 分(20<30,字13)",
-  "battlePass/还差 600 分(20<30,字13)",
-])
+/**
+ * 已知仍在被压小的行（`面板/文本前缀(盒高<下限,字号)`）。
+ *
+ * <p>**现在是空的**：#367 建表时 32 条，#368 还掉内城 2 + 设置 10，#369 还掉关卡 14，
+ * #370 还掉战令档位行 4 处与外观页 3 处 ⇒ 全客户端清零。这张表从此是**只增不许有**的闸门：
+ * 谁再拿 SHRINK + 猜的盒高压一行字，这里就会多出一条，量具当场红。
+ */
+const BASELINE = new Set([])
 
 let pass = 0
 let fail = 0

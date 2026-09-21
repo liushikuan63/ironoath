@@ -7,7 +7,7 @@
  * 避免各 Label 落到引擎默认 Arial 后由浏览器各自决定中文替代字体。
  */
 
-import { Label } from 'cc'
+import { Label, Size, UITransform } from 'cc'
 
 /**
  * Windows / macOS / Android 常见中文字体依次回退。
@@ -59,4 +59,22 @@ export function keepOneLine(label: Label, fontSize: number): Label {
  */
 export function oneLineFloorHeight(fontSize: number): number {
   return Math.max(fontSize + 14, 30)
+}
+
+/**
+ * 限宽不限字：给"必须待在固定宽度槽位里"的行用（旁边就是按钮、或卡片宽度写死，
+ * 用 CLAMP 裁字会把数值读成另一个数）。
+ *
+ * <p>盒高取 `oneLineFloorHeight`，于是 SHRINK 只在文案真的宽过槽位时才缩 ——
+ * 而不是像 `字号 + 6`、`字号 × 1.6` 那样把每一行常态性压小（台账 #366/#367 的迁移曲线）。
+ *
+ * <p>同时把字形钉在节点位置上（`verticalAlign = CENTER`）：盒子抬高了十几个像素，
+ * 默认的上沿对齐会跟着把整行字往上挪 —— 那是"改了盒子就顺带挪了版式"，本函数不承诺这个副作用。
+ */
+export function capWidth(label: Label, width: number): Label {
+  const transform = label.node.getComponent(UITransform)
+  transform?.setContentSize(new Size(width, oneLineFloorHeight(label.fontSize)))
+  label.verticalAlign = Label.VerticalAlign.CENTER
+  label.overflow = Label.Overflow.SHRINK
+  return label
 }

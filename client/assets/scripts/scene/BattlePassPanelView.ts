@@ -19,7 +19,7 @@ import { buildBattlePassPanel, trackStateText } from '../game/battlePass/BattleP
 import type { BattlePassPanelView as BattlePassView, BattlePassRow } from '../game/battlePass/BattlePassPanel'
 import type { BattlePassPanelData } from '../game/session/AppRoot'
 import type { BattlePassTrack } from '../net/generated/BattlePassProtocol'
-import { applySystemUiFont, keepOneLine } from './UiFont'
+import { applySystemUiFont, capWidth, keepOneLine } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -154,19 +154,15 @@ export class BattlePassPanelView extends Component {
     const tier = this.addLabel('Tier', -PANEL_WIDTH / 2 + PADDING, 14, COLOR_TEXT, 17, node)
     tier.horizontalAlign = Label.HorizontalAlign.LEFT
     tier.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    tier.node.getComponent(UITransform)?.setContentSize(new Size(200, 22))
-    tier.overflow = Label.Overflow.SHRINK
+    capWidth(tier, 200)
     const reached = this.addLabel('Reached', -PANEL_WIDTH / 2 + PADDING, -13, COLOR_TEXT_DIM, 13, node)
     reached.horizontalAlign = Label.HorizontalAlign.LEFT
     reached.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    reached.node.getComponent(UITransform)?.setContentSize(new Size(200, 20))
-    reached.overflow = Label.Overflow.SHRINK
+    capWidth(reached, 200)
     const free = this.addLabel('Free', 40, 14, COLOR_TEXT, 14, node)
-    free.node.getComponent(UITransform)?.setContentSize(new Size(230, 20))
-    free.overflow = Label.Overflow.SHRINK
+    capWidth(free, 230)
     const paid = this.addLabel('Paid', 40, -13, COLOR_TEXT_DIM, 14, node)
-    paid.node.getComponent(UITransform)?.setContentSize(new Size(230, 20))
-    paid.overflow = Label.Overflow.SHRINK
+    capWidth(paid, 230)
 
     const freeButton = this.createButton(node, index, 'FREE', PANEL_WIDTH / 2 - 2 * (BUTTON_WIDTH + 6) + BUTTON_WIDTH / 2)
     const paidButton = this.createButton(node, index, 'PAID', PANEL_WIDTH / 2 - (BUTTON_WIDTH + 6) + BUTTON_WIDTH / 2)
