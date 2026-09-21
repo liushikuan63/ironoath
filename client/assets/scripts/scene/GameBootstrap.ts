@@ -296,7 +296,7 @@ export class GameBootstrap extends Component {
     if (this.destroyed) {
       return
     }
-    // 导航层：由它建出各面板节点（初始未激活，因此不会九个面板一起画满屏背景），
+    // 导航层：由它建出各面板节点（初始未激活，因此不会十七个面板一起画满屏背景），
     // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
     this.nav = this.node.addComponent(PanelNav)
     // 音效层挂在同一个 host 上：AudioSource 必须属于活跃场景，否则 playOneShot 一声不出且不报错
@@ -367,8 +367,10 @@ export class GameBootstrap extends Component {
     layer.contentRectFor = key => this.nav?.contentRectFor(key) ?? null
     layer.onTrack = (action, stepId, version) => this.root?.trackGuideStep(action, stepId, version)
     layer.onReport = (stepId, action) => {
-      // 回执才能改位置：advanced=false 时服务端给回来的还是当前那一步，界面就留在原步等玩家
-      void this.root?.guideProgress(stepId, action, resp => this.guide?.applyProgress(resp.nextStepIndex))
+      // 回执才能改位置：advanced=false 时服务端给回来的还是当前那一步，界面就留在原步等玩家。
+      // `advanced` 一并交给视图，让它把"还没达成"讲给玩家听 —— 否则点了「我完成了」界面毫无反应。
+      void this.root?.guideProgress(stepId, action,
+        resp => this.guide?.applyProgress(resp.nextStepIndex, resp.advanced))
     }
   }
 
@@ -525,7 +527,7 @@ export class GameBootstrap extends Component {
     const api = new GameApi(apiDeps)
 
     // 版本闸门是**登录之前**的第一件事：协议写明 forceUpdate=true 时客户端必须停在提示页、
-    // 不得进入游戏，而"进入游戏"的第一步就是登录与拉十个面板 —— 判定排在它们之后等于没拦。
+    // 不得进入游戏，而"进入游戏"的第一步就是登录与拉十七个面板 —— 判定排在它们之后等于没拦。
     // 同一次响应后面还要用来建埋点（攒批策略在这份响应里），所以只发这一次请求。
     const version = await api.appVersion(CLIENT_VERSION, null)
     this.appVersion = version !== null && version.kind === 'ok' ? version.data : null
