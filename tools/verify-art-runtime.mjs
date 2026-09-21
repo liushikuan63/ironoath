@@ -49,6 +49,11 @@ const BLOCK = process.env.ART_VERIFY_BLOCK ?? ''
  * （实测症状是世界地图那一步抛 `WorldMap 组件不在场景里` —— 量具自己造的噪声）。
  */
 const SETTLE_MS = Number(process.env.ART_VERIFY_SETTLE_MS ?? 1600)
+/**
+ * 等某个面板真的就位（`PanelNav.currentKey === panel`）的上限。故意给得很宽：
+ * 这是**反空转**，不是时长预算 —— 超时后照样往下走，读数会以 `panelMismatches` 的形式红出来。
+ */
+const PANEL_READY_MS = Number(process.env.ART_VERIFY_PANEL_READY_MS ?? 30000)
 const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript((value) => {
@@ -78,6 +83,20 @@ async function inspectPanel(panel) {
   url.searchParams.set('panel', panel)
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+  /**
+   * **等这个面板真的就位，而不是只睡固定毫秒**（2026-09-21 补）。
+   *
+   * <p>注册路由拦截（`ART_VERIFY_BLOCK`）会让 Playwright **禁用该页 HTTP 缓存**，boot 从
+   * ~2.6s 涨到 ~8.6s（本轮实测：`tmp/diag-ref-boot.mjs`，同一份产物只差拦不拦）。
+   * 而固定等待读到的是**还没建好的场景**：表现是"五个面板全 null、截图全黑"——
+   * 与"素材缺失导致应用起不来"在读数上**一模一样**，本轮据此误判过一条并不存在的白屏缺陷（审计 §11.6）。
+   * 判据用面板自己的状态，不用时长；超时也继续，让 `panelMismatches` 去红。
+   */
+  await page.waitForFunction((expected) => {
+    const scene = window.cc.director.getScene()
+    const nav = scene.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('PanelNav')
+    return nav !== null && nav !== undefined && nav.currentKey === expected
+  }, panel, { timeout: PANEL_READY_MS }).catch(() => {})
   await page.waitForTimeout(SETTLE_MS)
   const activePanel = await page.evaluate(() => {
     const scene = window.cc.director.getScene()
@@ -758,7 +777,20 @@ const iconMappings = {
     || heroIcons.some((sprite) => sprite.y === 128 || sprite.y === 256),
 }
 /** 必须命中的映射（内城那条已从这里移出，改由 `cityCriteria` 反向钉住）。 */
-const requiredMappings = ['bagResourceIcon', 'armyInfantry', 'heroPortrait']
+const requiredMappings = ['bagResourceIcon', 'armyInfantry']
+/**
+ * `heroPortrait` 只在**名册真的有行**时判（反空转，2026-09-21 补）。
+ *
+ * <p>它原先是"必须有立绘"直接判红，而这一帧的武将来自"页内原始 fetch 抽一次卡 + 面板自己重拉列表"，
+ * 偶尔会读到空名册 —— 于是同一个工具对同一份代码**时红时绿**（本轮复现 3 次：A 绿/C 红/A 红）。
+ * 现在：名册为空 ⇒ **不判**，但要看得见（JSON 里 `heroRosterEmpty: true` + 控制台一行 WARN）；
+ * 名册有行却一张立绘都没有 ⇒ 照样红。空名册本身（抽完卡却没进名册）**不在这里判** ——
+ * 那是服务端侧的账，混进美术量具只会让两边都说不清。
+ */
+const heroRosterEmpty = heroIcons.length === 0
+if (heroRosterEmpty) {
+  console.warn('[verify-art] 武将名册这一帧是空的 —— heroPortrait 这条判据本轮走不到（不判红，也不当绿）')
+}
 const cityStage = [
   'city-ground-cobble-v1',
   'city-wall-band-v1',
@@ -881,6 +913,7 @@ const result = {
   chipButtonSizes,
   chipButtonsNotSliced: chipButtonsNotSliced.map((sprite) => sprite.name),
   iconMappings,
+  heroRosterEmpty,
   fontFamilies,
   fontPolicyFailures: fontPolicyFailures.map((font) => font.name),
   panelMismatches,
@@ -942,6 +975,8 @@ if (errors.length > 0
   || armyIcons.length === 0
   || heroIcons.length === 0
   || requiredMappings.some((key) => iconMappings[key] !== true)
+  // 名册为空时这条走不到（见 heroRosterEmpty 的注释）；有行而没有立绘照样红
+  || (!heroRosterEmpty && iconMappings.heroPortrait !== true)
   || chipButtons.length < 20
   || chipButtonsNotSliced.length > 0
   || fonts.length === 0
