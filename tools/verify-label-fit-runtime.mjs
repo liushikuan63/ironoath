@@ -72,6 +72,21 @@ const BASELINE = new Set([
   "bag/每小时 +200 ·(20<27,字13)",
   "city/Lv1(14<27,字10)",
   "city/主城(12<27,字9)",
+  "shop/10 金币(22<27,字15)",
+  "shop/300 金币(22<27,字15)",
+  "shop/40 金币(22<27,字15)",
+  "shop/45 金币(22<27,字15)",
+  "shop/50 金币(22<27,字15)",
+  "shop/一小时建造令(24<27,字18)",
+  "shop/一小时研究令(24<27,字18)",
+  "shop/一小时训练令(24<27,字18)",
+  "shop/今日限 20，已买 (20<27,字14)",
+  "shop/今日限 50，已买 (20<27,字14)",
+  "shop/今日限 5，已买 0(20<27,字14)",
+  "shop/八小时建造令(24<27,字18)",
+  "shop/可兑换(20<27,字14)",
+  "shop/木材箱(1万)(24<27,字18)",
+  "shop/金币不足：需要 30(20<27,字14)",
   "social/未加入小队(24<27,字17)",
   "social/还没有人建立小队(24<27,字17)",
   "social/需要主城 5 级，当(20<27,字13)",
@@ -182,7 +197,6 @@ for (const key of KEYS) {
   const url = new URL(`${preview.origin}/`)
   url.searchParams.set('panel', key)
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
-  preview.assertRewritten()
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
   let read = null
@@ -194,6 +208,21 @@ for (const key of KEYS) {
     read = await page.evaluate(WALK.replace('KEY_PLACEHOLDER', JSON.stringify(key)))
     if (read !== null && read.seen > 0 && read.seen === prevSeen) break
     prevSeen = read?.seen ?? -1
+  }
+  // 计数稳定 ≠ 覆盖完整：实测同一份产物连跑两遍，SHRINK 总数会 91 / 71 跳（列表虚拟化 + 渲染时机），
+  // 那意味着"基线"不可复现、门会随机红。所以再补三轮，**取并集与最大值**让覆盖单调收敛。
+  for (let round = 0; round < 3; round += 1) {
+    await page.waitForTimeout(400)
+    const again = await page.evaluate(WALK.replace('KEY_PLACEHOLDER', JSON.stringify(key)))
+    if (again === null || read === null) continue
+    read.seen = Math.max(read.seen, again.seen)
+    read.shrink = Math.max(read.shrink, again.shrink)
+    for (const list of ['out', 'stretched']) {
+      const have = new Set(read[list].map((x) => x.text + '@' + x.h))
+      for (const x of again[list] ?? []) {
+        if (!have.has(x.text + '@' + x.h)) read[list].push(x)
+      }
+    }
   }
   if (read === null) {
     console.log(`  SKIP  ${key}：这一格没画出来（深链没生效或面板名不是节点名）`)
@@ -210,6 +239,9 @@ for (const key of KEYS) {
   await page.close()
 }
 console.log(`  截图目录：${OUT}`)
+// 自检放在**遍历之后**：改写计数是按"服务出去的字节"累加的，goto 刚返回就断言会在
+// 首个资源还没记完时误抛（2026-09-21 实测：连跑到第 4 次抛"一个字都没换到"，红得莫名其妙）。
+preview.assertRewritten()
 
 console.log('\n=== 被盒子压小的行 ===')
 if (offenders.length === 0) console.log('  （无）')
