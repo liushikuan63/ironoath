@@ -101,6 +101,7 @@ export class ArmyPanelView extends Component {
   private hospitalLabel: Label | null = null
   private warningLabel: Label | null = null
   private autoTrainButton: Node | null = null
+  private collectTreatedButton: Node | null = null
   private autoTrainCaption: Label | null = null
   private autoTrainStatus: Label | null = null
 
@@ -111,6 +112,8 @@ export class ArmyPanelView extends Component {
   onCancelTrain: ((unitId: string) => void) | null = null
   /** 点「治疗」。治哪些伤兵由服务端裁定，本场景只表达意图 */
   onTreat: (() => void) | null = null
+  /** 收取治好的伤兵（军队四格里唯一一只纯接线的动作；加速治疗要道具选择器，见 #329）。 */
+  onCollectTreated: (() => void) | null = null
   /** 点「自动续训 / 停止自动」。能不能开、续的是哪一批由编排层判定（B25-S2d） */
   onToggleAutoTrain: (() => void) | null = null
 
@@ -249,6 +252,30 @@ export class ArmyPanelView extends Component {
     const treatCaption = this.addLabel(treat, 'Caption', 0, 0, COLOR_TEXT, 15)
     treatCaption.string = '治疗伤兵'
     treat.on('touch-start', (_event: EventTouch) => this.onTreat?.(), this)
+
+    // 「收取伤兵」（`/army/collectTreated` —— 军队四格里唯一一只纯接线的）：
+    // 治疗是**全局一批**（`TreatReq` 只有 requestId、医院状态里也没有 unitId），所以它挂在医院这一块，
+    // 不是挂在某个兵种行上；只在**治疗到点**（本地倒计时归零）时出现。
+    // 另一半「加速治疗」**不能照这个做**：服务端要求 `itemId`（"秒数只能来自道具配置"），
+    // 也就是它先要有一个"选哪个加速道具"的选择器 —— 那个组件客户端还没有（见收口清单 #329）。
+    const collectTreated = new Node('CollectTreatedButton')
+    collectTreated.layer = this.node.layer
+    this.node.addChild(collectTreated)
+    collectTreated.setPosition(new Vec3(PANEL_WIDTH / 2 - 60, top - 110, 0))
+    collectTreated.addComponent(UITransform).setContentSize(new Size(110, 26))
+    if (!applyCommandButton(collectTreated, 'normal', 110, 26)) {
+      const collectGraphics = collectTreated.addComponent(Graphics)
+      collectGraphics.fillColor = COLOR_PANEL
+      collectGraphics.strokeColor = COLOR_GOOD
+      collectGraphics.lineWidth = 1
+      collectGraphics.roundRect(-55, -13, 110, 26, 4)
+      collectGraphics.fill()
+      collectGraphics.stroke()
+    }
+    this.addLabel(collectTreated, 'Caption', 0, 0, COLOR_TEXT, 12).string = '收取伤兵'
+    collectTreated.active = false
+    collectTreated.on('touch-start', (_event: EventTouch) => this.onCollectTreated?.(), this)
+    this.collectTreatedButton = collectTreated
 
     // 「自动续训」放在治疗按钮的对面（同一行）：两个都是"整支军队"的动作，
     // 和上面那排页签（筛选）与下面那排行内按钮（单个兵种）都不同类
@@ -444,6 +471,10 @@ export class ArmyPanelView extends Component {
       }
       parts.push(hospital.treatCostRatioText)
       this.hospitalLabel.string = parts.join(' · ')
+      // 到点可收了才给「收取伤兵」：没治完摆着它，点了只会被服务端拒
+      if (this.collectTreatedButton !== null) {
+        this.collectTreatedButton.active = hospital.collectableTreated === true
+      }
     }
     if (this.warningLabel !== null) {
       const hospital = panel.hospital

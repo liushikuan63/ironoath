@@ -958,6 +958,17 @@ export class AppRoot {
       ['army', 'resources', 'reddot'])
   }
 
+  /**
+   * 收取治好的伤兵（`/army/collectTreated`）。
+   *
+   * <p>请求体只有 `requestId`（`TreatReq`）—— 治疗是**全局一批**，不按兵种，所以这里没有 unitId。
+   * 军队四格里它是唯一一只"纯接线"的：另外三只各有前置（训练两只要上阵武将，加速治疗要道具选择器）。
+   */
+  collectTreated(): Promise<void> {
+    this.track(TRACK_EVENTS.armyTreat, { action: 'collect' })
+    return this.write('army', this.api.armyCollectTreated({}), ['army', 'reddot'])
+  }
+
   /** 顶栏的「一键收割」= `buildingId: null`，由服务端裁定收哪些；具体行则收那一格。 */
   collect(buildingId: string | null): Promise<void> {
     this.track(TRACK_EVENTS.gatherCollect, { buildingId: trackParam(buildingId), all: trackParam(buildingId === null) })

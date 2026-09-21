@@ -1230,6 +1230,7 @@ export class GameBootstrap extends Component {
       army.onSpeedUpTrain = unitId => { void this.root?.speedUpTraining(unitId) }
       army.onCancelTrain = unitId => { void this.root?.cancelTraining(unitId) }
       army.onTreat = () => { void this.root?.treatWounded() }
+      army.onCollectTreated = () => { void this.root?.collectTreated() }
       army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
     }
     if (hero !== null) {
