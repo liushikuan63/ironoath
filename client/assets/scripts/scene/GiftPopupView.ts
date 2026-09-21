@@ -55,8 +55,11 @@ export class GiftPopupView extends Component {
       this.title.string = '限时礼包'
     }
     if (this.subtitle !== null) {
-      // 价格与内容都以服务端下发的这一档为准，客户端不内置
-      this.subtitle.string = `商品 ${resp.productId ?? ''}`
+      // 显示名由服务端下发（`pay_product.name`，如「落成贺礼」）——客户端不查表，
+      // 也**绝不**退回印 `productId`：把「商品 gift_building_celebration」印给玩家
+      // 是 #255/#268 同族的缺陷（2026-09-21 复检在建造完成弹窗上抓到的形态）。
+      // 旧服务端不下发这一位时留空，用一句空话代替一句内部编号。
+      this.subtitle.string = resp.productName ?? ''
     }
     if (this.result !== null) {
       this.result.string = ''
@@ -127,13 +130,17 @@ export class GiftPopupView extends Component {
     bg.fillRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT)
     root.addChild(panel)
 
-    this.title = this.label(panel, '礼包', 0, 96, 26, COLOR_COPPER_GOLD)
-    this.subtitle = this.label(panel, '', 0, 56, 18, COLOR_TEXT)
-    this.countdown = this.label(panel, '', 0, 24, 16, COLOR_TEXT_DIM)
-    this.result = this.label(panel, '', 0, -20, 16, COLOR_TEXT)
+    // 纵向排布：标题 / 显示名 / 倒计时 / 按钮 / 结果，**逐行不重叠**。
+    // 2026-09-21 复检抓到「剩 59:59」被「立即购买」按钮压住（倒计时 y=24、按钮盒 y∈[-28,28]）：
+    // 报价过期时间是这一屏唯一的时效信息，被按钮盖掉等于玩家看不见它。
+    this.title = this.label(panel, '礼包', 0, 108, 26, COLOR_COPPER_GOLD)
+    this.subtitle = this.label(panel, '', 0, 68, 18, COLOR_TEXT)
+    this.countdown = this.label(panel, '', 0, 36, 16, COLOR_TEXT_DIM)
+    this.result = this.label(panel, '', 0, -84, 16, COLOR_TEXT)
 
     this.buyButton = new Node('buy')
     this.buyButton.addComponent(UITransform).setContentSize(200, 56)
+    this.buyButton.setPosition(new Vec3(0, -28, 0))
     const buttonBg = this.buyButton.addComponent(Graphics)
     buttonBg.fillColor = COLOR_BUTTON
     buttonBg.fillRect(-100, -28, 200, 56)

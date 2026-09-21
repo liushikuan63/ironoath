@@ -9,6 +9,7 @@ import com.ironoath.common.ErrorCode;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.GiftCfg;
+import com.ironoath.config.cfg.PayProductCfg;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.pay.PopupThrottle;
 import com.ironoath.core.player.PlayerGiftPopup;
@@ -97,11 +98,33 @@ public class GiftPopupService {
                 players.save(save);
                 LOG.info("礼包弹窗触发 playerId={} 礼包={} 商品={} 报价到期={}（触发于 {}）",
                         playerId, row.id(), row.productId(), triggerAt + ttlMillis, triggerAt);
-                return new GiftPopupResp(true, row.id(), row.productId(), triggerAt + ttlMillis, 0L, now);
+                return new GiftPopupResp(true, row.id(), row.productId(), productName(row.productId()),
+                        triggerAt + ttlMillis, 0L, now);
             }
             long retrySec = (verdict.retryAfterMillis() + 999L) / 1_000L;
             minRetrySec = minRetrySec < 0L ? retrySec : Math.min(minRetrySec, retrySec);
         }
-        return new GiftPopupResp(false, null, null, null, Math.max(0L, minRetrySec), now);
+        return new GiftPopupResp(false, null, null, null, null, Math.max(0L, minRetrySec), now);
+    }
+
+    /**
+     * 这一档商品的**显示名**（`pay_product.name`）。
+     *
+     * <p>为什么要下发：客户端不查表。2026-09-21 复检抓到的形态是弹窗印
+     * 「商品 gift_building_celebration」—— 表里那一行明明写着「落成贺礼」，
+     * 而玩家看到的是内部编号（#255/#268 同族：显示名只有一个真源，就是服务端这里）。
+     *
+     * <p>查不到行时回 null，**绝不回 id**：宁可少一行字，也不把内部编号印给玩家。
+     */
+    private String productName(String productId) {
+        if (productId == null) {
+            return null;
+        }
+        for (PayProductCfg row : configs.all(PayProductCfg.class)) {
+            if (productId.equals(row.id())) {
+                return row.name();
+            }
+        }
+        return null;
     }
 }

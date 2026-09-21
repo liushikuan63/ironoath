@@ -3,6 +3,7 @@ package com.ironoath.web;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
@@ -15,7 +16,9 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ironoath.common.json.JsonUtils;
+import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.GiftCfg;
+import com.ironoath.config.cfg.PayProductCfg;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.web.dto.generated.PlayerInitReq;
@@ -40,6 +43,7 @@ class GiftPopupEndpointTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
+    @Autowired private ConfigRegistry configs;
 
     private String newPlayer() {
         return playerInitService.init(new PlayerInitReq(
@@ -55,10 +59,13 @@ class GiftPopupEndpointTest {
     }
 
     private JsonNode popup(String playerId) throws Exception {
+        // **按 UTF-8 读响应体**：MockMvc 的 getContentAsString() 默认用 ISO-8859-1，
+        // 中文字段会被解成 "è½æè´ºç¤¼" —— 本类此前只断言 ASCII 的 id，所以一直没暴露；
+        // 一旦断言显示名（本条用例），读侧编码就成了判据的一部分。
         String body = mockMvc.perform(get("/gift/popup")
                         .header("X-Player-Id", playerId)
                         .accept(MediaType.APPLICATION_JSON))
-                .andReturn().getResponse().getContentAsString();
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         JsonNode root = JsonUtils.readTree(body);
         assertThat(root.get("code").asInt()).as("端点必须回业务码 0，实际：" + body).isZero();
         return root.get("data");
@@ -96,6 +103,28 @@ class GiftPopupEndpointTest {
         JsonNode second = popup(playerId);
         assertThat(second.get("popup").asBoolean()).isFalse();
         assertThat(second.get("cooldownSec").asLong()).as("要告诉客户端多久后再问").isPositive();
+    }
+
+    @Test
+    @DisplayName("弹窗必须下发商品的中文显示名：缺了它客户端只能把 productId 印给玩家（#255/#268 同族）")
+    void popupCarriesTheProductDisplayName() throws Exception {
+        String playerId = newPlayer();
+        mark(playerId, GiftCfg.Trigger.BUILDING_DONE);
+
+        JsonNode data = popup(playerId);
+        assertThat(data.get("popup").asBoolean()).isTrue();
+        assertThat(data.has("productName")).as("字段必须在（nullable 也要在）").isTrue();
+
+        String productId = data.get("productId").asText();
+        String productName = data.get("productName").asText();
+        String configured = configs.all(PayProductCfg.class).stream()
+                .filter(row -> row.id().equals(productId))
+                .map(PayProductCfg::name)
+                .findFirst().orElseThrow();
+        assertThat(productName).as("显示名就是配置表那一行的 name，服务端不另造一份")
+                .isEqualTo(configured);
+        assertThat(productName).as("名字不许等于 id —— 那正是印内部编号的形态")
+                .isNotEqualTo(productId);
     }
 
     @Test
