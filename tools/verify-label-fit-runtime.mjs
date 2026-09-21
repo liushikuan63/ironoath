@@ -97,28 +97,27 @@ const WALK = `(() => {
       const str = lb ? (lb.string ?? '') : ''
       if (str.length > 0) {
         seen += 1
+        // **全程用世界矩形**：面板按视口缩放过，拿"世界坐标 − 本地盒宽"会混两套单位
+        // （第一版就是这么把内城资源条报成互相压上的）。缩放比用盒子高之比反推。
+        const ut = n.getComponent('cc.UITransform')
+        const bb = ut.getBoundingBoxToWorld()
+        const scale = ut.height > 0 ? bb.height / ut.height : 1
         if (navTop !== null) {
-          // 字的下沿按"盒中心 - 半个字号"估（盒子在 SHRINK 下是 27，比字高，拿盒子量会假红）
-          const utt = n.getComponent('cc.UITransform')
-          const bb = utt.getBoundingBoxToWorld()
-          const scale = utt.height > 0 ? bb.height / utt.height : 1
-          const glyphBottom = bb.y + bb.height / 2 - (lb.fontSize / 2) * scale
+          // 字的下沿按"盒中心 − 半个字号"估（盒子在 SHRINK 下是 27，比字高，拿盒子量会假红）
+          const glyphBottom = bb.y + bb.height / 2 - (lb.fontSize * scale) / 2
           if (glyphBottom < navTop + ${PLANT}) {
             underNav.push(str.slice(0, 8) + '(字底' + Math.round(glyphBottom) + '<导航上沿' + Math.round(navTop) + ')')
           }
         }
-        // 字形横向范围：盒子按锚点摆，字按对齐方式在盒子里摆。宽度按字符类别加权：
-        // 汉字一个全角、ASCII（数字/斜杠/空格）约半角 —— 一律按全角算会把"体力 100/10000"
-        // 估成两倍宽，把并排的资源项报成相碰（第一版就是这么错的）。
-        const ut = n.getComponent('cc.UITransform')
-        const wp = n.worldPosition ?? n.position
+        // 字形横向范围：宽度按字符类别加权（汉字 1.0 em、ASCII 约 0.55 em），再乘缩放比；
+        // SHRINK 保证画出来不宽于盒子，所以估宽按盒宽截断。
         let units = 0
         for (let k = 0; k < str.length; k++) units += str.charCodeAt(k) < 128 ? 0.55 : 1
-        const est = units * lb.fontSize
-        const left = wp.x - ut.anchorPoint.x * ut.width
+        let est = units * lb.fontSize * scale
+        if (lb.overflow === 2 && bb.width > 0) est = Math.min(est, bb.width)
         const align = lb.horizontalAlign
-        const x0 = align === 0 ? left : (align === 2 ? left + ut.width - est : left + (ut.width - est) / 2)
-        geo.push({ text: str.slice(0, 8), x0, x1: x0 + est, y: wp.y, font: lb.fontSize })
+        const x0 = align === 0 ? bb.x : (align === 2 ? bb.x + bb.width - est : bb.x + (bb.width - est) / 2)
+        geo.push({ text: str.slice(0, 8), x0, x1: x0 + est, y: bb.y + bb.height / 2, font: lb.fontSize * scale })
         // 2 = Label.Overflow.SHRINK；盒高用本地值（字号也是本地单位）
         if (lb.overflow === 2) {
           shrink += 1
@@ -161,6 +160,33 @@ const WALK = `(() => {
   }
   return { seen, shrink, out, stretched, crowd, underNav, navTop }
 })()`
+
+/**
+ * 把新手引导那块板藏起来，好量它背后那一屏自己的排版。
+ *
+ * <p>为什么不是"点掉它"：`GuideNext` 的 `touch-start` 会发一次推进引导的写请求，
+ * 而 dev 新号那一步的前置没满足 ⇒ 写失败，屏幕上换成"网络不稳定，正在重试（第 1 次）"，
+ * 板子还在、还多了一条重试提示（实测过）。引导是玩家可关的**覆盖层**，藏掉它不改被量那一屏的几何。
+ */
+function hideGuideBoard() {
+  const scene = window.cc.director.getScene()
+  const found = []
+  const find = (n) => {
+    if (!n.activeInHierarchy) return
+    if (n.name === 'GuideNext') found.push(n)
+    for (const c of n.children) find(c)
+  }
+  find(scene)
+  if (found.length === 0) return false
+  let top = found[0]
+  // 爬到 Game 的直接子节点（引导自己的那一层），别把 Game 整块关掉
+  while (top.parent !== null && top.parent.name !== 'Game' && top.parent.name !== 'Canvas') {
+    top = top.parent
+  }
+  if (top.name === 'Game' || top.name === 'Canvas') return false
+  top.active = false
+  return true
+}
 
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
 console.log(`=== 全客户端"字被盒子压小"清单：产物经 ${preview.origin}，后端 ${BACKEND} ===`)
@@ -215,6 +241,8 @@ for (const key of KEYS) {
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
+  // 新手引导那块板会盖住被引导的那一屏（内城顶部资源条就是被它挡了三轮，#388 的 6 条候选一条都没目视过）。
+  await page.evaluate(hideGuideBoard)
   let read = null
   // 不能"见到 >0 就停"：空态本来就有几颗 Label，那样永远读不到"有数据之后才画出来的行"。
   // 改成**计数稳定**才收（连续两次一样），最多 24 次 ×250ms。
@@ -229,6 +257,8 @@ for (const key of KEYS) {
   // 那意味着"基线"不可复现、门会随机红。所以再补三轮，**取并集与最大值**让覆盖单调收敛。
   for (let round = 0; round < 3; round += 1) {
     await page.waitForTimeout(400)
+    // 板是异步挂上来的：每轮都藏一次，最后一轮之后才截图，截图里才可能没有它
+    await page.evaluate(hideGuideBoard)
     const again = await page.evaluate(WALK.replace('KEY_PLACEHOLDER', JSON.stringify(key)))
     if (again === null || read === null) continue
     read.seen = Math.max(read.seen, again.seen)
