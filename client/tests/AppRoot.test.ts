@@ -251,7 +251,13 @@ const ROUTES: Record<string, unknown> = {
     consumed: 5, results: [{ type: 'RESOURCE', id: 'WOOD', count: 500, name: '木材' }],
     overflow: [], mailId: null, seed: 7, serverNow: SERVER_NOW,
   },
-  '/stage/sweep': { results: {}, rewards: [], serverNow: SERVER_NOW },
+  '/stage/sweep': {
+    results: [], totalRewards: [], staminaCost: 6, staminaCharged: 6,
+    // executed 故意小于请求的 10：视图那条「只扫了 7 次」的解释要靠它
+    executed: 3,
+    progress: { stageId: 's1', stars: 3, bestRounds: 2, clearedAt: 1, sweepCount: 3 },
+    serverNow: SERVER_NOW,
+  },
   '/stage/challenge': {
     reportId: 'r1', stars: { cleared: true, noLoss: true, withinRounds: true, total: 3 },
     starsEarned: 3, newBest: true, rewards: [], losses: [], staminaCost: 6,
@@ -585,6 +591,10 @@ interface Harness {
   readonly lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null
   /** 最近一次购买回执里服务端说的到账与扣币 */
   readonly lastStaminaBought: { granted: number, costGold: number } | null
+  /** 一次挑战的结算有没有送到面板。视图里那个渲染器长期零调用点，这条就是盯住投递 */
+  readonly lastChallenge: { stageId: string, stars: number } | null
+  /** 一次扫荡的结算 + 客户端请求的次数（缺次数就解释不了「要 10 次只扫了 3 次」） */
+  readonly lastSweep: { executed: number, requested: number } | null
   /** 最近一次落地给榜单面板的整块视图。 */
   readonly lastRank: RankBoardView | null
   readonly lastSeason: SeasonPanelView | null
@@ -704,6 +714,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastChat: ChatPanelData | null = null
   let lastStamina: { current: number, cap: number, gold: number | null } | null = null
   let lastStaminaBought: { granted: number, costGold: number } | null = null
+  let lastChallenge: { stageId: string, stars: number } | null = null
+  let lastSweep: { executed: number, requested: number } | null = null
   let lastRank: RankBoardView | null = null
   let lastSeason: SeasonPanelView | null = null
   let lastTech: TechPanelView | null = null
@@ -768,6 +780,14 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     staminaBought: (resp) => {
       attached.push('staminaBought')
       lastStaminaBought = { granted: resp.granted, costGold: resp.costGold }
+    },
+    challengeResult: (resp) => {
+      attached.push('challengeResult')
+      lastChallenge = { stageId: resp.progress.stageId, stars: resp.starsEarned }
+    },
+    sweepResult: (resp, requested) => {
+      attached.push('sweepResult')
+      lastSweep = { executed: resp.executed, requested }
     },
     social: (_resp, helps, members) => {
       attached.push('social')
@@ -932,6 +952,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastStaminaBought() {
       return lastStaminaBought
+    },
+    get lastChallenge() {
+      return lastChallenge
+    },
+    get lastSweep() {
+      return lastSweep
     },
     get lastRank() {
       return lastRank
@@ -1436,6 +1462,10 @@ test('×10 扫荡只发一个 count=10 的请求（拆成十个请求，弱网�
   const sweeps = h.http.calls.filter(c => c.path === '/stage/sweep')
   assert.equal(sweeps.length, 1)
   assert.equal(sweeps[0]?.body.count, 10)
+  // 结算必须送到面板，而且要把「客户端请求了几次」一起带过去：
+  // 响应里只有 executed=3，不带 requested 就解释不了「我要 10 次为什么只扫了 3 次」
+  // —— 视图里那个 `attachSweep` 一直存在，缺的就是这一投递
+  assert.deepEqual(h.lastSweep, { executed: 3, requested: 10 })
 })
 
 test('买体力：一次请求、回执照服务端说的念、买完重拉那三份账', async () => {
@@ -1573,6 +1603,10 @@ test('挑战先展示已编成阵容，选中后才把英雄与全部可用兵�
     { unitId: 'unit_archer_t1', count: 25 },
   ])
   assert.deepEqual(h.attached.slice(-3), ['stage', 'army', 'hero'])
+  // 挑战的结算同样要送到面板（星级、掉落、体力都在那份响应里），而且**排在三次重拉之前**：
+  // `write` 的口径是「回执先落地再刷新」，这条顺序另有四条用例钉着，这里把它连回执一起钉住
+  assert.deepEqual(h.lastChallenge, { stageId: 's1', stars: 3 })
+  assert.deepEqual(h.attached.slice(-4), ['challengeResult', 'stage', 'army', 'hero'])
 })
 
 test('踢人按页签分流到不同端点：View 的回调不带组织，根必须带上', async () => {

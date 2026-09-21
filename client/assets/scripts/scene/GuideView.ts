@@ -71,11 +71,6 @@ export class GuideView extends Component {
     this.repaint()
   }
 
-  /** 驱动实例（instrument 与用例读它，不复制判定）。 */
-  currentDriver(): GuideDriver | null {
-    return this.driver
-  }
-
   /**
    * 重画当前帧。切面板、上报回执、登录完成都调它 —— 判定全在驱动器里，这里只跟着画。
    *

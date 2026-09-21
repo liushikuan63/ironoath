@@ -386,6 +386,10 @@ checkTrue('买完那一条按重读到的响应更新（104/120、今日已购 3
 const receipt = await page.evaluate(BOX)
 checkTrue('回执写在摘要带上：到账与扣币都照服务端说的念',
   (receipt?.text ?? '').includes('到账 20 体力 · 扣 20 金币'))
+// 反空转的另一半：**字在 ≠ 看得见**。`attach()` 里那句 hideSummary() 只把面板关掉、不清字，
+// 所以只读 text 的话，「回执被这次写操作自己触发的列表刷新抹掉」这一整类缺陷都是绿的
+checkTrue('摘要面板此刻还亮着（等得到刷新回来，回执不会被自己抹掉）',
+  receipt?.active === true)
 await page.screenshot({ path: path.join(OUT, 'stage-stamina-bought.png') })
 console.log(`  截图：${path.join(OUT, 'stage-stamina-bought.png')}`)
 

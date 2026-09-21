@@ -336,31 +336,6 @@ export class SocialPanelView extends Component {
     this.rebuild()
   }
 
-  /**
-   * 装载一次 /alliance/sync 的结果（验收 10：只下发 diff）。
-   *
-   * <p>客户端把 changed 合进缓存、把 removed 从缓存里摘掉，
-   * 然后用合并后的全量列表重画。合并是客户端的职责，
-   * 但「谁变了」完全由服务端说了算 —— 本方法不比较任何字段。
-   */
-  applyAllianceDiff(changed: readonly AllianceMember[], removedIds: readonly string[]): void {
-    for (const member of changed) {
-      const index = this.allianceMembers.findIndex((item) => item.id === member.id)
-      if (index >= 0) {
-        this.allianceMembers[index] = member
-      } else {
-        this.allianceMembers.push(member)
-      }
-    }
-    for (const id of removedIds) {
-      const index = this.allianceMembers.findIndex((item) => item.id === id)
-      if (index >= 0) {
-        this.allianceMembers.splice(index, 1)
-      }
-    }
-    this.rebuild()
-  }
-
   /** 用缓存里的成员列表重新组装一次面板。没有原始响应时什么也不做。 */
   private rebuild(): void {
     if (this.lastResp === null) {

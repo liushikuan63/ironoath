@@ -16,7 +16,7 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
-import { buildArmyPanel, estimateTrainMs, estimateTreatMs } from '../game/army/ArmyPanel'
+import { buildArmyPanel, estimateTrainMs } from '../game/army/ArmyPanel'
 import type { TrainMemory } from '../game/army/AutoTrain'
 import { formatCountdown } from '../core/Countdown'
 import type { ArmyPanelView as ArmyPanelData, UnitRow } from '../game/army/ArmyPanel'
@@ -530,14 +530,5 @@ export class ArmyPanelView extends Component {
       this.trainButtons.set(button, usable ? row : null)
       button.active = usable
     }
-  }
-
-  /** 治疗耗时预估。暴露出来供编辑器的治疗确认弹窗使用。 */
-  treatEstimateText(wounded: number): string {
-    const resp = this.resp
-    if (resp === null || wounded <= 0) {
-      return ''
-    }
-    return `约 ${formatCountdown(estimateTreatMs(resp.hospital, wounded), '已完成')}`
   }
 }

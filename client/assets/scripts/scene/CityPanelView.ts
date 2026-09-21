@@ -11,12 +11,11 @@ import {
 } from 'cc'
 import {
   CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, cancelMessage, collectMessage,
-  errorText,
 } from '../game/city/CityPanel'
 import type { BuildingRow, CityGrid, CityPanelView as CityPanelData } from '../game/city/CityPanel'
 import { buildBuildChoices } from '../game/session/Choices'
 import type {
-  CityCancelResp, CityCollectResp, CityListResp, ErrorDetail, SpeedUpSource,
+  CityCancelResp, CityCollectResp, CityListResp, SpeedUpSource,
 } from '../net/generated/CityProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import {
@@ -229,10 +228,6 @@ export class CityPanelView extends Component {
       return
     }
     this.showMessage(message.text, message.kind === 'done' ? COLOR_GOOD : COLOR_TEXT_DIM)
-  }
-
-  showError(detail: ErrorDetail | null, fallback: string): void {
-    this.showMessage(errorText(detail, fallback), COLOR_WARNING)
   }
 
   override update(): void {

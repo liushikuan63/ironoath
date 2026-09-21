@@ -1298,6 +1298,9 @@ export class GameBootstrap extends Component {
       stage.onSweep = (stageId, count) => { void this.root?.sweep(stageId, count) }
       out.stamina = (resp, gold) => stage.attachStamina(resp, gold)
       out.staminaBought = resp => stage.attachStaminaBuy(resp)
+      // 两次结算也接到同一条摘要带上：视图里这两个方法一直存在，只是编排层从没给过它们响应
+      out.challengeResult = resp => stage.attachChallenge(resp)
+      out.sweepResult = (resp, requested) => stage.attachSweep(resp, requested)
       stage.onBuyStamina = () => { void this.root?.buyStamina() }
       out.lineupChoice = (options, onPick) => stage.showLineupPicker(options, onPick)
     }

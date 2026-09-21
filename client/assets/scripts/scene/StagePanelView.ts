@@ -143,6 +143,20 @@ export class StagePanelView extends Component {
     this.buyButton = null
   }
 
+  /**
+   * 玩家重新进入这一页时清掉摘要带。
+   *
+   * <p>刻意**不放在 {@link attach} 里**：一次写操作的投递顺序是「回执 → 刷新列表」，
+   * 放在 attach 里等于让这次操作自己把刚说的那句话抹掉（「买体力」那条到账回执今天就是这么没的，
+   * 而它一直是接上的）。摘要带讲的是「刚那一把怎么样」，所以它该由「玩家离开了这一页」结束，
+   * 而不是由任何一次列表刷新结束。
+   */
+  override onEnable(): void {
+    if (this.summaryPanel !== null && this.summaryPanel.active) {
+      this.hideSummary()
+    }
+  }
+
   /** 装载关卡列表。行顺序照搬服务端，本场景不排序、不过滤。 */
   attach(resp: StageListResp): void {
     if (this.rowPool === null) {
@@ -150,7 +164,6 @@ export class StagePanelView extends Component {
       return
     }
     this.list = buildStageList(resp)
-    this.hideSummary()
     this.render()
   }
 

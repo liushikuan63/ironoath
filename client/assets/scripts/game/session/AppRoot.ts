@@ -32,7 +32,7 @@ import type {
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
 import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
 import type { GachaDrawResp, GachaPoolsResp, HeroListResp } from '../../net/generated/HeroProtocol'
-import type { StageListResp } from '../../net/generated/StageProtocol'
+import type { ChallengeStageResp, StageListResp, SweepResp } from '../../net/generated/StageProtocol'
 import type {
   AllianceMember, AllianceRole, AllianceSyncResp, ChatChannel, ChatMessageView, FriendView, HelpRequestView,
   ReportReason, RallyPolicyResp, RallyPolicyView, SocialCreatePolicy, SocialCreatePolicyResp,
@@ -237,6 +237,16 @@ export interface PanelTargets {
   stamina?(resp: StaminaResp, gold: number | null): void
   /** 一次购买的回执（到账 / 扣币 / 今日已购）。画在关卡面板那条摘要带上。 */
   staminaBought?(resp: StaminaBuyResp): void
+  /**
+   * 一次挑战的结算（星级、掉落、达成条件、体力）。同样画在那条摘要带上 ——
+   * 只刷关卡列表等于把「这一把到底打成什么样」丢掉，而那是玩家刚花掉一次体力的结果。
+   */
+  challengeResult?(resp: ChallengeStageResp): void
+  /**
+   * 一次批量扫荡的结算。`requested` 是客户端发出去的次数：响应里没有这个字段，
+   * 而没有它就解释不了「我要 10 次为什么只扫了 7 次」。
+   */
+  sweepResult?(resp: SweepResp, requested: number): void
   /** 取消研究的回执：取消了哪一行、退回来多少资源（比例服务端算，与城建同一份配置）。 */
   techCancelled?(resp: TechCancelResp): void
   /** 研究加速用哪一张（候选按 `effectKind` 筛，不按 id 硬编码；一份选项自带张数）。 */
@@ -1214,13 +1224,14 @@ export class AppRoot {
       stageId,
       units: Array.from(choice.units),
       heroes: Array.from(choice.heroes),
-    }), ['stage', 'army', 'hero'])
+    }), ['stage', 'army', 'hero'], (resp) => this.targets.challengeResult?.(resp))
   }
 
   /** ×10 只发**一个** `count=10` 的请求（B09 验收 9：一次请求做完一件事，弱网下不会只成一半）。 */
   sweep(stageId: string, count: number): Promise<void> {
     this.track(TRACK_EVENTS.battleStart, { battleType: 'sweep', stageId, count: trackParam(count) })
-    return this.write('stage', this.api.stageSweep({ stageId, count }), ['stage'])
+    return this.write('stage', this.api.stageSweep({ stageId, count }), ['stage'],
+      (resp) => this.targets.sweepResult?.(resp, count))
   }
 
   // ---------- 体力（B09 §5） ----------
