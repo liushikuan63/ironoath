@@ -76,16 +76,20 @@ const stubHeroList = async (context) => {
       maxLevel: 60, star: 3, maxStar: 5, awaken: 0, maxAwaken: 3,
       mainSkillId: 'skill_guanyu_main', mainSkillName: '武圣激将', mainSkillLevel: 3,
       subSkillId: 'skill_guanyu_sub', subSkillName: '偃月蓄势', subSkillLevel: 1, maxSkillLevel: 10,
-      equipped: [], baseAttrs: { might: 96, command: 92, wisdom: 75 },
+      equips: [], baseAttrs: { might: 96, command: 92, wisdom: 75 },
       finalAttrs: { might: 96, command: 92, wisdom: 75 }, power: 12345, bondWith: null,
     }
     const lineups = [0, 1, 2].map((presetIndex) => ({
-      presetIndex, main: null, sub1: null, sub2: null,
+      presetIndex, main: null, sub1: null, sub2: null, activeBonds: [],
       bonus: { atkFixed: 0, defFixed: 0, skillFixed: 0, commandValue: 0, capped: false, breakdown: [] },
     }))
     const body = JSON.stringify({
       code: 0, msg: '成功', serverNow: Date.now(),
-      data: { heroes: [hero], lineups, serverNow: Date.now() },
+      data: {
+        heroes: [hero], lineups,
+        fragments: [], troopCap: 1000, troopsInUse: 0,
+        serverNow: Date.now(),
+      },
     })
     await route.fulfill({
       status: 200,
@@ -120,12 +124,31 @@ await pageA.screenshot({ path: path.join(OUT, 'hero-empty.png') })
 console.log(`  截图：${path.join(OUT, 'hero-empty.png')}`)
 await ctxA.close()
 
-// ---------- 相位 B（有行 ⇒ 空态必须藏）**没做**，原因是实测出来的，不是嫌麻烦 ----------
-// 把 `/hero/list` 换成一行武将之后，读数是 `rows=0 liveRows=0 header=""` ——
-// `header` 是空串意味着**面板整块没画**（不是"画了但零行"），此时"空态被藏起来"会**静默通过**，
-// 那是假绿，所以这一相先摘掉。下一格要补的是夹具本身：HeroListResp 的必填集比这里写的多
-// （见 contract/proto/hero.schema.json），补好后把这一相连同"有行必须藏"一起加回来。
-check('这一相跑完零页面级 error', errors.length, 0)
+// ---------- 相位 B：给一行武将 —— 空态必须藏起来 ----------
+// 第一版这份夹具缺 `fragments` / `troopCap` / `troopsInUse` / `activeBonds`，还把 `equips`
+// 写成了 `equipped` ⇒ 面板整块没画（`header` 是空串），那句"空态被藏起来"**静默判绿**。
+// 教训写在这：**"读数为零"不等于"这一相没数据"，要先证明面板画过**（用 header 非空当证据）。
+const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+await ctxB.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v), `hero-full-${Date.now()}`)
+await stubHeroList(ctxB)
+const pageB = await ctxB.newPage()
+pageB.on('pageerror', (e) => errors.push(`B:${e.message}`))
+await pageB.goto(url.toString(), { waitUntil: 'networkidle' })
+await pageB.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+let readB = null
+for (let i = 0; i < 30; i += 1) {
+  await pageB.waitForTimeout(500)
+  readB = await pageB.evaluate(READ)
+  if ((readB?.rows ?? 0) > 0) break
+}
+console.log(`  相位 B 读数：rows=${readB?.rows} liveRows=${readB?.liveRows} header=${JSON.stringify(readB?.header)}`)
+check('夹具那行武将真的画出来了（还要 header 非空，证明这一相面板真的渲染过）',
+  (readB?.rows ?? 0) > 0 && (readB?.header ?? '') !== '', true)
+check('有行时空态必须藏起来（有行还印「暂无武将」是自打嘴巴）', readB?.emptyActive, false)
+await pageB.screenshot({ path: path.join(OUT, 'hero-one-row.png') })
+console.log(`  截图：${path.join(OUT, 'hero-one-row.png')}`)
+
+check('两相跑完零页面级 error', errors.length, 0)
 if (errors.length > 0) for (const e of errors.slice(0, 3)) console.log(`    error: ${e.slice(0, 160)}`)
 
 await browser.close()

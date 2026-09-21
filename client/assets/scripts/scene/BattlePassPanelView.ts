@@ -242,7 +242,11 @@ export class BattlePassPanelView extends Component {
       this.remainLabel.color = view2.paidUnlocked ? COLOR_GOOD : COLOR_TEXT_DIM
     }
     if (this.noticeLabel !== null) {
-      this.noticeLabel.string = panel.notice ?? view2.noticeText ?? view2.paidHint ?? ''
+      // 一行档位都没有时，这一格必须说句话：否则玩家看到的是"积分/已领/剩余"三行数字
+      // 压着一整块空白（#344 那一族的最后一条）。句式照房规 `MarchPanelView:77`「暂无在外的队伍」。
+      this.noticeLabel.string = view2.rows.length === 0
+        ? '暂无档位'
+        : (panel.notice ?? view2.noticeText ?? view2.paidHint ?? '')
       this.noticeLabel.color = panel.notice !== null ? COLOR_GOOD : COLOR_TEXT_DIM
     }
 
