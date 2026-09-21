@@ -968,6 +968,10 @@ const HEADER_ROWS = `(() => {
       && hospital.boxW > 100 && warning.boxW > 100
       && hospital.boxW === warning.boxW,
     boxWidths: [hospital ? hospital.boxW : null, warning ? warning.boxW : null],
+    // 正向前置：警告行此刻真的有内容 —— 否则"两行不相交"是在读一个空集合（#347 那族假绿）
+    warningHasText: warning !== null && warning.text.length > 0,
+    rowHeights: [hospital, warning].filter((x) => x !== null)
+      .map((x) => Math.round(x.t - x.b)),
     overlaps,
     outside: [hospital, warning].filter((x) => x !== null && x.overflowing)
       .map((x) => x.text.slice(0, 18)),
@@ -981,10 +985,13 @@ const headerRows = await page2.evaluate(HEADER_ROWS)
 checkTrue('军队表头那两行都在（医院行与警告行）', headerRows?.found === true)
 checkTrue('两行被限成同一个宽度（守卫生效；没限时各自按文本自适应，宽度必然不同）',
   headerRows?.boxesGuarded === true)
-  // ⚠ 这一族还差一条：两行的盒子实测各高 50px，而中心距只有 26px ⇒ 警告行换行时**必然压到医院行**
-  //   （2026-09-21 量出：医院 t=561/b=511，警告 t=535/b=485）。这条判据**故意没写**——
-  //   把缺陷断言成现状等于把它钉成规格（#356 同一处置）。修法与取证记在台账 #362 与队列冷启动。
 check('两行都不顶出屏幕宽度', JSON.stringify(headerRows?.outside ?? null), '[]')
+// #362 撤下又还回来的那条：先证警告行此刻有内容，再断两行不互相压住
+checkTrue('警告行此刻确实有内容（否则下一条是在读空集合）', headerRows?.warningHasText === true)
+checkTrue('两行的盒子都不超过一行高（>30 说明又被文本撑开了）',
+  (headerRows?.rowHeights ?? [999]).every((h) => h <= 30))
+check('医院行与警告行不互相压住（中心距只有 26px，盒子一撑高就叠）',
+  headerRows?.overlaps, false)
 check('出征态下那颗命令键写「集结」（不再是\u300c改成集结\u300d这种带方向的措辞）',
   JSON.stringify(footBefore?.boxes?.map((b) => b.caption)),
   JSON.stringify(['取消', '侦察', '集结', '出征']))
