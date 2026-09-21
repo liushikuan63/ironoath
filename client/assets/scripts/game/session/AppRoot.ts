@@ -3701,6 +3701,44 @@ export class AppRoot {
 
   private rejectNeeds(panel: string, message: string): void {
     this.targets.error?.(panel, message)
+    this.showNeedsInPanel(panel, message)
+  }
+
+  /**
+   * 把「这件事现在做不了」写进面板**自己那条提示行**，再纯重递一次。
+   *
+   * <p>#357 只接了关卡与内城（它们各有一条瞬时带）。这一族里还有一批面板的提示是
+   * 随数据重算的 `notice`（商店、战令、外观、集结、聊天）—— 直接改标签会被下一次
+   * `attach` 覆盖掉，所以正确落点是**它们本来就带着的那个字段**。
+   *
+   * <p>只调"不发请求"的重递口：一次拒绝不该变成一次读放大。
+   * tech / gacha 的递送口内联在会拉数据的 `loadXxx()` 里（没有纯重递方法），
+   * army / bag / hero / social / reports 根本没有瞬时提示面 —— 都不硬凑，见台账未做。
+   */
+  private showNeedsInPanel(panel: string, message: string): void {
+    switch (panel) {
+      case 'shop':
+        this.shopNotice = message
+        this.deliverShop()
+        return
+      case 'battlePass':
+        this.battlePassNotice = message
+        this.deliverBattlePass()
+        return
+      case 'avatarFrames':
+        this.frameNotice = message
+        this.deliverAvatarFrames()
+        return
+      case 'rallies':
+        this.rallyNotice = message
+        this.deliverRallies()
+        return
+      case 'chat':
+        this.chatNotice = message
+        this.deliverChat()
+        return
+      default:
+      }
   }
 
   private say(panel: string, outcome: NetOutcome<unknown>): void {

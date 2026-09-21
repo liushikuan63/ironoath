@@ -3964,11 +3964,18 @@ test('商店：不能兑换的那一行不发请求，把服务端给的原因�
   await h.root.start('dev-1', '君')
   await h.root.refresh('shop')
   const before = h.http.countOf('/shop/buy')
+  const callsBeforeReject = h.http.calls.length
 
   await h.root.buyShopRow('shop_res_wood_10k')
 
   assert.equal(h.http.countOf('/shop/buy'), before, '锁定行不发请求（发了也会被同一套规则拒）')
   assert.deepEqual(h.errors.at(-1), ['shop', '主城 5 级解锁'])
+  // console 那条是**开发者通路**（#356 实测：只走它的话玩家屏幕上完全无声）。
+  // 商店的提示行是随数据重算的 `notice`，所以被拒时要写进那个字段再纯重递一次 ——
+  // 直接改标签会被下一次 attach 覆盖。而"重递"只该重画，不该把一次拒绝变成一次读放大
+  assert.equal(h.lastShop?.notice, '主城 5 级解锁')
+  assert.equal(h.http.calls.length, callsBeforeReject,
+    '重递提示不该再发任何请求（一次拒绝变成一次读放大）')
 })
 
 // ---------- B26 S15：军队行上的「队列」菜单与取消训练 ----------
