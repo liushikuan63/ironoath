@@ -780,6 +780,17 @@ export class CityPanelView extends Component {
     return label
   }
 
+  /**
+   * 适配层把「这件事现在做不了」写到那条文案带上（#356/#357：以前只进 console.warn）。
+   *
+   * <p>与 #355 删掉的那颗 `showError` 不是一回事：那颗是**视图自己另开的一条错误通路**，
+   * 会绕过 `AppRoot.say` 那个既显示又上报的收口点；这一颗是**收口点下面的落点**，
+   * 只有适配层会调它，本场景不判断任何"能不能"。
+   */
+  showBlocked(message: string): void {
+    this.showMessage(message, COLOR_WARNING)
+  }
+
   private showMessage(text: string, color: Color): void {
     if (this.messageLabel === null) {
       return

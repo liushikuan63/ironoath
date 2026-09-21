@@ -445,6 +445,9 @@ console.log(`  截图：${path.join(OUT, 'stage-stamina-bought.png')}`)
 checkTrue('夹具确实把第一关翻成可挑战（`/stage/list` 真回过、真改到了一行）',
   stageFlip.attempted === true && stageFlip.done === true)
 
+// 摘要带是**跨相复用的同一块**：上一相买体力那两行字还留在里面。
+// 不先快照，下一相"读到字"就可能读到旧内容（#356 撤掉的那条假绿正是这个形状）。
+const bandBefore = await page.evaluate(BOX)
 const tappedChallenge = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const panel = game?.getChildByName('stage')
@@ -517,12 +520,16 @@ if (heroFlip.mainSet) {
   // 挡下的话没画出来，玩家按「挑战」就会得到"没反应"——正是这一族最坏的样子。
   console.log(`  注：dev 号 lineups=${heroFlip.lineups}，走「被挡下」分支（未验证完整挑战路径，见台账未做①）`)
   check('这一支不该发出挑战请求', CHALLENGE_CALLS.length, 0)
-  // 这里**刻意不断言摘要带**：`rejectNeeds` 走的是 `targets.error`，而那条口的落点是 console.warn
-  // （`AppRoot.say` 上方的注释自己就写了"只有开发者看得见"）⇒ 玩家按「挑战」得到的是完全无声。
-  // 上一版在这里断言"带子亮着"判绿了 —— 那是**上一相买体力留下的字**，不是这次的回执，
-  // 一条"读起来像断言、实际什么都没读"的判据比没有判据更坏。缺陷本身记台账，修的时候连判据一起补。
-  const stillThere = await page.evaluate(BOX)
-  console.log(`  现状（缺陷，非判据）：被挡下之后摘要带仍是上一相的文字 —— ${(stillThere?.text ?? '').slice(0, 40)}`)
+  // #356 撤掉的那两条断言现在**还回来了**，而且是带防假绿形状的：先快照、再断"变了"，
+  // 因为摘要带是跨相复用的同一块（上一相买体力的字会一直留在那儿）。
+  const blocked = await page.evaluate(BOX)
+  const reason = blocked?.text ?? ''
+  console.log(`  被挡下时带上写的字：${reason.slice(0, 60)}`)
+  checkTrue('带上那句话**变了**（不是读到上一相残留的字）',
+    reason !== (bandBefore?.text ?? ''))
+  checkTrue('变成的是这一件事的原因（`AppRoot.challenge` 三条真分支之一）',
+    /没有已编成的阵容|没有可出战兵力|出战阵容/.test(reason))
+  checkTrue('而且此刻摘要带是亮着的（#354 那条：字在 ≠ 看得见）', blocked?.active === true)
 }
 await page.screenshot({ path: path.join(OUT, 'stage-challenge-settled.png') })
 console.log(`  截图：${path.join(OUT, 'stage-challenge-settled.png')}`)

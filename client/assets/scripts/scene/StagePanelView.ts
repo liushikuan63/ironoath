@@ -144,7 +144,17 @@ export class StagePanelView extends Component {
   }
 
   /**
-   * 玩家重新进入这一页时清掉摘要带。
+   * 适配层把「这件事现在做不了」送到这条带上。
+   *
+   * <p>以前这类话只进 console.warn（#356 实测：玩家按「挑战」得到的是完全无声，
+   * 而"没有编队"这件事只有武将面板说得出声）。刻意不发请求、不自己判断能不能做 ——
+   * 原因文本由 `AppRoot` 的三条真分支给出，本场景只负责让它看得见。
+   */
+  showBlocked(message: string): void {
+    this.showSummary([message], COLOR_WARNING)
+  }
+
+  /** 玩家重新进入这一页时清掉摘要带。
    *
    * <p>刻意**不放在 {@link attach} 里**：一次写操作的投递顺序是「回执 → 刷新列表」，
    * 放在 attach 里等于让这次操作自己把刚说的那句话抹掉（「买体力」那条到账回执今天就是这么没的，

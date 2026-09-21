@@ -1138,7 +1138,20 @@ export class GameBootstrap extends Component {
       missing: Object.entries(views).filter(([, view]) => view === null).map(([key]) => key),
     }
     const out: PanelTargets = {
-      error: (panel, message) => console.warn(`[${panel}] ${message}`),
+      // console.warn 保留（那是开发者通路），同时把话送到**该面板已有的那条文案带**上 ——
+      // #356 实测：玩家按「挑战」被挡下时屏幕上一个字都不改，而 `AppRoot.say` 上方的注释
+      // 自己就写着"只有开发者看得见"。
+      // 只接已有带子的两块（关卡、内城）：其余 13 个面板的提示要么没有瞬时带、
+      // 要么那个 `notice` 是随数据重算的（写进去下一次 attach 就没了），逐块都要按 #354
+      // 那条「别被自己触发的刷新抹掉」重新判一遍，不是一行分流能顺手带过的。
+      error: (panel, message) => {
+        console.warn(`[${panel}] ${message}`)
+        if (panel === 'stage') {
+          stage?.showBlocked(message)
+        } else if (panel === 'city') {
+          city?.showBlocked(message)
+        }
+      },
     }
     if (giftPopup !== null) {
       out.giftPopup = resp => giftPopup.attach(resp)
