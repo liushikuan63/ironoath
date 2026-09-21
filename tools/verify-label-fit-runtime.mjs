@@ -30,6 +30,7 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { decodePng, diffRegion } from './lib/png-diff.mjs'
 
 // 必须显式给后端：静默回落到 8080 等于"打到另一台机器上读数"（同一条教训见 march 探针第 25 行）
 const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
@@ -255,6 +256,69 @@ function clickTabNode(name) {
   if (found === null) return false
   found.emit('touch-start', null)
   return true
+}
+
+/**
+ * 像素法"底板压字"的规划：算出每颗 Label 的**字形带**（屏幕像素矩形），以及
+ * "DFS 次序排在它之后、且世界盒与字形带相交"的 `Graphics` 底板清单。
+ *
+ * <p>为什么必须按次序筛：卡片背景本来就压在字**底下**，藏掉它当然也会变像素 —— 只有**后画**的那层才叫"盖住"。
+ * <p>为什么不能按"子树里有文字就排除"筛纯底板：页签的底板就长在带页签文字的节点上，那样筛会把真缺陷亲手滤掉
+ * （台账 #399 第一轮就是这么假阴性的）。藏的方式是**只禁 `Graphics` 组件**，节点与它自己的文字照常画。
+ * <p>标定过的结论：植入 #389 那处老缺陷时报 192/822/181 像元变化，修好后同一批底板几何仍相交但变化 0/0/0
+ * ⇒ 判据不需要阈值。助手挂在 window 上（`evaluate` 只能带函数源码，节点引用传不出来）。
+ */
+function planPlateCoverage(panelKey) {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.children.find((c) => c.name === panelKey)
+  if (!panel) return null
+  const order = []
+  const walkOrder = (n) => {
+    order.push(n)
+    for (const c of n.children) walkOrder(c)
+  }
+  walkOrder(panel)
+  const vis = window.cc.view.getVisibleSize()
+  const can = window.cc.view.getCanvasSize()
+  const scale = can.width / vis.width
+  const bands = []
+  const plates = []
+  order.forEach((n, i) => {
+    const lb = n.getComponent('cc.Label')
+    const str = lb ? (lb.string ?? '') : ''
+    if (str.length === 0 || !n.activeInHierarchy) return
+    const bb = n.getComponent('cc.UITransform').getBoundingBoxToWorld()
+    let units = 0
+    for (const ch of str) units += ch.charCodeAt(0) < 128 ? 0.55 : 1
+    const est = Math.min(units * lb.fontSize, bb.width)
+    const align = lb.horizontalAlign
+    const gx0 = align === 0 ? bb.x : (align === 2 ? bb.x + bb.width - est : bb.x + (bb.width - est) / 2)
+    const band = {
+      x: Math.round(gx0 * scale),
+      y: Math.round((vis.height - (bb.y + bb.height / 2 + lb.fontSize / 2)) * scale),
+      w: Math.max(1, Math.round(est * scale)),
+      h: Math.max(1, Math.round(lb.fontSize * scale)),
+    }
+    const bi = bands.length
+    bands.push({ text: str.slice(0, 10), rect: band })
+    order.forEach((m, j) => {
+      if (j <= i) return
+      const g = m.getComponent('cc.Graphics')
+      if (g === null || g === undefined || !m.activeInHierarchy || !g.enabled) return
+      const pr = m.getComponent('cc.UITransform').getBoundingBoxToWorld()
+      const gy0 = bb.y + bb.height / 2 - lb.fontSize / 2
+      if (pr.x >= gx0 + est || gx0 >= pr.x + pr.width) return
+      if (pr.y >= gy0 + lb.fontSize || gy0 >= pr.y + pr.height) return
+      let slot = plates.find((p) => p.handle === j)
+      if (slot === undefined) {
+        slot = { handle: j, name: m.name, bands: [] }
+        plates.push(slot)
+      }
+      slot.bands.push(bi)
+    })
+  })
+  window.__plateNodes = order
+  return { bands, plates }
 }
 
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
@@ -487,6 +551,15 @@ const offenders = []
 const stretched = []
 const crowded = []
 const underNavAll = []
+/** 像素法报出来的"字被后画的底板盖住"（>0 的都列出来，便于逐张目视）。 */
+const covered = []
+/** 其中达到判红下限的那些 —— 这一维**判红**，标定见台账 #399/#400。 */
+const coveredRed = []
+/**
+ * 判红下限取 8 像元：植入 #389 那处老缺陷时最小的一条是 **181** 像元，修好后同一批底板是 **0** ——
+ * 两个量级之间取 8，隔开的是抗锯齿噪声，不是"把阈值调到全绿"（那条纪律见 #384/#392）。
+ */
+const PLATE_MIN_RED = 8
 let navFound = 0
 const reached = []
 /** 每一格读到的 Label 颗数：夹具反空转判据读它（见 `LABEL_FLOORS`）。 */
@@ -574,6 +647,32 @@ for (const key of KEYS) {
     console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗，`
       + `疑似被放大 ${(read.stretched ?? []).length} 颗，字形相碰 ${(read.crowd ?? []).length} 对，`
       + `压进导航条 ${(read.underNav ?? []).length} 颗`)
+  }
+  // 像素法：底板压字。**只在默认相量**（切页签后那一屏另说），且只报不判红。
+  // 一张全图基线 + 每块候选底板一张（按底板分组，不是一颗 Label 一张），差在内存里裁字形带算。
+  if (process.env.LABELFIT_PLATES !== '0') {
+    const plan = await page.evaluate(planPlateCoverage, key)
+    if (plan !== null && plan.plates.length > 0) {
+      const base = decodePng(await page.screenshot())
+      for (const plate of plan.plates) {
+        await page.evaluate((h) => { window.__plateNodes[h].getComponent('cc.Graphics').enabled = false }, plate.handle)
+        await page.waitForTimeout(120)
+        const after = decodePng(await page.screenshot())
+        await page.evaluate((h) => { window.__plateNodes[h].getComponent('cc.Graphics').enabled = true }, plate.handle)
+        await page.waitForTimeout(80)
+        for (const bi of plate.bands) {
+          const b = plan.bands[bi]
+          const d = diffRegion(base, after, b.rect, 24)
+          if (d.changed > 0) {
+            const line = `${key}/${b.text}←「${plate.name}」变了 ${d.changed}/${d.total} 像元`
+            covered.push(line)
+            if (d.changed >= PLATE_MIN_RED) coveredRed.push(line)
+          }
+        }
+      }
+      console.log(`  PLATE ${key}: 候选底板 ${plan.plates.length} 块、字形带 ${plan.bands.length} 条，`
+        + `报出 ${covered.filter((x) => x.startsWith(`${key}/`)).length} 处`)
+    }
   }
   // 每格落一张图：这一族改的是"盒高 + 对齐"，判据全绿也可能把字挪位，必须目视
   await page.screenshot({ path: path.join(OUT, `${key}.png`) })
@@ -702,6 +801,15 @@ if (underNavAll.length > 0) {
   console.log('\n=== 字压进底部导航条的（这一条判红；列出来是为了定位是哪一屏） ===')
   for (const line of [...new Set(underNavAll)]) console.log('  ' + line)
 }
+if (covered.length > 0) {
+  /**
+   * 这一维**判红**（标定与"植入会红"的实测见台账 #399/#400）：几何法在"已修好"和"有缺陷"两种情况下
+   * 都报相交（#393 的假阳性来源），像素法报出的是 192/822/181 对 0/0/0。
+   * 全部 >0 的都列出来（不到下限的当噪声看），判红只看 `>= PLATE_MIN_RED` 的那些。
+   */
+  console.log('\n=== 字被后画的图形底板盖住的（像素法；达下限的判红） ===')
+  for (const line of [...new Set(covered)]) console.log('  ' + line)
+}
 if (process.argv.includes('--print-baseline')) {
   console.log('\n// --- BASELINE 片段（贴进源文件替换 BASELINE 的构造）---')
   for (const x of [...new Set(offenders)].sort()) console.log(`  ${JSON.stringify(x)},`)
@@ -738,6 +846,15 @@ check('声明的页签相位全部走到位（改名或没画出来会红）', p
 // 阈值就取 0：实测最紧的一屏（战力）字底离导航上沿还有 18px，不会因抖动误红。
 check('没有一屏把字画进底部导航条（写死行数那一族的通用兜底）',
   new Set(underNavAll).size, 0)
+// 像素法这一维的判红。它**有前置条件**：`LABELFIT_PLATES=0` 会整段跳过，那时这一条是空跑的恒真 ——
+// 所以连"跑没跑"一起断言（同一份 covered 数组，跳过时长度必为 0）。
+if (process.env.LABELFIT_PLATES !== '0') {
+  check('没有一处字被后画的图形底板盖住（像素法，达 ' + PLATE_MIN_RED + ' 像元判红）',
+    new Set(coveredRed).size, 0)
+} else {
+  // 显式跳过时不判红，但要把"这一维没量"喊出来，别让它静默变成恒真
+  console.log('  ⚠ 像素法这一维被 LABELFIT_PLATES=0 跳过了：本轮**没有**验过"底板压字"')
+}
 const measured = new Set(offenders)
 check('被压小的行**恰好**等于基线（新增会红；修好没删基线行也会红）',
   JSON.stringify([...measured].sort()) === JSON.stringify([...BASELINE].sort()), true)
