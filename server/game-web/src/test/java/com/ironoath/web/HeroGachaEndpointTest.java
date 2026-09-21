@@ -301,6 +301,9 @@ class HeroGachaEndpointTest {
                         r.rarity().name()).dupFragment())
                 .sum();
         assertThat(second.fragmentsAwarded()).isEqualTo(expected);
+        // 逐行校验得先有行可校验：十连必须回 10 行，少一行下面那条 `allSatisfy` 就是恒真的空判
+        // （#342 同族 —— 那条守卫挂在"5000 打 10"这个实测零损失的载体上，从写下那天红着）。
+        assertThat(second.results()).as("抽 10 次必须回 10 行，否则下面的逐行断言什么都没说").hasSize(10);
         assertThat(second.results()).allSatisfy(r -> {
             if (r.isNew()) {
                 assertThat(r.fragments()).as("首次获得不产生碎片").isZero();
@@ -408,6 +411,8 @@ class HeroGachaEndpointTest {
         List<FragmentView> rows = heroAppService.list(playerId).fragments();
 
         // 每一档的门槛都照 hero_rarity 那一列，且候选都落在自己那一档里
+        // 外层这一圈逐行校验得先有行：`rows` 空的时候整段静默通过（#342 同族）
+        assertThat(rows).as("碎片行不能为空，否则下面整段逐行校验什么都没说").isNotEmpty();
         for (FragmentView f : rows) {
             String rarity = configs.get(ItemCfg.class, f.itemId()).rarity().name();
             assertThat(f.composeFragment()).as("%s 的门槛取自 hero_rarity 的 %s 行", f.itemId(), rarity)
@@ -490,6 +495,9 @@ class HeroGachaEndpointTest {
         assertThat(newbie.lifetimeDraws()).as("已抽次数与 doDraw 那句超限拒绝读的是同一个数")
                 .isEqualTo(1L);
         assertThat(after).filteredOn(s -> !s.poolId().equals("gacha_pool_newbie"))
+                // 过滤后还得有池子剩下，否则这句 `allSatisfy` 是恒真的空判（#342 同族）
+                .as("除新手池外还得有别的池子可查，否则这句逐池断言什么都没说")
+                .isNotEmpty()
                 .allSatisfy(s -> assertThat(s.lifetimeDraws())
                         .as("%s 不该跟着涨", s.poolId()).isZero());
     }

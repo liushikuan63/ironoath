@@ -187,6 +187,9 @@ class BagEndpointTest {
                 .satisfies(i -> assertThat(i.effectKind()).isNotEqualTo("GRANT_HERO_EXP"));
         // 整表都带这一列（没有 null 行）——列可空的话客户端到处判空
         assertThat(configs.all(ItemCfg.class))
+                // 空表会让这句恒真：先钉住"表里确实有行"（#342 同族）
+                .as("道具表必须加载到行，否则逐行断言什么都没说")
+                .isNotEmpty()
                 .allSatisfy(cfg -> assertThat(cfg.effectKind()).as(cfg.id()).isNotNull());
     }
 
