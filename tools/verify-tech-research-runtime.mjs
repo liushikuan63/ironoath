@@ -280,6 +280,55 @@ checkTrue('被学院等级挡住那一行写的是服务端给的那句原因',
   read !== null && read.texts.some((t) => t.includes('学院等级不足')))
 check('只有可研究那一行有键（灰着的行不给一颗必然失败的按钮）',
   (read?.buttons ?? []).join(','), 'research-tech_agri_wood')
+// ---------- 成本要让开键位：这条一直只有代码注释、没有判据 ----------
+// `TechPanelView.drawRow` 里那句 `const costRight = row.canResearch ? right - 84 : right`
+// 注释写明"键占右边 76 宽"，可谁把这个 84 改小，成本就会压到「研究」键上而量具照样全绿
+// （与 #336 / #344 那一族同形：版式靠常数撑着，却没人量）。
+const OVERLAP = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let tech = null
+  const find = (n) => { if (tech === null) { if (n.name === 'techPanel') { tech = n; return }; for (const c of n.children) find(c) } }
+  if (game) find(game)
+  if (tech === null || !tech.active) return null
+  const rect = (n) => {
+    const w = n.getComponent('cc.UITransform').getBoundingBoxToWorld()
+    return { l: w.x, r: w.x + w.width, b: w.y, t: w.y + w.height }
+  }
+  const costs = [], keys = []
+  const walk = (n) => {
+    if (n.activeInHierarchy) {
+      const lb = n.getComponent('cc.Label')
+      const s = lb ? (lb.string ?? '') : ''
+      // 成本那一格长这样：「木材 600」「铁矿 900 · 木材 200」，或「无需资源」；
+      // 等级以「级」结尾、耗时以「分」结尾、效果含「%」，所以"以数字结尾且带空格"就是它
+      if (lb && s !== '无需资源' && /[0-9,]$/.test(s) && s.indexOf(' ') > 0) {
+        costs.push(Object.assign(rect(n), { text: s }))
+      }
+      if (n.name.indexOf('research-') === 0) keys.push(Object.assign(rect(n), { text: n.name }))
+    }
+    for (const c of n.children) walk(c)
+  }
+  walk(tech)
+  const hits = []
+  for (const c of costs) {
+    for (const k of keys) {
+      if (c.l < k.r && k.l < c.r && c.b < k.t && k.b < c.t) hits.push(c.text + ' 压到 ' + k.text)
+    }
+  }
+  return { costCount: costs.length, keyCount: keys.length, hits,
+    costWidths: costs.map((c) => Math.round(c.r - c.l)),
+    costTexts: costs.map((c) => c.text) }
+})()`
+const overlap = await page.evaluate(OVERLAP)
+// 反空转前置：先证"确实抓到了成本标签与那颗键"，否则下面那条"没有相交"是在读一个空集合
+checkTrue('抓到可研究那一行的成本标签与「研究」键（否则"不相交"是空转）',
+  overlap !== null && overlap.costCount > 0 && overlap.keyCount > 0)
+checkTrue('成本标签的盒子是按文本自适应的（不是默认 100 宽 —— 是默认宽就说明这条判据不可信）',
+  (overlap?.costWidths ?? []).every((w) => w !== 100))
+// `check` 用的是严格相等（`===`），所以数组要 join 成字符串再比 —— 直接传 `[]` 会因引用不同必然红
+check('成本让开了键位：两者世界矩形不相交（压上去就是"木材 600"被键盖住）',
+  (overlap?.hits ?? ['<没读到>']).join(' | '), '')
+
 check('打开研究页拉了一次列表', techPulls, 1)
 await page.screenshot({ path: path.join(OUT, 'tech-page-opened.png') })
 console.log(`  截图：${path.join(OUT, 'tech-page-opened.png')}`)
