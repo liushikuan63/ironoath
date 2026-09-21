@@ -948,54 +948,68 @@ console.log(JSON.stringify(result, null, 2))
 
 await browser.close()
 await preview.close()
-if (errors.length > 0
-  || catalogWarnings.length > 0
-  || panelMismatches.length > 0
-  // 带内排版的四条：读得到常量、两张框都在场景里、几何两份真源没分家、内容一处都没压带。
-  // counted / labeled 的下限是反空转 —— 走不到节点、或一片空文字时，violations 天然是空的。
-  || FRAME_BAND <= 0
-  || frameMarch.error !== undefined || frameMarch.counted < 5 || frameMarch.labeled < 1
-  || frameBandDrift.length > 0
-  || frameOverlaps.length > 0
-  || degenerateSlices.length > 0
-  || navContrast.error !== undefined
-  || (navContrast.cells ?? []).length < NAV_CELLS_EXPECTED
-  || navLowContrast.length > 0
-  || navActiveIndistinguishable
-  || navTabMissing.length > 0
-  || navSelectedWrongFrame.length > 0
-  // 内城：城区四条 + 反空转（读不到标题就算没判到，不许当绿）
-  || cityCriteria.stageMissing
-  || cityCriteria.stageBothOn
-  || cityCriteria.mainCityOverdrawn
-  || cityCriteria.gridOffViewport
-  || cityCriteria.headerMissing
-  || cityCriteria.iconsMissing
-  || bagIcons.length === 0
-  || armyIcons.length === 0
-  || heroIcons.length === 0
-  || requiredMappings.some((key) => iconMappings[key] !== true)
-  // 名册为空时这条走不到（见 heroRosterEmpty 的注释）；有行而没有立绘照样红
-  || (!heroRosterEmpty && iconMappings.heroPortrait !== true)
-  || chipButtons.length < 20
-  || chipButtonsNotSliced.length > 0
-  || fonts.length === 0
-  || fontPolicyFailures.length > 0
-  || terrainTiles.length === 0
-  || entityArt.length === 0
-  || familyAfterBag - familyBeforeBag !== FAMILY_PNG_EXPECTED
-  || worldCaptions === 0
-  || bagTab.error !== undefined
-  || bagTab.itemRows < 4
-  || bagTab.iconRows < 4
-  || familyAfterActivity - familyBeforeActivity !== ACTIVITY_PNG_EXPECTED
-  || activityTab.error !== undefined
-  || activityDrawn.error !== undefined
-  || activityDrawn.activityRows !== 8
-  || activityDrawn.iconRows !== activityDrawn.drawnRows
-  || activityDrawn.overlaps > 0
-  || activityTab.questTitleX === null
-  || activityDrawn.activityTitleX === null
-  || Math.abs(activityTab.questTitleX - activityDrawn.activityTitleX) > 0.5) {
+/**
+ *
+ * <p>为什么不再写成一坨 `||`：那条形状红起来只说"退了 1"，不说红在哪一条 ——
+ * 2026-09-22 我自己为了定位一条红，手工把十来个字段逐个打印比对才找到
+ * （真凶是遗留的 `heroIcons.length === 0`，与刚改好的 `heroPortrait` 反空转自相矛盾：
+ * 名册为空时前者恒红，于是"不判红也不当绿"那条改动被它整个抵消）。
+ * 现在红的时候直接把命中项打出来。
+ */
+const gates = [
+  ['页面/控制台有报错', errors.length > 0],
+  ['ArtCatalog 有告警', catalogWarnings.length > 0],
+  ['面板与导航不一致', panelMismatches.length > 0],
+  ['PANEL_FRAME_BAND 读不到', FRAME_BAND <= 0],
+  ['行军面板框缺失/内容为空', frameMarch.error !== undefined || frameMarch.counted < 5 || frameMarch.labeled < 1],
+  ['框带厚与源码常量分家', frameBandDrift.length > 0],
+  ['内容压到框的角饰上', frameOverlaps.length > 0],
+  ['九宫格退化（目标小于自身边框）', degenerateSlices.length > 0],
+  ['导航对比度读不到', navContrast.error !== undefined],
+  ['导航格数不足', (navContrast.cells ?? []).length < NAV_CELLS_EXPECTED],
+  ['导航文字对比度不足', navLowContrast.length > 0],
+  ['导航选中态与未选中同色', navActiveIndistinguishable],
+  ['导航页签图缺失', navTabMissing.length > 0],
+  ['导航选中格用错变体', navSelectedWrongFrame.length > 0],
+  // 内城六条（城区形态 + 反重影 + 满屏 + 正稿；详见 cityCriteria 的注释）
+  ['内城：两套城景都不在场', cityCriteria.stageMissing],
+  ['内城：参考舞台与程序化城景同时在画', cityCriteria.stageBothOn],
+  ['内城：参考舞台之上又叠了主城正稿', cityCriteria.mainCityOverdrawn],
+  ['内城：城景内容区不等于视口', cityCriteria.gridOffViewport],
+  ['内城：读不到「建筑 N/36」标题', cityCriteria.headerMissing],
+  ['内城：已建 ≥2 栋却没有一栋正稿', cityCriteria.iconsMissing],
+  ['背包图标数为 0', bagIcons.length === 0],
+  ['军队图标数为 0', armyIcons.length === 0],
+  ['必需的艺术映射未命中', requiredMappings.some((key) => iconMappings[key] !== true)],
+  // 名册为空时这条走不到（见 heroRosterEmpty 的注释）；有行而没有立绘照样红。
+  // **不再另加 `heroIcons.length === 0`** —— 那条与"反空转"自相矛盾，会把它整个抵消。
+  ['武将名册有行但一张立绘都没有', !heroRosterEmpty && iconMappings.heroPortrait !== true],
+  ['chip 按钮数不足', chipButtons.length < 20],
+  ['chip 按钮没走九宫格', chipButtonsNotSliced.length > 0],
+  ['字体标签数为 0', fonts.length === 0],
+  ['字体策略不符', fontPolicyFailures.length > 0],
+  ['地形块数为 0', terrainTiles.length === 0],
+  ['地图实体美术为 0', entityArt.length === 0],
+  ['按需族增量与磁盘张数不符', familyAfterBag - familyBeforeBag !== FAMILY_PNG_EXPECTED],
+  ['世界地图名牌为 0', worldCaptions === 0],
+  ['背包页签读数失败', bagTab.error !== undefined],
+  ['背包道具行不足', bagTab.itemRows < 4],
+  ['背包图标行不足', bagTab.iconRows < 4],
+  ['活动族增量与磁盘张数不符', familyAfterActivity - familyBeforeActivity !== ACTIVITY_PNG_EXPECTED],
+  ['活动页签读数失败', activityTab.error !== undefined],
+  ['活动绘制读数失败', activityDrawn.error !== undefined],
+  ['活动行数不是 8', activityDrawn.activityRows !== 8],
+  ['活动行图标与绘制行数不符', activityDrawn.iconRows !== activityDrawn.drawnRows],
+  ['活动页签有重叠', activityDrawn.overlaps > 0],
+  ['活动页签标题读不到', activityTab.questTitleX === null],
+  ['活动页签标题（绘制侧）读不到', activityDrawn.activityTitleX === null],
+  ['两页签标题未对齐', activityTab.questTitleX !== null && activityDrawn.activityTitleX !== null
+    && Math.abs(activityTab.questTitleX - activityDrawn.activityTitleX) > 0.5],
+]
+const tripped = gates.filter(([, bad]) => bad).map(([name]) => name)
+if (tripped.length > 0) {
+  console.error(`[verify-art] 判据失败 ${tripped.length} 条：${tripped.join('；')}`)
   process.exitCode = 1
+} else {
+  console.log('[verify-art] 全绿：判据表全部通过')
 }
