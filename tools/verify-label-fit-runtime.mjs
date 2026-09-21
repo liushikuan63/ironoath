@@ -57,11 +57,12 @@ const BASELINE = new Set([
 /**
  * 夹具反空转下限：某格"有数据才画行"，读口的桩一旦掉线就退回空态，那时"零缺陷"是读空集合得来的。
  * 下限**取自面板自己的行结构**（不是照抄某次实测）：`MailPanelView.createRow` 每颗 Label 都算上文本的
- * 有 4 个（Title/Detail/Status/Expiry），夹具给 8 封而面板按可视高截断 ⇒ 取"至少画满 2 行"= 8 颗。
- * 空态实测 2 颗（表头 + 回执），差 4 倍以上，所以桩掉了这一条一定红；
+ * 有 4 个（Title/Detail/Status/Expiry），夹具给 8 封而面板按可视高截断 ⇒ 取"至少画满 2 行"= 8 颗；
+ * `BattleReportPanelView.createRow` 每行 3 颗（Title/Detail/Outcome）⇒ 战报取 2 行 = 6 颗。
+ * 空态实测邮件 2 颗 / 战报 3 颗，差 3~10 倍，所以桩掉了这一条一定红；
  * 上限故意不设：画几行随视口高度变，钉死会把量具变成"只能在这台机器上绿"。
  */
-const LABEL_FLOORS = { mail: 2 * 4 }
+const LABEL_FLOORS = { mail: 2 * 4, reports: 2 * 3 }
 
 let pass = 0
 let fail = 0
@@ -251,6 +252,7 @@ await stubRead('**/bag/list*', {
  * 已领（claimed 且有附件）、纯通知（rewards 为空 ⇒ 状态写「纯通知」）。
  */
 const DAY = 86_400_000
+const HOUR = 3_600_000
 const MAIL_ITEMS = [
   { mailId: 'probe_mail_0', kind: 'SYSTEM', title: '开服庆：全体统帅补给', text: '感谢你在这个王国扎根，这份补给不必客气。',
     rewards: [{ type: 'RESOURCE', id: 'wood', count: 100000, name: '木材' }, { type: 'ITEM', id: 'stamina_potion', count: 5, name: '体力药剂' }],
@@ -287,6 +289,42 @@ await stubRead('**/mail/list*', {
   unreadCount: MAIL_ITEMS.filter((m) => !m.read).length,
   claimedCount: MAIL_ITEMS.filter((m) => m.claimed || m.rewards.length === 0).length,
 })
+/**
+ * 战报夹具（两块页签一起，`AppRoot.refresh('reports')` 同一次刷新发两个读口）。
+ * 字段照 `contract/proto/battle.schema.json` 的 `BattleReportBrief.required` 与
+ * `world.schema.json` 的 `ScoutReportView.required` 给全，`serverNow` 也在 data 里 —— 契约写了必填。
+ * 四种 `BattleType` 都来一条：`TYPE_LABEL` 缺项时会直接把枚举名印给玩家（`?? r.battleType`）。
+ * 敌情那三条各覆盖一条分支：有效 / `expired=true`（不藏起来）/ `metrics` 为空（「没有观测项」）。
+ */
+const BATTLE_REPORTS = [
+  { battleType: 'PVE', opponentName: '野匪·断粮队', won: true, totalRounds: 6, attackerLoss: 120, defenderLoss: 980 },
+  { battleType: 'PVP_SOLO', opponentName: '铁砧营·玛尔达', won: false, totalRounds: 11, attackerLoss: 2450, defenderLoss: 1870 },
+  { battleType: 'PVP_RALLY', opponentName: '灰隼同盟主力', won: true, totalRounds: 18, attackerLoss: 9600, defenderLoss: 15200 },
+  { battleType: 'SIEGE', opponentName: '西关守军', won: false, totalRounds: 24, attackerLoss: 12800, defenderLoss: 4300 },
+  { battleType: 'PVE', opponentName: '屯粮仓护卫', won: true, totalRounds: 4, attackerLoss: 0, defenderLoss: 640 },
+  { battleType: 'PVP_SOLO', opponentName: '流浪骑士雷恩', won: true, totalRounds: 9, attackerLoss: 780, defenderLoss: 1240 },
+  // 再多三条，是为了让"画不下"这一支真的走到：6 场时这个视口装得下，截断文案与导航条余量都量不到。
+  { battleType: 'PVE', opponentName: '山道劫掠者', won: true, totalRounds: 3, attackerLoss: 40, defenderLoss: 420 },
+  { battleType: 'SIEGE', opponentName: '东关守军', won: true, totalRounds: 27, attackerLoss: 9800, defenderLoss: 6100 },
+  { battleType: 'PVP_RALLY', opponentName: '铁砧营集结', won: false, totalRounds: 15, attackerLoss: 5300, defenderLoss: 2900 },
+].map((r, i) => ({
+  reportId: `probe_report_${i}`, winner: r.won ? 'ATTACKER' : 'DEFENDER',
+  opponentId: `probe_opp_${i}`, createdAt: Date.now() - (i + 1) * 1_800_000,
+  expiresAt: Date.now() + (6 - i) * HOUR, ...r,
+}))
+await stubRead('**/battle/reports*', { reports: BATTLE_REPORTS, serverNow: Date.now() })
+const SCOUT_REPORTS = [
+  { target: { x: 118, y: 64 }, targetLevel: 21, expired: false,
+    metrics: [{ name: 'DEFENDER_TROOPS', value: 12400 }, { name: 'WALL_LEVEL', value: 9 }, { name: 'GARRISON', value: 3400 }] },
+  { target: { x: 96, y: 141 }, targetLevel: 7, expired: true,
+    metrics: [{ name: 'DEFENDER_TROOPS', value: 860 }] },
+  { target: { x: 203, y: 88 }, targetLevel: 30, expired: false, metrics: [] },
+].map((s, i) => ({
+  reportId: `probe_scout_${i}`, targetId: `probe_target_${i}`,
+  createdAt: Date.now() - (i + 1) * 900_000, expiresAt: Date.now() + (i + 2) * HOUR,
+  remainingMs: (i + 2) * HOUR, errorFixed: 800, seed: 1000 + i, serverNow: Date.now(), ...s,
+}))
+await stubRead('**/world/reports*', { reports: SCOUT_REPORTS, serverNow: Date.now() })
 
 const offenders = []
 const stretched = []

@@ -23,7 +23,7 @@ import type { PlaybackOptions } from '../game/battle/BattlePlayback'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import type { ShareChannelChoice } from '../game/session/Choices'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -46,7 +46,12 @@ const PADDING = 16
 /** 左边两行文字能给到的宽度：右边还要留给「有效 / 胜 / 败」那一格 */
 const TEXT_WIDTH = PANEL_WIDTH - 2 * PADDING - 150
 const HEADER_HEIGHT = 64
+/** 池的预热行数；真正画几行由 `render` 按可视高算（与 MailPanelView #394 同一口径）。 */
 const MAX_VISIBLE_ROWS = 8
+/** 底部导航条占掉的高度，与 QuestPanelView / ArmyPanelView / MailPanelView 同一个口径。 */
+const BOTTOM_RESERVED = 68
+/** 右列（胜 / 败 / 有效 / 过期）的槽宽：`TEXT_WIDTH` 从行宽里扣掉的那一段，再留 12 的缝。 */
+const OUTCOME_SLOT = PANEL_WIDTH - 2 * PADDING - TEXT_WIDTH - 12
 
 @ccclass('BattleReportPanelView')
 export class BattleReportPanelView extends Component {
@@ -289,12 +294,11 @@ export class BattleReportPanelView extends Component {
     this.currentReportId = null
   }
 
-  /** 左对齐标签：锚点挪到左中、给足宽度并允许 SHRINK，长文案才不会溢出到行外或被裁 */
-  private sizeLeftLabel(label: Label, width: number, height: number): void {
+  /** 左对齐标签：锚点挪到左中，宽度交给 `UiFont.capWidth`（盒高它钉 27，正好是"一行不被压小"的下限） */
+  private sizeLeftLabel(label: Label, width: number): void {
     const transform = label.node.getComponent(UITransform)
     transform?.setAnchorPoint(0, 0.5)
-    transform?.setContentSize(new Size(width, height))
-    label.overflow = Label.Overflow.SHRINK
+    capWidth(label, width)
   }
 
   private createRow(): Node {
@@ -306,12 +310,16 @@ export class BattleReportPanelView extends Component {
     // 于是长文案（敌情那一行的观测值 + 误差 + 剩余时间）会从盒子左边溢出、左半边被裁掉
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 18)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
-    this.sizeLeftLabel(title, TEXT_WIDTH, 26)
+    this.sizeLeftLabel(title, TEXT_WIDTH)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -12, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
-    this.sizeLeftLabel(detail, TEXT_WIDTH, 20)
-    this.addLabel(node, 'Outcome', PANEL_WIDTH / 2 - PADDING, 0, COLOR_TEXT, 18).horizontalAlign
-      = Label.HorizontalAlign.RIGHT
+    this.sizeLeftLabel(detail, TEXT_WIDTH)
+    // 右列同样要限宽：它只有"胜 / 败 / 有效 / 过期"四个短值，但值是服务端装配的，
+    // 不限宽就等于赌它一直短（锚点翻到右边，盒子往左长，才不会顶出卡片）
+    const outcome = this.addLabel(node, 'Outcome', PANEL_WIDTH / 2 - PADDING, 0, COLOR_TEXT, 18)
+    outcome.horizontalAlign = Label.HorizontalAlign.RIGHT
+    outcome.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    capWidth(outcome, OUTCOME_SLOT)
     return node
   }
 
@@ -351,9 +359,6 @@ export class BattleReportPanelView extends Component {
     if (source === null) {
       return
     }
-    if (this.headerLabel !== null) {
-      this.headerLabel.string = source?.headerText ?? ''
-    }
     if (this.emptyLabel !== null) {
       this.emptyLabel.string = source?.emptyText ?? ''
       // 有行的时候必须藏起来：敌情页第一版就是两行情报下面还挂着「还没有敌情」，
@@ -364,7 +369,12 @@ export class BattleReportPanelView extends Component {
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
     const topY = height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
-    const visible = source.rows.slice(0, MAX_VISIBLE_ROWS)
+    // 行数按实测可视高度算，不写死（与 MailPanelView #394 同一处修法）：写死 8 行时第 6~8 行
+    // 连同"另有 N 场未显示"一起落到导航条底下 —— 量具现在看得见这一条了（#390 升成判据）。
+    const navTop = -height / 2 + BOTTOM_RESERVED
+    const maxRows = Math.max(1,
+      Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
+    const visible = source.rows.slice(0, maxRows)
     visible.forEach((row: ReportRow | ScoutRow, index: number) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
@@ -375,9 +385,15 @@ export class BattleReportPanelView extends Component {
         this.renderRow(node, row as ReportRow)
       }
     })
+    // 「另有几场没画下」挂在表头那一行（军队/任务/邮件同一口径）：单独占一行要么吃掉一排的位置，
+    // 要么落到导航条底下 —— 两种都是"玩家看不见这条提示"。
+    const truncated = truncatedNotice(scoutMode ? '份' : '场', source.rows.length - visible.length)
+    if (this.headerLabel !== null) {
+      const base = source.headerText
+      this.headerLabel.string = truncated === '' ? base : `${base} · ${truncated}`
+    }
     if (this.overflowLabel !== null) {
-      const hidden = source.rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice(scoutMode ? '份' : '场', hidden)
+      this.overflowLabel.string = ''
     }
   }
 
