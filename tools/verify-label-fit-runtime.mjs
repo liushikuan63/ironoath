@@ -4,7 +4,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
- *   BACKEND_ORIGIN=http://localhost:8199 LABELFIT_PORT=8191 node tools/verify-label-fit-runtime.mjs
+ *   LABELFIT_BACKEND=http://localhost:8199 LABELFIT_PORT=8191 node tools/verify-label-fit-runtime.mjs
  *   修完一批后用 `--print-baseline` 重生成 BASELINE，别手抄。
  *
  * <p><b>为什么要这么一份量具</b>：台账 #366 页内量出 `overflow = SHRINK` 的**盒高就是字形的缩放
@@ -28,7 +28,12 @@ import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
 
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 8080 等于"打到另一台机器上读数"（同一条教训见 march 探针第 25 行）
+const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
+  console.error('[label-fit] 缺 LABELFIT_BACKEND：不给就退回 http://localhost:8080，'
+    + '那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.LABELFIT_PORT ?? 8191)
 const OUT = path.resolve(process.cwd(), 'client/build/label-fit-verify')
 mkdirSync(OUT, { recursive: true })
@@ -107,6 +112,7 @@ for (const key of KEYS) {
   const url = new URL(`${preview.origin}/`)
   url.searchParams.set('panel', key)
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
+  preview.assertRewritten()
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
   let read = null

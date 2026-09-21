@@ -22,7 +22,14 @@ import { startPreviewServer } from 'file:///D:/Java/GitHub/tieshi/tools/lib/prev
 const OUT = process.env.MARCH_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/march-verify')
 mkdirSync(OUT, { recursive: true })
 const PORT = Number(process.env.MARCH_PROBE_PORT ?? 8193)
-const BACKEND = process.env.MARCH_BACKEND ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 8080 等于"打到另一台机器上读数"。
+// 2026-09-21 实测：把变量名写成 `BACKEND_ORIGIN` 之后，13 条集结判据全红，
+// 而客户端与夹具都没有错 —— 那份 8080 的旧后端根本没有 `/rally/policy`。dev 约定 8199。
+const BACKEND = process.env.MARCH_BACKEND ?? (() => {
+  console.error('[march] 缺 MARCH_BACKEND：不给就退回 http://localhost:8080，'
+    + '那可能不是本轮要打的后端，所有读数都是假的（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 
 let pass = 0
 let fail = 0
@@ -103,6 +110,9 @@ await context.route('**/army/list*', async (route) => {
 const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'targets')
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
+// 自检：产物里那两处写死的 8080 有没有被改写成本轮要打的后端。漏了这一句，
+// 传错变量名时所有读数都会打到另一棵旧后端上，跑出一片看着像产品缺陷的假红（2026-09-21 实测 13 条）。
+preview.assertRewritten()
 await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
 await page.waitForTimeout(1800)
 
@@ -577,7 +587,17 @@ await page.screenshot({ path: path.join(OUT, 'compose-rally-squad.png') })
 console.log(`  截图：${path.join(OUT, 'compose-rally-squad.png')}`)
 
 checkTrue('按得到「联盟」那颗', await tapCompose('rallyBand/层级-ALLIANCE'))
-await page.waitForTimeout(400)
+// 等的是**状态**不是时间：那两个数要等 `/rally/policy` 落地后由恢复分支补上，
+// 而同一批里的 `/social/permissions` 一旦在慢后端上重试（2026-09-21 实测 8080 那棵返 500 + 重试两轮），
+// 政策就晚到一秒以上 —— 原来固定等 400ms 直接把 13 条判据全打成红（客户端本身没错）。
+// 上限 12 秒：真不到就是缺陷，下面那条判据照样会红，这里不静默放过。
+for (let i = 0; i < 40; i += 1) {
+  await page.waitForTimeout(300)
+  const seen = await page.evaluate(BAND)
+  if (seen?.numbersShown?.[0] === true) {
+    break
+  }
+}
 const allianceBand = await page.evaluate(BAND)
 check('切到联盟层后两个数都画出来了', JSON.stringify(allianceBand?.numbersShown),
   JSON.stringify([true, true]))
