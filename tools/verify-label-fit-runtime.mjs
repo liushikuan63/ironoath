@@ -44,6 +44,21 @@ const KEYS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest
   'mail', 'social', 'power', 'shop', 'avatarFrames', 'targets', 'world', 'settings']
 
 /**
+ * 页签相位：这些面板"点进去才画行"，#395/#396 的桩已挂上，但默认页签量不到那几屏。
+ * `node` 是页签节点名（战报是 Label 本体、社交是 `Tab_xxx` 壳），`label` 只用于日志与截图文件名。
+ */
+const TAB_PHASES = {
+  reports: [{ node: 'TabScout', label: 'scout' }],
+  social: [
+    { node: 'Tab_alliance', label: 'alliance' },
+    { node: 'Tab_help', label: 'help' },
+    { node: 'Tab_events', label: 'events' },
+    { node: 'Tab_chat', label: 'chat' },
+    { node: 'Tab_rally', label: 'rally' },
+  ],
+}
+
+/**
  * 已知仍在被压小的行（`面板/文本前缀(盒高<下限,字号)`）。
  *
  * <p>**现在是空的**：#367 建表时 32 条，#368 还掉内城 2 + 设置 10，#369 还掉关卡 14，
@@ -69,7 +84,14 @@ const LABEL_FLOORS = { mail: 2 * 4, reports: 2 * 3, social: 2 * 4 }
  * 社交那一格尤其需要 —— 它空态本来就有 11 颗 Label（页签条 + 「创建小队」那一行），
  * 光看颗数会把"桩掉线"读成"覆盖还在"。
  */
-const STUB_MARKS = { mail: '开服庆', reports: '野匪', social: '铁砧前哨' }
+const STUB_MARKS = {
+  mail: '开服庆', reports: '野匪', social: '铁砧前哨',
+  // 页签相位各有一条：桩掉线时那一屏会安静地退回空态，而"相位走到位"只证明点开了、不证明有数据。
+  // 敌情那条故意取**显示名**「总兵力」而不是坐标 —— 它只有指标名命中 `METRIC_LABEL` 才画得出来，
+  // 编错指标名（把裸枚举印给玩家）会被这条抓住。
+  'reports/scout': '总兵力', 'social/help': '兵营 Lv12 升级中',
+  'social/events': '集结邀请：西关', 'social/chat': '河谷渡口', 'social/rally': '28600',
+}
 
 let pass = 0
 let fail = 0
@@ -210,6 +232,31 @@ function hideGuideBoard() {
   return true
 }
 
+/**
+ * 切到一个页签。两个面板的处理器签名都是 `(_event: EventTouch) => ...`（不读那个参数），
+ * 所以按节点名找到壳直接 `emit` 就能换页 —— 换页签是纯客户端动作，不发写请求
+ * （与"覆盖层要点掉就别点"那条相反：#391 那块一点就发引导推进，这一族点了什么都不发）。
+ *
+ * <p>⚠ 这**绕过了命中测试**：量的是"切过去之后那一屏的排版"，不是"页签点不点得动"。
+ * 后者要真鼠标坐标 + 画布缩放换算，是另一格的活，别把这里的绿读成"页签一定能按"。
+ */
+function clickTabNode(name) {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let found = null
+  const find = (n) => {
+    if (found !== null) return
+    if (n.name === name && n.activeInHierarchy) {
+      found = n
+      return
+    }
+    for (const c of n.children) find(c)
+  }
+  for (const panel of game?.children ?? []) find(panel)
+  if (found === null) return false
+  found.emit('touch-start', null)
+  return true
+}
+
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
 console.log(`=== 全客户端"字被盒子压小"清单：产物经 ${preview.origin}，后端 ${BACKEND} ===`)
 
@@ -325,10 +372,13 @@ const BATTLE_REPORTS = [
 }))
 await stubRead('**/battle/reports*', { reports: BATTLE_REPORTS, serverNow: Date.now() })
 const SCOUT_REPORTS = [
+  // 指标名必须是服务端真发的那一套（`totalUnits` / `infantry` / …，见 `core/scout/ScoutReport.java`）：
+  // 客户端 `METRIC_LABEL` 查不到就 `?? metric.name` 把裸枚举名印给玩家 —— 上一版编了
+  // `DEFENDER_TROOPS` 这种不存在的名字，于是截图里是一行黑话，而所有判据全绿（台账 #397）。
   { target: { x: 118, y: 64 }, targetLevel: 21, expired: false,
-    metrics: [{ name: 'DEFENDER_TROOPS', value: 12400 }, { name: 'WALL_LEVEL', value: 9 }, { name: 'GARRISON', value: 3400 }] },
+    metrics: [{ name: 'totalUnits', value: 12400 }, { name: 'infantry', value: 9000 }, { name: 'cavalry', value: 3400 }] },
   { target: { x: 96, y: 141 }, targetLevel: 7, expired: true,
-    metrics: [{ name: 'DEFENDER_TROOPS', value: 860 }] },
+    metrics: [{ name: 'power', value: 860 }] },
   { target: { x: 203, y: 88 }, targetLevel: 30, expired: false, metrics: [] },
 ].map((s, i) => ({
   reportId: `probe_scout_${i}`, targetId: `probe_target_${i}`,
@@ -350,6 +400,19 @@ const SQUAD_MEMBERS = [
   { name: '守誓者贝尔', role: 'MEMBER', power: 47600, mainCityLevel: 11 },
   { name: '麦田·奥登', role: 'MEMBER', power: 33100, mainCityLevel: 9 },
 ].map((m, i) => ({ id: `probe_squad_p${i}`, lastActiveAt: Date.now() - i * 600_000, ...m }))
+// 事件三条：带坐标的（被打）、不带坐标的（收到互助）、过期的一条 ——
+// `SocialEventView.required` 那 8 个字段一个不少，`body` / `coord` / `relatedId` 允许 null 但**必须出现**
+const SOCIAL_EVENTS = [
+  { eventId: 'probe_ev_0', type: 'MEMBER_ATTACKED', title: '石锤·乌尔的城被攻打',
+    body: '守军损失 1 240， attacker 已撤退。', coord: { x: 118, y: 64 }, relatedId: 'probe_battle_0',
+    occurredAt: Date.now() - 600_000, expired: false },
+  { eventId: 'probe_ev_1', type: 'HELP_RECEIVED', title: '你的兵营加速已获 3 次互助',
+    body: null, coord: null, relatedId: 'probe_help_0',
+    occurredAt: Date.now() - 1_800_000, expired: false },
+  { eventId: 'probe_ev_2', type: 'RALLY_INVITED', title: '集结邀请：西关（已过期）',
+    body: '没有在你手上响应，队伍已经出发了。', coord: { x: 203, y: 88 }, relatedId: 'probe_rally_1',
+    occurredAt: Date.now() - 7_200_000, expired: true },
+]
 await stubRead('**/social/summary*', {
   squad: {
     id: 'probe_squad_1', name: '铁砧前哨', leaderId: 'probe_squad_p0', members: SQUAD_MEMBERS,
@@ -359,7 +422,7 @@ await stubRead('**/social/summary*', {
   },
   alliance: null, nationId: null,
   pendingInvites: 0, pendingHelps: 2, helpRemainingToday: 3,
-  events: [], serverNow: Date.now(),
+  events: SOCIAL_EVENTS, serverNow: Date.now(),
 })
 await stubRead('**/social/helpRequests*', {
   requests: [
@@ -391,6 +454,34 @@ await stubRead('**/chat/list*', {
   ],
   hasMore: false, serverNow: Date.now(),
 })
+// 集结页签的数据也走 `refresh('rallies')` → `GET /rally/list`（`GameBootstrap` 把它转手给
+// `social.attachRallies`）。**三条全是 PREPARING**：服务端这个端点只回进行中的集结
+// （`RallyListResp` 文档原话「已出发或已取消的集结留在面板上没有意义」），
+// 给一条 DEPARTED 就会造出一个"产品缺陷"假象 —— 上一版正是这样量出「即将出发」配 DEPARTED，
+// 判真假读到服务端才结案（台账 #397）。三条各取 `remainTextOf` 的一个分支 + 一条满员。
+await stubRead('**/rally/list*', {
+  rallies: [
+    { rallyId: 'probe_rally_0', scope: 'SQUAD', groupId: 'probe_squad_1', initiatorId: 'probe_squad_p0',
+      targetCoord: { x: 118, y: 64 }, targetType: 'MONSTER', maxMembers: 5, joinedCount: 3,
+      totalTroops: 12400, prepareUntil: Date.now() + 20 * 60_000, departAt: Date.now() + 25 * 60_000,
+      status: 'PREPARING', members: ['probe_squad_p0', 'probe_squad_p1', 'probe_squad_p2'],
+      heroSlots: [], serverNow: Date.now() },
+    // 不足一分钟那一支（「准备还剩 40 秒」）
+    { rallyId: 'probe_rally_1', scope: 'SQUAD', groupId: 'probe_squad_1', initiatorId: 'probe_squad_p1',
+      targetCoord: { x: 96, y: 141 }, targetType: 'RESOURCE', maxMembers: 4, joinedCount: 2,
+      totalTroops: 28600, prepareUntil: Date.now() + 40_000, departAt: Date.now() + 45_000,
+      status: 'PREPARING', members: ['probe_squad_p1', 'probe_squad_p2'],
+      heroSlots: [], serverNow: Date.now() },
+    // 已过准备时刻但服务端还没把它 tick 成 DEPARTED（「即将出发」）+ 满员（不给「加入」键）
+    { rallyId: 'probe_rally_2', scope: 'SQUAD', groupId: 'probe_squad_1', initiatorId: 'probe_squad_p2',
+      targetCoord: { x: 203, y: 88 }, targetType: 'PLAYER_CITY', maxMembers: 5, joinedCount: 5,
+      totalTroops: 41200, prepareUntil: Date.now() - 60_000, departAt: Date.now() - 55_000,
+      status: 'PREPARING', members: ['probe_squad_p1', 'probe_squad_p2', 'probe_squad_p3',
+        'probe_squad_p4', 'probe_squad_p5'],
+      heroSlots: [], serverNow: Date.now() },
+  ],
+  serverNow: Date.now(),
+})
 
 const offenders = []
 const stretched = []
@@ -404,16 +495,37 @@ const labelsBy = new Map()
 const textsBy = new Map()
 let totalLabels = 0
 let totalShrink = 0
+/** 页签相位：走到位了几个 / 一共声明了几个（漏一个就是"那一屏从没量过"，见末尾判据）。 */
+let phasesReached = 0
+let phasesTotal = 0
 
-for (const key of KEYS) {
-  const page = await context.newPage()
-  const url = new URL(`${preview.origin}/`)
-  url.searchParams.set('panel', key)
-  await page.goto(url.toString(), { waitUntil: 'networkidle' })
-  await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
-    null, { timeout: 60_000 })
-  // 新手引导那块板会盖住被引导的那一屏（内城顶部资源条就是被它挡了三轮，#388 的 6 条候选一条都没目视过）。
-  await page.evaluate(hideGuideBoard)
+/** 把一趟读数并进另一趟：颗数取最大值、清单取并集（同一份产物连跑读数会跳，见 #378 那条教训）。 */
+function mergeRead(target, src) {
+  target.seen = Math.max(target.seen, src.seen)
+  target.shrink = Math.max(target.shrink, src.shrink)
+  for (const list of ['out', 'stretched']) {
+    const have = new Set(target[list].map((x) => x.text + '@' + x.h))
+    for (const x of src[list] ?? []) {
+      if (!have.has(x.text + '@' + x.h)) target[list].push(x)
+    }
+  }
+  target.crowd = target.crowd ?? []
+  target.underNav = target.underNav ?? []
+  target.texts = [...new Set([...(target.texts ?? []), ...(src.texts ?? [])])]
+  for (const x of src.crowd ?? []) {
+    if (!target.crowd.includes(x)) target.crowd.push(x)
+  }
+  for (const x of src.underNav ?? []) {
+    if (!target.underNav.includes(x)) target.underNav.push(x)
+  }
+  if (typeof src.navTop === 'number') target.navTop = src.navTop
+}
+
+/**
+ * 走完"计数稳定 + 再三轮取并集"这一趟，返回这一相的读数（没画出来返回 null）。
+ * 提成函数是因为**页签相位要用同一套收敛**：切过去同样要等渲染，读数同样会跳。
+ */
+async function walkPhase(page, key) {
   let read = null
   // 不能"见到 >0 就停"：空态本来就有几颗 Label，那样永远读不到"有数据之后才画出来的行"。
   // 改成**计数稳定**才收（连续两次一样），最多 24 次 ×250ms。
@@ -424,6 +536,7 @@ for (const key of KEYS) {
     if (read !== null && read.seen > 0 && read.seen === prevSeen) break
     prevSeen = read?.seen ?? -1
   }
+  if (read === null) return null
   // 计数稳定 ≠ 覆盖完整：实测同一份产物连跑两遍，SHRINK 总数会 91 / 71 跳（列表虚拟化 + 渲染时机），
   // 那意味着"基线"不可复现、门会随机红。所以再补三轮，**取并集与最大值**让覆盖单调收敛。
   for (let round = 0; round < 3; round += 1) {
@@ -431,27 +544,21 @@ for (const key of KEYS) {
     // 板是异步挂上来的：每轮都藏一次，最后一轮之后才截图，截图里才可能没有它
     await page.evaluate(hideGuideBoard)
     const again = await page.evaluate(WALK.replace('KEY_PLACEHOLDER', JSON.stringify(key)))
-    if (again === null || read === null) continue
-    read.seen = Math.max(read.seen, again.seen)
-    read.shrink = Math.max(read.shrink, again.shrink)
-    for (const list of ['out', 'stretched']) {
-      const have = new Set(read[list].map((x) => x.text + '@' + x.h))
-      for (const x of again[list] ?? []) {
-        if (!have.has(x.text + '@' + x.h)) read[list].push(x)
-      }
-    }
-    read.crowd = read.crowd ?? []
-    read.underNav = read.underNav ?? []
-    read.texts = [...new Set([...(read.texts ?? []), ...(again.texts ?? [])])]
-    const haveCrowd = new Set(read.crowd)
-    for (const x of again.crowd ?? []) {
-      if (!haveCrowd.has(x)) read.crowd.push(x)
-    }
-    const haveNav = new Set(read.underNav)
-    for (const x of again.underNav ?? []) {
-      if (!haveNav.has(x)) read.underNav.push(x)
-    }
+    if (again !== null) mergeRead(read, again)
   }
+  return read
+}
+
+for (const key of KEYS) {
+  const page = await context.newPage()
+  const url = new URL(`${preview.origin}/`)
+  url.searchParams.set('panel', key)
+  await page.goto(url.toString(), { waitUntil: 'networkidle' })
+  await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
+    null, { timeout: 60_000 })
+  // 新手引导那块板会盖住被引导的那一屏（内城顶部资源条就是被它挡了三轮，#388 的 6 条候选一条都没目视过）。
+  await page.evaluate(hideGuideBoard)
+  const read = await walkPhase(page, key)
   if (read === null) {
     console.log(`  SKIP  ${key}：这一格没画出来（深链没生效或面板名不是节点名）`)
   } else {
@@ -464,13 +571,44 @@ for (const key of KEYS) {
     for (const x of read.stretched ?? []) stretched.push(`${key}/${x.text}(${x.h}>${x.floor}+8,字${x.want},估宽${x.est}/盒${x.boxW})`)
     for (const x of read.crowd ?? []) crowded.push(`${key}/${x}`)
     for (const x of read.underNav ?? []) underNavAll.push(`${key}/${x}`)
-    if (typeof read.navTop === 'number') navFound += 1
     console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗，`
       + `疑似被放大 ${(read.stretched ?? []).length} 颗，字形相碰 ${(read.crowd ?? []).length} 对，`
       + `压进导航条 ${(read.underNav ?? []).length} 颗`)
   }
   // 每格落一张图：这一族改的是"盒高 + 对齐"，判据全绿也可能把字挪位，必须目视
   await page.screenshot({ path: path.join(OUT, `${key}.png`) })
+  // 页签相位：切过去再量一趟，读数**并进本格**（同一块面板的另一相），同时单独打一行便于比对涨幅
+  for (const phase of TAB_PHASES[key] ?? []) {
+    phasesTotal += 1
+    const tag = `${key}/${phase.label}`
+    const shot = path.join(OUT, `${key}-${phase.label}.png`)
+    if (read === null) {
+      console.log(`  SKIP  ${tag}：面板本身没画出来，页签无从谈起`)
+      continue
+    }
+    if (!await page.evaluate(clickTabNode, phase.node)) {
+      console.log(`  SKIP  ${tag}：没找到页签节点「${phase.node}」（改名了？）`)
+      continue
+    }
+    const pr = await walkPhase(page, key)
+    if (pr === null) {
+      console.log(`  SKIP  ${tag}：切过去之后读不到那一屏`)
+      continue
+    }
+    phasesReached += 1
+    labelsBy.set(tag, pr.seen)
+    textsBy.set(tag, pr.texts ?? [])
+    console.log(`  READ  ${tag}: Label ${pr.seen} 颗，SHRINK ${pr.shrink} 颗，被压小 ${pr.out.length} 颗，`
+      + `疑似被放大 ${(pr.stretched ?? []).length} 颗，字形相碰 ${(pr.crowd ?? []).length} 对，`
+      + `压进导航条 ${(pr.underNav ?? []).length} 颗`)
+    for (const x of pr.out) offenders.push(`${tag}/${x.text}(${x.h}<${x.floor},字${x.want})`)
+    for (const x of pr.stretched ?? []) stretched.push(`${tag}/${x.text}(${x.h}>${x.floor}+8,字${x.want},估宽${x.est}/盒${x.boxW})`)
+    for (const x of pr.crowd ?? []) crowded.push(`${tag}/${x}`)
+    for (const x of pr.underNav ?? []) underNavAll.push(`${tag}/${x}`)
+    mergeRead(read, pr)
+    await page.screenshot({ path: shot })
+  }
+  if (typeof read?.navTop === 'number') navFound += 1
   await page.close()
 }
 console.log(`  截图目录：${OUT}`)
@@ -593,6 +731,9 @@ checkTrue('基线不是在读空集合（有基线行就必须量到 SHRINK 行�
   totalShrink > 0 || BASELINE.size === 0)
 // "没有字压进导航条"只有在**真的量到导航条**时才算结论，否则这一支是空跑的。
 check('每一格都读到导航条上沿（读不到就说明"压进导航条"这一支在空跑）', navFound, reached.length)
+// 页签相位与"漏格"同一条理由：声明了 6 个相位却只走到 4 个，剩下那两屏从没量过，
+// 而输出里只有 SKIP 一行 —— 不判红就会一路绿到下一次有人改名。
+check('声明的页签相位全部走到位（改名或没画出来会红）', phasesReached, phasesTotal)
 // 这一条是 #389 那一处（第 8 行被导航条盖住，量具当时全绿）的通用版。
 // 阈值就取 0：实测最紧的一屏（战力）字底离导航上沿还有 18px，不会因抖动误红。
 check('没有一屏把字画进底部导航条（写死行数那一族的通用兜底）',
@@ -601,7 +742,7 @@ const measured = new Set(offenders)
 check('被压小的行**恰好**等于基线（新增会红；修好没删基线行也会红）',
   JSON.stringify([...measured].sort()) === JSON.stringify([...BASELINE].sort()), true)
 
-console.log(`\n=== 通过 ${pass} 项，失败 ${fail} 项；SHRINK 行共 ${totalShrink} 颗 ===`)
+console.log(`\n=== 通过 ${pass} 项，失败 ${fail} 项；SHRINK 行共 ${totalShrink} 颗（默认相那一趟的和；页签相位看各自 READ 行）===`)
 await browser.close()
 await preview.close()
 process.exit(fail === 0 ? 0 : 1)
