@@ -65,6 +65,9 @@ const check = (msg, actual, expected) => {
 }
 const checkTrue = (msg, actual) => check(msg, actual, true)
 
+/** 植入用：把阈值抬高 N 像素，验证"压进导航条"这一支真的会红（0 = 正常阈值）。 */
+const PLANT = Number(process.env.LABELFIT_PLANT ?? 0)
+
 const WALK = `(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const panel = game?.children.find((c) => c.name === KEY_PLACEHOLDER)
@@ -72,14 +75,38 @@ const WALK = `(() => {
   const out = []
   const stretched = []
   const geo = []
+  const underNav = []
   let shrink = 0
   let seen = 0
+  // 底部导航条的真实上沿（不是抄常量）：#389 那一处"第 8 行被导航条盖住"是看截图才发现的，
+  // 因为量具没有这一条，而 BOTTOM_RESERVED 在各面板各写一遍。
+  let navTop = null
+  const findNav = (n) => {
+    if (navTop !== null) return
+    if (n.name === 'NavBar' && n.activeInHierarchy) {
+      const bb = n.getComponent('cc.UITransform').getBoundingBoxToWorld()
+      navTop = bb.y + bb.height
+      return
+    }
+    for (const c of n.children) findNav(c)
+  }
+  findNav(window.cc.director.getScene())
   const walk = (n) => {
     if (n.activeInHierarchy) {
       const lb = n.getComponent('cc.Label')
       const str = lb ? (lb.string ?? '') : ''
       if (str.length > 0) {
         seen += 1
+        if (navTop !== null) {
+          // 字的下沿按"盒中心 - 半个字号"估（盒子在 SHRINK 下是 27，比字高，拿盒子量会假红）
+          const utt = n.getComponent('cc.UITransform')
+          const bb = utt.getBoundingBoxToWorld()
+          const scale = utt.height > 0 ? bb.height / utt.height : 1
+          const glyphBottom = bb.y + bb.height / 2 - (lb.fontSize / 2) * scale
+          if (glyphBottom < navTop + ${PLANT}) {
+            underNav.push(str.slice(0, 8) + '(字底' + Math.round(glyphBottom) + '<导航上沿' + Math.round(navTop) + ')')
+          }
+        }
         // 字形横向范围：盒子按锚点摆，字按对齐方式在盒子里摆。宽度按字符类别加权：
         // 汉字一个全角、ASCII（数字/斜杠/空格）约半角 —— 一律按全角算会把"体力 100/10000"
         // 估成两倍宽，把并排的资源项报成相碰（第一版就是这么错的）。
@@ -132,7 +159,7 @@ const WALK = `(() => {
       crowd.push(a.text + '×' + b.text + '(Δy' + Math.round(dy) + '<带' + Math.round(band) + ')')
     }
   }
-  return { seen, shrink, out, stretched, crowd }
+  return { seen, shrink, out, stretched, crowd, underNav, navTop }
 })()`
 
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
@@ -175,6 +202,8 @@ await context.route('**/bag/list*', async (route) => {
 const offenders = []
 const stretched = []
 const crowded = []
+const underNavAll = []
+let navFound = 0
 const reached = []
 let totalLabels = 0
 let totalShrink = 0
@@ -211,9 +240,14 @@ for (const key of KEYS) {
       }
     }
     read.crowd = read.crowd ?? []
+    read.underNav = read.underNav ?? []
     const haveCrowd = new Set(read.crowd)
     for (const x of again.crowd ?? []) {
       if (!haveCrowd.has(x)) read.crowd.push(x)
+    }
+    const haveNav = new Set(read.underNav)
+    for (const x of again.underNav ?? []) {
+      if (!haveNav.has(x)) read.underNav.push(x)
     }
   }
   if (read === null) {
@@ -225,8 +259,11 @@ for (const key of KEYS) {
     for (const x of read.out) offenders.push(`${key}/${x.text}(${x.h}<${x.floor},字${x.want})`)
     for (const x of read.stretched ?? []) stretched.push(`${key}/${x.text}(${x.h}>${x.floor}+8,字${x.want},估宽${x.est}/盒${x.boxW})`)
     for (const x of read.crowd ?? []) crowded.push(`${key}/${x}`)
+    for (const x of read.underNav ?? []) underNavAll.push(`${key}/${x}`)
+    if (typeof read.navTop === 'number') navFound += 1
     console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗，`
-      + `疑似被放大 ${(read.stretched ?? []).length} 颗，字形相碰 ${(read.crowd ?? []).length} 对`)
+      + `疑似被放大 ${(read.stretched ?? []).length} 颗，字形相碰 ${(read.crowd ?? []).length} 对，`
+      + `压进导航条 ${(read.underNav ?? []).length} 颗`)
   }
   // 每格落一张图：这一族改的是"盒高 + 对齐"，判据全绿也可能把字挪位，必须目视
   await page.screenshot({ path: path.join(OUT, `${key}.png`) })
@@ -313,6 +350,10 @@ if (crowded.length > 0) {
   console.log('\n=== 字形相碰的对（只报不判红：估宽是字宽上限的近似，先要人确认哪几对真看得见） ===')
   for (const line of [...new Set(crowded)]) console.log('  ' + line)
 }
+if (underNavAll.length > 0) {
+  console.log('\n=== 字压进底部导航条的（这一条判红；列出来是为了定位是哪一屏） ===')
+  for (const line of [...new Set(underNavAll)]) console.log('  ' + line)
+}
 if (process.argv.includes('--print-baseline')) {
   console.log('\n// --- BASELINE 片段（贴进源文件替换 BASELINE 的构造）---')
   for (const x of [...new Set(offenders)].sort()) console.log(`  ${JSON.stringify(x)},`)
@@ -329,6 +370,12 @@ checkTrue('这些格里确实读到过 Label（读到 0 颗说明遍历写错了
 // 这条要能失败：基线里有点名行、却一颗 SHRINK 都没量到 ⇒ 遍历或枚举值变了，读的是空集合。
 checkTrue('基线不是在读空集合（有基线行就必须量到 SHRINK 行）',
   totalShrink > 0 || BASELINE.size === 0)
+// "没有字压进导航条"只有在**真的量到导航条**时才算结论，否则这一支是空跑的。
+check('每一格都读到导航条上沿（读不到就说明"压进导航条"这一支在空跑）', navFound, reached.length)
+// 这一条是 #389 那一处（第 8 行被导航条盖住，量具当时全绿）的通用版。
+// 阈值就取 0：实测最紧的一屏（战力）字底离导航上沿还有 18px，不会因抖动误红。
+check('没有一屏把字画进底部导航条（写死行数那一族的通用兜底）',
+  new Set(underNavAll).size, 0)
 const measured = new Set(offenders)
 check('被压小的行**恰好**等于基线（新增会红；修好没删基线行也会红）',
   JSON.stringify([...measured].sort()) === JSON.stringify([...BASELINE].sort()), true)
