@@ -18,7 +18,7 @@ import { canBuy, SHOP_TABS, shopRowStateText } from '../game/shop/ShopPanel'
 import type { ShopRow } from '../game/shop/ShopPanel'
 import type { ShopView } from '../game/session/AppRoot'
 import type { ShopCurrency } from '../net/generated/ShopProtocol'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 
 const { ccclass } = _decorator
@@ -110,8 +110,7 @@ export class ShopPanelView extends Component {
     this.balanceLabel = this.addLabel('Balance', 0, top - 50, COLOR_TEXT, 17)
     // 这一行两用：`open=false` 时的那句话，或上一次兑换的结果（临时提示）
     this.noticeLabel = this.addLabel('Notice', 0, top - 76, COLOR_TEXT_DIM, 15)
-    this.noticeLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
-    this.noticeLabel.overflow = Label.Overflow.SHRINK
+    capWidth(this.noticeLabel, PANEL_WIDTH - 2 * PADDING)
 
     const startX = -(SHOP_TABS.length - 1) * TAB_WIDTH / 2
     SHOP_TABS.forEach((tab, index) => {
@@ -162,19 +161,15 @@ export class ShopPanelView extends Component {
     const name = this.addLabel('Name', -PANEL_WIDTH / 2 + PADDING + 12, 15, COLOR_TEXT, 18, node)
     name.horizontalAlign = Label.HorizontalAlign.LEFT
     name.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    name.node.getComponent(UITransform)?.setContentSize(new Size(320, 24))
-    name.overflow = Label.Overflow.SHRINK
+    capWidth(name, 320)
     const price = this.addLabel('Price', -PANEL_WIDTH / 2 + PADDING + 12, -9, COLOR_COPPER_GOLD, 15, node)
     price.horizontalAlign = Label.HorizontalAlign.LEFT
     price.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    price.node.getComponent(UITransform)?.setContentSize(new Size(320, 22))
-    price.overflow = Label.Overflow.SHRINK
+    capWidth(price, 320)
     const limit = this.addLabel('Limit', 0, 6, COLOR_TEXT_DIM, 14, node)
-    limit.node.getComponent(UITransform)?.setContentSize(new Size(230, 20))
-    limit.overflow = Label.Overflow.SHRINK
+    capWidth(limit, 230)
     const state = this.addLabel('State', 0, -14, COLOR_TEXT_DIM, 14, node)
-    state.node.getComponent(UITransform)?.setContentSize(new Size(230, 20))
-    state.overflow = Label.Overflow.SHRINK
+    capWidth(state, 230)
 
     const button = new Node('BuyButton')
     button.layer = node.layer
