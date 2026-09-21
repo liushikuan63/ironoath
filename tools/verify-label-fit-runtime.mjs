@@ -48,7 +48,49 @@ const KEYS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest
  * #370 还掉战令档位行 4 处与外观页 3 处 ⇒ 全客户端清零。这张表从此是**只增不许有**的闸门：
  * 谁再拿 SHRINK + 猜的盒高压一行字，这里就会多出一条，量具当场红。
  */
-const BASELINE = new Set([])
+const BASELINE = new Set([
+  "army/先手动训一批，「自动(20<30,字14)",
+  "army/可用 0 · 需要兵(22<30,字14)",
+  "army/训练消耗 铁矿 30(20<30,字13)",
+  "army/训练消耗 铁矿 34(20<30,字13)",
+  "army/训练消耗 铁矿 38(20<30,字13)",
+  "army/训练消耗 铁矿 42(20<30,字13)",
+  "army/训练消耗 铁矿 47(20<30,字13)",
+  "army/重步兵 T1(26<32,字18)",
+  "army/重步兵 T2(26<32,字18)",
+  "army/重步兵 T3(26<32,字18)",
+  "army/重步兵 T4(26<32,字18)",
+  "army/重步兵 T5(26<32,字18)",
+  "bag/    合计(24<31,字17)",
+  "bag/    科技加成(24<31,字17)",
+  "bag/    联盟加成(24<31,字17)",
+  "bag/    道具 buf(24<31,字17)",
+  "bag/    领地基础产出(24<31,字17)",
+  "bag/STAMINA(24<31,字17)",
+  "bag/STONE(24<31,字17)",
+  "bag/每小时 +10 · (20<30,字13)",
+  "bag/每小时 +200 ·(20<30,字13)",
+  "city/Lv1(14<30,字10)",
+  "city/主城(12<30,字9)",
+  "shop/10 金币(22<30,字15)",
+  "shop/300 金币(22<30,字15)",
+  "shop/40 金币(22<30,字15)",
+  "shop/45 金币(22<30,字15)",
+  "shop/50 金币(22<30,字15)",
+  "shop/一小时建造令(24<32,字18)",
+  "shop/一小时研究令(24<32,字18)",
+  "shop/一小时训练令(24<32,字18)",
+  "shop/今日限 20，已买 (20<30,字14)",
+  "shop/今日限 50，已买 (20<30,字14)",
+  "shop/今日限 5，已买 0(20<30,字14)",
+  "shop/八小时建造令(24<32,字18)",
+  "shop/可兑换(20<30,字14)",
+  "shop/木材箱(1万)(24<32,字18)",
+  "shop/金币不足：需要 30(20<30,字14)",
+  "social/未加入小队(24<31,字17)",
+  "social/还没有人建立小队(24<31,字17)",
+  "social/需要主城 5 级，当(20<30,字13)",
+])
 
 let pass = 0
 let fail = 0
@@ -116,6 +158,34 @@ await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
 }, `labelfit-${Date.now()}`)
 
+const cors = (request) => ({
+  'access-control-allow-origin': request.headers()['origin'] ?? '*',
+  'access-control-allow-headers': '*',
+  'access-control-allow-methods': 'GET,POST,OPTIONS',
+})
+const reply = async (route, data) => route.fulfill({
+  status: 200,
+  headers: { ...cors(route.request()), 'content-type': 'application/json' },
+  body: JSON.stringify({ code: 0, msg: '成功', data, serverNow: Date.now() }),
+})
+/**
+ * 背包夹具：新号一进这一格只有 3 颗 Label（空态），量不到"有货之后才画出来的行"。
+ * 字段逐条对着 `contract/proto/bag.schema.json` 的 `BagItem.required` 给
+ * （itemId/name/type/rarity/count/stackMax/sortKey/effectKind）—— 少一个就是"fixture 没镜像真实接线"，
+ * 那条假红比缺覆盖更坑（记忆 [[tooling-windows-sandbox-orphan-lock]]）。
+ */
+const BAG_ITEMS = ['木材箱(1万)', '强化石 ×12', '限时头像框体验卡'].map((name, i) => ({
+  itemId: `probe_item_${i}`, name, type: 'RESOURCE', rarity: i === 2 ? 'SR' : 'N',
+  count: i + 1, stackMax: 99, sortKey: i, effectKind: 'NONE',
+}))
+await context.route('**/bag/list*', async (route) => {
+  if (route.request().method() === 'OPTIONS') {
+    await route.fulfill({ status: 204, headers: cors(route.request()) })
+    return
+  }
+  await reply(route, { items: BAG_ITEMS, capacityUsed: BAG_ITEMS.length, capacityMax: 60 })
+})
+
 const offenders = []
 const stretched = []
 const reached = []
@@ -131,10 +201,14 @@ for (const key of KEYS) {
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
   let read = null
+  // 不能"见到 >0 就停"：空态本来就有几颗 Label，那样永远读不到"有数据之后才画出来的行"。
+  // 改成**计数稳定**才收（连续两次一样），最多 24 次 ×250ms。
+  let prevSeen = -1
   for (let i = 0; i < 24; i += 1) {
     await page.waitForTimeout(250)
     read = await page.evaluate(WALK.replace('KEY_PLACEHOLDER', JSON.stringify(key)))
-    if (read !== null && read.seen > 0) break
+    if (read !== null && read.seen > 0 && read.seen === prevSeen) break
+    prevSeen = read?.seen ?? -1
   }
   if (read === null) {
     console.log(`  SKIP  ${key}：这一格没画出来（深链没生效或面板名不是节点名）`)
