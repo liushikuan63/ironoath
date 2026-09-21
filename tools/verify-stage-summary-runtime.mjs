@@ -102,6 +102,8 @@ await context.route('**/stage/list*', async (route) => {
 // dev 新号可能一个编队都没设主将，所以这里同样**抓真响应改最小一处**：有编队就把第一支的主将补上，
 // 一个都没有时不硬造（造出来的 `bonus` 是现实中不存在的形状，#347 的教训），下面那一相改走"被挡下"的分支。
 const heroFlip = { lineups: 0, mainSet: false }
+/** A 支（完整挑战路径）本次到底跑没跑 —— 汇总行要带着这句话，通过数不能单独被引用 */
+let branchAExecuted = false
 await context.route('**/hero/list*', async (route) => {
   if (await passthrough(route)) return
   const upstream = await route.fetch()
@@ -483,6 +485,7 @@ const picker = await page.evaluate(`(() => {
 
 if (heroFlip.mainSet) {
   // ---- 分支 A：dev 号有编队 ⇒ 走完整路径（弹窗 → 选 → 一个请求 → 真结算看得见）----
+  branchAExecuted = true
   checkTrue('点挑战弹出的是阵容三选一（ChoiceOverlay 亮着且有候选行）',
     picker !== null && picker.rowCount > 0)
   checkTrue('候选那一行有字（空行等于弹层没数据也判绿）', (picker?.firstRowText ?? '').length > 0)
@@ -518,7 +521,10 @@ if (heroFlip.mainSet) {
   // ---- 分支 B：dev 号连一支编队都没有 ⇒ 走不到弹窗，但**被挡下这件事本身要说得出、看得见**----
   // 这一支不是降级凑数：`rejectNeeds('stage', ...)` 走的就是 #354 修的那条摘要带，
   // 挡下的话没画出来，玩家按「挑战」就会得到"没反应"——正是这一族最坏的样子。
-  console.log(`  注：dev 号 lineups=${heroFlip.lineups}，走「被挡下」分支（未验证完整挑战路径，见台账未做①）`)
+  console.log(`  注：dev 号 lineups=${heroFlip.lineups}、heroes=0，走「被挡下」分支。`)
+  console.log('  ⚠ **A 支那五条判据本次没有执行、历史上也从没执行过**（要跑它得给这个号一个真武将，'
+    + '或凭空造一份 23 字段的 HeroView —— 那是 #347 警告过的"现实中不存在的形状"）。'
+    + '所以本文件的通过数**不等于**挑战完整路径验过了。')
   check('这一支不该发出挑战请求', CHALLENGE_CALLS.length, 0)
   // #356 撤掉的那两条断言现在**还回来了**，而且是带防假绿形状的：先快照、再断"变了"，
   // 因为摘要带是跨相复用的同一块（上一相买体力的字会一直留在那儿）。
@@ -542,4 +548,7 @@ if (errors.length > 0) {
 await browser.close()
 preview.close?.()
 console.log(`\n=== 通过 ${pass} 项，失败 ${fail} 项 ===`)
+if (!branchAExecuted) {
+  console.log('=== 其中「完整挑战路径」那一支（A 支五条）**未执行**：dev 号没有武将，补不出主将 ===')
+}
 process.exit(fail === 0 ? 0 : 1)
