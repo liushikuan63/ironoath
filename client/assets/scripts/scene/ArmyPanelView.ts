@@ -95,6 +95,8 @@ export class ArmyPanelView extends Component {
   private readonly trainButtons = new Map<Node, UnitRow | null>()
   private readonly tabButtons = new Map<string, Node>()
   private headerLabel: Label | null = null
+  /** 筛选后一行都不剩时的那句话：没有它，玩家看到的是一整块空白（与 MarchPanelView 同族） */
+  private emptyLabel: Label | null = null
   private hospitalLabel: Label | null = null
   private warningLabel: Label | null = null
   private autoTrainButton: Node | null = null
@@ -196,6 +198,11 @@ export class ArmyPanelView extends Component {
   private buildHeader(height: number): void {
     const top = height / 2 - PADDING
     this.headerLabel = this.addLabel(this.node, 'Header', 0, top - 20, COLOR_COPPER_GOLD, 20)
+    // 空态那一行落在**第一行该在的位置**（同一套 topY 算法），不是随便挑的一个 y
+    this.emptyLabel = this.addLabel(this.node, 'Empty', 0,
+      top - HEADER_HEIGHT - ROW_HEIGHT / 2, COLOR_TEXT_DIM, 16)
+    this.emptyLabel.string = ''
+    this.emptyLabel.node.active = false
     // 限宽 + SHRINK：这一行现在会带上「另有 N 项未显示」，不限宽就会顶出面板（#221 同族的排版溢出）
     this.headerLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 26))
     this.headerLabel.overflow = Label.Overflow.SHRINK
@@ -378,6 +385,14 @@ export class ArmyPanelView extends Component {
 
     // 行区排布先算出来：表头那一行要顺带说「还有几项没画下」，所以它得先知道画得下几行
     const rows = panel.rows.filter((row) => this.matchesFilter(row))
+    // 零行必须说句话：按兵种筛到没有时，行区是一片空白，而表头讲的是兵力与队列 ——
+    // 玩家分不清"这一类确实没有兵"与"面板没加载出来"（MarchPanelView:77 同一形状）。
+    if (this.emptyLabel !== null) {
+      // 没筛 = 页签停在「全部」，此时 `filter` 是 null（`UnitType | null`，没有 'ALL' 这个值）
+      const all = this.filter === null
+      this.emptyLabel.string = all ? '暂无部队' : '暂无这一类部队'
+      this.emptyLabel.node.active = rows.length === 0
+    }
     const size = view.getVisibleSize()
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
 

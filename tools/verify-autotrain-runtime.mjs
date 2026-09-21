@@ -210,6 +210,22 @@ async function main() {
     '被挡下时 console 里也留了同一条原因（排障时看得见）',
     `匹配 ${consoleLines.filter(l => l.includes('[army]')).length} 条 [army] 日志`)
 
+  const emptyState = await page.evaluate(() => {
+    const panel = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('army')
+    let rows = 0
+    let empty = null
+    const walk = (n) => {
+      if (n.name === 'UnitRow' && n.activeInHierarchy !== false) rows += 1
+      if (n.name === 'Empty') empty = n
+      for (const c of n.children ?? []) walk(c)
+    }
+    if (panel) walk(panel)
+    return { rows, emptyActive: empty === null ? null : empty.active === true }
+  })
+  verdict(emptyState?.rows > 0 && emptyState?.emptyActive === false,
+    '有部队行时空态那一行必须藏着（有行还印「暂无部队」等于自己打自己）',
+    'rows=' + emptyState?.rows + ' emptyActive=' + emptyState?.emptyActive)
+
   const shot = path.join(SHOT_DIR, 'army-autotrain.png')
   await page.screenshot({ path: shot })
   lines.push(`SHOT  ${shot}`)
