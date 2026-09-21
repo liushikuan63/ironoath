@@ -377,7 +377,13 @@ if (stretched.length > 0) {
   for (const line of stretched) console.log('  ' + line)
 }
 if (crowded.length > 0) {
-  console.log('\n=== 字形相碰的对（只报不判红：估宽是字宽上限的近似，先要人确认哪几对真看得见） ===')
+  /**
+   * 这一维**故意只报不判红**（标定过，见台账 #392）：把带里的 +4 余量去掉、改用"字形墨迹"阈值
+   * 0.9×(f1+f2)/2，今天这 6 条候选都不再命中（city 16 vs 10.8、gacha 19 vs 13.5），
+   * 但 #389 那处**真**缺陷（quest 表头 Δy21）同样也不会命中（21 vs 17.1）——
+   * 它当时是"字被页签的底板压住"，不是字压字。文本 vs 图形底板是另一种量法，没有它就没有能判红的规则。
+   */
+  console.log('\n=== 字形相碰的对（只报不判红，理由见本段注释与台账 #392） ===')
   for (const line of [...new Set(crowded)]) console.log('  ' + line)
 }
 if (underNavAll.length > 0) {
