@@ -47,7 +47,7 @@ import { applyCommandButton } from './ArtCatalog'
 import { NodePool } from './NodePool'
 import { buildRallyPanel } from '../game/social/RallyPanel'
 import type { RallyPanelData } from '../game/session/AppRoot'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -533,13 +533,11 @@ export class SocialPanelView extends Component {
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 11, COLOR_TEXT, 17)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    title.node.getComponent(UITransform)?.setContentSize(new Size(380, 24))
-    title.overflow = Label.Overflow.SHRINK
+    capWidth(title, 380)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -11, COLOR_TEXT_DIM, 13)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(380, 20))
-    detail.overflow = Label.Overflow.SHRINK
+    capWidth(detail, 380)
     const value = this.addLabel(node, 'Value', PANEL_WIDTH / 2 - 120, 0, COLOR_COPPER_GOLD, 15)
     value.horizontalAlign = Label.HorizontalAlign.RIGHT
     value.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)

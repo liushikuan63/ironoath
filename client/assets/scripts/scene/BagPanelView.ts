@@ -22,7 +22,7 @@ import { applyAnyIconSprite, applyCommandButton, ensureFamily, resourceIconKey }
 import { itemArtKeyForConfig } from '../game/art/ArtFamilies'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -315,14 +315,12 @@ export class BagPanelView extends Component {
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + 36, 9, COLOR_TEXT, 17)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    title.node.getComponent(UITransform)?.setContentSize(new Size(270, 24))
-    title.overflow = Label.Overflow.SHRINK
+    capWidth(title, 270)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + 36,
       -11, COLOR_TEXT_DIM, 13)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(270, 20))
-    detail.overflow = Label.Overflow.SHRINK
+    capWidth(detail, 270)
     const value = this.addLabel(node, 'Value', PANEL_WIDTH / 2 - 120, 0, COLOR_COPPER_GOLD, 16)
     value.horizontalAlign = Label.HorizontalAlign.RIGHT
     value.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
