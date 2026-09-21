@@ -98,7 +98,8 @@ for (const phase of PHASES) {
   }, phase.tab)
   await page.waitForTimeout(1500)
   const before = await measure(page, phase.panel)
-  const planted = await page.evaluate((panelKey) => {
+  const planted = await page.evaluate(([panelKey, alpha]) => {
+    window.__plantAlpha = alpha
     const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     const panel = game?.children.find((c) => c.name === panelKey)
     if (!panel) return { ok: false, why: '面板没找到' }
@@ -130,14 +131,19 @@ for (const phase of PHASES) {
     plate.setPosition((tl.x + br.x) / 2, (tl.y + br.y) / 2)
     // window.cc.Graphics 在这个构建里是 undefined（Error 3804 = 传进去的类为空），注册名可用
     const g = plate.addComponent('cc.Graphics')
-    const ctor = (panel.getComponent('cc.Graphics')?.fillColor ?? {}).constructor
+    // 取 Color 类必须从一个**确实存在**的颜色实例上取：面板根节点没有 Graphics，
+    // 原先写 `panel.getComponent('cc.Graphics')?.fillColor ?? {}` 会退化成 Object，
+    // `new Object(240,40,40,0)` 当颜色用 ⇒ alpha 旋钮整个失效（alpha 0 也照样报"盖住"就是这么来的）
+    const ctor = target.getComponent('cc.Label').color.constructor
     plate.getComponent('cc.UITransform').setContentSize(w, h)
-    g.fillColor = new ctor(240, 40, 40, 255)
+    // alpha 可由环境变量压低：用来量这一维的**边界** —— 半透明底板只是给字染色、
+    // 没真盖住，24 的像元阈值下报不报得出来是未知的，测出来才知道（台账 #412 的未做项）
+    g.fillColor = new ctor(240, 40, 40, Number(window.__plantAlpha ?? 255))
     g.rect(-w / 2, -h / 2, w, h)
     g.fill()
     window.__probePlant = plate
     return { ok: true, host: panel.name, text: target.getComponent('cc.Label').string.slice(0, 8) }
-  }, phase.panel)
+  }, [phase.panel, Number(process.env.PLANT_ALPHA ?? 255)])
   const after = planted.ok ? await measure(page, phase.panel, planted.text) : { hits: -1 }
   if (planted.ok) {
     await page.evaluate(() => { window.__probePlant?.destroy(); window.__probePlant = null })
