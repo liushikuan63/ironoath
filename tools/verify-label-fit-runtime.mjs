@@ -49,8 +49,7 @@ const KEYS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest
  * 谁再拿 SHRINK + 猜的盒高压一行字，这里就会多出一条，量具当场红。
  */
 const BASELINE = new Set([
-  "city/Lv1(14<27,字10)",
-  "city/主城(12<27,字9)"
+  "city/Lv1(14<27,字10)"
 ])
 
 let pass = 0

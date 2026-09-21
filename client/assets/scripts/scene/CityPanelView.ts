@@ -23,7 +23,7 @@ import {
   buildingIconKey, ensureFamily, familyFrame,
 } from './ArtCatalog'
 import { buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
-import { applySystemUiFont, oneLineFloorHeight } from './UiFont'
+import { applySystemUiFont, capWidth, oneLineFloorHeight } from './UiFont'
 import { DISTRICT_TINT_RGB, projectSceneLayout } from '../game/city/CitySceneAnchors'
 import type { ProjectedPlate, SceneDistrict } from '../game/city/CitySceneAnchors'
 
@@ -334,13 +334,14 @@ export class CityPanelView extends Component {
       iconBox.setAnchorPoint(0.5, 0)
       iconBox.setContentSize(new Size(plate.width, plate.width))
       const levelLabel = this.addLabel(tile, 'Level', 0, 0, COLOR_TEXT_DIM, 10)
+      // 这颗字**画在半径 9 的徽章圆盘里**（`drawTileBadge` 把位置钉到圆心、盒子钉到 20×14），
+      // 抬到 27 的地板就会让字长出圆盘。它是 27 地板的一条有意例外，留在横扫基线里。
       levelLabel.node.getComponent(UITransform)?.setContentSize(new Size(20, 14))
       levelLabel.overflow = Label.Overflow.SHRINK
       // 名字压在脚印下沿：正稿是"往上长"的，脚印下沿那一条本来就是房基，
       // 9px 的一行字盖在房基上比盖在屋顶上可读，也不会去撞前一排的建筑。
       const nameLabel = this.addLabel(tile, 'Name', 0, -plate.height / 2 + 6, COLOR_TEXT, 9)
-      nameLabel.node.getComponent(UITransform)?.setContentSize(new Size(plate.width, 12))
-      nameLabel.overflow = Label.Overflow.SHRINK
+      capWidth(nameLabel, plate.width)
       this.gridTiles.push({ node: tile, graphics, iconRim, icon, levelLabel, nameLabel, plate })
     }
   }
