@@ -68,6 +68,7 @@ const WALK = `(() => {
   const panel = game?.children.find((c) => c.name === KEY_PLACEHOLDER)
   if (panel === undefined || !panel.activeInHierarchy) return null
   const out = []
+  const stretched = []
   let shrink = 0
   let seen = 0
   const walk = (n) => {
@@ -79,11 +80,23 @@ const WALK = `(() => {
         // 2 = Label.Overflow.SHRINK；盒高用本地值（字号也是本地单位）
         if (lb.overflow === 2) {
           shrink += 1
-          const h = Math.round(n.getComponent('cc.UITransform').height)
+          const t = n.getComponent('cc.UITransform')
+          const h = Math.round(t.height)
           const floor = Math.max(lb.fontSize + 14, 30)
           if (h < floor) {
             out.push({ text: str.slice(0, 10), h, want: lb.fontSize, floor,
               wrap: lb.enableWrapText !== false })
+          }
+          // 反方向也真实存在：#366 的迁移曲线上 20 号字给盒高 36 时落地 24（**被放大**）。
+          // 只报"单行、且文本宽度根本用不满盒子"的那几颗 —— 多行文案给高盒子是正当需求，
+          // 混进来会把正常排版报成缺陷。
+          // 这里必须写「反斜杠 + n」：整段是模板字符串，直接写单反斜杠加 n 会被 Node 先转成
+          // 真实换行 —— 落在字符串里就是语法错，落在注释里就是把注释截断成代码（本轮两次都踩了）。
+          if (h > floor + 8 && str.indexOf('\\n') < 0 && lb.enableWrapText !== false) {
+            const est = Math.round(str.length * lb.fontSize * 0.95)
+            if (est < t.width) {
+              stretched.push({ text: str.slice(0, 10), h, want: lb.fontSize, floor, est, boxW: Math.round(t.width) })
+            }
           }
         }
       }
@@ -91,7 +104,7 @@ const WALK = `(() => {
     for (const c of n.children) walk(c)
   }
   walk(panel)
-  return { seen, shrink, out }
+  return { seen, shrink, out, stretched }
 })()`
 
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
@@ -104,6 +117,7 @@ await context.addInitScript((value) => {
 }, `labelfit-${Date.now()}`)
 
 const offenders = []
+const stretched = []
 const reached = []
 let totalLabels = 0
 let totalShrink = 0
@@ -129,7 +143,8 @@ for (const key of KEYS) {
     totalLabels += read.seen
     totalShrink += read.shrink
     for (const x of read.out) offenders.push(`${key}/${x.text}(${x.h}<${x.floor},字${x.want})`)
-    console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗`)
+    for (const x of read.stretched ?? []) stretched.push(`${key}/${x.text}(${x.h}>${x.floor}+8,字${x.want},估宽${x.est}/盒${x.boxW})`)
+    console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗，疑似被放大 ${(read.stretched ?? []).length} 颗`)
   }
   // 每格落一张图：这一族改的是"盒高 + 对齐"，判据全绿也可能把字挪位，必须目视
   await page.screenshot({ path: path.join(OUT, `${key}.png`) })
@@ -142,6 +157,10 @@ if (offenders.length === 0) console.log('  （无）')
 for (const line of offenders) console.log('  ' + line)
 
 // 修完一批之后用 `--print-baseline` 重生成上面那张表，别手抄
+if (stretched.length > 0) {
+  console.log('\n=== 疑似被盒子放大的行（只报不改，等逐屏判断：见台账 #377） ===')
+  for (const line of stretched) console.log('  ' + line)
+}
 if (process.argv.includes('--print-baseline')) {
   console.log('\n// --- BASELINE 片段（贴进源文件替换 BASELINE 的构造）---')
   for (const x of [...new Set(offenders)].sort()) console.log(`  ${JSON.stringify(x)},`)
