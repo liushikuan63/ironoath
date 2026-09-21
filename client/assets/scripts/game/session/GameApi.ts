@@ -742,6 +742,17 @@ export class GameApi {
     return this.mutate<SquadMemberReq, SocialSummaryResp>('/squad/transfer', req)
   }
 
+  /**
+   * GET /rally/policy（B26 S13a 落的服务端，S13b 接上消费者）。
+   *
+   * <p>一次回小队与联盟两档的**上下界、默认值、能不能发起与不能发起的原因**。编成弹层上
+   * 那两格可调项的界与起点只能来自这里：抄 `global.RALLY_*` 就是留第二个真源，
+   * 而写口会把越界的值夹掉，界一旦对不上，滑条就显示一个必然被改掉的数。
+   */
+  rallyPolicy(): Promise<NetOutcome<RallyPolicyResp>> {
+    return this.read<RallyPolicyResp>('/rally/policy')
+  }
+
   /** POST /squad/rally。人数上限由服务端按 global.RALLY_MAX_SIZE_SQUAD 夹，客户端不自己夹。 */
   squadRally(req: Omit<SquadRallyReq, 'requestId'>): Promise<NetOutcome<RallyResp>> {
     return this.mutate<SquadRallyReq, RallyResp>('/rally/squad', req)
@@ -824,17 +835,6 @@ export class GameApi {
    */
   rallyList(): Promise<NetOutcome<RallyListResp>> {
     return this.read<RallyListResp>('/rally/list')
-  }
-
-  /**
-   * GET /rally/policy：两个层级各自的人数与等待时长上下界、滑条起始值、此刻能不能发起。
-   *
-   * <p>联盟集结要收 `maxMembers` 与 `prepareMinutes` 两个数，而界都在 global 表里 ——
-   * 不读它就只剩两个坏选项：客户端抄一份表（表一动就开始撒谎），或画一条界不明的滑条
-   * 让玩家以为自己设了 30 人而服务端悄悄夹成 4 人。
-   */
-  rallyPolicy(): Promise<NetOutcome<RallyPolicyResp>> {
-    return this.read<RallyPolicyResp>('/rally/policy')
   }
 
   /**

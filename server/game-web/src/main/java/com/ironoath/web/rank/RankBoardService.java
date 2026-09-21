@@ -346,6 +346,11 @@ public class RankBoardService {
         List<SeasonSettlement.Entry> out = new ArrayList<>(rows.size());
         for (SeasonSettlement.Entry entry : rows) {
             // 读侧兜底：写入侧已经拦过，但库里可能存着规则生效前的条目（赛季榜恢复时同一条理由）
+            //
+            // 那句 "榜前 N 奖励坑位" 命名的是它服务的**红线条款**（B13 §七：Bot 不得占据需真人竞争的
+            // 前 3 名奖励坑位；`RankEndpointTest` 验收 3 用同一措辞），**不是这里的过滤宽度** ——
+            // 实际执行更严：Bot 从整张榜摘掉。别把这句改成"整榜排除"，那会切断代码与红线的对应；
+            // 也别以为改 `BotTuning.mayEnterRankTop` 能改变这里（那个方法在生产里没有调用点，理由见它的注释）。
             if (bots.humanOnly(entry.id(), "榜前 " + REWARDED_TOP_N + " 奖励坑位") == null) {
                 continue;
             }

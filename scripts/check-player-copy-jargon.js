@@ -32,6 +32,27 @@ const KNOWN_DEBT = [
   // 留空不是形式：这一栏一旦长期为空，说明"文件正被别人改"不再是留下黑话的理由。
 ]
 
+// 枚举原文同样是工程术语，而且**人工词表永远追不上它**：#255…#305 那族数到第九处才现形
+// （联盟任命通知把角色印成 `OFFICER`，2026-09-20 由 `9964488` 收掉），而 `JARGON` 里没有任何一个枚举名。
+// 所以词表从生成的联合类型里现取 —— 契约新增枚举时这道门自动跟着变宽，不需要有人记得加词。
+// 只查**含中文的字面量**：`case 'OFFICER': return '副盟主'` 那半句是正确的映射代码，不含中文，不该报。
+// 例外：抽卡稀有度 `SSR`/`SR` 本身就是玩家词汇（公示写"保底：SSR 90 抽"是正常说法），不是内部标识符。
+// 除这两个以外不要再往这里加——要加就在台账里写清"它为什么是玩家词"，否则这道门会被稀释成永远不报。
+const ENUM_ALLOW = new Set(['SSR', 'SR'])
+const ENUM_WORDS = [...collectEnumWords()]
+
+function collectEnumWords() {
+  const dir = path.join(__dirname, '..', 'client', 'assets', 'scripts', 'net', 'generated')
+  const found = new Set()
+  if (!fs.existsSync(dir)) return found
+  for (const file of walk(dir)) {
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(/'([A-Z][A-Z0-9_]{2,})'/g)) {
+      if (!ENUM_ALLOW.has(m[1])) found.add(m[1])
+    }
+  }
+  return found
+}
+
 function* walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name)
@@ -109,12 +130,22 @@ for (const root of ROOTS) {
         .match(/`[^`]*`|"[^"]*"|'[^']*'/g) || []
       for (const literal of literals) {
         const probe = literal.replace(/隐私协议/g, '')
+        const relative = file.split(path.sep).join('/')
         const hit = JARGON.find((word) => probe.includes(word))
         if (hit !== undefined) {
-          const relative = file.split(path.sep).join('/')
           const exempt = KNOWN_DEBT.some((debt) => relative.endsWith(debt.file) && debt.word === hit)
           if (!exempt) {
             problems.push(`${relative}:${index + 1} 玩家可见文案里有「${hit}」：${literal.slice(0, 70)}`)
+          }
+        }
+        // `${f('FREE')}` 里的 `FREE` 是**代码参数**不是文案；只看插值之外的可见文本。
+        // （首跑就在 5 处上误报，包括 `已分享到${channel === 'ALLIANCE' ? '联盟' : '小队'}频道`。）
+        const visible = probe.replace(/\$\{[^{}]*\}/g, '')
+        if (/[㐀-鿿]/.test(visible)) {
+          const enumHit = ENUM_WORDS.find((word) => new RegExp(`\\b${word}\\b`).test(visible))
+          if (enumHit !== undefined
+            && !KNOWN_DEBT.some((debt) => relative.endsWith(debt.file) && debt.word === enumHit)) {
+            problems.push(`${relative}:${index + 1} 玩家可见文案里印了枚举原文「${enumHit}」（显示名要走服务端下发的 name 或 game/ui/ 下的映射）：${literal.slice(0, 70)}`)
           }
         }
       }
@@ -124,6 +155,10 @@ for (const root of ROOTS) {
 
 if (scanned === 0) {
   console.error('[check-player-copy-jargon] 一个 .ts 都没扫到 —— 判据失效，不算通过')
+  process.exit(1)
+}
+if (ENUM_WORDS.length === 0) {
+  console.error('[check-player-copy-jargon] 一个枚举名都没取到 —— 枚举判据失效，不算通过')
   process.exit(1)
 }
 if (problems.length > 0) {

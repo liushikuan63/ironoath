@@ -300,6 +300,13 @@ public final class BotTuning {
     /**
      * Bot 能否进入排行榜前 N 名（§七 红线：禁止占据需真人竞争的前 3 名奖励坑位）。
      *
+     * <p><b>生产实际执行的是更严的一条</b>：榜的两侧都用 {@code BotRegistry.humanOnly} 把 Bot 从
+     * <b>整张榜</b>摘掉（{@code RankBoardService.rankedEntries} 读侧 + 上报入口写侧，
+     * 赛季结算 {@code SeasonSettlementService} 同一形状）。所以这个方法<b>没有生产调用点</b>，
+     * 它留在这里是因为它是那条红线的<b>成文表述</b>（{@code B23_排行榜} / {@code C06_人机的拟人化与合规边界}
+     * 都指向它，{@code BotSystemTest} 验收 5 逐名次断言它）。
+     * 别把它当死代码删掉，也别以为改它就能改变榜的行为——要改榜上有没有 Bot，去看 {@code humanOnly} 那两处。
+     *
      * @param rank 名次，1 起
      * @param rewardedTopN 有奖励的前 N 名
      */
