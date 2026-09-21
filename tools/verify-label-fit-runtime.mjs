@@ -230,6 +230,68 @@ console.log('\n=== 被盒子压小的行 ===')
 if (offenders.length === 0) console.log('  （无）')
 for (const line of offenders) console.log('  ' + line)
 
+/**
+ * `--calibrate`：把"落地尺寸 == 设定尺寸"的那个盒高**逐字号量出来**，用来检验 `oneLineFloorHeight` 的外推边界。
+ *
+ * <p>下限 `max(字号+14, 30)` 是台账 #366 在 14~20 号字上量出来的，而基线里有 9/10 号的小字（内城建筑角标）——
+ * 小字号上照 30 去钉可能反向**放大**，那就是判据自己造的假红。所以先量曲线再决定要不要动那两行。
+ * 做法：每个字号挑一颗 SHRINK Label，从 `字号+2` 逐档抬盒高（每档等两帧），报出落地尺寸；
+ * 落地尺寸第一次等于设定值的那一档就是它的"自然一行高"（#366 的曲线上没有平台段，只有交点）。
+ */
+if (process.argv.includes("--calibrate")) {
+  const CAL = `(async () => {
+    const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    const panel = game?.children.find((c) => c.name === KEY_PLACEHOLDER)
+    if (panel === undefined) return null
+    const twoFrames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    const bySize = new Map()
+    const collect = (n) => {
+      const lb = n.getComponent('cc.Label')
+      if (lb !== null && lb !== undefined && (lb.string ?? '').length > 0 && lb.overflow === 2
+          && n.activeInHierarchy && !bySize.has(lb.fontSize)) bySize.set(lb.fontSize, n)
+      for (const c of n.children) collect(c)
+    }
+    collect(panel)
+    const out = []
+    for (const [size, node] of [...bySize.entries()].sort((a, b) => a[0] - b[0])) {
+      const t = node.getComponent('cc.UITransform')
+      const lb = node.getComponent('cc.Label')
+      const saved = { w: t.width, h: t.height }
+      const curve = []
+      let cross = -1
+      // 步长必须是 1：落地尺寸是整数，步长 2 会直接跳过交点（20 号字实测返回过 -1）
+      for (let h = size + 2; h <= size + 40; h += 1) {
+        t.setContentSize(saved.w, h)
+        await twoFrames()
+        const a = lb.actualFontSize ?? -1
+        curve.push(h + ":" + a)
+        // 交点 = 落地尺寸回到**设定字号**的那一档（不是 1.5×：那是 NONE 模式下的光栅尺寸口径）
+        if (cross < 0 && Math.abs(a - size) < 0.51) cross = h
+      }
+      t.setContentSize(saved.w, saved.h)
+      await twoFrames()
+      out.push({ size, cross, text: (lb.string ?? "").slice(0, 6), curve: curve.join(" ") })
+    }
+    return out
+  })()`
+  for (const key of KEYS) {
+    const page = await context.newPage()
+    const url = new URL(`${preview.origin}/`)
+    url.searchParams.set('panel', key)
+    await page.goto(url.toString(), { waitUntil: 'networkidle' })
+    await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
+      null, { timeout: 60_000 })
+    await page.waitForTimeout(1500)
+    const rows = await page.evaluate(CAL.replace("KEY_PLACEHOLDER", JSON.stringify(key)))
+    for (const r of rows ?? []) {
+      console.log(`  CAL ${key}/${r.text} 字号${r.size} 交点盒高=${r.cross}  |  ${r.curve}`)
+    }
+    await page.close()
+  }
+  await browser.close()
+  await preview.close()
+  process.exit(0)
+}
 // 修完一批之后用 `--print-baseline` 重生成上面那张表，别手抄
 if (stretched.length > 0) {
   console.log('\n=== 疑似被盒子放大的行（只报不改，等逐屏判断：见台账 #377） ===')
