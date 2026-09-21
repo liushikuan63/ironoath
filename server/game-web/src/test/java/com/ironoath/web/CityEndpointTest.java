@@ -7,6 +7,10 @@ import com.ironoath.core.city.CityState;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.web.dto.generated.CityCancelReq;
 import com.ironoath.web.dto.generated.CityCancelResp;
+import com.ironoath.web.dto.generated.CityPauseReq;
+import com.ironoath.web.dto.generated.CityPauseResp;
+import com.ironoath.web.dto.generated.CityResumeReq;
+import com.ironoath.web.dto.generated.CityResumeResp;
 import com.ironoath.web.dto.generated.CityCollectResp;
 import com.ironoath.web.dto.generated.CityListResp;
 import com.ironoath.web.dto.generated.CityUpgradeReq;
@@ -171,6 +175,71 @@ class CityEndpointTest {
         // 两次调用间隔极短，产量按毫秒折算不足 1 单位 ⇒ 向下取整后应完全相同
         assertThat(second).as("重复读取不得刷出资源").isEqualTo(first);
     }
+
+    // ---------- /city/pause 与 /city/resume（B03 §2：队列中可暂停 / 取消）----------
+
+    @Test
+    @DisplayName("暂停：不返还资源、仍占队列、不给倒计时；恢复后**把暂停那段时间还回来**")
+    void pauseKeepsQueueAndGivesTimeBack() throws Exception {
+        String playerId = newPlayer();
+        CityUpgradeResp upgrade = startUpgrade(playerId, "lumber_camp", 1, 1);
+        // 把工期拉长，免得测试跑到一半楼就建好了（那样 pause 会因为"已完工"而报错）
+        extendUpgrade(playerId, upgrade.buildingId(), 100_000L);
+        long woodBefore = cityAppService.list(playerId)
+                .resources().get(com.ironoath.web.dto.generated.ResourceType.WOOD).current();
+        long remainingBefore = remainingOf(playerId, upgrade.buildingId());
+        assertThat(remainingBefore).as("夹具前提：确实在升级、有剩余时间").isGreaterThan(1000L);
+
+        CityPauseResp paused = cityAppService.pause(playerId,
+                new CityPauseReq(newRequestId(), upgrade.buildingId()));
+        assertThat(paused.status()).as("暂停后状态").isEqualTo("PAUSED");
+        assertThat(paused.remainingSeconds()).as("暂停中不给倒计时（照 finishAt 算会显示一个不走的表）")
+                .isZero();
+        long woodAfterPause = cityAppService.list(playerId)
+                .resources().get(com.ironoath.web.dto.generated.ResourceType.WOOD).current();
+        assertThat(woodAfterPause).as("暂停不是取消：资源不会被返还").isGreaterThanOrEqualTo(woodBefore);
+
+        CityListResp listed = cityAppService.list(playerId);
+        assertThat(listed.queues().used()).as("暂停中的建筑仍占一个建造队列 —— 否则暂停就等于无限队列")
+                .isEqualTo(1);
+        assertThat(listed.buildings()).as("暂停后那栋仍在列表里").hasSizeGreaterThan(1);
+        assertThat(listed.buildings().stream()
+                .filter(view -> view.id().equals(upgrade.buildingId())).findFirst().orElseThrow().status())
+                .isEqualTo(BuildingStatus.PAUSED);
+
+        // 暂停期间真等 2 秒：旧实现（只翻状态、不动 finishAt）会把这 2 秒算掉，恢复后剩余少 2 秒
+        Thread.sleep(2000L);
+
+        CityResumeResp resumed = cityAppService.resume(playerId,
+                new CityResumeReq(newRequestId(), upgrade.buildingId()));
+        assertThat(resumed.status()).isEqualTo("UPGRADING");
+        assertThat(resumed.remainingSeconds())
+                .as("暂停的那 2 秒必须还给这栋楼（旧实现会少 2 秒，这条断言就是冲着它去的）")
+                .isGreaterThanOrEqualTo(remainingBefore - 1L);
+        assertThat(remainingOf(playerId, upgrade.buildingId()))
+                .as("再读一次列表，剩余时间与恢复响应一致").isEqualTo(resumed.remainingSeconds());
+    }
+
+    @Test
+    @DisplayName("暂停：空闲建筑被拒，且不改任何状态")
+    void pauseRejectsIdleBuilding() {
+        String playerId = newPlayer();
+        // 先读一次列表把城建存档建出来（存档是惰性的：不读就没有），再取主城那栋
+        CityListResp initial = cityAppService.list(playerId);
+        String mainCityId = initial.buildings().stream()
+                .filter(view -> view.configId().equals("main_city")).findFirst().orElseThrow().id();
+        assertThatThrownBy(() -> cityAppService.pause(playerId,
+                new CityPauseReq(newRequestId(), mainCityId)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("暂停");
+        // 注意：这个对象是从 Spring 上下文里的仓储拿出来的，它的领域枚举由**应用类加载器**加载，
+        // 与测试类加载器里的 BuildingStatus.IDLE 不是同一个类实例（devtools 的 RestartClassLoader），
+        // 直接比枚举会得到 "IDLE != IDLE"。跨这条边界按 name() 比，语义不变。
+        assertThat(cities.findByPlayerId(playerId).orElseThrow().building(mainCityId).status().name())
+                .as("空闲建筑被拒后仍是 IDLE").isEqualTo("IDLE");
+        assertThat(cityAppService.list(playerId).queues().used()).isZero();
+    }
+
 
     // ---------- /city/speedUp ----------
 

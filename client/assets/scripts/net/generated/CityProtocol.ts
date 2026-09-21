@@ -190,6 +190,45 @@ export interface CityCancelResp {
 }
 
 /**
+ * POST /city/pause 请求体（B03 §2：队列中可暂停 / 取消）。暂停**不返还资源**：取消才返还 60%，两件事不要混。
+ */
+export interface CityPauseReq {
+  requestId: string
+  buildingId: string
+}
+
+/**
+ * POST /city/pause 响应体。回的是暂停后的那一行读数，界面直接照着改，不用再拉一次 /city/list（拉一次会顺带把已完成的建筑收割掉，那是另一个动作）。
+ */
+export interface CityPauseResp {
+  buildingId: string
+  /** 暂停后的状态，恒为 PAUSED。 */
+  status: string
+  /** 剩余秒数。**暂停时恒为 0**：服务端不给暂停中的建筑算倒计时（照 finishAt 算会显示一个永远不走的表）。真正的剩余时间冻结在服务端，恢复时原样接上。 */
+  remainingSeconds: number
+}
+
+/**
+ * POST /city/resume 请求体。
+ */
+export interface CityResumeReq {
+  requestId: string
+  buildingId: string
+}
+
+/**
+ * POST /city/resume 响应体。恢复会把**暂停的那段时间还给这栋楼**（剩余时间与暂停前一致），所以这里的 remainingSeconds 是接上之后的真实剩余。
+ */
+export interface CityResumeResp {
+  buildingId: string
+  /** 恢复后的状态，恒为 UPGRADING。 */
+  status: string
+  /** 恢复后的完成时刻（已把暂停时长顺延进去）。客户端的倒计时以它为准。 */
+  finishAt: number
+  remainingSeconds: number
+}
+
+/**
  * GET /city/list 响应体 —— 含离线结算后的资源与到点收割后的建筑状态（B03 §2）。
  */
 export interface CityListResp {

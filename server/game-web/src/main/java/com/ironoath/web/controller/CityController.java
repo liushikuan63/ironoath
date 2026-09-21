@@ -4,6 +4,10 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.web.dto.generated.CityCancelReq;
+import com.ironoath.web.dto.generated.CityPauseReq;
+import com.ironoath.web.dto.generated.CityPauseResp;
+import com.ironoath.web.dto.generated.CityResumeReq;
+import com.ironoath.web.dto.generated.CityResumeResp;
 import com.ironoath.web.dto.generated.CityCancelResp;
 import com.ironoath.web.dto.generated.CityCollectReq;
 import com.ironoath.web.dto.generated.CityCollectResp;
@@ -90,6 +94,22 @@ public class CityController {
                                          @RequestBody CityCancelReq req) {
         requirePlayer(playerId);
         return Result.ok(cityAppService.cancel(playerId, req));
+    }
+
+    /** 暂停升级（B03 §2：队列中可暂停 / 取消）。暂停不返还资源，只把剩余时间冻在服务端。 */
+    @PostMapping("/pause")
+    public Result<CityPauseResp> pause(@RequestHeader(PLAYER_HEADER) String playerId,
+                                       @RequestBody CityPauseReq req) {
+        requirePlayer(playerId);
+        return Result.ok(cityAppService.pause(playerId, req));
+    }
+
+    /** 恢复升级：把暂停的那段时间还给这栋楼。 */
+    @PostMapping("/resume")
+    public Result<CityResumeResp> resume(@RequestHeader(PLAYER_HEADER) String playerId,
+                                         @RequestBody CityResumeReq req) {
+        requirePlayer(playerId);
+        return Result.ok(cityAppService.resume(playerId, req));
     }
 
     /** 收割已到点的升级并结算其离线产出。{@code buildingId} 为空表示收割全部。 */
