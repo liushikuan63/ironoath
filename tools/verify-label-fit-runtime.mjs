@@ -23,12 +23,15 @@
  * <p><b>覆盖边界</b>：只量"新号一进这一格就画出来"的行。背包/邮件等格在空态下只有几颗 Label，
  * 有数据之后的行不在这份清单里 —— 那些要等带数据的宿主探针，别把这里的"没点到"读成"没问题"。
  */
+import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
 
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.LABELFIT_PORT ?? 8191)
+const OUT = path.resolve(process.cwd(), 'client/build/label-fit-verify')
+mkdirSync(OUT, { recursive: true })
 const KEYS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest', 'battlePass',
   'mail', 'social', 'power', 'shop', 'avatarFrames', 'targets', 'world', 'settings']
 
@@ -49,18 +52,6 @@ const BASELINE = new Set([
   "battlePass/还差 300 分(20<30,字13)",
   "battlePass/还差 450 分(20<30,字13)",
   "battlePass/还差 600 分(20<30,字13)",
-  "city/升级、加速、收割都在(21<30,字13)",
-  "city/点击建筑查看详情(26<30,字16)",
-  "settings/当前版本 1.0.0(21<30,字13)",
-  "settings/当前：开（点一下静音(21<30,字13)",
-  "settings/未成年人充值退款请通(21<30,字13)",
-  "settings/本环境未配置客服(21<30,字13)",
-  "settings/查看平台配置的用户隐(21<30,字13)",
-  "settings/申请退款(28<34,字20)",
-  "settings/联系客服(28<34,字20)",
-  "settings/设置(34<40,字26)",
-  "settings/隐私政策(28<34,字20)",
-  "settings/音效(28<34,字20)",
   "stage/chapter_01(24<33,字19)",
   "stage/三星条件：通关 / (20<30,字14)",
   "stage/买 1 次 · 50(22<30,字15)",
@@ -148,8 +139,11 @@ for (const key of KEYS) {
     for (const x of read.out) offenders.push(`${key}/${x.text}(${x.h}<${x.floor},字${x.want})`)
     console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗`)
   }
+  // 每格落一张图：这一族改的是"盒高 + 对齐"，判据全绿也可能把字挪位，必须目视
+  await page.screenshot({ path: path.join(OUT, `${key}.png`) })
   await page.close()
 }
+console.log(`  截图目录：${OUT}`)
 
 console.log('\n=== 被盒子压小的行 ===')
 if (offenders.length === 0) console.log('  （无）')

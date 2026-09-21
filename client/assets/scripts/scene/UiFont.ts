@@ -43,3 +43,20 @@ export function keepOneLine(label: Label, fontSize: number): Label {
   label.lineHeight = fontSize + 6
   return label
 }
+
+/**
+ * 一行字不被缩放所需的最小盒高：给那些**必须待在固定宽度槽位里**（旁边就是按钮、
+ * 或者卡片宽度写死）的行用 —— 那种地方只能 `overflow = SHRINK`（裁成 CLAMP 会把数字读成
+ * 另一个数），而 SHRINK 的盒高就是字形缩放系数。
+ *
+ * <p>下限是量出来的（台账 #366 的迁移曲线，系统字体）：14~20 号字都要盒高 **30** 才等于设定
+ * 字号，且这个 30 不随字号走（`lineHeight` 没设时引擎拿默认 40 参与）；更大字号按比例走，
+ * 26 号实测要 40。所以取 `max(字号 + 14, 30)`。
+ *
+ * <p>低于这条就是常态性把每一行压小（实测 `字号 + 6` 与 `字号 × 1.6` 都不够：战令五行落地
+ * 17/13/10/10/9 对设定 20/17/15/15/14）；高于这条则会**反向放大**（20 号字给 36 高 → 落地 24）。
+ * 用它的地方把盒高写死成这个返回值，别自己再乘一个系数。
+ */
+export function oneLineFloorHeight(fontSize: number): number {
+  return Math.max(fontSize + 14, 30)
+}
