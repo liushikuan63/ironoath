@@ -93,6 +93,37 @@ const free = [[1, 1], [2, 1], [1, 2]].find(([x, y]) => !occupied.has(`${x},${y}`
 await upgradeAndWait('barracks', { gridX: free[0], gridY: free[1] })
 console.log(`[army-queue] 兵营已建在 (${free[0]},${free[1]})`)
 
+// 第三段前置：**上阵一个武将**。新号带兵上限是 0（`超出带兵上限：当前 0，上限 0`），
+// 而上限由"上阵武将的统帅值"决定 ⇒ 必须真有一个武将在编队里。
+// 武将从仓库**唯一那条**凭空发奖励的通路来（`/ops/mail/send`，`type=HERO` 合法），与整城验收补资源同一条。
+const HERO_ID = process.env.ARMY_QUEUE_HERO ?? 'hero_ssr_01'
+const mail = await post('/ops/mail/send', {
+  requestId: `army-queue-hero-${Date.now()}`, playerId,
+  title: '军队队列探针用武将', text: '自动化量具建号后的补发（dev 后端限定）', actor: 'tools/verify-army-queue',
+  rewards: [{ type: 'HERO', id: HERO_ID, count: 1, name: HERO_ID }],
+}, { 'X-Ops-Token': process.env.ARMY_QUEUE_OPS_TOKEN ?? 'art-verify-local' })
+if (mail.code !== 0) {
+  console.error(`[army-queue][前置] 补发武将被拒（令牌没配？）：${JSON.stringify(mail)}`)
+  process.exit(2)
+}
+const claimed = await post('/mail/claimAll', { requestId: `army-queue-claim-${Date.now()}` }, HEAD)
+if (claimed.code !== 0) {
+  console.error(`[army-queue][前置] 领取武将失败：${JSON.stringify(claimed)}`)
+  process.exit(2)
+}
+const lineup = await post('/hero/lineup',
+  { requestId: `army-queue-lineup-${Date.now()}`, presetIndex: 0, main: HERO_ID, sub1: null, sub2: null }, HEAD)
+if (lineup.code !== 0) {
+  console.error(`[army-queue][前置] 上阵 ${HERO_ID} 失败：${JSON.stringify(lineup)}`)
+  process.exit(2)
+}
+const capAfterLineup = lineup.data.troopCap ?? null
+console.log(`[army-queue] 已补发并上阵 ${HERO_ID}：带兵上限=${capAfterLineup}`)
+if (capAfterLineup !== null && capAfterLineup <= 0) {
+  console.error('[army-queue][前置] 上阵之后带兵上限仍是 0 —— 训练一定发不出去，先查编队口径')
+  process.exit(2)
+}
+
 const list = await get('/army/list', HEAD)
 if (list.code !== 0) {
   console.error(`[army-queue][前置] 读军队列表失败：${JSON.stringify(list)}`)
@@ -151,25 +182,44 @@ await page.evaluate(() => {
   visit(scene)
 })
 
-/** 训练中那一行的读数：两只按钮的可见性 + 该行的倒计时/状态文本。 */
+/**
+ * 训练中那一行的读数。
+ *
+ * <p>**必须"先锁定那一行再读行内的按钮"**：行是池化复用的，屏幕上同时有好几个 `UnitRow`，
+ * 每个行节点里都有一只 `SpeedTrainButton`/`CancelTrainButton`（非训练行的被隐藏）。
+ * 第一版遍历全场景、用"最后访问到的那只"当读数 ⇒ 被非训练行盖成 `false`，
+ * 于是"按钮明明出来了"被判成没出来（而点击是成功的，请求都发出去了）。
+ * 顺带把倒计时也改成**行内**读（原来在全场景文本里找"剩"字，一无所获 ⇒ 那条判据静默不生效）。
+ */
 const rowReadout = () => page.evaluate(() => {
   const scene = window.cc.director.getScene()
-  const out = { speed: null, cancel: null, texts: [] }
+  const rows = []
   const visit = (node) => {
-    if (node.name === 'SpeedTrainButton') out.speed = node.activeInHierarchy === true
-    if (node.name === 'CancelTrainButton') out.cancel = node.activeInHierarchy === true
     if (node.name === 'UnitRow') {
+      const texts = []
       const collect = (child) => {
         const label = child.getComponent && child.getComponent('cc.Label')
-        if (label !== null && label !== undefined && label.string !== '') out.texts.push(label.string)
+        if (label !== null && label !== undefined && label.string !== '') texts.push(label.string)
         for (const grand of child.children) collect(grand)
       }
       collect(node)
+      const find = (name) => node.children.find((child) => child.name === name) ?? null
+      const speed = find('SpeedTrainButton')
+      const cancel = find('CancelTrainButton')
+      const countdown = find('Countdown')?.getComponent('cc.Label')?.string ?? null
+      rows.push({
+        texts,
+        training: texts.some((text) => text.includes('训练中')),
+        speed: speed === null ? null : speed.active === true,
+        cancel: cancel === null ? null : cancel.active === true,
+        countdown,
+      })
     }
     for (const child of node.children) visit(child)
   }
   visit(scene)
-  return out
+  const active = rows.find((row) => row.training) ?? null
+  return { rows, active, rowCount: rows.length }
 })
 
 const clickNode = (nodeName) => page.evaluate((name) => {
@@ -195,11 +245,12 @@ const clickNode = (nodeName) => page.evaluate((name) => {
 }, nodeName)
 
 const training = await rowReadout()
-console.log(`[army-queue] 训练中：加速键=${training.speed} 取消键=${training.cancel}`
-  + ` 行文本=${JSON.stringify(training.texts.filter((t) => t.includes('训练') || t.includes('剩')))}`)
+const activeRow = training.active
+console.log(`[army-queue] 行数=${training.rowCount} 训练中那一行：加速键=${activeRow?.speed} 取消键=${activeRow?.cancel}`
+  + ` 倒计时=${activeRow?.countdown ?? '(无)'} 文本=${JSON.stringify(activeRow?.texts ?? null)}`)
 
 // 点「加速」→ 请求要出去，倒计时要变短
-const before = training.texts.find((text) => /\d/.test(text) && text.includes('剩')) ?? ''
+const before = activeRow?.countdown ?? null
 const postsBeforeSpeed = armyPosts.length
 const speedPoint = await clickNode('SpeedTrainButton')
 if (speedPoint !== null) {
@@ -207,9 +258,9 @@ if (speedPoint !== null) {
   await page.waitForTimeout(2000)
 }
 const afterSpeed = await rowReadout()
-const afterText = afterSpeed.texts.find((text) => /\d/.test(text) && text.includes('剩')) ?? ''
+const afterText = afterSpeed.active?.countdown ?? null
 console.log(`[army-queue] 点「加速」→ /army/* 新增 [${armyPosts.slice(postsBeforeSpeed).join('、') || '(无)'}]`
-  + ` 倒计时：${before || '(无)'} → ${afterText || '(无)'}`)
+  + ` 倒计时：${before ?? '(无)'} → ${afterText ?? '(无)'}`)
 
 // 再点「取消」：训练态应当消失（取消不返还到 UI 文本里，但队列要腾出来）
 const postsBeforeCancel = armyPosts.length
@@ -224,24 +275,30 @@ await browser.close()
 await preview.close()
 
 console.log(`[army-queue] 点「取消」→ /army/* 新增 [${armyPosts.slice(postsBeforeCancel).join('、') || '(无)'}]`
-  + ` 取消后加速键=${afterCancel.speed} 取消键=${afterCancel.cancel}`)
+  + ` 取消后训练中的行=${afterCancel.active === null ? '(没有了)' : `加速键=${afterCancel.active.speed} 取消键=${afterCancel.active.cancel}`}`)
 console.log(`[army-queue] 截图：${SHOT}`)
 console.log(`[army-queue] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
 
 const failures = []
-if (training.speed !== true || training.cancel !== true) {
-  failures.push(`训练中那一行没有出现「加速」「取消」两只按钮：加速=${training.speed} 取消=${training.cancel}`)
+if (activeRow === null) {
+  failures.push('屏幕上没有"训练中"的行 —— 前置没生效，判据走不到（不许当绿）')
+} else {
+  if (activeRow.speed !== true || activeRow.cancel !== true) {
+    failures.push(`训练中那一行没有出现「加速」「取消」两只按钮：加速=${activeRow.speed} 取消=${activeRow.cancel}`)
+  }
 }
 if (!armyPosts.includes('speedUp')) {
   failures.push('点了「加速」没有发出 /army/speedUp —— 按钮没接上')
 }
-if (before !== '' && afterText !== '' && before === afterText) {
+if (before === null || afterText === null) {
+  failures.push(`训练行的倒计时读不到（${before ?? '(无)'} → ${afterText ?? '(无)'}）—— 这条判据走不到，不许当绿`)
+} else if (before === afterText) {
   failures.push(`点了「加速」但倒计时没变（${before}）—— 请求出去了而状态没跟着走`)
 }
 if (!armyPosts.includes('cancel')) {
   failures.push('点了「取消」没有发出 /army/cancel —— 按钮没接上')
 }
-if (afterCancel.cancel === true) {
+if (afterCancel.active !== null && afterCancel.active.cancel === true) {
   failures.push('取消之后「取消」键还在 —— 那一行已经不在训练中了，按钮该收起来')
 }
 if (errors.length > 0) {

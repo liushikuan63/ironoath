@@ -78,6 +78,8 @@ TOOLS=(
   "tools/verify-city-build-many.mjs"
   "tools/verify-city-multi-types.mjs"
   "tools/verify-city-phone.mjs"
+  # 军队训练队列的加速/取消：前置要养到主城 3 级 + 兵营 + 上阵武将（约 3 分钟），所以它排在最后
+  "tools/verify-army-queue.mjs"
   "tools/verify-gift-popup.mjs"
 )
 FAILED=()
