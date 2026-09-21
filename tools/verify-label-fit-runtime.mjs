@@ -32,6 +32,7 @@ import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf8
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { hideGuideBoard } from './lib/guide-overlay.mjs'
 import { decodePng, diffRegion } from './lib/png-diff.mjs'
+import { planPlateCoverage } from './lib/plate-coverage.mjs'
 
 // 必须显式给后端：静默回落到 8080 等于"打到另一台机器上读数"（同一条教训见 march 探针第 25 行）
 const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
@@ -233,68 +234,6 @@ function clickTabNode(name) {
   return true
 }
 
-/**
- * 像素法"底板压字"的规划：算出每颗 Label 的**字形带**（屏幕像素矩形），以及
- * "DFS 次序排在它之后、且世界盒与字形带相交"的 `Graphics` 底板清单。
- *
- * <p>为什么必须按次序筛：卡片背景本来就压在字**底下**，藏掉它当然也会变像素 —— 只有**后画**的那层才叫"盖住"。
- * <p>为什么不能按"子树里有文字就排除"筛纯底板：页签的底板就长在带页签文字的节点上，那样筛会把真缺陷亲手滤掉
- * （台账 #399 第一轮就是这么假阴性的）。藏的方式是**只禁 `Graphics` 组件**，节点与它自己的文字照常画。
- * <p>标定过的结论：植入 #389 那处老缺陷时报 192/822/181 像元变化，修好后同一批底板几何仍相交但变化 0/0/0
- * ⇒ 判据不需要阈值。助手挂在 window 上（`evaluate` 只能带函数源码，节点引用传不出来）。
- */
-function planPlateCoverage(panelKey) {
-  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
-  const panel = game?.children.find((c) => c.name === panelKey)
-  if (!panel) return null
-  const order = []
-  const walkOrder = (n) => {
-    order.push(n)
-    for (const c of n.children) walkOrder(c)
-  }
-  walkOrder(panel)
-  const vis = window.cc.view.getVisibleSize()
-  const can = window.cc.view.getCanvasSize()
-  const scale = can.width / vis.width
-  const bands = []
-  const plates = []
-  order.forEach((n, i) => {
-    const lb = n.getComponent('cc.Label')
-    const str = lb ? (lb.string ?? '') : ''
-    if (str.length === 0 || !n.activeInHierarchy) return
-    const bb = n.getComponent('cc.UITransform').getBoundingBoxToWorld()
-    let units = 0
-    for (const ch of str) units += ch.charCodeAt(0) < 128 ? 0.55 : 1
-    const est = Math.min(units * lb.fontSize, bb.width)
-    const align = lb.horizontalAlign
-    const gx0 = align === 0 ? bb.x : (align === 2 ? bb.x + bb.width - est : bb.x + (bb.width - est) / 2)
-    const band = {
-      x: Math.round(gx0 * scale),
-      y: Math.round((vis.height - (bb.y + bb.height / 2 + lb.fontSize / 2)) * scale),
-      w: Math.max(1, Math.round(est * scale)),
-      h: Math.max(1, Math.round(lb.fontSize * scale)),
-    }
-    const bi = bands.length
-    bands.push({ text: str.slice(0, 10), rect: band })
-    order.forEach((m, j) => {
-      if (j <= i) return
-      const g = m.getComponent('cc.Graphics')
-      if (g === null || g === undefined || !m.activeInHierarchy || !g.enabled) return
-      const pr = m.getComponent('cc.UITransform').getBoundingBoxToWorld()
-      const gy0 = bb.y + bb.height / 2 - lb.fontSize / 2
-      if (pr.x >= gx0 + est || gx0 >= pr.x + pr.width) return
-      if (pr.y >= gy0 + lb.fontSize || gy0 >= pr.y + pr.height) return
-      let slot = plates.find((p) => p.handle === j)
-      if (slot === undefined) {
-        slot = { handle: j, name: m.name, bands: [] }
-        plates.push(slot)
-      }
-      slot.bands.push(bi)
-    })
-  })
-  window.__plateNodes = order
-  return { bands, plates }
-}
 
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
 console.log(`=== 全客户端"字被盒子压小"清单：产物经 ${preview.origin}，后端 ${BACKEND} ===`)
