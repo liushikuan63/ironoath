@@ -80,6 +80,8 @@ TOOLS=(
   "tools/verify-city-phone.mjs"
   # 军队训练队列的加速/取消：前置要养到主城 3 级 + 兵营 + 上阵武将（约 3 分钟），所以它排在最后
   "tools/verify-army-queue.mjs"
+  # 背包批量开箱：种子靠运维补发宝箱道具（几秒）
+  "tools/verify-bag-open-batch.mjs"
   "tools/verify-gift-popup.mjs"
 )
 FAILED=()
