@@ -2706,6 +2706,8 @@ test('抽卡面板：两个池都列出来，抽满的那个点不动也不发�
   await h.root.drawGacha(1)
   assert.equal(h.http.countOf('/gacha/draw'), before, '抽满还发请求，等于把玩家送去挨一条拒绝')
   assert.deepEqual(h.errors.at(-1), ['gacha', '这个号在该池已抽满'])
+  // 同一句话要落在抽卡面板那条 `notice` 上（#358 的 (b) 类落点：写 notice 字段再纯重递）
+  assert.equal(h.lastGacha?.notice, '这个号在该池已抽满')
 })
 
 test('抽卡：换池后十抽不够就不发、单抽够就发一条，并回读四样与结果行', async () => {
@@ -4190,6 +4192,9 @@ test('没在研究时点取消：一个请求都不发，说的是"不用取消"
 
   assert.equal(h.http.calls.length, total, '队列空着就不该发这一按')
   assert.match(h.errors.map(e => e[1]).join('\n'), /没有在研究的项目/)
+  // console 那条只有开发者看得见（#356/#357）；同一句话要落到科技页那条 `noticeText` 上，
+  // 而落点走的是**纯重递**——上面那条 `calls.length` 不变就是它没顺手去重拉列表的证据
+  assert.match(String(h.lastTech?.noticeText), /没有在研究的项目/)
 })
 
 test('研究加速：先问用哪一张，选完发一条带幂等键的 POST 并重拉', async () => {

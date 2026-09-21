@@ -2298,6 +2298,14 @@ export class AppRoot {
         : AppRoot.reason(outcome)
       this.say('tech', outcome)
     }
+    this.deliverTech()
+  }
+
+  /**
+   * 组装并递一次科技面板。**纯重递、不发请求** —— 被拒的说明要走这条路
+   * （`showNeedsInPanel`），一次拒绝不该变成一次读放大。
+   */
+  private deliverTech(): void {
     this.targets.tech?.(buildTechPanel(this.techResp, this.techNotice))
   }
 
@@ -3712,11 +3720,19 @@ export class AppRoot {
    * `attach` 覆盖掉，所以正确落点是**它们本来就带着的那个字段**。
    *
    * <p>只调"不发请求"的重递口：一次拒绝不该变成一次读放大。
-   * tech / gacha 的递送口内联在会拉数据的 `loadXxx()` 里（没有纯重递方法），
-   * army / bag / hero / social / reports 根本没有瞬时提示面 —— 都不硬凑，见台账未做。
+   * army / bag / hero / social / reports 没有瞬时提示面（要新建 UI 面才能接），
+   * 这里刻意不给它们造落点 —— 见台账 #358 未做②。
    */
   private showNeedsInPanel(panel: string, message: string): void {
     switch (panel) {
+      case 'tech':
+        this.techNotice = message
+        this.deliverTech()
+        return
+      case 'gacha':
+        this.gachaNotice = message
+        this.deliverGacha()
+        return
       case 'shop':
         this.shopNotice = message
         this.deliverShop()
