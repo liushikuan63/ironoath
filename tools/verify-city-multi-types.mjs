@@ -9,6 +9,9 @@
  * 主城 →2（1000 木 1000 石）⇒ 农田 Lv2 门槛 + 仓库 Lv2；主城 →3 ⇒ 兵营 + 铁矿场。
  * 四类 + 主城 = 五栋同屏，正好覆盖"底图空位 + 各自正稿 + 名字与等级"三件事。
  *
+ * <p>**15 类全见的验收不在这里**（那要主城 8 级 + 走运维补发发资源），见
+ * `tools/verify-city-full-city.mjs`；本工具留在"新号零外部依赖也能跑"的位置上。
+ *
  * <p><b>建造走 HTTP、只有截图走浏览器</b>：客户端那个建造选择器按服务端顺序列全部候选项，
  * 选中门槛不够的行会被服务端拒（`3000 主城等级不足`）—— 那是**产品行为**，但不是本工具要验的东西。
  * 本工具要验的是"建好之后画成什么样"，所以建造直接走 `/city/upgrade`，快且可重复。
@@ -195,6 +198,120 @@ const frame = await page.evaluate(() => {
   visit(scene, true)
   return { tiles }
 })
+
+/**
+ * **点击命中矩阵**（`CITY-ART-04`：每栋基座中心必须命中自身）。
+ *
+ * <p>为什么补在这一次里：多建几栋才能验"相邻/边缘/高塔"这几类 —— 单栋城市里点谁都是它。
+ * 命中点取的是格子的**基座中心**（`Grid-N` 的 UITransform 原点，锚点是 (0.5, 0)），
+ * 正是判据要求的那一点；读的是选择栏里的 `SelectedTitle`（与 `verify-devtools-panels` 同一条读数路径）。
+ *
+ * <p>同时带一条**负向对照**：点一个没建的格子，选择栏**不许**报出任何一栋已建建筑的名字 ——
+ * 没有它，"点哪儿都能选中"这种假绿看不出来。
+ */
+const toPage = (nodeName) => page.evaluate((name) => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  let target = null
+  const visit = (node) => {
+    if (node.name === name) target = node
+    for (const child of node.children) visit(child)
+  }
+  visit(scene)
+  if (target === null) return null
+  const box = target.getComponent('cc.UITransform')
+  const camera = scene.getComponentInChildren('cc.Camera')
+  if (box === null || camera === null) return null
+  const screen = camera.worldToScreen(box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
+  const rect = document.querySelector('canvas').getBoundingClientRect()
+  const pixel = cc.view.getVisibleSizeInPixel()
+  return {
+    x: rect.left + (screen.x / pixel.width) * rect.width,
+    y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
+  }
+}, nodeName)
+
+const selectedTitle = () => page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let title = null
+  const visit = (node) => {
+    if (node.name === 'SelectedTitle') {
+      const label = node.getComponent('cc.Label')
+      if (label !== null && label !== undefined) title = label.string
+    }
+    for (const child of node.children) visit(child)
+  }
+  visit(scene)
+  return title
+})
+
+const builtNames = built.map((b) => b.name)
+const occupiedTiles = frame.tiles.filter((t) =>
+  t.frameName !== null || t.texts.some((x) => builtNames.includes(x)))
+const emptyTiles = frame.tiles.filter((t) => !occupiedTiles.includes(t))
+const hitChecks = []
+for (const tile of occupiedTiles) {
+  const point = await toPage(tile.tile)
+  if (point === null) {
+    hitChecks.push({ tile: tile.tile, expected: null, title: null, ok: false })
+    continue
+  }
+  await page.mouse.click(point.x, point.y)
+  await page.waitForTimeout(600)
+  const title = await selectedTitle()
+  const expectedName = tile.texts.find((x) => builtNames.includes(x)) ?? ''
+  hitChecks.push({ tile: tile.tile, expected: expectedName, title, ok: title !== null && title.includes(expectedName) })
+}
+/**
+ * 负向对照要能**分辨"点空了"与"串到邻格"**：两种情况下选择栏都不是空 —— 前者的标题**不变**
+ * （空格没有交互，上一次的选中留着），后者会**变成另一栋**。
+ *
+ * <p>第一版写成"点空格后标题不许含任何已建建筑名"，结果因为上一次刚好选中的就是铁矿场而误报
+ * （标题没变也算含建筑名）。现在：先明确选中主城当参照，再点**离所有建筑最远**的那个空格，
+ * 判据是"标题要么不变、要么变成非建筑文案；**一旦变成别的建筑就是真串格**"。
+ */
+let emptyControl = null
+if (emptyTiles.length > 0) {
+  // 用屏幕坐标挑"离所有已建格子最远"的那个空格（比按索引挑稳）
+  const positions = {}
+  for (const tile of frame.tiles) {
+    positions[tile.tile] = await toPage(tile.tile)
+  }
+  const occupiedNames = occupiedTiles.map((t) => t.tile)
+  const far = emptyTiles
+    .map((tile) => {
+      const point = positions[tile.tile]
+      if (point === null || point === undefined) return { name: tile.tile, distance: -1 }
+      const distance = Math.min(...occupiedNames.map((name) => {
+        const other = positions[name]
+        return other === null || other === undefined ? 0 : Math.hypot(point.x - other.x, point.y - other.y)
+      }))
+      return { name: tile.tile, distance }
+    })
+    .sort((a, b) => b.distance - a.distance)[0]
+  // 参照：先点主城那一格，让选择栏停在已知状态
+  const reference = occupiedTiles.find((t) => t.texts.some((x) => x.includes('主城')))
+  if (reference !== undefined) {
+    const referencePoint = positions[reference.tile]
+    if (referencePoint !== null && referencePoint !== undefined) {
+      await page.mouse.click(referencePoint.x, referencePoint.y)
+      await page.waitForTimeout(600)
+    }
+  }
+  const before = await selectedTitle()
+  const point = positions[far.name]
+  if (point !== null && point !== undefined) {
+    await page.mouse.click(point.x, point.y)
+    await page.waitForTimeout(600)
+    emptyControl = { tile: far.name, distance: Math.round(far.distance), before, title: await selectedTitle() }
+  }
+}
+console.log('[multi-types] 点击命中：')
+for (const check of hitChecks) {
+  console.log(`   ${check.tile} 期望「${check.expected}」实际「${check.title}」${check.ok ? '' : '  ← 未命中'}`)
+}
+console.log(`[multi-types] 负向对照（最远的空格 ${emptyControl?.tile ?? '(没找到)'}，距最近建筑 ${emptyControl?.distance ?? '?'}px）：`
+  + `点击前「${emptyControl?.before ?? '(没读到)'}」→ 点击后「${emptyControl?.title ?? '(没读到)'}」`)
 await page.screenshot({ path: SHOT })
 await browser.close()
 await preview.close()
@@ -228,6 +345,23 @@ if (mainCityArt !== undefined) {
 const artWithoutBuilding = withArt.filter((t) => !expected.some((b) => t.texts.some((x) => x === b.name)))
 if (artWithoutBuilding.length > 0) {
   failures.push(`有正稿出现在没建的格子上：${artWithoutBuilding.map((t) => t.tile).join('、')}`)
+}
+// CITY-ART-04：每栋基座中心命中自身 + 空格不误命中
+if (hitChecks.length === 0) {
+  failures.push('点击命中矩阵一条都没跑（没找到有建筑的格子）—— 判据走不到，不许当绿')
+}
+for (const check of hitChecks.filter((c) => !c.ok)) {
+  failures.push(`${check.tile} 基座中心点击后选择栏是「${check.title}」，不是「${check.expected}」`)
+}
+// 负向对照：点最远的空格。**标题不变 = 点空了**（空格没有交互）；变成另一栋 = 命中区串格（真缺陷）
+if (emptyControl !== null && emptyControl.title !== null
+    && emptyControl.title !== emptyControl.before
+    && builtNames.some((name) => emptyControl.title.includes(name))) {
+  failures.push(`点空格子（${emptyControl.tile}，距最近建筑 ${emptyControl.distance}px）后选择栏从`
+    + `「${emptyControl.before}」变成「${emptyControl.title}」—— 命中区串到邻格了`)
+}
+if (emptyControl !== null && emptyControl.title === null) {
+  failures.push('负向对照没读到选择栏标题 —— 判据走不到，不许当绿')
 }
 if (errors.length > 0) {
   failures.push(`页面报错 ${errors.length} 条：${errors[0]}`)
