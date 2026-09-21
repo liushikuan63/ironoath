@@ -23,7 +23,7 @@ import type { ArmyPanelView as ArmyPanelData, UnitRow } from '../game/army/ArmyP
 import type { ArmyListResp, UnitType } from '../net/generated/ArmyProtocol'
 import { applyCommandButton, applyIconSprite, unitIconKey } from './ArtCatalog'
 import { NodePool } from './NodePool'
-import { applySystemUiFont, keepOneLine } from './UiFont'
+import { applySystemUiFont, capWidth, keepOneLine } from './UiFont'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 
 const { ccclass } = _decorator
@@ -284,9 +284,7 @@ export class ArmyPanelView extends Component {
     // 状态行：「重步兵 ×50 · 还剩 2 批」/ 停止原因 / 还没有可续的那一批。
     // 它读的是服务端下发的那份策略 —— 自动续训的账单是持续的，玩家必须能一眼看到它现在在做什么
     this.autoTrainStatus = this.addLabel(this.node, 'AutoTrainStatus', 0, top - 164, COLOR_TEXT_DIM, 14)
-    this.autoTrainStatus.node.getComponent(UITransform)
-      ?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
-    this.autoTrainStatus.overflow = Label.Overflow.SHRINK
+    capWidth(this.autoTrainStatus, PANEL_WIDTH - 2 * PADDING)
   }
 
   private createRow(): Node {
@@ -302,20 +300,17 @@ export class ArmyPanelView extends Component {
       16, COLOR_TEXT, 18)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    title.node.getComponent(UITransform)?.setContentSize(new Size(330, 26))
-    title.overflow = Label.Overflow.SHRINK
+    capWidth(title, 330)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + 42,
       -4, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(330, 22))
-    detail.overflow = Label.Overflow.SHRINK
+    capWidth(detail, 330)
     const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING + 42,
       -22, COLOR_COPPER_GOLD, 13)
     countdown.horizontalAlign = Label.HorizontalAlign.LEFT
     countdown.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    countdown.node.getComponent(UITransform)?.setContentSize(new Size(330, 20))
-    countdown.overflow = Label.Overflow.SHRINK
+    capWidth(countdown, 330)
 
     const buttons: Array<{ name: string; text: string; x: number; count: number | null }> = [
       // 「队列」排在两颗训练键左边：它管的是**已经在练的那一口**（取消），与"再练多少"不同类。
