@@ -5,6 +5,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 INTEL_PORT（默认 8197，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8199 INTEL_PORT=8197 node tools/verify-scout-intel-runtime.mjs
  *
  * <p><b>为什么单独一个量具而不塞进 march 探针</b>：march 那份吃的是搜索/编成那一屏的节点树，

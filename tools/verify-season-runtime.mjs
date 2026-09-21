@@ -3,6 +3,7 @@
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：SEASON_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 SEASON_PROBE_PORT（默认 8172，同机并发时换一个）
  *   SEASON_MODE=disabled SEASON_BACKEND=http://localhost:8171 node tools/verify-season-runtime.mjs
  *   SEASON_MODE=enabled  SEASON_BACKEND=http://localhost:8173 node tools/verify-season-runtime.mjs
  *

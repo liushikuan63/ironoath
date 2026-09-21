@@ -4,6 +4,7 @@
  *       它只创建自己的临时号（设备号带时间戳，跑完就留在 dev 的测试号堆里，与量具探针同一类）。
  *
  * 用法：GACHA_REAL_BACKEND=http://localhost:8080 node tools/probe-gacha-real-account.mjs
+ * 必填：GACHA_REAL_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）
  *
  * <p><b>为什么要这么个量具</b>：台账 #267 与换装那一格都写着"阻塞：dev 新号 `heroes=0`、`instances=0`，
  * 造数据＝作弊端点被禁"。而抽卡入口刚接上（#294 / #295）—— 抽卡本身就是**生产路径**，
@@ -13,7 +14,12 @@
  * <p><b>它永远退 0</b>（报告器，不是门）：读不到结论就打印读不到，不卡任何人。
  */
 
-const BACKEND = process.env.GACHA_REAL_BACKEND ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.GACHA_REAL_BACKEND ?? (() => {
+  console.error('[probe-gacha-real-account] 缺 GACHA_REAL_BACKEND：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const MAX_DRAWS = Number(process.env.GACHA_REAL_DRAWS ?? 6)
 
 function newRequestId() {

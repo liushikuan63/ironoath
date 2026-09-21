@@ -4,6 +4,7 @@
  * 依赖：node、playwright、一台能登录的后端（默认 8080）、已构建的 web-mobile 产物。
  *
  * 用法：SKILL_ARTIFACT_ROOT=/d/tmp/tech-wt/client/build/web-mobile node tools/verify-skill-runtime.mjs
+ * 必填：SKILL_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 SKILL_PROBE_PORT（默认 8188，同机并发时换一个）
  *
  * <p><b>读接口经夹具替换</b>（与 `verify-awaken-runtime.mjs` 同一套做法与同一句理由）：
  * dev 新号 `heroes=0`，而这一屏要的是"有一个武将、他两路技能一路满级一路没满、背包里三本同型技能书"

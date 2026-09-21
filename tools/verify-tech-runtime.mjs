@@ -3,6 +3,7 @@
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 web-mobile 产物。
  *
  * 用法：TECH_BACKEND=http://localhost:8181 node tools/verify-tech-runtime.mjs
+ * 必填：TECH_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 TECH_PROBE_PORT（默认 8182，同机并发时换一个）
  *
  * <p><b>入口那一格的临时驱动方式（写在这里，免得下一个人以为这是设计）</b>：
  * 入口方案 (a) 是"内城学院 → 动作栏研究"，而 `CityPanelView.ts` 当时被并行会话持有 ⇒ 本探针

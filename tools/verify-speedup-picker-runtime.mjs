@@ -4,6 +4,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 PICKER_PORT（默认 8196，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8199 PICKER_PORT=8196 node tools/verify-speedup-picker-runtime.mjs
  *
  * <p><b>为什么要单独跑这一份</b>：#316 改的是 `ChoiceOverlay.createRow` 的版式（色带与两个标签

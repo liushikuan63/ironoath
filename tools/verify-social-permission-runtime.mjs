@@ -5,6 +5,7 @@
  * 依赖：node、playwright、一台能登录的后端（默认 8180）、已构建的 web-mobile 产物。
  *
  * 用法：
+ * 必填：SOCIAL_PERM_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 SOCIAL_PERM_PORT（默认 8197，同机并发时换一个）
  *   SOCIAL_PERM_BACKEND=http://localhost:8180 \
  *   SOCIAL_PERM_ARTIFACT_ROOT=/d/tmp/tech-wt/client/build/web-mobile \
  *   node tools/verify-social-permission-runtime.mjs

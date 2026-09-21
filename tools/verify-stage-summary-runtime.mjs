@@ -5,6 +5,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 STAGE_PORT（默认 8195，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8199 STAGE_PORT=8195 node tools/verify-stage-summary-runtime.mjs
  *
  * <p><b>为什么单独跑这一份</b>：#316 与 #319 各修过一处「SHRINK 标签没盒子」（弹层行、战报行），

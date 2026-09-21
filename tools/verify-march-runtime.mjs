@@ -3,6 +3,7 @@
  * 「弹层真的存在、默认是收起的、搜索面板正常画出来」。
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  * 用法：node tools/verify-march-runtime.mjs
+ * 必填：MARCH_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 MARCH_PROBE_PORT（默认 8193，同机并发时换一个）
  *
  * <p><b>本探针不验「点一行 → 编成 → 出征成功」那条完整链路</b>，这是刻意的：
  * 目标搜索的候选来自匹配池，而 dev 服上**没有任何对手**（空服没有真人，Bot 也没进池），

@@ -4,6 +4,7 @@
  * 依赖：node、playwright、一台能登录的后端（默认 8080）、已构建的 web-mobile 产物。
  *
  * 用法：COMPOSE_ARTIFACT_ROOT=/d/tmp/tech-wt/client/build/web-mobile node tools/verify-compose-runtime.mjs
+ * 必填：COMPOSE_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 COMPOSE_PROBE_PORT（默认 8191，同机并发时换一个）
  *
  * <p><b>为什么 `/hero/list` 要经本探针替换</b>：dev 上的新号 `heroes=0`，而碎片是抽卡重复保底与
  * 活动的产物 —— 刚建档的号既没有"差一片"也没有"刚好够"这两态，这一屏在真数据下够不到

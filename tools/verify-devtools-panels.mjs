@@ -4,6 +4,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 PANEL_PORT（默认 8093，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8155 DEVTOOLS_OPS_TOKEN=<运维令牌> \
  *     node tools/verify-devtools-panels.mjs
  *
@@ -33,7 +34,12 @@ import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf8
 import { startPreviewServer } from './lib/preview-server.mjs'
 
 const ROOT = path.resolve('client/build/web-mobile')
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[verify-devtools-panels] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const TOKEN = process.env.DEVTOOLS_OPS_TOKEN ?? ''
 const PORT = Number(process.env.PANEL_PORT ?? 8093)
 const NAV_SOURCE = 'client/assets/scripts/scene/PanelNav.ts'

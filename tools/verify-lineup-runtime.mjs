@@ -4,6 +4,7 @@
  * 依赖：node、playwright、一台能登录的后端（默认 8080）、已构建的 web-mobile 产物。
  *
  * 用法：LINEUP_ARTIFACT_ROOT=/d/tmp/tech-wt/client/build/web-mobile node tools/verify-lineup-runtime.mjs
+ * 必填：LINEUP_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 LINEUP_PROBE_PORT（默认 8195，同机并发时换一个）
  *
  * <p><b>为什么 `/hero/list` 要经夹具替换</b>：dev 新号只长得出一两名武将（见
  * `tools/probe-gacha-real-account.mjs` 的实测：初始 GOLD 200，只够抽新手池一次），

@@ -2,6 +2,7 @@
  * 职责：排行榜面板的**运行时**验收（B23 S3）—— 在真构建产物 + 真服务端上把四个页签走一遍。
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  * 用法：node tools/verify-rank-runtime.mjs
+ * 必填：RANK_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 RANK_PROBE_PORT（默认 8192，同机并发时换一个）
  *
  * <p>为什么必须有这一个：纯逻辑用例（`client/tests/RankBoard.test.ts`）与编排用例证的是
  * "数据装对了、请求发对了"，而**面板有没有把页签画出来、点了页签会不会切**只有真跑才知道 ——

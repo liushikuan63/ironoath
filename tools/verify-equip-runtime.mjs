@@ -3,6 +3,7 @@
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 web-mobile 产物。
  *
  * 用法：EQUIP_BACKEND=http://localhost:8181 node tools/verify-equip-runtime.mjs
+ * 必填：EQUIP_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 EQUIP_PROBE_PORT（默认 8183，同机并发时换一个）
  *
  * <p><b>这一条判的就是入口本身</b>（V03-a 的探针当时只能用编排层驱动，因为入口被并行会话挡着；
  * 装备页的入口已经落地，所以这里**必须真点按钮**）：武将行上点「装备库」→ 装备页激活。

@@ -4,6 +4,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 TECH_PORT（默认 8189，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8199 TECH_PORT=8189 node tools/verify-tech-research-runtime.mjs
  *
  * <p><b>为什么单独跑这一份</b>：#323 接了写侧（行上一颗「研究」键 + `AppRoot.researchTech`），

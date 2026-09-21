@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * 职责：在真实渲染里验新手引导那一层「画出来了、并且遮罩挡在该挡的地方」（B18 验收 6 的界面面）。
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 GUIDE_PORT（默认 8094，同机并发时换一个）
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  *
  * <p><b>为什么需要它，而不是只看单测</b>：{@code GuideDriver} 的判定在 CI 里（441 条客户端用例的一部分），

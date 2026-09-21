@@ -5,6 +5,7 @@
  * 依赖：node、playwright、一台能登录的后端（默认 8180）、已构建的 web-mobile 产物。
  *
  * 用法：
+ * 必填：SOCIAL_CREATE_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 SOCIAL_CREATE_PORT（默认 8198，同机并发时换一个）
  *   SOCIAL_CREATE_BACKEND=http://localhost:8180 \
  *   SOCIAL_CREATE_ARTIFACT_ROOT=/d/tmp/tech-wt/client/build/web-mobile \
  *   node tools/verify-social-create-runtime.mjs

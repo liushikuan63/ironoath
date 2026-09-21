@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * 职责：在真实浏览器里量客户端运行期的四项性能指标，并按 `global.json` 的阈值判定。
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 PERF_PORT（默认 8092，同机并发时换一个）
  * 依赖：node、playwright、**已启动的 dev 服务端（默认 8080）**、已构建的 `client/build/web-mobile`。
  *
  * <p>对应 `CC开发全流程.md` 阶段 6 里能在这台机器上做的四项：

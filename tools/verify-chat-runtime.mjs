@@ -5,6 +5,7 @@
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 CHAT_PORT（默认 8094，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8155 node tools/verify-chat-runtime.mjs
  *
  * <p><b>为什么在浏览器里量小游戏的界面</b>：面板、频道按钮与输入框是同一份代码
@@ -32,7 +33,12 @@ import { startPreviewServer } from './lib/preview-server.mjs'
 // 产物目录可以用 CHAT_ROOT 换：两个会话同时构建时，主产物目录会被另一边清空重建
 // （Cocos 的 web-mobile 构建先删后写），本工具指向自己的那份就不会互相踩
 const ROOT = path.resolve(process.env.CHAT_ROOT ?? 'client/build/web-mobile')
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[verify-chat-runtime] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.CHAT_PORT ?? 8094)
 const SHOT = process.env.CHAT_SHOT ?? 'D:/tmp/chat-panel.png'
 

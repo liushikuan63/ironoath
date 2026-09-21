@@ -3,7 +3,8 @@
  * 职责：验武将面板"一行都没有"时**说的是人话**，而不是留一整块空白。
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
- * 用法：
+ * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 HERO_PROBE_PORT（默认 8191，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8199 HERO_PROBE_PORT=8191 node tools/verify-hero-empty-runtime.mjs
  *
  * <p><b>为什么单独跑这一份</b>：#344~#346 那一族（"集合为空 → 界面静默什么都不画"）横扫出四条，

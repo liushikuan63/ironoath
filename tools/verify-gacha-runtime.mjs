@@ -4,6 +4,7 @@
  * 依赖：node、playwright、一台能登录的后端（默认 8080）、已构建的 web-mobile 产物。
  *
  * 用法：GACHA_ARTIFACT_ROOT=/d/tmp/tech-wt/client/build/web-mobile node tools/verify-gacha-runtime.mjs
+ * 必填：GACHA_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 GACHA_PROBE_PORT（默认 8193，同机并发时换一个）
  *
  * <p><b>为什么这几条路径要经夹具替换</b>：dev 新号 GOLD 只有初始那点、限定池要 `item_chest_hero`
  * （由关卡与礼包产出），而"抽满过的号"在 dev 上根本不存在（没有回档口，也不许造数据）。

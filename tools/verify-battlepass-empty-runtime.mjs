@@ -4,6 +4,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 BATTLEPASS_PROBE_PORT（默认 8192，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8199 BATTLEPASS_PROBE_PORT=8192 node tools/verify-battlepass-empty-runtime.mjs
  *
  * <p><b>相位 A 钉的是"双向一致"而不是"必须看到某句话"</b>：赛季开没开、有没有档位，
