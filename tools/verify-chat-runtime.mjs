@@ -29,6 +29,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 // 产物目录可以用 CHAT_ROOT 换：两个会话同时构建时，主产物目录会被另一边清空重建
 // （Cocos 的 web-mobile 构建先删后写），本工具指向自己的那份就不会互相踩
@@ -292,6 +293,7 @@ async function main() {
   await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   const bootDeadline = Date.now() + 45_000
   while (boot === null && Date.now() < bootDeadline) {
     await page.waitForTimeout(500)

@@ -19,6 +19,7 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const OUT = process.env.RANK_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/rank-verify')
 mkdirSync(OUT, { recursive: true })
@@ -75,6 +76,7 @@ async function openPowerPanel() {
   // 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
   preview.assertRewritten()
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+  await hideGuideOverlay(page)
   await page.waitForTimeout(1800)
 }
 

@@ -32,6 +32,7 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const OUT = process.env.SOCIAL_CREATE_OUT ?? path.resolve(process.cwd(), 'client/build/social-create-verify')
 mkdirSync(OUT, { recursive: true })
@@ -359,6 +360,7 @@ const shot = async (name) => {
 const bootIn = async () => {
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   await page.waitForTimeout(3_000)
 }
 const openSocial = async () => {

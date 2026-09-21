@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const OUT = process.env.ART_VERIFY_OUT
   ?? path.resolve(process.cwd(), 'client/build/art-verify')
@@ -44,6 +45,7 @@ async function inspectPanel(panel) {
   url.searchParams.set('panel', panel)
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+  await hideGuideOverlay(page)
   await page.waitForTimeout(1600)
   const activePanel = await page.evaluate(() => {
     const scene = window.cc.director.getScene()

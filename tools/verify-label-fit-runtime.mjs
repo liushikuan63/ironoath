@@ -30,6 +30,7 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideBoard } from './lib/guide-overlay.mjs'
 import { decodePng, diffRegion } from './lib/png-diff.mjs'
 
 // 必须显式给后端：静默回落到 8080 等于"打到另一台机器上读数"（同一条教训见 march 探针第 25 行）
@@ -206,32 +207,6 @@ const WALK = `(() => {
   return { seen, shrink, out, stretched, crowd, underNav, navTop, texts }
 })()`
 
-/**
- * 把新手引导那块板藏起来，好量它背后那一屏自己的排版。
- *
- * <p>为什么不是"点掉它"：`GuideNext` 的 `touch-start` 会发一次推进引导的写请求，
- * 而 dev 新号那一步的前置没满足 ⇒ 写失败，屏幕上换成"网络不稳定，正在重试（第 1 次）"，
- * 板子还在、还多了一条重试提示（实测过）。引导是玩家可关的**覆盖层**，藏掉它不改被量那一屏的几何。
- */
-function hideGuideBoard() {
-  const scene = window.cc.director.getScene()
-  const found = []
-  const find = (n) => {
-    if (!n.activeInHierarchy) return
-    if (n.name === 'GuideNext') found.push(n)
-    for (const c of n.children) find(c)
-  }
-  find(scene)
-  if (found.length === 0) return false
-  let top = found[0]
-  // 爬到 Game 的直接子节点（引导自己的那一层），别把 Game 整块关掉
-  while (top.parent !== null && top.parent.name !== 'Game' && top.parent.name !== 'Canvas') {
-    top = top.parent
-  }
-  if (top.name === 'Game' || top.name === 'Canvas') return false
-  top.active = false
-  return true
-}
 
 /**
  * 切到一个页签。两个面板的处理器签名都是 `(_event: EventTouch) => ...`（不读那个参数），

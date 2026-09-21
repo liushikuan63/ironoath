@@ -23,6 +23,7 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const ROOT = path.resolve('client/build/web-mobile')
 // 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
@@ -109,6 +110,7 @@ async function main() {
   await page.goto(`${preview.origin}/`, { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   const deadline = Date.now() + 45_000
   while (boot === null && Date.now() < deadline) {
     await page.waitForTimeout(500)

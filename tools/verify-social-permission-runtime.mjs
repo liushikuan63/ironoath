@@ -34,6 +34,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const ARTIFACT = path.resolve(process.env.SOCIAL_PERM_ARTIFACT_ROOT ?? 'client/build/web-mobile')
 // 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，
@@ -408,6 +409,7 @@ const shot = async (name) => {
 const bootIn = async () => {
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   await page.waitForTimeout(3_000)
 }
 
