@@ -74,6 +74,8 @@ export class BagPanelView extends Component {
    * （B04 §4：加速类道具必须给 targetId）—— 目标列表在城建/军队数据里，本场景拿不到。
    */
   onUseItem: ((itemId: string, needsTarget: boolean) => void) | null = null
+  /** 批量开箱（B04 验收 3）。count 是**持有数量**，一次最多 100，逐箱上限由服务端取小。 */
+  onOpenBatch: ((itemId: string, count: number) => void) | null = null
   /** 点「出售」。价格由服务端算好下发，本场景不参与定价 */
 
   override onLoad(): void {
@@ -112,6 +114,7 @@ export class BagPanelView extends Component {
     this.targetPicker?.hide()
     this.targetPicker = null
     this.onUseItem = null
+    this.onOpenBatch = null
   }
 
   /** 装载资源产出明细（GET /resource/detail）。 */
@@ -232,6 +235,8 @@ export class BagPanelView extends Component {
     // 所以它居中到原来的两个按钮之间，而不是留一个空位假装那边还有东西
     const buttons: Array<{ name: string; text: string; x: number }> = [
       { name: 'UseButton', text: '使用', x: PANEL_WIDTH / 2 - 48 },
+      // 「全开」只在宝箱页出现（B04 验收 3：一次最多 100，逐箱上限取 chest.maxBatchCount）
+      { name: 'OpenBatchButton', text: '全开', x: PANEL_WIDTH / 2 - 128 },
     ]
     for (const button of buttons) {
       const buttonNode = new Node(button.name)
@@ -357,8 +362,8 @@ export class BagPanelView extends Component {
         && applyAnyIconSprite(icon, row.iconKey, 26, 26)
     }
     // 前三个子节点是文本，后一个是使用按钮 —— 只有背包页的道具行才显示
-    const useButton = node.children[3]
-    if (useButton !== undefined) {
+    const useButton = node.getChildByName('UseButton')
+    if (useButton !== null) {
       useButton.active = row.itemId !== null
       useButton.off('touch-start')
       if (row.itemId !== null) {
@@ -366,6 +371,21 @@ export class BagPanelView extends Component {
         const needsTarget = row.needsTarget
         useButton.on('touch-start', (_event: EventTouch) => {
           this.onUseItem?.(itemId, needsTarget)
+        }, this)
+      }
+    }
+    // 「全开」：按钮**按名字取**（不再按下标）。`scripts/check-view-child-index.sh` 那道门管的是
+    // "不许新增按下标取节点"，这里既然要动这一处，就顺手让它先合规。
+    const openBatch = node.getChildByName('OpenBatchButton')
+    if (openBatch !== null) {
+      // 只有宝箱页、且真有库存才给「全开」：拿着 0 个摆一只可点的按钮只会被服务端拒
+      openBatch.active = row.chest && row.itemId !== null && row.count > 0
+      openBatch.off('touch-start')
+      if (openBatch.active && row.itemId !== null) {
+        const itemId = row.itemId
+        const count = row.count
+        openBatch.on('touch-start', (_event: EventTouch) => {
+          this.onOpenBatch?.(itemId, count)
         }, this)
       }
     }
@@ -396,6 +416,8 @@ export class BagPanelView extends Component {
           iconKey: null,
           itemId: null,
           needsTarget: false,
+          chest: false,
+          count: 0,
         })
       }
       out.push({
@@ -408,6 +430,8 @@ export class BagPanelView extends Component {
         iconKey: null,
         itemId: null,
         needsTarget: false,
+        chest: false,
+        count: 0,
       })
     }
     return out
@@ -437,6 +461,8 @@ export class BagPanelView extends Component {
       iconKey: itemArtKeyForConfig(item.itemId),
       itemId: item.itemId,
       needsTarget: item.needsTarget,
+      chest: page.type === 'CHEST',
+      count: item.count,
     }))
   }
 
@@ -458,6 +484,10 @@ interface RowDraft {
   readonly iconKey: string | null
   /** 道具行才有；资源行为 null，据此隐藏使用/出售按钮 */
   readonly itemId: string | null
+  /** 这一行是不是宝箱（页类型为 CHEST）——「全开」只对宝箱出现。 */
+  readonly chest: boolean
+  /** 持有数量（结构化数字，不是从 stackText 拆的）。 */
+  readonly count: number
   readonly needsTarget: boolean
 }
 
@@ -479,5 +509,7 @@ function resourceSummaryDraft(resource: ResourceRow): RowDraft {
     iconKey: resourceIconKey(resource.type),
     itemId: null,
     needsTarget: false,
+    chest: false,
+    count: 0,
   }
 }

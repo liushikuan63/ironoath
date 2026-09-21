@@ -24,11 +24,12 @@ cd "$(dirname "$0")/.."
 VIEW_DIR="${VIEW_DIR:-client/assets/scripts/scene}"
 
 # 存量基线（2026-09-22 清点）。**只减不增**；减少时把新数字填回来，别让这份账失效。
-BASELINE_TOTAL=43
+# 09-22 当天第一次降账：BagPanelView 4 → 3（接「全开」时把那一处改成按名字取），总数 43 → 42。
+BASELINE_TOTAL=42
 # 单文件基线：新增文件必须从 0 开始（不出现在这张表里就只允许 0 处）
 declare -A BASELINE=(
   [ArmyPanelView.ts]=4
-  [BagPanelView.ts]=4
+  [BagPanelView.ts]=3
   [BattlePlaybackView.ts]=1
   [BattleReportPanelView.ts]=3
   [GachaDisclosureView.ts]=2

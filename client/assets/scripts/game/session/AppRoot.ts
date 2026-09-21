@@ -969,6 +969,16 @@ export class AppRoot {
     return this.write('army', this.api.armyCollectTreated({}), ['army', 'reddot'])
   }
 
+  /**
+   * 批量开箱（B04 验收 3）。`count` 是持有数量，这里按**协议天花板 100** 夹一次；
+   * 逐箱的实际上限（`chest.maxBatchCount`）由服务端再取小 —— 客户端不查表（铁律 2）。
+   */
+  openChestBatch(itemId: string, count: number): Promise<void> {
+    const capped = Math.max(1, Math.min(100, Math.floor(count)))
+    this.track(TRACK_EVENTS.itemUse, { itemId, batch: trackParam(capped) })
+    return this.write('bag', this.api.itemOpenBatch({ itemId, count: capped }), ['bag', 'reddot'])
+  }
+
   /** 顶栏的「一键收割」= `buildingId: null`，由服务端裁定收哪些；具体行则收那一格。 */
   collect(buildingId: string | null): Promise<void> {
     this.track(TRACK_EVENTS.gatherCollect, { buildingId: trackParam(buildingId), all: trackParam(buildingId === null) })

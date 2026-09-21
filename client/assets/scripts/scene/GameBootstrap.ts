@@ -1275,6 +1275,7 @@ export class GameBootstrap extends Component {
       out.bag = resp => bag.attachBag(resp)
       out.resources = resp => bag.attachResources(resp)
       bag.onUseItem = (itemId, needsTarget) => { void this.root?.useItem(itemId, needsTarget) }
+      bag.onOpenBatch = (itemId, count) => { void this.root?.openChestBatch(itemId, count) }
       out.speedupTargetChoice = (options, onPick) => bag.showTargetPicker(options, onPick)
     }
     if (stage !== null) {
