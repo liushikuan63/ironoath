@@ -950,29 +950,42 @@ const HEADER_ROWS = `(() => {
     if (hit === null) return null
     const t = hit.getComponent('cc.UITransform')
     const w = t.getBoundingBoxToWorld()
-    return { text: hit.getComponent('cc.Label')?.string ?? '',
+    const lb = hit.getComponent('cc.Label')
+    return { text: lb?.string ?? '',
       l: w.x, r: w.x + w.width, b: w.y, t: w.y + w.height,
-      boxW: Math.round(t.width), overflowing: w.x < 0 || w.x + w.width > size.width }
+      boxW: Math.round(t.width), overflowing: w.x < 0 || w.x + w.width > size.width,
+      want: lb?.fontSize ?? 0, ov: lb?.overflow ?? -1, actual: lb?.actualFontSize ?? -1 }
   }
   const hospital = pick('Hospital')
   const warning = pick('Warning')
-  const overlaps = hospital !== null && warning !== null
+  // 两行的**字形带**不相交：中心距下限按字号（em）算，不按行盒算。
+  // 行盒按字模给（实测 ≈ 字号×1.54~1.79），拿行盒比会把健康版式判成一片红（#365），
+  // 而 #364 为了让行盒比开，去猜盒高 + SHRINK，结果整行字被压小（#366 的迁移曲线）。
+  const crowd = hospital !== null && warning !== null
     && hospital.l < warning.r && warning.l < hospital.r
-    && hospital.b < warning.t && warning.b < hospital.t
+    && Math.abs((hospital.b + hospital.t) / 2 - (warning.b + warning.t) / 2)
+      < (hospital.want + warning.want) / 2 + 4
   return {
     found: hospital !== null && warning !== null,
-    // 守卫生效的判据是「两行被限成同一个宽」：没限时各自按文本自适应，宽度必然不同
-    // （2026-09-21 实测：医院行 280、警告行 418）。只判"宽度大于 100"是假判据 ——
-    // 自适应出来的宽度本来就大于 100，守卫缺失照样绿
-    boxesGuarded: hospital !== null && warning !== null
-      && hospital.boxW > 100 && warning.boxW > 100
-      && hospital.boxW === warning.boxW,
-    boxWidths: [hospital ? hospital.boxW : null, warning ? warning.boxW : null],
+    // 守卫的判据从「两行同宽」换成「两行都只有一行、且都没被盒子改了字号」：
+    // 同宽是"钉宽度"的产物，而钉宽度 + SHRINK 的真实代价是把字压小一号（#366 实测曲线）。
+    // 现在限的是"不换行"，宽度由文本决定，所以判据直接量意图本身。
+    oneRowEach: hospital !== null && warning !== null
+      && hospital.want > 0 && warning.want > 0
+      && hospital.t - hospital.b <= hospital.want * 2 + 8
+      && warning.t - warning.b <= warning.want * 2 + 8,
     // 正向前置：警告行此刻真的有内容 —— 否则"两行不相交"是在读一个空集合（#347 那族假绿）
     warningHasText: warning !== null && warning.text.length > 0,
+    // 盒高低于一行字的实测下限 ⇒ SHRINK 正在拿缩字服从盒子。下限见台账 #366 的迁移曲线
+    // （14~20 号字都要到 30 才等于设定字号，且不随字号走）。
+    // ⚠ 别改用 actualFontSize：本轮植入实测它在翻转 overflow 后给的是**上一个模式的残值**
+    //   （NONE 的 1.5×字号），判据会恒绿 —— 是能骗过眼睛的那种假绿。
+    shrunk: [hospital, warning].filter((x) => x !== null && x.ov === 2 && x.text.length > 0
+      && (x.t - x.b) < Math.max(x.want + 14, 30))
+      .map((x) => x.text.slice(0, 6) + '=盒' + Math.round(x.t - x.b) + '<' + Math.max(x.want + 14, 30)),
     rowHeights: [hospital, warning].filter((x) => x !== null)
-      .map((x) => Math.round(x.t - x.b)),
-    overlaps,
+      .map((x) => Math.round(x.t - x.b) + '@' + x.want),
+    crowd,
     outside: [hospital, warning].filter((x) => x !== null && x.overflowing)
       .map((x) => x.text.slice(0, 18)),
   }
@@ -983,15 +996,17 @@ const headerRows = await page2.evaluate(HEADER_ROWS)
 
 // 反空转前置：两行都得在树里（`addLabel` 建的节点名就是 Hospital / Warning），否则后面全是读空集合
 checkTrue('军队表头那两行都在（医院行与警告行）', headerRows?.found === true)
-checkTrue('两行被限成同一个宽度（守卫生效；没限时各自按文本自适应，宽度必然不同）',
-  headerRows?.boxesGuarded === true)
+checkTrue('两行各自只占一行高（盒子 ≤ 字号×2+8；撑到两行就是又让 Label 换行了）',
+  headerRows?.oneRowEach === true)
 check('两行都不顶出屏幕宽度', JSON.stringify(headerRows?.outside ?? null), '[]')
 // #362 撤下又还回来的那条：先证警告行此刻有内容，再断两行不互相压住
 checkTrue('警告行此刻确实有内容（否则下一条是在读空集合）', headerRows?.warningHasText === true)
-checkTrue('两行的盒子都不超过一行高（>30 说明又被文本撑开了）',
-  (headerRows?.rowHeights ?? [999]).every((h) => h <= 30))
-check('医院行与警告行不互相压住（中心距只有 26px，盒子一撑高就叠）',
-  headerRows?.overlaps, false)
+// #366：这两行现在靠 `keepOneLine` 关换行，不再用 SHRINK 猜盒高。这条此刻是空跑
+// （本屏 SHRINK 行数 0），但它钉住那条回头路：谁再用 SHRINK 压行盒，落地字号这条立刻红。
+check('这两行没有被盒子改了字号（SHRINK 行的落地字号 ≥ 设定字号）',
+  JSON.stringify(headerRows?.shrunk ?? null), '[]')
+check('医院行与警告行的字形带不相交（中心距 ≥ 两行字号之和的一半 + 4；行盒相交不算，#365）',
+  headerRows?.crowd, false)
 check('出征态下那颗命令键写「集结」（不再是\u300c改成集结\u300d这种带方向的措辞）',
   JSON.stringify(footBefore?.boxes?.map((b) => b.caption)),
   JSON.stringify(['取消', '侦察', '集结', '出征']))

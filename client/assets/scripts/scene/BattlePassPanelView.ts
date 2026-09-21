@@ -19,7 +19,7 @@ import { buildBattlePassPanel, trackStateText } from '../game/battlePass/BattleP
 import type { BattlePassPanelView as BattlePassView, BattlePassRow } from '../game/battlePass/BattlePassPanel'
 import type { BattlePassPanelData } from '../game/session/AppRoot'
 import type { BattlePassTrack } from '../net/generated/BattlePassProtocol'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, keepOneLine } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -110,18 +110,16 @@ export class BattlePassPanelView extends Component {
     this.remainLabel = this.addLabel('Remain', 0, top - 96, COLOR_TEXT_DIM, 15)
     // 这五行都是居中的固定 y（间距只有 24~28），而 Label 会按文本把盒子撑高 ——
     // 撑到两行就直接叠在邻居身上（#363 在军队表头量出过同一形状，实测 hits 真出现）。
-    // 钉住「内宽 + 一行高」让 SHRINK 去缩字，而不是让两行半透明文字叠成一坨。
-    this.capLine(this.headerLabel, 20)
-    this.capLine(this.pointsLabel, 17)
-    this.capLine(this.claimedLabel, 15)
-    this.capLine(this.remainLabel, 15)
-    // 这五行都是居中的固定 y（间距只有 24~28），而 Label 会按文本把盒子撑高 ——
-    // 撑到两行就直接叠在邻居身上（#363 在军队表头量出过同一形状，实测 hits 真出现）。
-    // 钉住"内宽 + 一行高"让 SHRINK 去缩字，而不是让两行半透明文字叠成一坨。
+    // #364 当时用「SHRINK + 猜的一行高」去限，量具全绿，代价是整屏字被按比例缩小：
+    // 页内实测落地 17/13/10/10/9 对设定 20/17/15/15/14（台账 #366 的迁移曲线）。
+    // 现在改成直接关掉换行：盒子不可能撑成两行，字形也完全不碰。
+    keepOneLine(this.headerLabel, 20)
+    keepOneLine(this.pointsLabel, 17)
+    keepOneLine(this.claimedLabel, 15)
+    keepOneLine(this.remainLabel, 15)
     // 这一行两用：列表还没拉回来时的那句话，或（未解锁时）付费线为什么是灰的
     this.noticeLabel = this.addLabel('Notice', 0, top - 124, COLOR_TEXT_DIM, 14)
-    this.noticeLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
-    this.noticeLabel.overflow = Label.Overflow.SHRINK
+    keepOneLine(this.noticeLabel, 14)
 
     for (let index = 0; index < ROW_POOL_SIZE; index++) {
       const row = this.createRow(index)
@@ -204,19 +202,6 @@ export class BattlePassPanelView extends Component {
     graphics.fillColor = fill
     graphics.roundRect(-BUTTON_WIDTH / 2, -BUTTON_HEIGHT / 2, BUTTON_WIDTH, BUTTON_HEIGHT, 5)
     graphics.fill()
-  }
-
-  /**
-   * 把表头那一行钉成「面板内宽 × 一行高」，超出的部分交给 SHRINK 缩字号。
-   *
-   * <p>不设的话 Label 会按文本自适应：长文案换行后盒子被撑到两行高，
-   * 而表头五行的中心距只有 24~28px ⇒ 相邻两行直接叠在一起
-   * （#363 在军队表头量出过同一形状，本行是照那条的成例补的）。
-   */
-  private capLine(label: Label, fontSize: number): void {
-    label.node.getComponent(UITransform)?.setContentSize(
-      new Size(PANEL_WIDTH - 2 * PADDING, fontSize + 6))
-    label.overflow = Label.Overflow.SHRINK
   }
 
   private addLabel(name: string, x: number, y: number, color: Color, fontSize: number,

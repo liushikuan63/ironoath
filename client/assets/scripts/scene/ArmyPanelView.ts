@@ -23,7 +23,7 @@ import type { ArmyPanelView as ArmyPanelData, UnitRow } from '../game/army/ArmyP
 import type { ArmyListResp, UnitType } from '../net/generated/ArmyProtocol'
 import { applyCommandButton, applyIconSprite, unitIconKey } from './ArtCatalog'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, keepOneLine } from './UiFont'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 
 const { ccclass } = _decorator
@@ -203,22 +203,19 @@ export class ArmyPanelView extends Component {
       top - HEADER_HEIGHT - ROW_HEIGHT / 2, COLOR_TEXT_DIM, 16)
     this.emptyLabel.string = ''
     this.emptyLabel.node.active = false
-    // 限宽 + SHRINK：这一行现在会带上「另有 N 项未显示」，不限宽就会顶出面板（#221 同族的排版溢出）
-    this.headerLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 26))
-    this.headerLabel.overflow = Label.Overflow.SHRINK
+    // 限成一行：过去这里写成「SHRINK + 猜的盒高 26」，而 SHRINK 是拿**缩放字形**去服从盒子的
+    // —— 页内实测这一行设定 20 号字落地只有 17（战令表头同形，五行 17/13/10/10/9，台账 #366
+    // 附了盒高→落地字号的迁移曲线）。关掉换行才是不碰字号地把"就一行"说出来。
+    // 这一行现在会带上「另有 N 项未显示」，不限一行就会顶出面板（#221 同族的排版溢出），
+    // 顶出去由 `verify-march-runtime.mjs` 的宽度判据兜住。
+    keepOneLine(this.headerLabel, 20)
     this.hospitalLabel = this.addLabel(this.node, 'Hospital', 0, top - 48, COLOR_TEXT, 17)
     this.warningLabel = this.addLabel(this.node, 'Warning', 0, top - 74, COLOR_WARNING, 15)
-    // 同一条 #22x 教训：上面那颗 header 已经限了宽，这两行却漏了 —— 它们同样会带长文案
-    // （医院那行会拼「另有 N 项未显示」，警告那行是整句话），不限宽就顶出面板。
-    // ⚠ 限宽**不等于限高**：#362 实测这两行的盒子仍会被 Label 按文本重算成 50 高，
-    //   而两行中心距只有 26px ⇒ 警告行一换行就压到医院行。那条垂直重叠记台账 #362 未做①，
-    //   修它要连 `HEADER_HEIGHT` 一起改，不能只挪 y。
-    this.hospitalLabel.node.getComponent(UITransform)?.setContentSize(
-      new Size(PANEL_WIDTH - 2 * PADDING, 23))
-    this.hospitalLabel.overflow = Label.Overflow.SHRINK
-    this.warningLabel.node.getComponent(UITransform)?.setContentSize(
-      new Size(PANEL_WIDTH - 2 * PADDING, 21))
-    this.warningLabel.overflow = Label.Overflow.SHRINK
+    // 同一条 #22x 教训：这两行同样会带长文案（医院行拼「另有 N 项未显示」、警告行是整句话）。
+    // ⚠ 限宽**不等于限一行**：#362 实测这两行的盒子会被 Label 按文本重算成 50 高，
+    //   而两行中心距只有 26px ⇒ 警告行一换行就压到医院行（那条垂直重叠记台账 #362 未做①）。
+    keepOneLine(this.hospitalLabel, 17)
+    keepOneLine(this.warningLabel, 15)
 
     // 兵种页签。20 个兵种（4 类型 × 5 阶级）一屏放不下，按类型分页
     const tabWidth = 76

@@ -219,6 +219,7 @@ declare module 'cc' {
     horizontalAlign: number
     verticalAlign: number
     overflow: number
+    enableWrapText: boolean
     static HorizontalAlign: { LEFT: number; CENTER: number; RIGHT: number }
     static VerticalAlign: { TOP: number; CENTER: number; BOTTOM: number }
     static Overflow: { NONE: number; CLAMP: number; SHRINK: number; RESIZE_HEIGHT: number }
