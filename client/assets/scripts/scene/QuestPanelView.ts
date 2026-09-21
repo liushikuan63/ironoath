@@ -158,6 +158,9 @@ export class QuestPanelView extends Component {
       return
     }
     this.list = buildQuestList(resp)
+    // 与 #354 那条「回执被自己触发的刷新抹掉」同形状，但这一处是良性的，判据两条：
+    // 三选一是玩家点「领取」时按 intent 现算出来的（`handleClaimClick`），不来自任何写回执；
+    // 而能刷新到这里的地方只有 `claimQuest`（选完才发请求，此时关掉弹窗正是对的）与登录预拉（弹窗还不存在）。
     this.hidePrompt()
     this.render()
   }
