@@ -50,6 +50,8 @@ const PAGE_GAP = 6
 const PADDING = 16
 /** 一屏最多画几行。资源明细页每行还会展开若干条加成，所以留得比背包页少 */
 const MAX_VISIBLE_ROWS = 7
+/** 底部导航条预留高（与邮件/战报/任务各面板同一口径，量的是同一条 NavBar）。 */
+const BOTTOM_RESERVED = 68
 
 type Tab = 'resource' | 'bag'
 
@@ -475,7 +477,13 @@ export class BagPanelView extends Component {
     // 行位这一屏是写死的 MAX_VISIBLE_ROWS（上方那一行给了道具类型页签，按可视高算会把页签吃掉），
     // 分页沿用同一容量：从前装不下就在说明行写一句「另有 N 项未显示」，那些道具玩家永远拿不到（#307）
     const total = rows.length
-    const perPage = contentPerPage(total, MAX_VISIBLE_ROWS)
+    // 容量 = 写死的行位 与 按可视高算出的行位 取小的那一个：`MAX_VISIBLE_ROWS` 守着上方那行
+    // 道具类型页签不被吃掉，可视高那一条守着矮视口时第 7 行与两颗翻页键不落到导航条底下
+    //（独立审查抓到：只按写死的 7 算，531 高的窗口里第 7 行与键都在导航条之下，而页码仍承诺"共 N 项"）
+    const navTop = -size.height / 2 + BOTTOM_RESERVED
+    const capacity = Math.max(1, Math.min(MAX_VISIBLE_ROWS,
+      Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP))))
+    const perPage = contentPerPage(total, capacity)
     const pages = pageCount(total, perPage)
     this.page = clampPage(this.page, total, perPage)
     const slice = pageWindow(total, this.page, perPage)

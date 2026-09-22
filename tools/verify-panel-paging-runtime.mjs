@@ -168,6 +168,13 @@ async function openPanel(screen, mode) {
     //（2026-09-22 实测：mail 那一屏读到 1 句，而同一张截图上明明画着四行与那句页码）
     await page.waitForTimeout(400)
   }
+  // 背包默认落在「资源产出明细」，那一屏的行不吃 /bag/list 的夹具 ⇒ 先点到道具页签再量，
+  // 否则"走完所有页"量的是一屏真数据，夹具那 15 条永远上不了屏（独立审查抓到的第②条）
+  if (mode === 'fetch' && screen.tab !== undefined) {
+    await page.evaluate(clickTabNode, screen.tab)
+    await page.waitForTimeout(800)
+    state = await page.evaluate(readScreen, screen.key)
+  }
   return { context, page, state }
 }
 
@@ -221,8 +228,15 @@ for (const screen of SCREENS) {
   console.log(`  READ  ${screen.key}: 走了 ${pages} 屏，承诺 ${notice || '没有页码'}，`
     + `并集 ${union.size} 句，桩里应有 ${screen.markers?.length ?? '真数据不计'} 条独有标题`)
   if (promised === null) {
-    skips.push(`${screen.key} 只有一屏（${pages} 屏 / 无页码），翻页这一支未走到`)
-    console.log(`  SKIP  ${screen.key}：这一屏没出现页码 ⇒ 翻页这一支未执行（不是通过）`)
+    // 桩起来的屏"没出现页码"＝夹具没上屏，那是量具或接线的缺陷，不能记成 SKIP
+    //（从前这里一律记 SKIP，六屏全 SKIP 也照样退 0 —— 独立审查抓到的第①条）
+    const line = `${screen.key} 只有一屏（${pages} 屏 / 无页码 / 并集 ${union.size} 句）`
+    if (screen.markers !== undefined) {
+      failures.push(`${line} ⇒ 桩里的 ${screen.markers.length} 条本该翻得到，翻页这一支没走到`)
+    } else {
+      skips.push(`${line}，翻页这一支未执行（真数据不足，不是通过）`)
+      console.log(`  SKIP  ${screen.key}：这一屏没出现页码 ⇒ 翻页这一支未执行（不是通过）`)
+    }
   } else {
     if (pages !== promised) {
       failures.push(`${screen.key}：屏上写「${notice}」，实际只能走 ${pages} 屏`)

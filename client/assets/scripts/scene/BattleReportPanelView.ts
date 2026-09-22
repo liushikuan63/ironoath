@@ -407,6 +407,16 @@ export class BattleReportPanelView extends Component {
     const pool = this.rowPool
     if ((this.intel === 'BATTLE' && list === null) || (this.intel === 'SCOUT' && this.scouts === null)
       || pool === null) {
+      // 两份列表还没到齐：这一屏没东西可翻，两颗键整对收掉。从前只在这里 return，
+      // 于是"战报 9 场已出键 → 点敌情而情报未回"那一态留着上一屏的亮键，点了只加页号不换屏
+      this.canPrev = false
+      this.canNext = false
+      if (this.prevPageButton !== null) {
+        this.prevPageButton.active = false
+      }
+      if (this.nextPageButton !== null) {
+        this.nextPageButton.active = false
+      }
       return
     }
     const scoutMode = this.intel === 'SCOUT'
