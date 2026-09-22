@@ -49,7 +49,7 @@ function squad(overrides: Partial<SquadView> = {}): SquadView {
 function allianceMember(id: string, overrides: Partial<AllianceMember> = {}): AllianceMember {
   return {
     id, name: `盟友${id}`, power: 5000, role: 'MEMBER', contribution: 60,
-    lastActiveAt: 9_000, squadId: null,
+    lastActiveAt: 9_000, squadId: null, squadName: null,
     ...overrides,
   }
 }
@@ -156,7 +156,8 @@ test('小队等级与活跃度的展示：满级时不再显示经验条', () =>
 // ---------- 联盟区块 ----------
 
 test('联盟区块把资金、贡献值、领地、职位与今日捐献档数都摆出来', () => {
-  const members = [allianceMember('leader', { role: 'LEADER' }), allianceMember('a', { squadId: 's1' })]
+  const members = [allianceMember('leader', { role: 'LEADER' }),
+    allianceMember('a', { squadId: 's1', squadName: '铁砧前哨' })]
   const section = buildAllianceSection(alliance(), members)
   assert.equal(section.joined, true)
   assert.equal(section.title, '[IRON] 铁誓同盟')
@@ -167,7 +168,10 @@ test('联盟区块把资金、贡献值、领地、职位与今日捐献档数�
   assert.equal(section.myRoleText, '成员')
   assert.equal(section.donateText, '今日捐献 1/3 档')
   assert.equal(section.members.length, 2)
-  assert.equal(section.members[1]?.squadText, '分队 s1', '盟主集结时要能按分队点名')
+  assert.equal(section.members[1]?.squadText, '分队 铁砧前哨', '盟主集结时要能按分队点名')
+  // 这一条上一版写的是 `'分队 s1'` —— 绿灯把缺陷钉成了规格（台账 #422）：`squadId` 是内部标识，
+  // 玩家读不懂，能印的只有服务端下发的名字。判据反过来钉：名字要在、id 一个字都不许出现
+  assert.ok(!String(section.members[1]?.squadText).includes('s1'), '分队那一段不得印小队 id')
 })
 
 test('摆出来的是「今天还没捐过的档」：已用档位由服务端下发，客户端不再拿计数猜', () => {

@@ -1992,6 +1992,7 @@ public class SocialAppService {
         List<AllianceMember> out = new ArrayList<>(alliance.memberCount());
         for (String memberId : alliance.memberIds()) {
             PlayerSave save = players.findByPlayerId(memberId).orElse(null);
+            Squad squad = store.squadOf(memberId).orElse(null);
             out.add(new AllianceMember(memberId,
                     save == null ? memberId : save.nickName(),
                     save == null || save.power() == null ? 0L : save.power().displayPower(),
@@ -1999,7 +2000,10 @@ public class SocialAppService {
                             String.valueOf(alliance.roleOf(memberId))),
                     alliance.contributionOf(memberId),
                     save == null ? now : save.lastLoginAt(),
-                    store.squadOf(memberId).map(Squad::id).orElse(null)));
+                    squad == null ? null : squad.id(),
+                    // 名字跟着 id 一起下发：客户端没有小队表，只给 id 它就只能把 id 印给玩家（台账 #422）。
+                    // 取不到小队就两个都是 null，不拿 id 顶一个"名字"上去。
+                    squad == null ? null : squad.name()));
         }
         return out;
     }

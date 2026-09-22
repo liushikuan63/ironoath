@@ -828,6 +828,28 @@ class SocialEndpointTest {
     }
 
     @Test
+    @DisplayName("成员行的小队那一段给名字：客户端没有小队表，只下发 id 就会被拼成玩家读不懂的黑话")
+    void allianceMemberRowCarriesSquadName() throws Exception {
+        String leader = newPlayer(10);
+        post200("/alliance/create", leader, new AllianceCreateReq(newRequestId(), "点名盟", "ROLL"));
+
+        // 还没进小队：两个字段一起 null —— 服务端不拿 id 顶一个"名字"上去，客户端也就什么都不印
+        JsonNode before = post200("/alliance/sync", leader, new AllianceSyncReq(0L, true))
+                .get("changedMembers").get(0);
+        assertThat(before.get("squadId").isNull()).isTrue();
+        assertThat(before.get("squadName").isNull()).isTrue();
+
+        String squadId = post200("/squad/create", leader, new SquadCreateReq(newRequestId(), "铁砧突击队"))
+                .get("squad").get("id").asText();
+        JsonNode after = post200("/alliance/sync", leader, new AllianceSyncReq(0L, true))
+                .get("changedMembers").get(0);
+        assertThat(after.get("squadId").asText()).isEqualTo(squadId);
+        assertThat(after.get("squadName").asText())
+                .as("盟主看的是队名，不是 squad_1709213300 这种内部标识")
+                .isEqualTo("铁砧突击队");
+    }
+
+    @Test
     @DisplayName("入盟申请被拒时申请者会收到事件，而不是永远挂着不知道结果")
     void rejectedApplicationNotifiesApplicant() throws Exception {
         String leader = newPlayer(10);

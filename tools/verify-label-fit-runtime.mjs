@@ -26,7 +26,8 @@
  * Label，那里的"零缺陷"是读空集合读来的，别当成"没问题"。每一格读到几颗 Label 由 `READ` 行如实
  * 打印，`LABEL_FLOORS` 再钉一条下限挡住"夹具静默掉线"。
  */
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
@@ -103,8 +104,9 @@ const STUB_MARKS = {
   // "摘要给了个别的联盟" 这类错读，所以取联盟名本身 —— 它只有 `alliance` 字段真被画出来才存在。
   'social/alliance-joined': '黑石渡口',
   // 翻页相取**只在第二页出现**的那颗：成员列表里排在第二位的「铁砧·瓦拉」——
-  // 第一屏 34 颗比第二屏 27 颗还多，所以"没翻过去"这种失效**只有这条能抓**（颗数下限抓不到）
-  'social/alliance-joined#p2': '铁砧·瓦拉',
+  // 第一屏 34 颗比第二屏 27 颗还多，所以"没翻过去"这种失效**只有这条能抓**（颗数下限抓不到）。
+  // 第二条「铁砧前哨」是 #422 的正向半边：裸 id 不印了还不够，得证明印上去的确实是服务端给的名字
+  'social/alliance-joined#p2': ['铁砧·瓦拉', '铁砧前哨'],
 }
 
 let pass = 0
@@ -513,16 +515,45 @@ const ALLIANCE_VIEW = {
 // **最长的那个排第一**：一屏只画得下六行，排在后面的成员行落在第二页，量不到就等于没量。
 const ALLIANCE_MEMBERS = [
   // 最后一行改用长名字：这一屏的行是"名字 · 职位"拼出来的，越界正好落在名字那一侧
-  { id: 'probe_p_member', name: '断斧·罗德里戈·铁尾', power: 9100, role: 'MEMBER', contribution: 240, lastActiveAt: ALLIANCE_NOW - 1_800_000, squadId: null },
-  { id: 'probe_p_leader', name: '铁砧·瓦拉', power: 48_200, role: 'LEADER', contribution: 9120, lastActiveAt: ALLIANCE_NOW - 60_000, squadId: null },
-  { id: 'probe_p_officer', name: '灰隼·雷恩', power: 31_600, role: 'OFFICER', contribution: 6480, lastActiveAt: ALLIANCE_NOW - 5_400_000, squadId: 'probe_squad_1' },
-  { id: 'probe_p_elder', name: '石锤·乌尔', power: 27_400, role: 'ELDER', contribution: 5130, lastActiveAt: ALLIANCE_NOW - 432_000_000, squadId: null },
+  { id: 'probe_p_member', name: '断斧·罗德里戈·铁尾', power: 9100, role: 'MEMBER', contribution: 240, lastActiveAt: ALLIANCE_NOW - 1_800_000, squadId: null, squadName: null },
+  { id: 'probe_p_leader', name: '铁砧·瓦拉', power: 48_200, role: 'LEADER', contribution: 9120, lastActiveAt: ALLIANCE_NOW - 60_000, squadId: null, squadName: null },
+  { id: 'probe_p_officer', name: '灰隼·雷恩', power: 31_600, role: 'OFFICER', contribution: 6480, lastActiveAt: ALLIANCE_NOW - 5_400_000, squadId: 'probe_squad_1', squadName: '铁砧前哨' },
+  { id: 'probe_p_elder', name: '石锤·乌尔', power: 27_400, role: 'ELDER', contribution: 5130, lastActiveAt: ALLIANCE_NOW - 432_000_000, squadId: null, squadName: null },
 ]
 // **只给一条**：一屏画得下六行内容，多一条申请就把成员行挤到第二页去了
 // （成员行是这一屏最宽的一类，量不到等于没量 —— 截图目视时发现的）
 const ALLIANCE_APPLICANTS = [
   { playerId: 'probe_p_apply_1', nickname: '铜锣·魏八', mainCityLevel: 9 },
 ]
+/**
+ * 「屏上不出现裸 id」这一维（台账 #422）。**字段名从契约现取**，不写死字符串清单 ——
+ * 照 `scripts/check-player-copy-jargon.js` 那份"词表从生成物现取枚举名"的路子：契约里再多一个
+ * `xxxId`，这一门自动跟着变宽，不需要有人记得加词。
+ *
+ * <p>为什么那份静态门挡不住这里：屏幕上的字是 `` `分队 ${member.squadId}` `` 拼出来的，
+ * 插值之外的部分一个工程术语都没有，扫字面量的门看不见它（#421 翻页相第一次读到第二屏才现形，
+ * 几何判据全绿、只有截图看得见）。只有**跑起来的屏幕上**才量得到。
+ */
+const RAW_ID_PHASES = {
+  'social/alliance-joined': 'AllianceMember',
+  'social/alliance-joined#p2': 'AllianceMember',
+}
+/** 每一相那批类型对应的夹具行：id 的**取值**只从这些行里拿，不手写。 */
+const RAW_ID_ROWS = {
+  AllianceMember: ALLIANCE_MEMBERS,
+}
+
+/**
+ * 契约某类型下算"内部 id"的键名：`id` 本身，或以大写 `Id` 收尾的键。
+ * 取不到该类型时返回空数组 —— 下面那条"一条取值都没取到"的反空转判据会当场红，不会静默恒真。
+ */
+function contractIdFields(def) {
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
+    'contract/proto/social.schema.json')
+  const props = JSON.parse(readFileSync(file, 'utf8'))?.$defs?.[def]?.properties
+  return props === undefined ? [] : Object.keys(props).filter((k) => k === 'id' || /[A-Za-z]Id$/.test(k))
+}
+
 /** 只在 `social/alliance-joined` 那一相为真：见下面的整批遍历。 */
 let joinedAlliance = false
 await stubRead('**/social/summary*', () => ({
@@ -963,10 +994,24 @@ for (const [panel, floor] of Object.entries(LABEL_FLOORS)) {
   check(`${panel} 的读接口夹具还画出 ${floor} 颗以上 Label（掉线会退回空态）`,
     (labelsBy.get(panel) ?? 0) >= floor, true)
 }
-// 颗数只证明"画了点什么"，这一条证明"画的是夹具那份数据"（社交页空态本来就有 11 颗）
-for (const [panel, mark] of Object.entries(STUB_MARKS)) {
-  check(`${panel} 的夹具文字真的画到了屏幕上（找「${mark}」）`,
-    (textsBy.get(panel) ?? []).some((t) => t.includes(mark)), true)
+// 颗数只证明"画了点什么"，这一条证明"画的是夹具那份数据"（社交页空态本来就有 11 颗）。
+// 一相可以给多条独有串（值写成数组），少一条就红 —— 见 `social/alliance-joined#p2` 那两条的理由
+for (const [panel, want] of Object.entries(STUB_MARKS)) {
+  for (const mark of Array.isArray(want) ? want : [want]) {
+    check(`${panel} 的夹具文字真的画到了屏幕上（找「${mark}」）`,
+      (textsBy.get(panel) ?? []).some((t) => t.includes(mark)), true)
+  }
+}
+// 屏上不出现裸 id（台账 #422）：显示名一律服务端下发，客户端只有类型、没有表数据。
+// 实际取值列在 FAIL 里 —— 只报"有没有"的话，红了还得再跑一趟才知道是哪一颗。
+for (const [phase, def] of Object.entries(RAW_ID_PHASES)) {
+  const leaked = [...new Set(contractIdFields(def)
+    .flatMap((f) => RAW_ID_ROWS[def].map((row) => row[f]).filter((v) => typeof v === 'string')))]
+  // 反空转前置：取值取空说明契约改了键名或夹具不再有该字段，这一门就成了恒真 —— 不许交绿
+  // （同静态门那条「一个枚举名都没取到 —— 判据失效，不算通过」）
+  check(`${phase} 的裸 id 门真的从契约取到 ${def} 的 id 取值（取空=门失效）`, leaked.length > 0, true)
+  const shown = leaked.filter((v) => (textsBy.get(phase) ?? []).some((t) => t.includes(v)))
+  check(`${phase} 屏上不出现 ${def} 的裸 id（显示名要服务端下发）`, JSON.stringify(shown), '[]')
 }
 // 恒真的"totalShrink >= 0"不写：清单不能靠一个不会失败的条件交差。
 // 这条要能失败：基线里有点名行、却一颗 SHRINK 都没量到 ⇒ 遍历或枚举值变了，读的是空集合。

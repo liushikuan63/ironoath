@@ -405,8 +405,8 @@ const ROUTES: Record<string, unknown> = {
     version: 7, unchanged: false, removedMemberIds: [], fund: 100, level: 1, memberCount: 2,
     announcement: '', serverNow: SERVER_NOW,
     changedMembers: [
-      { id: 'M1', name: '甲', power: 10, role: 'LEADER', contribution: 5, lastActiveAt: 1, squadId: null },
-      { id: 'M2', name: '乙', power: 20, role: 'MEMBER', contribution: 3, lastActiveAt: 2, squadId: null },
+      { id: 'M1', name: '甲', power: 10, role: 'LEADER', contribution: 5, lastActiveAt: 1, squadId: null, squadName: null },
+      { id: 'M2', name: '乙', power: 20, role: 'MEMBER', contribution: 3, lastActiveAt: 2, squadId: null, squadName: null },
     ],
   },
 }
@@ -1817,7 +1817,7 @@ test('成员 diff 的合并：变更覆盖、移除摘掉，面板拿到的永�
 
   h.http.overrides.set('/alliance/sync', syncResponse({
     version: 9,
-    changedMembers: [{ id: 'M3', name: '丙', power: 30, role: 'MEMBER', contribution: 0, lastActiveAt: 3, squadId: null }],
+    changedMembers: [{ id: 'M3', name: '丙', power: 30, role: 'MEMBER', contribution: 0, lastActiveAt: 3, squadId: null, squadName: null }],
     removedMemberIds: ['M1'],
   }))
   await h.root.refresh('social')
