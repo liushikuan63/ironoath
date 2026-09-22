@@ -37,6 +37,7 @@ const PAGED_VIEWS = [
   'MailPanelView',
   'BattleReportPanelView',
   'QuestPanelView',
+  'ShopPanelView',
 ]
 
 for (const view of PAGED_VIEWS) {
