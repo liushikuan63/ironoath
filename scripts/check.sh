@@ -39,10 +39,12 @@ bash scripts/check-config-consumers.sh
 bash scripts/check-guide-no-copy.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-client-typecheck.sh
-# 客户端逻辑层单测（941 项）：**类型门只保证"能编译"，不保证"算对了"** —— 这一道之前那批用例
-# 只有人手动跑（`ci.yml` 调 build.sh 与 check.sh，两者都不调 test-client.sh），于是"改了公共算式
-# 有没有跑挂"完全靠记性。要 Node 20（`node --test` 的目录形态只在 20 上成立）：CI 用 setup-node 钉死，
-# 本地默认 node 若是 24，这一道会**明确报"量具没架对"并给出可粘贴的命令**，不是静默跳过也不是假红。
+# 客户端逻辑层单测（941 项）：**类型门只保证"能编译"，不保证"算对了"**。CI 里这批用例本来就跑
+# （`ci.yml` 跑 `build.sh`，`build.sh` 跑 `test.sh`，`test.sh:11` 才调本脚本），但**本地最常跑的入口是
+# `check.sh`，而它以前不跑**——于是"改完公共算式只敲 check.sh"的人拿不到这层保护。这一道把它补在
+# 类型门旁边，让两个入口的覆盖面一致（代价：CI 里多跑一遍，约 10 秒）。
+# 要 Node 20（`node --test` 的目录形态只在 20 上成立）：CI 用 setup-node 钉死，本地默认 node 若是 24，
+# 这一道会**明确报"量具没架对"并给出可粘贴的命令**，不是静默跳过也不是假红。
 bash scripts/test-client.sh
 bash scripts/check-player-copy-jargon.sh
 bash scripts/check-track-dictionary.sh
