@@ -57,7 +57,7 @@ function verdict(ok, label, detail) {
 /** 在页面里读军队那一格的自动续训两件套：按钮字幕、状态行文本与坐标、最后一行兵种行的底边。 */
 function readAutoTrain() {
   const out = { panelFound: false, button: null, caption: null, status: null, rowBottom: null,
-    currentKey: null, visible: null, pageText: null, pagerVisible: 0 }
+    currentKey: null, visible: null, pageText: null, pagerVisible: 0, treatVisible: null }
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas')?.getChildByName('Game')
   out.currentKey = game?.getComponent('PanelNav')?.currentKey ?? null
@@ -82,6 +82,11 @@ function readAutoTrain() {
     return null
   }
   for (const child of panel.children) {
+    if (child.name === 'TreatButton') {
+      // 对照组：字幕在创建时就写死（'治疗伤兵'），不经过 render() ⇒ 数据没到那一态它也该露着。
+      // 没有这一条，"把整排控件一起藏了"也会让下面那条判据变绿。
+      out.treatVisible = child.activeInHierarchy !== false
+    }
     if (child.name === 'AutoTrainButton') {
       out.button = { active: child.activeInHierarchy !== false, y: child.position.y,
         caption: labelOf(child) }
@@ -251,6 +256,61 @@ async function main() {
   const shot = path.join(SHOT_DIR, 'army-autotrain.png')
   await page.screenshot({ path: shot })
   lines.push(`SHOT  ${shot}`)
+
+  // 第二相：把 `/army/list` 桩成失败码，量"数据没到"那一态。
+  // 第一相读真后端 ⇒ 屏上永远有数据，"控件建出来先收着"这条守卫（#449/#450/#451 同族）在这一相之外
+  // 不可见：`render()` 在 `panel === null` 时第一句就 return，而那颗键的字幕与状态行的文本都只在
+  // `render()` 里写 ⇒ 那一态屏上是一个没字的空框还能点（台账 #453，从 #451 的截图目视抓到的）。
+  const failContext = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await failContext.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v),
+    `autotrain-nodata-${Date.now()}`)
+  const cors = (request) => ({
+    'access-control-allow-origin': request.headers()['origin'] ?? '*',
+    'access-control-allow-headers': '*',
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+  })
+  let stubHits = 0
+  await failContext.route('**/army/list*', async (route) => {
+    const req = route.request()
+    if (req.method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: cors(req) })
+      return
+    }
+    stubHits += 1
+    await route.fulfill({
+      status: 200,
+      headers: { ...cors(req), 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 10010, msg: '还没解锁', data: null, serverNow: Date.now() }),
+    })
+  })
+  const failPage = await failContext.newPage()
+  await failPage.goto(url.toString(), { waitUntil: 'networkidle' })
+  await failPage.waitForFunction(
+    () => window.cc !== undefined && window.cc.director?.getScene() !== null,
+    null, { timeout: 60_000 })
+  await failPage.waitForTimeout(4500)
+  await hideGuideOverlay(failPage)
+  const failRead = await failPage.evaluate(readAutoTrain)
+  // 桩必须真被打中：没打中就是又读了真后端那一态，下面四条会全绿而绿得没有意义
+  verdict(stubHits > 0 && failRead?.panelFound === true,
+    '失败态那一相走到了（桩命中且部队面板在屏上）',
+    `桩命中=${stubHits} panelFound=${failRead?.panelFound}`)
+  verdict(failRead?.button?.active === false,
+    '列表没到时「自动续训」那颗键收着（不留一个没字的空框还能点）',
+    `button=${failRead?.button?.active} 字幕=${JSON.stringify(failRead?.button?.caption?.text ?? null)}`)
+  verdict(failRead?.status?.active === false,
+    '列表没到时状态行也收着（文本同样只在 render() 里写）',
+    `status=${failRead?.status?.active} 文本="${failRead?.status?.text ?? ''}"`)
+  verdict(failRead?.treatVisible === true,
+    '对照组：创建时就带字的「治疗伤兵」仍露着（否则上面两条是在藏整排控件，恒真）',
+    `treat=${failRead?.treatVisible}`)
+  verdict(failRead?.pagerVisible === 0,
+    '列表没到时两颗翻页键也收着（#451 那条同族守卫在同一相里一起量）',
+    `露出=${failRead?.pagerVisible}`)
+  const failShot = path.join(SHOT_DIR, 'army-autotrain-no-list.png')
+  await failPage.screenshot({ path: failShot })
+  lines.push(`SHOT  ${failShot}`)
+  await failContext.close()
 
   await browser.close()
   await preview.close()

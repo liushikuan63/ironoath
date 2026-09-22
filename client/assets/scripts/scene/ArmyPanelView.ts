@@ -306,11 +306,17 @@ export class ArmyPanelView extends Component {
     this.autoTrainCaption = this.addLabel(autoTrain, 'Caption', 0, 0, COLOR_TEXT, 14)
     autoTrain.on('touch-start', (_event: EventTouch) => this.onToggleAutoTrain?.(), this)
     this.autoTrainButton = autoTrain
+    // 建出来先收着：字幕只在 `render()` 里写（那句是服务端下发的策略文本），
+    // 而 `render()` 在 `panel === null` 时早退 ⇒ 列表没到/读失败那一态它会剩一个**没有字的空框**还能点。
+    // 与同文件 `buildStaminaBand` 那条"没读到 /stamina 之前整条藏起来"是同一做法。
+    autoTrain.active = false
 
     // 状态行：「重步兵 ×50 · 还剩 2 批」/ 停止原因 / 还没有可续的那一批。
     // 它读的是服务端下发的那份策略 —— 自动续训的账单是持续的，玩家必须能一眼看到它现在在做什么
     this.autoTrainStatus = this.addLabel(this.node, 'AutoTrainStatus', 0, top - 164, COLOR_TEXT_DIM, 14)
     capWidth(this.autoTrainStatus, PANEL_WIDTH - 2 * PADDING)
+    // 与上面那颗键同一做法：这一行的三选一文案也只在 `render()` 里写
+    this.autoTrainStatus.node.active = false
   }
 
   private createRow(): Node {
@@ -473,10 +479,14 @@ export class ArmyPanelView extends Component {
       this.autoTrainCaption.string = autoTrain.caption
       this.autoTrainCaption.color = autoTrain.enabled ? COLOR_GOOD : COLOR_TEXT
     }
+    // 走到这里 `panel` 必已到位（上面 `panel === null` 就 return 了）⇒ 字幕与状态行都有内容可写，
+    // 这时才把建出来先收着的那两件套放出来（见 `buildHeader` 里那两句注释）
     if (this.autoTrainButton !== null) {
+      this.autoTrainButton.active = true
       applyCommandButton(this.autoTrainButton, autoTrain.enabled ? 'hover' : 'normal', 110, 34)
     }
     if (this.autoTrainStatus !== null) {
+      this.autoTrainStatus.node.active = true
       // 三选一：正在续的那一批 > 停下来的原因 > 还不能开的原因。都为空就是空行
       this.autoTrainStatus.string = autoTrain.runningText ?? autoTrain.stopText
         ?? autoTrain.blockedReason ?? ''
