@@ -20,6 +20,9 @@ if [ -z "$LIST" ]; then
   ls tools/verify-*-runtime.mjs > "$LIST"
 fi
 : > "$OUT"
+# 把"这一批打的是哪台后端"写进记录：`BACKEND` 有默认值（8199＝dev 约定），
+# 但默认值一旦没落进输出，事后就分不清这批读数是哪个端机器给的（同族教训：静默回落 8080）
+echo "# 后端=$BACKEND 清单=$LIST 记账=$OUT" | tee -a "$OUT"
 while read -r f; do
   i=$((i + 1))
   base="$(basename "$f")"
@@ -51,6 +54,6 @@ while read -r f; do
   fi
   echo "$code $base ($backend_env, port $port)" | tee -a "$OUT"
 done < "$LIST"
-# SKIP 不是红：汇总只数真正跑过而非零的那些，否则"非零份数"又变成一个要人脑内过滤的数
-echo "--- 汇总：非零退出的份数 = $(grep -cvE '^(0 |SKIP )' "$OUT")  SKIP 的份数 = $(grep -c '^SKIP ' "$OUT")"
-grep -vE '^(0 |SKIP )' "$OUT" || true
+# SKIP 不是红、`#` 开头的是本批的元信息行：汇总只数真正跑过而非零的那些
+echo "--- 汇总：非零退出的份数 = $(grep -cvE '^(0 |SKIP |# )' "$OUT")  SKIP 的份数 = $(grep -c '^SKIP ' "$OUT")"
+grep -vE '^(0 |SKIP |# )' "$OUT" || true
