@@ -942,8 +942,8 @@ public final class Alliance {
      * <p><b>donatedToday 与 techLevels 必须一起恢复</b>：前者是"今天还能捐几次"的账本，
      * 后者是联盟科技的等级。早先这个方法的签名里没有它们，于是"用 restore 重建一份存档"
      * 会静默丢掉当日捐献次数与全部已研究科技 —— 内存实现里没人调用所以看不出来，
-     * 一旦拿它写 Mongo 映射就是每天白送捐献额度、科技等级归零。Mongo 实现落地时补上，
-     * 并由 {@code AllianceRestoreTest} 钉住逐字段往返一致。
+     * 一旦拿它写 Mongo 映射就是每天白送捐献额度、科技等级归零。Mongo 实现已经落地，
+     * 并由 {@code SocialStoreEquivalenceTest#allianceRoundTripsEveryField} 钉住逐字段往返一致。
      */
     public static Alliance restore(String id, String name, String tag, String leaderId, Rules rules,
                                    Map<String, AllianceRole> members, Map<String, Long> contributions,

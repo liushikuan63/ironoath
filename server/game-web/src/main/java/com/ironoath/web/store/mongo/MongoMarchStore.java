@@ -23,7 +23,7 @@ import java.util.Optional;
  * 真实剩余时间继续走。内存实现下重启等于把半路上的兵清空 —— 兵力"在路上"这件事一旦丢失，
  * 连"该退多少给谁"都无从计算，而集合那边（B10 集结）还记着他们在外。
  *
- * <p>排序口径与内存实现逐条对齐（{@code MarchStoreContractTest} 两套实现比同一份结果）：
+ * <p>排序口径与内存实现逐条对齐（{@code MarchStoreEquivalenceTest#orderingIsIdenticalAcrossImplementations} 两套实现比同一份结果）：
  * 一律按 {@code startAt} 升序、同刻再按 {@code id}，因为 {@code ConcurrentHashMap} 与
  * Mongo 的自然顺序都不确定，而客户端要按出征顺序展示列表。
  */

@@ -20,7 +20,7 @@ import com.ironoath.common.rng.Rng;
  * 等表里真的出现占位符再加，届时本类加一个 {@code Map<String,String>} 参数即可。
  *
  * <p><b>场景与行为树的对应</b>：{@link Scene} 与 {@code bot_chat.scene} 的枚举逐字一致
- * （由 {@code BotChatBookTest} 与配置校验共同钉住）。哪些场景今天有生产者、哪些还没有，
+ * （**这一条目前没有判据钉着**：查过 BotConfigTest 的 everyChatSceneHasAtLeastOneLine、BotEventChatTest、ContractEnumParityTest，三条都不比对 {@link Scene} 与 {@code bot_chat.scene} 里的 ENUM 值）。哪些场景今天有生产者、哪些还没有，
  * 写在 {@code BotWorldAdapter} 的聊天段注释里 —— 表里 18 行并不都可达，这一点要说清楚而不是假装都接了。
  */
 public final class BotChatBook {

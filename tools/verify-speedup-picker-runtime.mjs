@@ -24,7 +24,7 @@
  * 弹层自己顶回末位 —— 八个宿主不需要各自记得抬（宿主侧那一行删掉后本探针仍全绿，就是判据）。
  *
  * <p><b>不验的</b>：真的把道具用掉、队列真的少多少时间 —— 那是服务端 `ItemAppService`
- * 与 `ItemEndpointTest` 那一头；这里的道具与训练队列都是**读接口夹具**（dev 新号两样都没有）。
+ * 与 `BagEndpointTest` 的 speedUpItemReducesRemainingByConfiguredSeconds 那一头；这里的道具与训练队列都是**读接口夹具**（dev 新号两样都没有）。
  */
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'

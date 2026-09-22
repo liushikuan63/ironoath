@@ -492,7 +492,7 @@ public class SocialAppService {
                 store.addApplication(alliance.id(), playerId);
                 // 审核请求要通知到有权限的人，否则申请会一直挂着（B10 禁止项：绝不静默失败）
                 // 申请人的昵称在循环外读一次：它原来落在下面这个循环里，于是乘数 = 有权限的官员数，
-                // 而每一次读的都是同一个人的整份存档（判据见 AllianceApplyNotifyQueryCountTest）
+                // 而每一次读的都是同一个人的整份存档（判据见 SamePlayerRepeatReadQueryCountTest#applicantSaveIsReadOnceNotOncePerNotifiedOfficer）
                 String applicantName = nickname(playerId);
                 for (String officer : alliance.memberIds()) {
                     AllianceRole role = alliance.roleOf(officer);
