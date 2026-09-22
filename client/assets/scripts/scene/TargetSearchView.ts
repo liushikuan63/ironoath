@@ -18,7 +18,7 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
-import { buildTargetRows, formatPower, targetSearchNotice } from '../game/power/PowerPanel'
+import { buildTargetRows, formatPower, pagerKeysVisible, targetSearchNotice } from '../game/power/PowerPanel'
 import { clampPage, contentPerPage, pageCount, pageNotice, pageWindow } from '../game/ui/PanelPaging'
 import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { TargetRow } from '../game/power/PowerPanel'
@@ -239,6 +239,9 @@ export class TargetSearchView extends Component {
     }
     // 建完就判一次：第一次搜索之前上下界还不知道，两颗半径键不该露着
     this.paintRadiusControls()
+    // 同一句理由管着两颗翻页键：`render()` 在 `response === null` 时直接 return，
+    // 不补这一次判，翻页键就从建出来一直露着，而点下去 `changePage` 空转（台账 #345 的口径）
+    this.paintPageButtons(1)
 
     // 位置每次 render 现算（它要贴着本页最后一行的下沿，页码变了它就变了）
     this.overflowLabel = this.addLabel(this.node, 'Overflow', 0, 0, COLOR_TEXT_DIM, 14)
@@ -347,13 +350,15 @@ export class TargetSearchView extends Component {
 
   /**
    * 只有一页（含零行）时把两颗翻页键整颗收掉；真有多页时才留下它们，并把不可翻的那一侧按灰。
+   * **没搜过也整颗收着**（判据在 `pagerKeysVisible`）：`render()` 不会在 `response === null` 时跑到这里，
+   * 所以建控件之后还有一次显式调用，别把它当冗余删掉。
    *
    * <p>为什么不是"只变灰"：零目标时屏幕上只剩"上一页 / 下一页"两颗灰键 + 一片空行，
    * 玩家读出来的是"搜索坏了 / 没加载出来"，而不是"这一带确实没有目标"。
    * 与 `BagPanelView` 那条同一口径（单页时整条页签带 `active = false`）。
    */
   private paintPageButtons(pages: number): void {
-    const paged = pages > 1
+    const paged = pagerKeysVisible(this.searched, pages)
     if (this.prevPageNode !== null && this.prevPageNode.active !== paged) {
       this.prevPageNode.active = paged
     }

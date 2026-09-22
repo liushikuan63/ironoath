@@ -156,6 +156,20 @@ export function targetSearchNotice(searched: boolean, total: number): string {
 }
 
 /**
+ * 目标搜索那两颗翻页键该不该露着 —— **没搜过就必须收着**，即使传进来的页数大于 1。
+ *
+ * <p>为什么单列一条免引擎判据（B00 铁律 2：判据要能脱离 Cocos 跑单测）：视图里 `paintPageButtons`
+ * 只在 `render()` 里被调，而 `render()` 在 `response === null` 时第一行就 return ⇒
+ * **首次搜索之前那两颗键从来没被判过**。它们建出来就是 `active`、`touch-start` 也挂着，
+ * 点下去 `changePage` 又因 `response === null` 直接 return ⇒ 玩家看到一颗按了没反应的按钮。
+ * #345 对这一族定的口径正是"点了没反应的按钮不该露着"（两颗半径键同一条理由已经收了，
+ * 见 `TargetSearchView` 那句"建完就判一次"）。
+ */
+export function pagerKeysVisible(searched: boolean, pages: number): boolean {
+  return searched && pages > 1
+}
+
+/**
  * 大数缩写：1234567 ⇒ "123.4万"，123456789 ⇒ "1.2亿"，9999 以下原样。
  *
  * <p>全程整数运算。用 {@code (v / 10000).toFixed(1)} 会在 19999 上得到 "2.0万"
