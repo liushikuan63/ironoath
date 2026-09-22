@@ -299,6 +299,8 @@ export class GameBootstrap extends Component {
     // 导航层：由它建出各面板节点（初始未激活，因此不会十七个面板一起画满屏背景），
     // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
     this.nav = this.node.addComponent(PanelNav)
+    /** onShow 只知道"现在是什么"，判断"刚离开了哪一格"要自己记一个上一次。 */
+    let previousKey = this.nav.current()
     // 音效层挂在同一个 host 上：AudioSource 必须属于活跃场景，否则 playOneShot 一声不出且不报错
     installAudio(this.node)
     this.buildGuideLayer()
@@ -346,6 +348,15 @@ export class GameBootstrap extends Component {
       }
       // 引导的每一步都是"在某面板上弹"，所以换面板要重算一次该不该画（判定在驱动器里，这里只触发）
       this.guide?.repaint()
+      // 离开世界地图时收尾（`GameApi.leaveWorld`：解绑 world requester + 清 worldReady）。
+      // 2026-09-22 之前这个方法**一处调用都没有**（收口清单"客户端发送口缺口"里的 leaveWorld）——
+      // 后果不是画错，而是"绑了不解"：世界那一套 requester 一直挂在适配层上，
+      // 且重新进场时 `enterWorld` 因为 `worldReady` 仍为真而跳过初始化。
+      // 口径（我定的）：离开 = 回内城页签，**不加二次确认**（可回退、无损，没有要保护的东西）。
+      if (previousKey === 'world' && key !== 'world') {
+        this.root?.leaveWorld()
+      }
+      previousKey = key
     }
     void this.boot()
   }

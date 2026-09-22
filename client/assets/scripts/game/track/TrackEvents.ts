@@ -268,6 +268,13 @@ export const TRACK_EVENTS = {
    * 上报会把一次出征记成多次。
    */
   marchSend: 'march_send',
+  /**
+   * 离开世界地图（切到别的面板即收尾）。
+   *
+   * <p>为什么要单独一个事件：它标的是"世界地图这一屏的会话有多长"与"玩家是从世界走的还是直接杀进程"。
+   * 与 `march_send` 分开记 —— 后者是军事意图，前者只是换屏，混在一起会让"出征率"被换屏次数冲淡。
+   */
+  worldLeave: 'world_leave',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

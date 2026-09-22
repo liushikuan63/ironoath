@@ -992,6 +992,20 @@ export class AppRoot {
   }
 
   /**
+   * 离开世界地图时的收尾（`GameApi.leaveWorld`：解绑 world requester + 清 `worldReady`）。
+   *
+   * <p>由 `GameBootstrap` 在"从 world 切到别的面板"时调用（2026-09-22 之前这个方法**一处调用都没有**）。
+   * **不是玩家可见功能**：它的作用是"绑了要解"——别把世界那套 requester 一直挂在适配层上，
+   * 并让下次进场重新初始化世界。放在编排层而不是视图里，是因为它改的是会话级状态。
+   */
+  leaveWorld(): void {
+    // 埋点是门禁要求的（`check-track-coverage`：每个面板动作都要有上报点），
+    // 也确实有读法：它是"世界地图这一屏的会话有多长"的唯一信号（与 march_send 分开，别让它冲淡出征率）
+    this.track(TRACK_EVENTS.worldLeave)
+    this.api.leaveWorld()
+  }
+
+  /**
    * 暂停一栋正在升级的建筑（B03 §2："队列中可暂停 / 取消"，收口清单 #324）。
    *
    * <p>与升级/收割同一套路：**只发请求、按服务端回执刷新**，客户端不自己改本地那一行 ——
