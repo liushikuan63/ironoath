@@ -14,8 +14,37 @@
 # 判什么：`git ls-files --eol` 里 index 侧是文本（`i/lf` / `i/mixed`）而 attr 侧没有 `eol=lf` 的，一律红。
 #   `i/-text`（二进制）与 `i/none`（没有换行可错）放过。
 # 一条都不许多：`i/mixed`（同一份文件里 LF 与 CRLF 混着入库）也直接算红 —— 那种文件两侧都不对。
+#
+# <p><b>2026-09-23 补的第二维：光查"属性有没有覆盖"查不出"blob 里还存着 CRLF"</b>。`tools/verify-hero-empty-runtime.mjs`
+# 是这道门立起来之前就入库的，索引侧那份 blob 有 165 个 CRLF，而 `git ls-files --eol` 把它报成 **`i/-text`**
+# （字节里没有 NUL，实测 9046 字节 0 个 NUL）—— 旧判据第一句 `idx != "i/lf" && idx != "i/mixed"` 就 next，
+# **`i/-text` 恰好被跳过**，于是它带着 CRLF 在绿色门后面一直活着。结论：**这一维不能问 `ls-files --eol`，要直接读 blob 字节**。
+# 源码族按扩展名点名（漏一份就是漏一年），但源码族里有 CRLF 本身就是缺陷 —— 与上面"属性覆盖"那条不重复。
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# 第二维：源码族 blob 里不许出现 CR 字节（`-I` 让 git 自己跳过二进制，vendored 的 .txt/.ai 因此不会被牵连）
+# ⚠ `git grep` 零命中时退 1，而本脚本开着 `set -e` + `pipefail` —— 直接写 `$(git grep … | wc -l)` 会让
+# "干净"变成"整条脚本静默退出 1、一个字都没打印"（2026-09-23 实测到：RED 正常，绿跑只留一个空文件 + 退 1）。
+# 所以退出码要单独接住：>1 才是量具没跑成，那种情况**不许**报通过。
+CR=$(printf '\r')
+hits=$(git grep --cached -Il "$CR" -- '*.mjs' '*.cjs' '*.js' '*.ts' '*.sh' '*.py' '*.yml' '*.json' '*.md') && rc=0 || rc=$?
+if [ "$rc" -gt 1 ]; then
+  echo "[check-eol-policy] git grep 退 $rc —— 这不是零命中，是量具没跑成（不在 git 工作区？路径写错？）。"
+  echo "  这**不是通过**，不许拿这条红字交差。"
+  exit 1
+fi
+stored=$(printf '%s\n' "$hits" | grep -c . || true)
+if [ "$stored" -gt 0 ]; then
+  echo "[check-eol-policy] $stored 个源码 blob 入库时带 CRLF（前 15 个）："
+  # 复用上面那次命中的结果，不再跑第二遍：`git grep … | head` 在命中很多时会因 SIGPIPE 退 141，
+  # 在 `set -e` 下等于门自己崩掉（报错信息反而丢了）
+  printf '%s\n' "$hits" | head -15 | sed 's/^/  /'
+  echo '  修法：把文件整份写成 LF 再 git add <那一个路径>；'
+  echo '  ⚠ git add --renormalize 对这种 blob 不动（它按属性判定，而 git 把这份 blob 报成 -text），'
+  echo "  改完用 git show :<路径> | tr -cd '\\\\r' | wc -c 复验是 0。"
+  exit 1
+fi
 
 git ls-files --eol | awk -v have_git="${1:-yes}" '
 BEGIN { FS = "\t"; bad = 0; seen = 0 }
@@ -26,6 +55,7 @@ BEGIN { FS = "\t"; bad = 0; seen = 0 }
   idx = f[1]
   attr = ""
   for (i = 3; i <= n; i++) attr = attr " " f[i]
+  if (idx == "i/-text" || idx == "i/none") next
   if (idx != "i/lf" && idx != "i/mixed") next
   if (attr ~ /-text/) next
   seen++
@@ -47,5 +77,5 @@ END {
     print "  而不是继续按扩展名点名 —— 点名这张表今天已经漏了 767 个，下一门新语言又会漏。"
     exit 1
   }
-  printf "[check-eol-policy] %d 个文本 blob 全部被强制 eol=lf（全新检出与本机同源）。\n", seen
+  printf "[check-eol-policy] %d 个文本 blob 全部被强制 eol=lf，且入库换行符全为 LF（全新检出与本机同源）。\n", seen
 }'
