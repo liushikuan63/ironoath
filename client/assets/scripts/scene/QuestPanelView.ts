@@ -17,7 +17,9 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildQuestList, candidateLabel, chosenClaimReq, claimIntentOf } from '../game/quest/QuestPanel'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 import type { ClaimIntent, HeroChoicePrompt, QuestListView, QuestRow } from '../game/quest/QuestPanel'
 import type { QuestListResp } from '../net/generated/QuestProtocol'
 import type { ActivityListResp } from '../net/generated/ActivityProtocol'
@@ -99,6 +101,14 @@ export class QuestPanelView extends Component {
   private readonly drawnRows: Node[] = []
   private headerLabel: Label | null = null
   private overflowLabel: Label | null = null
+  /** 当前页（0 起）。三个页签共用一格：换页签归零（`switchTab`），重新 attach 只 clamp（`render`）。 */
+  private page = 0
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
 
   private promptPanel: Node | null = null
   private promptTitle: Label | null = null
@@ -213,6 +223,70 @@ export class QuestPanelView extends Component {
     this.overflowLabel = this.addLabel(this.node, 'Overflow', 0,
       height / 2 - PADDING - HEADER_HEIGHT - MAX_VISIBLE_ROWS * (ROW_HEIGHT + ROW_GAP) - 12,
       COLOR_TEXT_DIM, 14)
+    // 两颗翻页键与那句页码同一行、摆在两端（中间那句「第 1/7 页 · 共 47 条」约 210px，
+    // 面板 680 宽、键占到 ±(262~326)，横向不碰）。y 由 render 跟着最后一行走。
+    this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
+    this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
+  }
+
+  /** 一颗 64×28 的翻页键，照本文件行上「领取」那颗的画法。 */
+  private buildPagerButton(name: string, x: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, 0, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 13)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    // 建出来先收着：render() 在两份列表都没到时早退，不先收就会在"数据没到 / 读失败"
+    // 那一态露出两颗点了没反应的键（#345 口径，#449 与 #450 各修过一次同一族）
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉的那一侧直接不吃：`clampPage` 也会把越界的页号夹回来，
+   * 但"点了什么反应都没有"正是 #345 那条口径要挡的观感，所以在入口处就判。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) return
+    if (delta > 0 && !this.canNext) return
+    this.page += delta
+    this.render()
+  }
+
+  /** 页码与两颗键跟着这一屏最后画出的那行走；只有一页时整对收掉（#345）。 */
+  private paintPager(total: number, pages: number, rowY: number): void {
+    const paged = pages > 1
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
+    if (this.overflowLabel !== null) {
+      this.overflowLabel.string = paged ? `${pageNotice(this.page, pages)} · 共 ${total} 条` : ''
+      this.overflowLabel.node.setPosition(new Vec3(0, rowY, 0))
+    }
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) continue
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, rowY, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
   }
 
   private createRow(): Node {
@@ -321,6 +395,9 @@ export class QuestPanelView extends Component {
       return
     }
     this.tab = key
+    // 三个页签是三份不同长度的列表，留着上一个页签的页号会停在错位的位置上
+    //（与 `attach` 相反：那里只 clamp，领奖后重新 attach 不该把玩家弹回第一页）
+    this.page = 0
     this.hidePrompt()
     this.render()
   }
@@ -338,6 +415,24 @@ export class QuestPanelView extends Component {
 
   // ---------- 渲染 ----------
 
+  /**
+   * 这一屏没东西可翻：两颗键整对收掉。
+   *
+   * <p>为什么单独一个方法：三个页签共用一格行位与一对键，而 `render` 在两份列表还没到时是
+   * 早退的 —— 从"活动有 12 条、正翻在第 2 页"切到数据未到的任务页，早退会让上一屏留下的那颗
+   * 亮键继续留在屏上，点了什么都不发生（#345 定的口径）。
+   */
+  private hidePager(): void {
+    this.canPrev = false
+    this.canNext = false
+    if (this.prevPageButton !== null) {
+      this.prevPageButton.active = false
+    }
+    if (this.nextPageButton !== null) {
+      this.nextPageButton.active = false
+    }
+  }
+
   private render(): void {
     this.renderTabs()
     // 两个池都先归还：切页签时上一页的行必须消失（各页只归还自己那一半的话，
@@ -353,6 +448,7 @@ export class QuestPanelView extends Component {
     const list = this.list
     const pool = this.rowPool
     if (list === null || pool === null) {
+      this.hidePager()
       return
     }
     // 任务页不含成就、成就页只看成就（两个页签的数据来自同一份响应，只是过滤不同）
@@ -364,20 +460,20 @@ export class QuestPanelView extends Component {
     // 行数按实测可视高度算，不写死：① 可视高度随窗口/机型变；② 多画的行会被底部导航条盖住，
     // 那是"画了但玩家看不见"，比少画一行更难发现（表头带抬到 76 之后这一屏更矮了一档）。
     const navTop = -size.height / 2 + BOTTOM_RESERVED
-    const maxRows = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
-    const visible = rows.slice(0, maxRows)
+    const capacity = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
+    // 共几页、夹到哪一页、切哪一段用同一个 perPage（`PanelPaging` 那条原话）：从前这里
+    // slice(0, maxRows) 一刀切、再把「另有 N 条」拼到表头，剩下的任务一条也够不着（#307）。
+    const total = rows.length
+    const perPage = contentPerPage(total, capacity)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const visible = rows.slice(slice.start, slice.end)
     if (this.headerLabel !== null) {
       const scope = this.tab === 'achievement' ? '成就' : '任务'
       const claimable = this.tab === 'achievement' ? null : list.claimableText
-      // 「另有几条没画下」挂在表头那一行（军队同一口径）：单独占一行要么吃掉一排的位置，
-      // 要么落到导航条底下 —— 两种都是"玩家看不见这条提示"。
-      const truncated = truncatedNotice('条', rows.length - visible.length)
-      this.headerLabel.string = `${scope} ${rows.length} 条`
+      this.headerLabel.string = `${scope} ${total} 条`
         + (claimable === null ? '' : ` · ${claimable}`)
-        + (truncated === '' ? '' : ` · ${truncated}`)
-    }
-    if (this.overflowLabel !== null) {
-      this.overflowLabel.string = ''
     }
     visible.forEach((row, index) => {
       const node = pool.acquire()
@@ -385,6 +481,8 @@ export class QuestPanelView extends Component {
       this.drawnRows.push(node)
       this.renderRow(node, row)
     })
+    // 页码与两颗键排在本屏让出来的那一格上（装不下时 `contentPerPage` 少画一行）
+    this.paintPager(total, pages, topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 12)
   }
 
   /**
@@ -406,20 +504,21 @@ export class QuestPanelView extends Component {
       if (this.overflowLabel !== null) {
         this.overflowLabel.string = '正在拉取活动列表…'
       }
+      this.hidePager()
       return
     }
-    // 与任务那一页同一口径：行数按实测可视高度算，"另有几条没画下"挂在表头上
+    // 与任务那一页同一口径：行数按实测可视高度算，装不下就翻页而不是只说"另有几条没画下"
     const navTop = -size.height / 2 + BOTTOM_RESERVED
-    const maxRows = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
-    const visible = data.rows.slice(0, maxRows)
+    const capacity = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
+    const total = data.rows.length
+    const perPage = contentPerPage(total, capacity)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const visible = data.rows.slice(slice.start, slice.end)
     if (this.headerLabel !== null) {
-      const truncated = truncatedNotice('条', data.rows.length - visible.length)
-      this.headerLabel.string = `活动 ${data.rows.length} 条`
+      this.headerLabel.string = `活动 ${total} 条`
         + (data.claimableText === null ? '' : ` · ${data.claimableText}`)
-        + (truncated === '' ? '' : ` · ${truncated}`)
-    }
-    if (this.overflowLabel !== null) {
-      this.overflowLabel.string = ''
     }
     visible.forEach((row, index) => {
       const node = pool.acquire()
@@ -427,6 +526,7 @@ export class QuestPanelView extends Component {
       this.drawnActivity.push(node)
       this.renderActivityRow(node, row)
     })
+    this.paintPager(total, pages, topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 12)
   }
 
   private renderActivityRow(node: Node, row: ActivityRow): void {
