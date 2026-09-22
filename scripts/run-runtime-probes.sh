@@ -44,13 +44,27 @@ while read -r f; do
   logdir="${RUNTIME_PROBES_LOGDIR:-/d/tmp}"
   mkdir -p "$logdir"
   log="$logdir/probe-$base.log"
-  env "$backend_env=$BACKEND" "$port_env=$port" node "$f" > "$log" 2>&1
-  code=$?
+  run_probe() {   # $1=端口 $2=日志文件
+    env "$backend_env=$BACKEND" "$port_env=$1" node "$f" > "$2" 2>&1
+    echo $?
+  }
+  code=$(run_probe "$port" "$log")
   # 日志空 = 这一份**根本没跑成**（重定向失败、node 没起来…），它的退出码和被测系统无关。
   # 不标出来的话，"没跑"会被记成一次普通的红或绿 —— #416 那版 just 这么把 `RUNTIME_PROBES_LOGDIR`
   # 指到一个不存在的目录，就得到一个凭空虚记的 "1"。
   if [ ! -s "$log" ]; then
     code="NO-RUN"
+  fi
+  # 有的量具拿"计时对上预算"当判据，而那条预算正落在它自己的读数散布里（#444 实测：perf 首屏
+  # 同一颗 SHA 四跑 2715/2830/3234/3244 对预算 3000）—— 超一次不构成缺陷。所以非零时补跑一次，
+  # **两次都超才判红**：真退化会连红两次，于是这不是把阈值挪走，只是不让噪声冒充缺陷。
+  # 首跑 NO-RUN 不补跑（那是环境没起来，补跑只会多一个假数）。
+  if [ "$code" != "0" ] && [ "$code" != "NO-RUN" ]; then
+    code2=$(run_probe "$((port + 100))" "$log.retry")
+    [ -s "$log.retry" ] || code2="NO-RUN"
+    # 这行必须带 `#` 前缀：汇总按 `^(0 |SKIP |# )` 排除元信息，换个词就被数成一次红。
+    echo "# RERUN $base 首跑=$code 复跑=$code2 判定取复跑" | tee -a "$OUT"
+    code="$code2"
   fi
   echo "$code $base ($backend_env, port $port)" | tee -a "$OUT"
 done < "$LIST"
