@@ -55,4 +55,16 @@ for (const view of PAGED_VIEWS) {
     assert.ok(source().includes('pageWindow('),
       `没有 pageWindow ⇒ ${view} 只画第一屏，剩下的行玩家够不着（#307）`)
   })
+
+  // 光看"有没有 pageWindow"判不住：算完页号却仍然 `slice(0, 容量)` 照样绿（#452 的独立审查
+  // 提的第⑥条）。这一条钉的是那三种"一刀切"写法不再出现 —— 页号只用于切段，不用于截断。
+  test(`${view} 不许留着"一刀切到容量"的旧写法`, () => {
+    // 先剥行注释：这两屏的注释里正写着"从前这里 slice(0, maxRows) 一刀切"，
+    // 拿散文当代码判会假红（判据要判结构，不判它旁边写了什么）
+    const code = source().replace(/\/\/[^\n]*/g, '')
+    for (const dead of ['slice(0, capacity)', 'slice(0, maxRows)', 'slice(0, drawn)']) {
+      assert.equal(code.includes(dead), false,
+        `${view} 里还有 ${dead} ⇒ 第一屏之外的那些行又没人能翻到（#307 换了件衣服）`)
+    }
+  })
 }
