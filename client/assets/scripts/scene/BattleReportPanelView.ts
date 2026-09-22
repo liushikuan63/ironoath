@@ -14,7 +14,9 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildReportList, buildScoutIntel } from '../game/battle/BattleReportPanel'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 import type { ReportListView, ReportRow, ScoutRow, ScoutListView } from '../game/battle/BattleReportPanel'
 import { BattlePlaybackView } from './BattlePlaybackView'
 import type { BattleReportListResp, BattleResultView } from '../net/generated/BattleProtocol'
@@ -69,6 +71,14 @@ export class BattleReportPanelView extends Component {
   private scoutTabLabel: Label | null = null
   private emptyLabel: Label | null = null
   private overflowLabel: Label | null = null
+  /** 当前页（0 起）。换页签归零（两块数据集不同），重新 attach 只 clamp（见 attach 那条注释）。 */
+  private page = 0
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
   private backLabel: Label | null = null
   private listNode: Node | null = null
   private playbackNode: Node | null = null
@@ -145,6 +155,8 @@ export class BattleReportPanelView extends Component {
     }
     this.showList()
     this.list = buildReportList(resp, now)
+    // 故意不归零页号：看完一场回放回来会重新 attach，归零等于把玩家弹回第一页。
+    // 列表变短时 render() 里的 clampPage 夹回最后一页（#450 关卡同一口径）。
     this.render()
   }
 
@@ -157,6 +169,9 @@ export class BattleReportPanelView extends Component {
   /** 切页签。侦察情报那页的行不可点：没有回放可看。 */
   private pickIntel(intel: 'BATTLE' | 'SCOUT'): void {
     this.intel = intel
+    // 换页签归零：战报与敌情是两块数据集，行数不同，留着上一页会停在错位的位置上
+    //（与 `attach` 相反：那里只 clamp，因为领完/看完重新 attach 不该把玩家弹回第一页）
+    this.page = 0
     this.render()
   }
 
@@ -254,6 +269,10 @@ export class BattleReportPanelView extends Component {
     this.emptyLabel = this.addLabel(list, 'Empty', 0, 40, COLOR_TEXT_DIM, 17)
     this.overflowLabel = this.addLabel(list, 'Overflow', 0,
       -height / 2 + PADDING + 18, COLOR_TEXT_DIM, 14)
+    // 两颗翻页键与那句页码同一行、摆在两端。挂在 List 上而不是 this.node 上：
+    // 回放那一屏靠 List.active 关掉，键跟着一起消失才不会浮在回放上。
+    this.prevPageButton = this.buildPagerButton(list, 'PrevPageButton', -PANEL_WIDTH / 2 + 46)
+    this.nextPageButton = this.buildPagerButton(list, 'NextPageButton', PANEL_WIDTH / 2 - 46)
     this.statusLabel = this.addLabel(this.node, 'Status', 0, 0, COLOR_TEXT_DIM, 16)
     this.backLabel = this.addLabel(this.node, 'Back', -PANEL_WIDTH / 2 + 56,
       height / 2 - PADDING - 20, COLOR_TEXT, 16)
@@ -272,6 +291,49 @@ export class BattleReportPanelView extends Component {
         this.onShareRequested?.(reportId)
       }
     })
+  }
+
+  /**
+   * 一颗 64×28 的翻页键（照本面板行上动作键的画法）。父节点传进来：这一屏的键要挂在 List 上，
+   * 点进回放时 List 整块关掉，浮在 this.node 上的键会留在回放里。
+   */
+  private buildPagerButton(parent: Node, name: string, x: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    parent.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, 0, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_ROW
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 13)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    // 建出来先收着：render() 在两份列表都没到时早退，不先收就会在"还没拉到战报"那一态
+    // 露出两颗点了没反应的键（#345 口径，#449 与 #450 各修过一次同一族）
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉的那一侧直接不吃：`render()` 里的 `clampPage` 也会把越界页号夹回来，
+   * 但"点了没反应"正是 #345 那条口径要挡的观感。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) return
+    if (delta > 0 && !this.canNext) return
+    this.page += delta
+    this.render()
   }
 
   private showList(): void {
@@ -372,9 +434,17 @@ export class BattleReportPanelView extends Component {
     // 行数按实测可视高度算，不写死（与 MailPanelView #394 同一处修法）：写死 8 行时第 6~8 行
     // 连同"另有 N 场未显示"一起落到导航条底下 —— 量具现在看得见这一条了（#390 升成判据）。
     const navTop = -height / 2 + BOTTOM_RESERVED
-    const maxRows = Math.max(1,
+    const capacity = Math.max(1,
       Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
-    const visible = source.rows.slice(0, maxRows)
+    // 共几页、夹到哪一页、切哪一段用同一个 perPage（`PanelPaging` 那条原话）：从前这里
+    // slice(0, maxRows) 一刀切，剩下的写成「另有 N 场未显示」就没有然后了 —— 那是 #307
+    // 说的"功能看不见换了件衣服"。
+    const total = source.rows.length
+    const perPage = contentPerPage(total, capacity)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const visible = source.rows.slice(slice.start, slice.end)
     visible.forEach((row: ReportRow | ScoutRow, index: number) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
@@ -385,15 +455,31 @@ export class BattleReportPanelView extends Component {
         this.renderRow(node, row as ReportRow)
       }
     })
-    // 「另有几场没画下」挂在表头那一行（军队/任务/邮件同一口径）：单独占一行要么吃掉一排的位置，
-    // 要么落到导航条底下 —— 两种都是"玩家看不见这条提示"。
-    const truncated = truncatedNotice(scoutMode ? '份' : '场', source.rows.length - visible.length)
+
+    const paged = pages > 1
+    const rowBottom = topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 10
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
     if (this.headerLabel !== null) {
-      const base = source.headerText
-      this.headerLabel.string = truncated === '' ? base : `${base} · ${truncated}`
+      this.headerLabel.string = source.headerText
     }
+    // 页码借用 Overflow 那一格：它从前每帧被清空（那句「另有 N 场」挂表头是因为按 8 行摆会把
+    // 提示挤到导航条底下）。现在装不下时让出一格行位，页码与两颗键就排在那一格上。
     if (this.overflowLabel !== null) {
-      this.overflowLabel.string = ''
+      this.overflowLabel.string = paged
+        ? `${pageNotice(this.page, pages)} · 共 ${total} ${scoutMode ? '份' : '场'}`
+        : ''
+      this.overflowLabel.node.setPosition(new Vec3(0, rowBottom, 0))
+    }
+    // 只有一页时两颗键整对收掉（#345：不留点了没反应的键）；多页时不可翻的那一侧按灰
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) continue
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, rowBottom, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
   }
 
