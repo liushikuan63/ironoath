@@ -55,6 +55,45 @@ const PHASES = [
   ...DEFAULT_PANELS,
 ]
 
+/**
+ * 每一相至少要量到几条字形带（像素法切出的文字横带）。
+ *
+ * <p><b>为什么从前它只打印不判红是错的</b>（台账 #424 未做栏①，本格收口）：这一相若夹具没命中、
+ * 页签没点到、面板根本没开，读数就是 0 条字形带，于是"植入前 0 处 → 植入后 0 处"看起来完全正常，
+ * 门全绿而那一屏<b>从没被量过</b>。`switched`/`paged` 只挡住"相位走没走到"，挡不住"走到了但什么都没画出来"。
+ *
+ * <p>值取 2026-09-22 直跑 `node tools/verify-plate-plant.mjs` 的<b>实测一半</b>（不是随手挑的阈值）：
+ * 正当增删几行字不许把它弄红，而"整相忽然量不到字"一定红。
+ * 生成器与读数的条数交叉校验写在台账里；改布局后要重量并同步上调，别调松到全绿了事。
+ */
+const BAND_FLOORS = {
+  'army': 13, // 实测 26
+  'avatarFrames': 5, // 实测 11
+  'bag': 10, // 实测 20
+  'battlePass': 14, // 实测 29
+  'city': 7, // 实测 15
+  'gacha': 6, // 实测 12
+  'hero': 2, // 实测 5
+  'mail': 1, // 实测 2
+  'power': 13, // 实测 27
+  'quest': 11, // 实测 22
+  'reports': 1, // 实测 3
+  'reports/scout': 2, // 实测 4
+  'settings': 5, // 实测 10
+  'shop': 15, // 实测 31
+  'social': 18, // 实测 36
+  'social/alliance': 5, // 实测 11
+  'social/alliance-joined': 17, // 实测 34
+  'social/alliance-joined#p2': 13, // 实测 27
+  'social/chat': 11, // 实测 22
+  'social/events': 8, // 实测 16
+  'social/help': 8, // 实测 17
+  'social/rally': 9, // 实测 19
+  'stage': 10, // 实测 21
+  'targets': 1, // 实测 3
+  'world': 3, // 实测 6
+}
+
 const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
 const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
@@ -165,9 +204,11 @@ for (const phase of PHASES) {
     && after.plantedHit === true && reverted.hits === 0
     // 相位没真走到就"报 0 处"，那是没量过而不是没问题 —— 从前这两条只打印不进判据
     && switched === true && paged === true
+    // 走到但没量到字，等于这一相没验过 —— 与 switched/paged 同一类"别把空转当通过"
+    && before.bands >= (BAND_FLOORS[phase.tag] ?? 1)
   results.push({ tag: phase.tag, switched, paged, before: before.hits, planted, after: after.hits,
     plantedHit: after.plantedHit === true, reverted: reverted.hits, bands: before.bands, ok })
-  console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged} 字形带=${before.bands} 条；植入前 ${before.hits} → `
+  console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged} 字形带=${before.bands} 条（下限 ${BAND_FLOORS[phase.tag] ?? 1}）；植入前 ${before.hits} → `
     + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true}）→ 撤掉后 ${reverted.hits}；`
     + `植入=${JSON.stringify(planted)} ⇒ ${ok ? 'OK' : '不合格'}`)
   await page.close()
