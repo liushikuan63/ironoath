@@ -19,7 +19,9 @@ import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, 
 import type { AvatarFrameRow } from '../game/avatar/AvatarFramePanel'
 import type { AvatarFramesView } from '../game/session/AppRoot'
 import { applySystemUiFont, capWidth } from './UiFont'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 
 const { ccclass } = _decorator
 
@@ -60,6 +62,14 @@ export class AvatarFramePanelView extends Component {
   private avatarInitial: Label | null = null
   private frameGraphics: Graphics | null = null
   private readonly rowNodes: Node[] = []
+  /** 当前页（0 起）。这一屏只有一份列表，重新 attach 只 clamp（见 attach）。 */
+  private page = 0
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
   private readonly rowSwatch: Graphics[] = []
   private readonly rowName: Label[] = []
   private readonly rowRarity: Label[] = []
@@ -90,6 +100,8 @@ export class AvatarFramePanelView extends Component {
 
   /** 装载整块外观视图（编排层组装好的，本文件不改其中任何判定）。 */
   attach(framesView: AvatarFramesView): void {
+    // 故意不归零页号：换上一个框会重新 attach，归零等于把玩家刚选中的那一枚弹走。
+    // 页号越界由 render() 里那一次 clampPage 夹回来 —— 只那一处，perPage 也只在那一处算得出
     this.panel = framesView
     this.render()
   }
@@ -111,6 +123,66 @@ export class AvatarFramePanelView extends Component {
     const top = height / 2 - PADDING
     this.headerLabel = this.addLabel('Header', 0, top - 20, COLOR_COPPER_GOLD, 20)
     this.countLabel = this.addLabel('Count', 0, top - 46, COLOR_TEXT_DIM, 15)
+    // 两颗翻页键与那句页码同一行、摆在两端，y 由 render() 跟着最后一行走
+    this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
+    this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
+  }
+
+  /** 一颗 64×28 的翻页键，照本文件行上那颗动作键的画法。 */
+  private buildPagerButton(name: string, x: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, 0, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel('Caption', 0, 0, COLOR_TEXT, 13, node)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    // 建出来先收着：不先收会在"数据没到"那一态露出两颗点了没反应的键
+    //（#345 口径，#449 与 #450 各修过一次同一族）
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉的那一侧直接不吃：`clampPage` 也会把越界页号夹回来，
+   * 但"点了没反应"正是 #345 那条口径要挡的观感。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) return
+    if (delta > 0 && !this.canNext) return
+    this.page += delta
+    this.render()
+  }
+
+  /** 两颗键跟着这一屏让出来的那一格走；只有一页时整对收掉（#345）。 */
+  private paintPager(pages: number, rowY: number): void {
+    const paged = pages > 1
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) continue
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, rowY, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
+  }
 
     // 预览区：一块底板 + 头像 + 框。位置写在一处常量里，渲染时只改颜色与文字
     const previewY = top - 46 - 62
@@ -265,16 +337,27 @@ export class AvatarFramePanelView extends Component {
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     const navTop = -size.height / 2 + BOTTOM_RESERVED
     const usable = topY + ROW_HEIGHT / 2 - navTop
-    const maxRows = Math.max(1, Math.floor(usable / (ROW_HEIGHT + ROW_GAP)))
-    const drawn = Math.min(panel.rows.length, maxRows)
+    // 容量取"按窗口算出来的行数"与"实际建出来的行数"里小的那一个（与商店同一处修法）
+    const capacity = Math.max(1,
+      Math.min(Math.floor(usable / (ROW_HEIGHT + ROW_GAP)), this.rowNodes.length))
+    const total = panel.rows.length
+    // 共几页、夹到哪一页、切哪一段用同一个 perPage：从前只画第一屏再补一句
+    // 「另有 N 枚未显示」，下面那些框玩家一枚也换不了（#307）
+    const perPage = contentPerPage(total, capacity)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const rows = panel.rows.slice(slice.start, slice.end)
+    const drawn = rows.length
 
     if (this.headerLabel !== null) {
-      this.headerLabel.string = `外观 · ${drawn}/${panel.rows.length} 枚`
-        + (panel.rows.length > drawn ? ` · ${truncatedNotice('枚', panel.rows.length - drawn)}` : '')
+      this.headerLabel.string = `外观 · ${drawn}/${total} 枚`
+        + (pages > 1 ? ` · ${pageNotice(this.page, pages)}` : '')
     }
+    this.paintPager(pages, topY - drawn * (ROW_HEIGHT + ROW_GAP) - 8)
 
     this.rowNodes.forEach((node, index) => {
-      const row: AvatarFrameRow | undefined = panel.rows[index]
+      const row: AvatarFrameRow | undefined = rows[index]
       node.active = index < drawn && row !== undefined
       if (row === undefined || index >= drawn) {
         this.rowIds[index] = null

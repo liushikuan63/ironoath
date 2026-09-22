@@ -38,6 +38,7 @@ const PAGED_VIEWS = [
   'BattleReportPanelView',
   'QuestPanelView',
   'ShopPanelView',
+  'AvatarFramePanelView',
 ]
 
 for (const view of PAGED_VIEWS) {
