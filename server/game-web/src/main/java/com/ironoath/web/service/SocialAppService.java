@@ -1608,9 +1608,14 @@ public class SocialAppService {
         requirePlayer(playerId);
         long now = timeService.serverNow();
         List<String> ids = store.followedPlayers(playerId);
+        // 关注对象的存档一次批量读回。逐个 findByPlayerId 是每次打开这一列表打 SOCIAL_FOLLOW_MAX
+        // （50）趟**整份存档**，而这一列表只要昵称与活跃时刻两项 —— 判据见 FollowListQueryCountTest
+        // （结果完全相同，只有往返数抓得住它）。名单为空时连这一趟都不发：新号第一次打开社交面板
+        // 就是空名单，那不该是一次存储往返。
+        Map<String, PlayerSave> saves = ids.isEmpty() ? Map.of() : players.findByPlayerIds(ids);
         List<FriendView> out = new ArrayList<>(ids.size());
         for (String id : ids) {
-            PlayerSave save = players.findByPlayerId(id).orElse(null);
+            PlayerSave save = saves.get(id);
             boolean online = pushGateway.isOnline(id);
             out.add(new FriendView(id,
                     save == null ? id : save.nickName(),
