@@ -109,6 +109,8 @@ import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
 import { ClientReddotTree } from '../reddot/ReddotTree'
 import { pickUnavailable, actionUnavailable } from '../ui/BlockedPickCopy'
+import { buildStaminaDetail } from '../ui/StaminaDetail'
+import type { StaminaDetailView } from '../ui/StaminaDetail'
 import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army/AutoTrain'
 import { buildShopPanel, buyBodyOf, buyResultText, shopRowStateText } from '../shop/ShopPanel'
 import type { ShopPanelView } from '../shop/ShopPanel'
@@ -207,6 +209,8 @@ export interface PanelTargets {
   city?(resp: CityListResp, offsetMs: number): void
   /** 一次收割的即时结果（要立刻飘字，之后再被 city 列表覆盖）。 */
   cityCollect?(resp: CityCollectResp): void
+  /** 体力详情弹层（B09 §5）。视图模型已经算好文案与置灰，表现层只负责画。 */
+  staminaDetail?(view: StaminaDetailView): void
   /**
    * 军队面板。`trainMemory` 是客户端记住的上一次成功训练 —— 面板只用它决定
    * 「自动续训」现在能不能开（开关本身的策略全部来自响应，见 game/army/AutoTrain.ts）。
@@ -982,6 +986,38 @@ export class AppRoot {
     const capped = Math.max(1, Math.min(100, Math.floor(count)))
     this.track(TRACK_EVENTS.itemUse, { itemId, batch: trackParam(capped) })
     return this.write('bag', this.api.itemOpenBatch({ itemId, count: capped }), ['bag', 'reddot'])
+  }
+
+  /**
+   * 打开体力详情（B09 §5）：拉 `/stamina`，把读数翻成弹层要画的那一帧。
+   *
+   * <p>金币余额取自**资源条那一份**（`cityResp`）—— 它只用来决定买体力按钮置不置灰，
+   * 真正能不能买仍然由服务端裁定（铁律 2）。
+   */
+  openStaminaDetail(): Promise<void> {
+    this.track(TRACK_EVENTS.staminaView)
+    return this.write('city', this.api.staminaView(), [], r => {
+      this.targets.staminaDetail?.(buildStaminaDetail(r, this.goldOf()))
+    })
+  }
+
+  /**
+   * 买一次体力（`POST /stamina/buy`）。
+   *
+   * <p>**不叠二次确认**：价格就印在按钮上、弹层本身就是确认面，再叠一层只是噪音
+   * （与"解散组织"那类不可逆且没把代价写在按钮上的动作不同）。
+   * 买完**重新拉一次详情**再画：次数、下一次价格、余额都会变，靠本地推算会与服务端分家。
+   */
+  buyStamina(times = 1): Promise<void> {
+    this.track(TRACK_EVENTS.staminaBuy, { times: trackParam(times) })
+    return this.write('city', this.api.staminaBuy({ times }), ['city', 'resources'], () => {
+      void this.openStaminaDetail()
+    })
+  }
+
+  /** 当前金币（资源条那一份；读不到就当 0 —— 那只会让按钮置灰，不会让判定失真）。 */
+  private goldOf(): number {
+    return this.cityResp?.resources?.GOLD?.current ?? 0
   }
 
   /** 顶栏的「一键收割」= `buildingId: null`，由服务端裁定收哪些；具体行则收那一格。 */

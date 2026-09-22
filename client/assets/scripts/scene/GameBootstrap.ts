@@ -43,6 +43,7 @@ import { decideUpdateGate } from '../game/release/UpdateGate'
 import { applySystemUiFont } from './UiFont'
 import { SettingsPanelView } from './SettingsPanelView'
 import { GiftPopupView } from './GiftPopupView'
+import { StaminaDetailOverlay } from './StaminaDetailOverlay'
 import { TechPanelView } from './TechPanelView'
 import { EquipPanelView } from './EquipPanelView'
 import { ExpPickOverlay } from './ExpPickOverlay'
@@ -1132,6 +1133,9 @@ export class GameBootstrap extends Component {
     const lineupEdit = this.panel(LineupEditOverlay, 'lineupEdit')
     const socialCreate = this.panel(SocialCreateOverlay, 'socialCreate')
     const gachaDisclosure = this.panel(GachaDisclosureView, 'gachaDisclosure')
+    // 体力详情弹层：**自己建节点**（与 OfflineReportOverlay 同一种写法，不是编辑器里的 panel）——
+    // `/stamina` 与 `/stamina/buy` 此前一处调用都没有，玩家看得见体力条却点不开也买不了。
+    const staminaDetail = new StaminaDetailOverlay(this.node)
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -1147,6 +1151,9 @@ export class GameBootstrap extends Component {
     }
     if (giftPopup !== null) {
       out.giftPopup = resp => giftPopup.attach(resp)
+      // 体力详情：弹层自己建节点，目标只负责把那一帧画上去
+      out.staminaDetail = view => staminaDetail.render(view)
+      staminaDetail.onBuy = () => { void this.root?.buyStamina() }
       out.payResult = view => giftPopup.renderResult(view)
       giftPopup.onBuy = productId => { void this.root?.buyGift(productId) }
       giftPopup.onClose = () => giftPopup.hide()
@@ -1228,6 +1235,8 @@ export class GameBootstrap extends Component {
       }
       city.onSpeedUp = (buildingId, source) => { void this.root?.speedUpBuilding(buildingId, source) }
       city.onCollect = buildingId => { void this.root?.collect(buildingId) }
+      // 点资源条上的「体力」那一行 → 体力详情（B09 §5；`/stamina` 与 `/stamina/buy` 此前一处调用都没有）
+      city.onStamina = () => { void this.root?.openStaminaDetail() }
       // 暂停/恢复/取消（B03 §2，收口清单 #324）：动作本身在服务端，这里只把回调送到 AppRoot
       city.onPause = buildingId => { void this.root?.pauseBuilding(buildingId) }
       city.onResume = buildingId => { void this.root?.resumeBuilding(buildingId) }

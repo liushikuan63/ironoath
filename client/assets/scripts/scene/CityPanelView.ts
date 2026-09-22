@@ -252,6 +252,14 @@ export class CityPanelView extends Component {
   onUpgrade: ((configId: string, gridX?: number, gridY?: number) => void) | null = null
   onSpeedUp: ((buildingId: string, source: SpeedUpSource) => void) | null = null
   onCollect: ((buildingId: string | null) => void) | null = null
+  /**
+   * 点资源条上的「体力」那一行（B09 §5）。
+   *
+   * <p>为什么挂在**那一行**而不是别处：体力是资源条上的一员（配置表把它做成资源行），
+   * 玩家看到「体力 87/100」的第一反应就是点它 —— 而在此之前那一行**点了什么都不会发生**
+   * （`/stamina` 与 `/stamina/buy` 一处调用都没有）。
+   */
+  onStamina: (() => void) | null = null
   /** 暂停/恢复升级（B03 §2）。两个回调分开：面板不做"当前该发哪个"的判断，状态由服务端说了算。 */
   onPause: ((buildingId: string) => void) | null = null
   onResume: ((buildingId: string) => void) | null = null
@@ -847,6 +855,13 @@ export class CityPanelView extends Component {
       const label = this.resourceLabels[index]
       if (label !== undefined) {
         label.string = line
+        // 「体力」那一行可点：打开体力详情。按**文本前缀**认它，不写死行列号 ——
+        // 资源条的排列来自服务端下发的资源表，写死第 5 格这种事会在改表那天静默失效。
+        const node = label.node
+        node.off('touch-start')
+        if (line.startsWith('体力')) {
+          node.on('touch-start', () => this.onStamina?.(), this)
+        }
       }
     })
 

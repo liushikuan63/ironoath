@@ -275,6 +275,20 @@ export const TRACK_EVENTS = {
    * 与 `march_send` 分开记 —— 后者是军事意图，前者只是换屏，混在一起会让"出征率"被换屏次数冲淡。
    */
   worldLeave: 'world_leave',
+  /**
+   * 买一次体力（B09 §5）。
+   *
+   * <p>为什么单记：体力是打野与关卡的消耗闸门，买体力次数直接说明"这个闸门是不是被付费绕开的"。
+   * 与 `shop_buy` 分开 —— 一个走体力这个消耗资源，一个是货架交易，混在一起读不出付费结构。
+   */
+  staminaBuy: 'stamina_buy',
+  /**
+   * 打开体力详情弹层（B09 §5）。
+   *
+   * <p>与 `stamina_buy` 分开：这一条是"玩家关心体力够不够"的读数（打开率），
+   * 后者是"他愿不愿意为它花钱"。只有前者高而后者为 0，说明卡点是真的、但付费点没说服力。
+   */
+  staminaView: 'stamina_view',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]
