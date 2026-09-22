@@ -491,11 +491,14 @@ public class SocialAppService {
                 }
                 store.addApplication(alliance.id(), playerId);
                 // 审核请求要通知到有权限的人，否则申请会一直挂着（B10 禁止项：绝不静默失败）
+                // 申请人的昵称在循环外读一次：它原来落在下面这个循环里，于是乘数 = 有权限的官员数，
+                // 而每一次读的都是同一个人的整份存档（判据见 AllianceApplyNotifyQueryCountTest）
+                String applicantName = nickname(playerId);
                 for (String officer : alliance.memberIds()) {
                     AllianceRole role = alliance.roleOf(officer);
                     if (role != null && role.tier() != AllianceRole.MEMBER.tier()) {
                         store.pushEvent(officer, event("ALLIANCE_APPLIED",
-                                nickname(playerId) + " 申请加入联盟", null, alliance.id(), now));
+                                applicantName + " 申请加入联盟", null, alliance.id(), now));
                     }
                 }
                 return summary(playerId, now);
@@ -1255,6 +1258,10 @@ public class SocialAppService {
     }
 
     private HelpResp doHelp(String playerId, List<String> requestIds, long now) {
+        // 本人的昵称只读一次：它原来落在下面的循环里，乘数 = 本次真正帮到的条数（一键帮助能一次
+        // 帮满当天的额度），而每次读的都是同一个人的整份存档。
+        // 刻意"用到才读"而不是提到循环外：全部跳过的批次本来一次存档都不该读。
+        String helperName = null;
         int helped = 0;
         int skipped = 0;
         long speedup = 0L;
@@ -1286,8 +1293,11 @@ public class SocialAppService {
             store.markHelped(requestId);
             // 帮一次算一次（目标不细分）：B12 §1 的 HELP_SQUAD
             questEvents.progress(playerId, com.ironoath.core.quest.GoalType.HELP_SQUAD, null, 1L, now);
+            if (helperName == null) {
+                helperName = nickname(playerId);
+            }
             store.pushEvent(request.fromPlayerId(), event("HELP_RECEIVED",
-                    nickname(playerId) + " 帮助了你：" + request.targetDesc(), null, requestId, now));
+                    helperName + " 帮助了你：" + request.targetDesc(), null, requestId, now));
         }
         LOG.info("互助帮助 helper={} 成功={} 跳过={} 合计加速={}", playerId, helped, skipped, speedup);
         return new HelpResp(helped, skipped, helpLedger.remainingToday(playerId, now),
