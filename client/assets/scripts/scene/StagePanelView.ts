@@ -25,7 +25,6 @@ import type { StageListView, StageRow } from '../game/stage/StagePanel'
 import { buildStaminaBoard } from '../game/stage/StaminaBoard'
 import type { StaminaBoardView } from '../game/stage/StaminaBoard'
 import type { StaminaBuyResp, StaminaResp } from '../net/generated/Protocol'
-import { truncatedNotice } from '../game/ui/TruncatedList'
 import {
   clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
 } from '../game/ui/PanelPaging'
@@ -532,9 +531,8 @@ export class StagePanelView extends Component {
     this.canPrev = this.page > 0
     this.canNext = this.page < pages - 1
     if (this.overflowLabel !== null) {
-      this.overflowLabel.string = paged
-        ? `${pageNotice(this.page, pages)} · 共 ${total} 关`
-        : truncatedNotice('关', total - visible.length)
+      // 只有一页时留空：所有关都已在屏上，那句「另有 N 关未显示」在接了分页之后分母恒为 0
+      this.overflowLabel.string = paged ? `${pageNotice(this.page, pages)} · 共 ${total} 关` : ''
       // 通知跟着行区最后一行走：容量是按摘要与窗口高度算出来的，钉在「7 行下面」
       // 就会飘到摘要框里 —— 玩家看到的是"关卡只有这两关"，而实际是被截断的 48 关
       this.overflowLabel.node.setPosition(new Vec3(0, rowBottom, 0))

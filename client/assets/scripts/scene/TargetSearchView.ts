@@ -20,7 +20,6 @@
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildTargetRows, formatPower, pagerKeysVisible, targetSearchNotice } from '../game/power/PowerPanel'
 import { clampPage, contentPerPage, pageCount, pageNotice, pageWindow } from '../game/ui/PanelPaging'
-import { truncatedNotice } from '../game/ui/TruncatedList'
 import type { TargetRow } from '../game/power/PowerPanel'
 import type { SearchTargetsResp } from '../net/generated/WorldProtocol'
 import { NodePool } from './NodePool'
@@ -343,7 +342,7 @@ export class TargetSearchView extends Component {
         ? emptyNotice
         : pages > 1
           ? `${pageNotice(this.page, pages)} · 共 ${total} 个`
-          : truncatedNotice('个目标', total - visible.length)
+          : ''
     }
     this.paintPageButtons(pages)
   }
