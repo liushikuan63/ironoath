@@ -345,10 +345,12 @@ const notice = await page.evaluate(`(() => {
     y: noticeNode.worldPosition.y, summaryTop: summary, lastRowBottom,
   }
 })()`)
-check('截断通知找得到', notice?.found, true)
-checkTrue('截断通知写明了还有多少关没画出来（不钉死具体数字，行数随窗口高度变）',
-  /^另有 \d+ 关未显示$/.test(notice?.text ?? ''))
-checkTrue('截断通知在最后一行之下、摘要框之上（没飘进摘要里）',
+check('翻页那一格找得到', notice?.found, true)
+// #450 之前这一格印的是「另有 N 关未显示」——#307 说清了那句话的问题："话说诚实了，
+// 但那 N 关永远拿不到"。关卡换成真分页之后，这一格改说"第几页 / 共几关"，判据跟着换形状。
+checkTrue('那一格说的是分页位置而不是"还有多少关看不见"（具体数字随窗口高度变，不钉死）',
+  /^第 \d+\/\d+ 页 · 共 \d+ 关$/.test(notice?.text ?? ''))
+checkTrue('那一格在最后一行之下、摘要框之上（没飘进摘要里）',
   notice !== null && notice.y < notice.lastRowBottom && notice.y > notice.summaryTop)
 await page.screenshot({ path: path.join(OUT, 'stage-summary.png') })
 console.log(`  截图：${path.join(OUT, 'stage-summary.png')}`)
