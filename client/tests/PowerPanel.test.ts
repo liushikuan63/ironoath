@@ -156,13 +156,16 @@ test('坐标照实显示（客户端本来就能算距离，藏坐标没有意�
 
 // ---------- 空态那句文案：三相都要钉 ----------
 
-test('targetSearchNotice 只在「搜过且零行」那一相说话，另两相必须闭嘴', () => {
-  // ① 还没搜过：`rows` 的初值就是空数组，光看行数分不出这一相与 ②，所以 searched 要单独传
-  assert.equal(targetSearchNotice(false, 0), '',
-    '搜索前就印「没有目标」，玩家按下搜索会以为自己在跟一面墙较劲')
+test('targetSearchNotice 三态各说各话：没搜过给下一步、搜过零结果给结论、有结果留空', () => {
+  // ① 还没搜过：屏上只有导航条 + 一颗「搜索」键（#449 收掉两颗空转翻页键之后更空），
+  //    留空的读感是"界面坏了"，所以给一句下一步动作而不是给一句结论
+  assert.equal(targetSearchNotice(false, 0), '点搜索看看这一带有什么可打的',
+    '搜索前留空 = 玩家以为界面坏了；搜索前印「没有目标」= 他以为自己在跟一面墙较劲')
+  // searched 优先于 total：这一相下传进来的数字是上一份结果的残留，不能拿它说话
+  assert.equal(targetSearchNotice(false, 5), '点搜索看看这一带有什么可打的')
   // ② 搜过了、确实一个没有：不说等于把「一片空行区」留给玩家自己猜
   assert.equal(targetSearchNotice(true, 0), '这一带没有可打的目标')
-  // ③ 搜过且有行：有行还印这句等于自己打自己的脸
+  // ③ 搜过且有行：有行还印那句等于自己打自己的脸
   assert.equal(targetSearchNotice(true, 3), '')
   assert.equal(targetSearchNotice(true, 1), '', '一页正好一条时也不算"没有目标"')
 })

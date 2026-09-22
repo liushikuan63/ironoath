@@ -244,6 +244,11 @@ export class TargetSearchView extends Component {
 
     // 位置每次 render 现算（它要贴着本页最后一行的下沿，页码变了它就变了）
     this.overflowLabel = this.addLabel(this.node, 'Overflow', 0, 0, COLOR_TEXT_DIM, 14)
+    // 这一格也必须"建完就写一次"：`render()` 在 `response === null` 时第一句就 return，
+    // 未搜索那一相永远走不到下面那段 ⇒ 不补这一次，玩家看到的还是整屏空白（与上面两颗键同一族，台账 #449）
+    if (this.overflowLabel !== null) {
+      this.overflowLabel.string = targetSearchNotice(this.searched, 0)
+    }
   }
 
   private createRow(): Node {
