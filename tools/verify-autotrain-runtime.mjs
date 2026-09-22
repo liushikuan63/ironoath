@@ -3,7 +3,7 @@
  * 职责：把「军队面板上的自动续训开关真的画出来了、而且点下去的行为是对的」变成一条能失败的判据。
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
- * 用法：
+ * 用法：
  * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 AUTOTRAIN_PORT（默认 8096，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8075 node tools/verify-autotrain-runtime.mjs
  *
@@ -57,7 +57,7 @@ function verdict(ok, label, detail) {
 /** 在页面里读军队那一格的自动续训两件套：按钮字幕、状态行文本与坐标、最后一行兵种行的底边。 */
 function readAutoTrain() {
   const out = { panelFound: false, button: null, caption: null, status: null, rowBottom: null,
-    currentKey: null, visible: null }
+    currentKey: null, visible: null, pageText: null, pagerVisible: 0 }
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas')?.getChildByName('Game')
   out.currentKey = game?.getComponent('PanelNav')?.currentKey ?? null
@@ -103,6 +103,12 @@ function readAutoTrain() {
   const header = panel.children.find(child => child.name === 'Header')
   const headerLabel = header === null || header === undefined ? null : header.getComponent('cc.Label')
   out.headerText = headerLabel === null || headerLabel === undefined ? null : headerLabel.string
+  // 让出来的那一格：页码那句 + 两颗翻页键露了几颗（#451：装不下时不再只说"另有 N 项"，改成翻页行）
+  const notice = panel.children.find(child => child.name === 'PageNotice')
+  const noticeLabel = notice === undefined || notice === null ? null : notice.getComponent('cc.Label')
+  out.pageText = noticeLabel === null || noticeLabel === undefined ? null : noticeLabel.string
+  out.pagerVisible = panel.children.filter(child => (child.name === 'PrevPageButton'
+    || child.name === 'NextPageButton') && child.activeInHierarchy !== false).length
   return out
 }
 
@@ -192,9 +198,17 @@ async function main() {
   verdict(read?.rowBottom !== null && read.rowBottom > navTop,
     '最后一行兵种行的底边也在导航条之上（行数按可视高度算，不是写死的）',
     `最低行底边=${read?.rowBottom} 导航条上沿=${navTop}`)
-  verdict(/另有 \d+ 项未显示/.test(String(read?.headerText ?? '')),
-    '画不下的行数说出来了（全兵种页 20 行只画得下 4 行，玩家得知道下面还有）',
-    `表头="${read?.headerText}"`)
+  // 从前这一条钉的是「另有 N 项未显示」—— 话说诚实了，但那 N 行的兵玩家永远够不着（#307 原话）。
+  // #451 换成真分页之后判据跟着改：那一格必须是翻页行（社交那两格换分页时同一改法，
+  // 见 verify-social-permission-runtime 的 D0c 与 verify-social-create-runtime 的 H4）。
+  const pageText = String(read?.pageText ?? '')
+  const pageMatch = /^第 (\d+)\/(\d+) 页 · 共 (\d+) 项$/.exec(pageText)
+  verdict(pageMatch !== null && Number(pageMatch[2]) > 1,
+    '装不下时那一格是翻页行（下面的兵现在拿得到，不是一句「另有 N 项未显示」）',
+    `页码行="${pageText}"`)
+  verdict(read?.pagerVisible === 2, '多页时两颗翻页键都露着', `露出=${read?.pagerVisible}`)
+  verdict(!/另有 \d+ 项未显示/.test(String(read?.headerText ?? '')),
+    '表头不再挂那句够不着的话（都拿得到了就不该说）', `表头="${read?.headerText}"`)
 
   // 点一下：没有可续的那一批 ⇒ 不发请求，而且要在 console 里说清原因（面板那行字已经说了）
   const before = autoTrainCalls.length
