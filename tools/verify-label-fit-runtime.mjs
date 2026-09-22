@@ -80,7 +80,7 @@ const BASELINE = new Set([
  * 空态实测邮件 2 颗 / 战报 3 颗，差 3~10 倍，所以桩掉了这一条一定红；
  * 上限故意不设：画几行随视口高度变，钉死会把量具变成"只能在这台机器上绿"。
  */
-const LABEL_FLOORS = { mail: 2 * 4, reports: 2 * 3, social: 2 * 4 }
+const LABEL_FLOORS = { mail: 2 * 4, reports: 2 * 3, social: 2 * 4, 'social/alliance-joined': 2 * 10 }
 
 /**
  * 正向断言（比数颗数更硬）：这些串**只在夹具数据里**，空态画不出来。
@@ -94,6 +94,9 @@ const STUB_MARKS = {
   // 编错指标名（把裸枚举印给玩家）会被这条抓住。
   'reports/scout': '总兵力', 'social/help': '兵营 Lv12 升级中',
   'social/events': '集结邀请：西关', 'social/chat': '河谷渡口', 'social/rally': '28600',
+  // 「已入盟」相的独有串：这一屏与未入盟那一屏的颗数差得开（32 对 11），但**光看颗数**仍挡不住
+  // "摘要给了个别的联盟" 这类错读，所以取联盟名本身 —— 它只有 `alliance` 字段真被画出来才存在。
+  'social/alliance-joined': '黑石渡口',
 }
 
 let pass = 0
@@ -120,6 +123,8 @@ const WALK = `(() => {
   const stretched = []
   const geo = []
   const underNav = []
+  /** 有文本但世界盒是 0x0 的颗数（从没被布局过）：不判红，只报数，见下面"压进导航条"那一支的注释。 */
+  let unlaid = 0
   /** 这一屏画出来的每一句原文（正向断言读它：夹具的桩掉线时这里就没有夹具的字）。 */
   const texts = []
   let shrink = 0
@@ -150,10 +155,22 @@ const WALK = `(() => {
         const bb = ut.getBoundingBoxToWorld()
         const scale = ut.height > 0 ? bb.height / ut.height : 1
         if (navTop !== null) {
-          // 字的下沿按"盒中心 − 半个字号"估（盒子在 SHRINK 下是 27，比字高，拿盒子量会假红）
-          const glyphBottom = bb.y + bb.height / 2 - (lb.fontSize * scale) / 2
-          if (glyphBottom < navTop + ${PLANT}) {
-            underNav.push(str.slice(0, 8) + '(字底' + Math.round(glyphBottom) + '<导航上沿' + Math.round(navTop) + ')')
+          // 0x0 的世界盒 = 这一颗从没被布局过（本轮抓到一颗路径为 Value←SocialRow←social 的
+          // 「联盟资金 12800」量在 (0,0) 0x0，屏幕上并没有那行字）。它既没挡住别人也没被挡住，
+          // 判红就是量具自己造的假红；但**必须报个数**，不然哪天真有一屏没布局也只会安静地少几颗。
+          if (bb.width <= 0 || bb.height <= 0) {
+            unlaid += 1
+          } else {
+            // 字的下沿按"盒中心 − 半个字号"估（盒子在 SHRINK 下是 27，比字高，拿盒子量会假红）
+            const glyphBottom = bb.y + bb.height / 2 - (lb.fontSize * scale) / 2
+            if (glyphBottom < navTop + ${PLANT}) {
+              // 带上节点与祖先名：只印文本的话，"这一颗到底是谁"要再猜一轮
+              const chain = []
+              for (let p = n; p !== null && chain.length < 4; p = p.parent) chain.push(p.name)
+              underNav.push(str.slice(0, 8) + '(字底' + Math.round(glyphBottom) + '<导航上沿' + Math.round(navTop)
+                + '，盒' + Math.round(bb.x) + ',' + Math.round(bb.y) + ' ' + Math.round(bb.width) + 'x' + Math.round(bb.height)
+                + '，路径 ' + chain.join('<') + ')')
+            }
           }
         }
         // 字形横向范围：宽度按字符类别加权（汉字 1.0 em、ASCII 约 0.55 em），再乘缩放比；
@@ -205,7 +222,7 @@ const WALK = `(() => {
       crowd.push(a.text + '×' + b.text + '(Δy' + Math.round(dy) + '<带' + Math.round(band) + ')')
     }
   }
-  return { seen, shrink, out, stretched, crowd, underNav, navTop, texts }
+  return { seen, shrink, out, stretched, crowd, underNav, navTop, texts, unlaid }
 })()`
 
 
@@ -391,17 +408,66 @@ const SOCIAL_EVENTS = [
     body: '没有在你手上响应，队伍已经出发了。', coord: { x: 203, y: 88 }, relatedId: 'probe_rally_1',
     occurredAt: Date.now() - 7_200_000, expired: true },
 ]
-await stubRead('**/social/summary*', {
+/**
+ * 「已入盟」那一相的三份夹具。字段逐条对着 `contract/proto/social.schema.json` 里
+ * `AllianceView` / `AllianceTechView` / `AllianceMember` / `AllianceSyncResp` /
+ * `AllianceApplicationListResp` 的 `required`（这些定义全是 `additionalProperties: false`，
+ * 多一个键和少一个键是同一类错）。
+ *
+ * <p>**开关为什么是"摘要里的 alliance 给不给 null"**：`AppRoot` 见 null 就不发 `/alliance/sync`
+ * （没入盟时那一问是白问，服务端回 10010，客户端还会把它画成"稍后会自动重试"），
+ * 而 `SocialPanel.buildAllianceSection` 判 joined 也只看了这一个字段。造第二套状态标志
+ * 只会造出一个客户端根本不读的分支。
+ */
+const ALLIANCE_NOW = Date.now()
+const ALLIANCE_TECHS = [
+  {
+    techId: 'probe_tech_logistics', level: 3, levelCap: 10, effectFixed: 4500,
+    name: '辎重道', nextLevelCost: 2400, canResearch: true, reason: null,
+  },
+  {
+    // 到顶的那一项：灰态原因那句由服务端给（客户端不自己比 level 与 levelCap）
+    techId: 'probe_tech_marshal', level: 8, levelCap: 8, effectFixed: 12000,
+    name: '点将台', nextLevelCost: 9600, canResearch: false, reason: '本盟已研究到当前联盟等级的上限',
+  },
+]
+const ALLIANCE_VIEW = {
+  id: 'probe_alliance_1', name: '黑石渡口', tag: '黑石', leaderId: 'probe_p_leader',
+  level: 7, exp: 18_400, memberCap: 80, memberCount: 41, fund: 12_800,
+  techs: ALLIANCE_TECHS, territoryCount: 6, territoryCap: 12,
+  myRole: 'LEADER', myContribution: 3240, myDonateToday: 3,
+  // 三档今天都捐过了 ⇒ 捐献那三行一行都不摆（"档数用完了就不摆按钮"那条分支也要有一相量到）：
+  // 省下来的两格正好让成员行挤进第一屏 —— 成员行是这一屏最宽的那一类（名字 · 职位 + 四段 detail）
+  donateTiersUsed: [0, 1, 2], donateDailyCap: 3,
+  announcement: '晚八点集结打西关，迟到的自己交粮。', version: 4, serverNow: ALLIANCE_NOW,
+}
+// 四个职位各来一个人：`allianceRoleText` 那条映射只有全走一遍才量得到最长的那句。
+// **最长的那个排第一**：一屏只画得下六行，排在后面的成员行落在第二页，量不到就等于没量。
+const ALLIANCE_MEMBERS = [
+  // 最后一行改用长名字：这一屏的行是"名字 · 职位"拼出来的，越界正好落在名字那一侧
+  { id: 'probe_p_member', name: '断斧·罗德里戈·铁尾', power: 9100, role: 'MEMBER', contribution: 240, lastActiveAt: ALLIANCE_NOW - 1_800_000, squadId: null },
+  { id: 'probe_p_leader', name: '铁砧·瓦拉', power: 48_200, role: 'LEADER', contribution: 9120, lastActiveAt: ALLIANCE_NOW - 60_000, squadId: null },
+  { id: 'probe_p_officer', name: '灰隼·雷恩', power: 31_600, role: 'OFFICER', contribution: 6480, lastActiveAt: ALLIANCE_NOW - 5_400_000, squadId: 'probe_squad_1' },
+  { id: 'probe_p_elder', name: '石锤·乌尔', power: 27_400, role: 'ELDER', contribution: 5130, lastActiveAt: ALLIANCE_NOW - 432_000_000, squadId: null },
+]
+// **只给一条**：一屏画得下六行内容，多一条申请就把成员行挤到第二页去了
+// （成员行是这一屏最宽的一类，量不到等于没量 —— 截图目视时发现的）
+const ALLIANCE_APPLICANTS = [
+  { playerId: 'probe_p_apply_1', nickname: '铜锣·魏八', mainCityLevel: 9 },
+]
+/** 只在 `social/alliance-joined` 那一相为真：见下面的整批遍历。 */
+let joinedAlliance = false
+await stubRead('**/social/summary*', () => ({
   squad: {
     id: 'probe_squad_1', name: '铁砧前哨', leaderId: 'probe_squad_p0', members: SQUAD_MEMBERS,
     level: 6, exp: 1240, expToNext: 2000, memberCap: 10, shopLevel: 3, squadCoin: 4820,
     allianceId: null, isSubSquad: false, dailyQuestProgress: 3, dailyQuestTarget: 8,
     serverNow: Date.now(),
   },
-  alliance: null, nationId: null,
+  alliance: joinedAlliance ? ALLIANCE_VIEW : null, nationId: null,
   pendingInvites: 0, pendingHelps: 2, helpRemainingToday: 3,
   events: SOCIAL_EVENTS, serverNow: Date.now(),
-})
+}))
 await stubRead('**/social/helpRequests*', {
   requests: [
     { requestId: 'probe_help_0', fromPlayerId: 'probe_squad_p1', fromPlayerName: '石锤·乌尔',
@@ -415,14 +481,31 @@ await stubRead('**/social/helpRequests*', {
 await stubRead('**/social/permissions*', (url) => ({
   scope: url.includes('ALLIANCE') ? 'ALLIANCE' : 'SQUAD',
   role: 'LEADER',
-  permissions: ['KICK_MEMBER', 'START_RALLY', 'DISBAND', 'DONATE'],
+  // 已入盟那一相要把联盟侧的权限补齐（每一位都在服务端搜得到同名码，客户端只读这些结论）：
+  // 缺哪一位，那一行按钮就整片置灰、"为什么不行"那句会盖上 detail —— 灰屏与亮屏是两屏不同的字。
+  // 反过来也不能塞一个服务端没有的码（原来那份清单里的 `DISBAND` 就是：真码只有
+  // `DISBAND_ALLIANCE` / `DISBAND_SQUAD`，客户端一处都不读裸的 `DISBAND`，留着是句假话）。
+  permissions: url.includes('ALLIANCE') && joinedAlliance
+    ? ['KICK_MEMBER', 'START_RALLY', 'DONATE', 'DISBAND_ALLIANCE',
+      'APPROVE_APPLICATION', 'SET_ROLE', 'EXPAND_CAPACITY', 'RESEARCH_TECH', 'TRANSFER_LEADER']
+    : ['KICK_MEMBER', 'START_RALLY', 'DONATE'],
   serverNow: Date.now(),
 }))
+// 成员列表只走 diff 通道（B10 验收 10）：摘要给了 alliance 之后，客户端会带着 version 来问一次。
+await stubRead('**/alliance/sync*', {
+  version: 4, unchanged: false, changedMembers: ALLIANCE_MEMBERS, removedMemberIds: [],
+  fund: ALLIANCE_VIEW.fund, level: ALLIANCE_VIEW.level, memberCount: ALLIANCE_VIEW.memberCount,
+  announcement: ALLIANCE_VIEW.announcement, serverNow: ALLIANCE_NOW,
+})
 // 发现型列表与聊天：这一格不量它们（要点页签才画行），但桩住才不会让 dev 新号的真实空响应混进读数 ——
 // `/alliance/list` 对没入盟的号回 10010，客户端会把那句「稍后会自动重试」画到屏幕上，量具就读成了另一屏
 await stubRead('**/alliance/list*', { alliances: [], total: 0, limit: 20, serverNow: Date.now() })
 await stubRead('**/squad/list*', { squads: [], total: 0, limit: 20, serverNow: Date.now() })
-await stubRead('**/alliance/applications*', { applicants: [], total: 0, limit: 20, serverNow: Date.now() })
+await stubRead('**/alliance/applications*', () => (joinedAlliance
+  // 两条都下发（total 与条数相等 ⇒ 那句"只显示前 N 条"的说明不出现）：
+  // 省下的那一格要给成员行挤进第一屏，见上面 `ALLIANCE_MEMBERS` 的排序理由
+  ? { applicants: ALLIANCE_APPLICANTS, total: ALLIANCE_APPLICANTS.length, limit: 2, serverNow: Date.now() }
+  : { applicants: [], total: 0, limit: 20, serverNow: Date.now() }))
 await stubRead('**/chat/list*', {
   messages: [
     { messageId: 'probe_chat_0', channel: 'SQUAD', senderId: 'probe_squad_p1',
@@ -604,7 +687,8 @@ for (const key of KEYS) {
     for (const x of read.underNav ?? []) underNavAll.push(`${key}/${x}`)
     console.log(`  READ  ${key}: Label ${read.seen} 颗，SHRINK ${read.shrink} 颗，被压小 ${read.out.length} 颗，`
       + `疑似被放大 ${(read.stretched ?? []).length} 颗，字形相碰 ${(read.crowd ?? []).length} 对，`
-      + `压进导航条 ${(read.underNav ?? []).length} 颗`)
+      + `压进导航条 ${(read.underNav ?? []).length} 颗`
+      + (read.unlaid ? `，未布局 ${read.unlaid} 颗（0x0 盒，不判红）` : ''))
   }
   // 像素法：底板压字（默认相一趟；页签相位各一趟，见下面 phase 循环）
   await platePass(page, key, key)
@@ -633,7 +717,8 @@ for (const key of KEYS) {
     textsBy.set(tag, pr.texts ?? [])
     console.log(`  READ  ${tag}: Label ${pr.seen} 颗，SHRINK ${pr.shrink} 颗，被压小 ${pr.out.length} 颗，`
       + `疑似被放大 ${(pr.stretched ?? []).length} 颗，字形相碰 ${(pr.crowd ?? []).length} 对，`
-      + `压进导航条 ${(pr.underNav ?? []).length} 颗`)
+      + `压进导航条 ${(pr.underNav ?? []).length} 颗`
+      + (pr.unlaid ? `，未布局 ${pr.unlaid} 颗（0x0 盒，不判红）` : ''))
     for (const x of pr.out) offenders.push(`${tag}/${x.text}(${x.h}<${x.floor},字${x.want})`)
     for (const x of pr.stretched ?? []) stretched.push(`${tag}/${x.text}(${x.h}>${x.floor}+8,字${x.want},估宽${x.est}/盒${x.boxW})`)
     for (const x of pr.crowd ?? []) crowded.push(`${tag}/${x}`)
@@ -642,6 +727,49 @@ for (const key of KEYS) {
     // 这一维也推到页签相位：那六屏的桩早就挂上了，之前只有默认相被像素法看过（#409）
     await platePass(page, key, tag)
     await page.screenshot({ path: shot })
+  }
+  // 「已入盟」那一相要**另开一张页**：摘要在面板打开那一刻就落进 `attach()` 了，
+  // 中途翻旗标再点页签不会重取一次 —— 同页翻只会读到上一相的残影（读数没变、还以为是空态）。
+  if (key === 'social' && read !== null) {
+    const vtag = 'social/alliance-joined'
+    phasesTotal += 1
+    joinedAlliance = true
+    const vpage = await context.newPage()
+    const vurl = new URL(`${preview.origin}/`)
+    vurl.searchParams.set('panel', key)
+    await vpage.goto(vurl.toString(), { waitUntil: 'networkidle' })
+    await vpage.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
+      null, { timeout: 60_000 })
+    await vpage.evaluate(hideGuideBoard)
+    // 先按主循环的顺序走一趟（`walkPhase` 才是"面板画出来了"的那个等待）：
+    // 直接点页签会在面板还没建出来时找不到节点（第一次实跑就是这么 SKIP 的）。
+    if (await walkPhase(vpage, key) === null) {
+      console.log(`  SKIP  ${vtag}：这一相连面板都没画出来`)
+    } else if (!await vpage.evaluate(clickTabNode, 'Tab_alliance')) {
+      console.log(`  SKIP  ${vtag}：没找到页签节点「Tab_alliance」（改名了？）`)
+    } else {
+      const vr = await walkPhase(vpage, key)
+      if (vr === null) {
+        console.log(`  SKIP  ${vtag}：切过去之后读不到那一屏`)
+      } else {
+        phasesReached += 1
+        labelsBy.set(vtag, vr.seen)
+        textsBy.set(vtag, vr.texts ?? [])
+        console.log(`  READ  ${vtag}: Label ${vr.seen} 颗，SHRINK ${vr.shrink} 颗，被压小 ${vr.out.length} 颗，`
+          + `疑似被放大 ${(vr.stretched ?? []).length} 颗，字形相碰 ${(vr.crowd ?? []).length} 对，`
+          + `压进导航条 ${(vr.underNav ?? []).length} 颗`
+          + (vr.unlaid ? `，未布局 ${vr.unlaid} 颗（0x0 盒，不判红）` : ''))
+        for (const x of vr.out) offenders.push(`${vtag}/${x.text}(${x.h}<${x.floor},字${x.want})`)
+        for (const x of vr.stretched ?? []) stretched.push(`${vtag}/${x.text}(${x.h}>${x.floor}+8,字${x.want},估宽${x.est}/盒${x.boxW})`)
+        for (const x of vr.crowd ?? []) crowded.push(`${vtag}/${x}`)
+        for (const x of vr.underNav ?? []) underNavAll.push(`${vtag}/${x}`)
+        mergeRead(read, vr)
+        await platePass(vpage, key, vtag)
+        await vpage.screenshot({ path: path.join(OUT, 'social-alliance-joined.png') })
+      }
+    }
+    await vpage.close()
+    joinedAlliance = false
   }
   if (typeof read?.navTop === 'number') navFound += 1
   await page.close()
