@@ -1,5 +1,5 @@
 /**
- * 职责：证明像素法那一维在**每一个被量的相位**（17 个默认相 + 7 个页签/联盟相）上都不是瞎的 —— 逐个相位运行时植入一块
+ * 职责：证明像素法那一维在**每一个被量的相位**（17 个默认相 + 8 个页签/联盟/翻页相）上都不是瞎的 —— 逐个相位运行时植入一块
  * "DFS 次序排在文字之后"的 `Graphics` 底板（#389 那处缺陷的形状），看它报不报得出来。
  * 依赖：node、playwright、已构建的 `client/build/web-mobile`、已启动的后端。
  *
@@ -21,6 +21,7 @@ import { planPlateCoverage } from './lib/plate-coverage.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 import { socialFixtures } from './lib/social-fixtures.mjs'
 import { makeStubRead } from './lib/route-stub.mjs'
+import { clickTabNode, clickRowAction } from './lib/panel-clicks.mjs'
 
 const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
   console.error('[plant] 缺 LABELFIT_BACKEND（dev 约定 http://localhost:8199）')
@@ -29,9 +30,10 @@ const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
 const PORT = Number(process.env.PLANT_PORT ?? 8197)
 
 /**
- * 七个页签/联盟相位 + 17 个默认相，全部要做正例：只在 quest 上标定过的话，
+ * 八个页签/联盟/翻页相位 + 17 个默认相，全部要做正例：只在 quest 上标定过的话，
  * 其余各屏的"0 处"就仍然只是"没量出东西"而不是"证明了没有"（台账 #411/#412）。
- * `tab` 为 null 表示默认相（不点页签）；`joined` 置起「已入盟」开关（见 `tools/lib/social-fixtures.mjs`）。
+ * `tab` 为 null 表示默认相（不点页签）；`joined` 置起「已入盟」开关（见 `tools/lib/social-fixtures.mjs`）；
+ * `pageAction` 是翻页相要点的行内按钮文本（见 `tools/lib/panel-clicks.mjs`）。
  */
 const DEFAULT_PANELS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest',
   'battlePass', 'mail', 'social', 'power', 'shop', 'avatarFrames', 'targets', 'world', 'settings']
@@ -47,6 +49,9 @@ const PHASES = [
   { tag: 'social/rally', panel: 'social', tab: 'Tab_rally' },
   // #420 才有夹具、#423 才搬进这一份：这一相从前的"报 0 处"只是"没量过"，不是"证明了没有"
   { tag: 'social/alliance-joined', panel: 'social', tab: 'Tab_alliance', joined: true },
+  // 翻页相：第二屏的行从前只被横扫量过，植入正例没证过 ⇒ 点不到「下一页」这一相直接判不合格
+  { tag: 'social/alliance-joined#p2', panel: 'social', tab: 'Tab_alliance', joined: true,
+    pageAction: '下一页' },
   ...DEFAULT_PANELS,
 ]
 
@@ -98,18 +103,10 @@ for (const phase of PHASES) {
   await page.waitForTimeout(2500)
   // 先藏新手引导板：不藏的话植入可能落在引导遮罩底下，像素不变 ⇒ 假失败
   await hideGuideOverlay(page)
-  const switched = phase.tab === null || await page.evaluate((tabName) => {
-    const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
-    let hit = null
-    const find = (n) => {
-      if (hit !== null) return
-      if (n.name === tabName && n.activeInHierarchy) hit = n
-      for (const c of n.children) find(c)
-    }
-    for (const p of game?.children ?? []) find(p)
-    if (hit !== null) hit.emit('touch-start', null)
-    return hit !== null
-  }, phase.tab)
+  const switched = phase.tab === null || await page.evaluate(clickTabNode, phase.tab)
+  // 翻页相要点「下一页」才量得到第二屏；点不到就是**那一屏从没量过**，不能算过（见下面 ok 里那条）
+  const paged = phase.pageAction === undefined
+    || await page.evaluate(clickRowAction, phase.pageAction)
   await page.waitForTimeout(1500)
   const before = await measure(page, phase.panel)
   const planted = await page.evaluate(([panelKey, alpha]) => {
@@ -166,9 +163,11 @@ for (const phase of PHASES) {
   const reverted = planted.ok ? await measure(page, phase.panel) : { hits: -1 }
   const ok = before.hits === 0 && planted.ok === true && after.hits > 0
     && after.plantedHit === true && reverted.hits === 0
-  results.push({ tag: phase.tag, switched, before: before.hits, planted, after: after.hits,
+    // 相位没真走到就"报 0 处"，那是没量过而不是没问题 —— 从前这两条只打印不进判据
+    && switched === true && paged === true
+  results.push({ tag: phase.tag, switched, paged, before: before.hits, planted, after: after.hits,
     plantedHit: after.plantedHit === true, reverted: reverted.hits, bands: before.bands, ok })
-  console.log(`  ${phase.tag}: 切页签=${switched} 字形带=${before.bands} 条；植入前 ${before.hits} → `
+  console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged} 字形带=${before.bands} 条；植入前 ${before.hits} → `
     + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true}）→ 撤掉后 ${reverted.hits}；`
     + `植入=${JSON.stringify(planted)} ⇒ ${ok ? 'OK' : '不合格'}`)
   await page.close()
