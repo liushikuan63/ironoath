@@ -59,6 +59,13 @@ const PHASES = [
   // 翻页相：第二屏的行从前只被横扫量过，植入正例没证过 ⇒ 点不到「下一页」、或点了屏幕没换，都判不合格
   { tag: 'social/alliance-joined#p2', panel: 'social', tab: 'Tab_alliance', joined: true,
     pageAction: '下一页' },
+  // power 的五张榜从前只有默认那一相被量过（默认落在哪张榜由服务端下发决定）⇒ 其余四张榜的字形带
+  // 从没进过植入正例。页签节点名是 `tab-<key>`（`PowerPanelView.drawTabs`），点不到的那一相会自己红
+  { tag: 'power/POWER', panel: 'power', tab: 'tab-POWER' },
+  { tag: 'power/KILL', panel: 'power', tab: 'tab-KILL' },
+  { tag: 'power/ALLIANCE', panel: 'power', tab: 'tab-ALLIANCE' },
+  { tag: 'power/NATION', panel: 'power', tab: 'tab-NATION' },
+  { tag: 'power/SEASON', panel: 'power', tab: 'tab-SEASON' },
   ...DEFAULT_PANELS,
 ]
 
@@ -83,6 +90,11 @@ const BAND_FLOORS = {
   'hero': 2, // 实测 5
   'mail': 1, // 实测 2
   'power': 13, // 实测 27
+  'power/POWER': 7, // 实测 14
+  'power/KILL': 7, // 实测 14
+  'power/ALLIANCE': 6, // 实测 13
+  'power/NATION': 6, // 实测 13
+  'power/SEASON': 3, // 实测 7
   'quest': 11, // 实测 22
   'reports': 1, // 实测 3
   'reports/scout': 2, // 实测 4
