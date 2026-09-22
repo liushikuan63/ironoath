@@ -6,7 +6,7 @@
  */
 
 /**
- * 学派。取值与 `tech.json` 的 `school` 列 ENUM 声明逐项一致（`TechContractParityTest` 会核这一点，改表枚举不改这里就会红）。
+ * 学派。取值与 `tech.json` 的 `school` 列 ENUM 声明逐项一致（`ContractEnumParityTest` 的 techSchoolMatchesTable 会核这一点，改表枚举不改这里就会红）。
  */
 export type TechSchool =
   | 'AGRICULTURE'
