@@ -6,6 +6,9 @@
 # **每份退出码显式写进日志**：后台任务通知里的 exit 0 属于整条命令链，不能当判据。
 #
 # 用法：BACKEND=http://localhost:8199 bash scripts/run-runtime-probes.sh [文件清单]
+# 超时：RUNTIME_PROBES_TIMEOUT=<秒>（默认 900，理由见下面 PROBE_TIMEOUT 那段）—— 一份量具卡住不能让
+#   整批停摆（2026-09-23 实测：run1 跑到 `verify-perf-runtime` 就 9 分钟不再输出一个字节，只能手动停）。
+#   超时记成 TIMEOUT，**与"跑出来是红"分开计**（同 NO-RUN 那条纪律：没跑完不等于验出了问题）。
 set -u
 cd "$(dirname "$0")/.."
 i=0
@@ -15,6 +18,11 @@ i=0
 BACKEND="${BACKEND:-http://localhost:8199}"
 OUT="${RUNTIME_PROBES_OUT:-/d/tmp/runtime-probes-exitcodes.txt}"
 LIST="${1:-}"
+# 不用 `timeout` 命令：Git Bash 的 PATH 上先命中 System32 的 timeout.exe（行为完全不同，
+# 会去等键盘输入），而 CI 的 Linux runner 有 GNU timeout —— 两边不等价。用纯 bash 看门狗。
+# 默认 900 秒不是拍脑袋：`verify-perf-runtime.mjs` 的 `PERF_SOAK_SECONDS` 默认就是 600（泡机取样），
+# 加启动与收尾要 660 秒以上 —— 默认值若低于它，这份量具**每批都必然假 TIMEOUT**（实测 300 秒时正是如此）。
+PROBE_TIMEOUT="${RUNTIME_PROBES_TIMEOUT:-900}"
 if [ -z "$LIST" ]; then
   LIST="$(mktemp -t runtime-probes-list.XXXXXX)"
   ls tools/verify-*-runtime.mjs > "$LIST"
@@ -44,11 +52,28 @@ while read -r f; do
   logdir="${RUNTIME_PROBES_LOGDIR:-/d/tmp}"
   mkdir -p "$logdir"
   log="$logdir/probe-$base.log"
-  run_probe() {   # $1=端口 $2=日志文件
-    env "$backend_env=$BACKEND" "$port_env=$1" node "$f" > "$2" 2>&1
-    echo $?
+  run_probe() {   # $1=端口 $2=日志文件；**把退出码 echo 到 stdout**（调用方用 $(…) 取），超时 echo 124
+    env "$backend_env=$BACKEND" "$port_env=$1" node "$f" > "$2" 2>&1 &
+    local pid=$! waited=0 code
+    while [ "$waited" -lt "$PROBE_TIMEOUT" ]; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 5
+      waited=$((waited + 5))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      # 只杀 node 本身：Playwright 拉起的 chrome 子进程可能留活口（bash 没有可移植的子树杀法），
+      # 所以超时后仍要人看一眼任务管理器 —— 这一点不假装解决
+      kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      echo 124
+      return
+    fi
+    wait "$pid"
+    code=$?
+    echo "$code"
   }
   code=$(run_probe "$port" "$log")
+  [ "$code" = "124" ] && code="TIMEOUT"
   # 日志空 = 这一份**根本没跑成**（重定向失败、node 没起来…），它的退出码和被测系统无关。
   # 不标出来的话，"没跑"会被记成一次普通的红或绿 —— #416 那版 just 这么把 `RUNTIME_PROBES_LOGDIR`
   # 指到一个不存在的目录，就得到一个凭空虚记的 "1"。
@@ -59,7 +84,8 @@ while read -r f; do
   # 同一颗 SHA 四跑 2715/2830/3234/3244 对预算 3000）—— 超一次不构成缺陷。所以非零时补跑一次，
   # **两次都超才判红**：真退化会连红两次，于是这不是把阈值挪走，只是不让噪声冒充缺陷。
   # 首跑 NO-RUN 不补跑（那是环境没起来，补跑只会多一个假数）。
-  if [ "$code" != "0" ] && [ "$code" != "NO-RUN" ]; then
+  # 超时不补跑：再跑一次只会再挂 10 分钟（首跑 NO-RUN 同理）
+  if [ "$code" != "0" ] && [ "$code" != "NO-RUN" ] && [ "$code" != "TIMEOUT" ]; then
     code2=$(run_probe "$((port + 100))" "$log.retry")
     [ -s "$log.retry" ] || code2="NO-RUN"
     # 这行必须带 `#` 前缀：汇总按 `^(0 |SKIP |# )` 排除元信息，换个词就被数成一次红。
@@ -69,5 +95,7 @@ while read -r f; do
   echo "$code $base ($backend_env, port $port)" | tee -a "$OUT"
 done < "$LIST"
 # SKIP 不是红、`#` 开头的是本批的元信息行：汇总只数真正跑过而非零的那些
-echo "--- 汇总：非零退出的份数 = $(grep -cvE '^(0 |SKIP |# )' "$OUT")  SKIP 的份数 = $(grep -c '^SKIP ' "$OUT")"
-grep -vE '^(0 |SKIP |# )' "$OUT" || true
+echo "--- 汇总：非零退出的份数 = $(grep -cvE '^(0 |SKIP |TIMEOUT |# )' "$OUT")  超时 = $(grep -c '^TIMEOUT ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
+grep -vE '^(0 |SKIP |TIMEOUT |# )' "$OUT" || true
+# 超时单独列一遍：它们不在上面那张表里，但恰恰是最需要人看的一批
+grep '^TIMEOUT ' "$OUT" || true
