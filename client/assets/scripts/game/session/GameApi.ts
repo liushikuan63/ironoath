@@ -46,7 +46,8 @@ import type {
   BagListResp, ItemUseReq, ItemUseResp, OpenBatchReq, OpenBatchResp,
 } from '../../net/generated/BagProtocol'
 import type {
-  ArmyListResp, ArmyUnitReq, AutoTrainReq, AutoTrainResp, TrainCancelResp, TrainReq, TrainResp,
+  ArmyListResp, ArmyTreatSpeedUpReq, ArmyUnitReq, AutoTrainReq, AutoTrainResp, TrainCancelResp,
+  TrainReq, TrainResp,
   TreatReq, TreatResp,
 } from '../../net/generated/ArmyProtocol'
 import type {
@@ -273,8 +274,8 @@ export class GameApi {
     return this.mutate<TreatReq, TreatResp>('/army/treat', req)
   }
 
-  armyTreatSpeedUp(req: Omit<ArmyUnitReq, 'requestId'>): Promise<NetOutcome<TreatResp>> {
-    return this.mutate<ArmyUnitReq, TreatResp>('/army/treatSpeedUp', req)
+  armyTreatSpeedUp(req: Omit<ArmyTreatSpeedUpReq, 'requestId'>): Promise<NetOutcome<TreatResp>> {
+    return this.mutate<ArmyTreatSpeedUpReq, TreatResp>('/army/treatSpeedUp', req)
   }
 
   armyCollectTreated(req: Omit<TreatReq, 'requestId'>): Promise<NetOutcome<TreatResp>> {
