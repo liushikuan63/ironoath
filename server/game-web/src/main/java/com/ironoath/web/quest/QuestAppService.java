@@ -276,11 +276,20 @@ public class QuestAppService {
      */
     private int refreshStateTargets(QuestProgress progress, long now) {
         int changed = 0;
+        // 一次刷新内<b>只读一份本人存档</b>，供所有要档的状态型目标共用：改之前"攒资源"与
+        // "研究科技"这两位各自去 findByPlayerId，等于同一份整档读两遍，而这条路径挂在面板打开
+        // （list）与 Bot 每个 tick 的红点（claimableCount）上。判据是往返计数：
+        // QuestStateSnapshotQueryCountTest。
+        // 这里不做"首次用到才读"（#430 那一处需要）：任务表里恒有这两位，每次刷新都必然用到，
+        // 加一个惰性标志只是多一处会写错的机械。
+        // 顺带修掉的是另一个更难看见的问题：两次分开读之间若有人写了这个号，同一次刷新里的
+        // 两位目标会看到两个版本的存档，而面板把这两行画在一起。
+        PlayerSave owner = players.findByPlayerId(progress.playerId()).orElse(null);
         for (QuestProgress.Entry entry : progress.entries()) {
             if (entry.goalType().accumulates() || !STATE_TYPES_WITH_SOURCE.contains(entry.goalType())) {
                 continue;
             }
-            long current = stateValue(progress.playerId(), entry);
+            long current = stateValue(progress.playerId(), entry, owner);
             if (current == entry.current()) {
                 continue;
             }
@@ -291,15 +300,19 @@ public class QuestAppService {
         return changed;
     }
 
-    /** 状态型目标的当前值。取不到（没有存档等）按 0 —— 与"没做过"同义。 */
-    private long stateValue(String playerId, QuestProgress.Entry entry) {
+    /**
+     * 状态型目标的当前值。取不到（没有存档等）按 0 —— 与"没做过"同义。
+     *
+     * @param owner 本次刷新共享的那一份本人存档，<b>可能为 null</b>（删号后账本还在）；
+     *              两个要档的分支都从它取，不许在这里再点查一次
+     */
+    private long stateValue(String playerId, QuestProgress.Entry entry, PlayerSave owner) {
         switch (entry.goalType()) {
             case REACH_RESOURCE -> {
-                PlayerSave save = players.findByPlayerId(playerId).orElse(null);
-                if (save == null || entry.goalTarget() == null) {
+                if (owner == null || entry.goalTarget() == null) {
                     return 0L;
                 }
-                var resource = save.resources().get(entry.goalTarget());
+                var resource = owner.resources().get(entry.goalTarget());
                 return resource == null ? 0L : resource.current();
             }
             case JOIN_SQUAD -> {
@@ -311,13 +324,12 @@ public class QuestAppService {
             case RESEARCH_TECH -> {
                 // 读的是科技账本（不是"研究过几次"）：状态型目标记的就是当前等级，赛季回落时它会跟着回落。
                 // 没结算到期的研究不算数 —— 那位次在玩家下一次读取（含本路径经过的结算）之后才进账本。
-                PlayerSave save = players.findByPlayerId(playerId).orElse(null);
-                if (save == null) {
+                if (owner == null) {
                     return 0L;
                 }
                 return entry.goalTarget() == null || entry.goalTarget().isBlank()
-                        ? save.tech().levels().size()          // 「研究过科技」：按研究到的行数计
-                        : save.tech().levelOf(entry.goalTarget());
+                        ? owner.tech().levels().size()          // 「研究过科技」：按研究到的行数计
+                        : owner.tech().levelOf(entry.goalTarget());
             }
             default -> {
                 // 新增状态型目标时必须在这里接数据源，否则它的进度永远是 0
