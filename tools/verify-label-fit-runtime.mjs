@@ -245,6 +245,9 @@ const WALK = `(() => {
  * 「翻页相」：读到「第 N/M 页」那一行 = 这一屏还有第二页从没量过
  * （#420 目视时发现的：一屏只画得下六行内容，成员行只量到第一条）。
  * 记数与判据与页签相同一条路：声明了就要走到，走不到那条覆盖门判红。
+ *
+ * <p>"走到"不只是"点到了按钮"：置灰那颗键的壳照样 `emit` 得动（`renderRow` 只在 `enabled` 为真时
+ * 才挂 `touch-start`），点了屏幕没换就是**把第一屏量两遍**（与植入正例的 `pageToNext` 同一条洞，台账 #447）。
  */
 async function pageTwoPass(page, key, tag) {
   const p2tag = `${tag}#p2`
@@ -256,6 +259,12 @@ async function pageTwoPass(page, key, tag) {
   const r = await walkPhase(page, key)
   if (r === null) {
     console.log(`  SKIP  ${p2tag}：翻过去之后读不到那一屏`)
+    return
+  }
+  const here = r.texts ?? []
+  const parent = textsBy.get(tag) ?? []
+  if (here.every((t) => parent.includes(t)) && parent.every((t) => here.includes(t))) {
+    console.log(`  SKIP  ${p2tag}：点了「下一页」但屏幕没换（同一屏 ${here.length} 颗字）⇒ 不计入"走到位"`)
     return
   }
   phasesReached += 1
