@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -412,6 +413,47 @@ class NationStoreEquivalenceTest {
                     .isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> store.insertIfAbsent(null))
                     .as("%s 建 null 档同样", label).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    @DisplayName("nationsByAlliance 批量口：与逐个 findByAlliance 一字不差（含副本语义与缺失口径），两版同一条")
+    void nationsByAllianceMatchesPointLookupsOnBothStores() {
+        for (NationStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            Nation wide = nation("N-batch", "两国");           // 建档联盟 = AL-N-batch
+            wide.admitAlliance("AL-b2", T0 + 10L);             // 一个国家被两个联盟键命中
+            store.insertIfAbsent(wide);
+            store.insertIfAbsent(nation("N-single", "单国"));   // 它的联盟键 = AL-N-single
+
+            assertThat(store.nationsByAlliance(List.of())).as("%s：空集合不该去库里捞一趟", label).isEmpty();
+            assertThat(store.nationsByAlliance(null)).as("%s：null 同样回空表，不抛", label).isEmpty();
+
+            Map<String, Nation> batch = store.nationsByAlliance(
+                    List.of("AL-N-batch", "AL-b2", "AL-N-single", "AL-never", "AL-N-batch"));
+            assertThat(batch.keySet())
+                    .as("%s：没入籍的联盟（AL-never）直接不出现，重复的键不产生两份", label)
+                    .containsExactlyInAnyOrder("AL-N-batch", "AL-b2", "AL-N-single");
+            for (String allianceId : List.of("AL-N-batch", "AL-b2", "AL-N-single")) {
+                assertThat(describe(batch.get(allianceId)))
+                        .as("%s：%s 的批量读数与点查必须一字不差（国家榜投影的国名全靠这一条）",
+                                label, allianceId)
+                        .isEqualTo(describe(store.findByAlliance(allianceId).orElseThrow()));
+            }
+            assertThat(batch.get("AL-N-batch"))
+                    .as("%s：同一个国的两个联盟键各拿一份副本，不共享同一个对象", label)
+                    .isNotSameAs(batch.get("AL-b2"));
+
+            // 副本语义：批量交出去的对象就地改，不许让库里的档跟着变（本类的核心风险）。
+            // 用外交而不是再 admitAlliance —— 国家等级对成员国数有上限（夹具那一国已经到顶），
+            // 撞上限的抛错会被读成"批量口有问题"，其实改的是夹具。
+            String asStored = describe(store.findById("N-batch").orElseThrow());
+            batch.get("AL-N-batch").setDiplomacy("N-other", Nation.Diplomacy.HOSTILE);
+            assertThat(describe(store.findById("N-batch").orElseThrow()))
+                    .as("%s：忘记 save 的外交改动不该看得见", label).isEqualTo(asStored);
+            // 只查一部分联盟时，同国没被点名的联盟不许被顺带塞进结果
+            assertThat(store.nationsByAlliance(List.of("AL-b2")).keySet())
+                    .as("%s：结果只含被点名的联盟", label).containsExactly("AL-b2");
         }
     }
 

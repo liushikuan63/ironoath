@@ -207,6 +207,32 @@ public final class InMemorySocialStore implements SocialStore {
     }
 
     /**
+     * 一批玩家各自所属的联盟，走的正是 {@link #allianceOf} 那张反查索引，所以两口的口径不可能漂。
+     *
+     * <p>同一个盟的多个成员各拿一份副本（与 {@link #squadsOf} 同一条）：组织榜只读名字与缩写，
+     * 但端口这条"读返回副本"的约定不按调用方破例 —— 破了就等于给"改了不 save"留一个只在
+     * 批量口才复现的窗口。
+     */
+    @Override
+    public synchronized Map<String, Alliance> alliancesOf(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Alliance> out = new HashMap<>();
+        for (String playerId : playerIds) {
+            String allianceId = allianceIdByPlayer.get(playerId);
+            if (allianceId == null) {
+                continue;
+            }
+            Alliance stored = alliancesById.get(allianceId);
+            if (stored != null) {
+                out.put(playerId, stored.copy());
+            }
+        }
+        return out;
+    }
+
+    /**
      * 全部联盟，按 id 升序（稳定顺序）。
      *
      * <p>给 Bot 的入盟申请挑目标用（收口清单 #94）：它需要一个"世界上有哪些联盟"的读法，

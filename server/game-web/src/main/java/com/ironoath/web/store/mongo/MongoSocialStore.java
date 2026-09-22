@@ -235,6 +235,40 @@ public final class MongoSocialStore implements SocialStore {
                 .map(document -> document.toDomain(rules.allianceRules()));
     }
 
+    /**
+     * 一批玩家各自所属的联盟，一次 {@code members.playerId} 的 $in 查询 —— 与 {@link #allianceOf}
+     * 打在同一个索引字段上（{@code idx_social_alliance_member}，见 {@code MongoIndexes}），
+     * 所以省掉的是往返不是扫描量（与 {@link #squadsOf} 同一条）。
+     *
+     * <p>一个盟可以有多个被点名的成员：档案只读一次，命中的人各自拿到一份副本。
+     * 刻意不设排序 —— {@link #allianceOf} 的 {@code findOne} 也没有排序，两版在"一个人挂在两个盟里"
+     * （脏数据才可能）这种分支上取的口径必须相同。
+     */
+    @Override
+    public Map<String, Alliance> alliancesOf(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.isEmpty()) {
+            return Map.of();
+        }
+        Set<String> distinct = new LinkedHashSet<>(playerIds);
+        distinct.remove(null);
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        List<AllianceDocument> documents = mongo.find(
+                Query.query(Criteria.where("members.playerId").in(distinct)),
+                AllianceDocument.class, AllianceDocument.COLLECTION);
+        Map<String, Alliance> out = new LinkedHashMap<>();
+        for (AllianceDocument document : documents) {
+            Alliance alliance = document.toDomain(rules.allianceRules());
+            for (String memberId : distinct) {
+                if (alliance.memberIds().contains(memberId)) {
+                    out.put(memberId, alliance.copy());
+                }
+            }
+        }
+        return out;
+    }
+
     @Override
     public List<Alliance> allAlliances() {
         Query query = new Query().with(Sort.by(Sort.Direction.ASC, "_id"));

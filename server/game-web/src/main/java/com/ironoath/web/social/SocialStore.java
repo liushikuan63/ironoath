@@ -137,6 +137,23 @@ public interface SocialStore {
     Optional<Alliance> allianceOf(String playerId);
 
     /**
+     * 一批玩家各自所属的联盟（playerId → 联盟），口径与逐个 {@link #allianceOf} 完全一致。
+     *
+     * <p>组织榜是投影：{@code RankBoardService.projectOrgBoard} 要把<b>整张 POWER 榜</b>按成员归到
+     * 盟里加起来，而那张榜不截断。逐个 {@code allianceOf} 等于每人在 {@code /rank/list} 这条人人都
+     * 要拉的读路径上一次索引点查 —— 一万人上榜就是一万次，每次请求。与 {@link #squadsOf} 同一条
+     * 理由、同一个索引字段（{@code members.playerId}，见 {@code MongoIndexes}），省的是往返不是扫描量。
+     *
+     * <p><b>为什么按玩家 id 批量</b>：{@code Alliance} 里没有"成员 → 小队"那样的反查需要，但榜上给出
+     * 的是玩家 id，要拿到他的盟必须先问一次成员关系 —— 与 {@link #squadsOf} 注释里那条同形。
+     *
+     * <p><b>约定</b>：不在任何联盟的玩家直接不出现在结果里（不返回 null 值），与
+     * {@link #squadsOf}、{@code PlayerRepository.findByPlayerIds} 同一条口径；null 或空集合返回空
+     * 表。值是副本，与 {@link #allianceOf} 一样。
+     */
+    Map<String, Alliance> alliancesOf(Collection<String> playerIds);
+
+    /**
      * 全部联盟，按 id 升序（稳定顺序）。
      *
      * <p>给 Bot 的入盟申请挑目标用（收口清单 #94）：它需要一个"世界上有哪些联盟"的读法，

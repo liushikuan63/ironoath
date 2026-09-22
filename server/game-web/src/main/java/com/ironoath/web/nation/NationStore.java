@@ -1,6 +1,8 @@
 package com.ironoath.web.nation;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import com.ironoath.core.nation.Nation;
@@ -78,6 +80,23 @@ public interface NationStore {
 
     /** 某个联盟所属的国家（联盟 ⊂ 国家，一个联盟最多属于一个国家）。 */
     Optional<Nation> findByAlliance(String allianceId);
+
+    /**
+     * 一批联盟各自所属的国家（allianceId → 国家），口径与逐个 {@link #findByAlliance} 完全一致。
+     *
+     * <p>国家榜同样是投影（{@code RankBoardService.projectOrgBoard}）：它要先知道"榜上这些人各在哪个
+     * 盟"，再知道"这些盟各在哪个国"，两跳都要按整张 POWER 榜的长度问一遍才算得出分。第一跳走
+     * {@code SocialStore.alliancesOf}，第二跳就是这里。
+     *
+     * <p><b>值里带着名字，所以一次就够</b>：投影同时要国名，逐个 {@code findById} 会把第二趟点查
+     * 留在同一个循环里。国家总数上限是 {@code global.NATION_MAX_PER_KINGDOM}（个位数，见
+     * {@link #all()} 的注释），所以这一口省下的往返虽然不多，却把"这个类只剩批量口"这条不变量补齐了
+     * —— 计数判据（{@code RankOrgBoardQueryCountTest}）正是靠它写成"点查为零"。
+     *
+     * <p><b>约定</b>：没入籍的联盟直接不出现在结果里（不返回 null 值），null 或空集合返回空表，
+     * 与 {@code SocialStore.alliancesOf} 同一条口径。值是副本，与 {@link #findByAlliance} 一样。
+     */
+    Map<String, Nation> nationsByAlliance(Collection<String> allianceIds);
 
     /** 全部国家。数量上限是 global.NATION_MAX_PER_KINGDOM（4），所以这不是一个大列表。 */
     List<Nation> all();

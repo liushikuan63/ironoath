@@ -9,6 +9,7 @@ import com.ironoath.config.cfg.MapmonsterCfg;
 import com.ironoath.core.march.March;
 import com.ironoath.core.power.Tyranny;
 import com.ironoath.core.player.PlayerRepository;
+import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.scout.ScoutReport;
 import com.ironoath.core.world.Coord;
 import com.ironoath.core.world.FogOfWar;
@@ -32,6 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -519,19 +521,43 @@ public class WorldAppService {
                     MarchStatus.valueOf(march.status().name()), null, march.load()));
         }
         WorldGenerator.Catalog catalog = catalog();
+        Map<String, PlayerSave> citySaves = citySavesOf(origin, rules, cityIndex);
         for (int dy = 0; dy < rules.chunkSize(); dy++) {
             for (int dx = 0; dx < rules.chunkSize(); dx++) {
                 Coord coord = Coord.of(origin.x() + dx, origin.y() + dy);
                 if (!coord.withinWorld(rules.worldSize())) {
                     continue;
                 }
-                WorldEntity entity = entityAt(coord, cityIndex, consumed, catalog);
+                WorldEntity entity = entityAt(coord, cityIndex, consumed, catalog, citySaves);
                 if (entity != null) {
                     out.add(entity);
                 }
             }
         }
         return out;
+    }
+
+    /**
+     * 本块玩家城拥有者的存档，<b>一次批量读</b>。
+     *
+     * <p>城表索引已经在手，所以"这块上有谁的城"根本不用问存储；要问的只有昵称与主城等级，
+     * 而那是同一次 {@code findByPlayerIds} 的事。与 {@link #exposedCities} 同一条读法。
+     *
+     * <p>这一趟扫的是块内的 32×32 格（纯内存查表），代价与下面那次装配同阶；反过来按城表筛
+     * 就要为每个块遍历一次全服城表，玩家越多越贵。
+     */
+    private Map<String, PlayerSave> citySavesOf(Coord origin, WorldGenerator.Rules rules,
+                                                Map<Coord, String> cityIndex) {
+        Set<String> owners = new LinkedHashSet<>();
+        for (int dy = 0; dy < rules.chunkSize(); dy++) {
+            for (int dx = 0; dx < rules.chunkSize(); dx++) {
+                String owner = cityIndex.get(Coord.of(origin.x() + dx, origin.y() + dy));
+                if (owner != null) {
+                    owners.add(owner);
+                }
+            }
+        }
+        return owners.isEmpty() ? Map.of() : players.findByPlayerIds(owners);
     }
 
     /**
@@ -550,14 +576,22 @@ public class WorldAppService {
         return ownerByCoord;
     }
 
-    /** 某格的地图实体；空地返回 null（空地下发没有意义，只会白占 payload）。 */
+    /**
+     * 某格的地图实体；空地返回 null（空地下发没有意义，只会白占 payload）。
+     *
+     * <p><b>城主的存档来自调用方一次批量读回的 {@code citySaves}，这里不再点查</b>：改之前昵称一趟
+     * {@code findByPlayerId}、等级又绕经 {@link #playerLevelOf} 一趟，等于每座城两次整档读取，
+     * 而这条装配在拖图（一次请求九个块）与 Bot 目标选择（每 tick 每个 Bot）上。判据是往返计数：
+     * {@code WorldCityQueryCountTest}。
+     */
     private WorldEntity entityAt(Coord coord, Map<Coord, String> ownerByCoord, Set<Coord> consumed,
-                                 WorldGenerator.Catalog catalog) {
+                                 WorldGenerator.Catalog catalog, Map<String, PlayerSave> citySaves) {
         String owner = ownerByCoord.get(coord);
         if (owner != null) {
-            String name = players.findByPlayerId(owner).map(p -> p.nickName()).orElse(null);
+            PlayerSave save = citySaves.get(owner);
             return new WorldEntity(owner, WorldEntityType.CITY, coord.x(), coord.y(),
-                    playerLevelOf(owner), name, null, null, null, null);
+                    save == null ? 0 : save.cityLevel(),
+                    save == null ? null : save.nickName(), null, null, null, null);
         }
         if (consumed.contains(coord)) {
             return null;
