@@ -48,7 +48,7 @@ export type WorldEntityType =
   | 'BUILDING'
 
 /**
- * 行军状态。与 game-core 的 March.Status 一致（由 WorldContractParityTest 断言）。
+ * 行军状态。与 game-core 的 March.Status 一致（由 ContractEnumParityTest 的 marchStatusMatchesDomainEnum 断言）。
  */
 export type MarchStatus =
   | 'MARCHING'
