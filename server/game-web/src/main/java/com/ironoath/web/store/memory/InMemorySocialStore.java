@@ -2,6 +2,7 @@ package com.ironoath.web.store.memory;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
@@ -94,8 +95,37 @@ public final class InMemorySocialStore implements SocialStore {
 
     @Override
     public synchronized Optional<Squad> squadOf(String playerId) {
+        return Optional.ofNullable(squadOfLocked(playerId)).map(Squad::copy);
+    }
+
+    /**
+     * 一批玩家所属小队，走的正是 {@link #squadOf} 那两条反查表，所以两口的口径不可能漂。
+     *
+     * <p>同一支小队会被它的每个成员各命中一次，这里按 id 去重后再 copy —— 逐个点查时
+     * 「每人一份副本」无所谓，批量之后如果还逐个 copy，同队五人会拿到五份等价但不同的对象。
+     */
+    @Override
+    public synchronized Map<String, Squad> squadsOf(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Squad> bySquadId = new HashMap<>();
+        Map<String, Squad> out = new HashMap<>();
+        for (String playerId : playerIds) {
+            Squad squad = squadOfLocked(playerId);
+            if (squad == null) {
+                continue;
+            }
+            Squad shared = bySquadId.computeIfAbsent(squad.id(), key -> squad.copy());
+            out.put(playerId, shared.copy());
+        }
+        return out;
+    }
+
+    /** 反查表里的小队；调用方负责 copy，两个口共用这一份判据。 */
+    private Squad squadOfLocked(String playerId) {
         String squadId = squadIdByPlayer.get(playerId);
-        return squadId == null ? Optional.empty() : Optional.ofNullable(squadsById.get(squadId)).map(Squad::copy);
+        return squadId == null ? null : squadsById.get(squadId);
     }
 
     @Override

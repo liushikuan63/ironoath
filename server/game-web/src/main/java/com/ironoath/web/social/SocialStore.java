@@ -1,6 +1,8 @@
 package com.ironoath.web.social;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import com.ironoath.core.social.Alliance;
@@ -83,6 +85,23 @@ public interface SocialStore {
     long saveSquad(Squad squad, long expectedVersion);
 
     Optional<Squad> squadOf(String playerId);
+
+    /**
+     * 一批玩家各自所属的小队（playerId → 小队），口径与逐个 {@link #squadOf} 完全一致。
+     *
+     * <p>联盟成员装配要给每一行带上分队名（收口清单 #422），逐个 {@code squadOf} 在 150 人的盟里
+     * 就是 150 次索引点查，而同一次装配真正需要的信息只有「这批人各在哪支队」—— 那是一趟
+     * {@code members.playerId} 的 $in 查询（该字段有索引，见 {@code MongoIndexes}）。
+     *
+     * <p><b>为什么按玩家 id 批量而不是按小队 id</b>：联盟档案里不存「成员 → 小队」的映射
+     * （{@code Alliance} 内没有任何 squad 字段），要拿到 squadId 必须先查一次小队，
+     * 于是"按小队 id 去重后一次取回"在两步之内回不到一次往返。
+     *
+     * <p><b>约定</b>：没有小队的玩家直接不出现在结果里（不返回 null 值），与
+     * {@code PlayerRepository.findByPlayerIds} 同一条口径；null 或空集合返回空 map。
+     * 值与 {@link #squadOf} 一样是副本。
+     */
+    Map<String, Squad> squadsOf(Collection<String> playerIds);
 
     Optional<Squad> squadById(String squadId);
 

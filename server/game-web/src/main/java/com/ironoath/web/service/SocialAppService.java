@@ -1982,17 +1982,27 @@ public class SocialAppService {
         return List.copyOf(out);
     }
 
-    /** 联盟成员列表（走 /alliance/sync 的 diff 通道，验收 10）。 */
+    /**
+     * 联盟成员列表（走 /alliance/sync 的 diff 通道，验收 10）。
+     *
+     * <p><b>成员信息一次批量取回，不在循环里点查</b>：原先每人各一次 {@code findByPlayerId}
+     * 与一次 {@code squadOf}，150 人的盟就是一次同步打 300 趟存储（其中 150 趟是整份玩家存档，
+     * 收口清单 #425）。次数由 {@code AllianceMemberQueryCountTest} 按调用计数钉住 —— 结果本身
+     * 两种写法一字不差，所以端点测试判不出这件事。
+     */
     public List<AllianceMember> allianceMembers(String playerId, long now) {
         Optional<Alliance> found = store.allianceOf(playerId);
         if (found.isEmpty()) {
             return List.of();
         }
         Alliance alliance = found.get();
-        List<AllianceMember> out = new ArrayList<>(alliance.memberCount());
-        for (String memberId : alliance.memberIds()) {
-            PlayerSave save = players.findByPlayerId(memberId).orElse(null);
-            Squad squad = store.squadOf(memberId).orElse(null);
+        List<String> memberIds = alliance.memberIds();
+        Map<String, PlayerSave> saves = players.findByPlayerIds(memberIds);
+        Map<String, Squad> squads = store.squadsOf(memberIds);
+        List<AllianceMember> out = new ArrayList<>(memberIds.size());
+        for (String memberId : memberIds) {
+            PlayerSave save = saves.get(memberId);
+            Squad squad = squads.get(memberId);
             out.add(new AllianceMember(memberId,
                     save == null ? memberId : save.nickName(),
                     save == null || save.power() == null ? 0L : save.power().displayPower(),
