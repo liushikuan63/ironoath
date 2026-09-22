@@ -527,10 +527,20 @@ public class SocialAppService {
                 "APPROVE_APPLICATION");
         int limit = (int) configs.longParam("ALLIANCE_APPLICATION_LIST_LIMIT");
         List<String> applicantIds = store.applicantsOf(alliance.id());
-        List<ApplicantView> rows = new ArrayList<>();
-        for (String applicantId : applicantIds.subList(0, Math.min(limit, applicantIds.size()))) {
+        List<String> page = applicantIds.subList(0, Math.min(limit, applicantIds.size()));
+        // 一页申请人的昵称与城等来自**同一次批量读**：改之前 nickname(...) 与 cityLevelOf(...) 各自
+        // 点查一次，于是打开这一屏要发 2 × min(上限, 申请数) 趟整份存档读取（上限实测 50 ⇒ 最坏 100 趟）。
+        // 判据是往返计数：AllianceApplicationQueryCountTest。名单为空时连这一趟都不发。
+        Map<String, PlayerSave> saves = page.isEmpty() ? Map.of() : players.findByPlayerIds(page);
+        List<ApplicantView> rows = new ArrayList<>(page.size());
+        for (String applicantId : page) {
             // 昵称与城等都走服务端那一份：客户端没有玩家表，拿 id 猜出来的名字就是第二真源
-            rows.add(new ApplicantView(applicantId, nickname(applicantId), cityLevelOf(applicantId)));
+            PlayerSave save = saves.get(applicantId);
+            // 读不到档的两条兜底与改之前那两个助手逐字同口径（昵称回 id、城等回 0）：
+            // "申请还挂着但人已消失"是删号后的正常状态，客户端要靠它画出一行而不是少一行
+            rows.add(new ApplicantView(applicantId,
+                    save == null ? applicantId : save.nickName(),
+                    save == null ? 0 : save.cityLevel()));
         }
         return new AllianceApplicationListResp(rows, applicantIds.size(), limit, now);
     }
