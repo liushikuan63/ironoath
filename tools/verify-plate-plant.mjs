@@ -1,7 +1,11 @@
 /**
- * 职责：证明像素法那一维在**每一个被量的相位**（17 个默认相 + 6 个页签相）上都不是瞎的 —— 逐个相位运行时植入一块
+ * 职责：证明像素法那一维在**每一个被量的相位**（17 个默认相 + 7 个页签/联盟相）上都不是瞎的 —— 逐个相位运行时植入一块
  * "DFS 次序排在文字之后"的 `Graphics` 底板（#389 那处缺陷的形状），看它报不报得出来。
- * 依赖：node、playwright、已构建的 `client/build/web-mobile`、已启动的后端（数据来自 #395/#396 的桩）。
+ * 依赖：node、playwright、已构建的 `client/build/web-mobile`、已启动的后端。
+ *
+ * <p>读接口夹具与横扫**共用同一份**（`tools/lib/social-fixtures.mjs` + `tools/lib/route-stub.mjs`）：
+ * 「已入盟」那一屏只有摘要给了 `alliance` 才画得出来，而 dev 新号本来是个空态 ——
+ * 各挂各的桩就会分叉（那批字段是逐条对着契约 required 配的，抄一遍就少抄一条，台账 #420/#423）。
  *
  * <p>用法：`LABELFIT_BACKEND=http://localhost:8199 node tools/verify-plate-plant.mjs`
  * <p>判据（每个相位都要满足，缺一判红）：植入前 0 处 / 植入后 > 0 处 / 撤掉后 0 处。
@@ -15,6 +19,8 @@ import { startPreviewServer } from './lib/preview-server.mjs'
 import { decodePng, diffRegion } from './lib/png-diff.mjs'
 import { planPlateCoverage } from './lib/plate-coverage.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
+import { socialFixtures } from './lib/social-fixtures.mjs'
+import { makeStubRead } from './lib/route-stub.mjs'
 
 const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
   console.error('[plant] 缺 LABELFIT_BACKEND（dev 约定 http://localhost:8199）')
@@ -23,9 +29,9 @@ const BACKEND = process.env.LABELFIT_BACKEND ?? (() => {
 const PORT = Number(process.env.PLANT_PORT ?? 8197)
 
 /**
- * 六个页签相位 + 17 个默认相，全部要做正例：只在 quest 上标定过的话，
+ * 七个页签/联盟相位 + 17 个默认相，全部要做正例：只在 quest 上标定过的话，
  * 其余各屏的"0 处"就仍然只是"没量出东西"而不是"证明了没有"（台账 #411/#412）。
- * `tab` 为 null 表示默认相（不点页签）。
+ * `tab` 为 null 表示默认相（不点页签）；`joined` 置起「已入盟」开关（见 `tools/lib/social-fixtures.mjs`）。
  */
 const DEFAULT_PANELS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest',
   'battlePass', 'mail', 'social', 'power', 'shop', 'avatarFrames', 'targets', 'world', 'settings']
@@ -39,6 +45,8 @@ const PHASES = [
   { tag: 'social/events', panel: 'social', tab: 'Tab_events' },
   { tag: 'social/chat', panel: 'social', tab: 'Tab_chat' },
   { tag: 'social/rally', panel: 'social', tab: 'Tab_rally' },
+  // #420 才有夹具、#423 才搬进这一份：这一相从前的"报 0 处"只是"没量过"，不是"证明了没有"
+  { tag: 'social/alliance-joined', panel: 'social', tab: 'Tab_alliance', joined: true },
   ...DEFAULT_PANELS,
 ]
 
@@ -46,6 +54,9 @@ const preview = await startPreviewServer({ root: 'client/build/web-mobile', back
 const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v), `plant-${Date.now()}`)
+// 读接口夹具与横扫共用一份，且必须在任何 `page.goto` 之前挂上（晚挂等于那一相读到空态）
+const social = socialFixtures()
+await social.install(makeStubRead(context))
 
 async function measure(page, panel, wantText = null) {
   const plan = await page.evaluate(planPlateCoverage, panel)
@@ -77,6 +88,9 @@ async function measure(page, panel, wantText = null) {
 
 const results = []
 for (const phase of PHASES) {
+  // 「已入盟」那一屏要摘要里的 alliance 非 null 才画得出来（三份桩跟着这个开关一起翻），
+  // 必须在 goto 之前置 —— 深链一进来就发请求
+  social.state.joinedAlliance = phase.joined === true
   const page = await context.newPage()
   await page.goto(`${preview.origin}/?panel=${phase.panel}`, { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
