@@ -24,7 +24,9 @@ import type { ArmyListResp, UnitType } from '../net/generated/ArmyProtocol'
 import { applyCommandButton, applyIconSprite, unitIconKey } from './ArtCatalog'
 import { NodePool } from './NodePool'
 import { applySystemUiFont, capWidth, keepOneLine } from './UiFont'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 
 const { ccclass } = _decorator
 
@@ -87,6 +89,16 @@ export class ArmyPanelView extends Component {
   private trainMemory: TrainMemory | null = null
   private offsetMs = 0
   private filter: UnitType | null = null
+  /** 当前页（0 起）。换兵种筛选归零（那是另一份列表）；写后 refresh 不归零，只由 `clampPage` 夹。 */
+  private page = 0
+  /** 让出来的那一格：页码 + 两颗翻页键。只有一页时整对收着（#345 口径）。 */
+  private pageLabel: Label | null = null
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
   private lastRenderedSecond = -1
   private pending: ArmyListResp | null = null
 
@@ -165,6 +177,9 @@ export class ArmyPanelView extends Component {
       return
     }
     this.filter = type
+    // 换筛选就是换一份列表 ⇒ 回第一页（与 `TargetSearchView` 的"新一次搜索回第一页"同一口径）。
+    // 与 `attach()` 相反：那里是写后刷新，归零会把玩家刚看过那一屏弹走（#450 的教训）。
+    this.page = 0
     this.render()
   }
 
@@ -216,6 +231,17 @@ export class ArmyPanelView extends Component {
     //   而两行中心距只有 26px ⇒ 警告行一换行就压到医院行（那条垂直重叠记台账 #362 未做①）。
     keepOneLine(this.hospitalLabel, 17)
     keepOneLine(this.warningLabel, 15)
+
+    // 让出来的那一格：页码在中间，两颗翻页键在两端（照本文件行上动作键的画法，64×28）。
+    // 建出来先收着 —— `render()` 在 `panel === null` 时早退，不先收的话列表没到那一态会露着
+    // 两颗点了没反应的键（#345 口径；#449/#450 各修过一次同一族）。
+    const firstRowY = height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    this.pageLabel = this.addLabel(this.node, 'PageNotice', 0, firstRowY, COLOR_TEXT_DIM, 15)
+    keepOneLine(this.pageLabel, 15)
+    this.pageLabel.string = ''
+    this.pageLabel.node.active = false
+    this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46, firstRowY)
+    this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46, firstRowY)
 
     // 兵种页签。20 个兵种（4 类型 × 5 阶级）一屏放不下，按类型分页
     const tabWidth = 76
@@ -406,14 +432,20 @@ export class ArmyPanelView extends Component {
     const navTop = -size.height / 2 + BOTTOM_RESERVED
     const usable = topY + ROW_HEIGHT / 2 - navTop
     const maxRows = Math.max(1, Math.floor(usable / (ROW_HEIGHT + ROW_GAP)))
-    const drawn = Math.min(rows.length, maxRows)
+    // 装不下时不再"切掉 + 说一句另有 N 项"，而是让出最后一格做翻页行：共几页、夹到哪一页、
+    // 切哪一段用同一个 `perPage`（`PanelPaging` 那条原话，抄一份就是留一个将来会分叉的口径）。
+    // 从前这里是 `Math.min(rows.length, maxRows)` 一刀切 —— 实测全兵种页 20 行只画得出 4 行，
+    // 剩下 16 行的兵玩家永远够不着（#307 那句"话说诚实了，但下面的东西永远拿不到"）。
+    const total = rows.length
+    const perPage = contentPerPage(total, maxRows)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
 
     if (this.headerLabel !== null) {
-      // 「还有几项没画下」挂在这一行（本面板的汇总行）：只显示 4 行时玩家得知道下面还有，
-      // 而不是以为这个类型就只有这几种兵。分隔符得自己补 —— 那一句是给独立一行用的
-      const truncated = truncatedNotice('项', rows.length - drawn)
+      // 汇总行只管"兵力与队列"这两件事；"还有几项没画下"那一句已经不需要了 —— 现在都画得下，
+      // 只是分了几页，页码与翻页键在让出来的那一格（`paintPager`）
       this.headerLabel.string = `${panel.troopCapText} · ${panel.queueText}`
-        + (truncated === '' ? '' : ` · ${truncated}`)
       this.headerLabel.color = panel.troopCapFull ? COLOR_WARNING : COLOR_COPPER_GOLD
     }
     if (this.hospitalLabel !== null) {
@@ -454,12 +486,79 @@ export class ArmyPanelView extends Component {
 
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
-    rows.slice(0, drawn).forEach((row, index) => {
+    rows.slice(slice.start, slice.end).forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
       this.renderRow(node, row)
     })
+    this.paintPager(total, pages, perPage, topY)
+  }
+
+  /** 一颗 64×28 的翻页键：照本文件关卡行那三颗动作键的画法，绑定一次、由 `turnPage` 判吃不吃点击。 */
+  private buildPagerButton(name: string, x: number, y: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, y, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 13)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉那一侧直接不吃：`render()` 里的 `clampPage` 会把越界页号夹回来（点了等于没点），
+   * 而"按了没反应"正是要避免的观感，所以在入口处判掉。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) {
+      return
+    }
+    if (delta > 0 && !this.canNext) {
+      return
+    }
+    this.page += delta
+    this.render()
+  }
+
+  /** 把页码与两颗键摆在让出来的那一格：只有一页（含零行）时整对收掉。 */
+  private paintPager(total: number, pages: number, perPage: number, topY: number): void {
+    const paged = pages > 1
+    const y = topY - perPage * (ROW_HEIGHT + ROW_GAP)
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
+    if (this.pageLabel !== null) {
+      this.pageLabel.node.active = paged
+      this.pageLabel.string = paged ? `${pageNotice(this.page, pages)} · 共 ${total} 项` : ''
+      this.pageLabel.node.setPosition(new Vec3(0, y, 0))
+    }
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) {
+        continue
+      }
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, y, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
   }
 
   /** 按兵种过滤。只是显示分组，不改变服务端给的顺序。 */
