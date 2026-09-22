@@ -205,12 +205,15 @@ for (const phase of PHASES) {
     const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     const panel = game?.children.find((c) => c.name === panelKey)
     if (!panel) return { ok: false, why: '面板没找到' }
-    // 挑第一颗"够宽"的字（≥3 字，避免挑到单字符把植入面积压到噪声级）
+    // 挑第一颗"够宽"的字（≥2 字，避免挑到单字符把植入面积压到噪声级）
+    // 从前是 ≥3：`targets` 那一相一直靠「上一页」那颗三字的翻页键当植入对象，
+    // 而 #449 把未搜索时的两颗翻页键收掉了 ⇒ 那一屏只剩两字的「搜索」（16 号字约 36px 宽，
+    // 远在噪声之上）。留 2 字的下界既保住"别挑单字"的原意，又不让这一相变成没法验。
     let target = null
     const walk = (n) => {
       if (target !== null) return
       const lb = n.getComponent('cc.Label')
-      if (lb !== null && (lb.string ?? '').length >= 3 && n.activeInHierarchy && n !== panel) {
+      if (lb !== null && (lb.string ?? '').length >= 2 && n.activeInHierarchy && n !== panel) {
         target = n
         return
       }

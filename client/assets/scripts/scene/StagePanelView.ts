@@ -26,6 +26,9 @@ import { buildStaminaBoard } from '../game/stage/StaminaBoard'
 import type { StaminaBoardView } from '../game/stage/StaminaBoard'
 import type { StaminaBuyResp, StaminaResp } from '../net/generated/Protocol'
 import { truncatedNotice } from '../game/ui/TruncatedList'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 import type { LineupChoice } from '../game/session/Choices'
 import type { ChallengeStageResp, StageListResp, SweepResp } from '../net/generated/StageProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
@@ -89,6 +92,15 @@ export class StagePanelView extends Component {
   private readonly drawnRows: Node[] = []
   private headerLabel: Label | null = null
   private overflowLabel: Label | null = null
+  /** 当前页（0 起）。`attach` 拿到新一份列表时归零，翻页只改它。 */
+  private page = 0
+  /** 两颗翻页键：整行画完再按 `pages > 1` 决定露不露，灰掉的那一侧不吃点击。 */
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
   private summaryLabel: Label | null = null
   private summaryPanel: Node | null = null
   private lineupPicker: ChoiceOverlay | null = null
@@ -174,6 +186,9 @@ export class StagePanelView extends Component {
       return
     }
     this.list = buildStageList(resp)
+    // 故意**不**归零页号：`AppRoot` 在挑战/扫荡/买体力之后都会 refresh('stage')，归零会把玩家
+    // 刚打过的那一关从屏上弹走（他正要看结果）。列表变短时 `render()` 里的 `clampPage` 会夹回
+    // 最后一页 —— 与 `SocialPanelView` 那条"不重置、只 clamp"同一口径。
     this.render()
   }
 
@@ -275,6 +290,50 @@ export class StagePanelView extends Component {
     this.overflowLabel = this.addLabel(this.node, 'Overflow', 0,
       height / 2 - PADDING - HEADER_HEIGHT - MAX_VISIBLE_ROWS * (ROW_HEIGHT + ROW_GAP) - 14,
       COLOR_TEXT_DIM, 14)
+    // 两颗翻页键与那句页码同一行，摆在两端：中间那句短（「第 1/7 页 · 共 47 关」），
+    // 面板宽 680，两侧各留 92 给键，不会与页码相碰（与关卡行里那三颗 64×28 的键同一写法）
+    this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
+    this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
+  }
+
+  /** 一颗 64×28 的翻页键：照本文件里关卡行那三颗动作键的画法，绑定一次、按 `canPrev/canNext` 决定吃不吃点击。 */
+  private buildPagerButton(name: string, x: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, -200, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 13)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    // 建出来先收着：`render()` 在 `list === null` 时早退，不先收的话列表没到/读失败那一态
+    // 会露着两颗点了没反应的键（#345 口径；#449 在目标搜索刚修过同一族，别在新面板上长回来）
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉的那一侧直接不吃：`render()` 里 `clampPage` 会把越界的页号夹回来，
+   * 但"点了什么反应都没有"正是 #345 定的那条口径要挡的观感，所以在入口处就判。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) return
+    if (delta > 0 && !this.canNext) return
+    this.page += delta
+    this.render()
   }
 
   /**
@@ -453,13 +512,14 @@ export class StagePanelView extends Component {
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
 
-    let capacity = this.rowCapacity(topY)
-    // 有截断就要把最后一格让给"另有 N 关未显示"：通知压在摘要框上等于没写，
-    // 而玩家会把"画出来的这两关"读成"关卡只有这两关"
-    if (list.rows.length > capacity) {
-      capacity = Math.max(1, capacity - 1)
-    }
-    const visible = list.rows.slice(0, capacity)
+    const total = list.rows.length
+    // 共几页、夹到哪一页、切哪一段必须用同一个 perPage（`PanelPaging` 那条原话）：
+    // 从前这里手抄了一遍 `capacity - 1`，于是"另有 N 关未显示"成了终局 —— 那 46 关玩家永远拿不到
+    const perPage = contentPerPage(total, this.rowCapacity(topY))
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const visible = list.rows.slice(slice.start, slice.end)
     visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
@@ -467,13 +527,27 @@ export class StagePanelView extends Component {
       this.renderRow(node, row)
     })
 
+    const paged = pages > 1
+    const rowBottom = topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 14
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
     if (this.overflowLabel !== null) {
-      const hidden = list.rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice('关', hidden)
+      this.overflowLabel.string = paged
+        ? `${pageNotice(this.page, pages)} · 共 ${total} 关`
+        : truncatedNotice('关', total - visible.length)
       // 通知跟着行区最后一行走：容量是按摘要与窗口高度算出来的，钉在「7 行下面」
       // 就会飘到摘要框里 —— 玩家看到的是"关卡只有这两关"，而实际是被截断的 48 关
-      this.overflowLabel.node.setPosition(new Vec3(0,
-        topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 14, 0))
+      this.overflowLabel.node.setPosition(new Vec3(0, rowBottom, 0))
+    }
+    // 只有一页时两颗键整对收掉（#345 口径：不留点了没反应的键）；多页时不可翻的那一侧按灰
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) continue
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, rowBottom + 1, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
   }
 
