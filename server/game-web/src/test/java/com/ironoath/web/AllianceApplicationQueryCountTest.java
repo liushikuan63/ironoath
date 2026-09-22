@@ -103,7 +103,7 @@ class AllianceApplicationQueryCountTest {
     }
 
     @Test
-    @DisplayName("一页申请：对申请人一次点查都不许有，整档只批量读一次；行内容一字不变")
+    @DisplayName("一页申请：对申请人一次点查都不许有，列表投影只批量读一次；行内容一字不变")
     void onePageOfApplicantsIsOneBatchedReadNotTwoPointReadsEach() {
         String leader = newPlayer("盟主甲", 16);
         String mate = newPlayer("元老乙", 16);
@@ -125,9 +125,14 @@ class AllianceApplicationQueryCountTest {
         assertThat(counter.countOf("findByPlayerId"))
                 .as("整条路径上仍合法地读盟主自己那一份（requireAllianceOf），所以这里只钉申请人")
                 .isEqualTo(counter.readsOf("findByPlayerId", leader));
-        // ---- 判据②：正向断言，批量口真的接上了 ----
+        // ---- 判据②：整档那一趟必须不再发生。往返计数看不见"省了字节"，只能钉这个维度----
         assertThat(counter.countOf("findByPlayerIds"))
-                .as("这一页申请人的存档一次批量读回")
+                .as("这一屏只用昵称与主城等级两列，不许再为它们反序列化整份存档"
+                        + "（投影口开出来后，列表类调用方回到整档读就是白搬）")
+                .isZero();
+        // ---- 判据②′：正向断言，投影批量口真的接上了（只查"坏东西不存在"会在两个口都没接上时 also 全绿）----
+        assertThat(counter.countOf("findBriefs"))
+                .as("这一页申请人的昵称与城等一次批量投影读回")
                 .isEqualTo(1);
 
         // ---- 判据③：内容一字不变（顺序是"按申请人 id 升序"那条可复现口径，不靠随机 id 猜先后）----
@@ -157,7 +162,7 @@ class AllianceApplicationQueryCountTest {
         social.allianceApplications(leader, NOW);
         counter.reset();
         social.allianceApplications(leader, NOW);
-        int withTwo = counter.countOf("findByPlayerIds");
+        int withTwo = counter.countOf("findBriefs");
         assertThat(counter.readsOf("findByPlayerId", first) + counter.readsOf("findByPlayerId", second))
                 .as("夹具前提：两名申请人的点查在改之前各是 2 次").isZero();
 
@@ -172,7 +177,7 @@ class AllianceApplicationQueryCountTest {
         counter.reset();
         var resp = social.allianceApplications(leader, NOW);
 
-        assertThat(counter.countOf("findByPlayerIds"))
+        assertThat(counter.countOf("findBriefs"))
                 .as("申请数 2 → 5 就把趟数跟着涨上去，正是 N+1 的定义")
                 .isEqualTo(withTwo);
         assertThat(counter.readsOf("findByPlayerId", third)
@@ -193,7 +198,7 @@ class AllianceApplicationQueryCountTest {
         counter.reset();
         assertThat(social.allianceApplications(leader, NOW).applicants()).isEmpty();
 
-        assertThat(counter.countOf("findByPlayerIds"))
+        assertThat(counter.countOf("findBriefs"))
                 .as("空页不该去库里捞一趟")
                 .isZero();
     }
@@ -215,7 +220,7 @@ class AllianceApplicationQueryCountTest {
                 .as("读不到档就回 id，而不是回 null 把这一行整个画没")
                 .isEqualTo("P-gone");
         assertThat(resp.applicants().get(0).mainCityLevel()).isZero();
-        assertThat(counter.countOf("findByPlayerIds"))
+        assertThat(counter.countOf("findBriefs"))
                 .as("缺失口径不是多点查一遍的理由：仍然只有那一次批量")
                 .isEqualTo(1);
     }

@@ -39,6 +39,35 @@ public interface PlayerRepository {
     Map<String, PlayerSave> findByPlayerIds(Collection<String> playerIds);
 
     /**
+     * 批量按玩家 id 查<b>列表行所需的那几项</b>，返回 playerId -> 投影，
+     * 语义与 {@link #findByPlayerIds} 逐字相同（缺失的 id 不出现、null 或空集合返回空 map），
+     * 唯一区别是返回的是 {@link PlayerBrief} 而不是整份存档。
+     *
+     * <p><b>为什么要单独开这个口</b>：{@link #findByPlayerIds} 省的是<b>往返次数</b>
+     * （N 个人一趟 $in 拿回来），但那一趟搬回来的是 N 份<b>整档</b>。批量列表类调用方
+     * （联盟成员 150 人、关注列表 50 人、一页申请 50 人、一个块内的城）只要昵称、城等、
+     * 活跃时刻、展示战力这几项，剩下的资源表 / PVP 账本 / 荣耀 / 引导 / 付费权益 / 科技 /
+     * 礼包弹窗 / 头像框集合全是被白搬白反序列化的字节 —— 而存档的字段数随玩法批次只增不减，
+     * 这一趟的代价跟着涨，列表行却一字不变。
+     *
+     * <p><b>它省的不是往返</b>：Mongo 侧与 {@link #findByPlayerIds} 打的是同一个
+     * {@code _id $in}，只是带上了字段投影。所以别指望用计数判据看出"少搬了整档"，
+     * 那一维由本口与 {@link PlayerBrief} 的<b>类型</b>守住：返回值里没有整档，
+     * 调用方就连编都编不出"顺手多读一项"。
+     *
+     * <p><b>什么时候该用 {@link #findByPlayerIds}</b>：需要玩法状态本身的时候。
+     * 目标搜索要 PVP 账本算护盾与暴虐值、Bot 校准要战力三元组做均值样本、
+     * 暴露城要按天补暴虐值衰减 —— 那些是真的在读档，不是在报名字，不要为了少几个字节改到这里来。
+     *
+     * <p><b>两份实现必须同语义</b>（内存版给 dev 与全部单测、Mongo 版给生产），
+     * 由 {@code PlayerBriefEquivalenceTest} 钉住：同名的字段接错来源、投影列漏一项，
+     * 症状都是"单测全绿、生产那列是 0"。
+     *
+     * @param playerIds 要查的玩家 id；null 或空集合返回空 map
+     */
+    Map<String, PlayerBrief> findBriefs(Collection<String> playerIds);
+
+    /**
      * 原子插入：仅当 deviceId 尚未存在时才写入。
      *
      * <p>必须由存储层的唯一索引保证原子性，不能用「先查后插」——

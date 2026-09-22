@@ -1,9 +1,11 @@
 package com.ironoath.web.store.mongo;
 
+import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerGlory;
 import com.ironoath.core.player.PlayerGuide;
 import com.ironoath.core.player.PlayerPower;
 import com.ironoath.core.player.PlayerPvp;
+import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
 
@@ -73,6 +75,19 @@ public final class PlayerDocumentMapper {
         return new PlayerDocument.PaidDoc(paid.cardExpireAt(), paid.cardClaimedThroughAt(),
                 paid.fundPurchasedAt(), java.util.List.copyOf(paid.fundClaimedTiers()),
                 paid.firstChargedAt(), java.util.List.copyOf(paid.fulfilledOrderIds()));
+    }
+
+    /**
+     * 列表行读模型 → 投影（{@link PlayerRepository#findBriefs} 的那一侧）。
+     *
+     * <p>入参是 {@link PlayerBriefDocument} 而不是 {@link PlayerDocument}：那条查询带字段投影，
+     * 整档文档模型在这条读法上根本构造不出来（见该 record 的注释）。这里也就拿不到、
+     * 更不该顺手去读资源表与 PVP 账本。
+     */
+    public static PlayerBrief toBrief(PlayerBriefDocument doc) {
+        PlayerDocument.PowerDoc p = doc.power();
+        return new PlayerBrief(doc.playerId(), doc.nickName(), doc.cityLevel(), doc.lastLoginAt(),
+                p == null ? 0L : p.displayPower());
     }
 
     public static PlayerSave toDomain(PlayerDocument doc) {

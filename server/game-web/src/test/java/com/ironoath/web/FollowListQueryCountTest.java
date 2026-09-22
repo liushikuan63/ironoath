@@ -116,9 +116,13 @@ class FollowListQueryCountTest {
         assertThat(pointReads)
                 .as("整份存档的逐人点查：只剩 requirePlayer 验调用方自己那一次")
                 .isEqualTo(1);
-        // ---- 判据②：正向断言，批量口真的接上了 ----
+        // 省的是字节那一维（往返计数看不见）：为两列标量反序列化整份存档就是白搬
         assertThat(counter.countOf("findByPlayerIds"))
-                .as("关注对象的存档一次批量读回")
+                .as("关注列表只要昵称与活跃时刻，不许再顺带搬回整份存档")
+                .isZero();
+        // ---- 判据②：正向断言，投影批量口真的接上了 ----
+        assertThat(counter.countOf("findBriefs"))
+                .as("关注对象的昵称与活跃时刻一次批量投影读回")
                 .isEqualTo(1);
 
         // ---- 判据③：内容一字不变（顺序 = 最近关注的在前）----
@@ -148,7 +152,7 @@ class FollowListQueryCountTest {
         assertThat(counter.countOf("findByPlayerId"))
                 .as("关注数从 3 涨到 6，点查次数跟着涨就是 N+1 又活了")
                 .isEqualTo(pointReads);
-        assertThat(counter.countOf("findByPlayerIds")).isEqualTo(1);
+        assertThat(counter.countOf("findBriefs")).isEqualTo(1);
         assertThat(six.friends()).as("六个人一个不少").hasSize(6);
         assertThat(six.friends()).extracting(FriendView::name)
                 .containsExactly("关注己", "关注戊", "关注丁", "关注丙", "关注乙", "关注甲");
@@ -163,7 +167,7 @@ class FollowListQueryCountTest {
         counter.reset();
         assertThat(social.follows(me).friends()).isEmpty();
 
-        assertThat(counter.countOf("findByPlayerIds"))
+        assertThat(counter.countOf("findBriefs"))
                 .as("新号第一次打开社交面板就是空名单，那不该是一次存储往返")
                 .isZero();
         assertThat(counter.countOf("findByPlayerId"))

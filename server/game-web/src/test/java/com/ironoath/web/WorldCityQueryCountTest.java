@@ -115,9 +115,14 @@ class WorldCityQueryCountTest {
         assertThat(counter.countOf("findByPlayerId"))
                 .as("逐个 findByPlayerId 是每座城读两趟整份存档，且随视野内的城数线性增长")
                 .isZero();
-        // ---- 判据②：正向断言，批量口真的接上了（只查"坏东西不存在"会在批量口整个没接上时 also 全绿）----
+        // 省的是字节那一维（往返计数看不见）：城行只有两列，拖图一次九个块不该搬九趟整档
         assertThat(counter.countOf("findByPlayerIds"))
-                .as("本块玩家城的存档一次批量读回")
+                .as("装配一行的只有昵称与等级，整档读取那一趟必须不再发生"
+                        + "（暴露城 exposedCities 要按天补暴虐值衰减，它不在本判据的读路径上）")
+                .isZero();
+        // ---- 判据②：正向断言，批量口真的接上了（只查"坏东西不存在"会在批量口整个没接上时 also 全绿）----
+        assertThat(counter.countOf("findBriefs"))
+                .as("本块玩家城的昵称与主城等级一次批量投影读回")
                 .isEqualTo(1);
 
         // ---- 判据③：内容一字不变，且等级/名字不许接错档（四个人的等级各不相同）----
@@ -150,7 +155,7 @@ class WorldCityQueryCountTest {
         world.visibleEntitiesOf(me);
         counter.reset();
         assertThat(world.visibleEntitiesOf(me)).isNotEmpty();
-        int withOneCity = counter.countOf("findByPlayerId") + counter.countOf("findByPlayerIds");
+        int withOneCity = counter.countOf("findByPlayerId") + counter.countOf("findBriefs");
 
         for (int i = 0; i < 5; i++) {
             String neighbor = newPlayer("邻居" + i, 3 + i);
@@ -159,7 +164,7 @@ class WorldCityQueryCountTest {
         world.visibleEntitiesOf(me);
         counter.reset();
         List<WorldEntity> rows = world.visibleEntitiesOf(me);
-        int withSixCities = counter.countOf("findByPlayerId") + counter.countOf("findByPlayerIds");
+        int withSixCities = counter.countOf("findByPlayerId") + counter.countOf("findBriefs");
 
         assertThat(rows).filteredOn(row -> row.type() == WorldEntityType.CITY)
                 .as("夹具前提：五座新城都落在同一块上，都被装配出来了").hasSize(6);

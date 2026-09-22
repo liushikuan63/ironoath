@@ -17,6 +17,7 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.nation.Nation;
+import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.social.Alliance;
@@ -531,16 +532,17 @@ public class SocialAppService {
         // 一页申请人的昵称与城等来自**同一次批量读**：改之前 nickname(...) 与 cityLevelOf(...) 各自
         // 点查一次，于是打开这一屏要发 2 × min(上限, 申请数) 趟整份存档读取（上限实测 50 ⇒ 最坏 100 趟）。
         // 判据是往返计数：AllianceApplicationQueryCountTest。名单为空时连这一趟都不发。
-        Map<String, PlayerSave> saves = page.isEmpty() ? Map.of() : players.findByPlayerIds(page);
+        // 走投影口：这一屏只点昵称与主城等级两列，剩下整档（资源表 / PVP 账本 / 科技 …）是白搬白反序列化
+        Map<String, PlayerBrief> briefs = page.isEmpty() ? Map.of() : players.findBriefs(page);
         List<ApplicantView> rows = new ArrayList<>(page.size());
         for (String applicantId : page) {
             // 昵称与城等都走服务端那一份：客户端没有玩家表，拿 id 猜出来的名字就是第二真源
-            PlayerSave save = saves.get(applicantId);
+            PlayerBrief brief = briefs.get(applicantId);
             // 读不到档的两条兜底与改之前那两个助手逐字同口径（昵称回 id、城等回 0）：
             // "申请还挂着但人已消失"是删号后的正常状态，客户端要靠它画出一行而不是少一行
             rows.add(new ApplicantView(applicantId,
-                    save == null ? applicantId : save.nickName(),
-                    save == null ? 0 : save.cityLevel()));
+                    brief == null ? applicantId : brief.nickName(),
+                    brief == null ? 0 : brief.cityLevel()));
         }
         return new AllianceApplicationListResp(rows, applicantIds.size(), limit, now);
     }
@@ -1628,19 +1630,20 @@ public class SocialAppService {
         requirePlayer(playerId);
         long now = timeService.serverNow();
         List<String> ids = store.followedPlayers(playerId);
-        // 关注对象的存档一次批量读回。逐个 findByPlayerId 是每次打开这一列表打 SOCIAL_FOLLOW_MAX
-        // （50）趟**整份存档**，而这一列表只要昵称与活跃时刻两项 —— 判据见 FollowListQueryCountTest
-        // （结果完全相同，只有往返数抓得住它）。名单为空时连这一趟都不发：新号第一次打开社交面板
-        // 就是空名单，那不该是一次存储往返。
-        Map<String, PlayerSave> saves = ids.isEmpty() ? Map.of() : players.findByPlayerIds(ids);
+        // 关注对象的昵称与活跃时刻一次批量读回。逐个 findByPlayerId 是每次打开这一列表打
+        // SOCIAL_FOLLOW_MAX（50）趟**整份存档**，而这一列表只要昵称与活跃时刻两项 —— 判据见
+        // FollowListQueryCountTest（结果完全相同，只有往返数抓得住它）。名单为空时连这一趟都不发：
+        // 新号第一次打开社交面板就是空名单，那不该是一次存储往返。
+        // 走的还是投影口：这两项之外的一整份存档（资源 / PVP / 科技 / 头像框集合）搬回来没人看
+        Map<String, PlayerBrief> briefs = ids.isEmpty() ? Map.of() : players.findBriefs(ids);
         List<FriendView> out = new ArrayList<>(ids.size());
         for (String id : ids) {
-            PlayerSave save = saves.get(id);
+            PlayerBrief brief = briefs.get(id);
             boolean online = pushGateway.isOnline(id);
             out.add(new FriendView(id,
-                    save == null ? id : save.nickName(),
+                    brief == null ? id : brief.nickName(),
                     online,
-                    online ? now : (save == null ? 0L : save.lastLoginAt())));
+                    online ? now : (brief == null ? 0L : brief.lastLoginAt())));
         }
         return new FriendListView(out);
     }
@@ -2022,19 +2025,21 @@ public class SocialAppService {
         }
         Alliance alliance = found.get();
         List<String> memberIds = alliance.memberIds();
-        Map<String, PlayerSave> saves = players.findByPlayerIds(memberIds);
+        // 走投影口而不是整档：成员行用的只有昵称、展示战力、最近活跃三项（收口清单 #425 的那一趟
+        // 批量读省的是往返，这一格省的是 150 份整档的字节与反序列化）
+        Map<String, PlayerBrief> briefs = players.findBriefs(memberIds);
         Map<String, Squad> squads = store.squadsOf(memberIds);
         List<AllianceMember> out = new ArrayList<>(memberIds.size());
         for (String memberId : memberIds) {
-            PlayerSave save = saves.get(memberId);
+            PlayerBrief brief = briefs.get(memberId);
             Squad squad = squads.get(memberId);
             out.add(new AllianceMember(memberId,
-                    save == null ? memberId : save.nickName(),
-                    save == null || save.power() == null ? 0L : save.power().displayPower(),
+                    brief == null ? memberId : brief.nickName(),
+                    brief == null ? 0L : brief.displayPower(),
                     com.ironoath.web.dto.generated.AllianceRole.valueOf(
                             String.valueOf(alliance.roleOf(memberId))),
                     alliance.contributionOf(memberId),
-                    save == null ? now : save.lastLoginAt(),
+                    brief == null ? now : brief.lastLoginAt(),
                     squad == null ? null : squad.id(),
                     // 名字跟着 id 一起下发：客户端没有小队表，只给 id 它就只能把 id 印给玩家（台账 #422）。
                     // 取不到小队就两个都是 null，不拿 id 顶一个"名字"上去。

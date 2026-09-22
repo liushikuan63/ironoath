@@ -150,9 +150,13 @@ class AllianceMemberQueryCountTest {
         assertThat(counter.countOf("findByPlayerId") + counter.countOf("squadOf"))
                 .as("装配成员行的点查总次数：批量口接上后它与成员数无关，回到 2N 就是 N+1 又活了")
                 .isLessThanOrEqualTo(2);
-        // ---- 判据②：正向断言。只查"坏东西不存在"会在批量口整个没接上时 also 全绿 ----
+        // 省的是字节那一维（往返计数看不见）：150 人的名单不为三列标量搬 150 份整档
         assertThat(counter.countOf("findByPlayerIds"))
-                .as("玩家存档一次批量")
+                .as("成员行只点三项，整档那一趟（资源表 / PVP 账本 / 科技 / 头像框集合）必须不再发生")
+                .isZero();
+        // ---- 判据②：正向断言。只查"坏东西不存在"会在批量口整个没接上时 also 全绿 ----
+        assertThat(counter.countOf("findBriefs"))
+                .as("成员行要的三项（昵称 / 展示战力 / 最近活跃）一次批量投影读回")
                 .isEqualTo(1);
         assertThat(counter.countOf("squadsOf"))
                 .as("小队一次批量")
@@ -199,7 +203,7 @@ class AllianceMemberQueryCountTest {
         assertThat(social.allianceMembers(stranger, NOW)).isEmpty();
 
         assertThat(counter.countOf("findByPlayerId") + counter.countOf("squadOf")
-                + counter.countOf("findByPlayerIds") + counter.countOf("squadsOf"))
+                + counter.countOf("findBriefs") + counter.countOf("squadsOf"))
                 .as("连盟都没有就没有成员可装配，批量口也不该空跑一次")
                 .isZero();
     }
