@@ -80,7 +80,12 @@ const BASELINE = new Set([
  * 空态实测邮件 2 颗 / 战报 3 颗，差 3~10 倍，所以桩掉了这一条一定红；
  * 上限故意不设：画几行随视口高度变，钉死会把量具变成"只能在这台机器上绿"。
  */
-const LABEL_FLOORS = { mail: 2 * 4, reports: 2 * 3, social: 2 * 4, 'social/alliance-joined': 2 * 10 }
+const LABEL_FLOORS = {
+  mail: 2 * 4, reports: 2 * 3, social: 2 * 4, 'social/alliance-joined': 2 * 10,
+  // 翻页相实测 27 颗 ⇒ 下限取 16：够挡住"翻页静默失效退回第一屏"（第一屏 34 颗会**高于**下限，
+  // 所以这一相真正靠的是下面那条独有串），但也挡住"翻过去读到了半屏/空屏"
+  'social/alliance-joined#p2': 2 * 8,
+}
 
 /**
  * 正向断言（比数颗数更硬）：这些串**只在夹具数据里**，空态画不出来。
@@ -97,6 +102,9 @@ const STUB_MARKS = {
   // 「已入盟」相的独有串：这一屏与未入盟那一屏的颗数差得开（32 对 11），但**光看颗数**仍挡不住
   // "摘要给了个别的联盟" 这类错读，所以取联盟名本身 —— 它只有 `alliance` 字段真被画出来才存在。
   'social/alliance-joined': '黑石渡口',
+  // 翻页相取**只在第二页出现**的那颗：成员列表里排在第二位的「铁砧·瓦拉」——
+  // 第一屏 34 颗比第二屏 27 颗还多，所以"没翻过去"这种失效**只有这条能抓**（颗数下限抓不到）
+  'social/alliance-joined#p2': '铁砧·瓦拉',
 }
 
 let pass = 0
@@ -249,6 +257,66 @@ function clickTabNode(name) {
   if (found === null) return false
   found.emit('touch-start', null)
   return true
+}
+
+/**
+ * 按**按钮上那句文本**点行内的动作按钮（翻页那一族：`ActionButton` / `2` / `3` 是运行时造的壳，
+ * 没有 `cc.Button`，命中测试走不通，只能照页签那样 `emit('touch-start')`）。
+ * 从 Label 往上爬到壳，是因为文本挂在壳的子节点上。
+ */
+function clickRowAction(text) {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let hit = null
+  const find = (n) => {
+    if (hit !== null) return
+    const lb = n.getComponent('cc.Label')
+    if (lb && lb.string === text && n.activeInHierarchy) {
+      for (let p = n; p !== null; p = p.parent) {
+        if (/^ActionButton/.test(p.name)) {
+          if (p.activeInHierarchy) hit = p
+          break
+        }
+      }
+      if (hit !== null) return
+    }
+    for (const c of n.children) find(c)
+  }
+  for (const panel of game?.children ?? []) find(panel)
+  if (hit === null) return false
+  hit.emit('touch-start', null)
+  return true
+}
+
+/**
+ * 「翻页相」：读到「第 N/M 页」那一行 = 这一屏还有第二页从没量过
+ * （#420 目视时发现的：一屏只画得下六行内容，成员行只量到第一条）。
+ * 记数与判据与页签相同一条路：声明了就要走到，走不到那条覆盖门判红。
+ */
+async function pageTwoPass(page, key, tag) {
+  const p2tag = `${tag}#p2`
+  phasesTotal += 1
+  if (!await page.evaluate(clickRowAction, '下一页')) {
+    console.log(`  SKIP  ${p2tag}：那一屏有翻页行，但按文本「下一页」没点到按钮`)
+    return
+  }
+  const r = await walkPhase(page, key)
+  if (r === null) {
+    console.log(`  SKIP  ${p2tag}：翻过去之后读不到那一屏`)
+    return
+  }
+  phasesReached += 1
+  labelsBy.set(p2tag, r.seen)
+  textsBy.set(p2tag, r.texts ?? [])
+  console.log(`  READ  ${p2tag}: Label ${r.seen} 颗，SHRINK ${r.shrink} 颗，被压小 ${r.out.length} 颗，`
+    + `疑似被放大 ${(r.stretched ?? []).length} 颗，字形相碰 ${(r.crowd ?? []).length} 对，`
+    + `压进导航条 ${(r.underNav ?? []).length} 颗`
+    + (r.unlaid ? `，未布局 ${r.unlaid} 颗（0x0 盒，不判红）` : ''))
+  for (const x of r.out) offenders.push(`${p2tag}/${x.text}(${x.h}<${x.floor},字${x.want})`)
+  for (const x of r.stretched ?? []) stretched.push(`${p2tag}/${x.text}(${x.h}>${x.floor}+8,字${x.want},估宽${x.est}/盒${x.boxW})`)
+  for (const x of r.crowd ?? []) crowded.push(`${p2tag}/${x}`)
+  for (const x of r.underNav ?? []) underNavAll.push(`${p2tag}/${x}`)
+  await platePass(page, key, p2tag)
+  await page.screenshot({ path: path.join(OUT, `${p2tag.replace(/[/#]/g, '-')}.png`) })
 }
 
 
@@ -766,6 +834,9 @@ for (const key of KEYS) {
         mergeRead(read, vr)
         await platePass(vpage, key, vtag)
         await vpage.screenshot({ path: path.join(OUT, 'social-alliance-joined.png') })
+        // 这一相是 `social` 那一格**最后**做的动作，所以可以放心就地翻页：面板的 `page`
+        // "换页签不重置"，在别的相上翻会把后面的相留在第二页，读数就变成另一屏了。
+        await pageTwoPass(vpage, key, vtag)
       }
     }
     await vpage.close()
