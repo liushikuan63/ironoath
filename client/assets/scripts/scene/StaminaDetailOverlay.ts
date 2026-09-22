@@ -124,7 +124,9 @@ export class StaminaDetailOverlay {
   }
 
   get visible(): boolean {
-    return this.node.activeInHierarchy === true
+    // 用 `active` 而不是 `activeInHierarchy`：探针里读后者没问题（那是运行期 JS），
+    // 但 headless 的 `cc` 类型声明里只有 `active` —— 门里的 tsc 会红（check-client-typecheck 抓到过）。
+    return this.node.active === true
   }
 
   /** 探针读数用：当前画的是哪一帧。 */
