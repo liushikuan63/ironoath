@@ -163,7 +163,11 @@ const BEFORE = `(() => {
 const before = await page.evaluate(BEFORE)
 checkTrue('搜索前：面板、视图组件、Overflow 那一格都在（否则"空串"是假绿）',
   before?.panelFound === true && before?.viewFound === true && before?.noticeFound === true)
-checkTrue('搜索前：那一格还没有话（控件在、字确实是空的）', before?.noticeText === '')
+// #459 之前这一条钉的是"空串"——产品口径改了（未搜索那一相要给一句下一步），判据跟着改。
+// 不在这里抄那句原文（会变成第二处真相）：逐字比对归 `tools/verify-targets-notice.mjs`，
+// 这一条只守两件事：**有话**，且**说的不是"搜过且零结果"那句**（两相必须分得开）。
+checkTrue('搜索前：那一格有话可说，但不是「没有可打的目标」（#459 口径；从前钉的是空串）',
+  String(before?.noticeText ?? '').trim() !== '' && !String(before?.noticeText ?? '').includes('没有可打的目标'))
 check('搜索前：rows 是空数组（所以"行数为零"本身不能当"搜过"的证据）', before?.rowsLen, 0)
 check('搜索前：searched 仍是 false', before?.searched, false)
 check('搜索前：半径还没有值（上下界只在响应里，客户端不猜）', before?.radius, null)
