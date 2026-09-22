@@ -113,8 +113,10 @@ public class RankBoardService {
             entries.add(toView(i + 1, rows.get(i), type));
         }
         MyRow mine = myRowOf(playerId, type, rows);
+        // dayKey 与 `captureTodayIfAbsent` 用的是**同一个源**（todayKey() → DayKey.of(serverNow)）：
+        // 客户端拿着它去查 /rank/snapshot，就不必自己算一个日期（那会造出第二条日切轴）。
         return new RankListResp(type, entries, mine.rank(), mine.value(),
-                safePage, pageSize, to < rows.size());
+                safePage, pageSize, to < rows.size(), todayKey());
     }
 
     /**

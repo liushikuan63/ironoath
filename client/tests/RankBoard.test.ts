@@ -27,6 +27,9 @@ function list(overrides: Partial<RankListResp> = {}): RankListResp {
     page: 1,
     pageSize: 20,
     hasMore: false,
+    // 今天由**服务端**下发（`/rank/list` 带 dayKey）：客户端拿它去查 /rank/snapshot，
+    // 自己算日期就是契约禁止的"第二条日切轴"。夹具里写死一天，让这条契约在测试里也看得见。
+    dayKey: '20260922',
     ...overrides,
   }
 }
@@ -153,4 +156,18 @@ test('快照那一块：日期键排成人读的形状，名次为 null 时说�
   })
   assert.match(missing.rankText, /那天你不在榜上/)
   assert.equal(missing.valueText, '', '没有值就不画一个 0')
+})
+
+test('快照那一块会跟着榜视图一起下发（2026-09-22 接上入口之前它只是"有口没读"）', () => {
+  const snapshot = buildRankSnapshotView({
+    type: 'POWER', dayKey: '20260922', snapshotAt: 1_790_000_000_000, myRank: null, myValue: null,
+  })
+  // 默认不带（既有调用者不受影响）；传了就要原样带上，不能在合成视图时丢掉
+  assert.equal(buildRankBoard(list(), 'POWER', 'P-2').snapshot, null)
+  const withSnapshot = buildRankBoard(list(), 'POWER', 'P-2', null, snapshot)
+  assert.equal(withSnapshot.snapshot?.dayText, '2026-09-22')
+  assert.match(withSnapshot.snapshot?.rankText ?? '', /那天你不在榜上/)
+  // 空榜（拉不到榜）那条分支也要带上，否则"榜空但快照有"时那一块会莫名消失
+  const blank = buildRankBoard(null, 'POWER', 'P-2', '限流了', snapshot)
+  assert.equal(blank.snapshot?.dayText, '2026-09-22')
 })

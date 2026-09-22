@@ -40,12 +40,12 @@ import {
   mergeChatHistory,
 } from '../social/ChatPanel'
 import type { ChatPanelData } from '../social/ChatPanel'
-import { buildRankBoard } from '../power/RankBoard'
+import { buildRankBoard, buildRankSnapshotView } from '../power/RankBoard'
 import {
   buildCompose, marchUnitsOf, rememberMarch, repeatBlockedReason, setPick,
 } from '../world/MarchCompose'
 import type { ComposeView, MarchSpec } from '../world/MarchCompose'
-import type { RankBoardView, RankTabKey } from '../power/RankBoard'
+import type { RankBoardView, RankSnapshotView, RankTabKey } from '../power/RankBoard'
 import type { RankListResp } from '../../net/generated/RankProtocol'
 import { buildSeasonPanel } from '../season/SeasonPanel'
 import type { SeasonPanelView } from '../season/SeasonPanel'
@@ -474,6 +474,11 @@ export class AppRoot {
   private rankTab: RankTabKey = 'DETAIL'
   /** 最近一次 `/rank/list` 的响应。**只有当前页签那一张**（切页签就换掉，不缓存多张 —— 榜是会变的） */
   private rankResp: RankListResp | null = null
+  /**
+   * 今日快照那一块（B23 §一 2）。**用 `/rank/list` 下发的 `dayKey` 去查**，客户端自己不算日期
+   * —— 契约明写"不许出现第二个日切轴"（2026-09-22 接上，此前这一格是"有口没读"）。
+   */
+  private rankSnapshot: RankSnapshotView | null = null
   /** 请求的页码。由服务端回显的 `page` 推进，**不自己加一**（出界时服务端会夹到最后一页） */
   private rankPage = 1
   /** 拉榜失败的可读原因（限流/断网）；成功一次或切页签后清空 */
@@ -2084,12 +2089,14 @@ export class AppRoot {
   private async loadRankIfBoard(): Promise<void> {
     if (this.rankTab === 'DETAIL') {
       this.rankResp = null
+      this.rankSnapshot = null
       this.deliverRank()
       return
     }
     if (this.rankTab === 'SEASON') {
       // 赛季页与榜无关：手里那份榜响应属于别的页签，留着会在赛季页签下画出一张榜
       this.rankResp = null
+      this.rankSnapshot = null
       await this.loadSeason()
       this.deliverRank()
       return
@@ -2098,6 +2105,10 @@ export class AppRoot {
     if (outcome.kind === 'ok') {
       this.rankResp = outcome.data
       this.rankNotice = null
+      // 快照：用**服务端下发的 dayKey** 去查（客户端自己算日期就是第二条日切轴）。
+      // 拉不到不算错误 —— 快照是"申诉时间线"，拉不到就不显示那一块，不打断榜本身。
+      const snapshot = await this.api.rankSnapshot(this.rankTab, outcome.data.dayKey)
+      this.rankSnapshot = snapshot.kind === 'ok' ? buildRankSnapshotView(snapshot.data) : null
     } else {
       // 榜拉不到时把服务端给的**理由**原样放上提示行（业务拒绝看 detail，网络失败看 reason）。
       // 不自己编一句"加载失败"：限流与断网的下一步动作完全不同（等一会儿 / 检查网络）
@@ -2130,7 +2141,7 @@ export class AppRoot {
   /** 组装并下发整块视图。表现层不参与任何计算（名次/页号/倒计时全部来自上面那两份响应）。 */
   private deliverRank(): void {
     this.targets.rank?.(buildRankBoard(this.rankResp, this.rankTab, this.playerId ?? '',
-      this.rankNotice))
+      this.rankNotice, this.rankSnapshot))
     // 赛季页与榜同屏（第六个页签），但正文来自另一份响应：页签高亮与正文必须同一次下发，
     // 否则会出现"赛季页签亮着、正文还是上一张榜"
     if (this.rankTab === 'SEASON') {
