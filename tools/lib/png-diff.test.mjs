@@ -7,67 +7,8 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deflateSync } from 'node:zlib'
-import { decodePng, diffRegion } from './png-diff.mjs'
+import { decodePng, diffRegion, encodePng } from './png-diff.mjs'
 
-const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
-  let c = n
-  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1
-  return c >>> 0
-})
-function crc32(buf) {
-  let c = 0xFFFFFFFF
-  for (const b of buf) c = CRC_TABLE[(c ^ b) & 255] ^ (c >>> 8)
-  return (c ^ 0xFFFFFFFF) >>> 0
-}
-function chunk(type, body) {
-  const len = Buffer.alloc(4)
-  len.writeUInt32BE(body.length)
-  const t = Buffer.from(type, 'ascii')
-  const crc = Buffer.alloc(4)
-  crc.writeUInt32BE(crc32(Buffer.concat([t, body])))
-  return Buffer.concat([len, t, body, crc])
-}
-/** 按规范编一张 8 位 RGB PNG；`filters` 给每行用哪种滤波器（0/1/2/4），不给就是全 0。 */
-function encodePng(width, height, pixels, filters = []) {
-  const ihdr = Buffer.alloc(13)
-  ihdr.writeUInt32BE(width, 0)
-  ihdr.writeUInt32BE(height, 4)
-  ihdr[8] = 8
-  ihdr[9] = 2
-  const raw = []
-  for (let y = 0; y < height; y += 1) {
-    const f = filters[y] ?? 0
-    raw.push(f)
-    for (let x = 0; x < width; x += 1) {
-      for (let c = 0; c < 3; c += 1) {
-        const i = (y * width + x) * 3 + c
-        const v = pixels[i]
-        const a = x > 0 ? pixels[i - 3] : 0
-        const b = y > 0 ? pixels[i - width * 3] : 0
-        const cc = (x > 0 && y > 0) ? pixels[i - width * 3 - 3] : 0
-        if (f === 0) raw.push(v)
-        else if (f === 1) raw.push((v - a) & 255)
-        else if (f === 2) raw.push((v - b) & 255)
-        else {
-          // Paeth 预测器：取 a/b/cc 里"最接近 a+b-cc"的那个（与解码侧同一条式子）
-          const p = a + b - cc
-          const pa = Math.abs(p - a)
-          const pb = Math.abs(p - b)
-          const pc = Math.abs(p - cc)
-          const pr = pa <= pb && pa <= pc ? a : (pb <= pc ? b : cc)
-          raw.push((v - pr) & 255)
-        }
-      }
-    }
-  }
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(Buffer.from(raw))),
-    chunk('IEND', Buffer.alloc(0)),
-  ])
-}
 const ramp = (w, h) => {
   const p = []
   for (let y = 0; y < h; y += 1) {
