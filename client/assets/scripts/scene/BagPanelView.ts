@@ -14,7 +14,9 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildBagPanel, buildResourcePanel, chestReceiptText } from '../game/bag/BagPanel'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 import type { BagItemRow, BagPanelView as BagPanelData, ResourcePanelView, ResourceRow } from '../game/bag/BagPanel'
 import type { ChoiceOption, SpeedupChoice } from '../game/session/Choices'
 import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../net/generated/BagProtocol'
@@ -62,6 +64,14 @@ export class BagPanelView extends Component {
   private rowPool: NodePool | null = null
   private readonly drawnRows: Node[] = []
   private headerLabel: Label | null = null
+  /** 当前页（0 起）。换道具类型页签与换 背包/资源 都归零（两份数据集不同）。 */
+  private page = 0
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
   private warningLabel: Label | null = null
   /** 类型页签那一条的容器（里面每类一颗） */
   private pageHolder: Node | null = null
@@ -165,6 +175,7 @@ export class BagPanelView extends Component {
     }
     this.tab = tab
     this.tabChosen = true
+    this.page = 0
     this.receipt = null
     this.render()
   }
@@ -274,6 +285,75 @@ export class BagPanelView extends Component {
     const top = height / 2 - PADDING
     this.headerLabel = this.addLabel(this.node, 'Header', 0, top - 20, COLOR_COPPER_GOLD, 22)
     this.warningLabel = this.addLabel(this.node, 'Warning', 0, top - 48, COLOR_WARNING, 15)
+    // 两颗翻页键与那句页码同一行、摆在行区下方那一格，y 由 render() 跟着最后一行走
+    this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
+    this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
+  }
+
+  /** 一颗 64×28 的翻页键，照本文件行上那颗动作键的画法。 */
+  private buildPagerButton(name: string, x: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, 0, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 13)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    // 建出来先收着：不先收会在"背包还没到"那一态露出两颗点了没反应的键
+    //（#345 口径，#449 与 #450 各修过一次同一族）
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉的那一侧直接不吃：`clampPage` 也会把越界页号夹回来，
+   * 但"点了没反应"正是 #345 那条口径要挡的观感。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) return
+    if (delta > 0 && !this.canNext) return
+    this.page += delta
+    this.render()
+  }
+
+  /**
+   * 页码那一格与两颗键的位置。
+   *
+   * <p>那句页码借用说明行（`warningLabel`）：那一行本来就是"开箱回执 > 满仓 > 另有 N 项"
+   * 三用的，回执优先；被它占时只剩两颗键自证"还能翻"（键上的「上一页/下一页」就是提示）。
+   */
+  private paintPager(pages: number, total: number, warning: string, rowY: number): void {
+    const paged = pages > 1
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
+    if (this.warningLabel !== null) {
+      this.warningLabel.string = warning !== '' ? warning
+        : (paged ? `${pageNotice(this.page, pages)} · 共 ${total} 项` : '')
+    }
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) continue
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, rowY, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
+  }
 
     const tabs: Array<{ tab: Tab; text: string; x: number }> = [
       { tab: 'resource', text: '资源明细', x: -60 },
@@ -391,7 +471,15 @@ export class BagPanelView extends Component {
     const rows = this.tab === 'resource' ? this.resourceRows() : this.bagRows()
     const size = view.getVisibleSize()
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
-    rows.slice(0, MAX_VISIBLE_ROWS).forEach((row, index) => {
+    // 行位这一屏是写死的 MAX_VISIBLE_ROWS（上方那一行给了道具类型页签，按可视高算会把页签吃掉），
+    // 分页沿用同一容量：从前装不下就在说明行写一句「另有 N 项未显示」，那些道具玩家永远拿不到（#307）
+    const total = rows.length
+    const perPage = contentPerPage(total, MAX_VISIBLE_ROWS)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const visible = rows.slice(slice.start, slice.end)
+    visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
@@ -401,13 +489,11 @@ export class BagPanelView extends Component {
     if (this.headerLabel !== null) {
       this.headerLabel.string = this.tab === 'resource' ? '资源产出明细' : (this.bag?.capacityText ?? '背包')
     }
-    if (this.warningLabel !== null) {
-      this.warningLabel.string = this.warningText(rows.length)
-    }
+    this.paintPager(pages, total, this.warningText(), topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 8)
     this.renderBagPages()
   }
 
-  private warningText(visibleCount: number): string {
+  private warningText(): string {
     // 开箱回执优先占这一行：`render()` 每次都会重算说明行，直接写 Label 会被下一次渲染抹掉
     // （实测：开完 5 个箱，那行字变成了资源页的「STAMINA 已满仓」）
     if (this.receipt !== null && this.tab === 'bag') {
@@ -425,11 +511,12 @@ export class BagPanelView extends Component {
         ? ''
         : `${mismatch.map((row) => row.type).join('、')} 的产出明细与总产量不符，已上报`
     }
-    const hidden = (this.bag?.pages.reduce((sum, page) => sum + page.items.length, 0) ?? 0) - visibleCount
     if (this.bag?.capacityFull === true) {
       return '背包已满，再获得道具可能无法入包'
     }
-    return truncatedNotice('项', hidden)
+    // 「另有 N 项」那一支交给页码：它原来的分母是**所有类别**的总件数（`bag.pages` 跨类求和），
+    // 而这一屏只画选中的那一类，且行位是 MAX_VISIBLE_ROWS —— 那句话把别的类别也算成了"没画下"
+    return ''
   }
 
   private renderRow(node: Node, row: RowDraft, index: number): void {
@@ -546,6 +633,8 @@ export class BagPanelView extends Component {
   /** 切换到背包里的某个类型页。由编辑器的页签控件调用。 */
   selectBagPage(type: string | null): void {
     this.bagPageType = type
+    // 换道具类别 = 换一份列表，页号留着会停在错位的地方
+    this.page = 0
     this.receipt = null
     this.render()
   }
