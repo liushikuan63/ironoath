@@ -368,8 +368,10 @@ export class BagPanelView extends Component {
     this.canPrev = this.page > 0
     this.canNext = this.page < pages - 1
     if (this.warningLabel !== null) {
-      this.warningLabel.string = warning !== '' ? warning
-        : (paged ? `${pageNotice(this.page, pages)} · 共 ${total} 项` : '')
+      // 说明行被开箱回执占着时**并列**写页码，不是不写：只写回执会让玩家以为这一屏就是全部
+      this.warningLabel.string = !paged ? warning
+        : (warning === '' ? `${pageNotice(this.page, pages)} · 共 ${total} 项`
+          : `${warning} · ${pageNotice(this.page, pages)}`)
     }
     for (const [button, caption, usable] of [
       [this.prevPageButton, this.prevPageCaption, this.canPrev],
