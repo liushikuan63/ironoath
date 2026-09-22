@@ -9,6 +9,7 @@
  *
  * <p>用法：`LABELFIT_BACKEND=http://localhost:8199 node tools/verify-plate-plant.mjs`
  * <p>判据（每个相位都要满足，缺一判红）：植入前 0 处 / 植入后 > 0 处 / 撤掉后 0 处。
+ * 翻页相另加一条：**点到了按钮还不算翻过去**，屏幕上的字形带文本集合必须真的换掉（见 `paged`）。
  * 全程只动浏览器里的节点树 ⇒ 不改源码、不重建，工作树不会留在植入态。
  *
  * <p>用的是横扫同一份 `planPlateCoverage`（`tools/lib/plate-coverage.mjs`）——
@@ -33,7 +34,13 @@ const PORT = Number(process.env.PLANT_PORT ?? 8197)
  * 八个页签/联盟/翻页相位 + 17 个默认相，全部要做正例：只在 quest 上标定过的话，
  * 其余各屏的"0 处"就仍然只是"没量出东西"而不是"证明了没有"（台账 #411/#412）。
  * `tab` 为 null 表示默认相（不点页签）；`joined` 置起「已入盟」开关（见 `tools/lib/social-fixtures.mjs`）；
- * `pageAction` 是翻页相要点的行内按钮文本（见 `tools/lib/panel-clicks.mjs`）。
+ * `pageAction` 是翻页相要点的行内按钮文本（见 `tools/lib/panel-clicks.mjs`），点了还必须真换屏（见 `pageToNext`）。
+ *
+ * <p><b>为什么翻页相只有这一例</b>（2026-09-22 逐相取证，台账 #444）：全客户端只有三处会画「下一页」——
+ * `SocialPanelView.drawRows`（`pages > 1` 才加那一行）、`PowerPanelView.drawPager`、`TargetSearchView`。
+ * 17 个默认相里有 15 个所在的面板**根本没有翻页行**（背包/邮件/战报/任务/部队那一族用 ScrollView），
+ * 四张排行榜榜行为 0 颗（`下一页` 那颗连监听都没挂，`canNext` 是服务端给的），目标搜索在首次搜索前
+ * `changePage` 直接 return ⇒ 只有「已入盟」那一屏（夹具 9 项 > 一屏容量）有真第二屏。
  */
 const DEFAULT_PANELS = ['city', 'army', 'hero', 'gacha', 'bag', 'stage', 'reports', 'quest',
   'battlePass', 'mail', 'social', 'power', 'shop', 'avatarFrames', 'targets', 'world', 'settings']
@@ -49,7 +56,7 @@ const PHASES = [
   { tag: 'social/rally', panel: 'social', tab: 'Tab_rally' },
   // #420 才有夹具、#423 才搬进这一份：这一相从前的"报 0 处"只是"没量过"，不是"证明了没有"
   { tag: 'social/alliance-joined', panel: 'social', tab: 'Tab_alliance', joined: true },
-  // 翻页相：第二屏的行从前只被横扫量过，植入正例没证过 ⇒ 点不到「下一页」这一相直接判不合格
+  // 翻页相：第二屏的行从前只被横扫量过，植入正例没证过 ⇒ 点不到「下一页」、或点了屏幕没换，都判不合格
   { tag: 'social/alliance-joined#p2', panel: 'social', tab: 'Tab_alliance', joined: true,
     pageAction: '下一页' },
   ...DEFAULT_PANELS,
@@ -130,6 +137,45 @@ async function measure(page, panel, wantText = null) {
   return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit }
 }
 
+/**
+ * 这一屏上"有哪些字"（像素法切出的字形带文本，与 `measure` 读同一份计划）。
+ *
+ * <p>只用来证"换了屏"，不截图 ⇒ 一次树遍历的量级。
+ */
+async function bandTexts(page, panel) {
+  const plan = await page.evaluate(planPlateCoverage, panel)
+  return plan === null ? null : plan.bands.map((b) => b.text)
+}
+
+/**
+ * 翻页相要"真翻过去了"。
+ *
+ * <p><b>为什么"点到了壳"不够</b>：`clickRowAction` 按文本找到 Label、再沿祖先链爬到名字对得上的壳
+ * `emit('touch-start')`，而**那颗壳未必挂着处理器**（社交面板的 `renderRow` 只在
+ * `actionEnabled` 为真时才 `on('touch-start')`），甚至挂了也可能是空转
+ * （目标搜索的 `changePage` 在 `response === null` 时直接 return，而首次搜索前两颗翻页键是活的）。
+ * 两种情况下 `paged` 都会是 true，于是这一相把**第一屏量了两遍**还报绿 ——
+ * 与 #424 抓到的"`ok` 里没有 `switched`"是同一族的空转。
+ *
+ * <p>判据因此是"点得到 **且** 屏上的字形带集合确实换了"（对称差非空）。
+ */
+async function pageToNext(page, panel, actionText) {
+  const pre = await bandTexts(page, panel)
+  const clicked = await page.evaluate(clickRowAction, actionText)
+  await page.waitForTimeout(1500)
+  const post = await bandTexts(page, panel)
+  if (pre === null || post === null) {
+    return { paged: false, proof: `点击=${clicked}·换屏=读不到那一屏` }
+  }
+  const gone = pre.filter((t) => !post.includes(t)).length
+  const added = post.filter((t) => !pre.includes(t)).length
+  return {
+    paged: clicked === true && (gone > 0 || added > 0),
+    // 这一串里不许有空格：逐相读数行由 `翻页=(\S+)` 抓，空格会把生成器的条数自检搅成假红
+    proof: `点击=${clicked}·换出${gone}·换进${added}`,
+  }
+}
+
 const results = []
 for (const phase of PHASES) {
   // 「已入盟」那一屏要摘要里的 alliance 非 null 才画得出来（三份桩跟着这个开关一起翻），
@@ -143,9 +189,15 @@ for (const phase of PHASES) {
   // 先藏新手引导板：不藏的话植入可能落在引导遮罩底下，像素不变 ⇒ 假失败
   await hideGuideOverlay(page)
   const switched = phase.tab === null || await page.evaluate(clickTabNode, phase.tab)
-  // 翻页相要点「下一页」才量得到第二屏；点不到就是**那一屏从没量过**，不能算过（见下面 ok 里那条）
-  const paged = phase.pageAction === undefined
-    || await page.evaluate(clickRowAction, phase.pageAction)
+  await page.waitForTimeout(1500)
+  // 翻页相要点到「下一页」**并且真换了一屏**才量得到第二屏；点不到或点了没反应都判不合格（见 `pageToNext`）
+  let paged = true
+  let pageProof = '非翻页相'
+  if (phase.pageAction !== undefined) {
+    const p = await pageToNext(page, phase.panel, phase.pageAction)
+    paged = p.paged
+    pageProof = p.proof
+  }
   await page.waitForTimeout(1500)
   const before = await measure(page, phase.panel)
   const planted = await page.evaluate(([panelKey, alpha]) => {
@@ -206,9 +258,10 @@ for (const phase of PHASES) {
     && switched === true && paged === true
     // 走到但没量到字，等于这一相没验过 —— 与 switched/paged 同一类"别把空转当通过"
     && before.bands >= (BAND_FLOORS[phase.tag] ?? 1)
-  results.push({ tag: phase.tag, switched, paged, before: before.hits, planted, after: after.hits,
-    plantedHit: after.plantedHit === true, reverted: reverted.hits, bands: before.bands, ok })
-  console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged} 字形带=${before.bands} 条（下限 ${BAND_FLOORS[phase.tag] ?? 1}）；植入前 ${before.hits} → `
+  results.push({ tag: phase.tag, switched, paged, pageProof, before: before.hits, planted,
+    after: after.hits, plantedHit: after.plantedHit === true, reverted: reverted.hits,
+    bands: before.bands, ok })
+  console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged}(${pageProof}) 字形带=${before.bands} 条（下限 ${BAND_FLOORS[phase.tag] ?? 1}）；植入前 ${before.hits} → `
     + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true}）→ 撤掉后 ${reverted.hits}；`
     + `植入=${JSON.stringify(planted)} ⇒ ${ok ? 'OK' : '不合格'}`)
   await page.close()
