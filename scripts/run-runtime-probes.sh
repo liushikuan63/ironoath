@@ -9,26 +9,48 @@
 set -u
 cd "$(dirname "$0")/.."
 i=0
-OUT="${RUNTIME_PROBES_OUT:-"$OUT"}"
+# 三个默认值都必须自己成立：#416 那版把 `RUNTIME_PROBES_OUT` 的默认写成 `${...:-"$OUT"}`
+# （自引用，`set -u` 下无参跑当场 "OUT: unbound variable"），把清单默认写成 `<(...)` 塞进参数展开
+# （不是进程替换，是字文件名），于是**无参整批跑这条路从来没通过** —— 当时只验了自己敲过的那条。
+BACKEND="${BACKEND:-http://localhost:8199}"
+OUT="${RUNTIME_PROBES_OUT:-/d/tmp/runtime-probes-exitcodes.txt}"
+LIST="${1:-}"
+if [ -z "$LIST" ]; then
+  LIST="$(mktemp -t runtime-probes-list.XXXXXX)"
+  ls tools/verify-*-runtime.mjs > "$LIST"
+fi
 : > "$OUT"
 while read -r f; do
   i=$((i + 1))
   base="$(basename "$f")"
   case "$base" in
     verify-label-fit-runtime.mjs) continue ;;   # 这一份每格都在跑，不必重复
-    verify-art-runtime.mjs)
-      echo "SKIP $base 需要 ART_VERIFY_OPS_TOKEN（凭据，不代填）" | tee -a "$OUT"
-      continue ;;
   esac
+  # 缺凭据的那几份**按谓词筛**，不按文件名点名（#416 那版只写死了 `verify-art`，
+  # 于是同样要令牌的 `verify-devtools` 被记成一次普通的红，汇总里的"非零份数"就不数了）。
+  tok_env="$(grep -oE 'process\.env\.[A-Z_]*TOKEN[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
+  if [ -n "$tok_env" ] && [ -z "${!tok_env:-}" ]; then
+    echo "SKIP $base 需要 $tok_env（凭据，不代填）" | tee -a "$OUT"
+    continue
+  fi
   backend_env="$(grep -oE 'process\.env\.[A-Z_]*BACKEND[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
   port_env="$(grep -oE 'process\.env\.[A-Z_]*PORT[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
   [ -z "$backend_env" ] && backend_env="BACKEND_ORIGIN"
   [ -z "$port_env" ] && port_env="PROBE_PORT"
   port=$((8200 + i))
-  log="${RUNTIME_PROBES_LOGDIR:-/d/tmp}/probe-$base.log"
-  env "$backend_env=http://localhost:8199" "$port_env=$port" node "$f" > "$log" 2>&1
+  logdir="${RUNTIME_PROBES_LOGDIR:-/d/tmp}"
+  mkdir -p "$logdir"
+  log="$logdir/probe-$base.log"
+  env "$backend_env=$BACKEND" "$port_env=$port" node "$f" > "$log" 2>&1
   code=$?
+  # 日志空 = 这一份**根本没跑成**（重定向失败、node 没起来…），它的退出码和被测系统无关。
+  # 不标出来的话，"没跑"会被记成一次普通的红或绿 —— #416 那版 just 这么把 `RUNTIME_PROBES_LOGDIR`
+  # 指到一个不存在的目录，就得到一个凭空虚记的 "1"。
+  if [ ! -s "$log" ]; then
+    code="NO-RUN"
+  fi
   echo "$code $base ($backend_env, port $port)" | tee -a "$OUT"
-done < "${1:-<(ls tools/verify-*-runtime.mjs)}"
-echo "--- 汇总：非零退出的份数 = $(grep -cvE '^0 ' "$OUT")"
-grep -vE '^0 ' "$OUT" || true
+done < "$LIST"
+# SKIP 不是红：汇总只数真正跑过而非零的那些，否则"非零份数"又变成一个要人脑内过滤的数
+echo "--- 汇总：非零退出的份数 = $(grep -cvE '^(0 |SKIP )' "$OUT")  SKIP 的份数 = $(grep -c '^SKIP ' "$OUT")"
+grep -vE '^(0 |SKIP )' "$OUT" || true
