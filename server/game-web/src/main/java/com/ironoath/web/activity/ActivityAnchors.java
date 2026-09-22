@@ -6,7 +6,6 @@ import org.springframework.stereotype.Component;
 
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.player.PlayerRepository;
-import com.ironoath.core.player.PlayerSave;
 
 /**
  * 职责：活动窗口的两块锚点（B17 §五① 的双锚点）—— 全服锚与玩家锚，各自只有一处实现。
@@ -64,6 +63,8 @@ public class ActivityAnchors {
      * "玩家首次登录时刻"。读不到存档时返回 0 —— 核心会退化为全服锚（那是"这个人还没有个人锚"）。
      */
     public long playerAnchorMs(String playerId) {
-        return players.findByPlayerId(playerId).map(PlayerSave::createdAt).orElse(0L);
+        // 只要建档时刻：走窄读口，不要 findByPlayerId —— 为一位数搬整份存档
+        // （资源表 / PVP 账本 / 科技 / 头像框集合），而这条挂在每条活动事件上
+        return players.findCreatedAt(playerId).orElse(0L);
     }
 }

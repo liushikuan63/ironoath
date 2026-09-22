@@ -3,6 +3,7 @@ package com.ironoath.core.player;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
  * 职责：玩家存档仓储端口（六边形架构的抽象侧）。
@@ -66,6 +67,23 @@ public interface PlayerRepository {
      * @param playerIds 要查的玩家 id；null 或空集合返回空 map
      */
     Map<String, PlayerBrief> findBriefs(Collection<String> playerIds);
+
+    /**
+     * 只读<b>建档时刻</b>（注册时刻）—— 活动窗口锚点这类"只要一个时间戳"的读法用这条，
+     * 不要用 {@link #findByPlayerId}：那为一位数搬回整份存档（资源表、PVP 账本、科技、
+     * 礼包弹窗账本、已拥有的头像框集合），而它在锚点上没有任何用处。
+     *
+     * <p>与 {@link #findBriefs} 的分工不重叠：那一条是<b>批量列表行</b>（昵称 / 城等 / 活跃 / 展示战力），
+     * 这一条是<b>单人的一个时间戳</b>。把 {@code createdAt} 塞进 {@link PlayerBrief} 看似省一个方法，
+     * 实际会让每一张列表都白投一列，而那四列是判据点名的字段集合 —— 类型上就该看得见"没人用它"。
+     *
+     * <p><b>为什么这一位可以不加锁也不 copy</b>：建档时刻是身份字段，建号写一次之后不再有写手
+     * （{@code PlayerDocument} 上那条 mongo-save-exempt 注释就是这件事的登记），
+     * 所以不存在 {@link #findBriefs} 里 {@code lastLoginAt} 那种与并发登录抢读的撕裂风险。
+     *
+     * @param playerId 玩家 id；null / 空白 / 查不到都返回 {@link OptionalLong#empty()}
+     */
+    OptionalLong findCreatedAt(String playerId);
 
     /**
      * 原子插入：仅当 deviceId 尚未存在时才写入。

@@ -18,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /**
@@ -107,6 +108,28 @@ public final class MongoPlayerStore implements PlayerRepository {
     static Query briefQuery(Set<String> ids) {
         Query query = Query.query(Criteria.where("_id").in(ids));
         query.fields().include("nickName", "cityLevel", "lastLoginAt", "power");
+        return query;
+    }
+
+    @Override
+    public OptionalLong findCreatedAt(String playerId) {
+        if (playerId == null || playerId.isBlank()) {
+            return OptionalLong.empty();
+        }
+        PlayerCreatedAtDocument doc = mongo.find(createdAtQuery(playerId),
+                        PlayerCreatedAtDocument.class, PlayerDocument.COLLECTION)
+                .stream().findFirst().orElse(null);
+        // 老文档没有 createdAt 这一位时读成 0：调用方按"这个人还没有个人锚"处理，不是报错
+        return doc == null ? OptionalLong.empty() : OptionalLong.of(doc.createdAt());
+    }
+
+    /**
+     * 建档时刻那条窄读查询。与 {@link #briefQuery} 同一条理由单独抽出来：
+     * 窄读口省的是字节，而字节在往返计数上不可见 —— 只能直接断言这条查询。
+     */
+    static Query createdAtQuery(String playerId) {
+        Query query = Query.query(Criteria.where("_id").is(playerId));
+        query.fields().include("createdAt");
         return query;
     }
 

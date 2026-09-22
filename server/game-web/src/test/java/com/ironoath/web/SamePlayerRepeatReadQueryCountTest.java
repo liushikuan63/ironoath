@@ -52,7 +52,8 @@ import com.ironoath.web.store.memory.InMemoryPlayerStore;
  * 读别人的档）。计数键因此多带一个入参：只数"读了谁的档"。
  *
  * <p><b>两处落点</b>：① 入盟申请通知（乘数 = 有权限被通知的官员数，一盟最多 150 人）；
- * ② 一键帮助（乘数 = 本次真正帮到的条数，能一次帮满当天的额度）。
+ * ② 一键帮助（曾经的乘数 = 本次真正帮到的条数 —— 每条帮助都把活动锚点算一遍，而锚点只要建档时刻
+ * 却走 {@code findByPlayerId} 搬整档；台账 #447 用窄读口 {@code findCreatedAt} 把它归零）。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -130,7 +131,7 @@ class SamePlayerRepeatReadQueryCountTest {
     }
 
     @Test
-    @DisplayName("一键帮助：本人存档 = 昵称一次 + 每条任务推进一次；帮 2 条时改之前是 4 次")
+    @DisplayName("一键帮助：整条路径上本人存档只读一次（昵称）；帮 2 条时曾是 3 次")
     void helperSaveIsReadOnceForTheNicknameNotOncePerHelpedRequest() {
         String helper = newPlayer("帮助者");
         String a = newPlayer("被帮甲");
@@ -141,11 +142,12 @@ class SamePlayerRepeatReadQueryCountTest {
         counter.reset();
         HelpResp two = social.helpAll(helper, NOW);
         assertThat(two.helped()).as("夹具前提：两条都帮到了").isEqualTo(2);
-        // 期望式 = 昵称那一次 + 每条帮助推进 HELP_SQUAD 时各一次（后者是任务域逐条落账，不是本格的缺陷）。
-        // 改之前昵称那一项变成 K 次 ⇒ 帮 2 条读到 4 次，这一条就是它的红。
+        // 改之前这里是 1 + 条数：昵称一次，外加每条帮助把活动锚点算一遍 —— 而锚点只要建档时刻，
+        // 却走 findByPlayerId 把整份存档搬回来（台账 #447：窄读口 findCreatedAt 之后这一项归零）。
+        // 写成绝对值而不是"1 + 条数"：留解释式的式子等于把那个缺陷当规格供起来。
         assertThat(counter.readsOf("findByPlayerId", helper))
-                .as("帮 2 条：昵称 1 次 + 任务推进 2 次 = 3 次")
-                .isEqualTo(1 + 2);
+                .as("帮 2 条也只读昵称那一次：活动锚点走 findCreatedAt，不再搬整档")
+                .isEqualTo(1);
 
         String c = newPlayer("被帮丙");
         seedHelp(c, "bld_c");
@@ -153,8 +155,8 @@ class SamePlayerRepeatReadQueryCountTest {
         HelpResp oneMore = social.helpAll(helper, NOW);
         assertThat(oneMore.helped()).as("夹具前提：第三条也帮到了").isEqualTo(1);
         assertThat(counter.readsOf("findByPlayerId", helper))
-                .as("帮 1 条：昵称 1 次 + 任务推进 1 次 = 2 次 —— 与上面那条合起来才说明昵称不随条数长")
-                .isEqualTo(1 + 1);
+                .as("与上面那条合起来才说明这一项既不随条数长、也不是靠夹具侥幸")
+                .isEqualTo(1);
 
         assertThat(titleOf(a)).contains("帮助者 帮助了你：");
         assertThat(titleOf(b)).contains("帮助者 帮助了你：");

@@ -64,4 +64,23 @@ class PlayerBriefProjectionQueryTest {
                 .as("被点名的 id 原样进 $in，一个不多一个不少")
                 .isEqualTo(new java.util.HashSet<>(IDS));
     }
+
+    @Test
+    @DisplayName("窄读口那条查询只投影 createdAt、按一个 _id 取：字节这一维只有这里能红")
+    void theCreatedAtQueryNarrowsToASingleColumnAndASingleId() {
+        Query query = MongoPlayerStore.createdAtQuery("P-甲");
+
+        assertThat(query.getFieldsObject())
+                .as("没带投影就等于为一列时间戳搬整档")
+                .containsEntry("createdAt", 1);
+        assertThat(query.getFieldsObject().keySet())
+                .as("一位不多：这一口只许拿建档时刻")
+                .containsExactly("createdAt");
+        assertThat(query.getQueryObject().keySet())
+                .as("按 _id 等值取一个人，不是 $in、也不是全表")
+                .containsExactly("_id");
+        assertThat(query.getQueryObject().get("_id"))
+                .as("id 原样进条件")
+                .isEqualTo("P-甲");
+    }
 }

@@ -8,6 +8,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -92,6 +93,18 @@ public final class InMemoryPlayerStore implements PlayerRepository {
             }
         }
         return out;
+    }
+
+    @Override
+    public OptionalLong findCreatedAt(String playerId) {
+        if (playerId == null) {
+            return OptionalLong.empty();
+        }
+        PlayerSave stored = byPlayerId.get(playerId);
+        // 不 copy 也不加锁：建档时刻是身份字段，建号那一次写完就没有第二个写手
+        // （见 PlayerDocument.createdAt 上那条 mongo-save-exempt 登记），
+        // 所以这里没有 findBriefs 里 lastLoginAt 那种与并发登录抢读的撕裂风险。
+        return stored == null ? OptionalLong.empty() : OptionalLong.of(stored.createdAt());
     }
 
     @Override

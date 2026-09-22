@@ -174,4 +174,27 @@ class PlayerBriefEquivalenceTest {
                 .as("字段集合就是列表行点的那几项；加字段要连端口注释与两版实现一起改")
                 .containsExactly("playerId", "nickName", "cityLevel", "lastLoginAt", "displayPower");
     }
+
+    @Test
+    @DisplayName("窄读口 findCreatedAt：两版同值、拿的是建档时刻而非登录时刻，取不到回 empty 而不是 0")
+    void theCreatedAtPortAgreesAcrossBothStores() {
+        Assumptions.assumeTrue(db != null,
+                "本机没有可用的 MongoDB（" + TestMongo.uri() + "）—— 两版等价这条今天没跑，跳过不算通过");
+        for (PlayerRepository store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            String mine = id("建档");
+            store.insertIfAbsent(saveOf(mine, "建档甲", 4, 700L));
+            // 故意把登录时刻挪开：建档时刻与它不同时，"窄读口接成 lastLoginAt"这条植入才红得掉
+            store.touchLogin(mine, LOGGED_IN_AT);
+
+            assertThat(store.findCreatedAt(mine))
+                    .as("%s 必须拿建号那一次的 createdAt，不是最近登录", label)
+                    .hasValue(NOW);
+            assertThat(store.findCreatedAt("P-不存在-" + label))
+                    .as("%s 查不到要回 empty：0 会被锚点当成“有个时间戳”夹到 1 用掉", label)
+                    .isEmpty();
+            assertThat(store.findCreatedAt(null)).as("%s null 入参", label).isEmpty();
+            assertThat(store.findCreatedAt("   ")).as("%s 空白 id 不必去问存储", label).isEmpty();
+        }
+    }
 }
