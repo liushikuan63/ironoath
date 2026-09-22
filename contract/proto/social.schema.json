@@ -17,12 +17,14 @@
       "properties": {
         "x": {
           "type": "integer",
-          "format": "int64",
+          "format": "int32",
+          "minimum": 0,
           "description": "横坐标（格）"
         },
         "y": {
           "type": "integer",
-          "format": "int64",
+          "format": "int32",
+          "minimum": 0,
           "description": "纵坐标（格）"
         }
       }

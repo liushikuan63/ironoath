@@ -2070,7 +2070,8 @@ public class SocialAppService {
                 com.ironoath.web.dto.generated.SocialEventType.valueOf(record.type()),
                 record.title(), record.body(),
                 record.coordX() == null || record.coordY() == null
-                        ? null : new SocialCoord(record.coordX(), record.coordY()),
+                        ? null : new SocialCoord(Math.toIntExact(record.coordX()),
+                                Math.toIntExact(record.coordY())),
                 record.relatedId(), record.occurredAt(), record.expiredAt(now));
     }
 
@@ -2539,10 +2540,10 @@ public class SocialAppService {
         }
         // 圈层校验按集结人数放宽（B08 的 √N）：此刻还不知道最终会有几个人，
         // 所以按上限算 —— 上限来自配置而不是发起人填的数字，否则填个大数就能绕过圈层
-        // SocialCoord 的坐标是 long（协议里是 int64），而 Coord.of 收 int：
-        // 世界只有 512×512，超出的坐标在 guardRally 里会被判为越界，所以这里的窄化是安全的
+        // 协议侧已经对齐成与 world 的 Coord 同一个 int32（由 SocialContractParityTest 钉住），
+        // 所以这里不再需要窄化；世界只有 512×512，越界坐标由 guardRally 判掉
         attackGuard.guardRally(playerId,
-                com.ironoath.core.world.Coord.of((int) coord.x(), (int) coord.y()), maxSize, now);
+                com.ironoath.core.world.Coord.of(coord.x(), coord.y()), maxSize, now);
         commitTroops(playerId, troops);
         try {
             Rally rally = Rally.initiate("rally_" + playerId + "_" + now, scope, groupId, playerId,
@@ -2765,7 +2766,7 @@ public class SocialAppService {
                 RallyScope.valueOf(rally.scope().name()),
                 rally.groupId(),
                 rally.initiatorId(),
-                new SocialCoord(rally.targetX(), rally.targetY()),
+                new SocialCoord(Math.toIntExact(rally.targetX()), Math.toIntExact(rally.targetY())),
                 rally.targetType() == null ? null : SocialTargetType.valueOf(rally.targetType()),
                 rally.maxMembers(),
                 rally.joinedCount(),
