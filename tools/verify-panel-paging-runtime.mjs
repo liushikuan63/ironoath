@@ -74,7 +74,26 @@ const SCOUT = Array.from({ length: 3 }, (_, i) => ({
 }))
 
 /**
- * `markers` 只有桩起来的三屏给得起（每一行的标题是我造的、可枚举）。真数据那三屏改判
+ * 商店与外观的夹具：这两屏在 dev 后端上读不到（`/shop/list`、`/player/frames` 都回
+ * 「网络不稳定，正在重试」），而"够不到翻页那一支"是**数据量**问题不是接口问题 ⇒ 桩到画不下为止。
+ * 字段照生成的 `ShopRowView`／`AvatarFrameView` 给全（含两个可空的 itemId／frameId），
+ * `requireMainLevel` 一律 1 —— 等级不够的行客户端仍要画（契约写明"显示成解锁"而不是消失），
+ * 但把它们画成灰行会让"这一行到底画没画"和"够不够得着"两件事混在一个读数里。
+ */
+const SHOP = Array.from({ length: 10 }, (_, i) => ({
+  rowId: `pg_row_${i}`, itemId: `wood`, frameId: null,
+  name: `翻页商品${String(i + 1).padStart(2, '0')}`, currency: 'GOLD', price: 100 + i * 10,
+  refreshType: ['NONE', 'DAILY', 'WEEKLY', 'SEASON'][i % 4],
+  limitCount: 5, used: 0, remaining: 5, requireMainLevel: 1, purchasable: true,
+}))
+const FRAMES = Array.from({ length: 10 }, (_, i) => ({
+  frameId: `pg_frame_${i}`, name: `翻页头像框${String(i + 1).padStart(2, '0')}`,
+  rarity: ['N', 'R', 'SR', 'SSR'][i % 4], placeholderColor: '#8B7D3F',
+  owned: i % 3 !== 0, worn: i === 1,
+}))
+
+/**
+ * `markers` 只有桩起来的五屏给得起（每一行的标题是我造的、可枚举）。真数据那一屏改判
  * "走完的页数 == 屏上承诺的 n"，并把够不到翻页的情形如实报成 SKIP 而不是 PASS。
  */
 const SCREENS = [
@@ -84,15 +103,18 @@ const SCREENS = [
       claimedCount: MAIL.filter((m) => m.claimed || m.rewards.length === 0).length }) } },
   { key: 'bag', routes: ['/bag/list', '/resource/detail'],
     // 背包面板默认落在「资源产出明细」那一页签，行来自 `/resource/detail` 而不是 `/bag/list`
-    // ⇒ 这一屏判"走了几屏 == 屏上承诺的页数"，标题并集那条留给桩起来的那三屏
+    // ⇒ 这一屏判"走了几屏 == 屏上承诺的页数"，标题并集那条留给桩起来的五屏
     stub: { '/bag/list': () => ({ items: BAG_ITEMS, capacityUsed: BAG_ITEMS.length,
       capacityMax: 60 }) } },
   { key: 'reports', routes: ['/battle/reports', '/world/reports'], markers: BATTLE.map((r) => r.opponentName),
     stub: { '/battle/reports': () => ({ reports: BATTLE, serverNow: Date.now() }),
       '/world/reports': () => ({ reports: SCOUT, serverNow: Date.now() }) } },
   { key: 'quest', routes: ['/quest/list'] },
-  { key: 'shop', routes: ['/shop/list'] },
-  { key: 'avatarFrames', routes: ['/player/frames'] },
+  { key: 'shop', routes: ['/shop/list'], markers: SHOP.map((r) => r.name),
+    stub: { '/shop/list': () => ({ currency: 'GOLD', open: true, notice: null, rows: SHOP,
+      balance: 999_999, serverNow: Date.now() }) } },
+  { key: 'avatarFrames', routes: ['/player/frames'], markers: FRAMES.map((f) => f.name),
+    stub: { '/player/frames': () => ({ frames: FRAMES, serverNow: Date.now() }) } },
 ]
 
 /** 页内只读：把这一屏的可见文字、翻页键是否露着、那句页码一次读回来。 */
