@@ -86,7 +86,7 @@ async function openPowerPanel() {
  * 于是"面板没打开"会变成一个假红 —— 探针自己先红在工具用法上。
  */
 const FIND_PANEL = `(game) => game.children
-  .map(c => c.components.find(x => x.constructor && x.constructor.name === 'PowerPanelView'))
+  .map(c => c.getComponent('PowerPanelView'))
   .find(Boolean)`
 
 /** 面板树上所有可见文案（递归收集 Label），**同时记下每一行的纵向位置**。 */
@@ -99,7 +99,7 @@ const LABEL_SNAPSHOT = `(() => {
   const ys = []
   const walk = (node, dy) => {
     const y = dy + node.getPosition().y
-    const label = node.components.find(x => x.constructor && x.constructor.name === 'Label')
+    const label = node.getComponent('cc.Label')
     if (label && label.string) {
       out.push(label.string)
       ys.push(y)
@@ -107,7 +107,7 @@ const LABEL_SNAPSHOT = `(() => {
     for (const child of node.children) walk(child, y)
   }
   walk(panel.node, 0)
-  const transform = panel.node.components.find(x => x.constructor && x.constructor.name === 'UITransform')
+  const transform = panel.node.getComponent('cc.UITransform')
   return {
     active: panel.node.active,
     labels: out,
@@ -217,7 +217,7 @@ const prevHit = await page.evaluate(`(() => {
   const panel = (${FIND_PANEL})(game)
   for (const node of panel.node.children) {
     if (node.name !== 'pager') continue
-    const label = node.children[0] && node.children[0].components.find(x => x.constructor && x.constructor.name === 'Label')
+    const label = node.children[0] && node.children[0].getComponent('cc.Label')
     if (label && label.string === '上一页') {
       node.emit('touch-start')
       return true

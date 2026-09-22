@@ -112,7 +112,7 @@ if (MODE === 'disabled' && status.phase !== null) {
 }
 
 const FIND_PANEL = `(game) => game.children
-  .map(c => c.components.find(x => x.constructor && x.constructor.name === 'PowerPanelView'))
+  .map(c => c.getComponent('PowerPanelView'))
   .find(Boolean)`
 
 const LABEL_SNAPSHOT = `(() => {
@@ -124,7 +124,7 @@ const LABEL_SNAPSHOT = `(() => {
   const ys = []
   const walk = (node, dy) => {
     const y = dy + node.getPosition().y
-    const label = node.components.find(x => x.constructor && x.constructor.name === 'Label')
+    const label = node.getComponent('cc.Label')
     if (label && label.string) {
       out.push(label.string)
       ys.push(y)
@@ -132,7 +132,7 @@ const LABEL_SNAPSHOT = `(() => {
     for (const child of node.children) walk(child, y)
   }
   walk(panel.node, 0)
-  const transform = panel.node.components.find(x => x.constructor && x.constructor.name === 'UITransform')
+  const transform = panel.node.getComponent('cc.UITransform')
   return {
     active: panel.node.active,
     labels: out,

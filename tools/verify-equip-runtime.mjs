@@ -67,12 +67,12 @@ const PANEL_SNAPSHOT = `(() => {
   const ys = []
   const walk = (n, dy) => {
     const y = dy + n.getPosition().y
-    const label = n.components.find(x => x.constructor && x.constructor.name === 'Label')
+    const label = n.getComponent('cc.Label')
     if (label && label.string) { out.push(label.string); ys.push(y) }
     for (const child of n.children) walk(child, y)
   }
   walk(node, 0)
-  const transform = node.components.find(x => x.constructor && x.constructor.name === 'UITransform')
+  const transform = node.getComponent('cc.UITransform')
   return { active: node.active, labels: out, ys, height: transform ? transform.contentSize.height : -1 }
 })()`
 
@@ -157,7 +157,7 @@ if (clicked === 'clicked') {
   const drove = await page.evaluate(`(() => {
     const scene = window.cc.director.getScene()
     const game = scene.getChildByName('Canvas').getChildByName('Game')
-    const boot = game.components.find(c => c.constructor && c.constructor.name === 'GameBootstrap')
+    const boot = game.getComponent('GameBootstrap')
     if (!boot || !boot.root) return false
     void boot.root.openEquip()
     return true
