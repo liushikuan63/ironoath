@@ -288,6 +288,33 @@ export class BagPanelView extends Component {
     // 两颗翻页键与那句页码同一行、摆在行区下方那一格，y 由 render() 跟着最后一行走
     this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
     this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
+
+    const tabs: Array<{ tab: Tab; text: string; x: number }> = [
+      { tab: 'resource', text: '资源明细', x: -60 },
+      { tab: 'bag', text: '背包', x: 60 },
+    ]
+    for (const item of tabs) {
+      const node = new Node(`Tab_${item.tab}`)
+      node.layer = this.node.layer
+      this.node.addChild(node)
+      node.setPosition(new Vec3(item.x, top - 76, 0))
+      node.addComponent(UITransform).setContentSize(new Size(110, 34))
+      if (!applyCommandButton(node, item.tab === this.tab ? 'hover' : 'normal', 110, 34)) {
+        const graphics = node.addComponent(Graphics)
+        graphics.fillColor = COLOR_PANEL
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.roundRect(-55, -17, 110, 34, 5)
+        graphics.fill()
+        graphics.stroke()
+      }
+      const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 16)
+      label.string = item.text
+      this.tabLabels.set(item.tab, label)
+      this.tabButtons.set(item.tab, node)
+      const tab = item.tab
+      node.on('touch-start', (_event: EventTouch) => this.switchTab(tab), this)
+    }
   }
 
   /** 一颗 64×28 的翻页键，照本文件行上那颗动作键的画法。 */
@@ -352,34 +379,6 @@ export class BagPanelView extends Component {
       button.active = paged
       button.setPosition(new Vec3(button.position.x, rowY, 0))
       caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
-    }
-  }
-
-    const tabs: Array<{ tab: Tab; text: string; x: number }> = [
-      { tab: 'resource', text: '资源明细', x: -60 },
-      { tab: 'bag', text: '背包', x: 60 },
-    ]
-    for (const item of tabs) {
-      const node = new Node(`Tab_${item.tab}`)
-      node.layer = this.node.layer
-      this.node.addChild(node)
-      node.setPosition(new Vec3(item.x, top - 76, 0))
-      node.addComponent(UITransform).setContentSize(new Size(110, 34))
-      if (!applyCommandButton(node, item.tab === this.tab ? 'hover' : 'normal', 110, 34)) {
-        const graphics = node.addComponent(Graphics)
-        graphics.fillColor = COLOR_PANEL
-        graphics.strokeColor = COLOR_COPPER_GOLD
-        graphics.lineWidth = 1
-        graphics.roundRect(-55, -17, 110, 34, 5)
-        graphics.fill()
-        graphics.stroke()
-      }
-      const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 16)
-      label.string = item.text
-      this.tabLabels.set(item.tab, label)
-      this.tabButtons.set(item.tab, node)
-      const tab = item.tab
-      node.on('touch-start', (_event: EventTouch) => this.switchTab(tab), this)
     }
   }
 

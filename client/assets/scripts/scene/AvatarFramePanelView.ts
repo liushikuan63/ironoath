@@ -126,6 +126,54 @@ export class AvatarFramePanelView extends Component {
     // 两颗翻页键与那句页码同一行、摆在两端，y 由 render() 跟着最后一行走
     this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
     this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
+
+    // 预览区：一块底板 + 头像 + 框。位置写在一处常量里，渲染时只改颜色与文字
+    const previewY = top - 46 - 62
+    const plate = new Node('PreviewPlate')
+    plate.layer = this.node.layer
+    this.node.addChild(plate)
+    plate.setPosition(new Vec3(0, previewY, 0))
+    plate.addComponent(UITransform).setContentSize(new Size(FRAME_SIZE + 24, FRAME_SIZE + 24))
+    const plateGraphics = plate.addComponent(Graphics)
+    plateGraphics.fillColor = COLOR_PANEL
+    plateGraphics.roundRect(-(FRAME_SIZE + 24) / 2, -(FRAME_SIZE + 24) / 2, FRAME_SIZE + 24, FRAME_SIZE + 24, 8)
+    plateGraphics.fill()
+
+    const avatar = new Node('AvatarPlate')
+    avatar.layer = this.node.layer
+    this.node.addChild(avatar)
+    avatar.setPosition(new Vec3(0, previewY, 0))
+    avatar.addComponent(UITransform).setContentSize(new Size(AVATAR_SIZE, AVATAR_SIZE))
+    const avatarGraphics = avatar.addComponent(Graphics)
+    avatarGraphics.fillColor = COLOR_ROW
+    avatarGraphics.roundRect(-AVATAR_SIZE / 2, -AVATAR_SIZE / 2, AVATAR_SIZE, AVATAR_SIZE, 6)
+    avatarGraphics.fill()
+    this.avatarInitial = this.addLabel('Initial', 0, previewY, COLOR_TEXT, 26)
+
+    const frameNode = new Node('FrameOverlay')
+    frameNode.layer = this.node.layer
+    this.node.addChild(frameNode)
+    frameNode.setPosition(new Vec3(0, previewY, 0))
+    frameNode.addComponent(UITransform).setContentSize(new Size(FRAME_SIZE, FRAME_SIZE))
+    this.frameGraphics = frameNode.addComponent(Graphics)
+
+    this.wornLabel = this.addLabel('Worn', 0, previewY - FRAME_SIZE / 2 - 20, COLOR_TEXT, 16)
+    // 这一行两用：列表还没拉回来时的那句话，或上一次操作的结果
+    this.noticeLabel = this.addLabel('Notice', 0, previewY - FRAME_SIZE / 2 - 44, COLOR_TEXT_DIM, 14)
+    capWidth(this.noticeLabel, PANEL_WIDTH - 2 * PADDING)
+
+    for (let index = 0; index < ROW_POOL_SIZE; index++) {
+      const row = this.createRow(index)
+      this.rowNodes.push(row.node)
+      this.rowSwatch.push(row.swatch)
+      this.rowName.push(row.name)
+      this.rowRarity.push(row.rarity)
+      this.rowState.push(row.state)
+      this.rowButton.push(row.button)
+      this.rowButtonCaption.push(row.buttonCaption)
+      this.rowIds.push(null)
+      this.rowActions.push(null)
+    }
   }
 
   /** 一颗 64×28 的翻页键，照本文件行上那颗动作键的画法。 */
@@ -181,55 +229,6 @@ export class AvatarFramePanelView extends Component {
       button.active = paged
       button.setPosition(new Vec3(button.position.x, rowY, 0))
       caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
-    }
-  }
-
-    // 预览区：一块底板 + 头像 + 框。位置写在一处常量里，渲染时只改颜色与文字
-    const previewY = top - 46 - 62
-    const plate = new Node('PreviewPlate')
-    plate.layer = this.node.layer
-    this.node.addChild(plate)
-    plate.setPosition(new Vec3(0, previewY, 0))
-    plate.addComponent(UITransform).setContentSize(new Size(FRAME_SIZE + 24, FRAME_SIZE + 24))
-    const plateGraphics = plate.addComponent(Graphics)
-    plateGraphics.fillColor = COLOR_PANEL
-    plateGraphics.roundRect(-(FRAME_SIZE + 24) / 2, -(FRAME_SIZE + 24) / 2, FRAME_SIZE + 24, FRAME_SIZE + 24, 8)
-    plateGraphics.fill()
-
-    const avatar = new Node('AvatarPlate')
-    avatar.layer = this.node.layer
-    this.node.addChild(avatar)
-    avatar.setPosition(new Vec3(0, previewY, 0))
-    avatar.addComponent(UITransform).setContentSize(new Size(AVATAR_SIZE, AVATAR_SIZE))
-    const avatarGraphics = avatar.addComponent(Graphics)
-    avatarGraphics.fillColor = COLOR_ROW
-    avatarGraphics.roundRect(-AVATAR_SIZE / 2, -AVATAR_SIZE / 2, AVATAR_SIZE, AVATAR_SIZE, 6)
-    avatarGraphics.fill()
-    this.avatarInitial = this.addLabel('Initial', 0, previewY, COLOR_TEXT, 26)
-
-    const frameNode = new Node('FrameOverlay')
-    frameNode.layer = this.node.layer
-    this.node.addChild(frameNode)
-    frameNode.setPosition(new Vec3(0, previewY, 0))
-    frameNode.addComponent(UITransform).setContentSize(new Size(FRAME_SIZE, FRAME_SIZE))
-    this.frameGraphics = frameNode.addComponent(Graphics)
-
-    this.wornLabel = this.addLabel('Worn', 0, previewY - FRAME_SIZE / 2 - 20, COLOR_TEXT, 16)
-    // 这一行两用：列表还没拉回来时的那句话，或上一次操作的结果
-    this.noticeLabel = this.addLabel('Notice', 0, previewY - FRAME_SIZE / 2 - 44, COLOR_TEXT_DIM, 14)
-    capWidth(this.noticeLabel, PANEL_WIDTH - 2 * PADDING)
-
-    for (let index = 0; index < ROW_POOL_SIZE; index++) {
-      const row = this.createRow(index)
-      this.rowNodes.push(row.node)
-      this.rowSwatch.push(row.swatch)
-      this.rowName.push(row.name)
-      this.rowRarity.push(row.rarity)
-      this.rowState.push(row.state)
-      this.rowButton.push(row.button)
-      this.rowButtonCaption.push(row.buttonCaption)
-      this.rowIds.push(null)
-      this.rowActions.push(null)
     }
   }
 

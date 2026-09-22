@@ -132,6 +132,38 @@ export class ShopPanelView extends Component {
     // 两颗翻页键与那句页码同一行、摆在两端，y 由 render() 跟着最后一行走
     this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
     this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
+
+    const startX = -(SHOP_TABS.length - 1) * TAB_WIDTH / 2
+    SHOP_TABS.forEach((tab, index) => {
+      const node = new Node(`Tab_${tab.currency}`)
+      node.layer = this.node.layer
+      this.node.addChild(node)
+      node.setPosition(new Vec3(startX + index * TAB_WIDTH, top - 112, 0))
+      node.addComponent(UITransform).setContentSize(new Size(TAB_WIDTH - 8, 34))
+      const graphics = node.addComponent(Graphics)
+      graphics.fillColor = COLOR_PANEL
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1
+      graphics.roundRect(-(TAB_WIDTH - 8) / 2, -17, TAB_WIDTH - 8, 34, 5)
+      graphics.fill()
+      graphics.stroke()
+      this.addLabel('Caption', 0, 0, COLOR_TEXT, 15, node).string = tab.label
+      const currency = tab.currency
+      node.on('touch-start', (_event: EventTouch) => this.onTab?.(currency), this)
+      this.tabNodes.set(currency, node)
+    })
+
+    for (let index = 0; index < ROW_POOL_SIZE; index++) {
+      const row = this.createRow(index)
+      this.rowNodes.push(row.node)
+      this.rowName.push(row.name)
+      this.rowPrice.push(row.price)
+      this.rowLimit.push(row.limit)
+      this.rowState.push(row.state)
+      this.rowButton.push(row.button)
+      this.rowButtonCaption.push(row.buttonCaption)
+      this.rowIds.push(null)
+    }
   }
 
   /** 一颗 64×28 的翻页键，照本文件行上「兑换」那颗的画法。 */
@@ -187,39 +219,6 @@ export class ShopPanelView extends Component {
       button.active = paged
       button.setPosition(new Vec3(button.position.x, rowY, 0))
       caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
-    }
-  }
-
-    const startX = -(SHOP_TABS.length - 1) * TAB_WIDTH / 2
-    SHOP_TABS.forEach((tab, index) => {
-      const node = new Node(`Tab_${tab.currency}`)
-      node.layer = this.node.layer
-      this.node.addChild(node)
-      node.setPosition(new Vec3(startX + index * TAB_WIDTH, top - 112, 0))
-      node.addComponent(UITransform).setContentSize(new Size(TAB_WIDTH - 8, 34))
-      const graphics = node.addComponent(Graphics)
-      graphics.fillColor = COLOR_PANEL
-      graphics.strokeColor = COLOR_COPPER_GOLD
-      graphics.lineWidth = 1
-      graphics.roundRect(-(TAB_WIDTH - 8) / 2, -17, TAB_WIDTH - 8, 34, 5)
-      graphics.fill()
-      graphics.stroke()
-      this.addLabel('Caption', 0, 0, COLOR_TEXT, 15, node).string = tab.label
-      const currency = tab.currency
-      node.on('touch-start', (_event: EventTouch) => this.onTab?.(currency), this)
-      this.tabNodes.set(currency, node)
-    })
-
-    for (let index = 0; index < ROW_POOL_SIZE; index++) {
-      const row = this.createRow(index)
-      this.rowNodes.push(row.node)
-      this.rowName.push(row.name)
-      this.rowPrice.push(row.price)
-      this.rowLimit.push(row.limit)
-      this.rowState.push(row.state)
-      this.rowButton.push(row.button)
-      this.rowButtonCaption.push(row.buttonCaption)
-      this.rowIds.push(null)
     }
   }
 
