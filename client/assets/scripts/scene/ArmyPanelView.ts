@@ -320,14 +320,16 @@ export class ArmyPanelView extends Component {
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     title.node.getComponent(UITransform)?.setContentSize(new Size(400, 26))
     title.overflow = Label.Overflow.SHRINK
-    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + 42,
-      -4, COLOR_TEXT_DIM, 14)
-    detail.horizontalAlign = Label.HorizontalAlign.LEFT
-    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    const detail = this.addLabel(node, 'Detail', PANEL_WIDTH / 2 - PADDING - 12,
+      4, COLOR_TEXT_DIM, 14)
+    // 状态行右对齐到行尾：左半是名称与消耗、右半是可用性/锁定原因，
+    // 否则整行右半永远是一条空带（2026-09-26 排版审查实测空约 55% 行宽）。
+    detail.horizontalAlign = Label.HorizontalAlign.RIGHT
+    detail.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
     detail.node.getComponent(UITransform)?.setContentSize(new Size(450, 22))
     detail.overflow = Label.Overflow.SHRINK
     const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING + 42,
-      -22, COLOR_COPPER_GOLD, 13)
+      -24, COLOR_COPPER_GOLD, 14)
     countdown.horizontalAlign = Label.HorizontalAlign.LEFT
     countdown.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     countdown.node.getComponent(UITransform)?.setContentSize(new Size(450, 20))
