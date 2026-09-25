@@ -16,6 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   SCENE_ANCHORS, SCENE_GRID_WIDTH, SCENE_GRID_HEIGHT, sceneAnchorAt, DISTRICT_NAMES,
+  SCENE_VIEW_WIDTH, SCENE_VIEW_HEIGHT,
 } from '../assets/scripts/game/city/CitySceneAnchors'
 
 function repoRoot(): string {
@@ -55,7 +56,10 @@ test('反棋盘：任何一行的水平间距都不许全相等（规格 §3.3 �
 test('锚点几何合法：脚印为正、落在工作视图内、越界格返回 null', () => {
   for (const a of SCENE_ANCHORS) {
     assert.ok(a.footprintWidth > 0 && a.footprintDepth > 0, `${a.anchorId} 脚印非正`)
-    assert.ok(a.x > 0 && a.x < 1000 && a.y > 0 && a.y < 563, `${a.anchorId} 落点越出工作视图`)
+    // 用工作视图常量而不是写死数字：视图尺寸一改（563 → 625 让比例与屏幕同源），
+    // 写死的那份就在这里变成假绿或假红
+    assert.ok(a.x > 0 && a.x < SCENE_VIEW_WIDTH && a.y > 0 && a.y < SCENE_VIEW_HEIGHT,
+      `${a.anchorId} 落点越出工作视图`)
     assert.ok(Object.keys(DISTRICT_NAMES).includes(a.district), `${a.anchorId} 区名未登记`)
   }
   assert.equal(sceneAnchorAt(-1, 0), null)

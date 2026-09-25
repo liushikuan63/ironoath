@@ -48,6 +48,8 @@ const COLOR_PANEL = new Color(40, 33, 27, 255)
  * 不会把问题从"房子对底座"挪成"描边对底座"。
  */
 const COLOR_ART_RIM = new Color(238, 222, 188, 150)
+/** 正稿乘色：把绿底抠图的亮草垫压进底图 sepia 色域，见 paintTile 里用它的那段。 */
+const COLOR_ART_GRADE = new Color(208, 192, 160, 255)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
@@ -500,15 +502,35 @@ export class CityPanelView extends Component {
     this.headerLabel = this.addLabel(card, 'Header', 0, top - 14, COLOR_COPPER_GOLD, 22)
     this.queueLabel = this.addLabel(card, 'Queue', 0, top - 38, COLOR_TEXT, 16)
 
-    // 资源条只占左侧一块，不横跨整屏 —— 满屏城景下横跨会把城压成一条缝。
-    const columnWidth = Math.min(210, this.contentWidth / 4)
-    for (let row = 0; row < 2; row++) {
-      for (let column = 0; column < 3; column++) {
+    // 资源条只占左上角一块，不横跨整屏 —— 满屏城景下横跨会把城压成一条缝，
+    // 而两列三行的底板右缘停在画面中线以左，不会盖住主堡（实测三列会盖住）。
+    const columnWidth = Math.min(165, this.contentWidth / 5.4)
+    const blockLeft = -this.contentWidth / 2 + 14
+    const blockTop = top - 52
+    const rowStep = 20
+    const rows = 3
+    const columns = 2
+    const blockWidth = columnWidth * columns + 12
+    const blockHeight = rowStep * rows + 12
+    // 整块资源区要一块实底：顶部渐变到第二行已经淡得托不住字
+    // （实测「木材 5000/20000」糊在亮山脊上读不出），六行字的对比度
+    // 不该取决于底下那一段城景画的是山还是墙。
+    const plate = new Node('ResourcePlate')
+    plate.layer = card.layer
+    card.addChild(plate)
+    plate.addComponent(UITransform).setContentSize(new Size(blockWidth, blockHeight))
+    plate.setPosition(new Vec3(blockLeft + blockWidth / 2, blockTop - blockHeight / 2 - 2, 0))
+    const plateGraphics = plate.addComponent(Graphics)
+    plateGraphics.fillColor = new Color(14, 11, 9, 172)
+    plateGraphics.roundRect(-blockWidth / 2, -blockHeight / 2, blockWidth, blockHeight, 6)
+    plateGraphics.fill()
+    for (let row = 0; row < rows; row++) {
+      for (let column = 0; column < columns; column++) {
         // 左对齐 + 限定列宽：数值位数由服务端算，不可控（"1000000" 和 "200" 同栏）。
         this.resourceLabels.push(this.addLabel(
           card, `Resource-${row}-${column}`,
-          -this.contentWidth / 2 + 20 + columnWidth * column, top - 62 - row * 18,
-          COLOR_TEXT_DIM, 14, true, columnWidth - 8))
+          blockLeft + 8 + columnWidth * column, blockTop - 8 - row * rowStep,
+          COLOR_TEXT, 15, true, columnWidth - 10))
       }
     }
 
@@ -744,20 +766,24 @@ export class CityPanelView extends Component {
     graphics.stroke()
 
     const left = -this.contentWidth / 2 + 12
-    this.selectedTitle = this.addLabel(bar, 'SelectedTitle', left, 16, COLOR_COPPER_GOLD, 16, true, 220)
-    this.selectedStatus = this.addLabel(bar, 'SelectedStatus', left, -8, COLOR_TEXT_DIM, 13, true, 220)
+    // 按钮簇整体靠右：左半给名字与状态，右半给动作，
+    // 否则满屏城景下选择栏右半永远是一条空带（实测空约 45% 宽）。
+    const clusterLeft = this.contentWidth / 2 - 12 - 430
+    const textCap = Math.max(160, Math.min(300, clusterLeft - left - 8))
+    this.selectedTitle = this.addLabel(bar, 'SelectedTitle', left, 16, COLOR_COPPER_GOLD, 17, true, textCap)
+    this.selectedStatus = this.addLabel(bar, 'SelectedStatus', left, -8, COLOR_TEXT_DIM, 14, true, textCap)
     this.selectedStatus.overflow = Label.Overflow.SHRINK
 
-    this.createActionButton(bar, 'DetailBuildButton', '建造', 0, 'build')
-    this.createActionButton(bar, 'DetailUpgradeButton', '升级', -12, 'upgrade')
-    this.createActionButton(bar, 'DetailCollectButton', '收割', -12, 'collect')
-    this.createActionButton(bar, 'DetailSpeedAdButton', '广告加速', 78, 'speedAd')
-    this.createActionButton(bar, 'DetailSpeedGoldButton', '金币加速', 168, 'speedGold')
+    this.createActionButton(bar, 'DetailBuildButton', '建造', clusterLeft, 'build')
+    this.createActionButton(bar, 'DetailUpgradeButton', '升级', clusterLeft - 12, 'upgrade')
+    this.createActionButton(bar, 'DetailCollectButton', '收割', clusterLeft - 12, 'collect')
+    this.createActionButton(bar, 'DetailSpeedAdButton', '广告加速', clusterLeft + 78, 'speedAd')
+    this.createActionButton(bar, 'DetailSpeedGoldButton', '金币加速', clusterLeft + 168, 'speedGold')
     // 暂停/恢复共用同一个 x：同一时刻只可能显示一个（升级中才可暂停、已暂停才能恢复），
     // 与「升级 / 收割」共用 -12 是同一个做法。
-    this.createActionButton(bar, 'DetailPauseButton', '暂停', 258, 'pause')
-    this.createActionButton(bar, 'DetailResumeButton', '恢复', 258, 'resume')
-    this.createActionButton(bar, 'DetailCancelButton', '取消', 348, 'cancel')
+    this.createActionButton(bar, 'DetailPauseButton', '暂停', clusterLeft + 258, 'pause')
+    this.createActionButton(bar, 'DetailResumeButton', '恢复', clusterLeft + 258, 'resume')
+    this.createActionButton(bar, 'DetailCancelButton', '取消', clusterLeft + 348, 'cancel')
 
     const collectAll = new Node('CollectAllButton')
     collectAll.layer = parent.layer
@@ -981,20 +1007,20 @@ export class CityPanelView extends Component {
       graphics.roundRect(-plateW / 2, -78, plateW, 42, 7)
       graphics.fill()
     }
-    tile.levelLabel.fontSize = onBase ? 15 : 10
+    tile.levelLabel.fontSize = onBase ? 16 : 12
     tile.levelLabel.string = `Lv${row.level}`
     tile.levelLabel.node.active = showIdentity
     if (showIdentity) {
       graphics.fillColor = new Color(16, 13, 11, 235)
-      graphics.circle(badgeX, badgeY, 9)
+      graphics.circle(badgeX, badgeY, onBase ? 10 : 11)
       graphics.fill()
       graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
       graphics.lineWidth = 1
-      graphics.circle(badgeX, badgeY, 9)
+      graphics.circle(badgeX, badgeY, onBase ? 10 : 11)
       graphics.stroke()
       tile.levelLabel.color = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
       tile.levelLabel.node.setPosition(new Vec3(badgeX, badgeY, 0))
-      tile.levelLabel.getComponent(UITransform)?.setContentSize(new Size(20, 14))
+      tile.levelLabel.getComponent(UITransform)?.setContentSize(new Size(26, 18))
     }
 
     // 暂停没有文字可写了（名字与状态都收进下面的选择栏），所以给它一枚实心琥珀点。
@@ -1005,14 +1031,14 @@ export class CityPanelView extends Component {
       graphics.fill()
     }
 
-    tile.nameLabel.fontSize = onBase ? 15 : 10
+    tile.nameLabel.fontSize = onBase ? 16 : 12
     tile.nameLabel.string = row.name
     tile.nameLabel.node.active = showIdentity
     tile.nameLabel.color = row.collectable ? COLOR_GOOD : COLOR_TEXT
-    tile.nameLabel.node.setPosition(new Vec3(0, onBase ? -44 : -13, 0))
+    tile.nameLabel.node.setPosition(new Vec3(0, onBase ? -44 : -15, 0))
     tile.nameLabel.getComponent(UITransform)
-      ?.setContentSize(new Size(Math.max(74, (onBase ? tile.plate.width : iconSide) * 0.9),
-        onBase ? 20 : 13))
+      ?.setContentSize(new Size(Math.max(84, (onBase ? tile.plate.width : iconSide) * 0.9),
+        onBase ? 20 : 16))
     if (onBase) {
       tile.icon.active = false
       tile.iconRim.active = false
@@ -1028,6 +1054,15 @@ export class CityPanelView extends Component {
         iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), iconSide, iconSide)
       }
       tile.icon.active = iconVisible
+      // 正稿是绿底抠图来的，自带一块亮黄绿草垫；直接叠在sepia厚涂的底图上
+      // 会像贴了一张别的游戏的贴纸。乘一层暖灰把草垫压进底图的色域
+      // （整栋一起变暖，与画面光向一致），分离感来自边缘描边而不是色差。
+      if (iconVisible) {
+        const iconSprite = tile.icon.getComponent(Sprite)
+        if (iconSprite !== null) {
+          iconSprite.color = COLOR_ART_GRADE
+        }
+      }
       // 描边只配正稿：图集小图标本来就带一圈浅色描边，再垫一层会变成两圈糊边。
       // 同一张图放大 12%、垫在正稿底下、着暖石亮色 ⇒ 分离来自边缘而不是底色。
       const rimFrame = artKey === null ? null : familyFrame(artKey)

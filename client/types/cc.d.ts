@@ -91,6 +91,8 @@ declare module 'cc' {
     constructor(name?: string)
     name: string
     active: boolean
+    /** 2D 节点绕 Z 轴旋转角度；城墙上沿需要轻微斜置。 */
+    angle: number
     parent: Node | null
     children: ReadonlyArray<Node>
     /**
@@ -184,6 +186,8 @@ declare module 'cc' {
     spriteFrame: SpriteFrame | null
     type: number
     sizeMode: number
+    /** `Sprite` 继承自 2D 渲染器的着色，例如城景描边垫图需要它。 */
+    color: Color
     static Type: {
       SIMPLE: number
       SLICED: number

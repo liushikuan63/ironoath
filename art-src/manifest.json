@@ -263,7 +263,13 @@
       "drafts": "generated/drafts/g7-avatars/g7-avatar-{lord,lady,steward,messenger}-v0.png",
       "raw": "generated/drafts/raw/2026-09-18/g7-avatar-master-2x2-raw.png（拆格）",
       "processedBy": "art-src/process_generated.py；ALL_OK",
-      "purpose": "社交/排行/邮件发件人默认头像" }
+      "purpose": "社交/排行/邮件发件人默认头像" },
+    { "family": "A17-city-stage", "status": "runtime-wired", "batch": "2026-09-19-a17", "generator": "gpt-image-2", "count": 3,
+      "runtime": "client/assets/resources/ui/generated/city/（512² 地面 + 1344×768 山脊 + 768×310 城墙，分包约 292KB）",
+      "drafts": "generated/drafts/a17-stage/{ground,ridge,wall}/city-*-v0.png",
+      "raw": "generated/drafts/raw/2026-09-19/a17-*-raw.png；山脊采用 a17-distant-ridge-v1-raw.png",
+      "processedBy": "art-src/process_stage_assets.py；地面残留接缝 12.3/11.8，城墙残留绿 0.000%",
+      "purpose": "A17 内城舞台：远景山脊、地表重复砖、装饰城墙带；CityPanelView 背景层真实消费" }
   ],
   "generatedAccepted": {
     "generator": "gpt-image-2",
@@ -300,6 +306,11 @@
     "map.entity": {
       "size": [256, 256],
       "keys": ["city", "monster", "resource", "allianceBuilding", "march"]
+    },
+    "city.stage": {
+      "ground": { "path": "generated/drafts/a17-stage/ground/city-ground-cobble-v0.png", "size": [512, 512] },
+      "ridge": { "path": "generated/drafts/a17-stage/ridge/city-ridge-v0.png", "size": [1344, 768] },
+      "wall": { "path": "generated/drafts/a17-stage/wall/city-wall-band-v0.png", "size": [768, 310] }
     }
   },
   "derived": {

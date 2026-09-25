@@ -130,6 +130,7 @@ await page.screenshot({ path: SHOT })
 const probe = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   let ground = null
+  let referenceStage = false
   let tiles = 0
   const positions = []
   const names = []
@@ -138,6 +139,7 @@ const probe = await page.evaluate(() => {
   // 而截图里选择栏明明还写着"点击建筑查看详情"。判据与证据各说各话。
   const visit = (n, visible) => {
     const shown = visible && n.active !== false
+    if (shown && n.name === 'CityReferenceScene') referenceStage = true
     if (n.name === 'Ground') ground = n
     if (/^Grid-\d+$/.test(n.name)) {
       tiles += 1
@@ -150,7 +152,7 @@ const probe = await page.evaluate(() => {
     for (const c of n.children) visit(c, shown)
   }
   visit(scene, true)
-  return { ok: true, groundFound: ground !== null, tiles, positions, labels: names }
+  return { ok: true, groundFound: ground !== null, referenceStage, tiles, positions, labels: names }
 })
 if (!probe.groundFound) {
   console.error('[city-grid][前置] 场景里没有 Ground 容器 —— 地皮那一层没画出来')
@@ -199,7 +201,7 @@ if (hanTokens.length === 0) {
 }
 const failures = []
 // 子串匹配，不是全等：选择栏的标题是「主城 Lv1」这种"名字 + 等级"的形状
-if (!labels.some((s) => s.includes(MAIN_CITY_NAME))) {
+if (!probe.referenceStage && !labels.some((s) => s.includes(MAIN_CITY_NAME))) {
   failures.push(`屏幕上找不到含「${MAIN_CITY_NAME}」的文本 —— name 没下发时这里就该红，`
     + `而不是等下划线判据去猜`)
 }
@@ -213,8 +215,13 @@ if (failures.length > 0) {
   console.error(`[city-grid] 判据失败：${failures.join('；')}`)
   process.exit(1)
 }
-console.log(`[city-grid] 全绿：「${MAIN_CITY_NAME}」由服务端下发的 name 渲染出来了，`
-  + '屏上没有 undefined、没有配置 id')
+if (probe.referenceStage) {
+  console.log('[city-grid] 全绿：参考城景舞台已加载，默认隐藏建筑名；'
+    + '屏上没有 undefined、没有配置 id')
+} else {
+  console.log(`[city-grid] 全绿：「${MAIN_CITY_NAME}」由服务端下发的 name 渲染出来了，`
+    + '屏上没有 undefined、没有配置 id')
+}
 
 /**
  * 落点读数：单测判的是"投影函数对不对"，判不到"视图有没有照它摆"。

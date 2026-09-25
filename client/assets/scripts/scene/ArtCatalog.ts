@@ -15,7 +15,7 @@ import {
   Graphics, JsonAsset, Node, Rect, resources, Size, Sprite, SpriteFrame, Texture2D,
   UITransform, Vec2,
 } from 'cc'
-import { ArtFamily, FAMILY_ASSETS } from '../game/art/ArtFamilies'
+import { ArtFamily, CITY_STAGE_ASSETS, FAMILY_ASSETS } from '../game/art/ArtFamilies'
 
 type StaticArtKey =
   | 'ui.panel.kingdom'
@@ -24,6 +24,10 @@ type StaticArtKey =
   | 'ui.button.chip.disabled'
   | 'ui.nav.tab'
   | 'ui.nav.tab.selected'
+  | 'city.ridge'
+  | 'city.ground'
+  | 'city.wall'
+  | 'city.scene.reference'
   | 'map.terrain.grass'
   | 'map.entity.city'
   | 'map.entity.monster'
@@ -123,6 +127,10 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.nav.tab.selected': {
     path: 'ui/generated/ui/nav-tab-selected-v1',
   },
+  'city.ridge': { path: CITY_STAGE_ASSETS.ridge },
+  'city.ground': { path: CITY_STAGE_ASSETS.ground },
+  'city.wall': { path: CITY_STAGE_ASSETS.wall },
+  'city.scene.reference': { path: CITY_STAGE_ASSETS.reference },
   'map.terrain.grass': { path: TERRAIN_GRASS_PATH },
   'map.entity.city': { path: 'ui/generated/map/map-player-city-v1' },
   'map.entity.monster': { path: 'ui/generated/map/map-monster-camp-v1' },
@@ -219,6 +227,10 @@ function loadOne(key: StaticArtKey, spec: ArtSpec): Promise<boolean> {
     if (frame === null) {
       console.warn(`[ArtCatalog] 资源加载失败：${key}`)
       return false
+    }
+    // A17 地表砖是 TILED 用法，目标通常大于 512×512；不改成 REPEAT 会把边缘拉成条带。
+    if (key === 'city.ground') {
+      enableTextureRepeat(frame)
     }
     frames.set(key, frame)
     return true
@@ -371,9 +383,14 @@ export function applySlicedSprite(node: Node, key: ArtKey, width: number, height
   return applySprite(node, key, Sprite.Type.SLICED, width, height)
 }
 
-/** 用 TILED Sprite 铺满节点；地图地面用它。 */
-export function applyTiledSprite(node: Node, key: ArtKey, width: number, height: number): boolean {
-  return applySprite(node, key, Sprite.Type.TILED, width, height)
+/** 用 TILED Sprite 铺满节点；地图地面用它。
+ *
+ * <p>`tileScale` 把平铺周期放大：地貌块是 256² 的整幅画，按原生尺寸平铺时
+ * 同一个山形每 ~95px 重复一次，整张地图读成壁纸。放大周期不破坏无缝性
+ * （平铺的纹理放大后仍然无缝），只是让重复稀疏到读不出网格。 */
+export function applyTiledSprite(node: Node, key: ArtKey, width: number, height: number,
+                                 tileScale = 1): boolean {
+  return applySprite(node, key, Sprite.Type.TILED, width, height, tileScale)
 }
 
 /** 用 SIMPLE Sprite 替换节点画面；地图实体与行军图标用它。 */
@@ -386,8 +403,8 @@ export function applyIconSprite(node: Node, key: IconArtKey, width: number, heig
 }
 
 export function applyTerrainSprite(node: Node, index: number,
-                                   width: number, height: number): boolean {
-  return applyTiledSprite(node, terrainArtKey(index), width, height)
+                                   width: number, height: number, tileScale = 1): boolean {
+  return applyTiledSprite(node, terrainArtKey(index), width, height, tileScale)
 }
 
 /**
@@ -435,26 +452,31 @@ export function clearSprite(node: Node): void {
 }
 
 function applySprite(node: Node, key: ArtKey, type: number,
-                     width: number, height: number): boolean {
+                     width: number, height: number, tileScale = 1): boolean {
   const frame = artFrame(key)
   if (frame === null) {
     clearSprite(node)
     return false
   }
-  paintSprite(node, frame, type, width, height)
+  paintSprite(node, frame, type, width, height, tileScale)
   return true
 }
 
 /** 把一张 SpriteFrame 铺到节点上，并显式关掉 Graphics 底画。 */
 function paintSprite(node: Node, frame: SpriteFrame, type: number,
-                     width: number, height: number): void {
+                     width: number, height: number, tileScale = 1): void {
   const graphics = node.getComponent(Graphics)
   const sprite = node.getComponent(Sprite) ?? node.addComponent(Sprite)
   sprite.spriteFrame = frame
   sprite.type = type
   sprite.sizeMode = Sprite.SizeMode.CUSTOM
   sprite.enabled = true
-  node.getComponent(UITransform)?.setContentSize(new Size(width, height))
+  // TILED 的平铺周期跟着节点缩放走：盒子缩到 1/scale、节点放大 scale，
+  // 覆盖面积不变而 motif 变大。SIMPLE 一律复位到 1，免得池化复用时带上一次的缩放。
+  const scaled = type === Sprite.Type.TILED && tileScale > 1
+  node.getComponent(UITransform)?.setContentSize(new Size(
+    scaled ? width / tileScale : width, scaled ? height / tileScale : height))
+  node.setScale(scaled ? tileScale : 1, scaled ? tileScale : 1, 1)
   if (graphics !== null) {
     // Cocos 的 Graphics 在 enabled=false 后仍可能保留上一次生成的几何；
     // 先 clear 掉旧画面，避免它继续盖在 Sprite 上。

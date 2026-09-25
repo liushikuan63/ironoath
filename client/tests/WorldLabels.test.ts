@@ -24,7 +24,7 @@ import {
   CAPTION_PLATE_HEIGHT, captionBox, captionPlateWidth, captionPriority, entityCaption,
   pickVisibleCaptions,
 } from '../assets/scripts/game/world/WorldLabels'
-import type { CaptionCandidate } from '../assets/scripts/game/world/WorldLabels'
+import type { CaptionCandidate, CaptionViewport } from '../assets/scripts/game/world/WorldLabels'
 
 function repoRoot(): string {
   let dir = process.cwd()
@@ -109,11 +109,20 @@ test('任何一类实体的文案都不会是 undefined / null 的字面量形�
 const CELL = 30
 
 function plate(key: string, type: WorldEntityType, centerX: number, caption: string, pinned = false): CaptionCandidate {
-  return { key, type, box: captionBox(centerX, 0, 15, caption), pinned }
+  return plateAt(key, type, centerX, 0, caption, pinned)
+}
+
+function plateAt(key: string, type: WorldEntityType, centerX: number, centerY: number,
+                 caption: string, pinned = false): CaptionCandidate {
+  return { key, type, box: captionBox(centerX, centerY, 15, caption), pinned }
 }
 
 function keptKeys(candidates: readonly CaptionCandidate[]): string[] {
   return Array.from(pickVisibleCaptions(candidates)).sort()
+}
+
+function keptKeysIn(candidates: readonly CaptionCandidate[], viewport: CaptionViewport): string[] {
+  return Array.from(pickVisibleCaptions(candidates, viewport)).sort()
 }
 
 test('牌盒尺寸由文案算出：宽按字数、高就是画出来的那一条', () => {
@@ -188,4 +197,20 @@ test('结果与输入顺序无关：同一帧重画不能让牌子闪来闪去',
   const forward = keptKeys(candidates)
   const backward = keptKeys([...candidates].reverse())
   assert.deepEqual(backward, forward, '倒序输入选出另一批牌 ⇒ 每帧谁先占位是随机的')
+})
+
+test('视口裁剪：顶 HUD、底导航、左右越界和 pinned 牌都不许画进 HUD', () => {
+  const viewport: CaptionViewport = { minX: -100, maxX: 100, minY: -80, maxY: 80 }
+  assert.deepEqual(keptKeysIn([plateAt('RESOURCE:ok', 'RESOURCE', 0, 0, '石料')], viewport),
+    ['RESOURCE:ok'], '安全区中央的牌应保留')
+  assert.deepEqual(keptKeysIn([plateAt('RESOURCE:top', 'RESOURCE', 0, 75, '石料')], viewport),
+    [], '压进顶 HUD 的牌必须裁掉')
+  assert.deepEqual(keptKeysIn([plateAt('RESOURCE:bottom', 'RESOURCE', 0, -95, '石料')], viewport),
+    [], '压进底导航的牌必须裁掉')
+  assert.deepEqual(keptKeysIn([plateAt('RESOURCE:left', 'RESOURCE', -90, 0, '石料')], viewport),
+    [], '左边越界的牌必须裁掉')
+  assert.deepEqual(keptKeysIn([plateAt('RESOURCE:right', 'RESOURCE', 90, 0, '石料')], viewport),
+    [], '右边越界的牌必须裁掉')
+  assert.deepEqual(keptKeysIn([plateAt('RESOURCE:pinned', 'RESOURCE', 0, 75, '石料', true)], viewport),
+    [], 'pinned 只保证不被同类挤掉，不能突破 HUD 安全区')
 })

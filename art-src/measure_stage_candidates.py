@@ -89,6 +89,7 @@ def main():
     ap.add_argument('--dir', default='art-src/generated/drafts/raw/2026-09-19')
     ap.add_argument('--width', type=int, default=1280, help='舞台显示宽（默认取 web-mobile 常见横屏基准）')
     ap.add_argument('--height', type=int, default=720)
+    ap.add_argument('--prefix', default='a17-', help='只量文件名带此前缀的候选')
     ap.add_argument('--only', default='', help='只量文件名含此子串的候选')
     args = ap.parse_args()
 
@@ -97,10 +98,11 @@ def main():
               "（修复：在仓库根执行，或先生成候选底图）")
         return 2
     cands = [n for n in sorted(os.listdir(args.dir))
-             if n.endswith('.png') and n.startswith('a17-')
+             if n.endswith('.png') and n.startswith(args.prefix)
              and (args.only == '' or args.only in n)]
     if not cands:
-        print(f"[stage-measure][FAIL-前置] {args.dir} 下没有 a17-* 候选，本判据会恒绿 —— 判据失效不是通过")
+        print(f"[stage-measure][FAIL-前置] {args.dir} 下没有 {args.prefix}* 候选，"
+              "本判据会恒绿 —— 判据失效不是通过")
         return 2
 
     print(f"[stage-measure] 舞台基准 {args.width}x{args.height}，量化 {QUANTIZE_COLORS} 色，"
@@ -114,7 +116,7 @@ def main():
                   f"解码 {r['decode_bytes'] / 1048576:5.2f}MB  "
                   f"铺满舞台需 {r['tiles_to_cover_stage']} 张  "
                   f"接缝 左右{r['seam_h']:5.1f} 上下{r['seam_v']:5.1f}")
-            if name.startswith('a17-ground-tile') and max(r['seam_h'], r['seam_v']) > SEAM_MAX:
+            if 'ground' in name and max(r['seam_h'], r['seam_v']) > SEAM_MAX:
                 seam_failures.append(f"{name} @ {r['size']}：左右 Δ={r['seam_h']}、上下 Δ={r['seam_v']}"
                                      f" > {SEAM_MAX:g}")
     if seam_failures:
