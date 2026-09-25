@@ -25,8 +25,12 @@ const { ccclass } = _decorator
 
 /** 配色沿用各面板的「铜金 + 暗红」。美术常量，不是游戏数值。 */
 const COLOR_MASK = new Color(8, 6, 5, 168)
-const COLOR_BUBBLE = new Color(38, 31, 25, 246)
+const COLOR_BUBBLE = new Color(38, 31, 25, 216)
 const COLOR_BUBBLE_EDGE = new Color(184, 134, 11, 255)
+/** 「这一步还没达成」那一句的暖红，与内城 `COLOR_WARNING` 同族。 */
+const COLOR_HELD = new Color(214, 122, 92, 255)
+/** 这句提示停留多久（秒）；之后 `repaint` 把步数标签还原。 */
+const HELD_HINT_SECONDS = 4
 const COLOR_TEXT = new Color(232, 221, 200, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 const COLOR_BUTTON = new Color(52, 43, 35, 255)
@@ -63,6 +67,8 @@ export class GuideView extends Component {
   private nextButton: Node | null = null
   private nextCaption: Label | null = null
   private skipButton: Node | null = null
+  /** 「还没达成」提示的还原计时器；`isValid` 守卫见 `showHeldHint`。 */
+  private heldHintTimer: ReturnType<typeof setTimeout> | null = null
   private skipCaption: Label | null = null
 
   /** 收到一次脚本下发：换驱动器就等于重新开始读这一号的位置（服务端是唯一权威）。 */
@@ -100,13 +106,15 @@ export class GuideView extends Component {
     const hole = this.holeOf(size.width, size.height)
     this.drawMask(area, hole)
     this.ensureBubble()
-    this.placeBubble(size.height, hole)
+    this.placeBubble(hole)
 
     if (this.bubbleText !== null) {
       this.bubbleText.string = frame.step.text
     }
     if (this.bubblePosition !== null) {
       this.bubblePosition.string = '第 ' + frame.position.index + ' / ' + frame.position.total + ' 步'
+      // 颜色也要一起还原：`showHeldHint` 把它染成了暖红，只改文字不改颜色会留下一个红着的步数
+      this.bubblePosition.color = COLOR_TEXT_DIM
     }
     if (this.nextCaption !== null) {
       this.nextCaption.string = '我完成了'
@@ -201,7 +209,10 @@ export class GuideView extends Component {
       return
     }
     const size = view.getVisibleSize()
-    const bubbleWidth = Math.min(size.width - BUBBLE_MARGIN * 2, 760)
+    // 600 而不是铺满：引导气泡是临时层，不该把整幅城景压成一块不透明板
+    // （2026-09-26 排版审查：760 宽 + 246 不透明度时首步弹窗盖掉约 40% 画面）。
+    // 文案在 600-32 里折两行仍装得下（文本盒高 62）。
+    const bubbleWidth = Math.min(size.width - BUBBLE_MARGIN * 2, 600)
 
     const bubble = new Node('GuideBubble')
     bubble.layer = this.node.layer
@@ -285,14 +296,31 @@ export class GuideView extends Component {
     return node
   }
 
-  /** 气泡贴着洞的下沿放；洞不在了（全屏面板）就贴屏幕底部。 */
-  private placeBubble(height: number, hole: GuideRect): void {
+  /**
+   * 气泡放在洞的**中上部**。
+   *
+   * <p>原实现是"贴着洞的下沿放"，而洞的下沿正好是底部选择栏 —— 实测这一步里
+   * `GuideBubble` 占 `x[150,1290] y[108,333]`、`DetailUpgradeButton` 占 `y[66,216]`，
+   * 气泡把「升级」按钮盖住约 2/3；而气泡本身吃触摸（见 `ensureBubble`），
+   * 于是玩家**既看不见也点不到**，引导第 1 步（"升级主城"）就此卡在原地。
+   *
+   * <p>为什么不是"把气泡的触摸去掉"：气泡的监听是防"点气泡空白穿到下层面板"用的，
+   * 去掉之后落在气泡范围内的「一键收割」会直接响应 —— 那是个改数据的操作，
+   * 比挡住按钮更糟。所以这里只挪位置：底部让给选择栏，顶部让给资源 HUD 与「一键收割」，
+   * 气泡落在中间那片没有可点控件的空当里。
+   */
+  private placeBubble(hole: GuideRect): void {
     if (this.bubble === null) {
       return
     }
-    const anchorBottom = hole.y > -height / 2 ? hole.y : -height / 2
-    const y = anchorBottom + BUBBLE_HEIGHT / 2 + 12
-    this.bubble.setPosition(new Vec3(0, Math.min(y, height / 2 - BUBBLE_HEIGHT / 2 - 8), 0))
+    const half = BUBBLE_HEIGHT / 2
+    const lowest = hole.y + half + 12
+    const highest = hole.y + hole.height - half - 12
+    // 0.62 是"再往下就要碰到选择栏"的落地值（洞高 540、气泡高 150 时，
+    // 气泡下沿落在距底部约 480 物理像素处，而选择栏上沿在 228）
+    const preferred = hole.y + hole.height * 0.62
+    const y = Math.max(lowest, Math.min(preferred, highest))
+    this.bubble.setPosition(new Vec3(0, y, 0))
     const row = this.bubble.getChildByName('GuideButtons')
     if (row !== null && this.skipButton !== null && this.nextButton !== null) {
       this.nextButton.setPosition(new Vec3(-(BUTTON_WIDTH + 12) / 2, 0, 0))
@@ -329,10 +357,40 @@ export class GuideView extends Component {
    * 消费一次上报回执。**位置只跟着服务端走**，所以这里只是把新位置交给驱动器再重画。
    *
    * <p>`advanced=false` 时服务端给的回执仍指向当前步，重画等于什么都不变 —— 这正是"留在原步等他"。
+   *
+   * @param advanced 服务端是否真的推进了。为 false 时**必须给玩家一句话**：契约里这是正常返回
+   *                 （不是错误），客户端原先什么都不做，于是玩家点了「我完成了」界面毫无反应，
+   *                 既不知道没完成、也不知道该去干什么 —— 实测引导第 1 步正是这种情形。
    */
-  applyProgress(nextStepIndex: number | null): void {
+  applyProgress(nextStepIndex: number | null, advanced = true): void {
     this.driver?.applyProgress(nextStepIndex)
     this.repaint()
+    if (!advanced) {
+      this.showHeldHint()
+    }
+  }
+
+  /**
+   * 把"还没达成"写在步数那一行上（不动版式，几秒后由 `repaint` 还原）。
+   *
+   * <p>用 `setTimeout` 而不是 `Component.scheduleOnce`：本工程锁定的 Cocos 类型里没有后者
+   * （类型检查会报 TS2551）。回调里补 `isValid` 守卫，节点销毁后不再碰它。
+   */
+  private showHeldHint(): void {
+    if (this.bubblePosition === null) {
+      return
+    }
+    this.bubblePosition.string = '这一步还没达成 —— 先完成上面的操作'
+    this.bubblePosition.color = COLOR_HELD
+    if (this.heldHintTimer !== null) {
+      clearTimeout(this.heldHintTimer)
+    }
+    this.heldHintTimer = setTimeout(() => {
+      this.heldHintTimer = null
+      if (this.isValid) {
+        this.repaint()
+      }
+    }, HELD_HINT_SECONDS * 1000)
   }
 
   private releaseBlockers(): void {
