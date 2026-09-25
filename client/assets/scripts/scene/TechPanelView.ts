@@ -10,8 +10,12 @@
  *
  * <p>占位美术用 Graphics 画纯色块（与战力页同一套做法）：正式美术到位只换绘制部分。
  */
-import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
+import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { techCancelText, techSpeedUpText } from '../game/tech/TechPanel'
 import type { TechPanelView as TechViewData, TechRow } from '../game/tech/TechPanel'
+import type { TechCancelResp, TechSpeedUpResp } from '../net/generated/TechProtocol'
+import type { ResearchSpeedupChoice } from '../game/session/Choices'
+import { ChoiceOverlay } from './ChoiceOverlay'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -25,8 +29,8 @@ const COLOR_BUTTON = new Color(62, 44, 26, 255)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
-const COLOR_GOOD = new Color(120, 176, 96, 255)
 const COLOR_HINT = new Color(120, 168, 196, 255)
+const COLOR_GOOD = new Color(120, 176, 96, 255)
 
 const CARD_WIDTH = 560
 const CARD_HEIGHT = 600
@@ -45,6 +49,48 @@ export class TechPanelView extends Component {
 
   private readonly rows: Node[] = []
   private viewData: TechViewData | null = null
+  /** 玩家点了某一行的「研究」。发不发、能不能发由外层按服务端那份 `canResearch` 判 */
+  onResearch: ((techId: string) => void) | null = null
+  /** 玩家点了队列那一行的「取消研究」。返还多少由服务端算，本场景只把回执念出来 */
+  onCancelResearch: (() => void) | null = null
+  /** 玩家点了队列那一行的「加速」。用哪一张由外层筛（`effectKind`），本场景只回抛一个"我要加速" */
+  onSpeedUpResearch: (() => void) | null = null
+
+  /** 用哪一张研究加速。选项由外层按 `effectKind` 筛好，本面板只画与回抛整份选项。 */
+  showSpeedupPicker(options: readonly ResearchSpeedupChoice[],
+                    onPick: (choice: ResearchSpeedupChoice) => void): void {
+    // 这一页是按需挂的（没有 onLoad 建节点那一步），所以弹层第一次要用时才建
+    if (this.speedupPicker === null) {
+      this.speedupPicker = new ChoiceOverlay(this.node, '用哪一张加速', 620)
+    }
+    const byId = new Map(options.map((option) => [option.id, option]))
+    this.speedupPicker.show(options, (id) => {
+      const choice = byId.get(id)
+      if (choice !== undefined) {
+        onPick(choice)
+      }
+    })
+  }
+
+  /** 一次加速的回执：减了多少、还剩多少、有没有因此完成。三个数都照服务端念。 */
+  attachTechSpeedUp(resp: TechSpeedUpResp): void {
+    this.receipt = techSpeedUpText(resp, this.nameOf(resp.techId))
+    this.redraw()
+  }
+
+  private nameOf(techId: string): string {
+    return this.viewData?.rows.find((row) => row.techId === techId)?.name ?? techId
+  }
+  /** 取消之后那句回执。占的是队列那一行的位置（取消完就没有在研项了），关掉这一页才清 */
+  private receipt: string | null = null
+  /** 「用哪一张加速」的弹层 */
+  private speedupPicker: ChoiceOverlay | null = null
+
+  /** 取消研究的回执。名字从当前那份列表里查（服务端只回 techId，中文名在行的 name 上）。 */
+  attachTechCancelled(resp: TechCancelResp): void {
+    this.receipt = techCancelText(this.nameOf(resp.techId), resp.refund)
+    this.redraw()
+  }
 
   /** 下发一份视图即显示。**每次都重画**：队列剩余时间会走，复用旧值会显示过期数字。 */
   render(view: TechViewData): void {
@@ -54,6 +100,7 @@ export class TechPanelView extends Component {
   }
 
   hide(): void {
+    this.receipt = null
     this.node.active = false
   }
 
@@ -106,10 +153,48 @@ export class TechPanelView extends Component {
   private drawQueue(y: number): number {
     const text = this.viewData?.queueText ?? null
     if (text === null) {
+      // 没有在研项时这一行留给"刚刚取消了什么、退回多少"—— 那是玩家按完最需要立刻看到的一句
+      if (this.receipt !== null) {
+        this.label(this.receipt, COLOR_GOOD, 16, -CARD_WIDTH / 2 + PADDING, y - 10, 'left')
+        return y - 26
+      }
       return y
     }
     this.label(text, COLOR_HINT, 18, -CARD_WIDTH / 2 + PADDING, y - 10, 'left')
-    return y - 26
+    // 队列还在跑时回执画在它**下面一行** —— 抢掉队列那一行会让"还剩多久"看不见，
+    // 而玩家刚用完一张加速，两件事都要看（清空只在 hide 时做）
+    let consumed = 26
+    if (this.receipt !== null) {
+      this.label(this.receipt, COLOR_GOOD, 15, -CARD_WIDTH / 2 + PADDING, y - 30, 'left')
+      // 多占一行：回执下面紧接着是学派分组标题，不挪的话两者叠在同一处（截图抓到）
+      consumed = 46
+    }
+    // 「取消研究」左边再一颗「加速」：队列这一行说的两件事（反悔 / 提前）都该在这儿办完
+    const speed = new Node('SpeedUpResearchButton')
+    this.node.addChild(speed)
+    speed.addComponent(UITransform).setContentSize(new Size(96, 26))
+    speed.setPosition(new Vec3(CARD_WIDTH / 2 - PADDING - 152, y - 10, 0))
+    const speedGraphics = speed.addComponent(Graphics)
+    speedGraphics.fillColor = COLOR_BUTTON
+    speedGraphics.rect(-48, -13, 96, 26)
+    speedGraphics.fill()
+    speed.on('touch-start', () => this.onSpeedUpResearch?.())
+    this.rows.push(speed)
+    this.label('加速', COLOR_TEXT, 14, CARD_WIDTH / 2 - PADDING - 152, y - 10, 'center')
+    // 队列一占就再也动不了是这一页原来最大的坑（服务端有 `/tech/cancel`，客户端连方法都没有）。
+    // 键放在队列那一行右侧：它取消的就是这一行说的那件事，位置要跟着那行出现与消失
+    const button = new Node('CancelResearchButton')
+    this.node.addChild(button)
+    button.addComponent(UITransform).setContentSize(new Size(96, 26))
+    button.setPosition(new Vec3(CARD_WIDTH / 2 - PADDING - 48, y - 10, 0))
+    const graphics = button.addComponent(Graphics)
+    graphics.fillColor = COLOR_BUTTON
+    graphics.rect(-48, -13, 96, 26)
+    graphics.fill()
+    button.on('touch-start', () => this.onCancelResearch?.())
+    this.rows.push(button)
+    this.label('取消研究', COLOR_TEXT, 14, CARD_WIDTH / 2 - PADDING - 48, y - 10, 'center')
+    return y - consumed
   }
 
   /**
@@ -169,18 +254,37 @@ export class TechPanelView extends Component {
 
     const left = -usable / 2 + 10
     const right = usable / 2 - 10
+    // 可研究那一行的成本要让开键位（键占右边 76 宽）：写在同一头会把"木材 600"压掉半截
+    const costRight = row.canResearch ? right - 84 : right
     this.label(row.name, row.canResearch ? COLOR_TEXT : COLOR_TEXT_DIM, 18, left, y - 10, 'left')
     this.label(row.levelText, COLOR_TEXT_DIM, 14, left + 150, y - 10, 'left')
-    this.label(row.costText, COLOR_TEXT_DIM, 14, right, y - 10, 'right')
+    this.label(row.costText, COLOR_TEXT_DIM, 14, costRight, y - 10, 'right')
     const second = row.effectText === null
       ? (row.timeText === null ? '' : `耗时 ${row.timeText}`)
       : `${row.effectText}${row.timeText === null ? '' : ` · 耗时 ${row.timeText}`}`
     this.label(second, COLOR_TEXT_DIM, 14, left, y - 25, 'left')
     if (row.canResearch) {
-      this.label('可研究', COLOR_GOOD, 15, right, y - 25, 'right')
+      // 「可研究」以前只是一句字 —— 玩家看得见这一行能做，但点下去什么都没有发生。
+      // 现在它是一颗键，按下去发 POST /tech/research
+      this.drawResearch(row.techId, right, y - 10)
     } else if (row.reasonText !== null) {
       this.label(row.reasonText, COLOR_TEXT_DIM, 15, right, y - 25, 'right')
     }
+  }
+
+  /** 行上的「研究」键。命名带 techId，运行时探针才按得到具体那一行。 */
+  private drawResearch(techId: string, right: number, y: number): void {
+    const node = new Node(`research-${techId}`)
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(76, 24)
+    node.setPosition(new Vec3(right - 38, y, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_BUTTON
+    graphics.rect(-38, -12, 76, 24)
+    graphics.fill()
+    node.on('touch-start', () => this.onResearch?.(techId))
+    this.rows.push(node)
+    this.label('研究', COLOR_COPPER_GOLD, 15, right - 38, y, 'center')
   }
 
   private drawClose(): void {
@@ -228,5 +332,8 @@ export class TechPanelView extends Component {
 
   override onDestroy(): void {
     this.clearRows()
+    this.onResearch = null
+    this.onCancelResearch = null
+    this.onSpeedUpResearch = null
   }
 }

@@ -14,7 +14,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as PowerPanel from '../assets/scripts/game/power/PowerPanel'
-import { buildPowerPanel, buildTargetRows, formatPower, formatRatio } from '../assets/scripts/game/power/PowerPanel'
+import { buildPowerPanel, buildTargetRows, formatPower, formatRatio, targetSearchNotice } from '../assets/scripts/game/power/PowerPanel'
 import type { PowerDetailResp } from '../assets/scripts/net/generated/Protocol'
 import type { SearchTargetsResp, TargetBrief } from '../assets/scripts/net/generated/WorldProtocol'
 
@@ -45,7 +45,10 @@ function target(overrides: Partial<TargetBrief> = {}): TargetBrief {
 }
 
 function searchResp(targets: TargetBrief[]): SearchTargetsResp {
-  return { targets, selfMatchPower: 10000, bandLower: 5000, bandUpper: 20000, serverNow: 1 }
+  return {
+    targets, selfMatchPower: 10000, bandLower: 5000, bandUpper: 20000,
+    radiusMin: 1, radiusDefault: 48, radiusMax: 128, serverNow: 1,
+  }
 }
 
 // ---------- 数字格式化 ----------
@@ -149,6 +152,22 @@ test('服务端发来未知暴虐档位时原样显示，而不是崩在 undefin
 test('坐标照实显示（客户端本来就能算距离，藏坐标没有意义）', () => {
   const rows = buildTargetRows(searchResp([target({ coord: { x: 12, y: 340 } })]))
   assert.equal(rows[0]?.coordText, '(12, 340)')
+})
+
+// ---------- 空态那句文案：三相都要钉 ----------
+
+test('targetSearchNotice 三态各说各话：没搜过给下一步、搜过零结果给结论、有结果留空', () => {
+  // ① 还没搜过：屏上只有导航条 + 一颗「搜索」键（#449 收掉两颗空转翻页键之后更空），
+  //    留空的读感是"界面坏了"，所以给一句下一步动作而不是给一句结论
+  assert.equal(targetSearchNotice(false, 0), '点搜索看看这一带有什么可打的',
+    '搜索前留空 = 玩家以为界面坏了；搜索前印「没有目标」= 他以为自己在跟一面墙较劲')
+  // searched 优先于 total：这一相下传进来的数字是上一份结果的残留，不能拿它说话
+  assert.equal(targetSearchNotice(false, 5), '点搜索看看这一带有什么可打的')
+  // ② 搜过了、确实一个没有：不说等于把「一片空行区」留给玩家自己猜
+  assert.equal(targetSearchNotice(true, 0), '这一带没有可打的目标')
+  // ③ 搜过且有行：有行还印那句等于自己打自己的脸
+  assert.equal(targetSearchNotice(true, 3), '')
+  assert.equal(targetSearchNotice(true, 1), '', '一页正好一条时也不算"没有目标"')
 })
 
 // ---------- 禁止项：客户端零校验 ----------

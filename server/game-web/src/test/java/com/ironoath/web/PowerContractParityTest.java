@@ -203,6 +203,7 @@ class PowerContractParityTest {
     void searchWeightsAndRallyBandShareOneHome() {
         TargetSearch.Rules rules = new TargetSearch.Rules(
                 (int) configs.longParam("SEARCH_MAX_RADIUS"),
+                (int) configs.longParam("SEARCH_DEFAULT_RADIUS"),
                 configs.longParam("SEARCH_ACTIVE_WINDOW_HOURS") * 3600_000L,
                 (int) configs.longParam("SEARCH_DEFAULT_COUNT"),
                 (int) configs.longParam("SEARCH_MAX_COUNT"),

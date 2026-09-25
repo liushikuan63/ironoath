@@ -10,8 +10,13 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 职责：国家存储的 MongoDB 实现（生产存储）。
@@ -171,6 +176,42 @@ public final class MongoNationStore implements NationStore {
         return Optional.ofNullable(mongo.findOne(
                 Query.query(Criteria.where("memberAllianceIds").is(allianceId)),
                 NationDocument.class, NationDocument.COLLECTION)).map(this::toDomain);
+    }
+
+    /**
+     * 一批联盟各自所属的国家，一次 {@code memberAllianceIds} 的 $in 查询 —— 与 {@link #findByAlliance}
+     * 打在同一个字段上（{@code idx_member_alliance_ids}，见 {@code MongoIndexes}），所以两口的口径
+     * 不可能漂，省掉的是往返。
+     *
+     * <p>一个国家可以有多个被点名的联盟（成员国不止一个）：文档只读一次，命中的每个联盟键各拿到
+     * 一份重新拼出来的对象 —— 与 {@link #findByAlliance} 的"每次读都新拼一份"（类注释那条副本约定）
+     * 同一条，两个调用方改其中一份不会互相看见。
+     *
+     * <p>刻意不设排序：国家总数上限是 {@code global.NATION_MAX_PER_KINGDOM}（个位数），一个联盟挂在
+     * 两个国家下（脏数据才可能）时两版取哪一个都由自然顺序决定，加排序反而让两版在好数据之外分家。
+     */
+    @Override
+    public Map<String, Nation> nationsByAlliance(Collection<String> allianceIds) {
+        if (allianceIds == null || allianceIds.isEmpty()) {
+            return Map.of();
+        }
+        Set<String> distinct = new LinkedHashSet<>(allianceIds);
+        distinct.remove(null);
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        List<NationDocument> documents = mongo.find(
+                Query.query(Criteria.where("memberAllianceIds").in(distinct)),
+                NationDocument.class, NationDocument.COLLECTION);
+        Map<String, Nation> out = new LinkedHashMap<>();
+        for (NationDocument document : documents) {
+            for (String allianceId : document.state().memberAlliances().keySet()) {
+                if (distinct.contains(allianceId)) {
+                    out.put(allianceId, toDomain(document));
+                }
+            }
+        }
+        return out;
     }
 
     @Override

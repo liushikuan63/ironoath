@@ -65,6 +65,19 @@ const SKIP = new Set([
   "beginRallyCompose",
   "pickMarchUnit",
   "cancelMarchCompose",
+  // B26 S14 同一条口径：换召集层级与调那两个数都是**在编成面板里做选择**，
+  // 真正"把兵压上去"那一下在 confirmAllianceRally / confirmSquadRally 里打 `rally_initiate`
+  // （参数带 scope=SQUAD/ALLIANCE，层级本身已经分得开）—— 这里再打会把一次发起记成三四次
+  "setComposeRallyScope",
+  "adjustComposeRallyNumber",
+  // 侦察那颗也是**换命令种类**（B26 S18）：真正"把侦察队发出去"那一下在 confirmScout 里打 `scout_send`
+  "toggleComposeScout",
+  // 军队行上「队列」（B26 S15）同一条口径：打开菜单只是把候选摆出来，
+  // 真正"取消这一口训练"那一下在 cancelTrain 里打 `army_train_cancel` —— 两处都打会把一次取消记成两次
+  "openArmyQueue",
+  // 研究那一行的「加速」（B20）同一条口径：它只是问"用哪一张"，
+  // 真正"吃掉一张推进研究"那一下在 speedUpResearch 里打 `tech_speed_up` —— 两处都打会把一张记成两张
+  "requestResearchSpeedUp",
   // 升级弹层的"开弹层"与"加减一件"：真正要量的是"喂下去"那一下（在 confirmExpPick 里打 hero_level_up），
   // 开弹层与步进都还不是意图 —— 与上面的 beginMarchCompose / pickMarchUnit 同一条理由
   "openExpPick",

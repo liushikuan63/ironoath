@@ -8,7 +8,7 @@
   "$defs": {
     "NationOffice": {
       "type": "string",
-      "description": "国家官职（B13 §2）。取值必须与 game-core 的 Nation.Office 逐一对应，由 NationContractParityTest 断言 —— 复制而不校验才是真正的危险：漂移的症状是服务端认得的官职客户端显示成未知，UI 只会空白。\n\n席位数：国王 1、首相 1、大将军 2、内政官 4、外交官 4，议员按盟主数动态给（不是固定席位）。",
+      "description": "国家官职（B13 §2）。取值必须与 game-core 的 Nation.Office 逐一对应，由 NationPayEnumParityTest 的 nationOfficeMatchesTheDomainEnum 断言 —— 复制而不校验才是真正的危险：漂移的症状是服务端认得的官职客户端显示成未知，UI 只会空白。\n\n席位数：国王 1、首相 1、大将军 2、内政官 4、外交官 4，议员按盟主数动态给（不是固定席位）。",
       "enum": [
         "KING",
         "PRIME_MINISTER",

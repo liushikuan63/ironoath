@@ -1,6 +1,6 @@
 /**
  * 职责：出征的**编成**与「上次出征」的展示数据组装（B25-S1，裁决②(a) 与 ④(b)）。引擎无关，可脱离 Cocos 跑单测。
- * 依赖：生成的协议类型（`ArmyProtocol` / `WorldProtocol`）。
+ * 依赖：生成的协议类型（`ArmyProtocol` / `WorldProtocol` / `SocialProtocol` 的集结政策）。
  *
  * <p><b>本模块不做任何"能不能打"的判定</b>（B08 禁止项：客户端不做战力校验）：圈层、目标合法性、
  * 负载、体力、武将是否可用——全部由服务端在 `MarchAppService.send` 里判。这里只做两件**纯展示**的事：
@@ -20,6 +20,7 @@
 
 import type { ArmyListResp, UnitView } from '../../net/generated/ArmyProtocol'
 import type { MarchAction, MarchReq, MarchUnit } from '../../net/generated/WorldProtocol'
+import type { RallyPolicyView } from '../../net/generated/SocialProtocol'
 
 /** 编成里的一行（一个兵种）。 */
 export interface ComposeOption {
@@ -181,4 +182,111 @@ function clamp(value: number, min: number, max: number): number {
     return min
   }
   return Math.min(Math.max(value, min), max)
+}
+
+// ---------- 集结层级与那两个数（B26 S14）----------
+
+/** 这一份编成要发给哪一层：小队列还是联盟列。 */
+export type RallyScope = 'SQUAD' | 'ALLIANCE'
+
+/** 联盟集结要收的两个数所在的行。 */
+export type RallyField = 'maxMembers' | 'prepareMinutes'
+
+/** 发起联盟集结的业务参数。<b>不含 requestId</b>，与 `MarchSpec` 同一条理由。 */
+export interface RallyForm {
+  readonly maxMembers: number
+  readonly prepareMinutes: number
+}
+
+/** 层级入口的一行（含服务端那句"此刻能不能发起"的原因）。 */
+export interface RallyScopeRow {
+  readonly scope: RallyScope
+  readonly label: string
+  /** 不能发起时那句人话；null = 可以发起，或政策还没拉到（后者不是"你不行"，交给服务端判） */
+  readonly blocked: string | null
+}
+
+/** 画出来的一行数字（带界，表现层据此点亮 −/＋，不自己算、也不自己拼字）。 */
+export interface RallyNumberRow {
+  readonly field: RallyField
+  /** 数前面那两个字的表头 */
+  readonly caption: string
+  /** 格式化好的数（带单位与上界）：格式化只有一份，不然两屏各写一遍迟早对不上 */
+  readonly text: string
+  readonly value: number
+  readonly min: number
+  readonly max: number
+}
+
+/** 一次点 −/＋ 走多少：人数按人走，分钟按 5 分钟走（10~30 分钟这一档来回点 4 下到位）。 */
+const RALLY_STEPS: Record<RallyField, number> = { maxMembers: 1, prepareMinutes: 5 }
+
+/**
+ * 联盟集结的初始表单：两个数都照政策给的值取，**客户端不挑默认值**。
+ *
+ * <p>政策还没拉到时返回 null 而不是猜一组：猜出来的数会真的发出去，而玩家以为自己在
+ * 「30 人 · 等 30 分钟」的档上按了确认。null 由提交口拦成一句人话。
+ */
+export function rallyFormOf(policy: RallyPolicyView | null): RallyForm | null {
+  if (policy === null) {
+    return null
+  }
+  return {
+    maxMembers: clamp(policy.maxMembers, policy.minMembers, policy.maxMembers),
+    prepareMinutes: clamp(policy.defaultPrepareMinutes, policy.minPrepareMinutes, policy.maxPrepareMinutes),
+  }
+}
+
+/** 点某个层级时那句"现在不能发起"的原因；null = 切得过去。 */
+export function rallySwitchBlocked(policy: RallyPolicyView | null): string | null {
+  if (policy === null) {
+    return null
+  }
+  return policy.canStart ? null : (policy.reason ?? '现在还不能发起这一层的集结')
+}
+
+/** 加减一档，夹在政策的界内；政策或表单没到齐时原样返回（没有界就不猜）。 */
+export function adjustRallyNumber(form: RallyForm | null, policy: RallyPolicyView | null,
+                                  field: RallyField, direction: number): RallyForm | null {
+  if (form === null || policy === null) {
+    return form
+  }
+  const step = RALLY_STEPS[field] * Math.sign(direction)
+  if (field === 'maxMembers') {
+    return {
+      ...form,
+      maxMembers: clamp(form.maxMembers + step, policy.minMembers, policy.maxMembers),
+    }
+  }
+  return {
+    ...form,
+    prepareMinutes: clamp(form.prepareMinutes + step, policy.minPrepareMinutes, policy.maxPrepareMinutes),
+  }
+}
+
+/**
+ * 编成面板上那两行数字（只给联盟层）：界与值一起下发，
+ * 表现层不再自己夹取（同一份界在两处写的结局是滑条显示一个必然被服务端夹掉的上限）。
+ */
+export function rallyNumbersOf(form: RallyForm | null, policy: RallyPolicyView | null): readonly RallyNumberRow[] {
+  if (form === null || policy === null) {
+    return []
+  }
+  return [
+    {
+      field: 'maxMembers', caption: '人数', value: form.maxMembers,
+      min: policy.minMembers, max: policy.maxMembers,
+      text: `${form.maxMembers}/${policy.maxMembers}人`,
+    },
+    {
+      field: 'prepareMinutes', caption: '等待', value: form.prepareMinutes,
+      min: policy.minPrepareMinutes, max: policy.maxPrepareMinutes,
+      text: `${form.prepareMinutes}分`,
+    },
+  ]
+}
+
+/** 政策没拉到时提交口那句人话（拉到就没有拦它的理由）。 */
+export function rallyFormBlocked(form: RallyForm | null): string | null {
+  return form === null ? '集结的人数与时长还没拉到，稍等一下再发起' : null
 }

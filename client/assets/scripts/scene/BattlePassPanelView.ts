@@ -19,7 +19,7 @@ import { buildBattlePassPanel, trackStateText } from '../game/battlePass/BattleP
 import type { BattlePassPanelView as BattlePassView, BattlePassRow } from '../game/battlePass/BattlePassPanel'
 import type { BattlePassPanelData } from '../game/session/AppRoot'
 import type { BattlePassTrack } from '../net/generated/BattlePassProtocol'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth, keepOneLine } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -108,10 +108,18 @@ export class BattlePassPanelView extends Component {
     this.pointsLabel = this.addLabel('Points', 0, top - 48, COLOR_TEXT, 17)
     this.claimedLabel = this.addLabel('Claimed', 0, top - 72, COLOR_TEXT_DIM, 15)
     this.remainLabel = this.addLabel('Remain', 0, top - 96, COLOR_TEXT_DIM, 15)
+    // 这五行都是居中的固定 y（间距只有 24~28），而 Label 会按文本把盒子撑高 ——
+    // 撑到两行就直接叠在邻居身上（#363 在军队表头量出过同一形状，实测 hits 真出现）。
+    // #364 当时用「SHRINK + 猜的一行高」去限，量具全绿，代价是整屏字被按比例缩小：
+    // 页内实测落地 17/13/10/10/9 对设定 20/17/15/15/14（台账 #366 的迁移曲线）。
+    // 现在改成直接关掉换行：盒子不可能撑成两行，字形也完全不碰。
+    keepOneLine(this.headerLabel, 20)
+    keepOneLine(this.pointsLabel, 17)
+    keepOneLine(this.claimedLabel, 15)
+    keepOneLine(this.remainLabel, 15)
     // 这一行两用：列表还没拉回来时的那句话，或（未解锁时）付费线为什么是灰的
     this.noticeLabel = this.addLabel('Notice', 0, top - 124, COLOR_TEXT_DIM, 14)
-    this.noticeLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
-    this.noticeLabel.overflow = Label.Overflow.SHRINK
+    keepOneLine(this.noticeLabel, 14)
 
     for (let index = 0; index < ROW_POOL_SIZE; index++) {
       const row = this.createRow(index)
@@ -146,19 +154,15 @@ export class BattlePassPanelView extends Component {
     const tier = this.addLabel('Tier', -PANEL_WIDTH / 2 + PADDING, 14, COLOR_TEXT, 17, node)
     tier.horizontalAlign = Label.HorizontalAlign.LEFT
     tier.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    tier.node.getComponent(UITransform)?.setContentSize(new Size(200, 22))
-    tier.overflow = Label.Overflow.SHRINK
+    capWidth(tier, 200)
     const reached = this.addLabel('Reached', -PANEL_WIDTH / 2 + PADDING, -13, COLOR_TEXT_DIM, 13, node)
     reached.horizontalAlign = Label.HorizontalAlign.LEFT
     reached.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    reached.node.getComponent(UITransform)?.setContentSize(new Size(200, 20))
-    reached.overflow = Label.Overflow.SHRINK
+    capWidth(reached, 200)
     const free = this.addLabel('Free', 40, 14, COLOR_TEXT, 14, node)
-    free.node.getComponent(UITransform)?.setContentSize(new Size(230, 20))
-    free.overflow = Label.Overflow.SHRINK
+    capWidth(free, 230)
     const paid = this.addLabel('Paid', 40, -13, COLOR_TEXT_DIM, 14, node)
-    paid.node.getComponent(UITransform)?.setContentSize(new Size(230, 20))
-    paid.overflow = Label.Overflow.SHRINK
+    capWidth(paid, 230)
 
     const freeButton = this.createButton(node, index, 'FREE', PANEL_WIDTH / 2 - 2 * (BUTTON_WIDTH + 6) + BUTTON_WIDTH / 2)
     const paidButton = this.createButton(node, index, 'PAID', PANEL_WIDTH / 2 - (BUTTON_WIDTH + 6) + BUTTON_WIDTH / 2)
@@ -229,7 +233,12 @@ export class BattlePassPanelView extends Component {
     const view2: BattlePassView = buildBattlePassPanel(panel.source, maxRows)
 
     if (this.headerLabel !== null) {
-      this.headerLabel.string = `赛季战令 · ${view2.rangeText}`
+      // 零档位时 `rangeText` 是空串（`game/activity/BattlePassPanel.ts` 在 total === 0 时给空），
+      // 无条件拼分隔符就会印出「赛季战令 · 」这种带尾巴的空分隔符（#349 目视抓到）。
+      // 房规同 `ArmyPanelView:413`、`ShopPanelView:262`：可空的那一段非空才拼分隔符。
+      this.headerLabel.string = view2.rangeText === ''
+        ? '赛季战令'
+        : `赛季战令 · ${view2.rangeText}`
     }
     if (this.pointsLabel !== null) {
       this.pointsLabel.string = view2.pointsText
@@ -242,7 +251,11 @@ export class BattlePassPanelView extends Component {
       this.remainLabel.color = view2.paidUnlocked ? COLOR_GOOD : COLOR_TEXT_DIM
     }
     if (this.noticeLabel !== null) {
-      this.noticeLabel.string = panel.notice ?? view2.noticeText ?? view2.paidHint ?? ''
+      // 一行档位都没有时，这一格必须说句话：否则玩家看到的是"积分/已领/剩余"三行数字
+      // 压着一整块空白（#344 那一族的最后一条）。句式照房规 `MarchPanelView:77`「暂无在外的队伍」。
+      this.noticeLabel.string = view2.rows.length === 0
+        ? '暂无档位'
+        : (panel.notice ?? view2.noticeText ?? view2.paidHint ?? '')
       this.noticeLabel.color = panel.notice !== null ? COLOR_GOOD : COLOR_TEXT_DIM
     }
 

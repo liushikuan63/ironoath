@@ -13,16 +13,19 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
-import { buildReportList } from '../game/battle/BattleReportPanel'
-import { truncatedNotice } from '../game/ui/TruncatedList'
-import type { ReportListView, ReportRow } from '../game/battle/BattleReportPanel'
+import { buildReportList, buildScoutIntel } from '../game/battle/BattleReportPanel'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
+import type { ReportListView, ReportRow, ScoutRow, ScoutListView } from '../game/battle/BattleReportPanel'
 import { BattlePlaybackView } from './BattlePlaybackView'
 import type { BattleReportListResp, BattleResultView } from '../net/generated/BattleProtocol'
+import type { ScoutListResp } from '../net/generated/WorldProtocol'
 import type { PlaybackOptions } from '../game/battle/BattlePlayback'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import type { ShareChannelChoice } from '../game/session/Choices'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -41,8 +44,16 @@ const PANEL_WIDTH = 680
 const ROW_HEIGHT = 60
 const ROW_GAP = 6
 const PADDING = 16
+
+/** 左边两行文字能给到的宽度：右边还要留给「有效 / 胜 / 败」那一格 */
+const TEXT_WIDTH = PANEL_WIDTH - 2 * PADDING - 150
 const HEADER_HEIGHT = 64
+/** 池的预热行数；真正画几行由 `render` 按可视高算（与 MailPanelView #394 同一口径）。 */
 const MAX_VISIBLE_ROWS = 8
+/** 底部导航条占掉的高度，与 QuestPanelView / ArmyPanelView / MailPanelView 同一个口径。 */
+const BOTTOM_RESERVED = 68
+/** 右列（胜 / 败 / 有效 / 过期）的槽宽：`TEXT_WIDTH` 从行宽里扣掉的那一段，再留 12 的缝。 */
+const OUTCOME_SLOT = PANEL_WIDTH - 2 * PADDING - TEXT_WIDTH - 12
 
 @ccclass('BattleReportPanelView')
 export class BattleReportPanelView extends Component {
@@ -53,8 +64,21 @@ export class BattleReportPanelView extends Component {
   private rowPool: NodePool | null = null
   private readonly drawnRows: Node[] = []
   private headerLabel: Label | null = null
+  /** 敌情那一份列表（B26 S19）。与战报同一块面板、同一个行池，但字段是情报的字段 */
+  private scouts: ScoutListView | null = null
+  private intel: 'BATTLE' | 'SCOUT' = 'BATTLE'
+  private battleTabLabel: Label | null = null
+  private scoutTabLabel: Label | null = null
   private emptyLabel: Label | null = null
   private overflowLabel: Label | null = null
+  /** 当前页（0 起）。换页签归零（两块数据集不同），重新 attach 只 clamp（见 attach 那条注释）。 */
+  private page = 0
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
   private backLabel: Label | null = null
   private listNode: Node | null = null
   private playbackNode: Node | null = null
@@ -131,7 +155,51 @@ export class BattleReportPanelView extends Component {
     }
     this.showList()
     this.list = buildReportList(resp, now)
+    // 故意不归零页号：看完一场回放回来会重新 attach，归零等于把玩家弹回第一页。
+    // 列表变短时 render() 里的 clampPage 夹回最后一页（#450 关卡同一口径）。
     this.render()
+  }
+
+  /** 敌情那一份列表到了就换上去（B26 S19）。不在这个方法里判"该显示哪一页"，页签是谁选的就画谁。 */
+  attachScouts(resp: ScoutListResp, now: number): void {
+    this.scouts = buildScoutIntel(resp, now)
+    this.render()
+  }
+
+  /** 切页签。侦察情报那页的行不可点：没有回放可看。 */
+  private pickIntel(intel: 'BATTLE' | 'SCOUT'): void {
+    this.intel = intel
+    // 换页签归零：战报与敌情是两块数据集，行数不同，留着上一页会停在错位的位置上
+    //（与 `attach` 相反：那里只 clamp，因为领完/看完重新 attach 不该把玩家弹回第一页）
+    this.page = 0
+    this.render()
+  }
+
+  private renderScoutRow(node: Node, row: ScoutRow): void {
+    const graphics = node.getComponent(Graphics)
+    if (graphics !== null) {
+      graphics.clear()
+      // 过期的情报压暗：它不能再拿来定打法，混在有效情报里比没有更危险（B07 验收 9）
+      graphics.fillColor = row.expired ? COLOR_ROW_LOST : COLOR_ROW
+      graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
+      graphics.fill()
+    }
+    // 按名字取而不是按下标：池化行里子节点次序是建行时的偶然，
+    // 按下标取在加一颗子节点的那天会静默拿错标签（check-view-child-index 钉的就是这条）。
+    const title = node.getChildByName('Title')?.getComponent(Label)
+    const detail = node.getChildByName('Detail')?.getComponent(Label)
+    const outcome = node.getChildByName('Outcome')?.getComponent(Label)
+    if (title !== undefined && title !== null) {
+      title.string = row.title
+    }
+    if (detail !== undefined && detail !== null) {
+      detail.string = row.detail
+    }
+    if (outcome !== undefined && outcome !== null) {
+      outcome.string = row.outcome
+      outcome.color = row.expired ? COLOR_LOSE : COLOR_WIN
+    }
+    node.off('touch-start')
   }
 
   /**
@@ -194,9 +262,19 @@ export class BattleReportPanelView extends Component {
     this.listNode = list
 
     this.headerLabel = this.addLabel(list, 'Header', 0, height / 2 - PADDING - 20, COLOR_COPPER_GOLD, 22)
+    this.battleTabLabel = this.addLabel(list, 'TabBattle', -70, height / 2 - PADDING - 48, COLOR_COPPER_GOLD, 15)
+    this.battleTabLabel.string = '战报'
+    this.battleTabLabel.node.on('touch-start', (_event: EventTouch) => this.pickIntel('BATTLE'), this)
+    this.scoutTabLabel = this.addLabel(list, 'TabScout', 70, height / 2 - PADDING - 48, COLOR_TEXT_DIM, 15)
+    this.scoutTabLabel.string = '侦察情报'
+    this.scoutTabLabel.node.on('touch-start', (_event: EventTouch) => this.pickIntel('SCOUT'), this)
     this.emptyLabel = this.addLabel(list, 'Empty', 0, 40, COLOR_TEXT_DIM, 17)
     this.overflowLabel = this.addLabel(list, 'Overflow', 0,
       -height / 2 + PADDING + 18, COLOR_TEXT_DIM, 14)
+    // 两颗翻页键与那句页码同一行、摆在两端。挂在 List 上而不是 this.node 上：
+    // 回放那一屏靠 List.active 关掉，键跟着一起消失才不会浮在回放上。
+    this.prevPageButton = this.buildPagerButton(list, 'PrevPageButton', -PANEL_WIDTH / 2 + 46)
+    this.nextPageButton = this.buildPagerButton(list, 'NextPageButton', PANEL_WIDTH / 2 - 46)
     this.statusLabel = this.addLabel(this.node, 'Status', 0, 0, COLOR_TEXT_DIM, 16)
     this.backLabel = this.addLabel(this.node, 'Back', -PANEL_WIDTH / 2 + 56,
       height / 2 - PADDING - 20, COLOR_TEXT, 16)
@@ -215,6 +293,49 @@ export class BattleReportPanelView extends Component {
         this.onShareRequested?.(reportId)
       }
     })
+  }
+
+  /**
+   * 一颗 64×28 的翻页键（照本面板行上动作键的画法）。父节点传进来：这一屏的键要挂在 List 上，
+   * 点进回放时 List 整块关掉，浮在 this.node 上的键会留在回放里。
+   */
+  private buildPagerButton(parent: Node, name: string, x: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    parent.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, 0, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_ROW
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 13)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    // 建出来先收着：render() 在两份列表都没到时早退，不先收就会在"还没拉到战报"那一态
+    // 露出两颗点了没反应的键（#345 口径，#449 与 #450 各修过一次同一族）
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉的那一侧直接不吃：`render()` 里的 `clampPage` 也会把越界页号夹回来，
+   * 但"点了没反应"正是 #345 那条口径要挡的观感。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) return
+    if (delta > 0 && !this.canNext) return
+    this.page += delta
+    this.render()
   }
 
   private showList(): void {
@@ -237,17 +358,32 @@ export class BattleReportPanelView extends Component {
     this.currentReportId = null
   }
 
+  /** 左对齐标签：锚点挪到左中，宽度交给 `UiFont.capWidth`（盒高它钉 27，正好是"一行不被压小"的下限） */
+  private sizeLeftLabel(label: Label, width: number): void {
+    const transform = label.node.getComponent(UITransform)
+    transform?.setAnchorPoint(0, 0.5)
+    capWidth(label, width)
+  }
+
   private createRow(): Node {
     const node = new Node('ReportRow')
     node.layer = this.node.layer
     node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, ROW_HEIGHT))
     node.addComponent(Graphics)
-    this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 18).horizontalAlign
-      = Label.HorizontalAlign.LEFT
-    this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -12, COLOR_TEXT_DIM, 14).horizontalAlign
-      = Label.HorizontalAlign.LEFT
-    this.addLabel(node, 'Outcome', PANEL_WIDTH / 2 - PADDING, 0, COLOR_TEXT, 18).horizontalAlign
-      = Label.HorizontalAlign.RIGHT
+    // 两个左对齐的标签必须有真实宽度和锚点：addLabel 给的 UITransform 是默认 100×100 居中锚点，
+    // 于是长文案（敌情那一行的观测值 + 误差 + 剩余时间）会从盒子左边溢出、左半边被裁掉
+    const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 12, COLOR_TEXT, 18)
+    title.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.sizeLeftLabel(title, TEXT_WIDTH)
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -12, COLOR_TEXT_DIM, 14)
+    detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.sizeLeftLabel(detail, TEXT_WIDTH)
+    // 右列同样要限宽：它只有"胜 / 败 / 有效 / 过期"四个短值，但值是服务端装配的，
+    // 不限宽就等于赌它一直短（锚点翻到右边，盒子往左长，才不会顶出卡片）
+    const outcome = this.addLabel(node, 'Outcome', PANEL_WIDTH / 2 - PADDING, 0, COLOR_TEXT, 18)
+    outcome.horizontalAlign = Label.HorizontalAlign.RIGHT
+    outcome.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    capWidth(outcome, OUTCOME_SLOT)
     return node
   }
 
@@ -271,30 +407,91 @@ export class BattleReportPanelView extends Component {
   private render(): void {
     const list = this.list
     const pool = this.rowPool
-    if (list === null || pool === null) {
+    if ((this.intel === 'BATTLE' && list === null) || (this.intel === 'SCOUT' && this.scouts === null)
+      || pool === null) {
+      // 两份列表还没到齐：这一屏没东西可翻，两颗键整对收掉。从前只在这里 return，
+      // 于是"战报 9 场已出键 → 点敌情而情报未回"那一态留着上一屏的亮键，点了只加页号不换屏
+      this.canPrev = false
+      this.canNext = false
+      if (this.prevPageButton !== null) {
+        this.prevPageButton.active = false
+      }
+      if (this.nextPageButton !== null) {
+        this.nextPageButton.active = false
+      }
       return
     }
+    const scoutMode = this.intel === 'SCOUT'
+    if (this.battleTabLabel !== null) {
+      this.battleTabLabel.color = scoutMode ? COLOR_TEXT_DIM : COLOR_COPPER_GOLD
+    }
+    if (this.scoutTabLabel !== null) {
+      this.scoutTabLabel.color = scoutMode ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+    }
     const height = view.getVisibleSize().height
-    if (this.headerLabel !== null) {
-      this.headerLabel.string = list.headerText
+    const source = scoutMode ? this.scouts : list
+    if (source === null) {
+      return
     }
     if (this.emptyLabel !== null) {
-      this.emptyLabel.string = list.emptyText
+      this.emptyLabel.string = source?.emptyText ?? ''
+      // 有行的时候必须藏起来：敌情页第一版就是两行情报下面还挂着「还没有敌情」，
+      // 读数全绿（只判了文字内容），画面自相矛盾
+      this.emptyLabel.node.active = source.rows.length === 0
     }
 
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
     const topY = height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
-    const visible = list.rows.slice(0, MAX_VISIBLE_ROWS)
-    visible.forEach((row, index) => {
+    // 行数按实测可视高度算，不写死（与 MailPanelView #394 同一处修法）：写死 8 行时第 6~8 行
+    // 连同"另有 N 场未显示"一起落到导航条底下 —— 量具现在看得见这一条了（#390 升成判据）。
+    const navTop = -height / 2 + BOTTOM_RESERVED
+    const capacity = Math.max(1,
+      Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
+    // 共几页、夹到哪一页、切哪一段用同一个 perPage（`PanelPaging` 那条原话）：从前这里
+    // slice(0, maxRows) 一刀切，剩下的写成「另有 N 场未显示」就没有然后了 —— 那是 #307
+    // 说的"功能看不见换了件衣服"。
+    const total = source.rows.length
+    const perPage = contentPerPage(total, capacity)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const visible = source.rows.slice(slice.start, slice.end)
+    visible.forEach((row: ReportRow | ScoutRow, index: number) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
-      this.renderRow(node, row)
+      if (scoutMode) {
+        this.renderScoutRow(node, row as ScoutRow)
+      } else {
+        this.renderRow(node, row as ReportRow)
+      }
     })
+
+    const paged = pages > 1
+    const rowBottom = topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 10
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
+    if (this.headerLabel !== null) {
+      this.headerLabel.string = source.headerText
+    }
+    // 页码借用 Overflow 那一格：它从前每帧被清空（那句「另有 N 场」挂表头是因为按 8 行摆会把
+    // 提示挤到导航条底下）。现在装不下时让出一格行位，页码与两颗键就排在那一格上。
     if (this.overflowLabel !== null) {
-      const hidden = list.rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice('场', hidden)
+      this.overflowLabel.string = paged
+        ? `${pageNotice(this.page, pages)} · 共 ${total} ${scoutMode ? '份' : '场'}`
+        : ''
+      this.overflowLabel.node.setPosition(new Vec3(0, rowBottom, 0))
+    }
+    // 只有一页时两颗键整对收掉（#345：不留点了没反应的键）；多页时不可翻的那一侧按灰
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) continue
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, rowBottom, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
   }
 
@@ -307,9 +504,11 @@ export class BattleReportPanelView extends Component {
       graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
       graphics.fill()
     }
-    const title = node.children[0]?.getComponent(Label)
-    const detail = node.children[1]?.getComponent(Label)
-    const outcome = node.children[2]?.getComponent(Label)
+    // 按名字取而不是按下标：池化行里子节点次序是建行时的偶然，
+    // 按下标取在加一颗子节点的那天会静默拿错标签（check-view-child-index 钉的就是这条）。
+    const title = node.getChildByName('Title')?.getComponent(Label)
+    const detail = node.getChildByName('Detail')?.getComponent(Label)
+    const outcome = node.getChildByName('Outcome')?.getComponent(Label)
     if (title !== undefined && title !== null) {
       title.string = row.title
     }

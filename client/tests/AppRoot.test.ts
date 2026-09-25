@@ -24,7 +24,7 @@ import { AppRoot } from '../assets/scripts/game/session/AppRoot'
 import type { RallyPanelData } from '../assets/scripts/game/session/AppRoot'
 import type { OfflineReportPopup, PanelTargets, ShopView } from '../assets/scripts/game/session/AppRoot'
 import type {
-  ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
+  ChatActionChoice, LineupChoice, ResearchSpeedupChoice, ShareChannelChoice, SpeedupChoice,
 } from '../assets/scripts/game/session/Choices'
 import type { ChatPanelData } from '../assets/scripts/game/social/ChatPanel'
 import type { RankBoardView } from '../assets/scripts/game/power/RankBoard'
@@ -44,6 +44,7 @@ import type { SquadListView } from '../assets/scripts/game/social/SquadDiscovery
 import type { ApplicationView } from '../assets/scripts/game/social/AllianceApplications'
 import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
+import type { ChoiceOption } from '../assets/scripts/game/session/Choices'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
 import { resetWorld } from '../assets/scripts/game/world/WorldContext'
 
@@ -106,6 +107,18 @@ const ROUTES: Record<string, unknown> = {
   '/bag/list': { items: [] },
   '/resource/detail': { entries: [], serverNow: SERVER_NOW },
   '/stage/list': { chapters: [], serverNow: SERVER_NOW },
+  // 体力那一屏（B26 S22）。默认"恢复中、买得动"：满与买满是另外三条用例专门演的
+  '/stamina': {
+    current: 84, cap: 120, recoverPerHour: 5, nextPointAt: SERVER_NOW + 192_000,
+    boughtToday: 2, buyCostGold: 20, serverNow: SERVER_NOW,
+  },
+  '/stamina/buy': {
+    stamina: {
+      current: 104, cap: 120, recoverPerHour: 5, nextPointAt: SERVER_NOW + 192_000,
+      boughtToday: 3, buyCostGold: 40, serverNow: SERVER_NOW,
+    },
+    granted: 20, costGold: 20, boughtToday: 3,
+  },
   // 可申请联盟（B26 S6）。默认给"一个都没有"：这条读口在真服务端永远存在，
   // 桩里缺它会让所有"未入盟"的用例都多走一次失败上报（实测踩过：那正是 fixture 没镜像真实接线）
   '/alliance/list': { alliances: [], total: 0, limit: 20, serverNow: 1_788_000_000_000 },
@@ -173,6 +186,16 @@ const ROUTES: Record<string, unknown> = {
     academyLevel: 2,
     serverNow: SERVER_NOW,
   },
+  '/tech/research': {
+    techId: 'tech_agri_wood', level: 4, finishAt: SERVER_NOW + 300_000,
+    cost: [{ type: 'WOOD', amount: 600 }], timeSec: 300,
+  },
+  '/tech/cancel': {
+    techId: 'tech_agri_wood', refund: [{ type: 'WOOD', amount: 360 }],
+  },
+  '/tech/speedUp': {
+    techId: 'tech_agri_wood', reducedSeconds: 3600, remainingSeconds: 0, finished: true,
+  },
   '/equip/instances': {
     instances: [
       {
@@ -200,6 +223,7 @@ const ROUTES: Record<string, unknown> = {
   '/city/upgrade': { accepted: true, serverNow: SERVER_NOW },
   '/city/speedUp': { remainingSeconds: 0, serverNow: SERVER_NOW },
   '/city/collect': { collected: {}, entries: [], serverNow: SERVER_NOW },
+  '/city/cancel': { buildingId: 'b1', refund: [{ type: 'WOOD', amount: 300 }] },
   '/army/train': { started: 1, serverNow: SERVER_NOW },
   // 开关自动续训（B25-S2d）：回一份「开着、还剩 2 批」的策略，够编排用例读回执
   '/army/autoTrain': {
@@ -223,7 +247,17 @@ const ROUTES: Record<string, unknown> = {
   '/shop/buy': { rowId: 'shop_speedup_build_1h', itemId: 'item_speedup_build_1h', count: 1,
     currency: 'GOLD', spent: 300, balance: 900, used: 2, remaining: 0, serverNow: SERVER_NOW },
   '/item/use': { used: 1, remaining: 0, effects: [], serverNow: SERVER_NOW },
-  '/stage/sweep': { results: {}, rewards: [], serverNow: SERVER_NOW },
+  '/item/openBatch': {
+    consumed: 5, results: [{ type: 'RESOURCE', id: 'WOOD', count: 500, name: '木材' }],
+    overflow: [], mailId: null, seed: 7, serverNow: SERVER_NOW,
+  },
+  '/stage/sweep': {
+    results: [], totalRewards: [], staminaCost: 6, staminaCharged: 6,
+    // executed 故意小于请求的 10：视图那条「只扫了 7 次」的解释要靠它
+    executed: 3,
+    progress: { stageId: 's1', stars: 3, bestRounds: 2, clearedAt: 1, sweepCount: 3 },
+    serverNow: SERVER_NOW,
+  },
   '/stage/challenge': {
     reportId: 'r1', stars: { cleared: true, noLoss: true, withinRounds: true, total: 3 },
     starsEarned: 3, newBest: true, rewards: [], losses: [], staminaCost: 6,
@@ -236,7 +270,8 @@ const ROUTES: Record<string, unknown> = {
   '/squad/kick': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
   '/alliance/kick': { squad: null, alliance: null, nationId: null, pendingInvites: 0, pendingHelps: 0, helpRemainingToday: 0, events: [], serverNow: SERVER_NOW },
   '/alliance/donate': { tier: 1, donated: {}, contribution: 0, fund: 0, serverNow: SERVER_NOW },
-  '/world/searchTargets': { targets: [], selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW },
+  '/world/searchTargets': { targets: [], selfMatchPower: 10, lowerBound: 5, upperBound: 20,
+    radiusMin: 1, radiusDefault: 48, radiusMax: 128, serverNow: SERVER_NOW },
   '/world/march': {
     march: { marchId: 'm-1', from: { x: 48, y: 48 }, to: { x: 60, y: 60 }, status: 'MARCHING',
       targetType: 'CITY', targetId: 'P9', rallyId: null, action: 'ATTACK', startAt: SERVER_NOW,
@@ -252,6 +287,8 @@ const ROUTES: Record<string, unknown> = {
     departAt: SERVER_NOW + 120000, status: 'PREPARING', members: ['P-leader'],
     heroSlots: [], serverNow: SERVER_NOW,
   }], serverNow: SERVER_NOW },
+  '/rally/policy': rallyPolicyBody(),
+  '/world/reports': { reports: [], serverNow: SERVER_NOW },
   '/rally/join': { rally: {
     rallyId: 'r-1', scope: 'SQUAD', groupId: 'sq-1', initiatorId: 'P-leader',
     targetCoord: { x: 60, y: 60 }, targetType: 'MONSTER', maxMembers: 10,
@@ -368,8 +405,8 @@ const ROUTES: Record<string, unknown> = {
     version: 7, unchanged: false, removedMemberIds: [], fund: 100, level: 1, memberCount: 2,
     announcement: '', serverNow: SERVER_NOW,
     changedMembers: [
-      { id: 'M1', name: '甲', power: 10, role: 'LEADER', contribution: 5, lastActiveAt: 1, squadId: null },
-      { id: 'M2', name: '乙', power: 20, role: 'MEMBER', contribution: 3, lastActiveAt: 2, squadId: null },
+      { id: 'M1', name: '甲', power: 10, role: 'LEADER', contribution: 5, lastActiveAt: 1, squadId: null, squadName: null },
+      { id: 'M2', name: '乙', power: 20, role: 'MEMBER', contribution: 3, lastActiveAt: 2, squadId: null, squadName: null },
     ],
   },
 }
@@ -537,6 +574,27 @@ interface Harness {
   readonly lastSocialHelps: string[]
   /** 最近一次落地给聊天页签的数据（B22）—— 频道、会话、消息、提示行都看它。 */
   readonly lastChat: ChatPanelData | null
+  /** 最近一次递给体力那条的三份数：当前 / 上限 / 金币（金币为 null 表示资源明细还没到） */
+  readonly lastStamina: { current: number, cap: number, gold: number | null } | null
+  /** 最近一次递给「开几个」选择器的选项 */
+  readonly chestOptions: readonly ChoiceOption[]
+  /** 点「开几个」里的一条 */
+  pickChest(id: string): void
+  readonly lastChest: { consumed: number, overflow: number } | null
+  /** 最近一次取消研究里服务端回的 techId 与那份返还 */
+  readonly lastTechCancel: { techId: string, refund: number } | null
+  /** 最近一次取消建造里服务端回的返还量 */
+  readonly lastCityCancel: number | null
+  /** 递给「用哪一张加速」的候选，以及点其中一张 */
+  readonly researchSpeedupOptions: readonly ResearchSpeedupChoice[]
+  pickResearchSpeedup(itemId: string, count: number): void
+  readonly lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null
+  /** 最近一次购买回执里服务端说的到账与扣币 */
+  readonly lastStaminaBought: { granted: number, costGold: number } | null
+  /** 一次挑战的结算有没有送到面板。视图里那个渲染器长期零调用点，这条就是盯住投递 */
+  readonly lastChallenge: { stageId: string, stars: number } | null
+  /** 一次扫荡的结算 + 客户端请求的次数（缺次数就解释不了「要 10 次只扫了 3 次」） */
+  readonly lastSweep: { executed: number, requested: number } | null
   /** 最近一次落地给榜单面板的整块视图。 */
   readonly lastRank: RankBoardView | null
   readonly lastSeason: SeasonPanelView | null
@@ -588,6 +646,10 @@ interface Harness {
   readonly errors: Array<[string, string]>
   readonly attached: string[]
   readonly events: Array<{ name: string, params: Record<string, string> }>
+  /** 最近一次弹出的军队「队列」菜单选项（B26 S15） */
+  readonly queueOptions: readonly ChoiceOption[]
+  /** 点「队列」菜单里的一条 */
+  pickQueue(id: string): void
   readonly speedupOptions: readonly SpeedupChoice[]
   readonly lineupOptions: readonly LineupChoice[]
   /** 最近一次弹出的分享频道候选（没点分享时为空） */
@@ -650,6 +712,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let socialMembers: string[] = []
   let socialHelps: string[] = []
   let lastChat: ChatPanelData | null = null
+  let lastStamina: { current: number, cap: number, gold: number | null } | null = null
+  let lastStaminaBought: { granted: number, costGold: number } | null = null
+  let lastChallenge: { stageId: string, stars: number } | null = null
+  let lastSweep: { executed: number, requested: number } | null = null
   let lastRank: RankBoardView | null = null
   let lastSeason: SeasonPanelView | null = null
   let lastTech: TechPanelView | null = null
@@ -675,6 +741,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let reddotTree: ClientReddotTree | null = null
   let activityNow = -1
   let activityRows = -1
+  let queueOptions: ChoiceOption[] = []
+  let queuePick: ((id: string) => void) | null = null
   let speedupOptions: SpeedupChoice[] = []
   let lineupOptions: LineupChoice[] = []
   let shareChannelOptions: ShareChannelChoice[] = []
@@ -683,16 +751,44 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastShareOutcome: [string, boolean] = ['', false]
   let shareChannelPick: ((choice: ShareChannelChoice) => void) | null = null
   let speedupPick: ((targetId: string) => void) | null = null
+  let chestOptions: ChoiceOption[] = []
+  let chestPick: ((id: string) => void) | null = null
+  let lastChest: { consumed: number, overflow: number } | null = null
+  let lastTechCancel: { techId: string, refund: number } | null = null
+  let lastCityCancel: number | null = null
+  let researchSpeedupOptions: ResearchSpeedupChoice[] = []
+  let researchSpeedupPick: ((choice: ResearchSpeedupChoice) => void) | null = null
+  let lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null = null
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
   const targets: PanelTargets = {
     city: () => attached.push('city'),
     cityCollect: () => attached.push('cityCollect'),
+    cityCancelled: (resp) => {
+      attached.push('cityCancelled')
+      lastCityCancel = resp.refund[0]?.amount ?? 0
+    },
     army: () => attached.push('army'),
     hero: () => attached.push('hero'),
     resources: () => attached.push('resources'),
     bag: () => attached.push('bag'),
     stage: () => attached.push('stage'),
+    stamina: (resp, gold) => {
+      attached.push('stamina')
+      lastStamina = { current: resp.current, cap: resp.cap, gold }
+    },
+    staminaBought: (resp) => {
+      attached.push('staminaBought')
+      lastStaminaBought = { granted: resp.granted, costGold: resp.costGold }
+    },
+    challengeResult: (resp) => {
+      attached.push('challengeResult')
+      lastChallenge = { stageId: resp.progress.stageId, stars: resp.starsEarned }
+    },
+    sweepResult: (resp, requested) => {
+      attached.push('sweepResult')
+      lastSweep = { executed: resp.executed, requested }
+    },
     social: (_resp, helps, members) => {
       attached.push('social')
       socialMembers = members.map(m => m.id)
@@ -796,6 +892,32 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       speedupOptions = [...options]
       speedupPick = onPick
     },
+    chestOpenChoice: (options, onPick) => {
+      chestOptions = [...options]
+      chestPick = onPick
+    },
+    chestOpened: (resp) => {
+      attached.push('chestOpened')
+      lastChest = { consumed: resp.consumed, overflow: resp.overflow.length }
+    },
+    techCancelled: (resp) => {
+      attached.push('techCancelled')
+      lastTechCancel = { techId: resp.techId, refund: resp.refund[0]?.amount ?? 0 }
+    },
+    researchSpeedupChoice: (options, onPick) => {
+      researchSpeedupOptions = [...options]
+      researchSpeedupPick = onPick
+    },
+    techSpeededUp: (resp) => {
+      attached.push('techSpeededUp')
+      lastTechSpeedUp = {
+        reduced: resp.reducedSeconds, remaining: resp.remainingSeconds, finished: resp.finished,
+      }
+    },
+    armyQueueChoice: (options, onPick) => {
+      queueOptions = [...options]
+      queuePick = onPick
+    },
     lineupChoice: (options, onPick) => {
       lineupOptions = [...options]
       lineupPick = onPick
@@ -824,6 +946,18 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastChat() {
       return lastChat
+    },
+    get lastStamina() {
+      return lastStamina
+    },
+    get lastStaminaBought() {
+      return lastStaminaBought
+    },
+    get lastChallenge() {
+      return lastChallenge
+    },
+    get lastSweep() {
+      return lastSweep
     },
     get lastRank() {
       return lastRank
@@ -903,8 +1037,39 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     get reddotTree() {
       return reddotTree
     },
+    get queueOptions() {
+      return queueOptions
+    },
+    pickQueue(id: string) {
+      queuePick?.(id)
+    },
     get speedupOptions() {
       return speedupOptions
+    },
+    get chestOptions() {
+      return chestOptions
+    },
+    pickChest(id) {
+      chestPick?.(id)
+    },
+    get lastChest() {
+      return lastChest
+    },
+    get lastTechCancel() {
+      return lastTechCancel
+    },
+    get lastCityCancel() {
+      return lastCityCancel
+    },
+    get researchSpeedupOptions() {
+      return researchSpeedupOptions
+    },
+    pickResearchSpeedup(itemId, count) {
+      const choice = researchSpeedupOptions.find(o => o.itemId === itemId && o.count === count)
+      if (choice !== undefined) researchSpeedupPick?.(choice)
+    },
+    get lastTechSpeedUp() {
+      return lastTechSpeedUp
     },
     get lineupOptions() {
       return lineupOptions
@@ -946,9 +1111,10 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
 
 // 登录 1 条 + 首屏面板请求。社交面板是三条（摘要 + 成员 diff + 互助列表），
 // 2026-09-12 加任务面板（B12 §1 + 收口清单 #98 的三选一送将）后再 +1，
-// 阶段 3.4 再把红点树作为独立首屏拉取项 +1 ——
+// 阶段 3.4 再把红点树作为独立首屏拉取项 +1，B26 S22 加体力那条（`/stamina` 是会写库的读，
+// 不能蹭 `/stage/list` 那份只带 current 的数）再 +1 ——
 // 这个数被断言写死正是为了让每一次新增都要被看见并解释
-const PANEL_PULLS = 13
+const PANEL_PULLS = 14
 
 test('start：先登录，再把十个面板各拉一次，并把家坐标交出去', async () => {
   const h = harness()
@@ -960,7 +1126,7 @@ test('start：先登录，再把十个面板各拉一次，并把家坐标交出
   // 但谁先谁后不再断言 —— 那个顺序没有任何调用方在读，钉住它只会让并发化变成一次假红。
   assert.deepEqual(Array.from(h.attached).sort(),
     ['army', 'bag', 'chat', 'city', 'hero', 'home', 'power', 'quest', 'rank', 'reddot',
-      'resources', 'social', 'stage'])
+      'resources', 'social', 'stage', 'stamina'])
   assert.equal(h.errors.length, 0)
   assert.equal(h.root.playerId, 'P1')
 })
@@ -1022,7 +1188,7 @@ test('首屏预拉是并发发出的：第一个面板还扣着时，其余十�
   const paths = h.http.calls.map(c => c.path)
   assert.equal(paths.includes('/city/list'), true, '第一个面板得先发出去（并且被扣着）')
   for (const path of ['/army/list', '/hero/list', '/bag/list', '/resource/detail', '/stage/list',
-    '/social/summary', '/player/power', '/world/marches', '/quest/list', '/social/reddot']) {
+    '/stamina', '/social/summary', '/player/power', '/world/marches', '/quest/list', '/social/reddot']) {
     assert.equal(paths.includes(path), true,
       `第一个面板还卡着时 ${path} 就该已经发出：串行会把这些请求排成一串，`
       + '首屏可交互时间就是它们的和')
@@ -1210,6 +1376,8 @@ test('战报列表：refresh 只发一次 GET，回执落到面板（GameApi 那
   await h.root.refresh('reports')
 
   assert.equal(h.http.calls.filter(c => c.path === '/battle/reports').length, 1)
+  assert.equal(h.http.calls.filter(c => c.path === '/world/reports').length, 1,
+    '敌情与战报是同一块面板的两个页签：一次刷新各拉一次，不多发也不漏发')
   assert.equal(h.attached.includes('reports'), true)
   assert.equal(h.errors.length, 0)
 })
@@ -1294,6 +1462,69 @@ test('×10 扫荡只发一个 count=10 的请求（拆成十个请求，弱网�
   const sweeps = h.http.calls.filter(c => c.path === '/stage/sweep')
   assert.equal(sweeps.length, 1)
   assert.equal(sweeps[0]?.body.count, 10)
+  // 结算必须送到面板，而且要把「客户端请求了几次」一起带过去：
+  // 响应里只有 executed=3，不带 requested 就解释不了「我要 10 次为什么只扫了 3 次」
+  // —— 视图里那个 `attachSweep` 一直存在，缺的就是这一投递
+  assert.deepEqual(h.lastSweep, { executed: 3, requested: 10 })
+})
+
+test('买体力：一次请求、回执照服务端说的念、买完重拉那三份账', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.buyStamina()
+
+  const buys = h.http.calls.filter(c => c.path === '/stamina/buy')
+  assert.equal(buys.length, 1)
+  assert.equal(buys[0]?.body.times, 1)
+  assert.ok(typeof buys[0]?.body.requestId === 'string' && buys[0].body.requestId.length > 0,
+    '扣金币的写口没有幂等键 = 允许重放刷体力')
+  // 到账与扣币都取响应里的数，客户端不自己算
+  assert.deepEqual(h.lastStaminaBought, { granted: 20, costGold: 20 })
+  // 买完的体力与金币都必须重拉：不重拉的话面板停在买之前的余额上，玩家以为没扣
+  assert.equal(h.http.countOf('/stamina'), 2, '买完要重读 `/stamina`')
+  assert.equal(h.http.calls.filter(c => c.path === '/resource/detail').length, 2,
+    '买完要重读资源明细（金币余额）')
+})
+
+test('体力已满时点买：一个请求都不发，并把「白扣金币」说在按下去之前', async () => {
+  const h = harness()
+  h.http.overrides.set('/stamina', {
+    current: 120, cap: 120, recoverPerHour: 5, nextPointAt: null,
+    boughtToday: 1, buyCostGold: 20, serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  await h.root.buyStamina()
+
+  assert.equal(h.http.calls.length, total, '满了就不该发出这一按的请求')
+  assert.match(h.errors.map(e => e[1]).join('\n'), /白扣金币/)
+})
+
+test('今日买满（价格下发 0）：同样不发请求，说的是今日上限', async () => {
+  const h = harness()
+  h.http.overrides.set('/stamina', {
+    current: 40, cap: 120, recoverPerHour: 5, nextPointAt: SERVER_NOW + 60_000,
+    boughtToday: 5, buyCostGold: 0, serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  await h.root.buyStamina()
+
+  assert.equal(h.http.calls.length, total)
+  assert.match(h.errors.map(e => e[1]).join('\n'), /今日购买次数已达上限/)
+})
+
+test('买体力是一条埋点：付费点没有漏斗就没人知道它卡在哪一步', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.buyStamina()
+
+  assert.deepEqual(h.events.filter(e => e.name === 'stamina_buy'),
+    [{ name: 'stamina_buy', params: { priceGold: '20' } }])
 })
 
 test('信息不足的动作不发请求，只说清缺什么（替玩家挑阵容消耗的是他的兵和体力，且不会报错）', async () => {
@@ -1372,6 +1603,10 @@ test('挑战先展示已编成阵容，选中后才把英雄与全部可用兵�
     { unitId: 'unit_archer_t1', count: 25 },
   ])
   assert.deepEqual(h.attached.slice(-3), ['stage', 'army', 'hero'])
+  // 挑战的结算同样要送到面板（星级、掉落、体力都在那份响应里），而且**排在三次重拉之前**：
+  // `write` 的口径是「回执先落地再刷新」，这条顺序另有四条用例钉着，这里把它连回执一起钉住
+  assert.deepEqual(h.lastChallenge, { stageId: 's1', stars: 3 })
+  assert.deepEqual(h.attached.slice(-4), ['challengeResult', 'stage', 'army', 'hero'])
 })
 
 test('踢人按页签分流到不同端点：View 的回调不带组织，根必须带上', async () => {
@@ -1408,6 +1643,18 @@ test('搜索：半径由面板给、maxCount 由根定，响应回到目标列�
   assert.equal(call?.body.radius, 64)
   assert.equal(typeof call?.body.maxCount, 'number')
   assert.deepEqual(h.attached, ['targets'])
+})
+
+test('搜索：还不知道半径时发 null，不是一个猜出来的 0', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.searchTargets(null)
+
+  const call = h.http.calls.find(c => c.path === '/world/searchTargets')
+  // 发 0 会被服务端夹成地板值 1 格（上下左右四格邻居），玩家读到的是空列表 + 一个说不清的理由。
+  // null 才是「按 SEARCH_DEFAULT_RADIUS 搜」的那个意思 —— 与 maxCount 的 null 同一条口径
+  assert.strictEqual(call?.body.radius, null)
 })
 
 test('每个面板动作都要留下一个事件（B16 验收 3 的客户端半边，卡口比对的就是这件事）', async () => {
@@ -1570,7 +1817,7 @@ test('成员 diff 的合并：变更覆盖、移除摘掉，面板拿到的永�
 
   h.http.overrides.set('/alliance/sync', syncResponse({
     version: 9,
-    changedMembers: [{ id: 'M3', name: '丙', power: 30, role: 'MEMBER', contribution: 0, lastActiveAt: 3, squadId: null }],
+    changedMembers: [{ id: 'M3', name: '丙', power: 30, role: 'MEMBER', contribution: 0, lastActiveAt: 3, squadId: null, squadName: null }],
     removedMemberIds: ['M1'],
   }))
   await h.root.refresh('social')
@@ -2073,6 +2320,46 @@ test('研究页：打开才拉 /tech/list、上报 tech_view，判定字段原�
   assert.equal(h.lastTech?.rows[1]?.costText, '铁矿 900', '被拒的行也把成本摊开')
 })
 
+test('点「研究」：一次 POST、带幂等键，成功后重拉列表与资源两份账', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.openTech()
+
+  await h.root.researchTech('tech_agri_wood')
+
+  const calls = h.http.calls.filter(c => c.path === '/tech/research')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.techId, 'tech_agri_wood')
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
+    '扣资源的写口没有幂等键 = 弱网重投会扣两次')
+  // 队列与余额都变了：不重拉的话面板停在"没在研究、钱还在"的旧世界上
+  assert.equal(h.http.countOf('/tech/list'), 2, '开始研究后要重拉列表（队列那一行是服务端算的）')
+  assert.equal(h.http.countOf('/resource/detail'), 2, '开始研究后要重拉资源（扣了钱）')
+})
+
+test('服务端说不能研究的那一行：一个请求都不发，把那句原因原样报出来', async () => {
+  const h = harness()
+  await h.root.openTech()
+  const total = h.http.calls.length
+
+  await h.root.researchTech('tech_mil_attack')
+
+  assert.equal(h.http.calls.length, total, '灰着的行点下去不该发出请求')
+  assert.equal(h.errors.length, 1)
+  assert.equal(h.errors[0]?.[1], '学院等级不足', '原因用服务端给的那句，不自己编')
+})
+
+test('研究一行是一条埋点，带目标等级（长线养成要看卡在哪一级不动）', async () => {
+  const h = harness()
+  await h.root.openTech()
+  h.events.length = 0
+
+  await h.root.researchTech('tech_agri_wood')
+
+  assert.deepEqual(h.events.filter(e => e.name === 'tech_research'),
+    [{ name: 'tech_research', params: { techId: 'tech_agri_wood', nextLevel: '4' } }])
+})
+
 test('研究页：拉不到时理由原样进说明行，且不把上一次那份清空', async () => {
   const h = harness()
   await h.root.start('dev-1', '君')
@@ -2419,6 +2706,8 @@ test('抽卡面板：两个池都列出来，抽满的那个点不动也不发�
   await h.root.drawGacha(1)
   assert.equal(h.http.countOf('/gacha/draw'), before, '抽满还发请求，等于把玩家送去挨一条拒绝')
   assert.deepEqual(h.errors.at(-1), ['gacha', '这个号在该池已抽满'])
+  // 同一句话要落在抽卡面板那条 `notice` 上（#358 的 (b) 类落点：写 notice 字段再纯重递）
+  assert.equal(h.lastGacha?.notice, '这个号在该池已抽满')
 })
 
 test('抽卡：换池后十抽不够就不发、单抽够就发一条，并回读四样与结果行', async () => {
@@ -2558,10 +2847,11 @@ test('编队编辑：名册没读到时保存是空操作，并把理由说给�
   assert.deepEqual(h.errors.at(-1), ['hero', '武将列表还没读到'])
 })
 
-test('社交三道门：两个 scope 各拉一次 + 一份创建政策，两份权限都到齐才放开按钮，且首屏不占这三条请求', async () => {
+test('社交四道门：两个 scope 各拉一次 + 创建政策 + 集结政策，两份权限都到齐才放开按钮，且首屏不占这几条请求', async () => {
   const h = harness()
   h.http.overrides.set('/social/permissions', permissionBody())
   h.http.overrides.set('/social/createPolicy', createPolicyBody())
+  h.http.overrides.set('/rally/policy', rallyPolicyBody())
   // 首屏预拉里就有 /resource/detail：余额 200 而联盟要 500 ⇒ 行上该写「还差 300」
   h.http.overrides.set('/resource/detail', {
     resources: [{
@@ -2571,12 +2861,14 @@ test('社交三道门：两个 scope 各拉一次 + 一份创建政策，两份�
     serverNow: SERVER_NOW,
   })
   await h.root.start('dev-1', '君')
-  // 首屏预算：社交页的三道门不在预拉里（与邮件/商店/外观同一条纪律）
+  // 首屏预算：社交页的四道门不在预拉里（与邮件/商店/外观同一条纪律）
   assert.equal(h.http.countOf('/social/permissions'), 0,
     '开局多两条并发请求会挤那 3 秒可交互预算')
   assert.equal(h.http.countOf('/social/createPolicy'), 0)
+  assert.equal(h.http.countOf('/rally/policy'), 0, '集结政策与创建政策同一条预算纪律')
 
   await h.root.loadSocialGates()
+  assert.equal(h.http.countOf('/rally/policy'), 1, '一次并发拉齐，两个层级一份响应')
   const scopeCalls = h.http.calls.filter((c) => c.path === '/social/permissions')
   assert.deepEqual(scopeCalls.map((c) => c.query.get('scope')), ['SQUAD', 'ALLIANCE'],
     '服务端一次只回一个 scope，只拉一次就等于只验了一半')
@@ -2594,6 +2886,7 @@ test('社交三道门：两个 scope 各拉一次 + 一份创建政策，两份�
   await h.root.refresh('social')
   assert.equal(h.http.countOf('/social/permissions'), before + 2)
   assert.equal(h.http.countOf('/social/createPolicy'), 2)
+  assert.equal(h.http.countOf('/rally/policy'), 2, '职位/人数变了那两个数也跟着变，不能留在旧政策上')
 })
 
 test('社交三道门：拉不到时不放行也不猜，理由走统一上报口', async () => {
@@ -2955,6 +3248,20 @@ function createPolicyBody(): Record<string, unknown> {  return {
 }
 
 /**
+ * 一份两层都放行、联盟能凑满 12 人的集结政策（B26 S14）。
+ *
+ * <p>数字刻意与 global 表的配置上限（20）不同：**这是"此刻按联盟实际人数算出来的上界"**，
+ * 用例里要断言客户端下发的是政策那个 12，而不是抄表抄来的 20。
+ */
+function rallyPolicyBody(): Record<string, unknown> {
+  const view = (maxMembers: number): Record<string, unknown> => ({
+    minMembers: 2, maxMembers, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+    defaultPrepareMinutes: 30, canStart: true, reason: null,
+  })
+  return { squad: view(5), alliance: view(12), serverNow: SERVER_NOW }
+}
+
+/**
  * 一份「我是盟主，能踢人能捐献」的权限响应。
  *
  * <p>桩里 `/social/permissions` **没有默认路由**：不设这条覆盖，读会失败并走重试，
@@ -3067,11 +3374,7 @@ test('点搜索到的目标 → 拉起编成（带坐标与可选项），且一
 
   h.root.beginMarchCompose('P9')
 
-  const writes = h.http.calls.slice(before).filter(c => c.method === 'POST')
-  assert.deepEqual(writes.map(c => c.path), [],
-    '编成只是准备数据：确认之前不发任何写请求、不扣兵')
-  assert.deepEqual(h.http.calls.slice(before).map(c => c.path), ['/rally/policy'],
-    '打开编成只多这一发读（发起集结的界与默认值）；哪天这里冒出第二发，就是有人往准备阶段塞了动作')
+  assert.equal(h.http.calls.length, before, '编成只是准备数据：确认之前不发请求、不扣兵')
   assert.equal(h.lastCompose?.targetName, '邻居')
   assert.equal(h.lastCompose?.coordText, '60, 60')
   assert.equal(h.lastCompose?.compose.options.length, 2, '可选项来自军队列表')
@@ -3097,66 +3400,25 @@ test('B26 S12：编成里切到集结再确认 → 发 /rally/squad 而不是 /w
     squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
   }))
   h.http.overrides.set('/rally/squad', { rally: rallyShape(), serverNow: SERVER_NOW })
-  h.http.overrides.set('/rally/policy', {
-    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 5, maxPrepareMinutes: 60,
-      defaultPrepareMinutes: 60, canStart: true, reason: null },
-    alliance: { minMembers: 3, maxMembers: 20, minPrepareMinutes: 10, maxPrepareMinutes: 120,
-      defaultPrepareMinutes: 120, canStart: true, reason: null },
-    serverNow: SERVER_NOW,
-  })
-  h.http.overrides.set('/rally/alliance', { rally: rallyShape(), serverNow: SERVER_NOW })
   await h.root.refresh('army')
   await h.root.searchTargets(64)
   await h.root.loadSocialGates()
   await h.root.refresh('social')
   h.root.beginMarchCompose('P9')
-  await h.root.loadRallyPolicy()
-  assert.equal(h.lastCompose?.kind ?? 'MARCH', 'MARCH', '默认还是出征')
-  // 用局部变量接住再判空：`assert.ok(h.lastCompose?.rally === null)` 会沿这条属性路径
-  // 把 `rally` 永久收窄成 null，后面再取 `.members` 就成了 never
-  const marchRally = h.lastCompose?.rally
-  assert.ok(marchRally === null, '出征没有"等人"这个维度，那一行整条不该在')
-
+  assert.equal(h.lastCompose?.mode ?? 'MARCH', 'MARCH', '默认还是出征')
   h.root.toggleComposeRally()
-  assert.equal(h.lastCompose?.kind, 'SQUAD_RALLY')
-  assert.equal(h.lastCompose?.submitLabel, '发起小队集结')
-  const squadParams = h.lastCompose?.rally
-  assert.ok(squadParams === null,
-    'SquadRallyReq 不吃人数与时长 ⇒ 那一档画参数行就是一组点了什么都不发生的控件')
-
-  h.root.toggleComposeRally()
-  assert.equal(h.lastCompose?.kind, 'ALLIANCE_RALLY')
-  assert.equal(h.lastCompose?.submitLabel, '发起联盟集结')
-  assert.equal(h.lastCompose?.rally?.members.max, 20, '上界来自读口，不是客户端抄 global')
-  assert.equal(h.lastCompose?.rally?.members.value, 20, '默认值也来自读口')
-  assert.equal(h.lastCompose?.rally?.prepare.value, 120)
-
-  h.root.adjustRallyParams('members', -1)
-  h.root.adjustRallyParams('prepare', -1)
-  assert.equal(h.lastCompose?.rally?.members.value, 18, '步长由上下界推出（跨度 17 ⇒ 每下 2）')
-  assert.equal(h.lastCompose?.rally?.prepare.value, 109, '跨度 110 ⇒ 每下一步走 11 分钟')
+  assert.equal(h.lastCompose?.mode, 'RALLY')
+  assert.equal(h.lastCompose?.submitLabel, '发起集结', '确认键上的字跟着变，玩家才知道自己按的是哪种命令')
   h.root.pickMarchUnit('unit_infantry_t1', 30)
   await h.root.confirmMarch()
   assert.equal(h.http.countOf('/world/march'), 0, '切了集结就不该再走普通出征')
-  const allianceSent = h.http.calls.filter(c => c.path === '/rally/alliance').at(-1)
-  assert.ok(allianceSent !== undefined, '联盟集结那一枪要真发出去')
-  assert.equal(allianceSent?.body.maxMembers, 18, '发出去的是玩家调过的那个值')
-  assert.equal(allianceSent?.body.prepareMinutes, 109)
-  assert.equal(h.http.countOf('/rally/squad'), 0, '联盟档不该同时打小队那一枪')
-  assert.deepEqual(allianceSent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }],
+  const sent = h.http.calls.filter(c => c.path === '/rally/squad').at(-1)
+  assert.ok(sent !== undefined, '集结那一枪要真发出去')
+  assert.deepEqual(sent?.body.targetCoord, { x: 60, y: 60 }, '目标是编成前选的那个')
+  assert.equal(sent?.body.targetType, 'PLAYER_CITY', '搜索结果都是玩家城，类型由编排层定而不是猜')
+  assert.deepEqual(sent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }],
     '发起人自己的兵必须随这一枪交出去：服务端拿它建第一个参与者')
-
-  // 发起成功会收起面板；重开一次再走小队档，确认 S12 那条原路径没被三态化挡死
-  // （小队档没有参数行，若沿用联盟那条"参数没到先别发"的守卫就会被永久挡住）
-  h.root.beginMarchCompose('P9')
-  await h.root.loadRallyPolicy()
-  h.root.toggleComposeRally()
-  assert.equal(h.lastCompose?.kind, 'SQUAD_RALLY')
-  h.root.pickMarchUnit('unit_infantry_t1', 30)
-  await h.root.confirmMarch()
-  const squadSent = h.http.calls.filter(c => c.path === '/rally/squad').at(-1)
-  assert.ok(squadSent !== undefined, '小队档仍然发得出去')
-  assert.equal(squadSent?.body.maxMembers, undefined, '小队请求里没有这两个字段')
+  assert.ok(typeof sent?.body.requestId === 'string', '集结建的是公共事务，重放等于多开一支')
 })
 
 test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只说一句原因', async () => {
@@ -3175,11 +3437,12 @@ test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只�
   h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
     squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
   }))
+  // 「能不能发起」这一句现在只有一个出处：`/rally/policy`。客户端不再按权限位自己拼一份
   h.http.overrides.set('/rally/policy', {
-    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 5, maxPrepareMinutes: 60,
-      defaultPrepareMinutes: 60, canStart: false, reason: '你还没有小队，先加入或建一支再发起集结' },
-    alliance: { minMembers: 3, maxMembers: 20, minPrepareMinutes: 10, maxPrepareMinutes: 120,
-      defaultPrepareMinutes: 120, canStart: true, reason: null },
+    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: false, reason: '你当前的职位不能发起集结' },
+    alliance: { minMembers: 2, maxMembers: 20, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: false, reason: '你当前的职位不能发起集结' },
     serverNow: SERVER_NOW,
   })
   await h.root.refresh('army')
@@ -3187,16 +3450,176 @@ test('B26 S12：切换种类本身不发请求也不打埋点，被挡住时只�
   await h.root.loadSocialGates()
   await h.root.refresh('social')
   h.root.beginMarchCompose('P9')
-  await h.root.loadRallyPolicy()
   h.events.length = 0
   const before = h.http.calls.length
   h.root.toggleComposeRally()
   assert.equal(h.http.calls.length, before, '切换不吃网络：它既不是命令也不该预拉')
   assert.equal(h.events.length, 0, '换种类是一次选择，不是那一次提交')
-  assert.equal(h.lastCompose?.kind ?? 'MARCH', 'MARCH', '被挡住就不切')
-  assert.ok((h.lastCompose?.notice ?? '').length > 0, '要说出为什么切不动')
-  assert.ok((h.lastCompose?.notice ?? '').includes('先加入或建一支'),
-    '那句原因是读口给的原文，客户端不自己翻译一遍')
+  assert.equal(h.lastCompose?.mode ?? 'MARCH', 'MARCH', '被挡住就不切')
+  assert.equal(h.lastCompose?.notice, '你当前的职位不能发起集结',
+    '原因用服务端那句原话：客户端自己拼的那份一旦和权限表漂了，玩家看到的和被拒的就不是同一句')
+})
+
+// ---------- B26 S14：编成面板上的联盟集结（层级 + 那两个数） ----------
+
+/**
+ * 一支已经按下「改成集结」的编成面板。
+ *
+ * @param policy 覆盖 `/rally/policy` 的响应；不给就用路由表里那份（两层都放行、联盟上界 12 人）
+ */
+async function rallyComposeHarness(policy?: Record<string, unknown>): Promise<Harness> {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'LEADER', permissions: ['START_RALLY'], serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
+    squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
+  }))
+  h.http.overrides.set('/rally/squad', { rally: rallyShape(), serverNow: SERVER_NOW })
+  h.http.overrides.set('/rally/alliance', { rally: rallyShape(), serverNow: SERVER_NOW })
+  if (policy !== undefined) {
+    h.http.overrides.set('/rally/policy', policy)
+  }
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  await h.root.loadSocialGates()
+  await h.root.refresh('social')
+  h.root.beginMarchCompose('P9')
+  h.root.toggleComposeRally()
+  return h
+}
+
+test('B26 S14：编成里的层级两行都在，小队层不带数字，切到联盟就按政策填出那两个数', async () => {
+  const h = await rallyComposeHarness()
+  assert.equal(h.lastCompose?.mode, 'RALLY')
+  assert.deepEqual(h.lastCompose?.rallyScopes?.map(row => [row.scope, row.label, row.blocked]),
+    [['SQUAD', '小队', null], ['ALLIANCE', '联盟', null]],
+    '两行都带服务端那句"能不能发起"，客户端不再判第二遍')
+  assert.equal(h.lastCompose?.rallyScope, 'SQUAD', '进集结态先停在玩家已经点过的那条路（小队）')
+  assert.equal(h.lastCompose?.rallyNumbers?.length, 0, '小队层的上限与时长由服务端自己定，没有可填的数')
+
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyScope, 'ALLIANCE')
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => [row.field, row.text]),
+    [['maxMembers', '12/12人'], ['prepareMinutes', '30分']],
+    '起始值取自政策：上界是"此刻按实际人数算出来的 12"而不是 global 表里的 20，时长是服务端给的 defaultPrepareMinutes')
+  assert.equal(h.http.countOf('/rally/alliance'), 0, '选层级不发请求')
+})
+
+test('B26 S14：联盟层确认 → 发 /rally/alliance 带那两个数与承诺的兵，不再走小队口', async () => {
+  const h = await rallyComposeHarness()
+  h.root.setComposeRallyScope('ALLIANCE')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  h.events.length = 0
+  await h.root.confirmMarch()
+  const sent = h.http.calls.filter(c => c.path === '/rally/alliance').at(-1)
+  assert.ok(sent !== undefined, '联盟集结要真发出去')
+  assert.deepEqual(sent?.body.targetCoord, { x: 60, y: 60 })
+  assert.equal(sent?.body.targetType, 'PLAYER_CITY')
+  assert.equal(sent?.body.maxMembers, 12, '人数上限照政策那一刻的值')
+  assert.equal(sent?.body.prepareMinutes, 30)
+  assert.deepEqual(sent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }],
+    '发起人的兵只有这一个入口')
+  assert.equal(h.http.countOf('/rally/squad'), 0, '选了联盟层就不该打到小队口')
+  assert.equal(h.http.countOf('/world/march'), 0)
+  assert.deepEqual(h.events.find(e => e.name === 'rally_initiate')?.params,
+    { scope: 'ALLIANCE', troops: '30' }, '层级要分得开：看板靠它才知道联盟集结有没有人用')
+})
+
+test('B26 S14：政策说这一层发起不了 → 点「联盟」不切过去，把那一句人话写在提示行', async () => {
+  const h = await rallyComposeHarness({
+    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: true, reason: null },
+    alliance: { minMembers: 2, maxMembers: 2, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: false,
+      reason: '你还没有联盟，先申请加入或建一个再发起集结' },
+    serverNow: SERVER_NOW,
+  })
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyScope, 'SQUAD', '政策说不能就不切层')
+  assert.equal(h.lastCompose?.notice, '你还没有联盟，先申请加入或建一个再发起集结',
+    '原因是服务端那句原话，客户端不另写一遍')
+  assert.equal(h.http.countOf('/rally/alliance'), 0)
+})
+
+test('B26 S14：那两个数夹在政策的界内，越界的按键直接不画', async () => {
+  const h = await rallyComposeHarness()
+  h.root.setComposeRallyScope('ALLIANCE')
+  h.root.adjustComposeRallyNumber('maxMembers', 1)
+  assert.equal(h.lastCompose?.rallyNumbers?.[0]?.value, 12, '已经在上界 ⇒ 加不动（发出去必然被服务端夹回去）')
+  h.root.adjustComposeRallyNumber('prepareMinutes', -1)
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => row.value), [12, 25])
+  for (let i = 0; i < 30; i++) {
+    // 远超下界：夹住而不是绕回，也不是靠表现层少画一颗键来"挡"
+    h.root.adjustComposeRallyNumber('prepareMinutes', -1)
+    h.root.adjustComposeRallyNumber('maxMembers', -1)
+  }
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => row.value), [2, 10],
+    '下界是政策的最少人数与最短时长（一个人「集结」就是普通出征）')
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => [row.value > row.min, row.value < row.max]),
+    [[false, true], [false, true]], '到界那一侧的键不画：灰键会让玩家以为坏了')
+})
+
+test('B26 S14：政策还没拉到时不猜数 —— 层级切得过去，但确认拦成一句人话、一条写请求都不发', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/social/permissions', {
+    scope: 'ALLIANCE', role: 'LEADER', permissions: ['START_RALLY'], serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/social/summary', Object.assign({}, ROUTES['/social/summary'], {
+    squad: { id: 'SQ_MINE', name: '我的队', memberCount: 3 },
+  }))
+  h.http.failPaths.add('/rally/policy')
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  h.root.toggleComposeRally()
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyScope, 'ALLIANCE', '读不到政策不是"你不行"，不挡着玩家选')
+  assert.equal(h.lastCompose?.rallyNumbers?.length, 0, '没有政策就没有界 ⇒ 一行数都不画，不猜一组')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  await h.root.confirmMarch()
+  assert.equal(h.http.countOf('/rally/alliance'), 0, '猜出来的数不许真的发出去')
+  assert.ok((h.lastCompose?.notice ?? '').includes('还没拉到'), '要说清为什么按不动，以及缺的是哪一样')
+})
+
+test('B26 S14：从没开过社交页的玩家切进集结态会补拉一次政策；政策已在手上就不重复拉', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  assert.equal(h.http.countOf('/rally/policy'), 0, '政策不在首屏预拉里（与创建政策同一条预算纪律）')
+  await h.root.toggleComposeRally()
+  assert.equal(h.http.countOf('/rally/policy'), 1,
+    '不补这一次，玩家看到的是「没有层级可切、两个数一行都不画」的面板')
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyNumbers?.length, 2, '补拉到的政策当场就把两行数字画上')
+  h.root.toggleComposeRally()
+  await h.root.toggleComposeRally()
+  assert.equal(h.http.countOf('/rally/policy'), 1, '已经在手上就不重复拉')
 })
 
 /** 集结那一枪的响应体（面板只把它当"成功了"的信封用）。 */
@@ -3216,6 +3639,22 @@ test('V02-S1：集结列表递下来时带上我的 id —— 「我参没参」
   assert.equal(h.lastRallies?.myPlayerId, h.store.getState().playerId,
     'playerId 由编排层给（纯逻辑层拿它去对 members）')
   assert.equal(h.lastRallies?.notice, null)
+})
+
+test('集结列表里已经没有这一支时点加入：不发请求，原因要写进列表那条说明', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  await h.root.refresh('rallies')
+  const before = h.http.calls.length
+
+  // 真实竞态：列表拉回来之后、玩家点下去之前那一支正好结束了
+  await h.root.beginRallyCompose('rally-already-over')
+
+  assert.equal(h.http.calls.length, before, '列表里没有这一支，一个请求都不该多发')
+  assert.deepEqual(h.errors.at(-1), ['rallies', '这一支集结已经结束了'])
+  // console 那条只有开发者看得见（#356/#357/#358）；同一句话要落到列表那条 `notice` 上，
+  // 走的是 `deliverRallies` 这条**纯重递**（上面那条 calls.length 不变就是它没顺手重拉）
+  assert.equal(h.lastRallies?.notice, '这一支集结已经结束了')
 })
 
 test('V02-S1：给集结编队后确认 → POST /rally/join 带 rallyId 与承诺的兵力，并重拉列表', async () => {
@@ -3543,9 +3982,359 @@ test('商店：不能兑换的那一行不发请求，把服务端给的原因�
   await h.root.start('dev-1', '君')
   await h.root.refresh('shop')
   const before = h.http.countOf('/shop/buy')
+  const callsBeforeReject = h.http.calls.length
 
   await h.root.buyShopRow('shop_res_wood_10k')
 
   assert.equal(h.http.countOf('/shop/buy'), before, '锁定行不发请求（发了也会被同一套规则拒）')
   assert.deepEqual(h.errors.at(-1), ['shop', '主城 5 级解锁'])
+  // console 那条是**开发者通路**（#356 实测：只走它的话玩家屏幕上完全无声）。
+  // 商店的提示行是随数据重算的 `notice`，所以被拒时要写进那个字段再纯重递一次 ——
+  // 直接改标签会被下一次 attach 覆盖。而"重递"只该重画，不该把一次拒绝变成一次读放大
+  assert.equal(h.lastShop?.notice, '主城 5 级解锁')
+  assert.equal(h.http.calls.length, callsBeforeReject,
+    '重递提示不该再发任何请求（一次拒绝变成一次读放大）')
+})
+
+// ---------- B26 S15：军队行上的「队列」菜单与取消训练 ----------
+
+/** 一口在练、一口没练的军队数据。 */
+function armyWithQueue(): Record<string, unknown> {
+  return {
+    units: [
+      { unitId: 'unit_infantry_t1', name: '重步', type: 'INFANTRY', tier: 1, count: 100,
+        wounded: 0, training: 30, finishAt: SERVER_NOW + 600_000, remainingSeconds: 600,
+        unlocked: true, unlockHint: null, trainTimeSec: 10 },
+      { unitId: 'unit_archer_t1', name: '长弓', type: 'ARCHER', tier: 1, count: 50,
+        wounded: 0, training: 0, finishAt: null, remainingSeconds: null,
+        unlocked: true, unlockHint: null, trainTimeSec: 12 },
+    ],
+    troopCap: 1000, troopsInUse: 0, trainingInUse: 30, queueSlots: 1, queueSlotsMax: 2,
+    hospital: { capacity: 100, used: 0, treating: false, treatFinishAt: null,
+      treatRemainingSeconds: 0, treatCostRatio: 0 },
+    autoTrain: { enabled: false, unitId: 'none', batchCount: 1, batchBudget: 0, targetCount: 0,
+      stopReason: null },
+    serverNow: SERVER_NOW,
+  }
+}
+
+test('B26 S15：点「队列」把菜单递给面板，选「取消」才打 POST /army/cancel 并带 unitId', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/army/list', armyWithQueue())
+  h.http.overrides.set('/army/cancel', {
+    unitId: 'unit_infantry_t1', count: 30, refund: [], serverNow: SERVER_NOW,
+  })
+  await h.root.refresh('army')
+  h.root.openArmyQueue('unit_infantry_t1')
+  assert.deepEqual(h.queueOptions.map((it) => it.id), ['CANCEL_TRAIN'])
+  assert.equal(h.http.countOf('/army/cancel'), 0, '打开菜单不是下命令：这一下一条请求都不该发')
+
+  const armyBefore = h.http.countOf('/army/list')
+  h.events.length = 0
+  h.pickQueue('CANCEL_TRAIN')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const sent = h.http.calls.filter(c => c.path === '/army/cancel').at(-1)
+  assert.ok(sent !== undefined, '选了取消就要真发出去')
+  assert.equal(sent?.body.unitId, 'unit_infantry_t1')
+  assert.equal(sent?.body.seconds, null, '取消不带加速参数：这一口是"不练了"，不是"练快点"')
+  assert.equal(sent?.body.itemId, null)
+  assert.ok(typeof sent?.body.requestId === 'string', '取消退资源，重放等于退两次')
+  assert.ok(h.http.countOf('/army/list') >= armyBefore + 1,
+    '取消退了资源，军队与资源两本账都要重拉')
+  assert.deepEqual(h.events.find(e => e.name === 'army_train_cancel')?.params,
+    { unitId: 'unit_infantry_t1' }, '取消集中在同一兵种就是训练时长配得不合适')
+})
+
+test('B26 S15：没有在训练的那一口不弹空菜单，只说一句原因、一条请求都不发', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/army/list', armyWithQueue())
+  await h.root.refresh('army')
+  h.errors.length = 0
+  const before = h.http.calls.length
+  h.root.openArmyQueue('unit_archer_t1')
+  assert.deepEqual(h.queueOptions, [], '不画一张什么都没有的菜单')
+  assert.equal(h.http.calls.length, before, '没有可取消的东西就不该有任何请求')
+  assert.deepEqual(h.errors.at(-1), ['army', '这一口没有在训练的队伍'])
+})
+
+// ---------- B26 S18：编成面板的第三种命令 —— 派侦察 ----------
+
+test('B26 S18：切成侦察再确认 → 发 /world/scout 带同一份编成，不再走 /world/march', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/world/scout', ROUTES['/world/march'])
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  h.root.toggleComposeScout()
+  assert.equal(h.lastCompose?.mode, 'SCOUT')
+  assert.equal(h.lastCompose?.submitLabel, '派侦察', '确认键上的字要说清这一下发的是侦察队')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  h.events.length = 0
+  await h.root.confirmMarch()
+  const sent = h.http.calls.filter(c => c.path === '/world/scout').at(-1)
+  assert.ok(sent !== undefined, '侦察那一枪要真发出去')
+  assert.deepEqual([sent?.body.toX, sent?.body.toY], [60, 60], '目标是编成前选的那个')
+  assert.deepEqual(sent?.body.units, [{ unitId: 'unit_infantry_t1', count: 30 }],
+    '侦察队会被打：交出去的就是玩家编的这一队，不是免费的看一眼')
+  assert.equal(h.http.countOf('/world/march'), 0, '切了侦察就不该再走普通出征')
+  assert.deepEqual(h.events.find(e => e.name === 'scout_send')?.params, { troops: '30' })
+})
+
+test('B26 S18：命令三态互斥 —— 切侦察会把集结清掉，切回来反之，切换本身不吃网络', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  const before = h.http.calls.length
+  h.root.toggleComposeScout()
+  assert.equal(h.lastCompose?.mode, 'SCOUT')
+  h.root.toggleComposeRally()
+  assert.equal(h.lastCompose?.mode, 'RALLY', '切集结要赢过侦察')
+  assert.equal(h.lastCompose?.rallyScope, 'SQUAD')
+  h.root.toggleComposeScout()
+  assert.equal(h.lastCompose?.mode, 'SCOUT', '再切侦察要把集结清掉（一条命令只有一个种类）')
+  assert.equal(h.http.countOf('/rally/squad'), 0, '切换不发任何写请求')
+  assert.ok(h.http.countOf('/rally/policy') <= 1, '政策只在进集结态时补拉一次，来回切不重复拉')
+  assert.ok(h.http.calls.length - before <= 5, '切换本身不吃网络（允许多的那几条是政策补拉）')
+})
+
+// ---------- 开箱（B04 §2：/item/use 对宝箱直接拒绝，玩家此前根本开不了箱） ----------
+
+function chestBag(count: number): Record<string, unknown> {
+  return {
+    items: [{
+      itemId: 'item_chest_basic', name: '基础宝箱', type: 'CHEST', rarity: 'RARE',
+      count, stackMax: 99, sortKey: 10, effectKind: null, effectTarget: null, effectValue: 0,
+    }],
+    capacityUsed: 1, capacityMax: 100, serverNow: SERVER_NOW,
+  }
+}
+
+test('宝箱那一行按「使用」不去打那条必然被服务端拒的 /item/use，而是先问开几个', async () => {
+  const h = harness()
+  h.http.overrides.set('/bag/list', chestBag(12))
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  await h.root.useItem('item_chest_basic', false)
+
+  assert.equal(h.http.calls.length, total, '问"开几个"之前一个写请求都不该发')
+  assert.deepEqual(h.chestOptions.map(o => o.id), ['1', '5', '10', 'all'],
+    '档位按手里有几个给（12 个 ⇒ 1/5/10/全开）')
+})
+
+test('选「开 5 个」：一次 /item/openBatch、带幂等键，回执交给面板', async () => {
+  const h = harness()
+  h.http.overrides.set('/bag/list', chestBag(12))
+  await h.root.start('dev-1', '君')
+
+  await h.root.useItem('item_chest_basic', false)
+  h.pickChest('5')
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  const opens = h.http.calls.filter(c => c.path === '/item/openBatch')
+  assert.equal(opens.length, 1)
+  assert.equal(opens[0]?.body.count, 5)
+  assert.equal(opens[0]?.body.itemId, 'item_chest_basic')
+  assert.ok(typeof opens[0]?.body.requestId === 'string' && opens[0].body.requestId.length > 0,
+    '开箱是有副作用的写：没有幂等键，断网重放会让玩家白丢一箱')
+  assert.equal(h.http.countOf('/item/use'), 0, '宝箱不该再走 /item/use')
+  assert.deepEqual(h.lastChest, { consumed: 5, overflow: 0 })
+  // 开出什么会动到背包、资源与武将碎片；溢出那部分由红点报（邮件不在首屏预拉里，不为一件
+  // 玩家可能不看的事多塞一次请求）
+  for (const path of ['/bag/list', '/resource/detail', '/hero/list', '/social/reddot']) {
+    assert.equal(h.http.countOf(path) >= 2, true, `开完要重拉 ${path}`)
+  }
+  assert.equal(h.http.countOf('/mail/list'), 0, '开箱不顺手拉邮件：那是点开那一格才拉的')
+})
+
+test('手里只剩 1 个时不画"开 5 个"那颗必然被拒的选项', async () => {
+  const h = harness()
+  h.http.overrides.set('/bag/list', chestBag(1))
+  await h.root.start('dev-1', '君')
+
+  await h.root.useItem('item_chest_basic', false)
+
+  assert.deepEqual(h.chestOptions.map(o => o.id), ['1'])
+})
+
+test('取消研究：请求不带 techId（一次一队列），返还照服务端念', async () => {
+  const h = harness()
+  h.http.overrides.set('/tech/list', {
+    ...(ROUTES['/tech/list'] as Record<string, unknown>),
+    queue: {
+      techId: 'tech_agri_wood', finishAt: SERVER_NOW + 300_000, startedAt: SERVER_NOW,
+      totalSeconds: 300, remainingSeconds: 300,
+    },
+  })
+  await h.root.openTech()
+
+  await h.root.cancelResearch()
+
+  const calls = h.http.calls.filter(c => c.path === '/tech/cancel')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.techId, undefined, '取消哪一行由服务端按队列定，客户端不该再传一个')
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
+    '退资源是写操作，重放会退两次')
+  // 返还比例（与城建同一份配置）由服务端算，客户端只念回来的数
+  assert.deepEqual(h.lastTechCancel, { techId: 'tech_agri_wood', refund: 360 })
+  assert.equal(h.http.countOf('/tech/list'), 2, '取消完要重拉列表（队列那一行清空是服务端算的）')
+})
+
+test('没在研究时点取消：一个请求都不发，说的是"不用取消"而不是报错', async () => {
+  const h = harness()
+  await h.root.openTech()
+  const total = h.http.calls.length
+
+  await h.root.cancelResearch()
+
+  assert.equal(h.http.calls.length, total, '队列空着就不该发这一按')
+  assert.match(h.errors.map(e => e[1]).join('\n'), /没有在研究的项目/)
+  // console 那条只有开发者看得见（#356/#357）；同一句话要落到科技页那条 `noticeText` 上，
+  // 而落点走的是**纯重递**——上面那条 `calls.length` 不变就是它没顺手去重拉列表的证据
+  assert.match(String(h.lastTech?.noticeText), /没有在研究的项目/)
+})
+
+test('研究加速：先问用哪一张，选完发一条带幂等键的 POST 并重拉', async () => {
+  const h = harness()
+  h.http.overrides.set('/tech/list', {
+    ...(ROUTES['/tech/list'] as Record<string, unknown>),
+    queue: {
+      techId: 'tech_agri_wood', finishAt: SERVER_NOW + 300_000, startedAt: SERVER_NOW,
+      totalSeconds: 300, remainingSeconds: 300,
+    },
+  })
+  h.http.overrides.set('/bag/list', {
+    items: [{
+      itemId: 'item_speedup_research_1h', name: '研究令', type: 'SPEEDUP', rarity: 'R',
+      count: 2, stackMax: 99, sortKey: 1, effectKind: 'REDUCE_RESEARCH_SECONDS', effectTarget: null,
+    }],
+    capacityUsed: 1, capacityMax: 100, serverNow: SERVER_NOW,
+  })
+  await h.root.start('dev-1', '君')
+  await h.root.openTech()
+
+  h.root.requestResearchSpeedUp()
+  assert.deepEqual(h.researchSpeedupOptions.map(o => `${o.count}:${o.detail}`),
+    ['1:用 1 张 · 持有 2 张', '2:一次用掉 2 张 · 用不完的会退回'],
+    '两个档位都给出（研究后期一步以天计，一张一张点是折磨；用超了服务端会退剩下的张数）')
+  assert.equal(h.http.countOf('/tech/speedUp'), 0, '没选之前不能吃道具')
+
+  h.pickResearchSpeedup('item_speedup_research_1h', 2)
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  const calls = h.http.calls.filter(c => c.path === '/tech/speedUp')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.itemId, 'item_speedup_research_1h')
+  assert.equal(calls[0]?.body.count, 2, '选的是「全用」那一档 ⇒ 手里两张一次交完')
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
+    '加速是"消耗品 + 改状态"的双重动作，重放不去重就是白丢一张')
+  assert.equal(h.http.countOf('/bag/list') >= 2, true, '吃过一张要重拉背包')
+  assert.deepEqual(h.lastTechSpeedUp, { reduced: 3600, remaining: 0, finished: true })
+})
+
+test('手里没有研究令：一个请求都不发，并说清建造令训练令用不到研究上', async () => {
+  const h = harness()
+  h.http.overrides.set('/tech/list', {
+    ...(ROUTES['/tech/list'] as Record<string, unknown>),
+    queue: {
+      techId: 'tech_agri_wood', finishAt: SERVER_NOW + 300_000, startedAt: SERVER_NOW,
+      totalSeconds: 300, remainingSeconds: 300,
+    },
+  })
+  await h.root.start('dev-1', '君')
+  await h.root.openTech()
+  const total = h.http.calls.length
+
+  h.root.requestResearchSpeedUp()
+
+  assert.equal(h.http.calls.length, total)
+  assert.match(h.errors.map(e => e[1]).join('\n'), /没有研究加速道具/)
+})
+
+test('背包那份还没读到时说"还没读到"，不说成"手里没有"', async () => {
+  const h = harness()
+  h.http.overrides.set('/tech/list', {
+    ...(ROUTES['/tech/list'] as Record<string, unknown>),
+    queue: {
+      techId: 'tech_agri_wood', finishAt: SERVER_NOW + 300_000, startedAt: SERVER_NOW,
+      totalSeconds: 300, remainingSeconds: 300,
+    },
+  })
+  await h.root.openTech()
+
+  h.root.requestResearchSpeedUp()
+
+  assert.match(h.errors.map(e => e[1]).join('\n'), /道具清单还没读到/)
+})
+
+// ---------- 取消建造（B03 §2：`/city/cancel` 一直有，客户端零调用点） ----------
+
+const upgradingCity = {
+  buildings: [
+    { id: 'b1', configId: 'academy', name: '学院', level: 2, gridX: 3, gridY: 3,
+      status: 'UPGRADING', finishAt: SERVER_NOW + 60_000, remainingSeconds: 60,
+      progress: 500, startedAt: SERVER_NOW - 60_000, totalSeconds: 120, helpCount: 0 },
+    { id: 'b2', configId: 'farm', name: '农田', level: 1, gridX: 1, gridY: 1,
+      status: 'IDLE', finishAt: null, remainingSeconds: null, progress: 0,
+      startedAt: null, totalSeconds: 0, helpCount: 0 },
+  ],
+  buildOptions: [],
+  queues: { used: 1, available: 1, max: 2 },
+  resources: {}, serverNow: SERVER_NOW,
+}
+
+test('取消建造：一次 POST 带幂等键，返还量照服务端念', async () => {
+  const h = harness()
+  h.http.overrides.set('/city/list', upgradingCity)
+  await h.root.start('dev-1', '君')
+
+  await h.root.cancelBuild('b1')
+
+  const calls = h.http.calls.filter(c => c.path === '/city/cancel')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.buildingId, 'b1')
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0,
+    '取消退资源是写操作，重放不去重就是退两次')
+  assert.equal(h.lastCityCancel, 300, '退多少由服务端算（比例与城建共用一份配置），客户端不重算')
+  assert.equal(h.http.countOf('/city/list') >= 2, true, '取消完要重拉城市列表（队列槽位空出来了）')
+})
+
+test('没在建的那一格点取消：一个请求都不发，说的是"不用取消"', async () => {
+  const h = harness()
+  h.http.overrides.set('/city/list', upgradingCity)
+  await h.root.start('dev-1', '君')
+  const total = h.http.calls.length
+
+  await h.root.cancelBuild('b2')
+
+  assert.equal(h.http.calls.length, total, 'IDLE 那一格不该发出取消请求')
+  assert.ok(h.errors.some(e => /没有在建/.test(e[1])))
+})
+
+test('列表还没读到时不说成"没在建"：那是读侧故障，不是玩家的问题', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+
+  await h.root.cancelBuild('b9')
+
+  assert.ok(h.errors.some(e => /状态还没读到/.test(e[1])))
 })

@@ -566,6 +566,78 @@ class SocialStoreEquivalenceTest {
     }
 
     @Test
+    @DisplayName("squadsOf 批量口：与逐个 squadOf 一字不差（含副本语义与缺失口径），两版同一条（#425）")
+    void squadsOfMatchesPointLookupsOnBothStores() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveSquad(squadWith("SQ-1", "甲队", "P-1", "P-2", "P-3"), 0L);
+            store.saveSquad(squadWith("SQ-2", "乙队", "P-4"), 0L);
+
+            assertThat(store.squadsOf(List.of())).as("%s：空集合不该去库里捞一趟", label).isEmpty();
+            assertThat(store.squadsOf(null)).as("%s：null 同样回空表，不抛", label).isEmpty();
+
+            Map<String, Squad> batch = store.squadsOf(List.of("P-1", "P-2", "P-4", "P-9", "P-1"));
+            assertThat(batch.keySet())
+                    .as("%s：没小队的玩家（P-9）直接不出现，重复的 id 不产生两份", label)
+                    .containsExactlyInAnyOrder("P-1", "P-2", "P-4");
+
+            for (String memberId : List.of("P-1", "P-2", "P-4")) {
+                assertThat(describe(batch.get(memberId)))
+                        .as("%s：%s 的批量读数与点查必须一字不差（联盟成员装配靠的就是这一条）",
+                                label, memberId)
+                        .isEqualTo(describe(store.squadOf(memberId).orElseThrow()));
+            }
+            assertThat(batch.get("P-1"))
+                    .as("%s：同队的两个人各拿一份副本，不共享同一个对象", label)
+                    .isNotSameAs(batch.get("P-2"));
+
+            // 副本语义：批量交出去的对象就地改，不许让库里的档跟着变（本类的核心风险）
+            batch.get("P-1").attachToAlliance("AL-OTHER");
+            assertThat(store.squadOf("P-1").orElseThrow().allianceId())
+                    .as("%s：忘记 save 的改动不该看得见", label).isEqualTo("AL-1");
+            // 只查一部分成员时，同队没被点名的成员不许被顺带塞进结果
+            assertThat(store.squadsOf(List.of("P-3")).keySet())
+                    .as("%s：结果只含被点名的玩家", label).containsExactly("P-3");
+        }
+    }
+
+    @Test
+    @DisplayName("alliancesOf 批量口：与逐个 allianceOf 一字不差（含副本语义与缺失口径），两版同一条")
+    void alliancesOfMatchesPointLookupsOnBothStores() {
+        for (SocialStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.saveAlliance(allianceWith("AL-1", "甲盟", "JIA", "P-1", "P-2", "P-3"), 0L);
+            store.saveAlliance(allianceWith("AL-2", "乙盟", "YI", "P-4"), 0L);
+
+            assertThat(store.alliancesOf(List.of())).as("%s：空集合不该去库里捞一趟", label).isEmpty();
+            assertThat(store.alliancesOf(null)).as("%s：null 同样回空表，不抛", label).isEmpty();
+
+            Map<String, Alliance> batch = store.alliancesOf(List.of("P-1", "P-2", "P-4", "P-9", "P-1"));
+            assertThat(batch.keySet())
+                    .as("%s：不在任何盟的玩家（P-9）直接不出现，重复的 id 不产生两份", label)
+                    .containsExactlyInAnyOrder("P-1", "P-2", "P-4");
+
+            for (String memberId : List.of("P-1", "P-2", "P-4")) {
+                assertThat(describe(batch.get(memberId)))
+                        .as("%s：%s 的批量读数与点查必须一字不差（组织榜投影的名字与合计全靠这一条）",
+                                label, memberId)
+                        .isEqualTo(describe(store.allianceOf(memberId).orElseThrow()));
+            }
+            assertThat(batch.get("P-1"))
+                    .as("%s：同盟的两个人各拿一份副本，不共享同一个对象", label)
+                    .isNotSameAs(batch.get("P-2"));
+
+            // 副本语义：批量交出去的对象就地改，不许让库里的档跟着变（本类的核心风险）
+            batch.get("P-1").disband("P-1", T0);
+            assertThat(store.allianceOf("P-2").orElseThrow().disbandedAt())
+                    .as("%s：忘记 save 的解散不该看得见", label).isZero();
+            // 只查一部分成员时，同盟没被点名的成员不许被顺带塞进结果
+            assertThat(store.alliancesOf(List.of("P-3")).keySet())
+                    .as("%s：结果只含被点名的玩家", label).containsExactly("P-3");
+        }
+    }
+
+    @Test
     @DisplayName("applicantsOf：两版都按申请人 id 升序给出本盟待审的人，别盟的不混进来（B26 S8 的审核口）")
     void applicantsOfMatchOnOrderAndScope() {
         for (SocialStore store : bothStores()) {
@@ -619,6 +691,16 @@ class SocialStoreEquivalenceTest {
                 "AL-1", coins, 10L, 4L, 0L, 7L);
     }
 
+    /** 成员名单由用例点名的 squad（批量口要按人分小队，richSquad 那三个人不够分）。 */
+    private static Squad squadWith(String id, String name, String... memberIds) {
+        Map<String, SquadRole> members = new LinkedHashMap<>();
+        for (int i = 0; i < memberIds.length; i++) {
+            members.put(memberIds[i], i == 0 ? SquadRole.LEADER : SquadRole.MEMBER);
+        }
+        return Squad.restore(id, name, memberIds[0], rules.squadRules(), members,
+                memberIds.length, 250L, "AL-1", Map.of(), 10L, 4L, 0L, 7L);
+    }
+
     /** 已解散的小队：档案还在库里（内存版要等 unbindSquadMember 才摘），但发现列表不该再给出它。 */
     private static Squad disbandedSquad(String id, String name) {
         Map<String, SquadRole> members = new LinkedHashMap<>();
@@ -646,6 +728,22 @@ class SocialStoreEquivalenceTest {
         techs.put("tech_def", 1);
         return Alliance.restore(id, name, tag, "P-1", rules.allianceRules(), members,
                 contributions, donated, techs, 4, 900L, 50_000L, 7, 2, 42L, 0L);
+    }
+
+    /** 成员可指定的富状态联盟：批量口要拿"同盟两人各拿一份副本"当判据，就得有两个成员可点名。 */
+    private static Alliance allianceWith(String id, String name, String tag, String... memberIds) {
+        Map<String, AllianceRole> members = new LinkedHashMap<>();
+        Map<String, Long> contributions = new LinkedHashMap<>();
+        for (int i = 0; i < memberIds.length; i++) {
+            members.put(memberIds[i], i == 0 ? AllianceRole.LEADER : AllianceRole.MEMBER);
+            contributions.put(memberIds[i], 120L - 30L * i);
+        }
+        Map<String, Integer> donated = new LinkedHashMap<>();
+        donated.put(memberIds[0] + ":" + DAY, 2);
+        Map<String, Integer> techs = new LinkedHashMap<>();
+        techs.put("tech_atk", 3);
+        return Alliance.restore(id, name, tag, memberIds[0], rules.allianceRules(), members,
+                contributions, donated, techs, memberIds.length, 900L, 50_000L, 7, 2, 42L, 0L);
     }
 
     private static Rally richRally(String id, Rally.Status status, Rally.Departure departure, long prepareUntil) {

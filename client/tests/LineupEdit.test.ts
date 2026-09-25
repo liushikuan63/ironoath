@@ -146,6 +146,8 @@ test('名册还没读到时：视图不给发，键上说实话', () => {
   assert.equal(view.presetText, '编队 3')
   assert.equal(view.canSave, false)
   assert.equal(view.saveText, '武将列表还没读到')
+  // `every` 在空数组上恒真 —— 先钉住"三槽都在"，上面那句"不崩"才不是空判（#342 同族）
+  assert.equal(view.slots.length, 3, '再空的编队也要给出三个槽位')
   assert.ok(view.slots.every((r) => r.empty), '读不到编队时三槽都是空的，不崩')
 })
 

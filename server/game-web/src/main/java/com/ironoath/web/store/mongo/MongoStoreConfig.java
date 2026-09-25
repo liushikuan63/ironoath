@@ -167,7 +167,7 @@ public class MongoStoreConfig {
     }
 
     /**
-     * 任务进度。契约见 {@code QuestProgressStoreEquivalenceTest}。
+     * 任务进度。契约**目前没有用例钉着**（查过 QuestEndpointTest 只跑内存版、BeanAssemblyTest 只验装配，没有 Mongo 侧的等价用例）。
      * 这一档防的是「进度丢一次就永久少一格」：累加型目标（累计训练 20 个兵）无法从当前状态反推 ——
      * 兵可能已经战死，所以它只能在事件发生那一刻记下来。
      */

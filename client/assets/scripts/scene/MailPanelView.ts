@@ -15,11 +15,13 @@
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { buildMailPanel, claimOutcomeText } from '../game/mail/MailPanel'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 import type { MailPanelView as MailPanelData, MailRow } from '../game/mail/MailPanel'
 import type { MailClaimAllResp, MailListResp } from '../net/generated/MailProtocol'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -38,8 +40,14 @@ const ROW_GAP = 6
 const PADDING = 16
 const HEADER_HEIGHT = 64
 const BUTTON_HEIGHT = 40
-/** 一屏最多画几行。超出的要靠 ScrollView（编辑器里补），占位期截断显示并说明。 */
+/** 池的预热行数：真正画几行由 `render` 按可视高算（下面 `BOTTOM_RESERVED` 那条理由）。 */
 const MAX_VISIBLE_ROWS = 7
+/** 底部导航条占掉的高度，与 QuestPanelView / ArmyPanelView 同一个口径（#389 定下的写法）。 */
+const BOTTOM_RESERVED = 68
+/** 右槽（状态 / 到期）：「6 天后到期」13 号字占约 78，留 140 给更长的下发文案。 */
+const RIGHT_SLOT = 140
+/** 左槽（标题 / 附件）吃掉剩下的宽度，中间留 12 的缝 —— 两槽相碰就是量具那一维的"字形相碰"。 */
+const LEFT_SLOT = PANEL_WIDTH - 2 * PADDING - RIGHT_SLOT - 12
 
 @ccclass('MailPanelView')
 export class MailPanelView extends Component {
@@ -54,6 +62,14 @@ export class MailPanelView extends Component {
   private headerLabel: Label | null = null
   private outcomeLabel: Label | null = null
   private overflowLabel: Label | null = null
+  /** 当前页（0 起）。只有翻页操作与 `render` 里的 clamp 会动它。 */
+  private page = 0
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
   private claimButton: Node | null = null
   private claimCaption: Label | null = null
 
@@ -95,6 +111,8 @@ export class MailPanelView extends Component {
       return
     }
     this.panelData = buildMailPanel(resp, now)
+    // 故意**不**归零页号：读一封、领一次都会重新 attach 一份列表，归零会把玩家正在看的那一封
+    // 从屏上弹走。列表变短时 render() 里的 clampPage 夹回最后一页（与 #450 关卡同一口径）。
     this.render()
   }
 
@@ -152,6 +170,50 @@ export class MailPanelView extends Component {
     const rowsTop = height / 2 - PADDING - HEADER_HEIGHT - BUTTON_HEIGHT - 16
     this.overflowLabel = this.addLabel(this.node, 'Overflow', 0,
       rowsTop - MAX_VISIBLE_ROWS * (ROW_HEIGHT + ROW_GAP) - 10, COLOR_TEXT_DIM, 14)
+    // 两颗翻页键与那句页码同一行、摆在两端：中间那句「第 1/4 页 · 共 23 封」约 210px，
+    // 面板 680 宽、键占到 ±(262~326)，横向不会相碰；y 由 render() 跟着最后一行走。
+    this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
+    this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
+  }
+
+  /** 一颗 64×28 的翻页键，照本文件「一键领取」那颗的画法。 */
+  private buildPagerButton(name: string, x: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, 0, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_ROW
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 13)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    // 建出来先收着：render() 在 panelData === null 时早退，不先收就会在"列表没到 / 读失败"
+    // 那一态露出两颗点了没反应的键（#345 口径，#449 与 #450 各修过一次同一族）
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉的那一侧直接不吃：`render()` 里的 `clampPage` 也会把越界的页号夹回来，
+   * 但"点了什么反应都没有"正是 #345 那条口径要挡的观感，所以在入口处就判。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) return
+    if (delta > 0 && !this.canNext) return
+    this.page += delta
+    this.render()
   }
 
   private createRow(): Node {
@@ -163,14 +225,25 @@ export class MailPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
     graphics.fill()
 
+    // 四个槽位各自限宽（军队/背包同一口径：锚点定边 + `capWidth`）。
+    // 不限宽时 Label 在 `overflow = NONE` 下把盒子撑成文本那么宽、又绕节点中心铺开 ——
+    // 长标题会往左顶出卡片甚至顶出屏幕（台账 #394 目视 `label-fit-verify/mail.png` 抓到的那一行）。
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING, 16, COLOR_TEXT, 19)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
+    title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    capWidth(title, LEFT_SLOT)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING, -8, COLOR_TEXT_DIM, 14)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    capWidth(detail, LEFT_SLOT)
     const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - PADDING, 12, COLOR_TEXT, 15)
     status.horizontalAlign = Label.HorizontalAlign.RIGHT
+    status.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    capWidth(status, RIGHT_SLOT)
     const expiry = this.addLabel(node, 'Expiry', PANEL_WIDTH / 2 - PADDING, -14, COLOR_TEXT_DIM, 13)
     expiry.horizontalAlign = Label.HorizontalAlign.RIGHT
+    expiry.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    capWidth(expiry, RIGHT_SLOT)
     return node
   }
 
@@ -198,9 +271,6 @@ export class MailPanelView extends Component {
     if (data === null || pool === null) {
       return
     }
-    if (this.headerLabel !== null) {
-      this.headerLabel.string = data.headerText
-    }
     if (this.claimButton !== null && this.claimCaption !== null) {
       // 没有可领的东西时按钮灰着且点不动：亮着却拿到一个空响应会让玩家以为卡了
       this.claimButton.off('touch-start')
@@ -213,9 +283,22 @@ export class MailPanelView extends Component {
     }
 
     const rowsTop = height / 2 - PADDING - HEADER_HEIGHT - BUTTON_HEIGHT - 16 - ROW_HEIGHT / 2
+    // 行数按实测可视高度算，不写死（与 QuestPanelView #389 同一处修法）：写死 7 行时第 5~7 行
+    // 连同"另有 N 封未显示"一起落到导航条底下 —— 那是"画了但玩家看不见"，比少画一行更难发现。
+    // 这一格原本量不到：dev 新号邮箱是空的，横扫只读到 2 颗 Label（台账 #394）。
+    const navTop = -height / 2 + BOTTOM_RESERVED
+    const capacity = Math.max(1,
+      Math.floor((rowsTop + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
-    const visible = data.rows.slice(0, MAX_VISIBLE_ROWS)
+    // 共几页、夹到哪一页、切哪一段用同一个 perPage（`PanelPaging` 那条原话）：从前这里
+    // 照着 maxRows 切一刀就把剩下的写成「另有 N 封未显示」，那几封信玩家永远拿不到。
+    const total = data.rows.length
+    const perPage = contentPerPage(total, capacity)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const visible = data.rows.slice(slice.start, slice.end)
     visible.forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, rowsTop - index * (ROW_HEIGHT + ROW_GAP), 0))
@@ -223,9 +306,30 @@ export class MailPanelView extends Component {
       this.renderRow(node, row)
     })
 
+    const paged = pages > 1
+    const rowBottom = rowsTop - visible.length * (ROW_HEIGHT + ROW_GAP) - 10
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
+    if (this.headerLabel !== null) {
+      this.headerLabel.string = data.headerText
+    }
+    // 页码借用那一格本来就每帧清空的 Overflow（那句「另有 N 封」从前挂在表头，是因为单独占一行
+    // 会落到导航条底下）：现在让出一格行位，页码与两颗键就排在那一格上。
     if (this.overflowLabel !== null) {
-      const hidden = data.rows.length - visible.length
-      this.overflowLabel.string = truncatedNotice('封', hidden)
+      this.overflowLabel.string = paged
+        ? `${pageNotice(this.page, pages)} · 共 ${total} 封`
+        : ''
+      this.overflowLabel.node.setPosition(new Vec3(0, rowBottom, 0))
+    }
+    // 只有一页时两颗键整对收掉（#345：不留点了没反应的键）；多页时不可翻的那一侧按灰
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) continue
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, rowBottom, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
   }
 

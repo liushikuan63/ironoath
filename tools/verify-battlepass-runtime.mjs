@@ -5,6 +5,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 BATTLEPASS_PORT（默认 8100，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8155 node tools/verify-battlepass-runtime.mjs
  *
  * <p><b>为什么用 web 产物证</b>：`BattlePassPanelView` 在两个平台上都是同一份代码
@@ -23,9 +24,15 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const ROOT = path.resolve('client/build/web-mobile')
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[verify-battlepass-runtime] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.BATTLEPASS_PORT ?? 8100)
 const SHOT_DIR = path.resolve('client/build/battlepass-verify')
 /** 屏幕底部要给导航条让出的高度（与面板里的常量同源：8 + 52 + 8）。 */
@@ -129,6 +136,7 @@ async function main() {
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   const deadline = Date.now() + 45_000
   while (boot === null && Date.now() < deadline) {
     await page.waitForTimeout(500)
@@ -225,6 +233,90 @@ async function main() {
   verdict(!statusCalls.slice(before).some(u => u.includes('/battlePass/claim')),
     '点一颗灰的领取键：不发请求（不可领的线在面板层就不该可点）',
     `新增请求 ${statusCalls.length - before} 条：${statusCalls.slice(before).join(' ')}`)
+
+  // ---------- 表头那五行：会不会互相叠（#363 在军队表头量出同一形状） ----------
+  // 两件事分开量，因为 #366 证明它们会互相伪装：
+  // ① **字形带不相交**：Label 的盒子按行盒给（≈ 字号 ×1.5+，实测 20 号字要 30 高），
+  //    比字形高一截。拿盒子两两相交当判据，会把健康的紧凑表头判成一片红（#365 的教训），
+  //    所以下限按**字号（em）**算中心距。
+  // ② **落地字号 == 设定字号**：#364 用 `overflow=SHRINK` 把盒高压成「字号 + 6」，
+  //    SHRINK 就按盒子缩放字形去服从它 —— 页内实测五行落地 17/13/10/10/9 对设定 20/17/15/15/14，
+  //    最小的那行只剩 64%。盒子反而给高了也会被放大（20 号字给 36 高 → 落地 24）。
+  //    ①的绿灯会盖住②的退化，所以两条必须同时在场。
+  const HEAD5 = `(() => {
+    const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    const panel = game?.getChildByName('battlePass')
+    if (!panel) return null
+    const names = ['Header', 'Points', 'Claimed', 'Remain', 'Notice']
+    const rows = []
+    for (const name of names) {
+      const node = panel.getChildByName(name)
+      if (node === null || node === undefined) continue
+      const w = node.getComponent('cc.UITransform').getBoundingBoxToWorld()
+      const lb = node.getComponent('cc.Label')
+      rows.push({ name, text: lb?.string ?? '', want: lb?.fontSize ?? 0,
+        h: Math.round(w.height),
+        // 2 = SHRINK：只有这种模式下 actualFontSize 才是"落地字号"（NONE 下它给 1.5×）
+        ov: lb?.overflow ?? -1,
+        actual: lb?.actualFontSize ?? lb?._actualFontSize ?? -1 })
+    }
+    for (const x of rows) { x.l = 0; x.r = 0; x.b = 0; x.t = 0 }
+    const boxes = rows.map((x) => {
+      const n = panel.getChildByName(x.name)
+      return n.getComponent('cc.UITransform').getBoundingBoxToWorld()
+    })
+    rows.forEach((x, i) => {
+      x.l = boxes[i].x; x.r = boxes[i].x + boxes[i].width
+      x.b = boxes[i].y; x.t = boxes[i].y + boxes[i].height
+    })
+    const crowd = []
+    for (let a = 0; a < rows.length; a++) {
+      for (let c = a + 1; c < rows.length; c++) {
+        const x = rows[a], y = rows[c]
+        if (x.text.length === 0 || y.text.length === 0) continue
+        if (!(x.l < y.r && y.l < x.r)) continue
+        const need = (x.want + y.want) / 2 + 4
+        const dist = Math.abs((x.b + x.t) / 2 - (y.b + y.t) / 2)
+        if (dist < need) crowd.push(x.name + '×' + y.name + ' 中心距' + Math.round(dist) + '<' + Math.round(need))
+      }
+    }
+    return { count: rows.length, crowd,
+      // SHRINK 模式下盒子就是字形的缩放系数：盒高低于「装得下一行」的下限，整行字就被压小。
+      // 下限是量出来的（台账 #366 迁移曲线）：14~20 号字都要到盒高 30 才等于设定字号，
+      // 且这个点不随字号走 —— 所以取 max(字号+14, 30) 这条保守界。
+      // ⚠ 不要用 actualFontSize 当这条的判据：同一视觉状态在两棵构建上分别读过
+      //   17/13/10/10/9 与 26/22/20/20/19（本轮植入实测），它不是"落地字号"。
+      shrunk: rows.filter((x) => x.ov === 2 && x.text.length > 0 && x.h < 27)
+        .map((x) => x.name + '=盒' + x.h + '<' + 27),
+      shrinkRows: rows.filter((x) => x.ov === 2).length,
+      // 一行的高度上限：NONE 模式实测给 1.54~1.79×字号，换成两行就是 2× 以上
+      tooTall: rows.filter((x) => x.want > 0 && x.h > x.want * 2 + 8)
+        .map((x) => x.name + '=盒' + x.h + ' 字号' + x.want),
+      read: rows.map((x) => x.name + '=盒' + x.h + '/字' + x.want + '/ov' + x.ov + '/落' + x.actual).join(','),
+      withText: rows.filter((x) => x.text.length > 0).length }
+  })()`
+  const head5 = await page.evaluate(HEAD5)
+  verdict(head5 !== null && head5.count === 5 && head5.withText >= 3,
+    '反空转前置：表头五行都在且至少三行有内容',
+    `count=${head5?.count} withText=${head5?.withText}`)
+  // 设定字号读成 0 时下面三条会恒真（`want > 0` 把整行滤掉），所以先自证读得到。
+  verdict(head5 !== null && head5.read.split(',').every((p) => {
+    const m = /字(\d+)\/ov/.exec(p)
+    return m !== null && Number(m[1]) > 0
+  }),
+    '反空转前置：五行都读到了设定字号（读不到则下面三条判据恒真）',
+    `read=${head5?.read}（格式 行名=盒高/设定字号/ov 模式/落地字号）`)
+  verdict(head5 !== null && head5.tooTall.length === 0,
+    '表头每行的盒子仍是一行高（撑到两行就是又让 Label 按文本换行了，#363 同形）',
+    `tooTall=${head5?.tooTall.join(',')}`)
+  // 关掉换行之后本屏不再有 SHRINK 表头；这条此刻是空跑，但它把 #364 那条回头路钉住了：
+  // 谁再拿 SHRINK + 猜的盒高压一行字，落地字号这条立刻红（页内实测 20→17、14→9）。
+  verdict(head5 !== null && head5.shrunk.length === 0,
+    '没有一行 SHRINK 表头的盒高低于一行字（低于就会被压小，台账 #366 实测）',
+    `shrunk=${head5?.shrunk.join(',')} 本屏 SHRINK 行数=${head5?.shrinkRows}`)
+  verdict(head5 !== null && head5.crowd.length === 0,
+    '相邻两行的字形带不相交（中心距 ≥ 两行字号之和的一半 + 4）',
+    `crowd=${head5?.crowd.join(',')}`)
 
   verdict(errors.length === 0, '全程零页面异常',
     `errors=${errors.length}${errors.length > 0 ? ' → ' + errors[0] : ''}`)

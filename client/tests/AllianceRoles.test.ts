@@ -30,6 +30,11 @@ test('收回职位那一项要写清后果：它是这条链路上唯一会让�
 })
 
 test('未知/空职位不炸：只是没有一项被标成现任', () => {
-  assert.deepEqual(roleChoices(null).every(c => !c.current), true)
-  assert.deepEqual(roleChoices('WHATEVER').every(c => !c.current), true)
+  // 先钉住"有项可标"：`every` 在空数组上恒真，清空常量表这条用例也不会红（#342 同族）
+  const none = roleChoices(null)
+  const weird = roleChoices('WHATEVER')
+  assert.ok(none.length > 0, '职位菜单必须给出候选，否则下面两句什么都没说')
+  assert.deepEqual(none.every(c => !c.current), true)
+  assert.equal(weird.length, none.length, '认不出的职位与空职位给出同一份候选')
+  assert.deepEqual(weird.every(c => !c.current), true)
 })

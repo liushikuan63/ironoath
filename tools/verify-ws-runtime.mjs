@@ -31,7 +31,13 @@ const { createRequire } = await import('node:module')
 const { fileURLToPath } = await import('node:url')
 const require = createRequire(import.meta.url)
 
-const BACKEND = (process.env.WS_VERIFY_BACKEND ?? 'http://127.0.0.1:8080').replace(/\/$/, '')
+// 必须显式给后端：静默回落到 127.0.0.1:8080 等于"打到另一台机器上读数"（同族收过 30+ 份，
+// 这一份因写成 `(env.X ?? 'http://…').replace(...)` 漏网 —— #419 的回扫抓出来的）
+const rawBackend = process.env.WS_VERIFY_BACKEND ?? (() => {
+  console.error('[verify-ws-runtime] 缺 WS_VERIFY_BACKEND：不给就退回 http://127.0.0.1:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
+const BACKEND = rawBackend.replace(/\/$/, '')
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BUILD = path.join(REPO, 'client/build-test/assets/scripts')
 

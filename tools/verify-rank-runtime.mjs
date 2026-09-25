@@ -2,6 +2,7 @@
  * 职责：排行榜面板的**运行时**验收（B23 S3）—— 在真构建产物 + 真服务端上把四个页签走一遍。
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  * 用法：node tools/verify-rank-runtime.mjs
+ * 必填：RANK_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 RANK_PROBE_PORT（默认 8192，同机并发时换一个）
  *
  * <p>为什么必须有这一个：纯逻辑用例（`client/tests/RankBoard.test.ts`）与编排用例证的是
  * "数据装对了、请求发对了"，而**面板有没有把页签画出来、点了页签会不会切**只有真跑才知道 ——
@@ -18,11 +19,17 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const OUT = process.env.RANK_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/rank-verify')
 mkdirSync(OUT, { recursive: true })
 const PORT = Number(process.env.RANK_PROBE_PORT ?? 8192)
-const BACKEND = process.env.RANK_BACKEND ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.RANK_BACKEND ?? (() => {
+  console.error('[rank] 缺 RANK_BACKEND：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 
 let pass = 0
 let fail = 0
@@ -80,7 +87,11 @@ async function openPowerPanel() {
   const url = new URL(`${preview.origin}/`)
   url.searchParams.set('panel', 'power')
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
+  // 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+  // 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+  preview.assertRewritten()
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+  await hideGuideOverlay(page)
   await page.waitForTimeout(1800)
 }
 
@@ -93,13 +104,9 @@ async function openPowerPanel() {
  * 而 `@ccclass` 注册的名字不受压缩影响，`getComponent('X')` 稳定可用（背包那条探针一直这么用）。
  * 两路都留：注册名优先，构造器名兜底。
  */
-const FIND_PANEL = `(game) => {
-  const node = game.children.find(c => c.name === 'power')
-  if (!node) return null
-  return node.getComponent('PowerPanelView')
-    || node.components.find(x => x.constructor && x.constructor.name === 'PowerPanelView')
-    || null
-}`
+const FIND_PANEL = `(game) => game.children
+  .map(c => c.getComponent('PowerPanelView'))
+  .find(Boolean)`
 
 /** 面板树上所有可见文案（递归收集 Label），**同时记下每一行的纵向位置**。 */
 const LABEL_SNAPSHOT = `(() => {

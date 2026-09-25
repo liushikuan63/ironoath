@@ -120,10 +120,18 @@ class StageEndpointTest {
         // 损失行是**直接画给玩家看**的：客户端没有 unit 表数据（B00 铁律），服务端不给名字，
         // 界面就只能印 `unit_infantry_t1 −1` —— #255 建筑名 / #268 资源名 / #278 技能名 /
         // #281 碎片名 / #288 赛季行 id 同族第八处。
-        // 挂在胜方这一仗而不是败方：200 打 10 **确定**留下 1 个伤兵（上面 noLoss 那条注释算过，
-        // 下面 retry 也按"上一场有 1 个兵进了医院"取数），而 1 打 10 是打到回合上限判负、零损失，
-        // 拿空集合断言"每行都带名字"是恒真的假绿。
-        assertThat(won.losses())
+        //
+        // 载体是**另一场 2000 打 10**，不是上面那场 5000：实测 5000 时怪在第一回合就被清空、
+        // 己方 `losses=[]`，拿它断言"每行都带名字"就是恒真的空判（这条断言自 3037720 起一直红着，
+        // 因为 Java 套件不在 check.sh 与 test-client.sh 里，只有 build.sh 跑到）。
+        // 2000 / 500 / 120 / 60 都会留下 1 个伤兵，30 留 2 个 —— 取 2000 是要它同时满足"压倒性胜利"。
+        String woundedPlayer = newPlayer();
+        giveTroops(woundedPlayer, Map.of(UNIT, 2000L));
+        giveHospital(woundedPlayer, 5);
+        ChallengeStageResp wounded = stageAppService.challenge(woundedPlayer,
+                new ChallengeStageReq(newRequestId(), STAGE_1,
+                        List.of(new StageUnit(UNIT, 2000L)), List.of()));
+        assertThat(wounded.losses())
                 .as("这一仗有伤兵，损失行必须非空（否则下面的逐行断言就是空判）")
                 .isNotEmpty()
                 .allSatisfy(loss -> {
@@ -145,7 +153,8 @@ class StageEndpointTest {
         assertThat(lost.staminaCost()).as("应付多少仍然照实下发，玩家才知道这一关的门槛").isPositive();
 
         // 星级只升不降：重打一次，星级不变。
-        // 兵力要按当前实际持有量填 —— 上一场有 1 个兵进了医院，所以已经不是 5000 了
+        // 兵力按**当前实际持有量**填，不写死 5000：上面那场 5000 打 10 实测零损失（怪在第一回合就被清空），
+        // 但"打完还剩多少"不该由本测试假设 —— 一旦哪天有损失，写死的数会让请求超过持有量而整个失败。
         long remaining = armies.findByPlayerId(playerId).orElseThrow().countOf(UNIT);
         ChallengeStageResp retry = stageAppService.challenge(playerId,
                 new ChallengeStageReq(newRequestId(), STAGE_1,

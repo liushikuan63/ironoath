@@ -25,15 +25,18 @@ import type { GameSession } from './GameSession'
 import type { NetOutcome } from '../../net/NetModule'
 import type { Store } from '../store/Store'
 import type { TimeSync } from '../../core/TimeSync'
-import type { OfflineReportView, PowerDetailResp } from '../../net/generated/Protocol'
-import type { CityCollectResp, CityListResp, SpeedUpSource } from '../../net/generated/CityProtocol'
+import type { OfflineReportView, PowerDetailResp, StaminaBuyResp, StaminaResp } from '../../net/generated/Protocol'
+import type {
+  CityCancelResp, CityCollectResp, CityListResp, SpeedUpSource,
+} from '../../net/generated/CityProtocol'
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
-import type { BagListResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
+import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
 import type { GachaDrawResp, GachaPoolsResp, HeroListResp } from '../../net/generated/HeroProtocol'
-import type { StageListResp } from '../../net/generated/StageProtocol'
+import type { ChallengeStageResp, StageListResp, SweepResp } from '../../net/generated/StageProtocol'
 import type {
   AllianceMember, AllianceRole, AllianceSyncResp, ChatChannel, ChatMessageView, FriendView, HelpRequestView,
-  ReportReason, SocialCreatePolicy, SocialCreatePolicyResp, SocialEventView, SocialSummaryResp,
+  ReportReason, RallyPolicyResp, RallyPolicyView, SocialCreatePolicy, SocialCreatePolicyResp,
+  SocialEventView, SocialSummaryResp,
 } from '../../net/generated/SocialProtocol'
 import {
   ackablePrivateEventIds, buildChatPanel, chatFailureText, chatKey, CHAT_LOCAL_HISTORY_MAX,
@@ -41,18 +44,25 @@ import {
 } from '../social/ChatPanel'
 import type { ChatPanelData } from '../social/ChatPanel'
 import { buildRankBoard, buildRankSnapshotView } from '../power/RankBoard'
+import { buildStaminaBoard } from '../stage/StaminaBoard'
 import {
-  buildCompose, marchUnitsOf, rememberMarch, repeatBlockedReason, setPick,
+  adjustRallyNumber, buildCompose, marchUnitsOf, rallyFormBlocked, rallyFormOf, rallyNumbersOf,
+  rallySwitchBlocked, rememberMarch, repeatBlockedReason, setPick,
 } from '../world/MarchCompose'
-import type { ComposeView, MarchSpec } from '../world/MarchCompose'
+import type {
+  ComposeView, MarchSpec, RallyField, RallyForm, RallyNumberRow, RallyScope, RallyScopeRow,
+} from '../world/MarchCompose'
 import type { RankBoardView, RankSnapshotView, RankTabKey } from '../power/RankBoard'
 import type { RankListResp } from '../../net/generated/RankProtocol'
 import { buildSeasonPanel } from '../season/SeasonPanel'
 import type { SeasonPanelView } from '../season/SeasonPanel'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
-import { buildTechPanel } from '../tech/TechPanel'
+import type { ScoutListResp } from '../../net/generated/WorldProtocol'
+import { blockReasonText, buildTechPanel } from '../tech/TechPanel'
 import type { TechPanelView } from '../tech/TechPanel'
-import type { TechListView } from '../../net/generated/TechProtocol'
+import type {
+  TechCancelResp, TechListView, TechSpeedUpResp,
+} from '../../net/generated/TechProtocol'
 import { buildEquipPanel } from '../equip/EquipPanel'
 import type { EquipPanelView } from '../equip/EquipPanel'
 import type { EquipInstanceListView, EquipSlot } from '../../net/generated/EquipProtocol'
@@ -73,10 +83,6 @@ import { buildCreateForm, createEntries } from '../social/SocialCreate'
 import type { CreateEntry, CreateForm, CreateScope } from '../social/SocialCreate'
 import { buildDiscovery, canApply, EMPTY_DISCOVERY } from '../social/AllianceDiscovery'
 import { buildSquadDiscovery, canJoin, EMPTY_SQUAD_DISCOVERY } from '../social/SquadDiscovery'
-import {
-  blockedReason, defaultParams, kindSubmitLabel, nextKind, rebind, stepControl,
-} from '../social/RallyCompose'
-import type { RallyKind, RallyParams } from '../social/RallyCompose'
 import type { DiscoveryView } from '../social/AllianceDiscovery'
 import type { SquadListView } from '../social/SquadDiscovery'
 import { buildApplications, EMPTY_APPLICATIONS } from '../social/AllianceApplications'
@@ -98,10 +104,11 @@ import type { ActivityClaimResp, ActivityListResp } from '../../net/generated/Ac
 import type { GuideAction, GuideProgressResp, GuideScriptResp } from '../../net/generated/GuideProtocol'
 import { claimActivityReq } from '../activity/ActivityPanel'
 import {
-  buildChatActionChoices, buildLineupChoices, buildShareChannelChoices, buildSpeedupChoices,
+  buildArmyQueueChoices, buildChestOpenChoices, buildChatActionChoices, buildLineupChoices,
+  buildResearchSpeedupChoices, buildShareChannelChoices, buildSpeedupChoices,
 } from './Choices'
 import type {
-  ChatActionChoice, LineupChoice, ShareChannelChoice, SpeedupChoice,
+  ChatActionChoice, ChoiceOption, LineupChoice, ResearchSpeedupChoice, ShareChannelChoice, SpeedupChoice,
 } from './Choices'
 import type { GiftPopupResp } from '../../net/generated/PayProtocol'
 import type { PayView } from '../pay/GiftPayFlow'
@@ -119,7 +126,7 @@ import { buildAvatarFramePanel, wearBodyOf, wearResultText } from '../avatar/Ava
 import type { AvatarFramePanelView } from '../avatar/AvatarFramePanel'
 import type { AvatarFrameListResp } from '../../net/generated/Protocol'
 import type { BattlePassStatusResp, BattlePassTrack } from '../../net/generated/BattlePassProtocol'
-import type { RallyListResp, RallyPolicyResp } from '../../net/generated/SocialProtocol'
+import type { RallyListResp } from '../../net/generated/SocialProtocol'
 import { buildBattlePassPanel, claimBodyOf, claimResultText } from '../battlePass/BattlePassPanel'
 import { buildOfflineItems, offlineReportGate } from '../offline/OfflineReport'
 import type { OfflineItem } from '../offline/OfflineReport'
@@ -153,19 +160,24 @@ export interface MarchComposeView {
   /** 正在提交（面板据此禁用确认键，防双击发两份） */
   readonly submitting: boolean
   /**
-   * 这一份编成是哪一种命令（B26 S12 两态 → S13b 三态）。省略等于 MARCH：
-   * 「再次出征」那几条提示走的是同一个面板，它们永远不出集结，就不该各自补一遍字段。
+   * 这一份编成是要**发起集结**、**派侦察**还是普通出征（B26 S12 / B26 S18）。省略等于 MARCH：
+   * 「再次出征」那几条提示走的是同一个面板，它们永远不出集结也不派侦察，就不该各自补一遍字段。
    */
-  readonly kind?: RallyKind
-  /** 确认键上的字（出征 / 发起小队集结 / 发起联盟集结）。面板不自己翻，免得两处写两份 */
+  readonly mode?: 'MARCH' | 'RALLY' | 'SCOUT'
+  /** 确认键上的字（出征 / 发起集结）。面板不自己翻，免得两处写两份 */
   readonly submitLabel?: string
-  /** 不能发起集结时那句原因（读不到政策时**不为它**置灰：那是"暂时不知道"，不是"你不行"） */
+  /** 不能发起集结时那句原因（读不到权限时**不为它**置灰：那是"暂时不知道"，不是"你不行"） */
   readonly rallyBlocked?: string | null
   /**
-   * 集结参数那一行（人数 / 准备时长）。MARCH 或读口没到时为 null ⇒ 那一行整条不画。
-   * 界与默认值都是服务端给的，面板只显示、不夹取。
+   * 集结态下的两个层级入口（B26 S14）。出征态不画这一行，所以省略即"没有层级可选"。
+   * 「联盟集结要收两个数」这件事不能让玩家在别处填 —— 同一份兵、同一个目标，
+   * 换的只是命令种类与召集范围，所以层级就摆在编成面板里。
    */
-  readonly rally?: RallyParams | null
+  readonly rallyScopes?: readonly RallyScopeRow[]
+  /** 当前选中的层级（省略 = 小队，与 `mode` 省略等于 MARCH 同一口径） */
+  readonly rallyScope?: RallyScope
+  /** 联盟层的两个数（含界）；政策还没拉到时是空数组，面板就少画两行而不是画一对猜出来的数 */
+  readonly rallyNumbers?: readonly RallyNumberRow[]
 }
 
 /** 商店面板：货架那块来自 game/shop/ShopPanel.ts，notice 是**上一次兑换的结果**（临时提示）。 */
@@ -211,6 +223,8 @@ export interface PanelTargets {
   cityCollect?(resp: CityCollectResp): void
   /** 体力详情弹层（B09 §5）。视图模型已经算好文案与置灰，表现层只负责画。 */
   staminaDetail?(view: StaminaDetailView): void
+  /** 一次取消建造的即时回执（退回来多少，照服务端给的数念）。 */
+  cityCancelled?(resp: CityCancelResp): void
   /**
    * 军队面板。`trainMemory` 是客户端记住的上一次成功训练 —— 面板只用它决定
    * 「自动续训」现在能不能开（开关本身的策略全部来自响应，见 game/army/AutoTrain.ts）。
@@ -220,6 +234,30 @@ export interface PanelTargets {
   resources?(resp: ResourceDetailResp): void
   bag?(resp: BagListResp): void
   stage?(resp: StageListResp): void
+  /**
+   * 体力那一屏（画在关卡面板表头下面）。`gold` 由本层从资源明细里取来 ——
+   * 场景层不参与"够不够"的算账，它只把 `StaminaBoard` 给的字画出来。
+   */
+  stamina?(resp: StaminaResp, gold: number | null): void
+  /** 一次购买的回执（到账 / 扣币 / 今日已购）。画在关卡面板那条摘要带上。 */
+  staminaBought?(resp: StaminaBuyResp): void
+  /**
+   * 一次挑战的结算（星级、掉落、达成条件、体力）。同样画在那条摘要带上 ——
+   * 只刷关卡列表等于把「这一把到底打成什么样」丢掉，而那是玩家刚花掉一次体力的结果。
+   */
+  challengeResult?(resp: ChallengeStageResp): void
+  /**
+   * 一次批量扫荡的结算。`requested` 是客户端发出去的次数：响应里没有这个字段，
+   * 而没有它就解释不了「我要 10 次为什么只扫了 7 次」。
+   */
+  sweepResult?(resp: SweepResp, requested: number): void
+  /** 取消研究的回执：取消了哪一行、退回来多少资源（比例服务端算，与城建同一份配置）。 */
+  techCancelled?(resp: TechCancelResp): void
+  /** 研究加速用哪一张（候选按 `effectKind` 筛，不按 id 硬编码；一份选项自带张数）。 */
+  researchSpeedupChoice?(options: readonly ResearchSpeedupChoice[],
+    onPick: (choice: ResearchSpeedupChoice) => void): void
+  /** 一次研究加速的回执：减了多少秒、还剩多少、是否因此完成。 */
+  techSpeededUp?(resp: TechSpeedUpResp): void
   /**
    * 社交面板。`members` 走 `/alliance/sync` 的 diff 通道，`helps` 走
    * `/social/helpRequests`；两者都由服务端给出，客户端只转手，不自己拼列表。
@@ -338,6 +376,8 @@ export interface PanelTargets {
   activity?(resp: ActivityListResp, serverNowMs: number): void
   /** 战报列表（B12 §3）。时刻由外层给：列表里每行都写着「N 天后过期」，那是相对时间。 */
   reports?(resp: BattleReportListResp, serverNowMs: number): void
+  /** 敌情列表（B26 S19）：与战报同一块面板的第二个页签，同样由视图自己装配 */
+  scoutIntel?(resp: ScoutListResp, serverNowMs: number): void
   /** 「自上次登录以来」那一屏（B25-S3）。条目为空时编排层不会调它 —— 一个空面板比不弹更糟。 */
   offlineReport?(view: OfflineReportPopup): void
   /** 汇总里点了一条：跳到那一页（key 与 PanelNav 的 key 一致）。 */
@@ -372,6 +412,12 @@ export interface PanelTargets {
   home?(x: number, y: number): void
   /** 加速道具目标选择器。回调由场景层在选择后触发一次。 */
   speedupTargetChoice?(options: readonly SpeedupChoice[], onPick: (targetId: string) => void): void
+  /** 军队那一行的「队列」菜单（B26 S15）：选项与"点了做什么"都由编排层给，面板只画与回抛 */
+  armyQueueChoice?(options: readonly ChoiceOption[], onPick: (id: string) => void): void
+  /** 宝箱那一行的「开几个」选择器。选项按手里有几个给（逐箱上限在 chest 表里，没下发）。 */
+  chestOpenChoice?(options: readonly ChoiceOption[], onPick: (id: string) => void): void
+  /** 一次开箱的回执：实际开了几个、开出什么、装不下的那部分转了邮件。 */
+  chestOpened?(resp: OpenBatchResp): void
   /** 关卡出战阵容选择器。回调由场景层在选择后触发一次。 */
   lineupChoice?(options: readonly LineupChoice[], onPick: (choice: LineupChoice) => void): void
   /**
@@ -389,12 +435,14 @@ export interface PanelTargets {
 
 /** 一次写操作影响的列表：成功后重拉这些面板。 */
 export type PanelKey =
-  'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'social' | 'power' | 'world'
+  'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'stamina' | 'social' | 'power' | 'world'
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
   | 'battlePass' | 'rallies' | 'tech' | 'equip' | 'gacha'
 
-/** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */
-export interface Tracker {
+/** 「全开」这一档的天花板：`OpenBatchReq.count` 的协议上界（逐箱上限由服务端判，超了会明确拒）。 */
+const CHEST_OPEN_CEILING = 100
+
+/** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */export interface Tracker {
   track(name: string, params?: Record<string, string>): void
 }
 
@@ -431,16 +479,19 @@ export class AppRoot {
   private rallyNotice: string | null = null
   /** 正在为哪一支集结编队；null = 普通出征的编成。**加入集结必须带兵力**（服务端要锁兵）。 */
   private composeRallyId: string | null = null
-  /** 编成面板当前是哪一种命令（B26 S12 两态 → S13b 三态）。换目标就回到出征 */
-  private composeKind: RallyKind = 'MARCH'
+  /** 编成面板当前是"发起小队集结"还是"出征"（B26 S12）。换目标就回到出征 */
+  private composeRally = false
+  /** 这一份编成是派去侦察的（B26 S18）。与集结互斥：一条命令只有一个种类 */
+  private composeScout = false
+  /** 集结发给哪一层（B26 S14）。每次进集结态都从小队层起步：那是玩家已经点过的那条路 */
+  private composeRallyScope: RallyScope = 'SQUAD'
   /**
-   * 发起集结的政策读口（`GET /rally/policy`，B26 S13a 落的服务端）。
-   * 人数与准备时长的**上下界和默认值**全从这里来 —— 客户端不抄 `global.RALLY_*`，
-   * 也不自己挑一个默认时长（那是"显示名必须服务端下发"同族的第十条：入参上下界同属必须下发）。
+   * 联盟集结那两个数（人数上限 / 等待时长）。null = 还没按政策填出来，
+   * 而 null 会让确认键拦下一句人话 —— 猜一组数发出去是最坏的结果。
    */
-  private rallyPolicyResp: RallyPolicyResp | null = null
-  /** 面板上那两个可调项当前的值；null = 当前这一档没有参数（出征）或读口还没到 */
-  private rallyParams: RallyParams | null = null
+  private rallyForm: RallyForm | null = null
+  /** 集结政策（B26 S13 的读口）：两个层级的界、起始值、此刻能不能发起。没拉到是 null */
+  private rallyPolicy: RallyPolicyResp | null = null
   /** 战令：最近一次状态与上一次领取的结果（临时提示）。**进度两位都取自响应，本地不改**。 */
   private battlePassResp: BattlePassStatusResp | null = null
   private battlePassNotice: string | null = null
@@ -541,6 +592,8 @@ export class AppRoot {
   /** 最近一次 `/gacha/pools` 与 `/resource/detail`（抽卡面板比余额要，与 bagResp 同一条做法） */
   private gachaResp: GachaPoolsResp | null = null
   private resourceResp: ResourceDetailResp | null = null
+  /** 最近一次 `/stamina`：买不买得动由它决定，买完之后服务端回的那一份立刻覆盖它 */
+  private staminaResp: StaminaResp | null = null
   /** 抽卡面板：选中哪个池、上一次抽取的结果、上一次失败的理由 */
   private gachaPoolId: string | null = null
   private gachaLast: GachaDrawResp | null = null
@@ -631,7 +684,7 @@ export class AppRoot {
     // 边界与阈值随登录一起下发（B25-S3）：previousLoginAt 是"自上次登录以来"的起点，
     // 而 profile.lastLoginAt 此刻已被推进成现在 —— 两者差一个"永远是 0 秒"的 bug
     this.offlineConfig = outcome.data.offlineReport ?? null
-    await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'social', 'power',
+    await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'stamina', 'social', 'power',
       'world', 'quest', 'reddot')
     // 首屏拉齐之后再弹「自上次登录以来」（B25-S3）：它要读城市/社交那两份已到的数据，
     // 早于首屏弹会少条目 —— 而少条目正是这个功能最容易骗人的地方
@@ -759,6 +812,14 @@ export class AppRoot {
       case 'stage':
         this.deliver('stage', await this.api.stageList(), r => this.targets.stage?.(r))
         return
+      case 'stamina':
+        // `GET /stamina` 是个会写库的读（惰性恢复与容量随主城等级变化都在这里推进），
+        // 所以它必须与 `/stage/list` 分开拉：关卡列表只带 current，不带 cap / 价格 / 今日已购。
+        this.deliver('stamina', await this.api.staminaView(), r => {
+          this.staminaResp = r
+          this.targets.stamina?.(r, this.goldBalance())
+        })
+        return
       case 'social': {
         const summary = await this.api.socialSummary()
         if (summary.kind !== 'ok') {
@@ -835,10 +896,14 @@ export class AppRoot {
       case 'quest':
         this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
         return
-      case 'reports':
-        this.deliver('reports', await this.api.battleReports(),
-          r => this.targets.reports?.(r, this.timeSync.serverNow()))
+      case 'reports': {
+        // 战报与敌情同一次刷新一起拉（B26 S19）：它们是同一块面板的两个页签，
+        // 分两次进就会让玩家切页签时看到「读取中」
+        const [battles, scouts] = await Promise.all([this.api.battleReports(), this.api.scoutReports()])
+        this.deliver('reports', battles, r => this.targets.reports?.(r, this.timeSync.serverNow()))
+        this.deliver('reports', scouts, r => this.targets.scoutIntel?.(r, this.timeSync.serverNow()))
         return
+      }
       case 'shop':
         this.deliver('shop', await this.api.shopList(this.shopTab), r => {
           this.shopResp = r
@@ -1008,12 +1073,6 @@ export class AppRoot {
    * （与"解散组织"那类不可逆且没把代价写在按钮上的动作不同）。
    * 买完**重新拉一次详情**再画：次数、下一次价格、余额都会变，靠本地推算会与服务端分家。
    */
-  buyStamina(times = 1): Promise<void> {
-    this.track(TRACK_EVENTS.staminaBuy, { times: trackParam(times) })
-    return this.write('city', this.api.staminaBuy({ times }), ['city', 'resources'], () => {
-      void this.openStaminaDetail()
-    })
-  }
 
   /** 当前金币（资源条那一份；读不到就当 0 —— 那只会让按钮置灰，不会让判定失真）。 */
   private goldOf(): number {
@@ -1040,6 +1099,28 @@ export class AppRoot {
     this.track(TRACK_EVENTS.worldLeave)
     this.api.leaveWorld()
   }
+
+  /**
+   * 取消一格建造。按钮只在服务端说"这一格在升级"时才存在（`BuildingRow.upgrading`），
+   * 所以这里不再自己判一遍该不该让按 —— 但**列表还没到手时不能放行**，
+   * 那等于把一次读侧故障变成一次注定失败的写请求。
+   */
+  cancelBuild(buildingId: string): Promise<void> {
+    const row = this.cityResp?.buildings.find((b) => b.id === buildingId)
+    if (row === undefined) {
+      this.rejectNeeds('city', '这一格的状态还没读到，稍后再试')
+      return Promise.resolve()
+    }
+    if (row.status !== 'UPGRADING') {
+      this.rejectNeeds('city', '这一格现在没有在建，不用取消')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.buildingCancel, { buildingId })
+    return this.write('city', this.api.cityCancel({ buildingId }),
+      ['city', 'resources', 'reddot'], r => this.targets.cityCancelled?.(r))
+  }
+
+  // ---------- 武将养成（V03 前置：把已有的养成能力接到玩家手上） ----------
 
   /**
    * 暂停一栋正在升级的建筑（B03 §2："队列中可暂停 / 取消"，收口清单 #324）。
@@ -1094,6 +1175,40 @@ export class AppRoot {
   }
 
   /**
+   * 打开某一行的「队列」菜单（B26 S15）。
+   *
+   * <p>没有可做的动作时回一句人话，**不画一颗空菜单**：点了什么都不发生的键，
+   * 在玩家眼里就是"这功能坏了"（与 `useItem` 那条"没有可用目标就明说"同一口径）。
+   */
+  openArmyQueue(unitId: string): void {
+    if (this.armyResp === null) {
+      this.rejectNeeds('army', '军队数据还没到，稍后再试')
+      return
+    }
+    const options = buildArmyQueueChoices(this.armyResp, unitId)
+    if (options.length === 0) {
+      this.rejectNeeds('army', '这一口没有在训练的队伍')
+      return
+    }
+    if (this.targets.armyQueueChoice === undefined) {
+      this.rejectNeeds('army', pickUnavailable('取消哪一口训练'))
+      return
+    }
+    this.targets.armyQueueChoice(options, (id) => {
+      if (id === 'CANCEL_TRAIN') {
+        void this.cancelTrain(unitId)
+      }
+    })
+  }
+
+  /** 取消某一口的训练。退多少由服务端按比例算（配置来的），客户端不参与计算也不猜。 */
+  cancelTrain(unitId: string): Promise<void> {
+    this.track(TRACK_EVENTS.armyTrainCancel, { unitId })
+    return this.write('army', this.api.armyCancel({ unitId, seconds: null, itemId: null }),
+      ['army', 'resources'])
+  }
+
+  /**
    * 开关自动续训 / 自动补兵（B25-S2d）。
    *
    * <p><b>续的是哪一批</b>由 {@link lastTrain} 决定 —— 服务端保存的是一份策略，
@@ -1128,11 +1243,32 @@ export class AppRoot {
   // ---------- 背包 ----------
 
   /**
-   * 使用道具。`needsTarget` 为真时（加速类）需要目标选择器，而它还没有 ——
+   * 使用道具。加速类（`needsTarget`）先要一个目标选择器，而它还没有 ——
    * 明说比替玩家挑一个目标好：猜错目标消耗掉的是真金白银买来的道具，且不会有任何报错。
+   *
+   * <p>宝箱类走另一条路：服务端对宝箱的 `/item/use` **直接拒绝**并写明"请走 /item/openBatch"
+   * （它的产出可能是道具或武将碎片，不是资源），所以这一按过去只会拿到一句报错。
    */
   useItem(itemId: string, needsTarget: boolean,
           targetId: string | null = null): Promise<void> {
+    const held = this.bagResp?.items.find((it) => it.itemId === itemId)
+    if (held !== undefined && held.type === 'CHEST') {
+      this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'chest_picker' })
+      const options = buildChestOpenChoices(held.count)
+      if (options.length === 0) {
+        this.rejectNeeds('bag', '手里这一种宝箱已经没有了')
+        return Promise.resolve()
+      }
+      if (this.targets.chestOpenChoice === undefined) {
+        this.rejectNeeds('bag', pickUnavailable('开几个'))
+        return Promise.resolve()
+      }
+      this.targets.chestOpenChoice(options, (picked) => {
+        void this.openChest(itemId, picked === 'all'
+          ? Math.min(held.count, CHEST_OPEN_CEILING) : Number(picked))
+      })
+      return Promise.resolve()
+    }
     if (needsTarget && targetId === null) {
       this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'picker' })
       const options = buildSpeedupChoices(this.cityResp, this.armyResp)
@@ -1152,6 +1288,20 @@ export class AppRoot {
     this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'false' })
     return this.write('bag', this.api.itemUse({ itemId, count: 1, targetId }),
       ['bag', 'city', 'army', 'reddot'])
+  }
+
+  /**
+   * 开 N 个宝箱。随机、逐箱上限、溢出转邮件全在服务端（B04 禁止项：不得在客户端本地开箱），
+   * 本层只发一次请求、把回执交给面板，并重拉那四本账（背包 / 资源 / 武将碎片 / 红点）。
+   *
+   * <p>**不重拉邮件**：邮件本来就不在首屏预拉里（点开那一格才拉），溢出那件事由红点那条通路
+   * 告诉玩家就够了 —— 为一件玩家可能根本不看的事多塞一次首屏预算外的请求，是本仓库反复避的那种浪费。
+   */
+  openChest(itemId: string, count: number): Promise<void> {
+    this.track(TRACK_EVENTS.chestOpen, { itemId, count: trackParam(count) })
+    return this.write('bag', this.api.itemOpenBatch({ itemId, count }),
+      ['bag', 'resources', 'hero', 'reddot'],
+      (resp) => this.targets.chestOpened?.(resp))
   }
 
   // ---------- 关卡 ----------
@@ -1193,13 +1343,47 @@ export class AppRoot {
       stageId,
       units: Array.from(choice.units),
       heroes: Array.from(choice.heroes),
-    }), ['stage', 'army', 'hero'])
+    }), ['stage', 'army', 'hero'], (resp) => this.targets.challengeResult?.(resp))
   }
 
   /** ×10 只发**一个** `count=10` 的请求（B09 验收 9：一次请求做完一件事，弱网下不会只成一半）。 */
   sweep(stageId: string, count: number): Promise<void> {
     this.track(TRACK_EVENTS.battleStart, { battleType: 'sweep', stageId, count: trackParam(count) })
-    return this.write('stage', this.api.stageSweep({ stageId, count }), ['stage'])
+    return this.write('stage', this.api.stageSweep({ stageId, count }), ['stage'],
+      (resp) => this.targets.sweepResult?.(resp, count))
+  }
+
+  // ---------- 体力（B09 §5） ----------
+
+  /**
+   * 买一次体力。买不买得动、扣多少金币、实际到账多少全由服务端裁定，本层只做协议
+   * 明确要求客户端做的两件事：① 买不动时把原因说在按下去<b>之前</b>（体力已满还要买是
+   * 「到账 0、金币照扣、溢出永久损失」，协议注释点名要客户端先提示）；② 买完把响应里
+   * 的 {@code granted / costGold / boughtToday} 照实念出来，不自己算。
+   */
+  buyStamina(): Promise<void> {
+    const resp = this.staminaResp
+    if (resp === null) {
+      // 「还没读到」与「买不了」是两件事：把读侧故障写成玩家没金币，他会去做一件不必要的事
+      this.rejectNeeds('stage', '体力信息还没读到，稍后再试')
+      return Promise.resolve()
+    }
+    const board = buildStaminaBoard(resp, this.goldBalance())
+    if (board.buyBlocked) {
+      this.rejectNeeds('stage', board.buyBlockedReason ?? '现在买不了')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.staminaBuy, { priceGold: trackParam(resp.buyCostGold) })
+    return this.write('stage', this.api.staminaBuy({ times: 1 }), ['stamina', 'resources', 'stage'],
+      (outcome) => this.targets.staminaBought?.(outcome))
+  }
+
+  /** 金币余额：资源明细里那一行。读不到返回 null，<b>不当 0 用</b>（那会把有钱的玩家灰掉）。 */
+  private goldBalance(): number | null {
+    // `?? []` 与 `gachaBalances` 同一条：协议类型写着 resources 必有，但一份缺字段的响应
+    // 不该把整个体力那条炸掉（实测：桩里给的是 entries 时这里直接 TypeError）
+    const row = (this.resourceResp?.resources ?? []).find((r) => r.type === 'GOLD')
+    return row === undefined ? null : row.current
   }
 
   // ---------- 任务（B12 §1） ----------
@@ -1559,7 +1743,8 @@ export class AppRoot {
   }
 
   /**
-   * 拉社交页的三道门（B26 S1 + S2）：两个 scope 的权限、一份创建政策（一次回两个层级）。
+   * 拉社交页的四道门（B26 S1 + S2 + S14）：两个 scope 的权限、一份创建政策、一份集结政策
+   * （各一次回两个层级）。
    *
    * <p>权限两份都到齐才把 `loaded` 置 true：只拿到一半就放开按钮，等于拿缺的那一半去猜。
    * 失败时保持原样并说一句"暂时拉不到"—— 灰着的按钮比一个点了会被拒的按钮诚实。
@@ -1575,9 +1760,9 @@ export class AppRoot {
     return this.gatesFlight
   }
 
-  private async pullSocialGates(): Promise<void> {    const [squad, alliance, create] = await Promise.all([
+  private async pullSocialGates(): Promise<void> {    const [squad, alliance, create, rally] = await Promise.all([
       this.api.socialPermissions('SQUAD'), this.api.socialPermissions('ALLIANCE'),
-      this.api.socialCreatePolicy(),
+      this.api.socialCreatePolicy(), this.api.rallyPolicy(),
     ])
     let state = EMPTY_PERMISSIONS
     if (squad.kind === 'ok') {
@@ -1596,10 +1781,21 @@ export class AppRoot {
     } else {
       this.say('social', create)
     }
+    if (rally.kind === 'ok') {
+      this.rallyPolicy = rally.data
+      // 编成面板正停在联盟层等这两个数：政策晚到一步就要立刻补上，否则那一屏停在"读取中"
+      if (this.rallyForm === null && this.composeRally && this.composeRallyScope === 'ALLIANCE') {
+        this.rallyForm = rallyFormOf(this.rallyPolicyOf('ALLIANCE'))
+      }
+    } else {
+      this.say('social', rally)
+    }
     this.permissions = state
     this.targets.socialGates?.(this.permissions, createEntries(this.createPolicy,
       this.createBalance('squad'), this.createBalance('alliance')))
     this.deliverSocialCreate()
+    // 编成面板可能正停在联盟层等那两个数：政策晚到也要立刻补上那一屏
+    this.deliverCompose()
   }
 
   /**
@@ -2227,7 +2423,106 @@ export class AppRoot {
         : AppRoot.reason(outcome)
       this.say('tech', outcome)
     }
+    this.deliverTech()
+  }
+
+  /**
+   * 组装并递一次科技面板。**纯重递、不发请求** —— 被拒的说明要走这条路
+   * （`showNeedsInPanel`），一次拒绝不该变成一次读放大。
+   */
+  private deliverTech(): void {
     this.targets.tech?.(buildTechPanel(this.techResp, this.techNotice))
+  }
+
+  /**
+   * 开始研究一行科技（V03-a-S1 只接了读侧，这一按才是玩家真正要做的动作）。
+   *
+   * <p>点之前先看服务端怎么说这一行：`canResearch=false` 就把那句原因报出去、**不发请求** ——
+   * 灰着的行点下去只换来一个报错，那是本仓库反复在抓的"界面画了但动作是死的"。
+   * 判定本身仍在服务端（它会再校验一遍队列 / 学院等级 / 资源），这里只是不让人对着一句"不行"再按一次。
+   */
+  researchTech(techId: string): Promise<void> {
+    const row = this.techResp?.techs.find((t) => t.techId === techId)
+    if (row === undefined) {
+      this.rejectNeeds('tech', '这一行研究项还没拉到，稍后再试')
+      return Promise.resolve()
+    }
+    if (!row.canResearch) {
+      this.rejectNeeds('tech', blockReasonText(row.blockedReason) ?? '这一行现在研究不了')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.techResearch, { techId, nextLevel: trackParam(row.level + 1) })
+    return this.write('tech', this.api.techResearch({ techId }), ['tech', 'resources'])
+  }
+
+  /**
+   * 取消当前研究。请求不带 techId（一次一队列，服务端知道是哪一行），返还比例与城建共用一份配置，
+   * 客户端只把服务端回的那份 `refund` 念出来 —— 自己按比例重算就是第二个真相。
+   *
+   * <p>**回执在重拉之后才交**：那句回执占的正是队列那一行的位置，而重拉会把这一行重画一遍 ——
+   * 走 `write()` 的 `onOk`（在刷新之前）会被紧接着的渲染清掉（实测：取消成功了但屏幕上什么都没有）。
+   */
+  async cancelResearch(): Promise<void> {
+    const queueId = this.techResp?.queue.techId ?? null
+    if (queueId === null || queueId === undefined) {
+      // "没在研究"与"取消失败"是两件事：前者不该发请求，后者由服务端说原因
+      this.rejectNeeds('tech', '现在没有在研究的项目，不用取消')
+      return
+    }
+    this.track(TRACK_EVENTS.techCancel, { techId: queueId })
+    const outcome = await this.api.techCancel()
+    if (outcome.kind !== 'ok') {
+      this.say('tech', outcome)
+      return
+    }
+    await this.refresh('tech', 'resources')
+    this.targets.techCancelled?.(outcome.data)
+  }
+
+  /**
+   * 用一张研究加速道具推进当前研究。候选由 `effectKind` 筛（不按 id 硬编码），
+   * 减多少秒、还剩多少秒、有没有完成都由服务端回。
+   *
+   * <p>与 `cancelResearch()` 同一条时序教训：**回执在重拉之后交**，因为它占的是队列那一行的位置。
+   */
+  async speedUpResearch(itemId: string, count: number): Promise<void> {
+    this.track(TRACK_EVENTS.techSpeedUp, { itemId, count: trackParam(count) })
+    const outcome = await this.api.techSpeedUp({ itemId, count })
+    if (outcome.kind !== 'ok') {
+      this.say('tech', outcome)
+      return
+    }
+    await this.refresh('tech', 'bag', 'resources')
+    this.targets.techSpeededUp?.(outcome.data)
+  }
+
+  /**
+   * 玩家点了队列那一行的「加速」：先问用哪一张（只有 `REDUCE_RESEARCH_SECONDS` 那一种能用），
+   * 手里一张都没有就明说 —— 不给一颗点开只会失败的键。
+   */
+  requestResearchSpeedUp(): void {
+    const queueId = this.techResp?.queue.techId ?? null
+    if (queueId === null || queueId === undefined) {
+      this.rejectNeeds('tech', '现在没有在研究的项目，用不了加速')
+      return
+    }
+    if (this.bagResp === null) {
+      // "还没读到"与"手里没有"是两句话：写成后者会把一次读侧故障说成玩家的错
+      this.rejectNeeds('tech', '道具清单还没读到，稍后再试')
+      return
+    }
+    const options = buildResearchSpeedupChoices(this.bagResp)
+    if (options.length === 0) {
+      this.rejectNeeds('tech', '手里没有研究加速道具（建造令与训练令用不到研究上）')
+      return
+    }
+    if (this.targets.researchSpeedupChoice === undefined) {
+      this.rejectNeeds('tech', pickUnavailable('加速道具'))
+      return
+    }
+    this.targets.researchSpeedupChoice(options, (picked) => {
+      void this.speedUpResearch(picked.itemId, picked.count)
+    })
   }
 
   // ---------- 装备实例页（V03-b-S1 读侧） ----------
@@ -3082,119 +3377,231 @@ export class AppRoot {
       return
     }
     this.composeTarget = { id: brief.id, name: brief.name, x: brief.coord.x, y: brief.coord.y }
-    this.composeKind = 'MARCH'
-    this.rallyParams = null
+    this.composeRally = false
+    this.composeScout = false
+    this.composeRallyScope = 'SQUAD'
+    this.rallyForm = null
     this.composePicks = {}
     this.composeNotice = null
     this.deliverCompose()
-    // 政策在打开编成之后才拉：它只决定"能不能切、界是多少"，晚到只会让那一行晚点出现，
-    // 不该把玩家点开面板这一下挡在后面
-    void this.loadRallyPolicy()
   }
 
   /**
-   * 拉一次发起集结的政策。公开是为了**用例能 await 它**：`beginMarchCompose` 里那一发是
-   * 后台补拉，用例不等它就永远读不到政策，"切到联盟档要长出参数行"这条断言就只能靠时序碰运气。
-   * 失败不弹错误条：这一格读不到只是"暂时不知道能不能"，不是玩家做错了什么。
-   */
-  async loadRallyPolicy(): Promise<void> {
-    const outcome = await this.api.rallyPolicy()
-    if (outcome.kind !== 'ok') {
-      return
-    }
-    this.rallyPolicyResp = outcome.data
-    if (this.rallyParams !== null) {
-      this.rallyParams = rebind(this.rallyParams, this.composeKind, outcome.data)
-    }
-    this.deliverCompose()
-  }
-
-  /**
-   * 在编成面板上循环切换命令种类：出征 → 小队集结 → 联盟集结 → 出征（B26 S12 两态扩成 S13b 三态）。
+   * 在编成面板上把这条命令从"出征"切成"发起小队集结"（B26 S12）。
    *
    * <p>为什么放在编成面板而不是在目标行上再加一颗按钮：同一份兵、同一个目标，
    * 换的只是**命令种类** —— 在目标行上摆两颗键会把"我打他"这件事拆成两个入口，
    * 而玩家在选目标那一刻通常还没决定要派多少兵。
    *
-   * <p>能不能发起：改由 `GET /rally/policy` 判（组织在不在、职位有没有那一位、人数够不够最低档
-   * 三条都在服务端算），**政策读不到时不置灰**，因为"还没拉到"不是"你不行"
-   * （同一口径见 PermissionGates 的注释），真发出去由服务端裁决并回一句人话。
+   * <p>能不能发起：读得到权限就按 `START_RALLY` 那一位说；**读不到不置灰**，
+   * 因为"权限还没拉到"不是"你不行"（同一口径见 PermissionGates 的注释），
+   * 真发出去由服务端裁决并回一句人话。
    */
-  toggleComposeRally(): void {
+  async toggleComposeRally(): Promise<void> {
     if (this.composeTarget === null) {
       return
     }
-    const next = nextKind(this.composeKind)
-    if (next !== 'MARCH') {
-      const blocked = blockedReason(next, this.rallyPolicyResp)
+    if (!this.composeRally) {
+      const blocked = this.rallyBlockedReason()
       if (blocked !== null) {
         this.composeNotice = blocked
         this.deliverCompose()
         return
       }
     }
-    this.composeKind = next
-    this.rallyParams = defaultParams(next, this.rallyPolicyResp)
+    this.composeRally = !this.composeRally
+    if (this.composeRally) {
+      this.composeScout = false
+    }
+    if (!this.composeRally) {
+      // 切回出征：层级与那两个数一起收掉，下次进集结态从小队层起步
+      this.composeRallyScope = 'SQUAD'
+      this.rallyForm = null
+    }
+    this.composeNotice = null
+    this.deliverCompose()
+    // 从来没开过社交页的玩家手里没有政策：不补这一次，他看到的就是一个
+    // 「没有层级可切、两个数一行都不画」的集结面板，而缺的那一样看起来像功能坏了。
+    // 放在切完之后：被门挡住的那一下不该预拉（与上面 rallyBlockedReason 同一条预算）。
+    if (this.composeRally && this.rallyPolicy === null) {
+      await this.loadSocialGates()
+    }
+  }
+
+  /** 某一层级的政策；还没拉到就是 null（面板不为它猜界）。 */
+  private rallyPolicyOf(scope: RallyScope): RallyPolicyView | null {
+    if (this.rallyPolicy === null) {
+      return null
+    }
+    return scope === 'SQUAD' ? this.rallyPolicy.squad : this.rallyPolicy.alliance
+  }
+
+  /**
+   * 换集结的召集范围：小队 / 联盟（B26 S14）。
+   *
+   * <p>政策说不能时才拦下并给服务端那句原因；**政策没拉到时不拦**（"暂时不知道"不是"你不行"，
+   * 同一口径见 {@link rallyBlockedReason}）。切到联盟才填那两个数：小队层的上限与时长
+   * 由服务端按自己的配置定，客户端没有可填的字段。
+   */
+  setComposeRallyScope(scope: RallyScope): void {
+    if (this.composeTarget === null || !this.composeRally || scope === this.composeRallyScope) {
+      return
+    }
+    const blocked = rallySwitchBlocked(this.rallyPolicyOf(scope))
+    if (blocked !== null) {
+      this.composeNotice = blocked
+      this.deliverCompose()
+      return
+    }
+    this.composeRallyScope = scope
+    this.rallyForm = scope === 'ALLIANCE' ? rallyFormOf(this.rallyPolicyOf(scope)) : null
     this.composeNotice = null
     this.deliverCompose()
   }
 
-  /** 调人数或准备时长。± 越界是夹住（夹取在纯逻辑里做，表现层不夹、判定在服务端）。 */
-  adjustRallyParams(field: 'members' | 'prepare', direction: number): void {
-    if (this.rallyParams === null) {
+  /** 把人数上限 / 等待时长调一档。夹取在纯逻辑里按政策的界做，表现层不自己算。 */
+  adjustComposeRallyNumber(field: RallyField, direction: number): void {
+    if (!this.composeRally || this.composeRallyScope !== 'ALLIANCE') {
       return
     }
-    this.rallyParams = {
-      ...this.rallyParams,
-      [field]: stepControl(this.rallyParams[field], direction),
-    }
+    this.rallyForm = adjustRallyNumber(this.rallyForm, this.rallyPolicyOf('ALLIANCE'), field, direction)
+    this.composeNotice = null
     this.deliverCompose()
   }
 
   /**
-   * 发起集结（B26 S12 小队 / S13b 联盟）。目标与兵力用的是与出征同一份编成，只是命令种类不同：
-   * 出征是"我打他"，集结是"我打他，等人一起"。发起人自己的兵在这一枪里就交出去
-   * （服务端把发起人算作第一个参与者，之后他不能再 join 自己的集结），所以缺了这份兵
-   * 一次集结永远只能带别人的兵出发。
+   * 发起不了集结时那句原因；null = 可以发起（或政策还没拉到，交给服务端判）。
+   *
+   * <p>这一句**只能来自 `/rally/policy`**：客户端先前自己按权限位与摘要拼过一份同样的判定，
+   * 那是把服务端已经写成人话的东西再翻一遍 —— 两边一漂，玩家看到的原因就和被拒的原因不是一回事。
    */
-  private async confirmStartRally(target: { x: number, y: number, name: string },
-                                  units: readonly { unitId: string, count: number }[]): Promise<void> {
-    const alliance = this.composeKind === 'ALLIANCE_RALLY'
-    const params = this.rallyParams
-    if (alliance && params === null) {
-      // 只有联盟档吃这两个数。读口没到就点发起：不猜一个人数发出去，也不静默失败，
-      // 直接把"再等一下"说清楚。小队档本来就没有参数行，不能被这条挡住。
-      this.composeNotice = '集结的人数与时长还没拉到，稍等一下再发'
-      this.deliverCompose()
+  private rallyBlockedReason(): string | null {
+    return rallySwitchBlocked(this.rallyPolicyOf('SQUAD'))
+  }
+
+  /**
+   * 在出征与派侦察之间切（B26 S18）。
+   *
+   * <p>落点与集结同一条理由：同一份兵、同一个目标，换的只是命令种类 —— `ScoutReq.units`
+   * 要的就是玩家正在编的这一队，另开一屏只会让他再编一遍。
+   * 这里不判"能不能侦察"（体力、目标合法性都在服务端），点下去由服务端裁决并回一句人话。
+   */
+  toggleComposeScout(): void {
+    if (this.composeTarget === null) {
       return
     }
-    this.track(TRACK_EVENTS.rallyInitiate, {
-      scope: trackParam(alliance ? 'ALLIANCE' : 'SQUAD'),
+    this.composeScout = !this.composeScout
+    if (this.composeScout) {
+      this.composeRally = false
+      this.composeRallyScope = 'SQUAD'
+      this.rallyForm = null
+    }
+    this.composeNotice = null
+    this.deliverCompose()
+  }
+
+  /**
+   * 派侦察（B26 S18）。交出去的仍是这一份编成 —— 侦察队会被打，打光了就是打光了，
+   * 所以"随手派个侦察"在数值上和派一支小队出去是一回事，不能当成免费的看一眼。
+   */
+  private async confirmScout(target: { x: number, y: number, name: string },
+                             units: readonly { unitId: string, count: number }[]): Promise<void> {
+    this.track(TRACK_EVENTS.scoutSend, {
       troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
-      // 只有联盟档真的带了这两个数；小队档写 0 会在看板上读成"0 人集结"
-      ...(alliance && params !== null ? {
-        members: trackParam(params.members.value),
-        prepareMinutes: trackParam(params.prepare.value),
-      } : {}),
     })
     this.composeSubmitting = true
     this.composeNotice = null
     this.deliverCompose()
-    const body = {
-      targetCoord: { x: target.x, y: target.y }, targetType: 'PLAYER_CITY' as const,
-      troops: units.map(unit => ({ ...unit })), heroes: [],
-    }
-    const outcome = alliance && params !== null
-      ? await this.api.allianceRally({ ...body, maxMembers: params.members.value,
-        prepareMinutes: params.prepare.value })
-      : await this.api.squadRally(body)
+    const outcome = await this.api.worldScout({
+      toX: target.x, toY: target.y, units: units.map(unit => ({ ...unit })),
+    })
     this.composeSubmitting = false
     if (outcome.kind === 'ok') {
-      this.composeKind = 'MARCH'
-      this.rallyParams = null
+      this.composeScout = false
+      this.composeNotice = `侦察队已出发：${target.name}`
+      this.deliverCompose()
+      void this.refresh('army')
+      return
+    }
+    this.composeNotice = outcome.kind === 'biz'
+      ? (outcome.detail ?? outcome.msg)
+      : AppRoot.reason(outcome)
+    this.say('targets', outcome)
+    this.deliverCompose()
+  }
+
+  /**
+   * 发起小队集结（B26 S12）。目标与兵力用的是与出征同一份编成，只是命令种类不同：
+   * 出征是"我打他"，集结是"我打他，等人一起"。发起人自己的兵在这一枪里就交出去
+   * （服务端把发起人算作第一个参与者，之后他不能再 join 自己的集结），所以缺了这份兵
+   * 一次集结永远只能带别人的兵出发。
+   */
+  private async confirmSquadRally(target: { x: number, y: number, name: string },
+                                  units: readonly { unitId: string, count: number }[]): Promise<void> {
+    this.track(TRACK_EVENTS.rallyInitiate, {
+      scope: trackParam('SQUAD'),
+      troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
+    })
+    this.composeSubmitting = true
+    this.composeNotice = null
+    this.deliverCompose()
+    const outcome = await this.api.squadRally({
+      targetCoord: { x: target.x, y: target.y }, targetType: 'PLAYER_CITY',
+      troops: units.map(unit => ({ ...unit })), heroes: [],
+    })
+    this.composeSubmitting = false
+    if (outcome.kind === 'ok') {
+      this.composeRally = false
       this.composeTarget = null
       this.composePicks = {}
       this.composeNotice = `已发起集结：${target.name}`,
+      this.deliverCompose()
+      void this.refresh('social')
+      return
+    }
+    this.composeNotice = outcome.kind === 'biz'
+      ? (outcome.detail ?? outcome.msg)
+      : AppRoot.reason(outcome)
+    this.say('targets', outcome)
+    this.deliverCompose()
+  }
+
+  /**
+   * 发起联盟集结（B26 S14）。与小队那条的唯一差别是请求多带两个数，而那两个数的界
+   * 来自 `/rally/policy`：客户端不抄 global 表，也不自己挑默认值（挑出来的数会真的发出去，
+   * 玩家以为自己设了 30 人而服务端夹成 4 人）。
+   *
+   * <p>政策还没拉到时**不猜**：拦成一句人话，确认键按不下去。
+   */
+  private async confirmAllianceRally(target: { x: number, y: number, name: string },
+                                     units: readonly { unitId: string, count: number }[]): Promise<void> {
+    const form = this.rallyForm
+    if (form === null) {
+      this.composeNotice = rallyFormBlocked(form)
+      this.deliverCompose()
+      return
+    }
+    this.track(TRACK_EVENTS.rallyInitiate, {
+      scope: trackParam('ALLIANCE'),
+      troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
+    })
+    this.composeSubmitting = true
+    this.composeNotice = null
+    this.deliverCompose()
+    const outcome = await this.api.allianceRally({
+      targetCoord: { x: target.x, y: target.y }, targetType: 'PLAYER_CITY',
+      maxMembers: form.maxMembers, prepareMinutes: form.prepareMinutes,
+      troops: units.map(unit => ({ ...unit })), heroes: [],
+    })
+    this.composeSubmitting = false
+    if (outcome.kind === 'ok') {
+      this.composeRally = false
+      this.composeScout = false
+      this.composeRallyScope = 'SQUAD'
+      this.rallyForm = null
+      this.composeTarget = null
+      this.composePicks = {}
+      this.composeNotice = `已发起联盟集结：${target.name}`
       this.deliverCompose()
       void this.refresh('social')
       return
@@ -3218,6 +3625,10 @@ export class AppRoot {
   /** 关掉编成面板（不扣兵、不发请求）。 */
   cancelMarchCompose(): void {
     this.composeTarget = null
+    this.composeRally = false
+    this.composeScout = false
+    this.composeRallyScope = 'SQUAD'
+    this.rallyForm = null
     this.composePicks = {}
     this.composeNotice = null
     this.deliverCompose()
@@ -3247,8 +3658,16 @@ export class AppRoot {
       await this.confirmRallyJoin(this.composeRallyId, units)
       return
     }
-    if (this.composeKind !== 'MARCH') {
-      await this.confirmStartRally(target, units)
+    if (this.composeScout) {
+      await this.confirmScout(target, units)
+      return
+    }
+    if (this.composeRally) {
+      if (this.composeRallyScope === 'ALLIANCE') {
+        await this.confirmAllianceRally(target, units)
+      } else {
+        await this.confirmSquadRally(target, units)
+      }
       return
     }
     // 打点是"真的发出去"这一下：被 blockedReason 拦住的那些不计（它们不是出征意图）
@@ -3336,7 +3755,7 @@ export class AppRoot {
       this.targets.marchCompose?.({
         targetId: '', targetName: '', coordText: '', compose,
         notice: this.composeNotice, submitting: false,
-        kind: 'MARCH', submitLabel: '出征', rallyBlocked: null, rally: null,
+        mode: 'MARCH', submitLabel: '出征', rallyBlocked: null,
       })
       return
     }
@@ -3347,16 +3766,32 @@ export class AppRoot {
       compose,
       notice: this.composeNotice,
       submitting: this.composeSubmitting,
-      kind: this.composeKind,
-      submitLabel: kindSubmitLabel(this.composeKind),
-      rallyBlocked: blockedReason(this.composeKind, this.rallyPolicyResp),
-      rally: this.rallyParams,
+      mode: this.composeScout ? 'SCOUT' : this.composeRally ? 'RALLY' : 'MARCH',
+      submitLabel: this.composeScout ? '派侦察' : this.composeRally ? '发起集结' : '出征',
+      rallyBlocked: this.rallyBlockedReason(),
+      rallyScope: this.composeRallyScope,
+      rallyScopes: this.composeRally ? this.rallyScopeRows() : [],
+      rallyNumbers: this.composeRally && this.composeRallyScope === 'ALLIANCE'
+        ? rallyNumbersOf(this.rallyForm, this.rallyPolicyOf('ALLIANCE'))
+        : [],
     })
+  }
+
+  /**
+   * 集结态下的两行层级入口。原因直接抄政策那句（服务端已经把"不在盟/职位不够/人数不够"
+   * 说成人话了，客户端不再判第二遍）。政策没拉到时两行都不带原因 —— 点下去由服务端裁决。
+   */
+  private rallyScopeRows(): RallyScopeRow[] {
+    const rowOf = (scope: RallyScope, label: string): RallyScopeRow => ({
+      scope, label, blocked: rallySwitchBlocked(this.rallyPolicyOf(scope)),
+    })
+    return [rowOf('SQUAD', '小队'), rowOf('ALLIANCE', '联盟')]
   }
 
   // ---------- 目标搜索与流亡 ----------
 
-  searchTargets(radius: number): Promise<void> {
+  /** `radius` 为 null = 客户端还不知道上下界（第一次搜索），服务端按 SEARCH_DEFAULT_RADIUS 搜。 */
+  searchTargets(radius: number | null): Promise<void> {
     this.track(TRACK_EVENTS.targetsSearch, { radius: trackParam(radius) })
     return this.write('targets', this.api.searchTargets({ radius, maxCount: 30 }), [],
       r => {
@@ -3405,6 +3840,52 @@ export class AppRoot {
 
   private rejectNeeds(panel: string, message: string): void {
     this.targets.error?.(panel, message)
+    this.showNeedsInPanel(panel, message)
+  }
+
+  /**
+   * 把「这件事现在做不了」写进面板**自己那条提示行**，再纯重递一次。
+   *
+   * <p>#357 只接了关卡与内城（它们各有一条瞬时带）。这一族里还有一批面板的提示是
+   * 随数据重算的 `notice`（商店、战令、外观、集结、聊天）—— 直接改标签会被下一次
+   * `attach` 覆盖掉，所以正确落点是**它们本来就带着的那个字段**。
+   *
+   * <p>只调"不发请求"的重递口：一次拒绝不该变成一次读放大。
+   * army / bag / hero / social / reports 没有瞬时提示面（要新建 UI 面才能接），
+   * 这里刻意不给它们造落点 —— 见台账 #358 未做②。
+   */
+  private showNeedsInPanel(panel: string, message: string): void {
+    switch (panel) {
+      case 'tech':
+        this.techNotice = message
+        this.deliverTech()
+        return
+      case 'gacha':
+        this.gachaNotice = message
+        this.deliverGacha()
+        return
+      case 'shop':
+        this.shopNotice = message
+        this.deliverShop()
+        return
+      case 'battlePass':
+        this.battlePassNotice = message
+        this.deliverBattlePass()
+        return
+      case 'avatarFrames':
+        this.frameNotice = message
+        this.deliverAvatarFrames()
+        return
+      case 'rallies':
+        this.rallyNotice = message
+        this.deliverRallies()
+        return
+      case 'chat':
+        this.chatNotice = message
+        this.deliverChat()
+        return
+      default:
+      }
   }
 
   private say(panel: string, outcome: NetOutcome<unknown>): void {

@@ -17,6 +17,7 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.nation.Nation;
+import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.social.Alliance;
@@ -492,11 +493,14 @@ public class SocialAppService {
                 }
                 store.addApplication(alliance.id(), playerId);
                 // 审核请求要通知到有权限的人，否则申请会一直挂着（B10 禁止项：绝不静默失败）
+                // 申请人的昵称在循环外读一次：它原来落在下面这个循环里，于是乘数 = 有权限的官员数，
+                // 而每一次读的都是同一个人的整份存档（判据见 SamePlayerRepeatReadQueryCountTest#applicantSaveIsReadOnceNotOncePerNotifiedOfficer）
+                String applicantName = nickname(playerId);
                 for (String officer : alliance.memberIds()) {
                     AllianceRole role = alliance.roleOf(officer);
                     if (role != null && role.tier() != AllianceRole.MEMBER.tier()) {
                         store.pushEvent(officer, event("ALLIANCE_APPLIED",
-                                nickname(playerId) + " 申请加入联盟", null, alliance.id(), now));
+                                applicantName + " 申请加入联盟", null, alliance.id(), now));
                     }
                 }
                 return summary(playerId, now);
@@ -525,10 +529,21 @@ public class SocialAppService {
                 "APPROVE_APPLICATION");
         int limit = (int) configs.longParam("ALLIANCE_APPLICATION_LIST_LIMIT");
         List<String> applicantIds = store.applicantsOf(alliance.id());
-        List<ApplicantView> rows = new ArrayList<>();
-        for (String applicantId : applicantIds.subList(0, Math.min(limit, applicantIds.size()))) {
+        List<String> page = applicantIds.subList(0, Math.min(limit, applicantIds.size()));
+        // 一页申请人的昵称与城等来自**同一次批量读**：改之前 nickname(...) 与 cityLevelOf(...) 各自
+        // 点查一次，于是打开这一屏要发 2 × min(上限, 申请数) 趟整份存档读取（上限实测 50 ⇒ 最坏 100 趟）。
+        // 判据是往返计数：AllianceApplicationQueryCountTest。名单为空时连这一趟都不发。
+        // 走投影口：这一屏只点昵称与主城等级两列，剩下整档（资源表 / PVP 账本 / 科技 …）是白搬白反序列化
+        Map<String, PlayerBrief> briefs = page.isEmpty() ? Map.of() : players.findBriefs(page);
+        List<ApplicantView> rows = new ArrayList<>(page.size());
+        for (String applicantId : page) {
             // 昵称与城等都走服务端那一份：客户端没有玩家表，拿 id 猜出来的名字就是第二真源
-            rows.add(new ApplicantView(applicantId, nickname(applicantId), cityLevelOf(applicantId)));
+            PlayerBrief brief = briefs.get(applicantId);
+            // 读不到档的两条兜底与改之前那两个助手逐字同口径（昵称回 id、城等回 0）：
+            // "申请还挂着但人已消失"是删号后的正常状态，客户端要靠它画出一行而不是少一行
+            rows.add(new ApplicantView(applicantId,
+                    brief == null ? applicantId : brief.nickName(),
+                    brief == null ? 0 : brief.cityLevel()));
         }
         return new AllianceApplicationListResp(rows, applicantIds.size(), limit, now);
     }
@@ -1256,6 +1271,10 @@ public class SocialAppService {
     }
 
     private HelpResp doHelp(String playerId, List<String> requestIds, long now) {
+        // 本人的昵称只读一次：它原来落在下面的循环里，乘数 = 本次真正帮到的条数（一键帮助能一次
+        // 帮满当天的额度），而每次读的都是同一个人的整份存档。
+        // 刻意"用到才读"而不是提到循环外：全部跳过的批次本来一次存档都不该读。
+        String helperName = null;
         int helped = 0;
         int skipped = 0;
         long speedup = 0L;
@@ -1287,8 +1306,11 @@ public class SocialAppService {
             store.markHelped(requestId);
             // 帮一次算一次（目标不细分）：B12 §1 的 HELP_SQUAD
             questEvents.progress(playerId, com.ironoath.core.quest.GoalType.HELP_SQUAD, null, 1L, now);
+            if (helperName == null) {
+                helperName = nickname(playerId);
+            }
             store.pushEvent(request.fromPlayerId(), event("HELP_RECEIVED",
-                    nickname(playerId) + " 帮助了你：" + request.targetDesc(), null, requestId, now));
+                    helperName + " 帮助了你：" + request.targetDesc(), null, requestId, now));
         }
         LOG.info("互助帮助 helper={} 成功={} 跳过={} 合计加速={}", playerId, helped, skipped, speedup);
         return new HelpResp(helped, skipped, helpLedger.remainingToday(playerId, now),
@@ -1609,14 +1631,20 @@ public class SocialAppService {
         requirePlayer(playerId);
         long now = timeService.serverNow();
         List<String> ids = store.followedPlayers(playerId);
+        // 关注对象的昵称与活跃时刻一次批量读回。逐个 findByPlayerId 是每次打开这一列表打
+        // SOCIAL_FOLLOW_MAX（50）趟**整份存档**，而这一列表只要昵称与活跃时刻两项 —— 判据见
+        // FollowListQueryCountTest（结果完全相同，只有往返数抓得住它）。名单为空时连这一趟都不发：
+        // 新号第一次打开社交面板就是空名单，那不该是一次存储往返。
+        // 走的还是投影口：这两项之外的一整份存档（资源 / PVP / 科技 / 头像框集合）搬回来没人看
+        Map<String, PlayerBrief> briefs = ids.isEmpty() ? Map.of() : players.findBriefs(ids);
         List<FriendView> out = new ArrayList<>(ids.size());
         for (String id : ids) {
-            PlayerSave save = players.findByPlayerId(id).orElse(null);
+            PlayerBrief brief = briefs.get(id);
             boolean online = pushGateway.isOnline(id);
             out.add(new FriendView(id,
-                    PlayerDtoMapper.displayName(save),
+                    brief == null ? id : brief.nickName(),
                     online,
-                    online ? now : (save == null ? 0L : save.lastLoginAt())));
+                    online ? now : (brief == null ? 0L : brief.lastLoginAt())));
         }
         return new FriendListView(out);
     }
@@ -1999,24 +2027,40 @@ public class SocialAppService {
         return List.copyOf(out);
     }
 
-    /** 联盟成员列表（走 /alliance/sync 的 diff 通道，验收 10）。 */
+    /**
+     * 联盟成员列表（走 /alliance/sync 的 diff 通道，验收 10）。
+     *
+     * <p><b>成员信息一次批量取回，不在循环里点查</b>：原先每人各一次 {@code findByPlayerId}
+     * 与一次 {@code squadOf}，150 人的盟就是一次同步打 300 趟存储（其中 150 趟是整份玩家存档，
+     * 收口清单 #425）。次数由 {@code AllianceMemberQueryCountTest} 按调用计数钉住 —— 结果本身
+     * 两种写法一字不差，所以端点测试判不出这件事。
+     */
     public List<AllianceMember> allianceMembers(String playerId, long now) {
         Optional<Alliance> found = store.allianceOf(playerId);
         if (found.isEmpty()) {
             return List.of();
         }
         Alliance alliance = found.get();
-        List<AllianceMember> out = new ArrayList<>(alliance.memberCount());
-        for (String memberId : alliance.memberIds()) {
-            PlayerSave save = players.findByPlayerId(memberId).orElse(null);
+        List<String> memberIds = alliance.memberIds();
+        // 走投影口而不是整档：成员行用的只有昵称、展示战力、最近活跃三项（收口清单 #425 的那一趟
+        // 批量读省的是往返，这一格省的是 150 份整档的字节与反序列化）
+        Map<String, PlayerBrief> briefs = players.findBriefs(memberIds);
+        Map<String, Squad> squads = store.squadsOf(memberIds);
+        List<AllianceMember> out = new ArrayList<>(memberIds.size());
+        for (String memberId : memberIds) {
+            PlayerBrief brief = briefs.get(memberId);
+            Squad squad = squads.get(memberId);
             out.add(new AllianceMember(memberId,
-                    PlayerDtoMapper.displayName(save),
-                    save == null || save.power() == null ? 0L : save.power().displayPower(),
+                    brief == null ? memberId : brief.nickName(),
+                    brief == null ? 0L : brief.displayPower(),
                     com.ironoath.web.dto.generated.AllianceRole.valueOf(
                             String.valueOf(alliance.roleOf(memberId))),
                     alliance.contributionOf(memberId),
-                    save == null ? now : save.lastLoginAt(),
-                    store.squadOf(memberId).map(Squad::id).orElse(null)));
+                    brief == null ? now : brief.lastLoginAt(),
+                    squad == null ? null : squad.id(),
+                    // 名字跟着 id 一起下发：客户端没有小队表，只给 id 它就只能把 id 印给玩家（台账 #422）。
+                    // 取不到小队就两个都是 null，不拿 id 顶一个"名字"上去。
+                    squad == null ? null : squad.name()));
         }
         return out;
     }
@@ -2048,7 +2092,8 @@ public class SocialAppService {
                 com.ironoath.web.dto.generated.SocialEventType.valueOf(record.type()),
                 record.title(), record.body(),
                 record.coordX() == null || record.coordY() == null
-                        ? null : new SocialCoord(record.coordX(), record.coordY()),
+                        ? null : new SocialCoord(Math.toIntExact(record.coordX()),
+                                Math.toIntExact(record.coordY())),
                 record.relatedId(), record.occurredAt(), record.expiredAt(now));
     }
 
@@ -2517,10 +2562,10 @@ public class SocialAppService {
         }
         // 圈层校验按集结人数放宽（B08 的 √N）：此刻还不知道最终会有几个人，
         // 所以按上限算 —— 上限来自配置而不是发起人填的数字，否则填个大数就能绕过圈层
-        // SocialCoord 的坐标是 long（协议里是 int64），而 Coord.of 收 int：
-        // 世界只有 512×512，超出的坐标在 guardRally 里会被判为越界，所以这里的窄化是安全的
+        // 协议侧已经对齐成与 world 的 Coord 同一个 int32（由 SocialContractParityTest 钉住），
+        // 所以这里不再需要窄化；世界只有 512×512，越界坐标由 guardRally 判掉
         attackGuard.guardRally(playerId,
-                com.ironoath.core.world.Coord.of((int) coord.x(), (int) coord.y()), maxSize, now);
+                com.ironoath.core.world.Coord.of(coord.x(), coord.y()), maxSize, now);
         commitTroops(playerId, troops);
         try {
             Rally rally = Rally.initiate("rally_" + playerId + "_" + now, scope, groupId, playerId,
@@ -2743,7 +2788,7 @@ public class SocialAppService {
                 RallyScope.valueOf(rally.scope().name()),
                 rally.groupId(),
                 rally.initiatorId(),
-                new SocialCoord(rally.targetX(), rally.targetY()),
+                new SocialCoord(Math.toIntExact(rally.targetX()), Math.toIntExact(rally.targetY())),
                 rally.targetType() == null ? null : SocialTargetType.valueOf(rally.targetType()),
                 rally.maxMembers(),
                 rally.joinedCount(),

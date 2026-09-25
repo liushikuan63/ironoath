@@ -78,6 +78,7 @@ import { ShopPanelView } from './ShopPanelView'
 import { AvatarFramePanelView } from './AvatarFramePanelView'
 import { BattlePassPanelView } from './BattlePassPanelView'
 import { TargetSearchView } from './TargetSearchView'
+import { ChoiceOverlay } from './ChoiceOverlay'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
 import { OfflineReportOverlay } from './OfflineReportOverlay'
 import { WorldMap } from './WorldMap'
@@ -199,6 +200,9 @@ export class GameBootstrap extends Component {
   private nav: PanelNav | null = null
   /** 出征编成弹层（B25-S1）。它是弹层不是面板，所以不走 `panel()` 那张按名字查表的通道。 */
   private marchCompose: MarchComposeOverlay | null = null
+  /** 军队行上「队列」的菜单（B26 S15）。挂在 Game 节点上，不挂在军队面板里：
+   * 面板每为倒计时重渲染一次就会把行 addChild 到父节点末尾，建在面板里的弹层必然被压住 */
+  private armyQueue: ChoiceOverlay | null = null
   private offlineReport: OfflineReportOverlay | null = null
   /** 引导层（B18）：整屏遮罩 + 气泡，挂在所有面板与导航条之上。 */
   private guide: GuideView | null = null
@@ -949,8 +953,12 @@ export class GameBootstrap extends Component {
   }
 
   /**
-   * 研究页（V03-a-S1）。**不占导航第 17 项**：它从内城「学院」点出来，是二级页，
-   * 所以与礼包弹窗同一做法 —— 挂在这一层、初始不激活，找得到就接、找不到就少一份。
+   * 研究页（V03-a-S1）。**不占导航第 17 项**：它是内城左下角那颗常驻「学院 · 研究」点出来的二级页，
+   * 与礼包弹窗同一做法 —— 挂在这一层、初始不激活，找得到就接、找不到就少一份。
+   *
+   * <p>原注释写的是"从内城「学院」点出来"，量过之后按实际改了：详情按钮条只有 536 宽，
+   * 学院升级中那一行已经要放两颗加速键，第三颗放不下（#330）。研究页本身是全局一页一队列，
+   * 常驻一颗比"挂在某个建筑上"更对得上玩家要做的事。
    */
   private mountTechPanel(): void {
     if (this.node.getChildByName('techPanel') !== null) {
@@ -1147,7 +1155,20 @@ export class GameBootstrap extends Component {
       missing: Object.entries(views).filter(([, view]) => view === null).map(([key]) => key),
     }
     const out: PanelTargets = {
-      error: (panel, message) => console.warn(`[${panel}] ${message}`),
+      // console.warn 保留（那是开发者通路），同时把话送到**该面板已有的那条文案带**上 ——
+      // #356 实测：玩家按「挑战」被挡下时屏幕上一个字都不改，而 `AppRoot.say` 上方的注释
+      // 自己就写着"只有开发者看得见"。
+      // 只接已有带子的两块（关卡、内城）：其余 13 个面板的提示要么没有瞬时带、
+      // 要么那个 `notice` 是随数据重算的（写进去下一次 attach 就没了），逐块都要按 #354
+      // 那条「别被自己触发的刷新抹掉」重新判一遍，不是一行分流能顺手带过的。
+      error: (panel, message) => {
+        console.warn(`[${panel}] ${message}`)
+        if (panel === 'stage') {
+          stage?.showBlocked(message)
+        } else if (panel === 'city') {
+          city?.showBlocked(message)
+        }
+      },
     }
     if (giftPopup !== null) {
       out.giftPopup = resp => giftPopup.attach(resp)
@@ -1161,6 +1182,12 @@ export class GameBootstrap extends Component {
     if (tech !== null) {
       // 打开由编排层发起（`AppRoot.openTech`，入口在内城「学院」）；这里只把"画"接上
       out.tech = view => tech.render(view)
+      tech.onResearch = techId => { void this.root?.researchTech(techId) }
+      tech.onCancelResearch = () => { void this.root?.cancelResearch() }
+      tech.onSpeedUpResearch = () => this.root?.requestResearchSpeedUp()
+      out.techCancelled = resp => tech.attachTechCancelled(resp)
+      out.techSpeededUp = resp => tech.attachTechSpeedUp(resp)
+      out.researchSpeedupChoice = (options, onPick) => tech.showSpeedupPicker(options, onPick)
     }
     if (equip !== null) {
       // 打开由编排层发起（`AppRoot.openEquip`，入口在武将页）；这里只把"画"接上
@@ -1235,12 +1262,16 @@ export class GameBootstrap extends Component {
       }
       city.onSpeedUp = (buildingId, source) => { void this.root?.speedUpBuilding(buildingId, source) }
       city.onCollect = buildingId => { void this.root?.collect(buildingId) }
-      // 点资源条上的「体力」那一行 → 体力详情（B09 §5；`/stamina` 与 `/stamina/buy` 此前一处调用都没有）
+      // 点资源条上的「体力」那一行 → 体力详情（B09 §5）
       city.onStamina = () => { void this.root?.openStaminaDetail() }
-      // 暂停/恢复/取消（B03 §2，收口清单 #324）：动作本身在服务端，这里只把回调送到 AppRoot
+      // 暂停/恢复（B03 §2）：动作本身在服务端，这里只把回调送到 AppRoot
       city.onPause = buildingId => { void this.root?.pauseBuilding(buildingId) }
       city.onResume = buildingId => { void this.root?.resumeBuilding(buildingId) }
-      city.onCancel = buildingId => { void this.root?.cancelBuilding(buildingId) }
+      // 取消建造走 origin 的口径（回执要念给玩家听）
+      city.onCancelBuild = buildingId => { void this.root?.cancelBuild(buildingId) }
+      out.cityCancelled = resp => city.attachCancel(resp)
+      // 内城左下角那颗「学院 · 研究」：研究页的玩家入口
+      city.onOpenTech = () => { void this.root?.openTech() }
     }
     if (army !== null) {
       out.army = (resp, offsetMs, trainMemory) => army.attach(resp, offsetMs, trainMemory)
@@ -1252,6 +1283,12 @@ export class GameBootstrap extends Component {
       army.onTreat = () => { void this.root?.treatWounded() }
       army.onCollectTreated = () => { void this.root?.collectTreated() }
       army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
+      // 行上「队列」→ 编排层判有没有可取消的那一口，菜单再由本层画（B26 S15）
+      army.onQueue = unitId => this.root?.openArmyQueue(unitId)
+      out.armyQueueChoice = (options, onPick) => {
+        // 抬层已由 `ChoiceOverlay.show()` 自己负责（八个使用者同一条时序，不在这里各喊一次）
+        this.armyQueue?.show(options, onPick)
+      }
     }
     if (hero !== null) {
       out.hero = resp => hero.attach(resp)
@@ -1297,11 +1334,19 @@ export class GameBootstrap extends Component {
       bag.onUseItem = (itemId, needsTarget) => { void this.root?.useItem(itemId, needsTarget) }
       bag.onOpenBatch = (itemId, count) => { void this.root?.openChestBatch(itemId, count) }
       out.speedupTargetChoice = (options, onPick) => bag.showTargetPicker(options, onPick)
+      out.chestOpenChoice = (options, onPick) => bag.showChestOpenPicker(options, onPick)
+      out.chestOpened = resp => bag.showChestReceipt(resp)
     }
     if (stage !== null) {
       out.stage = resp => stage.attach(resp)
       stage.onChallenge = stageId => { this.root?.challenge(stageId) }
       stage.onSweep = (stageId, count) => { void this.root?.sweep(stageId, count) }
+      out.stamina = (resp, gold) => stage.attachStamina(resp, gold)
+      out.staminaBought = resp => stage.attachStaminaBuy(resp)
+      // 两次结算也接到同一条摘要带上：视图里这两个方法一直存在，只是编排层从没给过它们响应
+      out.challengeResult = resp => stage.attachChallenge(resp)
+      out.sweepResult = (resp, requested) => stage.attachSweep(resp, requested)
+      stage.onBuyStamina = () => { void this.root?.buyStamina() }
       out.lineupChoice = (options, onPick) => stage.showLineupPicker(options, onPick)
     }
     if (social !== null) {
@@ -1408,7 +1453,12 @@ export class GameBootstrap extends Component {
       }
     }
     if (search !== null) {
-      out.targets = resp => search.attach(resp)
+      // 半径的上下界与起点只在服务端的 global 表里（客户端的 config/generated 只有类型没有值），
+      // 所以随响应注入。顺序不能反：先注入再 attach，表头第一次画出来就是真正用过的那个半径
+      out.targets = resp => {
+        search.setRadiusBounds(resp.radiusDefault, resp.radiusMin, resp.radiusMax)
+        search.attach(resp)
+      }
       search.onSearchRequested = radius => { void this.root?.searchTargets(radius) }
       // 点一行就是把"打他"这个意图交出去：编成由编排层准备，这里不拼任何请求
       search.onTargetSelected = targetId => this.root?.beginMarchCompose(targetId)
@@ -1417,11 +1467,17 @@ export class GameBootstrap extends Component {
     // 「自上次登录以来」那一屏（B25-S3）：挂在导航之后 ⇒ 同层兄弟里它排在更后，遮罩压得住面板与导航条
     this.offlineReport = new OfflineReportOverlay(this.node)
     this.offlineReport.onJump = jump => this.root?.offlineReportJump(jump)
+    this.armyQueue = new ChoiceOverlay(this.node, '这一口队列', 520)
     this.marchCompose = new MarchComposeOverlay(this.node)
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
       // 出征 / 发起集结 的切换（B26 S12）：编成与目标都不变，只换命令种类
     this.marchCompose.onToggleMode = () => { void this.root?.toggleComposeRally() }
-    this.marchCompose.onRallyAdjust = (field, direction) => this.root?.adjustRallyParams(field, direction)
+      // 出征 / 侦察 也是换命令种类（B26 S18）：同一份兵、同一个目标
+    this.marchCompose.onScout = () => { void this.root?.toggleComposeScout() }
+      // 换召集范围 / 调那两个数（B26 S14）：都只改这一屏，一条请求都不发
+    this.marchCompose.onPickScope = scope => this.root?.setComposeRallyScope(scope)
+    this.marchCompose.onAdjustNumber = (field, direction) =>
+      this.root?.adjustComposeRallyNumber(field, direction)
     this.marchCompose.onConfirm = () => { void this.root?.confirmMarch() }
     this.marchCompose.onCancel = () => this.root?.cancelMarchCompose()
     out.marchCompose = view => this.marchCompose?.render(view)
@@ -1441,6 +1497,7 @@ export class GameBootstrap extends Component {
     }
     if (reports !== null) {
       out.reports = (resp, serverNowMs) => reports.attach(resp, serverNowMs)
+      out.scoutIntel = (resp, serverNowMs) => reports.attachScouts(resp, serverNowMs)
       // 回放参数由服务端随战报下发（表里那两个数），这里只装配不写死。
       // 表里写了不支持的倍速时 playbackOptionsOf 会抛 —— 那是一条配置故障，
       // 让它响到崩溃上报里去，而不是让玩家点开一场看到一屏不动的画

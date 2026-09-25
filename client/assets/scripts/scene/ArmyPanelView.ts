@@ -16,15 +16,17 @@
  */
 
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, sys, view } from 'cc'
-import { buildArmyPanel, estimateTrainMs, estimateTreatMs } from '../game/army/ArmyPanel'
+import { buildArmyPanel, estimateTrainMs } from '../game/army/ArmyPanel'
 import type { TrainMemory } from '../game/army/AutoTrain'
 import { formatCountdown } from '../core/Countdown'
 import type { ArmyPanelView as ArmyPanelData, UnitRow } from '../game/army/ArmyPanel'
 import type { ArmyListResp, UnitType } from '../net/generated/ArmyProtocol'
 import { applyCommandButton, applyIconSprite, unitIconKey } from './ArtCatalog'
 import { NodePool } from './NodePool'
-import { applySystemUiFont } from './UiFont'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import { applySystemUiFont, capWidth, keepOneLine } from './UiFont'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 
 const { ccclass } = _decorator
 
@@ -87,6 +89,16 @@ export class ArmyPanelView extends Component {
   private trainMemory: TrainMemory | null = null
   private offsetMs = 0
   private filter: UnitType | null = null
+  /** 当前页（0 起）。换兵种筛选归零（那是另一份列表）；写后 refresh 不归零，只由 `clampPage` 夹。 */
+  private page = 0
+  /** 让出来的那一格：页码 + 两颗翻页键。只有一页时整对收着（#345 口径）。 */
+  private pageLabel: Label | null = null
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
   private lastRenderedSecond = -1
   private pending: ArmyListResp | null = null
 
@@ -98,6 +110,8 @@ export class ArmyPanelView extends Component {
   private readonly cancelButtons = new Map<Node, UnitRow | null>()
   private readonly tabButtons = new Map<string, Node>()
   private headerLabel: Label | null = null
+  /** 筛选后一行都不剩时的那句话：没有它，玩家看到的是一整块空白（与 MarchPanelView 同族） */
+  private emptyLabel: Label | null = null
   private hospitalLabel: Label | null = null
   private warningLabel: Label | null = null
   private autoTrainButton: Node | null = null
@@ -114,6 +128,8 @@ export class ArmyPanelView extends Component {
   onTreat: (() => void) | null = null
   /** 收取治好的伤兵（军队四格里唯一一只纯接线的动作；加速治疗要道具选择器，见 #329）。 */
   onCollectTreated: (() => void) | null = null
+  /** 点行上的「队列」（B26 S15）：这一口在练什么、能不能取消，全由编排层判，这里只回抛 unitId */
+  onQueue: ((unitId: string) => void) | null = null
   /** 点「自动续训 / 停止自动」。能不能开、续的是哪一批由编排层判定（B25-S2d） */
   onToggleAutoTrain: (() => void) | null = null
 
@@ -170,6 +186,9 @@ export class ArmyPanelView extends Component {
       return
     }
     this.filter = type
+    // 换筛选就是换一份列表 ⇒ 回第一页（与 `TargetSearchView` 的"新一次搜索回第一页"同一口径）。
+    // 与 `attach()` 相反：那里是写后刷新，归零会把玩家刚看过那一屏弹走（#450 的教训）。
+    this.page = 0
     this.render()
   }
 
@@ -203,11 +222,35 @@ export class ArmyPanelView extends Component {
   private buildHeader(height: number): void {
     const top = height / 2 - PADDING
     this.headerLabel = this.addLabel(this.node, 'Header', 0, top - 20, COLOR_COPPER_GOLD, 20)
-    // 限宽 + SHRINK：这一行现在会带上「另有 N 项未显示」，不限宽就会顶出面板（#221 同族的排版溢出）
-    this.headerLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 26))
-    this.headerLabel.overflow = Label.Overflow.SHRINK
+    // 空态那一行落在**第一行该在的位置**（同一套 topY 算法），不是随便挑的一个 y
+    this.emptyLabel = this.addLabel(this.node, 'Empty', 0,
+      top - HEADER_HEIGHT - ROW_HEIGHT / 2, COLOR_TEXT_DIM, 16)
+    this.emptyLabel.string = ''
+    this.emptyLabel.node.active = false
+    // 限成一行：过去这里写成「SHRINK + 猜的盒高 26」，而 SHRINK 是拿**缩放字形**去服从盒子的
+    // —— 页内实测这一行设定 20 号字落地只有 17（战令表头同形，五行 17/13/10/10/9，台账 #366
+    // 附了盒高→落地字号的迁移曲线）。关掉换行才是不碰字号地把"就一行"说出来。
+    // 这一行现在会带上「另有 N 项未显示」，不限一行就会顶出面板（#221 同族的排版溢出），
+    // 顶出去由 `verify-march-runtime.mjs` 的宽度判据兜住。
+    keepOneLine(this.headerLabel, 20)
     this.hospitalLabel = this.addLabel(this.node, 'Hospital', 0, top - 48, COLOR_TEXT, 17)
     this.warningLabel = this.addLabel(this.node, 'Warning', 0, top - 74, COLOR_WARNING, 15)
+    // 同一条 #22x 教训：这两行同样会带长文案（医院行拼「另有 N 项未显示」、警告行是整句话）。
+    // ⚠ 限宽**不等于限一行**：#362 实测这两行的盒子会被 Label 按文本重算成 50 高，
+    //   而两行中心距只有 26px ⇒ 警告行一换行就压到医院行（那条垂直重叠记台账 #362 未做①）。
+    keepOneLine(this.hospitalLabel, 17)
+    keepOneLine(this.warningLabel, 15)
+
+    // 让出来的那一格：页码在中间，两颗翻页键在两端（照本文件行上动作键的画法，64×28）。
+    // 建出来先收着 —— `render()` 在 `panel === null` 时早退，不先收的话列表没到那一态会露着
+    // 两颗点了没反应的键（#345 口径；#449/#450 各修过一次同一族）。
+    const firstRowY = height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    this.pageLabel = this.addLabel(this.node, 'PageNotice', 0, firstRowY, COLOR_TEXT_DIM, 15)
+    keepOneLine(this.pageLabel, 15)
+    this.pageLabel.string = ''
+    this.pageLabel.node.active = false
+    this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46, firstRowY)
+    this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46, firstRowY)
 
     // 兵种页签。20 个兵种（4 类型 × 5 阶级）一屏放不下，按类型分页
     const tabWidth = 76
@@ -296,13 +339,17 @@ export class ArmyPanelView extends Component {
     this.autoTrainCaption = this.addLabel(autoTrain, 'Caption', 0, 0, COLOR_TEXT, 14)
     autoTrain.on('touch-start', (_event: EventTouch) => this.onToggleAutoTrain?.(), this)
     this.autoTrainButton = autoTrain
+    // 建出来先收着：字幕只在 `render()` 里写（那句是服务端下发的策略文本），
+    // 而 `render()` 在 `panel === null` 时早退 ⇒ 列表没到/读失败那一态它会剩一个**没有字的空框**还能点。
+    // 与同文件 `buildStaminaBand` 那条"没读到 /stamina 之前整条藏起来"是同一做法。
+    autoTrain.active = false
 
     // 状态行：「重步兵 ×50 · 还剩 2 批」/ 停止原因 / 还没有可续的那一批。
     // 它读的是服务端下发的那份策略 —— 自动续训的账单是持续的，玩家必须能一眼看到它现在在做什么
     this.autoTrainStatus = this.addLabel(this.node, 'AutoTrainStatus', 0, top - 164, COLOR_TEXT_DIM, 14)
-    this.autoTrainStatus.node.getComponent(UITransform)
-      ?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
-    this.autoTrainStatus.overflow = Label.Overflow.SHRINK
+    capWidth(this.autoTrainStatus, PANEL_WIDTH - 2 * PADDING)
+    // 与上面那颗键同一做法：这一行的三选一文案也只在 `render()` 里写
+    this.autoTrainStatus.node.active = false
   }
 
   private createRow(): Node {
@@ -318,24 +365,22 @@ export class ArmyPanelView extends Component {
       16, COLOR_TEXT, 18)
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    title.node.getComponent(UITransform)?.setContentSize(new Size(400, 26))
-    title.overflow = Label.Overflow.SHRINK
-    const detail = this.addLabel(node, 'Detail', PANEL_WIDTH / 2 - PADDING - 12,
-      4, COLOR_TEXT_DIM, 14)
-    // 状态行右对齐到行尾：左半是名称与消耗、右半是可用性/锁定原因，
-    // 否则整行右半永远是一条空带（2026-09-26 排版审查实测空约 55% 行宽）。
-    detail.horizontalAlign = Label.HorizontalAlign.RIGHT
-    detail.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(450, 22))
-    detail.overflow = Label.Overflow.SHRINK
+    capWidth(title, 330)
+    const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + 42,
+      -4, COLOR_TEXT_DIM, 14)
+    detail.horizontalAlign = Label.HorizontalAlign.LEFT
+    detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    capWidth(detail, 330)
     const countdown = this.addLabel(node, 'Countdown', -PANEL_WIDTH / 2 + PADDING + 42,
       -24, COLOR_COPPER_GOLD, 14)
     countdown.horizontalAlign = Label.HorizontalAlign.LEFT
     countdown.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    countdown.node.getComponent(UITransform)?.setContentSize(new Size(450, 20))
-    countdown.overflow = Label.Overflow.SHRINK
+    capWidth(countdown, 330)
 
     const buttons: Array<{ name: string; text: string; x: number; count: number | null }> = [
+      // 「队列」排在两颗训练键左边：它管的是**已经在练的那一口**（取消），与"再练多少"不同类。
+      // 三颗键各占 78，字那三行限到 330 宽，盒子互不重叠（量具按盒子量，不按眼睛）
+      { name: 'QueueButton', text: '队列', x: PANEL_WIDTH / 2 - 212, count: null },
       { name: 'TrainOnceButton', text: '训练×1', x: PANEL_WIDTH / 2 - 128, count: TRAIN_ONCE },
       { name: 'TrainBulkButton', text: '训练×100', x: PANEL_WIDTH / 2 - 44, count: TRAIN_BULK },
     ]
@@ -360,8 +405,13 @@ export class ArmyPanelView extends Component {
       this.trainButtons.set(buttonNode, null)
       buttonNode.on('touch-start', (_event: EventTouch) => {
         const row = this.trainButtons.get(buttonNode)
-        if (row !== undefined && row !== null) {
-          this.onTrain?.(row.unitId, button.count ?? TRAIN_ONCE)
+        if (row === undefined || row === null) {
+          return
+        }
+        if (button.count === null) {
+          this.onQueue?.(row.unitId)
+        } else {
+          this.onTrain?.(row.unitId, button.count)
         }
       }, this)
     }
@@ -442,6 +492,14 @@ export class ArmyPanelView extends Component {
 
     // 行区排布先算出来：表头那一行要顺带说「还有几项没画下」，所以它得先知道画得下几行
     const rows = panel.rows.filter((row) => this.matchesFilter(row))
+    // 零行必须说句话：按兵种筛到没有时，行区是一片空白，而表头讲的是兵力与队列 ——
+    // 玩家分不清"这一类确实没有兵"与"面板没加载出来"（MarchPanelView:77 同一形状）。
+    if (this.emptyLabel !== null) {
+      // 没筛 = 页签停在「全部」，此时 `filter` 是 null（`UnitType | null`，没有 'ALL' 这个值）
+      const all = this.filter === null
+      this.emptyLabel.string = all ? '暂无部队' : '暂无这一类部队'
+      this.emptyLabel.node.active = rows.length === 0
+    }
     const size = view.getVisibleSize()
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
 
@@ -452,14 +510,20 @@ export class ArmyPanelView extends Component {
     const navTop = -size.height / 2 + BOTTOM_RESERVED
     const usable = topY + ROW_HEIGHT / 2 - navTop
     const maxRows = Math.max(1, Math.floor(usable / (ROW_HEIGHT + ROW_GAP)))
-    const drawn = Math.min(rows.length, maxRows)
+    // 装不下时不再"切掉 + 说一句另有 N 项"，而是让出最后一格做翻页行：共几页、夹到哪一页、
+    // 切哪一段用同一个 `perPage`（`PanelPaging` 那条原话，抄一份就是留一个将来会分叉的口径）。
+    // 从前这里是 `Math.min(rows.length, maxRows)` 一刀切 —— 实测全兵种页 20 行只画得出 4 行，
+    // 剩下 16 行的兵玩家永远够不着（#307 那句"话说诚实了，但下面的东西永远拿不到"）。
+    const total = rows.length
+    const perPage = contentPerPage(total, maxRows)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
 
     if (this.headerLabel !== null) {
-      // 「还有几项没画下」挂在这一行（本面板的汇总行）：只显示 4 行时玩家得知道下面还有，
-      // 而不是以为这个类型就只有这几种兵。分隔符得自己补 —— 那一句是给独立一行用的
-      const truncated = truncatedNotice('项', rows.length - drawn)
+      // 汇总行只管"兵力与队列"这两件事；"还有几项没画下"那一句已经不需要了 —— 现在都画得下，
+      // 只是分了几页，页码与翻页键在让出来的那一格（`paintPager`）
       this.headerLabel.string = `${panel.troopCapText} · ${panel.queueText}`
-        + (truncated === '' ? '' : ` · ${truncated}`)
       this.headerLabel.color = panel.troopCapFull ? COLOR_WARNING : COLOR_COPPER_GOLD
     }
     if (this.hospitalLabel !== null) {
@@ -491,10 +555,14 @@ export class ArmyPanelView extends Component {
       this.autoTrainCaption.string = autoTrain.caption
       this.autoTrainCaption.color = autoTrain.enabled ? COLOR_GOOD : COLOR_TEXT
     }
+    // 走到这里 `panel` 必已到位（上面 `panel === null` 就 return 了）⇒ 字幕与状态行都有内容可写，
+    // 这时才把建出来先收着的那两件套放出来（见 `buildHeader` 里那两句注释）
     if (this.autoTrainButton !== null) {
+      this.autoTrainButton.active = true
       applyCommandButton(this.autoTrainButton, autoTrain.enabled ? 'hover' : 'normal', 110, 34)
     }
     if (this.autoTrainStatus !== null) {
+      this.autoTrainStatus.node.active = true
       // 三选一：正在续的那一批 > 停下来的原因 > 还不能开的原因。都为空就是空行
       this.autoTrainStatus.string = autoTrain.runningText ?? autoTrain.stopText
         ?? autoTrain.blockedReason ?? ''
@@ -504,12 +572,79 @@ export class ArmyPanelView extends Component {
 
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
-    rows.slice(0, drawn).forEach((row, index) => {
+    rows.slice(slice.start, slice.end).forEach((row, index) => {
       const node = pool.acquire()
       node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
       this.renderRow(node, row)
     })
+    this.paintPager(total, pages, perPage, topY)
+  }
+
+  /** 一颗 64×28 的翻页键：照本文件关卡行那三颗动作键的画法，绑定一次、由 `turnPage` 判吃不吃点击。 */
+  private buildPagerButton(name: string, x: number, y: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, y, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 13)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉那一侧直接不吃：`render()` 里的 `clampPage` 会把越界页号夹回来（点了等于没点），
+   * 而"按了没反应"正是要避免的观感，所以在入口处判掉。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) {
+      return
+    }
+    if (delta > 0 && !this.canNext) {
+      return
+    }
+    this.page += delta
+    this.render()
+  }
+
+  /** 把页码与两颗键摆在让出来的那一格：只有一页（含零行）时整对收掉。 */
+  private paintPager(total: number, pages: number, perPage: number, topY: number): void {
+    const paged = pages > 1
+    const y = topY - perPage * (ROW_HEIGHT + ROW_GAP)
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
+    if (this.pageLabel !== null) {
+      this.pageLabel.node.active = paged
+      this.pageLabel.string = paged ? `${pageNotice(this.page, pages)} · 共 ${total} 项` : ''
+      this.pageLabel.node.setPosition(new Vec3(0, y, 0))
+    }
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) {
+        continue
+      }
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, y, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
   }
 
   /** 按兵种过滤。只是显示分组，不改变服务端给的顺序。 */
@@ -569,10 +704,19 @@ export class ArmyPanelView extends Component {
       icon.active = applyIconSprite(icon, unitIconKey(row.unitType), 34, 34)
     }
 
-    // 未解锁的兵种不给训练按钮：留着可点的按钮却只会被服务端拒绝，比灰掉更糟
-    for (const button of node.children.slice(3, 5)) {
-      this.trainButtons.set(button, row.unlocked ? row : null)
-      button.active = row.unlocked
+    // 未解锁的兵种不给训练按钮：留着可点的按钮却只会被服务端拒绝，比灰掉更糟。
+    // 按名字挑而不是按下标：行里加了第三颗键之后，`children.slice(3, 5)` 会把「队列」
+    // 当成训练键（#291 那一格就是被这种按下标挑法坑过一次）
+    const rowButtons = ['QueueButton', 'TrainOnceButton', 'TrainBulkButton']
+      .map((name) => node.getChildByName(name))
+      .filter((it): it is Node => it !== null)
+    for (const button of rowButtons) {
+      const usable = button.name === 'QueueButton'
+        // 只有真的一口在练时才给「队列」：没有可取消的东西，点下去就是一张空菜单
+        ? row.trainingText !== null
+        : row.unlocked
+      this.trainButtons.set(button, usable ? row : null)
+      button.active = usable
     }
     // 队列动作只在"这一批正在训练"时出现：没在训练还摆着「加速/取消」是骗点击
     const training = row.trainingText !== null
@@ -586,14 +730,5 @@ export class ArmyPanelView extends Component {
       map.set(button, training && row.unlocked ? row : null)
       button.active = training && row.unlocked
     }
-  }
-
-  /** 治疗耗时预估。暴露出来供编辑器的治疗确认弹窗使用。 */
-  treatEstimateText(wounded: number): string {
-    const resp = this.resp
-    if (resp === null || wounded <= 0) {
-      return ''
-    }
-    return `约 ${formatCountdown(estimateTreatMs(resp.hospital, wounded), '已完成')}`
   }
 }

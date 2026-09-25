@@ -1,5 +1,6 @@
 package com.ironoath.web.store.mongo;
 
+import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.mongodb.client.result.UpdateResult;
@@ -17,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /**
@@ -64,17 +66,9 @@ public final class MongoPlayerStore implements PlayerRepository {
 
     @Override
     public Map<String, PlayerSave> findByPlayerIds(Collection<String> playerIds) {
-        if (playerIds == null || playerIds.isEmpty()) {
-            return Map.of();
-        }
         // 一次 $in 查询而不是 N 次 findById：目标搜索的候选池可能上千，
         // N 次往返的延迟会直接变成玩家点一次「搜索」的等待时间
-        Set<String> ids = new LinkedHashSet<>();
-        for (String id : playerIds) {
-            if (id != null && !id.isBlank()) {
-                ids.add(id);
-            }
-        }
+        Set<String> ids = distinctIds(playerIds);
         if (ids.isEmpty()) {
             return Map.of();
         }
@@ -87,6 +81,69 @@ public final class MongoPlayerStore implements PlayerRepository {
             out.put(doc.playerId(), PlayerDocumentMapper.toDomain(doc));
         }
         return out;
+    }
+
+    @Override
+    public Map<String, PlayerBrief> findBriefs(Collection<String> playerIds) {
+        Set<String> ids = distinctIds(playerIds);
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        // 同一个 _id $in，只是多带一条字段投影：省的不是往返，是搬回来的字节与反序列化
+        // （理由见端口注释）。投影列表与读模型由 PlayerBriefProjectionQueryTest 钉住 ——
+        // 漏一列的症状不是报错，而是"内存版全绿、生产那一列恒为 0"
+        List<PlayerBriefDocument> docs = mongo.find(briefQuery(ids),
+                PlayerBriefDocument.class, PlayerDocument.COLLECTION);
+        Map<String, PlayerBrief> out = new LinkedHashMap<>(docs.size());
+        for (PlayerBriefDocument doc : docs) {
+            out.put(doc.playerId(), PlayerDocumentMapper.toBrief(doc));
+        }
+        return out;
+    }
+
+    /**
+     * 投影口的那条查询。单独抽出来是为了让它能被直接断言：往返计数看不见"少搬了整档"，
+     * 而这条读法的价值全在 {@code $in} 的过滤面与字段投影的列集合上。
+     */
+    static Query briefQuery(Set<String> ids) {
+        Query query = Query.query(Criteria.where("_id").in(ids));
+        query.fields().include("nickName", "cityLevel", "lastLoginAt", "power");
+        return query;
+    }
+
+    @Override
+    public OptionalLong findCreatedAt(String playerId) {
+        if (playerId == null || playerId.isBlank()) {
+            return OptionalLong.empty();
+        }
+        PlayerCreatedAtDocument doc = mongo.find(createdAtQuery(playerId),
+                        PlayerCreatedAtDocument.class, PlayerDocument.COLLECTION)
+                .stream().findFirst().orElse(null);
+        // 老文档没有 createdAt 这一位时读成 0：调用方按"这个人还没有个人锚"处理，不是报错
+        return doc == null ? OptionalLong.empty() : OptionalLong.of(doc.createdAt());
+    }
+
+    /**
+     * 建档时刻那条窄读查询。与 {@link #briefQuery} 同一条理由单独抽出来：
+     * 窄读口省的是字节，而字节在往返计数上不可见 —— 只能直接断言这条查询。
+     */
+    static Query createdAtQuery(String playerId) {
+        Query query = Query.query(Criteria.where("_id").is(playerId));
+        query.fields().include("createdAt");
+        return query;
+    }
+
+    /** 去掉 null 与空白、保留传入顺序去重 —— 两个批量读口共用，口径不许分叉。 */
+    private static Set<String> distinctIds(Collection<String> playerIds) {
+        Set<String> ids = new LinkedHashSet<>();
+        if (playerIds != null) {
+            for (String id : playerIds) {
+                if (id != null && !id.isBlank()) {
+                    ids.add(id);
+                }
+            }
+        }
+        return ids;
     }
 
     @Override

@@ -15,7 +15,7 @@ import java.util.UUID;
  * 职责：抽卡日志的 MongoDB 实现（B06 §6 合规凭证）。
  * 依赖：Spring Data MongoDB、{@link GachaLogBatchDocument}。
  *
- * <p>三条语义必须与内存实现逐条对齐（{@code GachaLogStoreContractTest} 跑同一份断言）：
+ * <p>三条语义必须与内存实现逐条对齐（{@code GachaStoreEquivalenceTest} 跑同一份断言）：
  * <ol>
  *   <li><b>一批全写或全不写</b>：一个批次一个文档，原子性来自单文档写入，不依赖事务与副本集；</li>
  *   <li><b>按时间升序返回</b>：合规核查与客服回放都要按发生顺序看，顺序错了就等于

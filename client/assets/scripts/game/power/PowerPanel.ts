@@ -142,6 +142,41 @@ export function buildTargetRows(resp: SearchTargetsResp): readonly TargetRow[] {
 }
 
 /**
+ * 目标搜索那一格该对玩家说什么 —— 三态三种话，一态留空。
+ *
+ * <p>为什么 `searched` 要单独传进来、不看 `total === 0` 就完事：`rows` 的初值就是空数组，
+ * 光看行数分不出「面板还没搜过」与「搜过、确实一个没有」，而这两相要说的话完全不同。
+ * 少了这个状态，要么搜索前就先印上「没有目标」（玩家以为自己在瞎搜），
+ * 要么零结果时整块空白（他以为搜索坏了）—— 两句都错在同一个地方。
+ *
+ * <p>「还没搜过」那一相从前留空，于是屏上只剩导航条加一颗「搜索」键（#449 收掉两颗空转的翻页键之后
+ * 更空），看着像界面坏了；口径改成**给一句下一步动作**，与 #345/#348 同一族做法：借既有那一格说话，
+ * 不新增控件、不动任何几何。
+ *
+ * <p>句式照房规 `MarchPanelView:77`「暂无在外的队伍」。返回空串时调用方直接画，不用再判一次。
+ */
+export function targetSearchNotice(searched: boolean, total: number): string {
+  if (!searched) {
+    return '点搜索看看这一带有什么可打的'
+  }
+  return total === 0 ? '这一带没有可打的目标' : ''
+}
+
+/**
+ * 目标搜索那两颗翻页键该不该露着 —— **没搜过就必须收着**，即使传进来的页数大于 1。
+ *
+ * <p>为什么单列一条免引擎判据（B00 铁律 2：判据要能脱离 Cocos 跑单测）：视图里 `paintPageButtons`
+ * 只在 `render()` 里被调，而 `render()` 在 `response === null` 时第一行就 return ⇒
+ * **首次搜索之前那两颗键从来没被判过**。它们建出来就是 `active`、`touch-start` 也挂着，
+ * 点下去 `changePage` 又因 `response === null` 直接 return ⇒ 玩家看到一颗按了没反应的按钮。
+ * #345 对这一族定的口径正是"点了没反应的按钮不该露着"（两颗半径键同一条理由已经收了，
+ * 见 `TargetSearchView` 那句"建完就判一次"）。
+ */
+export function pagerKeysVisible(searched: boolean, pages: number): boolean {
+  return searched && pages > 1
+}
+
+/**
  * 大数缩写：1234567 ⇒ "123.4万"，123456789 ⇒ "1.2亿"，9999 以下原样。
  *
  * <p>全程整数运算。用 {@code (v / 10000).toFixed(1)} 会在 19999 上得到 "2.0万"

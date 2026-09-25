@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 职责：契约枚举与内部枚举的一致性。
  * 依赖：JUnit 5 + AssertJ；只比对枚举常量，不需要容器。
  *
- * <p><b>为什么需要这个测试</b>：这两个枚举各有一份「协议侧」和一份「内部侧」的定义，
+ * <p><b>为什么需要这个测试</b>：下面这几个枚举各有一份「协议侧」和一份「内部侧」的定义，
  * 而生成器无法自动校验它们 —— 协议侧来自 contract/proto 的 JSON Schema，
  * 内部侧来自 game-core 的手写枚举与 contract/config 的 fieldTypes。
  * 一旦漂移，症状是服务端下发的字符串在客户端解析不出来（TS 侧变成 undefined），
@@ -86,5 +86,19 @@ class ContractEnumParityTest {
                         + "协议少一个取值就等于那行科技永远下发不出去")
                 .containsExactlyElementsOf(table);
         assertThat(contract).contains("UNIT_ATTACK", "BUILD_SPEED", "HOSPITAL_CAPACITY");
+    }
+
+    @Test
+    @DisplayName("协议 MarchStatus 与 game-core 的 March.Status 一致（含顺序，行军状态两侧各有一份定义）")
+    void marchStatusMatchesDomainEnum() {
+        List<String> contract = Arrays.stream(com.ironoath.web.dto.generated.MarchStatus.values())
+                .map(Enum::name).toList();
+        List<String> domain = Arrays.stream(com.ironoath.core.march.March.Status.values())
+                .map(Enum::name).toList();
+        assertThat(contract)
+                .as("world.schema.json 的 description 承诺两侧同一套取值：漂移的两种症状都难看 —— "
+                        + "服务端 valueOf 抛 IllegalArgumentException 变 500，"
+                        + "或客户端拿到未知状态只能显示空白（TS 侧不会报错）")
+                .containsExactlyElementsOf(domain);
     }
 }

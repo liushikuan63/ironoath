@@ -5,6 +5,7 @@
  * 依赖：node、playwright、一台能登录的后端（默认 8180）、已构建的 web-mobile 产物。
  *
  * 用法：
+ * 必填：SOCIAL_CREATE_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 SOCIAL_CREATE_PORT（默认 8198，同机并发时换一个）
  *   SOCIAL_CREATE_BACKEND=http://localhost:8180 \
  *   SOCIAL_CREATE_ARTIFACT_ROOT=/d/tmp/tech-wt/client/build/web-mobile \
  *   node tools/verify-social-create-runtime.mjs
@@ -31,11 +32,17 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const OUT = process.env.SOCIAL_CREATE_OUT ?? path.resolve(process.cwd(), 'client/build/social-create-verify')
 mkdirSync(OUT, { recursive: true })
 const PORT = Number(process.env.SOCIAL_CREATE_PORT ?? 8198)
-const BACKEND = process.env.SOCIAL_CREATE_BACKEND ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.SOCIAL_CREATE_BACKEND ?? (() => {
+  console.error('[social-create] 缺 SOCIAL_CREATE_BACKEND：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const ARTIFACT = process.env.SOCIAL_CREATE_ARTIFACT_ROOT ?? 'client/build/web-mobile'
 
 let pass = 0
@@ -353,10 +360,14 @@ const shot = async (name) => {
 const bootIn = async () => {
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   await page.waitForTimeout(3_000)
 }
 const openSocial = async () => {
   await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
+  // 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+  // 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+  preview.assertRewritten()
   await bootIn()
 }
 

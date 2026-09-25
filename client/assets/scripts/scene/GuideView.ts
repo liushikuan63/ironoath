@@ -77,11 +77,6 @@ export class GuideView extends Component {
     this.repaint()
   }
 
-  /** 驱动实例（instrument 与用例读它，不复制判定）。 */
-  currentDriver(): GuideDriver | null {
-    return this.driver
-  }
-
   /**
    * 重画当前帧。切面板、上报回执、登录完成都调它 —— 判定全在驱动器里，这里只跟着画。
    *
@@ -106,7 +101,7 @@ export class GuideView extends Component {
     const hole = this.holeOf(size.width, size.height)
     this.drawMask(area, hole)
     this.ensureBubble()
-    this.placeBubble(hole)
+    this.placeBubble(size.height, hole)
 
     if (this.bubbleText !== null) {
       this.bubbleText.string = frame.step.text
@@ -297,30 +292,25 @@ export class GuideView extends Component {
   }
 
   /**
-   * 气泡放在洞的**中上部**。
+   * 气泡贴着洞的**上沿**放；洞不在了（全屏面板）就贴屏幕顶部。
    *
-   * <p>原实现是"贴着洞的下沿放"，而洞的下沿正好是底部选择栏 —— 实测这一步里
-   * `GuideBubble` 占 `x[150,1290] y[108,333]`、`DetailUpgradeButton` 占 `y[66,216]`，
-   * 气泡把「升级」按钮盖住约 2/3；而气泡本身吃触摸（见 `ensureBubble`），
-   * 于是玩家**既看不见也点不到**，引导第 1 步（"升级主城"）就此卡在原地。
+   * <p>为什么不是下沿（原写法）：气泡不透明，落在洞里就是一块"看不见的遮挡"。本游戏的面板把
+   * **可点的动作键排在卡片底部**（详情条：升级 / 加速 / 收取 / 取消），而引导每一步要玩家做的正是按那颗键 ——
+   * 贴下沿就是"引导把它让你按的东西挡住"。世界矩形实测：气泡 y 72..222 把「升级」那颗（88..165）整个盖住。
    *
-   * <p>为什么不是"把气泡的触摸去掉"：气泡的监听是防"点气泡空白穿到下层面板"用的，
-   * 去掉之后落在气泡范围内的「一键收割」会直接响应 —— 那是个改数据的操作，
-   * 比挡住按钮更糟。所以这里只挪位置：底部让给选择栏，顶部让给资源 HUD 与「一键收割」，
-   * 气泡落在中间那片没有可点控件的空当里。
+   * <p>为什么贴顶不是"换个地方挡"：屏幕 960×640、底部导航条实测只有 52 高（y 8..60）、卡片 608 高 ——
+   * **没有任何一个位置能既放得下 150 高的气泡又不碰到卡片**（贴屏幕底部时气泡占 y 8..158，
+   * 照样压进动作条 88..165 里）。所以只能选挡住什么：
+   * 顶部那一条是标题 / 队列 / 资源读数（读一次就够，且引导文案本身就在说要做的事），
+   * 底部那一条是**这一步要按的键**（按不到就推不下去）。取前者。
    */
-  private placeBubble(hole: GuideRect): void {
+  private placeBubble(height: number, hole: GuideRect): void {
     if (this.bubble === null) {
       return
     }
-    const half = BUBBLE_HEIGHT / 2
-    const lowest = hole.y + half + 12
-    const highest = hole.y + hole.height - half - 12
-    // 0.62 是"再往下就要碰到选择栏"的落地值（洞高 540、气泡高 150 时，
-    // 气泡下沿落在距底部约 480 物理像素处，而选择栏上沿在 228）
-    const preferred = hole.y + hole.height * 0.62
-    const y = Math.max(lowest, Math.min(preferred, highest))
-    this.bubble.setPosition(new Vec3(0, y, 0))
+    const anchorTop = hole.y + hole.height < height / 2 ? hole.y + hole.height : height / 2
+    const y = anchorTop - BUBBLE_HEIGHT / 2 - 12
+    this.bubble.setPosition(new Vec3(0, Math.max(y, -height / 2 + BUBBLE_HEIGHT / 2 + 8), 0))
     const row = this.bubble.getChildByName('GuideButtons')
     if (row !== null && this.skipButton !== null && this.nextButton !== null) {
       this.nextButton.setPosition(new Vec3(-(BUTTON_WIDTH + 12) / 2, 0, 0))

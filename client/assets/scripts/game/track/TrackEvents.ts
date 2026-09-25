@@ -68,6 +68,11 @@ export const TRACK_EVENTS = {
   /** 开始训练士兵。 */
   armyTrain: 'army_train',
   /**
+   * 取消某一口的训练（B26 S15）。带 unitId：取消一直集中在同一兵种上，
+   * 说明那一口的时长或队列容量配得不合适（玩家排了又后悔）。
+   */
+  armyTrainCancel: 'army_train_cancel',
+  /**
    * 开关自动续训 / 自动补兵（B25-S2d）。
    * `on=true/false` 分开看：开得多说明减负被接受，关得多多半是"资源被自动花掉"这类反馈。
    */
@@ -276,19 +281,47 @@ export const TRACK_EVENTS = {
    */
   worldLeave: 'world_leave',
   /**
-   * 买一次体力（B09 §5）。
-   *
-   * <p>为什么单记：体力是打野与关卡的消耗闸门，买体力次数直接说明"这个闸门是不是被付费绕开的"。
-   * 与 `shop_buy` 分开 —— 一个走体力这个消耗资源，一个是货架交易，混在一起读不出付费结构。
-   */
-  staminaBuy: 'stamina_buy',
-  /**
    * 打开体力详情弹层（B09 §5）。
    *
    * <p>与 `stamina_buy` 分开：这一条是"玩家关心体力够不够"的读数（打开率），
    * 后者是"他愿不愿意为它花钱"。只有前者高而后者为 0，说明卡点是真的、但付费点没说服力。
    */
   staminaView: 'stamina_view',
+  /**
+   * 派出一支侦察队（B26 S18）。带承诺兵力：侦察队会被打，"随手看一眼"在数值上就是
+   * 派一支小队出去 —— 这条与 `march_send` 的比例看得出玩家是不是把侦察当成免费情报。
+   */
+  scoutSend: 'scout_send',
+  /**
+   * 用金币买一次体力（B09 §5）。带**当时的单价**而不只是"买了"：体力是付费点，
+   * 单价随当日已购次数递增，这条与 `login` 的比例才看得出玩家在什么价位上开始嫌贵。
+   */
+  staminaBuy: 'stamina_buy',
+  /**
+   * 开始研究一行科技（V03-a-S2）。带目标等级：科技是长线养成，
+   * "卡在哪一级不再动"只有从等级分布才看得出来。
+   */
+  techResearch: 'tech_research',
+  /**
+   * 取消当前研究（B20 §一）。带被取消的 techId：取消率与"卡在哪一行"合起来才看得出
+   * 是队列排太长，还是玩家被某一级的前置挡住了。
+   */
+  techCancel: 'tech_cancel',
+  /**
+   * 用一张研究加速道具（B20 §一）。带 itemId：三种加速令分别通向建造 / 训练 / 研究三个出口，
+   * "玩家把研究令用在哪"只有这条能回答。
+   */
+  techSpeedUp: 'tech_speed_up',
+  /**
+   * 开一批宝箱（B04 §2）。带 `count`：开箱是产出与付费的交汇点，
+   * "一次开 1 个"与"一次开 100 个"在运营曲线上是两种玩家。
+   */
+  chestOpen: 'chest_open',
+  /**
+   * 取消一格建造（B03 §2）。带 buildingId：取消率按建筑拆开才看得出是"玩家排错了"
+   * 还是"某一种建筑的排队代价让人反复反悔"。
+   */
+  buildingCancel: 'building_cancel',
 } as const
 
 export type TrackEventName = typeof TRACK_EVENTS[keyof typeof TRACK_EVENTS]

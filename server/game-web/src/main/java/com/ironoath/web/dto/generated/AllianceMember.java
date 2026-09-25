@@ -12,6 +12,7 @@ public record AllianceMember(
         AllianceRole role,   // 职位
         long contribution,   // 累计贡献值
         long lastActiveAt,   // 最近活跃的服务端时间戳
-        String squadId)   // 该成员所属的小队 id（联盟内分队）；无小队为 null。**必须下发**：盟主集结时要能按分队点名，否则 150 人的名单就是一堆散沙
+        String squadId,   // 该成员所属的小队 id（联盟内分队）；无小队为 null。**必须下发**：盟主集结时要能按分队点名，否则 150 人的名单就是一堆散沙
+        String squadName)   // 该成员所属小队的名字，与 `squadId` 同步为 null 或同步为非 null。**必须下发**：客户端只有类型、没有小队表数据，拿 `squadId` 去拼只会印出「分队 squad_17」这种玩家读不懂的黑话（收口清单 #422 的成因）；小队名被改了要跟着改，那只有服务端知道
 {
 }

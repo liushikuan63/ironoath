@@ -3,6 +3,7 @@
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：SEASON_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 SEASON_PROBE_PORT（默认 8172，同机并发时换一个）
  *   SEASON_MODE=disabled SEASON_BACKEND=http://localhost:8171 node tools/verify-season-runtime.mjs
  *   SEASON_MODE=enabled  SEASON_BACKEND=http://localhost:8173 node tools/verify-season-runtime.mjs
  *
@@ -25,11 +26,17 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const OUT = process.env.SEASON_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/season-verify')
 mkdirSync(OUT, { recursive: true })
 const PORT = Number(process.env.SEASON_PROBE_PORT ?? 8172)
-const BACKEND = process.env.SEASON_BACKEND ?? 'http://localhost:8171'
+// 必须显式给后端：静默回落到 http://localhost:8171 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.SEASON_BACKEND ?? (() => {
+  console.error('[season] 缺 SEASON_BACKEND：不给就退回 http://localhost:8171，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 // 产物根可换：并行会话把带缺陷的半成品留在工作区时，主库的 web-mobile 会整包编不出来
 // （脚本 bundle 缺类 → 页面黑屏）。这时在干净 worktree 里构建、把这里指过去即可 —— 别去动别人的文件。
 const ARTIFACT = process.env.SEASON_ARTIFACT_ROOT ?? 'client/build/web-mobile'
@@ -105,7 +112,7 @@ if (MODE === 'disabled' && status.phase !== null) {
 }
 
 const FIND_PANEL = `(game) => game.children
-  .map(c => c.components.find(x => x.constructor && x.constructor.name === 'PowerPanelView'))
+  .map(c => c.getComponent('PowerPanelView'))
   .find(Boolean)`
 
 const LABEL_SNAPSHOT = `(() => {
@@ -117,7 +124,7 @@ const LABEL_SNAPSHOT = `(() => {
   const ys = []
   const walk = (node, dy) => {
     const y = dy + node.getPosition().y
-    const label = node.components.find(x => x.constructor && x.constructor.name === 'Label')
+    const label = node.getComponent('cc.Label')
     if (label && label.string) {
       out.push(label.string)
       ys.push(y)
@@ -125,7 +132,7 @@ const LABEL_SNAPSHOT = `(() => {
     for (const child of node.children) walk(child, y)
   }
   walk(panel.node, 0)
-  const transform = panel.node.components.find(x => x.constructor && x.constructor.name === 'UITransform')
+  const transform = panel.node.getComponent('cc.UITransform')
   return {
     active: panel.node.active,
     labels: out,
@@ -141,7 +148,11 @@ async function openPowerPage(page) {
   const url = new URL(`${preview.origin}/`)
   url.searchParams.set('panel', 'power')
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
+  // 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+  // 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+  preview.assertRewritten()
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+  await hideGuideOverlay(page)
   await page.waitForTimeout(1800)
 }
 

@@ -72,7 +72,7 @@ public final class PlayerSave {
      * 当前佩戴的头像框 id（B24 块③）。null = 没戴。
      *
      * <p><b>外观只在这里，不参与任何数值</b>：B15 §一 第 7 条与公理一都写明外观不能碰战力/属性/产出，
-     * 而"逐字段相等"的判别性用例就是这条红线的机器判据（见 AvatarFrameZeroImpactTest）。
+     * 而"逐字段相等"的判别性用例就是这条红线的机器判据（见 AvatarFrameEndpointTest#wearingAFrameChangesNoNumbers）。
      */
     private String avatarFrame;
     /**

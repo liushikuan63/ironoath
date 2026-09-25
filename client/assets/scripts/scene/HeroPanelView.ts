@@ -66,6 +66,8 @@ export class HeroPanelView extends Component {
   /** 行节点 → 它当前代表的武将 id。池化节点复用时每次渲染都要重新登记 */
   private readonly rowHeroes = new Map<Node, string>()
   private headerLabel: Label | null = null
+  /** 当前页签一行都没有时的那句话；有行时必须藏着（有行还印「暂无」等于自己打自己） */
+  private emptyLabel: Label | null = null
   private cappedLabel: Label | null = null
   private readonly tabLabels = new Map<Tab, Label>()
   private readonly tabButtons = new Map<Tab, Node>()
@@ -157,6 +159,11 @@ export class HeroPanelView extends Component {
   private buildHeader(height: number): void {
     const top = height / 2 - PADDING
     this.headerLabel = this.addLabel(this.node, 'Header', 0, top - 20, COLOR_COPPER_GOLD, 20)
+    // 空态那一行落在**第一行该在的那个 y**（与 renderRows 同一套 topY 算法），不是随手挑的数
+    this.emptyLabel = this.addLabel(this.node, 'Empty', 0,
+      top - HEADER_HEIGHT - ROW_HEIGHT / 2, COLOR_TEXT_DIM, 16)
+    this.emptyLabel.string = ''
+    this.emptyLabel.node.active = false
     this.cappedLabel = this.addLabel(this.node, 'CappedHint', 0, top - 46, COLOR_WARNING, 14)
 
     const tabs: Array<{ tab: Tab; text: string; x: number }> = [
@@ -316,6 +323,12 @@ export class HeroPanelView extends Component {
     }
 
     const drafts = this.tab === 'heroes' ? heroDrafts(panel.heroes) : lineupDrafts(panel.lineups)
+    // 零行要说句话：武将页/编队页都出现过"整块空白 + 表头只写总数"的样子，
+    // 玩家分不清"确实没有"与"面板坏了"（MarchPanelView:77 同一形状，句式照它）
+    if (this.emptyLabel !== null) {
+      this.emptyLabel.string = this.tab === 'heroes' ? '暂无武将' : '暂无编队'
+      this.emptyLabel.node.active = drafts.length === 0
+    }
     const size = view.getVisibleSize()
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     pool.releaseAll(this.drawnRows)

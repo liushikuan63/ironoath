@@ -3,6 +3,7 @@ package com.ironoath.core.player;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
  * 职责：玩家存档仓储端口（六边形架构的抽象侧）。
@@ -37,6 +38,52 @@ public interface PlayerRepository {
      * @param playerIds 要查的玩家 id；null 或空集合返回空 map
      */
     Map<String, PlayerSave> findByPlayerIds(Collection<String> playerIds);
+
+    /**
+     * 批量按玩家 id 查<b>列表行所需的那几项</b>，返回 playerId -> 投影，
+     * 语义与 {@link #findByPlayerIds} 逐字相同（缺失的 id 不出现、null 或空集合返回空 map），
+     * 唯一区别是返回的是 {@link PlayerBrief} 而不是整份存档。
+     *
+     * <p><b>为什么要单独开这个口</b>：{@link #findByPlayerIds} 省的是<b>往返次数</b>
+     * （N 个人一趟 $in 拿回来），但那一趟搬回来的是 N 份<b>整档</b>。批量列表类调用方
+     * （联盟成员 150 人、关注列表 50 人、一页申请 50 人、一个块内的城）只要昵称、城等、
+     * 活跃时刻、展示战力这几项，剩下的资源表 / PVP 账本 / 荣耀 / 引导 / 付费权益 / 科技 /
+     * 礼包弹窗 / 头像框集合全是被白搬白反序列化的字节 —— 而存档的字段数随玩法批次只增不减，
+     * 这一趟的代价跟着涨，列表行却一字不变。
+     *
+     * <p><b>它省的不是往返</b>：Mongo 侧与 {@link #findByPlayerIds} 打的是同一个
+     * {@code _id $in}，只是带上了字段投影。所以别指望用计数判据看出"少搬了整档"，
+     * 那一维由本口与 {@link PlayerBrief} 的<b>类型</b>守住：返回值里没有整档，
+     * 调用方就连编都编不出"顺手多读一项"。
+     *
+     * <p><b>什么时候该用 {@link #findByPlayerIds}</b>：需要玩法状态本身的时候。
+     * 目标搜索要 PVP 账本算护盾与暴虐值、Bot 校准要战力三元组做均值样本、
+     * 暴露城要按天补暴虐值衰减 —— 那些是真的在读档，不是在报名字，不要为了少几个字节改到这里来。
+     *
+     * <p><b>两份实现必须同语义</b>（内存版给 dev 与全部单测、Mongo 版给生产），
+     * 由 {@code PlayerBriefEquivalenceTest} 钉住：同名的字段接错来源、投影列漏一项，
+     * 症状都是"单测全绿、生产那列是 0"。
+     *
+     * @param playerIds 要查的玩家 id；null 或空集合返回空 map
+     */
+    Map<String, PlayerBrief> findBriefs(Collection<String> playerIds);
+
+    /**
+     * 只读<b>建档时刻</b>（注册时刻）—— 活动窗口锚点这类"只要一个时间戳"的读法用这条，
+     * 不要用 {@link #findByPlayerId}：那为一位数搬回整份存档（资源表、PVP 账本、科技、
+     * 礼包弹窗账本、已拥有的头像框集合），而它在锚点上没有任何用处。
+     *
+     * <p>与 {@link #findBriefs} 的分工不重叠：那一条是<b>批量列表行</b>（昵称 / 城等 / 活跃 / 展示战力），
+     * 这一条是<b>单人的一个时间戳</b>。把 {@code createdAt} 塞进 {@link PlayerBrief} 看似省一个方法，
+     * 实际会让每一张列表都白投一列，而那四列是判据点名的字段集合 —— 类型上就该看得见"没人用它"。
+     *
+     * <p><b>为什么这一位可以不加锁也不 copy</b>：建档时刻是身份字段，建号写一次之后不再有写手
+     * （{@code PlayerDocument} 上那条 mongo-save-exempt 注释就是这件事的登记），
+     * 所以不存在 {@link #findBriefs} 里 {@code lastLoginAt} 那种与并发登录抢读的撕裂风险。
+     *
+     * @param playerId 玩家 id；null / 空白 / 查不到都返回 {@link OptionalLong#empty()}
+     */
+    OptionalLong findCreatedAt(String playerId);
 
     /**
      * 原子插入：仅当 deviceId 尚未存在时才写入。

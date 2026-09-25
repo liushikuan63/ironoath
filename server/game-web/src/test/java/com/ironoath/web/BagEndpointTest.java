@@ -57,7 +57,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 依赖：Spring Boot Test，test profile（内存存储 + JVM 内锁，不需要 MongoDB / Redis）。
  *
  * <p>覆盖 B04 验收 2 / 3 / 4 / 5 / 9 / 10 与 §3 的排序分页规则。
- * 验收 1 / 6 / 7 / 8 分别在 ResourceDetailFullTest（本文件末尾）、
+ * 验收 1 / 6 / 7 / 8 分别在 本文件末尾那一段（入口是 fullStorageStopsProductionAndIsFlagged，没有单独类名）、
  * game-core 的 ResourceProtectionTest、RewardGrantorTest 与客户端飘字队列测试里。
  *
  * <p><b>开箱种子被替换成固定值</b>：生产的种子源是 SecureRandom（客户端无法预测），
@@ -187,6 +187,9 @@ class BagEndpointTest {
                 .satisfies(i -> assertThat(i.effectKind()).isNotEqualTo("GRANT_HERO_EXP"));
         // 整表都带这一列（没有 null 行）——列可空的话客户端到处判空
         assertThat(configs.all(ItemCfg.class))
+                // 空表会让这句恒真：先钉住"表里确实有行"（#342 同族）
+                .as("道具表必须加载到行，否则逐行断言什么都没说")
+                .isNotEmpty()
                 .allSatisfy(cfg -> assertThat(cfg.effectKind()).as(cfg.id()).isNotNull());
     }
 

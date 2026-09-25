@@ -80,10 +80,10 @@ import type {
   AllianceListResp, AllianceReviewReq, AllianceRoleReq, AllianceSelfReq, AllianceSyncReq,
   AllianceSyncResp,
   AllianceTechReq, AllianceTechResp, ChatListReq, ChatListResp, ChatSendReq, ChatSendResp,
-  HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyResp, SocialEventAckReq,
+  HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyPolicyResp, RallyResp, SocialEventAckReq,
   SocialCreatePolicyResp, SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq,
   SquadListResp, SquadMemberReq, SquadRallyReq,
-  SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp, RallyPolicyResp,
+  SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp,
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import type { QuestClaimReq, QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
@@ -101,7 +101,10 @@ import type {
   RankListResp, RankSnapshotResp, RankType,
 } from '../../net/generated/RankProtocol'
 import type { SeasonStatusResp } from '../../net/generated/SeasonProtocol'
-import type { TechListView } from '../../net/generated/TechProtocol'
+import type {
+  TechCancelReq, TechCancelResp, TechListView, TechResearchReq, TechResearchResp,
+  TechSpeedUpReq, TechSpeedUpResp,
+} from '../../net/generated/TechProtocol'
 import type { EquipInstanceListView } from '../../net/generated/EquipProtocol'
 
 export interface GameApiDeps {
@@ -171,6 +174,33 @@ export class GameApi {
    */
   techList(): Promise<NetOutcome<TechListView>> {
     return this.read<TechListView>('/tech/list')
+  }
+
+  /**
+   * POST /tech/research（V03-a-S1 只接了读侧，这一条是玩家真正要的那一半）。
+   *
+   * <p>服务端依次校验：行存在 → 未满级 → 队列空 → 学院等级够 → 资源够，顺序与城建一致
+   * （先把"不该花的钱"挡住再扣）。响应带回扣掉的资源与算出的时长，界面据此更新，不必再拉一次列表。
+   */
+  techResearch(req: Omit<TechResearchReq, 'requestId'>): Promise<NetOutcome<TechResearchResp>> {
+    return this.mutate<TechResearchReq, TechResearchResp>('/tech/research', req)
+  }
+
+  /**
+   * 取消当前研究。**请求里没有 techId**：一次一队列，队列里那一项就是被取消的那一项 ——
+   * 让客户端再传一次等于给它一个说错的机会。返还比例与城建共用一份配置（服务端算，客户端只念）。
+   */
+  techCancel(): Promise<NetOutcome<TechCancelResp>> {
+    return this.mutate<TechCancelReq, TechCancelResp>('/tech/cancel', {})
+  }
+
+  /**
+   * 用研究加速道具推进当前研究。道具必须是 `type=SPEEDUP` 且 `effectKind=REDUCE_RESEARCH_SECONDS`
+   * 那一种 —— 建造令与训练令走到这里会被服务端拒（它宁可响一声，也不静默按另一种加速处理），
+   * 所以候选由 `effectKind` 这一列筛，不按 id 硬编码。
+   */
+  techSpeedUp(req: Omit<TechSpeedUpReq, 'requestId'>): Promise<NetOutcome<TechSpeedUpResp>> {
+    return this.mutate<TechSpeedUpReq, TechSpeedUpResp>('/tech/speedUp', req)
   }
 
   /**

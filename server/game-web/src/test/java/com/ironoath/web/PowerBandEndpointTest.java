@@ -13,6 +13,7 @@ import com.ironoath.core.player.PlayerPower;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.power.PowerBandGuard;
+import com.ironoath.core.power.TargetSearch;
 import com.ironoath.core.world.Coord;
 import com.ironoath.core.world.WorldRepository;
 import com.ironoath.web.dto.generated.MarchAction;
@@ -287,6 +288,35 @@ class PowerBandEndpointTest {
         assertThat(data.get("bandUpper").asLong())
                 .isEqualTo(FixedPoint.round(FixedPoint.mul(FixedPoint.of(selfPower),
                         configs.fixedParam("PVP_POWER_MAX_RATIO"))));
+        assertThat(data.get("radiusMax").asInt())
+                .as("半径上界照配置表下发：± 键的右端必须与服务端的截断值同源")
+                .isEqualTo((int) configs.longParam("SEARCH_MAX_RADIUS"));
+        assertThat(data.get("radiusDefault").asInt())
+                .as("默认半径也来自配置表，不是响应组装处现编的数")
+                .isEqualTo((int) configs.longParam("SEARCH_DEFAULT_RADIUS"));
+        assertThat(data.get("radiusMin").asInt())
+                .as("下界就是 TargetSearch 的那个地板值 —— 客户端不许自己写死 1")
+                .isEqualTo(TargetSearch.MIN_RADIUS);
+    }
+
+    @Test
+    @DisplayName("请求不带半径时按 SEARCH_DEFAULT_RADIUS 搜：第一次点搜索不该空手")
+    void nullRadiusSearchesAtTheDefaultRatherThanAtOneTile() throws Exception {
+        String self = newPlayerAt(256, 256);
+        giveTroops(self, 1000L);
+        liftProtection(self);
+        long selfPower = powerRefreshService.refresh(self).matchPower();
+        // 六格外的邻居：地板值 1 格的搜索够不到，默认的 48 格够得到
+        String neighbor = newPlayerAt(262, 256, "隔壁", 1.0d, true);
+        setMatchPower(neighbor, selfPower);
+
+        assertThat(names(post200(SEARCH_URL, self, new SearchTargetsReq(null, 50)).get("targets")))
+                .as("null 半径按默认值搜，六格外的人搜得到")
+                .containsExactly("隔壁");
+
+        assertThat(names(post200(SEARCH_URL, self, new SearchTargetsReq(0, 50)).get("targets")))
+                .as("改之前客户端发出去的就是 0（夹成 1 格）—— 六格外的人就是这么一直搜不到的")
+                .isEmpty();
     }
 
     @Test

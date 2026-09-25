@@ -11,7 +11,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildBagPanel, buildItemRow, buildOutputLine, buildResourcePanel, buildResourceRow, itemTypeText,
+  buildBagPanel, buildItemRow, buildOutputLine, buildResourcePanel, buildResourceRow,
+  chestReceiptText, itemTypeText,
 } from '../assets/scripts/game/bag/BagPanel'
 import { formatRate } from '../assets/scripts/game/gacha/GachaDisclosure'
 import { percentText } from '../assets/scripts/core/FixedPoint'
@@ -196,4 +197,30 @@ test('行里带**结构化数量**：批量开箱的入参取自 `count`，不�
   assert.equal(row.stackText, '7/999')
   // 数量为 0 的行也照实传 0（视图据此不给「全开」；不许在这里悄悄改成 1）
   assert.equal(buildItemRow(item({ type: 'CHEST', count: 0 })).count, 0)
+})
+
+test('开箱回执把"开了几个 / 开出什么"照服务端说的念', () => {
+  const text = chestReceiptText({
+    consumed: 10, serverNow: 1, mailId: null, seed: 7,
+    results: [{ type: 'RESOURCE', id: 'WOOD', count: 3000, name: '木材' },
+      { type: 'HERO_FRAGMENT', id: 'h1', count: 5, name: '卫无咎碎片' }],
+    overflow: [],
+  })
+  assert.equal(text, '开了 10 个：木材 ×3000 · 卫无咎碎片 ×5')
+})
+
+test('装不下的那部分必须说"已转邮件"—— 不说就等于玩家以为道具丢了（B04 验收 2）', () => {
+  const text = chestReceiptText({
+    consumed: 100, serverNow: 1, mailId: 'm-1', seed: 7,
+    results: [{ type: 'RESOURCE', id: 'GOLD', count: 100, name: '金币' }],
+    overflow: [{ type: 'ITEM', id: 'item_x', count: 2, name: '加速道具（1 小时）' }],
+  })
+  assert.match(text, /开了 100 个：金币 ×100/)
+  assert.match(text, /加速道具（1 小时） ×2 装不下，已转邮件/)
+})
+
+test('一次开出空也说实话，不留一行空白当"成功"', () => {
+  assert.equal(chestReceiptText({
+    consumed: 1, serverNow: 1, mailId: null, seed: 7, results: [], overflow: [],
+  }), '开了 1 个：什么都没有')
 })

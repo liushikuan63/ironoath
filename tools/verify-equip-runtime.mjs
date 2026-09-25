@@ -3,6 +3,7 @@
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 web-mobile 产物。
  *
  * 用法：EQUIP_BACKEND=http://localhost:8181 node tools/verify-equip-runtime.mjs
+ * 必填：EQUIP_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 EQUIP_PROBE_PORT（默认 8183，同机并发时换一个）
  *
  * <p><b>这一条判的就是入口本身</b>（V03-a 的探针当时只能用编排层驱动，因为入口被并行会话挡着；
  * 装备页的入口已经落地，所以这里**必须真点按钮**）：武将行上点「装备库」→ 装备页激活。
@@ -17,11 +18,17 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const OUT = process.env.EQUIP_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/equip-verify')
 mkdirSync(OUT, { recursive: true })
 const PORT = Number(process.env.EQUIP_PROBE_PORT ?? 8183)
-const BACKEND = process.env.EQUIP_BACKEND ?? 'http://localhost:8181'
+// 必须显式给后端：静默回落到 http://localhost:8181 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.EQUIP_BACKEND ?? (() => {
+  console.error('[equip] 缺 EQUIP_BACKEND：不给就退回 http://localhost:8181，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const ARTIFACT = process.env.EQUIP_ARTIFACT_ROOT ?? 'client/build/web-mobile'
 
 let pass = 0
@@ -60,12 +67,12 @@ const PANEL_SNAPSHOT = `(() => {
   const ys = []
   const walk = (n, dy) => {
     const y = dy + n.getPosition().y
-    const label = n.components.find(x => x.constructor && x.constructor.name === 'Label')
+    const label = n.getComponent('cc.Label')
     if (label && label.string) { out.push(label.string); ys.push(y) }
     for (const child of n.children) walk(child, y)
   }
   walk(node, 0)
-  const transform = node.components.find(x => x.constructor && x.constructor.name === 'UITransform')
+  const transform = node.getComponent('cc.UITransform')
   return { active: node.active, labels: out, ys, height: transform ? transform.contentSize.height : -1 }
 })()`
 
@@ -120,7 +127,11 @@ page.on('request', (request) => {
 const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'hero')
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
+// 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+// 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+preview.assertRewritten()
 await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+await hideGuideOverlay(page)
 await page.waitForTimeout(1800)
 
 const before = await page.evaluate(PANEL_SNAPSHOT)
@@ -146,7 +157,7 @@ if (clicked === 'clicked') {
   const drove = await page.evaluate(`(() => {
     const scene = window.cc.director.getScene()
     const game = scene.getChildByName('Canvas').getChildByName('Game')
-    const boot = game.components.find(c => c.constructor && c.constructor.name === 'GameBootstrap')
+    const boot = game.getComponent('GameBootstrap')
     if (!boot || !boot.root) return false
     void boot.root.openEquip()
     return true

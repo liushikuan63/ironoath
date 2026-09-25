@@ -98,6 +98,35 @@ for (let index = 0; index < lines.length; index++) {
   }
 }
 
+/**
+ * 判据：编号行被拆成多个物理行 ⇒ 后半段脱离表格渲染，内容等于丢掉。
+ *
+ * <p>2026-09-21 实测两次踩中（往台账插文本时用换行 join），而"每行列数不超过表头"这条抓不到 ——
+ * 拆开后的每一段单独看都合法。**注意不要写成"行必须以 | 收尾"**：台账里 #294~#296 等老行本来就没写
+ * 收尾竖线，GFM 照样渲染，那样会误伤 6 条（本轮试过，红的是规则自己）。
+ * 只认"表格还在继续时出现的游离正文行"：后面又出现编号行，才说明它是被拆出来的续行。
+ */
+{
+  const isRow = (t) => /^\|\s*[0-9]+\s*\|/.test(t)
+  const stops = (t) => t === '' || t.startsWith('|') || /^#/.test(t) || /^\*\*/.test(t) || /^>/.test(t)
+  for (let k = 0; k < lines.length; k++) {
+    if (!isRow(lines[k].trim())) continue
+    const orphans = []
+    let m = k + 1
+    while (m < lines.length && !stops(lines[m].trim())) {
+      orphans.push(m + 1)
+      m += 1
+    }
+    if (orphans.length > 0 && m < lines.length && isRow(lines[m].trim())) {
+      problems.push(
+        `第 ${k + 1} 行（编号行）被拆成多个物理行：第 ${orphans.join('、')} 行是它的续行 —— `
+        + '渲染时续行会脱离表格变成游离正文，等于把台账写坏。把续行并回上一行（表格行必须是单个物理行）。',
+      )
+    }
+    k = m - 1
+  }
+}
+
 if (problems.length > 0) {
   console.error('[check-checklist-table] 表格形状或编号有问题：')
   problems.forEach((p) => console.error('  ' + p))

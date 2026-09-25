@@ -4,6 +4,7 @@
  * 依赖：node、playwright、**已启动的后端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 AUTOTRAIN_PORT（默认 8096，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8075 node tools/verify-autotrain-runtime.mjs
  *
  * <p><b>为什么用 web 产物证</b>：`ArmyPanelView` 与 `game/army/AutoTrain.ts` 在两个平台上是同一份代码
@@ -24,9 +25,15 @@ import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const ROOT = path.resolve('client/build/web-mobile')
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[verify-autotrain-runtime] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.AUTOTRAIN_PORT ?? 8096)
 const SHOT_DIR = path.resolve('client/build/autotrain-verify')
 /**
@@ -50,7 +57,7 @@ function verdict(ok, label, detail) {
 /** 在页面里读军队那一格的自动续训两件套：按钮字幕、状态行文本与坐标、最后一行兵种行的底边。 */
 function readAutoTrain() {
   const out = { panelFound: false, button: null, caption: null, status: null, rowBottom: null,
-    currentKey: null, visible: null }
+    currentKey: null, visible: null, pageText: null, pagerVisible: 0, treatVisible: null }
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas')?.getChildByName('Game')
   out.currentKey = game?.getComponent('PanelNav')?.currentKey ?? null
@@ -75,6 +82,11 @@ function readAutoTrain() {
     return null
   }
   for (const child of panel.children) {
+    if (child.name === 'TreatButton') {
+      // 对照组：字幕在创建时就写死（'治疗伤兵'），不经过 render() ⇒ 数据没到那一态它也该露着。
+      // 没有这一条，"把整排控件一起藏了"也会让下面那条判据变绿。
+      out.treatVisible = child.activeInHierarchy !== false
+    }
     if (child.name === 'AutoTrainButton') {
       out.button = { active: child.activeInHierarchy !== false, y: child.position.y,
         caption: labelOf(child) }
@@ -96,6 +108,12 @@ function readAutoTrain() {
   const header = panel.children.find(child => child.name === 'Header')
   const headerLabel = header === null || header === undefined ? null : header.getComponent('cc.Label')
   out.headerText = headerLabel === null || headerLabel === undefined ? null : headerLabel.string
+  // 让出来的那一格：页码那句 + 两颗翻页键露了几颗（#451：装不下时不再只说"另有 N 项"，改成翻页行）
+  const notice = panel.children.find(child => child.name === 'PageNotice')
+  const noticeLabel = notice === undefined || notice === null ? null : notice.getComponent('cc.Label')
+  out.pageText = noticeLabel === null || noticeLabel === undefined ? null : noticeLabel.string
+  out.pagerVisible = panel.children.filter(child => (child.name === 'PrevPageButton'
+    || child.name === 'NextPageButton') && child.activeInHierarchy !== false).length
   return out
 }
 
@@ -132,6 +150,7 @@ async function main() {
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   const bootDeadline = Date.now() + 45_000
   while (boot === null && Date.now() < bootDeadline) {
     await page.waitForTimeout(500)
@@ -184,9 +203,17 @@ async function main() {
   verdict(read?.rowBottom !== null && read.rowBottom > navTop,
     '最后一行兵种行的底边也在导航条之上（行数按可视高度算，不是写死的）',
     `最低行底边=${read?.rowBottom} 导航条上沿=${navTop}`)
-  verdict(/另有 \d+ 项未显示/.test(String(read?.headerText ?? '')),
-    '画不下的行数说出来了（全兵种页 20 行只画得下 4 行，玩家得知道下面还有）',
-    `表头="${read?.headerText}"`)
+  // 从前这一条钉的是「另有 N 项未显示」—— 话说诚实了，但那 N 行的兵玩家永远够不着（#307 原话）。
+  // #451 换成真分页之后判据跟着改：那一格必须是翻页行（社交那两格换分页时同一改法，
+  // 见 verify-social-permission-runtime 的 D0c 与 verify-social-create-runtime 的 H4）。
+  const pageText = String(read?.pageText ?? '')
+  const pageMatch = /^第 (\d+)\/(\d+) 页 · 共 (\d+) 项$/.exec(pageText)
+  verdict(pageMatch !== null && Number(pageMatch[2]) > 1,
+    '装不下时那一格是翻页行（下面的兵现在拿得到，不是一句「另有 N 项未显示」）',
+    `页码行="${pageText}"`)
+  verdict(read?.pagerVisible === 2, '多页时两颗翻页键都露着', `露出=${read?.pagerVisible}`)
+  verdict(!/另有 \d+ 项未显示/.test(String(read?.headerText ?? '')),
+    '表头不再挂那句够不着的话（都拿得到了就不该说）', `表头="${read?.headerText}"`)
 
   // 点一下：没有可续的那一批 ⇒ 不发请求，而且要在 console 里说清原因（面板那行字已经说了）
   const before = autoTrainCalls.length
@@ -210,9 +237,80 @@ async function main() {
     '被挡下时 console 里也留了同一条原因（排障时看得见）',
     `匹配 ${consoleLines.filter(l => l.includes('[army]')).length} 条 [army] 日志`)
 
+  const emptyState = await page.evaluate(() => {
+    const panel = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('army')
+    let rows = 0
+    let empty = null
+    const walk = (n) => {
+      if (n.name === 'UnitRow' && n.activeInHierarchy !== false) rows += 1
+      if (n.name === 'Empty') empty = n
+      for (const c of n.children ?? []) walk(c)
+    }
+    if (panel) walk(panel)
+    return { rows, emptyActive: empty === null ? null : empty.active === true }
+  })
+  verdict(emptyState?.rows > 0 && emptyState?.emptyActive === false,
+    '有部队行时空态那一行必须藏着（有行还印「暂无部队」等于自己打自己）',
+    'rows=' + emptyState?.rows + ' emptyActive=' + emptyState?.emptyActive)
+
   const shot = path.join(SHOT_DIR, 'army-autotrain.png')
   await page.screenshot({ path: shot })
   lines.push(`SHOT  ${shot}`)
+
+  // 第二相：把 `/army/list` 桩成失败码，量"数据没到"那一态。
+  // 第一相读真后端 ⇒ 屏上永远有数据，"控件建出来先收着"这条守卫（#449/#450/#451 同族）在这一相之外
+  // 不可见：`render()` 在 `panel === null` 时第一句就 return，而那颗键的字幕与状态行的文本都只在
+  // `render()` 里写 ⇒ 那一态屏上是一个没字的空框还能点（台账 #453，从 #451 的截图目视抓到的）。
+  const failContext = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await failContext.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v),
+    `autotrain-nodata-${Date.now()}`)
+  const cors = (request) => ({
+    'access-control-allow-origin': request.headers()['origin'] ?? '*',
+    'access-control-allow-headers': '*',
+    'access-control-allow-methods': 'GET,POST,OPTIONS',
+  })
+  let stubHits = 0
+  await failContext.route('**/army/list*', async (route) => {
+    const req = route.request()
+    if (req.method() === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: cors(req) })
+      return
+    }
+    stubHits += 1
+    await route.fulfill({
+      status: 200,
+      headers: { ...cors(req), 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 10010, msg: '还没解锁', data: null, serverNow: Date.now() }),
+    })
+  })
+  const failPage = await failContext.newPage()
+  await failPage.goto(url.toString(), { waitUntil: 'networkidle' })
+  await failPage.waitForFunction(
+    () => window.cc !== undefined && window.cc.director?.getScene() !== null,
+    null, { timeout: 60_000 })
+  await failPage.waitForTimeout(4500)
+  await hideGuideOverlay(failPage)
+  const failRead = await failPage.evaluate(readAutoTrain)
+  // 桩必须真被打中：没打中就是又读了真后端那一态，下面四条会全绿而绿得没有意义
+  verdict(stubHits > 0 && failRead?.panelFound === true,
+    '失败态那一相走到了（桩命中且部队面板在屏上）',
+    `桩命中=${stubHits} panelFound=${failRead?.panelFound}`)
+  verdict(failRead?.button?.active === false,
+    '列表没到时「自动续训」那颗键收着（不留一个没字的空框还能点）',
+    `button=${failRead?.button?.active} 字幕=${JSON.stringify(failRead?.button?.caption?.text ?? null)}`)
+  verdict(failRead?.status?.active === false,
+    '列表没到时状态行也收着（文本同样只在 render() 里写）',
+    `status=${failRead?.status?.active} 文本="${failRead?.status?.text ?? ''}"`)
+  verdict(failRead?.treatVisible === true,
+    '对照组：创建时就带字的「治疗伤兵」仍露着（否则上面两条是在藏整排控件，恒真）',
+    `treat=${failRead?.treatVisible}`)
+  verdict(failRead?.pagerVisible === 0,
+    '列表没到时两颗翻页键也收着（#451 那条同族守卫在同一相里一起量）',
+    `露出=${failRead?.pagerVisible}`)
+  const failShot = path.join(SHOT_DIR, 'army-autotrain-no-list.png')
+  await failPage.screenshot({ path: failShot })
+  lines.push(`SHOT  ${failShot}`)
+  await failContext.close()
 
   await browser.close()
   await preview.close()

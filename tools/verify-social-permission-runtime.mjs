@@ -5,6 +5,7 @@
  * 依赖：node、playwright、一台能登录的后端（默认 8180）、已构建的 web-mobile 产物。
  *
  * 用法：
+ * 必填：SOCIAL_PERM_BACKEND=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 SOCIAL_PERM_PORT（默认 8197，同机并发时换一个）
  *   SOCIAL_PERM_BACKEND=http://localhost:8180 \
  *   SOCIAL_PERM_ARTIFACT_ROOT=/d/tmp/tech-wt/client/build/web-mobile \
  *   node tools/verify-social-permission-runtime.mjs
@@ -33,9 +34,15 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const ARTIFACT = path.resolve(process.env.SOCIAL_PERM_ARTIFACT_ROOT ?? 'client/build/web-mobile')
-const BACKEND = process.env.SOCIAL_PERM_BACKEND ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，
+// 而读数错得像产品缺陷（2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错）。
+const BACKEND = process.env.SOCIAL_PERM_BACKEND ?? (() => {
+  console.error('[social-permission] 缺 SOCIAL_PERM_BACKEND：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.SOCIAL_PERM_PORT ?? 8197)
 const OUT = process.env.SOCIAL_PERM_OUT ?? path.resolve(process.cwd(), 'client/build/social-perm-verify')
 mkdirSync(OUT, { recursive: true })
@@ -282,6 +289,17 @@ const OVERLAY_LABELS = `(() => {
   }
   find(root)
   if (overlay === null) return { error: 'no-overlay', labels: [] }
+  // #320 那条同族判据：弹层是宿主 onLoad 建的，列表行是每次渲染才 addChild 的，
+  // 加得晚就排在弹层后面把它盖住。中央修法之后弹层会在 child-added 时自己顶回末位，
+  // 这条断言盯的就是"它真的顶回去了"—— 社交这一页每次刷新都重排行，是最容易复现的宿主
+  const parent = overlay.parent
+  let rowsAbove = 0
+  if (parent !== null) {
+    const at = overlay.getSiblingIndex()
+    for (const sibling of parent.children) {
+      if (sibling.active && sibling.getSiblingIndex() > at) rowsAbove += 1
+    }
+  }
   const labels = []
   const walk = (n) => {
     const label = n.getComponent('cc.Label')
@@ -289,7 +307,7 @@ const OVERLAY_LABELS = `(() => {
     for (const child of n.children) walk(child)
   }
   walk(overlay)
-  return { error: null, labels }
+  return { error: null, labels, rowsAbove }
 })()`
 const BUTTON_DUMP = `(() => {
   const game = ${NODE_PATH}
@@ -391,6 +409,7 @@ const shot = async (name) => {
 const bootIn = async () => {
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   await page.waitForTimeout(3_000)
 }
 
@@ -412,6 +431,9 @@ console.log(`=== 社交权限门运行时验收：产物经 ${preview.origin}，
 
 // ============================ 相位 A：真后端、真账号 ============================
 await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
+// 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
+// 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
+preview.assertRewritten()
 await bootIn()
 const playerId = typeof boot?.playerId === 'string' ? boot.playerId : ''
 checkTrue(`A1 启动跑通且拿到 playerId（platform=${boot?.platform ?? '—'}）`,
@@ -819,6 +841,8 @@ checkTrue(`I2 弹层真的开着且给出三个可任命职位：labels=${JSON.s
     && (picker?.labels ?? []).some(t => /^成员/.test(t)))
 checkTrue('I3 盟主**不在**选项里：转让是另一件事，不混在一颗按钮上',
   !((picker?.labels ?? []).some(t => t === '盟主' || t === '盟主（现任）')))
+check('I3b 弹层没有被后加进来的行盖住（#320 那条同族判据，社交是最容易复现的宿主）',
+  picker?.rowsAbove, 0)
 const before = fixture.setRoleCalls.length
 check('I4 选「副盟主」', await page.evaluate(TAP_ANY('副盟主')), 'tapped')
 await page.waitForTimeout(1_600)

@@ -106,8 +106,8 @@ public class TargetSearchService {
         Protection.Rules protectionRules = powerService.protectionRules();
         Tyranny.Rules tyrannyRules = powerService.tyrannyRules();
 
-        int radius = Math.max(1, Math.min(req.radius(), searchRules.maxRadius()));
-        if (req.radius() > searchRules.maxRadius()) {
+        int radius = searchRules.resolveRadius(req.radius());
+        if (req.radius() != null && req.radius() > searchRules.maxRadius()) {
             LOG.info("搜索半径超出上限，已截断 playerId={} 请求={} 上限={}",
                     playerId, req.radius(), searchRules.maxRadius());
         }
@@ -134,7 +134,9 @@ public class TargetSearchService {
                 playerId, radius, pool.candidates().size(), targets.size(), selfPower.matchPower(),
                 band.lowerBound(), band.upperBound(), matchPool.size());
         return new SearchTargetsResp(targets, selfPower.matchPower(),
-                band.lowerBound(), band.upperBound(), now);
+                band.lowerBound(), band.upperBound(),
+                TargetSearch.MIN_RADIUS, searchRules.defaultRadius(), searchRules.maxRadius(),
+                now);
     }
 
     /**

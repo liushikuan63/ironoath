@@ -5,7 +5,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
@@ -15,9 +14,11 @@ import com.ironoath.common.time.DayKey;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.bot.BotRegistry;
+import com.ironoath.core.nation.Nation;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.season.SeasonSettlement;
+import com.ironoath.core.social.Alliance;
 import com.ironoath.web.dto.generated.OpsRankSnapshotResp;
 import com.ironoath.web.dto.generated.RankEntryView;
 import com.ironoath.web.dto.generated.RankListResp;
@@ -366,23 +367,40 @@ public class RankBoardService {
      *
      * <p>只有**在榜上的成员**会被计入：一个人还没上报过战力就等于还没有分数，
      * 把他算成 0 分会把"没打过仗的联盟"和"分数为 0 的联盟"混成同一件事。
+     *
+     * <p><b>整榜的组织归属按批量读，不逐个问</b>：这里的循环长度是<b>整张 POWER 榜</b>（那张榜不
+     * 截断），改之前每个榜上成员一次 {@code allianceOf}、国家榜再加一次 {@code findByAlliance}，
+     * 而它挂在 {@code /rank/list} 这条人人都要拉的读路径上 —— 本仓现存最重的 N+1。名字（盟名带缩写、
+     * 国名）顺手从同一批档里取，所以按 id 的那趟点查也一起没了。
+     * 判据是往返计数而不是结果：{@code RankOrgBoardQueryCountTest}。
      */
     private List<SeasonSettlement.Entry> projectOrgBoard(String seasonId, RankType type) {
+        List<SeasonSettlement.Entry> members = rankedEntries(RankType.POWER);
+        Map<String, Alliance> allianceByPlayer = social.alliancesOf(
+                members.stream().map(SeasonSettlement.Entry::id).toList());
+        Map<String, Nation> nationByAlliance = type == RankType.NATION
+                ? nations.nationsByAlliance(allianceByPlayer.values().stream()
+                        .map(Alliance::id).distinct().toList())
+                : Map.of();
+
         Map<String, Long> scoreByOrg = new LinkedHashMap<>();
         Map<String, String> nameByOrg = new LinkedHashMap<>();
-        for (SeasonSettlement.Entry entry : rankedEntries(RankType.POWER)) {
-            String orgId = orgIdOf(entry.id(), type);
-            if (orgId == null) {
+        for (SeasonSettlement.Entry entry : members) {
+            Alliance alliance = allianceByPlayer.get(entry.id());
+            if (alliance == null) {
+                continue;   // 不在任何联盟：与改之前 orgIdOf 回 null 同一条，直接跳过
+            }
+            if (type == RankType.ALLIANCE) {
+                scoreByOrg.merge(alliance.id(), entry.score(), Long::sum);
+                nameByOrg.putIfAbsent(alliance.id(), alliance.name() + "[" + alliance.tag() + "]");
                 continue;
             }
-            scoreByOrg.merge(orgId, entry.score(), Long::sum);
-            if (type == RankType.ALLIANCE) {
-                nameByOrg.computeIfAbsent(orgId, id -> social.allianceById(id)
-                        .map(value -> value.name() + "[" + value.tag() + "]").orElse(id));
-            } else {
-                nameByOrg.computeIfAbsent(orgId, id -> nations.findById(id)
-                        .map(value -> value.name()).orElse(id));
+            Nation nation = nationByAlliance.get(alliance.id());
+            if (nation == null) {
+                continue;   // 盟没入籍：它的人不进国家榜
             }
+            scoreByOrg.merge(nation.id(), entry.score(), Long::sum);
+            nameByOrg.putIfAbsent(nation.id(), nation.name());
         }
         List<SeasonSettlement.Entry> out = new ArrayList<>(scoreByOrg.size());
         scoreByOrg.forEach((orgId, score) ->
@@ -392,16 +410,27 @@ public class RankBoardService {
         return out;
     }
 
-    /** 玩家此刻所属的组织 id（联盟榜回联盟，国家榜回国家）；不在任何组织里就是 null。 */
+    /**
+     * 玩家此刻所属的组织 id（联盟榜回联盟，国家榜回国家）；不在任何组织里就是 null。
+     *
+     * <p><b>这里也走批量口</b>（单人批量）：省的不是往返 —— 一次与一次一样 —— 而是让"本类的读路径
+     * 上不存在按人点查"成为一条能写成 {@code isZero()} 的判据。留着这一趟"我的名次"的点查，
+     * 计数判据就只能写成"不随榜长增长"那种要采样两次才成立的弱断言。Mongo 侧单人 {@code $in} 与
+     * {@code findOne} 打在同一个索引字段上，代价相同。
+     */
     private String orgIdOf(String playerId, RankType type) {
-        Optional<com.ironoath.core.social.Alliance> alliance = social.allianceOf(playerId);
-        if (alliance.isEmpty()) {
+        if (playerId == null || playerId.isBlank()) {
+            return null;
+        }
+        Alliance alliance = social.alliancesOf(List.of(playerId)).get(playerId);
+        if (alliance == null) {
             return null;
         }
         if (type == RankType.ALLIANCE) {
-            return alliance.get().id();
+            return alliance.id();
         }
-        return nations.findByAlliance(alliance.get().id()).map(value -> value.id()).orElse(null);
+        Nation nation = nations.nationsByAlliance(List.of(alliance.id())).get(alliance.id());
+        return nation == null ? null : nation.id();
     }
 
     private RankEntryView toView(int rank, SeasonSettlement.Entry entry, RankType type) {

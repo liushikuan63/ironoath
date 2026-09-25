@@ -24,7 +24,13 @@
  * 共享机器上端口随时会被别人的服务占着（本项目踩过：对着旧构建量首屏，量出来的全是别人的数），
  * 少了这一步，本工具会对着一台不是本项目的后端读出「一切正常」。
  */
-const BACKEND = (process.env.DEVTOOLS_BACKEND ?? 'http://localhost:8080').replace(/\/$/, '')
+// 必须显式给后端：静默回落到 8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （同族已按谓词收过 30+ 份，这两份因写成 `(env.X ?? 'http://…').replace(...)` 而漏网 —— 台账 #420/#419 的回扫）
+const rawBackend = process.env.DEVTOOLS_BACKEND ?? (() => {
+  console.error('[verify-devtools-runtime] 缺 DEVTOOLS_BACKEND：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
+const BACKEND = rawBackend.replace(/\/$/, '')
 const TOKEN = process.env.DEVTOOLS_OPS_TOKEN ?? ''
 
 const failures = []

@@ -1,12 +1,15 @@
 package com.ironoath.web.store.mongo;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Sort;
@@ -92,6 +95,42 @@ public final class MongoSocialStore implements SocialStore {
                         Query.query(Criteria.where("members.playerId").is(playerId)),
                         SquadDocument.class, SquadDocument.COLLECTION))
                 .map(document -> document.toDomain(rules.squadRules()));
+    }
+
+    /**
+     * 一批玩家所属小队，一次 $in 查询 —— 与 {@link #squadOf} 打在同一个索引字段上
+     * （{@code idx_social_squad_member}，见 {@code MongoIndexes}），所以省掉的是往返不是扫描量。
+     *
+     * <p>同一份档案里可能有多个要查的成员（联盟成员装配就是一整队人一起问）：档案只读一次，
+     * 命中的人各自拿到一份副本。
+     *
+     * <p><b>不设排序</b>：{@link #squadOf} 用的 {@code findOne} 也没有排序，两口的"一个玩家同时挂在
+     * 两支小队里"（脏数据才可能）取哪一支的口径都是自然顺序 —— 加一段排序反而会让两版在
+     * 好数据之外的分支上给出不同答案。
+     */
+    @Override
+    public Map<String, Squad> squadsOf(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.isEmpty()) {
+            return Map.of();
+        }
+        Set<String> distinct = new LinkedHashSet<>(playerIds);
+        distinct.remove(null);
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        List<SquadDocument> documents = mongo.find(
+                Query.query(Criteria.where("members.playerId").in(distinct)),
+                SquadDocument.class, SquadDocument.COLLECTION);
+        Map<String, Squad> out = new LinkedHashMap<>();
+        for (SquadDocument document : documents) {
+            Squad squad = document.toDomain(rules.squadRules());
+            for (String memberId : distinct) {
+                if (squad.memberIds().contains(memberId)) {
+                    out.put(memberId, squad.copy());
+                }
+            }
+        }
+        return out;
     }
 
     @Override
@@ -194,6 +233,40 @@ public final class MongoSocialStore implements SocialStore {
                         Query.query(Criteria.where("members.playerId").is(playerId)),
                         AllianceDocument.class, AllianceDocument.COLLECTION))
                 .map(document -> document.toDomain(rules.allianceRules()));
+    }
+
+    /**
+     * 一批玩家各自所属的联盟，一次 {@code members.playerId} 的 $in 查询 —— 与 {@link #allianceOf}
+     * 打在同一个索引字段上（{@code idx_social_alliance_member}，见 {@code MongoIndexes}），
+     * 所以省掉的是往返不是扫描量（与 {@link #squadsOf} 同一条）。
+     *
+     * <p>一个盟可以有多个被点名的成员：档案只读一次，命中的人各自拿到一份副本。
+     * 刻意不设排序 —— {@link #allianceOf} 的 {@code findOne} 也没有排序，两版在"一个人挂在两个盟里"
+     * （脏数据才可能）这种分支上取的口径必须相同。
+     */
+    @Override
+    public Map<String, Alliance> alliancesOf(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.isEmpty()) {
+            return Map.of();
+        }
+        Set<String> distinct = new LinkedHashSet<>(playerIds);
+        distinct.remove(null);
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        List<AllianceDocument> documents = mongo.find(
+                Query.query(Criteria.where("members.playerId").in(distinct)),
+                AllianceDocument.class, AllianceDocument.COLLECTION);
+        Map<String, Alliance> out = new LinkedHashMap<>();
+        for (AllianceDocument document : documents) {
+            Alliance alliance = document.toDomain(rules.allianceRules());
+            for (String memberId : distinct) {
+                if (alliance.memberIds().contains(memberId)) {
+                    out.put(memberId, alliance.copy());
+                }
+            }
+        }
+        return out;
     }
 
     @Override

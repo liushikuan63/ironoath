@@ -383,15 +383,50 @@ class OpsEndpointTest {
         JsonNode all = okData(getRoot(CRASH_RECENT_URL + "?limit=20", OPS_TOKEN));
         assertThat(all.get("total").asInt()).isEqualTo(2);
         assertThat(all.get("listed").asInt()).isEqualTo(2);
-        JsonNode first = all.get("crashes").get(0);
-        assertThat(first.get("traceId").asText()).as("按服务端收到时刻倒序").isEqualTo("t-2");
-        assertThat(first.has("stack")).as("列表带堆栈会让只读端点变成全仓最大的响应").isFalse();
+        List<Long> ts = serverTsOf(all.get("crashes"));
+        assertThat(ts).as("每行都得带排序键，否则下面那条倒序断言是空转的").hasSize(2);
+        // 断言「倒序」这个不变量，不断言「第 0 条是我最后发的那一条」：两次 POST 落在同一毫秒时
+        // serverTs 相等，而存储层自己写明并列次序不是契约（InMemoryTrackStore.recentCrashes 的注释：
+        // 内存版按插入序、生产版 Mongo 按 _id 定序）。拿具体某一条钉死位置，就是这条用例 flaky 的根因。
+        // 「时刻严格不同时的先后」由 TrackStoreEquivalenceTest 用可控 serverTs 在两版存储上各自钉住。
+        for (int i = 1; i < ts.size(); i++) {
+            assertThat(ts.get(i - 1)).as("明细按服务端收到时刻倒序，第 %d 行不该比上一行新", i)
+                    .isGreaterThanOrEqualTo(ts.get(i));
+        }
+        for (JsonNode row : all.get("crashes")) {
+            assertThat(row.has("stack"))
+                    .as("列表带堆栈会让只读端点变成全仓最大的响应（每一行都不带）").isFalse();
+        }
+        assertThat(stackCharsOf(all.get("crashes"), "t-1")).as("长度是「要不要去取明细」的依据")
+                .isEqualTo(stack.length());
+        assertThat(stackCharsOf(all.get("crashes"), "t-2")).as("短堆栈的长度按它自己算")
+                .isEqualTo("短堆栈".length());
 
         JsonNode one = okData(getRoot(CRASH_RECENT_URL + "?limit=1", OPS_TOKEN));
         assertThat(one.get("listed").asInt()).isEqualTo(1);
         assertThat(one.get("total").asInt()).as("limit 只砍明细，不砍总数").isEqualTo(2);
-        assertThat(one.get("crashes").get(0).get("stackChars").asInt())
-                .as("长度是「要不要去取明细」的依据").isEqualTo("短堆栈".length());
+        // 截断只能从最旧那头砍：留下的必须是最大 serverTs 那一条。这条不依赖两次 POST 谁先落库。
+        assertThat(serverTsOf(one.get("crashes"))).as("limit 砍掉的是最新的，不是最旧的")
+                .containsExactly(java.util.Collections.max(ts));
+    }
+
+    /** 明细行的服务端收到时刻，按响应里的顺序给出。 */
+    private static List<Long> serverTsOf(JsonNode crashes) {
+        List<Long> out = new ArrayList<>();
+        for (JsonNode row : crashes) {
+            out.add(row.get("serverTs").asLong());
+        }
+        return out;
+    }
+
+    /** 按 traceId 取 stackChars —— 拿下标取会连带断言排序，而并列时刻的排序不是契约。 */
+    private static int stackCharsOf(JsonNode crashes, String traceId) {
+        for (JsonNode row : crashes) {
+            if (traceId.equals(row.get("traceId").asText())) {
+                return row.get("stackChars").asInt();
+            }
+        }
+        throw new AssertionError("明细里没有 traceId=" + traceId + "，按 traceId 取的断言无从落地");
     }
 
     @Test

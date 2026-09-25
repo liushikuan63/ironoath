@@ -18,8 +18,10 @@ import { canBuy, SHOP_TABS, shopRowStateText } from '../game/shop/ShopPanel'
 import type { ShopRow } from '../game/shop/ShopPanel'
 import type { ShopView } from '../game/session/AppRoot'
 import type { ShopCurrency } from '../net/generated/ShopProtocol'
-import { applySystemUiFont } from './UiFont'
-import { truncatedNotice } from '../game/ui/TruncatedList'
+import { applySystemUiFont, capWidth } from './UiFont'
+import {
+  clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
+} from '../game/ui/PanelPaging'
 
 const { ccclass } = _decorator
 
@@ -63,6 +65,16 @@ export class ShopPanelView extends Component {
   private readonly rowButtonCaption: Label[] = []
   /** 每一行当前对应哪一个 rowId（池化节点复用时行数据会变，点击要知道点的是谁）。 */
   private readonly rowIds: Array<string | null> = []
+  /** 当前页（0 起）。换币种归零、同一币种重新拉取只 clamp（见 attach）。 */
+  private page = 0
+  /** 上一次 attach 是哪一页的账本，用来分辨"换页签"与"买完重拉同一页"。 */
+  private lastCurrency: ShopCurrency | null = null
+  private prevPageButton: Node | null = null
+  private nextPageButton: Node | null = null
+  private prevPageCaption: Label | null = null
+  private nextPageCaption: Label | null = null
+  private canPrev = false
+  private canNext = false
 
   /** 切页签：由编排层去拉那一页（四个币种的账本各是各的）。 */
   onTab: ((currency: ShopCurrency) => void) | null = null
@@ -87,6 +99,12 @@ export class ShopPanelView extends Component {
 
   /** 装载一整块商店视图（编排层组装好的，本文件不改其中任何判定）。 */
   attach(shopView: ShopView): void {
+    // 换币种归零（四个账本是四份不同的货架），买完重拉同一页只 clamp：
+    // 兑换后编排层会再 attach 一次，归零会把玩家刚买的那一行从屏上弹走
+    if (this.lastCurrency !== shopView.currency) {
+      this.page = 0
+      this.lastCurrency = shopView.currency
+    }
     this.panel = shopView
     this.render()
   }
@@ -110,8 +128,10 @@ export class ShopPanelView extends Component {
     this.balanceLabel = this.addLabel('Balance', 0, top - 50, COLOR_TEXT, 17)
     // 这一行两用：`open=false` 时的那句话，或上一次兑换的结果（临时提示）
     this.noticeLabel = this.addLabel('Notice', 0, top - 76, COLOR_TEXT_DIM, 15)
-    this.noticeLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, 20))
-    this.noticeLabel.overflow = Label.Overflow.SHRINK
+    capWidth(this.noticeLabel, PANEL_WIDTH - 2 * PADDING)
+    // 两颗翻页键与那句页码同一行、摆在两端，y 由 render() 跟着最后一行走
+    this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
+    this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
 
     const startX = -(SHOP_TABS.length - 1) * TAB_WIDTH / 2
     SHOP_TABS.forEach((tab, index) => {
@@ -146,6 +166,62 @@ export class ShopPanelView extends Component {
     }
   }
 
+  /** 一颗 64×28 的翻页键，照本文件行上「兑换」那颗的画法。 */
+  private buildPagerButton(name: string, x: number): Node {
+    const node = new Node(name)
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(64, 28))
+    node.setPosition(new Vec3(x, 0, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = 1
+    graphics.roundRect(-32, -14, 64, 28, 4)
+    graphics.fill()
+    graphics.stroke()
+    const caption = this.addLabel('Caption', 0, 0, COLOR_TEXT, 13, node)
+    caption.string = name === 'PrevPageButton' ? '上一页' : '下一页'
+    // 建出来先收着：不先收的话"货架还没到"那一态会露着两颗点了没反应的键
+    //（#345 口径，#449 与 #450 各修过一次同一族）
+    node.active = false
+    if (name === 'PrevPageButton') {
+      this.prevPageCaption = caption
+      node.on('touch-start', () => this.turnPage(-1), this)
+    } else {
+      this.nextPageCaption = caption
+      node.on('touch-start', () => this.turnPage(1), this)
+    }
+    return node
+  }
+
+  /**
+   * 翻一页。灰掉的那一侧直接不吃：`clampPage` 也会把越界的页号夹回来，
+   * 但"点了什么反应都没有"正是 #345 那条口径要挡的观感。
+   */
+  private turnPage(delta: number): void {
+    if (delta < 0 && !this.canPrev) return
+    if (delta > 0 && !this.canNext) return
+    this.page += delta
+    this.render()
+  }
+
+  /** 两颗键跟着这一屏让出来的那一格走；只有一页时整对收掉（#345）。 */
+  private paintPager(pages: number, rowY: number): void {
+    const paged = pages > 1
+    this.canPrev = this.page > 0
+    this.canNext = this.page < pages - 1
+    for (const [button, caption, usable] of [
+      [this.prevPageButton, this.prevPageCaption, this.canPrev],
+      [this.nextPageButton, this.nextPageCaption, this.canNext],
+    ] as Array<[Node | null, Label | null, boolean]>) {
+      if (button === null || caption === null) continue
+      button.active = paged
+      button.setPosition(new Vec3(button.position.x, rowY, 0))
+      caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+    }
+  }
+
   private createRow(index: number): {
     node: Node; name: Label; price: Label; limit: Label; state: Label
     button: Node; buttonCaption: Label
@@ -162,19 +238,15 @@ export class ShopPanelView extends Component {
     const name = this.addLabel('Name', -PANEL_WIDTH / 2 + PADDING + 12, 15, COLOR_TEXT, 18, node)
     name.horizontalAlign = Label.HorizontalAlign.LEFT
     name.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    name.node.getComponent(UITransform)?.setContentSize(new Size(320, 24))
-    name.overflow = Label.Overflow.SHRINK
+    capWidth(name, 320)
     const price = this.addLabel('Price', -PANEL_WIDTH / 2 + PADDING + 12, -9, COLOR_COPPER_GOLD, 15, node)
     price.horizontalAlign = Label.HorizontalAlign.LEFT
     price.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    price.node.getComponent(UITransform)?.setContentSize(new Size(320, 22))
-    price.overflow = Label.Overflow.SHRINK
+    capWidth(price, 320)
     const limit = this.addLabel('Limit', 0, 6, COLOR_TEXT_DIM, 14, node)
-    limit.node.getComponent(UITransform)?.setContentSize(new Size(230, 20))
-    limit.overflow = Label.Overflow.SHRINK
+    capWidth(limit, 230)
     const state = this.addLabel('State', 0, -14, COLOR_TEXT_DIM, 14, node)
-    state.node.getComponent(UITransform)?.setContentSize(new Size(230, 20))
-    state.overflow = Label.Overflow.SHRINK
+    capWidth(state, 230)
 
     const button = new Node('BuyButton')
     button.layer = node.layer
@@ -253,18 +325,30 @@ export class ShopPanelView extends Component {
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     const navTop = -size.height / 2 + BOTTOM_RESERVED
     const usable = topY + ROW_HEIGHT / 2 - navTop
-    const maxRows = Math.max(1, Math.floor(usable / (ROW_HEIGHT + ROW_GAP)))
-    const drawn = Math.min(panel.rows.length, maxRows)
+    // 容量取"按窗口算出来的行数"与"实际建出来的行数"里小的那一个：行池只有 `ROW_POOL_SIZE`
+    // 行，从前按窗口算出 7 就把表头写成 7、把"另有 N 件"少算一件 —— 屏上只有 6 行（#244 那一族）
+    const capacity = Math.max(1,
+      Math.min(Math.floor(usable / (ROW_HEIGHT + ROW_GAP)), this.rowNodes.length))
+    const total = panel.rows.length
+    // 共几页、夹到哪一页、切哪一段用同一个 perPage（`PanelPaging` 那条原话）：从前这里
+    // 只画第一屏再把剩下的写成「另有 N 件未显示」，那几件商品玩家永远买不到（#307）
+    const perPage = contentPerPage(total, capacity)
+    const pages = pageCount(total, perPage)
+    this.page = clampPage(this.page, total, perPage)
+    const slice = pageWindow(total, this.page, perPage)
+    const rows = panel.rows.slice(slice.start, slice.end)
+    const drawn = rows.length
 
     if (this.headerLabel !== null) {
-      this.headerLabel.string = `货架 ${drawn}/${panel.rows.length} 件`
+      this.headerLabel.string = `货架 ${drawn}/${total} 件`
         + (panel.open ? '' : '（这一页暂未开放）')
-        + (panel.rows.length > drawn ? ` · ${truncatedNotice('件', panel.rows.length - drawn)}` : '')
+        + (pages > 1 ? ` · ${pageNotice(this.page, pages)}` : '')
       this.headerLabel.color = panel.open ? COLOR_COPPER_GOLD : COLOR_WARNING
     }
+    this.paintPager(pages, topY - drawn * (ROW_HEIGHT + ROW_GAP) - 8)
 
     this.rowNodes.forEach((node, index) => {
-      const row: ShopRow | undefined = panel.rows[index]
+      const row: ShopRow | undefined = rows[index]
       node.active = index < drawn && row !== undefined
       if (row === undefined || index >= drawn) {
         this.rowIds[index] = null

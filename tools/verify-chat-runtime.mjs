@@ -5,6 +5,7 @@
  * 依赖：node、playwright、**已启动的 dev 服务端**、已构建的 `client/build/web-mobile`。
  *
  * 用法：
+ * 必填：BACKEND_ORIGIN=http://localhost:8199 —— 不给会立刻退 2 并点名这个变量：静默回落到别的后端，读数错得像产品缺陷（台账 #371/#372）；端口 CHAT_PORT（默认 8094，同机并发时换一个）
  *   BACKEND_ORIGIN=http://localhost:8155 node tools/verify-chat-runtime.mjs
  *
  * <p><b>为什么在浏览器里量小游戏的界面</b>：面板、频道按钮与输入框是同一份代码
@@ -28,11 +29,17 @@ import { existsSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 // 产物目录可以用 CHAT_ROOT 换：两个会话同时构建时，主产物目录会被另一边清空重建
 // （Cocos 的 web-mobile 构建先删后写），本工具指向自己的那份就不会互相踩
 const ROOT = path.resolve(process.env.CHAT_ROOT ?? 'client/build/web-mobile')
-const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+// 必须显式给后端：静默回落到 http://localhost:8080 等于"打到另一台机器上读数"，读数错得像产品缺陷
+// （2026-09-21 实测：变量名传错时一份量具红了 13 条，客户端与夹具都没错 —— 台账 #371/#372）。
+const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
+  console.error('[verify-chat-runtime] 缺 BACKEND_ORIGIN：不给就退回 http://localhost:8080，那可能不是本轮要打的后端（dev 约定 http://localhost:8199）')
+  process.exit(2)
+})()
 const PORT = Number(process.env.CHAT_PORT ?? 8094)
 const SHOT = process.env.CHAT_SHOT ?? 'D:/tmp/chat-panel.png'
 
@@ -168,26 +175,59 @@ function installHelpers() {
       }
       return titles
     },
-    /** 点选择器里标题包含某段文字的那一项。 */
-    tapChoice: (contains) => {
+    /**
+     * 弹层有没有被后加进来的兄弟盖住（#320 那条同族判据）：
+     * 聊天行与消息行都是每次刷新重新 addChild 的，排在弹层后面就把它压住。
+     */
+    pickerCovered: () => {
       const scene = window.cc.director.getScene()
       const stack = [...scene.children]
       while (stack.length > 0) {
         const node = stack.pop()
-        if (node.name.startsWith('Choice-') && node.activeInHierarchy) {
-          const texts = []
-          for (const child of node.children) {
-            const label = child.getComponent ? child.getComponent('cc.Label') : null
-            if (label !== null && label !== undefined && label.string !== '') {
-              texts.push(label.string)
-            }
+        if (node.name === 'ChoiceOverlay' && node.activeInHierarchy) {
+          const parent = node.parent
+          if (parent === null) return 0
+          const at = node.getSiblingIndex()
+          let above = 0
+          for (const sibling of parent.children) {
+            if (sibling.active && sibling.getSiblingIndex() > at) above += 1
           }
-          if (texts.some((text) => text.includes(contains))) {
-            node.emit('touch-start')
-            return 'ok'
-          }
+          return above
         }
         for (const child of node.children) stack.push(child)
+      }
+      return null
+    },
+    /** 点选择器里标题包含某段文字的那一项。 */
+    tapChoice: (contains) => {
+      const scene = window.cc.director.getScene()
+      const stack = [...scene.children]
+      let overlay = null
+      while (stack.length > 0) {
+        const node = stack.pop()
+        if (node.name === 'ChoiceOverlay' && node.activeInHierarchy) { overlay = node; break }
+        for (const child of node.children) stack.push(child)
+      }
+      if (overlay === null) return 'no-overlay:' + contains
+      // 菜单一共六项而弹层每页四项：「拉黑」「关注他」在第 2 页。
+      // 翻页是这份弹层自己的导航，玩家也是这么够到那些项的 —— 探针不翻就等于判"这一项不存在"
+      for (let page = 0; page < 4; page += 1) {
+        const hit = (overlay.children || []).find((row) => row.name.startsWith('Choice-')
+          && row.activeInHierarchy
+          && (row.children || []).some((child) => (child.getComponent('cc.Label')?.string ?? '')
+            .includes(contains)))
+        if (hit !== undefined) {
+          hit.emit('touch-start')
+          return 'ok'
+        }
+        const next = (overlay.children || []).find((c) => c.name === 'ChoiceNext' && c.activeInHierarchy)
+        if (next === undefined) return 'no-choice:' + contains
+        const before = (overlay.children || []).filter((c) => c.activeInHierarchy
+          && c.name.startsWith('Choice-')).map((c) => c.name).join(',')
+        next.emit('touch-start')
+        const after = (overlay.children || []).filter((c) => c.activeInHierarchy
+          && c.name.startsWith('Choice-')).map((c) => c.name).join(',')
+        if (before === after) return 'no-choice:' + contains
       }
       return 'no-choice:' + contains
     },
@@ -253,6 +293,7 @@ async function main() {
   await page.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
     null, { timeout: 60_000 })
+  await hideGuideOverlay(page)
   const bootDeadline = Date.now() + 45_000
   while (boot === null && Date.now() < bootDeadline) {
     await page.waitForTimeout(500)
@@ -357,11 +398,15 @@ async function main() {
   const openTap = await page.evaluate(() => window.__chat.tapRowAction('给你发来一条私信'))
   const openedTexts = await waitFor(list => list.some(text => text.includes(privateText)))
   verdict(openTap === 'ok' && openedTexts.some(text => text.includes(privateText)),
-    '点「打开」后拉到了那条私聊正文，且未读清零',
+    '点「打开」后拉到了那条私聊正文',
     `tap=${openTap} 私聊按钮=${openedTexts.filter(t => t.startsWith('私聊')).join('、')}`)
-  verdict(!openedTexts.some(text => text === '私聊（1）'),
+  // 未读数要等 `/social/ackEvents` 回写完才刷，和"正文出现在屏上"之间没有任何先后保证 ——
+  // 拿上一格的快照判这一格就是三次里翻红一次的那个竞态（#416）：判据必须自己轮询到状态。
+  // 轮询超时返回**最后一次读数**（不是返回"满足"），所以真不消账时这一格仍然红。
+  const clearedTexts = await waitFor(list => !list.some(text => text === '私聊（1）'))
+  verdict(!clearedTexts.some(text => text === '私聊（1）'),
     '打开会话后未读归零（走的是 /social/ackEvents 那本账）',
-    `私聊相关文本 → ${openedTexts.filter(t => t.startsWith('私聊')).join('、')}`)
+    `私聊相关文本 → ${clearedTexts.filter(t => t.startsWith('私聊')).join('、')}`)
 
   // ---- 5) 分享入口的客户端半边：同形消息长按钮，点它会去拉回放 ----
   // 真实分享要从回放页发起，而探针账号是全新号（没有兵力 ⇒ 打不了任何一关 ⇒ 拿不到战报；
@@ -404,6 +449,10 @@ async function main() {
     && menuTitles.some(t => t.includes('举报：疑似作弊')) && menuTitles.some(t => t.includes('举报：其他')),
   '消息行的按钮弹出一层选择器：第一页是四种举报原因（拉黑在第 2 页，与选择器 4 项/页一致）',
   `tap=${menuTap} 选项=${menuTitles.join(' / ').slice(0, 90)}`)
+
+  const covered = await page.evaluate(() => window.__chat.pickerCovered())
+  verdict(covered === 0, '选择器没有被后加进来的消息行盖住（#320 同族判据，聊天是第四个宿主）',
+    `排在弹层之后的激活兄弟=${covered}`)
 
   await page.evaluate(() => window.__chat.tapChoice('举报：刷屏'))
   await page.waitForTimeout(400)

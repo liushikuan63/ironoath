@@ -2,6 +2,7 @@ package com.ironoath.web.store.memory;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
@@ -94,8 +95,37 @@ public final class InMemorySocialStore implements SocialStore {
 
     @Override
     public synchronized Optional<Squad> squadOf(String playerId) {
+        return Optional.ofNullable(squadOfLocked(playerId)).map(Squad::copy);
+    }
+
+    /**
+     * 一批玩家所属小队，走的正是 {@link #squadOf} 那两条反查表，所以两口的口径不可能漂。
+     *
+     * <p>同一支小队会被它的每个成员各命中一次，这里按 id 去重后再 copy —— 逐个点查时
+     * 「每人一份副本」无所谓，批量之后如果还逐个 copy，同队五人会拿到五份等价但不同的对象。
+     */
+    @Override
+    public synchronized Map<String, Squad> squadsOf(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Squad> bySquadId = new HashMap<>();
+        Map<String, Squad> out = new HashMap<>();
+        for (String playerId : playerIds) {
+            Squad squad = squadOfLocked(playerId);
+            if (squad == null) {
+                continue;
+            }
+            Squad shared = bySquadId.computeIfAbsent(squad.id(), key -> squad.copy());
+            out.put(playerId, shared.copy());
+        }
+        return out;
+    }
+
+    /** 反查表里的小队；调用方负责 copy，两个口共用这一份判据。 */
+    private Squad squadOfLocked(String playerId) {
         String squadId = squadIdByPlayer.get(playerId);
-        return squadId == null ? Optional.empty() : Optional.ofNullable(squadsById.get(squadId)).map(Squad::copy);
+        return squadId == null ? null : squadsById.get(squadId);
     }
 
     @Override
@@ -174,6 +204,32 @@ public final class InMemorySocialStore implements SocialStore {
     public synchronized Optional<Alliance> allianceOf(String playerId) {
         String allianceId = allianceIdByPlayer.get(playerId);
         return allianceId == null ? Optional.empty() : Optional.ofNullable(alliancesById.get(allianceId)).map(Alliance::copy);
+    }
+
+    /**
+     * 一批玩家各自所属的联盟，走的正是 {@link #allianceOf} 那张反查索引，所以两口的口径不可能漂。
+     *
+     * <p>同一个盟的多个成员各拿一份副本（与 {@link #squadsOf} 同一条）：组织榜只读名字与缩写，
+     * 但端口这条"读返回副本"的约定不按调用方破例 —— 破了就等于给"改了不 save"留一个只在
+     * 批量口才复现的窗口。
+     */
+    @Override
+    public synchronized Map<String, Alliance> alliancesOf(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Alliance> out = new HashMap<>();
+        for (String playerId : playerIds) {
+            String allianceId = allianceIdByPlayer.get(playerId);
+            if (allianceId == null) {
+                continue;
+            }
+            Alliance stored = alliancesById.get(allianceId);
+            if (stored != null) {
+                out.put(playerId, stored.copy());
+            }
+        }
+        return out;
     }
 
     /**

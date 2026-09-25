@@ -27,7 +27,7 @@ import com.ironoath.common.num.FixedPoint;
  * 5→8→10、30→50→80→120→150、扩容 base 20000 增长 1.8、帮助每次 1% 上限 50%、
  * 聊天 3 次 / 10 秒。手抄配置值到测试夹具有漂移风险（与 BattleSimulatorTest 同一类问题，
  * 已记入待办清单），但这些数字同时是 B10 文档明写的验收标准，
- * 所以「表值 == 文档值」这一层由 SquadAllianceConfigTest 在 game-config 侧断言。
+ * 所以「表值 == 文档值」这一层由 SocialConfigTest 的 squadMemberCapLadder 与 allianceMemberCapLadder 在 game-config 侧断言。
  */
 class SocialSystemTest {
 

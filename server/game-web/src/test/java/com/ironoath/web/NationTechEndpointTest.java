@@ -182,6 +182,9 @@ class NationTechEndpointTest {
         long before = treasury(f.king);
 
         JsonNode asMate = get200("/nation/tech", f.mate);
+        // 先钉住"有行"，下面那条逐行断言才不是空判：表里 4 项，成员看到的也必须是 4 项
+        // （与上面 `treeComesFromTheTable…` 那条同一口径，#342 同族）。
+        assertThat(asMate.get("techs")).as("面板必须把 4 项都画出来").hasSize(4);
         assertThat(asMate.get("techs")).allSatisfy(one -> assertThat(one.get("blockedReason").asText())
                 .as("对没有权限的人，每一行的拦因都是权限而不是钱（他连花的资格都没有）").isNotEqualTo("NONE"));
         assertThat(row(asMate, GRAIN_ROW).get("canResearch").asBoolean()).isFalse();

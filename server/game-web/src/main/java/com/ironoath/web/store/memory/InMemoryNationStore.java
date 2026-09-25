@@ -1,6 +1,7 @@
 package com.ironoath.web.store.memory;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -157,6 +158,27 @@ public final class InMemoryNationStore implements NationStore {
     public synchronized Optional<Nation> findByAlliance(String allianceId) {
         String id = allianceId == null ? null : idByAlliance.get(allianceId);
         return id == null ? Optional.empty() : findById(id);
+    }
+
+    /**
+     * 一批联盟各自所属的国家，走的正是 {@link #findByAlliance} 那张 {@code idByAlliance} 反查索引，
+     * 所以两口的口径不可能漂（退国的联盟在两张路上一起消失，见 {@link #index} 的注释）。
+     */
+    @Override
+    public synchronized Map<String, Nation> nationsByAlliance(Collection<String> allianceIds) {
+        if (allianceIds == null || allianceIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Nation> out = new LinkedHashMap<>();
+        for (String allianceId : allianceIds) {
+            String nationId = allianceId == null ? null : idByAlliance.get(allianceId);
+            if (nationId == null) {
+                continue;
+            }
+            // 逐份重建：同盟多个联盟键命中同一个国家时，各拿一份副本，不共享对象
+            findById(nationId).ifPresent(nation -> out.put(allianceId, nation));
+        }
+        return out;
     }
 
     @Override

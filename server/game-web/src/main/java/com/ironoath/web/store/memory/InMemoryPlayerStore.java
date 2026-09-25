@@ -1,5 +1,6 @@
 package com.ironoath.web.store.memory;
 
+import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 
@@ -7,6 +8,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -64,6 +66,45 @@ public final class InMemoryPlayerStore implements PlayerRepository {
             }
         }
         return out;
+    }
+
+    @Override
+    public Map<String, PlayerBrief> findBriefs(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, PlayerBrief> out = new LinkedHashMap<>();
+        for (String playerId : playerIds) {
+            if (playerId == null) {
+                continue;
+            }
+            PlayerSave stored = byPlayerId.get(playerId);
+            if (stored != null) {
+                // 与 findByPlayerIds 同一把锁：投影不需要 copy（它是新造的不可变记录），
+                // 但仍要锁 —— lastLoginAt 是个非 volatile 的 long，touchLogin 正在写它，
+                // 而无锁读一个 long 在 JVM 规范里并不保证一次读完（撕裂出的半个新半个旧
+                // 会画出一个 1970 年附近的"最近活跃"，且只在并发登录时偶发）。
+                // Mongo 侧没有这个问题（服务端单文档更新是原子的），所以这条只能在这里钉。
+                synchronized (stored) {
+                    out.put(playerId, new PlayerBrief(playerId, stored.nickName(), stored.cityLevel(),
+                            stored.lastLoginAt(),
+                            stored.power() == null ? 0L : stored.power().displayPower()));
+                }
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public OptionalLong findCreatedAt(String playerId) {
+        if (playerId == null) {
+            return OptionalLong.empty();
+        }
+        PlayerSave stored = byPlayerId.get(playerId);
+        // 不 copy 也不加锁：建档时刻是身份字段，建号那一次写完就没有第二个写手
+        // （见 PlayerDocument.createdAt 上那条 mongo-save-exempt 登记），
+        // 所以这里没有 findBriefs 里 lastLoginAt 那种与并发登录抢读的撕裂风险。
+        return stored == null ? OptionalLong.empty() : OptionalLong.of(stored.createdAt());
     }
 
     @Override
