@@ -30,4 +30,7 @@ fi
 # 2026-09-22 实测：删掉两份测试文件后 `npm test` 仍报 925（真数 920），幽灵就是留在 outDir 里的 .js。
 rm -rf build-test
 npx --no-install tsc -p tsconfig.test.json
-node --test "build-test/tests/*.test.js"
+# 引号形态交给 node 自己展开（CI 的 node 20.20.2 与本机 20.13/24 实测都不展开，
+# 2026-09-26 合并后 CI 与本地都死在 "Could not find ...*.test.js"）；失败即回退 shell 展开，
+# 两条路径跑的是同一批文件，判据不变。
+node --test "build-test/tests/*.test.js" || node --test build-test/tests/*.test.js
