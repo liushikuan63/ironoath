@@ -14,6 +14,7 @@ import {
   Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3,
 } from 'cc'
 import type { StaminaDetailView } from '../game/ui/StaminaDetail'
+import { applySystemUiFont } from './UiFont'
 
 const PANEL_W = 360
 const PANEL_H = 260
@@ -141,7 +142,7 @@ export class StaminaDetailOverlay {
     parent.addChild(node)
     node.addComponent(UITransform).setContentSize(new Size(width, size + 8))
     node.setPosition(new Vec3(x, y, 0))
-    const label = node.addComponent(Label)
+    const label = applySystemUiFont(node.addComponent(Label))
     label.string = ''
     label.color = color
     label.fontSize = size
