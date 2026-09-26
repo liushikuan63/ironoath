@@ -46,6 +46,15 @@ declare module 'cc' {
     getUILocation(): Vec2
   }
 
+  /**
+   * 鼠标事件的最小面。Web 端内城镜头用滚轮缩放（`mouse-wheel`），只读 getScrollY。
+   * 真机没有滚轮，那条路径由双指捏合与两颗缩放键覆盖。
+   */
+  export class EventMouse {
+    getScrollY(): number
+    getUILocation(): Vec2
+  }
+
   export class Size {
     constructor(width?: number, height?: number)
     width: number
@@ -227,6 +236,15 @@ declare module 'cc' {
     static HorizontalAlign: { LEFT: number; CENTER: number; RIGHT: number }
     static VerticalAlign: { TOP: number; CENTER: number; BOTTOM: number }
     static Overflow: { NONE: number; CLAMP: number; SHRINK: number; RESIZE_HEIGHT: number }
+  }
+
+  /**
+   * 文字描边组件。城景是亮暗交错的厚涂，小字压在上面没有描边就读不出来
+   * （内城建筑名 1:1 目视实测：字与城墙同亮度时几乎隐形）。真实 cc 有同名组件。
+   */
+  export class LabelOutline extends Component {
+    color: Color
+    width: number
   }
 
   export class Canvas extends Component {

@@ -7,7 +7,8 @@
  */
 
 import {
-  _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, sys, view,
+  _decorator, Color, Component, EventMouse, EventTouch, Graphics, Label, LabelOutline, Node, Size, Sprite,
+  UITransform, Vec3, sys, view,
 } from 'cc'
 import {
   CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, cancelMessage, collectMessage,
@@ -55,6 +56,12 @@ const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 const COLOR_WARNING = new Color(200, 96, 64, 255)
 const COLOR_GOOD = new Color(120, 176, 96, 255)
+/**
+ * 建筑名 / 等级字的描边色。城景是亮暗交错的厚涂，小字不描边就与城墙同亮度、几乎读不出来
+ * （2026-09-26 的 1:1 裁剪目视：「伐木场」三个字压在城墙上时只剩轮廓可猜）。
+ * 取近黑的暖色而不是纯黑：纯黑描边在亮山脊上会现出一圈硬边，反而更"贴"。
+ */
+const COLOR_LABEL_OUTLINE = new Color(12, 9, 7, 210)
 
 /**
  * 五区地皮色。色值真源在 `CitySceneAnchors.DISTRICT_TINT_RGB`（引擎无关层）。
@@ -193,6 +200,24 @@ const NAV_BAR_HEIGHT = 76
 /** 右上角「一键收割」与左下角「学院 · 研究」共用的键宽（origin 线的实测值）。 */
 const CORNER_KEY_WIDTH = 132
 
+/**
+ * 内城镜头（用户 2026-09-26：「内城地图要可以放大缩小，默认为放大，只显示主城周围建筑」）。
+ *
+ * <p>**为什么默认是放大而不是"整城尽收"**：36 格铺满 960×600 时，一格只有 ~150 物理像素宽，
+ * 建筑正稿缩到那个尺寸就读不出造型，玩家也分不清哪栋是哪栋（审计 §5.3「信息辨识度极低」）。
+ * 默认 1.8 倍并对准主堡，一屏只剩主堡周围那几栋 —— 每栋都大到能认出，
+ * 想看全城就缩小（下限 1.0 = 改动前那一屏，一寸不多留）。
+ *
+ * <p>**缩放的是"城景舞台"这一个容器**（底图 + 36 格），HUD（资源条 / 选择栏 / 提示）不跟着缩：
+ * 读数与按钮的尺寸是排版契约，缩放了就会与量具钉的几何分家。
+ */
+const CITY_ZOOM_MIN = 1
+const CITY_ZOOM_MAX = 2.4
+const CITY_ZOOM_DEFAULT = 1.8
+const CITY_ZOOM_STEP = 0.3
+const ZOOM_BUTTON_WIDTH = 40
+const ZOOM_BUTTON_HEIGHT = 34
+
 type RowAction = 'build' | 'upgrade' | 'speedAd' | 'speedGold' | 'collect' | 'pause' | 'resume' | 'cancel'
 
 interface GridTileRefs {
@@ -224,6 +249,20 @@ export class CityPanelView extends Component {
 
   private card: Node | null = null
   private backgroundNode: Node | null = null
+  /** 城景舞台：底图 + 36 格都在这个容器里。缩放与平移只动它，HUD 不跟着缩。 */
+  private stage: Node | null = null
+  /** 当前缩放倍数，以及镜头对准的那个点（舞台本地坐标）。 */
+  private zoom = CITY_ZOOM_DEFAULT
+  private focusX = 0
+  private focusY = 0
+  /** 玩家自己动过镜头（缩放 / 拖动）之后就不再按数据自动回中 —— 否则每次刷新都把玩家拽回主堡。 */
+  private viewAdjusted = false
+  /** 上一次按哪个倍数画的标注；倍数变了要重画（标注按 1/zoom 画，见 `paintTile`）。 */
+  private lastPaintedZoom = 0
+  /** 单指拖动与双指捏合的上一次触点（屏幕像素；差值除以 zoom 才是舞台上的位移）。 */
+  private lastPointerX = 0
+  private lastPointerY = 0
+  private pinchDistance = 0
   /** 上一次布局用的视口尺寸；与当前不符就整棵重建（resize 不重排是审计 §5.2 的硬缺陷）。 */
   private lastViewWidth = 0
   private lastViewHeight = 0
@@ -326,6 +365,8 @@ export class CityPanelView extends Component {
     this.buildPicker = null
     this.backgroundNode?.destroy()
     this.backgroundNode = null
+    // 舞台是 Background 的子节点，随它一起销毁；这里只断引用，免得留着指已销毁的节点
+    this.stage = null
     this.card?.destroy()
     this.card = null
     this.gridTiles.length = 0
@@ -342,6 +383,7 @@ export class CityPanelView extends Component {
     this.selectionBarBackground = null
     this.frameGraphics = null
     this.referenceStage = false
+    this.lastPaintedZoom = 0
   }
 
   /**
@@ -444,19 +486,32 @@ export class CityPanelView extends Component {
     graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
 
+    // 城景舞台：底图与 36 格都挂在这一层，缩放与拖动只动它。
+    // 放在 Background **里面**（而不是与它平级）有两个理由：① 深色底不跟着缩，缩到 1 倍以下时
+    //    四周露出来的是它，读起来像"一幅画放在桌上"而不是"图被裁了"；
+    //    ② `teardown` 销毁 Background 就把它一起带走，不会留下半棵孤儿树。
+    const stage = new Node('CityStage')
+    stage.layer = node.layer
+    node.addChild(stage)
+    // 必须有铺满屏的 UITransform：触摸命中按它算，少了这层就收不到拖动与捏合
+    stage.addComponent(UITransform).setContentSize(new Size(width, height))
+    this.stage = stage
+    this.wireStageInput(stage)
+
     const reference = new Node('CityReferenceScene')
-    reference.layer = node.layer
-    node.addChild(reference)
+    reference.layer = stage.layer
+    stage.addChild(reference)
     reference.addComponent(UITransform).setContentSize(new Size(width, height))
     if (applySimpleSprite(reference, 'city.scene.reference', width, height)) {
       this.referenceStage = true
+      this.applyStageTransform()
       return
     }
 
     // 参考图是满屏城景：地表先铺满全屏，远山再压在上半部，城内只叠道路与建筑。
     const ground = new Node('CityGround')
-    ground.layer = node.layer
-    node.addChild(ground)
+    ground.layer = stage.layer
+    stage.addChild(ground)
     ground.addComponent(UITransform).setContentSize(new Size(width, height))
     applyTiledSprite(ground, 'city.ground', width, height)
     const groundSprite = ground.getComponent(Sprite)
@@ -467,14 +522,168 @@ export class CityPanelView extends Component {
     const ridgeWidth = width * 1.02
     const ridgeHeight = ridgeWidth * 525 / 1344
     const ridge = new Node('CityRidge')
-    ridge.layer = node.layer
-    node.addChild(ridge)
+    ridge.layer = stage.layer
+    stage.addChild(ridge)
     ridge.setPosition(new Vec3(0, height / 2 - ridgeHeight / 2 + 72, 0))
     applySimpleSprite(ridge, 'city.ridge', ridgeWidth, ridgeHeight)
     const ridgeSprite = ridge.getComponent(Sprite)
     if (ridgeSprite !== null) {
       ridgeSprite.color = new Color(255, 255, 255, 142)
     }
+    this.applyStageTransform()
+  }
+
+  // ---------- 内城镜头 ----------
+
+  /**
+   * 舞台上的三种输入：滚轮缩放（Web）、双指捏合（真机）、单指拖动平移。
+   *
+   * <p>**为什么单指拖动会和"点中一栋楼"同时发生**：格子的选中挂在 `touch-start` 上
+   * （全仓量具都按这个事件名点格子，换事件名等于把所有探针的点击一起弄哑），
+   * 所以手指落下的那一刻选中就已经发生了，之后移动才被判成拖动。
+   * 代价是"从一栋楼上起手的拖动会顺手选中它" —— 选中只点亮底部详情条、不发任何写请求，
+   * 比"为了不误选而把拖动做不出来"便宜。
+   */
+  private wireStageInput(stage: Node): void {
+    // 事件名用字面量而不是 `Node.EventType.*`：与 WorldMap 同一口径，
+    // 也让 headless 类型桩不必为一张常量表负责（桩里缺的是常量表，不是引擎能力）。
+    stage.on('mouse-wheel', (event: EventMouse) => {
+      this.viewAdjusted = true
+      this.zoomBy(event.getScrollY() > 0 ? CITY_ZOOM_STEP : -CITY_ZOOM_STEP)
+    }, this)
+    stage.on('touch-start', (event: EventTouch) => {
+      if (event.getAllTouches().length >= 2) {
+        this.pinchDistance = this.touchDistance(event)
+        return
+      }
+      const point = event.getUILocation()
+      this.lastPointerX = point.x
+      this.lastPointerY = point.y
+    }, this)
+    stage.on('touch-move', (event: EventTouch) => {
+      if (event.getAllTouches().length >= 2) {
+        const distance = this.touchDistance(event)
+        if (this.pinchDistance > 0 && distance > 0) {
+          this.viewAdjusted = true
+          this.zoomTo(this.zoom * (distance / this.pinchDistance))
+        }
+        this.pinchDistance = distance
+        return
+      }
+      const point = event.getUILocation()
+      const dx = point.x - this.lastPointerX
+      const dy = point.y - this.lastPointerY
+      this.lastPointerX = point.x
+      this.lastPointerY = point.y
+      if (dx === 0 && dy === 0) {
+        return
+      }
+      this.viewAdjusted = true
+      // 舞台放大了 zoom 倍：手指在屏幕上走 dx，镜头对准的那一点只要走 dx/zoom
+      this.setFocus(this.focusX - dx / this.zoom, this.focusY - dy / this.zoom)
+    }, this)
+    stage.on('touch-end', () => {
+      this.pinchDistance = 0
+    }, this)
+    stage.on('touch-cancel', () => {
+      this.pinchDistance = 0
+    }, this)
+  }
+
+  private touchDistance(event: EventTouch): number {
+    const touches = event.getAllTouches()
+    const first = touches[0]?.getUILocation()
+    const second = touches[1]?.getUILocation()
+    if (first === undefined || second === undefined) {
+      return 0
+    }
+    return Math.hypot(first.x - second.x, first.y - second.y)
+  }
+
+  private zoomBy(delta: number): void {
+    this.zoomTo(this.zoom + delta)
+  }
+
+  private zoomTo(target: number): void {
+    this.zoom = Math.min(CITY_ZOOM_MAX, Math.max(CITY_ZOOM_MIN, target))
+    this.applyStageTransform()
+  }
+
+  private setFocus(x: number, y: number): void {
+    this.focusX = x
+    this.focusY = y
+    this.applyStageTransform()
+  }
+
+  /**
+   * 把 `focus` 那一点搬到屏幕中心，再夹回"底图必须铺满视口"的范围里。
+   *
+   * <p>夹取上限是 `content*(zoom-1)/2`：再往外移就会露出底图之外的深色底。
+   * zoom=1 时上限为 0 ⇒ 只能居中，也就是改动前那一屏。
+   */
+  private applyStageTransform(): void {
+    const stage = this.stage
+    if (stage === null) {
+      return
+    }
+    stage.setScale(this.zoom, this.zoom, 1)
+    const maxX = this.contentWidth * (this.zoom - 1) / 2
+    const maxY = this.contentHeight * (this.zoom - 1) / 2
+    const x = Math.max(-maxX, Math.min(maxX, -this.focusX * this.zoom))
+    const y = Math.max(-maxY, Math.min(maxY, -this.focusY * this.zoom))
+    stage.setPosition(new Vec3(x, y, 0))
+    if (this.lastPaintedZoom !== this.zoom) {
+      this.lastPaintedZoom = this.zoom
+      this.repaintTiles()
+    }
+  }
+
+  /**
+   * 只重画 36 格的 Graphics 与标注（不重绑监听、不动选中态）。
+   * 缩放改倍数时标注要按新的 1/zoom 重画；比重跑 `render` 便宜，也不打断玩家正在看的选择栏。
+   */
+  private repaintTiles(): void {
+    const panel = this.panel
+    if (panel === null) {
+      return
+    }
+    const grid = buildCityGrid(panel.rows)
+    this.gridTiles.forEach((tile) => {
+      const index = tile.plate.gridY * CITY_GRID_WIDTH + tile.plate.gridX
+      this.paintTile(tile, grid.cells[index] ?? null)
+    })
+  }
+
+  /** 右下角两颗缩放键。滚轮只在 Web 上有、捏合在真机上容易和拖动打架，键是那条兜底路径。 */
+  private buildZoomControls(parent: Node): void {
+    const x = this.contentWidth / 2 - FRAME_BAND - ZOOM_BUTTON_WIDTH / 2 - 6
+    const lowerY = -this.contentHeight / 2 + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26
+    this.createZoomButton(parent, 'ZoomOutButton', '-', x, lowerY)
+    this.createZoomButton(parent, 'ZoomInButton', '+', x, lowerY + ZOOM_BUTTON_HEIGHT + 8)
+  }
+
+  private createZoomButton(parent: Node, name: string, caption: string, x: number, y: number): void {
+    const button = new Node(name)
+    button.layer = parent.layer
+    parent.addChild(button)
+    button.setPosition(new Vec3(x, y, 0))
+    button.addComponent(UITransform).setContentSize(new Size(ZOOM_BUTTON_WIDTH, ZOOM_BUTTON_HEIGHT))
+    if (!applyCommandButton(button, 'normal', ZOOM_BUTTON_WIDTH, ZOOM_BUTTON_HEIGHT)) {
+      const graphics = button.addComponent(Graphics)
+      graphics.fillColor = COLOR_PANEL
+      graphics.strokeColor = COLOR_COPPER_GOLD
+      graphics.lineWidth = 1
+      graphics.roundRect(-ZOOM_BUTTON_WIDTH / 2, -ZOOM_BUTTON_HEIGHT / 2,
+        ZOOM_BUTTON_WIDTH, ZOOM_BUTTON_HEIGHT, 5)
+      graphics.fill()
+      graphics.stroke()
+    }
+    const label = this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 20)
+    label.string = caption
+    button.on('touch-start', (_event: EventTouch) => {
+      this.viewAdjusted = true
+      this.zoomBy(name === 'ZoomInButton' ? CITY_ZOOM_STEP : -CITY_ZOOM_STEP)
+    }, this)
   }
 
   private buildCard(): void {
@@ -492,8 +701,11 @@ export class CityPanelView extends Component {
     // **先建城景，再把 HUD 叠上去**。反过来的话，玩家在画面上方盖的楼会把自己的资源数字挡掉 ——
     // 实测伐木场建在 y≈21% 时正好压住「铁矿 2000/10000」那一行。
     // Cocos 按子节点次序绘制，所以这里的添加顺序就是层级。
-    this.buildGrid(card)
+    // 36 格挂在**舞台**上（跟着缩放），HUD 挂在卡片上（不跟着缩）：读数与按钮的尺寸是排版契约。
+    const stage = this.stage
+    this.buildGrid(stage ?? card)
     this.buildActionBar(card)
+    this.buildZoomControls(card)
 
     // 顶部信息条的底板：**分段渐变而不是一块硬黑边**。
     // 审计里"主堡塔尖被顶部黑条切断"那条就是硬边造成的 —— 分段递增透明度后底边融进城景，
@@ -597,15 +809,24 @@ export class CityPanelView extends Component {
       iconBox.setAnchorPoint(0.5, 0)
       iconBox.setContentSize(new Size(plate.width, plate.width))
       const levelLabel = this.addLabel(tile, 'Level', 0, 0, COLOR_TEXT_DIM, 10)
+      this.outlineFor(levelLabel)
       // 这颗字**画在半径 9 的徽章圆盘里**（`drawTileBadge` 把位置钉到圆心、盒子钉到 20×14），
       // 抬到 27 的地板就会让字长出圆盘。它是 27 地板的一条有意例外，留在横扫基线里。
       levelLabel.node.getComponent(UITransform)?.setContentSize(new Size(20, 14))
       levelLabel.overflow = Label.Overflow.SHRINK
       const nameLabel = this.addLabel(tile, 'Name', 0, -12, COLOR_TEXT, 10)
+      this.outlineFor(nameLabel)
       nameLabel.node.getComponent(UITransform)?.setContentSize(new Size(plate.width, 12))
       nameLabel.overflow = Label.Overflow.SHRINK
       this.gridTiles.push({ node: tile, graphics, iconRim, icon, levelLabel, nameLabel, plate })
     }
+  }
+
+  /** 给城景里的小字加一圈深色描边：见 {@link COLOR_LABEL_OUTLINE} 为什么存在。 */
+  private outlineFor(label: Label): void {
+    const outline = label.node.addComponent(LabelOutline)
+    outline.color = COLOR_LABEL_OUTLINE
+    outline.width = 2
   }
 
   private buildPreviews(grid: Node): void {
@@ -939,10 +1160,6 @@ export class CityPanelView extends Component {
         }
       }
     })
-    if (this.resourceOverflowLabel !== null) {
-      const hidden = panel.resourceLines.length - this.resourceLabels.length
-      this.resourceOverflowLabel.string = hidden > 0 ? `另有 ${hidden} 项资源未显示` : ''
-    }
     // 尾部要清：`resources` 是服务端按玩家状态拼的 map（`CityAppService.toResourceMap`），
     // 键数不固定 —— 只写不清的话，条数一变短，后面那几颗就还留着**上一次的旧数值**，
     // 玩家读到的是"我还有 8000 石头"，而那个数属于上一帧。
@@ -965,6 +1182,9 @@ export class CityPanelView extends Component {
   }
 
   private renderGrid(grid: CityGrid): void {
+    // 主堡在哪一格由服务端下发（gridX/gridY），所以默认对焦点要现读，不能写死坐标。
+    let keepX = Number.NaN
+    let keepY = Number.NaN
     this.gridTiles.forEach((tile) => {
       // 按格位取格子，不按数组下标：下标一旦和锚点表的顺序耦合，改投影就会改玩法
       const index = tile.plate.gridY * CITY_GRID_WIDTH + tile.plate.gridX
@@ -982,12 +1202,24 @@ export class CityPanelView extends Component {
         }
         return
       }
+      if (row.configId === 'main_city') {
+        keepX = tile.plate.x
+        keepY = tile.plate.y
+      }
       tile.node.on('touch-start', (_event: EventTouch) => {
         this.buildMode = false
         this.selectedId = row.id
         this.renderSelection(row)
       }, this)
     })
+    // 这一遍是按当前倍数画的，记下来：`applyStageTransform` 靠它判断要不要重画标注
+    this.lastPaintedZoom = this.zoom
+    // 默认镜头对准主堡的**基座**：放大到 1.8 倍时屏幕上只剩主堡周围那几栋，
+    // 而对准基座（而不是堡体中心）刚好让城堡整个落在画面里、上方还留出天空。
+    // 玩家自己缩放过或拖动过就不再抢镜头 —— 否则每次数据刷新都把人拽回主堡。
+    if (!this.viewAdjusted && !Number.isNaN(keepX)) {
+      this.setFocus(keepX, keepY)
+    }
   }
 
   private openBuildPicker(gridX: number, gridY: number): void {
@@ -1042,7 +1274,41 @@ export class CityPanelView extends Component {
     }
 
     const iconSide = buildingIconSize(row.configId, tile.plate.width)
-    // 选中/可收取用地面光环，不再给整栋楼套一个矩形卡片。
+    /**
+     * **标注不跟世界一起缩**：等级牌 / 名字 / 进度条是 UI，字号该停在设计尺寸上
+     * （与全游戏其它文字同一把尺：设计 px × 设备比）。跟着舞台缩的话，默认 1.8 倍下
+     * 主城的深色名牌会变成 187×76 的大黑块压在城堡门上、字号比任何 HUD 文字都大一号
+     * （2026-09-26 截图实测）。做法是几何一律乘 `u = 1/zoom` 画、Label 节点再 `setScale(u)`：
+     * 位置乘 u 后被父级的 zoom 乘回来（落点不变），尺寸乘 u 再乘 zoom 等于设计尺寸。
+     * 地面光环与正稿**不**乘 u —— 它们是画里的东西，该跟着世界走。
+     */
+    const u = 1 / this.zoom
+    // 底图上已经画着主堡（它也是新号默认就有的唯一建筑），再叠一层正稿就是重影；
+    // 其余 14 类在底图上已被抹成空地，**必须叠正稿**才能"建了才看得见" —— 这也是
+    // A18 那 15 张正稿真正被用上的地方（审计 §2.2 记的就是它们先前一格都没渲染）。
+    const onBase = this.referenceStage && row.configId === 'main_city'
+    // **未建成的楼不画**：取消首次放置之后，实例会留在 Lv0 + 空闲（服务端没有"移除建筑"的口子），
+    // 那种格子如果照画正稿，玩家会看到一栋自己从没建成的楼（2026-09-22 取消功能上线后实测到）。
+    // 口径与 build-many 那条判据一致：升级中 / 已暂停 / 待收割 / 已建成 才算这格有楼。
+    const built = row.level > 0 || row.upgrading || row.paused || row.collectable
+
+    /**
+     * 「这栋楼点得动」的三级地面语言（用户 2026-09-26：要凸显可操作建筑，但不能破坏自然感）。
+     *
+     * <p>三级都画在**地面**上，一律不给楼体套框 —— 套框（矩形卡片 / 整栋描边）就是把厚涂底图
+     * 上的建筑变成"贴在画上的 UI"，正是自然感的杀手：
+     * <ol>
+     *   <li><b>常置台座</b>：凡建成的楼，脚下都有一枚极淡的暖色椭圆（alpha 26 填充 / 46 描边）。
+     *       读作"这块地踩实了、是有主的"，而不是"这是个按钮"；</li>
+     *   <li><b>有事可做</b>：可收割 ⇒ 换成绿色光环（alpha 58 + 2px 描边），一眼看出哪栋能收；</li>
+     *   <li><b>选中</b>：金色光环 + 正稿底下那圈 rim 提到 alpha 150（见下面的 `rim.color`）。</li>
+     * </ol>
+     * 椭圆一律压扁（0.5 : 0.15）贴着地面透视走，颜色取自画面自己的暖调（214,186,132 /
+     * 铜金 184,134,11），不用饱和原色 —— 所以它像地上的光，不像叠上去的图形。
+     *
+     * <p>主堡（`onBase`）不走一级台座：它是画在底图里的，脚下那一片是画好的城门石阶，
+     * 再叠一枚椭圆就是往画上抹一块斑。它的可操作提示由等级牌与名字底衬承担（下面那两块）。
+     */
     if (selected || row.collectable) {
       graphics.fillColor = row.collectable
         ? new Color(120, 176, 96, 58) : new Color(184, 134, 11, 48)
@@ -1052,12 +1318,16 @@ export class CityPanelView extends Component {
       graphics.lineWidth = 2
       graphics.ellipse(0, 0, iconSide * 0.54, iconSide * 0.16)
       graphics.stroke()
+    } else if (built && !onBase) {
+      graphics.fillColor = new Color(214, 186, 132, 26)
+      graphics.ellipse(0, 0, iconSide * 0.5, iconSide * 0.15)
+      graphics.fill()
+      graphics.strokeColor = new Color(214, 186, 132, 46)
+      graphics.lineWidth = 1
+      graphics.ellipse(0, 0, iconSide * 0.5, iconSide * 0.15)
+      graphics.stroke()
     }
 
-    // 底图上已经画着主堡（它也是新号默认就有的唯一建筑），再叠一层正稿就是重影；
-    // 其余 14 类在底图上已被抹成空地，**必须叠正稿**才能"建了才看得见" —— 这也是
-    // A18 那 15 张正稿真正被用上的地方（审计 §2.2 记的就是它们先前一格都没渲染）。
-    const onBase = this.referenceStage && row.configId === 'main_city'
     // 等级徽章：普通建筑贴在自己的图标右上；**主堡在底图上时改成基座下方居中** ——
     // main_city 的 iconSide 是 300（2.3 倍脚印），badgeY=246 会把徽章推到画面上边之外
     // （主堡基座离顶只有约 121px），等级和名字就都看不见了。
@@ -1072,7 +1342,7 @@ export class CityPanelView extends Component {
       // （审计 §5.3「信息辨识度极低」指的就是这一类）。底衬同时把标签与堡体分开。
       graphics.fillColor = new Color(14, 11, 9, 220)
       const plateW = Math.max(104, tile.plate.width * 1.15)
-      graphics.roundRect(-plateW / 2, -78, plateW, 42, 7)
+      graphics.roundRect(-plateW / 2 * u, -78 * u, plateW * u, 42 * u, 7 * u)
       graphics.fill()
     }
     tile.levelLabel.fontSize = onBase ? 16 : 12
@@ -1080,14 +1350,15 @@ export class CityPanelView extends Component {
     tile.levelLabel.node.active = showIdentity
     if (showIdentity) {
       graphics.fillColor = new Color(16, 13, 11, 235)
-      graphics.circle(badgeX, badgeY, onBase ? 10 : 11)
+      graphics.circle(badgeX * u, badgeY * u, (onBase ? 10 : 11) * u)
       graphics.fill()
       graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-      graphics.lineWidth = 1
-      graphics.circle(badgeX, badgeY, onBase ? 10 : 11)
+      graphics.lineWidth = 1 * u
+      graphics.circle(badgeX * u, badgeY * u, (onBase ? 10 : 11) * u)
       graphics.stroke()
       tile.levelLabel.color = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-      tile.levelLabel.node.setPosition(new Vec3(badgeX, badgeY, 0))
+      tile.levelLabel.node.setPosition(new Vec3(badgeX * u, badgeY * u, 0))
+      tile.levelLabel.node.setScale(u, u, 1)
       tile.levelLabel.getComponent(UITransform)?.setContentSize(new Size(26, 18))
     }
 
@@ -1095,7 +1366,7 @@ export class CityPanelView extends Component {
     // 少这一个记号就等于"暂停与升级中在城景里长得一样"，而玩家下一步要做的两件事不同。
     if (row.paused) {
       graphics.fillColor = COLOR_WARNING
-      graphics.circle(-badgeX, badgeY, 5)
+      graphics.circle(-badgeX * u, badgeY * u, 5 * u)
       graphics.fill()
     }
 
@@ -1103,17 +1374,14 @@ export class CityPanelView extends Component {
     tile.nameLabel.string = row.name
     tile.nameLabel.node.active = showIdentity
     tile.nameLabel.color = row.collectable ? COLOR_GOOD : COLOR_TEXT
-    tile.nameLabel.node.setPosition(new Vec3(0, onBase ? -44 : -15, 0))
+    tile.nameLabel.node.setPosition(new Vec3(0, (onBase ? -44 : -15) * u, 0))
+    tile.nameLabel.node.setScale(u, u, 1)
     capWidth(tile.nameLabel, Math.max(84, (onBase ? tile.plate.width : iconSide) * 0.9))
     if (onBase) {
       tile.icon.active = false
       tile.iconRim.active = false
     } else {
       const artKey = buildingArtKey(row.configId)
-      // **未建成的楼不画**：取消首次放置之后，实例会留在 Lv0 + 空闲（服务端没有"移除建筑"的口子），
-      // 那种格子如果照画正稿，玩家会看到一栋自己从没建成的楼（2026-09-22 取消功能上线后实测到）。
-      // 口径与 build-many 那条判据一致：升级中 / 已暂停 / 待收割 / 已建成 才画。
-      const built = row.level > 0 || row.upgrading || row.paused || row.collectable
       let iconVisible = built && artKey !== null && applyAnyIconSprite(tile.icon, artKey, iconSide, iconSide)
       if (!iconVisible && built) {
         // 没有正稿、或族图这一次没拉到：退回图集小图标，而不是留一个空格子
@@ -1151,10 +1419,10 @@ export class CityPanelView extends Component {
       const ratio = row.collectable ? 1 : Math.min(1, Math.max(0, Number.parseInt(row.progressText ?? '0', 10) / 100))
       const barWidth = Math.max(48, iconSide * 0.72)
       graphics.fillColor = COLOR_PANEL
-      graphics.rect(-barWidth / 2, -23, barWidth, 4)
+      graphics.rect(-barWidth / 2 * u, -23 * u, barWidth * u, 4 * u)
       graphics.fill()
       graphics.fillColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-      graphics.rect(-barWidth / 2, -23, barWidth * ratio, 4)
+      graphics.rect(-barWidth / 2 * u, -23 * u, barWidth * ratio * u, 4 * u)
       graphics.fill()
     }
   }
