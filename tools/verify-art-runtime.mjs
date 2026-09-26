@@ -385,31 +385,43 @@ const cityStageProbe = await collectCityStage()
 async function collectNavContrast() {
   return page.evaluate(() => {
     const scene = window.cc.director.getScene()
-    const bar = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('NavBar')
+    const game = scene.getChildByName('Canvas')?.getChildByName('Game')
+    const bar = game?.getChildByName('NavBar')
     if (bar === null || bar === undefined) return { error: 'NavBar 不在场景里' }
-    const nav = scene.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('PanelNav')
+    const nav = game?.getComponent('PanelNav')
+    /**
+     * 「更多」抽屉里的格子挂在 `NavMoreLayer/NavMoreTray` 下，整层默认不激活 ——
+     * 但节点与组件都已经建好，读它们的 Sprite/Label 不需要先展开（展开只改 active）。
+     * 只收 NavBar 会漏掉 10 格，于是"每格都得有页签图 / 字要看得清"这两条对抽屉里的入口失效。
+     */
+    const tray = game?.getChildByName('NavMoreLayer')?.getChildByName('NavMoreTray')
     const cells = []
-    for (const cell of bar.children) {
-      if (!cell.name.startsWith('Nav-')) continue
-      const sprite = cell.getComponent('cc.Sprite')
-      const graphics = cell.getComponent('cc.Graphics')
-      const caption = cell.getChildByName('Caption')
-      const label = caption !== null && caption !== undefined ? caption.getComponent('cc.Label') : null
-      if (label === null) continue
-      const c = label.color
-      const lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255
-      cells.push({
-        key: cell.name.slice('Nav-'.length),
-        background: sprite !== null && sprite.enabled === true && sprite.spriteFrame !== null
-          ? 'art' : (graphics !== null && graphics.enabled === true ? 'graphics' : 'none'),
-        frameName: sprite !== null && sprite.spriteFrame !== null
-          ? `${sprite.spriteFrame.name}|${sprite.spriteFrame.texture ? sprite.spriteFrame.texture.name : ''}`
-          : null,
-        luminance: Number(lum.toFixed(3)),
-        color: `${c.r},${c.g},${c.b}`,
-        active: nav !== null && nav !== undefined && nav.current() === cell.name.slice('Nav-'.length),
-      })
+    const collect = (parent, group) => {
+      for (const cell of parent?.children ?? []) {
+        if (!cell.name.startsWith('Nav-')) continue
+        const sprite = cell.getComponent('cc.Sprite')
+        const graphics = cell.getComponent('cc.Graphics')
+        const caption = cell.getChildByName('Caption')
+        const label = caption !== null && caption !== undefined ? caption.getComponent('cc.Label') : null
+        if (label === null) continue
+        const c = label.color
+        const lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255
+        cells.push({
+          key: cell.name.slice('Nav-'.length),
+          group,
+          background: sprite !== null && sprite.enabled === true && sprite.spriteFrame !== null
+            ? 'art' : (graphics !== null && graphics.enabled === true ? 'graphics' : 'none'),
+          frameName: sprite !== null && sprite.spriteFrame !== null
+            ? `${sprite.spriteFrame.name}|${sprite.spriteFrame.texture ? sprite.spriteFrame.texture.name : ''}`
+            : null,
+          luminance: Number(lum.toFixed(3)),
+          color: `${c.r},${c.g},${c.b}`,
+          active: nav !== null && nav !== undefined && nav.current() === cell.name.slice('Nav-'.length),
+        })
+      }
     }
+    collect(bar, 'bar')
+    collect(tray, 'more')
     return { cells }
   })
 }
@@ -417,6 +429,17 @@ const navContrast = await collectNavContrast()
 /** 导航格数从 PanelNav 现读，不在工具里抄第二份清单（同 verify-devtools-panels 的口径）。 */
 const NAV_CELLS_EXPECTED = (readFileSync('client/assets/scripts/scene/PanelNav.ts', 'utf8')
   .match(/^\s*\{ key: '/gm) ?? []).length
+/**
+ * 面板 key 清单也从 PanelNav 现读：**格数相等不代表格子对得上** ——
+ * `MORE_KEYS` 里写错一个 key，那一格会从抽屉挪回常驻条，总数一格不变（18 还是 18），
+ * 只有按 key 逐个对才看得出"某个面板根本没有入口"。
+ */
+const NAV_KEYS_EXPECTED = Array.from(readFileSync('client/assets/scripts/scene/PanelNav.ts', 'utf8')
+  .matchAll(/^\s*\{ key: '([^']+)'/gm), (m) => m[1])
+const navCellsSeen = (navContrast.cells ?? []).filter((cell) => cell.key !== 'more')
+const navMissingCells = NAV_KEYS_EXPECTED.filter((key) => !navCellsSeen.some((cell) => cell.key === key))
+const navBarCells = (navContrast.cells ?? []).filter((cell) => cell.group === 'bar')
+const navTrayCells = (navContrast.cells ?? []).filter((cell) => cell.group === 'more')
 const navLowContrast = (navContrast.cells ?? [])
   .filter((cell) => cell.background === 'art' && cell.luminance < 0.35)
   .map((cell) => `${cell.key} 文字亮度 ${cell.luminance} < 0.35（色 ${cell.color}，底是按钮图的深色中心）`)
@@ -426,8 +449,10 @@ const navActiveIndistinguishable = (navContrast.cells ?? []).length > 0
       .filter((other) => !other.active)
       .every((other) => other.color === cell.color))
 /**
- * 页签图真的铺上了没（G8）：13 格都必须是 nav-tab，且选中那一格必须换成 selected 变体。
- * 能失败的方式：PanelNav 退回按钮九宫格（帧名对不上）、selected 键没进启动预载（帧为 null）。
+ * 页签图真的铺上了没（G8）：常驻条与抽屉里的**每一格**都必须是 nav-tab，
+ * 且选中那一格必须换成 selected 变体。
+ * 能失败的方式：PanelNav 退回按钮九宫格（帧名对不上）、selected 键没进启动预载（帧为 null）、
+ * 抽屉里的格子走了另一套构造（收进 `createCell` 之前正是这个形状）。
  */
 const navTabMissing = (navContrast.cells ?? [])
   .filter((cell) => cell.frameName === null || !cell.frameName.includes('nav-tab'))
@@ -928,6 +953,9 @@ const result = {
   nav: {
     cells: navContrast.cells ?? navContrast,
     expected: NAV_CELLS_EXPECTED,
+    barCells: navBarCells.length,
+    trayCells: navTrayCells.length,
+    missingCells: navMissingCells,
     lowContrast: navLowContrast,
     activeIndistinguishable: navActiveIndistinguishable,
     tabMissing: navTabMissing,
@@ -968,6 +996,12 @@ const gates = [
   ['九宫格退化（目标小于自身边框）', degenerateSlices.length > 0],
   ['导航对比度读不到', navContrast.error !== undefined],
   ['导航格数不足', (navContrast.cells ?? []).length < NAV_CELLS_EXPECTED],
+  ['导航格与面板清单对不上', navMissingCells.length > 0],
+  // 导航瘦身（2026-09-26）：17 格挤一条 ⇒ 常驻只留核心几格，其余进「更多」抽屉。
+  // 三条都能失败：退回"每格都上条"时第一条红；删掉抽屉时第二、三条红。
+  ['常驻条没收窄（还是每格都上条）', navBarCells.length >= NAV_KEYS_EXPECTED.length],
+  ['「更多」那格不在常驻条上', !navBarCells.some((cell) => cell.key === 'more')],
+  ['抽屉里一格都没有', navTrayCells.length === 0],
   ['导航文字对比度不足', navLowContrast.length > 0],
   ['导航选中态与未选中同色', navActiveIndistinguishable],
   ['导航页签图缺失', navTabMissing.length > 0],
