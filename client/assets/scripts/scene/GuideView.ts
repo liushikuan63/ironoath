@@ -19,6 +19,7 @@ import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, 
 import { GuideDriver } from '../game/guide/GuideDriver'
 import type { GuideFrame } from '../game/guide/GuideDriver'
 import type { GuideAction, GuideScriptResp } from '../net/generated/GuideProtocol'
+import { applyCommandButton } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -39,6 +40,8 @@ const BUBBLE_HEIGHT = 150
 const BUBBLE_MARGIN = 24
 const BUTTON_HEIGHT = 44
 const BUTTON_WIDTH = 150
+/** 两颗按钮并排时的间距；单颗时它不参与排位（那颗必须居中）。 */
+const BUTTON_GAP = 12
 
 /** 本地坐标下的矩形（左下角 + 宽高）—— 遮罩按它拼四块。 */
 export interface GuideRect {
@@ -120,6 +123,7 @@ export class GuideView extends Component {
     if (this.skipCaption !== null) {
       this.skipCaption.string = '跳过这一步'
     }
+    this.layoutButtons()
     this.node.active = true
   }
 
@@ -256,28 +260,36 @@ export class GuideView extends Component {
     bubble.addChild(row)
     row.addComponent(UITransform).setContentSize(new Size(bubbleWidth - 32, BUTTON_HEIGHT))
     row.setPosition(new Vec3(0, -BUBBLE_HEIGHT / 2 + BUTTON_HEIGHT / 2 + 12, 0))
-    this.nextButton = this.button(row, 'GuideNext', BUTTON_WIDTH, '我完成了', COLOR_BUBBLE_EDGE)
+    this.nextButton = this.button(row, 'GuideNext', BUTTON_WIDTH, '我完成了', false)
     this.nextCaption = this.nextButton.getChildByName('caption')?.getComponent(Label) ?? null
-    this.skipButton = this.button(row, 'GuideSkip', BUTTON_WIDTH, '跳过这一步', COLOR_TEXT_DIM)
+    this.skipButton = this.button(row, 'GuideSkip', BUTTON_WIDTH, '跳过这一步', true)
     this.skipCaption = this.skipButton.getChildByName('caption')?.getComponent(Label) ?? null
 
     this.nextButton.on('touch-start', (_event: EventTouch) => this.complete(), this)
     this.skipButton.on('touch-start', (_event: EventTouch) => this.skip(), this)
   }
 
-  private button(parent: Node, name: string, width: number, caption: string, edge: Color): Node {
+  /**
+   * 一颗按钮。走全游戏同一张暗金 chip 母版（{@code applyCommandButton}），
+   * 取不到素材时才退回 Graphics 描边 —— 引导气泡不该是界面里唯一一套按钮皮。
+   *
+   * @param secondary 次要键（跳过）：同一张 chip，只用文字颜色降权，不再另画一套灰皮。
+   */
+  private button(parent: Node, name: string, width: number, caption: string, secondary: boolean): Node {
     const node = new Node(name)
     node.layer = parent.layer
     parent.addChild(node)
     node.addComponent(UITransform).setContentSize(new Size(width, BUTTON_HEIGHT))
-    const graphics = node.addComponent(Graphics)
-    graphics.fillColor = COLOR_BUTTON
-    graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 8)
-    graphics.fill()
-    graphics.lineWidth = 2
-    graphics.strokeColor = edge
-    graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 8)
-    graphics.stroke()
+    if (!applyCommandButton(node, 'normal', width, BUTTON_HEIGHT)) {
+      const graphics = node.addComponent(Graphics)
+      graphics.fillColor = COLOR_BUTTON
+      graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 8)
+      graphics.fill()
+      graphics.lineWidth = 2
+      graphics.strokeColor = COLOR_BUBBLE_EDGE
+      graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 8)
+      graphics.stroke()
+    }
     const label = new Node('caption')
     label.layer = node.layer
     node.addChild(label)
@@ -286,9 +298,30 @@ export class GuideView extends Component {
     captionLabel.fontSize = 22
     captionLabel.lineHeight = BUTTON_HEIGHT
     captionLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-    captionLabel.color = edge
+    captionLabel.color = secondary ? COLOR_TEXT_DIM : COLOR_TEXT
     captionLabel.string = caption
     return node
+  }
+
+  /**
+   * 按钮行的排位：**只有一颗时它必须居中**。
+   *
+   * <p>原来这里无条件按"两颗并排"排（`-(W+gap)/2` 与 `+(W+gap)/2`），而 `showSkip=false`
+   * 的那些步里「跳过这一步」是 `active=false` 的 —— 于是屏上只剩「我完成了」一颗，
+   * 却仍坐在左半边的位置上，看着像没对齐（用户 2026-09-26 指出的正是这个形状）。
+   * 排位读的是 `skipButton.active`，所以 `draw` 里必须先设 active 再调本方法。
+   */
+  private layoutButtons(): void {
+    if (this.nextButton === null || this.skipButton === null) {
+      return
+    }
+    if (this.skipButton.active) {
+      const half = (BUTTON_WIDTH + BUTTON_GAP) / 2
+      this.nextButton.setPosition(new Vec3(-half, 0, 0))
+      this.skipButton.setPosition(new Vec3(half, 0, 0))
+      return
+    }
+    this.nextButton.setPosition(new Vec3(0, 0, 0))
   }
 
   /**
@@ -311,11 +344,6 @@ export class GuideView extends Component {
     const anchorTop = hole.y + hole.height < height / 2 ? hole.y + hole.height : height / 2
     const y = anchorTop - BUBBLE_HEIGHT / 2 - 12
     this.bubble.setPosition(new Vec3(0, Math.max(y, -height / 2 + BUBBLE_HEIGHT / 2 + 8), 0))
-    const row = this.bubble.getChildByName('GuideButtons')
-    if (row !== null && this.skipButton !== null && this.nextButton !== null) {
-      this.nextButton.setPosition(new Vec3(-(BUTTON_WIDTH + 12) / 2, 0, 0))
-      this.skipButton.setPosition(new Vec3((BUTTON_WIDTH + 12) / 2, 0, 0))
-    }
   }
 
   private complete(): void {
