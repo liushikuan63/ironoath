@@ -167,6 +167,7 @@ public class ReleaseRulesAssembler {
     public PerfBudget perfBudget() {
         return new PerfBudget(
                 configs.longParam("PERF_FIRST_PACKAGE_MAX_BYTES"),
+                configs.longParam("PERF_TOTAL_PACKAGE_MAX_BYTES"),
                 configs.longParam("PERF_API_P99_MAX_MS"),
                 configs.longParam("PERF_BATTLE_SETTLE_P99_MAX_MS"),
                 configs.longParam("PERF_PAYLOAD_MAX_BYTES"),
@@ -221,7 +222,8 @@ public class ReleaseRulesAssembler {
      * @param fullGcMaxPerHour       Full GC 频率上限
      * @param fullGcPauseMaxMs       Full GC 单次停顿上限
      */
-    public record PerfBudget(long firstPackageMaxBytes, long apiP99MaxMs, long battleSettleP99MaxMs,
+    public record PerfBudget(long firstPackageMaxBytes, long totalPackageMaxBytes, long apiP99MaxMs,
+                             long battleSettleP99MaxMs,
                              long payloadMaxBytes, long memoryPeakMaxMb, long minFps,
                              long firstScreenMaxMs, long fullGcMaxPerHour, long fullGcPauseMaxMs) {
     }

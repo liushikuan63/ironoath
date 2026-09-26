@@ -32,6 +32,7 @@ param() {
 }
 
 FIRST_PACKAGE_MAX=$(param PERF_FIRST_PACKAGE_MAX_BYTES)
+TOTAL_PACKAGE_MAX=$(param PERF_TOTAL_PACKAGE_MAX_BYTES)
 
 # 微信构建产物目录（存在时以它为准，那才是真正会被打包上传的东西）
 BUILD_DIR="client/build/wechatgame"
@@ -123,6 +124,16 @@ mb() {
 SIZE_MB=$(mb "$SIZE")
 MAX_MB=$(mb "$FIRST_PACKAGE_MAX")
 
+# 合计口径（微信：主包+全部分包 ≤ 30M）：产物模式量整个产物目录（主包+subpackages），
+# 源码模式量整个 client/assets（不含引擎，是下界，与首包那条同一个 caveat）。
+if [ "$MEASURED_DIR" = "$BUILD_DIR" ]; then
+  TOTAL_SIZE=$(du -sb "$BUILD_DIR" | cut -f1)
+else
+  TOTAL_SIZE=$(du -sb "$SOURCE_DIR" | cut -f1)
+fi
+TOTAL_MB=$(mb "$TOTAL_SIZE")
+TOTAL_MAX_MB=$(mb "$TOTAL_PACKAGE_MAX")
+
 echo "[check-package-size] 首包预算 ${MAX_MB}MB（来源 global.PERF_FIRST_PACKAGE_MAX_BYTES）"
 echo "[check-package-size] 量的是 $MEASURED_DIR —— $KIND，实际 ${SIZE_MB}MB"
 
@@ -139,6 +150,17 @@ elif [ "$SIZE" -gt "$FIRST_PACKAGE_MAX" ]; then
   FAIL=1
 fi
 
+# 合计：单个**普通**分包不限大小，所以美术往分包里堆不会触发上面任何一条 ——
+# 唯一会失控的是"主包+分包合计 ≤ 30M"这条微信硬限，这里钉住它。
+echo "[check-package-size] 主包+分包合计 ${TOTAL_MB}MB（预算 ${TOTAL_MAX_MB}MB；微信：普通分包不限单个大小，合计 ≤30M）"
+if [ "$TOTAL_SIZE" -gt "$TOTAL_PACKAGE_MAX" ] && [ "$DEBUG_BUILD" = "true" ]; then
+  echo "[check-package-size][WARN] debug 构建，合计超预算不判失败；提审请用 release 构建复量。"
+elif [ "$TOTAL_SIZE" -gt "$TOTAL_PACKAGE_MAX" ]; then
+  echo "[check-package-size][FAIL] 主包+分包合计 ${TOTAL_MB}MB 超过预算 ${TOTAL_MAX_MB}MB（微信硬限 30M）。"
+  echo "  整改：美术走 CDN / 远程资源、分包再拆、纹理压缩；不要靠删功能降体积（B16 禁止项）。"
+  FAIL=1
+fi
+
 if [ "$MEASURED_DIR" = "$SOURCE_DIR" ]; then
   echo "[check-package-size][WARN] 本仓库当前没有微信构建产物，量的是客户端源码，这是一个**下界**："
   echo "  真实首包还要加上 Cocos 引擎（通常 1~2MB）与构建期生成的资源。"
@@ -152,6 +174,7 @@ echo ""
 echo "[check-package-size] B16 §1 性能预算（数字全部来自 $GLOBAL_JSON，改预算只改配置表）："
 printf '  %-34s %-12s %s\n' "指标" "预算" "判定方式"
 printf '  %-34s %-12s %s\n' "首包体积" "${MAX_MB}MB" "本脚本（CI 卡口）"
+printf '  %-34s %-12s %s\n' "主包+分包合计" "${TOTAL_MAX_MB}MB" "本脚本（CI 卡口）"
 printf '  %-34s %-12s %s\n' "服务端接口 P99" "$(param PERF_API_P99_MAX_MS)ms" "生产监控（不含战斗结算）"
 printf '  %-34s %-12s %s\n' "战斗结算 P99" "$(param PERF_BATTLE_SETTLE_P99_MAX_MS)ms" "生产监控 + B13 压测报告"
 printf '  %-34s %-12s %s\n' "单次请求 payload" "$(param PERF_PAYLOAD_MAX_BYTES)B" "抓包（PerfBudgetTest 校验配置关系）"

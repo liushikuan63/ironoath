@@ -84,6 +84,11 @@ class PerfBudgetTest {
         assertThat(budget.firstPackageMaxBytes())
                 .as("首包上限是微信硬限制 4MB，改大它不会让包变小，只会让 CI 卡口失去意义")
                 .isEqualTo(4L * 1024 * 1024);
+        assertThat(budget.totalPackageMaxBytes())
+                .as("主包+分包合计上限是微信硬限制 30M；单个普通分包不限大小，所以合计是唯一会失控的一条。"
+                        + "它必须不小于首包上限，否则主包自己就超过了合计")
+                .isEqualTo(30L * 1024 * 1024)
+                .isGreaterThanOrEqualTo(budget.firstPackageMaxBytes());
         assertThat(budget.fullGcPauseMaxMs())
                 .as("单次 Full GC 停顿必须小于微信回调的时限，否则支付回调会被判超时并进补单队列")
                 .isLessThan(budget.apiP99MaxMs() * 10);
