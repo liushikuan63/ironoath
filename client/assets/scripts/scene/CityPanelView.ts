@@ -582,12 +582,25 @@ export class CityPanelView extends Component {
       // 舞台放大了 zoom 倍：手指在屏幕上走 dx，镜头对准的那一点只要走 dx/zoom
       this.setFocus(this.focusX - dx / this.zoom, this.focusY - dy / this.zoom)
     }, this)
-    stage.on('touch-end', () => {
-      this.pinchDistance = 0
-    }, this)
-    stage.on('touch-cancel', () => {
-      this.pinchDistance = 0
-    }, this)
+    stage.on('touch-end', (event: EventTouch) => this.endPinch(event), this)
+    stage.on('touch-cancel', (event: EventTouch) => this.endPinch(event), this)
+  }
+
+  /**
+   * 双指抬起一根时，剩下那根的"上一次位置"还停在两指时代 —— 直接拿它算 dx 会得到一个
+   * 巨大的位移，镜头瞬移（WorldMap 的同族缺陷注释记的正是这个形状）。
+   * 把单指拖动的起点重置到剩下那根的当前位置，瞬移就没有了。
+   */
+  private endPinch(event: EventTouch): void {
+    const remaining = event.getAllTouches()
+    if (remaining.length === 1) {
+      const point = remaining[0]?.getUILocation()
+      if (point !== undefined) {
+        this.lastPointerX = point.x
+        this.lastPointerY = point.y
+      }
+    }
+    this.pinchDistance = 0
   }
 
   private touchDistance(event: EventTouch): number {
@@ -610,8 +623,12 @@ export class CityPanelView extends Component {
   }
 
   private setFocus(x: number, y: number): void {
-    this.focusX = x
-    this.focusY = y
+    // focus 自己也要夹在当前倍数的可平移范围内：zoom=1 时舞台被夹在居中，若 focus 不夹，
+    // 玩家在 1 倍下的空拖会让它无限累积，之后一按「+」镜头就瞬移到累积出的极值。
+    const maxX = this.contentWidth * (this.zoom - 1) / (2 * this.zoom)
+    const maxY = this.contentHeight * (this.zoom - 1) / (2 * this.zoom)
+    this.focusX = Math.max(-maxX, Math.min(maxX, x))
+    this.focusY = Math.max(-maxY, Math.min(maxY, y))
     this.applyStageTransform()
   }
 
