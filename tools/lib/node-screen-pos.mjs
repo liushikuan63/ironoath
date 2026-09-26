@@ -34,10 +34,18 @@ export function nodeScreenPos(name) {
   walk(scene)
   if (found === null) return null
   const world = found.getWorldPosition()
+  const visible = window.cc.view.getVisibleSize()
   return {
     x: world.x * window.cc.view.getScaleX(),
     y: window.innerHeight - world.y * window.cc.view.getScaleY(),
     worldX: world.x,
     worldY: world.y,
+    /**
+     * 换算假设：画布正好铺满视口（没有黑边偏移）。本仓库的量具一律固定 1440×900 = 1.5×960×600，
+     * 假设成立；真机其它比例下 Cocos 的适配策略可能留黑边，那时这个换算会整体偏一个偏移量。
+     * **调用方必须把它当判据的一部分**（不成立就失败），别静默拿坐标去点。
+     */
+    fillsViewport: window.innerWidth === Math.round(visible.width * window.cc.view.getScaleX())
+      && window.innerHeight === Math.round(visible.height * window.cc.view.getScaleY()),
   }
 }

@@ -217,12 +217,25 @@ report('缩到 1 倍时舞台回到居中（不露底图外的深色底）',
 await page.screenshot({ path: path.join(OUT, 'city-zoom-full.png') })
 
 // ---------- 第 3 相：玩家动过镜头之后，数据刷新不许抢回去 ----------
-// 面板每秒重画一次（`update` 里的秒级重绘），等两秒就是两次 renderGrid
+// 先放大一步（1 → 1.3）：1 倍时夹取上限为 0、舞台恒居中，"没回中"这条会恒真（假绿）。
+await tapNode('ZoomInButton')
+const beforeDrag = await readView()
+// 真拖一段。拖动本身必须真的移动了舞台 —— 否则后面"没回中"量的是一个没动过的东西
+await page.mouse.move(700, 450)
+await page.mouse.down()
+await page.mouse.move(830, 480, { steps: 6 })
+await page.mouse.up()
+await page.waitForTimeout(300)
+const dragged = await readView()
+const movedByDrag = Math.hypot(dragged.stageX - beforeDrag.stageX, dragged.stageY - beforeDrag.stageY)
+report('单指拖动真的平移了镜头（> 20 设计px）', movedByDrag > 20,
+  `位移 ${movedByDrag.toFixed(1)}（(${beforeDrag.stageX}, ${beforeDrag.stageY}) → (${dragged.stageX}, ${dragged.stageY})）`)
+// 面板每秒重画一次（`update` 里的秒级重绘），等两秒就是两次 renderGrid：镜头不许被抢回主堡
 await page.waitForTimeout(2200)
 const afterTick = await readView()
 report('数据刷新后镜头仍在玩家停的地方（没有自动回中）',
-  near(afterTick.zoom, ZOOM_MIN) && Math.abs(afterTick.stageX) <= 1,
-  `zoom=${afterTick.zoom} stageX=${afterTick.stageX}`)
+  Math.abs(afterTick.stageX - dragged.stageX) <= 1 && Math.abs(afterTick.stageY - dragged.stageY) <= 1,
+  `拖后 (${dragged.stageX}, ${dragged.stageY}) → 刷新后 (${afterTick.stageX}, ${afterTick.stageY})`)
 
 // ---------- 第 4 相：放大键与上限夹取 ----------
 for (let i = 0; i < 12; i += 1) {

@@ -97,6 +97,12 @@ await page.waitForTimeout(400)
  */
 const navCellPos = (key) => page.evaluate(nodeScreenPos, `Nav-${key}`)
 
+/** 点完必须核对"导航真的换到了那一格"：只信坐标不信换页，坐标整体偏了会拍 18 张同图还全绿。 */
+const currentKey = () => page.evaluate(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  return game?.getComponent('PanelNav')?.current() ?? null
+})
+
 const missed = []
 for (let i = 0; i < PAGES.length; i += 1) {
   const { key, label } = PAGES[i]
@@ -115,25 +121,53 @@ for (let i = 0; i < PAGES.length; i += 1) {
     console.error(`[sweep][MISS] 点不到导航格：${key}（条上与抽屉里都找不到可见的那颗）`)
     continue
   }
+  if (pos.fillsViewport !== true) {
+    missed.push(key)
+    console.error(`[sweep][MISS] 画布没有铺满视口（有黑边偏移），坐标换算不成立：${key}`)
+    continue
+  }
   await page.mouse.click(Math.round(pos.x), Math.round(pos.y))
   await page.waitForTimeout(900)
   await dismissGuide()
+  const shown = await currentKey()
+  if (shown !== key) {
+    missed.push(key)
+    console.error(`[sweep][MISS] 点了 ${key} 但导航停在 ${shown}（点击没换页，截图不作数）`)
+    continue
+  }
   const file = path.join(OUT, `panel-${String(i).padStart(2, '0')}-${label}.png`)
   await page.screenshot({ path: file })
   console.log(`[sweep] ${label} -> ${file}`)
 }
 
-// 抽屉展开态自己也要留一帧：它是这一轮新增的一级界面，逐页横扫时每帧都已经被收起
+// 抽屉展开态自己也要留一帧：它是这一轮新增的一级界面，逐页横扫时每帧都已经被收起。
+// 「更多」是 toggle：若上一轮点偏把它留着开着，这里再点一次就拍成了收起态 —— 所以拍前读
+// NavMoreLayer.active，关着才点、点完再读一次确认开着。
+const drawerOpen = () => page.evaluate(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  let layer = null
+  const find = (n) => {
+    if (layer !== null) return
+    if (n.name === 'NavMoreLayer') { layer = n; return }
+    for (const c of n.children) find(c)
+  }
+  find(game)
+  return layer === null ? null : layer.active === true
+})
 const morePos = await navCellPos('more')
-if (morePos !== null) {
+let open = await drawerOpen()
+if (morePos !== null && open === false) {
   await page.mouse.click(Math.round(morePos.x), Math.round(morePos.y))
   await page.waitForTimeout(600)
+  open = await drawerOpen()
+}
+if (open === true) {
   const file = path.join(OUT, 'panel-more-抽屉展开.png')
   await page.screenshot({ path: file })
   console.log(`[sweep] 更多（抽屉展开） -> ${file}`)
 } else {
   missed.push('more')
-  console.error('[sweep][MISS] 点不到「更多」那格')
+  console.error(`[sweep][MISS] 抽屉展开帧没拍到（NavMoreLayer.active=${open}）`)
 }
 
 await browser.close()

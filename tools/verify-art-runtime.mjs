@@ -436,6 +436,14 @@ const NAV_CELLS_EXPECTED = (readFileSync('client/assets/scripts/scene/PanelNav.t
  */
 const NAV_KEYS_EXPECTED = Array.from(readFileSync('client/assets/scripts/scene/PanelNav.ts', 'utf8')
   .matchAll(/^\s*\{ key: '([^']+)'/gm), (m) => m[1])
+/**
+ * 抽屉清单也从源码现读。`MORE_KEYS` 里写错一个 key 时那一格只是从抽屉挪回常驻条 ——
+ * 17 个 key 一个不少、`navMissingCells` 为空，按 key 对账抓不住它；
+ * 抓得住的是**分边计数**（条上 = 17 - |MORE_KEYS|、抽屉 = |MORE_KEYS|）。
+ */
+const MORE_BLOCK = (readFileSync('client/assets/scripts/scene/PanelNav.ts', 'utf8')
+  .match(/const MORE_KEYS: readonly string\[\] = \[([\s\S]*?)\]/) ?? [null, ''])[1]
+const MORE_KEYS_EXPECTED = Array.from(MORE_BLOCK.matchAll(/'([^']+)'/g), (m) => m[1])
 const navCellsSeen = (navContrast.cells ?? []).filter((cell) => cell.key !== 'more')
 const navMissingCells = NAV_KEYS_EXPECTED.filter((key) => !navCellsSeen.some((cell) => cell.key === key))
 const navBarCells = (navContrast.cells ?? []).filter((cell) => cell.group === 'bar')
@@ -1002,6 +1010,11 @@ const gates = [
   ['常驻条没收窄（还是每格都上条）', navBarCells.length >= NAV_KEYS_EXPECTED.length],
   ['「更多」那格不在常驻条上', !navBarCells.some((cell) => cell.key === 'more')],
   ['抽屉里一格都没有', navTrayCells.length === 0],
+  // 分边计数：MORE_KEYS 写错一个 key 只会把格子挪边，按 key 对账抓不住，这两条抓得住
+  ['常驻条格数与 MORE_KEYS 对不上',
+    navBarCells.filter((cell) => cell.key !== 'more').length
+    !== NAV_KEYS_EXPECTED.length - MORE_KEYS_EXPECTED.length],
+  ['抽屉格数与 MORE_KEYS 对不上', navTrayCells.length !== MORE_KEYS_EXPECTED.length],
   ['导航文字对比度不足', navLowContrast.length > 0],
   ['导航选中态与未选中同色', navActiveIndistinguishable],
   ['导航页签图缺失', navTabMissing.length > 0],
