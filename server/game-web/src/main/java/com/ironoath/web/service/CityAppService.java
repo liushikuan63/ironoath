@@ -26,6 +26,10 @@ import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.web.dto.generated.BuildingView;
 import com.ironoath.web.dto.generated.BuildOptionView;
 import com.ironoath.web.dto.generated.CityCancelReq;
+import com.ironoath.web.dto.generated.CityPauseReq;
+import com.ironoath.web.dto.generated.CityPauseResp;
+import com.ironoath.web.dto.generated.CityResumeReq;
+import com.ironoath.web.dto.generated.CityResumeResp;
 import com.ironoath.web.dto.generated.CityCancelResp;
 import com.ironoath.web.dto.generated.CityCollectReq;
 import com.ironoath.web.dto.generated.CityCollectResp;
@@ -43,6 +47,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -598,12 +603,21 @@ public class CityAppService {
                 buildings.add(toView(b, now));
             }
             List<BuildOptionView> buildOptions = new ArrayList<>();
+            // 前置建筑的**显示名**：客户端不查表，缺了它只能把行 id 印给玩家
+            // （「前置 main_city」是 #255 同族的形态，2026-09-21 复检在 Choices.buildOptionDetail 上抓到）。
+            // 名字从同一次遍历里取，不另开一次查表；查不到就回 null，**不回 id**。
+            Map<String, String> buildingNames = new HashMap<>();
+            for (BuildingCfg cfg : configs.all(BuildingCfg.class)) {
+                buildingNames.put(cfg.id(), cfg.name());
+            }
             for (BuildingCfg cfg : configs.all(BuildingCfg.class)) {
                 if (city.findByConfigId(cfg.id()) != null) {
                     continue;
                 }
+                String requireName = cfg.requireBuilding() == null
+                        ? null : buildingNames.get(cfg.requireBuilding());
                 buildOptions.add(new BuildOptionView(cfg.id(), cfg.name(), cfg.type().name(),
-                        (int) cfg.requireMainLevel(), cfg.requireBuilding()));
+                        (int) cfg.requireMainLevel(), cfg.requireBuilding(), requireName));
             }
             QueueView queues = new QueueView(city.usedQueues(),
                     rules.availableQueues(isInNewbieProtect(player, now), city.extraQueues()),
@@ -914,6 +928,79 @@ public class CityAppService {
         return reduced;
     }
 
+    /**
+     * 暂停升级（B03 §2："队列中可暂停 / 取消"）。
+     *
+     * <p>与 {@link #cancel} 的分工：暂停**不返还资源**、不动等级、离开队列的占用（暂停中的建筑
+     * 仍算 {@code isUpgrading()}，也就是仍占一个建造队列 —— 否则玩家可以靠"暂停"把队列腾出来，
+     * 那就等于无限队列），只是把剩余时间冻在服务端。
+     */
+    public CityPauseResp pause(String playerId, CityPauseReq req) {
+        return runCityAction(playerId, req == null ? null : req.requestId(), req == null ? null : req.buildingId(),
+                (now, buildingId) -> doPause(playerId, buildingId, now));
+    }
+
+    /** 恢复升级：把暂停的那段时间还给这栋楼（剩余时间与暂停前一致）。 */
+    public CityResumeResp resume(String playerId, CityResumeReq req) {
+        return runCityAction(playerId, req == null ? null : req.requestId(), req == null ? null : req.buildingId(),
+                (now, buildingId) -> doResume(playerId, buildingId, now));
+    }
+
+    /**
+     * 暂停/恢复共用的前置：请求体与 buildingId 校验、幂等键、玩家锁。
+     *
+     * <p>抽出来是因为两者**除了那一个动作之外完全同形**：再抄一遍就是三份（cancel 是第三份）
+     * 各写各的幂等与加锁 —— 那类重复的典型症状是"某个端点忘了释放幂等键，重试全被判重复"。
+     */
+    private <T> T runCityAction(String playerId, String requestId, String buildingId, CityAction<T> action) {
+        if (requestId == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请求体不得为空");
+        }
+        requireRequestId(requestId);
+        if (buildingId == null || buildingId.isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "buildingId 不得为空");
+        }
+        long now = timeService.serverNow();
+        long ttlMs = configs.longParam("REQUEST_ID_TTL_SECONDS") * 1000L;
+        if (!idempotency.tryAcquire(requestId, now, ttlMs)) {
+            throw new BizException(ErrorCode.REQUEST_DUPLICATED, "requestId=" + requestId);
+        }
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> action.run(now, buildingId));
+        } catch (RuntimeException e) {
+            idempotency.release(requestId);
+            throw e;
+        }
+    }
+
+    /** 暂停/恢复里那段"拿锁之后要做的事"。 */
+    private interface CityAction<T> {
+        T run(long now, String buildingId);
+    }
+
+    private CityPauseResp doPause(String playerId, String buildingId, long now) {
+        Ctx ctx = load(playerId, now);
+        CityState city = ctx.city();
+        city.pause(buildingId, now);
+        cities.save(playerId, city, ctx.cityVersion());
+        BuildingInstance instance = city.building(buildingId);
+        LOG.info("暂停升级 playerId={} building={} 剩余={}秒", playerId, buildingId,
+                Math.max(0L, (instance.upgradeFinishAt() - now) / 1000L));
+        return new CityPauseResp(buildingId, instance.status().name(), instance.remainingSeconds(now));
+    }
+
+    private CityResumeResp doResume(String playerId, String buildingId, long now) {
+        Ctx ctx = load(playerId, now);
+        CityState city = ctx.city();
+        city.resume(buildingId, now);
+        cities.save(playerId, city, ctx.cityVersion());
+        BuildingInstance instance = city.building(buildingId);
+        LOG.info("恢复升级 playerId={} building={} 剩余={}秒", playerId, buildingId,
+                instance.remainingSeconds(now));
+        return new CityResumeResp(buildingId, instance.status().name(), instance.upgradeFinishAt(),
+                instance.remainingSeconds(now));
+    }
+
     /** 取消升级，返还 60% 资源（B03 §2 / 验收 4）。 */
     public CityCancelResp cancel(String playerId, CityCancelReq req) {
         if (req == null) {
@@ -952,12 +1039,20 @@ public class CityAppService {
         for (Map.Entry<String, Long> e : refund.entrySet()) {
             grantResource(player, e.getKey(), e.getValue());
         }
+        // 取消**首次放置**（还停在 Lv0）要把实例一起摘掉，那格才算真的回到未建（#328）。
+        // 取消一次"既有建筑的升级"不走这条路：那栋楼本来就在，等级不变、原地留着。
+        boolean slotFreed = false;
+        if (instance.level() == 0 && instance.status() == com.ironoath.core.city.BuildingStatus.IDLE) {
+            city.removeUnbuilt(req.buildingId());
+            slotFreed = true;
+        }
         players.save(player);
         cities.save(playerId, city, ctx.cityVersion());
         // 取消之后目标就不在了，请求也不能留在别人的可帮列表里 ——
         // 留着就会有人帮一栋已经停工的楼：额度与事件都真的发生，而时长一秒都不会少
         helpRequests.withdraw(playerId, req.buildingId());
-        LOG.info("取消升级 playerId={} building={} 返还={}", playerId, req.buildingId(), refund);
+        LOG.info("取消升级 playerId={} building={} 返还={}{}", playerId, req.buildingId(), refund,
+                slotFreed ? "（首次放置，格子已释放）" : "");
         return new CityCancelResp(req.buildingId(), toAmountList(refund));
     }
 

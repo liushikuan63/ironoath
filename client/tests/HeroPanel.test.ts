@@ -212,6 +212,15 @@ test('已激活的缘分把 id 换成名字（成对同队才算，这个判定�
   assert.deepEqual(buildLineupPanel(lineup({ activeBonds: [] }), NAMES).bondTexts, [])
 })
 
+test('槽位上的 heroId 在名册里查不到名字时写「未知武将」，绝不把内部编号印上队伍栏', () => {
+  // 这条会失败：把 `?? '未知武将'` 改回 `?? heroId` 就红。
+  // 形态与 `LineupEdit` 那条同源（#255 家族）：玩家读到的应该是一句人话，不是 `hero_guanyu`。
+  const stale = buildLineupPanel(lineup({ main: 'hero_gone', sub1: 'h2', sub2: null }), NAMES)
+  assert.deepEqual(stale.slotTexts, ['主将：未知武将', '副将：沈砚', '副将：空'])
+  assert.ok(!stale.slotTexts.some((text) => text.includes('hero_gone')),
+    `队伍栏里出现了内部编号：${stale.slotTexts.join(' / ')}`)
+})
+
 // ---------- 面板汇总 ----------
 
 test('面板汇总：武将数、带兵上限、碎片持有量都照服务端原样搬', () => {

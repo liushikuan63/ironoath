@@ -50,7 +50,9 @@ const COLOR_BACKGROUND = new Color(16, 14, 12, 255)
 const COLOR_GROUND = new Color(52, 42, 33, 255)
 const COLOR_GROUND_GRID = new Color(70, 57, 45, 255)
 /** 迷雾：B07 §3 要求未探索区域为黑色遮罩。刻意用纯黑而不是半透明 —— 半透明等于给了透视的余地 */
-const COLOR_FOG = new Color(6, 6, 8, 255)
+/** 迷雾是"还没探索"，不是"这里没有世界"：纯黑读成渲染漏洞（2026-09-26 排版审查
+ * 实测视野边缘一条黑带被读成地图残缺），改成冷灰雾色后它读成雾。 */
+const COLOR_FOG = new Color(26, 28, 32, 255)
 /** 请求已发出但响应还没回来。必须与迷雾区分：一个是网络慢，一个是没探索过 */
 const COLOR_LOADING = new Color(30, 30, 34, 255)
 const COLOR_CITY = new Color(139, 26, 26, 255)
@@ -74,10 +76,17 @@ const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 /** 实体色块的边长占一格的比例。留出缝隙才能看清格子边界，也避免相邻实体糊成一片。 */
 const ENTITY_SIZE_RATIO = 0.72
 const CITY_SIZE_RATIO = 1.5
+/**
+ * 地貌平铺周期放大倍数。地貌块是 256² 的整幅画，按原生尺寸平铺时同一山形
+ * 每 ~95px 重复一次、整张地图读成壁纸；放大周期让重复稀疏到读不出网格。
+ */
+const TERRAIN_TILE_SCALE = 2
 const MARCH_SIZE_RATIO = 0.9
 
 /** 顶部 HUD 条带高度（像素）。落在这条带里的触摸不触发拖动，否则点按钮会同时把地图拖走。 */
 const HUD_BAND_HEIGHT = 104
+/** PanelNav 的导航条占 y ∈ [-h/2+8, -h/2+60]；地图名牌只允许画到它的上边界。 */
+const MAP_BOTTOM_INSET = 60
 const HUD_BUTTON_SIZE = 84
 const HUD_BUTTON_GAP = 12
 /** 流亡按钮要显示「冷却 N 天 M 小时」，不能沿用 84px 的方形尺寸。 */
@@ -127,6 +136,8 @@ export class WorldMap extends Component {
   private readonly unsubscribes: Unsubscribe[] = []
 
   private mapLayer: Node | null = null
+  private backdropNode: Node | null = null
+  private backdropPainted = false
   private hudLayer: Node | null = null
   private tilePool: NodePool | null = null
   private entityPool: NodePool | null = null
@@ -222,6 +233,8 @@ export class WorldMap extends Component {
     this.drawnEntities.clear()
     this.drawnMarches.clear()
     this.drawnTiles.clear()
+    this.backdropNode = null
+    this.backdropPainted = false
     this.flash.clear()
     this.activeTouches.clear()
     this.marchRequesting.clear()
@@ -363,6 +376,32 @@ export class WorldMap extends Component {
     graphics.fillColor = COLOR_BACKGROUND
     graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
+    // 视野只有 3×3 块、相机却按玩家在块内的位置居中，于是偏移大时屏幕一侧
+    // 没有块可画 —— 实测左缘露出一条纯黑竖带，玩家读成"地图残缺"；缩小档更甚，
+    // 3×3 块只占画面中央一小块，其余全是虚空。静态底衬不跟 mapLayer 平移，
+    // 永远盖满视口：露出的边缘是草地而不是虚空。
+    // 不在 onLoad 建：启动预载完成前 `map.terrain.grass` 还没有帧，一次性的
+    // 建法会静默失败；改在 renderTiles 里惰性建（那时块自己已经能画上地形）。
+    const backdrop = new Node('BackgroundTerrain')
+    backdrop.layer = background.layer
+    background.addChild(backdrop)
+    backdrop.addComponent(UITransform)
+    this.backdropNode = backdrop
+  }
+
+  /** 视野外一律是战争迷雾：底衬用迷雾色铺满视口，3×3 已加载块就是雾里的一块
+   * 已探索区 —— 比露虚空（玩家读成"地图残缺"）或铺草地（把未探索伪装成已探索）都诚实。 */
+  private paintBackdrop(): void {
+    const backdrop = this.backdropNode
+    if (backdrop === null || this.backdropPainted) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const graphics = backdrop.addComponent(Graphics)
+    graphics.fillColor = COLOR_FOG
+    graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
+    graphics.fill()
+    this.backdropPainted = true
   }
 
   /**
@@ -729,7 +768,7 @@ export class WorldMap extends Component {
     this.renderEntities(frame.tiles, cell, zoom)
     this.renderMarches(frame.marches, cell)
     // 藏牌要**跨两个池**一起判：行军牌画在实体牌之后，各判各的就会留下"自家队伍的牌压在资源牌上"
-    this.applyCaptions()
+    this.applyCaptions(cameraX, cameraY, cell)
     this.updateSelection()
     this.renderHud(frame)
     this.renderMarchPanel(frame.marches)
@@ -740,6 +779,7 @@ export class WorldMap extends Component {
     if (pool === null) {
       return
     }
+    this.paintBackdrop()
     const seen = new Set<string>()
     for (const tile of tiles) {
       seen.add(tile.key)
@@ -760,8 +800,8 @@ export class WorldMap extends Component {
       }
       const terrainVariant = terrainVariantForChunk(tile.cx, tile.cy)
       const artApplied = !tile.fogged && tile.loaded
-        && (applyTerrainSprite(refs.spriteNode, terrainVariant, size, size)
-          || applyTiledSprite(refs.spriteNode, 'map.terrain.grass', size, size))
+        && (applyTerrainSprite(refs.spriteNode, terrainVariant, size, size, TERRAIN_TILE_SCALE)
+          || applyTiledSprite(refs.spriteNode, 'map.terrain.grass', size, size, TERRAIN_TILE_SCALE))
       refs.spriteNode.active = artApplied
       refs.graphicsNode.active = !artApplied
       if (!artApplied) {
@@ -835,14 +875,24 @@ export class WorldMap extends Component {
   }[] = []
 
   /** 藏牌口径在 `game/world/WorldLabels.ts`（引擎无关、可单测），这里只负责"按结论画或不画"。 */
-  private applyCaptions(): void {
+  private applyCaptions(cameraX: number, cameraY: number, cell: number): void {
+    const size = view.getVisibleSize()
+    // mapLayer 的局部坐标是世界像素，不是屏幕中心坐标：屏幕中心对应相机格中心的 `(camera + 0.5) * cell`。
+    const centerX = (cameraX + 0.5) * cell
+    const centerY = (cameraY + 0.5) * cell
+    const viewport = {
+      minX: centerX - size.width / 2,
+      maxX: centerX + size.width / 2,
+      minY: centerY - size.height / 2 + MAP_BOTTOM_INSET,
+      maxY: centerY + size.height / 2 - HUD_BAND_HEIGHT,
+    }
     const withCaption = this.pendingPlates.filter((entry) => entry.caption !== '')
     const visible = pickVisibleCaptions(withCaption.map((entry) => ({
       key: entry.key,
       type: entry.type,
       box: captionBox(entry.x, entry.y, entry.size, entry.caption),
       pinned: entry.key === this.selectedKey,
-    })))
+    })), viewport)
     for (const entry of this.pendingPlates) {
       if (entry.refs === undefined) {
         continue

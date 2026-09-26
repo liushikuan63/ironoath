@@ -60,6 +60,14 @@ export interface CaptionBox {
   readonly height: number
 }
 
+/** 名牌允许出现的矩形（mapLayer 本地坐标）。HUD 带与屏幕外的牌一律不画。 */
+export interface CaptionViewport {
+  readonly minX: number
+  readonly maxX: number
+  readonly minY: number
+  readonly maxY: number
+}
+
 export function captionBox(centerX: number, centerY: number, iconSize: number, caption: string): CaptionBox {
   const width = captionPlateWidth(caption)
   return {
@@ -102,6 +110,15 @@ function boxesOverlap(a: CaptionBox, b: CaptionBox): boolean {
     && Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y) > 1
 }
 
+function boxInsideViewport(box: CaptionBox, viewport: CaptionViewport): boolean {
+  // 0.5px 容差只吸收世界坐标换算的取整误差；真的压进 HUD 时交集远大于它。
+  const epsilon = 0.5
+  return box.x >= viewport.minX - epsilon
+    && box.x + box.width <= viewport.maxX + epsilon
+    && box.y >= viewport.minY - epsilon
+    && box.y + box.height <= viewport.maxY + epsilon
+}
+
 /**
  * 从一堆候选名牌里挑出"该画字"的那些：按优先级贪心占位，与已留下的牌相交就藏。
  *
@@ -113,8 +130,13 @@ function boxesOverlap(a: CaptionBox, b: CaptionBox): boolean {
  * 选中项被藏起来，玩家会以为点没生效。
  *
  * <p>结果与输入顺序无关（同优先级按 `key` 定序），所以同一帧重画不会让牌子闪来闪去。
+ *
+ * <p>传入 `viewport` 时，盒子超出安全区的候选先被裁掉，不参与占位 —— HUD 是另一层，
+ * 不裁的话滚到屏幕边缘的实体牌必然压在顶按钮带或底导航带上。
  */
-export function pickVisibleCaptions(candidates: readonly CaptionCandidate[]): Set<string> {
+export function pickVisibleCaptions(
+  candidates: readonly CaptionCandidate[], viewport?: CaptionViewport,
+): Set<string> {
   const sorted = [...candidates].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned === true ? -1 : 1
     const rank = captionPriority(a.type) - captionPriority(b.type)
@@ -124,6 +146,9 @@ export function pickVisibleCaptions(candidates: readonly CaptionCandidate[]): Se
   const kept: CaptionCandidate[] = []
   for (const candidate of sorted) {
     if (candidate.box.width <= 0 || candidate.box.height <= 0) {
+      continue
+    }
+    if (viewport !== undefined && !boxInsideViewport(candidate.box, viewport)) {
       continue
     }
     if (kept.some((other) => boxesOverlap(other.box, candidate.box))) {

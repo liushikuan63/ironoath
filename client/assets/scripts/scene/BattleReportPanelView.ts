@@ -184,9 +184,11 @@ export class BattleReportPanelView extends Component {
       graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
       graphics.fill()
     }
-    const title = node.children[0]?.getComponent(Label)
-    const detail = node.children[1]?.getComponent(Label)
-    const outcome = node.children[2]?.getComponent(Label)
+    // 按名字取而不是按下标：池化行里子节点次序是建行时的偶然，
+    // 按下标取在加一颗子节点的那天会静默拿错标签（check-view-child-index 钉的就是这条）。
+    const title = node.getChildByName('Title')?.getComponent(Label)
+    const detail = node.getChildByName('Detail')?.getComponent(Label)
+    const outcome = node.getChildByName('Outcome')?.getComponent(Label)
     if (title !== undefined && title !== null) {
       title.string = row.title
     }
@@ -502,9 +504,11 @@ export class BattleReportPanelView extends Component {
       graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
       graphics.fill()
     }
-    const title = node.children[0]?.getComponent(Label)
-    const detail = node.children[1]?.getComponent(Label)
-    const outcome = node.children[2]?.getComponent(Label)
+    // 按名字取而不是按下标：池化行里子节点次序是建行时的偶然，
+    // 按下标取在加一颗子节点的那天会静默拿错标签（check-view-child-index 钉的就是这条）。
+    const title = node.getChildByName('Title')?.getComponent(Label)
+    const detail = node.getChildByName('Detail')?.getComponent(Label)
+    const outcome = node.getChildByName('Outcome')?.getComponent(Label)
     if (title !== undefined && title !== null) {
       title.string = row.title
     }

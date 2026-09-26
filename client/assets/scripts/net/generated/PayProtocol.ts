@@ -243,6 +243,8 @@ export interface GiftPopupResp {
   giftId: string | null
   /** 要买就下单这一档（pay_product id）。价格与内容都按它现查，本响应不复制。 */
   productId: string | null
+  /** 这一档商品的**显示名**（pay_product.name，如「落成贺礼」）。**必须下发**：客户端不查表，缺了它弹窗只能印 productId，而那是把内部编号印给玩家（#255/#268 同族；2026-09-21 复检在建造完成弹窗上抓到的正是这个形态）。查不到行时回 null，**不许回 id**。 */
+  productName: string | null
   /** 本次报价过期时刻（毫秒）= 触发时刻 + gift.offerTtlMinutes。过期之后必须重新触发才有弹窗，不做常驻挂件（§五⑤：玩家不看界面时倒计时照样在走，那是拿焦虑换点击）。 */
   offerExpireAt: number | null
   /** 被压住时「多久之后再问一次」的秒数（本次判定各条压制理由里最短的那个），允许弹出时为 0。客户端拿它做请求节流；它**不是**倒计时，倒计时读 offerExpireAt。 */

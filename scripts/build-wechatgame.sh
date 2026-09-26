@@ -46,6 +46,9 @@ echo "[build-wechatgame] CocosCreator: $COCOS_CREATOR"
 echo "[build-wechatgame] startScene: $BOOT_UUID"
 echo "[build-wechatgame] debug: $COCOS_DEBUG"
 
+# 本次构建的开始时刻：用来判"产物到底是不是这一轮写的"（见下面那条检查）。
+BUILD_STARTED_AT=$(date +%s)
+
 # showFPS 跟着 debug 走：命令行构建的默认值是 **true**，于是 release 包里也带着引擎 profiler
 # 浮层（FPS / Draw call 那一整块），玩家看到的就是这块调试面板 —— #280 的地图截图抓到过。
 # debug 包留着才有用（B07-4 那条"地图 ≥ 40 FPS"要量），所以不是写死 false。
@@ -63,12 +66,26 @@ if [ "$COCOS_STATUS" -ne 0 ]; then
   echo "[build-wechatgame][WARN] CocosCreator 退出码=$COCOS_STATUS；继续验证完整产物。"
 fi
 
+# **产物必须是本次构建写的**（2026-09-22 补）。
+#
+# 为什么必须有这一条：本脚本对非零退出码只 WARN（上面那条是必要的，Cocos 会以 36 收尾），
+# 于是"构建其实没跑起来"与"构建成功"在退出码上**完全同形** —— 实测踩到一次：
+# 忘了清 `ELECTRON_RUN_AS_NODE`（Cocos 是 Electron 应用，该变量让它以纯 Node 模式启动、
+# 把 `--project` 当 Node 选项拒绝），构建一行没写，脚本却顺着旧产物一路验到"构建与产物检查通过"、
+# **退 0**；直到 `check-package-size.sh` 打出"产物比源码旧 60 个文件"才暴露。
+# 现在按 `build-webmobile.sh` 的同一口径硬判：三件产物里最新的一份必须比本次开始时间新。
 for artifact in game.json game.js application.js; do
   if [ ! -f "$BUILD_DIR/$artifact" ]; then
     echo "[build-wechatgame][FAIL] 构建产物缺少 $BUILD_DIR/$artifact"
     exit 1
   fi
 done
+NEWEST_MTIME=$(stat -c %Y "$BUILD_DIR/game.js")
+if [ "$NEWEST_MTIME" -lt "$BUILD_STARTED_AT" ]; then
+  echo "[build-wechatgame][FAIL] $BUILD_DIR/game.js 是本次构建之前留下的（mtime $NEWEST_MTIME < $BUILD_STARTED_AT）"
+  echo "  构建很可能根本没跑：检查 $COCOS_CREATOR 能否启动，以及环境里有没有 ELECTRON_RUN_AS_NODE。"
+  exit 1
+fi
 
 node scripts/patch-wechat-orientation.mjs "$BUILD_DIR/game.json"
 node scripts/patch-wechat-config.mjs "$BUILD_DIR/project.config.json" "$WECHAT_GAME_APPID"

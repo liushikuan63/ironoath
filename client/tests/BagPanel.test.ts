@@ -43,8 +43,7 @@ function detailResp(resources: ResourceDetail[]): ResourceDetailResp {
   return { resources, serverNow: 0 }
 }
 
-function item(overrides: Partial<BagItem> = {}): BagItem {
-  return {
+function item(overrides: Partial<BagItem> = {}): BagItem {  return {
     itemId: 'item_speed_60m',
     name: '加速 60 分钟',
     type: 'SPEEDUP',
@@ -187,6 +186,17 @@ test('空背包也能组装（新号第一次打开面板）', () => {
   const panel = buildBagPanel(bagResp([]))
   assert.deepEqual(panel.pages, [])
   assert.equal(panel.capacityFull, false)
+})
+
+test('行里带**结构化数量**：批量开箱的入参取自 `count`，不是从 "3/10" 这种显示串里拆出来的', () => {
+  // 持有 7 个、单堆上限 999：显示串是 "7/999"，而数字必须是 7。
+  // 这条断言护的是"显示串兼职当数据源"那类隐性耦合：将来 stackText 改成 "7 / 999" 或加千分位，
+  // 拆字符串的写法会**静默**算错数量（多开或漏开），而结构化字段不受影响。
+  const row = buildItemRow(item({ type: 'CHEST', count: 7, stackMax: 999 }))
+  assert.equal(row.count, 7)
+  assert.equal(row.stackText, '7/999')
+  // 数量为 0 的行也照实传 0（视图据此不给「全开」；不许在这里悄悄改成 1）
+  assert.equal(buildItemRow(item({ type: 'CHEST', count: 0 })).count, 0)
 })
 
 test('开箱回执把"开了几个 / 开出什么"照服务端说的念', () => {

@@ -58,6 +58,11 @@ export interface HospitalPanel {
   readonly capacityText: string
   readonly treatingText: string | null
   readonly countdownText: string | null
+  /**
+   * 治疗到点、可以收了（本地倒计时归零即算，与城建 `collectable` 同一口径：服务端的收割
+   * 也要等玩家点那一下才发生）。判据放视图模型里是为了能单测 —— 视图在 node 环境跑不起来。
+   */
+  readonly collectableTreated: boolean
   /** capacity == 0：所有伤兵都会直接死亡。必须标红 */
   readonly noCapacity: boolean
   /** used >= capacity > 0：再受伤兵就会溢出成死亡 */
@@ -202,6 +207,7 @@ export function buildHospitalPanel(hospital: HospitalView, offsetMs: number, loc
     capacityText: `医院 ${hospital.used}/${hospital.capacity}`,
     treatingText: hospital.treating ? '治疗中' : null,
     countdownText: countdown === null ? null : formatCountdown(countdown),
+    collectableTreated: hospital.treating && countdown !== null && countdown <= 0,
     noCapacity,
     overflowing,
     warningText: warnings.length === 0 ? null : warnings.join('；'),

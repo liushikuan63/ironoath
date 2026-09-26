@@ -22,6 +22,7 @@ import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.core.reward.RewardPorts;
 import com.ironoath.web.dto.generated.ArmyListResp;
+import com.ironoath.web.dto.generated.ArmyTreatSpeedUpReq;
 import com.ironoath.web.dto.generated.ArmyUnitReq;
 import com.ironoath.web.dto.generated.AutoTrainReq;
 import com.ironoath.web.dto.generated.AutoTrainResp;
@@ -533,7 +534,7 @@ public class ArmyAppService {
     }
 
     /** 加速治疗。与训练加速同一口径：秒数只能来自道具配置，不接受客户端报数。 */
-    public TreatResp treatSpeedUp(String playerId, ArmyUnitReq req) {
+    public TreatResp treatSpeedUp(String playerId, ArmyTreatSpeedUpReq req) {
         validateRequest(playerId, req == null ? null : req.requestId());
         return guarded(playerId, req.requestId(), () -> cityAppService.withSettledCity(playerId, snap -> {
             ArmyState army = loadOrCreate(playerId);

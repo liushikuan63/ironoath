@@ -751,10 +751,22 @@ export interface BlockReq {
 
 /**
  * GET /social/blocks 响应体：我拉黑了谁。**只回我自己的名单**：对方拉没拉黑我是看不到的（那会变成一种骚扰反馈），而发消息时服务端会给出"被对方拒收"的说清方向的错误。
+ *
+ * **2026-09-22（收口清单 #322）**：原先只回一串 playerId，于是「取消拉黑」那个选择器只能把 `P9179c…` 这种内部编号印给玩家。改成对象列表：`playerId` 用于发请求，`name` 由服务端解析好（客户端不查表，铁律 2）。
  */
 export interface BlockListView {
-  /** 我拉黑的玩家 id，按加入顺序（最近的在前）。 */
-  blockedPlayerIds: string[]
+  /** 我拉黑的玩家，按加入顺序（最近的在前）。 */
+  blocked: BlockedPlayerView[]
+}
+
+/**
+ * 名单里的一位玩家。id 与显示名分开：前者是机器用的，后者是给人看的。
+ */
+export interface BlockedPlayerView {
+  /** 玩家 id（发 /social/unblock 时用它）。 */
+  playerId: string
+  /** 显示名（服务端解析好的昵称）。查不到存档时服务端回「未知玩家」—— **绝不回 id**（#323 同一条口径）。 */
+  name: string
 }
 
 /**

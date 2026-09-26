@@ -493,6 +493,26 @@
         }
       }
     },
+    "ArmyTreatSpeedUpReq": {
+      "type": "object",
+      "description": "POST /army/treatSpeedUp 请求体（B09/B05 的加速治疗）。\n\n**为什么不像训练那样带 unitId**（2026-09-22 改）：治疗是**全局一批**（`HospitalView` 只有 treating 与剩余秒，`TreatReq` 也只带 requestId），服务端实现里 `req.unitId()` **一次都没读** —— 而旧契约把它列成必填，于是客户端要么编一个没有意义的 unitId，要么根本发不出这个请求（这正是它一直没人调用的原因）。契约不该要求一个没人用的字段。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "itemId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64
+        },
+        "itemId": {
+          "type": "string",
+          "description": "加速道具的 id。**必填**：服务端原话是\"加速治疗必须指定 itemId\"、\"秒数只能来自道具配置\" —— 治疗没有金币加速这条路。"
+        }
+      }
+    },
     "TrainCancelResp": {
       "type": "object",
       "description": "POST /army/cancel 响应体。refund 是返还的资源（与城建取消同一口径：按比例返还，比例来自配置）。",

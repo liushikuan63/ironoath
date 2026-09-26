@@ -87,18 +87,27 @@ class StageEndpointTest {
         ((InMemoryStageProgressStore) progressRepo).clear();
     }
 
+    // 为什么是 200 而不是"压倒性的 5000"：**这条用例原来会间歇性变红**。
+    // 攻方损失 ≈ 敌方兵力 / LANCHESTER_K = 10/7 ≈ 1.43，而战斗带 ±5% 浮动 ⇒ 取整后落在
+    // 1 与 0 的边界上。2026-09-21 实测（同一条用例各跑 12 次）：派 **5000** 时 8 次得到空损失行、
+    // 4 次得到 1 行；派 **20000** 时 12 次全空；而派 **200 / 500 / 1000** 时 12 次全是确定的 1 行。
+    // 也就是说：损失只由"敌方兵力 / K"决定，与带多少兵无关 ⇒ 兵力越大反而越容易失去"有损失行"
+    // 这个前提，而下面那条逐行断言（展示名不许混进 `unit_` 编号）正是靠它避免空判。
+    // 换成 200 之后 200 打 10 依然压倒性取胜（三星判据不变），但"有 1 个伤兵"变成确定性事实。
+    private static final long SENT = 200L;
+
     @Test
     @DisplayName("验收10：压倒性胜利拿满三星，失败拿 0 星，且星级只升不降")
     void starsReflectTheThreeConditions() {
         String playerId = newPlayer();
-        giveTroops(playerId, Map.of(UNIT, 5000L));
+        giveTroops(playerId, Map.of(UNIT, SENT));
 
         giveHospital(playerId, 5);
         ChallengeStageResp won = stageAppService.challenge(playerId,
-                new ChallengeStageReq(newRequestId(), STAGE_1, List.of(new StageUnit(UNIT, 5000L)), List.of()));
+                new ChallengeStageReq(newRequestId(), STAGE_1, List.of(new StageUnit(UNIT, SENT)), List.of()));
         assertThat(won.stars().cleared()).isTrue();
         assertThat(won.stars().noLoss())
-                .as("无损 = 己方阵亡为 0。5000 打 10 时期望损失约 10/7 ≈ 1.4 个兵，"
+                .as("无损 = 己方阵亡为 0。200 打 10 时期望损失约 10/7 ≈ 1.4 个兵，"
                         + "按 PVE 死亡比例 0.20 算阵亡约 0.3 个 ⇒ 取整为 0；那 1 个伤兵由医院接住，"
                         + "所以无损可达。**没有医院时这一星拿不到** —— 内核把超容量的伤兵算作永久死亡，"
                         + "这正是第一章主城门槛对齐到医院可用的 5 级的原因")

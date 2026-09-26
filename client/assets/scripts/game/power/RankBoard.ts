@@ -95,6 +95,13 @@ export interface RankBoardView {
   readonly emptyText: string | null
   /** 拉榜失败时那一行提示（限流/断网等）；正常时为 null。文案由编排层给（服务端理由原样） */
   readonly noticeText: string | null
+  /**
+   * 今日快照那一块（B23 §一 2 的申诉时间线）；没查到 / 不在榜页签时为 null。
+   *
+   * <p>2026-09-22 接上：视图模型 `buildRankSnapshotView` 早就写好了，缺的是**入口** ——
+   * 请求 `/rank/snapshot` 要一个 `dayKey`，而它现在由 `/rank/list` 的响应下发（同一个日切轴）。
+   */
+  readonly snapshot: RankSnapshotView | null
 }
 
 /** 每日快照（申诉时间线）那一块的展示数据。 */
@@ -152,7 +159,8 @@ function formatCount(value: number): string {
  *                   所以组织榜下不会有任何一行被标成 mine（这是对的：联盟榜标"我"是联盟行）
  */
 export function buildRankBoard(resp: RankListResp | null, active: RankTabKey,
-                               myPlayerId: string, notice: string | null = null): RankBoardView {
+                               myPlayerId: string, notice: string | null = null,
+                               snapshot: RankSnapshotView | null = null): RankBoardView {
   const tabs: RankTabView[] = RANK_TABS.map(tab => ({
     key: tab.key,
     label: tab.label,
@@ -169,6 +177,7 @@ export function buildRankBoard(resp: RankListResp | null, active: RankTabKey,
     canNext: false,
     emptyText,
     noticeText: notice,
+    snapshot,
   })
   // 明细页与赛季页都不画榜：这两页的数字分别来自 /player/power 与 /season/status，
   // 与榜无关（数据源不同，混着画会串台）
@@ -210,6 +219,7 @@ export function buildRankBoard(resp: RankListResp | null, active: RankTabKey,
     canNext: resp.hasMore,
     emptyText: rows.length === 0 ? `这个榜还没有人。${boardHintOf(resp.type)}` : null,
     noticeText: notice,
+    snapshot,
   }
 }
 

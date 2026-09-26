@@ -64,3 +64,34 @@ Icons made by Delapouite, Lorc, Skoll, Heavenly Dog, Sbed, Faithtoken, Andy Mene
 - 提交：`f8d157532fbfaeda587e826d4cd5b21a49186f7c`
 - 许可证：SIL Open Font License 1.1
 - 状态：来源已确认，尚未复制字体文件；接入前必须做中文字形子集化，避免首包超预算。
+
+## 内城舞台底图（AI 重绘版）
+
+- 构图来源：用户在 2026-09-19 对话中直接提供的目标效果图（本机剪贴板 PNG）。
+  原始归档：`art-src/generated/concepts/a16-city-composition/city-reference-user-v0.png`。
+- 加工：2026-09-21 经图像编辑模型重绘（`gpt-image-2.5-sunburst`，OpenAI 兼容中转）。
+  区域掩码与提示词见 `tmp/city-base.py`；重绘**抹掉除主堡外的 15 类功能建筑**，
+  保留地形、道路、城墙、城门、装饰民居、广场帐篷与树石。
+- 运行时产物：`client/assets/resources/ui/generated/city/city-base-v1.png`
+  （1792×1024，224 色调色板，约 1.38 MB）；由 `ArtFamilies.CITY_STAGE_ASSETS.reference` 登记。
+- **为什么用重绘版而不是原图**：① 原图的再分发/公开发布许可尚未由用户书面确认，
+  重绘版与原图不再逐像素相同，显著降低直接复用第三方画面的风险；
+  ② 只有抹掉功能建筑，「未建造建筑不能预画在底图中冒充存在」（内城规格 §1.2）才成立。
+- 授权边界：重绘版仍以用户提供的图为构图依据；对外发布前仍需确认用户对原始素材的权利来源。
+- **原始效果图与它的旧派生版都不参与构建**：旧派生版 `city-scene-reference-v1.png`
+  已于 2026-09-21 删除（不再被任何代码引用），原图仅作为 `art-src` 归档与构图依据。
+
+### v2（2026-09-26，当前运行时底图）
+
+- 起因：v1 的擦除是**一次调用 + 十个巨大矩形掩膜**（最大一块占画面 41%×34%），
+  模型把抹空区填成带光晕的喷枪疤，玩家在内城看到的就是"贴图断裂"。
+- 加工链（均可复跑）：`art-src/redraw_city_base.py` 从原图出发、紧掩膜分四pass 串行擦除
+  （每pass 后归一回 1792×1024，否则掩膜随返回尺寸漂移）；`art-src/patch_city_base.py --warp`
+  对草地门控区做低频位移去相关，打散模型自带的重复草纹（建筑/墙/路门控为 0、像素不动）；
+  `art-src/install_city_base.py` 量化 224 色并生成新 uuid 的 meta。
+- **实测事实：该中转的 `/images/edits` 不执行掩膜**（品红填充探针零命中），
+  擦除效果完全由整图提示词决定；因此"逐区精修"路线被放弃，重复纹改由确定性后处理解决。
+- 画中保留的礼拜堂（原学院位置）裁定为**环境建筑**：它不属于 15 类功能正稿，
+  玩家的功能建筑正稿仍按锚点叠画，不构成规格 §1.2 的"未建预画"。
+- 运行时产物：`client/assets/resources/ui/generated/city/city-base-v2.png`
+  （1792×1024，224 色，约 0.96 MB，比 v1 小 27%）；v1 保留在仓内作回滚点，不再被引用。

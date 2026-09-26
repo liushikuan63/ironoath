@@ -51,7 +51,7 @@ public final class CityState {
     public record BuildingSnapshot(String instanceId, String configId, int level, int gridX, int gridY,
                                    BuildingStatus status, Long upgradeFinishAt, long upgradeStartedAt,
                                    long upgradeTotalSeconds, long upgradeOriginalSeconds,
-                                   int helpCount, long lastMovedAt, long lastFinishedAt) {
+                                   int helpCount, long lastMovedAt, long lastFinishedAt, long pausedAt) {
     }
 
     /**
@@ -76,7 +76,8 @@ public final class CityState {
         for (BuildingInstance b : buildings.values()) {
             out.add(new BuildingSnapshot(b.instanceId(), b.configId(), b.level(), b.gridX(), b.gridY(),
                     b.status(), b.upgradeFinishAt(), b.upgradeStartedAt(), b.upgradeTotalSeconds(),
-                    b.upgradeOriginalSeconds(), b.helpCount(), b.lastMovedAt(), b.lastFinishedAt()));
+                    b.upgradeOriginalSeconds(), b.helpCount(), b.lastMovedAt(), b.lastFinishedAt(),
+                    b.pausedAt()));
         }
         return new Snapshot(List.copyOf(out), extraQueues);
     }
@@ -98,7 +99,7 @@ public final class CityState {
                     b.level(), b.gridX(), b.gridY());
             instance.restore(b.level(), b.gridX(), b.gridY(), b.status(), b.upgradeFinishAt(),
                     b.upgradeStartedAt(), b.upgradeTotalSeconds(), b.upgradeOriginalSeconds(),
-                    b.helpCount(), b.lastMovedAt(), b.lastFinishedAt());
+                    b.helpCount(), b.lastMovedAt(), b.lastFinishedAt(), b.pausedAt());
             state.restoreBuilding(instance);
         }
         if (snapshot.extraQueues() > 0) {
@@ -189,6 +190,29 @@ public final class CityState {
         }
         buildings.put(instance.instanceId(), instance);
         gridOccupancy.put(key, instance.instanceId());
+    }
+
+    /**
+     * 摘掉一栋**从未建成**的建筑（取消首次放置时用，收口清单 #328）。
+     *
+     * <p>为什么需要它：`/city/cancel` 把实例留在 `Lv0 + IDLE`，而 `CityState` 原先只有"登记"没有"摘除"
+     * —— 于是那格从此被一栋从没建成的楼占着、表头「建筑 N/36」也算它一栋。取消首次放置的语义
+     * 应是**真正回到未建**（返还 60% 是"放弃这次建造"，不是"买个空地占着"）。
+     *
+     * <p>守卫写得很窄，是故意的：只接受 `Lv0 + IDLE`。建成的楼要拆是另一个功能（要退多少、
+     * 要不要冷却、要不要确认），不能靠这个方法顺手实现。
+     */
+    public void removeUnbuilt(String instanceId) {
+        BuildingInstance instance = building(instanceId);
+        if (instance.level() > 0) {
+            throw new IllegalStateException("这栋楼已经建成（Lv" + instance.level() + "），不能按未建成摘掉："
+                    + instanceId);
+        }
+        if (instance.isUpgrading()) {
+            throw new IllegalStateException("这栋楼正在升级（含暂停），先取消再摘：" + instanceId);
+        }
+        buildings.remove(instanceId);
+        gridOccupancy.remove(gridKey(instance.gridX(), instance.gridY()));
     }
 
     /**
@@ -446,12 +470,19 @@ public final class CityState {
         return refund;
     }
 
-    public void pause(String instanceId) {
-        building(instanceId).pause();
+    /**
+     * 暂停升级（B03 §2："队列中可暂停 / 取消"）。
+     *
+     * <p>收 `now` 是必须的：暂停要记下时刻，恢复时才会把这段时间还给这栋楼。
+     * 早先那版没有 `now`，于是"暂停"只是不显示倒计时 —— 时钟照走，恢复即完工。
+     */
+    public void pause(String instanceId, long now) {
+        building(instanceId).pause(now);
     }
 
-    public void resume(String instanceId) {
-        building(instanceId).resume();
+    /** 恢复升级：把暂停的那段时间还给这栋楼（剩余时间不变）。 */
+    public void resume(String instanceId, long now) {
+        building(instanceId).resume(now);
     }
 
     /**

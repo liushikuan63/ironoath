@@ -19,3 +19,23 @@ export const RESOURCE_NAMES: Readonly<Record<string, string>> = {
 export function resourceName(type: string): string {
   return RESOURCE_NAMES[type] ?? type
 }
+
+/**
+ * 建筑类型 → 中文名。取值与 `contract/config/building.json` 的 `type` 列一一对应
+ * （CORE / RESOURCE / UTILITY / MILITARY / DEFENSE / SCIENCE）。
+ *
+ * <p>和上面的 `RESOURCE_NAMES` 是**同一条情形、同一个理由**：`BuildOptionView.type` 下发的就是枚举原文，
+ * 而建造选择器把它连同门槛一起印给了玩家 —— 屏幕上出现「RESOURCE · 需要主城 1 级」。
+ * 这与收口清单 #255 的 `main_city`、资源条的 `WOOD` 是同一类缺陷的第三次出现。
+ *
+ * <p>正经修法是服务端在 `BuildOptionView` 上补下发中文名（那要动 city 契约 + 重生成双端 DTO），
+ * 在那之前这里是与 `RESOURCE_NAMES` 并列的**唯一真源，不许再抄第二份**。
+ */
+export const BUILDING_TYPE_NAMES: Readonly<Record<string, string>> = {
+  CORE: '核心', RESOURCE: '资源', UTILITY: '民生',
+  MILITARY: '军事', DEFENSE: '防御', SCIENCE: '科技',
+}
+
+export function buildingTypeName(type: string): string {
+  return BUILDING_TYPE_NAMES[type] ?? type
+}

@@ -37,7 +37,8 @@ import type {
   BattlePassClaimReq, BattlePassClaimResp, BattlePassStatusResp,
 } from '../../net/generated/BattlePassProtocol'
 import type {
-  CityCancelReq, CityCancelResp, CityCollectReq, CityCollectResp, CityListResp, CityUpgradeReq,
+  CityCancelReq, CityCancelResp, CityCollectReq, CityCollectResp, CityListResp, CityPauseReq,
+  CityPauseResp, CityResumeReq, CityResumeResp, CityUpgradeReq,
   CityUpgradeResp, SpeedUpReq, SpeedUpResp,
 } from '../../net/generated/CityProtocol'
 import type { ResourceDetailResp } from '../../net/generated/BagProtocol'
@@ -45,7 +46,8 @@ import type {
   BagListResp, ItemUseReq, ItemUseResp, OpenBatchReq, OpenBatchResp,
 } from '../../net/generated/BagProtocol'
 import type {
-  ArmyListResp, ArmyUnitReq, AutoTrainReq, AutoTrainResp, TrainCancelResp, TrainReq, TrainResp,
+  ArmyListResp, ArmyTreatSpeedUpReq, ArmyUnitReq, AutoTrainReq, AutoTrainResp, TrainCancelResp,
+  TrainReq, TrainResp,
   TreatReq, TreatResp,
 } from '../../net/generated/ArmyProtocol'
 import type {
@@ -245,6 +247,16 @@ export class GameApi {
     return this.mutate<CityCancelReq, CityCancelResp>('/city/cancel', req)
   }
 
+  /** 暂停升级（B03 §2）。暂停不返还资源，只把剩余时间冻在服务端。 */
+  cityPause(req: Omit<CityPauseReq, 'requestId'>): Promise<NetOutcome<CityPauseResp>> {
+    return this.mutate<CityPauseReq, CityPauseResp>('/city/pause', req)
+  }
+
+  /** 恢复升级：把暂停的那段时间还给这栋楼。 */
+  cityResume(req: Omit<CityResumeReq, 'requestId'>): Promise<NetOutcome<CityResumeResp>> {
+    return this.mutate<CityResumeReq, CityResumeResp>('/city/resume', req)
+  }
+
   cityCollect(req: Omit<CityCollectReq, 'requestId'>): Promise<NetOutcome<CityCollectResp>> {
     return this.mutate<CityCollectReq, CityCollectResp>('/city/collect', req)
   }
@@ -292,8 +304,8 @@ export class GameApi {
     return this.mutate<TreatReq, TreatResp>('/army/treat', req)
   }
 
-  armyTreatSpeedUp(req: Omit<ArmyUnitReq, 'requestId'>): Promise<NetOutcome<TreatResp>> {
-    return this.mutate<ArmyUnitReq, TreatResp>('/army/treatSpeedUp', req)
+  armyTreatSpeedUp(req: Omit<ArmyTreatSpeedUpReq, 'requestId'>): Promise<NetOutcome<TreatResp>> {
+    return this.mutate<ArmyTreatSpeedUpReq, TreatResp>('/army/treatSpeedUp', req)
   }
 
   armyCollectTreated(req: Omit<TreatReq, 'requestId'>): Promise<NetOutcome<TreatResp>> {

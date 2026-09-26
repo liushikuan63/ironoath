@@ -74,44 +74,68 @@ export interface SceneAnchor {
   readonly road: string
 }
 
-/** [gridX, gridY, district, x, y, 脚印宽, 脚印深, 道路]；行 0 是最北（远山），行 5 是城门一侧。 */
+/**
+ * [gridX, gridY, district, x, y, 脚印宽, 脚印深, 道路]。
+ *
+ * <p><b>2026-09-21 重排</b>：底图换成 AI 重绘版（`city-base-v1`，抹掉了除主堡外的 15 类功能建筑，
+ * 保留地形/道路/城墙/城门/民居）。本表按**新底图上真实存在的空位**重新标定 ——
+ * 旧表是 A16 时代的构图，与用户效果图对不上，实测 p33 落在主堡下方的岩石上、城堡本体没有热区，
+ * 玩家点最显眼的城堡会点空（见 `内城界面审计_2026-09-21.md` §2.3）。
+ *
+ * <p>坐标口径：1000×563 工作视图（与 A16 热区图同源），落点是**基座中心**。
+ * 格位与显示位置解耦：`(gridX, gridY)` 是服务器坐标，`x/y` 只决定画在哪，
+ * 所以重排显示不会动玩家存档。
+ *
+ * <p>`p33` 是服务器默认主城格，对准底图上的城堡；其余功能建筑落在底图被抹空的位置。
+ */
 const TABLE: ReadonlyArray<readonly [number, number, SceneDistrict, number, number, number, number, string]> = [
-  [0, 0, 'suburb', 132, 118, 96, 46, '北坡小道'],
-  [1, 0, 'suburb', 268, 104, 104, 48, '北坡小道'],
-  [2, 0, 'wall', 402, 92, 88, 40, '北垣步道'],
-  [3, 0, 'wall', 556, 92, 88, 40, '北垣步道'],
-  [4, 0, 'suburb', 700, 108, 112, 50, '东田埂'],
-  [5, 0, 'suburb', 858, 122, 104, 48, '东田埂'],
-  [0, 1, 'suburb', 118, 208, 100, 52, '北坡小道'],
-  [1, 1, 'crown', 250, 196, 112, 58, '台基西阶'],
-  [2, 1, 'crown', 400, 176, 150, 76, '主堡前庭'],
-  [3, 1, 'crown', 566, 176, 150, 76, '主堡前庭'],
-  [4, 1, 'crown', 716, 198, 112, 58, '台基东阶'],
-  [5, 1, 'suburb', 868, 220, 100, 52, '东田埂'],
-  [0, 2, 'wall', 112, 296, 92, 48, '西墙根'],
-  [1, 2, 'civic', 244, 288, 116, 60, '学院支路'],
-  [2, 2, 'crown', 392, 282, 128, 62, '台阶口'],
-  [3, 2, 'crown', 556, 282, 128, 62, '台阶口'],
-  [4, 2, 'civic', 712, 292, 116, 60, '使馆大道'],
-  [5, 2, 'wall', 872, 302, 92, 48, '东墙根'],
-  [0, 3, 'military', 116, 372, 100, 52, '校场便道'],
-  [1, 3, 'civic', 250, 372, 118, 60, '医院小巷'],
-  [2, 3, 'civic', 398, 366, 122, 62, '广场西廊'],
-  [3, 3, 'civic', 560, 366, 122, 62, '广场东廊'],
-  [4, 3, 'civic', 716, 372, 118, 60, '仓储车道'],
-  [5, 3, 'wall', 876, 378, 92, 48, '东墙根'],
-  [0, 4, 'military', 122, 444, 104, 54, '箭场长道'],
-  [1, 4, 'military', 256, 444, 116, 58, '营区主道'],
-  [2, 4, 'military', 404, 448, 120, 60, '营区主道'],
-  [3, 4, 'military', 562, 448, 120, 60, '营区主道'],
-  [4, 4, 'civic', 718, 444, 116, 58, '仓储车道'],
-  [5, 4, 'wall', 878, 450, 92, 48, '东墙根'],
-  [0, 5, 'suburb', 128, 512, 96, 44, '西坡矿道'],
-  [1, 5, 'military', 262, 516, 104, 46, '马厩围场'],
-  [2, 5, 'wall', 410, 528, 108, 40, '门洞西侧'],
-  [3, 5, 'wall', 560, 528, 108, 40, '门洞东侧'],
-  [4, 5, 'suburb', 716, 516, 104, 46, '东坡矿道'],
-  [5, 5, 'suburb', 872, 512, 96, 44, '东坡矿道'],
+  // ── 王庭高地：主堡与台地。p33 对准底图城堡
+  [3, 3, 'crown', 495, 84, 138, 52, '王庭主轴'],
+  [3, 1, 'crown', 490, 150, 74, 34, '王庭内阶'],
+  [2, 2, 'crown', 425, 213, 72, 34, '主堡前庭西'],
+  [4, 2, 'crown', 565, 213, 72, 34, '主堡前庭东'],
+  [2, 1, 'crown', 375, 162, 70, 32, '王庭西阶'],
+  [4, 1, 'crown', 615, 162, 70, 32, '王庭东阶'],
+
+  // ── 城郊生产带：四缘空地（原伐木场/农田/采石/矿口位置）
+  // y 不小于 ~17%：再往上就是底图的远山与天际线，建筑会"浮"在山脊上
+  // （实测伐木场落在 y=12% 时悬在画面最顶端、接地阴影压在远山上，一眼假）
+  [0, 0, 'suburb', 130, 131, 66, 32, '西北林场'],
+  [1, 0, 'suburb', 240, 112, 62, 30, '北坡木场'],
+  [2, 0, 'suburb', 340, 131, 62, 30, '北坡田埂'],
+  [3, 0, 'suburb', 680, 131, 60, 30, '东北农田'],
+  [4, 0, 'suburb', 780, 162, 68, 32, '东田埂'],
+  [5, 0, 'suburb', 880, 144, 60, 30, '东北林缘'],
+  [0, 1, 'suburb', 80, 250, 62, 30, '西坡矿道'],
+  [1, 1, 'suburb', 130, 312, 68, 32, '西工坊场'],
+  [5, 1, 'suburb', 930, 231, 62, 30, '东岩采石'],
+  [5, 2, 'suburb', 920, 350, 60, 30, '东坡矿口'],
+  [5, 3, 'suburb', 930, 275, 60, 30, '东岩台'],
+  [5, 5, 'suburb', 940, 444, 60, 30, '东南林缘'],
+
+  // ── 行政与民生区：中左（原学院）、中右（原使馆/医院）
+  [1, 2, 'civic', 240, 188, 70, 32, '学院坡道'],
+  [3, 2, 'civic', 660, 200, 70, 32, '使馆大道'],
+  [1, 3, 'civic', 270, 294, 70, 32, '广场西廊'],
+  [2, 3, 'civic', 350, 262, 72, 34, '市场西街'],
+  [4, 3, 'civic', 685, 262, 70, 32, '医院小巷'],
+  [4, 4, 'civic', 620, 362, 68, 32, '仓储东道'],
+
+  // ── 城门与军事区：左下整片空地 + 城门两翼。y 上限 73%，再往下会被底部选择栏压住
+  [0, 2, 'military', 150, 412, 70, 32, '西营外场'],
+  [0, 4, 'military', 60, 450, 66, 30, '西营门道'],
+  [1, 4, 'military', 280, 456, 66, 30, '营区南道'],
+  [2, 4, 'military', 300, 412, 68, 32, '马厩南场'],
+  [3, 4, 'military', 380, 375, 66, 32, '校场东道'],
+  [5, 4, 'military', 840, 425, 66, 32, '东营道'],
+  [0, 5, 'military', 170, 456, 62, 30, '门西外场'],
+  [1, 5, 'military', 390, 456, 62, 30, '门西墙道'],
+  [2, 5, 'military', 600, 456, 62, 30, '门东营道'],
+  [4, 5, 'military', 720, 438, 66, 30, '门东外场'],
+
+  // ── 城郭与通道：城门主轴与城墙沿线
+  [0, 3, 'wall', 60, 325, 64, 30, '西墙根'],
+  [3, 5, 'wall', 490, 444, 96, 42, '城门内侧'],
 ]
 
 export const SCENE_ANCHORS: readonly SceneAnchor[] = TABLE.map(
@@ -132,9 +156,28 @@ export function sceneAnchorAt(gridX: number, gridY: number): SceneAnchor | null 
   return SCENE_ANCHORS.find((a) => a.gridX === gridX && a.gridY === gridY) ?? null
 }
 
-/** 工作视图尺寸，供视图算统一缩放。 */
+/**
+ * 工作视图尺寸：**宽高比必须等于内容区（= 屏幕）的宽高比**，锚点才能与铺满全屏的底图同源。
+ *
+ * <p>2026-09-21 由 1000×563 改为 1000×625（1.6 = 设计分辨率 960×600 的比例）。
+ * 旧的 1.776 与屏幕不同源，投影时只能靠留白找平，热区因此整体偏移。
+ */
 export const SCENE_VIEW_WIDTH = 1000
-export const SCENE_VIEW_HEIGHT = 563
+export const SCENE_VIEW_HEIGHT = 625
+
+/** 程序化装饰（非参考图模式）的基准尺寸；视图与投影单测共用这一组值。 */
+export const SCENE_STAGE_WIDTH = 760
+export const SCENE_STAGE_HEIGHT = 440
+
+/**
+ * 城景内容区基准尺寸 = Cocos 设计分辨率（960×600）。
+ *
+ * <p>2026-09-21 起城景**铺满全屏**：规格 §1.1 要的就是满屏城景，而锚点只铺在卡片子矩形里
+ * 时，热区永远对不上满屏底图上的建筑（审计 §2.3 的根因之一）。
+ * 视图实际取 `view.getVisibleSize()`，这组常量给投影单测与取不到视口时兜底。
+ */
+export const SCENE_RUNTIME_WIDTH = 960
+export const SCENE_RUNTIME_HEIGHT = 600
 
 /** 一格地皮投影到面板之后的落点与尺寸（面板局部坐标：x 右正、y 上正，原点在内容区中心）。 */
 export interface ProjectedPlate {
@@ -157,15 +200,21 @@ export interface SceneLayout {
 }
 
 /**
- * 把 36 个锚点**等比**投影进面板的一块矩形内容区。
+ * 把 36 个锚点**按工作视图直接线性映射**进内容区。
  *
  * <p>为什么放在引擎无关层：投影是"格位 → 落点"的唯一换算，视图只照抄。
  * 让它留在 `CityPanelView` 里的话，"退回均匀棋盘"这件事没有任何东西拦得住 ——
  * 而规格 §3.3 禁的正是那个。`tests/CitySceneProjection.test.ts` 判四件事：
  * 全部落在区内、互不重叠、行列间距不再全等、缩放是各向同性（不拉伸）。
  *
+ * <p><b>2026-09-21 改算法</b>：旧版按**锚点包围盒**归一化（把 min/max 铺满内容区），
+ * 于是 36 个锚点被整体缩放居中，而底图是铺满全屏的 —— 两者因此错开：
+ * 实测 p33 偏了约 36 物理像素，底部几格还被选择栏压住。
+ * 现在工作视图与内容区同比例，直接 `(锚点 - 视图中心) × scale` 即可，
+ * 锚点坐标就是底图坐标，热区天然落在画面里那栋建筑上。
+ *
  * <p>坐标口径：锚点 `x/y` 是**落地中心**、`footprintDepth` 向画面下方延伸，
- * 所以脚印在源里占 `y-h/2 … y+h/2`（与 A16 热区图同源）；面板 y 轴朝上，故取负。
+ * 所以脚印在源里占 `y-h/2 … y+h/2`；面板 y 轴朝上，故取负。
  *
  * @param padding 内容区内缩边距，给描边与选中框留位置
  */
@@ -174,14 +223,8 @@ export function projectSceneLayout(
 ): SceneLayout {
   const innerWidth = areaWidth - padding * 2
   const innerHeight = areaHeight - padding * 2
-  const left = Math.min(...SCENE_ANCHORS.map((a) => a.x - a.footprintWidth / 2))
-  const right = Math.max(...SCENE_ANCHORS.map((a) => a.x + a.footprintWidth / 2))
-  const top = Math.min(...SCENE_ANCHORS.map((a) => a.y - a.footprintDepth / 2))
-  const bottom = Math.max(...SCENE_ANCHORS.map((a) => a.y + a.footprintDepth / 2))
   // 各向同性：两个轴共用一个缩放，否则城会被拉扁——横看是"所有屋顶都变椭圆"
-  const scale = Math.min(innerWidth / (right - left), innerHeight / (bottom - top))
-  const centerX = (left + right) / 2
-  const centerY = (top + bottom) / 2
+  const scale = Math.min(innerWidth / SCENE_VIEW_WIDTH, innerHeight / SCENE_VIEW_HEIGHT)
   return {
     scale,
     plates: SCENE_ANCHORS.map((anchor) => ({
@@ -189,8 +232,8 @@ export function projectSceneLayout(
       gridY: anchor.gridY,
       district: anchor.district,
       road: anchor.road,
-      x: (anchor.x - centerX) * scale,
-      y: -(anchor.y - centerY) * scale,
+      x: (anchor.x - SCENE_VIEW_WIDTH / 2) * scale,
+      y: (SCENE_VIEW_HEIGHT / 2 - anchor.y) * scale,
       width: anchor.footprintWidth * scale,
       height: anchor.footprintDepth * scale,
       depth: anchor.y,

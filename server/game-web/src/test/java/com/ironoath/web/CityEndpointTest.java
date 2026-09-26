@@ -7,6 +7,10 @@ import com.ironoath.core.city.CityState;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.web.dto.generated.CityCancelReq;
 import com.ironoath.web.dto.generated.CityCancelResp;
+import com.ironoath.web.dto.generated.CityPauseReq;
+import com.ironoath.web.dto.generated.CityPauseResp;
+import com.ironoath.web.dto.generated.CityResumeReq;
+import com.ironoath.web.dto.generated.CityResumeResp;
 import com.ironoath.web.dto.generated.CityCollectResp;
 import com.ironoath.web.dto.generated.CityListResp;
 import com.ironoath.web.dto.generated.CityUpgradeReq;
@@ -96,8 +100,49 @@ class CityEndpointTest {
                 new CityUpgradeReq(newRequestId(), configId, x, y));
     }
 
-    // ---------- /city/list ----------
+    @Test
+    @DisplayName("取消首次放置：那栋楼从列表里消失、格子能原地再建、返还照旧（#328）")
+    void cancelFirstPlacementFreesTheSlot() {
+        String playerId = newPlayer();
+        CityUpgradeResp first = startUpgrade(playerId, "lumber_camp", 1, 1);
+        long woodBefore = cityAppService.list(playerId)
+                .resources().get(com.ironoath.web.dto.generated.ResourceType.STONE).current();
 
+        cityAppService.cancel(playerId, new CityCancelReq(newRequestId(), first.buildingId()));
+
+        CityListResp afterCancel = cityAppService.list(playerId);
+        assertThat(afterCancel.buildings())
+                .as("取消首次放置之后那栋楼不该还占着列表 —— 它从没建成过")
+                .noneMatch(view -> view.id().equals(first.buildingId()));
+        assertThat(afterCancel.buildings()).as("主城还在").hasSize(1);
+        assertThat(cityAppService.list(playerId)
+                .resources().get(com.ironoath.web.dto.generated.ResourceType.STONE).current())
+                .as("返还照旧（石料退回）").isGreaterThan(woodBefore);
+        assertThat(afterCancel.queues().used()).as("队列也腾空了").isZero();
+
+        // 同一格能重新建 —— 这是"格子真的释放了"最直接的证据（占用没释放会报网格冲突）。
+        // 注意实例 id 是**按玩家+配置定的**（不是随机），所以重建拿到的 id 与原来相同，这不算判据问题。
+        CityUpgradeResp again = startUpgrade(playerId, "lumber_camp", 1, 1);
+        assertThat(again.buildingId()).isNotBlank();
+        assertThat(cityAppService.list(playerId).buildings())
+                .as("重新建起来之后列表里应当有它").anyMatch(view -> view.id().equals(again.buildingId()));
+        // 取消"既有建筑的升级"不走摘除这条路：楼本来就该留着。
+        // 先把它真的建成（金币加速提前 1 小时 → 收割），再升 2 级、取消那次升级。
+        cityAppService.speedUp(playerId, new SpeedUpReq(newRequestId(), again.buildingId(),
+                SpeedUpSource.GOLD, null));
+        cityAppService.collect(playerId, new com.ironoath.web.dto.generated.CityCollectReq(newRequestId(), again.buildingId()));
+        assertThat(cities.findByPlayerId(playerId).orElseThrow()
+                .building(again.buildingId()).level()).as("夹具前提：先建到 Lv1").isEqualTo(1);
+
+        CityUpgradeResp toLevel2 = cityAppService.upgrade(playerId,
+                new CityUpgradeReq(newRequestId(), "lumber_camp", null, null));
+        cityAppService.cancel(playerId, new CityCancelReq(newRequestId(), toLevel2.buildingId()));
+        assertThat(cityAppService.list(playerId).buildings())
+                .as("已经建成的楼被取消升级后必须还在（不能被当成未建成摘掉）")
+                .anyMatch(view -> view.id().equals(again.buildingId()));
+    }
+
+    // ---------- /city/list ----------
     @Test
     @DisplayName("list 返回主城、队列视图（含新手期的 2 个队列）与五种资源的结算结果")
     void listReturnsFullCitySnapshot() {
@@ -121,7 +166,6 @@ class CityEndpointTest {
         assertThat(resp.buildOptions())
                 .anyMatch(option -> option.configId().equals("lumber_camp")
                         && option.name().equals("伐木场"));
-
         assertThat(resp.queues().used()).isZero();
         assertThat(resp.queues().available()).as("新号在保护期内应有 2 个队列").isEqualTo(2);
         assertThat(resp.queues().max()).isEqualTo(3);
@@ -172,6 +216,71 @@ class CityEndpointTest {
         // 两次调用间隔极短，产量按毫秒折算不足 1 单位 ⇒ 向下取整后应完全相同
         assertThat(second).as("重复读取不得刷出资源").isEqualTo(first);
     }
+
+    // ---------- /city/pause 与 /city/resume（B03 §2：队列中可暂停 / 取消）----------
+
+    @Test
+    @DisplayName("暂停：不返还资源、仍占队列、不给倒计时；恢复后**把暂停那段时间还回来**")
+    void pauseKeepsQueueAndGivesTimeBack() throws Exception {
+        String playerId = newPlayer();
+        CityUpgradeResp upgrade = startUpgrade(playerId, "lumber_camp", 1, 1);
+        // 把工期拉长，免得测试跑到一半楼就建好了（那样 pause 会因为"已完工"而报错）
+        extendUpgrade(playerId, upgrade.buildingId(), 100_000L);
+        long woodBefore = cityAppService.list(playerId)
+                .resources().get(com.ironoath.web.dto.generated.ResourceType.WOOD).current();
+        long remainingBefore = remainingOf(playerId, upgrade.buildingId());
+        assertThat(remainingBefore).as("夹具前提：确实在升级、有剩余时间").isGreaterThan(1000L);
+
+        CityPauseResp paused = cityAppService.pause(playerId,
+                new CityPauseReq(newRequestId(), upgrade.buildingId()));
+        assertThat(paused.status()).as("暂停后状态").isEqualTo("PAUSED");
+        assertThat(paused.remainingSeconds()).as("暂停中不给倒计时（照 finishAt 算会显示一个不走的表）")
+                .isZero();
+        long woodAfterPause = cityAppService.list(playerId)
+                .resources().get(com.ironoath.web.dto.generated.ResourceType.WOOD).current();
+        assertThat(woodAfterPause).as("暂停不是取消：资源不会被返还").isGreaterThanOrEqualTo(woodBefore);
+
+        CityListResp listed = cityAppService.list(playerId);
+        assertThat(listed.queues().used()).as("暂停中的建筑仍占一个建造队列 —— 否则暂停就等于无限队列")
+                .isEqualTo(1);
+        assertThat(listed.buildings()).as("暂停后那栋仍在列表里").hasSizeGreaterThan(1);
+        assertThat(listed.buildings().stream()
+                .filter(view -> view.id().equals(upgrade.buildingId())).findFirst().orElseThrow().status())
+                .isEqualTo(BuildingStatus.PAUSED);
+
+        // 暂停期间真等 2 秒：旧实现（只翻状态、不动 finishAt）会把这 2 秒算掉，恢复后剩余少 2 秒
+        Thread.sleep(2000L);
+
+        CityResumeResp resumed = cityAppService.resume(playerId,
+                new CityResumeReq(newRequestId(), upgrade.buildingId()));
+        assertThat(resumed.status()).isEqualTo("UPGRADING");
+        assertThat(resumed.remainingSeconds())
+                .as("暂停的那 2 秒必须还给这栋楼（旧实现会少 2 秒，这条断言就是冲着它去的）")
+                .isGreaterThanOrEqualTo(remainingBefore - 1L);
+        assertThat(remainingOf(playerId, upgrade.buildingId()))
+                .as("再读一次列表，剩余时间与恢复响应一致").isEqualTo(resumed.remainingSeconds());
+    }
+
+    @Test
+    @DisplayName("暂停：空闲建筑被拒，且不改任何状态")
+    void pauseRejectsIdleBuilding() {
+        String playerId = newPlayer();
+        // 先读一次列表把城建存档建出来（存档是惰性的：不读就没有），再取主城那栋
+        CityListResp initial = cityAppService.list(playerId);
+        String mainCityId = initial.buildings().stream()
+                .filter(view -> view.configId().equals("main_city")).findFirst().orElseThrow().id();
+        assertThatThrownBy(() -> cityAppService.pause(playerId,
+                new CityPauseReq(newRequestId(), mainCityId)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("暂停");
+        // 注意：这个对象是从 Spring 上下文里的仓储拿出来的，它的领域枚举由**应用类加载器**加载，
+        // 与测试类加载器里的 BuildingStatus.IDLE 不是同一个类实例（devtools 的 RestartClassLoader），
+        // 直接比枚举会得到 "IDLE != IDLE"。跨这条边界按 name() 比，语义不变。
+        assertThat(cities.findByPlayerId(playerId).orElseThrow().building(mainCityId).status().name())
+                .as("空闲建筑被拒后仍是 IDLE").isEqualTo("IDLE");
+        assertThat(cityAppService.list(playerId).queues().used()).isZero();
+    }
+
 
     // ---------- /city/speedUp ----------
 
@@ -449,7 +558,11 @@ class CityEndpointTest {
 
         CityState city = cities.findByPlayerId(playerId).orElseThrow();
         assertThat(city.usedQueues()).as("取消后队列应释放").isZero();
-        assertThat(city.building(upgrade.buildingId()).level()).as("取消不得保留等级").isZero();
+        // 2026-09-22（#328 之后）：取消的是**首次放置**（还停在 Lv0），实例被一并摘掉 ——
+        // 原先这里断言"等级归零"，那钉的是旧语义（格子被一栋从没建成的楼占着）。
+        assertThat(city.buildings()).as("首次放置被取消后不该还占着格子")
+                .noneMatch(b -> b.instanceId().equals(upgrade.buildingId()));
+        assertThat(cityAppService.list(playerId).buildings()).as("列表里也只剩主城").hasSize(1);
     }
 
     @Test
@@ -631,6 +744,70 @@ class CityEndpointTest {
     }
 
     // ---------- 辅助 ----------
+
+    /**
+     * 前置建筑的**显示名**（`requireBuildingName`）必须下发。
+     *
+     * <p>为什么要在单测里改表：现网 `building.json` 的 15 行**没有任何一行带前置**
+     * （`requireBuilding` 全为 null）⇒ 这条路径平时走不到，端到端也点不出来。
+     * 所以按生产同一条热更入口 `ConfigRegistry.reload` 先造一个前置出来，再问一次 `/city/list`，
+     * `finally` 里还原（同 `PayEntitlementTest` 的做法：不把改过的表留给后面的用例）。
+     */
+    @Test
+    @DisplayName("前置建筑下发的是中文显示名，不是 building.json 的行 id")
+    void buildOptionCarriesThePrerequisiteDisplayName() throws Exception {
+        String original = readContractTable("building.json");
+        configs.reload("building", com.ironoath.config.cfg.BuildingCfg.class,
+                withPrerequisite(original, "academy", "main_city"));
+        try {
+            CityListResp resp = cityAppService.list(newPlayer());
+            var academy = resp.buildOptions().stream()
+                    .filter(option -> option.configId().equals("academy"))
+                    .findFirst().orElseThrow();
+            assertThat(academy.requireBuilding()).as("id 仍要下发：服务端校验与埋点用它")
+                    .isEqualTo("main_city");
+            assertThat(academy.requireBuildingName())
+                    .as("显示名就是 building.json 那一行的 name").isEqualTo("主城");
+            assertThat(academy.requireBuildingName())
+                    .as("名字不许等于 id —— 那正是「前置 main_city」这条外泄的形态")
+                    .isNotEqualTo(academy.requireBuilding());
+        } finally {
+            configs.reload("building", com.ironoath.config.cfg.BuildingCfg.class, original);
+        }
+    }
+
+    /** 把某一行加上前置建筑（只改内存里那份 JSON 文本，不动 contract/config 的文件）。 */
+    private static String withPrerequisite(String json, String rowId, String prerequisite)
+            throws Exception {
+        com.fasterxml.jackson.databind.JsonNode root =
+                com.ironoath.common.json.JsonUtils.readTree(json);
+        com.fasterxml.jackson.databind.node.ObjectNode out =
+                (com.fasterxml.jackson.databind.node.ObjectNode) root;
+        com.fasterxml.jackson.databind.JsonNode rows = out.get("rows");
+        for (com.fasterxml.jackson.databind.JsonNode row : rows) {
+            if (rowId.equals(row.get("id").asText())) {
+                ((com.fasterxml.jackson.databind.node.ObjectNode) row)
+                        .put("requireBuilding", prerequisite);
+            }
+        }
+        return com.ironoath.common.json.JsonUtils.toJson(out);
+    }
+
+    /** surefire 的工作目录是被测模块目录，按仓库根相对路径读会 NoSuchFile —— 向上找到 contract/ 再拼。 */
+    private static String readContractTable(String fileName) throws java.io.IOException {
+        java.nio.file.Path dir = java.nio.file.Path.of("").toAbsolutePath();
+        for (int i = 0; i < 6; i++) {
+            java.nio.file.Path candidate = dir.resolve("contract").resolve("config").resolve(fileName);
+            if (java.nio.file.Files.exists(candidate)) {
+                return java.nio.file.Files.readString(candidate, java.nio.charset.StandardCharsets.UTF_8);
+            }
+            dir = dir.getParent();
+            if (dir == null) {
+                break;
+            }
+        }
+        throw new java.io.IOException("找不到 contract/config/" + fileName);
+    }
 
     /** 某建筑此刻的剩余秒数。读仓储而不是手里那份 —— 读端口给的是副本。 */
     private long remainingOf(String playerId, String buildingId) {

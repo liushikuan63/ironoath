@@ -19,14 +19,19 @@ import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, 
 import { GuideDriver } from '../game/guide/GuideDriver'
 import type { GuideFrame } from '../game/guide/GuideDriver'
 import type { GuideAction, GuideScriptResp } from '../net/generated/GuideProtocol'
+import { applyCommandButton } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
 /** 配色沿用各面板的「铜金 + 暗红」。美术常量，不是游戏数值。 */
 const COLOR_MASK = new Color(8, 6, 5, 168)
-const COLOR_BUBBLE = new Color(38, 31, 25, 246)
+const COLOR_BUBBLE = new Color(38, 31, 25, 216)
 const COLOR_BUBBLE_EDGE = new Color(184, 134, 11, 255)
+/** 「这一步还没达成」那一句的暖红，与内城 `COLOR_WARNING` 同族。 */
+const COLOR_HELD = new Color(214, 122, 92, 255)
+/** 这句提示停留多久（秒）；之后 `repaint` 把步数标签还原。 */
+const HELD_HINT_SECONDS = 4
 const COLOR_TEXT = new Color(232, 221, 200, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 const COLOR_BUTTON = new Color(52, 43, 35, 255)
@@ -35,6 +40,8 @@ const BUBBLE_HEIGHT = 150
 const BUBBLE_MARGIN = 24
 const BUTTON_HEIGHT = 44
 const BUTTON_WIDTH = 150
+/** 两颗按钮并排时的间距；单颗时它不参与排位（那颗必须居中）。 */
+const BUTTON_GAP = 12
 
 /** 本地坐标下的矩形（左下角 + 宽高）—— 遮罩按它拼四块。 */
 export interface GuideRect {
@@ -63,6 +70,8 @@ export class GuideView extends Component {
   private nextButton: Node | null = null
   private nextCaption: Label | null = null
   private skipButton: Node | null = null
+  /** 「还没达成」提示的还原计时器；`isValid` 守卫见 `showHeldHint`。 */
+  private heldHintTimer: ReturnType<typeof setTimeout> | null = null
   private skipCaption: Label | null = null
 
   /** 收到一次脚本下发：换驱动器就等于重新开始读这一号的位置（服务端是唯一权威）。 */
@@ -102,6 +111,8 @@ export class GuideView extends Component {
     }
     if (this.bubblePosition !== null) {
       this.bubblePosition.string = '第 ' + frame.position.index + ' / ' + frame.position.total + ' 步'
+      // 颜色也要一起还原：`showHeldHint` 把它染成了暖红，只改文字不改颜色会留下一个红着的步数
+      this.bubblePosition.color = COLOR_TEXT_DIM
     }
     if (this.nextCaption !== null) {
       this.nextCaption.string = '我完成了'
@@ -112,6 +123,7 @@ export class GuideView extends Component {
     if (this.skipCaption !== null) {
       this.skipCaption.string = '跳过这一步'
     }
+    this.layoutButtons()
     this.node.active = true
   }
 
@@ -196,7 +208,10 @@ export class GuideView extends Component {
       return
     }
     const size = view.getVisibleSize()
-    const bubbleWidth = Math.min(size.width - BUBBLE_MARGIN * 2, 760)
+    // 600 而不是铺满：引导气泡是临时层，不该把整幅城景压成一块不透明板
+    // （2026-09-26 排版审查：760 宽 + 246 不透明度时首步弹窗盖掉约 40% 画面）。
+    // 文案在 600-32 里折两行仍装得下（文本盒高 62）。
+    const bubbleWidth = Math.min(size.width - BUBBLE_MARGIN * 2, 600)
 
     const bubble = new Node('GuideBubble')
     bubble.layer = this.node.layer
@@ -245,28 +260,36 @@ export class GuideView extends Component {
     bubble.addChild(row)
     row.addComponent(UITransform).setContentSize(new Size(bubbleWidth - 32, BUTTON_HEIGHT))
     row.setPosition(new Vec3(0, -BUBBLE_HEIGHT / 2 + BUTTON_HEIGHT / 2 + 12, 0))
-    this.nextButton = this.button(row, 'GuideNext', BUTTON_WIDTH, '我完成了', COLOR_BUBBLE_EDGE)
+    this.nextButton = this.button(row, 'GuideNext', BUTTON_WIDTH, '我完成了', false)
     this.nextCaption = this.nextButton.getChildByName('caption')?.getComponent(Label) ?? null
-    this.skipButton = this.button(row, 'GuideSkip', BUTTON_WIDTH, '跳过这一步', COLOR_TEXT_DIM)
+    this.skipButton = this.button(row, 'GuideSkip', BUTTON_WIDTH, '跳过这一步', true)
     this.skipCaption = this.skipButton.getChildByName('caption')?.getComponent(Label) ?? null
 
     this.nextButton.on('touch-start', (_event: EventTouch) => this.complete(), this)
     this.skipButton.on('touch-start', (_event: EventTouch) => this.skip(), this)
   }
 
-  private button(parent: Node, name: string, width: number, caption: string, edge: Color): Node {
+  /**
+   * 一颗按钮。走全游戏同一张暗金 chip 母版（{@code applyCommandButton}），
+   * 取不到素材时才退回 Graphics 描边 —— 引导气泡不该是界面里唯一一套按钮皮。
+   *
+   * @param secondary 次要键（跳过）：同一张 chip，只用文字颜色降权，不再另画一套灰皮。
+   */
+  private button(parent: Node, name: string, width: number, caption: string, secondary: boolean): Node {
     const node = new Node(name)
     node.layer = parent.layer
     parent.addChild(node)
     node.addComponent(UITransform).setContentSize(new Size(width, BUTTON_HEIGHT))
-    const graphics = node.addComponent(Graphics)
-    graphics.fillColor = COLOR_BUTTON
-    graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 8)
-    graphics.fill()
-    graphics.lineWidth = 2
-    graphics.strokeColor = edge
-    graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 8)
-    graphics.stroke()
+    if (!applyCommandButton(node, 'normal', width, BUTTON_HEIGHT)) {
+      const graphics = node.addComponent(Graphics)
+      graphics.fillColor = COLOR_BUTTON
+      graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 8)
+      graphics.fill()
+      graphics.lineWidth = 2
+      graphics.strokeColor = COLOR_BUBBLE_EDGE
+      graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 8)
+      graphics.stroke()
+    }
     const label = new Node('caption')
     label.layer = node.layer
     node.addChild(label)
@@ -275,9 +298,30 @@ export class GuideView extends Component {
     captionLabel.fontSize = 22
     captionLabel.lineHeight = BUTTON_HEIGHT
     captionLabel.horizontalAlign = Label.HorizontalAlign.CENTER
-    captionLabel.color = edge
+    captionLabel.color = secondary ? COLOR_TEXT_DIM : COLOR_TEXT
     captionLabel.string = caption
     return node
+  }
+
+  /**
+   * 按钮行的排位：**只有一颗时它必须居中**。
+   *
+   * <p>原来这里无条件按"两颗并排"排（`-(W+gap)/2` 与 `+(W+gap)/2`），而 `showSkip=false`
+   * 的那些步里「跳过这一步」是 `active=false` 的 —— 于是屏上只剩「我完成了」一颗，
+   * 却仍坐在左半边的位置上，看着像没对齐（用户 2026-09-26 指出的正是这个形状）。
+   * 排位读的是 `skipButton.active`，所以 `draw` 里必须先设 active 再调本方法。
+   */
+  private layoutButtons(): void {
+    if (this.nextButton === null || this.skipButton === null) {
+      return
+    }
+    if (this.skipButton.active) {
+      const half = (BUTTON_WIDTH + BUTTON_GAP) / 2
+      this.nextButton.setPosition(new Vec3(-half, 0, 0))
+      this.skipButton.setPosition(new Vec3(half, 0, 0))
+      return
+    }
+    this.nextButton.setPosition(new Vec3(0, 0, 0))
   }
 
   /**
@@ -300,11 +344,6 @@ export class GuideView extends Component {
     const anchorTop = hole.y + hole.height < height / 2 ? hole.y + hole.height : height / 2
     const y = anchorTop - BUBBLE_HEIGHT / 2 - 12
     this.bubble.setPosition(new Vec3(0, Math.max(y, -height / 2 + BUBBLE_HEIGHT / 2 + 8), 0))
-    const row = this.bubble.getChildByName('GuideButtons')
-    if (row !== null && this.skipButton !== null && this.nextButton !== null) {
-      this.nextButton.setPosition(new Vec3(-(BUTTON_WIDTH + 12) / 2, 0, 0))
-      this.skipButton.setPosition(new Vec3((BUTTON_WIDTH + 12) / 2, 0, 0))
-    }
   }
 
   private complete(): void {
@@ -336,10 +375,40 @@ export class GuideView extends Component {
    * 消费一次上报回执。**位置只跟着服务端走**，所以这里只是把新位置交给驱动器再重画。
    *
    * <p>`advanced=false` 时服务端给的回执仍指向当前步，重画等于什么都不变 —— 这正是"留在原步等他"。
+   *
+   * @param advanced 服务端是否真的推进了。为 false 时**必须给玩家一句话**：契约里这是正常返回
+   *                 （不是错误），客户端原先什么都不做，于是玩家点了「我完成了」界面毫无反应，
+   *                 既不知道没完成、也不知道该去干什么 —— 实测引导第 1 步正是这种情形。
    */
-  applyProgress(nextStepIndex: number | null): void {
+  applyProgress(nextStepIndex: number | null, advanced = true): void {
     this.driver?.applyProgress(nextStepIndex)
     this.repaint()
+    if (!advanced) {
+      this.showHeldHint()
+    }
+  }
+
+  /**
+   * 把"还没达成"写在步数那一行上（不动版式，几秒后由 `repaint` 还原）。
+   *
+   * <p>用 `setTimeout` 而不是 `Component.scheduleOnce`：本工程锁定的 Cocos 类型里没有后者
+   * （类型检查会报 TS2551）。回调里补 `isValid` 守卫，节点销毁后不再碰它。
+   */
+  private showHeldHint(): void {
+    if (this.bubblePosition === null) {
+      return
+    }
+    this.bubblePosition.string = '这一步还没达成 —— 先完成上面的操作'
+    this.bubblePosition.color = COLOR_HELD
+    if (this.heldHintTimer !== null) {
+      clearTimeout(this.heldHintTimer)
+    }
+    this.heldHintTimer = setTimeout(() => {
+      this.heldHintTimer = null
+      if (this.isValid) {
+        this.repaint()
+      }
+    }, HELD_HINT_SECONDS * 1000)
   }
 
   private releaseBlockers(): void {

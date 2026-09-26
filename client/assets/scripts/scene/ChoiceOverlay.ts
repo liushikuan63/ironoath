@@ -5,6 +5,14 @@ import type { ChoiceOption } from '../game/session/Choices'
 import { applySystemUiFont } from './UiFont'
 
 const COLOR_MASK = new Color(12, 10, 9, 238)
+/**
+ * 面板背后的全屏压暗层。
+ *
+ * <p>为什么要有它：面板自身的底色与城景/列表底一样是暗褐，只靠一块圆角矩形和背景"粘连"在一起，
+ * 边界读不出来（审计 §2.5 的视觉评审原话：「面板自身边界非常模糊，与背后同样暗沉的城景严重粘连」）。
+ * 压暗层同时把"这一层是模态"讲清楚 —— 它下面的东西这一刻不能点。
+ */
+const COLOR_SCRIM = new Color(8, 6, 5, 150)
 const COLOR_PANEL = new Color(43, 36, 29, 255)
 const COLOR_ROW = new Color(59, 48, 38, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
@@ -24,6 +32,7 @@ export class ChoiceOverlay {
   private readonly width: number
   private page = 0
   private onPick: ((id: string) => void) | null = null
+  private onHide: (() => void) | null = null
 
   constructor(parent: Node, title: string, width = 760) {
     this.width = width
@@ -33,6 +42,20 @@ export class ChoiceOverlay {
     this.node.addComponent(UITransform).setContentSize(new Size(width, 430))
     this.node.on('touch-start', (_event: EventTouch) => {
       // 吞掉遮罩点击，防止透传到下面的网格或列表。
+    }, this)
+
+    // 全屏压暗层：作为**第一个子节点**挂进来，于是它画在所有内容之下、
+    // 又随 `this.node.active` 一起开关。尺寸给得远大于任何面板，覆盖整个可视区。
+    const scrim = new Node('ChoiceScrim')
+    scrim.layer = parent.layer
+    this.node.addChild(scrim)
+    scrim.addComponent(UITransform).setContentSize(new Size(4000, 4000))
+    const scrimGraphics = scrim.addComponent(Graphics)
+    scrimGraphics.fillColor = COLOR_SCRIM
+    scrimGraphics.rect(-2000, -2000, 4000, 4000)
+    scrimGraphics.fill()
+    scrim.on('touch-start', (_event: EventTouch) => {
+      // 压暗层自己也要吞点击：它比 `this.node` 的命中盒大，不吞就会漏到下层
     }, this)
 
     const background = this.node.addComponent(Graphics)
@@ -76,7 +99,8 @@ export class ChoiceOverlay {
     this.node.active = false
   }
 
-  show(options: readonly ChoiceOption[], onPick: (id: string) => void): void {
+  show(options: readonly ChoiceOption[], onPick: (id: string) => void,
+       onHide?: () => void): void {
     // 显示前先抬到父节点最后：弹层在各面板 `onLoad` 就建好了，而列表行是每次渲染才
     // addChild 的 —— 加得晚就压在菜单上面。背包那格实测：道具行（含「使用」键）横盖住
     // 「选择加速目标」的标题，读数全绿而玩家看到的是半截字。放在这里而不是每个调用方
@@ -85,6 +109,7 @@ export class ChoiceOverlay {
     this.options = Array.from(options)
     this.page = 0
     this.onPick = onPick
+    this.onHide = onHide ?? null
     this.node.active = true
     this.renderPage()
   }
@@ -108,6 +133,11 @@ export class ChoiceOverlay {
     this.node.active = false
     this.options = []
     this.onPick = null
+    // `hide` 是唯一的关闭出口（取消、选中、以及面板被拆时都走它），
+    // 所以把"关掉了"这件事挂在它上面，调用方不必在每条路径上各恢复一次状态。
+    const callback = this.onHide
+    this.onHide = null
+    callback?.()
   }
 
   private createRow(index: number): { node: Node, title: Label, detail: Label } {

@@ -14,6 +14,7 @@ public record RankListResp(
         Long myValue,   // 我的榜值；未上榜为 null。
         int page,   // 请求的页码，原样回显（B23 验收 6 的体积判据要靠它复现同一页）。
         int pageSize,   // 本次实际生效的每页条数（服务端夹过：上限来自 global.RANK_PAGE_SIZE_MAX）。
-        boolean hasMore)   // 后面还有没有下一页。
+        boolean hasMore,   // 后面还有没有下一页。
+        String dayKey)   // **今天**的日期键 yyyyMMdd（UTC+8，与 `DayKey.of(serverNow)` 同一口径）。 **为什么要由服务端给**（2026-09-22 加）：`/rank/snapshot` 的请求参数要一个 `dayKey`，而契约同时禁止"第二个日切轴"。客户端手上没有任何响应带今天的日期键（`dayKey` 原先只出现在两个**快照响应**里），于是它要么自己算一个（正是被禁的第二条轴），要么从别的功能的响应里借一个（隐性第二真相源）。放在榜列表上是最省事也最不容易错的一条：查一次榜就知道今天是哪一天，随后查快照直接用它。
 {
 }

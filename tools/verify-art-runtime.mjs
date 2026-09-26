@@ -16,20 +16,59 @@ mkdirSync(OUT, { recursive: true })
  * 而读数看着像是产物坏了。默认端口也换成 8190，避免与仍在用 8090 的那一份互踩。
  */
 const ART_PORT = Number(process.env.ART_VERIFY_PORT ?? 8190)
+/**
+ * 后端默认仍是产物里写死的那台（8080）；要指向**本轮自己起的那台**用 `ART_VERIFY_BACKEND`。
+ *
+ * <p>加这个开关不是洁癖：本工具里另有三处 `fetch('http://localhost:8080/…')`
+ * （首抽、运维补发道具、领取），只换托管用的那台就变成"页面读我这台、种数据打到别人那台"。
+ * 2026-09-21 复检正是这么踩的：`heroPortrait` 判红，根因是那次首抽打到了别的会话 09-19 起的
+ * 旧实例上（那台还不下发 `BuildingView.name`）。三处 fetch 与本行统一取同一个 BACKEND。
+ */
+const BACKEND = process.env.ART_VERIFY_BACKEND ?? 'http://localhost:8080'
 const preview = await startPreviewServer({
   root: 'client/build/web-mobile',
-  // 后端就用产物里写死的那台：不换地址 ⇒ 不需要 rewrite，也不会有读数打到别的机器
-  backend: 'http://localhost:8080',
+  backend: BACKEND,
   port: ART_PORT,
 })
 
-const deviceId = `art-runtime-${Date.now()}`
+/**
+ * 两个**只给对照实验用**的开关（默认关；关着时行为与本改动前逐字一致）：
+ *
+ * - `ART_VERIFY_DEVICE`：复用一个已有 deviceId。默认每轮新号 ⇒ 城里只有主城，
+ *   "建了才叠正稿"那条判据永远走不到；复用它就能先在同一玩家上建一栋、再跑本工具。
+ * - `ART_VERIFY_BLOCK=<URL 片段>`：把 URL 含该片段的请求答成 404（素材多半用 uuid 认，
+ *   如 `2ded851f…` 是参考图底图、`68493275…` 是伐木场正稿）。它是**负向对照**用的：
+ *   拦掉参考图底图 ⇒ 程序化城景那一条必须接上；拦掉某张建筑正稿 ⇒ `cityIcons` 那条必须红。
+ *   判据能不能失败，靠它证明；平时不要开。
+ */
+const deviceId = process.env.ART_VERIFY_DEVICE ?? `art-runtime-${Date.now()}`
+const BLOCK = process.env.ART_VERIFY_BLOCK ?? ''
+/**
+ * 每次 `page.goto` 之后的落定等待。默认 1600ms = 本改动前的固定值，**不设就等于没改**。
+ * 开了 `ART_VERIFY_BLOCK` 做对照实验时要调大（4000~5000）：Playwright 一旦注册路由拦截，
+ * 这个页面的 HTTP 缓存就被禁用，各面板首次导航明显变慢，1600ms 会读到"场景还没建好"
+ * （实测症状是世界地图那一步抛 `WorldMap 组件不在场景里` —— 量具自己造的噪声）。
+ */
+const SETTLE_MS = Number(process.env.ART_VERIFY_SETTLE_MS ?? 1600)
+/**
+ * 等某个面板真的就位（`PanelNav.currentKey === panel`）的上限。故意给得很宽：
+ * 这是**反空转**，不是时长预算 —— 超时后照样往下走，读数会以 `panelMismatches` 的形式红出来。
+ */
+const PANEL_READY_MS = Number(process.env.ART_VERIFY_PANEL_READY_MS ?? 30000)
 const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
 }, deviceId)
 const page = await context.newPage()
+if (BLOCK !== '') {
+  // **只拦命中的 URL**，不要写成 `**/*` 全量拦截：全量拦截会让每个请求都过一遍 router，
+  // 实测把后面世界地图那一步的 1600ms 等待吃掉，偶发报「WorldMap 组件不在场景里」——
+  // 那是量具自己造的噪声，不是产品缺陷。BLOCK 传的是 URL 里的一段（多半是素材的 uuid）。
+  await page.route(`**/*${BLOCK}*`, (route) => route.fulfill({
+    status: 404, contentType: 'text/plain', body: 'blocked by ART_VERIFY_BLOCK',
+  }))
+}
 const errors = []
 const warnings = []
 page.on('pageerror', (error) => errors.push(error.message))
@@ -45,8 +84,21 @@ async function inspectPanel(panel) {
   url.searchParams.set('panel', panel)
   await page.goto(url.toString(), { waitUntil: 'networkidle' })
   await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
-  await hideGuideOverlay(page)
-  await page.waitForTimeout(1600)
+  /**
+   * **等这个面板真的就位，而不是只睡固定毫秒**（2026-09-21 补）。
+   *
+   * <p>注册路由拦截（`ART_VERIFY_BLOCK`）会让 Playwright **禁用该页 HTTP 缓存**，boot 从
+   * ~2.6s 涨到 ~8.6s（本轮实测：`tmp/diag-ref-boot.mjs`，同一份产物只差拦不拦）。
+   * 而固定等待读到的是**还没建好的场景**：表现是"五个面板全 null、截图全黑"——
+   * 与"素材缺失导致应用起不来"在读数上**一模一样**，本轮据此误判过一条并不存在的白屏缺陷（审计 §11.6）。
+   * 判据用面板自己的状态，不用时长；超时也继续，让 `panelMismatches` 去红。
+   */
+  await page.waitForFunction((expected) => {
+    const scene = window.cc.director.getScene()
+    const nav = scene.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('PanelNav')
+    return nav !== null && nav !== undefined && nav.currentKey === expected
+  }, panel, { timeout: PANEL_READY_MS }).catch(() => {})
+  await page.waitForTimeout(SETTLE_MS)
   const activePanel = await page.evaluate(() => {
     const scene = window.cc.director.getScene()
     const nav = scene.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('PanelNav')
@@ -92,6 +144,9 @@ async function collectSprites() {
         out.push({
           name: node.name,
           enabled: sprite.enabled,
+          // 层内 active：判"参考舞台在场时还叠着主城正稿"要用它 —— 只看 spriteFrame 有没有挂，
+          // 会把"挂了但整个节点是关闭的"也算成重影。
+          activeInHierarchy: node.activeInHierarchy,
           type: sprite.type,
           frameName: sprite.spriteFrame.name,
           typeName: Object.keys(spriteTypes).find((key) => spriteTypes[key] === sprite.type) ?? null,
@@ -266,9 +321,59 @@ async function collectFrameLayout(checks) {
 }
 
 const cityResult = await inspectPanel('city')
-const frameCity = (await collectFrameLayout(
-  [{ root: 'Card', frame: 'CardFrame', skip: ['CardFrame', 'ChoiceOverlay'] }],
-)).Card
+
+/**
+ * 内城的**城景形态**探针（2026-09-21 随判据一起改，理由见 `cityStage*` 那几条判据的注释）。
+ *
+ * <p>读三件事，全部从运行期场景/视口现读，不在工具里抄第二份：
+ * ① 满屏参考舞台在不在场（`CityReferenceScene` 及其帧名）；
+ * ② 城景内容区（`CityGrid`）是不是等于视口 ⇒ 满屏改造与 resize 重排的机器判据；
+ * ③ 面板标题里的「内城 · 建筑 N/36」⇒ 判"该有几栋正稿"时用它，不用工具自己编一个数。
+ */
+async function collectCityStage() {
+  return page.evaluate(() => {
+    const scene = window.cc.director.getScene()
+    const byName = (name) => {
+      let hit = null
+      const visit = (node) => {
+        if (hit !== null) return
+        if (node.name === name) { hit = node; return }
+        for (const child of node.children) visit(child)
+      }
+      visit(scene)
+      return hit
+    }
+    const reference = byName('CityReferenceScene')
+    const referenceSprite = reference === null ? null : reference.getComponent('cc.Sprite')
+    const referenceFrame = referenceSprite !== null && referenceSprite.spriteFrame !== null
+      ? referenceSprite.spriteFrame.name : null
+    const grid = byName('CityGrid')
+    const gridBox = grid === null ? null : grid.getComponent('cc.UITransform')
+    const visible = window.cc.view.getVisibleSize()
+    let builtCount = null
+    let builtTotal = null
+    const lookForHeader = (node, shown) => {
+      const on = shown && node.active !== false
+      const label = node.getComponent && node.getComponent('cc.Label')
+      if (on && label !== null && label !== undefined && label.string !== '') {
+        const hit = /内城\s*·\s*建筑\s*(\d+)\s*\/\s*(\d+)/.exec(label.string)
+        if (hit !== null) { builtCount = Number(hit[1]); builtTotal = Number(hit[2]) }
+      }
+      for (const child of node.children) lookForHeader(child, on)
+    }
+    lookForHeader(scene, true)
+    return {
+      referenceVisible: reference !== null && reference.activeInHierarchy === true
+        && referenceFrame !== null,
+      referenceFrame,
+      gridSize: gridBox === null ? null : [Math.round(gridBox.width), Math.round(gridBox.height)],
+      visibleSize: [Math.round(visible.width), Math.round(visible.height)],
+      builtCount,
+      builtTotal,
+    }
+  })
+}
+const cityStageProbe = await collectCityStage()
 
 /**
  * 导航格文字的**对比度**判定。导航格只有 63×44，而按钮母版是 384×143、端帽 54/边框 40 ——
@@ -280,31 +385,43 @@ const frameCity = (await collectFrameLayout(
 async function collectNavContrast() {
   return page.evaluate(() => {
     const scene = window.cc.director.getScene()
-    const bar = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('NavBar')
+    const game = scene.getChildByName('Canvas')?.getChildByName('Game')
+    const bar = game?.getChildByName('NavBar')
     if (bar === null || bar === undefined) return { error: 'NavBar 不在场景里' }
-    const nav = scene.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('PanelNav')
+    const nav = game?.getComponent('PanelNav')
+    /**
+     * 「更多」抽屉里的格子挂在 `NavMoreLayer/NavMoreTray` 下，整层默认不激活 ——
+     * 但节点与组件都已经建好，读它们的 Sprite/Label 不需要先展开（展开只改 active）。
+     * 只收 NavBar 会漏掉 10 格，于是"每格都得有页签图 / 字要看得清"这两条对抽屉里的入口失效。
+     */
+    const tray = game?.getChildByName('NavMoreLayer')?.getChildByName('NavMoreTray')
     const cells = []
-    for (const cell of bar.children) {
-      if (!cell.name.startsWith('Nav-')) continue
-      const sprite = cell.getComponent('cc.Sprite')
-      const graphics = cell.getComponent('cc.Graphics')
-      const caption = cell.getChildByName('Caption')
-      const label = caption !== null && caption !== undefined ? caption.getComponent('cc.Label') : null
-      if (label === null) continue
-      const c = label.color
-      const lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255
-      cells.push({
-        key: cell.name.slice('Nav-'.length),
-        background: sprite !== null && sprite.enabled === true && sprite.spriteFrame !== null
-          ? 'art' : (graphics !== null && graphics.enabled === true ? 'graphics' : 'none'),
-        frameName: sprite !== null && sprite.spriteFrame !== null
-          ? `${sprite.spriteFrame.name}|${sprite.spriteFrame.texture ? sprite.spriteFrame.texture.name : ''}`
-          : null,
-        luminance: Number(lum.toFixed(3)),
-        color: `${c.r},${c.g},${c.b}`,
-        active: nav !== null && nav !== undefined && nav.current() === cell.name.slice('Nav-'.length),
-      })
+    const collect = (parent, group) => {
+      for (const cell of parent?.children ?? []) {
+        if (!cell.name.startsWith('Nav-')) continue
+        const sprite = cell.getComponent('cc.Sprite')
+        const graphics = cell.getComponent('cc.Graphics')
+        const caption = cell.getChildByName('Caption')
+        const label = caption !== null && caption !== undefined ? caption.getComponent('cc.Label') : null
+        if (label === null) continue
+        const c = label.color
+        const lum = (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255
+        cells.push({
+          key: cell.name.slice('Nav-'.length),
+          group,
+          background: sprite !== null && sprite.enabled === true && sprite.spriteFrame !== null
+            ? 'art' : (graphics !== null && graphics.enabled === true ? 'graphics' : 'none'),
+          frameName: sprite !== null && sprite.spriteFrame !== null
+            ? `${sprite.spriteFrame.name}|${sprite.spriteFrame.texture ? sprite.spriteFrame.texture.name : ''}`
+            : null,
+          luminance: Number(lum.toFixed(3)),
+          color: `${c.r},${c.g},${c.b}`,
+          active: nav !== null && nav !== undefined && nav.current() === cell.name.slice('Nav-'.length),
+        })
+      }
     }
+    collect(bar, 'bar')
+    collect(tray, 'more')
     return { cells }
   })
 }
@@ -312,6 +429,25 @@ const navContrast = await collectNavContrast()
 /** 导航格数从 PanelNav 现读，不在工具里抄第二份清单（同 verify-devtools-panels 的口径）。 */
 const NAV_CELLS_EXPECTED = (readFileSync('client/assets/scripts/scene/PanelNav.ts', 'utf8')
   .match(/^\s*\{ key: '/gm) ?? []).length
+/**
+ * 面板 key 清单也从 PanelNav 现读：**格数相等不代表格子对得上** ——
+ * `MORE_KEYS` 里写错一个 key，那一格会从抽屉挪回常驻条，总数一格不变（18 还是 18），
+ * 只有按 key 逐个对才看得出"某个面板根本没有入口"。
+ */
+const NAV_KEYS_EXPECTED = Array.from(readFileSync('client/assets/scripts/scene/PanelNav.ts', 'utf8')
+  .matchAll(/^\s*\{ key: '([^']+)'/gm), (m) => m[1])
+/**
+ * 抽屉清单也从源码现读。`MORE_KEYS` 里写错一个 key 时那一格只是从抽屉挪回常驻条 ——
+ * 17 个 key 一个不少、`navMissingCells` 为空，按 key 对账抓不住它；
+ * 抓得住的是**分边计数**（条上 = 17 - |MORE_KEYS|、抽屉 = |MORE_KEYS|）。
+ */
+const MORE_BLOCK = (readFileSync('client/assets/scripts/scene/PanelNav.ts', 'utf8')
+  .match(/const MORE_KEYS: readonly string\[\] = \[([\s\S]*?)\]/) ?? [null, ''])[1]
+const MORE_KEYS_EXPECTED = Array.from(MORE_BLOCK.matchAll(/'([^']+)'/g), (m) => m[1])
+const navCellsSeen = (navContrast.cells ?? []).filter((cell) => cell.key !== 'more')
+const navMissingCells = NAV_KEYS_EXPECTED.filter((key) => !navCellsSeen.some((cell) => cell.key === key))
+const navBarCells = (navContrast.cells ?? []).filter((cell) => cell.group === 'bar')
+const navTrayCells = (navContrast.cells ?? []).filter((cell) => cell.group === 'more')
 const navLowContrast = (navContrast.cells ?? [])
   .filter((cell) => cell.background === 'art' && cell.luminance < 0.35)
   .map((cell) => `${cell.key} 文字亮度 ${cell.luminance} < 0.35（色 ${cell.color}，底是按钮图的深色中心）`)
@@ -321,8 +457,10 @@ const navActiveIndistinguishable = (navContrast.cells ?? []).length > 0
       .filter((other) => !other.active)
       .every((other) => other.color === cell.color))
 /**
- * 页签图真的铺上了没（G8）：13 格都必须是 nav-tab，且选中那一格必须换成 selected 变体。
- * 能失败的方式：PanelNav 退回按钮九宫格（帧名对不上）、selected 键没进启动预载（帧为 null）。
+ * 页签图真的铺上了没（G8）：常驻条与抽屉里的**每一格**都必须是 nav-tab，
+ * 且选中那一格必须换成 selected 变体。
+ * 能失败的方式：PanelNav 退回按钮九宫格（帧名对不上）、selected 键没进启动预载（帧为 null）、
+ * 抽屉里的格子走了另一套构造（收进 `createCell` 之前正是这个形状）。
  */
 const navTabMissing = (navContrast.cells ?? [])
   .filter((cell) => cell.frameName === null || !cell.frameName.includes('nav-tab'))
@@ -336,8 +474,8 @@ const armyResult = await inspectPanel('army')
 const city = cityResult.sprites
 const bag = bagResult.sprites
 const army = armyResult.sprites
-const drawResult = await page.evaluate(async ({ playerId }) => {
-  const initResponse = await fetch('http://localhost:8080/player/init', {
+const drawResult = await page.evaluate(async ({ playerId, base }) => {
+  const initResponse = await fetch(`${base}/player/init`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -351,7 +489,7 @@ const drawResult = await page.evaluate(async ({ playerId }) => {
   if (init.code !== 0) {
     return init
   }
-  const response = await fetch('http://localhost:8080/gacha/draw', {
+  const response = await fetch(`${base}/gacha/draw`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -364,7 +502,7 @@ const drawResult = await page.evaluate(async ({ playerId }) => {
     }),
   })
   return response.json()
-}, { playerId: deviceId })
+}, { playerId: deviceId, base: BACKEND })
 if (drawResult.code !== 0) {
   errors.push(`新号首抽失败：${drawResult.msg ?? JSON.stringify(drawResult)}`)
 }
@@ -377,14 +515,14 @@ const OPS_TOKEN = process.env.ART_VERIFY_OPS_TOKEN ?? 'art-verify-local'
  * （曾试过塞 eq_iron_sword：装备行走 #166 的实例账本，不在背包页渲染 —— 装备图标的
  * 行级验证属装备面板批次，此处由 tests/ArtFamilies.test.ts 的映射对账兜底。）
  */
-const seeded = await page.evaluate(async ({ playerId, token }) => {
-  const init = await (await fetch('http://localhost:8080/player/init', {
+const seeded = await page.evaluate(async ({ playerId, token, base }) => {
+  const init = await (await fetch(`${base}/player/init`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requestId: `art-seed-init-${Date.now()}`, deviceId: playerId,
       nickName: 'ArtSeed', clientTime: Date.now() }),
   })).json()
   if (init.code !== 0) return { step: 'init', init }
-  const mail = await (await fetch('http://localhost:8080/ops/mail/send', {
+  const mail = await (await fetch(`${base}/ops/mail/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Ops-Token': token },
     body: JSON.stringify({
@@ -399,14 +537,14 @@ const seeded = await page.evaluate(async ({ playerId, token }) => {
     }),
   })).json()
   if (mail.code !== 0) return { step: 'mail', mail }
-  const claim = await (await fetch('http://localhost:8080/mail/claimAll', {
+  const claim = await (await fetch(`${base}/mail/claimAll`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Player-Id': init.data.playerId },
     body: JSON.stringify({ requestId: `art-claim-${Date.now()}` }),
   })).json()
   if (claim.code !== 0) return { step: 'claim', claim }
   return { ok: true, playerId: init.data.playerId, claimed: claim.data.claimed }
-}, { playerId: deviceId, token: OPS_TOKEN })
+}, { playerId: deviceId, token: OPS_TOKEN, base: BACKEND })
 if (seeded.ok !== true) {
   errors.push(`背包道具种子失败：${JSON.stringify(seeded)}`)
 }
@@ -422,8 +560,13 @@ const world = worldResult.sprites
  * 调 WorldMap 的公开 zoomIn **一档**后：屏内必须数得到非空名牌文字 —— 数不到就是
  * drawCaptionPlate 断了线。两档会按设计切进城市档，截出来的就不是世界地图了
  * （排版轮实测撞到过一次）。截图另存，供人工比对同类 SLG 的名牌观感。
+ *
+ * <p>**读不到 `WorldMap` 时不再抛**：原来这里直接 `throw`，于是整个量具**一行读数都不打印**
+ * 就死了 —— 而世界地图那三条判据（`worldCaptions`/`terrainTiles`/`entityArt`）本来就是红的，
+ * 不需要再用崩溃表达一次；崩溃真正的代价是"内城那几条到底绿没绿"也无从判读
+ * （2026-09-21 复检做对照实验时连撞两次）。改成记一条 error 再往下走。
  */
-await page.evaluate(() => {
+const worldZoomError = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   let map = null
   const visit = (n) => {
@@ -433,9 +576,13 @@ await page.evaluate(() => {
     for (const child of n.children) visit(child)
   }
   visit(scene)
-  if (map === null) throw new Error('WorldMap 组件不在场景里')
+  if (map === null) return 'WorldMap 组件不在场景里'
   map.zoomIn()
+  return null
 })
+if (worldZoomError !== null) {
+  errors.push(`世界地图放大档没能验证：${worldZoomError}`)
+}
 await page.waitForTimeout(900)
 const worldZoom = await collectSprites()
 const worldCaptions = await page.evaluate(() => {
@@ -477,8 +624,15 @@ const frameMarch = (await collectFrameLayout(
 )).MarchPanel
 await page.screenshot({ path: path.join(OUT, 'art-march-runtime.png') })
 
-/** 两张框的读数合到一起判：带厚分家 = 几何又有两个家；压带 = 内容盖在装饰上。 */
-const frameEntries = [frameMarch, frameCity]
+/**
+ * 框的读数合到一起判：带厚分家 = 几何又有两个家；压带 = 内容盖在装饰上。
+ *
+ * <p>**内城卡片 2026-09-21 退出这一组**：满屏参考舞台之后 `CardFrame`
+ * 是 `active=false`、不挂 Sprite 的空容器（`CityPanelView.buildCard`），
+ * "九宫格带内排版"对它已不成立。它由下面 `cityCriteria` 那几条替换：
+ * 内容区 = 视口、城景恰好一套、参考舞台在场时不叠主城正稿。行军面板照旧。
+ */
+const frameEntries = [frameMarch]
 const frameBandDrift = frameEntries
   .filter((entry) => entry.error === undefined)
   .filter((entry) => entry.liveInsets.some((value) => value !== FRAME_BAND))
@@ -642,16 +796,88 @@ const terrainTiles = world.filter((sprite) => sprite.name === 'Art' && sprite.wi
 const terrainRects = new Set(terrainTiles.map((sprite) => `${sprite.x}:${sprite.y}`))
 const entityArt = world.filter((sprite) => sprite.name === 'Art' && sprite.width !== 64)
 const catalogWarnings = warnings.filter((message) => message.includes('[ArtCatalog]'))
+/**
+ * 内城那条（原 `cityMain`：要求主城格子必须画 `building-main-city` 正稿）**2026-09-21 删掉**：
+ * 满屏参考舞台的底图里已经画着城堡，`CityPanelView.paintTile` 因此刻意**不叠主城正稿**
+ * （叠了就是重影）。方向反过来钉在 `cityCriteria.mainCityOverdrawn`：参考舞台在场时**不许**
+ * 出现可见的主城正稿。下面这三条仍按原样"必须有"。
+ */
 const iconMappings = {
-  // A18 之后内城格子优先画**正稿**，所以主城的身份是它的帧名，不再是图集里的矩形位置
-  // （独立 PNG 的 rect 恒为 0:0，拿位置当身份会把"正稿没加载、退回图集小图标"也判成绿）。
-  cityMain: cityIcons.some((sprite) => /^building-main-city/.test(sprite.frameName ?? '')),
   bagResourceIcon: bagResourceIconMapped,
   armyInfantry: armyIcons.some((sprite) => sprite.x === 384 && sprite.y === 384),
   // 武将行现在优先画立绘（G1 族，256 高；Cocos 导入会裁透明边所以宽可能 <256），
   // 稀有度图集图标（128 格）只是无立绘时的退路
   heroPortrait: heroIcons.some((sprite) => sprite.height === 256)
     || heroIcons.some((sprite) => sprite.y === 128 || sprite.y === 256),
+}
+/** 必须命中的映射（内城那条已从这里移出，改由 `cityCriteria` 反向钉住）。 */
+const requiredMappings = ['bagResourceIcon', 'armyInfantry']
+/**
+ * `heroPortrait` 只在**名册真的有行**时判（反空转，2026-09-21 补）。
+ *
+ * <p>它原先是"必须有立绘"直接判红，而这一帧的武将来自"页内原始 fetch 抽一次卡 + 面板自己重拉列表"，
+ * 偶尔会读到空名册 —— 于是同一个工具对同一份代码**时红时绿**（本轮复现 3 次：A 绿/C 红/A 红）。
+ * 现在：名册为空 ⇒ **不判**，但要看得见（JSON 里 `heroRosterEmpty: true` + 控制台一行 WARN）；
+ * 名册有行却一张立绘都没有 ⇒ 照样红。空名册本身（抽完卡却没进名册）**不在这里判** ——
+ * 那是服务端侧的账，混进美术量具只会让两边都说不清。
+ */
+const heroRosterEmpty = heroIcons.length === 0
+if (heroRosterEmpty) {
+  console.warn('[verify-art] 武将名册这一帧是空的 —— heroPortrait 这条判据本轮走不到（不判红，也不当绿）')
+}
+const cityStage = [
+  'city-ground-cobble-v1',
+  'city-wall-band-v1',
+  'city-ridge-v1',
+].map((name) => ({
+  name,
+  visible: city.some((sprite) => (sprite.frameName ?? '').startsWith(name)),
+}))
+/**
+ * 内城的四条判据（2026-09-21 改，原三条已与实现脱节 ⇒ 恒红，见 `内城界面审计_2026-09-21.md` §十）。
+ *
+ * <p>背景：2026-09-20 起内城改成**满屏参考舞台**（`city.scene.reference` = 重绘版底图），
+ * `CityPanelView.buildBackground` 在参考图加载成功时**直接 return**，程序化 `CityGround/CityRidge/
+ * CityWall` 根本不建。所以"程序化三件必须在场"这条判据从那天起不可能再绿 —— 换成下面这套
+ * **二选一 + 反重影 + 满屏 + 该有的正稿**，每条都能失败，且比原来更强（原判据查不出"两套都没画"）：
+ *
+ * - `stageMissing`：参考舞台不在场时，程序化地面必须接上 ⇒ 两条路都不画才算红。
+ * - `stageBothOn`：两套同时在画 ⇒ 重影（参考舞台铺底 + 程序化地表/山脊叠上去）。
+ * - `mainCityOverdrawn`：参考舞台在场却又叠了**可见**的主城正稿 ⇒ 城堡画两遍。
+ * - `gridOffViewport`：城景内容区 ≠ 视口 ⇒ 满屏改造或 resize 重排断了（§8.1 第 5 条、§8.3 第 10 条）。
+ * - `headerMissing`：读不到「内城 · 建筑 N/36」⇒ 下面那条判据走不到，不许静默算绿。
+ * - `iconsMissing`：面板说已建 ≥2 栋，却**一栋正稿**都没画出来（`building-*` 帧名的可见图标）——
+ *   正稿拉不到时 `CityPanelView` 会退回图集小图标，那正是这条要抓的形态（旧的 `cityMain` 想抓它，
+ *   但写成了"主城必须有正稿"，而主城按设计恰恰不叠）。新号只有 1 栋（建筑 1/36）时**刻意不判**：
+ *   那是"没有该画的东西"，不是"该画的没画"。
+ */
+const cityIconsVisible = cityIcons.filter((sprite) => sprite.activeInHierarchy === true)
+const isDrawnOnAtlas = (sprite) => !/^building-/.test(sprite.frameName ?? '')
+const isMainCityFrame = (sprite) => /^building-main-city/.test(sprite.frameName ?? '')
+const cityVisibleStage = cityStage.filter((entry) => entry.visible).map((entry) => entry.name)
+const cityGroundVisible = cityStage
+  .find((entry) => entry.name === 'city-ground-cobble-v1')?.visible === true
+const referenceStageOn = cityStageProbe.referenceVisible === true
+const cityCriteria = {
+  referenceStageOn,
+  referenceFrame: cityStageProbe.referenceFrame,
+  visibleStageKeys: cityVisibleStage,
+  gridSize: cityStageProbe.gridSize,
+  visibleSize: cityStageProbe.visibleSize,
+  builtCount: cityStageProbe.builtCount,
+  builtTotal: cityStageProbe.builtTotal,
+  stageMissing: !referenceStageOn && !cityGroundVisible,
+  stageBothOn: referenceStageOn && cityVisibleStage.length > 0,
+  mainCityOverdrawn: referenceStageOn && cityIconsVisible.some(isMainCityFrame),
+  gridOffViewport: !(Array.isArray(cityStageProbe.gridSize)
+    && Array.isArray(cityStageProbe.visibleSize)
+    && Math.abs(cityStageProbe.gridSize[0] - cityStageProbe.visibleSize[0]) <= 1
+    && Math.abs(cityStageProbe.gridSize[1] - cityStageProbe.visibleSize[1]) <= 1),
+  headerMissing: cityStageProbe.builtCount === null,
+  iconsMissing: cityStageProbe.builtCount !== null && cityStageProbe.builtCount >= 2
+    && cityIconsVisible.filter((sprite) => !isDrawnOnAtlas(sprite) && !isMainCityFrame(sprite))
+      .length === 0,
+  atlasFallbackIcons: cityIconsVisible.filter(isDrawnOnAtlas).length,
 }
 // 按钮按**帧名**认，不按 insets 认 —— insets 各家族不同（面板框 44、chip 12），
 // 拿一个数字当身份就是给下一个家族埋雷（#213 那条判据的同族教训）。
@@ -677,10 +903,29 @@ const fontFamilies = Array.from(new Set(fonts.map((font) => font.fontFamily)))
 const fontPolicyFailures = fonts.filter((font) =>
   font.useSystemFont !== true || !font.fontFamily.includes('Microsoft YaHei'))
 
+/**
+ * 指定了非默认后端、却一次都没换到产物里写死的那个地址 ⇒ 这轮读数其实来自别的机器。
+ * `preview-server` 把这个判据做成了 `assertRewritten`，但**必须等到服务过文件之后再问**：
+ * `rewrites()` 是在服务文件的过程中累加的，启动那一刻恒为 0。
+ * 折成一条 `errors` 而不是自己再写一遍判据 —— 退出码那条里已经有 `errors.length > 0`。
+ */
+let rewriteFailure = null
+try {
+  preview.assertRewritten()
+} catch (error) {
+  rewriteFailure = error.message
+  errors.push(`后端替换失败：${rewriteFailure}`)
+}
+
 const result = {
   activePanels,
+  /** 本轮读数到底是谁答的：换过后端就必须换到过东西（默认后端时 rewritten 恒 0，属正常）。 */
+  backend: { origin: BACKEND, rewrittenFromBaked: preview.rewrites(), rewriteFailure },
   counts: {
     cityIcons: cityIcons.length,
+    cityIconsVisible: cityIconsVisible.length,
+    cityStage,
+    cityCriteria,
     bagIcons: bagIcons.length,
     armyIcons: armyIcons.length,
     heroIcons: heroIcons.length,
@@ -702,6 +947,7 @@ const result = {
   chipButtonSizes,
   chipButtonsNotSliced: chipButtonsNotSliced.map((sprite) => sprite.name),
   iconMappings,
+  heroRosterEmpty,
   fontFamilies,
   fontPolicyFailures: fontPolicyFailures.map((font) => font.name),
   panelMismatches,
@@ -709,13 +955,15 @@ const result = {
   frame: {
     bandFromSource: FRAME_BAND,
     march: frameMarch,
-    city: frameCity,
     bandDrift: frameBandDrift,
     bandOverlaps: frameOverlaps,
   },
   nav: {
     cells: navContrast.cells ?? navContrast,
     expected: NAV_CELLS_EXPECTED,
+    barCells: navBarCells.length,
+    trayCells: navTrayCells.length,
+    missingCells: navMissingCells,
     lowContrast: navLowContrast,
     activeIndistinguishable: navActiveIndistinguishable,
     tabMissing: navTabMissing,
@@ -737,47 +985,79 @@ console.log(JSON.stringify(result, null, 2))
 
 await browser.close()
 await preview.close()
-if (errors.length > 0
-  || catalogWarnings.length > 0
-  || panelMismatches.length > 0
-  // 带内排版的四条：读得到常量、两张框都在场景里、几何两份真源没分家、内容一处都没压带。
-  // counted / labeled 的下限是反空转 —— 走不到节点、或一片空文字时，violations 天然是空的。
-  || FRAME_BAND <= 0
-  || frameMarch.error !== undefined || frameMarch.counted < 5 || frameMarch.labeled < 1
-  || frameCity.error !== undefined || frameCity.counted < 20
-  || frameBandDrift.length > 0
-  || frameOverlaps.length > 0
-  || degenerateSlices.length > 0
-  || navContrast.error !== undefined
-  || (navContrast.cells ?? []).length < NAV_CELLS_EXPECTED
-  || navLowContrast.length > 0
-  || navActiveIndistinguishable
-  || navTabMissing.length > 0
-  || navSelectedWrongFrame.length > 0
-  || cityIcons.length === 0
-  || bagIcons.length === 0
-  || armyIcons.length === 0
-  || heroIcons.length === 0
-  || Object.values(iconMappings).some((matched) => !matched)
-  || chipButtons.length < 20
-  || chipButtonsNotSliced.length > 0
-  || fonts.length === 0
-  || fontPolicyFailures.length > 0
-  || terrainTiles.length === 0
-  || entityArt.length === 0
-  || familyAfterBag - familyBeforeBag !== FAMILY_PNG_EXPECTED
-  || worldCaptions === 0
-  || bagTab.error !== undefined
-  || bagTab.itemRows < 4
-  || bagTab.iconRows < 4
-  || familyAfterActivity - familyBeforeActivity !== ACTIVITY_PNG_EXPECTED
-  || activityTab.error !== undefined
-  || activityDrawn.error !== undefined
-  || activityDrawn.activityRows !== 8
-  || activityDrawn.iconRows !== activityDrawn.drawnRows
-  || activityDrawn.overlaps > 0
-  || activityTab.questTitleX === null
-  || activityDrawn.activityTitleX === null
-  || Math.abs(activityTab.questTitleX - activityDrawn.activityTitleX) > 0.5) {
+/**
+ *
+ * <p>为什么不再写成一坨 `||`：那条形状红起来只说"退了 1"，不说红在哪一条 ——
+ * 2026-09-22 我自己为了定位一条红，手工把十来个字段逐个打印比对才找到
+ * （真凶是遗留的 `heroIcons.length === 0`，与刚改好的 `heroPortrait` 反空转自相矛盾：
+ * 名册为空时前者恒红，于是"不判红也不当绿"那条改动被它整个抵消）。
+ * 现在红的时候直接把命中项打出来。
+ */
+const gates = [
+  ['页面/控制台有报错', errors.length > 0],
+  ['ArtCatalog 有告警', catalogWarnings.length > 0],
+  ['面板与导航不一致', panelMismatches.length > 0],
+  ['PANEL_FRAME_BAND 读不到', FRAME_BAND <= 0],
+  ['行军面板框缺失/内容为空', frameMarch.error !== undefined || frameMarch.counted < 5 || frameMarch.labeled < 1],
+  ['框带厚与源码常量分家', frameBandDrift.length > 0],
+  ['内容压到框的角饰上', frameOverlaps.length > 0],
+  ['九宫格退化（目标小于自身边框）', degenerateSlices.length > 0],
+  ['导航对比度读不到', navContrast.error !== undefined],
+  ['导航格数不足', (navContrast.cells ?? []).length < NAV_CELLS_EXPECTED],
+  ['导航格与面板清单对不上', navMissingCells.length > 0],
+  // 导航瘦身（2026-09-26）：17 格挤一条 ⇒ 常驻只留核心几格，其余进「更多」抽屉。
+  // 三条都能失败：退回"每格都上条"时第一条红；删掉抽屉时第二、三条红。
+  ['常驻条没收窄（还是每格都上条）', navBarCells.length >= NAV_KEYS_EXPECTED.length],
+  ['「更多」那格不在常驻条上', !navBarCells.some((cell) => cell.key === 'more')],
+  ['抽屉里一格都没有', navTrayCells.length === 0],
+  // 分边计数：MORE_KEYS 写错一个 key 只会把格子挪边，按 key 对账抓不住，这两条抓得住
+  ['常驻条格数与 MORE_KEYS 对不上',
+    navBarCells.filter((cell) => cell.key !== 'more').length
+    !== NAV_KEYS_EXPECTED.length - MORE_KEYS_EXPECTED.length],
+  ['抽屉格数与 MORE_KEYS 对不上', navTrayCells.length !== MORE_KEYS_EXPECTED.length],
+  ['导航文字对比度不足', navLowContrast.length > 0],
+  ['导航选中态与未选中同色', navActiveIndistinguishable],
+  ['导航页签图缺失', navTabMissing.length > 0],
+  ['导航选中格用错变体', navSelectedWrongFrame.length > 0],
+  // 内城六条（城区形态 + 反重影 + 满屏 + 正稿；详见 cityCriteria 的注释）
+  ['内城：两套城景都不在场', cityCriteria.stageMissing],
+  ['内城：参考舞台与程序化城景同时在画', cityCriteria.stageBothOn],
+  ['内城：参考舞台之上又叠了主城正稿', cityCriteria.mainCityOverdrawn],
+  ['内城：城景内容区不等于视口', cityCriteria.gridOffViewport],
+  ['内城：读不到「建筑 N/36」标题', cityCriteria.headerMissing],
+  ['内城：已建 ≥2 栋却没有一栋正稿', cityCriteria.iconsMissing],
+  ['背包图标数为 0', bagIcons.length === 0],
+  ['军队图标数为 0', armyIcons.length === 0],
+  ['必需的艺术映射未命中', requiredMappings.some((key) => iconMappings[key] !== true)],
+  // 名册为空时这条走不到（见 heroRosterEmpty 的注释）；有行而没有立绘照样红。
+  // **不再另加 `heroIcons.length === 0`** —— 那条与"反空转"自相矛盾，会把它整个抵消。
+  ['武将名册有行但一张立绘都没有', !heroRosterEmpty && iconMappings.heroPortrait !== true],
+  ['chip 按钮数不足', chipButtons.length < 20],
+  ['chip 按钮没走九宫格', chipButtonsNotSliced.length > 0],
+  ['字体标签数为 0', fonts.length === 0],
+  ['字体策略不符', fontPolicyFailures.length > 0],
+  ['地形块数为 0', terrainTiles.length === 0],
+  ['地图实体美术为 0', entityArt.length === 0],
+  ['按需族增量与磁盘张数不符', familyAfterBag - familyBeforeBag !== FAMILY_PNG_EXPECTED],
+  ['世界地图名牌为 0', worldCaptions === 0],
+  ['背包页签读数失败', bagTab.error !== undefined],
+  ['背包道具行不足', bagTab.itemRows < 4],
+  ['背包图标行不足', bagTab.iconRows < 4],
+  ['活动族增量与磁盘张数不符', familyAfterActivity - familyBeforeActivity !== ACTIVITY_PNG_EXPECTED],
+  ['活动页签读数失败', activityTab.error !== undefined],
+  ['活动绘制读数失败', activityDrawn.error !== undefined],
+  ['活动行数不是 8', activityDrawn.activityRows !== 8],
+  ['活动行图标与绘制行数不符', activityDrawn.iconRows !== activityDrawn.drawnRows],
+  ['活动页签有重叠', activityDrawn.overlaps > 0],
+  ['活动页签标题读不到', activityTab.questTitleX === null],
+  ['活动页签标题（绘制侧）读不到', activityDrawn.activityTitleX === null],
+  ['两页签标题未对齐', activityTab.questTitleX !== null && activityDrawn.activityTitleX !== null
+    && Math.abs(activityTab.questTitleX - activityDrawn.activityTitleX) > 0.5],
+]
+const tripped = gates.filter(([, bad]) => bad).map(([name]) => name)
+if (tripped.length > 0) {
+  console.error(`[verify-art] 判据失败 ${tripped.length} 条：${tripped.join('；')}`)
   process.exitCode = 1
+} else {
+  console.log('[verify-art] 全绿：判据表全部通过')
 }

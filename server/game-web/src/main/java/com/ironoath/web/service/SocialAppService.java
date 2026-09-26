@@ -43,6 +43,7 @@ import com.ironoath.web.dto.generated.AllianceTechReq;
 import com.ironoath.web.dto.generated.AllianceTechResp;
 import com.ironoath.web.dto.generated.AllianceView;
 import com.ironoath.web.dto.generated.BlockListView;
+import com.ironoath.web.dto.generated.BlockedPlayerView;
 import com.ironoath.web.dto.generated.FollowReq;
 import com.ironoath.web.dto.generated.FriendListView;
 import com.ironoath.web.dto.generated.FriendView;
@@ -1739,7 +1740,7 @@ public class SocialAppService {
         String target = requireBlockTarget(playerId, req);
         store.block(playerId, target);
         LOG.info("拉黑 playerId={} 目标={}", playerId, target);
-        return new BlockListView(store.blockedPlayers(playerId));
+        return blockListOf(playerId);
     }
 
     /** 取消拉黑（幂等）。 */
@@ -1747,13 +1748,29 @@ public class SocialAppService {
         String target = requireBlockTarget(playerId, req);
         store.unblock(playerId, target);
         LOG.info("取消拉黑 playerId={} 目标={}", playerId, target);
-        return new BlockListView(store.blockedPlayers(playerId));
+        return blockListOf(playerId);
     }
 
     /** 我拉黑了谁。**只回我自己的名单**：对方拉没拉黑我是看不到的（那会变成一种骚扰反馈）。 */
     public BlockListView blocks(String playerId) {
         requirePlayer(playerId);
-        return new BlockListView(store.blockedPlayers(playerId));
+        return blockListOf(playerId);
+    }
+
+    /**
+     * 名单视图：id 供发请求，**显示名由服务端解析好**（客户端不查表，铁律 2）。
+     *
+     * <p>2026-09-22（收口清单 #322）：原先这里只回一串 id，于是「取消拉黑」选择器只能把
+     * {@code P9179c…} 印给玩家 —— 与 #255/#268/#320 同族。查不到存档时回
+     * {@link PlayerDtoMapper#UNKNOWN_PLAYER_NAME}，**不回 id**（#323 同一条口径）。
+     */
+    private BlockListView blockListOf(String playerId) {
+        List<BlockedPlayerView> out = new ArrayList<>();
+        for (String blockedId : store.blockedPlayers(playerId)) {
+            PlayerSave save = players.findByPlayerId(blockedId).orElse(null);
+            out.add(new BlockedPlayerView(blockedId, PlayerDtoMapper.displayName(save)));
+        }
+        return new BlockListView(out);
     }
 
     private String requireBlockTarget(String playerId, BlockReq req) {
@@ -1940,7 +1957,7 @@ public class SocialAppService {
         for (String memberId : squad.memberIds()) {
             PlayerSave save = players.findByPlayerId(memberId).orElse(null);
             members.add(new SquadMember(memberId,
-                    save == null ? memberId : save.nickName(),
+                    PlayerDtoMapper.displayName(save),
                     save == null || save.power() == null ? 0L : save.power().displayPower(),
                     save == null ? now : save.lastLoginAt(),
                     com.ironoath.web.dto.generated.SquadRole.valueOf(

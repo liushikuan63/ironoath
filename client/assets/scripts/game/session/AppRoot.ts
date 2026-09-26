@@ -43,7 +43,7 @@ import {
   mergeChatHistory,
 } from '../social/ChatPanel'
 import type { ChatPanelData } from '../social/ChatPanel'
-import { buildRankBoard } from '../power/RankBoard'
+import { buildRankBoard, buildRankSnapshotView } from '../power/RankBoard'
 import { buildStaminaBoard } from '../stage/StaminaBoard'
 import {
   adjustRallyNumber, buildCompose, marchUnitsOf, rallyFormBlocked, rallyFormOf, rallyNumbersOf,
@@ -52,7 +52,7 @@ import {
 import type {
   ComposeView, MarchSpec, RallyField, RallyForm, RallyNumberRow, RallyScope, RallyScopeRow,
 } from '../world/MarchCompose'
-import type { RankBoardView, RankTabKey } from '../power/RankBoard'
+import type { RankBoardView, RankSnapshotView, RankTabKey } from '../power/RankBoard'
 import type { RankListResp } from '../../net/generated/RankProtocol'
 import { buildSeasonPanel } from '../season/SeasonPanel'
 import type { SeasonPanelView } from '../season/SeasonPanel'
@@ -116,6 +116,8 @@ import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
 import { ClientReddotTree } from '../reddot/ReddotTree'
 import { pickUnavailable, actionUnavailable } from '../ui/BlockedPickCopy'
+import { buildStaminaDetail } from '../ui/StaminaDetail'
+import type { StaminaDetailView } from '../ui/StaminaDetail'
 import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army/AutoTrain'
 import { buildShopPanel, buyBodyOf, buyResultText, shopRowStateText } from '../shop/ShopPanel'
 import type { ShopPanelView } from '../shop/ShopPanel'
@@ -219,6 +221,8 @@ export interface PanelTargets {
   city?(resp: CityListResp, offsetMs: number): void
   /** 一次收割的即时结果（要立刻飘字，之后再被 city 列表覆盖）。 */
   cityCollect?(resp: CityCollectResp): void
+  /** 体力详情弹层（B09 §5）。视图模型已经算好文案与置灰，表现层只负责画。 */
+  staminaDetail?(view: StaminaDetailView): void
   /** 一次取消建造的即时回执（退回来多少，照服务端给的数念）。 */
   cityCancelled?(resp: CityCancelResp): void
   /**
@@ -525,6 +529,11 @@ export class AppRoot {
   private rankTab: RankTabKey = 'DETAIL'
   /** 最近一次 `/rank/list` 的响应。**只有当前页签那一张**（切页签就换掉，不缓存多张 —— 榜是会变的） */
   private rankResp: RankListResp | null = null
+  /**
+   * 今日快照那一块（B23 §一 2）。**用 `/rank/list` 下发的 `dayKey` 去查**，客户端自己不算日期
+   * —— 契约明写"不许出现第二个日切轴"（2026-09-22 接上，此前这一格是"有口没读"）。
+   */
+  private rankSnapshot: RankSnapshotView | null = null
   /** 请求的页码。由服务端回显的 `page` 推进，**不自己加一**（出界时服务端会夹到最后一页） */
   private rankPage = 1
   /** 拉榜失败的可读原因（限流/断网）；成功一次或切页签后清空 */
@@ -610,6 +619,8 @@ export class AppRoot {
   private chatSentSeq = 0
   /** 我拉黑的名单（B22 §一 3）。菜单里显示"拉黑"还是"取消拉黑"要看它 */
   private myBlocked: readonly string[] = []
+  /** 名单里的显示名（服务端解析好下发，见 #322）；id → 名字，只给"取消拉黑"那一行用。 */
+  private myBlockedNames: ReadonlyMap<string, string> = new Map()
   /** 名单是否已经从服务端取过。懒取：首屏不必为它多打一轮请求 */
   private blocksLoaded = false
   /** 我关注的人（B22 §一 4）。与黑名单同一套懒取策略：第一次点消息菜单时才拉 */
@@ -1003,11 +1014,90 @@ export class AppRoot {
       ['city', 'reddot'])
   }
 
+  /** 军队：加速正在训练的那一批（B05）。`seconds` 与 `itemId` 由服务端按来源裁定，客户端不自己算时长。 */
+  speedUpTraining(unitId: string): Promise<void> {
+    this.track(TRACK_EVENTS.speedupUsed, { target: unitId, source: 'TRAIN' })
+    return this.write('army', this.api.armySpeedUp({ unitId, seconds: null, itemId: null }),
+      ['army', 'reddot'])
+  }
+
+  /**
+   * 军队：取消正在训练的那一批（B05），按规格返还一部分资源。
+   *
+   * <p>刷新里带 resources：退的资源要让玩家立刻看见（与城建那边的取消同一条口径）。
+   */
+  cancelTraining(unitId: string): Promise<void> {
+    this.track(TRACK_EVENTS.armyTrain, { unitId, action: 'cancel' })
+    return this.write('army', this.api.armyCancel({ unitId, seconds: null, itemId: null }),
+      ['army', 'resources', 'reddot'])
+  }
+
+  /**
+   * 收取治好的伤兵（`/army/collectTreated`）。
+   *
+   * <p>请求体只有 `requestId`（`TreatReq`）—— 治疗是**全局一批**，不按兵种，所以这里没有 unitId。
+   * 军队四格里它是唯一一只"纯接线"的：另外三只各有前置（训练两只要上阵武将，加速治疗要道具选择器）。
+   */
+  collectTreated(): Promise<void> {
+    this.track(TRACK_EVENTS.armyTreat, { action: 'collect' })
+    return this.write('army', this.api.armyCollectTreated({}), ['army', 'reddot'])
+  }
+
+  /**
+   * 批量开箱（B04 验收 3）。`count` 是持有数量，这里按**协议天花板 100** 夹一次；
+   * 逐箱的实际上限（`chest.maxBatchCount`）由服务端再取小 —— 客户端不查表（铁律 2）。
+   */
+  openChestBatch(itemId: string, count: number): Promise<void> {
+    const capped = Math.max(1, Math.min(100, Math.floor(count)))
+    this.track(TRACK_EVENTS.itemUse, { itemId, batch: trackParam(capped) })
+    return this.write('bag', this.api.itemOpenBatch({ itemId, count: capped }), ['bag', 'reddot'])
+  }
+
+  /**
+   * 打开体力详情（B09 §5）：拉 `/stamina`，把读数翻成弹层要画的那一帧。
+   *
+   * <p>金币余额取自**资源条那一份**（`cityResp`）—— 它只用来决定买体力按钮置不置灰，
+   * 真正能不能买仍然由服务端裁定（铁律 2）。
+   */
+  openStaminaDetail(): Promise<void> {
+    this.track(TRACK_EVENTS.staminaView)
+    return this.write('city', this.api.staminaView(), [], r => {
+      this.targets.staminaDetail?.(buildStaminaDetail(r, this.goldOf()))
+    })
+  }
+
+  /**
+   * 买一次体力（`POST /stamina/buy`）。
+   *
+   * <p>**不叠二次确认**：价格就印在按钮上、弹层本身就是确认面，再叠一层只是噪音
+   * （与"解散组织"那类不可逆且没把代价写在按钮上的动作不同）。
+   * 买完**重新拉一次详情**再画：次数、下一次价格、余额都会变，靠本地推算会与服务端分家。
+   */
+
+  /** 当前金币（资源条那一份；读不到就当 0 —— 那只会让按钮置灰，不会让判定失真）。 */
+  private goldOf(): number {
+    return this.cityResp?.resources?.GOLD?.current ?? 0
+  }
+
   /** 顶栏的「一键收割」= `buildingId: null`，由服务端裁定收哪些；具体行则收那一格。 */
   collect(buildingId: string | null): Promise<void> {
     this.track(TRACK_EVENTS.gatherCollect, { buildingId: trackParam(buildingId), all: trackParam(buildingId === null) })
     return this.write('city', this.api.cityCollect({ buildingId }),
       ['city', 'resources', 'reddot'], r => this.targets.cityCollect?.(r))
+  }
+
+  /**
+   * 离开世界地图时的收尾（`GameApi.leaveWorld`：解绑 world requester + 清 `worldReady`）。
+   *
+   * <p>由 `GameBootstrap` 在"从 world 切到别的面板"时调用（2026-09-22 之前这个方法**一处调用都没有**）。
+   * **不是玩家可见功能**：它的作用是"绑了要解"——别把世界那套 requester 一直挂在适配层上，
+   * 并让下次进场重新初始化世界。放在编排层而不是视图里，是因为它改的是会话级状态。
+   */
+  leaveWorld(): void {
+    // 埋点是门禁要求的（`check-track-coverage`：每个面板动作都要有上报点），
+    // 也确实有读法：它是"世界地图这一屏的会话有多长"的唯一信号（与 march_send 分开，别让它冲淡出征率）
+    this.track(TRACK_EVENTS.worldLeave)
+    this.api.leaveWorld()
   }
 
   /**
@@ -1032,6 +1122,35 @@ export class AppRoot {
 
   // ---------- 武将养成（V03 前置：把已有的养成能力接到玩家手上） ----------
 
+  /**
+   * 暂停一栋正在升级的建筑（B03 §2："队列中可暂停 / 取消"，收口清单 #324）。
+   *
+   * <p>与升级/收割同一套路：**只发请求、按服务端回执刷新**，客户端不自己改本地那一行 ——
+   * 暂停要冻的是服务端的剩余时间，本地改状态只会让两边不一致（面板显示的"已暂停"必须来自服务端）。
+   */
+  pauseBuilding(buildingId: string): Promise<void> {
+    this.track(TRACK_EVENTS.buildingUpgradeStart, { target: buildingId, action: 'pause' })
+    return this.write('city', this.api.cityPause({ buildingId }), ['city', 'reddot'])
+  }
+
+  /** 恢复一栋已暂停的建筑：服务端会把暂停的那段时间还给这栋楼。 */
+  resumeBuilding(buildingId: string): Promise<void> {
+    this.track(TRACK_EVENTS.buildingUpgradeStart, { target: buildingId, action: 'resume' })
+    return this.write('city', this.api.cityResume({ buildingId }), ['city', 'reddot'])
+  }
+
+  /**
+   * 取消升级，按 B03 §2 返还 60% 资源（这一半规格原先也只有服务端）。
+   *
+   * <p>刷新里**必须带 resources**：取消会真的把资源退回来，不刷资源玩家会以为白扣了。
+   * 与暂停一样，客户端不自己算返还额 —— 退多少由服务端算好，界面照着刷新即可。
+   */
+  cancelBuilding(buildingId: string): Promise<void> {
+    this.track(TRACK_EVENTS.buildingUpgradeStart, { target: buildingId, action: 'cancel' })
+    return this.write('city', this.api.cityCancel({ buildingId }), ['city', 'resources', 'reddot'])
+  }
+
+  // ---------- 武将养成（V03 前置：把已有的养成能力接到玩家手上） ----------
   /**
    * 武将升星。**只带 heroId** —— 六条养成接口里只有升星与碎片合成不需要先选道具/技能槽，
    * 所以这两个能从武将行直接点出去；升级（要喂经验道具）、觉醒与技能（要选道具）、装备（要选装备）
@@ -2216,12 +2335,14 @@ export class AppRoot {
   private async loadRankIfBoard(): Promise<void> {
     if (this.rankTab === 'DETAIL') {
       this.rankResp = null
+      this.rankSnapshot = null
       this.deliverRank()
       return
     }
     if (this.rankTab === 'SEASON') {
       // 赛季页与榜无关：手里那份榜响应属于别的页签，留着会在赛季页签下画出一张榜
       this.rankResp = null
+      this.rankSnapshot = null
       await this.loadSeason()
       this.deliverRank()
       return
@@ -2230,6 +2351,10 @@ export class AppRoot {
     if (outcome.kind === 'ok') {
       this.rankResp = outcome.data
       this.rankNotice = null
+      // 快照：用**服务端下发的 dayKey** 去查（客户端自己算日期就是第二条日切轴）。
+      // 拉不到不算错误 —— 快照是"申诉时间线"，拉不到就不显示那一块，不打断榜本身。
+      const snapshot = await this.api.rankSnapshot(this.rankTab, outcome.data.dayKey)
+      this.rankSnapshot = snapshot.kind === 'ok' ? buildRankSnapshotView(snapshot.data) : null
     } else {
       // 榜拉不到时把服务端给的**理由**原样放上提示行（业务拒绝看 detail，网络失败看 reason）。
       // 不自己编一句"加载失败"：限流与断网的下一步动作完全不同（等一会儿 / 检查网络）
@@ -2262,7 +2387,7 @@ export class AppRoot {
   /** 组装并下发整块视图。表现层不参与任何计算（名次/页号/倒计时全部来自上面那两份响应）。 */
   private deliverRank(): void {
     this.targets.rank?.(buildRankBoard(this.rankResp, this.rankTab, this.playerId ?? '',
-      this.rankNotice))
+      this.rankNotice, this.rankSnapshot))
     // 赛季页与榜同屏（第六个页签），但正文来自另一份响应：页签高亮与正文必须同一次下发，
     // 否则会出现"赛季页签亮着、正文还是上一张榜"
     if (this.rankTab === 'SEASON') {
@@ -3074,7 +3199,7 @@ export class AppRoot {
     if (!this.blocksLoaded) {
       const blocks = await this.api.socialBlocks()
       if (blocks.kind === 'ok') {
-        this.applyBlockList(blocks.data.blockedPlayerIds)
+        this.applyBlockList(blocks.data.blocked)
       }
     }
     if (!this.friendsLoaded) {
@@ -3114,7 +3239,7 @@ export class AppRoot {
       this.deliverChat()
       return
     }
-    this.applyBlockList(outcome.data.blockedPlayerIds)
+    this.applyBlockList(outcome.data.blocked)
     // 先重拉再写提示：loadChat 成功时会把提示行清空（它自己的规矩），
     // 顺序反了的话玩家看不到"已拉黑"这一句
     await this.reloadChatAfterFilterChange()
@@ -3132,7 +3257,7 @@ export class AppRoot {
       this.deliverChat()
       return
     }
-    this.applyBlockList(outcome.data.blockedPlayerIds)
+    this.applyBlockList(outcome.data.blocked)
     await this.reloadChatAfterFilterChange()
     this.chatNotice = '已取消拉黑'
     this.deliverChat()
@@ -3154,17 +3279,23 @@ export class AppRoot {
       this.deliverChat()
       return
     }
-    const options = this.myBlocked.map((id) => ({
+    // 2026-09-22（收口清单 #322）：名单现在是**对象列表**，显示名由服务端解析好下发 ——
+    // 所以这一行印真名（「取消拉黑：卫无咎」）。旧服务端只回 id 列表时退回"名单第 N 位"，
+    // **绝不把 id 拼进这一行**（那串 `P9179c…` 是内部编号，印给玩家就是 #255 同族）。
+    const options = this.myBlocked.map((id, index) => ({
       id, kind: 'UNBLOCK' as const, reason: null,
-      label: `取消拉黑：${id}`, detail: '恢复与他的私聊与频道可见',
+      label: `取消拉黑：${this.myBlockedNames.get(id) ?? `名单第 ${index + 1} 位`}`,
+      detail: '恢复与他的私聊与频道可见',
     }))
     this.targets.chatActionChoice(options, (choice) => {
       void this.unblockPlayer(choice.id)
     })
   }
 
-  private applyBlockList(ids: readonly string[]): void {
-    this.myBlocked = [...ids]
+  private applyBlockList(blocked: readonly { playerId: string, name: string }[]): void {
+    this.myBlocked = blocked.map((entry) => entry.playerId)
+    // 名字单独存一份：门控逻辑只认 id（`includes`），显示那一行才要名字。
+    this.myBlockedNames = new Map(blocked.map((entry) => [entry.playerId, entry.name]))
     this.blocksLoaded = true
   }
 
@@ -3174,7 +3305,7 @@ export class AppRoot {
     }
     const outcome = await this.api.socialBlocks()
     if (outcome.kind === 'ok') {
-      this.applyBlockList(outcome.data.blockedPlayerIds)
+      this.applyBlockList(outcome.data.blocked)
     }
     // 拉不到就按"没拉黑过任何人"生成选项：点在"拉黑"上仍然会被服务端受理（幂等），
     // 而如果已经拉黑过，菜单会多出一个"拉黑"项 —— 它点了也只是幂等地再拉一次，不会出错

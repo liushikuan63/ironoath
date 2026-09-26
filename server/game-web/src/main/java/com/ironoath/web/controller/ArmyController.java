@@ -4,6 +4,7 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.web.dto.generated.ArmyListResp;
+import com.ironoath.web.dto.generated.ArmyTreatSpeedUpReq;
 import com.ironoath.web.dto.generated.ArmyUnitReq;
 import com.ironoath.web.dto.generated.AutoTrainReq;
 import com.ironoath.web.dto.generated.AutoTrainResp;
@@ -104,7 +105,7 @@ public class ArmyController {
     /** 加速治疗。口径同 {@code /army/speedUp}：秒数只能来自道具配置。 */
     @PostMapping("/treatSpeedUp")
     public Result<TreatResp> treatSpeedUp(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
-                                          @RequestBody ArmyUnitReq req) {
+                                          @RequestBody ArmyTreatSpeedUpReq req) {
         requirePlayer(playerId);
         return Result.ok(armyAppService.treatSpeedUp(playerId, req));
     }

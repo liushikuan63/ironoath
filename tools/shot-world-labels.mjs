@@ -199,6 +199,28 @@ if (EXPECTED_TILES === 0) {
 if (last < EXPECTED_TILES) {
   console.error(`[world][前置] 只画到 ${last} 块（期望 ${EXPECTED_TILES}）—— 分块没发全或家落在地图边角被裁，`
     + '覆盖率判据走不到，不要把这条读成"地图铺不满"')
+  // -1 是"连 WorldMap 组件都没有"＝应用没进到世界视图，这种时候**唯一的线索是页面报错**，
+  // 不在这里打出来就要重跑一趟才能看到（2026-09-20 撞上一次产物半坏，白跑一趟）。
+  if (last === -1) {
+    // 没有 pageerror 也不等于没坏：应用自己接住的异常会走 CrashReporter 画面，`pageerror` 收不到。
+    // 这种时候唯一能定性的证据是"屏上到底写着什么 + 长什么样"，所以在这里就地取证。
+    const onScreen = await page.evaluate(() => {
+      const out = []
+      const visit = (node) => {
+        const label = node.getComponent('cc.Label')
+        if (label !== null && label.enabled !== false && label.string !== '' && node.activeInHierarchy) {
+          out.push(label.string)
+        }
+        for (const c of node.children) visit(c)
+      }
+      visit(window.cc.director.getScene())
+      return out
+    })
+    const failShot = OUT.replace(/\.png$/, '-boot-fail.png')
+    await page.screenshot({ path: failShot })
+    console.error(`[world][前置] 屏上文字 ${onScreen.length} 条：${onScreen.slice(0, 12).join(' / ') || '（一条都没有）'}`)
+    console.error(`[world][前置] 取证截图：${failShot}`)
+  }
   await browser.close()
   await preview.close()
   process.exit(2)
@@ -463,9 +485,82 @@ const overlap = await page.evaluate(() => {
       }
     }
   }
+  /**
+   * HUD 占掉的区域：顶带 = `HudLayer` 全部子节点外接盒的并，底带 = `NavBar` 自己的外接盒。
+   *
+   * <p>刻意**不拿 `view.getVisibleSize()` 去换算带子位置**：量具里牌的盒子和 HUD 的盒子
+   * 都是 `getBoundingBoxToWorld()`，同一个空间；而 `getVisibleSize()` 是设计分辨率单位
+   * （实测牌心 x 能到 1250 而 visible.width 只有 960），混用就会得到"牌都在屏外"这种假读数。
+   */
+  const bandOf = (predicate) => {
+    let box = null
+    const visit = (node) => {
+      const t = node.getComponent('cc.UITransform')
+      if (t !== null && node.activeInHierarchy && predicate(node)) {
+        const r = t.getBoundingBoxToWorld()
+        if (box === null) {
+          box = { x: r.x, y: r.y, w: r.width, h: r.height }
+        } else {
+          const x2 = Math.max(box.x + box.w, r.x + r.width); const y2 = Math.max(box.y + box.h, r.y + r.height)
+          box.x = Math.min(box.x, r.x); box.y = Math.min(box.y, r.y)
+          box.w = x2 - box.x; box.h = y2 - box.y
+        }
+      }
+      for (const c of node.children) visit(c)
+    }
+    visit(window.cc.director.getScene())
+    return box
+  }
+  /**
+   * 顶带 = `HudLayer` **直接子节点**里"像一条带子"的那些（自身高度 ≤ 屏高 1/4）。
+   *
+   * <p>第一版没加这个限高，把整块行军面板并了进去 ⇒ 顶带读成 944×591（≈整屏），
+   * 于是"28 张牌压 HUD"是假的。**带子的判据必须自己看着像带子**：现在打出来应当是
+   * 一条 ~156px 高的横带（`HUD_BAND_HEIGHT = 104` 设计单位 × 1.5 像素比）。
+   */
+  const pixelH = window.cc.view.getVisibleSizeInPixel().height
+  // 定点诊断：顶带到底被谁撑大的 —— 把 HudLayer 直接子节点的名字与自身高度列出来。
+  const hud = (() => {
+    let found = null
+    const visit = (node) => {
+      if (found !== null) return
+      if (node.name === 'HudLayer') { found = node; return }
+      for (const c of node.children) visit(c)
+    }
+    visit(window.cc.director.getScene())
+    return found
+  })()
+  const hudChildren = hud === null || hud === undefined ? [] : hud.children.map((c) => {
+    const t = c.getComponent('cc.UITransform')
+    const r = t === null ? null : t.getBoundingBoxToWorld()
+    return `${c.name}:${t === null ? 'noUI' : `${Math.round(t.width)}x${Math.round(t.height)}`}`
+      + `${r === null ? '' : `@(${Math.round(r.x)},${Math.round(r.y)})`}`
+  })
+  const topBand = bandOf((node) => {
+    if (node.parent === null || node.parent.name !== 'HudLayer') return false
+    const t = node.getComponent('cc.UITransform')
+    // 宽 0 的空提示（HintLabel 平时没有文字）停在原点上，会把"带子"撑成整屏 —— 第一版就是这么假的
+    return t !== null && t.width > 0 && t.height > 0 && t.height <= pixelH / 4
+  })
+  const navBand = bandOf((node) => node.name === 'NavBar')
+
+  const underHud = []
+  for (const b of boxes) {
+    for (const [which, band] of [['顶带', topBand], ['导航带', navBand]]) {
+      if (band === null) continue
+      const ox = Math.min(b.x + b.w, band.x + band.w) - Math.max(b.x, band.x)
+      const oy = Math.min(b.y + b.h, band.y + band.h) - Math.max(b.y, band.y)
+      if (ox > 1 && oy > 1) underHud.push(`${b.text} 压${which} ${Math.round(ox)}×${Math.round(oy)}`)
+    }
+  }
+  const ys = boxes.map((b) => b.y + b.h / 2)
   return {
     boxes: boxes.length, pairs, examples: hits, heights,
     marches: map.drawnMarches.size, marchPlates,
+    hudOver: underHud.length, hudOverExamples: underHud.slice(0, 6),
+    // 牌心的 y 跨度：用来判"这条门在这张图上到底有没有可能红"（恒绿的判据比没有判据更坏）
+    yRange: ys.length === 0 ? null : [Math.min(...ys), Math.max(...ys)],
+    bands: { topBand, navBand }, hudChildren, pixelH,
   }
 })
 await browser.close()
@@ -487,8 +582,44 @@ if (overlap.marchPlates.length === 0) {
     + ' —— 两个池共用的那条候选表漏了行军那一侧（#279 拆 drawMarker 时最容易漏的半边）')
   process.exit(1)
 }
+console.log(`[world] 压在 HUD 上的名牌 ${overlap.hudOver} 张`
+  + `${overlap.hudOverExamples.length > 0 ? `：${overlap.hudOverExamples.join('；')}` : ''}`)
+if (overlap.hudOver > 0) {
+  console.error('[world] 判据失败：仍有名牌压进顶 HUD 或底导航带 —— '
+    + '`pickVisibleCaptions` 的 viewport 裁剪未生效或被绕过')
+  process.exit(1)
+}
 console.log(`[world] 两两压叠 ${overlap.pairs} 对`
   + `${overlap.examples.length > 0 ? `：${overlap.examples.join('；')}` : ''}`)
+/**
+ * 压在 HUD 上的名牌：**当前只是读数，不是门，且不采信**。
+ * 2026-09-20 实测矛盾：这一趟报 0 张，而同一趟的截图上左下 `粮草` 牌明显压在导航条上、
+ * 顶部另有一张被按钮带切掉半截（牌心约在设计 y≈9，导航带是 y 8..60，按矩形相交应当命中）。
+ * 这条判据**看不见一个真实存在的缺陷** ⇒ 拿它当门就是"恒绿假判据"，比没有门更坏。
+ * 未查明的两个候选：① 那两张牌的节点不在我扫的两个池子里；② 牌盒与带盒虽同为
+ * `getBoundingBoxToWorld`，但分属 `mapLayer` 与 HUD 两棵子树，缩放/锚点不同 ⇒ 空间并不真的相同。
+ * 下一格先证伪这两条，再决定立不立门。
+ */
+console.log(`[world] 压在 HUD 上的名牌 ${overlap.hudOver} 张（读数，未采信，见注释）`
+  + `${overlap.hudOverExamples.length > 0 ? `：${overlap.hudOverExamples.join('；')}` : ''}`
+  + `牌心 y 跨度 ${overlap.yRange === null ? '（无牌）' : overlap.yRange.map((v) => Math.round(v)).join('~')}`
+  + `；顶带 ${JSON.stringify(overlap.bands.topBand)}；导航带 ${JSON.stringify(overlap.bands.navBand)}）`)
+/**
+ * 带子自检：HUD 的顶带与导航带都必须是"一条横带"（高 ≤ 屏高 1/4）。
+ * 第一版把整块行军面板与一个宽 0 的空 HintLabel 并了进来，顶带读成 944×591 ≈ 整屏，
+ * 于是"28 张牌压 HUD"是假的 —— **拿假读数去修排版，就是再造一次 #270/#271**。
+ * 带子坏了是量具的问题，不是产品的问题 ⇒ 退 2，不退 1。
+ */
+const bandSane = (band) => band !== null && band.h > 0 && band.h <= overlap.pixelH / 4
+if (!bandSane(overlap.bands.navBand)) {
+  console.error(`[world][前置] 导航带读出来不像一条带子（${JSON.stringify(overlap.bands.navBand)}）`
+    + ' —— 量具的取盒口径坏了，压 HUD 的读数不可信')
+  process.exit(2)
+}
+if (overlap.bands.topBand !== null && !bandSane(overlap.bands.topBand)) {
+  console.error(`[world][前置] 顶带读出来不像一条带子（${JSON.stringify(overlap.bands.topBand)}）—— 同上`)
+  process.exit(2)
+}
 /**
  * 分堆自检：牌盒只可能是"字数 × 板高"这几种，出现 50（文字盒）或 100（池默认）
  * 说明量的又不是画出来的那块 —— 这条判据已经错过三次（#271/#272/#275），所以钉成门。

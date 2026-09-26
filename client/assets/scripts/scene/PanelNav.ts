@@ -3,7 +3,7 @@
  * 依赖：cc（渲染）、scene/*View（被导航的面板）。
  *
  * <p><b>为什么需要它</b>：11 个面板都是<b>全屏自绘</b>（各自画满屏背景 + 内容），
- * 同时挂在同一个节点上会互相覆盖 —— 之前只能一次看一个，等于九个面板没有入口。
+ * 同时挂在同一个节点上会互相覆盖 —— 之前只能一次看一个，等于其余面板没有入口。
  * 本类把每个面板放进自己的子节点，用 {@code active} 切换：
  * <ul>
  *   <li>未激活的节点<b>不会执行 onLoad</b>，也就不会画背景、不占渲染 —— 不是"画了再藏起来"</li>
@@ -67,10 +67,16 @@ interface PanelDef {
 }
 
 /**
- * 面板清单。**顺序就是导航条从左到右的顺序**：
- * 内城 → 军队 → 武将 → 背包 → 关卡 → 任务 → 社交 → 战力 → 搜索 → 地图。
- * 地图（WorldMap）是最后一项：它带镜头与拖拽输入，且依赖 enterWorld 初始化过的世界模型
+ * 面板清单（**当前 17 项**，2026-09-21 现数）。**顺序就是面板的定义顺序**；
+ * 导航条上从左到右只画常驻那几格（见 {@link MORE_KEYS}），其余进「更多」抽屉。
+ *
+ * <p>**这份注释里的计数是一个已经漂移过两次的读数**（阶段 2 写"九个系统"、阶段 5/7 之后
+ * 陆续加到 17，而注释与 `CC开发全流程.md` 阶段总览都停在旧数）。改这一行时请顺手改
+ * `CC开发全流程.md` 阶段总览/3.1/7 三处 —— 判据：`grep -c "{ key: '" 本文件` 必须等于注释里的数字。
+ *
+ * <p>地图（WorldMap）是倒数第二项：它带镜头与拖拽输入，且依赖 enterWorld 初始化过的世界模型
  * （AppRoot.start 里已经拉过），所以挂上就能用，不需要额外的装配。
+ * 设置放最后：客服与退款入口要一级可见（上线检查清单 §二 8/9）。
  */
 const PANELS: readonly PanelDef[] = [
   { key: 'city', label: '内城', view: CityPanelView, reddotKey: 'city' },
@@ -106,16 +112,57 @@ const PANELS: readonly PanelDef[] = [
   { key: 'settings', label: '设置', view: SettingsPanelView, reddotKey: null },
 ]
 
+/**
+ * 收进「更多」抽屉的入口（**这里的顺序就是抽屉里从左到右、从上到下的顺序**）。
+ * 常驻条因此只剩 7 格 + 「更多」：17 格挤在 900px 里时每格只有 52.9px，
+ * 两个字的标签（fontSize 18 = 36px）贴上格边，页签图的端帽也被压得读不出造型（用户 2026-09-26 指出）。
+ *
+ * <p>谁**必须**留在条上，是三条硬约束定的，不是审美：
+ * <ul>
+ *   <li>设置 —— 客服与退款要「一级可见」（上线检查清单 §二 8/9），而导航条是本作唯一的一级入口；</li>
+ *   <li>邮件 —— 每天进来清一次的入口，且角标绑在服务端 mail/unread 叶子上（B12 §4）；</li>
+ *   <li>内城 / 军队 / 武将 / 任务 / 地图 —— 主线循环：引导七步与主线任务在这五格之间来回，
+ *       多一次"先展开抽屉"就是把新手引导的每一步都加长一截。</li>
+ * </ul>
+ * 抽屉里那 10 项都是"点开看一眼、顺手做一件事"的常驻功能，收起来不影响主线推进；
+ * 它们各自的红点仍在（抽屉格子上照画），并在「更多」上合并成一个总点，收起时也看得见。
+ *
+ * <p>面板清单仍只有 {@link PANELS} 一份出处：这里只列 key，标签 / 视图 / 红点路径都从它取。
+ * 写错一个 key 不会静默少一格 —— `tools/verify-art-runtime.mjs` 的导航格数判据按
+ * "条上 + 抽屉里的格子合计 = PANELS 行数" 断言，漏一个就红。
+ */
+const MORE_KEYS: readonly string[] = [
+  'gacha', 'bag', 'stage', 'reports', 'battlePass',
+  'social', 'power', 'shop', 'avatarFrames', 'targets',
+]
+
+/** 常驻条上的格子（按 PANELS 的顺序）。 */
+const BAR_PANELS: readonly PanelDef[] = PANELS.filter((def) => !MORE_KEYS.includes(def.key))
+/** 抽屉里的格子（按 MORE_KEYS 的顺序）。 */
+const MORE_PANELS: readonly PanelDef[] = MORE_KEYS
+  .map((key) => PANELS.find((def) => def.key === key) ?? null)
+  .filter((def): def is PanelDef => def !== null)
+
+/** 抽屉的几何：5 列 × 2 行，格子高度与导航格一致，省得两套手感。 */
+const MORE_COLUMNS = 5
+const MORE_GAP = 8
+const MORE_PADDING = 10
+/** 抽屉那一格自己的 key。它不是面板，所以 `show()` 认不得它 —— 点击走 {@link PanelNav.toggleMore}。 */
+const MORE_KEY = 'more'
+const MORE_LABEL = '更多'
+
 @ccclass('PanelNav')
 export class PanelNav extends Component {
 
   private currentKey = ''
-  /** 导航条每格的宽度（建条时算好，高亮时复用它，不去读 UITransform 的属性名） */
-  private columnWidth = 100
+  /** 每格实际画多宽：条上与抽屉里不一样，画页签图时要按各自的宽度画 */
+  private readonly cellWidths = new Map<string, number>()
   private readonly panelNodes = new Map<string, Node>()
   private readonly buttonNodes = new Map<string, Node>()
   private readonly buttonLabels = new Map<string, Label>()
   private readonly navDots = new Map<string, Node>()
+  private moreLayer: Node | null = null
+  private moreOpen = false
   private reddot: ClientReddotTree | null = null
 
   /** 切换面板时的回调。数据侧由 GameBootstrap 决定要不要补拉，导航层不碰网络。 */
@@ -127,7 +174,7 @@ export class PanelNav extends Component {
       const node = new Node(def.key)
       node.layer = this.node.layer
       // 先置为未激活再挂组件：Cocos 不会给未激活节点跑 onLoad，
-      // 于是九个面板不会在开局一起画满屏背景（也省掉九份节点池）
+      // 于是十七个面板不会在开局一起画满屏背景（也省掉十七份节点池）
       node.active = false
       this.node.addChild(node)
       // **必须有 UITransform 且铺满屏**：触摸命中是按节点的 UITransform 矩形算的。
@@ -168,6 +215,10 @@ export class PanelNav extends Component {
       return
     }
     if (this.currentKey === key) {
+      // 从抽屉里点了当前这一格：抽屉要收起来，否则玩家选完了屏上还挂着一块板
+      if (this.moreOpen) {
+        this.setMoreOpen(false)
+      }
       this.onShow?.(key)
       return
     }
@@ -178,7 +229,12 @@ export class PanelNav extends Component {
       node.active = panelKey === key
     }
     this.currentKey = key
-    this.highlight()
+    if (this.moreOpen) {
+      // 收起时会重画一次高亮（「更多」那格的选中态跟着 currentKey 走）
+      this.setMoreOpen(false)
+    } else {
+      this.highlight()
+    }
     this.onShow?.(key)
   }
 
@@ -225,42 +281,133 @@ export class PanelNav extends Component {
     graphics.roundRect(-width / 2, -BAR_HEIGHT / 2, width, BAR_HEIGHT, 8)
     graphics.fill()
 
-    const columnWidth = width / PANELS.length
-    this.columnWidth = columnWidth
-    PANELS.forEach((def, index) => {
-      const x = -width / 2 + columnWidth * (index + 0.5)
-      const button = new Node(`Nav-${def.key}`)
-      button.layer = bar.layer
-      bar.addChild(button)
-      button.setPosition(new Vec3(x, 0, 0))
-      button.addComponent(UITransform).setContentSize(new Size(columnWidth - 6, BAR_HEIGHT - 8))
-      const labelNode = new Node('Caption')
-      labelNode.layer = button.layer
-      button.addChild(labelNode)
-      labelNode.addComponent(UITransform)
-      const label = applySystemUiFont(labelNode.addComponent(Label))
-      label.string = def.label
-      label.fontSize = 18
-      label.color = COLOR_TEXT_IDLE
-
-      const dot = new Node('NavRedDot')
-      dot.layer = button.layer
-      button.addChild(dot)
-      dot.setPosition(new Vec3((columnWidth - 6) / 2 - 9, (BAR_HEIGHT - 8) / 2 - 9, 0))
-      dot.addComponent(UITransform).setContentSize(new Size(12, 12))
-      const dotGraphics = dot.addComponent(Graphics)
-      dotGraphics.fillColor = COLOR_RED_DOT
-      dotGraphics.roundRect(-6, -6, 12, 12, 6)
-      dotGraphics.fill()
-      dot.active = false
-      this.navDots.set(def.key, dot)
-
-      button.on('touch-start', (_event: EventTouch) => {
-        this.show(def.key)
-      }, this)
-      this.buttonNodes.set(def.key, button)
-      this.buttonLabels.set(def.key, label)
+    // 格子数 = 常驻面板 + 「更多」自己那一格
+    const columnWidth = width / (BAR_PANELS.length + 1)
+    BAR_PANELS.forEach((def, index) => {
+      this.createCell(bar, def.key, def.label,
+        -width / 2 + columnWidth * (index + 0.5), 0, columnWidth - 6)
     })
+    this.createCell(bar, MORE_KEY, MORE_LABEL,
+      -width / 2 + columnWidth * (BAR_PANELS.length + 0.5), 0, columnWidth - 6)
+    this.buildMoreLayer(width)
+    this.highlight()
+  }
+
+  /**
+   * 建一格导航。条上与抽屉里共用这一份构造 —— 页签图、字色、红点、点击手感四件事
+   * 只有一处实现，抽屉里的格子不会变成"另一套按钮"。
+   */
+  private createCell(parent: Node, key: string, caption: string,
+                     x: number, y: number, width: number): void {
+    const height = BAR_HEIGHT - 8
+    const button = new Node(`Nav-${key}`)
+    button.layer = parent.layer
+    parent.addChild(button)
+    button.setPosition(new Vec3(x, y, 0))
+    button.addComponent(UITransform).setContentSize(new Size(width, height))
+    const labelNode = new Node('Caption')
+    labelNode.layer = button.layer
+    button.addChild(labelNode)
+    labelNode.addComponent(UITransform)
+    const label = applySystemUiFont(labelNode.addComponent(Label))
+    label.string = caption
+    label.fontSize = 18
+    label.color = COLOR_TEXT_IDLE
+
+    const dot = new Node('NavRedDot')
+    dot.layer = button.layer
+    button.addChild(dot)
+    dot.setPosition(new Vec3(width / 2 - 9, height / 2 - 9, 0))
+    dot.addComponent(UITransform).setContentSize(new Size(12, 12))
+    const dotGraphics = dot.addComponent(Graphics)
+    dotGraphics.fillColor = COLOR_RED_DOT
+    dotGraphics.roundRect(-6, -6, 12, 12, 6)
+    dotGraphics.fill()
+    dot.active = false
+    this.navDots.set(key, dot)
+
+    button.on('touch-start', (_event: EventTouch) => {
+      if (key === MORE_KEY) {
+        this.toggleMore()
+        return
+      }
+      this.show(key)
+    }, this)
+    this.buttonNodes.set(key, button)
+    this.buttonLabels.set(key, label)
+    this.cellWidths.set(key, width)
+  }
+
+  /**
+   * 「更多」抽屉：常驻条之外的 10 个入口。
+   *
+   * <p>**为什么是抽屉而不是第二排常驻条**：两排条会把可视高度再吃掉 52px，
+   * 而各面板的内容区是按"全屏减去一条导航"算的（{@link PanelNav.contentRectFor}）——
+   * 加第二排等于把每个面板的内容一起压扁。抽屉只在开着时占地方。
+   *
+   * <p>**为什么背板不盖住导航条那一条**：盖上去会让"开着抽屉直接换一格"变成
+   * "先点空白收起、再点那一格"，原本一下的事变成两下。
+   */
+  private buildMoreLayer(barWidth: number): void {
+    const size = view.getVisibleSize()
+    const cellHeight = BAR_HEIGHT - 8
+    const rows = Math.max(1, Math.ceil(MORE_PANELS.length / MORE_COLUMNS))
+    const cellWidth = (barWidth - MORE_PADDING * 2 - MORE_GAP * (MORE_COLUMNS - 1)) / MORE_COLUMNS
+    const plateHeight = MORE_PADDING * 2 + rows * cellHeight + (rows - 1) * MORE_GAP
+    const barStrip = 8 + BAR_HEIGHT
+
+    const layer = new Node('NavMoreLayer')
+    layer.layer = this.node.layer
+    this.node.addChild(layer)
+    layer.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    // 关着就整层不激活：既不画也不吃触摸（背板是全屏的，激活着会把面板的点击全吞掉）
+    layer.active = false
+    this.moreLayer = layer
+
+    const backdropHeight = size.height - barStrip
+    const backdrop = new Node('NavMoreBackdrop')
+    backdrop.layer = layer.layer
+    layer.addChild(backdrop)
+    backdrop.addComponent(UITransform).setContentSize(new Size(size.width, backdropHeight))
+    backdrop.setPosition(new Vec3(0, -size.height / 2 + barStrip + backdropHeight / 2, 0))
+    backdrop.on('touch-start', (_event: EventTouch) => this.setMoreOpen(false), this)
+
+    const tray = new Node('NavMoreTray')
+    tray.layer = layer.layer
+    layer.addChild(tray)
+    tray.addComponent(UITransform).setContentSize(new Size(barWidth, plateHeight))
+    tray.setPosition(new Vec3(0, -size.height / 2 + barStrip + 8 + plateHeight / 2, 0))
+    const plate = new Node('TrayBackground')
+    plate.layer = tray.layer
+    tray.addChild(plate)
+    plate.addComponent(UITransform).setContentSize(new Size(barWidth, plateHeight))
+    const plateGraphics = plate.addComponent(Graphics)
+    plateGraphics.fillColor = COLOR_BAR
+    plateGraphics.roundRect(-barWidth / 2, -plateHeight / 2, barWidth, plateHeight, 8)
+    plateGraphics.fill()
+    plateGraphics.lineWidth = 2
+    plateGraphics.strokeColor = COLOR_IDLE
+    plateGraphics.roundRect(-barWidth / 2, -plateHeight / 2, barWidth, plateHeight, 8)
+    plateGraphics.stroke()
+
+    MORE_PANELS.forEach((def, index) => {
+      const column = index % MORE_COLUMNS
+      const row = Math.floor(index / MORE_COLUMNS)
+      const x = -barWidth / 2 + MORE_PADDING + cellWidth / 2 + column * (cellWidth + MORE_GAP)
+      const y = plateHeight / 2 - MORE_PADDING - cellHeight / 2 - row * (cellHeight + MORE_GAP)
+      this.createCell(tray, def.key, def.label, x, y, cellWidth)
+    })
+  }
+
+  private toggleMore(): void {
+    this.setMoreOpen(!this.moreOpen)
+  }
+
+  private setMoreOpen(open: boolean): void {
+    this.moreOpen = open
+    if (this.moreLayer !== null) {
+      this.moreLayer.active = open
+    }
     this.highlight()
   }
 
@@ -284,34 +431,47 @@ export class PanelNav extends Component {
       }
       dot.active = tree !== null && def.reddotKey !== null && tree.isLit(def.reddotKey)
     }
+    // 抽屉收起时，里面那些入口的红点玩家看不见 ⇒ 在「更多」上合并成一个总点。
+    // 判据仍只读服务端那棵树（B12 §4：客户端不参与算红点），这里只做"或"。
+    const moreDot = this.navDots.get(MORE_KEY)
+    if (moreDot !== undefined) {
+      moreDot.active = tree !== null && MORE_PANELS
+        .some((def) => def.reddotKey !== null && tree.isLit(def.reddotKey))
+    }
   }
 
   /** 高亮当前项：当前用铜金底 + 深色字，其余保持暗底浅字。 */
   private highlight(): void {
     for (const def of PANELS) {
-      const button = this.buttonNodes.get(def.key)
-      const label = this.buttonLabels.get(def.key)
-      if (button === undefined || label === undefined) {
-        continue
-      }
-      const active = def.key === this.currentKey
-      const width = this.columnWidth - 6
-      const height = BAR_HEIGHT - 8
-      const drawnWithArt = applyNavTab(button, active, width, height)
-      // 字色要等"这格实际是什么底"定了再定：先设色再画图，选中态就是深色字压在深色底上
-      label.color = drawnWithArt && active ? COLOR_TEXT_ACTIVE_ON_ART
-        : (active ? COLOR_TEXT_ACTIVE : COLOR_TEXT_IDLE)
-      if (drawnWithArt) {
-        continue
-      }
-      const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)
-      graphics.clear()
-      graphics.fillColor = active ? COLOR_ACTIVE : COLOR_IDLE
-      // 尺寸用建按钮时算好的值：UITransform 的尺寸属性名在不同版本间变过（width/height
-      // 与 contentSize），这里不依赖它
-      graphics.roundRect(-width / 2, -height / 2, width, height, 6)
-      graphics.fill()
+      this.paintCell(def.key, def.key === this.currentKey)
     }
+    // 「更多」自己那一格：抽屉开着、或当前面板就在抽屉里 ⇒ 它代表"你现在在这儿"，要给选中态。
+    // 否则从抽屉进了商店，条上七格全暗，玩家看不出自己在哪一屏。
+    this.paintCell(MORE_KEY, this.moreOpen || MORE_KEYS.includes(this.currentKey))
+  }
+
+  private paintCell(key: string, active: boolean): void {
+    const button = this.buttonNodes.get(key)
+    const label = this.buttonLabels.get(key)
+    if (button === undefined || label === undefined) {
+      return
+    }
+    // 尺寸用建格子时算好的值：UITransform 的尺寸属性名在不同版本间变过（width/height
+    // 与 contentSize），这里不依赖它
+    const width = this.cellWidths.get(key) ?? 0
+    const height = BAR_HEIGHT - 8
+    const drawnWithArt = applyNavTab(button, active, width, height)
+    // 字色要等"这格实际是什么底"定了再定：先设色再画图，选中态就是深色字压在深色底上
+    label.color = drawnWithArt && active ? COLOR_TEXT_ACTIVE_ON_ART
+      : (active ? COLOR_TEXT_ACTIVE : COLOR_TEXT_IDLE)
+    if (drawnWithArt) {
+      return
+    }
+    const graphics = button.getComponent(Graphics) ?? button.addComponent(Graphics)
+    graphics.clear()
+    graphics.fillColor = active ? COLOR_ACTIVE : COLOR_IDLE
+    graphics.roundRect(-width / 2, -height / 2, width, height, 6)
+    graphics.fill()
   }
 
   override onDestroy(): void {
@@ -319,6 +479,8 @@ export class PanelNav extends Component {
     this.buttonNodes.clear()
     this.buttonLabels.clear()
     this.navDots.clear()
+    this.cellWidths.clear()
+    this.moreLayer = null
     this.reddot = null
     this.onShow = null
   }

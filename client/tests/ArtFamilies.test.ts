@@ -17,6 +17,7 @@ import path from 'node:path'
 import {
   FAMILY_ASSETS, EQUIP_ICON_BY_CONFIG, ITEM_ICON_BY_CONFIG, ACTIVITY_ICON_BY_CONFIG,
   itemArtKeyForConfig, activityIconKey, buildingArtKey, familyArtKey, PANEL_FRAME_BAND,
+  CITY_STAGE_ASSETS,
 } from '../assets/scripts/game/art/ArtFamilies'
 
 const CONFIG_DIR = path.join(repoRoot(), 'contract', 'config')
@@ -62,6 +63,22 @@ test('每个族键都有对应的运行时 PNG（键表 → 磁盘）', () => {
     }
   }
   assert.deepEqual(missing, [], `以下键在磁盘上没有图：\n${missing.join('\n')}`)
+})
+
+test('A17 舞台三件套都有运行时 PNG，且不会被当成按需族漏加载', () => {
+  const missing = Object.entries(CITY_STAGE_ASSETS)
+    .filter(([, rel]) => !fs.existsSync(path.join(RUNTIME_DIR, `${rel}.png`)))
+    .map(([name, rel]) => `${name} → assets/resources/${rel}.png`)
+  assert.deepEqual(missing, [], `A17 舞台图缺件：\n${missing.join('\n')}`)
+  const source = fs.readFileSync(ART_CATALOG_SRC, 'utf8')
+  for (const member of Object.keys(CITY_STAGE_ASSETS)) {
+    assert.ok(source.includes(`CITY_STAGE_ASSETS.${member}`),
+      `ArtCatalog 没有消费 A17 常量：${member}`)
+  }
+  assert.ok(source.includes("'city.ground'") && source.includes("'city.wall'")
+    && source.includes("'city.ridge'"), 'ArtCatalog 缺少 A17 的静态键')
+  assert.equal(/key === 'city\.ground'[\s\S]{0,120}enableTextureRepeat/.test(source),
+    true, 'A17 地表砖没有启用 REPEAT，TILED 放大时会出现边缘拉丝')
 })
 
 test('hero.json 每一行都有立绘，且键表与磁盘文件一一对应', () => {

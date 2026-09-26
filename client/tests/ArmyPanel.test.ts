@@ -54,8 +54,7 @@ function hospital(overrides: Partial<HospitalView> = {}): HospitalView {
   }
 }
 
-function armyResp(units: UnitView[], overrides: Partial<ArmyListResp> = {}): ArmyListResp {
-  return {
+function armyResp(units: UnitView[], overrides: Partial<ArmyListResp> = {}): ArmyListResp {  return {
     units,
     troopCap: 2000,
     troopsInUse: 800,
@@ -229,4 +228,20 @@ test('治疗时长预估 = 每个伤兵秒数 × 伤兵数', () => {
   assert.equal(estimateTreatMs(hospital({ treatSecondsPerWounded: 3 }), 200), 600_000)
   assert.equal(estimateTreatMs(hospital(), 0), 0)
   assert.throws(() => estimateTreatMs(hospital(), -1), /非负整数/)
+})
+
+test('「收取伤兵」的可见判据：治疗到点才算可收（本地倒计时归零，与城建 collectable 同口径）', () => {
+  const now = 1_700_000_000_000
+  // 治疗中、还没到点 → 不给收（服务端也会拒）
+  assert.equal(buildHospitalPanel(hospital({ treating: true, treatFinishAt: now + HOUR }), 0, now)
+    .collectableTreated, false)
+  // 治疗中、已经到点 → 可收
+  assert.equal(buildHospitalPanel(hospital({ treating: true, treatFinishAt: now - 1 }), 0, now)
+    .collectableTreated, true)
+  // 压根没在治疗 → 不给收（哪怕历史 finishAt 是过去的）
+  assert.equal(buildHospitalPanel(hospital({ treating: false, treatFinishAt: now - HOUR }), 0, now)
+    .collectableTreated, false)
+  // 差一毫秒也不算到点：本地倒计时与 finishAt 是同一份判据，别让它有第二种算法
+  assert.equal(buildHospitalPanel(hospital({ treating: true, treatFinishAt: now + 1 }), 0, now)
+    .collectableTreated, false)
 })

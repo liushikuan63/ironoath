@@ -563,25 +563,87 @@ class CityStateTest {
     }
 
     @Test
-    @DisplayName("暂停与恢复：暂停期间剩余时间不推进，恢复后继续")
+    @DisplayName("暂停与恢复：暂停期间剩余时间不推进、不被收割，恢复后**把暂停那段时间还回来**")
     void pauseFreezesRemainingTime() {
         CityState city = cityWith("main_city", "barracks");
         long now = 1_700_000_000_000L;
         city.startUpgrade("inst_barracks", 600L, 1, now);
         BuildingInstance b = city.building("inst_barracks");
 
-        city.pause("inst_barracks");
+        // 先跑 60 秒再暂停
+        city.pause("inst_barracks", now + 60_000L);
         assertThat(b.status()).isEqualTo(BuildingStatus.PAUSED);
+        assertThat(b.pausedAt()).as("暂停要记下时刻 —— 不记的话恢复时没法把这段时间还回来")
+                .isEqualTo(now + 60_000L);
         assertThat(b.remainingSeconds(now + HOUR)).as("暂停期间不显示倒计时").isZero();
-        // 暂停中不得被 collectFinished 收割
-        assertThat(city.collectFinished(now + HOUR)).isEmpty();
+        // 暂停中不得被 collectFinished 收割 —— 哪怕已经越过原来的完成时刻
+        assertThat(city.collectFinished(now + HOUR)).as("暂停中越过 finishAt 也不许收割").isEmpty();
+        // 进度条也不许自己往前爬
+        long frozenProgress = b.progressFixed(now + HOUR);
+        assertThat(b.progressFixed(now + 2 * HOUR)).as("暂停期间进度不动").isEqualTo(frozenProgress);
 
         // 已暂停时再暂停应报错
-        assertThatThrownBy(() -> city.pause("inst_barracks")).isInstanceOf(IllegalStateException.class);
-        // 未暂停时 resume 应报错
-        city.resume("inst_barracks");
+        assertThatThrownBy(() -> city.pause("inst_barracks", now + HOUR))
+                .isInstanceOf(IllegalStateException.class);
+
+        // 在 now+HOUR 恢复：已跑 60 秒，剩余应是 540 秒（暂停的那 1 小时不算数）
+        city.resume("inst_barracks", now + HOUR);
         assertThat(b.status()).isEqualTo(BuildingStatus.UPGRADING);
-        assertThatThrownBy(() -> city.resume("inst_barracks")).isInstanceOf(IllegalStateException.class);
+        assertThat(b.pausedAt()).as("恢复后暂停时刻要清掉").isZero();
+        assertThat(b.remainingSeconds(now + HOUR)).as("剩余时间 = 600 - 已跑的 60 秒").isEqualTo(540L);
+        assertThat(city.collectFinished(now + HOUR + 539_000L)).as("差一秒还不该完成").isEmpty();
+        assertThat(city.collectFinished(now + HOUR + 540_000L)).containsExactly("inst_barracks");
+
+        // 未暂停时 resume 应报错
+        assertThatThrownBy(() -> city.resume("inst_barracks", now + 2 * HOUR))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("取消首次放置后摘掉未建成的楼：格子真的空出来、能原地再放（#328）")
+    void removeUnbuiltFreesTheSlot() {
+        CityState city = cityWith("main_city", "barracks");
+        long now = 1_700_000_000_000L;
+        city.startUpgrade("inst_barracks", 600L, 1, now);
+        city.cancelUpgrade("inst_barracks", Map.of("STONE", 400L), rules());
+        assertThat(city.building("inst_barracks").level()).isZero();
+
+        city.removeUnbuilt("inst_barracks");
+        assertThat(city.buildings()).as("摘掉之后城里不该还有它")
+                .noneMatch(b -> b.instanceId().equals("inst_barracks"));
+        // 占用释放了才可能在同一格再放一个 —— 不放的话这条测不出"格子真空出来"
+        city.place("inst_barracks_again", "barracks", 1, 1, rules(), false, false);
+        assertThat(city.building("inst_barracks_again").level()).isZero();
+    }
+
+    @Test
+    @DisplayName("摘除的守卫很窄：升级中的与已建成的都不许按未建成摘掉")
+    void removeUnbuiltRefusesUpgradingAndBuilt() {
+        CityState city = cityWith("main_city", "barracks");
+        long now = 1_700_000_000_000L;
+        city.startUpgrade("inst_barracks", 1L, 1, now);
+        assertThatThrownBy(() -> city.removeUnbuilt("inst_barracks"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("先取消");
+        // 建完（Lv1）之后更不许摘
+        assertThat(city.collectFinished(now + 5_000L)).containsExactly("inst_barracks");
+        assertThat(city.building("inst_barracks").level()).isEqualTo(1);
+        assertThatThrownBy(() -> city.removeUnbuilt("inst_barracks"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("已经建成");
+    }
+
+    void pausedAtSurvivesSnapshotRoundTrip() {
+        CityState city = cityWith("main_city", "barracks");
+        long now = 1_700_000_000_000L;
+        city.startUpgrade("inst_barracks", 600L, 1, now);
+        city.pause("inst_barracks", now + 120_000L);
+
+        CityState restored = CityState.fromSnapshot(city.snapshot());
+        BuildingInstance copy = restored.building("inst_barracks");
+        assertThat(copy.status()).isEqualTo(BuildingStatus.PAUSED);
+        assertThat(copy.pausedAt()).as("暂停时刻必须跟着存档走").isEqualTo(now + 120_000L);
+        // 重建之后恢复，剩余时间照样是 600 - 120 = 480 秒
+        restored.resume("inst_barracks", now + HOUR);
+        assertThat(copy.remainingSeconds(now + HOUR)).isEqualTo(480L);
     }
 
     @Test

@@ -43,6 +43,7 @@ import { decideUpdateGate } from '../game/release/UpdateGate'
 import { applySystemUiFont } from './UiFont'
 import { SettingsPanelView } from './SettingsPanelView'
 import { GiftPopupView } from './GiftPopupView'
+import { StaminaDetailOverlay } from './StaminaDetailOverlay'
 import { TechPanelView } from './TechPanelView'
 import { EquipPanelView } from './EquipPanelView'
 import { ExpPickOverlay } from './ExpPickOverlay'
@@ -300,9 +301,11 @@ export class GameBootstrap extends Component {
     if (this.destroyed) {
       return
     }
-    // 导航层：由它建出各面板节点（初始未激活，因此不会九个面板一起画满屏背景），
+    // 导航层：由它建出各面板节点（初始未激活，因此不会十七个面板一起画满屏背景），
     // 本组件只按 key 去找它们。放在 boot 之前：targets() 在登录成功后要立刻找得到这些组件。
     this.nav = this.node.addComponent(PanelNav)
+    /** onShow 只知道"现在是什么"，判断"刚离开了哪一格"要自己记一个上一次。 */
+    let previousKey = this.nav.current()
     // 音效层挂在同一个 host 上：AudioSource 必须属于活跃场景，否则 playOneShot 一声不出且不报错
     installAudio(this.node)
     this.buildGuideLayer()
@@ -350,6 +353,15 @@ export class GameBootstrap extends Component {
       }
       // 引导的每一步都是"在某面板上弹"，所以换面板要重算一次该不该画（判定在驱动器里，这里只触发）
       this.guide?.repaint()
+      // 离开世界地图时收尾（`GameApi.leaveWorld`：解绑 world requester + 清 worldReady）。
+      // 2026-09-22 之前这个方法**一处调用都没有**（收口清单"客户端发送口缺口"里的 leaveWorld）——
+      // 后果不是画错，而是"绑了不解"：世界那一套 requester 一直挂在适配层上，
+      // 且重新进场时 `enterWorld` 因为 `worldReady` 仍为真而跳过初始化。
+      // 口径（我定的）：离开 = 回内城页签，**不加二次确认**（可回退、无损，没有要保护的东西）。
+      if (previousKey === 'world' && key !== 'world') {
+        this.root?.leaveWorld()
+      }
+      previousKey = key
     }
     void this.boot()
   }
@@ -371,8 +383,10 @@ export class GameBootstrap extends Component {
     layer.contentRectFor = key => this.nav?.contentRectFor(key) ?? null
     layer.onTrack = (action, stepId, version) => this.root?.trackGuideStep(action, stepId, version)
     layer.onReport = (stepId, action) => {
-      // 回执才能改位置：advanced=false 时服务端给回来的还是当前那一步，界面就留在原步等玩家
-      void this.root?.guideProgress(stepId, action, resp => this.guide?.applyProgress(resp.nextStepIndex))
+      // 回执才能改位置：advanced=false 时服务端给回来的还是当前那一步，界面就留在原步等玩家。
+      // `advanced` 一并交给视图，让它把"还没达成"讲给玩家听 —— 否则点了「我完成了」界面毫无反应。
+      void this.root?.guideProgress(stepId, action,
+        resp => this.guide?.applyProgress(resp.nextStepIndex, resp.advanced))
     }
   }
 
@@ -529,7 +543,7 @@ export class GameBootstrap extends Component {
     const api = new GameApi(apiDeps)
 
     // 版本闸门是**登录之前**的第一件事：协议写明 forceUpdate=true 时客户端必须停在提示页、
-    // 不得进入游戏，而"进入游戏"的第一步就是登录与拉十个面板 —— 判定排在它们之后等于没拦。
+    // 不得进入游戏，而"进入游戏"的第一步就是登录与拉十七个面板 —— 判定排在它们之后等于没拦。
     // 同一次响应后面还要用来建埋点（攒批策略在这份响应里），所以只发这一次请求。
     const version = await api.appVersion(CLIENT_VERSION, null)
     this.appVersion = version !== null && version.kind === 'ok' ? version.data : null
@@ -1127,6 +1141,9 @@ export class GameBootstrap extends Component {
     const lineupEdit = this.panel(LineupEditOverlay, 'lineupEdit')
     const socialCreate = this.panel(SocialCreateOverlay, 'socialCreate')
     const gachaDisclosure = this.panel(GachaDisclosureView, 'gachaDisclosure')
+    // 体力详情弹层：**自己建节点**（与 OfflineReportOverlay 同一种写法，不是编辑器里的 panel）——
+    // `/stamina` 与 `/stamina/buy` 此前一处调用都没有，玩家看得见体力条却点不开也买不了。
+    const staminaDetail = new StaminaDetailOverlay(this.node)
     // 这一次装配的账：boot 自检行的 mountedPanels/missingPanels 从这里来。
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
@@ -1155,6 +1172,9 @@ export class GameBootstrap extends Component {
     }
     if (giftPopup !== null) {
       out.giftPopup = resp => giftPopup.attach(resp)
+      // 体力详情：弹层自己建节点，目标只负责把那一帧画上去
+      out.staminaDetail = view => staminaDetail.render(view)
+      staminaDetail.onBuy = () => { void this.root?.buyStamina() }
       out.payResult = view => giftPopup.renderResult(view)
       giftPopup.onBuy = productId => { void this.root?.buyGift(productId) }
       giftPopup.onClose = () => giftPopup.hide()
@@ -1242,15 +1262,26 @@ export class GameBootstrap extends Component {
       }
       city.onSpeedUp = (buildingId, source) => { void this.root?.speedUpBuilding(buildingId, source) }
       city.onCollect = buildingId => { void this.root?.collect(buildingId) }
+      // 点资源条上的「体力」那一行 → 体力详情（B09 §5）
+      city.onStamina = () => { void this.root?.openStaminaDetail() }
+      // 暂停/恢复（B03 §2）：动作本身在服务端，这里只把回调送到 AppRoot
+      city.onPause = buildingId => { void this.root?.pauseBuilding(buildingId) }
+      city.onResume = buildingId => { void this.root?.resumeBuilding(buildingId) }
+      // 取消建造走 origin 的口径（回执要念给玩家听）
       city.onCancelBuild = buildingId => { void this.root?.cancelBuild(buildingId) }
       out.cityCancelled = resp => city.attachCancel(resp)
-      // 内城左下角那颗「学院 · 研究」：研究页此前根本没有玩家入口（`openTech()` 零调用方）
+      // 内城左下角那颗「学院 · 研究」：研究页的玩家入口
       city.onOpenTech = () => { void this.root?.openTech() }
     }
     if (army !== null) {
       out.army = (resp, offsetMs, trainMemory) => army.attach(resp, offsetMs, trainMemory)
       army.onTrain = (unitId, count) => { void this.root?.train(unitId, count) }
+      // 训练队列的两个动作（收口清单"客户端发送口缺口"·军队四格的头两个）：
+      // 服务端与协议早就有 `/army/cancel`、`/army/speedUp`，缺的只是这两条回调
+      army.onSpeedUpTrain = unitId => { void this.root?.speedUpTraining(unitId) }
+      army.onCancelTrain = unitId => { void this.root?.cancelTraining(unitId) }
       army.onTreat = () => { void this.root?.treatWounded() }
+      army.onCollectTreated = () => { void this.root?.collectTreated() }
       army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
       // 行上「队列」→ 编排层判有没有可取消的那一口，菜单再由本层画（B26 S15）
       army.onQueue = unitId => this.root?.openArmyQueue(unitId)
@@ -1301,6 +1332,7 @@ export class GameBootstrap extends Component {
       out.bag = resp => bag.attachBag(resp)
       out.resources = resp => bag.attachResources(resp)
       bag.onUseItem = (itemId, needsTarget) => { void this.root?.useItem(itemId, needsTarget) }
+      bag.onOpenBatch = (itemId, count) => { void this.root?.openChestBatch(itemId, count) }
       out.speedupTargetChoice = (options, onPick) => bag.showTargetPicker(options, onPick)
       out.chestOpenChoice = (options, onPick) => bag.showChestOpenPicker(options, onPick)
       out.chestOpened = resp => bag.showChestReceipt(resp)

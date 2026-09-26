@@ -18,11 +18,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SCENE_ANCHORS, SCENE_GRID_WIDTH, SCENE_GRID_HEIGHT, projectSceneLayout,
+  SCENE_RUNTIME_WIDTH, SCENE_RUNTIME_HEIGHT,
 } from '../assets/scripts/game/city/CitySceneAnchors'
 
-/** 与 `CityPanelView` 同一组数：内容区 536×296、内缩 6。 */
-const AREA_WIDTH = 6 * 86 + 5 * 4
-const AREA_HEIGHT = 6 * 46 + 5 * 4
+/** 与 `CityPanelView` 同一组真源，避免视图变大而测试仍拿旧棋盘尺寸判绿。 */
+const AREA_WIDTH = SCENE_RUNTIME_WIDTH
+const AREA_HEIGHT = SCENE_RUNTIME_HEIGHT
 const PADDING = 6
 const layout = projectSceneLayout(AREA_WIDTH, AREA_HEIGHT, PADDING)
 

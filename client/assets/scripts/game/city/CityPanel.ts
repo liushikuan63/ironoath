@@ -108,7 +108,10 @@ export function buildCityPanel(resp: CityListResp, offsetMs: number, localNow: n
     const full = state.perHour > 0 && state.current >= state.cap
     // 名字走 `game/ui/ResourceNames`（客户端唯一一份），不打 `WOOD` 这种枚举原文 ——
     // 那和 #255 内城印 `main_city` 是同一条缺陷，只是这次漏在资源条上。
-    resources.push(`${resourceName(type)} ${state.current}/${state.cap}${full ? '（已满，停产）' : ''}`)
+    // 后缀只留一个「满」字：资源条是 HUD，长后缀会把列宽撑到盖住主堡
+    // （2026-09-26 排版审查实测「（已满，停产）」把底板推过画面中线）；
+    // "停产"的完整解释在仓库/体力详情里，不在这一行里重复。
+    resources.push(`${resourceName(type)} ${state.current}/${state.cap}${full ? '（满）' : ''}`)
   }
 
   return {

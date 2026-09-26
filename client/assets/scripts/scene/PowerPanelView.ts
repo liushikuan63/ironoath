@@ -240,6 +240,14 @@ export class PowerPanelView extends Component {
     if (view.noticeText !== null) {
       y = this.drawHint(view.noticeText, y)
     }
+    // 今日快照那一块（B23 §一 2）：**只画服务端给的四个数**（日期 / 快照时刻 / 那名次 / 那榜值），
+    // 不解释"为什么那天是这样"。名次为 null 时视图模型给的是"那天你不在榜上"——
+    // 绝不画成"第 0 名"（协议明写 null 不许用 0 冒充）。
+    if (view.snapshot !== null) {
+      y = this.drawHint(`今日快照 ${view.snapshot.dayText} · ${view.snapshot.rankText}`
+        + (view.snapshot.valueText === '' ? '' : ` · ${view.snapshot.valueText}`), y)
+      y = this.drawHint(view.snapshot.snapshotText, y)
+    }
     void y
     this.drawPager(view)
   }

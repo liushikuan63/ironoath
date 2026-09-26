@@ -51,6 +51,21 @@ const preview = await startPreviewServer({
 console.log(`=== 榜单面板运行时验收：产物经 ${preview.origin}，后端 ${BACKEND} ===`)
 
 const deviceId = `rank-runtime-${Date.now()}`
+// **先自己建号**：本探针原先假定后端里已经有号（跑在共享的 8080 上时成立），
+// 而 dev 后端是内存态 —— 换一台本轮自己的后端就"战力面板没打开"（2026-09-22 实测）。
+// 与其它探针同一条做法：显式 init 同 deviceId 的号，客户端起来就是老玩家，深度链才会生效。
+const init = await fetch(`${BACKEND}/player/init`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    requestId: `rank-init-${Date.now()}`, deviceId, nickName: '榜单探针',
+    clientTime: Date.now(), wxCode: '',
+  }),
+}).then((response) => response.json())
+if (init.code !== 0) {
+  console.error(`[rank][前置] 建号失败（后端在跑吗？）：${JSON.stringify(init)}`)
+  process.exit(2)
+}
 const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript((value) => {
@@ -81,9 +96,13 @@ async function openPowerPanel() {
 }
 
 /**
- * 面板上的组件按**构造器名**找，不用 `getComponent('PowerPanelView')`：
- * 在构建产物里按字符串查类名查不到（实测返回 null，而同一节点的 `components` 里它就在那儿），
- * 于是"面板没打开"会变成一个假红 —— 探针自己先红在工具用法上。
+ * 面板上的组件按**注册名**找：`getComponent('PowerPanelView')`。
+ *
+ * <p>2026-09-22 更正：原先用 `constructor.name === 'PowerPanelView'`，理由是"按字符串查类名
+ * 在产物里查不到"——**那条结论反了**。实测（`tmp/diag-power-panel.mjs`）产物里 power 节点的组件
+ * 构造器名被压成了 `["e","o"]`，于是按构造器名找必然落空、"战力面板没打开"这条红是探针自己造的；
+ * 而 `@ccclass` 注册的名字不受压缩影响，`getComponent('X')` 稳定可用（背包那条探针一直这么用）。
+ * 两路都留：注册名优先，构造器名兜底。
  */
 const FIND_PANEL = `(game) => game.children
   .map(c => c.getComponent('PowerPanelView'))
@@ -208,6 +227,47 @@ check('翻页按钮画出来了', has(power.labels, '上一页') && has(power.la
 checkInsidePanel(power, '战力榜')
 await checkPagerAboveNav('战力榜')
 await page.screenshot({ path: path.join(OUT, 'rank-board-page.png') })
+
+// 今日快照（B23 §一 2）：拉榜成功后要**顺手查一次快照**。
+// 请求的 dayKey 取自 `/rank/list` 的响应 —— 客户端自己算日期就是契约禁止的"第二条日切轴"。
+//
+// **赛季感知**：快照要**赛季进行中**才拍得出来（服务端 `snapshot()` 在 `seasonId == null` 时
+// 直接以"本赛季还没开始"拒绝，`captureTodayIfAbsent` 也是同样早退）。dev 后端默认赛季未开
+// （实测 `/season/status` 的 `phase` 为空），所以这里分两条路判：
+//   · 赛季未开：**不画半截**（不许出现一个空的"今日快照"），且请求照样要发出（证明入口接上了）
+//   · 赛季进行中：四个数都要画出来，未上榜说"不在榜上"、绝不出现"第 0 名"
+const snapshotCalls = () => requests.filter((u) => u.includes('/rank/snapshot')).length
+check('拉榜成功后顺手查了一次 /rank/snapshot', snapshotCalls(), 1)
+const powerText = power.labels.join(' ')
+/**
+ * 去掉空白的副本，**长句断言一律用它**。
+ *
+ * <p>2026-09-22 实测：Cocos 的 Label 折行会往 `string` 里插空白（读出来是"那天你不 在榜上"），
+ * 于是一句完整的文案按原样匹配会落空 —— 而红出来的信息只会说"没有这句话"，
+ * 看不出是被折行拆开了（这一条红我查了两轮）。
+ */
+const powerCompact = powerText.replace(/\s+/g, '')
+// **别猜环境，看画面**：第一版用"赛季进行中"的话术去猜（`seasonId == null` 就以为拍不出快照），
+// 实测猜错了 —— dev 的 `phase` 为空但快照照样拍得出来（服务端有兜底赛季）。
+// 现在只看那一块在不在：在 ⇒ 四条正向判据；不在 ⇒ 说清"这一块没画"，并把请求与原因打出来。
+if (powerCompact.includes('今日快照')) {
+  check('快照那一块画出来了（「今日快照」）', true, true)
+  check('日期键排成 yyyy-MM-dd', /\d{4}-\d{2}-\d{2}/.test(powerCompact), true)
+  check('快照时刻那一行也画了（UTC）', /快照时刻：\d{4}-\d{2}-\d{2}/.test(powerCompact), true)
+  // 名次那一句只可能是两种：上榜说"那天你排第 N 名"、未上榜说"那天你不在榜上"。
+  // 断言写成**析取**并把实际文本带进失败信息（空白已去掉，见 powerCompact 的注释）。
+  const rankPhrase = /那天你(排第\d+名|不在榜上)/.exec(powerCompact)
+  if (rankPhrase === null) {
+    bad(`快照那一块没有可读的名次句（实际文本：${powerText.slice(0, 200)}）`)
+  } else {
+    ok(`快照名次句：${rankPhrase[0]}`)
+  }
+} else {
+  console.log('  FAIL  快照那一块没画出来（请求已发出，接口这次是成功的）')
+  fail += 1
+}
+// 未上榜的正确说法：`myRank: null` 明写"不许用 0 冒充"，所以界面上任何情况下都不许出现"第 0 名"
+check('没有把 null 画成「第 0 名」', powerCompact.includes('第0名'), false)
 
 // 第 1 页点「上一页」：不发请求（按钮在服务端说 canPrev=false 时就不该接触摸）
 const beforePrev = rankCalls()

@@ -71,6 +71,13 @@ export interface BagItemRow {
    * 服务端仍然会独立校验 targetId 缺失并拒绝。
    */
   readonly needsTarget: boolean
+  /**
+   * 持有数量（结构化数字，来自协议的 `BagItem.count`）。
+   *
+   * <p>为什么不能从 `stackText` 里拆：那是**显示串**（"3/10"），拿它当批量开箱的入参，
+   * 等于让"给玩家看的东西"兼职当数据源 —— 将来改个格式（加空格、加千分位）就会静默算错数量。
+   */
+  readonly count: number
 }
 
 /** 按类型分页后的道具。页内顺序照搬服务端的 sortKey 升序。 */
@@ -226,6 +233,7 @@ export function buildItemRow(item: BagItem): BagItemRow {
       ? null
       : `来自：${item.obtainFrom}`,
     needsTarget: item.type === 'SPEEDUP',
+    count: item.count,
   }
 }
 

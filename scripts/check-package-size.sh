@@ -50,6 +50,32 @@ else
 fi
 
 if [ "$MEASURED_DIR" = "$BUILD_DIR" ]; then
+  # ---------- 先判"这个产物还算不算数" ----------
+  # 有构建产物时下面量的是它，而**产物可以是很多天前的**：2026-09-21 实测
+  # `client/build/wechatgame` 停在 09-19 23:56，而 `client/assets` 里有 94 个文件比它新
+  # （内城那套素材就是 09-21 才进库的）。那一刻这条门输出"首包 2.52MB，在预算内"是**真读数**，
+  # 但它描述的是一个已经不存在的源码状态 —— 提审前用旧产物判绿，等于把"资源塞进首包"
+  # 这类失控留到最后一刻才发现（正是本脚本开头那段注释最想避免的事）。
+  # 所以这里不猜、只比时间：**源码里有比产物新的文件就判失败**，并点名是哪几个。
+  # 注意 `*.meta` 也算：Cocos 的导入参数（九宫格 border、REPEAT 等）会改画面与体积，
+  # 只改 meta 不改 png 同样会让旧产物失真。
+  if [ -d "$SOURCE_DIR" ]; then
+    NEWER=$(find "$SOURCE_DIR" -type f -newer "$MEASURED_DIR" 2>/dev/null | head -5 || true)
+    if [ -n "$NEWER" ]; then
+      NEWER_COUNT=$(find "$SOURCE_DIR" -type f -newer "$MEASURED_DIR" 2>/dev/null | wc -l | tr -d ' ')
+      echo "[check-package-size][WARN] 微信构建产物比客户端源码旧：$SOURCE_DIR 里有 $NEWER_COUNT 个文件比产物新。"
+      echo "  产物时间：$(date -r "$MEASURED_DIR" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 未知)"
+      echo "  比它新的文件（前 5 个）："
+      echo "$NEWER" | sed 's/^/    /'
+      echo "  ⇒ 这时量出来的首包体积描述的是一个**已经不存在的源码状态**，不能拿它当提审判据。"
+      echo "  整改：重新构建一次微信产物（npm run build:wechat 或 Cocos 构建 wechatgame）后复跑本脚本。"
+      echo ""
+      echo "  **为什么不在这里判失败**：这道门在 check.sh 里排第 9 位，而 check.sh 是 set -e ——"
+      echo "  在这里退非 0 会让它后面十几道门全部不跑，那是拿掉一整排队列去换一条提示。"
+      echo "  所以这里只告警；'提审前必须用 release 真实产物复核'这条硬要求仍由"
+      echo "  `上线检查清单.md` 第 4 项人工把守。"
+    fi
+  fi
   # 首包预算只量"玩家第一次下载要拿到的那些文件"：分包目录（subpackages/**）
   # 不在此列。量整个构建目录会随着分包越做越多而报假红 —— 越优化越红是最坏的信号。
   if [ -d "$MEASURED_DIR/subpackages" ]; then
@@ -65,7 +91,30 @@ if [ "$MEASURED_DIR" = "$BUILD_DIR" ]; then
     process.stdout.write(settings.engine && settings.engine.debug ? "true" : "false")
   ' "$MEASURED_DIR/src/settings.json" 2>/dev/null || echo false)
 else
-  SIZE=$(du -sb "$MEASURED_DIR" | cut -f1)
+  # 源码下界必须与产物口径量**同一样东西**。微信产物的 game.json 把 resources 整个 bundle
+  # 声明成分包（`"subpackages": [{"name":"resources","root":"subpackages/resources/"}]`，
+  # 2026-09-26 对旧产物实测），主包只含引擎与脚本；产物路径上面已经用
+  # `--exclude=subpackages` 表达了这件事。源码路径若不跟着排除 client/assets/resources，
+  # 量出来的就是"主包 + 分包"的合计 —— 于是往分包里优化美术反而更红，正是本脚本开头
+  # 说的那类最坏信号。排除表不写死：从 `*.meta` 的 isBundle 现读，见下面的守卫。
+  SOURCE_EXCLUDES=""
+  while IFS= read -r meta; do
+    bundleDir="${meta%.meta}"
+    case "$bundleDir" in
+      "$SOURCE_DIR/resources")
+        # resources 在微信构建里是分包 ⇒ 不计入主包下界
+        SOURCE_EXCLUDES="$SOURCE_EXCLUDES --exclude=$bundleDir"
+        ;;
+      *)
+        echo "[check-package-size][FAIL] 发现未登记去向的资源 bundle：$bundleDir"
+        echo "  它要么在微信构建配置里声明成分包（那就把它加进本 case 的排除分支），"
+        echo "  要么会进主包（那它的体积必须算进本判据）。这个决定不允许默认发生。"
+        exit 1
+        ;;
+    esac
+  done < <(grep -rl '"isBundle": true' "$SOURCE_DIR" --include='*.meta' 2>/dev/null || true)
+  # shellcheck disable=SC2086  # SOURCE_EXCLUDES 故意按词展开成多个 --exclude
+  SIZE=$(du -sb $SOURCE_EXCLUDES "$MEASURED_DIR" | cut -f1)
   DEBUG_BUILD=false
 fi
 mb() {
@@ -93,7 +142,8 @@ fi
 if [ "$MEASURED_DIR" = "$SOURCE_DIR" ]; then
   echo "[check-package-size][WARN] 本仓库当前没有微信构建产物，量的是客户端源码，这是一个**下界**："
   echo "  真实首包还要加上 Cocos 引擎（通常 1~2MB）与构建期生成的资源。"
-  echo "  所以这个卡口能挡住「美术资源塞进首包」这类失控，挡不住引擎体积本身。"
+  echo "  已按微信产物的 game.json 口径排除分包 bundle（resources）：下界只含会进主包的脚本与场景。"
+  echo "  所以这个卡口能挡住「美术资源塞进主包」这类失控，挡不住引擎体积本身。"
   echo "  提审前必须在微信开发者工具里构建一次，用真实产物目录复核（上线检查清单第 4 项）。"
 fi
 
