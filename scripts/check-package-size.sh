@@ -91,7 +91,30 @@ if [ "$MEASURED_DIR" = "$BUILD_DIR" ]; then
     process.stdout.write(settings.engine && settings.engine.debug ? "true" : "false")
   ' "$MEASURED_DIR/src/settings.json" 2>/dev/null || echo false)
 else
-  SIZE=$(du -sb "$MEASURED_DIR" | cut -f1)
+  # 源码下界必须与产物口径量**同一样东西**。微信产物的 game.json 把 resources 整个 bundle
+  # 声明成分包（`"subpackages": [{"name":"resources","root":"subpackages/resources/"}]`，
+  # 2026-09-26 对旧产物实测），主包只含引擎与脚本；产物路径上面已经用
+  # `--exclude=subpackages` 表达了这件事。源码路径若不跟着排除 client/assets/resources，
+  # 量出来的就是"主包 + 分包"的合计 —— 于是往分包里优化美术反而更红，正是本脚本开头
+  # 说的那类最坏信号。排除表不写死：从 `*.meta` 的 isBundle 现读，见下面的守卫。
+  SOURCE_EXCLUDES=""
+  while IFS= read -r meta; do
+    bundleDir="${meta%.meta}"
+    case "$bundleDir" in
+      "$SOURCE_DIR/resources")
+        # resources 在微信构建里是分包 ⇒ 不计入主包下界
+        SOURCE_EXCLUDES="$SOURCE_EXCLUDES --exclude=$bundleDir"
+        ;;
+      *)
+        echo "[check-package-size][FAIL] 发现未登记去向的资源 bundle：$bundleDir"
+        echo "  它要么在微信构建配置里声明成分包（那就把它加进本 case 的排除分支），"
+        echo "  要么会进主包（那它的体积必须算进本判据）。这个决定不允许默认发生。"
+        exit 1
+        ;;
+    esac
+  done < <(grep -rl '"isBundle": true' "$SOURCE_DIR" --include='*.meta' 2>/dev/null || true)
+  # shellcheck disable=SC2086  # SOURCE_EXCLUDES 故意按词展开成多个 --exclude
+  SIZE=$(du -sb $SOURCE_EXCLUDES "$MEASURED_DIR" | cut -f1)
   DEBUG_BUILD=false
 fi
 mb() {
@@ -119,7 +142,8 @@ fi
 if [ "$MEASURED_DIR" = "$SOURCE_DIR" ]; then
   echo "[check-package-size][WARN] 本仓库当前没有微信构建产物，量的是客户端源码，这是一个**下界**："
   echo "  真实首包还要加上 Cocos 引擎（通常 1~2MB）与构建期生成的资源。"
-  echo "  所以这个卡口能挡住「美术资源塞进首包」这类失控，挡不住引擎体积本身。"
+  echo "  已按微信产物的 game.json 口径排除分包 bundle（resources）：下界只含会进主包的脚本与场景。"
+  echo "  所以这个卡口能挡住「美术资源塞进主包」这类失控，挡不住引擎体积本身。"
   echo "  提审前必须在微信开发者工具里构建一次，用真实产物目录复核（上线检查清单第 4 项）。"
 fi
 
