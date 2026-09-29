@@ -16,7 +16,15 @@
  */
 
 import type { GachaHistoryResp } from '../../net/generated/PayProtocol'
+import { elapsedText, JUST_NOW } from '../ui/ElapsedText'
 import { clampPage, pageCount, pageNotice, pageWindow } from '../ui/PanelPaging'
+
+/**
+ * 「多久以前」那份算式住在 `game/ui/ElapsedText.ts`（国库流水要的是同一种话，
+ * 同一个格式化函数只能有一个家）。这里转出去一份是**为了不打断既有调用方**
+ * （单测与面板都从本模块取），不是"这里还留着一个实现"。
+ */
+export { elapsedText, JUST_NOW }
 
 /**
  * 一页排几条。
@@ -36,8 +44,6 @@ export interface GachaNameTables {
 /** 查不到名字时的回退语。**不是**把 id 印出来。 */
 export const UNKNOWN_POOL = '未知卡池'
 export const UNKNOWN_HERO = '未知武将'
-/** 相对时间的下限语。 */
-export const JUST_NOW = '刚刚'
 
 /** 面板上的一行。 */
 export interface GachaHistoryRow {
@@ -60,31 +66,6 @@ export interface GachaHistoryView {
   readonly total: number
   readonly page: number
   readonly pages: number
-}
-
-/**
- * 距今多久（毫秒 → 人话）。
- *
- * <p><b>负数一律说「刚刚」</b>：记录时刻晚于 `serverNow` 只可能是两端时钟不同步，
- * 而算出「-3 分钟前」或「0 天前」都会让玩家以为记录坏了。分级刻意只有四档 ——
- * 抽卡记录是流水，玩家要看的是"这是我刚才那次，还是昨天那次"。
- */
-export function elapsedText(elapsedMs: number): string {
-  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
-    return JUST_NOW
-  }
-  const minutes = Math.floor(elapsedMs / 60000)
-  if (minutes < 1) {
-    return JUST_NOW
-  }
-  if (minutes < 60) {
-    return `${minutes} 分钟前`
-  }
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) {
-    return `${hours} 小时前`
-  }
-  return `${Math.floor(hours / 24)} 天前`
 }
 
 /**

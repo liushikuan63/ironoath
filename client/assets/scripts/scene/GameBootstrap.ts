@@ -53,6 +53,7 @@ import { ComposePickOverlay } from './ComposePickOverlay'
 import { RecruitPanelView } from './RecruitPanelView'
 import { GachaDisclosureView } from './GachaDisclosureView'
 import { GachaHistoryView } from './GachaHistoryView'
+import { NationPanelView } from './NationPanelView'
 import { CreditsOverlay } from './CreditsOverlay'
 import { LineupEditOverlay } from './LineupEditOverlay'
 import { SocialCreateOverlay } from './SocialCreateOverlay'
@@ -1130,6 +1131,24 @@ export class GameBootstrap extends Component {
     node.active = false
   }
 
+  /**
+   * 国家面板覆盖层（V13-S1 · B13）。与抽取记录同一种承载方式：自己建节点、建出来先 `active = false`。
+   *
+   * <p>**入口在联盟页那一行**，因为入籍的最小单位是联盟（个人不能单独入籍）。
+   */
+  private mountNationPanel(): void {
+    if (this.node.getChildByName('nation') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('nation')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(NationPanelView)
+    node.active = false
+  }
+
   /** 本节点上挂了哪些面板，就接哪些。没挂的面板不会被假装接上（根只会少发那份请求的落地）。 */
   private targets(): PanelTargets {
     this.mountGiftPopup()
@@ -1143,6 +1162,7 @@ export class GameBootstrap extends Component {
     this.mountSocialCreateOverlay()
     this.mountGachaDisclosure()
     this.mountGachaHistory()
+    this.mountNationPanel()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -1171,6 +1191,7 @@ export class GameBootstrap extends Component {
     const socialCreate = this.panel(SocialCreateOverlay, 'socialCreate')
     const gachaDisclosure = this.panel(GachaDisclosureView, 'gachaDisclosure')
     const gachaHistory = this.panel(GachaHistoryView, 'gachaHistory')
+    const nation = this.panel(NationPanelView, 'nation')
     // 体力详情弹层：**自己建节点**（与 OfflineReportOverlay 同一种写法，不是编辑器里的 panel）——
     // `/stamina` 与 `/stamina/buy` 此前一处调用都没有，玩家看得见体力条却点不开也买不了。
     const staminaDetail = new StaminaDetailOverlay(this.node)
@@ -1291,6 +1312,22 @@ export class GameBootstrap extends Component {
       gachaHistory.onClose = () => gachaHistory.node.active = false
       gachaHistory.onPrev = () => { void this.root?.turnGachaHistoryPage(-1) }
       gachaHistory.onNext = () => { void this.root?.turnGachaHistoryPage(1) }
+    }
+    if (nation !== null) {
+      // 打开由编排层发起（`AppRoot.openNation`，入口在联盟页那一行「国家」）。
+      // 画与六声"喊"接上：建国 / 入籍 / 退国 / 解散 / 支出 / 要收款人名单
+      out.nation = view => {
+        nation.node.active = true
+        nation.attach(view)
+      }
+      out.nationPayees = payees => nation.attachPayees(payees)
+      nation.onClose = () => { nation.node.active = false }
+      nation.onFound = (name, capitalX, capitalY) => { void this.root?.foundNation(name, capitalX, capitalY) }
+      nation.onJoin = nationId => { void this.root?.joinNation(nationId) }
+      nation.onLeave = () => { void this.root?.leaveNation() }
+      nation.onDisband = () => { void this.root?.disbandNation() }
+      nation.onSpend = draft => { void this.root?.spendTreasury(draft) }
+      nation.onRequestPayees = () => this.root?.requestNationPayees()
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
@@ -1451,6 +1488,12 @@ export class GameBootstrap extends Component {
       social.onSocialResearch = techId => { void this.root?.researchAllianceTech(techId) }
       // 任命职位（B26 S11）：弹层在视图里，选项由纯逻辑给；这里只接"选完之后的那一枪"
       social.onSocialSetRole = (memberId, role) => { void this.root?.setAllianceRole(memberId, role) }
+      // 国家（V13-S1）：入口是联盟页那一行。**开之前先重置输入态** ——
+      // 否则"关掉再开还留着上次的国名与用途"（社交页头注里记过这个形态）
+      social.onNation = () => {
+        nation?.beginSession()
+        void this.root?.openNation()
+      }
 
       out.chat = data => social.attachChat(data)
       social.onHelpAll = () => { void this.root?.helpAll() }

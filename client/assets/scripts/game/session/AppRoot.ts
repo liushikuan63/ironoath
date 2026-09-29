@@ -95,6 +95,11 @@ import { buildDisclosure } from '../gacha/GachaDisclosure'
 import type { GachaDisclosure } from '../gacha/GachaDisclosure'
 import { buildGachaHistory } from '../gacha/GachaHistory'
 import type { GachaHistoryView } from '../gacha/GachaHistory'
+import { buildNationPanel, cooldownText } from '../nation/NationPanel'
+import type { NationCandidate, NationPanelView, SpendDraft } from '../nation/NationPanel'
+import type {
+  NationLeaveResp, NationResp, NationTreasuryResp,
+} from '../../net/generated/NationProtocol'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -356,6 +361,18 @@ export interface PanelTargets {
   socialTransfer?(armed: { scope: ExitScope, memberId: string } | null): void
   /** 可申请联盟那一屏（B26 S6）：行与那句总量说明都由纯逻辑算好。 */
   allianceDiscovery?(view: DiscoveryView): void
+  /**
+   * 国家面板（V13-S1 · B13）。整块视图由 `game/nation/NationPanel` 组装：
+   * 有没有国家、能做什么、国库余额与流水全在里面。
+   *
+   * <p>**「不在任何国家」不是错误**：那是 13000 `NATION_NOT_FOUND`，被折成 `mode: 'NONE'` 那一态。
+   */
+  nation?(view: NationPanelView): void
+  /**
+   * 可选的国库收款人（联盟成员，id → 昵称）。**只在玩家真的要点「发给成员」时才发那一枪** ——
+   * 为一颗还没按的键多发一次读，弱网下就是白等一个来回。
+   */
+  nationPayees?(payees: readonly { id: string; name: string }[]): void
   /** 可加入小队那一屏（B26 S7）：同一族，只是小队不要审核。 */
   squadDiscovery?(view: SquadListView): void
   /** 入盟申请那一屏（B26 S8）：**只有能审核的人才拿得到这一份**，画不画由有没有行决定。 */
@@ -541,6 +558,20 @@ export class AppRoot {
    */
   private static readonly RANK_SCREEN_ROWS = 8
 
+  /**
+   * 服务端「你不在任何国家里」那一条错误码（`ErrorCode.NATION_NOT_FOUND`）。
+   *
+   * <p>**必须与网络失败严格分开**：它是面板的正常起点（`mode: 'NONE'` 那一屏给创建与可加入两条路），
+   * 而网络失败要提示重试。合并处理的后果是"断网时看见一张'你还没有国家'的表单"。
+   */
+  private static readonly NATION_NOT_FOUND = 13000
+
+  /**
+   * 可加入国家要几条。**版式常量**（国家面板那一屏排得下 6 行，面板自己再截），
+   * 候选来自国家榜而不是 `/nation/list`（服务端没有那个端点，见 {@link loadNationCandidates}）。
+   */
+  private static readonly NATION_CANDIDATE_ROWS = 8
+
   /** 当前页签。默认停在「明细」：那是这个页面原本的内容，四类榜是新加的邻居 */
   private rankTab: RankTabKey = 'DETAIL'
   /** 最近一次 `/rank/list` 的响应。**只有当前页签那一张**（切页签就换掉，不缓存多张 —— 榜是会变的） */
@@ -618,6 +649,19 @@ export class AppRoot {
   private gachaHistoryResp: GachaHistoryResp | null = null
   private gachaHistory: GachaHistoryView | null = null
   private gachaHistoryPage = 0
+
+  // ---------- 国家状态（V13-S1 · B13） ----------
+
+  /** `GET /nation` 的结果。不在任何国家时为 null（13000，不是网络失败）。 */
+  private nationResp: NationResp | null = null
+  /** 国库余额与流水。读不到时为 null（与"账上没流水"是两种状态，面板要说得清不同）。 */
+  private nationTreasuryResp: NationTreasuryResp | null = null
+  /** 可加入的国家（来自 `GET /rank/list?type=NATION` 的 id + 名字，都是服务端下发）。 */
+  private nationCandidates: NationCandidate[] = []
+  /** 上一次操作的结果（成功一句 / 服务端拒绝的理由）。没有则 null。 */
+  private nationNotice: string | null = null
+  /** 国库收款人名单已拉到没有 —— 拉过就别反复发那一枪。 */
+  private nationPayeesLoaded = false
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -3191,6 +3235,230 @@ export class AppRoot {
     this.targets.gachaHistory?.(view)
   }
 
+  // ---------- 国家（V13-S1 · B13：入籍 + 国库） ----------
+
+  /**
+   * 打开国家面板。每次都重拉：国家身份、官员、国库余额与流水都是会变的（周税惰性结清、别人也在花钱），
+   * 拿缓存会让玩家照着一份过期的账做决定。
+   *
+   * <p>**"不在任何国家"走的是正常路径**：13000 `NATION_NOT_FOUND` 被折成 `nationResp = null`，
+   * 与网络失败严格分开 —— 后者要提示重试，前者是面板的起点。
+   */
+  async openNation(): Promise<void> {
+    this.nationNotice = null
+    const view = await this.api.nationView()
+    if (view.kind === 'ok') {
+      this.nationResp = view.data
+    } else if (view.kind === 'biz' && view.code === AppRoot.NATION_NOT_FOUND) {
+      this.nationResp = null
+    } else {
+      // 读不到身份就不能画面板：宁可说一句"这次没读到"，也不要画一份"你没有国家"的假面板
+      this.rejectNeeds('nation', AppRoot.reason(view))
+      return
+    }
+    this.nationTreasuryResp = null
+    if (this.nationResp !== null) {
+      // 在国里才读国库：不在国里发这一枪只会换一个同义的错误码回来
+      const treasury = await this.api.nationTreasury()
+      if (treasury.kind === 'ok') {
+        this.nationTreasuryResp = treasury.data
+      } else {
+        this.say('nation', treasury)
+      }
+    } else {
+      await this.loadNationCandidates()
+    }
+    this.deliverNation()
+  }
+
+  /**
+   * 可加入的国家列表。
+   *
+   * <p><b>服务端没有 `/nation/list` 这个端点**（B13 交付的只有 found/join/leave/disband/appoint/
+   * diplomacy/view/treasury/…），所以候选名单取自**国家榜**（`GET /rank/list?type=NATION`）：
+   * 那一栏的 `id` 就是 nationId、`name` 就是国名，两样都是服务端下发的 ——
+   * 客户端一份表都不用抄（红线：不抄配置表）。"榜上有的国家"不等于"全部国家"，
+   * 面板据此写「不是全部」。
+   */
+  private async loadNationCandidates(): Promise<void> {
+    const outcome = await this.api.rankList('NATION', 1, AppRoot.NATION_CANDIDATE_ROWS)
+    if (outcome.kind === 'ok') {
+      this.nationCandidates = outcome.data.entries.map(entry => ({
+        nationId: entry.id, name: entry.name,
+      }))
+    } else {
+      this.nationCandidates = []
+      this.say('nation', outcome)
+    }
+  }
+
+  /**
+   * 建国。
+   *
+   * <p>三条前置（主城 16 级 / 开服 D14 / 在某联盟中）全在服务端判，协议里也没有
+   * 「我已满足前置」这种字段 —— 所以客户端不预判，被拒时把服务端那句 `detail` 原样显示。
+   */
+  async foundNation(name: string, capitalX: number, capitalY: number): Promise<void> {
+    const outcome = await this.api.foundNation({ name, capitalX, capitalY })
+    this.track(TRACK_EVENTS.nationFound)
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.deliverNation()
+      return
+    }
+    this.nationResp = outcome.data
+    this.nationNotice = `已建国：${outcome.data.nation.name}`
+    await this.reloadNationTreasury()
+    this.deliverNation()
+  }
+
+  /** 联盟入籍。能不能加入（冷却 / 名额 / 是否已属他国）由服务端判，拒绝理由原样显示。 */
+  async joinNation(nationId: string): Promise<void> {
+    const outcome = await this.api.joinNation({ nationId })
+    this.track(TRACK_EVENTS.nationJoin, { scope: 'ALLIANCE' })
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.deliverNation()
+      return
+    }
+    this.nationResp = outcome.data
+    this.nationNotice = `已加入 ${outcome.data.nation.name}`
+    await this.reloadNationTreasury()
+    this.deliverNation()
+  }
+
+  /**
+   * 退出国家。
+   *
+   * <p>响应只回"什么时候能再入籍"，所以**清掉手里那份国家视图** ——
+   * 留着它会让面板继续画一个我已经被踢出国的国家（下一读才回 13000）。
+   * 冷却到期时刻由服务端下发，客户端不自己加 24 小时。
+   */
+  async leaveNation(): Promise<void> {
+    const outcome = await this.api.leaveNation()
+    // 埋点打在**这一枪**上，不在共用的收尾里：`recordLeave` 只是复用响应形状的那段收尾，
+    // 意图的位置要落在"玩家按了退国"的方法上（`check-track-coverage` 也是这么判的）
+    this.track(TRACK_EVENTS.nationLeave)
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.deliverNation()
+      return
+    }
+    this.recordLeave(outcome.data)
+  }
+
+  /** 解散国家。同上：回的是审计四件套，**没有国家视图可留**。 */
+  async disbandNation(): Promise<void> {
+    const outcome = await this.api.disbandNation()
+    this.track(TRACK_EVENTS.nationDisband)
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.deliverNation()
+      return
+    }
+    this.nationResp = null
+    this.nationTreasuryResp = null
+    this.nationNotice = `${outcome.data.nationName} 已解散：`
+      + `${outcome.data.memberAllianceCount} 个成员联盟进入入籍冷却，`
+      + `核销国库 ${outcome.data.treasuryWrittenOff}`
+    this.deliverNation()
+  }
+
+  /** 退国成功后的收尾：清掉手里那份国家视图（下一读才回 13000），并把冷却提示摆出来。 */
+  private recordLeave(resp: NationLeaveResp): void {
+    this.nationResp = null
+    this.nationTreasuryResp = null
+    this.nationNotice = `已退出 ${resp.nationName}：${cooldownText(resp.cooldownUntil, resp.serverNow)}`
+    this.deliverNation()
+  }
+
+  /**
+   * 国库支出。
+   *
+   * <p>**两种失败是两个错误码，客户端不合成一句话**：13010 余额不足（下一步是等进钱）、
+   * 13011 超本周限额（下一步是等下周额度刷新）。合成一句"国库不够"会让玩家做错那一步。
+   */
+  async spendTreasury(draft: SpendDraft): Promise<void> {
+    // 落点是枚举（`TreasuryPayeeType` / `TreasurySink`），而表单那侧是展示态的 string ——
+    // 这里做一次**词面**收窄：选项只有那两个 sink（`spendSinkOptions` 给的），别的值一律不成立。
+    // 写成 `as TreasurySink` 的话，协议将来多一个用途就会静默地按错的发出去。
+    const sink = draft.payeeType === 'SINK' && (draft.sink === 'NATIONAL_TECH' || draft.sink === 'WAR_BOOST')
+      ? draft.sink
+      : null
+    if (draft.payeeType === 'SINK' && sink === null) {
+      this.nationNotice = '先选一个消耗性用途'
+      this.deliverNation()
+      return
+    }
+    const outcome = await this.api.spendTreasury({
+      amount: draft.amount,
+      reason: draft.reason,
+      payeeType: draft.payeeType,
+      payeeId: draft.payeeType === 'PLAYER' ? draft.payeeId : null,
+      sink,
+    })
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.deliverNation()
+      return
+    }
+    this.track(TRACK_EVENTS.treasurySpend, {
+      payeeType: draft.payeeType,
+      amount: String(draft.amount),
+    })
+    this.nationNotice = `已支出 ${outcome.data.amount}，国库余额 ${outcome.data.balance}`
+    await this.reloadNationTreasury()
+    this.deliverNation()
+  }
+
+  /**
+   * 拉一次可收款的成员名单（`PLAYER` 落点专用）。
+   *
+   * <p>用手里那份联盟成员 diff（`/alliance/sync` 已经推过的），**不额外发请求** ——
+   * 国库只能发给本盟成员，而本盟名单社交页一直在维护。
+   */
+  requestNationPayees(): void {
+    this.nationPayeesLoaded = true
+    this.targets.nationPayees?.(this.allianceMembers.map(member => ({ id: member.id, name: member.name })))
+  }
+
+  /** 名单还没拉过时点「发给成员」会来这么一下：社交页打开过就一定拉过一次，这里不重复。 */
+  get nationPayeesReady(): boolean {
+    return this.nationPayeesLoaded
+  }
+
+  /** 国库那一块单独重拉（写操作之后要看到最新余额与流水）。 */
+  private async reloadNationTreasury(): Promise<void> {
+    if (this.nationResp === null) {
+      this.nationTreasuryResp = null
+      return
+    }
+    const treasury = await this.api.nationTreasury()
+    if (treasury.kind === 'ok') {
+      this.nationTreasuryResp = treasury.data
+    } else {
+      this.say('nation', treasury)
+    }
+  }
+
+  /**
+   * 组装并递一次国家面板。
+   *
+   * <p>成员名表来自**手里那份联盟成员 diff**（id → 昵称）：国库流水里的"谁做的 / 支给谁"只有
+   * 玩家 id，客户端不印裸 id（同 #255 建筑名 / #268 资源名那一族）。
+   */
+  private deliverNation(): void {
+    const view = buildNationPanel({
+      nation: this.nationResp?.nation ?? null,
+      treasury: this.nationTreasuryResp,
+      candidates: this.nationCandidates,
+      playerId: this.playerId ?? '',
+      memberNames: new Map(this.allianceMembers.map(member => [member.id, member.name])),
+      notice: this.nationNotice,
+    })
+    this.targets.nation?.(view)
+  }
+
   /** 组装并递一次抽卡面板。 */
   private deliverGacha(): void {
     const resp = this.gachaResp
@@ -4014,6 +4282,10 @@ export class AppRoot {
       case 'chat':
         this.chatNotice = message
         this.deliverChat()
+        return
+      case 'nation':
+        this.nationNotice = message
+        this.deliverNation()
         return
       default:
       }

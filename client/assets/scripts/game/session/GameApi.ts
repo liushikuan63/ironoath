@@ -106,6 +106,10 @@ import type {
   TechSpeedUpReq, TechSpeedUpResp,
 } from '../../net/generated/TechProtocol'
 import type { EquipForgeReq, EquipForgeResp, EquipInstanceListView } from '../../net/generated/EquipProtocol'
+import type {
+  NationDisbandReq, NationDisbandResp, NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp,
+  NationResp, NationTreasuryResp, NationTreasurySpendReq, NationTreasurySpendResp,
+} from '../../net/generated/NationProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -227,6 +231,93 @@ export class GameApi {
   /** POST /stamina/buy。扣金币与体力上限判定都在服务端。 */
   staminaBuy(req: Omit<StaminaBuyReq, 'requestId'>): Promise<NetOutcome<StaminaBuyResp>> {
     return this.mutate<StaminaBuyReq, StaminaBuyResp>('/stamina/buy', req)
+  }
+
+  // ---------- 国家（B13，V13-S1：入籍 + 国库） ----------
+
+  /**
+   * GET /nation —— 我现在有没有国家。
+   *
+   * <p><b>「不在任何国家」是业务拒绝（13000 NATION_NOT_FOUND），不是网络失败</b>：
+   * 两种结局含义完全不同 —— 前者是面板的正常起点，后者要提示重试。
+   * 所以调用方必须按 `kind` + `code` 分开处理，**不许把 13000 当成"面板打不开"**。
+   *
+   * <p>也是个带副作用的读：服务端在这一次读里先结清当周周税（与 `/nation/treasury` 同理），
+   * 所以面板每次打开都真拉，不缓存。
+   */
+  nationView(): Promise<NetOutcome<NationResp>> {
+    return this.read<NationResp>('/nation')
+  }
+
+  /**
+   * POST /nation/found —— 建国。
+   *
+   * <p><b>幂等键是必需且不能省的那一种</b>：契约里写明建国重放会造出两个同名国家
+   * （并发时"查重名 → 写库"之间没有锁，两次都能通过）。`requestId` 由 mutate 统一注入。
+   *
+   * <p>三条前置（主城 16 级 / 开服 D14 / 在某联盟中）全在服务端判，协议里也没有
+   * 「我已满足前置」这种字段 —— 客户端不做这个判断，被拒时把 `detail` 原样显示。
+   */
+  foundNation(req: Omit<NationFoundReq, 'requestId'>): Promise<NetOutcome<NationResp>> {
+    return this.mutate<NationFoundReq, NationResp>('/nation/found', req)
+  }
+
+  /**
+   * POST /nation/join —— 盟主代表全盟加入一个国家。
+   *
+   * <p>发起权按「你是不是这个盟的盟主」判，**不查 role_permission**（入籍那一刻人还不在目标国）。
+   * 能不能加入（冷却 / 名额 / 是否已属他国）也全在服务端，客户端只指名 `nationId`。
+   */
+  joinNation(req: Omit<NationJoinReq, 'requestId'>): Promise<NetOutcome<NationResp>> {
+    return this.mutate<NationJoinReq, NationResp>('/nation/join', req)
+  }
+
+  /**
+   * POST /nation/leave —— 全盟退出所属国家。
+   *
+   * <p><b>这条不回国家视图</b>（`NationLeaveResp`）：退出后已经没有国家可看了，
+   * 回一份再也无权查询的视图会让客户端刷新到一个假入口上。唯一要立刻显示的是
+   * 「什么时候能再入籍」，而那个时刻必须由服务端下发（`cooldownUntil`）——
+   * 客户端自己拿 24 小时去加，会在本地钟偏时出现"显示能加入、服务端却拒绝"。
+   */
+  leaveNation(): Promise<NetOutcome<NationLeaveResp>> {
+    return this.mutate<NationLeaveReq, NationLeaveResp>('/nation/leave', {})
+  }
+
+  /**
+   * POST /nation/disband —— 解散国家（不可逆，且连带全体成员联盟的入籍冷却）。
+   *
+   * <p>回的是审计四件套（哪个国、叫什么、带着几个联盟、核销了多少钱），不是视图。
+   * 界面上「解散」必须二次确认：国库是公共资产，一笔静默消失的钱正是 B13 §三 要防的形状。
+   */
+  disbandNation(): Promise<NetOutcome<NationDisbandResp>> {
+    return this.mutate<NationDisbandReq, NationDisbandResp>('/nation/disband', {})
+  }
+
+  /**
+   * GET /nation/treasury —— 国库余额与流水。
+   *
+   * <p>**余额与流水在同一个响应里**（契约里写明理由：分两次查会拿到两个时刻的数，
+   * 而"余额与流水对不上"正是这张表唯一要防的那种形状）。这也是带副作用的读，每次打开都真拉。
+   *
+   * <p>谁能读：本国任一成员联盟的成员 —— 只给国王看等于没有。
+   */
+  nationTreasury(): Promise<NetOutcome<NationTreasuryResp>> {
+    return this.read<NationTreasuryResp>('/nation/treasury')
+  }
+
+  /**
+   * POST /nation/treasury/spend —— 国库支出。
+   *
+   * <p>`payeeType` 两类：PLAYER 俸禄（扣账后走发放器发 GOLD）、SINK 消耗性用途
+   * （国家科技 / 国战增益，没有收款人）。**两者都给或都不给都会被服务端拒** ——
+   * 含糊的支给对象是这张日志最怕的东西，所以调用方只能把「选中的那一种」原样传上去。
+   *
+   * <p>两种失败是两个错误码（13010 余额不足 / 13011 超本周限额），玩家的下一步不同，
+   * 所以**不许在客户端把它们合成一句话**。
+   */
+  spendTreasury(req: Omit<NationTreasurySpendReq, 'requestId'>): Promise<NetOutcome<NationTreasurySpendResp>> {
+    return this.mutate<NationTreasurySpendReq, NationTreasurySpendResp>('/nation/treasury/spend', req)
   }
 
   // ---------- 城建（B03） ----------

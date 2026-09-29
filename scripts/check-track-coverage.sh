@@ -141,6 +141,14 @@ const SKIP = new Set([
   "requestExit",
   // 转让同样：第一下只改字，真发那一枪记在 social_transfer 上
   "requestTransfer",
+  // 国家面板（V13-S1）是一次读（`GET /nation` + 国库 + 国家榜候选），不是玩家意图 ——
+  // 与上面 `openGachaProbability` / `openGachaHistory` / `reloadRankTab` 同一条口径。
+  // 真正的意图在建国/入籍/退国/解散/支出那五颗键上（各打一条）；把"打开"也记进去
+  // 会让漏斗第一格比最后一格大，看不出卡在"没人点开"还是"点开了没成"
+  "openNation",
+  // 要一份可收款成员名单同样是一次读，而且**只在玩家点了「发给成员」之后才发**。
+  // 名单本身没有可上报的意图，支出那一枪才记在 treasury_spend 上
+  "requestNationPayees",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

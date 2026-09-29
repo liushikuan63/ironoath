@@ -265,6 +265,29 @@ export const TRACK_EVENTS = {
   equipForge: 'equip_forge',
 
   /**
+   * 国家系统（B13 · V13-S1）。**一条事件对应一个真实的花费或一次不可逆的身份变化**：
+   * 建国、入籍、退国、解散各是一次（幂等写 + 后果都由服务端判），国库支出是公共资产。
+   *
+   * <p>看板上要答的是两件事：①"多少人走完了国家这条线"（found / join 各多少）；
+   * ②"国库的钱花在哪儿"（spend 带 payeeType 与 amount）。
+   * 金额**只报整数最小单位**（B01 的定点约定），客户端不折算成元 —— 折算就成第二套口径。
+   *
+   * <p>**打开国家面板不单独上报**：那是一次读（`GET /nation` + 国库），
+   * 与 `rank_view` / `season_view` 同一条口径；翻可加入列表也不报（同「翻页不单独上报」）。
+   */
+  nationFound: 'nation_found',
+  /** 联盟入籍。`scope` 恒为 ALLIANCE（B13 §一：入籍的最小单位是联盟，个人不能单独入籍）。 */
+  nationJoin: 'nation_join',
+  /**
+   * 退国 / 解散。**两个不同的量**：主动退国（玩家想走）与解散亡国（不可逆、连带全体冷却），
+   * 合成一条就分不清"联盟自己散了"与"国王把国散了"这两件后果完全不同的事。
+   */
+  nationLeave: 'nation_leave',
+  nationDisband: 'nation_disband',
+  /** 国库支出。`payeeType` = PLAYER | SINK（协议的 `TreasuryPayeeType`），`amount` 是最小单位整数。 */
+  treasurySpend: 'treasury_spend',
+
+  /**
    * 保存一套编队（B06 §4）。参数 `presetIndex` 与三名武将 id（空位是空串）——
    * 看板上要答的是"玩家到底编不编队"：编队决定缘分与乘区，全是默认编队就说明这一层没人用。
    * **打开编辑器 / 换槽位 / 换选中都不单独上报**：编队是"改完一次提交"，
