@@ -46,8 +46,9 @@ test('未配置客服时入口照样在，点下去说明未配置（不是死�
   const view = buildSettingsView(resp({ support: null }), '1.0.0', noPrivacyApi)
 
   const keys = view.rows.map(r => r.key)
-  assert.deepEqual(keys, ['audio', 'support', 'refund', 'privacy'],
-    '音效 + 客服、退款、隐私四个入口都要一级可见（提审按 §二 5/8/9 查）')
+  assert.deepEqual(keys, ['audio', 'support', 'refund', 'privacy', 'credits'],
+    '音效 + 客服、退款、隐私、署名五个入口都要一级可见（提审按 §二 5/8/9 查；'
+    + '署名那条是 CC BY 3.0 的授权条件，V14 新加）')
 
   for (const row of view.rows.filter(r => r.key === 'support' || r.key === 'refund')) {
     assert.equal(row.action.kind, 'message',
@@ -78,8 +79,18 @@ test('配置了客服 ⇒ 两个入口都走 open-customer-service，并原样�
 test('服务端版本没拿到时页面照常能用：入口还在，版本行只报当前版本', () => {
   const view = buildSettingsView(null, '1.0.0')
 
-  assert.equal(view.rows.length, 4, '拿不到版本响应不该让设置页空掉（四个入口照常）')
+  assert.equal(view.rows.length, 5, '拿不到版本响应不该让设置页空掉（五个入口照常）')
   assert.equal(view.versionText, '当前版本 1.0.0', '没有服务端版本就不显示「最新」，不编一个')
+})
+
+test('署名入口（V14）：一级可见、点下去是 open-credits、文案点明它是许可要求', () => {
+  const view = buildSettingsView(resp(), '1.0.0', noPrivacyApi)
+  const credits = view.rows.find(r => r.key === 'credits')
+  assert.ok(credits !== undefined, 'CC BY 3.0 的素材没有署名入口就等于没有权利分发')
+  assert.equal(credits.action.kind, 'open-credits')
+  assert.equal(credits.title, '开源许可与署名')
+  // 副标题要说清"这是许可要求"而不是"看看用了谁的图"：前者是合规项，后者是花絮
+  assert.ok(credits.subtitle.includes('CC BY 3.0'), '副标题写的是：' + credits.subtitle)
 })
 
 test('音效行：默认开、排第一、点下去是 toggle-audio（不是一句"请去系统设置"）', () => {

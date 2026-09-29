@@ -53,6 +53,7 @@ import { ComposePickOverlay } from './ComposePickOverlay'
 import { RecruitPanelView } from './RecruitPanelView'
 import { GachaDisclosureView } from './GachaDisclosureView'
 import { GachaHistoryView } from './GachaHistoryView'
+import { CreditsOverlay } from './CreditsOverlay'
 import { LineupEditOverlay } from './LineupEditOverlay'
 import { SocialCreateOverlay } from './SocialCreateOverlay'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
@@ -206,6 +207,8 @@ export class GameBootstrap extends Component {
   private armyQueue: ChoiceOverlay | null = null
   /** 「用哪一张加速治疗」（V12）。与 `armyQueue` 同组件不同实例：标题在构造时定死。 */
   private treatSpeedupPicker: ChoiceOverlay | null = null
+  /** 开源许可与署名（V14）。内容是静态的，建一次、只切可见性。 */
+  private creditsOverlay: CreditsOverlay | null = null
   private offlineReport: OfflineReportOverlay | null = null
   /** 引导层（B18）：整屏遮罩 + 气泡，挂在所有面板与导航条之上。 */
   private guide: GuideView | null = null
@@ -732,6 +735,11 @@ export class GameBootstrap extends Component {
     }
     if (action.kind === 'open-privacy-contract') {
       openPrivacyContract()
+      return
+    }
+    if (action.kind === 'open-credits') {
+      // V14：第三方素材署名是 CC BY 3.0 的授权条件，不是花絮 —— 入口在设置页一级（与客服入口同一条理由）
+      this.creditsOverlay?.show()
       return
     }
     if (action.kind === 'message') {
@@ -1525,6 +1533,16 @@ export class GameBootstrap extends Component {
     // 「用哪一张训练令加速治疗」（V12）：与队列菜单同一个组件、另开一个实例 ——
     // 标题不同（构造时定死），复用同一个实例会让标题对不上玩家正在做的事
     this.treatSpeedupPicker = new ChoiceOverlay(this.node, '用哪一张加速', 520)
+    // 开源许可与署名（V14）：素材许可不会在两次打开之间变化，所以建一次就够
+    const creditsNode = new Node('creditsOverlay')
+    creditsNode.layer = this.node.layer
+    this.node.addChild(creditsNode)
+    const visibleSize = view.getVisibleSize()
+    creditsNode.addComponent(UITransform).setContentSize(new Size(visibleSize.width, visibleSize.height))
+    const credits = creditsNode.addComponent(CreditsOverlay)
+    credits.onClose = () => { creditsNode.active = false }
+    creditsNode.active = false
+    this.creditsOverlay = credits
     this.marchCompose = new MarchComposeOverlay(this.node)
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
       // 出征 / 发起集结 的切换（B26 S12）：编成与目标都不变，只换命令种类

@@ -15,7 +15,7 @@ import type { PrivacyPlan } from '../privacy/PrivacyConsent'
 
 /** 设置页的一行。 */
 export interface SettingsRow {
-  readonly key: 'audio' | 'support' | 'refund' | 'privacy'
+  readonly key: 'audio' | 'support' | 'refund' | 'privacy' | 'credits'
   readonly title: string
   readonly subtitle: string
   /** 点下去会发生什么；恒非空 —— 未配置时是一条说明，不是一个死按钮 */
@@ -27,6 +27,7 @@ export type SettingsAction =
   | { readonly kind: 'toggle-audio' }
   | { readonly kind: 'open-customer-service'; readonly corpId: string; readonly url: string }
   | { readonly kind: 'open-privacy-contract' }
+  | { readonly kind: 'open-credits' }
   | { readonly kind: 'message'; readonly text: string }
 
 /** 整个设置页的数据。 */
@@ -81,6 +82,14 @@ export function buildSettingsView(
           ? '查看平台配置的用户隐私保护指引'
           : `查看${privacy.contractName}`,
         action: privacyAction(privacy),
+      },
+      {
+        key: 'credits',
+        title: '开源许可与署名',
+        // 措辞刻意不写"看看用了谁的图"：它是**授权条件**，不是花絮 ——
+        // Game-icons 是 CC BY 3.0，不署名就没有权利分发那份素材（art-src/ATTRIBUTION.md 的原话）
+        subtitle: '第三方素材的作者与许可（CC BY 3.0 要求保留）',
+        action: { kind: 'open-credits' },
       },
     ],
     versionText: latest === null || latest === clientVersion
