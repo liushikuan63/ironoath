@@ -1070,25 +1070,6 @@ export class SocialPanelView extends Component {
   }
 
   /**
-   * 「国家」那一行（V13-S1 的入口）。**刻意不在这一行显示"我在不在国家里"**：
-   * 那要 `GET /nation` 才答得上来，而这一行的职责只是"把那扇门指出来"。
-   * 真答不答得上在打开之后的第一屏里说 —— 为了给一颗入口键多发一次读，
-   * 会让"进社交页"在弱网下多等一个来回。
-   */
-  private nationRow(): RowDraft {
-    return {
-      title: '国家',
-      titleColor: COLOR_TEXT,
-      detail: '建国、入籍、退国，以及国库那本账',
-      value: '',
-      actionText: '打开',
-      actionEnabled: true,
-      actionId: 'nation',
-      actionKind: 'nation',
-    }
-  }
-
-  /**
    * 可申请联盟那几行（B26 S6）。一行一个联盟，那句总量说明单独占一行 ——
    * 它没有按钮，只是把"这不是全部"说清楚，免得玩家以为世界上的联盟就这几个。
    */
@@ -1199,17 +1180,14 @@ export class SocialPanelView extends Component {
           ]
         }
         const rows = allianceDrafts(data.alliance, this.permissions, this.transferFor('alliance'))
-        // 「国家」紧跟概况行（V13-S1）：它是固定行，**不能排在成员名单之后** ——
-        // 名单是不定长的，排在后面就等于大半玩家永远看不到那颗入口
-        rows.splice(1, 0, this.nationRow())
         // 插在联盟概况那一行之后、捐献与成员名单之前（名单是不定长的，固定那一行不能排在它后面）
         rows.splice(1, 0, this.exitRow('alliance'))
         // 待审申请紧跟概况行（B26 S8）：成员名单是不定长的，固定那一行不能排在它后面
-        rows.splice(3, 0, ...this.applicationRows())
+        rows.splice(2, 0, ...this.applicationRows())
         // 科技目录紧跟在申请行之后（B26 S9）。**不能 push 到最后**：一屏只画得下六行，
         // 而捐献三行 + 成员若干行本来就排在后面 —— 排最后等于永远截断在屏外，
         // 这一格要修的"功能看不见"就以另一种形式回来了。
-        rows.splice(3 + this.applicationRows().length, 0, ...this.techRows(data.alliance))
+        rows.splice(2 + this.applicationRows().length, 0, ...this.techRows(data.alliance))
         return rows
       }
       case 'help':
@@ -1661,6 +1639,22 @@ function allianceDrafts(alliance: AllianceSection, permissions: PermissionState,
     actionEnabled: expandGate.allowed,
     actionId: 'expand',
     actionKind: 'socialExpand',
+    // 「国家」入口挂在**概况行的第二颗键**上（V13-S1）。
+    //
+    // **为什么不单开一行**：那是实测出来的代价。联盟页一屏 7 格（`rowCapacity(0)` 按可视高现算），
+    // 而小联盟「概况 + 退出 + 三档捐献 + 两名成员」正好占满 7 格、没有翻页行。
+    // 单开一行就把它顶成 8 行 ⇒ 出现翻页行、真成员行落到第 2 页 ——
+    // 「踢出 / 设职 / 转让」三颗按钮当场从屏上消失（`verify-social-permission-runtime`
+    // 的 B5/B6/I1 红的就是这个：探针只读画出来的行，它不翻页）。
+    // 拿**已有功能的可见性**去换一个新入口，方向反了。
+    //
+    // 挂这里语义也顺：概况行本来就是"这个盟是什么、能对它做什么"，入籍正是联盟层级的决定。
+    action2: {
+      text: '国家',
+      enabled: true,
+      id: 'nation',
+      kind: 'nation',
+    },
   })
   // 捐献三档：档位用完了就不摆按钮，摆了点了只会看到报错
   const tierNames = ['免费捐献', '资源捐献', '金币捐献']

@@ -17,7 +17,7 @@
  * `X-Player-Id` 现取的** —— 国王那一档因此是真的"我这个号就是 kingId"，不是写死一个 id 去撞。
  *
  * <p><b>它盯的判据</b>（每条都能失败）：
- * ① 对照组：真后端 + 新号 ⇒ 联盟页没有「国家」那一行，国家面板也不出现；
+ * ① 对照组：真后端 + 新号 ⇒ 联盟页没有「国家」那颗键（它挂在概况行上），国家面板也不出现；
  * ② 无国家：面板说「你还没有国家」，并给出「创建国家」与可加入列表两条路；
  * ③ 有国家：概况逐字段等于夹具下发的值（国名/等级/成员/国库/都城/官职中文名）；
  * ④ 国库：余额、上限、流水（支给谁 · 多少 / 多久以前 · 谁做的 · 用途 / 余额）都在；
@@ -160,7 +160,10 @@ function readNation() {
   return { missing: !panel, active: panel ? panel.activeInHierarchy : false, texts, buttons }
 }
 
-/** 联盟页里找「国家」那一行（池化行按标题找，不按序号 —— 序号会随行数变）。 */
+/**
+ * 联盟页里找「国家」那颗键（**按按钮文案找，不按行标题**：
+ * 入口挂在概况行的第二颗键上，而行是池化复用的、标题会变）。
+ */
 function readNationRow() {
   const scene = window.cc.director.getScene()
   const social = scene.getChildByName('Canvas').getChildByName('Game').getChildByName('social')
@@ -168,11 +171,14 @@ function readNationRow() {
   const rows = []
   let found = false
   const walk = (n) => {
-    if (n.name === 'SocialRow' && n.activeInHierarchy) {
-      const title = n.children[0] && n.children[0].getComponent('cc.Label')
-      const titleText = title ? String(title.string) : ''
-      rows.push(titleText)
-      if (titleText === '国家') found = true
+    if (!n.activeInHierarchy) return
+    if (/^ActionButton[23]?$/.test(n.name)) {
+      const caption = n.getComponentInChildren('cc.Label')
+      if (caption !== null && caption !== undefined) {
+        const text = String(caption.string)
+        rows.push(text)
+        if (text === '国家') found = true
+      }
     }
     for (const child of n.children) walk(child)
   }
@@ -211,23 +217,32 @@ const clickTab = (page, tab) => page.evaluate(`(() => {
   return true
 })()`)
 
-/** 点联盟页「国家」那一行的动作键。返回点没点得到。 */
+/** 点联盟页上「国家」那颗键。返回点没点得到。
+ *
+ * <p>入口挂在**概况行的第二颗键**上（不是独立一行）：单开一行会把小联盟的
+ * 「成员行」挤到第 2 页，`verify-social-permission-runtime` 红过 11 条。
+ * 所以这里按**按钮文案**找，不按行标题 —— 行是池化复用的，标题会变。
+ */
 const clickNationRow = (page) => page.evaluate(`(() => {
   const scene = window.cc.director.getScene()
   const social = scene.getChildByName('Canvas').getChildByName('Game').getChildByName('social')
   if (!social) return false
-  let button = null
+  let target = null
   const walk = (n) => {
-    if (button) return
-    if (n.name === 'SocialRow' && n.activeInHierarchy) {
-      const title = n.children[0] && n.children[0].getComponent('cc.Label')
-      if (title && String(title.string) === '国家') button = n.children[3]
+    if (target) return
+    // 按钮壳的名字是 ActionButton / ActionButton2 / ActionButton3，里面的 Caption 才是文案
+    if (/^ActionButton[23]?$/.test(n.name) && n.activeInHierarchy) {
+      const caption = n.getComponentInChildren('cc.Label')
+      if (caption !== null && caption !== undefined && String(caption.string) === '国家') {
+        target = n
+        return
+      }
     }
     for (const child of n.children) walk(child)
   }
   walk(social)
-  if (!button || !button.activeInHierarchy) return false
-  button.emit('touch-start')
+  if (target === null) return false
+  target.emit('touch-start')
   return true
 })()`)
 
@@ -359,7 +374,7 @@ async function runScene(browser, { name, kind, stubbed, extra }) {
     await page.waitForTimeout(3500)
     await hideGuideOverlay(page)
     await page.waitForTimeout(400)
-    // 切到「联盟」页 —— 国家那一行挂在那一页（默认停在「小队」）
+    // 切到「联盟」页 —— 国家那颗键挂在那一页（默认停在「小队」）
     const tabbed = await clickTab(page, 'alliance')
     await page.waitForTimeout(1200)
     check(`${name}：切到「联盟」页`, tabbed, true)
@@ -391,7 +406,7 @@ const browser = await chromium.launch({ headless: true })
   await page.waitForTimeout(1200)
   const row = await page.evaluate(readNationRow)
   console.log(`  联盟页行标题：${(row.rows ?? []).join(' ｜ ') || '（无）'}`)
-  check('对照组：新号没有联盟 ⇒ 联盟页**不出现**「国家」那一行', row.found, false)
+  check('对照组：新号没有联盟 ⇒ 联盟页**不出现**「国家」那颗键', row.found, false)
   const state = await page.evaluate(readNation)
   check('对照组：国家面板没有出现', state.active, false)
   check('对照组：零页面错误', errors.join(' | ') || '无', '无')
@@ -409,9 +424,9 @@ await runScene(browser, {
     const before = await page.evaluate(readNation)
     check('点之前面板不出现（对照组）', before.active, false)
     const row = await page.evaluate(readNationRow)
-    check('联盟页有「国家」那一行', row.found, true)
+    check('联盟页有「国家」那颗键', row.found, true)
     const clicked = await clickNationRow(page)
-    checkThat('点得动「国家」那一行', clicked)
+    checkThat('点得动「国家」那颗键', clicked)
     await page.waitForTimeout(1500)
     const opened = await page.evaluate(readNation)
     check('面板出现了', opened.active, true)

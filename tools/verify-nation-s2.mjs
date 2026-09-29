@@ -140,23 +140,25 @@ const clickPanelButton = (page, name) => page.evaluate(`(() => {
 
 const clickTab = (page, tab) => clickPanelButton(page, `Tab_${tab}`)
 
+/** 点联盟页上「国家」那颗键：入口挂在**概况行的第二颗键**上（不是独立一行 ——
+ * 单开一行会把小联盟的成员行挤到第 2 页）。所以按**按钮文案**找，不按行标题。 */
 const clickAllianceNationRow = (page) => page.evaluate(`(() => {
   const scene = window.cc.director.getScene()
   const social = scene.getChildByName('Canvas').getChildByName('Game').getChildByName('social')
   if (!social) return false
   social.getChildByName('Tab_alliance').emit('touch-start')
-  let button = null
+  let target = null
   const walk = (n) => {
-    if (button) return
-    if (n.name === 'SocialRow' && n.activeInHierarchy) {
-      const title = n.children[0] && n.children[0].getComponent('cc.Label')
-      if (title && String(title.string) === '国家') button = n.children[3]
+    if (target) return
+    if (/^ActionButton[23]?$/.test(n.name) && n.activeInHierarchy) {
+      const caption = n.getComponentInChildren('cc.Label')
+      if (caption !== null && caption !== undefined && String(caption.string) === '国家') { target = n; return }
     }
     for (const child of n.children) walk(child)
   }
   walk(social)
-  if (!button || !button.activeInHierarchy) return false
-  button.emit('touch-start')
+  if (target === null) return false
+  target.emit('touch-start')
   return true
 })()`)
 

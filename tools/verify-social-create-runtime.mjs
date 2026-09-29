@@ -384,6 +384,34 @@ check('A2 对照组：不存在的路径回 404', bogus.status, 404)
 const real = await fetch(`${BACKEND}/social/createPolicy`, { headers: { 'X-Player-Id': playerId } })
   .then((r) => r.json())
 check('A3 真服务端答这条读口（code 0）', real.code, 0)
+/**
+ * A 相的前提是"**新号主城 1 级** ⇒ 两道门都关着"。
+ *
+ * <p>而这个前提会被 **dev 提速档**打破：`IRONOATH_DEV_CITY_LEVEL=16`（为了验国家正链路加的，
+ * 见 `DevNewPlayerBoost`）让新号直接落 16 级 ⇒ 小队与联盟的门全开着，
+ * 下面 A4/A5/A9/A11 会一起红成 5 条 —— **那不是功能坏了，是量具没架对**。
+ *
+ * <p>所以这里不退化成"跳过"，而是**明确挡下并说清怎么办**（`scripts/test-client.sh` 那条
+ * "这不是用例红，是量具没架对"是同一条纪律）。要跑这一份就把后端重启成不带那个环境变量的。
+ *
+ * <p>新号等级只能从 `/player/init` 读（`/social/createPolicy` 没有这个字段），
+ * 所以这里现建一个号问一次 —— 它与本探针那个号受同一个档位影响。
+ */
+const levelProbe = await fetch(`${BACKEND}/player/init`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    requestId: `social-create-level-${Date.now()}`, deviceId: `social-create-level-${Date.now()}`,
+    nickName: '等级探针', avatarId: 1, clientTime: Date.now(),
+  }),
+}).then((r) => r.json()).catch(() => null)
+const realLevel = Number(levelProbe?.data?.cityLevel ?? -1)
+if (realLevel > 1) {
+  console.error(`[verify-social-create-runtime] 新号主城 = ${realLevel} > 1：这台后端开着 dev 提速档`
+    + `（IRONOATH_DEV_CITY_LEVEL），而本探针的 A 相要求"新号 1 级、两道门都关着"。`)
+  console.error('  做法：这一份要跑在**不带**提速档的后端上；国家那一格要的正好相反（verify-nation-live.mjs）。')
+  console.error('  这不是用例红，是量具没架对。')
+  process.exit(2)
+}
 check('A4 新号主城 1 级 ⇒ 小队门是关的', real.data?.squad?.canCreate, false)
 checkTrue('A5 门槛那句由服务端给出（含「主城 5 级」与「当前 1 级」）',
   String(real.data?.squad?.reason ?? '').includes('主城 5 级')

@@ -677,9 +677,13 @@ check('B26 恰好一条 /alliance/transfer，且带的就是那一行的成员 i
   `1/${MEMBER.id}`)
 await shot('B-two-step-transfer')
 const headerAfter = ((await readRows())?.rows ?? []).find(r => r.title.startsWith('Lv3'))
-checkTrue('B27 联盟概况行上只有一颗「扩建」，绝不带着上一行留下的那颗「转让」（池化复用不重置就等于还挂着）',
-  headerAfter !== undefined && headerAfter.secondActive === false
-    && headerAfter.caption === '扩建')
+// 概况行现在**合法地有两颗键**：扩建 + 国家（V13-S1 的入口挂在这里 —— 单开一行会把小联盟的
+// 成员行挤到第 2 页，本探针的 B5/B6/I1 因此红过 11 条）。
+// 这条断言的**本意没变**：池化行不许带出上一行残留的按钮。所以判据从"只有一颗"改成
+// "恰好是扩建 + 国家" —— 带出残留的「转让」、或第二颗是别的字，仍然会红。
+checkTrue('B27 联盟概况行上是「扩建 + 国家」两颗，绝不带着上一行留下的那颗「转让」（池化复用不重置就等于还挂着）',
+  headerAfter !== undefined && headerAfter.caption === '扩建'
+    && headerAfter.secondActive === true && headerAfter.caption2Text === '国家')
 const expandBefore = fixture.expandCalls.length
 check('B28 点概况行的「扩建」（花联盟资金，一按就发，不做两下）',
   await page.evaluate(TAP_CAPTION('扩建')), 'tapped')
