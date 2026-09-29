@@ -954,14 +954,13 @@ public class NationAppService {
         }
     }
 
-    /** 官职 → 权限档位。这是<b>结构映射</b>（哪一档官职），具体能不能做由 role_permission 表决定。 */
+    /**
+     * 官职 → 权限档位。**映射本身在 {@code core/nation/NationPermissions}**（全项目唯一一份）：
+     * 读路径（`GET /social/permissions?scope=NATION`）用的是同一份，
+     * 两处各写一遍就会分叉，而分叉的症状只是"面板上那颗键亮着、点下去被拒"。
+     */
     private PermissionMatrix.Tier tierOf(Nation nation, String playerId) {
-        Nation.Office office = nation.officeOf(playerId);
-        return office == null ? PermissionMatrix.Tier.MEMBER : switch (office) {
-            case KING -> PermissionMatrix.Tier.LEADER;
-            case PRIME_MINISTER, GENERAL, MINISTER, DIPLOMAT -> PermissionMatrix.Tier.OFFICER;
-            case REPRESENTATIVE -> PermissionMatrix.Tier.MEMBER;
-        };
+        return com.ironoath.core.nation.NationPermissions.tierOf(nation.officeOf(playerId));
     }
 
     private static Nation.Office toOffice(NationOffice office) {

@@ -366,14 +366,14 @@ export interface SocialEventView {
 }
 
 /**
- * GET /social/summary 响应体（B10 §二）。三层社交一屏给全：小队、联盟、国家（B13 接入前恒为 null）。pendingInvites 与 pendingHelps 是红点数据 —— B10 验收 6 要求「一键帮助全部，红点清零」，所以红点数必须由服务端给出而不是客户端自己数列表。
+ * GET /social/summary 响应体（B10 §二）。三层社交一屏给全：小队、联盟、国家。pendingInvites 与 pendingHelps 是红点数据 —— B10 验收 6 要求「一键帮助全部，红点清零」，所以红点数必须由服务端给出而不是客户端自己数列表。
  */
 export interface SocialSummaryResp {
   /** 我的小队；未加入为 null */
   squad: SquadView | null
   /** 我的联盟；未加入为 null */
   alliance: AllianceView | null
-  /** 我的国家 id（B13 接入前恒为 null）；未加入为 null */
+  /** 我的国家 id；未加入（或所属国家已解散）为 null。**只给 id 不给视图**：国家那一屏走 `GET /nation`（那里有等级、国库、官职），这里只回答「我有没有国籍」—— 同一份国家数据不开第二个家 */
   nationId: string | null
   /** 待处理的邀请数（红点） */
   pendingInvites: number

@@ -43,6 +43,10 @@ import com.ironoath.web.dto.generated.ChatSendReq;
 import com.ironoath.core.reddot.ReddotTree;
 import com.ironoath.web.dto.generated.HelpReq;
 import com.ironoath.web.dto.generated.HelpTargetKind;
+import com.ironoath.web.dto.generated.NationAppointReq;
+import com.ironoath.web.dto.generated.NationFoundReq;
+import com.ironoath.web.dto.generated.NationLeaveReq;
+import com.ironoath.web.dto.generated.NationOffice;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.SocialEventAckReq;
 import com.ironoath.web.dto.generated.SquadCreateReq;
@@ -354,6 +358,73 @@ class SocialEndpointTest {
         his.get("permissions").forEach(node -> memberPermissions.add(node.asText()));
         assertThat(memberPermissions).doesNotContain("KICK_MEMBER");
         assertThat(memberPermissions).contains("CALL_FOR_HELP");
+    }
+
+    @Test
+    @DisplayName("国家层的权限接口：国王拿到任命权、官员拿到支取权、普通国民只拿到成员档（V13-d 的补口）")
+    void nationPermissionsEndpointFollowsTheOffice() throws Exception {
+        // 这一格此前**恒定回 NONE + 空列表**（`case NATION -> "NONE"` 的硬编码），
+        // 于是客户端问不出"我在这个国家能做什么"，只能拿 myOffice 自己猜。
+        // 建盟要主城 10 级、建国要 16 级（两道门都在服务端判），所以发起人那个号要给足
+        String king = newPlayer(16);
+        post200("/alliance/create", king, new AllianceCreateReq(newRequestId(), "权限盟", "PY"));
+        JsonNode founded = post200("/nation/found", king,
+                new NationFoundReq(newRequestId(), "权限国", 100L, 200L));
+        String nationId = founded.get("nation").get("nationId").asText();
+        assertThat(nationId).isNotEmpty();
+
+        JsonNode kingsView = get200("/social/permissions?scope=NATION", king);
+        assertThat(kingsView.get("scope").asText()).isEqualTo("NATION");
+        assertThat(kingsView.get("role").asText()).as("国王就是国王").isEqualTo("KING");
+        List<String> kings = permissionListOf(kingsView);
+        assertThat(kings).as("任命只有国主能做").contains("APPOINT_OFFICE");
+        assertThat(kings).contains("WITHDRAW_TREASURY", "RESEARCH_NATION_TECH");
+
+        // 第二个号入盟后被任命为内政官 ⇒ 干部档：能支取国库，但**任命权不给**（表里 allowOfficer=false）
+        String minister = newPlayer(5);
+        String allianceId = get200("/social/summary", king).get("alliance").get("id").asText();
+        joinAlliance(minister, allianceId, king);
+        post200("/nation/appoint", king, new NationAppointReq(newRequestId(), minister, NationOffice.MINISTER));
+
+        JsonNode ministersView = get200("/social/permissions?scope=NATION", minister);
+        assertThat(ministersView.get("role").asText()).isEqualTo("MINISTER");
+        List<String> officers = permissionListOf(ministersView);
+        assertThat(officers).contains("WITHDRAW_TREASURY", "RESEARCH_NATION_TECH", "MANAGE_DIPLOMACY");
+        assertThat(officers).as("任命是国家元首专属（perm_nation_appoint_office 的 allowOfficer=false）")
+                .doesNotContain("APPOINT_OFFICE");
+
+        // 第三个号入盟但没有任何官职 ⇒ MEMBER 档：只拿成员级的位，一个官员位都不给
+        String plain = newPlayer(5);
+        joinAlliance(plain, allianceId, king);
+        JsonNode plainsView = get200("/social/permissions?scope=NATION", plain);
+        assertThat(plainsView.get("role").asText()).as("在国里但没官职").isEqualTo("MEMBER");
+        List<String> members = permissionListOf(plainsView);
+        assertThat(members).as("普通国民不许支取国库").doesNotContain("WITHDRAW_TREASURY");
+        assertThat(members).doesNotContain("APPOINT_OFFICE", "DECLARE_WAR", "SET_NATIONAL_POLICY");
+
+        // 不在任何国家里的人：role=NONE 且列表为空（与联盟/小队两侧同一条形状）
+        String outsider = newPlayer(5);
+        JsonNode outsiderView = get200("/social/permissions?scope=NATION", outsider);
+        assertThat(outsiderView.get("role").asText()).isEqualTo("NONE");
+        assertThat(permissionListOf(outsiderView)).as("没有国籍就是没有任何国家权限").isEmpty();
+
+        // 摘掉国籍之后同一句话必须变：**这是判据的分母**（否则"恒定回 NONE"也能让它全绿）
+        post200("/nation/leave", king, new NationLeaveReq(newRequestId()));
+        JsonNode afterLeave = get200("/social/permissions?scope=NATION", king);
+        assertThat(afterLeave.get("role").asText()).isEqualTo("NONE");
+        assertThat(permissionListOf(afterLeave)).doesNotContain("APPOINT_OFFICE");
+    }
+
+    private static List<String> permissionListOf(JsonNode view) {
+        List<String> out = new java.util.ArrayList<>();
+        view.get("permissions").forEach(node -> out.add(node.asText()));
+        return out;
+    }
+
+    /** 申请 + 盟主审核通过：入盟在这套用例里总是两步（`/alliance/apply` → `/alliance/review`）。 */
+    private void joinAlliance(String playerId, String allianceId, String leader) throws Exception {
+        post200("/alliance/apply", playerId, new AllianceIdReq(newRequestId(), allianceId));
+        post200("/alliance/review", leader, new AllianceReviewReq(newRequestId(), playerId, true));
     }
 
     // ---------- 联盟 ----------

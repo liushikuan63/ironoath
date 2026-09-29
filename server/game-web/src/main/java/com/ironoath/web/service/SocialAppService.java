@@ -1139,7 +1139,14 @@ public class SocialAppService {
         return new SocialSummaryResp(
                 store.squadOf(playerId).map(squad -> toSquadView(squad, playerId, now)).orElse(null),
                 store.allianceOf(playerId).map(alliance -> toAllianceView(alliance, playerId, now)).orElse(null),
-                null,   // nationId：B13 接入前恒为 null
+                // 我的国家 id（B13 接入后不再是恒 null）。**只给 id 不给视图**：国家那一屏走
+                // `GET /nation`（那里有等级、国库、官职），这里只回答"我有没有国籍"，
+                // 免得同一份国家数据有第二个家
+                store.allianceOf(playerId)
+                        .flatMap(alliance -> nations.findByAlliance(alliance.id()))
+                        .filter(nation -> !nation.isDisbanded())
+                        .map(com.ironoath.core.nation.Nation::id)
+                        .orElse(null),
                 pendingInvitesOf(playerId),
                 pendingHelpsOf(playerId, now),
                 helpLedger.remainingToday(playerId, now),
@@ -1223,11 +1230,37 @@ public class SocialAppService {
                     .orElse("NONE");
             case ALLIANCE -> store.allianceOf(playerId)
                     .map(alliance -> String.valueOf(alliance.roleOf(playerId))).orElse("NONE");
-            case NATION -> "NONE";   // B13 接入前没有国家职位
+            case NATION -> nationRoleOf(playerId);
         };
         PermissionMatrix.Tier tier = tierOf(scope, role);
         return new PermissionListResp(scope.name(), role,
                 tier == null ? List.of() : List.copyOf(matrix.permissionsOf(scope, tier)), now);
+    }
+
+    /**
+     * 我在国家里的"职位名"：有官职就是官职名，在国里但没官职是 {@code MEMBER}，
+     * 不在任何国家里是 {@code NONE}。
+     *
+     * <p><b>为什么读路径也要先 bind 再问官职</b>：议员是**派生席位**（每盟主一席，没人任命它），
+     * 只有 {@code NationLeaders.bind} 注入盟主查询之后 {@code officeOf} 才看得见它。
+     * 少这一次 bind 的症状很隐蔽：议员看到自己的 role 变成 MEMBER —— 而两者的权限档位**恰好相同**，
+     * 所以面板上的按钮一模一样，只有角色名一处不对。
+     *
+     * <p>亡国的国家不算：它已经不是一个可查询、可入籍的对象（成员表也被清空），
+     * 把它当成国籍会让玩家在一个不存在的国家里"有权限"。
+     */
+    private String nationRoleOf(String playerId) {
+        return store.allianceOf(playerId)
+                .flatMap(alliance -> nations.findByAlliance(alliance.id()))
+                .filter(nation -> !nation.isDisbanded())
+                .map(nation -> {
+                    com.ironoath.core.nation.Nation.Office office =
+                            nationLeaders.bind(nation).officeOf(playerId);
+                    return office == null
+                            ? com.ironoath.core.nation.NationPermissions.MEMBER_ROLE
+                            : office.name();
+                })
+                .orElse(com.ironoath.core.nation.NationPermissions.NO_ROLE);
     }
 
     // ================= 互助（验收 6） =================
@@ -2210,11 +2243,9 @@ public class SocialAppService {
             return null;
         }
         if (scope == PermissionMatrix.Scope.NATION) {
-            // 国家没有职位枚举（B13 未接入），所以这里没有任何名字可认。
-            // 不写成「非 SQUAD 就当联盟职位」：那会把将来的国家职位串按联盟的表认，
-            // 认中了就是凭空拿到一档权限。
-            LOG.warn("NATION 尚无职位体系，却收到职位串 role=\"{}\"，按无权限处理", role);
-            return null;
+            // 国家职位 = 官职名；"在国里但没官职"报 MEMBER（这一档在 role_permission 表里就叫 member），
+            // 不在任何国家里报 NONE。**联盟的职位串在这里认不出来**（映射在 NationPermissions）
+            return com.ironoath.core.nation.NationPermissions.tierOfName(role);
         }
         try {
             return scope == PermissionMatrix.Scope.SQUAD
