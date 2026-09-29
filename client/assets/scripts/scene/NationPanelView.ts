@@ -15,9 +15,9 @@
  */
 import { _decorator, Color, Component, EditBox, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type {
-  NationPanelView as NationPanelData, PayeeType, SpendDraft,
+  NationPanelView as NationPanelData, NationTabKey, PayeeType, SpendDraft,
 } from '../game/nation/NationPanel'
-import { SPEND_AMOUNT_PRESETS, amountText, spendDraftBlocker, spendSinkOptions } from '../game/nation/NationPanel'
+import { NATION_TABS, SPEND_AMOUNT_PRESETS, TREASURY_LOG_ROWS, amountText, spendDraftBlocker, spendSinkOptions } from '../game/nation/NationPanel'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -115,6 +115,19 @@ export class NationPanelView extends Component {
   onSpend: ((draft: SpendDraft) => void) | null = null
   /** 收款人名单（联盟成员：只有他们能作为「发给谁」的目标）。 */
   onRequestPayees: (() => void) | null = null
+  /** 切页签（V13-S2）。切到「科技」时才发 `/nation/tech` 那一枪。 */
+  onSelectTab: ((tab: NationTabKey) => void) | null = null
+  /** 研究一级国家科技。传的是 `techId`（**只用于发请求，永不上屏**）。 */
+  onResearchTech: ((techId: string) => void) | null = null
+  /** 记一条外交关系。 */
+  onSetRelation: ((targetNationId: string, relation: string) => void) | null = null
+  /** 任命一名成员。 */
+  onAppoint: ((playerId: string, office: string) => void) | null = null
+  /** 外交页当前选中的目标国（`nationId`；null = 还没选）。 */
+  private diproTarget: string | null = null
+  private diproRelation = 'ALLIED'
+  /** 任命页当前选中的人。 */
+  private appointTarget: string | null = null
 
   override onLoad(): void {
     this.buildMask()
@@ -138,12 +151,19 @@ export class NationPanelView extends Component {
     this.onDisband = null
     this.onSpend = null
     this.onRequestPayees = null
+    this.onSelectTab = null
+    this.onResearchTech = null
+    this.onSetRelation = null
+    this.onAppoint = null
   }
 
   /** 每次打开都重置输入态（"关掉再开还留着上次的字"是本仓记过的形态）。 */
   beginSession(): void {
     this.draft = freshDraft()
     this.payees = []
+    this.diproTarget = null
+    this.diproRelation = 'ALLIED'
+    this.appointTarget = null
   }
 
   /** 递一份可收款名单（由编排层在拉完联盟成员后调用）。 */
@@ -221,17 +241,189 @@ export class NationPanelView extends Component {
       cursor = this.drawFoundForm(left, cursor)
       cursor = this.drawCandidates(left, innerWidth, cursor, data)
     } else {
-      // 支出表单开着的时候**收起概况那六行**：一屏 600 逻辑高塞不下「概况 + 国库 + 操作 + 表单」，
-      // 而表单开着时玩家要的正是"我这笔钱花给谁"，概况里那几行此时是重复信息（标题与身份那句仍在）。
-      if (!this.draft.armed) {
-        cursor = this.drawSummary(left, cursor, data)
+      cursor = this.drawTabs(left, innerWidth, cursor, data)
+      switch (data.tab) {
+        case 'TREASURY':
+          // 支出表单开着的时候**收起概况那六行**：一屏 600 逻辑高塞不下「概况 + 国库 + 操作 + 表单」，
+          // 而表单开着时玩家要的正是"我这笔钱花给谁"，概况里那几行此时是重复信息（标题与身份那句仍在）。
+          if (!this.draft.armed) {
+            cursor = this.drawSummary(left, cursor, data)
+          }
+          cursor = this.drawTreasury(left, innerWidth, cursor, data)
+          cursor = this.drawActions(left, cursor, data)
+          break
+        case 'TECH':
+          cursor = this.drawTech(left, innerWidth, cursor, data)
+          break
+        case 'DIPLO':
+          cursor = this.drawDiplomacy(left, innerWidth, cursor, data)
+          break
+        case 'OFFICE':
+          cursor = this.drawAppoint(left, cursor, data)
+          break
       }
-      cursor = this.drawTreasury(left, innerWidth, cursor, data)
-      cursor = this.drawActions(left, cursor, data)
     }
     if (data.notice !== null) {
-      this.label(data.notice, COLOR_WARN, 14, left, cursor - 12, 'left')
+      // **成功是金色、失败是红色**：这一屏同时承载公共资产的操作，
+      // 把"研究完成"染成警告红，玩家读到的就是"出错了"。
+      this.label(data.notice, data.noticeTone === 'ok' ? COLOR_GOLD : COLOR_WARN, 14,
+        left, cursor - 12, 'left')
     }
+  }
+
+  // ---------- S2 的四个页签 ----------
+
+  /** 页签条。当前页签点亮，**点哪一颗都只是"切过去看"**（真正的动作在各自那一页里）。 */
+  private drawTabs(left: number, innerWidth: number, top: number, data: NationPanelData): number {
+    const width = Math.floor(innerWidth / NATION_TABS.length) - 8
+    NATION_TABS.forEach((tab, index) => {
+      const x = left + width / 2 + index * (width + 8)
+      const active = tab.key === data.tab
+      this.button(`Tab_${tab.key}`, tab.label, x, top - 16, width, true, () => this.onSelectTab?.(tab.key))
+      if (active) {
+        // 当前页签加一道底线：不靠"按下去有反应"这种回执当唯一指示
+        const mark = this.surface(`TabMark_${tab.key}`, x, top - 16 - BUTTON_HEIGHT / 2 - 1, width, 2)
+        mark.fillColor = COLOR_GOLD
+        mark.rect(-width / 2, -1, width, 2)
+        mark.fill()
+      }
+    })
+    return top - 36
+  }
+
+  private drawTech(left: number, innerWidth: number, top: number, data: NationPanelData): number {
+    const section = data.sections?.tech ?? null
+    if (section === null) {
+      this.label('国家科技这一次没拉到', COLOR_WARN, 14, left, top - 12, 'left')
+      return top - 32
+    }
+    let y = top - 12
+    if (section.headerText !== null) {
+      this.label(section.headerText, COLOR_GOLD, 15, left, y, 'left')
+      y -= 26
+    }
+    if (section.emptyText !== null) {
+      this.label(section.emptyText, COLOR_DIM, 14, left, y, 'left')
+      return y - 26
+    }
+    const actionWidth = 110
+    section.rows.slice(0, TREASURY_LOG_ROWS).forEach(row => {
+      const plate = this.surface(`TechRow-${row.key}`, 0, y - 14, innerWidth, 46)
+      plate.fillColor = COLOR_ROW
+      plate.rect(-innerWidth / 2, -23, innerWidth, 46)
+      plate.fill()
+      this.label(row.titleText, COLOR_TEXT, 15, left + 10, y - 4, 'left')
+      this.label(row.detailText, COLOR_DIM, 13, left + 10, y - 20, 'left')
+      if (row.effectText !== null) {
+        this.label(row.effectText, COLOR_HINT, 13, left + innerWidth - actionWidth - 16, y - 4, 'right')
+      }
+      this.button(`TechResearch-${row.key}`, row.actionText, left + innerWidth - actionWidth / 2 - 8, y - 10,
+        actionWidth, row.enabled, () => this.onResearchTech?.(row.key))
+      if (row.reason !== null) {
+        this.label(row.reason, COLOR_DIM, 12, left + innerWidth - actionWidth - 16, y - 20, 'right')
+      }
+      y -= 50
+    })
+    const hidden = section.rows.length - TREASURY_LOG_ROWS
+    if (hidden > 0) {
+      this.label(`另有 ${hidden} 行未显示`, COLOR_DIM, 13, left, y, 'left')
+      y -= 22
+    }
+    return y
+  }
+
+  private drawDiplomacy(left: number, innerWidth: number, top: number, data: NationPanelData): number {
+    const section = data.sections?.diplomacy ?? null
+    if (section === null) {
+      this.label('外交这一页没拉到', COLOR_WARN, 14, left, top - 12, 'left')
+      return top - 32
+    }
+    let y = top - 12
+    // ① 当前关系表（变更之后才有）
+    if (section.emptyText !== null) {
+      this.label(section.emptyText, COLOR_DIM, 13, left, y, 'left')
+      y -= 26
+    } else {
+      section.rows.slice(0, 4).forEach(row => {
+        this.label(row.name, COLOR_TEXT, 15, left + 6, y, 'left')
+        this.label(row.relationText ?? '未记录', row.relationText === null ? COLOR_DIM : COLOR_GOLD, 14,
+          left + innerWidth - 90, y, 'right')
+        this.button(`DiproSet-${row.key}`, '改关系', left + innerWidth - 40, y, 74, true,
+          () => { this.diproTarget = row.key; this.redraw() })
+        y -= ROW_HEIGHT
+      })
+      y -= 6
+    }
+    // ② 选目标国
+    this.label('选一个国家', COLOR_DIM, 13, left, y, 'left')
+    y -= 26
+    const targetWidth = 110
+    section.targets.slice(0, 6).forEach((target, index) => {
+      const x = left + targetWidth / 2 + index * (targetWidth + 8)
+      // **常亮可选**，"选中"另用一态画（见 `button` 的三态说明）
+      this.button(`DiproTarget-${target.key}`, target.name, x, y, targetWidth, true,
+        () => { this.diproTarget = target.key; this.redraw() },
+        this.diproTarget === target.key)
+    })
+    y -= 32
+    // ③ 四种关系
+    this.label('把关系记为', COLOR_DIM, 13, left, y, 'left')
+    y -= 26
+    const optionWidth = 92
+    section.options.forEach((option, index) => {
+      const x = left + optionWidth / 2 + index * (optionWidth + 8)
+      this.button(`DiproOption-${option.key}`, option.label, x, y, optionWidth, this.diproTarget !== null,
+        () => {
+          if (this.diproTarget === null) {
+            return
+          }
+          this.diproRelation = option.key
+          this.onSetRelation?.(this.diproTarget, option.key)
+        })
+    })
+    y -= 26
+    const note = section.options.find(option => option.key === this.diproRelation)?.note ?? ''
+    this.label(note, COLOR_DIM, 13, left, y, 'left')
+    return y - 22
+  }
+
+  private drawAppoint(left: number, top: number, data: NationPanelData): number {
+    const section = data.sections?.appoint ?? null
+    if (section === null) {
+      this.label('任命这一页没拉到', COLOR_WARN, 14, left, top - 12, 'left')
+      return top - 32
+    }
+    let y = top - 12
+    if (section.notice !== null) {
+      this.label(section.notice, COLOR_DIM, 14, left, y, 'left')
+      return y - 26
+    }
+    this.label('选一个人', COLOR_DIM, 13, left, y, 'left')
+    y -= 26
+    const nameWidth = 104
+    section.rows.slice(0, 6).forEach((row, index) => {
+      const x = left + nameWidth / 2 + index * (nameWidth + 8)
+      this.button(`AppointTarget-${row.key}`, row.name, x, y, nameWidth, true,
+        () => { this.appointTarget = row.key; this.redraw() },
+        this.appointTarget === row.key)
+    })
+    y -= 32
+    this.label('任命为', COLOR_DIM, 13, left, y, 'left')
+    y -= 26
+    const officeWidth = 96
+    section.offices.forEach((office, index) => {
+      const x = left + officeWidth / 2 + index * (officeWidth + 8)
+      this.button(`AppointOffice-${office.key}`, office.label, x, y, officeWidth, this.appointTarget !== null,
+        () => {
+          if (this.appointTarget === null) {
+            return
+          }
+          this.onAppoint?.(this.appointTarget, office.key)
+        })
+    })
+    y -= 28
+    this.label('国王与议员没有任命入口（那是席位，不是任出来的）', COLOR_DIM, 12, left, y, 'left')
+    return y - 20
   }
 
   // ---------- 无国家：创建 + 可加入列表 ----------
@@ -382,27 +574,27 @@ export class NationPanelView extends Component {
     const presetWidth = 96
     SPEND_AMOUNT_PRESETS.forEach((preset, index) => {
       const x = left + presetWidth / 2 + index * (presetWidth + 8)
-      this.button(`Amount-${preset}`, amountText(preset), x, y, presetWidth, draft.amount === preset,
-        () => { draft.amount = preset; this.redraw() })
+      this.button(`Amount-${preset}`, amountText(preset), x, y, presetWidth, true,
+        () => { draft.amount = preset; this.redraw() }, draft.amount === preset)
     })
     y -= 32
     const sinkWidth = 108
-    this.button('PayeePlayer', '发给成员', left + sinkWidth / 2, y, sinkWidth, draft.payeeType === 'PLAYER',
+    this.button('PayeePlayer', '发给成员', left + sinkWidth / 2, y, sinkWidth, true,
       () => {
         draft.payeeType = 'PLAYER'
         if (this.payees.length === 0) {
           this.onRequestPayees?.()
         }
         this.redraw()
-      })
+      }, draft.payeeType === 'PLAYER')
     spendSinkOptions().forEach((option, index) => {
       const x = left + sinkWidth + 8 + index * (sinkWidth + 8) + sinkWidth / 2
-      this.button(`Sink-${option.key}`, option.label, x, y, sinkWidth, draft.sink === option.key,
+      this.button(`Sink-${option.key}`, option.label, x, y, sinkWidth, true,
         () => {
           draft.payeeType = 'SINK'
           draft.sink = option.key
           this.redraw()
-        })
+        }, draft.payeeType === 'SINK' && draft.sink === option.key)
     })
     y -= 32
     if (draft.payeeType === 'PLAYER') {
@@ -412,8 +604,8 @@ export class NationPanelView extends Component {
       }
       this.payees.slice(0, 4).forEach((payee, index) => {
         const x = left + sinkWidth / 2 + index * (sinkWidth + 8)
-        this.button(`Payee-${payee.id}`, payee.name, x, y, sinkWidth, draft.payeeId === payee.id,
-          () => { draft.payeeId = payee.id; this.redraw() })
+        this.button(`Payee-${payee.id}`, payee.name, x, y, sinkWidth, true,
+          () => { draft.payeeId = payee.id; this.redraw() }, draft.payeeId === payee.id)
       })
       y -= 32
     }
@@ -452,11 +644,22 @@ export class NationPanelView extends Component {
 
   // ---------- 基础件 ----------
 
-  /** 按钮：灰掉时**不吃触摸**（点了也不会发请求），与招募面板同一份做法。 */
+  /**
+   * 一颗键。三态，而且**这三态的分工是这一格最贵的一课**：
+   * ① `enabled = false` = 灰，**不挂 touch-start**（点了零请求）；
+   * ② `selected` = 选中，画成金底 —— **它必须与 enabled 解耦**；
+   * ③ 其余 = 常亮。
+   *
+   * <p><b>为什么必须解耦</b>：把「选中」直接当 `enabled` 用，等于把每一颗**选择键**的入口在
+   * 「还没选中」时关掉 —— 于是玩家第一次点它没反应、永远选不中、后面那颗也永远不会亮。
+   * 这是探针当场抓到的：S2 的目标国键与任命人键第一版都写成 `enabled: 当前选中的是我`，
+   * 结果四颗关系键一直灰着、点了零请求。支出表单的金额预设与落点键是同族，一并拆开。
+   */
   private button(name: string, text: string, x: number, y: number, width: number, enabled: boolean,
-    onClick: () => void): void {
+    onClick: () => void, selected = false): void {
     const graphics = this.surface(name, x, y, width, BUTTON_HEIGHT)
-    graphics.fillColor = enabled ? COLOR_ROW : COLOR_FIELD
+    const active = enabled && selected
+    graphics.fillColor = active ? COLOR_GOLD : (enabled ? COLOR_ROW : COLOR_FIELD)
     graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 6)
     graphics.fill()
     graphics.strokeColor = enabled ? COLOR_GOLD : COLOR_DIM
@@ -466,7 +669,7 @@ export class NationPanelView extends Component {
     if (enabled) {
       graphics.node.on('touch-start', onClick)
     }
-    this.label(text, enabled ? COLOR_GOLD : COLOR_DIM, 15, x, y, 'center')
+    this.label(text, active ? COLOR_FIELD : (enabled ? COLOR_GOLD : COLOR_DIM), 15, x, y, 'center')
   }
 
   /**

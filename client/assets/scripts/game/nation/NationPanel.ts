@@ -22,6 +22,23 @@ import type {
   NationTreasuryResp, NationTreasurySpendResp, NationView, TreasuryLogView,
 } from '../../net/generated/NationProtocol'
 import { elapsedText } from '../ui/ElapsedText'
+import type { NationSectionsView } from './NationSections'
+
+/**
+ * 国家面板的页签（S2 起）。
+ *
+ * <p>**TREASURY 在前**：国库是这一屏最该先看见的东西（余额与流水），
+ * 其余三块都是"要做事才点进去"的动作页。
+ */
+export type NationTabKey = 'TREASURY' | 'TECH' | 'DIPLO' | 'OFFICE'
+
+/** 页签的中文名与它各自的键。表驱动是为了表现层只有一处 switch。 */
+export const NATION_TABS: readonly { key: NationTabKey; label: string }[] = [
+  { key: 'TREASURY', label: '国库' },
+  { key: 'TECH', label: '国家科技' },
+  { key: 'DIPLO', label: '外交' },
+  { key: 'OFFICE', label: '任命' },
+]
 
 /**
  * 服务端用来表示「这条流水是系统动作」的 operatorId（契约里写明周税入账就是它）。
@@ -187,6 +204,10 @@ export interface NationTreasuryView {
 
 export interface NationPanelView {
   readonly mode: 'NONE' | 'MEMBER'
+  /** 当前页签（S2 起）。无国家时恒为 `'TREASURY'` —— 没有国家就没有国库之外的东西。 */
+  readonly tab: NationTabKey
+  /** S2 三块（科技 / 外交 / 任命）。`null` = 还没拉过（打开科技页签才发那一枪）。 */
+  readonly sections: NationSectionsView | null
   readonly title: string
   /** 一句话说清"我现在是什么处境"。 */
   readonly headline: string
@@ -200,6 +221,12 @@ export interface NationPanelView {
   readonly spend: NationActionView
   /** 上一次操作的结果（成功一句 / 服务端拒绝的理由），没有则 null。 */
   readonly notice: string | null
+  /**
+   * notice 的语气。**成功与失败必须分开**：用同一个红字去显示"研究完成"，
+   * 玩家读到的是"出错了"—— 而这一屏同时承载公共资产的操作，误读的代价很高。
+   * 默认 `'warn'`（失败），编排层要在成功时显式传 `'ok'`。
+   */
+  readonly noticeTone: 'ok' | 'warn'
 }
 
 /** 可加入国家的一行来源。id 与名字都由服务端下发（`GET /rank/list?type=NATION`）。 */
@@ -220,6 +247,12 @@ export interface NationPanelInput {
   /** 联盟成员名单：流水里的操作人与收款人靠它换成名字（id → 昵称）。 */
   readonly memberNames: ReadonlyMap<string, string>
   readonly notice: string | null
+  /** notice 的语气；不给按 `'warn'`（失败）算。 */
+  readonly noticeTone?: 'ok' | 'warn'
+  /** 当前页签（S2）。无国家时忽略。 */
+  readonly tab?: NationTabKey
+  /** S2 三块；没拉过时为 null（面板据它说"这一次没读到"，不是画一片空白）。 */
+  readonly sections?: NationSectionsView | null
 }
 
 const OFF_ACTION: NationActionView = { text: '—', enabled: false, reason: '你还不在任何国家里' }
@@ -336,6 +369,10 @@ export function buildNationPanel(input: NationPanelInput): NationPanelView {
     }))
     return {
       mode: 'NONE',
+      // 无国家时页签与 S2 三块都不存在：恒给默认值，而不是 null —— 表现层按 `mode` 分支，
+      // 拿到一个 null 的 tab 会逼它写第二遍"这页没有页签条"
+      tab: 'TREASURY',
+      sections: null,
       title: '国家',
       headline: '你还没有国家。建国需要主城满级、开服满一定天数，而且你得在一个联盟里 —— 缺哪一条，界面上会写明。',
       summary: [],
@@ -349,6 +386,7 @@ export function buildNationPanel(input: NationPanelInput): NationPanelView {
       disband: OFF_ACTION,
       spend: OFF_ACTION,
       notice: input.notice,
+    noticeTone: input.noticeTone ?? 'warn',
     }
   }
 
@@ -371,6 +409,8 @@ export function buildNationPanel(input: NationPanelInput): NationPanelView {
   const isKing = nation.kingId === input.playerId
   return {
     mode: 'MEMBER',
+    tab: input.tab ?? 'TREASURY',
+    sections: input.sections ?? null,
     title: nation.name,
     headline: `你在 ${nation.name} 的身份：${officeLabel(nation.myOffice)}。`
       + (isKing ? '你是这个国家的国王。' : ''),
@@ -398,5 +438,6 @@ export function buildNationPanel(input: NationPanelInput): NationPanelView {
         : null,
     },
     notice: input.notice,
+    noticeTone: input.noticeTone ?? 'warn',
   }
 }

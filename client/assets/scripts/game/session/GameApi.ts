@@ -107,9 +107,13 @@ import type {
 } from '../../net/generated/TechProtocol'
 import type { EquipForgeReq, EquipForgeResp, EquipInstanceListView } from '../../net/generated/EquipProtocol'
 import type {
-  NationDisbandReq, NationDisbandResp, NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp,
-  NationResp, NationTreasuryResp, NationTreasurySpendReq, NationTreasurySpendResp,
+  NationAppointReq, NationDisbandReq, NationDisbandResp, NationDiplomacyReq, NationDiplomacyResp,
+  NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationResp, NationTreasuryResp,
+  NationTreasurySpendReq, NationTreasurySpendResp,
 } from '../../net/generated/NationProtocol'
+import type {
+  NationTechListView, NationTechResearchReq, NationTechResearchResp,
+} from '../../net/generated/NationTechProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -318,6 +322,64 @@ export class GameApi {
    */
   spendTreasury(req: Omit<NationTreasurySpendReq, 'requestId'>): Promise<NetOutcome<NationTreasurySpendResp>> {
     return this.mutate<NationTreasurySpendReq, NationTreasurySpendResp>('/nation/treasury/spend', req)
+  }
+
+  // ---------- 国家 S2（B13 §2 任命 / §5 外交 / B20 块③ 国家科技） ----------
+
+  /**
+   * POST /nation/appoint —— 任命一名成员担任官职。
+   *
+   * <p>入参是 **`playerId` 而不是 allianceId**：被任命者必须属于某个已入籍的联盟，
+   * 而个人不能脱离联盟单独入籍（所以服务端按 `allianceOf(targetId)` 反查）。
+   * Bot 会被合规闸门拒绝（`bots.requireMayHoldOffice`）—— 协议里没有任何字段能让客户端
+   * 声明「这个人是真人」，所以这条线客户端绕不过。
+   *
+   * <p>回的是**操作后的完整国家视图**（`NationResp`），面板据此刷新，不必再查一次。
+   */
+  appointNationOffice(req: Omit<NationAppointReq, 'requestId'>): Promise<NetOutcome<NationResp>> {
+    return this.mutate<NationAppointReq, NationResp>('/nation/appoint', req)
+  }
+
+  /**
+   * POST /nation/diplomacy —— 变更与另一个国家的外交关系。
+   *
+   * <p><b>关系直接决定 `mayAttackNation`**：盟约之间不能互相攻击、敌对之间才可以 ——
+   * 所以这不是一个装饰性的标签，改一次就立刻改变「谁能打谁」。
+   *
+   * <p>**单方面声明、双方都记着才成立**（2026-09-13 裁决 C21）：一份 `ALLIED` 只有两侧都记着
+   * 同一个关系才双向禁攻。屏上因此不能说"结盟成功"就等于"条约已生效"。
+   *
+   * <p>**这是唯一能拿到关系表的入口**：服务端没有只读的 `/nation/relations`，
+   * 响应里的 `allRelations` 是变更之后的那张全表。
+   */
+  setNationDiplomacy(req: Omit<NationDiplomacyReq, 'requestId'>): Promise<NetOutcome<NationDiplomacyResp>> {
+    return this.mutate<NationDiplomacyReq, NationDiplomacyResp>('/nation/diplomacy', req)
+  }
+
+  /**
+   * GET /nation/tech —— 国家科技整棵树 + 当前账本 + 国库余额。
+   *
+   * <p>**要身份**：花钱的与看账的都是本国成员，而"看得到"本身就是审计的一部分
+   * （与 `/nation/treasury` 同一条理由：只给国王看等于没有）。
+   *
+   * <p>行里的 `canResearch` / `blockedReason` / `nextCostTreasury` 都是服务端算好的，
+   * 客户端不再自己判等级与余额。
+   */
+  nationTech(): Promise<NetOutcome<NationTechListView>> {
+    return this.read<NationTechListView>('/nation/tech')
+  }
+
+  /**
+   * POST /nation/tech/research —— 研究一级国家科技（国库出资，走 `sink:NATIONAL_TECH` 核销）。
+   *
+   * <p>即时生效、没有队列与完成时刻；回执带花掉多少与扣完剩多少 —— 国库是公共账，
+   * 界面不回余额就得再拉一次列表才能确认钱只扣了一次。
+   *
+   * <p><b>幂等键在这一条比个人科技更要紧</b>：国库是公共池，弱网重投若不去重，
+   * 症状是同一级研究扣了两笔公共钱，而没有任何一个人的余额因此变少。
+   */
+  researchNationTech(req: Omit<NationTechResearchReq, 'requestId'>): Promise<NetOutcome<NationTechResearchResp>> {
+    return this.mutate<NationTechResearchReq, NationTechResearchResp>('/nation/tech/research', req)
   }
 
   // ---------- 城建（B03） ----------

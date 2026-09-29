@@ -149,6 +149,10 @@ const SKIP = new Set([
   // 要一份可收款成员名单同样是一次读，而且**只在玩家点了「发给成员」之后才发**。
   // 名单本身没有可上报的意图，支出那一枪才记在 treasury_spend 上
   "requestNationPayees",
+  // 国家面板的四个页签（V13-S2）同样是一次读：切到「科技」才发 `/nation/tech`，
+  // 切到「外交」才补一次国家榜（候选目标国）。与 `openNation` / `reloadRankTab` 同一口径 ——
+  // 真正的意图在研究、改关系、任命那三枪上（各打一条）
+  "selectNationTab",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")

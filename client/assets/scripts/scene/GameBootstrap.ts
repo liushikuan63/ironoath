@@ -63,6 +63,7 @@ import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
 import { NetworkNotice } from '../game/network/NetworkNotice'
 import type { UpdateGateDecision } from '../game/release/UpdateGate'
 import type { AppVersionResp } from '../net/generated/OpsProtocol'
+import type { DiplomacyRelation, NationOffice } from '../net/generated/NationProtocol'
 import type { NetOutcome, NetworkSignal } from '../net/NetModule'
 import { TrackClient } from '../game/track/TrackClient'
 import { CityPanelView } from './CityPanelView'
@@ -1328,6 +1329,16 @@ export class GameBootstrap extends Component {
       nation.onDisband = () => { void this.root?.disbandNation() }
       nation.onSpend = draft => { void this.root?.spendTreasury(draft) }
       nation.onRequestPayees = () => this.root?.requestNationPayees()
+      // S2 的四页签与三颗动作：切页签会发读（切到科技才拉 `/nation/tech`），
+      // 三颗动作各是一次真实写入，由编排层发那一枪
+      nation.onSelectTab = tab => { void this.root?.selectNationTab(tab) }
+      nation.onResearchTech = techId => { void this.root?.researchNationTech(techId) }
+      nation.onSetRelation = (targetNationId, relation) => {
+        void this.root?.setNationRelation(targetNationId, relation as DiplomacyRelation)
+      }
+      nation.onAppoint = (playerId, office) => {
+        void this.root?.appointNationOffice(playerId, office as NationOffice)
+      }
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)

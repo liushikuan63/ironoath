@@ -288,6 +288,21 @@ export const TRACK_EVENTS = {
   treasurySpend: 'treasury_spend',
 
   /**
+   * S2 的三条（V13-S2）。与 S1 同一条口径：**一条事件对应一次真实的公共资产或身份变化**。
+   *
+   * <p>看板要答的是：①「国家这套玩法有没有人真的用」——科技研究与任命各多少人；
+   * ②「外交是谁在定」——四类关系各被宣布过多少次，而**撕约只要一个人**，
+   * 所以 HOSTILE 的次数本身就是"局势被谁推着走"的读数。
+   *
+   * <p>**切页签不单独上报**：那是一次读（切到科技才发 `/nation/tech`），
+   * 与 `rank_view` / `openNation` 同一口径。外交的「目标国」也不上报：
+   * 它只是从国家榜里挑的一个 id，而看板要答的是"关系怎么变的"不是"对谁变的"。
+   */
+  nationTechResearch: 'nation_tech_research',
+  nationDiplomacy: 'nation_diplomacy',
+  nationAppoint: 'nation_appoint',
+
+  /**
    * 保存一套编队（B06 §4）。参数 `presetIndex` 与三名武将 id（空位是空串）——
    * 看板上要答的是"玩家到底编不编队"：编队决定缘分与乘区，全是默认编队就说明这一层没人用。
    * **打开编辑器 / 换槽位 / 换选中都不单独上报**：编队是"改完一次提交"，

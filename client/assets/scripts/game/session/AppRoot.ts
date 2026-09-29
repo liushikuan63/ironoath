@@ -95,11 +95,15 @@ import { buildDisclosure } from '../gacha/GachaDisclosure'
 import type { GachaDisclosure } from '../gacha/GachaDisclosure'
 import { buildGachaHistory } from '../gacha/GachaHistory'
 import type { GachaHistoryView } from '../gacha/GachaHistory'
-import { buildNationPanel, cooldownText } from '../nation/NationPanel'
-import type { NationCandidate, NationPanelView, SpendDraft } from '../nation/NationPanel'
+import { buildNationPanel, amountText, cooldownText } from '../nation/NationPanel'
+import type { NationCandidate, NationPanelView, NationTabKey, SpendDraft } from '../nation/NationPanel'
+import {
+  APPOINTABLE_OFFICES, DIPLOMACY_OPTIONS, buildNationSections, diplomacyNotice,
+} from '../nation/NationSections'
 import type {
-  NationLeaveResp, NationResp, NationTreasuryResp,
+  DiplomacyRelation, NationLeaveResp, NationOffice, NationRelationView, NationResp, NationTreasuryResp,
 } from '../../net/generated/NationProtocol'
+import type { NationTechListView } from '../../net/generated/NationTechProtocol'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -660,8 +664,19 @@ export class AppRoot {
   private nationCandidates: NationCandidate[] = []
   /** 上一次操作的结果（成功一句 / 服务端拒绝的理由）。没有则 null。 */
   private nationNotice: string | null = null
+  /** notice 的语气。**默认失败** —— 编排层每一次成功都要显式翻成 `'ok'`。 */
+  private nationNoticeTone: 'ok' | 'warn' = 'warn'
   /** 国库收款人名单已拉到没有 —— 拉过就别反复发那一枪。 */
   private nationPayeesLoaded = false
+  /** S2：当前页签。默认停在国库（余额与流水是这一屏最该先看见的东西）。 */
+  private nationTab: NationTabKey = 'TREASURY'
+  /** S2：国家科技那一棵树。没拉过为 null（面板据它说"这一次没读到"，不是空白）。 */
+  private nationTechResp: NationTechListView | null = null
+  /**
+   * S2：外交关系表。**null = 还没打过一次交道**，不是"没有关系" ——
+   * 服务端只有写口（`/nation/diplomacy`）能拿到这张表，所以第一次打开之前是空的。
+   */
+  private nationRelations: NationRelationView[] | null = null
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -3308,6 +3323,8 @@ export class AppRoot {
     }
     this.nationResp = outcome.data
     this.nationNotice = `已建国：${outcome.data.nation.name}`
+    // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
+    this.nationNoticeTone = 'ok'
     await this.reloadNationTreasury()
     this.deliverNation()
   }
@@ -3323,6 +3340,8 @@ export class AppRoot {
     }
     this.nationResp = outcome.data
     this.nationNotice = `已加入 ${outcome.data.nation.name}`
+    // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
+    this.nationNoticeTone = 'ok'
     await this.reloadNationTreasury()
     this.deliverNation()
   }
@@ -3360,7 +3379,9 @@ export class AppRoot {
     this.nationTreasuryResp = null
     this.nationNotice = `${outcome.data.nationName} 已解散：`
       + `${outcome.data.memberAllianceCount} 个成员联盟进入入籍冷却，`
-      + `核销国库 ${outcome.data.treasuryWrittenOff}`
+      + `核销国库 ${amountText(outcome.data.treasuryWrittenOff)}`
+    // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
+    this.nationNoticeTone = 'ok'
     this.deliverNation()
   }
 
@@ -3369,6 +3390,8 @@ export class AppRoot {
     this.nationResp = null
     this.nationTreasuryResp = null
     this.nationNotice = `已退出 ${resp.nationName}：${cooldownText(resp.cooldownUntil, resp.serverNow)}`
+    // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
+    this.nationNoticeTone = 'ok'
     this.deliverNation()
   }
 
@@ -3406,7 +3429,9 @@ export class AppRoot {
       payeeType: draft.payeeType,
       amount: String(draft.amount),
     })
-    this.nationNotice = `已支出 ${outcome.data.amount}，国库余额 ${outcome.data.balance}`
+    this.nationNotice = `已支出 ${amountText(outcome.data.amount)}，国库余额 ${amountText(outcome.data.balance)}`
+    // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
+    this.nationNoticeTone = 'ok'
     await this.reloadNationTreasury()
     this.deliverNation()
   }
@@ -3448,15 +3473,142 @@ export class AppRoot {
    * 玩家 id，客户端不印裸 id（同 #255 建筑名 / #268 资源名那一族）。
    */
   private deliverNation(): void {
+    const members = this.allianceMembers.map(member => ({ id: member.id, name: member.name }))
     const view = buildNationPanel({
       nation: this.nationResp?.nation ?? null,
       treasury: this.nationTreasuryResp,
       candidates: this.nationCandidates,
       playerId: this.playerId ?? '',
-      memberNames: new Map(this.allianceMembers.map(member => [member.id, member.name])),
+      memberNames: new Map(members.map(member => [member.id, member.name])),
       notice: this.nationNotice,
+      noticeTone: this.nationNoticeTone,
+      tab: this.nationTab,
+      sections: buildNationSections(this.nationTechResp, this.nationRelations,
+        this.nationCandidates, members),
     })
     this.targets.nation?.(view)
+  }
+
+  // ---------- 国家 S2：页签 + 科技 / 外交 / 任命 ----------
+
+  /**
+   * 切页签。
+   *
+   * <p><b>每次切都重拉当前那一份</b>：国家等级、官员、国库余额与关系都一直在变
+   * （周税惰性结清、别人也在花钱与改关系），拿缓存会让玩家照着一份过期的账做决定。
+   *
+   * <p>切到「科技」时才发 `/nation/tech` 那���枪 —— 打开面板不预拉它：
+   * 那是这一屏里最贵的一份，而大多数玩家只是来看一眼国库。
+   */
+  async selectNationTab(tab: NationTabKey): Promise<void> {
+    this.nationTab = tab
+    this.nationNotice = null
+    if (tab === 'TECH' && this.nationTechResp === null && this.nationResp !== null) {
+      await this.loadNationTech()
+    }
+    if (tab === 'DIPLO' && this.nationCandidates.length === 0) {
+      // 外交页的候选目标也来自国家榜（服务端没有"列出全部国家"的端点）
+      await this.loadNationCandidates()
+    }
+    this.deliverNation()
+  }
+
+  /** 拉一次国家科技。失败时理由进 notice，**不清空手里那一份**（与榜/赛季同一条纪律）。 */
+  private async loadNationTech(): Promise<void> {
+    const outcome = await this.api.nationTech()
+    if (outcome.kind === 'ok') {
+      this.nationTechResp = outcome.data
+      return
+    }
+    this.nationTechResp = null
+    this.nationNotice = AppRoot.reason(outcome)
+    this.say('nation', outcome)
+  }
+
+  /**
+   * 研究一级国家科技（国库出资）。
+   *
+   * <p>成功后**立刻重拉科技表**：等级、下一级花费与国库余额全变了，
+   * 而这三样都由服务端算 —— 客户端改一个 `level + 1` 就是第二个家（#281 那一族）。
+   */
+  async researchNationTech(techId: string): Promise<void> {
+    const outcome = await this.api.researchNationTech({ techId })
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.deliverNation()
+      return
+    }
+    this.track(TRACK_EVENTS.nationTechResearch, {
+      techId,
+      cost: String(outcome.data.costTreasury),
+    })
+    // **说行名不说 techId**：行 id 是 `nation_tech_wood` 这种内部值，印上玩家面就是
+    // 「不许把内部 id / 枚举原文印给玩家」那条红线（S1 的国库流水已经栽过一次）。
+    // 名字从刚拉的那份科技表里按 id 取 —— 服务端下发的，客户端不自己拼。
+    const techName = this.nationTechResp?.techs.find(tech => tech.techId === techId)?.name ?? '那一行'
+    this.nationNotice = `研究完成：${techName} 到 Lv${outcome.data.level}，`
+      + `花掉 ${amountText(outcome.data.costTreasury)}，国库剩 ${amountText(outcome.data.treasuryAfter)}`
+    // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
+    this.nationNoticeTone = 'ok'
+    await this.loadNationTech()
+    await this.reloadNationTreasury()
+    this.deliverNation()
+  }
+
+  /**
+   * 变更与另一个国家的外交关系。
+   *
+   * <p>**成功后整张关系表换掉**（`allRelations` 是变更之后那张全表），
+   * 于是第一次打完交道之后，这一页就能显示"与所有国家现在各是什么关系"。
+   */
+  async setNationRelation(targetNationId: string, relation: DiplomacyRelation): Promise<void> {
+    // 关系是协议里的四个枚举之一；不认识的值一律不发出去 ——
+    // 发出去等于让服务端替我们猜一个玩家没选过的关系
+    if (!DIPLOMACY_OPTIONS.some(option => option.key === relation)) {
+      this.nationNotice = '先选一种关系'
+      this.deliverNation()
+      return
+    }
+    const name = this.nationCandidates.find(item => item.nationId === targetNationId)?.name ?? '那个国家'
+    const outcome = await this.api.setNationDiplomacy({ targetNationId, relation })
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.deliverNation()
+      return
+    }
+    this.track(TRACK_EVENTS.nationDiplomacy, { relation })
+    this.nationRelations = outcome.data.allRelations
+    this.nationNotice = diplomacyNotice(name, outcome.data.relation)
+    // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
+    this.nationNoticeTone = 'ok'
+    this.deliverNation()
+  }
+
+  /**
+   * 任命一名成员。
+   *
+   * <p>回执是**操作后的完整国家视图**，所以直接换掉手里那份国家视图 ——
+   * 不必再查一次（少一次往返在弱网下就是少一次超时机会）。
+   */
+  async appointNationOffice(playerId: string, office: NationOffice): Promise<void> {
+    if (!APPOINTABLE_OFFICES.some(item => item.key === office)) {
+      this.nationNotice = '这个官职没有任命入口'
+      this.deliverNation()
+      return
+    }
+    const name = this.allianceMembers.find(member => member.id === playerId)?.name ?? '那名成员'
+    const outcome = await this.api.appointNationOffice({ playerId, office })
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.deliverNation()
+      return
+    }
+    this.track(TRACK_EVENTS.nationAppoint, { office })
+    this.nationResp = outcome.data
+    this.nationNotice = `已任命 ${name}`
+    // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
+    this.nationNoticeTone = 'ok'
+    this.deliverNation()
   }
 
   /** 组装并递一次抽卡面板。 */
