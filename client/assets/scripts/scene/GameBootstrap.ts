@@ -52,6 +52,7 @@ import { SkillPickOverlay } from './SkillPickOverlay'
 import { ComposePickOverlay } from './ComposePickOverlay'
 import { RecruitPanelView } from './RecruitPanelView'
 import { GachaDisclosureView } from './GachaDisclosureView'
+import { GachaHistoryView } from './GachaHistoryView'
 import { LineupEditOverlay } from './LineupEditOverlay'
 import { SocialCreateOverlay } from './SocialCreateOverlay'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
@@ -203,6 +204,8 @@ export class GameBootstrap extends Component {
   /** 军队行上「队列」的菜单（B26 S15）。挂在 Game 节点上，不挂在军队面板里：
    * 面板每为倒计时重渲染一次就会把行 addChild 到父节点末尾，建在面板里的弹层必然被压住 */
   private armyQueue: ChoiceOverlay | null = null
+  /** 「用哪一张加速治疗」（V12）。与 `armyQueue` 同组件不同实例：标题在构造时定死。 */
+  private treatSpeedupPicker: ChoiceOverlay | null = null
   private offlineReport: OfflineReportOverlay | null = null
   /** 引导层（B18）：整屏遮罩 + 气泡，挂在所有面板与导航条之上。 */
   private guide: GuideView | null = null
@@ -1102,6 +1105,23 @@ export class GameBootstrap extends Component {
     node.active = false
   }
 
+  /**
+   * 抽取记录覆盖层（B15 §三 合规三件套的第三件：最近 N 次可查）。
+   * 与概率公示同一种承载方式 —— 都是招募面板打开的一屏，自己建节点、建出来先 `active = false`。
+   */
+  private mountGachaHistory(): void {
+    if (this.node.getChildByName('gachaHistory') !== null) {
+      return
+    }
+    const size = view.getVisibleSize()
+    const node = new Node('gachaHistory')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(size.width, size.height))
+    node.addComponent(GachaHistoryView)
+    node.active = false
+  }
+
   /** 本节点上挂了哪些面板，就接哪些。没挂的面板不会被假装接上（根只会少发那份请求的落地）。 */
   private targets(): PanelTargets {
     this.mountGiftPopup()
@@ -1114,6 +1134,7 @@ export class GameBootstrap extends Component {
     this.mountLineupEditOverlay()
     this.mountSocialCreateOverlay()
     this.mountGachaDisclosure()
+    this.mountGachaHistory()
     const city = this.panel(CityPanelView, 'city')
     const army = this.panel(ArmyPanelView, 'army')
     const hero = this.panel(HeroPanelView, 'hero')
@@ -1141,6 +1162,7 @@ export class GameBootstrap extends Component {
     const lineupEdit = this.panel(LineupEditOverlay, 'lineupEdit')
     const socialCreate = this.panel(SocialCreateOverlay, 'socialCreate')
     const gachaDisclosure = this.panel(GachaDisclosureView, 'gachaDisclosure')
+    const gachaHistory = this.panel(GachaHistoryView, 'gachaHistory')
     // 体力详情弹层：**自己建节点**（与 OfflineReportOverlay 同一种写法，不是编辑器里的 panel）——
     // `/stamina` 与 `/stamina/buy` 此前一处调用都没有，玩家看得见体力条却点不开也买不了。
     const staminaDetail = new StaminaDetailOverlay(this.node)
@@ -1196,6 +1218,8 @@ export class GameBootstrap extends Component {
       equip.onRowAction = (uid, slot, takeOff) => {
         void (takeOff ? this.root?.equipTakeOff(slot) : this.root?.equipWear(uid, slot))
       }
+      // 强化（V11）：一次一级，请求与重拉都在编排层
+      equip.onForge = uid => { void this.root?.forgeEquip(uid) }
     }
     if (expPick !== null) {
       // 升级弹层（V03-d）：视图只喊一声，加减与确认都由编排层处理
@@ -1240,6 +1264,7 @@ export class GameBootstrap extends Component {
       recruit.onPickPool = poolId => this.root?.selectGachaPool(poolId)
       recruit.onDraw = count => { void this.root?.drawGacha(count) }
       recruit.onProbability = () => { void this.root?.openGachaProbability() }
+      recruit.onHistory = () => { void this.root?.openGachaHistory() }
     }
     if (gachaDisclosure !== null) {
       out.gachaDisclosure = disclosure => {
@@ -1247,6 +1272,17 @@ export class GameBootstrap extends Component {
         gachaDisclosure.attach(disclosure)
       }
       gachaDisclosure.onClose = () => gachaDisclosure.node.active = false
+    }
+    if (gachaHistory !== null) {
+      // 打开由编排层发起（`AppRoot.openGachaHistory`，入口在招募面板那颗「抽取记录」）；
+      // 这里只把"画"与三声"喊"接上 —— 翻页要重发请求，所以页码状态住在编排层
+      out.gachaHistory = history => {
+        gachaHistory.node.active = true
+        gachaHistory.attach(history)
+      }
+      gachaHistory.onClose = () => gachaHistory.node.active = false
+      gachaHistory.onPrev = () => { void this.root?.turnGachaHistoryPage(-1) }
+      gachaHistory.onNext = () => { void this.root?.turnGachaHistoryPage(1) }
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
@@ -1282,12 +1318,30 @@ export class GameBootstrap extends Component {
       army.onCancelTrain = unitId => { void this.root?.cancelTraining(unitId) }
       army.onTreat = () => { void this.root?.treatWounded() }
       army.onCollectTreated = () => { void this.root?.collectTreated() }
+      // 「加速治疗」（V12）：军队四格最后一格 —— 点下去先弹"用哪一张训练令"，选择器复用已有的 ChoiceOverlay
+      army.onTreatSpeedUp = () => this.root?.requestTreatSpeedUp()
       army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
       // 行上「队列」→ 编排层判有没有可取消的那一口，菜单再由本层画（B26 S15）
       army.onQueue = unitId => this.root?.openArmyQueue(unitId)
       out.armyQueueChoice = (options, onPick) => {
         // 抬层已由 `ChoiceOverlay.show()` 自己负责（八个使用者同一条时序，不在这里各喊一次）
         this.armyQueue?.show(options, onPick)
+      }
+      // 加速治疗用哪一张训练令（V12）：选项由编排层按 `effectKind` 筛好，这里只画与回抛
+      out.treatSpeedupChoice = (options, onPick) => {
+        const picker = this.treatSpeedupPicker
+        if (picker === null) {
+          return
+        }
+        // `ChoiceOverlay` 回抛的是**选项 id**（它不认识业务对象）：与科技页那份选择器同一条做法 ——
+        // 在这里把 id 映射回整份 choice，业务层就不会拿到一个需要字符串反解的东西
+        const byId = new Map(options.map((option) => [option.id, option]))
+        picker.show(options, (id) => {
+          const choice = byId.get(id)
+          if (choice !== undefined) {
+            onPick(choice)
+          }
+        })
       }
     }
     if (hero !== null) {
@@ -1468,6 +1522,9 @@ export class GameBootstrap extends Component {
     this.offlineReport = new OfflineReportOverlay(this.node)
     this.offlineReport.onJump = jump => this.root?.offlineReportJump(jump)
     this.armyQueue = new ChoiceOverlay(this.node, '这一口队列', 520)
+    // 「用哪一张训练令加速治疗」（V12）：与队列菜单同一个组件、另开一个实例 ——
+    // 标题不同（构造时定死），复用同一个实例会让标题对不上玩家正在做的事
+    this.treatSpeedupPicker = new ChoiceOverlay(this.node, '用哪一张加速', 520)
     this.marchCompose = new MarchComposeOverlay(this.node)
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
       // 出征 / 发起集结 的切换（B26 S12）：编成与目标都不变，只换命令种类

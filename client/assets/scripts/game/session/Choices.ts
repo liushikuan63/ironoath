@@ -110,23 +110,27 @@ export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
 }
 
 /**
- * 能推进当前研究的那一种道具，一次给两个档位：**用 1 张**与**把手里的全用掉**。
+ * 加速道具的候选：**按服务端下发的 `effectKind` 筛**，一次给两个档位（用 1 张 / 全用）。
  *
  * <p><b>为什么敢给"全用"</b>：服务端对 `count` 只校验"为正"与"背包里够"，而且**用超了会退**
  * （`TechAppService.applySpeedUp` 里那句 `refundItems`：研究提前完成后剩下的张数原路归还），
  * 所以"一次交完"不需要玩家自己算账 —— 协议注释也写明研究后期一步以天计，一张一张点才是折磨。
  *
- * <p><b>筛的是服务端下发的 `effectKind` 这一列，不按 id 硬编码</b>：`type=SPEEDUP` 底下还有建造令与
- * 训练令，走到 `/tech/speedUp` 会被服务端拒（协议注释：宁可响，也不静默按另一种加速处理）——
+ * <p><b>筛的是服务端下发的 `effectKind` 这一列，不按 id 硬编码</b>：`type=SPEEDUP` 底下有建造令、
+ * 训练令与研究令三种，走错端点会被服务端拒（协议注释：宁可响，也不静默按另一种加速处理）——
  * 与其让玩家挑一颗必然被拒的，不如在这一层就不列出来。
+ *
+ * <p>本函数是把原先只服务研究的那一份**参数化**（V12）：治疗与训练共用同一类道具
+ * （`ArmyAppService.treatSpeedUp` 的注释："两者的语义完全相同，再开一种只会让玩家背包里多两种功能重复的道具"），
+ * 所以调用方只需要给出正确的 `effectKind`。
  */
-export function buildResearchSpeedupChoices(bag: BagListResp | null): readonly ResearchSpeedupChoice[] {
+function buildSpeedupItemChoices(bag: BagListResp | null, effectKind: string): readonly ResearchSpeedupChoice[] {
   if (bag === null) {
     return []
   }
   const out: ResearchSpeedupChoice[] = []
   for (const item of bag.items) {
-    if (item.type !== 'SPEEDUP' || item.effectKind !== 'REDUCE_RESEARCH_SECONDS') {
+    if (item.type !== 'SPEEDUP' || item.effectKind !== effectKind) {
       continue
     }
     // `BagItem` 里没有 `effectValue` —— 一张减多少秒**没下发**，所以这句不许编：
@@ -143,6 +147,22 @@ export function buildResearchSpeedupChoices(bag: BagListResp | null): readonly R
     }
   }
   return out
+}
+
+/** 研究加速的候选（`effectKind=REDUCE_RESEARCH_SECONDS`，走 `/tech/speedUp`）。 */
+export function buildResearchSpeedupChoices(bag: BagListResp | null): readonly ResearchSpeedupChoice[] {
+  return buildSpeedupItemChoices(bag, 'REDUCE_RESEARCH_SECONDS')
+}
+
+/**
+ * 训练 / 治疗加速的候选（`effectKind=REDUCE_TRAIN_SECONDS`）。
+ *
+ * <p><b>为什么两者共用一份</b>：`ArmyAppService.treatSpeedUp` 里写明治疗与训练共用"减少秒数"这一类道具 ——
+ * 服务端要求 `itemId` 的 `effectKind` 必须正是 `REDUCE_TRAIN_SECONDS`（"秒数只能来自道具配置"）。
+ * 而 `/army/treatSpeedUp` 的请求体只有 `{requestId, itemId}`（治疗是**全局一批**，没有 unitId/targetId）。
+ */
+export function buildTrainSpeedupChoices(bag: BagListResp | null): readonly ResearchSpeedupChoice[] {
+  return buildSpeedupItemChoices(bag, 'REDUCE_TRAIN_SECONDS')
 }
 
 /** 未放置建筑候选。地块能否放置由玩家点选坐标后交给服务端判定。 */

@@ -31,6 +31,8 @@ const CARD_WIDTH = 620
 const CARD_HEIGHT = 600
 const ROW_HEIGHT = 46
 const PADDING = 16
+/** 行右端的「强化」键区宽度：行的触摸命中区到它左沿为止（几何分离的理由写在 `drawRow` 里）。 */
+const FORGE_ZONE = 104
 const BOTTOM_RESERVED = 56
 
 @ccclass('EquipPanelView')
@@ -44,6 +46,14 @@ export class EquipPanelView extends Component {
    * 表现层只喊一声，请求由编排层发（铁律 2）。
    */
   onRowAction: ((uid: string, slot: EquipSlot, takeOff: boolean) => void) | null = null
+
+  /**
+   * 强化某一件（V11）。表现层只喊一声，请求由编排层发（铁律 2）。
+   *
+   * <p>能不能强化**不在这里判**：`row.canForge` 与 `row.reasonText` 都是服务端
+   * `canForge`/`blockReason` 的同一次计算，客户端只负责画成亮键还是灰键。
+   */
+  onForge: ((uid: string) => void) | null = null
 
   /** 下发一份视图即显示。**每次都重画**：穿戴与强化都会改这里的数据。 */
   render(view: EquipViewData): void {
@@ -137,18 +147,26 @@ export class EquipPanelView extends Component {
 
   private drawRow(row: EquipRow, y: number, index: number): void {
     const usable = CARD_WIDTH - PADDING * 2
+    // **命中区与「强化」键区几何分开**：键是兄弟节点，而 Cocos 的触摸会派发给所有命中的节点
+    // （引擎声明里没有 `propagationStopped` 可用来阻断，本轮已核 `client/temp/declarations/cc.d.ts` 零命中），
+    // 所以行的命中区必须真的不覆盖键区。渲染面仍是整行：锚点挪到左端 + 位置左移，让
+    // "底板照画满整行"与"命中区只到键区左沿"同时成立。
     const node = new Node(`equip-${row.uid}`)
     this.node.addChild(node)
-    node.addComponent(UITransform).setContentSize(usable, ROW_HEIGHT - 4)
-    node.setPosition(new Vec3(0, y, 0))
+    const transform = node.addComponent(UITransform)
+    transform.setAnchorPoint(0, 0.5)
+    transform.setContentSize(usable - FORGE_ZONE, ROW_HEIGHT - 4)
+    node.setPosition(new Vec3(-usable / 2, y, 0))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = row.canForge ? (index % 2 === 0 ? COLOR_ROW : COLOR_ROW_ALT) : COLOR_ROW_LOCKED
-    graphics.rect(-usable / 2, -ROW_HEIGHT + 2, usable, ROW_HEIGHT - 4)
+    graphics.rect(0, -ROW_HEIGHT + 2, usable, ROW_HEIGHT - 4)
     graphics.fill()
     this.rows.push(node)
 
     const left = -usable / 2 + 10
-    const right = usable / 2 - 10
+    // 右列文字整体让开键区：**第二行的费用也要让** —— 它在键下沿附近，最右对齐时会顶到键上
+    // （首跑截图抓到的：读数全绿，而"强化消耗 铁矿 120"被键压掉一半）
+    const right = usable / 2 - 10 - FORGE_ZONE
     this.label(`${row.name}  ${row.rarityText}`, row.canForge ? COLOR_TEXT : COLOR_TEXT_DIM,
       18, left, y - 12, 'left')
     this.label(`${row.slotText} · ${row.forgeText}`, COLOR_TEXT_DIM, 14, left + 210, y - 12, 'left')
@@ -165,12 +183,43 @@ export class EquipPanelView extends Component {
     const cost = row.worn ? `${row.wornText}${row.costText === null ? '' : ` · ${row.costText}`}`
       : (row.costText ?? row.wornText)
     this.label(cost, COLOR_TEXT_DIM, 14, right, y - 31, 'right')
+    // 强化键与"能不能装备"是两件事：前者看这一件自己的 canForge，后者看有没有选武将
+    this.forgeButton(row, y, usable / 2 - FORGE_ZONE / 2)
 
     // 只有**给得出动作**的行才吃触摸：没有动作的行不该长得像能点（点了没反应比不给按钮更糟）
     if (row.actionText !== null) {
       const takeOff = row.actionText === '卸下'
       node.on('touch-start', () => this.onRowAction?.(row.uid, row.slot, takeOff))
     }
+  }
+
+  /**
+   * 「强化」键（V11）。
+   *
+   * <p><b>灰键不吃触摸</b>（与招募面板同一条纪律）：点了没反应比不给按钮更糟。
+   * 灰的原因不去这里复述 —— 右侧那一行本来就写着 `row.reasonText`（"已满级" / "铁不够"），
+   * 在按钮上再写一遍就是同一句话的两个产地。
+   */
+  private forgeButton(row: EquipRow, y: number, x: number): void {
+    const width = FORGE_ZONE - 10
+    const height = ROW_HEIGHT - 12
+    const node = new Node(`forge-${row.uid}`)
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(width, height)
+    node.setPosition(new Vec3(x, y, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = row.canForge ? COLOR_ROW_ALT : COLOR_ROW_LOCKED
+    graphics.roundRect(-width / 2, -height / 2, width, height, 6)
+    graphics.fill()
+    graphics.strokeColor = row.canForge ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+    graphics.lineWidth = 1
+    graphics.roundRect(-width / 2, -height / 2, width, height, 6)
+    graphics.stroke()
+    if (row.canForge) {
+      node.on('touch-start', () => this.onForge?.(row.uid))
+    }
+    this.rows.push(node)
+    this.label('强化', row.canForge ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 16, x, y, 'center')
   }
 
   private drawClose(): void {

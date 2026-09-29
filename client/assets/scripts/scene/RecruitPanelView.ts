@@ -57,6 +57,8 @@ export class RecruitPanelView extends Component {
   onDraw: ((count: number) => void) | null = null
   /** 打开合规公示那一屏。 */
   onProbability: (() => void) | null = null
+  /** 打开抽取记录那一屏（B15 §三：公示之外还要查得到自己的记录）。 */
+  onHistory: (() => void) | null = null
 
   override onLoad(): void {
     this.buildBackground()
@@ -74,6 +76,7 @@ export class RecruitPanelView extends Component {
     this.onPickPool = null
     this.onDraw = null
     this.onProbability = null
+    this.onHistory = null
   }
 
   /** 装载整块视图（由 `AppRoot.deliverGacha` 下发，每次状态变化都重发一份完整的）。 */
@@ -115,7 +118,13 @@ export class RecruitPanelView extends Component {
     this.label(data.balanceText === null ? '余额读取中' : `余额 ${data.balanceText}`,
       COLOR_HINT, 15, PANEL_WIDTH / 2 - PADDING, top - 16, 'right')
     // 上一次失败的理由写在标题下面那一行：抽卡是花钱的动作，"为什么没抽成"必须看得见
-    this.label(data.notice ?? '', COLOR_WARNING, 14, -PANEL_WIDTH / 2 + PADDING, top - 42, 'left')
+    // 这一行右侧留给「抽取记录」那颗键，所以理由先按**字符**截断（同 #321 那一族"没盒子导致的裁字"）
+    this.label(RecruitPanelView.clampNotice(data.notice ?? ''), COLOR_WARNING, 14,
+      -PANEL_WIDTH / 2 + PADDING, top - 42, 'left')
+    // 记录入口与"概率公示"分开摆：两颗键都是合规要求，但一个是事前告知、一个是事后可查，
+    // 合成一颗会让"我要核对我抽到的"多走一步
+    this.button('history', '抽取记录', PANEL_WIDTH / 2 - PADDING - 55, top - 42, 110, true,
+      () => this.onHistory?.())
 
     let y = top - 42
     for (const row of data.rows) {
@@ -180,18 +189,26 @@ export class RecruitPanelView extends Component {
     }
     const single = data.selected?.canDrawOnce ?? false
     const ten = data.selected?.canDrawTen ?? false
-    this.button('drawOnce', data.singleText, -PANEL_WIDTH / 2 + PADDING + 110, y, single,
+    this.button('drawOnce', data.singleText, -PANEL_WIDTH / 2 + PADDING + 110, y, 200, single,
       () => this.onDraw?.(1))
-    this.button('drawTen', data.tenText, -PANEL_WIDTH / 2 + PADDING + 330, y, ten,
+    this.button('drawTen', data.tenText, -PANEL_WIDTH / 2 + PADDING + 330, y, 200, ten,
       () => this.onDraw?.(10))
-    this.button('probability', '概率公示', PANEL_WIDTH / 2 - PADDING - 84, y, true,
+    this.button('probability', '概率公示', PANEL_WIDTH / 2 - PADDING - 84, y, 200, true,
       () => this.onProbability?.())
   }
 
+  /**
+   * 提示行截断：这一行右侧要给「抽取记录」留位。按**字符**数算而不是字节 ——
+   * 中文一个字就是一个显示单位，按字节切会把一个汉字劈成半个。
+   */
+  private static clampNotice(text: string): string {
+    const chars = Array.from(text)
+    return chars.length <= 14 ? text : `${chars.slice(0, 14).join('')}…`
+  }
+
   /** 按钮：灰掉时**不吃触摸**（点了也不会发请求），与觉醒/合成弹层同一条纪律。 */
-  private button(name: string, text: string, x: number, y: number, enabled: boolean,
+  private button(name: string, text: string, x: number, y: number, width: number, enabled: boolean,
     onClick: () => void): void {
-    const width = 200
     const graphics = this.surface(name, x, y, width, BUTTON_HEIGHT)
     // 这里刻意用 Graphics 而不是九宫格按钮图：截图上按钮"只剩字、没有底"，
     // 而按钮底是"这一下能不能点"的唯一视觉信号（灰/亮两种态都靠它承载）

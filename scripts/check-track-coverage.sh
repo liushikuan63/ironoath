@@ -78,6 +78,9 @@ const SKIP = new Set([
   // 研究那一行的「加速」（B20）同一条口径：它只是问"用哪一张"，
   // 真正"吃掉一张推进研究"那一下在 speedUpResearch 里打 `tech_speed_up` —— 两处都打会把一张记成两张
   "requestResearchSpeedUp",
+  // 加速治疗同一条口径（V12）：它只是问"用哪一张训练令"，
+  // 真正"吃掉一张"那一下在 armyTreatSpeedUp 里打 `speedup_used` —— 两处都打会把一张记成两张
+  "requestTreatSpeedUp",
   // 升级弹层的"开弹层"与"加减一件"：真正要量的是"喂下去"那一下（在 confirmExpPick 里打 hero_level_up），
   // 开弹层与步进都还不是意图 —— 与上面的 beginMarchCompose / pickMarchUnit 同一条理由
   "openExpPick",
@@ -103,6 +106,12 @@ const SKIP = new Set([
   "selectGachaPool",
   // 概率公示是一次读（B06 §6 的合规屏），不是玩家意图；要量"有没有人看公示"是独立的埋点设计
   "openGachaProbability",
+  // 抽取记录与公示是同一种动作：都是招募面板打开的**一次读**（B15 §三 合规屏，不花钱、不改存档）。
+  // 与上面那条同口径 —— 要量"多少玩家核对了自己的记录"是独立的埋点批次，不是在这里补一条
+  "openGachaHistory",
+  // 翻页不是意图：本仓对翻页的既有口径见 `rank_view`（"打开了一张榜单；翻页不单独上报"）。
+  // 每翻一页记一条只会让"打开过记录页"的次数被自己的翻页冲垮
+  "turnGachaHistoryPage",
   // 编队编辑器同一条口径：意图是"把这一队提交上去"（saveLineup 里打 hero_lineup_save）。
   // 开编辑器是去看现在怎么排的，点槽位与换选中都是同一次编辑的中间态（什么都没改到存档）
   "openLineupEdit",

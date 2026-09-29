@@ -93,6 +93,8 @@ import { buildGachaPanel, TEN_DRAW_COUNT } from '../gacha/GachaPanel'
 import type { GachaBalances, GachaPanelView } from '../gacha/GachaPanel'
 import { buildDisclosure } from '../gacha/GachaDisclosure'
 import type { GachaDisclosure } from '../gacha/GachaDisclosure'
+import { buildGachaHistory } from '../gacha/GachaHistory'
+import type { GachaHistoryView } from '../gacha/GachaHistory'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -106,11 +108,12 @@ import { claimActivityReq } from '../activity/ActivityPanel'
 import {
   buildArmyQueueChoices, buildChestOpenChoices, buildChatActionChoices, buildLineupChoices,
   buildResearchSpeedupChoices, buildShareChannelChoices, buildSpeedupChoices,
+  buildTrainSpeedupChoices,
 } from './Choices'
 import type {
   ChatActionChoice, ChoiceOption, LineupChoice, ResearchSpeedupChoice, ShareChannelChoice, SpeedupChoice,
 } from './Choices'
-import type { GiftPopupResp } from '../../net/generated/PayProtocol'
+import type { GachaHistoryResp, GiftPopupResp } from '../../net/generated/PayProtocol'
 import type { PayView } from '../pay/GiftPayFlow'
 import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
@@ -363,6 +366,12 @@ export interface PanelTargets {
    * 公示面板此前是一个从没被挂载过的组件 —— 它的组装函数吃配置行，而客户端只有类型没有数据。
    */
   gachaDisclosure?(view: GachaDisclosure): void
+
+  /**
+   * 抽取记录那一屏（B15 §三 合规三件套的第三件：最近 N 次可查）。
+   * 与 `gachaDisclosure` 分开两个口：一个是事前告知，一个是事后可查，合成一个会让两种失败分不开。
+   */
+  gachaHistory?(view: GachaHistoryView): void
   /**
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
@@ -414,6 +423,13 @@ export interface PanelTargets {
   speedupTargetChoice?(options: readonly SpeedupChoice[], onPick: (targetId: string) => void): void
   /** 军队那一行的「队列」菜单（B26 S15）：选项与"点了做什么"都由编排层给，面板只画与回抛 */
   armyQueueChoice?(options: readonly ChoiceOption[], onPick: (id: string) => void): void
+  /**
+   * 用哪一张训练令加速治疗（V12）。选项由编排层按 `effectKind` 筛好，面板只画与回抛 ——
+   * 与 `speedupTargetChoice` 分开，是因为两者回抛的东西不同：那个回 `targetId`（给 `/item/use`），
+   * 这个回 `itemId`（给 `/army/treatSpeedUp`，一次只吃一张）。
+   */
+  treatSpeedupChoice?(options: readonly ResearchSpeedupChoice[],
+    onPick: (choice: ResearchSpeedupChoice) => void): void
   /** 宝箱那一行的「开几个」选择器。选项按手里有几个给（逐箱上限在 chest 表里，没下发）。 */
   chestOpenChoice?(options: readonly ChoiceOption[], onPick: (id: string) => void): void
   /** 一次开箱的回执：实际开了几个、开出什么、装不下的那部分转了邮件。 */
@@ -598,6 +614,10 @@ export class AppRoot {
   private gachaPoolId: string | null = null
   private gachaLast: GachaDrawResp | null = null
   private gachaNotice: string | null = null
+  /** 抽取记录那一屏：响应留一份（翻页要在本地切段），页码是"看的是哪一页"的唯一来源。 */
+  private gachaHistoryResp: GachaHistoryResp | null = null
+  private gachaHistory: GachaHistoryView | null = null
+  private gachaHistoryPage = 0
 
   // ---------- 聊天状态（B22 §一 1） ----------
 
@@ -1041,6 +1061,53 @@ export class AppRoot {
   collectTreated(): Promise<void> {
     this.track(TRACK_EVENTS.armyTreat, { action: 'collect' })
     return this.write('army', this.api.armyCollectTreated({}), ['army', 'reddot'])
+  }
+
+  /**
+   * 军队：加速正在治疗的那一批（V12，`/army/treatSpeedUp`）。
+   *
+   * <p><b>请求体只有 `{requestId, itemId}`</b>（`ArmyTreatSpeedUpReq`）—— 治疗是**全局一批**，
+   * 没有 unitId / targetId。`itemId` 必须是 `REDUCE_TRAIN_SECONDS` 那一类（治疗与训练共用，
+   * 服务端原话："两者的语义完全相同"），候选取 `buildTrainSpeedupChoices`。
+   *
+   * <p><b>一次只吃一张</b>（服务端扣 1 个并把它减掉的秒数回在回执里），与研究的 `count` 不同 ——
+   * 所以这里没有档位可挑，选择器只回答"用哪一种训练令"。
+   */
+  armyTreatSpeedUp(itemId: string): Promise<void> {
+    this.track(TRACK_EVENTS.speedupUsed, { target: 'hospital', source: 'TREAT' })
+    return this.write('army', this.api.armyTreatSpeedUp({ itemId }), ['army', 'bag', 'reddot'])
+  }
+
+  /**
+   * 玩家点了「加速治疗」：先问用哪一张训练令，手里一张都没有就明说。
+   *
+   * <p>与 `requestResearchSpeedUp` 同一条纪律：**不给一颗点开只会失败的键** ——
+   * "没在治疗"与"没有可用道具"都在这里拦下来并给人话，而不是让玩家按下去收一个错误码。
+   * 判"在不在治疗"读的是服务端下发的 `hospital.treating`，客户端不自己算倒计时。
+   */
+  requestTreatSpeedUp(): void {
+    const hospital = this.armyResp?.hospital
+    if (hospital === null || hospital === undefined || hospital.treating !== true) {
+      this.rejectNeeds('army', '现在没有在治疗的伤兵，用不了加速')
+      return
+    }
+    if (this.bagResp === null) {
+      // "还没读到"与"手里没有"是两句话（与研究加速同一条口径）
+      this.rejectNeeds('army', '道具清单还没读到，稍后再试')
+      return
+    }
+    const options = buildTrainSpeedupChoices(this.bagResp)
+    if (options.length === 0) {
+      this.rejectNeeds('army', '手里没有训练令（建造令与研究令用不到治疗上）')
+      return
+    }
+    if (this.targets.treatSpeedupChoice === undefined) {
+      this.rejectNeeds('army', pickUnavailable('加速道具'))
+      return
+    }
+    this.targets.treatSpeedupChoice(options, (picked) => {
+      void this.armyTreatSpeedUp(picked.itemId)
+    })
   }
 
   /**
@@ -2573,6 +2640,22 @@ export class AppRoot {
     return this.write('equip', this.api.heroEquip({ heroId, slot, equipUid: null }), ['hero', 'equip'])
   }
 
+  /**
+   * 强化**一件**装备一级（V11；B20 块②：纯消耗、必成）。
+   *
+   * <p><b>成功后重拉三样</b>：`equip`（等级、三维与下一级价格都在服务端那份视图里，**不本地 +1**）、
+   * `resources`（扣的是铁，资源条必须跟着变）、`hero`（这件穿在身上时战力才涨 ——
+   * 契约里 `powerDelta` 那句"不是 0 就说明它此刻确实作用于某个武将"就是这个意思）。
+   *
+   * <p><b>不带 heroId</b>：强化看的是"这一件"，与它此刻穿在谁身上无关；能不能强化由服务端的
+   * `canForge` / `blockReason` 说了算，客户端不自己拿 `forgeLevel` 与 `forgeMax` 比一遍
+   * （契约注释写明：两份判定的分叉不报错，症状是"按钮亮着却按失败"）。
+   */
+  forgeEquip(uid: string): Promise<void> {
+    this.track(TRACK_EVENTS.equipForge)
+    return this.write('equip', this.api.forgeEquip({ equipUid: uid }), ['equip', 'resources', 'hero'])
+  }
+
   // ---------- 武将升级（V03-d：口径＝逐件选数量） ----------
 
   /**
@@ -3058,6 +3141,54 @@ export class AppRoot {
     } catch (error) {
       this.rejectNeeds('gacha', `概率公示数据异常：${(error as Error).message}`)
     }
+  }
+
+  /**
+   * 打开「抽取记录」（B15 §三 合规三件套的第三件：最近 N 次可查）。
+   *
+   * <p><b>每次打开都重拉</b>：它要答的问题是"我刚抽的那一枪在不在"，缓存一份就会漏掉刚抽的那次。
+   * 翻页只重画不重拉 —— 服务端给的是完整窗口（最近 50 条），翻页是本地切段。
+   */
+  async openGachaHistory(): Promise<void> {
+    this.gachaHistoryPage = 0
+    const outcome = await this.api.gachaHistory()
+    if (outcome.kind !== 'ok') {
+      this.rejectNeeds('gacha', AppRoot.reason(outcome))
+      return
+    }
+    this.gachaHistoryResp = outcome.data
+    this.deliverGachaHistory()
+  }
+
+  /** 翻页：只重画不重拉。页码越界由数据层夹回，这里不做第二遍判定。 */
+  turnGachaHistoryPage(delta: number): void {
+    const view = this.gachaHistory
+    if (view === null) {
+      return
+    }
+    this.gachaHistoryPage = view.page + delta
+    this.deliverGachaHistory()
+  }
+
+  /**
+   * 组装并递一次记录页。
+   *
+   * <p>名字表来自**随行下发的那两份**（`/gacha/pools` 与 `/hero/list`）：记录里只有
+   * `poolId` / `heroId`，客户端没有 gacha 表也没有 hero 表，自己拼名字会在表改名之后对玩家说谎
+   * （#255 建筑名 / #268 资源名 / #303 兵种名那一族）。
+   */
+  private deliverGachaHistory(): void {
+    const resp = this.gachaHistoryResp
+    if (resp === null) {
+      return
+    }
+    const view = buildGachaHistory(resp, {
+      poolNames: new Map((this.gachaResp?.pools ?? []).map(pool => [pool.poolId, pool.name])),
+      heroNames: new Map((this.heroResp?.heroes ?? []).map(hero => [hero.heroId, hero.name])),
+    }, this.gachaHistoryPage)
+    this.gachaHistory = view
+    this.gachaHistoryPage = view.page
+    this.targets.gachaHistory?.(view)
   }
 
   /** 组装并递一次抽卡面板。 */

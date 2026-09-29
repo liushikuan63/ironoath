@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   buildArmyQueueChoices, buildBuildChoices, buildChestOpenChoices, buildLineupChoices,
   buildResearchSpeedupChoices,
-  buildSpeedupChoices,
+  buildSpeedupChoices, buildTrainSpeedupChoices,
 } from '../assets/scripts/game/session/Choices'
 import type { ArmyListResp } from '../assets/scripts/net/generated/ArmyProtocol'
 import type { CityListResp } from '../assets/scripts/net/generated/CityProtocol'
@@ -195,4 +195,21 @@ test('候选里不许编"一张减多少秒"——BagItem 没下发 effectValue'
   } as never)[0]
   assert.equal(/减|分|秒/.test(one?.detail ?? ''), false, `detail 写的是「${one?.detail}」`)
   assert.match(one?.detail ?? '', /持有 3 张/)
+})
+
+test('治疗加速只列训练令 —— 与服务端 treatSpeedUp 的校验同源（V12）', () => {
+  const bag = {
+    items: [
+      { itemId: 'i_train', name: '一小时训练令', type: 'SPEEDUP', effectKind: 'REDUCE_TRAIN_SECONDS', count: 4 },
+      { itemId: 'i_build', name: '一小时建造令', type: 'SPEEDUP', effectKind: 'REDUCE_BUILD_SECONDS', count: 9 },
+      { itemId: 'i_research', name: '一小时研究令', type: 'SPEEDUP', effectKind: 'REDUCE_RESEARCH_SECONDS', count: 2 },
+    ],
+  } as never
+  assert.deepEqual(buildTrainSpeedupChoices(bag).map((o) => `${o.itemId}:${o.count}`),
+    ['i_train:1', 'i_train:4'],
+    '服务端要求 effectKind 正是 REDUCE_TRAIN_SECONDS，挑错了会被 ITEM_CANNOT_USE 拒 —— 所以不列出来')
+  // 同一个参数化函数的两条路径各筛各的：研究那一半一字不变（改这一格不许动到它）
+  assert.deepEqual(buildResearchSpeedupChoices(bag).map((o) => o.itemId),
+    ['i_research', 'i_research'])
+  assert.deepEqual(buildTrainSpeedupChoices(null), [], '背包没读到不猜')
 })

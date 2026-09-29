@@ -93,7 +93,7 @@ import type {
 import type {
   ActivityClaimReq, ActivityClaimResp, ActivityListResp,
 } from '../../net/generated/ActivityProtocol'
-import type { CreateOrderReq, CreateOrderResp, GiftPopupResp, OrderStatusResp } from '../../net/generated/PayProtocol'
+import type { CreateOrderReq, CreateOrderResp, GachaHistoryResp, GiftPopupResp, OrderStatusResp } from '../../net/generated/PayProtocol'
 import type {
   GuideProgressReq, GuideProgressResp, GuideScriptResp,
 } from '../../net/generated/GuideProtocol'
@@ -105,7 +105,7 @@ import type {
   TechCancelReq, TechCancelResp, TechListView, TechResearchReq, TechResearchResp,
   TechSpeedUpReq, TechSpeedUpResp,
 } from '../../net/generated/TechProtocol'
-import type { EquipInstanceListView } from '../../net/generated/EquipProtocol'
+import type { EquipForgeReq, EquipForgeResp, EquipInstanceListView } from '../../net/generated/EquipProtocol'
 
 export interface GameApiDeps {
   readonly net: NetModule
@@ -210,6 +210,18 @@ export class GameApi {
    */
   equipInstances(): Promise<NetOutcome<EquipInstanceListView>> {
     return this.read<EquipInstanceListView>('/equip/instances')
+  }
+
+  /**
+   * POST /equip/forge。强化**一件**装备一级（B20 块②：纯消耗、必成，没有「一键 +5」）。
+   *
+   * <p><b>必须带幂等键</b>：契约里写明这是全链"唯一一处『重试比不重试更糟』的地方" ——
+   * 双击或客户端重试会一次扣两级铁。`requestId` 由请求层注入（与城建/训练/研究同一套机制）。
+   *
+   * <p>入参要 **uid（实例号）不是配置行 id**：传行 id 服务端回 `PARAM_INVALID`。
+   */
+  forgeEquip(req: Omit<EquipForgeReq, 'requestId'>): Promise<NetOutcome<EquipForgeResp>> {
+    return this.mutate<EquipForgeReq, EquipForgeResp>('/equip/forge', req)
   }
 
   /** POST /stamina/buy。扣金币与体力上限判定都在服务端。 */
@@ -378,6 +390,17 @@ export class GameApi {
   /** GET /gacha/probability。合规公示的数据源，必须原文展示（B06 §6）。 */
   gachaProbability(poolId: string): Promise<NetOutcome<GachaProbResp>> {
     return this.read<GachaProbResp>('/gacha/probability', { poolId })
+  }
+
+  /**
+   * GET /gacha/history。最近 N 次抽取记录 —— B15 §三 合规三件套的第三件
+   * （概率公示 + 最近 50 次可查 + 日志保留 90 天，缺一即公示不实）。
+   *
+   * <p><b>只读、不进离线队列、不带幂等键</b>：它不改变任何状态，重放一次也只是再读一遍。
+   * 条数窗口与保留天数都由服务端下发，客户端不截断、不推算。
+   */
+  gachaHistory(): Promise<NetOutcome<GachaHistoryResp>> {
+    return this.read<GachaHistoryResp>('/gacha/history')
   }
 
   // ---------- 世界大地图（B07 / B08） ----------

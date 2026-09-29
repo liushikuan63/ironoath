@@ -19,6 +19,26 @@ import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
+import { makeStubRead } from './lib/route-stub.mjs'
+
+/**
+ * V11 的夹具模式（`EQUIP_STUB=1`）。
+ *
+ * <p><b>为什么需要它</b>：dev 上**没有任何途径拿到一件装备** —— `scripts/verify-b20.sh:182` 记着这条
+ * （"全仓库没有一张表发放装备"，#165 ⑥），新号既没有装备也没有跳门槛的后门。
+ * 于是"强化键点得动、请求体带的是 uid 与幂等键、灰键零请求"这三条在真后端上**永远量不到**。
+ * 夹具把这两件（一件能强化、一件满级）注入 `GET /equip/instances`，判据就能失败；
+ * 真实读数仍会打印在"后端现状"那一行，不混。
+ */
+const STUB = process.env.EQUIP_STUB === '1'
+const STUB_INSTANCES = [
+  { uid: 'e_probe_forgeable', equipId: 'equip_iron_sword', name: '铁剑', slot: 'WEAPON', rarity: 'R',
+    forgeLevel: 0, forgeMax: 10, mightFixed: 120000, commandFixed: 0, wisdomFixed: 0,
+    nextCostIron: 120, canForge: true, blockReason: 'NONE', wornByHeroId: null },
+  { uid: 'e_probe_maxed', equipId: 'equip_iron_armor', name: '铁甲', slot: 'ARMOR', rarity: 'N',
+    forgeLevel: 10, forgeMax: 10, mightFixed: 0, commandFixed: 100000, wisdomFixed: 0,
+    nextCostIron: 0, canForge: false, blockReason: 'MAX_LEVEL', wornByHeroId: null },
+]
 
 const OUT = process.env.EQUIP_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/equip-verify')
 mkdirSync(OUT, { recursive: true })
@@ -117,15 +137,30 @@ page.on('pageerror', (error) => errors.push(error.message))
 page.on('console', (message) => {
   if (message.type() === 'error') errors.push(message.text())
 })
+/** V11：拦截 `POST /equip/forge` —— 判"那颗键到底发出去没有"，而不是"点了没报错"。 */
+const forgePosts = []
 page.on('request', (request) => {
   const header = request.headers()['x-player-id']
   if (header) {
     playerId = header
   }
+  if (request.method() === 'POST' && request.url().endsWith('/equip/forge')) {
+    try {
+      forgePosts.push(JSON.parse(request.postData() ?? '{}'))
+    } catch (error) {
+      forgePosts.push({ parseError: String(error) })
+    }
+  }
 })
 
 const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'hero')
+if (STUB) {
+  // 必须挂在 goto **之前**（深链一进去就发请求，晚挂等于那一格读到空态 —— route-stub 头注释里那条坑）
+  const stubRead = makeStubRead(context)
+  stubRead('**/equip/instances', { instances: STUB_INSTANCES })
+  console.log('  （夹具模式：/equip/instances 由桩提供两件 —— 一件能强化、一件满级）')
+}
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
 // 自检：产物里那两处写死的后端地址有没有真的被改写成本轮要打的那棵。
 // 漏了这一句，传错变量名就是"打到另一台机器上读数"，红得像是产品缺陷（台账 #371）。
@@ -146,6 +181,8 @@ if (playerId === null) {
 const instances = await fetchJson('/equip/instances', playerId)
 const heroes = await fetchJson('/hero/list', playerId)
 console.log(`  后端现状：instances=${instances.instances.length} heroes=${(heroes.heroes ?? []).length}`)
+// 对账用哪一份：桩模式下以夹具为准（页面显示的就是夹具），否则以后端为准 —— 两者不混，真实读数仍打印在上面那行
+const instancesList = STUB ? STUB_INSTANCES : instances.instances
 
 // ① 入口：真点武将行上的「装备库」
 const clicked = await clickArmory(page)
@@ -176,10 +213,10 @@ if (snap === null) {
 }
 check('打开后装备页激活', snap.active, true)
 checkTrue('标题是「装 备」', has(snap.labels, '装 备'))
-checkTrue(`汇总行照抄服务端（已装备 ${instances.instances.filter((i) => i.wornByHeroId).length} / 共 ${instances.instances.length} 件）`,
-  has(snap.labels, `已装备 ${instances.instances.filter((i) => i.wornByHeroId).length} / 共 ${instances.instances.length} 件`))
+checkTrue(`汇总行照抄服务端（已装备 ${instancesList.filter((i) => i.wornByHeroId).length} / 共 ${instancesList.length} 件）`,
+  has(snap.labels, `已装备 ${instancesList.filter((i) => i.wornByHeroId).length} / 共 ${instancesList.length} 件`))
 
-const first = instances.instances[0]
+const first = instancesList[0]
 if (first === undefined) {
   // 这条是首跑截图抓出来的：数据到了但一件装备都没有，而面板写着"正在载入…"（玩家会一直等）
   checkTrue('空列表写实话"还没有装备"', has(snap.labels, '还没有装备'))
@@ -194,9 +231,71 @@ if (first === undefined) {
   }
 }
 
+// ---------- V11：强化键（在不在、亮灰与服务端一致、亮的点下去真的发请求） ----------
+const forgeKeys = await page.evaluate(`(() => {
+  const scene = window.cc.director.getScene()
+  const game = scene.getChildByName('Canvas').getChildByName('Game')
+  const node = game.getChildByName('equipPanel')
+  if (!node) return null
+  const out = []
+  const walk = (n) => {
+    if (n.name.indexOf('forge-') === 0) out.push(n.name.slice('forge-'.length))
+    for (const child of n.children) walk(child)
+  }
+  walk(node)
+  return out
+})()`)
+check('每一件装备都有「强化」键', forgeKeys?.length ?? -1, instancesList.length)
+check('键的 uid 与服务端下发的实例一一对应',
+  instancesList.every((item) => (forgeKeys ?? []).includes(item.uid)), true)
+
+/** 按 uid 点那颗「强化」键（真 emit，与真人按下走同一个回调）。 */
+const clickForge = async (uid) => page.evaluate(`(() => {
+  const scene = window.cc.director.getScene()
+  const game = scene.getChildByName('Canvas').getChildByName('Game')
+  const node = game.getChildByName('equipPanel')
+  let found = null
+  const walk = (n) => {
+    if (found) return
+    if (n.name === 'forge-${uid}') { found = n; return }
+    for (const child of n.children) walk(child)
+  }
+  walk(node)
+  if (!found) return 'no-key'
+  found.emit('touch-start')
+  return 'clicked'
+})()`)
+
+const forgeable = instancesList.find((item) => item.canForge === true)
+if (forgeable === undefined) {
+  skip('后端没有一件 canForge=true 的装备（铁不够或全满级）⇒ "点得动"这条未验证，不当作通过')
+} else {
+  const before = forgePosts.length
+  const clickedForge = await clickForge(forgeable.uid)
+  await page.waitForTimeout(1500)
+  checkTrue(`能强化的那一件点得动（${forgeable.name}）`, clickedForge === 'clicked')
+  check('点下去真的发出了 POST /equip/forge（新增请求数）', forgePosts.length - before, 1)
+  const sent = forgePosts[forgePosts.length - 1] ?? {}
+  check('请求体带的是这一件的 uid（不是配置行 id）', sent.equipUid, forgeable.uid)
+  checkTrue('请求体带幂等键 requestId', typeof sent.requestId === 'string' && sent.requestId.length > 0)
+  await page.screenshot({ path: path.join(OUT, 'equip-forge-after.png') })
+}
+
+// 对照组：不能强化的那一件，点了必须**零请求**（灰键不吃触摸）
+const blocked = instancesList.find((item) => item.canForge === false)
+if (blocked === undefined) {
+  skip('后端没有一件 canForge=false 的装备 ⇒ 灰键那条对照组未验证')
+} else {
+  const beforeBlocked = forgePosts.length
+  const clickedBlocked = await clickForge(blocked.uid)
+  await page.waitForTimeout(900)
+  check('灰键点了不发请求（对照组：请求数不变）', forgePosts.length - beforeBlocked, 0)
+  ok(`灰键仍然点得到节点（${blocked.name}，${clickedBlocked}）—— 它只是不吃触摸`)
+}
+
 // 行数必须与服务端一致（这一页没有滚动：少画一件 = 那件玩家够不到）
 const drawnRows = snap.labels.filter((l) => l.includes(' · 强化 +')).length
-check('每一件都画出来了（行数与服务端一致）', drawnRows, instances.instances.length)
+check('每一件都画出来了（行数与服务端一致）', drawnRows, instancesList.length)
 
 // heroId 不许出现在画面上（id 不是名字）
 check('画面上不出现 heroId', snap.labels.some((l) => /hero_/.test(l)), false)

@@ -116,6 +116,8 @@ export class ArmyPanelView extends Component {
   private warningLabel: Label | null = null
   private autoTrainButton: Node | null = null
   private collectTreatedButton: Node | null = null
+  /** 「加速治疗」（V12）：只在**正在治疗**时出现（"到点可收"那一档由「收取伤兵」承担，两者互斥）。 */
+  private treatSpeedUpButton: Node | null = null
   private autoTrainCaption: Label | null = null
   private autoTrainStatus: Label | null = null
 
@@ -128,6 +130,8 @@ export class ArmyPanelView extends Component {
   onTreat: (() => void) | null = null
   /** 收取治好的伤兵（军队四格里唯一一只纯接线的动作；加速治疗要道具选择器，见 #329）。 */
   onCollectTreated: (() => void) | null = null
+  /** 点了「加速治疗」：编排层去问用哪一张训练令（`itemId` 只能来自道具配置，界面不猜）。 */
+  onTreatSpeedUp: (() => void) | null = null
   /** 点行上的「队列」（B26 S15）：这一口在练什么、能不能取消，全由编排层判，这里只回抛 unitId */
   onQueue: ((unitId: string) => void) | null = null
   /** 点「自动续训 / 停止自动」。能不能开、续的是哪一批由编排层判定（B25-S2d） */
@@ -153,6 +157,8 @@ export class ArmyPanelView extends Component {
     this.tabButtons.clear()
     this.onTrain = null
     this.onTreat = null
+    this.onCollectTreated = null
+    this.onTreatSpeedUp = null
   }
 
   /**
@@ -319,6 +325,30 @@ export class ArmyPanelView extends Component {
     collectTreated.active = false
     collectTreated.on('touch-start', (_event: EventTouch) => this.onCollectTreated?.(), this)
     this.collectTreatedButton = collectTreated
+
+    // 「加速治疗」（V12，`/army/treatSpeedUp` —— 军队四格最后一格）：与「收取伤兵」同挂医院这一块
+    // （治疗是**全局一批**，不按兵种），只在**正在治疗**时出现 —— 与"到点可收"那一档互斥，所以位置分开摆。
+    // 它比收取多一步：服务端要求 `itemId`（"秒数只能来自道具配置"）⇒ 点下去先弹"用哪一张训练令"。
+    // ⚠ 本节上面那段注释原先写的是"那个组件客户端还没有"（收口清单 #329）—— `ChoiceOverlay` 早就在，
+    // 缺的只是这一根线，本轮补上并把那句过期判断改准。
+    const treatSpeedUp = new Node('TreatSpeedUpButton')
+    treatSpeedUp.layer = this.node.layer
+    this.node.addChild(treatSpeedUp)
+    treatSpeedUp.setPosition(new Vec3(PANEL_WIDTH / 2 - 60, top - 82, 0))
+    treatSpeedUp.addComponent(UITransform).setContentSize(new Size(110, 26))
+    if (!applyCommandButton(treatSpeedUp, 'normal', 110, 26)) {
+      const speedGraphics = treatSpeedUp.addComponent(Graphics)
+      speedGraphics.fillColor = COLOR_PANEL
+      speedGraphics.strokeColor = COLOR_GOOD
+      speedGraphics.lineWidth = 1
+      speedGraphics.roundRect(-55, -13, 110, 26, 4)
+      speedGraphics.fill()
+      speedGraphics.stroke()
+    }
+    this.addLabel(treatSpeedUp, 'Caption', 0, 0, COLOR_TEXT, 12).string = '加速治疗'
+    treatSpeedUp.active = false
+    treatSpeedUp.on('touch-start', (_event: EventTouch) => this.onTreatSpeedUp?.(), this)
+    this.treatSpeedUpButton = treatSpeedUp
 
     // 「自动续训」放在治疗按钮的对面（同一行）：两个都是"整支军队"的动作，
     // 和上面那排页签（筛选）与下面那排行内按钮（单个兵种）都不同类
@@ -540,6 +570,11 @@ export class ArmyPanelView extends Component {
       // 到点可收了才给「收取伤兵」：没治完摆着它，点了只会被服务端拒
       if (this.collectTreatedButton !== null) {
         this.collectTreatedButton.active = hospital.collectableTreated === true
+      }
+      // 「加速治疗」与「收取伤兵」互斥：**正在治疗**才给加速键 —— 到点了就该点收取，
+      // 那时候再摆一颗"花道具"的键是让人白扔一张训练令（服务端也会拒："治疗已完成，请领取而不是加速"）
+      if (this.treatSpeedUpButton !== null) {
+        this.treatSpeedUpButton.active = hospital.treatingText !== null
       }
     }
     if (this.warningLabel !== null) {
