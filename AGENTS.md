@@ -29,6 +29,19 @@
 `ART_VERIFY_BACKEND` / `EQUIP_BACKEND` …）：传错会**静默回退到 8080**，跑出一片假红 —— 先读每份探针首行的
 「后端 http://…」再读结果。
 
+**探针批跑不是可选项**（2026-09-30 一笔实证）：改了**共用件**（`PermissionGates`、`PanelNav`、`Store`、
+社交页的行池 / 行序、聊天页签的绘制路径）之后，**只跑自己碰的那两份不够** ——
+那一轮单跑全绿、批跑红 3 份，其中 1 份是本会话真引入的（给联盟页加了一行入口，
+把「踢出/设职」挤到第 2 页，而探针只读**画出来的行**、它不翻页），另 2 份是环境造成的假红。
+做法：`BACKEND=http://localhost:8080 RUNTIME_PROBES_TIMEOUT=240 bash scripts/run-runtime-probes.sh <清单文件>`
+挑与改动相关的十份左右跑；**加新入口 / 改行序 / 改门禁依据**这三类改动，必须带上
+「已有内容可见性」那一族（`verify-social-permission-runtime` · `verify-social-create-runtime` · `verify-rank-runtime`）。
+
+**dev 提速档会改变量具前提**（同上那笔）：`IRONOATH_DEV_CITY_LEVEL=16` 让新号落 16 级，
+于是「新号 1 级、两道门都关着」那类探针（`verify-social-create-runtime` 的 A 相）会假红 5 条。
+那类探针已加**显式守卫**（读到等级 > 1 就退 2 并说明"这一份要跑在不带提速档的后端上"）——
+**看到退 2 不是功能坏了，是量具没架对**；国家正链路要的正好是**开着**档的后端（`verify-nation-live.mjs`）。
+
 ## 三、本机环境（踩过的坑，别再重新探索）
 
 - **bash 必须走 Git Bash**：`C:\Program Files\Git\bin\bash.exe`。PATH 里的 `bash` 是 WSL 的
