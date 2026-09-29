@@ -18,8 +18,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  OFFICE_LABELS, SINK_LABELS, SPEND_AMOUNT_PRESETS, TREASURY_LOG_ROWS, UNKNOWN_MEMBER, UNKNOWN_OFFICE,
-  UNKNOWN_OPERATOR, amountText, buildNationPanel, buildSpendRow, cooldownText, officeLabel, operatorLabel,
+  OFFICE_LABELS, PLAIN_PAYEE_LABELS, SINK_LABELS, SPEND_AMOUNT_PRESETS, TREASURY_LOG_ROWS,
+  UNKNOWN_MEMBER, UNKNOWN_OFFICE, UNKNOWN_OPERATOR, UNKNOWN_PAYEE, UNKNOWN_SINK,
+  amountText, buildNationPanel, buildSpendRow, buildTreasuryRow, cooldownText, officeLabel, operatorLabel,
   payeeLabel, spendDraftBlocker, spendSinkOptions,
 } from '../assets/scripts/game/nation/NationPanel'
 import type { NationPanelInput, NationPanelView, SpendDraft } from '../assets/scripts/game/nation/NationPanel'
@@ -173,7 +174,9 @@ test('国库：支给对象的两种形态都换成人话，换不掉也不许�
   assert.equal(payeeLabel('sink:NATIONAL_TECH', NAMES), '国家科技')
   assert.equal(payeeLabel('sink:WAR_BOOST', NAMES), '国战增益')
   assert.equal(payeeLabel('sink:SINK_FROM_THE_FUTURE', NAMES), '其他用途')
-  assert.equal(payeeLabel('随便什么', NAMES), '其他用途')
+  // **裸 token 走另一条回退语**（`UNKNOWN_PAYEE` = 「其他」）：这一条原先断言的是「其他用途」，
+  // 而真链路的周税入账把那个口径的毛病照了出来 —— 一笔入账显示成"用途"读起来像钱花掉了
+  assert.equal(payeeLabel('随便什么', NAMES), '其他')
   assert.equal(operatorLabel('system', NAMES), '系统')
   assert.equal(operatorLabel(KING_ID, NAMES), '赵国王')
   assert.equal(operatorLabel('player_ghost', NAMES), UNKNOWN_OPERATOR)
@@ -480,4 +483,26 @@ test('notice 的语气：成功与失败必须分开（红字显示"研究完成
   assert.equal(warn.notice, '国库余额不足')
   // 没有 notice 时语气无所谓，但不许是 undefined（表现层直接拿它选色）
   assert.equal(buildNationPanel(input()).noticeTone, 'warn')
+})
+
+test('裸 token 的对手方：周税入账不许显示成「其他用途」（真链路回读屏才发现的那一处）', () => {
+  // 三种形态各判一次：前缀式两种 + 裸 token 一种
+  assert.equal(payeeLabel('player:player_x', NAMES), '孙俸禄')
+  assert.equal(payeeLabel('sink:NATIONAL_TECH', NAMES), '国家科技')
+  assert.equal(payeeLabel('weekly_tax', NAMES), '成员联盟周税')
+  assert.equal(payeeLabel('disband_writeoff', NAMES), '亡国核销')
+  assert.equal(payeeLabel('war_loot', NAMES), '国战战利品')
+  // 查不到的裸 token 给「其他」，而且**不能是「其他用途」** —— 那读起来像支出
+  assert.equal(payeeLabel('brand_new_income', NAMES), UNKNOWN_PAYEE)
+  assert.notEqual(UNKNOWN_PAYEE, UNKNOWN_SINK)
+  assert.ok(!UNKNOWN_PAYEE.includes('用途'))
+  // 词表本身也要与 token 一一对上：加一个 token 却忘了加词，屏上就会回退成「其他」
+  assert.deepEqual(Object.keys(PLAIN_PAYEE_LABELS).sort(), ['disband_writeoff', 'war_loot', 'weekly_tax'])
+  // 屏上不许出现裸 token
+  const row = buildTreasuryRow(
+    { at: NOW, operatorId: 'system', counterparty: 'weekly_tax', amount: 10_000, reason: '国库周税', balanceAfter: 10_000 },
+    NAMES, NOW, 0)
+  assert.equal(row.headText, '成员联盟周税 · 10,000')
+  assert.equal(row.detailText, '刚刚 · 系统 · 国库周税')
+  assert.ok(!row.headText.includes('weekly_tax') && !row.headText.includes('其他用途'))
 })

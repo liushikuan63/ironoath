@@ -107,6 +107,13 @@ public class CityAppService {
     private final com.ironoath.web.tech.TechEffects techEffects;
     /** 国家科技那一份（B20 块③），与个人的相加后作用一次（§五④）。 */
     private final com.ironoath.web.nation.NationTechBonuses nationTechBonuses;
+    /**
+     * dev profile 的新号提速档（{@code @Profile("dev")}，prod 上下文里不存在 ⇒ null）。
+     *
+     * <p>它存在的唯一理由是让下面那行"新号主城与 PlayerSave.cityLevel 一致"在提速档下**仍然成立**：
+     * 只抬存档不抬建筑，会造出一份"主城等级 16 但主城建筑 1 级"的存档，而城建与玩法两处各读一份。
+     */
+    private final com.ironoath.web.config.NewPlayerBoost boost;
 
     public CityAppService(ConfigRegistry configs, Formula formula, PlayerRepository players,
                           CityRepository cities, PlayerLock playerLock,
@@ -118,7 +125,8 @@ public class CityAppService {
                           com.ironoath.web.quest.QuestEvents questEvents,
                           com.ironoath.web.pay.PaidProducts paidProducts,
                           com.ironoath.web.tech.TechEffects techEffects,
-                          com.ironoath.web.nation.NationTechBonuses nationTechBonuses) {
+                          com.ironoath.web.nation.NationTechBonuses nationTechBonuses,
+                          org.springframework.beans.factory.ObjectProvider<com.ironoath.web.config.NewPlayerBoost> boost) {
         this.configs = configs;
         this.formula = formula;
         this.players = players;
@@ -134,6 +142,7 @@ public class CityAppService {
         this.paidProducts = paidProducts;
         this.techEffects = techEffects;
         this.nationTechBonuses = nationTechBonuses;
+        this.boost = boost.getIfAvailable(() -> com.ironoath.web.config.NewPlayerBoost.NONE);
     }
 
     /**
@@ -354,8 +363,11 @@ public class CityAppService {
         BuildingCfg mainCity = configs.get(BuildingCfg.class, "main_city");
         BuildingInstance main = fresh.place("bld_main_city", "main_city", center, center,
                 rules, false, true);
-        // 新号主城直接是 1 级（与 PlayerSave.cityLevel 一致），不占用建造队列
-        main.restore(1, center, center, com.ironoath.core.city.BuildingStatus.IDLE,
+        // 新号主城（与 PlayerSave.cityLevel 一致；dev 提速档下两处一起抬，不造"存档 16 / 建筑 1"），
+        // 不占用建造队列
+        int mainLevel = com.ironoath.web.config.NewPlayerBoost.cityLevel(
+                configs.longParam("INIT_CITY_LEVEL"), boost.cityLevel());
+        main.restore(mainLevel, center, center, com.ironoath.core.city.BuildingStatus.IDLE,
                 null, 0L, 0L, 0L, 0, now, 0L);
         if (mainCity.type() != BuildingCfg.Type.CORE) {
             throw new IllegalStateException("main_city 的配置类型应为 CORE，实际=" + mainCity.type());

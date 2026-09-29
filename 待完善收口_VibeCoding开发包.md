@@ -268,7 +268,8 @@
 | **V16** | 未提交（改动在工作树） | `check-checklist-table.sh` 退 0；`git diff --numstat -- 收口清单.md` = **4 增 0 删**（只增不删的台账纪律）；三处都附了复跑命令 | — | 三份台账的**其它**过期数字没扫（只改本轮现跑撞出来的三条） |
 | **V14** | 未提交（改动在工作树） | `check.sh` **退 0**；`check-client-typecheck.sh` 退 0；客户端 **972/972**（新增 `Credits` 6 条 + `SettingsPanel` 1 条，另同步两条把入口写死成 4 个的旧断言）；`tools/verify-credits.mjs` **退 0（15 通过 / 0 失败）** | `tmp/credits/credits.png`（三组署名 + 许可 + 关闭键，无一行顶出卡片） | 只列了**真正进包**的第三方素材（Game-icons / Kenney / 自生成）；Noto CJK 尚未进包所以没列（`ATTRIBUTION.md` 写着"来源已确认，尚未复制字体文件"）；未提交 |
 | V13-S1 | 见 §四 末尾那行 | `check.sh` **退 0**（31 道静态门 + 埋点门 78 个动作全有事件 + 客户端 **988/988**）；`check-client-typecheck.sh` 退 0（两个 project）；`build-webmobile.sh` 退 0（`missing or invalid = 0`）；`tools/verify-nation.mjs` **退 0（68 通过 / 0 失败，5 场）** | `tmp/nation/{00-control-no-alliance,01-no-nation,02-member,02b-spend-form,03-no-office,04-king}.png` | **正向链路（建国/入籍/退国/解散/支出真正发出去并回填）未验**：dev 新号没有联盟 ⇒ 建国三条前置（主城 16 级 / 开服 D14 / 在联盟中）全不满足，建国之后的世界状态更无从造起。正向只能等一个真号；`02b` 那张是**表单开着的形态**，确认键是灰的（用途没填），**没有点下去过**。S2（外交/国策/国家科技）与国战整条仍未动 |
-| **V13-S2** | 见 §四 末尾那行 | `check.sh` **退 0**（31 道静态门 + 埋点门 81 个动作全有事件 + 客户端 **996/996**）；`check-client-typecheck.sh` 退 0（两个 project）；`build-webmobile.sh` 退 0；`tools/verify-nation-s2.mjs` **退 0（89 通过 / 0 失败，9 场）**；`tools/verify-nation.mjs` 复跑 **退 0（68/0）** —— S2 改了同一个面板，S1 那份是回归面 | `tmp/nation-s2/{00-control,01-tech,02-tech-treasuryLow,02-tech-officerLimit,02-tech-notOfficer,02-tech-maxLevel,03-research,04-diplomacy-empty,05-diplomacy-set,06-appoint,07-appointed}.png` | **正向三笔在夹具上跑通了**（研究 / 改关系 / 任命：真发出、带 `requestId`、回执回填）；**真后端上仍未验** —— 同一个限制（dev 新号无联盟 ⇒ 建国前置不满足），要真数据得先有一个建国成功的号。**国策投票仍无端点**（B13 域与协议里都没有，不是"没接"）；**国战整条等压测** |
+| **V13-S2** | `320f5c0` | `check.sh` **退 0**（31 道静态门 + 埋点门 81 个动作全有事件 + 客户端 **996/996**）；`check-client-typecheck.sh` 退 0（两个 project）；`build-webmobile.sh` 退 0；`tools/verify-nation-s2.mjs` **退 0（89 通过 / 0 失败，9 场）**；`tools/verify-nation.mjs` 复跑 **退 0（68/0）** —— S2 改了同一个面板，S1 那份是回归面 | `tmp/nation-s2/{00-control,01-tech,02-tech-treasuryLow,02-tech-officerLimit,02-tech-notOfficer,02-tech-maxLevel,03-research,04-diplomacy-empty,05-diplomacy-set,06-appoint,07-appointed}.png` | **正向三笔在夹具上跑通了**（研究 / 改关系 / 任命：真发出、带 `requestId`、回执回填）；真后端正向当时仍未验（见下一行，已解决） |
+| **V13 真链路** | `320f5c0` 之后的提交 | `tools/verify-nation-live.mjs` **退 0（52 通过 / 0 失败，连跑两次都 0）** —— 全程真 HTTP、零夹具：建号 → 建联盟 → **建国** → 读回逐字段一致 → **国库支出** → 流水四要素 → **国家科技研究**（等级 +1、扣款 = 表里给的下一级花费、重读仍是新等级）→ 二号申请入盟 → 批准 → **任命** → 被任命者自查 `myOffice` → 第二个国家 → **外交 HOSTILE** → 负例（与自己建交被拒 1001）→ **退国** → 再读回 13000 → 清理。`NATION_LIVE_UI=1` 再加一趟**回读屏**（真后端 + 真产物）：屏上国名/等级/成员/国库/周税流水逐项等于服务端 | `tmp/nation-live/live-panel.png`（真数据：`回读屏国44914`｜`成员联盟：1 / 200`｜`国库：10,000 / 500,000`｜`刚刚 · 系统 · 国库周税（第 202640 周 × 1 个成员联盟）`） | 服务端与客户端各加了改动（见下）⇒ 各跑一遍全量：`mvn test` **退 0（1977 项）**、`check.sh` 退 0（**997/997**）。**仍未做**：国策投票没端点；国战等压测 |
 
 **V10 落地的两处口径决定（留给下一格，别再重新想）**：
 
@@ -364,6 +365,37 @@
    编排层每一次成功显式翻成 `'ok'`，并钉了一条单测。
    同一轮还顺手改掉两处把内部值印上玩家面的地方：研究回执原来印 `techId`
    （现在按 id 去刚拉的科技表里取**服务端下发的行名**），解散与支出回执的金额原来没走千分位。
+
+**V13 真链路那一格：dev-only 提速档（本次裁决选 B）与它照出来的两处缺陷**：
+
+1. **`NewPlayerBoost` 接口 + `DevNewPlayerBoost`（`@Profile("dev")`）**
+   （`server/game-web/.../config/`）：两个环境变量 `IRONOATH_DEV_CITY_LEVEL` 与
+   `IRONOATH_DEV_START_AMOUNT`，**都不设时与改动前逐字节一致**（模式隔离那条纪律的硬要求）。
+   两处注入（`PlayerInitService` 的开局存档 + `CityAppService` 的主城建筑）——
+   **只抬一处会造出"存档 16 级 / 主城建筑 1 级"的自相矛盾存档**，而那一行原有的注释正写着二者必须一致。
+   "prod 读不到它"是**结构事实**：prod 上下文里这个 bean 根本不存在 ⇒ `ObjectProvider` 空 ⇒ 走配置表。
+   `DevNewPlayerBoostTest` 四条把它钉住：覆盖只在 `> 0` 时生效、空实现安全、
+   **`@Profile("dev")` 注解必须在（反射断言）**、两个服务都接了同一个口（按类型找字段，改名不会假红）。
+   为什么不改配置表：`INIT_CITY_LEVEL` 与 `resource.initAmount` 是真源，被
+   `ConfigRegistryTest`/`PlayerInitTest` 钉着，而且 **prod 与 dev 读同一份表** ——
+   为了本地好跑而把 prod 的开局数值一起改了，是拿验收环境换一条测试。
+
+2. **真链路回读屏照出一处显示缺陷：裸 token 的对手方落进了回退语**。
+   周税入账那一笔的 `counterparty` 是**裸 token `weekly_tax`**（不带 `player:` / `sink:` 前缀），
+   而 `payeeLabel` 只认那两种前缀 ⇒ 屏上显示「其他用途 · 10,000」——
+   一笔**入账**被写成"用途"，读起来像钱花掉了。已加 `PLAIN_PAYEE_LABELS`
+   （`weekly_tax` / `disband_writeoff` / `war_loot`）与**独立的**回退语 `UNKNOWN_PAYEE`（「其他」，
+   与 `sink:` 那侧的「其他用途」分开）。**为什么两轮夹具探针都没照出来**：
+   夹具的流水是我们自己编的，里面恰好没有周税那一笔 —— 已把周税补进
+   `verify-nation.mjs` 的夹具并加了两条判据（S1 探针因此从 68 条涨到 70 条）。
+   这一条是"真链路验收"这个动作本身的产出：**夹具验的是我们想到的形态，真后端会给没想到的那些。**
+
+3. **真链路脚本自己的三处坑（留作同类脚本的教训）**：
+   ① `/player/init` 的 `clientTime` 是必填，传 0 会被 `PARAM_INVALID(1001)` 挡住；
+   ② dev 内存后端**跨轮次不清**，写死联盟名/标签第二轮撞 `ALLIANCE_NAME_TAKEN(10016)`、
+   留下的国家还会把 `NATION_MAX_PER_KINGDOM=4` 占满（撞 `NATION_CREATE_LIMIT(13002)`）⇒
+   本轮名字加时间戳 + **跑完自己清掉建过的国**（国王退国后仍亡得了自己的国）；
+   ③ 断言**按下标**取关系表/流水在共享后端下是错的（表里有前几轮的残留）⇒ 改成按 id 查。
 
 > 记录纪律：写「本轮命令 + 退出码 + 覆盖范围」，未验证的显式标注「未验证 + 原因」；
 > 同一行里「已落地并验证」与「未做」分开写。

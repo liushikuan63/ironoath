@@ -11,12 +11,14 @@ import com.ironoath.core.player.PlayerPower;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
+import com.ironoath.web.config.NewPlayerBoost;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.PlayerInitResp;
 import com.ironoath.web.security.AuthSessionService;
 import com.ironoath.web.security.WeChatCodeExchanger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -62,6 +64,13 @@ public class PlayerInitService {
     /** 领域事件发布入口（B17 连续签到用 LOGIN_DAY）。名字沿用既有类 —— 它是业务侧发布领域事件的统一入口。 */
     private final com.ironoath.web.quest.QuestEvents domainEvents;
     private final com.ironoath.web.compliance.MinorPlayGate minorPlay;
+    /**
+     * dev profile 的新号提速档（{@code @Profile("dev")} 的实现，prod 上下文里不存在 ⇒ null）。
+     *
+     * <p>刻意用 {@link ObjectProvider} 而不是构造器直接依赖：那样写会让 prod 启动失败
+     * （找不到 bean），而这里要的是"没有就照原样"。
+     */
+    private final com.ironoath.web.config.NewPlayerBoost boost;
 
     public PlayerInitService(ConfigRegistry configs, PlayerRepository players,
                              IdempotencyStore idempotency, TimeService timeService,
@@ -71,7 +80,8 @@ public class PlayerInitService {
                              AuthSessionService sessions,
                              com.ironoath.web.security.ContentSecurityGuard contentSecurity,
                              com.ironoath.web.quest.QuestEvents domainEvents,
-                             com.ironoath.web.compliance.MinorPlayGate minorPlay) {
+                             com.ironoath.web.compliance.MinorPlayGate minorPlay,
+                             ObjectProvider<com.ironoath.web.config.NewPlayerBoost> boost) {
         this.configs = configs;
         this.players = players;
         this.idempotency = idempotency;
@@ -83,6 +93,7 @@ public class PlayerInitService {
         this.contentSecurity = contentSecurity;
         this.domainEvents = domainEvents;
         this.minorPlay = minorPlay;
+        this.boost = boost.getIfAvailable(() -> com.ironoath.web.config.NewPlayerBoost.NONE);
     }
 
     /**
@@ -239,7 +250,10 @@ public class PlayerInitService {
         Map<String, PlayerResourceState> resources = new LinkedHashMap<>();
         for (ResourceCfg cfg : configs.allResources()) {
             long cap = rates.cap(cfg.id());
-            long amount = Math.min(cfg.initAmount(), cap);
+            // dev 提速档：初始数量整体抬到同一档。**不是只抬某一种** ——
+            // 只抬金币的话会出现"钱够建盟但建不起任何建筑"的提速档，那比不快更误导
+            long amount = NewPlayerBoost.startAmount(cfg.initAmount(), boost.startAmount());
+            amount = Math.min(amount, cap);
             resources.put(cfg.id(), new PlayerResourceState(
                     amount, cap, resourceRates.protectedAmountOf(cfg.id(), rates),
                     rates.perHour(cfg.id()), now));
@@ -259,7 +273,7 @@ public class PlayerInitService {
                 req.nickName(),
                 (int) configs.longParam("INIT_AVATAR_ID"),
                 now,
-                (int) configs.longParam("INIT_CITY_LEVEL"),
+                NewPlayerBoost.cityLevel(configs.longParam("INIT_CITY_LEVEL"), boost.cityLevel()),
                 resources,
                 power,
                 protectUntil);

@@ -110,6 +110,12 @@ const LOGS = [
     at: NOW - 30 * 3_600_000, operatorId: KING, counterparty: `player:${KING}`,
     amount: 20_000, reason: '远征犒赏', balanceAfter: 1_314_567,
   },
+  // **裸 token 那一形态必须有**：周税是真实后端里最常见的入账，而它不带 player:/sink: 前缀。
+  // 真链路回读屏抓到过一次"入账显示成其他用途"，而当时这份夹具里没有它 ⇒ 探针全绿。
+  {
+    at: NOW - 50 * 3_600_000, operatorId: 'system', counterparty: 'weekly_tax',
+    amount: 10_000, reason: '国库周税（第 202640 周 × 1 个成员联盟）', balanceAfter: 1_334_567,
+  },
 ]
 
 const NATION = {
@@ -442,6 +448,9 @@ await runScene(browser, {
     checkThat('流水给了余额那一列（自证连贯）', shown.includes('余额 1,229,567'))
     checkThat('系统动作显示成「系统」而不是 system', shown.includes('1 天前 · 系统 · 国家科技出资'))
     checkThat('去向显示成中文而不是 sink:NATIONAL_TECH', shown.includes('国家科技 · 80,000'))
+    // 裸 token 那一形态：周税是入账，**不许落进「其他用途」**（真链路回读屏抓到过一次）
+    checkThat('周税入账显示成「成员联盟周税」', shown.includes('成员联盟周税 · 10,000'))
+    checkThat('入账那一行不出现「其他用途」', !shown.includes('其他用途'))
     // 权限：不是国王 ⇒ 解散灰；不是国王但有官职 ⇒ 支出亮
     check('不是国王 ⇒「解散国家」灰（不吃触摸，点了零请求）', opened.buttons.DisbandButton, false)
     check('有官职 ⇒「国库支出」亮', opened.buttons.SpendButton, true)

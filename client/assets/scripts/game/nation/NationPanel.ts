@@ -77,6 +77,27 @@ export const SINK_LABELS: Readonly<Record<string, string>> = {
   WAR_BOOST: '国战增益',
 }
 
+/**
+ * **不带前缀**的对手方 token → 中文。
+ *
+ * <p>协议的注释说"方向由 counterparty 表达"，而实际有三种形态：`player:<id>`（支给谁）、
+ * `sink:<用途>`（核销到哪个子系统）、以及**裸 token**（系统自己产生的那几笔）。
+ * 裸 token 这一形态是**真链路回读屏才发现的**：周税入账那一行原先落进回退语，
+ * 屏上显示成「其他用途 · 10,000」—— 而它明明是一笔**入账**，"用途"这个词会让玩家以为钱花掉了。
+ * 两轮夹具探针都没照出它，因为夹具的流水里没有周税那一笔（真后端才有）。
+ *
+ * <p>取值来自服务端领域层的字面量（`Nation`：`weekly_tax` / `disband_writeoff`）。
+ * 查不到时给 {@link UNKNOWN_PAYEE}，**绝不把 token 原样印出去**。
+ */
+export const PLAIN_PAYEE_LABELS: Readonly<Record<string, string>> = {
+  weekly_tax: '成员联盟周税',
+  disband_writeoff: '亡国核销',
+  war_loot: '国战战利品',
+}
+
+/** 裸 token 查不到时的回退语。**与 {@link UNKNOWN_SINK} 分开**：一个说"用途不明"，一个说"这笔是什么不明"。 */
+export const UNKNOWN_PAYEE = '其他'
+
 /** 一屏排得下几条流水。**版式常量，不是业务口径**（条数上限由服务端在领域层截断）。 */
 export const TREASURY_LOG_ROWS = 6
 
@@ -133,7 +154,8 @@ export function payeeLabel(counterparty: string, names: ReadonlyMap<string, stri
   if (counterparty === SYSTEM_OPERATOR) {
     return '系统'
   }
-  return UNKNOWN_SINK
+  // 裸 token（周税 / 亡国核销…）：**必须有自己的词表**，否则一笔入账会显示成「其他用途」
+  return PLAIN_PAYEE_LABELS[counterparty] ?? UNKNOWN_PAYEE
 }
 
 /**
