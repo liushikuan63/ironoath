@@ -72,12 +72,18 @@ const HEADER_HEIGHT = 104
 const PADDING = 16
 /** 一屏最多画几行。150 人的联盟名单要靠 ScrollView（编辑器资产） */
 const MAX_VISIBLE_ROWS = 8
-/** 聊天页签要多留两条横条（频道切换 + 输入行），所以一屏少画三行（实测面板可视高 540） */
-const CHAT_VISIBLE_ROWS = 5
-/** 聊天页签里消息行整体下移的高度：上面要给频道切换条让位（页签行底 159 / 频道条 122~154） */
+/**
+ * 聊天页签里消息行整体下移的高度：上面要给频道切换条让位（页签行底 159 / 频道条 122~154）
+ *
+ * <p>原先还有一个 `CHAT_VISIBLE_ROWS = 5` 写在这里 —— V15 真分页之后一屏画几行
+ * 搬进了 `ChatPanel.CHAT_PAGE_ROWS`（编排层要知道它才能算"共几页"，
+ * 而这个数与屏幕上能塞几行必须**是同一个数**，两处各写一份必然分叉）。
+ */
 const CHAT_TOP_OFFSET = 32
 const CHANNEL_BUTTON_WIDTH = 92
 const CHANNEL_BUTTON_HEIGHT = 32
+/** 输入框的占位文案。**只有一个家**：建组件时与每次渲染同步时都读它。 */
+const CHAT_INPUT_PLACEHOLDER = '说点什么…'
 const SEND_BUTTON_WIDTH = 92
 const SEND_BUTTON_HEIGHT = 36
 /**
@@ -139,7 +145,7 @@ type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'ch
   | 'chatMenu' | 'blocks' | 'friend' | 'rallyJoin' | 'rallyQuit' | 'rallyCancel' | 'socialCreate'
   | 'socialExit' | 'socialExpand' | 'socialApply' | 'socialTransfer' | 'socialJoin'
   | 'socialReview' | 'socialReject' | 'socialResearch' | 'pagePrev' | 'pageNext'
-  | 'socialSetRole' | 'nation'
+  | 'socialSetRole' | 'nation' | 'chatOlder' | 'chatNewer'
 
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
@@ -261,6 +267,16 @@ export class SocialPanelView extends Component {
   onChatAction: ((senderId: string, messageId: string) => void) | null = null
   /** 点私聊列表顶部那条「黑名单」（解除拉黑的唯一入口） */
   onChatManageBlocks: (() => void) | null = null
+  /**
+   * 聊天翻页（V15 真分页）。**`step` 是页码增量：`+1` = 往更早、`-1` = 往更新。**
+   *
+   * <p>方向之所以与直觉相反，是因为聊天的页码从**最新**往回数（0 = 最新那一页）——
+   * 详见 `ChatPanel.chatPageOf`。这里按页码增量传，不在两处各转一次语义。
+   *
+   * <p>与其它页签的 `pagePrev/pageNext` **刻意不共用**：那两个只改视图自己的 `page` 就够，
+   * 而聊天往前翻到底要去拉更旧的一段（一次网络动作）⇒ 必须交给编排层。
+   */
+  onChatTurnPage: ((step: number) => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -671,7 +687,7 @@ export class SocialPanelView extends Component {
     input.setPosition(new Vec3(-(SEND_BUTTON_WIDTH + 16) / 2, inputY, 0))
     input.addComponent(UITransform).setContentSize(new Size(inputWidth - 16, SEND_BUTTON_HEIGHT))
     const box = input.addComponent(EditBox)
-    box.placeholder = '说点什么…'
+    box.placeholder = CHAT_INPUT_PLACEHOLDER
     box.inputMode = EditBox.InputMode.SINGLE_LINE
     // **必须显式设置**：真实实现的默认上限是 20 个字符，不设就会把玩家的半句话静默截断
     box.maxLength = CHAT_INPUT_MAX_LENGTH
@@ -799,11 +815,11 @@ export class SocialPanelView extends Component {
         this.hintLabel.string = chat?.hintText ?? '聊天加载中…'
         this.hintLabel.color = chat?.hintIsWarning === true ? COLOR_WARNING : COLOR_TEXT_DIM
       }
-      // 只画**最近**这一屏：消息按时间升序，而聊天要看的永远是"最新的几条" ——
-      // 直接 slice(0, n) 会画最早的那几条，症状是"自己刚发的消息不出现"（世界频道一热闹就必现）。
-      // 探针 tools/verify-chat-runtime.mjs 逮到过这一条：别人的历史一多，新消息就掉出窗口
+      // 消息按时间升序，而**当前这一页已由编排层切好**（V15 真分页）：
+      // 表现层直接画，不再自己 `slice(-N)` —— 那种打补丁的写法正是"历史消息没有入口"的成因。
+      // `limit` 传 `drafts.length` ⇒ 这一层的分页器不介入（页码属于编排层，见 ChatPanel.chatPageOf）
       const drafts = chat === null ? [] : chatDrafts(chat)
-      this.drawRows(drafts.slice(-CHAT_VISIBLE_ROWS), CHAT_VISIBLE_ROWS, CHAT_TOP_OFFSET)
+      this.drawRows(drafts, drafts.length, CHAT_TOP_OFFSET)
       return
     }
 
@@ -918,6 +934,33 @@ export class SocialPanelView extends Component {
       // 私聊没选对象时发送是灰的：那一次请求在结构上就缺 toPlayerId
       applyCommandButton(this.sendButton, data?.canSend === true ? 'normal' : 'disabled',
         SEND_BUTTON_WIDTH, SEND_BUTTON_HEIGHT)
+    }
+    this.syncChatPlaceholder()
+  }
+
+  /**
+   * 把占位文案与字体**每次渲染都同步一遍**。
+   *
+   * <p>为什么不能只在建 `EditBox` 那一处设：`placeholderLabel` 是 EditBox 自己在
+   * **onEnable 之后**才创建的，建组件那一刻它还是 null ⇒ 那一处设的 `placeholder` 与字体
+   * 都落不到这个标签上，屏上留的是引擎的默认串 —— 就是一个孤零零的 `label`
+   * 挂在输入框左上角（2026-09-30 的截图里能看到它，玩家也看得到）。
+   * 同族的坑在 `NationPanelView` 也踩过一次（那边是 `box.placeholder = ''` 处理掉的）。
+   */
+  private syncChatPlaceholder(): void {
+    const box = this.chatInput
+    if (box === null) {
+      return
+    }
+    const label = box.placeholderLabel
+    if (label === null) {
+      return
+    }
+    applySystemUiFont(label)
+    label.fontSize = 16
+    label.color = COLOR_TEXT_DIM
+    if (label.string !== CHAT_INPUT_PLACEHOLDER) {
+      label.string = CHAT_INPUT_PLACEHOLDER
     }
   }
 
@@ -1341,6 +1384,12 @@ export class SocialPanelView extends Component {
           this.onNation?.()
           return
         }
+        if (kind === 'chatOlder' || kind === 'chatNewer') {
+          // **不走本地改 page**：往前翻到底要发请求拉更旧的一段，页码住在编排层。
+          // 页码增量：+1 = 更早（第 0 页是最新，所以往更早是加）
+          this.onChatTurnPage?.(kind === 'chatOlder' ? 1 : -1)
+          return
+        }
         if (kind === 'pagePrev' || kind === 'pageNext') {
           // 翻页不是玩家意图，是一次浏览：不发请求、不打埋点，只重画
           this.page = kind === 'pagePrev' ? this.page - 1 : this.page + 1
@@ -1473,7 +1522,7 @@ function chatDrafts(data: ChatPanelData): RowDraft[] {
   if (data.messages.length === 0) {
     return [infoRow(data.emptyText)]
   }
-  return data.messages.map((message): RowDraft => ({
+  const rows = data.messages.map((message): RowDraft => ({
     title: message.author,
     // 自己的消息用铜金：一眼能分出"我说的"和"别人说的"，而这一行没有气泡可用
     titleColor: message.mine ? COLOR_COPPER_GOLD : COLOR_TEXT,
@@ -1486,6 +1535,27 @@ function chatDrafts(data: ChatPanelData): RowDraft[] {
     actionId: message.reportId !== null ? message.reportId : message.messageId,
     actionKind: message.reportId !== null ? 'report' : (message.mine ? 'none' : 'chatMenu'),
   }))
+  // 翻页行（V15）：**只有一面还有东西时才画** —— 一页装得下就不占那一行。
+  // 页码从最新往回数，所以左键是「更早」、右键是「更新」，与其它页签的上一页/下一页方向相反。
+  if (data.canOlder || data.canNewer) {
+    rows.push({
+      title: data.pageNotice,
+      titleColor: COLOR_TEXT_DIM,
+      detail: '',
+      value: '',
+      actionText: '更早',
+      actionEnabled: data.canOlder,
+      actionId: 'older',
+      actionKind: 'chatOlder',
+      action2: {
+        text: '更新',
+        enabled: data.canNewer,
+        id: 'newer',
+        kind: 'chatNewer',
+      },
+    })
+  }
+  return rows
 }
 
 /** 一行不可点的说明（空列表）。面板没有别的空态展示位。 */

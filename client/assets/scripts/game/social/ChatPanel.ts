@@ -18,6 +18,7 @@
  */
 
 import { channelText } from './SocialPanel'
+import { contentPerPage, pageCount } from '../ui/PanelPaging'
 import type {
   ChatChannel, ChatMessageView, FriendView, SocialEventView,
 } from '../../net/generated/SocialProtocol'
@@ -31,6 +32,28 @@ import type {
  * （服务端仍会再夹一次，所以镜像过期不会越界，只会少拉）。
  */
 export const CHAT_LOCAL_HISTORY_MAX = 200
+
+/**
+ * 聊天一屏**最多**画几行（容量，不是每页行数）。
+ *
+ * <p>与其它页签同一条口径：装不下时最后一格留给翻页行，内容行少一行
+ * （走 `contentPerPage`，与其它页签共用同一个算式）。所以
+ * {@link CHAT_PAGE_ROWS} 是"容量 5"，而真正每页几条由 `contentPerPage(总数, 5)` 现算 ——
+ * **5 条消息 + 1 行翻页 = 6 行塞不下**，会把翻页行压到输入行上
+ * （2026-09-30 的截图抓到的，当时探针 33 条全绿：判据只看了文字，没看它们在哪一行）。
+ *
+ * <p>可视高从 V15 之前就是写死的 5；本格只把它从视图挪到这里，换的是**外面那层真分页**。
+ */
+export const CHAT_PAGE_ROWS = 5
+
+/**
+ * 「更早」一次向服务端要多少条。
+ *
+ * <p>**与 {@link CHAT_LOCAL_HISTORY_MAX} 是两个数，别合并**：200 是本地缓存上限
+ * （`global.CHAT_LOCAL_HISTORY_MAX`，超出丢最旧），这里是"往前翻一屏要补多少"。
+ * 取 20 = 4 屏的量：翻 4 次才发一枪，而弱网下多一次往返就是多一次超时机会。
+ */
+export const CHAT_FETCH_OLDER = 20
 
 /**
  * 输入框的字符上限。**必须显式设置**：`EditBox` 的默认上限是 20 个字符，
@@ -123,6 +146,13 @@ export interface ChatViewInput {
   readonly blockedCount: number
   /** 我关注的人，最近关注的在前（服务端给的顺序） */
   readonly friends: readonly FriendView[]
+  /**
+   * 当前页（0 = 最新那一页）。**住在编排层**：往前翻到底要去拉更旧的一段，
+   * 而那是一次网络动作 —— 页码不能由一个只会重画的视图持有。
+   */
+  readonly page: number
+  /** 服务端上一次回的 `hasMore`（还能不能往更早翻）。 */
+  readonly hasMoreOlder: boolean
 }
 
 /** 聊天页签的展示数据。 */
@@ -136,7 +166,20 @@ export interface ChatPanelData {
   }>
   /** 私聊且未选中会话 ⇒ 'conversations'（画会话列表），其余 ⇒ 'messages' */
   readonly mode: 'messages' | 'conversations'
+  /**
+   * **当前这一页**的消息行（已按 `page` 切好，升序）。表现层直接画，不再自己 slice ——
+   * 原先那句 `drafts.slice(-CHAT_VISIBLE_ROWS)` 正是"历史没有入口"的成因（V15）。
+   */
   readonly messages: readonly ChatMessageRow[]
+  /** 页码与总页数（`page` 0 = 最新那一页）。 */
+  readonly page: number
+  readonly pages: number
+  /** 本地缓存里一共几条（翻页行的「共 N 条」）。 */
+  readonly totalMessages: number
+  readonly canOlder: boolean
+  readonly canNewer: boolean
+  /** 「共 37 条 · 第 2/8 页（第 1 页最新）」；只有一页时为空串（不占一行）。 */
+  readonly pageNotice: string
   readonly conversations: readonly ChatConversationRow[]
   readonly peerId: string | null
   readonly peerLabel: string | null
@@ -256,6 +299,75 @@ export function buildChatMessages(messages: readonly ChatMessageView[], myPlayer
 }
 
 /**
+ * 一页装几条内容。**与其它页签共用 `contentPerPage`**：装不下时最后一格让给翻页行 ——
+ * 两处各算一遍就是"共几页"与"切哪一段"对不上，翻页会翻出空白页（本仓记过一次）。
+ */
+export function chatContentPerPage(total: number, capacity: number = CHAT_PAGE_ROWS): number {
+  return contentPerPage(total, capacity)
+}
+
+/** 一段本地历史共几页。**与 {@link chatPageOf} 用同一个 perPage**，抄一份就会分叉。 */
+export function chatPageCount(total: number, capacity: number = CHAT_PAGE_ROWS): number {
+  return pageCount(total, chatContentPerPage(total, capacity))
+}
+
+/** 聊天的一页。 */
+export interface ChatPageView {
+  /** 这一页的消息行，**升序**（面板从上往下画）。 */
+  readonly rows: readonly ChatMessageRow[]
+  /** 页码。**0 = 最新那一页**（与其它页签相反，理由见 {@link chatPageOf}）。 */
+  readonly page: number
+  readonly pages: number
+  /** 还能往前翻（本地还有更旧的，或服务端说 `hasMore`）。 */
+  readonly canOlder: boolean
+  /** 还能往新翻（当前不在最新那一页）。 */
+  readonly canNewer: boolean
+  /** 「共 37 条 · 第 2/8 页（第 1 页最新）」 */
+  readonly noticeText: string
+  /** 这一屏对应的本地窗口，给"最旧一条"的游标用。 */
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * 把一段本地历史切成一页。
+ *
+ * <p><b>页码从最新往回数</b>（0 = 最新那一页），这与其它页签的正序分页**刻意相反**：
+ * 聊天要看的永远是"最新的几条"，所以每次打开、每发一条、每换一个频道都必须落在第 0 页。
+ * 若沿用正序（0 = 最早），打开聊天会先给人看三小时前的那几句 —— 而"自己刚发的消息不出现"
+ * 这个缺陷在本仓已经被探针逮过一次（原先靠 `drafts.slice(-5)` 打补丁）。
+ *
+ * <p>`canOlder` 把 `hasMoreOlder` 也算进去：本地窗口翻到头但服务端还有更旧的，
+ * 那颗「更早」必须继续亮着（点它才去拉下一段），否则玩家会以为历史就这么多。
+ */
+export function chatPageOf(messages: readonly ChatMessageView[], myPlayerId: string | null,
+                           nowServer: number, page: number, hasMoreOlder: boolean,
+                           capacity: number = CHAT_PAGE_ROWS): ChatPageView {
+  const total = messages.length
+  // 每页几条由**容量**现算：装不下时为翻页行让出一格（见 CHAT_PAGE_ROWS 的说明）
+  const size = chatContentPerPage(total, capacity)
+  const pages = pageCount(total, size)
+  const safe = Math.max(0, Math.min(page, pages - 1))
+  // 第 0 页 = 最后 size 条。倒着数：end 从末尾往回收
+  const end = Math.max(0, total - safe * size)
+  const start = Math.max(0, end - size)
+  // 一句话说不清"第几页"与"还剩多少"：行数会被那一格让位改掉，所以每页几条也报出来
+  const perPageText = pages > 1 ? ` · 每页 ${size} 条` : ''
+  return {
+    rows: buildChatMessages(messages.slice(start, end), myPlayerId, nowServer),
+    page: safe,
+    pages,
+    canOlder: safe < pages - 1 || hasMoreOlder,
+    canNewer: safe > 0,
+    noticeText: total === 0
+      ? ''
+      : `共 ${total} 条${perPageText} · 第 ${safe + 1}/${pages} 页（第 1 页最新）`,
+    start,
+    end,
+  }
+}
+
+/**
  * 从正文里认出"分享了一份战报"，返回被分享的战报 id（不是分享就返回 null）。
  *
  * <p><b>认的是结尾的结构化标记</b> `[report:<id>]`，不是前缀文案：前缀是给人读的
@@ -308,13 +420,21 @@ export function buildChatPanel(input: ChatViewInput): ChatPanelData {
   }))
   const conversationsMode = input.channel === 'PRIVATE' && input.peerId === null
   const peerLabel = input.peerId === null ? null : (input.peerNames.get(input.peerId) ?? null)
+  const pageView = conversationsMode
+    ? null
+    : chatPageOf(input.messages, input.myPlayerId, input.localNow + input.offsetMs,
+      input.page, input.hasMoreOlder)
   return {
     channel: input.channel,
     channelTabs,
     mode: conversationsMode ? 'conversations' : 'messages',
-    messages: conversationsMode
-      ? []
-      : buildChatMessages(input.messages, input.myPlayerId, input.localNow + input.offsetMs),
+    messages: pageView === null ? [] : pageView.rows,
+    page: pageView === null ? 0 : pageView.page,
+    pages: pageView === null ? 1 : pageView.pages,
+    totalMessages: input.messages.length,
+    canOlder: pageView !== null && pageView.canOlder,
+    canNewer: pageView !== null && pageView.canNewer,
+    pageNotice: pageView === null ? '' : pageView.noticeText,
     conversations,
     peerId: input.peerId,
     peerLabel,

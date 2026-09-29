@@ -1521,6 +1521,8 @@ export class GameBootstrap extends Component {
       }
       out.chatActionChoice = (options, onPick) => social.showChatActionPicker(options, onPick)
       social.onChatManageBlocks = () => { void this.root?.manageBlocks() }
+      // 聊天翻页（V15 真分页）：往前翻到底要给服务端发一次游标请求，所以由编排层发那一枪
+      social.onChatTurnPage = delta => { void this.root?.turnChatPage(delta) }
       // 集结页签（V02-S1）：列表与三个动作都经编排层 —— 面板判不了"我参没参"，也发不出 join（要带兵）
       out.rallies = data => social.attachRallies(data)
       social.onRallyEnter = () => { void this.root?.refresh('rallies') }

@@ -18,7 +18,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ackablePrivateEventIds, buildChatPanel, buildChatMessages, chatConversations, chatFailureText,
-  chatKey, chatMessageText, chatUnreadCount, CHAT_LOCAL_HISTORY_MAX, mergeChatHistory,
+  chatContentPerPage, chatKey, chatMessageText, chatPageCount, chatPageOf, chatUnreadCount, CHAT_FETCH_OLDER,
+  CHAT_LOCAL_HISTORY_MAX, CHAT_PAGE_ROWS, mergeChatHistory,
   parseSharedReport, SOCIAL_CHAT_RATE_LIMITED,
 } from '../assets/scripts/game/social/ChatPanel'
 import type { ChatMessageView, SocialEventView } from '../assets/scripts/net/generated/SocialProtocol'
@@ -117,7 +118,7 @@ test('页面数据：私聊未选会话画会话列表，选中后画消息，�
   const base = {
     messages: [message('m1', 100)], events, myPlayerId: 'me',
     peerNames: new Map<string, string>(), offsetMs: 0, localNow: 200, sentSeq: 0, notice: null,
-    blockedCount: 0, friends: [],
+    blockedCount: 0, friends: [], page: 0, hasMoreOlder: false,
   }
   const list = buildChatPanel({ ...base, channel: 'PRIVATE', peerId: null })
   assert.equal(list.mode, 'conversations')
@@ -142,7 +143,7 @@ test('页面数据：私聊未选会话画会话列表，选中后画消息，�
 test('页面数据：notice 进提示行且按告警色画（失败原因是玩家唯一看得见的落点）', () => {
   const data = buildChatPanel({
     channel: 'SQUAD', peerId: null, messages: [], events: [], myPlayerId: 'me',
-    peerNames: new Map(), offsetMs: 0, localNow: 0, sentSeq: 0, blockedCount: 0, friends: [],
+    peerNames: new Map(), offsetMs: 0, localNow: 0, sentSeq: 0, blockedCount: 0, friends: [], page: 0, hasMoreOlder: false,
     notice: '慢一点：同一句话 8 秒后才能再发',
   })
   assert.equal(data.hintIsWarning, true)
@@ -169,7 +170,7 @@ test('黑名单入口：私聊列表顶部多一行（拉黑后那条消息够�
   const base = {
     channel: 'PRIVATE' as const, peerId: null, messages: [], events: [],
     myPlayerId: 'me', peerNames: new Map<string, string>(), offsetMs: 0, localNow: 0,
-    sentSeq: 0, notice: null, friends: [],
+    sentSeq: 0, notice: null, friends: [], page: 0, hasMoreOlder: false,
   }
   const empty = buildChatPanel({ ...base, blockedCount: 0 })
   assert.equal(empty.conversations.some(row => row.peerId === 'blocks'), false,
@@ -186,6 +187,7 @@ test('关注列表：进私聊页就能看到，带在线状态（会话列表�
   const data = buildChatPanel({
     channel: 'PRIVATE', peerId: null, messages: [], events: [], myPlayerId: 'me',
     peerNames: new Map(), offsetMs: 0, localNow: 1000, sentSeq: 0, notice: null, blockedCount: 0,
+    page: 0, hasMoreOlder: false,
     friends: [
       { playerId: 'f1', name: '老王', online: true, lastSeenAt: 1000 },
       { playerId: 'f2', name: '小李', online: false, lastSeenAt: 1000 - 3 * 3600_000 },
@@ -200,4 +202,123 @@ test('本地历史按会话分桶：私聊的键要带对象，否则两人的�
   assert.equal(chatKey('WORLD', null), 'WORLD')
   assert.equal(chatKey('PRIVATE', 'p1'), 'PRIVATE:p1')
   assert.notEqual(chatKey('PRIVATE', 'p1'), chatKey('PRIVATE', 'p2'))
+})
+
+// ---------- V15：聊天真分页 ----------
+
+function msg(index: number): ChatMessageView {
+  return {
+    messageId: `m${String(index).padStart(3, '0')}`,
+    channel: 'WORLD', senderId: 'other', senderName: '别人', content: `第 ${index} 条`,
+    sentAt: 1_000 + index,
+  } as ChatMessageView
+}
+
+function ramp(count: number): ChatMessageView[] {
+  return Array.from({ length: count }, (_v, i) => msg(i))
+}
+
+test('聊天分页：第 0 页是**最新**一页（与其它页签相反）', () => {
+  const all = ramp(12)
+  // 容量 5，而 12 条装不下 ⇒ **为翻页行让出一格**，每页 4 条（与其它页签共用 contentPerPage）
+  const perPage = chatContentPerPage(12)
+  assert.equal(perPage, 4, '装不下时要为翻页行让位：5 条消息 + 1 行翻页会压到输入行上')
+  const newest = chatPageOf(all, 'me', 2_000, 0, false)
+  assert.equal(newest.page, 0)
+  assert.equal(newest.pages, Math.ceil(12 / perPage))
+  assert.equal(newest.rows.length, perPage)
+  // 最新页必须是**最后** 4 条，不是最前 4 条 —— 正序分页会让"自己刚发的消息不出现"
+  assert.equal(newest.rows[newest.rows.length - 1]?.messageId, 'm011')
+  assert.equal(newest.rows[0]?.messageId, 'm008')
+  assert.equal(newest.canNewer, false, '第 0 页就是最新，没有更新的')
+  assert.equal(newest.canOlder, true)
+  assert.match(newest.noticeText, /第 1\/3 页（第 1 页最新）/)
+  assert.match(newest.noticeText, /每页 4 条/, '每页几条会被"让位"改掉，所以要报出来')
+
+  // 往更早翻一页
+  const older = chatPageOf(all, 'me', 2_000, 1, false)
+  assert.equal(older.rows[0]?.messageId, 'm004')
+  assert.equal(older.rows[older.rows.length - 1]?.messageId, 'm007')
+  assert.equal(older.canNewer, true)
+  assert.equal(older.canOlder, true)
+  assert.match(older.noticeText, /第 2\/3 页/)
+
+  // 最旧那一页：本地到头、服务端也没了 ⇒ canOlder=false
+  const oldest = chatPageOf(all, 'me', 2_000, 2, false)
+  assert.equal(oldest.rows[0]?.messageId, 'm000')
+  assert.equal(oldest.canOlder, false, '本地与服务端都到头了，那颗「更早」必须灰')
+})
+
+test('聊天分页：装得下时**不让位**（每页仍是 5 条，也没有翻页行）', () => {
+  // 5 条正好装满容量 ⇒ 不画翻页行，5 条都画出来
+  const exact = chatPageOf(ramp(5), 'me', 2_000, 0, false)
+  assert.equal(chatContentPerPage(5), 5)
+  assert.equal(exact.pages, 1)
+  assert.equal(exact.rows.length, 5)
+  assert.equal(exact.canOlder, false)
+  assert.equal(exact.canNewer, false)
+  assert.ok(!exact.noticeText.includes('每页'), '只有一页时不报每页几条')
+})
+
+test('聊天分页：本地到头但服务端还有 ⇒ 「更早」继续亮（点它去拉下一段）', () => {
+  const all = ramp(6)   // 2 页
+  const last = chatPageOf(all, 'me', 2_000, 1, true)
+  assert.equal(last.page, 1)
+  assert.equal(last.canOlder, true, 'hasMore=true 时最旧那一页的「更早」不许灰 —— 灰了就再也拉不到历史')
+  const done = chatPageOf(all, 'me', 2_000, 1, false)
+  assert.equal(done.canOlder, false)
+})
+
+test('聊天分页：页码越界夹回，不抛异常也不画空白页', () => {
+  const all = ramp(12)
+  // 负数与超大页码都要夹回范围内（翻页键会画灰，但数据层不能依赖视图的自觉）
+  assert.equal(chatPageOf(all, 'me', 2_000, -5, false).page, 0)
+  assert.equal(chatPageOf(all, 'me', 2_000, 99, false).page, 2)
+  assert.ok(chatPageOf(all, 'me', 2_000, 99, false).rows.length > 0, '夹回来的那一页必须有内容')
+  // 一条都没有时：1 页、0 行、页码 0（0 页会让"上一页"除零）
+  const empty = chatPageOf([], 'me', 2_000, 0, false)
+  assert.equal(empty.pages, 1)
+  assert.equal(empty.rows.length, 0)
+  assert.equal(empty.noticeText, '')
+  assert.equal(empty.canOlder, false)
+  assert.equal(empty.canNewer, false)
+})
+
+test('聊天分页：页内仍是升序（面板从上往下画），且与其它页签的页数口径一致', () => {
+  const all = ramp(11)
+  // **从最旧那一页往新页遍历**：第 0 页是最新，所以页码递增是倒着走时间轴
+  // （第一版这里从 0 开始遍历，断言必红 —— 但那红的是测试的前提，不是代码）
+  const pages = chatPageOf(all, 'me', 2_000, 0, false).pages
+  let previous = -1
+  for (let page = pages - 1; page >= 0; page -= 1) {
+    const view = chatPageOf(all, 'me', 2_000, page, false)
+    for (const row of view.rows) {
+      const index = Number(row.messageId.slice(1))
+      assert.ok(index > previous, `page=${page} 页内顺序错了：${row.messageId} 跟在 ${previous} 之后`)
+      previous = index
+    }
+  }
+  assert.equal(previous, 10, '翻完所有页必须恰好覆盖每一条，不重不漏')
+  // 共几页与切哪一段必须用同一个 perPage（两处各算一遍就会翻出空白页）
+  for (const count of [0, 1, 5, 6, 10, 11, 200]) {
+    const total = chatPageCount(count)
+    const lastPage = chatPageOf(ramp(count), 'me', 2_000, total - 1, false)
+    assert.ok(count === 0 || lastPage.rows.length > 0, `count=${count} 的最后一页是空的（页数算错了）`)
+  }
+})
+
+test('聊天分页：一屏装得下时不占翻页行（canOlder/canNewer 都为 false）', () => {
+  const small = chatPageOf(ramp(3), 'me', 2_000, 0, false)
+  assert.equal(small.pages, 1)
+  assert.equal(small.canOlder, false)
+  assert.equal(small.canNewer, false)
+  assert.equal(small.rows.length, 3)
+})
+
+test('聊天分页：CHAT_PAGE_ROWS 与"向服务端一次要多少"是两个数，不许合并', () => {
+  assert.equal(CHAT_PAGE_ROWS, 5, '一屏 5 条消息 + 1 行翻页 = 6 行，正好用满聊天页签的可视高')
+  assert.equal(CHAT_FETCH_OLDER, 20, '往前翻一次补 20 条 = 4 屏，翻 4 次才发一枪')
+  assert.notEqual(CHAT_PAGE_ROWS, CHAT_FETCH_OLDER)
+  assert.ok(CHAT_FETCH_OLDER > CHAT_PAGE_ROWS, '一次要的必须多于一屏，否则每翻一页都发一次请求')
+  assert.ok(CHAT_FETCH_OLDER <= CHAT_LOCAL_HISTORY_MAX, '一次要的不能超过本地缓存上限')
 })

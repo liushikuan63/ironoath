@@ -39,8 +39,8 @@ import type {
   SocialEventView, SocialSummaryResp,
 } from '../../net/generated/SocialProtocol'
 import {
-  ackablePrivateEventIds, buildChatPanel, chatFailureText, chatKey, CHAT_LOCAL_HISTORY_MAX,
-  mergeChatHistory,
+  ackablePrivateEventIds, buildChatPanel, chatFailureText, chatKey, chatPageCount,
+  CHAT_FETCH_OLDER, CHAT_LOCAL_HISTORY_MAX, CHAT_PAGE_ROWS, mergeChatHistory,
 } from '../social/ChatPanel'
 import type { ChatPanelData } from '../social/ChatPanel'
 import { buildRankBoard, buildRankSnapshotView } from '../power/RankBoard'
@@ -685,6 +685,17 @@ export class AppRoot {
   private chatPeerId: string | null = null
   /** 各频道/会话已拉到的历史，键见 `chatKey`。**只在内存里**：B10 §5 说的"本地保留 200 条"是本次会话的窗口，不落盘 */
   private readonly chatHistory = new Map<string, ChatMessageView[]>()
+  /**
+   * 聊天当前页（V15：0 = 最新那一页）。**住在编排层而不是视图**：
+   * 往更早翻翻到本地窗口之外时要发一次请求（游标 = 手里最旧那条），
+   * 而视图只会重画、不该发请求。
+   */
+  private chatPage = 0
+  /**
+   * 服务端说"还有更早的"（`/chat/list` 的 `hasMore`）。V15 之前这一位**下发了但客户端零读取** ——
+   * 于是历史消息在面板里没有入口。现在它决定最旧那一页的「更早」键还亮不亮。
+   */
+  private chatHasMoreOlder = false
   /** 已学到的昵称（打开过会话就从消息里学到）。会话列表没有它时只能显示事件标题 */
   private readonly chatPeerNames = new Map<string, string>()
   /**
@@ -2308,6 +2319,9 @@ export class AppRoot {
       mergeChatHistory(this.chatHistory.get(key) ?? [], [outcome.data.message]))
     this.chatNotice = null
     this.chatSentSeq += 1
+    // **发完一条回到最新那一页**：停在"更早"那一页时，自己刚发的话落在最新页上，
+    // 屏上什么都不动 —— 玩家会以为没发出去（这正是 V15 之前那个 slice(-5) 在补的坑）
+    this.chatPage = 0
     this.deliverChat()
   }
 
@@ -2384,6 +2398,9 @@ export class AppRoot {
     const key = chatKey(channel, peerId)
     this.chatHistory.set(key,
       mergeChatHistory(this.chatHistory.get(key) ?? [], outcome.data.messages))
+    // 打开/切频道/换会话一律回到最新那一页，并把服务端的 `hasMore` 收下来（V15）
+    this.chatPage = 0
+    this.chatHasMoreOlder = outcome.data.hasMore
     this.learnPeerNames(outcome.data.messages)
     this.chatNotice = null
     this.deliverChat()
@@ -3656,7 +3673,72 @@ export class AppRoot {
       notice: this.chatNotice,
       blockedCount: this.myBlocked.length,
       friends: this.myFriends,
+      page: this.chatPage,
+      hasMoreOlder: this.chatHasMoreOlder,
     }))
+  }
+
+  /**
+   * 聊天翻页（V15 真分页）。
+   *
+   * <p><b>`step` 是页码增量，而页码从最新往回数**（0 = 最新那一页）⇒
+   * `step = +1` 是往**更早**翻、`-1` 是往**更新**翻。** 这个方向与直觉相反，
+   * 所以调用方（表现层）按语义传 `+1/-1`，而这里只认页码增量 —— 两处各转一次必然错一次
+   * （第一版表现层按"更早 = -1"传，于是页码被夹回 0，点了没反应）。
+   *
+   * <p>往更早翻到本地窗口之外时**要先去拉一段更旧的**（`beforeMessageId` = 当前手里最旧那条，
+   * `hasMore` 由服务端给）。这就是 `hasMore` 从"下发但没人读"变成真在用的那一步。
+   *
+   * <p>拉不到就**不动页码**：往前翻一格显示一片空白，比"停在原地说一句拉不到"更让人以为记录丢了。
+   */
+  async turnChatPage(step: number): Promise<void> {
+    if (this.chatChannel === 'PRIVATE' && this.chatPeerId === null) {
+      return
+    }
+    const key = chatKey(this.chatChannel, this.chatPeerId)
+    const loaded = this.chatHistory.get(key) ?? []
+    const pages = chatPageCount(loaded.length, CHAT_PAGE_ROWS)
+    const target = this.chatPage + step
+    if (step < 0) {
+      // 往**更新**翻：只是在本地窗口里往回走，**不发请求**
+      this.chatPage = Math.max(0, Math.min(target, pages - 1))
+      this.deliverChat()
+      return
+    }
+    if (target < pages) {
+      this.chatPage = Math.max(0, target)
+      this.deliverChat()
+      return
+    }
+    // 已经翻到本地最旧那一页：服务端说还有，就去补一段
+    if (!this.chatHasMoreOlder) {
+      return
+    }
+    const oldest = loaded[0] ?? null
+    if (oldest === null) {
+      return
+    }
+    const outcome = await this.api.chatList({
+      channel: this.chatChannel,
+      toPlayerId: this.chatChannel === 'PRIVATE' ? this.chatPeerId : null,
+      beforeMessageId: oldest.messageId,
+      limit: CHAT_FETCH_OLDER,
+    })
+    if (outcome.kind !== 'ok') {
+      this.chatNotice = outcome.kind === 'biz'
+        ? chatFailureText(outcome.code, outcome.detail, outcome.msg)
+        : AppRoot.reason(outcome)
+      this.say('chat', outcome)
+      this.deliverChat()
+      return
+    }
+    this.chatHistory.set(key, mergeChatHistory(loaded, outcome.data.messages))
+    this.chatHasMoreOlder = outcome.data.hasMore
+    this.learnPeerNames(outcome.data.messages)
+    // 补到的这一段正好接在旧窗口之前，所以页码只前进一格
+    const grown = this.chatHistory.get(key) ?? []
+    this.chatPage = Math.min(target, chatPageCount(grown.length, CHAT_PAGE_ROWS) - 1)
+    this.deliverChat()
   }
 
   // ---------- 举报与拉黑（B22 §一 3） ----------

@@ -153,6 +153,10 @@ const SKIP = new Set([
   // 切到「外交」才补一次国家榜（候选目标国）。与 `openNation` / `reloadRankTab` 同一口径 ——
   // 真正的意图在研究、改关系、任命那三枪上（各打一条）
   "selectNationTab",
+  // 聊天往前翻（V15 真分页）与榜的翻页同一条口径：翻页是同一次阅读的延续，
+  // 打开频道那一下已经由 `chat` 家族的读取记过，翻页再记会把一次浏览记成多次。
+  // **注意"往前翻到底会发一次请求"不改变这条**：那是把同一段阅读补齐，不是新的意图
+  "turnChatPage",
 ])
 
 const lines = fs.readFileSync(ROOT, "utf8").split("\n")
