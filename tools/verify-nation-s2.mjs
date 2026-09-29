@@ -104,7 +104,7 @@ function readPanel() {
   const buttons = {}
   const BUILT = ['Tab_TREASURY', 'Tab_TECH', 'Tab_DIPLO', 'Tab_OFFICE', 'TechResearch-nation_tech_wood',
     'DiproTarget-nation_chibi', 'DiproOption-ALLIED', 'AppointTarget-player_minister',
-    'AppointOffice-GENERAL', 'AppointOffice-KING', 'AppointOffice-REPRESENTATIVE', 'CloseButton']
+    'AppointOffice-GENERAL', 'AppointOffice-KING', 'AppointOffice-REPRESENTATIVE', 'SpendButton', 'CloseButton']
   if (panel) {
     const walk = (n) => {
       if (n.activeInHierarchy) {
@@ -160,15 +160,23 @@ const clickAllianceNationRow = (page) => page.evaluate(`(() => {
   return true
 })()`)
 
-/** 挂夹具：已在联盟 + 已有国家 + 一张科技表。`techCase` 选哪一行形态。 */
-function stubAll(context, { techCase = 'ok', relations = null } = {}) {
+/** 挂夹具：已在联盟 + 已有国家 + 一张科技表。`techCase` 选哪一行形态。
+ *
+ * <p>`permissions` 是**国家层权限位**（V13-d 之后灰键由它裁决，不再靠 `myOffice` 猜）：
+ * 默认给全（国王档），`permissions: []` 用来验"位缺了就是灰的"。
+ */
+function stubAll(context, { techCase = 'ok', permissions = null } = {}) {
   const stub = makeStubRead(context)
   const cors = (request) => ({
     'access-control-allow-origin': request.headers()['origin'] ?? '*',
     'access-control-allow-headers': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
   })
+  const codes = permissions ?? ['APPOINT_OFFICE', 'WITHDRAW_TREASURY', 'MANAGE_DIPLOMACY', 'RESEARCH_NATION_TECH']
   const techCalls = []
+  stub('**/social/permissions*', () => ({
+    scope: 'NATION', role: codes.length === 0 ? 'MEMBER' : 'KING', permissions: codes, serverNow: NOW,
+  }))
   stub('**/social/summary', () => ({
     squad: null, alliance: ALLIANCE, nationId: NATION.nationId, pendingInvites: 0, pendingHelps: 0,
     helpRemainingToday: 5, events: [], serverNow: NOW,
@@ -177,7 +185,6 @@ function stubAll(context, { techCase = 'ok', relations = null } = {}) {
     version: 1, unchanged: false, changedMembers: MEMBERS, removedMemberIds: [],
     fund: ALLIANCE.fund, level: ALLIANCE.level, memberCount: MEMBERS.length, announcement: '', serverNow: NOW,
   }))
-  stub('**/social/permissions*', () => ({ permissions: [], serverNow: NOW }))
   stub('**/social/helpRequests*', () => ({ requests: [], serverNow: NOW }))
   stub('**/nation/treasury', () => ({ balance: 1_234_567, logs: [], serverNow: NOW }))
   stub('**/nation/tech', () => {
@@ -449,6 +456,50 @@ await runScene(browser, '任命', { techCase: 'ok' }, async ({ page, state }) =>
   const after = await page.evaluate(readPanel)
   checkThat('回执把任命说清了（用昵称，不是 id）', (after.texts ?? []).join('').includes('已任命 钱部长'))
   await page.screenshot({ path: path.join(OUT, '07-appointed.png') })
+})
+
+// ---------- 第 9 场：权限位缺了就是灰的（V13-d 的判别场景） ----------
+await runScene(browser, '权限位缺位', { techCase: 'ok', permissions: [] }, async ({ page, state }) => {
+  await clickAllianceNationRow(page)
+  await page.waitForTimeout(1200)
+  // 任命：没有 APPOINT_OFFICE ⇒ 先选人，官职键也不许亮；点了零请求
+  await clickTab(page, 'OFFICE')
+  await page.waitForTimeout(1200)
+  const office = await page.evaluate(readPanel)
+  const officeText = (office.texts ?? []).join('')
+  checkThat('缺 APPOINT_OFFICE：选人那颗键仍可点（它是选择，不是动作）',
+    office.buttons['AppointTarget-player_minister'] === true)
+  check('缺 APPOINT_OFFICE：官职键是灰的', office.buttons['AppointOffice-GENERAL'], false)
+  checkThat('缺位时写明的是「职位不能做」，不是「没读到」',
+    officeText.includes('你当前的职位不能任命官职') && !officeText.includes('权限还没读到'))
+  await clickPanelButton(page, 'AppointTarget-player_minister')
+  await page.waitForTimeout(700)
+  const picked = await page.evaluate(readPanel)
+  check('选了人之后官职键**仍然**灰（位缺了就是缺了）', picked.buttons['AppointOffice-GENERAL'], false)
+  await clickPanelButton(page, 'AppointOffice-GENERAL')
+  await page.waitForTimeout(800)
+  check('点灰的官职键零请求', state.posts.length, 0)
+  await page.screenshot({ path: path.join(OUT, '08-no-appoint-bit.png') })
+
+  // 外交：没有 MANAGE_DIPLOMACY ⇒ 目标可选、四颗关系键全灰、零请求
+  await clickTab(page, 'DIPLO')
+  await page.waitForTimeout(1200)
+  const diplo = await page.evaluate(readPanel)
+  const diploText = (diplo.texts ?? []).join('')
+  check('缺 MANAGE_DIPLOMACY：四颗关系键是灰的', diplo.buttons['DiproOption-ALLIED'], false)
+  checkThat('缺位时写明的是「职位不能变更外交」', diploText.includes('你当前的职位不能变更外交'))
+  await clickPanelButton(page, 'DiproTarget-nation_chibi')
+  await page.waitForTimeout(700)
+  await clickPanelButton(page, 'DiproOption-HOSTILE')
+  await page.waitForTimeout(800)
+  check('点灰的关系键零请求', state.posts.length, 0)
+  await page.screenshot({ path: path.join(OUT, '09-no-diplomacy-bit.png') })
+
+  // 国库：没有 WITHDRAW_TREASURY ⇒ 支出灰（S1 已细验，这里确认同一份权限位也管着这一颗）
+  await clickTab(page, 'TREASURY')
+  await page.waitForTimeout(1000)
+  const treasury = await page.evaluate(readPanel)
+  check('缺 WITHDRAW_TREASURY：国库支出也是灰的', treasury.buttons.SpendButton, false)
 })
 
 await browser.close()

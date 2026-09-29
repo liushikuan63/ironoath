@@ -271,6 +271,13 @@ export interface NationPanelInput {
   readonly notice: string | null
   /** notice 的语气；不给按 `'warn'`（失败）算。 */
   readonly noticeTone?: 'ok' | 'warn'
+  /**
+   * `GET /social/permissions?scope=NATION` 的权限位（`role_permission.permission`）——
+   * **灰键的权威来源**（V13-d：能做什么由服务端权限位决定）。
+   */
+  readonly permissions?: readonly string[] | null
+  /** 那一份权限位读到了没有。**读不到时不给"你不行"，也不放行**（见 `permissionGateOf`）。 */
+  readonly permissionsLoaded?: boolean
   /** 当前页签（S2）。无国家时忽略。 */
   readonly tab?: NationTabKey
   /** S2 三块；没拉过时为 null（面板据它说"这一次没读到"，不是画一片空白）。 */
@@ -279,6 +286,48 @@ export interface NationPanelInput {
 
 const OFF_ACTION: NationActionView = { text: '—', enabled: false, reason: '你还不在任何国家里' }
 const IN_ACTION: NationActionView = { text: '—', enabled: false, reason: '你已经在一个国家里' }
+
+/**
+ * 权限位 → 「这颗键亮不亮、为什么灰」。
+ *
+ * <p>三条口径（与 `game/social/PermissionGates.gate` 同一套，刻意不另立一套）：
+ * ① 权限位里有这一位 ⇒ 亮；
+ * ② 读到了、但没有这一位 ⇒ 灰，理由是**身份结论**（"你当前的职位不能动国库"）；
+ * ③ **没读到**（请求失败 / 还没回来）⇒ 灰，理由是"权限还没读到"。
+ *
+ * <p>③ 不能写成②：把一次读失败说成"你不行"，玩家会去申请升职 ——
+ * 而真正该做的只是重进这一页。这条纪律在社交页那边已经立过一次。
+ */
+/** 权限位的判定结果（`text` 由调用方补：同一份判定服务三颗不同文案的键）。 */
+export interface NationGate {
+  readonly enabled: boolean
+  readonly reason: string | null
+}
+
+/**
+ * 权限位 → 「这颗键亮不亮、为什么灰」。
+ *
+ * <p>三条口径（与 `game/social/PermissionGates.gate` 同一套，刻意不另立一套）：
+ * ① 权限位里有这一位 ⇒ 亮；
+ * ② 读到了、但没有这一位 ⇒ 灰，理由是**身份结论**（"你当前的职位不能动国库"）；
+ * ③ **没读到**（请求失败 / 还没回来）⇒ 灰，理由是"权限还没读到"。
+ *
+ * <p>③ 不能写成②：把一次读失败说成"你不行"，玩家会去申请升职 ——
+ * 而真正该做的只是重进这一页。这条纪律在社交页那边已经立过一次。
+ *
+ * @param action 这一位管的是哪件事（"动国库" / "任命官职" / "变更外交"），拼进那句理由
+ */
+export function permissionGateOf(code: string, action: string,
+                                permissions: readonly string[] | null | undefined,
+                                loaded: boolean | undefined): NationGate {
+  if (loaded !== true) {
+    return { enabled: false, reason: '权限还没读到' }
+  }
+  if ((permissions ?? []).includes(code)) {
+    return { enabled: true, reason: null }
+  }
+  return { enabled: false, reason: `你当前的职位不能${action}` }
+}
 
 /** 一条流水 → 一行。`serverNow` 必须与 `log.at` 同源（铁律 5：不引本机时钟）。 */
 export function buildTreasuryRow(log: TreasuryLogView, names: ReadonlyMap<string, string>,
@@ -408,7 +457,7 @@ export function buildNationPanel(input: NationPanelInput): NationPanelView {
       disband: OFF_ACTION,
       spend: OFF_ACTION,
       notice: input.notice,
-    noticeTone: input.noticeTone ?? 'warn',
+      noticeTone: input.noticeTone ?? 'warn',
     }
   }
 
@@ -449,15 +498,13 @@ export function buildNationPanel(input: NationPanelInput): NationPanelView {
       enabled: isKing,
       reason: isKing ? null : '只有国王能解散这个国家',
     },
-    // 国库支出的权限位在 role_permission 表里（WITHDRAW_TREASURY），**客户端拿不到那张表**。
-    // 唯一能从下发字段判出来的结论是「你有没有官职」：没有官职的玩家一定动不了国库，
-    // 所以那颗键灰掉、点了零请求；有官职的能不能花、花多少仍由服务端判（13010/13011）
+    // 国库支出：**由权限位裁决**（`WITHDRAW_TREASURY`，V13-d 的口径）。
+    // 从前这里只能用「你有没有官职」当代理 —— 那个代理是对的但不精确：
+    // 谁是 OFFICER 由 role_permission 表说了算，表改了代理就骗人。
+    // 表里没有"解散"这一位，所以解散仍然按 kingId（结构事实，不是权限），见上。
     spend: {
       text: '国库支出',
-      enabled: nation.myOffice !== null && nation.myOffice !== '',
-      reason: nation.myOffice === null || nation.myOffice === ''
-        ? '你在本国没有官职，按规定不能动国库'
-        : null,
+      ...permissionGateOf('WITHDRAW_TREASURY', '动国库', input.permissions, input.permissionsLoaded),
     },
     notice: input.notice,
     noticeTone: input.noticeTone ?? 'warn',

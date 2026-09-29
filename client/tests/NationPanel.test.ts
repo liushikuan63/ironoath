@@ -28,6 +28,7 @@ import {
   APPOINTABLE_OFFICES, DIPLOMACY_OPTIONS, buildAppointRows, buildDiplomacyRows, buildNationSections,
   buildNationTechSection, diplomacyLabel, diplomacyNotice, nationTechBlockText,
 } from '../assets/scripts/game/nation/NationSections'
+import { codesOf, EMPTY_PERMISSIONS, gate, roleText, withPermissionScope, withoutNationPermissions } from '../assets/scripts/game/social/PermissionGates'
 import type { NationRelationView } from '../assets/scripts/net/generated/NationProtocol'
 import type { NationTechListView, NationTechView } from '../assets/scripts/net/generated/NationTechProtocol'
 import type {
@@ -224,26 +225,56 @@ test('流水超出屏：报出截掉了几条，不做"只显示最近 5 条 + �
   assert.equal(box.logs[0]?.detailText.split(' · ')[0], '刚刚')
 })
 
-test('权限：解散那颗只对国王亮；支出那颗按「有没有官职」亮', () => {
-  const king = buildNationPanel(input({ nation: nation({ kingId: KING_ID, myOffice: 'KING' }), treasury: treasuryResp() }))
+test('权限：解散那颗按 kingId；支出那颗按**权限位**（V13-d 的口径）', () => {
+  const king = buildNationPanel(input({
+    nation: nation({ kingId: KING_ID, myOffice: 'KING' }), treasury: treasuryResp(),
+    permissions: ['WITHDRAW_TREASURY', 'APPOINT_OFFICE'], permissionsLoaded: true,
+  }))
   assert.equal(king.disband.enabled, true)
   assert.equal(king.disband.reason, null)
   assert.equal(king.spend.enabled, true)
   assert.equal(king.spend.reason, null)
 
-  const plain = buildNationPanel(input({ nation: nation({ kingId: OTHER_ID, myOffice: 'GENERAL' }), treasury: treasuryResp() }))
+  // 不是国王 ⇒ 解散灰。**表里没有"解散"这一位**，所以它仍然按 kingId（结构事实，不是权限）
+  const plain = buildNationPanel(input({
+    nation: nation({ kingId: OTHER_ID, myOffice: 'GENERAL' }), treasury: treasuryResp(),
+    permissions: ['WITHDRAW_TREASURY'], permissionsLoaded: true,
+  }))
   assert.equal(plain.disband.enabled, false, '不是国王就不许亮解散')
   assert.equal(plain.disband.reason, '只有国王能解散这个国家')
 
-  const noOffice = buildNationPanel(input({ nation: nation({ myOffice: null }), treasury: treasuryResp() }))
-  assert.equal(noOffice.spend.enabled, false, '没有官职就不许亮国库支出')
-  assert.equal(noOffice.spend.reason, '你在本国没有官职，按规定不能动国库')
+  // **判别性**：有官职、但权限位里没有 WITHDRAW_TREASURY ⇒ 灰。
+  // 这一条正是本格要修的：从前"有官职"就等于能花（代理），而权威是权限位
+  const officeWithoutBit = buildNationPanel(input({
+    nation: nation({ myOffice: 'MINISTER' }), treasury: treasuryResp(),
+    permissions: [], permissionsLoaded: true,
+  }))
+  assert.equal(officeWithoutBit.spend.enabled, false, '有官职不等于有这一位')
+  assert.equal(officeWithoutBit.spend.reason, '你当前的职位不能动国库')
+
+  // 反过来：没官职但服务端给了这一位 ⇒ 亮（客户端不拿官职名当门槛）
+  const bitWithoutOffice = buildNationPanel(input({
+    nation: nation({ myOffice: null }), treasury: treasuryResp(),
+    permissions: ['WITHDRAW_TREASURY'], permissionsLoaded: true,
+  }))
+  assert.equal(bitWithoutOffice.spend.enabled, true, '结论只认权限位，不认官职名')
+
+  // 权限还没读到：不许说"你不行"（那是把一次读失败伪装成身份结论）
+  const notLoaded = buildNationPanel(input({
+    nation: nation({ myOffice: 'MINISTER' }), treasury: treasuryResp(),
+    permissions: null, permissionsLoaded: false,
+  }))
+  assert.equal(notLoaded.spend.enabled, false, '读不到权限时不放行')
+  assert.equal(notLoaded.spend.reason, '权限还没读到')
+  assert.ok(!String(notLoaded.spend.reason).includes('不能'),
+    '读失败不许说成"你不能做" —— 玩家会去申请升职，而真正该做的只是重进这一页')
 
   // 换一个人当国王，这一颗就该跟着换人 —— 结论完全来自下发字段
   const switched = buildNationPanel(input({
     nation: nation({ kingId: OTHER_ID, myOffice: 'MINISTER' }),
     playerId: OTHER_ID,
     treasury: treasuryResp(),
+    permissions: ['WITHDRAW_TREASURY'], permissionsLoaded: true,
   }))
   assert.equal(switched.disband.enabled, true)
 })
@@ -505,4 +536,66 @@ test('裸 token 的对手方：周税入账不许显示成「其他用途」（�
   assert.equal(row.headText, '成员联盟周税 · 10,000')
   assert.equal(row.detailText, '刚刚 · 系统 · 国库周税')
   assert.ok(!row.headText.includes('weekly_tax') && !row.headText.includes('其他用途'))
+})
+
+test('V13-d：任命与外交两颗门也由权限位裁决（不许自己按官职名判）', () => {
+  const members = [{ id: 'p1', name: '成员甲' }]
+  // 有 APPOINT_OFFICE / MANAGE_DIPLOMACY ⇒ 两块都开
+  const allowed = buildNationSections(null, null, [{ nationId: 'nation_x', name: '北伐营' }], members,
+    ['APPOINT_OFFICE', 'MANAGE_DIPLOMACY'], true)
+  assert.equal(allowed.appoint.gate.enabled, true)
+  assert.equal(allowed.diplomacy.gate.enabled, true)
+  assert.equal(allowed.appoint.gate.reason, null)
+
+  // 只有一位 ⇒ 外交灰而任命亮（两颗门各管各的，不许合成一颗）
+  const onlyAppoint = buildNationSections(null, null, [], members, ['APPOINT_OFFICE'], true)
+  assert.equal(onlyAppoint.appoint.gate.enabled, true)
+  assert.equal(onlyAppoint.diplomacy.gate.enabled, false)
+  assert.equal(onlyAppoint.diplomacy.gate.reason, '你当前的职位不能变更外交')
+
+  // 都没读到 ⇒ 两颗门都写"权限还没读到"，**不写"你不能"**
+  const unloaded = buildNationSections(null, null, [], members, null, false)
+  assert.equal(unloaded.appoint.gate.enabled, false)
+  assert.equal(unloaded.appoint.gate.reason, '权限还没读到')
+  assert.equal(unloaded.diplomacy.gate.reason, '权限还没读到')
+  for (const reason of [unloaded.appoint.gate.reason, unloaded.diplomacy.gate.reason]) {
+    assert.ok(!String(reason).includes('不能'))
+  }
+
+  // 默认参数：不传权限时按"没读到"算（调用方忘了传 = 灰着，不是放开）
+  const byDefault = buildNationSections(null, null, [], members)
+  assert.equal(byDefault.appoint.gate.enabled, false)
+  assert.equal(byDefault.appoint.gate.reason, '权限还没读到')
+})
+
+test('V13-d：三档 scope 各读各的槽位，NATION 不许落到联盟那一格', () => {
+  // 判别性：改之前 codesOf/roleText 都是"非 SQUAD 就当联盟"，
+  // 加一层 scope 而忘了改这里，就会让国家权限读联盟的槽位（或反过来），而两边都不报错
+  let state = EMPTY_PERMISSIONS
+  state = withPermissionScope(state, 'SQUAD', ['KICK_MEMBER'], 'LEADER', false)
+  state = withPermissionScope(state, 'ALLIANCE', ['EDIT_ANNOUNCEMENT'], 'LEADER', true)
+  state = withPermissionScope(state, 'NATION', ['WITHDRAW_TREASURY'], 'KING', false)
+  assert.deepEqual([...codesOf(state, 'SQUAD')], ['KICK_MEMBER'])
+  assert.deepEqual([...codesOf(state, 'ALLIANCE')], ['EDIT_ANNOUNCEMENT'])
+  assert.deepEqual([...codesOf(state, 'NATION')], ['WITHDRAW_TREASURY'])
+  assert.equal(state.loaded, true)
+  assert.equal(state.nationLoaded, true)
+  assert.equal(roleText(state, 'SQUAD'), '队长')
+  assert.equal(roleText(state, 'ALLIANCE'), '盟主')
+
+  // 国家那一份**单独一位**：只有它拉到过时，小/盟两层的门仍是"还没读到"
+  let onlyNation = withPermissionScope(EMPTY_PERMISSIONS, 'NATION', [], 'MEMBER', false)
+  assert.equal(onlyNation.nationLoaded, true)
+  assert.equal(onlyNation.loaded, false, '国家那份不许把 loaded 顶成 true')
+  assert.equal(gate(onlyNation, 'ALLIANCE', 'KICK_MEMBER').reason, '权限还没读到')
+  assert.equal(gate(onlyNation, 'NATION', 'KICK_MEMBER').allowed, false)
+  assert.equal(gate(onlyNation, 'NATION', 'KICK_MEMBER').reason, '你当前的职位不能做这件事')
+
+  // 退国/亡国之后必须清干净：留着就是让一个已经离开的国家继续授权
+  const cleared = withoutNationPermissions(state)
+  assert.deepEqual([...codesOf(cleared, 'NATION')], [])
+  assert.equal(cleared.nationLoaded, false)
+  assert.equal(cleared.nationRole, null)
+  assert.deepEqual([...codesOf(cleared, 'SQUAD')], ['KICK_MEMBER'], '清国家那一份不许动别的层级')
+  assert.deepEqual([...codesOf(cleared, 'ALLIANCE')], ['EDIT_ANNOUNCEMENT'])
 })

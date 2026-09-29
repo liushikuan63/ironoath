@@ -836,7 +836,7 @@ export class GameApi {
    * <p>两个 scope 都要各拉一次：小队与联盟的权限码**同名不同授予**（两边都有 `KICK_MEMBER`），
    * 合成一份的话就是"这一页能踢人，那一页的按钮也跟着亮"。
    */
-  socialPermissions(scope: 'SQUAD' | 'ALLIANCE'): Promise<NetOutcome<PermissionListResp>> {
+  socialPermissions(scope: 'SQUAD' | 'ALLIANCE' | 'NATION'): Promise<NetOutcome<PermissionListResp>> {
     return this.read<PermissionListResp>('/social/permissions', { scope })
   }
 

@@ -22,8 +22,9 @@
  * ③ 有国家：概况逐字段等于夹具下发的值（国名/等级/成员/国库/都城/官职中文名）；
  * ④ 国库：余额、上限、流水（支给谁 · 多少 / 多久以前 · 谁做的 · 用途 / 余额）都在；
  * ⑤ 屏上没有裸值：`nation_` / `player:` / `sink:` / 官职枚举原文 / 玩家 id 一个都不许出现；
- * ⑥ 权限：不是国王 ⇒「解散国家」灰；没有官职 ⇒「国库支出」灰，**点了零请求**（数 POST）；
- * ⑦ 国王那一档：解散键亮（有官职就能花国库那一颗也亮）；
+ * ⑥ 权限：不是国王 ⇒「解散国家」灰（表里没有这一位，按 kingId 结构事实）；
+ *    没有 `WITHDRAW_TREASURY` 这一位 ⇒「国库支出」灰，**点了零请求**（数 POST）；
+ * ⑦ 国王那一档：解散键亮，且权限位里那一组都在 ⇒ 国库支出也亮；
  * ⑧ 点「关闭」收得掉；全程零页面错误。
  */
 import { mkdirSync } from 'node:fs'
@@ -246,13 +247,29 @@ const clickPanelButton = (page, name) => page.evaluate(`(() => {
   return true
 })()`)
 
-/** 挂上「已在联盟 + 国家三态」那一整套夹具。`kind` 决定 GET /nation 回什么。 */
+/**
+ * 挂上「已在联盟 + 国家三态」那一整套夹具。`kind` 决定 GET /nation 回什么。
+ *
+ * <p>`permissions` 是**国家层权限位**（`GET /social/permissions?scope=NATION`）：
+ * V13-d 之后灰键由它裁决，所以夹具必须用权限位说话，而不是靠 `myOffice` 猜。
+ * 三态的位分别对应角色：KING 全有、MINISTER 有支取、无官职一个都没有。
+ */
 function stubSocial(context, kind) {
   const stub = makeStubRead(context)
   const cors = (request) => ({
     'access-control-allow-origin': request.headers()['origin'] ?? '*',
     'access-control-allow-headers': '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
+  })
+  const permissionsOf = () => {
+    if (kind === 'none') return { role: 'NONE', permissions: [] }
+    if (kind === 'king') return { role: 'KING', permissions: ['APPOINT_OFFICE', 'WITHDRAW_TREASURY', 'MANAGE_DIPLOMACY', 'RESEARCH_NATION_TECH', 'DECLARE_WAR', 'JOIN_NATIONAL_RALLY'] }
+    if (kind === 'nooffice') return { role: 'MEMBER', permissions: ['JOIN_NATIONAL_RALLY'] }
+    return { role: 'MINISTER', permissions: ['WITHDRAW_TREASURY', 'MANAGE_DIPLOMACY', 'RESEARCH_NATION_TECH', 'JOIN_NATIONAL_RALLY'] }
+  }
+  stub('**/social/permissions*', () => {
+    const p = permissionsOf()
+    return { scope: 'NATION', role: p.role, permissions: p.permissions, serverNow: NOW }
   })
   stub('**/social/summary', () => ({
     squad: null,
@@ -269,7 +286,6 @@ function stubSocial(context, kind) {
     fund: ALLIANCE.fund, level: ALLIANCE.level, memberCount: MEMBERS.length,
     announcement: '', serverNow: NOW,
   }))
-  stub('**/social/permissions*', () => ({ permissions: [], serverNow: NOW }))
   stub('**/social/helpRequests*', () => ({ requests: [], serverNow: NOW }))
   if (kind === 'none') {
     stub('**/rank/list*', () => ({
@@ -453,7 +469,7 @@ await runScene(browser, {
     checkThat('入账那一行不出现「其他用途」', !shown.includes('其他用途'))
     // 权限：不是国王 ⇒ 解散灰；不是国王但有官职 ⇒ 支出亮
     check('不是国王 ⇒「解散国家」灰（不吃触摸，点了零请求）', opened.buttons.DisbandButton, false)
-    check('有官职 ⇒「国库支出」亮', opened.buttons.SpendButton, true)
+    check('权限位里有 WITHDRAW_TREASURY ⇒「国库支出」亮', opened.buttons.SpendButton, true)
     checkThat('灰的那颗写明了为什么', shown.includes('只有国王能解散这个国家'))
     // 开一次支出表单：金额预设与落点必须都在，且用途没填时确认键是灰的
     await clickPanelButton(page, 'SpendButton')
@@ -481,7 +497,7 @@ await runScene(browser, {
   },
 })
 
-// ---------- 第 3 场：没有官职 ⇒ 国库支出灰 ----------
+// ---------- 第 3 场：权限位里没有 WITHDRAW_TREASURY ⇒ 国库支出灰 ----------
 await runScene(browser, {
   name: '在国里·没有官职',
   kind: 'nooffice',
@@ -491,8 +507,8 @@ await runScene(browser, {
     await page.waitForTimeout(1500)
     const opened = await page.evaluate(readNation)
     const shown = (opened.texts ?? []).join('')
-    check('没有官职 ⇒「国库支出」灰', opened.buttons.SpendButton, false)
-    checkThat('写明了缺哪一条（不是只灰着）', shown.includes('你在本国没有官职'))
+    check('权限位里没有 WITHDRAW_TREASURY ⇒「国库支出」灰', opened.buttons.SpendButton, false)
+    checkThat('写明了原因（不是只灰着）', shown.includes('你当前的职位不能动国库'))
     await clickPanelButton(page, 'SpendButton')
     await page.waitForTimeout(800)
     check('点灰的「国库支出」零请求', posts.length, 0)
@@ -511,7 +527,7 @@ await runScene(browser, {
     const opened = await page.evaluate(readNation)
     const shown = (opened.texts ?? []).join('')
     check('国王 ⇒「解散国家」亮', opened.buttons.DisbandButton, true)
-    check('国王也有官职 ⇒「国库支出」亮', opened.buttons.SpendButton, true)
+    check('国王的权限位里有 WITHDRAW_TREASURY ⇒「国库支出」亮', opened.buttons.SpendButton, true)
     checkThat('说明了「你是这个国家的国王」', shown.includes('你是这个国家的国王'))
     checkThat('官职显示成「国王」而不是 KING', shown.includes('我的官职：国王'))
     await page.screenshot({ path: path.join(OUT, '04-king.png') })

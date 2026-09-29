@@ -77,7 +77,7 @@ import type { HeroComposeView } from '../hero/HeroCompose'
 import { buildHeroPanel } from '../hero/HeroPanel'
 import { buildLineupEdit, lineupBody } from '../hero/LineupEdit'
 import type { LineupEditView, LineupSlot } from '../hero/LineupEdit'
-import { EMPTY_PERMISSIONS, gate, withPermissionScope } from '../social/PermissionGates'
+import { EMPTY_PERMISSIONS, gate, withPermissionScope, withoutNationPermissions } from '../social/PermissionGates'
 import type { PermissionState } from '../social/PermissionGates'
 import { buildCreateForm, createEntries } from '../social/SocialCreate'
 import type { CreateEntry, CreateForm, CreateScope } from '../social/SocialCreate'
@@ -3297,10 +3297,32 @@ export class AppRoot {
       } else {
         this.say('nation', treasury)
       }
+      // 国家层的权限位（V13-d：灰键的权威来源）。**只有在国里才有意义**，
+      // 所以与国库一起在这一支里拉，而不是并进进社交页那次 pullSocialGates
+      await this.loadNationPermissions()
     } else {
+      // 不在国里：把上一次那份清掉。留着就是让一个已经离开的国家继续授权
+      this.permissions = withoutNationPermissions(this.permissions)
       await this.loadNationCandidates()
     }
     this.deliverNation()
+  }
+
+  /**
+   * 拉一次国家层的权限码（`GET /social/permissions?scope=NATION`）。
+   *
+   * <p>失败时**把 `nationLoaded` 留在 false**：面板据此把三颗键画成"权限还没读到"，
+   * 而不是画成"你不能" —— 一次读失败被说成身份结论，玩家会去申请升职。
+   */
+  private async loadNationPermissions(): Promise<void> {
+    const outcome = await this.api.socialPermissions('NATION')
+    if (outcome.kind !== 'ok') {
+      this.permissions = withoutNationPermissions(this.permissions)
+      this.say('nation', outcome)
+      return
+    }
+    this.permissions = withPermissionScope(this.permissions, 'NATION',
+      outcome.data.permissions, outcome.data.role, false)
   }
 
   /**
@@ -3394,6 +3416,8 @@ export class AppRoot {
     }
     this.nationResp = null
     this.nationTreasuryResp = null
+    // 亡国了，那一份国家权限也必须跟着没（同上：留着就是让一个不存在的国家继续授权）
+    this.permissions = withoutNationPermissions(this.permissions)
     this.nationNotice = `${outcome.data.nationName} 已解散：`
       + `${outcome.data.memberAllianceCount} 个成员联盟进入入籍冷却，`
       + `核销国库 ${amountText(outcome.data.treasuryWrittenOff)}`
@@ -3406,6 +3430,8 @@ export class AppRoot {
   private recordLeave(resp: NationLeaveResp): void {
     this.nationResp = null
     this.nationTreasuryResp = null
+    // 国籍没了，那一份国家权限也必须跟着没 —— 留着就是让一个已经离开的国家继续授权
+    this.permissions = withoutNationPermissions(this.permissions)
     this.nationNotice = `已退出 ${resp.nationName}：${cooldownText(resp.cooldownUntil, resp.serverNow)}`
     // 成功语气：这一句是"做成了"，不能染成失败红（V13-S2 目视截图抓到的那处）
     this.nationNoticeTone = 'ok'
@@ -3499,9 +3525,11 @@ export class AppRoot {
       memberNames: new Map(members.map(member => [member.id, member.name])),
       notice: this.nationNotice,
       noticeTone: this.nationNoticeTone,
+      permissions: this.permissions.nation,
+      permissionsLoaded: this.permissions.nationLoaded,
       tab: this.nationTab,
       sections: buildNationSections(this.nationTechResp, this.nationRelations,
-        this.nationCandidates, members),
+        this.nationCandidates, members, this.permissions.nation, this.permissions.nationLoaded),
     })
     this.targets.nation?.(view)
   }

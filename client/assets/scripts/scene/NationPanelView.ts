@@ -348,7 +348,7 @@ export class NationPanelView extends Component {
         this.label(row.name, COLOR_TEXT, 15, left + 6, y, 'left')
         this.label(row.relationText ?? '未记录', row.relationText === null ? COLOR_DIM : COLOR_GOLD, 14,
           left + innerWidth - 90, y, 'right')
-        this.button(`DiproSet-${row.key}`, '改关系', left + innerWidth - 40, y, 74, true,
+        this.button(`DiproSet-${row.key}`, '改关系', left + innerWidth - 40, y, 74, section.gate.enabled,
           () => { this.diproTarget = row.key; this.redraw() })
         y -= ROW_HEIGHT
       })
@@ -372,7 +372,9 @@ export class NationPanelView extends Component {
     const optionWidth = 92
     section.options.forEach((option, index) => {
       const x = left + optionWidth / 2 + index * (optionWidth + 8)
-      this.button(`DiproOption-${option.key}`, option.label, x, y, optionWidth, this.diproTarget !== null,
+      // 两颗门都要过：权限位（能不能改）与"选了目标国没有"
+      this.button(`DiproOption-${option.key}`, option.label, x, y, optionWidth,
+        section.gate.enabled && this.diproTarget !== null,
         () => {
           if (this.diproTarget === null) {
             return
@@ -382,8 +384,9 @@ export class NationPanelView extends Component {
         })
     })
     y -= 26
-    const note = section.options.find(option => option.key === this.diproRelation)?.note ?? ''
-    this.label(note, COLOR_DIM, 13, left, y, 'left')
+    const note = section.gate.reason
+      ?? section.options.find(option => option.key === this.diproRelation)?.note ?? ''
+    this.label(note, section.gate.reason === null ? COLOR_DIM : COLOR_WARN, 13, left, y, 'left')
     return y - 22
   }
 
@@ -413,7 +416,9 @@ export class NationPanelView extends Component {
     const officeWidth = 96
     section.offices.forEach((office, index) => {
       const x = left + officeWidth / 2 + index * (officeWidth + 8)
-      this.button(`AppointOffice-${office.key}`, office.label, x, y, officeWidth, this.appointTarget !== null,
+      // 两颗门：权限位（能不能任命）与"选了人没有"
+      this.button(`AppointOffice-${office.key}`, office.label, x, y, officeWidth,
+        section.gate.enabled && this.appointTarget !== null,
         () => {
           if (this.appointTarget === null) {
             return
@@ -422,6 +427,10 @@ export class NationPanelView extends Component {
         })
     })
     y -= 28
+    if (section.gate.reason !== null) {
+      this.label(section.gate.reason, COLOR_WARN, 13, left, y, 'left')
+      y -= 20
+    }
     this.label('国王与议员没有任命入口（那是席位，不是任出来的）', COLOR_DIM, 12, left, y, 'left')
     return y - 20
   }

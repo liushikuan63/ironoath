@@ -18,7 +18,8 @@
 import type { NationRelationView } from '../../net/generated/NationProtocol'
 import type { NationTechListView, NationTechView } from '../../net/generated/NationTechProtocol'
 import { effectAttrLabel, schoolLabel } from '../tech/TechPanel'
-import { amountText } from './NationPanel'
+import { amountText, permissionGateOf } from './NationPanel'
+import type { NationGate } from './NationPanel'
 
 /** 拒绝原因 → 玩家语言（`NationTechBlockReason` 与个人那枚**刻意不合并**，见契约注释）。 */
 export function nationTechBlockText(reason: string): string | null {
@@ -190,11 +191,15 @@ export interface NationSectionsView {
     /** 候选目标国（来自国家榜；`key` 是 nationId，只用于发请求，永不上屏）。 */
     readonly targets: readonly { key: string; name: string }[]
     readonly options: readonly { key: string; label: string; note: string }[]
+    /** 能不能改关系（权限位 `MANAGE_DIPLOMACY`）。灰的时候 `gate` 里带着为什么。 */
+    readonly gate: NationGate
   }
   readonly appoint: {
     readonly rows: readonly NationAppointRow[]
     readonly offices: readonly { key: string; label: string }[]
     readonly notice: string | null
+    /** 能不能任命（权限位 `APPOINT_OFFICE`）。 */
+    readonly gate: NationGate
   }
 }
 
@@ -209,7 +214,9 @@ export interface NationSectionsView {
 export function buildNationSections(tech: NationTechListView | null,
   relations: readonly NationRelationView[] | null,
   targets: readonly { nationId: string; name: string }[],
-  members: readonly { id: string; name: string }[]): NationSectionsView {
+  members: readonly { id: string; name: string }[],
+  permissions: readonly string[] | null = null,
+  permissionsLoaded = false): NationSectionsView {
   const rows = buildDiplomacyRows(relations)
   const appointRows = buildAppointRows(members)
   return {
@@ -221,11 +228,15 @@ export function buildNationSections(tech: NationTechListView | null,
         : null,
       targets: targets.slice(0, 8).map(t => ({ key: t.nationId, name: t.name })),
       options: DIPLOMACY_OPTIONS,
+      // 关系变更的权限位（`MANAGE_DIPLOMACY`：国王与外交官档）。**不许自己按官职名判** ——
+      // "谁是外交官"由 role_permission 表说了算，客户端抄一份就会在表改了的那天骗人
+      gate: permissionGateOf('MANAGE_DIPLOMACY', '变更外交', permissions, permissionsLoaded),
     },
     appoint: {
       rows: appointRows,
       offices: APPOINTABLE_OFFICES,
       notice: appointRows.length === 0 ? '本盟还没有别的成员可任命' : null,
+      gate: permissionGateOf('APPOINT_OFFICE', '任命官职', permissions, permissionsLoaded),
     },
   }
 }
