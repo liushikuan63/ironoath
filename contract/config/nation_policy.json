@@ -1,0 +1,88 @@
+{
+  "table": "nation_policy",
+  "version": 1,
+  "comment": "国策表（B13 §4 / B21 §五④）。与国家科技（nation_tech.json）的关系：同一层级的两种全国性加成，但**机制完全相反** —— 国家科技是花钱买的永久加成，国策是投票选出来的、每轮换一次、到点就失效的周期 buff。所以这张表没有等级、没有成本曲线、没有费用：一条国策就是「一个效果 + 一个幅度 + 一个生效槽位」，其余全在投票流程里。",
+  "designNote": "**为什么 effectAttr 只有四个取值而不是六个**：国策的效果最终落在五处算式上，其中「乘区 G 的攻击」与「乘区 G 的防御」是两个独立乘区（B21 §五④ 块③「buff 走独立乘区，不许污染既有乘区」），而产量与行军速度根本不在战斗乘区里 —— 它们是资源产率算式与 `Rates.shortenSeconds` 那条时长算式。B13 原文的四个例子正好一一落在这四个取值上，没有第五种去处。\n\n**为什么没有 WALL_DEFENSE 这个取值**（乘区 H 已经在内核里交付了）：`building.json` 的城墙行只有战力基值 7，`global.json` 里没有任何「城墙等级 → 战斗加成」参数 —— 城墙的**加成幅度至今没有任何出处**，按本仓「待裁决不发明」的红线不编数（收口清单 #477）。等策划给了数再加这个取值；现在加就是给一个恒为 0 的分支起名字。\n\n**为什么 targetUnit 逐档给行（骑兵 5 行）**（裁决 A7）：兵种是 `unit_cavalry_t1..t5` 五档，五档的攻击/防御数值差着量级（unit 表按阶级缩放），一条「骑兵 +15%」要能逐档调就得一行一档。B13 原文写的是「骑兵」（B21 改成了「轻骑兵」，与 unit 表的实际兵种名一致，见 B13S4 草案 §二 末）。\n\n**为什么四条的 requireNationLevel 全是 1**：槽位数已经随国家等级变化（nation_config.policySlotCount = 1/2/3），再加一道等级门槛就是两个家管同一件事 —— 国家等级低的国家提案池更小，门槛再高一层只会让 Lv1 国家永远开不出国策。等级该管的事已经全在 policySlotCount 上了。\n\n**为什么 effectValue 允许为负**：国策是「全国性增益**或减益**」（role_permission 那行 perm_nation_set_national_policy 的 why 原话），内核的 OrgBonus 也据此允许 policyAttack/policyDefense 取负。把非负写进字段类型，将来一条减益型国策就只能改数据层规则而不是加一行。\n\n**四条国策之间不同类不相乘**（裁决派生口径）：它们分落不同消费点（战斗乘区 / 产量算式 / 行军时长），所以不构成同类叠加；只有将来两条落在同一消费点时才相加。这与收口清单 #146 ②「同类加成相加成总率、作用于基础一次」同一条纪律。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "effectAttr": "ENUM:POLICY_ATTACK,POLICY_DEFENSE,OUTPUT,MARCH_SPEED",
+    "effectValue": "DECIMAL",
+    "targetUnit": "?REF:unit",
+    "requireNationLevel": "LONG_POS",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "np_cavalry_t1",
+      "name": "骑兵时代·轻骑 T1",
+      "effectAttr": "POLICY_ATTACK",
+      "effectValue": "0.15",
+      "targetUnit": "unit_cavalry_t1",
+      "requireNationLevel": 1,
+      "why": "轻骑兵 T1 攻击 +15%（乘区 G）。B13 §4 原文「骑兵时代：骑兵 +15%」的数值，B21 §五④ 原样采纳，幅度未改；逐档分行是裁决 A7 —— 兵种分五档而 unit 表按阶级缩放，一条行给不出「哪一档」。"
+    },
+    {
+      "id": "np_cavalry_t2",
+      "name": "骑兵时代·轻骑 T2",
+      "effectAttr": "POLICY_ATTACK",
+      "effectValue": "0.15",
+      "targetUnit": "unit_cavalry_t2",
+      "requireNationLevel": 1,
+      "why": "轻骑兵 T2 攻击 +15%（乘区 G），与 T1 同幅度。**五档刻意同值**：B21 只给了一个 15%，逐档递减或递增都是编数字；将来要分档时改表即可，不需要动代码。"
+    },
+    {
+      "id": "np_cavalry_t3",
+      "name": "骑兵时代·轻骑 T3",
+      "effectAttr": "POLICY_ATTACK",
+      "effectValue": "0.15",
+      "targetUnit": "unit_cavalry_t3",
+      "requireNationLevel": 1,
+      "why": "轻骑兵 T3 攻击 +15%（乘区 G），与 T1/T2 同幅度。"
+    },
+    {
+      "id": "np_cavalry_t4",
+      "name": "骑兵时代·轻骑 T4",
+      "effectAttr": "POLICY_ATTACK",
+      "effectValue": "0.15",
+      "targetUnit": "unit_cavalry_t4",
+      "requireNationLevel": 1,
+      "why": "轻骑兵 T4 攻击 +15%（乘区 G），与 T1/T2/T3 同幅度。"
+    },
+    {
+      "id": "np_cavalry_t5",
+      "name": "骑兵时代·轻骑 T5",
+      "effectAttr": "POLICY_ATTACK",
+      "effectValue": "0.15",
+      "targetUnit": "unit_cavalry_t5",
+      "requireNationLevel": 1,
+      "why": "轻骑兵 T5 攻击 +15%（乘区 G），与 T1~T4 同幅度。T5 是最高档骑兵，也是国策唯一能影响到的最高攻击面 —— 这条是「骑兵时代」存在的理由：它给的是全族同幅而不是高阶专属，避免低阶玩家在本国策上毫无收益。"
+    },
+    {
+      "id": "np_fortress",
+      "name": "坚壁时代",
+      "effectAttr": "POLICY_DEFENSE",
+      "effectValue": "0.15",
+      "requireNationLevel": 1,
+      "why": "全成员防御 +15%（乘区 G）。B21 §五④ 原话是「城墙与守军防御 +15%」，**本行只落「守军」那半**：城墙的加成幅度至今没有任何出处（building.json 的城墙行只有战力基值 7，global.json 无城墙参数），按红线不编数。",
+      "todo": "TODO(需策划): 「城墙」那半的加成幅度无出处，且乘区 H 已在内核交付但没有生产方（收口清单 #477）。给了数再加 WALL_DEFENSE 取值与本行的第二段效果"
+    },
+    {
+      "id": "np_harvest",
+      "name": "丰收时代",
+      "effectAttr": "OUTPUT",
+      "effectValue": "0.10",
+      "requireNationLevel": 1,
+      "why": "全成员四种资源产出 +10%。B21 §五④ 写的是「全成员资源产出 +10%」，所以**一行管四种**而不是四行：消费点是 ResourceRateService 的每资源产率算式，同一个 +10% 对粮木石铁一视同仁。多资源在这里是同一条规则而不是四条 —— 写成四行的话，将来给木石铁单独调幅度就得新增行，而「国策给全国加成」这个语义本身不分资源。"
+    },
+    {
+      "id": "np_conquest",
+      "name": "征伐时代",
+      "effectAttr": "MARCH_SPEED",
+      "effectValue": "0.10",
+      "requireNationLevel": 1,
+      "why": "全成员行军速度 +10%。与个人科技（tech_com_march +3%/级 × 30 级 = 90%）、国家科技（nt_com_march +3%/级 × 20 级 = 60%）**同类相加**后交给 Rates.shortenSeconds 作用一次（收口清单 #146 ②）。**本行不为速度类新造总上限**：MarchAppService:315-316 现在就是裸相加，加这条是第三个相加项、不改变现状；封顶是独立的平衡口径变更，缺出处，不在这一格顺手做。"
+    }
+  ]
+}

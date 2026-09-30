@@ -790,6 +790,32 @@ export interface NationConfigCfg {
   warCooldownHours: number
 }
 
+/** nation_policy.nationPolicyEffectAttr 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type NationPolicyEffectAttr =
+  | 'POLICY_ATTACK'
+  | 'POLICY_DEFENSE'
+  | 'OUTPUT'
+  | 'MARCH_SPEED'
+
+/**
+ * 配置表 nation_policy 的一行。
+ * 国策表（B13 §4 / B21 §五④）。与国家科技（nation_tech.json）的关系：同一层级的两种全国性加成，但**机制完全相反** —— 国家科技是花钱买的永久加成，国策是投票选出来的、每轮换一次、到点就失效的周期 buff。所以这张表没有等级、没有成本曲线、没有费用：一条国策就是「一个效果 + 一个幅度 + 一个生效槽位」，其余全在投票流程里。
+ *
+ * 源表 version=1
+ */
+export interface NationPolicyCfg {
+  /** 主键 */
+  id: string
+  name: string
+  /** 枚举，取值见 NationPolicyEffectAttr */
+  effectAttr: NationPolicyEffectAttr
+  /** 定点数（真实值 ×10000）。配置里写成十进制字符串，生成后是 long，禁止还原成 double */
+  effectValue: number
+  /** 外键，指向 unit 表的 id */
+  targetUnit?: string
+  requireNationLevel: number
+}
+
 /** nation_tech.nationTechSchool 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type NationTechSchool =
   | 'AGRICULTURE'
