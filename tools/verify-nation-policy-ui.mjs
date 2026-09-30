@@ -91,6 +91,10 @@ await context.addInitScript(v => localStorage.setItem('ironoath.deviceId', v), k
 const page = await context.newPage()
 const errors = []
 page.on('pageerror', error => errors.push(error.message))
+// **页面 console 必须接出来**：第一版把诊断写在 page.evaluate 里的 console.log，
+// 结果什么都没看见 —— Playwright 的页面 console 默认不进本进程 stdout。
+// 「我以为我打了日志」和「我打了日志」在这一处是同一种错误。
+page.on('console', msg => { if (msg.text().startsWith('[dismiss]')) console.log('  ' + msg.text()) })
 
 /** 打开国家面板（联盟概况行的第二颗键，按文案找 —— 与既有那份探针同一条路）。 */
 const OPEN_PANEL = `(() => {
@@ -157,26 +161,36 @@ const clickPrefixed = prefix => clickByName(`n => n.startsWith(${JSON.stringify(
  * 在一张图上分不开。加速档尤其容易撞上：2400 倍速下 36 秒真实时间就攒出 2 小时 13 分产出，
  * 弹窗必出。
  *
- * <p><b>前两版都失败</b>：① 按文案用 {@code getComponentInChildren} 找，caption 拿不到；
- * ② 按 {@code Canvas} 下的直接子节点找 {@code OfflineReport}，那个 overlay 挂得更深。
- * 这一版不猜层级：**找「自身 Label 就是『知道了』」的那个节点，再把事件发到它的父节点** ——
+ * <p><b>为什么前三版找不到：扫错了根</b>。它们都在 {@code director.getScene()} 里找 ——
+ * 而常驻层挂在 {@code director.getPersistRootNode()} 上，**它不是 scene 的子节点**，
+ * 于是无论怎么扫 scene 都看不见那棵树。这一版两个根都扫。
  * touch-start 真正挂在那张卡片的节点上，而 Label 可能在它自己身上、也可能在它的子节点上，
  * 两种排版都覆盖。返回值带点到了哪个节点，红了能一眼看出是「没找到」还是「点了没反应」。
  */
 async function dismissOfflineModal() {
   // 1st: find the node whose OWN cc.Label is the dismiss caption, emit on its parent
   const viaNode = await page.evaluate(`(() => {
-    const scene = window.cc.director.getScene()
+    const roots = [window.cc.director.getScene()]
     let labelNode = null
     const walk = (n) => {
       if (labelNode) return
       if (n.activeInHierarchy) {
         const own = n.getComponent('cc.Label')
-        if (own && String(own.string) === '知道了') { labelNode = n; return }
+        if (own && String(own.string).indexOf('知道了') >= 0) {
+          labelNode = n
+          const chain = []
+          for (let p = n; p; p = p.parent) chain.push(p.name)
+          console.log('[dismiss] 命中节点：' + chain.join(' < '))
+          return
+        }
       }
       for (const child of n.children) walk(child)
     }
-    walk(scene)
+    for (const root of roots) {
+      if (!root) continue
+      walk(root)
+      if (labelNode) break
+    }
     if (!labelNode) return 'not-found'
     const target = labelNode.parent && labelNode.parent.emit ? labelNode.parent : labelNode
     target.emit('touch-start')
@@ -196,17 +210,16 @@ async function dismissOfflineModal() {
 /** Is the offline modal still on screen (read the caption, not a node name)? */
 async function offlineModalShown() {
   return page.evaluate(`(() => {
-    const scene = window.cc.director.getScene()
     let found = false
     const walk = (n) => {
       if (found) return
       if (n.activeInHierarchy) {
         const own = n.getComponent('cc.Label')
-        if (own && String(own.string) === '知道了') { found = true; return }
+        if (own && String(own.string).indexOf('知道了') >= 0) { found = true; return }
       }
       for (const child of n.children) walk(child)
     }
-    walk(scene)
+    walk(window.cc.director.getScene())
     return found
   })()`)
 }
