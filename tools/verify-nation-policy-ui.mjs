@@ -153,27 +153,63 @@ const clickPrefixed = prefix => clickByName(`n => n.startsWith(${JSON.stringify(
 /**
  * 关掉「自上次登录以来」的离线产出弹窗。
  *
- * <p><b>它会盖住整个面板</b>，于是截图里看不全国策页 —— 而"截图看不全"与"页面真的画对了"
- * 在一张图上分不开。加速档尤其容易撞上：2400 倍速下 36 秒真实时间就攒出 2 小时 23 分产出，
- * 弹窗必出。点了没弹出时返回 false（不是错误，只是什么都没做）。
+ * <p><b>它会盖住整个面板</b>，于是截图里看不全国策页 —— 而「截图看不全」与「页面真的画对了」
+ * 在一张图上分不开。加速档尤其容易撞上：2400 倍速下 36 秒真实时间就攒出 2 小时 13 分产出，
+ * 弹窗必出。
+ *
+ * <p><b>前两版都失败</b>：① 按文案用 {@code getComponentInChildren} 找，caption 拿不到；
+ * ② 按 {@code Canvas} 下的直接子节点找 {@code OfflineReport}，那个 overlay 挂得更深。
+ * 这一版不猜层级：**找「自身 Label 就是『知道了』」的那个节点，再把事件发到它的父节点** ——
+ * touch-start 真正挂在那张卡片的节点上，而 Label 可能在它自己身上、也可能在它的子节点上，
+ * 两种排版都覆盖。返回值带点到了哪个节点，红了能一眼看出是「没找到」还是「点了没反应」。
  */
 async function dismissOfflineModal() {
-  return page.evaluate(`(() => {
-    const scene = window.cc.director.getScene().getChildByName('Canvas')
-    let target = null
+  // 1st: find the node whose OWN cc.Label is the dismiss caption, emit on its parent
+  const viaNode = await page.evaluate(`(() => {
+    const scene = window.cc.director.getScene()
+    let labelNode = null
     const walk = (n) => {
-      if (target) return
-      const label = n.getComponentInChildren && n.getComponentInChildren('cc.Label')
-      if (label && String(label.string) === '知道了') { target = n; return }
+      if (labelNode) return
+      if (n.activeInHierarchy) {
+        const own = n.getComponent('cc.Label')
+        if (own && String(own.string) === '知道了') { labelNode = n; return }
+      }
       for (const child of n.children) walk(child)
     }
     walk(scene)
-    if (target === null) return false
+    if (!labelNode) return 'not-found'
+    const target = labelNode.parent && labelNode.parent.emit ? labelNode.parent : labelNode
     target.emit('touch-start')
-    return true
+    return 'emitted:' + target.name
   })()`)
+  // 2nd: still there -> click by real coordinates. The overlay is centred so the
+  // button sits at a fixed spot; when nothing is shown the click lands on empty space.
+  await page.waitForTimeout(400)
+  if (!(await offlineModalShown())) {
+    return viaNode
+  }
+  await page.mouse.click(640, 522)
+  await page.waitForTimeout(400)
+  return viaNode + '|clicked'
 }
 
+/** Is the offline modal still on screen (read the caption, not a node name)? */
+async function offlineModalShown() {
+  return page.evaluate(`(() => {
+    const scene = window.cc.director.getScene()
+    let found = false
+    const walk = (n) => {
+      if (found) return
+      if (n.activeInHierarchy) {
+        const own = n.getComponent('cc.Label')
+        if (own && String(own.string) === '知道了') { found = true; return }
+      }
+      for (const child of n.children) walk(child)
+    }
+    walk(scene)
+    return found
+  })()`)
+}
 // 读面板当前所有非空文字。
 const READ_TEXTS = `(() => {
   const panel = window.cc.director.getScene()
@@ -347,6 +383,14 @@ if (speedEnv === undefined || Number(speedEnv) < 2) {
       !voting.includes('现在不是投票时间'))
     checkThat('屏上没有内部 id', !voting.includes('np_'))
     await dismissOfflineModal()
+  // **弹窗关不掉就明说，不假装截图是完整的**。四种手段都试过：按文案找（caption 取不到）、
+  // 按 Canvas 下的直接子节点找 OfflineReport（挂得更深）、找自身 Label 是「知道了」的节点再
+  // emit 到它父节点、按坐标真点。四种都没关掉它，所以这一屏**只有文本级判据**，
+  // 截图被遮住这件事必须写出来而不是留在一张图里让人自己发现（收口清单 #483）。
+  if (await offlineModalShown()) {
+    console.log('  注意：离线产出弹窗仍在，**下面这张截图的上半部分被遮住** ——'
+      + '这一屏只有文本级判据，没有完整的视觉验证。')
+  }
     await page.screenshot({ path: path.join(OUT, '04-voting.png') })
     console.log(`  截图：${path.join(OUT, '04-voting.png')}`)
 
@@ -366,8 +410,55 @@ if (speedEnv === undefined || Number(speedEnv) < 2) {
   checkThat('票数与名单自洽：1 票赞成对应 1 个名字，反对名单仍为空',
     !afterVote.includes('赞成：还没有人投票') && afterVote.includes('反对：还没有人投票'))
   await dismissOfflineModal()
+  // **弹窗关不掉就明说，不假装截图是完整的**。四种手段都试过：按文案找（caption 取不到）、
+  // 按 Canvas 下的直接子节点找 OfflineReport（挂得更深）、找自身 Label 是「知道了」的节点再
+  // emit 到它父节点、按坐标真点。四种都没关掉它，所以这一屏**只有文本级判据**，
+  // 截图被遮住这件事必须写出来而不是留在一张图里让人自己发现（收口清单 #483）。
+  if (await offlineModalShown()) {
+    console.log('  注意：离线产出弹窗仍在，**下面这张截图的上半部分被遮住** ——'
+      + '这一屏只有文本级判据，没有完整的视觉验证。')
+  }
   await page.screenshot({ path: path.join(OUT, '05-voted.png') })
-    console.log(`  截图：${path.join(OUT, '05-voted.png')}`)
+  console.log(`  截图：${path.join(OUT, '05-voted.png')}`)
+
+    // ---------- ④c 生效段：再等一个投票窗，结算在窗口关闭那一刻惰性发生 ----------
+    console.log('  等投票窗关闭（结算应当在那之后惰性发生）…')
+    let settled = false
+    const settleDeadline = Date.now() + 150_000
+    while (Date.now() < settleDeadline) {
+      await page.waitForTimeout(3000)
+      if (await phaseOf() === 'ACTIVE') {
+        settled = true
+        break
+      }
+      await reopenPanel()
+    }
+    checkThat('投票窗关闭后进入生效段（惰性结算，不是定时器）', settled,
+      `150 秒内没等到；当前段=${await phaseOf()}`)
+
+    if (settled) {
+      await reopenPanel()
+      await dismissOfflineModal()
+  // **弹窗关不掉就明说，不假装截图是完整的**。四种手段都试过：按文案找（caption 取不到）、
+  // 按 Canvas 下的直接子节点找 OfflineReport（挂得更深）、找自身 Label 是「知道了」的节点再
+  // emit 到它父节点、按坐标真点。四种都没关掉它，所以这一屏**只有文本级判据**，
+  // 截图被遮住这件事必须写出来而不是留在一张图里让人自己发现（收口清单 #483）。
+  if (await offlineModalShown()) {
+    console.log('  注意：离线产出弹窗仍在，**下面这张截图的上半部分被遮住** ——'
+      + '这一屏只有文本级判据，没有完整的视觉验证。')
+  }
+      const active = await page.evaluate(READ_TEXTS)
+      console.log(`  屏上文字：${active}`)
+      checkThat('生效段标题在屏上', active.includes('国策生效中 · 生效槽位'))
+      checkThat('生效中的那一条带着自己的到期倒计时（activeUntil，不是整轮一个时刻）',
+        /当前生效：.*（还剩 \d+/.test(active), active.slice(0, 160))
+      checkThat('投票段的公示已清空（不留在屏上冒充生效中的）',
+        !active.includes('赞成 1 · 反对 0'))
+      checkThat('提案键回来了（下一轮又可以提）', active.includes('提案'))
+      checkThat('屏上没有内部 id', !active.includes('np_'))
+      await page.screenshot({ path: path.join(OUT, '06-active.png') })
+      console.log(`  截图：${path.join(OUT, '06-active.png')}`)
+    }
   }
 }
 
