@@ -22,6 +22,7 @@ bash scripts/check-layering.sh
 bash scripts/check-contract-sync.sh
 # 注释里「判据见 XxxTest」指向的类必须存在（台账 #439；这一族清完 31 处后最容易长回来）
 bash scripts/check-dangling-test-refs.sh
+bash scripts/check-ts-meta.sh
 bash scripts/check-eol-policy.sh
 bash scripts/check-contract-defs.sh
 bash scripts/check-no-handout.sh

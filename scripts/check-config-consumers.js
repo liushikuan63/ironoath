@@ -126,6 +126,12 @@ const UNREFERENCED = {
   // 2026-09-30 的 V17-D 格让 NationRulesAssembler 真的读它了（换算成 policyVoteMillis 与
   // policyRoundMillis，轮次时间旋钮只有这一个），例外随之删除 —— 与下面 MINOR_PAY_* 那条同一条规矩。
   POWER_DROP_ALERT_RATIO: '零引用：#26（B08 §8 的"标记观察"没有风控归属，标记了给谁看未定）',
+  // 2026-09-30：#19 集结加成的幅度**已定**（+10%，A10「先出模拟再定」，
+  // 幅度来自 balance-sim --rally 实测曲线，见 global.json 那一行的 why）。
+  // 但**装配那一格还没做**：进攻方要把 Rally 的 minMembersRequired 判定
+  // 带进 PlayerCityBattleService 的攻击侧 OrgBonus，那要动 march → battle 的通路。
+  // 例外在装配接上的那一刻删掉 —— 与上面 NationTechCfg 那条同一条规矩。
+  RALLY_ATTACK_BONUS_FIXED: '零引用：#19（幅度已定，装配待做：minMembersRequired → 攻击侧 OrgBonus）',
   // 这四条是 B19 §五①a 定的换算基准与倍率。<b>运行时没有人读它们，这是设计而不是欠账</b>：
   // 它们回答的是"这一行该写 50 还是 60"，而算好的结果已经进了 `product_reward`，
   // 运行时读的是那张表（PaidProducts）。再让运行时乘一遍就是给同一份数字两个家。
