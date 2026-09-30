@@ -115,6 +115,23 @@ public final class BattleParamsResolver {
                 FormationType.STANDARD, hospitalCapacity, new OrgBonus(byUnit, 0L, 0L));
     }
 
+    /**
+     * 带城墙防御加成的裸军队（乘区 H 的量具）。
+     *
+     * <p>与上面那个四参形状的关系是**相加**而不是替代：集结加的是攻方有效攻击（乘区 G 的
+     * 攻击侧），城墙加的是守方防御（乘区 H），两者落在 {@link OrgBonus} 的不同字段上，
+     * 所以一个五参形状装得下两种来源 —— 而城墙那一位**不允许为负**（破墙是归零不是取负）。
+     */
+    public ArmySide bareArmy(String sideId, Map<UnitType, Long> units, long hospitalCapacity,
+                              long attackBonusFixed, long wallDefenseFixed) {
+        if (wallDefenseFixed <= 0L) {
+            return bareArmy(sideId, units, hospitalCapacity, attackBonusFixed);
+        }
+        return new ArmySide(sideId, List.of(), units, TechBonus.none(), 0L,
+                FormationType.STANDARD, hospitalCapacity,
+                new OrgBonus(Map.of(), 0L, wallDefenseFixed));
+    }
+
     /** 单一兵种的军队，用于胜率矩阵。 */
     public ArmySide singleTypeArmy(String sideId, UnitType type, long count, long hospitalCapacity) {
         Map<UnitType, Long> units = new EnumMap<>(UnitType.class);

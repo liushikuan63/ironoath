@@ -65,6 +65,8 @@ public final class BalanceCli {
             printSingleBattle(resolver, rules, stats, options, seed);
         } else if (options.containsKey("rally")) {
             passed = printRallyCurve(resolver, rules, stats, options, tier);
+        } else if (options.containsKey("wall")) {
+            passed = printWallCurve(resolver, rules, stats, options, tier);
         } else if (options.containsKey("settle-bench")) {
             passed = printSettleBench(configs, resolver, rules, stats, options);
         } else {
@@ -326,6 +328,94 @@ public final class BalanceCli {
         System.out.println();
         System.out.printf("判定：均势处最大加成与零加成的胜率差 = %.1f 个百分点%s%n", delta * 100,
                 delta > 0 ? "" : "（**为 0 或负 —— 加成没进结算，这一列是装饰**）");
+        return delta > 0;
+    }
+
+    // ---------- 城墙曲线（乘区 H 的幅度仍然没有出处；这一格负责把它量出来） ----------
+
+    /**
+     * 扫「城墙防御加成 → 攻方要多少人才打穿」，读数是**攻方胜率**。
+     *
+     * <p><b>与集结曲线互为镜像</b>：那一格加的是攻方（乘区 G 的攻击侧），这一格加的是守方
+     * （乘区 H 的防御侧）。内核已把乘区 H 强制成「只对守方生效」（兰彻斯特里双方防御都会被算，
+     * 不强制的话城墙会安静地让攻方更难杀）。
+     *
+     * <p><b>为什么这格不是「等策划」</b>：城墙等级 → 加成的幅度至今没有出处，而 #19 的先例是
+     * **先量再定**（`RALLY_ATTACK_BONUS_FIXED` 的 +10% 就是这么来的）。这一格给策划的正是
+     * 那一类读数：「+10% 的城墙让攻方要多拉多少人」。本工具仍然**不发明数值** ——
+     * 它输出曲线，定档是裁量。
+     *
+     * <p><b>自动判定只钉一件能判的事</b>：加成 0 与最大加成两列在人数比 1.00 处的胜率差不为 0
+     * —— 判「这一列真的进了结算」，不判「城墙该多硬」。
+     */
+    private static boolean printWallCurve(BattleParamsResolver resolver, BattleRules rules,
+                                           Map<UnitType, UnitStats> stats,
+                                           Map<String, String> options, int tier) {
+        int runs = Integer.parseInt(options.getOrDefault("runs", "400"));
+        long size = Long.parseLong(options.getOrDefault("size", "1000"));
+        long seed = Long.parseLong(options.getOrDefault("seed", "20261001"));
+        int[] percents = {60, 70, 80, 90, 95, 100, 105, 110, 120, 130, 140, 150, 170, 200};
+        long[] bonuses = parseBonusList(options.getOrDefault("bonus", "0,500,1000,1500,2000"));
+        String comp = options.getOrDefault("comp", "步,骑,弓,器");
+        Map<UnitType, Long> share = parseArmy(comp);
+
+        System.out.printf("=== 城墙曲线（T%d，各兵种同比例，基准 %d 兵，%d 局/点，seed 起点 %d）===%n",
+                tier, size, runs, seed);
+        System.out.printf("编成：%s ｜ 地形：%s ｜ 类型：%s%n", comp,
+                options.getOrDefault("terrain", TerrainType.PLAIN.name()),
+                options.getOrDefault("type", BattleType.PVP_SOLO.name()));
+        System.out.println("加成只加在**守方**防御上（乘区 H，内核强制）；单位是定点万分比，5000 = +50%。");
+        System.out.println("读法：每一列是一档城墙加成；**往下读** —— 同一胜率需要的人数比越大，说明这档城墙越硬。");
+        System.out.println();
+
+        System.out.printf("%-10s", "人数比");
+        for (long bonus : bonuses) {
+            System.out.printf("%12s", "+" + FixedPoint.format(bonus * 100L) + "%");
+        }
+        System.out.println();
+
+        double[] atParity = new double[bonuses.length];
+        for (int percent : percents) {
+            System.out.printf("%-10s", percent + "%");
+            for (int b = 0; b < bonuses.length; b++) {
+                long atkSize = Math.round(size * percent / 100.0);
+                int wins = 0;
+                for (int i = 0; i < runs; i++) {
+                    ArmySide atk = resolver.bareArmy("攻方", scale(share, atkSize), Long.MAX_VALUE / 4);
+                    ArmySide def = resolver.bareArmy("守方", scale(share, size), Long.MAX_VALUE / 4,
+                            0L, bonuses[b]);
+                    BattleResult r = BattleSimulator.simulate(new BattleInput(atk, def,
+                            TerrainType.valueOf(options.getOrDefault("terrain", TerrainType.PLAIN.name())),
+                            seed + i * 7919L,
+                            BattleType.valueOf(options.getOrDefault("type", BattleType.PVP_SOLO.name())),
+                            BattleModifier.none(), BattleModifier.none(), stats, rules,
+                            DefenderStore.none()));
+                    wins += r.winner() == Winner.ATTACKER ? 2 : (r.winner() == Winner.DRAW ? 1 : 0);
+                }
+                double rate = wins / (2.0 * runs);
+                if (percent == 100) {
+                    atParity[b] = rate;
+                }
+                System.out.printf("%11.1f%%", rate * 100);
+            }
+            System.out.println();
+        }
+
+        System.out.println();
+        System.out.printf("均势（人数比 1.00）处的攻方胜率：");
+        for (int b = 0; b < bonuses.length; b++) {
+            System.out.printf("  城墙+%s%% → %.1f%%", FixedPoint.format(bonuses[b] * 100L), atParity[b] * 100);
+        }
+        System.out.println();
+        System.out.println("读法：");
+        System.out.println("  · 均势处掉得越多，城墙在「势均力敌」这一档越管用；");
+        System.out.println("  · 曲线整体右移 = 同样的胜率要更多人 —— 这是攻城方要考虑的代价；");
+        System.out.println("  · 定档是策划的裁量，本工具只给事实（不发明数值）。");
+
+        double delta = atParity[0] - atParity[bonuses.length - 1];
+        System.out.println();
+        System.out.printf("判定：均势处零加成与最大加成的胜率差 = %.1f 个百分点%s%n", delta * 100,
+                delta > 0 ? "" : "（**为 0 —— 乘区 H 没进这一列，这一列是装饰**）");
         return delta > 0;
     }
 
