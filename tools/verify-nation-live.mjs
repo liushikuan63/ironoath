@@ -243,6 +243,123 @@ if (appoint.code === 0) {
     appoint.code === 13004)
 }
 
+// ---------- 8b. 国策（B13 §4）：提案段 + 投票段门禁 + 轮次视图 ----------
+// 位置放在这里是因为它需要「国王 + 一位内政官 + 一位普通成员」三种身份，
+// 而这三位到 8 节结束时才齐；又必须在退国（10 节）之前跑完——退国之后就没有国家了。
+// **能验到哪一步**：提案、权限门禁、轮次视图、两份名单、投票段未开时的拒绝。
+// **验不到**：结算与生效——那要等 48 小时（24h 投票窗 + 24h 生效段），
+// 真链路不可能等，所以那一半由 `NationPolicyTest` 的 22 条领域用例兜。
+const round0 = await call('GET', '/nation/policy', undefined, king.playerId, king.token)
+if (round0.code !== 0) {
+  bad(`读国策轮次被拒：${round0.code} ${round0.msg} ${round0.detail ?? ''}`)
+} else {
+  const r0 = round0.data
+  check('轮次视图带了国家 id', r0.nationId, nation.nationId)
+  check('开局是提案段（还没有任何提案）', r0.phase, 'PROPOSING')
+  check('国策清单 = 表里的 8 行，一次给全（客户端不硬编码有几条）', (r0.policies ?? []).length, 8)
+  check('槽位数 = 国家等级那一列（Lv1 = 1）', r0.policySlotCount, 1)
+  checkThat('国王此刻可以提案', r0.canPropose === true && r0.proposeBlockReason === 'NONE')
+  checkThat('此刻不能投票，而理由是「本轮还没有提案」（不是一个笼统的"不行"）',
+    r0.canVote === false && r0.voteBlockReason === 'NO_PROPOSAL_YET')
+  checkThat('没有提案时 myProposals 是空的', Array.isArray(r0.myProposals) && r0.myProposals.length === 0)
+  checkThat('生效中的国策是空数组而不是 null（客户端要能直接遍历）', Array.isArray(r0.active))
+  checkThat('槽位竞争规则随视图下发（不是客户端自己写的文案）',
+    typeof r0.slotOrderNote === 'string' && r0.slotOrderNote.length > 0)
+  // 效果说明是服务端拼好的：客户端不拿 attr × value × unit 自己拼
+  const cavalry = (r0.policies ?? []).find(p => p.policyId === 'np_cavalry_t1')
+  checkThat('骑兵时代那一行带了下发的中文兵种名（不是 unit_cavalry_t1 这种 id）',
+    cavalry !== undefined && cavalry.targetUnitName === '轻骑兵 T1', cavalry?.targetUnitName)
+  checkThat('效果说明是可上屏的一句话', typeof cavalry?.effectText === 'string'
+    && cavalry.effectText.includes('%'), cavalry?.effectText)
+  // 幅度是定点：1500 = +15%。这一条钉住「下发的是定点而不是浮点」
+  check('骑兵时代的幅度 = 15%（定点 1500）', cavalry?.effectValueFixed, 1500)
+
+  // 负例：此刻还没有任何提案，所以投票被拒的理由是「本轮还没有提案」——
+  // **不是**「现在不是投票时间」。两枚码是分开设计的（玩家的下一步不同：一种是自己提一条，
+  // 一种是等窗口开），所以这里要按真实的时刻各钉一枚，不能混着写一条。
+  const earlyVote = await call('POST', '/nation/policy/vote', {
+    requestId: rid('vote-early'), proposalId: 'whatever', support: true,
+  }, king.playerId, king.token)
+  checkThat(`还没提案就投票被拒（13016 = 本轮还没有提案）：${earlyVote.code} ${earlyVote.detail ?? earlyVote.msg}`,
+    earlyVote.code === 13016)
+
+  // 负例：普通成员不能提案（A1 之后是国王+官员，不是全员）
+  const outsider = await initPlayer('nationlive4')
+  await call('POST', '/alliance/apply', {
+    requestId: rid('apply-outsider'), allianceId,
+  }, outsider.playerId, outsider.token)
+  const apps2 = await call('GET', '/alliance/applications', undefined, king.playerId, king.token)
+  const pend2 = (apps2.data?.applicants ?? []).find(i => i.playerId === outsider.playerId)
+    ?? (apps2.data?.applications ?? []).find(i => i.playerId === outsider.playerId) ?? null
+  if (pend2 !== null) {
+    await call('POST', '/alliance/review', {
+      requestId: rid('review-outsider'), applicantId: outsider.playerId, approve: true,
+    }, king.playerId, king.token)
+  }
+  const outsiderRound = await call('GET', '/nation/policy', undefined, outsider.playerId, outsider.token)
+  if (outsiderRound.code === 0) {
+    checkThat('普通成员读到的是「不能提案」而理由指名缺的是提案权',
+      outsiderRound.data.canPropose === false
+      && outsiderRound.data.proposeBlockReason === 'NOT_PROPOSER',
+      `${outsiderRound.data.canPropose}/${outsiderRound.data.proposeBlockReason}`)
+    const outsiderPropose = await call('POST', '/nation/policy/propose', {
+      requestId: rid('propose-outsider'), policyId: 'np_harvest',
+    }, outsider.playerId, outsider.token)
+    checkThat(`普通成员提案被拒（13014）：${outsiderPropose.code} ${outsiderPropose.detail ?? outsiderPropose.msg}`,
+      outsiderPropose.code === 13014)
+  } else {
+    bad(`普通成员读国策被拒：${outsiderRound.code} ${outsiderRound.detail ?? outsiderRound.msg} ⇒ 提案权那一格验不到`)
+  }
+
+  // 正例：内政官可以提案（A1 的实际效果；上面那位已经是 MINISTER）
+  const ministerPropose = await call('POST', '/nation/policy/propose', {
+    requestId: rid('propose-minister'), policyId: 'np_harvest',
+  }, minister.playerId, minister.token)
+  if (ministerPropose.code === 0) {
+    ok('内政官提案成功（裁决 A1：提案权放开到官员档）')
+    const afterPropose = ministerPropose.data.round
+    check('提案之后仍是提案段（不立刻开窗）', afterPropose.phase, 'PROPOSING')
+    check('本轮有 1 条提案', (afterPropose.proposals ?? []).length, 1)
+    const mine = afterPropose.proposals[0]
+    check('那条提案指向丰收时代', mine.policy.effectAttr, 'OUTPUT')
+    check('提案人是那位内政官', mine.proposedBy, minister.playerId)
+    checkThat('两份公示名单此时都是空数组（还没人投票；客户端要能直接遍历，null 与空数组不等价）',
+      Array.isArray(mine.supporters) && mine.supporters.length === 0
+      && Array.isArray(mine.opponents) && mine.opponents.length === 0,
+      `supporters=${JSON.stringify(mine.supporters)} opponents=${JSON.stringify(mine.opponents)}`)
+    checkThat('票数此刻都是 0（票数与名单必须自证：两者都为零）',
+      mine.yes === 0 && mine.no === 0, `yes=${mine.yes} no=${mine.no}`)
+    checkThat('提案之后 myProposals 里能看到自己那条',
+      (afterPropose.myProposals ?? []).includes(mine.proposalId),
+      JSON.stringify(afterPropose.myProposals))
+    checkThat('开窗时刻 = 提案时刻 + 一个提案段（24h），服务端下发不由客户端加',
+      afterPropose.nextVoteAt - afterPropose.serverNow > 23 * 3600 * 1000
+      && afterPropose.nextVoteAt - afterPropose.serverNow <= 24 * 3600 * 1000,
+      `${afterPropose.nextVoteAt - afterPropose.serverNow}ms`)
+    // 负例：同一条国策本轮不能提第二次
+    const twice = await call('POST', '/nation/policy/propose', {
+      requestId: rid('propose-twice'), policyId: 'np_harvest',
+    }, king.playerId, king.token)
+    checkThat(`同一条国策第二次提案被拒（13018）：${twice.code} ${twice.detail ?? twice.msg}`,
+      twice.code === 13018)
+    // 负例：表里没有的国策 id
+    const ghost = await call('POST', '/nation/policy/propose', {
+      requestId: rid('propose-ghost'), policyId: 'np_does_not_exist',
+    }, king.playerId, king.token)
+    checkThat(`表里没有的国策被拒（1001 = 参数非法）：${ghost.code} ${ghost.detail ?? ghost.msg}`,
+      ghost.code === 1001)
+    // 负例：现在本轮已经有提案了，但投票窗还没开 ⇒ 换成另一枚码（13015）
+    const stillEarly = await call('POST', '/nation/policy/vote', {
+      requestId: rid('vote-still-early'), proposalId: mine.proposalId, support: true,
+    }, king.playerId, king.token)
+    checkThat(`有提案但窗口未开时投票仍被拒（13015 = 现在不是投票时间，与 13016 是两枚不同的码）：${stillEarly.code} ${stillEarly.detail ?? stillEarly.msg}`,
+      stillEarly.code === 13015)
+  } else {
+    checkThat(`内政官提案成功（13015 = 上一段的负例把窗口状态弄脏了）：${ministerPropose.code} ${ministerPropose.detail ?? ministerPropose.msg}`,
+      ministerPropose.code === 0)
+  }
+}
+
 // ---------- 9. 外交：需要第二个国家 ----------
 const rival = await initPlayer('nationlive3')
 await call('POST', '/alliance/create', {
