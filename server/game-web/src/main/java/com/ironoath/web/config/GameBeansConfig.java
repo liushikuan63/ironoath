@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import org.springframework.beans.factory.ObjectProvider;
 import java.util.List;
 
 /**
@@ -53,11 +54,18 @@ public class GameBeansConfig {
         return registry;
     }
 
-    /** 服务端时间源。异常偏移告警阈值取自配置表，不硬编码（铁律 1）。 */
+    /**
+     * 服务端时间源。异常偏移告警阈值取自配置表，不硬编码（铁律 1）。
+     *
+     * <p><b>时间源本身可覆盖</b>（{@link ClockSource}，dev profile 有加速实现 {@link DevClockSpeed}）：
+     * 国策一轮 48 小时，真链路等不到。默认走 {@link ClockSource#SYSTEM}，
+     * 而 prod 上下文里那个加速 bean <b>不存在</b>（{@code @Profile("dev")}）⇒ 走真实时间，
+     * 是结构事实而不是「忘了设环境变量」。
+     */
     @Bean
-    public TimeService timeService(ConfigRegistry configs) {
-        Clock clock = Clock.systemUTC();
-        return new TimeService(clock::millis, configs.longParam("TIME_SYNC_MAX_SKEW_MS"));
+    public TimeService timeService(ConfigRegistry configs, ObjectProvider<ClockSource> clocks) {
+        ClockSource source = clocks.getIfAvailable(() -> ClockSource.SYSTEM);
+        return new TimeService(source::nowMillis, configs.longParam("TIME_SYNC_MAX_SKEW_MS"));
     }
 
     /** 曲线求值器。ConfigRegistry 实现了 game-common 的 CurveSource 端口，因此 game-core 不需要依赖 game-config。 */

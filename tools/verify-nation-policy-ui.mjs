@@ -150,7 +150,31 @@ const clickNamed = name => clickByName(`n => n === ${JSON.stringify(name)}`)
 /** 前缀匹配：提案键带 policyId 尾巴（`PolicyPropose-np_harvest`）。 */
 const clickPrefixed = prefix => clickByName(`n => n.startsWith(${JSON.stringify(prefix)})`)
 
-/** 面板当前所有非空文字。 */
+/**
+ * 关掉「自上次登录以来」的离线产出弹窗。
+ *
+ * <p><b>它会盖住整个面板</b>，于是截图里看不全国策页 —— 而"截图看不全"与"页面真的画对了"
+ * 在一张图上分不开。加速档尤其容易撞上：2400 倍速下 36 秒真实时间就攒出 2 小时 23 分产出，
+ * 弹窗必出。点了没弹出时返回 false（不是错误，只是什么都没做）。
+ */
+async function dismissOfflineModal() {
+  return page.evaluate(`(() => {
+    const scene = window.cc.director.getScene().getChildByName('Canvas')
+    let target = null
+    const walk = (n) => {
+      if (target) return
+      const label = n.getComponentInChildren && n.getComponentInChildren('cc.Label')
+      if (label && String(label.string) === '知道了') { target = n; return }
+      for (const child of n.children) walk(child)
+    }
+    walk(scene)
+    if (target === null) return false
+    target.emit('touch-start')
+    return true
+  })()`)
+}
+
+// 读面板当前所有非空文字。
 const READ_TEXTS = `(() => {
   const panel = window.cc.director.getScene()
     .getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
@@ -279,6 +303,75 @@ try {
   checkThat('④ 提过的那一条那颗键已经灰了（返回 greyed，不发请求）', twice === 'greyed' || twice === 'not-found',
     `返回=${twice}`)
   check('④ 零页面错误', errors.join(' | ') || '无', '无')
+
+// ---------- ④b 投票段：等窗口真的开（dev 时间加速档；24 小时压缩到约 36 秒真实时间） ----------
+// 这一段只在后端带 IRONOATH_DEV_TIME_SPEED 时才跑；没开就**明确说「未验」**，不假装通过。
+// 时间是**真的在走**（加速档），不是拨钟 —— 所以窗口开启、结算、到期走的都是生产代码。
+const phaseOf = async () => (await call('GET', '/nation/policy', undefined, king.playerId, king.token))
+  .data?.phase ?? 'UNKNOWN'
+const speedEnv = process.env.IRONOATH_DEV_TIME_SPEED
+
+if (speedEnv === undefined || Number(speedEnv) < 2) {
+  console.log(`  跳过投票段：后端没开时间加速档（IRONOATH_DEV_TIME_SPEED=${speedEnv ?? '未设'}）`
+    + ' ⇒ 投票窗要等 24 小时真实时间。这一段是「未验」，不是「通过」。')
+} else {
+  console.log(`  时间加速档 ${speedEnv}× ：在真实时间里等投票窗开…`)
+  const reopenPanel = async () => {
+    // 按节点名找，不按文案（同上面那条判据的理由：同一段文字在屏上出现多次）。
+    await page.evaluate(OPEN_PANEL)
+    await page.waitForTimeout(700)
+    await page.evaluate(clickNamed('Tab_POLICY'))
+    await page.waitForTimeout(1300)
+  }
+  let opened = false
+  const deadline = Date.now() + 150_000
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(3000)
+    if (await phaseOf() === 'VOTING') {
+      opened = true
+      break
+    }
+    await reopenPanel()
+  }
+  checkThat(`投票窗在真实时间里真的开了（加速档 ${speedEnv}×，不是拨钟）`, opened,
+    `150 秒内没等到；当前段=${await phaseOf()}`)
+
+  if (opened) {
+    await reopenPanel()
+    const voting = await page.evaluate(READ_TEXTS)
+    console.log(`  屏上文字：${voting}`)
+    checkThat('投票段标题在屏上（不是提案段那句话）', voting.includes('投票中 · 生效槽位'))
+    checkThat('票数那行是 0 · 0（此刻没人投票）', voting.includes('赞成 0 · 反对 0'))
+    checkThat('投票键在屏上', voting.includes('赞成') && voting.includes('反对'))
+    checkThat('投票段不再显示「现在不是投票时间」（那条只在提案段出现）',
+      !voting.includes('现在不是投票时间'))
+    checkThat('屏上没有内部 id', !voting.includes('np_'))
+    await dismissOfflineModal()
+    await page.screenshot({ path: path.join(OUT, '04-voting.png') })
+    console.log(`  截图：${path.join(OUT, '04-voting.png')}`)
+
+    const voted = await page.evaluate(clickPrefixed('PolicyYes-'))
+    checkThat('投票键点得动（不是灰的）', voted === 'ok', `返回=${voted}`)
+    await page.waitForTimeout(2000)
+    const afterVote = await page.evaluate(READ_TEXTS)
+    console.log(`  屏上文字：${afterVote}`)
+    checkThat('投票之后票数变成 1（服务端账本，不是本地 +1）',
+      afterVote.includes('赞成 1 · 反对 0'))
+    checkThat('赞成名单不再是「还没有人投票」', !afterVote.includes('赞成：还没有人投票'))
+    checkThat('投过之后那颗键灰了（再点不会发第二个请求）',
+      await page.evaluate(clickPrefixed('PolicyYes-')) === 'greyed')
+    // 票数与名单自洽：1 票赞成 ⇒ 赞成名单有 1 个名字，而**反对名单仍该是空的**
+  // （1:0 的局面下「反对：还没有人投票」正是对的说法）。
+  // 第一版把这条写成「反对名单不能还是空的」—— 那是在断言一个不存在的约束。
+  checkThat('票数与名单自洽：1 票赞成对应 1 个名字，反对名单仍为空',
+    !afterVote.includes('赞成：还没有人投票') && afterVote.includes('反对：还没有人投票'))
+  await dismissOfflineModal()
+  await page.screenshot({ path: path.join(OUT, '05-voted.png') })
+    console.log(`  截图：${path.join(OUT, '05-voted.png')}`)
+  }
+}
+
+console.log(`\n=== 国策页真机证据：${pass} 通过 / ${fail} 失败 ===`)
 } finally {
   await page.screenshot({ path: path.join(OUT, '03-final.png') })
   await browser.close()
@@ -288,6 +381,4 @@ try {
 // 清掉本轮建的国家：不清的话每跑一轮就多占一个名额（上限只有 4）
 const cleaned = await call('POST', '/nation/disband', { requestId: rid('disband') }, king.playerId, king.token)
 check(`清掉本轮建的国家（${cleaned.detail ?? cleaned.msg}）`, cleaned.code, 0)
-
-console.log(`\n=== 国策页真机证据：${pass} 通过 / ${fail} 失败 ===`)
 process.exit(fail === 0 ? 0 : 1)
