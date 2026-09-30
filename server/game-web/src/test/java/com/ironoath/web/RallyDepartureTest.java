@@ -305,13 +305,21 @@ class RallyDepartureTest {
 
         long leaderGain = resourceTotal(leader) - leaderBefore;
         long mateGain = resourceTotal(mate) - mateBefore;
+        long victimLost = victimBefore - resourceTotal(victim);
+        // **三个数字都写进断言消息**：这条红过一次（#19 集结加成接上之后），
+        // 而「成员分不到」可以有好几种原因（守方没被打疼 / 战利品为 0 / 分摊逻辑坏了），
+        // 只印一句人话的话每次都要重新查一遍。消息里有数，下一次红就能直接判。
         assertThat(leaderGain + mateGain)
-                .as("Σ各受益人增量不得超过守方被搬走的量（守方同时还在产，所以不断言严格相等）")
-                .isLessThanOrEqualTo(victimBefore - resourceTotal(victim) + 10L);
+                .as("Σ增量 ≤ 守方被搬走的量；本轮 发起人+" + leaderGain + " 成员+" + mateGain + " 守方共-" + victimLost)
+                .isLessThanOrEqualTo(victimLost + 10L);
         assertThat(mateGain)
-                .as("成员出了 400/1000 的兵，却一分抢不到 ⇒ 集结就是替发起人打工").isPositive();
+                .as("成员出了 400/1000 的兵却一分抢不到 ⇒ 集结就是替发起人打工；本轮 发起人+" + leaderGain
+                        + " 成员+" + mateGain + " 守方共-" + victimLost
+                        + " 战报数=" + battleReportService.list(victim).reports().size()
+                        + " 残留行军数=" + marches.findByPlayerId(leader).size())
+                .isPositive();
         assertThat(leaderGain)
-                .as("发起人承诺 600/1000，拿大头")
+                .as("发起人承诺 600/1000，拿大头；本轮 发起人+" + leaderGain + " 成员+" + mateGain)
                 .isGreaterThan(mateGain);
 
         // 战报类型也要是集结：这是玩家唯一能回看「这一仗是谁打的、按什么口径算」的地方。

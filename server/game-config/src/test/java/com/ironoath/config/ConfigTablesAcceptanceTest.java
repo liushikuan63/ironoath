@@ -258,6 +258,33 @@ class ConfigTablesAcceptanceTest {
     }
 
     @Test
+    @DisplayName("集结加成取得到且是定点 1000：fixedParam 本身就是在验它被声明成 DECIMAL")
+    void rallyBonusMustBeDeclaredAsDecimal() {
+        // 这条红过一次（2026-09-30 #19 装配那一格）：参数声明成 LONG + value=1000，
+        // `fixedParam` 在运行时报「类型是 LONG，不能按 DECIMAL 读取」——
+        // 而**到达处理把异常吞掉**，于是那一仗静默不结算：不掠夺、不写战报，
+        // 症状是「集结打过去什么都没发生」，与「集结没生效」完全分不开
+        // （当时是靠断言消息里那三个数字才定位到的：守方共-0、战报数=0）。
+        //
+        // **定点度是 10000，所以「1000」在 DECIMAL 里就是 "10.00"**，不是 "1000"。
+        // 声明一旦被改成别的，下面这行会直接抛 —— 而真正兜住后果的是
+        // `RallyDepartureTest.rallySpoilsAreSplitByCommitment`（它会当场红）。
+        assertThat(registry.fixedParam("RALLY_ATTACK_BONUS_FIXED"))
+                .as("+10% = 定点 1000（裁决 A10 取自 balance-sim --rally 实测曲线）").isEqualTo(1_000L);
+    }
+
+    @Test
+    @DisplayName("集结加成落在有效区间里：负数会让集结变成削弱，大到离谱会让均势必胜")
+    void rallyBonusStaysInAPlausibleRange() {
+        long bonus = registry.fixedParam("RALLY_ATTACK_BONUS_FIXED");
+        // 实测结论（balance-sim --rally，600 局/点）：+15% 就让均势变成必胜，
+        // 集结从「要不要赌」退化成「走流程」。所以上限钉在 +15%。
+        assertThat(bonus).as("0 = 这一格没做；负数 = 集结反而削弱进攻方").isPositive();
+        assertThat(bonus).as("超过 +15% 实测会让均势必胜，超出就不再是「赌一把」")
+                .isLessThanOrEqualTo(1_500L);
+    }
+
+    @Test
     @DisplayName("五分钟体验：1 级野怪战力必须落在新号的可攻击区间内，首战必胜")
     void firstMonsterIsBeatableByNewPlayer() {
         long newPlayerPower = registry.longParam("INIT_MATCH_POWER");

@@ -4,7 +4,7 @@ import com.ironoath.battle.OrgBonus;
 import com.ironoath.battle.UnitType;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.NationPolicyCfg;
-import com.ironoath.config.cfg.UnitCfg;
+import com.ironoath.web.battle.BattleArmyFactory;
 import com.ironoath.core.nation.Nation;
 import com.ironoath.web.social.SocialStore;
 import org.slf4j.Logger;
@@ -45,13 +45,23 @@ public class NationPolicyBonuses {
     private final SocialStore social;
     private final NationStore nations;
     private final NationLeaders leaders;
+    /**
+     * id → 兵种折算就这一份。
+     *
+     * <p>本类原来自己折了一遍（查 `unit` 表拿 {@code type} 再逐个比枚举名），
+     * 而 {@code BattleArmyFactory} 早就有同一个折算 —— 两个家在改了表的那天就会对不上
+     * （#281 那一族：同一个格式化函数被抄了四遍）。现在只调那一份。
+     */
+    private final BattleArmyFactory armyFactory;
 
     public NationPolicyBonuses(ConfigRegistry configs, SocialStore social,
-                               NationStore nations, NationLeaders leaders) {
+                               NationStore nations, NationLeaders leaders,
+                               BattleArmyFactory armyFactory) {
         this.configs = configs;
         this.social = social;
         this.nations = nations;
         this.leaders = leaders;
+        this.armyFactory = armyFactory;
     }
 
     /**
@@ -79,7 +89,7 @@ public class NationPolicyBonuses {
         for (NationPolicyCfg row : active) {
             switch (row.effectAttr()) {
                 case POLICY_ATTACK -> {
-                    UnitType type = unitTypeOf(row.targetUnit());
+                    UnitType type = armyFactory.unitTypeOf(row.targetUnit());
                     if (type != null) {
                         attackByUnit.merge(type, row.effectValue(), Long::sum);
                     }
@@ -146,23 +156,6 @@ public class NationPolicyBonuses {
             out.add(configs.get(NationPolicyCfg.class, active.policyId()));
         }
         return out;
-    }
-
-    /** {@code targetUnit}（{@code unit_cavalry_t1} 这类 id）→ 兵种枚举。读不到返回 null。 */
-    private UnitType unitTypeOf(String unitId) {
-        if (unitId == null || unitId.isBlank()) {
-            return null;
-        }
-        if (!configs.rawTable("unit").has(unitId)) {
-            return null;
-        }
-        UnitCfg row = configs.get(UnitCfg.class, unitId);
-        for (UnitType type : UnitType.values()) {
-            if (type.name().equals(row.type())) {
-                return type;
-            }
-        }
-        return null;
     }
 
     /**

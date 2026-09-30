@@ -179,6 +179,45 @@ class OrgBonusZoneTest {
     }
 
     @Test
+    @DisplayName("国策与集结相加而不是二选一：同一个兵种上两样都在")
+    void policyAndRallyAddUpOnTheSameUnitType() {
+        OrgBonus both = OrgBonus.attackOn(UnitType.CAVALRY, POLICY_15).plus(OrgBonus.attackOn(UnitType.CAVALRY, 1000L));
+        assertThat(both.policyAttackFor(UnitType.CAVALRY))
+                .as("攻方只带一份 OrgBonus：两份来源必须相加，否则「既当国策又集结」的进攻方丢掉其中一样")
+                .isEqualTo(POLICY_15 + 1000L);
+    }
+
+    @Test
+    @DisplayName("相加是逐兵种的：集结只给它带的那几种兵，国策只给它点的那个")
+    void theSumIsPerUnitTypeNotGlobal() {
+        OrgBonus policy = OrgBonus.attackOn(UnitType.CAVALRY, POLICY_15);
+        OrgBonus rally = new OrgBonus(Map.of(UnitType.CAVALRY, 1000L, UnitType.INFANTRY, 1000L), 0L, 0L);
+
+        OrgBonus both = policy.plus(rally);
+        assertThat(both.policyAttackFor(UnitType.CAVALRY)).isEqualTo(POLICY_15 + 1000L);
+        assertThat(both.policyAttackFor(UnitType.INFANTRY))
+                .as("集结带步兵就加步兵 —— 压成一个标量会顺手加给没带的兵种")
+                .isEqualTo(1000L);
+        assertThat(both.policyAttackFor(UnitType.ARCHER)).isZero();
+    }
+
+    @Test
+    @DisplayName("空的那一份相加是恒等（省掉一次 if，也钉住 isZero 的语义）")
+    void addingAnEmptyBonusIsIdentity() {
+        OrgBonus policy = OrgBonus.attackOn(UnitType.CAVALRY, POLICY_15);
+        assertThat(policy.plus(OrgBonus.none()).policyAttackFor(UnitType.CAVALRY)).isEqualTo(POLICY_15);
+        assertThat(OrgBonus.none().plus(policy).policyAttackFor(UnitType.CAVALRY)).isEqualTo(POLICY_15);
+    }
+
+    @Test
+    @DisplayName("城墙那一位取 max 不相加（两份都非负，今天等价，将来不用重议语义）")
+    void wallTakesMaxNotSum() {
+        OrgBonus a = new OrgBonus(Map.of(), 0L, 300L);
+        OrgBonus b = new OrgBonus(Map.of(), 0L, 500L);
+        assertThat(a.plus(b).wallDefense()).isEqualTo(500L);
+    }
+
+    @Test
     @DisplayName("国策只给配置里点名的那个兵种：轻骑兵国策打不动全步兵的队伍")
     void aCavalryPolicyDoesNothingAgainstAPureInfantryArmy() {
         ArmySide infantryAttacker = army("atk", 1000L);

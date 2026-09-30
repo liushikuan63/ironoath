@@ -2,6 +2,7 @@ package com.ironoath.web.battle;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
@@ -11,6 +12,8 @@ import org.springframework.stereotype.Service;
 
 import com.ironoath.battle.ArmySide;
 import com.ironoath.battle.BattleInput;
+import com.ironoath.battle.OrgBonus;
+import com.ironoath.battle.UnitType;
 import com.ironoath.battle.BattleModifier;
 import com.ironoath.battle.BattleResult;
 import com.ironoath.battle.BattleSimulator;
@@ -246,7 +249,10 @@ public class PlayerCityBattleService {
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(march.units());
         ArmySide attacker = armyFactory.toSide(attackerId, attackerFold, attackerHeroes, 0L,
                 techBonuses.forPlayer(attackerId), attackerHospital,
-                policyBonuses.combatBonusFor(attackerId));
+                // **两份组织加成相加，不是二选一**（国策 + 集结，见 OrgBonus.plus 的注释）：
+                // 只装一份的话，「既当国策又集结」的进攻方会安静地丢掉其中一样 ——
+                // 那是一条两条单测各自都过的缺陷。
+                policyBonuses.combatBonusFor(attackerId).plus(rallyBonus(march)));
 
         ArmyState defenderArmy = armies.findByPlayerId(defenderId).orElseGet(ArmyState::new);
         Map<String, Long> defenderTroops = new LinkedHashMap<>(defenderArmy.troops());
@@ -401,7 +407,7 @@ public class PlayerCityBattleService {
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(attacker.units());
         ArmySide attackerSide = armyFactory.toSide(attackerId, attackerFold, attackerHeroes, 0L,
                 techBonuses.forPlayer(attackerId), attackerHospital,
-                policyBonuses.combatBonusFor(attackerId));
+                policyBonuses.combatBonusFor(attackerId).plus(rallyBonus(attacker)));
 
         HeroRoster gathererRoster = heroes.findByPlayerId(gathererId).orElseGet(HeroRoster::new);
         List<HeroSnapshot> gathererHeroes = heroMapper.snapshots(gathererId, gatherer.heroes(), gathererRoster);
@@ -534,6 +540,44 @@ public class PlayerCityBattleService {
             }
         }
         return new DefenderStore(unprotected, protectedAmount, true);
+    }
+
+    /**
+     * 集结加成（#19，幅度取自 {@code global.json} 的 {@code RALLY_ATTACK_BONUS_FIXED}，
+     * 那个数是 {@code balance-sim --rally} 实测出来的）。
+     *
+     * <p><b>判据是 {@code march.isRally()}，不重新比人数</b>：{@code Rally.depart()} 在
+     * {@code participants.size() < minMembersRequired()} 时就拒绝出发，所以
+     * 「带 rallyId 的行军」<b>已经</b>意味着达到了集结下限。在这里再比一次人数，
+     * 等于把 B03 的那一条判定抄第二份 —— 将来改了下限，两处会走散。
+     *
+     * <p><b>只加在攻方、且加给这一支队伍带的每一种兵</b>：集结是进攻方行为（B03 口径），
+     * 同盟围攻那种「守方集结」是另一条性质，不在这一格。按兵种给而不是压成一个标量 ——
+     * 与乘区 G 的形状一致，也是 {@code balance-sim} 那一侧量的同一个形状
+     * （{@code BattleParamsResolver.bareArmy(..., bonus)}）。
+     */
+    private OrgBonus rallyBonus(March march) {
+        if (!march.isRallyMarch()) {
+            return OrgBonus.none();
+        }
+        long bonus = configs.fixedParam("RALLY_ATTACK_BONUS_FIXED");
+        if (bonus == 0L) {
+            return OrgBonus.none();
+        }
+        Map<UnitType, Long> byUnit = new EnumMap<>(UnitType.class);
+        for (Map.Entry<String, Long> entry : march.units().entrySet()) {
+            if (entry.getValue() == null || entry.getValue() <= 0L) {
+                continue;
+            }
+            // **id → 兵种走 BattleArmyFactory 那一份**，不自己再折一次：
+            // 行军里带的是 unit_cavalry_t1 这类 id，折算要查 `unit` 表拿 type，
+            // 这里抄第二份的话，改了表就会有一处对一处不对。
+            UnitType type = armyFactory.unitTypeOf(entry.getKey());
+            if (type != null) {
+                byUnit.put(type, bonus);
+            }
+        }
+        return byUnit.isEmpty() ? OrgBonus.none() : new OrgBonus(byUnit, 0L, 0L);
     }
 
     /** 攻方战损：损失从行军里扣，伤兵进攻方自己的医院，超容量的部分死亡。 */

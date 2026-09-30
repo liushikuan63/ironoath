@@ -84,6 +84,41 @@ public record OrgBonus(Map<UnitType, Long> policyAttackByUnit, long policyDefens
         return policyAttackByUnit.isEmpty() && policyDefense == 0L && wallDefense == 0L;
     }
 
+    /**
+     * 把另一份组织加成<b>合并进来</b>（同类相加）。
+     *
+     * <p><b>为什么必须相加而不是二选一</b>：攻方身上现在有两份互不相干的攻击加成 ——
+     * 国策（按兵种，{@code np_cavalry_t1..t5}）与集结（B03 的 {@code RALLY_ATTACK_BONUS_FIXED}，
+     * 加给带 rallyId 的那支队伍）。两者落在<b>同一个 Map</b> 上，
+     * 而 {@code ArmySide} 只带一份 {@code OrgBonus}。于是「谁后装配谁覆盖前者」
+     * 是一条只在特定玩家身上出现的缺陷：既当国策又集结的进攻方会丢掉其中一样，
+     * 而两条单测各自都过。
+     *
+     * <p><b>语义是同类相加，不是相乘</b>：国策与集结都是对有效攻击的<b>加算</b>来源，
+     * 而乘区内部已经是连乘（`(1 + hero + tech + …) × (1 + policy) × (1 + wall)`）。
+     * 两个来源再相乘会把「+10% 与 +15%」读成 +15.25%，那是第三个家。
+     *
+     * <p>城墙那一位取 {@code max} 而非相加：乘区 H 目前只有守方会有值，
+     * 而两份都非负，相加与取 max 在今天等价 —— **用 max 是为了让「谁更大」这件事
+     * 在将来出现两份来源时不需要重新讨论语义**。
+     */
+    public OrgBonus plus(OrgBonus other) {
+        if (other == null || other.isZero()) {
+            return this;
+        }
+        if (this.isZero()) {
+            return other;
+        }
+        Map<UnitType, Long> merged = new EnumMap<>(UnitType.class);
+        merged.putAll(policyAttackByUnit);
+        for (Map.Entry<UnitType, Long> entry : other.policyAttackByUnit.entrySet()) {
+            merged.merge(entry.getKey(), entry.getValue(), Long::sum);
+        }
+        return new OrgBonus(merged,
+                policyDefense + other.policyDefense,
+                Math.max(wallDefense, other.wallDefense));
+    }
+
     /** 可读形式，用于日志与战报。 */
     public String describe() {
         StringBuilder attack = new StringBuilder();
