@@ -220,11 +220,27 @@ class ConfigTablesAcceptanceTest {
         // **WITHDRAW_TREASURY 不在这一组里了**（2026-09-13 裁决 C16）：B13 §2 本来就把「国库支出」
         // 同时给了国王（无限制）与首相（限额），原先把它算作"国主独有"是让表去否定规范文本。
         // 摘出来不等于放松守卫 —— 见下面那段，它改守的是另外两件事。
-        for (String sensitive : List.of("DECLARE_WAR", "SET_NATIONAL_POLICY", "APPOINT_OFFICE")) {
+        for (String sensitive : List.of("DECLARE_WAR", "APPOINT_OFFICE")) {
             RolePermissionCfg perm = registry.get(RolePermissionCfg.class, "perm_nation_" + sensitive.toLowerCase());
             assertThat(perm.allowOfficer()).as("%s 必须收窄到国主独有", sensitive).isFalse();
             assertThat(perm.allowMember()).as("%s 必须收窄到国主独有", sensitive).isFalse();
         }
+
+        // **SET_NATIONAL_POLICY 也摘出来了**（2026-09-30 裁决 A1）：B13 §2 把「国策提案」给了内政官、
+        // B21 块③ 写「提案来源限国王/内政官」，而本表原先 allowOfficer=false 是在让表去否定两份规范文本
+        // —— 与 2026-09-13 从这一组里摘掉 WITHDRAW_TREASURY（同样是「表否定 B13 §2」）是同一种错。
+        // 摘出来不等于放松守卫：**allowMember 仍然必须为 false**（普通成员不能提案），
+        // 而且真正的闸不在这一格上 —— 提案不花钱也不耗国库，闸在投票那一侧
+        // （相对 50% 门槛 + 参与下限）。下面那一条守着的就是「不得对全员开放」。
+        RolePermissionCfg setPolicy =
+                registry.get(RolePermissionCfg.class, "perm_nation_set_national_policy");
+        assertThat(setPolicy.allowLeader())
+                .as("国策至少要国主能提，否则没人能发起讨论").isTrue();
+        assertThat(setPolicy.allowOfficer())
+                .as("A1 之后国王与四类官员都可提案（内政官 4 席的权限在 B13 §2 里是明写的）")
+                .isTrue();
+        assertThat(setPolicy.allowMember())
+                .as("放开到官员档不等于放开到全员：普通成员只能投票，不能提案").isFalse();
 
         RolePermissionCfg withdraw =
                 registry.get(RolePermissionCfg.class, "perm_nation_withdraw_treasury");

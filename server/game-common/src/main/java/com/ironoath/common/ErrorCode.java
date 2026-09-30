@@ -378,6 +378,16 @@ public enum ErrorCode {
      * 对齐结果是全等）。为同一件事再造一枚，玩家就会看到两条不同文案的「钱不够」而这两个数没有区别。
      */
     NATION_TECH_NATION_LEVEL_LOW(13013, "国家等级不足，无法研究该科技"),
+    /* ---------- 国策（B13 §4，13014~13019） ----------
+     * 六枚而不是一枚，理由与 TechBlock 那族同款：玩家的下一步动作各不相同，
+     * 合成一个码就是让客户端替玩家猜。
+     * ① 「等下一轮提案段」② 「等别人提案」③ 「等窗口开」—— 三种「等」不是一个意思。 */
+    NATION_POLICY_NOT_PROPOSER(13014, "只有国王与官员能提出国策"),
+    NATION_POLICY_VOTING_CLOSED(13015, "现在不是投票时间，提案已结束"),
+    NATION_POLICY_NO_PROPOSAL(13016, "本轮还没有任何国策提案可投"),
+    NATION_POLICY_ALREADY_VOTED(13017, "这一票已经投过了"),
+    NATION_POLICY_ALREADY_PROPOSED(13018, "本轮已经提过这一条国策"),
+    NATION_POLICY_BOT_NOT_ALLOWED(13019, "人机账号不参与国策投票"),
 
     // ---------- 14xxx 赛季（B14） ----------
     /**

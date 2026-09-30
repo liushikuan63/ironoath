@@ -113,6 +113,32 @@ public class BotRegistry {
     }
 
     /**
+     * 合规闸门（B13 §4 / B11 §七）：<b>国策提案与投票只对真人开放</b>。
+     *
+     * <p><b>为什么需要一条新闸门而不能复用 {@link #mayHoldOffice}</b>：
+     * 提案权来自官职（{@code SET_NATIONAL_POLICY}），所以提案那一半可以问 {@code mayHoldOffice}；
+     * 但投票权是 <b>2026-09-30 裁决 A2 定的「每成员一票」</b>，任何官职都不参与 ——
+     * 于是没有 {@code isLeader/isOffice} 可传，{@code mayHoldOffice} 在这一格给不出答案。
+     * 硬把投票说成「官职」是给规则套一个错的壳，而错壳会在下一次改权限时被继承下去。
+     *
+     * <p><b>判定本体住在 {@link BotTuning#mayTakeNationalPolicyAction()}</b>（恒为 false，
+     * 与 {@code mayAppearIn} 那族同一条「默认拒绝」的纪律），
+     * 而「谁该被挡」这个身份问题只有一个家 —— 这正是 {@code check-no-bot-privilege.sh} 要的形状：
+     * <b>不许业务代码写 {@code if (isBot)}，只许委托</b>。本类的第一版没有这一格，
+     * {@code NationAppService} 里就出现了三处 {@code bots.isBot(...)} 并被门禁判红；
+     * 那是门禁对的形状错了业务，而不是门禁该放宽。
+     *
+     * @param what 动作名（用于日志与提示文案，例如「国策提案」）
+     * @return 放行与否。真人恒为 true
+     */
+    public boolean mayTakeNationalPolicyAction(String playerId) {
+        if (!isBot(playerId)) {
+            return true;
+        }
+        return new BotTuning(assembler.tuningRules()).mayTakeNationalPolicyAction();
+    }
+
+    /**
      * 拒绝式形状：<b>这个位置只对真人开放，被挡住是一次要被拒绝的操作</b>。
      *
      * <p>为什么不让调用方自己 {@code if (mayHoldOffice(...)) throw}：与

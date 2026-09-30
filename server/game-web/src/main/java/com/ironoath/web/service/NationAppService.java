@@ -1,7 +1,9 @@
 package com.ironoath.web.service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -14,6 +16,19 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.NationTechCfg;
 import com.ironoath.core.formula.Formula;
 import com.ironoath.core.idempotency.IdempotencyStore;
+import com.ironoath.config.cfg.NationPolicyCfg;
+import com.ironoath.web.dto.generated.NationMyVoteView;
+import com.ironoath.web.dto.generated.NationPolicyBlockReason;
+import com.ironoath.web.dto.generated.NationPolicyEffectAttr;
+import com.ironoath.web.dto.generated.NationPolicyPhase;
+import com.ironoath.web.dto.generated.NationPolicyProposeReq;
+import com.ironoath.web.dto.generated.NationPolicyProposeResp;
+import com.ironoath.web.dto.generated.NationPolicyProposalView;
+import com.ironoath.web.dto.generated.NationPolicyRoundView;
+import com.ironoath.web.dto.generated.NationPolicyView;
+import com.ironoath.web.dto.generated.NationPolicyVoteReq;
+import com.ironoath.web.dto.generated.NationPolicyVoteResp;
+import com.ironoath.web.dto.generated.NationPolicyVoterView;
 import com.ironoath.core.nation.Nation;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
@@ -936,6 +951,299 @@ public class NationAppService {
     }
 
     // ---------- 内部 ----------
+
+    // ---------- 国策（B13 §4，2026-09-30） ----------
+
+    /**
+     * 国策轮次的完整视图（{@code GET /nation/policy}）。
+     *
+     * <p><b>这一格是 Bot 判定唯一该出现的地方</b>：{@code check-no-bot-privilege.sh} 规定
+     * 「除了 {@code BotRegistry} 之外任何地方都不许问这是不是 Bot」，而领域层
+     * {@code Nation.PolicyBlock} 刻意没有 {@code BOT_NOT_ALLOWED} —— 所以本方法在读视图时
+     * 把它补上去，写路径 {@link #votePolicy} / {@link #proposePolicy} 在进领域层之前挡掉。
+     * 一处判定、三条路径共用 {@link BotRegistry#mayTakeNationalPolicyAction}，与「只许在一个地方问」是同一条纪律。
+     *
+     * <p><b>读这个动作会推进轮次</b>（{@code settlePolicy}），所以它必须在玩家锁内跑：
+     * 轮次推进是「读-改-写」，两个玩家同时读会各推一次。
+     */
+    public NationPolicyRoundView nationPolicy(String playerId) {
+        long now = timeService.serverNow();
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            Nation loaded = requireNationOf(playerId);
+            Nation nation = settleTax(loaded.id(), now);
+            Nation.PolicyRound round = nation.policyRound(playerId,
+                    allows(nation, playerId, "SET_NATIONAL_POLICY"), now);
+            nations.save(nation, nation.version());
+            return toRoundResp(nation, round, playerId,
+                    !bots.mayTakeNationalPolicyAction(playerId));
+        });
+    }
+
+    /** 提案。**Bot 在进领域层之前就被挡掉**（理由同 {@link #nationPolicy}）。 */
+    public NationPolicyProposeResp proposeNationPolicy(String playerId, NationPolicyProposeReq req) {
+        long now = timeService.serverNow();
+        acquire(req == null ? null : req.requestId(), now);
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+                Nation loaded = requireNationOf(playerId);
+                Nation nation = settleTax(loaded.id(), now);
+                if (!bots.mayTakeNationalPolicyAction(playerId)) {
+                    throw new BizException(ErrorCode.NATION_POLICY_BOT_NOT_ALLOWED,
+                            "Bot 不参与国策：提案权来自官职，而官职本来就不许 Bot 担任");
+                }
+                String policyId = req.policyId();
+                if (policyId == null || policyId.isBlank()) {
+                    throw new BizException(ErrorCode.PARAM_INVALID, "policyId 不得为空");
+                }
+                if (!configs.rawTable("nation_policy").has(policyId)) {
+                    throw new BizException(ErrorCode.PARAM_INVALID,
+                            "nation_policy 表里没有这一行: " + policyId);
+                }
+                NationPolicyCfg row = configs.get(NationPolicyCfg.class, policyId);
+                if (nation.level() < row.requireNationLevel()) {
+                    throw new BizException(ErrorCode.NATION_TECH_NATION_LEVEL_LOW,
+                            "国家等级不足（要 Lv" + row.requireNationLevel() + "，当前 Lv"
+                                    + nation.level() + "）");
+                }
+                // 提案 id 由这一层生成：领域层不造 id（与 techId 同一条分工）。
+                // 带上前缀是为了让日志与排查一眼看出它是提案而不是别的 id。
+                String proposalId = "np_" + playerId + "_" + now;
+                try {
+                    nation.propose(proposalId, policyId, playerId,
+                            allows(nation, playerId, "SET_NATIONAL_POLICY"), now);
+                } catch (Nation.PolicyException e) {
+                    throw new BizException(policyErrorCode(e.block()), e.getMessage());
+                }
+                nations.save(nation, nation.version());
+                Nation.PolicyRound round = nation.policyRound(playerId,
+                        allows(nation, playerId, "SET_NATIONAL_POLICY"), now);
+                LOG.info("国策提案 nationId={} 提案={} 国策={} 提案人={} 开窗于={}",
+                        nation.id(), proposalId, policyId, playerId, round.nextVoteAt());
+                return new NationPolicyProposeResp(proposalId,
+                        toRoundResp(nation, round, playerId, false));
+            });
+        } catch (RuntimeException e) {
+            idempotency.release(req.requestId());
+            throw e;
+        }
+    }
+
+    /** 投票（B13 §二 的 {@code NationVoteReq(proposalId, boolean support)}）。 */
+    public NationPolicyVoteResp voteNationPolicy(String playerId, NationPolicyVoteReq req) {
+        long now = timeService.serverNow();
+        acquire(req == null ? null : req.requestId(), now);
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+                Nation loaded = requireNationOf(playerId);
+                Nation nation = settleTax(loaded.id(), now);
+                if (!bots.mayTakeNationalPolicyAction(playerId)) {
+                    throw new BizException(ErrorCode.NATION_POLICY_BOT_NOT_ALLOWED,
+                            "Bot 不参与国策投票（2026-09-30 裁决 A8）");
+                }
+                String proposalId = req.proposalId();
+                if (proposalId == null || proposalId.isBlank()) {
+                    throw new BizException(ErrorCode.PARAM_INVALID, "proposalId 不得为空");
+                }
+                try {
+                    nation.vote(proposalId, playerId, req.support(), now);
+                } catch (Nation.PolicyException e) {
+                    throw new BizException(policyErrorCode(e.block()), e.getMessage());
+                }
+                nations.save(nation, nation.version());
+                Nation.PolicyRound round = nation.policyRound(playerId,
+                        allows(nation, playerId, "SET_NATIONAL_POLICY"), now);
+                Nation.ProposalTally mine = round.proposals().stream()
+                        .filter(t -> t.proposalId().equals(proposalId))
+                        .findFirst().orElseThrow();
+                LOG.info("国策投票 nationId={} 提案={} 投票人={} 赞成={} 反对={}",
+                        nation.id(), proposalId, playerId, mine.yes(), mine.no());
+                return new NationPolicyVoteResp(proposalId, req.support(),
+                        toRoundResp(nation, round, playerId, false));
+            });
+        } catch (RuntimeException e) {
+            idempotency.release(req.requestId());
+            throw e;
+        }
+    }
+
+    /** 领域层那五种拦截各自对应哪一枚码。Bot 那一枚不在这里产生（见 {@link #nationPolicy}）。 */
+    private static ErrorCode policyErrorCode(Nation.PolicyBlock block) {
+        return switch (block) {
+            case NONE -> ErrorCode.PARAM_INVALID;
+            case NOT_PROPOSER -> ErrorCode.NATION_POLICY_NOT_PROPOSER;
+            case NOT_VOTING -> ErrorCode.NATION_POLICY_VOTING_CLOSED;
+            case ALREADY_VOTED -> ErrorCode.NATION_POLICY_ALREADY_VOTED;
+            case ALREADY_PROPOSED -> ErrorCode.NATION_POLICY_ALREADY_PROPOSED;
+            case NO_PROPOSAL_YET -> ErrorCode.NATION_POLICY_NO_PROPOSAL;
+        };
+    }
+
+    /**
+     * 领域 → 协议。两个刻意的地方：
+     *
+     * <ol>
+     *   <li><b>提案与生效列表都从同一份 {@code policies} 按 id 取</b>：界面上「这条提案指向
+     *       骑兵时代」与「当前生效的是骑兵时代」必须是同一份文案，两处各拼一次迟早对不上。</li>
+     *   <li><b>名单里的名字在这里解析</b>：B13 §4 要求「参与者可查」，而客户端不抄配置表也不持有
+     *       玩家名表（B13 §二 里「客户端不得自行缓存拼接」是同一条纪律）。</li>
+     * </ol>
+     */
+    private NationPolicyRoundView toRoundResp(Nation nation, Nation.PolicyRound round,
+                                             String viewerId, boolean viewerIsBot) {
+        List<NationPolicyCfg> all = configs.all(NationPolicyCfg.class);
+        Map<String, NationPolicyView> byId = new LinkedHashMap<>();
+        for (NationPolicyCfg row : all) {
+            byId.put(row.id(), toPolicyView(row));
+        }
+        List<NationPolicyProposalView> proposals = new ArrayList<>();
+        for (Nation.ProposalTally tally : round.proposals()) {
+            NationPolicyView view = byId.get(tally.policyId());
+            proposals.add(new NationPolicyProposalView(
+                    tally.proposalId(),
+                    view == null ? missingPolicyView(tally.policyId()) : view,
+                    tally.yes(), tally.no(),
+                    toVoters(tally.supporters()), toVoters(tally.opponents()),
+                    tally.proposedBy(), tally.at()));
+        }
+        List<NationPolicyView> active = new ArrayList<>();
+        for (Nation.ActivePolicy one : round.active()) {
+            NationPolicyView view = byId.get(one.policyId());
+            if (view != null) {
+                active.add(view);
+            }
+        }
+        List<String> myProposals = new ArrayList<>(round.myProposals());
+        List<NationMyVoteView> myVotes = new ArrayList<>();
+        for (Map.Entry<String, Boolean> entry : round.myVotes().entrySet()) {
+            myVotes.add(new NationMyVoteView(entry.getKey(), entry.getValue()));
+        }
+        // Bot 的两个判定位在这里补：领域层看不见 Bot（门禁），但面板必须知道「你这一颗键点不动」。
+        NationPolicyBlockReason voteBlock = toBlockReason(round.voteBlock());
+        boolean canVote = voteBlock == NationPolicyBlockReason.NONE && !viewerIsBot;
+        if (viewerIsBot) {
+            voteBlock = NationPolicyBlockReason.BOT_NOT_ALLOWED;
+        }
+        NationPolicyBlockReason proposeBlock = viewerIsBot
+                ? NationPolicyBlockReason.BOT_NOT_ALLOWED
+                : toBlockReason(round.proposeBlock());
+        return new NationPolicyRoundView(
+                nation.id(),
+                toPhase(round.phase()),
+                round.slotCount(),
+                new ArrayList<>(byId.values()),
+                proposals,
+                active,
+                proposeBlock == NationPolicyBlockReason.NONE,
+                proposeBlock,
+                canVote,
+                voteBlock,
+                myProposals,
+                myVotes,
+                round.nextVoteAt(),
+                round.voteEndsAt(),
+                SLOT_ORDER_NOTE,
+                now0());
+    }
+
+    /** 槽位竞争的规则说明（协议 `slotOrderNote` 的唯一一份文案）。 */
+    private static final String SLOT_ORDER_NOTE =
+            "同轮多条提案都通过时，按「赞成率 → 赞成票数 → 提案时刻 → 国策 id」四级排序，"
+                    + "先到的占住前 N 个槽位（N = 国家等级决定的槽位数）。";
+
+    private long now0() {
+        return timeService.serverNow();
+    }
+
+    /**
+     * 表里被删掉、而存档里还留着的一条国策。
+     *
+     * <p><b>为什么要专门给一个回退而不是抛错</b>：配置表热更会删行，而存档里可能还有上一轮
+     * 的提案指向它。让整个面板打不开，症状是「策划删了一行国策，全国玩家的国策页全白」——
+     * 而那一行本来只是失效，不该让别的七行一起不可用。名字回退成「已下架的国策」，
+     * 效果回退成 0（它已经不在生效列表里，不会有任何加成被算进去）。
+     */
+    private NationPolicyView missingPolicyView(String policyId) {
+        return new NationPolicyView(policyId, "已下架的国策", NationPolicyEffectAttr.POLICY_ATTACK,
+                0L, null, "");
+    }
+
+    private NationPolicyView toPolicyView(NationPolicyCfg row) {
+        String unitName = null;
+        if (row.targetUnit() != null && !row.targetUnit().isBlank()) {
+            unitName = configs.rawTable("unit").has(row.targetUnit())
+                    ? configs.get(com.ironoath.config.cfg.UnitCfg.class, row.targetUnit()).name()
+                    : null;
+        }
+        NationPolicyEffectAttr attr = toEffectAttr(row.effectAttr());
+        String effect = effectText(attr, row.name(), unitName, row.effectValue());
+        return new NationPolicyView(row.id(), row.name(), attr, row.effectValue(), unitName, effect);
+    }
+
+    /**
+     * 拼一句可直接上屏的效果说明。
+     *
+     * <p><b>为什么由服务端拼而不用下发三个字段让客户端拼</b>：那样改一次文案就要改客户端，
+     * 而拼错的版本没有任何测试会发现。定点的「+15%」由 {@code FixedPoint.format} 给，
+     * 所以这里不出现任何浮点。
+     */
+    private String effectText(NationPolicyEffectAttr attr, String policyName, String unitName,
+                              long effectValueFixed) {
+        String percent = FixedPoint.format(effectValueFixed * 100L) + "%";
+        String target = unitName == null ? "全成员" : unitName;
+        return switch (attr) {
+            case POLICY_ATTACK -> target + " 攻击 " + percent;
+            case POLICY_DEFENSE -> target + " 防御 " + percent;
+            case OUTPUT -> "全成员资源产出 " + percent;
+            case MARCH_SPEED -> "全成员行军速度 " + percent;
+        };
+    }
+
+    private List<NationPolicyVoterView> toVoters(List<String> playerIds) {
+        List<NationPolicyVoterView> out = new ArrayList<>(playerIds.size());
+        for (String playerId : playerIds) {
+            out.add(new NationPolicyVoterView(playerId, playerName(playerId)));
+        }
+        return out;
+    }
+
+    /**
+     * 玩家名。<b>读不到就给一个可辨认的回退而不是抛错</b>：公示名单里少一个名字不该让
+     * 整个国策页打不开（那会让「点不开」变成「不敢点」）。回退语是「未知玩家」，
+     * 与仓库里既有的那条约定同一口径。
+     */
+    private String playerName(String playerId) {
+        return players.findByPlayerId(playerId)
+                .map(PlayerDtoMapper::displayName)
+                .orElse("未知玩家");
+    }
+
+    private static NationPolicyPhase toPhase(Nation.PolicyPhase phase) {
+        return switch (phase) {
+            case PROPOSING -> NationPolicyPhase.PROPOSING;
+            case VOTING -> NationPolicyPhase.VOTING;
+            case ACTIVE -> NationPolicyPhase.ACTIVE;
+        };
+    }
+
+    private static NationPolicyEffectAttr toEffectAttr(NationPolicyCfg.EffectAttr attr) {
+        return switch (attr) {
+            case POLICY_ATTACK -> NationPolicyEffectAttr.POLICY_ATTACK;
+            case POLICY_DEFENSE -> NationPolicyEffectAttr.POLICY_DEFENSE;
+            case OUTPUT -> NationPolicyEffectAttr.OUTPUT;
+            case MARCH_SPEED -> NationPolicyEffectAttr.MARCH_SPEED;
+        };
+    }
+
+    private static NationPolicyBlockReason toBlockReason(Nation.PolicyBlock block) {
+        return switch (block) {
+            case NONE -> NationPolicyBlockReason.NONE;
+            case NOT_PROPOSER -> NationPolicyBlockReason.NOT_PROPOSER;
+            case NOT_VOTING -> NationPolicyBlockReason.NOT_VOTING;
+            case ALREADY_VOTED -> NationPolicyBlockReason.ALREADY_VOTED;
+            case ALREADY_PROPOSED -> NationPolicyBlockReason.ALREADY_PROPOSED;
+            case NO_PROPOSAL_YET -> NationPolicyBlockReason.NO_PROPOSAL_YET;
+        };
+    }
 
     private Nation requireNationOf(String playerId) {
         Alliance alliance = socialStore.allianceOf(playerId).orElseThrow(() -> new BizException(

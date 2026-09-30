@@ -20,6 +20,11 @@ import com.ironoath.web.dto.generated.NationJoinReq;
 import com.ironoath.web.dto.generated.NationLeaveReq;
 import com.ironoath.web.dto.generated.NationLeaveResp;
 import com.ironoath.web.dto.generated.NationResp;
+import com.ironoath.web.dto.generated.NationPolicyProposeReq;
+import com.ironoath.web.dto.generated.NationPolicyProposeResp;
+import com.ironoath.web.dto.generated.NationPolicyRoundView;
+import com.ironoath.web.dto.generated.NationPolicyVoteReq;
+import com.ironoath.web.dto.generated.NationPolicyVoteResp;
 import com.ironoath.web.dto.generated.NationTechListView;
 import com.ironoath.web.dto.generated.NationTechResearchReq;
 import com.ironoath.web.dto.generated.NationTechResearchResp;
@@ -168,6 +173,47 @@ public class NationController {
             @RequestBody NationTechResearchReq req) {
         requirePlayer(playerId);
         return Result.ok(nations.researchNationTech(playerId, req));
+    }
+
+    // ---------- 国策（B13 §4，2026-09-30） ----------
+
+    /**
+     * 国策轮次的完整视图：当前处在哪一段、本轮有哪些提案、哪些正在生效、什么时候开下一轮。
+     *
+     * <p><b>一次给全而不是分三个端点</b>：面板本来就要同时显示「当前国策」与「本轮提案」，
+     * 分两次查会得到两个时刻的数（提案刚被投掉、面板还挂着上一份）。
+     *
+     * <p><b>这个读动作会推进轮次</b>（结算过期的、开到期的窗口），所以它在服务层是带玩家锁的
+     * 「读-改-写」，不是一个纯查询。
+     */
+    @GetMapping("/policy")
+    public Result<NationPolicyRoundView> policy(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(nations.nationPolicy(playerId));
+    }
+
+    /** 提案。权限走 {@code role_permission} 的 {@code SET_NATIONAL_POLICY}（2026-09-30 放开到官员档）。 */
+    @PostMapping("/policy/propose")
+    public Result<NationPolicyProposeResp> proposePolicy(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestBody NationPolicyProposeReq req) {
+        requirePlayer(playerId);
+        return Result.ok(nations.proposeNationPolicy(playerId, req));
+    }
+
+    /**
+     * 投票（B13 §二 的 {@code NationVoteReq(proposalId, boolean support)}）。
+     *
+     * <p>每成员一票、同一提案只能投一次；**Bot 被明确拒绝**（13019）——
+     * 那一枚码在服务层产生，因为领域层看不见 Bot 身份（{@code check-no-bot-privilege} 门禁）。
+     */
+    @PostMapping("/policy/vote")
+    public Result<NationPolicyVoteResp> votePolicy(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestBody NationPolicyVoteReq req) {
+        requirePlayer(playerId);
+        return Result.ok(nations.voteNationPolicy(playerId, req));
     }
 
     private static void requirePlayer(String playerId) {
