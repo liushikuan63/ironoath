@@ -15,7 +15,10 @@ import com.ironoath.battle.UnitStats;
 import com.ironoath.battle.UnitType;
 import com.ironoath.battle.Winner;
 import com.ironoath.common.num.FixedPoint;
+import java.util.Comparator;
+import java.util.List;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.StageCfg;
 
 import java.nio.file.Path;
 import java.util.EnumMap;
@@ -66,7 +69,7 @@ public final class BalanceCli {
         } else if (options.containsKey("rally")) {
             passed = printRallyCurve(resolver, rules, stats, options, tier);
         } else if (options.containsKey("f2p-stages")) {
-            passed = printF2pStages(resolver, rules, stats, options, tier);
+            passed = printF2pStages(configs, resolver, rules, stats, options, tier);
         } else if (options.containsKey("f2p7d")) {
             passed = printF2pTimeline(options);
         } else if (options.containsKey("wall")) {
@@ -614,8 +617,8 @@ public final class BalanceCli {
      * 所以它验的是「有没有可失败的对立面」，而不是「能不能过」——
      * 一个永远赢的关卡不构成证据。
      */
-    private static boolean printF2pStages(BattleParamsResolver resolver, BattleRules rules,
-                                           Map<UnitType, UnitStats> stats,
+    private static boolean printF2pStages(ConfigRegistry configs, BattleParamsResolver resolver,
+                                           BattleRules rules, Map<UnitType, UnitStats> stats,
                                            Map<String, String> options, int tier) {
         int days = Integer.parseInt(options.getOrDefault("f2p-days", "7"));
         int runs = Integer.parseInt(options.getOrDefault("runs", "40"));
@@ -635,12 +638,22 @@ public final class BalanceCli {
         System.out.println("-".repeat(64));
 
         long seed = Long.parseLong(options.getOrDefault("seed", "20261001"));
-        int[] stages = {10, 30, 267};
-        int worstStage = 0;
+        // **逐关真读 stage 表**（第一版硬编码了三档规模 —— 量级对，但不是逐关配置）
+        List<StageCfg> stages = configs.all(StageCfg.class).stream()
+                .filter(r -> r.chapterId().startsWith("chapter_0")
+                        && Integer.parseInt(r.chapterId().substring(8)) <= 3)
+                .sorted(Comparator.comparing(StageCfg::chapterId).thenComparingLong(StageCfg::stageNo))
+                .toList();
+        if (stages.isEmpty()) {
+            System.out.println("stage 表里没有前三章的行 —— 这不是「通过」，是量具没架对。");
+            return false;
+        }
         int worstTotal = 0;
-        for (int s = 0; s < stages.length; s++) {
-            int total = stages[s];
-            int roundLimit = s == 0 ? 6 : (s == 1 ? 7 : 8);
+        for (int s = 0; s < stages.size(); s++) {
+            StageCfg row = stages.get(s);
+            int total = (int) (row.enemyInfantry() + row.enemyCavalry()
+                    + row.enemyArcher() + row.enemySiege());
+            int roundLimit = (int) row.roundLimit();
             ArmySide attacker = resolver.bareArmy("攻方",
                     Map.of(UnitType.INFANTRY, (long) troop[0]), Long.MAX_VALUE / 4);
             int wins = 0;
@@ -655,20 +668,25 @@ public final class BalanceCli {
                 wins += won ? 1 : 0;
             }
             double rate = wins / (double) runs;
+            // 逐兵种铺开：stage 表给的是四个兵种各自的数，不是「一共 N 个」
+            Map<UnitType, Long> enemy = new EnumMap<>(UnitType.class);
+            enemy.put(UnitType.INFANTRY, row.enemyInfantry());
+            enemy.put(UnitType.CAVALRY, row.enemyCavalry());
+            enemy.put(UnitType.ARCHER, row.enemyArcher());
+            enemy.put(UnitType.SIEGE, row.enemySiege());
             System.out.printf("%-14s%-8d%-10d%.1f%%%n",
-                    "stage_0" + (s + 1) + "_" + (s == 0 ? "01" : "10"),
-                    total, roundLimit, rate * 100);
+                    row.id(), total, roundLimit, rate * 100);
             if (total > worstTotal) {
                 worstTotal = total;
-                worstStage = s;
             }
         }
         System.out.println();
-        System.out.println("**诚实交代**：上面三行是「均匀的 T2 步兵 ×N」三档规模，"
-            + "不是 stage 表里那 30 关的逐关配置（逐关要走 StageAppService 的 army 组装，"
-            + "而那条链路在本工具之外）。所以它给出的是**量级对照**，"
-            + "不是「30 关全过」的证明 —— 那一格要另写一个走真实关卡装配的脚本。");
-        System.out.printf("判定：%s", worstTotal > 0 ? "力比已量出（14 倍），可失败性存疑。" : "");
+        System.out.println("**诚实交代**：上面 30 行是 **stage 表逐关读出来的规模与回合上限**，"
+            + "但守方军队仍是「uniform 的 T" + tier + " 步兵」，不是 StageAppService 的真实装配"
+            + "（后者还要过 unitRestriction 与 bossMechanic）。所以它给的是"
+            + "**逐关规模下的量级对照**，不是「30 关全过」的证明。");
+        System.out.printf("判定：%s",
+                worstTotal > 0 ? "已逐关量出，最硬一关 " + worstTotal + " 个敌人；可失败性存疑。" : "");
         return true;
     }
 
