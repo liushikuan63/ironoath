@@ -15,7 +15,7 @@ public record NationPolicyRoundView(
         int policySlotCount,   // 可同时生效的国策数（`nation_config.policySlotCount`，Lv1/Lv2/Lv3 = 1/2/3）。这个数决定了同轮多条提案通过时谁能占住槽位。
         List<NationPolicyView> policies,   // 全部国策（表里的 8 行，顺序 = 表序）。提案下拉的候选就是这份，客户端不硬编码。
         List<NationPolicyProposalView> proposals,   // 本轮的全部提案（含已投完的）。空数组 = 本轮还没有人提案。
-        List<NationPolicyView> active,   // **当前正在生效**的国策（B21 块③：「生效期间可查『当前国策』」）。到期那一刻它会从这里消失，所以这个数组天然表达「还剩多久」。
+        List<NationPolicyActiveView> active,   // **当前正在生效**的国策（B21 块③：「生效期间可查『当前国策』」）。到期那一刻它会从这里消失；每一行自带 `activeUntil`，所以「还剩多久」由这一列自己回答，客户端不用去猜。
         boolean canPropose,   // 服务端算好的「此刻点提案会不会成功」（含权限位与轮次段判定）。客户端不许自己判第二遍。
         NationPolicyBlockReason proposeBlockReason,   // 拦着提案的原因；没拦着时是 `NONE`。
         boolean canVote,   // 服务端算好的「此刻点投票会不会成功」。**Bot 恒为 false**（裁决 A8），但那是服务端判定 —— 协议里没有任何字段能让客户端声明「我是真人」，所以客户端绕不过去。

@@ -374,6 +374,19 @@ export interface NationMyVoteView {
 }
 
 /**
+ * **一条正在生效的国策**，带到期时刻。
+ *
+ * **为什么单独一个类型而不在 `NationPolicyView` 上加一个 `activeUntil`**：候选清单里那 8 行根本还没有生效时刻（还没通过、还没开始计时），加上去就是一份「大多数时候是 0 或者 null」的字段，客户端每处都要判空 —— 而判空的那个分支永远没人测。拆开之后「生效中」这件事的类型上就带着到期时刻，拿不到就是拿不到。
+ *
+ * **到期时刻是必填**：这一列存在的理由就是「还剩多久」，而 B21 块③ 说的「生效期间可查当前国策」落到屏上必然带倒计时。
+ */
+export interface NationPolicyActiveView {
+  policy: NationPolicyView
+  /** 这一条到期的服务端时刻（毫秒）。**由服务端下发，客户端不许自己加时长**（铁律 5）—— 倒计时是两个同源时刻相减。 */
+  activeUntil: number
+}
+
+/**
  * 公示名单里的一名投票者。**带中文名而不是只给 id**：B13 §4 明文要求「票数与**参与者**可查」，而玩家要看到的是名字。
  */
 export interface NationPolicyVoterView {
@@ -421,8 +434,8 @@ export interface NationPolicyRoundView {
   policies: NationPolicyView[]
   /** 本轮的全部提案（含已投完的）。空数组 = 本轮还没有人提案。 */
   proposals: NationPolicyProposalView[]
-  /** **当前正在生效**的国策（B21 块③：「生效期间可查『当前国策』」）。到期那一刻它会从这里消失，所以这个数组天然表达「还剩多久」。 */
-  active: NationPolicyView[]
+  /** **当前正在生效**的国策（B21 块③：「生效期间可查『当前国策』」）。到期那一刻它会从这里消失；每一行自带 `activeUntil`，所以「还剩多久」由这一列自己回答，客户端不用去猜。 */
+  active: NationPolicyActiveView[]
   /** 服务端算好的「此刻点提案会不会成功」（含权限位与轮次段判定）。客户端不许自己判第二遍。 */
   canPropose: boolean
   /** 拦着提案的原因；没拦着时是 `NONE`。 */

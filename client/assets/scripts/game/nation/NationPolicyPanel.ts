@@ -206,7 +206,11 @@ function describeActive(round: NationPolicyRoundView): string {
   if (active.length === 0) {
     return '当前没有生效的国策'
   }
-  return `当前生效：${active.map(p => p.name).join('、')}`
+  // 「还剩多久」由**每一行自己的 activeUntil** 回答（服务端下发，客户端两个同源时刻相减）：
+  // 拿整轮一个时刻去减所有行，在两条国策到期时刻不同的时候就会有一条显示错。
+  const parts = active.map(one =>
+    `${one.policy.name}（还剩 ${remainingText(one.activeUntil - round.serverNow)}）`)
+  return `当前生效：${parts.join('、')}`
 }
 
 function names(voters: readonly { name: string }[] | undefined): string {

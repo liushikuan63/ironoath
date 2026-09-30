@@ -18,6 +18,7 @@ import com.ironoath.core.formula.Formula;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.config.cfg.NationPolicyCfg;
 import com.ironoath.web.dto.generated.NationMyVoteView;
+import com.ironoath.web.dto.generated.NationPolicyActiveView;
 import com.ironoath.web.dto.generated.NationPolicyBlockReason;
 import com.ironoath.web.dto.generated.NationPolicyEffectAttr;
 import com.ironoath.web.dto.generated.NationPolicyPhase;
@@ -1105,11 +1106,11 @@ public class NationAppService {
                     toVoters(tally.supporters()), toVoters(tally.opponents()),
                     tally.proposedBy(), tally.at()));
         }
-        List<NationPolicyView> active = new ArrayList<>();
+        List<NationPolicyActiveView> active = new ArrayList<>();
         for (Nation.ActivePolicy one : round.active()) {
             NationPolicyView view = byId.get(one.policyId());
             if (view != null) {
-                active.add(view);
+                active.add(new NationPolicyActiveView(view, one.expiresAt()));
             }
         }
         List<String> myProposals = new ArrayList<>(round.myProposals());
@@ -1130,7 +1131,7 @@ public class NationAppService {
                 nation.id(),
                 toPhase(round.phase()),
                 round.slotCount(),
-                new ArrayList<>(byId.values()),
+                new ArrayList<NationPolicyView>(byId.values()),
                 proposals,
                 active,
                 proposeBlock == NationPolicyBlockReason.NONE,

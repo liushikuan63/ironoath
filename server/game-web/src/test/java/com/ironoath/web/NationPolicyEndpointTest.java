@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +15,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,12 +28,16 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ironoath.common.ErrorCode;
+import com.ironoath.common.num.FixedPoint;
+import com.ironoath.common.time.TimeService;
 import com.ironoath.common.json.JsonUtils;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.NationPolicyCfg;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
+import com.ironoath.core.bot.BotProfile;
+import com.ironoath.web.bot.BotRegistry;
 import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
@@ -50,14 +60,39 @@ import com.ironoath.web.store.memory.InMemoryPlayerStore;
  * 而是「不能被谁提」「不能被谁投」「同一票不能投两次」—— 这三条一旦松了，
  * 后面所有数值调校都是在给一个被操纵的结果调参。
  *
- * <p><b>验不到结算与生效</b>：那要 48 小时（24h 投票窗 + 24h 生效段），
- * 夹具里没有可控时钟，所以那一半由 {@code NationPolicyTest} 的领域用例兜 ——
- * <b>这一条限制必须写在这里而不是靠「用例很多」蒙混过去</b>。
+ * <p><b>投票段与生效段在这里也验了</b>：用 {@code @TestConfiguration} 把 {@code TimeService}
+ * 换成可拨的（投票窗 24 小时，真链路不可能等）。这不是后门端点也不跳过任何门禁 ——
+ * {@code TimeService} 本来就是 {@link java.util.function.LongSupplier} 注入的
+ * （铁律 5 / C00 公理四·五：只有它读系统时钟），拨时间就是让同一套
+ * {@code voteBlock} / {@code settlePolicy} 在更晚的时刻上跑一遍。
+ * <b>为什么要覆盖 bean 而不是加一个改时间的接口</b>：仓库明写「不许有跳门槛的端点」，
+ * 一个能拨钟的 dev 端点会被当成跳门槛的通道；覆盖 bean 只存在于测试作用域。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(NationPolicyEndpointTest.MovableClock.class)
 class NationPolicyEndpointTest {
+
+    /**
+     * 可拨的时钟（投票窗 24 小时，真链路不可能等）。
+     *
+     * <p>拨时间 = 让同一套 {@code voteBlock} / {@code settlePolicy} 在更晚的时刻上跑一遍，
+     * **不跳过任何门禁**；覆盖 bean 而不是加一个改时间的接口，是因为仓库明写
+     * 「不许有跳门槛的端点」，而覆盖只存在于测试作用域。
+     */
+    @TestConfiguration
+    static class MovableClock {
+        static final long T0 = 1_900_000_000_000L;
+        static final AtomicLong NOW = new AtomicLong(T0);
+        static final long HOUR = 3_600_000L;
+
+        @Bean
+        @Primary
+        TimeService testTimeService() {
+            return new TimeService(NOW::get, 10L * 365 * 24 * 3600 * 1000);
+        }
+    }
 
     private static final String PLAYER_HEADER = "X-Player-Id";
     /** 表里 8 行，数值全部来自 B21 §五④。这一条按 configs 现读，不写死 8。 */
@@ -67,6 +102,8 @@ class NationPolicyEndpointTest {
     @Autowired private PlayerRepository players;
     @Autowired private SocialStore socialStore;
     @Autowired private InMemoryNationStore nationStore;
+    @Autowired private BotRegistry botRegistry;
+    @Autowired private com.ironoath.web.nation.NationPolicyBonuses policyBonuses;
 
     private int seq;
 
@@ -255,6 +292,147 @@ class NationPolicyEndpointTest {
         assertThat(get200("/nation/policy", f.king).get("proposals")).hasSize(1);
     }
 
+    // ---------- 投票段（拨钟 25 小时后进去） ----------
+
+    @Test
+    @DisplayName("投票段：开票后能投、票数与两份名单一次给全、同一票不能投第二次")
+    void votingWindowTalliesAndRefusesADoubleVote() throws Exception {
+        Fixture f = nation();
+        JsonNode proposed = post200("/nation/policy/propose", f.king,
+                new NationPolicyProposeReq(newRequestId(), "np_harvest"));
+        String proposalId = proposed.get("proposalId").asText();
+
+        // 开窗时刻 = 提案时刻 + 一个提案段（24h）。拨 25 小时 ⇒ 落在投票段里而不是边界上。
+        MovableClock.NOW.addAndGet(25 * MovableClock.HOUR);
+
+        JsonNode voting = get200("/nation/policy", f.king);
+        assertThat(voting.get("phase").asText()).as("开窗之后是投票段").isEqualTo("VOTING");
+        assertThat(voting.get("canVote").asBoolean()).isTrue();
+        assertThat(voting.get("voteBlockReason").asText()).isEqualTo("NONE");
+        long windowIn = voting.get("voteEndsAt").asLong() - voting.get("serverNow").asLong();
+        assertThat(windowIn).as("投票窗还剩不到 24 小时（拨了 25 小时进去）")
+                .isPositive().isLessThanOrEqualTo(24 * MovableClock.HOUR);
+
+        JsonNode yes = post200("/nation/policy/vote", f.plain,
+                new NationPolicyVoteReq(newRequestId(), proposalId, true));
+        assertThat(yes.get("round").get("phase").asText()).isEqualTo("VOTING");
+
+        JsonNode row = policyProposal(get200("/nation/policy", f.king), proposalId);
+        assertThat(row.get("yes").asLong()).as("一票赞成").isEqualTo(1L);
+        assertThat(row.get("no").asLong()).isZero();
+        assertThat(row.get("supporters")).as("赞成名单一次给全").hasSize(1);
+        assertThat(row.get("supporters").get(0).get("name").asText())
+                .as("名单里是玩家名而不是 playerId（公示要能被看懂）").isNotBlank();
+        assertThat(row.get("supporters").get(0).get("playerId").asText())
+                .as("id 也在，但只用于服务端核对").isEqualTo(f.plain);
+        assertThat(row.get("opponents")).as("反对名单是空数组而不是 null").isEmpty();
+
+        JsonNode mine = get200("/nation/policy", f.plain).get("myVotes");
+        assertThat(mine).as("我这一票要能认出来（客户端据此把键灰掉）").hasSize(1);
+        assertThat(mine.get(0).get("support").asBoolean()).isTrue();
+
+        JsonNode twice = postRaw("/nation/policy/vote", f.plain,
+                new NationPolicyVoteReq(newRequestId(), proposalId, false));
+        assertThat(twice.get("code").asInt())
+                .as("同一票不能投第二次：否则票数与名单立刻对不上")
+                .isEqualTo(ErrorCode.NATION_POLICY_ALREADY_VOTED.code());
+    }
+
+    @Test
+    @DisplayName("投票段：Bot 不能投票 —— 门禁在服务端，客户端灰键只是提示")
+    void botsMayNotVote() throws Exception {
+        Fixture f = nation();
+        post200("/nation/policy/propose", f.king,
+                new NationPolicyProposeReq(newRequestId(), "np_conquest"));
+        MovableClock.NOW.addAndGet(25 * MovableClock.HOUR);
+
+        // **必须先把那个 id 注册进 BotRegistry**：闸门是 `if (!isBot) return true;`，
+        // 而 `isBot` 只认注册过的 id。第一版直接问一个没注册过的 "bot-1"，
+        // 于是 isBot=false、闸门放行 —— 断言红的是夹具，不是实现。
+        // 这条钉的是「注册过的 Bot 一定被挡住」，对照组是同一个注册表放行真人。
+        String botId = "bot-policy-" + seq;
+        registerBot(botId);
+
+        assertThat(botRegistry.mayTakeNationalPolicyAction(botId))
+                .as("Bot 不得参与国策（裁决 A8）").isFalse();
+        assertThat(botRegistry.mayTakeNationalPolicyAction(f.plain))
+                .as("同一个注册表放行真人 —— 上面那条不是「一律 false」").isTrue();
+        assertThat(botRegistry.profileOf(botId))
+                .as("对照组的前置：那个 id 确实注册上了").isNotNull();
+    }
+
+    /** 注册一个 Bot 画像。构造参数照 `BotEventChatTest` 的同一份（数值对这一条无意义）。 */
+    private void registerBot(String botId) {
+        java.util.List<Integer> hours = new java.util.ArrayList<>();
+        for (int h = 0; h < 24; h++) {
+            hours.add(h);
+        }
+        botRegistry.register(new BotProfile(botId, "bot_linju",
+                new BotProfile.AiProfile(FixedPoint.parse("0.30"), FixedPoint.parse("0.50"),
+                        FixedPoint.parse("1.00"), FixedPoint.parse("1.0")),
+                new BotProfile.Persona(42L, 7L, 99L, hours, 3L, 30L, FixedPoint.parse("0.10")),
+                FixedPoint.parse("1.0")));
+    }
+
+    // ---------- 生效段（再拨 25 小时） ----------
+
+    @Test
+    @DisplayName("生效段：过窗即结算，胜出的那条进生效列表且真被战斗装配读到")
+    void afterTheWindowTheWinnerBecomesActiveAndReachesTheBattleAssembly() throws Exception {
+        Fixture f = nation();
+        JsonNode proposed = post200("/nation/policy/propose", f.king,
+                new NationPolicyProposeReq(newRequestId(), "np_harvest"));
+        String proposalId = proposed.get("proposalId").asText();
+
+        MovableClock.NOW.addAndGet(25 * MovableClock.HOUR);
+        post200("/nation/policy/vote", f.plain,
+                new NationPolicyVoteReq(newRequestId(), proposalId, true));
+
+        // 再拨一整个投票窗：窗口关闭，惰性结算应当发生
+        MovableClock.NOW.addAndGet(25 * MovableClock.HOUR);
+
+        JsonNode active = get200("/nation/policy", f.king);
+        assertThat(active.get("phase").asText()).as("过了投票窗且已结算，进入生效段").isEqualTo("ACTIVE");
+        JsonNode activeList = active.get("active");
+        assertThat(activeList).as("过窗即生效").hasSize(1);
+        assertThat(activeList.get(0).get("policy").get("policyId").asText()).isEqualTo("np_harvest");
+        assertThat(activeList.get(0).get("policy").get("name").asText()).isNotBlank();
+        assertThat(activeList.get(0).get("activeUntil").asLong())
+                .as("生效段是有限的一段（到期才需要下一轮）")
+                .isGreaterThan(active.get("serverNow").asLong());
+        assertThat(active.get("proposals")).as("本轮提案公示清空，不留在屏上冒充生效中的").isEmpty();
+        assertThat(active.get("nextVoteAt").asLong())
+                .as("下一轮开票时刻由最早到期那一刻推出来，不是固定加 24h")
+                .isGreaterThanOrEqualTo(active.get("serverNow").asLong());
+
+        // **装配真的读到了它**：投票期那条 OUTPUT 此刻给 +10% 产出
+        assertThat(policyBonuses.outputPercent(f.plain))
+                .as("国策在生效段要真的落到成员身上（不落 = 这一格只是界面上的一句话）")
+                .isEqualTo(1_000L);
+    }
+
+    @Test
+    @DisplayName("生效段到期后自动开下一轮：提案段回来，旧的从生效列表里掉出去")
+    void anExpiredPolicyOpensTheNextRound() throws Exception {
+        Fixture f = nation();
+        JsonNode proposed = post200("/nation/policy/propose", f.king,
+                new NationPolicyProposeReq(newRequestId(), "np_harvest"));
+        MovableClock.NOW.addAndGet(25 * MovableClock.HOUR);
+        post200("/nation/policy/vote", f.plain,
+                new NationPolicyVoteReq(newRequestId(), proposed.get("proposalId").asText(), true));
+        MovableClock.NOW.addAndGet(25 * MovableClock.HOUR);
+        assertThat(get200("/nation/policy", f.king).get("phase").asText()).isEqualTo("ACTIVE");
+
+        // 再拨一个完整的生效段：到期 ⇒ 下一轮开窗
+        MovableClock.NOW.addAndGet(25 * MovableClock.HOUR);
+        JsonNode next = get200("/nation/policy", f.king);
+        assertThat(next.get("phase").asText())
+                .as("惰性自循环：到期就开下一轮，不需要任何定时器").isEqualTo("PROPOSING");
+        assertThat(next.get("active")).as("旧的那条已到期，不再占生效位").isEmpty();
+        assertThat(policyBonuses.outputPercent(f.plain))
+                .as("到期即失效 —— 留着加成就是白送资源").isZero();
+    }
+
     // ---------- 夹具 ----------
 
     private record Fixture(String king, String minister, String plain, String nationId) {
@@ -274,6 +452,16 @@ class NationPolicyEndpointTest {
                 .get("nation").get("nationId").asText();
         post200("/nation/appoint", king, new NationAppointReq(newRequestId(), minister, NationOffice.MINISTER));
         return new Fixture(king, minister, plain, nationId);
+    }
+
+
+    private JsonNode policyProposal(JsonNode view, String proposalId) {
+        for (JsonNode node : view.get("proposals")) {
+            if (proposalId.equals(node.get("proposalId").asText())) {
+                return node;
+            }
+        }
+        throw new AssertionError("本轮提案里没有这一条: " + proposalId);
     }
 
     private JsonNode policy(JsonNode view, String policyId) {

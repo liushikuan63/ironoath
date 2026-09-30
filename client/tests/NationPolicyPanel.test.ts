@@ -27,6 +27,15 @@ function first<T>(list: readonly T[]): T {
 const NOW = 1_790_000_000_000
 const HOUR = 3_600_000
 
+const FORTRESS = {
+  policyId: 'np_fortress',
+  name: '全成员防御·城池加固',
+  effectAttr: 'POLICY_DEFENSE' as const,
+  effectValueFixed: 1500,
+  targetUnitName: '',
+  effectText: '全成员 防御 +15%',
+}
+
 const POLICY = {
   policyId: 'np_cavalry_t1',
   name: '骑兵时代·轻骑 T1',
@@ -177,9 +186,20 @@ test('公示名单为空时说「还没有人投票」，不是空白', () => {
   assert.equal(row.opponents, '还没有人投票')
 })
 
-test('生效中的国策给出一句人话，空的时候不装作有', () => {
-  const active = buildPolicyPanel(round({ phase: 'ACTIVE', active: [POLICY] }), 'king')
-  assert.equal(active.activeText, '当前生效：骑兵时代·轻骑 T1')
+test('生效中的国策带上各自的到期时刻（两个同源时刻相减，不用本机钟）', () => {
+  const active = buildPolicyPanel(round({
+    phase: 'ACTIVE',
+    // **两条到期时刻不同** —— 用整轮一个时刻去减所有行的话，第二条就会显示错
+    active: [{ policy: POLICY, activeUntil: NOW + 3 * HOUR },
+      { policy: FORTRESS, activeUntil: NOW + 20 * HOUR }],
+  }), 'king')
+  assert.equal(active.activeText,
+    '当前生效：骑兵时代·轻骑 T1（还剩 3 小时）、全成员防御·城池加固（还剩 20 小时）')
+  // 已过期的行说「已到点」而不是「剩 -5 小时」
+  const past = buildPolicyPanel(round({
+    phase: 'ACTIVE', active: [{ policy: POLICY, activeUntil: NOW - 60_000 }],
+  }), 'king')
+  assert.equal(past.activeText.includes('已到点'), true, past.activeText)
 })
 
 test('倒计时用服务端两个时刻相减，不用本机钟（方向也钉住：不是「…前」而是「还有」）', () => {
