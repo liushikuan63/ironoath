@@ -168,43 +168,45 @@ const clickPrefixed = prefix => clickByName(`n => n.startsWith(${JSON.stringify(
  * 两种排版都覆盖。返回值带点到了哪个节点，红了能一眼看出是「没找到」还是「点了没反应」。
  */
 async function dismissOfflineModal() {
-  // 1st: find the node whose OWN cc.Label is the dismiss caption, emit on its parent
-  const viaNode = await page.evaluate(`(() => {
-    const roots = [window.cc.director.getScene()]
-    let labelNode = null
+  // 命中链实测是 label < 离线汇总知道了 < OfflineReport < Game < Canvas < Boot，
+  // 所以**按节点名取**即可，不必猜层级。
+  const emitted = await page.evaluate(`(() => {
+    let button = null
     const walk = (n) => {
-      if (labelNode) return
-      if (n.activeInHierarchy) {
-        const own = n.getComponent('cc.Label')
-        if (own && String(own.string).indexOf('知道了') >= 0) {
-          labelNode = n
-          const chain = []
-          for (let p = n; p; p = p.parent) chain.push(p.name)
-          console.log('[dismiss] 命中节点：' + chain.join(' < '))
-          return
-        }
-      }
+      if (button) return
+      if (n.activeInHierarchy && n.name === '离线汇总知道了') { button = n; return }
       for (const child of n.children) walk(child)
     }
-    for (const root of roots) {
-      if (!root) continue
-      walk(root)
-      if (labelNode) break
-    }
-    if (!labelNode) return 'not-found'
-    const target = labelNode.parent && labelNode.parent.emit ? labelNode.parent : labelNode
-    target.emit('touch-start')
-    return 'emitted:' + target.name
+    walk(window.cc.director.getScene())
+    if (!button) return 'not-found'
+    // **必须带事件对象**：不传参时 OfflineReportOverlay 的处理函数读 _event.type 会抛，
+    // 而抛在事件回调里被吞掉 —— 症状是「emit 返回了、什么也没发生」。
+    button.emit('touch-start', { type: 'touch-start', target: button })
+    return 'emitted'
   })()`)
-  // 2nd: still there -> click by real coordinates. The overlay is centred so the
-  // button sits at a fixed spot; when nothing is shown the click lands on empty space.
   await page.waitForTimeout(400)
   if (!(await offlineModalShown())) {
-    return viaNode
+    return emitted
   }
-  await page.mouse.click(640, 522)
-  await page.waitForTimeout(400)
-  return viaNode + '|clicked'
+
+  // 兜底：**直接 destroy 那个 overlay 节点**。它是纯表现层（`OfflineReportOverlay`），
+  // destroy 不改服务端状态、不改任何账本 —— 这一步的目的只是让截图不被遮住。
+  // 返回值里写明是「destroy 掉的」而不是「点掉的」：截图里那一屏是被探针整理过的，
+  // 不能让人以为玩家真的点了那颗键。
+  const destroyed = await page.evaluate(`(() => {
+    let overlay = null
+    const walk = (n) => {
+      if (overlay) return
+      if (n.activeInHierarchy && n.name === 'OfflineReport') { overlay = n; return }
+      for (const child of n.children) walk(child)
+    }
+    walk(window.cc.director.getScene())
+    if (!overlay) return 'not-found'
+    overlay.destroy()
+    return 'destroyed'
+  })()`)
+  await page.waitForTimeout(300)
+  return emitted + '|' + destroyed
 }
 
 /** Is the offline modal still on screen (read the caption, not a node name)? */
