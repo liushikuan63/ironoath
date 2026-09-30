@@ -28,6 +28,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ConfigRegistryB02Test {
 
+    /**
+     * 主城等级上限。
+     *
+     * <p><b>2026-10-01 由 40 改为 27</b>（收口清单 #494/#495）：`balance-sim --f2p7d --days=45`
+     * 实测零氪 45 天停在 27 级，而 40 级造价 ≈ 3.9M 木石、45 天只实攒 22 万 —— 差 17 倍。
+     * 影响面已核：没有任何建筑或科技行的 {@code requireMainLevel ≥ 27}。
+     *
+     * <p><b>为什么钉住具体数字而不是从表里读</b>：从表里读的话，表改错时这些用例会跟着一起
+     * 变绿 —— 而它们的作用恰恰是「表被改了就红」。
+     */
+    private static final int MAIN_CITY_CAP = 27;
+
     private static ConfigRegistry registry;
     private static Path configDir;
 
@@ -65,7 +77,8 @@ class ConfigRegistryB02Test {
         BuildingCfg mainCity = registry.get(BuildingCfg.class, "main_city");
         assertThat(mainCity.name()).isEqualTo("主城");
         assertThat(mainCity.type()).isEqualTo(BuildingCfg.Type.CORE);
-        assertThat(mainCity.maxLevel()).as("用户确认主城上限 40 级").isEqualTo(40);
+        assertThat(mainCity.maxLevel()).as("主城上限 27 级（2026-10-01 由 40 下调，见 building.json 的 why）")
+                .isEqualTo(MAIN_CITY_CAP);
         assertThat(mainCity.costBaseWood()).isEqualTo(1000L);
         assertThat(mainCity.timeBaseSec()).as("0 表示沿用 curve.BUILDING_TIME 的基数 30 秒").isZero();
         assertThat(mainCity.outputResource()).as("主城不产资源").isNull();
@@ -187,7 +200,7 @@ class ConfigRegistryB02Test {
     void reloadAtomicallySwapsTable() {
         ConfigTable<BuildingCfg> oldTable = registry.load("building", BuildingCfg.class);
         BuildingCfg oldMainCity = oldTable.get("main_city");
-        assertThat(oldMainCity.maxLevel()).isEqualTo(40);
+        assertThat(oldMainCity.maxLevel()).isEqualTo(MAIN_CITY_CAP);
         // 版本不写死：building.json 每被策划改一次版本就 +1，写死会让本用例与「热更是否原子」这件事无关地反复挂
         int oldVersion = oldTable.version();
         int newVersion = oldVersion + 1;
@@ -195,7 +208,8 @@ class ConfigRegistryB02Test {
         // 热更：把主城上限改成 45，version 递增一档
         String updated = readTable("building.json")
                 .replace("\"version\": " + oldVersion, "\"version\": " + newVersion)
-                .replace("\"maxLevel\": 40,\n      \"timeBaseSec\": 0", "\"maxLevel\": 45,\n      \"timeBaseSec\": 0");
+                .replace("\"maxLevel\": " + MAIN_CITY_CAP + ",\n      \"timeBaseSec\": 0",
+                "\"maxLevel\": 45,\n      \"timeBaseSec\": 0");
         assertThat(updated).as("替换必须真的生效，否则这个测试什么都没验证").contains("\"maxLevel\": 45");
         assertThat(updated).as("版本号替换必须真的生效").contains("\"version\": " + newVersion);
 
@@ -207,20 +221,22 @@ class ConfigRegistryB02Test {
 
         // 关键：进行中的请求持有的旧引用必须仍然是完整一致的旧快照
         assertThat(oldTable.version()).isEqualTo(oldVersion);
-        assertThat(oldTable.get("main_city").maxLevel()).isEqualTo(40);
-        assertThat(oldMainCity.maxLevel()).isEqualTo(40);
+        assertThat(oldTable.get("main_city").maxLevel()).isEqualTo(MAIN_CITY_CAP);
+        assertThat(oldMainCity.maxLevel()).isEqualTo(MAIN_CITY_CAP);
         assertThat(oldTable.rows()).hasSize(newTable.rows().size());
 
         // 还原，避免污染同一 JVM 内的其它测试
         registry.reload("building", BuildingCfg.class, readTable("building.json"));
-        assertThat(registry.load("building", BuildingCfg.class).get("main_city").maxLevel()).isEqualTo(40);
+        assertThat(registry.load("building", BuildingCfg.class).get("main_city").maxLevel())
+                .isEqualTo(MAIN_CITY_CAP);
     }
 
     @Test
     @DisplayName("验收9：热更内容非法时抛异常且保留旧版本（热更失败不能把服务打挂）")
     void failedReloadKeepsOldVersion() {
         ConfigTable<BuildingCfg> before = registry.load("building", BuildingCfg.class);
-        String broken = readTable("building.json").replace("\"maxLevel\": 40", "\"maxLevel\": \"很多\"");
+        String broken = readTable("building.json")
+                .replace("\"maxLevel\": " + MAIN_CITY_CAP, "\"maxLevel\": \"很多\"");
 
         assertThatThrownBy(() -> registry.reload("building", BuildingCfg.class, broken))
                 .isInstanceOf(ConfigException.class)
@@ -229,7 +245,7 @@ class ConfigRegistryB02Test {
 
         ConfigTable<BuildingCfg> after = registry.load("building", BuildingCfg.class);
         assertThat(after).isSameAs(before);
-        assertThat(after.get("main_city").maxLevel()).isEqualTo(40);
+        assertThat(after.get("main_city").maxLevel()).isEqualTo(MAIN_CITY_CAP);
     }
 
     // ---------- 验收 10：无浮点 ----------
