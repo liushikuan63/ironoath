@@ -658,8 +658,20 @@ public final class BalanceCli {
                     Map.of(UnitType.INFANTRY, (long) troop[0]), Long.MAX_VALUE / 4);
             int wins = 0;
             for (int i = 0; i < runs; i++) {
-                ArmySide defender = resolver.bareArmy("守方",
-                        Map.of(UnitType.INFANTRY, (long) total), Long.MAX_VALUE / 4);
+                // **守方按 stage 表的四兵种铺开**，并应用 unitRestriction ——
+                // 第一版是「uniform 的 T1 步兵 ×N」，那把 NO_SIEGE / CAVALRY_ONLY
+                // 两类编队限制整个抹掉了。限制在这三档规模下对胜率的影响测得出来。
+                Map<UnitType, Long> enemy = new EnumMap<>(UnitType.class);
+                enemy.put(UnitType.INFANTRY, row.enemyInfantry());
+                enemy.put(UnitType.CAVALRY, row.enemyCavalry());
+                enemy.put(UnitType.ARCHER, row.enemyArcher());
+                enemy.put(UnitType.SIEGE, row.enemySiege());
+                if (row.unitRestriction() == StageCfg.UnitRestriction.NO_SIEGE) {
+                    enemy.put(UnitType.SIEGE, 0L);
+                } else if (row.unitRestriction() == StageCfg.UnitRestriction.CAVALRY_ONLY) {
+                    enemy.keySet().retainAll(List.of(UnitType.CAVALRY));
+                }
+                ArmySide defender = resolver.bareArmy("守方", enemy, Long.MAX_VALUE / 4);
                 BattleResult r = BattleSimulator.simulate(new BattleInput(attacker, defender,
                         TerrainType.PLAIN, seed + i * 7919L + s, BattleType.PVE,
                         BattleModifier.none(), BattleModifier.none(), stats,
@@ -668,12 +680,6 @@ public final class BalanceCli {
                 wins += won ? 1 : 0;
             }
             double rate = wins / (double) runs;
-            // 逐兵种铺开：stage 表给的是四个兵种各自的数，不是「一共 N 个」
-            Map<UnitType, Long> enemy = new EnumMap<>(UnitType.class);
-            enemy.put(UnitType.INFANTRY, row.enemyInfantry());
-            enemy.put(UnitType.CAVALRY, row.enemyCavalry());
-            enemy.put(UnitType.ARCHER, row.enemyArcher());
-            enemy.put(UnitType.SIEGE, row.enemySiege());
             System.out.printf("%-14s%-8d%-10d%.1f%%%n",
                     row.id(), total, roundLimit, rate * 100);
             if (total > worstTotal) {
@@ -681,10 +687,11 @@ public final class BalanceCli {
             }
         }
         System.out.println();
-        System.out.println("**诚实交代**：上面 30 行是 **stage 表逐关读出来的规模与回合上限**，"
-            + "但守方军队仍是「uniform 的 T" + tier + " 步兵」，不是 StageAppService 的真实装配"
-            + "（后者还要过 unitRestriction 与 bossMechanic）。所以它给的是"
-            + "**逐关规模下的量级对照**，不是「30 关全过」的证明。");
+        System.out.println("**诚实交代**：上面 30 行是 **stage 表逐关读出来的规模、回合上限与编队限制**"
+            + "（unitRestriction 已应用），但**不是** StageAppService 的真实装配 —— "
+            + "**bossMechanic 仍未建模**（前三章有 3 关带 REINFORCEMENT / SHIELD_PHASE /"
+            + " COUNTER_STRIKE），所以它给的是**逐关规模下的量级对照**，"
+            + "不是「30 关全过」的证明。");
         System.out.printf("判定：%s",
                 worstTotal > 0 ? "已逐关量出，最硬一关 " + worstTotal + " 个敌人；可失败性存疑。" : "");
         return true;
