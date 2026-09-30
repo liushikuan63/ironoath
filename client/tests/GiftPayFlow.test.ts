@@ -42,7 +42,10 @@ function harness(options: {
 
   const deps: PayFlowDeps = {
     createOrder: async () => options.createOrder ?? okOutcome<CreateOrderResp>({
-      orderId: 'order-1', payParams: PAY_PARAMS,
+      // **minorNotice 必须显式给 null**：生成类型把它列成必填（契约里 required 不含它，
+      // 但 TS 侧按非可选生成），而「成年 / 年龄未知」这一路的真值就是 null ——
+      // 夹具不写它会在类型检查期报缺字段，那是第一道能抓住的信号。
+      orderId: 'order-1', minorNotice: null, payParams: PAY_PARAMS,
     }),
     orderStatus: async () => {
       orderStatusCalls.push(statusIndex)

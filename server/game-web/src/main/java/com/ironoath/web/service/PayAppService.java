@@ -244,16 +244,20 @@ public class PayAppService {
                     // 幂等：同一个 requestId 重放时返回同一个订单，而不是造出第二笔。
                     // 造两笔的后果是玩家只付其中一笔的钱，另一笔永久停在 PENDING，
                     // 最后在补单队列里变成一条谁也说不清的记录
-                    return new CreateOrderResp(orderId, payParams(line));
+                    // 幂等重放：**不重算提示**（null）。玩家已经拿到过那一句，重放多半是网络重试；
+                    // 重复一句只会变成噪音，还会多打一行日志。
+                    return new CreateOrderResp(orderId, null, payParams(line));
                 }
                 PayOrder order = PayOrder.create(orderId, playerId, line);
-                requireWithinMinorLimit(playerId, line.totalCents(), now);
+                // 未成年额度是**提示不是闸门**（B15 §3 禁止项 + 裁决 #489）：先算好那句提示，
+                // 再照常落库 —— 提示随 CreateOrderResp 的 minorNotice 那一列下发。
+                String minorNotice = minorLimitNotice(playerId, line.totalCents(), now);
                 orders.insert(order);
                 recordGiftPurchaseIfAny(playerId, product, now);
                 LOG.info("下单 orderId={} playerId={} 商品={} 份数={} 金额={}分 选将={}",
                         orderId, playerId, line.productId(), line.count(), line.totalCents(),
                         line.heroChoice());
-                return new CreateOrderResp(orderId, payParams(line));
+                return new CreateOrderResp(orderId, minorNotice, payParams(line));
             });
         } catch (RuntimeException e) {
             idempotency.release(req.requestId());
@@ -278,7 +282,7 @@ public class PayAppService {
      * <p><b>为什么读的是"弹窗那一位"而不是订单表</b>：一天的事实写在本来就要读的这一位上，
      * 比给订单表新开一条按 productId 的索引便宜，也少一次跨集合查询（工单里的优先项）。
      *
-     * <p><b>为什么在 orders.insert 之前判</b>：与 {@link #requireWithinMinorLimit} 同一条理由 ——
+     * <p><b>为什么在 orders.insert 之前判</b>：与 {@link #minorLimitNotice} 同一条理由 ——
      * 拦下了却留一条 PENDING 订单，对账与僵尸单清理都会把它当真实交易看。
      */
     private void requireGiftSellable(String playerId, PayProductCfg product, long now) {
@@ -341,31 +345,40 @@ public class PayAppService {
         players.save(save);
     }
 
-    private void requireWithinMinorLimit(String playerId, long amountCents, long now) {
+    /**
+     * 未成年付费额度提示。**返回一句话，不抛异常** —— 这是 B15 §3 的禁止项
+     * （「❌ 不要让未成年限额提示变成硬拦截（体验友好优先）」，裁决见收口清单 #489）。
+     *
+     * <p><b>超限也照常下单</b>：额度从闸门变成告知。这是有自觉的代价，不是漏做 ——
+     * 接上实名之后超限的钱确实付得出去，换来的是未成年玩家看到「本月还剩多少」
+     * 而不是一堵没有解释的墙。
+     *
+     * <p><b>{@code @return 可空</b>：{@code null} 表示本次无需提示（成年、或年龄未知）。
+     * 「年龄未知」必须也返回 null —— 否则每个新号都会看见一句多余的提醒。
+     *
+     * <p>阈值与月度账本都照旧只回答「还剩多少」，与「拦不拦」正交，一处都没动。
+     */
+    private String minorLimitNotice(String playerId, long amountCents, long now) {
         Boolean minor = minorPolicy.minorFlagOf(playerId);
         if (minor == null) {
-            LOG.warn("未成年付费限额未生效：账号 {} 拿不到年龄（实名认证未接入），本次 {}分 按成年人放行。"
-                    + "B15 §3 是提审必查项，换掉 MinorPaymentPolicy 即生效", playerId, amountCents);
-            return;
+            LOG.warn("\u672a\u6210\u5e74\u4ed8\u8d39\u989d\u5ea6\u672a\u751f\u6548\uff1a\u8d26\u53f7 {} \u62ff\u4e0d\u5230\u5e74\u9f84\uff08\u5b9e\u540d\u8ba4\u8bc1\u672a\u63a5\u5165\uff09\uff0c\u672c\u6b21 {}\u5206 \u4e0d\u63d0\u793a\u3002"
+                    + "B15 \u00a73 \u662f\u63d0\u5ba1\u5fc5\u67e5\u9879\uff0c\u6362\u6389 MinorPaymentPolicy \u5373\u751f\u6548", playerId, amountCents);
+            return null;
         }
         if (!minor) {
-            return;
+            return null;
         }
         long single = configs.longParam("MINOR_PAY_SINGLE_LIMIT_CENTS");
         long monthly = configs.longParam("MINOR_PAY_MONTHLY_LIMIT_CENTS");
         long spent = orders.paidCentsSince(playerId, com.ironoath.common.time.MonthKey.startMillis(now));
         var verdict = throttle.minorPayNotice(single, monthly, spent, amountCents);
-        if (verdict.withinLimit()) {
-            if (verdict.notice() != null) {
-                LOG.info("未成年付费额度提示 playerId={} 本月已花={}分 剩余={}分",
-                        playerId, spent, verdict.remainingCents());
-            }
-            return;
+        if (verdict.notice() == null) {
+            return null;
         }
-        LOG.warn("拒绝未成年付费 playerId={} 本次={}分 本月已花={}分 单笔上限={}分 本月上限={}分",
-                playerId, amountCents, spent, single, monthly);
-        throw new BizException(ErrorCode.PAY_MINOR_LIMIT,
-                verdict.notice() + "（本月已花 " + spent + "分，剩 " + verdict.remainingCents() + "分）");
+        LOG.info("\u672a\u6210\u5e74\u4ed8\u8d39\u989d\u5ea6\u63d0\u793a playerId={} \u672c\u6b21={}\u5206 \u672c\u6708\u5df2\u82b1={}\u5206 \u5269\u4f59={}\u5206 \u5355\u7b14\u4e0a\u9650={}\u5206 \u672c\u6708\u4e0a\u9650={}\u5206"
+                        + "\uff08\u8d85\u9650\u4e5f\u653e\u884c\uff1aB15 \u00a73 \u4f53\u9a8c\u53cb\u597d\u4f18\u5148\uff0c\u989d\u5ea6\u662f\u544a\u77e5\u4e0d\u662f\u95f8\u95e8\uff09",
+                playerId, amountCents, spent, verdict.remainingCents(), single, monthly);
+        return verdict.notice() + "\uff08\u672c\u6708\u5df2\u82b1 " + spent + "\u5206\uff0c\u5269 " + verdict.remainingCents() + "\u5206\uff09";
     }
 
     // ---------- 回调（渠道服务器调用，不校验玩家身份） ----------
@@ -606,7 +619,7 @@ public class PayAppService {
 
     /**
      * 下单前的三道判定：<b>商品存在 → 选将合法 → 本账号还有资格买它</b>，全在
-     * {@code orders.insert} 之前完成（与 {@link #requireWithinMinorLimit} 同一条理由：
+     * {@code orders.insert} 之前完成（与 {@link #minorLimitNotice} 同一条理由：
      * 拦下了还留一条 PENDING 订单，对账与僵尸单清理都会把它当真实交易看）。
      *
      * <p><b>选将的两个方向都要判</b>：该挑没挑 ⇒ 发货时只能替玩家挑一个（不允许）；

@@ -74,7 +74,7 @@ if [ "$MEASURED_DIR" = "$BUILD_DIR" ]; then
       echo "  **为什么不在这里判失败**：这道门在 check.sh 里排第 9 位，而 check.sh 是 set -e ——"
       echo "  在这里退非 0 会让它后面十几道门全部不跑，那是拿掉一整排队列去换一条提示。"
       echo "  所以这里只告警；'提审前必须用 release 真实产物复核'这条硬要求仍由"
-      echo "  `上线检查清单.md` 第 4 项人工把守。"
+      echo '  `上线检查清单.md` 第 4 项人工把守。'
     fi
   fi
   # 首包预算只量"玩家第一次下载要拿到的那些文件"：分包目录（subpackages/**）

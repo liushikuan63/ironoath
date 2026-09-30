@@ -24,6 +24,7 @@ import com.ironoath.core.pay.PayOrder;
 import com.ironoath.core.pay.PopupThrottle;
 import com.ironoath.web.dto.generated.CreateOrderReq;
 import com.ironoath.web.pay.MinorPaymentPolicy;
+import com.ironoath.web.dto.generated.CreateOrderResp;
 import com.ironoath.web.service.PayAppService;
 
 /**
@@ -101,22 +102,43 @@ class PayMinorLimitTest {
     }
 
     @Test
-    @DisplayName("未成年买超过单笔上限的商品：拒绝，且不在订单表里留下一笔 PENDING")
-    void minorSingleCapRejectsBeforeInsert() {
+    @DisplayName("未成年买超过单笔上限的商品：**放行但回一句可指路的提示**，订单照常落库")
+    void minorSingleCapAllowsWithANotice() {
         PayOrder.Registry orders = new PayOrder.Registry();
         long price = priceOf("growth_fund");
         assertThat(price).as("前置：这件商品确实贵过单笔上限，否则这条用例什么都没测")
                 .isGreaterThan(configs.longParam("MINOR_PAY_SINGLE_LIMIT_CENTS"));
 
         String playerId = "p-minor-" + UUID.randomUUID();
-        assertThatThrownBy(() -> payWith(orders, alwaysMinor()).createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1, null)))
-                .isInstanceOf(BizException.class)
-                .extracting(e -> ((BizException) e).errorCode())
-                .isEqualTo(ErrorCode.PAY_MINOR_LIMIT);
+        // **不抛异常**：B15 §3 禁止项 + 裁决 #489 —— 额度是告知不是闸门。
+        // 这一条断言的是「压根没拦住」：下面那行 createOrder 不包 assertThatThrownBy 就是钉它。
+        CreateOrderResp resp = payWith(orders, alwaysMinor()).createOrder(playerId,
+                new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1, null));
+        assertThat(orders.get(resp.orderId()))
+                .as("放行就要真建档 —— 「提示但不拦」不是「提示完订单就没了」").isNotNull();
+        assertThat(resp.minorNotice())
+                .as("超限必须给出一句可指路的提示（B15 §3：体验友好优先，不是没有提示）")
+                .isNotNull().contains("本月已花");
+        // 提示里要带「还剩多少」，那是这条机制存在的全部意义（只说"超了"等于没说）
+        assertThat(resp.minorNotice()).contains("剩");
+    }
 
-        assertThat(orders.all()).as("拦下了还留一笔 PENDING，对账就会把一次被拒的支付当真实交易")
-                .isEmpty();
+    @Test
+    @DisplayName("成年与年龄未知都**不产生提示**：没接实名不能让每个新号都看见一句多余的提醒")
+    void adultAndUnknownBothGetNoNotice() {
+        PayOrder.Registry orders = new PayOrder.Registry();
+        for (MinorPaymentPolicy policy : new MinorPaymentPolicy[] {
+                playerId -> Boolean.FALSE, MinorPaymentPolicy.UNKNOWN }) {
+            String playerId = "p-" + UUID.randomUUID();
+            CreateOrderResp resp = payWith(orders, policy).createOrder(playerId,
+                    new CreateOrderReq("req-" + UUID.randomUUID(), "growth_fund", 1, null));
+            assertThat(orders.get(resp.orderId())).as("这一路应当正常建档（策略=%s）", policy).isNotNull();
+            // **对照组**：这一条是本轮新加的。原用例只验「不拦」，而新机制多了一个
+            // 「返回一句话」的口子 —— 忘了在成年分支返回 null 的话，每个新号都会看见
+            // 一句跟自己无关的提醒，而那条永远不会失败、只会在提审时被人骂。
+            assertThat(resp.minorNotice())
+                    .as("成年/年龄未知不得产生提示（策略=%s）", policy).isNull();
+        }
     }
 
     @Test
@@ -133,27 +155,24 @@ class PayMinorLimitTest {
     }
 
     @Test
-    @DisplayName("本月快花完时，小额订单也拒：走的必须是月度那条分支，不是单笔")
-    void minorMonthlyCapRejectsSmallOrder() {
+    @DisplayName("本月快花完时，小额订单也**给提示**：走的必须是月度那条分支，不是单笔")
+    void minorMonthlyCapNoticesSmallOrder() {
         PayOrder.Registry orders = new PayOrder.Registry();
         String playerId = "p-minor-" + UUID.randomUUID();
         seedPaid(orders, playerId, almostSpent(200L), PayOrder.Status.SUCCESS, insideThisMonth());
 
         long small = priceOf("first_charge");
-        assertThat(small).as("前置：这笔小额在单笔上限之内，所以拒它的只可能是月度额度")
+        assertThat(small).as("前置：这笔小额在单笔上限之内，所以触发提示的只可能是月度额度")
                 .isLessThanOrEqualTo(configs.longParam("MINOR_PAY_SINGLE_LIMIT_CENTS"));
 
         PayAppService pay = payWith(orders, alwaysMinor());
-        assertThatThrownBy(() -> pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1, "hero_sr_01")))
-                .isInstanceOf(BizException.class)
-                .satisfies(e -> {
-                    BizException b = (BizException) e;
-                    assertThat(b.errorCode()).isEqualTo(ErrorCode.PAY_MINOR_LIMIT);
-                    assertThat(b.detail())
-                            .as("文案要说清是本月超额，否则玩家会去换更小的档位，而换多小都没用")
-                            .contains("本月剩余额度").doesNotContain("单笔上限");
-                });
+        CreateOrderResp resp = pay.createOrder(playerId,
+                new CreateOrderReq("req-" + UUID.randomUUID(), "first_charge", 1, "hero_sr_01"));
+        assertThat(orders.get(resp.orderId()))
+                .as("月度超额也不拦（B15 §3 禁止项 + 裁决 #489）：提示 + 放行").isNotNull();
+        assertThat(resp.minorNotice())
+                .as("文案要说清是本月超额，否则玩家会去换更小的档位，而换多小都没用")
+                .isNotNull().contains("本月已花");
     }
 
     @Test
