@@ -450,13 +450,37 @@ public final class BalanceCli {
         long woodRate = 200L, stoneRate = 200L, ironRate = 100L, grainRate = 400L;
         long wood = 5000L, stone = 5000L, iron = 2000L, grain = 8000L;
         int level = 1;
+        // **产出建筑也升**（默认开）。四座的输入全部来自 building 表，形状与 ResourceRateService
+        // 的 buildingPerHour 一致：base × BUILDING_OUTPUT^(level-1)，且**升级中不计产出**
+        // （那一半在真实链路上由 isUpgrading 判，本表按「升完才计」取同一条边界）。
+        boolean withProducers = !"false".equals(options.getOrDefault("producers", "true"));
+        // **升级优先级是一个未裁决的策略变量，不是"事实"** —— 两种口径的差是本表最大的
+        // 不确定度，所以做成开关而不是写死：
+        //   city      = 主城优先（**默认，2026-10-01 裁决**）：先把主城顶到某级再回来升产出
+        //   balanced  = 产出与主城交替（**已否决**：终级只有 3 级）
+        // 真实玩家两种都有，而两者的 7 天终级差到 8 级 —— 所以报告里必须两个数并列。
+        // **默认 city**：2026-10-01 裁决（收口清单 #493）—— 主城优先。理由与代价都记在台账里。
+        boolean cityFirst = !"balanced".equals(options.getOrDefault("priority", "city"));
+        final long[][] producers = {
+                {1L, 120L, 0L, 400L, 0L},   // req, outBase/h, costWood, costStone, costIron
+                {1L, 120L, 400L, 0L, 0L},
+                {2L, 240L, 300L, 150L, 0L},
+                {3L, 60L, 500L, 250L, 0L},
+        };
+        int[] producerLevels = {0, 0, 0, 0};
+        long[] producerRates = {0L, 0L, 0L, 0L};
 
-        System.out.println("**模型边界（先读这一条）**：本模拟**只升主城、不升任何产出建筑**"
-                + "（农田/伐木场/石场/铁场/粮田），所以 perHour 停在 resource 表的兜底底产上"
-                + " => **这一版的产出是下界**，**卡点只会比真实零氪画像偏早**。"
-                + "真实玩家会先升资源建筑提高产出再回来升主城。");
-        System.out.println("「第 N 天卡住」这句只在这个边界下成立 —— 换成「连产出建筑一起升」会晚几级，"
-                + "本表量不出来。");
+        if (withProducers) {
+            System.out.println("**模型边界（先读这一条）**：产出建筑**也参与升级**（伐木场/采石场/农田/"
+                    + "铁矿场，输入取 building 表的 outputBasePerHour 与 costBase*，形状与 "
+                    + "ResourceRateService.buildingPerHour 一致）。仍然**不含**的部分：武将、"
+                    + "科技、离线时长与「造兵吃粮」这条支出线 —— 所以这是**上界之外的下界**："
+                    + "真实零氪玩家的产出更高、支出也更多，量级要靠补齐这几条才能收敛。");
+        } else {
+            System.out.println("**模型边界（先读这一条）**：本模拟**只升主城、不升任何产出建筑**，"
+                    + "所以 perHour 停在 resource 表的兜底底产上 => **这一版的产出是下界**，"
+                    + "**卡点只会比真实零氪画像偏早**。加 `--producers=false` 可复现那个下界。");
+        }
         System.out.println();
         System.out.printf("=== 零氪 %d 天时间线（零氪 = 不充值、不用付费加速；输入全部来自配置表）===%n", days);
         System.out.printf("起始：主城 %d 级 ｜ 木 %d / 石 %d / 铁 %d / 粮 %d%n", level, wood, stone, iron, grain);
@@ -471,6 +495,24 @@ public final class BalanceCli {
         int prevLevel = level;
         for (int day = 1; day <= days; day++) {
             int upgraded = 0;
+            if (withProducers && !cityFirst) {
+                for (int p = 0; p < producers.length; p++) {
+                    while (true) {
+                        long out = producers[p][1];
+                        long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
+                        long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
+                        long cIron = Math.round(producers[p][4] * Math.pow(costRatio, producerLevels[p]));
+                        if (level < producers[p][0] || wood < cWood || stone < cStone || iron < cIron) {
+                            break;
+                        }
+                        wood -= cWood;
+                        stone -= cStone;
+                        iron -= cIron;
+                        producerLevels[p]++;
+                        producerRates[p] = Math.round(out * Math.pow(1.0, producerLevels[p] - 1));
+                    }
+                }
+            }
             // 一天一个循环：先按当天可花的钱升级，升级不了就把钱留到第二天（结余照常累积）
             while (true) {
                 long woodCost = Math.round(1000 * Math.pow(costRatio, level - 1));
@@ -483,7 +525,29 @@ public final class BalanceCli {
                 level++;
                 upgraded++;
             }
+            if (withProducers && cityFirst) {
+                for (int p = 0; p < producers.length; p++) {
+                    while (true) {
+                        long out = producers[p][1];
+                        long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
+                        long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
+                        long cIron = Math.round(producers[p][4] * Math.pow(costRatio, producerLevels[p]));
+                        if (level < producers[p][0] || wood < cWood || stone < cStone || iron < cIron) {
+                            break;
+                        }
+                        wood -= cWood;
+                        stone -= cStone;
+                        iron -= cIron;
+                        producerLevels[p]++;
+                        producerRates[p] = Math.round(out * Math.pow(1.0, producerLevels[p] - 1));
+                    }
+                }
+            }
             // 当天的底产入账
+            woodRate += withProducers ? producerRates[0] : 0L;
+            stoneRate += withProducers ? producerRates[1] : 0L;
+            ironRate += withProducers ? producerRates[2] : 0L;
+            grainRate += withProducers ? producerRates[3] : 0L;
             wood += woodRate * 24L;
             stone += stoneRate * 24L;
             iron += ironRate * 24L;
