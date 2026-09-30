@@ -126,6 +126,11 @@ const UNREFERENCED = {
   // 2026-09-30 的 V17-D 格让 NationRulesAssembler 真的读它了（换算成 policyVoteMillis 与
   // policyRoundMillis，轮次时间旋钮只有这一个），例外随之删除 —— 与下面 MINOR_PAY_* 那条同一条规矩。
   POWER_DROP_ALERT_RATIO: '零引用：#26（B08 §8 的"标记观察"没有风控归属，标记了给谁看未定）',
+  // 2026-10-01: WALL_DEFENSE_BONUS_FIXED 幅度已定（+10%，balance-sim --wall 量出来的，56000 局），
+  // 但**爬升形状没有出处**：每级加多少、按几级封顶都不在表里，而配置里也没有现成的城池
+  // 等级上限可锚；生产方还得先知道「城墙等级」在存档里到底是哪个字段。
+  // 例外留到形状定下来为止 —— 这不是忘了接线。
+  WALL_DEFENSE_BONUS_FIXED: '零引用：#484（幅度已定 +10%；爬升形状仍无出处，配置里也没有城池等级上限）',
   // 2026-09-30: #19 rally bonus wiring is DONE (PlayerCityBattleService.rallyBonus).
   //   Amplitude comes from the measured balance-sim --rally curve (A10).
   //   The gate is march.isRallyMarch(), not a second headcount check --
