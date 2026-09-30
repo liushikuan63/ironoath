@@ -321,7 +321,8 @@ public final class BattleSimulator {
                     army.equipBonusFixed(),
                     FixedPoint.mul(counter, FixedPoint.ONE + siege),
                     rules.terrainAttack(input.terrain()),
-                    modifier.totalFixed() + side.attackBuff() - side.attackDebuff());
+                    modifier.totalFixed() + side.attackBuff() - side.attackDebuff(),
+                    army.orgBonus().policyAttack());
             long perUnit = FixedPoint.mul(stats.attackFixed(), multipliers.compose());
             total += FixedPoint.mul(FixedPoint.of(count), perUnit);
         }
@@ -342,16 +343,26 @@ public final class BattleSimulator {
         // 与有效攻击同一条口径：守方的生存力必须按守方自己的阶级属性算
         Map<UnitType, UnitStats> ownStats =
                 side.isAttacker() ? input.attackerUnitStats() : input.defenderUnitStats();
-        long multiplier = FixedPoint.ONE
-                + side.heroDefenseBonus()
-                + army.techBonus().defenseFixed()
-                + army.equipBonusFixed()
-                + rules.terrainDefense(input.terrain())
-                + side.defenseBuff() - side.defenseDebuff();
-        if (multiplier < 0L) {
-            // 削防叠满也不该把防御变成负数：那会让减员系数超过 1，损失多于总兵数
-            multiplier = 0L;
-        }
+        // 旧算式（武将 + 科技 + 装备 + 地形 + 增益 − 削减 的扁平加法）原样交给 DefenseMultipliers，
+        // 由它在内部夹到非负再乘上乘区 G（国策）与乘区 H（城墙）。
+        // 拆出去的唯一理由是给 G/H 两个独立乘区腾位置：把它们塞进那个括号里就是「污染既有乘区」
+        // （B21 §五④ 块③），而把整个括号改写成连乘又是一次无声的全局平衡重算。
+        // 括号内逐位不变，由 OrgBonusZoneTest 的等式断言钉住。
+        //
+        // 城墙只对守方生效，而且是在内核里强制的，不靠调用点自觉：
+        // 兰彻斯特结算里双方的防御都会被算（守方的反击伤害吃攻方防御），
+        // 所以「填错到攻方那一份」不会报错、只会安静地让攻方变难打 ——
+        // 那正是 Nation 领域模型里写的「可表达的禁止项早晚会被表达出来」的形状。
+        long wall = side.isAttacker() ? 0L : army.orgBonus().wallDefense();
+        long multiplier = new DefenseMultipliers(
+                side.heroDefenseBonus(),
+                army.techBonus().defenseFixed(),
+                army.equipBonusFixed(),
+                rules.terrainDefense(input.terrain()),
+                side.defenseBuff(),
+                side.defenseDebuff(),
+                army.orgBonus().policyDefense(),
+                wall).compose();
         long total = 0L;
         for (UnitType type : UnitType.values()) {
             long count = ownCounts.get(type);

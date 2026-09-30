@@ -21,6 +21,7 @@ import java.util.Map;
  * @param equipBonusFixed  装备加成（乘区 C）。装备系统交付前恒为 0
  * @param formation        阵型，决定兵种落在哪一排（V1 只有 STANDARD）
  * @param hospitalCapacity 医院容量。伤兵超出容量的部分直接死亡（B00 伤兵规则）
+ * @param orgBonus         组织侧加成（乘区 G 国策 / 乘区 H 城墙）。无国家、无城墙时传 {@link OrgBonus#none()}
  */
 public record ArmySide(
         String sideId,
@@ -29,7 +30,23 @@ public record ArmySide(
         TechBonus techBonus,
         long equipBonusFixed,
         FormationType formation,
-        long hospitalCapacity) {
+        long hospitalCapacity,
+        OrgBonus orgBonus) {
+
+    /**
+     * 七参构造器（组织侧加成恒为 0）。
+     *
+     * <p>打野、PVE、平衡 CLI 与全部「无国策」的内核测试都走它 ——
+     * 这些场景本来就不该有国策加成，让它们数第八个参数只会增加笔误面。
+     * <b>玩家城 PVP 那条路径必须走八参版本</b>，否则国策与城墙永远不生效；
+     * {@code BattleArmyFactory} 是它唯一的生产方。
+     */
+    public ArmySide(String sideId, List<HeroSnapshot> heroes, Map<UnitType, Long> units,
+                    TechBonus techBonus, long equipBonusFixed, FormationType formation,
+                    long hospitalCapacity) {
+        this(sideId, heroes, units, techBonus, equipBonusFixed, formation, hospitalCapacity,
+                OrgBonus.none());
+    }
 
     public ArmySide {
         if (sideId == null || sideId.isBlank()) {
@@ -46,6 +63,9 @@ public record ArmySide(
         }
         if (hospitalCapacity < 0L) {
             throw new IllegalArgumentException("hospitalCapacity 不得为负，sideId=" + sideId);
+        }
+        if (orgBonus == null) {
+            throw new IllegalArgumentException("orgBonus 不得为 null，无加成请用 OrgBonus.none()，sideId=" + sideId);
         }
         heroes = List.copyOf(heroes);
         units = toEnumMap(units, sideId);
