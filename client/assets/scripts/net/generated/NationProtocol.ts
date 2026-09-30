@@ -44,6 +44,48 @@ export type TreasurySink =
   | 'WAR_BOOST'
 
 /**
+ * 国策改的是哪一个数。取值与 `nation_policy.json` 的 `effectAttr` 列逐一对应（由 `ContractEnumParityTest` 断言）。
+ *
+ * **只有四个取值**：国策的效果最终落在四条算式上 —— `POLICY_ATTACK` / `POLICY_DEFENSE` 进战斗内核的**乘区 G**（B21 §五④ 块③「buff 走独立乘区，不许污染既有乘区」），`OUTPUT` 进 `ResourceRateService` 的每资源产率算式，`MARCH_SPEED` 进 `Rates.shortenSeconds` 那条时长算式。乘区 H（城墙）**刻意不在这个枚举里**：城墙等级 → 加成的幅度至今没有任何出处，声明一个恒为 0 的取值就是给一条不存在的分支起名字。
+ */
+export type NationPolicyEffectAttr =
+  | 'POLICY_ATTACK'
+  | 'POLICY_DEFENSE'
+  | 'OUTPUT'
+  | 'MARCH_SPEED'
+
+/**
+ * 国策轮次处在哪一段。**三段而不是两段**：`NationVoteReq` 是二值的（B13 §二 的 `NationVoteReq(String proposalId, boolean support)`），所以「提案」与「投票」必然是两个不同的动作、两个不同的时间窗 —— 把它们压进一个窗口意味着玩家在投票窗口里才能提案，而提案要 24 小时被讨论、投票又要 24 小时，窗口就得 48 小时，那与 `NATION_VOTE_DURATION_HOURS=24` 的原意（一次投票 24 小时）不是一回事。
+ *
+ * 三个取值各自能做什么：
+ * - `PROPOSING` —— 本国可以提案，投票窗口未开。提案不消耗任何资源（B13 §3 的国库三用途里没有「国策」）。
+ * - `VOTING` —— 投票窗口开着（长度 = `NATION_VOTE_DURATION_HOURS`），可以投票，不能提案。
+ * - `ACTIVE` —— 本轮已结算，通过的国策占住了 `policySlotCount` 个槽位并**生效中**，等最早到期那一刻自动开下一轮。
+ *
+ * **没有任何一段是「常驻定时器推进的」**：轮次由读取动作惰性推进（与 `settleTax` 同一手法），服务端不跑任何定时任务（`check-no-scheduled.sh` 是门禁）。
+ */
+export type NationPolicyPhase =
+  | 'PROPOSING'
+  | 'VOTING'
+  | 'ACTIVE'
+
+/**
+ * 为什么现在不能做这个动作。`NONE` = 没拦着（此时对应的 `canPropose` / `canVote` 为 true）。
+ *
+ * `NOT_PROPOSER` 与 `NOT_VOTING` **刻意不合并**：前者是「你这个身份没有提案权」（读 `role_permission` 表的 `SET_NATIONAL_POLICY`，2026-09-30 裁决放开到官员档），后者是「身份够但此刻不是提案段」。合并后面板会对一个内政官说「你不是国王」而他明天可能就该收到别人的提案通知 —— 玩家能做的是等窗口开，而不是换个人。
+ *
+ * `BOT_NOT_ALLOWED` 同样独立：Bot 不投票是 2026-09-30 的裁决（B11/B13 的红线只管「Bot 不得任官职」，投票不是官职，那条红线一个字都没覆盖到这一格）。它与 `NOT_PROPOSER` 分开是因为**两条红线的来源不同**：一条是权限表，一条是合规。
+ */
+export type NationPolicyBlockReason =
+  | 'NONE'
+  | 'NOT_PROPOSER'
+  | 'NOT_VOTING'
+  | 'ALREADY_VOTED'
+  | 'ALREADY_PROPOSED'
+  | 'POOL_CLOSED'
+  | 'BOT_NOT_ALLOWED'
+
+/**
  * 一个国家的公开视图。
  */
 export interface NationView {
@@ -297,4 +339,151 @@ export interface NationTreasurySpendResp {
   log: TreasuryLogView
   /** 服务端时刻。 */
   serverNow: number
+}
+
+/**
+ * 一条国策（`nation_policy.json` 的一行）。全量下发，顺序 = 表序，客户端不知道有几行。
+ */
+export interface NationPolicyView {
+  /** `nation_policy.json` 的行 id，提案时原样回传（服务端按它查表，不认下标）。 */
+  policyId: string
+  /** 表里的中文名，服务端下发。客户端不硬编码国策名 —— 改一次文案不该要改客户端。 */
+  name: string
+  /** 改的是哪个数。客户端按它决定这一行画在哪个分组下，但**不自己算合成**（那是服务端的事，铁律 3）。 */
+  effectAttr: NationPolicyEffectAttr
+  /** 幅度（定点万分比：1500 = +15%）。**允许为负** —— 国策是「全国性增益**或减益**」（`role_permission` 那行 `perm_nation_set_national_policy` 的 why 原话），协议不能把它锁成非负。 */
+  effectValueFixed: number
+  /** 作用到的兵种中文名，服务端从 `unit.json` 查好下发；不针对特定兵种的国策（坚壁/丰收/征伐）为 null。 **下发中文名而不是 `targetUnit` id**：客户端不抄配置表（数值与中文名一律来自服务端），而玩家要看到的是「轻骑兵 T1」而不是 `unit_cavalry_t1`。 */
+  targetUnitName: string | null
+  /** 一句可直接上屏的效果说明（服务端拼好的，如「轻骑兵 T1 攻击 +15%」）。有了它，客户端就不必把 `effectAttr` × `effectValueFixed` × `targetUnitName` 自己拼一遍 —— 那正是「第二个家」的形状（改文案要改客户端，而且拼错的版本没人能发现）。 */
+  effectText: string | null
+}
+
+/**
+ * 调用者本轮投出的一票。**刻意只回「我投了什么」而不是「我能不能改」**：改票本批不做（要改就是先撤回再投，那是另一个动作与另一枚错误码），给一个客户端算得出来而服务端不认的「可改」标志就是第二个家。
+ */
+export interface NationMyVoteView {
+  /** 投的是哪一条提案。 */
+  proposalId: string
+  /** true = 赞成，false = 反对。 */
+  support: boolean
+}
+
+/**
+ * 公示名单里的一名投票者。**带中文名而不是只给 id**：B13 §4 明文要求「票数与**参与者**可查」，而玩家要看到的是名字。
+ */
+export interface NationPolicyVoterView {
+  playerId: string
+  /** 玩家名，服务端下发（要与聊天、战报、客服工单里的称呼一致）。 */
+  name: string
+}
+
+/**
+ * 本轮的一条提案（B13 §二 的 `NationVoteReq(proposalId, support)` 投的就是它）。
+ *
+ * **公示的两份名单一次给全**（2026-09-30 裁决 A9）：200 人国约 2KB、800 人国约 8KB，都在 `global.PERF_PAYLOAD_MAX_BYTES=20480` 预算内（对照：排行榜最坏 4101B）。分页要引入另一个 N 与一套游标，而 800 人国要翻十几页才看得到名单 —— 为省几 KB 换一个「公示查不到人」，是本末倒置。
+ */
+export interface NationPolicyProposalView {
+  /** 提案 id，投票时原样回传。 */
+  proposalId: string
+  /** 这条提案指向的国策（表里的一行）。 */
+  policy: NationPolicyView
+  /** 赞成票数。 */
+  yes: number
+  /** 反对票数。 */
+  no: number
+  /** 投了赞成的玩家（B13 §4「参与者可查」的正面那一份）。 */
+  supporters: NationPolicyVoterView[]
+  /** 投了反对的玩家。 */
+  opponents: NationPolicyVoterView[]
+  /** 提案人（国王或内政官，2026-09-30 裁决 A1 放开到官员档）的玩家 id。 */
+  proposedBy: string
+  /** 提案时刻（服务端时间戳）。它同时是槽位竞争的**末位排序键**（见 `NationPolicyRoundView.slotOrderNote`）。 */
+  proposedAt: number
+}
+
+/**
+ * `GET /nation/policy` 的响应：本国国策的全部状态（当前处在哪一段、本轮有哪些提案、哪些正在生效、什么时候开下一轮）。
+ *
+ * **一次给全**而不是分三个端点：面板本来就要同时显示「当前国策」与「本轮提案」，分两次查会得到两个时刻的数（提案刚被投掉、面板上还挂着），而国策公示的争议恰恰出在这种对不上的时刻。
+ */
+export interface NationPolicyRoundView {
+  nationId: string
+  /** 轮次处在哪一段。读这个动作本身就会惰性推进轮次（结算过期的国策、在该开窗的时刻开窗），与 `GET /nation` 顺手 `settleTax` 同一手法。 */
+  phase: NationPolicyPhase
+  /** 可同时生效的国策数（`nation_config.policySlotCount`，Lv1/Lv2/Lv3 = 1/2/3）。这个数决定了同轮多条提案通过时谁能占住槽位。 */
+  policySlotCount: number
+  /** 全部国策（表里的 8 行，顺序 = 表序）。提案下拉的候选就是这份，客户端不硬编码。 */
+  policies: NationPolicyView[]
+  /** 本轮的全部提案（含已投完的）。空数组 = 本轮还没有人提案。 */
+  proposals: NationPolicyProposalView[]
+  /** **当前正在生效**的国策（B21 块③：「生效期间可查『当前国策』」）。到期那一刻它会从这里消失，所以这个数组天然表达「还剩多久」。 */
+  active: NationPolicyView[]
+  /** 服务端算好的「此刻点提案会不会成功」（含权限位与轮次段判定）。客户端不许自己判第二遍。 */
+  canPropose: boolean
+  /** 拦着提案的原因；没拦着时是 `NONE`。 */
+  proposeBlockReason: NationPolicyBlockReason
+  /** 服务端算好的「此刻点投票会不会成功」。**Bot 恒为 false**（裁决 A8），但那是服务端判定 —— 协议里没有任何字段能让客户端声明「我是真人」，所以客户端绕不过去。 */
+  canVote: boolean
+  voteBlockReason: NationPolicyBlockReason
+  /** 我（调用者）这轮提过的提案 id。同一条国策在同一轮里只能被提一次（`ALREADY_PROPOSED`），所以这个数组天然去重。 */
+  myProposals: string[]
+  /** 我（调用者）这轮投过的票。同一个提案只能投一次（`ALREADY_VOTED`），改票要走「撤回再投」而那一格本批不做。 */
+  myVotes: NationMyVoteView[]
+  /** 下一次开投票窗的时刻。取「当前生效国策里最早到期的那一刻」—— 也就是轮次自循环的驱动点（2026-09-30 裁决 A4）。`ACTIVE` 段之外为 0。 **必须由服务端下发而不是客户端拿时长自己加**：铁律 5 禁止在展示与判定两侧各算一遍时间。 */
+  nextVoteAt: number
+  /** 本轮投票窗的结束时刻（服务端时间戳）。不在 `VOTING` 段时为 0。窗口长度读 `global.NATION_VOTE_DURATION_HOURS`，那是它的唯一家。 */
+  voteEndsAt: number
+  /** 同轮多条提案都通过时槽位怎么分 —— **一句可上屏的说明**，服务端下发。 规则是「赞成率降序 → 赞成票数降序 → 提案时刻升序 → policyId 字典序」。前三级都能从票数与时刻直接推出，最后一级是**纯粹为了确定性**（同率同数同时刻时不能靠哈希顺序决定，那会让同一份存档复算出不同的结果）。 ⚠ **B13 与 B21 都没写过这一条**（通过门槛用的是相对 50%，槽位竞争是裁决 Q3 明确没选的第三项），所以它是实现侧定的规则，落在服务端一处，改它只改一处。 */
+  slotOrderNote: string | null
+  /** 服务端时刻。所有倒计时的基准，与 `nextVoteAt` / `voteEndsAt` 同源。 */
+  serverNow: number
+}
+
+/**
+ * `POST /nation/policy/propose` 请求体：把一条国策放进本轮提案池。
+ *
+ * **权限走 `role_permission` 表的 `SET_NATIONAL_POLICY`**（2026-09-30 裁决 A1 把 `allowOfficer` 从 false 改成 true，即国王与四类官员都可提案；`B13:49` 的「议员提案」随之退役）。
+ *
+ * **提案不消耗国库**：`TreasurySink` 只有 `NATIONAL_TECH` 与 `WAR_BOOST` 两值（B13 §3 的国库三用途在 2026-09-11 收敛过一次），国策不在其中 —— 所以这个请求里没有任何金额字段。
+ */
+export interface NationPolicyProposeReq {
+  /** 幂等键。重放一次提案不该在本轮池里出现两条 —— 那会让公示的票数分母与提案数对不上，而公示的争议正是从这里开始的。 */
+  requestId: string
+  /** 提哪一条（`nation_policy.json` 的行 id）。服务端依次校验：行存在 → 身份有提案权 → 现在是提案段 → 本轮还没提过这一条。 */
+  policyId: string
+}
+
+/**
+ * 提案结果。**回整份轮次视图**而不是只回一个 proposalId：提案面板要立刻显示新提案与刷新后的票数，再发一次查询就会有两个时刻的数（提案刚被投掉、面板还挂着上一份）。
+ */
+export interface NationPolicyProposeResp {
+  proposalId: string
+  /** 提案之后的轮次视图（票数此刻全是 0，因为窗口还没开）。 */
+  round: NationPolicyRoundView
+}
+
+/**
+ * `POST /nation/policy/vote` 请求体：对一条提案投赞成或反对（B13 §二 的 `NationVoteReq(String proposalId, boolean support)` 原形）。
+ *
+ * **二值而不是排序选择**：B13 的契约原文就是 `boolean support`，所以玩家选的是「支持哪几条」，不是「把哪条排第一」。投票是每成员一票（裁决 A2），同一提案只能投一次；改票本批不做（要改就是先撤回再投，那是另一个动作与另一枚错误码）。
+ */
+export interface NationPolicyVoteReq {
+  /** 幂等键。**这一条比提案更要紧**：重放一次投票会让票数凭空 +1，而公示的两个数字（票数与参与者名单）都是从这份账本算出来的 —— 票数与名单对不上正是这一格唯一要防的形状。 */
+  requestId: string
+  /** 投哪一条提案。 */
+  proposalId: string
+  /** true = 赞成，false = 反对。**不投也是一种选择**（弃权票不计入分母，裁决 A3 的推论），所以协议里没有「弃权」这个取值。 */
+  support: boolean
+}
+
+/**
+ * 投票结果。同样回整份轮次视图：投票之后要立刻看到票数与（自己的）选择，公示是这一格的核心交付物（B13 验收 11「结果公示可查」）。
+ */
+export interface NationPolicyVoteResp {
+  proposalId: string
+  /** 这一票投的是什么（原样回显）。 */
+  support: boolean
+  /** 投票之后的轮次视图。`yes` 与 `no` 之和必然等于「实际投票人数」（弃权不计入），界面可以拿它与两份名单的长度自证。 */
+  round: NationPolicyRoundView
 }
