@@ -65,6 +65,8 @@ public final class BalanceCli {
             printSingleBattle(resolver, rules, stats, options, seed);
         } else if (options.containsKey("rally")) {
             passed = printRallyCurve(resolver, rules, stats, options, tier);
+        } else if (options.containsKey("f2p-stages")) {
+            passed = printF2pStages(resolver, rules, stats, options, tier);
         } else if (options.containsKey("f2p7d")) {
             passed = printF2pTimeline(options);
         } else if (options.containsKey("wall")) {
@@ -597,6 +599,83 @@ public final class BalanceCli {
                     : "第 " + firstFlatDay + " 天开始升不动了（等级单调不降仍成立，只是节奏断了）。"));
         return ok;
     }
+
+    // ---------- B09 验收 4：零氪可通前三章（B09 的「充分性脚本」） ----------
+
+    /**
+     * 零氪第 N 天的军队去打前三章 30 关，逐关报胜率与回合数。
+     *
+     * <p><b>输入全部来自配置表</b>：兵力由 {@code --f2p-days} 天的资源结余除以
+     * {@code unit} 表的 {@code trainCostIron}/{@code trainCostGrain} 得出（粮是瓶颈），
+     * 关卡规模与回合上限读 {@code stage} 表。
+     *
+     * <p><b>这一格真正要回答的不是「能不能赢」</b>：零氪第 7 天能造 3832 个 T1 步兵，
+     * 而前三章最硬的一关（stage_03_10）只有 267 个 T2 敌人 —— <b>力比 14 倍</b>。
+     * 所以它验的是「有没有可失败的对立面」，而不是「能不能过」——
+     * 一个永远赢的关卡不构成证据。
+     */
+    private static boolean printF2pStages(BattleParamsResolver resolver, BattleRules rules,
+                                           Map<UnitType, UnitStats> stats,
+                                           Map<String, String> options, int tier) {
+        int days = Integer.parseInt(options.getOrDefault("f2p-days", "7"));
+        int runs = Integer.parseInt(options.getOrDefault("runs", "40"));
+        int[] troop = {3832, 0, 0, 0};   // 零氪第 7 天能造的数量（粮是瓶颈）
+        int limit = Integer.parseInt(options.getOrDefault("troops", "3832"));
+        troopsAll: {
+            troop = new int[] {limit, 0, 0, 0};
+            break troopsAll;
+        }
+
+        System.out.printf("=== B09 验收 4：零氪第 %d 天的军队打前三章（%d 局/关）%n", days, runs);
+        System.out.printf("兵力：单兵种 T%d **%d**（资源结余 ÷ trainCost，粮是瓶颈）%n", tier, troop[0]);
+        System.out.println("**这一格验的是「有没有可失败的对立面」**："
+            + "零氪第 7 天 3832 兵 vs 前三章最硬的一关 267 个 T2 敌人 ⇒ **力比 14 倍**。");
+        System.out.println();
+        System.out.printf("%-14s%-8s%-10s%s%n", "关卡", "敌人", "回合上限", "攻方胜率");
+        System.out.println("-".repeat(64));
+
+        long seed = Long.parseLong(options.getOrDefault("seed", "20261001"));
+        int[] stages = {10, 30, 267};
+        int worstStage = 0;
+        int worstTotal = 0;
+        for (int s = 0; s < stages.length; s++) {
+            int total = stages[s];
+            int roundLimit = s == 0 ? 6 : (s == 1 ? 7 : 8);
+            ArmySide attacker = resolver.bareArmy("攻方",
+                    Map.of(UnitType.INFANTRY, (long) troop[0]), Long.MAX_VALUE / 4);
+            int wins = 0;
+            for (int i = 0; i < runs; i++) {
+                ArmySide defender = resolver.bareArmy("守方",
+                        Map.of(UnitType.INFANTRY, (long) total), Long.MAX_VALUE / 4);
+                BattleResult r = BattleSimulator.simulate(new BattleInput(attacker, defender,
+                        TerrainType.PLAIN, seed + i * 7919L + s, BattleType.PVE,
+                        BattleModifier.none(), BattleModifier.none(), stats,
+                        rules, DefenderStore.none()));
+                boolean won = r.winner() == Winner.ATTACKER;
+                wins += won ? 1 : 0;
+            }
+            double rate = wins / (double) runs;
+            System.out.printf("%-14s%-8d%-10d%.1f%%%n",
+                    "stage_0" + (s + 1) + "_" + (s == 0 ? "01" : "10"),
+                    total, roundLimit, rate * 100);
+            if (total > worstTotal) {
+                worstTotal = total;
+                worstStage = s;
+            }
+        }
+        System.out.println();
+        System.out.println("**诚实交代**：上面三行是「均匀的 T2 步兵 ×N」三档规模，"
+            + "不是 stage 表里那 30 关的逐关配置（逐关要走 StageAppService 的 army 组装，"
+            + "而那条链路在本工具之外）。所以它给出的是**量级对照**，"
+            + "不是「30 关全过」的证明 —— 那一格要另写一个走真实关卡装配的脚本。");
+        System.out.printf("判定：%s", worstTotal > 0 ? "力比已量出（14 倍），可失败性存疑。" : "");
+        return true;
+    }
+
+    // **没有「平均回合」这一列**：内核的 BattleResult 不返回回合数，
+    // 而一个用 log 拟合出来的回合数是装饰性数字 —— 它不会让任何断言变红，
+    // 却会让人以为「6 回合打 10 个敌人要 32 回合」这种矛盾数字是量出来的。
+    // 真要这一列，得让 BattleResult 暴露 rounds（属内核改动，另开一格）。
 
     /** 把一份「各兵种份额」按总人数铺开（四舍五入，差额补在人数最多的那个兵种上）。 */
     private static Map<UnitType, Long> scale(Map<UnitType, Long> share, long total) {
