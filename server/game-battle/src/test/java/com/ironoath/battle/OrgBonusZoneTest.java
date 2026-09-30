@@ -133,10 +133,10 @@ class OrgBonusZoneTest {
     @Test
     @DisplayName("国策允许为负（它是「增益或减益」），城墙不允许为负（破墙是归零不是取负）")
     void policyMayBeNegativeButWallMayNot() {
-        assertThat(new OrgBonus(-POLICY_15, -POLICY_15, 0L).policyAttack())
+        assertThat(new OrgBonus(Map.of(UnitType.CAVALRY, -POLICY_15), -POLICY_15, 0L).policyAttackFor(UnitType.CAVALRY))
                 .as("国策减益必须在数据层可表达，否则将来只能改内核")
                 .isEqualTo(-POLICY_15);
-        assertThatThrownBy(() -> new OrgBonus(0L, 0L, -1L))
+        assertThatThrownBy(() -> new OrgBonus(Map.of(), 0L, -1L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("城墙");
     }
@@ -152,19 +152,20 @@ class OrgBonusZoneTest {
                 .isEqualTo(OrgBonus.none());
         assertThat(seven.orgBonus().isZero()).isTrue();
 
-        ArmySide eight = army("b", 1000L, new OrgBonus(POLICY_15, 0L, 0L));
-        assertThat(eight.orgBonus().policyAttack()).isEqualTo(POLICY_15);
+        ArmySide eight = army("b", 1000L, OrgBonus.attackOn(UnitType.CAVALRY, POLICY_15));
+        assertThat(eight.orgBonus().policyAttackFor(UnitType.CAVALRY)).isEqualTo(POLICY_15);
     }
 
     // ---------- 真的进了战斗内核 ----------
 
     @Test
-    @DisplayName("乘区 G 真的进了结算：同种子下，攻方拿到国策后守方损失上升、自身损失下降")
+    @DisplayName("乘区 G 真的进了结算：轻骑兵拿到国策后守方损失上升、自身损失下降")
     void policyBonusActuallyChangesTheBattleOutcome() {
-        ArmySide attacker = army("atk", 1000L);
-        ArmySide defender = army("def", 1000L);
-        ArmySide boosted = new ArmySide("atk", List.of(), units(1000L), TechBonus.none(), 0L,
-                FormationType.STANDARD, Long.MAX_VALUE / 4, new OrgBonus(POLICY_15, 0L, 0L));
+        // 夹具必须是**轻骑兵**：乘区 G 的攻击侧按兵种给（裁决 A7 逐档五行），
+        // 全步兵的军队拿骑兵国策不会有任何效果 —— 第一版这里用的就是全步兵，用例直接判红。
+        ArmySide attacker = cavalryArmy("atk", 1000L);
+        ArmySide defender = cavalryArmy("def", 1000L);
+        ArmySide boosted = cavalryArmy("atk", 1000L, OrgBonus.attackOn(UnitType.CAVALRY, POLICY_15));
         long seed = 20260930L;
 
         BattleResult plain = BattleSimulator.simulate(input(attacker, defender, seed));
@@ -178,12 +179,27 @@ class OrgBonusZoneTest {
     }
 
     @Test
+    @DisplayName("国策只给配置里点名的那个兵种：轻骑兵国策打不动全步兵的队伍")
+    void aCavalryPolicyDoesNothingAgainstAPureInfantryArmy() {
+        ArmySide infantryAttacker = army("atk", 1000L);
+        ArmySide infantryDefender = army("def", 1000L);
+        ArmySide boosted = army("atk", 1000L, OrgBonus.attackOn(UnitType.CAVALRY, POLICY_15));
+        long seed = 20260930L;
+
+        BattleResult plain = BattleSimulator.simulate(input(infantryAttacker, infantryDefender, seed));
+        BattleResult withPolicy = BattleSimulator.simulate(input(boosted, infantryDefender, seed));
+
+        assertThat(withPolicy.defDead()).isEqualTo(plain.defDead());
+        assertThat(withPolicy.defWounded()).isEqualTo(plain.defWounded());
+    }
+
+    @Test
     @DisplayName("城墙只作用于防守方：把城墙加成填到攻方那一份上，这一战与无城墙逐位相同")
     void wallNeverTouchesTheAttackSide() {
         long seed = 20260930L;
         ArmySide plainAttacker = army("atk", 1000L);
         // 装配点填错位置时的样子：城墙挂到了攻方
-        ArmySide wrongSide = army("atk", 1000L, new OrgBonus(0L, 0L, POLICY_15));
+        ArmySide wrongSide = army("atk", 1000L, new OrgBonus(Map.of(), 0L, POLICY_15));
         ArmySide defender = army("def", 1000L);
 
         BattleResult plain = BattleSimulator.simulate(input(plainAttacker, defender, seed));
@@ -201,7 +217,7 @@ class OrgBonusZoneTest {
         long seed = 20260930L;
         ArmySide attacker = army("atk", 1000L);
         ArmySide plainDefender = army("def", 1000L);
-        ArmySide walledDefender = army("def", 1000L, new OrgBonus(0L, 0L, POLICY_15));
+        ArmySide walledDefender = army("def", 1000L, new OrgBonus(Map.of(), 0L, POLICY_15));
 
         BattleResult plain = BattleSimulator.simulate(input(attacker, plainDefender, seed));
         BattleResult walled = BattleSimulator.simulate(input(attacker, walledDefender, seed));
@@ -222,6 +238,21 @@ class OrgBonusZoneTest {
         Map<UnitType, Long> units = new EnumMap<>(UnitType.class);
         units.put(UnitType.INFANTRY, infantry);
         return units;
+    }
+
+    private static Map<UnitType, Long> cavalryUnits(long cavalry) {
+        Map<UnitType, Long> units = new EnumMap<>(UnitType.class);
+        units.put(UnitType.CAVALRY, cavalry);
+        return units;
+    }
+
+    private static ArmySide cavalryArmy(String id, long cavalry) {
+        return cavalryArmy(id, cavalry, OrgBonus.none());
+    }
+
+    private static ArmySide cavalryArmy(String id, long cavalry, OrgBonus orgBonus) {
+        return new ArmySide(id, List.of(), cavalryUnits(cavalry), TechBonus.none(), 0L,
+                FormationType.STANDARD, Long.MAX_VALUE / 4, orgBonus);
     }
 
     private static ArmySide army(String id, long infantry) {

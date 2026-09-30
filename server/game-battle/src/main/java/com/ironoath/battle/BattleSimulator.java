@@ -322,7 +322,7 @@ public final class BattleSimulator {
                     FixedPoint.mul(counter, FixedPoint.ONE + siege),
                     rules.terrainAttack(input.terrain()),
                     modifier.totalFixed() + side.attackBuff() - side.attackDebuff(),
-                    army.orgBonus().policyAttack());
+                    army.orgBonus().policyAttackFor(type));
             long perUnit = FixedPoint.mul(stats.attackFixed(), multipliers.compose());
             total += FixedPoint.mul(FixedPoint.of(count), perUnit);
         }

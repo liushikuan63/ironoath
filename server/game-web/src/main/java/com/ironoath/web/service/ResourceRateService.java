@@ -52,12 +52,16 @@ public class ResourceRateService {
     private final com.ironoath.web.tech.TechEffects techEffects;
     /** 国家科技那一份（B20 块③）。与上面那一位<b>相加</b>后作用一次（§五④），不各乘一遍。 */
     private final com.ironoath.web.nation.NationTechBonuses nationTechBonuses;
+    /** 国策加成（乘区 G 的非战斗那半：产出与行军速度）。与国家科技同类相加，见消费点那一行。 */
+    private final com.ironoath.web.nation.NationPolicyBonuses policyBonuses;
 
     public ResourceRateService(ConfigRegistry configs, com.ironoath.web.tech.TechEffects techEffects,
-                               com.ironoath.web.nation.NationTechBonuses nationTechBonuses) {
+                               com.ironoath.web.nation.NationTechBonuses nationTechBonuses,
+                              com.ironoath.web.nation.NationPolicyBonuses policyBonuses) {
         this.configs = configs;
         this.techEffects = techEffects;
         this.nationTechBonuses = nationTechBonuses;
+        this.policyBonuses = policyBonuses;
     }
 
     /**
@@ -162,9 +166,12 @@ public class ResourceRateService {
             // 联盟加成与道具 buff 两位仍是 0 —— 那不是"忘了填"，而是那两个生产者还不存在：
             // 联盟科技表没有 *_OUTPUT 属性，道具 buff 没有承载。0 是"还没做"，
             // 编一个值才是"做了但不算数"（明细结构与 Σ==总量 的不变量都不受影响）。
+            // 国策是第三个相加项（收口清单 #146 ②：同类加成相加成总率、作用于基础一次）。
+            // 国策的 OUTPUT 一行管四种资源，所以这里传的是 playerId 而不是 res.id()。
             breakdowns.put(res.id(), ResourceOutputCalculator.compute(baseLines,
                     techEffects.outputPercent(res.id(), tech)
-                            + nationTechBonuses.outputPercent(res.id(), playerId), 0L, 0L));
+                            + nationTechBonuses.outputPercent(res.id(), playerId)
+                            + policyBonuses.outputPercent(playerId), 0L, 0L));
             caps.put(res.id(), capacity);
         }
         return new Rates(breakdowns, caps);

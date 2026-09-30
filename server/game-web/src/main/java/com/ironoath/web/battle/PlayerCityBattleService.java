@@ -101,6 +101,8 @@ public class PlayerCityBattleService {
 
     private final ConfigRegistry configs;
     private final BattleArmyFactory armyFactory;
+    /** 国策 → 乘区 G / 乘区 H 的唯一读取口。两侧都要装配：攻方的国策与守方的国策是两份。 */
+    private final com.ironoath.web.nation.NationPolicyBonuses policyBonuses;
     private final BattleRulesAssembler rulesAssembler;
     private final HeroBattleMapper heroMapper;
     private final HeroStatsService heroStats;
@@ -135,6 +137,7 @@ public class PlayerCityBattleService {
     private final org.springframework.context.ApplicationEventPublisher events;
 
     public PlayerCityBattleService(ConfigRegistry configs, BattleArmyFactory armyFactory,
+                              com.ironoath.web.nation.NationPolicyBonuses policyBonuses,
                                    BattleRulesAssembler rulesAssembler, HeroBattleMapper heroMapper,
                                    HeroStatsService heroStats, HeroRepository heroes,
                                    ArmyRepository armies, CityRepository cities,
@@ -151,6 +154,7 @@ public class PlayerCityBattleService {
                                    org.springframework.context.ApplicationEventPublisher events) {
         this.configs = configs;
         this.armyFactory = armyFactory;
+        this.policyBonuses = policyBonuses;
         this.rulesAssembler = rulesAssembler;
         this.heroMapper = heroMapper;
         this.heroStats = heroStats;
@@ -241,7 +245,8 @@ public class PlayerCityBattleService {
         long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerId, attackerCity);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(march.units());
         ArmySide attacker = armyFactory.toSide(attackerId, attackerFold, attackerHeroes, 0L,
-                techBonuses.forPlayer(attackerId), attackerHospital);
+                techBonuses.forPlayer(attackerId), attackerHospital,
+                policyBonuses.combatBonusFor(attackerId));
 
         ArmyState defenderArmy = armies.findByPlayerId(defenderId).orElseGet(ArmyState::new);
         Map<String, Long> defenderTroops = new LinkedHashMap<>(defenderArmy.troops());
@@ -252,7 +257,8 @@ public class PlayerCityBattleService {
         long defenderHospital = defenderCity == null ? 0L : armyAppService.hospitalCapacity(defenderId, defenderCity);
         BattleArmyFactory.Folded defenderFold = armyFactory.fold(defenderTroops);
         ArmySide defender = armyFactory.toSide(defenderId, defenderFold, defenderHeroes, 0L,
-                techBonuses.forPlayer(defenderId), defenderHospital);
+                techBonuses.forPlayer(defenderId), defenderHospital,
+                policyBonuses.combatBonusFor(defenderId));
 
         // ---------- 二、守方仓库（掠夺的输入） ----------
         DefenderStore store = defenderStore(defenderId, now);
@@ -394,7 +400,8 @@ public class PlayerCityBattleService {
         long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerId, attackerCity);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(attacker.units());
         ArmySide attackerSide = armyFactory.toSide(attackerId, attackerFold, attackerHeroes, 0L,
-                techBonuses.forPlayer(attackerId), attackerHospital);
+                techBonuses.forPlayer(attackerId), attackerHospital,
+                policyBonuses.combatBonusFor(attackerId));
 
         HeroRoster gathererRoster = heroes.findByPlayerId(gathererId).orElseGet(HeroRoster::new);
         List<HeroSnapshot> gathererHeroes = heroMapper.snapshots(gathererId, gatherer.heroes(), gathererRoster);
@@ -402,7 +409,8 @@ public class PlayerCityBattleService {
         long gathererHospital = gathererCity == null ? 0L : armyAppService.hospitalCapacity(gathererId, gathererCity);
         BattleArmyFactory.Folded gathererFold = armyFactory.fold(gatherer.units());
         ArmySide gathererSide = armyFactory.toSide(gathererId, gathererFold, gathererHeroes, 0L,
-                techBonuses.forPlayer(gathererId), gathererHospital);
+                techBonuses.forPlayer(gathererId), gathererHospital,
+                policyBonuses.combatBonusFor(gathererId));
 
         // ---------- 二、跑内核（在途负载不进内核，所以守方仓库是空的） ----------
         // 拦截也是玩家打玩家，所以复仇与围剿在这一路同样要装配 ——

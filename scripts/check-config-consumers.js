@@ -35,10 +35,9 @@ const UNWIRED = {
   // 让它真的被生产代码读了，例外随之删除 —— 与上面 TechCfg / GuideCfg / PayProductCfg 同一条规矩。
   // BotArchetypeCfg 与 BotNameCfg 曾挂在这里（#60「Bot 四张表零消费」）：2026-09-11 的孵化档
   // （收口清单 #84）让 BotRulesAssembler 真的读它们了，例外条目随之删除 —— 别照着 #60 加回来。
-  // NationPolicyCfg 挂在这里（#477，B13 §4 国策 V17 的 B 格：表与 A 格内核通路都交付了）：
-  // 数值全部来自 B21 §五④，但**还没有生产代码读它** —— 投票/提案/生效的领域与端点是 D/E/F 三格的事。
-  // 装配接上的那一刻例外随之删除 —— 与上面 NationTechCfg 那条同一条规矩，别把它当长期借口。
-  NationPolicyCfg: '零装配：#477（国策 B 格表 + A 格乘区已交付，投票与装配在 D~F 格）',
+  // NationPolicyCfg 曾挂在这里（#477，B13 §4 国策 V17 的 B 格：表与 A 格内核通路都交付了）：
+  // 2026-09-30 的 F 格让 NationPolicyBonuses（战斗侧乘区 G/H + 产出 + 行军速度）真的读它了，
+  // 例外随之删除 —— 与上面 NationTechCfg 那条同一条规矩。
   BotChatCfg: '零装配：#60（同上）',
   BotScheduleCfg: '零装配：#60（同上）',
 }

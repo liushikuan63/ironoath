@@ -4,6 +4,7 @@ import com.ironoath.battle.ArmySide;
 import com.ironoath.battle.FormationType;
 import com.ironoath.battle.HeroSnapshot;
 import com.ironoath.battle.TechBonus;
+import com.ironoath.battle.OrgBonus;
 import com.ironoath.battle.UnitStats;
 import com.ironoath.battle.UnitType;
 import com.ironoath.common.BizException;
@@ -167,16 +168,30 @@ public class BattleArmyFactory {
      *                          那样会让「折算兵种属性」这一件事与社交状态纠缠，也就没法单独验证。
      *                          没有科技时传 {@link TechBonus#none()}，而不是传 1.0 之类的假值：
      *                          传假值会让以后没人分得清「科技生效了」与「一直有个常数在加」
+     * @param orgBonus          乘区 G（国策）与乘区 H（城墙），来自
+     *                          {@code NationPolicyBonuses.combatBonusFor}。同一条分工：
+     *                          <b>由调用方算好传入</b>，本类不去查国家账本 ——
+     *                          「这个玩家属于哪个国家」是社交域的事，折算兵种属性不该知道它。
+     *                          没有国家或没有生效国策时传 {@link OrgBonus#none()}。
      */
     public ArmySide toSide(String sideId, Folded folded, List<HeroSnapshot> heroes,
                            long equipBonusFixed, TechBonus techBonus, long hospitalCapacity) {
+        return toSide(sideId, folded, heroes, equipBonusFixed, techBonus, hospitalCapacity,
+                OrgBonus.none());
+    }
+
+    /** 带组织侧加成（乘区 G / H）的七参形状。<b>玩家对玩家的战斗必须走它</b>，否则国策永远不生效。 */
+    public ArmySide toSide(String sideId, Folded folded, List<HeroSnapshot> heroes,
+                           long equipBonusFixed, TechBonus techBonus, long hospitalCapacity,
+                           OrgBonus orgBonus) {
         if (folded == null) {
             throw new IllegalArgumentException("folded 不得为 null");
         }
         // 阵型恒为 STANDARD：B05 只交付了这一种（重步兵前排、骑兵中排、弓兵与攻城器后排）
         return new ArmySide(sideId, heroes == null ? List.of() : heroes, folded.counts(),
                 techBonus == null ? TechBonus.none() : techBonus,
-                equipBonusFixed, FormationType.STANDARD, hospitalCapacity);
+                equipBonusFixed, FormationType.STANDARD, hospitalCapacity,
+                orgBonus == null ? OrgBonus.none() : orgBonus);
     }
 
     /**
