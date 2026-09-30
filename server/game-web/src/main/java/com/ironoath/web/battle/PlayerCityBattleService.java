@@ -26,10 +26,12 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.time.DayKey;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.BuildingCfg;
 import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.TierSplit;
 import com.ironoath.core.city.CityRepository;
+import com.ironoath.core.city.BuildingInstance;
 import com.ironoath.core.city.CityState;
 import com.ironoath.core.hero.HeroRepository;
 import com.ironoath.core.hero.HeroRoster;
@@ -114,6 +116,9 @@ public class PlayerCityBattleService {
     private final CityRepository cities;
     private final PlayerRepository players;
     private final ArmyAppService armyAppService;
+    /** 城墙在 building 表里的配置 id。写成常量是为了让「这是哪座城」在代码里只有一处可查。 */
+    private static final String WALL_CONFIG_ID = "wall";
+
     private final PlayerWallet wallet;
     private final PowerService powerService;
     private final PowerRefreshService powerRefreshService;
@@ -264,7 +269,9 @@ public class PlayerCityBattleService {
         BattleArmyFactory.Folded defenderFold = armyFactory.fold(defenderTroops);
         ArmySide defender = armyFactory.toSide(defenderId, defenderFold, defenderHeroes, 0L,
                 techBonuses.forPlayer(defenderId), defenderHospital,
-                policyBonuses.combatBonusFor(defenderId));
+                // **两份组织加成相加**（国策 + 城墙，见 wallBonus 的注释）：两个机制落在
+                // OrgBonus 的不同字段上，二者同时生效时是各自乘进结算，不是二选一。
+                policyBonuses.combatBonusFor(defenderId).plus(wallBonus(defenderCity)));
 
         // ---------- 二、守方仓库（掠夺的输入） ----------
         DefenderStore store = defenderStore(defenderId, now);
@@ -553,6 +560,52 @@ public class PlayerCityBattleService {
      *
      * <p><b>只加在攻方、且加给这一支队伍带的每一种兵</b>：集结是进攻方行为（B03 口径），
      * 同盟围攻那种「守方集结」是另一条性质，不在这一格。按兵种给而不是压成一个标量 ——
+     /**
+     * 城墙防御加成（乘区 H 的生产方）。
+     *
+     * <p><b>形状是裁决出来的线性爬升</b>（2026-10-01，收口清单 #484/#485）：
+     * {@code 满值 × 城墙等级 ÷ 城墙等级上限}，两个输入都是既有字段 —— 等级来自
+     * {@code CityState.BuildingSnapshot}（{@code configId == "wall"} 的那条），上限来自
+     * {@code building.json} 的 {@code wall.maxLevel}。**上限从表里读，不硬编码 40** ——
+     * 策划把表里的上限改了，这里必须跟着变，否则两个数会安静地对不上。
+     *
+     * <p><b>只读 level，不看 status</b>：升级中的建筑 {@code level} 还是旧值，
+     * 所以「在建的城墙」给的是已建成那一级的加成 —— 补建成之后再给新的。
+     * 这个口径**没有出处**，但它是唯一一个不需要新造规则的读法（{@code status}
+     * 另有「已建成 / 建造中 / 暂停」几态，而加成该按哪一态算，表里没有说）。
+     *
+     * <p><b>与国策防御不相加也不互斥</b>：国策防御走 {@code policyDefense} 位（{@code plus} 里相加），
+     * 城墙走 {@code wallDefense} 位 —— 两个机制落在不同字段上，所以两者同时生效时是
+     * <b>两个乘区各自乘进结算</b>，而不是二选一。
+     */
+    private OrgBonus wallBonus(CityState city) {
+        if (city == null) {
+            return OrgBonus.none();
+        }
+        int level = 0;
+        for (BuildingInstance b : city.buildings()) {
+            if (WALL_CONFIG_ID.equals(b.configId()) && b.level() > level) {
+                level = b.level();
+            }
+        }
+        if (level <= 0) {
+            return OrgBonus.none();
+        }
+        int maxLevel = (int) configs.get(BuildingCfg.class, WALL_CONFIG_ID).maxLevel();
+        if (maxLevel <= 0) {
+            // 表里把上限配成 0 时**按满值给**，而不是按 0 除出一个无穷大 ——
+            // 一个配错的表不该让每一场攻城战崩掉。
+            return new OrgBonus(Map.of(), 0L, configs.fixedParam("WALL_DEFENSE_BONUS_FIXED"));
+        }
+        long capped = Math.min(level, maxLevel);
+        long bonus = Math.round(configs.fixedParam("WALL_DEFENSE_BONUS_FIXED") * (double) capped / maxLevel);
+        if (bonus <= 0L) {
+            return OrgBonus.none();
+        }
+        return new OrgBonus(Map.of(), 0L, bonus);
+    }
+
+    /**
      * 与乘区 G 的形状一致，也是 {@code balance-sim} 那一侧量的同一个形状
      * （{@code BattleParamsResolver.bareArmy(..., bonus)}）。
      */
