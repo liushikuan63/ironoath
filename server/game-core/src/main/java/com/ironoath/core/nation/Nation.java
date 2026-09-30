@@ -2,6 +2,7 @@ package com.ironoath.core.nation;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -97,10 +98,18 @@ public final class Nation {
      * @param officeSeatTotal    固定官职席位总数（议员不计）。来源 global.NATION_OFFICE_SEAT_TOTAL
      * @param officerSpendRatioFixed 非国王身份的本周国库支出上限 = 本周实收入账 × 本比例（定点，10000=1.0）。
      *                               来源 global.NATION_OFFICER_SPEND_WEEKLY_RATIO。国王不受此限
+     * @param policyVoteMillis   一次国策**投票窗**的长度（毫秒）。来源 global.NATION_VOTE_DURATION_HOURS
+     * @param policyRoundMillis  一整轮国策周期的长度（毫秒），= 投票窗 + 提案段 + 生效段。
+     * @param policyMinVoteRatio 通过门槛：赞成票 ÷ <b>实际投票人数</b> 的下限（定点，10000 = 1.0）。
+     *                            来源 global.NATION_POLICY_PASS_RATIO
+     * @param policyMinVotersPerAlliance 参与下限：实际投票人数至少要有「成员联盟数 × 本值」。
+     *                                  来源 global.NATION_POLICY_MIN_VOTERS_PER_ALLIANCE
      */
     public record Rules(List<LevelRule> levels, long unlockMainLevel, long unlockDayOffset,
                         int maxPerKingdom, long joinCooldownMillis, long taxWeeklyPerAlliance,
-                        int treasuryLogRetention, int officeSeatTotal, long officerSpendRatioFixed) {
+                        int treasuryLogRetention, int officeSeatTotal, long officerSpendRatioFixed,
+                        long policyVoteMillis, long policyRoundMillis,
+                        long policyMinVoteRatio, int policyMinVotersPerAlliance) {
         public Rules {
             if (levels == null || levels.isEmpty()) {
                 throw new IllegalArgumentException("国家等级规则不得为空");
@@ -145,6 +154,19 @@ public final class Nation {
             }
             if (unlockDayOffset < 0) {
                 throw new IllegalArgumentException("unlockDayOffset 不得为负，实际=" + unlockDayOffset);
+            }
+            if (policyVoteMillis <= 0L) {
+                throw new IllegalArgumentException("国策投票窗长度必须为正，实际=" + policyVoteMillis
+                        + "（0 意味着投票窗开出来就关，票数恒为 0）");
+            }
+            if (policyRoundMillis < policyVoteMillis) {
+                throw new IllegalArgumentException("国策一轮周期不得短于投票窗，实际 round="
+                        + policyRoundMillis + " vote=" + policyVoteMillis
+                        + "：周期短于窗口的话，轮次会在窗口还没关时就结算，票数只统计到一部分人");
+            }
+            if (policyMinVoteRatio < 0L || policyMinVoteRatio > FixedPoint.SCALE) {
+                throw new IllegalArgumentException("国策通过门槛必须落在 0~1（定点 0~" + FixedPoint.SCALE
+                        + "），实际=" + policyMinVoteRatio + "。超过 1 意味着全票赞成都通不过");
             }
         }
 
@@ -201,6 +223,115 @@ public final class Nation {
             if (reason == null || reason.isBlank()) {
                 throw new IllegalArgumentException("国库日志必须记录用途：没有「为什么」的日志等于没有日志");
             }
+        }
+    }
+
+    // ---------- 国策（B13 §4 / B21 块③，2026-09-30 裁决） ----------
+
+    /** 轮次处在哪一段。与协议 `NationPolicyPhase` 逐项对应。 */
+    public enum PolicyPhase {
+        /** 可提案，投票窗未开。 */
+        PROPOSING,
+        /** 投票窗开着，可投票。 */
+        VOTING,
+        /** 本轮已结算，有国策正在生效。 */
+        ACTIVE
+    }
+
+    /**
+     * 为什么现在不能做这个动作。带类型而不是靠比对文案（与 {@link TechBlock} 同一条理由：
+     * 靠 message 区分错误码，改一句提示就会把两个码悄悄混回去）。
+     */
+    public enum PolicyBlock {
+        NONE,
+        /** 身份没有提案权（读 role_permission 表，领域层不读配置表，由调用方判定后传入）。 */
+        NOT_PROPOSER,
+        /** 身份够，但此刻不是提案段（投票窗开着）或不是投票段。 */
+        NOT_VOTING,
+        /** 这条提案本轮已经投过了（改票本批不做）。 */
+        ALREADY_VOTED,
+        /** 这条国策本轮已经提过了。 */
+        ALREADY_PROPOSED,
+        /** 本轮还没有任何提案，投票窗开不起来。 */
+        NO_PROPOSAL_YET
+    }
+
+    /** 一条提案。{@code id} 由调用方给（领域层不生成 id，与 {@code techId} 同一条分工）。 */
+    public record PolicyProposal(String id, String policyId, String proposedBy, long at) {
+        public PolicyProposal {
+            if (id == null || id.isBlank()) {
+                throw new IllegalArgumentException("提案 id 不得为空");
+            }
+            if (policyId == null || policyId.isBlank()) {
+                throw new IllegalArgumentException("提案必须指向一条国策（policyId）");
+            }
+            if (proposedBy == null || proposedBy.isBlank()) {
+                throw new IllegalArgumentException("提案必须记录提案人：没有「谁提的」就无法追溯国策的来源");
+            }
+        }
+    }
+
+    /**
+     * 一条提案的计票结果。
+     *
+     * <p><b>名单按 playerId 升序</b>：公示（B13 §4「票数与参与者可查」）会被客户端原样渲染，
+     * 而顺序若依赖 HashMap 的桶布局，同一份存档在不同 JVM 上会给出不同的名单 ——
+     * 那正是 B05 §1.7 为兵种容器强制 {@code EnumMap} 的同一条理由。
+     *
+     * @param passed 是否通过门槛（只看票数，不看槽位 —— 槽位竞争是另一层）
+     */
+    public record ProposalTally(String proposalId, String policyId, String proposedBy, long at,
+                                long yes, long no, List<String> supporters, List<String> opponents,
+                                boolean passed) {
+        public ProposalTally {
+            supporters = List.copyOf(supporters);
+            opponents = List.copyOf(opponents);
+        }
+
+        /** 实际投票人数 = 赞成 + 反对。**弃权不计入**（2026-09-30 裁决 A3 的推论）。 */
+        public long actualVoters() {
+            return yes + no;
+        }
+    }
+
+    /**
+     * 正在生效的一条国策。
+     *
+     * @param expiresAt 到期时刻。到期那一刻它从生效列表里消失，槽位空出来。
+     */
+    public record ActivePolicy(String policyId, long expiresAt) {
+    }
+
+    /**
+     * 国策轮次的完整状态 —— 应用层与客户端只看这一份。
+     *
+     * @param myProposals 我本轮提过的提案 id
+     * @param myVotes     我本轮投过的票（提案 id → 赞成与否）
+     */
+    public record PolicyRound(PolicyPhase phase, int slotCount, int memberAllianceCount,
+                              List<ProposalTally> proposals, List<ActivePolicy> active,
+                              PolicyBlock proposeBlock, PolicyBlock voteBlock,
+                              List<String> myProposals, Map<String, Boolean> myVotes,
+                              long nextVoteAt, long voteEndsAt) {
+        public PolicyRound {
+            proposals = List.copyOf(proposals);
+            active = List.copyOf(active);
+            myProposals = List.copyOf(myProposals);
+            myVotes = Map.copyOf(myVotes);
+        }
+    }
+
+    /** 提案或投票被 {@link PolicyBlock} 挡住。带类型，理由与 {@link TechResearchException} 同款。 */
+    public static final class PolicyException extends IllegalStateException {
+        private final PolicyBlock block;
+
+        PolicyException(PolicyBlock block, String message) {
+            super(message);
+            this.block = block;
+        }
+
+        public PolicyBlock block() {
+            return block;
         }
     }
 
@@ -308,6 +439,32 @@ public final class Nation {
      * 两者若各存一份，症状就是"谁的钱花的、谁拿到的加成"对不上。
      */
     private final Map<String, Integer> techLevels = new LinkedHashMap<>();
+
+    // ---------- 国策（B13 §4 / B21 块③，2026-09-30） ----------
+
+    /**
+     * 本轮的提案：提案 id → 提案。<b>本轮</b>的意思是「上一次结算之后」。
+     *
+     * <p><b>为什么提案是「本轮」而不是长期存在</b>：国策是周期性投票选出来的 buff，
+     * 到期就没了 —— 一条三个月前的提案不该在今天还能被投（B13 §4 原话是「周期性投票」）。
+     * 结算时整份清空。
+     */
+    private final Map<String, PolicyProposal> policyProposals = new LinkedHashMap<>();
+    /**
+     * 投票：提案 id → (投票者 id → 赞成与否)。<b>存成两层而不是「每人一票」</b>：
+     * 投票权是**每成员一票**（2026-09-30 裁决 A2），而 B13 §二 的
+     * {@code NationVoteReq(proposalId, boolean support)} 是<b>每提案一票</b> ——
+     * 两个维度都真实存在，压成一个数就再也答不出「谁投了这条」。
+     */
+    private final Map<String, Map<String, Boolean>> policyVotes = new LinkedHashMap<>();
+    /** 正在生效的国策：policyId → 到期时刻。长度不超过 {@link #policySlotCount()}。 */
+    private final Map<String, Long> activePolicies = new LinkedHashMap<>();
+    /** 下一次开投票窗的时刻。0 = 还没定（建国后的第一轮由「第一条提案」触发）。 */
+    private long policyNextVoteAt;
+    /** 投票窗开启时刻；0 = 没开。 */
+    private long policyVoteOpenedAt;
+    /** 投票窗结束时刻；0 = 没开。 */
+    private long policyVoteEndsAt;
     private long lastTaxWeekKey;
     /**
      * 最近一次周税**实际入库**的金额（不是应收额）。C16 限额的分母。
@@ -420,6 +577,10 @@ public final class Nation {
                            List<TreasuryLog> treasuryLogs, List<String> provinces,
                            Map<String, String> holderAlliance,
                            Map<String, Integer> techLevels,
+                           List<PolicyProposal> policyProposals,
+                           Map<String, Map<String, Boolean>> policyVotes,
+                           Map<String, Long> activePolicies,
+                           long policyNextVoteAt, long policyVoteOpenedAt, long policyVoteEndsAt,
                            long lastTaxWeekKey, long lastTaxCredited,
                            long spendWeekKey, long spentThisWeek,
                            long disbandedAt, long version) {
@@ -430,11 +591,18 @@ public final class Nation {
         for (Map.Entry<Office, List<String>> entry : offices.entrySet()) {
             officesCopy.put(entry.getKey(), List.copyOf(entry.getValue()));
         }
+        Map<String, Map<String, Boolean>> votesCopy = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, Boolean>> entry : policyVotes.entrySet()) {
+            votesCopy.put(entry.getKey(), new LinkedHashMap<>(entry.getValue()));
+        }
         return new Snapshot(id, name, kingId, capitalX, capitalY, level, treasury,
                 new LinkedHashMap<>(memberAlliances), officesCopy,
                 new LinkedHashMap<>(diplomacy), new LinkedHashMap<>(joinCooldownUntil),
                 List.copyOf(treasuryLogs), List.copyOf(provinces),
                 new LinkedHashMap<>(holderAlliance), new LinkedHashMap<>(techLevels),
+                List.copyOf(new ArrayList<>(policyProposals.values())), votesCopy,
+                new LinkedHashMap<>(activePolicies),
+                policyNextVoteAt, policyVoteOpenedAt, policyVoteEndsAt,
                 lastTaxWeekKey, lastTaxCredited,
                 spendWeekKey, spentThisWeek, disbandedAt, version);
     }
@@ -495,6 +663,37 @@ public final class Nation {
         if (s.provinces() != null) {
             nation.provinces.addAll(s.provinces());
         }
+        // 国策四个字段是 2026-09-30 加的，老文档读不到它们 ⇒ 一律当「本轮什么都没有」。
+        // 宽容读法的代价只是「这个国家的国策重新从提案段开始」，而不是它打不开；
+        // 与上面 techLevels 那条同一条读法。注意 policyVoteEndsAt 读到 0 意味着「窗口没开」，
+        // 恰好是安全的一侧（不会凭空开一个已经过期的窗口）。
+        nation.policyProposals.clear();
+        if (s.policyProposals() != null) {
+            for (PolicyProposal proposal : s.policyProposals()) {
+                if (proposal != null) {
+                    nation.policyProposals.put(proposal.id(), proposal);
+                }
+            }
+        }
+        nation.policyVotes.clear();
+        if (s.policyVotes() != null) {
+            s.policyVotes().forEach((proposalId, votes) -> {
+                if (proposalId != null && votes != null && !votes.isEmpty()) {
+                    nation.policyVotes.put(proposalId, new LinkedHashMap<>(votes));
+                }
+            });
+        }
+        nation.activePolicies.clear();
+        if (s.activePolicies() != null) {
+            s.activePolicies().forEach((policyId, expiresAt) -> {
+                if (policyId != null && !policyId.isBlank() && expiresAt != null && expiresAt > 0L) {
+                    nation.activePolicies.put(policyId, expiresAt);
+                }
+            });
+        }
+        nation.policyNextVoteAt = s.policyNextVoteAt();
+        nation.policyVoteOpenedAt = s.policyVoteOpenedAt();
+        nation.policyVoteEndsAt = s.policyVoteEndsAt();
         nation.lastTaxWeekKey = s.lastTaxWeekKey();
         nation.lastTaxCredited = s.lastTaxCredited();
         nation.spendWeekKey = s.spendWeekKey();
@@ -1338,5 +1537,304 @@ public final class Nation {
         if (isDisbanded()) {
             throw new IllegalStateException("国家已解散，不能再变更");
         }
+    }
+
+    // ==================================================================
+    // 国策（B13 §4 / B21 块③，2026-09-30 裁决）
+    //
+    // **全部惰性**：轮次由 settlePolicy(now) 推进，而 settlePolicy 由每一次
+    // 读取（policyRound）与每一次写（propose / vote）顺手调用。服务端不跑任何定时任务
+    // （check-no-scheduled.sh 是门禁），这与周税 settleTax 同一手法。
+    //
+    // **状态机（三段，草案 §三 已记）**：
+    //   窗口关着 + 生效中/空      → PROPOSING（可提案）
+    //   到 nextVoteAt 且有提案   → 开窗，VOTING（policyVoteMillis）
+    //   到点                      → 结算：过门槛的按四级排序占 policySlotCount 个槽位，
+    //                               生效 policyRoundMillis - policyVoteMillis，清空提案与票
+    //                               → 下一轮开窗时刻 = 最早到期那一刻
+    // ==================================================================
+
+    /**
+     * 推进轮次（惰性）。读取与写入都先调它。
+     *
+     * <p><b>三步的顺序不能换</b>：先丢掉已到期的生效国策，再结算已关的窗口，最后才考虑开窗。
+     * 反过来的话会出现「窗口刚开就立刻被结算」—— 因为开窗那一刻 {@code policyVoteEndsAt}
+     * 已经是过去式（存档里带了旧的时刻），那会让本轮票数恒为 0。
+     */
+    public synchronized void settlePolicy(long now) {
+        if (isDisbanded()) {
+            return;
+        }
+        // ① 到期的生效国策出列（空出来的槽位不会被自动填上 —— 填槽只发生在结算那一刻）
+        activePolicies.entrySet().removeIf(entry -> entry.getValue() <= now);
+        // ② 窗口开着且到点 → 结算
+        if (policyVoteEndsAt > 0L) {
+            if (now >= policyVoteEndsAt) {
+                applyVoteOutcome(now);
+            }
+            return;
+        }
+        // ③ 窗口没开：到点且本轮有提案才开窗
+        if (!policyProposals.isEmpty() && now >= policyNextVoteAt) {
+            policyVoteOpenedAt = now;
+            policyVoteEndsAt = now + rules.policyVoteMillis();
+        }
+    }
+
+    /**
+     * 结算本轮：判门槛、占槽位、续下一轮。
+     *
+     * <p><b>四条排序键（协议 {@code slotOrderNote} 的服务端实现）</b>：
+     * 赞成率降序 → 赞成票数降序 → 提案时刻升序 → policyId 字典序。
+     * 前三级都能从票数与时刻直接推出；最后一级是<b>纯确定性装置</b> ——
+     * 同率同数同时刻时不能靠哈希顺序决定，否则同一份存档会复算出不同的槽位归属。
+     *
+     * <p><b>同一条国策不占两个槽</b>：两条不同的提案指向同一条国策是可能的（去重按「本轮有没有提过这条」，
+     * 但提案 id 不同），占两个槽等于同一条 buff 生效两次 —— 那会让公示的票数与实际收益对不上。
+     */
+    private void applyVoteOutcome(long now) {
+        List<ProposalTally> passed = new ArrayList<>();
+        for (ProposalTally tally : tallies()) {
+            if (tally.passed()) {
+                passed.add(tally);
+            }
+        }
+        passed.sort(Nation::slotOrder);
+
+        int slots = policySlotCount();
+        long expiresAt = now + activeDurationMillis();
+        Map<String, Long> next = new LinkedHashMap<>();
+        for (ProposalTally tally : passed) {
+            if (next.size() >= slots) {
+                break;
+            }
+            next.putIfAbsent(tally.policyId(), expiresAt);
+        }
+        policyProposals.clear();
+        policyVotes.clear();
+        activePolicies.clear();
+        activePolicies.putAll(next);
+        policyVoteOpenedAt = 0L;
+        policyVoteEndsAt = 0L;
+        // 下一轮开窗 = 最早到期那一刻。生效段与提案段合起来等于一整轮
+        // （轮次长度由 policyRoundMillis 给，与投票窗是同一个参数的派生量）。
+        policyNextVoteAt = next.isEmpty() ? now : expiresAt;
+    }
+
+    /**
+     * 生效段长度 = 一轮周期 − 投票窗。
+     *
+     * <p><b>为什么用减法而不是直接读一个参数</b>：轮次只有一个时间旋钮（提案段与投票段同长，
+     * 草案 §三 已记），生效段是剩下的那段。写成减法之后，轮次总长恒等于 {@code policyRoundMillis}，
+     * 不会因为三段各读一个参数而对不上。
+     */
+    private long activeDurationMillis() {
+        long active = rules.policyRoundMillis() - rules.policyVoteMillis();
+        return active > 0L ? active : rules.policyVoteMillis();
+    }
+
+    /** 槽位竞争的四级排序。返回值 < 0 表示 a 优先。 */
+    private static int slotOrder(ProposalTally a, ProposalTally b) {
+        // 赞成率：交叉相乘比较，避免定点除法的舍入影响先后
+        int byRatio = Long.compare(b.yes() * a.actualVoters(), a.yes() * b.actualVoters());
+        if (byRatio != 0) {
+            return byRatio;
+        }
+        int byYes = Long.compare(b.yes(), a.yes());
+        if (byYes != 0) {
+            return byYes;
+        }
+        int byAt = Long.compare(a.at(), b.at());
+        if (byAt != 0) {
+            return byAt;
+        }
+        return a.policyId().compareTo(b.policyId());
+    }
+
+    /**
+     * 逐条提案计票，并判是否过门槛。
+     *
+     * <p><b>门槛 = 赞成 ≥ 实际投票人数 × 门槛比例，且实际投票人数 ≥ 参与下限</b>（裁决 A3）。
+     * 两个条件缺一不可：只有比例的话「1 个人投赞成」就是 100% 通过，
+     * 等于让一个小号替 800 人定国策。
+     */
+    public List<ProposalTally> tallies() {
+        List<ProposalTally> out = new ArrayList<>();
+        int minVoters = memberAllianceCount() * rules.policyMinVotersPerAlliance();
+        for (PolicyProposal proposal : policyProposals.values()) {
+            Map<String, Boolean> votes = policyVotes.getOrDefault(proposal.id(), Map.of());
+            List<String> supporters = new ArrayList<>();
+            List<String> opponents = new ArrayList<>();
+            for (Map.Entry<String, Boolean> entry : votes.entrySet()) {
+                if (Boolean.TRUE.equals(entry.getValue())) {
+                    supporters.add(entry.getKey());
+                } else {
+                    opponents.add(entry.getKey());
+                }
+            }
+            supporters.sort(null);
+            opponents.sort(null);
+            long yes = supporters.size();
+            long no = opponents.size();
+            long voters = yes + no;
+            boolean enough = voters >= minVoters;
+            boolean enoughYes = enough && FixedPoint.mul(voters, rules.policyMinVoteRatio()) <= yes;
+            out.add(new ProposalTally(proposal.id(), proposal.policyId(), proposal.proposedBy(),
+                    proposal.at(), yes, no, supporters, opponents, enoughYes));
+        }
+        return out;
+    }
+
+    /** 提案被哪一位挡住（{@link PolicyBlock#NONE} = 挡不住）。不抛异常，面板与写路径共用这一份判定。
+     *
+     *  <p><b>这里没有「是不是 Bot」这一问，而那是有意的</b>：{@code check-no-bot-privilege.sh}
+     *  是一条门禁，它规定「只有 {@code BotRegistry} 可以问这是不是 Bot」——
+     *  游戏逻辑里出现 {@code if (isBot)} 哪怕是「拒绝它」也算违规，因为白名单只放行定义处。
+     *  所以 Bot 拒投由 {@code game-web} 在调本方法<b>之前</b>挡掉（它持有 {@code BotRegistry}），
+     *  对应协议里的 {@code NationPolicyBlockReason.BOT_NOT_ALLOWED}。
+     *  领域层多一个 {@code isBot} 参数换来的只是「能在同一处判完」，代价是让内核知道 Bot 存在。
+     */
+    public PolicyBlock proposeBlock(String operatorId, boolean hasProposePermission, long now) {
+        settlePolicy(now);
+        if (!hasProposePermission) {
+            return PolicyBlock.NOT_PROPOSER;
+        }
+        if (policyVoteEndsAt > 0L) {
+            return PolicyBlock.NOT_VOTING;
+        }
+        return PolicyBlock.NONE;
+    }
+
+    /**
+     * 投票被哪一位挡住。
+     *
+     * <p><b>这一位不检查权限</b>：投票权是**每成员一票**（裁决 A2），与国策提案权那张权限表无关。
+     * 写成「也查一下权限」的话，一个普通成员会看到自己不能投票 —— 而 B13 §2 给的是
+     * 「议员：投票、提案」，2026-09-30 裁决 A2 把投票权放宽到全体成员，两者要分开。
+     *
+     * <p><b>{@code ALREADY_VOTED} 不在这里</b>：那是<b>每条提案</b>的判断，而本方法是轮次级的。
+     * 轮次级只能回答「此刻能不能投」，某一条投过了没有由 {@code myVotes} 表达 ——
+     * 面板据此把那颗键置灰，写路径据此回那一枚码。
+     */
+    public PolicyBlock voteBlock(String voterId, long now) {
+        settlePolicy(now);
+        if (policyVoteEndsAt <= 0L) {
+            return policyProposals.isEmpty()
+                    ? PolicyBlock.NO_PROPOSAL_YET : PolicyBlock.NOT_VOTING;
+        }
+        return PolicyBlock.NONE;
+    }
+
+    /**
+     * 提案。
+     *
+     * @param proposalId           提案 id，<b>由调用方生成</b>（领域层不造 id，与 {@code techId} 同一条分工）
+     * @param hasProposePermission 提案权判定结果，调用方读 {@code role_permission} 表得出
+     * @throws PolicyException 被 {@link PolicyBlock} 挡住
+     */
+    public synchronized PolicyProposal propose(String proposalId, String policyId, String operatorId,
+                                               boolean hasProposePermission, long now) {
+        requireActive();
+        PolicyBlock block = proposeBlock(operatorId, hasProposePermission, now);
+        if (block != PolicyBlock.NONE) {
+            throw new PolicyException(block, "提案被挡住：" + block);
+        }
+        for (PolicyProposal existing : policyProposals.values()) {
+            if (existing.policyId().equals(policyId)) {
+                throw new PolicyException(PolicyBlock.ALREADY_PROPOSED,
+                        "本轮已经提过这一条国策（提案 " + existing.id() + "）");
+            }
+        }
+        // 本轮的第一条提案把开窗时刻推到「一个提案段之后」，否则国王点一下就把 24 小时窗口
+        // 关上了，而 B13 §2 把「国策提案」给了内政官 4 席 —— 不给时间等于这个官职形同虚设。
+        if (policyNextVoteAt <= now) {
+            policyNextVoteAt = now + activeDurationMillis();
+        }
+        PolicyProposal proposal = new PolicyProposal(proposalId, policyId, operatorId, now);
+        policyProposals.put(proposalId, proposal);
+        return proposal;
+    }
+
+    /**
+     * 投票（{@code NationVoteReq(proposalId, boolean support)} 的落地）。
+     *
+     * <p><b>同 {@code researchTech}，为什么 synchronized</b>：应用层的锁按玩家加，
+     * 而这本账按国家共享。「先查有没有投过 → 再记一票」会被两个玩家穿过，
+     * 症状是票数 +2 而名单只有 1 个人 —— 而票数与名单必须自证一致（B13 验收 11）。
+     */
+    public synchronized void vote(String proposalId, String voterId, boolean support, long now) {
+        requireActive();
+        PolicyBlock block = voteBlock(voterId, now);
+        if (block != PolicyBlock.NONE) {
+            throw new PolicyException(block, "投票被挡住：" + block);
+        }
+        PolicyProposal proposal = policyProposals.get(proposalId);
+        if (proposal == null) {
+            throw new IllegalArgumentException("提案不存在：proposalId=" + proposalId
+                    + "（它可能属于上一轮 —— 轮次结算时整份清空）");
+        }
+        Map<String, Boolean> votes = policyVotes.computeIfAbsent(proposalId,
+                k -> new LinkedHashMap<>());
+        if (votes.containsKey(voterId)) {
+            throw new PolicyException(PolicyBlock.ALREADY_VOTED,
+                    "这一票已经投过了：proposalId=" + proposalId + " voterId=" + voterId
+                            + "（改票本批不做，要改就是先撤回再投）");
+        }
+        votes.put(voterId, support);
+    }
+
+    /**
+     * 国策轮次的完整状态。**读这个动作本身会推进轮次**（与 {@code GET /nation} 顺手
+     * {@code settleTax} 同一手法）—— 玩家看到的必须是当下的数。
+     */
+    public synchronized PolicyRound policyRound(String viewerId, boolean hasProposePermission,
+                                                long now) {
+        settlePolicy(now);
+        List<String> myProposals = new ArrayList<>();
+        Map<String, Boolean> myVotes = new LinkedHashMap<>();
+        for (PolicyProposal proposal : policyProposals.values()) {
+            if (proposal.proposedBy().equals(viewerId)) {
+                myProposals.add(proposal.id());
+            }
+        }
+        for (Map.Entry<String, Map<String, Boolean>> entry : policyVotes.entrySet()) {
+            Boolean mine = entry.getValue().get(viewerId);
+            if (mine != null) {
+                myVotes.put(entry.getKey(), mine);
+            }
+        }
+        List<ActivePolicy> active = new ArrayList<>();
+        for (Map.Entry<String, Long> entry : activePolicies.entrySet()) {
+            active.add(new ActivePolicy(entry.getKey(), entry.getValue()));
+        }
+        return new PolicyRound(phaseOf(), policySlotCount(), memberAllianceCount(),
+                tallies(), active,
+                proposeBlock(viewerId, hasProposePermission, now),
+                voteBlock(viewerId, now),
+                myProposals, myVotes, policyNextVoteAt, policyVoteEndsAt);
+    }
+
+    /**
+     * 当前正在生效的国策（按到期时刻升序），供乘区 G 的装配点读。
+     *
+     * <p><b>这一层刻意不读配置表</b>：它只回答「哪些 policyId 生效、到什么时候」，
+     * 幅度与效果由 game-config 那一侧解析 —— 与 {@code NationTechBonuses} 同一条分工。
+     */
+    public synchronized List<ActivePolicy> activePolicies(long now) {
+        settlePolicy(now);
+        List<ActivePolicy> out = new ArrayList<>();
+        for (Map.Entry<String, Long> entry : activePolicies.entrySet()) {
+            out.add(new ActivePolicy(entry.getKey(), entry.getValue()));
+        }
+        out.sort(Comparator.comparingLong(ActivePolicy::expiresAt)
+                .thenComparing(ActivePolicy::policyId));
+        return out;
+    }
+
+    private PolicyPhase phaseOf() {
+        if (policyVoteEndsAt > 0L) {
+            return PolicyPhase.VOTING;
+        }
+        return activePolicies.isEmpty() ? PolicyPhase.PROPOSING : PolicyPhase.ACTIVE;
     }
 }

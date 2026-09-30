@@ -41,7 +41,9 @@ class NationSystemTest {
                 200,             // 国库日志保留条数
                 12,              // 固定官职席位
                 // 0.5（定点）。两个成员联盟 ⇒ 周税入库 20000 ⇒ 非国王身份的周支出上限 10000
-                5_000L);
+                5_000L,
+                // 国策（B13 §4）：投票窗 24h、一轮 48h、通过门槛 50%（定点）、参与下限每盟 1 人
+                24 * HOUR, 48 * HOUR, 5_000L, 1);
     }
 
     private static Nation newNation() {
@@ -733,29 +735,29 @@ class NationSystemTest {
     void nationRulesAreValidated() {
         assertThatThrownBy(() -> new Nation.Rules(
                 List.of(level(1, 400, 500_000L, 1), level(2, 200, 2_000_000L, 2)),
-                16, 13, 4, DAY, 10_000L, 200, 12, 5_000L))
+                16, 13, 4, DAY, 10_000L, 200, 12, 5_000L, 24 * HOUR, 48 * HOUR, 5_000L, 1))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("人数上限");
         assertThatThrownBy(() -> new Nation.Rules(
                 List.of(level(1, 200, 2_000_000L, 1), level(2, 400, 500_000L, 2)),
-                16, 13, 4, DAY, 10_000L, 200, 12, 5_000L))
+                16, 13, 4, DAY, 10_000L, 200, 12, 5_000L, 24 * HOUR, 48 * HOUR, 5_000L, 1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("国库容量必须随等级单调不减");
         assertThatThrownBy(() -> new Nation.Rules(List.of(level(1, 200, 500_000L, 1)),
-                16, 13, 1, DAY, 10_000L, 200, 12, 5_000L))
+                16, 13, 1, DAY, 10_000L, 200, 12, 5_000L, 24 * HOUR, 48 * HOUR, 5_000L, 1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("只有一个国家就不存在外交");
         assertThatThrownBy(() -> new Nation.Rules(List.of(level(1, 200, 500_000L, 1)),
-                16, 13, 4, DAY, 10_000L, 0, 12, 5_000L))
+                16, 13, 4, DAY, 10_000L, 0, 12, 5_000L, 24 * HOUR, 48 * HOUR, 5_000L, 1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("保留 0 条等于没有日志");
         // 比例 > 1 意味着官员一周能花掉比一周税收还多的钱，那已经不叫限额；
         // 而负数会让任何一次支出都被拒 —— 两种都不该等到运行时才发现
         assertThatThrownBy(() -> new Nation.Rules(List.of(level(1, 200, 500_000L, 1)),
-                16, 13, 4, DAY, 10_000L, 200, 12, 10_001L))
+                16, 13, 4, DAY, 10_000L, 200, 12, 10_001L, 24 * HOUR, 48 * HOUR, 5_000L, 1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("已经不叫限额");
         assertThatThrownBy(() -> new Nation.Rules(List.of(level(1, 200, 500_000L, 1)),
-                16, 13, 4, DAY, 10_000L, 200, 12, -1L))
+                16, 13, 4, DAY, 10_000L, 200, 12, -1L, 24 * HOUR, 48 * HOUR, 5_000L, 1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("已经不叫限额");
     }

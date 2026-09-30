@@ -31,12 +31,15 @@ class NationTechTest {
     }
 
     private static Nation.Rules rules() {
+        long hour = 60 * 60 * 1000L;
         return new Nation.Rules(
                 List.of(level(1, 200, 500_000L), level(2, 400, 2_000_000L), level(3, 800, 8_000_000L)),
-                16, 13, 4, 24 * 60 * 60 * 1000L,
+                16, 13, 4, 24 * hour,
                 10_000L,                     // 每盟每周税收
                 200, 12,
-                5_000L);                     // 国库日志保留条数在 Rules 里，这一位是官员周支出比例（定点 0.5）
+                5_000L,                      // 官员周支出比例（定点 0.5）
+                24 * hour, 48 * hour,       // 国策：投票窗 24h、一轮 48h
+                5_000L, 1);                  // 通过门槛 50%（定点）、参与下限每盟 1 人
     }
 
     /**
@@ -201,7 +204,10 @@ class NationTechTest {
         Nation rebuilt = Nation.fromSnapshot(new Nation.Snapshot(snap.id(), snap.name(), snap.kingId(),
                 snap.capitalX(), snap.capitalY(), snap.level(), snap.treasury(), snap.memberAlliances(),
                 snap.offices(), snap.diplomacy(), snap.joinCooldownUntil(), snap.treasuryLogs(),
-                snap.provinces(), snap.holderAlliance(), dirty, snap.lastTaxWeekKey(),
+                snap.provinces(), snap.holderAlliance(), dirty,
+                snap.policyProposals(), snap.policyVotes(), snap.activePolicies(),
+                snap.policyNextVoteAt(), snap.policyVoteOpenedAt(), snap.policyVoteEndsAt(),
+                snap.lastTaxWeekKey(),
                 snap.lastTaxCredited(), snap.spendWeekKey(), snap.spentThisWeek(),
                 snap.disbandedAt(), snap.version()), rules());
 
@@ -221,7 +227,9 @@ class NationTechTest {
         Nation old = Nation.fromSnapshot(new Nation.Snapshot(snap.id(), snap.name(), snap.kingId(),
                 snap.capitalX(), snap.capitalY(), snap.level(), snap.treasury(), snap.memberAlliances(),
                 snap.offices(), snap.diplomacy(), snap.joinCooldownUntil(), snap.treasuryLogs(),
-                snap.provinces(), snap.holderAlliance(), null, snap.lastTaxWeekKey(),
+                snap.provinces(), snap.holderAlliance(), null,
+                null, null, null,
+                0L, 0L, 0L, snap.lastTaxWeekKey(),
                 snap.lastTaxCredited(), snap.spendWeekKey(), snap.spentThisWeek(),
                 snap.disbandedAt(), snap.version()), rules());
 

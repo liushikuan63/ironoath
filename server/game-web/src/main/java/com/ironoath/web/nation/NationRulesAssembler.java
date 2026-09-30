@@ -48,6 +48,11 @@ public class NationRulesAssembler {
         // 解锁前置在每一行都是同一份（16 级 / D14），取第一行；
         // 若将来按等级分档，这里要改成「取 1 级那一行」而不是「取第一行」
         NationConfigCfg first = rows.get(0);
+        // 国策的时间旋钮只有 NATION_VOTE_DURATION_HOURS 一个（2026-09-30 裁决 A4 + 草案 §三 派生口径）：
+        // 提案段与投票段同长、生效段是剩下的那段，所以「一整轮」= 2 × 投票窗（48 小时）。
+        // 写成派生式而不是再加一个参数，是为了不出现第二个时间旋钮 ——
+        // 两个旋钮各改一次就会让轮次总长与投票窗对不上，而那一格是玩家唯一能感知的节奏。
+        long voteMillis = configs.longParam("NATION_VOTE_DURATION_HOURS") * MILLIS_PER_HOUR;
         return new Nation.Rules(levels,
                 first.unlockMainLevel(),
                 first.unlockDayOffset(),
@@ -57,6 +62,11 @@ public class NationRulesAssembler {
                 (int) configs.longParam("NATION_TREASURY_LOG_RETENTION"),
                 (int) configs.longParam("NATION_OFFICE_SEAT_TOTAL"),
                 // DECIMAL 已由 fixedParam 给成定点（10000=1.0），这里不能再乘一次
-                configs.fixedParam("NATION_OFFICER_SPEND_WEEKLY_RATIO"));
+                configs.fixedParam("NATION_OFFICER_SPEND_WEEKLY_RATIO"),
+                voteMillis,
+                voteMillis * 2L,
+                // DECIMAL 已由 fixedParam 给成定点（10000=1.0），不能再乘一次
+                configs.fixedParam("NATION_POLICY_PASS_RATIO"),
+                (int) configs.longParam("NATION_POLICY_MIN_VOTERS_PER_ALLIANCE"));
     }
 }

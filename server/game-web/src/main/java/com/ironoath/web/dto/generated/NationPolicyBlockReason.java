@@ -9,6 +9,8 @@ package com.ironoath.web.dto.generated;
  *
  * `BOT_NOT_ALLOWED` 同样独立：Bot 不投票是 2026-09-30 的裁决（B11/B13 的红线只管「Bot 不得任官职」，投票不是官职，那条红线一个字都没覆盖到这一格）。它与 `NOT_PROPOSER` 分开是因为**两条红线的来源不同**：一条是权限表，一条是合规。
  *
+ * ⚠ **这一位不由领域层产出**：`scripts/check-no-bot-privilege.sh` 是一条门禁，它规定「除了 `BotRegistry` 之外，任何地方都不许问这是不是 Bot」——游戏逻辑里写 `if (isBot)` 哪怕是**拒绝**它也算违规。所以领域层 `Nation.PolicyBlock` 刻意没有这个取值，Bot 的判定与拦截都在 game-web 持有 `BotRegistry` 的那一层完成。
+ *
  * `NO_PROPOSAL_YET` 与 `NOT_VOTING` 也分开：前者是「本轮还没有任何提案，投票窗开不起来」（轮次自循环要有人提才有得投），后者是「窗口已经开过或正在开，提案段已经结束」。玩家在两种情况下的下一步不同：一种是自己提一条，另一种是等别人提完再投。
  */
 public enum NationPolicyBlockReason {

@@ -123,7 +123,9 @@ if (GLOBAL_ROWS.length < 200) {
 /* 零引用的 7 个参数，逐个给出处（出处会被核对，与 UNWIRED 同一套）。 */
 const UNREFERENCED = {
   WAR_SERVER_GOAL_GOLD: '零引用：#47（国战与全服目标整块未开工，没有承载代码）',
-  NATION_VOTE_DURATION_HOURS: '零引用：#47（国策投票同上，B13 §4 没有实现）',
+  // NATION_VOTE_DURATION_HOURS 曾挂在这里（#47「国策投票同上，B13 §4 没有实现」）：
+  // 2026-09-30 的 V17-D 格让 NationRulesAssembler 真的读它了（换算成 policyVoteMillis 与
+  // policyRoundMillis，轮次时间旋钮只有这一个），例外随之删除 —— 与下面 MINOR_PAY_* 那条同一条规矩。
   POWER_DROP_ALERT_RATIO: '零引用：#26（B08 §8 的"标记观察"没有风控归属，标记了给谁看未定）',
   // 这四条是 B19 §五①a 定的换算基准与倍率。<b>运行时没有人读它们，这是设计而不是欠账</b>：
   // 它们回答的是"这一行该写 50 还是 60"，而算好的结果已经进了 `product_reward`，
