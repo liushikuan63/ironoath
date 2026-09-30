@@ -443,6 +443,8 @@ public final class BalanceCli {
         int days = Integer.parseInt(options.getOrDefault("days", "7"));
         long hourMillis = 3_600_000L;
         long dayMillis = 24 * hourMillis;
+        double outExponent = options.containsKey("out-exponent")
+                ? Double.parseDouble(options.get("out-exponent")) : 1.0;
         double costRatio = options.containsKey("cost-ratio")
                 ? Double.parseDouble(options.get("cost-ratio")) : 1.22;
         double timeRatio = 1.18;
@@ -497,7 +499,9 @@ public final class BalanceCli {
             int upgraded = 0;
             if (withProducers && !cityFirst) {
                 for (int p = 0; p < producers.length; p++) {
-                    while (true) {
+                    // **每轮只升一级**：升到升不动会把当天全部资源吃掉、主城直接饿死
+                    // （那是第一版 balanced 的 3 级的成因，已修）。
+                    for (int step = 0; step < 1; step++) {
                         long out = producers[p][1];
                         long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
                         long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
@@ -509,7 +513,11 @@ public final class BalanceCli {
                         stone -= cStone;
                         iron -= cIron;
                         producerLevels[p]++;
-                        producerRates[p] = Math.round(out * Math.pow(1.0, producerLevels[p] - 1));
+                        // **产出随等级线性增长**：P(n) = base × n^exponent，exponent 取自 curve 表
+                        // BUILDING_OUTPUT（现值 1）。第一版这里写的是 base × 1^(n-1) = base，
+                        // 也就是「升了不涨产出」—— 那是我抄错了公式，于是「交替」那档的 3 级
+                        // 完全是这个 bug 的产物，不是玩法结论。
+                        producerRates[p] = Math.round(out * Math.pow(outExponent, producerLevels[p] - 1));
                     }
                 }
             }
@@ -539,7 +547,11 @@ public final class BalanceCli {
                         stone -= cStone;
                         iron -= cIron;
                         producerLevels[p]++;
-                        producerRates[p] = Math.round(out * Math.pow(1.0, producerLevels[p] - 1));
+                        // **产出随等级线性增长**：P(n) = base × n^exponent，exponent 取自 curve 表
+                        // BUILDING_OUTPUT（现值 1）。第一版这里写的是 base × 1^(n-1) = base，
+                        // 也就是「升了不涨产出」—— 那是我抄错了公式，于是「交替」那档的 3 级
+                        // 完全是这个 bug 的产物，不是玩法结论。
+                        producerRates[p] = Math.round(out * Math.pow(outExponent, producerLevels[p] - 1));
                     }
                 }
             }
