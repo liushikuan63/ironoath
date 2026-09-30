@@ -63,14 +63,17 @@ public final class BalanceCli {
         } else if (options.containsKey("single")) {
             long seed = Long.parseLong(options.getOrDefault("seed", "1"));
             printSingleBattle(resolver, rules, stats, options, seed);
+        } else if (options.containsKey("rally")) {
+            passed = printRallyCurve(resolver, rules, stats, options, tier);
         } else if (options.containsKey("settle-bench")) {
             passed = printSettleBench(configs, resolver, rules, stats, options);
         } else {
             System.err.println("用法（参数用 --key=value 形式）：");
             System.err.println("  --single --atk=步,骑,弓,器 --def=步,骑,弓,器 --seed=N");
             System.err.println("  --matrix --runs=1000 --tier=1 --size=1000");
+            System.err.println("  --rally --runs=400 --comp=步,骑,弓,器 --size=1000 --bonus=0,500,1000,1500");
             System.err.println("  --settle-bench --samples=200 --warmup=30 --comp=25000,25000,25000,25000");
-            System.err.println("退出码：矩阵判定存在违规时为 1。");
+            System.err.println("退出码：矩阵 / 集结曲线判定存在违规时为 1。");
             System.exit(2);
         }
         // 耗时是判断「能不能跑万局调平衡」的关键指标，每次都打出来
@@ -220,6 +223,141 @@ public final class BalanceCli {
             case DEFENDER -> "守方胜";
             case DRAW -> "平局";
         };
+    }
+
+    // ---------- 集结曲线（#19 / 裁决 A10：先出模拟再定幅度） ----------
+
+    /**
+     * 扫「攻守人数比 → 攻方胜率」曲线，并在每一档集结加成上读出两个数：
+     * **五五开时的胜率**（集结该不该在均势时给优势 —— 给了就等于把"拉人"变成"集结"的
+     * 线性收益，那是最容易滚雪球的一档）与 **半数胜率落在哪个比值上**（集结要补的就是
+     * 这一段：从均势到稳赢要付出多少人）。
+     *
+     * <p><b>加成只加在攻方的有效攻击上</b>（走 {@code BattleModifier}，乘区 F），
+     * 守方拿同一条加成 —— 「集结」是**攻方**的行为（B03 口径），
+     * 所以只测攻方受益那一侧；守方受益是另一条性质（同盟围攻），不在这一格。
+     *
+     * <p><b>为什么是曲线而不是三个数</b>：B 文档里那个「集结加成」只有幅度没有出处。
+     * 单点的胜率随人数比剧烈移动（这一格实测 1000 人对 1100 人就已经是 71%），
+     * 拿单点去定幅度等于把结论绑在一个人数比上。曲线给出的是**函数**，
+     * 策划能自己看该在哪一段给多少。
+     *
+     * <p><b>判定口径只钉一件可判的事</b>：加成 0 与加成 1500（+15%）两条曲线
+     * 在比值 1.00 处的胜率差不得为 0 —— 不是判「加多少合适」，
+     * 而是判「这一列真的进了结算」。幅度合不合适是策划的裁量，
+     * 本工具只负责把事实摆出来（`AMBIUOUS` 那一条就是留给裁量的）。
+     */
+    private static boolean printRallyCurve(BattleParamsResolver resolver, BattleRules rules,
+                                           Map<UnitType, UnitStats> stats,
+                                           Map<String, String> options, int tier) {
+        int runs = Integer.parseInt(options.getOrDefault("runs", "400"));
+        long size = Long.parseLong(options.getOrDefault("size", "1000"));
+        long seed = Long.parseLong(options.getOrDefault("seed", "20260930"));
+        // 人数比：50% ~ 200%，步长 5%。**每档的局数一样**，否则两档的抽样误差不同，
+        // 而 5 个点的差只有几个百分点 —— 抽样误差一大就会读出假的斜率。
+        // **均势附近用 1 个百分点的步长**：第一版整段都是 5 个点，读出来是
+        // 「+10% 把均势从 50.0% 抬到 85.8%、+15% 抬到 100%」—— 中间发生了什么全看不见，
+        // 而那正是要定幅度的那一段。粗步长会把整条曲线压成三个跳变。
+        int[] percents = {50, 60, 70, 80, 85, 88, 90, 92, 94, 96, 98, 100, 102, 104, 106, 108, 110, 115, 120, 130, 150, 200};
+        long[] bonuses = parseBonusList(options.getOrDefault("bonus", "0,500,1000,1500"));
+
+        String comp = options.getOrDefault("comp", "步,骑,弓,器");
+        Map<UnitType, Long> share = parseArmy(comp);
+
+        System.out.printf("=== 集结曲线（T%d，各兵种同比例，基准 %d 兵，%d 局/点，seed 起点 %d）===%n",
+                tier, size, runs, seed);
+        System.out.printf("编成：%s ｜ 地形：%s ｜ 类型：%s%n", comp,
+                options.getOrDefault("terrain", TerrainType.PLAIN.name()),
+                options.getOrDefault("type", BattleType.PVP_SOLO.name()));
+        System.out.println("加成只加在攻方有效攻击上（乘区 F）；单位是定点万分比，5000 = +50%。");
+        System.out.println();
+
+        System.out.printf("%-10s", "人数比");
+        for (long bonus : bonuses) {
+            System.out.printf("%12s", "+" + FixedPoint.format(bonus * 100L) + "%");
+        }
+        System.out.println();
+
+        double[] atParity = new double[bonuses.length];
+        for (int percent : percents) {
+            System.out.printf("%-10s", percent + "%");
+            for (int b = 0; b < bonuses.length; b++) {
+                long bonus = bonuses[b];
+                long atkSize = Math.round(size * percent / 100.0);
+                long defSize = size;
+                int wins = 0;
+                int draws = 0;
+                for (int i = 0; i < runs; i++) {
+                    ArmySide atk = resolver.bareArmy("攻方", scale(share, atkSize), Long.MAX_VALUE / 4, bonus);
+                    ArmySide def = resolver.bareArmy("守方", scale(share, defSize), Long.MAX_VALUE / 4);
+                    BattleResult r = BattleSimulator.simulate(new BattleInput(atk, def,
+                            TerrainType.valueOf(options.getOrDefault("terrain", TerrainType.PLAIN.name())),
+                            seed + i * 7919L,
+                            BattleType.valueOf(options.getOrDefault("type", BattleType.PVP_SOLO.name())),
+                            BattleModifier.none(), BattleModifier.none(), stats, rules,
+                            DefenderStore.none()));
+                    // **平局算半场**：B02 验收 4 的读法，平局算守方守住一半，
+                    // 否则「拉人却没打赢」与「拉人打平」在读数上会混成一条。
+                    wins += r.winner() == Winner.ATTACKER ? 2 : (r.winner() == Winner.DRAW ? 1 : 0);
+                    draws += r.winner() == Winner.DRAW ? 1 : 0;
+                }
+                double rate = wins / (2.0 * runs);
+                if (percent == 100) {
+                    atParity[b] = rate;
+                }
+                System.out.printf("%11.1f%%", rate * 100);
+            }
+            System.out.println();
+        }
+
+        System.out.println();
+        System.out.printf("均势（人数比 1.00）处的攻方胜率：");
+        for (int b = 0; b < bonuses.length; b++) {
+            System.out.printf("  +%s%% → %.1f%%", FixedPoint.format(bonuses[b] * 100L), atParity[b] * 100);
+        }
+        System.out.println();
+        System.out.println("读法：");
+        System.out.println("  · 均势处从 0 变高 = 集结在拉平局面（对攻方有利的那一侧）；");
+        System.out.println("  · 曲线整体左移 = 同样的胜率要少拉人（这才是集结省时间的地方）。");
+        System.out.println("  · 幅度合不合适由策划定，本工具只给事实（不发明数值）。");
+
+        // 唯一能自动判的一件事：加成真的进了结算。
+        double delta = atParity[bonuses.length - 1] - atParity[0];
+        System.out.println();
+        System.out.printf("判定：均势处最大加成与零加成的胜率差 = %.1f 个百分点%s%n", delta * 100,
+                delta > 0 ? "" : "（**为 0 或负 —— 加成没进结算，这一列是装饰**）");
+        return delta > 0;
+    }
+
+    /** 把一份「各兵种份额」按总人数铺开（四舍五入，差额补在人数最多的那个兵种上）。 */
+    private static Map<UnitType, Long> scale(Map<UnitType, Long> share, long total) {
+        long sum = share.values().stream().mapToLong(Long::longValue).sum();
+        Map<UnitType, Long> out = new java.util.EnumMap<>(UnitType.class);
+        UnitType largest = null;
+        long largestShare = -1L;
+        long assigned = 0L;
+        for (Map.Entry<UnitType, Long> e : share.entrySet()) {
+            long count = Math.round(total * (double) e.getValue() / sum);
+            out.put(e.getKey(), count);
+            assigned += count;
+            if (e.getValue() > largestShare) {
+                largestShare = e.getValue();
+                largest = e.getKey();
+            }
+        }
+        // 差额（≤兵种数）补在份额最大的那个兵种上，保证总量精确等于 total ——
+        // 差几个兵不会改变结论，但"总量和 --size 说的不一样"会让读数没法复核。
+        out.put(largest, out.get(largest) + (total - assigned));
+        return out;
+    }
+
+    private static long[] parseBonusList(String raw) {
+        String[] parts = raw.split(",");
+        long[] out = new long[parts.length];
+        for (int i = 0; i < parts.length; i++) {
+            out[i] = Long.parseLong(parts[i].trim());
+        }
+        return out;
     }
 
     // ---------- 单次结算耗时（B05 验收 4，压测三件之一） ----------

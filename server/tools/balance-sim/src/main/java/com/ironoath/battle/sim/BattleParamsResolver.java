@@ -3,6 +3,7 @@ package com.ironoath.battle.sim;
 import com.ironoath.battle.ArmySide;
 import com.ironoath.battle.BattleRules;
 import com.ironoath.battle.FormationType;
+import com.ironoath.battle.OrgBonus;
 import com.ironoath.battle.TechBonus;
 import com.ironoath.battle.UnitStats;
 import com.ironoath.battle.UnitType;
@@ -86,6 +87,32 @@ public final class BattleParamsResolver {
     public ArmySide bareArmy(String sideId, Map<UnitType, Long> units, long hospitalCapacity) {
         return new ArmySide(sideId, List.of(), units, TechBonus.none(), 0L,
                 FormationType.STANDARD, hospitalCapacity);
+    }
+
+    /**
+     * 带组织侧攻击加成的裸军队（#19 集结曲线用）。
+     *
+     * <p><b>走 {@link OrgBonus}（乘区 G）而不是在工具里另造一个加成位</b>：
+     * 集结是攻方的有效攻击加成，而乘区 G 就是那一位的正式通路（A 格交付）。
+     * 工具里另开一个加成位，等于平衡读数与实战结算走两套算式 ——
+     * 那样量出来的幅度拿去上线就会对不上。
+     *
+     * <p>该加成**按兵种给**（与 A 格的形状一致），不是压成一个标量：
+     * 一个标量会顺手给到编成里所有兵种，而集结现实中加的是带队那支兵。
+     */
+    public ArmySide bareArmy(String sideId, Map<UnitType, Long> units, long hospitalCapacity,
+                              long attackBonusFixed) {
+        if (attackBonusFixed == 0L) {
+            return bareArmy(sideId, units, hospitalCapacity);
+        }
+        Map<UnitType, Long> byUnit = new EnumMap<>(UnitType.class);
+        for (Map.Entry<UnitType, Long> e : units.entrySet()) {
+            if (e.getValue() != null && e.getValue() > 0L) {
+                byUnit.put(e.getKey(), attackBonusFixed);
+            }
+        }
+        return new ArmySide(sideId, List.of(), units, TechBonus.none(), 0L,
+                FormationType.STANDARD, hospitalCapacity, new OrgBonus(byUnit, 0L, 0L));
     }
 
     /** 单一兵种的军队，用于胜率矩阵。 */
