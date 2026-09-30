@@ -20,6 +20,7 @@ import type { NationTechListView, NationTechView } from '../../net/generated/Nat
 import { effectAttrLabel, schoolLabel } from '../tech/TechPanel'
 import { amountText, permissionGateOf } from './NationPanel'
 import type { NationGate } from './NationPanel'
+import type { PolicyPanel } from './NationPolicyPanel'
 
 /** 拒绝原因 → 玩家语言（`NationTechBlockReason` 与个人那枚**刻意不合并**，见契约注释）。 */
 export function nationTechBlockText(reason: string): string | null {
@@ -201,6 +202,13 @@ export interface NationSectionsView {
     /** 能不能任命（权限位 `APPOINT_OFFICE`）。 */
     readonly gate: NationGate
   }
+  /**
+   * 国策那一页（B13 §4）。**与前三块刻意不同源**：`buildPolicyPanel` 在
+   * {@code game/nation/NationPolicyPanel} 里，形状由协议定而不是这里拼 ——
+   * 原因是这一页要下发的字段太多（两份公示名单、槽位说明、两个三态门禁），
+   * 在这里拼就等于让这一页有第二个家的风险。
+   */
+  readonly policy: PolicyPanel | null
 }
 
 /**
@@ -216,7 +224,8 @@ export function buildNationSections(tech: NationTechListView | null,
   targets: readonly { nationId: string; name: string }[],
   members: readonly { id: string; name: string }[],
   permissions: readonly string[] | null = null,
-  permissionsLoaded = false): NationSectionsView {
+  permissionsLoaded = false,
+  policy: PolicyPanel | null = null): NationSectionsView {
   const rows = buildDiplomacyRows(relations)
   const appointRows = buildAppointRows(members)
   return {
@@ -238,6 +247,9 @@ export function buildNationSections(tech: NationTechListView | null,
       notice: appointRows.length === 0 ? '本盟还没有别的成员可任命' : null,
       gate: permissionGateOf('APPOINT_OFFICE', '任命官职', permissions, permissionsLoaded),
     },
+    // **默认 null**（不是空面板）：这一页没拉过时面板要说「这一次没拉到」，
+    // 画一片空白会让玩家以为这个国家没有国策可议。
+    policy,
   }
 }
 

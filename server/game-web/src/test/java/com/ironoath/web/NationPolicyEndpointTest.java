@@ -116,7 +116,8 @@ class NationPolicyEndpointTest {
         assertThat(cavalry.get("effectValueFixed").asLong())
                 .as("幅度是定点（1500 = +15%），全项目禁浮点").isEqualTo(1500L);
         assertThat(cavalry.get("effectText").asText())
-                .as("效果说明由服务端拼好：改文案不该要改客户端").contains("%");
+                .as("效果说明由服务端拼好：改文案不该要改客户端；**符号必须带** —— effectValue 有符号")
+                .isEqualTo("轻骑兵 T1 攻击 +15%");
 
         JsonNode harvest = policy(get200("/nation/policy", f.king), "np_harvest");
         assertThat(harvest.get("effectAttr").asText()).isEqualTo("OUTPUT");

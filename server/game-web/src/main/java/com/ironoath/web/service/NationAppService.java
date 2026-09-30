@@ -1147,8 +1147,8 @@ public class NationAppService {
 
     /** 槽位竞争的规则说明（协议 `slotOrderNote` 的唯一一份文案）。 */
     private static final String SLOT_ORDER_NOTE =
-            "同轮多条提案都通过时，按「赞成率 → 赞成票数 → 提案时刻 → 国策 id」四级排序，"
-                    + "先到的占住前 N 个槽位（N = 国家等级决定的槽位数）。";
+            "同轮多条提案都通过时，按「赞成率 → 赞成票数 → 提案时刻 → 国策表里的先后」四级排序，"
+                    + "先到的占住前 N 个槽位（N 由国家等级决定）。";
 
     private long now0() {
         return timeService.serverNow();
@@ -1188,7 +1188,12 @@ public class NationAppService {
      */
     private String effectText(NationPolicyEffectAttr attr, String policyName, String unitName,
                               long effectValueFixed) {
-        String percent = FixedPoint.format(effectValueFixed * 100L) + "%";
+        // **符号自己拼**：`nation_policy.effectValue` 是有符号的（B13 §4 允许减益国策），
+        // 而 `FixedPoint.format` 只给绝对值那一份 —— 不拼符号的话屏上会同时出现
+        // 「攻击 15%」（增益）与「攻击 15%」（减益）两句话，玩家分不出方向。
+        long scaled = effectValueFixed * 100L;
+        String sign = scaled < 0 ? "-" : "+";
+        String percent = sign + FixedPoint.format(Math.abs(scaled)) + "%";
         String target = unitName == null ? "全成员" : unitName;
         return switch (attr) {
             case POLICY_ATTACK -> target + " 攻击 " + percent;

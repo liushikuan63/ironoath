@@ -55,6 +55,15 @@ const DEFAULT_FIELD_WIDTH = 150
 const LABEL_COL = 100
 /** 支出表单打开时流水只留这么几条：一屏装不下全部 + 表单（截掉几条由数据层报出来）。 */
 const LOG_ROWS_WHEN_ARMED = 2
+/**
+ * 国策页一屏画几条提案 / 几条候选（B13 §4 的公示是明文要求可查项，所以截断要说清剩几条）。
+ *
+ * <p>取 3 是版式推导：一屏 600 逻辑高减掉标题、页签、倒计时、槽位说明之后剩约 340，
+ * 每条提案占两行 + 门禁理由一行 ≈ 74，3 条 ≈ 222，候选区再留一屏的一半。
+ * 刻意不取「能放多少放多少」：多画一条就把生效状态推出屏外，而那一行是玩家最该先看见的。
+ */
+const POLICY_PROPOSAL_ROWS = 3
+const POLICY_CANDIDATE_ROWS = 4
 
 /** 临时的输入态。**不属于存档**：`beginSession` 每次打开都重置，免得"关掉再开还留着上次的字"。 */
 type DraftField = 'nationName' | 'capitalX' | 'capitalY' | 'reason'
@@ -128,6 +137,13 @@ export class NationPanelView extends Component {
   private diproRelation = 'ALLIED'
   /** 任命页当前选中的人。 */
   private appointTarget: string | null = null
+  /** 提案：把一条国策放进本轮提案池（`policyId` 只用于发请求，永不上屏）。 */
+  onProposePolicy: ((policyId: string) => void) | null = null
+  /**
+   * 投票（`proposalId` / `support`）。**只喊出去，不判** ——
+   * 能不能投、是不是已经投过，全部来自 `policyRow.voteGate`。
+   */
+  onVotePolicy: ((proposalId: string, support: boolean) => void) | null = null
 
   override onLoad(): void {
     this.buildMask()
@@ -260,6 +276,9 @@ export class NationPanelView extends Component {
           break
         case 'OFFICE':
           cursor = this.drawAppoint(left, cursor, data)
+          break
+        case 'POLICY':
+          cursor = this.drawPolicy(left, innerWidth, cursor, data)
           break
       }
     }
@@ -432,6 +451,104 @@ export class NationPanelView extends Component {
       y -= 20
     }
     this.label('国王与议员没有任命入口（那是席位，不是任出来的）', COLOR_DIM, 12, left, y, 'left')
+    return y - 20
+  }
+
+  /**
+   * 国策那一页（B13 §4）。
+   *
+   * <p><b>`innerWidth` 是形参，不是 `window.innerWidth`</b>：这个函数曾经把形参删掉过一次，
+   * 于是表达式里的 `innerWidth` 静默解析到 DOM 全局（DOM lib 声明了同名全局，所以
+   * 类型检查一声不响），把「提案」键推到 x≈1341 —— 卡片只有 -360..+360，
+   * 键全跑到屏外：探针按节点名 emit 所以点得到，而屏上一个都看不见。
+   * 探针里那条「键数 + 左边缘」的判据就是为这件事留的，别删。
+   *
+   * <p><b>候选区单列</b>，与科技页、任命页同一套排版：两列的第一版两处叠着毛病
+   * （键压在第二列文字上；改成一列一键后第二列又画出卡片右边界）。
+   *
+   * <p><b>这一页只画 {@code buildPolicyPanel} 给的东西</b>：能不能提、能不能投、为什么灰、
+   * 倒计时、槽位说明、公示名单，全部是服务端下发的那一位（铁律 2）。
+   * 灰键不挂 touch-start ⇒ 点了零请求。
+   *
+   * <p><b>版式取舍</b>：提案区每条占两行（国策名 + 票数与名单），
+   * 一屏放得下 3 条；再多的只画前 3 条并说清还剩几条 ——
+   * 公示是 B13 §4 明文要求的可查项，**不能说"更多"就把它省掉**。
+   */
+  private drawPolicy(left: number, innerWidth: number, top: number, data: NationPanelData): number {
+    const policy = data.sections?.policy ?? null
+    if (policy === null) {
+      this.label('国策这一次没拉到', COLOR_WARN, 14, left, top - 12, 'left')
+      return top - 32
+    }
+    let y = top - 18
+    this.label(policy.header, COLOR_GOLD, 15, left, y, 'left')
+    y -= 24
+    this.label(policy.countdownText, COLOR_DIM, 13, left, y, 'left')
+    y -= 20
+    this.label(policy.activeText, COLOR_HINT, 13, left, y, 'left')
+    y -= 24
+
+    // ---------- 提案区 ----------
+    this.label(`本轮提案（${policy.proposals.length}）`, COLOR_DIM, 13, left, y, 'left')
+    y -= 24
+    if (policy.proposals.length === 0) {
+      this.label('本轮还没有提案 —— 国王或官员可以从下面挑一条提上来', COLOR_DIM, 13, left, y, 'left')
+      y -= 24
+    }
+    const shown = policy.proposals.slice(0, POLICY_PROPOSAL_ROWS)
+    for (const row of shown) {
+      this.label(row.name, COLOR_TEXT, 14, left, y, 'left')
+      this.label(row.tallyText, COLOR_DIM, 12, left + 150, y, 'left')
+      this.button(`PolicyYes-${row.proposalId ?? 'x'}`, '赞成', left + 420, y, 74, row.voteGate.enabled,
+        () => { if (row.proposalId !== null) this.onVotePolicy?.(row.proposalId, true) })
+      this.button(`PolicyNo-${row.proposalId ?? 'x'}`, '反对', left + 500, y, 74, row.voteGate.enabled,
+        () => { if (row.proposalId !== null) this.onVotePolicy?.(row.proposalId, false) })
+      y -= 20
+      this.label(`赞成：${row.supporters}`, COLOR_DIM, 12, left, y, 'left')
+      y -= 18
+      this.label(`反对：${row.opponents}`, COLOR_DIM, 12, left, y, 'left')
+      y -= 18
+      // 灰键的理由**印在屏上**（不只在点不动时）：玩家要能读出"为什么我不能投"
+      if (!row.voteGate.enabled && row.voteGate.reason !== null && row.voteGate.reason !== '') {
+        this.label(row.voteGate.reason, COLOR_WARN, 12, left, y, 'left')
+        y -= 18
+      }
+      y -= 6
+    }
+    const hiddenProposals = policy.proposals.length - shown.length
+    if (hiddenProposals > 0) {
+      this.label(`另有 ${hiddenProposals} 条提案没显示`, COLOR_DIM, 12, left, y, 'left')
+      y -= 20
+    }
+
+    // ---------- 候选区（提案用） ----------
+    this.label('可提的国策', COLOR_DIM, 13, left, y, 'left')
+    y -= 24
+    // **单列，不是两列**。两列的第一版有两个叠在一起的毛病：键压在第二列文字上，
+    // 改成两列各自带键之后，第二列的文字又跑出卡片右边界（截图里 T2/T4 那两行直接画到了
+    // 卡片外面）。这里退回与科技页、任命页同一套已被验证的排版：
+    // 文字贴 `left`，键排在右侧固定一处 —— 一列一行，键与文字不可能相压，也不可能出界。
+    const proposeButtonX = left + innerWidth - 40
+    const candidates = policy.candidates.slice(0, POLICY_CANDIDATE_ROWS)
+    candidates.forEach((row, index) => {
+      const cy = y - index * 28
+      this.label(row.effectText, COLOR_TEXT, 12, left, cy, 'left')
+      this.button(`PolicyPropose-${row.policyId}`, '提案', proposeButtonX, cy, 70, row.proposeGate.enabled,
+        () => this.onProposePolicy?.(row.policyId))
+    })
+    y -= candidates.length * 28 + 2
+    const hiddenCandidates = policy.candidates.length - candidates.length
+    if (hiddenCandidates > 0) {
+      this.label(`另有 ${hiddenCandidates} 条国策没显示`, COLOR_DIM, 12, left, y, 'left')
+      y -= 20
+    }
+    // 提案的门禁理由**只显一次**（八行候选各自印一遍会把屏刷满）
+    const proposeReason = candidates.find(row => !row.proposeGate.enabled)?.proposeGate.reason ?? ''
+    if (proposeReason !== null && proposeReason !== '') {
+      this.label(proposeReason, COLOR_WARN, 12, left, y, 'left')
+      y -= 20
+    }
+    this.label(policy.slotNote, COLOR_DIM, 12, left, y, 'left')
     return y - 20
   }
 

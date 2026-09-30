@@ -303,6 +303,20 @@ export const TRACK_EVENTS = {
   nationAppoint: 'nation_appoint',
 
   /**
+   * 提案（B13 §4）。参数 `policy` 是国策 id —— **只用来分组，不用来告诉运营"谁提的"**：
+   * 谁提的那一份在服务端日志里（提案记录带提案人），埋点再带一遍就多一份要脱敏的副本。
+   * 「有多少个国家提了哪一条」才是这一条埋点能回答的问题。
+   */
+  nationPolicyPropose: 'nation_policy_propose',
+  /**
+   * 投票。参数 `support` 取 `yes` / `no` 两值。
+   *
+   * <p><b>刻意不记 proposalId</b>：那一列在服务端有账（票数与参与者名单都可查），
+   * 而埋点带过去就等于在事件流里留一份能对上人次的副本。
+   */
+  nationPolicyVote: 'nation_policy_vote',
+
+  /**
    * 保存一套编队（B06 §4）。参数 `presetIndex` 与三名武将 id（空位是空串）——
    * 看板上要答的是"玩家到底编不编队"：编队决定缘分与乘区，全是默认编队就说明这一层没人用。
    * **打开编辑器 / 换槽位 / 换选中都不单独上报**：编队是"改完一次提交"，

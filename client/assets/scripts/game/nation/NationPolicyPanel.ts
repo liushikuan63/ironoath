@@ -17,7 +17,7 @@ import type {
   NationPolicyProposalView,
   NationPolicyRoundView,
 } from '../../net/generated/NationProtocol'
-import { elapsedText } from '../ui/ElapsedText'
+import { remainingText } from '../ui/ElapsedText'
 import type { NationGate } from './NationPanel'
 
 /** 提案理由 → 玩家语言。`null` = 没拦着。 */
@@ -154,10 +154,12 @@ export function buildPolicyPanel(round: NationPolicyRoundView, viewerId: string)
   const proposals: PolicyRow[] = (round.proposals ?? []).map(proposal => rowOf(round, proposal, myVotes))
 
   const countdownTarget = round.phase === 'VOTING' ? round.voteEndsAt : round.nextVoteAt
-  // **两个时刻相减**（不是拿本机钟）：`elapsedText` 刻意不引本机时钟（铁律 5），
+  // **两个时刻相减**（不是拿本机钟）：`remainingText` 刻意不引本机时钟（铁律 5），
   // 这里传的是 `countdownTarget - serverNow`，两端同源。
+  // 用 `remainingText` 而不是 `elapsedText`：后者的每句话都带「前」，
+  // 倒计时用它会读成「距开票 23 小时前」—— 方向反了，而且是通顺的错话。
   const countdownText = countdownTarget > 0
-    ? `${round.phase === 'VOTING' ? '距本轮投票结束' : '距开票'} ${elapsedText(countdownTarget - round.serverNow)}`
+    ? `${round.phase === 'VOTING' ? '本轮投票还剩' : '距开票还有'} ${remainingText(countdownTarget - round.serverNow)}`
     : '本轮还没有提案 —— 国王或官员可以先提一条'
 
   return {

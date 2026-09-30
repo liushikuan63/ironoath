@@ -85,7 +85,7 @@ test('提案段：候选全亮，但投票那一栏必须是灰的（服务端�
   assert.equal(first(panel.candidates).proposeGate.enabled, true, '国王此刻能提这一条')
   assert.equal(first(panel.candidates).voteGate.enabled, false)
   assert.equal(first(panel.candidates).voteGate.reason, '先提案，再投票')
-  assert.equal(panel.countdownText.startsWith('距开票'), true)
+  assert.equal(panel.countdownText.startsWith('距开票还有'), true)
   // 生效列表为空时给的是一句人话，而不是空白让玩家猜
   assert.equal(panel.activeText, '当前没有生效的国策')
 })
@@ -143,7 +143,7 @@ test('投票段：票数、名单、我这一票都是从服务端那份照抄�
   assert.equal(row.mySupport, true, '甲那一票能从 myVotes 里认出来')
   assert.equal(row.voteGate.enabled, false, '投过了就不许再投（这一格最贵的正是它）')
   assert.equal(row.voteGate.reason, '这一票你已经投过了')
-  assert.equal(panel.countdownText.startsWith('距本轮投票结束'), true)
+  assert.equal(panel.countdownText.startsWith('本轮投票还剩'), true)
 })
 
 test('没投过的人在投票段能投（服务端说能，客户端不许自己加灰）', () => {
@@ -182,10 +182,18 @@ test('生效中的国策给出一句人话，空的时候不装作有', () => {
   assert.equal(active.activeText, '当前生效：骑兵时代·轻骑 T1')
 })
 
-test('倒计时用服务端两个时刻相减，不用本机钟（负数说「刚刚」而不是负时长）', () => {
-  // nextVoteAt 已经过去：面板要说刚刚，而不是「-5 分钟」
+test('倒计时用服务端两个时刻相减，不用本机钟（方向也钉住：不是「…前」而是「还有」）', () => {
+  // **方向是这一条真正要断的东西**：`elapsedText` 反着用会得到「距开票 23 小时前」，
+  // 那句话读起来是通顺的，而它的意思正好相反（截图里真的一样）。
+  const future = buildPolicyPanel(round({ nextVoteAt: NOW + 90 * 60_000 }), 'king')
+  assert.equal(future.countdownText, '距开票还有 1 小时')
+  assert.equal(/前/.test(future.countdownText), false, '倒计时里不该出现「前」')
+  // nextVoteAt 已经过去：说「已到点」，而不是「-5 分钟」也不是「刚刚」
   const past = buildPolicyPanel(round({ nextVoteAt: NOW - 5 * 60_000 }), 'king')
-  assert.equal(past.countdownText.includes('刚刚'), true)
+  assert.equal(past.countdownText, '距开票还有 已到点了')
+  // 本轮没有提案时（nextVoteAt = 0）给的是那句引导，而不是倒计时
+  const none = buildPolicyPanel(round({ nextVoteAt: 0 }), 'king')
+  assert.equal(none.countdownText, '本轮还没有提案 —— 国王或官员可以先提一条')
 })
 
 test('页眉带槽位数，玩家看得见「这一轮能占几个」', () => {

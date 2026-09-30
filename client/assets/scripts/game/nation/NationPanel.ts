@@ -28,9 +28,13 @@ import type { NationSectionsView } from './NationSections'
  * 国家面板的页签（S2 起）。
  *
  * <p>**TREASURY 在前**：国库是这一屏最该先看见的东西（余额与流水），
- * 其余三块都是"要做事才点进去"的动作页。
+ * 其余四块都是"要做事才点进去"的动作页。
+ *
+ * <p><b>POLICY 放在任命之后（最后一位）</b>：国策是唯一一个要**等**的动作页 ——
+ * 提案段要等、投票段要等、还有生效段。与其放前面占掉「国库」之后那个位置，
+ * 不如放在最后，让"要做事"的那几页聚在一起。
  */
-export type NationTabKey = 'TREASURY' | 'TECH' | 'DIPLO' | 'OFFICE'
+export type NationTabKey = 'TREASURY' | 'TECH' | 'DIPLO' | 'OFFICE' | 'POLICY'
 
 /** 页签的中文名与它各自的键。表驱动是为了表现层只有一处 switch。 */
 export const NATION_TABS: readonly { key: NationTabKey; label: string }[] = [
@@ -38,6 +42,7 @@ export const NATION_TABS: readonly { key: NationTabKey; label: string }[] = [
   { key: 'TECH', label: '国家科技' },
   { key: 'DIPLO', label: '外交' },
   { key: 'OFFICE', label: '任命' },
+  { key: 'POLICY', label: '国策' },
 ]
 
 /**

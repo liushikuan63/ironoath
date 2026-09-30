@@ -104,6 +104,9 @@ import type {
   DiplomacyRelation, NationLeaveResp, NationOffice, NationRelationView, NationResp, NationTreasuryResp,
 } from '../../net/generated/NationProtocol'
 import type { NationTechListView } from '../../net/generated/NationTechProtocol'
+import type { NationPolicyRoundView } from '../../net/generated/NationProtocol'
+import { buildPolicyPanel } from '../nation/NationPolicyPanel'
+import type { PolicyPanel } from '../nation/NationPolicyPanel'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
@@ -672,6 +675,8 @@ export class AppRoot {
   private nationTab: NationTabKey = 'TREASURY'
   /** S2：国家科技那一棵树。没拉过为 null（面板据它说"这一次没读到"，不是空白）。 */
   private nationTechResp: NationTechListView | null = null
+  /** 国策轮次。没拉过为 null —— 与「拉到了但本轮没有提案」是两件事。 */
+  private nationPolicyResp: NationPolicyRoundView | null = null
   /**
    * S2：外交关系表。**null = 还没打过一次交道**，不是"没有关系" ——
    * 服务端只有写口（`/nation/diplomacy`）能拿到这张表，所以第一次打开之前是空的。
@@ -3529,9 +3534,25 @@ export class AppRoot {
       permissionsLoaded: this.permissions.nationLoaded,
       tab: this.nationTab,
       sections: buildNationSections(this.nationTechResp, this.nationRelations,
-        this.nationCandidates, members, this.permissions.nation, this.permissions.nationLoaded),
+        this.nationCandidates, members, this.permissions.nation, this.permissions.nationLoaded,
+        this.nationPolicyPanel()),
     })
     this.targets.nation?.(view)
+  }
+
+  /**
+   * 国策那一页的视图模型。
+   *
+   * <p><b>「没拉过」与「拉到了」要能分开</b>：拉之前给 null，面板说「这一次没拉到」；
+   * 拉到了而本轮一条提案都没有，给的是「本轮还没有提案」。
+   * 两者混成同一个空面板，玩家会以为这个国家没有国策可议。
+   */
+  private nationPolicyPanel(): PolicyPanel | null {
+    const resp = this.nationPolicyResp
+    if (resp === null) {
+      return null
+    }
+    return buildPolicyPanel(resp, this.playerId ?? '')
   }
 
   // ---------- 国家 S2：页签 + 科技 / 外交 / 任命 ----------
@@ -3554,6 +3575,70 @@ export class AppRoot {
     if (tab === 'DIPLO' && this.nationCandidates.length === 0) {
       // 外交页的候选目标也来自国家榜（服务端没有"列出全部国家"的端点）
       await this.loadNationCandidates()
+    }
+    // 国策页**每次切都重拉**：轮次是在服务端惰性推进的，而投票窗只有 24 小时 ——
+    // 拿缓存的话玩家会在窗口已经关掉的屏上点「赞成」，点回去才被拒。
+    if (tab === 'POLICY' && this.nationResp !== null) {
+      await this.loadNationPolicy()
+    }
+    this.deliverNation()
+  }
+
+  /** 拉一次国策轮次。失败时理由进 notice，**不清空手里那一份**（与科技同一条纪律）。 */
+  private async loadNationPolicy(): Promise<void> {
+    const outcome = await this.api.nationPolicy()
+    if (outcome.kind === 'ok') {
+      this.nationPolicyResp = outcome.data
+      return
+    }
+    this.nationPolicyResp = null
+    this.nationNotice = AppRoot.reason(outcome)
+    this.nationNoticeTone = 'warn'
+  }
+
+  /**
+   * 提案。
+   *
+   * <p>回执带整份轮次视图，所以**不再多发一次查询** —— 多发一次就会看到两个时刻的数
+   * （提案刚被投掉、面板还挂着上一份）。
+   */
+  async proposeNationPolicy(policyId: string): Promise<void> {
+    if (this.nationPolicyResp === null) {
+      return
+    }
+    const outcome = await this.api.proposeNationPolicy({ policyId })
+    if (outcome.kind === 'ok') {
+      this.nationPolicyResp = outcome.data.round
+      const name = outcome.data.round.policies.find(p => p.policyId === policyId)?.name ?? '那一条国策'
+      this.nationNotice = `已把「${name}」放进本轮提案，等开票`
+      this.nationNoticeTone = 'ok'
+      this.track(TRACK_EVENTS.nationPolicyPropose, { policy: policyId })
+    } else {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.nationNoticeTone = 'warn'
+    }
+    this.deliverNation()
+  }
+
+  /**
+   * 投票。
+   *
+   * <p><b>不做本地乐观更新</b>：票数与参与者名单都从服务端那一份账本算出来，
+   * 本地先把数字 +1 的话，屏上会出现「赞成了但名单里没有我」的那一刻。
+   */
+  async voteNationPolicy(proposalId: string, support: boolean): Promise<void> {
+    if (this.nationPolicyResp === null) {
+      return
+    }
+    const outcome = await this.api.voteNationPolicy({ proposalId, support })
+    if (outcome.kind === 'ok') {
+      this.nationPolicyResp = outcome.data.round
+      this.nationNotice = support ? '已投赞成' : '已投反对'
+      this.nationNoticeTone = 'ok'
+      this.track(TRACK_EVENTS.nationPolicyVote, { support: support ? 'yes' : 'no' })
+    } else {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.nationNoticeTone = 'warn'
     }
     this.deliverNation()
   }
