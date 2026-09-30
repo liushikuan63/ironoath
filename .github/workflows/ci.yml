@@ -78,3 +78,68 @@ jobs:
       # 产物类门在没有 Cocos 构建时会打 [SKIPPED] 并说明"这不是通过"。
       - name: Static gates
         run: bash scripts/check.sh
+
+  # 运行时探针里**不需要前端产物**的那一类：纯 HTTP，起一个 dev 后端就能跑。
+  #
+  # ⚠ **这是当前可达的上界，不是"探针批跑已经进 CI 了"**：35 份 `verify-*-runtime.mjs` 绝大多数要
+  #   `client/build/web-mobile`，而 Cocos 构建在 ubuntu runner 上做不到（要登录与许可 ——
+  #   与上面产物类门在 CI 里只能 SKIPPED 是同一条理由）。需要产物那一批仍要在装了编辑器的机器上
+  #   按 AGENTS.md §二 的批跑纪律手工跑（2026-09-30 那笔实证：只跑自己碰的两份会漏掉真回归）。
+  #
+  # 为什么这一份值得单独进门禁：它是**服务端真链路的端到端**（真 HTTP、零夹具，`/nation/*` 里
+  # 7 个端点走一遍，含建国/入籍/国库/科技/外交/任命/退国与两条负例，52 条判据）。它原来只在
+  # "有人记得手工跑"的时候跑，而它是唯一能证明"服务端整条链路在 CI 环境里也成立"的量具。
+  probes:
+    runs-on: ubuntu-latest
+    needs: verify
+    env:
+      # 这一份探针要求"新号主城 16 级"（B13 建国前置），而新号默认 1 级 —— 靠这个 **dev 专用**档位
+      # 抬上去（`DevNewPlayerBoost`，`@Profile("dev")`，prod 读不到它）。两个变量都不设时行为与改动前一致。
+      IRONOATH_DEV_CITY_LEVEL: '16'
+      IRONOATH_DEV_START_AMOUNT: '2000000'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # **起后端与跑探针必须在同一步**：分成两步时，上一步的后台进程会在步结束时被收走，
+      # 探针连不上 8080 —— 症状是"探针红"，而真正的原因是进程没了。
+      # `dev.sh` 自己会先 `mvn install -q` 把上游模块刷进本地仓库，再以 dev profile 起服务
+      # （dev = storage: memory，所以这一步不需要 Mongo 服务容器）。
+      - name: Boot the dev backend and run the nation live chain
+        run: |
+          set -euo pipefail
+          nohup bash scripts/dev.sh > /tmp/backend.log 2>&1 &
+          ready=0
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+              http://localhost:8080/player/init \
+              -H 'content-type: application/json' \
+              -d "{\"requestId\":\"ci-ready-$i\",\"deviceId\":\"ci-ready-$i\",\"nickName\":\"ci\",\"avatarId\":1,\"clientTime\":$(date +%s%3N)}" \
+              || true)
+            if [ "$code" = "200" ]; then
+              echo "后端就绪（第 $i 次探测，约 $((i * 2)) 秒）"
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then
+            echo "后端 180 秒内没起来 —— 先看它自己的日志"
+            tail -80 /tmp/backend.log
+            exit 1
+          fi
+          BACKEND_ORIGIN=http://localhost:8080 node tools/verify-nation-live.mjs
+
+      # 失败时把后端日志尾部带出来：探针只说"业务码不是 0"，而原因在服务端那一侧
+      - name: Backend log（失败时）
+        if: failure()
+        run: tail -120 /tmp/backend.log
