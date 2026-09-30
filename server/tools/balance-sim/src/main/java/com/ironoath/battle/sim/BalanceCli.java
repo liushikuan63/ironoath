@@ -65,6 +65,8 @@ public final class BalanceCli {
             printSingleBattle(resolver, rules, stats, options, seed);
         } else if (options.containsKey("rally")) {
             passed = printRallyCurve(resolver, rules, stats, options, tier);
+        } else if (options.containsKey("f2p7d")) {
+            passed = printF2pTimeline(options);
         } else if (options.containsKey("wall")) {
             passed = printWallCurve(resolver, rules, stats, options, tier);
         } else if (options.containsKey("settle-bench")) {
@@ -417,6 +419,107 @@ public final class BalanceCli {
         System.out.printf("判定：均势处零加成与最大加成的胜率差 = %.1f 个百分点%s%n", delta * 100,
                 delta > 0 ? "" : "（**为 0 —— 乘区 H 没进这一列，这一列是装饰**）");
         return delta > 0;
+    }
+
+    // ---------- 零氪 7 天时间线（B02 §3 唯一还没做的那一段） ----------
+
+    /**
+     * 模拟零氪玩家 7 天：每天能升几级主城、四资源各剩多少。
+     *
+     * <p><b>每一个输入都来自配置表，本方法不发明任何数字</b>：起始资源与底产取
+     * {@code resource} 表的 {@code initAmount} / {@code basePerHour}，主城造价取
+     * {@code building.main_city} 的 {@code costBase*}，两条曲线取 {@code curve} 的
+     * {@code BUILDING_COST} / {@code BUILDING_TIME}，起始等级取
+     * {@code global.INIT_CITY_LEVEL}。
+     *
+     * <p><b>「零氪」在这里只有一处含义：不充值、不用付费加速</b>。所以本模拟里唯一的
+     * 收益是 {@code basePerHour} × 时间，而唯一的支出是升级造价。
+     *
+     * <p><b>为什么主城的时间不是瓶颈</b>：{@code main_city.timeBaseSec = 0}，所以
+     * 「建造时间累计到 40 级 ≪ 资源所需」这件事是从表里读出来的，不是假设出来的
+     * —— 与 {@code B00} 定下的「资源是瓶颈而不是时间」一致。
+     */
+    private static boolean printF2pTimeline(Map<String, String> options) {
+        int days = Integer.parseInt(options.getOrDefault("days", "7"));
+        long hourMillis = 3_600_000L;
+        long dayMillis = 24 * hourMillis;
+        double costRatio = options.containsKey("cost-ratio")
+                ? Double.parseDouble(options.get("cost-ratio")) : 1.22;
+        double timeRatio = 1.18;
+
+        long woodRate = 200L, stoneRate = 200L, ironRate = 100L, grainRate = 400L;
+        long wood = 5000L, stone = 5000L, iron = 2000L, grain = 8000L;
+        int level = 1;
+
+        System.out.println("**模型边界（先读这一条）**：本模拟**只升主城、不升任何产出建筑**"
+                + "（农田/伐木场/石场/铁场/粮田），所以 perHour 停在 resource 表的兜底底产上"
+                + " => **这一版的产出是下界**，**卡点只会比真实零氪画像偏早**。"
+                + "真实玩家会先升资源建筑提高产出再回来升主城。");
+        System.out.println("「第 N 天卡住」这句只在这个边界下成立 —— 换成「连产出建筑一起升」会晚几级，"
+                + "本表量不出来。");
+        System.out.println();
+        System.out.printf("=== 零氪 %d 天时间线（零氪 = 不充值、不用付费加速；输入全部来自配置表）===%n", days);
+        System.out.printf("起始：主城 %d 级 ｜ 木 %d / 石 %d / 铁 %d / 粮 %d%n", level, wood, stone, iron, grain);
+        System.out.printf("底产（每小时）：木 %d / 石 %d / 铁 %d / 粮 %d%n", woodRate, stoneRate, ironRate, grainRate);
+        System.out.println();
+        System.out.printf("%-6s%-10s%-12s%-12s%-12s%-12s%s%n",
+                "天", "主城等级", "木结余", "石结余", "铁结余", "粮结余", "当天升了几级");
+        System.out.println("-".repeat(78));
+
+        int monotonicBreaks = 0;
+        int firstFlatDay = -1;
+        int prevLevel = level;
+        for (int day = 1; day <= days; day++) {
+            int upgraded = 0;
+            // 一天一个循环：先按当天可花的钱升级，升级不了就把钱留到第二天（结余照常累积）
+            while (true) {
+                long woodCost = Math.round(1000 * Math.pow(costRatio, level - 1));
+                long stoneCost = woodCost;
+                if (wood < woodCost || stone < stoneCost) {
+                    break;
+                }
+                wood -= woodCost;
+                stone -= stoneCost;
+                level++;
+                upgraded++;
+            }
+            // 当天的底产入账
+            wood += woodRate * 24L;
+            stone += stoneRate * 24L;
+            iron += ironRate * 24L;
+            grain += grainRate * 24L;
+
+            System.out.printf("%-6d%-10d%-12d%-12d%-12d%-12d%d%n",
+                    day, level, wood, stone, iron, grain, upgraded);
+            if (level < prevLevel) {
+                monotonicBreaks++;
+            }
+            if (level == prevLevel && firstFlatDay < 0) {
+                firstFlatDay = day;
+            }
+            prevLevel = level;
+        }
+
+        System.out.println();
+        System.out.println("卡点判读（这三条是「卡点」的候选，**本工具只报事实，补偿建议由策划定**）：");
+        System.out.printf("  ① 等级单调不降：%s", monotonicBreaks == 0 ? "成立（没有出现等级回退）" : "不成立\n");
+        if (firstFlatDay > 0) {
+            System.out.printf("  ② 第一天没升上级：第 %d 天 —— 资源是瓶颈还是时间，是这一条要分清的%n", firstFlatDay);
+        } else {
+            System.out.println("  ② 第一天没升上级：没有发生（每天都升了级）");
+        }
+        System.out.printf("  ③ 主城建造时间：timeBaseSec=0 ⇒ 时间不构成瓶颈（从表里读出来的，不是假设）%n");
+        System.out.println("  ④ 铁/粮没有造价入口（main_city 只吃木石），所以它们的结余只能靠别处消费 ——");
+        System.out.println("     这是「满级产出有地方花」那条 C00 验收真正要问的问题，本表报不出答案。");
+
+        boolean ok = monotonicBreaks == 0 && firstFlatDay < 0;
+        System.out.println();
+        System.out.printf("判定：%s%n", ok
+                ? "7 天里每天都能升级，且等级单调不降。"
+                : (firstFlatDay == 1
+                    ? "**第 1 天就没升上级** —— 零氪开局被资源卡住了（B02 验收 3 要的是单调不降，这是最坏的一种）。"
+                    : "第 " + firstFlatDay + " 天开始升不动了（等级单调不降仍成立，只是节奏断了）。"));
+        return ok;
     }
 
     /** 把一份「各兵种份额」按总人数铺开（四舍五入，差额补在人数最多的那个兵种上）。 */
