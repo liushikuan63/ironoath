@@ -585,7 +585,8 @@
         "policyId",
         "name",
         "effectAttr",
-        "effectValueFixed"
+        "effectValueFixed",
+        "effectText"
       ],
       "properties": {
         "policyId": {
@@ -724,6 +725,8 @@
         "phase",
         "policySlotCount",
         "policies",
+        "effectText",
+        "slotOrderNote",
         "proposals",
         "active",
         "canPropose",

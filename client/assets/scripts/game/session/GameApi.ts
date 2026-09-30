@@ -108,13 +108,13 @@ import type {
 import type { EquipForgeReq, EquipForgeResp, EquipInstanceListView } from '../../net/generated/EquipProtocol'
 import type {
   NationAppointReq, NationDisbandReq, NationDisbandResp, NationDiplomacyReq, NationDiplomacyResp,
-  NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationResp, NationTreasuryResp,
-  NationTreasurySpendReq, NationTreasurySpendResp,
+  NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationPolicyProposeReq,
+  NationPolicyProposeResp, NationPolicyRoundView, NationPolicyVoteReq, NationPolicyVoteResp,
+  NationResp, NationTreasuryResp, NationTreasurySpendReq, NationTreasurySpendResp,
 } from '../../net/generated/NationProtocol'
 import type {
   NationTechListView, NationTechResearchReq, NationTechResearchResp,
 } from '../../net/generated/NationTechProtocol'
-
 export interface GameApiDeps {
   readonly net: NetModule
   readonly store: Store
@@ -380,6 +380,40 @@ export class GameApi {
    */
   researchNationTech(req: Omit<NationTechResearchReq, 'requestId'>): Promise<NetOutcome<NationTechResearchResp>> {
     return this.mutate<NationTechResearchReq, NationTechResearchResp>('/nation/tech/research', req)
+  }
+
+  // ---------- 国策（B13 §4，2026-09-30） ----------
+
+  /**
+   * GET /nation/policy —— 国策轮次全量视图。
+   *
+   * <p><b>这个「读」会推进轮次</b>（服务端惰性结算），所以它不是纯查询：
+   * 面板打开一次就等于替这个国家推了一次时间，返回的 `serverNow` / `nextVoteAt` /
+   * `voteEndsAt` 是推进之后的那一份。
+   */
+  nationPolicy(): Promise<NetOutcome<NationPolicyRoundView>> {
+    return this.read<NationPolicyRoundView>('/nation/policy')
+  }
+
+  /**
+   * POST /nation/policy/propose —— 提案。
+   *
+   * <p>请求里**没有金额**：国库三用途（科技 / 国战增益 / 俸禄）里没有国策，
+   * 所以这一条不消耗任何资源。回执带整份轮次视图，提案面板据此刷新，不再多发一次查询
+   * —— 多发一次就会看到两个时刻的数（提案刚被投掉、面板还挂着上一份）。
+   */
+  proposeNationPolicy(req: Omit<NationPolicyProposeReq, 'requestId'>): Promise<NetOutcome<NationPolicyProposeResp>> {
+    return this.mutate<NationPolicyProposeReq, NationPolicyProposeResp>('/nation/policy/propose', req)
+  }
+
+  /**
+   * POST /nation/policy/vote —— 对一条提案投赞成或反对。
+   *
+   * <p><b>幂等键在这一条比提案更要紧</b>：重放一次投票会让票数凭空 +1，而公示的两个数字
+   * （票数与参与者名单）都从这份账本算出来 —— 票数与名单对不上正是这一格唯一要防的形状。
+   */
+  voteNationPolicy(req: Omit<NationPolicyVoteReq, 'requestId'>): Promise<NetOutcome<NationPolicyVoteResp>> {
+    return this.mutate<NationPolicyVoteReq, NationPolicyVoteResp>('/nation/policy/vote', req)
   }
 
   // ---------- 城建（B03） ----------

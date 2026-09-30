@@ -360,7 +360,7 @@ export interface NationPolicyView {
   /** 作用到的兵种中文名，服务端从 `unit.json` 查好下发；不针对特定兵种的国策（坚壁/丰收/征伐）为 null。 **下发中文名而不是 `targetUnit` id**：客户端不抄配置表（数值与中文名一律来自服务端），而玩家要看到的是「轻骑兵 T1」而不是 `unit_cavalry_t1`。 */
   targetUnitName: string | null
   /** 一句可直接上屏的效果说明（服务端拼好的，如「轻骑兵 T1 攻击 +15%」）。有了它，客户端就不必把 `effectAttr` × `effectValueFixed` × `targetUnitName` 自己拼一遍 —— 那正是「第二个家」的形状（改文案要改客户端，而且拼错的版本没人能发现）。 */
-  effectText: string | null
+  effectText: string
 }
 
 /**
@@ -439,7 +439,7 @@ export interface NationPolicyRoundView {
   /** 本轮投票窗的结束时刻（服务端时间戳）。不在 `VOTING` 段时为 0。窗口长度读 `global.NATION_VOTE_DURATION_HOURS`，那是它的唯一家。 */
   voteEndsAt: number
   /** 同轮多条提案都通过时槽位怎么分 —— **一句可上屏的说明**，服务端下发。 规则是「赞成率降序 → 赞成票数降序 → 提案时刻升序 → policyId 字典序」。前三级都能从票数与时刻直接推出，最后一级是**纯粹为了确定性**（同率同数同时刻时不能靠哈希顺序决定，那会让同一份存档复算出不同的结果）。 ⚠ **B13 与 B21 都没写过这一条**（通过门槛用的是相对 50%，槽位竞争是裁决 Q3 明确没选的第三项），所以它是实现侧定的规则，落在服务端一处，改它只改一处。 */
-  slotOrderNote: string | null
+  slotOrderNote: string
   /** 服务端时刻。所有倒计时的基准，与 `nextVoteAt` / `voteEndsAt` 同源。 */
   serverNow: number
 }
