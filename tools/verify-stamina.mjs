@@ -97,7 +97,12 @@ url.searchParams.set('panel', 'city')
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
 await page.waitForFunction(() => window.cc?.director?.getScene?.() != null, null, { timeout: 25_000 })
   .catch(() => {})
-await page.waitForTimeout(2500)
+// 等待时长做成可调（#610）：原来写死 2500ms。实测（#610）缩短它并不能改变「点不中」，
+// 但把它做成参数之后，"点得中/点不中"可以按 GET /stamina 出现的**条数**直接判读 —���
+// 一条 = 点击没命中（只有 AppRoot:913 的 deliver），两条 = 点击命中且触发了
+// openStaminaDetail(:1204)。这是复现「点不中」时最省事的那个开关。
+const __waitMs = Number(process.env.STA_WAIT_MS ?? '2500')
+await page.waitForTimeout(__waitMs)
 await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   const visit = (node) => {
