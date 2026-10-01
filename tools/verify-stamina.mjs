@@ -129,6 +129,11 @@ const clickStaminaRow = () => page.evaluate(() => {
   }
   visit(scene)
   if (target === null) return null
+  // 诊断 E（#611）：#610 用偏移扫描钉死了「点 Label 中心偏 12px，触摸挂在整行节点上」。
+  // 这里把 Label 往上每一层祖先的 UITransform 尺寸打出来 —— 找出「整行」是哪一层。
+  // 注意：这段跑在**浏览器上下文**，console.log 会进页面而不是 node 的 stdout，
+  // 必须收集到局部变量再随返回值带出去（#610 那次就是栽在这里，什么都没打出来）。
+  const chainRows = []  // #611 对照：计算已移除
   const box = target.getComponent('cc.UITransform')
   const camera = scene.getComponentInChildren('cc.Camera')
   if (box === null || camera === null) return null
@@ -136,6 +141,7 @@ const clickStaminaRow = () => page.evaluate(() => {
   const rect = document.querySelector('canvas').getBoundingClientRect()
   const pixel = cc.view.getVisibleSizeInPixel()
   return {
+    chain: chainRows.join(' <- '),
     x: rect.left + (screen.x / pixel.width) * rect.width,
     y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
   }
@@ -179,6 +185,20 @@ const clickInOverlay = (nodeName) => page.evaluate((name) => {
   }
   walk(overlay)
   if (target === null) return null
+  // 诊断 E（#611）：#610 用偏移扫描钉死了「点 Label 中心偏 12px，触摸挂在整行节点上」。
+  // 这里把 Label 往上每一层祖先的 UITransform 尺寸打出来 —— 找出「整行」是哪一层。
+  // 注意：这段跑在**浏览器上下文**，console.log 会进页面而不是 node 的 stdout，
+  // 必须收集到局部变量再随返回值带出去（#610 那次就是栽在这里，什么都没打出来）。
+  const chainRows = []
+  {
+    let q = target
+    while (q != null) {
+      const bx = q.getComponent('cc.UITransform')
+      const sz = bx == null ? 'no-UI' : Math.round(bx.contentSize.width) + 'x' + Math.round(bx.contentSize.height)
+      chainRows.push(q.name + '[' + sz + ']active=' + q.active + ',inh=' + q.activeInHierarchy)
+      q = q.parent
+    }
+  }
   const box = target.getComponent('cc.UITransform')
   const camera = scene.getComponentInChildren('cc.Camera')
   if (box === null || camera === null) return null
@@ -186,12 +206,14 @@ const clickInOverlay = (nodeName) => page.evaluate((name) => {
   const rect = document.querySelector('canvas').getBoundingClientRect()
   const pixel = cc.view.getVisibleSizeInPixel()
   return {
+    chain: chainRows.join(' <- '),
     x: rect.left + (screen.x / pixel.width) * rect.width,
     y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
   }
 }, nodeName)
 
 const rowPoint = await clickStaminaRow()
+console.log('[stamina][诊断E] Label 祖先链：' + (rowPoint === null ? '(rowPoint=null)' : rowPoint.chain))
 if (rowPoint === null) {
   console.error('[stamina][前置] 资源条上找不到「体力」那一行 —— 前置不满足')
   process.exit(2)
