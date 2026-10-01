@@ -492,7 +492,14 @@ public final class BalanceCli {
         System.out.printf("底产（读自 building 表）：木 %d / 石 %d / 铁 %d / 粮 %d 每小时"
                 + "（已乘 --base-rate %s）%n", woodRate, stoneRate, ironRate, grainRate,
                 options.getOrDefault("base-rate", "1.0"));
-        long wood = 5000L, stone = 5000L, iron = 2000L, grain = 8000L;
+        // **初始资源也从 resource 表读**（#599）：原来写死 5000/5000/2000/8000，与 resource.json 的
+        // initAmount 一致 —— 但那是「今天一致」。#594~#598 已经把 capBase / initCap / producers /
+        // 仓库与主城造价都接到表上了，只剩这一行自己记一份，改表就会静默按旧初始量跑。
+        // 上面那四行 woodRate/stoneRate/... 早就读表了，这一行是唯一的例外。
+        long wood = configs.get(com.ironoath.config.cfg.ResourceCfg.class, "WOOD").initAmount();
+        long stone = configs.get(com.ironoath.config.cfg.ResourceCfg.class, "STONE").initAmount();
+        long iron = configs.get(com.ironoath.config.cfg.ResourceCfg.class, "IRON").initAmount();
+        long grain = configs.get(com.ironoath.config.cfg.ResourceCfg.class, "GRAIN").initAmount();
         int level = 1;
         // **产出建筑也升**（默认开）。四座的输入全部来自 building 表，形状与 ResourceRateService
         // 的 buildingPerHour 一致：base × BUILDING_OUTPUT^(level-1)，且**升级中不计产出**

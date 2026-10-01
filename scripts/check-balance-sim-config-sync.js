@@ -1,6 +1,6 @@
 /**
  * 判据：balance-sim 的 f2p 模拟里，凡是与配置表重复的数值都必须从表读，不得硬编码。
- *       2026-10-02 盯五处：capBase（#594）、initCap 与 producers（#596）、仓库与主城造价（#598）。
+ *       2026-10-02 盯五处：capBase（#594）、initCap 与 producers（#596）、仓库与主城造价（#598）、初始资源 initAmount（#599）。
  *
  * 背景（收口清单 #592~#596）：模拟器原来把仓容基数硬编码成 1000，而 building.json 已经是 8000；
  * initCap 与 producers 也是字面量。两边漂移时模拟器照常输出一整套读数，却全是按旧值算的，
@@ -121,6 +121,25 @@ if (/long\s+stoneCost\s*=\s*woodCost\s*;/.test(cli)) {
   fail('主城石价被写成 stoneCost = woodCost —— 那等价于断言「主城木石同价」。'
     + '表里今天是 1000/1000，但那是巧合不是约束，改表就会静默按旧值算。')
 }
+// ---------- ⑤ 初始资源 initAmount（#599）----------
+// 紧挨着它的 woodRate / stoneRate / ... 早就读表了，只有初始资源这一行自己记了
+// 5000/5000/2000/8000 —— 于是「改了 resource.json 的 initAmount，模拟器照按旧初始量跑」。
+const initIdx2 = lines.findIndex((l) => /long\s+wood\s*=\s*configs\.get/.test(l))
+if (initIdx2 < 0) {
+  const legacy = lines.find((l) => /long\s+wood\s*=\s*\d+L\s*,\s*stone\s*=\s*\d+L/.test(l))
+  fail('初始资源没有从 ResourceCfg 读'
+    + (legacy ? '（仍是一行字面量：' + legacy.trim().slice(0, 60) + '）' : '')
+    + ' —— 改 resource.json 的 initAmount，模拟器会静默按旧初始量跑。')
+} else {
+  const init2Snip = lines.slice(initIdx2, initIdx2 + 5).join(NL)
+  const got2 = [...init2Snip.matchAll(/ResourceCfg\.class\s*,\s*"(\w+)"/g)].map((m) => m[1])
+  for (const w of ['WOOD', 'STONE', 'IRON', 'GRAIN']) {
+    if (!got2.includes(w)) {
+      fail('初始资源没有取 ' + w + '（当前只取了 ' + (got2.join(' / ') || '空') + '）'
+        + ' —— 少一种会让零氪起点少一份资源。')
+    }
+  }
+}
 if (fails.length) {
   console.error('[check-balance-sim-config-sync][FAIL] balance-sim 与配置表脱钩了：')
   for (const f of fails) console.error('  - ' + f)
@@ -134,6 +153,6 @@ const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 五处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 六处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
-  + ' / producers 4 座 / 仓库与主城造价各从表读）。')
+  + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount）。')
