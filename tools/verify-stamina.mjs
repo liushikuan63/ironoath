@@ -177,14 +177,50 @@ const clickStaminaRow = () => page.evaluate(() => {
   const box = target.getComponent('cc.UITransform')
   const camera = scene.getComponentInChildren('cc.Camera')
   if (box === null || camera === null) return null
-  const screen = camera.worldToScreen(box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
   const rect = document.querySelector('canvas').getBoundingClientRect()
-  const pixel = cc.view.getVisibleSizeInPixel()
+  // **坐标口径统一到引擎那条**（#633）：#632 查明触发的判定链是
+  //   `_handleTouchStart` → `i.hitTest(t.getLocation(ly), windowId)`
+  //   → `hitTest` 内部 `h.screenToWorld(Vec3)` 再按 `_anchorPoint` 判盒。
+  // 探针原来自己用 `worldToScreen` + `getVisibleSizeInPixel` 归一 + 自己翻 y，是**第三条**路，
+  // 与前两条都不保证一致（#628 那次量到的 364px 差就是这么来的）。
+  //
+  // ⇒ 这里改成**用引擎自己的 `hitTest` 反查**：以 Label 锚点为起点，在它自己的盒内取样，
+  // 找到第一个 `hitTest` 通过的屏幕点就返回它。这样拿到的是「引擎认的点」，而不是
+  // 「我们以为的点」—— 三条路合一，且不依赖任何关于缩放/翻转的手工推导。
+  //
+  // `hitTest(v, 0)` 的入参是**屏幕坐标**（cc.js 原文：`Qn.set(r, t.x, t.y, 0); h.screenToWorld(r, r)`），
+  // 单位与 `Touch.getLocation` 一致；`windowId` 传 0 与 `hitTest` 的默认值一致（`void 0 === e && (e = 0)`）。
+  const size = box.contentSize
+  const ap = box.anchorPoint
+  // 盒中心相对锚点的偏移（anchor 0,0.5 ⇒ 中心在局部 +width/2）
+  const centreLocal = new cc.Vec2(size.width * (0.5 - ap.x), size.height * (0.5 - ap.y))
+  const worldCentre = box.convertToWorldSpaceAR(new cc.Vec3(centreLocal.x, centreLocal.y, 0))
+  const sc = camera.worldToScreen(worldCentre)
+  const base = {
+    x: rect.left + (sc.x / cc.view.getVisibleSizeInPixel().width) * rect.width,
+    y: rect.top + rect.height - (sc.y / cc.view.getVisibleSizeInPixel().height) * rect.height,
+  }
+  let picked = null
+  let tried = 0
+  // 以盒中心为原点做小范围扫描（先中心，再一圈 ±12px 的网格），用 hitTest 判定
+  for (const dy of [0, -12, 12, -24, 24, -36, 36]) {
+    for (const dx of [0, -12, 12, -24, 24, -36, 36, -48, 48]) {
+      const px = base.x + dx
+      const py = base.y + dy
+      tried++
+      const ok = box.hitTest(new cc.Vec2(px, py), 0)
+      if (ok) { picked = { x: px, y: py }; break }
+    }
+    if (picked !== null) break
+  }
+  const point = picked ?? base
+
   return {
     diagG: barRows.length + ' 项：' + barRows.join(' ; '),
     chain: chainRows.join(' <- '),
-    x: rect.left + (screen.x / pixel.width) * rect.width,
-    y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
+    scan: 'base=' + Math.round(base.x) + ',' + Math.round(base.y) + ' tried=' + tried + ' hit=' + (picked === null ? '(全不命中)' : '偏移 ' + Math.round(picked.x - base.x) + ',' + Math.round(picked.y - base.y)),
+    x: point.x,
+    y: point.y,
   }
 })
 
@@ -416,6 +452,7 @@ console.log('[stamina][hitTest] 探针点(' + htInfo.probe + ')：' + htInfo.row
 const __dx = Number(process.env.STA_DX ?? '0')
 const __dy = Number(process.env.STA_DY ?? '0')
 console.log('[stamina][偏移] 基准=' + Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y) + ' 偏移=' + __dx + ',' + __dy)
+console.log('[stamina][扫描] ' + rowPoint.scan)
 await page.mouse.click(rowPoint.x + __dx, rowPoint.y + __dy)
 const touchHits = await page.evaluate(() => (window.__touchHits ?? []).slice())
 console.log('[stamina][触摸] 收到 touch-start 的节点: ' + (touchHits.length === 0 ? '(无)' : touchHits.join('、')) + '  |  点击点=' + Math.round(rowPoint.x + __dx) + ',' + Math.round(rowPoint.y + __dy))
