@@ -611,7 +611,7 @@ public final class BalanceCli {
                         // BUILDING_OUTPUT（现值 1）。第一版这里写的是 base × 1^(n-1) = base，
                         // 也就是「升了不涨产出」—— 那是我抄错了公式，于是「交替」那档的 3 级
                         // 完全是这个 bug 的产物，不是玩法结论。
-                        producerRates[p] = Math.round(out * Math.pow(outExponent, producerLevels[p] - 1));
+                        producerRates[p] = Math.round(out * Math.pow(producerLevels[p], outExponent));
                     }
                 }
             }
@@ -645,7 +645,7 @@ public final class BalanceCli {
                         // BUILDING_OUTPUT（现值 1）。第一版这里写的是 base × 1^(n-1) = base，
                         // 也就是「升了不涨产出」—— 那是我抄错了公式，于是「交替」那档的 3 级
                         // 完全是这个 bug 的产物，不是玩法结论。
-                        producerRates[p] = Math.round(out * Math.pow(outExponent, producerLevels[p] - 1));
+                        producerRates[p] = Math.round(out * Math.pow(producerLevels[p], outExponent));
                     }
                 }
             }
