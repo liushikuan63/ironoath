@@ -139,10 +139,10 @@ const UNREFERENCED = {
   //   ② 值住在另一张表里（global 这一对是聚合/上限，权威值在别处）
   //   ③ 整块玩法未开工
   //   ④ 判据是压测/口径而不是代码
-  STAGE_DIFFICULTY_BASE: 'zero-ref: #501①（B09 难度曲线装配口缺：领域层备好了、没人读这四条）',
-  STAGE_DIFFICULTY_RATIO_EARLY: 'zero-ref: #501①（同上）',
-  STAGE_DIFFICULTY_EARLY_THROUGH: 'zero-ref: #501①（同上）',
-  STAGE_DIFFICULTY_RATIO_LATE: 'zero-ref: #501①（同上）',
+  STAGE_DIFFICULTY_BASE: 'zero-ref: #501①（**生成期输入**：stage 表那 50 行是由这四条推导物化的，运行期读的是物化后的行 —— 改难度要改这四条再重跑生成器）',
+  STAGE_DIFFICULTY_RATIO_EARLY: 'zero-ref: #501①（同上：生成期输入）',
+  STAGE_DIFFICULTY_EARLY_THROUGH: 'zero-ref: #501①（同上：生成期输入）',
+  STAGE_DIFFICULTY_RATIO_LATE: 'zero-ref: #501①（同上：生成期输入）',
   BOT_SHARE_LINJU: 'zero-ref: #501①（B11 五原型份额：bot_archetype 表有逐原型的值，global 这一组没有装配口）',
   BOT_SHARE_MENGYOU: 'zero-ref: #501①（同上）',
   BOT_SHARE_JIELUE: 'zero-ref: #501①（同上）',
@@ -161,7 +161,7 @@ const UNREFERENCED = {
   PRODUCT_GROWTH_FUND_CENTS: 'zero-ref: #501③（成长基金未上货架）',
   PRODUCT_FIRST_CHARGE_CENTS: 'zero-ref: #501③（首充档位未上货架）',
   PRODUCT_GIFT_CENTS: 'zero-ref: #501③（礼包档价格未上货架）',
-  GIFT_VALUE_MULTIPLIER: 'zero-ref: #501①（B19 §五① 的换算倍率，装配口缺；product_reward 表里有逐行 rewardValue）',
+  GIFT_VALUE_MULTIPLIER: 'zero-ref: #501①（**换算期输入**：B19 §五① 的倍率只在算价时用，运行期读 product_reward 的逐行 rewardValue）',
   // 2026-09-30: #19 rally bonus wiring is DONE (PlayerCityBattleService.rallyBonus).
   //   Amplitude comes from the measured balance-sim --rally curve (A10).
   //   The gate is march.isRallyMarch(), not a second headcount check --
