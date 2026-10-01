@@ -570,6 +570,15 @@ public final class BalanceCli {
         long cityWood = 0L, cityStone = 0L;   // 主城升级花费（#532 对账用）
         // 每一处资源扣除自报（#534）：**别靠 grep 猜，让它自己报花了多少**
         final Map<String, Long> spendTags = new java.util.TreeMap<>();
+        // 具名扣料（#537）：**名字写在这一行旁边**，不再靠「插入顺序」编号
+        // —— 那样「标签 ↔ 位置」就成了推断（#537 的结论）。
+        class Ledger {
+            final Map<String, Long> tags = new java.util.TreeMap<>();
+            void spend(String res, String who, long amount) {
+                tags.merge(res + "/" + who, amount, Long::sum);
+            }
+        }
+        final Ledger ledger = new Ledger();
         final double BUILD_COST_RATIO = 1.22;   // curve.BUILDING_COST.ratio
             if (withCap) {
                 // 兵营：与主城等级同步推进（requireMainLevel=3），本版不单独花资源升它
@@ -596,7 +605,7 @@ public final class BalanceCli {
                         break;
                     }
                     wood -= wc;
-                    spendTags.merge("#1 wood", wc, Long::sum);
+                    ledger.spend("wood", "warehouse-upgrade", wc);
                     stone -= ws;
                     buildWood += wc;
                     buildStone += ws;
@@ -698,7 +707,7 @@ public final class BalanceCli {
                     }
                     grain -= needGrain;
                     wood -= needWood;
-                    spendTags.merge("#2 wood", needWood, Long::sum);
+                    ledger.spend("wood", "build-gable", needWood);
                     stone -= needStone;
                     iron -= needIron;
                     buildGrain += needGrain;
@@ -776,7 +785,7 @@ public final class BalanceCli {
                             break;
                         }
                         wood -= cWood;
-                        spendTags.merge("#3 wood", cWood, Long::sum);
+                        ledger.spend("wood", "gather-A", cWood);
                         stone -= cStone;
                         buildWood += cWood;
                         buildStone += cStone;
@@ -798,7 +807,7 @@ public final class BalanceCli {
                     break;
                 }
                 wood -= woodCost;
-                spendTags.merge("#4 wood", woodCost, Long::sum);
+                ledger.spend("wood", "city-upgrade", woodCost);
                 stone -= stoneCost;
                 cityWood += woodCost;      // #532 对账
                 cityStone += stoneCost;
@@ -816,7 +825,7 @@ public final class BalanceCli {
                             break;
                         }
                         wood -= cWood;
-                        spendTags.merge("#5 wood", cWood, Long::sum);
+                        ledger.spend("wood", "gather-B", cWood);
                         stone -= cStone;
                         buildWood += cWood;
                         buildStone += cStone;
@@ -863,8 +872,8 @@ public final class BalanceCli {
             System.out.println();
             System.out.println("=== 收支对账（#532）===");
             System.out.println("=== 每一处木的扣除（#534 自报）===");
-            spendTags.forEach((k, v) -> System.out.printf("  %-14s %d%n", k, v));
-            long taggedTotal = spendTags.values().stream().mapToLong(Long::longValue).sum();
+            ledger.tags.forEach((k, v) -> System.out.printf("  %-22s %d%n", k, v));
+            long taggedTotal = ledger.tags.values().stream().mapToLong(Long::longValue).sum();
             System.out.printf("  合计 %d（对账差额 %+d 里有这一份）%n",
                     taggedTotal, taggedTotal - buildWood);
 
