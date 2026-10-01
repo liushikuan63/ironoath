@@ -359,6 +359,29 @@ await page.evaluate(() => {
   }
   walk(scene, 0)
 })
+// 命中顺序诊断（#628）：Cocos 的 `_sortByPriority`（cc.js 压缩源码）同父分支最终是
+//   var d = r ? r.siblingIndex : 0, _ = s ? s.siblingIndex : 0; return o ? d - _ : _ - d
+// ⇒ **同父之间按 siblingIndex（= 添加顺序）比较，先添加的先被命中**，与「后添加在上层」的
+// 渲染直觉相反。CityPanelView 里 `ResourcePlate` 先 addChild（L767），格子后加（L774+）
+// ⇒ 按这条规则 plate 永远先于格子被命中。这里把 siblingIndex 一次打全，好把这层推论钉死。
+const siblingInfo = await page.evaluate(() => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  const rows = []
+  const walk = (n, depth) => {
+    if (depth > 40) return
+    if (n.name.startsWith('Resource')) {
+      const p2 = n.parent
+      rows.push(`${n.name} siblingIndex=${n.siblingIndex} parent=${p2 == null ? '(null)' : p2.name}`
+        + ` parentSiblingOfPlate=${p2 == null ? '-' : p2.siblingIndex}`)
+    }
+    for (const c of n.children) walk(c, depth + 1)
+  }
+  walk(scene, 0)
+  rows.sort((a, b) => a.localeCompare(b))
+  return rows
+})
+console.log('[stamina][sibling] ' + siblingInfo.join(String.fromCharCode(10) + '    '))
 const __dx = Number(process.env.STA_DX ?? '0')
 const __dy = Number(process.env.STA_DY ?? '0')
 console.log('[stamina][偏移] 基准=' + Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y) + ' 偏移=' + __dx + ',' + __dy)
