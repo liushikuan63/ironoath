@@ -773,6 +773,8 @@ public final class BalanceCli {
                         }
                         wood -= cWood;
                         stone -= cStone;
+                        buildWood += cWood;
+                        buildStone += cStone;
                         iron -= cIron;
                         producerLevels[p]++;
                         // **产出随等级线性增长**：P(n) = base × n^exponent，exponent 取自 curve 表
@@ -811,6 +813,8 @@ public final class BalanceCli {
                         }
                         wood -= cWood;
                         stone -= cStone;
+                        buildWood += cWood;
+                        buildStone += cStone;
                         iron -= cIron;
                         producerLevels[p]++;
                         // **产出随等级线性增长**：P(n) = base × n^exponent，exponent 取自 curve 表
