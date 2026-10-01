@@ -6,6 +6,8 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.GiftCfg;
 import com.ironoath.core.city.CityRepository;
 import com.ironoath.core.city.CityState;
+import com.ironoath.core.bag.Inventory;
+import com.ironoath.core.bag.InventoryRepository;
 import com.ironoath.core.hero.HeroRepository;
 import com.ironoath.core.hero.HeroRoster;
 import com.ironoath.core.player.PlayerRepository;
@@ -65,6 +67,7 @@ class GiftPopupTriggerEndToEndTest {
     @Autowired private CityRepository cities;
     @Autowired private ArmyAppService armyAppService;
     @Autowired private HeroRepository heroes;
+    @Autowired private InventoryRepository inventories;
     @Autowired private HeroStatsService heroStats;
 
     /** 夹具：直接给足四种资源（照 ArmyEndpointTest.giveResources 的形状）。 */
@@ -103,6 +106,38 @@ class GiftPopupTriggerEndToEndTest {
         // 而 `load()` 只有**下一次请求**才会跑到 —— `collect` 走的是收割分支，
         // **不会把 settlement.harvested() 变成非空**。`list` 走 `load()`，所以补它一下。
         cityAppService.list(playerId);
+    }
+
+    /**
+     * 夹具：给道具（照 ArmyEndpointTest.giveItems 的形状 —— 直接写 Inventory）。
+     */
+    private void giveItems(String playerId, String itemId, long count) {
+        Inventory inv = inventories.findByPlayerId(playerId)
+                .orElseGet(() -> Inventory.empty((int) configs.longParam("BAG_INITIAL_CAPACITY")));
+        long added = inv.add(itemId, count,
+                configs.get(com.ironoath.config.cfg.ItemCfg.class, itemId).stackMax());
+        assertThat(added).as("夹具必须能放下 %s × %d", itemId, count).isEqualTo(count);
+        if (inventories.findByPlayerId(playerId).isEmpty()) {
+            assertThat(inventories.insertIfAbsent(playerId, inv)).isTrue();
+        } else {
+            inventories.save(playerId, inv, inventories.versionOf(playerId));
+        }
+    }
+
+    /**
+     * 夹具：**把训练秒数直接减到 0**（裁决 #577：用加速道具，不改 ArmyState）。
+     *
+     * <p>为什么走道具而不是后门：本仓硬纪律「服务端禁常驻定时器、时间推进一律惰性驱动」
+     * ⇒ 训练完成是**惰性判定** ⇒ 而服务端单测里**没有推进时间的手段**（收口清单 #574 已搜证）。
+     * {@code /army/speedUp} 带 {@code item_speedup_train_1h}（effectValue 3600 秒）
+     * 会把剩余秒数减 3600 ⇒ **下一次结算时那批兵就完成**，
+     * **而训练计时这条被测逻辑全程真实走过**（不像直接改 ArmyState 那样遮蔽它）。
+     */
+    private void finishTraining(String playerId, String unitId) {
+        giveItems(playerId, "item_speedup_train_1h", 2L);
+        armyAppService.speedUp(playerId,
+                new com.ironoath.web.dto.generated.ArmyUnitReq(
+                        "e2e-su-" + UUID.randomUUID(), unitId, 0L, "item_speedup_train_1h"));
     }
 
     /** 夹具：主城升到指定等级（初始 1 级，中心格 (3,3) 固定主城）。 */
@@ -239,6 +274,13 @@ class GiftPopupTriggerEndToEndTest {
         // **先造兵**（#571）：不造兵时 `/world/march` 恒回 `6000 MARCH_NO_TROOP`。
         try {
             trainT1(pid, 100L);
+            // **把训练秒数减到 0**（裁决 #577）：train 后立刻用加速道具，
+            // 下一次 `armyAppService.list()` 触发的惰性结算就会把它收进队列。
+            finishTraining(pid, "unit_infantry_t1");
+            // **再触发一次惰性结算**（#577）：本仓「时间推进一律惰性驱动」⇒
+            // 「训练是否完成」只在**下一次读 ArmyState** 时才判定，
+            // 加速道具只是把 `finishAt` 提前，所以必须再 `list()` 一次让它收进队列。
+            armyAppService.list(pid);
         } catch (com.ironoath.common.BizException e) {
             // **夹具前置未齐 ⇒ 诚实标「不可验 + 原因」而不是让本类把 mvn test 弄红**（#571）。
             // 已知原因：新号没有武将 ⇒ troopCap=0 ⇒ 造不出兵；上阵要 composeHero（合成）。
@@ -261,7 +303,11 @@ class GiftPopupTriggerEndToEndTest {
                         .header("X-Player-Id", pid)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"requestId\":\"e2e-a-" + UUID.randomUUID() + "\","
-                                + "\"targetX\":141,\"targetY\":83}"))
+                                // #577：**请求体之前是错的** —— `MarchReq` 的分量是
+                                // `units` + `heroes`，我之前一个都没传（只传了 targetX/targetY），
+                                // 而 6000 MARCH_NO_TROOP 大概率就是这么来的。
+                                + "\"units\":[{\"unitId\":\"unit_infantry_t1\",\"count\":100}],"
+                                + "\"heroes\":[\"hero_ssr_02\"]}"))
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         int attackCode = JsonUtils.readTree(attackBody).path("code").asInt(-1);
 
