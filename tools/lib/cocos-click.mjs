@@ -17,9 +17,10 @@
  * #618 反复更正偏移的用途、#624 的往返不一致，全是这一处的下游症状。
  *
  * <p><b>口径（三条自检全过才算数）</b>：
- *   ① 往返：`camera.worldToScreen(out, worldPos)` 之后 `camera.screenToWorld(out2, sp)` 必须回到原世界点
- *      —— 这一条与 CSS 换算、与参数顺序都无关，是**独立**的量具自检（#624 缺的正是它）；
- *   ② 引擎自命中：`box.hitTest(Vec2(sp), cam.systemWindowId)` 必须为真（与输入系统同一个函数）；
+ *   ① 往返：`camera.worldToScreen(v)`（**单参、就地改写**，见第 4 步注释）之后
+ *      `camera.screenToWorld(v2)` 必须回到原世界点
+ *      —— 这一条与 CSS 换算、与实参序都无关，是**独立**的量具自检（#624 缺的正是它）；
+ *   ② 引擎自命中：`box.hitTest(Vec2(sp), 0)` 必须为真（与输入系统同一个函数；`windowId` 见第 4 步）；
  *   ③ CSS 点必须落在 canvas 矩形内 —— 落在外面的话事件根本到不了 canvas 的监听器。
  * 任一条不过就返回 `verified:false` + reason。**调用方拿到 false 必须停止**并报「点击坐标不可信」，
  * 不得继续拿红绿当功能判据 —— 这就是 #624 留下的那句话。

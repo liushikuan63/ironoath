@@ -24,6 +24,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { resolveCocosClickPoint } from './lib/cocos-click.mjs'
 
 const ROOT = 'client/build/web-mobile'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
@@ -178,49 +179,34 @@ const clickStaminaRow = () => page.evaluate(() => {
   const camera = scene.getComponentInChildren('cc.Camera')
   if (box === null || camera === null) return null
   const rect = document.querySelector('canvas').getBoundingClientRect()
-  // **坐标口径统一到引擎那条**（#633）：#632 查明触发的判定链是
-  //   `_handleTouchStart` → `i.hitTest(t.getLocation(ly), windowId)`
-  //   → `hitTest` 内部 `h.screenToWorld(Vec3)` 再按 `_anchorPoint` 判盒。
-  // 探针原来自己用 `worldToScreen` + `getVisibleSizeInPixel` 归一 + 自己翻 y，是**第三条**路，
-  // 与前两条都不保证一致（#628 那次量到的 364px 差就是这么来的）。
+  // **这里不再算点击点**（#638）：#633 改成"用 hitTest 在 ±48px 网格里反查可点区域"，但
+  // `hitTest` 吃的那一点不是 CSS 像素 —— 产物 `cc.js` 里浏览器事件进引擎的那一步写死了
+  //   `i = (clientX - rect.x) * dpr`，`n = (rect.y + rect.height - clientY) * dpr`
+  // （见 docs/cocos-3.8-输入命中备忘.md §8 与它的复核命令）。把 CSS 点塞进去等于在
+  // **上下镜像**的那片区域里找命中：扫出来的"可点"是镜像点，真按它去点就点空了；
+  // 扫不出来时又退回 base，于是 #633 那次"退出码 0 全绿"来自**兜底分支**，不是来自它声称的反查。
   //
-  // ⇒ 这里改成**用引擎自己的 `hitTest` 反查**：以 Label 锚点为起点，在它自己的盒内取样，
-  // 找到第一个 `hitTest` 通过的屏幕点就返回它。这样拿到的是「引擎认的点」，而不是
-  // 「我们以为的点」—— 三条路合一，且不依赖任何关于缩放/翻转的手工推导。
+  // 点击点改由 tools/lib/cocos-click.mjs 出（往返自检 + 引擎自命中 + 出画布三道门），
+  // 那里有一份可失败的判据（9 条自检 + 三个变异实测会红）。
   //
-  // `hitTest(v, 0)` 的入参是**屏幕坐标**（cc.js 原文：`Qn.set(r, t.x, t.y, 0); h.screenToWorld(r, r)`），
-  // 单位与 `Touch.getLocation` 一致；`windowId` 传 0 与 `hitTest` 的默认值一致（`void 0 === e && (e = 0)`）。
+  // 下面这个 `legacyControl` **只作负向对照**留著：它就是被替换掉的那条公式（除以设计空间
+  // 尺寸 `getVisibleSizeInPixel()`、不乘 dpr）。留着是为了让新点与旧点在**同一份读数**下
+  // 一起交给引擎判 —— 旧点被判负、新点被判正，才算真钉住"旧公式点不中"（#624 的结论）。
   const size = box.contentSize
   const ap = box.anchorPoint
-  // 盒中心相对锚点的偏移（anchor 0,0.5 ⇒ 中心在局部 +width/2）
   const centreLocal = new cc.Vec2(size.width * (0.5 - ap.x), size.height * (0.5 - ap.y))
   const worldCentre = box.convertToWorldSpaceAR(new cc.Vec3(centreLocal.x, centreLocal.y, 0))
-  const sc = camera.worldToScreen(worldCentre)
-  const base = {
+  // `worldToScreen(OUT, IN)`：输出向量在**前**（#633 之前这里只传了一个参数，等于拿世界点当 out）
+  const sc = camera.worldToScreen(new cc.Vec3(), worldCentre)
+  const legacyControl = {
     x: rect.left + (sc.x / cc.view.getVisibleSizeInPixel().width) * rect.width,
     y: rect.top + rect.height - (sc.y / cc.view.getVisibleSizeInPixel().height) * rect.height,
   }
-  let picked = null
-  let tried = 0
-  // 以盒中心为原点做小范围扫描（先中心，再一圈 ±12px 的网格），用 hitTest 判定
-  for (const dy of [0, -12, 12, -24, 24, -36, 36]) {
-    for (const dx of [0, -12, 12, -24, 24, -36, 36, -48, 48]) {
-      const px = base.x + dx
-      const py = base.y + dy
-      tried++
-      const ok = box.hitTest(new cc.Vec2(px, py), 0)
-      if (ok) { picked = { x: px, y: py }; break }
-    }
-    if (picked !== null) break
-  }
-  const point = picked ?? base
 
   return {
     diagG: barRows.length + ' 项：' + barRows.join(' ; '),
     chain: chainRows.join(' <- '),
-    scan: 'base=' + Math.round(base.x) + ',' + Math.round(base.y) + ' tried=' + tried + ' hit=' + (picked === null ? '(全不命中)' : '偏移 ' + Math.round(picked.x - base.x) + ',' + Math.round(picked.y - base.y)),
-    x: point.x,
-    y: point.y,
+    legacyControl,
   }
 })
 
@@ -244,50 +230,10 @@ const readOverlay = () => page.evaluate(() => {
   return { found: true, visible: overlay.activeInHierarchy === true, texts }
 })
 
-/** 点弹层里的某个按钮（按节点名）。 */
-const clickInOverlay = (nodeName) => page.evaluate((name) => {
-  const cc = window.cc
-  const scene = cc.director.getScene()
-  let overlay = null
-  const visit = (node) => {
-    if (node.name === 'StaminaDetail') overlay = node
-    for (const child of node.children) visit(child)
-  }
-  visit(scene)
-  if (overlay === null) return null
-  let target = null
-  const walk = (node) => {
-    if (node.name === name) target = node
-    for (const child of node.children) walk(child)
-  }
-  walk(overlay)
-  if (target === null) return null
-  // 诊断 E（#611）：#610 用偏移扫描钉死了「点 Label 中心偏 12px，触摸挂在整行节点上」。
-  // 这里把 Label 往上每一层祖先的 UITransform 尺寸打出来 —— 找出「整行」是哪一层。
-  // 注意：这段跑在**浏览器上下文**，console.log 会进页面而不是 node 的 stdout，
-  // 必须收集到局部变量再随返回值带出去（#610 那次就是栽在这里，什么都没打出来）。
-  const chainRows = []
-  {
-    let q = target
-    while (q != null) {
-      const bx = q.getComponent('cc.UITransform')
-      const sz = bx == null ? 'no-UI' : Math.round(bx.contentSize.width) + 'x' + Math.round(bx.contentSize.height)
-      chainRows.push(q.name + '[' + sz + ']active=' + q.active + ',inh=' + q.activeInHierarchy)
-      q = q.parent
-    }
-  }
-  const box = target.getComponent('cc.UITransform')
-  const camera = scene.getComponentInChildren('cc.Camera')
-  if (box === null || camera === null) return null
-  const screen = camera.worldToScreen(box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
-  const rect = document.querySelector('canvas').getBoundingClientRect()
-  const pixel = cc.view.getVisibleSizeInPixel()
-  return {
-    chain: chainRows.join(' <- '),
-    x: rect.left + (screen.x / pixel.width) * rect.width,
-    y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
-  }
-}, nodeName)
+/** 点弹层里的某个按钮（按节点名）。坐标同样由引擎自己的命中出（#638）。 */
+const clickInOverlay = (nodeName) => page.evaluate(resolveCocosClickPoint, {
+  within: 'StaminaDetail', name: nodeName,
+})
 
 const rowPoint = await clickStaminaRow()
 console.log('[stamina][诊断G] ' + (rowPoint === null ? '(rowPoint=null)' : rowPoint.diagG))
@@ -356,13 +302,12 @@ const hitReport = await page.evaluate((PT) => {
   return { world: Math.round(world.x) + ',' + Math.round(world.y), rows }
 }, { x: 281, y: 177 })
 console.log('[stamina][命中] 点(281,177) -> 世界(' + hitReport.world + ')' + hitReport.rows.map((r) => String.fromCharCode(10) + '    ' + r).join(''))
-// 坐标口径诊断（#626）：Cocos 产物 `convertUtils.worldToScreenUtils` 的实现是
-//   worldToScreen(e, i); i.x /= view.getScaleX(); i.y /= view.getScaleY()
-// 而 Touch.getUILocationX/Y 是 (this._x - viewport.x) / getScaleX()
-// ⇒ 正逆两向一致：**css = rect.left + viewport.x + worldToScreen.x**。
-// 而本探针原来用的是 `(screen.x / getVisibleSizeInPixel().width) * rect.width`
-// —— 归一化的分母换了、viewport 原点也没加 ⇒ 那就是 #624 里 364px 差的来源。
-// 这里把四个数一次打全，好让新公式有可核对的依据。
+// 坐标口径诊断（#626 提出、#638 更正结论）：#626 当时据 `convertUtils.worldToScreenUtils`
+// 推出「正逆两向一致：css = rect.left + viewport.x + worldToScreen.x」，并把 #624 的 364px 差
+// 归因为「漏了 y 轴翻转」。**那个结论不成立** —— 浏览器事件进引擎的那一步（产物 `_getLocation`）
+// 是 `(clientX - rect.x) * dpr` / `(rect.y + rect.height - clientY) * dpr`：
+// 既没有 viewport 原点，也没有 getScaleX/Y，只有 dpr 与一次 y 翻转。
+// 下面这四个数一次打全，是给「换个视口/开缩放就分道扬镳」这件事留的现场。
 const coordInfo = await page.evaluate(() => {
   const cc = window.cc
   const canvas = document.querySelector('canvas')
@@ -418,21 +363,21 @@ const siblingInfo = await page.evaluate(() => {
   return rows
 })
 console.log('[stamina][sibling] ' + siblingInfo.join(String.fromCharCode(10) + '    '))
-// hitTest 直测（#632）：引擎的 `_handleTouchStart` 里 `!i.hitTest(ly, t.windowId) || (…, e.dispatchEvent(t), 0)`
-// ⇒ 节点**必须**先过自己的 `hitTest` 才会派发。这里直接对每个 Resource 节点调 hitTest，
-// 坐标用 Cocos 自己的 `Touch.getLocation` 约定（`t.getLocation(ly)` 走的是**未翻转的** view 坐标），
-// 与探针的点击公式不同 —— 这正是要分开看的地方。
+// hitTest 直测（#632 提出、#638 修正口径）：引擎的 `_handleTouchStart` 里
+// `!i.hitTest(ly, t.windowId) || (…, e.dispatchEvent(t), 0)` ⇒ 节点**必须**先过自己的 `hitTest`。
+// ⚠️ #632 那版把 `Touch.getUILocation` 的算式（减 viewport、除 scale）当成了 `hitTest` 的入参口径，
+// **那是另一个方法**：`hitTest` 吃的是 `EventMouse.getLocation()`，也就是产物里
+// `_getLocation` 算出来的那个点 —— `(clientX - rect.x) * dpr` / `(rect.y + rect.height - clientY) * dpr`，
+// 不减 viewport、不除 scale、y 从下往上（docs/cocos-3.8-输入命中备忘.md §8）。
 const htInfo = await page.evaluate(() => {
   const cc = window.cc
   const scene = cc.director.getScene()
   const PT = { x: 281, y: 177 }
   const rect = document.querySelector('canvas').getBoundingClientRect()
-  const vis = cc.view.getVisibleSize()
+  const dpr = window.devicePixelRatio || 1
   const v = new cc.Vec2()
-  // 对齐 Touch.getLocation：先减去 viewport 原点，再除以 scale —— **不翻转 y**
-  const vp = cc.view.getViewportRect()
-  v.x = (PT.x - rect.left - vp.x) / cc.view.getScaleX()
-  v.y = (rect.height - (PT.y - rect.top)) / cc.view.getScaleY()
+  v.x = (PT.x - rect.left) * dpr
+  v.y = (rect.top + rect.height - PT.y) * dpr
   const rows = []
   const walk = (n, depth) => {
     if (depth > 40) return
@@ -451,11 +396,36 @@ const htInfo = await page.evaluate(() => {
 console.log('[stamina][hitTest] 探针点(' + htInfo.probe + ')：' + htInfo.rows.join(' ; '))
 const __dx = Number(process.env.STA_DX ?? '0')
 const __dy = Number(process.env.STA_DY ?? '0')
-console.log('[stamina][偏移] 基准=' + Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y) + ' 偏移=' + __dx + ',' + __dy)
-console.log('[stamina][扫描] ' + rowPoint.scan)
-await page.mouse.click(rowPoint.x + __dx, rowPoint.y + __dy)
+// 点击点由引擎自己的命中出（#638）。三道门：往返自检、引擎自命中、CSS 点落在画布内。
+// 任何一道不过 ⇒ **一个像素都不点**，并以退出码 2 报"点击坐标不可信" ——
+// 那样的话下面那些红绿说的是"量具没架对"，不是"功能有缺陷"（#624 留下的那句话）。
+const clickPoint = await page.evaluate(resolveCocosClickPoint, {
+  labelPrefix: '体力',
+  compare: [{ label: 'legacy', x: rowPoint.legacyControl.x, y: rowPoint.legacyControl.y }],
+})
+const fmt = (p) => (p == null ? '(null)' : Math.round(p.x) + ',' + Math.round(p.y))
+console.log('[stamina][引擎点] ' + JSON.stringify(clickPoint.engine) + ' 相机=' + clickPoint.camera
+  + ' dpr=' + clickPoint.dpr + ' 往返漂移=' + (clickPoint.attempts?.[0]?.roundTripDrift ?? '-'))
+for (const row of clickPoint.attempts ?? []) {
+  console.log('[stamina][尝试] ' + row.camera + ' windowId=' + row.systemWindowId
+    + ' 引擎点=' + fmt(row.engine) + ' CSS=' + fmt(row.css)
+    + ' 往返=' + (row.roundTripOk ? 'OK' : '漂移' + row.roundTripDrift)
+    + ' 引擎命中=' + row.hitTest + ' 在画布内=' + row.insideCanvas)
+}
+for (const row of clickPoint.compare ?? []) {
+  const perCam = Object.keys(row).filter((k) => !['label', 'css', 'engine', 'insideCanvas'].includes(k))
+  console.log('[stamina][对照] ' + row.label + ' CSS=' + fmt(row.css) + ' 引擎点=' + fmt(row.engine)
+    + ' 在画布内=' + row.insideCanvas + ' 引擎判定=' + perCam.map((k) => k + '=' + row[k]).join(' '))
+}
+if (clickPoint.verified !== true) {
+  console.error('[stamina][前置] 点击坐标不可信（reason=' + clickPoint.reason + '，节点=' + clickPoint.node + '）'
+    + ' —— 按 #624：此前的红绿不能当功能判据，本次不作结论')
+  process.exit(2)
+}
+console.log('[stamina][偏移] 基准=' + fmt(clickPoint) + ' 偏移=' + __dx + ',' + __dy)
+await page.mouse.click(clickPoint.x + __dx, clickPoint.y + __dy)
 const touchHits = await page.evaluate(() => (window.__touchHits ?? []).slice())
-console.log('[stamina][触摸] 收到 touch-start 的节点: ' + (touchHits.length === 0 ? '(无)' : touchHits.join('、')) + '  |  点击点=' + Math.round(rowPoint.x + __dx) + ',' + Math.round(rowPoint.y + __dy))
+console.log('[stamina][触摸] 收到 touch-start 的节点: ' + (touchHits.length === 0 ? '(无)' : touchHits.join('、')) + '  |  点击点=' + Math.round(clickPoint.x + __dx) + ',' + Math.round(clickPoint.y + __dy))
 await page.waitForTimeout(1500)
 // 诊断 B（#607）：render() 末尾明确写了 this.node.active = true，而 Cocos 的 activeInHierarchy
 // 要本节点**与所有祖先**都 active。所以「不可见」有两种可能：本节点没被 render，或者某个祖先
@@ -495,7 +465,11 @@ await page.screenshot({ path: SHOT })
 const wasFullBeforeBuy = before.data.current >= before.data.cap
 const postsBeforeBuy = staminaPosts.length
 const buyPoint = await clickInOverlay('BuyButton')
-if (buyPoint !== null) {
+if (buyPoint === null || buyPoint.verified !== true) {
+  // 与上面同一个门禁：坐标不可信就不点，也不把它算成"按钮没接上"（#638）。
+  console.log('[stamina][买] 点击坐标不可信（reason=' + (buyPoint == null ? 'null' : buyPoint.reason)
+    + '，节点=' + (buyPoint == null ? '-' : buyPoint.node) + '）—— 本次不判"买"这一段')
+} else {
   await page.mouse.click(buyPoint.x, buyPoint.y)
   await page.waitForTimeout(2000)
 }

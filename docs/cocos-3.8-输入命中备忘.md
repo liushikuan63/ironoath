@@ -29,26 +29,40 @@
 必须先收集到局部变量、再随返回值带出去；拼多行用 `String.fromCharCode(10)`，
 不要在压缩/转译环境里赌 `\n` 能过括号匹配。（#610 栽在这里：什么都没打出来。）
 
-### 5. ★ `Camera.screenToWorld(OUT, IN)` —— **输出向量是第一个参数**
+### 5. ★★ `worldToScreen` / `screenToWorld` 的实参序：**世界点在前**，且**用单参形式**
 
-引擎自己的包装函数写死了这个顺序：
+> ⚠️ **2026-10-02 #639 更正**：本条原先写的是「`out` 在前、点在后」，**那是照 `.d.ts` 抄的，
+> 被本仓产物与实跑双双证伪**。下面保留错案，因为错法本身比结论更值得记。
+
+**错案**（原第 5 条）：看到引擎自己的包装是
+```js
+i.screenToWorld = function (t, e) { return e || (e = this.node.getWorldPosition()),
+                                    this._camera && this._camera.screenToWorld(e, t), e }
+```
+就把 `e`（世界点）当成了输出。实际**恰恰相反**：`this._camera.screenToWorld(e, t)` 里
+**`e` 是世界点（IN）、`t` 是输出（OUT）**。
+
+**实测**（本仓 3.8.7 产物，1440×900 视口，场景里那台 `cc.Camera` 组件）：
+
+| 调用 | 结果 |
+|---|---|
+| `cam.worldToScreen(new Vec3(100,50,0))` | 就地改成 **(150,75)**，返回同一个对象 ✅ |
+| `cam.worldToScreen(new Vec3(), world)` | `world` 变成 **(0,0)**（相机原点那个角），**不抛异常** ❌ |
+
+⇒ **两参形式按 `.d.ts` 的顺序传会静默退化**（不报错、拿到一个看似合理的数），这正是 #638 首次
+实跑读数 `引擎点=0,0 / 往返漂移=482 / roundtrip-failed` 的来源。
+
+**正确写法：单参、就地改写**，对两种实参序都成立，不去赌签名：
 
 ```js
-// convertUtils 里的包装
-i.screenToWorld = function (t, e) {
-  return e || (e = this.node.getWorldPosition()),      // e = 输入
-         this._camera && this._camera.screenToWorld(e, t), // camera.screenToWorld(OUT=t, IN=e)
-         e                                             // 返回被就地改写的「输入」那个
-}
+const sp = cam.worldToScreen(new cc.Vec3(world.x, world.y, world.z))   // sp 就是结果
+const back = cam.screenToWorld(new cc.Vec3(sp.x, sp.y, sp.z))          // 往返自检
 ```
 
-`Camera` 上两个方向的签名一致：**`out` 在前、点在后**。
-`worldToScreen` 同样是 `worldToScreen(OUT, IN)`（内部 `transformMat4(t, e, matViewProj)`，返回 `t`）。
-
-**踩过的那次**：`cam.screenToWorld(sp, world)` —— 传反了。于是 `world` 始终停在 `(0, 0, 0)`，
-后面整段「把点击点反投影回世界坐标再算局部坐标」的诊断量的其实是**世界原点**，与点击点无关。
-#624 据此得出的「往返不一致 (0, -364)」是这么来的；#626 把它归因为「漏了 y 轴翻转」——
-**归因同样可疑**，因为那条诊断的输入一开始就是错的。
+#624 那次 `cam.screenToWorld(sp, world)` 同样是这个坑（`world` 停在原点），
+#626 把它归因为「漏了 y 轴翻转」——**归因也不对**，输入一开始就是错的。
+#638 按 `.d.ts` 改成两参，把同一个坑又踩了一遍：**同一个错误两次以不同面貌出现**，
+所以现在 `tools/lib/cocos-click.mjs` 里那条往返自检不许省（它是唯一与实参序无关的判据）。
 
 ### 6. ★ 官方命中 API 是 `UITransform.hitTest(screenPoint, windowId)`
 
@@ -66,6 +80,10 @@ e._handleMouseDown = function (t) {
 - **入参是「屏幕点」，不是世界点**。实现里是 `h.screenToWorld(r, r)` —— 世界坐标换算是它自己做的，
   调用方**不要**先换算再传。
 - `windowId` 省略时**默认 0**；实现里逐个相机比对 `h.systemWindowId === windowId`。
+  ⚠️ **传 0，别传 `cam.systemWindowId`**（#639 实测）：`hitTest` 遍历的是**渲染场景**里那台相机
+  （`_getRenderScene().cameras`），而组件 `cc.Camera` 上读到的 `systemWindowId` 是 `undefined`
+  ⇒ `undefined !== 0` ⇒ 那台被 `continue` 掉、`hitTest` 恒 false，
+  症状长得跟"点不中"一模一样（#638 首次实跑就撞在这，报的是 `roundtrip-failed`）。
 - 它比手写盒判定**多做三件事**，缺任何一条都会得到假绿：
   ① `camera.visibility & this.node.layer`（相机可见性位 ∧ 节点层位）；
   ② `camera.systemWindowId === windowId`；
@@ -121,8 +139,8 @@ e._getLocation = function (t, e) {
 
 ```js
 const world = box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
-const sp = cam.worldToScreen(new cc.Vec3(), new cc.Vec3(world.x, world.y, world.z)) // out 在前
-if (!box.hitTest(new cc.Vec2(sp.x, sp.y), cam.systemWindowId)) return /* 不可信就别点 */
+const sp = cam.worldToScreen(new cc.Vec3(world.x, world.y, world.z)) // 单参、就地改写（第 5 条）
+if (!box.hitTest(new cc.Vec2(sp.x, sp.y), 0)) return /* 不可信就别点；windowId 传 0，见下 */
 // 引擎点 → CSS 点（上面那个式子的逆）
 const cssX = rect.left + sp.x / dpr
 const cssY = rect.top + rect.height - sp.y / dpr
@@ -135,8 +153,9 @@ const cssY = rect.top + rect.height - sp.y / dpr
 ## 二、怎么复核（条款与产物对不上时以产物为准）
 
 ```bash
-# 5：输出参数在前 —— 看引擎自己的包装怎么调
-grep -o 'i.screenToWorld=function(t,e){[^}]*}' client/build/web-mobile/cocos-js/cc.js
+# 5：实参序（注意方向与 .d.ts 相反，见正文）
+grep -o 'i.worldToScreen=function(t,e){.\{0,160\}' client/build/web-mobile/cocos-js/cc.js
+grep -o 'i.screenToWorld=function(t,e){.\{0,160\}' client/build/web-mobile/cocos-js/cc.js
 
 # 6：hitTest 的完整实现（入参是屏幕点、内部自己 screenToWorld）
 grep -o 'i.hitTest=function(t,e){.\{0,600\}' client/build/web-mobile/cocos-js/cc.js

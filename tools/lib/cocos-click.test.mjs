@@ -38,24 +38,33 @@ class V2 {
 
 /** 造一棵最小 Cocos 树 + 一台可扰动的相机。 */
 function install(opts = {}) {
-  const swapArgs = opts.swapArgs === true // 假装引擎把 (out, worldPos) 写反了
+  const outFirst = opts.outFirst === true // 假装引擎是 .d.ts 那种 (out, worldPos) 且**没有**默认值
   const breakRoundTrip = opts.breakRoundTrip === true // 假装 screenToWorld 不是 worldToScreen 的逆
   const alwaysMiss = opts.alwaysMiss === true // 假装节点自己永远不接受命中
   const depth = opts.depth ?? 4
 
-  const fwd = swapArgs
-    // 引擎把 (worldPos, out) 写反了：调用方传进来的**第一个** Vec3 被当成世界点，
-    // 于是拿 (0,0,0) 当世界点算，返回的是画布原点附近 —— 往返必然对不回去。
-    ? (arg1, arg2) => {
-        arg2.x = arg1.x * CAM.scale + CAM.ox
-        arg2.y = arg1.y * CAM.scale + CAM.oy
-        arg2.z = 0
-        return arg2
-      }
-    : (out, worldPos) => { out.x = worldPos.x * CAM.scale + CAM.ox; out.y = worldPos.y * CAM.scale + CAM.oy; out.z = 0; return out }
-  const inv = (out, sp) => {
-    if (breakRoundTrip) { out.x = (sp.x - CAM.ox) / CAM.scale + 777; out.y = sp.y; out.z = 0; return out }
-    out.x = (sp.x - CAM.ox) / CAM.scale; out.y = (sp.y - CAM.oy) / CAM.scale; out.z = 0; return out
+  // ⚠️ 这里照抄**本仓产物**的实参序（#639），不是 .d.ts 的：
+  // 引擎自己的包装是 `this._camera.worldToScreen(e, t)`，`e`（世界点）在**前**、`t`（输出）在后，
+  // 且输出省略时默认复用传入的那个向量。实测一致：`worldToScreen(v)` 就地改 v 得到 (150,75) 是对的；
+  // `worldToScreen(new V3(), world)` 会把 `world` 写成 (0,0)。
+  // 所以**两参形式写错顺序会静默退化**，单参形式对两种顺序都成立 —— 自检要能抓住有人改回两参。
+  const fwd = (worldPos, out) => {
+    if (outFirst) {
+      // .d.ts 那种顺序：out 在前且**没有默认值** ⇒ 单参调用直接拿不到 worldPos。
+      if (worldPos === undefined) throw new TypeError('worldPos is undefined')
+      out.x = worldPos.x * CAM.scale + CAM.ox; out.y = worldPos.y * CAM.scale + CAM.oy; out.z = 0
+      return out
+    }
+    const dst = out === undefined ? worldPos : out
+    dst.x = worldPos.x * CAM.scale + CAM.ox
+    dst.y = worldPos.y * CAM.scale + CAM.oy
+    dst.z = 0
+    return dst
+  }
+  const inv = (sp, out) => {
+    const dst = out === undefined ? sp : out
+    if (breakRoundTrip) { dst.x = (sp.x - CAM.ox) / CAM.scale + 777; dst.y = sp.y; dst.z = 0; return dst }
+    dst.x = (sp.x - CAM.ox) / CAM.scale; dst.y = (sp.y - CAM.oy) / CAM.scale; dst.z = 0; return dst
   }
 
   const cameraNode = {
@@ -65,7 +74,8 @@ function install(opts = {}) {
   }
   const camera = {
     node: cameraNode,
-    systemWindowId: 0,
+    // 实测：组件 cc.Camera 上的 systemWindowId 是 **undefined**（hitTest 比的是渲染场景里那台）。
+    systemWindowId: undefined,
     worldToScreen: fwd,
     screenToWorld: inv,
   }
@@ -76,7 +86,7 @@ function install(opts = {}) {
     convertToWorldSpaceAR: () => new V3(nx, ny, 0),
     hitTest(v2, windowId) {
       if (alwaysMiss) return false
-      if (windowId !== 0) return false // 引擎 ui-transform.ts:471 的 windowId 门
+      if (windowId !== 0) return false // 产物：`void 0===e&&(e=0); … h.systemWindowId===e`
       const wx = (v2.x - CAM.ox) / CAM.scale
       const wy = (v2.y - CAM.oy) / CAM.scale
       return Math.abs(wx - nx) <= w / 2 && Math.abs(wy - ny) <= h / 2
@@ -175,11 +185,37 @@ test('往返不一致时报 roundtrip-failed，而不是含糊地说"点不中"'
   assert.equal(r.x, null, '不可信就不许给出坐标 —— 给了就会被拿去当偏移量的基准')
 })
 
-test('引擎把 worldToScreen 的 (out, worldPos) 写反时，同样被判不可信（口径不靠猜）', () => {
-  install({ swapArgs: true })
+test('夹具照抄产物：实参序是 (worldPos, out)，两参按 .d.ts 顺序传会**静默**退化成 (0,0)', () => {
+  // #639 实测（1440×900、dpr=1、相机正交）：`worldToScreen(v)` 就地改 v → (150,75) 正确；
+  // `worldToScreen(new Vec3(), world)` → world 变成 (0,0)，**不报错**。这就是 #638 首次实跑
+  // 拿到的 (0,0) 与 roundtrip-failed。没有这条，夹具就成了"照着自己编的世界把关"。
+  const { camera } = install()
+  const one = camera.worldToScreen(new V3(100, 50, 0))
+  assert.deepEqual([one.x, one.y], [CENTER_ENGINE.x, CENTER_ENGINE.y], '单参形式是产物真实行为')
+  const out = new V3()
+  const two = camera.worldToScreen(new V3(), out)
+  // 第一个参数被当成世界点（这里是零向量）⇒ 输出是**相机原点那个角**，不是节点所在处。
+  // 本仓真机上那个角恰好是 (0,0) —— 这就是 #638 首次实跑读到的 (0,0) 与 roundtrip-failed。
+  assert.deepEqual([two.x, two.y], [CAM.ox, CAM.oy], '输出退化成"世界原点投影到屏幕"，且不抛异常')
+  assert.notDeepEqual([two.x, two.y], [CENTER_ENGINE.x, CENTER_ENGINE.y], '绝不能等于节点自己的屏幕点')
+})
+
+test('解析器走单参形式，所以拿到的引擎点与实参序无关（不赌签名）', () => {
+  install()
   const r = resolveStamina()
-  assert.equal(r.verified, false)
-  assert.equal(r.reason, 'roundtrip-failed')
+  assert.equal(r.verified, true, '单参形式对两种实参序都成立：' + JSON.stringify(r.attempts))
+  assert.deepEqual([r.engine.x, r.engine.y], [CENTER_ENGINE.x, CENTER_ENGINE.y])
+})
+
+test('windowId 必须传 0：组件上的 systemWindowId 实测是 undefined，照抄它会恒判不命中', () => {
+  // #639 实测：`hitTest` 比的是渲染场景里那台相机的 systemWindowId，组件 cc.Camera 上读到的
+  // 是 undefined。传它 ⇒ `undefined !== 0` ⇒ 那台被 continue 掉 ⇒ 恒 false，
+  // 症状长得跟"点不中"一模一样（#638 首次实跑就撞在这）。
+  install()
+  const r = resolveStamina()
+  assert.equal(r.attempts[0].componentSystemWindowId, undefined, '夹具要照抄实况：组件上确实读不到')
+  assert.equal(r.verified, true, '传 0 才过得了引擎那道 windowId 门')
+  assert.equal(r.attempts[0].hitTest, true)
 })
 
 test('节点自己不收命中时报 hittest-rejected', () => {
