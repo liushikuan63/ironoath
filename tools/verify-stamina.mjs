@@ -382,6 +382,37 @@ const siblingInfo = await page.evaluate(() => {
   return rows
 })
 console.log('[stamina][sibling] ' + siblingInfo.join(String.fromCharCode(10) + '    '))
+// hitTest 直测（#632）：引擎的 `_handleTouchStart` 里 `!i.hitTest(ly, t.windowId) || (…, e.dispatchEvent(t), 0)`
+// ⇒ 节点**必须**先过自己的 `hitTest` 才会派发。这里直接对每个 Resource 节点调 hitTest，
+// 坐标用 Cocos 自己的 `Touch.getLocation` 约定（`t.getLocation(ly)` 走的是**未翻转的** view 坐标），
+// 与探针的点击公式不同 —— 这正是要分开看的地方。
+const htInfo = await page.evaluate(() => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  const PT = { x: 281, y: 177 }
+  const rect = document.querySelector('canvas').getBoundingClientRect()
+  const vis = cc.view.getVisibleSize()
+  const v = new cc.Vec2()
+  // 对齐 Touch.getLocation：先减去 viewport 原点，再除以 scale —— **不翻转 y**
+  const vp = cc.view.getViewportRect()
+  v.x = (PT.x - rect.left - vp.x) / cc.view.getScaleX()
+  v.y = (rect.height - (PT.y - rect.top)) / cc.view.getScaleY()
+  const rows = []
+  const walk = (n, depth) => {
+    if (depth > 40) return
+    if (n.name.startsWith('Resource')) {
+      const bx = n.getComponent && n.getComponent('cc.UITransform')
+      if (bx != null && bx !== undefined) {
+        rows.push(`${n.name} size=${Math.round(bx.contentSize.width)}x${Math.round(bx.contentSize.height)}`
+          + ` hitTest=${bx.hitTest(v, 0)}`)
+      }
+    }
+    for (const c of n.children) walk(c, depth + 1)
+  }
+  walk(scene, 0)
+  return { probe: Math.round(v.x) + ',' + Math.round(v.y), rows }
+})
+console.log('[stamina][hitTest] 探针点(' + htInfo.probe + ')：' + htInfo.rows.join(' ; '))
 const __dx = Number(process.env.STA_DX ?? '0')
 const __dy = Number(process.env.STA_DY ?? '0')
 console.log('[stamina][偏移] 基准=' + Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y) + ' 偏移=' + __dx + ',' + __dy)
