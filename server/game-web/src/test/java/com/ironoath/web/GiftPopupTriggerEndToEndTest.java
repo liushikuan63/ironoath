@@ -62,6 +62,18 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @AutoConfigureMockMvc
 class GiftPopupTriggerEndToEndTest {
 
+    /**
+     * Harvest-time skew for `now`, in milliseconds.
+     *
+     * <p>Why (conclusion of the #580 diagnostics): after the speedup item zeroes the
+     * remaining seconds, `remainingSeconds` shows 0 -- but that is the *integer*
+     * division `(finishAt - now) / 1000` (documented in ArmyEndpointTest), so **0 does
+     * not mean `finishAt <= now`**. Measured: `settledArmy` returned `queue=1 troops={}`,
+     * i.e. the harvest condition was exactly not met. Hence: push `now` forward
+     * explicitly instead of relying on the real clock (a millisecond-level race).
+     */
+    private static final long SETTLE_SKEW_MS = 5_000L;
+
     /** 目标格：与 B13 国策探针同源的王城坐标（那边用它建过国家）。 */
     private static final int TARGET_X = 141;
     private static final int TARGET_Y = 83;
@@ -342,7 +354,7 @@ class GiftPopupTriggerEndToEndTest {
                 // `dueCounts` 收集 `task.finishAt() <= now` 的批次，然后 `army.collectFinished(now)`
                 // 把它们搬进 `count`。**`list()` 走的是 lazy load，不收割** —— 这是上一轮
                 // 「remaining=0 而 count=0」的原因（#579）。
-                armyAppService.settledArmy(pid, System.currentTimeMillis());
+                armyAppService.settledArmy(pid, System.currentTimeMillis() + SETTLE_SKEW_MS);
                 long remaining = remainingOf(pid, "unit_infantry_t1");
                 System.out.println("[E2E] 第 " + (i + 1) + " 轮：remaining=" + remaining
                         + " count=" + countOf(pid, "unit_infantry_t1"));
@@ -351,7 +363,13 @@ class GiftPopupTriggerEndToEndTest {
                 }
                 finishTraining(pid, "unit_infantry_t1");
             }
-            armyAppService.settledArmy(pid, System.currentTimeMillis());
+            // **两行诊断（#580）**：一次分辨「finishAt <= now 不成立」与「收割没落库」
+            com.ironoath.core.army.ArmyState settled =
+                    armyAppService.settledArmy(pid, System.currentTimeMillis() + SETTLE_SKEW_MS);
+            System.out.println("[E2E] settledArmy 返回值：queue=" + settled.queue().size()
+                    + " troops=" + settled.troops()
+                    + " | countOf=" + countOf(pid, "unit_infantry_t1"));
+            armyAppService.settledArmy(pid, System.currentTimeMillis() + SETTLE_SKEW_MS);
             System.out.println("[E2E] 加速后 remaining=" + remainingOf(pid, "unit_infantry_t1")
                     + " count=" + countOf(pid, "unit_infantry_t1")
                     + " troopCap=" + armyAppService.list(pid).troopCap());
