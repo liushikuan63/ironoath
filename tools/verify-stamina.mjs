@@ -129,6 +129,39 @@ const clickStaminaRow = () => page.evaluate(() => {
   }
   visit(scene)
   if (target === null) return null
+  // 诊断 G（#616）：#615 把「点得中/点不中」压成了判别指标 `base`（281 全红 / 33 全绿），
+  // 但**没解释 base 为什么在 33 与 281 之间跳**。这一步把资源条上**每一项**的名字与
+  // 屏幕坐标都打出来并连同 base 记录 —— 下次再遇到 281，就能立刻看出是哪一项排到了前面。
+  // 找法：资源条的每一项都挂在名为 `Resource` 的父节点下，所以只扫这些节点的子节点。
+  const barRows = []
+  {
+    const camG = scene.getComponentInChildren('cc.Camera')
+    const rectG = document.querySelector('canvas').getBoundingClientRect()
+    const pixG = cc.view.getVisibleSizeInPixel()
+    // ⚠️ 与点击端**逐字同式**（#616）：`rowPoint` 算的是 rect.left + … 与 rect.top + rect.height - …，
+    // 第一版这��诊断漏了 rect.left/top，打出来的 y 比真实点击点少 60（= rect.top）⇒ 拿它比较会看错。
+    const pxOf = (nd) => {
+      const bx = nd.getComponent('cc.UITransform')
+      if (bx == null || camG == null) return '-'
+      const s = camG.worldToScreen(bx.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
+      return Math.round(rectG.left + (s.x / pixG.width) * rectG.width) + ','
+        + Math.round(rectG.top + rectG.height - (s.y / pixG.height) * rectG.height)
+    }
+    // 递归扫**每个** Resource 节点自己的整棵子树 —— #616 第一版只扫直接子节点、也没算节点
+    // 自己，于是打出「0 项」（而 `Resource-0-0` 恰恰就是那个带 Label 的节点）。
+    const walk = (nd, depth) => {
+      if (nd.name.startsWith('Resource')) {
+        const lab = nd.getComponent && nd.getComponent('cc.Label')
+        const bx = nd.getComponent('cc.UITransform')
+        if (lab != null) {
+          const self = bx != null ? Math.round(bx.contentSize.width) + 'x' + Math.round(bx.contentSize.height) : 'no-UI'
+          barRows.push(nd.name + '{' + self + '}"' + lab.string + '"@' + pxOf(nd) + '/d' + depth)
+        }
+      }
+      for (const c of nd.children) walk(c, depth + 1)
+    }
+    walk(scene, 0)
+  }
   // 诊断 E（#611）：#610 用偏移扫描钉死了「点 Label 中心偏 12px，触摸挂在整行节点上」。
   // 这里把 Label 往上每一层祖先的 UITransform 尺寸打出来 —— 找出「整行」是哪一层。
   // 注意：这段跑在**浏览器上下文**，console.log 会进页面而不是 node 的 stdout，
@@ -141,6 +174,7 @@ const clickStaminaRow = () => page.evaluate(() => {
   const rect = document.querySelector('canvas').getBoundingClientRect()
   const pixel = cc.view.getVisibleSizeInPixel()
   return {
+    diagG: barRows.length + ' 项：' + barRows.join(' ; '),
     chain: chainRows.join(' <- '),
     x: rect.left + (screen.x / pixel.width) * rect.width,
     y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
@@ -213,6 +247,7 @@ const clickInOverlay = (nodeName) => page.evaluate((name) => {
 }, nodeName)
 
 const rowPoint = await clickStaminaRow()
+console.log('[stamina][诊断G] ' + (rowPoint === null ? '(rowPoint=null)' : rowPoint.diagG))
 console.log('[stamina][诊断E] Label 祖先链：' + (rowPoint === null ? '(rowPoint=null)' : rowPoint.chain))
 if (rowPoint === null) {
   console.error('[stamina][前置] 资源条上找不到「体力」那一行 —— 前置不满足')
