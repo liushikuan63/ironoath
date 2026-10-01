@@ -74,6 +74,9 @@ class GiftPopupTriggerEndToEndTest {
      */
     private static final long SETTLE_SKEW_MS = 5_000L;
 
+    /** 行军到期扫描的 now 偏移毫秒（战斗结算同样是惰性的）。 */
+    private static final long MARCH_SKEW_MS = 600_000L;
+
     /** 目标格：与 B13 国策探针同源的王城坐标（那边用它建过国家）。 */
     private static final int TARGET_X = 141;
     private static final int TARGET_Y = 83;
@@ -410,6 +413,16 @@ class GiftPopupTriggerEndToEndTest {
         int attackCode;
         try {
             marchAppService.send(pid, marchReq);   // 方法名是 send 不是 march（#577）
+            // **到期扫描必须显式喂 skew 后的 now**（#582）：`processDue` 是
+            // `public int processDue(String playerId, long now)`（MarchAppService 577 行）——
+            // **公开且带 now 参数**，所以不必伪造 TimeService（那要 @TestConfiguration）。
+            // 类注释第 64 行明写「`processDue` 在每个读写入口的开头被调用」，而
+            // `list` / `recall` / `collectGather` 喂的都是 `timeService.serverNow()`
+            //（真实时钟）⇒ 刚发出去的行军 `arriveAt` 还没到，扫描不会结算它。
+            int dueSettled = marchAppService.processDue(pid,
+                    System.currentTimeMillis() + MARCH_SKEW_MS);
+            System.out.println("[E2E] processDue 结算了 " + dueSettled
+                    + " 支行军（skew " + MARCH_SKEW_MS + "ms）");
             attackCode = 0;
         } catch (com.ironoath.common.BizException e) {
             attackCode = e.errorCode().code();   // errorCode() 返回 ErrorCode 不是 int
