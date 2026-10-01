@@ -454,9 +454,13 @@ public final class BalanceCli {
                 ? Double.parseDouble(options.get("out-exponent")) : 1.0;
         double costRatio = options.containsKey("cost-ratio")
                 ? Double.parseDouble(options.get("cost-ratio")) : 1.22;
+        // `--base-rate` 只在 CLI 里存在（默认 1.0 = 不缩放）：量「底产要缩到几成，仓储才不再满」。
+        final double baseRate = Double.parseDouble(options.getOrDefault("base-rate", "1.0"));
         double timeRatio = 1.18;
 
-        long woodRate = 200L, stoneRate = 200L, ironRate = 100L, grainRate = 400L;
+        // 底产（house_* 的 perHour 之和）：`--base-rate` 缩放的就是这四个数。
+        long woodRate = Math.round(200L * baseRate), stoneRate = Math.round(200L * baseRate),
+                ironRate = Math.round(100L * baseRate), grainRate = Math.round(400L * baseRate);
         long wood = 5000L, stone = 5000L, iron = 2000L, grain = 8000L;
         int level = 1;
         // **产出建筑也升**（默认开）。四座的输入全部来自 building 表，形状与 ResourceRateService
