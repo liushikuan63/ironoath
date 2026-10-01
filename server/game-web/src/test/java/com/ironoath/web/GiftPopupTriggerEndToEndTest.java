@@ -13,6 +13,8 @@ import com.ironoath.core.hero.HeroRoster;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.web.dto.generated.TrainReq;
+import com.ironoath.web.service.MarchAppService;
+import com.ironoath.web.service.WorldAppService;
 import com.ironoath.web.service.ArmyAppService;
 import com.ironoath.web.service.HeroStatsService;
 import com.ironoath.web.service.CityAppService;
@@ -28,6 +30,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,6 +62,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @AutoConfigureMockMvc
 class GiftPopupTriggerEndToEndTest {
 
+    /** 目标格：与 B13 国策探针同源的王城坐标（那边用它建过国家）。 */
+    private static final int TARGET_X = 141;
+    private static final int TARGET_Y = 83;
+
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
@@ -66,6 +73,8 @@ class GiftPopupTriggerEndToEndTest {
     @Autowired private CityAppService cityAppService;
     @Autowired private CityRepository cities;
     @Autowired private ArmyAppService armyAppService;
+    @Autowired private MarchAppService marchAppService;
+    @Autowired private WorldAppService worldAppService;
     @Autowired private HeroRepository heroes;
     @Autowired private InventoryRepository inventories;
     @Autowired private HeroStatsService heroStats;
@@ -187,6 +196,37 @@ class GiftPopupTriggerEndToEndTest {
         buildAndFinish(playerId, "barracks", 1, 1);
     }
 
+    /**
+     * 找一格指定实体类型的地图格（照 {@code MarchLineupValidationTest.cellOfType} 的形状：
+     * 从家城向外逐圈由近到远找，找不到就抛 —— 那说明世界生成规则变了、断言要跟着改）。
+     */
+    private com.ironoath.core.world.Coord cellOfType(
+            String playerId, com.ironoath.core.world.WorldGenerator.EntityType type) {
+        com.ironoath.core.world.Coord home = worldAppService.homeOf(playerId);
+        int size = worldAppService.rules().worldSize();
+        for (int radius = 1; radius < size; radius++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dy = -radius; dy <= radius; dy++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != radius) {
+                        continue;
+                    }
+                    int x = home.x() + dx;
+                    int y = home.y() + dy;
+                    if (x < 0 || y < 0
+                            || !com.ironoath.core.world.Coord.of(x, y).withinWorld(size)) {
+                        continue;
+                    }
+                    if (worldAppService.cellAt(com.ironoath.core.world.Coord.of(x, y))
+                            .entityType() == type) {
+                        return com.ironoath.core.world.Coord.of(x, y);
+                    }
+                }
+            }
+        }
+        throw new AssertionError("整张地图里找不到类型为 " + type + " 的格子"
+                + "（世界生成规则改过，断言要跟着改）");
+    }
+
     private String newPlayer() {
         return playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "礼包端到端",
@@ -299,17 +339,30 @@ class GiftPopupTriggerEndToEndTest {
         if (pre.path("popup").asBoolean(false)) {
             System.out.println("[E2E] 已排空夹具自带的弹窗：" + pre.path("giftId").asText(""));
         }
-        String attackBody = mockMvc.perform(post("/world/march")
-                        .header("X-Player-Id", pid)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"requestId\":\"e2e-a-" + UUID.randomUUID() + "\","
-                                // #577：**请求体之前是错的** —— `MarchReq` 的分量是
-                                // `units` + `heroes`，我之前一个都没传（只传了 targetX/targetY），
-                                // 而 6000 MARCH_NO_TROOP 大概率就是这么来的。
-                                + "\"units\":[{\"unitId\":\"unit_infantry_t1\",\"count\":100}],"
-                                + "\"heroes\":[\"hero_ssr_02\"]}"))
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        int attackCode = JsonUtils.readTree(attackBody).path("code").asInt(-1);
+        // **服务层直调，不再拼 JSON**（#577 判据照做）：读全 `MarchReq` 的 6 个分量 ——
+        // `requestId, toX, toY, List<MarchUnit> units, List<String> heroes, MarchAction action` ——
+        // 我之前三轮只发了 3 个（缺 toX / toY / action）⇒ 那个 `1000` 是请求体残缺造成的。
+        // **JSON 拼装是本轮第五次栽跟头的地方**（包名、签名、字段名、层级、请求体），
+        // 绕开它的收益大于「多走一次 HTTP」。
+        // **目标格要找野怪**（#577）：硬编 `(141,83)` 会被
+        // `6009 目标不合法……是 EMPTY` 挡掉 —— 错误原文自己写了
+        // 「只有野怪、玩家城与『有人正在采集的资源点』能被攻击」。
+        com.ironoath.core.world.Coord target = cellOfType(pid,
+                com.ironoath.core.world.WorldGenerator.EntityType.MONSTER);
+        var marchReq = new com.ironoath.web.dto.generated.MarchReq(
+                "e2e-a-" + UUID.randomUUID(),
+                target.x(), target.y(),
+                List.of(new com.ironoath.web.dto.generated.MarchUnit("unit_infantry_t1", 100L)),
+                List.of("hero_ssr_02"),
+                com.ironoath.web.dto.generated.MarchAction.ATTACK);
+        int attackCode;
+        try {
+            marchAppService.send(pid, marchReq);   // 方法名是 send 不是 march（#577）
+            attackCode = 0;
+        } catch (com.ironoath.common.BizException e) {
+            attackCode = e.errorCode().code();   // errorCode() 返回 ErrorCode 不是 int
+            System.out.println("[E2E] march 业务码=" + attackCode + " " + e.getMessage());
+        }
 
         JsonNode data = popupData(pid);
         if (!data.path("popup").asBoolean(false)) {
