@@ -515,7 +515,17 @@ public final class BalanceCli {
         long troopsMade = 0L;
         boolean pickedOnceThisRound = false;   // #549 均衡升：每轮只升一级          // 累计造兵，用来核对「造兵到底能不能吃掉产出」
         final long initAmount = 0L;                                  // 起始资源见下面的初值
-        final long woodCapBase = Long.parseLong(options.getOrDefault("cap-base", "1000"));
+        // **--cap-base 的默认值从配置表读**（#594）：原来硬编码 1000，而 building.json 的
+        // warehouse.capBase 已经是 8000 —— 两边漂移时模拟器照常输出一整套读数，却全是按 1000 算的
+        // （#592/#593 连续两轮的结论就建立在错的输入上）。命令行显式传 --cap-base 仍可覆盖，
+        // 那是**有意的**扫档手段，不是漂移；门禁 scripts/check-balance-sim-capbase.sh 盯着默认值。
+        long capBaseFromCfg = 0L;
+        try {
+            capBaseFromCfg = configs.get(com.ironoath.config.cfg.BuildingCfg.class, "warehouse").capBase();
+        } catch (RuntimeException ex) {
+            throw new IllegalStateException("读不到 warehouse.capBase，仓容截断没法算：" + ex.getMessage(), ex);
+        }
+        final long woodCapBase = Long.parseLong(options.getOrDefault("cap-base", Long.toString(capBaseFromCfg)));
                               // warehouse.capBase（表里 1000），可调以便扫档
         final long[] warehouseLevels = {0L, 0L, 0L, 0L};
         long[] overflow = {0L, 0L, 0L, 0L};
