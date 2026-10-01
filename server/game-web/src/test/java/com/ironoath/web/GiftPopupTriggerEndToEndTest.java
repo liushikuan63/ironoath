@@ -433,13 +433,6 @@ class GiftPopupTriggerEndToEndTest {
         // so read the actual battle report and print who won.
         // #589: the log proves the battle resolved with winner=DEFENDER and markBattleLost
         // ran, so read the archive field itself -- five rounds of guessing, five rounds wrong.
-        PlayerSave after = players.findByPlayerId(pid).orElseThrow();
-        System.out.println("[E2E] 战后存档 giftPopup=" + after.giftPopup());
-        var reports = battleReports.reportsOf(pid);
-        System.out.println("[E2E] 攻方战报数=" + reports.size());
-        reports.stream().limit(2).forEach(r -> System.out.println(
-                "[E2E] 战报 winner=" + r.result().winner() + " won=" + r.won()
-                        + " att=" + r.attackerName() + " def=" + r.defenderName()));
         JsonNode data = popupData(pid);
         if (!data.path("popup").asBoolean(false)) {
             // **把服务端回的东西原样打出来**（#570）：这是分辨「标记没打」与「被频控压住」的唯一办法
@@ -509,6 +502,31 @@ class GiftPopupTriggerEndToEndTest {
         if (pre.path("popup").asBoolean(false)) {
             System.out.println("[E2E] 已排空夹具自带的弹窗：" + pre.path("giftId").asText(""));
         }
+        // **排空之后还要清掉全局冷却的读数**（#589）：`/gift/popup` 是「问一次并压制该次
+
+        // 机会」，所以它**弹出去的那一刻会把 `lastShowAt` 写成真实时钟**，而全局冷却
+
+        // 10 分钟读的就是这一位（PlayerGiftPopup 的字段注释原文：「lastShowAt 最近一次
+
+        // 弹出任意礼包的时刻；0 = 从未弹过（全局冷却 10 分钟读这一位）」）。⇒ 于是
+
+        // 紧接着的 BATTLE_LOST 弹窗**必然被频控压住**，实测 popup=false 而存档里
+
+        // BATTLE_LOST 标记与战报都在（标记链路没问题，压住的是弹出）。`PlayerGiftPopup`
+
+        // 是 record，没有清 `lastShowAt` 的方法，所以直接用规范构造器把它置 0。triggeredAt
+        // 同样整体清空：BUILDING_DONE 的报价 TTL 是 60 分钟，弹过一次也不会自己过期，
+        // 不清它就会在 BATTLE_LOST 之前先到先得（实测拿到的是 popup_building_celebration）。
+
+        PlayerSave cooled = players.findByPlayerId(pid).orElseThrow();
+
+        com.ironoath.core.player.PlayerGiftPopup g = cooled.giftPopup();
+
+        cooled.setGiftPopup(new com.ironoath.core.player.PlayerGiftPopup(
+
+                0L, g.showsByGift(), java.util.Map.of(), g.purchaseDayKey(), g.purchasedCountByGift()));
+
+        players.save(cooled);
         // **服务层直调，不再拼 JSON**（#577 判据照做）：读全 `MarchReq` 的 6 个分量 ——
         // `requestId, toX, toY, List<MarchUnit> units, List<String> heroes, MarchAction action` ——
         // 我之前三轮只发了 3 个（缺 toX / toY / action）⇒ 那个 `1000` 是请求体残缺造成的。
@@ -575,6 +593,12 @@ class GiftPopupTriggerEndToEndTest {
             System.out.println("[E2E] march 业务码=" + attackCode + " " + e.getMessage());
         }
 
+        // #589 diagnostics -- MUST live inside case 4. An earlier round put them in case 3
+        // and read that player instead, which produced the bogus "BATTLE_LOST was
+        // overwritten" conclusion (see the note in the log).
+        PlayerSave after = players.findByPlayerId(pid).orElseThrow();
+        System.out.println("[E2E] PID=" + pid + " giftPopup=" + after.giftPopup());
+        System.out.println("[E2E] attacker reports=" + battleReports.reportsOf(pid).size());
         JsonNode data = popupData(pid);
         if (!data.path("popup").asBoolean(false)) {
             System.out.println("[E2E] BATTLE_LOST 不可验：/world/march 业务码=" + attackCode
