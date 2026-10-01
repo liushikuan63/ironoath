@@ -96,9 +96,15 @@ for (const typeName of tables) {
     continue
   }
   unwiredHit.push(typeName)
-  /* 核对出处 */
+  /* 核对出处：**必须**含 `#数字`，否则判红。
+     原先是 `if (row && …)` —— 没有 `#数字` 就整段跳过、**静默通过**，
+     于是「零引用：因为还没做」这类无锚点出处能过这道门。
+     例外机制的全部价值在于「出处可核对」，而不可核对的出处等于没有出处。 */
   const row = note.match(/#(\d+)/)
-  if (row && !new RegExp('\\n\\|\\s*' + row[1] + '\\s*\\|').test('\n' + checklist)) {
+  if (!row) {
+    problems.push(`${typeName} 的例外出处里没有 \`#数字\`，无法核对：${note.slice(0, 60)}`
+      + ' —— 例外必须指向收口清单里真实存在的一行（`\n| N |`）')
+  } else if (!new RegExp('\\n\\|\\s*' + row[1] + '\\s*\\|').test('\n' + checklist)) {
     problems.push(`${typeName} 的例外出处指向 收口清单 #${row[1]}，但那一行不存在（清单被回滚或改号了）`)
   }
   const md = note.match(/([BC]\d\d_[^\s，。）)]+\.md)/)
@@ -196,7 +202,10 @@ for (const row of GLOBAL_ROWS) {
     continue
   }
   const citeRow = note.match(/#(\d+)/)
-  if (citeRow && !new RegExp('\\n\\|\\s*' + citeRow[1] + '\\s*\\|').test('\n' + checklist)) {
+  if (!citeRow) {
+    problems.push(`${row.id} 的例外出处里没有 #数字，无法核对：${note.slice(0, 60)}`
+      + ' —— 例外必须指向收口清单里真实存在的一行')
+  } else if (!new RegExp('\\n\\|\\s*' + citeRow[1] + '\\s*\\|').test('\n' + checklist)) {
     problems.push(`${row.id} 的例外出处指向 收口清单 #${citeRow[1]}，但那一行不存在`)
   }
 }
