@@ -525,6 +525,10 @@ public final class BalanceCli {
         java.util.Set<String> dims = new java.util.HashSet<>(List.of(
                 options.getOrDefault("dims", "cap,builds,forge,troops").split(",")));
         boolean dimBuilds = dims.contains("builds");
+        // `--builds-gate`：只建这些（#543 的待裁决项要读「一座不建」的影响面）
+        java.util.Set<String> buildsGate = new java.util.HashSet<>(List.of(
+                options.getOrDefault("builds-gate",
+                        "hospital,academy,stable,embassy,drill_ground").split(",")));
         boolean dimForge = dims.contains("forge");
         boolean dimTroops = dims.contains("troops");
         final long[][] producers = {
@@ -683,6 +687,9 @@ public final class BalanceCli {
             List<String> grainBuildings = List.of(
                     "hospital", "academy", "stable", "embassy", "drill_ground");
             for (String bid : grainBuildings) {
+                if (!buildsGate.contains(bid)) {
+                    continue;                    // #543：先量「一座不建」的影响面
+                }
                 BuildingCfg row = null;
                 for (var c : configs.all(BuildingCfg.class)) {
                     if (bid.equals(c.id())) {
