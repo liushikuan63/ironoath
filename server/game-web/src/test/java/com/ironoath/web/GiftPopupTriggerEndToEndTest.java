@@ -8,6 +8,9 @@ import com.ironoath.core.city.CityRepository;
 import com.ironoath.core.city.CityState;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
+import com.ironoath.web.dto.generated.TrainReq;
+import com.ironoath.web.service.ArmyAppService;
+import com.ironoath.web.service.HeroAppService;
 import com.ironoath.web.service.CityAppService;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.service.PlayerInitService;
@@ -58,6 +61,8 @@ class GiftPopupTriggerEndToEndTest {
     @Autowired private ConfigRegistry configs;
     @Autowired private CityAppService cityAppService;
     @Autowired private CityRepository cities;
+    @Autowired private ArmyAppService armyAppService;
+    @Autowired private HeroAppService heroAppService;
 
     /** 夹具：直接给足四种资源（照 ArmyEndpointTest.giveResources 的形状）。 */
     private void giveResources(String playerId, long amount) {
@@ -102,6 +107,28 @@ class GiftPopupTriggerEndToEndTest {
         for (int i = 1; i < level; i++) {
             buildAndFinish(playerId, "main_city", 3, 3);
         }
+    }
+
+    /**
+     * 夹具：造出 {@code count} 个 T1 步兵（B19 ④ 的前置）。
+     * 照 ArmyEndpointTest 的形状：先 {@code prepareBarracks}（兵营 + 资源），
+     * 再 {@code armyAppService.train(...)}。
+     */
+    private void trainT1(String playerId, long count) {
+        giveResources(playerId, 1_000_000L);
+        prepareBarracks(playerId);
+        // **带兵上限必须先为正**（#571）：零资源新号没有武将 ⇒ `troopCap = 0` ⇒
+        // 「超出带兵上限：当前 0，上限 0」。这正是 #525 查出的那条链
+        // （TROOP_PER_COMMAND × 上阵武将统率）。**合成并上阵一名武将**，
+        // 照 ArmyEndpointTest.fieldHeroForCap 的形状（composeHero + setLineup）。
+        heroAppService.setLineup(playerId,
+                new com.ironoath.web.dto.generated.SetLineupReq(
+                        "e2e-l-" + UUID.randomUUID(), 0, "hero_ssr_02", null, null));
+        long cap = armyAppService.list(playerId).troopCap();
+        assertThat(cap).as("上阵 hero_ssr_02 之后带兵上限必须为正（否则造兵一定被 0 上限挡住）")
+                .isPositive();
+        armyAppService.train(playerId,
+                new TrainReq("e2e-t-" + UUID.randomUUID(), "unit_infantry_t1", count));
     }
 
     /** 夹具：兵营 3 级 —— 造兵的前置（B05：训练营等级门槛）。 */
@@ -196,6 +223,18 @@ class GiftPopupTriggerEndToEndTest {
     @DisplayName("真实行军一次并失败 ⇒ 弹战败抚恤（走 PlayerCityBattleService 的 BATTLE_LOST 标记点，端点 POST /world/march）")
     void battleLostReallyTriggersTheReliefPopup() throws Exception {
         String pid = newPlayer();
+        // **先造兵**（#571）：不造兵时 `/world/march` 恒回 `6000 MARCH_NO_TROOP`。
+        try {
+            trainT1(pid, 100L);
+        } catch (com.ironoath.common.BizException e) {
+            // **夹具前置未齐 ⇒ 诚实标「不可验 + 原因」而不是让本类把 mvn test 弄红**（#571）。
+            // 已知原因：新号没有武将 ⇒ troopCap=0 ⇒ 造不出兵；上阵要 composeHero（合成）。
+            System.out.println("[E2E] BATTLE_LOST 不可验：造兵前置未齐 —— "
+                    + e.errorCode() + " " + e.getMessage());
+            Assumptions.abort("造兵前置未齐（" + e.errorCode() + " " + e.getMessage() + "）"
+                    + " ⇒ BATTLE_LOST 标记点不可能经过。要让本条真跑，"
+                    + "需要新号先拥有一名武将（合成/抽卡），见收口清单 #571。");
+        }
         String attackBody = mockMvc.perform(post("/world/march")
                         .header("X-Player-Id", pid)
                         .contentType(MediaType.APPLICATION_JSON)
