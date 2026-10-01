@@ -41,6 +41,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  * 中心 (3,3) 固定主城）—— 141/83 那是大地图坐标，落在城外，会被
  * {@code CITY_GRID_INVALID(3007)} 挡掉。
  *
+ * <p><b>响应形状（踩过的坑，#570）</b>：{@code data.popup} 是 <b>boolean</b>（canPopup），
+ * 而 {@code giftId} / {@code productId} / {@code productName} / {@code cooldownSec} /
+ * {@code offerExpireAt} 与它<b>同层</b>在 {@code data} 里 —— 不是 {@code {popup:{...}}}。
+ * 在 {@code popup} 里面找 {@code giftId} 会得到 NPE（我前面两次就是这么栽的）。
+ *
  * <p><b>所以这里的判据是「端到端经过真实动作」</b>。
  */
 @SpringBootTest
@@ -84,6 +89,12 @@ class GiftPopupTriggerEndToEndTest {
         cityAppService.collect(playerId,
                 new com.ironoath.web.dto.generated.CityCollectReq(
                         "e2e-c-" + UUID.randomUUID(), upgrade.buildingId()));
+        // **必须再触发一次结算**（#570）：`BUILDING_DONE` 标记打在
+        // `CityAppService.load()` 的结算段里（源码 316~323 行，注释明写
+        // 「收割发生在**任意一次结算**里……只盯 collect 会漏掉这一类路径」），
+        // 而 `load()` 只有**下一次请求**才会跑到 —— `collect` 走的是收割分支，
+        // **不会把 settlement.harvested() 变成非空**。`list` 走 `load()`，所以补它一下。
+        cityAppService.list(playerId);
     }
 
     /** 夹具：主城升到指定等级（初始 1 级，中心格 (3,3) 固定主城）。 */
@@ -143,14 +154,15 @@ class GiftPopupTriggerEndToEndTest {
     @Test
     @DisplayName("对照组：没有真实动作时，弹窗不是三类触发里的任何一个（否则下面两条是假绿）")
     void noRealActionMeansNoPopup() throws Exception {
-        JsonNode popup = popupData(newPlayer()).get("popup");
+        JsonNode data = popupData(newPlayer());
+        boolean canPopup = data.path("popup").asBoolean(false);
         // **真实形状**（GiftPopupResp 第一个分量是 boolean）：`canPopup=false` 时 giftId 为 null。
         // **新号可能有「新手礼包」弹窗**（那是设计，不是三类触发）——
         // 所以对照组的正确判据是「**不是那三类里的任何一个**」，不是「没有弹窗」。
-        if (popup == null || popup.isNull() || !popup.path("canPopup").asBoolean(false)) {
+        if (!canPopup) {
             return;   // 不弹当然也合格
         }
-        String id = popup.path("giftId").asText("");
+        String id = data.path("giftId").asText("");
         for (GiftCfg.Trigger t : new GiftCfg.Trigger[] {
                 GiftCfg.Trigger.STUCK_STAGE, GiftCfg.Trigger.BUILDING_DONE, GiftCfg.Trigger.BATTLE_LOST }) {
             assertThat(id).as("没做真实动作就不该拿到三类触发之一的弹窗")
@@ -167,14 +179,17 @@ class GiftPopupTriggerEndToEndTest {
         buildAndFinish(pid, "lumber_camp", 1, 1);
         int upgradeCode = 0;
 
-        JsonNode got = popupData(pid).get("popup");
-        if (got == null || got.isNull() || !got.path("canPopup").asBoolean(false)) {
-            System.out.println("[E2E] BUILDING_DONE 不可验：/city/upgrade 业务码=" + upgradeCode);
+        JsonNode data = popupData(pid);
+        if (!data.path("popup").asBoolean(false)) {
+            // **把服务端回的东西原样打出来**（#570）：这是分辨「标记没打」与「被频控压住」的唯一办法
+            System.out.println("[E2E] BUILDING_DONE 不可验：/city/upgrade=" + upgradeCode
+                    + "  popup=" + data.path("popup") + "  cooldownSec="
+                    + data.path("cooldownSec").asLong(-1L) + "  giftId=" + data.path("giftId").asText(""));
             Assumptions.abort("/city/upgrade 业务码=" + upgradeCode + " ⇒ BUILDING_DONE 标记点未经过；"
                     + "新号默认资源/位置不满足升级前置 ⇒ 本条不可验（不是通过也不是失败）。"
                     + "要让本条真跑，需要先给新号发足资源或用提速档后端。");
         }
-        assertThat(got.path("giftId").asText()).isEqualTo(giftIdFor(GiftCfg.Trigger.BUILDING_DONE));
+        assertThat(data.path("giftId").asText()).isEqualTo(giftIdFor(GiftCfg.Trigger.BUILDING_DONE));
     }
 
     @Test
@@ -189,14 +204,14 @@ class GiftPopupTriggerEndToEndTest {
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         int attackCode = JsonUtils.readTree(attackBody).path("code").asInt(-1);
 
-        JsonNode got = popupData(pid).get("popup");
-        if (got == null || got.isNull() || !got.path("canPopup").asBoolean(false)) {
+        JsonNode data = popupData(pid);
+        if (!data.path("popup").asBoolean(false)) {
             System.out.println("[E2E] BATTLE_LOST 不可验：/world/march 业务码=" + attackCode);
             Assumptions.abort("/world/march 业务码=" + attackCode + " ⇒ BATTLE_LOST 标记点未经过；"
                     + "新号无兵力/无可打目标 ⇒ 本条不可验（不是通过也不是失败）。"
                     + "要让本条真跑：先给新号造出至少 1 队兵（兵营 3 级 + 30 铁/20 粮每 100），"
                     + "再指向一个必输目标（低战力打高战力城）。");
         }
-        assertThat(got.path("giftId").asText()).isEqualTo(giftIdFor(GiftCfg.Trigger.BATTLE_LOST));
+        assertThat(data.path("giftId").asText()).isEqualTo(giftIdFor(GiftCfg.Trigger.BATTLE_LOST));
     }
 }
