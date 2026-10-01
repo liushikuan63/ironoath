@@ -470,6 +470,16 @@ public final class BalanceCli {
         // 真实玩家两种都有，而两者的 7 天终级差到 8 级 —— 所以报告里必须两个数并列。
         // **默认 city**：2026-10-01 裁决（收口清单 #493）—— 主城优先。理由与代价都记在台账里。
         boolean cityFirst = !"balanced".equals(options.getOrDefault("priority", "city"));
+        // ---------- 仓储上限截断（#507）----------
+        // **第一版没有这一维**，于是 45 天报出「铁 607 万」—— 而游戏里铁上限只有 5 万。
+        // 截断是真规则：ResourceSettlement.settle 装满后 overflow = output - room，
+        // **产出被丢弃**（不是排队、不是溢出到别处）。容量 = initCap + warehouse.capBase × 等级。
+        final long[] initCap = {20000L, 20000L, 10000L, 30000L};   // 木 石 铁 粮
+        final long initAmount = 0L;                                  // 起始资源见下面的初值
+        final long woodCapBase = 1000L;                              // warehouse.capBase（表里 1000）
+        final long[] warehouseLevels = {0L, 0L, 0L, 0L};
+        long[] overflow = {0L, 0L, 0L, 0L};
+        boolean withCap = !"false".equals(options.getOrDefault("cap", "true"));
         final long[][] producers = {
                 {1L, 120L, 0L, 400L, 0L},   // req, outBase/h, costWood, costStone, costIron
                 {1L, 120L, 400L, 0L, 0L},
@@ -563,6 +573,22 @@ public final class BalanceCli {
                 }
             }
             // 当天的底产入账
+            if (withCap) {
+                long[] amounts = {wood, stone, iron, grain};
+                for (int r = 0; r < 4; r++) {
+                    long cap = initCap[r] + woodCapBase * warehouseLevels[r];
+                    long produced = (r == 0 ? woodRate : r == 1 ? stoneRate : r == 2 ? ironRate : grainRate)
+                            * 24L;
+                    long room = Math.max(0L, cap - amounts[r]);
+                    long gained = Math.min(room, produced);
+                    overflow[r] += produced - gained;
+                    amounts[r] += gained;
+                }
+                wood = amounts[0];
+                stone = amounts[1];
+                iron = amounts[2];
+                grain = amounts[3];
+            } else {
             woodRate += withProducers ? producerRates[0] : 0L;
             stoneRate += withProducers ? producerRates[1] : 0L;
             ironRate += withProducers ? producerRates[2] : 0L;
@@ -571,9 +597,14 @@ public final class BalanceCli {
             stone += stoneRate * 24L;
             iron += ironRate * 24L;
             grain += grainRate * 24L;
+            }
 
             System.out.printf("%-6d%-10d%-12d%-12d%-12d%-12d%d%n",
                     day, level, wood, stone, iron, grain, upgraded);
+            if (withCap) {
+                System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
+                        "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
+            }
             if (level < prevLevel) {
                 monotonicBreaks++;
             }
