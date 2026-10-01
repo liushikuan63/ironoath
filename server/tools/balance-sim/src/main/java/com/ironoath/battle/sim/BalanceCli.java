@@ -568,6 +568,8 @@ public final class BalanceCli {
             // warehouse：requireMainLevel=2、cost 600木+300石、capBase 1000/级、maxLevel 40。
         long buildWood = 0L, buildStone = 0L, buildIron = 0L;
         long cityWood = 0L, cityStone = 0L;   // 主城升级花费（#532 对账用）
+        // 每一处资源扣除自报（#534）：**别靠 grep 猜，让它自己报花了多少**
+        final Map<String, Long> spendTags = new java.util.TreeMap<>();
         final double BUILD_COST_RATIO = 1.22;   // curve.BUILDING_COST.ratio
             if (withCap) {
                 // 兵营：与主城等级同步推进（requireMainLevel=3），本版不单独花资源升它
@@ -594,6 +596,7 @@ public final class BalanceCli {
                         break;
                     }
                     wood -= wc;
+                    spendTags.merge("#1 wood", wc, Long::sum);
                     stone -= ws;
                     buildWood += wc;
                     buildStone += ws;
@@ -695,6 +698,7 @@ public final class BalanceCli {
                     }
                     grain -= needGrain;
                     wood -= needWood;
+                    spendTags.merge("#2 wood", needWood, Long::sum);
                     stone -= needStone;
                     iron -= needIron;
                     buildGrain += needGrain;
@@ -772,6 +776,7 @@ public final class BalanceCli {
                             break;
                         }
                         wood -= cWood;
+                        spendTags.merge("#3 wood", cWood, Long::sum);
                         stone -= cStone;
                         buildWood += cWood;
                         buildStone += cStone;
@@ -793,6 +798,7 @@ public final class BalanceCli {
                     break;
                 }
                 wood -= woodCost;
+                spendTags.merge("#4 wood", woodCost, Long::sum);
                 stone -= stoneCost;
                 cityWood += woodCost;      // #532 对账
                 cityStone += stoneCost;
@@ -810,6 +816,7 @@ public final class BalanceCli {
                             break;
                         }
                         wood -= cWood;
+                        spendTags.merge("#5 wood", cWood, Long::sum);
                         stone -= cStone;
                         buildWood += cWood;
                         buildStone += cStone;
@@ -855,6 +862,12 @@ public final class BalanceCli {
             long producedStone = 5000L + stoneRate * 24L * day;
             System.out.println();
             System.out.println("=== 收支对账（#532）===");
+            System.out.println("=== 每一处木的扣除（#534 自报）===");
+            spendTags.forEach((k, v) -> System.out.printf("  %-14s %d%n", k, v));
+            long taggedTotal = spendTags.values().stream().mapToLong(Long::longValue).sum();
+            System.out.printf("  合计 %d（对账差额 %+d 里有这一份）%n",
+                    taggedTotal, taggedTotal - buildWood);
+
             System.out.printf("木：产出 %d - 建造/仓库 %d - 主城升级 %d = 结余 %d%n",
                     producedWood, buildWood, cityWood, wood);
             System.out.printf("石：产出 %d - 建造/仓库 %d - 主城升级 %d = 结余 %d%n",
