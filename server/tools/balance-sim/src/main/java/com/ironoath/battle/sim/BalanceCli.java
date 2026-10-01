@@ -630,7 +630,7 @@ public final class BalanceCli {
                     wood -= wc;
                     ledger.spend("wood", "warehouse-upgrade", wc);
                     stone -= ws;
-                    ledger.spend("stone", "site", ws);
+                    ledger.spend("stone", "warehouse-upgrade", ws);
                     buildWood += wc;
                     buildStone += ws;
                     // **仓库一级同时扩四种资源的容量**（#560）：原来只 `warehouseLevels[0]++`
@@ -745,7 +745,7 @@ public final class BalanceCli {
                     wood -= needWood;
                     ledger.spend("wood", "build-gable", needWood);
                     stone -= needStone;
-                    ledger.spend("stone", "site", needStone);
+                    ledger.spend("stone", "build-gable", needStone);
                     iron -= needIron;
                     buildGrain += needGrain;
                     buildWood += needWood;
@@ -824,7 +824,7 @@ public final class BalanceCli {
                         wood -= cWood;
                         ledger.spend("wood", "gather-A", cWood);
                         stone -= cStone;
-                        ledger.spend("stone", "site", cStone);
+                        ledger.spend("stone", "gather-A", cStone);
                         buildWood += cWood;
                         buildStone += cStone;
                         iron -= cIron;
@@ -847,7 +847,7 @@ public final class BalanceCli {
                 wood -= woodCost;
                 ledger.spend("wood", "city-upgrade", woodCost);
                 stone -= stoneCost;
-                ledger.spend("stone", "site", stoneCost);
+                ledger.spend("stone", "city-upgrade", stoneCost);
                 cityWood += woodCost;      // #532 对账
                 cityStone += stoneCost;
                 level++;
@@ -873,7 +873,7 @@ public final class BalanceCli {
                         wood -= cWood;
                         ledger.spend("wood", "gather-B", cWood);
                         stone -= cStone;
-                        ledger.spend("stone", "site", cStone);
+                        ledger.spend("stone", "gather-B", cStone);
                         buildWood += cWood;
                         buildStone += cStone;
                         iron -= cIron;
