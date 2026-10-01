@@ -761,6 +761,7 @@ public class MarchAppService {
             // 集结合并行军一到目标就把集结推到 ARRIVED：全灭时这支行军的记录当场被删，
             // 之后再也没有第二个能标记它的时刻，不在这里标就永久停在 DEPARTED
             markRallyArrived(march);
+            boolean marchAlive = true;
             switch (march.action()) {
                 case GATHER -> {
                     march.startGathering(now);
@@ -772,7 +773,7 @@ public class MarchAppService {
                 case STATION, GARRISON -> {
                     // 驻扎没有后续事件，等玩家召回
                 }
-                case ATTACK -> resolveAttack(march, now);
+                case ATTACK -> marchAlive = resolveAttack(march, now);
                 case SCOUT -> {
                     generateReport(march, now);
                     march.beginReturn(now, MarchCalculator.recallMillis(march, now));
@@ -780,7 +781,9 @@ public class MarchAppService {
                 }
             }
             world.bumpChunkVersion(march.to().chunkKey(chunkSize()));
-            marches.save(march, version);
+            if (marchAlive) {
+                marches.save(march, version);
+            }
             LOG.info("行军到达 marchId={} playerId={} 目标={} 行为={} 新状态={}",
                     march.id(), march.playerId(), march.to(), march.action(), march.status());
             return true;
@@ -815,7 +818,7 @@ public class MarchAppService {
      * 玩家看到的是一支永远卡在目标面前的队伍，而日志里一切正常。
      * 让它带着满编兵力回家是唯一不会留下烂状态的处理。
      */
-    private void resolveAttack(March march, long now) {
+    private boolean resolveAttack(March march, long now) {
         Map<String, Long> beneficiaries = beneficiaries(march);
         try {
             switch (march.targetType()) {
@@ -851,11 +854,12 @@ public class MarchAppService {
             // 全军覆没：没有兵可以走回来，直接清理，否则地图上会留一支 0 兵的队伍在移动
             LOG.info("攻击失败且全军覆没，行军记录删除 marchId={} playerId={}", march.id(), march.playerId());
             marches.delete(march.id());
-            return;
+            return false;
         }
         // 打完就返程：野怪不能被占领，玩家城的占领属 B13 国战，队伍都没有理由留在原地
         march.beginReturn(now, MarchCalculator.recallMillis(march, now));
         dueQueue.reschedule(march.id(), march.returnArriveAt());
+        return true;
     }
 
     /**

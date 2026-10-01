@@ -94,6 +94,7 @@ class GiftPopupTriggerEndToEndTest {
     @Autowired private HeroRepository heroes;
     @Autowired private InventoryRepository inventories;
     @Autowired private HeroStatsService heroStats;
+    @Autowired private com.ironoath.web.battle.BattleReportStore battleReports;
 
     /** 夹具：直接给足四种资源（照 ArmyEndpointTest.giveResources 的形状）。 */
     private void giveResources(String playerId, long amount) {
@@ -428,6 +429,17 @@ class GiftPopupTriggerEndToEndTest {
         buildAndFinish(pid, "lumber_camp", 1, 1);
         int upgradeCode = 0;
 
+        // #589 diagnostics: guessing from a missing popup failed four times (#568-#587),
+        // so read the actual battle report and print who won.
+        // #589: the log proves the battle resolved with winner=DEFENDER and markBattleLost
+        // ran, so read the archive field itself -- five rounds of guessing, five rounds wrong.
+        PlayerSave after = players.findByPlayerId(pid).orElseThrow();
+        System.out.println("[E2E] 战后存档 giftPopup=" + after.giftPopup());
+        var reports = battleReports.reportsOf(pid);
+        System.out.println("[E2E] 攻方战报数=" + reports.size());
+        reports.stream().limit(2).forEach(r -> System.out.println(
+                "[E2E] 战报 winner=" + r.result().winner() + " won=" + r.won()
+                        + " att=" + r.attackerName() + " def=" + r.defenderName()));
         JsonNode data = popupData(pid);
         if (!data.path("popup").asBoolean(false)) {
             // **把服务端回的东西原样打出来**（#570）：这是分辨「标记没打」与「被频控压住」的唯一办法
