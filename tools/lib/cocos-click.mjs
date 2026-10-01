@@ -100,6 +100,8 @@ export function resolveCocosClickPoint(opts) {
   // CSS 像素 → 引擎点：`_getLocation` 的原式（mouse-input.ts:82-90），只乘 dpr、y 从下往上。
   const toEngine = (cssX, cssY) => ({ x: (cssX - rect.left) * dpr, y: (rect.top + rect.height - cssY) * dpr })
   const toCss = (ex, ey) => ({ x: rect.left + ex / dpr, y: rect.top + rect.height - ey / dpr })
+  // Web 上只有一个系统窗口，输入系统给 hitTest 的 windowId 就是 0（见下面第 4 步的注释）。
+  const WEB_WINDOW_ID = 0
   const insideCanvas = (css) =>
     css.x >= rect.left && css.x <= rect.left + rect.width && css.y >= rect.top && css.y <= rect.top + rect.height
 
@@ -119,21 +121,45 @@ export function resolveCocosClickPoint(opts) {
   if (cameras.length === 0) return fail('no-camera', { node: node.name })
 
   // ---- 4. 节点世界坐标 → 逐台相机求屏幕点 → 三条自检。
-  const world = box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
+  //
+  // ⚠️ **锚点补偿**（收口清单 #623 / #640）：`convertToWorldSpaceAR(Vec3(0,0,0))` 求的是
+  // **节点局部坐标系的原点**，而原点落在**锚点**上，**不一定是盒子中心**。
+  // 资源条格子就是这么写的 —— `addLabel` 里 `if (leftAligned) transform.setAnchorPoint(0, 0.5)`，
+  // 于是 `(0,0,0)` 是**左边缘中点**。盒宽 155 世界单位（屏幕 232px）⇒ 偏出去约 116px，
+  // 落在格子之外，点过去什么也不发生。
+  // ⇒ 这里先按 `anchorPoint` 算出「盒中心相对锚点」的局部偏移再换算。
+  // ⚠️ 这正是 #633 在探针里内联做对、而本模块最初漏掉的那一处；两版曾并存（重复实现），
+  // 现在探针改接本模块，所以**修在这里**，探针侧不再各算一套。
+  const boxSize = box.contentSize
+  const anchor = box.anchorPoint
+  const world = box.convertToWorldSpaceAR(new cc.Vec3(
+    boxSize.width * (0.5 - anchor.x),
+    boxSize.height * (0.5 - anchor.y),
+    0))
   const attempts = []
   let roundTripFailed = false
   let hitTestFailed = false
   let outside = false
   for (const cam of cameras) {
-    const sp = cam.worldToScreen(new cc.Vec3(), new cc.Vec3(world.x, world.y, world.z))
-    const back = cam.screenToWorld(new cc.Vec3(), new cc.Vec3(sp.x, sp.y, sp.z))
+    // **一参、就地改写**（#639）：产物里 Camera 这两个方法的实参序与 .d.ts 写的**相反** ——
+    // 引擎自己的包装 `this._camera.worldToScreen(e, t)` 里 `e` 是世界点、`t` 是输出。
+    // 实测（本仓 3.8.7 产物，1440×900 视口）：`worldToScreen(v)` 把 v 就地改成 (150,75) 是对的；
+    // 而 `worldToScreen(new Vec3(), world)` 会把 `world` 写成 (0,0) —— 第一个参数被当成了世界点。
+    // 一参形式对两种实参序都成立，所以用它，不去赌签名（#638 曾按 .d.ts 用两参，整轮读数全废）。
+    const sp = cam.worldToScreen(new cc.Vec3(world.x, world.y, world.z))
+    const back = cam.screenToWorld(new cc.Vec3(sp.x, sp.y, sp.z))
     const drift = Math.max(Math.abs(back.x - world.x), Math.abs(back.y - world.y))
-    const accepted = box.hitTest(new cc.Vec2(sp.x, sp.y), cam.systemWindowId) === true
+    // `windowId` 传 **0**，与 Web 输入系统一致（`EventMouse.windowId` 默认 0，产物
+    // `i.hitTest=function(t,e){void 0===e&&(e=0); …}`）。⚠️ **不能传 `cam.systemWindowId`**：
+    // `hitTest` 内部遍历的是**渲染场景**里那台相机（`_getRenderScene().cameras`），而组件
+    // `cc.Camera` 上的 `systemWindowId` 实测是 `undefined` ⇒ `undefined !== 0`
+    // ⇒ 那台被 `continue` 掉、hitTest 恒 false，看上去就成了"点不中"。这是 #638 首次实跑的真实拦因。
+    const accepted = box.hitTest(new cc.Vec2(sp.x, sp.y), WEB_WINDOW_ID) === true
     const css = toCss(sp.x, sp.y)
     const inCanvas = insideCanvas(css)
     const row = {
       camera: (cam.node && cam.node.name) || '(anon)',
-      systemWindowId: cam.systemWindowId,
+      componentSystemWindowId: cam.systemWindowId,
       engine: { x: sp.x, y: sp.y },
       css: { x: css.x, y: css.y },
       roundTripDrift: drift,
@@ -166,7 +192,7 @@ export function resolveCocosClickPoint(opts) {
       const e = convert(item.x, item.y)
       const row = { label: item.label, css: { x: item.x, y: item.y }, engine: e, insideCanvas: insideCanvas({ x: item.x, y: item.y }) }
       for (const cam of camList) {
-        row[cam.node && cam.node.name ? cam.node.name : '(anon)'] = boxx.hitTest(new ccx.Vec2(e.x, e.y), cam.systemWindowId) === true
+        row[cam.node && cam.node.name ? cam.node.name : '(anon)'] = boxx.hitTest(new ccx.Vec2(e.x, e.y), WEB_WINDOW_ID) === true
       }
       rows.push(row)
     }
