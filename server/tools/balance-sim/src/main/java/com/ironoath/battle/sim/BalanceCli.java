@@ -794,9 +794,7 @@ public final class BalanceCli {
                 }
                 wood -= woodCost;
                 stone -= stoneCost;
-                cityWood += woodCost;
-                cityStone += stoneCost;   // #532 对账
-                cityWood += woodCost;
+                cityWood += woodCost;      // #532 对账
                 cityStone += stoneCost;
                 level++;
                 upgraded++;
