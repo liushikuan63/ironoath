@@ -604,10 +604,22 @@ public final class BalanceCli {
                 // 主城因此只到 4~5 级。**真实玩家不会在 15% 时升仓库**，这是模型缺陷不是机制。
                 final long WH_TRIGGER_NUM = 80L;    // 80% cap（= 1 - RESOURCE_PROTECT_RATIO）
                 final long WH_TRIGGER_DEN = 100L;
-                long whCapNow = initCap[0] + woodCapBase * warehouseLevels[0];
-                long whCapStone = initCap[1] + woodCapBase * warehouseLevels[1];
-                boolean woodNearFull = wood * WH_TRIGGER_DEN >= whCapNow * WH_TRIGGER_NUM;
-                boolean stoneNearFull = stone * WH_TRIGGER_DEN >= whCapStone * WH_TRIGGER_NUM;
+                // **门要对四种资源都判**（#560）：原来只判木与石（`[0]`/`[1]`），
+                // 而截断那侧（结算处）对**四种**都算 ⇒ **粮与铁满了仓库也不升**。
+                // 症状：粮从第 5 天起长期满在 `initCap` 30 000 上、溢出 23.7 万，
+                // 而仓库一级没升（`capBase 1000`/级本可以扩到 7 万）。
+                // **这是「门控与实体的资源集合不一致」**，属模型缺陷不是数值口径。
+                boolean anyNearFull = false;
+                long[] resNow = {wood, stone, iron, grain};
+                for (int rr = 0; rr < 4; rr++) {
+                    long capR = initCap[rr] + woodCapBase * warehouseLevels[rr];
+                    if (resNow[rr] * WH_TRIGGER_DEN >= capR * WH_TRIGGER_NUM) {
+                        anyNearFull = true;
+                        break;
+                    }
+                }
+                boolean woodNearFull = anyNearFull;   // 保留原变量名，条件已并入 anyNearFull
+                boolean stoneNearFull = anyNearFull;
                 while (level >= 2 && warehouseLevels[0] < 40L
                         && (woodNearFull || stoneNearFull)) {
                     long wc = Math.round(600 * Math.pow(costRatio, warehouseLevels[0]));
@@ -621,7 +633,15 @@ public final class BalanceCli {
                     ledger.spend("stone", "site", ws);
                     buildWood += wc;
                     buildStone += ws;
-                    warehouseLevels[0]++;
+                    // **仓库一级同时扩四种资源的容量**（#560）：原来只 `warehouseLevels[0]++`
+                    // （只涨木），于是**石/铁/粮的容量永远不涨** ——
+                    // 而 `capBase` 那一列对四种资源是同一个值（表里 1000），
+                    // 语义就是「每级每种 +1000」。症状：粮从第 5 天起长期满在 30 000、
+                    // 45 天溢出 23.7 万，而仓库一级都没涨过粮的容量。
+                    // **模型缺陷（容量语义与实现不一致），不是数值口径。**
+                    for (int wr = 0; wr < 4; wr++) {
+                        warehouseLevels[wr]++;
+                    }
                 }
             }
             pickedOnceThisRound = false;        // #549：每轮重置
