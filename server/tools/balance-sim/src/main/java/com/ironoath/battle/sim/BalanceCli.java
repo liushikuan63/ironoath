@@ -475,6 +475,9 @@ public final class BalanceCli {
         // 截断是真规则：ResourceSettlement.settle 装满后 overflow = output - room，
         // **产出被丢弃**（不是排队、不是溢出到别处）。容量 = initCap + warehouse.capBase × 等级。
         final long[] initCap = {20000L, 20000L, 10000L, 30000L};   // 木 石 铁 粮
+        long barracksLevel = 0L;      // 兵营等级（造兵前置：requireMainLevel=3）
+        long standing = 0L;            // 在编兵力（造满 500 即停 —— 队列上限）
+        long troopsMade = 0L;          // 累计造兵，用来核对「造兵到底能不能吃掉产出」
         final long initAmount = 0L;                                  // 起始资源见下面的初值
         final long woodCapBase = Long.parseLong(options.getOrDefault("cap-base", "1000"));
                               // warehouse.capBase（表里 1000），可调以便扫档
@@ -521,6 +524,10 @@ public final class BalanceCli {
             // 的判断**建立在「仓库根本没被考虑」之上**，是错的。
             // warehouse：requireMainLevel=2、cost 600木+300石、capBase 1000/级、maxLevel 40。
             if (withCap) {
+                // 兵营：与主城等级同步推进（requireMainLevel=3），本版不单独花资源升它
+                while (barracksLevel < Math.min(40L, level - 2L)) {
+                    barracksLevel++;
+                }
                 while (level >= 2 && warehouseLevels[0] < 40L) {
                     long wc = Math.round(600 * Math.pow(costRatio, warehouseLevels[0]));
                     long ws = Math.round(300 * Math.pow(costRatio, warehouseLevels[0]));
@@ -530,6 +537,34 @@ public final class BalanceCli {
                     wood -= wc;
                     stone -= ws;
                     warehouseLevels[0]++;
+                }
+            }
+            // ---------- 造兵吃粮（第三维，#510 指出的那个出口缺位）----------
+            // 铁粮的**唯一消费线**：训练部队吃 trainCostIron / trainCostGrain
+            // （unit 表：重步兵 T1 = 铁 30 / 粮 20，四个兵种都是这个量级）。
+            // 之前两版模型里铁粮只进仓库、只被 cap 截断，于是第 3 天起永久溢出 ——
+            // 那正是「产出没有出口」的机器形态。补上这一维才能回答：
+            // **溢出是不是「玩家本该去造兵」的正常现象**。
+            // 真实上限是**三张表联立**，不是我能在这里编的一个数：
+            //   `TRAIN_QUEUE_SLOTS = 1`（B05 §二：兵营按队列训练，一次一个槽位）
+            //   人口上限 = Σ武将统帅值 + 科技加成（B05 §二 的「统帅上限」）
+            //   单队上限 = `TROOP_PER_COMMAND = 5`
+            // **本版只建模「每槽位一批、每批 100 个 T1」**（B11 ArmyState 的 load=20 ⇒ 5 队 × 20），
+            // **人口那一维（Σ武将统帅值）没有建模** —— 没有武将存档，而编一个「一个武将 20 统帅」
+            // 就是发明数值。所以造兵量在这一版里是**下界**，真实值只会更大。
+            // 结论对下界稳健：连下界都吃不掉产出，真实值能不能吃满是另一件事（见 #511）。
+            final long batchSize = 100L;
+            final long slots = 1L;             // TRAIN_QUEUE_SLOTS
+            final long maxQueued = slots * batchSize;
+            if (withCap && barracksLevel >= 3) {
+                while (standing < maxQueued) {
+                    if (iron < 30L || grain < 20L) {
+                        break;
+                    }
+                    iron -= 30L;
+                    grain -= 20L;
+                    standing += batchSize;
+                    troopsMade += batchSize;
                 }
             }
             if (withProducers && !cityFirst) {
@@ -622,6 +657,8 @@ public final class BalanceCli {
             if (withCap) {
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
+                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = TRAIN_QUEUE_SLOTS×批大小，兵营 %d 级）%n",
+                        "", "", troopsMade, standing, maxQueued, barracksLevel);
             }
             if (level < prevLevel) {
                 monotonicBreaks++;
