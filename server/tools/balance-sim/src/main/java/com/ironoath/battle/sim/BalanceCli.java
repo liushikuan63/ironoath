@@ -553,18 +553,31 @@ public final class BalanceCli {
             // **人口那一维（Σ武将统帅值）没有建模** —— 没有武将存档，而编一个「一个武将 20 统帅」
             // 就是发明数值。所以造兵量在这一版里是**下界**，真实值只会更大。
             // 结论对下界稳健：连下界都吃不掉产出，真实值能不能吃满是另一件事（见 #511）。
+            // 人口上限 = Σ 武将统帅值（B05 §二「人口/统帅上限 = Σ武将统帅值 + 科技加成」）。
+            // **守方是真正的玩家，本该有武将存档 —— 而我没有。所以取下界**：科技加成必为 0，
+            // 武将只按「一个都没有」算（0 个 ⇒ 人口 0 ⇒ 这一版造兵量为 0）。
+            // ⚠️ 那样造兵这一维就恒为 0，等于白加。**改取 B00 §三 的默认口径**
+            // （新号赠 1 名武将，hero 表 command 值域 46~100 ⇒ 取下界 46）
+            // —— 「新号有什么」属产品口径，此处只把 46 标成**下界假设**并写进输出。
+            final long minCommand = 46L;       // hero 表 command 的最小值（下界，非设计值）
             final long batchSize = 100L;
             final long slots = 1L;             // TRAIN_QUEUE_SLOTS
-            final long maxQueued = slots * batchSize;
-            if (withCap && barracksLevel >= 3) {
-                while (standing < maxQueued) {
-                    if (iron < 30L || grain < 20L) {
+            final long population = minCommand;   // **下界**：0 科技 + 1 名最弱武将
+            final long maxQueued = Math.min(slots * batchSize, population);
+            if (withCap && barracksLevel >= 3 && population > 0L) {
+                // 人口不足一批时**按人口切一批**，不是造满再截 ——
+                // 那样会出现「在编 100 / 上限 46」这种自相矛盾的输出（真造兵也不会超人口）。
+                long perBatch = Math.min(batchSize, maxQueued);
+                while (standing + perBatch <= maxQueued) {
+                    long costIron = (perBatch / 100L) * 30L;
+                    long costGrain = (perBatch / 100L) * 20L;
+                    if (iron < costIron || grain < costGrain) {
                         break;
                     }
-                    iron -= 30L;
-                    grain -= 20L;
-                    standing += batchSize;
-                    troopsMade += batchSize;
+                    iron -= costIron;
+                    grain -= costGrain;
+                    standing += perBatch;
+                    troopsMade += perBatch;
                 }
             }
             if (withProducers && !cityFirst) {
@@ -657,7 +670,7 @@ public final class BalanceCli {
             if (withCap) {
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
-                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = TRAIN_QUEUE_SLOTS×批大小，兵营 %d 级）%n",
+                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次, 人口下界 46)，兵营 %d 级）%n",
                         "", "", troopsMade, standing, maxQueued, barracksLevel);
             }
             if (level < prevLevel) {
