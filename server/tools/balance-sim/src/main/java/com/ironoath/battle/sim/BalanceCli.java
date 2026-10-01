@@ -68,6 +68,8 @@ public final class BalanceCli {
             printSingleBattle(resolver, rules, stats, options, seed);
         } else if (options.containsKey("rally")) {
             passed = printRallyCurve(resolver, rules, stats, options, tier);
+        } else if (options.containsKey("determinism")) {
+            passed = printDeterminism(resolver, rules, stats, options, tier);
         } else if (options.containsKey("f2p-stages")) {
             passed = printF2pStages(configs, resolver, rules, stats, options, tier);
         } else if (options.containsKey("f2p7d")) {
@@ -701,6 +703,59 @@ public final class BalanceCli {
     // 而一个用 log 拟合出来的回合数是装饰性数字 —— 它不会让任何断言变红，
     // 却会让人以为「6 回合打 10 个敌人要 32 回合」这种矛盾数字是量出来的。
     // 真要这一列，得让 BattleResult 暴露 rounds（属内核改动，另开一格）。
+
+    // ---------- 跨 JVM 确定性（B05 验收 3 缺的那一半） ----------
+
+    /**
+     * 同一个 seed 在**另一个 JVM 进程**里跑出逐位相同的结算摘要。
+     *
+     * <p><b>为什么需要它</b>：`BattleSimulatorTest` 只验了「同 seed 下触发序列完全一致」，
+     * 那是**同一个 JVM 内重跑两次** —— 它证明代码没有随机源泄漏，但证明不了
+     * 「换个 JVM 结果一样」。而这一条在 `验收矩阵` 里长期标 ✅ 却带着「同机器多 JVM 未跑」。
+     *
+     * <p><b>本模式输出的是可跨进程比对的摘要**（同一行固定格式），因此复跑命令是：
+     * <pre>node tools/check-battle-determinism.mjs</pre>
+     * 那份脚本跑两个 JVM 进程、比两行摘要 —— 断言在脚本里，**不在本方法内**
+     * （单进程内跑两次证明不了「跨 JVM」，那正是 #505 那次要避免的自欺）。
+     */
+    private static boolean printDeterminism(BattleParamsResolver resolver, BattleRules rules,
+                                            Map<UnitType, UnitStats> stats,
+                                            Map<String, String> options, int tier) {
+        int cases = Integer.parseInt(options.getOrDefault("cases", "5"));
+        long seed = Long.parseLong(options.getOrDefault("seed", "20261001"));
+        StringBuilder acc = new StringBuilder();
+        for (int c = 0; c < cases; c++) {
+            ArmySide atk = resolver.bareArmy("攻方",
+                    Map.of(UnitType.INFANTRY, 900L + c * 37L, UnitType.CAVALRY, 700L,
+                            UnitType.ARCHER, 600L, UnitType.SIEGE, 200L),
+                    Long.MAX_VALUE / 4);
+            ArmySide def = resolver.bareArmy("守方",
+                    Map.of(UnitType.INFANTRY, 950L, UnitType.CAVALRY, 800L,
+                            UnitType.ARCHER, 650L, UnitType.SIEGE, 150L),
+                    Long.MAX_VALUE / 4);
+            BattleResult r = BattleSimulator.simulate(new BattleInput(atk, def,
+                    TerrainType.PLAIN, seed + c, BattleType.PVP_SOLO,
+                    BattleModifier.none(), BattleModifier.none(), stats, rules,
+                    DefenderStore.none()));
+            // 摘要只取**逐位可复现**的量：胜负、回合数、总伤、总剩兵。
+            // 不取耗时、不取任何 HashMap 的迭代顺序相关内容。
+            // RoundSnapshot 的字段就是逐位可复现的量：每回合的攻守损失与技能触发。
+            // 不取耗时、不取任何集合的迭代顺序相关内容（那会让摘要变成 JVM 版本的指纹）。
+            long totalRounds = r.rounds().size();
+            long atkLoss = r.rounds().stream().mapToLong(rd -> rd.atkLoss()).sum();
+            long defLoss = r.rounds().stream().mapToLong(rd -> rd.defLoss()).sum();
+            long skills = r.rounds().stream().mapToLong(rd -> rd.skills().size()).sum();
+            acc.append(String.format("case%d winner=%s rounds=%d atkLoss=%d defLoss=%d skills=%d%n",
+                    c, r.winner(), totalRounds, atkLoss, defLoss, skills));
+        }
+        String digest = acc.toString().trim();
+        System.out.println("[determinism] cases=" + cases + " seed=" + seed
+                + " jdk=" + System.getProperty("java.version"));
+        System.out.println(digest);
+        System.out.println("[determinism] 上面这一段就是比对对象；"
+                + "另一个 JVM 进程跑同样的参数，输出必须逐字相同。");
+        return true;
+    }
 
     /** 把一份「各兵种份额」按总人数铺开（四舍五入，差额补在人数最多的那个兵种上）。 */
     private static Map<UnitType, Long> scale(Map<UnitType, Long> share, long total) {
