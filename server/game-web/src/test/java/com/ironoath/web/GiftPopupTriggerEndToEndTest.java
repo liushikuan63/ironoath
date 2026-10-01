@@ -422,8 +422,13 @@ class GiftPopupTriggerEndToEndTest {
         // **先清掉新号的免战期**（#583）：`validateAction` 用的是 `timeService.serverNow()`
         // （真实时钟）⇒ 给它 skew 无效，只能直接清标记：
         // `6003 目标处于保护状态｜免战期间无法主动出击`。
+
+        // Re-read the save AFTER raising the city (the #583 run hit
+        // `IllegalState optimistic lock conflict` twice this way):
+        // `raiseMainCity` writes the save internally, so a snapshot taken
+        // before it is stale.
         PlayerSave me = players.findByPlayerId(pid).orElseThrow();
-        me.pvp().withPeaceUntil(0L);   // 不是 null：withPeaceUntil 内会解引用
+        me.pvp().withPeaceUntil(0L);   // not null: withPeaceUntil dereferences it
         players.save(me);
 
         // **目标必须是玩家城**（#583）：`resolveTargetType` 判 `PLAYER_CITY` 的条件是
