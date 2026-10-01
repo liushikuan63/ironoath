@@ -573,7 +573,20 @@ public final class BalanceCli {
                 while (barracksLevel < Math.min(40L, level - 2L)) {
                     barracksLevel++;
                 }
-                while (level >= 2 && warehouseLevels[0] < 40L) {
+                // **只有仓库快满了才升**（#531）：`RESOURCE_PROTECT_RATIO = 0.20`
+                // 是「保留 20% 余量」的出处置 ⇒ 触发点是**当前量 ≥ 80% cap**。
+                // 之前这一维「能升就升」，于是在木石只占容量 15% 时也在升仓库 ——
+                // 而仓库给的是容量、容量根本没满 ⇒ **纯浪费**：
+                // 实测 7 天里木石从约 40320 掉到约 6500，几乎全被仓库与建造吃掉，
+                // 主城因此只到 4~5 级。**真实玩家不会在 15% 时升仓库**，这是模型缺陷不是机制。
+                final long WH_TRIGGER_NUM = 80L;    // 80% cap（= 1 - RESOURCE_PROTECT_RATIO）
+                final long WH_TRIGGER_DEN = 100L;
+                long whCapNow = initCap[0] + woodCapBase * warehouseLevels[0];
+                long whCapStone = initCap[1] + woodCapBase * warehouseLevels[1];
+                boolean woodNearFull = wood * WH_TRIGGER_DEN >= whCapNow * WH_TRIGGER_NUM;
+                boolean stoneNearFull = stone * WH_TRIGGER_DEN >= whCapStone * WH_TRIGGER_NUM;
+                while (level >= 2 && warehouseLevels[0] < 40L
+                        && (woodNearFull || stoneNearFull)) {
                     long wc = Math.round(600 * Math.pow(costRatio, warehouseLevels[0]));
                     long ws = Math.round(300 * Math.pow(costRatio, warehouseLevels[0]));
                     if (wood < wc || stone < ws) {
