@@ -581,6 +581,7 @@ public final class BalanceCli {
         // base 与 ratio **都是定点**（70 → 700000、1.22 → 12200）。
         // ⚠️ 行为假设：每天把铁全花在**当前能升的那一件**上 ⇒ 消费的**上界**；
         // 真实玩家更保守，溢出会比这里更小（这一维不会高估缺口）。
+        final double BUILD_COST_RATIO = 1.22;   // curve.BUILDING_COST.ratio
         final long FORGE_BASE = 700000L;
         final long FORGE_RATIO = 12200L;
         long forgeIron = 0L;
@@ -614,6 +615,54 @@ public final class BalanceCli {
                     forgePieces++;
                 }
                 forgeLevel.put(eq.id(), lvl);
+            }
+        }
+
+        // ---------- 第五维：建造吃粮（#521）----------
+        // 粮**不止造兵一个出口**：`building` 表里五条建筑 costBaseGrain > 0
+        // （stable 200 / drill_ground 100 / hospital 300 / academy 300 / embassy 200），
+        // 而模型里一条都没有 ⇒ 「粮溢出 237200」与铁那一轮一样是**缺维造成的**。
+        // 本版按「**能升就升**」推进（与仓库/兵营同一口径），建造优先级按表顺序，
+        // 造价按 `BUILDING_COST` 的 ratio^(n-1)（curve.base=0 ⇒ 用 costBase 直接起步）。
+        long buildGrain = 0L;
+        Map<String, Long> buildLevel = new java.util.HashMap<>();
+        if (withCap) {
+            List<String> grainBuildings = List.of(
+                    "hospital", "academy", "stable", "embassy", "drill_ground");
+            for (String bid : grainBuildings) {
+                BuildingCfg row = null;
+                for (var c : configs.all(BuildingCfg.class)) {
+                    if (bid.equals(c.id())) {
+                        row = c;
+                        break;
+                    }
+                }
+                if (row == null || row.costBaseGrain() <= 0L) {
+                    continue;
+                }
+                long reqMain = (long) row.requireMainLevel();
+                if (level < reqMain) {
+                    continue;                    // 主城等级不够（与真实建造前置一致）
+                }
+                long lv = buildLevel.getOrDefault(bid, 0L);
+                long maxLv = row.maxLevel();
+                while (lv < maxLv) {
+                    double ratio = Math.pow(BUILD_COST_RATIO, lv);
+                    long needGrain = Math.round(row.costBaseGrain() * ratio);
+                    long needWood = Math.round(row.costBaseWood() * ratio);
+                    long needStone = Math.round(row.costBaseStone() * ratio);
+                    long needIron = Math.round(row.costBaseIron() * ratio);
+                    if (grain < needGrain || wood < needWood || stone < needStone || iron < needIron) {
+                        break;                    // 任何一种不够就停（真建造也是整体校验）
+                    }
+                    grain -= needGrain;
+                    wood -= needWood;
+                    stone -= needStone;
+                    iron -= needIron;
+                    buildGrain += needGrain;
+                    lv++;
+                }
+                buildLevel.put(bid, lv);
             }
         }
 
@@ -759,6 +808,8 @@ public final class BalanceCli {
             if (withCap) {
                 System.out.printf("%-6s%-10s装备强化累计吃铁 %d（已开练 %d 件）%n",
                         "", "", forgeIron, forgePieces);
+                System.out.printf("%-6s%-10s建造累计吃粮 %d（等级 %s）%n",
+                        "", "", buildGrain, buildLevel);
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
                 System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次, --population %d)，兵营 %d 级）%n",
