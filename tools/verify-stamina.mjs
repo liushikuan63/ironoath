@@ -10,6 +10,9 @@
  *   ① 点「体力」那一行必须发出 `/stamina`，且弹出 `StaminaDetail` 弹层；
  *   ② 弹层里的标题必须等于**服务端读数**（`体力 X/Y` 与 `/stamina` 的响应逐字对上）；
  *   ③ 点「买 1 次（N 金币）」必须发出 `/stamina/buy`，且金币减少、体力增加（两次读数对比）。
+ *      **前提是买之前体力未满**（2026-10-02 #606）：满仓时按钮**被正确置灰**，本来就不该有
+ *      POST、已买次数与买价都不该动。此前这几条是无条件断言，而「满仓时体力不该涨」那条是
+ *      分支断言 —— 两组判据用了相反的前提，于是「按钮正确置灰」这件符合 B09 §5 的事被判成了红。
  *
  * 退出码：0 全绿；1 判据失败；2 前置不满足（产物/后端/建号/找不到体力那一行）。
  */
@@ -184,6 +187,11 @@ console.log(`[stamina] 点体力行后：弹层存在=${opened.found} 可见=${o
 await page.screenshot({ path: SHOT })
 
 // 买一次：金币要少、体力要多
+// 满不满仓要在**买之前**定下来（#606）：下面三条判据「有没有 POST /stamina/buy」「已买次数
+// 涨没涨」「下次买价涨没涨」全都在问「这次购买有没有发生」，而满仓时按钮**被正确置灰**
+// ⇒ 本来就不该有 POST、次数与买价都不该动。此前这三条是无条件断言，与下面第 229 行
+// `wasFull` 的分支判据用了相反的前提，于是「满仓时按钮正确置灰」这件符合规格的事被判成了红。
+const wasFullBeforeBuy = before.data.current >= before.data.cap
 const postsBeforeBuy = staminaPosts.length
 const buyPoint = await clickInOverlay('BuyButton')
 if (buyPoint !== null) {
@@ -217,11 +225,22 @@ if (!opened.texts.some((text) => text.replace(/\s+/g, '').includes(expectedTitle
 if (!opened.texts.some((text) => text.includes('金币'))) {
   failures.push('弹层里没有买体力的按钮文案（应含「买 1 次（N 金币）」）')
 }
-if (!staminaPosts.some((entry) => entry.startsWith('POST'))) {
-  failures.push('点了买体力没有发出 POST /stamina/buy —— 按钮没接上（或已到上限被置灰）')
-}
-if (after.data.boughtToday <= before.data.boughtToday) {
-  failures.push(`买完之后今日已买次数没涨（${before.data.boughtToday} → ${after.data.boughtToday}）`)
+if (wasFullBeforeBuy) {
+  // 满仓：按钮应被禁用。判据是「不该发出 POST」+「弹层给出了溢出警告」，
+  // 后者与下面 `wasFull` 分支里的那条重复不了（这里查的是**点击前**的弹层，那里查的是点击后）。
+  if (staminaPosts.some((entry) => entry.startsWith('POST'))) {
+    failures.push(`满仓时（${before.data.current}/${before.data.cap}）竟然发出了 POST /stamina/buy —— 置灰规则没生效`)
+  }
+  if (buyPoint === null) {
+    failures.push('满仓时「买 1 次」按钮找不到了 —— 满仓应置灰而不是移除（玩家仍需看到买价与警告）')
+  }
+} else {
+  if (!staminaPosts.some((entry) => entry.startsWith('POST'))) {
+    failures.push('未满仓时点了买体力没有发出 POST /stamina/buy —— 按钮没接上')
+  }
+  if (after.data.boughtToday <= before.data.boughtToday) {
+    failures.push(`买完之后今日已买次数没涨（${before.data.boughtToday} → ${after.data.boughtToday}）`)
+  }
 }
 // 体力的变化要看**买之前满没满**：B09 §5 明写"溢出不结转"，满仓时买就是会丢 ——
 // 第一版一刀切断言"买完必须涨"，于是把一件**符合规格**的事判成了缺陷。
@@ -239,7 +258,9 @@ if (wasFull) {
   }
 }
 // 买价要跟着涨（服务端定价，客户端不推算）：这是"服务端真的记了这次购买"的第二个证据
-if (after.data.buyCostGold > 0 && after.data.buyCostGold <= before.data.buyCostGold) {
+// 买价要跟着涨（服务端定价，客户端不推算）：这是"服务端真的记了这次购买"的第二个证据。
+// **只在真的买成了的时候断言** —— 满仓时这次购买压根没发生，拿它判"没涨"是量具自相矛盾。
+if (!wasFullBeforeBuy && after.data.buyCostGold > 0 && after.data.buyCostGold <= before.data.buyCostGold) {
   failures.push(`买完之后下一次的买价没涨（${before.data.buyCostGold} → ${after.data.buyCostGold}）`)
 }
 if (errors.length > 0) {
