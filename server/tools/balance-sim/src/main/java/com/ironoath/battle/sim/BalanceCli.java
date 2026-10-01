@@ -19,6 +19,7 @@ import java.util.Comparator;
 import java.util.List;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.BuildingCfg;
+import com.ironoath.config.cfg.EquipCfg;
 import com.ironoath.config.cfg.StageCfg;
 
 import java.nio.file.Path;
@@ -74,7 +75,7 @@ public final class BalanceCli {
         } else if (options.containsKey("f2p-stages")) {
             passed = printF2pStages(configs, resolver, rules, stats, options, tier);
         } else if (options.containsKey("f2p7d")) {
-            passed = printF2pTimeline(options);
+            passed = printF2pTimeline(configs, options);
         } else if (options.containsKey("wall")) {
             passed = printWallCurve(resolver, rules, stats, options, tier);
         } else if (options.containsKey("settle-bench")) {
@@ -447,7 +448,7 @@ public final class BalanceCli {
      * 「建造时间累计到 40 级 ≪ 资源所需」这件事是从表里读出来的，不是假设出来的
      * —— 与 {@code B00} 定下的「资源是瓶颈而不是时间」一致。
      */
-    private static boolean printF2pTimeline(Map<String, String> options) {
+    private static boolean printF2pTimeline(ConfigRegistry configs, Map<String, String> options) {
         int days = Integer.parseInt(options.getOrDefault("days", "7"));
         long hourMillis = 3_600_000L;
         long dayMillis = 24 * hourMillis;
@@ -464,9 +465,7 @@ public final class BalanceCli {
         // **120 / 120 / 60 / 240**，低 40% ⇒ 此前所有溢出读数都被高估。
         // `--base-rate` 缩放的就是这四个数。
         long woodRate = 0L, stoneRate = 0L, ironRate = 0L, grainRate = 0L;
-        for (var row : ConfigRegistry.loadFromDirectory(
-                Path.of(options.getOrDefault("config", "contract/config")))
-                .all(BuildingCfg.class)) {
+        for (var row : configs.all(BuildingCfg.class)) {
             // `outputBasePerHour` 是**可选列** —— main_city / warehouse 那些行没有产出，
             // 取值返回 null（生成物对 `?LONG` 列不填默认值）。不判空会 NPE。
             Long perBox = row.outputBasePerHour();
@@ -575,7 +574,50 @@ public final class BalanceCli {
                     warehouseLevels[0]++;
                 }
             }
-            // ---------- 造兵吃粮（第三维，#510 指出的那个出口缺位）----------
+            // ---------- 第四维：装备强化吃铁（#518 / #519）----------
+        // 排在**仓储截断之前** —— 放在之后铁已被 `overflow` 丢弃，这一维永远吃不到东西。
+        // 口径**照抄 `EquipForgeCostCalibrationTest`**（同口径才量的是同一件事）：
+        //   铁耗(第 n 次) = (might+command+wisdom) × EQUIP_FORGE_COST.base × ratio^(n)
+        // base 与 ratio **都是定点**（70 → 700000、1.22 → 12200）。
+        // ⚠️ 行为假设：每天把铁全花在**当前能升的那一件**上 ⇒ 消费的**上界**；
+        // 真实玩家更保守，溢出会比这里更小（这一维不会高估缺口）。
+        final long FORGE_BASE = 700000L;
+        final long FORGE_RATIO = 12200L;
+        long forgeIron = 0L;
+        int forgePieces = 0;
+        Map<String, Long> forgeLevel = new java.util.HashMap<>();
+        if (withCap) {
+            for (var eq : configs.all(EquipCfg.class)) {
+                // `rarity` 是**枚举 EquipCfg.Rarity**（不是字符串）——
+                // #519 记的「N 档一件都没进循环」就是这个：用 `"N".equals(eq.rarity())`
+                // 恒为 false，整条消费线静默地一条都没跑。
+                if (eq.rarity() != EquipCfg.Rarity.N) {
+                    continue;                    // 只算 N 档：B20 §五② 的开局 4 槽
+                }
+                long points = eq.might() + eq.command() + eq.wisdom();
+                long forgeMax = eq.forgeMax();
+                if (points <= 0L || forgeMax <= 0L) {
+                    continue;
+                }
+                long lvl = forgeLevel.getOrDefault(eq.id(), 0L);
+                while (lvl < forgeMax) {
+                    long cost = FixedPoint.round(FixedPoint.geometric(
+                            points * FORGE_BASE, FORGE_RATIO, (int) lvl));
+                    if (iron < cost) {
+                        break;                     // 铁不够就等下一天（优先点能升的那一件）
+                    }
+                    iron -= cost;
+                    forgeIron += cost;
+                    lvl++;
+                }
+                if (lvl > 0L) {
+                    forgePieces++;
+                }
+                forgeLevel.put(eq.id(), lvl);
+            }
+        }
+
+        // ---------- 造兵吃粮（第三维，#510 指出的那个出口缺位）----------
             // 铁粮的**唯一消费线**：训练部队吃 trainCostIron / trainCostGrain
             // （unit 表：重步兵 T1 = 铁 30 / 粮 20，四个兵种都是这个量级）。
             // 之前两版模型里铁粮只进仓库、只被 cap 截断，于是第 3 天起永久溢出 ——
@@ -715,6 +757,8 @@ public final class BalanceCli {
             System.out.printf("%-6d%-10d%-12d%-12d%-12d%-12d%d%n",
                     day, level, wood, stone, iron, grain, upgraded);
             if (withCap) {
+                System.out.printf("%-6s%-10s装备强化累计吃铁 %d（已开练 %d 件）%n",
+                        "", "", forgeIron, forgePieces);
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
                 System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次, --population %d)，兵营 %d 级）%n",
