@@ -18,6 +18,7 @@ import com.ironoath.common.num.FixedPoint;
 import java.util.Comparator;
 import java.util.List;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.BuildingCfg;
 import com.ironoath.config.cfg.StageCfg;
 
 import java.nio.file.Path;
@@ -458,9 +459,40 @@ public final class BalanceCli {
         final double baseRate = Double.parseDouble(options.getOrDefault("base-rate", "1.0"));
         double timeRatio = 1.18;
 
-        // 底产（house_* 的 perHour 之和）：`--base-rate` 缩放的就是这四个数。
-        long woodRate = Math.round(200L * baseRate), stoneRate = Math.round(200L * baseRate),
-                ironRate = Math.round(100L * baseRate), grainRate = Math.round(400L * baseRate);
+        // 底产：**从 building 表读** `outputBasePerHour`（lumber_camp / quarry / iron_mine / farm），
+        // **不再写死**。前一版写死 200/200/100/400 是我编的 —— 表里真实值是
+        // **120 / 120 / 60 / 240**，低 40% ⇒ 此前所有溢出读数都被高估。
+        // `--base-rate` 缩放的就是这四个数。
+        long woodRate = 0L, stoneRate = 0L, ironRate = 0L, grainRate = 0L;
+        for (var row : ConfigRegistry.loadFromDirectory(
+                Path.of(options.getOrDefault("config", "contract/config")))
+                .all(BuildingCfg.class)) {
+            // `outputBasePerHour` 是**可选列** —— main_city / warehouse 那些行没有产出，
+            // 取值返回 null（生成物对 `?LONG` 列不填默认值）。不判空会 NPE。
+            Long perBox = row.outputBasePerHour();
+            long per = perBox == null ? 0L : perBox;
+            if (per <= 0L) {
+                continue;
+            }
+            // outputResource 是指向 resource 表 id 的**外键字符串**（表里存的是**大写**
+            // `WOOD`/`STONE`/`IRON`/`GRAIN`），不是枚举。第一版按小写 switch，
+            // 四档全不匹配 ⇒ 底产读成 0 ⇒ 那次跑出来的「溢出全 0、主城只到 4 级」
+            // 是**读数为 0 造成的假象**，不是结论。
+            switch (row.outputResource()) {
+                case "WOOD" -> woodRate += per;
+                case "STONE" -> stoneRate += per;
+                case "IRON" -> ironRate += per;
+                case "GRAIN" -> grainRate += per;
+                default -> { }
+            }
+        }
+        woodRate = Math.round(woodRate * baseRate);
+        stoneRate = Math.round(stoneRate * baseRate);
+        ironRate = Math.round(ironRate * baseRate);
+        grainRate = Math.round(grainRate * baseRate);
+        System.out.printf("底产（读自 building 表）：木 %d / 石 %d / 铁 %d / 粮 %d 每小时"
+                + "（已乘 --base-rate %s）%n", woodRate, stoneRate, ironRate, grainRate,
+                options.getOrDefault("base-rate", "1.0"));
         long wood = 5000L, stone = 5000L, iron = 2000L, grain = 8000L;
         int level = 1;
         // **产出建筑也升**（默认开）。四座的输入全部来自 building 表，形状与 ResourceRateService
