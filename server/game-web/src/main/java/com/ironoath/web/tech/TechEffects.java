@@ -1,5 +1,6 @@
 package com.ironoath.web.tech;
 
+import com.ironoath.common.config.TechBonusCore;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.TechCfg;
 import com.ironoath.core.player.PlayerTech;
@@ -99,16 +100,26 @@ public class TechEffects {
         if (tech == null) {
             return 0L;
         }
-        long total = 0L;
-        for (TechCfg row : configs.all(TechCfg.class)) {
-            if (row.effectAttr() != attr) {
-                continue;
-            }
-            int level = tech.levelOf(row.id());
-            if (level > 0) {
-                total += row.effectValue() * level;
-            }
+        // **算法已下沉到 game-common 的 {@link TechBonusCore}**（#636）：balance-sim 要算同一份
+        // 科技加成，而它拿不到 game-web。原先这段 12 行的 sum 循环就在本文件里，与线上同源、
+        // 模拟器只能另抄一份 —— 那正是 #592/#594 连续踩的「两边各算一套、悄悄漂移」。
+        // 本方法现在只负责「把 TechCfg 行喂进去」这一层适配，算法本身只有一份。
+        return TechBonusCore.totalPercent(techRows(), attr.name(), tech::levelOf);
+    }
+
+    /**
+     * 把 {@code tech} 表整张摊成 {@link TechBonusCore.Row}。
+     *
+     * <p>每层每次调用都重摊一遍是有意的：{@code tech} 表是构建期常量、这张表在进程内不变，
+     * 而缓存会引入「表变了缓存没清」的第二种失败模式 —— 与其用一个省不下来的缓存换来一条新的坑，
+     * 不如每次重算（12 行的摊平 × 十几行表，实测在纳秒级，不在任何热路径上）。
+     */
+    private java.util.List<TechBonusCore.Row> techRows() {
+        java.util.List<TechCfg> all = configs.all(TechCfg.class);
+        java.util.List<TechBonusCore.Row> rows = new java.util.ArrayList<>(all.size());
+        for (TechCfg cfg : all) {
+            rows.add(new TechBonusCore.Row(cfg.id(), cfg.effectAttr().name(), cfg.effectValue()));
         }
-        return total;
+        return rows;
     }
 }
