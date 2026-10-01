@@ -563,7 +563,9 @@ public final class BalanceCli {
             // 用途：量出「人口上限要多大，造兵才吃得满产���」—— 那个数就是 B05 §二 要补的口径。
             final long minCommand = Long.parseLong(options.getOrDefault("population", "46"));
             final long batchSize = 100L;
-            final long slots = 1L;             // TRAIN_QUEUE_SLOTS
+            // `--train-slots` 同 `--population`：**只在 CLI 里存在的探针旋钮**，
+            // 用来量「把 TRAIN_QUEUE_SLOTS 调大能吃掉多少溢出」。默认值 1 = 表里的值。
+            final long slots = Long.parseLong(options.getOrDefault("train-slots", "1"));
             final long population = minCommand;   // **下界**：0 科技 + 1 名最弱武将
             final long maxQueued = Math.min(slots * batchSize, population);
             if (withCap && barracksLevel >= 3 && population > 0L) {
