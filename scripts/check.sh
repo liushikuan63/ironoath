@@ -16,6 +16,7 @@
 #       + public 方法不许收了 playerId 却不用它（身份被静默丢弃 = 越权读改，编译与单测都看不见 —— 见 #256）。
 #       + Mongo 存档的 save 必须覆盖 Document 的每个字段（白名单漏一个 = 只在真 Mongo 上静默丢档）。
 #       + 微信小游戏产物（方向必须横屏；release 首包必须 ≤ 预算；没有产物则跳过）。
+#       + 资源条顺序不变量（资源快照退回散列摆放的 map 时，排列跨进程变而进程内恒定 ⇒ 单测钉不住）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 bash scripts/check-layering.sh
@@ -60,4 +61,7 @@ bash scripts/check-wechat-artifact.sh
 bash scripts/check-search-radius.sh
 bash scripts/check-web-artifact.sh
 bash scripts/check-view-child-index.sh
+# 资源条顺序（#616~#618）：PlayerSave.resources() 退回 Map.copyOf 时，顺序按 SALT 散列摆放、
+# 跨进程变而进程内恒定 ⇒ 单测永远绿、玩家每次登录看到的排列却可能不同。#618 的单测钉不住这一维。
+bash scripts/check-resource-order-invariant.sh
 echo "[check] 全部静态检查通过。"
