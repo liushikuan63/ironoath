@@ -558,6 +558,7 @@ public final class BalanceCli {
             // ⇒ cap 恒等于 initCap ⇒ 溢出必然在第 3 天发生，而那个「仓库扩容追不上产出」
             // 的判断**建立在「仓库根本没被考虑」之上**，是错的。
             // warehouse：requireMainLevel=2、cost 600木+300石、capBase 1000/级、maxLevel 40。
+        long buildWood = 0L, buildStone = 0L, buildIron = 0L;
             if (withCap) {
                 // 兵营：与主城等级同步推进（requireMainLevel=3），本版不单独花资源升它
                 while (barracksLevel < Math.min(40L, level - 2L)) {
@@ -571,6 +572,8 @@ public final class BalanceCli {
                     }
                     wood -= wc;
                     stone -= ws;
+                    buildWood += wc;
+                    buildStone += ws;
                     warehouseLevels[0]++;
                 }
             }
@@ -660,6 +663,9 @@ public final class BalanceCli {
                     stone -= needStone;
                     iron -= needIron;
                     buildGrain += needGrain;
+                    buildWood += needWood;
+                    buildStone += needStone;
+                    buildIron += needIron;
                     lv++;
                 }
                 buildLevel.put(bid, lv);
@@ -810,6 +816,8 @@ public final class BalanceCli {
                         "", "", forgeIron, forgePieces);
                 System.out.printf("%-6s%-10s建造累计吃粮 %d（等级 %s）%n",
                         "", "", buildGrain, buildLevel);
+                System.out.printf("%-6s%-10s建造/仓库累计吃：木 %d / 石 %d / 铁 %d / 粮 %d%n",
+                        "", "", buildWood, buildStone, buildIron, buildGrain);
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
                 System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次, --population %d)，兵营 %d 级）%n",
