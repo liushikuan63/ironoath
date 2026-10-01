@@ -74,8 +74,9 @@ class GiftPopupTriggerEndToEndTest {
      */
     private static final long SETTLE_SKEW_MS = 5_000L;
 
-    /** 行军到期扫描的 now 偏移毫秒（战斗结算同样是惰性的）。 */
-    private static final long MARCH_SKEW_MS = 600_000L;
+    /** 行军到期扫描的 now 偏移毫秒（战斗结算同样是惰性的）。
+     *  必须**越过新号的免战期**（`6003 目标处于保护状态｜免战期间无法主动出击`）。 */
+    private static final long MARCH_SKEW_MS = 86_400_000L;
 
     /** 目标格：与 B13 国策探针同源的王城坐标（那边用它建过国家）。 */
     private static final int TARGET_X = 141;
@@ -162,6 +163,22 @@ class GiftPopupTriggerEndToEndTest {
         armyAppService.speedUp(playerId,
                 new com.ironoath.web.dto.generated.ArmyUnitReq(
                         "e2e-su-" + UUID.randomUUID(), unitId, 0L, "item_speedup_train_1h"));
+    }
+
+    /**
+     * 夹具：造一个「打得过新号」的 rival 家城。
+     *
+     * <p>为什么需要（#583）：`markBattleLost` 只在输了时记，而新号 + 100 个 T1 步兵打谁都会赢
+     * ⇒ 必须有一个战力明显更高的玩家城当目标。B08 的 `BotAttackQuotaTest` 已经证明
+     * 「拿另一个新号的家城当 PVP 目标」这条路径在测试里可行（它就是 `human` / `humanB`）。
+     */
+    private String strongRival() {
+        String rival = playerInitService.init(new PlayerInitReq(
+                "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "rival",
+                1_700_000_000_000L, "")).playerId();
+        giveResources(rival, 100_000_000L);
+        raiseMainCity(rival, 12);
+        return rival;
     }
 
     /** 读某个兵种的剩余训练秒数（0 = 已完成或没在训）。 */
@@ -402,8 +419,21 @@ class GiftPopupTriggerEndToEndTest {
         // **目标格要找野怪**（#577）：硬编 `(141,83)` 会被
         // `6009 目标不合法……是 EMPTY` 挡掉 —— 错误原文自己写了
         // 「只有野怪、玩家城与『有人正在采集的资源点』能被攻击」。
-        com.ironoath.core.world.Coord target = cellOfType(pid,
-                com.ironoath.core.world.WorldGenerator.EntityType.MONSTER);
+        // **先清掉新号的免战期**（#583）：`validateAction` 用的是 `timeService.serverNow()`
+        // （真实时钟）⇒ 给它 skew 无效，只能直接清标记：
+        // `6003 目标处于保护状态｜免战期间无法主动出击`。
+        PlayerSave me = players.findByPlayerId(pid).orElseThrow();
+        me.pvp().withPeaceUntil(0L);   // 不是 null：withPeaceUntil 内会解引用
+        players.save(me);
+
+        // **目标必须是玩家城**（#583）：`resolveTargetType` 判 `PLAYER_CITY` 的条件是
+        // `world.cityAt(coord).isPresent()`（与 entityType 无关），
+        // 而 `markBattleLost` 只在 PLAYER_CITY 的 PVP 结算里（#582 实测：打 MONSTER 时
+        // `processDue` 结算了 1 支行军但 `popup=false`）。
+        // **要输 ⇒ 打一个比自己强的玩家**：让一个「满资源、高等级」的新号当地主，
+        // 而本号只有 100 个 T1 步兵。
+        String victim = strongRival();
+        com.ironoath.core.world.Coord target = worldAppService.homeOf(victim);
         var marchReq = new com.ironoath.web.dto.generated.MarchReq(
                 "e2e-a-" + UUID.randomUUID(),
                 target.x(), target.y(),
