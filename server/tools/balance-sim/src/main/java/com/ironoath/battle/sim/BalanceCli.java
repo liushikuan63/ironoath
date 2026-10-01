@@ -932,8 +932,13 @@ public final class BalanceCli {
             long stoneSpent = ledger.tags.entrySet().stream()
                     .filter(e -> e.getKey().startsWith("stone/"))
                     .mapToLong(Map.Entry::getValue).sum();
-            long woodGap = (5000L + woodRate * 24L * day) - woodSpent - wood;
-            long stoneGap = (5000L + stoneRate * 24L * day) - stoneSpent - stone;
+            // **必须减掉溢出**（#562）：`ResourceSettlement` 装满后
+            // `overflow = output - room`，**产出被丢弃** —— 而这条公式原来不减它。
+            // 45 天内木石从不溢出（溢出全在粮上，而对账只算木石）⇒ 缺陷一直藏着；
+            // 600 天木石也满了（42000/42000）⇒ 对账立刻不平（+128 万）。
+            // **这是对账工具的第三处缺陷**（前两处：×24 漏乘、拿当日当累计）。
+            long woodGap = (5000L + woodRate * 24L * day) - woodSpent - wood - overflow[0];
+            long stoneGap = (5000L + stoneRate * 24L * day) - stoneSpent - stone - overflow[1];
             System.out.printf("木：起始 5000 + 产出 %d - 扣除 %d = 结余 %d%n",
                     woodRate * 24L * day, woodSpent, wood);
             System.out.printf("石：起始 5000 + 产出 %d - 扣除 %d = 结余 %d%n",
