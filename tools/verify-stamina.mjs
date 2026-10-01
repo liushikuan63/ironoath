@@ -342,10 +342,29 @@ const coordInfo = await page.evaluate(() => {
     dpr: window.devicePixelRatio }
 })
 console.log('[stamina][坐标] ' + JSON.stringify(coordInfo))
+// 触摸观测（#626 定下的下一步）：**不再算坐标**，直接给每个 `Resource-*` 节点挂一个计数
+// 监听，点一次之后看「哪个节点收到了 touch-start」。一次读数就能把这三种可能分开：
+//   ① 坐标压根没落在任何一格的盒内  ② 命中了别的节点  ③ 该格根本没收到事件（监听没挂上/被吞）
+// 挂的是 `touch-start` 的**监听计数**，不改任何业务行为（Cocos 的 `on` 是追加语义）。
+await page.evaluate(() => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  window.__touchHits = []
+  const walk = (n, depth) => {
+    if (depth > 40) return
+    if (n.name.startsWith('Resource')) {
+      n.on('touch-start', () => window.__touchHits.push(n.name), n)
+    }
+    for (const c of n.children) walk(c, depth + 1)
+  }
+  walk(scene, 0)
+})
 const __dx = Number(process.env.STA_DX ?? '0')
 const __dy = Number(process.env.STA_DY ?? '0')
 console.log('[stamina][偏移] 基准=' + Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y) + ' 偏移=' + __dx + ',' + __dy)
 await page.mouse.click(rowPoint.x + __dx, rowPoint.y + __dy)
+const touchHits = await page.evaluate(() => (window.__touchHits ?? []).slice())
+console.log('[stamina][触摸] 收到 touch-start 的节点: ' + (touchHits.length === 0 ? '(无)' : touchHits.join('、')) + '  |  点击点=' + Math.round(rowPoint.x + __dx) + ',' + Math.round(rowPoint.y + __dy))
 await page.waitForTimeout(1500)
 // 诊断 B（#607）：render() 末尾明确写了 this.node.active = true，而 Cocos 的 activeInHierarchy
 // 要本节点**与所有祖先**都 active。所以「不可见」有两种可能：本节点没被 render，或者某个祖先
