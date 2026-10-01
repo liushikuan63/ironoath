@@ -559,7 +559,9 @@ public final class BalanceCli {
             // ⚠️ 那样造兵这一维就恒为 0，等于白加。**改取 B00 §三 的默认口径**
             // （新号赠 1 名武将，hero 表 command 值域 46~100 ⇒ 取下界 46）
             // —— 「新号有什么」属产品口径，此处只把 46 标成**下界假设**并写进输出。
-            final long minCommand = 46L;       // hero 表 command 的最小值（下界，非设计值）
+            // **--population 是探针旋钮，不是游戏数值**：它只在 CLI 里存在，默认 46 = hero 表 command 的最小值（1 名最弱武将 + 0 科技）。
+            // 用途：量出「人口上限要多大，造兵才吃得满产���」—— 那个数就是 B05 §二 要补的口径。
+            final long minCommand = Long.parseLong(options.getOrDefault("population", "46"));
             final long batchSize = 100L;
             final long slots = 1L;             // TRAIN_QUEUE_SLOTS
             final long population = minCommand;   // **下界**：0 科技 + 1 名最弱武将
@@ -567,7 +569,14 @@ public final class BalanceCli {
             if (withCap && barracksLevel >= 3 && population > 0L) {
                 // 人口不足一批时**按人口切一批**，不是造满再截 ——
                 // 那样会出现「在编 100 / 上限 46」这种自相矛盾的输出（真造兵也不会超人口）。
+                // 上一批已派走：队列位空出来了（`perBatch` 本身就是「已派走」的证据，
+                // 所以直接归零而不是记一个行军状态 —— 本版不建模行军去向）
+                standing = 0L;
                 long perBatch = Math.min(batchSize, maxQueued);
+                // **每天补兵**：真实的 `ResourceSettlement` 每次结算都会把上一批派去行军/驻防，
+                // 所以队列位会**空出来再被填满** —— 人口决定的是「每批能造多少」，
+                // **不是「一生只能造多少」**。第一版每天只在 `standing + perBatch <= maxQueued`
+                // 时造，等价于「造满就永远停手」，那是把队列当成了总量上限。
                 while (standing + perBatch <= maxQueued) {
                     long costIron = (perBatch / 100L) * 30L;
                     long costGrain = (perBatch / 100L) * 20L;
@@ -670,8 +679,8 @@ public final class BalanceCli {
             if (withCap) {
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
-                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次, 人口下界 46)，兵营 %d 级）%n",
-                        "", "", troopsMade, standing, maxQueued, barracksLevel);
+                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次, --population %d)，兵营 %d 级）%n",
+                        "", "", troopsMade, standing, maxQueued, minCommand, barracksLevel);
             }
             if (level < prevLevel) {
                 monotonicBreaks++;
