@@ -143,11 +143,6 @@ const UNREFERENCED = {
   STAGE_DIFFICULTY_RATIO_EARLY: 'zero-ref: #501①（同上：生成期输入）',
   STAGE_DIFFICULTY_EARLY_THROUGH: 'zero-ref: #501①（同上：生成期输入）',
   STAGE_DIFFICULTY_RATIO_LATE: 'zero-ref: #501①（同上：生成期输入）',
-  BOT_SHARE_LINJU: 'zero-ref: #502⑥（**动态拼接的参数名**：BotRulesAssembler.shareOf 按 `BOT_SHARE_` + 原型 id 后缀拼出名字再 `configs.longParam(param)`，静态扫字面量看不见它。不是零引用）',
-  BOT_SHARE_MENGYOU: 'zero-ref: #502⑥（**动态拼接的参数名**：BotRulesAssembler.shareOf 按 `BOT_SHARE_` + 原型 id 后缀拼出名字再 `configs.longParam(param)`，静态扫字面量看不见它。不是零引用）',
-  BOT_SHARE_JIELUE: 'zero-ref: #502⑥（**动态拼接的参数名**：BotRulesAssembler.shareOf 按 `BOT_SHARE_` + 原型 id 后缀拼出名字再 `configs.longParam(param)`，静态扫字面量看不见它。不是零引用）',
-  BOT_SHARE_JUNFA: 'zero-ref: #502⑥（**动态拼接的参数名**：BotRulesAssembler.shareOf 按 `BOT_SHARE_` + 原型 id 后缀拼出名字再 `configs.longParam(param)`，静态扫字面量看不见它。不是零引用）',
-  BOT_SHARE_YINGZI: 'zero-ref: #502⑥（**动态拼接的参数名**：BotRulesAssembler.shareOf 按 `BOT_SHARE_` + 原型 id 后缀拼出名字再 `configs.longParam(param)`，静态扫字面量看不见它。不是零引用）',
   BOT_FULL_ROUND_BUDGET_MS: 'zero-ref: #501④（验收 6 的压测门槛，不是代码判据；要接的是压测脚本）',
   BOT_REACTION_DELAY_MIN_SEC: 'zero-ref: #501②（权威值在 bot_archetype 表的 reactionDelayMinSec/MaxSec，这一对是全局上下界）',
   BOT_REACTION_DELAY_MAX_SEC: 'zero-ref: #501②（同上）',
@@ -189,11 +184,31 @@ const UNREFERENCED = {
   // 别照着 #64 把它们加回来。
 }
 
+// ---------- 动态参数名（#502） ----------
+//
+// `configs.longParam(param)` 里 param 是拼出来的（`BOT_SHARE_` + 原型 id），静态扫看不见 ——
+// 于是那五条被算成零引用，而它们其实有生产读者（`BotRulesAssembler.shareOf`）。
+//
+// 这里反过来用**前缀常量的字符串字面量**去认：扫源码里
+// `String XXX = "BOT_SHARE_"` 这种形状，把它的字面量当成「动态读取的参数名前缀」。
+// **宁可多认也不漏认**：多认的后果是少报一条例外，漏认的后果是逼下一个人去「接线」
+// 而破坏那个「加了原型忘了配占比就当场抛」的形状（见 #502）。
+const dynamicPrefixes = new Set()
+for (const s of consumers) {
+  for (const m of s.src.matchAll(/\bString\s+[A-Z_][A-Z_0-9]*\s*=\s*"([A-Z][A-Z_0-9]*_)"\s*;/g)) {
+    dynamicPrefixes.add(m[1])
+  }
+}
+
 let paramHits = 0
 const deadParams = []
 for (const row of GLOBAL_ROWS) {
   const re = new RegExp('\\b' + row.id + '\\b')
   if (consumers.some((s) => !s.test && re.test(s.src))) { paramHits++; continue }
+  // 动态拼接：id 以某个「前缀常量」的字面量开头，且那个前缀**在生产源码里**被这么声明过
+  const dynamic = [...dynamicPrefixes].some((prefix) => row.id.startsWith(prefix)
+      && consumers.some((f) => !f.test && f.src.includes(prefix + '"')))
+  if (dynamic) { paramHits++; continue }
   deadParams.push(row.id)
   const note = UNREFERENCED[row.id]
   if (!note) {
