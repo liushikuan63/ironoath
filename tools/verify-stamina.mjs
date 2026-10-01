@@ -270,6 +270,56 @@ if (rowPoint === null) {
 //
 // 判据仍是 **GET /stamina 出现几条**：一条 = 点击没命中（只有 AppRoot:913 的 deliver），
 // 两条 = 点击命中并触发了 `openStaminaDetail`(:1204)。
+// 命中测试（#623/#624）：点不中究竟是「坐标算错」还是「那个点压根不落在任何一格上」。
+// 把点击点**反投影**回世界坐标，再对每个资源条格子算 containsPoint —— 一次就能分开这两种。
+// 注意坐标换算要与 clickStaminaRow **同式**（含 rect.left / rect.top），#616 那次漏了 top 就看错方向。
+const hitReport = await page.evaluate((PT) => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  const cam = scene.getComponentInChildren('cc.Camera')
+  const rect = document.querySelector('canvas').getBoundingClientRect()
+  const pixel = cc.view.getVisibleSizeInPixel()
+  const vx = (PT.x - rect.left) * (pixel.width / rect.width)
+  const vy = (PT.y - rect.top) * (pixel.height / rect.height)
+  // ⚠️ Cocos 的签名是 screenToWorld(screenPoint, camera, out) —— **第一个参数是一个 Vec2/Vec3**，
+  // 不是 (x, y, z, out) 四个散参。传散参会被当成「拿 out 当 screenPoint」，报
+  // 「Cannot create property 'x' on number」（#624 实测踩过）。
+  // ⚠️ Cocos 3.x 的签名是 screenToWorld(screenPoint: Vec3, out: Vec3) —— 入参**必须是 Vec3**。
+  // 传 Vec2 或四个散参都拿不到正确结果（散参报「Cannot create property 'x' on number」，
+  // Vec2 静默给 NaN）—— #624 两个都踩过。
+  const sp = new cc.Vec3(vx, vy, 0)
+  const world = new cc.Vec3()
+  cam.screenToWorld(sp, world)
+  const rows = []
+  const walk = (n, depth) => {
+    const bx = n.getComponent && n.getComponent('cc.UITransform')
+    if (depth > 40) return
+    if (bx != null && bx !== undefined && n.activeInHierarchy === true && n.name.startsWith('Resource')) {
+      // ⚠️ Cocos 3.8 的 UITransform **没有** containsPoint（实测报
+      // 「bx.containsPoint is not a function」）⇒ 自己算：把世界点换算到节点局部，再按 anchor 判矩形。
+      const lp = new cc.Vec3()
+      bx.convertToNodeSpaceAR(world, lp)
+      const size = bx.contentSize
+      const ap = bx.anchorPoint
+      const halfW = size.width * ap.x
+      const halfH = size.height * ap.y
+      const hit = lp.x >= -halfW && lp.x <= size.width - halfW
+        && lp.y >= -halfH && lp.y <= size.height - halfH
+      const local = bx.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
+      const scr = cam.worldToScreen(local)
+      const cx = rect.left + (scr.x / pixel.width) * rect.width
+      const cy = rect.top + rect.height - (scr.y / pixel.height) * rect.height
+      rows.push(n.name + ' size=' + Math.round(size.width) + 'x' + Math.round(size.height)
+        + ' anchor=' + bx.anchorPoint.x + ',' + bx.anchorPoint.y
+        + ' localPt=' + Math.round(lp.x) + ',' + Math.round(lp.y)
+        + ' hit=' + hit + ' origin@(' + Math.round(cx) + ',' + Math.round(cy) + ')')
+    }
+    for (const c of n.children) walk(c, depth + 1)
+  }
+  walk(scene, 0)
+  return { world: Math.round(world.x) + ',' + Math.round(world.y), rows }
+}, { x: 281, y: 177 })
+console.log('[stamina][命中] 点(281,177) -> 世界(' + hitReport.world + ')' + hitReport.rows.map((r) => String.fromCharCode(10) + '    ' + r).join(''))
 const __dx = Number(process.env.STA_DX ?? '0')
 const __dy = Number(process.env.STA_DY ?? '0')
 console.log('[stamina][偏移] 基准=' + Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y) + ' 偏移=' + __dx + ',' + __dy)
@@ -279,7 +329,7 @@ await page.waitForTimeout(1500)
 // 要本节点**与所有祖先**都 active。所以「不可见」有两种可能：本节点没被 render，或者某个祖先
 // 不活跃。这里把整条祖先链打出来 —— 一次就能分开这两种。
 const chain = await page.evaluate(() => {
-  const walk = (n) => {
+  const walk = (n, depth) => {
     if (n == null) return null
     if (n.name === 'StaminaDetail') return n
     for (const c of n.children) {
