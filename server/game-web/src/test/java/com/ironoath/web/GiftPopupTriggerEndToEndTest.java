@@ -149,6 +149,22 @@ class GiftPopupTriggerEndToEndTest {
                         "e2e-su-" + UUID.randomUUID(), unitId, 0L, "item_speedup_train_1h"));
     }
 
+    /** 读某个兵种的剩余训练秒数（0 = 已完成或没在训）。 */
+    private long remainingOf(String playerId, String unitId) {
+        return armyAppService.list(playerId).units().stream()
+                .filter(u -> unitId.equals(u.unitId()))
+                .mapToLong(u -> u.remainingSeconds())
+                .findFirst().orElse(0L);
+    }
+
+    /** 读某个兵种的已可用数量。 */
+    private long countOf(String playerId, String unitId) {
+        return armyAppService.list(playerId).units().stream()
+                .filter(u -> unitId.equals(u.unitId()))
+                .mapToLong(u -> u.count())
+                .findFirst().orElse(0L);
+    }
+
     /** 夹具：主城升到指定等级（初始 1 级，中心格 (3,3) 固定主城）。 */
     private void raiseMainCity(String playerId, int level) {
         for (int i = 1; i < level; i++) {
@@ -317,10 +333,24 @@ class GiftPopupTriggerEndToEndTest {
             // **把训练秒数减到 0**（裁决 #577）：train 后立刻用加速道具，
             // 下一次 `armyAppService.list()` 触发的惰性结算就会把它收进队列。
             finishTraining(pid, "unit_infantry_t1");
-            // **再触发一次惰性结算**（#577）：本仓「时间推进一律惰性驱动」⇒
-            // 「训练是否完成」只在**下一次读 ArmyState** 时才判定，
-            // 加速道具只是把 `finishAt` 提前，所以必须再 `list()` 一次让它收进队列。
+            // **循环加速到 remainingSeconds 归零**（#578 现跑量出来的）：
+            // 造 100 个 T1 = trainTimeSec(60) × 100 = 6000 秒，而一件
+            // `item_speedup_train_1h` 只减 **3600 秒** ⇒ **一次加速剩 2399 秒**（实测），
+            // **给道具而不循环使用是上一轮的疏漏**（给了 2 件、只用了 1 次）。
+            for (int i = 0; i < 5; i++) {
+                armyAppService.list(pid);
+                long remaining = remainingOf(pid, "unit_infantry_t1");
+                System.out.println("[E2E] 第 " + (i + 1) + " 轮：remaining=" + remaining
+                        + " count=" + countOf(pid, "unit_infantry_t1"));
+                if (remaining <= 0L) {
+                    break;
+                }
+                finishTraining(pid, "unit_infantry_t1");
+            }
             armyAppService.list(pid);
+            System.out.println("[E2E] 加速后 remaining=" + remainingOf(pid, "unit_infantry_t1")
+                    + " count=" + countOf(pid, "unit_infantry_t1")
+                    + " troopCap=" + armyAppService.list(pid).troopCap());
         } catch (com.ironoath.common.BizException e) {
             // **夹具前置未齐 ⇒ 诚实标「不可验 + 原因」而不是让本类把 mvn test 弄红**（#571）。
             // 已知原因：新号没有武将 ⇒ troopCap=0 ⇒ 造不出兵；上阵要 composeHero（合成）。
