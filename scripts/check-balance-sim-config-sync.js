@@ -1,6 +1,6 @@
 /**
  * 判据：balance-sim 的 f2p 模拟里，凡是与配置表重复的数值都必须从表读，不得硬编码。
- *       2026-10-02 盯三处：capBase（#594）、initCap、producers（#596）。
+ *       2026-10-02 盯五处：capBase（#594）、initCap 与 producers（#596）、仓库与主城造价（#598）。
  *
  * 背景（收口清单 #592~#596）：模拟器原来把仓容基数硬编码成 1000，而 building.json 已经是 8000；
  * initCap 与 producers 也是字面量。两边漂移时模拟器照常输出一整套读数，却全是按旧值算的，
@@ -103,6 +103,24 @@ if (prodIdx < 0) {
   }
 }
 
+// ---------- ④ 升级造价（#598）----------
+// 仓库 600/300 与主城 1000 原来各写一份字面量。主城那处还顺带藏了个假设：
+// `long stoneCost = woodCost;` 等价于断言「主城木石同价」—— 表里确实是 1000/1000，
+// 但那是巧合不是约束，哪天策划把石头改成 1200 就会静默按 1000 算。
+const costChecks = [
+  { name: '仓库升级木价', re: /warehouseCfg\.costBaseWood\(\)/, hint: '仓库造价要读 warehouseCfg.costBaseWood()' },
+  { name: '仓库升级石价', re: /warehouseCfg\.costBaseStone\(\)/, hint: '仓库造价要读 warehouseCfg.costBaseStone()' },
+  { name: '主城升级木价', re: /mainCityCfg\.costBaseWood\(\)/, hint: '主城造价要读 mainCityCfg.costBaseWood()' },
+  { name: '主城升级石价', re: /mainCityCfg\.costBaseStone\(\)/, hint: '主城造价要读 mainCityCfg.costBaseStone()' },
+]
+for (const c2 of costChecks) {
+  if (!c2.re.test(cli)) fail(c2.name + ' 没从配置表读（' + c2.hint + '）—— 改表不动这里，读数就静默按写死的旧值算。')
+}
+// 「stoneCost = woodCost」这条隐含假设本身也要判红
+if (/long\s+stoneCost\s*=\s*woodCost\s*;/.test(cli)) {
+  fail('主城石价被写成 stoneCost = woodCost —— 那等价于断言「主城木石同价」。'
+    + '表里今天是 1000/1000，但那是巧合不是约束，改表就会静默按旧值算。')
+}
 if (fails.length) {
   console.error('[check-balance-sim-config-sync][FAIL] balance-sim 与配置表脱钩了：')
   for (const f of fails) console.error('  - ' + f)
@@ -116,6 +134,6 @@ const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 三处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 五处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
-  + ' / producers 4 座）。')
+  + ' / producers 4 座 / 仓库与主城造价各从表读）。')

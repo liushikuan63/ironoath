@@ -534,6 +534,16 @@ public final class BalanceCli {
         }
         final long woodCapBase = Long.parseLong(options.getOrDefault("cap-base", Long.toString(capBaseFromCfg)));
                               // warehouse.capBase（表里 1000），可调以便扫档
+        // 仓库与主城的造价行（#598）：下面算升级花费时读它们的 costBaseWood / costBaseStone，
+        // 不再在两处各写一份字面量。取不到就抛，而不是静默用一个默认值继续跑。
+        BuildingCfg warehouseCfg;
+        BuildingCfg mainCityCfg;
+        try {
+            warehouseCfg = configs.get(BuildingCfg.class, "warehouse");
+            mainCityCfg = configs.get(BuildingCfg.class, "main_city");
+        } catch (RuntimeException ex) {
+            throw new IllegalStateException("读不到 warehouse / main_city 的造价行，升级花费没法算：" + ex.getMessage(), ex);
+        }
         final long[] warehouseLevels = {0L, 0L, 0L, 0L};
         long[] overflow = {0L, 0L, 0L, 0L};
         boolean withCap = !"false".equals(options.getOrDefault("cap", "true"));
@@ -647,8 +657,10 @@ public final class BalanceCli {
                 boolean stoneNearFull = anyNearFull;
                 while (level >= 2 && warehouseLevels[0] < 40L
                         && (woodNearFull || stoneNearFull)) {
-                    long wc = Math.round(600 * Math.pow(costRatio, warehouseLevels[0]));
-                    long ws = Math.round(300 * Math.pow(costRatio, warehouseLevels[0]));
+                    // 仓库造价也从表读（#598）：原来写死 600/300，与 warehouse 行的 costBaseWood /
+                    // costBaseStone 一致 —— 但那是「今天一致」。改表不动这里，读数就静默按旧值算。
+                    long wc = Math.round(warehouseCfg.costBaseWood() * Math.pow(costRatio, warehouseLevels[0]));
+                    long ws = Math.round(warehouseCfg.costBaseStone() * Math.pow(costRatio, warehouseLevels[0]));
                     if (wood < wc || stone < ws) {
                         break;
                     }
@@ -864,8 +876,10 @@ public final class BalanceCli {
             }
             // 一天一个循环：先按当天可花的钱升级，升级不了就把钱留到第二天（结余照常累积）
             while (true) {
-                long woodCost = Math.round(1000 * Math.pow(costRatio, level - 1));
-                long stoneCost = woodCost;
+                // 主城造价也从表读（#598）：原来写死 1000，且下一行 stoneCost = woodCost
+                // 隐含了「木石同价」这个假设 —— 表里确实是 1000/1000，但那是巧合不是约束。
+                long woodCost = Math.round(mainCityCfg.costBaseWood() * Math.pow(costRatio, level - 1));
+                long stoneCost = Math.round(mainCityCfg.costBaseStone() * Math.pow(costRatio, level - 1));
                 if (wood < woodCost || stone < stoneCost) {
                     break;
                 }
