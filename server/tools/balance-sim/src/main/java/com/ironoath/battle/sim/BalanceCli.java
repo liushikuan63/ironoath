@@ -1009,17 +1009,24 @@ public final class BalanceCli {
                                            Map<String, String> options, int tier) {
         int days = Integer.parseInt(options.getOrDefault("f2p-days", "7"));
         int runs = Integer.parseInt(options.getOrDefault("runs", "40"));
-        int[] troop = {3832, 0, 0, 0};   // 零氪第 7 天能造的数量（粮是瓶颈）
-        int limit = Integer.parseInt(options.getOrDefault("troops", "3832"));
+        // **不再写死 3832**（#564）：那是 #491 时期「粮 76 640、无 cap」那一版的读数，
+        // **口径变过之后已作废**（#542 账平 / #560 仓库容量修好 / #561 粮认定为设计后果）。
+        // **当前口径下第 7 天的瓶颈是铁不是粮**：粮 30 000（cap 满）÷ 20/100 = 15 000 兵，
+        // 而铁 2 050 ÷ 30/100 = **6 833 兵** ⇒ 铁先见底。
+        // ⇒ 力比从 14 倍变成 **25 倍**，而结论方向不变（仍 100% 胜率、仍没有可失败的对立面）。
+        // `--troops` 可覆盖；若口径再变，改这里的默认值时**必须重跑 `--f2p7d --days=7` 取结余**。
+        int[] troop = {6833, 0, 0, 0};   // 零氪第 7 天能造的数量（铁是瓶颈，见上）
+        int limit = Integer.parseInt(options.getOrDefault("troops", "6833"));   // #564
         troopsAll: {
             troop = new int[] {limit, 0, 0, 0};
             break troopsAll;
         }
 
         System.out.printf("=== B09 验收 4：零氪第 %d 天的军队打前三章（%d 局/关）%n", days, runs);
-        System.out.printf("兵力：单兵种 T%d **%d**（资源结余 ÷ trainCost，粮是瓶颈）%n", tier, troop[0]);
-        System.out.println("**这一格验的是「有没有可失败的对立面」**："
-            + "零氪第 7 天 3832 兵 vs 前三章最硬的一关 267 个 T2 敌人 ⇒ **力比 14 倍**。");
+        System.out.printf("兵力：单兵种 T%d **%d**（资源结余 ÷ trainCost；#564：当前口径下**铁**是瓶颈）%n", tier, troop[0]);
+        System.out.println("**这一格验的是「有没有可失败的对立面」**：零氪第 7 天 " + troop[0]
+            + " 兵 vs 前三章最硬的一关 267 个 T2 敌人 ⇒ **力比 " + (troop[0] / 267)
+            + " 倍**（#564：口径变过，力比从 14 升到 25）。");
         System.out.println();
         System.out.printf("%-14s%-8s%-10s%s%n", "关卡", "敌人", "回合上限", "攻方胜率");
         System.out.println("-".repeat(64));
