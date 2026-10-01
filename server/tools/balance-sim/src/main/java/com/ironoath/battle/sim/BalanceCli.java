@@ -578,7 +578,63 @@ public final class BalanceCli {
                     warehouseLevels[0]++;
                 }
             }
-            // ---------- 第五维：建造吃粮（#521）----------
+            // ---------- 第四维：装备强化吃铁（#518 / #519 / #522）----------
+        // 排在**仓储截断之前** —— 放在之后铁已被 `overflow` 丢弃，这一维永远吃不到东西。
+        // 口径**照抄 `EquipForgeCostCalibrationTest`**（同口径才量的是同一件事）：
+        //   铁耗(第 n 次) = (might+command+wisdom) × EQUIP_FORGE_COST.base × ratio^(n)
+        // base 与 ratio **都是定点**（70 → 700000、1.22 → 12200）。
+        // 排序：**裁决 #524（2026-10-01）—— 零氪玩家的资源优先级是「先建全，后点装备」**。
+        // 这一维因此排在**建造之后**。原来它排最前、把铁吃干净，挤得 `stable` 与
+        // `drill_ground` 永远建不起来（那两座各要铁 300 / 100）。
+        // 理由：零氪的真实目标是推战力/推关，而建造是升级的前置（主城 > 训练营 > 兵），
+        // 先建才能开下一条线；且与 B00「战力才是目的」一致 —— 「优先点满一件装备」那组
+        // 读数（粮缺口 173798）看着更小，实测是把 `hospital`/`embassy` 挤掉而改建
+        // 便宜的 `drill_ground`，**实际战力更低**。
+        // **排序改了（#522）**：这一维现在排在**建造之后** —— 原来它排最前、把铁吃干净，
+        // 挤得 `stable` 与 `drill_ground` 永远建不起来（那两座各要铁 300 / 100）。
+        // 真实玩家是「先把该建的建了、剩下的铁才去点装备」，这个顺序比「无条件优先」更真。
+        // ⚠️ 仍是行为假设：**余额才点**，不设每日上限（上限属玩法口径，未裁决）。
+        final long FORGE_BASE = 700000L;
+        final long FORGE_RATIO = 12200L;
+        long forgeIron = 0L;
+        int forgePieces = 0;
+        Map<String, Long> forgeLevel = new java.util.HashMap<>();
+        if (withCap) {
+            for (var eq : configs.all(EquipCfg.class)) {
+                // `rarity` 是**枚举 EquipCfg.Rarity**（不是字符串）——
+                // #519 记的「N 档一件都没进循环」就是这个：用 `"N".equals(eq.rarity())`
+                // 恒为 false，整条消费线静默地一条都没跑。
+                if (eq.rarity() != EquipCfg.Rarity.N) {
+                    continue;                    // 只算 N 档：B20 §五② 的开局 4 槽
+                }
+                long points = eq.might() + eq.command() + eq.wisdom();
+                long forgeMax = eq.forgeMax();
+                if (points <= 0L || forgeMax <= 0L) {
+                    continue;
+                }
+                long lvl = forgeLevel.getOrDefault(eq.id(), 0L);
+                while (lvl < forgeMax) {
+                    long cost = FixedPoint.round(FixedPoint.geometric(
+                            points * FORGE_BASE, FORGE_RATIO, (int) lvl));
+                    if (iron < cost) {
+                        break;                     // 铁不够就等下一天（优先点能升的那一件）
+                    }
+                    iron -= cost;
+                    forgeIron += cost;
+                    lvl++;
+                }
+                if (lvl > 0L) {
+                    forgePieces++;
+                }
+                forgeLevel.put(eq.id(), lvl);
+            }
+        }
+
+        // ---------- 顺序（裁决 #528，2026-10-01）：主城升级排在建造之前 ----------
+        // #527 量出：建造优先会让主城第 1 天到 4 级后 **44 天不动**（五座建筑每轮先吃木石）。
+        // 主城优先的理由：① 主城等级是 `requireMainLevel` 的门槛（barracks 3 / academy 等），
+        //   **主城优先才自洽**；② 与 B00「战力才是目的」一致；③ 现状是死亡螺旋。
+        // ---------- 第五维：建造吃粮（#521）----------
         // 粮**不止造兵一个出口**：`building` 表里五条建筑 costBaseGrain > 0
         // （stable 200 / drill_ground 100 / hospital 300 / academy 300 / embassy 200），
         // 而模型里一条都没有 ⇒ 「粮溢出 237200」与铁那一轮一样是**缺维造成的**。
@@ -681,58 +737,6 @@ public final class BalanceCli {
                     troopsMade += perBatch;
                 }
             }
-        // ---------- 第四维：装备强化吃铁（#518 / #519 / #522）----------
-        // 排在**仓储截断之前** —— 放在之后铁已被 `overflow` 丢弃，这一维永远吃不到东西。
-        // 口径**照抄 `EquipForgeCostCalibrationTest`**（同口径才量的是同一件事）：
-        //   铁耗(第 n 次) = (might+command+wisdom) × EQUIP_FORGE_COST.base × ratio^(n)
-        // base 与 ratio **都是定点**（70 → 700000、1.22 → 12200）。
-        // 排序：**裁决 #524（2026-10-01）—— 零氪玩家的资源优先级是「先建全，后点装备」**。
-        // 这一维因此排在**建造之后**。原来它排最前、把铁吃干净，挤得 `stable` 与
-        // `drill_ground` 永远建不起来（那两座各要铁 300 / 100）。
-        // 理由：零氪的真实目标是推战力/推关，而建造是升级的前置（主城 > 训练营 > 兵），
-        // 先建才能开下一条线；且与 B00「战力才是目的」一致 —— 「优先点满一件装备」那组
-        // 读数（粮缺口 173798）看着更小，实测是把 `hospital`/`embassy` 挤掉而改建
-        // 便宜的 `drill_ground`，**实际战力更低**。
-        // **排序改了（#522）**：这一维现在排在**建造之后** —— 原来它排最前、把铁吃干净，
-        // 挤得 `stable` 与 `drill_ground` 永远建不起来（那两座各要铁 300 / 100）。
-        // 真实玩家是「先把该建的建了、剩下的铁才去点装备」，这个顺序比「无条件优先」更真。
-        // ⚠️ 仍是行为假设：**余额才点**，不设每日上限（上限属玩法口径，未裁决）。
-        final long FORGE_BASE = 700000L;
-        final long FORGE_RATIO = 12200L;
-        long forgeIron = 0L;
-        int forgePieces = 0;
-        Map<String, Long> forgeLevel = new java.util.HashMap<>();
-        if (withCap) {
-            for (var eq : configs.all(EquipCfg.class)) {
-                // `rarity` 是**枚举 EquipCfg.Rarity**（不是字符串）——
-                // #519 记的「N 档一件都没进循环」就是这个：用 `"N".equals(eq.rarity())`
-                // 恒为 false，整条消费线静默地一条都没跑。
-                if (eq.rarity() != EquipCfg.Rarity.N) {
-                    continue;                    // 只算 N 档：B20 §五② 的开局 4 槽
-                }
-                long points = eq.might() + eq.command() + eq.wisdom();
-                long forgeMax = eq.forgeMax();
-                if (points <= 0L || forgeMax <= 0L) {
-                    continue;
-                }
-                long lvl = forgeLevel.getOrDefault(eq.id(), 0L);
-                while (lvl < forgeMax) {
-                    long cost = FixedPoint.round(FixedPoint.geometric(
-                            points * FORGE_BASE, FORGE_RATIO, (int) lvl));
-                    if (iron < cost) {
-                        break;                     // 铁不够就等下一天（优先点能升的那一件）
-                    }
-                    iron -= cost;
-                    forgeIron += cost;
-                    lvl++;
-                }
-                if (lvl > 0L) {
-                    forgePieces++;
-                }
-                forgeLevel.put(eq.id(), lvl);
-            }
-        }
-
             if (withProducers && !cityFirst) {
                 for (int p = 0; p < producers.length; p++) {
                     // **每轮只升一级**：升到升不动会把当天全部资源吃掉、主城直接饿死
