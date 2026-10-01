@@ -218,7 +218,14 @@ if (rowPoint === null) {
   console.error('[stamina][前置] 资源条上找不到「体力」那一行 —— 前置不满足')
   process.exit(2)
 }
-await page.mouse.click(rowPoint.x, rowPoint.y)
+// 点击偏移（#612）：#610 曾据此写下「坐标偏 12px」，#611 又据一次**无效对照**否掉了它
+// （那次扫描时 STA_DX/STA_DY 已经不在代码里，5 组其实跑的是同一组默认）。
+// 这里把偏移做成参数，重做那张表 —— 判断「点得中/点不中」的判据是 **GET /stamina 出现几条**：
+// 一条 = 点击没命中（只有 AppRoot:913 的 deliver），两条 = 点击命中且触发了 openStaminaDetail。
+const __dx = Number(process.env.STA_DX ?? '0')
+const __dy = Number(process.env.STA_DY ?? '0')
+console.log('[stamina][偏移] 基准=' + Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y) + ' 偏移=' + __dx + ',' + __dy)
+await page.mouse.click(rowPoint.x + __dx, rowPoint.y + __dy)
 await page.waitForTimeout(1500)
 // 诊断 B（#607）：render() 末尾明确写了 this.node.active = true，而 Cocos 的 activeInHierarchy
 // 要本节点**与所有祖先**都 active。所以「不可见」有两种可能：本节点没被 render，或者某个祖先
