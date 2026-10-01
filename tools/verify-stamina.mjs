@@ -320,6 +320,28 @@ const hitReport = await page.evaluate((PT) => {
   return { world: Math.round(world.x) + ',' + Math.round(world.y), rows }
 }, { x: 281, y: 177 })
 console.log('[stamina][命中] 点(281,177) -> 世界(' + hitReport.world + ')' + hitReport.rows.map((r) => String.fromCharCode(10) + '    ' + r).join(''))
+// 坐标口径诊断（#626）：Cocos 产物 `convertUtils.worldToScreenUtils` 的实现是
+//   worldToScreen(e, i); i.x /= view.getScaleX(); i.y /= view.getScaleY()
+// 而 Touch.getUILocationX/Y 是 (this._x - viewport.x) / getScaleX()
+// ⇒ 正逆两向一致：**css = rect.left + viewport.x + worldToScreen.x**。
+// 而本探针原来用的是 `(screen.x / getVisibleSizeInPixel().width) * rect.width`
+// —— 归一化的分母换了、viewport 原点也没加 ⇒ 那就是 #624 里 364px 差的来源。
+// 这里把四个数一次打全，好让新公式有可核对的依据。
+const coordInfo = await page.evaluate(() => {
+  const cc = window.cc
+  const canvas = document.querySelector('canvas')
+  const rect = canvas.getBoundingClientRect()
+  const vp = cc.view.getViewportRect()
+  const vis = cc.view.getVisibleSize()
+  const pix = cc.view.getVisibleSizeInPixel()
+  return { rectW: rect.width, rectH: rect.height, rectL: rect.left, rectT: rect.top,
+    canvasW: canvas.width, canvasH: canvas.height,
+    vpX: vp.x, vpY: vp.y, vpW: vp.width, vpH: vp.height,
+    scaleX: cc.view.getScaleX(), scaleY: cc.view.getScaleY(),
+    visW: vis.width, visH: vis.height, pixW: pix.width, pixH: pix.height,
+    dpr: window.devicePixelRatio }
+})
+console.log('[stamina][坐标] ' + JSON.stringify(coordInfo))
 const __dx = Number(process.env.STA_DX ?? '0')
 const __dy = Number(process.env.STA_DY ?? '0')
 console.log('[stamina][偏移] 基准=' + Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y) + ' 偏移=' + __dx + ',' + __dy)
