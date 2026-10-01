@@ -64,4 +64,11 @@ bash scripts/check-view-child-index.sh
 # 资源条顺序（#616~#618）：PlayerSave.resources() 退回 Map.copyOf 时，顺序按 SALT 散列摆放、
 # 跨进程变而进程内恒定 ⇒ 单测永远绿、玩家每次登录看到的排列却可能不同。#618 的单测钉不住这一维。
 bash scripts/check-resource-order-invariant.sh
+# Cocos 输入命中的坐标口径（#624~#633）：`UITransform.hitTest` 吃的是
+# `(clientX - rect.left) * dpr` / `(rect.top + rect.height - clientY) * dpr`（见
+# docs/cocos-3.8-输入命中备忘.md §8，条款是从本仓产物 cc.js 里抄的）。这条换算此前散在
+# 探针里手算，三次返工（#610/#616/#624）都是因为把 CSS 像素当成了那个点。
+# 这里把它连同「往返自检 + 引擎自命中 + 出画布」三道门一起钉住：改动 dpr、y 翻转或
+# `worldToScreen` 参数顺序，**任一处都会变红**（已用三个变异实测过）。
+node --test tools/lib/cocos-click.test.mjs
 echo "[check] 全部静态检查通过。"

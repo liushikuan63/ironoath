@@ -99,7 +99,7 @@ export function resolveCocosClickPoint(opts) {
 
   // CSS 像素 → 引擎点：`_getLocation` 的原式（mouse-input.ts:82-90），只乘 dpr、y 从下往上。
   const toEngine = (cssX, cssY) => ({ x: (cssX - rect.left) * dpr, y: (rect.top + rect.height - cssY) * dpr })
-  const toCss = (ex, ey) => ({ x: rect.left + ex, y: rect.top + rect.height - ey / dpr })
+  const toCss = (ex, ey) => ({ x: rect.left + ex / dpr, y: rect.top + rect.height - ey / dpr })
   const insideCanvas = (css) =>
     css.x >= rect.left && css.x <= rect.left + rect.width && css.y >= rect.top && css.y <= rect.top + rect.height
 
