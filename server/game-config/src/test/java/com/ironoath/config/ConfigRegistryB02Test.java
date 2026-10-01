@@ -31,14 +31,20 @@ class ConfigRegistryB02Test {
     /**
      * 主城等级上限。
      *
-     * <p><b>2026-10-01 由 40 改为 27</b>（收口清单 #494/#495）：`balance-sim --f2p7d --days=45`
-     * 实测零氪 45 天停在 27 级，而 40 级造价 ≈ 3.9M 木石、45 天只实攒 22 万 —— 差 17 倍。
-     * 影响面已核：没有任何建筑或科技行的 {@code requireMainLevel ≥ 27}。
+     * <p><b>2026-10-02 由 27 改回 40</b>（收口清单 #591/#600/#602）：2026-10-01 那次下调
+     * （收口清单 #494/#495）的理由是「`balance-sim --f2p7d --days=45` 实测零氪 45 天停在 27 级」。
+     * 但 2026-10-02 复核发现**那个 27 从来不是零氪的真实卡点**：同口径跑到 600 天也只到 20 级
+     * （#592），改前的真实卡点是仓容溢出（#592 的扫档：cap-base 1000/8000/40000 三档里
+     * 「溢出彻底归零」也只换来 1 级）。⇒ 27 这个上限只是把一条错判固化成了断言。
      *
-     * <p><b>为什么钉住具体数字而不是从表里读</b>：从表里读的话，表改错时这些用例会跟着一起
-     * 变绿 —— 而它们的作用恰恰是「表被改了就红」。
+     * <p><b>注意「90 天到 30 级」目前未达成</b>：实测 120 天 17 级，要 120 天到 30 级需产出提高
+     * 约 20 倍（收口清单 #593，B02 验收 3c 标为待验证）。改回 40 级是按产品 2026-10-02 的裁决，
+     * **不是**因为实测能到 —— 别把这两件事混起来引。
+     *
+     * <p><b>为什么钉住具体数字而不是从表里读</b>（这条 2026-10-01 就写下了，保留）：从表里读的���，
+     * 表改错时这些用例会跟着一起变绿 —— 而它们的作用恰恰是「表被改了就红」。
      */
-    private static final int MAIN_CITY_CAP = 27;
+    private static final int MAIN_CITY_CAP = 40;
 
     private static ConfigRegistry registry;
     private static Path configDir;
@@ -77,7 +83,7 @@ class ConfigRegistryB02Test {
         BuildingCfg mainCity = registry.get(BuildingCfg.class, "main_city");
         assertThat(mainCity.name()).isEqualTo("主城");
         assertThat(mainCity.type()).isEqualTo(BuildingCfg.Type.CORE);
-        assertThat(mainCity.maxLevel()).as("主城上限 27 级（2026-10-01 由 40 下调，见 building.json 的 why）")
+        assertThat(mainCity.maxLevel()).as("主城上限 40 级（2026-10-02 由 27 改回，见 building.json 的 why 与收口清单 #591/#600）")
                 .isEqualTo(MAIN_CITY_CAP);
         assertThat(mainCity.costBaseWood()).isEqualTo(1000L);
         assertThat(mainCity.timeBaseSec()).as("0 表示沿用 curve.BUILDING_TIME 的基数 30 秒").isZero();
