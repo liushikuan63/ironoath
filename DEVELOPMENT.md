@@ -86,6 +86,49 @@ mvn -f server/pom.xml -pl game-web spring-boot:run \
 
 ---
 
+## 四之二、dev 提速档（跑真机探针 / 截图前必读）
+
+B13 的国策一轮要 **48 小时**（24h 投票窗 + 24h 生效段），赛季与周税同理。
+不提速就只能靠拨钟的单元测试 —— 而「文本断言全绿而画面是坏的」在本仓已发生过不止一次。
+三个环境变量把 48 小时压成几分钟，**没有后门端点、没有第二个时间源**（`DevClockSpeed` 是
+`ClockSource` 的实现，结算/开窗/到期全走同一套代码）。
+
+| 环境变量 | 作用 | 不设的后果 |
+|---|---|---|
+| `IRONOATH_DEV_CITY_LEVEL` | 新号主城等级（探针要 16，建盟门槛是 10） | 建盟报 `10013 联盟尚未解锁：需要主城 10 级，当前 1 级` |
+| `IRONOATH_DEV_START_AMOUNT` | 每种资源初始量（建盟还要金币 500，新号只有 200） | 建盟报 `10014 金币不足` |
+| `IRONOATH_DEV_TIME_SPEED` | 时间倍速（上限 100000；投票段要 48 小时真实流逝） | 探针打印「跳过投票段…这一段是未验」，**但仍然退 0** |
+
+**两条必须知道的坑**：
+
+1. **必须用 `--spring-boot.run.profiles=dev`。** `DevNewPlayerBoost` 与 `DevClockSpeed` 都是
+   `@Profile("dev")` —— **起 `local` profile 时这两个 bean 整个不存在**，城市档与时间档**静默失效**
+   （只有 `DevNewPlayerBoost` 开档时会打一行 INFO，日志里能看出来；`DevClockSpeed` 同理）。
+2. **`IRONOATH_DEV_TIME_SPEED` 要给「后端」和「探针进程」两边都设。** 探针
+   `tools/verify-nation-policy-ui.mjs:363` 读的是**自己进程的环境变量**，不是后端的 ——
+   只给后端设会被判成「未设」并跳过投票段。
+
+一次跑通（B13 国策收官，2026-10-01 实测 41 通过 / 0 失败）：
+
+```bash
+# 1) 后端（三个档 + dev profile）
+source scripts/env.sh
+IRONOATH_DEV_CITY_LEVEL=16 IRONOATH_DEV_START_AMOUNT=100000 IRONOATH_DEV_TIME_SPEED=3600 \
+  mvn -f server/pom.xml -pl game-web spring-boot:run -Dspring-boot.run.profiles=dev
+
+# 2) 产物（先构建再量测，两者不能并行）
+env -u ELECTRON_RUN_AS_NODE bash scripts/build-webmobile.sh
+
+# 3) 探针（后端与探针两边都要有 TIME_SPEED）
+export BACKEND_ORIGIN=http://localhost:8080 IRONOATH_DEV_TIME_SPEED=3600
+node tools/verify-nation-policy-ui.mjs
+```
+
+**验收纪律**：**探针退 0 不等于全部验过。** 凡「条件不满足就跳过」的分支，必须核那段到底跑没跑
+（看输出里有没有「跳过」二字）。截图另存到 `tmp/` 下，**要打开看一眼** ——
+自动断言只读 DOM，读不出「画出来是黑的」。
+
+
 ## 五、改配置表的正确流程
 
 ```
