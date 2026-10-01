@@ -512,7 +512,8 @@ public final class BalanceCli {
         final long[] initCap = {20000L, 20000L, 10000L, 30000L};   // 木 石 铁 粮
         long barracksLevel = 0L;      // 兵营等级（造兵前置：requireMainLevel=3）
         long standing = 0L;            // 在编兵力（造满 500 即停 —— 队列上限）
-        long troopsMade = 0L;          // 累计造兵，用来核对「造兵到底能不能吃掉产出」
+        long troopsMade = 0L;
+        boolean pickedOnceThisRound = false;   // #549 均衡升：每轮只升一级          // 累计造兵，用来核对「造兵到底能不能吃掉产出」
         final long initAmount = 0L;                                  // 起始资源见下面的初值
         final long woodCapBase = Long.parseLong(options.getOrDefault("cap-base", "1000"));
                               // warehouse.capBase（表里 1000），可调以便扫档
@@ -526,9 +527,13 @@ public final class BalanceCli {
                 options.getOrDefault("dims", "cap,builds,forge,troops").split(",")));
         boolean dimBuilds = dims.contains("builds");
         // `--builds-gate`：只建这些（#543 的待裁决项要读「一座不建」的影响面）
+        // **裁决 #549（2026-10-01）**：零氪前 7 天**不建**那四座零产出建筑。
+        // 读数依据：全建 45 天主城 5 级 / 一座不建 11 级（#544，对账全程平）。
+        // 理由：它们解锁的能力（治疗上限 / 骑兵 / 科技 / 联盟）在新号阶段一样都用不上
+        // （无战损、无行军、无外交），而建造是**不可逆**的资源投入 ——
+        // 先攒料升主城、有了战损再补医院，是同一笔钱的两种花法。
         java.util.Set<String> buildsGate = new java.util.HashSet<>(List.of(
-                options.getOrDefault("builds-gate",
-                        "hospital,academy,stable,embassy,drill_ground").split(",")));
+                options.getOrDefault("builds-gate", "none").split(",")));
         boolean dimForge = dims.contains("forge");
         boolean dimTroops = dims.contains("troops");
         final long[][] producers = {
@@ -619,6 +624,7 @@ public final class BalanceCli {
                     warehouseLevels[0]++;
                 }
             }
+            pickedOnceThisRound = false;        // #549：每轮重置
             // ---------- 第四维：装备强化吃铁（#518 / #519 / #522）----------
         // 排在**仓储截断之前** —— 放在之后铁已被 `overflow` 丢弃，这一维永远吃不到东西。
         // 口径**照抄 `EquipForgeCostCalibrationTest`**（同口径才量的是同一件事）：
@@ -830,6 +836,13 @@ public final class BalanceCli {
             if (withProducers && cityFirst) {
                 for (int p = 0; p < producers.length; p++) {
                     while (true) {
+                        // **均衡升（裁决 #549）**：本轮已升过就停下，让下一轮从 p=0 重新开始，
+                        // 木石按「谁缺谁先升」交替 —— 而 #548 定位到那处卡点正是
+                        // 「数组顺序先到先赢」。
+                        if (pickedOnceThisRound) {
+                            break;
+                        }
+                        pickedOnceThisRound = true;
                         long out = producers[p][1];
                         long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
                         long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
