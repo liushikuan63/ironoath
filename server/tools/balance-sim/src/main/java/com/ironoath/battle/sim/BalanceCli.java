@@ -509,7 +509,14 @@ public final class BalanceCli {
         // **第一版没有这一维**，于是 45 天报出「铁 607 万」—— 而游戏里铁上限只有 5 万。
         // 截断是真规则：ResourceSettlement.settle 装满后 overflow = output - room，
         // **产出被丢弃**（不是排队、不是溢出到别处）。容量 = initCap + warehouse.capBase × 等级。
-        final long[] initCap = {20000L, 20000L, 10000L, 30000L};   // 木 石 铁 粮
+        // **initCap 从 resource 表读**（#596）：原来硬编码 {20000, 20000, 10000, 30000}，与 resource.json 的
+        // initCap 一致（#596 现跑核对过四项全对），但两边漂移时模拟器仍照常输出读数 —— 与 #592 的 capBase 同一种病。
+        final long[] initCap = {
+                configs.get(com.ironoath.config.cfg.ResourceCfg.class, "WOOD").initCap(),
+                configs.get(com.ironoath.config.cfg.ResourceCfg.class, "STONE").initCap(),
+                configs.get(com.ironoath.config.cfg.ResourceCfg.class, "IRON").initCap(),
+                configs.get(com.ironoath.config.cfg.ResourceCfg.class, "GRAIN").initCap(),
+        };   // 木 石 铁 粮
         long barracksLevel = 0L;      // 兵营等级（造兵前置：requireMainLevel=3）
         long standing = 0L;            // 在编兵力（造满 500 即停 —— 队列上限）
         long troopsMade = 0L;
@@ -546,12 +553,20 @@ public final class BalanceCli {
                 options.getOrDefault("builds-gate", "none").split(",")));
         boolean dimForge = dims.contains("forge");
         boolean dimTroops = dims.contains("troops");
-        final long[][] producers = {
-                {1L, 120L, 0L, 400L, 0L},   // req, outBase/h, costWood, costStone, costIron
-                {1L, 120L, 400L, 0L, 0L},
-                {2L, 240L, 300L, 150L, 0L},
-                {3L, 60L, 500L, 250L, 0L},
-        };
+        // **producers 从 building 表读**（#596）：原来四行字面量，#596 现跑逐项核对过与表一致（req/outBase/costWood/costStone/costIron 四项×四行全对），
+        // 但那是「今天一致」，不是「不会漂移」—— 与 capBase、initCap 同一种病，一并接到表上。
+        // 顺序保持不变（伐木场/采石场/农田/铁矿场），只有值改成读来的。
+        String[] producerIds = {"lumber_camp", "quarry", "farm", "iron_mine"};
+        long[][] prodRows = new long[producerIds.length][5];   // req, outBase/h, costWood, costStone, costIron
+        for (int i = 0; i < producerIds.length; i++) {
+            BuildingCfg pc = configs.get(BuildingCfg.class, producerIds[i]);
+            prodRows[i][0] = pc.requireMainLevel();
+            prodRows[i][1] = pc.outputBasePerHour() == null ? 0L : pc.outputBasePerHour();
+            prodRows[i][2] = pc.costBaseWood();
+            prodRows[i][3] = pc.costBaseStone();
+            prodRows[i][4] = pc.costBaseIron();
+        }
+        final long[][] producers = prodRows;
         int[] producerLevels = {0, 0, 0, 0};
         long[] producerRates = {0L, 0L, 0L, 0L};
 
