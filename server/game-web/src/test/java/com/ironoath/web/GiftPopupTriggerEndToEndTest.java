@@ -248,6 +248,15 @@ class GiftPopupTriggerEndToEndTest {
                     + " ⇒ BATTLE_LOST 标记点不可能经过。要让本条真跑，"
                     + "需要新号先拥有一名武将（合成/抽卡），见收口清单 #571。");
         }
+
+        // **把夹具自己触发的弹窗排空**（#573）：造兵夹具要建兵营 + 升主城，
+        // 而那正是 `BUILDING_DONE` 的触发条件 ⇒ 弹的是「落成贺礼」而不是「战败抚恤」
+        // （实测：expected popup_defeat_relief / but was popup_building_celebration）。
+        // `/gift/popup` 是「问一次并压制该次机会」，所以在**行军之前**先问一次即可排空。
+        JsonNode pre = popupData(pid);
+        if (pre.path("popup").asBoolean(false)) {
+            System.out.println("[E2E] 已排空夹具自带的弹窗：" + pre.path("giftId").asText(""));
+        }
         String attackBody = mockMvc.perform(post("/world/march")
                         .header("X-Player-Id", pid)
                         .contentType(MediaType.APPLICATION_JSON)
