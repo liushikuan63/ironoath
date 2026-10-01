@@ -559,6 +559,17 @@ public final class BalanceCli {
         int monotonicBreaks = 0;
         int firstFlatDay = -1;
         int prevLevel = level;
+        // 具名扣料（#537 / #541）：**名字写在这一行旁边**，不靠「插入顺序」编号；
+        // **声明在每日循环之外** —— 它原先在循环内，每轮重建，于是最后一天打印的
+        // 「累计」其实是**当日**（#541 的根因：表头写累计、数据是当日，读数错一个量级）。
+        class Ledger {
+            final Map<String, Long> tags = new java.util.TreeMap<>();
+            void spend(String res, String who, long amount) {
+                tags.merge(res + "/" + who, amount, Long::sum);
+            }
+        }
+        final Ledger ledger = new Ledger();
+
         for (int day = 1; day <= days; day++) {
             int upgraded = 0;
             // ---------- 仓库升级（第二版才补上的一维）----------
@@ -570,15 +581,6 @@ public final class BalanceCli {
         long cityWood = 0L, cityStone = 0L;   // 主城升级花费（#532 对账用）
         // 每一处资源扣除自报（#534）：**别靠 grep 猜，让它自己报花了多少**
         final Map<String, Long> spendTags = new java.util.TreeMap<>();
-        // 具名扣料（#537）：**名字写在这一行旁边**，不再靠「插入顺序」编号
-        // —— 那样「标签 ↔ 位置」就成了推断（#537 的结论）。
-        class Ledger {
-            final Map<String, Long> tags = new java.util.TreeMap<>();
-            void spend(String res, String who, long amount) {
-                tags.merge(res + "/" + who, amount, Long::sum);
-            }
-        }
-        final Ledger ledger = new Ledger();
         final double BUILD_COST_RATIO = 1.22;   // curve.BUILDING_COST.ratio
             if (withCap) {
                 // 兵营：与主城等级同步推进（requireMainLevel=3），本版不单独花资源升它
@@ -607,6 +609,7 @@ public final class BalanceCli {
                     wood -= wc;
                     ledger.spend("wood", "warehouse-upgrade", wc);
                     stone -= ws;
+                    ledger.spend("stone", "site", ws);
                     buildWood += wc;
                     buildStone += ws;
                     warehouseLevels[0]++;
@@ -709,6 +712,7 @@ public final class BalanceCli {
                     wood -= needWood;
                     ledger.spend("wood", "build-gable", needWood);
                     stone -= needStone;
+                    ledger.spend("stone", "site", needStone);
                     iron -= needIron;
                     buildGrain += needGrain;
                     buildWood += needWood;
@@ -787,6 +791,7 @@ public final class BalanceCli {
                         wood -= cWood;
                         ledger.spend("wood", "gather-A", cWood);
                         stone -= cStone;
+                        ledger.spend("stone", "site", cStone);
                         buildWood += cWood;
                         buildStone += cStone;
                         iron -= cIron;
@@ -809,6 +814,7 @@ public final class BalanceCli {
                 wood -= woodCost;
                 ledger.spend("wood", "city-upgrade", woodCost);
                 stone -= stoneCost;
+                ledger.spend("stone", "site", stoneCost);
                 cityWood += woodCost;      // #532 对账
                 cityStone += stoneCost;
                 level++;
@@ -827,6 +833,7 @@ public final class BalanceCli {
                         wood -= cWood;
                         ledger.spend("wood", "gather-B", cWood);
                         stone -= cStone;
+                        ledger.spend("stone", "site", cStone);
                         buildWood += cWood;
                         buildStone += cStone;
                         iron -= cIron;
@@ -871,20 +878,27 @@ public final class BalanceCli {
             long producedStone = 5000L + stoneRate * 24L * day;
             System.out.println();
             System.out.println("=== 收支对账（#532）===");
-            System.out.println("=== 每一处木的扣除（#534 自报）===");
+            System.out.println("=== 每一处木的扣除（#534 自报；#541 起是真累计）===");
             ledger.tags.forEach((k, v) -> System.out.printf("  %-22s %d%n", k, v));
             long taggedTotal = ledger.tags.values().stream().mapToLong(Long::longValue).sum();
-            System.out.printf("  合计 %d（对账差额 %+d 里有这一份）%n",
-                    taggedTotal, taggedTotal - buildWood);
+            System.out.printf("  **合计 %d（整 %d 天累计；应随天数单调增长）**%n",
+                    taggedTotal, days);
 
-            System.out.printf("木：产出 %d - 建造/仓库 %d - 主城升级 %d = 结余 %d%n",
-                    producedWood, buildWood, cityWood, wood);
-            System.out.printf("石：产出 %d - 建造/仓库 %d - 主城升级 %d = 结余 %d%n",
-                    producedStone, buildStone, cityStone, stone);
-            long woodGap = wood - (producedWood - buildWood - cityWood);
-            long stoneGap = stone - (producedStone - buildStone - cityStone);
-            System.out.printf("**对账差额：木 %+d / 石 %+d**（0 = 账平；非 0 = 模型里有一笔没记账的支出）%n",
-                    woodGap, stoneGap);
+            // 支出一律读**同一个 ledger**（#541：`buildWood` / `cityWood` 那些变量也是每轮重建的，
+            // 用它们对账等于拿「当日」去减「累计」，差额必然不对）。
+            long woodSpent = ledger.tags.entrySet().stream()
+                    .filter(e -> e.getKey().startsWith("wood/"))
+                    .mapToLong(Map.Entry::getValue).sum();
+            long stoneSpent = ledger.tags.entrySet().stream()
+                    .filter(e -> e.getKey().startsWith("stone/"))
+                    .mapToLong(Map.Entry::getValue).sum();
+            long woodGap = (5000L + woodRate * 24L * day) - woodSpent - wood;
+            long stoneGap = (5000L + stoneRate * 24L * day) - stoneSpent - stone;
+            System.out.printf("木：起始 5000 + 产出 %d - 扣除 %d = 结余 %d%n",
+                    woodRate * 24L * day, woodSpent, wood);
+            System.out.printf("石：起始 5000 + 产出 %d - 扣除 %d = 结余 %d%n",
+                    stoneRate * 24L * day, stoneSpent, stone);
+            System.out.printf("**对账差额：木 %+d / 石 %+d**（0 = 账平）%n", woodGap, stoneGap);
         }
         System.out.printf("%-6d%-10d%-12d%-12d%-12d%-12d%d%n",
                     day, level, wood, stone, iron, grain, upgraded);
