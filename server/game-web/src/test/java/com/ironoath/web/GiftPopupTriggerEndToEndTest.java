@@ -338,7 +338,11 @@ class GiftPopupTriggerEndToEndTest {
             // `item_speedup_train_1h` 只减 **3600 秒** ⇒ **一次加速剩 2399 秒**（实测），
             // **给道具而不循环使用是上一轮的疏漏**（给了 2 件、只用了 1 次）。
             for (int i = 0; i < 5; i++) {
-                armyAppService.list(pid);
+                // **`settledArmy` 才是收割入口**（#579 现读 `ArmyAppService` 285~297 行）：
+                // `dueCounts` 收集 `task.finishAt() <= now` 的批次，然后 `army.collectFinished(now)`
+                // 把它们搬进 `count`。**`list()` 走的是 lazy load，不收割** —— 这是上一轮
+                // 「remaining=0 而 count=0」的原因（#579）。
+                armyAppService.settledArmy(pid, System.currentTimeMillis());
                 long remaining = remainingOf(pid, "unit_infantry_t1");
                 System.out.println("[E2E] 第 " + (i + 1) + " 轮：remaining=" + remaining
                         + " count=" + countOf(pid, "unit_infantry_t1"));
@@ -347,7 +351,7 @@ class GiftPopupTriggerEndToEndTest {
                 }
                 finishTraining(pid, "unit_infantry_t1");
             }
-            armyAppService.list(pid);
+            armyAppService.settledArmy(pid, System.currentTimeMillis());
             System.out.println("[E2E] 加速后 remaining=" + remainingOf(pid, "unit_infantry_t1")
                     + " count=" + countOf(pid, "unit_infantry_t1")
                     + " troopCap=" + armyAppService.list(pid).troopCap());
