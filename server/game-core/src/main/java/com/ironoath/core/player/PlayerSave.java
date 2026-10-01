@@ -1,5 +1,6 @@
 package com.ironoath.core.player;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -219,9 +220,23 @@ public final class PlayerSave {
         return version;
     }
 
-    /** 资源快照的只读视图（保持配置表顺序）。 */
+    /**
+     * 资源快照的只读视图（保持配置表顺序）。
+     *
+     * <p><b>不能用 {@code Map.copyOf}</b>（#617）：它返回 {@code ImmutableCollections.MapN}，
+     * 那个实现按 **SALT** 散列摆放键来防碰撞攻击，而 SALT 每个 JVM 进程都不同 ⇒ 迭代顺序
+     * **跨进程会变、进程内恒定**。实测 8 次 JVM 启动出现 6 种顺序，根因复现器在
+     * {@code tools/MapCopyOrderProof.java}。
+     *
+     * <p>为什么这不是「顺序好不好看」的问题：这条链一路传到 {@code /city/list} 的
+     * {@code resources} 字段、再传到客户端资源条的格子顺序 ⇒ <b>玩家每次重新登录看到的资源排列
+     * 可能不同</b>，而任何按「第 N 格」写死假设的量具都会时绿时红。
+     * 建档侧（{@code PlayerInitService} 用 {@code LinkedHashMap} + {@code configs.allResources()}）
+     * 与持久化侧（{@code PlayerDocumentMapper} 存取都用 {@code LinkedHashMap}）本来都保序，
+     * 破序点只有这一句。
+     */
     public Map<String, PlayerResourceState> resources() {
-        return Map.copyOf(resources);
+        return Collections.unmodifiableMap(new LinkedHashMap<>(resources));
     }
 
     /**
