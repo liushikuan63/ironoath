@@ -126,6 +126,36 @@ const UNREFERENCED = {
   // 2026-09-30 的 V17-D 格让 NationRulesAssembler 真的读它了（换算成 policyVoteMillis 与
   // policyRoundMillis，轮次时间旋钮只有这一个），例外随之删除 —— 与下面 MINOR_PAY_* 那条同一条规矩。
   POWER_DROP_ALERT_RATIO: '零引用：#26（B08 §8 的"标记观察"没有风控归属，标记了给谁看未定）',
+  // 2026-10-01 的一批：**规格已定、出处齐全，但生产零消费** —— 由 #501 暴露。
+  // 门禁原先把 src/test 的引用算成生产引用，所以这 23 个一直免于例外登记。
+  // 四类，分类依据是「为什么生产读不到」，不是按前缀随手分：
+  //   ① 装配层缺读取口（领域层备好了、没人调）
+  //   ② 值住在另一张表里（global 这一对是聚合/上限，权威值在别处）
+  //   ③ 整块玩法未开工
+  //   ④ 判据是压测/口径而不是代码
+  STAGE_DIFFICULTY_BASE: 'zero-ref: #501①（B09 难度曲线装配口缺：领域层备好了、没人读这四条）',
+  STAGE_DIFFICULTY_RATIO_EARLY: 'zero-ref: #501①（同上）',
+  STAGE_DIFFICULTY_EARLY_THROUGH: 'zero-ref: #501①（同上）',
+  STAGE_DIFFICULTY_RATIO_LATE: 'zero-ref: #501①（同上）',
+  BOT_SHARE_LINJU: 'zero-ref: #501①（B11 五原型份额：bot_archetype 表有逐原型的值，global 这一组没有装配口）',
+  BOT_SHARE_MENGYOU: 'zero-ref: #501①（同上）',
+  BOT_SHARE_JIELUE: 'zero-ref: #501①（同上）',
+  BOT_SHARE_JUNFA: 'zero-ref: #501①（同上）',
+  BOT_SHARE_YINGZI: 'zero-ref: #501①（同上）',
+  BOT_FULL_ROUND_BUDGET_MS: 'zero-ref: #501④（验收 6 的压测门槛，不是代码判据；要接的是压测脚本）',
+  BOT_REACTION_DELAY_MIN_SEC: 'zero-ref: #501②（权威值在 bot_archetype 表的 reactionDelayMinSec/MaxSec，这一对是全局上下界）',
+  BOT_REACTION_DELAY_MAX_SEC: 'zero-ref: #501②（同上）',
+  BOT_HELP_DELAY_MIN_SEC: 'zero-ref: #501②（同类：求助延迟的权威值不在这一对）',
+  BOT_HELP_DELAY_MAX_SEC: 'zero-ref: #501②（同上）',
+  BOT_MISTAKE_RATE_MIN: 'zero-ref: #501②（权威值在 bot_archetype 表）',
+  BOT_MISTAKE_RATE_MAX: 'zero-ref: #501②（同上）',
+  BOT_MARK_AFTER_DAYS: 'zero-ref: #501③（标识策略属未开工的那半：B11 开放问题 3 的建议值）',
+  NATION_DIPLOMACY_RELATIONS: 'zero-ref: #501③（四种外交关系的枚举清单，B13 §5 定；消费方按关系名硬判，没有读这个清单的地方）',
+  PRODUCT_BATTLE_PASS_CENTS: 'zero-ref: #501③（战令商品未上货架，B24 裁决②已定价）',
+  PRODUCT_GROWTH_FUND_CENTS: 'zero-ref: #501③（成长基金未上货架）',
+  PRODUCT_FIRST_CHARGE_CENTS: 'zero-ref: #501③（首充档位未上货架）',
+  PRODUCT_GIFT_CENTS: 'zero-ref: #501③（礼包档价格未上货架）',
+  GIFT_VALUE_MULTIPLIER: 'zero-ref: #501①（B19 §五① 的换算倍率，装配口缺；product_reward 表里有逐行 rewardValue）',
   // 2026-09-30: #19 rally bonus wiring is DONE (PlayerCityBattleService.rallyBonus).
   //   Amplitude comes from the measured balance-sim --rally curve (A10).
   //   The gate is march.isRallyMarch(), not a second headcount check --
@@ -135,10 +165,10 @@ const UNREFERENCED = {
   // 它们回答的是"这一行该写 50 还是 60"，而算好的结果已经进了 `product_reward`，
   // 运行时读的是那张表（PaidProducts）。再让运行时乘一遍就是给同一份数字两个家。
   // 钉住"表里的值确实等于 价格 × 基准 × 倍率"的是 ProductRewardConsistencyTest（改价时它会红）。
-  PRODUCT_GROWTH_FUND_RETURN_RATIO: '零引用：B19_付费发货与礼包弹窗.md §五③（算价输入，运行时读 product_reward 行，一致性由一致性测试现算）',
-  PAY_BASE_GOLD_PER_YUAN: '零引用：B19_付费发货与礼包弹窗.md §五①a（同上：换算基准只在算价时用）',
-  FIRST_CHARGE_MULTIPLIER: '零引用：B19_付费发货与礼包弹窗.md §五①a（同上：首充倍率只在算价时用）',
-  MONTHLY_CARD_DAILY_MULTIPLIER: '零引用：B19_付费发货与礼包弹窗.md §五①a（同上：月卡倍率只在算价时用）',
+  PRODUCT_GROWTH_FUND_RETURN_RATIO: '零引用：#501⑤（原例外只写文档锚点 §五③，而门禁**不核对文档锚点、只核对 `#数字` 行** —— 所以这四条一直免于核对。B19 §五①a 的换算基准/倍率实际读的是 product_reward 行，global 这几个数字从没进过算价）',
+  PAY_BASE_GOLD_PER_YUAN: '零引用：#501⑤（同上）',
+  FIRST_CHARGE_MULTIPLIER: '零引用：#501⑤（同上）',
+  MONTHLY_CARD_DAILY_MULTIPLIER: '零引用：#501⑤（同上）',
   // 2026-09-18 更正：先前那条理由（"渠道写死在支付适配器上，只起记录作用"）是**不成立的** ——
   // 全仓支付代码里没有任何 channel 字面量（`grep -rni channel game-*/src/main | grep -v ChatChannel` 零命中），
   // 所以它从来不是"记录用的副本"，而是一条**没人读的白名单来源**。
@@ -157,7 +187,7 @@ let paramHits = 0
 const deadParams = []
 for (const row of GLOBAL_ROWS) {
   const re = new RegExp('\\b' + row.id + '\\b')
-  if (consumers.some((s) => re.test(s.src))) { paramHits++; continue }
+  if (consumers.some((s) => !s.test && re.test(s.src))) { paramHits++; continue }
   deadParams.push(row.id)
   const note = UNREFERENCED[row.id]
   if (!note) {
