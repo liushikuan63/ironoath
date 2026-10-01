@@ -79,6 +79,18 @@ page.on('request', (request) => {
     staminaPosts.push(`${request.method()} ${request.url().split('/stamina')[1] || '/'}`)
   }
 })
+// 诊断 A（#607）：把 /stamina 的真实响应体打出来。**别再靠猜** —— 「弹层存在但内容为空」
+// 有两种完全不同的成因：① 请求失败 ⇒ AppRoot.write() 不调 onOk ⇒ render 永不执行；
+// ② 请求成功但**点击没命中**，于是发请求的是 AppRoot:913 的 deliver 路径而不是
+// openStaminaDetail(:1204)。这一行把两者一次分开。
+page.on('request', (req) => {
+  if (!req.url().includes('/stamina')) return
+  const t0 = Date.now()
+  req.response().then(async (r) => {
+    const body = await r.text().catch(() => '<no body>')
+    console.log(`[stamina][诊断] ${req.method()} ${req.url()} -> ${r.status()} ${Date.now() - t0}ms body=${body.slice(0, 300)}`)
+  }).catch(() => console.log(`[stamina][诊断] ${req.url()} 无响应`))
+})
 
 const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'city')
@@ -181,6 +193,31 @@ if (rowPoint === null) {
 }
 await page.mouse.click(rowPoint.x, rowPoint.y)
 await page.waitForTimeout(1500)
+// 诊断 B（#607）：render() 末尾明确写了 this.node.active = true，而 Cocos 的 activeInHierarchy
+// 要本节点**与所有祖先**都 active。所以「不可见」有两种可能：本节点没被 render，或者某个祖先
+// 不活跃。这里把整条祖先链打出来 —— 一次就能分开这两种。
+const chain = await page.evaluate(() => {
+  const walk = (n) => {
+    if (n == null) return null
+    if (n.name === 'StaminaDetail') return n
+    for (const c of n.children) {
+      const r = walk(c)
+      if (r !== null) return r
+    }
+    return null
+  }
+  const scene = window.cc.director.getScene()
+  const t = walk(scene)
+  if (t === null) return 'NOT_FOUND'
+  const rows = []
+  let n = t
+  while (n !== null) {
+    rows.push(`${n.name}:active=${n.active},activeInHierarchy=${n.activeInHierarchy}`)
+    n = n.parent
+  }
+  return rows.join(' <- ')
+})
+console.log(`[stamina][诊断2] 祖先链：${chain}`)
 const opened = await readOverlay()
 console.log(`[stamina] 点体力行后：弹层存在=${opened.found} 可见=${opened.visible}`
   + ` 文本=${JSON.stringify(opened.texts)}`)
