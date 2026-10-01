@@ -76,7 +76,7 @@ class GiftPopupTriggerEndToEndTest {
 
     /** 行军到期扫描的 now 偏移毫秒（战斗结算同样是惰性的）。
      *  必须**越过新号的免战期**（`6003 目标处于保护状态｜免战期间无法主动出击`）。 */
-    private static final long MARCH_SKEW_MS = 86_400_000L;
+    private static final long MARCH_SKEW_MS = 604_800_000L;
 
     /** 目标格：与 B13 国策探针同源的王城坐标（那边用它建过国家）。 */
     private static final int TARGET_X = 141;
@@ -177,8 +177,94 @@ class GiftPopupTriggerEndToEndTest {
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "rival",
                 1_700_000_000_000L, "")).playerId();
         giveResources(rival, 100_000_000L);
-        raiseMainCity(rival, 12);
+        // Match power above our attack window (#587): the B08 combat-ring guard reported
+        // `your attack range is 4171 ~ 16684, theirs 100`, so a legal loss needs the rival
+        // clearly stronger. 12000 sits INSIDE the window (4171 ~ 16684) -- 40000 was
+        setMatchPower(rival, 1_500L);
+        // The guard now says **the TARGET** is protected: `6003 ... the target is under
+        // newcomer protection and cannot be attacked` (#587). Both sides need it cleared.
+        PlayerSave rs = players.findByPlayerId(rival).orElseThrow();
+        clearNewcomerProtection(rs);
+        rs.pvp().withPeaceUntil(0L);
+        players.save(rs);
+        // **The garrison is the rival's in-city troops** (#587): the guard moved on to
+        // `6009 target invalid | no garrison in the target city`. So the rival needs REAL
+        // troops now -- match power alone is not enough. 200 T1 fits the fresh-account IRON
+        // cap (200 x 30 = 6000 < 9800).
+        // 300 T1 = 9000 IRON, which fits under the fresh-account IRON cap of 9800.
+        // (400 would need 12000 and hit `resource shortfall`.)
+        giveRivalGarrison(rival, 300L);
         return rival;
+    }
+
+    /** Give the rival real in-city troops -- the guard reads the garrison, not match power (#587). */
+    private void giveRivalGarrison(String rivalId, long count) {
+        giveResources(rivalId, 1_000_000L);
+        raiseMainCity(rivalId, 4);
+        buildAndFinish(rivalId, "barracks", 1, 1);
+        com.ironoath.core.hero.HeroRoster roster =
+                heroes.findByPlayerId(rivalId).orElseGet(com.ironoath.core.hero.HeroRoster::new);
+        roster.obtain("hero_ssr_02");
+        roster.setLineup(0, "hero_ssr_02", java.util.Arrays.asList(null, null), heroStats.rules());
+        if (!heroes.insertIfAbsent(rivalId, roster)) {
+            heroes.save(rivalId, roster, heroes.versionOf(rivalId));
+        }
+        armyAppService.train(rivalId,
+                new TrainReq("e2e-rt-" + UUID.randomUUID(), "unit_infantry_t1", count));
+        for (int i = 0; i < 5; i++) {
+            armyAppService.settledArmy(rivalId,
+                    System.currentTimeMillis() + SETTLE_SKEW_MS);
+            long rem = remainingOf(rivalId, "unit_infantry_t1");
+            long have = countOf(rivalId, "unit_infantry_t1");
+            System.out.println("[E2E] rival 第 " + (i + 1) + " 轮：remaining=" + rem + " count=" + have);
+            if (rem <= 0L && have >= count) {
+                break;
+            }
+            finishTraining(rivalId, "unit_infantry_t1");
+        }
+        armyAppService.settledArmy(rivalId,
+                System.currentTimeMillis() + SETTLE_SKEW_MS);
+        System.out.println("[E2E] rival 收官：remaining=" + remainingOf(rivalId, "unit_infantry_t1")
+                + " count=" + countOf(rivalId, "unit_infantry_t1")
+                + " troopCap=" + armyAppService.list(rivalId).troopCap());
+    }
+
+    /**
+     * Put an account at a given match power (#587).
+     *
+     * <p>Copied from {@code BotCalibrationTest.setMatchPower}: all three PlayerPower fields
+     * are written together, because {@code PlayerPower}'s invariant is {@code peak >= match}.
+     *
+     * <p>Why this replaces the hand-rolled "stronger rival" army fixture (#586): five attempts
+     * to build one through the real building/training chain all hit resource or occupancy
+     * limits -- {@code IRON needs 12000, only 9800}, {@code needs WOOD},
+     * {@code plot already occupied}. The ring guard compares **match power**, not troop count,
+     * so writing match power is both sufficient and faithful to what the rule reads.
+     */
+    /**
+     * Clear the newcomer-protection timestamp on a save (adjudication #586).
+     *
+     * <p>Why the 20-argument rebuild: {@code PlayerSave.protectUntil} is a **private field
+     * with no wither** (unlike {@code pvp().peaceUntil()}), written once at account creation
+     * from the {@code NEWCOMER_PROTECT_SECONDS} global param. Raising the main city does NOT
+     * clear it. The only writer is {@code restore(...)}, so every other field is read back
+     * off the same save and passed through unchanged, with {@code protectUntil = null}
+     * meaning "no protection".
+     */
+    private void clearNewcomerProtection(PlayerSave save) {
+        save.restore(save.playerId(), save.deviceId(), save.nickName(), save.avatarId(),
+                save.createdAt(), save.lastLoginAt(), save.cityLevel(),
+                save.resources(), save.power(), save.pvp(),
+                null,                       // protectUntil = null => no protection
+                save.glory(), save.guide(), save.paid(), save.tech(), save.giftPopup(),
+                save.avatarFrame(), save.ownedAvatarFrames(), save.version());
+    }
+
+    private void setMatchPower(String playerId, long matchPower) {
+        PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
+        save.setPower(new com.ironoath.core.player.PlayerPower(
+                matchPower, matchPower, matchPower));
+        players.save(save);
     }
 
     /** 读某个兵种的剩余训练秒数（0 = 已完成或没在训）。 */
@@ -361,7 +447,7 @@ class GiftPopupTriggerEndToEndTest {
         String pid = newPlayer();
         // **先造兵**（#571）：不造兵时 `/world/march` 恒回 `6000 MARCH_NO_TROOP`。
         try {
-            trainT1(pid, 100L);
+            trainT1(pid, 10L);
             // **把训练秒数减到 0**（裁决 #577）：train 后立刻用加速道具，
             // 下一次 `armyAppService.list()` 触发的惰性结算就会把它收进队列。
             finishTraining(pid, "unit_infantry_t1");
@@ -429,6 +515,7 @@ class GiftPopupTriggerEndToEndTest {
         // before it is stale.
         PlayerSave me = players.findByPlayerId(pid).orElseThrow();
         me.pvp().withPeaceUntil(0L);   // not null: withPeaceUntil dereferences it
+        clearNewcomerProtection(me);  // the field that actually gates the attack (#584/#586)
         players.save(me);
 
         // **目标必须是玩家城**（#583）：`resolveTargetType` 判 `PLAYER_CITY` 的条件是
@@ -442,20 +529,32 @@ class GiftPopupTriggerEndToEndTest {
         var marchReq = new com.ironoath.web.dto.generated.MarchReq(
                 "e2e-a-" + UUID.randomUUID(),
                 target.x(), target.y(),
-                List.of(new com.ironoath.web.dto.generated.MarchUnit("unit_infantry_t1", 100L)),
+                List.of(new com.ironoath.web.dto.generated.MarchUnit("unit_infantry_t1", 10L)),
                 List.of("hero_ssr_02"),
                 com.ironoath.web.dto.generated.MarchAction.ATTACK);
         int attackCode;
         try {
-            marchAppService.send(pid, marchReq);   // 方法名是 send 不是 march（#577）
+            // exactly ONE send: a second call is rejected as `1002 duplicate request` (#587)
+            var marchReqSent = marchAppService.send(pid, marchReq);
             // **到期扫描必须显式喂 skew 后的 now**（#582）：`processDue` 是
             // `public int processDue(String playerId, long now)`（MarchAppService 577 行）——
             // **公开且带 now 参数**，所以不必伪造 TimeService（那要 @TestConfiguration）。
             // 类注释第 64 行明写「`processDue` 在每个读写入口的开头被调用」，而
             // `list` / `recall` / `collectGather` 喂的都是 `timeService.serverNow()`
             //（真实时钟）⇒ 刚发出去的行军 `arriveAt` 还没到，扫描不会结算它。
+            // MarchResp only carries `durationSec` and `serverNow`; the id and arriveAt live
+            // on MarchView (#587: guessed twice before reading the records).
+            System.out.println("[E2E] send 返回：durationSec="
+                    + marchReqSent.durationSec() + " serverNow=" + marchReqSent.serverNow()
+                    + " 现在=" + System.currentTimeMillis());
+            marchAppService.list(pid).marches().forEach(m -> System.out.println(
+                    "[E2E] 队列里的行军：id=" + m.marchId() + " status=" + m.status()
+                    + " arriveAt=" + m.arriveAt()));
             int dueSettled = marchAppService.processDue(pid,
                     System.currentTimeMillis() + MARCH_SKEW_MS);
+            System.out.println("[E2E] 结算后再看队列：");
+            marchAppService.list(pid).marches().forEach(m -> System.out.println(
+                    "[E2E]   id=" + m.marchId() + " status=" + m.status()));
             System.out.println("[E2E] processDue 结算了 " + dueSettled
                     + " 支行军（skew " + MARCH_SKEW_MS + "ms）");
             attackCode = 0;
@@ -466,7 +565,8 @@ class GiftPopupTriggerEndToEndTest {
 
         JsonNode data = popupData(pid);
         if (!data.path("popup").asBoolean(false)) {
-            System.out.println("[E2E] BATTLE_LOST 不可验：/world/march 业务码=" + attackCode);
+            System.out.println("[E2E] BATTLE_LOST 不可验：/world/march 业务码=" + attackCode
+                    + " (battle resolved => we won or drew; markBattleLost only fires on a loss)");
             Assumptions.abort("/world/march 业务码=" + attackCode + " ⇒ BATTLE_LOST 标记点未经过；"
                     + "新号无兵力/无可打目标 ⇒ 本条不可验（不是通过也不是失败）。"
                     + "要让本条真跑：先给新号造出至少 1 队兵（兵营 3 级 + 30 铁/20 粮每 100），"
