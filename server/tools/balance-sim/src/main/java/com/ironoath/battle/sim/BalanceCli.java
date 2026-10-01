@@ -519,6 +519,14 @@ public final class BalanceCli {
         final long[] warehouseLevels = {0L, 0L, 0L, 0L};
         long[] overflow = {0L, 0L, 0L, 0L};
         boolean withCap = !"false".equals(options.getOrDefault("cap", "true"));
+        // `--dims` 只在 CLI 里存在：**关掉某一维再跑**，用来看它对读数的贡献。
+        // #529 那个「B00 写第 7 天 13 级、现跑 4 级」要定位是哪一维造成的，就是靠这个开关逐个试。
+        // 写法：`--dims=cap,builds,forge`（不写 = 全开）；写 `none` = 全关。
+        java.util.Set<String> dims = new java.util.HashSet<>(List.of(
+                options.getOrDefault("dims", "cap,builds,forge,troops").split(",")));
+        boolean dimBuilds = dims.contains("builds");
+        boolean dimForge = dims.contains("forge");
+        boolean dimTroops = dims.contains("troops");
         final long[][] producers = {
                 {1L, 120L, 0L, 400L, 0L},   // req, outBase/h, costWood, costStone, costIron
                 {1L, 120L, 400L, 0L, 0L},
@@ -599,7 +607,7 @@ public final class BalanceCli {
         long forgeIron = 0L;
         int forgePieces = 0;
         Map<String, Long> forgeLevel = new java.util.HashMap<>();
-        if (withCap) {
+        if (withCap && dimForge) {
             for (var eq : configs.all(EquipCfg.class)) {
                 // `rarity` 是**枚举 EquipCfg.Rarity**（不是字符串）——
                 // #519 记的「N 档一件都没进循环」就是这个：用 `"N".equals(eq.rarity())`
@@ -642,7 +650,7 @@ public final class BalanceCli {
         // 造价按 `BUILDING_COST` 的 ratio^(n-1)（curve.base=0 ⇒ 用 costBase 直接起步）。
         long buildGrain = 0L;
         Map<String, Long> buildLevel = new java.util.HashMap<>();
-        if (withCap) {
+        if (withCap && dimBuilds) {
             List<String> grainBuildings = List.of(
                     "hospital", "academy", "stable", "embassy", "drill_ground");
             for (String bid : grainBuildings) {
@@ -714,7 +722,7 @@ public final class BalanceCli {
             final long slots = Long.parseLong(options.getOrDefault("train-slots", "1"));
             final long population = minCommand;   // **下界**：0 科技 + 1 名最弱武将
             final long maxQueued = Math.min(slots * batchSize, population);
-            if (withCap && barracksLevel >= 3 && population > 0L) {
+            if (withCap && dimTroops && barracksLevel >= 3 && population > 0L) {
                 // 人口不足一批时**按人口切一批**，不是造满再截 ——
                 // 那样会出现「在编 100 / 上限 46」这种自相矛盾的输出（真造兵也不会超人口）。
                 // 上一批已派走：队列位空出来了（`perBatch` 本身就是「已派走」的证据，
