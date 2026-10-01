@@ -567,6 +567,7 @@ public final class BalanceCli {
             // 的判断**建立在「仓库根本没被考虑」之上**，是错的。
             // warehouse：requireMainLevel=2、cost 600木+300石、capBase 1000/级、maxLevel 40。
         long buildWood = 0L, buildStone = 0L, buildIron = 0L;
+        long cityWood = 0L, cityStone = 0L;   // 主城升级花费（#532 对账用）
         final double BUILD_COST_RATIO = 1.22;   // curve.BUILDING_COST.ratio
             if (withCap) {
                 // 兵营：与主城等级同步推进（requireMainLevel=3），本版不单独花资源升它
@@ -791,6 +792,10 @@ public final class BalanceCli {
                 }
                 wood -= woodCost;
                 stone -= stoneCost;
+                cityWood += woodCost;
+                cityStone += stoneCost;   // #532 对账
+                cityWood += woodCost;
+                cityStone += stoneCost;
                 level++;
                 upgraded++;
             }
@@ -843,7 +848,21 @@ public final class BalanceCli {
             grain += grainRate * 24L;
             }
 
-            System.out.printf("%-6d%-10d%-12d%-12d%-12d%-12d%d%n",
+            if (day == days) {
+            long producedWood = 5000L + woodRate * 24L * day;
+            long producedStone = 5000L + stoneRate * 24L * day;
+            System.out.println();
+            System.out.println("=== 收支对账（#532）===");
+            System.out.printf("木：产出 %d - 建造/仓库 %d - 主城升级 %d = 结余 %d%n",
+                    producedWood, buildWood, cityWood, wood);
+            System.out.printf("石：产出 %d - 建造/仓库 %d - 主城升级 %d = 结余 %d%n",
+                    producedStone, buildStone, cityStone, stone);
+            long woodGap = wood - (producedWood - buildWood - cityWood);
+            long stoneGap = stone - (producedStone - buildStone - cityStone);
+            System.out.printf("**对账差额：木 %+d / 石 %+d**（0 = 账平；非 0 = 模型里有一笔没记账的支出）%n",
+                    woodGap, stoneGap);
+        }
+        System.out.printf("%-6d%-10d%-12d%-12d%-12d%-12d%d%n",
                     day, level, wood, stone, iron, grain, upgraded);
             if (withCap) {
                 System.out.printf("%-6s%-10s装备强化累计吃铁 %d（已开练 %d 件）%n",
