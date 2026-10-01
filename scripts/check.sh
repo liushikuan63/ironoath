@@ -37,7 +37,7 @@ bash scripts/check-config-refs.sh
 bash scripts/check-checklist-table.sh
 bash scripts/check-error-codes.sh
 bash scripts/check-config-consumers.sh
-bash scripts/check-balance-sim-capbase.sh
+bash scripts/check-balance-sim-config-sync.sh
 bash scripts/check-guide-no-copy.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-client-typecheck.sh
