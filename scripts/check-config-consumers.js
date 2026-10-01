@@ -200,6 +200,8 @@ for (const s of consumers) {
   }
 }
 
+const WHY_UNWIRED_MARK = '运行期无人读它'
+
 let paramHits = 0
 const deadParams = []
 for (const row of GLOBAL_ROWS) {
@@ -211,6 +213,19 @@ for (const row of GLOBAL_ROWS) {
   if (dynamic) { paramHits++; continue }
   deadParams.push(row.id)
   const note = UNREFERENCED[row.id]
+  // #505：零引用 ⇒ `why` 必须自陈「运行期无人读它」。
+  // 为什么落在 `why` 而不是 `todo`：`todo` 的语义是「**未定稿**」（`pendingConfirmations()`
+  // 收非空 todo，`ConfigRegistryTest` 钉着列表里每条都含 `TODO(需确认)`），
+  // 把「已定稿但没消费方」塞进去会让那条纪律的实现开始喊并未待确认的东西（#504 踩过）。
+  // `why` 是给**改表的人**看的那一列 —— 他改的正是这张表。
+  if (note) {
+    const why = String(row.why || '')
+    if (!why.includes(WHY_UNWIRED_MARK)) {
+      problems.push(`${row.id} 已在例外表里（${note.slice(0, 40)}…），但它的 why 没写`
+        + `「${WHY_UNWIRED_MARK}」—— 改表的人在表里看不见这一行运行期没人读`
+        + '（#505 裁决：可见性落在 why，不落在 todo）')
+    }
+  }
   if (!note) {
     problems.push(`${row.id} 这个 global 参数没有任何代码读它，也不在例外表里。`
       + '要么接上消费方，要么在 UNREFERENCED 里写明出处（出处会被核对）')
