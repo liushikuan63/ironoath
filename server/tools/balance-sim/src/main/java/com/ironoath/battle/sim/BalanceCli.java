@@ -476,7 +476,8 @@ public final class BalanceCli {
         // **产出被丢弃**（不是排队、不是溢出到别处）。容量 = initCap + warehouse.capBase × 等级。
         final long[] initCap = {20000L, 20000L, 10000L, 30000L};   // 木 石 铁 粮
         final long initAmount = 0L;                                  // 起始资源见下面的初值
-        final long woodCapBase = 1000L;                              // warehouse.capBase（表里 1000）
+        final long woodCapBase = Long.parseLong(options.getOrDefault("cap-base", "1000"));
+                              // warehouse.capBase（表里 1000），可调以便扫档
         final long[] warehouseLevels = {0L, 0L, 0L, 0L};
         long[] overflow = {0L, 0L, 0L, 0L};
         boolean withCap = !"false".equals(options.getOrDefault("cap", "true"));
@@ -514,6 +515,23 @@ public final class BalanceCli {
         int prevLevel = level;
         for (int day = 1; day <= days; day++) {
             int upgraded = 0;
+            // ---------- 仓库升级（第二版才补上的一维）----------
+            // 第一版只加了「截断」却**没让玩家升仓库** ⇒ warehouseLevels 恒为 0
+            // ⇒ cap 恒等于 initCap ⇒ 溢出必然在第 3 天发生，而那个「仓库扩容追不上产出」
+            // 的判断**建立在「仓库根本没被考虑」之上**，是错的。
+            // warehouse：requireMainLevel=2、cost 600木+300石、capBase 1000/级、maxLevel 40。
+            if (withCap) {
+                while (level >= 2 && warehouseLevels[0] < 40L) {
+                    long wc = Math.round(600 * Math.pow(costRatio, warehouseLevels[0]));
+                    long ws = Math.round(300 * Math.pow(costRatio, warehouseLevels[0]));
+                    if (wood < wc || stone < ws) {
+                        break;
+                    }
+                    wood -= wc;
+                    stone -= ws;
+                    warehouseLevels[0]++;
+                }
+            }
             if (withProducers && !cityFirst) {
                 for (int p = 0; p < producers.length; p++) {
                     // **每轮只升一级**：升到升不动会把当天全部资源吃掉、主城直接饿死
