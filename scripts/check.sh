@@ -72,6 +72,18 @@ bash scripts/check-resource-order-invariant.sh
 # （含整个 nation 族），且没有任何检查会红。收集规则已改成全收 + 显式排除名单，
 # 这道门守住名单本身：条目必须存在、必须有理由、文件必须以换行结尾、收集规则不得退化回旧形态。
 bash scripts/check-runtime-probe-coverage.sh
+# 探针脚本的**语法**（#753 收尾）：上面那道门只守「收集与排除名单」，不查脚本本身写得对不对。
+# 实测过：一份探针有语法错时 `check.sh` 仍是 EXIT=0「全部静态检查通过」——
+# 而探针要起后端 + 产物才跑得到，那是最晚才发现的地方。语法错必须在这里就红。
+syntax_bad=0
+for f in tools/verify-*.mjs; do
+  if ! node --check "$f" >/dev/null 2>&1; then
+    echo "[check] 语法错：$f" >&2
+    syntax_bad=$((syntax_bad + 1))
+  fi
+done
+[ "$syntax_bad" -eq 0 ] || { echo "[check] $syntax_bad 份探针有语法错" >&2; exit 1; }
+echo "[check] 探针脚本语法：$(ls tools/verify-*.mjs | wc -l) 份全部通过 node --check"
 # Cocos 输入命中的坐标口径（#624~#633）：`UITransform.hitTest` 吃的是
 # `(clientX - rect.left) * dpr` / `(rect.top + rect.height - clientY) * dpr`（见
 # docs/cocos-3.8-输入命中备忘.md §8，条款是从本仓产物 cc.js 里抄的）。这条换算此前散在

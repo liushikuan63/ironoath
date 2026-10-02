@@ -523,6 +523,18 @@ const CITY_BAR = `(() => {
     hasCancel: cancel !== null,
     cancelVisible: cancel !== null && cancel.active,
     upgradeVisible: upgrade !== null && upgrade.active,
+    // ── 诊断读数（#753 收尾，2026-10-03）：先有读数，再有判据 ──
+    // ⚠️ 本段在反引号模板里，注释里**不许再出现反引号**，否则字符串提前闭合（node --check 立刻报）。
+    // 「取消」键的渲染条件是 CityPanelView.ts:1486 的
+    // (row.upgrading || row.paused) && !row.collectable，而 collectable 由
+    // CityPanel.ts:138 的 done = countdown !== null && countdown <= 0 推导，
+    // countdown 又来自 countdownMs(building.finishAt, offsetMs, localNow)。
+    // ⇒ 键不出现只可能是两种：upgrading 没成立（已排除：夹具给的是 status:'UPGRADING'），
+    //   或者 done 一上来就是 true —— 也就是**夹具的固定时间戳 NOW 与页面真实墙钟对不上**。
+    // 这三个读数就是用来把后者钉死的：把 wallClock 与夹具的 nowMs 一比就知道偏移落在哪一侧、有多大。
+    // finishAt 不必由页面回报 —— 夹具里它是 NOW + 60_000（:183），探针侧本来就知道。
+    wallClock: Date.now(),
+    nowMs: NOW,
     resourceSlots,
     overflow: (() => {
       let hit = ''
@@ -534,11 +546,22 @@ const CITY_BAR = `(() => {
   }
 })()`
 let cityBar = null
+const BAR_FRAMES = []
 for (let i = 0; i < 20; i += 1) {
   cityBar = await page.evaluate(CITY_BAR)
+  // 逐帧留读数：键一旦一直不出现，"它在哪一帧开始不出现"本身就是证据
+  //（旧写法的 `hasCancel` 只留最后一帧，把过程全丢了 —— 今天这串误判有一半是它造成的）。
+  BAR_FRAMES.push({ i, hasCancel: cityBar?.hasCancel, visible: cityBar?.cancelVisible,
+    upgrade: cityBar?.upgradeVisible, wallClock: cityBar?.wallClock })
   if (cityBar?.hasCancel === true) break
   await page.waitForTimeout(500)
 }
+console.log('[tech][cityBar] 夹具 nowMs=' + NOW + ' finishAt=' + (NOW + 60_000)
+  + ' · 逐帧 ' + JSON.stringify(BAR_FRAMES))
+console.log('[tech][cityBar] 末帧 墙钟=' + cityBar?.wallClock + ' 与夹具 nowMs 相差 '
+  + ((cityBar?.wallClock ?? 0) - NOW) + 'ms'
+  + ' ⇒ 若这个差是**几十万**量级，说明夹具的固定时间戳与真实墙钟严重错位，'
+  + 'countdown 会一上来就 ≤0、collectable 直接为 true，按设计就不给「取消」键')
 check('在升级那一格的动作条上有「取消」键', cityBar?.cancelVisible, true)
 check('同一槽位的「升级」让位给「取消」（这一格已经在建，不能再开一次）',
   cityBar?.upgradeVisible, false)
