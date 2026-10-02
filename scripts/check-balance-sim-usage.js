@@ -68,6 +68,45 @@ if (trulyMissing.length > 0) {
   process.exit(1)
 }
 
+  // ---- #697: usage must not hard-code values that live in config tables. #679 changed
+  // `warehouse.capBase` 8000 -> 32000 and the `--cap-base` help line kept saying「现值 8000」;
+  // `--troops` advertised「兵力上限（默认 6833）」while the actual training cap is
+  // `population x TROOP_PER_COMMAND` (= 230). Both are「文档说 A、代码是 B」shapes, and both
+  // shipped because nothing read the usage text against the tables. This gate fails when a
+  // help line prints a number that is *also* a current config-table value, unless the same line
+  // explicitly says the number is read from a table at runtime.
+  const cfgFiles = [
+    'contract/config/building.json',
+    'contract/config/curve.json',
+    'contract/config/resource.json',
+  ]
+  const tableValues = new Set()
+  for (const f of cfgFiles) {
+    const txt = readFileSync(f, 'utf8')
+    for (const m of txt.matchAll(/:\s*(\d{2,})/g)) tableValues.add(m[1])
+  }
+  const hardcoded = []
+  for (const l of usage.split('\n')) {
+    if (!/--[a-z-]+=/.test(l)) continue
+    // ⚠️ **本门第一版有个漏洞，已修**（#697 自测）：原来「同一行声明了从表读就放行」，
+    // 而「默认**读** building 表 capBase，**现值 32000**」这种句子**同时**满足两条件
+    // ⇒ 正好是本门要禁的形状却放行了。注入测试当场抓出这一点。
+    // ⇒ 现在规则收紧为：**usage 里只要出现「现值 N」/「默认 N」且 N 是表里现值，一律红**，
+    // 不给「顺带声明了读表」留口子。要放行就只能不写具体数值（写「实时读表的那个值」）。
+    for (const m of l.matchAll(/(?:现值|默认)\s*(\d{2,})/g)) {
+      if (tableValues.has(m[1])) hardcoded.push({ line: l.trim(), value: m[1] })
+    }
+  }
+  if (hardcoded.length > 0) {
+    console.error('[check-balance-sim-usage][FAIL] usage 里写死了配置表当前的数值：')
+    for (const h of hardcoded) console.error(`  - 「${h.line}」里的 ${h.value} 也是配置表里的现值`)
+    console.error('  改表不改 usage 就会变成「文档说 A、代码是 B」（本会话已发生两次：')
+    console.error('  #679 改 warehouse.capBase 8000 -> 32000、--troops 的 6833 与实际 230 量纲不同）。')
+    console.error('  修法：usage 只写「从哪张表的哪个字段读」，不抄具体数值；')
+    console.error('  或者同一行显式写「实时读表」，本门会放行。依据：收口清单 #696/#697。')
+    process.exit(1)
+  }
+
 const documented = [...switches].filter((k) => usage.includes('--' + k))
 console.log(`[check-balance-sim-usage] usage 覆盖全部 ${documented.length}/${switches.size} 个开关，`
   + `f2p7d 族必需项全在。`)

@@ -89,7 +89,9 @@ public final class BalanceCli {
             System.err.println("    --cap=true|false      **同时**关掉四件事：仓容截断 + 装备强化 + 建造 + 造兵（默认 true）");
         System.err.println("                            #690/#691：它**不是**单纯的「仓容对照档」—— 真实语义是「关四维度」；");
         System.err.println("                            而 withCap 同时是 forge / builds / troops 三维的前置条件。");
-            System.err.println("    --cap-base=N          仓容基数（默认读 building 表 capBase，现值 8000）");
+            System.err.println("    --cap-base=N          仓容基数（**默认实时读 building 表 warehouse.capBase**，不写死数值）");
+        System.err.println("                            #696：原写「现值 8000」，#679 改成 32000 后它就过期了");
+        System.err.println("                            ⇒ 这里**不重复表里的数值**，要现值请读表。");
             System.err.println("    --base-rate=R         产出倍率（默认 1.0）");
             System.err.println("    --producers=true|false 产出建筑是否参与升级（默认 true）");
             System.err.println("    --priority=city|balanced  主城优先还是产出建筑优先（默认 city）");
@@ -120,7 +122,10 @@ public final class BalanceCli {
             System.err.println("  --wall   --runs=400 --comp=步,骑,弓,器 --size=1000");
             System.err.println("  --settle-bench --samples=200 --warmup=30 --comp=25000,25000,25000,25000");
             System.err.println("    --type=NAME            战斗类型（PVP_SOLO 等，取 BattleType 枚举名，默认 PVP_SOLO）");
-            System.err.println("    --troops=N            兵力上限（默认 6833，见 #564）");
+            System.err.println("    --troops=N            **只**喂「零氪第 7 天能造多少」那个参考值（默认 6833，见 #564）");
+        System.err.println("                            #696：**它不是造兵上限** —— 造兵上限由 --population 决定");
+        System.err.println("                            （带兵上限 = 统帅值 × TROOP_PER_COMMAND = 46 × 5 = 230），");
+        System.err.println("                            两个数**量纲不同**，别混用。");
             System.err.println();
             System.err.println("【其它】");
             System.err.println("  --f2p-stages --terrain=... --cases=...   零氪分阶段读数");
