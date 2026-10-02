@@ -23,9 +23,23 @@ LIST="${1:-}"
 # 默认 900 秒不是拍脑袋：`verify-perf-runtime.mjs` 的 `PERF_SOAK_SECONDS` 默认就是 600（泡机取样），
 # 加启动与收尾要 660 秒以上 —— 默认值若低于它，这份量具**每批都必然假 TIMEOUT**（实测 300 秒时正是如此）。
 PROBE_TIMEOUT="${RUNTIME_PROBES_TIMEOUT:-900}"
+EXCLUDE_LIST="${RUNTIME_PROBES_EXCLUDE:-scripts/runtime-probes-exclude.txt}"
 if [ -z "$LIST" ]; then
   LIST="$(mktemp -t runtime-probes-list.XXXXXX)"
-  ls tools/verify-*-runtime.mjs > "$LIST"
+  # 收集**全部** verify-*.mjs（2026-10-03，#753 收尾）：旧规则只收 `*-runtime.mjs`，
+  # 而"文件名带不带 -runtime"与"要不要真跑"毫无关系 —— #611 实测有 23 份量具从没被批跑到
+  # （含整个 nation 族），本次现跑是 **24/24 份都需要后端、23 份开浏览器、0 份纯逻辑**，
+  # 即它们全都是该真跑的量具，只是没按命名约定起名。
+  # ⇒ 唯一还需要手工表达的是"**这几份在默认环境跑只会得到假红**"，那就是 $EXCLUDE_LIST。
+  ls tools/verify-*.mjs \
+    | while read -r p; do
+        b="$(basename "$p")"
+        if [ -f "$EXCLUDE_LIST" ] && grep -qxF "$b" "$EXCLUDE_LIST"; then
+          echo "EXCLUDE $b （见 $EXCLUDE_LIST 的理由）" >&2
+        else
+          echo "$p"
+        fi
+      done > "$LIST"
 fi
 : > "$OUT"
 # 把"这一批打的是哪台后端"写进记录：`BACKEND` 有默认值（8199＝dev 约定），
@@ -34,6 +48,7 @@ echo "# 后端=$BACKEND 清单=$LIST 记账=$OUT" | tee -a "$OUT"
 while read -r f; do
   i=$((i + 1))
   base="$(basename "$f")"
+  # 排除名单已在生成 $LIST 时过滤过（见上）；这里保留 case 只为兼容**显式传入** LIST 的旧用法。
   case "$base" in
     verify-label-fit-runtime.mjs) continue ;;   # 这一份每格都在跑，不必重复
   esac

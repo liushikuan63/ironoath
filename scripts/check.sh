@@ -67,6 +67,11 @@ bash scripts/check-view-child-index.sh
 # 资源条顺序（#616~#618）：PlayerSave.resources() 退回 Map.copyOf 时，顺序按 SALT 散列摆放、
 # 跨进程变而进程内恒定 ⇒ 单测永远绿、玩家每次登录看到的排列却可能不同。#618 的单测钉不住这一维。
 bash scripts/check-resource-order-invariant.sh
+# 批跑覆盖率（#611 / #753 收尾）：批跑脚本此前只收 `tools/verify-*-runtime.mjs`，
+# 而"文件名带不带 -runtime"与"要不要真跑"毫无关系 ⇒ 有 23~24 份真该跑的量具从没被批跑到
+# （含整个 nation 族），且没有任何检查会红。收集规则已改成全收 + 显式排除名单，
+# 这道门守住名单本身：条目必须存在、必须有理由、文件必须以换行结尾、收集规则不得退化回旧形态。
+bash scripts/check-runtime-probe-coverage.sh
 # Cocos 输入命中的坐标口径（#624~#633）：`UITransform.hitTest` 吃的是
 # `(clientX - rect.left) * dpr` / `(rect.top + rect.height - clientY) * dpr`（见
 # docs/cocos-3.8-输入命中备忘.md §8，条款是从本仓产物 cc.js 里抄的）。这条换算此前散在
