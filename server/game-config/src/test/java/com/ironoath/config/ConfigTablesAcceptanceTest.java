@@ -340,6 +340,72 @@ class ConfigTablesAcceptanceTest {
         return m.infantryCount() + m.cavalryCount() + m.archerCount() + m.siegeCount();
     }
 
+    /**
+     * 跨赛季必须真的递进（#753 裁决，2026-10-03）。
+     *
+     * <p><b>为什么要有这条</b>：season_02..05 入表时是 season_01 的**逐字复制**
+     * （#751 裁决："这样 SEASON_COUNT=5 不需要发明任何数"），于是"跨赛季"在数值层面完全为空 ——
+     * 而当时**没有任何测试会因此变红**：实测把 season_04 的目标值改回与 season_01 相同，
+     * {@code ConfigTablesAcceptanceTest} 仍然 13/13 全绿。改数据却没有判据守着，等于没改。
+     *
+     * <p><b>判据为什么是「单调非递减」而不是「不全相同」</b>：后者太弱，救不了"某一季倒退回第一季"
+     * 这种最可能的退化（把 season_04 的目标抄回 season_01，五季取值 8/9/10/<b>8</b>/12 仍然"不全相同"）。
+     * 单调非递减能抓住它：10 → 8 是倒退。
+     *
+     * <p><b>为什么允许持平</b>：{@code JOIN_ALLIANCE}（加入 N 个联盟）与 {@code SEASON_RANK}
+     * （名次）的最小可达值都是 1，递增它们只会制造数值噪音而不会形成难度曲线。
+     * 「至少一个阶段严格递增」这条则保证"全表恒定"也过不去。
+     */
+    @Test
+    @DisplayName("跨赛季递进：各阶段目标值与三个奖励逐季单调非递减，且至少一个阶段严格递增")
+    void seasonsProgressMonotonically() {
+        Map<String, List<SeasonCfg>> bySeason = registry.all(SeasonCfg.class).stream()
+                .collect(Collectors.groupingBy(
+                        r -> r.id().substring(0, r.id().substring(0, r.id().indexOf("_phase_")).length()),
+                        TreeMap::new,
+                        Collectors.toList()));
+
+        int strictGrowthPhases = 0;
+        for (int phaseNo = 1; phaseNo <= 5; phaseNo++) {
+            final int phase = phaseNo;   // lambda 捕获用：循环变量本身不是 effectively final
+            List<Long> goals = new java.util.ArrayList<>();
+            List<Long> golds = new java.util.ArrayList<>();
+            List<Long> coins = new java.util.ArrayList<>();
+            List<Long> frags = new java.util.ArrayList<>();
+            for (String season : List.of("season_01", "season_02", "season_03", "season_04", "season_05")) {
+                SeasonCfg row = bySeason.get(season).stream()
+                        .filter(r -> r.phaseNo() == phase)
+                        .findFirst()
+                        .orElseThrow(() -> new AssertionError(season + " 缺少阶段 " + phase));
+                goals.add(row.goalValue());
+                golds.add(row.rewardGold());
+                coins.add(row.rewardSeasonCoin());
+                frags.add(row.rewardHeroFragment());
+            }
+            assertMonotonic("阶段 " + phase + " 的 goalValue", goals);
+            assertMonotonic("阶段 " + phase + " 的 rewardGold", golds);
+            assertMonotonic("阶段 " + phase + " 的 rewardSeasonCoin", coins);
+            assertMonotonic("阶段 " + phase + " 的 rewardHeroFragment", frags);
+            if (new java.util.HashSet<>(goals).size() > 1) {
+                strictGrowthPhases++;
+            }
+        }
+
+        assertThat(strictGrowthPhases)
+                .as("若每个阶段的目标值都逐季恒定，跨赛季就只剩了个编号（#753 裁决要求真的递进）")
+                .isGreaterThan(0);
+    }
+
+    /** 按季单调不递减：抓住"某一季倒退回第一季"这种最可能的退化。 */
+    private static void assertMonotonic(String what, List<Long> values) {
+        for (int i = 1; i < values.size(); i++) {
+            assertThat(values.get(i))
+                    .as("%s：第 %d 季(%d) 必须 >= 第 %d 季(%d)，倒退会让后期赛季比前期更简单",
+                            what, i + 1, values.get(i), i, values.get(i - 1))
+                    .isGreaterThanOrEqualTo(values.get(i - 1));
+        }
+    }
+
     @Test
     @DisplayName("每一季的时间轴都连续无空隙、无重叠，且各季等长、总长与主城 40 级的养成节奏对齐")
     void seasonPhasesAreContiguous() {

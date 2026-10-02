@@ -2,7 +2,7 @@
   "table": "season",
   "version": 1,
   "comment": "赛季表。B02 字段：阶段时间轴/目标/结算奖励。一个赛季 = 5 阶段共 45 天。startDayOffset 是相对开服的天数偏移。",
-  "designNote": "45 天的赛季长度不是随便定的：主城 40 级累计需约 1063 万木，按后期产量折算约需 22 天纯积累，加上被掠夺、战损、科技线争抢资源，实际满级在 45 天以上——所以「一个赛季打不满级」成立，这正是 C00 公理四要的效果。五个阶段的目标刻意换了四种类型（主城等级→社交归属→累计行为→组织成果→排名），让每个阶段的最优策略都不同：只闷头升级的会在第二阶段掉队，只社交的会在第三阶段掉队。没有任何一个阶段目标是纯战力数值，避免赛季变成氪金排行榜。\n【为什么规则阶段要单独立一列】season 表的阶段是「目标阶段」（这阶段要玩家做什么），而代码里 SeasonTimeline.Phase 是「规则阶段」（能不能 PVP、王城是否开放、是否结算）。两者不是一回事：立盟期与争锋期是两个目标、同一条扩张规则。没有这一列，映射只能写死在 Java 里，换赛季就得改代码 —— 违反本批次「所有赛季规则走配置」的硬约束。\n【休赛期不在表里，这是刻意的】REST 不是赛季内的一段时间，而是「赛季结束之后、下一季开始之前」，所以第 45 天之后由时间轴判为休赛，而不是塞一行进 45 天轴 —— 那会把刚定稿的赛季时长改成 46+ 天。",
+  "designNote": "【跨赛季递增规则（#753 裁决）】season_02..05 不再逐字复制 season_01：等级型目标（REACH_MAIN_LEVEL）逐季 +1；数量型目标（KILL_MONSTER_TOTAL / CAPTURE_TERRITORY）与 gold / 赛季币 / 武将碎片三个奖励逐季上调；「1 即最小可达」的 JOIN_ALLIANCE 与 SEASON_RANK 保持 1 —— 递增它们只会制造数值噪音，不会形成难度曲线。45 天的赛季长度不是随便定的：主城 40 级累计需约 1063 万木，按后期产量折算约需 22 天纯积累，加上被掠夺、战损、科技线争抢资源，实际满级在 45 天以上——所以「一个赛季打不满级」成立，这正是 C00 公理四要的效果。五个阶段的目标刻意换了四种类型（主城等级→社交归属→累计行为→组织成果→排名），让每个阶段的最优策略都不同：只闷头升级的会在第二阶段掉队，只社交的会在第三阶段掉队。没有任何一个阶段目标是纯战力数值，避免赛季变成氪金排行榜。\n【为什么规则阶段要单独立一列】season 表的阶段是「目标阶段」（这阶段要玩家做什么），而代码里 SeasonTimeline.Phase 是「规则阶段」（能不能 PVP、王城是否开放、是否结算）。两者不是一回事：立盟期与争锋期是两个目标、同一条扩张规则。没有这一列，映射只能写死在 Java 里，换赛季就得改代码 —— 违反本批次「所有赛季规则走配置」的硬约束。\n【休赛期不在表里，这是刻意的】REST 不是赛季内的一段时间，而是「赛季结束之后、下一季开始之前」，所以第 45 天之后由时间轴判为休赛，而不是塞一行进 45 天轴 —— 那会把刚定稿的赛季时长改成 46+ 天。",
   "fieldTypes": {
     "id": "STRING_KEY",
     "name": "STRING",
@@ -41,11 +41,11 @@
       "startDayOffset": 0,
       "durationDays": 7,
       "goalType": "REACH_MAIN_LEVEL",
-      "goalValue": 8,
-      "rewardGold": 200,
-      "rewardSeasonCoin": 100,
+      "goalValue": 9,
+      "rewardGold": 260,
+      "rewardSeasonCoin": 130,
       "rewardHeroFragment": 0,
-      "why": "#751 裁决：复用 season_01 的目标与奖励（逐字相同）—— 这样 SEASON_COUNT=5 不需要发明任何数；各季内容差异化待产品口径。第 1~7 天。目标定在主城 8 级 = B00 首日目标：让赛季第一阶段与新手引导完全重合，玩家不需要理解赛季这个概念就能跟上节奏。 【rulePhase】开垦期 = 禁战 + 新手保护：规则语义与目标（主城 8 级）无关，它是「开服头几天的秩序」这一条规则。"
+      "why": "#753 裁决（2026-10-03）：跨赛季逐季递增 —— 目标值与三个奖励不再逐字复制 season_01；递增规则见本文件 designNote。第 1~7 天。目标定在主城 8 级 = B00 首日目标：让赛季第一阶段与新手引导完全重合，玩家不需要理解赛季这个概念就能跟上节奏。 【rulePhase】开垦期 = 禁战 + 新手保护：规则语义与目标（主城 8 级）无关，它是「开服头几天的秩序」这一条规则。"
     },
     {
       "id": "season_03_phase_1",
@@ -55,9 +55,9 @@
       "startDayOffset": 0,
       "durationDays": 7,
       "goalType": "REACH_MAIN_LEVEL",
-      "goalValue": 8,
-      "rewardGold": 200,
-      "rewardSeasonCoin": 100,
+      "goalValue": 10,
+      "rewardGold": 340,
+      "rewardSeasonCoin": 170,
       "rewardHeroFragment": 0,
       "why": "第 1~7 天。目标定在主城 8 级 = B00 首日目标：让赛季第一阶段与新手引导完全重合，玩家不需要理解赛季这个概念就能跟上节奏。 【rulePhase】开垦期 = 禁战 + 新手保护：规则语义与目标（主城 8 级）无关，它是「开服头几天的秩序」这一条规则。"
     },
@@ -69,9 +69,9 @@
       "startDayOffset": 0,
       "durationDays": 7,
       "goalType": "REACH_MAIN_LEVEL",
-      "goalValue": 8,
-      "rewardGold": 200,
-      "rewardSeasonCoin": 100,
+      "goalValue": 11,
+      "rewardGold": 440,
+      "rewardSeasonCoin": 220,
       "rewardHeroFragment": 0,
       "why": "第 1~7 天。目标定在主城 8 级 = B00 首日目标：让赛季第一阶段与新手引导完全重合，玩家不需要理解赛季这个概念就能跟上节奏。 【rulePhase】开垦期 = 禁战 + 新手保护：规则语义与目标（主城 8 级）无关，它是「开服头几天的秩序」这一条规则。"
     },
@@ -83,9 +83,9 @@
       "startDayOffset": 0,
       "durationDays": 7,
       "goalType": "REACH_MAIN_LEVEL",
-      "goalValue": 8,
-      "rewardGold": 200,
-      "rewardSeasonCoin": 100,
+      "goalValue": 12,
+      "rewardGold": 570,
+      "rewardSeasonCoin": 290,
       "rewardHeroFragment": 0,
       "why": "第 1~7 天。目标定在主城 8 级 = B00 首日目标：让赛季第一阶段与新手引导完全重合，玩家不需要理解赛季这个概念就能跟上节奏。 【rulePhase】开垦期 = 禁战 + 新手保护：规则语义与目标（主城 8 级）无关，它是「开服头几天的秩序」这一条规则。"
     },
@@ -112,9 +112,9 @@
       "durationDays": 7,
       "goalType": "JOIN_ALLIANCE",
       "goalValue": 1,
-      "rewardGold": 500,
-      "rewardSeasonCoin": 200,
-      "rewardHeroFragment": 2,
+      "rewardGold": 650,
+      "rewardSeasonCoin": 260,
+      "rewardHeroFragment": 3,
       "why": "第 8~14 天。目标定在加入联盟，与联盟解锁条件（主城 10 级 + D3）留足缓冲。这一阶段是社交关系成型期，也是留存分水岭。 【rulePhase】立盟期起开放 PVP 与领地争夺：目标写的是加入联盟，规则上已经进扩张期。"
     },
     {
@@ -126,9 +126,9 @@
       "durationDays": 7,
       "goalType": "JOIN_ALLIANCE",
       "goalValue": 1,
-      "rewardGold": 500,
-      "rewardSeasonCoin": 200,
-      "rewardHeroFragment": 2,
+      "rewardGold": 850,
+      "rewardSeasonCoin": 340,
+      "rewardHeroFragment": 4,
       "why": "第 8~14 天。目标定在加入联盟，与联盟解锁条件（主城 10 级 + D3）留足缓冲。这一阶段是社交关系成型期，也是留存分水岭。 【rulePhase】立盟期起开放 PVP 与领地争夺：目标写的是加入联盟，规则上已经进扩张期。"
     },
     {
@@ -140,9 +140,9 @@
       "durationDays": 7,
       "goalType": "JOIN_ALLIANCE",
       "goalValue": 1,
-      "rewardGold": 500,
-      "rewardSeasonCoin": 200,
-      "rewardHeroFragment": 2,
+      "rewardGold": 1100,
+      "rewardSeasonCoin": 440,
+      "rewardHeroFragment": 5,
       "why": "第 8~14 天。目标定在加入联盟，与联盟解锁条件（主城 10 级 + D3）留足缓冲。这一阶段是社交关系成型期，也是留存分水岭。 【rulePhase】立盟期起开放 PVP 与领地争夺：目标写的是加入联盟，规则上已经进扩张期。"
     },
     {
@@ -154,9 +154,9 @@
       "durationDays": 7,
       "goalType": "JOIN_ALLIANCE",
       "goalValue": 1,
-      "rewardGold": 500,
-      "rewardSeasonCoin": 200,
-      "rewardHeroFragment": 2,
+      "rewardGold": 1430,
+      "rewardSeasonCoin": 570,
+      "rewardHeroFragment": 6,
       "why": "第 8~14 天。目标定在加入联盟，与联盟解锁条件（主城 10 级 + D3）留足缓冲。这一阶段是社交关系成型期，也是留存分水岭。 【rulePhase】立盟期起开放 PVP 与领地争夺：目标写的是加入联盟，规则上已经进扩张期。"
     },
     {
@@ -181,10 +181,10 @@
       "startDayOffset": 14,
       "durationDays": 14,
       "goalType": "KILL_MONSTER_TOTAL",
-      "goalValue": 200,
-      "rewardGold": 1000,
-      "rewardSeasonCoin": 400,
-      "rewardHeroFragment": 5,
+      "goalValue": 250,
+      "rewardGold": 1300,
+      "rewardSeasonCoin": 520,
+      "rewardHeroFragment": 7,
       "why": "第 15~28 天。国家解锁（主城 16 级 + D14）正好落在本阶段起点。目标改为累计打野 200 次而非战力，避免阶段目标变成纯氪金竞赛。 【rulePhase】争锋期仍是扩张规则，只是目标换成累计讨伐；规则阶段刻意不因目标不同而多切一档。"
     },
     {
@@ -195,10 +195,10 @@
       "startDayOffset": 14,
       "durationDays": 14,
       "goalType": "KILL_MONSTER_TOTAL",
-      "goalValue": 200,
-      "rewardGold": 1000,
-      "rewardSeasonCoin": 400,
-      "rewardHeroFragment": 5,
+      "goalValue": 320,
+      "rewardGold": 1700,
+      "rewardSeasonCoin": 680,
+      "rewardHeroFragment": 9,
       "why": "第 15~28 天。国家解锁（主城 16 级 + D14）正好落在本阶段起点。目标改为累计打野 200 次而非战力，避免阶段目标变成纯氪金竞赛。 【rulePhase】争锋期仍是扩张规则，只是目标换成累计讨伐；规则阶段刻意不因目标不同而多切一档。"
     },
     {
@@ -209,10 +209,10 @@
       "startDayOffset": 14,
       "durationDays": 14,
       "goalType": "KILL_MONSTER_TOTAL",
-      "goalValue": 200,
-      "rewardGold": 1000,
-      "rewardSeasonCoin": 400,
-      "rewardHeroFragment": 5,
+      "goalValue": 400,
+      "rewardGold": 2200,
+      "rewardSeasonCoin": 880,
+      "rewardHeroFragment": 11,
       "why": "第 15~28 天。国家解锁（主城 16 级 + D14）正好落在本阶段起点。目标改为累计打野 200 次而非战力，避免阶段目标变成纯氪金竞赛。 【rulePhase】争锋期仍是扩张规则，只是目标换成累计讨伐；规则阶段刻意不因目标不同而多切一档。"
     },
     {
@@ -223,10 +223,10 @@
       "startDayOffset": 14,
       "durationDays": 14,
       "goalType": "KILL_MONSTER_TOTAL",
-      "goalValue": 200,
-      "rewardGold": 1000,
-      "rewardSeasonCoin": 400,
-      "rewardHeroFragment": 5,
+      "goalValue": 500,
+      "rewardGold": 2860,
+      "rewardSeasonCoin": 1140,
+      "rewardHeroFragment": 14,
       "why": "第 15~28 天。国家解锁（主城 16 级 + D14）正好落在本阶段起点。目标改为累计打野 200 次而非战力，避免阶段目标变成纯氪金竞赛。 【rulePhase】争锋期仍是扩张规则，只是目标换成累计讨伐；规则阶段刻意不因目标不同而多切一档。"
     },
     {
@@ -251,10 +251,10 @@
       "startDayOffset": 28,
       "durationDays": 14,
       "goalType": "CAPTURE_TERRITORY",
-      "goalValue": 5,
-      "rewardGold": 2000,
-      "rewardSeasonCoin": 800,
-      "rewardHeroFragment": 10,
+      "goalValue": 6,
+      "rewardGold": 2600,
+      "rewardSeasonCoin": 1040,
+      "rewardHeroFragment": 13,
       "why": "第 29~42 天。占领 5 块领地，把目标从个人转向组织——赛季后半段必须靠联盟/国家协作才能推进，这是 C00 公理七的赛季级实现。 【rulePhase】问鼎期 = 中央王城限时开放，allowsCapitalWar() 只在这一段为 true。"
     },
     {
@@ -265,10 +265,10 @@
       "startDayOffset": 28,
       "durationDays": 14,
       "goalType": "CAPTURE_TERRITORY",
-      "goalValue": 5,
-      "rewardGold": 2000,
-      "rewardSeasonCoin": 800,
-      "rewardHeroFragment": 10,
+      "goalValue": 8,
+      "rewardGold": 3400,
+      "rewardSeasonCoin": 1360,
+      "rewardHeroFragment": 17,
       "why": "第 29~42 天。占领 5 块领地，把目标从个人转向组织——赛季后半段必须靠联盟/国家协作才能推进，这是 C00 公理七的赛季级实现。 【rulePhase】问鼎期 = 中央王城限时开放，allowsCapitalWar() 只在这一段为 true。"
     },
     {
@@ -279,10 +279,10 @@
       "startDayOffset": 28,
       "durationDays": 14,
       "goalType": "CAPTURE_TERRITORY",
-      "goalValue": 5,
-      "rewardGold": 2000,
-      "rewardSeasonCoin": 800,
-      "rewardHeroFragment": 10,
+      "goalValue": 10,
+      "rewardGold": 4400,
+      "rewardSeasonCoin": 1760,
+      "rewardHeroFragment": 22,
       "why": "第 29~42 天。占领 5 块领地，把目标从个人转向组织——赛季后半段必须靠联盟/国家协作才能推进，这是 C00 公理七的赛季级实现。 【rulePhase】问鼎期 = 中央王城限时开放，allowsCapitalWar() 只在这一段为 true。"
     },
     {
@@ -293,10 +293,10 @@
       "startDayOffset": 28,
       "durationDays": 14,
       "goalType": "CAPTURE_TERRITORY",
-      "goalValue": 5,
-      "rewardGold": 2000,
-      "rewardSeasonCoin": 800,
-      "rewardHeroFragment": 10,
+      "goalValue": 13,
+      "rewardGold": 5720,
+      "rewardSeasonCoin": 2290,
+      "rewardHeroFragment": 29,
       "why": "第 29~42 天。占领 5 块领地，把目标从个人转向组织——赛季后半段必须靠联盟/国家协作才能推进，这是 C00 公理七的赛季级实现。 【rulePhase】问鼎期 = 中央王城限时开放，allowsCapitalWar() 只在这一段为 true。"
     },
     {
@@ -322,9 +322,9 @@
       "durationDays": 3,
       "goalType": "SEASON_RANK",
       "goalValue": 1,
-      "rewardGold": 5000,
-      "rewardSeasonCoin": 2000,
-      "rewardHeroFragment": 30,
+      "rewardGold": 6500,
+      "rewardSeasonCoin": 2600,
+      "rewardHeroFragment": 40,
       "why": "第 43~45 天。结算只有 3 天：够玩家看到排名与奖励，短到不会让人无所事事地等关服。赛季总长 45 天，与主城 40 级的资源节奏对齐，保证一个赛季打不满级（C00 公理四）。 【rulePhase】结算期：发奖、排行、段位重置。settles() 只在这一段为 true。"
     },
     {
@@ -336,9 +336,9 @@
       "durationDays": 3,
       "goalType": "SEASON_RANK",
       "goalValue": 1,
-      "rewardGold": 5000,
-      "rewardSeasonCoin": 2000,
-      "rewardHeroFragment": 30,
+      "rewardGold": 8500,
+      "rewardSeasonCoin": 3400,
+      "rewardHeroFragment": 52,
       "why": "第 43~45 天。结算只有 3 天：够玩家看到排名与奖励，短到不会让人无所事事地等关服。赛季总长 45 天，与主城 40 级的资源节奏对齐，保证一个赛季打不满级（C00 公理四）。 【rulePhase】结算期：发奖、排行、段位重置。settles() 只在这一段为 true。"
     },
     {
@@ -350,9 +350,9 @@
       "durationDays": 3,
       "goalType": "SEASON_RANK",
       "goalValue": 1,
-      "rewardGold": 5000,
-      "rewardSeasonCoin": 2000,
-      "rewardHeroFragment": 30,
+      "rewardGold": 11000,
+      "rewardSeasonCoin": 4400,
+      "rewardHeroFragment": 68,
       "why": "第 43~45 天。结算只有 3 天：够玩家看到排名与奖励，短到不会让人无所事事地等关服。赛季总长 45 天，与主城 40 级的资源节奏对齐，保证一个赛季打不满级（C00 公理四）。 【rulePhase】结算期：发奖、排行、段位重置。settles() 只在这一段为 true。"
     },
     {
@@ -364,9 +364,9 @@
       "durationDays": 3,
       "goalType": "SEASON_RANK",
       "goalValue": 1,
-      "rewardGold": 5000,
-      "rewardSeasonCoin": 2000,
-      "rewardHeroFragment": 30,
+      "rewardGold": 14300,
+      "rewardSeasonCoin": 5720,
+      "rewardHeroFragment": 88,
       "why": "第 43~45 天。结算只有 3 天：够玩家看到排名与奖励，短到不会让人无所事事地等关服。赛季总长 45 天，与主城 40 级的资源节奏对齐，保证一个赛季打不满级（C00 公理四）。 【rulePhase】结算期：发奖、排行、段位重置。settles() 只在这一段为 true。"
     }
   ]
