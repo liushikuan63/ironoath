@@ -92,6 +92,10 @@ public final class BalanceCli {
             System.err.println("    --producers=true|false 产出建筑是否参与升级（默认 true）");
             System.err.println("    --priority=city|balanced  主城优先还是产出建筑优先（默认 city）");
             System.err.println("    --dims=a,b,c          计入哪几维（默认 cap,builds,forge,troops）");
+        System.err.println("    --seat-by=rate|level|index  产出建筑「先升哪一座」的口径（#685）：");
+        System.err.println("                            rate=当前产量最低者先升（默认，与 --priority city 同口径）");
+        System.err.println("                            level=等级最低者先升（拉平等级而非产量）");
+        System.err.println("                            index=原样保留数组顺序（旧的「先到先赢」，作对照组）");
             System.err.println("    --builds-gate=ids     建造那维开哪几座（默认 none，见 #543/#544 裁决：");
             System.err.println("                         新号阶段先攒料升主城。传 hospital,academy,stable,");
             System.err.println("                         embassy,drill_ground 可开门对照）");
@@ -598,6 +602,14 @@ public final class BalanceCli {
         // 真实玩家两种都有，而两者的 7 天终级差到 8 级 —— 所以报告里必须两个数并列。
         // **默认 city**：2026-10-01 裁决（收口清单 #493）—— 主城优先。理由与代价都记在台账里。
         boolean cityFirst = !"balanced".equals(options.getOrDefault("priority", "city"));
+        // ⚠️ **选座口径开关（#685）**：`--seat-by` 决定「先升哪一座」的比较量。
+        // 默认值 `rate` 与 `--priority city` 那一支同口径（#648/#649 裁决：「当前产量最低的先升」）；
+        // `level` = 拉平**等级**；`index` = **原样保留数组顺序**（#548 点名要消除的「先到先赢」）。
+        // ⚠️ 存在的理由：`--priority balanced` 那一支（!cityFirst）原本**一直**是数组顺序，
+        // 与 city 支口径不一致（#684），而两者的读数在 capBase=32000 下又被仓容上限
+        // 抹平成同一个数（#680）⇒ 差异一直没被看见。
+        // **加这个开关不是为了改行为，是为了让三种口径可对照。**
+        final String seatBy = options.getOrDefault("seat-by", "rate");
         // ---------- 仓储上限截断（#507）----------
         // **第一版没有这一维**，于是 45 天报出「铁 607 万」—— 而游戏里铁上限只有 5 万。
         // 截断是真规则：ResourceSettlement.settle 装满后 overflow = output - room，
@@ -1063,7 +1075,63 @@ public final class BalanceCli {
                 }
             }
             if (withProducers && !cityFirst) {
+                // ⚠️ **这一支原先是「数组顺序 + 第一个能升的就 break」（#684/#685）** ——
+                // 那正是 #548 点名要消除的「先到先赢」，而 #649 只改了 city 那一支。
+                // ⇒ 现在改成与 city 支同构的 `bestP` 选座，**比较量由 `--seat-by` 决定**：
+                //   `rate`（默认）= 当前产量最低者先升（与 city 支同口径）
+                //   `level` = 等级最低者先升（拉平**等级**而不是产量）
+                //   `index` = 原样保留数组顺序（**对照组**：保留旧行为，`--seat-by=index` 即旧口径）
+                // ⚠️ 为什么默认值是 `rate` 而不是 `index`：默认档 `--priority city` 走的就是
+                // 「产量最低的先升」（#648/#649 已裁决），若 balanced 支默认用 `index`，
+                // 同名档位的两支口径就不一致；统一成 `rate` 后 `--priority` 只决定
+                // 「先升主城还是先升产出建筑」，不再顺带改变选座口径。
+                // ⚠️ **另一处差异（本格发现，暂不动）**：这一支是 `for (p=0..3)` 逐座尝试、
+                // 每天**可能升多座**，而 city 支每天只升一座 ⇒ #549「每轮只升一座」的裁决
+                // 也只覆盖了 city 支。要不要给这一支也加「每天最多升 N 座」是产品口径，
+                // 需先看 `--seat-by` 三档的读数差多少 ⇒ 下一格用读数去问，本格不加。
+                int seatBestP = -1;
+                long seatBestVal = Long.MAX_VALUE;
                 for (int p = 0; p < producers.length; p++) {
+                    // ⚠️ 等级上限守卫（#673）
+                    if (producerLevels[p] >= producers[p][5]) {
+                        continue;
+                    }
+                    long cWoodW = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
+                    long cStoneW = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
+                    long cIronW = Math.round(producers[p][4] * Math.pow(costRatio, producerLevels[p]));
+                    if (level < producers[p][0] || wood < cWoodW || stone < cStoneW || iron < cIronW) {
+                        continue;   // 买不起就不参与选座（不是 break —— 见下）
+                    }
+                    // 比较量：`index` 口径下**不比较**，让循环顺序决定（等价于旧的先到先赢）
+                    if (!"index".equals(seatBy)) {
+                        long v = "level".equals(seatBy) ? producerLevels[p] : producerRates[p];
+                        if (v < seatBestVal) {
+                            seatBestVal = v;
+                            seatBestP = p;
+                        }
+                    }
+                }
+                if ("index".equals(seatBy)) {
+                    for (int p = 0; p < producers.length; p++) {
+                        if (producerLevels[p] >= producers[p][5]) {
+                            continue;
+                        }
+                        long cWoodI = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
+                        long cStoneI = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
+                        long cIronI = Math.round(producers[p][4] * Math.pow(costRatio, producerLevels[p]));
+                        if (level >= producers[p][0] && wood >= cWoodI && stone >= cStoneI && iron >= cIronI) {
+                            seatBestP = p;   // 数组顺序第一个能升的（旧的先到先赢）
+                            break;
+                        }
+                    }
+                } else if (seatBestP < 0) {
+                    // 没有任何一座买得起 —— 与旧口径的 `break` 同义（这一支当日不升）
+                    seatBestP = -1;
+                }
+                for (int p = 0; p < producers.length; p++) {
+                    if (p != seatBestP) {
+                        continue;
+                    }
                     // **每轮只升一级**：升到升不动会把当天全部资源吃掉、主城直接饿死
                     // （那是第一版 balanced 的 3 级的成因，已修）。
                     for (int step = 0; step < 1; step++) {
