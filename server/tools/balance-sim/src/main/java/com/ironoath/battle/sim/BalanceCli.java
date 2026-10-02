@@ -86,12 +86,16 @@ public final class BalanceCli {
             System.err.println("【B02 经济 / 进度读数的主入口】");
             System.err.println("  --f2p7d                 零氪时间线（天级）。**B02 全部「实测 N 级 / 溢出 X」都出自它**");
             System.err.println("    --days=7              跑多少天（默认 7）");
-            System.err.println("    --cap=true|false      是否算仓容截断与各类扩建（默认 true；false = 只算裸产出）");
+            System.err.println("    --cap=true|false      **同时**关掉四件事：仓容截断 + 装备强化 + 建造 + 造兵（默认 true）");
+        System.err.println("                            #690/#691：它**不是**单纯的「仓容对照档」—— 真实语义是「关四维度」；");
+        System.err.println("                            而 withCap 同时是 forge / builds / troops 三维的前置条件。");
             System.err.println("    --cap-base=N          仓容基数（默认读 building 表 capBase，现值 8000）");
             System.err.println("    --base-rate=R         产出倍率（默认 1.0）");
             System.err.println("    --producers=true|false 产出建筑是否参与升级（默认 true）");
             System.err.println("    --priority=city|balanced  主城优先还是产出建筑优先（默认 city）");
             System.err.println("    --dims=a,b,c          计入哪几维（默认 cap,builds,forge,troops）");
+        System.err.println("                            #691：写 cap 与不写**没有区别**（源码只读 builds/forge/troops，");
+        System.err.println("                            cap 是死参数）—— 截断只由上面的 --cap 管，别被这一项误导。");
         System.err.println("    --seat-by=rate|level|index  产出建筑「先升哪一座」的口径（#685）：");
         System.err.println("                            rate=当前产量最低者先升（默认，与 --priority city 同口径）");
         System.err.println("                            level=等级最低者先升（拉平等级而非产量）");
@@ -692,6 +696,11 @@ public final class BalanceCli {
         // `--dims` 只在 CLI 里存在：**关掉某一维再跑**，用来看它对读数的贡献。
         // #529 那个「B00 写第 7 天 13 级、现跑 4 级」要定位是哪一维造成的，就是靠这个开关逐个试。
         // 写法：`--dims=cap,builds,forge`（不写 = 全开）；写 `none` = 全关。
+        // ⚠️ **但 `cap` 这一项是死参数**（#691）：本段只读 `dims.contains("builds"|"forge"|"troops")`，
+        // **没有任何 `dimCap`** ⇒ 截断真正由 `withCap`（`--cap`）单独控制（见 L691），
+        // 而 `withCap` 又同时是上面三维的前置条件（L900/L941/L1046）⇒ **一个开关两种语义、焊在一起**。
+        // ⇒ 要「只关截断、保留消费」现在做不到（改这三处会破坏模式隔离，因为 `--cap=false` 的
+        // 现有语义「关四维度」已被 #690 当作已知事实引用）；只能另开一个纯仓容开关。
         java.util.Set<String> dims = new java.util.HashSet<>(List.of(
                 options.getOrDefault("dims", "cap,builds,forge,troops").split(",")));
         boolean dimBuilds = dims.contains("builds");
