@@ -289,10 +289,34 @@ if (sumProblems.length > 0) {
     + '而拧 out-exponent 读数纹丝不动。依据：收口清单 #672。')
   process.exit(1)
 }
+// ---- #673: producer buildings had no level cap at all, so the farm reached level 51
+// while `building.json` says maxLevel 40 (production `ResourceRateService` seals it).
+// The array carrying per-producer numbers grew a 6th column for `maxLevel`; both upgrade
+// loops (the per-day single-step one and #650's lowest-rate seat picker) now skip a
+// producer that reached it. Same family as #670's main-city cap, and it is the last
+// place in this file that read no `maxLevel` at all.
+const prodProblems = []
+if (!/new long\[producerIds\.length\]\[6\]/.test(cliCode)) {
+  prodProblems.push('`prodRows` 仍是 5 列，缺第 6 列 maxLevel')
+}
+if (!/prodRows\[i\]\[5\]\s*=\s*pc\.maxLevel\(\)/.test(cliCode)) {
+  prodProblems.push('没有从 `pc.maxLevel()` 填第 6 列')
+}
+const capGuardHits = (cliCode.match(/producerLevels\[p\]\s*>=\s*producers\[p\]\[5\]/g) || []).length
+if (capGuardHits < 2) {
+  prodProblems.push('产出建筑的两个升级循环里只有 ' + capGuardHits + ' 处等级上限守卫（应 2 处）')
+}
+if (prodProblems.length > 0) {
+  console.error('[check-balance-sim-config-sync][FAIL] 产出建筑没有等级上限：')
+  for (const p of prodProblems) console.error('  - ' + p)
+  console.error('  后果：粮建筑实测能到 51 级而 building.json 的 maxLevel 是 40，'
+    + '模拟器比线上更宽松。依据：收口清单 #673。')
+  process.exit(1)
+}
 const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 十一处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 十二处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
   + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount / 强化费读 EQUIP_FORGE_COST 曲线）。')

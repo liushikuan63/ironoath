@@ -685,7 +685,7 @@ public final class BalanceCli {
         // 但那是「今天一致」，不是「不会漂移」—— 与 capBase、initCap 同一种病，一并接到表上。
         // 顺序保持不变（伐木场/采石场/农田/铁矿场），只有值改成读来的。
         String[] producerIds = {"lumber_camp", "quarry", "farm", "iron_mine"};
-        long[][] prodRows = new long[producerIds.length][5];   // req, outBase/h, costWood, costStone, costIron
+        long[][] prodRows = new long[producerIds.length][6];   // req, outBase/h, costWood, costStone, costIron, maxLevel   // req, outBase/h, costWood, costStone, costIron
         for (int i = 0; i < producerIds.length; i++) {
             BuildingCfg pc = configs.get(BuildingCfg.class, producerIds[i]);
             prodRows[i][0] = pc.requireMainLevel();
@@ -693,6 +693,10 @@ public final class BalanceCli {
             prodRows[i][2] = pc.costBaseWood();
             prodRows[i][3] = pc.costBaseStone();
             prodRows[i][4] = pc.costBaseIron();
+            // ⚠️ **第 6 列 = `maxLevel`（#673）**：产出建筑此前**没有等级上限**，
+            // 实测粮建筑能升到 51 级（`building.json` 的 `maxLevel` 是 40），
+            // 而线上 `ResourceRateService` 受 `building.maxLevel`封顶 ⇒ 与 #670 主城那处同源。
+            prodRows[i][5] = pc.maxLevel();
         }
         final long[][] producers = prodRows;
         int[] producerLevels = {0, 0, 0, 0};
@@ -1051,6 +1055,11 @@ public final class BalanceCli {
                     // **每轮只升一级**：升到升不动会把当天全部资源吃掉、主城直接饿死
                     // （那是第一版 balanced 的 3 级的成因，已修）。
                     for (int step = 0; step < 1; step++) {
+                        // ⚠️ 等级上限守卫（#673）：原来只判「每轮一级」与资源够不够，
+                        // 不判 maxLevel ⇒ 产出建筑能无限升（实测粮建筑到 51 级）。
+                        if (producerLevels[p] >= producers[p][5]) {
+                            continue;
+                        }
                         long out = producers[p][1];
                         long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
                         long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
@@ -1130,6 +1139,9 @@ public final class BalanceCli {
                     long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
                     long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
                     long cIron = Math.round(producers[p][4] * Math.pow(costRatio, producerLevels[p]));
+                    if (producerLevels[p] >= producers[p][5]) {
+                        continue;   // 等级上限守卫（#673，与 gather-A 那处同口径）
+                    }
                     if (wood < cWood || stone < cStone || iron < cIron) {
                         continue;
                     }
