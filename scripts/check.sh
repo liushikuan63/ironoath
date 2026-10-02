@@ -35,6 +35,7 @@ bash scripts/check-track-coverage.sh
 bash scripts/check-endpoint-paths.sh
 bash scripts/check-permission-bits.sh
 bash scripts/check-config-refs.sh
+bash scripts/check-checklist-append-only.sh
 bash scripts/check-checklist-table.sh
 bash scripts/check-error-codes.sh
 bash scripts/check-config-consumers.sh
