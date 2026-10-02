@@ -49,8 +49,13 @@ run() {
     echo "     —— 先看 $OUT/$name.txt 的前几行" >&2
     return 1
   fi
+  # ⚠️ #732：把本档**实际传入的完整命令行**写进 .keys 首行。
+# 为什么：读数与 default 逐位相同有三种成因（参数无效 / 名字打错而 parse() 不校验 /
+# 够不到瓶颈），而「读数」这一维区分不了它们，只有「参数是否被解析」能区分。
+# 成本一行，收益是每一档自带「我传了什么」，以后「读数相同」至少有第三种成因可查。
   # 抽关键行：dayN 终值 + 四类累计 + 产出建筑等级 + 造兵
   {
+    echo "# cmd: balance-sim $args"
     grep -E "^ *${DAYS} " "$OUT/$name.txt" | tail -1
     grep -E "装备强化累计吃铁" "$OUT/$name.txt" | tail -1
     grep -E "建造累计吃粮" "$OUT/$name.txt" | tail -1
