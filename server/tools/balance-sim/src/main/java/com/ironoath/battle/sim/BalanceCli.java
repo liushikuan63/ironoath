@@ -1157,6 +1157,19 @@ public final class BalanceCli {
                             * Math.pow(producerLevels[p], outExponent));
                 }
             }
+            // ⚠️ **产出建筑的产量汇总提到仓容分支之前（#672）**：
+            // 原来这四行 `woodRate += withProducers ? producerRates[0] : 0L;`（四个资源）
+            // 写在 `} else {` **里面** —— 而 `withCap` 默认 **true**（L641），
+            // 走的是 `if` 支 ⇒ **汇总那段每天都不执行**
+            // ⇒ **产出建筑（120 天到 23 级）的产量从未入账**，模拟器只报了 `resource` 表的底产。
+            // 症状特别隐蔽：改动前把 `outExponent` 从 1.0 拧到 1.5，读数**逐位不变**（#671 留的待查项），
+            // 因为那个指数只作用在 `producerRates` 上，而 `producerRates` 根本没进 `woodRate`。
+            // 修法：汇总提到 `if (withCap)` **之前**，两支共用 —— `if` 支要截断、`else` 支不要，
+            // 但「当天该产多少」这件事两支必须一致（线上 `ResourceRateService` 两者都算）。
+            woodRate += withProducers ? producerRates[0] : 0L;
+            stoneRate += withProducers ? producerRates[1] : 0L;
+            ironRate += withProducers ? producerRates[2] : 0L;
+            grainRate += withProducers ? producerRates[3] : 0L;
             // 当天的底产入账
             if (withCap) {
                 long[] amounts = {wood, stone, iron, grain};
@@ -1174,10 +1187,6 @@ public final class BalanceCli {
                 iron = amounts[2];
                 grain = amounts[3];
             } else {
-            woodRate += withProducers ? producerRates[0] : 0L;
-            stoneRate += withProducers ? producerRates[1] : 0L;
-            ironRate += withProducers ? producerRates[2] : 0L;
-            grainRate += withProducers ? producerRates[3] : 0L;
             wood += woodRate * 24L;
             stone += stoneRate * 24L;
             iron += ironRate * 24L;

@@ -254,10 +254,45 @@ if (ratioProblems.length > 0) {
     + '曲线字面量违反 CurveCfg 类注释铁律 1。依据：收口清单 #671。')
   process.exit(1)
 }
+// ---- #672: the producer output was never credited at all. The four
+// `woodRate += withProducers ? producerRates[0] : 0L;` lines sat INSIDE the
+// `} else {` of `if (withCap)`, and `withCap` defaults to true, so the branch that
+// actually ran every day skipped them entirely: 23 levels of producer buildings
+// produced nothing, and the simulator only ever reported the `resource` table base rate.
+// The symptom that exposed it: turning `outExponent` from 1.0 to 1.5 changed nothing
+// digit for digit, because the exponent only feeds `producerRates`, and `producerRates`
+// never reached `woodRate`. The gate pins the position, not just the presence: the
+// four lines must come BEFORE `if (withCap)`, since capping is the only difference
+// between the two branches.
+// Position is checked structurally, not by comparing absolute line numbers: the file has
+// three other `if (withCap) {` blocks (the warehouse trigger, the settle path, the report), so
+// "the first one" means nothing. Instead: within 20 lines after the four accumulation lines there
+// must be an `if (withCap) {` — that is exactly "the accumulation sits immediately before the
+// capping branch". Put the accumulation after the branch and no such line follows it.
+const srcLines = cliCode.split('\n')
+const sumIdx = srcLines.findIndex((l) => /(wood|stone|iron|grain)Rate \+= withProducers \? producerRates\[0\]/.test(l))
+const sumProblems = []
+if (sumIdx < 0) {
+  sumProblems.push('找不到 `woodRate += withProducers ? producerRates[0]` 汇总')
+} else {
+  const window = srcLines.slice(sumIdx + 1, sumIdx + 21)
+  if (!window.some((l) => /if \(withCap\)\s*\{/.test(l))) {
+    sumProblems.push('产出汇总之后 20 行内没有 `if (withCap) {`'
+      + ' ⇒ 汇总落在仓容分支的 `else` 支里，withCap 默认 true 时永不执行，'
+      + '产出建筑产量从未入账')
+  }
+}
+if (sumProblems.length > 0) {
+  console.error('[check-balance-sim-config-sync][FAIL] 产出建筑产量未入账：')
+  for (const p of sumProblems) console.error('  - ' + p)
+  console.error('  后果：产出建筑升到 23 级也不产任何东西，'
+    + '而拧 out-exponent 读数纹丝不动。依据：收口清单 #672。')
+  process.exit(1)
+}
 const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 十处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 十一处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
   + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount / 强化费读 EQUIP_FORGE_COST 曲线）。')
