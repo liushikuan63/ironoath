@@ -489,6 +489,42 @@ public final class BalanceCli {
         stoneRate = Math.round(stoneRate * baseRate);
         ironRate = Math.round(ironRate * baseRate);
         grainRate = Math.round(grainRate * baseRate);
+
+        // ---------- 科技加成（#636，甲：先补齐模型的第一刀）----------
+        // **倍率一律从 `tech` 表读，不在这里写死任何百分比**（铁律「待裁决不发明」）。
+        // 算法复用 `com.ironoath.common.config.TechBonusCore` —— 与线上 `TechEffects` 同一份，
+        // 免得模拟器与线上各算一套、悄悄漂移（#592/#594 连续踩的病根）。
+        //
+        // `--tech-level=N`：把**所有** `*_OUTPUT` 属性的科技行统一当作 N 级。N=0 = 一行都没研究过
+        // ⇒ 必须与本开关出现之前的读数**逐位相同**（对照组，见下面的自检）。
+        // ⚠️ **这个读数的性质是「上界」不是「真实路径」**：真实玩家按科技树逐级解锁、
+        // 还要花钱与等时间；而这里直接把每行顶到同一级 ⇒ 它回答的是
+        // 「**如果产出科技满级，时间线会走到哪**」，用来给「120 天 17 级」那个下界定上界，
+        // 不能当玩家画像。报告里两处都写明这一句。
+        int techLevel = Integer.parseInt(options.getOrDefault("tech-level", "0"));
+        long woodTechPct = 0L, stoneTechPct = 0L, ironTechPct = 0L, grainTechPct = 0L;
+        if (techLevel > 0) {
+            var rows = new java.util.ArrayList<com.ironoath.common.config.TechBonusCore.Row>();
+            for (var row : configs.all(com.ironoath.config.cfg.TechCfg.class)) {
+                rows.add(new com.ironoath.common.config.TechBonusCore.Row(
+                        row.id(), row.effectAttr().name(), row.effectValue()));
+            }
+            // 全部科技行都顶到 techLevel：levelOf 不看 id，一律返回 techLevel
+            java.util.function.ToIntFunction<String> uniform = id -> techLevel;
+            woodTechPct = com.ironoath.common.config.TechBonusCore.totalPercent(
+                    rows, com.ironoath.config.cfg.TechCfg.EffectAttr.WOOD_OUTPUT.name(), uniform);
+            stoneTechPct = com.ironoath.common.config.TechBonusCore.totalPercent(
+                    rows, com.ironoath.config.cfg.TechCfg.EffectAttr.STONE_OUTPUT.name(), uniform);
+            ironTechPct = com.ironoath.common.config.TechBonusCore.totalPercent(
+                    rows, com.ironoath.config.cfg.TechCfg.EffectAttr.IRON_OUTPUT.name(), uniform);
+            grainTechPct = com.ironoath.common.config.TechBonusCore.totalPercent(
+                    rows, com.ironoath.config.cfg.TechCfg.EffectAttr.GRAIN_OUTPUT.name(), uniform);
+            // 定点万分比：Σ effectValue × level 本身就是万分比 ⇒ 乘数 = 1 + pct/10000
+            woodRate = Math.round(woodRate * (10_000L + woodTechPct) / 10_000L);
+            stoneRate = Math.round(stoneRate * (10_000L + stoneTechPct) / 10_000L);
+            ironRate = Math.round(ironRate * (10_000L + ironTechPct) / 10_000L);
+            grainRate = Math.round(grainRate * (10_000L + grainTechPct) / 10_000L);
+        }
         System.out.printf("底产（读自 building 表）：木 %d / 石 %d / 铁 %d / 粮 %d 每小时"
                 + "（已乘 --base-rate %s）%n", woodRate, stoneRate, ironRate, grainRate,
                 options.getOrDefault("base-rate", "1.0"));
@@ -591,12 +627,26 @@ public final class BalanceCli {
             System.out.println("**模型边界（先读这一条）**：产出建筑**也参与升级**（伐木场/采石场/农田/"
                     + "铁矿场，输入取 building 表的 outputBasePerHour 与 costBase*，形状与 "
                     + "ResourceRateService.buildingPerHour 一致）。仍然**不含**的部分：武将、"
-                    + "科技、离线时长与「造兵吃粮」这条支出线 —— 所以这是**上界之外的下界**："
+                    + (techLevel > 0 ? "（科技已由 --tech-level 计入，见下）" : "科技、")
+                    + "离线时长与「造兵吃粮」这条支出线 —— 所以这是**上界之外的下界**："
                     + "真实零氪玩家的产出更高、支出也更多，量级要靠补齐这几条才能收敛。");
         } else {
             System.out.println("**模型边界（先读这一条）**：本模拟**只升主城、不升任何产出建筑**，"
                     + "所以 perHour 停在 resource 表的兜底底产上 => **这一版的产出是下界**，"
                     + "**卡点只会比真实零氪画像偏早**。加 `--producers=false` 可复现那个下界。");
+        }
+        if (techLevel > 0) {
+            // ⚠️ 这一段**不是**免责声明，是读数的性质说明 —— 少了它，报告会被当成玩家画像引用。
+            System.out.printf("**科技口径（--tech-level=%d）**：把 tech 表里每一条 `*_OUTPUT` 行"
+                    + "**统一当作 %d 级**，加成 = Σ(effectValue × %d)，倍率 = 1 + 万分比/10000。"
+                    + "加成逐项：木 +%.2f%% / 石 +%.2f%% / 铁 +%.2f%% / 粮 +%.2f%%。%n",
+                    techLevel, techLevel, techLevel,
+                    woodTechPct / 100.0, stoneTechPct / 100.0,
+                    ironTechPct / 100.0, grainTechPct / 100.0);
+            System.out.println("⚠️ **这个数是「上界」不是玩家画像**：真实玩家要按科技树逐级解锁、"
+                    + "还要花钱与等时间（`TECH_TIME` 比率 1.28），这里直接把每行顶到同一级。"
+                    + "它回答的是「产出科技满级时时间线会走到哪」，用来给那个下界**定上界**；"
+                    + "`--tech-level=0` 是对照组，两者的差就是科技这条线的全部贡献。");
         }
         System.out.println();
         System.out.printf("=== 零氪 %d 天时间线（零氪 = 不充值、不用付费加速；输入全部来自配置表）===%n", days);
