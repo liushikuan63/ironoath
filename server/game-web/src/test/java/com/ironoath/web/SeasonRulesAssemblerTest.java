@@ -12,7 +12,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ironoath.common.num.FixedPoint;
+import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.model.GlobalCfg;
 import com.ironoath.config.cfg.SeasonCfg;
@@ -40,6 +44,15 @@ class SeasonRulesAssemblerTest {
 
     private static ConfigRegistry configs;
     private static SeasonRulesAssembler assembler;
+
+    /** 一天的毫秒数（UTC+8 自然日轴，与 ServerCalendar / DayKey 同一口径）。 */
+    private static final long DAY_MS = 86_400_000L;
+
+    /**
+     * 固定的赛季锚点（毫秒时间戳），不是「今天」——按天数推进的断言要能复现同一个 now。
+     * 数值本身无意义，只要落在一个整日边界上即可。
+     */
+    private static final long SEASON_ANCHOR = 1_760_000_000_000L;
 
     @BeforeAll
     static void loadConfigs() {
@@ -151,8 +164,8 @@ class SeasonRulesAssemblerTest {
      * 而表前缀集合已变成 {@code {season_09}} ⇒ 两个断言必然有一个不成立。
      */
     @Test
-    @DisplayName("赛季号一致性：行 id 的前缀集合必须恰好是 {seasonId}，不许出现第二处赛季号定义")
-    void seasonIdHasExactlyOneDefinitionInTheTable() {
+    @DisplayName("赛季号一致性：装配出来的 seasonId 必须是表里真实存在的行 id 前缀，不许另有全局参数")
+    void seasonIdComesFromTheTablePrefixes() {
         SeasonTimeline.Rules rules = assembler.timelineRules();
         List<String> prefixes = configs.all(SeasonCfg.class).stream()
                 .map(SeasonCfg::id)
@@ -161,16 +174,77 @@ class SeasonRulesAssemblerTest {
                 .sorted()
                 .toList();
 
+        // 2026-10-03 裁决落地：season 表从 season_01 五行扩到 season_01..season_05 共 25 行，
+        // 所以「表里只有一个前缀」这个前提**已经不成立**，断言随之改成「当前读数必须是表里存在的那个」。
+        // 仍然要守的是同一件事：赛季号的唯一来源是行 id 前缀。编一个 season_06 或读一个全局参数
+        // 都会让归档集合名（SeasonSettlement 侧用的同一个字符串）与时间轴分叉，而那种错没有任何别处会红。
         assertThat(prefixes)
-                .as("season 表里只应存在一个赛季前缀（加第二个赛季时这里会变 {season_01, season_02}，"
-                        + "届时 seasonId 取哪一个必须由表决定而不是由别处决定）")
-                .hasSize(1);
+                .as("多赛季落地后表里应有 5 个前缀（SEASON_COUNT=5，#750 裁决）")
+                .hasSizeGreaterThanOrEqualTo(2);
         assertThat(rules.seasonId())
-                .as("装配出来的赛季号必须来自行 id 前缀，不能另有全局参数")
+                .as("装配出来的赛季号必须来自行 id 前缀的集合，不能另有全局参数")
+                .isIn(prefixes);
+        assertThat(rules.seasonId())
+                .as("未配置 SEASON_START_AT ⇒ 赛季未启用 ⇒ 恒取第一季（ServerCalendar 的既有语义）")
                 .isEqualTo(prefixes.get(0));
-        assertThat(rules.seasonId())
-                .as("赛季号与归档集合名共用同一个字符串：漂移时两者会分叉（SeasonSettlement 侧读的就是它）")
-                .isIn("season_01");
+    }
+
+    /**
+     * 第 N 天 ⇒ season_0X（2026-10-03 裁决落地：按天数推进）。
+     *
+     * <p><b>断言能失败吗</b>：能，而且不依赖墙上时钟 —— {@code timelineRules(long now)} 让 now 可钉住。
+     * 反例有两条：① 把某一天的 now 改成 season_01 那一档的天数，断言会红；
+     * ② 若筛选那段被删掉（把 25 行全塞进时间轴），本条在 day=0 时就会因
+     * {@code IllegalArgument: 阶段序号必须从 1 起连续，实际缺了 2} 而 Error。
+     */
+    @Test
+    @DisplayName("按天数推进：第 46 天必须是 season_02，第 96 天必须是 season_03（第 1 季 45 天）")
+    void seasonAdvancesWithElapsedDays() {
+        // 锚点是固定常量而不是「今天」—— 这条断言要能失败，就必须能复现同一个 now。
+        SeasonRulesAssembler anchored = new SeasonRulesAssembler(
+                registryWithSeasonStartAt(SEASON_ANCHOR), clockAt(SEASON_ANCHOR));
+
+        assertThat(anchored.timelineRules(SEASON_ANCHOR).seasonId())
+                .as("开季当天必须是第一季").isEqualTo("season_01");
+        assertThat(anchored.timelineRules(SEASON_ANCHOR + 44L * DAY_MS).seasonId())
+                .as("第 45 天仍落在第一季内（0 基 44 天 < 45）").isEqualTo("season_01");
+        assertThat(anchored.timelineRules(SEASON_ANCHOR + 45L * DAY_MS).seasonId())
+                .as("第 46 天（0 基 45 天）跨过整季 ⇒ 第二季").isEqualTo("season_02");
+        assertThat(anchored.timelineRules(SEASON_ANCHOR + 50L * DAY_MS).seasonId())
+                .as("第 51 天落在第二季内").isEqualTo("season_02");
+        assertThat(anchored.timelineRules(SEASON_ANCHOR + 95L * DAY_MS).seasonId())
+                .as("第 96 天跨过两季 ⇒ 第三季").isEqualTo("season_03");
+        assertThat(anchored.timelineRules(SEASON_ANCHOR + 10_000L * DAY_MS).seasonId())
+                .as("天数远超表里最后一季（season_05）⇒ 取最后一季，不编造 season_06："
+                        + "编出来的 id 会让 purgeArchivedSeasons 拿一个表里不存在的季号去比较归档")
+                .isEqualTo("season_05");
+    }
+
+    /** 往 global 表追加一行 SEASON_START_AT（它是部署参数，平时不在表里）—— 与 RankEndpointTest / SeasonStatusTest 同款做法。 */
+    private static ConfigRegistry registryWithSeasonStartAt(long startAt) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            ObjectNode table = (ObjectNode) mapper.readTree(
+                    Files.readString(locateTable("global.json"), StandardCharsets.UTF_8));
+            ArrayNode rows = (ArrayNode) table.get("rows");
+            ObjectNode row = mapper.createObjectNode();
+            row.put("id", "SEASON_START_AT");
+            row.put("valueType", "LONG");
+            row.put("value", startAt);
+            row.put("unit", "毫秒时间戳");
+            row.put("source", "B14 §一（部署参数，不进表）");
+            row.put("why", "测试注入的赛季锚点：真实环境由部署时配置");
+            rows.add(row);
+            ConfigRegistry registry = ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
+            registry.reload(ConfigRegistry.TABLE_GLOBAL, GlobalCfg.class, mapper.writeValueAsString(table));
+            return registry;
+        } catch (Exception e) {
+            throw new IllegalStateException("无法构造带 SEASON_START_AT 的 global 表", e);
+        }
+    }
+
+    private static TimeService clockAt(long fixedMillis) {
+        return new TimeService(() -> fixedMillis);
     }
 
     @Test

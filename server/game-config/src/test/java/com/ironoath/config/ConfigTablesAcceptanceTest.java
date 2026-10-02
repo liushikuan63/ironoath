@@ -15,7 +15,10 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -338,22 +341,52 @@ class ConfigTablesAcceptanceTest {
     }
 
     @Test
-    @DisplayName("赛季阶段时间轴连续无空隙、无重叠，且总长与主城 40 级的养成节奏对齐")
+    @DisplayName("每一季的时间轴都连续无空隙、无重叠，且各季等长、总长与主城 40 级的养成节奏对齐")
     void seasonPhasesAreContiguous() {
-        List<SeasonCfg> phases = registry.all(SeasonCfg.class).stream()
-                .sorted((a, b) -> Long.compare(a.phaseNo(), b.phaseNo()))
-                .toList();
-        assertThat(phases).hasSize(5);
-        assertThat(phases.get(0).startDayOffset()).isZero();
-        for (int i = 1; i < phases.size(); i++) {
-            SeasonCfg prev = phases.get(i - 1);
-            SeasonCfg cur = phases.get(i);
-            assertThat(cur.startDayOffset())
-                    .as("阶段 %d 必须紧接阶段 %d 结束，不能有空隙或重叠", cur.phaseNo(), prev.phaseNo())
-                    .isEqualTo(prev.startDayOffset() + prev.durationDays());
+        // 2026-10-03：season 表从 season_01 五行扩到 season_01..season_05 共 25 行（#750 / #751 裁决），
+        // 所以「全表恰好 5 行」这个前提不再成立。断言随之改成**逐季**校验 —— 它比原来更严：
+        // 原来只查一季的连续性，现在每一季都查，且要求各季的阶段数与总长彼此一致。
+        // 一致性正是「按天数推进」能成立的前提（SeasonRulesAssembler 用第一季的长度算第几季）。
+        Map<String, List<SeasonCfg>> bySeason = registry.all(SeasonCfg.class).stream()
+                .collect(Collectors.groupingBy(
+                        r -> r.id().substring(0, r.id().indexOf("_phase_")),
+                        TreeMap::new,
+                        Collectors.toList()));
+
+        assertThat(bySeason.keySet())
+                .as("season 表里的赛季前缀（#750 裁决 SEASON_COUNT=5 ⇒ 应有 5 个，且补零两位故字典序=时间序）")
+                .hasSize(5)
+                .containsExactly("season_01", "season_02", "season_03", "season_04", "season_05");
+
+        Long expectedTotal = null;
+        for (Map.Entry<String, List<SeasonCfg>> entry : bySeason.entrySet()) {
+            List<SeasonCfg> phases = entry.getValue().stream()
+                    .sorted((a, b) -> Long.compare(a.phaseNo(), b.phaseNo()))
+                    .toList();
+            assertThat(phases)
+                    .as("%s 的阶段数", entry.getKey()).hasSize(5);
+            assertThat(phases.get(0).startDayOffset())
+                    .as("%s 必须从第 0 天起（startDayOffset 是相对开服的天数偏移，赛季内自算）", entry.getKey())
+                    .isZero();
+            for (int i = 1; i < phases.size(); i++) {
+                SeasonCfg prev = phases.get(i - 1);
+                SeasonCfg cur = phases.get(i);
+                assertThat(cur.startDayOffset())
+                        .as("%s 阶段 %d 必须紧接阶段 %d 结束，不能有空隙或重叠",
+                                entry.getKey(), cur.phaseNo(), prev.phaseNo())
+                        .isEqualTo(prev.startDayOffset() + prev.durationDays());
+            }
+            long totalDays = phases.stream().mapToLong(SeasonCfg::durationDays).sum();
+            assertThat(totalDays).as("%s 的赛季总长应为 45 天", entry.getKey()).isEqualTo(45L);
+            if (expectedTotal == null) {
+                expectedTotal = totalDays;
+            } else {
+                assertThat(totalDays)
+                        .as("各季必须等长：SeasonRulesAssembler 用第一季的长度算「现在是第几季」，"
+                                + "不等长会让跨季那几天落在错误的季里")
+                        .isEqualTo(expectedTotal);
+            }
         }
-        long totalDays = phases.stream().mapToLong(SeasonCfg::durationDays).sum();
-        assertThat(totalDays).as("赛季总长应为 45 天").isEqualTo(45L);
     }
 
     @Test

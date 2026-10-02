@@ -2,13 +2,19 @@ package com.ironoath.web.season;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import com.ironoath.common.time.DayKey;
+import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.SeasonCfg;
 import com.ironoath.core.season.SeasonSettlement;
 import com.ironoath.core.season.SeasonTimeline;
 import com.ironoath.core.season.SeasonTier;
+import com.ironoath.web.service.ServerCalendar;
 
 /**
  * 职责：把 global 表的赛季参数装配成 game-core 的规则对象（B14 §2 段位、§4 结算）。
@@ -35,9 +41,25 @@ import com.ironoath.core.season.SeasonTier;
 public class SeasonRulesAssembler {
 
     private final ConfigRegistry configs;
+    private final TimeService timeService;
 
+    /**
+     * 单参构造器（保留给直接 new 的测试）：时间源退化成系统时钟。
+     *
+     * <p><b>为什么不把它删掉</b>：仓库里有 11 处 {@code new SeasonRulesAssembler(configs)}
+     * （{@code RankEndpointTest} / {@code SeasonRulesAssemblerTest} / {@code SeasonSettlementTest} /
+     * {@code SeasonStatusTest}），而它们要的只是「赛季未启用时恒取第一季」这个读数 ——
+     * 那条读数与时钟无关。删掉它等于让 4 个测试类为了一个与它们无关的构造参数而改。
+     */
     public SeasonRulesAssembler(ConfigRegistry configs) {
+        this(configs, new TimeService(System::currentTimeMillis));
+    }
+
+    /** 生产路径：时间源是 {@link TimeService}（唯一时间基准，测试可完全控制）。 */
+    @Autowired
+    public SeasonRulesAssembler(ConfigRegistry configs, TimeService timeService) {
         this.configs = configs;
+        this.timeService = timeService;
     }
 
     /**
@@ -67,13 +89,43 @@ public class SeasonRulesAssembler {
      * 带着空阶段列表启动的症状是所有 PVP 被无声放行。
      */
     public SeasonTimeline.Rules timelineRules() {
-        List<com.ironoath.config.cfg.SeasonCfg> rows =
-                new ArrayList<>(configs.all(com.ironoath.config.cfg.SeasonCfg.class));
-        if (rows.isEmpty()) {
+        return timelineRules(timeService.serverNow());
+    }
+
+    /**
+     * 赛季时间轴，带显式「现在」（毫秒）。
+     *
+     * <p><b>为什么要这个重载</b>：赛季号会随天数推进，于是 {@link #timelineRules()} 的读数依赖墙上时钟 ——
+     * 而「今天是第 50 天 ⇒ season_02」这类断言只有把 now 钉住才写得出来（时间夹具 discipline）。
+     * 生产走无参版（时间源是 {@link TimeService}），单测走这个。
+     *
+     * <p><b>为什么必须按赛季筛行</b>（2026-10-03 裁决）：season 表现在有 {@code season_01..season_05}
+     * 共 25 行，而 {@code SeasonTimeline.Rules} 的构造期校验要求 {@code phaseNo} 从 1 起连续、
+     * 且后一阶段起点恰好等于前一阶段终点 —— 把 25 行一起塞进去会直接抛
+     * {@code IllegalArgument: 阶段序号必须从 1 起连续，实际缺了 2}。
+     * 所以要先取出「当前这一季」那 5 行，别的季的行不进这条时间轴。
+     */
+    public SeasonTimeline.Rules timelineRules(long now) {
+        List<SeasonCfg> allRows = new ArrayList<>(configs.all(SeasonCfg.class));
+        if (allRows.isEmpty()) {
             throw new com.ironoath.config.ConfigException(
                     "season 表没有任何阶段行：赛季时间轴为空，无法判定当前处于哪个阶段");
         }
+        String currentId = currentSeasonIdOf(allRows, now);
+        List<SeasonCfg> rows = new ArrayList<>();
+        for (SeasonCfg row : allRows) {
+            if (seasonIdOf(row.id()).equals(currentId)) {
+                rows.add(row);
+            }
+        }
         rows.sort((a, b) -> Long.compare(a.phaseNo(), b.phaseNo()));
+        if (rows.isEmpty()) {
+            // 没有这条守卫的话，症状是下面 rows.get(0) 抛 IndexOutOfBounds（0/0）——
+            // 那句话既不说是哪个赛季号对不上，也不说表里有几个赛季，等于把排查留给下一个人。
+            throw new com.ironoath.config.ConfigException(
+                    "season 表里找不到当前赛季 " + currentId + " 的阶段行：表内共 " + allRows.size()
+                            + " 行、赛季前缀 " + new TreeSet<>(seasonIdsOf(allRows)));
+        }
         List<SeasonTimeline.Stage> stages = new ArrayList<>(rows.size());
         for (var row : rows) {
             stages.add(new SeasonTimeline.Stage((int) row.phaseNo(),
@@ -81,6 +133,59 @@ public class SeasonRulesAssembler {
                     row.startDayOffset(), row.durationDays()));
         }
         return new SeasonTimeline.Rules(stages, seasonIdOf(rows.get(0).id()));
+    }
+
+    /**
+     * 当前是第几季（返回行 id 前缀，如 {@code season_02}）。
+     *
+     * <p><b>三条口径，每条都有出处</b>：
+     * ① <b>赛季未启用（没配 {@code SEASON_START_AT}）⇒ 恒取第一季</b>。
+     * 沿用 {@link ServerCalendar#seasonStartOrZero} 的既有语义（返回 0 = 未启用）；
+     * 若这里改成「按开服天数硬推」，会出现「开服 0 天就在 season_02」这种没开季的服。
+     * ② <b>启用后按天数推进</b>：{@code 天数 / 单季总天数} 即第几季（0 基）。
+     * ③ <b>天数越过表里最后一季 ⇒ 取最后一季</b>，不报错：表里只写到 season_05，
+     * 而 seasonId 补零到两位（{@code SeasonSettlementService} 注释：字典序 = 时间序），
+     * 越界时取最大前缀是唯一不制造「新 id」的选择 —— 编一个 season_06 会让
+     * {@code purgeArchivedSeasons} 的归档比较拿到一个表里不存在的季号。
+     *
+     * <p><b>「各季等长」是当前表的事实而非假设</b>：#751 裁决「复用 season_01 的目标与奖励」，
+     * 5 季的 {@code durationDays} 完全相同（7/7/14/14/3 = 45 天），所以用第一季的长度算索引是准的。
+     * 若将来各季不等长，本方法要改成「逐季累加到目标天数落在哪一季」—— 届时
+     * {@code SeasonTimeline.Rules} 的无空洞校验会先把它逼出来。
+     */
+    private String currentSeasonIdOf(List<SeasonCfg> allRows, long now) {
+        List<String> ids = new ArrayList<>(new TreeSet<>(seasonIdsOf(allRows)));
+        long start = ServerCalendar.seasonStartOrZero(configs);
+        if (start <= 0L) {
+            return ids.get(0);
+        }
+        long days = Math.max(0L, DayKey.daysBetween(start, now));
+        long seasonLength = seasonLengthDays(allRows, ids.get(0));
+        if (seasonLength <= 0L) {
+            return ids.get(0);
+        }
+        long index = days / seasonLength;
+        return ids.get((int) Math.min(index, ids.size() - 1L));
+    }
+
+    /** 表里出现过��赛季 id（去重、字典序升序）。季号补零两位 ⇒ 字典序 = 时间序。 */
+    private static List<String> seasonIdsOf(List<SeasonCfg> rows) {
+        List<String> ids = new ArrayList<>();
+        for (SeasonCfg row : rows) {
+            ids.add(seasonIdOf(row.id()));
+        }
+        return ids;
+    }
+
+    /** 某一季的总天数（各阶段 {@code durationDays} 之和）。 */
+    private static long seasonLengthDays(List<SeasonCfg> rows, String seasonId) {
+        long total = 0L;
+        for (SeasonCfg row : rows) {
+            if (seasonIdOf(row.id()).equals(seasonId)) {
+                total += row.durationDays();
+            }
+        }
+        return total;
     }
 
     /** {@code season_01_phase_3} ⇒ {@code season_01}。为什么不再加一个全局参数见类注释。 */
