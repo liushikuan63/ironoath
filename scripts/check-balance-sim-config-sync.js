@@ -181,10 +181,36 @@ if (forgeProblems.length > 0) {
     + '且表一改模拟器照常按旧值报数。依据：收口清单 #664。')
   process.exit(1)
 }
+// ---- #665: the 8th site, and the only one so far that is a FORMULA mismatch rather than a
+// literal copy. Warehouse capacity was `initCap + capBase x level` (linear) while production
+// `ResourceRateService` uses `Formula.buildingOutput(cfg.capBase(), level, outputExponent)`
+// i.e. `capBase x level^1.08`. building.json's designNote says so explicitly:
+// 「容量走 BUILDING_OUTPUT 曲线（POWER，指数 1.08）…『容量 ÷ 每小时产量』这个比值与等级无关,
+//   恒等于 capBase/120 ≈ 8.3 小时」and warehouse.why quotes `20000 + 1000x16^1.08` for #592.
+// Effect at 120 days: grain overflow 471200 -> 0 and main city 15 -> 16 levels.
+// The gate must pin the formula, not just the base, because #592 only checked the base.
+const capProblems = []
+const linearCap = /initCap\[\w+\]\s*\+\s*\w*[Cc]apBase\s*\*/.test(cliCode)
+if (linearCap) {
+  capProblems.push('仓容又变回线性 `initCap + capBase × 等级`（线上走 capBase × level^1.08）')
+}
+if (!/Formula\.buildingOutput\(/.test(cliCode)) {
+  capProblems.push('仓容没有走 core 的 Formula.buildingOutput')
+}
+if (!/curve\(\s*"BUILDING_OUTPUT"\s*\)\.exponentFixed\(\)/.test(cliCode)) {
+  capProblems.push('仓容的指数没有取 curve.BUILDING_OUTPUT 的定点 exponentFixed')
+}
+if (capProblems.length > 0) {
+  console.error('[check-balance-sim-config-sync][FAIL] 仓容公式形状脱钩：')
+  for (const p of capProblems) console.error('  - ' + p)
+  console.error('  后果：线性公式让「能囤几小时」随等级递减，而线上恒为 capBase/120 ≈ 8.3 小时；'
+    + '实测 120 天粮溢出 471200 → 0、主城 15 → 16 级。依据：收口清单 #665。')
+  process.exit(1)
+}
 const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 七处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 八处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
   + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount / 强化费读 EQUIP_FORGE_COST 曲线）。')

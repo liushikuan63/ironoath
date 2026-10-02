@@ -621,6 +621,29 @@ public final class BalanceCli {
             throw new IllegalStateException("读不到 warehouse / main_city 的造价行，升级花费没法算：" + ex.getMessage(), ex);
         }
         final long[] warehouseLevels = {0L, 0L, 0L, 0L};
+        // ⚠️ **仓容公式原先是线性的 `initCap + capBase × 仓库等级`（#665），与线上不一致**。
+        // 线上 `ResourceRateService`（L156-160）走的是 `Formula.buildingOutput(cfg.capBase(), level, outputExponent)`
+        // —— 即 **`capBase × level^1.08`**（`building.json` 的 designNote 写明：
+        // 「容量走 BUILDING_OUTPUT 曲线（POWER，指数 1.08）…**『容量 ÷ 每小时产量』这个比值与等级无关，
+        // 恒等于 capBase/120 ≈ 8.3 小时**」，而 `warehouse.why` 里 #592 那次定档写的也是
+        // 「20000 + 1000×**16^1.08**」）。⇒ 线性公式让「能囤几小时」**随等级递减**，
+        // 而线上是恒定；40 级时线上 8000×40^1.08 ≈ **429848**、线性只有 **320000**（差 **34%**）。
+        // ⚠️ 这不是「capBase 取多少」那种数值口径（#592 只核了 base 从表读，没核公式形状），
+        // 而是**公式形状**脱钩 ⇒ 溢出与升仓节奏都被低估。
+        // ⚠️ `Formula` 在 game-core 的 `com.ironoath.core.formula`，`FixedPoint` 在 game-common 的 `com.ironoath.common.num`；
+        // balance-sim 本来就依赖这两个模块（#644 用了 `HeroCalculator`、#641 用了 `TechBonusCore` 同理）。
+        // `Formula.buildingOutput` 的指数是**定点**（与 ResourceRateService 单一来源同口径）；
+        // 而 `outExponent` 是 double（供 Math.pow 用）⇒ 这里取 curve 表的原值，不从 double 反推。
+        final long outExponentFixed = configs.curve("BUILDING_OUTPUT").exponentFixed();
+        final java.util.function.LongUnaryOperator warehouseCapPer = (lv) ->
+                // ⚠️ `Formula.buildingOutput` 要求等级 >= 1（它会校验），而仓库等级初始就是 0 ——
+                // 直接传会抛「等级必须 >= 1，实际=0」。线上碰不到是因为 `ResourceRateService`
+                // 外面套了 `b.level() > 0` 的判断，未建（等级 0）不贡献容量。
+                // ⇒ 这里照抄同一口径：**等级 0 贡献 0 容量**（不是回退到线性，那会又变成两套公式）。
+                lv <= 0L ? 0L
+                        : com.ironoath.core.formula.Formula.buildingOutput(
+                                com.ironoath.common.num.FixedPoint.of(woodCapBase), (int) lv,
+                                outExponentFixed);
         long[] overflow = {0L, 0L, 0L, 0L};
         boolean withCap = !"false".equals(options.getOrDefault("cap", "true"));
         // `--dims` 只在 CLI 里存在：**关掉某一维再跑**，用来看它对读数的贡献。
@@ -763,7 +786,7 @@ public final class BalanceCli {
                 boolean anyNearFull = false;
                 long[] resNow = {wood, stone, iron, grain};
                 for (int rr = 0; rr < 4; rr++) {
-                    long capR = initCap[rr] + woodCapBase * warehouseLevels[rr];
+                    long capR = initCap[rr] + warehouseCapPer.applyAsLong(warehouseLevels[rr]);
                     if (resNow[rr] * WH_TRIGGER_DEN >= capR * WH_TRIGGER_NUM) {
                         anyNearFull = true;
                         break;
@@ -1113,7 +1136,7 @@ public final class BalanceCli {
             if (withCap) {
                 long[] amounts = {wood, stone, iron, grain};
                 for (int r = 0; r < 4; r++) {
-                    long cap = initCap[r] + woodCapBase * warehouseLevels[r];
+                    long cap = initCap[r] + warehouseCapPer.applyAsLong(warehouseLevels[r]);
                     long produced = (r == 0 ? woodRate : r == 1 ? stoneRate : r == 2 ? ironRate : grainRate)
                             * 24L;
                     long room = Math.max(0L, cap - amounts[r]);
