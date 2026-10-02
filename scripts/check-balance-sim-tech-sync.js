@@ -57,6 +57,50 @@ if (!/上界/.test(printedLines)) {
   problems.push('报告输出里没有「上界」字样 —— 这个读数一旦被当成玩家画像就会误导验收')
 }
 
+// ---- #644: the 武将 line. The bug was a **unit mix-up**: `--population` is a 统帅值
+// (command value), but the code used it directly as the 带兵上限, dropping the
+// `× TROOP_PER_COMMAND` factor (46 became 46 instead of 230 — a 5x undercount).
+// The fix routes it through `HeroCalculator.troopCap`, so the gate must insist on that:
+// a hand-rolled `commandValue * 5` in this file is the same defect wearing a different hat.
+const heroMustHave = [
+  ['reads --population as the command value', /getOrDefault\(\s*"population"\s*,\s*"46"\s*\)/],
+  ['uses HeroCalculator.troopCap (not a hand-rolled multiply)', /HeroCalculator\.troopCap\(/],
+  ['builds HeroRules from the config table', /new\s+com\.ironoath\.core\.hero\.HeroRules\(/],
+  ['TROOP_PER_COMMAND comes from the table', /longParam\(\s*"TROOP_PER_COMMAND"\s*\)/],
+]
+// ⚠️ 判据只能看**代码**、不能看注释：源码注释里就写着「真值要过 `HeroCalculator.troopCap`」，
+// 而把实现改回手写之后正则照样匹配到那行注释 ⇒ **注入违规却报绿**（又一次「门没校准就上」）。
+// ⇒ 统一剥掉注释再判：同时挡行首注释（行首 //、*、/*）与行尾（// 之后）。
+const codeOnly = src
+  .split('\n')
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .map((l) => l.split('//')[0])
+  .join('\n')
+
+for (const [name, re] of heroMustHave) {
+  if (!re.test(codeOnly)) problems.push(`武将线缺：${name}`)
+}
+
+// ⚠️ 四处坑叠在一起才导致「现状也报红」，逐个记下来（这一格调试的主要产出）：
+//   ① 只取含「累计造兵」的**那一行**，而 printf 被拆成续行、真正的「带兵上限」在参数行；
+//   ② `findIndex` 命中的是**源码注释**里那句「累计造兵」（L566 那段说明文字）；
+//   ③ 只挡**行首**注释（`^\s*//`）⇒ 挡不住**行尾**注释 —— L566 是
+//      `boolean pickedOnceThisRound = false;   // #549 均衡升…累计造兵…`，代码在行首、关键词在行尾；
+//   ④ 上面那条修完仍红，是因为还没剥掉行尾注释。
+// ⇒ 判据：**先剥掉 `//` 及其后内容**（printf 格式串里本仓不含 `//`，无副作用），再找「累计造兵」。
+const lines = src.split('\n')
+const code = (l) => l.split('//')[0]
+const popIdx = lines.findIndex((l) => code(l).includes('累计造兵'))
+if (popIdx < 0) {
+  problems.push('报告里找不到（非注释的）「累计造兵」打印语句 —— 这一行是造兵读数的唯一出口')
+} else {
+  const window = lines.slice(popIdx, popIdx + 6).map(code).join('\n')
+  if (!/统帅值/.test(window) || !/带兵上限/.test(window)) {
+    problems.push('报告的「累计造兵」那行没有分别印出统帅值与带兵上限 —— '
+      + '只印一个数字时读者无从判断它是哪个（这正是 #644 口径混用的根）')
+  }
+}
+
 if (problems.length > 0) {
   console.error('[check-balance-sim-tech-sync][FAIL] 科技加成的口径脱钩了：')
   for (const p of problems) console.error(`  - ${p}`)

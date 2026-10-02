@@ -873,12 +873,32 @@ public final class BalanceCli {
             // —— 「新号有什么」属产品口径，此处只把 46 标成**下界假设**并写进输出。
             // **--population 是探针旋钮，不是游戏数值**：它只在 CLI 里存在，默认 46 = hero 表 command 的最小值（1 名最弱武将 + 0 科技）。
             // 用途：量出「人口上限要多大，造兵才吃得满产���」—— 那个数就是 B05 §二 要补的口径。
-            final long minCommand = Long.parseLong(options.getOrDefault("population", "46"));
+            // ⚠️ `--population` 是**队伍统帅值**（一名最弱武将的 command 下界，B00 §三 新号赠 1 名），
+            // **不是带兵上限** —— 真值要过 `HeroCalculator.troopCap`（= 统帅值 × TROOP_PER_COMMAND），
+            // 否则上限会少算 `TROOP_PER_COMMAND` 倍（46 被当成 46，而真值是 46 × 5 = 230）。收口清单 #644。
+            final long commandValue = Long.parseLong(options.getOrDefault("population", "46"));
             final long batchSize = 100L;
             // `--train-slots` 同 `--population`：**只在 CLI 里存在的探针旋钮**，
             // 用来量「把 TRAIN_QUEUE_SLOTS 调大能吃掉多少溢出」。默认值 1 = 表里的值。
             final long slots = Long.parseLong(options.getOrDefault("train-slots", "1"));
-            final long population = minCommand;   // **下界**：0 科技 + 1 名最弱武将
+            final com.ironoath.core.hero.HeroRules heroRules = new com.ironoath.core.hero.HeroRules(
+                    configs.fixedParam("HERO_LEVEL_STEP"),
+                    configs.fixedParam("HERO_STAR_STEP"),
+                    configs.fixedParam("HERO_AWAKEN_STEP"),
+                    (int) configs.longParam("HERO_STAR_MAX"),
+                    (int) configs.longParam("HERO_SKILL_MAX_LEVEL"),
+                    configs.longParam("HERO_ATTR_PER_PERCENT"),
+                    configs.fixedParam("HERO_SUB_BONUS_RATIO"),
+                    configs.fixedParam("HERO_ZONE_CAP"),
+                    configs.fixedParam("HERO_BOND_BONUS"),
+                    configs.longParam("TROOP_PER_COMMAND"),
+                    (int) configs.longParam("LINEUP_HERO_COUNT"),
+                    (int) configs.longParam("LINEUP_PRESET_COUNT"),
+                    configs.curve("HERO_LEVEL_EXP").baseFixed(),
+                    configs.curve("HERO_LEVEL_EXP").ratioFixed(),
+                    configs.curve("HERO_GROWTH").exponentFixed());
+            // **下界**：0 科技 + 1 名最弱武将。算法复用 core 的 troopCap，与线上同一份。
+            final long population = com.ironoath.core.hero.HeroCalculator.troopCap(commandValue, heroRules);
             final long maxQueued = Math.min(slots * batchSize, population);
             if (withCap && dimTroops && barracksLevel >= 3 && population > 0L) {
                 // 人口不足一批时**按人口切一批**，不是造满再截 ——
@@ -1052,8 +1072,10 @@ public final class BalanceCli {
                         "", "", buildWood, buildStone, buildIron, buildGrain);
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
-                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次, --population %d)，兵营 %d 级）%n",
-                        "", "", troopsMade, standing, maxQueued, minCommand, barracksLevel);
+                // 统帅值与带兵上限**分开印**：这两个数混用正是 #644 的根，只印一个时读者无从判断它是哪个。
+                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次 %d, 带兵上限 %d = 统帅值 %d × TROOP_PER_COMMAND %d)，兵营 %d 级）%n",
+                        "", "", troopsMade, standing, maxQueued, slots * batchSize,
+                        population, commandValue, heroRules.troopPerCommand(), barracksLevel);
             }
             if (level < prevLevel) {
                 monotonicBreaks++;
