@@ -813,8 +813,20 @@ public final class BalanceCli {
         // 挤得 `stable` 与 `drill_ground` 永远建不起来（那两座各要铁 300 / 100）。
         // 真实玩家是「先把该建的建了、剩下的铁才去点装备」，这个顺序比「无条件优先」更真。
         // ⚠️ 仍是行为假设：**余额才点**，不设每日上限（上限属玩法口径，未裁决）。
-        final long FORGE_BASE = 700000L;
-        final long FORGE_RATIO = 12200L;
+        // ⚠️ **这两个值原先是写死的 `FORGE_BASE = 700000L` / `FORGE_RATIO = 12200L`**（#664）：
+        // ① **违反 `CurveCfg` 的铁律** —— 该类的类注释明写「代码中不得出现任何曲线常量（铁律 1）」；
+        // ② **表一改就漂移**，而模拟器照常输出一整套读数（与 #592 capBase、#594 initCap、#641 科技加成同族）；
+        // ③ **指数这一项：一度以为也错了，实测是我自己错了** —— 表 `EQUIP_FORGE_COST` 的公式是
+        //    `F(n) = (行属性总和 × 70) × 1.22^(n-1)`，而线上 `EquipForgeCostCalibrationTest` 传
+        //    `geometric(rowBaseFixed, curve.ratio(), level - 1)`，看着像该照抄那个 `- 1`；
+        //    **但两边的等级语义不同**：校准测试的 `level` 是 **1-based**，
+        //    而这里的 `lvl` 是 **0-based**（`forgeLevel.getOrDefault(eq.id(), 0L)`）
+        //    ⇒ **指数本来就该是 `lvl`，原来没错**。我照抄 `- 1` 之后第一次跑就抛
+        //    `geometric 的指数不得为负：-1`（首日 `lvl = 0`）⇒ 若只盯读数不看退出码，
+        //    就会把「读数变了」当成「修好了」，而那其实是我自己引入的红。
+        //    ⇒ 本格只修 ①②（改成读表），**不动指数**。
+        final com.ironoath.common.config.CurveParams forgeCurve =
+                configs.curve("EQUIP_FORGE_COST");
         if (withCap && dimForge) {
             for (var eq : configs.all(EquipCfg.class)) {
                 // `rarity` 是**枚举 EquipCfg.Rarity**（不是字符串）——
@@ -831,7 +843,7 @@ public final class BalanceCli {
                 long lvl = forgeLevel.getOrDefault(eq.id(), 0L);
                 while (lvl < forgeMax) {
                     long cost = FixedPoint.round(FixedPoint.geometric(
-                            points * FORGE_BASE, FORGE_RATIO, (int) lvl));
+                            points * forgeCurve.baseFixed(), forgeCurve.ratioFixed(), (int) lvl));
                     if (iron < cost) {
                         break;                     // 铁不够就等下一天（优先点能升的那一件）
                     }

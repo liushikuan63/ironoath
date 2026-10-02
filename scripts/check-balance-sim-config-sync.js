@@ -149,10 +149,42 @@ if (fails.length) {
   process.exit(1)
 }
 
+// ---- #664: the 7th hard-coded site. The `forge` cost used two literals,
+// `FORGE_BASE = 700000L` and `FORGE_RATIO = 12200L`, which are exactly
+// `curve.EQUIP_FORGE_COST`'s base (70) and ratio (1.22) after fixed-point scaling.
+// Two problems, one of them a written rule:
+//   (a) CurveCfg's class javadoc says 代码中不得出现任何曲线常量（铁律 1）— a literal is that.
+//   (b) Edit curve.json and the simulator keeps printing a full set of readings computed
+//       from the old numbers, and nothing turns red (same family as #592 capBase).
+// The exponent is deliberately NOT checked: the production calibration test passes
+// `level - 1` because ITS level is 1-based, while BalanceCli's `lvl` is 0-based. Copying that
+// `- 1` throws `geometric 的指数不得为负：-1` on day one — recorded in 收口清单 #664.
+const cliCode = cli
+  .split('\n')
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .map((l) => l.split('//')[0])
+  .join('\n')
+const forgeProblems = []
+if (/FORGE_BASE|FORGE_RATIO/.test(cliCode)) {
+  forgeProblems.push('强化费又出现了写死的 FORGE_BASE / FORGE_RATIO 字面量')
+}
+if (!/configs\.curve\(\s*"EQUIP_FORGE_COST"\s*\)/.test(cliCode)) {
+  forgeProblems.push('强化费没有从 configs.curve("EQUIP_FORGE_COST") 读')
+}
+if (!/forgeCurve\.baseFixed\(\)/.test(cliCode) || !/forgeCurve\.ratioFixed\(\)/.test(cliCode)) {
+  forgeProblems.push('强化费没有用 curve 的 baseFixed / ratioFixed')
+}
+if (forgeProblems.length > 0) {
+  console.error('[check-balance-sim-config-sync][FAIL] 强化费口径脱钩：')
+  for (const p of forgeProblems) console.error('  - ' + p)
+  console.error('  后果：CurveCfg 类注释明写「代码中不得出现任何曲线常量（铁律 1）」，'
+    + '且表一改模拟器照常按旧值报数。依据：收口清单 #664。')
+  process.exit(1)
+}
 const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 六处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 七处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
-  + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount）。')
+  + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount / 强化费读 EQUIP_FORGE_COST 曲线）。')
