@@ -15,6 +15,12 @@
 # （输出末尾有「判定：…」），那是它的既有口径，不是本脚本的失败。
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# ⚠️ #727：必须先取 JDK 17，否则会用 PATH 里的 JDK 8 跑 JDK 17 编译产物而全档失败。
+# 失败原文是「class file version 61.0 ... only recognizes class file versions up to 52.0」。
+# 本仓「mvn 默认指向 JDK 8、scripts/env.sh 会覆盖成 JDK 17」写在项目 AGENTS.md §三，
+# 而本脚本此前漏了这一步 —— 手工跑 balance-sim 时每格都手动 source，所以只有脚本踩到。
+# shellcheck disable=SC1091
+source scripts/env.sh
 DAYS="${DAYS:-45}"
 OUT="tmp/baseline-f2p"
 mkdir -p "$OUT"
@@ -28,8 +34,19 @@ run() {
   mvn -q -f server/pom.xml -pl tools/balance-sim exec:java -Dexec.args="$args" \
       > "$OUT/$name.txt" 2>&1
   local ec=$?
-  if [ $ec -ne 0 ] && [ $ec -ne 1 ]; then
+  # ⚠️ #727：exit 1 有**两种**含义，而原判据只认其中一种 ——
+  #   (a) BalanceCli 自己的判定不通过（本脚本注释 L14-15 明写：那不是本脚本的失败）；
+  #   (b) Maven 构建/执行失败（#727 实测：class file version 61.0 vs 52.0，8 档全红）。
+  # 原来只按 exit 1 放行，于是 (b) 被当成 (a)，脚本宣告「跑完 8 档」而实际 0 条读数。
+  # => 改为：**产物为空 / 没有关键行时一律判失败**，与 exit 码无关。
+  #    这是三件校验里的 b) 与 c)；a)（退出码）保留但只用来抓 >1 的异常。
+  if [ $ec -gt 1 ]; then
     echo "  !! $name 执行异常（exit=$ec）—— 先看 $OUT/$name.txt" >&2
+    return 1
+  fi
+  if ! grep -qE "^ *${DAYS} " "$OUT/$name.txt"; then
+    echo "  !! $name 产物里没有第 ${DAYS} 天终值行（Maven 构建失败或档位参数非法）" >&2
+    echo "     —— 先看 $OUT/$name.txt 的前几行" >&2
     return 1
   fi
   # 抽关键行：dayN 终值 + 四类累计 + 产出建筑等级 + 造兵
