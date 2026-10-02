@@ -632,6 +632,17 @@ public final class BalanceCli {
                 configs.get(com.ironoath.config.cfg.ResourceCfg.class, "GRAIN").initCap(),
         };   // 木 石 铁 粮
         long barracksLevel = 0L;      // 兵营等级（造兵前置：requireMainLevel=3）
+        // ⚠️ **学院等级（#700/#711 裁决「零氪建学院」）**：线上 `TechListView.academyLevel` 的注释
+        // 明写「学院建筑**当前等级**（0 = 还没建）…读的是城建的真实等级」，
+        // `TechAppService:140` 是 `int academy = academyLevel(snap.city());`
+        // ⇒ **它就是 `academy` 这座建筑的真实等级**，不是独立系统。
+        // 而 `tech.json` 11 条科技全部以它为唯一前置（requireAcademyLevel 1/3/5/6/8，#701 已量阶梯）
+        // ⇒ 不接它，#701 那张阶梯表在模拟器里永远停在「0 条可解锁」。
+        // 口径与兵营同构（与主城等级同步推进、本版不单独花资源），理由也相同：
+        // **本版的目的是给科技花费接线提供前置状态**，不在这一版决定学院要花多少资源
+        // （那是 #710 记的三个待定量之一）。默认档 `--builds-gate=none` 不建学院 ⇒ 本值为 0 ⇒
+        // **默认档读数必须逐位不变**（#700 的判据）。
+        long academyLevel = 0L;      // 学院等级（科技唯一前置：requireAcademyLevel）
         long standing = 0L;            // 在编兵力（造满 500 即停 —— 队列上限）
         long troopsMade = 0L;
         final long initAmount = 0L;                                  // 起始资源见下面的初值
@@ -830,6 +841,13 @@ public final class BalanceCli {
                 // 兵营：与主城等级同步推进（requireMainLevel=3），本版不单独花资源升它
                 while (barracksLevel < Math.min(40L, level - 2L)) {
                     barracksLevel++;
+                }
+                // 学院：同构推进（`building.json` 里 `academy.maxLevel=40`、
+                // `tech.requireAcademyLevel` 最高 8，所以 8 级之后不再影响科技可解锁集合）
+                // ⚠️ **上限取 40 而非 8**：与 `barracksLevel` 同口径留满，
+                // 免得这一版就把「建筑能升到几级」这个尚未裁决的问题（学院要花多少资源）提前钉死。
+                while (academyLevel < Math.min(40L, level - 2L)) {
+                    academyLevel++;
                 }
                 // **只有仓库快满了才升**（#531）：`RESOURCE_PROTECT_RATIO = 0.20`
                 // 是「保留 20% 余量」的出处置 ⇒ 触发点是**当前量 ≥ 80% cap**。
