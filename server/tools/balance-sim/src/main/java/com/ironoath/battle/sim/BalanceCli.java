@@ -626,10 +626,22 @@ public final class BalanceCli {
         if (withProducers) {
             System.out.println("**模型边界（先读这一条）**：产出建筑**也参与升级**（伐木场/采石场/农田/"
                     + "铁矿场，输入取 building 表的 outputBasePerHour 与 costBase*，形状与 "
-                    + "ResourceRateService.buildingPerHour 一致）。仍然**不含**的部分：武将、"
-                    + (techLevel > 0 ? "（科技已由 --tech-level 计入，见下）" : "科技、")
-                    + "离线时长与「造兵吃粮」这条支出线 —— 所以这是**上界之外的下界**："
-                    + "真实零氪玩家的产出更高、支出也更多，量级要靠补齐这几条才能收敛。");
+                    + "ResourceRateService.buildingPerHour 一致）。仍然**不含**的只有一条："
+                    + "**「造兵吃粮」这条支出线**（造兵量已建模、吃粮还没扣）"
+                    + "（科技见 --tech-level、武将见 --population，两条都已接上）"
+                    + " —— 所以这是**上界之外的下界**："
+                    + "真实零氪玩家的产出更高、支出也更多，量级要靠补齐这一条才能收敛。");
+            // ⚠️ **「离线时长」与「武将」都曾被写进上面那句「不含」里，两条都是错的**，
+            // 而且是**打给读者看的那一句** —— 读者会据此以为离线不产资源、以为没算武将。
+            // ① 离线（#645）：`ResourceSettlement.settle` 的产出是
+            //    `theoreticalOutput(perHour, elapsedMs) = perHour × elapsedMs / 3600000`，
+            //    `elapsedMs = now - lastSettle`，**全程无封顶**（`global` 表里与离线有关的只有
+            //    `OFFLINE_REPORT_MIN_IDLE_MINUTES` / `OFFLINE_REPORT_MIN_ITEMS` 两个**弹窗阈值**
+            //    和 `NET_OFFLINE_QUEUE_MAX` 行军队列上限，**没有产出封顶参数**）；而本表每日
+            //    `+= perHour × 24`，`perHour × 86400000 / 3600000 = perHour × 24`
+            //    ⇒ **离线口径本来就完全一致**，玩家离开多久都照算，不需要额外建模。
+            // ② 武将（#644）：`--population` 已接 `HeroCalculator.troopCap`，
+            //    带兵上限 = 统帅值 × `TROOP_PER_COMMAND`，从表读。
         } else {
             System.out.println("**模型边界（先读这一条）**：本模拟**只升主城、不升任何产出建筑**，"
                     + "所以 perHour 停在 resource 表的兜底底产上 => **这一版的产出是下界**，"
