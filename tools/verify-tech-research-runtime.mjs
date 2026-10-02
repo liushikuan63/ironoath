@@ -531,10 +531,10 @@ const CITY_BAR = `(() => {
     // countdown 又来自 countdownMs(building.finishAt, offsetMs, localNow)。
     // ⇒ 键不出现只可能是两种：upgrading 没成立（已排除：夹具给的是 status:'UPGRADING'），
     //   或者 done 一上来就是 true —— 也就是**夹具的固定时间戳 NOW 与页面真实墙钟对不上**。
-    // 这三个读数就是用来把后者钉死的：把 wallClock 与夹具的 nowMs 一比就知道偏移落在哪一侧、有多大。
-    // finishAt 不必由页面回报 —— 夹具里它是 NOW + 60_000（:183），探针侧本来就知道。
+    // ⚠️ 只有 page 能看见的东西能写在这里：NOW 是 Node 侧变量，页面里**没有它**，
+    //    在这里引用它会让 evaluate 直接抛 ReferenceError（node --check 抓不到，语法是合法的）。
+    //    夹具的 nowMs 在 Node 侧打印时带上即可。
     wallClock: Date.now(),
-    nowMs: NOW,
     resourceSlots,
     overflow: (() => {
       let hit = ''
@@ -560,7 +560,7 @@ console.log('[tech][cityBar] 夹具 nowMs=' + NOW + ' finishAt=' + (NOW + 60_000
   + ' · 逐帧 ' + JSON.stringify(BAR_FRAMES))
 console.log('[tech][cityBar] 末帧 墙钟=' + cityBar?.wallClock + ' 与夹具 nowMs 相差 '
   + ((cityBar?.wallClock ?? 0) - NOW) + 'ms'
-  + ' ⇒ 若这个差是**几十万**量级，说明夹具的固定时间戳与真实墙钟严重错位，'
+  + ' ⇒ 差值若是几十万量级，说明夹具的固定时间戳与真实墙钟严重错位，'
   + 'countdown 会一上来就 ≤0、collectable 直接为 true，按设计就不给「取消」键')
 check('在升级那一格的动作条上有「取消」键', cityBar?.cancelVisible, true)
 check('同一槽位的「升级」让位给「取消」（这一格已经在建，不能再开一次）',
