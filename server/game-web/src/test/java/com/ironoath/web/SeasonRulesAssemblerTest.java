@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -132,6 +133,45 @@ class SeasonRulesAssemblerTest {
     }
 
     // ---------- ② 关系 ----------
+
+    /**
+     * 赛季号一致性（2026-10-02 加，#748）。
+     *
+     * <p><b>为什么加这条</b>：{@code SeasonRulesAssembler} 的类注释里写明「赛季 id 从行 id 的前缀反推，
+     * 而不是再加一个全局参数：一行的前缀就是这一季，两处定义迟早漂移成『归档集合叫 season_01
+     * 而时间轴读的是 season_02』，那种数据错乱没有任何测试会红」。上面 {@code timelineComesFromTheSeasonTable}
+     * 断言的是「season_01 这一个值对不对」，它拦不住上面说的那种漂移 ——
+     * 因为两处定义漂移时，每一处**单独看都是合法的 season_01**。
+     *
+     * <p><b>所以这条断言只做一件事</b>：把「行 id 的前缀集合」与「装配出来的 {@code seasonId}」放在一起比。
+     * 一旦有人加了第二个赛季前缀、或者把赛季号改成了全局参数而表里的前缀没跟上，这条就会红。
+     *
+     * <p><b>断言能失败吗</b>：能。夹具把五行改成 {@code season_09_phase_N} 之后，
+     * {@code assembler.timelineRules().seasonId()} 仍是 {@code season_01}（它读的是未改的那份表），
+     * 而表前缀集合已变成 {@code {season_09}} ⇒ 两个断言必然有一个不成立。
+     */
+    @Test
+    @DisplayName("赛季号一致性：行 id 的前缀集合必须恰好是 {seasonId}，不许出现第二处赛季号定义")
+    void seasonIdHasExactlyOneDefinitionInTheTable() {
+        SeasonTimeline.Rules rules = assembler.timelineRules();
+        List<String> prefixes = configs.all(SeasonCfg.class).stream()
+                .map(SeasonCfg::id)
+                .map(id -> id.substring(0, id.indexOf("_phase_")))
+                .distinct()
+                .sorted()
+                .toList();
+
+        assertThat(prefixes)
+                .as("season 表里只应存在一个赛季前缀（加第二个赛季时这里会变 {season_01, season_02}，"
+                        + "届时 seasonId 取哪一个必须由表决定而不是由别处决定）")
+                .hasSize(1);
+        assertThat(rules.seasonId())
+                .as("装配出来的赛季号必须来自行 id 前缀，不能另有全局参数")
+                .isEqualTo(prefixes.get(0));
+        assertThat(rules.seasonId())
+                .as("赛季号与归档集合名共用同一个字符串：漂移时两者会分叉（SeasonSettlement 侧读的就是它）")
+                .isIn("season_01");
+    }
 
     @Test
     @DisplayName("门槛必须严格升序且第一个为 0：否则最低档之下会出现一个没有段位的区间")
