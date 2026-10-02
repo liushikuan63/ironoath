@@ -177,6 +177,7 @@ const UNREFERENCED = {
   // 但本门的 walk() 只收 .java 与 .ts，**看不见被 shell 卡口消费的参数** —— 这是 #165 ⑦
   // "只看表不看列"之外另一条盲区，同一条道理：绿不代表有人读，红也不代表没人读。
   // 因此这条留在例外表里，理由改成"消费者是 CI 脚本"，别当"仍未接线"再加新例外。
+  SEASON_COUNT: '零引用：#750（裁决「跑 5 个赛季」已定、值 5 已落global.json，但**代码里没有「第几个赛季」的概念** —— seasonId 由 SeasonRulesAssembler 从 season 表行 id 前缀反推，恒为 season_01；要让它随天数推进要改 SeasonTimeline.Rules 或 SeasonRulesAssembler 一处，而那一步与「补 season_02..05 的阶段行」一起待口径）',
   PAY_CHANNEL: '零引用（运行时代码）：#175（消费者是 scripts/check-no-payment-bypass.sh，本门只扫 java/ts 看不见 shell）',
   // MINOR_PAY_SINGLE_LIMIT_CENTS 与 MINOR_PAY_MONTHLY_LIMIT_CENTS 曾在这里挂着：
   // 那两条不是"设计如此"，而是**没接线**（#64）。现在下单路径

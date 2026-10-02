@@ -2185,6 +2185,15 @@
       "why": "每名次的赛季币基数，实际发放 = coinPerRank × (rewardedTopN − rank + 1)，所以第 1 名拿 rewardedTopN 份、最后一名拿 1 份。**用「名次越靠前份数越多」而不是「每名次等额」**：等额的话第 1 名与第 100 名只差一个名次却拿一样的钱，排行就失去了意义；而这个线性公式的好处是不引入第二个参数（不需要再定一个「首名额外倍数」），调 SEASON_REWARDED_TOP_N 时整条曲线自动跟着变。",
       "todo": "TODO(需确认): 100 是起点，且赛季币的用途（荣耀商店？）尚未定义 —— 一种没有用途的货币发得再多也没有激励作用"
     },
+  {
+    "id": "SEASON_COUNT",
+    "valueType": "LONG",
+    "value": 5,
+    "unit": "个赛季",
+    "source": "#750 裁决（2026-10-02 人工选中「5 个」，区间上沿）",
+    "why": "一共跑几个赛季。⚠️ 运行期无人读它 —— —— 代码里没有「第几个赛季」的概念：seasonId 由 SeasonRulesAssembler 从 season 表行 id 的前缀反推（season.json 只有 season_01 五行 ⇒ 恒为 season_01），所以这个数今天改了不会生效，直到 SeasonTimeline.Rules 或 SeasonRulesAssembler 那唯一一处改成按天数推进（#505 裁决：可见性落在 why 不落 todo）。与同区的 SEASON_ARCHIVE_RETENTION=3 一起看：跑 5 季而归档留 3 季（= 当前季 + 前两季），所以「上个赛季的争议」始终可取证——这正是 ARCHIVE_RETENTION 那条 why 要保证的事，而季数本身不参与该判断。上界取 5 的理由同 ARCHIVE_RETENTION 那段 why：5 个赛季 = 225 天，已足够让 #748 实测的「跨赛季才满级」形态（45 天主城 22 级 → 120 天 39 级）跑满 5 轮并被玩家体验到；同时季号补零到两位（SeasonSettlementService:284-285 注释：季号形如 season_01_phase_3，补零两位使字典序等于时间序），5 远在两位数的容量之内 ⇒ 季号排序不失效。",
+    "todo": "TODO(需确认) season 表目前只有 season_01 五行；SEASON_COUNT=5 要真正生效需要补 season_02..season_05 的阶段行，且每季 5 个阶段的 goalValue 与三种奖励（rewardGold/rewardSeasonCoin/rewardHeroFragment）本仓无出处——season_01 现值是 8/1/200/5/1 与 200/500/1000/2000/5000、100/200/400/800/2000、0/2/5/10/30，而「赛季之间该递多少」表里未写，需产品给口径（见 #750 第三段）。另需确认：代码里目前没有「第几个赛季」的概念，seasonId 由 SeasonRulesAssembler 从 season 表行 id 前缀反推（恒为 season_01），要让它随天数推进需改 SeasonTimeline.Rules 或 SeasonRulesAssembler 一处（seasonId 生产读点 38 处，真要改的只有那一处）。"
+  },
     {
       "id": "SEASON_ARCHIVE_RETENTION",
       "valueType": "LONG",
