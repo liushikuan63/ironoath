@@ -47,11 +47,80 @@ import java.util.Map;
  */
 public final class BalanceCli {
 
+    // 代码里真正被读过的开关全集，共 41 个（#735 裁决：只警告、不改退出码）。
+    // 这份名单的来路与两个坑，都是 2026-10-02 实测踩出来的：
+    //   1) 不能用 usage 段那份清单当权威：usage 只列了 19 个，本类实际读 41 个，
+    //      拿 usage 当权威会把 22 个「代码认、usage 没列」的开关误报成未知。
+    //   2) 不能只扫一种读法：本类读开关有四种写法（getOrDefault / options.get /
+    //      containsKey / options.containsKey），首版只扫前两种，漏掉 containsKey
+    //      独有的 11 个，于是无值 flag --f2p7d 被自己的警告拦下。
+    // 另有两类不算「拼错」：裸 -- （tools/baseline-f2p.sh 每条命令行都带一个，
+    // 见 #733 落在 .keys 首行的回显）会被 parse 存成空键；无值 flag 会被存成 true。
+    // 用 HashSet 而不是 Set.of：Set.of 的参数个数上限是 10，这里有 41 个。
+    // 加新开关时必须同步补进这里，否则它会被自己的警告拦下。
+    private static final java.util.Set<String> KNOWN_SWITCHES =
+            new java.util.HashSet<>(java.util.Arrays.asList(
+                    "atk",
+                    "base-rate",
+                    "bonus",
+                    "builds-gate",
+                    "cap",
+                    "cap-base",
+                    "cases",
+                    "comp",
+                    "config",
+                    "cost-ratio",
+                    "days",
+                    "def",
+                    "determinism",
+                    "dims",
+                    "f2p-days",
+                    "f2p-stages",
+                    "f2p7d",
+                    "matrix",
+                    "out-exponent",
+                    "population",
+                    "priority",
+                    "producers",
+                    "rally",
+                    "runs",
+                    "samples",
+                    "seat-by",
+                    "seed",
+                    "seed-base",
+                    "settle-bench",
+                    "single",
+                    "size",
+                    "tech-cost",
+                    "tech-level",
+                    "terrain",
+                    "tier",
+                    "train-slots",
+                    "train-unit",
+                    "troops",
+                    "type",
+                    "wall",
+                    "warmup"
+            ));
+
+    private static void warnUnknownSwitches(Map<String, String> options) {
+        java.util.List<String> unknown = options.keySet().stream()
+                .filter(k -> !k.isEmpty())
+                .filter(k -> !KNOWN_SWITCHES.contains(k))
+                .sorted()
+                .collect(java.util.stream.Collectors.toList());
+        if (unknown.isEmpty()) {
+            return;
+        }
+        System.err.println("[WARN] 未知开关（已按「未设置」处理，退出码不变）: " + String.join(" ", unknown));
+    }
+
     private BalanceCli() {
     }
 
     public static void main(String[] args) {
         Map<String, String> options = parse(args);
+        warnUnknownSwitches(options);
         ConfigRegistry configs = ConfigRegistry.loadFromDirectory(
                 Path.of(options.getOrDefault("config", "contract/config")));
         BattleParamsResolver resolver = new BattleParamsResolver(configs);
