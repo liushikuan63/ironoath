@@ -893,6 +893,14 @@ public final class BalanceCli {
             // `--train-slots` 同 `--population`：**只在 CLI 里存在的探针旋钮**，
             // 用来量「把 TRAIN_QUEUE_SLOTS 调大能吃掉多少溢出」。默认值 1 = 表里的值。
             final long slots = Long.parseLong(options.getOrDefault("train-slots", "1"));
+            // ⚠️ **造价单价从 `unit` 表读**（#646）：原来写死「铁 30 / 粮 20」，那只是 T1 步兵的**现值** ——
+            // `unit.json` 一改就漂移，而模拟器照常输出一整套读数（#592 capBase / #594 initCap 同族）。
+            // 兵种默认 T1 步兵（`--train-unit` 可换），与原注释「每批 100 个 T1」一致。
+            final String trainUnitId = options.getOrDefault("train-unit", "unit_infantry_t1");
+            final com.ironoath.config.cfg.UnitCfg trainUnit =
+                    configs.get(com.ironoath.config.cfg.UnitCfg.class, trainUnitId);
+            final long trainCostIronPerUnit = trainUnit.trainCostIron();
+            final long trainCostGrainPerUnit = trainUnit.trainCostGrain();
             final com.ironoath.core.hero.HeroRules heroRules = new com.ironoath.core.hero.HeroRules(
                     configs.fixedParam("HERO_LEVEL_STEP"),
                     configs.fixedParam("HERO_STAR_STEP"),
@@ -924,8 +932,19 @@ public final class BalanceCli {
                 // **不是「一生只能造多少」**。第一版每天只在 `standing + perBatch <= maxQueued`
                 // 时造，等价于「造满就永远停手」，那是把队列当成了总量上限。
                 while (standing + perBatch <= maxQueued) {
-                    long costIron = (perBatch / 100L) * 30L;
-                    long costGrain = (perBatch / 100L) * 20L;
+                    // ⚠️ **造价改成从 `unit` 表读，且去掉整除**（收口清单 #646）。原来两行是：
+                    //     long costIron  = (perBatch / 100L) * 30L;
+                    //     long costGrain = (perBatch / 100L) * 20L;
+                    // 两个问题：① **30/20 是写死的** —— 恰���等于 T1 步兵现值，所以读数「看起来对」，
+                    //   而 `unit.json` 一改就漂移（与 #592 capBase、#594 initCap、#641 科技加成同族：
+                    //   量具与表脱钩时它照常输出一整套读数，全是按旧值算的）；
+                    // ② **`perBatch / 100L` 是整除** —— 人口不足一批时（`maxQueued < 100`）
+                    //   `perBatch / 100 == 0` ⇒ **造价算成 0，等于白造兵**。实测 `--population` 调到
+                    //   小值时就会走到这一支，#644 把它暴露了出来。
+                    // ⇒ 修法：单价从 `UnitCfg` 读（`trainCostIron` / `trainCostGrain`），
+                    //   总量 = 单价 × 本批个数，**不整除**。
+                    final long costIron = perBatch * trainCostIronPerUnit;
+                    final long costGrain = perBatch * trainCostGrainPerUnit;
                     if (iron < costIron || grain < costGrain) {
                         break;
                     }
@@ -1085,9 +1104,13 @@ public final class BalanceCli {
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
                 // 统帅值与带兵上限**分开印**：这两个数混用正是 #644 的根，只印一个时读者无从判断它是哪个。
-                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次 %d, 带兵上限 %d = 统帅值 %d × TROOP_PER_COMMAND %d)，兵营 %d 级）%n",
+                // 兵种与单价也印出来：#646 之前它们是写死的 30/20，印出来才能自证「现在读的是表」。
+                System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次 %d, "
+                                + "带兵上限 %d = 统帅值 %d × TROOP_PER_COMMAND %d)，兵营 %d 级，"
+                                + "兵种 %s：铁 %d / 粮 %d 每兵，读自 unit 表）%n",
                         "", "", troopsMade, standing, maxQueued, slots * batchSize,
-                        population, commandValue, heroRules.troopPerCommand(), barracksLevel);
+                        population, commandValue, heroRules.troopPerCommand(), barracksLevel,
+                        trainUnitId, trainCostIronPerUnit, trainCostGrainPerUnit);
             }
             if (level < prevLevel) {
                 monotonicBreaks++;
