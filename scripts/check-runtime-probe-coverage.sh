@@ -70,6 +70,28 @@ if ! grep -q 'tools/verify-\*\.mjs' scripts/run-runtime-probes.sh; then
   fail=1
 fi
 
+# ⚠️ 最关键的一条：**排除必须真的生效**（2026-10-03 当场抓到）。
+# 收集脚本第一版用 `grep -qxF "$b" "$EXCLUDE_LIST"` 整行匹配，而名单行带 `#` 理由
+# ⇒ 永远匹配不上 ⇒ 名单形同虚设：`verify-nation-live.mjs` 明明在名单里却仍被跑了。
+# 而只验"名单条目存在且有理由"的门禁**抓不到这个** —— 名单本身完全合法，只是没被用上。
+# ⇒ 这里直接**复用收集脚本的解析方式**生成一份"应该被排除的名字"，再与真实收集逻辑比：
+#   若某条排除项仍出现在 `ls tools/verify-*.mjs` 的全量里且没被剔除 ⇒ 排除没生效。
+excluded_names="$(grep -v '^[[:space:]]*#' "$EXCLUDE" | awk 'NF{print $1}')"
+for name in $excluded_names; do
+  if ! grep -q 'EXCLUDE_NAMES' scripts/run-runtime-probes.sh; then
+    echo "[check-runtime-probe-coverage] 收集脚本里找不到 EXCLUDE_NAMES：排除逻辑被改掉了，排除项 $name 会静默失效" >&2
+    fail=1
+    break
+  fi
+  # 收集脚本必须先剥注释再取首字段，否则带理由的名单行永远匹配不上
+  if grep -q 'grep -qxF "\$b" "\$EXCLUDE_LIST"' scripts/run-runtime-probes.sh; then
+    echo "[check-runtime-probe-coverage] 收集脚本仍用整行匹配（grep -qxF \"\$b\" \"\$EXCLUDE_LIST\"）：" \
+      "名单行带 # 理由，永远匹配不上 ⇒ 排除静默失效（$name 就是下一个受害者）" >&2
+    fail=1
+    break
+  fi
+done
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

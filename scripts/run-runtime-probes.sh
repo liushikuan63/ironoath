@@ -31,10 +31,15 @@ if [ -z "$LIST" ]; then
   # （含整个 nation 族），本次现跑是 **24/24 份都需要后端、23 份开浏览器、0 份纯逻辑**，
   # 即它们全都是该真跑的量具，只是没按命名约定起名。
   # ⇒ 唯一还需要手工表达的是"**这几份在默认环境跑只会得到假红**"，那就是 $EXCLUDE_LIST。
+  # ⚠️ 名单的行**带 `#` 理由**，所以不能用 `grep -qxF "$b"` 整行匹配 ——
+  #    那样永远匹配不上，**排除名单会静默失效**（2026-10-03 实测：`verify-nation-live.mjs`
+  #    明明写在名单里却仍被跑了，账本里 `port 8234` 那一行就是它）。
+  #    ⇒ 先剥掉注释、只留每行第一个字段，再比文件名。
+  EXCLUDE_NAMES="$(grep -v '^[[:space:]]*#' "$EXCLUDE_LIST" 2>/dev/null | awk 'NF{print $1}')"
   ls tools/verify-*.mjs \
     | while read -r p; do
         b="$(basename "$p")"
-        if [ -f "$EXCLUDE_LIST" ] && grep -qxF "$b" "$EXCLUDE_LIST"; then
+        if [ -n "$EXCLUDE_NAMES" ] && printf '%s\n' "$EXCLUDE_NAMES" | grep -qxF "$b"; then
           echo "EXCLUDE $b （见 $EXCLUDE_LIST 的理由）" >&2
         else
           echo "$p"
