@@ -1261,7 +1261,7 @@ public final class BalanceCli {
             // 因为「读数没变」有三种原因（#712 落的判据：没生效 / 被上限吃掉 / 不在这个维度）。
             if (withCap && techCost && academyLevel > 0L) {
                 int tcBestIdx = -1;
-                long tcBestVal = Long.MAX_VALUE;
+                long tcBestVal = Long.MAX_VALUE;   // 「剩余次数」，不是造价（#715 裁决，理由见下）
                 for (int ti = 0; ti < techIds.length; ti++) {
                     if (techLevels[ti] >= techMaxLv[ti]) {
                         continue;   // 已满级
@@ -1269,12 +1269,17 @@ public final class BalanceCli {
                     if (techNeedAcademy[ti] > academyLevel) {
                         continue;   // ③ 门槛没过 —— 不排队、不替代
                     }
-                    // 同口径选座：优先买「当前造价最低」的那条（与产出建筑的「产量最低先升」同构：
-                    // 都是让最便宜的那步先走，避免被一条贵的卡住而整条线停滞）
-                    long tcVal = Math.round(techCostBase[ti][0] * Math.pow(costRatio, techLevels[ti]))
-                            + Math.round(techCostBase[ti][1] * Math.pow(costRatio, techLevels[ti]))
-                            + Math.round(techCostBase[ti][2] * Math.pow(costRatio, techLevels[ti]))
-                            + Math.round(techCostBase[ti][3] * Math.pow(costRatio, techLevels[ti]));
+                    // ⚠️ **选座口径已由 #714 的「造价最低先走」改为 #715/#716 裁决的「剩余次数最少优先」**。
+                    // 改的缘由是一个**实测出来的退化**（#715 已记）：「造价最低先走」会永远选中
+                    // `tech_agri_stone`（costBaseWood 只有 200，是 11 条里最便宜的），
+                    // 于是 120 次机会几乎全花在**同一条**上（重放：只升 11 级、其余 10 条一次没轮到），
+                    // 实测吃掉 266,832 而 #698 的理论值是 504 万 —— **只拿到 5.3%**。
+                    // 「剩余次数最少」= 优先把 `maxLevel` 小的先升满（`tech_fort_build`/`tech_mil_train`
+                    // 是 25 级，其余 30~40 级），重放结果 **木 187.8万 / 石 180.9万**（比原口径 18 倍）。
+                    // ⚠️ **但要说清它解决不了什么**：铁/粮在任何口径下都只有 3~10 万，
+                    // 因为**铁粮只出现在四条 `tech_mil_*`**（maxLevel 25~40），
+                    // 而 #695 实测铁粮溢出占 99.1% ⇒ **这是结构性的，不是选座能解决的**。
+                    long tcVal = techMaxLv[ti] - techLevels[ti];
                     if (tcVal < tcBestVal) {
                         tcBestVal = tcVal;
                         tcBestIdx = ti;
