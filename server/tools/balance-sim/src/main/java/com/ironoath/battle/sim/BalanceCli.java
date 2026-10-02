@@ -652,22 +652,26 @@ public final class BalanceCli {
         // 而 `outExponent` 是 double（供 Math.pow 用）⇒ 这里取 curve 表的原值，不从 double 反推。
         final long outExponentFixed = configs.curve("BUILDING_OUTPUT").exponentFixed();
         final java.util.function.LongUnaryOperator warehouseCapPer = (lv) ->
-                // ⚠️ `Formula.buildingOutput` 要求等级 >= 1（它会校验），而仓库等级初始就是 0 ——
-                // 直接传会抛「等级必须 >= 1，实际=0」。线上碰不到是因为 `ResourceRateService`
-                // 外面套了 `b.level() > 0` 的判断，未建（等级 0）不贡献容量。
-                // ⇒ 这里照抄同一口径：**等级 0 贡献 0 容量**（不是回退到线性，那会又变成两套公式）。
+                // ⚠️ **必须是「套 `of` + 外面 `round`」这一对，缺一个就差 10000 倍（#676 更正 #674）**：
+                // 线上 `ResourceRateService` 的仓容口径是
+                //     `FixedPoint.round(Formula.buildingOutput(FixedPoint.of(cfg.capBase()), level, exp))`
+                //     = round((capBase × 10000) × level^1.08) ÷ 10000 = **capBase × level^1.08**
+                // 而 `Formula.buildingOutput` → `FixedPoint.powerLaw` **返回定点**（`FixedPoint.round` 的
+                // javadoc 写明「定点转 long 整数，15000 ⇒ 2」，它内部 `divideHalfUp(fixed, SCALE)` ÷10000）。
+                // ⇒ 所以两侧的 `of` 与 `round` 必须成对出现：**少了 `of` 会把 8000 当 0.8 定点（容量≈0），
+                // 少了 `round` 会把定点值当普通整数用（大 10000 倍）**。
+                // ⚠️ #674 我在这里只去掉了 `of`、没补 `round`，得出「线上仓容 9.6 亿」这个**错误结论**：
+                // 实测 cap=961,831,548 = `FixedPoint.of(8000) × 10^1.08`（定点值），
+                // 真正的根因是**模拟器缺 `round`**，而**线上三处本来就是对的**（#675 已回滚线上改动并回绿）。
+                // ⇒ 正确写法与线上逐字同构。
+                // ⚠️ 另：`buildingOutput` 要求等级 >= 1（它会校验），而仓库等级初始就是 0 ——
+                // 线上碰不到是因为 `ResourceRateService` 外面套了 `b.level() > 0` 的判断，未建不贡献容量。
+                // ⇒ 这里照抄同一口径：**等级 0 贡献 0 容量**（不回退线性，那会又变成两套公式）。
                 lv <= 0L ? 0L
-                        : com.ironoath.core.formula.Formula.buildingOutput(
-                                // ⚠️ **这里刻意不套 `FixedPoint.of`（#674）**：`buildingOutput(base, level, exp)`
-                                // 的 `base` 要的是**已定点**的值，而 `building.capBase` 是**普通整数**
-                                // （`BuildingCfg` L23 是裸 `long`，没有 `FixedPointDeserializer`）。
-                                // ⚠️ 套一次 `FixedPoint.of(8000)` 会变成 8,000 万 ⇒ 40 级仓容 9.6 亿，
-                                // 而 `building.json` designNote 写的是 `20000 + capBase×40^1.08`（约 44 万）。
-                                // ⚠️ **仓库里早就写着这个警告** —— `EquipForgeCostCalibrationTest` 的注释：
-                                // 「再套一次 `FixedPoint.of` 会把价钱放大一万倍」。
-                                // ⚠️ 线上 `ResourceRateService:159` 与 `ArmyAppService:610` **正好踩了这个坑**（#674 待裁决）。
-                                woodCapBase, (int) lv,
-                                outExponentFixed);
+                        : com.ironoath.common.num.FixedPoint.round(
+                                com.ironoath.core.formula.Formula.buildingOutput(
+                                        com.ironoath.common.num.FixedPoint.of(woodCapBase),
+                                        (int) lv, outExponentFixed));
         long[] overflow = {0L, 0L, 0L, 0L};
         boolean withCap = !"false".equals(options.getOrDefault("cap", "true"));
         // `--dims` 只在 CLI 里存在：**关掉某一维再跑**，用来看它对读数的贡献。
