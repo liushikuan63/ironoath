@@ -682,6 +682,19 @@ public final class BalanceCli {
         }
         final Ledger ledger = new Ledger();
 
+        // ⚠️ **这七个「累计」计数器与「各建筑当前等级」表必须声明在每日循环之外**（#651）。
+        // 原来它们写在 `for (day)` **里面**（L692/693/770/771/772/814/815）⇒ **每天全部归零**，
+        // 而报告却打「装备强化累计吃铁 / 建造累计吃粮 / 建造累计吃木石铁」——
+        // **同一次运行里那个「累计吃铁」在 840 / 1540 / 1865 之间来回跳**，就是它每天重置的证据。
+        // ⚠️ 更严重的不只是数字不好看：`buildLevel` / `forgeLevel` 记的是**各建筑当前等级**，
+        // 每天归零等于**每天认为那些建筑还是 0 级、每天都按最低造价重复升一遍**（#651）。
+        // ⇒ 这也是 #650 写下的「铁恒定 1675、造兵那 3000 铁永远排不上队」的机制。
+        long buildWood = 0L, buildStone = 0L, buildIron = 0L, buildGrain = 0L;
+        long cityWood = 0L, cityStone = 0L;   // 主城升级花费（#532 对账用）
+        long forgeIron = 0L;
+        int forgePieces = 0;
+        Map<String, Long> forgeLevel = new java.util.HashMap<>();
+        Map<String, Long> buildLevel = new java.util.HashMap<>();
         for (int day = 1; day <= days; day++) {
             int upgraded = 0;
             // ---------- 仓库升级（第二版才补上的一维）----------
@@ -689,8 +702,6 @@ public final class BalanceCli {
             // ⇒ cap 恒等于 initCap ⇒ 溢出必然在第 3 天发生，而那个「仓库扩容追不上产出」
             // 的判断**建立在「仓库根本没被考虑」之上**，是错的。
             // warehouse：requireMainLevel=2、cost 600木+300石、capBase 1000/级、maxLevel 40。
-        long buildWood = 0L, buildStone = 0L, buildIron = 0L;
-        long cityWood = 0L, cityStone = 0L;   // 主城升级花费（#532 对账用）
         // 每一处资源扣除自报（#534）：**别靠 grep 猜，让它自己报花了多少**
         final Map<String, Long> spendTags = new java.util.TreeMap<>();
         final double BUILD_COST_RATIO = 1.22;   // curve.BUILDING_COST.ratio
@@ -767,9 +778,6 @@ public final class BalanceCli {
         // ⚠️ 仍是行为假设：**余额才点**，不设每日上限（上限属玩法口径，未裁决）。
         final long FORGE_BASE = 700000L;
         final long FORGE_RATIO = 12200L;
-        long forgeIron = 0L;
-        int forgePieces = 0;
-        Map<String, Long> forgeLevel = new java.util.HashMap<>();
         if (withCap && dimForge) {
             for (var eq : configs.all(EquipCfg.class)) {
                 // `rarity` 是**枚举 EquipCfg.Rarity**（不是字符串）——
@@ -811,8 +819,6 @@ public final class BalanceCli {
         // 而模型里一条都没有 ⇒ 「粮溢出 237200」与铁那一轮一样是**缺维造成的**。
         // 本版按「**能升就升**」推进（与仓库/兵营同一口径），建造优先级按表顺序，
         // 造价按 `BUILDING_COST` 的 ratio^(n-1)（curve.base=0 ⇒ 用 costBase 直接起步）。
-        long buildGrain = 0L;
-        Map<String, Long> buildLevel = new java.util.HashMap<>();
         if (withCap && dimBuilds) {
             List<String> grainBuildings = List.of(
                     "hospital", "academy", "stable", "embassy", "drill_ground");
