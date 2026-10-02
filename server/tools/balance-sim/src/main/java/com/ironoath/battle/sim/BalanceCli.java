@@ -95,7 +95,10 @@ public final class BalanceCli {
             System.err.println("    --base-rate=R         产出倍率（默认 1.0）");
             System.err.println("    --producers=true|false 产出建筑是否参与升级（默认 true）");
             System.err.println("    --priority=city|balanced  主城优先还是产出建筑优先（默认 city）");
-            System.err.println("    --dims=a,b,c          计入哪几维（默认 cap,builds,forge,troops）");
+            System.err.println("    --tech-cost=true|false 科技花费是否计入账本（默认 false；#713）");
+        System.err.println("                            **独立于 --tech-level**：后者只算 *_OUTPUT 的效果，");
+        System.err.println("                            本开关才按 tech 表的 costBase × 1.22^等级 真实扣四资源。");
+        System.err.println("    --dims=a,b,c          计入哪几维（默认 cap,builds,forge,troops）");
         System.err.println("                            #691：写 cap 与不写**没有区别**（源码只读 builds/forge/troops，");
         System.err.println("                            cap 是死参数）—— 截断只由上面的 --cap 管，别被这一项误导。");
         System.err.println("    --seat-by=rate|level|index  产出建筑「先升哪一座」的口径（#685）：");
@@ -565,6 +568,39 @@ public final class BalanceCli {
         // 「**如果产出科技满级，时间线会走到哪**」，用来给「120 天 17 级」那个下界定上界，
         // 不能当玩家画像。报告里两处都写明这一句。
         int techLevel = Integer.parseInt(options.getOrDefault("tech-level", "0"));
+    // ---------- 科技花费侧（#713）----------
+    // `--tech-cost` 独立于 `--tech-level`：后者只算 *_OUTPUT 的效果（L567 起），本开关才扣资源。
+    // 判据靠账目侧（ledger 出现 tech-upgrade），不靠「读数变了」（理由见主段注释）。
+    boolean techCost = !"false".equals(options.getOrDefault("tech-cost", "false"));
+    String[] techIds = new String[0];
+    int[] techLevels = new int[0];
+    long[] techMaxLv = new long[0];
+    int[] techNeedAcademy = new int[0];
+    long[][] techCostBase = new long[0][4];
+    long techWood = 0L, techStone = 0L, techIron = 0L, techGrain = 0L;
+    {
+        var trs = new java.util.ArrayList<com.ironoath.config.cfg.TechCfg>();
+        for (var row : configs.all(com.ironoath.config.cfg.TechCfg.class)) {
+            trs.add(row);
+        }
+        int n = trs.size();
+        techIds = new String[n];
+        techLevels = new int[n];
+        techMaxLv = new long[n];
+        techNeedAcademy = new int[n];
+        techCostBase = new long[n][4];
+        for (int i = 0; i < n; i++) {
+            var row = trs.get(i);
+            techIds[i] = row.id();
+            techLevels[i] = 0;
+            techMaxLv[i] = row.maxLevel();
+            techNeedAcademy[i] = (int) row.requireAcademyLevel();
+            techCostBase[i][0] = row.costBaseWood();
+            techCostBase[i][1] = row.costBaseStone();
+            techCostBase[i][2] = row.costBaseIron();
+            techCostBase[i][3] = row.costBaseGrain();
+        }
+    }
         long woodTechPct = 0L, stoneTechPct = 0L, ironTechPct = 0L, grainTechPct = 0L;
         if (techLevel > 0) {
             var rows = new java.util.ArrayList<com.ironoath.common.config.TechBonusCore.Row>();
@@ -1205,7 +1241,66 @@ public final class BalanceCli {
                     }
                 }
             }
-            // 一天一个循环：先按当天可花的钱升级，升级不了就把钱留到第二天（结余照常累积）
+            // ---------- 科技花费（#713 裁决：每天 1 条 / 严格按表扣 / 严格按表接门槛） ----------
+            // ⚠️ **这一段是本仓第一条「四资源消费口」**（#699 的核法：载体必须同时有花费列 + 有代码入账，
+            // 而此前两者都不满足 ⇒ 消费口 = 0 ⇒ 溢出占 92%~99%）。它的作用不是「解决溢出」
+            // （#698 已算：科技全满只占 4.08%/3.36%/6.06%/6.25%），而是**先量出一个真实值**，
+            // 再反推还缺多少载体 —— 这正是裁决「先只接 tech，用实测反推还缺多少」的形态。
+            //
+            // 三个口径（#713，均为弹窗裁决，不是自己选的）：
+            //   ① **每天 1 条**（与 #692 已定的「每天一座/一级」同口径）；
+            //   ② **严格按表扣**：`costBase{Wood,Stone,Iron,Grain} × 1.22^当前等级`，
+            //      曲线取 `tech.json` 的 `costCurve=BUILDING_COST`（ratio 1.22）——
+            //      **不新造任何数字**，与 `EQUIP_FORGE_COST.why` 里「强化与城建共用一个递增斜率」
+            //      是同一条口径；
+            //   ③ **`requireAcademyLevel` 严格按表接**：低于门槛的**不买**（不排队、不降级替代），
+            //      与线上 `TechAppService:141` 的 `if (academy < cfg.requireAcademyLevel())` 逐字同构。
+            //
+            // ⚠️ **`--tech-level` 仍是效果侧那个开关**（L567 起，它把 11 条全顶到 N 级算 *_OUTPUT）；
+            // 本段**另加** `--tech-cost` 才扣钱 —— 判据要用**账目侧**（`ledger` 里出现 tech-upgrade），
+            // 因为「读数没变」有三种原因（#712 落的判据：没生效 / 被上限吃掉 / 不在这个维度）。
+            if (withCap && techCost && academyLevel > 0L) {
+                int tcBestIdx = -1;
+                long tcBestVal = Long.MAX_VALUE;
+                for (int ti = 0; ti < techIds.length; ti++) {
+                    if (techLevels[ti] >= techMaxLv[ti]) {
+                        continue;   // 已满级
+                    }
+                    if (techNeedAcademy[ti] > academyLevel) {
+                        continue;   // ③ 门槛没过 —— 不排队、不替代
+                    }
+                    // 同口径选座：优先买「当前造价最低」的那条（与产出建筑的「产量最低先升」同构：
+                    // 都是让最便宜的那步先走，避免被一条贵的卡住而整条线停滞）
+                    long tcVal = Math.round(techCostBase[ti][0] * Math.pow(costRatio, techLevels[ti]))
+                            + Math.round(techCostBase[ti][1] * Math.pow(costRatio, techLevels[ti]))
+                            + Math.round(techCostBase[ti][2] * Math.pow(costRatio, techLevels[ti]))
+                            + Math.round(techCostBase[ti][3] * Math.pow(costRatio, techLevels[ti]));
+                    if (tcVal < tcBestVal) {
+                        tcBestVal = tcVal;
+                        tcBestIdx = ti;
+                    }
+                }
+                if (tcBestIdx >= 0) {
+                    int t = tcBestIdx;
+                    double f = Math.pow(costRatio, techLevels[t]);
+                    long cw = Math.round(techCostBase[t][0] * f);
+                    long cs = Math.round(techCostBase[t][1] * f);
+                    long ci = Math.round(techCostBase[t][2] * f);
+                    long cg = Math.round(techCostBase[t][3] * f);
+                    if (wood >= cw && stone >= cs && iron >= ci && grain >= cg) {
+                        wood -= cw;   stone -= cs;   iron -= ci;   grain -= cg;
+                        // ⚠️ **必须记 ledger**（判据③）：#689 刚把对账公式改成逐日真累计
+                        // `producedTotal`，新增花费若不入账，**对账会第一次真的破**
+                        // （此前对得上只是因为科技花费一直是 0）。
+                        if (cw > 0L) { ledger.spend("wood", "tech-upgrade", cw); }
+                        if (cs > 0L) { ledger.spend("stone", "tech-upgrade", cs); }
+                        if (ci > 0L) { ledger.spend("iron", "tech-upgrade", ci); }
+                        if (cg > 0L) { ledger.spend("grain", "tech-upgrade", cg); }
+                        techWood += cw; techStone += cs; techIron += ci; techGrain += cg;
+                        techLevels[t]++;
+                    }
+                }
+            }            // 一天一个循环：先按当天可花的钱升级，升级不了就把钱留到第二天（结余照常累积）
             while (true) {
                 // ⚠️ **补上主城等级上限守卫（#670）**：原来这个 `while (true)` 只判资源够不够，
                 // **不判等级上限** ⇒ 主城能无限升；而线上 `CityAppService:499` 是把
