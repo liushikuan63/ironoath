@@ -486,13 +486,29 @@ public final class BalanceCli {
         int days = Integer.parseInt(options.getOrDefault("days", "7"));
         long hourMillis = 3_600_000L;
         long dayMillis = 24 * hourMillis;
+        // ⚠️ **这三个数原先一个是写死的、一个默认取错（#671）**：
+        //   `outExponent` 默认 **1.0**、而线上 `ResourceRateService:131` 读 `curve.BUILDING_OUTPUT`
+        //   的 `exponentFixed()` = **1.08** ⇒ 模拟器的产出曲线是 `base × level^1.0`（线性），
+        //   线上是 `base × level^1.08` ⇒ **40 级时产量差 38%**（40 vs 40^1.08 ≈ 55.2）。
+        //   而这行代码下面 26 行处的仓容（#665）**已经在用 1.08** ⇒ 同一份代码里
+        //   「仓容 1.08、产出 1.0」自相矛盾，那个矛盾本身就是判据。
+        //   `costRatio` 数值 1.22 与 `curve.BUILDING_COST.ratio` 相同，但那是「今天一致」——
+        //   它有 **13 个使用点**（仓库/产出建筑/主城造价），表一改就全漂移。
+        //   `timeRatio` 原为写死 1.18，**但整份文件里从未被使用**（死变量）⇒ 直接删。
+        // 定点数（真实值 ×10000）转 double 用项目既有的 `/ 10000.0d` 写法（见 ArmyEndpointTest:309）。
+        // 三个 CLI 覆盖开关（`--out-exponent` / `--cost-ratio`）保留，量具仍可被探针拧。
+        final com.ironoath.common.config.CurveParams outputCurve =
+                configs.curve("BUILDING_OUTPUT");
+        final com.ironoath.common.config.CurveParams costCurve =
+                configs.curve("BUILDING_COST");
         double outExponent = options.containsKey("out-exponent")
-                ? Double.parseDouble(options.get("out-exponent")) : 1.0;
+                ? Double.parseDouble(options.get("out-exponent"))
+                : outputCurve.exponentFixed() / 10000.0d;
         double costRatio = options.containsKey("cost-ratio")
-                ? Double.parseDouble(options.get("cost-ratio")) : 1.22;
+                ? Double.parseDouble(options.get("cost-ratio"))
+                : costCurve.ratioFixed() / 10000.0d;
         // `--base-rate` 只在 CLI 里存在（默认 1.0 = 不缩放）：量「底产要缩到几成，仓储才不再满」。
         final double baseRate = Double.parseDouble(options.getOrDefault("base-rate", "1.0"));
-        double timeRatio = 1.18;
 
         // 底产：**从 building 表读** `outputBasePerHour`（lumber_camp / quarry / iron_mine / farm），
         // **不再写死**。前一版写死 200/200/100/400 是我编的 —— 表里真实值是

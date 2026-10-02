@@ -224,10 +224,40 @@ if (lvlProblems.length > 0) {
     + '依据：收口清单 #670。')
   process.exit(1)
 }
+// ---- #671: the 10th site. Three numbers at the top of the run: `outExponent` defaulted to 1.0
+// while production reads `curve.BUILDING_OUTPUT.exponentFixed()` = 1.08; `costRatio` was the
+// literal 1.22 across 13 call sites (warehouse / producer / main-city cost); `timeRatio` was the
+// literal 1.18 and was never used at all. Note the self-contradiction that gave it away: the
+// warehouse capacity added 26 lines below already used 1.08 (#665), so the same file computed
+// "capacity with 1.08, output with 1.0". Literals are banned by CurveCfg's class javadoc
+// （铁律 1）, and the file comment at the other producerRates write site even said
+// 「产出随等级按 curve 表 BUILDING_OUTPUT 增长（exponent 现值 1）」— the defect was known and
+// documented in place. The CLI overrides stay so probes can still turn the dials.
+const ratioProblems = []
+if (/:\s*1\.0;/.test(cliCode) && /double outExponent/.test(cliCode)) {
+  ratioProblems.push('outExponent 又退回默认 1.0（线上 BUILDING_OUTPUT 指数是 1.08）')
+}
+if (!/curve\(\s*"BUILDING_OUTPUT"\s*\)\s*\n?\s*;/.test(cliCode)
+    && !/outputCurve\.exponentFixed\(\)/.test(cliCode)) {
+  ratioProblems.push('outExponent 没有从 curve.BUILDING_OUTPUT 读')
+}
+if (!/costCurve\.ratioFixed\(\)/.test(cliCode)) {
+  ratioProblems.push('costRatio 没有从 curve.BUILDING_COST 读（13 个使用点）')
+}
+if (/\btimeRatio\b/.test(cliCode)) {
+  ratioProblems.push('timeRatio 又出现了（它是死变量，从未被使用）')
+}
+if (ratioProblems.length > 0) {
+  console.error('[check-balance-sim-config-sync][FAIL] 产出/造价比率脱钩：')
+  for (const p of ratioProblems) console.error('  - ' + p)
+  console.error('  后果：仓容用 1.08 而产出用 1.0，同一份代码自相矛盾；'
+    + '曲线字面量违反 CurveCfg 类注释铁律 1。依据：收口清单 #671。')
+  process.exit(1)
+}
 const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 九处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 十处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
   + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount / 强化费读 EQUIP_FORGE_COST 曲线）。')
