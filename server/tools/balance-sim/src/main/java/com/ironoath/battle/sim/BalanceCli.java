@@ -658,7 +658,15 @@ public final class BalanceCli {
                 // ⇒ 这里照抄同一口径：**等级 0 贡献 0 容量**（不是回退到线性，那会又变成两套公式）。
                 lv <= 0L ? 0L
                         : com.ironoath.core.formula.Formula.buildingOutput(
-                                com.ironoath.common.num.FixedPoint.of(woodCapBase), (int) lv,
+                                // ⚠️ **这里刻意不套 `FixedPoint.of`（#674）**：`buildingOutput(base, level, exp)`
+                                // 的 `base` 要的是**已定点**的值，而 `building.capBase` 是**普通整数**
+                                // （`BuildingCfg` L23 是裸 `long`，没有 `FixedPointDeserializer`）。
+                                // ⚠️ 套一次 `FixedPoint.of(8000)` 会变成 8,000 万 ⇒ 40 级仓容 9.6 亿，
+                                // 而 `building.json` designNote 写的是 `20000 + capBase×40^1.08`（约 44 万）。
+                                // ⚠️ **仓库里早就写着这个警告** —— `EquipForgeCostCalibrationTest` 的注释：
+                                // 「再套一次 `FixedPoint.of` 会把价钱放大一万倍」。
+                                // ⚠️ 线上 `ResourceRateService:159` 与 `ArmyAppService:610` **正好踩了这个坑**（#674 待裁决）。
+                                woodCapBase, (int) lv,
                                 outExponentFixed);
         long[] overflow = {0L, 0L, 0L, 0L};
         boolean withCap = !"false".equals(options.getOrDefault("cap", "true"));
