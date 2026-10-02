@@ -1060,6 +1060,15 @@ public final class BalanceCli {
             }
             // 一天一个循环：先按当天可花的钱升级，升级不了就把钱留到第二天（结余照常累积）
             while (true) {
+                // ⚠️ **补上主城等级上限守卫（#670）**：原来这个 `while (true)` 只判资源够不够，
+                // **不判等级上限** ⇒ 主城能无限升；而线上 `CityAppService:499` 是把
+                // `(int) cfg.maxLevel()` 传给升级调用来封顶的 ⇒ 模拟器与线上不一致（第九处脱钩，
+                // 与 #592 capBase、#665 仓容公式同族：表里那个 `maxLevel` 根本没被读到）。
+                // ⚠️ 它对当前读数**无影响**（600 天只到 24 级，远未触顶），
+                // 但**模拟器不得比线上更宽松**，否则一旦产出被放大就会算出线上不可能的等级。
+                if (level >= mainCityCfg.maxLevel()) {
+                    break;
+                }
                 // 主城造价也从表读（#598）：原来写死 1000，且下一行 stoneCost = woodCost
                 // 隐含了「木石同价」这个假设 —— 表里确实是 1000/1000，但那是巧合不是约束。
                 long woodCost = Math.round(mainCityCfg.costBaseWood() * Math.pow(costRatio, level - 1));

@@ -207,10 +207,27 @@ if (capProblems.length > 0) {
     + '实测 120 天粮溢出 471200 → 0、主城 15 → 16 级。依据：收口清单 #665。')
   process.exit(1)
 }
+// ---- #670: the 9th site. The simulator's main-city upgrade loop guarded only resources,
+// not the level cap, so it could climb forever, while production `CityAppService:499`
+// passes `(int) cfg.maxLevel()` into the upgrade call to seal it. Verified no effect on current
+// readings (600 days reach only level 24, far from 40) — but a simulator must never be more
+// permissive than production, or raising output would produce levels the real game cannot reach.
+const lvlProblems = []
+const hasGuard = /level\s*>=\s*mainCityCfg\.maxLevel\(\)/.test(cliCode)
+if (!hasGuard) {
+  lvlProblems.push('主城升级循环没有 `level >= mainCityCfg.maxLevel()` 守卫（线上 CityAppService:499 封顶）')
+}
+if (lvlProblems.length > 0) {
+  console.error('[check-balance-sim-config-sync][FAIL] 主城等级上限脱钩：')
+  for (const p of lvlProblems) console.error('  - ' + p)
+  console.error('  后果：模拟器能算出线上不可能的等级，而表里那个 maxLevel 根本没被读到。'
+    + '依据：收口清单 #670。')
+  process.exit(1)
+}
 const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 八处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 九处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
   + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount / 强化费读 EQUIP_FORGE_COST 曲线）。')
