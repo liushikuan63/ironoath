@@ -102,10 +102,9 @@ url.searchParams.set('panel', 'city')
 await page.goto(url.toString(), { waitUntil: 'networkidle' })
 await page.waitForFunction(() => window.cc?.director?.getScene?.() != null, null, { timeout: 25_000 })
   .catch(() => {})
-// 等待时长做成可调（#610）：原来写死 2500ms。实测（#610）缩短它并不能改变「点不中」，
-// 但把它做成参数之后，"点得中/点不中"可以按 GET /stamina 出现的**条数**直接判读 —���
-// 一条 = 点击没命中（只有 AppRoot:913 的 deliver），两条 = 点击命中且触发了
-// openStaminaDetail(:1204)。这是复现「点不中」时最省事的那个开关。
+// 等待时长做成可调（#610）：原来写死 2500ms。**它现在只用来调节探针的节奏，不再是诊断旋钮** ——
+// #610 当初靠它区分"点不中"，而那个现象的真因是 `PlayerSave.resources()` 用 `Map.copyOf` 排序
+// （#618 定位、#619 修掉），布局已不再随 JVM 进程变 ⇒ 缩短它改变不了命中与否，别再拿它做反证。
 const __waitMs = Number(process.env.STA_WAIT_MS ?? '2500')
 await page.waitForTimeout(__waitMs)
 await page.evaluate(() => {
@@ -388,6 +387,13 @@ const htInfo = await page.evaluate(() => {
   return { probe: Math.round(v.x) + ',' + Math.round(v.y), rows }
 })
 console.log('[stamina][hitTest] 探针点(' + htInfo.probe + ')：' + htInfo.rows.join(' ; '))
+// `STA_DX` / `STA_DY`：**人工排查用**的像素偏移旋钮（#610），不是"修命中"的开关 ——
+// #619 修掉 `Map.copyOf` 之前，布局随 JVM 进程变，于是"偏移能不能救回来"成过一个真问题；
+// 现在布局跨进程恒定，正常跑时它们应当恒为 0，改它们只会在量具本身上制造偏差。
+// ⚠️ 2026-10-03 差点把这两个变量当死代码删掉：`grep 'STA_DX'` 找不到 `__dx` 的**使用点**，
+//    而 `node --check` 只查语法、查不出未定义变量 ⇒ 删了之后要等到跑探针才炸成 ReferenceError。
+//    ⇒ 落判据：**判"某变量没被用过"时，grep 必须同时覆盖定义名与所有引用形式，
+//    并且判据要能在真跑时失败 —— 语法检查不构成证据。**
 const __dx = Number(process.env.STA_DX ?? '0')
 const __dy = Number(process.env.STA_DY ?? '0')
 // 点击点由引擎自己的命中出（#638）。三道门：往返自检、引擎自命中、CSS 点落在画布内。
