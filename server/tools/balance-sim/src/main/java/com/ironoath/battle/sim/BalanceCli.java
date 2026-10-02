@@ -597,7 +597,10 @@ public final class BalanceCli {
         boolean dimBuilds = dims.contains("builds");
         // `--builds-gate`：只建这些（#543 的待裁决项要读「一座不建」的影响面）
         // **裁决 #549（2026-10-01）**：零氪前 7 天**不建**那四座零产出建筑。
-        // 读数依据：全建 45 天主城 5 级 / 一座不建 11 级（#544，对账全程平）。
+        // 读数依据：**全建 45 天主城 8 级 / 默认一座不建 12 级**（#652 现跑，对账全程平）。
+// ⚠️ 原来这里记的是「全建 5 级 / 一座不建 11 级（#544）」—— **那是 #651 修好「累计」之前的口径**：
+// 那时 `forgeLevel` / `buildLevel` 每天归零、装备与建筑被按 0 级造价重造，
+// 铁被白嫖掉、主城才勉强爬到 5 级。#651 之后数字变了，就地更正而不删原文。
         // 理由：它们解锁的能力（治疗上限 / 骑兵 / 科技 / 联盟）在新号阶段一样都用不上
         // （无战损、无行军、无外交），而建造是**不可逆**的资源投入 ——
         // 先攒料升主城、有了战损再补医院，是同一笔钱的两种花法。
@@ -1124,8 +1127,23 @@ public final class BalanceCli {
             if (withCap) {
                 System.out.printf("%-6s%-10s装备强化累计吃铁 %d（已开练 %d 件）%n",
                         "", "", forgeIron, forgePieces);
-                System.out.printf("%-6s%-10s建造累计吃粮 %d（等级 %s）%n",
-                        "", "", buildGrain, buildLevel);
+                // ⚠️ **门控关闭时必须说清「为什么是 0」**（#652）：`--builds-gate` 默认 `"none"`
+                // （#543/#544 裁决：新号阶段那些建筑解锁的能力都用不上，而建造不可逆、先攒料升主城），
+                // 关闭时 `buildLevel` 永远是空 Map —— 原来只打一个 `{}`，
+                // 读者会以为这维坏了或数据丢了。现跑对照（45 天）：
+                //   默认 none  ⇒ 12 级 / 铁 1456 / 建造累计吃粮 0（等级 {}）
+                //   五座全开  ⇒  8 级 / 铁 2721 / 建造累计吃粮 32799
+                //     （{stable=9, embassy=10, drill_ground=9, hospital=12, academy=9}）
+                // ⇒ 这维是好的，0 是**配置选择**而不是缺陷。
+                if (buildLevel.isEmpty() && "none".equals(options.getOrDefault("builds-gate", "none"))) {
+                    System.out.printf("%-6s%-10s建造累计吃粮 0（**本档未开 --builds-gate**，默认 none，见 #543/#544 裁决："
+                            + "那些建筑解锁的能力新号阶段都用不上，建造不可逆，先攒料升主城；"
+                            + "传 --builds-gate=hospital,academy,stable,embassy,drill_ground 可开门对照）%n",
+                            "", "");
+                } else {
+                    System.out.printf("%-6s%-10s建造累计吃粮 %d（等级 %s）%n",
+                            "", "", buildGrain, buildLevel);
+                }
                 System.out.printf("%-6s%-10s建造/仓库累计吃：木 %d / 石 %d / 铁 %d / 粮 %d%n",
                         "", "", buildWood, buildStone, buildIron, buildGrain);
                 System.out.printf("%-6s%-10s累计溢出（**产出被丢弃，不是排队**）：木 %d / 石 %d / 铁 %d / 粮 %d%n",
