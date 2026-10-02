@@ -313,10 +313,43 @@ if (prodProblems.length > 0) {
     + '模拟器比线上更宽松。依据：收口清单 #673。')
   process.exit(1)
 }
+// ---- #683: the producer report line documented the wrong index order. `producerIds` is
+// `{lumber_camp, quarry, farm, iron_mine}` — index 2 is the FARM (grain) and index 3 is the
+// IRON MINE — but the line said 「索引 0木/1石/2铁/3粮」, i.e. 2 and 3 swapped. That is not
+// cosmetic: reading `[21,20,11,38]` with the wrong legend gives "iron 11, grain 38" and
+// makes the 「产量最低的先升」 rule look broken (iron at level 11 while grain is at 38), which
+// cost a whole debugging detour (#682) before the real answer — the rule is correct, and
+// `bestP` at each day was indeed the lowest-rate producer. The gate pins the array literal's
+// order so the legend cannot drift from it again.
+const seatProblems = []
+const m = /String\[\]\s*producerIds\s*=\s*\{([^}]*)\}/.exec(cliCode)
+if (!m) {
+  seatProblems.push('找不到 `producerIds` 数组声明')
+} else {
+  const ids = m[1].split(',').map((s) => s.trim().replace(/"/g, ''))
+  const expect = ['lumber_camp', 'quarry', 'farm', 'iron_mine']
+  if (ids.join(',') !== expect.join(',')) {
+    seatProblems.push('`producerIds` 顺序变了：现在是 ' + ids.join(',')
+      + ' ⇒ 报告里那行「索引 N=某资源」的说明必须同步改，否则读数会被读反')
+  }
+  if (/索引\s*0\s*(木|wood)[^|]*2\s*(铁|iron)[^|]*3\s*(粮|grain)/.test(cliCode)) {
+    seatProblems.push('报告仍写着「索引 0木/1石/2铁/3粮」，而数组第 3 位是 farm(粮)、第 4 位是 iron_mine(铁)')
+  }
+  if (!/2=农场\(grain\)\/3=铁矿场\(iron\)/.test(cliCode)) {
+    seatProblems.push('报告那行没有写明「索引 2=农场(粮)/3=铁矿场(铁)」')
+  }
+}
+if (seatProblems.length > 0) {
+  console.error('[check-balance-sim-config-sync][FAIL] 产出建筑等级的索引说明与数组不符：')
+  for (const p of seatProblems) console.error('  - ' + p)
+  console.error('  后果：按错误图例读 [21,20,11,38] 会得出「铁只到 11 级」的假象，'
+    + '并误判「产量最低的先升」这条规则坏了（它其实完全正常）。依据：收口清单 #683。')
+  process.exit(1)
+}
 const r = (id) => {
   const x = resource.rows.find((y) => y.id === id)
   return x ? x.initCap : '?'
 }
-console.log('[check-balance-sim-config-sync] 十二处都与配置表同源（capBase ' + warehouse.capBase
+console.log('[check-balance-sim-config-sync] 十三处都与配置表同源（capBase ' + warehouse.capBase
   + ' / initCap ' + ['WOOD', 'STONE', 'IRON', 'GRAIN'].map(r).join(',')
   + ' / producers 4 座 / 仓库与主城造价各从表读 / 初始资源读 initAmount / 强化费读 EQUIP_FORGE_COST 曲线）。')

@@ -1279,7 +1279,7 @@ public final class BalanceCli {
                 // 兵种与单价也印出来：#646 之前它们是写死的 30/20，印出来才能自证「现在读的是表」。
                 // ⚠️ **产出建筑等级必须进报告**（#649）：#647 那次「为什么只有伐木场升」只能靠临时
                 // 插诊断才看到，而诊断行已经删了 —— 读数里缺这一维，下一次同样的问题还要重查一遍。
-                System.out.printf("%-6s%-10s产出建筑等级 %s（索引 0木/1石/2铁/3粮，与 producerRates 同序）%n",
+                System.out.printf("%-6s%-10s产出建筑等级 %s（⚠️索引 0=伐木场(wood)/1=采石场(stone)/**2=农场(grain)/3=铁矿场(iron)**，与 `producerIds = {lumber_camp, quarry, farm, iron_mine}` 同序（#683 更正：原写「0木/1石/2铁/3粮」把 2 与 3 说反了）%n",
                         "", "", java.util.Arrays.toString(producerLevels));
                 System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次 %d, "
                                 + "带兵上限 %d = 统帅值 %d × TROOP_PER_COMMAND %d)，兵营 %d 级，"
