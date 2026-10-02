@@ -68,6 +68,7 @@ public final class BalanceCli {
                     "cap-base",
                     "cases",
                     "comp",
+                    "consume",
                     "config",
                     "cost-ratio",
                     "days",
@@ -157,6 +158,7 @@ public final class BalanceCli {
             System.err.println("  --f2p7d                 零氪时间线（天级）。**B02 全部「实测 N 级 / 溢出 X」都出自它**");
             System.err.println("    --days=7              跑多少天（默认 7）");
             System.err.println("    --cap=true|false      **同时**关掉四件事：仓容截断 + 装备强化 + 建造 + 造兵（默认 true）");
+        System.err.println("    --consume=true|false  是否模拟 consumes 维度（builds/forge/troops/tech 四段；默认 true，#741 拆开关，--cap 只管仓容截断）");
         System.err.println("                            #690/#691：它**不是**单纯的「仓容对照档」—— 真实语义是「关四维度」；");
         System.err.println("                            而 withCap 同时是 forge / builds / troops 三维的前置条件。");
             System.err.println("    --cap-base=N          仓容基数（**默认实时读 building 表 warehouse.capBase**，不写死数值）");
@@ -825,7 +827,14 @@ public final class BalanceCli {
         // **没有任何 `dimCap`** ⇒ 截断真正由 `withCap`（`--cap`）单独控制（见 L691），
         // 而 `withCap` 又同时是上面三维的前置条件（L900/L941/L1046）⇒ **一个开关两种语义、焊在一起**。
         // ⇒ 要「只关截断、保留消费」现在做不到（改这三处会破坏模式隔离，因为 `--cap=false` 的
-        // 现有语义「关四维度」已被 #690 当作已知事实引用）；只能另开一个纯仓容开关。
+        // ⇒ **【#741 已落地】** 「另开一个纯开关」这件事已经做了：新增 `--consume`（见下），`--cap` 恢复成只管截断。
+        // ⚠️ #741 裁决（人工选中方案「甲 · 拆开关」）：把「消费维度是否模拟」从 `withCap`（--cap）里拆出来。
+        // 原状：`--cap=false` 同时关掉「仓容截断」与 builds/forge/troops/tech 四段 ⇒ 长周期档（>45 天）
+        // 与消费维度在现有开关组合下**互斥**，且 `nocap` 基线档实测是「关仓容 + 关全部消费维度」。
+        // 新增 `--consume=true|false`（默认 true）单独控制四个消费维度；**`--cap` 恢复成只管截断**。
+        // ⚠️ **模式隔离**（全局纪律「模式隔离」条）：不传 `--consume` 时行为与 `--cap=true` 时完全一致；
+        // 要复现旧的 `--cap=false` 行为请显式传 `--cap=false --consume=false`。
+        boolean dimConsume = !"false".equals(options.getOrDefault("consume", "true"));
         java.util.Set<String> dims = new java.util.HashSet<>(List.of(
                 options.getOrDefault("dims", "cap,builds,forge,troops").split(",")));
         boolean dimBuilds = dims.contains("builds");
@@ -1038,7 +1047,7 @@ public final class BalanceCli {
         //    ⇒ 本格只修 ①②（改成读表），**不动指数**。
         final com.ironoath.common.config.CurveParams forgeCurve =
                 configs.curve("EQUIP_FORGE_COST");
-        if (withCap && dimForge) {
+        if (dimConsume && dimForge) {
             for (var eq : configs.all(EquipCfg.class)) {
                 // `rarity` 是**枚举 EquipCfg.Rarity**（不是字符串）——
                 // #519 记的「N 档一件都没进循环」就是这个：用 `"N".equals(eq.rarity())`
@@ -1079,7 +1088,7 @@ public final class BalanceCli {
         // 而模型里一条都没有 ⇒ 「粮溢出 237200」与铁那一轮一样是**缺维造成的**。
         // 本版按「**能升就升**」推进（与仓库/兵营同一口径），建造优先级按表顺序，
         // 造价按 `BUILDING_COST` 的 ratio^(n-1)（curve.base=0 ⇒ 用 costBase 直接起步）。
-        if (withCap && dimBuilds) {
+        if (dimConsume && dimBuilds) {
             List<String> grainBuildings = List.of(
                     "hospital", "academy", "stable", "embassy", "drill_ground");
             for (String bid : grainBuildings) {
@@ -1184,7 +1193,7 @@ public final class BalanceCli {
             // **下界**：0 科技 + 1 名最弱武将。算法复用 core 的 troopCap，与线上同一份。
             final long population = com.ironoath.core.hero.HeroCalculator.troopCap(commandValue, heroRules);
             final long maxQueued = Math.min(slots * batchSize, population);
-            if (withCap && dimTroops && barracksLevel >= 3 && population > 0L) {
+            if (dimConsume && dimTroops && barracksLevel >= 3 && population > 0L) {
                 // 人口不足一批时**按人口切一批**，不是造满再截 ——
                 // 那样会出现「在编 100 / 上限 46」这种自相矛盾的输出（真造兵也不会超人口）。
                 // 上一批已派走：队列位空出来了（`perBatch` 本身就是「已派走」的证据，
@@ -1332,7 +1341,7 @@ public final class BalanceCli {
             // ⚠️ **`--tech-level` 仍是效果侧那个开关**（L567 起，它把 11 条全顶到 N 级算 *_OUTPUT）；
             // 本段**另加** `--tech-cost` 才扣钱 —— 判据要用**账目侧**（`ledger` 里出现 tech-upgrade），
             // 因为「读数没变」有三种原因（#712 落的判据：没生效 / 被上限吃掉 / 不在这个维度）。
-            if (withCap && techCost && academyLevel > 0L) {
+            if (dimConsume && techCost && academyLevel > 0L) {
                 int tcBestIdx = -1;
                 long tcBestVal = Long.MAX_VALUE;   // 「剩余次数」，不是造价（#715 裁决，理由见下）
                 for (int ti = 0; ti < techIds.length; ti++) {
