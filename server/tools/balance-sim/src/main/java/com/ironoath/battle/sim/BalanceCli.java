@@ -92,6 +92,7 @@ public final class BalanceCli {
                     "single",
                     "size",
                     "tech-cost",
+                    "tech-per-day",
                     "tech-level",
                     "terrain",
                     "tier",
@@ -165,6 +166,7 @@ public final class BalanceCli {
             System.err.println("    --producers=true|false 产出建筑是否参与升级（默认 true）");
             System.err.println("    --priority=city|balanced  主城优先还是产出建筑优先（默认 city）");
             System.err.println("    --tech-cost=true|false 科技花费是否计入账本（默认 false；#713）");
+        System.err.println("    --tech-per-day=N      每天买几条科技（默认 1 = #713 裁决；#737 加的速率旋钮，#713 那条是写死的）");
         System.err.println("                            **独立于 --tech-level**：后者只算 *_OUTPUT 的效果，");
         System.err.println("                            本开关才按 tech 表的 costBase × 1.22^等级 真实扣四资源。");
         System.err.println("    --dims=a,b,c          计入哪几维（默认 cap,builds,forge,troops）");
@@ -644,6 +646,8 @@ public final class BalanceCli {
     String[] techIds = new String[0];
     int[] techLevels = new int[0];
     long[] techMaxLv = new long[0];
+        // #737：`--tech-per-day`（默认 1 = #713 的原裁决「每天 1 条」）。
+        int techPerDay = Math.max(1, Integer.parseInt(options.getOrDefault("tech-per-day", "1")));
     int[] techNeedAcademy = new int[0];
     long[][] techCostBase = new long[0][4];
     long techWood = 0L, techStone = 0L, techIron = 0L, techGrain = 0L;
@@ -1354,6 +1358,13 @@ public final class BalanceCli {
                         tcBestIdx = ti;
                     }
                 }
+                // ⚠️ #737：#713 那条「每天 1 条」原先是**写死的、没有开关**，
+                // 于是「科技能不能成为那条吃掉日产出一半的线」这个问题**无法做速率敏感性实测**
+                // （`--tech-level` 改的是**等级**、不是**速率**，两者不同轴，见 #733）。
+                // 这里加 `--tech-per-day=N`（默认 1 = #713 的原裁决），不改任何默认行为。
+                // `techLevels[t]++` 在循环体内 ⇒ 第二轮会重新按「剩余次数最少优先」重选，
+                // 所以 N 条是**按该口径顺序买**，不是同一条买 N 次。
+                for (int techRepeat = 0; techRepeat < techPerDay; techRepeat++) {
                 if (tcBestIdx >= 0) {
                     int t = tcBestIdx;
                     double f = Math.pow(costRatio, techLevels[t]);
@@ -1373,6 +1384,7 @@ public final class BalanceCli {
                         techWood += cw; techStone += cs; techIron += ci; techGrain += cg;
                         techLevels[t]++;
                     }
+                }
                 }
             }            // 一天一个循环：先按当天可花的钱升级，升级不了就把钱留到第二天（结余照常累积）
             while (true) {
