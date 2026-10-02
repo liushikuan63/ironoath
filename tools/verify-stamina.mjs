@@ -323,23 +323,17 @@ const coordInfo = await page.evaluate(() => {
     dpr: window.devicePixelRatio }
 })
 console.log('[stamina][坐标] ' + JSON.stringify(coordInfo))
-// 触摸观测（#626 定下的下一步）：**不再算坐标**，直接给每个 `Resource-*` 节点挂一个计数
-// 监听，点一次之后看「哪个节点收到了 touch-start」。一次读数就能把这三种可能分开：
-//   ① 坐标压根没落在任何一格的盒内  ② 命中了别的节点  ③ 该格根本没收到事件（监听没挂上/被吞）
-// 挂的是 `touch-start` 的**监听计数**，不改任何业务行为（Cocos 的 `on` 是追加语义）。
-await page.evaluate(() => {
-  const cc = window.cc
-  const scene = cc.director.getScene()
-  window.__touchHits = []
-  const walk = (n, depth) => {
-    if (depth > 40) return
-    if (n.name.startsWith('Resource')) {
-      n.on('touch-start', () => window.__touchHits.push(n.name), n)
-    }
-    for (const c of n.children) walk(c, depth + 1)
-  }
-  walk(scene, 0)
-})
+// 触摸观测（#626 引入、#642 撤掉）：原来给每个 `Resource*` 挂 `touch-start` 计数监听，
+// 注释里写的是「`on` 是追加语义，不改任何业务行为」—— **这句是错的，已被实测推翻**。
+// 同一份产物、同一个点击点，两种形态各跑一遍：
+//   A 不挂任何计数监听（= 玩家真实形态）：触摸落在 `ResourcePlate`，`StaminaDetail` 打开、
+//     文本 6 条、`GET /stamina` **两条**（一条 deliver + 一条 openStaminaDetail）。
+//   B 照抄本探针的形态（给所有 `Resource*` 挂计数）：触摸改落在 `Resource-2-1`，
+//     弹层 `active=false`、文本 1 条、`GET /stamina` 只有**一条**。
+// ⇒ **观测手段本身改变了被测行为**：格子一旦挂上监听，命中顺序就与不挂时不同。
+// 所以这里不再挂任何监听，改用探针从 #610 起就定好的判别：**`GET /stamina` 出现几条** ——
+// 一条 = 点击没命中（只有 AppRoot:913 的 deliver），两条 = 点击命中并触发了 openStaminaDetail(:1204)。
+// 教训与本仓「同族错误」表同源：量具不能改被测对象，否则它量的是自己。
 // 命中顺序诊断（#628）：Cocos 的 `_sortByPriority`（cc.js 压缩源码）同父分支最终是
 //   var d = r ? r.siblingIndex : 0, _ = s ? s.siblingIndex : 0; return o ? d - _ : _ - d
 // ⇒ **同父之间按 siblingIndex（= 添加顺序）比较，先添加的先被命中**，与「后添加在上层」的
@@ -423,10 +417,19 @@ if (clickPoint.verified !== true) {
   process.exit(2)
 }
 console.log('[stamina][偏移] 基准=' + fmt(clickPoint) + ' 偏移=' + __dx + ',' + __dy)
+const staminaPostsBeforeClick = staminaPosts.length
 await page.mouse.click(clickPoint.x + __dx, clickPoint.y + __dy)
-const touchHits = await page.evaluate(() => (window.__touchHits ?? []).slice())
-console.log('[stamina][触摸] 收到 touch-start 的节点: ' + (touchHits.length === 0 ? '(无)' : touchHits.join('、')) + '  |  点击点=' + Math.round(clickPoint.x + __dx) + ',' + Math.round(clickPoint.y + __dy))
 await page.waitForTimeout(1500)
+// 判别改用 `GET /stamina` 的条数（#642）：**不再给 `Resource*` 挂 touch-start 计数** ——
+// 那套监听已被实测证明会改变命中顺序（见上面那段），观测手段不能改被测对象。
+// 命中判别（#642）：`GET /stamina` 的条数**只作读数**，不参与裁决 —— #610 记的
+// 「两条 = 点中」规律在当前产物里不成立（实测点中时也只有 1 条新增），它依赖请求时机。
+// 真正的判据是下面 `failures` 里那几条弹层读数：可见 + 标题等于服务端 + 买按钮文案 + 溢出警告。
+const clickGets = staminaPosts.slice(staminaPostsBeforeClick).filter((e) => e.startsWith('GET')).length
+console.log('[stamina][请求读数] 点击后新增 /stamina 请求 ['
+  + (staminaPosts.slice(staminaPostsBeforeClick).join('、') || '(无)')
+  + ']  GET ' + clickGets + ' 条（只作读数，裁决看弹层）'
+  + '  |  点击点=' + Math.round(clickPoint.x + __dx) + ',' + Math.round(clickPoint.y + __dy))
 // 诊断 B（#607）：render() 末尾明确写了 this.node.active = true，而 Cocos 的 activeInHierarchy
 // 要本节点**与所有祖先**都 active。所以「不可见」有两种可能：本节点没被 render，或者某个祖先
 // 不活跃。这里把整条祖先链打出来 —— 一次就能分开这两种。
@@ -487,9 +490,13 @@ console.log(`[stamina] 截图：${SHOT}`)
 console.log(`[stamina] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
 
 const failures = []
-if (!staminaPosts.some((entry) => entry.startsWith('GET'))) {
-  failures.push('点体力那一行没有发出 GET /stamina —— 资源条上的触摸没接上')
-}
+// ⚠️ 这里**故意不**拿「`GET /stamina` 的条数」当判据（#642 实测推翻）：#610 记的规律是
+// 「一条 = 只有 deliver、两条 = 点击命中并触发了 openStaminaDetail(:1204)」，但在当前产物里
+// 点中时实测**只有 1 条新增 GET**，而弹层确实带着服务端读数打开了
+// （可见=true，文本含「体力 100/100」/「买 1 次（50 金币）」/「体力已满，买了会溢出损失」）。
+// ⇒ 那条规律依赖请求发生的时刻，产物一改就失效。**判据只认弹层读数**（下面几条）：
+// 可见、标题等于服务端读数、有买按钮文案、满仓时给溢出警告 —— 这四条都与请求时机无关。
+// 上面的 `[命中判别]` 那行只作诊断读数留着，不参与裁决。
 if (opened.visible !== true) {
   failures.push('点完体力那一行，StaminaDetail 弹层没显示')
 }
