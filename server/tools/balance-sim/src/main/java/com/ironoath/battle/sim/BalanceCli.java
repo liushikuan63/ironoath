@@ -81,12 +81,46 @@ public final class BalanceCli {
         } else if (options.containsKey("settle-bench")) {
             passed = printSettleBench(configs, resolver, rules, stats, options);
         } else {
-            System.err.println("用法（参数用 --key=value 形式）：");
+            System.err.println("用法（参数一律 --key=value 形式；空格分隔的 `--runs 1000` 会被解析成两个开关）：");
+            System.err.println();
+            System.err.println("【B02 经济 / 进度读数的主入口】");
+            System.err.println("  --f2p7d                 零氪时间线（天级）。**B02 全部「实测 N 级 / 溢出 X」都出自它**");
+            System.err.println("    --days=7              跑多少天（默认 7）");
+            System.err.println("    --cap=true|false      是否算仓容截断与各类扩建（默认 true；false = 只算裸产出）");
+            System.err.println("    --cap-base=N          仓容基数（默认读 building 表 capBase，现值 8000）");
+            System.err.println("    --base-rate=R         产出倍率（默认 1.0）");
+            System.err.println("    --producers=true|false 产出建筑是否参与升级（默认 true）");
+            System.err.println("    --priority=city|balanced  主城优先还是产出建筑优先（默认 city）");
+            System.err.println("    --dims=a,b,c          计入哪几维（默认 cap,builds,forge,troops）");
+            System.err.println("    --builds-gate=ids     建造那维开哪几座（默认 none，见 #543/#544 裁决：");
+            System.err.println("                         新号阶段先攒料升主城。传 hospital,academy,stable,");
+            System.err.println("                         embassy,drill_ground 可开门对照）");
+            System.err.println("    --tech-level=N        科技档位：把 tech 表每条 *_OUTPUT 行当作 N 级（默认 0 = 不计）");
+            System.err.println("                         ⚠️ 读数是**上界**不是玩家画像：真实玩家要逐级解锁、还要花时间");
+            System.err.println("    --population=N        队伍统帅值（默认 46 = hero 表 command 下界，B00 §三 新号赠 1 名）");
+            System.err.println("                         带兵上限 = 统帅值 × TROOP_PER_COMMAND（默认 5），**不是 N 本身**");
+            System.err.println("    --train-slots=N       训练队列槽位（默认 1 = 表里的 TRAIN_QUEUE_SLOTS）");
+            System.err.println("    --train-unit=id       造哪个兵（默认 unit_infantry_t1；单价读 unit 表）");
+            System.err.println("    --out-exponent=R      产出随等级的增长指数（默认读 curve.BUILDING_OUTPUT）");
+            System.err.println("    --cost-ratio=R        造价随等级的增长比率（默认读 curve.BUILDING_COST）");
+            System.err.println("    --f2p-days=N          零氪天数（--f2p-stages 用）");
+            System.err.println();
+            System.err.println("【战斗矩阵 / 曲线】");
             System.err.println("  --single --atk=步,骑,弓,器 --def=步,骑,弓,器 --seed=N");
             System.err.println("  --matrix --runs=1000 --tier=1 --size=1000");
-            System.err.println("  --rally --runs=400 --comp=步,骑,弓,器 --size=1000 --bonus=0,500,1000,1500");
+            System.err.println("  --rally  --runs=400 --comp=步,骑,弓,器 --size=1000 --bonus=0,500,1000,1500");
+            System.err.println("  --wall   --runs=400 --comp=步,骑,弓,器 --size=1000");
             System.err.println("  --settle-bench --samples=200 --warmup=30 --comp=25000,25000,25000,25000");
-            System.err.println("退出码：矩阵 / 集结曲线判定存在违规时为 1。");
+            System.err.println("    --type=NAME            战斗类型（PVP_SOLO 等，取 BattleType 枚举名，默认 PVP_SOLO）");
+            System.err.println("    --troops=N            兵力上限（默认 6833，见 #564）");
+            System.err.println();
+            System.err.println("【其它】");
+            System.err.println("  --f2p-stages --terrain=... --cases=...   零氪分阶段读数");
+            System.err.println("  --determinism --runs=N --seed-base=N       同输入同输出的确定性自检");
+            System.err.println("  --config=PATH                            指定配置目录（默认 contract/config）");
+            System.err.println();
+            System.err.println("退出码：0 正常；1 判定存在违规（矩阵 / 集结曲线 / 判定不通过）；2 用法错误。");
+            System.err.println("⚠️ `--f2p7d` 自己的判定不通过时也退 1（输出末尾有「判定：…」），那不是构建失败。");
             System.exit(2);
         }
         // 耗时是判断「能不能跑万局调平衡」的关键指标，每次都打出来
