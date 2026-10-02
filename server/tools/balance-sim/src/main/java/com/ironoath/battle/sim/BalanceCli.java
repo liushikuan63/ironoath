@@ -685,6 +685,9 @@ public final class BalanceCli {
                                         com.ironoath.common.num.FixedPoint.of(woodCapBase),
                                         (int) lv, outExponentFixed));
         long[] overflow = {0L, 0L, 0L, 0L};
+        // ⚠️ **逐日真累计（#689）**：对账要用「每天真实产出了多少」的总和，
+        // 不能用「循环结束时那一天的 rate × 24 × 天数」—— 产出建筑每天升级、rate 每天在涨。
+        long[] producedTotal = {0L, 0L, 0L, 0L};
         boolean withCap = !"false".equals(options.getOrDefault("cap", "true"));
         // `--dims` 只在 CLI 里存在：**关掉某一维再跑**，用来看它对读数的贡献。
         // #529 那个「B00 写第 7 天 13 级、现跑 4 级」要定位是哪一维造成的，就是靠这个开关逐个试。
@@ -1270,7 +1273,8 @@ public final class BalanceCli {
                     long produced = (r == 0 ? woodRate : r == 1 ? stoneRate : r == 2 ? ironRate : grainRate)
                             * 24L;
                     long room = Math.max(0L, cap - amounts[r]);
-                    long gained = Math.min(room, produced);
+                    producedTotal[r] += produced;   // #689：记**真实产出**，不是入账的 gained
+        long gained = Math.min(room, produced);
                     overflow[r] += produced - gained;
                     amounts[r] += gained;
                 }
@@ -1279,6 +1283,12 @@ public final class BalanceCli {
                 iron = amounts[2];
                 grain = amounts[3];
             } else {
+            // ⚠️ 这一支**不记 overflow 是对的**（没有截断、没有东西被丢弃）——
+            // 错的是对账公式（#689）：它此前用「末值 × 天数」，在 rate 递增时不是真实总产出。
+            producedTotal[0] += woodRate * 24L;
+            producedTotal[1] += stoneRate * 24L;
+            producedTotal[2] += ironRate * 24L;
+            producedTotal[3] += grainRate * 24L;
             wood += woodRate * 24L;
             stone += stoneRate * 24L;
             iron += ironRate * 24L;
@@ -1309,12 +1319,19 @@ public final class BalanceCli {
             // 45 天内木石从不溢出（溢出全在粮上，而对账只算木石）⇒ 缺陷一直藏着；
             // 600 天木石也满了（42000/42000）⇒ 对账立刻不平（+128 万）。
             // **这是对账工具的第三处缺陷**（前两处：×24 漏乘、拿当日当累计）。
-            long woodGap = (5000L + woodRate * 24L * day) - woodSpent - wood - overflow[0];
-            long stoneGap = (5000L + stoneRate * 24L * day) - stoneSpent - stone - overflow[1];
+            // ⚠️ **对账必须用「逐日真累计」，不能用「末值 × 天数」（#689）**：
+            // 原来这行是 `(5000L + woodRate * 24L * day) - …`，而 `woodRate` 是**循环结束时**的值，
+            // 产出建筑每天升级 ⇒ rate 每天在涨 ⇒ **末值 × 天数 ≠ 真实总产出**。
+            // 它此前之所以对得上（默认档差额 0），是因为**默认档 60 天后仓容满、rate 冻结**
+            // ⇒ 恰好相等 —— **这是巧合，不是正确**；`--cap=false` 档 rate 一路涨，
+            // 实测差额达 **木 +4.9 亿 / 石 +5.1 亿**（`producedTotal` 远大于 `末值×天数`）。
+            // ⇒ 改为逐日累加真实产出（截断档记 `gained`，不截断档记全部 `produced`）。
+            long woodGap = (5000L + producedTotal[0]) - woodSpent - wood - overflow[0];
+            long stoneGap = (5000L + producedTotal[1]) - stoneSpent - stone - overflow[1];
             System.out.printf("木：起始 5000 + 产出 %d - 扣除 %d = 结余 %d%n",
-                    woodRate * 24L * day, woodSpent, wood);
+                    producedTotal[0], woodSpent, wood);
             System.out.printf("石：起始 5000 + 产出 %d - 扣除 %d = 结余 %d%n",
-                    stoneRate * 24L * day, stoneSpent, stone);
+                    producedTotal[1], stoneSpent, stone);
             System.out.printf("**对账差额：木 %+d / 石 %+d**（0 = 账平）%n", woodGap, stoneGap);
         }
         System.out.printf("%-6d%-10d%-12d%-12d%-12d%-12d%d%n",
