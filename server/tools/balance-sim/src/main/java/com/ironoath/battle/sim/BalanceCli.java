@@ -563,7 +563,6 @@ public final class BalanceCli {
         long barracksLevel = 0L;      // 兵营等级（造兵前置：requireMainLevel=3）
         long standing = 0L;            // 在编兵力（造满 500 即停 —— 队列上限）
         long troopsMade = 0L;
-        boolean pickedOnceThisRound = false;   // #549 均衡升：每轮只升一级          // 累计造兵，用来核对「造兵到底能不能吃掉产出」
         final long initAmount = 0L;                                  // 起始资源见下面的初值
         // **--cap-base 的默认值从配置表读**（#594）：原来硬编码 1000，而 building.json 的
         // warehouse.capBase 已经是 8000 —— 两边漂移时模拟器照常输出一整套读数，却全是按 1000 算的
@@ -750,7 +749,6 @@ public final class BalanceCli {
                     }
                 }
             }
-            pickedOnceThisRound = false;        // #549：每轮重置
             // ---------- 第四维：装备强化吃铁（#518 / #519 / #522）----------
         // 排在**仓储截断之前** —— 放在之后铁已被 `overflow` 丢弃，这一维永远吃不到东西。
         // 口径**照抄 `EquipForgeCostCalibrationTest`**（同口径才量的是同一件事）：
@@ -1001,36 +999,59 @@ public final class BalanceCli {
                 upgraded++;
             }
             if (withProducers && cityFirst) {
+                // ⚠️ **选座口径 2026-10-02 裁决：按「产量最低的先升」**（#648/#649）。
+                // 原来这里是 `for (p=0..3) { while(true){ if (pickedOnceThisRound) break; … } }`，
+                // 而 `pickedOnceThisRound` 每天重置为 false（L753）⇒ 每天第一座把标志置位、
+                // `p=1,2,3` 立刻 break ⇒ **每天只升第 0 座**（实测 `producerLevels=[21,0,0,0]`）。
+                // ⚠️ 而同段注释写的是「木石按『谁缺谁先升』交替 —— #548 定位到那处卡点正是
+                // 『数组顺序先到先赢』」⇒ **代码里根本没有「谁缺谁」的比较逻辑**，
+                // 数组顺序（伐木场排第一）**就是** #548 点名要消除的那个「先到先赢」。
+                //
+                // **保留下来的部分**（#549 裁决「每轮只升一级」不动）：每天仍然只升一座。
+                // **改掉的只有「选哪一座」**：从「数组顺序第一个」改成「当前产量最低的那座」。
+                // 之所以能这样改：`producerRates` 初值是 `{0,0,0,0}`，而 1 级时
+                // `Math.round(out × 1^exponent) = out` ⇒ **没升过的座产量恒为 0、必然最低**，
+                // 所以四座会依次被拉起来；拉平之后再比真实产量（铁矿场底产 60 最低，会继续先升）
+                // ⇒ **这正好解掉 #647 那条「铁 120 天只到 2030、买不起第一批兵」的链**。
+                //
+                // ⚠️ **平局处理**：产量完全相同（例如四座都没升）时按**索引小者优先**，
+                // 那只是保证结果**确定**（同一天跑两次读数一致），不是策略口径。
+                // ⚠️ **不变式**：`--priority balanced` 分支（L957 那段）**一行未动**，
+                // `--cap=false` 也未动 ⇒ 不开该模式的路径与改动前完全一致。
+                int bestP = -1;
+                long bestRate = Long.MAX_VALUE;
                 for (int p = 0; p < producers.length; p++) {
-                    while (true) {
-                        // **均衡升（裁决 #549）**：本轮已升过就停下，让下一轮从 p=0 重新开始，
-                        // 木石按「谁缺谁先升」交替 —— 而 #548 定位到那处卡点正是
-                        // 「数组顺序先到先赢」。
-                        if (pickedOnceThisRound) {
-                            break;
-                        }
-                        pickedOnceThisRound = true;
-                        long out = producers[p][1];
-                        long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
-                        long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
-                        long cIron = Math.round(producers[p][4] * Math.pow(costRatio, producerLevels[p]));
-                        if (level < producers[p][0] || wood < cWood || stone < cStone || iron < cIron) {
-                            break;
-                        }
-                        wood -= cWood;
-                        ledger.spend("wood", "gather-B", cWood);
-                        stone -= cStone;
-                        ledger.spend("stone", "gather-B", cStone);
-                        buildWood += cWood;
-                        buildStone += cStone;
-                        iron -= cIron;
-                        producerLevels[p]++;
-                        // **产出随等级线性增长**：P(n) = base × n^exponent，exponent 取自 curve 表
-                        // BUILDING_OUTPUT（现值 1）。第一版这里写的是 base × 1^(n-1) = base，
-                        // 也就是「升了不涨产出」—— 那是我抄错了公式，于是「交替」那档的 3 级
-                        // 完全是这个 bug 的产物，不是玩法结论。
-                        producerRates[p] = Math.round(out * Math.pow(producerLevels[p], outExponent));
+                    if (level < producers[p][0]) {
+                        continue;
                     }
+                    long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
+                    long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
+                    long cIron = Math.round(producers[p][4] * Math.pow(costRatio, producerLevels[p]));
+                    if (wood < cWood || stone < cStone || iron < cIron) {
+                        continue;
+                    }
+                    // 严格小于 ⇒ 平局时保留先到的（小索引），保证确定性
+                    if (producerRates[p] < bestRate) {
+                        bestRate = producerRates[p];
+                        bestP = p;
+                    }
+                }
+                if (bestP >= 0) {
+                    int p = bestP;
+                    long cWood = Math.round(producers[p][2] * Math.pow(costRatio, producerLevels[p]));
+                    long cStone = Math.round(producers[p][3] * Math.pow(costRatio, producerLevels[p]));
+                    long cIron = Math.round(producers[p][4] * Math.pow(costRatio, producerLevels[p]));
+                    wood -= cWood;
+                    ledger.spend("wood", "gather-B", cWood);
+                    stone -= cStone;
+                    ledger.spend("stone", "gather-B", cStone);
+                    buildWood += cWood;
+                    buildStone += cStone;
+                    iron -= cIron;
+                    producerLevels[p]++;
+                    // 产出随等级按 curve 表 BUILDING_OUTPUT 增长（exponent 现值 1）
+                    producerRates[p] = Math.round(producers[p][1]
+                            * Math.pow(producerLevels[p], outExponent));
                 }
             }
             // 当天的底产入账
@@ -1105,6 +1126,10 @@ public final class BalanceCli {
                         "", "", overflow[0], overflow[1], overflow[2], overflow[3]);
                 // 统帅值与带兵上限**分开印**：这两个数混用正是 #644 的根，只印一个时读者无从判断它是哪个。
                 // 兵种与单价也印出来：#646 之前它们是写死的 30/20，印出来才能自证「现在读的是表」。
+                // ⚠️ **产出建筑等级必须进报告**（#649）：#647 那次「为什么只有伐木场升」只能靠临时
+                // 插诊断才看到，而诊断行已经删了 —— 读数里缺这一维，下一次同样的问题还要重查一遍。
+                System.out.printf("%-6s%-10s产出建筑等级 %s（索引 0木/1石/2铁/3粮，与 producerRates 同序）%n",
+                        "", "", java.util.Arrays.toString(producerLevels));
                 System.out.printf("%-6s%-10s累计造兵 %d（在编 %d / 上限 %d = min(槽位×批次 %d, "
                                 + "带兵上限 %d = 统帅值 %d × TROOP_PER_COMMAND %d)，兵营 %d 级，"
                                 + "兵种 %s：铁 %d / 粮 %d 每兵，读自 unit 表）%n",

@@ -101,6 +101,29 @@ if (popIdx < 0) {
   }
 }
 
+
+// ---- #649: the producer pick must be "lowest current output first", not array order.
+// #548 ruled out "array order wins" and #549 ruled "one upgrade per round"; the code kept
+// one-per-round but its pick was `pickedOnceThisRound`, which made the FIRST array entry win
+// every single day (`producerLevels=[21,0,0,0]`). A hand-rolled `if (p == 0)` is the same
+// defect wearing a different hat, so the gate has to insist on the comparison.
+const codeForPick = codeOnly
+const mustPick = [
+  ['scans every producer (not a fixed index)', /for \(int p = 0; p < producers\.length; p\+\+\)/],
+  ['compares producerRates to choose', /producerRates\[p\]\s*<\s*bestRate/],
+  ['keeps one upgrade per round (#549)', /if \(bestP >= 0\)/],
+]
+for (const [name, re] of mustPick) {
+  if (!re.test(codeForPick)) problems.push(`产出建筑选座缺：${name}`)
+}
+
+// The report must print producerLevels — #647 could only see them via a throwaway debug
+// line, and the read-out is useless without that dimension.
+if (!/产出建筑等级/.test(codeForPick)) {
+  problems.push('报告里没有「产出建筑等级」这一行 —— 选了哪一座、升到了几级看不到，'
+    + '下一次同样的问题还得再插一次临时诊断（#647 就是这么查的）')
+}
+
 if (problems.length > 0) {
   console.error('[check-balance-sim-tech-sync][FAIL] 科技加成的口径脱钩了：')
   for (const p of problems) console.error(`  - ${p}`)
