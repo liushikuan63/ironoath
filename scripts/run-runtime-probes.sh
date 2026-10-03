@@ -52,7 +52,11 @@ fi
 # 的异常读数就是这么丢的，直到发现时已经无法复盘。
 # ⇒ 每批开跑前把上一批整体搬进 `archive/<时间戳>/`。**刻意不改日志文件名** ——
 #   各门禁与文档都引用 `$RUNTIME_PROBES_LOGDIR/probe-*.log` 这个路径，改名会连带一堆引用。
-if [ "$KEEP_PREV_LOGS" != "1" ]; then
+# ⚠️ `set -u` 下必须写 ${KEEP_PREV_LOGS:-}：不设这个变量时直接引用会报
+#    "KEEP_PREV_LOGS: unbound variable" 让整份脚本崩（2026-10-03 踩到两次：
+#    第一次写这一段时正例与反向对照**都显式传了变量**，从没测到默认路径；
+#    第二次是用户名 a1740→Admin 之后那次提交丢失，同一处又退回未修形态）。
+if [ "${KEEP_PREV_LOGS:-}" != "1" ]; then
   _prev="$(ls "${RUNTIME_PROBES_LOGDIR:-/d/tmp}"/probe-*.log 2>/dev/null | wc -l)"
   if [ "$_prev" -gt 0 ]; then
     _stamp="$(date +%Y%m%d-%H%M%S)"
