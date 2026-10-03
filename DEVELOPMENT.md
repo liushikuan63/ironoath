@@ -14,11 +14,28 @@
 | Node.js | 20+ | 必需（客户端类型检查与逻辑单测） |
 | MongoDB | 4.2+ | 仅 `storage=mongo` 时需要；默认 `memory` 不需要 |
 | Redis | 6+ | B07 起需要（行军延迟队列）；B01~B06 不需要 |
-| Cocos Creator | 3.8 | 只有要跑场景/真机时需要；逻辑层单测不需要 |
+| Cocos Creator | **3.8.7**，装在 `D:/Cocos/Creator/3.8.7/CocosCreator.exe` | 要跑 `build-webmobile.sh`／真机探针时需要；逻辑层单测不需要 |
+| Playwright（模块 + Chromium） | 任意近期版本 | 要跑 `tools/verify-*.mjs` 里的浏览器类探针时需要 |
+| Python + Pillow | Python 3.x | 必需（`scripts/check-icon-legibility.sh` 读图要 `PIL`；缺它 `check.sh` 会红在 `[legibility][FAIL-前置] 缺 Pillow`） |
 | make | 任意 | 可选。Windows 上通常没有，改用 `npm run <target>` |
 
 **Windows 注意**：仓库脚本假设 Git Bash。若 `JAVA_HOME` 指向 JDK 8，
 `scripts/env.sh` 会自动在常见安装路径里找 JDK 17 并覆盖它，无需手工切换。
+
+**新机器上第一次跑探针，容易漏的三样**（2026-10-04 在一台全新机器上实测逐层踩到）：
+
+1. **Playwright 目前是"硬编码路径"的，不在 `package.json` 里。** `tools/verify-*.mjs` 里有相当一批把
+   import 写成了绝对 `file://` 路径，指向一个 npx 缓存目录（形如
+   `file:///D:/Java/nodejs/node_cache/_npx/<hash>/node_modules/playwright/index.mjs`）。
+   那条缓存一没，**所有浏览器类探针同时失效**。要么按老路径把它装回去：
+   `npm install --prefix "D:/Java/nodejs/node_cache/_npx/<hash>" playwright` 且在该目录 `npx playwright install chromium`；
+   要么（治本）把那些 import 改成裸 `from 'playwright'` 并在仓库里正常装一次。
+2. **`client/build/web-mobile` 是构建产物，探针直接读它。** 没构建过就会以
+   `ENOENT ... client/build/web-mobile/index.html` 失败 —— 那不是产品缺陷，是产物没建。
+   构建：`env -u ELECTRON_RUN_AS_NODE bash scripts/build-webmobile.sh`
+   （**必须先 unset `ELECTRON_RUN_AS_NODE`**，否则 CocosCreator 会以 node 模式启动并报 `bad option: --project`）。
+3. **`/d/tmp` 是批跑账本与日志的默认目录**（`RUNTIME_PROBES_OUT` / `RUNTIME_PROBES_LOGDIR` 的默认值都在它下面）。
+   新机器上它不存在时，账本写不下去。
 
 ---
 
