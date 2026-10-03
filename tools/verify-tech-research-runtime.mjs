@@ -502,6 +502,60 @@ check('标题不被「一键收割」角标压住', overlaps(rects?.header, rect
 check('队列那一行不被两颗常驻键压住',
   overlaps(rects?.queue, rects?.tech) === true || overlaps(rects?.queue, rects?.collect) === true, false)
 
+// ── 选中那一格（#753 收尾）：这一段是这 10 项判据能成立的前提 ──
+// 2026-10-03 实测：探针此前**从未选中任何一格** ⇒ `selectedId` 恒为 null ⇒
+// `CityPanelView.wireActionButtons`（CityPanelView.ts:1478）的 `row !== null &&`
+// 把**所有**动作按钮置为不可见 ⇒ `DetailCancelButton` 节点被创建了（hasCancel=true）
+// 却 `active=false`，于是「点不到那颗取消键 / POST /city/cancel 实发 0 条 /
+// buildingId 是 undefined / 资源不退」这 10 项全崩 —— 它们不是十条独立问题，
+// 是同一个「没选中」的下游。
+// 目标格子 `b_academy` 在夹具里是 gridX=3, gridY=3（:182），而线性索引按
+// `CityPanel.ts:171  index = gridY * CITY_GRID_WIDTH + gridX`（CITY_GRID_WIDTH=6，:57）
+// 算出来是 21，tile 的节点名是 `Grid-<index>`（CityPanelView.ts:805），
+// 选中动作绑在 tile 的 touch-start 上（:1226）。
+// ⚠️ 先打读数再跑判据：读不到 row 就不往下走，别再"读代码猜"。
+const SELECT_TILE = `(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('city')
+  let tile = null
+  const walk = (n) => { if (n.name === 'Grid-21') tile = n; for (const c of n.children) walk(c) }
+  if (panel) walk(panel)
+  if (tile === null) return { ok: false, why: 'Grid-21 节点不存在' }
+  // 走产品自己的入口：tile 的 touch-start 会做 selectedId = row.id 与 renderSelection(row)
+  // （CityPanelView.ts:1226-1230）。这里 emit 而不是直接改 selectedId ——
+  // 直接改 private 字段会测出一条生产走不到的路径。
+  tile.emit('touch-start', { touch: { getID: () => 0, getUILocation: () => ({ x: 0, y: 0 }) } })
+  return { ok: true, hasTile: true }
+})()`
+const selRead = await page.evaluate(SELECT_TILE)
+console.log('[tech][select] 选中动作已下发 ' + JSON.stringify(selRead))
+await page.waitForTimeout(500)
+// ⚠️ 读数只做诊断输出，**不作判据**：`selectedId`/`selectedRow` 是 private，
+//    组件挂在哪个节点上没查证过，拿它当判据就是"读代码猜"（今天已经错过 9 次）。
+//    判据用下面那条**零假设**的：详情条文案不再是「点击建筑查看详情」。
+const rowRead = await page.evaluate(`(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const panel = game?.getChildByName('city')
+  let statusText = null
+  const walk = (n) => {
+    if (statusText === null && n.name === 'SelectionBar') {
+      const visit = (m) => {
+        const t = m.getComponent?.('cc.Label')?.string
+        if (typeof t === 'string' && t.length > 0 && t !== '取消' && t !== '升级' && t !== '建造' && t !== '收割') statusText = t
+        for (const k of m.children) visit(k)
+      }
+      visit(n)
+    }
+    for (const c of n.children) walk(c)
+  }
+  if (panel) walk(panel)
+  return { statusText }
+})()`)
+console.log('[tech][select] 详情条读数 ' + JSON.stringify(rowRead)
+  + ' ｜ 若 statusText 仍是「点击建筑查看详情」⇒ 那一格没被选中，下面所有按钮判据都只是量具没架对')
+check('选中生效：详情条不再是「点建筑查看详情」（这是 row !== null 的等价可观测判据）',
+  rowRead?.statusText !== null && rowRead.statusText !== '点击建筑查看详情', true)
+
 const CITY_BAR = `(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const panel = game?.getChildByName('city')
