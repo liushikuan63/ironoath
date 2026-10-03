@@ -142,8 +142,11 @@ while read -r f; do
   fi
   echo "$code $base ($backend_env, port $port)" | tee -a "$OUT"
 done < "$LIST"
-# SKIP 不是红、`#` 开头的是本批的元信息行：汇总只数真正跑过而非零的那些
-echo "--- 汇总：非零退出的份数 = $(grep -cvE '^(0 |SKIP |TIMEOUT |# )' "$OUT")  超时 = $(grep -c '^TIMEOUT ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
+# SKIP 不是红、`#` 开头的是本批的元信息行、超时另列（见末尾那两行）：
+# 这张表只数"真正需要人看、且不是超时"的那些。
+# ⚠️ 措辞用"需看的份数"而不是"非零退出的份数"（2026-10-04）：NO-RUN **没有可用的退出码**，
+# 旧措辞把它算进"非零退出"会让人以为量具测出了红。现在把 NO-RUN 单独点出来。
+echo "--- 汇总：需看的份数 = $(grep -cvE '^(0 |SKIP |TIMEOUT |# )' "$OUT")（其中 未跑成 NO-RUN = $(grep -c '^NO-RUN ' "$OUT")）  超时 = $(grep -c '^TIMEOUT ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
 grep -vE '^(0 |SKIP |TIMEOUT |# )' "$OUT" || true
 # 超时单独列一遍：它们不在上面那张表里，但恰恰是最需要人看的一批
 grep '^TIMEOUT ' "$OUT" || true
