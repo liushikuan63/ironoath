@@ -46,6 +46,22 @@ if [ -z "$LIST" ]; then
         fi
       done > "$LIST"
 fi
+# 归档上一批的日志（#753 收尾，2026-10-03）：每份探针的日志写成**固定文件名** `probe-<name>.log`，
+# 于是每一批都会把上一批覆盖掉 —— 批跑里出现的偶发红，事后证据就没了，连"重现"都不干净
+# （探针自己还会 POST /tech/research、/city/cancel 改状态）。实测踩到：一次 `23 过 / 29 败`
+# 的异常读数就是这么丢的，直到发现时已经无法复盘。
+# ⇒ 每批开跑前把上一批整体搬进 `archive/<时间戳>/`。**刻意不改日志文件名** ——
+#   各门禁与文档都引用 `$RUNTIME_PROBES_LOGDIR/probe-*.log` 这个路径，改名会连带一堆引用。
+if [ "$KEEP_PREV_LOGS" != "1" ]; then
+  _prev="$(ls "${RUNTIME_PROBES_LOGDIR:-/d/tmp}"/probe-*.log 2>/dev/null | wc -l)"
+  if [ "$_prev" -gt 0 ]; then
+    _stamp="$(date +%Y%m%d-%H%M%S)"
+    _dir="${RUNTIME_PROBES_LOGDIR:-/d/tmp}/archive/$_stamp"
+    mkdir -p "$_dir"
+    mv "${RUNTIME_PROBES_LOGDIR:-/d/tmp}"/probe-*.log "$_dir/" 2>/dev/null
+    echo "# 上一批 $_prev 份日志已归档到 $_dir（KEEP_PREV_LOGS=1 可关掉归档）" >&2
+  fi
+fi
 : > "$OUT"
 # 把"这一批打的是哪台后端"写进记录：`BACKEND` 有默认值（8199＝dev 约定），
 # 但默认值一旦没落进输出，事后就分不清这批读数是哪个端机器给的（同族教训：静默回落 8080）
