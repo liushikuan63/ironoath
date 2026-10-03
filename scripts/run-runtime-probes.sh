@@ -119,6 +119,14 @@ while read -r f; do
   # 指到一个不存在的目录，就得到一个凭空虚记的 "1"。
   if [ ! -s "$log" ]; then
     code="NO-RUN"
+  # 2026-10-04 加：**日志非空，也可能是"量具自己没起来"**。启动期错误（模块找不到、前端产物缺失）
+  # 会往日志里写满 stack trace ⇒ 旧判据下它被记成一次普通的红，**冒充产品缺陷**。
+  # 实测（新机器上从零装环境那次）：探针写死的 playwright 绝对路径失效 ⇒ 所有浏览器类探针一起判红，
+  # 而根因与环境有关、与产品无关；同一批里 `client/build/web-mobile` 缺失也走同一条路。
+  # ⇒ 这两类"没跑起来"的形状与"日志空"同义，一并记 NO-RUN，让它与真红可分辨。
+  elif grep -qE 'ERR_MODULE_NOT_FOUND|Cannot find module|MODULE_NOT_FOUND' "$log" \
+    || grep -qE 'ENOENT.*index\.html' "$log"; then
+    code="NO-RUN"
   fi
   # 有的量具拿"计时对上预算"当判据，而那条预算正落在它自己的读数散布里（#444 实测：perf 首屏
   # 同一颗 SHA 四跑 2715/2830/3234/3244 对预算 3000）—— 超一次不构成缺陷。所以非零时补跑一次，
