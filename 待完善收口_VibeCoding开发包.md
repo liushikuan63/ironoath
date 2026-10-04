@@ -1297,3 +1297,35 @@ Chromium 里「显式 `hasTouch:false`」与「不传」不是同一回事（前
 按 `camera.worldToScreen` 点一个按钮中心 → 读 `nodeTouch`」。
 **先证明"这个页面里任何一次点击都能注册"**，再逐项把功能加回去。
 ⇒ 这与上一格的教训是同一条：**别再一项项猜差异，先把最小可复现的通路打通。**
+
+##### 16:9x **换二分方式成功**：最小探针证明「点击可注册」⇒ 问题在 audio 探针自己多出来的东西
+
+不再一项项猜差异，直接写**最小独立探针** `tmp/probe-click-sanity.mjs`（一次性诊断，
+不进 `tools/` 以免进批跑清单），只做一件事：
+`?panel=city` → 等 `PanelNav.currentKey==='city'` → 等 2 秒
+→ 给所有 active+UITransform 节点挂 touch-start 计数
+→ `camera.worldToScreen` 算一个按钮中心 → `page.mouse.click` → 读计数。
+上下文与 `verify-city-multi-types` **逐字一致**（只给 viewport，`hasTouch` 键整个不传）。
+
+```
+[sanity] PanelNav.currentKey==='city' 达成 = true
+[sanity] 挂了监听的节点数 = 159
+[sanity] 按钮总数=4 点={"name":"CollectAllButton","x":1260,"y":72}
+[sanity] nodeTouch 计数 = 5   ⇒ 点击可注册
+```
+
+⇒ **同一页面 / 同一后端 / 同一换算，最小探针 `nodeTouch=5`**；
+而 `verify-audio-runtime` 是 **0**、`verify-city-multi-types` 是 **33/35**。
+⇒ **点击通路本身没问题，问题在 `verify-audio-runtime` 多加的那些东西里。**
+
+⚠️ **已单独 toggle 过、仍为 0 的三项**（所以不是单独哪一项）：
+`AUDIO_NO_PATCH=1`（AudioContext 补丁 + deviceId）、`AUDIO_NO_HIDE=1`（引导层摘除）、
+以及诊断出口本身。⇒ 说明**可能是组合效应**，或是我没 toggle 到的某一项。
+
+⚠️ **下一格（未做，唯一可执行）**：**反向二分** —— 以最小探针为基线，
+把 audio 探针的功能**一项一项加回去**，每加一项跑一次，看 `nodeTouch` 何时从 5 掉到 0。
+建议的加回顺序（按嫌疑从大到小）：
+① `addInitScript`（AudioContext 补丁 + **每次生成新的 `ironoath.deviceId`**
+—— 这会让后端每次都建**新玩家**，面板状态与复用的玩家不同，这条嫌疑最大且此前没单独验证过）；
+② `page.goto` 之外的额外等待；③ 诊断出口读取时机；④ 其余。
+⇒ 与本会话这串的教训一致：**别再猜差异，先把最小可复现的通路打通，再一项项加回。**
