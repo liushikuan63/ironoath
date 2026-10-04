@@ -239,8 +239,9 @@ for (const phase of PHASES) {
   }
   await page.waitForTimeout(1500)
   const before = await measure(page, phase.panel)
-  const planted = await page.evaluate(([panelKey, alpha]) => {
+  const planted = await page.evaluate(([panelKey, alpha, rgb]) => {
     window.__plantAlpha = alpha
+    window.__plantRgb = rgb
     const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     const panel = game?.children.find((c) => c.name === panelKey)
     if (!panel) return { ok: false, why: '面板没找到' }
@@ -282,7 +283,11 @@ for (const phase of PHASES) {
     plate.getComponent('cc.UITransform').setContentSize(w, h)
     // alpha 可由环境变量压低：用来量这一维的**边界** —— 半透明底板只是给字染色、
     // 没真盖住，24 的像元阈值下报不报得出来是未知的，测出来才知道（台账 #412 的未做项）
-    g.fillColor = new ctor(240, 40, 40, Number(window.__plantAlpha ?? 255))
+    // 2026-10-05 对照实验开关：底板颜色可由 PLANT_RGB 覆盖（默认保持原样 240,40,40）。
+    // 用途：根因假设是「底板与橙红字太接近 ⇒ 关掉后像素差达不到阈值 24」，
+    // 所以用**高反差色**跑一轮作对照 ⇒ 若红相位的最大像素差从 0 变正，假设成立。
+    const _rgb = (window.__plantRgb ?? '240,40,40').split(',').map(Number)
+    g.fillColor = new ctor(_rgb[0], _rgb[1], _rgb[2], Number(window.__plantAlpha ?? 255))
     g.rect(-w / 2, -h / 2, w, h)
     g.fill()
     window.__probePlant = plate
@@ -324,7 +329,7 @@ for (const phase of PHASES) {
       fillColorActual: _g === null ? null : [_g.fillColor.r, _g.fillColor.g, _g.fillColor.b],
       nodeActive: plate.activeInHierarchy === true, uiSize: [Math.round(plate.getComponent('cc.UITransform').width), Math.round(plate.getComponent('cc.UITransform').height)],
       screenRect: _screenRect, worldBox: [world.x, world.y, world.width, world.height] }
-  }, [phase.panel, Number(process.env.PLANT_ALPHA ?? 255)])
+  }, [phase.panel, Number(process.env.PLANT_ALPHA ?? 255), process.env.PLANT_RGB ?? '240,40,40'])
   const after = planted.ok ? await measure(page, phase.panel, planted.text) : { hits: -1 }
   // 2026-10-05 **坐标系已读明白后的正确判别**（零新增 evaluate）：
   // 带矩形定义写在 plate-coverage.mjs:36-39 ——
