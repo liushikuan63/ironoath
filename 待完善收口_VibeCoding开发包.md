@@ -845,6 +845,34 @@ AGENTS.md §八要求「当轮门禁有读数」才推。已修并复验 `CHECK_
 （下一格要做的验证，**不需要改产品码**）。
 ⚠️ **未做**：修它要动 `bindGlobalTouch`（产品行为：桌面端是否也该出声）⇒ **属产品口径**，未擅自改。
 
+##### 15:4x 那一格做完了：**假设被证伪，修复已回退**
+
+**双计数器实验（不改产品码）做不出来**，如实记：
+`{"nodeTouch":0,"globalTouch":0,"hasCcInput":false,"hasCcNode":true,"note":"window.cc.input 不可直接取"}`
+- 全局侧：`window.cc.input` **压根没暴露**（`hasCcInput:false`）⇒ 从页面读不到；
+- 节点侧：`hasCcNode:true` 但 `nodeTouch:0` ⇒ **我把监听挂在 DFS 到的第一个节点上（多半是根节点），
+  它收不到指针下的触摸** ⇒ 这个对照无效，不是"节点级也不触发"的证据。
+
+**⇒ 转而按推断修并实测**（动了产品码，所以这一步留痕）：
+① 给 `bindGlobalTouch` 补 `Input.EventType.MOUSE_DOWN`；② 门禁拦下
+`TS2339 Property 'MOUSE_DOWN' does not exist` ⇒ 查出是**本仓自己的类型桩**
+`client/types/cc.d.ts:315` 只声明了 touch 三个（真实引擎本来就有鼠标那六个）⇒ **补桩，不改用字符串字面量绕过**
+（挂错事件名**不报错、只会永远不响**，正是这类症状）。
+
+**实测结果：`armed` 依旧是 `false`。**
+⇒ **"桌面鼠标不映射到 `TOUCH_START`"这个推断被证伪** ——
+全局 `input.on(...)` 在那个上下文里**连 `MOUSE_DOWN` 都收不到**。
+
+⇒ **已回退那个未证实的行为改动**（`bindGlobalTouch` 恢复只挂 `TOUCH_START`；
+`AudioService.ts` 现只多出诊断出口 3 行），**保留 `cc.d.ts` 补桩**（那本来就是真缺口）。
+`CHECK_EXIT=0`。
+
+⚠️ **下一步要查的（未做，按序）**：
+1. **在 `hasTouch` 上下文里改用 `touchscreen.tap`** 试一次 —— 本会话 `verify-city-phone` 早已实测：
+   触摸上下文能点到格子、而鼠标点不到 ⇒ **可能是上下文 `hasTouch` 的差异，不是事件名的问题**；
+2. 若 touch 能解锁 ⇒ `verify-audio-runtime` 自己的上下文配错了（量具问题，不是产品缺陷）；
+3. 若 touch 也解不了锁 ⇒ 才是产品问题，且要重新查为什么节点级能触发而全局级不能。
+
 - ⚠️ 另注（本机环境，已落记忆）：`github.com` 解析到 **127.0.0.1**（本地转发，时通时不通）。
   ⇒ **推送可行性判据要用 `git ls-remote --heads origin master`**，**不要**用
   `Test-NetConnection` 的 `TcpTestSucceeded` —— 两者走不同路径，口径会相反。

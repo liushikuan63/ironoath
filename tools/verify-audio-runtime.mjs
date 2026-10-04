@@ -138,6 +138,40 @@ for (let i = 0; i < 5; i++) {
   await page.mouse.click(720, 500)
   await page.waitForTimeout(180)
 }
+// 2026-10-04：桌面 Web 上「音效永不解锁」的对照实验。
+// 嫌疑：`AudioService.bindGlobalTouch` 挂在 `input.on(Input.EventType.TOUCH_START)` 上，
+// 而 `Input.EventType.TOUCH_START` 对应 DOM 的 `touchstart` —— 桌面无触屏时鼠标点它不响。
+// **但节点级触摸是能被鼠标点出来的**（本会话 city-multi-types / city-phone 都靠鼠标点中了格子），
+// 而两者走的不是同一条路 ⇒ 不能靠"节点能点"反推"全局 input.on 会响"。
+// 这里同页挂**两个计数器**，同一发 `page.mouse.click` 打过去：
+//   节点级 node.on('touch-start') 有数 + 全局 input.on('touch-start') 无数 ⇒ 坐实。
+const touchPaths = await page.evaluate(() => {
+  const out = { nodeTouch: 0, globalTouch: 0, hasCcInput: false, hasCcNode: false, note: '' }
+  const scene = window.cc?.director?.getScene?.()
+  if (scene === null || scene === undefined) { out.note = 'no-scene'; return out }
+  let host = null
+  const find = (n) => {
+    if (host === null && n.getComponent != null) host = n
+    for (const c of n.children) find(c)
+  }
+  find(scene)
+  if (host !== null && typeof host.on === 'function') {
+    out.hasCcNode = true
+    host.on('touch-start', () => { out.nodeTouch += 1 })
+  }
+  // Cocos 的 input 模块是否挂在 window.cc 上（不同版本挂法不同，挂不上就如实记下来）
+  const inp = window.cc?.input
+  if (inp != null && typeof inp.on === 'function') {
+    out.hasCcInput = true
+    inp.on('touch-start', () => { out.globalTouch += 1 })
+  } else {
+    out.note = out.note === '' ? 'window.cc.input 不可直接取' : out.note
+  }
+  globalThis.__touchPaths = out
+  return out
+})
+await page.waitForTimeout(300)
+
 const afterMore = await page.evaluate(() => globalThis.__bufferSources)
 const pointerEvents = await page.evaluate(() => globalThis.__pointerEvents)
 // 2026-10-04：读 AudioService 自己那份**只读**诊断快照（AudioService.ts 里 `audioDiagnostics()`，
@@ -148,14 +182,18 @@ const audioDiag = await page.evaluate(() => {
   const fn = globalThis.__ironoathAudioDiagnostics
   return typeof fn === 'function' ? fn() : { missing: true }
 })
+const touchRead = await page.evaluate(() => globalThis.__touchPaths)
 
 checks.taps = { beforeTaps, afterFirst, afterMore }
 checks.pointerEvents = pointerEvents
 checks.audioDiagnostics = audioDiag
+checks.touchPaths = touchRead
 console.log(`[verify-audio] 发声计数 ${beforeTaps} →(首点，设计上不响) ${afterFirst} →(再点五次) ${afterMore}`
   + `；期间 canvas 上的 pointer/touch 事件 = ${pointerEvents}`
   + '（为 0 ⇒ 点击没送达页面；>0 而发声 0 ⇒ 拦在 armed/muted/节流那一侧）')
 console.log(`[verify-audio] AudioService 只读诊断：${JSON.stringify(audioDiag)}`)
+console.log(`[verify-audio] 触摸通路对照：${JSON.stringify(touchRead)}`
+  + ' —— 节点级 touch-start 有数 + 全局 input.on(touch-start) 无数 ⇒ 桌面鼠标不解锁音效')
 checks.audioWarnings = audioWarnings
 checks.errors = errors
 // 把失败请求也打出来：ERR_CONNECTION_REFUSED 没有 URL 时无法判读，有 URL 就能

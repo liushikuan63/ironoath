@@ -186,6 +186,9 @@ function readStored(): string | null {
 
 /** 全局触摸接线单独拆出来：一次点击只登记一次监听，装不上就该在日志里看见。 */
 function bindGlobalTouch(): void {
+  // 2026-10-04：**试过**再加一条 `Input.EventType.MOUSE_DOWN`（推断"桌面鼠标不发 TOUCH_START"），
+  // 实测 `armed` 依旧 false ⇒ **该推断被证伪，已回退**：全局 input.on 在那个上下文里
+  // 连 MOUSE_DOWN 都收不到，所以问题不在"选哪个事件名"。恢复原样，保持这一行干净。
   input.on(Input.EventType.TOUCH_START, () => {
     if (!armed) {
       // 第一次触摸是"解锁音频"那一下，不配音效：平台在这一刻才允许出声，

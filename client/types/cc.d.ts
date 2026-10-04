@@ -310,9 +310,27 @@ declare module 'cc' {
     playOneShot(clip: AudioClip, volume?: number): void
   }
 
-  /** 引擎级输入：全仓库唯一的音效接点挂在它的 TOUCH_START 上。 */
+  /** 引擎级输入：音效接点挂在它的 TOUCH_START（触摸设备）与 MOUSE_DOWN（桌面 Web）上。 */
   export class Input {
-    static EventType: { TOUCH_START: string; TOUCH_MOVE: string; TOUCH_END: string }
+    /**
+     * 2026-10-04 补全鼠标那六个：真实引擎的 `Input.EventType` 本来就有它们，
+     * 是**本桩只写了 touch 三个**。补之前 `Input.EventType.MOUSE_DOWN` 编译不过。
+     *
+     * <p>为什么不改用字符串字面量绕过：`bindGlobalTouch` 挂错事件名**不会报错、只会永远不响**
+     * （本轮 `verify-audio-runtime` 的 `armed` 恒为 false 就是这类症状）⇒ 值必须来自引擎常量。
+     */
+    static EventType: {
+      TOUCH_START: string
+      TOUCH_MOVE: string
+      TOUCH_END: string
+      TOUCH_CANCEL: string
+      MOUSE_DOWN: string
+      MOUSE_UP: string
+      MOUSE_MOVE: string
+      MOUSE_WHEEL: string
+      MOUSE_ENTER: string
+      MOUSE_LEAVE: string
+    }
   }
 
   export const input: {
