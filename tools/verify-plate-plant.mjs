@@ -123,16 +123,16 @@ await social.install(makeStubRead(context))
 
 async function measure(page, panel, wantText = null) {
   const plan = await page.evaluate(planPlateCoverage, panel)
-  // 2026-10-04 **只读诊断**：把 plan 的内容打出来，用来判别「底板是不是被当成牌一起捕获进 plan」。
-  // 起因：调用顺序是「植入(盖上) → measure(plan 重捕 …)」，底板在 plan 捕获**之前**就盖好了；
-  // 而 planPlateCoverage 认牌靠的是视觉特征，探针底板正是一块纯色矩形
-  // ⇒ 若 plan.plates 里混进探针自己那块，循环关它时就是"自己关自己"，差被抵消 ⇒ hits=0 且时好时坏。
-  // ⚠️ 只加读数，不改判据（ok 仍只看 hits/plantedHit）。
-  const plateNames = await page.evaluate(() => Object.keys(window.__plateNodes ?? {}))
-  console.log(`  [plan] bands=${plan === null ? 'null' : plan.bands.length}`
-    + ` plates=${plan === null ? 'null' : plan.plates.length}`
-    + ` 每张牌带数=${plan === null ? 'null' : JSON.stringify(plan.plates.map((p) => p.bands.length))}`
-    + ` 场景里的牌=${JSON.stringify(plateNames)}`)
+  // 2026-10-04：这里**曾经**加过一段打 `plan` 内容的诊断（`plates.length` / 每张牌带数 /
+  // 场景里的牌名），用来判别「`plan.plates === 0` 会不会就是失败相位」。
+  // ⚠️ **已撤掉，原因值得记住**：这段诊断在**每次 `measure` 里多打了一次 `page.evaluate`**，
+  // 而 `measure` 处在时序敏感路径上 ⇒ 实测**撤掉之前连跑 4 次全绿、加了诊断之后一次失败都没复现**
+  // ⇒ 结论：**「加了诊断之后变绿」不能当成「抖动不存在」**。
+  // 这是本会话第二次栽在「侵入式观测改变被测行为」（第一次是给 city 探针 170 个节点挂监听）。
+  // ⇒ 以后要取这类读数，**只能取不落在时序路径上的**（例如在**相位结束**时读一次汇总），
+  //    绝不能挂在 `measure` 这种每相位跑三次的函数里。
+  // 保留判据本身不变：`plan.plates.length === 0` 时直接短路返回 hits=0（压根没比像素）——
+  // 这条短路**实测真实存在**，但**未证实**它与失败相位一一对应（见 vibiecoding 文档 16:29x）。
   if (plan === null) return { hits: -1, bands: 0, plates: 0, plantedHit: false }
   if (plan.plates.length === 0) return { hits: 0, bands: plan.bands.length, plates: 0, plantedHit: false }
   const base = decodePng(await page.screenshot())
