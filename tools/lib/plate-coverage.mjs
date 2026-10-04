@@ -50,7 +50,13 @@ export function planPlateCoverage(panelKey) {
       if (pr.y >= gy0 + lb.fontSize || gy0 >= pr.y + pr.height) return
       let slot = plates.find((p) => p.handle === j)
       if (slot === undefined) {
-        slot = { handle: j, name: m.name, bands: [] }
+        // 2026-10-05 **零新增 evaluate 的读数**：把牌自己的世界矩形一并带出（`pr` 本来就在上面算好了）。
+        // 用途：与「它自己那些带的矩形」比重叠 —— `verify-plate-plant` 的红相位读数是
+        // 「最大像素差 **0**」（绿相位最小 936，无中间值）⇒ 底板确实盖上了、却与被测带**完全没重叠**。
+        // 而本函数正是**按重叠**把带挂到牌上的（上面两行 `if (pr.x >= gx0 + est …) return`）
+        // ⇒ 若带已挂上却量到差 0，就说明**截图那一刻的版面与这里算的版面不是同一版**。
+        // 只需把 `pr` 带出去即可比对，**不需要新增任何 evaluate**（挂在 measure 里的采集会抹平抖动）。
+        slot = { handle: j, name: m.name, bands: [], rect: [pr.x, pr.y, pr.width, pr.height] }
         plates.push(slot)
       }
       slot.bands.push(bi)
