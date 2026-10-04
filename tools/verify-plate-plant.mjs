@@ -273,9 +273,21 @@ for (const phase of PHASES) {
     && switched === true && paged === true
     // 走到但没量到字，等于这一相没验过 —— 与 switched/paged 同一类"别把空转当通过"
     && before.bands >= (BAND_FLOORS[phase.tag] ?? 1)
+  // 2026-10-04 **只读诊断**（不改判据）：`after.hits === 0` 时再等一短延时量一次，
+  // 两次读数都记下来。目的是分辨「植入真的没生效」与「**读早了**」。
+  // ⚠️ 判据 `ok` 仍然只看**第一次**的 `after` —— 这里只加读数，不放宽也不收紧通过条件。
+  // 实测依据：连采 3 次得 2 红 1 绿、失败 tag 每次都不同（power/KILL、power/ALLIANCE、
+  // power/SEASON），症状统一 `plantedHit:false` ⇒ 非确定性抖动，疑似读早。
+  let retry = null
+  if (after.hits === 0) {
+    await page.waitForTimeout(400)
+    retry = await measure(page, phase.panel, planted.text)
+    console.log(`  [retry] ${phase.tag}：等 400ms 后复量 hits=${retry.hits} 命中被植字=${retry.plantedHit}`
+      + `（第一次 hits=${after.hits}）⇒ ${retry.hits > 0 ? '**读早了**：延时后能看到' : '延时后仍看不到'}`)
+  }
   results.push({ tag: phase.tag, switched, paged, pageProof, before: before.hits, planted,
     after: after.hits, plantedHit: after.plantedHit === true, reverted: reverted.hits,
-    bands: before.bands, ok })
+    bands: before.bands, ok, retry: retry === null ? null : { hits: retry.hits, plantedHit: retry.plantedHit } })
   console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged}(${pageProof}) 字形带=${before.bands} 条（下限 ${BAND_FLOORS[phase.tag] ?? 1}）；植入前 ${before.hits} → `
     + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true}）→ 撤掉后 ${reverted.hits}；`
     + `植入=${JSON.stringify(planted)} ⇒ ${ok ? 'OK' : '不合格'}`)
