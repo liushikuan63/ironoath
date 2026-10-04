@@ -133,8 +133,12 @@ async function measure(page, panel, wantText = null) {
   //    绝不能挂在 `measure` 这种每相位跑三次的函数里。
   // 保留判据本身不变：`plan.plates.length === 0` 时直接短路返回 hits=0（压根没比像素）——
   // 这条短路**实测真实存在**，但**未证实**它与失败相位一一对应（见 vibiecoding 文档 16:29x）。
-  if (plan === null) return { hits: -1, bands: 0, plates: 0, plantedHit: false }
-  if (plan.plates.length === 0) return { hits: 0, bands: plan.bands.length, plates: 0, plantedHit: false }
+  if (plan === null) return { hits: -1, bands: 0, plates: 0, plantedHit: false, maxChanged: -1 }
+  // ⚠️ 2026-10-05：这条提前返回**原先漏了 `maxChanged`** ⇒ 调用方拿到 `undefined`。
+  // 后果有两处，都已实测到：`[retry]` 打出 `最大像素差=undefined`；
+  // 以及 `after.maxChanged === 0` 永远不成立 ⇒ `[取证]` 分支**一次都没触发**。
+  // ⇒ **判据**：新增返回字段时，**每一条 return 路径都要给全**，否则读数会"看起来有、其实是 undefined"。
+  if (plan.plates.length === 0) return { hits: 0, bands: plan.bands.length, plates: 0, plantedHit: false, maxChanged: -1 }
   const base = decodePng(await page.screenshot())
   let hits = 0
   let plantedHit = false
@@ -329,7 +333,7 @@ for (const phase of PHASES) {
       fillColorActual: _g === null ? null : [_g.fillColor.r, _g.fillColor.g, _g.fillColor.b],
       nodeActive: plate.activeInHierarchy === true, uiSize: [Math.round(plate.getComponent('cc.UITransform').width), Math.round(plate.getComponent('cc.UITransform').height)],
       screenRect: _screenRect, worldBox: [world.x, world.y, world.width, world.height] }
-  }, [phase.panel, Number(process.env.PLANT_ALPHA ?? 255), process.env.PLANT_RGB ?? '240,40,40'])
+  }, [phase.panel, Number(process.env.PLANT_ALPHA ?? 255), process.env.PLANT_RGB ?? '255,0,255'])
   const after = planted.ok ? await measure(page, phase.panel, planted.text) : { hits: -1 }
   // 2026-10-05 **坐标系已读明白后的正确判别**（零新增 evaluate）：
   // 带矩形定义写在 plate-coverage.mjs:36-39 ——
@@ -360,6 +364,52 @@ for (const phase of PHASES) {
   // 带重叠=0%）⇒ 两者的**原点与缩放仍不是同一个坐标系**（camera.worldToScreen 与 diffRegion`n  // 用的截图像素坐标系不同）⇒ 判据无效。
   // ⚠️ 本格是**先拿绿相位当对照**才发现它无效的 —— 这正是上一格定下的规矩：**新判据上线前，
   //   先用它跑一个已知正常的样本，确认它给出非零/非异常的读数**。
+  // 2026-10-05 **取证读取点（正解）**：落在「`after` 量测**结束之后**、`destroy` **之前**」这个窗口里。
+  // 三种错法都真实发生过，判据合起来是一句话 ——
+  // **读数的位置必须落在「被测对象还在、且测量已经结束」这个窗口内**：
+  // ① 放进 `plant` / `measure` ⇒ 每个相位都执行 ⇒ 加延时 ⇒ **把抖动抹平**（实测 3 次连跑全绿）。
+  // ② 放进 `[retry]` 分支 ⇒ 探针**自己**已在下面把底板 destroy 了
+  //    ⇒ 实测恒返回 `{err: 底板已不在场景里}`，那是**设计如此、不是证据**。
+  // ③ 正解 = 就在这里。
+  // ⚠️ 只在 `maxChanged === 0`（真正"量不到差异"）时才发起这次 evaluate，**正常相位零开销**。
+  let plateForensics = null
+  if (planted.ok === true && after.maxChanged === 0) {
+    plateForensics = await page.evaluate(() => {
+      try {
+        const plate = window.__probePlant
+        if (plate === null || plate === undefined) return { err: '底板已不在场景里' }
+        const all = []
+        const w = (n) => { all.push(n); for (const c of n.children) w(c) }
+        w(window.cc.director.getScene())
+        const u = plate.getComponent('cc.UITransform')
+        const wb = u.getBoundingBoxToWorld()
+        const cx = wb.x + wb.width / 2
+        const cy = wb.y + wb.height / 2
+        const at = []
+        for (const nd of all) {
+          if (nd === plate) { at.push('PLATE'); continue }
+          const nu = nd.getComponent && nd.getComponent('cc.UITransform')
+          if (nu === null || nu === undefined || !nd.activeInHierarchy) continue
+          const b = nu.getBoundingBoxToWorld()
+          if (b.x <= cx && b.x + b.width >= cx && b.y <= cy && b.y + b.height >= cy) {
+            const g = nd.getComponent('cc.Graphics')
+            at.push(nd.name + (g !== null && g !== undefined ? '[Graphics]' : ''))
+          }
+        }
+        const g2 = plate.getComponent('cc.Graphics')
+        return {
+          plateIndex: all.indexOf(plate),
+          nodeCount: all.length,
+          plateActive: plate.activeInHierarchy === true,
+          plateEnabled: g2 !== null && g2 !== undefined ? g2.enabled === true : null,
+          atPoint: at
+        }
+      } catch (e) { return { err: String(e) } }
+    })
+    console.log(`  [取证] ${phase.tag} 底板仍在=${plateForensics.plateActive === true}`
+      + ` 启用=${plateForensics.plateEnabled} 索引=${plateForensics.plateIndex}/${plateForensics.nodeCount}`
+      + ` 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
+  }
   if (planted.ok) {
     await page.evaluate(() => { window.__probePlant?.destroy(); window.__probePlant = null })
     await page.waitForTimeout(200)
@@ -381,39 +431,7 @@ for (const phase of PHASES) {
     await page.waitForTimeout(400)
     retry = await measure(page, phase.panel, planted.text)
     console.log(`  [retry] ${phase.tag}：等 400ms 后复量 hits=${retry.hits} 命中被植字=${retry.plantedHit} 最大像素差=${retry.maxChanged}`
-      + `（第一次 hits=${after.hits}）⇒ ${retry.hits > 0 ? '**读早了**：延时后能看到' : '延时后仍看不到'}`
-      // 2026-10-05 **取证读数**：这里已经是**量测窗口之外**、而且**已经知道差为 0**，
-      // 所以在此处取"底板被谁挡住"既**不扰动测量**又拿得到证据。
-      // ⚠️ **不要再把它挪回 `plant` 里** —— 放在那儿等于每个相位都算，
-      //    实测 3 次连跑全绿、红相位一次没出现 ⇒ 又把抖动测没了（**本会话第七次**
-      //    栽在「侵入式观测改变被测行为」）。
-      // 用它分辨「底板被谁挡住」—— 这是六次假设被推翻后唯一还没被证伪的那条。
-      + ` | 底板取证=${JSON.stringify(await page.evaluate(() => {
-          try {
-            const scene = window.cc.director.getScene()
-            const all = []
-            const w = (n) => { all.push(n); for (const c of n.children) w(c) }
-            w(scene)
-            const plate = window.__probePlant
-            if (plate === null || plate === undefined) return { err: '底板已不在场景里' }
-            const u = plate.getComponent('cc.UITransform')
-            const wb = u.getBoundingBoxToWorld()
-            const cx = wb.x + wb.width / 2
-            const cy = wb.y + wb.height / 2
-            const at = []
-            for (const nd of all) {
-              if (nd === plate) { at.push('PLATE'); continue }
-              const nu = nd.getComponent && nd.getComponent('cc.UITransform')
-              if (nu === null || nu === undefined || !nd.activeInHierarchy) continue
-              const b = nu.getBoundingBoxToWorld()
-              if (b.x <= cx && b.x + b.width >= cx && b.y <= cy && b.y + b.height >= cy) {
-                const g = nd.getComponent('cc.Graphics')
-                at.push(nd.name + (g !== null && g !== undefined ? '[Graphics]' : ''))
-              }
-            }
-            return { plateIndex: all.indexOf(plate), nodeCount: all.length, atPoint: at }
-          } catch (e) { return { err: String(e) } }
-        }))}`)
+      + `（第一次 hits=${after.hits}）⇒ ${retry.hits > 0 ? '**读早了**：延时后能看到' : '延时后仍看不到'}`)
   }
   results.push({ tag: phase.tag, switched, paged, pageProof, before: before.hits, planted,
     after: after.hits, plantedHit: after.plantedHit === true, reverted: reverted.hits,
