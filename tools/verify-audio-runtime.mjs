@@ -115,6 +115,20 @@ const checks = {
 }
 
 const beforeTaps = await page.evaluate(() => globalThis.__bufferSources)
+// 2026-10-04 诊断读数：此前只知道"没发声"，分不清「点击根本没到页面」与「到了但被 armed/muted 拦下」。
+// 在 canvas 上数最底层的 pointer 事件 —— 它在 Cocos 的触摸分发**之前**，
+// 于是点数为 0 ⇒ Playwright 的点击没送达；点数 > 0 而发声数为 0 ⇒ 拦在 armed/muted/节流那一侧。
+// ⚠️ 另：AudioService.ts:139-146 明写「第一次触摸只解锁、不配音效」（浏览器与微信禁止交互前播音频）
+// ⇒ **第一次点击发声数为 0 是符合设计的**，判据必须从第二次点起算。
+await page.evaluate(() => {
+  globalThis.__pointerEvents = 0
+  const c = document.querySelector('canvas')
+  if (c !== null) {
+    for (const type of ['pointerdown', 'pointerup', 'touchstart']) {
+      c.addEventListener(type, () => { globalThis.__pointerEvents += 1 }, true)
+    }
+  }
+})
 // 第一次点击是"解锁音频"那一下：按设计它**不该**发声
 await page.mouse.click(720, 500)
 await page.waitForTimeout(400)
@@ -125,8 +139,13 @@ for (let i = 0; i < 5; i++) {
   await page.waitForTimeout(180)
 }
 const afterMore = await page.evaluate(() => globalThis.__bufferSources)
+const pointerEvents = await page.evaluate(() => globalThis.__pointerEvents)
 
 checks.taps = { beforeTaps, afterFirst, afterMore }
+checks.pointerEvents = pointerEvents
+console.log(`[verify-audio] 发声计数 ${beforeTaps} →(首点，设计上不响) ${afterFirst} →(再点五次) ${afterMore}`
+  + `；期间 canvas 上的 pointer/touch 事件 = ${pointerEvents}`
+  + '（为 0 ⇒ 点击没送达页面；>0 而发声 0 ⇒ 拦在 armed/muted/节流那一侧）')
 checks.audioWarnings = audioWarnings
 checks.errors = errors
 // 把失败请求也打出来：ERR_CONNECTION_REFUSED 没有 URL 时无法判读，有 URL 就能

@@ -714,3 +714,33 @@ POST http://localhost:8080/player/init     :: ERR_CONNECTION_REFUSED   (×3)
 不是页面报错（`errors: []`）。
 ⇒ **下一格要补的读数**：`armed` / `muted` / `lastPlayedMs` 三个值的可见性
 （要么在 `AudioService` 上挂一个只读诊断属性，要么让探针断言"没发声时 armed 是不是 false"）。
+
+#### 14:5x 再收窄一格：点击**确实送达了**，且「首点不响」是**设计**
+
+两条新读数：
+
+1. **「第一次点击发声数为 0」是符合设计的，不是缺陷。** `AudioService.ts:139-146`：
+   ```js
+   input.on(Input.EventType.TOUCH_START, () => {
+     if (!armed) { armed = true; return }   // 第一次触摸只解锁，不配音效
+     playSfx('tap')
+   })
+   ```
+   配套注释（`:12-14`）写明原因：浏览器与微信都禁止在用户交互前播音频，
+   **第一次触摸本身也不响（它正是解锁那一下）**。
+   ⇒ 探针的判据应从**第二次点**起算（它现在确实取了 `afterMore`，方向是对的）。
+
+2. **点击送达了页面**（新加的 canvas 底层 pointer 计数）：
+   ```
+   发声计数 0 →(首点，设计上不响) 0 →(再点五次) 0；期间 canvas 上的 pointer/touch 事件 = 12
+   ```
+   6 次点击 ×（pointerdown + pointerup）= **12** ⇒ Playwright 的点击**确实到达页面**，
+   排除了"点击根本没送达"这一路。
+
+⚠️ **仍未定**：拦下它的在 `armed` / `muted` / **clip 未进服务自己的 `clips` Map** 这三者之一，
+**这一轮分不开**。注意 `playSfx`（`:74-79`）在 `clips.get(path) === undefined` 时
+**直接 return 并顺手再发一次 `loadClip`** —— 而探针那条「4 张 clip 全部加载」读的是**别处**
+（resources 缓存 / 场景节点），**未必等于服务自己那张 Map 已就绪**。
+⇒ **下一格要补的读数**：服务侧那张 `clips` Map 的键数 + `armed` + `muted`（模块内局部变量，
+页面里读不到 ⇒ 需要在 `AudioService` 上挂一个**只读**诊断属性，或让探针改走别的可观测面）。
+⚠️ 这是**产品码**改动（虽只读），动手前先说明。
