@@ -493,7 +493,28 @@ if (emptyTiles.length > 0) {
 // 2026-10-04：漂移值**单独打一行** —— 上一格混在 [geo] 长行里被截断，一直没读到。
 for (const hp of hitPoints) console.log(`   [drift] ${hp.tile} 落点(${hp.x},${hp.y}) 600ms 漂移=${hp.drift}px`)
 // 2026-10-04：Grid-35 打空的最后一读 —— 那个坐标上站着谁
+const hud = await page.evaluate(() => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  let n = null
+  const find = (x) => { if (n === null && x.name === 'ZoomOutButton') n = x; for (const c of x.children) find(c) }
+  find(scene)
+  if (n === null) return { found: false }
+  const chain = []
+  let cur = n
+  while (cur !== null && cur !== undefined) {
+    const ui = cur.getComponent('cc.UITransform')
+    chain.push({ name: cur.name, active: cur.activeInHierarchy === true,
+      pos: [Math.round(cur.position.x), Math.round(cur.position.y)],
+      size: ui === null ? null : [Math.round(ui.width), Math.round(ui.height)],
+      anchor: ui === null ? null : [ui.anchorX, ui.anchorY] })
+    cur = cur.parent
+  }
+  return { found: true, chain }
+})
+globalThis.__hudChain = hud
 const who = await whoIsAt('Grid-35')
+console.log('[hud] ZoomOutButton 父链=' + JSON.stringify(globalThis.__hudChain))
 console.log('[who] Grid-35 世界坐标=' + JSON.stringify(who.world) + ' 覆盖该点的节点数=' + (who.hitCount ?? '-') + ' => ' + JSON.stringify(who.hits ?? who.error))
 console.log('[multi-types] 点击命中：')
 // 2026-10-04：落点两两间距。重叠 ⇒ 命中区真的叠在一起（产品缺陷）；分得开 ⇒ 量具还要再挪镜头。
