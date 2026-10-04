@@ -904,3 +904,41 @@ AGENTS.md §八要求「当轮门禁有读数」才推。已修并复验 `CHECK_
 - ⚠️ 另注（本机环境，已落记忆）：`github.com` 解析到 **127.0.0.1**（本地转发，时通时不通）。
   ⇒ **推送可行性判据要用 `git ls-remote --heads origin master`**，**不要**用
   `Test-NetConnection` 的 `TcpTestSucceeded` —— 两者走不同路径，口径会相反。
+
+##### 15:5x 用户指派：**优先修「任务老是停止」** —— 根因 = 心跳插件的触发判据盯错了文件
+
+**先排除"插件没跑"**：`~/.dsh/logs/session-heartbeat-native.log` 显示它**每次都按时武装**：
+```
+07:38:27Z agent=session-b7a6aaf5 idle: arming heartbeat in 180000ms
+07:47:58Z agent=session-b7a6aaf5 idle: arming heartbeat in 180000ms
+07:50:58Z agent=session-b7a6aaf5 skip: queue unchanged (1790997834000)
+```
+⇒ 机制活着，是**到点被自己挡回**。
+
+**根因（机制性，不是偶发）**：`session-heartbeat-native/index.js` 的判据 ③ 只盯
+**`hooks/continuation-queue.md`（写死的 `QUEUE_REL`）**，而**同一个插件的投喂提示词**让 agent 去读
+**仓库根的 `.qoder-work-queue.md` 与 `收口清单.md`**（`HEARTBEAT_PROMPT` 第 2 行）。
+**触发判据与提示词盯的不是同一批文件** —— 本工作流只维护后者、**从不改前者**
+（实测该文件"可推进项 = 0"）⇒ 它的 mtime 永远不变 ⇒「有活可干」永远为假
+⇒ **长任务必然停在做完一格之后**。
+
+**修法**（插件侧 + 配置侧，可回滚）：
+- `index.js`：判据改为看**一组**文件（配置项 `queueFiles`，绝对路径），取 mtime **最大值**；
+  **不配置时行为与改动前逐字一致**（只认原来那一个）⇒ 没配这项的会话不受影响。
+- `session-heartbeat.json`：加 `queueFiles = [.qoder-work-queue.md, 收口清单.md]`（两文件**已验证存在**），
+  备份 `session-heartbeat.json.bak-queuefiles-20261004-160058`。**这一项热读，不用重启**。
+
+**判据能失败（双向对照 26 ↔ 22/26）**：
+- 修好后 **26/26 绿**（新增 7 条：默认不变 / 配了就生效 / 名单外不投 / stamp 取最大 / 全缺为 none）；
+- 把 `queueStamp` 改回单文件 ⇒ **22/26，4 条 FAIL**，且
+  `违规：配了 queueFiles 后动它就能再投（停摆的正解）` **因正确的原因红**（`sent=1 first=1`）。
+
+⚠️ **过程中自查到一条不合格判据并已改**：第一版把「动名单内的文件」与「动名单外的文件」放在**同一个 home**
+里串行跑，后者顺手把 stamp 顶出去 ⇒ 前者**因错误的原因通过**（反向对照时它没红）。
+已拆成两个独立 home（b1 / b2），现在它在坏版本里正确地红。
+
+⚠️ **未做 / 待裁决**：**插件代码改动需重启 DSH 宿主才生效**（插件是 `file:///` 加载，
+而 `cordis.patch.yml` 明写「改这个文件会触发 HMR 重载，可能 dispose 活动会话并让 schedule 挂起」）。
+**「不重启 DSH」是本会话红线**，故已弹窗请本人拍板，**未擅自重启**。
+⇒ 重启后的验收判据：`node ~/.dsh/plugins/session-heartbeat-native/index.test.mjs` 应仍 26/26；
+日志里应出现 `watched=2`，且 `.qoder-work-queue.md` 一变化就出现 `heartbeat n/50 queued` 而不再是 `skip: queue unchanged`。
