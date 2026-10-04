@@ -29,6 +29,7 @@ const path = await import('node:path').then(m => m.default ?? m)
 const fs = await import('node:fs').then(m => m.default ?? m)
 const { createRequire } = await import('node:module')
 const { fileURLToPath } = await import('node:url')
+const { spawnSync } = await import('node:child_process')
 const require = createRequire(import.meta.url)
 
 // 必须显式给后端：静默回落到 127.0.0.1:8080 等于"打到另一台机器上读数"（同族收过 30+ 份，
@@ -60,8 +61,18 @@ function missingBuild() {
 
 async function main() {
   if (typeof WebSocket === 'undefined') {
-    console.error('本进程的 node 没有全局 WebSocket（PATH 上的 node 是 v20）。')
-    console.error('  正确起法：node --experimental-websocket tools/verify-ws-runtime.mjs')
+    // 2026-10-04：原先在这里直接退 2 并让人"用 --experimental-websocket 手动跑"。
+    // 但批跑是 `node "$f"` 裸跑的（run-runtime-probes.sh:96），**没人能给它加旗**
+    // ⇒ 这一份在批跑里恒定红，读起来像功能坏，其实是量具没架对。
+    // 改成**自己带旗重跑一次**（带一个环境标记防无限递归）：
+    // 加旗后仍没有 WebSocket（node 版本太老）才退 2，那才是真的跑不了。
+    if (process.env.PROBE_WS_RESPAWNED !== '1') {
+      const r = spawnSync(process.execPath,
+        ['--experimental-websocket', fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+        { stdio: 'inherit', env: { ...process.env, PROBE_WS_RESPAWNED: '1' } })
+      process.exit(r.status === null ? 1 : r.status)
+    }
+    console.error('本进程的 node 即使加了 --experimental-websocket 也没有全局 WebSocket（node 版本太老）。')
     process.exit(2)
   }
   const absent = missingBuild()
