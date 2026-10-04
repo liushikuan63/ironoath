@@ -138,6 +138,14 @@ async function measure(page, panel, wantText = null) {
   const base = decodePng(await page.screenshot())
   let hits = 0
   let plantedHit = false
+  // 2026-10-05 **零新增 evaluate 的读数**：`diffRegion` 的 `d.changed` 本来就现成，
+  // 这里只把它累加成 `maxChanged` 带回。用途是量化「差有多小」——
+  // 判据只看 `d.changed > 0`，所以"差=3"和"差=0"在判据眼里一样，
+  // 但两者指向的原因完全不同（前者=盖住了但盖得轻，后者=压根没盖住）。
+  // ⚠️ 刻意**不**新加 `page.evaluate`：上一格实测证明挂在 measure 里的采集会把抖动抹平。
+  // ⚠️ 声明必须在**循环外**：第一版误写在 `for (const plate …)` 体内，
+  // 而 return 在循环外 ⇒ 运行时报 `maxChanged is not defined`、探针直接崩（已踩，见文档 16:32x）。
+  let maxChanged = 0
   for (const plate of plan.plates) {
     await page.evaluate((h) => { window.__plateNodes[h].getComponent('cc.Graphics').enabled = false }, plate.handle)
     await page.waitForTimeout(120)
@@ -146,6 +154,7 @@ async function measure(page, panel, wantText = null) {
     await page.waitForTimeout(80)
     for (const bi of plate.bands) {
       const d = diffRegion(base, after, plan.bands[bi].rect, 24)
+      if (d.changed > maxChanged) maxChanged = d.changed
       if (d.changed > 0) {
         hits += 1
         // 不只要求"报了点什么"，还要求**被植入的那颗字**在报出来的里面 ——
@@ -156,7 +165,7 @@ async function measure(page, panel, wantText = null) {
       }
     }
   }
-  return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit }
+  return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit, maxChanged }
 }
 
 /**
@@ -308,7 +317,7 @@ for (const phase of PHASES) {
     after: after.hits, plantedHit: after.plantedHit === true, reverted: reverted.hits,
     bands: before.bands, ok, retry: retry === null ? null : { hits: retry.hits, plantedHit: retry.plantedHit } })
   console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged}(${pageProof}) 字形带=${before.bands} 条（下限 ${BAND_FLOORS[phase.tag] ?? 1}）；植入前 ${before.hits} → `
-    + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true} 识别到牌=${after.plates}）→ 撤掉后 ${reverted.hits}；`
+    + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true} 识别到牌=${after.plates} 最大像素差=${after.maxChanged}）→ 撤掉后 ${reverted.hits}；`
     + `植入=${JSON.stringify(planted)} ⇒ ${ok ? 'OK' : '不合格'}`)
   await page.close()
 }
