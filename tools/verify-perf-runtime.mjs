@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+import { chromium } from 'playwright'
 import { startPreviewServer, BAKED_HTTP } from './lib/preview-server.mjs'
 
 const require = createRequire(import.meta.url)

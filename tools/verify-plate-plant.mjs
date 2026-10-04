@@ -15,7 +15,7 @@
  * <p>用的是横扫同一份 `planPlateCoverage`（`tools/lib/plate-coverage.mjs`）——
  * 复制一份去验证，验证的就是另一个东西了（台账 #410）。
  */
-import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { decodePng, diffRegion } from './lib/png-diff.mjs'
 import { planPlateCoverage } from './lib/plate-coverage.mjs'

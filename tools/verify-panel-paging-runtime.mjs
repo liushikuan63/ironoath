@@ -17,7 +17,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { makeStubRead } from './lib/route-stub.mjs'
 import { clickTabNode } from './lib/panel-clicks.mjs'

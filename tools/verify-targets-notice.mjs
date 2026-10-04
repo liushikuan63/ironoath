@@ -18,7 +18,7 @@
  * <p><b>读的是场景图不是 DOM</b>：Cocos 把面板画在 canvas 上，DOM 里一个字都没有；
  * 组件只按注册名 `getComponent('cc.Label')` 取（release 产物会压缩类名，`constructor.name` 不可靠）。
  */
-import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 import path from 'node:path'

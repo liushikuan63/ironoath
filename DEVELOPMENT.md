@@ -24,12 +24,13 @@
 
 **新机器上第一次跑探针，容易漏的三样**（2026-10-04 在一台全新机器上实测逐层踩到）：
 
-1. **Playwright 目前是"硬编码路径"的，不在 `package.json` 里。** `tools/verify-*.mjs` 里有相当一批把
-   import 写成了绝对 `file://` 路径，指向一个 npx 缓存目录（形如
-   `file:///D:/Java/nodejs/node_cache/_npx/<hash>/node_modules/playwright/index.mjs`）。
-   那条缓存一没，**所有浏览器类探针同时失效**。要么按老路径把它装回去：
-   `npm install --prefix "D:/Java/nodejs/node_cache/_npx/<hash>" playwright` 且在该目录 `npx playwright install chromium`；
-   要么（治本）把那些 import 改成裸 `from 'playwright'` 并在仓库里正常装一次。
+1. **Playwright 是仓库根的 devDependency，根目录 `npm install` 会带上它。**
+   `tools/verify-*.mjs` 里的 import 是裸 `from 'playwright'`，由 node 的常规解析找到它。
+   ⚠️ **历史坑（2026-10-04 修掉）**：此前 59 份探针把 import 写成了绝对 `file://` 路径，指向一个 npx 缓存目录
+   （形如 `file:///D:/Java/nodejs/node_cache/_npx/<hash>/node_modules/playwright/index.mjs`）。
+   那条缓存一没（新机器 / 清缓存 / 换用户），**整批浏览器类探针同时失效**；
+   更糟的是当时 `run-runtime-probes.sh` 的旧判据会把"模块找不到"记成**一次普通的红**、冒充产品缺陷。
+   现在两处都已修：import 改回裸 specifier + 依赖声明进 `package.json`；批跑对"模块找不到 / 产物缺失"一律记 `NO-RUN`。
 2. **`client/build/web-mobile` 是构建产物，探针直接读它。** 没构建过就会以
    `ENOENT ... client/build/web-mobile/index.html` 失败 —— 那不是产品缺陷，是产物没建。
    构建：`env -u ELECTRON_RUN_AS_NODE bash scripts/build-webmobile.sh`

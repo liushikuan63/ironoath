@@ -14,7 +14,7 @@
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 import { nodeScreenPos } from './lib/node-screen-pos.mjs'

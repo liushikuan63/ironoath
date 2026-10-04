@@ -436,7 +436,7 @@ if (process.env.NATION_LIVE_UI === '1') {
   if (uiFound.code === 0) {
     const nationName = uiFound.data.nation.name
     const treasury = uiFound.data.nation.treasury
-    const { chromium } = await import('file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs')
+    const { chromium } = await import('playwright')
     const { startPreviewServer } = await import('./lib/preview-server.mjs')
     const { hideGuideOverlay } = await import('./lib/guide-overlay.mjs')
     const port = Number(process.env.NATION_LIVE_PORT ?? 8233)

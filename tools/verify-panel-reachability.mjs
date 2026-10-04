@@ -11,7 +11,7 @@
  * 否则该相"不画翻页行"是有承载的（滚动或一屏放得下），格子可按证据关掉。
  * 用法：PAGING_BACKEND=http://localhost:8171 node tmp/probe-nonpaging.mjs
  */
-import { chromium } from 'file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs'
+import { chromium } from 'playwright'
 import { startPreviewServer } from '../tools/lib/preview-server.mjs'
 
 const BACKEND = process.env.PAGING_BACKEND ?? 'http://localhost:8171'

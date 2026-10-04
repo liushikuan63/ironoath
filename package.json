@@ -16,6 +16,7 @@
     "gen": "bash scripts/gen.sh"
   },
   "devDependencies": {
+    "playwright": "^1.63.0",
     "typescript": "5.4.5"
   }
 }

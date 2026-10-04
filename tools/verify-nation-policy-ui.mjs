@@ -80,7 +80,7 @@ const treasury = founded.data.nation.treasury
 console.log(`\n=== 国策页真机证据（真后端 + 真产物，零夹具）===`)
 console.log(`  真数据：${nationName}｜国库 ${treasury}｜${BACKEND}`)
 
-const { chromium } = await import('file:///D:/Java/nodejs/node_cache/_npx/31e32ef8478fbf80/node_modules/playwright/index.mjs')
+const { chromium } = await import('playwright')
 const { startPreviewServer } = await import('./lib/preview-server.mjs')
 const { hideGuideOverlay } = await import('./lib/guide-overlay.mjs')
 const port = Number(process.env.NATION_LIVE_PORT ?? 8237)
