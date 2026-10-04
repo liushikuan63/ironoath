@@ -684,3 +684,33 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 ⇒ **落判据**：给"点格子"类探针分类时，除了看它点不点，还要看它**靠什么点**
 （HTTP / `emit` / 坐标）—— 后两者**都绕开命中区**，坐标那一种还要额外满足"先移镜头且落点在视口内"。
 **读数里出现"全绿"时，先确认它有没有真的走过那条会出错的路径。**
+
+### 2026-10-04 14:4x verify-audio-runtime：两条 FAIL → 一条，根因是**后端指向写死**
+
+此前只拿到 `ERR_CONNECTION_REFUSED`（**没有 URL**）判不出来。补 `requestfailed` 读数后立刻看清：
+
+```
+POST http://localhost:8080/ops/app/version :: ERR_CONNECTION_REFUSED
+POST http://localhost:8080/player/init     :: ERR_CONNECTION_REFUSED   (×3)
+```
+
+⇒ **与音频毫无关系**：页面在跟 **8080** 说话，而后端在 **8199**。
+探针 `verify-audio-runtime.mjs:30` 把 `backend: 'http://localhost:8080'` **写死**了 ——
+而产物里的地址本就是 8080（`preview-server.mjs:24` 的 `BAKED_HTTP`），于是
+`startPreviewServer` 把它当成"不重写"（`preview-server.mjs:42`，单测 `:64` 那条判据就是这个意思）
+⇒ 页面直连空端口 ⇒ `/player/init` 连不上 ⇒ 拿不到玩家 ⇒ 连点无效 ⇒ `taps` 停在 0。
+
+**改法**：传真实后端（`AUDIO_BACKEND ?? BACKEND_ORIGIN ?? 8080`），由预览服务重写；
+换不到重写点时它会抛错（`preview-server.mjs:120`），不会静默打错地址。
+
+**验（同一台后端）**：`failedRequests: []`、`errors: []` ⇒ **"页面报错 4 条"那条 FAIL 消失**，
+判据从 **2 条失败降到 1 条**；4 张 clip 仍全部加载正常（那本来就不是问题）。
+
+⚠️ **未做**：`taps` 仍停在 0 ——「连点五次一次都没发声」这条**还没查清**。
+`playSfx`（`AudioService.ts:63-82`）在 `armed=false` / `muted` / 节流不足时**直接 return、不排队**，
+而 `armed` 与 `muted` 都是**模块内局部变量、页面里读不到** ⇒ 这一层**未验证**。
+⚠️ 已排除：不是资源缺失（源资产 4 个、产物 `assets/resources/native/*.ogg` 也在 4 个）、
+不是远程 bundle（产物 `settings.json` 的 `server` 与 `remoteBundles` 均为空 ⇒ 同源加载）、
+不是页面报错（`errors: []`）。
+⇒ **下一格要补的读数**：`armed` / `muted` / `lastPlayedMs` 三个值的可见性
+（要么在 `AudioService` 上挂一个只读诊断属性，要么让探针断言"没发声时 armed 是不是 false"）。

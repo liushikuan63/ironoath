@@ -27,7 +27,16 @@ if (!existsSync(path.join(ROOT, 'index.html'))) {
 }
 
 const PORT = Number(process.env.AUDIO_VERIFY_PORT ?? 8191)
-const preview = await startPreviewServer({ root: ROOT, backend: 'http://localhost:8080', port: PORT })
+// 2026-10-04：此处原先**写死** `backend: 'http://localhost:8080'`，等于告诉预览服务"不重写"。
+// 而产物里的地址本就是打 8080 的（`preview-server.mjs:24` 的 BAKED_HTTP）⇒ **页面直连 8080**，
+// 那儿什么都没有 ⇒ `/player/init` 连不上 ⇒ 页面拿不到玩家 ⇒ 连点无效、`taps` 停在 0，
+// 于是「连点五次一次都没发声」与「页面报错 4 条」两条判据一起红 —— **与音频毫无关系**。
+// 上一轮我只拿到 `ERR_CONNECTION_REFUSED`（没有 URL）判不出来；补上 `requestfailed` 读数后
+// 立刻看到是 `POST http://localhost:8080/ops/app/version` 与 `/player/init` —— 一条一条对上。
+// 现在传真实后端，由预览服务做重写（换不到时它会抛错，见 preview-server.mjs:120）。
+const AUDIO_BACKEND = process.env.AUDIO_BACKEND ?? process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
+const preview = await startPreviewServer({ root: ROOT, backend: AUDIO_BACKEND, port: PORT })
+console.log(`[verify-audio] 预览 http://localhost:${PORT}，页面后端指向 ${AUDIO_BACKEND}`)
 
 const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
@@ -52,6 +61,14 @@ await context.addInitScript(() => {
 const page = await context.newPage()
 const errors = []
 const audioWarnings = []
+// 2026-10-04 诊断读数（先有读数再下结论）：此前只记 `m.text()`，拿到的是
+// 「Failed to load resource: net::ERR_CONNECTION_REFUSED」——**没有 URL**，
+// 于是无法分辨"是哪个资源、连的是谁"。这里把失败请求的**方法 / URL / 失败原因**逐条记下来，
+// 下一格判读就有据可依。
+const failedRequests = []
+page.on('requestfailed', (r) => {
+  failedRequests.push(`${r.method()} ${r.url()} :: ${r.failure()?.errorText ?? '?'}`)
+})
 page.on('pageerror', (e) => errors.push(e.message))
 page.on('console', (m) => {
   if (m.type() === 'error') {
@@ -112,6 +129,11 @@ const afterMore = await page.evaluate(() => globalThis.__bufferSources)
 checks.taps = { beforeTaps, afterFirst, afterMore }
 checks.audioWarnings = audioWarnings
 checks.errors = errors
+// 把失败请求也打出来：ERR_CONNECTION_REFUSED 没有 URL 时无法判读，有 URL 就能
+checks.failedRequests = failedRequests
+for (const line of failedRequests.slice(0, 6)) {
+  console.log(`[verify-audio][请求失败] ${line}`)
+}
 
 const failures = []
 if (!checks.serviceNode.found) {
