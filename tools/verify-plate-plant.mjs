@@ -406,7 +406,24 @@ for (const phase of PHASES) {
               name: nd.name,
               active: nd.activeInHierarchy === true,
               graphicsEnabled: g !== null && g !== undefined ? g.enabled === true : false,
-              isProbePlate: nd === window.__probePlant
+              isProbePlate: nd === window.__probePlant,
+              // 2026-10-05 关键读数（零新增执行）：`Background` 的世界矩形 vs 被植 Label 的字形矩形。
+              // 上格查明它"每个面板都有、通铺整块、带 Graphics"，却因 `plate-coverage.mjs:44`
+              // 的 `j <= i` 永远不被认成牌。
+              // 若它**恰好就盖在被植那颗字上**（而不是面板整体），则「关掉探针底板 → 露出来的是
+              // Background 的底色，而底色与被遮住的字色差 < 24 ⇒ diffRegion 判成没变」这条路径成立。
+              // ⚠️ 与「底板颜色那条」区分：那条已被品红对照证伪；本条说的是**底色**。
+              bgWorldRect: (() => {
+                const nb = nd.getComponent('cc.UITransform').getBoundingBoxToWorld()
+                const pb = window.__probePlant.getComponent('cc.UITransform').getBoundingBoxToWorld()
+                return {
+                  bg: [Math.round(nb.x), Math.round(nb.y), Math.round(nb.width), Math.round(nb.height)],
+                  plate: [Math.round(pb.x), Math.round(pb.y), Math.round(pb.width), Math.round(pb.height)],
+                  // 底板面积占 Background 的比例：接近 1 = Background 就压在那颗字上；
+                  // 远小于 1 = Background 是整块面板底，与这颗字无关。
+                  areaRatio: Math.round((pb.width * pb.height) / Math.max(1, nb.width * nb.height) * 1000) / 1000
+                }
+              })()
             }
             break
           }
