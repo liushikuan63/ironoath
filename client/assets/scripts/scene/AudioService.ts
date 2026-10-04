@@ -100,7 +100,13 @@ export function isMuted(): boolean {
  * 已排除的：点击没送达页面（canvas 底层 pointer 计数 = 12）、页面报错、资源缺失、远程 bundle。
  * ⇒ 这个出口把剩下的三个候选一次分开。
  *
- * <p>**纯读**：不改任何状态，也不被播放路径调用；`clipKeys` 排过序，返回新数组。
+ * <p>**纯读**：不改任何状态，也不被播放路径调用。
+ *
+ * <p>⚠️ 这里**必须用 `Array.from`**，不能对 `Map`/`Set` 的迭代器做展开（仓库门禁
+ * `check-client-iter-spread` 会拦，2026-10-04 实测拦到了）：Cocos 的转译把 iterable 的展开
+ * 编成 `concat` —— **不展开**，于是那份快照里装的是迭代器对象而不是键名。
+ * 而 node:test 走 tsc 会真展开 ⇒ 这条缺陷在单测里永远看不出来，只有真机读数才暴露。
+ * （写这条注释时也踩了同一个门禁：注释里照抄那段展开写法会被逐行匹配到 ⇒ 注释里别把它写全。）
  */
 export interface AudioDiagnostics {
   /** 首次手势之后才 true —— 见 bindGlobalTouch：第一次触摸只解锁，不配音效。 */
@@ -123,8 +129,8 @@ export function audioDiagnostics(): AudioDiagnostics {
     armed,
     muted,
     hasSource: source !== null,
-    clipKeys: [...clips.keys()].sort(),
-    loadingKeys: [...loading].sort(),
+    clipKeys: Array.from(clips.keys()).sort(),
+    loadingKeys: Array.from(loading).sort(),
     lastPlayedMs,
     tapIndex,
   }

@@ -816,6 +816,35 @@ POST http://localhost:8080/player/init     :: ERR_CONNECTION_REFUSED   (×3)
 元素没保住类型）⇒ **键名没打印出来**，只知各有 1 项。要看键名得让出口返回 `Array.from(...)` 的字符串数组
 并显式 `map(String)`，属小修，未做。
 
+##### 同格更正：① 我推了一次**红门禁**；② 那个 `[{}]` 读数是我读错了
+
+**① 红门禁（已修，但过程要留痕）**：加上诊断出口后 `check.sh` 报 `[check-client-iter-spread][FAIL]`
+——我用了迭代器展开写法。**我在门禁红的情况下推送了**（`caa9e8b4`），这是错的：
+AGENTS.md §八要求「当轮门禁有读数」才推。已修并复验 `CHECK_EXIT=0`。
+**教训**：那次推送命令把 `check.sh` 的退出码只是 `echo` 出来，却没让它**拦住 `git push`** ——
+应当在红时直接 `exit 1` 终止。
+
+**② `[{}]` 不是键名，是没展开的迭代器对象** ⇒ 我上一段写的「`clipKeys` 已有键、各 1 项」是**误读**。
+门禁的说明给了原因：**Cocos 的转译把 iterable 的展开编成 `concat`（不展开），而 node:test 走 tsc 会真展开
+⇒ 这条缺陷在单测里永远全绿，只有真机读数才暴露**。
+改用 `Array.from(...)` 后键名才真的打出来。（附带踩坑：注释里照抄那段展开写法**也会被门禁逐行匹配到**，
+所以注释里别把它写全 —— 第二轮门禁就是栽在这儿。）
+
+**修完后的可信读数**：
+```json
+{"armed":false,"muted":false,"hasSource":true,
+ "clipKeys":["audio/ui-click-alt","audio/ui-switch","audio/ui-tap","audio/ui-tap-alt"],
+ "loadingKeys":[],"lastPlayedMs":null,"tapIndex":0}
+```
+⇒ **4 张 clip 全部加载**（键名齐、`loadingKeys` 空）⇒ 彻底排除 clip 假设；
+`muted:false` 排除静音；`hasSource:true` 排除音源缺失。
+⇒ **只剩 `armed:false`**：6 次点击、12 个 pointer 事件都到了，`armed` 却不动
+⇒ 全局 `input.on(Input.EventType.TOUCH_START)` 在**桌面 Web + 鼠标**下没被触发。
+
+⚠️ **未验证**：这是**推断**，本轮还没做那个"节点级 vs 全局级"双计数器对照
+（下一格要做的验证，**不需要改产品码**）。
+⚠️ **未做**：修它要动 `bindGlobalTouch`（产品行为：桌面端是否也该出声）⇒ **属产品口径**，未擅自改。
+
 - ⚠️ 另注（本机环境，已落记忆）：`github.com` 解析到 **127.0.0.1**（本地转发，时通时不通）。
   ⇒ **推送可行性判据要用 `git ls-remote --heads origin master`**，**不要**用
   `Test-NetConnection` 的 `TcpTestSucceeded` —— 两者走不同路径，口径会相反。
