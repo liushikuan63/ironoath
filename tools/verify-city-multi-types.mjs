@@ -513,9 +513,52 @@ const hud = await page.evaluate(() => {
   return { found: true, chain }
 })
 globalThis.__hudChain = hud
+// 2026-10-04：算**影响面** —— 到底有几格被缩放键**永久**压住。
+// 因为缩放键与格子在同一个 stage（上一格读数），两者共享同一变换
+// ⇒ 相对位置固定、与镜头无关 ⇒ 被压住就是**永久**压住。
+// 只读：遍历所有 Grid-*，用世界中心去撞两个缩放键的世界矩形。
+globalThis.__blockedByHud = await page.evaluate(() => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  const btn = {}
+  const findBtn = (x) => {
+    if (/^Zoom(In|Out)Button$/.test(x.name)) {
+      const t2 = x.getComponent('cc.UITransform')
+      const c = t2.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
+      btn[x.name] = { x: c.x, y: c.y, hw: t2.width / 2, hh: t2.height / 2 }
+    }
+    for (const c of x.children) findBtn(c)
+  }
+  findBtn(scene)
+  const tiles = []
+  const walk = (x) => {
+    if (/^Grid-\d+$/.test(x.name)) {
+      const ui = x.getComponent('cc.UITransform')
+      if (ui !== null && ui !== undefined) {
+        const c = ui.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
+        tiles.push({ name: x.name, x: Math.round(c.x), y: Math.round(c.y), w: Math.round(ui.width), h: Math.round(ui.height) })
+      }
+    }
+    for (const c of x.children) walk(c)
+  }
+  walk(scene)
+  const blocked = []
+  for (const t3 of tiles) {
+    for (const [bn, b] of Object.entries(btn)) {
+      if (Math.abs(t3.x - b.x) <= b.hw + t3.w / 2 && Math.abs(t3.y - b.y) <= b.hh + t3.h / 2) {
+        blocked.push({ tile: t3.name, at: [t3.x, t3.y], btn: bn })
+      }
+    }
+  }
+  return { buttons: Object.keys(btn), tileCount: tiles.length, blocked }
+})
 const who = await whoIsAt('Grid-35')
 console.log('[hud] ZoomOutButton 父链=' + JSON.stringify(globalThis.__hudChain))
 console.log('[who] Grid-35 世界坐标=' + JSON.stringify(who.world) + ' 覆盖该点的节点数=' + (who.hitCount ?? '-') + ' => ' + JSON.stringify(who.hits ?? who.error))
+console.log('[hud-blocked] 缩放键=' + JSON.stringify(globalThis.__blockedByHud.buttons)
+  + ' 格子总数=' + globalThis.__blockedByHud.tileCount
+  + ' 被永久压住的格子数=' + globalThis.__blockedByHud.blocked.length
+  + ' => ' + JSON.stringify(globalThis.__blockedByHud.blocked))
 console.log('[multi-types] 点击命中：')
 // 2026-10-04：落点两两间距。重叠 ⇒ 命中区真的叠在一起（产品缺陷）；分得开 ⇒ 量具还要再挪镜头。
 for (const a of hitPoints) {
