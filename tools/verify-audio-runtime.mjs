@@ -39,7 +39,22 @@ const preview = await startPreviewServer({ root: ROOT, backend: AUDIO_BACKEND, p
 console.log(`[verify-audio] 预览 http://localhost:${PORT}，页面后端指向 ${AUDIO_BACKEND}`)
 
 const browser = await chromium.launch({ headless: true })
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+// 2026-10-04：输入通路做成**可切换**，默认走触摸。
+// 起因：`armed` 恒为 false，而本会话 `verify-city-phone` 早已实测「触摸上下文能点到格子、鼠标点不到」
+// ⇒ 嫌疑是**上下文 hasTouch 的差异**，不是 AudioService 选错事件名
+//（上一格补 `MOUSE_DOWN` 实测无效已证伪那个推断）。
+// `AUDIO_HAS_TOUCH=0` 可切回鼠标，两条通路的读数放一起比。
+const HAS_TOUCH = process.env.AUDIO_HAS_TOUCH !== '0'
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: HAS_TOUCH })
+console.log(`[verify-audio] 输入通路：${HAS_TOUCH ? 'touchscreen.tap（hasTouch=true）' : 'page.mouse.click（hasTouch=false）'}`)
+/** 按当前通路打一发点击。两种都用同一坐标，避免"点在哪"成为变量。 */
+const tapAt = async (x, y) => {
+  if (HAS_TOUCH) {
+    await page.touchscreen.tap(x, y)
+  } else {
+    await page.mouse.click(x, y)
+  }
+}
 await context.addInitScript(() => {
   localStorage.setItem('ironoath.deviceId', `audio-verify-${Date.now()}`)
   // 在页面脚本之前包住 BufferSource 的创建：Cocos 的 web 音频后端每次真正发声都要要一个
@@ -130,12 +145,12 @@ await page.evaluate(() => {
   }
 })
 // 第一次点击是"解锁音频"那一下：按设计它**不该**发声
-await page.mouse.click(720, 500)
+await tapAt(720, 500)
 await page.waitForTimeout(400)
 const afterFirst = await page.evaluate(() => globalThis.__bufferSources)
 // 之后连点五次（间隔 > 节流窗口），应当真的排出声音
 for (let i = 0; i < 5; i++) {
-  await page.mouse.click(720, 500)
+  await tapAt(720, 500)
   await page.waitForTimeout(180)
 }
 // 2026-10-04：桌面 Web 上「音效永不解锁」的对照实验。

@@ -873,6 +873,34 @@ AGENTS.md §八要求「当轮门禁有读数」才推。已修并复验 `CHECK_
 2. 若 touch 能解锁 ⇒ `verify-audio-runtime` 自己的上下文配错了（量具问题，不是产品缺陷）；
 3. 若 touch 也解不了锁 ⇒ 才是产品问题，且要重新查为什么节点级能触发而全局级不能。
 
+###### 15:4x 第二步：**「上下文 hasTouch 差异」也证伪** —— 三种解释全灭
+
+把输入通路做成**可切换**（`AUDIO_HAS_TOUCH`，默认触摸），两条都跑：
+
+| 通路 | canvas 上的 pointer/touch 事件 | `armed` |
+|---|---|---|
+| A `touchscreen.tap`（`hasTouch=true`） | **18** | **false** |
+| B `page.mouse.click`（`hasTouch=false`） | **12** | **false** |
+
+⇒ **触摸与鼠标都解锁不了。** 加上上一格证伪的 `MOUSE_DOWN`，**三种解释全部出局**：
+不是"选错事件名"、不是"桌面鼠标不映射"、也不是"上下文 hasTouch 差异"。
+
+⇒ **已确定的事实**（都与量具无关，不受输入通路影响）：
+`installAudio` 确实跑完了（`hasSource:true` ⇒ `bindGlobalTouch()` 必然被调、`input.on` 必然注册）、
+4 张 clip 全部加载（键名齐、`loadingKeys` 空）、`muted:false`、
+点击确实到达 canvas（12/18 个底层事件）。
+
+⚠️ **仍未定**：**全局 `input.on` 收不到事件，而节点级点击是好的**
+（本会话 `city-multi-types` / `city-phone` 都靠点击选中了格子）。
+这两条路在引擎里不是同一条 ⇒ 差异出在哪，**本轮没查到**，不猜。
+
+⇒ **下一格要查的（未做）**：确认 `input.on(...)` 的注册与派发。
+优先怀疑 **`installAudio` 的调用时机**（`GameBootstrap.ts:318`，在 boot 阶段）——
+若那时引擎的输入系统还没起，监听会注册在一个"之后被换掉"的输入实例上，
+**症状正好是"节点级照常工作、全局级永远静默"**，与全部读数一致。
+验证办法：在 `bindGlobalTouch` 之后读一次 `input` 上该监听是否还在（需要产品码加一个只读出口），
+或把 `installAudio` 推迟到首帧之后（**行为改动，先别做**）。
+
 - ⚠️ 另注（本机环境，已落记忆）：`github.com` 解析到 **127.0.0.1**（本地转发，时通时不通）。
   ⇒ **推送可行性判据要用 `git ls-remote --heads origin master`**，**不要**用
   `Test-NetConnection` 的 `TcpTestSucceeded` —— 两者走不同路径，口径会相反。
