@@ -380,8 +380,40 @@ for (const phase of PHASES) {
   if (after.hits === 0) {
     await page.waitForTimeout(400)
     retry = await measure(page, phase.panel, planted.text)
-    console.log(`  [retry] ${phase.tag}：等 400ms 后复量 hits=${retry.hits} 命中被植字=${retry.plantedHit}`
-      + `（第一次 hits=${after.hits}）⇒ ${retry.hits > 0 ? '**读早了**：延时后能看到' : '延时后仍看不到'}`)
+    console.log(`  [retry] ${phase.tag}：等 400ms 后复量 hits=${retry.hits} 命中被植字=${retry.plantedHit} 最大像素差=${retry.maxChanged}`
+      + `（第一次 hits=${after.hits}）⇒ ${retry.hits > 0 ? '**读早了**：延时后能看到' : '延时后仍看不到'}`
+      // 2026-10-05 **取证读数**：这里已经是**量测窗口之外**、而且**已经知道差为 0**，
+      // 所以在此处取"底板被谁挡住"既**不扰动测量**又拿得到证据。
+      // ⚠️ **不要再把它挪回 `plant` 里** —— 放在那儿等于每个相位都算，
+      //    实测 3 次连跑全绿、红相位一次没出现 ⇒ 又把抖动测没了（**本会话第七次**
+      //    栽在「侵入式观测改变被测行为」）。
+      // 用它分辨「底板被谁挡住」—— 这是六次假设被推翻后唯一还没被证伪的那条。
+      + ` | 底板取证=${JSON.stringify(await page.evaluate(() => {
+          try {
+            const scene = window.cc.director.getScene()
+            const all = []
+            const w = (n) => { all.push(n); for (const c of n.children) w(c) }
+            w(scene)
+            const plate = window.__probePlant
+            if (plate === null || plate === undefined) return { err: '底板已不在场景里' }
+            const u = plate.getComponent('cc.UITransform')
+            const wb = u.getBoundingBoxToWorld()
+            const cx = wb.x + wb.width / 2
+            const cy = wb.y + wb.height / 2
+            const at = []
+            for (const nd of all) {
+              if (nd === plate) { at.push('PLATE'); continue }
+              const nu = nd.getComponent && nd.getComponent('cc.UITransform')
+              if (nu === null || nu === undefined || !nd.activeInHierarchy) continue
+              const b = nu.getBoundingBoxToWorld()
+              if (b.x <= cx && b.x + b.width >= cx && b.y <= cy && b.y + b.height >= cy) {
+                const g = nd.getComponent('cc.Graphics')
+                at.push(nd.name + (g !== null && g !== undefined ? '[Graphics]' : ''))
+              }
+            }
+            return { plateIndex: all.indexOf(plate), nodeCount: all.length, atPoint: at }
+          } catch (e) { return { err: String(e) } }
+        }))}`)
   }
   results.push({ tag: phase.tag, switched, paged, pageProof, before: before.hits, planted,
     after: after.hits, plantedHit: after.plantedHit === true, reverted: reverted.hits,
