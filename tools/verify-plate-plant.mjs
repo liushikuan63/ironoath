@@ -165,29 +165,14 @@ async function measure(page, panel, wantText = null) {
       }
     }
   }
-  // 2026-10-05 **零新增 evaluate**：牌自己的矩形（`planPlateCoverage` 已经算好带出来了）
-  // 与它自己那些带的矩形比重叠面积占比。
-  // 判别口诀：**带已挂到这张牌上（`planPlateCoverage` 就是按重叠挂的）**，
-  //   ⇒ 重叠面积本该接近整块；若这里算出来**接近 0**，
-  //   就说明"带矩形"与"牌矩形"在数学上就对不上 —— 指向 `diffRegion` 取到的矩形不是同一版版面。
-  // ⚠️ 纯计算，不新增 evaluate。
-  let worstOverlap = 1
-  for (const plate of plan.plates) {
-    const pr = plate.rect
-    if (pr === undefined) continue
-    const [px, py, pw, ph] = pr
-    let covered = 0
-    for (const bi of plate.bands) {
-      const r = plan.bands[bi].rect
-      const ox = Math.max(0, Math.min(px + pw, r.x + r.width) - Math.max(px, r.x))
-      const oy = Math.max(0, Math.min(py + ph, r.y + r.height) - Math.max(py, r.y))
-      const area = r.width * r.height
-      if (area > 0) covered += (ox * oy) / area
-    }
-    const ratio = plate.bands.length === 0 ? 0 : covered / plate.bands.length
-    if (ratio < worstOverlap) worstOverlap = ratio
-  }
-  return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit, maxChanged, worstOverlap }
+  // 2026-10-05：这里**曾经**算过一个「牌矩形 vs 带矩形的重叠占比」（`worstOverlap`）并打印，
+  // **已撤掉**。原因：那个读数**无效且不具区分力** ——
+  // `pr` 来自 `getBoundingBoxToWorld()`（**世界坐标**），而 `plan.bands[].rect` 是**屏幕像素**，
+  // 两个量纲混着比 ⇒ 交集恒为 0，**连正常的绿相位也是 0%**。
+  // ⇒ 留着一个"看起来像证据、其实恒为 0"的打印在仓里，只会把后来者带偏。
+  // ⚠️ 若日后要重做这件事，**先统一坐标空间**，并且**先用绿相位当对照组**验判据本身
+  //    （本会话的通用规矩：新判据上线前先跑一个已知正常的样本，确认它给出非零/非异常的读数）。
+  return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit, maxChanged }
 }
 
 /**
@@ -339,7 +324,7 @@ for (const phase of PHASES) {
     after: after.hits, plantedHit: after.plantedHit === true, reverted: reverted.hits,
     bands: before.bands, ok, retry: retry === null ? null : { hits: retry.hits, plantedHit: retry.plantedHit } })
   console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged}(${pageProof}) 字形带=${before.bands} 条（下限 ${BAND_FLOORS[phase.tag] ?? 1}）；植入前 ${before.hits} → `
-    + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true} 识别到牌=${after.plates} 最大像素差=${after.maxChanged} 最小重叠=${Math.round((after.worstOverlap ?? -1)*100)}%）→ 撤掉后 ${reverted.hits}；`
+    + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true} 识别到牌=${after.plates} 最大像素差=${after.maxChanged}）→ 撤掉后 ${reverted.hits}；`
     + `植入=${JSON.stringify(planted)} ⇒ ${ok ? 'OK' : '不合格'}`)
   await page.close()
 }

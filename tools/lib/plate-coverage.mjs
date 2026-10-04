@@ -56,7 +56,7 @@ export function planPlateCoverage(panelKey) {
         // 而本函数正是**按重叠**把带挂到牌上的（上面两行 `if (pr.x >= gx0 + est …) return`）
         // ⇒ 若带已挂上却量到差 0，就说明**截图那一刻的版面与这里算的版面不是同一版**。
         // 只需把 `pr` 带出去即可比对，**不需要新增任何 evaluate**（挂在 measure 里的采集会抹平抖动）。
-        slot = { handle: j, name: m.name, bands: [], rect: [pr.x, pr.y, pr.width, pr.height] }
+        slot = { handle: j, name: m.name, bands: [] }
         plates.push(slot)
       }
       slot.bands.push(bi)
