@@ -75,6 +75,18 @@ const alliance = await call('POST', '/alliance/create', {
   requestId: rid('alliance'), name: `国策屏盟${runTag}`, tag: `G${runTag.slice(-4)}`,
 }, king.playerId, king.token)
 console.log(`  建盟：code=${alliance.code} msg=${alliance.msg ?? ''} detail=${alliance.detail ?? ''}`)
+// 10013 = 联盟尚未解锁。实测（2026-10-04）：`需要主城 10 级，当前 1 级`
+// —— 本探针建的是新号（主城 1 级），而建盟要主城 ≥10。
+// ⇒ 这是**量具前提没架对**，不是功能坏：这一份要跑在**开了 dev 提速档的后端**上
+//   （`IRONOATH_DEV_CITY_LEVEL=16`，见项目 AGENTS.md §二「dev 提速档会改变量具前提」）。
+// 按本仓既有约定（`verify-social-create-runtime` A 相那类）**退 2 并说清要什么**，
+// 不要让它以「建国报 13003」的面貌混进"非零"里冒充产品缺陷。
+if (alliance.code === 10013) {
+  console.error('[verify-nation-policy-ui][退 2] 这一份要跑在开了 dev 提速档的后端上'
+    + `（IRONOATH_DEV_CITY_LEVEL=16）：建盟被拒的原因是「${alliance.detail ?? alliance.msg}」——`
+    + '主城等级不够，不是国家功能有问题。')
+  process.exit(2)
+}
 if (alliance.code !== 0) {
   throw new Error(`建盟就被拒了：${alliance.code} ${alliance.msg} ${alliance.detail ?? ''}`
     + '（建国报 13003「必须先在联盟中」是它的下游症状，别顺着那个查）')
