@@ -66,9 +66,19 @@ fs.mkdirSync(OUT, { recursive: true })
 
 // ---------- 造一个在位国家 ----------
 const king = await initPlayer('king')
-await call('POST', '/alliance/create', {
+// 2026-10-04：这一段此前**从不检查建盟的返回**，于是建盟一旦失败，下一句建国就报
+// 「建国必须先在联盟中：国家成员的最小单位是联盟」——那是**下游症状**，
+// 真正的错（建盟被拒的原因）被整段吞掉，读数只到 13003 为止。
+// 按「先有读数，再有判据」：把建盟的 code/msg/detail 打出来，并在失败时**当场**停，
+// 不要让它伪装成"建国被拒"。
+const alliance = await call('POST', '/alliance/create', {
   requestId: rid('alliance'), name: `国策屏盟${runTag}`, tag: `G${runTag.slice(-4)}`,
 }, king.playerId, king.token)
+console.log(`  建盟：code=${alliance.code} msg=${alliance.msg ?? ''} detail=${alliance.detail ?? ''}`)
+if (alliance.code !== 0) {
+  throw new Error(`建盟就被拒了：${alliance.code} ${alliance.msg} ${alliance.detail ?? ''}`
+    + '（建国报 13003「必须先在联盟中」是它的下游症状，别顺着那个查）')
+}
 const founded = await call('POST', '/nation/found', {
   requestId: rid('found'), name: `国策屏国${runTag}`, capitalX: 141, capitalY: 83,
 }, king.playerId, king.token)
