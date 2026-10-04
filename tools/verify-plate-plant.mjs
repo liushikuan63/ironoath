@@ -123,6 +123,16 @@ await social.install(makeStubRead(context))
 
 async function measure(page, panel, wantText = null) {
   const plan = await page.evaluate(planPlateCoverage, panel)
+  // 2026-10-04 **只读诊断**：把 plan 的内容打出来，用来判别「底板是不是被当成牌一起捕获进 plan」。
+  // 起因：调用顺序是「植入(盖上) → measure(plan 重捕 …)」，底板在 plan 捕获**之前**就盖好了；
+  // 而 planPlateCoverage 认牌靠的是视觉特征，探针底板正是一块纯色矩形
+  // ⇒ 若 plan.plates 里混进探针自己那块，循环关它时就是"自己关自己"，差被抵消 ⇒ hits=0 且时好时坏。
+  // ⚠️ 只加读数，不改判据（ok 仍只看 hits/plantedHit）。
+  const plateNames = await page.evaluate(() => Object.keys(window.__plateNodes ?? {}))
+  console.log(`  [plan] bands=${plan === null ? 'null' : plan.bands.length}`
+    + ` plates=${plan === null ? 'null' : plan.plates.length}`
+    + ` 每张牌带数=${plan === null ? 'null' : JSON.stringify(plan.plates.map((p) => p.bands.length))}`
+    + ` 场景里的牌=${JSON.stringify(plateNames)}`)
   if (plan === null) return { hits: -1, bands: 0, plates: 0, plantedHit: false }
   if (plan.plates.length === 0) return { hits: 0, bands: plan.bands.length, plates: 0, plantedHit: false }
   const base = decodePng(await page.screenshot())
