@@ -329,6 +329,55 @@ const zoomToMin = async () => page.evaluate(() => {
   return true
 })
 
+/**
+ * 2026-10-04：**那个坐标上站着谁**（`Grid-35` 打空的最后一读）。
+ *
+ * <p>把落点反算回世界坐标，遍历所有 active + UITransform 节点，列出**世界矩形包含该点**的，
+ * 按面积从大到小排：
+ * - 只有 `Grid-35` 自己 ⇒ 命中区没接上（**产品缺陷**：`CityPanelView` 给该格算错了命中区）
+ * - 还有更大的节点（面板边框/遮罩/别的按钮）⇒ 被它盖住（**产品缺陷**）
+ *
+ * <p>⚠️ 用 `convertToWorldSpaceAR` 换算角点，所以对任意锚点都对。
+ */
+const whoIsAt = async (tileName) => {
+  const focusRes = await focusTile(tileName)
+  if (focusRes.ok !== true) return { error: focusRes.why }
+  await page.waitForTimeout(400)
+  return page.evaluate((n) => {
+    const cc = window.cc
+    const scene = cc.director.getScene()
+    const target = scene.getChildByName('Canvas')?.getChildByName('Game')
+    void target
+    let node = null
+    const find = (x) => { if (node === null && x.name === n) node = x; for (const c of x.children) find(c) }
+    find(scene)
+    if (node === null) return { error: 'no-tile' }
+    const ui = node.getComponent('cc.UITransform')
+    const p = ui.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
+    const hits = []
+    const walk = (x) => {
+      if (x.activeInHierarchy === true) {
+        const t = x.getComponent('cc.UITransform')
+        if (t !== null && t !== undefined) {
+          // 用中心 + 半宽高近似该节点的世界矩形（锚点已由 convertToWorldSpaceAR 吸收）
+          const c = t.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
+          const hw = t.width / 2
+          const hh = t.height / 2
+          if (Math.abs(c.x - p.x) <= hw && Math.abs(c.y - p.y) <= hh) {
+            hits.push({ name: x.name, area: Math.round(t.width * t.height), w: Math.round(t.width), h: Math.round(t.height) })
+          }
+        }
+      }
+      for (const k of x.children) walk(k)
+    }
+    walk(scene)
+    // ⚠️ 升序：全屏容器（Game/Canvas/Background）必然覆盖任何点，**没有区分力**；
+    // 有区分力的是**面积最小**的那个（最具体的那个）。
+    hits.sort((a, b) => a.area - b.area)
+    return { tile: n, world: [Math.round(p.x), Math.round(p.y)], hitCount: hits.length, hits: hits.slice(0, 6) }
+  }, tileName)
+}
+
 const clickTile = async (name) => {
   const focused = await focusTile(name)
   if (focused.ok !== true) return { ok: false, why: focused.why }
@@ -443,6 +492,9 @@ if (emptyTiles.length > 0) {
 }
 // 2026-10-04：漂移值**单独打一行** —— 上一格混在 [geo] 长行里被截断，一直没读到。
 for (const hp of hitPoints) console.log(`   [drift] ${hp.tile} 落点(${hp.x},${hp.y}) 600ms 漂移=${hp.drift}px`)
+// 2026-10-04：Grid-35 打空的最后一读 —— 那个坐标上站着谁
+const who = await whoIsAt('Grid-35')
+console.log('[who] Grid-35 世界坐标=' + JSON.stringify(who.world) + ' 覆盖该点的节点数=' + (who.hitCount ?? '-') + ' => ' + JSON.stringify(who.hits ?? who.error))
 console.log('[multi-types] 点击命中：')
 // 2026-10-04：落点两两间距。重叠 ⇒ 命中区真的叠在一起（产品缺陷）；分得开 ⇒ 量具还要再挪镜头。
 for (const a of hitPoints) {
