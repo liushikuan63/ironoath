@@ -49,7 +49,13 @@ const HAS_TOUCH = process.env.AUDIO_HAS_TOUCH !== '0'
 // 原先固定 (720,500) —— 那多半是空处，节点级 touch 自然 0，量出来的对照是无效的。
 const TAP_X = Number(process.env.AUDIO_TAP_X ?? 125)
 const TAP_Y = Number(process.env.AUDIO_TAP_Y ?? 857)
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: HAS_TOUCH })
+// 2026-10-04：与 verify-city-multi-types **逐字一致** —— 它是 newContext({viewport})，
+// **根本不传 hasTouch 这个键**；而这里一直显式传（哪怕值是 false）。
+// Chromium 里「显式 hasTouch:false」与「不传」不是同一回事（前者会走去碰点仿真开关），
+// 这条差异此前**从没试过**。⇒ 鼠标模式下**整个省略**该键。
+const context = HAS_TOUCH
+  ? await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true })
+  : await browser.newContext({ viewport: { width: 1440, height: 900 } })
 console.log(`[verify-audio] 输入通路：${HAS_TOUCH ? 'touchscreen.tap（hasTouch=true）' : 'page.mouse.click（hasTouch=false）'}`)
 /** 按当前通路打一发点击。两种都用同一坐标，避免"点在哪"成为变量。 */
 const tapAt = async (x, y) => {
