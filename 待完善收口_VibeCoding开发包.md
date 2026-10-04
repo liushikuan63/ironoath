@@ -1419,3 +1419,33 @@ canvas capture 指针监听、节点计数器、`hideGuideAndPopup`、`waitForGa
 ⇒ 这一条之所以还没做：**它在做法上与前 7 次不同**（不是加开关，是换文件），不能靠"再试一个开关"替代。
 
 ⚠️ 本格到此按纪律判卡住（已换 8 种切法：单开关 4、组合 1、次数对齐 1、A/B 1、pause 读数 1）。
+
+##### 16:13x 第九种切法（`resources.get`）也证伪；**已读完全文找不到剩余差异** ⇒ 留给接续的精确状态
+
+**第九种切法**：`resources.get(key, cc.AudioClip)` × 4（audio 探针点击前**唯一会改引擎状态**的调用）
+照抄进最小探针：
+```
+[sanity] resources.get 结果={"audio/ui-tap":true,"audio/ui-tap-alt":true,"audio/ui-switch":true,"audio/ui-click-alt":true}
+[sanity] nodeTouch 计数 = 30   ← 断不了输入
+```
+⇒ ✗ 不是它。
+
+**已逐行读完 audio 探针的"点击之前"全文（L18-151）与最小探针逐项对照**：
+ROOT（同目录）· launch（同）· context（同）· addInitScript（同，含 deviceId 每次新建）·
+`newPage` 顺序（同）· `requestfailed/pageerror/console` 三个监听（同）· `goto` 与
+`?panel=city`（同）· 额外 `waitForFunction`（已试）· `serviceNode`/`clips` 读数（已试）·
+`hideGuideAndPopup`（已试）· `waitForGameRunning` 轮询（已试）· 节点计数器（两边都在）。
+⇒ **找不到任何剩余差异**，但行为仍不同 ⇒ 差异在**浏览器上下文**层。
+⇒ 又排除一项：**端口 8191 / 8203 都空闲**，没有"残留的旧预览实例"这种可能。
+
+⚠️ **顺带更正上一格我自己的一处不严谨**："未读到 paused 标记 ⇒ 排除 pause" **依据不足** ——
+读出的 JSON 里 `directorPaused` / `gamePaused` **两个键整个消失了**（只留下 `frameRate` / `totalFrames`），
+说明那些属性在该构建上**根本不存在**、`?? null` 没兜住。⇒ 这条应重测为
+**「Cocos 3.8 的 `director`/`game` 上没有 `isPaused` 属性，pause 这条其实没测到」**，
+而不是"已排除"。
+
+⇒ **交给接续的精确状态**：页相同（nodeBound 159 / 目标 `CollectAllButton@(1260,72)`）、
+点击相同、上下文参数相同、端口干净 ⇒ 唯一未对齐的只剩**"页面被加载到 ready 的那一段时序"**。
+建议接续直接从这里开：**把 audio 探针的 `page.goto` 到 `hideGuideAndPopup` 之间逐行贴成对照 diff**
+（`diff <(sed -n '113,290p' audio) <(sanity 对应段)`），**逐行看**，不要再逐项试开关 ——
+前九种切法证明逐项试已经穷尽。
