@@ -75,16 +75,24 @@ const alliance = await call('POST', '/alliance/create', {
   requestId: rid('alliance'), name: `国策屏盟${runTag}`, tag: `G${runTag.slice(-4)}`,
 }, king.playerId, king.token)
 console.log(`  建盟：code=${alliance.code} msg=${alliance.msg ?? ''} detail=${alliance.detail ?? ''}`)
-// 10013 = 联盟尚未解锁。实测（2026-10-04）：`需要主城 10 级，当前 1 级`
-// —— 本探针建的是新号（主城 1 级），而建盟要主城 ≥10。
-// ⇒ 这是**量具前提没架对**，不是功能坏：这一份要跑在**开了 dev 提速档的后端**上
-//   （`IRONOATH_DEV_CITY_LEVEL=16`，见项目 AGENTS.md §二「dev 提速档会改变量具前提」）。
-// 按本仓既有约定（`verify-social-create-runtime` A 相那类）**退 2 并说清要什么**，
-// 不要让它以「建国报 13003」的面貌混进"非零"里冒充产品缺陷。
-if (alliance.code === 10013) {
-  console.error('[verify-nation-policy-ui][退 2] 这一份要跑在开了 dev 提速档的后端上'
-    + `（IRONOATH_DEV_CITY_LEVEL=16）：建盟被拒的原因是「${alliance.detail ?? alliance.msg}」——`
-    + '主城等级不够，不是国家功能有问题。')
+// 建盟有两道 **dev 提速档前提**，实测一道比一道晚暴露（2026-10-04）：
+//   10013 联盟尚未解锁 —— `需要主城 10 级，当前 1 级`（只开 `IRONOATH_DEV_CITY_LEVEL` 时到这里）
+//   10014 金币不足     —— `需要金币 500，当前 200`（等级那道过了之后才露出来）
+// ⚠️ 我第一版守卫**只认 10013**，于是 10014 掉进下面的 throw ⇒ 以「建盟就被拒了」的面貌
+// 冒充产品缺陷。第二道门是 `DevNewPlayerBoost.START_AMOUNT_ENV`（`IRONOATH_DEV_START_AMOUNT`），
+// 它与等级那个是**两个独立旋钮**（server/.../config/DevNewPlayerBoost.java:34,36）。
+// ⇒ 依 AGENTS.md §二「dev 提速档会改变量具前提」，这两条都**退 2 并说清要什么**，
+//   不要让它们以「建盟就被拒了」的面貌混进"非零"里冒充产品缺陷。
+//   两个档都开时实测：建盟 code=0，本份「24 通过 / 0 失败」。
+const DEV_PREREQ = {
+  10013: 'IRONOATH_DEV_CITY_LEVEL=16',
+  10014: 'IRONOATH_DEV_START_AMOUNT=100000',
+}
+if (Object.prototype.hasOwnProperty.call(DEV_PREREQ, alliance.code)) {
+  console.error(`[verify-nation-policy-ui][退 2] 这一份要跑在开了 dev 提速档的后端上`
+    + `（${DEV_PREREQ[alliance.code]}；实测两个档要一起开，`
+    + `只开等级那道会接着撞上金币不足）：建盟被拒的原因是「${alliance.detail ?? alliance.msg}」`
+    + ' —— 是量具前提没架对，不是国家功能有问题。')
   process.exit(2)
 }
 if (alliance.code !== 0) {
