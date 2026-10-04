@@ -1538,3 +1538,35 @@ L337-338 的注释还写着"这里同页挂**两个计数器**，同一发 `page
 ⚠️ 已弹窗待裁决（callId `7e1d1eae-47d1-4480-84f8-e0ab2bce152c`，当前 **pending，不是许可**）：
 ① 音效解锁怎么修（动 `AudioService.ts`）② 缩放键该不该占格子（动 `CityPanelView.ts`）
 ③ 这条红判据在批跑里怎么处理。三条**都触红线**，等真人答复。
+
+##### 16:17x ★ **音效解锁已修，`verify-audio-runtime` 由红转绿（EXIT=0）** ★
+
+**裁决**：callId `7e1d1eae-47d1-4480-84f8-e0ab2bce152c` —— 选项一「授权改：换成 game 事件 + 节点委托双路解锁」。
+
+**改**（`client/assets/scripts/scene/AudioService.ts`，`bindGlobalTouch`）：
+① 全局 `input.on` 挂**两条**事件名（`TOUCH_START` + `MOUSE_DOWN`）；
+② **节点委托**：`host.on('touch-start', onGesture)` —— UI 触摸沿节点树冒泡，根节点 `Game` 必定收得到
+（节点级读数 42 为证，这条是**已被同一份读数验证过**的路）。
+⚠️ `host.on` 用**事件名字符串**：本仓 `cc` 类型里 `typeof Node` 没有 `EventType`（实测 `error TS2339`）。
+
+**关键配套（不是顺手加的，是双路的必要条件）**：同一手势两路都会到 ⇒ **按手势去重，窗口 120ms**。
+⚠️ 去掉它会怎样，**实测过**：首轮修复后读数 `发声计数 0 → 1`、判红
+「**第一次点击就发声了（0 → 1）：解锁那一下不该响**」——
+`TOUCH_START` 先把 `armed` 置真，节点委托那路紧接着看到 `armed` 为真就播了。
+
+**验证链**（每一步都有退出码）：
+`bash scripts/check.sh` = **0** → 重建 `scripts/build-webmobile.sh`（`index.html` 21:12 → 新）
+→ `node tools/verify-audio-runtime.mjs` **EXIT=0**：
+
+```
+发声计数 0 →(首点，设计上不响) 0 →(再点五次) 5
+AudioService 只读诊断：{"armed":true, "muted":false, "hasSource":true}
+```
+
+⇒ **解锁成功且语义正确**：第一下只解锁不响，之后五次点各响一次（0 → 5，正好 5）。
+⇒ `calls:7` / `armedOnFirstCall:true` ⇒ 监听确实被调用了（修前是 `calls:0`）。
+
+⚠️ **未验证**：**真机（微信小游戏）** 的行为 —— 本读数仍来自 headless Chromium。
+⇒ 但**双路**里节点委托那路与平台无关（节点冒泡），真机只会更容易命中。
+⚠️ 批跑口径按裁决**保留为红判据**（选项三已被否决，实际是选项一）；
+本条**现已转绿**，故批跑里这一份应当**恢复绿** —— 下一格用批跑复核。

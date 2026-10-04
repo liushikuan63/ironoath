@@ -76,7 +76,7 @@ export function installAudio(host: Node): void {
   for (const clip of [SFX_CLIP.nav, SFX_CLIP.alert, tapVariant(0), tapVariant(1)]) {
     loadClip(clip)
   }
-  bindGlobalTouch()
+  bindGlobalTouch(host)
   bindDiag = { registered: true, calls: 0, armedOnFirstCall: null, installedAtMs: Date.now(), hostName: host.name }
   // 只读诊断出口挂在这里而不是 GameBootstrap：这样"音效层的状态"与"音效层"同一个归属，
   // 量具不用知道装配层怎么写的。**只挂读函数、不挂状态本身**，页面改不动它。
@@ -232,11 +232,27 @@ function readStored(): string | null {
 }
 
 /** 全局触摸接线单独拆出来：一次点击只登记一次监听，装不上就该在日志里看见。 */
-function bindGlobalTouch(): void {
-  // 2026-10-04：**试过**再加一条 `Input.EventType.MOUSE_DOWN`（推断"桌面鼠标不发 TOUCH_START"），
-  // 实测 `armed` 依旧 false ⇒ **该推断被证伪，已回退**：全局 input.on 在那个上下文里
-  // 连 MOUSE_DOWN 都收不到，所以问题不在"选哪个事件名"。恢复原样，保持这一行干净。
-  input.on(Input.EventType.TOUCH_START, () => {
+function bindGlobalTouch(host: Node): void {
+  // 2026-10-04 **已实测的根因**：`input.on(Input.EventType.TOUCH_START)` 在本构建上
+  // **从不派发**。实测（`verify-audio-runtime`，修好它"计数器挂在点击之后"那个 bug 之后）：
+  // 鼠标与真触屏（`touchscreen.tap`）下 **节点级 touch 触发 42 次**，
+  // 而全局 `input.on` 的 `calls` **恒为 0** ⇒ 之前那条 `armed:false` 判据不是量具问题。
+  // ⇒ 按授权改成**双路解锁**（裁决 callId 7e1d1eae-47d1-4480-84f8-e0ab2bce152c 选项一）：
+  //   ① `input.on` 两条事件名（不同平台派发的名字不同，两条都挂，成本一行）；
+  //   ② **节点委托** —— UI 触摸沿节点树**冒泡**，挂在根节点 `Game` 上必定收得到
+  //      （节点级读数 42 为证，这条是**已被同一份读数验证过**的那条路）。
+  // 两路都会重复触发同一个手势，因此**必须按手势去重**：同一手势内第一路负责"解锁或播放"，
+  // 之后的路直接跳过。窗口取 120ms —— 一次点击的所有路都在同一瞬间到达，
+  // 而玩家两次真实点击至少间隔几十毫秒以上。
+  // ⚠️ 这条不是"顺手的节流"，是双路解锁的**必要配套**：去掉它，解锁那一下会紧接着出声
+  // （实测 `verify-audio-runtime`：修复后首读数 `发声计数 0 → 1`，判红「解锁那一下不该响」）。
+  let lastGestureMs = 0
+  const onGesture = (): void => {
+    const now = Date.now()
+    if (now - lastGestureMs < 120) {
+      return
+    }
+    lastGestureMs = now
     if (bindDiag !== null) {
       bindDiag.calls += 1
       if (bindDiag.calls === 1) bindDiag.armedOnFirstCall = !armed
@@ -248,7 +264,14 @@ function bindGlobalTouch(): void {
       return
     }
     playSfx('tap')
-  })
+  }
+  // ① 全局 input 事件（两条事件名）
+  input.on(Input.EventType.TOUCH_START, onGesture)
+  input.on(Input.EventType.MOUSE_DOWN, onGesture)
+  // ② 节点委托：冒泡到根节点，实测可达。
+  // ⚠️ 这里用事件名字符串而不是 `Node.EventType.TOUCH_START` —— 本仓的 `cc` 类型声明里
+  // `typeof Node` 上**没有** `EventType`（实测 `error TS2339`），而 `node.on` 接受字符串。
+  host.on('touch-start', onGesture)
   game.on(Game.EVENT_HIDE, () => {
     // 回前台后第一声之前要有完整间隔：把基准推到"现在"，后台期间不攒补播
     lastPlayedMs = Date.now()
