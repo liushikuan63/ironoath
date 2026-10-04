@@ -284,11 +284,24 @@ console.log(`[state]   队列行=${upgrading.texts.find((t) => t.includes('建�
 // 选中那一格 → 点「暂停」→ 读面板 → 点「恢复」→ 读面板；全程真点按钮，不走后门。
 const pausePhase = { clicked: false, paused: null, resumed: null, pausedMs: 0 }
 if (campA !== null) {
-  const point = await clickNode(campA.key)
-  if (point !== null) {
-    await page.mouse.click(point.x, point.y)
-    await page.waitForTimeout(600)
-  }
+  // ⚠️ 2026-10-04：坐标点击**点不中格子**。实测读数：
+  //   「选中 Grid-7：暂停键=false 恢复键=false 选择栏=「点击建筑查看详情」」
+  //   ⇒ 那一格**根本没被选中**（row===null ⇒ CityPanelView.ts:1478 的 `row !== null &&`
+  //   把动作键全置 invisible），于是「暂停这个动作在界面上不可达」。
+  // 而**同一个 clickNode 去点「取消」是好的**（实测木材 4601→4841，退了 60%）
+  // ⇒ 坐标换算没问题，问题在"格子的命中"这条路。
+  // 改用 verify-tech-research-runtime 已验证过的同一手法：直接 emit 该 tile 的 touch-start
+  // （绑定见 CityPanelView.ts:1226），不依赖鼠标落点 —— 与「#753 取消建造」那一格同源同解。
+  const tapped = await page.evaluate((key) => {
+    let hit = null
+    const walk = (n) => { if (n.name === key) hit = n; for (const c of n.children) walk(c) }
+    walk(window.cc.director.getScene())
+    if (hit === null) return false
+    hit.emit('touch-start')
+    return true
+  }, campA.key)
+  console.log(`[state] emit ${campA.key} 的 touch-start：${tapped}`)
+  await page.waitForTimeout(600)
   const beforePause = await pauseReadout()
   console.log(`[state] 选中 ${campA.key}：暂停键=${beforePause.pause} 恢复键=${beforePause.resume}`
     + ` 选择栏=「${beforePause.title ?? ''}」「${beforePause.status ?? ''}」`)
