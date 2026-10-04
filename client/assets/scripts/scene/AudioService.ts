@@ -57,6 +57,11 @@ export function installAudio(host: Node): void {
     loadClip(clip)
   }
   bindGlobalTouch()
+  // 只读诊断出口挂在这里而不是 GameBootstrap：这样"音效层的状态"与"音效层"同一个归属，
+  // 量具不用知道装配层怎么写的。**只挂读函数、不挂状态本身**，页面改不动它。
+  // ⚠️ 命名空间前缀 `__ironoath`，避免与别的全局撞名（项目 AGENTS.md §五不许把内部 id 印给玩家，
+  // 这里虽不面向玩家，但同一精神：内部标识一律带私有前缀）。
+  ;(globalThis as Record<string, unknown>).__ironoathAudioDiagnostics = audioDiagnostics
 }
 
 /** 换页/领奖这类"由代码发起"的声音也走这里，视图不需要知道音频存在。 */
@@ -84,6 +89,45 @@ export function playSfx(key: SfxKey): void {
 /** 当前是否静音（设置页那一行的文案要用）。 */
 export function isMuted(): boolean {
   return muted
+}
+
+/**
+ * **只读**诊断快照：把"这一声为什么没出来"需要的那几个值一次读全。
+ *
+ * <p>为什么需要（2026-10-04）：`verify-audio-runtime` 报「连点五次一次都没发声（停在 0）」，
+ * 而 `playSfx`（见上）在三种情况下**静默 return、不排队**：`!armed` / `muted` / `source === null`。
+ * 这几个值原本都是模块内局部变量，页面里读不到 ⇒ 量具只能看着"0 次发声"猜。
+ * 已排除的：点击没送达页面（canvas 底层 pointer 计数 = 12）、页面报错、资源缺失、远程 bundle。
+ * ⇒ 这个出口把剩下的三个候选一次分开。
+ *
+ * <p>**纯读**：不改任何状态，也不被播放路径调用；`clipKeys` 排过序，返回新数组。
+ */
+export interface AudioDiagnostics {
+  /** 首次手势之后才 true —— 见 bindGlobalTouch：第一次触摸只解锁，不配音效。 */
+  armed: boolean
+  muted: boolean
+  /** `cc.AudioSource` 是否装上了（装不上时一声不出且不报错）。 */
+  hasSource: boolean
+  /** 服务自己这张 clip 表的键，**已加载好**的那些 —— 探针读资源缓存 ≠ 这张表已就绪。 */
+  clipKeys: string[]
+  /** 正在加载中的 clip 键。 */
+  loadingKeys: string[]
+  /** 上一声成功播放的时刻；null = 这一局还没响过。 */
+  lastPlayedMs: number | null
+  /** 当前连点计数（tapVariant 的 n）。 */
+  tapIndex: number
+}
+
+export function audioDiagnostics(): AudioDiagnostics {
+  return {
+    armed,
+    muted,
+    hasSource: source !== null,
+    clipKeys: [...clips.keys()].sort(),
+    loadingKeys: [...loading].sort(),
+    lastPlayedMs,
+    tapIndex,
+  }
 }
 
 /** 切换静音并落本机存储。返回切换后的状态，让调用方直接拿去刷新界面。 */

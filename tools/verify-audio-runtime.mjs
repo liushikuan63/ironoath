@@ -140,12 +140,22 @@ for (let i = 0; i < 5; i++) {
 }
 const afterMore = await page.evaluate(() => globalThis.__bufferSources)
 const pointerEvents = await page.evaluate(() => globalThis.__pointerEvents)
+// 2026-10-04：读 AudioService 自己那份**只读**诊断快照（AudioService.ts 里 `audioDiagnostics()`，
+// 由 installAudio 挂到 globalThis.__ironoathAudioDiagnostics）。
+// 它把「连点五次一次都没发声」剩下的三个候选一次分开：
+// armed=false（首次手势之前）／ muted=true ／ 服务侧 clips Map 未就绪（loadingKeys 非空、clipKeys 缺键）。
+const audioDiag = await page.evaluate(() => {
+  const fn = globalThis.__ironoathAudioDiagnostics
+  return typeof fn === 'function' ? fn() : { missing: true }
+})
 
 checks.taps = { beforeTaps, afterFirst, afterMore }
 checks.pointerEvents = pointerEvents
+checks.audioDiagnostics = audioDiag
 console.log(`[verify-audio] 发声计数 ${beforeTaps} →(首点，设计上不响) ${afterFirst} →(再点五次) ${afterMore}`
   + `；期间 canvas 上的 pointer/touch 事件 = ${pointerEvents}`
   + '（为 0 ⇒ 点击没送达页面；>0 而发声 0 ⇒ 拦在 armed/muted/节流那一侧）')
+console.log(`[verify-audio] AudioService 只读诊断：${JSON.stringify(audioDiag)}`)
 checks.audioWarnings = audioWarnings
 checks.errors = errors
 // 把失败请求也打出来：ERR_CONNECTION_REFUSED 没有 URL 时无法判读，有 URL 就能

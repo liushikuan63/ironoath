@@ -767,3 +767,55 @@ POST http://localhost:8080/player/init     :: ERR_CONNECTION_REFUSED   (×3)
 「跳过投票段：后端没开时间加速档（`IRONOATH_DEV_TIME_SPEED`=未设）⇒ 投票窗要等 24 小时真实时间。
 **这一段是「未验」，不是「通过」**」。要验它需再加第三个旋钮 `IRONOATH_DEV_TIME_SPEED`，
 未做（会改到投票时序，判读面更大）。
+
+#### 15:2x 下一格预告（**要动产品码，先记影响面再改**）
+
+给 `AudioService` 挂**只读**诊断出口，把 `verify-audio-runtime` 剩下的那条
+「连点五次一次都没发声（停在 0）」分到具体原因上。已排除：点击没送达（canvas 底层 pointer 计数 = 12）、
+页面报错（`errors: []`）、资源缺失、远程 bundle。剩三个候选：`armed=false` / `muted=true` /
+**服务侧 `clips` Map 未就绪**（探针那条「4 张 clip 全部加载」读的是别处，未必等于服务自己那张 Map）。
+
+- **改动范围**：`client/assets/scripts/scene/AudioService.ts` —— 只**新增**一个只读诊断函数
+  （导出 `audioDiagnostics()` 之类，返回 `{armed, muted, clipKeys}`）。
+- **影响面**：不改播放逻辑；`playSfx` / `shouldPlay` / `bindGlobalTouch` / 静音读写**一字不动**；
+  无迁移、无配置、无契约、不碰生成物、不碰 `CityPanelView.ts` / `CityPanel.ts`。
+- **回滚**：删掉新增那几行即可（纯增量）。
+- **红线核对**：产品码改动，故**先落这条记录再改码**，改完仍要 `check.sh` + 探针实跑。
+
+#### 15:3x **根因抓到了**：`armed` 一直是 false —— 全局 `TOUCH_START` 没被触发
+
+加了只读诊断出口（`AudioService.ts` 新增 `audioDiagnostics()`，由 `installAudio` 挂到
+`globalThis.__ironoathAudioDiagnostics`；探针侧读它），重建产物后实跑，一行读数定案：
+
+```json
+{"armed":false, "muted":false, "hasSource":true, "clipKeys":[1],"loadingKeys":[1],
+ "lastPlayedMs":null, "tapIndex":0}
+```
+
+- **`armed:false` 就是根因** —— 不是静音（`muted:false`）、不是音源缺失（`hasSource:true`）、
+  不是 clip 没加载（`clipKeys` 已有键）、也不是没进发声路径（`tapIndex:0`）。
+- 而 `bindGlobalTouch`（`AudioService.ts:139-146`）在**第一次 `TOUCH_START`** 就置 `armed = true`。
+  6 次点击、canvas 上 **12 个 pointer 事件**都确实到了（已排除"点击没送达"），
+  **`armed` 却纹丝不动** ⇒ **全局 `input.on(Input.EventType.TOUCH_START)` 压根没被触发**。
+
+⚠️ **两种解释，本轮只验到第一种的一半**：
+- **(a) Cocos 在桌面 Web 上不把鼠标映射成 `TOUCH_START`**（`Input.EventType.TOUCH_START` 对应 DOM 的
+  `touchstart`；桌面无触屏 ⇒ 不发）。⚠️ 旁证：节点级触摸（`node.on(Node.EventType.TOUCH_START)`）
+  是**能被鼠标点出来的** —— 本会话的 `verify-city-multi-types` / `verify-city-phone` 都靠鼠标点中了格子。
+  **两者走的不是同一条路**，所以"节点能点"并不推出"全局 `input.on(TOUCH_START)` 会响"。
+  ⇒ 若 (a) 成立，**桌面浏览器上音效永远不解锁 = 一声都出不来**（微信小游戏是主平台，触摸设备上无碍）。
+- **(b) 页面里别的东西压掉了系统级触摸**（探针的 `addInitScript` 改了 AudioContext）。
+
+⇒ **下一格要做的验证**（**不需要改产品码**）：在同一页面里同时挂两个计数器 ——
+一个数 `node.on(Node.EventType.TOUCH_START)` 的触发、一个数 `input.on(Input.EventType.TOUCH_START)` 的触发，
+再用同一个 `page.mouse.click` 打一发。
+**节点侧有数、全局侧无数 ⇒ (a) 坐实**，那是**产品缺陷**（改 `bindGlobalTouch` 要动产品行为），
+按纪律先弹窗给口径、不擅自改。
+
+⚠️ 另注：诊断快照里 `clipKeys` / `loadingKeys` 被 Playwright 序列化成了 `[{}]`（`Map`/`Set` 展开后的
+元素没保住类型）⇒ **键名没打印出来**，只知各有 1 项。要看键名得让出口返回 `Array.from(...)` 的字符串数组
+并显式 `map(String)`，属小修，未做。
+
+- ⚠️ 另注（本机环境，已落记忆）：`github.com` 解析到 **127.0.0.1**（本地转发，时通时不通）。
+  ⇒ **推送可行性判据要用 `git ls-remote --heads origin master`**，**不要**用
+  `Test-NetConnection` 的 `TcpTestSucceeded` —— 两者走不同路径，口径会相反。
