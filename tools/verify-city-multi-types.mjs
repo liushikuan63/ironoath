@@ -265,34 +265,71 @@ const builtNames = built.map((b) => b.name)
 const occupiedTiles = frame.tiles.filter((t) =>
   t.frameName !== null || t.texts.some((x) => builtNames.includes(x)))
 const emptyTiles = frame.tiles.filter((t) => !occupiedTiles.includes(t))
-// 「点某一格」的唯一入口：先把镜头摆到那一格，再**重算**它的页面坐标，然后点。
-// ⚠️ 顺序是硬要求（2026-10-04 实测踩到）：面板可缩放可平移（zoom 默认 1.8 / MIN 1 / MAX 2.4，
-// 滚轮 :552 / 捏合 :568 / 单指拖动 setFocus :583 / stage.setScale :646）⇒ 镜头一动，
-// **所有**格子的页面坐标全变。不移镜头就点，Playwright 会把视口外的坐标夹进视口
-// ⇒ 点空或落到主城头上（那正是本轮查出来的「Grid-31/35 选中主城」的成因）。
+// 「点某一格」的唯一入口：先把镜头摆向那一格，再**重算**它的页面坐标，确认**在视口内**才点。
+// ⚠️ 三条顺序上的硬要求（都是 2026-10-04 实测踩出来的）：
+// ① **先移镜头再算坐标** —— 面板可缩放可平移（zoom 默认 1.8 / MIN 1 / MAX 2.4，滚轮 :552 /
+//    捏合 :568 / 单指拖动 setFocus :583 / stage.setScale :646），镜头一动**所有**格子的页面坐标全变。
+// ② **`setFocus` 会被夹** —— 夹取上限 `content*(zoom-1)/2`（:647-648）是"底图必须铺满视口"的硬约束
+//    （`verify-city-zoom-runtime.mjs:170-176` 记着这个形状：本地 y≈219 ⇒ 期望 −394 被夹到 −240）。
+//    ⇒ **"移了镜头就看得见"不成立**：夹完仍可能整格在视口外。
+// ③ **落在视口外就不点** —— Playwright 会把视口外的坐标**夹进视口**，点空或落到主城头上都是这么来的
+//    （那正是本轮查出来的「Grid-31/35 选中主城」）。宁可这一格报"没量到"，也不要量一个夹出来的假读数。
+//    夹取后仍在视口外的，先缩到 CITY_ZOOM_MIN=1 再试一次（可平移范围最大），仍不行就老实记下。
+const canvasRect = async () => page.evaluate(() => {
+  const r = document.querySelector('canvas').getBoundingClientRect()
+  return { left: r.left, top: r.top, width: r.width, height: r.height }
+})
+const inViewport = (point, rect) => point.x >= rect.left && point.x <= rect.left + rect.width
+  && point.y >= rect.top && point.y <= rect.top + rect.height
+
+const focusTile = async (name) => page.evaluate((n) => {
+  let view = null
+  let target = null
+  const visit = (node) => {
+    if (view === null) view = node.getComponent('CityPanelView') ?? null
+    if (target === null && node.name === n) target = node
+    for (const c of node.children) visit(c)
+  }
+  visit(window.cc.director.getScene())
+  if (view === null || target === null) return { ok: false, why: view === null ? 'no-view' : 'no-tile' }
+  const p = target.position
+  const before = [view.focusX, view.focusY]
+  view.setFocus(p.x, p.y)
+  return { ok: true, want: [Math.round(p.x), Math.round(p.y)], got: [Math.round(view.focusX), Math.round(view.focusY)],
+    clamped: Math.abs(view.focusX - p.x) > 1 || Math.abs(view.focusY - p.y) > 1, before }
+}, name)
+
+const zoomToMin = async () => page.evaluate(() => {
+  let view = null
+  const visit = (n) => { if (view === null) view = n.getComponent('CityPanelView') ?? null; for (const c of n.children) visit(c) }
+  visit(window.cc.director.getScene())
+  if (view === null) return false
+  view.zoomTo(1) // = CITY_ZOOM_MIN
+  return true
+})
+
 const clickTile = async (name) => {
-  // 由 applyStageTransform（CityPanelView.ts:641-651）反推：世界 = zoom × (local − focus)
-  // ⇒ 把某格摆到屏幕中心 = setFocus(该格 node.position)。view 实例按 @ccclass 名取得（:242）。
-  const focused = await page.evaluate((n) => {
-    let view = null
-    let target = null
-    const visit = (node) => {
-      if (view === null) view = node.getComponent('CityPanelView') ?? null
-      if (target === null && node.name === n) target = node
-      for (const c of node.children) visit(c)
-    }
-    visit(window.cc.director.getScene())
-    if (view === null || target === null) return { ok: false, why: view === null ? 'no-view' : 'no-tile' }
-    const p = target.position
-    view.setFocus(p.x, p.y)
-    return { ok: true, focus: [Math.round(p.x), Math.round(p.y)] }
-  }, name)
+  const focused = await focusTile(name)
+  if (focused.ok !== true) return { ok: false, why: focused.why }
   await page.waitForTimeout(400)
-  const point = await toPage(name)
-  if (point === null) return { ok: false, why: 'no-point', focus: focused }
+  const rect = await canvasRect()
+  let point = await toPage(name)
+  let zoomedOut = false
+  if (point !== null && !inViewport(point, rect)) {
+    // 夹取把这一格留在视口外 ⇒ 缩到最小再试一次（MIN=1 时可平移范围最大）
+    zoomedOut = await zoomToMin()
+    if (zoomedOut) {
+      await page.waitForTimeout(400)
+      point = await toPage(name)
+    }
+  }
+  if (point === null) return { ok: false, why: 'no-point', focus: focused, zoomedOut }
+  if (!inViewport(point, rect)) {
+    return { ok: false, why: 'still-outside', point, focus: focused, zoomedOut }
+  }
   await page.mouse.click(point.x, point.y)
   await page.waitForTimeout(600)
-  return { ok: true, point, focus: focused.ok === true ? focused.focus : focused.why }
+  return { ok: true, point, focus: focused, zoomedOut }
 }
 
 const hitChecks = []
