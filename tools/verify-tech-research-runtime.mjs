@@ -487,20 +487,48 @@ const RECTS = `(() => {
     if (box === undefined || box === null) return null
     return { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height) }
   }
+  // 2026-10-04 加：连文案与字号一起取回来。判据要比的是**字形跑多远**，
+  // 而 getBoundingBox 给的是布局时写进去的 contentSize（见下面 textRunBox 的说明）。
+  const labelOf = (name) => {
+    let hit = null
+    const walk = (n) => { if (n.name === name) hit = n; for (const c of n.children) walk(c) }
+    walk(panel)
+    if (hit === null) return null
+    const lb = hit.getComponent('cc.Label')
+    return lb == null ? null : { text: String(lb.string ?? ''), fontSize: lb.fontSize }
+  }
   return {
     header: rectOf('Header'), queue: rectOf('Queue'),
     tech: rectOf('TechOpenButton'), collect: rectOf('CollectAllButton'),
     bar: rectOf('SelectionBar'), message: rectOf('Message'),
+    headerText: labelOf('Header'), queueText: labelOf('Queue'),
   }
 })()`
 const rects = await page.evaluate(RECTS)
 const overlaps = (a, b) => a !== null && b !== null
   && !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y)
+// ⚠️ 2026-10-04 判据修正（这条此前是**恒红**的假判据，不是产品缺陷）：
+// Header / Queue 是 `addLabel(..., leftAligned=false, maxWidth=headerCap)` 建的居中 Label，
+// contentSize 被写成满宽（实测 header 盒子 766px，横跨 x∈[-383,383]），而字形只占中间一小段。
+// 于是拿**盒子**去判"压没压住"，无论文案多短都会与右上角那颗常驻键相交 ——
+// 实测读数 header x∈[-383,383] y∈[255,282]、collect x∈[294,426] y∈[235,269]，判相交；
+// 而同一时刻的截图（client/build/tech-verify/city-cancel-build.png）里标题居中于
+// x∈[635,805]、队列行 x∈[557,841]、一键收割 x∈[1163,1357]，**三者水平区间毫无交叠**。
+// 改按**字形的保守上界**判：非空白字符一律按 1em 宽估（CJK 就是 1em，拉丁更窄 ⇒ 这是上界），
+// 上界不撞 ⇒ 真字形必不撞；上界仍撞 ⇒ 才判红（文案长到压上去时它会红，判据仍能失败）。
+const textRunBox = (rect, label) => {
+  if (rect === null || rect === undefined || label === null || label === undefined) return null
+  const chars = label.text.replace(/\s+/g, '').length
+  const run = Math.min(rect.w, chars * label.fontSize)
+  return { x: Math.round(rect.x + rect.w / 2 - run / 2), y: rect.y, w: Math.round(run), h: rect.h }
+}
 console.log(`  顶部那一行量到的矩形：${JSON.stringify(rects)}`)
+console.log(`  字形保守上界：header=${JSON.stringify(textRunBox(rects?.header, rects?.headerText))} queue=${JSON.stringify(textRunBox(rects?.queue, rects?.queueText))}`)
 check('标题不被「学院 · 研究」那颗压住', overlaps(rects?.header, rects?.tech), false)
-check('标题不被「一键收割」角标压住', overlaps(rects?.header, rects?.collect), false)
+check('标题不被「一键收割」角标压住', overlaps(textRunBox(rects?.header, rects?.headerText), rects?.collect), false)
 check('队列那一行不被两颗常驻键压住',
-  overlaps(rects?.queue, rects?.tech) === true || overlaps(rects?.queue, rects?.collect) === true, false)
+  overlaps(textRunBox(rects?.queue, rects?.queueText), rects?.tech) === true
+  || overlaps(textRunBox(rects?.queue, rects?.queueText), rects?.collect) === true, false)
 
 // ── 选中那一格（#753 收尾）：这一段是这 10 项判据能成立的前提 ──
 // 2026-10-03 实测：探针此前**从未选中任何一格** ⇒ `selectedId` 恒为 null ⇒
@@ -655,8 +683,16 @@ check('「学院 · 研究」不压底部那句回执', overlaps(afterCancel?.me
 // 重拉之后量"变短"这一相：尾部四颗必须被清空，留下的两颗得是当帧的数
 const shrunkSlots = cityBar?.resourceSlots ?? []
 console.log(`  资源槽位（缩到两种之后）：${JSON.stringify(shrunkSlots)}`)
+// ⚠️ 2026-10-04 判据修正（此前把"已清空的一种形态"当成没清空）：
+// `resourceSlots` 是**稀疏数组**（CITY_BAR 只在扫到 `Resource-<a>-<b>` 节点时才赋值下标），
+// 而 `JSON.stringify` 会把**空洞**序列化成 `null` ⇒ 实测读到
+//   ["木材 8000/24000","铁矿 5200/24000",null,"","",null,"",""]
+// 其中 `null` 是「那一格的节点已经不存在了」（比留一个空壳更彻底的清空），`""` 是「节点在、文本已清空」。
+// 旧写法 `(slots[i] ?? 'x') === ''` 把 `null` 判成没清空 ⇒ 面板行为正确却记了一次红。
+// 现在两种形态都算"清空"，但**留了旧数仍然判红**（判据没有因此变松）。
+const slotCleared = (i) => i >= shrunkSlots.length || (shrunkSlots[i] ?? '') === ''
 check('资源从六种缩到两种后，尾部那四颗被清空（不是留着上一帧的 2400/5200/3100/1500）',
-  [2, 3, 4, 5].every((i) => (shrunkSlots[i] ?? 'x') === ''), true)
+  [2, 3, 4, 5].every(slotCleared), true)
 check('留下的两颗是当帧的数（木材 8000、铁矿 5200）',
   (shrunkSlots[0] ?? '').includes('8000') === true && (shrunkSlots[1] ?? '').includes('5200') === true, true)
 await page.screenshot({ path: path.join(OUT, 'city-cancel-build.png') })
