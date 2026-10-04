@@ -259,7 +259,16 @@ for (const phase of PHASES) {
     g.rect(-w / 2, -h / 2, w, h)
     g.fill()
     window.__probePlant = plate
-    return { ok: true, host: panel.name, text: target.getComponent('cc.Label').string.slice(0, 8) }
+    // 2026-10-04 **只读诊断**：把"底板到底有没有真被写进去"读出来。
+    // 起因：`power` 系相位 `after.hits===0`（关掉底板后像素差一个都没过阈值 24），
+    // 而上一轮 ALPHA 扫描证明"调 alpha 不解决" ⇒ 得先确认 alpha/颜色**有没有真的落到组件上**。
+    // ⚠️ 只加读数，不改判据。
+    const _g = plate.getComponent('cc.Graphics')
+    return { ok: true, host: panel.name, text: target.getComponent('cc.Label').string.slice(0, 8),
+      plantAlphaSeen: Number(window.__plantAlpha ?? -1),
+      fillAlphaActual: _g === null ? null : _g.fillColor.a,
+      fillColorActual: _g === null ? null : [_g.fillColor.r, _g.fillColor.g, _g.fillColor.b],
+      nodeActive: plate.activeInHierarchy === true, uiSize: [Math.round(plate.getComponent('cc.UITransform').width), Math.round(plate.getComponent('cc.UITransform').height)] }
   }, [phase.panel, Number(process.env.PLANT_ALPHA ?? 255)])
   const after = planted.ok ? await measure(page, phase.panel, planted.text) : { hits: -1 }
   if (planted.ok) {

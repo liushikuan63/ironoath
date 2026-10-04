@@ -1861,3 +1861,36 @@ env "$backend_env=$BACKEND" "$port_env=$1" node "$f"
 而早先几轮是 **30** 相 ⇒ 相位数会随页面当时开了哪些面板而变 ⇒
 **跨轮次比"合格 N/30"是没有意义的**，只能在同一次采样内部比。这与本会话早先那条
 "跨镜头坐标不可相减"是同一类错误。
+
+##### 16:27x 否定结果二：**alpha 与颜色确实真写进组件了** ⇒「alpha 没生效」彻底排除
+
+按上一格定的**做法不同的方向**做：不再扫 alpha，直接把"底板有没有真被写进去"读出来。
+给 `verify-plate-plant.mjs` 的植入返回值加了三项**只读诊断**（⚠️ 不改判据）：
+`plantAlphaSeen`（页面有没有读到 `window.__plantAlpha`）、
+`fillAlphaActual`（`cc.Graphics` 上**实际**的 `fillColor.a`）、
+`fillColorActual` + `nodeActive` + `uiSize`。
+
+读数（能正常工作的那几个 host）：
+```
+reports/scout : "plantAlphaSeen":255, "fillAlphaActual":255, "fillColorActual":[240,40,40,...]
+social/alliance: "plantAlphaSeen":255, "fillAlphaActual":255, "fillColorActual":[240,40,40,...]
+social/help   : "plantAlphaSeen":255, "fillAlphaActual":255, "fillColorActual":[240,40,40,...]
+```
+
+⇒ **alpha 255 全程一致、颜色全程是 (240,40,40) 全不透明、节点是 active 的**
+⇒ 「环境变量没读到」「alpha 没落到组件上」「底板节点没激活」**三条全部排除**。
+⇒ **台账 #412 的开放问题要改写**：它问的是"半透明底板没真盖住"，
+但实测底板是**全不透明红**、也**确实激活**了 ⇒ 缺的不是透明度，是**别的**。
+
+⚠️ ⇒ 由此把方向逼到一个更具体的地方：**`diffRegion` 用的是 `plan.bands[bi].rect`**
+（`verify-plate-plant.mjs:138`），而这些矩形是**量测计划阶段捕获的**，
+**测植入效果时并没有重新捕获**。
+⇒ **新的头号嫌疑**：`power` 这个 host 有**五张榜**（版面会随选中哪张榜重排/滚动），
+若"捕获计划 → 切页签 → 植入 → 量"之间版面**又动了一次**，
+那么拿着**过期矩形**去做区域比对 ⇒ **差全落在矩形外 ⇒ `hits=0`**。
+⇒ 这同时解释了**为什么它时好时坏**（版面是否已稳定取决于那一拍的渲染时序）。
+
+⚠️ **未做（下一格，理由同上：只加读数、不改判据）**：在量测时**并排读两个数**——
+① 沿用旧 `plan` 矩形算出的 `hits`；② **当场重新捕获**矩形后再算的 `hits`。
+两者不一致 ⇒ **坐实"矩形过期"**；一致 ⇒ 说明确实是像素差达不到阈值。
+⇒ 这一步能**判别**两种可能，而不是再猜一轮。
