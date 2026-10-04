@@ -332,6 +332,10 @@ const clickTile = async (name) => {
   return { ok: true, point, focus: focused, zoomedOut }
 }
 
+// 2026-10-04：量「点过之后各格的实际落点」两两间距。
+// Grid-35 期望铁矿场却选中兵营 ⇒ 要分清「两个格子的落点真的重叠（=产品缺陷：命中区重叠）」
+// 与「落点分得开、只是点歪了（=量具还要再挪镜头）」。这两者只有量间距才分得开。
+const hitPoints = []
 const hitChecks = []
 for (const tile of occupiedTiles) {
   const clicked = await clickTile(tile.tile)
@@ -347,6 +351,7 @@ for (const tile of occupiedTiles) {
     hitChecks.push({ tile: tile.tile, expected: null, title: null, ok: false })
     continue
   }
+  if (clicked.ok === true) hitPoints.push({ tile: tile.tile, x: Math.round(clicked.point.x), y: Math.round(clicked.point.y) })
   const title = await selectedTitle()
   const expectedName = tile.texts.find((x) => builtNames.includes(x)) ?? ''
   hitChecks.push({ tile: tile.tile, expected: expectedName, title, ok: title !== null && title.includes(expectedName) })
@@ -397,6 +402,13 @@ if (emptyTiles.length > 0) {
   }
 }
 console.log('[multi-types] 点击命中：')
+// 2026-10-04：落点两两间距。重叠 ⇒ 命中区真的叠在一起（产品缺陷）；分得开 ⇒ 量具还要再挪镜头。
+for (const a of hitPoints) {
+  const near = hitPoints.filter((b) => b !== a)
+    .map((b) => ({ tile: b.tile, d: Math.round(Math.hypot(a.x - b.x, a.y - b.y)) }))
+    .sort((x, y) => x.d - y.d)
+  console.log(`   [geo] ${a.tile} 落点(${a.x},${a.y}) 最近邻=${near[0]?.tile ?? '-'} 距离=${near[0]?.d ?? '-'}px`)
+}
 for (const check of hitChecks) {
   console.log(`   ${check.tile} 期望「${check.expected}」实际「${check.title}」${check.ok ? '' : '  ← 未命中'}`)
 }
