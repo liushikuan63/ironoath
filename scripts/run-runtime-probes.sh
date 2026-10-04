@@ -128,12 +128,21 @@ while read -r f; do
     || grep -qE 'ENOENT.*index\.html' "$log"; then
     code="NO-RUN"
   fi
+  # 退出码 2 = **探针自己声明的「量具前提不足」**（本仓约定，见 `verify-social-create-runtime` A 相那类：
+  # 读到等级不对就退 2 并说明"这一份要跑在不带提速档的后端上"）。
+  # 它既不是产品红，也不是"量具没起来"的 NO-RUN，而是"这台机器/这个后端不满足我跑的前提"。
+  # 2026-10-04 实测踩到：`verify-panel-reachability` 退 2 并写明「量具未校准，读数作废」，
+  # 而旧汇总只放过 `0 `/`SKIP `/`TIMEOUT `/`# ` ⇒ 它被算进「需看的份数」，还白跑一次 RERUN
+  # （补跑解决不了"前提没架对"，那不是噪声，是确定性红）。
+  # ⇒ 单独归一类 PREREQ：不进 RERUN、不进"需看"、不与 TIMEOUT 混在一起列表。
+  [ "$code" = "2" ] && code="PREREQ"
   # 有的量具拿"计时对上预算"当判据，而那条预算正落在它自己的读数散布里（#444 实测：perf 首屏
   # 同一颗 SHA 四跑 2715/2830/3234/3244 对预算 3000）—— 超一次不构成缺陷。所以非零时补跑一次，
   # **两次都超才判红**：真退化会连红两次，于是这不是把阈值挪走，只是不让噪声冒充缺陷。
   # 首跑 NO-RUN 不补跑（那是环境没起来，补跑只会多一个假数）。
   # 超时不补跑：再跑一次只会再挂 10 分钟（首跑 NO-RUN 同理）
-  if [ "$code" != "0" ] && [ "$code" != "NO-RUN" ] && [ "$code" != "TIMEOUT" ]; then
+  # PREREQ 不补跑：前提没架对，补跑必然同样退 2，白等一个超时窗口
+  if [ "$code" != "0" ] && [ "$code" != "NO-RUN" ] && [ "$code" != "TIMEOUT" ] && [ "$code" != "PREREQ" ]; then
     code2=$(run_probe "$((port + 100))" "$log.retry")
     [ -s "$log.retry" ] || code2="NO-RUN"
     # 这行必须带 `#` 前缀：汇总按 `^(0 |SKIP |# )` 排除元信息，换个词就被数成一次红。
@@ -142,11 +151,12 @@ while read -r f; do
   fi
   echo "$code $base ($backend_env, port $port)" | tee -a "$OUT"
 done < "$LIST"
-# SKIP 不是红、`#` 开头的是本批的元信息行、超时另列（见末尾那两行）：
-# 这张表只数"真正需要人看、且不是超时"的那些。
-# ⚠️ 措辞用"需看的份数"而不是"非零退出的份数"（2026-10-04）：NO-RUN **没有可用的退出码**，
-# 旧措辞把它算进"非零退出"会让人以为量具测出了红。现在把 NO-RUN 单独点出来。
-echo "--- 汇总：需看的份数 = $(grep -cvE '^(0 |SKIP |TIMEOUT |# )' "$OUT")（其中 未跑成 NO-RUN = $(grep -c '^NO-RUN ' "$OUT")）  超时 = $(grep -c '^TIMEOUT ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
-grep -vE '^(0 |SKIP |TIMEOUT |# )' "$OUT" || true
-# 超时单独列一遍：它们不在上面那张表里，但恰恰是最需要人看的一批
+# SKIP 不是红、`#` 开头的是本批的元信息行、超时与 PREREQ 另列（见末尾那两行）：
+# 这张表只数"真正需要人看、且不是超时/前提不足"的那些。
+# ⚠️ 措辞用"需看的份数"而不是"非零退出的份数"（2026-10-04）：NO-RUN 与 PREREQ 都**没有可用的退出码**
+# （前者是量具没起来，后者是量具声明前提不足），旧措辞把它们算进"非零退出"会让人以为量具测出了红。
+echo "--- 汇总：需看的份数 = $(grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |# )' "$OUT")（其中 未跑成 NO-RUN = $(grep -c '^NO-RUN ' "$OUT")）  超时 = $(grep -c '^TIMEOUT ' "$OUT")  前提不足 PREREQ = $(grep -c '^PREREQ ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
+grep -vE '^(0 |SKIP |TIMEOUT |PREREQ |# )' "$OUT" || true
+# 超时与"前提不足"各自单独列一遍：它们不在上面那张表里，但恰恰是最需要人看的一批
 grep '^TIMEOUT ' "$OUT" || true
+grep '^PREREQ ' "$OUT" || true

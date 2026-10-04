@@ -527,6 +527,7 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 |---|---|---|---|---|
 | **ws-runtime 自带旗重跑** | 本次提交 | 修前：裸 `node` 跑死在第一道守卫「本进程的 node 没有全局 WebSocket（PATH 上的 node 是 v20）」。修后：**越过了 WebSocket 关、越过了 `WS_VERIFY_BACKEND` 关**，一路走到第三道「后端不可达」（`EXIT=2`）⇒ 带旗重跑确实生效 | `D:\tmp\probe753\ws2.log` | **没在活后端上跑完一次**（只验到"三道关的第三道"）；批跑重跑时才会真正量它 |
 | **perf 那份 TIMEOUT 是我造成的** | —（**未改**） | `TIMEOUT verify-perf-runtime.mjs`。根因：`run-runtime-probes.sh` 的注释明写这份要 `PERF_SOAK_SECONDS` 600（泡机取样）+ 启动收尾 ⇒ **660 秒以上**，而我给 `RUNTIME_PROBES_TIMEOUT=420` ⇒ **每批都必然假 TIMEOUT**（脚本里连"实测 300 秒时正是如此"都写着） | — | ⇒ **下一格起批跑一律用脚本默认的 900**，别再自己压低 |
+| **批跑认下退出码 2（PREREQ）** | 本次提交 | 合成双向对照 **2/2**：`exit 2` 的合成探针 ⇒ 归 **`PREREQ`**、**不触发 RERUN**、**不进「需看」**、末尾单列；`exit 3` 的合成探针 ⇒ 仍记 `3` 且**仍触发 RERUN**（`首跑=3 复跑=3`）。汇总行读作 `需看的份数 = 1 … 前提不足 PREREQ = 1` | `tmp/fake-probes/verify-prereq.mjs` + `tmp/fake-probes/verify-realred.mjs`，复核命令见 `.qoder-work-queue.md` | **没在真实探针上验过**：下一次批跑才会看到 `verify-panel-reachability` 与 `verify-nation-policy-ui` 真的落进 PREREQ 那一栏（这两份现已都退 2）。⚠️ 本仓还有别的探针可能退 2 表达**别的东西**（真红也可能是 2），那份名单**尚未逐份核对** |
 
 **一条顺带的正读数**：`# RERUN verify-plate-plant.mjs 首跑=1 复跑=0 判定取复跑` ——
 首跑红、复跑绿，说明它**有抖动**；批跑那个"非零补跑一次、两次都红才判红"的机制**在这一份上救了场**。
