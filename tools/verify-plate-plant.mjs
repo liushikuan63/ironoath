@@ -177,7 +177,13 @@ async function measure(page, panel, wantText = null) {
   // ⚠️ 若日后要重做这件事，**先统一坐标空间**，并且**先用绿相位当对照组**验判据本身
   //    （本会话的通用规矩：新判据上线前先跑一个已知正常的样本，确认它给出非零/非异常的读数）。
   return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit, maxChanged, scale: plan.scale, visHeight: plan.visHeight,
-    bandRects: plan.bands.map((b) => b.rect) }
+    bandRects: plan.bands.map((b) => b.rect),
+    // 2026-10-05 **零新增执行的读数**：`plan` 本来就在手上，把每张牌**挂了几条带**带出来。
+    // 用途：`measure` 里 `for (const bi of plate.bands)` —— 若某张牌 `bands` 为空，
+    // 这个循环**一次都不执行** ⇒ `hits` 与 `maxChanged` 都保持初始值 0。
+    // 那是"牌认出来了、但一条带都没挂上"，与"渲染没生效"是两回事，必须能区分开。
+    plateInfo: plan.plates.map((p) => ({ name: p.name, bandCount: p.bands.length }))
+  }
 }
 
 /**
@@ -418,7 +424,7 @@ for (const phase of PHASES) {
     })
     console.log(`  [取证] ${phase.tag} 底板仍在=${plateForensics.plateActive === true}`
       + ` 启用=${plateForensics.plateEnabled} 索引=${plateForensics.plateIndex}/${plateForensics.nodeCount}`
-      + ` 牌名单里有没有探针底板=${plateForensics.isProbePlate} 牌名单=${JSON.stringify(plateForensics.plateNames)} 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
+      + ` 牌名单里有没有探针底板=${plateForensics.isProbePlate} 牌名单=${JSON.stringify(plateForensics.plateNames)} 每张牌挂了几条带=${JSON.stringify(after.plateInfo ?? null)} 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
   }
   if (planted.ok) {
     await page.evaluate(() => { window.__probePlant?.destroy(); window.__probePlant = null })
