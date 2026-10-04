@@ -1482,3 +1482,39 @@ ROOT（同目录）· launch（同）· context（同）· addInitScript（同�
 都要确认那句注入/赋值**在 `newPage()` / `goto()` 之前**；
 `SANITY_RESGET` / `SANITY_HIDE` / `SANITY_POLL` / `SANITY_EXTRAWAIT` / `SANITY_CLICKS`
 都是**直接读 `process.env` 的普通分支**（不依赖 initScript）⇒ 不受此影响，结论仍成立。
+
+##### 16:15x **★ 根因找到了 ★**：`nodeTouch:0` 是探针**测量顺序 bug**；修后拿到**真实产品读数**
+
+**根因**：`verify-audio-runtime` 把"节点级 touch 计数器"的绑定写在 **L339**，
+而**全部点击在 L286-331** ⇒ 计数器是**在点击之后**才挂的 ⇒ `nodeTouch:0` **恒成立**。
+L337-338 的注释还写着"这里同页挂**两个计数器**，同一发 `page.mouse.click` 打过去" ——
+**代码与注释正好相反**。
+⇒ 也就是说：这条读数**压根没量到产品**，却被本会话当成"节点级触摸不通"的证据，
+据此作废了**十二条假设**（事件名 / 桌面鼠标映射 / hasTouch / 监听没注册 / 落点是空处 /
+引导层吃点击 / 引擎没跑 / 进入方式 / 摘层拆树 / initScript 干扰 / hasTouch 键 / 显式传参）。
+
+**修复**：把绑定整段移到点击**之前**，点击后只**读回**同一个 `globalThis.__touchPaths`（不重新绑定）。
+
+**修后读数**（后端在跑）：
+
+| 通路 | nodeTouch | nodeBound | globalTouch | calls | armed |
+|---|---|---|---|---|---|
+| `AUDIO_HAS_TOUCH=0`（鼠标） | **42** | 170 | **0** | **0** | false |
+| `AUDIO_HAS_TOUCH=1`（`touchscreen.tap` 真触屏） | **42** | 170 | **0** | **0** | false |
+
+⇒ **节点级触摸通（42，与 city 探针的 33/35 同量级）**；
+⇒ **全局 `Input.EventType.TOUCH_START` 即使在真触屏下也不派发**。
+
+**已排除的解释**：`bindGlobalTouch`（`AudioService.ts:239`）注册时
+`input.on(Input.EventType.TOUCH_START, () => {...})` **没有传 target**
+⇒ 「Cocos 按 target 过滤」这条假设**作废**（`hostName` 只是诊断字段）。
+
+⇒ ⇒ **这从"量具问题"变成了一条真实的产品读数**：
+在该构建上，`AudioService` 的全局解锁监听**从未被调用**（`calls:0`）⇒ `armed` 恒 false
+⇒ 按 `playSfx` 的实现（`!armed` 静默 return），**音效永不解锁**。
+⚠️ **未验证**：**真机（微信小游戏）** 是否同样如此 —— 本读数来自 headless Chromium。
+⚠️ **未做（红线）**：修它要动 `client/assets/scripts/scene/AudioService.ts`（**产品码，本会话明令不改**）。
+⇒ 这条**需要产品口径 + 授权**才能继续：全局触摸监听在本构建上不派发，是改监听方式
+（`game.on(Game.EVENT_AFTER_SCENE_LAUNCH)` / 节点级委托 / `MOUSE_DOWN` 并挂）还是改构建/引擎配置。
+⇒ 顺带：`verify-audio-runtime` 这条判据**本身是对的**（它要测的正是这件事），
+错的只是它的**诊断计数器挂晚了**——已修，可以继续当红/绿判据用。

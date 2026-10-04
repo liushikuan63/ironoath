@@ -282,6 +282,45 @@ const clickNodeCenter = async () => {
 const ready = await waitForGameRunning()
 console.log(`[verify-audio] 等引擎跑起来：ready=${ready.ready} 帧数=${ready.frames} 等了 ${ready.waitedMs}ms`)
 const framesBeforeTaps = await totalFrames()
+// 2026-10-04 **根因修复**：原先这段"节点级 touch 计数器"绑在**全部点击之后**（L339），
+// 而点击在 L286-331 ⇒ 计数器从来就统计不到那几发点击，**`nodeTouch:0` 恒成立**。
+// 换句话说：这条读数**压根没量到产品**，却被本会话当成了"节点级触摸不通"的证据，
+// 白白追了十几条假设。⇒ 必须在点击**之前**绑定；点击之后再读同一个对象。
+const touchPaths = await page.evaluate(() => {
+  const out = { nodeTouch: 0, globalTouch: 0, hasCcInput: false, hasCcNode: false, note: '' }
+  const scene = window.cc?.director?.getScene?.()
+  if (scene === null || scene === undefined) { out.note = 'no-scene'; return out }
+  let host = null
+  const find = (n) => {
+    if (host === null && n.getComponent != null) host = n
+    for (const c of n.children) find(c)
+  }
+  find(scene)
+  if (host !== null && typeof host.on === 'function') {
+    out.hasCcNode = true
+    out.nodeBound = 0
+    const bindAll = (n) => {
+      const ui = n.getComponent && n.getComponent('cc.UITransform')
+      if (ui !== null && ui !== undefined && n.activeInHierarchy === true && typeof n.on === 'function') {
+        out.nodeBound += 1
+        n.on('touch-start', () => { out.nodeTouch += 1 })
+      }
+      for (const c of n.children) bindAll(c)
+    }
+    bindAll(scene)
+  }
+  const inp = window.cc?.input
+  if (inp != null && typeof inp.on === 'function') {
+    out.hasCcInput = true
+    inp.on('touch-start', () => { out.globalTouch += 1 })
+  } else {
+    out.note = out.note === '' ? 'window.cc.input 不可直接取' : out.note
+  }
+  globalThis.__touchPaths = out
+  return out
+})
+await page.waitForTimeout(300)
+
 // 2026-10-04 解卡点：**同文件 A/B**。最小探针 `tmp/probe-click-sanity.mjs` 怎么加都还是
 // nodeTouch=30，而本探针恒为 0 ⇒ 差异在**本探针特有**的代码里。
 // `AUDIO_SANITY_CLICK=1` 时跳过本探针自己的 `clickTile` 全套，改跑一段与最小探针**逐字相同**的点击
@@ -336,45 +375,8 @@ for (let i = 0; i < 5; i++) {
 // 而两者走的不是同一条路 ⇒ 不能靠"节点能点"反推"全局 input.on 会响"。
 // 这里同页挂**两个计数器**，同一发 `page.mouse.click` 打过去：
 //   节点级 node.on('touch-start') 有数 + 全局 input.on('touch-start') 无数 ⇒ 坐实。
-const touchPaths = await page.evaluate(() => {
-  const out = { nodeTouch: 0, globalTouch: 0, hasCcInput: false, hasCcNode: false, note: '' }
-  const scene = window.cc?.director?.getScene?.()
-  if (scene === null || scene === undefined) { out.note = 'no-scene'; return out }
-  let host = null
-  const find = (n) => {
-    if (host === null && n.getComponent != null) host = n
-    for (const c of n.children) find(c)
-  }
-  find(scene)
-  if (host !== null && typeof host.on === 'function') {
-    out.hasCcNode = true
-    // 2026-10-04 修正：原先只挂在 DFS 到的**第一个**节点（多半是根/空节点，pointer 落不到它身上）
-    // ⇒ `nodeTouch:0` 是个**无效对照**。现在挂到**每个**带 UITransform 且 active 的节点上，
-    // 这样"节点级通不通"才是真的被量到。
-    out.nodeTouch = 0
-    out.nodeBound = 0
-    const bindAll = (n) => {
-      const ui = n.getComponent && n.getComponent('cc.UITransform')
-      if (ui !== null && ui !== undefined && n.activeInHierarchy === true && typeof n.on === 'function') {
-        out.nodeBound += 1
-        n.on('touch-start', () => { out.nodeTouch += 1 })
-      }
-      for (const c of n.children) bindAll(c)
-    }
-    bindAll(scene)
-  }
-  // Cocos 的 input 模块是否挂在 window.cc 上（不同版本挂法不同，挂不上就如实记下来）
-  const inp = window.cc?.input
-  if (inp != null && typeof inp.on === 'function') {
-    out.hasCcInput = true
-    inp.on('touch-start', () => { out.globalTouch += 1 })
-  } else {
-    out.note = out.note === '' ? 'window.cc.input 不可直接取' : out.note
-  }
-  globalThis.__touchPaths = out
-  return out
-})
-await page.waitForTimeout(300)
+// 2026-10-04 **根因修复**：这段绑定原先在这里（L378，即**全部点击之后**）⇒ `nodeTouch:0` 恒成立、
+// 压根没量到产品。已移到点击**之前**（见上）⇒ 这里只**读回**同一个对象，不再重新绑定。
 
 const afterMore = await page.evaluate(() => globalThis.__bufferSources)
 const pointerEvents = await page.evaluate(() => globalThis.__pointerEvents)
