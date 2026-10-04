@@ -942,3 +942,35 @@ AGENTS.md §八要求「当轮门禁有读数」才推。已修并复验 `CHECK_
 **「不重启 DSH」是本会话红线**，故已弹窗请本人拍板，**未擅自重启**。
 ⇒ 重启后的验收判据：`node ~/.dsh/plugins/session-heartbeat-native/index.test.mjs` 应仍 26/26；
 日志里应出现 `watched=2`，且 `.qoder-work-queue.md` 一变化就出现 `heartbeat n/50 queued` 而不再是 `skip: queue unchanged`。
+
+##### 15:6x audio：`input.on` 派发读数出来了；**五条假设全部出局，仍未定**
+
+加了 `audioBindDiagnostics()`（**只读**：`registered` / `calls` / `armedOnFirstCall`），重建后实跑：
+
+```json
+{"registered":true,"calls":0,"armedOnFirstCall":null,"hostName":"Game"}
+```
+
+⇒ **`registered:true`（监听确实注册了）但 `calls:0`（一次都没被派发）**
+⇒ 「问题在 handler 内部」这一支**排除**；点击进了页面（canvas 底层 12/18 个事件）、clip 全就绪、
+`muted:false`、`hasSource:true`。
+
+**本格依次试了五条假设，全部证伪**（读数都在，结论是"不是它"）：
+
+| # | 假设 | 实测 | 结果 |
+|---|---|---|---|
+| 1 | 桌面鼠标不映射到 `TOUCH_START` | 补 `Input.EventType.MOUSE_DOWN` 后 `armed` 仍 false | ✗ 证伪（已回退） |
+| 2 | 上下文 `hasTouch` 差异 | 触摸（hasTouch=true，18 事件）与鼠标（false，12 事件）**双双 false** | ✗ 证伪 |
+| 3 | 监听没注册 / 派发 | `registered:true` `calls:0` | ✗ 注册没问题、**但一次都没派发** |
+| 4 | 点击位置是空处 | 改点**已知有节点的**底部导航按钮「内城」(125,857)，170 个节点挂监听仍 `nodeTouch:0` | ✗ 证伪 |
+| 5 | 引导层 `GuideView` 吃掉点击 | 摘掉 Guide/Gift/Popup（`nodeBound` 170→162，确实摘了 8 个）后仍全 0 | ✗ 证伪 |
+
+⚠️ **仍未定，不猜。** 剩下最可能的是：**本探针点得太早 / 页面还没进入可交互态**
+（它只用 `waitUntil:'networkidle'` 就开始点，而内城探针都会等具体 UI 出现）。
+⇒ **下一格**：先等"内城面板/导航栏真正可交互"的判据（读 `PanelNav` 或某个已知节点的 active）
+再点，然后重复点同一坐标。若那时 `calls` 仍为 0 ⇒ 是**产品问题**（桌面 Web 输入整体不通），
+若 `calls` 开始动 ⇒ 本探针是**量具问题**（点得太早）。
+
+⚠️ 另外：**这一格的产品码改动全是只读诊断出口**（`audioDiagnostics` / `audioBindDiagnostics`
++ 挂到 `globalThis.__ironoathAudioDiagnostics` / `__ironoathAudioBind`），
+播放逻辑一字未改；`bindGlobalTouch` 已恢复原样。

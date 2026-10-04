@@ -33,6 +33,26 @@ let tapIndex = 0
 let armed = false
 let muted = false
 let installed = false
+/**
+ * 2026-10-04 诊断（**只读**，不参与播放）：全局 `input.on` 那个监听到底注册了没有、被调过几次。
+ *
+ * <p>起因：`verify-audio-runtime` 报 `armed` 恒为 false，而三种解释已被实测证伪 ——
+ * ① 补 `MOUSE_DOWN` 无效；② 触摸上下文（`hasTouch=true` + `touchscreen.tap`）同样无效；
+ * ③ 两者 canvas 上分别有 12 / 18 个底层事件。**剩下的头号嫌疑是注册时机**：
+ * `installAudio` 在 boot 阶段调（`GameBootstrap.ts:318`），若那时引擎的输入系统还没就绪，
+ * `input.on` 可能挂在一个"之后被换掉"的输入实例上 ⇒ 症状正好是
+ * 「节点级点击照常工作、全局级永远静默」（本会话 city 探针靠鼠标能点中格子就是那条证据）。
+ *
+ * <p>`calls` 就是那把尺子：它不动 ⇒ 监听从没被派发（注册时机 / 实例问题）；
+ * 它动 ⇒ 监听活着，问题在 handler 内部。
+ */
+let bindDiag: {
+  registered: boolean
+  calls: number
+  armedOnFirstCall: boolean | null
+  installedAtMs: number
+  hostName: string
+} | null = null
 
 /**
  * 装上音效层。由 `GameBootstrap` 在装配阶段调一次，重复调用无效果。
@@ -57,11 +77,13 @@ export function installAudio(host: Node): void {
     loadClip(clip)
   }
   bindGlobalTouch()
+  bindDiag = { registered: true, calls: 0, armedOnFirstCall: null, installedAtMs: Date.now(), hostName: host.name }
   // 只读诊断出口挂在这里而不是 GameBootstrap：这样"音效层的状态"与"音效层"同一个归属，
   // 量具不用知道装配层怎么写的。**只挂读函数、不挂状态本身**，页面改不动它。
   // ⚠️ 命名空间前缀 `__ironoath`，避免与别的全局撞名（项目 AGENTS.md §五不许把内部 id 印给玩家，
   // 这里虽不面向玩家，但同一精神：内部标识一律带私有前缀）。
   ;(globalThis as Record<string, unknown>).__ironoathAudioDiagnostics = audioDiagnostics
+  ;(globalThis as Record<string, unknown>).__ironoathAudioBind = audioBindDiagnostics
 }
 
 /** 换页/领奖这类"由代码发起"的声音也走这里，视图不需要知道音频存在。 */
@@ -136,6 +158,31 @@ export function audioDiagnostics(): AudioDiagnostics {
   }
 }
 
+/**
+ * **只读**：全局输入监听本身的注册与派发读数（2026-10-04 诊断用，见 `bindDiag`）。
+ *
+ * <p>`calls` 是关键那一列：0 ⇒ 监听**从没被派发**（注册时机 / 输入实例问题）；
+ * >0 ⇒ 监听活着、问题在 handler 内部。
+ * `handlerRan` 记最近一次是否真的把 `armed` 置过真，用于分辨"派发了但状态没变"。
+ */
+export interface AudioBindDiagnostics {
+  registered: boolean
+  calls: number
+  armedOnFirstCall: boolean | null
+  installedAtMs: number
+  hostName: string
+}
+
+export function audioBindDiagnostics(): AudioBindDiagnostics {
+  return {
+    registered: bindDiag?.registered ?? false,
+    calls: bindDiag?.calls ?? 0,
+    armedOnFirstCall: bindDiag?.armedOnFirstCall ?? null,
+    installedAtMs: bindDiag?.installedAtMs ?? 0,
+    hostName: bindDiag?.hostName ?? '',
+  }
+}
+
 /** 切换静音并落本机存储。返回切换后的状态，让调用方直接拿去刷新界面。 */
 export function setMuted(next: boolean): boolean {
   muted = next
@@ -190,6 +237,10 @@ function bindGlobalTouch(): void {
   // 实测 `armed` 依旧 false ⇒ **该推断被证伪，已回退**：全局 input.on 在那个上下文里
   // 连 MOUSE_DOWN 都收不到，所以问题不在"选哪个事件名"。恢复原样，保持这一行干净。
   input.on(Input.EventType.TOUCH_START, () => {
+    if (bindDiag !== null) {
+      bindDiag.calls += 1
+      if (bindDiag.calls === 1) bindDiag.armedOnFirstCall = !armed
+    }
     if (!armed) {
       // 第一次触摸是"解锁音频"那一下，不配音效：平台在这一刻才允许出声，
       // 强行放会有一声被丢，玩家听到的是"第一下没反应，后面才有"

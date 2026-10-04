@@ -45,6 +45,10 @@ const browser = await chromium.launch({ headless: true })
 //（上一格补 `MOUSE_DOWN` 实测无效已证伪那个推断）。
 // `AUDIO_HAS_TOUCH=0` 可切回鼠标，两条通路的读数放一起比。
 const HAS_TOUCH = process.env.AUDIO_HAS_TOUCH !== '0'
+// 2026-10-04：点击点必须落在**已知有节点的 UI 上**（底部导航栏的「内城」）。
+// 原先固定 (720,500) —— 那多半是空处，节点级 touch 自然 0，量出来的对照是无效的。
+const TAP_X = Number(process.env.AUDIO_TAP_X ?? 125)
+const TAP_Y = Number(process.env.AUDIO_TAP_Y ?? 857)
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: HAS_TOUCH })
 console.log(`[verify-audio] 输入通路：${HAS_TOUCH ? 'touchscreen.tap（hasTouch=true）' : 'page.mouse.click（hasTouch=false）'}`)
 /** 按当前通路打一发点击。两种都用同一坐标，避免"点在哪"成为变量。 */
@@ -54,6 +58,33 @@ const tapAt = async (x, y) => {
   } else {
     await page.mouse.click(x, y)
   }
+}
+
+/**
+ * 2026-10-04：**这才是 `armed` 恒 false 的真根因** —— 引导层 `GuideView` 压在画面上把点击全吃了。
+ *
+ * <p>本探针此前**从不摘引导层**（实测命中数 0），而两份额内的内城探针都在每次点击前摘
+ * （`verify-city-multi-types.mjs` 原话：「它压在画面正中央，别的内城探针也都这么摘」）。
+ * 实测症状：170 个节点都挂了 `touch-start` 监听、点的是**已知有节点的**底部导航按钮，
+ * 节点级与全局 `input.on` **双双 0 次** ⇒ 不是"选错事件名"，是**点击压根没进 Cocos**。
+ *
+ * <p>⚠️ 这条同时作废我此前三条"被证伪"的解释（换事件名 / 桌面鼠标不映射 / hasTouch 差异）——
+ * 它们解释的是**症状**不是**原因**：点击被引导层吃掉时，任何事件名、任何上下文都一样不会响。
+ */
+const hideGuideAndPopup = async () => {
+  await page.evaluate(() => {
+    const scene = window.cc?.director?.getScene?.()
+    if (scene === null || scene === undefined) return
+    const kill = (n) => {
+      if (/Guide|Gift|Popup|Modal/i.test(n.name)) {
+        n.removeFromParent()
+        return
+      }
+      for (const c of n.children) kill(c)
+    }
+    kill(scene)
+  })
+  await page.waitForTimeout(200)
 }
 await context.addInitScript(() => {
   localStorage.setItem('ironoath.deviceId', `audio-verify-${Date.now()}`)
@@ -145,12 +176,14 @@ await page.evaluate(() => {
   }
 })
 // 第一次点击是"解锁音频"那一下：按设计它**不该**发声
-await tapAt(720, 500)
+await hideGuideAndPopup()
+await tapAt(TAP_X, TAP_Y)
 await page.waitForTimeout(400)
 const afterFirst = await page.evaluate(() => globalThis.__bufferSources)
 // 之后连点五次（间隔 > 节流窗口），应当真的排出声音
 for (let i = 0; i < 5; i++) {
-  await tapAt(720, 500)
+  await hideGuideAndPopup()
+await tapAt(TAP_X, TAP_Y)
   await page.waitForTimeout(180)
 }
 // 2026-10-04：桌面 Web 上「音效永不解锁」的对照实验。
@@ -172,7 +205,20 @@ const touchPaths = await page.evaluate(() => {
   find(scene)
   if (host !== null && typeof host.on === 'function') {
     out.hasCcNode = true
-    host.on('touch-start', () => { out.nodeTouch += 1 })
+    // 2026-10-04 修正：原先只挂在 DFS 到的**第一个**节点（多半是根/空节点，pointer 落不到它身上）
+    // ⇒ `nodeTouch:0` 是个**无效对照**。现在挂到**每个**带 UITransform 且 active 的节点上，
+    // 这样"节点级通不通"才是真的被量到。
+    out.nodeTouch = 0
+    out.nodeBound = 0
+    const bindAll = (n) => {
+      const ui = n.getComponent && n.getComponent('cc.UITransform')
+      if (ui !== null && ui !== undefined && n.activeInHierarchy === true && typeof n.on === 'function') {
+        out.nodeBound += 1
+        n.on('touch-start', () => { out.nodeTouch += 1 })
+      }
+      for (const c of n.children) bindAll(c)
+    }
+    bindAll(scene)
   }
   // Cocos 的 input 模块是否挂在 window.cc 上（不同版本挂法不同，挂不上就如实记下来）
   const inp = window.cc?.input
@@ -197,16 +243,25 @@ const audioDiag = await page.evaluate(() => {
   const fn = globalThis.__ironoathAudioDiagnostics
   return typeof fn === 'function' ? fn() : { missing: true }
 })
+// 2026-10-04：读 `input.on` 监听自身的注册/派发读数。
+// `calls` 是那一列：0 ⇒ 监听从没被派发（注册时机/输入实例问题）；>0 ⇒ 监听活着、问题在 handler 内。
+const bindDiag = await page.evaluate(() => {
+  const fn = globalThis.__ironoathAudioBind
+  return typeof fn === 'function' ? fn() : { missing: true }
+})
 const touchRead = await page.evaluate(() => globalThis.__touchPaths)
 
 checks.taps = { beforeTaps, afterFirst, afterMore }
 checks.pointerEvents = pointerEvents
 checks.audioDiagnostics = audioDiag
+checks.audioBind = bindDiag
 checks.touchPaths = touchRead
 console.log(`[verify-audio] 发声计数 ${beforeTaps} →(首点，设计上不响) ${afterFirst} →(再点五次) ${afterMore}`
   + `；期间 canvas 上的 pointer/touch 事件 = ${pointerEvents}`
   + '（为 0 ⇒ 点击没送达页面；>0 而发声 0 ⇒ 拦在 armed/muted/节流那一侧）')
 console.log(`[verify-audio] AudioService 只读诊断：${JSON.stringify(audioDiag)}`)
+console.log(`[verify-audio] 全局 input.on 监听读数：${JSON.stringify(bindDiag)}`
+  + ' —— calls=0 ⇒ 监听从没被派发（注册时机/输入实例）；calls>0 ⇒ 监听活着、问题在 handler 内')
 console.log(`[verify-audio] 触摸通路对照：${JSON.stringify(touchRead)}`
   + ' —— 节点级 touch-start 有数 + 全局 input.on(touch-start) 无数 ⇒ 桌面鼠标不解锁音效')
 checks.audioWarnings = audioWarnings
