@@ -1329,3 +1329,25 @@ Chromium 里「显式 `hasTouch:false`」与「不传」不是同一回事（前
 —— 这会让后端每次都建**新玩家**，面板状态与复用的玩家不同，这条嫌疑最大且此前没单独验证过）；
 ② `page.goto` 之外的额外等待；③ 诊断出口读取时机；④ 其余。
 ⇒ 与本会话这串的教训一致：**别再猜差异，先把最小可复现的通路打通，再一项项加回。**
+
+##### 16:10x 反向二分前两项：**都不是**（基线 5 / 加 initScript 5 / 加 capture 指针监听 5）
+
+以最小探针 `tmp/probe-click-sanity.mjs` 为基线（`nodeTouch = 5`），把 audio 探针的功能逐项加回：
+
+| 加回项 | 开关 | `nodeTouch` | 结论 |
+|---|---|---|---|
+| （基线） | — | **5** | 点击可注册 |
+| `addInitScript`（AudioContext 补丁 + **每次新 `ironoath.deviceId`**） | `SANITY_PATCH=1` | **5** | ✗ 不是它 |
+| canvas 上 **capture 相位**的 `pointerdown/pointerup/touchstart` 监听 | `SANITY_PTR=1` | **5** | ✗ 不是它 |
+
+⚠️ 这两项**此前从没单独验证过**（audio 探针里是与其他东西混着的）⇒ 现在都排除了。
+
+⚠️ **仍未定**。audio 探针相对基线**还没试过**的差异（按嫌疑排序，下一格从这里继续）：
+① `hideGuideAndPopup()`（它在 audio 里以 `AUDIO_NO_HIDE=1` 单独关过仍为 0，但那次**其它东西都还在**）；
+② `waitForGameRunning()` 的轮询（每 250ms 一次 `page.evaluate`）；
+③ 点击次数（audio 点 6 次、基线点 1 次）——**可疑**：第一发可能就把画面状态改了；
+④ 点前那几次读 `serviceNode` / `clips` 的 `page.evaluate`。
+
+⚠️ **本格起我不再在正文里写「下一格：X」就收尾**（2026-10-04 19:5x 用户当面指出：
+「依旧没有按照我的要求持续推进，在存在下一格可做情况下停止了任务」）。
+⇒ 改成：把可推进的格子**直接做完**再汇报；只有真正被裁决/红线/外部条件挡住的才留待办。
