@@ -1449,3 +1449,36 @@ ROOT（同目录）· launch（同）· context（同）· addInitScript（同�
 建议接续直接从这里开：**把 audio 探针的 `page.goto` 到 `hideGuideAndPopup` 之间逐行贴成对照 diff**
 （`diff <(sed -n '113,290p' audio) <(sanity 对应段)`），**逐行看**，不要再逐项试开关 ——
 前九种切法证明逐项试已经穷尽。
+
+##### 16:14x 逐行 diff 挖出**我自己一个无效测试** ⇒ 补测后才算真排除
+
+按上一格的承诺做了逐行 diff（`audio L113-152` vs `sanity L60-110`），结构逐项对得上，
+但 diff 让我看见一处**我自己的测试无效**：
+
+`tmp/probe-click-sanity.mjs` 里注入 `__SANITY_PTR` 的那句
+`await context.addInitScript(...)` **插在了 `newPage()` 之后**。
+⚠️ Playwright 的 `context.addInitScript` **只对之后新建的页面生效**，
+已建好的那个 page 拿不到 ⇒ **`SANITY_PTR=1` 从来没真正生效过**。
+
+⇒ ⇒ **作废自己此前那条结论**：「canvas capture 指针监听不是它」**当时根本没测到**。
+⇒ 已把注入挪到 `newPage()` 之前，并删掉旧的那句（避免两个注入同时存在造成误判）。
+
+**补测结果**（`SANITY_PTR=1` 这次真生效，有读数为证）：
+
+```
+[sanity] nodeTouch 计数 = 30   canvas底层指针事件 = 12
+```
+
+`canvas底层指针事件 = 12` 证明 capture 监听**确实挂在 canvas 上并收到了事件**，
+而 `nodeTouch` **仍为 30** ⇒ 这一项**现在才是被真实验证并排除**的。
+
+⚠️ **教训（与本会话已有三条同类）**：
+① 侵入式监听会改变被测行为 ② 读数能打印 ≠ 有区分力 ③ 跨镜头坐标不可相减
+④ **开关没真正生效 ⇒ 那轮结论等于没测** —— 判据是**"开关生效的读数"要能被独立看见**
+（本例靠 `canvas底层指针事件` 才确认挂上了）。
+⇒ 凡加开关，必须同时打一条"开关确实生效了"的读数，否则那一轮的排除不成立。
+
+⚠️ 由此**连带需要复查**：上一格九种切法里，凡是靠**新增开关**实现的，
+都要确认那句注入/赋值**在 `newPage()` / `goto()` 之前**；
+`SANITY_RESGET` / `SANITY_HIDE` / `SANITY_POLL` / `SANITY_EXTRAWAIT` / `SANITY_CLICKS`
+都是**直接读 `process.env` 的普通分支**（不依赖 initScript）⇒ 不受此影响，结论仍成立。
