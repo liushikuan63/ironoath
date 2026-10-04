@@ -391,7 +391,7 @@ for (const tile of ordered) {
     hitChecks.push({ tile: tile.tile, expected: null, title: null, ok: false })
     continue
   }
-  if (clicked.ok === true) hitPoints.push({ tile: tile.tile, x: Math.round(clicked.point.x), y: Math.round(clicked.point.y) })
+  if (clicked.ok === true) hitPoints.push({ tile: tile.tile, x: Math.round(clicked.point.x), y: Math.round(clicked.point.y), drift: clicked.drift })
   const title = await selectedTitle()
   const expectedName = tile.texts.find((x) => builtNames.includes(x)) ?? ''
   hitChecks.push({ tile: tile.tile, expected: expectedName, title, ok: title !== null && title.includes(expectedName) })
@@ -441,6 +441,8 @@ if (emptyTiles.length > 0) {
     emptyControl = { tile: far.name, distance: Math.round(far.distance), before, title: await selectedTitle() }
   }
 }
+// 2026-10-04：漂移值**单独打一行** —— 上一格混在 [geo] 长行里被截断，一直没读到。
+for (const hp of hitPoints) console.log(`   [drift] ${hp.tile} 落点(${hp.x},${hp.y}) 600ms 漂移=${hp.drift}px`)
 console.log('[multi-types] 点击命中：')
 // 2026-10-04：落点两两间距。重叠 ⇒ 命中区真的叠在一起（产品缺陷）；分得开 ⇒ 量具还要再挪镜头。
 for (const a of hitPoints) {
