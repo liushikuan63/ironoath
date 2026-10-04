@@ -400,6 +400,26 @@ for (const phase of PHASES) {
         const wb = u.getBoundingBoxToWorld()
         const cx = wb.x + wb.width / 2
         const cy = wb.y + wb.height / 2
+        // 2026-10-05 **关键读数（零新增执行）**：底板所在点最近的 `cc.Mask` 祖先。
+        // 理由：`带重叠 51%` 是按**世界矩形**算的，而**世界矩形重叠 ≠ 那块区域真的画出来了**。
+        // 若某层 Mask 把底板那块**裁掉了**，那么底板"画了、启用、在最上层"却**压根不显示**
+        // ⇒ 关掉它自然什么都不变 ⇒ 像素差 0。
+        // 判定：把每个 Mask 祖先的世界矩形与底板矩形求交，看**交集是否为空 / 是否远小于底板**。
+        const masks = []
+        for (let p = plate.parent; p !== null && p !== undefined; p = p.parent) {
+          const mk = p.getComponent && p.getComponent('cc.Mask')
+          if (mk === null || mk === undefined) continue
+          const pb = p.getComponent('cc.UITransform').getBoundingBoxToWorld()
+          const ox = Math.max(0, Math.min(pb.x + pb.width, wb.x + wb.width) - Math.max(pb.x, wb.x))
+          const oy = Math.max(0, Math.min(pb.y + pb.height, wb.y + wb.height) - Math.max(pb.y, wb.y))
+          masks.push({
+            name: p.name,
+            rect: [Math.round(pb.x), Math.round(pb.y), Math.round(pb.width), Math.round(pb.height)],
+            plateRect: [Math.round(wb.x), Math.round(wb.y), Math.round(wb.width), Math.round(wb.height)],
+            overlapArea: Math.round(ox * oy),
+            plateArea: Math.round(wb.width * wb.height)
+          })
+        }
         const at = []
         for (const nd of all) {
           if (nd === plate) { at.push('PLATE'); continue }
@@ -417,6 +437,7 @@ for (const phase of PHASES) {
           nodeCount: all.length,
           plateActive: plate.activeInHierarchy === true,
           plateNames: names, isProbePlate: isProbePlate,
+          masks: masks,
           plateEnabled: g2 !== null && g2 !== undefined ? g2.enabled === true : null,
           atPoint: at
         }
@@ -424,7 +445,7 @@ for (const phase of PHASES) {
     })
     console.log(`  [取证] ${phase.tag} 底板仍在=${plateForensics.plateActive === true}`
       + ` 启用=${plateForensics.plateEnabled} 索引=${plateForensics.plateIndex}/${plateForensics.nodeCount}`
-      + ` 牌名单里有没有探针底板=${plateForensics.isProbePlate} 牌名单=${JSON.stringify(plateForensics.plateNames)} 每张牌挂了几条带=${JSON.stringify(after.plateInfo ?? null)} 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
+      + ` 牌名单里有没有探针底板=${plateForensics.isProbePlate} 牌名单=${JSON.stringify(plateForensics.plateNames)} 每张牌挂了几条带=${JSON.stringify(after.plateInfo ?? null)} Mask祖先=${JSON.stringify(plateForensics.masks ?? 'MISSING')} 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
   }
   if (planted.ok) {
     await page.evaluate(() => { window.__probePlant?.destroy(); window.__probePlant = null })

@@ -2503,3 +2503,30 @@ for (const bi of plate.bands) { … }   // ← 一次都不执行
 `UITransform` 尺寸（与底板矩形比较，看是不是把底板裁掉了）。
 仍是**取证分支里、只在 `maxChanged===0` 时触发**，零新增执行。
 ⇒⚠️ 本会话已排除 14 条假设；每条都是被自己的对照实验推翻的。
+
+##### 16:45x `Mask` 假设**被证伪**；但读到另一个此前没注意的东西：`Background` 也是 `Graphics` 节点
+
+按上一格定的加那个读数（底板所在点最近的 `cc.Mask` 祖先），读数：
+```
+[取证] avatarFrames 每张牌挂了几条带=[{"name":"probePlantPlate","bandCount":1}]
+  Mask祖先=[]  盖在底板中心的节点=["Canvas","Game","avatarFrames","Background[Graphics]","Header","PLATE"]
+```
+⇒ ⚠️ **`Mask祖先=[]`** ⇒ 底板那条链上**一个 `cc.Mask` 都没有**
+⇒ **「被 Mask 裁掉所以画不出来」被证伪**（第 15 条排除）。
+
+⇒ ★ **但读数里露出一个此前完全没注意的东西**：
+**`Background` 是个带 `cc.Graphics` 的节点**（读数里的 `Background[Graphics]` 是我加的
+"有 Graphics 就打标"，正说明它有）。
+⇒ 而 **`planPlateCoverage` 认"牌"靠的正是"节点有 `cc.Graphics` 且 enabled、active"**
+⇒ **产品自己的 `Background` 与探针的 `probePlantPlate` 在量具眼里是同一类东西。**
+⇒ 它没被认成牌（`识别到牌=1` 且那 1 张是 `probePlantPlate`），
+说明它是**挂带那一步没通过**（`:49-50` 的重叠判定把它判掉了）——**这本身值得单独看**。
+
+⇒ ⚠️ **仍未定因**。已排除 **15** 条。
+⇒ ⚠️ **下一格的可查线索（仍零新增执行）**：
+把 `[取证]` 里"覆盖底板中心的节点"**逐个标出它是不是有 `cc.Graphics`**（现在只标了
+`[Graphics]` 后缀，信息已在手，只是没读它**是不是被判成牌**）——
+具体说：`__plateNodes` 里到底有没有 `Background`？
+上格读过的 `牌名单` 里有 `"background"`（小写）——**大小写与 `Background` 不同**，
+⇒ **这不是同两个名字**，需要确认是不是同一个节点、或者同名不同物。
+⚠️ **这条线索本轮未查**，如实标为下一步。
