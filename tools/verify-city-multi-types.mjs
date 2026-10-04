@@ -314,6 +314,15 @@ const clickTile = async (name) => {
   await page.waitForTimeout(400)
   const rect = await canvasRect()
   let point = await toPage(name)
+  // 2026-10-04：`Grid-35` 打空（挪到点击第一位后读数是「点击建筑查看详情」⇒ 真的没打中，
+  // 不是"停在上一次"）。新的头号嫌疑：**镜头在平滑移动**，而落点是在移动途中算的，
+  // 到真正点击时又偏了。⇒ 量两次落点：间隔 600ms 还不同 ⇒ 镜头没停稳。
+  let drift = null
+  if (point !== null) {
+    await page.waitForTimeout(600)
+    const again = await toPage(name)
+    if (again !== null) drift = Math.round(Math.hypot(point.x - again.x, point.y - again.y))
+  }
   let zoomedOut = false
   if (point !== null && !inViewport(point, rect)) {
     // 夹取把这一格留在视口外 ⇒ 缩到最小再试一次（MIN=1 时可平移范围最大）
@@ -329,7 +338,7 @@ const clickTile = async (name) => {
   }
   await page.mouse.click(point.x, point.y)
   await page.waitForTimeout(600)
-  return { ok: true, point, focus: focused, zoomedOut }
+  return { ok: true, point, focus: focused, zoomedOut, drift }
 }
 
 // 2026-10-04：量「点过之后各格的实际落点」两两间距。
@@ -337,7 +346,17 @@ const clickTile = async (name) => {
 // 与「落点分得开、只是点歪了（=量具还要再挪镜头）」。这两者只有量间距才分得开。
 const hitPoints = []
 const hitChecks = []
-for (const tile of occupiedTiles) {
+// 2026-10-04：`Grid-35` 一直是**最后一个**被点的，而它恰好是唯一不命中的那一格。
+// 这既可能是「它真的点不到」，也可能只是「这一下没生效、选择栏停在上一次（兵营）」——
+// **这两种只有把点击次序换掉才分得开**。默认把 Grid-35 提到**第一位**，
+// `CITY_LAST_FIRST=0` 可切回原次序做对照。
+const FIRST_TILE = process.env.CITY_LAST_FIRST === '0' ? null : 'Grid-35'
+const ordered = FIRST_TILE === null
+  ? occupiedTiles
+  : [...occupiedTiles.filter((t) => t.tile === FIRST_TILE),
+    ...occupiedTiles.filter((t) => t.tile !== FIRST_TILE)]
+console.log(`[multi-types] 点击次序：${ordered.map((t) => t.tile).join(' → ')}`)
+for (const tile of ordered) {
   const clicked = await clickTile(tile.tile)
   // 把「算出来的页面坐标」与「格子的几何」并排打出来：
   // 坐标出界就是"镜头没摆过去"，几何与坐标的差就是"命中区没盖住基座"——两者都打出来才分得开。
@@ -346,7 +365,7 @@ for (const tile of occupiedTiles) {
     + ` 尺寸=${tile.geo?.w}×${tile.geo?.h} 锚点=(${tile.geo?.ax},${tile.geo?.ay})`
     + ` | 图标世界=(${tile.geo?.iwx},${tile.geo?.iwy}) 尺寸=${tile.geo?.iw}×${tile.geo?.ih}`
     + ` | 点下去时的页面坐标=${clicked.ok === true ? `(${Math.round(clicked.point.x)},${Math.round(clicked.point.y)})` : clicked.why}`
-    + ` 图标active=${tile.iconActive} 帧名=${tile.frameName}`)
+    + ` 落点600ms漂移=${clicked.drift ?? '-'}px 图标active=${tile.iconActive} 帧名=${tile.frameName}`)
   if (clicked.ok !== true) {
     hitChecks.push({ tile: tile.tile, expected: null, title: null, ok: false })
     continue
