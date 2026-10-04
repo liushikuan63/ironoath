@@ -391,6 +391,26 @@ for (const phase of PHASES) {
         const nodes = window.__plateNodes ?? {}
         const names = Object.values(nodes).map((n) => (n === null || n === undefined ? '?' : n.name))
         const isProbePlate = names.indexOf('probePlantPlate') >= 0
+        // 2026-10-05 **关键判别（零新增执行）**：`__plateNodes` 里那个 **`background`（小写）**
+        // 与"盖在底板中心的 **`Background`（大写开头）**"**是不是同一个节点**。
+        // 两者在量具眼里都是"带 Graphics 的节点"⇒ `planPlateCoverage` 认牌时同等待遇。
+        // `__plateNodes` 是 `order`（DFS 先序）建成的手柄→节点表，索引即 DFS 序 ⇒ 可直接比身份。
+        let bgProbe = null
+        for (const key of Object.keys(nodes)) {
+          const nd = nodes[key]
+          if (nd !== null && nd !== undefined && String(nd.name).toLowerCase() === 'background') {
+            const g = nd.getComponent && nd.getComponent('cc.Graphics')
+            bgProbe = {
+              handle: key,
+              dfsIndex: Number(key),
+              name: nd.name,
+              active: nd.activeInHierarchy === true,
+              graphicsEnabled: g !== null && g !== undefined ? g.enabled === true : false,
+              isProbePlate: nd === window.__probePlant
+            }
+            break
+          }
+        }
         const plate = window.__probePlant
         if (plate === null || plate === undefined) return { err: '底板已不在场景里', plateNames: names, isProbePlate }
         const all = []
@@ -437,6 +457,7 @@ for (const phase of PHASES) {
           nodeCount: all.length,
           plateActive: plate.activeInHierarchy === true,
           plateNames: names, isProbePlate: isProbePlate,
+          bgProbe: bgProbe,
           masks: masks,
           plateEnabled: g2 !== null && g2 !== undefined ? g2.enabled === true : null,
           atPoint: at
@@ -445,7 +466,7 @@ for (const phase of PHASES) {
     })
     console.log(`  [取证] ${phase.tag} 底板仍在=${plateForensics.plateActive === true}`
       + ` 启用=${plateForensics.plateEnabled} 索引=${plateForensics.plateIndex}/${plateForensics.nodeCount}`
-      + ` 牌名单里有没有探针底板=${plateForensics.isProbePlate} 牌名单=${JSON.stringify(plateForensics.plateNames)} 每张牌挂了几条带=${JSON.stringify(after.plateInfo ?? null)} Mask祖先=${JSON.stringify(plateForensics.masks ?? 'MISSING')} 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
+      + ` 牌名单里有没有探针底板=${plateForensics.isProbePlate} 牌名单=${JSON.stringify(plateForensics.plateNames)} 每张牌挂了几条带=${JSON.stringify(after.plateInfo ?? null)} 名单里那个background=${JSON.stringify(plateForensics.bgProbe ?? 'MISSING')} Mask祖先=${JSON.stringify(plateForensics.masks ?? 'MISSING')} 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
   }
   if (planted.ok) {
     await page.evaluate(() => { window.__probePlant?.destroy(); window.__probePlant = null })

@@ -2530,3 +2530,40 @@ for (const bi of plate.bands) { … }   // ← 一次都不执行
 上格读过的 `牌名单` 里有 `"background"`（小写）——**大小写与 `Background` 不同**，
 ⇒ **这不是同两个名字**，需要确认是不是同一个节点、或者同名不同物。
 ⚠️ **这条线索本轮未查**，如实标为下一步。
+
+##### 16:46x 确认 `Background` 是独立节点；并读出量具的一条**结构性事实**（`j <= i`）
+
+按上一格说的，比对 `background` 与 `Background` 是不是同一个节点（`__plateNodes` 已在手，零新增执行）：
+```
+名单里那个background={"handle":"1","dfsIndex":1,"name":"Background",
+                      "active":true,"graphicsEnabled":true,"isProbePlate":false}
+Mask祖先=[] 盖在底板中心的节点=["Canvas","Game","mail","Background[Graphics]","Header","PLATE"]
+```
+
+⇒ **① 它和探针底板是两个不同节点**（`isProbePlate:false`），
+而且它 **active=true、graphicsEnabled=true** ⇒ 完全满足
+`plate-coverage.mjs:46` 那条"是牌"的判据（`g 存在 && activeInHierarchy && g.enabled`），
+**却没出现在 `plan.plates` 里**。
+
+⇒ ★★ **② 顺手读出量具的一条结构性事实（这条以前没人知道）**：
+`plate-coverage.mjs:44` 有一句 `if (j <= i) return` ——
+**一个 Graphics 节点只有当它的 DFS 序 `j` 晚于它要覆盖的 Label 序号 `i`，才可能被认成"牌"。**
+而 `Background` 是面板的**第一个子节点**（`dfsIndex=1`）⇒ **它在结构上永远不可能被认成牌**，
+不管它多大、多 active、多 enabled。
+反过来，探针的底板是 `panel.addChild(plate)` 加的 ⇒ **它是最后一个子节点** ⇒ 永远能认成牌。
+
+⇒ ⇒ 这解释了**为什么 `识别到牌` 恒等于 1**（探针自己那块），
+也解释了**为什么产品真正的背景板从来不会被量具关掉**。
+
+⇒ ⚠️ **仍未定因**：红相位「关掉底板 = 画面不变」这件事，上述事实都还解释不了
+（`Background` 在底板**下面**，不影响它显示）。
+
+⇒ ⇒ 但**多了一条更强的判断依据**：
+`Background` 是**每个面板都有**的、通铺整个面板、带 `Graphics` 的节点。
+⇒ 它是唯一一件**在所有相位里都存在、且与探针底板性质相同**的产品侧对象。
+⇒ **下一格仍零新增执行**：读 `Background` 的世界矩形 `pr` 与**那条被植 Label 的字形矩形**
+的**相对位置**——若 `Background` 恰好**就盖在被植那颗字上**（而不是面板整体），
+那么"关掉底板后底色露出来、而底色与被遮住的字色差 < 24"这条**至今没被排除过的路径**
+就有可能被坐实（注意：**底板颜色那条已被品红对照证伪，但"被遮住的不是底板而是底色"是另一回事**）。
+
+⚠️ 已排除 15 条 + 本格确认一条结构性事实；每条排除都是被自己的对照实验推翻的。
