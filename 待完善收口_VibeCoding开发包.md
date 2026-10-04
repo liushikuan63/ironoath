@@ -1518,3 +1518,23 @@ L337-338 的注释还写着"这里同页挂**两个计数器**，同一发 `page
 （`game.on(Game.EVENT_AFTER_SCENE_LAUNCH)` / 节点级委托 / `MOUSE_DOWN` 并挂）还是改构建/引擎配置。
 ⇒ 顺带：`verify-audio-runtime` 这条判据**本身是对的**（它要测的正是这件事），
 错的只是它的**诊断计数器挂晚了**——已修，可以继续当红/绿判据用。
+
+##### 16:16x 稳定性复核：两条读数都**稳定可复现**（不是抖动）
+
+```
+--- audio ---  nodeTouch=42  globalTouch=0  calls=0
+               [FAIL] 连点五次一次都没发声（停在 0）
+--- city  ---  [hud-blocked] 缩放键=["ZoomOutButton","ZoomInButton"] 格子总数=36
+               被永久压住的格子数=1 => [{"tile":"Grid-35","at":[902,174],"btn":"ZoomOutButton"}]
+               Grid-35 未命中；Grid-7/11/21/31 全中
+```
+
+⇒ ① 音频这条**稳定红**：根因（计数器挂晚）已修，`nodeTouch` 稳定在 **42**，
+而 `globalTouch`/`calls` 稳定 **0** ⇒ 读数可信、可复现，不是环境抖动。
+⇒ ② 城市这条**稳定**：被压住的仍是**同样的 1/36、同样是 `Grid-35`、同样被 `ZoomOutButton` 压住**。
+
+⇒ ⇒ **两条结论都已达到"可复算、可复现"的强度**，等裁决即可动手，不需要再取证。
+
+⚠️ 已弹窗待裁决（callId `7e1d1eae-47d1-4480-84f8-e0ab2bce152c`，当前 **pending，不是许可**）：
+① 音效解锁怎么修（动 `AudioService.ts`）② 缩放键该不该占格子（动 `CityPanelView.ts`）
+③ 这条红判据在批跑里怎么处理。三条**都触红线**，等真人答复。
