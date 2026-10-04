@@ -453,7 +453,7 @@ for (const phase of PHASES) {
     after: after.hits, plantedHit: after.plantedHit === true, reverted: reverted.hits,
     bands: before.bands, ok, retry: retry === null ? null : { hits: retry.hits, plantedHit: retry.plantedHit } })
   console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged}(${pageProof}) 字形带=${before.bands} 条（下限 ${BAND_FLOORS[phase.tag] ?? 1}）；植入前 ${before.hits} → `
-    + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true} 识别到牌=${after.plates} 最大像素差=${after.maxChanged} 带重叠=${Math.round(bandOverlap*100)}%）→ 撤掉后 ${reverted.hits}；`
+    + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true} 识别到牌=${after.plates} 牌与带=${JSON.stringify(after.plateInfo ?? null)} 最大像素差=${after.maxChanged} 带重叠=${Math.round(bandOverlap*100)}%）→ 撤掉后 ${reverted.hits}；`
     + `植入=${JSON.stringify(planted)} ⇒ ${ok ? 'OK' : '不合格'}`)
   await page.close()
 }
