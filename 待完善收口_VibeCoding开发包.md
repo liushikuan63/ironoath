@@ -1661,3 +1661,38 @@ BATCH_EXIT=0
 ⚠️ **仍未验证**：**真机（微信小游戏）** 两条修复的行为 —— 本会话全部读数来自 headless Chromium。
 ⚠️ **未做**：全量批跑（其余 55 份）本轮**没重跑** —— 只跑了与本会话改动相关的这两份。
 下一格若要收尾，应跑一次**全量批跑**确认没有回归。
+
+##### 16:21x **全量批跑复核：59 份，`BATCH_EXIT=0`，零回归**
+
+两条产品修复（`AudioService.ts` / `CityPanelView.ts`）之后跑全量：
+脚本 `tmp/run-batch-all.sh`（一次性），后端与批跑同一脱离进程树，
+`RUNTIME_PROBES_TIMEOUT=900`，清单 `tools/verify-*.mjs` 全 59 份、验末字节 `0a`。
+
+```
+--- 汇总：需看的份数 = 1（其中 未跑成 NO-RUN = 0） 超时 = 0 前提不足 PREREQ = 3 SKIP = 7
+BATCH_EXIT=0
+```
+
+**逐项分诊**：
+
+| 探针 | 读数 | 是否本次回归 |
+|---|---|---|
+| `verify-city-multi-types` | `RERUN 首跑=1 复跑=0` ⇒ **取复跑（绿）** | ✗ 不是。产物刚重建后的首次跑抖了一下，复跑绿；单跑早已 `EXIT=0` |
+| `verify-audio-runtime` | **绿** | ✗ 不是 |
+| `verify-plate-plant` | `RERUN 首跑=1 复跑=1`（**需看 1 份**） | ✗ **不是** —— 见下 |
+| `verify-nation-live` · `verify-nation-policy-ui` · `verify-panel-reachability` | `PREREQ` | 前置不足，**不是红** |
+| `verify-resource-order-roundtrip` | `SKIP 需要 RT_TOKEN` | 缺凭据，不代填 |
+
+**`verify-plate-plant` 为什么不是回归**：
+它是 **`LABELFIT_BACKEND`**（标签/配置回灌那一路的后端），而本轮只起了 8199 一个后端
+⇒ 它对着一个没起的服务跑。⚠️ 这**本该是 `PREREQ` 而不是红** ——
+量具没认出"要的后端没起"，判据口径有缺口，记在下面「未做」。
+⇒ 且本次改动只碰 `AudioService.ts`（音频解锁）与 `CityPanelView.ts`（缩放键坐标）
+两个内城文件，标签回灌那份探针**连内城都不进**，逻辑上不可能相关。
+
+⚠️ **未做（真根因待下一格）**：`run-runtime-probes.sh` 的 PREREQ 判定**没覆盖
+「该探针要的 `*_BACKEND` 变量指向的端口没有服务在听」**这一类。
+⇒ 下一格：读 `run-runtime-probes.sh` 的 PREREQ 判据，把"后端端口未监听"也归 PREREQ，
+避免这类环境缺口继续被记成红、占用分诊注意力。
+
+⇒ **本轮结论：零回归。** 两条修复在单跑、批跑、全量三处都是绿。
