@@ -225,18 +225,66 @@ const waitForGameRunning = async (timeoutMs = 20000) => {
   return { ready: false, frames: last, waitedMs: Date.now() - t0 }
 }
 
+/**
+ * 2026-10-04：按**节点中心**点，而不是按固定坐标。
+ *
+ * <p>为什么：城市探针点的是"某节点算出来的屏幕坐标"，而本探针一直点固定坐标
+ * （原 (720,500)，后改 (125,857)）。即使 170 个节点都挂了 `touch-start` 监听，
+ * **落点不在任何节点矩形内时节点级自然 0** —— 那时读数是"量具没对准"，不是"输入不通"。
+ *
+ * <p>所以这里照抄城市探针的换算（`camera.worldToScreen` + canvas 矩形 + y 翻转），
+ * 取一个**真实按钮**的中心来点，让"点在哪"不再是变量。
+ */
+const clickNodeCenter = async () => {
+  const info = await page.evaluate(() => {
+    const cc = window.cc
+    const scene = cc.director.getScene()
+    const camera = scene.getComponentInChildren('cc.Camera')
+    const rect = document.querySelector('canvas').getBoundingClientRect()
+    const pixel = cc.view.getVisibleSizeInPixel()
+    const cands = []
+    const visit = (n) => {
+      if (n.activeInHierarchy !== true) return
+      const ui = n.getComponent('cc.UITransform')
+      if (ui !== null && ui !== undefined && /Button$/.test(n.name)) {
+        const s = camera.worldToScreen(ui.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
+        cands.push({
+          name: n.name, w: ui.width, h: ui.height,
+          x: rect.left + (s.x / pixel.width) * rect.width,
+          y: rect.top + rect.height - (s.y / pixel.height) * rect.height,
+        })
+      }
+      for (const c of n.children) visit(c)
+    }
+    visit(scene)
+    const inCanvas = cands.filter((c) => c.x > rect.left && c.x < rect.left + rect.width
+      && c.y > rect.top && c.y < rect.top + rect.height)
+    return { total: cands.length, inCanvas: inCanvas.length, pick: inCanvas[0] ?? null }
+  })
+  if (info.pick === null) {
+    return { ok: false, why: `没找到画布内的按钮（Button 节点 ${info.total} 个，界内 ${info.inCanvas} 个）` }
+  }
+  if (HAS_TOUCH) {
+    await page.touchscreen.tap(info.pick.x, info.pick.y)
+  } else {
+    await page.mouse.click(info.pick.x, info.pick.y)
+  }
+  return { ok: true, picked: info.pick }
+}
+
 // 第一次点击是"解锁音频"那一下：按设计它**不该**发声
 const ready = await waitForGameRunning()
 console.log(`[verify-audio] 等引擎跑起来：ready=${ready.ready} 帧数=${ready.frames} 等了 ${ready.waitedMs}ms`)
 const framesBeforeTaps = await totalFrames()
 if (process.env.AUDIO_NO_HIDE !== '1') await hideGuideAndPopup() // 2026-10-04：这行 removeFromParent 本身可能拆掉 UI 树，用 AUDIO_NO_HIDE=1 可单独关掉对照
-await tapAt(TAP_X, TAP_Y)
+const firstHit = await clickNodeCenter() // 2026-10-04：改点**真实节点中心**（照抄城市探针的换算）
+console.log(`[verify-audio] 首点目标：${JSON.stringify(firstHit)}`)
 await page.waitForTimeout(400)
 const afterFirst = await page.evaluate(() => globalThis.__bufferSources)
 // 之后连点五次（间隔 > 节流窗口），应当真的排出声音
 for (let i = 0; i < 5; i++) {
   if (process.env.AUDIO_NO_HIDE !== '1') await hideGuideAndPopup() // 2026-10-04：这行 removeFromParent 本身可能拆掉 UI 树，用 AUDIO_NO_HIDE=1 可单独关掉对照
-await tapAt(TAP_X, TAP_Y)
+  await clickNodeCenter() // 同上：每一发都点**真实节点中心**，让"点在哪"不再是变量
   await page.waitForTimeout(180)
 }
 // 2026-10-04：桌面 Web 上「音效永不解锁」的对照实验。

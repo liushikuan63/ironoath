@@ -1018,3 +1018,27 @@ AGENTS.md §八要求「当轮门禁有读数」才推。已修并复验 `CHECK_
 早于我 `16:06:14` 追加队列那一刻；此后本会话**一直没闲下来**，3 分钟 idle 从未满足 ⇒ 心跳没再武装。
 ⇒ 验证判据：**本轮结束并闲置满 3 分钟后**，日志应出现 `heartbeat n/50 queued` 而不再是 `skip: queue unchanged`。
 （历史统计：81 次 arming / 29 次 skip / 8 次 queued ⇒ 它确实投过，只是极少。）
+
+##### 15:9x audio：第十条也证伪 —— **点真按钮中心仍全 0**；交接下一步
+
+改成照抄城市探针的换算（`camera.worldToScreen` + canvas 矩形 + y 翻转）点**真实节点中心**：
+
+```
+[verify-audio] 首点目标：{"ok":true,"picked":{"name":"DetailBuildButton","w":82,"h":32,"x":777,"y":759}}
+```
+
+⇒ 点的是**真按钮**（`DetailBuildButton`，82×32，在画布内），结果仍是
+`{"registered":true,"calls":0}` · `nodeTouch:0`（162 节点全挂了监听）· `armed:false`。
+
+⇒ **"落点不在任何节点矩形内"这条也出局**（第十条）。
+⇒ 本仓 `verify-audio-runtime` 的「连点五次一次都没发声」这条判据，**当前无法归因**：
+量具侧能对齐的项**已全部对齐**（上下文 / 进入方式 / PanelNav 等待 / 额外等待 /
+点击方式 / 引导层开关 / initScript 开关 / 落点=真节点中心），读数仍不变。
+
+⚠️ **未做（下一格，唯一可执行）**：**让 audio 探针与 `verify-city-multi-types` 在同一次运行里并排量**
+——同一份产物、同一后端、同一坐标、两边各自挂"所有 active+UITransform 节点"的计数。
+- city 侧有数 / audio 侧 0 ⇒ 差异在**探针代码**（继续二分 audio 探针）
+- **两侧都是 0** ⇒ 是**产物或引擎层**问题（= 产品缺陷，`AudioService` 以外的东西）
+
+⚠️ 在那条读数出来之前，**不要**再对 `AudioService` 下产品结论；
+本会话对它的产品码改动**至今全是只读诊断出口**，播放逻辑一字未改。
