@@ -265,48 +265,51 @@ const builtNames = built.map((b) => b.name)
 const occupiedTiles = frame.tiles.filter((t) =>
   t.frameName !== null || t.texts.some((x) => builtNames.includes(x)))
 const emptyTiles = frame.tiles.filter((t) => !occupiedTiles.includes(t))
-const hitChecks = []
-for (const tile of occupiedTiles) {
-  // 2026-10-04：**点之前先把镜头移到那一格**。
-  // 起因是几何读数：算出来的页面坐标大面积出界（Grid-7 → x=-226、Grid-11 → x=1848、Grid-31 → y=1182，
-  // 视口只有 1440×900），而 CityPanelView 本来就可缩放可平移（zoom 默认 1.8、MIN 1 / MAX 2.4，
-  // 滚轮 :552 / 捏合 :568 / 单指拖动 + setFocus :583 / stage.setScale :646）⇒ 网格超出视口是设计如此。
-  // 不移镜头就点，Playwright 会把视口外的坐标**夹进视口** ⇒ 点空或落到主城头上（实测正是如此）。
-  // 由 applyStageTransform 反推：世界坐标 = zoom × (local − focus) ⇒ 把某格摆到屏幕中心 = setFocus(该格 local)。
-  const focused = await page.evaluate((name) => {
+// 「点某一格」的唯一入口：先把镜头摆到那一格，再**重算**它的页面坐标，然后点。
+// ⚠️ 顺序是硬要求（2026-10-04 实测踩到）：面板可缩放可平移（zoom 默认 1.8 / MIN 1 / MAX 2.4，
+// 滚轮 :552 / 捏合 :568 / 单指拖动 setFocus :583 / stage.setScale :646）⇒ 镜头一动，
+// **所有**格子的页面坐标全变。不移镜头就点，Playwright 会把视口外的坐标夹进视口
+// ⇒ 点空或落到主城头上（那正是本轮查出来的「Grid-31/35 选中主城」的成因）。
+const clickTile = async (name) => {
+  // 由 applyStageTransform（CityPanelView.ts:641-651）反推：世界 = zoom × (local − focus)
+  // ⇒ 把某格摆到屏幕中心 = setFocus(该格 node.position)。view 实例按 @ccclass 名取得（:242）。
+  const focused = await page.evaluate((n) => {
     let view = null
     let target = null
-    const visit = (n) => {
-      if (view === null) view = n.getComponent('CityPanelView') ?? null
-      if (target === null && n.name === name) target = n
-      for (const c of n.children) visit(c)
+    const visit = (node) => {
+      if (view === null) view = node.getComponent('CityPanelView') ?? null
+      if (target === null && node.name === n) target = node
+      for (const c of node.children) visit(c)
     }
     visit(window.cc.director.getScene())
     if (view === null || target === null) return { ok: false, why: view === null ? 'no-view' : 'no-tile' }
     const p = target.position
     view.setFocus(p.x, p.y)
     return { ok: true, focus: [Math.round(p.x), Math.round(p.y)] }
-  }, tile.tile)
-  if (focused.ok !== true) {
-    console.log(`   [geo] ${tile.tile} 移镜头失败：${focused.why}`)
-  }
+  }, name)
   await page.waitForTimeout(400)
-  // ⚠️ 坐标必须在**移完镜头之后**重算：镜头一动，所有格子的页面坐标全变（上一版算完就缓存是错的）。
-  const point = await toPage(tile.tile)
+  const point = await toPage(name)
+  if (point === null) return { ok: false, why: 'no-point', focus: focused }
+  await page.mouse.click(point.x, point.y)
+  await page.waitForTimeout(600)
+  return { ok: true, point, focus: focused.ok === true ? focused.focus : focused.why }
+}
+
+const hitChecks = []
+for (const tile of occupiedTiles) {
+  const clicked = await clickTile(tile.tile)
   // 把「算出来的页面坐标」与「格子的几何」并排打出来：
-  // 两者的差就是这一格点不中的原因（坐标换算错 vs 命中区没盖住基座）——两者都打出来才分得开。
-  console.log(`   [geo] ${tile.tile} 移镜头=${JSON.stringify(focused.focus ?? focused.why)}`
+  // 坐标出界就是"镜头没摆过去"，几何与坐标的差就是"命中区没盖住基座"——两者都打出来才分得开。
+  console.log(`   [geo] ${tile.tile} 移镜头=${JSON.stringify(clicked.focus)}`
     + ` 节点世界=(${tile.geo?.wx},${tile.geo?.wy})`
     + ` 尺寸=${tile.geo?.w}×${tile.geo?.h} 锚点=(${tile.geo?.ax},${tile.geo?.ay})`
     + ` | 图标世界=(${tile.geo?.iwx},${tile.geo?.iwy}) 尺寸=${tile.geo?.iw}×${tile.geo?.ih}`
-    + ` | 移镜头后的页面坐标=${point === null ? 'null' : `(${Math.round(point.x)},${Math.round(point.y)})`}`
+    + ` | 点下去时的页面坐标=${clicked.ok === true ? `(${Math.round(clicked.point.x)},${Math.round(clicked.point.y)})` : clicked.why}`
     + ` 图标active=${tile.iconActive} 帧名=${tile.frameName}`)
-  if (point === null) {
+  if (clicked.ok !== true) {
     hitChecks.push({ tile: tile.tile, expected: null, title: null, ok: false })
     continue
   }
-  await page.mouse.click(point.x, point.y)
-  await page.waitForTimeout(600)
   const title = await selectedTitle()
   const expectedName = tile.texts.find((x) => builtNames.includes(x)) ?? ''
   hitChecks.push({ tile: tile.tile, expected: expectedName, title, ok: title !== null && title.includes(expectedName) })
@@ -321,7 +324,11 @@ for (const tile of occupiedTiles) {
  */
 let emptyControl = null
 if (emptyTiles.length > 0) {
-  // 用屏幕坐标挑"离所有已建格子最远"的那个空格（比按索引挑稳）
+  // ⚠️ 2026-10-04：这一相原先把**所有格子**的页面坐标一次算完就缓存，然后照着缓存去点 ——
+  // 两个毛病：① 空格多半**不在当前视口里**（面板可平移缩放），不先移镜头就会被 Playwright 夹坐标，
+  // 点到哪一栋全看夹完落在哪；② 一旦中途移了镜头，缓存的坐标全部作废。
+  // 现在两处点击都走 `clickTile`（先移镜头 → 重算坐标 → 再点）。
+  // 「离所有建筑最远」仍按页面坐标算距离 —— 那只是**挑谁**用的启发式，不参与判据。
   const positions = {}
   for (const tile of frame.tiles) {
     positions[tile.tile] = await toPage(tile.tile)
@@ -338,20 +345,17 @@ if (emptyTiles.length > 0) {
       return { name: tile.tile, distance }
     })
     .sort((a, b) => b.distance - a.distance)[0]
-  // 参照：先点主城那一格，让选择栏停在已知状态
+  // 参照：先点主城那一格，让选择栏停在已知状态（同样先移镜头）
   const reference = occupiedTiles.find((t) => t.texts.some((x) => x.includes('主城')))
   if (reference !== undefined) {
-    const referencePoint = positions[reference.tile]
-    if (referencePoint !== null && referencePoint !== undefined) {
-      await page.mouse.click(referencePoint.x, referencePoint.y)
-      await page.waitForTimeout(600)
-    }
+    await clickTile(reference.tile)
   }
   const before = await selectedTitle()
-  const point = positions[far.name]
-  if (point !== null && point !== undefined) {
-    await page.mouse.click(point.x, point.y)
-    await page.waitForTimeout(600)
+  const farClick = await clickTile(far.name)
+  console.log(`   [geo] 空格 ${far.name} 距已建格 ${Math.round(far.distance)}px`
+    + ` 移镜头=${JSON.stringify(farClick.focus)}`
+    + ` 点下去时的页面坐标=${farClick.ok === true ? `(${Math.round(farClick.point.x)},${Math.round(farClick.point.y)})` : farClick.why}`)
+  if (farClick.ok === true) {
     emptyControl = { tile: far.name, distance: Math.round(far.distance), before, title: await selectedTitle() }
   }
 }
