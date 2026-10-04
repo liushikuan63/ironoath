@@ -172,7 +172,8 @@ console.log(`[multi-types] 落成贺礼弹窗${popupHidden ? '已收起（它挡
 await page.waitForTimeout(400)
 
 const frame = await page.evaluate(() => {
-  const scene = window.cc.director.getScene()
+  const cc = window.cc
+  const scene = cc.director.getScene()
   const tiles = []
   const visit = (node, shown) => {
     const on = shown && node.activeInHierarchy === true
@@ -186,11 +187,26 @@ const frame = await page.evaluate(() => {
         for (const grand of child.children) collect(grand)
       }
       collect(node)
+      // 2026-10-04 诊断读数（先有读数再下结论）：这一格点不中，上一版只有"选择栏成了什么"，
+      // 不足以分辨「命中区没盖住基座」与「坐标算错」。这里把**几何**也打出来：
+      // 格子节点与 BuildingIcon 的世界坐标 / 尺寸 / 锚点 —— 前者决定点哪儿，后者决定画在哪儿。
+      const ui = node.getComponent('cc.UITransform')
+      const wp = ui === null ? null : ui.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
+      const iconUi = icon === null ? null : icon.getComponent('cc.UITransform')
+      const iwp = iconUi === null ? null : iconUi.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
       tiles.push({
         tile: node.name,
         texts,
         iconActive: icon === null ? null : icon.active,
         frameName: sprite === null || sprite.spriteFrame === null ? null : sprite.spriteFrame.name,
+        geo: {
+          wx: wp === null ? null : Math.round(wp.x), wy: wp === null ? null : Math.round(wp.y),
+          w: ui === null ? null : Math.round(ui.width), h: ui === null ? null : Math.round(ui.height),
+          ax: ui === null ? null : ui.anchorX, ay: ui === null ? null : ui.anchorY,
+          iw: iconUi === null ? null : Math.round(iconUi.width), ih: iconUi === null ? null : Math.round(iconUi.height),
+          iax: iconUi === null ? null : iconUi.anchorX, iay: iconUi === null ? null : iconUi.anchorY,
+          iwx: iwp === null ? null : Math.round(iwp.x), iwy: iwp === null ? null : Math.round(iwp.y),
+        },
       })
     }
     for (const child of node.children) visit(child, on)
@@ -252,6 +268,13 @@ const emptyTiles = frame.tiles.filter((t) => !occupiedTiles.includes(t))
 const hitChecks = []
 for (const tile of occupiedTiles) {
   const point = await toPage(tile.tile)
+  // 把「算出来的页面坐标」与「格子的几何」并排打出来：
+  // 两者的差就是这一格点不中的原因（坐标换算错 vs 命中区没盖住基座）——两者都打出来才分得开。
+  console.log(`   [geo] ${tile.tile} 节点世界=(${tile.geo?.wx},${tile.geo?.wy})`
+    + ` 尺寸=${tile.geo?.w}×${tile.geo?.h} 锚点=(${tile.geo?.ax},${tile.geo?.ay})`
+    + ` | 图标世界=(${tile.geo?.iwx},${tile.geo?.iwy}) 尺寸=${tile.geo?.iw}×${tile.geo?.ih}`
+    + ` | 算出的页面坐标=${point === null ? 'null' : `(${Math.round(point.x)},${Math.round(point.y)})`}`
+    + ` 图标active=${tile.iconActive} 帧名=${tile.frameName}`)
   if (point === null) {
     hitChecks.push({ tile: tile.tile, expected: null, title: null, ok: false })
     continue
