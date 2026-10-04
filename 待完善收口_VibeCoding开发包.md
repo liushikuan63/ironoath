@@ -2367,3 +2367,39 @@ MAGENTA RUN1 EXIT=1 红相位[命中被植字=false 识别到牌=1 最大像素�
 若**不是**，那关掉的就不是底板 ⇒ 直接指向"量具在关错对象"。
 ⇒ 判别办法：`[取证]` 已经带出 `plateIndex=43/325` 与底板名，**只需再打印
 `plan.plates[0].name` 与底板名做字符串比对**即可，零新增执行（复用已有返回值）。
+
+##### 16:41x ★ **锁定了最可疑的一环**：`plan.plates[0].bands` 可能是**空的**
+
+取证读到牌名单了：
+```
+[取证] power/NATION 底板仍在=true 启用=true 索引=42/324
+  牌名单里有没有探针底板=true
+  牌名单=["power","background","label","tab-DETAIL","label","tab-POWER",…,"probePlantPlate"]
+```
+
+⇒ **① 底板确实在 `window.__plateNodes` 里** ⇒ `measure` 里
+`window.__plateNodes[plate.handle]` **有可能**就是底板本身
+⇒ **"量具在关错对象"这条不是唯一解释，但也没被排除**：得看 `plates[0].handle` 具体指向谁。
+
+⇒ **② 更要紧的落差**：`__plateNodes` 有 **28+ 个**候选节点，
+而 `plan.plates` 只认出 **1 张**（`识别到牌=1`）
+⇒ **`planPlateCoverage` 把绝大多数牌都判掉了**，
+而它认牌/挂带靠的是**估算的字宽**（`:31-34`
+`units += 字符<128 ? 0.55 : 1` → `est = min(units*fontSize, bb.width)`、`gx0` 按对齐方式算）
+⇒ **估算与实际字形一旦对不上，`est` 那个矩形就与 `pr` 不重叠** ⇒ 该 Label 被 `:49-50` 那两行 `return` 掉。
+
+⇒ ⇒ ★ **最可疑的一环**：如果 `plan.plates[0].bands.length === 0`
+（牌认出来了、但**一条带都没挂上**），那么 `measure` 里
+```js
+for (const bi of plate.bands) { … }   // ← 一次都不执行
+```
+⇒ **`hits` 保持 0、`maxChanged` 保持初始值 0** ——
+**这就同时解释了「hits=0」与「最大像素差=0」两个读数，不需要任何"渲染没生效"的假设。**
+⇒ 且它天然解释了**为什么时好时坏**：估算字宽与实际是否对得上，取决于那颗字的字符构成
+（中文 1、西文 0.55 的系数对混合文案就会偏）。
+
+⇒ ⚠️ **本轮尚未证实**（取证里还没带出 `plates[0].bands.length`）。
+⚠️ **下一格只需加一个读数、且零新增执行**：
+在取证里同时读出 `window.__platePlan`（或复用 `measure` 已有的 `plan`）里
+**`plates[0].bands.length` 与 `plates[0].name`**。
+⇒ **这是本会话到现在最省的一格**：一个读数就能把"空带"这条从推断变成事实。

@@ -376,8 +376,17 @@ for (const phase of PHASES) {
   if (planted.ok === true && after.maxChanged === 0) {
     plateForensics = await page.evaluate(() => {
       try {
+        // 2026-10-05 **关键判别（零新增执行）**：`plan.plates` 里那 1 张牌
+        // **是不是探针自己这块底板**？读 `window.__plateNodes` 的名字即可
+        //（`planPlateCoverage` 已经把它写好，这里只是读，**不新增 evaluate 次数**）。
+        // 它分辨两种完全不同的失败：
+        //   · 名单里有 `probePlantPlate` ⇒ 关的**就是底板本身** ⇒ 只能是渲染层的事；
+        //   · 名单里**没有** ⇒ **量具在关错对象**（关的是别的牌），根因立刻清楚。
+        const nodes = window.__plateNodes ?? {}
+        const names = Object.values(nodes).map((n) => (n === null || n === undefined ? '?' : n.name))
+        const isProbePlate = names.indexOf('probePlantPlate') >= 0
         const plate = window.__probePlant
-        if (plate === null || plate === undefined) return { err: '底板已不在场景里' }
+        if (plate === null || plate === undefined) return { err: '底板已不在场景里', plateNames: names, isProbePlate }
         const all = []
         const w = (n) => { all.push(n); for (const c of n.children) w(c) }
         w(window.cc.director.getScene())
@@ -401,6 +410,7 @@ for (const phase of PHASES) {
           plateIndex: all.indexOf(plate),
           nodeCount: all.length,
           plateActive: plate.activeInHierarchy === true,
+          plateNames: names, isProbePlate: isProbePlate,
           plateEnabled: g2 !== null && g2 !== undefined ? g2.enabled === true : null,
           atPoint: at
         }
@@ -408,7 +418,7 @@ for (const phase of PHASES) {
     })
     console.log(`  [取证] ${phase.tag} 底板仍在=${plateForensics.plateActive === true}`
       + ` 启用=${plateForensics.plateEnabled} 索引=${plateForensics.plateIndex}/${plateForensics.nodeCount}`
-      + ` 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
+      + ` 牌名单里有没有探针底板=${plateForensics.isProbePlate} 牌名单=${JSON.stringify(plateForensics.plateNames)} 盖在底板中心的节点=${JSON.stringify(plateForensics.atPoint ?? plateForensics.err)}`)
   }
   if (planted.ok) {
     await page.evaluate(() => { window.__probePlant?.destroy(); window.__probePlant = null })
