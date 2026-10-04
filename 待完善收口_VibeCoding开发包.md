@@ -1894,3 +1894,33 @@ social/help   : "plantAlphaSeen":255, "fillAlphaActual":255, "fillColorActual":[
 ① 沿用旧 `plan` 矩形算出的 `hits`；② **当场重新捕获**矩形后再算的 `hits`。
 两者不一致 ⇒ **坐实"矩形过期"**；一致 ⇒ 说明确实是像素差达不到阈值。
 ⇒ 这一步能**判别**两种可能，而不是再猜一轮。
+
+##### 16:28x ⚠️ **更正上一格的一处说法**（更精确的嫌疑）：plan **每次 measure 都重捕**，但**是在底板盖上之后**捕的
+
+上一格我写「这些矩形是量测计划阶段捕获的，量植入效果时并没有重新捕获」——
+**这句不准确**。`measure()` 的第 125 行就在函数体内：
+```js
+async function measure(page, panel, wantText = null) {
+  const plan = await page.evaluate(planPlateCoverage, panel)   // ← 每次调用都重新捕获
+  ...
+  const base = decodePng(await page.screenshot())              // 紧接着截"盖着"的基线
+```
+⇒ 所以矩形**不是跨调用过期**，`base` 截图也紧跟在 plan 捕获之后。
+**"矩形过期"这条嫌疑因此弱化，不作为头号。**
+
+⇒ **更正后更精确的嫌疑**：调用顺序是
+`植入（底板盖上） → measure(plan 重捕 → base 截图 → 逐个把底板 enabled=false → 截图比对)`。
+⇒ **底板是在 `planPlateCoverage` 捕获 `plan` 之前就已经盖上去的**
+⇒ **底板本身很可能被当成"牌"或"字形带"一起捕获进 `plan`**
+（`planPlateCoverage` 认的是"牌"的视觉特征，而探针的底板正是一块纯色矩形）。
+⇒ 若如此：`plan.plates` 里混进了探针自己那块底板 ⇒ 循环关掉它时
+**自己关自己**、目标区域的差被抵消 ⇒ **`hits=0`**，且**时好时坏**（取决于这次捕获把底板算成了几张）。
+
+⚠️ **未做（下一格，只加读数不改判据）**：在 `measure` 里把 `plan` 的内容读出来打一行
+——**`plan.bands.length` / `plan.plates.length` / 每张 plate 的名字与 rect**。
+⇒ 与「正常 host」对照着看：若 `power` 的 `plan.plates` 里出现了探针自己的
+`__probePlant`（或一个它没预期到的纯色矩形），**上面这条就坐实了**。
+
+⇒ ⚠️ 顺带记一条方法论（本会话第五次同类）：
+**"我以为 A 是这样"必须回到代码逐行确认再写进文档** ——
+上一格那句就是在没看第 125 行的情况下写的。已更正。
