@@ -285,18 +285,39 @@ const inViewport = (point, rect) => point.x >= rect.left && point.x <= rect.left
 const focusTile = async (name) => page.evaluate((n) => {
   let view = null
   let target = null
+  // 2026-10-04：上一格读数自相矛盾（want[-355,0] 的 got 却是 [0,0]；
+  // 前一格刚设成 [213,-126]，下一格读到的 before 却是 [0,0]）⇒ 先把"到底几个实例"数清楚。
+  // 多个实例时 `getComponent` 只返回**第一个** ⇒ focusTile 很可能在给另一个实例设焦点。
+  const all = []
+  const insts = []
   const visit = (node) => {
-    if (view === null) view = node.getComponent('CityPanelView') ?? null
+    const v = node.getComponent('CityPanelView')
+    if (v !== null && v !== undefined) {
+      insts.push(v)
+      all.push({ node: node.name, fx: v.focusX, fy: v.focusY, zoom: v.zoom })
+    }
     if (target === null && node.name === n) target = node
     for (const c of node.children) visit(c)
   }
   visit(window.cc.director.getScene())
-  if (view === null || target === null) return { ok: false, why: view === null ? 'no-view' : 'no-tile' }
+  // ⚠️ `insts` 才是组件本体；`all` 只是它的**快照**。拿快照调 setFocus 会报 not a function
+  //（2026-10-04 实测踩到：`view = all[0]` ⇒ `view.setFocus is not a function`，探针直接崩）
+  view = insts.length > 0 ? insts[0] : null
+  const live = all.map((a) => ({ node: a.node, focus: [Math.round(a.fx * 100) / 100, Math.round(a.fy * 100) / 100], zoom: a.zoom }))
+  globalThis.__panelViews = live
+  if (view === null || target === null) return { ok: false, why: view === null ? 'no-view' : 'no-tile', views: live }
   const p = target.position
   const before = [view.focusX, view.focusY]
   view.setFocus(p.x, p.y)
-  return { ok: true, want: [Math.round(p.x), Math.round(p.y)], got: [Math.round(view.focusX), Math.round(view.focusY)],
-    clamped: Math.abs(view.focusX - p.x) > 1 || Math.abs(view.focusY - p.y) > 1, before }
+  return {
+    ok: true,
+    viewCount: all.length,
+    views: live,
+    want: [Math.round(p.x), Math.round(p.y)],
+    got: [Math.round(view.focusX), Math.round(view.focusY)],
+    clamped: Math.abs(view.focusX - p.x) > 1 || Math.abs(view.focusY - p.y) > 1,
+    before: [Math.round(before[0]), Math.round(before[1])],
+  }
 }, name)
 
 const zoomToMin = async () => page.evaluate(() => {
@@ -365,7 +386,7 @@ for (const tile of ordered) {
     + ` 尺寸=${tile.geo?.w}×${tile.geo?.h} 锚点=(${tile.geo?.ax},${tile.geo?.ay})`
     + ` | 图标世界=(${tile.geo?.iwx},${tile.geo?.iwy}) 尺寸=${tile.geo?.iw}×${tile.geo?.ih}`
     + ` | 点下去时的页面坐标=${clicked.ok === true ? `(${Math.round(clicked.point.x)},${Math.round(clicked.point.y)})` : clicked.why}`
-    + ` 落点600ms漂移=${clicked.drift ?? '-'}px 图标active=${tile.iconActive} 帧名=${tile.frameName}`)
+    + ` 实例数=${clicked.viewCount ?? "-"}` + ` 落点600ms漂移=${clicked.drift ?? '-'}px 图标active=${tile.iconActive} 帧名=${tile.frameName}`)
   if (clicked.ok !== true) {
     hitChecks.push({ tile: tile.tile, expected: null, title: null, ok: false })
     continue
