@@ -674,9 +674,20 @@ export class CityPanelView extends Component {
   /** 右下角两颗缩放键。滚轮只在 Web 上有、捏合在真机上容易和拖动打架，键是那条兜底路径。 */
   private buildZoomControls(parent: Node): void {
     const x = this.contentWidth / 2 - FRAME_BAND - ZOOM_BUTTON_WIDTH / 2 - 6
-    const lowerY = -this.contentHeight / 2 + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26
-    this.createZoomButton(parent, 'ZoomOutButton', '-', x, lowerY)
-    this.createZoomButton(parent, 'ZoomInButton', '+', x, lowerY + ZOOM_BUTTON_HEIGHT + 8)
+    // 2026-10-04：**缩放键挪出网格占用区**（裁决 callId 7e1d1eae-47d1-4480-84f8-e0ab2bce152c 选项一）。
+    // 原来 `lowerY = -contentHeight/2 + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26`
+    // —— 那个值比网格底边**还高 26px**，两颗键整个落在网格里。
+    // 而缩放键与格子在**同一个 stage**（父链 `ZoomOutButton → Card → city`，
+    // `city` 就是被 `applyStageTransform` 平移缩放的那层）⇒ **相对位置固定**，
+    // 于是右下角那一格被**永久**压在「−」键下面、玩家永远点不到。
+    // 实测（`verify-city-multi-types` 的 `[hud-blocked]` 读数）：36 格里 1 格被压住，
+    // 就是 `Grid-35` 被 `ZoomOutButton` 压住。
+    // ⇒ 改放进**动作条带**（`-contentHeight/2 + NAV_BAR_HEIGHT` 起、高 `ACTION_HEIGHT`），
+    // 那一带在网格之外，两颗键竖排正好放得下（34×2 + 4 间距 = 72 ≤ 76）。
+    const bandCenterY = -this.contentHeight / 2 + NAV_BAR_HEIGHT + ACTION_HEIGHT / 2
+    const stackGap = 4
+    this.createZoomButton(parent, 'ZoomOutButton', '-', x, bandCenterY - (ZOOM_BUTTON_HEIGHT + stackGap) / 2)
+    this.createZoomButton(parent, 'ZoomInButton', '+', x, bandCenterY + (ZOOM_BUTTON_HEIGHT + stackGap) / 2)
   }
 
   private createZoomButton(parent: Node, name: string, caption: string, x: number, y: number): void {

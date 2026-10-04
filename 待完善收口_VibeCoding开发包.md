@@ -1570,3 +1570,40 @@ AudioService 只读诊断：{"armed":true, "muted":false, "hasSource":true}
 ⇒ 但**双路**里节点委托那路与平台无关（节点冒泡），真机只会更容易命中。
 ⚠️ 批跑口径按裁决**保留为红判据**（选项三已被否决，实际是选项一）；
 本条**现已转绿**，故批跑里这一份应当**恢复绿** —— 下一格用批跑复核。
+
+##### 16:18x ★ **缩放键已挪出网格，`verify-city-multi-types` 由红转绿（EXIT=0）** ★
+
+**裁决**：同一 callId 选项一「不该占：把缩放键挪出网格占用区」。
+
+**根因坐标**（`CityPanelView.ts:676-679`）：
+`lowerY = -contentHeight/2 + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26`
+—— 这个值比网格底边**还高 26px**，两颗键整个落在**网格里**；
+而动作条带（L1014）在 `-contentHeight/2 + NAV_BAR_HEIGHT + ACTION_HEIGHT/2`，
+缩放键与格子又**共享同一个 stage**（父链 `ZoomOutButton → Card → city`，
+`city` 就是 `applyStageTransform` 平移缩放的那层）⇒ **相对位置固定 ⇒ 永久压住那一格**。
+
+**改**：挪进**动作条带**（网格之外），竖排居中，间距 4
+（34×2 + 4 = 72 ≤ `ACTION_HEIGHT` 76，放得下）。
+
+**验证链**：`check.sh` = **0** → 重建 `build-webmobile.sh` → `verify-city-multi-types` **EXIT=0**：
+
+```
+[hud-blocked] 缩放键=["ZoomOutButton","ZoomInButton"] 格子总数=36
+              被永久压住的格子数=0 => []
+Grid-35 期望「铁矿场」实际「铁矿场 Lv1」   ← 修前是「点击建筑查看详情」
+Grid-7/11/21/31 全部命中
+```
+
+⇒ **影响面 1/36 → 0/36**，那条稳定可复现的未命中消失。
+
+## 本轮两条授权修复小结
+
+| 缺陷 | 改了什么 | 判据 | 结果 |
+|---|---|---|---|
+| 音效永不解锁 | `AudioService.bindGlobalTouch` 双路解锁 + 120ms 按手势去重 | `verify-audio-runtime` | **EXIT=0**，发声 `0→0→5`、`armed:true` |
+| Grid-35 永远点不到 | `CityPanelView.buildZoomControls` 挪进动作条带 | `verify-city-multi-types` | **EXIT=0**，压住 **0/36**、`Grid-35` 命中 |
+
+⚠️ **未做视觉验证**：缩放键挪到动作条带后**是否与该条带原有按钮视觉重叠**，本轮**没有截图核对** ——
+本会话是 headless 环境，只验了命中与遮挡读数。**下一格应补一次实拍截图**。
+⚠️ **未验证真机**（微信小游戏）行为。
+⚠️ 批跑尚未复核 —— 下一格跑批跑，确认这两份在批里也是绿。
