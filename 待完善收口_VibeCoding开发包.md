@@ -356,6 +356,30 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 | **V17-C 协议** | `d12ad21` + `bc14237` | `npm run gen` 退 0（Java 395 → 407 个文件、TS 同步）；`mvn test` 退 0；`check.sh` 退 0（双端契约一致性 OK，客户端 1006/1006） | 协议 def 22 → 32（国策 11 个）；`NationProtocol.ts` | 只声明不实现：`NationPolicyRoundView` 的每个字段都要有生产方（D/E/F 三格），在那之前它们全是零消费者 |
 | **V17 国策** | 本次提交（纯文档） | `check.sh` **退 0**；`mvn -f server/pom.xml test` 退 0 | `B13S4_国策规格草案.md`（8 节：现状核对 / 10 条已定口径 / 11 条裁决 / 4 条 buff 候选表 / 乘区纪律 / 落地清单 / 验收映射 / 台账口径） | 契约、领域、端点、客户端一行都没有，这是刻意的 |
 
+### 2026-10-04 · #753 收尾 + 新机器上从零补环境（本轮）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| **#753 取消建造（探针侧）** | `03b7521` | `verify-tech-research-runtime.mjs` 城建 **10 项里 9 项由红转绿**，退出码 0 | `client/build/tech-verify/city-cancel-build.png`（取消后木材 4601→4841，退 60%） | **产品码一行未改** —— 根因是量具从未选中那一格（`row===null` ⇒ `CityPanelView.ts:1478` 的 `row !== null &&` 把动作键全置 invisible），修法是探针按 `CityPanel.ts:171` 的 `index = gridY*6+gridX` 算出 `Grid-21` 并 emit 它的 `touch-start` |
+| **量具"没起来"不许冒充红** | `266fd510` | 合成双向对照 **8/8**（import 不存在的模块 ⇒ `NO-RUN`；打印读数后 `exit 3` ⇒ 仍记 `3`，没被误吞）；真实场景 `NO-RUN verify-tech-research-runtime.mjs` | `tmp/fake-probes/{verify-modnotfound,verify-realred}.mjs` + 复核命令写在 `tmp/2026-10-04-探针playwright缺失.md` | 只补了 `ERR_MODULE_NOT_FOUND` / `ENOENT…index.html` 两类形状；其它启动期失败（如超时以外的语法错）仍会记成普通红 |
+| **playwright 裸 import 治本** | `c963011c` | **59 份探针**改掉写死的 npx 绝对路径（两种形状：静态 `import` 57 份 + `await import` 2 份）；`package.json` 加 `playwright ^1.63.0`；残留 `_npx` 引用 **0**；`check.sh` **退 0**（含探针语法门 `node --check` 覆盖全部 `verify-*.mjs`）；同一份探针的报错由 `ERR_MODULE_NOT_FOUND` **变为** `ENOENT …web-mobile/index.html` ⇒ 解析确实成功 | 62 文件、**59 份各恰好 1 增 1 删**（确认没把行尾整体改写） | 只验了 1 份探针的端到端；全量批跑那部分**当时未跑完**（见下一行） |
+| **三条假判据修正** | `20716fba` | `verify-tech-research-runtime.mjs` 由 **通过 49 / 失败 3** 变为 **通过 52 / 失败 0**；反向对照 `tmp/fake-probes/check-overlap-judgment.mjs` **8/8**（超长文案判红 ×2、尾槽留旧数判红 ×2、真读数判绿 ×4）；`check.sh` **退 0** | 同帧截图 `client/build/tech-verify/city-cancel-build.png`：标题 `x∈[635,805]`、队列行 `x∈[557,841]`、一键收割 `x∈[1163,1357]`，**水平区间毫无交叠** | **遗留真隐患未修**：`headerCap` 给满宽 + `SHRINK` ⇒ 文案够长时字形可能滑进右上角常驻键下面（新判据会判红，但彻底消除要动产品码） |
+| **city-states 选不中格子** | `0827c669` | 同一台后端同一条命令内跑，**退出码 0**；读数由「暂停键=false / 选择栏=点击建筑查看详情」变为「`emit Grid-7 的 touch-start：true` / 暂停键=true / 选择栏=伐木场 Lv0 · 升级中·25%」 | 同上一张截图 | **没有查清"坐标点击为何打不中格子"** —— 只证明 `emit` 这条路走得通、坐标那条路走不通 |
+| **nation-policy-ui 把被吞的读数捞出来** | `1938bca8` | `node --check` 退 0；**真根因待下一轮读数**（本轮只加读数与早停，未改判据） | — | 建盟为什么被拒**尚未查明** —— 此前 `建国被拒 13003「必须先在联盟中」` 是下游症状，真错被整段吞掉 |
+| **新机器环境从零补齐 + 开发指南** | `01c3255b` + `5510e942` + `8257be21` + `38eecce8` 等 | 7 层全部补齐（`/d/tmp` · 后端 jar · playwright + Chromium · 仓库根 `npm install` · `client/` `npm install` · Pillow · Cocos Creator 3.8.7）；`client/build/web-mobile` 重建 **298 个文件**、**`BUILD_EXIT=0`**；`bash scripts/check.sh` **退 0** | `client/build/tech-verify/*.png` 五张（研究页 / 提速 / 取消 / 建城） | Cocos 官方 CDN `download.cocos.org` 对那台机器**整域 403**（试过 7 种手段），编辑器是用户装好后我才接手解压与构建 |
+
+**本轮跨格落判据（三条，都写进了代码注释而不只是文档）**：
+
+1. **判"两个 UI 元素压没压住"不能比 `UITransform.getBoundingBox()`** —— 那是布局给的**声明尺寸**，不是字形尺寸。
+   `Header`/`Queue` 是**居中** Label、contentSize 被写成满宽（实测 766px 横跨 `x∈[-383,383]`），字形却只占中间一小段
+   ⇒ 拿它判"压住"**无论文案多短都恒红**。要么量字形的**保守上界**（非空白字符按 1em 估，CJK 即 1em），
+   要么**同时留一张同帧截图**做目视对照。
+2. **稀疏数组经 `JSON.stringify` 会把空洞变成 `null`** —— `resourceSlots[i] ?? 'x'` 会把"那一格的节点已不存在"
+   （比留空壳更彻底的清空）判成"没清空"。判"是否清空"要接受**下标越界 / 空串 / 空洞**三种形态。
+3. **判"某个动作在界面上不可达"之前，先确认量具有没有选中那一格** —— 本轮连续三次都在"被压住 / 状态没进 UI /
+   探针时序"之间猜错，三次的真因都是**同一个：`row===null`**。⇒ 必须让量具把 `row` / 节点存在性 / 坐标
+   **和同帧截图**一起打出来，光有判据成败不够。
+
 **V10 落地的两处口径决定（留给下一格，别再重新想）**：
 
 1. **埋点：开记录页与翻页都豁免**，登记在 `scripts/check-track-coverage.sh` 的 `SKIP` 里（`openGachaHistory` /
