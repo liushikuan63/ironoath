@@ -267,13 +267,39 @@ const occupiedTiles = frame.tiles.filter((t) =>
 const emptyTiles = frame.tiles.filter((t) => !occupiedTiles.includes(t))
 const hitChecks = []
 for (const tile of occupiedTiles) {
+  // 2026-10-04：**点之前先把镜头移到那一格**。
+  // 起因是几何读数：算出来的页面坐标大面积出界（Grid-7 → x=-226、Grid-11 → x=1848、Grid-31 → y=1182，
+  // 视口只有 1440×900），而 CityPanelView 本来就可缩放可平移（zoom 默认 1.8、MIN 1 / MAX 2.4，
+  // 滚轮 :552 / 捏合 :568 / 单指拖动 + setFocus :583 / stage.setScale :646）⇒ 网格超出视口是设计如此。
+  // 不移镜头就点，Playwright 会把视口外的坐标**夹进视口** ⇒ 点空或落到主城头上（实测正是如此）。
+  // 由 applyStageTransform 反推：世界坐标 = zoom × (local − focus) ⇒ 把某格摆到屏幕中心 = setFocus(该格 local)。
+  const focused = await page.evaluate((name) => {
+    let view = null
+    let target = null
+    const visit = (n) => {
+      if (view === null) view = n.getComponent('CityPanelView') ?? null
+      if (target === null && n.name === name) target = n
+      for (const c of n.children) visit(c)
+    }
+    visit(window.cc.director.getScene())
+    if (view === null || target === null) return { ok: false, why: view === null ? 'no-view' : 'no-tile' }
+    const p = target.position
+    view.setFocus(p.x, p.y)
+    return { ok: true, focus: [Math.round(p.x), Math.round(p.y)] }
+  }, tile.tile)
+  if (focused.ok !== true) {
+    console.log(`   [geo] ${tile.tile} 移镜头失败：${focused.why}`)
+  }
+  await page.waitForTimeout(400)
+  // ⚠️ 坐标必须在**移完镜头之后**重算：镜头一动，所有格子的页面坐标全变（上一版算完就缓存是错的）。
   const point = await toPage(tile.tile)
   // 把「算出来的页面坐标」与「格子的几何」并排打出来：
   // 两者的差就是这一格点不中的原因（坐标换算错 vs 命中区没盖住基座）——两者都打出来才分得开。
-  console.log(`   [geo] ${tile.tile} 节点世界=(${tile.geo?.wx},${tile.geo?.wy})`
+  console.log(`   [geo] ${tile.tile} 移镜头=${JSON.stringify(focused.focus ?? focused.why)}`
+    + ` 节点世界=(${tile.geo?.wx},${tile.geo?.wy})`
     + ` 尺寸=${tile.geo?.w}×${tile.geo?.h} 锚点=(${tile.geo?.ax},${tile.geo?.ay})`
     + ` | 图标世界=(${tile.geo?.iwx},${tile.geo?.iwy}) 尺寸=${tile.geo?.iw}×${tile.geo?.ih}`
-    + ` | 算出的页面坐标=${point === null ? 'null' : `(${Math.round(point.x)},${Math.round(point.y)})`}`
+    + ` | 移镜头后的页面坐标=${point === null ? 'null' : `(${Math.round(point.x)},${Math.round(point.y)})`}`
     + ` 图标active=${tile.iconActive} 帧名=${tile.frameName}`)
   if (point === null) {
     hitChecks.push({ tile: tile.tile, expected: null, title: null, ok: false })
