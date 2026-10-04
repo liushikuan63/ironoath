@@ -172,7 +172,7 @@ async function measure(page, panel, wantText = null) {
   // ⇒ 留着一个"看起来像证据、其实恒为 0"的打印在仓里，只会把后来者带偏。
   // ⚠️ 若日后要重做这件事，**先统一坐标空间**，并且**先用绿相位当对照组**验判据本身
   //    （本会话的通用规矩：新判据上线前先跑一个已知正常的样本，确认它给出非零/非异常的读数）。
-  return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit, maxChanged,
+  return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit, maxChanged, scale: plan.scale, visHeight: plan.visHeight,
     bandRects: plan.bands.map((b) => b.rect) }
 }
 
@@ -323,9 +323,34 @@ for (const phase of PHASES) {
       fillAlphaActual: _g === null ? null : _g.fillColor.a,
       fillColorActual: _g === null ? null : [_g.fillColor.r, _g.fillColor.g, _g.fillColor.b],
       nodeActive: plate.activeInHierarchy === true, uiSize: [Math.round(plate.getComponent('cc.UITransform').width), Math.round(plate.getComponent('cc.UITransform').height)],
-      screenRect: _screenRect }
+      screenRect: _screenRect, worldBox: [world.x, world.y, world.width, world.height] }
   }, [phase.panel, Number(process.env.PLANT_ALPHA ?? 255)])
-  const after = planted.ok ? await measure(page, phase.panel, planted.text) : { hits: -1 }  // 2026-10-05：这里**曾经**算过「底板屏幕矩形 vs 带矩形」的重叠占比（andOverlap），**已撤掉**。
+  const after = planted.ok ? await measure(page, phase.panel, planted.text) : { hits: -1 }
+  // 2026-10-05 **坐标系已读明白后的正确判别**（零新增 evaluate）：
+  // 带矩形定义写在 plate-coverage.mjs:36-39 ——
+  //   x = worldX*scale ; y = (vis.height - worldY)*scale ; w/h = size*scale
+  // 即「canvas 像素 + 原点左下 + y 翻转 + 乘 scale」。
+  // ⚠️ 前两次失败都因为用了别的坐标系（世界坐标 / worldToScreen）。
+  // ⚠️ 判据上线前先拿绿相位当对照（规矩）：绿相位若也得 0%，判据无效。
+  let bandOverlap = -1
+  if (planted.ok === true && planted.worldBox !== undefined && after.scale !== undefined) {
+    const wb = planted.worldBox
+    const sc = after.scale
+    const vh = after.visHeight
+    const sx = wb[0] * sc
+    const sy = (vh - (wb[1] + wb[3] / 2)) * sc
+    const sw = wb[2] * sc
+    const sh = wb[3] * sc
+    let best = 0
+    for (const r of (after.bandRects ?? [])) {
+      const rr = { x: r.x, y: r.y, width: r.w, height: r.h }
+      const ox = Math.max(0, Math.min(sx + sw, rr.x + rr.width) - Math.max(sx, rr.x))
+      const oy = Math.max(0, Math.min(sy + sh, rr.y + rr.height) - Math.max(sy, rr.y))
+      const a = rr.width * rr.height
+      if (a > 0) { const v = (ox * oy) / a; if (v > best) best = v }
+    }
+    bandOverlap = best
+  }  // 2026-10-05：这里**曾经**算过「底板屏幕矩形 vs 带矩形」的重叠占比（andOverlap），**已撤掉**。
   // 原因：即使两边都换算成屏幕像素，绿相位的重叠**仍然恒为 0%**（实测 social/help 最大像素差=9900 而
   // 带重叠=0%）⇒ 两者的**原点与缩放仍不是同一个坐标系**（camera.worldToScreen 与 diffRegion`n  // 用的截图像素坐标系不同）⇒ 判据无效。
   // ⚠️ 本格是**先拿绿相位当对照**才发现它无效的 —— 这正是上一格定下的规矩：**新判据上线前，
@@ -357,7 +382,7 @@ for (const phase of PHASES) {
     after: after.hits, plantedHit: after.plantedHit === true, reverted: reverted.hits,
     bands: before.bands, ok, retry: retry === null ? null : { hits: retry.hits, plantedHit: retry.plantedHit } })
   console.log(`  ${phase.tag}: 切页签=${switched} 翻页=${paged}(${pageProof}) 字形带=${before.bands} 条（下限 ${BAND_FLOORS[phase.tag] ?? 1}）；植入前 ${before.hits} → `
-    + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true} 识别到牌=${after.plates} 最大像素差=${after.maxChanged}）→ 撤掉后 ${reverted.hits}；`
+    + `植入后 ${after.hits}（命中被植字=${after.plantedHit === true} 识别到牌=${after.plates} 最大像素差=${after.maxChanged} 带重叠=${Math.round(bandOverlap*100)}%）→ 撤掉后 ${reverted.hits}；`
     + `植入=${JSON.stringify(planted)} ⇒ ${ok ? 'OK' : '不合格'}`)
   await page.close()
 }

@@ -63,5 +63,10 @@ export function planPlateCoverage(panelKey) {
     })
   })
   window.__plateNodes = order
-  return { bands, plates }
+  // 2026-10-05：把 `scale` 与 `vis.height` 一并带出。
+  // 理由：带矩形用的是「**canvas 像素 + 原点左下 + y 翻转 + 乘 scale**」
+  //（就是上面 36-39 行那个公式）。要拿别处的矩形来比，**必须用同一个公式换算**；
+  // 用 `camera.worldToScreen` 会因为「没乘 scale、原点方向不同」而算出恒 0 的交集
+  //（本会话已实测两次失败：世界坐标 vs 像素、两套"屏幕像素"）。
+  return { bands, plates, scale, visHeight: vis.height }
 }
