@@ -172,7 +172,8 @@ async function measure(page, panel, wantText = null) {
   // ⇒ 留着一个"看起来像证据、其实恒为 0"的打印在仓里，只会把后来者带偏。
   // ⚠️ 若日后要重做这件事，**先统一坐标空间**，并且**先用绿相位当对照组**验判据本身
   //    （本会话的通用规矩：新判据上线前先跑一个已知正常的样本，确认它给出非零/非异常的读数）。
-  return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit, maxChanged }
+  return { hits, bands: plan.bands.length, plates: plan.plates.length, plantedHit, maxChanged,
+    bandRects: plan.bands.map((b) => b.rect) }
 }
 
 /**
@@ -290,13 +291,45 @@ for (const phase of PHASES) {
     // 而上一轮 ALPHA 扫描证明"调 alpha 不解决" ⇒ 得先确认 alpha/颜色**有没有真的落到组件上**。
     // ⚠️ 只加读数，不改判据。
     const _g = plate.getComponent('cc.Graphics')
+    // 2026-10-05 **零新增 evaluate**：把底板的**屏幕矩形**算出来带出去。
+    // 为什么在这里算：底板的位置是按**面板节点空间**摆的（`convertToNodeSpaceAR`），
+    // 而 `plan.bands[].rect` 是**像素法从截图里切出来的屏幕像素** ——
+    // 上一格就是因为拿"世界坐标的牌矩形"去比"屏幕像素的带矩形"而恒为 0（两量纲不可比）。
+    // ⇒ 必须**统一到屏幕像素**才能比。而本次 evaluate **本来就在页面里**，底板也在，
+    //    所以顺手换算，**不新增任何 evaluate**（挂在时序路径上的采集会抹平抖动）。
+    let _screenRect = null
+    try {
+      let _cam = null
+      const _scene = window.cc.director.getScene()
+      const _findCam = (n) => {
+        if (_cam === null && n.getComponent) {
+          const c = n.getComponent('cc.Camera')
+          if (c !== null && c !== undefined) _cam = c
+        }
+        for (const c of n.children) _findCam(c)
+      }
+      _findCam(_scene)
+      if (_cam !== null) {
+        const _pb = plate.getComponent('cc.UITransform').getBoundingBoxToWorld()
+        const _a = _cam.worldToScreen(new (panel.position.constructor)(_pb.x, _pb.y + _pb.height, 0))
+        const _b = _cam.worldToScreen(new (panel.position.constructor)(_pb.x + _pb.width, _pb.y, 0))
+        _screenRect = [Math.round(_a.x), Math.round(_a.y), Math.round(_b.x - _a.x), Math.round(_a.y - _b.y)]
+      }
+    } catch (e) {
+      _screenRect = null
+    }
     return { ok: true, host: panel.name, text: target.getComponent('cc.Label').string.slice(0, 8),
       plantAlphaSeen: Number(window.__plantAlpha ?? -1),
       fillAlphaActual: _g === null ? null : _g.fillColor.a,
       fillColorActual: _g === null ? null : [_g.fillColor.r, _g.fillColor.g, _g.fillColor.b],
-      nodeActive: plate.activeInHierarchy === true, uiSize: [Math.round(plate.getComponent('cc.UITransform').width), Math.round(plate.getComponent('cc.UITransform').height)] }
+      nodeActive: plate.activeInHierarchy === true, uiSize: [Math.round(plate.getComponent('cc.UITransform').width), Math.round(plate.getComponent('cc.UITransform').height)],
+      screenRect: _screenRect }
   }, [phase.panel, Number(process.env.PLANT_ALPHA ?? 255)])
-  const after = planted.ok ? await measure(page, phase.panel, planted.text) : { hits: -1 }
+  const after = planted.ok ? await measure(page, phase.panel, planted.text) : { hits: -1 }  // 2026-10-05：这里**曾经**算过「底板屏幕矩形 vs 带矩形」的重叠占比（andOverlap），**已撤掉**。
+  // 原因：即使两边都换算成屏幕像素，绿相位的重叠**仍然恒为 0%**（实测 social/help 最大像素差=9900 而
+  // 带重叠=0%）⇒ 两者的**原点与缩放仍不是同一个坐标系**（camera.worldToScreen 与 diffRegion`n  // 用的截图像素坐标系不同）⇒ 判据无效。
+  // ⚠️ 本格是**先拿绿相位当对照**才发现它无效的 —— 这正是上一格定下的规矩：**新判据上线前，
+  //   先用它跑一个已知正常的样本，确认它给出非零/非异常的读数**。
   if (planted.ok) {
     await page.evaluate(() => { window.__probePlant?.destroy(); window.__probePlant = null })
     await page.waitForTimeout(200)
