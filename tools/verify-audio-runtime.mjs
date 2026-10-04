@@ -86,7 +86,7 @@ const hideGuideAndPopup = async () => {
   })
   await page.waitForTimeout(200)
 }
-await context.addInitScript(() => {
+if (process.env.AUDIO_NO_PATCH !== '1') await context.addInitScript(() => { // 2026-10-04：这个 initScript 是本探针与内城探针最后一处差异，用 AUDIO_NO_PATCH=1 可关掉对照
   localStorage.setItem('ironoath.deviceId', `audio-verify-${Date.now()}`)
   // 在页面脚本之前包住 BufferSource 的创建：Cocos 的 web 音频后端每次真正发声都要要一个
   globalThis.__bufferSources = 0
@@ -125,9 +125,24 @@ page.on('console', (m) => {
   }
 })
 
-await page.goto(`${preview.origin}/`, { waitUntil: 'networkidle' })
+// 2026-10-04：**照抄内城探针的进入方式**。
+// 原先走裸 `/`、只等场景非空 ⇒ 页面多半停在一个面板都还没就绪的状态，
+// 于是 `calls:0` / `nodeTouch:0` 是**必然**的，量出来的东西不能用来判产品。
+// 内城探针（`verify-city-multi-types.mjs:119-129`）做的是三件事，本探针原先一件都没做：
+//   ① `?panel=city` 直接进内城面板；② 等 `PanelNav.currentKey === 'city'`；
+//   ③ 再多等 2000ms。
+const audioUrl = new URL(`${preview.origin}/`)
+audioUrl.searchParams.set('panel', 'city')
+await page.goto(audioUrl.toString(), { waitUntil: 'networkidle' })
 await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
-await page.waitForTimeout(1500)
+const panelReady = await page.waitForFunction(() => {
+  const scene = window.cc?.director?.getScene?.()
+  if (scene === null || scene === undefined) return false
+  const nav = scene.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('PanelNav')
+  return nav !== null && nav !== undefined && nav.currentKey === 'city'
+}, null, { timeout: 25_000 }).then(() => true).catch(() => false)
+console.log(`[verify-audio] 进入方式 ?panel=city，PanelNav.currentKey==='city' 达成 = ${panelReady}`)
+await page.waitForTimeout(2000)
 
 const checks = {
   serviceNode: await page.evaluate(() => {
@@ -175,14 +190,52 @@ await page.evaluate(() => {
     }
   }
 })
+/**
+ * 2026-10-04：等游戏**真的进入可交互态**再点。
+ *
+ * <p>为什么：本探针此前只用 `waitUntil:'networkidle'` 就开始点，而内城探针都会等具体 UI 出现。
+ * 若点在"引擎还没跑起来"的时候，`calls:0` 与 `armed:false` 都是**必然**的，
+ * 量出来的东西不能用来判产品（`NO-RUN` ≠ 红，同一条纪律）。
+ *
+ * <p>判据用**引擎帧数推进**（`cc.director.getTotalFrames()`）而不是猜某个节点：
+ * 帧在走 = 引擎活着；再配 AudioService 节点已存在 = `installAudio` 跑完。
+ * ⚠️ 注意 `hasTouch=false` 时 `getTotalFrames` 仍会推进（rAF 不依赖触屏）。
+ */
+const totalFrames = () => page.evaluate(() => {
+  const d = window.cc?.director
+  return typeof d?.getTotalFrames === 'function' ? d.getTotalFrames() : null
+})
+const waitForGameRunning = async (timeoutMs = 20000) => {
+  const t0 = Date.now()
+  let last = -1
+  while (Date.now() - t0 < timeoutMs) {
+    const [frames, hasSvc] = await page.evaluate(() => {
+      const d = window.cc?.director
+      const f = typeof d?.getTotalFrames === 'function' ? d.getTotalFrames() : -1
+      let svc = false
+      const scene = d?.getScene?.()
+      const walk = (n) => { if (n.name === 'AudioService') svc = true; for (const c of n.children) walk(c) }
+      if (scene) walk(scene)
+      return [f, svc]
+    })
+    if (frames > last && last >= 0 && frames > 20 && hasSvc) return { ready: true, frames, waitedMs: Date.now() - t0 }
+    last = frames
+    await page.waitForTimeout(250)
+  }
+  return { ready: false, frames: last, waitedMs: Date.now() - t0 }
+}
+
 // 第一次点击是"解锁音频"那一下：按设计它**不该**发声
-await hideGuideAndPopup()
+const ready = await waitForGameRunning()
+console.log(`[verify-audio] 等引擎跑起来：ready=${ready.ready} 帧数=${ready.frames} 等了 ${ready.waitedMs}ms`)
+const framesBeforeTaps = await totalFrames()
+if (process.env.AUDIO_NO_HIDE !== '1') await hideGuideAndPopup() // 2026-10-04：这行 removeFromParent 本身可能拆掉 UI 树，用 AUDIO_NO_HIDE=1 可单独关掉对照
 await tapAt(TAP_X, TAP_Y)
 await page.waitForTimeout(400)
 const afterFirst = await page.evaluate(() => globalThis.__bufferSources)
 // 之后连点五次（间隔 > 节流窗口），应当真的排出声音
 for (let i = 0; i < 5; i++) {
-  await hideGuideAndPopup()
+  if (process.env.AUDIO_NO_HIDE !== '1') await hideGuideAndPopup() // 2026-10-04：这行 removeFromParent 本身可能拆掉 UI 树，用 AUDIO_NO_HIDE=1 可单独关掉对照
 await tapAt(TAP_X, TAP_Y)
   await page.waitForTimeout(180)
 }
@@ -250,12 +303,14 @@ const bindDiag = await page.evaluate(() => {
   return typeof fn === 'function' ? fn() : { missing: true }
 })
 const touchRead = await page.evaluate(() => globalThis.__touchPaths)
+const framesAfterTaps = await totalFrames()
 
 checks.taps = { beforeTaps, afterFirst, afterMore }
 checks.pointerEvents = pointerEvents
 checks.audioDiagnostics = audioDiag
 checks.audioBind = bindDiag
 checks.touchPaths = touchRead
+checks.engineFrames = { beforeTaps: framesBeforeTaps, afterTaps: framesAfterTaps }
 console.log(`[verify-audio] 发声计数 ${beforeTaps} →(首点，设计上不响) ${afterFirst} →(再点五次) ${afterMore}`
   + `；期间 canvas 上的 pointer/touch 事件 = ${pointerEvents}`
   + '（为 0 ⇒ 点击没送达页面；>0 而发声 0 ⇒ 拦在 armed/muted/节流那一侧）')

@@ -974,3 +974,32 @@ AGENTS.md §八要求「当轮门禁有读数」才推。已修并复验 `CHECK_
 ⚠️ 另外：**这一格的产品码改动全是只读诊断出口**（`audioDiagnostics` / `audioBindDiagnostics`
 + 挂到 `globalThis.__ironoathAudioDiagnostics` / `__ironoathAudioBind`），
 播放逻辑一字未改；`bindGlobalTouch` 已恢复原样。
+
+##### 15:7x audio：**九条假设全证伪** —— 已把量具对齐到与"能工作的城市探针"逐项一致，仍 `calls:0`
+
+本格把 audio 探针**逐项对齐**到内城探针（每一步都实跑验证）：
+
+| 对齐项 | 内城探针的做法 | audio 探针现状 |
+|---|---|---|
+| 上下文 | `newContext({viewport:{1440,900}})` | 已同（`AUDIO_HAS_TOUCH=0`） |
+| 进入方式 | `?panel=city` | **已改成 `?panel=city`** |
+| 等待 | `waitForFunction(nav.currentKey === 'city')` | **已加，实测达成 = true** |
+| 额外等待 | `waitForTimeout(2000)` | **已同** |
+| 摘引导层 | 点前摘 | 已做成开关 `AUDIO_NO_HIDE=1`（关掉后 `nodeBound` 170 对 162，确认真的没摘） |
+| `addInitScript` | 无 | 已做成开关 `AUDIO_NO_PATCH=1`（关掉后仍 `calls:0`） |
+| 点击方式 | `page.mouse.click` | 已同 |
+
+**引擎确实活着**：`engineFrames` 点击期间 **94 → 254**（推进 160 帧）；`PanelNav.currentKey === 'city'` 达成。
+
+**仍然全 0**：`{"registered":true,"calls":0}` · `nodeTouch:0`（170 个节点都挂了监听）· `armed:false`。
+
+⇒ **本轮作废的九条假设**（读数都在，逐条证伪）：
+①桌面鼠标不映射 `TOUCH_START` ②上下文 `hasTouch` 差异 ③监听没注册
+④点击位置是空处 ⑤引导层 `GuideView` 吃掉点击 ⑥引擎还没跑起来（点得太早）
+⑦进入方式不对（没走 `?panel=city`）⑧摘引导层那行本身拆了 UI 树 ⑨`addInitScript`（AudioContext 补丁）干扰。
+
+⚠️ **仍未定，不猜。** 剩下的**唯一可执行的下一步**（下一格）：
+**让 audio 探针与 `verify-city-multi-types` 在同一次运行里并排量**——同一份产物、同一后端，
+各自在点之前挂"所有 active+UITransform 节点"的计数，点同一坐标，打印两份读数。
+这是唯一能把"探针差异"彻底排除、只剩"同一产物上两份探针行为不同"的办法；
+若 city 侧有数而 audio 侧为 0 ⇒ 差异在探针代码；若**两侧都是 0** ⇒ 是产物/引擎层问题（产品缺陷）。
