@@ -1389,3 +1389,33 @@ SANITY_PATCH=1（addInitScript） + SANITY_PTR=1（canvas capture 指针监听�
 **卡在哪**：最小探针复现不出 audio 探针的 0 ⇒ 两者的差异在"我以为相同"的那段。
 **需要什么**：要么把 audio 探针的 `ROOT`/`waitForFunction`/`__ironoathAudioDiagnostics` 三处读数打出来逐字比，
 要么直接**把 audio 探针的点击段换成最小探针的代码**（同一文件内 A/B），把差异钉到具体几行。
+
+##### 16:12x A/B 把差异钉死到「点击之前」；pause 排除
+
+**A/B（同文件内跑最小探针的逐字代码）**：
+
+```
+[verify-audio] A/B sanity 式点击目标={"name":"CollectAllButton","x":1260,"y":72}
+[verify-audio] 触摸通路对照：{"nodeTouch":0, "nodeBound":159}
+```
+
+⇒ 与最小探针**逐项相同**：点击目标同为 `CollectAllButton@(1260,72)`、`nodeBound` 同为 **159**。
+⇒ **页面内容相同、点击代码相同、点击坐标相同**，但 `nodeTouch` 一个 **0**、一个 **30**。
+⇒ **差异 100% 在"点击之前发生的那段代码里"**，不在页面、不在点击。
+
+**pause 排除**：两侧都读到 `frameRate: 60`，且「帧在推进（实测 94→254）而输入不派发」
+这个形状**不是** pause 造成的（未读到任何 paused 标记）。
+
+⇒ 至此卡点收窄成一句可执行的话：**最小探针与 audio 探针在"点击之前"的差异还没被枚举完**。
+⇒ 已排除（点击前）：`ROOT`（同一目录）、额外 `waitForFunction(cc&&scene)`、`addInitScript`、
+canvas capture 指针监听、节点计数器、`hideGuideAndPopup`、`waitForGameRunning` 轮询、
+`serviceNode`/`clips` 读数（结果体现在 `nodeBound` 与目标都相同 ⇒ 那两次 evaluate 之后页面仍一致）。
+
+⚠️ **仍未试、且是唯一还剩下的方向**（下一格，别重走上面任何一项）：
+**把 audio 探针整段"点击之前"的代码逐行贴到最小探针里**（不是加开关，是**照抄顺序**），
+跑到 `nodeTouch` 掉到 0 为止；或反向：**把最小探针的文件直接改名顶替 audio 探针**跑一次
+（若变成 30，差异就在 audio 探针"独有"的那几行；若仍是 0，那 audio 探针的**文件级**差异
+——比如 import 顺序、顶层 await、变量遮蔽——才是根因）。
+⇒ 这一条之所以还没做：**它在做法上与前 7 次不同**（不是加开关，是换文件），不能靠"再试一个开关"替代。
+
+⚠️ 本格到此按纪律判卡住（已换 8 种切法：单开关 4、组合 1、次数对齐 1、A/B 1、pause 读数 1）。

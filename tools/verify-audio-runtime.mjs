@@ -282,9 +282,45 @@ const clickNodeCenter = async () => {
 const ready = await waitForGameRunning()
 console.log(`[verify-audio] 等引擎跑起来：ready=${ready.ready} 帧数=${ready.frames} 等了 ${ready.waitedMs}ms`)
 const framesBeforeTaps = await totalFrames()
-if (process.env.AUDIO_NO_HIDE !== '1') await hideGuideAndPopup() // 2026-10-04：这行 removeFromParent 本身可能拆掉 UI 树，用 AUDIO_NO_HIDE=1 可单独关掉对照
-const firstHit = await clickNodeCenter() // 2026-10-04：改点**真实节点中心**（照抄城市探针的换算）
-console.log(`[verify-audio] 首点目标：${JSON.stringify(firstHit)}`)
+// 2026-10-04 解卡点：**同文件 A/B**。最小探针 `tmp/probe-click-sanity.mjs` 怎么加都还是
+// nodeTouch=30，而本探针恒为 0 ⇒ 差异在**本探针特有**的代码里。
+// `AUDIO_SANITY_CLICK=1` 时跳过本探针自己的 `clickTile` 全套，改跑一段与最小探针**逐字相同**的点击
+// （算一个 `/Button$/` 的中心 → `mouse.click` → 读同一个计数器）。
+// ⇒ 若此时 `nodeTouch` 变正，差异就钉死在 `clickTile`（焦点 / 视口判定 / 缩放兜底那一套）。
+const SANITY_CLICK = process.env.AUDIO_SANITY_CLICK === '1'
+if (SANITY_CLICK) {
+  const t = await page.evaluate(() => {
+    const cc = window.cc
+    const scene = cc.director.getScene()
+    const camera = scene.getComponentInChildren('cc.Camera')
+    const rect = document.querySelector('canvas').getBoundingClientRect()
+    const pixel = cc.view.getVisibleSizeInPixel()
+    let pick = null
+    const walk = (x) => {
+      if (pick === null && x.activeInHierarchy === true && /Button$/.test(x.name)) {
+        const ui = x.getComponent('cc.UITransform')
+        const s = camera.worldToScreen(ui.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
+        const px = rect.left + (s.x / pixel.width) * rect.width
+        const py = rect.top + rect.height - (s.y / pixel.height) * rect.height
+        if (px > rect.left && px < rect.left + rect.width && py > rect.top && py < rect.top + rect.height) {
+          pick = { name: x.name, x: Math.round(px), y: Math.round(py) }
+        }
+      }
+      for (const c of x.children) walk(c)
+    }
+    walk(scene)
+    return pick
+  })
+  console.log(`[verify-audio] A/B sanity 式点击目标=${JSON.stringify(t)}`)
+  if (t !== null) {
+    await page.mouse.click(t.x, t.y)
+    await page.waitForTimeout(700)
+  }
+} else {
+  await hideGuideAndPopup()
+  await clickNodeCenter()
+  console.log(`[verify-audio] 首点目标=${JSON.stringify(await clickNodeCenter())}`)
+}
 await page.waitForTimeout(400)
 const afterFirst = await page.evaluate(() => globalThis.__bufferSources)
 // 之后连点五次（间隔 > 节流窗口），应当真的排出声音
@@ -357,6 +393,20 @@ const bindDiag = await page.evaluate(() => {
   return typeof fn === 'function' ? fn() : { missing: true }
 })
 const touchRead = await page.evaluate(() => globalThis.__touchPaths)
+// 2026-10-04 解卡点续：A/B 已证明**页面与点击完全相同**（目标同为 CollectAllButton@1260,72、
+// nodeBound 同为 159），但本探针 nodeTouch=0、最小探针=5。
+// 「帧在推进（实测 94→254）但输入不派发」正是 **director/game 被 pause** 的特征 ⇒ 直接读它。
+const pauseState = await page.evaluate(() => {
+  const d = window.cc?.director
+  const g = window.cc?.game
+  return {
+    directorPaused: d?.isPaused ?? null,
+    gamePaused: g?.isPaused ?? null,
+    frameRate: g?.frameRate ?? null,
+    totalFrames: typeof d?.getTotalFrames === 'function' ? d.getTotalFrames() : null,
+  }
+})
+console.log(`[verify-audio] pause 读数：${JSON.stringify(pauseState)}`)
 const framesAfterTaps = await totalFrames()
 
 checks.taps = { beforeTaps, afterFirst, afterMore }
