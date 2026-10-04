@@ -187,12 +187,54 @@ if (tileKey === null) {
   await preview.close()
   process.exit(2)
 }
+// 2026-10-04：点这一格之前先**把镜头摆过去**。手机视口比 1440×900 更小，而面板可缩放可平移
+// （zoom 默认 1.8 / MIN 1 / MAX 2.4，滚轮 :552 / 捏合 :568 / 单指拖动 setFocus :583 /
+// stage.setScale :646）⇒ 网格超出视口是设计如此（`verify-city-multi-types` 那一格实测：
+// Grid-7 的 want 焦点 [-355,0] 被夹到 [-213,0]，夹取上限 = content*(zoom-1)/(2*zoom)）。
+// ⚠️ **夹取是真会发生的**：夹完若仍整格在视口外，Playwright 会把坐标**夹进视口**
+// ⇒ 点空或落到别的建筑上都是这么来的。所以这里同样"落在视口外就不点"。
+const PHONE_RECT = await page.evaluate(() => {
+  const r = document.querySelector('canvas').getBoundingClientRect()
+  return { left: r.left, top: r.top, width: r.width, height: r.height }
+})
+const focusPhoneTile = async (name) => page.evaluate((n) => {
+  let view = null
+  let target = null
+  const visit = (node) => {
+    if (view === null) view = node.getComponent('CityPanelView') ?? null
+    if (target === null && node.name === n) target = node
+    for (const c of node.children) visit(c)
+  }
+  visit(window.cc.director.getScene())
+  if (view === null || target === null) return { ok: false, why: view === null ? 'no-view' : 'no-tile' }
+  const p = target.position
+  view.setFocus(p.x, p.y)
+  return { ok: true, want: [Math.round(p.x), Math.round(p.y)], got: [Math.round(view.focusX), Math.round(view.focusY)],
+    clamped: Math.abs(view.focusX - p.x) > 1 || Math.abs(view.focusY - p.y) > 1 }
+}, name)
+
+const focusInfo = await focusPhoneTile(tileKey)
+await page.waitForTimeout(400)
 const tilePoint = await clickNode(tileKey)
-if (tilePoint !== null) {
+const inView = tilePoint !== null
+  && tilePoint.x >= PHONE_RECT.left && tilePoint.x <= PHONE_RECT.left + PHONE_RECT.width
+  && tilePoint.y >= PHONE_RECT.top && tilePoint.y <= PHONE_RECT.top + PHONE_RECT.height
+console.log(`[phone] ${tileKey} want焦点=${JSON.stringify(focusInfo.want ?? focusInfo.why)}`
+  + ` 实际焦点=${JSON.stringify(focusInfo.got ?? null)} 被夹=${focusInfo.clamped ?? '?'}`
+  + ` 视口=${Math.round(PHONE_RECT.width)}x${Math.round(PHONE_RECT.height)}`
+  + ` 落点=${tilePoint === null ? 'null' : `(${Math.round(tilePoint.x)},${Math.round(tilePoint.y)})`} 在视口内=${inView}`)
+if (tilePoint !== null && inView) {
   // 必须用**触摸**：这个上下文是 hasTouch/isMobile，鼠标事件不会走 Cocos 的触摸分发，
   // 第一版用 page.mouse.click 点格子 ⇒ 什么都没选中（而 1440×900 那套探针一直是鼠标，所以没暴露）。
   await page.touchscreen.tap(tilePoint.x, tilePoint.y)
   await page.waitForTimeout(700)
+} else if (tilePoint !== null) {
+  // ⚠️ 宁可这一格报「没量到」，也不要量一个被 Playwright 夹出来的假读数
+  console.error(`[phone][未点] ${tileKey} 落在视口外（视口 ${Math.round(PHONE_RECT.width)}x${Math.round(PHONE_RECT.height)}）`
+    + ' —— 这一份要跑在能看见那一格的视口/倍数上，否则量的是"夹完落在哪"，不是"点这一格会怎样"')
+  await browser.close()
+  await preview.close()
+  process.exit(2)
 }
 
 /** 动作栏读数：每个按钮的激活态、屏幕点、尺寸；外加画布矩形。 */
