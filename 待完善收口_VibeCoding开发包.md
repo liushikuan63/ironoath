@@ -3864,3 +3864,62 @@ bash scripts/test.sh
 | `run-batch-dual-backend.sh`（运行时探针） | ✅ `需看 0 · PREREQ 0 · SKIP 7 · BATCH_EXIT=0` · **实跑 51 份全绿** |
 | ⚠️ 真机（微信小游戏） | ❌ **未验证**（需外部环境） |
 | ⚠️ `SKIP 7` | ❌ **需凭据**（不代填） |
+
+##### 17:20x `scripts/build.sh`（全量构建含契约生成）：**首跑红在「jar 被占用」，清残留后 `BUILD_ALL_EXIT=0`**
+
+本会话从未跑过 `scripts/build.sh`，而它是项目「全绿」判据里的一环 ⇒ 本格补上。
+
+**首跑**：`BUILD_ALL_EXIT=1`，红在 `game-web`。⚠️ **不是测试红**（`test.sh` 刚在同一模块全绿）——
+`test.sh` 只跑 `test` 目标，`build.sh` 还要走 `spring-boot-maven-plugin:repackage`。真实错误：
+```
+[ERROR] Failed to execute goal org.springframework.boot:spring-boot-maven-plugin:3.2.5:repackage
+        (default) on project game-web: … Unable to rename
+        'D:\Java\GitHub\tieshi\server\game-web\target\game-web.jar'
+        to   'D:\Java\GitHub\tieshi\server\game-web\target\game-web.jar.original'
+```
+
+⇒ ★ **根因是本会话自己造成的环境残留**：
+```
+残留 java(game-web) = 2   （pid 19276 / 31444）
+```
+⇒ **两个残留的后端 JVM 还占着 `game-web.jar`** ⇒ Windows 上 rename 失败。
+⇒ **来源**：前面那些批跑的**双后端入口**，它的收尾是 `kill_listen`（按 `-State Listen` 的端口杀），
+⚠️ 而**这一轮我是在批跑之外手工起过后端做冒烟**（`verify-city-multi-types` / `verify-audio-runtime` 那两次），
+**那两个 JVM 不在任何脚本的管辖范围内** ⇒ 脚本收不掉它们。
+
+⇒ **清掉两个 pid 后重跑 ⇒ `BUILD_ALL_EXIT=0`**：
+```
+game-common   SUCCESS [ 0.499 s]   game-config SUCCESS [ 0.030 s]
+game-core     SUCCESS [ 0.056 s]   game-battle SUCCESS [ 0.021 s]
+game-web      SUCCESS [ 9.199 s]
+（第二轮：1.068 / 1.256 / 1.501 / 0.800 / 51.486 s —— 打包 + 测试）
+[test] 全部单测通过。
+[build] 全量构建通过。
+BUILD SUCCESS / 含 "<<< FAILURE" 与 "<<< ERROR" 的行数 = 0
+新产物：server/game-web/target/game-web.jar @ 10/05 18:45
+```
+⇒ ★ **五个模块全部 SUCCESS**，`game-web.jar` 已重新生成（**时间戳 18:45**，晚于本会话任何 Java 改动）。
+
+⇒ ⚠️ **由此带出一条该写进环境纪律的坑（本会话踩到并修掉）**：
+**跑 `scripts/build.sh`（或任何会 repackage jar 的目标）之前，
+必须先确认没有后端 JVM 在跑并占着 `server/game-web/target/game-web.jar`。**
+⚠️ 判据别只看端口残留 —— 那两个 pid 是我手工起的，**不在任何脚本的收尾范围内**，
+所以「按端口查残留」查不出来。⇒ **更稳的判据是直接查进程命令行**：
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
+  Where-Object { $_.CommandLine -like "*game-web.jar*" }
+```
+⇒ ⚠️ **未做**：双后端入口 `scripts/run-batch-dual-backend.sh` 的收尾**只按端口杀**，
+⇒ **手工起的后端它收不掉**。⚠️ 要不要把它改成**也按命令行兜底扫一遍**
+（属"改动会让既有行为变化"、且是脚本收尾语义 ⇒ **需口径**，本会话不做）。
+
+⇒ 📌 **验证全景更新**（四道门全绿，只剩外部条件挡着的两块）：
+| 门 | 读数 |
+|---|---|
+| `scripts/check.sh` | ✅ `CHECK_EXIT=0` · `fail 0` |
+| `scripts/test.sh` | ✅ `TEST_EXIT=0` · `1200 跑 / 0 红 / 0 跳` |
+| `scripts/build.sh` | ✅ `BUILD_ALL_EXIT=0` · **五模块 SUCCESS** · `BUILD SUCCESS` |
+| `build-webmobile.sh` | ✅ `产物就绪` · `missing or invalid = 0` |
+| `run-batch-dual-backend.sh` | ✅ `需看 0 · PREREQ 0 · SKIP 7` · 实跑 **51 份全绿** |
+| ⚠️ 真机（微信小游戏） | ❌ 未验证（需外部环境） |
+| ⚠️ `SKIP 7` | ❌ 需凭据（不代填） |
