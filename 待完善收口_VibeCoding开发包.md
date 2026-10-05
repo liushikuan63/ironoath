@@ -2967,3 +2967,39 @@ verify-panel-reachability.mjs => EXIT=2
 `verify-panel-reachability` ✗ 仍待校准）。
 ⚠️ 注意：这两份的绿是**在带提速档的后端上**取得的，**默认批跑的后端不带这两个变量**
 ⇒ 它们在批跑里仍会报 PREREQ ⇒ **要在批跑脚本里给这几份单独配提速档后端**才会在批跑里转绿（**未做**）。
+
+##### 16:58x `verify-panel-reachability` 的 fail-closed 根因：**像素 vs 世界坐标，两量纲不可比**
+
+上一格它是三份 PREREQ 里唯一还红的一份，退出原因：
+```
+[nonpaging][NO-RUN] city 对照组读错（on=true off=true parked=false）——量具未校准，读数作废
+```
+读它的判据，根因一目了然：
+```js
+// L73-75，注释还专门写过「拿 getVisibleSize()（设计分辨率）比会把在屏标签全判成"被裁"」
+const h = window.innerHeight          // ← 浏览器视口【像素】
+const w = window.innerWidth
+…
+const v = new window.cc.Vec3()
+n.getWorldPosition(v)                 // ← Cocos【世界坐标】
+const hit = Math.abs(v.x) > w / 2 || Math.abs(v.y) > h / 2     // ← 两边直接比
+```
+⇒ ★ **一边是像素、一边是世界坐标，量纲不同** ⇒ 连 `(0, 0)` 那个"必判不裁"的探针
+都会被判成"被裁" ⇒ `controlOn = true`（读数里正是 `on=true`）；
+`probe(h*4)` 同理被判"裁" ⇒ `parked = false`（读数里正是 `parked=false`）。
+⇒ ⇒ **三个对照组全废**，探针因此 **fail-closed 退 2** ——
+**它的 fail-closed 是对的**：宁可不读数，也不拿没校准的量具去判产品缺陷。
+
+⇒ ⚠️ **这已经是本会话第三次栽在「两量纲不可比」这一类**：
+① 跨镜头落点相减 ② 世界坐标 vs 截图像素（`verify-plate-plant` 两次）
+③ **本条：浏览器像素 vs 世界坐标**。
+⇒ **可复用的判据**：**凡是把 `window.innerWidth/innerHeight`、`getVisibleSize()`、
+`getBoundingBoxToWorld()`、`camera.worldToScreen()` 混着比，先问一句"这三者单位一样吗"**。
+⇒ 本会话三处都栽在同一处，说明**这类错误在本仓是系统性的**，值得单独立一条检查项。
+
+⇒ ⚠️ **修法（未做，需口径）**：把比较统一到**同一量纲**——
+用 `camera.worldToScreen(v)` 把世界坐标转成**像素**，再与 `window.innerWidth/innerHeight` 比
+（**两边都是像素**）；或反过来把 `w/h` 也换成世界单位。**判据（"有内容落在可视区外 = 真缺陷"）不动。**
+⚠️ 但它会**改变"哪些面板被判有缺陷"** ⇒ 属「改动会让既有验证失效」⇒ **需口径才动**。
+
+⇒ 📌 **PREREQ 账目**：3 → **1**，剩的这一份**不是外部条件**，是**量具未校准** ⇒ 可做。
