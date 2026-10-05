@@ -4587,3 +4587,56 @@ check-dangling-test-refs.sh    基线=0 还原后=0 违规时=1  ✔
 ⇒ ⚠️ **它们的「绿」目前只说明没触发，不说明判据在工作。**
 ⚠️ 新写或改动门禁时，**必须手跑一次 `bash scripts/check-gates-can-fail.sh`**（现覆盖 7 道）
 ⇒ **要不要扩到其余 20+ 道，属独立工作量**（每道都要先读判据再造违规），**明确留账**。
+
+##### 17:36x `check-gates-can-fail` 从 7 道扩到 **10 条判据**（9 道门）；⚠️ 又是「放错地方」
+
+17:35x 留的账：要不要扩到其余 20+ 道。本格扩了**能安全造违规的那部分**。
+
+**新增三条**
+| 门 | 判据来源 | 造法 |
+|---|---|---|
+| `check-no-bot-privilege` | `L31 grep -rn "isBot"` | 源码里出现 `isBot` |
+| `check-layering`（判据①） | `L13 FORBIDDEN_IMPORT_REGEX='^[[:space:]]*import[[:space:]]+(org\.springframework\|…)'` | 顶格写 `import org.springframework.stereotype.Component;` |
+| `check-layering`（判据②） | `L15 FORBIDDEN_CALL_REGEX='\b(Math\.random\(\|…\|System\.currentTimeMillis\()'` | `return Math.random();` |
+
+⇒ ★ **同一道门可以有多条独立判据** ⇒ harness 的粒度是**「门 × 判据」**，不是「门」。
+
+⇒ ⚠️⚠️ **第一次跑，两条 layering 都红**（`合格 8 / 不合格 2`）——**又是我的造法不合范围**：
+我按老习惯把临时 java 放在 **`server/game-web/src/main/java`**，而
+`check-layering.sh` 的 `L12 PURE_MODULES=(game-common game-core game-battle)`、`L75 FLOAT_MODULES=(game-battle game-core)`
+**都不含 `game-web`** ⇒ 门**根本没看那个文件**。
+⇒ ★⇒ **这是本会话"造法不合判据"的第 4 例，但这次的原因不是正则、是「扫描范围」**：
+> 造违规**除了读正则，还要读"它扫哪些目录"** ——
+> `game-web` / `game-core` / `tools` / `contract/config` 各自被不同的门盯着，
+> **放错目录 = 违规从未进入门的视野**。
+⇒ 修法：另开 `JAVA_LAYER=server/game-core/src/main/java/…`（`game-core` 同时在两个 MODULES 列表里），
+并把残留统计加上 `layer` 一项。
+
+**最终读数**
+```
+check-no-scheduled · check-no-handout · check-no-payment-bypass · check-no-scattered-reddot
+check-permission-bits · check-ts-meta · check-dangling-test-refs · check-no-bot-privilege
+check-layering（禁框架 import）· check-layering（禁 Math.random）
+                    全部 ✔ 三读数齐全（绿/绿/红）
+=== 结果：合格 10 条 / 不合格 0 条 ===   GATES_EXIT=0
+残留：java=0 layer=0 ts=0 ts.meta=0 mjs=0
+bash scripts/check.sh ⇒ [check] 全部静态检查通过。 / CHECK_EXIT=0 / ZzGate 残留=0
+```
+
+⇒ ⚠️ **仍未覆盖（如实，留账）**：
+`check-endpoint-paths` · `check-contract-sync` · `check-package-size` · `check-track-coverage`
+· `check-checklist-append-only` · `check-checklist-table` · `check-contract-defs` ·
+`check-config-refs`（17:32x 只证到"能红"，**对照未通过**）· `check-eol-policy`（**不可造**）·
+`check-no-scattered-reddot` 之外的 `check-no-*` 家族其余成员
+⇒ ⚠️ 其中 **`check-checklist-*` 两道要在 `收口清单.md` 上动手脚** ⇒ **本会话不做**（那是入库台账，风险不对称）。
+
+⇒ ⇒ ★ **把本会话四例"造法不合判据"归总（这是这一整段最该被记住的东西）**：
+| # | 原因 | 教训 |
+|---|---|---|
+| 1 | 造的东西**没违反任何判据**（同义反复） | **符合期望 ≠ 自证成功** |
+| 2 | 正则**字符层面**不认（小写字面量） | 读正则到**字符级** |
+| 3 | 机制**把违规消掉**（`eol=lf` 规范化） | 判据可能**构造上不可造** |
+| 4 | **扫描范围不含**我放的目录 | 读判据还要读**它扫哪里** |
+⇒ ⚠️ **四次都是先怀疑门** ⇒ **先怀疑自己的实验设计**。
+⇒ ★ **成本很低的做法**：把 `mk_*` 函数当成"读判据的作业"——
+⇒ **写不出来，说明你还没读懂那道门的判据**，而不是"门坏了"。

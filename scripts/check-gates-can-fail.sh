@@ -22,6 +22,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 JAVA=server/game-web/src/main/java
+# ⚠️ layering 门扫的是 **PURE_MODULES=(game-common game-core game-battle)**，**不含 game-web**
+#    ⇒ 造它的违规必须另放一个临时 java 文件到 game-core，放到 $JAVA 会静默不红。
+JAVA_LAYER=server/game-core/src/main/java/ZzGateLayerSelfTest.java
 TS=client/assets/scripts
 MJS=tools
 TMP_JAVA="$JAVA/ZzGateSelfTest.java"
@@ -29,7 +32,7 @@ TMP_TS="$TS/zz-gate-selftest.ts"
 TMP_MJS="$MJS/zz-gate-selftest.mjs"
 
 cleanup() {
-  rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS"
+  rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
 }
 trap cleanup EXIT
 
@@ -101,6 +104,25 @@ mk_dangling() { # check-dangling-test-refs：**只扫 git 已跟踪的文件** �
   fi
 }
 
+mk_bot_priv() { # check-no-bot-privilege：源码里不出现 isBot
+  if [ "$1" = "1" ]; then
+    printf 'public class ZzGateSelfTest { boolean f() { return isBot; } }\n' > "$TMP_JAVA"
+  else rm -f "$TMP_JAVA"; fi
+}
+mk_layering() { # check-layering：领域层禁 import 框架 / 禁 Math.random|System.currentTimeMillis
+  # ⚠️ 两段正则分开验：FORBIDDEN_IMPORT_REGEX 只认 **行首 import**（'^[[:space:]]*import …'），
+  #    所以 import 行必须顶格、前面不能有别的代码。
+  # ⚠️ 文件必须落在 PURE_MODULES 里的 game-core（见上方 JAVA_LAYER 的注释）。
+  if [ "$1" = "1" ]; then
+    printf 'import org.springframework.stereotype.Component;\npublic class ZzGateLayerSelfTest {}\n' > "$JAVA_LAYER"
+  else rm -f "$JAVA_LAYER"; fi
+}
+mk_mathrandom() { # check-layering 的 FORBIDDEN_CALL_REGEX 分支（只查 FLOAT_MODULES，含 game-core）
+  if [ "$1" = "1" ]; then
+    printf 'public class ZzGateLayerSelfTest { double f() { return Math.random(); } }\n' > "$JAVA_LAYER"
+  else rm -f "$JAVA_LAYER"; fi
+}
+
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'
 three check-no-payment-bypass.sh mk_payment '禁米大师之外的支付入口'
@@ -108,11 +130,15 @@ three check-no-scattered-reddot.sh mk_reddot '禁散落红点开关'
 three check-permission-bits.sh  mk_perm    '权限位必须在 role_permission 表里（全大写字面量）'
 three check-ts-meta.sh         mk_ts_meta  '.ts 必须配 .ts.meta'
 three check-dangling-test-refs.sh mk_dangling '悬空测试引用（必须先 git add 才被扫到）'
+three check-no-bot-privilege.sh  mk_bot_priv '禁 isBot 特判'
+three check-layering.sh          mk_layering '领域层禁 import 框架（FORBIDDEN_IMPORT_REGEX 只认行首 import）'
+three check-layering.sh          mk_mathrandom '领域层禁 Math.random（FORBIDDEN_CALL_REGEX 分支）'
 
 cleanup
 printf '\n=== 结果：合格 %d 条 / 不合格 %d 条 ===\n' "$pass" "$fail"
-printf '残留：java=%s ts=%s ts.meta=%s mjs=%s\n' \
-  "$(ls "$TMP_JAVA" 2>/dev/null | wc -l)" "$(ls "$TMP_TS" 2>/dev/null | wc -l)" \
+printf '残留：java=%s layer=%s ts=%s ts.meta=%s mjs=%s\n' \
+  "$(ls "$TMP_JAVA" 2>/dev/null | wc -l)" "$(ls "$JAVA_LAYER" 2>/dev/null | wc -l)" \
+  "$(ls "$TMP_TS" 2>/dev/null | wc -l)" \
   "$(ls "$TMP_TS.meta" 2>/dev/null | wc -l)" "$(ls "$TMP_MJS" 2>/dev/null | wc -l)"
 if [ "$fail" -gt 0 ]; then
   echo "[check-gates-can-fail] 失败：有门禁的『三读数』不齐 —— 它们可能只是在『没触发』。" >&2
