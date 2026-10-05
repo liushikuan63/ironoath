@@ -4553,3 +4553,37 @@ check-dangling-test-refs.sh    基线=0 还原后=0 违规时=1  ✔
 
 ⇒ 📌 **累计已证"三读数齐全"：7 道**；**已证"能红"但对照不齐：1 道**（`check-config-refs`）；
 **不可造：1 道**（`check-eol-policy`）。
+
+##### 17:35x `.qoder-work-queue.md` 补上后半段主线；「gate 可失败性要不要进 `check.sh`」**裁决：不接，当手动回归跑**
+
+**一、队列文件补齐**
+⚠️ 该文件上一节还是 17:24x 的状态，而此后又做了**十格**（17:25x~17:34x 整个门禁可信度主线）
+⇒ 下一个会话照它接，**会完全看不到这条主线**。
+已补：新增第 32 道门 · 已证 7 道「三读数齐全」· 1 道对照不齐 · 1 道不可造 ·
+两个可重跑入口（及其**能否每轮自动跑**的差别）· **五条元教训**。
+
+**二、裁决：不把 `check-gates-can-fail.sh` 接进 `check.sh`**
+⚠️ **弹窗超时未答**，由 `ask-user-auto-pick` 自动按推荐项提交 —— **不是本人选的**。
+底数（供复核）：该脚本造违规时**必须 `git add`**（`check-dangling-test-refs` 只扫已跟踪文件），
+而 `git add -N` **不放内容进索引** ⇒ 17:34x 实测两种写法结果不同。
+⇒ 结论：**接进 `check.sh` = 每轮都会动 git 索引**。
+
+⇒ ⇒ ★ **两种可重跑入口的差别，恰好就是「是否动索引」**：
+| 入口 | 碰索引 | 用法 |
+|---|---|---|
+| `check-probe-coordinate-space.sh` | ❌ 只在工作区造文件、不 `git add` | ✅ **每轮自动跑**（17:33x 已接） |
+| `check-gates-can-fail.sh` | ✅ **必须 `git add`** | ⚠️ **改完门禁后手动跑一次** |
+
+⇒ ★ **这条差别不是偶然，是取舍的判据**：
+**能不能每轮自动跑，取决于「它是否动共享状态」** ——
+动共享状态的检查（碰索引、碰端口、碰数据目录）就不该每轮自动跑，
+否则多会话并行时它会成为噪声源甚至互相干扰。
+⇒ ⇒ 这条判据**可以复用到别的机制化动作上**：先问"它动不动共享状态"，再决定进不进常规门禁。
+
+⇒ ⚠️ **仍未做（如实，不夸大）**：
+⚠️ **没有覆盖的 20+ 道门**：check-layering · check-contract-sync · check-endpoint-paths
+· check-package-size · check-track-coverage · check-checklist-append-only · check-checklist-table
+· check-no-handout 之外的 check-no-* 家族其余成员 · check-contract-defs 等
+⇒ ⚠️ **它们的「绿」目前只说明没触发，不说明判据在工作。**
+⚠️ 新写或改动门禁时，**必须手跑一次 `bash scripts/check-gates-can-fail.sh`**（现覆盖 7 道）
+⇒ **要不要扩到其余 20+ 道，属独立工作量**（每道都要先读判据再造违规），**明确留账**。
