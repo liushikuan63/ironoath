@@ -5243,3 +5243,22 @@ TEST_EXIT=0
 **下一步（这一格的续做只要一次点击）**：用户在 IDE 里点「普通编译」⇒ 我重跑 `capture-window.ps1`（趁前台空闲）
 拿渲染截图 ⇒ 再跑 `tools/verify-devtools-runtime.mjs` 九条判据（要 dev 后端 + ops 令牌，见项目记忆
 [[devtools-receipt-and-wx-noise]]）把「真机未验证」那两条换成读数。
+
+---
+
+### 2026-10-06 04:5x｜会话 0d266c61：**模拟器通道打通并拿到机器回执**（上一格的续做，已收）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 模拟器冒烟收口（用户点了「普通编译」之后） | 本笔 | `tools/verify-devtools-runtime.mjs` **九条全 PASS、`RECEIPT_EXIT=0`、FAIL 0 条**：`boot_check total=1` · `platform=wechat` · 登录 `started=true` · `attemptedPanels=17`（反空转下限）· `mounted=17 missing=""` · `panel_load_failed total=0` · 崩溃 0 · `bootMs=1643`；后端侧 `POST /ops/track/batch=200`、对照组 404 | `D:\tmp\wx-sim-live.png`（模拟器出新手引导「第 1 / 7 步 升级主城」+ Console 里那行 `[boot]`）、`D:\tmp\wx-sim-nodomain.png`（域名校验关掉后 404 变少）、`D:\tmp\devtools-receipt.log` | **真机仍未验证**（本轮全部读数来自模拟器，别当真机回执）；`cli open` 的 IDE 内部 `d.on is not a function (code 10)` 没修（不影响：窗口照开）；8199 那台后端**仍在跑**（证据源），停它：`powershell "Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | ? CommandLine -like '*game-web.jar*8199*' | % { Stop-Process -Id $_.ProcessId }"` |
+
+**关键决策与理由**
+- **零重建**：用 `scripts/patch-wechat-backend.mjs` 改产物里的 base URL（顺带关 `urlCheck`），而不是整棵 Cocos 重建 ——
+  省掉一次几分钟的构建，且产物不入库、可回滚（原件已备份到 `D:\tmp\bak-pkgpath-034219\wechatgame-project.config.json`）。
+- **不装 C 盘、不碰别人端口**：新后端起在 **8199**（脚本默认口径），没去动占着 8080 的 `phpmyadmin` 容器（核心服务禁动）。
+- **ops 令牌本机随机生成**，只写进 `D:\tmp` 下的本机文件；命令输出用 `sed` 把令牌换成 `***` 再落日志 ⇒ 凭据不入源码、日志与汇报。
+- 推翻自己上一条前提：8080 不是"旧 jar"而是**根本没游戏后端**（Apache HTML 404）⇒ 404 必须看**响应体形状**，
+  只看状态码会把"端口被别的服务占了"读成"构建过期"。
+
+**下一步**：① 真机预览（`cli preview` 出二维码 + 手机扫码）仍待做，那是 §七「真机未验证」那两条的唯一解；
+② 其余同上一格（实名与年龄输入要产品口径、B13 四件装配要排期、老树退役等点头）。
