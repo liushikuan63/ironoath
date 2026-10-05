@@ -5134,3 +5134,28 @@ TEST_EXIT=0
 
 **关键入口**：新门 `scripts/check-doc-counts.sh` · harness 用例 `scripts/check-gates-can-fail.sh`（搜 `mk_doc_counts`）
 · 台账 `收口清单.md` §七 末尾 · 标识口径唯一真源 `README.md` 顶部 · 工具 `D:\Tencent\wechat-devtools\cli.bat`
+
+##### 03:3x 目录改名轮（会话 ab8db5d4）：工作根切到 `D:\Java\GitHub\ironoath`，后续格子在新目录做
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 整树拷贝到新目录并提升为工作根 | 本笔（新树 `git log -1`） | 新树 `check.sh` **41 道 EXIT=0** · `test.sh` **EXIT=0 · BUILD SUCCESS · 服务端 2054 项 0 红 0 跳**（聚合行命中数 6 已断言） | 新树/老树/远端 `git rev-parse HEAD` 三处同点 `d2495d60`；跟踪文件 5609=5609；`收口清单.md`+`scripts/check.sh`+`AGENTS.md`+`package.json` 的 md5 链 `16c0cbb7ec3c` 相同；`client/node_modules` 真实 34M | 旧副本 1.1GB **未删**（另一条会话在里面提交，两份都提交会在 origin 撞分叉）；`.qoder/projects` 两份键并存 ⇒ **项目记忆写在旧键下，切换后已 cp 覆盖一次，后续若再写旧键需再覆盖** |
+| 改名可行性实测 | 不在仓库内（`/d/tmp/rename-probe/`） | 探针：目录被别的进程当 cwd 持有时 `mv` **退 0**（`victim` ⇒ `victim2`） | 同左 | 没走原地改名（会打断并行会话）；原地这条路**已证伪为"可行但不该用"** |
+
+**关键决策与理由**
+- 上一格我把"会话 cwd + 按路径键控目录"当成**硬阻塞**、只写步骤就收尾 ⇒ 判断错误（用户指出后重做）。
+  真正的约束只是"本会话注册的工作根字符串会变"，而**拷贝 + 提升**这条路完全避开它，且等价性可以硬校验。
+- 用 `robocopy /E /XJ` 而不是 `git clone`：要保住未跟踪但在用的东西（`.qoder-work-queue.md`、
+  `client/build` 与 `library`/`temp` 的 Cocos 产物、`tmp/` 的量具历史），否则新树里
+  `check-wechat-artifact` / `check-web-artifact` 那几道门会因为缺产物而无据可查。`/XJ` 是为了**不把 junction 递归展开**。
+
+**新发现的计数漂移（重要）**：`test.sh` 常被引用的"1200 跑 / 0 红 / 0 跳"**只是 `game-web` 一个模块**，
+全反应堆是 **2054**（`game-common` 57 + `game-config` 154 + `game-core` 584 + `game-battle` 52 +
+`game-web` 1200 + `tools/balance-sim` 7）。凡拿 1200 当"服务端全量"的地方都要改成 2054。
+
+**下一步（已在队列里，第一条=新会话第一件事）**：① 一切后续格子在 `D:\Java\GitHub\ironoath` 做；
+② 队列第一条未完成项是「改 Java 包名 `com.ironoath`」，**第一步先加"包路径谓词命中数 > 0"的门**；
+③ 旧副本退役：等那条会话收口后 `rm -rf D:\Java\GitHub\tieshi`（删前 `git status --porcelain` 确认无在途）。
+
+**关键入口**：新树 `D:\Java\GitHub\ironoath`（`scripts/check.sh` 41 道 / `scripts/test.sh` 2054 项）·
+`AGENTS.md` §三 首条已写明工作根迁移事实 · 台账 `收口清单.md` §七 末尾两段（项目名统一轮 + 目录改名轮）。

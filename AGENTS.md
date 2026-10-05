@@ -46,6 +46,13 @@
 
 ## 三、本机环境（踩过的坑，别再重新探索）
 
+- **工作副本在 `D:\Java\GitHub\ironoath`（2026-10-06 起为唯一真源，与 GitHub 仓库同名）**：由旧副本
+  `D:\Java\GitHub\tieshi` 整树拷贝（`robocopy /E /XJ`，1.1GB）后提升，旧目录当时仍被另一条会话占着而未删。
+  ⚠️ 实测过：**目录被别的进程当 cwd 也能改名**（探针 `mv victim victim2` 退 0）⇒ "解除占用"不是硬阻塞，
+  退役旧副本只要一条 `rm -rf`，前提是那条会话不再写它。
+  ⚠️ **两份树都提交会在 origin 上撞成分叉**：开工前先比 `git rev-parse HEAD` 与 `origin/master`。
+  Qoder 按路径键控的目录已复制成新名字（`D--Java-GitHub-ironoath`，`D:\UserData\.qoder\projects` 与
+  `C:\Users\Admin\.qoder\projects` **两侧都做了**；会话记录属"永不删"档，两份都留）。
 - **bash 必须走 Git Bash**：`C:\Program Files\Git\bin\bash.exe`。PATH 里的 `bash` 是 WSL 的
   `C:\WINDOWS\system32\bash.exe`，本机 WSL 无 `/bin/bash`，直接跑报 `execvpe(/bin/bash) failed`。
 - **客户端单测要 Node 20**：`export PATH="/d/Java/nodejs/node20.13.0:$PATH"` 后再跑门；
