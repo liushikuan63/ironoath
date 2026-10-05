@@ -18,7 +18,7 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
-import { startPreviewServer } from 'file:///D:/Java/GitHub/tieshi/tools/lib/preview-server.mjs'
+import { startPreviewServer } from './lib/preview-server.mjs'
 
 const OUT = process.env.MARCH_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/march-verify')
 mkdirSync(OUT, { recursive: true })

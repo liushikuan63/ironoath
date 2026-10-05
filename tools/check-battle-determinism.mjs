@@ -20,10 +20,10 @@ const bash = process.env.BASH_BIN || 'C:\\Program Files\\Git\\bin\\bash.exe'
 function digest() {
   const raw = execFileSync(bash, [
     '-c',
-    "cd /d/Java/GitHub/tieshi && source scripts/env.sh >/dev/null 2>&1 && " +
+    "source scripts/env.sh >/dev/null 2>&1 && " +
     "mvn -f server/pom.xml -q -pl tools/balance-sim compile exec:java " +
     "-Dexec.args='--determinism' 2>&1",
-  ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, cwd: root })
   const lines = raw.split(/\r?\n/).filter((l) => /^case\d+ /.test(l))
   if (lines.length === 0) {
     console.error('[determinism] 没抓到任何 case 行 —— 后端没编译或模式没跑起来：')

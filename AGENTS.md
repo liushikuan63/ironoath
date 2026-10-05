@@ -1,4 +1,4 @@
-# 项目约定 · tieshi / PROJECT_IRON_OATH
+# 项目约定 · ironoath（代号 PROJECT_IRON_OATH，对外名《列王纪·铁誓》/ Chronicles of Kings: Iron Oath）
 
 > 每次会话自动注入。**地图而非手册**：只放判据、红线与索引，细节在各台账与 `docs/`。
 > 与 `~/.dsh/AGENTS.md`（全局纪律）冲突时以全局为准；本文件只**加严**或细化，不放宽任何一条。
@@ -9,12 +9,13 @@
 服务端 `server/`（Java 17 / Spring Boot / 多模块 Maven：common / config / core / battle / web）；
 客户端 `client/`（Cocos Creator 3.8.7 + TypeScript）；
 双端契约的唯一真源是 `contract/proto/*.schema.json` 与 `contract/config/*.json`。
+> **标识口径的唯一真源在 `README.md` 顶部**：中文《列王纪·铁誓》 / 英文 Chronicles of Kings: Iron Oath / 代号 PROJECT_IRON_OATH / 仓库与包标识 ironoath（GitHub 仓库同名）。Java 包名 `com.ironoath` 暂不改——另立一格，改包名必须**同批改门禁谓词**（97 处引用里写死了 `com/ironoath` 路径，不同批改就会扫空目录假绿）。
 
 ## 二、验证入口（改完必须现跑，不许引用旧读数）
 
 | 目的 | 命令 |
 |---|---|
-| 静态门（32 道）+ 客户端单测 | `bash scripts/check.sh` |
+| 静态门（41 道）+ 客户端单测 | `bash scripts/check.sh` |
 | 服务端 JUnit + 客户端单测 | `bash scripts/test.sh`（等价 `mvn -f server/pom.xml test`） |
 | 全量构建（含契约生成） | `bash scripts/build.sh` |
 | 契约/配置表重生成（改 `contract/` 后必跑） | `npm run gen` |

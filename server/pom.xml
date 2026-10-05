@@ -14,8 +14,8 @@
   <artifactId>ironoath-server</artifactId>
   <version>0.1.0</version>
   <packaging>pom</packaging>
-  <name>PROJECT_IRON_OATH server</name>
-  <description>《列王纪·铁誓》服务端多模块工程</description>
+  <name>Chronicles of Kings: Iron Oath - server</name>
+  <description>《列王纪·铁誓》（英文名 Chronicles of Kings: Iron Oath，标识 ironoath）服务端多模块工程</description>
 
   <modules>
     <module>game-common</module>

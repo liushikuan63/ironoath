@@ -1,8 +1,8 @@
 {
-  "name": "project-iron-oath",
+  "name": "ironoath",
   "version": "0.1.0",
   "private": true,
-  "description": "《列王纪·铁誓》SLG 微信小游戏 —— 根级构建脚本入口（实际逻辑在 scripts/*.sh）",
+  "description": "Chronicles of Kings: Iron Oath（《列王纪·铁誓》）SLG 微信小游戏 —— 根级构建脚本入口（实际逻辑在 scripts/*.sh）",
   "scripts": {
     "dev": "bash scripts/dev.sh",
     "build": "bash scripts/build.sh",

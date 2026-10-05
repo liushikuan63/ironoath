@@ -1,4 +1,10 @@
-# SLG 小游戏 VibeCoding 提示词批次包
+# Chronicles of Kings: Iron Oath《列王纪·铁誓》 · SLG 小游戏 VibeCoding 提示词批次包
+
+> **标识口径（本仓库唯一真源，其余文档只引用不另立）**
+> 中文对外名《列王纪·铁誓》｜英文对外名 **Chronicles of Kings: Iron Oath**｜内部代号 `PROJECT_IRON_OATH`
+> ｜仓库与包标识 `ironoath`（GitHub 仓库 `liushikuan63/ironoath`、Maven `ironoath-server`、
+> 客户端 `ironoath-client`、Java 包 `com.ironoath`）。英文对外名是 2026-10-06 由直译给出的**待产品确认**口径，
+> 记在 `收口清单.md` §五；改它只改这一处 + 台账就地补注。
 
 > 配套主文档：`../SLG小程序_VibeCoding提示词工程包.md`（设定、数值、合规的总纲）
 > 本目录是**可直接投喂给 AI 的逐批次开发提示词**。

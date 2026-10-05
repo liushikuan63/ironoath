@@ -33,10 +33,11 @@ TMP_MJS="$MJS/zz-gate-selftest.mjs"
 # ⚠️ 各 mk_* 的临时目录：必须在 cleanup 定义**之前**声明（脚本是 set -u）。
 TC_D=/d/tmp/probe753/gates-tcov
 PS_D=/d/tmp/probe753/gates-pkgsz
+DC_D=/d/tmp/probe753/gates-doccnt
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D"
 }
 trap cleanup EXIT
 
@@ -241,6 +242,24 @@ mk_package_size() { # check-package-size：首包 ≤ PERF_FIRST_PACKAGE_MAX_BYT
 run_package_size() { bash scripts/check-package-size.sh; }
 three_arg check-package-size.sh \
           mk_package_size run_package_size '首包不得超过 PERF_FIRST_PACKAGE_MAX_BYTES（走环境变量口，零污染）'
+
+mk_doc_counts() { # check-doc-counts：AGENTS.md 声明的门禁道数必须等于 check.sh 实际调用数
+  # ⚠️ 走**环境变量口**（DOCCOUNT_CHECK_SH / DOCCOUNT_AGENTS_MD，2026-10-06 新加）⇒ **零污染**：
+  #    不碰仓库里的 AGENTS.md 与 scripts/check.sh（后者正被别的会话改，动它就是搅在一起）。
+  if [ "$1" = "1" ]; then
+    rm -rf "$DC_D"; mkdir -p "$DC_D"
+    # 违规态：脚本里 4 道，文档写 3 道
+    printf 'bash scripts/check-a.sh\nbash scripts/check-b.sh\nbash scripts/check-c.sh\nbash scripts/check-d.sh\n' > "$DC_D/check.sh"
+    printf '| 静态门（3 道）+ 客户端单测 | x |\n' > "$DC_D/AGENTS.md"
+    export DOCCOUNT_CHECK_SH="$DC_D/check.sh" DOCCOUNT_AGENTS_MD="$DC_D/AGENTS.md"
+  else
+    unset DOCCOUNT_CHECK_SH DOCCOUNT_AGENTS_MD
+    rm -rf "$DC_D"
+  fi
+}
+run_doc_counts() { bash scripts/check-doc-counts.sh; }
+three_arg check-doc-counts.sh \
+          mk_doc_counts run_doc_counts '文档声明的门禁道数必须等于实际调用数（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'
