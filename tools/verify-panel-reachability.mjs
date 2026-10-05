@@ -148,26 +148,44 @@ for (const [key, label] of PAGES) {
     // 双向对照组：屏心的标签必判"不裁"、屏外的必判"裁"。
     // 任一对照读错就说明世界坐标这套数学不可信，本次读数作废（退 2），
     // 而不是拿一个没校准的量具去判产品有没有缺陷。
-    // 2026-10-05：下面的 `probe()` 现在**与统计段共用上面那个 `isClipped`**，
-    //    所以 `parked`（远停不裁）这条对照才可能成立 ——
-    //    原先 `probe()` 用的是自己那套「没有 0.8 上界」的判据，与统计段打架。
-    const probe = (y) => {
+    // 2026-10-05：下面的 `probePx()` 按**像素偏移**给点，再按 `canvas/visible` 比例反推成世界坐标。
+    // 为什么：判据 `isClipped` 已经统一到**像素**，可原先三个对照仍按**世界坐标**取点
+    // （`probe(h*0.7)` = 世界 `630` = **像素 945**，早已越过 `0.8h` 的带）
+    // ⇒ **取点与判据不同量纲**，于是"带内"那条对照永远落在带外（实测 `off=false`）。
+    // ⇒ 现在三者都是像素语义：中心=0（必不裁）、带内=600（必裁）、带外=1200（必不裁）。
+    //    `600` 与 `1200` 都落在 `[>450, <=720]` 的**反面/正面**，与 `isClipped` 的带一致。
+    // 2026-10-05 ⚠️ **这里自己踩了一次"世界坐标 vs 局部坐标"**（与本文件刚修的那类同源）：
+    // `n.setPosition()` 收的是**面板局部坐标**，而我第一版按"世界中心 + 偏移"算，
+    // 多加了半个可见区高（`vs.height/2 = 300`）⇒ 取点整体偏高 ⇒ 落到了带外。
+    // 依据：`probe(0)` 的世界坐标实测是 `(480, 300)`，正好是可见区 `[0,960]×[0,600]` 的中心
+    // ⇒ **面板局部原点就在世界中心** ⇒ 像素偏移 px 对应**局部**偏移 `px / k`，没有额外加项。
+    const pxToLocalY = (px) => {
+      // 世界可见区高 `visibleSize.height`、像素画布高 `canvasSize.height` ⇒ 比例 k
+      const vs = window.cc.view.getVisibleSize()
+      const cs = window.cc.view.getCanvasSize()
+      const k = cs.height / Math.max(1, vs.height)
+      return px / Math.max(0.0001, k)
+    }
+    const probePx = (px) => {
       const n = new window.cc.Node('ProbeControl')
       n.layer = panel.layer
       panel.addChild(n)
       n.addComponent('cc.UITransform')
       const lab = n.addComponent('cc.Label')
       lab.string = 'probe'
-      n.setPosition(0, y, 0)
+      n.setPosition(0, pxToLocalY(px), 0)
       const v = new V3()
       n.getWorldPosition(v)
       const hit = isClipped(v)
       n.destroy()
       return hit
     }
-    const parked = probe(h * 4) === false
-    const controlOn = probe(0) === false
-    const controlOff = probe(h * 0.7) === true
+    // 屏心：像素偏移 0 ⇒ 必判「不裁」
+    const controlOn = probePx(0) === false
+    // 带内：像素偏移 600（带是 `>450` 且 `<=720`）⇒ 必判「裁」
+    const controlOff = probePx(600) === true
+    // 带外：像素偏移 1200（越过 `720`）⇒ 必判「不裁」（池化停放/地图名牌那种远处停放）
+    const parked = probePx(1200) === false
     return { paging, scroll, labels, clipped, controlOn, controlOff, parked,
       // 2026-10-05 **只读诊断**（不改判据）：把探针的**世界坐标**与**视口像素尺寸**都打出来，
       // 量化「两者差多少倍」。本探针的 `hit` 判据是 `|v.x| > w/2 || |v.y| > h/2`，
