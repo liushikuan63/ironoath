@@ -4248,3 +4248,53 @@ scripts/check-ts-meta.sh                    （实现在同名 .js）
 - 17:26x **自测**门禁能否失败 ⇒ 12 项里 11 项符合；**证伪了 `AGENTS.md` §五 一句话**
 - 17:28x **扩到**所有自带自测的门 ⇒ 分层如实记 ⇒ **并明确"其余二十多道仍未验证"**
 ⇒ ★ 也就是说：**这三格把"门禁"从"跑绿就算"变成了"跑绿 + 证过它会红"**。
+
+##### 17:29x 再补两门：**按各门真实判据**造违规 ⇒ `no-payment-bypass` 与 `no-handout` **都能失败**
+
+17:28x 留的账第二部分。⚠️ **第一版尝试是同义反复，什么都没证明**，如实记：
+
+**失败的第一版**：我造了个 `export const zzGateSelfTest = 1` 的临时 `.ts`，然后验三道门
+⇒ `6/6 符合期望` ⇒ ★ **但这个"符合"毫无价值** ——
+**我造的东西谁都不违反** ⇒ 门当然不红 ⇒ 那只能证明"门没被无关输入误触发"，
+**不能证明"该红时会红"**。⇒ **符合期望 ≠ 自证成功**，这是本格最容易骗自己的一点。
+
+**第二次：先读判据、再按判据造**
+`check-no-payment-bypass.sh` 判据在 `L67/L82/L98` 三条 `grep -rniE`（第三方支付 / 绕支付 / 浮点金额）。
+逐词试（客户端 `client/assets/scripts`）：
+```
+基线 EXIT=0
+  词 wxPay EXIT=0   词 openid EXIT=0   词 appid EXIT=0   词 mch_id EXIT=0   词 WeChatPay EXIT=0
+  词 alipay  EXIT=1   ← 抓到了
+还原 EXIT=0
+残留=0  git命中=0
+```
+
+`check-no-handout.sh` 判据是 `FORBIDDEN_REGEX`（`Weak/Underdog/Loser/Inferior` ×
+`Bonus/Buff/Compensation/Handout/Assist/Relief` 等组合）。
+逐词试（服务端 `server/game-web/src/main/java`）：
+```
+基线 EXIT=0
+  词 weakBonus EXIT=1   ← 一击即中
+还原 EXIT=0
+残留=0  git命中=0
+```
+
+⇒ ★ **这两道门现在也被证过"能失败"**，加上前几格，累计已证的门：
+`check-ts-meta` · `check-dangling-test-refs` · `check-probe-coordinate-space`（本会话新增的）
+· `check-resource-order-invariant`（11 份夹具）· `check-no-payment-bypass` · `check-no-handout`。
+
+⇒ ⚠️ **仍未验（如实）**：
+⚠️ `check-permission-bits.sh` **未验** —— 它只是 `node scripts/check-permission-bits.js` 的壳，
+判据全在 `.js` 里，要造违规得先读那个 `.js` ⇒ **本会话没做，留账**。
+⚠️ **其余十几道门仍未验**（`check-layering` / `check-contract-sync` / `check-eol-policy` /
+`check-endpoint-paths` / `check-no-scheduled` / `check-no-scattered-reddot` / `check-package-size` 等）。
+
+⇒ ⚠️ **纪律（本格自己执行的）**：每次破坏**只动本会话新建的临时文件**，
+**绝不改仓库既有文件**（多会话并行时不动对方的）；每个脚本结尾都 `trap cleanup EXIT` +
+**验残留为 0** ⇒ 三次运行后 `.ts` / `.java` 残留均为 0、`git status` 命中 0。
+
+⇒ ⇒ ★ **本会话在"验门禁"这件事上踩出来的元教训（比验出来的门更值钱）**：
+> **"造了个违规、门没红"与"造了个违规、门红了"要分开看** ——
+> **造的东西根本没违反任何判据**时，"门没红"是**必然**的，
+> ⚠️ **不能算作"门是好的"或"门能失败"**。
+⇒ **判据：先读出门盯的词，再照着那个词造**；否则做多少次都是同义反复。
