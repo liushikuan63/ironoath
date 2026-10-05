@@ -11,7 +11,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-GLOBAL_JSON="contract/config/global.json"
+# ⚠️ 下面三处允许用**环境变量**换输入（用来验证这条检查真的会红，而不必改仓库里的表/产物）。
+#    **不设环境变量时逐字节等同于改动前**（模式隔离：默认路径不得有任何差异）。
+#    写法与 scripts/check-config-refs.js 的可选参数口同源。
+GLOBAL_JSON="${PKGSIZE_GLOBAL_JSON:-contract/config/global.json}"
 
 # 从配置表读一个全局参数。
 # 用 node 而不是 python：本仓库的必需工具链里有 node（客户端与代码生成器都要用），
@@ -35,9 +38,9 @@ FIRST_PACKAGE_MAX=$(param PERF_FIRST_PACKAGE_MAX_BYTES)
 TOTAL_PACKAGE_MAX=$(param PERF_TOTAL_PACKAGE_MAX_BYTES)
 
 # 微信构建产物目录（存在时以它为准，那才是真正会被打包上传的东西）
-BUILD_DIR="client/build/wechatgame"
+BUILD_DIR="${PKGSIZE_BUILD_DIR:-client/build/wechatgame}"
 # 没有构建产物时退而量客户端源码。这是一个**下界**：真实首包还要加上引擎与构建期资源
-SOURCE_DIR="client/assets"
+SOURCE_DIR="${PKGSIZE_SOURCE_DIR:-client/assets}"
 
 if [ -d "$BUILD_DIR" ]; then
   MEASURED_DIR="$BUILD_DIR"

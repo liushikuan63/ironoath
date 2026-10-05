@@ -4948,3 +4948,68 @@ bash scripts/check.sh ⇒ [check] 全部静态检查通过。 / CHECK_EXIT=0
 - ⚠️ **本会话的 goal 目标文本已严重过期**（仍写着 16:5x 的 `verify-audio-runtime` 卡点与
   `CityPanelView.ts` 红线）⇒ **那两项早在 16:5x 就已完成/已解决**；
   ⚠️ 且 `update_goal action=edit` **需人直接发起**，本会话改不了 ⇒ **如实记，不假装已改**。
+
+##### 00:0x 第四道门开通自测口：`check-package-size` ⇒ harness 达 **14 条判据**（并给 `收口清单.md` 就地补注）
+
+**改动**（`scripts/check-package-size.sh`，三处写死的输入改成**可被环境变量覆盖、不设即原值**）
+```bash
+-GLOBAL_JSON="contract/config/global.json"
+-BUILD_DIR="client/build/wechatgame"
+-SOURCE_DIR="client/assets"
++GLOBAL_JSON="${PKGSIZE_GLOBAL_JSON:-contract/config/global.json}"
++BUILD_DIR="${PKGSIZE_BUILD_DIR:-client/build/wechatgame}"
++SOURCE_DIR="${PKGSIZE_SOURCE_DIR:-client/assets}"
+```
+⇒ ★ **用 `${VAR:-默认}` 而不是 `process.argv`** —— 因为这道门是**纯 bash**（前面三道是 node）。
+⇒ ⇒ ★★ **「加自测口」的套路按语言分两种写法，本会话现在两种都踩过了**：
+| 门的形态 | 加口方式 | 例子 |
+|---|---|---|
+| **node**（`.js` / `node -e`） | `process.argv[N]` + **记得转发 `"$@"`**（`node -e` 那道的坑） | `check-config-refs` · `check-contract-defs` · `check-endpoint-paths` · `check-track-coverage` |
+| **纯 bash** | `${VAR:-默认值}`，**不设即原值**（模式隔离由参数展开保证） | **`check-package-size`（本格）** |
+
+**三组读数**
+```
+1) 默认路径（不设环境变量，期望与改动前一致）
+     首包预算 4.00MB（来源 global.PERF_FIRST_PACKAGE_MAX_BYTES）
+     主包+分包合计 6.47MB（预算 30.00MB）                      DEFAULT_EXIT=0
+2) 造违规：临时表把首包预算压到 1000 字节 + 临时产物 5KB
+     [FAIL] 首包 0.00MB 超过预算 0.00MB。                      ⇒ EXIT=1
+3) 对照组：把阈值放宽到 10MB                                  ⇒ EXIT=0  ← 不是永远红
+```
+⚠️ 造样时**只需给门会查的两个 id**（`PERF_FIRST_PACKAGE_MAX_BYTES` / `PERF_TOTAL_PACKAGE_MAX_BYTES`）
+—— 这是读 `param()` 函数读出来的，不是猜的。
+
+**harness 与全门**
+```
+scripts/check-gates-can-fail.sh ⇒ 合格 14 条 / 不合格 0 条   GATES_EXIT=0
+  残留：java=0 layer=0 ts=0 ts.meta=0 mjs=0    工作区残留=0
+bash scripts/check.sh ⇒ [check] 全部静态检查通过。 / CHECK_EXIT=0
+```
+
+⇒ ⚠️ **顺手修了 harness 自己两处**：
+① `PS_D` 没进 `cleanup`（脚本 `set -u` + 可能残留临时目录）；
+② `TC_D=` **重复声明了两行**（我上一格留的）。
+⇒ ⇒ ★ **这两处都不是功能错，但都会在下一次改动时变成坑** ——
+**新增 `mk_*` 时必须同时做三件事**：声明变量（在 `cleanup` 之前）· 加进 `cleanup` · 在 `three_arg` 里注册。
+
+⇒ ★ **`收口清单.md` §七 就地补注**（本格按 §七 规矩重做了一次，因为上一格我违了规）：
+把那条门禁欠账里**已完成的部分改为"已验 14 条"**，并且
+⚠️ **原行逐字节保留、更正另起新行** —— 这是 23:3x 被 `check-checklist-append-only` 抓过之后学到的做法。
+```
+git diff --numstat -- 收口清单.md ⇒ 删除数为 0
+bash scripts/check-checklist-append-only.sh ⇒ HEAD 的 1235 个非空行全部仍在 ✓
+```
+
+⇒ ⚠️ **仍未做（如实）**：
+- ⚠️ **真机（微信小游戏）两条产品修复未验证** —— 全部读数来自 headless Chromium。
+- ⚠️ `SKIP 7` 需凭据（`ARMY_QUEUE_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN` / `BAG_BATCH_OPS_TOKEN` /
+  `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
+- ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
+- ⚠️ **仍未纳入 harness 的只剩 3 道**：`check-contract-sync`（要真跑 `mvn config-gen`）·
+  `check-checklist-append-only` / `check-checklist-table`（**输入就是台账本身** ⇒ 风险不对称）·
+  `check-eol-policy`（**机制层不可造**：`eol=lf` 在 `git add` 时把 CRLF 规范化掉）。
+- ⚠️ **本会话 goal 目标文本仍严重过期**（`update_goal action=edit` 需人直接发起，本会话改不了）。
+
+⇒ ⇒ ★★ **本会话"门禁可信度"这条主线的收口判据**（写下来，免得后人以为还没做完）：
+**能零污染自测的门已经全部自测完了**（14 条判据，覆盖 13 道门）；
+剩下的 3 道**不是"还没做"，而是"结构上做不了"**，且每一道都有写明的理由。

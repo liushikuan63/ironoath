@@ -32,10 +32,11 @@ TMP_TS="$TS/zz-gate-selftest.ts"
 TMP_MJS="$MJS/zz-gate-selftest.mjs"
 # ⚠️ 各 mk_* 的临时目录：必须在 cleanup 定义**之前**声明（脚本是 set -u）。
 TC_D=/d/tmp/probe753/gates-tcov
+PS_D=/d/tmp/probe753/gates-pkgsz
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D"
 }
 trap cleanup EXIT
 
@@ -200,7 +201,6 @@ three_arg check-endpoint-paths.sh \
           mk_endpoint_paths run_endpoint_paths '客户端绑的路径服务端必须存在（走可选参数口，零污染）'
 
 TC_D=/d/tmp/probe753/gates-tcov
-TC_D=/d/tmp/probe753/gates-tcov
 mk_track_coverage() { # check-track-coverage：AppRoot 的每个面板动作都必须打点
   # ⚠️ 走**可选参数口**（`bash scripts/check-track-coverage.sh <AppRoot.ts> <TrackEvents.ts>`，23:2x 新加）
   #    ⇒ **零污染**：不碰仓库里的客户端源码。
@@ -222,6 +222,25 @@ mk_track_coverage() { # check-track-coverage：AppRoot 的每个面板动作都�
 run_track_coverage() { bash scripts/check-track-coverage.sh "${TC_ARGS[@]}"; }
 three_arg check-track-coverage.sh \
           mk_track_coverage run_track_coverage 'AppRoot 每个面板动作都必须打点（走可选参数口，零污染）'
+
+mk_package_size() { # check-package-size：首包 ≤ PERF_FIRST_PACKAGE_MAX_BYTES
+  # ⚠️ 覆盖口用**环境变量**（PKGSIZE_GLOBAL_JSON / PKGSIZE_BUILD_DIR / PKGSIZE_SOURCE_DIR，23:4x 新加）
+  #    ⇒ 不设这三个时逐字节等同改动前；设了就换成临时表与临时产物 ⇒ **零污染**。
+  if [ "$1" = "1" ]; then
+    rm -rf "$PS_D"; mkdir -p "$PS_D/build" "$PS_D/src"
+    # 只含门会查的两个 id；预算压到 1000 字节，产物造 5KB ⇒ 必然超
+    printf '{"rows":[{"id":"PERF_FIRST_PACKAGE_MAX_BYTES","value":1000},{"id":"PERF_TOTAL_PACKAGE_MAX_BYTES","value":100000}]}\n' > "$PS_D/global.json"
+    head -c 5000 /dev/zero | tr '\0' 'x' > "$PS_D/build/blob.bin"
+    printf 'aaaa' > "$PS_D/src/tiny.ts"
+    export PKGSIZE_GLOBAL_JSON="$PS_D/global.json" PKGSIZE_BUILD_DIR="$PS_D/build" PKGSIZE_SOURCE_DIR="$PS_D/src"
+  else
+    unset PKGSIZE_GLOBAL_JSON PKGSIZE_BUILD_DIR PKGSIZE_SOURCE_DIR
+    rm -rf "$PS_D"
+  fi
+}
+run_package_size() { bash scripts/check-package-size.sh; }
+three_arg check-package-size.sh \
+          mk_package_size run_package_size '首包不得超过 PERF_FIRST_PACKAGE_MAX_BYTES（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'
