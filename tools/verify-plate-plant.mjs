@@ -139,6 +139,16 @@ async function measure(page, panel, wantText = null) {
   // 以及 `after.maxChanged === 0` 永远不成立 ⇒ `[取证]` 分支**一次都没触发**。
   // ⇒ **判据**：新增返回字段时，**每一条 return 路径都要给全**，否则读数会"看起来有、其实是 undefined"。
   if (plan.plates.length === 0) return { hits: 0, bands: plan.bands.length, plates: 0, plantedHit: false, maxChanged: -1 }
+  // 2026-10-05 **对照开关 `BASE_RAF`**：拍 `base` 之前先等一个 `requestAnimationFrame`。
+  // 起因（见 vibiecoding 文档 16:47x）：位置/可见性这一整类已被排除，而唯一自洽的形状是
+  // **「`base` 拍到的是底板还没被 GPU 提交上去的那一帧」** ⇒ `base` 与 `after` 是同一帧 ⇒ 差 0。
+  // ⚠️ 这是**开关**，不是判据改动：阈值 24 / `hits>0` / `plantedHit` 一个字没动。
+  // ⚠️ 默认**保持原行为**（`BASE_RAF` 未设 = 不等），与改动前逐字一致。
+  // ⚠️ **本会话第七次教训**：在量具里加东西会把抖动抹平 ⇒ 判读必须**两组各 ≥3 次**、
+  //    并且**拿绿相位当对照**，否则会把"加了等待就变绿"读成"问题不存在了"。
+  if (process.env.BASE_RAF === '1') {
+    await page.evaluate(() => new Promise((r) => { requestAnimationFrame(() => r(true)) }))
+  }
   const base = decodePng(await page.screenshot())
   let hits = 0
   let plantedHit = false
