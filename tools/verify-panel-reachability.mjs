@@ -104,8 +104,54 @@ for (const [key, label] of PAGES) {
   //（`gacha`/`battlePass`/`social`/`power` 不在栏上 ⇒ 仍按原坐标点，行为与改动前一致）。
   // ⇒ 「要不要进 `Nav-more` 覆盖那四项」是**另一个分叉**，需要口径，不在本格。
   const navHit = navByName.get(key)
-  await page.mouse.click(navHit !== undefined ? navHit.x : Math.round(first + step * indexOf[label]),
-    navHit !== undefined ? navHit.y : 845)
+if (navHit !== undefined) {
+  await page.mouse.click(navHit.x, navHit.y)
+} else {
+  // 2026-10-05 **裁决「进 Nav-more 覆盖剩下四项」**：主导航栏没有该 key ⇒ 先展开二级页
+  // → **重新普查**该页上的可点节点 → 找到 `Nav-<key>`（或名字等于 key 的节点）就用它自己的坐标点它。
+  // ⚠️ **判据不动**（"有内容落在可视区外 = 真缺陷"照旧）；只改"点哪个坐标 / 先点哪一步"。
+  const more = navByName.get('more')
+  if (more !== undefined) await page.mouse.click(more.x, more.y)
+  await page.waitForTimeout(600)
+  const sub = await page.evaluate(() => {
+    const scene = window.cc.director.getScene()
+    let cam = null
+    const w2 = (n) => {
+      if (cam === null && n.getComponent) {
+        const c = n.getComponent('cc.Camera')
+        if (c !== null && c !== undefined) cam = c
+      }
+      for (const c of n.children) w2(c)
+    }
+    w2(scene)
+    const rect = document.querySelector('canvas').getBoundingClientRect()
+    const rows = []
+    const walk = (n) => {
+      const u = n.getComponent && n.getComponent('cc.UITransform')
+      if (n.activeInHierarchy && u !== null && u !== undefined && cam !== null) {
+        const wb = u.getBoundingBoxToWorld()
+        const s = cam.worldToScreen(new window.cc.Vec3(wb.x + wb.width / 2, wb.y + wb.height / 2, 0))
+        const x = Math.round(s.x + rect.left)
+        const y = Math.round(rect.top + rect.height - s.y)
+        if (y > rect.height * 0.45) {
+          const lb = n.getComponent('cc.Label')
+          rows.push({ name: n.name, label: lb ? String(lb.string).slice(0, 8) : null, x, y })
+        }
+      }
+      for (const c of n.children) walk(c)
+    }
+    walk(scene)
+    return rows
+  })
+  console.log(`  [二级页] ${key} 行数=${sub.length} 项=${JSON.stringify(sub.slice(0, 18))}`)
+  const byName = sub.find((r) => r.name === `Nav-${key}` || r.name === key)
+  if (byName !== undefined) {
+    await page.mouse.click(byName.x, byName.y)
+  } else {
+    // 找不到就退回旧坐标（不静默改成别的行为）
+    await page.mouse.click(Math.round(first + step * indexOf[label]), 845)
+  }
+}
   await page.waitForTimeout(900)
   await hideGuide()
   const read = await page.evaluate((key) => {
