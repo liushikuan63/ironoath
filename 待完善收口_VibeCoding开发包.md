@@ -3571,3 +3571,44 @@ COVERAGE_EXIT=0
 ⇒ ⇒ **批跑请走双后端入口**；单后端入口留给"只想跑一部分/不需要 nation 族"的场合。
 ⇒ ⚠️ **未做**：本轮只验了显式两份的冒烟，**没重跑全量 51 份**。
 ⇒ ⚠️ 仍用 **2026-10-04 的旧 jar**（本会话没动产品码 ⇒ 安全，但"改产物后重跑"这条链路仍未被验过）。
+
+##### 17:13x ★ **兑现 17:12x 欠的账**：官方入口全量 **51 份实跑全绿**（含 `verify-nation-live`）
+
+用 `bash scripts/run-batch-dual-backend.sh`（**不传清单**，走自动收集）跑全量：
+```
+0 verify-nation-live.mjs        (BACKEND_ORIGIN, port 8232)
+0 verify-panel-reachability.mjs (PAGING_BACKEND, port 8238)
+--- 汇总：需看的份数 = 0（其中 未跑成 NO-RUN = 0） 超时 = 0 前提不足 PREREQ = 0 SKIP = 7
+BATCH_EXIT=0
+```
+
+⇒ ★★ **独立证据**（按 17:10x / 17:12x 的教训，**不只看汇总行**）：
+```
+/d/tmp/runtime-probes-exitcodes.txt：
+  实际跑绿份数 = 51
+  非 0 的行 = 7 条，**全部是 SKIP**（ARMY_QUEUE_OPS_TOKEN / ART_VERIFY_OPS_TOKEN /
+              BAG_BATCH_OPS_TOKEN / DEVTOOLS_OPS_TOKEN ×2 / RT_TOKEN），**没有一份真红**
+  含 nation-live 的行 = 1  ⇒ 它确实在批跑里，且是 0
+```
+⇒ ⇒ **三方对得上**：59（总量）− 1（排除：`verify-label-fit-runtime`）− 7（SKIP）= **51**
+⇒ ⇒ **不是"跑了 0 份所以汇总 0"**，也不是"跑了几份恰好没红"。
+
+⇒ ★ **本会话批跑的最终口径**：
+| |12:3x|**17:13x**|
+|---|---|---|
+|官方入口|无（手工脚本）|**`scripts/run-batch-dual-backend.sh`**|
+|需看|0|**0**|
+|PREREQ|3|**0**|
+|SKIP（凭据，不代填）|7|**7**|
+|实跑份数|50|**51**（多收 `verify-nation-live`）|
+|`BATCH_EXIT`|0|**0**|
+
+⇒ ⚠️ **仍未做 / 仍未验证（如实）**：
+- ⚠️ 仍用 **2026-10-04 的旧 `game-web.jar`** —— 本会话**没动产品码**
+  （只改了 `scripts/`、`tools/` 探针与文档）⇒ 用旧产物安全；
+  ⚠️ 但**「改产品码 → 重建产物 → 跑批跑」这条完整链路本会话从未端到端验过**。
+- ⚠️ **真机（微信小游戏）两条产品修复均未验证** —— 全部读数来自 headless Chromium。
+- ⚠️ `SKIP 7` 需凭据（`ARMY_QUEUE_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN` /
+  `BAG_BATCH_OPS_TOKEN` / `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
+- ⚠️ **只跑单后端入口**（不传 `BOOST_BACKEND`）时，`verify-nation-live` 会被收进去并
+  **报前提不足退 2** ⇒ 汇总多一个 `PREREQ` ⇒ **批跑请走双后端入口**。
