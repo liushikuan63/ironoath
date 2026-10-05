@@ -4386,3 +4386,56 @@ const lits = [...args.matchAll(/"([A-Z_]+)"/g)]   // ← 只认【全大写 + �
 · `check-resource-order-invariant`（11 份夹具）· `check-no-payment-bypass` · `check-no-handout`
 · `check-permission-bits` · **`check-no-scattered-reddot`**（本格）
 ⚠️ **单独归类 1 道**：`check-eol-policy` —— **可失败性不可用新造违规证明**（见上）。
+
+##### 17:32x `check-no-scheduled` 与 `check-config-refs` 证过；⚠️ 后者的**对照组我自己没通过**
+
+**A) `check-no-scheduled` —— 证过，一击即中**
+判据（L9）：生产源码里不出现 `@Scheduled` / `@EnableScheduling`。
+```
+基线 EXIT=0
+  词 @Scheduled EXIT=1   ← 抓到了
+还原 EXIT=0   残留=0  git命中=0
+```
+
+**B) `check-config-refs` —— ★ 它自带「造红入口」，是本会话见过最干净的一种验证**
+`scripts/check-config-refs.js` 的第 3~4 行原文：
+```js
+/* 可选参数：换一份配置目录跑（用来验证这份检查真的会红，而不必先弄脏仓库里的表）。 */
+const DIR = process.argv[2] || 'contract/config'
+```
+⇒ ⇒ **零污染**：传一份临时配置目录，**不碰仓库里的任何表**。
+
+**读数**
+```
+### 1) 基线：真实仓库            EXIT=0
+### 2) 造红 A：item 表为空        EXIT=1
+      | [check-config-refs][FAIL] item 表读不到或为空，检查无法进行（宁可失败也不空转通过）
+### 3) 造红 B：断外键的表          EXIT=1
+      | [check-config-refs][FAIL] id 空间只有 3 个，疑似表没读全（读表坏了会让所有外键都"查不到东西"）
+### 4) 造一份"完全合法"的目录      EXIT=1     ← ⚠️ 我的对照组失败了
+```
+⇒ ★ **能失败**成立（真实仓库 `0` vs 空 item `1`，且消息明确）**。
+⚠️ **但我不能说"证明了它不是永远红"** —— 第 4 组那个**"合法"目录自己也红了**，
+原因是它**另一道自检**（"id 空间只有 3 个，疑似表没读全"）要求表数量够，
+而我的最小目录只有 3 张表 ⇒ **我的对照组设计得太瘦**，撞上了与被测行为无关的另一条判据。
+⇒ ⇒ **如实记：对照组未通过 ⇒ 该路径未被隔离验证。**
+⇒ **未做**：要补这个对照组，得复制一份**完整**的 `contract/config` 再改其中一处
+⇒ **本会话不做**（要复制整套配置，收益不抵成本）。
+
+⇒ ⚠️ **两道的对照小结（这就是"可失败性验证"该有的诚实结构）**：
+| 门 | 基线 | 违规 | **对照组（合法）** | 结论 |
+|---|---|---|---|---|
+| `check-no-scheduled` | 0 | **1** | 0（还原后） | ✅ **完整**（绿/红/绿三读数） |
+| `check-config-refs` | 0 | **1** | ⚠️ **1（未通过）** | ⚠️ **部分**（能失败，但"非永远红"未隔离） |
+| `check-eol-policy`（17:31x） | 0 | **造不出** | — | ⚠️ **不可造** |
+
+⇒ ★ ⇒ **三条路都不通向"完整通过"**，这本身就是结论：
+**门禁的"可失败性"不是一次性能验完的属性**，要**逐门**做，且**每门都要设计三组**（基线/违规/合法对照）。
+⚠️ **本会话已证 10 道**（其中 1 道仅部分、1 道不可造）⇒ 其余门**仍未验证**。
+
+⇒ 📌 **累计**：`check-ts-meta` · `check-dangling-test-refs` · `check-probe-coordinate-space`
+· `check-resource-order-invariant` · `check-no-payment-bypass` · `check-no-handout`
+· `check-permission-bits` · `check-no-scattered-reddot` · **`check-no-scheduled`** · **`check-config-refs`（部分）**
+⇒ ⚠️ 不可造 1 道：`check-eol-policy`。
+⇒ ⚠️ 仍未验：`check-endpoint-paths` / `check-layering` / `check-contract-sync` /
+`check-package-size` / `check-track-coverage` / `check-checklist-*` 等。
