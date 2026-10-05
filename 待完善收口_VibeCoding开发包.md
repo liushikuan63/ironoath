@@ -4337,3 +4337,52 @@ const lits = [...args.matchAll(/"([A-Z_]+)"/g)]   // ← 只认【全大写 + �
 ⇒ ⚠️ **仍未验（如实）**：`check-layering` / `check-contract-sync` / `check-eol-policy` /
 `check-endpoint-paths` / `check-no-scheduled` / `check-no-scattered-reddot` / `check-package-size` /
 `check-track-coverage` / `check-config-refs` / `check-checklist-*` 等**十余道仍未验证会失败**。
+
+##### 17:31x `check-no-scattered-reddot` 证过；⚠️ `check-eol-policy` 的可失败性**造不出来**（不是门坏了）
+
+**A) `check-no-scattered-reddot` —— 证过**
+判据是 `L16 PATTERN='showRedDot|hasRedDot|setRedDot|redDotVisible|isRedDotOn|reddotVisible|showBadge|hasBadge'`
+⇒ 照着 PATTERN 造，第一个词就中：
+```
+基线 EXIT=0
+  词 showRedDot EXIT=1   ← 抓到了
+还原 EXIT=0   残留=0  git命中=0
+```
+
+**B) `check-eol-policy` —— 试了三版，结论是「造不出违规」，不是门坏了**
+```
+第 1 版：造 CRLF 的 .ts  ⇒ EXIT=0
+第 2 版：照 L34 的 `git grep --cached -Il "$CR"` 造  ⇒ 仍 EXIT=0
+第 3 版：**当场验 CRLF 到底写进去没有** ⇒ 文件字节=40、CR 个数=2（工作区确实有 CR）
+        但 git add 时输出：warning: … CRLF will be replaced by LF the next time Git touches it
+        门输出：2771 个文本 blob 全部被强制 eol=lf，且入库换行符全为 LF
+还原 EXIT=0   残留=0
+```
+
+⇒ ★★ **根因（本会话最值得记的一条）**：
+**`.gitattributes` 的 `eol=lf` 会在 `git add` 时把工作区的 CRLF 规范化成 LF**
+⇒ **索引里的 blob 根本没有 CR** ⇒ 门**正确地**找不到 CR。
+⇒ ⇒ ★ **这道门的"可失败性"用"新造 CRLF 文件"这条路是走不通的 ——
+造出来的违规在 `git add` 那一刻就被消掉了。**
+⇒ ⇒ 它的第二维（**直接读 blob 字节**）只能抓到**在 `eol=lf` 属性存在之前就入库**的文件 ——
+⚠️ **这恰恰是它自己注释里写明的设计意图**（`L18-21`：讲 `verify-hero-empty-runtime.mjs`
+"是这道门立起来之前就入库的，索引侧那份 blob 有 165 个 CRLF"）。
+
+⇒ ⇒ ★★ **因此「这道门能不能失败」这个问题，对它而言提法就不对**：
+它的可失败性**只能靠历史遗留**证明，**造不出新违规**。
+⇒ 若一定要证，路径是"把某个已入库文件改成 CRLF 并 `--no-verify`/绕过规范化再提交" ——
+⚠️ **那要动仓库既有文件、并绕过 git 的规范化** ⇒ **本会话不做**（AGENTS.md：
+多会话并行时不动既有文件；且这属于"绕过机制"，不是正常验证）。
+
+⇒ ⚠️ **本会话"误判门坏"的次数已达 3 次**（17:29x 同义反复、17:30x 正则不符、本格 CRLF 被规范化）
+⇒ ⇒ ★ **元教训再收紧**：
+> **造不出违规 ≠ 门坏了**。第三种可能是**这道门的判据在构造上就"造不出来"**
+> （例如某个机制会先把违规消掉、或违规只能由历史遗留产生）。
+⇒ **三种可能都要排**：① 造的东西没违反判据 ② 造法不合判据的实现 **③ 判据在构造上不可造**。
+⇒ ⚠️ 三次都是**先怀疑门** ⇒ **先怀疑自己的实验设计**。
+
+⇒ 📌 **累计已证"能失败"的门（8 道）**：
+`check-ts-meta` · `check-dangling-test-refs` · `check-probe-coordinate-space`（本会话新增）
+· `check-resource-order-invariant`（11 份夹具）· `check-no-payment-bypass` · `check-no-handout`
+· `check-permission-bits` · **`check-no-scattered-reddot`**（本格）
+⚠️ **单独归类 1 道**：`check-eol-policy` —— **可失败性不可用新造违规证明**（见上）。
