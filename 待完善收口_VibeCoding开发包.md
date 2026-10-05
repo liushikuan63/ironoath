@@ -4298,3 +4298,42 @@ scripts/check-ts-meta.sh                    （实现在同名 .js）
 > **造的东西根本没违反任何判据**时，"门没红"是**必然**的，
 > ⚠️ **不能算作"门是好的"或"门能失败"**。
 ⇒ **判据：先读出门盯的词，再照着那个词造**；否则做多少次都是同义反复。
+
+##### 17:30x `check-permission-bits` 也证过"能失败"；⚠️ **第一次没红，是我的造法不合它的正则**（不是门坏了）
+
+上一格留的账。它的判据全在 `scripts/check-permission-bits.js`：
+扫 `server/**/*.java` 里 `requirePermission(` 的实参（**括号配平取整段**，跨行也不漏），
+取**最后一个全大写字面量**当权限位，比对 `contract/config/role_permission.json` 的 `permission` 列。
+
+**第一次造违规没红** ⇒ 我第一反应又是"门坏了"，**查下去发现又是造法不对**：
+```js
+const lits = [...args.matchAll(/"([A-Z_]+)"/g)]   // ← 只认【全大写 + 下划线】
+```
+⇒ 我写的 `"zz_gate_selftest_not_in_table"` **含小写** ⇒ 正则匹配不到 ⇒ **门正确地没反应**。
+
+**第二版按真实正则造（`"scope", "ZZ_GATE_SELFTEST_NOT_IN_TABLE"`）**
+```
+### 1) 基线 EXIT=0
+### 2) 小写字面量 EXIT=0   ← 门正确地没反应（正则只认 [A-Z_]+）
+### 3) 全大写字面量 EXIT=1  ← 抓到，并点名位置：
+      - ZZ_GATE_SELFTEST_NOT_IN_TABLE （server\game-web\src\main\java\ZzPermSelfTest.java:2）
+### 4) 还原 EXIT=0     残留=0  git命中=0
+```
+⇒ ★ 门**不但能失败，还把违规的**文件与行号**都打出来了**（这才是有用的失败）。
+⇒ 表里实际有 **23** 个 permission 值（`KICK_MEMBER` / `INVITE_MEMBER` / `START_RALLY` / …）。
+
+⇒ ⚠️ **本会话第二次因为"造法不合判据"而误判门坏了**（第一次是 17:29x 的同义反复）
+⇒ ⇒ ★ **把 17:29x 的元教训再收紧一格**：
+> 「先读判据」还不够，**要读到"判据具体长什么样"** ——
+> 包括**正则在字符层面认什么**（这里 `[A-Z_]+` 只认全大写）、
+> **匹配哪一段文本**（`requirePermission(` 之后括号配平的整段）。
+⇒ **只读"门扫什么文件"不够，要读"门怎么匹配"**。
+⚠️ 两次都是**先怀疑门、后怀疑自己** ⇒ 教训：**先怀疑自己**。
+
+⇒ 📌 **累计已证"能失败"的门（7 道）**：
+`check-ts-meta` · `check-dangling-test-refs` · `check-probe-coordinate-space`（本会话新增）
+· `check-resource-order-invariant`（11 份夹具）· `check-no-payment-bypass` · `check-no-handout`
+· **`check-permission-bits`**（本格）
+⇒ ⚠️ **仍未验（如实）**：`check-layering` / `check-contract-sync` / `check-eol-policy` /
+`check-endpoint-paths` / `check-no-scheduled` / `check-no-scattered-reddot` / `check-package-size` /
+`check-track-coverage` / `check-config-refs` / `check-checklist-*` 等**十余道仍未验证会失败**。
