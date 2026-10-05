@@ -2931,3 +2931,39 @@ BATCH_EXIT=0
 `.qoder-work-queue.md`（未跟踪，只放指针与判据，不放长文）」一致）
 ⇒ **本节已落盘即生效，不入库**；`git add` 后已 `git reset` 撤销暂存，**没有把未跟踪文件带进提交**。
 ⇒ 本格因此**没有可入库的代码/文档改动** ⇒ 按纪律，本条记录本身就是本格的入库留档。
+
+##### 16:57x ★ `PREREQ 3` 变 **`PREREQ 1`**：两份在**带 dev 提速档的后端**上直接转绿
+
+旧目标把「`PREREQ 3` 要带 dev 档或单独后端」写成**外部条件**，实测**它不需要凭据** ——
+`verify-nation-live` / `verify-nation-policy-ui` 要的只是**两个环境变量**（后端可自己起）：
+```
+IRONOATH_DEV_CITY_LEVEL=16  IRONOATH_DEV_START_AMOUNT=2000000  SPRING_PROFILES_ACTIVE=dev
+```
+⇒ 起这样的后端再跑（`tmp/run-prereq3.sh`）：
+```
+verify-nation-live.mjs        => EXIT=0      ← 原 PREREQ(2)
+verify-nation-policy-ui.mjs   => EXIT=0      ← 原 PREREQ(2)
+verify-panel-reachability.mjs => EXIT=2
+```
+
+⇒ ⚠️⚠️ **过程中我自己踩了项目 AGENTS.md 写明的坑，并修掉**（保留轨迹）：
+第一次跑我把变量名**猜**成了 `NATION_BACKEND`，结果
+`verify-nation-live` 打「缺 `BACKEND_ORIGIN`」、`verify-nation-policy-ui` 直接连 `127.0.0.1:8080` 被拒
+⇒ **EXIT=1 的"假红"**。回读三份探针首行才拿到真名：
+`verify-nation-live` / `verify-nation-policy-ui` = **`BACKEND_ORIGIN`**，
+`verify-panel-reachability` = **`PAGING_BACKEND`**（默认 8171，不是 8080）。
+⇒ ⇒ **教训（AGENTS.md 原文就写着，我仍然先猜了）**：
+**运行时探针的后端变量名不统一，传错会静默回退默认端口、跑出一片假红
+⇒ 必须先读每份探针首行的「后端 http://…」再读结果。**
+
+⇒ ⚠️ **第三份 `verify-panel-reachability` 仍是 2，但原因不同** —— 它是**自己的 fail-closed 守卫**：
+```
+[nonpaging][NO-RUN] city 对照组读错（on=true off=true parked=false）——量具未校准，读数作废
+```
+⇒ 它要的是**自己的「非翻页」对照组先校准**，与 dev 提速档**无关**
+⇒ 这份**不是外部条件**，是量具未校准 ⇒ **下一格可做**（先把它的对照组跑对）。
+
+⇒ 📌 **PREREQ 账目变化**：3 → **1**（`verify-nation-live` ✓ · `verify-nation-policy-ui` ✓ ·
+`verify-panel-reachability` ✗ 仍待校准）。
+⚠️ 注意：这两份的绿是**在带提速档的后端上**取得的，**默认批跑的后端不带这两个变量**
+⇒ 它们在批跑里仍会报 PREREQ ⇒ **要在批跑脚本里给这几份单独配提速档后端**才会在批跑里转绿（**未做**）。
