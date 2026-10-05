@@ -30,10 +30,12 @@ MJS=tools
 TMP_JAVA="$JAVA/ZzGateSelfTest.java"
 TMP_TS="$TS/zz-gate-selftest.ts"
 TMP_MJS="$MJS/zz-gate-selftest.mjs"
+# ⚠️ 各 mk_* 的临时目录：必须在 cleanup 定义**之前**声明（脚本是 set -u）。
+TC_D=/d/tmp/probe753/gates-tcov
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D"
 }
 trap cleanup EXIT
 
@@ -196,6 +198,30 @@ EOF
 run_endpoint_paths() { node scripts/check-endpoint-paths.js "${EP_ARGS[@]}"; }
 three_arg check-endpoint-paths.sh \
           mk_endpoint_paths run_endpoint_paths '客户端绑的路径服务端必须存在（走可选参数口，零污染）'
+
+TC_D=/d/tmp/probe753/gates-tcov
+TC_D=/d/tmp/probe753/gates-tcov
+mk_track_coverage() { # check-track-coverage：AppRoot 的每个面板动作都必须打点
+  # ⚠️ 走**可选参数口**（`bash scripts/check-track-coverage.sh <AppRoot.ts> <TrackEvents.ts>`，23:2x 新加）
+  #    ⇒ **零污染**：不碰仓库里的客户端源码。
+  # ⚠️ `three` 的约定是 **`$1=1` 表示"植入违规"** ⇒ 这里直接造**不打点**的版本。
+  # ⚠️ 判据两处都是**字面量匹配**，造样必须照抄：
+  #    decl = /^ {2}(?:async )?(?!private |get |set |constructor)([a-z][A-Za-z0-9]*)\(/ 且行尾以 { 收尾
+  #    打点 = 方法体里出现字面量 **.track(** ⇒ 写 track.xxx() **不算**（那是 "track."）
+  TC_ARGS=()
+  if [ "$1" = "1" ]; then
+    rm -rf "$TC_D"; mkdir -p "$TC_D"
+    # 违规态：方法体里**没有** .track(
+    printf 'export class AppRoot {\n  zzGateProbeClick(): void {\n    this.send()\n  }\n}\n' > "$TC_D/AppRoot.ts"
+    printf "export const TrackEvents = {\n  zzGateProbeClick: 'zz_gate_probe_click',\n}\n" > "$TC_D/TrackEvents.ts"
+    TC_ARGS=("$TC_D/AppRoot.ts" "$TC_D/TrackEvents.ts")
+  else
+    rm -rf "$TC_D"
+  fi
+}
+run_track_coverage() { bash scripts/check-track-coverage.sh "${TC_ARGS[@]}"; }
+three_arg check-track-coverage.sh \
+          mk_track_coverage run_track_coverage 'AppRoot 每个面板动作都必须打点（走可选参数口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'

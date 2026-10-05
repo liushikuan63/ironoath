@@ -14,12 +14,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# ⚠️ 可选参数：换一份 AppRoot.ts / TrackEvents.ts 跑（用来验证这条检查真的会红，
+#    而不必改仓库里的客户端源码）。不传时行为与改动前完全一致（模式隔离）。
+# ⚠️ 下面那段 node -e 脚本在**单引号字符串**里 ⇒ 注释只能写在 shell 侧；
+#    ⚠️ 一旦把带单引号的注释写进去，引号配对会被打断 ⇒ bash 会把后半段当命令执行。
+#    ⚠️ 下标注意：node -e 的脚本里，argv[1] 起才是传给脚本的参数。
 node -e '
 const fs = require("fs")
 const path = require("path")
 
-const ROOT = "client/assets/scripts/game/session/AppRoot.ts"
-const EVENTS = "client/assets/scripts/game/track/TrackEvents.ts"
+const ROOT = process.argv[1] || "client/assets/scripts/game/session/AppRoot.ts"
+const EVENTS = process.argv[2] || "client/assets/scripts/game/track/TrackEvents.ts"
 /**
  * 不是"面板动作"的公开方法 ⇒ 不需要埋点。每条都要写清为什么，不写理由的豁免等于把门关掉。
  *
@@ -219,4 +224,4 @@ if (missing.length > 0) {
   process.exit(1)
 }
 console.log("[check-track-coverage] " + actions.length + " 个面板动作全部有事件，覆盖率卡口通过。")
-'
+' "$@"

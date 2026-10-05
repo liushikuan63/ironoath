@@ -4879,3 +4879,72 @@ bash scripts/check.sh ⇒ [check] 全部静态检查通过。 / CHECK_EXIT=0
   `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
 ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
 ⚠️ `check-track-coverage` **仍未查**（扫描范围不明）；`收口清单.md` §七 那条门禁欠账**尚未同步到 12 条**。
+
+##### 23:2x 第三道门开通自测口：`check-track-coverage` ⇒ harness 达 **13 条判据**；⚠️ 途中**被 append-only 门抓到我自己删了台账内容**
+
+**改动**（`scripts/check-track-coverage.sh`，两处）
+```bash
+-const ROOT = "client/assets/scripts/game/session/AppRoot.ts"
+-const EVENTS = "client/assets/scripts/game/track/TrackEvents.ts"
++const ROOT = process.argv[1] || "client/assets/scripts/game/session/AppRoot.ts"
++const EVENTS = process.argv[2] || "client/assets/scripts/game/track/TrackEvents.ts"
+…
+ console.log("[check-track-coverage] …")
+-'                       # ← node -e 的收尾
++' "$@"                  # ← ★ 把 shell 参数转发给 node（我第一版漏了这步）
+```
+
+⇒ ⚠️⚠️ **两处都踩了坑，都写进代码注释了**：
+1. ★ **注释不能写在 `node -e '…'` 的单引号字符串里**：我第一版把注释写成含
+   `` `'<脚本>'` `` 的 JS 块注释 ⇒ **那个单引号提前终止了字符串** ⇒ bash 把后半段当命令执行 ⇒
+   `line 17: 脚本: No such file or directory`。⇒ **注释只能写在 shell 侧**（`node -e` 上方）。
+2. ★ **加了 `process.argv` 还必须转发 `"$@"`** —— 否则 `node -e` 根本收不到参数
+   ⇒ 门**照旧读真实文件** ⇒ 三次读数全是「83 个面板动作」，**看起来正常、其实参数没进去**。
+   ⚠️ 这是**最阴的一种**：不报错、退出码正常，只是**读的东西没换**。
+
+**三组读数**
+```
+1) 默认路径（不传参）  83 个面板动作全部有事件，覆盖率卡口通过      DEFAULT_EXIT=0   ← 与改动前一致
+2) 造违规：方法体里没有 .track(  ⇒ [FAIL] 1 个面板动作没有埋点：zzGateProbeClick  ⇒ EXIT=1
+3) 对照组：补上 this.track(…)   ⇒ 1 个面板动作全部有事件           ⇒ EXIT=0  ← 不是永远红
+```
+⇒ ⚠️ 第 3 组第一次也红：判据是**字面量** `body.some(l => l.includes(".track("))`，
+我写 `track.zzGateProbeClick()` **不含** `.track(`（那是 `track.`）⇒ **照抄判据的字面量**才行。
+
+**harness 与全门**
+```
+scripts/check-gates-can-fail.sh ⇒ 合格 13 条 / 不合格 0 条   GATES_EXIT=0
+  残留：java=0 layer=0 ts=0 ts.meta=0 mjs=0    工作区残留=0
+bash scripts/check.sh ⇒ [check] 全部静态检查通过。 / CHECK_EXIT=0
+```
+
+⇒ ★★★ **本格最大的收获不是"又通了一道门"，而是下面这件事**：
+
+**`check-checklist-append-only` 在我跑 `check.sh` 时抓到了我自己。**
+```
+[check-checklist-append-only] 有 4 行在 HEAD 里存在、工作区里不见了 ⇒ 收口清单.md 被删了内容
+  L1387: · `check-layering`（禁框架 import / 禁 `Math.random` 两条判据）。
+  L1391: - **仍未验**：`check-endpoint-paths` · `check-contract-sync` …
+```
+⇒ ⚠️ **来源**：本格开头我把清单那条门禁欠账**从 10 条更新到 12 条**，
+用的方式是**替换**那一段 ⇒ **净删 4 行** ⇒ ⚠️ **违反项目 §七「只增不删、更正用就地补注」**。
+⇒ ⇒ ★ **这就是 17:25x 说的"跑绿不等于门在工作"的反面**：
+**我新写的 harness 在查门禁，`append-only` 这道老门禁在查我** ⇒ ★ **两套机制互相盯着，才叫闭环。**
+
+⇒ ⚠️ **修的过程又暴露一个判据差异**：
+- `check-checklist-append-only` 判的是「**前 60 字符逐行匹配**」⇒ 加删除线前缀 `~~` **它认**（判过）
+- 但 **§七 要求的 `git diff --numstat` 删除数必须为 0** ⇒ 加 `~~` **它不认**（仍算删）
+⇒ ⇒ ★ **两个判据强度不同，必须都满足** ⇒ 正确做法是**原行逐字节恢复**，更正另起新行。
+⇒ 修完读数：`git diff --numstat -- 收口清单.md` ⇒ **15 新增 / 0 删除**，
+两个门 `只增未删 ✓` + `单元格数不多于表头` 全绿，`check.sh` `CHECK_EXIT=0`。
+
+⇒ ⚠️ **仍未做（如实）**：
+- ⚠️ **真机（微信小游戏）两条产品修复未验证** —— 全部读数来自 headless Chromium。
+- ⚠️ `SKIP 7` 需凭据（`ARMY_QUEUE_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN` / `BAG_BATCH_OPS_TOKEN` /
+  `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
+- ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
+- ⚠️ 仍未纳入 harness：`check-contract-sync`（要跑 `mvn config-gen`）· `check-package-size`（要量产物）
+  · `check-checklist-append-only` · `check-checklist-table`（**输入就是台账本身**）· `check-eol-policy`（**机制层不可造**）。
+- ⚠️ **本会话的 goal 目标文本已严重过期**（仍写着 16:5x 的 `verify-audio-runtime` 卡点与
+  `CityPanelView.ts` 红线）⇒ **那两项早在 16:5x 就已完成/已解决**；
+  ⚠️ 且 `update_goal action=edit` **需人直接发起**，本会话改不了 ⇒ **如实记，不假装已改**。
