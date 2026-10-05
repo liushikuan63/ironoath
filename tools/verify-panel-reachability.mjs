@@ -73,6 +73,51 @@ for (const [key, label] of PAGES) {
     // 拿 getVisibleSize()（设计分辨率）比会把在屏标签全判成"被裁"（对照组实测自证）。
     const h = window.innerHeight
     const w = window.innerWidth
+    // 2026-10-05 **两处修正**（裁决「修」；判据「有内容落在可视区外 = 真缺陷」不动）。
+    //
+    // ① **统一量纲**（裁决原话：「两边都用 camera.worldToScreen 转后再比」）：
+    //    `w/h` 来自 `window.innerWidth/innerHeight`（**浏览器像素**），
+    //    而 `getWorldPosition()` 给的是 **Cocos 世界坐标**（实测本构建是 `[0,960]×[0,600]`、
+    //    原点左下，而像素是 `1440×900`、原点左上，差 `canvasSize/visibleSize = 1.5` 倍）。
+    //    ⇒ 一律转成**像素**再比，**两边同量纲**。
+    //
+    // ② ★ **真正的根因**（实测定位；裁决描述基于我上一格已证伪的假设）：
+    //    `probe()` 原式 `|v.x| > w/2 || |v.y| > h/2` **没有"一带"上界**，
+    //    而统计 `clipped` 的那段**有**（`&& … <= w*0.8` / `<= h*0.8`）。
+    //    本文件 :90-92 的注释本就写明「池化停放行与地图空间名牌停在更远坐标，
+    //    **它们不是布局溢出**」⇒ `probe(h*4)` 期望判"不裁"，
+    //    但没有 `0.8` 上界时它**必然**被判"裁" ⇒ `parked` 永远是 `false`
+    //    ⇒ **这份探针在任何环境下都 fail-closed**。
+    //    ⇒ 现在统计段与对照组**用同一个 `isClipped`**，口径不可能再打架。
+    const cam = (() => {
+      let found = null
+      const walkCam = (n) => {
+        if (found === null && n.getComponent) {
+          const c = n.getComponent('cc.Camera')
+          if (c !== null && c !== undefined) found = c
+        }
+        for (const c of n.children) walkCam(c)
+      }
+      walkCam(window.cc.director.getScene())
+      return found
+    })()
+    const V3 = window.cc.Vec3
+    /** 世界坐标 → 视口像素；拿不到相机时退回"世界坐标当像素用"（与旧行为一致）。 */
+    const toPixel = (v) => {
+      if (cam === null || cam === undefined) return { x: v.x, y: v.y }
+      const s = cam.worldToScreen(new V3(v.x, v.y, v.z))
+      return { x: s.x, y: s.y }
+    }
+    /**
+     * "落在可视区外一带" 的判据 —— **统计段与对照组共用这一份**。
+     * 只把「刚超出屏边一带」的算布局溢出；远远停放的（池化停放 / 地图空间名牌）不算。
+     */
+    const isClipped = (v) => {
+      const p = toPixel(v)
+      const ax = Math.abs(p.x - w / 2)
+      const ay = Math.abs(p.y - h / 2)
+      return (ax > w / 2 && ax <= w * 0.8) || (ay > h / 2 && ay <= h * 0.8)
+    }
     let paging = 0
     let scroll = 0
     let labels = 0
@@ -87,12 +132,14 @@ for (const [key, label] of PAGES) {
         if (lab !== null && lab.string.trim() !== '') {
           labels += 1
           n.getWorldPosition(v3)
-          // 世界坐标原点在屏中心；落在可视区外即被裁掉（够不着）
-          // 只把「刚好超出屏边一带」判为够不着：池化停放行与地图空间名牌
-          // 停在更远坐标（实测 |y| 到几千像素），它们不是布局溢出。
-          const ax = Math.abs(v3.x)
-          const ay = Math.abs(v3.y)
-          if ((ax > w / 2 && ax <= w * 0.8) || (ay > h / 2 && ay <= h * 0.8)) clipped += 1
+          // 2026-10-05：统计段与对照组**改用同一个 `isClipped`**，口径不可能再打架。
+          // 原式是 `(|v.x| > w/2 && |v.x| <= w*0.8) || (…|v.y|…)`，
+          // 它把 `v3`（**世界坐标**）与 `w/h`（**浏览器像素**）直接比 ⇒ 量纲不一致；
+          // 而下面 `probe()` 里的 `hit` **既没有 `0.8` 上界、量纲也不一致**
+          // ⇒ 两处口径打架 ⇒ 对照组永远读错 ⇒ 探针永远 fail-closed。
+          // 注释（:90-92）的原意保留在此：**只把「刚超出屏边一带」的判为布局溢出**，
+          // 远远停放的（池化停放行 / 地图空间名牌，实测 |y| 到几千像素）不算。
+          if (isClipped(v3)) clipped += 1
         }
       }
       n.children.forEach((c) => walk(c, shown))
@@ -101,6 +148,9 @@ for (const [key, label] of PAGES) {
     // 双向对照组：屏心的标签必判"不裁"、屏外的必判"裁"。
     // 任一对照读错就说明世界坐标这套数学不可信，本次读数作废（退 2），
     // 而不是拿一个没校准的量具去判产品有没有缺陷。
+    // 2026-10-05：下面的 `probe()` 现在**与统计段共用上面那个 `isClipped`**，
+    //    所以 `parked`（远停不裁）这条对照才可能成立 ——
+    //    原先 `probe()` 用的是自己那套「没有 0.8 上界」的判据，与统计段打架。
     const probe = (y) => {
       const n = new window.cc.Node('ProbeControl')
       n.layer = panel.layer
@@ -109,9 +159,9 @@ for (const [key, label] of PAGES) {
       const lab = n.addComponent('cc.Label')
       lab.string = 'probe'
       n.setPosition(0, y, 0)
-      const v = new window.cc.Vec3()
+      const v = new V3()
       n.getWorldPosition(v)
-      const hit = Math.abs(v.x) > w / 2 || Math.abs(v.y) > h / 2
+      const hit = isClipped(v)
       n.destroy()
       return hit
     }
