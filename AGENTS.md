@@ -14,7 +14,7 @@
 
 | 目的 | 命令 |
 |---|---|
-| 静态门（31 道）+ 客户端单测 | `bash scripts/check.sh` |
+| 静态门（32 道）+ 客户端单测 | `bash scripts/check.sh` |
 | 服务端 JUnit + 客户端单测 | `bash scripts/test.sh`（等价 `mvn -f server/pom.xml test`） |
 | 全量构建（含契约生成） | `bash scripts/build.sh` |
 | 契约/配置表重生成（改 `contract/` 后必跑） | `npm run gen` |
@@ -87,7 +87,11 @@
   `**/config/cfg/**` 由 `npm run gen` 产出，改了契约就重跑生成器。
 - **服务端禁常驻定时器**（`check-no-scheduled.sh` 是门禁）：时间推进一律惰性驱动。
 - **新增 `.ts` 要连 `.ts.meta` 一起提交**（仓库里 187 个 `.ts.meta` 都是入库资产），
-  新增测试类先 `git add`（`check-dangling-test-refs.sh` 会把未跟踪的类判成悬空引用）。
+  新增测试类先 `git add`：⚠️ **不是为了让 `check-dangling-test-refs.sh` 去判红，
+  而是因为它扫不到未跟踪的文件**。实测（2026-10-05 自测）：`scripts/check-dangling-test-refs.js`
+  的 `L69 !SELF.has(p)` + `L80 scan(tracked())` ⇒ **只扫 `git` 已跟踪的文件**。
+  对照读数：同一个悬空引用，**未跟踪时 `EXIT=0`（正确放过）／`git add` 进索引后 `EXIT=1`
+  （被抓）／还原后 `EXIT=0`**。⇒ 该门**自带 `--self-test`** 且通过 ⇒ **门本身是好的，只是前提没写清**。
 - **交付前不夹带无关文件**：多会话并行时先分辨改动归属，只提交明确的路径。
 
 ## 六、地图（要什么去哪读）
