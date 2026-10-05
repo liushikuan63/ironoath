@@ -4067,3 +4067,54 @@ git diff --numstat -- 收口清单.md  ⇒  18  0      ← 18 新增 / 0 删除
 | `待完善收口_VibeCoding开发包.md` §四 | ✅ 入库 | 本会话每格的读数与坑 | 随仓库回来 |
 | `收口清单.md` §七 | ✅ 入库 | 欠账（本机给不了的） | 随仓库回来 |
 | `.qoder-work-queue.md` | ❌ 未跟踪 | 跨会话的**下一件事指针** | ⚠️ 丢失 ⇒ 靠上面两份重建 |
+
+##### 17:25x ★ **把「坐标量纲」这条教训机制化成门禁**（`check-probe-coordinate-space.sh`），并**当场推翻了自己的第一版判据**
+
+我在这份文档里**反复了好几格**写「建议在 `scripts/check.sh` 加一条静态检查」，
+⚠️ 却**一直没做** ⇒ 提示词约束会忘，机制不会 ⇒ **这一格做掉它**。
+
+**新增** `scripts/check-probe-coordinate-space.sh`，并接进 `scripts/check.sh`（31 → **32** 道门）。
+
+⇒ ⚠️⚠️ **判据第一版写错了，写在门禁注释里留证**（这是本格最值钱的产物）：
+我第一版把 `getVisibleSize()` / `getCanvasSize()` 也算进「视口像素」那一侧
+⇒ **当前工作区 5 份现有探针全部误报**：
+```
+verify-battlepass-runtime.mjs · verify-guide-buttons-runtime.mjs · verify-ink-height-runtime.mjs
+verify-march-runtime.mjs       · verify-social-create-runtime.mjs
+```
+⇒ **分诊后发现它们大多是对的**，最硬的一条证据是
+**`verify-guide-buttons-runtime.mjs:74` 自己的注释就写着**：
+> 「世界坐标换算成屏幕像素再比（**画布有缩放，直接比世界坐标与 `innerWidth` 是错的口径**）」
+
+⇒ ⇒ ★ **根因是我把两类东西混为一谈**：
+| API | 它是什么 | 与世界坐标的关系 |
+|---|---|---|
+| `getVisibleSize()` / `getCanvasSize()` | **设计分辨率** | **同空间** ⇒ 拿它与世界坐标比是**合法的** |
+| `window.innerWidth` / `innerHeight` | **浏览器像素**（实测 `1440×900`，原点左上） | **不同空间**（世界是 `[0,960]×[0,600]`，原点左下，差 1.5 倍）⇒ 直接比**必错** |
+
+⇒ **收紧后的判据**：只在「同时出现 `getWorldPosition`/`getBoundingBoxToWorld`
+**且** `window.innerWidth`/`window.innerHeight` **且**全文**没有** `worldToScreen`」时判红。
+
+⇒ ★ **自测三组全对（门禁必须能失败）**
+```
+### 1) 当前工作区（期望 EXIT=0）   ⇒ EXIT=0   ← 5 个误报已消除
+### 2) 造违规：取世界坐标 + 比 window.innerWidth，无 worldToScreen（期望 EXIT=1）⇒ EXIT=1
+### 3) 造合规：加了 worldToScreen 中转（期望 EXIT=0）        ⇒ EXIT=0
+### 收尾：ls tools/verify-zz-coordgate-probe.mjs ⇒ No such file（测试文件已删干净）
+```
+⇒ ⚠️ **第 2 组是这张门的"可失败"证明** —— 没有它，
+"通过"只能说明**没触发**，不能说明**该触发时会触发**。
+
+⇒ **接入后的读数**
+```
+bash scripts/check.sh
+  [check-probe-coordinate-space] 通过：没有探针在缺 worldToScreen 中转时混用世界坐标与视口像素。
+  [check] 全部静态检查通过。 / CHECK_EXIT=0 / 32 道门
+  tools 目录测试残留 = 0
+```
+
+⇒ ⇒ ★ **这一格的方法论，比门禁本身更值钱**：
+**"加一条防回归门"这件事，最容易死在"判据写太粗 ⇒ 一堆误报 ⇒ 没人敢接"。**
+⇒ **正确做法是：接之前先造违规文件自测它能失败，再拿现有代码跑一遍看误报，
+把误报逐条分诊清楚再收紧判据** —— 而不是"跑绿了就接"。
+⇒ **推论**：本仓库其它门禁也值得这样自测一遍（⚠️ **本会话未做，留账**）。

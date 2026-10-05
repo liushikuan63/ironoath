@@ -37,6 +37,7 @@ bash scripts/check-permission-bits.sh
 bash scripts/check-config-refs.sh
 bash scripts/check-checklist-append-only.sh
 bash scripts/check-checklist-table.sh
+bash scripts/check-probe-coordinate-space.sh
 bash scripts/check-error-codes.sh
 bash scripts/check-config-consumers.sh
 bash scripts/check-balance-sim-config-sync.sh
