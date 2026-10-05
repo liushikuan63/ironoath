@@ -383,16 +383,35 @@ const clickTile = async (name) => {
   if (focused.ok !== true) return { ok: false, why: focused.why }
   await page.waitForTimeout(400)
   const rect = await canvasRect()
+  // 2026-10-05 ★ **根因修复**：`setFocus` 是**平滑动画**，原先在固定 `waitForTimeout(400)` 之后
+  // 就直接算落点并点击 —— 那时镜头**常常还没停稳**（实测 `drift` 高达 915px / 668px），
+  // 于是**点的是动画途中算出的过期坐标** ⇒ 没打中建筑 ⇒ 选择栏停在「点击建筑查看详情」。
+  // 证据：同一份探针里 `Grid-35` / `Grid-7` 的 drift 是 915 / 668（红），
+  // 而 `Grid-11` / `Grid-21` 是 0（绿，其 setFocus 目标落在夹取范围内、不产生动画）。
+  //
+  // ⇒ 改成**轮询到落点收敛再点**：两次连续读数在 `CITY_SETTLE_PX` 内即认为镜头已停稳。
+  // ⚠️ **判据一个字没动**：仍然要求「点中基座 ⇒ 选择栏显示该建筑」。
+  // ⚠️ `CITY_SETTLE_PX=0` 可退回"不等待收敛"的旧行为（回退开关，默认走新行为）。
+  const settlePx = Number(process.env.CITY_SETTLE_PX ?? 1)
   let point = await toPage(name)
-  // 2026-10-04：`Grid-35` 打空（挪到点击第一位后读数是「点击建筑查看详情」⇒ 真的没打中，
-  // 不是"停在上一次"）。新的头号嫌疑：**镜头在平滑移动**，而落点是在移动途中算的，
-  // 到真正点击时又偏了。⇒ 量两次落点：间隔 600ms 还不同 ⇒ 镜头没停稳。
   let drift = null
-  if (point !== null) {
-    await page.waitForTimeout(600)
-    const again = await toPage(name)
-    if (again !== null) drift = Math.round(Math.hypot(point.x - again.x, point.y - again.y))
+  if (point !== null && settlePx > 0) {
+    for (let i = 0; i < 12; i += 1) {
+      await page.waitForTimeout(120)
+      const again = await toPage(name)
+      if (again === null) { drift = null; break }
+      drift = Math.round(Math.hypot(point.x - again.x, point.y - again.y))
+      if (drift <= settlePx) { point = again; drift = 0; break }
+      point = again
+    }
   }
+  // 2026-10-04：`Grid-35` 打空（挪到点击第一位后读数是「点击建筑查看详情」⇒ 真的没打中，
+  // 不是"停在上一次"）。当时的**头号嫌疑**就是「**镜头在平滑移动**，而落点是在移动途中算的」。
+  // ⇒ 2026-10-05 已把这条从「只打一行日志」升级为「**轮询到落点收敛才点**」（见上）。
+  // ⇒ 这一行 `let drift = null` 原先声明在下面那段 600ms 复量里，那段已被上面取代 ⇒ 删掉此处重复声明。
+  // 2026-10-05：原先这里还有一段「等 600ms 再量一次落点算 drift」的读数，
+  // 现已**并入上面的收敛轮询** —— 它测的正是「镜头有没有停稳」，
+  // 而答案不该只打一行日志、**应该直接决定"能不能点"**。
   let zoomedOut = false
   if (point !== null && !inViewport(point, rect)) {
     // 夹取把这一格留在视口外 ⇒ 缩到最小再试一次（MIN=1 时可平移范围最大）

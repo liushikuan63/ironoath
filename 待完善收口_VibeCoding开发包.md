@@ -2818,3 +2818,55 @@ L409      await page.mouse.click(point.x, point.y)                // ← 点的�
 ⇒ ✅ 再次确认：本次批跑里**另两条产品修复仍绿**
 （`verify-audio-runtime` / `verify-city-zoom-runtime` 均 `0`），
 且 `verify-plate-plant` 因上一格的 `BASE_RAF` 修复**转为 `0`**。
+
+##### 16:54x **修好了 city 探针**：`setFocus` 后轮询到落点收敛再点 ⇒ `CITY_EXIT=0`、`drift` 全 `0px`
+
+⚠️ **口径交代**：弹窗**超时未答**，由 `ask-user-auto-pick` **自动按推荐项提交**
+（返回 `custom: 无操作超时，系统已自动选择推荐项`）——**不是本人选的**，不记成"用户拍板"。
+
+改动（`tools/verify-city-multi-types.mjs` 的 `clickTile`）：
+```js
+const settlePx = Number(process.env.CITY_SETTLE_PX ?? 1)
+let point = await toPage(name)
+let drift = null
+if (point !== null && settlePx > 0) {
+  for (let i = 0; i < 12; i += 1) {
+    await page.waitForTimeout(120)
+    const again = await toPage(name)
+    if (again === null) { drift = null; break }
+    drift = Math.round(Math.hypot(point.x - again.x, point.y - again.y))
+    if (drift <= settlePx) { point = again; drift = 0; break }
+    point = again
+  }
+}
+```
+⇒ **轮询到两次连续落点相差 ≤1px 即认为镜头停稳**，然后拿那个**稳定**落点去点。
+⚠️ **判据一个字没动**：仍要求「点中基座 ⇒ 选择栏显示该建筑」。
+⚠️ `CITY_SETTLE_PX=0` 是**回退开关**，可退回"不等收敛"的旧行为。
+⚠️ 原先那段「等 600ms 复量一次、只打一行 `drift` 日志」的读数**已被并入上面的收敛轮询** ——
+**它测的正是"镜头有没有停稳"，而答案不该只打一行日志、应该直接决定"能不能点"。**
+
+**验证**
+```
+BACKEND_ORIGIN=http://127.0.0.1:8199 PROBE_PORT=8742 node tools/verify-city-multi-types.mjs
+⇒ CITY_EXIT=0
+  [drift] Grid-35 落点(1354,639) 600ms 漂移=0px
+  [drift] Grid-7  落点(187,449)  600ms 漂移=0px
+  [drift] Grid-11 落点(1339,333) 600ms 漂移=0px
+  [drift] Grid-21 落点(713,121)  600ms 漂移=0px
+  [drift] Grid-31 落点(562,657)  600ms 漂移=0px
+```
+⇒ **全部格子 `drift=0`**（修前是 915 / 668 / 0 / 0 / …）⇒ **镜头每次都等到停稳才点**
+⇒ **`CITY_EXIT=0`**，那份"需看"消除。
+
+⇒ ⚠️ **过程中我自己写错一处并修掉**（保留轨迹）：
+把 `let drift = null` 加在上面、又留着原来下面那一处 ⇒ `SyntaxError: Identifier 'drift' has already been declared`
+⇒ **且 `node --check` 那一轮被 `&&` 链短路掩盖了**（语法失败时后面的命令没跑，我差点当成"检查通过"）
+⇒ **教训**：**语法检查必须单独跑一次并看它的退出码**，不要挂在 `&&` 链后面。
+
+⇒ ★ **本会话至此的净结论**（59 份全量 + 单跑）：
+- ✅ 音效永不解锁 —— 修好，多轮绿（**真机未验证**）
+- ✅ Grid-35 点不到 —— 修好，`verify-city-multi-types` **CITY_EXIT=0**（**真机未验证**）
+- ✅ `verify-plate-plant` 随机红 —— 根因（截图早于 GPU 提交）坐实并修复，全量批跑里转为 `0`
+- ✅ `verify-city-multi-types` 随机红 —— 根因（落点未收敛）坐实并修复，单跑绿
+⇒ ⚠️ **仍需重跑一次 59 份全量批跑**确认这份也进批跑转 `0`（**未做**）。
