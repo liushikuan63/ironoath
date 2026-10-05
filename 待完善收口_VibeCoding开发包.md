@@ -3721,3 +3721,50 @@ bash scripts/check.sh
 本会话**从未跑过** —— 本会话**没改任何 Java/服务端代码**（只改 `tools/*.mjs`、`scripts/*.sh`、
 排除名单与文档）⇒ 服务端理论上不受影响，
 ⚠️ 但**"没改 ⇒ 不受影响"仍是推演，不是读数** ⇒ **下一格跑一次 `test.sh` 把这个推演换成读数。**
+
+##### 17:17x `scripts/test.sh`：`TEST_EXIT=1`，**1200 条跑、1 红**，那 1 红是**环境**（本机没 mongod）
+
+本格目的：把"本会话没改 Java ⇒ 服务端不受影响"这个**推演**换成**读数**。结果读数是**红的**。
+
+```
+bash scripts/test.sh
+  [ERROR] Tests run: 3, Failures: 1, Errors: 0, Skipped: 0 <<< FAILURE!
+    -- in com.ironoath.web.store.InventoryEquipEquivalenceTest
+  java.lang.AssertionError: 本机 MongoDB 没接通：老文档迁移只在内存侧验过，
+      Mongo 侧（真正会有老文档的那一侧）本轮未验。起一个 27017 或按 TestMongo 的说明连库再跑
+  BUILD FAILURE / mvn <args> -rf :game-web
+  TEST_EXIT=1
+```
+
+⇒ ★ **总量读数**：`Tests run: 1200, Failures: 1, Errors: 0, Skipped: 199`
+⇒ **全仓只有 1 条红**，就是上面那条，**红因是环境、不是代码**：
+它自己把话说得很清楚 ——「**本轮未验**……起一个 27017 或按 TestMongo 的说明连库再跑」
+⇒ 这是**又一个"fail-closed 且明说原因"的守卫**（与 PREREQ 同一类），**不是假红，也不是功能缺陷**。
+
+⇒ ⚠️ **文档与实机不符（如实记，不替它圆）**：
+项目 `AGENTS.md` §三写着「**Java 测试硬连本机 mongod `127.0.0.1:27017`（本机已有原生 mongod 服务，不必起容器）**」，
+⚠️ **实测本机现在并没有**：
+```
+27017 监听: 0
+系统里 mongod 进程: 0
+Get-Service "MongoDB"     → 没有该服务项
+常见安装路径（C:/D: Program Files/MongoDB 等）→ 全不存在
+docker ps --filter ancestor=mongo → 无
+```
+⇒ ⇒ **那条文档已过期**。⚠️ **但 `AGENTS.md` 属"更具体的项目约定"**，
+本会话**不擅自改它**（改约定需要口径）⇒ **只在此处如实记下"实测与该句不符"**，下一格弹窗问要不要更正。
+
+⇒ ⚠️ **因此 199 条 Skipped 的成因也要标清楚**：
+`Skipped: 199` 占比不小，其中**很可能有一部分正是因为没有 mongod**（连不上就跳）。
+⚠️ **本会话没有逐条核**这 199 条的跳过理由 ⇒ **不能断言"它们都无关"**，
+只能说"已知的 1 条红是环境、不是代码"。
+
+⇒ ⚠️ **这意味着什么（不夸大也不缩小）**：
+⚠️ **服务端单测在本会话结束时**不是全绿**，而是 **1200 跑 / 1 红（环境） / 199 跳**。
+⇒ 但本会话**一行 Java 都没改**（只改 `tools/*.mjs`、`scripts/*.sh`、排除名单、文档），
+且 `check.sh` 已绿 ⇒ **没有证据表明本会话引入了服务端问题**；
+⚠️ 但"没有证据表明有问题"≠"证明没问题"，因为**这条链路的 Mongo 侧确实没被验过**。
+
+⇒ **未做（需外部条件/口径）**：
+① 起 mongod 再跑 `test.sh` ⇒ **装 mongod 属新软件安装** ⇒ **需口径**（且要决定装哪版、放哪个盘）。
+② 更正 `AGENTS.md` 里"本机已有原生 mongod"那句 ⇒ **改约定，需口径**。
