@@ -33,6 +33,7 @@ TMP_MJS="$MJS/zz-gate-selftest.mjs"
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep
 }
 trap cleanup EXIT
 
@@ -169,6 +170,32 @@ GATE_ARGS_DEF=()
 run_contract_defs() { node scripts/check-contract-defs.js "${GATE_ARGS_DEF[@]}"; }
 three_arg check-contract-defs.sh \
           mk_contract_defs run_contract_defs '同名 def 结构必须一致（走可选目录口，零污染）'
+
+mk_endpoint_paths() { # check-endpoint-paths：客户端绑的每个路径服务端必须真的有
+  # ⚠️ 走**可选参数口**（`node scripts/check-endpoint-paths.js <java根> <GameApi文件>`，17:41x 新加）
+  #    ⇒ **零污染**：不碰仓库里的控制器与客户端 API。
+  local d=/d/tmp/probe753/gates-ep
+  if [ "$1" = "1" ]; then
+    rm -rf "$d"; mkdir -p "$d/java" "$d/ts"
+    cat > "$d/java/ZzGateProbeController.java" <<'EOF'
+package com.ironoath.probe;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+@RestController
+@RequestMapping("/zz/gateprobe")
+public class ZzGateProbeController {
+    @GetMapping("/ok") public String ok() { return "ok"; }
+}
+EOF
+    printf "const A = '/zz/gateprobe/ok'\nconst B = '/zz/gateprobe/ghost'\n" > "$d/ts/api.ts"
+  else rm -rf "$d"; fi
+  EP_ARGS=()
+  if [ "$1" = "1" ]; then EP_ARGS=("$d/java" "$d/ts/api.ts"); else EP_ARGS=(); fi
+}
+run_endpoint_paths() { node scripts/check-endpoint-paths.js "${EP_ARGS[@]}"; }
+three_arg check-endpoint-paths.sh \
+          mk_endpoint_paths run_endpoint_paths '客户端绑的路径服务端必须存在（走可选参数口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'

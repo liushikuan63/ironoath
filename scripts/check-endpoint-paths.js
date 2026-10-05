@@ -2,8 +2,12 @@
 // 依赖：scripts/lib/endpoint-paths.js（两份清单的解析都在那里，本文件只做判定）。
 const { serverPaths, clientBoundPaths } = require('./lib/endpoint-paths')
 
-const server = new Set(serverPaths())
-const client = clientBoundPaths()
+/* 可选参数：换一份「服务端 Java 根目录」与「客户端 GameApi 文件」跑
+   （用来验证这条检查真的会红，而不必改仓库里的控制器/客户端）。
+   ⚠️ **不传参数时行为与改动前完全一致**（模式隔离）。
+   写法与 scripts/check-config-refs.js / check-contract-defs.js 的同名口一致。 */
+const server = new Set(serverPaths(process.argv[2]))
+const client = clientBoundPaths(process.argv[3])
 
 const missing = client.filter(p => !server.has(p)).sort()
 console.log('[check-endpoint-paths] 服务端端点 ' + server.size + ' 条，客户端绑定 ' + client.length + ' 条')

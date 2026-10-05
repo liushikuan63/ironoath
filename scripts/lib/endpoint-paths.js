@@ -32,10 +32,12 @@ function walkJava(dir, out = []) {
   return out
 }
 
-/** 服务端声明的全部 HTTP 路径。 */
-function serverPaths() {
+/** 服务端声明的全部 HTTP 路径。
+ *  ⚠️ 可选参数：换一个 Java 根目录（用来验证这条检查真的会红，而不必改仓库里的控制器）。
+ *  不传时行为与改动前完全一致（模式隔离）。 */
+function serverPaths (serverRoot = SERVER_ROOT) {
   const found = new Set()
-  for (const file of walkJava(SERVER_ROOT)) {
+  for (const file of walkJava(serverRoot)) {
     const src = fs.readFileSync(file, 'utf8')
     if (!/@(?:Rest)?Controller\b/.test(src)) continue
     const pre = (src.match(/@RequestMapping\("([^"]*)"\)/) || [, ''])[1]
@@ -50,9 +52,10 @@ function serverPaths() {
   return Array.from(found).sort()
 }
 
-/** 客户端绑定的全部路径（玩家点得到的那一些）。 */
-function clientBoundPaths() {
-  const api = fs.readFileSync(CLIENT_API, 'utf8')
+/** 客户端绑定的全部路径（玩家点得到的那一些）。
+ *  ⚠️ 可选参数：换一个 GameApi 文件（零污染自测用；不传时行为与改动前完全一致）。 */
+function clientBoundPaths (clientApi = CLIENT_API) {
+  const api = fs.readFileSync(clientApi, 'utf8')
   const found = new Set()
   for (const m of api.matchAll(/'\/[A-Za-z0-9_/-]*'/g)) found.add(m[0].slice(1, -1))
   return Array.from(found).sort()

@@ -4818,3 +4818,64 @@ node scripts/check-contract-defs.js（不传参）⇒ 24 份 schema，397 个 de
 - ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
 - ⚠️ `check-package-size` / `check-checklist-*` / `check-contract-sync` / `check-endpoint-paths` /
   `check-track-coverage` 仍**未纳入 harness**。
+
+##### 17:41x 第二道门也用同一模式开通自测口：`check-endpoint-paths` ⇒ harness 达 **12 条判据**
+
+**改动**（3 处，全部是**加可选参数**，默认路径逐字节不变）
+```js
+// scripts/lib/endpoint-paths.js
+-function serverPaths() { for (const file of walkJava(SERVER_ROOT)) … }
+-function clientBoundPaths() { const api = fs.readFileSync(CLIENT_API, 'utf8') … }
++function serverPaths (serverRoot = SERVER_ROOT) { … }      // ← 默认参数
++function clientBoundPaths (clientApi = CLIENT_API) { … }    // ← 默认参数
+
+// scripts/check-endpoint-paths.js
+-const server = new Set(serverPaths())      const client = clientBoundPaths()
++const server = new Set(serverPaths(process.argv[2]))
++const client = clientBoundPaths(process.argv[3])
+```
+⇒ ★ 用**默认参数**而不是在函数体里 `||` 兜底 ⇒ **不传就是原值**，模式隔离由语言保证。
+
+**三组读数**
+```
+1) 默认路径（不传参）  服务端端点 164 条，客户端绑定 136 条 ⇒ EXIT=0  ← 与改动前一致
+2) 客户端多绑一条 '/zz/probe/ghost' 而服务端没有
+     [FAIL] 客户端绑了服务端不存在的路径（点了就是 404）： - /zz/probe/ghost   ⇒ EXIT=1
+3) 对照组：把 ghost 也挂到服务端  ⇒ 服务端 2 条 / 客户端 2 条 ⇒ EXIT=0  ← 不是永远红
+```
+
+**harness 现状**
+```
+scripts/check-gates-can-fail.sh ⇒ 合格 12 条 / 不合格 0 条   GATES_EXIT=0
+  残留：java=0 layer=0 ts=0 ts.meta=0 mjs=0
+bash scripts/check.sh ⇒ [check] 全部静态检查通过。 / CHECK_EXIT=0
+源码与契约目录残留 = 0
+```
+
+⇒ ⇒ ★★ **这一格最值钱的是把 17:40x 的做法从"个案"变成"套路"**：
+17:40x 我给 `check-contract-defs.js` 加口，**当时以为是特例**；
+17:41x 再给 `check-endpoint-paths.js` 加口，**成本只有 3 行** ⇒
+⇒ ★ **可复用的三步**：
+① 找到门里**写死的那一两个常量**（`DIR` / `SERVER_ROOT` / `CLIENT_API`）；
+② **改成默认参数**（不传即原值 ⇒ 模式隔离免费获得）；
+③ 在调用处读 `process.argv[2]`（**照抄仓里已有的同名口，别发明新写法**）。
+⇒ ⚠️ **成立的前提**：这道门的输入是**文件/目录**，而不是**要跑构建、要动产物**。
+
+⇒ ⇒ ★ **据此把"哪些门进不了 harness"重新划了线**（比 17:39x 的更准）：
+| 门 | 能不能进 | 为什么 |
+|---|---|---|
+| `check-contract-defs` | ✅ **已进**（17:40x） | 输入是 `contract/proto` 目录 ⇒ 加口即可 |
+| `check-endpoint-paths` | ✅ **已进**（本格） | 输入是两个路径常量 ⇒ 加口即可 |
+| `check-contract-sync` | ❌ | **要真的跑 `mvn config-gen` 重新生成契约**，输入不是路径 |
+| `check-package-size` | ❌ | **要量产物体积**，且阈值在 `global.json`（入库表） |
+| `check-checklist-*` | ❌ | 输入是**入库台账本身** ⇒ 造违规就等于改台账（§七：改之前先备份） |
+| `check-eol-policy` | ❌ | **`eol=lf` 在 `git add` 时把违规消掉** ⇒ 机制层不可造 |
+⇒ ⇒ **判据**：进不了 harness 的只有三类 ——
+**① 要跑构建 / 要量产物 ② 输入就是入库台账本身 ③ 机制会把违规消掉**。
+
+⇒ ⚠️ **仍未做（如实）**：
+⚠️ **真机（微信小游戏）两条产品修复未验证** —— 全部读数来自 headless Chromium。
+⚠️ `SKIP 7` 需凭据（`ARMY_QUEUE_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN` / `BAG_BATCH_OPS_TOKEN` /
+  `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
+⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
+⚠️ `check-track-coverage` **仍未查**（扫描范围不明）；`收口清单.md` §七 那条门禁欠账**尚未同步到 12 条**。
