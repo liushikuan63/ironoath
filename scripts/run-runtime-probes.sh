@@ -88,12 +88,23 @@ while read -r f; do
   port_env="$(grep -oE 'process\.env\.[A-Z_]*PORT[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
   [ -z "$backend_env" ] && backend_env="BACKEND_ORIGIN"
   [ -z "$port_env" ] && port_env="PROBE_PORT"
+  # 2026-10-05：**dev 提速档是要设在「后端进程」上的**（`IRONOATH_DEV_CITY_LEVEL=16` +
+  # `IRONOATH_DEV_START_AMOUNT=2000000`，只在 dev profile 生效），探针侧设了没用。
+  # ⇒ 给这几份单独指一台提速档后端：`BOOST_BACKEND`（可空）+ `BOOST_PROBES`（正则，默认覆盖 nation 两份）。
+  # 不配 `BOOST_BACKEND` ⇒ 行为与改动前完全一致（仍打 `$BACKEND`）。
+  target_backend="$BACKEND"
+  if [ -n "${BOOST_BACKEND:-}" ]; then
+    boost_re="${BOOST_PROBES:-verify-nation-live|verify-nation-policy-ui}"
+    if printf '%s' "$base" | grep -qE "$boost_re"; then
+      target_backend="$BOOST_BACKEND"
+    fi
+  fi
   port=$((8200 + i))
   logdir="${RUNTIME_PROBES_LOGDIR:-/d/tmp}"
   mkdir -p "$logdir"
   log="$logdir/probe-$base.log"
   run_probe() {   # $1=端口 $2=日志文件；**把退出码 echo 到 stdout**（调用方用 $(…) 取），超时 echo 124
-    env "$backend_env=$BACKEND" "$port_env=$1" node "$f" > "$2" 2>&1 &
+    env "$backend_env=$target_backend" "$port_env=$1" node "$f" > "$2" 2>&1 &
     local pid=$! waited=0 code
     while [ "$waited" -lt "$PROBE_TIMEOUT" ]; do
       kill -0 "$pid" 2>/dev/null || break

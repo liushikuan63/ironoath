@@ -3364,3 +3364,57 @@ await page.mouse.click(navHit !== undefined ? navHit.x : Math.round(first + step
 根因链 = ①三个对照判据与统计段口径不一致（漏 `0.8` 上界）→ ②量纲不一致（世界 vs 像素）
 → ③对照取点与判据不同量纲 → ④导航写死的等分坐标错一倍多 → ⑤四个面板根本不在主导航栏、需进 `Nav-more`。
 ⇒ **五层，缺一层都修不到底**；每层都是被上一层的读数逼出来的，不是猜的。
+
+##### 17:8x ★★★ **PREREQ 首次归零**：`需看 0 · 超时 0 · PREREQ 0 · SKIP 7 · BATCH_EXIT=0`
+
+**先坐实一条关键事实**（它改变了整件事的性质）：
+```
+EXCLUDE verify-nation-live.mjs （见 scripts/runtime-probes-exclude.txt 的理由）
+```
+⇒ **`verify-nation-live` 本来就在排除名单里**，**它从来没被计入批跑的 PREREQ**。
+⇒ 所以批跑里那 3 份 PREREQ 实际是 `verify-nation-policy-ui` + `verify-panel-reachability` + 另一份，
+⇒ **其中两份本轮都转 `0`**。
+⇒ ⚠️ 17:5x 我把 `verify-nation-live` 算进"批跑里要覆盖的那份"是**不准确的**（它单跑能绿，但批跑不收它）。
+
+**改动一：`scripts/run-runtime-probes.sh` 支持给指定几份单独配后端**
+```bash
+target_backend="$BACKEND"
+if [ -n "${BOOST_BACKEND:-}" ]; then
+  boost_re="${BOOST_PROBES:-verify-nation-live|verify-nation-policy-ui}"
+  if printf '%s' "$base" | grep -qE "$boost_re"; then target_backend="$BOOST_BACKEND"; fi
+fi
+env "$backend_env=$target_backend" … node "$f"
+```
+⇒ ★ **要点**：dev 提速档（`IRONOATH_DEV_CITY_LEVEL=16` / `IRONOATH_DEV_START_AMOUNT=2000000`）
+是**后端进程**读的，**设在探针侧完全没用** ⇒ 必须给这几份**另一台后端**。
+⚠️ **不配 `BOOST_BACKEND` ⇒ 行为与改动前完全一致**（默认开关保守，不泄漏进常规路径）。
+
+**改动二（临时脚本，未跟踪）**：`tmp/run-batch-all2.sh` 起**两台**后端（8199 普通 / **8198 提速档**），
+并把**判就绪从 `grep 'Started Application in'` 改成 `curl` 探活** ——
+日志是追加缓冲，那行可能在刷出前就被判超时，脚本会卡住不写汇总（上一版踩过）。
+
+**读数**
+```
+[all] 普通后端就绪 / [all] 提速档后端就绪
+0 verify-panel-reachability.mjs (PAGING_BACKEND, port 8237)
+0 verify-nation-policy-ui.mjs   (BACKEND_ORIGIN, port 8232)
+0 verify-nation.mjs / verify-nation-s2.mjs
+--- 汇总：需看的份数 = 0（其中 未跑成 NO-RUN = 0） 超时 = 0 前提不足 PREREQ = 0 SKIP = 7
+BATCH_EXIT=0
+```
+
+⇒ ★★★ **本会话最终批跑状态**：
+| 项 | 12:3x | **17:8x** |
+|---|---|---|
+| 需看 | 0 | **0** |
+| **PREREQ** | **3** | **0** |
+| 超时 | 0 | 0 |
+| SKIP | 7 | 7（凭据，不代填） |
+| `BATCH_EXIT` | 0 | 0 |
+
+⇒ ⚠️ **仍未做 / 仍未验证（如实）**：
+- **真机（微信小游戏）两条产品修复均未验证** —— 全部读数来自 headless Chromium。
+- `SKIP 7`：需凭据（`RT_TOKEN` / `DEVTOOLS_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN`），**不代填**。
+- `verify-nation-live` **在排除名单里**（批跑不收它）⇒ 它只在单跑口径下验过。
+- 批跑脚本的 `BOOST_BACKEND` 改动**只在本轮的 `tmp/run-batch-all2.sh` 里显式传了值**；
+  ⚠️ **默认不传时行为不变** ⇒ 要让批跑常态化带提速档，需决定"是否在 `scripts/` 里固化成默认双后端"（**未做，需口径**）。
