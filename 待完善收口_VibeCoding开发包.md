@@ -5262,3 +5262,22 @@ TEST_EXIT=0
 
 **下一步**：① 真机预览（`cli preview` 出二维码 + 手机扫码）仍待做，那是 §七「真机未验证」那两条的唯一解；
 ② 其余同上一格（实名与年龄输入要产品口径、B13 四件装配要排期、老树退役等点头）。
+
+---
+
+### 2026-10-06 07:3x｜会话 0d266c61：上线清单假陈述更正 + CI 长期红的真因（账单）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| `上线检查清单.md` 「未成年人时长限制整块零实现」改假 | `a1ab8296` | 现跑：`MinorPlayGate.java:36` 被 `PlayerInitService.java:110` 的 `minorPlay.requirePlayable(...)` 真实调用 · `global.json:2278` 与 `:2286` 有 `MINOR_PLAY_WINDOW_START_HOUR` / `_END_HOUR` · `holiday.json` 在表里 · `MinorPlayGateTest` 存在 · `realName` 与 `idCard` 与 `birthYear` 在 server java 里 **0 命中**、无实名端点 | `git grep -n "minorPlay\."` 输出（先核字段持有再核调用点，避免"类里有方法"式判据） | 实名与年龄输入**仍未实现**（要产品口径：未实名能不能进游戏、年龄从哪来）⇒ 那条硬阻塞没解，只是把"已实现的说成未实现"这半纠正了 |
+| CI 长期红归因 | 不在仓库内（API 读数） | `GET /actions/runs?per_page=10` ⇒ **最近 10 次全 failure，含开工前的 `2dd08570` / `d2495d60` / `2c700525`** · `GET /check-runs/112028380583/annotations` 原文「The job was not started because recent account payments have failed or your spending limit needs to be increased」· `verify` job failure、`probes` skipped、日志 blob `BlobNotFound` | `D:\tmp\ci10.json`、`D:\tmp\ciann.json`（令牌不落盘不回显，取用走 `git credential fill` + `curl --ssl-no-revoke`） | **账单是外部条件**，我不动用户账号设置；恢复后必须**主动重跑一次**（这些提交从未在干净检出上验证过），在此之前"CI 绿"不得当验收证据 |
+
+**关键决策与理由**
+- 先归因再动手：CI 红的第一反应是"我推坏了"，但把十次运行与本地 `git log` 对齐后发现红**早于本会话** ⇒
+  按"多出来的红先归因自己算错"这条纪律，我没有回滚任何提交，而是继续挖到 annotations 那层。
+- 没有 `gh` 就用凭据助手 + REST API，而不是为此装软件（装到 D 盘也要动系统）；
+  `--ssl-no-revoke` 是本机加速器环境的必需项（缺它直接空响应，看着像"没网"）。
+- `ubuntu-latest` 2026-10-19 迁 Ubuntu 26 ⇒ 恢复 CI 时留意构建脚本。
+
+**下一步**：① 用户提升 GitHub Actions 消费限额后重跑 CI 并把读数补进本表；② 真机预览按用户指令暂缓；
+③ 队列已空 ⇒ 下一格从 `收口清单.md` §五/§七 的待裁决项里挑不依赖裁决的，或做 B13 全服目标的四件装配。
