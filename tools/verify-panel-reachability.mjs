@@ -207,6 +207,41 @@ for (const [key, label] of PAGES) {
         const top = Object.entries(names).sort((a, b) => b[1] - a[1]).slice(0, 8)
         return { totalNodes: Object.values(names).reduce((a, b) => a + b, 0), activeUi, topNames: top }
       })(),
+      // 2026-10-05 **只读诊断**：把**导航栏上所有 active 的 UI 节点**及其**屏幕坐标**列出来。
+      // 目的：为「把上面那套写死的等分坐标（`first + step*indexOf[label]`、y=845）
+      // 改成按导航项自身世界坐标取点」取底数。
+      // ⚠️ 只读：不点任何东西、不改判据。
+      // ⚠️ **不能另写独立脚本取这个数** —— 独立脚本没挂 read 夹具，游戏根本起不来
+      // （实测 `window.cc` 120s 都不就绪 ⇒ `CC_NOT_READY`），必须借探针自己的启动流程。
+      navCensus: (() => {
+        const rows = []
+        const scan = (n) => {
+          const u = n.getComponent && n.getComponent('cc.UITransform')
+          if (n.activeInHierarchy && u !== null && u !== undefined) {
+            const lb = n.getComponent('cc.Label')
+            const wb = u.getBoundingBoxToWorld()
+            let sx = null
+            let sy = null
+            if (cam !== null && cam !== undefined) {
+              const s = cam.worldToScreen(new V3(wb.x + wb.width / 2, wb.y + wb.height / 2, 0))
+              // worldToScreen 原点在左下 ⇒ 翻成页面像素的左上原点
+              sx = Math.round(s.x)
+              sy = Math.round(h - s.y)
+            }
+            rows.push({
+              name: n.name,
+              label: lb !== null && lb !== undefined ? String(lb.string).slice(0, 8) : null,
+              sx,
+              sy,
+              w: Math.round(wb.width)
+            })
+          }
+          for (const c of n.children) scan(c)
+        }
+        scan(window.cc.director.getScene())
+        const navRow = rows.filter((r) => r.sy !== null && r.sy > h * 0.6)
+        return { navRowCount: navRow.length, navRow: navRow.slice(0, 24) }
+      })(),
       // 2026-10-05 **只读诊断**（不改判据）：把探针的**世界坐标**与**视口像素尺寸**都打出来，
       // 量化「两者差多少倍」。本探针的 `hit` 判据是 `|v.x| > w/2 || |v.y| > h/2`，
       // 而 `v` 来自 `getWorldPosition()`（**世界坐标**）、`w/h` 来自 `window.innerWidth/innerHeight`
@@ -261,6 +296,7 @@ for (const [key, label] of PAGES) {
     process.exit(2)
   }
   const unreachable = read.clipped > 0
+  console.log(`  [导航] ${key} 行数=${read.navCensus?.navRowCount} 项=${JSON.stringify(read.navCensus?.navRow ?? null)}`)
   console.log(`  [普查] ${key} 总节点=${read.nodeCensus?.totalNodes} activeUI=${read.nodeCensus?.activeUi} 主要节点=${JSON.stringify(read.nodeCensus?.topNames)}`)
   console.log(`[nonpaging] ${key}(nav=${read.navKey}): 翻页键 ${read.paging} / ScrollView ${read.scroll} / 面板内Label ${read.labels} / 被裁 ${read.clipped}`
     + `${unreachable ? '  ==> 有内容落在可视区外（真缺陷）' : ''}`)

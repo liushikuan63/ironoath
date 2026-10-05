@@ -3210,3 +3210,39 @@ EXIT=0
 ⇒ ⚠️ **过程中的自错（保留轨迹）**：用 PowerShell 正则插入含模板字面量的 `console.log`，
 **反引号被当转义符吃掉** ⇒ `SyntaxError: missing ) after argument list`
 ⇒ 与 16:59x 那次**同源第三次** ⇒ **凡是含 JS 模板字面量的行，一律用 edit 工具插，不要用 PowerShell 正则。**
+
+##### 17:4x ★ 拿到导航栏**决定性底数**：写死的 `step` **错了一倍多**，且导航节点**可按名字寻址**
+
+把导航普查放进**探针内部**（⚠️ 不能另写独立脚本取这个数 ——
+独立脚本没挂 read 夹具，游戏根本起不来，实测 `window.cc` **120s 都不就绪** ⇒ `CC_NOT_READY`）。
+
+读数（`city` 相位，`sy` 是翻成页面像素左上原点后的 y）：
+```
+{"name":"NavBar","label":null,"sx":720,"sy":849,"w":900}
+{"name":"BarBackground","label":null,"sx":720,"sy":849,"w":900}
+{"name":"Nav-city","label":null,"sx":129,"sy":849,"w":107}   {"name":"Caption","label":"内城","sx":129}
+{"name":"Nav-army","label":null,"sx":298,"sy":849,"w":107}   {"name":"Caption","label":"军队","sx":298}
+{"name":"Nav-hero","label":null,"sx":467,"sy":849,"w":107}   {"name":"Caption","label":"武将","sx":467}
+{"name":"Nav-quest","label":null,"sx":636,"sy":849,"w":107}
+{"name":"NavRedDot","label":null,"sx":196,"sy":830,"w":12}
+```
+
+⇒ ★★ **两条决定性事实**：
+① **导航项有稳定的可寻址节点名 `Nav-<key>`**（`Nav-city` / `Nav-army` / `Nav-hero` / `Nav-quest` …），
+   且 `key` 正好就是探针 `PAGES` 里的那个 key ⇒ **可以按节点自身取点，不必推算**。
+② **实测间距是 `169`**（129 → 298 → 467 → 636），
+   而探针写死的是 `step = (1355 - 85) / 16 = 79.375`
+⇒ ⇒ **写死的等分假设错了整整一倍多** ⇒ 17 个格子里只有恰好压在真位置上的少数几个能点中
+⇒ **这就是 `power` / `settings` 内容存在却 `activeUI=0` 的直接原因**。
+
+⇒ ⚠️ **顺带更正我上一格的推断**：我当时说「`city`/`world` 点中了、其余不对」——
+按这条底数，**能点中纯属坐标碰巧对上**（`city` 是第 0 格，`first=85` 恰好落在 `Nav-city` 的 129 左边一点），
+**不是"那两格特殊"**。⇒ 机制解释更简单、也更准。
+
+⇒ **修法（下一格）**：把 `:63` 的
+`page.mouse.click(Math.round(first + step * indexOf[label]), 845)`
+改成**先按 `Nav-<key>` 找节点 → `getBoundingBoxToWorld()` → `camera.worldToScreen()` → 取中心点**再点。
+⇒ 删掉 `first` / `step` / `indexOf` 这三个**写死的假设**（它们就是错的来源）。
+⚠️ **判据不动**（"有内容落在可视区外 = 真缺陷"照旧）。
+⚠️ 但这会让 17 个面板**第一次全部真正被量** ⇒ **可能报出真缺陷** ⇒ 属「改动会让既有验证失效」
+⇒ **下一格收尾弹窗给口径**（底数已齐：导航节点名 + 坐标 + 现间距 vs 写死间距）。
