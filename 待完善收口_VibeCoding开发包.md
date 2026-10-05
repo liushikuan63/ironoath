@@ -3768,3 +3768,57 @@ docker ps --filter ancestor=mongo → 无
 ⇒ **未做（需外部条件/口径）**：
 ① 起 mongod 再跑 `test.sh` ⇒ **装 mongod 属新软件安装** ⇒ **需口径**（且要决定装哪版、放哪个盘）。
 ② 更正 `AGENTS.md` 里"本机已有原生 mongod"那句 ⇒ **改约定，需口径**。
+
+##### 17:18x ★ **MongoDB 用容器起在 D 盘 ⇒ `test.sh` 从红转绿：`1200 跑 · 0 红 · 0 跳`**
+
+授权：「在本机安装 MongoDB，装到 D 盘，数据也保存在 D 盘，或考虑装进 Docker」。
+
+**选容器，不装软件** —— 三条实测理由：
+1. `docker` 可执行**已存在**（`C:\Program Files\Docker\Docker\resources\bin\docker.exe`，29.8.1）
+2. **daemon 在跑**（`docker info` ⇒ `ServerVersion 29.8.1`）⇒ 不需要装也不需要起 Docker Desktop
+3. ★ **`mongo:7` 镜像本机已有**（`docker.m.daocloud.io/library/mongo:7`，1.18GB）⇒ **连 pull 都不用**
+
+⇒ **数据落 D 盘**（按要求）：
+```bash
+docker run -d --name mongo27 -p 27017:27017 \
+  -v "D:\mongodb-data:/data/db" --restart unless-stopped \
+  docker.m.daocloud.io/library/mongo:7
+```
+⇒ 连接串无需认证（`server/game-web/src/test/java/com/ironoath/web/store/TestMongo.java:27`
+= `mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000`）⇒ 裸容器即可。
+⇒ `--restart unless-stopped` ⇒ **重启机器后自动起来**，不用每次手工起。
+
+**验证（三条独立证据）**
+```
+27017 Listen: 2
+容器内 mongosh  db.runCommand({ping:1}).ok  ⇒ 1
+D:\mongodb-data 下出现 .mongodb / diagnostic.data / journal / collection-*.wt
+```
+
+⇒ ★★ **`scripts/test.sh` 从红转绿**：
+```
+bash scripts/test.sh
+  Tests run: 1200, Failures: 0, Errors: 0, Skipped: 0
+  BUILD SUCCESS / [test] 全部单测通过。 / TEST_EXIT=0
+  含 "<<< FAILURE" 的行数 = 0
+```
+⇒ ★ **与上一轮（17:17x）逐项对照，收益一目了然**：
+| |17:17x（无 mongod）|**17:18x（有容器）**|
+|---|---|---|
+|`Tests run`|1200|1200|
+|`Failures`|**1**（环境）|**0**|
+|**`Skipped`**|**199**|**0**|
+|`BUILD`|FAILURE|**SUCCESS**|
+|`TEST_EXIT`|1|**0**|
+
+⇒ ⇒ ★ **一个重要结论（回答 17:17x 留下的疑问）**：
+**那 199 条 Skipped 就是"没有 MongoDB ⇒ 跳"，现在一条都不跳了。**
+⇒ ⇒ **测试套件本身覆盖的是 1200 条，不是"1200 跑 + 199 跳"** ——
+⚠️ 17:17x 我只能说"不能断言跳过的都无关"，**现在有读数了：它们全是 Mongo 侧那部分。**
+
+⇒ ⚠️ **仍未做（如实）**：
+⚠️ **项目 `AGENTS.md` §三那句「本机已有原生 mongod 服务，不必起容器」现在更不准了** ——
+本机既没有原生 mongod，**现在是容器** ⇒ 那句该改成"用 `docker run … mongo:7` 起容器"。
+⚠️ **改项目约定需口径，本会话不擅自改** ⇒ 弹窗问。
+⚠️ `D:\mongodb-data` 下的数据**没有备份策略**；⚠️ 容器若被 `docker rm` 数据仍在（bind mount），
+但**没验过备份/恢复** ⇒ 如实挂账。
