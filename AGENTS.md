@@ -19,7 +19,8 @@
 | 全量构建（含契约生成） | `bash scripts/build.sh` |
 | 契约/配置表重生成（改 `contract/` 后必跑） | `npm run gen` |
 | 前台产物 | `bash scripts/build-webmobile.sh` |
-| 运行时探针（要产物 + 活后端） | `bash scripts/run-runtime-probes.sh`；单份 `node tools/verify-*.mjs` |
+| 运行时探针（要产物 + 活后端） | **首选** `bash scripts/run-batch-dual-backend.sh`（自动起**两台**后端：普通 + dev 提速档）；单份 `node tools/verify-*.mjs` |
+| 同上（只想要单后端 / 手工分批） | `bash scripts/run-runtime-probes.sh`（⚠️ 不传 `BOOST_BACKEND` 时 `verify-nation-live` 会报前提不足退 2） |
 | 客户端发送口缺口现数 | `node tools/report-client-send-paths.mjs`（永远退 0） |
 
 **「全绿」的判据**：同一轮跑完 `check.sh` + `test.sh`（或 `mvn test`）+ headless 构建 + 真启动/探针，

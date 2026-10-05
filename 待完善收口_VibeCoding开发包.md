@@ -3966,3 +3966,34 @@ report_stray_backends() {
 ⇒ ⚠️ **仍未做（如实）**：本会话**临时起过的后端**仍可能残留（17:20x 那两个已被清），
 ⇒ 而**双后端入口自己也只按端口杀** ⇒ 它**管得住自己起的，管不住别人起的** ——
 **这是有意为之**（不越界动别人的进程），代价是**要靠这行警告提醒人**。
+
+##### 17:22x `AGENTS.md` §二**验证入口表**收进 `run-batch-dual-backend.sh`（补一处"改了做法没改索引"的缺口）
+
+17:10x 新增了官方双后端入口，**但 `AGENTS.md` §二「验证入口」那张表里仍只写着旧的
+`scripts/run-runtime-probes.sh`** ⇒ 下一个会话照表跑，会走单后端入口
+⇒ `verify-nation-live` 报前提不足退 2 ⇒ **白红一轮**。
+⇒ 这正是本项目 §四 第 1 条纪律的另一个面：**入口改了，索引要跟着改**。
+
+**改动**（`AGENTS.md` §二）：
+```diff
+-| 运行时探针（要产物 + 活后端） | `bash scripts/run-runtime-probes.sh`；单份 `node tools/verify-*.mjs` |
++| 运行时探针（要产物 + 活后端） | **首选** `bash scripts/run-batch-dual-backend.sh`（自动起**两台**后端：普通 + dev 提速档）；单份 `node tools/verify-*.mjs` |
++| 同上（只想要单后端 / 手工分批） | `bash scripts/run-runtime-probes.sh`（⚠️ 不传 `BOOST_BACKEND` 时 `verify-nation-live` 会报前提不足退 2） |
+```
+⇒ ★ **没有删掉旧入口**，只把它降级成"次选"并写明它的**代价**
+⇒ 这样"手工分批 / 只跑一部分"的用法仍然有明确入口，**不会因为换了首选就断了老用法**。
+
+**验证**（改的是 `AGENTS.md`，而它会被若干静态门读到 ⇒ 必须复跑门）
+```
+bash scripts/check.sh
+  [check] 全部静态检查通过。
+  CHECK_EXIT=0
+```
+⇒ ★ **改文档也要跑门** —— 本会话之前只以为"改脚本要跑门"，
+**这一次证明 `AGENTS.md` 也在门的射程里**（EOL 策略等会读它）。
+
+⇒ ⚠️ **仍未做（如实）**：
+- ⚠️ **真机（微信小游戏）两条产品修复仍未验证** —— 全部读数来自 headless Chromium。
+- ⚠️ `SKIP 7` 需凭据（`ARMY_QUEUE_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN` /
+  `BAG_BATCH_OPS_TOKEN` / `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
+- ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
