@@ -3822,3 +3822,45 @@ bash scripts/test.sh
 ⚠️ **改项目约定需口径，本会话不擅自改** ⇒ 弹窗问。
 ⚠️ `D:\mongodb-data` 下的数据**没有备份策略**；⚠️ 容器若被 `docker rm` 数据仍在（bind mount），
 但**没验过备份/恢复** ⇒ 如实挂账。
+
+##### 17:19x 更正 `AGENTS.md` §三「本机已有原生 mongod」——**实测已不成立**（裁决**本人选择**，非自动采纳）
+
+裁决：「改：换成『本机无原生 mongod，用 `docker run … mongo:7` 起容器』」
+⚠️ **这次是本人选的**（返回值**无** `custom: 无操作超时…`）⇒ **与本会话那三次自动采纳区分开**。
+
+**改动**（`AGENTS.md` §三，第 54 行起）：
+```diff
+-- **Java 测试硬连本机 mongod** `127.0.0.1:27017`（本机已有原生 mongod 服务，不必起容器）；
++- **Java 测试硬连本机 mongod** `127.0.0.1:27017`（**本机没有原生 mongod 服务** ——
++  2026-10-05 实测：无 `mongod` 进程、无 `MongoDB` 服务项、无 `C:/D: Program Files/MongoDB` 安装目录。
++  ⇒ **用容器起**，镜像本机已有（`docker.m.daocloud.io/library/mongo:7`），数据落 **D 盘**：
++  …docker run -d --name mongo27 -p 27017:27017 -v "D:\mongodb-data:/data/db" --restart unless-stopped …
++  无需认证（`TestMongo.java` 的连接串就是 `mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000`）；
++  ⚠️ **没起它就跑 `scripts/test.sh` 会红**，且不是功能红：
++  `InventoryEquipEquivalenceTest` 会抛「本机 MongoDB 没接通……」，并**连带跳过 199 条**
++  （实测 `1200 跑 / 1 红 / 199 跳` ⇒ 起容器后 `1200 跑 / 0 红 / 0 跳`）；
+```
+⇒ ★ **写进去的不只是"怎么起"，还有"不领会怎样"** ——
+`1200 跑 / 1 红 / 199 跳` 这组数字让下一个会话**一眼认出**"这是环境，不是功能红"，
+而不是重新排查一遍。
+
+⇒ ⇒ **这正好是本项目 §四 第 1 条纪律的一个实例**：
+「**文档里的计数与状态，引用前必须现跑**；「文档说 A、代码是 B」时**先信现跑结果**，再把文档改对」
+⇒ 那句"本机已有原生 mongod"正是**文档说 A、现实是 B**，本会话**先实测再改文档**，没有替它圆。
+
+⇒ ⚠️ **仍未做（如实）**：
+- ⚠️ `D:\mongodb-data` 的**数据没有备份策略**，也**没验过备份/恢复**。
+  （容器被 `docker rm` 数据仍在，因为是 bind mount；但**"数据没了怎么办"这件事没被验过**。）
+- ⚠️ **真机（微信小游戏）两条产品修复仍未验证** —— 全部读数来自 headless Chromium。
+- ⚠️ `SKIP 7` 仍需凭据（`ARMY_QUEUE_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN` /
+  `BAG_BATCH_OPS_TOKEN` / `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
+
+⇒ 📌 **本会话至此的验证全景**（每格都有可失败读数）：
+| 门 | 读数 |
+|---|---|
+| `scripts/check.sh`（31 道静态门 + 客户端单测） | ✅ `CHECK_EXIT=0` · `fail 0` |
+| `scripts/test.sh`（服务端 JUnit + 客户端单测） | ✅ `TEST_EXIT=0` · `1200 跑 / 0 红 / 0 跳` · `BUILD SUCCESS` |
+| `build-webmobile.sh`（前台产物） | ✅ `产物就绪` · `missing or invalid = 0` |
+| `run-batch-dual-backend.sh`（运行时探针） | ✅ `需看 0 · PREREQ 0 · SKIP 7 · BATCH_EXIT=0` · **实跑 51 份全绿** |
+| ⚠️ 真机（微信小游戏） | ❌ **未验证**（需外部环境） |
+| ⚠️ `SKIP 7` | ❌ **需凭据**（不代填） |

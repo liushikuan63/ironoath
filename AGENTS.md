@@ -51,7 +51,20 @@
 - **Cocos 命令行构建要先清 `ELECTRON_RUN_AS_NODE`**：本机会话若注入了它，`CocosCreator.exe` 会以 node 模式启动
   并报 `bad option: --project`（`--help` 打出 node 的 help 就是这条的症状）。
   跑法：`env -u ELECTRON_RUN_AS_NODE bash scripts/build-webmobile.sh`。
-- **Java 测试硬连本机 mongod** `127.0.0.1:27017`（本机已有原生 mongod 服务，不必起容器）；
+- **Java 测试硬连本机 mongod** `127.0.0.1:27017`（**本机没有原生 mongod 服务** ——
+  2026-10-05 实测：无 `mongod` 进程、无 `MongoDB` 服务项、无 `C:/D: Program Files/MongoDB` 安装目录。
+  ⇒ **用容器起**，镜像本机已有（`docker.m.daocloud.io/library/mongo:7`），数据落 **D 盘**：
+  ```bash
+  docker run -d --name mongo27 -p 27017:27017 \
+    -v "D:\mongodb-data:/data/db" --restart unless-stopped \
+    docker.m.daocloud.io/library/mongo:7
+  ```
+  无需认证（`TestMongo.java` 的连接串就是 `mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000`）；
+  `--restart unless-stopped` ⇒ 重启后自动起来。
+  ⚠️ **没起它就跑 `scripts/test.sh` 会红**，且不是功能红：
+  `InventoryEquipEquivalenceTest` 会抛
+  「本机 MongoDB 没接通……起一个 27017 或按 TestMongo 的说明连库再跑」，
+  并**连带跳过 199 条**（实测 `1200 跑 / 1 红 / 199 跳` ⇒ 起容器后 `1200 跑 / 0 红 / 0 跳`）；
   `mvn` 默认指向 JDK 8，`scripts/env.sh` 会自动覆盖成 JDK 17。
 - **构建与量具不能并行**：`build-webmobile.sh` 中途会清空产物目录，正在加载页面的探针会报 `ENOENT index.html`。
 
