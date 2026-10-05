@@ -118,9 +118,57 @@ for (const [key, label] of PAGES) {
     const parked = probe(h * 4) === false
     const controlOn = probe(0) === false
     const controlOff = probe(h * 0.7) === true
-    return { paging, scroll, labels, clipped, controlOn, controlOff, parked }
+    return { paging, scroll, labels, clipped, controlOn, controlOff, parked,
+      // 2026-10-05 **只读诊断**（不改判据）：把探针的**世界坐标**与**视口像素尺寸**都打出来，
+      // 量化「两者差多少倍」。本探针的 `hit` 判据是 `|v.x| > w/2 || |v.y| > h/2`，
+      // 而 `v` 来自 `getWorldPosition()`（**世界坐标**）、`w/h` 来自 `window.innerWidth/innerHeight`
+      // （**浏览器像素**）⇒ 量纲不同 ⇒ 连 `(0,0)` 那个"必判不裁"的探针都会被判成"被裁"。
+      // ⚠️ 只加读数：**判据、退出码、fail-closed 行为一个字节都没改**。
+      diag: (() => {
+        const mk = (y) => {
+          const n = new window.cc.Node('DiagProbe')
+          n.layer = panel.layer
+          panel.addChild(n)
+          n.addComponent('cc.UITransform')
+          const lb = n.addComponent('cc.Label')
+          lb.string = 'probe'
+          n.setPosition(0, y, 0)
+          const v = new window.cc.Vec3()
+          n.getWorldPosition(v)
+          const out = { x: Math.round(v.x), y: Math.round(v.y) }
+          n.destroy()
+          return out
+        }
+        return {
+          viewportPx: { w, h },
+          halfViewportPx: { w: Math.round(w / 2), h: Math.round(h / 2) },
+          worldAtCenter: mk(0),
+          worldAtOffscreen: mk(h * 0.7),
+          worldAtFar: mk(h * 4),
+          viewVisibleSize: (() => {
+            const vs = window.cc.view.getVisibleSize()
+            return { w: Math.round(vs.width), h: Math.round(vs.height) }
+          })(),
+          canvasSize: (() => {
+            const cs = window.cc.view.getCanvasSize()
+            return { w: Math.round(cs.width), h: Math.round(cs.height) }
+          })()
+        }
+      })()
+    }
   }, key)
   if (!read.controlOn || !read.controlOff || !read.parked) {
+    // 2026-10-05 **只读诊断**：把量纲差量化出来（视口像素 vs 世界坐标）。
+    // ⚠️ 判据、退出码、fail-closed 行为**一个字节都没改** —— 这行只打日志。
+    if (read.diag !== undefined) {
+      console.log(`  [诊断] ${key} 视口像素=${JSON.stringify(read.diag.viewportPx)}`
+        + ` 半宽高=${JSON.stringify(read.diag.halfViewportPx)}`
+        + ` 世界坐标@中心=${JSON.stringify(read.diag.worldAtCenter)}`
+        + ` @刚出屏=${JSON.stringify(read.diag.worldAtOffscreen)}`
+        + ` @远=${JSON.stringify(read.diag.worldAtFar)}`
+        + ` visibleSize=${JSON.stringify(read.diag.viewVisibleSize)}`
+        + ` canvasSize=${JSON.stringify(read.diag.canvasSize)}`)
+    }
     console.error(`[nonpaging][NO-RUN] ${key} 对照组读错（on=${read.controlOn} off=${read.controlOff} parked=${read.parked}）——量具未校准，读数作废`)
     process.exit(2)
   }
