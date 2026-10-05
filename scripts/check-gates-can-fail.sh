@@ -34,10 +34,11 @@ TMP_MJS="$MJS/zz-gate-selftest.mjs"
 TC_D=/d/tmp/probe753/gates-tcov
 PS_D=/d/tmp/probe753/gates-pkgsz
 DC_D=/d/tmp/probe753/gates-doccnt
+PP_D=/d/tmp/probe753/gates-pkgpath
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D"
 }
 trap cleanup EXIT
 
@@ -260,6 +261,28 @@ mk_doc_counts() { # check-doc-counts：AGENTS.md 声明的门禁道数必须等�
 run_doc_counts() { bash scripts/check-doc-counts.sh; }
 three_arg check-doc-counts.sh \
           mk_doc_counts run_doc_counts '文档声明的门禁道数必须等于实际调用数（走环境变量口，零污染）'
+
+mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的包路径谓词必须命中真实文件/目录
+  # ⚠️ 走**环境变量口**（PKGPATH_SCAN_DIRS / PKGPATH_SERVER_DIR，2026-10-06 新加）⇒ **零污染**：
+  #    不碰仓库里的 17 条门禁字面量路径，也不动 Java 源码树。
+  # ⚠️ 违规夹具里**必须同时放一条合法的 exec.mainClass**：本门有「每族谓词命中数 > 0」的下限，
+  #    少了它会让判红变成"两条都不成立"，红点归因不到①（本仓做法：植入要逐条干净 FAIL）。
+  if [ "$1" = "1" ]; then
+    rm -rf "$PP_D"; mkdir -p "$PP_D"
+    # ⚠️ 幽灵路径必须**分两段拼出来**：本仓库自身的 `scripts/` 就在被扫范围内，
+    #    一条完整的假路径写进本文件 ⇒ 基线自己就红（本轮被三读数的第一读数当场抓到）。
+    printf 'const ghost = "%s/%s"\n' \
+      'server/game-web/src/main/java/com/ironoath' 'zzgateprobe/NoSuch.java' > "$PP_D/a.js"
+    printf 'mvn -Dexec.mainClass=com.ironoath.codegen.ContractGenMain\n' >> "$PP_D/a.js"
+    export PKGPATH_SCAN_DIRS="$PP_D"
+  else
+    unset PKGPATH_SCAN_DIRS
+    rm -rf "$PP_D"
+  fi
+}
+run_pkg_path_predicates() { bash scripts/check-package-path-predicates.sh; }
+three_arg check-package-path-predicates.sh \
+          mk_pkg_path_predicates run_pkg_path_predicates '量具写死的包路径谓词必须命中真实路径（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'

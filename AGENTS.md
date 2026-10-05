@@ -9,13 +9,17 @@
 服务端 `server/`（Java 17 / Spring Boot / 多模块 Maven：common / config / core / battle / web）；
 客户端 `client/`（Cocos Creator 3.8.7 + TypeScript）；
 双端契约的唯一真源是 `contract/proto/*.schema.json` 与 `contract/config/*.json`。
-> **标识口径的唯一真源在 `README.md` 顶部**：中文《列王纪·铁誓》 / 英文 Chronicles of Kings: Iron Oath / 代号 PROJECT_IRON_OATH / 仓库与包标识 ironoath（GitHub 仓库同名）。Java 包名 `com.ironoath` 暂不改——另立一格，改包名必须**同批改门禁谓词**（97 处引用里写死了 `com/ironoath` 路径，不同批改就会扫空目录假绿）。
+> **标识口径的唯一真源在 `README.md` 顶部**：中文《列王纪·铁誓》 / 英文 Chronicles of Kings: Iron Oath / 代号 PROJECT_IRON_OATH / 仓库与包标识 ironoath（GitHub 仓库同名）。
+> Java 包名 `com.ironoath` **已裁决为不改**（2026-10-06：项目名统一轮选的就是"保留 ironoath 词根"，包名没有第二目标值；
+> 现跑 `git grep -lE "com.tieshi"` = 0 命中）。**若将来真要改包**：`scripts/tools` 里有 **19 个文件**写死了 `com/ironoath` 字面量
+> （18 条路径 + 1 条 exec.mainClass），只改 Java 不改它们 ⇒ 门去扫空目录然后退 0（假绿）—— 这一族由第 42 道门
+> `check-package-path-predicates.sh` 守着，改完必须同批动那 19 个文件再复跑 harness。
 
 ## 二、验证入口（改完必须现跑，不许引用旧读数）
 
 | 目的 | 命令 |
 |---|---|
-| 静态门（41 道）+ 客户端单测 | `bash scripts/check.sh` |
+| 静态门（42 道）+ 客户端单测 | `bash scripts/check.sh` |
 | 服务端 JUnit + 客户端单测 | `bash scripts/test.sh`（等价 `mvn -f server/pom.xml test`） |
 | 全量构建（含契约生成） | `bash scripts/build.sh` |
 | 契约/配置表重生成（改 `contract/` 后必跑） | `npm run gen` |

@@ -5159,3 +5159,29 @@ TEST_EXIT=0
 
 **关键入口**：新树 `D:\Java\GitHub\ironoath`（`scripts/check.sh` 41 道 / `scripts/test.sh` 2054 项）·
 `AGENTS.md` §三 首条已写明工作根迁移事实 · 台账 `收口清单.md` §七 末尾两段（项目名统一轮 + 目录改名轮）。
+
+---
+
+### 2026-10-06 03:4x｜会话 0d266c61：包路径谓词门（第 42 道）+ 「改 Java 包名」幽灵格子更正
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 新开第 42 道门 `scripts/check-package-path-predicates.sh` | 本笔 | `check.sh` **EXIT=0 · 42 道**（`doc-counts` 报「声明 42 = 现数 42」）· harness **合格 16 条 / 不合格 0 条 / 残留 0**，新门三读数 = **基线 0 / 还原 0 / 违规 1** · 手工六态（幽灵路径、幽灵 mainClass、幽灵 `x-java-package`、包根不唯一、零命中、输入目录不存在）**全部退 1** · 新门自报「18 条包路径 + 1 条 exec.mainClass + 1 个 x-java-package + 13 个源码根 + 包根唯一 com/ironoath」 | 日志 `D:\tmp\check42.log` 与 `D:\tmp\harness2.log`（一次性产物，收尾按 `/clean-temp` 处置）；夹具 `D:\tmp\pkgpath-falsify\` | ① 服务端 `test.sh` 2054 项**未重跑**（本格零 Java 源码改动，判据全在门与文档上，跑一遍要占十分钟且与改动无因果）；② `npm run gen` **未跑**（`contract/` 未动）；③ 判据④「包根唯一」只有**手工**证伪（`PKGPATH_SERVER_DIR` 指到假树会连带让②③ 一起红，归因变浑），harness 里**只注册了①那条**的三读数 |
+| 「改 Java 包名 `com.ironoath`」记为**已裁决：不改** | 本笔 | 现跑 `git grep -lE "com.tieshi"` = **0 命中** · `git grep -lE "com/tieshi"` = **0 命中** · `server/*/src/*/java/com/` 下**只有 `ironoath` 一个包根** · `README.md` 顶部标识口径真源写的 Java 包即 `com.ironoath` | 台账 `收口清单.md` §七「2026-10-06 项目名统一轮」下的三条就地补注（原行保留，numstat **25 增 / 0 删**） | 无待办。**若将来真要改包**：本门已经就位，改完必须同批动那 **19 个文件**（`git grep -lE "com.ironoath" -- scripts tools`）的字面量，再复跑 harness 与 `check.sh`；只改 Java 不改门 ⇒ 门扫空目录退 0，那正是本门要拦的形状 |
+
+**关键决策与理由**
+- 队列首条「改 Java 包名」是**幽灵格子**：用户当轮选的是「保留 ironoath 词根、只补对外名」，包名 `com.ironoath` 已是目标态，
+  没有可改的第二值 ⇒ 按「待裁决不发明」记为**不改**，不去动 1127 个 Java 源文件（派出去取证的那条会话也是因拒绝发明目标名才停笔，
+  它没写过任何仓库文件）。
+- 但**门照开**：它守的不是"改包"这一件事，而是「量具扫一个不存在的目录 ⇒ 退 0 假绿」这一族 ——
+  移动类、模块改名、生成器输出目录漂移都会触发，与本仓 §四 第 2 条「判定写了没接上」同源，与是否改包无关。
+- 门的设计把「每族谓词命中数必须 > 0」做成**主判据**而不是附带说明：抽取正则自己失效时，"全部命中"其实是"一条都没查"。
+
+**下一步（队列第一条已换）**：① 微信开发者工具**已首启并登录**（用户 2026-10-06 确认，允许用测试 AppID）⇒ 取
+`scripts/build-wechatgame.sh` 产物跑 `cli auto`，把 §七 那两条「真机未验证」换成新读数，顺带实测它的 C 盘 `%LOCALAPPDATA%` 足迹；
+② `验收矩阵.md` B13「全服目标」假绿待改回未接线；③ `tools/report-client-send-paths.mjs` 升成第 43 道门（条件已达成）。
+
+**关键入口**：新门 `scripts/check-package-path-predicates.sh`（三个环境变量口 `PKGPATH_SCAN_DIRS` /
+`PKGPATH_CONTRACT_DIR` / `PKGPATH_SERVER_DIR`）· harness 用例搜 `mk_pkg_path_predicates` ·
+标识口径唯一真源 `README.md` 顶部 · 台账 `收口清单.md` §七「项目名统一轮」下的补注三条 ·
+`D:\Tencent\wechat-devtools\cli.bat`（已登录）。
