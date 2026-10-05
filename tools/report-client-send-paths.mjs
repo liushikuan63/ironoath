@@ -4,10 +4,14 @@
  *
  * 这一族缺陷已经咬过三次（`connectSocket` 推送整条是死的 / 出征与集结四条发送口零调用点 /
  * 商店货架玩家看不见），而 445 条用例与 `check.sh` 全绿期间一条都不报 —— 因为它们只测
- * "方法本身能不能跑通"，不测"有没有人点它"。本脚本是**报告器不是门**（永远退 0）：
- * 现在缺口还有几十个，做成门会把仓库刷成红的，等清单见底再进门。
+ * "方法本身能不能跑通"，不测"有没有人点它"。**本脚本自己是报告器**（永远退 0，给人读），
+ * 门在 `scripts/check-client-send-paths.sh`：它解析本脚本的「生产零调用点」读数，> 0 就判红。
+ * 2026-10-06 现跑到 **0** ⇒ 缺口见底，按 `客户端发送口缺口清单.md:126` 自述的条件（"降到 0 才进门"）
+ * 升成第 43 道静态门。之前不做门是因为缺口有几十个 —— 做成门会把仓库刷成红的，把真缺陷埋进噪声里。
  *
  * 用法：node tools/report-client-send-paths.mjs
+ *   可选输入口 SENDPATHS_CLIENT / SENDPATHS_TESTS / SENDPATHS_TOOLS / SENDPATHS_API
+ *   （**不设时逐字节等同改动前**，harness 靠这四个口做零污染三读数）。
  * 判据口径与两类假阳性见 客户端发送口缺口.md。
  */
 import fs from 'node:fs'
@@ -15,10 +19,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const CLIENT = path.join(HERE, '..', 'client', 'assets', 'scripts')
-const TESTS = path.join(HERE, '..', 'client', 'tests')
-const TOOLS = HERE
-const API = path.join(CLIENT, 'game', 'session', 'GameApi.ts')
+// 可选输入口（**不设时逐字节等同改动前**）：check-gates-can-fail.sh 靠这四个口做零污染三读数，
+// 不必往仓库里植死方法，也不必读客户端源码。
+//   SENDPATHS_CLIENT（生产语料根）/ SENDPATHS_TESTS / SENDPATHS_TOOLS / SENDPATHS_API
+const CLIENT = process.env.SENDPATHS_CLIENT || path.join(HERE, '..', 'client', 'assets', 'scripts')
+const TESTS = process.env.SENDPATHS_TESTS || path.join(HERE, '..', 'client', 'tests')
+const TOOLS = process.env.SENDPATHS_TOOLS || HERE
+const API = process.env.SENDPATHS_API || path.join(CLIENT, 'game', 'session', 'GameApi.ts')
 
 /** `switch (` / `if (` 这类语句会被"两空格 + 名字 + 左括号"的形状误认成方法。 */
 const KEYWORDS = new Set(['switch', 'if', 'for', 'while', 'catch', 'return', 'function',

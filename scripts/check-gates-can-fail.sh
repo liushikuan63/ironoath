@@ -35,10 +35,11 @@ TC_D=/d/tmp/probe753/gates-tcov
 PS_D=/d/tmp/probe753/gates-pkgsz
 DC_D=/d/tmp/probe753/gates-doccnt
 PP_D=/d/tmp/probe753/gates-pkgpath
+SP_D=/d/tmp/probe753/gates-sendpaths
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D"
 }
 trap cleanup EXIT
 
@@ -283,6 +284,26 @@ mk_pkg_path_predicates() { # check-package-path-predicates：量具里写死的�
 run_pkg_path_predicates() { bash scripts/check-package-path-predicates.sh; }
 three_arg check-package-path-predicates.sh \
           mk_pkg_path_predicates run_pkg_path_predicates '量具写死的包路径谓词必须命中真实路径（走环境变量口，零污染）'
+
+mk_client_send_paths() { # check-client-send-paths：GameApi 的每个发送口都必须有生产调用点
+  # ⚠️ 走**四个环境变量口**（SENDPATHS_CLIENT / TESTS / TOOLS / API，2026-10-06 加在报告器上）
+  #    ⇒ **零污染**：不往客户端源码里植死方法，也不读真 GameApi。
+  # ⚠️ 违规态 = 夹具里 `beta()` **没有任何生产调用点**；`alpha()` 必须被 prod.ts 调到，
+  #    否则两条方法都成缺口，红点归因不到"新增没人调的发送口"这一形状。
+  if [ "$1" = "1" ]; then
+    rm -rf "$SP_D"; mkdir -p "$SP_D/client" "$SP_D/tests" "$SP_D/tools"
+    printf 'export class GameApi {\n  alpha(): void {}\n  beta(): void {}\n}\n' > "$SP_D/client/GameApi.ts"
+    printf 'export function go(api: any) { return api.alpha() }\n' > "$SP_D/client/prod.ts"
+    export SENDPATHS_CLIENT="$SP_D/client" SENDPATHS_TESTS="$SP_D/tests" \
+           SENDPATHS_TOOLS="$SP_D/tools" SENDPATHS_API="$SP_D/client/GameApi.ts"
+  else
+    unset SENDPATHS_CLIENT SENDPATHS_TESTS SENDPATHS_TOOLS SENDPATHS_API
+    rm -rf "$SP_D"
+  fi
+}
+run_client_send_paths() { bash scripts/check-client-send-paths.sh; }
+three_arg check-client-send-paths.sh \
+          mk_client_send_paths run_client_send_paths 'GameApi 每个发送口都必须有人调（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'
