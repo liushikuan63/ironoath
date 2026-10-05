@@ -4729,3 +4729,34 @@ git diff --numstat -- 收口清单.md   ⇒   19  0      ← 19 新增 / 0 删�
   `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
 ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
 ⚠️ **其余二十多道门仍未验**（本格只是把这条欠账**记进了正式台账**，没有消除它）。
+
+##### 17:39x ★ 摸到门禁覆盖的**自然边界**：剩余门禁**都要动入库文件**才能造违规
+
+17:36x 留的账是"要不要扩到其余 20+ 道"。本格逐道查了实现，结论是**它们跨过了我自己定的那条线**。
+
+**判据**（我 17:34x 写进 harness 头部的第①条纪律）：
+> 破坏**只动本会话新建的临时文件**，**绝不改仓库既有文件**（多会话并行时不动对方的）。
+
+**逐道核查结果**
+| 门 | 实现 | 为什么不能安全造违规 |
+|---|---|---|
+| `check-contract-defs` | `check-contract-defs.js` 的 `L16 const DIR = 'contract/proto'` | ⚠️ **写死、无 argv 覆盖** ⇒ 要造违规必须改 `contract/proto/*.schema.json`（**入库契约**） |
+| `check-package-size` | 量产物体积 vs `global.json` 的 `PERF_FIRST_PACKAGE_MAX_BYTES` | 要么动 `client/build/**` 产物、要么改 `contract/config/global.json`（**入库表**） |
+| `check-checklist-append-only` · `check-checklist-table` | 读 `收口清单.md` | 要在**入库台账**上动手脚（§七 明令"改之前先备份"）⇒ **风险不对称** |
+| `check-track-coverage` | 内联 node | 需先读它扫什么，**本格未查**（如实） |
+
+⇒ ★⇒ **这不是"偷懒"，是边界**：`check-config-refs` 之所以能零污染自测，
+⚠️ **是因为它的作者显式留了 `process.argv[2]` 覆盖口**（并写了注释说明"用来验证真的会红"）。
+⇒ ⇒ **⇒ 一条可复用的判据**：
+> **一道门能不能被安全自测，取决于它的作者有没有留"换输入"的口。**
+> 留了（`argv` 传目录）⇒ **零污染可自测**；没留（写死 `DIR`）⇒ **只能改入库文件** ⇒ 不该在常规验证里做。
+⇒ ★ **推论（下一格若要做这件事，正确的入口是"给门加自测口"，而不是"改入库文件造违规"）**：
+`check-contract-defs.js` / `check-package-size.sh` 值得按 `check-config-refs.js` 的样式**加一个可选目录/可选表参数**，
+⚠️ 但那是**改门禁的行为**（且 `check-package-size` 还要产物）⇒ **需口径，本会话不做**。
+
+⇒ ⚠️ **仍未做（如实）**：
+- ⚠️ **真机（微信小游戏）两条产品修复未验证** —— 全部读数来自 headless Chromium。
+- ⚠️ `SKIP 7` 需凭据（`ARMY_QUEUE_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN` / `BAG_BATCH_OPS_TOKEN` /
+  `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
+- ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
+- ⚠️ `check-track-coverage` 的扫描范围**没查**；其余二十多道门**仍未验**（欠账已入 `收口清单.md` §七）。
