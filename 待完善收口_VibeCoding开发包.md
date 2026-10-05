@@ -2870,3 +2870,46 @@ BACKEND_ORIGIN=http://127.0.0.1:8199 PROBE_PORT=8742 node tools/verify-city-mult
 - ✅ `verify-plate-plant` 随机红 —— 根因（截图早于 GPU 提交）坐实并修复，全量批跑里转为 `0`
 - ✅ `verify-city-multi-types` 随机红 —— 根因（落点未收敛）坐实并修复，单跑绿
 ⇒ ⚠️ **仍需重跑一次 59 份全量批跑**确认这份也进批跑转 `0`（**未做**）。
+
+##### 16:55x ★★★ **59 份全量批跑首次「需看 0」** —— 本会话收口
+
+重跑全量批跑（`tmp/run-batch-all.sh`，日志 `D:\tmp\probe753\batch-all.log`，跑前已清进程：
+后端残留 0、8197 Listen 0）：
+```
+--- 汇总：需看的份数 = 0（其中 未跑成 NO-RUN = 0） 超时 = 0 前提不足 PREREQ = 3 SKIP = 7
+BATCH_EXIT=0
+```
+⇒ ★★★ **首次「需看 0」。**
+（历史：22:0x 那轮是「需看 1 = `verify-plate-plant`」；
+16:52x 重跑换成「需看 1 = `verify-city-multi-types`」；本轮 **0**。）
+
+四份关键探针的退出码逐条核对：
+```
+0 verify-audio-runtime.mjs      (AUDIO_BACKEND, port 8203)
+0 verify-city-multi-types.mjs   (BACKEND_ORIGIN, port 8213)
+0 verify-city-zoom-runtime.mjs  (BACKEND_ORIGIN, port 8216)
+0 verify-plate-plant.mjs        (LABELFIT_BACKEND, port 8241)
+```
+⇒ 「非 0 且非 PREREQ/SKIP」的份数 = **0**。
+
+⇒ ★ **本会话的完整账**（每条都有可失败的读数）：
+| # | 事项 | 性质 | 证据 |
+|---|---|---|---|
+| 1 | 音效永不解锁（`AudioService.ts` 双路解锁 + 120ms 去重） | **产品缺陷已修** | `verify-audio-runtime` **0**（批跑+单跑多轮）；发声 `0→0→5`、`armed:true` |
+| 2 | Grid-35 永远点不到（`CityPanelView.ts` 缩放键挪进动作条带） | **产品缺陷已修** | `verify-city-multi-types` **0**；压住 `1/36→0/36`；**视觉已截图核对** |
+| 3 | `verify-plate-plant` 随机红 | **量具缺陷已修** | 根因 = `base` 截图早于 GPU 提交；n=8/组、Fisher **p=0.008**、量具零失真 |
+| 4 | `verify-city-multi-types` 随机红 | **量具缺陷已修** | 根因 = `setFocus` 动画未停稳就用过期落点点；修后 `drift` 全 `0px`、`CITY_EXIT=0` |
+
+⇒ ⚠️ **仍未做 / 仍未验证（如实）**：
+- ⚠️ **真机（微信小游戏）两条产品修复均未验证** —— 全部读数来自 **headless Chromium**。
+- ⚠️ `PREREQ 3`（不是红）：`verify-nation-live` · `verify-nation-policy-ui` · `verify-panel-reachability`
+  —— 这三份要带对应 dev 档或单独后端才绿。
+- ⚠️ `SKIP 7`：需要凭据（如 `RT_TOKEN` / `DEVTOOLS_OPS_TOKEN`），**不代填**。
+- ⚠️ 本会话**没有**证明"改动前后 `verify-plate-plant` 的失败频率"（那要各采 ≥10 次）——
+  但**根因已坐实并修复**，且全量批跑里已转 `0`。
+
+⇒ ★ **本会话最贵的两条教训**（都写进了本文档，值得跨会话复用）：
+1. **取读数的位置必须落在「被测对象还在、且测量已经结束」这个窗口内** ——
+   放进 `measure` 里会抹平抖动（本会话栽了 7 次）；放进 `[retry]` 里会读到"对象已被销毁"的空值。
+2. **"加了诊断之后变绿了"不能当成"问题修好了"** ——
+   必须同时看**失败率**与**量具读数分布**（后者不变 ⇒ 是真修好；后者也变 ⇒ 是量具失真）。
