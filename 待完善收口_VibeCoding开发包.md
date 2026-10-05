@@ -3418,3 +3418,36 @@ BATCH_EXIT=0
 - `verify-nation-live` **在排除名单里**（批跑不收它）⇒ 它只在单跑口径下验过。
 - 批跑脚本的 `BOOST_BACKEND` 改动**只在本轮的 `tmp/run-batch-all2.sh` 里显式传了值**；
   ⚠️ **默认不传时行为不变** ⇒ 要让批跑常态化带提速档，需决定"是否在 `scripts/` 里固化成默认双后端"（**未做，需口径**）。
+
+##### 17:9x `scripts/runtime-probes-exclude.txt` 里 `verify-nation-live` 的**理由已更新**（不是新增排除）+ 门禁绿
+
+**动这一格的原因**：17:8x 留下的"是否固化双后端"那格，本格按**保守口径**做完 ——
+**不改默认行为**，只把**那条已经过时的理由**更正，并写清它在什么条件下能进批跑。
+
+改动（`scripts/runtime-probes-exclude.txt`）：
+```diff
+-verify-nation-live.mjs          # 国战正链路要的是**开着** IRONOATH_DEV_CITY_LEVEL 提速档的后端，与默认批跑环境相反
++verify-nation-live.mjs          # 需 `BOOST_BACKEND`（一台带 dev 提速档的后端）；不传则报前提不足退 2，不是功能红
++（补一段说明：那个「相反」现在有解了 —— `BOOST_BACKEND`/`BOOST_PROBES` 就是为此设计的；
++  且提速档是**后端进程**读的，设在探针侧没用 —— 17:8x 坐实）
+```
+⇒ ★ **它仍在排除名单里**，不是被放进来 ——
+按本文件第 8 行的判据「进名单 = **在默认批跑环境下**跑它得到的是环境造成的假红」，
+**默认环境（不传 `BOOST_BACKEND`）下它仍会退 2**，那条判据依然成立。
+⚠️ 但理由**从「与默认环境相反、无解」变成了「有解，但要先显式给 `BOOST_BACKEND`」** ——
+⇒ **这是本仓该名册里第一条"条件性排除"**，值得记：**排除理由会过期，判据比理由活得久**。
+
+**验证**
+```
+bash scripts/check-runtime-probe-coverage.sh
+[check-runtime-probe-coverage] 通过：量具 59 份，排除 2 份（名单条目都存在且有理由；收集规则仍是全收）
+COVERAGE_EXIT=0
+```
+
+⇒ ⚠️ **如实标注（未做）**：
+⚠️ **没有把双后端固化成默认**。`tmp/run-batch-all2.sh` 仍是**临时未跟踪脚本**，
+每次跑批跑要它手工在位。⇒ **默认批跑（只传 `BACKEND`）下 `verify-nation-live` 依然不进批跑**，
+`verify-nation-policy-ui` 也会因缺提速档而**报前提不足**（本轮批跑里它绿，是因为临时脚本传了 `BOOST_BACKEND`）。
+⇒ **要不要固化成"默认双后端"**（起两台、默认带上 `BOOST_BACKEND`）——
+⚠️ 这会让**每次批跑多起一个 JVM**（内存/时长都涨），属"改动会让既有验证行为变化"⇒ **需口径**。
+⇒ ⚠️ **本会话不做**；下一格若要推进，**必须先弹窗**。
