@@ -53,9 +53,28 @@ kill_listen() {
   done
 }
 
+# 2026-10-05 17:20x 补：**报告**那些「在跑 game-web 但不占本脚本两个端口」的后端 JVM。
+# ⚠️ **只报告、不杀** —— 那些进程是**别人（或脚本之外的会话）起的**，
+#    本脚本没有理由替别人杀（那会波及别的会话正在跑的批跑）。
+# ⚠️ **为什么必须报告**：这类残留会让后面的 `scripts/build.sh` 失败
+#    —— `spring-boot-maven-plugin:repackage` 要 rename `game-web.jar`，
+#    而**只要有 JVM 占着那个 jar 就 rename 不动**（实测 `Unable to rename …`）。
+#    ⚠️ 而且它们**按端口查不出来**（不占 8199/8198）⇒ 只能按命令行扫。
+report_stray_backends() {
+  local stray
+  stray="$(powershell.exe -NoProfile -Command \
+    "Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | Where-Object { \$_.CommandLine -like '*game-web.jar*' } | ForEach-Object { \$_.ProcessId }" 2>/dev/null | tr -d '\r')"
+  if [ -n "$stray" ]; then
+    echo "[dual] ⚠️ 另有 game-web 后端在跑（pid: $(echo "$stray" | tr '\n' ' ')）——不是本脚本起的，不代杀" >> "$LOG"
+    echo "[dual] ⚠️ 它们会占着 server/game-web/target/game-web.jar ⇒ 之后跑 scripts/build.sh 会报" >> "$LOG"
+    echo "[dual]    'Unable to rename …' ⇒ 需要先自己停掉它们" >> "$LOG"
+  fi
+}
+
 echo "[dual] 收掉旧后端（$BACKEND_PORT / $BOOST_PORT）" >> "$LOG"
 kill_listen "$BACKEND_PORT"
 kill_listen "$BOOST_PORT"
+report_stray_backends
 sleep 3
 
 echo "[dual] 起普通后端 $BACKEND_PORT" >> "$LOG"

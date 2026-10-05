@@ -3923,3 +3923,46 @@ Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
 | `run-batch-dual-backend.sh` | ✅ `需看 0 · PREREQ 0 · SKIP 7` · 实跑 **51 份全绿** |
 | ⚠️ 真机（微信小游戏） | ❌ 未验证（需外部环境） |
 | ⚠️ `SKIP 7` | ❌ 需凭据（不代填） |
+
+##### 17:21x 双后端入口补 `report_stray_backends`：★ **只报告、不杀**（推翻我上一格"要不要按命令行杀"的提法）
+
+17:20x 我留的未做项是「双后端入口的收尾只按端口杀，手工起的后端收不掉」。
+⚠️ **本格做完时改了主意，并说清为什么** —— 我原本想的是"改成按命令行兜底扫一遍"，
+**但那会杀掉脚本没起的后端**：那些进程可能是**别的会话正在跑的批跑**，
+本脚本**没有理由替别人杀**（全局纪律：多会话并行时不动对方的进程）。
+
+⇒ ★ **改成：只报告、不杀。**
+```bash
+report_stray_backends() {
+  stray="$(powershell.exe -NoProfile -Command \
+    "Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | Where-Object { $_.CommandLine -like '*game-web.jar*' } | ForEach-Object { $_.ProcessId }" …)"
+  [ -n "$stray" ] && echo "[dual] ⚠️ 另有 game-web 后端在跑（pid: …）——不是本脚本起的，不代杀" >> "$LOG"
+  …并写明后果：它们占着 game-web.jar ⇒ 之后跑 scripts/build.sh 会报 'Unable to rename …'
+}
+```
+⇒ 在 `kill_listen` 之后调用 ⇒ **不改变原有行为**（照样只按端口杀自己起的两台），
+⚠️ **只是多打三行警告**，把"批跑跑完之后 `build.sh` 为什么会红"提前说清。
+
+**验证（两条读数缺一不可）**
+```
+# 先手工起一个「游离」后端（占 8155，不在本脚本的 8199/8198）
+--- 日志 ---
+  [dual] ⚠️ 另有 game-web 后端在跑（pid: 61664 ）——不是本脚本起的，不代杀
+  [dual] ⚠️ 它们会占着 server/game-web/target/game-web.jar ⇒ 之后跑 scripts/build.sh 会报
+  [dual]    'Unable to rename …' ⇒ 需要先自己停掉它们
+# 之后再查那个进程：仍在（计数 = 1）⇒ **证明"只报告、不杀"成立**
+```
+⇒ ★ **两条读数缺一不可**：只看日志有 ⚠️ 行 ⇒ **不能**证明它没动手；
+必须再查**那个 pid 还在不在**（实测在）⇒ 才证明"报告但不杀"。
+
+⇒ ⚠️ **过程中的坑（本会话第 N 次）**：测这个函数时先想 `source` 主脚本，
+⚠️ **不行** —— 一 source 就**会真的起批跑**（脚本顶层有副作用）。
+⇒ 改成 `sed -n '/^report_stray_backends() {/,/^}/p'` 把函数**抠出来**单独跑，
+⚠️ 但抠出来的片段**没有 `$LOG`** ⇒ 又报 `: No such file or directory`
+⇒ 最后是 `{ echo 'LOG="${LOG}"'; cat 片段; echo 调用; }` 拼一个临时脚本才跑通。
+⇒ ★ **可复用**：**测一个脚本里的函数，别 source 整个脚本**（顶层副作用会跟着跑），
+用 `sed` 抠函数 + **手工把它依赖的变量补上**。
+
+⇒ ⚠️ **仍未做（如实）**：本会话**临时起过的后端**仍可能残留（17:20x 那两个已被清），
+⇒ 而**双后端入口自己也只按端口杀** ⇒ 它**管得住自己起的，管不住别人起的** ——
+**这是有意为之**（不越界动别人的进程），代价是**要靠这行警告提醒人**。
