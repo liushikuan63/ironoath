@@ -31,9 +31,35 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# ⚠️ **自检开关（2026-10-05 补）**：`SELFTEST=1` 时先造一份违规探针、确认本门**真的会红**，
+#    撤掉后再跑正式检查。⇒ 这样「本门是绿的」才有意义 ——
+#    **0 命中是"没触发"，不等于"判据在工作"**（本会话在批跑上栽过同款：汇总全 0 ≠ 跑过了）。
+if [ "${SELFTEST:-0}" = "1" ]; then
+  probe="tools/verify-zz-selftest-coordinate.mjs"
+  trap 'rm -f "$probe"' EXIT
+  cat > "$probe" <<'EOF'
+// 自检用违规样本（SELFTEST=1 时临时生成，跑完即删）
+const h = window.innerHeight
+const w = window.innerWidth
+const v = new window.cc.Vec3()
+node.getWorldPosition(v)
+const hit = Math.abs(v.x) > w / 2 || Math.abs(v.y) > h / 2
+EOF
+  # ⚠️ 必须显式关掉子进程的 SELFTEST —— 否则它继承 SELFTEST=1 会**无限递归**（本会话实际卡死过一次）。
+  if SELFTEST=0 bash "$0" >/dev/null 2>&1; then
+    echo "[check-probe-coordinate-space][FAIL] 自检失败：植入违规样本后本门仍然绿 ⇒ 判据没在工作。" >&2
+    exit 1
+  fi
+  rm -f "$probe"
+  trap - EXIT
+  echo "[check-probe-coordinate-space] 自检通过（植入违规 ⇒ 判红；撤掉 ⇒ 继续查真文件）。"
+fi
+
 bad=0
+scanned=0
 for f in tools/verify-*.mjs; do
   [ -f "$f" ] || continue
+  scanned=$((scanned + 1))
   has_world=0
   has_viewport=0
   has_bridge=0
@@ -49,8 +75,15 @@ for f in tools/verify-*.mjs; do
   fi
 done
 
+# ⚠️ **下限断言（技能 assertion-discipline §三）**：一份探针都没扫到，是**故障**不是通过。
+#    （`tools/verify-*.mjs` 被改名/挪走时，这道门会静默变成"永远绿"。）
+if [ "$scanned" -lt 10 ]; then
+  echo "[check-probe-coordinate-space][FAIL] 只扫到 $scanned 份探针（应至少 10）⇒ 扫描范围失效，不是通过。" >&2
+  exit 1
+fi
+
 if [ "$bad" -gt 0 ]; then
   echo "[check-probe-coordinate-space] 失败：$bad 份探针可能把世界坐标和浏览器像素直接比。" >&2
   exit 1
 fi
-echo "[check-probe-coordinate-space] 通过：没有探针在缺 worldToScreen 中转时混用世界坐标与视口像素。"
+echo "[check-probe-coordinate-space] 通过：扫了 $scanned 份探针，没有一份在缺 worldToScreen 中转时混用世界坐标与视口像素。"

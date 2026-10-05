@@ -38,6 +38,9 @@ bash scripts/check-config-refs.sh
 bash scripts/check-checklist-append-only.sh
 bash scripts/check-checklist-table.sh
 bash scripts/check-probe-coordinate-space.sh
+# 这道门自带「植入违规→判红」的自检开关，每轮跑一次 ⇒ 「门是绿的」才有意义
+# （0 命中是"没触发"，不等于"判据在工作"；本会话在批跑上栽过同款：汇总全 0 ≠ 跑过了）
+SELFTEST=1 bash scripts/check-probe-coordinate-space.sh
 bash scripts/check-error-codes.sh
 bash scripts/check-config-consumers.sh
 bash scripts/check-balance-sim-config-sync.sh
