@@ -96,7 +96,16 @@ const indexOf = { 内城: 0, 军队: 1, 武将: 2, 招募: 3, 背包: 4, 关卡:
 const bad = []
 for (const [key, label] of PAGES) {
   await hideGuide()
-  await page.mouse.click(Math.round(first + step * indexOf[label]), 845)
+  // 2026-10-05 **改按导航项自身坐标取点**（不再用写死的等分推算）。
+  // 依据（导航普查实测）：主导航栏是 `Nav-city/army/hero/quest/mail/world/settings/more`
+  // 八项，**间距 169、y 全部 849**；而写死的 `step = (1355-85)/16 = 79.375` **错了一倍多**
+  // ⇒ 第 7 格算成 `85 + 79.375×16 = 1355`，而真实的第 7 格在 `1311` ⇒ 压偏 44px。
+  // ⚠️ **覆盖面不变**：只对**主导航栏上确实存在**的那几项生效
+  //（`gacha`/`battlePass`/`social`/`power` 不在栏上 ⇒ 仍按原坐标点，行为与改动前一致）。
+  // ⇒ 「要不要进 `Nav-more` 覆盖那四项」是**另一个分叉**，需要口径，不在本格。
+  const navHit = navByName.get(key)
+  await page.mouse.click(navHit !== undefined ? navHit.x : Math.round(first + step * indexOf[label]),
+    navHit !== undefined ? navHit.y : 845)
   await page.waitForTimeout(900)
   await hideGuide()
   const read = await page.evaluate((key) => {

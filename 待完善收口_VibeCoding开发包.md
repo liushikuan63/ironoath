@@ -3287,3 +3287,39 @@ EXIT=0
 ② 先点 `Nav-more` 再进二级页，覆盖 `gacha`/`battlePass`/`social`/`power` ——
    **覆盖面从 2/8 升到 8/8**，⚠️ **可能报出真缺陷**（尤其 `power` 明明有 27 个 label 却从没被量过）。
 ⇒ ⚠️ 这是**新的分叉**（不是纯量具修法）⇒ **下一格收尾必须弹窗给口径**，底数已齐。
+
+##### 17:6x 执行**不扩大覆盖面**的那一半：按 `Nav-<key>` 精确取点 ⇒ `hero` 从"空壳"变成"真打开"
+
+改动（`tools/verify-panel-reachability.mjs`，`clickTile` 之前那一行）：
+```js
+const navHit = navByName.get(key)
+await page.mouse.click(navHit !== undefined ? navHit.x : Math.round(first + step * indexOf[label]),
+                        navHit !== undefined ? navHit.y : 845)
+```
+⚠️ **覆盖面刻意不变**：`navByName.get(key)` 命中才用节点坐标，
+没命中（`gacha`/`battlePass`/`social`/`power` 四个）**仍走原来的旧坐标** ⇒ 行为与改动前一致。
+⇒ 「要不要进 `Nav-more` 覆盖那四项」是**另一个分叉**，需口径，**不在本格**。
+
+**读数**（改动前 → 改动后）：
+| 面板 | 改动前 | 改动后 |
+|---|---|---|
+| `city` | 253 节点 / activeUI 141 | 253 / **141**（不变） |
+| **`hero`** | **4 / 0**（看着像空壳） | **14 / 11** ⇒ `Header`、`Empty`、`Caption`… **真打开了** |
+| `world` | 312 / 229 | 327 / **241** |
+| `gacha`/`battlePass`/`social` | 4 / 0 | 4 / 0（**不变**，不在栏上） |
+| `power` | 48 / 0 | 48 / 0（**不变**，不在栏上） |
+| — | — | **EXIT=0** |
+
+⇒ ★ **`hero` 那个"空壳"是我误判的**：它不是产品侧没实现，
+而是**探针点偏了**才只量到 4 个节点（只有壳子自己）。
+精确取点后它**长出 10 个节点、11 个 active UI**。
+⇒ ⇒ **17:3x 表格里「`hero` = 空壳（产品侧没实现）」那一行是错的，本格更正**。
+
+⇒ ⚠️ **仍然成立的那部分**：`gacha`/`battlePass`/`social`（4 节点、连 `Header` 都没有）与
+`power`（48 节点、内容存在但 `activeUI=0`）**确实点不到** ——
+它们**不在主导航栏**（17:5x 普查已证），要进 `Nav-more` 或二级页。
+
+⇒ ⚠️ **覆盖面的真话**：从 **2/8（真正被量到内容的）** 提到 **3/8**，
+⚠️ **离 8/8 还远**，且 `power` 那个"27 个 label 从没被量过"的疑点**仍然悬着**。
+⇒ ⇒ **下一格必须弹窗**：要不要让这份探针进 `Nav-more`/二级页把剩下四项覆盖上。
+底数已齐：`Nav-*` 八个节点的坐标 + 哪些 key 不在栏上 + 各自现在的 activeUI。
