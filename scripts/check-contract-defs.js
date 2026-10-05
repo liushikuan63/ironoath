@@ -13,7 +13,10 @@
 const fs = require('fs')
 const path = require('path')
 
-const DIR = 'contract/proto'
+/* 可选参数：换一份 schema 目录跑（用来验证这条检查真的会红，而不必改仓库里的契约）。
+   ⚠️ **不传参数时行为与改动前完全一致**（模式隔离：不开这个口不得有任何差异）。
+   写法照抄 scripts/check-config-refs.js 的同名口。 */
+const DIR = process.argv[2] || 'contract/proto'
 const files = fs.readdirSync(DIR).filter((f) => f.endsWith('.schema.json')).sort()
 if (files.length < 15) {
   console.error('[check-contract-defs][FAIL] 只看到 ' + files.length

@@ -4760,3 +4760,61 @@ git diff --numstat -- 收口清单.md   ⇒   19  0      ← 19 新增 / 0 删�
   `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
 - ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
 - ⚠️ `check-track-coverage` 的扫描范围**没查**；其余二十多道门**仍未验**（欠账已入 `收口清单.md` §七）。
+
+##### 17:40x ★ 突破 17:39x 的边界：给 `check-contract-defs.js` 加**可选目录口** ⇒ 它也能零污染自测（**11 条判据**）
+
+17:39x 的结论是"剩余门禁都得改入库文件才能造违规"。**本格把这个结论推翻了一半** ——
+⚠️ 不是所有门都需要改入库文件，**是它们没留"换输入的口"**。
+
+**改动**（`scripts/check-contract-defs.js`，只加一个可选参数）
+```js
+/* 可选参数：换一份 schema 目录跑（用来验证这条检查真的会红，而不必改仓库里的契约）。
+   ⚠️ **不传参数时行为与改动前完全一致**（模式隔离：不开这个口不得有任何差异）。 */
+const DIR = process.argv[2] || 'contract/proto'
+```
+⇒ ★ **写法照抄 `scripts/check-config-refs.js` 已有的同名口**（同一作者、同一模式），
+⚠️ **全局纪律「机制化 > 提示词 / 沿用项目既有约定」的实例**：不发明新机制，**复制仓里已有的那个**。
+
+**四组读数**
+```
+### 1) 默认路径（不传参，期望 EXIT=0 且与改动前一致）
+     24 份 schema，397 个 def 名，其中跨文件复用的 6 个：形状全部一致    DEFAULT_EXIT=0
+### 2) 造「同名 def 结构不一致」（两份一个 integer 一个 string）  ⇒ EXIT=1
+     [FAIL] ZzCommon 在 17 份 schema 里出现，但有 2 种形状：…
+### 3) 把那份改回一致（对照组，期望 EXIT=0 ⇒ 不是永远红）        ⇒ EXIT=0
+### 4) 删到只剩 5 份（撞它自己的 files.length < 15 下限）          ⇒ EXIT=1
+     [FAIL] 只看到 5 份 schema（预期 15 份以上）—— 扫不到文件时这条检查就只剩"全绿"可报了
+```
+⇒ ★ **第 3 组是关键**（17:32x 栽过"对照组自己红了"）⇒ **这次对照组通过了**。
+
+⇒ ⚠️⚠️ **接入 harness 时又踩了两个坑，都写进代码注释**：
+1. **造法错**：def 必须写在 **`$defs`** 键下（脚本 `L44` 是 `doc.$defs || {}`）——
+   我第一版写成 `defs` ⇒ 门输出「17 份 schema，**0 个 def 名**」
+   ⇒ **门绿着，但它什么都没量到** ⇒ 这是"同义反复"的第 5 例，但**这次是门自己的输出暴露的**
+   ⇒ ★ **教训：门的输出里带计数时，先看计数是不是你以为的那个**。
+2. ★★ **`[ -n "$run" ] && "$run" … || bash …` 的退出码被覆盖**：
+   违规时 `$run` 退 1 ⇒ `||` 分支**接着跑默认命令**（退 0）⇒ **读数永远是「违规时=0」**。
+   ⇒ 与本会话早先记的「`node --check` 挂在 `&&` 链后面会被短路掩盖」**同源**。
+   ⇒ 改成 `if/else`，**退出码原样传出**；修完 11/11 全绿。
+
+⇒ ⇒ ★★ **由此把 17:39x 的结论**升级**成一条更准的判据**：
+> 原判据：「一道门能不能安全自测，取决于作者有没有留换输入的口」——
+> ⚠️ **后半句其实是可改的**：**没有口的话，给它加一个就是**。
+> ⇒ 真正不可造的是**机制层面把违规消掉**的那一种（`check-eol-policy` 的 `eol=lf` 规范化）。
+⇒ ⚠️ **仍然不可造的**：`check-package-size`（要产物）· `check-checklist-*`（要在入库台账上动手脚，风险不对称）。
+
+**最终读数**
+```
+scripts/check-gates-can-fail.sh ⇒ 合格 11 条 / 不合格 0 条   GATES_EXIT=0
+  残留：java=0 layer=0 ts=0 ts.meta=0 mjs=0    contract/proto 残留=0
+bash scripts/check.sh ⇒ [check] 全部静态检查通过。 / CHECK_EXIT=0
+node scripts/check-contract-defs.js（不传参）⇒ 24 份 schema，397 个 def 名 / DEFAULT_EXIT=0
+```
+
+⇒ ⚠️ **仍未做（如实）**：
+- ⚠️ **真机（微信小游戏）两条产品修复未验证** —— 全部读数来自 headless Chromium。
+- ⚠️ `SKIP 7` 需凭据（`ARMY_QUEUE_OPS_TOKEN` / `ART_VERIFY_OPS_TOKEN` / `BAG_BATCH_OPS_TOKEN` /
+  `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
+- ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**。
+- ⚠️ `check-package-size` / `check-checklist-*` / `check-contract-sync` / `check-endpoint-paths` /
+  `check-track-coverage` 仍**未纳入 harness**。

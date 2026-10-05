@@ -39,16 +39,31 @@ trap cleanup EXIT
 pass=0; fail=0
 note() { if [ "$1" = "ok" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); fi; }
 
+# 每道门的默认执行方式 = `bash scripts/<门>`；three_arg 用 GATE_RUN/GATE_MAKE 覆盖。
+# ⚠️ 必须先给空值：脚本是 `set -u`，`${GATE_RUN:-}` 在**未定义**时虽然安全，
+#    但 `local run="${GATE_RUN:-}"` 之后再 `$run` 为空时走 fallback 才是对的 —— 这里显式声明避免歧义。
+GATE_RUN=""
+GATE_MAKE=""
+
 # three: $1=门 $2=造违规的函数名 $3=该门的说明
+#   可先用 GATE_RUN 覆盖执行方式（默认 `bash scripts/<门>`）；GATE_MAKE 覆盖造违规函数。
 three() {
-  local gate="$1" make="$2" desc="$3"
+  local gate="$1" make="${GATE_MAKE:-$2}" desc="$3"
+  local run="${GATE_RUN:-}"
   printf '\n--- %s（%s）---\n' "$gate" "$desc"
-  bash "scripts/$gate" >/dev/null 2>&1; local base=$?
-  "$make" 0            # 撤掉违规，回到基线
-  bash "scripts/$gate" >/dev/null 2>&1; local restored=$?
-  "$make" 1            # 植入违规
-  bash "scripts/$gate" >/dev/null 2>&1; local broken=$?
-  "$make" 0            # 还原
+  # ⚠️⚠️ **不能用 `[ -n "$run" ] && "$run" … || bash …`**：
+  #    违规时 `$run` 退 1 ⇒ `||` 分支会**接着跑默认命令**（它退 0）⇒ **退出码被覆盖成 0**
+  #    ⇒ 读数永远是"违规时=0"。这与本会话早先记的「`node --check` 挂在 `&&` 链后面被短路掩盖」同源。
+  #    ⇒ 必须用 if/else，**让退出码原样传出**。
+  if [ -n "$run" ]; then
+    "$make" 0; "$run" >/dev/null 2>&1; local base=$?
+    "$make" 1; "$run" >/dev/null 2>&1; local broken=$?
+    "$make" 0; "$run" >/dev/null 2>&1; local restored=$?
+  else
+    "$make" 0; bash "scripts/$gate" >/dev/null 2>&1; local base=$?
+    "$make" 1; bash "scripts/$gate" >/dev/null 2>&1; local broken=$?
+    "$make" 0; bash "scripts/$gate" >/dev/null 2>&1; local restored=$?
+  fi
   printf '  基线=%s 还原后=%s 违规时=%s\n' "$base" "$restored" "$broken"
   if [ "$base" = "0" ] && [ "$restored" = "0" ] && [ "$broken" != "0" ]; then
     note ok; printf '  ✔ 三读数齐全（绿/绿/红）\n'
@@ -122,6 +137,38 @@ mk_mathrandom() { # check-layering 的 FORBIDDEN_CALL_REGEX 分支（只查 FLOA
     printf 'public class ZzGateLayerSelfTest { double f() { return Math.random(); } }\n' > "$JAVA_LAYER"
   else rm -f "$JAVA_LAYER"; fi
 }
+
+mk_contract_defs() { # check-contract-defs：同名 def 的结构（去掉 description）必须一致
+  # ⚠️ 走**可选目录口**（`node scripts/check-contract-defs.js <dir>`，17:40x 新加，
+  #    照 check-config-refs.js 的样式；不传参时行为与改动前完全一致）
+  #    ⇒ **零污染**：不碰 contract/proto 里任何入库契约。
+  # ⚠️ def 必须写在 **`$defs`** 键下（脚本 L44 是 `doc.$defs || {}`）——
+  #    写成 `defs` 会被读成「0 个 def 名」，门绿着但什么都没量到（本格实测踩过）。
+  # ⚠️ 它有 `files.length < 15` 的下限 ⇒ 合法样本也要造够 15 份。
+  local d=/d/tmp/probe753/gates-defs
+  if [ "$1" = "1" ]; then
+    rm -rf "$d"; mkdir -p "$d"
+    local i
+    for i in $(seq 1 15); do
+      printf '{"type":"object","$defs":{"ZzCommon":{"type":"integer","description":"%s"}}\n}\n' "$i" > "$d/proto$i.schema.json"
+    done
+    # 让两份同名 def 结构不同（description 允许不同，其余不能不同）
+    printf '{"type":"object","$defs":{"ZzCommon":{"type":"integer","description":"a"}}\n}\n' > "$d/proto16.schema.json"
+    printf '{"type":"object","$defs":{"ZzCommon":{"type":"string","description":"b"}}\n}\n' > "$d/proto17.schema.json"
+  fi
+  GATE_ARGS_DEF=()
+  if [ "$1" = "1" ]; then GATE_ARGS_DEF=("$d"); else rm -rf "$d"; GATE_ARGS_DEF=(); fi
+}
+
+three_arg() { # 带自定义执行方式的门：$1=门 $2=造违规函数 $3=执行函数 $4=说明
+  GATE_MAKE="$2"; GATE_RUN="$3"
+  three "$1" "$2" "$4"
+  GATE_MAKE=""; GATE_RUN=""
+}
+GATE_ARGS_DEF=()
+run_contract_defs() { node scripts/check-contract-defs.js "${GATE_ARGS_DEF[@]}"; }
+three_arg check-contract-defs.sh \
+          mk_contract_defs run_contract_defs '同名 def 结构必须一致（走可选目录口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'
