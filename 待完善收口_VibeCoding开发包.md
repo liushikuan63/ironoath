@@ -5093,3 +5093,44 @@ TEST_EXIT=0
 - ⚠️ `SKIP 7` 需凭据，**不代填**。
 - ⚠️ `D:\mongodb-data` **没有备份策略**，备份/恢复**没验过**（本格只确认了"重启后数据还在"，**那不等于"有备份"**）。
 - ⚠️ **本次 daemon 重启的触发者不明**（可能是 Docker Desktop 自动更新或用户手动），**本会话没查**。
+
+##### 02:5x 项目名统一轮 + 第 41 道门（会话 ab8db5d4）
+
+**这一格做了什么**：用户三条指令里的第 1 条与第 2 条落地，第 3 条（查剩余未收口项）复核完并落进
+`收口清单.md` §七 末尾的「2026-10-06 项目名统一轮」。
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 项目级英文标识统一为 `ironoath` | `a669c2fa`（12 文件 +102/-16） | `bash scripts/check.sh` **EXIT=0 · 41 道全过**；客户端单测 **1029 项 0 红**（`# tests 1018`+`# tests 11`） | 三份 JSON `JSON.parse` 通过；`pom.xml` `<name>` 开闭各 1、旧代号不在 `<name>` 里；`git grep -c project-iron-oath` 在非归档文件里 0 | 英文对外名 `Chronicles of Kings: Iron Oath` **是我直译的，待产品确认**；`com.ironoath` 包名**一格未动**（1266 个入库文件、97 处门禁谓词，见台账） |
+| 摘掉两处硬编码绝对路径 | 同上 | `node --check` 两份退 0；`tools/lib/preview-server.mjs:41` 确实导出 `startPreviewServer` | `D:\tmp\test-cwd-root-resolution.mjs`：正向 `ENV_SOURCED`+`server/pom.xml`，**负对照把 cwd 指到 `C:/Windows` 必须翻红** ⇒ `CWD_TEST=GREEN` | 全库还有 7864 处旧绝对路径在 27MB 历史对话归档里（**不动**，那是存档不是代码） |
+| 新开第 41 道门 `check-doc-counts.sh` | 同上 | `bash scripts/check-gates-can-fail.sh` **合格 15 条 / 不合格 0 条、残留 0**，新门三读数 = 基线 0 / 还原 0 / 违规 1 | 手工五态：道数不符红 · 两处真源红 · 谓词数到 0 红 · 输入不存在红 · 基线绿 | 这道门只管「门禁道数」这一维；`test.sh` 与探针的计数仍无门守着（本轮把 `check.sh:12` 的 941 改成「以现跑为准」，是**绕开**而不是解决） |
+| 微信开发者工具 2.01.2510260 装到 D 盘 | 不在仓库内（本机安装） | `cli.bat --help` **EXIT=0** 且能列 `auto`/`preview`/`upload`；注册表 `UninstallString` 指向 `D:\Tencent\wechat-devtools\卸载微信开发者工具.exe`；`C:\Program Files (x86)\Tencent` 下**无**该工具目录 | 安装包 243,376,768 字节 = 官方 `Content-Length`；MD5 `cc80dd5e13a2eede3832d280def78f19`；`Get-AuthenticodeSignature` = **Valid**；安装器 = Nullsoft v3.05，`/S /D=` 实测生效 | **工具没首启** ⇒ C 盘用户数据足迹未验证（首启会在 `%LOCALAPPDATA%` 建目录，那部分搬不到 D）；§七 的真机格子**一条都没因此勾掉** |
+
+**关键决策与理由**
+
+- 包名不动是**用户裁决**（不是我的判断）：`ironoath` 词根保留、只补对外名。我给了 4 个词根候选（`kingschronicle`
+  / `ironchronicle` / `chronicleofkings` / 保留 `ironoath`），选「保留」——因为改包名的**真实代价不是编译红而是假绿**：
+  97 处 scripts/tools/contract 引用里写死了 `com/ironoath` 路径，门会扫空目录退 0。这条已作为「下一格第一步」写进台账。
+- 目录改名（`tieshi` ⇒ `ironoath`）**本会话不能做**：Qoder 的会话 cwd 与按路径键控的项目目录
+  （`D:\UserData\.qoder\projects\D--Java-GitHub-tieshi` 及 `C:\Users\Admin\.qoder\projects\` 同名，另有 3 个
+  worktree 派生目录）都吃这个路径，改了本会话下一条命令就废。远端仓库名**已经是** `ironoath`，无需改。
+- 安装路径选 `D:\Tencent\wechat-devtools` 而**不是** `D:\Program Files (x86)\Tencent\...`：NSIS 的 `/D=` 必须放最后一个参数
+  且**不能加引号**，路径带空格时 PowerShell 会替我加引号从而破坏解析；用纯 ASCII 无空格路径把这个变量消掉。
+- 「软件不装 C 盘」已固化为全局红线：写进 `~/.qoder/AGENTS.md` §操作安全红线（含 NSIS/MSI/Electron 三类安装器的
+  自定义目录探测法 + 装后必须核对实际落地路径），并落 `memory/feedback-no-install-on-c-drive.md`。
+
+**下一步待办与风险**
+
+1. `验收矩阵.md` 的 B13「全服目标」✅ 是**假绿**（`claimServerGoal` 生产调用点 0，只在 `NationSystemTest.java:707-715`）
+   —— 本轮**故意没改**：另一会话（HEAD `2c700525`→`e0ac5b35`）正在同一工作树做「漂移检查」，同题不同笔会造第二真相。
+   改之前先 `git status -- 验收矩阵.md` 核归属。
+2. `客户端发送口缺口清单.md` 的「11 个 / 31 个」全过期（现跑 131 方法 / 生产零调用点 **0**）⇒ 该清单 `:126`
+   自述的进门条件已达成，可把 `report-client-send-paths.mjs` 升成一道门。
+3. 7 个 prunable worktree 残桩（3 个在旧用户名目录 `C:/Users/a1740/...`）⇒ `git worktree prune` 能清，但动 `.git` 元数据，**先问**。
+4. 真机复验：工具装了但**没首启、没登录、没连 `miniprogram-automator`** ⇒ §七 那条仍挂账，别当已验。
+5. ⚠️ 本轮**没跑** `bash scripts/test.sh`（服务端 1200 项 JUnit）与探针批跑：改动不含任何 Java/TS 逻辑
+   （只有标识字符串、两份 `.mjs` 的路径解析、一道 bash 门），但**沙箱里跑 `mvn test` 会重写活后端在用的
+   `target/classes`**，而本轮开始时确实没有 java 进程 —— 下一格若动服务端必须补跑。
+
+**关键入口**：新门 `scripts/check-doc-counts.sh` · harness 用例 `scripts/check-gates-can-fail.sh`（搜 `mk_doc_counts`）
+· 台账 `收口清单.md` §七 末尾 · 标识口径唯一真源 `README.md` 顶部 · 工具 `D:\Tencent\wechat-devtools\cli.bat`
