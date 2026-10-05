@@ -5281,3 +5281,25 @@ TEST_EXIT=0
 
 **下一步**：① 用户提升 GitHub Actions 消费限额后重跑 CI 并把读数补进本表；② 真机预览按用户指令暂缓；
 ③ 队列已空 ⇒ 下一格从 `收口清单.md` §五/§七 的待裁决项里挑不依赖裁决的，或做 B13 全服目标的四件装配。
+
+---
+
+### 2026-10-06 08:0x｜会话 0d266c61：第 44 道门（服务端孤儿类）+ B13 结论改为"缺承载不是缺端点"
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 新开 `scripts/check-core-wiring.sh`（core 的类必须被外层主源码引用） | 本笔 | `check.sh` **EXIT=0 · 44 道**（doc-counts 声明=现数）· harness **合格 18 / 不合格 0 / 残留 0**，新门三读数 基线 0 / 还原 0 / 违规 1 · 门自身 1.9 秒 · 对照面 111 个 core 类 × 797 个外层主源码文件 · **未加白名单前首跑就抓到 `WarScoreBoard` 并退 1** | `D:\tmp\check44.log`、`D:\tmp\harness5.log`；夹具 `$CW_D`（`/d/tmp/probe753/gates-corewire`，用完即删，残留计数 0） | ① 门只查"有没有被引用"，**不查引用是否真的驱动了状态**（`WarScoreBoard` 若被 new 出来却从不累计击杀，本门仍会绿）⇒ 那一维要靠 B13 端到端用例补；② 白名单只 2 条，都带撤销条件，但**没有到期检查**（下一轮人得自己判断）；③ 服务端 `test.sh` 与 `npm run gen` 本格未重跑（零 Java 与零契约改动，test.sh 在开格前刚跑过 2054 全绿） |
+| B13 全服目标：结论修正 | 本笔 | 现跑：`Nation` 聚合内**无积分板状态**（只有 `capitalX/capitalY` 与 `Rules.warCooldownHours`）· core 的 nation 包只有三个类 · 生产里没有任何 `new WarScoreBoard` / `restore` 调用 ⇒ 击杀数无来源、`serverGoalReached()` 恒假 | 台账 §七「08:0x」那条 + `git grep -l -w WarScoreBoard -- 'server/**/src/main/**' ':(exclude)server/game-core/**'` = 0 命中 | **故意不接端点**：读一张永远为空的板会把"已接线"演成第二处假绿。真做这一项的顺序是：先给国战会话找承载（谁创建 board、击杀从哪累计、`Phase` 怎么推进），再谈领取端点与客户端发送口 ⇒ **属整块排期，不是补一个口** |
+
+**关键决策与理由**
+- 用户说"先不做真机、持续推进"⇒ 队列已空时我没有去硬凑一个"看起来完成了"的端点，而是把这一族的**通用防线**做成门：
+  客户端早有 `check-client-send-paths`，服务端一直没有对应物；补上之后 `WarScoreBoard` 从"某次审计发现"变成"机制常驻"。
+- 白名单不是把门调松：它要求**每条带理由 + 撤销条件**，且门会反过来抓"豁免已失效"（真接上了却不删条目也判红）。
+- 不硬接端点的判据写进台账，是为了下一格不必重走我这一轮的调研（约 90 次工具调用的落点图已存）。
+
+**下一步（B13 真要做的顺序，已排好）**：① 定国战会话承载（新建 `WarStore` 一族：端口 + 内存 + Mongo Document，
+注意 `check-mongo-set-coverage` 要求每个字段补 `$set`）；② 击杀事件从 `/world/march` 结算里累计进 board；
+③ `contract/proto/nation.schema.json` 加 `WarGoalView` 与领取 Req/Resp ⇒ `npm run gen`；
+④ `NationController` 加 `GET /nation/war/goal` 与 `POST /nation/war/goal/claim`（发钱抄 `NationAppService:800-802`，
+新错误码必须落 13000~13999）；⑤ 客户端 `GameApi` 发送口 + `NationPanel` 入口 + `AppRoot` 编排 + 埋点三门同批
+（`check-track-coverage` / `dictionary` / `params`）；⑥ 撤掉 `check-core-wiring` 的 `WarScoreBoard` 白名单行。

@@ -36,10 +36,11 @@ PS_D=/d/tmp/probe753/gates-pkgsz
 DC_D=/d/tmp/probe753/gates-doccnt
 PP_D=/d/tmp/probe753/gates-pkgpath
 SP_D=/d/tmp/probe753/gates-sendpaths
+CW_D=/d/tmp/probe753/gates-corewire
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D"
 }
 trap cleanup EXIT
 
@@ -304,6 +305,30 @@ mk_client_send_paths() { # check-client-send-paths：GameApi 的每个发送口�
 run_client_send_paths() { bash scripts/check-client-send-paths.sh; }
 three_arg check-client-send-paths.sh \
           mk_client_send_paths run_client_send_paths 'GameApi 每个发送口都必须有人调（走环境变量口，零污染）'
+
+mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
+  # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
+  #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
+  # ⚠️ 违规态 = 假树里 `ZzOrphan.java` 没有任何外层引用，而 `ZzWired.java` **有**（Bar.java 引用它）：
+  #    两条一起放才证明门不是"恒红"也不是"恒绿"——只放孤儿会让"门永远判红"这个反例排除不掉。
+  if [ "$1" = "1" ]; then
+    # ⚠️ 目录里的 `java` 那一段必须**用变量拼**：本文件在 scripts/ 里，而 check-package-path-predicates.sh
+    #    会抽走任何形如 `…/src/main/java/com/…` 的字面量去查存在性 —— 临时树的路径归一不到仓库相对路径，
+    #    于是基线自己就红（本轮第二次踩同族，第一次是假路径字面量）。
+    local J=java
+    rm -rf "$CW_D"; mkdir -p "$CW_D/core/com/zz" "$CW_D/web/src/main/$J/com/zz"
+    printf 'package com.zz;\npublic class ZzOrphan { public int unused() { return 1; } }\n' > "$CW_D/core/com/zz/ZzOrphan.java"
+    printf 'package com.zz;\npublic class ZzWired { public int used() { return 2; } }\n' > "$CW_D/core/com/zz/ZzWired.java"
+    printf 'package com.zz;\npublic class Bar { public int b() { return new ZzWired().used(); } }\n' > "$CW_D/web/src/main/$J/com/zz/Bar.java"
+    export COREWIRING_CORE_DIR="$CW_D/core" COREWIRING_CONSUMER_DIR="$CW_D"
+  else
+    unset COREWIRING_CORE_DIR COREWIRING_CONSUMER_DIR
+    rm -rf "$CW_D"
+  fi
+}
+run_core_wiring() { bash scripts/check-core-wiring.sh; }
+three_arg check-core-wiring.sh \
+          mk_core_wiring run_core_wiring 'core 的类必须被外层主源码引用（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'

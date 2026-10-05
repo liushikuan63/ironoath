@@ -104,6 +104,11 @@ bash scripts/check-package-path-predicates.sh
 # connectSocket 整条是死的、出征与集结四条发送口没人调、商店货架玩家看不见 —— 这三笔都发生在
 # 「445 条用例 + check.sh 全绿」期间，因为单测只测方法能不能跑通，不测有没有人点它。
 bash scripts/check-client-send-paths.sh
+# game-core 的每个主源码类都必须被外层主源码真的引用（2026-10-06 开）：
+# B13 验收 10 长期挂 ✅，理由是单测 36 条全绿 —— 而现跑发现 WarScoreBoard 在 core 之外引用数为 0，
+# 它自己的注释写着「由 game-web 载入、落盘」却没人执行 ⇒ 玩家完全不可达。客户端那一侧早有
+# check-client-send-paths 管"有名字零读者"，服务端这一侧一直没有。
+bash scripts/check-core-wiring.sh
 # 文档里的门禁道数必须等于本脚本实际调用的道数（2026-10-06 开）：
 # AGENTS.md 写「32 道」而这里实际 40 道是现跑抓到的 —— 计数一漂，后面每次会话都拿旧数当
 # 「门全开」的证据。⚠️ 这道门自己也在被数之内：加/删门禁不改 AGENTS.md 的数字就会红。
