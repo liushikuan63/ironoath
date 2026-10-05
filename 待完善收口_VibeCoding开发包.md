@@ -3451,3 +3451,42 @@ COVERAGE_EXIT=0
 ⇒ **要不要固化成"默认双后端"**（起两台、默认带上 `BOOST_BACKEND`）——
 ⚠️ 这会让**每次批跑多起一个 JVM**（内存/时长都涨），属"改动会让既有验证行为变化"⇒ **需口径**。
 ⇒ ⚠️ **本会话不做**；下一格若要推进，**必须先弹窗**。
+
+##### 17:10x 新增**官方双后端入口** `scripts/run-batch-dual-backend.sh`（⚠️ 弹窗超时自动采纳推荐项，**非本人选**）
+
+裁决弹窗「是否把双后端固化成默认」**超时未答**，由 `ask-user-auto-pick` 自动按推荐项提交
+（`custom: 无操作超时，系统已自动选择推荐项（ask-user-auto-pick）`）
+⇒ ⚠️ **不是本人选的**，按纪律显式交代，不记成"用户拍板"。
+
+**新增** `scripts/run-batch-dual-backend.sh`：起**两台**后端（8199 普通 / **8198 带 dev 提速档**）
+⇒ 调 `run-runtime-probes.sh` 时带上 `BOOST_BACKEND` ⇒ 收后端。
+⚠️ **是新增入口，不是改现有入口** —— 只想要单后端时照旧跑 `run-runtime-probes.sh`
+（`run-runtime-probes.sh` 的默认行为**一个字节都没变**）。
+可覆盖：`BACKEND_PORT` / `BOOST_PORT` / `RUNTIME_PROBES_TIMEOUT` / `RUNTIME_PROBES_LOGDIR` / `LOG`。
+★ 提速档后端没起来时**不直接失败**：继续跑，让那几份照旧报前提不足退 2（环境造成的、不是功能红）。
+
+**冒烟验证（显式清单跑三份 nation 族）**
+```
+[dual] 普通后端就绪 / [dual] 提速档后端就绪
+0 verify-nation-policy-ui.mjs (BACKEND_ORIGIN, port 8201)
+0 verify-nation.mjs          (BACKEND_ORIGIN, port 8202)
+--- 汇总：需看的份数 = 0（其中 未跑成 NO-RUN = 0） 超时 = 0 前提不足 PREREQ = 0 SKIP = 0
+BATCH_EXIT=0
+```
+⇒ **`verify-nation-policy-ui` 走提速档后端转绿** ⇒ 分流机制**实测生效**。
+⚠️ 冒烟用的 `game-web.jar` 是 **2026-10-04 的旧产物**（本轮**没动产品码**，所以用旧产物安全）。
+
+⚠️⚠️ **冒烟过程中我自己错了两次，两次都表现为「汇总 0 但其实一份都没跑」** —— 差点据此误判成功：
+1. 在 `bash -lc` 里用 `printf "...\n..."` 写清单 ⇒ **`\n` 变成字面量 `n`**，
+   清单成了**一行** `verify-nation-policy-ui.mjsnverify-nation-live.mjsn` ⇒ 匹配不到任何文件 ⇒ 跑 0 份。
+2. 修完格式仍缺 **`tools/` 前缀** ⇒ `grep: verify-nation-s2.mjs: No such file or directory`
+   ⇒ 两份 `NO-RUN`。⚠️ 而**汇总照样打印 `需看 0 · PREREQ 0`**
+   （脚本把"没跑成"记成 `NO-RUN=0`，因为那两份压根没进循环）。
+⇒ ⇒ ★ **教训（比修法更重要）**：**汇总行全是 0 不等于"跑过了且通过"** ——
+必须**再核一份"到底跑了哪几份"的独立证据**（本轮用的是 `runtime-probes-exitcodes.txt`，
+它是空的就说明一份没跑）。⚠️ **这是本会话第三次栽在「把『没测到』读成『没问题』」**：
+第三次在 `verify-panel-reachability`（`面板内Label 0` vs `-1`）、第四次在批跑汇总（0 份 vs 全绿）。
+
+⇒ ⚠️ **未做（下一格）**：用这个**官方入口**跑一次**全量 59 份**，
+证明它与手工的 `tmp/run-batch-all2.sh` 等价（那一轮已得 `需看 0 · PREREQ 0`）。
+⇒ 本格只验了三份的冒烟，**不等于全量绿**。
