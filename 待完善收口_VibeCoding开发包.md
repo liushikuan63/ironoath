@@ -3694,3 +3694,30 @@ BATCH_EXIT=0
 读数：需看 0 · 超时 0 · PREREQ 0 · SKIP 7 · BATCH_EXIT=0
 独立证据：跑绿 51 份 = 59 − 1（排除 verify-label-fit-runtime）− 7（SKIP 凭据）
 ```
+
+##### 17:16x ★ **第一次跑静态门 `scripts/check.sh`：`CHECK_EXIT=0`、`fail 0`**
+
+本会话改过 **3 个 `tools/` 探针 + 2 个 `scripts/` 文件 + 1 个排除名单**，
+但此前**所有读数都来自运行时探针**，**从没跑过静态门** ⇒ 这是个一直挂着的缺口。
+
+```
+bash scripts/check.sh
+  # fail 0 / # cancelled 0 / # skipped 0 / # todo 0 / # duration_ms 50.7684
+  [check] 全部静态检查通过。
+  CHECK_EXIT=0
+```
+⇒ ★ **31 道静态门 + 客户端单测全绿** ⇒ 本会话对 `tools/` 与 `scripts/` 的改动
+**没有破坏任何静态规则**（包括 EOL 策略、`check-runtime-probe-coverage`、`check-ts-meta` 等）。
+
+⇒ ⚠️ **过程中的坑（保留轨迹）**：第一次用
+`Start-Process bash -ArgumentList @("-lc","cd … && bash scripts/check.sh > log 2>&1; …")`
+⇒ **日志文件根本没生成**、`check.done` 也没有 ⇒ 脚本压根没跑起来。
+**根因**：`bash -lc "<长串>"` 经 PowerShell `Start-Process` 传参时**整个参数会被拆开**
+（与本会话早先记录的"反引号被吃"是同一类：**不要把长命令塞进 `-lc` 字符串**）。
+⇒ **正确做法**：写一个 `tmp/*.sh` 文件，再 `Start-Process bash <脚本路径>`（本会话所有成功批次都是这么做的）。
+⇒ ★ **这条应该写进环境坑清单**：**长命令一律落成脚本文件再跑，不要塞进 `bash -lc "…"`。**
+
+⇒ ⚠️ **仍未做（如实）**：`bash scripts/test.sh`（服务端 JUnit + 客户端单测的 Maven 全量）
+本会话**从未跑过** —— 本会话**没改任何 Java/服务端代码**（只改 `tools/*.mjs`、`scripts/*.sh`、
+排除名单与文档）⇒ 服务端理论上不受影响，
+⚠️ 但**"没改 ⇒ 不受影响"仍是推演，不是读数** ⇒ **下一格跑一次 `test.sh` 把这个推演换成读数。**
