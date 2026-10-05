@@ -5185,3 +5185,23 @@ TEST_EXIT=0
 `PKGPATH_CONTRACT_DIR` / `PKGPATH_SERVER_DIR`）· harness 用例搜 `mk_pkg_path_predicates` ·
 标识口径唯一真源 `README.md` 顶部 · 台账 `收口清单.md` §七「项目名统一轮」下的补注三条 ·
 `D:\Tencent\wechat-devtools\cli.bat`（已登录）。
+
+---
+
+### 2026-10-06 03:5x｜会话 0d266c61：B13 全服目标改回未接线 + 开发者工具 CLI 通道取证（阻塞）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| `验收矩阵.md:264` B13 验收 10 从 ✅ 改回 ⬜ | 本笔 | 现跑：`claimServerGoal` 非测试引用只有定义本身（`WarScoreBoard.java:257`），其余 4 处全在 `NationSystemTest.java:707` 到 `:715`；`git grep -l WarScoreBoard -- 'server/**/src/main/**'` = 1（它自己）；`server/game-web/src/main` 里 `goal` 16 处命中全属活动系统；`client/assets/scripts` 里 `serverGoal` 与 `server_goal` 与 `warGoal` 各 0 命中；`contract/proto` 只有 `nation` 与 `nationTech` | `node D:\tmp\check-matrix-cells.cjs 验收矩阵.md 264` ⇒ 单元格 4 = 表头 4 列，状态格 `⬜`；台账 table 与 append-only 双绿、numstat 33 增 0 删 | **只改文档状态，没接代码**：真要收这一项得四件（国战 AppService 装配 `WarScoreBoard`、领取端点、契约 schema、客户端发送口），属整块功能，需要排期而不是顺手补 |
+| 微信开发者工具模拟器冒烟 | 本笔 | `cli open --project client/build/wechatgame` 报「IDE service port disabled」并卡在 `? Enable IDE Service (y/N)`；管道喂 `y` 后端口文件 `.ide` 生成（内容 `37870`），但 `netstat` 查不到任何进程监听 37870 ⇒ 残留文件、服务未真开；重跑回到同一提示。IDE 在跑（6 个 `wechatdevtools.exe`，主进程 pid 71748），可见窗口只有 1 个且**无项目窗口** | 日志 `D:\tmp\cli-open.log` / `cli-open2.log` / `cli-open3.log`；窗口枚举助手 `D:\tmp\list-windows.ps1` | **未做视觉验证 + 原因**：需要用户手动在 IDE 里开「设置 → 安全设置 → 服务端口」；我不驱动第三方应用的设置界面、也不改它的配置文件 ⇒ 模拟器实际截图这一维本轮**没拿到**。产物是今早 03:24 构建的那份（未重建：本会话零客户端代码改动） |
+
+**关键决策与理由**
+- B13 那条 ✅ 的来历是"上一轮只核到内核侧就判已实现"，正是本仓 §四 第 2 条的头号形状 ⇒ 按"否定式结论要走到调用链终点"
+  重核（web 层装配、端点映射、契约 schema、客户端发送口，四层各查一遍）后才改回 ⬜，且**两条原始理由都保留不删**。
+- CLI 通道不通不等于工具没装好：登录态与产物都在，缺的只是 IDE 一个安全开关 ⇒ 选择**停下问用户**，
+  不去改第三方应用的配置（回滚不显然）。
+- C 盘足迹拿到真值：**301M**（`C:\Users\Admin\AppData\Local\微信开发者工具`）⇒ 作废上一格「未验证」。
+
+**下一步**：① 用户开服务端口后续做模拟器冒烟（`cli open` / `cli auto` ⇒ 实际截图 ⇒ 把 §七 两条「真机未验证」换新读数）；
+② 队列未动项：`tools/report-client-send-paths.mjs` 升成第 43 道门（条件已达成）；`上线检查清单.md` 那条防沉迷假陈述已更正，
+但**年龄与实名输入仍缺**（`realName` 在 server 的 java 里 0 命中、无实名端点）；③ 老树 `D:\Java\GitHub\tieshi` 退役等用户点头。
