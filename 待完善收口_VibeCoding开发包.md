@@ -3612,3 +3612,47 @@ BATCH_EXIT=0
   `BAG_BATCH_OPS_TOKEN` / `DEVTOOLS_OPS_TOKEN` / `RT_TOKEN`），**不代填**。
 - ⚠️ **只跑单后端入口**（不传 `BOOST_BACKEND`）时，`verify-nation-live` 会被收进去并
   **报前提不足退 2** ⇒ 汇总多一个 `PREREQ` ⇒ **批跑请走双后端入口**。
+
+##### 17:14x ★ **「改产品码 → 重建产物 → 跑批跑」这条链路首次端到端验过**
+
+这一格是前几格一直挂着的「⚠️ 未验证」：**本会话一直用 2026-10-04 的旧 `game-web.jar` / 旧 web-mobile 产物**，
+从未真正重建过一次、也没证明产物里带着这两条产品修复。
+
+**第一步：重建产物**
+```
+env -u ELECTRON_RUN_AS_NODE bash scripts/build-webmobile.sh
+[build-webmobile] CocosCreator 退出码=36（36 = SIGTERM 收尾，判据在下面）
+[build-webmobile] 产物就绪：client/build/web-mobile（missing or invalid = 0，profiler 浮层已关）
+```
+
+⇒ ⚠️ **两个"看起来像失败、其实不是"的点，先说清免得下一格重踩**：
+1. ⚠️ **`index.html` 时间戳没变**（仍是 10-04 21:20:47）⇒ Cocos **沿用了增量缓存**，
+   `index.html` 内容没变就不重写 ⇒ **时间戳不变 ≠ 没重建**，判据在"产物就绪"那一行。
+2. ⚠️ **`grep bandCenterY client/build/web-mobile/**/*.js` 计数 = 0** ——
+   ⚠️ **这不能当"产物里没有该修复"的证据**：`debug: false` 会压缩/改名，
+   变量名在产物里根本不叫 `bandCenterY`。
+⇒ ⇒ **这两条都是"看起来能否证、实际不能"的陷阱**，必须换**行为**来证。
+
+**第二步：对刚重建的产物跑两条产品修复探针（行为级证明）**
+```
+--- 独立证据：/d/tmp/runtime-probes-exitcodes.txt
+  0 verify-city-multi-types.mjs (BACKEND_ORIGIN, port 8201)
+  0 verify-audio-runtime.mjs    (AUDIO_BACKEND, port 8202)
+--- 汇总：需看的份数 = 0 · NO-RUN 0 · 超时 0 · PREREQ 0 · SKIP 0
+```
+⇒ ★★ **这条 `0` 就是"产物里带着修复"的证明**：
+`verify-city-multi-types` 的判据包含「**`Grid-35` 基座中心点击后选择栏显示该建筑**」，
+而 `Grid-35` 历史上**正是被 `ZoomOutButton` 永久压住**的那一格 ⇒ **它能过 ⇒ 缩放键确实挪开了 ⇒
+`CityPanelView.ts` 的改动**确实进了产物**。
+同理 `verify-audio-runtime` **0** ⇒ `AudioService.ts` 的双路解锁**确实进了产物**。
+
+⇒ ★ **可复用的判据（本会话最该沉淀的一条）**：
+**要证明"某个产物带着某个源文件改动"，不要 `grep` 变量名** ——
+**用一条"只有带这个改动才会变绿"的探针**（行为级证明）。
+⚠️ `debug:false` 的产物里变量名会被压缩/改名，**grep 产物几乎必然误判为"没有"**。
+
+⇒ ⚠️ **仍未验证（如实）**：
+- ⚠️ **真机（微信小游戏）**两条产品修复仍未验证 —— 全部读数来自 **headless Chromium**。
+- ⚠️ 本轮只对**刚重建的产物**跑了两条；⚠️ **全量 51 份那一轮（17:13x）用的还是重建前的产物**
+  ⇒ 「51 份全绿」与「重建后产物」之间**没有交叉验证**。
+  ⇒ **未做（下一格）**：用**刚重建的产物**再跑一次全量，把这个缺口补掉。
