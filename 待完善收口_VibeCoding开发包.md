@@ -3164,3 +3164,49 @@ if (panel === null) return { paging: -1, scroll: -1, labels: -1, clipped: -1 }
 这**仍然**是覆盖缺口（这些面板的内容可能不走 `cc.Label`，或走懒加载），
 但**性质完全不同**：不是"没量"，而是"量了、但这个量法看不见它们的内容"。
 ⚠️ 要确认到底是哪一种，需要**看那些面板里到底有什么节点** —— 这是**下一格**可做的只读调查。
+
+##### 17:3x 普查把「Label 0」的两种可能**彻底分开**：四个是**空壳**，两个是**没点中**
+
+给探针加了**只读普查**（`nodeCensus`：总节点数 / active 的 UITransform 数 / 主要节点名），
+并补上一直缺失的 `navKey`（⚠️ 判据、退出码、fail-closed 行为**一个字节没改**）。
+
+读数：
+```
+city        总节点=253  activeUI=141  主要=[[BuildingRim,36],[BuildingIcon,36],[Level,36],[Name,36],[Label,13],…]
+hero        总节点=4    activeUI=0    主要=[[ProbeControl,3],[hero,1]]
+gacha       总节点=4    activeUI=0    主要=[[ProbeControl,3],[gacha,1]]
+battlePass  总节点=4    activeUI=0    主要=[[ProbeControl,3],[battlePass,1]]
+social      总节点=4    activeUI=0    主要=[[ProbeControl,3],[social,1]]
+power       总节点=48   activeUI=0    主要=[[label,27],[row,9],…,[tab-DETAIL],[tab-POWER],[tab-KILL],…]
+world       总节点=312  activeUI=229  主要=[[Caption,57],[Marker,53],[Art,53],[FallbackGraphics,53],…]
+settings    总节点=22   activeUI=0    主要=[[label,12],[ProbeControl,3],[settings,1],[background,1],[row-audio],…]
+EXIT=0
+```
+
+⇒ ★ **两种可能被彻底分开**（这正是加普查的目的）：
+| 面板 | 总节点 | activeUI | 判读 |
+|---|---|---|---|
+| `hero` / `gacha` / `battlePass` / `social` | **4** | **0** | **空壳** —— 除了自己就只有探针，**没有任何内容节点** |
+| `power` / `settings` | 48 / 22 | **0** | **内容确实存在**（27 / 12 个 `label`、`row`、`row-audio`…）却**全不 active** |
+| `city` / `world` | 253 / 312 | 141 / 229 | **真正打开并渲染** |
+
+⇒ ⇒ **所以"Label 0"有完全不同的两个成因**：
+① **空壳型**（四个）：那是**产品侧的空态占位节点**（面板还没实现/未接入）⇒ **不是探针的锅**；
+② **没点中型**（`power`/`settings`）：内容在、但 `activeUI=0`
+⇒ **探针点导航没点中**（`:63` 那个固定坐标 `first + step*indexOf[label]`、y=845 的点击）。
+⇒ 而 `city`/`world` 点中了 ⇒ 说明**那两格的坐标恰好对，其余的不对**。
+
+⇒ ⚠️ **正确的问题陈述**（前两格都写偏了，这一格才对）：
+**不是"六个面板没打开"**，而是**「四个面板是空壳 + 两个面板探针没点中」**。
+⚠️ 空壳那四个**无法靠改探针覆盖**（内容根本不存在）；能改的只有 `power`/`settings` 的点击坐标。
+
+⇒ ⚠️ **未做（下一格，不需裁决——它只改"点哪个坐标"，不改判据）**：
+把导航点击改成**按导航项自身的世界坐标取点**（读导航节点的 `UITransform` → `camera.worldToScreen`），
+而不是 `:57-59` 那套写死的等分假设。
+⚠️ **但要如实标注**：这会让 `power`/`settings` **第一次真正被量** ⇒ **可能报出真缺陷**
+⇒ 一旦报出，那是**产品问题**，不是探针问题 ⇒ 需跟进。
+⇒ 属「改动会让既有验证失效」⇒ **下一格收尾时弹窗给口径**（先做完只读调查再弹）。
+
+⇒ ⚠️ **过程中的自错（保留轨迹）**：用 PowerShell 正则插入含模板字面量的 `console.log`，
+**反引号被当转义符吃掉** ⇒ `SyntaxError: missing ) after argument list`
+⇒ 与 16:59x 那次**同源第三次** ⇒ **凡是含 JS 模板字面量的行，一律用 edit 工具插，不要用 PowerShell 正则。**

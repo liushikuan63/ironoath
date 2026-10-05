@@ -187,6 +187,26 @@ for (const [key, label] of PAGES) {
     // 带外：像素偏移 1200（越过 `720`）⇒ 必判「不裁」（池化停放/地图名牌那种远处停放）
     const parked = probePx(1200) === false
     return { paging, scroll, labels, clipped, controlOn, controlOff, parked,
+      navKey: key,
+      // 2026-10-05 **只读诊断**（不改判据）：面板里到底有哪些节点、有多少 active 的
+      // UITransform。用它分辨「面板内 Label 0」的两种可能：
+      //   · 面板是空的（内容没建 / 懒加载还没触发）
+      //   · 面板有内容，但**不走 cc.Label**（例如画在 Graphics/Sprite 上，或用了自定义组件）
+      nodeCensus: (() => {
+        const names = {}
+        let activeUi = 0
+        const tally = (n) => {
+          names[n.name] = (names[n.name] ?? 0) + 1
+          if (n.activeInHierarchy) {
+            const u = n.getComponent && n.getComponent('cc.UITransform')
+            if (u !== null && u !== undefined) activeUi += 1
+          }
+          for (const c of n.children) tally(c)
+        }
+        tally(panel)
+        const top = Object.entries(names).sort((a, b) => b[1] - a[1]).slice(0, 8)
+        return { totalNodes: Object.values(names).reduce((a, b) => a + b, 0), activeUi, topNames: top }
+      })(),
       // 2026-10-05 **只读诊断**（不改判据）：把探针的**世界坐标**与**视口像素尺寸**都打出来，
       // 量化「两者差多少倍」。本探针的 `hit` 判据是 `|v.x| > w/2 || |v.y| > h/2`，
       // 而 `v` 来自 `getWorldPosition()`（**世界坐标**）、`w/h` 来自 `window.innerWidth/innerHeight`
@@ -241,6 +261,7 @@ for (const [key, label] of PAGES) {
     process.exit(2)
   }
   const unreachable = read.clipped > 0
+  console.log(`  [普查] ${key} 总节点=${read.nodeCensus?.totalNodes} activeUI=${read.nodeCensus?.activeUi} 主要节点=${JSON.stringify(read.nodeCensus?.topNames)}`)
   console.log(`[nonpaging] ${key}(nav=${read.navKey}): 翻页键 ${read.paging} / ScrollView ${read.scroll} / 面板内Label ${read.labels} / 被裁 ${read.clipped}`
     + `${unreachable ? '  ==> 有内容落在可视区外（真缺陷）' : ''}`)
   if (unreachable) bad.push(key)
