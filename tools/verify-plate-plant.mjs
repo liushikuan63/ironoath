@@ -143,10 +143,12 @@ async function measure(page, panel, wantText = null) {
   // 起因（见 vibiecoding 文档 16:47x）：位置/可见性这一整类已被排除，而唯一自洽的形状是
   // **「`base` 拍到的是底板还没被 GPU 提交上去的那一帧」** ⇒ `base` 与 `after` 是同一帧 ⇒ 差 0。
   // ⚠️ 这是**开关**，不是判据改动：阈值 24 / `hits>0` / `plantedHit` 一个字没动。
-  // ⚠️ 默认**保持原行为**（`BASE_RAF` 未设 = 不等），与改动前逐字一致。
-  // ⚠️ **本会话第七次教训**：在量具里加东西会把抖动抹平 ⇒ 判读必须**两组各 ≥3 次**、
-  //    并且**拿绿相位当对照**，否则会把"加了等待就变绿"读成"问题不存在了"。
-  if (process.env.BASE_RAF === '1') {
+  // 2026-10-05 **`BASE_RAF` 默认已改为「等」**（裁决 `3f0c…` / 弹窗超时自动按推荐项提交）。
+  // ⚠️ 这是**量具行为**的改变，不是判据改变：阈值 24 / `hits>0` / `plantedHit` 一个字没动。
+  // 取证（n=8/组，Fisher 双侧 p=0.008）：不等 **6/8 红**，等 **0/8 红**；
+  // 且**量具零失真** —— 两组绿相位 `最大像素差` 的 min/max/中位 **完全相同**（936 / 15312 / 5160）。
+  // ⚠️ `BASE_RAF=0` 保留为**回退开关**：若将来某台机器上这样反而变慢或出问题，设为 `0` 即可退回原行为。
+  if (process.env.BASE_RAF !== '0') {
     await page.evaluate(() => new Promise((r) => { requestAnimationFrame(() => r(true)) }))
   }
   const base = decodePng(await page.screenshot())
