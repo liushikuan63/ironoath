@@ -54,6 +54,42 @@ const hideGuide = () => page.evaluate(() => {
 })
 await hideGuide()
 
+// 2026-10-05 **只读调查**：把导航栏上所有 `Nav-*` 节点的名字与屏幕坐标列出来。
+// 目的：确认 `PAGES` 的每个 key 是否都有一个可寻址的 `Nav-<key>` 节点
+//（已实测 `Nav-city` / `Nav-army` / `Nav-hero` / `Nav-quest` 存在，间距 169，
+//  而写死的 `step = (1355-85)/16 = 79.375` **错了一倍多**）。
+// ⚠️ 只读：不点任何东西、不改判据。这一步取完底数才动点击逻辑。
+await hideGuide()
+const navDump = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let cam = null
+  const w2 = (n) => {
+    if (cam === null && n.getComponent) {
+      const c = n.getComponent('cc.Camera')
+      if (c !== null && c !== undefined) cam = c
+    }
+    for (const c of n.children) w2(c)
+  }
+  w2(scene)
+  const rect = document.querySelector('canvas').getBoundingClientRect()
+  const out = []
+  const walk = (n) => {
+    if (n.name.startsWith('Nav-') && n.activeInHierarchy && cam !== null) {
+      const u = n.getComponent('cc.UITransform')
+      const wb = u.getBoundingBoxToWorld()
+      const s = cam.worldToScreen(new window.cc.Vec3(wb.x + wb.width / 2, wb.y + wb.height / 2, 0))
+      out.push({ name: n.name, x: Math.round(s.x + rect.left), y: Math.round(rect.top + rect.height - s.y) })
+    }
+    for (const c of n.children) walk(c)
+  }
+  walk(scene)
+  return out.sort((a, b) => a.x - b.x)
+})
+console.log(`[导航普查] ${JSON.stringify(navDump)}`)
+const navByName = new Map(navDump.map((r) => [r.name.slice(4), r]))
+const missing = PAGES.map(([k]) => k).filter((k) => !navByName.has(k))
+console.log(`[导航普查] PAGES 里点不到对应 Nav-* 的 key=${JSON.stringify(missing)}`)
+
 const first = 85
 const step = (1355 - 85) / 16
 const indexOf = { 内城: 0, 军队: 1, 武将: 2, 招募: 3, 背包: 4, 关卡: 5, 战报: 6, 任务: 7, 战令: 8, 邮件: 9, 社交: 10, 战力: 11, 商店: 12, 外观: 13, 搜索: 14, 地图: 15, 设置: 16 }
