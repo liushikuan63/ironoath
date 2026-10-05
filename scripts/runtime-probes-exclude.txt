@@ -7,14 +7,16 @@
 #
 # 判据：进这份名单 = 「在默认批跑环境下跑它，得到的是环境造成的假红，而不是功能结论」。
 verify-label-fit-runtime.mjs    # 每格都已在跑，重复跑没有信息量
-verify-nation-live.mjs          # 需 `BOOST_BACKEND`（一台带 dev 提速档的后端）；不传则报前提不足退 2，不是功能红
-# 2026-10-05 `verify-nation-live.mjs` 的**理由已更新**（不是新增排除）：
+# 2026-10-05 14:5x `verify-nation-live.mjs` **移出排除名单**（裁决「让批跑真正收它并断言绿」，
+# ⚠️ 弹窗超时未答、由 ask-user-auto-pick 自动按推荐项提交 —— 不是本人选的）。
+#
 # 它当初被排在这里的理由是「国战正链路要的是**开着** IRONOATH_DEV_CITY_LEVEL 提速档的后端，
-# 与默认批跑环境相反」。⚠️ 那个「相反」现在**有解**了 ——
-# `run-runtime-probes.sh` 新增 `BOOST_BACKEND` / `BOOST_PROBES`，
-# 能给指定几份**单独指一台带提速档的后端**
-#（且提速档是**后端进程**读的，设在探针侧没用 —— 这一条是 17:8x 坐实的）。
-# ⇒ 跑批跑时**显式给 `BOOST_BACKEND`**，这一份就能在批跑里转绿
-#（实测：`BOOST_BACKEND=http://127.0.0.1:8198` 时 `verify-nation-live` EXIT=0）。
-# ⚠️ 因此它**留在**排除名单里：不传 `BOOST_BACKEND` 时它跑出来是"前提不足"，
-# 按本文件第 8 行的判据（进名单 = 默认环境下得到的是环境造成的假红）仍成立。
+# 与默认批跑环境相反」。⚠️ 那个「相反」**已经有解**了：
+#   · `run-runtime-probes.sh` 新增 `BOOST_BACKEND` / `BOOST_PROBES`（不传时行为与改动前完全一致）；
+#   · 新增官方入口 `scripts/run-batch-dual-backend.sh`，**默认就起两台后端并带上 `BOOST_BACKEND`**。
+# ⇒ 实测：`bash scripts/run-batch-dual-backend.sh` 下 `verify-nation-live` **EXIT=0**。
+#
+# ⚠️ **因此批跑口径变了**：走双后端入口时它是 **绿且被断言**的一份；
+# ⚠️ 只跑单后端 `run-runtime-probes.sh`（不传 `BOOST_BACKEND`）时它会**报前提不足退 2** ——
+#    那是**环境造成的**、不是功能红，⚠️ 但它仍会占掉汇总里的一个 `PREREQ`。
+# ⇒ **批跑请走 `scripts/run-batch-dual-backend.sh`**（单后端入口留给"只想跑一部分/不需 nation 族"的场合）。

@@ -3524,3 +3524,50 @@ BATCH_EXIT=0
 ⇒ ⚠️ **未做（需口径）**：既然官方入口已经默认带 `BOOST_BACKEND`，
 那份排除名单里的 `verify-nation-live` **要不要移出**（让批跑真正收它、并断言它是绿的）。
 ⚠️ 这一条**改的是"哪些量具进批跑"的契约** ⇒ 属「改动会让既有验证失效」⇒ 下一格弹窗。
+
+##### 17:12x `verify-nation-live` **移出排除名单**并实测进批跑转绿；⚠️ 又抓到一个"汇总 0 但没跑"的**通用坑**
+
+裁决「**移出排除名单，让批跑真正收它并断言绿**」
+⚠️ **弹窗超时未答，由 `ask-user-auto-pick` 自动按推荐项提交**（`custom: 无操作超时…`）—— **不是本人选的**。
+
+**改动**：`scripts/runtime-probes-exclude.txt` 里删掉 `verify-nation-live.mjs` 这一条，
+并把"为什么当初要排除 / 现在为什么能移出 / 单后端入口下会怎样"整段写进注释（不删历史理由）。
+
+**门禁**
+```
+bash scripts/check-runtime-probe-coverage.sh
+[check-runtime-probe-coverage] 通过：量具 59 份，排除 1 份（名单条目都存在且有理由；收集规则仍是全收）
+COVERAGE_EXIT=0
+```
+
+**实测（官方入口 + 显式清单两份）**
+```
+--- 独立证据：/d/tmp/runtime-probes-exitcodes.txt
+  0 verify-nation-live.mjs      (BACKEND_ORIGIN, port 8201)   ← 以前是 EXCLUDE，现在进批跑且绿
+  0 verify-nation-policy-ui.mjs (BACKEND_ORIGIN, port 8202)
+--- 汇总：需看 0 · NO-RUN 0 · 超时 0 · PREREQ 0 · SKIP 0 · BATCH_EXIT=0
+```
+⇒ ⇒ **`verify-nation-live` 现在真的进批跑、真的绿**。
+
+⇒ ⚠️⚠️ **又抓到一个"汇总 0 但一份没跑"的坑，而且这次是通用坑**：
+第一次冒烟（清单末尾**没有换行**）⇒ 日志照样打印 `需看 0 · PREREQ 0 · BATCH_EXIT=0`，
+但 `runtime-probes-exitcodes.txt` **只有一行表头** ⇒ **一份都没跑**。
+**根因**：`while read -r f` **会丢掉没有以换行结尾的最后一行**。
+⚠️ 这**同时解释了 17:10x 那次"三份只跑了两份"** —— `verify-nation-s2` 正是那个"最后一行"。
+⇒ ⇒ ★ **教训（两条，合起来是一条）**：
+① **汇总行全 0 不等于"跑过了且通过"** —— 必须核一份**独立证据**（本仓库就是 `runtime-probes-exitcodes.txt`，
+   **它只有表头 ⇒ 一份没跑**）。
+② **喂给批跑的清单文件必须以换行结尾**，否则 `while read` 静默丢最后一行、
+   且**脚本不会报任何错**。
+⇒ **写清单的安全做法**（本轮实测可行）：
+`for f in tools/a.mjs tools/b.mjs; do echo $f; done > list.txt` ——
+**不要用 `printf "a\nb\n"`**（在 `bash -lc` 里经 PowerShell 会被吃掉 `\n`，变字面量 `n`），
+**写完必须 `cat -A` 验末字节 `$`**。
+
+⇒ ⚠️ **批跑口径的变化（必须交代）**：
+**走官方入口 `scripts/run-batch-dual-backend.sh` 时，批跑现在收 51 份**（原 50）
+⇒ ⚠️ **只跑单后端 `scripts/run-runtime-probes.sh`（不传 `BOOST_BACKEND`）时，
+`verify-nation-live` 会被收进去并**报前提不足退 2** ⇒ 汇总里会多一个 `PREREQ`。
+⇒ ⇒ **批跑请走双后端入口**；单后端入口留给"只想跑一部分/不需要 nation 族"的场合。
+⇒ ⚠️ **未做**：本轮只验了显式两份的冒烟，**没重跑全量 51 份**。
+⇒ ⚠️ 仍用 **2026-10-04 的旧 jar**（本会话没动产品码 ⇒ 安全，但"改产物后重跑"这条链路仍未被验过）。
