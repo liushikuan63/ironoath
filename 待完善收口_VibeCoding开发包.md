@@ -3490,3 +3490,37 @@ BATCH_EXIT=0
 ⇒ ⚠️ **未做（下一格）**：用这个**官方入口**跑一次**全量 59 份**，
 证明它与手工的 `tmp/run-batch-all2.sh` 等价（那一轮已得 `需看 0 · PREREQ 0`）。
 ⇒ 本格只验了三份的冒烟，**不等于全量绿**。
+
+##### 17:11x ★ **官方入口全量 59 份验证通过**，并按上一格教训补了**独立证据**（不只是汇总行）
+
+用 `scripts/run-batch-dual-backend.sh`（**不传清单**，走自动收集）跑全量：
+```
+[dual] 普通后端就绪 / [dual] 提速档后端就绪
+EXCLUDE verify-nation-live.mjs （见 scripts/runtime-probes-exclude.txt 的理由）
+0 verify-nation-policy-ui.mjs (BACKEND_ORIGIN, port 8232)
+0 verify-nation-s2.mjs        (BACKEND_ORIGIN, port 8233)
+0 verify-nation.mjs           (BACKEND_ORIGIN, port 8234)
+0 verify-panel-reachability.mjs (PAGING_BACKEND, port 8237)
+--- 汇总：需看的份数 = 0（其中 未跑成 NO-RUN = 0） 超时 = 0 前提不足 PREREQ = 0 SKIP = 7
+BATCH_EXIT=0
+```
+
+⇒ ★ **与手工 `tmp/run-batch-all2.sh` 那轮完全等价** ⇒ 官方入口可替代临时脚本。
+
+⇒ ★★ **按 17:10x 的教训补了独立证据**（不只看汇总行）：
+```
+/d/tmp/runtime-probes-exitcodes.txt 里实际记账份数 = 50，非 0 的份 = 0
+```
+⇒ **三方对得上**：59（总量）− 2（排除：`verify-label-fit-runtime` / `verify-nation-live`）
+− 7（SKIP 凭据）= **50** ⇒ **确实跑了 50 份、全部 0**。
+⇒ ⇒ **不是"跑了 0 份所以汇总 0"**（这正是 17:10x 我差点误判的那个坑）。
+
+⇒ ⚠️ **如实标注**：
+⚠️ 本轮用的是 **2026-10-04 的 `game-web.jar` 旧产物** —— 本会话**没动产品码**
+（只改了 `scripts/`、`tools/` 探针与文档）⇒ 用旧产物**安全**，但**不代表"改产品码后重跑产物"这条链路被验过**。
+⚠️ `verify-nation-live` 仍是 **EXCLUDE**（在 `scripts/runtime-probes-exclude.txt` 里，
+理由已在 17:9x 更新为"需 `BOOST_BACKEND`"）⇒ **它仍然不进批跑**，
+即便本入口**已经**提供了 `BOOST_BACKEND`。
+⇒ ⚠️ **未做（需口径）**：既然官方入口已经默认带 `BOOST_BACKEND`，
+那份排除名单里的 `verify-nation-live` **要不要移出**（让批跑真正收它、并断言它是绿的）。
+⚠️ 这一条**改的是"哪些量具进批跑"的契约** ⇒ 属「改动会让既有验证失效」⇒ 下一格弹窗。
