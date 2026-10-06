@@ -93,6 +93,13 @@ class PlayerCityAttackEndpointTest {
     @Autowired private com.ironoath.core.gacha.GachaLogStore gachaLogs;
     @Autowired private com.ironoath.core.limit.DailyCounter dailyCounter;
     @Autowired private BattleReportStore battleReports;
+    @Autowired private com.ironoath.web.nation.WarStore wars;
+    @Autowired private com.ironoath.web.nation.WarRulesAssembler warRules;
+    @Autowired private com.ironoath.web.nation.NationStore nations;
+    @Autowired private com.ironoath.web.nation.NationRulesAssembler nationRules;
+    @Autowired private com.ironoath.web.social.SocialStore social;
+    @Autowired private com.ironoath.web.social.SocialRulesAssembler socialRules;
+    @Autowired private com.ironoath.common.time.TimeService timeService;
 
     @BeforeEach
     void resetStores() {
@@ -108,10 +115,42 @@ class PlayerCityAttackEndpointTest {
         ((InMemoryGachaLogStore) gachaLogs).clear();
         ((com.ironoath.web.limit.InMemoryDailyCounter) dailyCounter).clear();
         battleReports.clear();
+        wars.clear();
     }
 
     // ---------- 完整结算 ----------
 
+    @Test
+    @DisplayName("国战疲劳接上了：参战方发起一次行军 +1、一仗的伤兵按系数入账，而没参战的人一分不记")
+    void warFatigueAccumulatesForParticipantsOnly() {
+        Fixture f = readyPair(1_800L, 1_000L);
+        enrollAttackerIntoWar(f.attacker(), timeService.serverNow());
+
+        // ① 发起行军那一下：+1 份行军疲劳（挂在 createMarch 上，个人出征与集结共用）
+        String marchId = sendAttack(f.attacker(), f.defenderCoord(), Map.of("unit_infantry_t1", 1_800L));
+        assertThat(wars.findLatest().orElseThrow().fatigueOf(f.attacker()))
+                .as("参战方发起一次行军 = 一份行军疲劳（WAR_FATIGUE_PER_MARCH）")
+                .isEqualTo(warRules.rules().fatiguePerMarch());
+
+        // ② 真打起来：伤兵按系数入账（与击杀只算阵亡刻意对称：阵亡进击杀账、伤兵进疲劳账）
+        // ② 真打起来：战斗漏斗那一句也要跑一遍（它按**伤兵**入账）。
+        //    ⚠️ 本夹具里攻方的伤兵恒为 0：新号没有医院 ⇒ `BattleSimulator` 的医院溢出规则
+        //    把全部损失算成阵亡（`casualties()`：overflow = wounded - hospitalCapacity，
+        //    hospitalCapacity=0 时 killed = 全部）。所以这一条的等式**退化成只有行军那一项** ——
+        //    伤兵那一项的可失败证据在 `WarStoreEquivalenceTest#fatigueAccumulatesOnBothStores`
+        //    （那边直接按 0 行军 + N 伤兵调存储口，断言值等于 N × 系数）。
+        arriveAndProcess(marchId);
+        assertThat(totalWounded(f.attacker()))
+                .as("夹具前提：新号没有医院 ⇒ 这一仗的损失全是阵亡、伤兵为 0（见上面那段说明）")
+                .isZero();
+        assertThat(wars.findLatest().orElseThrow().fatigueOf(f.attacker()))
+                .as("伤兵为 0 时战斗漏斗那一句是一笔 0 点的加账：值不该被它改变")
+                .isEqualTo(warRules.rules().fatiguePerMarch());
+        // ③ 守方没有国籍（没登记进参战方）：一分都不记 —— 这道闸只挡参战的人
+        assertThat(wars.findLatest().orElseThrow().fatigueOf(f.defender()))
+                .as("不参战的人不吃国战疲劳：把别人的仗变成全服日常的负担不是设计者写过的东西")
+                .isZero();
+    }
     @Test
     @DisplayName("压倒性进攻：守方掉兵掉资源、攻方拿到掠夺、攻方带着残兵返程")
     void overwhelmingAttackSettlesBothSides() {
@@ -409,6 +448,39 @@ class PlayerCityAttackEndpointTest {
 
     private long totalTroops(String playerId) {
         return armies.findByPlayerId(playerId).map(ArmyState::totalTroops).orElse(0L);
+    }
+
+    /** 这个号当前的伤兵总数（疲劳按伤兵算，而伤兵住在这份存档里）。 */
+    private long totalWounded(String playerId) {
+        return armies.findByPlayerId(playerId).map(army -> {
+            long sum = 0L;
+            for (long count : army.wounded().values()) {
+                sum += count;
+            }
+            return sum;
+        }).orElse(0L);
+    }
+
+    /**
+     * 把攻方塞进「一个联盟里的一国」，并把这一国登记成一场仗的参战方（疲劳只对参战方生效）。
+     *
+     * <p>刻意不去走宣战那条路：这一格验的是**疲劳接在战斗漏斗与行军漏斗上**，而不是宣战
+     * （那条路在 WarEndpointTest 里另有判据）。用存储直写把前置摆好，红的时候才能确定红在疲劳这一句上。
+     */
+    private void enrollAttackerIntoWar(String attackerId, long now) {
+        String allianceId = "AL-fatigue-" + attackerId;
+        com.ironoath.core.social.Alliance alliance = com.ironoath.core.social.Alliance.create(
+                allianceId, "疲劳盟" + attackerId, "FAT", attackerId, 1_000L, socialRules.allianceRules());
+        social.saveAlliance(alliance, 0L);
+        com.ironoath.core.nation.Nation nation = com.ironoath.core.nation.Nation.found(
+                "N-fatigue-" + attackerId, "疲劳国", attackerId, allianceId, 10L, 20L, now,
+                nationRules.rules());
+        nations.insertIfAbsent(nation);
+        com.ironoath.core.nation.WarScoreBoard board =
+                new com.ironoath.core.nation.WarScoreBoard(warRules.rules(), now);
+        board.registerNation(nation.id());
+        board.registerNation("N-bystander");
+        assertThat(wars.insertIfNoneActive(board)).as("夹具前提：这一场仗摆起来了").isTrue();
     }
 
     private long tyrannyOf(String playerId) {

@@ -99,6 +99,37 @@ public final class MongoWarStore implements WarStore {
     }
 
     /**
+     * 记一笔疲劳：读、判、加、写回全在 {@code activeLock} 里（与 recordKills／insertIfNoneActive 共用）。
+     *
+     * <p><b>两项增量都为 0 时直接返回</b>：连一次库读都不做。
+     */
+    @Override
+    public WarStore.FatigueResult addFatigue(String fatigueNationId, String playerId,
+                                             long marches, long wounded) {
+        if (marches <= 0L && wounded <= 0L) {
+            return WarStore.FatigueResult.SKIPPED;
+        }
+        synchronized (activeLock) {
+            WarDocument doc = latestDocument();
+            if (doc == null || doc.state() == null
+                    || doc.state().phase() == WarScoreBoard.Phase.SETTLED) {
+                return WarStore.FatigueResult.NO_ACTIVE_WAR;
+            }
+            WarScoreBoard board = WarScoreBoard.fromSnapshot(doc.state(), rules.rules());
+            WarStore.FatigueResult result =
+                    WarStore.applyFatigue(board, fatigueNationId, playerId, marches, wounded);
+            if (result == WarStore.FatigueResult.APPLIED) {
+                Update update = new Update()
+                        .set("startedAt", board.startedAt())
+                        .set("state", board.toSnapshot());
+                mongo.updateFirst(Query.query(Criteria.where("_id").is(doc.warId())),
+                        update, WarDocument.class, WarDocument.COLLECTION);
+            }
+            return result;
+        }
+    }
+
+    /**
      * 领一次全服奖励：读、判、标名单、写回全在 {@code activeLock} 这一把锁里（与 recordKills／insertIfNoneActive 共用）。
      *
      * <p><b>不排除 SETTLED 的档</b>（与 recordKills 刻意相反）：目标达成与领取多半发生在仗打完之后 ——

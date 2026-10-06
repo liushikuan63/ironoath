@@ -133,6 +133,9 @@ public class MarchAppService {
     private final com.ironoath.web.nation.NationTechBonuses nationTechBonuses;
     /** 国策加成（乘区 G 的非战斗那半：产出与行军速度）。与国家科技同类相加，见消费点那一行。 */
     private final com.ironoath.web.nation.NationPolicyBonuses policyBonuses;
+    /** 国战疲劳与国籍（B13 §7）：每次发起行军给参战方记一笔 —— 挂在 {@code createMarch} 上。 */
+    private final com.ironoath.web.nation.WarStore wars;
+    private final com.ironoath.web.nation.NationMembership membership;
 
     public MarchAppService(ConfigRegistry configs, MarchRepository marches, MarchDueQueue dueQueue,
                            WorldRepository world, ArmyRepository armies,
@@ -151,7 +154,9 @@ public class MarchAppService {
                            com.ironoath.web.bot.BotAttackLimiter botAttackLimiter,
                            com.ironoath.web.tech.TechEffects techEffects,
                           com.ironoath.web.nation.NationTechBonuses nationTechBonuses,
-                              com.ironoath.web.nation.NationPolicyBonuses policyBonuses) {
+                              com.ironoath.web.nation.NationPolicyBonuses policyBonuses,
+                          com.ironoath.web.nation.WarStore wars,
+                          com.ironoath.web.nation.NationMembership membership) {
         this.configs = configs;
         this.marches = marches;
         this.dueQueue = dueQueue;
@@ -177,6 +182,8 @@ public class MarchAppService {
         this.techEffects = techEffects;
         this.nationTechBonuses = nationTechBonuses;
         this.policyBonuses = policyBonuses;
+        this.wars = wars;
+        this.membership = membership;
     }
 
     // ---------- 出征 ----------
@@ -341,6 +348,14 @@ public class MarchAppService {
         try {
             if (!marches.insertIfAbsent(march)) {
                 throw new BizException(ErrorCode.SYSTEM_ERROR, "行军 id 冲突: " + marchId);
+            }
+            // 国战疲劳（B13 §7）：参战方每发起一次行军累积一份 —— 挂在<b>这一个</b>漏斗上
+            // （个人出征、采集与集结都走 createMarch，写在调用方各写一遍就会漏掉另外几条）。
+            // 非参战方不吃这道闸（WarStore.FatigueResult.NOT_PARTICIPANT），理由在端口注释里。
+            var fatigueResult = wars.addFatigue(membership.nationIdOf(playerId), playerId, 1L, 0L);
+            if (LOG.isDebugEnabled()
+                    && fatigueResult != com.ironoath.web.nation.WarStore.FatigueResult.SKIPPED) {
+                LOG.debug("国战疲劳累积（行军）playerId={} 结果={} 行军=1", playerId, fatigueResult);
             }
             dueQueue.schedule(marchId, march.arriveAt());
             commit.run();

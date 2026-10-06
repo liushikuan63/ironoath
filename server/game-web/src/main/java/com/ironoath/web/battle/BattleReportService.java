@@ -131,6 +131,17 @@ public class BattleReportService {
         if (LOG.isDebugEnabled() && warResult != com.ironoath.web.nation.WarStore.KillResult.SKIPPED) {
             LOG.debug("国战击杀归属 ownerId={} 结果={} 击杀数={}", ownerId, warResult, kills);
         }
+        // 国战疲劳（B13 §7）也挂在同一个漏斗上：与击杀同一条理由 —— 四条战斗路径全经过这里，
+        // 写在任何一条 service 里都会漏掉另外三条。**只算伤兵**（治得回来，但那一轮出了力），
+        // 与"击杀只算阵亡"刻意对称：阵亡进击杀账、伤兵进疲劳账，两笔账各记各的。
+        // 按主人视角取自己这一方的伤兵（战报攻守双方各一份，与上面那条三目同一条口径）。
+        long wounded = ownerId.equals(attackerId) ? result.defWounded() : result.atkWounded();
+        com.ironoath.web.nation.WarStore.FatigueResult fatigueResult =
+                wars.addFatigue(membership.nationIdOf(ownerId), ownerId, 0L, wounded);
+        if (LOG.isDebugEnabled()
+                && fatigueResult != com.ironoath.web.nation.WarStore.FatigueResult.SKIPPED) {
+            LOG.debug("国战疲劳累积 ownerId={} 结果={} 伤兵={}", ownerId, fatigueResult, wounded);
+        }
         LOG.info("战报已落库 reportId={} ownerId={} 类型={} 对手={} 结果={} 回合={} seed={} 过期={}",
                 report.reportId(), ownerId, battleType, defenderId, result.winner(),
                 result.totalRounds(), result.seed(), report.expiresAt());

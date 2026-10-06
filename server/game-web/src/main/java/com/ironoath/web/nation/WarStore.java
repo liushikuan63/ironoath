@@ -280,6 +280,62 @@ public interface WarStore {
     }
 
     /**
+     * 一次疲劳累积的结果（与 {@link KillResult} 同一条理由：四种情况别压成一个 boolean）。
+     */
+    enum FatigueResult {
+        /** 参战方的人：这一笔疲劳加上了。 */
+        APPLIED,
+        /**
+         * 仗在打，但这个人所属的国家没参战：**不吃国战的疲劳闸门**。
+         *
+         * <p>那道闸的设计意图是「逼迫参战方调度轮班」（B13 §7），把不参战的人也闸住
+         * 等于让一场别人的仗影响全服的日常打野 —— 那不是设计者写过的东西。
+         */
+        NOT_PARTICIPANT,
+        /** 没有任何一场未结束的仗：什么都没记。 */
+        NO_ACTIVE_WAR,
+        /** 两项增量都是 0：一次写入都不该发生（未破墙、零伤兵都可能是 0）。 */
+        SKIPPED
+    }
+
+    /**
+     * 原子地把一笔疲劳记进当前那一场仗（与 {@link #recordKills} 同一把锁、同一条纪律）。
+     *
+     * <p><b>为什么也在存储层</b>：理由与 {@link #recordKills} 一个字都不用改 ——
+     * 这是本档最热的第二条写路径（<b>每次行军</b>都会来一次），而「读板子 → 加 → 落盘」
+     * 在服务层同样是没有保护的读-改-写。
+     *
+     * <p><b>落在哪个口径</b>：只有参战方才吃这道闸（见 {@link FatigueResult#NOT_PARTICIPANT}），
+     * 而「一仗打完之后疲劳怎么办」由内核的 clamp 与持久化决定（结算不重置疲劳：
+     * 它记的是「这一场里你出过多少力」，与积分同寿）。
+     *
+     * @param fatigueNationId 行为者所属国家 id；查不到（没国籍或联盟退国）传 null，按非参战方处理
+     * @param playerId        行为者（疲劳按人记）
+     * @param marches         这一次要加的行军次数（发起一次行军 = 1）
+     * @param wounded         这一次要加的伤兵数
+     * @return 四种结果之一；调用方只拿它打一行日志 —— 与 {@link #recordKills} 同一条：
+     *         国战记账是旁路，成不成都不得改变那一枪本身的结果
+     */
+    FatigueResult addFatigue(String fatigueNationId, String playerId, long marches, long wounded);
+
+    /**
+     * 疲劳归属的<b>唯一一份</b>实现（两套存储共用，与 {@link #applyKills} 同一条理由）。
+     *
+     * <p><b>它只改传入的那块板子，不落盘</b> —— 写回是调用方（存储层临界区内）的责任。
+     */
+    static FatigueResult applyFatigue(WarScoreBoard board, String fatigueNationId, String playerId,
+                                     long marches, long wounded) {
+        if (marches <= 0L && wounded <= 0L) {
+            return FatigueResult.SKIPPED;
+        }
+        if (fatigueNationId == null || !board.registeredNations().contains(fatigueNationId)) {
+            return FatigueResult.NOT_PARTICIPANT;
+        }
+        board.addFatigue(playerId, marches, wounded);
+        return FatigueResult.APPLIED;
+    }
+
+    /**
      * 领取全服目标奖励的结果（四个值各对应一种"能不能领"的判断，与 {@link KillResult} 同一条理由：
      * 把四种情况压成一个 boolean，日志与排查就只能靠猜）。
      */

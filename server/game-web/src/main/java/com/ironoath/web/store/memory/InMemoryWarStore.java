@@ -86,6 +86,32 @@ public final class InMemoryWarStore implements WarStore {
     }
 
     /**
+     * 记一笔疲劳（与 {@link #recordKills} 同一把锁、同一条纪律）。
+     *
+     * <p><b>两项增量都为 0 时直接返回</b>：连一次读都不做（未破墙、零伤兵都可能是 0，
+     * 而"We 没发生"不该付一次重建板子的代价）。
+     */
+    @Override
+    public synchronized WarStore.FatigueResult addFatigue(String fatigueNationId, String playerId,
+                                                         long marches, long wounded) {
+        if (marches <= 0L && wounded <= 0L) {
+            return WarStore.FatigueResult.SKIPPED;
+        }
+        WarScoreBoard.Snapshot stored = latestSnapshot().orElse(null);
+        if (stored == null || stored.phase() == WarScoreBoard.Phase.SETTLED) {
+            return WarStore.FatigueResult.NO_ACTIVE_WAR;
+        }
+        WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        WarStore.FatigueResult result =
+                WarStore.applyFatigue(board, fatigueNationId, playerId, marches, wounded);
+        if (result == WarStore.FatigueResult.APPLIED) {
+            // 改的是重建出来的那份，必须整份写回；漏这一行的症状是"疲劳永远归零、闸门形同不存在"
+            byId.put(WarStore.documentIdOf(board), board.toSnapshot());
+        }
+        return result;
+    }
+
+    /**
      * 领一次全服奖励：判定与标记在<b>本对象的同一把监视器</b>里做完（与 recordKills 共用一把锁）——
      * 拆成"先查有没有领过、再记"两步的话，两个人同时点领取会各自读到名单里没有自己、各自写回，
      * 后写的那份把前一份盖掉：那正是"每人只领一次"在并发下失效的形状。

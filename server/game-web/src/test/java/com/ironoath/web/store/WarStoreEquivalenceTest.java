@@ -788,6 +788,50 @@ class WarStoreEquivalenceTest {
      * <p>积分与击杀刻意各不相等、疲劳刻意一个到顶一个没到顶、领取名单刻意两个人 ——
      * 三项对称的值会让「读串了行」这类错误看不见。
      */
+    @Test
+    @DisplayName("疲劳累积口：两套存储上同一条 —— 按系数入账、夹在配置上限、非参战方与无仗都不记、0/0 直接跳过")
+    void fatigueAccumulatesOnBothStores() {
+        long perMarch = rules.rules().fatiguePerMarch();
+        long perWounded = rules.rules().fatiguePerWounded();
+        long max = rules.rules().fatigueMax();
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(richBoard(T0));
+
+            // ① 按系数入账：0 行军 + 5 伤兵 ⇒ 5 × perWounded（伤兵那一项在这里被证明）
+            //    取 5 而不是更大的数：夹具的 P1 已经有 80 点疲劳（见 richBoard），
+            //    而夹顶的证明在 ②，这里要的是**加法本身**
+            assertThat(store.addFatigue("n1", "P1", 0L, 5L))
+                    .as("%s 参战方的人：记上了", label).isEqualTo(WarStore.FatigueResult.APPLIED);
+            assertThat(store.findLatest().orElseThrow().fatigueOf("P1"))
+                    .as("%s 伤兵按系数入账（夹具的 P1 起点 80 = 15×5 + 5×1，见 richBoard）", label)
+                    .isEqualTo(80L + 5L * perWounded);
+
+            // ② 行军那一项 + 夹顶：再加一大笔，值必须夹在疲劳上限
+            assertThat(store.addFatigue("n1", "P1", 1_000L, 0L))
+                    .as("%s 行军也能记", label).isEqualTo(WarStore.FatigueResult.APPLIED);
+            assertThat(store.findLatest().orElseThrow().fatigueOf("P1"))
+                    .as("%s 超过上限就夹住（内核 clamp），不是无限涨", label).isEqualTo(max);
+            assertThat(perMarch).as("夹具前提：这一笔确实足以顶到上限").isPositive();
+
+            // ③ 非参战方：不吃国战疲劳（那道闸只挡参战的人）
+            assertThat(store.addFatigue("n_outside", "P9", 1L, 0L))
+                    .as("%s 没参战的国家：不作数", label)
+                    .isEqualTo(WarStore.FatigueResult.NOT_PARTICIPANT);
+            assertThat(store.findLatest().orElseThrow().fatigueOf("P9"))
+                    .as("%s 连一笔都不该落下", label).isZero();
+
+            // ④ 两项都是 0：连读都不做，直接跳过（不付一次重建板子的代价）
+            assertThat(store.addFatigue("n1", "P1", 0L, 0L))
+                    .as("%s 0/0 ⇒ SKIPPED", label).isEqualTo(WarStore.FatigueResult.SKIPPED);
+
+            // ⑤ 仗打完之后：没有活着的仗就不记（疲劳与积分同寿，跟这一场走）
+            long duration = rules.rules().durationMillis();
+            store.settleIfExpired(T0 + duration).orElseThrow();
+            assertThat(store.addFatigue("n1", "P1", 5L, 0L))
+                    .as("%s 结算之后不再累积", label).isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
+        }
+    }
     private static WarScoreBoard richBoard(long startedAt) {
         // 第三个参数是发起国：3b-2 之后它是快照的一部分（发发起加成只认这一项）。
         // 夹具不带它上去，等于「新字段在两套实现上都没被往返过」
