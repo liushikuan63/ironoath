@@ -44,7 +44,18 @@ public final class SeasonSettlement {
         /** 联盟榜 */
         ALLIANCE,
         /** 国家榜 */
-        NATION
+        NATION,
+        /**
+         * 国战赛季分榜（V18，B13 承载 3b）。
+         *
+         * <p>与前四张的差别在<b>分数什么时候存在</b>：POWER 随时重算、KILL 每次战斗即时累加，
+         * 而这一张的分只在<b>一场国战结算那一刻</b>产生一次，所以它必须与战事档一起可复盘
+         * （{@code WarScoreBoard.playerKills} 就是那份账，V18 立卡时先落的就是它）。
+         *
+         * <p><b>不参与结算依据</b>：{@code Rules.snapshotBoard} 取的是战力榜（B14 §四 的奖励档位口径），
+         * 加这一枚不会改变任何一笔已发放的赛季币。
+         */
+        WAR
     }
 
     /** 榜上的一条。 */

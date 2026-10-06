@@ -136,7 +136,21 @@ public interface WarStore {
      *            这样「跨过那一刻」这个边界能被测试精确摆位，不必 sleep
      * @return 最新那一场（可能就是刚刚被这一句结算完的那份）；一份都没有时为 empty
      */
-    Optional<WarScoreBoard> settleIfExpired(long now);
+    Optional<Settlement> settleIfExpired(long now);
+
+    /**
+     * 一次惰性推进的结果。
+     *
+     * <p><b>{@code settledNow} 说的是"这一句把仗结掉了"，不是"这一场现在是结算态"</b> ——
+     * 前者只会出现一次，后者每次读都为真。发奖那一跳必须挂在前者上：
+     * 挂在后者上等于每一读都重新发一遍赛季分，而 {@code SeasonBoardStore.accumulate} 是<b>累加</b>语义，
+     * 它会照单全收。这也是 {@code #753} 那条"结算返回的 `Result` 至今无消费者"里被接走的第一半。
+     *
+     * @param board      推进之后（或本来就好好的）那一场
+     * @param settledNow 这一次读是否正好是把它结算掉的那一次
+     */
+    record Settlement(WarScoreBoard board, boolean settledNow) {
+    }
 
     /**
      * 这一对两国之间<b>最近的那一场</b>，<b>不论打完没打完</b> —— 宣战冷却的唯一数据源。

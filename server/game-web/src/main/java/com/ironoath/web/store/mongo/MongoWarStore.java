@@ -139,7 +139,7 @@ public final class MongoWarStore implements WarStore {
      * 而等价测试里那条专门盯这件事的断言会红。
      */
     @Override
-    public Optional<WarScoreBoard> settleIfExpired(long now) {
+    public Optional<WarStore.Settlement> settleIfExpired(long now) {
         synchronized (activeLock) {
             WarDocument doc = latestDocument();
             if (doc == null || doc.state() == null) {
@@ -147,7 +147,7 @@ public final class MongoWarStore implements WarStore {
             }
             WarScoreBoard board = WarScoreBoard.fromSnapshot(doc.state(), rules.rules());
             if (!WarStore.dueToSettle(board, now)) {
-                return Optional.of(board);
+                return Optional.of(new WarStore.Settlement(board, false));
             }
             board.settle(now);
             Update update = new Update()
@@ -155,7 +155,7 @@ public final class MongoWarStore implements WarStore {
                     .set("state", board.toSnapshot());
             mongo.updateFirst(Query.query(Criteria.where("_id").is(doc.warId())),
                     update, WarDocument.class, WarDocument.COLLECTION);
-            return Optional.of(board);
+            return Optional.of(new WarStore.Settlement(board, true));
         }
     }
 

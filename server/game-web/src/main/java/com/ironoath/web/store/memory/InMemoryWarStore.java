@@ -108,18 +108,19 @@ public final class InMemoryWarStore implements WarStore {
      * 而 dev 下单线程用例全绿，看不见这个窗口。
      */
     @Override
-    public synchronized Optional<WarScoreBoard> settleIfExpired(long now) {
+    public synchronized Optional<WarStore.Settlement> settleIfExpired(long now) {
         WarScoreBoard.Snapshot stored = latestSnapshot().orElse(null);
         if (stored == null) {
             return Optional.empty();
         }
         WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
-        if (WarStore.dueToSettle(board, now)) {
+        boolean settledNow = WarStore.dueToSettle(board, now);
+        if (settledNow) {
             board.settle(now);
             // 主键按 startedAt 推导，settle 不动它 ⇒ 写回必然落在同一档上（历史不会被"挪个位置"）
             byId.put(WarStore.documentIdOf(board), board.toSnapshot());
         }
-        return Optional.of(board);
+        return Optional.of(new WarStore.Settlement(board, settledNow));
     }
 
     /**

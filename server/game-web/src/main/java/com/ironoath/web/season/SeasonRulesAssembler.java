@@ -245,6 +245,53 @@ public class SeasonRulesAssembler {
         return out;
     }
 
+    /**
+     * 国战赛季分（V18，B13 承载 3b）：把 global 的 {@code WAR_SEASON_*} 那两行装配成一份规则。
+     *
+     * <p><b>为什么放在赛季装配器而不是 {@code WarRulesAssembler}</b>：这些分写的是
+     * {@code SeasonBoardStore} 那张赛季榜，而读它的人（{@code RankBoardService#reportWarSeasonPoints}）
+     * 手里已经握着本类；放过去会把「国战积分板的规则」与「国战发的赛季分」混成一份 Rules ——
+     * 前者的语义是<b>不进战事存档、每次现取</b>（见 {@code WarRulesAssembler} 的类注释），
+     * 后者只在结算那一刻用一次，两者的生命周期不是一件事。
+     *
+     * <p><b>0 是合法值</b>：门槛给 0 = 不设门槛，每杀给 0 = 这一场不发分（运营旋钮的两种"关掉"），
+     * 所以校验只拦负数。
+     */
+    public WarSeasonPoints warSeasonPoints() {
+        return new WarSeasonPoints(
+                configs.longParam("WAR_SEASON_POINT_PER_KILL"),
+                configs.longParam("WAR_SEASON_POINT_MIN_KILLS"));
+    }
+
+    /**
+     * @param pointPerKill 每消灭一个单位给的赛季分。来源 global.WAR_SEASON_POINT_PER_KILL
+     * @param minKills     挂机门槛。来源 global.WAR_SEASON_POINT_MIN_KILLS
+     */
+    public record WarSeasonPoints(long pointPerKill, long minKills) {
+
+        public WarSeasonPoints {
+            if (pointPerKill < 0) {
+                throw new IllegalArgumentException("WAR_SEASON_POINT_PER_KILL 不得为负，实际=" + pointPerKill
+                        + "。负分意味着「打国战反而扣赛季分」，那是另一条要产品口径的设计，"
+                        + "不是这个旋钮的一个档位");
+            }
+            if (minKills < 0) {
+                throw new IllegalArgumentException("WAR_SEASON_POINT_MIN_KILLS 不得为负，实际=" + minKills);
+            }
+        }
+
+        /**
+         * 这名玩家这一场的分。<b>门槛不过返回 0 而不是负数或异常</b> —— 调用方按「0 就不写那一行」处理，
+         * 于是"不建行"和"给 0 分"这两种形状里，实现只保留前者（见那行参数的 {@code why}）。
+         */
+        public long pointsOf(long kills) {
+            if (kills <= 0L || kills < minKills || pointPerKill <= 0L) {
+                return 0L;
+            }
+            return kills * pointPerKill;
+        }
+    }
+
     private static SeasonSettlement.Board boardOf(String raw) {
         try {
             return SeasonSettlement.Board.valueOf(raw == null ? "" : raw.trim());

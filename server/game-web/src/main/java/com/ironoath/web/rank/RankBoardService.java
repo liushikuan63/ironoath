@@ -15,6 +15,7 @@ import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.bot.BotRegistry;
 import com.ironoath.core.nation.Nation;
+import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.season.SeasonSettlement;
@@ -48,6 +49,15 @@ public class RankBoardService {
 
     /** Bot 不进榜前 3 的那个"前 3"：与赛季榜奖励坑位同一个宽度（B13 的口径，不是这个类自己定的）。 */
     private static final int REWARDED_TOP_N = 3;
+
+    /**
+     * 榜类型提示<b>从枚举现推</b>，不写死名单：V18 加第五张榜（{@code WAR}）那一天，
+     * 原先硬编码那句「可选 POWER / KILL / ALLIANCE / NATION」就变成一句<b>教玩家怎么写错</b>的假话 ——
+     * 而这条错误路径恰好只验了"拼错会被拒"，验不到"名单与枚举不一致"。
+     */
+    private static final String TYPE_OPTIONS = java.util.Arrays.stream(RankType.values())
+            .map(Enum::name)
+            .collect(java.util.stream.Collectors.joining(" / "));
 
     private final SeasonBoardStore boards;
     private final SocialStore social;
@@ -90,6 +100,51 @@ public class RankBoardService {
         }
         boards.accumulate(seasonId, SeasonSettlement.Board.KILL,
                 new SeasonSettlement.Entry(playerId, name == null ? playerId : name, kills), kills);
+    }
+
+    /**
+     * 国战赛季分上报（V18，B13 承载 3b）：把一场国战<b>被结算的那一次</b>按人换成赛季分，
+     * 进 {@link SeasonSettlement.Board#WAR}。
+     *
+     * <p><b>只有一个调用点，而且它必须保证"每场仗只调一次"</b>（{@code WarStore.Settlement#settledNow}）。
+     * 本方法走的是 {@code accumulate}（累加语义），调两次就是发两倍分。为什么不在这里再设一道幂等旗标：
+     * 那要把旗标写进战事存档，而存档的"少带一项就复活出假状态"这条刚在 2c 被钉过；
+     * 现在「结算转换只发生一次」是存储层临界区保证的、并且有用例钉住的更强事实，
+     * 就不该为它再造第二份真相（同 B23 §五「不造第二本账」那条裁决的形状）。
+     *
+     * <p><b>门槛不过的人根本不建行</b>，而不是建行给 0 分：0 分的行会占住一个位次并出现在分页里，
+     * 于是"挂着没打的人"和"打了没消灭到人的人"在榜上成了同一种存在，而这张榜的意图
+     * 恰恰是把"要不要真的参战"做成一个选择（V18：鼓励群体宣战）。
+     *
+     * <p><b>赛季没开就直接返回</b>（与 {@link #reportKills} 同一条）：没有赛季就没有"赛季内国战分"，
+     * 硬记会记到一份谁也不认的榜上。
+     *
+     * <p><b>每人一次点查取昵称</b>：{@code PlayerRepository} 没有批量口，而这条路每场仗只跑一次 ——
+     * 它是冷路径，不是 {@code list} 那种每次翻页都跑的热路径，所以
+     * {@code RankOrgBoardQueryCountTest} 那条按往返计数的判据不会被这里加的一行削弱（它测的是读路径）。
+     *
+     * @return 实际进账的人数（0 = 没发：赛季没开、没人打够门槛、或全是 Bot）
+     */
+    public int reportWarSeasonPoints(WarScoreBoard board) {
+        String seasonId = seasonIdOrNull();
+        if (seasonId == null) {
+            return 0;
+        }
+        SeasonRulesAssembler.WarSeasonPoints rules = assembler.warSeasonPoints();
+        int applied = 0;
+        for (Map.Entry<String, Long> row : board.playerKillLedger().entrySet()) {
+            long score = rules.pointsOf(row.getValue());
+            if (score <= 0L || bots.humanOnly(row.getKey(), "国战赛季分") == null) {
+                continue;
+            }
+            String name = players.findByPlayerId(row.getKey())
+                    .map(PlayerSave::nickName)
+                    .orElse(null);
+            boards.accumulate(seasonId, SeasonSettlement.Board.WAR,
+                    new SeasonSettlement.Entry(row.getKey(), name, score), score);
+            applied++;
+        }
+        return applied;
     }
 
     /**
@@ -256,7 +311,7 @@ public class RankBoardService {
             return RankType.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw new BizException(ErrorCode.PARAM_INVALID,
-                    "不认识的榜类型：" + raw + "（可选 POWER / KILL / ALLIANCE / NATION）");
+                    "不认识的榜类型：" + raw + "（可选 " + TYPE_OPTIONS + "）");
         }
     }
 

@@ -89,6 +89,35 @@ class SeasonBoardStoreEquivalenceTest {
         }
     }
 
+    /**
+     * 第五张榜（{@link Board#WAR}，V18 / B13 承载 3b）。<b>这条不是把上面那条照着再写一遍</b>：
+     * 它验的是「加一枚枚举值」这件事本身 —— 两套实现都在<b>构造期</b>按 {@code Board.values()} 建槽位
+     * （内存版建 map、Mongo 版建集合名与索引），少接一处不会让编译失败，
+     * 症状是 WAR 榜在某一侧静默读不到，而国战赛季分照发不误（发的人看不见自己发去了哪）。
+     */
+    @Test
+    @DisplayName("WAR 榜（V18 第五张）两套实现都能累加与回读，且排序同口径")
+    void warBoardBehavesLikeTheOthersOnBothStores() {
+        Assumptions.assumeTrue(db != null,
+                "本机连不上 MongoDB（" + TestMongo.uri() + "）：这条等价性今天没被验证，别当成通过");
+
+        for (SeasonBoardStore store : List.of(newMemoryStore(), newMongoStore())) {
+            String who = store.getClass().getSimpleName();
+            store.accumulate(SEASON, Board.WAR, entry("P-9", "铁誓王", 50), 50);
+            store.accumulate(SEASON, Board.WAR, entry("P-8", "赤原王", 20), 20);
+            store.accumulate(SEASON, Board.WAR, entry("P-9", "铁誓王", 5), 5);
+
+            List<SeasonSettlement.Entry> rows = store.board(SEASON, Board.WAR);
+            assertThat(rows).as(who + " WAR 榜两个人各一行").hasSize(2);
+            assertThat(rows.get(0).id()).as(who + " 55 > 20，降序").isEqualTo("P-9");
+            assertThat(rows.get(0).score()).as(who + " 两次累加合成 55").isEqualTo(55L);
+            assertThat(store.rankOf(SEASON, Board.WAR, "P-8"))
+                    .as(who + " 榜侧名次读得到").isEqualTo(2);
+            assertThat(store.rankOf(SEASON, Board.KILL, "P-9"))
+                    .as(who + " 各张榜互不串：WAR 榜的人不该出现在击杀榜上").isZero();
+        }
+    }
+
     @Test
     @DisplayName("两个实现：上报同一份榜得到同一个顺序、同一个名次（同分按 id 升序）")
     void bothImplementationsAgreeOnOrderAndRank() {

@@ -294,7 +294,11 @@ class WarStoreEquivalenceTest {
             String beforeSettle = describe(richBoard(T0));
 
             // 第一档：差一秒没到期 —— 一分都不许动
-            WarScoreBoard notYet = store.settleIfExpired(T0 + duration - 1_000L).orElseThrow();
+            WarStore.Settlement notYetS = store.settleIfExpired(T0 + duration - 1_000L).orElseThrow();
+            WarScoreBoard notYet = notYetS.board();
+            assertThat(notYetS.settledNow())
+                    .as("%s 未到期不能报 settledNow=true：发奖就挂在这个旗标上，报早一次就发早一次", label)
+                    .isFalse();
             assertThat(notYet.phase())
                     .as("%s 未到期就结算，等于把最后不足一分钟的占领分提前定格", label)
                     .isEqualTo(WarScoreBoard.Phase.SIEGE);
@@ -303,7 +307,11 @@ class WarStoreEquivalenceTest {
                     .isEqualTo(beforeSettle);
 
             // 第二档：正好到点 —— 用 >= 而不是 >，否则面板会停在 remainingSec=0 而 phase=SIEGE
-            WarScoreBoard at = store.settleIfExpired(T0 + duration).orElseThrow();
+            WarStore.Settlement atS = store.settleIfExpired(T0 + duration).orElseThrow();
+            WarScoreBoard at = atS.board();
+            assertThat(atS.settledNow())
+                    .as("%s 到点那一次必须报 true —— 赛季分就发在这一次，漏报等于这一场永远没人进 WAR 榜", label)
+                    .isTrue();
             assertThat(at.phase())
                     .as("%s 到点这一刻必须当场定格", label)
                     .isEqualTo(WarScoreBoard.Phase.SETTLED);
@@ -317,7 +325,11 @@ class WarStoreEquivalenceTest {
                     .contains("n1=1730,60000,100");
 
             // 第三档：时间再走 4 小时再读一次 —— 不许再动，也不许敲内核那条「重复结算」的护栏
-            WarScoreBoard after = store.settleIfExpired(T0 + duration + 4L * 60L * MINUTE).orElseThrow();
+            WarStore.Settlement afterS = store.settleIfExpired(T0 + duration + 4L * 60L * MINUTE).orElseThrow();
+            WarScoreBoard after = afterS.board();
+            assertThat(afterS.settledNow())
+                    .as("%s 第二次读的 settledNow 必须为 false：旗标说的是「这一句结掉了它」，不是「它现在是结算态」", label)
+                    .isFalse();
             assertThat(describe(after))
                     .as("%s 第二次读必须与第一次一字不差。再结一次会撞内核 settle() 的护栏（抛到端点上就是 500），"
                             + "而绕过它去 catch 则会把占领分算两遍 —— 两个都不许发生", label)
@@ -349,7 +361,7 @@ class WarStoreEquivalenceTest {
         for (WarStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
             store.insertIfNoneActive(richBoard(T0));
-            assertThat(store.settleIfExpired(T0 + duration).orElseThrow().phase())
+            assertThat(store.settleIfExpired(T0 + duration).orElseThrow().board().phase())
                     .as("%s 前置：第一场确实被这一句结掉了", label)
                     .isEqualTo(WarScoreBoard.Phase.SETTLED);
 
@@ -363,7 +375,7 @@ class WarStoreEquivalenceTest {
                     .as("%s 读端点给的必须是新那一场，而不是刚结完的历史", label)
                     .isEqualTo(T0 + 2 * duration);
 
-            assertThat(store.settleIfExpired(T0 + 3 * duration).orElseThrow().phase())
+            assertThat(store.settleIfExpired(T0 + 3 * duration).orElseThrow().board().phase())
                     .as("%s 结算口不是只对第一场生效的一次性代码", label)
                     .isEqualTo(WarScoreBoard.Phase.SETTLED);
         }
@@ -431,7 +443,7 @@ class WarStoreEquivalenceTest {
                         go.await();
                         return store.recordKills("n1", "P1", 10L);
                     });
-                    Future<Optional<WarScoreBoard>> settle = pool.submit(() -> {
+                    Future<Optional<WarStore.Settlement>> settle = pool.submit(() -> {
                         go.await();
                         return store.settleIfExpired(T0 + duration);
                     });

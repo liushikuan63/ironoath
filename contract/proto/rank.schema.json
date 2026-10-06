@@ -2,18 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ironoath.local/contract/proto/rank.schema.json",
   "title": "RankProtocol",
-  "description": "排行榜协议（B23）。四类榜各自一个数据源：POWER 来自战力上报、KILL 来自战斗结算的击杀累计、ALLIANCE / NATION 是成员赛季分的合计（B23 §五 裁决①：与赛季结算同源，不造第二本账）。实时榜只用于展示，结算依据永远是快照（B14 禁止项）。",
+  "description": "排行榜协议（B23）。五类榜各自一个数据源：POWER 来自战力上报、KILL 来自战斗结算的击杀累计、ALLIANCE / NATION 是成员赛季分的合计（B23 §五 裁决①：与赛季结算同源，不造第二本账）；`WAR` 是国战赛季分（V18，只在国战结算那一刻按人累加，**不是**结算依据，也不自动并进组织榜）。实时榜只用于展示，结算依据永远是快照（B14 禁止项）。\n\n**`WAR` 这一张的写入形状与前四张不同**（B13 承载 3b）：POWER 每次重算上报、KILL 每场战斗即时累加，而它只在**一场国战被结算的那一刻**按人写一次，分数 = 这一场里他的消灭数 × `WAR_SEASON_POINT_PER_KILL`，低于 `WAR_SEASON_POINT_MIN_KILLS` 的人**不建行**（不是给 0 分 —— 0 分的行会占住一个位次并出现在分页里）。「每场只发一次」由存储层的结算转换保证（`WarStore.Settlement#settledNow`），而榜侧那个入口**自己不幂等**：调两次就是两倍分，这是判据里刻意留下的一条正向证明。⚠️ 胜负与参与那三条加成（V18 的 `WINNER` / `PARTICIPANT` / `INITIATOR_BONUS`）**还没接**：它们要按国家花名册给分，而存储层目前没有「某国全部成员玩家」的批量口，参数先不进表（进了就是三行零引用参数）—— 连同「组织榜要不要把国战分算进去」一起记在 `#756`。",
   "x-java-package": "com.ironoath.web.dto.generated",
   "x-ts-module": "RankProtocol",
   "$defs": {
     "RankType": {
       "type": "string",
-      "description": "榜的类型（B23 §一 1）。与 SeasonSettlement.Board 的四个值一一对应 —— 刻意不复用那个枚举：那个是结算侧的领域类型，客户端不该依赖结算的内部形状。",
+      "description": "榜的类型（B23 §一 1）。与 `SeasonSettlement.Board` **逐一对应且同序**——刻意不复用那个枚举：那个是结算侧的领域类型，客户端不该依赖结算的内部形状；对应关系由 `RankBoardService.boardOf` 的 `valueOf(name())` 与 `RankEndpointTest` 的枚举断言钉住（漂移的表现是服务端认得的榜客户端解析不出来）。\n\n五张榜里只有 `WAR` 是 2026-10-06 V18 加的（国战赛季分，玩家维度）。⚠️ **它不参与赛季结算依据**（`Rules.snapshotBoard` 取的是战力榜），也不会自动进 `ALLIANCE` / `NATION`：那两张是**结算依据榜**按成员的合计（B23 §五 裁决①「与赛季结算同源，不造第二本账」的执行形状），把国战分并进去要先拍\"国家榜到底加什么分\"这一问，见 `收口清单.md` 的 #756。",
       "enum": [
         "POWER",
         "KILL",
         "ALLIANCE",
-        "NATION"
+        "NATION",
+        "WAR"
       ]
     },
     "RankEntryView": {

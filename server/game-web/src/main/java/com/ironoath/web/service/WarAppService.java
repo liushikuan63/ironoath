@@ -21,6 +21,7 @@ import com.ironoath.web.dto.generated.WarNationScoreView;
 import com.ironoath.web.dto.generated.WarPhase;
 import com.ironoath.web.dto.generated.WarStatusResp;
 import com.ironoath.web.nation.NationMembership;
+import com.ironoath.web.rank.RankBoardService;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
@@ -65,11 +66,18 @@ public class WarAppService {
     private final PlayerLock playerLock;
     private final IdempotencyStore idempotency;
     private final ConfigRegistry configs;
+    /**
+     * 只在「结算转换那一次」用到：把这一场的每人击杀换成国战赛季分（V18）。
+     * 依赖方向是 war → rank，而 rank 不回读 war 服务，所以不会成环；
+     * 之所以不自己写一份累加，是 {@code seasonId} 解析与 Bot 排除那两条已经长在榜侧了。
+     */
+    private final RankBoardService rankBoards;
 
     public WarAppService(WarStore wars, NationStore nations, WarRulesAssembler assembler,
                          TimeService timeService, NationMembership membership,
                          SocialRulesAssembler socialRules, PlayerLock playerLock,
-                         IdempotencyStore idempotency, ConfigRegistry configs) {
+                         IdempotencyStore idempotency, ConfigRegistry configs,
+                         RankBoardService rankBoards) {
         this.wars = wars;
         this.nations = nations;
         this.assembler = assembler;
@@ -79,6 +87,7 @@ public class WarAppService {
         this.playerLock = playerLock;
         this.idempotency = idempotency;
         this.configs = configs;
+        this.rankBoards = rankBoards;
     }
 
     /**
@@ -94,8 +103,8 @@ public class WarAppService {
         // 读这一句顺带把时间推进一格：到点的那一场在这里结算并落盘（服务端禁常驻定时器）。
         // 用 settleIfExpired 而不是 findLatest —— 后者只看不动，一场打满 3 小时的仗会永远停在 SIEGE，
         // 而"什么时候算打完"这个问题没有别的执行者。
-        Optional<WarScoreBoard> latest = wars.settleIfExpired(now);
-        if (latest.isEmpty()) {
+        Optional<WarStore.Settlement> progressed = wars.settleIfExpired(now);
+        if (progressed.isEmpty()) {
             // 无战事：积分与击杀给 0（那是"没有任何事发生过"的真值），而 phase/startedAt/占领者给 null
             // （那三项没有真值可给，填 0 会被读成"1970 年开过一场仗"）。
             // canMarch 在这里是 true —— 疲劳闸门只在国战里生效，没有仗就没有那道闸；
@@ -104,7 +113,16 @@ public class WarAppService {
                     null, null, List.of(), 0L, rules.serverGoalKills(), false,
                     0L, rules.fatigueMax(), true, now);
         }
-        WarScoreBoard board = latest.get();
+        WarStore.Settlement progressedOne = progressed.get();
+        WarScoreBoard board = progressedOne.board();
+        if (progressedOne.settledNow()) {
+            // 挂在"这一句把它结掉了"，不挂在"它现在是 SETTLED"上 —— 后者每一读都成立，
+            // 而 SeasonBoardStore.accumulate 是累加语义，那样会变成每读一次发一遍赛季分。
+            // 这一跳是本类唯一的经济写入，所以留一行审计（金额与人数都能从这里回查）。
+            int awarded = rankBoards.reportWarSeasonPoints(board);
+            LOG.info("国战赛季分进账 战事主键={} 进账人数={} 榜=WAR（由这一次读触发）",
+                    WarStore.documentIdOf(board), awarded);
+        }
         Map<String, WarScoreBoard.Score> scores = board.snapshot();
         List<WarNationScoreView> rows = new ArrayList<>(scores.size());
         for (Map.Entry<String, WarScoreBoard.Score> entry : scores.entrySet()) {

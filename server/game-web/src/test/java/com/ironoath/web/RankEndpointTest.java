@@ -163,6 +163,58 @@ class RankEndpointTest {
                 .as("击杀 150 排第 2 —— 名次跟着榜值走，不是跟着谁先上报").isEqualTo(2);
     }
 
+    /**
+     * 国战赛季分（V18 / B13 承载 3b）：一场仗结算时按人把击杀换成 {@code WAR} 榜的分。
+     *
+     * <p><b>走 {@code reportWarSeasonPoints(board)} 这个真实入口</b>而不是直接调 {@code accumulate}：
+     * 门槛、Bot 排除、赛季没开就返回这三段判断都长在这个方法里，直接调累加等于只测了存储。
+     *
+     * <p><b>两个因子都从表里现取</b>（{@code warSeasonPoints()}），所以这条用例不绑
+     * {@code WAR_SEASON_POINT_*} 的具体初值 —— 运营改表它照样成立，而"改表就红"的量具
+     * 恰好是本仓「数值零硬编码」那条铁律的反面教材。
+     */
+    @Test
+    @DisplayName("国战结算发赛季分：门槛不过不建行；分等于击杀乘每杀点数；调两次就是两倍（旗标存在的理由）")
+    void warSeasonPointsLandOnTheWarBoardWithThresholdApplied() {
+        String hunter = newPlayer(16);
+        String idler = newPlayer(16);
+        SeasonRulesAssembler rules = new SeasonRulesAssembler(anchoredConfigs());
+        var points = rules.warSeasonPoints();
+        assertThat(points.minKills())
+                .as("夹具前提：门槛为正数，否则「不过」这一支根本测不到").isPositive();
+        assertThat(points.pointPerKill())
+                .as("夹具前提：每杀点数为正数，否则下面那句等式对任何分都成立").isPositive();
+
+        com.ironoath.core.nation.WarScoreBoard board = new com.ironoath.core.nation.WarScoreBoard(
+                new com.ironoath.web.nation.WarRulesAssembler(anchoredConfigs()).rules(),
+                timeService.serverNow());
+        board.registerNation("n1");
+        board.registerNation("n2");
+        board.recordKill("n1", hunter, points.minKills() + 40L);   // 打够门槛
+        board.recordKill("n2", idler, points.minKills() - 1L);     // 差一个，不该建行
+
+        assertThat(ranks.reportWarSeasonPoints(board))
+                .as("只有打够门槛的那一个进账").isEqualTo(1);
+        var view = ranks.list(hunter, RankType.WAR, 1, 0);
+        assertThat(view.entries().stream().map(e -> e.id()).toList())
+                .as("低于门槛的人不建行：给 0 分会占住一个位次并出现在分页里")
+                .containsExactly(hunter);
+        assertThat(view.entries().get(0).value())
+                .as("分 = 击杀 × WAR_SEASON_POINT_PER_KILL（两个因子都现取，不写死）")
+                .isEqualTo((points.minKills() + 40L) * points.pointPerKill());
+
+        assertThat(ranks.list(hunter, RankType.KILL, 1, 0).entries())
+                .as("国战分不进击杀榜：两张榜各记一件事（击杀榜收全量，WAR 榜只收这一场）")
+                .isEmpty();
+
+        // 同一场再发一次：本方法自己不幂等 —— 这正是"每场仗只调一次"这条前提必须成立的直接证据，
+        // 那条前提由 WarStore.Settlement#settledNow 保证（等价测试里钉着）。
+        ranks.reportWarSeasonPoints(board);
+        assertThat(ranks.list(hunter, RankType.WAR, 1, 0).entries().get(0).value())
+                .as("累加语义调两次就是两倍分 —— settledNow 旗标存在的全部理由")
+                .isEqualTo(2L * (points.minKills() + 40L) * points.pointPerKill());
+    }
+
     @Test
     @DisplayName("验收 2：未上榜给 null，不用 0 冒充（0 会与「第 0 名」混淆）")
     void unrankedPlayerGetsNullNotZero() throws Exception {
