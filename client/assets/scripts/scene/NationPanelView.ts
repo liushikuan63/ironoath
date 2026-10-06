@@ -133,6 +133,8 @@ export class NationPanelView extends Component {
   onSetRelation: ((targetNationId: string, relation: string) => void) | null = null
   /** 宣战：**第一次点只是武装**，第二次点才发（不可逆动作的二次确认，与国库支出同一条形状）。 */
   onDeclareWar: ((targetNationId: string) => void) | null = null
+  /** 领全服目标奖励（B13 §一 §7）。这一颗**不需要二次确认**：领失败不会造成损失（名单挡着）。 */
+  onClaimWarGoal: (() => void) | null = null
   /** 任命一名成员。 */
   onAppoint: ((playerId: string, office: string) => void) | null = null
   /** 外交页当前选中的目标国（`nationId`；null = 还没选）。 */
@@ -177,6 +179,7 @@ export class NationPanelView extends Component {
     this.onResearchTech = null
     this.onSetRelation = null
     this.onDeclareWar = null
+    this.onClaimWarGoal = null
     this.onAppoint = null
   }
 
@@ -543,6 +546,16 @@ export class NationPanelView extends Component {
     } else if (this.warArmed) {
       this.label(`再点一次「确认宣战」：对 ${selected?.name ?? ''} 开一场，冷却 24 小时`,
         COLOR_WARN, 13, left, y, 'left')
+      y -= 22
+    }
+    // ---- 全服目标奖励（B13 §一 §7）：三态由服务端下发的两位决定 ----
+    if (section.goalClaim.claimable || section.goalClaim.claimed) {
+      this.button('WarGoalClaim', section.goalClaim.claimed ? '已领取' : '领取全服奖励',
+        left + 70, y, 140, section.goalClaim.claimable, () => this.onClaimWarGoal?.())
+      y -= 22
+    }
+    if (section.goalClaim.note !== null) {
+      this.label(section.goalClaim.note, COLOR_DIM, 13, left, y, 'left')
       y -= 22
     }
     return y

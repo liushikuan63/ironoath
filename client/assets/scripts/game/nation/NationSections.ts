@@ -301,6 +301,24 @@ export interface WarSection {
   readonly targets: readonly { readonly key: string; readonly name: string }[]
   /** 能不能宣战（权限位 `DECLARE_WAR`，V13-d；三态见 {@link permissionGateOf}）。 */
   readonly declareGate: NationGate
+  /**
+   * 全服奖励那颗键的三态（B13 §一 §7）：**还没达成 / 可以领 / 已经领过了**。
+   *
+   * <p>三态都由服务端下发的两位决定（`serverGoalReached` + `myGoalClaimed`）——
+   * 客户端不自己比大小（`totalKills >= serverGoalKills` 的判定在服务端一处），
+   * 也不本地记"我刚领过"（换设备/重登就假）。
+   */
+  readonly goalClaim: WarGoalClaimView
+}
+
+/** 全服奖励那颗键的三态。 */
+export interface WarGoalClaimView {
+  /** 达成且没领过 ⇒ 键亮着。 */
+  readonly claimable: boolean
+  /** 已经领过 ⇒ 键灰着、文案改成"已领取"（而不是一颗点了就被拒的键）。 */
+  readonly claimed: boolean
+  /** 键下面那一行：还没达成时说清差在哪，领过了说清已经领过。 */
+  readonly note: string | null
 }
 
 /** 一个参战方一行。**`key` 是 nationId，只用于发请求，永不上屏**（B13 红线）。 */
@@ -337,6 +355,16 @@ export function buildWarSection(resp: WarStatusResp | null,
   permissionsLoaded = false): WarSection {
   const declareGate = permissionGateOf('DECLARE_WAR', '宣战', permissions, permissionsLoaded)
   const targetViews = targets.slice(0, 8).map(t => ({ key: t.nationId, name: t.name }))
+  // 全服奖励的三态（见 WarGoalClaimView）：两位都由服务端下发，客户端只做展示判定
+  const goalClaim: WarGoalClaimView = resp === null
+    ? { claimable: false, claimed: false, note: null }
+    : {
+      claimable: resp.serverGoalReached && !resp.myGoalClaimed,
+      claimed: resp.myGoalClaimed,
+      note: resp.myGoalClaimed
+        ? '这一场的全服奖励你已经领过了（每人每场只领一次）'
+        : (resp.serverGoalReached ? null : '全服击杀还没到目标，到了之后这里会亮起来'),
+    }
   if (resp === null) {
     return {
       hasWar: false,
@@ -350,6 +378,7 @@ export function buildWarSection(resp: WarStatusResp | null,
       emptyText: '这一次没读到国战状态：重进这一页再试',
       targets: targetViews,
       declareGate,
+      goalClaim,
     }
   }
   if (!resp.hasWar) {
@@ -370,6 +399,7 @@ export function buildWarSection(resp: WarStatusResp | null,
         + '挑一个目标国、按两次「宣战」就能开一场（只有国王能做这件事）。',
       targets: targetViews,
       declareGate,
+      goalClaim,
     }
   }
   const ranked = rankWarSides(resp.scores)
@@ -395,6 +425,7 @@ export function buildWarSection(resp: WarStatusResp | null,
     emptyText: null,
     targets: targetViews,
     declareGate,
+    goalClaim,
   }
 }
 

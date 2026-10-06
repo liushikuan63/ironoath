@@ -373,6 +373,17 @@ public final class WarScoreBoard {
         return goalClaimed.size();
     }
 
+    /**
+     * 这名玩家领过这一场的全服奖励没有。
+     *
+     * <p><b>为什么要问这个</b>：面板要能区分"还没达成""可以领""已经领过了"三种状态 ——
+     * 只有 {@link #serverGoalReached()} 与"人数"两个读数时，第三种状态画不出来，
+     * 于是玩家会对着一个点了就被拒的键反复点（而那正是验收 10 想避免的形状）。
+     */
+    public boolean goalClaimedBy(String playerId) {
+        return playerId != null && goalClaimed.contains(playerId);
+    }
+
     /** 结束国战并结算（验收 6）。 */
     public Result settle(long now) {
         if (phase == Phase.SETTLED) {

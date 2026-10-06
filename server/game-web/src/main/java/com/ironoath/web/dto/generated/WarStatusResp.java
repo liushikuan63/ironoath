@@ -28,6 +28,7 @@ public record WarStatusResp(
         long myFatigue,   // 请求者本人的疲劳值（`X-Player-Id` 那位）。没有这一场可看时为 0。
         long fatigueMax,   // 疲劳上限（`global.WAR_FATIGUE_MAX`）。同样是「上下界必须下发」那一条：面板要写「12 / 100」。
         boolean canMarch,   // 本人还能不能行军（B13 验收 7）。**由服务端一处判定**（内核 `WarScoreBoard.canMarch`），客户端不许按 `myFatigue < fatigueMax` 再算一遍 —— 那两个式子今天等价，但行军闸门后面还要接外交、窗口、集结等条件，届时自己算的那份会留在原地。
-        long serverNow)   // 服务端时间戳（铁律 5：客户端不许自己读本地时钟算剩余时间，否则改手机时间就能把仗打完）。
+        long serverNow,   // 服务端时间戳（铁律 5：客户端不许自己读本地时钟算剩余时间，否则改手机时间就能把仗打完）。
+        boolean myGoalClaimed)   // **请求者本人**领过这一场的全服奖励没有（`X-Player-Id` 那位）。`hasWar=false` 时为 false。 **为什么必须下发这一位**：面板要能区分三种状态 —— 还没达成 / 可以领 / 已经领过了。只有 `serverGoalReached` 与「已领人数」两个读数时第三种画不出来，玩家会对着一个点了就被拒的键反复点，而那正是验收 10「每人只领一次」想避免的形状。 **判定在服务端**：领取名单在战事档里（`goalClaimed`），客户端本地记一个「我刚领过」在换设备/重登之后就假了。
 {
 }

@@ -723,6 +723,24 @@ if (process.env.NATION_LIVE_UI === '1') {
       await page.screenshot({ path: path.join(OUT, 'live-diplo-after-declare.png') })
       console.log(`  截图（宣战后的外交页）：${path.join(OUT, 'live-diplo-after-declare.png')}`)
 
+      // ---- 全服目标奖励：还没达成 ⇒ 服务端拒 + 键不画（负向成对，成正向要 5 万击杀，探针给不了） ----
+      const goalRejected = await call('POST', '/nation/war/goal/claim', {
+        requestId: rid('goal-claim'),
+      }, uiKing.playerId, uiKing.token)
+      check('（回读屏）目标没达成时领取被拒（13024）', goalRejected.code, 13024)
+      // 屏上那颗键也不该画出来（还没达成）：按**节点名**判，不按文案 —— 「领取」这种词别的面板也有，
+
+      // 用文案判就是"静态选项里就有的词"那一族假绿（本线已经栽过一次）
+      const goalKeyShown = await page.evaluate(`(() => {
+        const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        if (!panel || !panel.activeInHierarchy) return true
+        let found = false
+        const walk = (n) => { if (found) return; if (n.name === 'WarGoalClaim') { found = true; return } for (const child of n.children) walk(child) }
+        walk(panel)
+        return found
+      })()`)
+      checkThat('（回读屏）没达成时全服奖励那颗键不画（节点 WarGoalClaim 不存在）', goalKeyShown === false)
+
       // ---- 负向相 ①（HTTP）：同一对两国再宣一次 ⇒ 冷却拦住，且**没有**开出第二场 ----
       const again = await call('POST', '/nation/war/declare', {
         requestId: rid('declare-again'), targetNationId: uiTargetNationId,

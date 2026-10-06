@@ -43,7 +43,9 @@ import com.ironoath.web.dto.generated.NationDiplomacyReq;
 import com.ironoath.web.dto.generated.NationDisbandReq;
 import com.ironoath.web.dto.generated.NationFoundReq;
 import com.ironoath.web.dto.generated.PlayerInitReq;
+import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.dto.generated.WarDeclareReq;
+import com.ironoath.web.dto.generated.WarGoalClaimReq;
 import com.ironoath.web.dto.generated.WarPhase;
 import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.nation.NationStore;
@@ -90,6 +92,7 @@ class WarEndpointTest {
     @Autowired private NationStore nations;
     @Autowired private NationRulesAssembler nationRules;
     @Autowired private TimeService timeService;
+    @Autowired private ConfigRegistry configs;
     /** 所有战斗的唯一漏斗（打野/关卡/攻城/拦截都汇到这里）—— 击杀归属就挂在这一句上，所以要真的走它。 */
     @Autowired private com.ironoath.web.battle.BattleReportService battleReports;
 
@@ -240,6 +243,54 @@ class WarEndpointTest {
                 .isFalse();
         // 全服那一半不因身份而变
         assertThat(theirs.get("totalKills").asLong()).isEqualTo(mine.get("totalKills").asLong());
+    }
+
+    // ---------- 全服目标奖励（切片 3d）----------
+
+    @Test
+    @DisplayName("全服目标奖励：没达成就领不了、达成后领到配置里的金币、再领被名单挡住，而状态里的今天领没领跟着翻")
+    void serverGoalPaysOncePerWarAndFlipsMyClaimFlag() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        post200("/nation/war/declare", a.king, new WarDeclareReq(newRequestId(), b.nationId));
+
+        // ① 还没达成：宣完战 totalKills=0，而目标是表里那个数
+        assertThat(postRaw("/nation/war/goal/claim", a.king, new WarGoalClaimReq(newRequestId()))
+                .get("code").asInt())
+                .as("没达成就领不了：13024 而不是一个空响应").isEqualTo(ErrorCode.WAR_GOAL_NOT_REACHED.code());
+
+        // ② 把击杀堆过目标。**走生产同一条写回路径**（读出来 → 改 → save 回去），
+        //    而不是直接往库里塞一份——否则这一格验的就不是存储层那一段临界区了
+        WarScoreBoard board = wars.findLatest().orElseThrow();
+        board.recordKill(a.nationId, a.king, warRules.rules().serverGoalKills());
+        wars.save(board);
+
+        JsonNode beforeClaim = get200("/nation/war", a.king);
+        assertThat(beforeClaim.get("serverGoalReached").asBoolean()).as("目标达成了").isTrue();
+        assertThat(beforeClaim.get("myGoalClaimed").asBoolean())
+                .as("还没领 —— 这一位存在的全部理由：面板要能区分「可以领」与「已经领过」")
+                .isFalse();
+
+        long goldBefore = goldOf(a.king);
+        long expected = configs.longParam("WAR_SERVER_GOAL_GOLD");
+        JsonNode claimed = post200("/nation/war/goal/claim", a.king, new WarGoalClaimReq(newRequestId()));
+        assertThat(claimed.get("gold").asLong())
+                .as("回的是配置里那个数 —— 客户端拿它拼文案，不自己抄表").isEqualTo(expected);
+        assertThat(goldOf(a.king) - goldBefore).as("金币真的到账").isEqualTo(expected);
+
+        // ③ 再领一次：**名单挡住**（幂等键只挡网络重放，换一条请求再点靠的是名单）
+        assertThat(postRaw("/nation/war/goal/claim", a.king, new WarGoalClaimReq(newRequestId()))
+                .get("code").asInt())
+                .as("第二次是 13025：这一条才是验收 10 的护栏").isEqualTo(ErrorCode.WAR_GOAL_ALREADY_CLAIMED.code());
+        assertThat(goldOf(a.king) - goldBefore).as("被拒那一次不许再发一分钱").isEqualTo(expected);
+
+        // ④ 状态跟着翻，且**只翻我自己的**（名单是按人记的）
+        assertThat(get200("/nation/war", a.king).get("myGoalClaimed").asBoolean())
+                .as("领过之后面板画「已领取」，而不是一颗点了就被拒的键").isTrue();
+        assertThat(get200("/nation/war", b.king).get("myGoalClaimed").asBoolean())
+                .as("同场的另一个参战国没领过，不受影响").isFalse();
+        assertThat(get200("/nation/war", b.king).get("serverGoalReached").asBoolean())
+                .as("全服进度是全服的：别人领没领不改变它").isTrue();
     }
 
     // ---------- 宣战（切片 2a）----------
@@ -751,6 +802,12 @@ class WarEndpointTest {
 
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
+    }
+
+    /** 这个号现在有多少金币（领取用例要按差值断言，不写死余额）。 */
+    private long goldOf(String playerId) {
+        return players.findByPlayerId(playerId).orElseThrow()
+                .resources().get("GOLD").current();
     }
 
     private JsonNode get200(String url, String playerId) throws Exception {

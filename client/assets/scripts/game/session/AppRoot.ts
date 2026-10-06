@@ -3768,6 +3768,26 @@ export class AppRoot {
     this.deliverNation()
   }
 
+  /**
+   * 领全服目标奖励（B13 §一 §7）。**不需要二次确认**：领失败不会造成损失（服务端名单挡着），
+   * 与宣战那种不可逆动作不是一回事。回执里带着金额 —— 那句话用服务端给的数，不抄配置。
+   */
+  async claimWarGoal(): Promise<void> {
+    const outcome = await this.api.claimWarGoal({})
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.nationNoticeTone = 'warn'
+      this.deliverNation()
+      return
+    }
+    this.track(TRACK_EVENTS.warGoalClaim)
+    this.nationNotice = `全服奖励已领取：${amountText(outcome.data.gold)} 金币`
+    this.nationNoticeTone = 'ok'
+    // 领完重拉一次：`myGoalClaimed` 要跟着翻（键从"可以领"变成"已领取"）
+    await this.loadNationWar()
+    this.deliverNation()
+  }
+
   async setNationRelation(targetNationId: string, relation: DiplomacyRelation): Promise<void> {
     // 关系是协议里的四个枚举之一；不认识的值一律不发出去 ——
     // 发出去等于让服务端替我们猜一个玩家没选过的关系

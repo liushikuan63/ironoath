@@ -15,8 +15,15 @@ import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.nation.Nation;
 import com.ironoath.core.nation.WarScoreBoard;
+import com.ironoath.core.resource.ResourceIds;
+import com.ironoath.core.reward.RewardContext;
+import com.ironoath.core.reward.RewardItem;
+import com.ironoath.core.reward.RewardService;
+import com.ironoath.core.reward.RewardType;
 import com.ironoath.core.social.PermissionMatrix;
 import com.ironoath.web.dto.generated.WarDeclareReq;
+import com.ironoath.web.dto.generated.WarGoalClaimReq;
+import com.ironoath.web.dto.generated.WarGoalClaimResp;
 import com.ironoath.web.dto.generated.WarNationScoreView;
 import com.ironoath.web.dto.generated.WarPhase;
 import com.ironoath.web.dto.generated.WarStatusResp;
@@ -72,12 +79,14 @@ public class WarAppService {
      * 之所以不自己写一份累加，是 {@code seasonId} 解析与 Bot 排除那两条已经长在榜侧了。
      */
     private final RankBoardService rankBoards;
+    /** 全服目标奖励的金币走它发放（与赛季发奖同一个口：溢出进补偿队列，不由调用方自己写存档）。 */
+    private final RewardService rewardService;
 
     public WarAppService(WarStore wars, NationStore nations, WarRulesAssembler assembler,
                          TimeService timeService, NationMembership membership,
                          SocialRulesAssembler socialRules, PlayerLock playerLock,
                          IdempotencyStore idempotency, ConfigRegistry configs,
-                         RankBoardService rankBoards) {
+                         RankBoardService rankBoards, RewardService rewardService) {
         this.wars = wars;
         this.nations = nations;
         this.assembler = assembler;
@@ -88,6 +97,7 @@ public class WarAppService {
         this.idempotency = idempotency;
         this.configs = configs;
         this.rankBoards = rankBoards;
+        this.rewardService = rewardService;
     }
 
     /**
@@ -111,7 +121,9 @@ public class WarAppService {
             // "有没有仗"由 hasWar 单独说，一个事实只用一种表示。
             return new WarStatusResp(false, null, null, 0L, rules.gateCount(),
                     null, null, List.of(), 0L, rules.serverGoalKills(), false,
-                    0L, rules.fatigueMax(), true, now);
+                    0L, rules.fatigueMax(), true, now,
+                    // 没有仗就没有可领的：我的领取位恒 false（不填 0 冒充，宁可说清"没有"）
+                    false);
         }
         WarStore.Settlement progressedOne = progressed.get();
         WarScoreBoard board = progressedOne.board();
@@ -140,7 +152,64 @@ public class WarAppService {
                 board.remainingSeconds(now), rules.gateCount(),
                 capitalHolder, nationNameOrNull(capitalHolder), List.copyOf(rows),
                 board.totalKills(), rules.serverGoalKills(), board.serverGoalReached(),
-                board.fatigueOf(playerId), rules.fatigueMax(), board.canMarch(playerId), now);
+                board.fatigueOf(playerId), rules.fatigueMax(), board.canMarch(playerId), now,
+                // 本人领过没有：面板要区分"可以领/已经领过"，否则那颗键点了就被拒（验收 10 的形状）。
+                // 注意它是**最后一个组件**（生成器按 schema 的 properties 顺序排，我在属性表里追加在末尾）
+                board.goalClaimedBy(playerId));
+    }
+
+    /**
+     * 领取这一场的全服目标奖励（B13 §一 §7「全服累计击杀达标后每人可领一次」）。
+     *
+     * <p><b>为什么先标名单、后发钱</b>：发钱要动玩家存档（{@code RewardService}），
+     * 而名单在战事档里 —— 两处不可能在同一个事务里。中间崩掉时，先标后发的后果是
+     * 「玩家少领一次」（可补），反过来则是「同一份奖励发两次」（要回收）。
+     *
+     * <p><b>名单的判定与写入在存储层的临界区里</b>（{@link WarStore#claimServerGoal}）：
+     * 服务层写"读板子 → 内核标名单 → 落盘"是一次没有保护的读-改-写，两个人同时点领取就会
+     * 各自读到"没领过"、各自写回，后写的那份把前一份盖掉。
+     *
+     * <p><b>金币数现取配置</b>（{@code global.WAR_SERVER_GOAL_GOLD}）：改了表立刻生效，
+     * 与 WAR 那族其余参数同一条（规则不进战事存档）。
+     */
+    public WarGoalClaimResp claimServerGoal(String playerId, WarGoalClaimReq req) {
+        long now = timeService.serverNow();
+        acquire(req == null ? null : req.requestId(), now);
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+                requireNationOf(playerId);
+                long gold = configs.longParam("WAR_SERVER_GOAL_GOLD");
+                WarStore.GoalClaimResult result = wars.claimServerGoal(playerId);
+                switch (result) {
+                    case NO_WAR, NOT_REACHED -> throw new BizException(ErrorCode.WAR_GOAL_NOT_REACHED,
+                            "全服目标还没有达成：现在是 " + wars.findLatest()
+                                    .map(b -> b.totalKills() + " / " + b.rules().serverGoalKills())
+                                    .orElse("没有任何一场国战")
+                                    + "（达成之后才能领）");
+                    case ALREADY_CLAIMED -> throw new BizException(ErrorCode.WAR_GOAL_ALREADY_CLAIMED,
+                            "这一场的全服奖励你已经领过了（每人每场只领一次）");
+                    case CLAIMED -> {
+                        // 名单已经标好了，这一跳是发钱；发放失败会进补偿队列（与赛季发奖同一条兜底）
+                        var grant = rewardService.grant(playerId,
+                                List.of(new RewardItem(RewardType.RESOURCE, ResourceIds.GOLD, gold)),
+                                RewardContext.toMail("war_goal",
+                                        WarStore.documentIdOf(wars.findLatest().orElseThrow()),
+                                        req.requestId()));
+                        if (grant.hasCompensation()) {
+                            LOG.error("【国战全服奖励入账失败已进补偿队列】playerId={} 金币={} compensationId={}",
+                                    playerId, gold, grant.compensationId());
+                        }
+                        LOG.info("国战全服奖励领取 playerId={} 金币={} 战事主键={}", playerId, gold,
+                                wars.findLatest().map(WarStore::documentIdOf).orElse("-"));
+                        return new WarGoalClaimResp(gold, now);
+                    }
+                    default -> throw new IllegalStateException("未处理的领取结果：" + result);
+                }
+            });
+        } catch (RuntimeException e) {
+            idempotency.release(req.requestId());
+            throw e;
+        }
     }
 
     /**

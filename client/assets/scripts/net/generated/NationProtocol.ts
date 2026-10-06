@@ -561,6 +561,26 @@ export interface WarNationScoreView {
 }
 
 /**
+ * `POST /nation/war/goal/claim` 的入参：领取这一场的全服目标奖励（B13 §一 §7「全服累计击杀达标后每人可领一次」）。
+ */
+export interface WarGoalClaimReq {
+  /** 幂等键。重复提交不会领两次 —— **但真正的护栏不在它**：领取名单在战事档里，同一个人第二次来会被 13025 挡（幂等键只挡网络重放，挡不住玩家换一条请求再点一次）。 */
+  requestId: string
+}
+
+/**
+ * `POST /nation/war/goal/claim` 的响应：这一次领到了多少金币。
+ *
+ * **回金额而不是只回 ok**：客户端要弹一句「领到 500 金币」，而那个数属于配置（`global.WAR_SERVER_GOAL_GOLD`）—— 让客户端自己拼就是把配置抄进客户端（红线：客户端不抄配置表）。
+ */
+export interface WarGoalClaimResp {
+  /** 本次领到的金币数。**恒为正**：领不到的情况全是业务拒绝（13024/13025），不走这条响应。 */
+  gold: number
+  /** 服务端时间戳。 */
+  serverNow: number
+}
+
+/**
  * `POST /nation/war/declare` 的入参：对本国之外的某一个国家宣战，开启一场 3 小时限时的王城战（B13 §一 §7）。
  *
  * **权限走 `role_permission` 表的 `DECLARE_WAR`**（`perm_nation_declare_war`：`allowLeader=true`、`allowOfficer=false`）。⚠️ 这与 `B13:46` 官职表里那句「大将军：发起国战」不一致，**以表为准**：`role_permission` 的 v3 设计说明把「任命官职、宣战、国策」三项明确收窄到国主独有（理由是「影响 800 人且不可逆」），而判定只长在表里那一处 —— 若照官职表放开到将军档，读路径（`GET /social/permissions?scope=NATION`）与写路径就会分叉，症状是「面板上那颗键亮着、点下去被拒」。Bot 结构性地不可能担任官职（B13 §2 合规红线），所以这里没有额外的 Bot 闸门。
@@ -618,4 +638,6 @@ export interface WarStatusResp {
   canMarch: boolean
   /** 服务端时间戳（铁律 5：客户端不许自己读本地时钟算剩余时间，否则改手机时间就能把仗打完）。 */
   serverNow: number
+  /** **请求者本人**领过这一场的全服奖励没有（`X-Player-Id` 那位）。`hasWar=false` 时为 false。 **为什么必须下发这一位**：面板要能区分三种状态 —— 还没达成 / 可以领 / 已经领过了。只有 `serverGoalReached` 与「已领人数」两个读数时第三种画不出来，玩家会对着一个点了就被拒的键反复点，而那正是验收 10「每人只领一次」想避免的形状。 **判定在服务端**：领取名单在战事档里（`goalClaimed`），客户端本地记一个「我刚领过」在换设备/重登之后就假了。 */
+  myGoalClaimed: boolean
 }

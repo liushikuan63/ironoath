@@ -1342,6 +1342,9 @@ export class GameBootstrap extends Component {
       nation.onDeclareWar = targetNationId => {
         void this.root?.declareNationWar(targetNationId)
       }
+      nation.onClaimWarGoal = () => {
+        void this.root?.claimWarGoal()
+      }
       // 国策（B13 §4）。**这两个回调漏绑过一次**：探针点「提案」返回 ok 而屏上纹丝不动，
       // 原因就是它们没接 —— 面板画得出来、按钮点得动、请求一个都没发。
       // 那正是「有方法、玩家点不到」那一族（客户端发送口缺口清单）的形状。

@@ -33,6 +33,8 @@ import com.ironoath.web.dto.generated.NationTreasuryResp;
 import com.ironoath.web.dto.generated.NationTreasurySpendReq;
 import com.ironoath.web.dto.generated.NationTreasurySpendResp;
 import com.ironoath.web.dto.generated.WarDeclareReq;
+import com.ironoath.web.dto.generated.WarGoalClaimReq;
+import com.ironoath.web.dto.generated.WarGoalClaimResp;
 import com.ironoath.web.dto.generated.WarStatusResp;
 import com.ironoath.web.service.NationAppService;
 import com.ironoath.web.service.WarAppService;
@@ -276,6 +278,14 @@ public class NationController {
             @RequestBody WarDeclareReq req) {
         requirePlayer(playerId);
         return Result.ok(wars.declare(playerId, req));
+    }
+
+    @PostMapping("/war/goal/claim")
+    public Result<WarGoalClaimResp> claimWarGoal(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestBody WarGoalClaimReq req) {
+        requirePlayer(playerId);
+        return Result.ok(wars.claimServerGoal(playerId, req));
     }
 
     private static void requirePlayer(String playerId) {

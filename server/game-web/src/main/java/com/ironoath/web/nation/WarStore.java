@@ -280,6 +280,53 @@ public interface WarStore {
     }
 
     /**
+     * 领取全服目标奖励的结果（四个值各对应一种"能不能领"的判断，与 {@link KillResult} 同一条理由：
+     * 把四种情况压成一个 boolean，日志与排查就只能靠猜）。
+     */
+    enum GoalClaimResult {
+        /** 一块板子都没有：没有仗就没有在积累的全服击杀，目标自然没达成。 */
+        NO_WAR,
+        /** 有板子但目标还没达成。 */
+        NOT_REACHED,
+        /** 目标达成了，但这个人这一场已经领过（验收 10：每人每场只领一次）。 */
+        ALREADY_CLAIMED,
+        /** 这一次真的领到了 —— <b>调用方随后负责发钱</b>，且必须把它写回（名单在板子上）。 */
+        CLAIMED
+    }
+
+    /**
+     * 在<b>存储层临界区</b>里领一次全服目标奖励：判定与写入必须在同一步完成。
+     *
+     * <p><b>为什么这条长在存储层</b>：与 {@link #recordKills} 同一条 —— 服务层写
+     * {@code findLatest → claimServerGoal → save} 是一次<b>没有保护的读-改-写</b>：
+     * 两个玩家同时点领取，各自读到名单里没有自己、各自 save，后写的那份把前一份盖掉
+     * （而内核那条 Set 护栏只挡得住同一个对象上的并发，挡不住两份副本先后落盘）。
+     * 于是"每人只领一次"在并发下退化成"谁后写谁作数"，而发钱是照 save 成功那一次发的。
+     *
+     * <p><b>只标名单、不发钱</b>：发钱要动玩家存档（{@code RewardService}），那不在战事档的临界区里。
+     * 顺序是<b>先标后发</b>：中间崩了是"玩家少领一次"（可补），反过来则是"同一份奖励发两次"（要回收）。
+     *
+     * @param playerId 领取人
+     * @return 四种结果之一；只有 {@link GoalClaimResult#CLAIMED} 时调用方才该发钱
+     */
+    GoalClaimResult claimServerGoal(String playerId);
+
+    /**
+     * 两种存储共用的判定与标记（放在端口而不是任何一份实现里，与 {@link #applyKills} 同一条理由）。
+     *
+     * <p><b>它只改传入的那块板子，不落盘</b> —— 写回是调用方（存储层临界区内）的责任。
+     */
+    static GoalClaimResult applyGoalClaim(WarScoreBoard board, String playerId) {
+        if (board == null) {
+            return GoalClaimResult.NO_WAR;
+        }
+        if (!board.serverGoalReached()) {
+            return GoalClaimResult.NOT_REACHED;
+        }
+        return board.claimServerGoal(playerId) ? GoalClaimResult.CLAIMED : GoalClaimResult.ALREADY_CLAIMED;
+    }
+
+    /**
      * 测试辅助：清空。
      */
     void clear();

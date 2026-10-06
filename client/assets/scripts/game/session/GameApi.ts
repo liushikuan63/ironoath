@@ -111,7 +111,7 @@ import type {
   NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationPolicyProposeReq,
   NationPolicyProposeResp, NationPolicyRoundView, NationPolicyVoteReq, NationPolicyVoteResp,
   NationResp, NationTreasuryResp, NationTreasurySpendReq, NationTreasurySpendResp,
-  NationRelationsResp, WarDeclareReq, WarStatusResp,
+  NationRelationsResp, WarDeclareReq, WarGoalClaimReq, WarGoalClaimResp, WarStatusResp,
 } from '../../net/generated/NationProtocol'
 import type {
   NationTechListView, NationTechResearchReq, NationTechResearchResp,
@@ -273,6 +273,16 @@ export class GameApi {
    */
   nationRelations(): Promise<NetOutcome<NationRelationsResp>> {
     return this.read<NationRelationsResp>('/nation/relations')
+  }
+
+  /**
+   * POST /nation/war/goal/claim —— 领这一场的全服目标奖励（B13 §一 §7；每人每场一次）。
+   *
+   * <p>**幂等键只挡网络重放**：同一个人换一条请求再点一次，靠的是服务端那份领取名单（回 13025）。
+   * 所以界面上"已领取"那一态不能只靠本地记 —— 它是服务端 `myGoalClaimed` 下发的。
+   */
+  claimWarGoal(req: Omit<WarGoalClaimReq, 'requestId'>): Promise<NetOutcome<WarGoalClaimResp>> {
+    return this.mutate<WarGoalClaimReq, WarGoalClaimResp>('/nation/war/goal/claim', req)
   }
 
   warStatus(): Promise<NetOutcome<WarStatusResp>> {

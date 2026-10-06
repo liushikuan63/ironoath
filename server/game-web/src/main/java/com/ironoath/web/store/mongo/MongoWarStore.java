@@ -98,6 +98,32 @@ public final class MongoWarStore implements WarStore {
                 .ne(WarScoreBoard.Phase.SETTLED.name())), WarDocument.COLLECTION);
     }
 
+    /**
+     * 领一次全服奖励：读、判、标名单、写回全在 {@code activeLock} 这一把锁里（与 recordKills／insertIfNoneActive 共用）。
+     *
+     * <p><b>不排除 SETTLED 的档</b>（与 recordKills 刻意相反）：目标达成与领取多半发生在仗打完之后 ——
+     * 结算把 phase 定格，但那份全服进度与领取名单仍然有效。
+     */
+    @Override
+    public WarStore.GoalClaimResult claimServerGoal(String playerId) {
+        synchronized (activeLock) {
+            WarDocument doc = latestDocument();
+            if (doc == null || doc.state() == null) {
+                return WarStore.GoalClaimResult.NO_WAR;
+            }
+            WarScoreBoard board = WarScoreBoard.fromSnapshot(doc.state(), rules.rules());
+            WarStore.GoalClaimResult result = WarStore.applyGoalClaim(board, playerId);
+            if (result == WarStore.GoalClaimResult.CLAIMED) {
+                Update update = new Update()
+                        .set("startedAt", board.startedAt())
+                        .set("state", board.toSnapshot());
+                mongo.updateFirst(Query.query(Criteria.where("_id").is(doc.warId())),
+                        update, WarDocument.class, WarDocument.COLLECTION);
+            }
+            return result;
+        }
+    }
+
     @Override
     public void save(WarScoreBoard board) {
         String warId = WarStore.documentIdOf(requireBoard(board));

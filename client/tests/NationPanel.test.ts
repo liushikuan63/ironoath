@@ -618,7 +618,7 @@ function warResp(overrides: Partial<WarStatusResp> = {}): WarStatusResp {
     hasWar: true, phase: 'SIEGE', startedAt: NOW, remainingSec: 600,
     gateCount: 4, capitalHolder: null, capitalHolderName: null,
     scores: [warScore()], totalKills: 0, serverGoalKills: 500, serverGoalReached: false,
-    myFatigue: 0, fatigueMax: 100, canMarch: true, serverNow: NOW, ...overrides,
+    myFatigue: 0, fatigueMax: 100, canMarch: true, serverNow: NOW, myGoalClaimed: false, ...overrides,
   }
 }
 
@@ -668,6 +668,27 @@ test('国战那一页：没拉到 / 没有仗 / 有仗 三态各自说清，不�
   assert.equal(/nation_[ab]/.test(onScreen), false, `国战那页印出了内部 id：${onScreen}`)
 })
 
+test('国战全服奖励的三态：还没达成 / 可以领 / 已经领过（都由服务端下发的两位决定）', () => {
+  // ① 还没达成：键不画、note 说清差在哪（客户端不自己比 totalKills 与目标大小）
+  const notYet = buildWarSection(warResp({ hasWar: true, serverGoalReached: false, myGoalClaimed: false }))
+  assert.equal(notYet.goalClaim.claimable, false)
+  assert.equal(notYet.goalClaim.claimed, false)
+  assert.match(notYet.goalClaim.note ?? '', /还没到目标/)
+  // ② 达成且没领：键亮着，note 为空（这时屏上没有别的要说）
+  const ready = buildWarSection(warResp({ hasWar: true, serverGoalReached: true, myGoalClaimed: false }))
+  assert.equal(ready.goalClaim.claimable, true)
+  assert.equal(ready.goalClaim.claimed, false)
+  assert.equal(ready.goalClaim.note, null)
+  // ③ 已经领过：键灰着、note 说明（**不能只靠本地记**：换设备/重登后就假了）
+  const claimed = buildWarSection(warResp({ hasWar: true, serverGoalReached: true, myGoalClaimed: true }))
+  assert.equal(claimed.goalClaim.claimable, false)
+  assert.equal(claimed.goalClaim.claimed, true)
+  assert.match(claimed.goalClaim.note ?? '', /已经领过/)
+  // 没拉到（null）：三态都给不能领且 note 为空 —— 别在一份没读到的数据上编状态
+  const missing = buildWarSection(null)
+  assert.equal(missing.goalClaim.claimable, false)
+  assert.equal(missing.goalClaim.note, null)
+})
 test('国战页的宣战门与目标：权限三态照 permissionGateOf，目标只带上屏要用的名字', () => {
   const target = { nationId: 'nation_z', name: '北伐营' }
   // ① 读到了、但没有这一位 ⇒ 灰，理由是身份结论

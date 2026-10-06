@@ -85,6 +85,29 @@ public final class InMemoryWarStore implements WarStore {
         return result;
     }
 
+    /**
+     * 领一次全服奖励：判定与标记在<b>本对象的同一把监视器</b>里做完（与 recordKills 共用一把锁）——
+     * 拆成"先查有没有领过、再记"两步的话，两个人同时点领取会各自读到名单里没有自己、各自写回，
+     * 后写的那份把前一份盖掉：那正是"每人只领一次"在并发下失效的形状。
+     *
+     * <p><b>不排除 SETTLED 的板子</b>（与 recordKills 刻意相反）：目标达成与领取都发生在仗打完之后
+     * 更常见 —— 结算把 phase 定格，但那份全服进度与领取名单仍然有效。
+     */
+    @Override
+    public synchronized WarStore.GoalClaimResult claimServerGoal(String playerId) {
+        WarScoreBoard.Snapshot stored = latestSnapshot().orElse(null);
+        if (stored == null) {
+            return WarStore.GoalClaimResult.NO_WAR;
+        }
+        WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        WarStore.GoalClaimResult result = WarStore.applyGoalClaim(board, playerId);
+        if (result == WarStore.GoalClaimResult.CLAIMED) {
+            // 名单在板子上：标了不写回，下一次读还是"没领过"，于是这份奖励可以反复领
+            byId.put(WarStore.documentIdOf(board), board.toSnapshot());
+        }
+        return result;
+    }
+
     @Override
     public synchronized void save(WarScoreBoard board) {
         String id = WarStore.documentIdOf(requireBoard(board));
