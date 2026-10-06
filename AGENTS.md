@@ -19,7 +19,7 @@
 
 | 目的 | 命令 |
 |---|---|
-| 静态门（44 道）+ 客户端单测 | `bash scripts/check.sh` |
+| 静态门（45 道）+ 客户端单测 | `bash scripts/check.sh` |
 | 服务端 JUnit + 客户端单测 | `bash scripts/test.sh`（等价 `mvn -f server/pom.xml test`） |
 | 全量构建（含契约生成） | `bash scripts/build.sh` |
 | 契约/配置表重生成（改 `contract/` 后必跑） | `npm run gen` |

@@ -109,6 +109,10 @@ bash scripts/check-client-send-paths.sh
 # 它自己的注释写着「由 game-web 载入、落盘」却没人执行 ⇒ 玩家完全不可达。客户端那一侧早有
 # check-client-send-paths 管"有名字零读者"，服务端这一侧一直没有。
 bash scripts/check-core-wiring.sh
+# 客户端 game/ 与 scene/ 的每个 .ts 都必须被别的生产文件导入（或被场景按压缩 uuid 挂载）：
+# B04 验收 8 的 ✅ 长期挂在 RewardToastQueue 的单测上，而生产提示出口 showHint 每次都往同一坐标
+# add 一个 Label ⇒ 多条必然重叠，正是验收项禁止的行为。域类这一维此前没人守。
+bash scripts/check-client-orphans.sh
 # 文档里的门禁道数必须等于本脚本实际调用的道数（2026-10-06 开）：
 # AGENTS.md 写「32 道」而这里实际 40 道是现跑抓到的 —— 计数一漂，后面每次会话都拿旧数当
 # 「门全开」的证据。⚠️ 这道门自己也在被数之内：加/删门禁不改 AGENTS.md 的数字就会红。

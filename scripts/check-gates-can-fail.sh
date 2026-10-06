@@ -37,10 +37,11 @@ DC_D=/d/tmp/probe753/gates-doccnt
 PP_D=/d/tmp/probe753/gates-pkgpath
 SP_D=/d/tmp/probe753/gates-sendpaths
 CW_D=/d/tmp/probe753/gates-corewire
+CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D"
 }
 trap cleanup EXIT
 
@@ -329,6 +330,26 @@ mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真�
 run_core_wiring() { bash scripts/check-core-wiring.sh; }
 three_arg check-core-wiring.sh \
           mk_core_wiring run_core_wiring 'core 的类必须被外层主源码引用（走环境变量口，零污染）'
+
+mk_client_orphans() { # check-client-orphans：客户端 game/scene 的 .ts 必须被生产文件导入
+  # ⚠️ 走**环境变量口**（ORPHAN_SCAN_DIRS / ORPHAN_ASSET_DIR，2026-10-06 新加）⇒ **零污染**：
+  #    不碰 client/assets 那 124 个文件，也不往真树里植孤儿。
+  # ⚠️ 违规态里 `ZzUsed.ts` 必须**被引用一次**（ZzParent 导入它）：两条都孤儿会让红点归因不清，
+  #    而"已接线数 = 0"会撞上门自己的第三条下限（那是另一条判据，不能混进来）。
+  if [ "$1" = "1" ]; then
+    rm -rf "$CO_D"; mkdir -p "$CO_D/game"
+    printf 'export class ZzOrphan { go(): void {} }\n' > "$CO_D/game/ZzOrphan.ts"
+    printf 'export class ZzUsed { go(): void {} }\n' > "$CO_D/game/ZzUsed.ts"
+    printf 'import { ZzUsed } from "./ZzUsed"\nexport class ZzParent { x = new ZzUsed() }\n' > "$CO_D/game/ZzParent.ts"
+    export ORPHAN_SCAN_DIRS="$CO_D/game" ORPHAN_ASSET_DIR="$CO_D"
+  else
+    unset ORPHAN_SCAN_DIRS ORPHAN_ASSET_DIR
+    rm -rf "$CO_D"
+  fi
+}
+run_client_orphans() { bash scripts/check-client-orphans.sh; }
+three_arg check-client-orphans.sh \
+          mk_client_orphans run_client_orphans '客户端 game/scene 的 .ts 必须被生产导入（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'
