@@ -69,15 +69,22 @@ public class BattleReportService {
     private final SocialAppService social;
     /** 击杀上报（B23 的 KILL 榜）。战报域是所有战斗的唯一漏斗，所以击杀累计挂在这里。 */
     private final com.ironoath.web.rank.RankBoardService ranks;
+    /** 国战击杀累计（B13 §7）：同一个漏斗的第二位读者 —— 见下面 record 里那段"为什么挂在这里"。 */
+    private final com.ironoath.web.nation.WarStore wars;
+    private final com.ironoath.web.nation.NationMembership membership;
 
     public BattleReportService(ConfigRegistry configs, BattleReportStore store,
                                TimeService timeService, SocialAppService social,
-                               com.ironoath.web.rank.RankBoardService ranks) {
+                               com.ironoath.web.rank.RankBoardService ranks,
+                               com.ironoath.web.nation.WarStore wars,
+                               com.ironoath.web.nation.NationMembership membership) {
         this.configs = configs;
         this.store = store;
         this.timeService = timeService;
         this.social = social;
         this.ranks = ranks;
+        this.wars = wars;
+        this.membership = membership;
     }
 
     /**
@@ -109,6 +116,21 @@ public class BattleReportService {
         // 所以"对方死掉的那些"才是这份记录主人的击杀。只算阵亡（wounded 是伤兵，治得回来）
         long kills = ownerId.equals(attackerId) ? result.defDead() : result.atkDead();
         ranks.reportKills(ownerId, nicknameOf(ownerId), kills);
+        // 国战击杀累计（B13 §7）也挂在这个漏斗上，理由与 KILL 榜同一条：打野、打关卡、攻城、拦截
+        // 四条战斗路径全都经过这里，写在任何一条 service 里都会漏掉另外三条 ——
+        // 而"全服累计击杀"要的恰恰是<b>不打王城的人也算进来</b>。
+        // 只算阵亡（上面那条三目已经是主人视角的阵亡数），伤兵治得回来，不算被消灭。
+        //
+        // PVP 双方各记一份战报，所以这一句会被两边各调一次，各自的击杀是对方阵亡的那些 ⇒
+        // 全服总数 = 双方阵亡之和，每个死亡只被计一次（不是双计）。
+        //
+        // 刻意不包 try/catch：这一句与上一句、与战报落库是同级的写。给国战记账单独吞一次异常，
+        // 症状是进度条悄悄不涨而没有任何地方报错 —— 那正是本仓反复防的"判定写了却没接上"。
+        com.ironoath.web.nation.WarStore.KillResult warResult =
+                wars.recordKills(membership.nationIdOf(ownerId), ownerId, kills);
+        if (LOG.isDebugEnabled() && warResult != com.ironoath.web.nation.WarStore.KillResult.SKIPPED) {
+            LOG.debug("国战击杀归属 ownerId={} 结果={} 击杀数={}", ownerId, warResult, kills);
+        }
         LOG.info("战报已落库 reportId={} ownerId={} 类型={} 对手={} 结果={} 回合={} seed={} 过期={}",
                 report.reportId(), ownerId, battleType, defenderId, result.winner(),
                 result.totalRounds(), result.seed(), report.expiresAt());

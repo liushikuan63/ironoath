@@ -60,6 +60,31 @@ public final class InMemoryWarStore implements WarStore {
         return true;
     }
 
+    /**
+     * 击杀归属。<b>整个「取最新 → 判参战 → 改 → 写回」在本对象的同一把监视器里完成</b>
+     * （方法级 {@code synchronized} 与 {@link #insertIfNoneActive} 用的是同一把锁，
+     * 所以"刚宣完战的第一场"与"同时打完的那一仗"不会互相踩）。
+     *
+     * <p>最新那一场若是 {@code SETTLED} 也按「没有活着的仗」处理：结算完的历史不许再被记分，
+     * 否则重启后 {@code findLatest} 会把已结算的档当现役档继续加。
+     */
+    @Override
+    public synchronized WarStore.KillResult recordKills(String killerNationId, String killerPlayerId,
+                                                        long units) {
+        if (units <= 0L) {
+            return WarStore.KillResult.SKIPPED;
+        }
+        WarScoreBoard.Snapshot stored = latestSnapshot().orElse(null);
+        if (stored == null || stored.phase() == WarScoreBoard.Phase.SETTLED) {
+            return WarStore.KillResult.NO_ACTIVE_WAR;
+        }
+        WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        WarStore.KillResult result = WarStore.applyKills(board, killerNationId, killerPlayerId, units);
+        // 改的是重建出来的那份，必须整份写回；漏这一行的症状是"全服进度条永远不动"而不报错
+        byId.put(WarStore.documentIdOf(board), board.toSnapshot());
+        return result;
+    }
+
     @Override
     public synchronized void save(WarScoreBoard board) {
         String id = WarStore.documentIdOf(requireBoard(board));

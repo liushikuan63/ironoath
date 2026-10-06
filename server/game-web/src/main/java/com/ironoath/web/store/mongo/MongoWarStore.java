@@ -124,9 +124,48 @@ public final class MongoWarStore implements WarStore {
      */
     @Override
     public Optional<WarScoreBoard> findLatest() {
+        return Optional.ofNullable(latestDocument()).map(this::toDomain);
+    }
+
+    /**
+     * 击杀归属：<b>读、判、改、写回收在 {@code activeLock} 这一把锁里</b>，与
+     * {@link #insertIfNoneActive} 共用同一把 —— 所以"刚宣完战的第一场"与"同一秒打完的那一仗"
+     * 不会各自拿着旧副本互相盖。
+     *
+     * <p><b>这一条是整份代码里最热的一次写</b>（每场战斗结算都来一趟），但它仍然是串行的：
+     * 一场战斗到一次结算的转化率远低于内核注释里那条"200 QPS 的行军事件"，
+     * 而这里<b>没有在数据库层做 SUM</b>（B13 禁止项）—— 加法算在内核对象上，
+     * 落盘只是把整份快照换回去，与内存版给玩家的是同一份算出来的数。
+     *
+     * <p>如果哪天真需要横向扩展，办法是把这一条换成带版本 CAS 的循环或 Mongo 的原子累加口，
+     * 而不是把锁挪到服务层 —— 挪上去就退回"两个玩家各拿一把按玩家分的锁"那个窗口。
+     */
+    @Override
+    public WarStore.KillResult recordKills(String killerNationId, String killerPlayerId, long units) {
+        if (units <= 0L) {
+            return WarStore.KillResult.SKIPPED;
+        }
+        synchronized (activeLock) {
+            WarDocument doc = latestDocument();
+            if (doc == null || doc.state() == null
+                    || doc.state().phase() == WarScoreBoard.Phase.SETTLED) {
+                return WarStore.KillResult.NO_ACTIVE_WAR;
+            }
+            WarScoreBoard board = WarScoreBoard.fromSnapshot(doc.state(), rules.rules());
+            WarStore.KillResult result = WarStore.applyKills(board, killerNationId, killerPlayerId, units);
+            Update update = new Update()
+                    .set("startedAt", board.startedAt())
+                    .set("state", board.toSnapshot());
+            mongo.updateFirst(Query.query(Criteria.where("_id").is(doc.warId())),
+                    update, WarDocument.class, WarDocument.COLLECTION);
+            return result;
+        }
+    }
+
+    /** 按 {@code startedAt} 取最新那一份文档（走 {@code idx_war_started_at}）；一份都没有时为 null。 */
+    private WarDocument latestDocument() {
         Query query = new Query().with(Sort.by(Sort.Direction.DESC, "startedAt")).limit(1);
-        return Optional.ofNullable(mongo.findOne(query, WarDocument.class, WarDocument.COLLECTION))
-                .map(this::toDomain);
+        return mongo.findOne(query, WarDocument.class, WarDocument.COLLECTION);
     }
 
     @Override

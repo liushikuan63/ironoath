@@ -226,7 +226,12 @@ class RankEndpointTest {
         String loser = newPlayer(16);
         var battleStore = new com.ironoath.web.store.memory.InMemoryBattleReportStore();
         var reports = new com.ironoath.web.battle.BattleReportService(anchoredConfigs(), battleStore,
-                timeService, social, ranks);
+                timeService, social, ranks,
+                // 国战归属用一份<b>全新的空存储</b>：本用例验的是 KILL 榜，不该被上下文里
+                // 那颗共享的 war bean 影响（若哪条用例先宣过战，这里就会顺手把击杀记进那场仗）
+                new com.ironoath.web.store.memory.InMemoryWarStore(
+                        new com.ironoath.web.nation.WarRulesAssembler(anchoredConfigs())),
+                new com.ironoath.web.nation.NationMembership(socialStore, nationStore));
 
         // 战果由内核产出（这里手工构造一份：本用例验的是"记战报会不会上报击杀"，
         // 不是内核怎么算伤害 —— 形状与 BattleReportStoreEquivalenceTest 的夹具一致）

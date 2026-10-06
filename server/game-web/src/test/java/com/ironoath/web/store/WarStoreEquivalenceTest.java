@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -267,6 +268,116 @@ class WarStoreEquivalenceTest {
         }
     }
 
+    // ---------- 击杀归属（切片 2b：内核的 recordKill 第一次有了生产写路径）----------
+
+    @Test
+    @DisplayName("击杀归属的四种结果两套实现一字不差；没参战的人只加全服进度与个人账")
+    void killAttributionIsIdenticalOnBothStores() {
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(richBoard(T0));
+            WarScoreBoard before = store.findLatest().orElseThrow();
+            long killsBefore = before.totalKills();
+            long n1KillBefore = before.snapshot().get("n1").killScore();
+
+            assertThat(store.recordKills("n1", "P1", 10L))
+                    .as("%s 参战国的人应当走 APPLIED", label).isEqualTo(WarStore.KillResult.APPLIED);
+            assertThat(store.recordKills("n-outside", "P9", 5L))
+                    .as("%s 仗在打但这个人所属的国家没参战：SERVER_ONLY —— B13 §7 明写不打国战的人也算进全服目标", label)
+                    .isEqualTo(WarStore.KillResult.SERVER_ONLY);
+            assertThat(store.recordKills(null, "P9", 3L))
+                    .as("%s 连国籍都没有（没联盟或联盟没入籍）：同样 SERVER_ONLY，不许抛", label)
+                    .isEqualTo(WarStore.KillResult.SERVER_ONLY);
+            assertThat(store.recordKills("n1", "P1", 0L))
+                    .as("%s 零击杀：一次写入都不该发生", label).isEqualTo(WarStore.KillResult.SKIPPED);
+
+            WarScoreBoard back = store.findLatest().orElseThrow();
+            assertThat(back.totalKills()).as("%s 全服进度 = 三笔计入之和（10+5+3）", label)
+                    .isEqualTo(killsBefore + 18L);
+            assertThat(back.snapshot().get("n1").killScore())
+                    .as("%s 国家击杀分只涨被点名的那一国（10 兵 × 1 分/兵）", label)
+                    .isEqualTo(n1KillBefore + 10L);
+            assertThat(back.snapshot().get("n2").killScore())
+                    .as("%s 没被点名的参战国一分不涨（否则两个国家会因为一个人的战斗同时加分）", label)
+                    .isEqualTo(120L);
+            assertThat(back.killsBy("P9"))
+                    .as("%s 个人账必须留着 —— 赛季分按人发就靠这一列，少了它 3b 只能回头翻会过期的战报", label)
+                    .isEqualTo(8L);
+
+            back.settle(T0 + 40 * MINUTE);
+            store.save(back);
+            assertThat(store.recordKills("n1", "P1", 1L))
+                    .as("%s 已结算的历史不许再被记分（否则重启后 findLatest 读到的那份历史会一直涨）", label)
+                    .isEqualTo(WarStore.KillResult.NO_ACTIVE_WAR);
+            assertThat(store.findLatest().orElseThrow().totalKills())
+                    .as("%s 被拒的那一次不许动到定格的分", label).isEqualTo(killsBefore + 18L);
+        }
+    }
+
+    @Test
+    @DisplayName("没有仗的时候归属是纯 no-op：战斗本身不受影响，也不凭空开出一场")
+    void killsWithoutAnyWarAreNoOpOnBothStores() {
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            assertThat(store.recordKills("n1", "P1", 5L))
+                    .as("%s 空存储必须回 NO_ACTIVE_WAR", label)
+                    .isEqualTo(WarStore.KillResult.NO_ACTIVE_WAR);
+            assertThat(store.findLatest()).as("%s 不许因为一次归属就开出仗来", label).isEmpty();
+        }
+    }
+
+    /**
+     * 八个人同时各结算五次击杀。<b>这条是"归属必须长在存储层"的直接证据</b>：
+     * 服务层写「读板子 → 加 → 落盘」的话，这里会少涨几条而全链路不报错
+     * （内存版是后写覆盖前写，Mongo 版是整档替换互相盖），症状只是"进度条好像少涨了一点"。
+     */
+    @Test
+    @DisplayName("并发结算一条击杀都不许丢：总账与每个人的账都要精确（内存与 Mongo 同一条）")
+    void concurrentKillsAreNotLostOnBothStores() throws Exception {
+        final int threads = 8;
+        final int each = 5;
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(richBoard(T0));
+            long baseline = store.findLatest().orElseThrow().totalKills();
+
+            ExecutorService pool = Executors.newFixedThreadPool(threads);
+            try {
+                // 起跑线必须是 CountDownLatch(1)：latch 的初值是"要 countDown 几次才放行"，
+                // 写成 (threads) 又只 countDown 一次，八条线程会永远等在起跑线上 ——
+                // 表现为 Future.get 超时且任务一条日志都不打，看着像实现死锁，其实是用例写错（本轮真踩过）
+                CountDownLatch startLine = new CountDownLatch(1);
+                List<Future<Void>> futures = new ArrayList<>();
+                for (int t = 0; t < threads; t++) {
+                    final String playerId = "C" + t;
+                    futures.add(pool.submit(() -> {
+                        startLine.await();
+                        for (int i = 0; i < each; i++) {
+                            store.recordKills("n1", playerId, 1L);
+                        }
+                        return null;
+                    }));
+                }
+                startLine.countDown();
+                for (Future<Void> f : futures) {
+                    f.get(20, TimeUnit.SECONDS);
+                }
+            } finally {
+                pool.shutdownNow();
+            }
+
+            WarScoreBoard back = store.findLatest().orElseThrow();
+            assertThat(back.totalKills())
+                    .as("%s 少了就是读-改-写没进同一个临界区（丢的那几条不会有任何地方报错）", label)
+                    .isEqualTo(baseline + (long) threads * each);
+            for (int t = 0; t < threads; t++) {
+                assertThat(back.killsBy("C" + t))
+                        .as("%s 第 %d 个人的个人账被并发挤掉了（全服总数对不上个人账，赛季分就会发错人）", label, t)
+                        .isEqualTo(each);
+            }
+        }
+    }
+
     // ---------- 建档与落盘 ----------
 
     @Test
@@ -377,8 +488,8 @@ class WarStoreEquivalenceTest {
         board.captureGate("n2", "gate_2");
         board.beginSiege(startedAt + MINUTE);
         board.captureCapital("n1", startedAt + 7 * MINUTE);
-        board.recordKill("n1", 60_000L);
-        board.recordKill("n2", 120L);
+        board.recordKill("n1", "P1", 60_000L);
+        board.recordKill("n2", "P2", 120L);
         board.addFatigue("P1", 15L, 5L);   // 15×5 + 5×1 = 80
         board.addFatigue("P2", 25L, 0L);   // 125 → 夹到上限 100
         board.claimServerGoal("P1");
@@ -417,6 +528,12 @@ class WarStoreEquivalenceTest {
         b.append("|fatigue=");
         for (String playerId : List.of("P1", "P2", "P3")) {
             b.append(playerId).append('=').append(board.fatigueOf(playerId)).append(',');
+        }
+        // 每人击杀账（V18 的赛季分输入）。这一列必须在描述里：少持久化它的症状是
+        // "全服进度对了、国家分对了，但某个人的赛季榜一动不动" —— 上面任何一列都看不出来
+        b.append("|playerKills=");
+        for (String playerId : List.of("P1", "P2", "P3", "P9")) {
+            b.append(playerId).append('=').append(board.killsBy(playerId)).append(',');
         }
         b.append("|claimedCount=").append(board.serverGoalClaimed());
         return b.toString();

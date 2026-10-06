@@ -114,6 +114,13 @@ public final class WarScoreBoard {
     private long capitalHeldSince;
     /** 玩家 id → 疲劳值 */
     private final Map<String, Long> fatigue = new LinkedHashMap<>();
+    /**
+     * 玩家 id → 这一场里他消灭的单位数。<b>赛季积分要按人发，所以"谁打的"必须留在这块板上</b>：
+     * 只记国家维度的击杀，到了赛季结算就分不出该给谁加分，届时唯一的补救办法是回头翻战报 ——
+     * 而战报有 {@code BATTLE_REPORT_TTL_SECONDS} 的 TTL（`BattleReportService` 落的就是这份档），
+     * <b>过期就查无此账</b>。用一份会过期的档去推一份要永久计分的账，正是"账本住在易失的盒子里"那一族。
+     */
+    private final Map<String, Long> playerKills = new LinkedHashMap<>();
     /** 已领取全服奖励的玩家 id */
     private final Set<String> goalClaimed = new LinkedHashSet<>();
     private long totalKills;
@@ -197,8 +204,27 @@ public final class WarScoreBoard {
         capitalHeldSince += minutes * 60_000L;
     }
 
-    /** 记一次击杀。同时累加全服击杀数（全服目标）。 */
+    /**
+     * 记一次击杀（不知道或不该知道是谁打的时使用 —— 例如据点守军的自然减员）。
+     *
+     * <p>它只是 {@link #recordKill(String, String, long)} 传 null 的名字：<b>不记玩家维度账</b>，
+     * 因此这一笔不会进任何人的赛季分。有真实击杀者的人请调三参版，
+     * 否则赛季榜会少一块分而全服目标照样涨 —— 那种"两个数各对一半"最难查。
+     */
     public void recordKill(String killerNationId, long units) {
+        recordKill(killerNationId, null, units);
+    }
+
+    /**
+     * 记一次击杀，并记下<b>是谁打的</b>。同时累加全服击杀数（全服目标）。
+     *
+     * <p><b>为什么国家分与个人账要在同一个方法里加</b>：这两个数必须永远同源。
+     * 分成 {@code recordKill} 与 {@code addPlayerKills} 两个调用的话，任何一条调用路径漏抄第二个，
+     * 症状就是"国家加了分、那个人在赛季榜上没动"，而不报错。
+     *
+     * @param killerPlayerId 击杀者的玩家 id；null 表示无主击杀（不计入赛季分）
+     */
+    public void recordKill(String killerNationId, String killerPlayerId, long units) {
         requireSiegeOrPrep();
         requireRegistered(killerNationId);
         if (units <= 0) {
@@ -206,6 +232,44 @@ public final class WarScoreBoard {
         }
         scores.get(killerNationId)[1] += units * rules.killScorePerUnit();
         totalKills += units;
+        if (killerPlayerId != null && !killerPlayerId.isBlank()) {
+            playerKills.merge(killerPlayerId, units, Long::sum);
+        }
+    }
+
+    /**
+     * 全服目标的另一种记法：<b>计入全服进度与个人账，但不给任何国家加分</b>。
+     *
+     * <p>为什么需要它而不是让调用方"自己判断要不要调 {@link #recordKill}"：B13 §7 明写
+     * 「全服累计击杀包含不打国战的人的贡献（打野、打关卡都算）」，这是那一节唯一一条
+     * 「不参战也有收益」的设计。若参战国之外的人干脆不上报，全服进度条就会在国战期间
+     * <b>只涨于参战国的人</b>，而那句话正是这个玩法的存在理由。
+     *
+     * <p>同一条理由也决定了它<b>不能</b>顺手给国家加分：未参战的国家没有这一行的账，
+     * {@code scores.get(nationId)} 会直接 NPE —— 那是"少一条判据就崩"的形状，不是设计。
+     */
+    public void recordServerKill(String killerPlayerId, long units) {
+        requireSiegeOrPrep();
+        if (units <= 0) {
+            throw new IllegalArgumentException("击杀数必须为正，实际=" + units);
+        }
+        totalKills += units;
+        if (killerPlayerId != null && !killerPlayerId.isBlank()) {
+            playerKills.merge(killerPlayerId, units, Long::sum);
+        }
+    }
+
+    /**
+     * 某个玩家在这一场里的击杀数（赛季分的输入，见 {@link #playerKills} 那段）。
+     * 没打过或无主击杀都回 0 —— 这条不抛，因为视图要能显示"你还没动手"而不是一句错误。
+     */
+    public long killsBy(String playerId) {
+        return playerId == null ? 0L : playerKills.getOrDefault(playerId, 0L);
+    }
+
+    /** 这一场里所有有主击杀的账（不可变视图）。 */
+    public Map<String, Long> playerKillLedger() {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(playerKills));
     }
 
     /**
@@ -390,7 +454,8 @@ public final class WarScoreBoard {
      */
     public record Snapshot(long startedAt, Phase phase, List<NationRow> nations,
                            String capitalHolder, long capitalHeldSince,
-                           Map<String, Long> fatigue, List<String> goalClaimed, long totalKills) {
+                           Map<String, Long> fatigue, Map<String, Long> playerKills,
+                           List<String> goalClaimed, long totalKills) {
 
         public Snapshot {
             if (phase == null) {
@@ -399,6 +464,8 @@ public final class WarScoreBoard {
             nations = List.copyOf(nations == null ? List.of() : nations);
             fatigue = Collections.unmodifiableMap(new LinkedHashMap<>(
                     fatigue == null ? Map.of() : fatigue));
+            playerKills = Collections.unmodifiableMap(new LinkedHashMap<>(
+                    playerKills == null ? Map.of() : playerKills));
             goalClaimed = List.copyOf(goalClaimed == null ? List.of() : goalClaimed);
         }
     }
@@ -433,7 +500,8 @@ public final class WarScoreBoard {
                     held == null ? List.of() : List.copyOf(held)));
         }
         return new Snapshot(startedAt, phase, rows, capitalHolder, capitalHeldSince,
-                new LinkedHashMap<>(fatigue), List.copyOf(goalClaimed), totalKills);
+                new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
+                List.copyOf(goalClaimed), totalKills);
     }
 
     /**
@@ -456,15 +524,16 @@ public final class WarScoreBoard {
         }
         return restore(rules, snapshot.startedAt(), snapshot.phase(), scoreMap, gateMap,
                 snapshot.capitalHolder(), snapshot.capitalHeldSince(), snapshot.fatigue(),
-                new LinkedHashSet<>(snapshot.goalClaimed()), snapshot.totalKills());
+                snapshot.playerKills(), new LinkedHashSet<>(snapshot.goalClaimed()),
+                snapshot.totalKills());
     }
 
     /** 供仓储重建。 */
     public static WarScoreBoard restore(Rules rules, long startedAt, Phase phase,
                                         Map<String, long[]> scores, Map<String, Set<String>> gates,
                                         String capitalHolder, long capitalHeldSince,
-                                        Map<String, Long> fatigue, Set<String> goalClaimed,
-                                        long totalKills) {
+                                        Map<String, Long> fatigue, Map<String, Long> playerKills,
+                                        Set<String> goalClaimed, long totalKills) {
         WarScoreBoard board = new WarScoreBoard(rules, startedAt);
         board.phase = phase;
         // 逐份 clone 数组：传进来的那份 map 常常就是调用方手里的活对象，共享数组等于读返回别名
@@ -477,6 +546,7 @@ public final class WarScoreBoard {
         board.capitalHolder = capitalHolder;
         board.capitalHeldSince = capitalHeldSince;
         board.fatigue.putAll(fatigue);
+        board.playerKills.putAll(playerKills);
         board.goalClaimed.addAll(goalClaimed);
         board.totalKills = totalKills;
         return board;

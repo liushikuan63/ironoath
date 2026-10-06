@@ -108,6 +108,63 @@ public interface WarStore {
     Optional<WarScoreBoard> findLatest();
 
     /**
+     * 击杀归属的结果（四个值各对应一种"要不要记账"的判断，不是一个笼统的 boolean）：
+     * 战斗每天都在发生，把四种情况压成一个布尔，日志与排查就只能靠猜。
+     */
+    enum KillResult {
+        /** 参战国的人：国家击杀分、全服进度、个人账三样都加了 */
+        APPLIED,
+        /** 仗在打，但这个人的国家没参战：加全服进度与个人账，<b>不给任何国家加分</b>（B13 §7 的原话） */
+        SERVER_ONLY,
+        /** 没有任何一场未结束的仗：什么都没记 */
+        NO_ACTIVE_WAR,
+        /** 零击杀：一次写入都不该发生（未破墙、平局、纯拦截失败都有可能是 0） */
+        SKIPPED
+    }
+
+    /**
+     * 原子地把一场战斗的击杀记进当前那一场仗：<b>读、判、改、写回全在存储层的同一个临界区里</b>。
+     *
+     * <p><b>为什么这条必须长在存储层而不是服务层</b>：这是本档最热的一条写路径 —— 每一场战斗结算都会来一次，
+     * 而 {@code PlayerLock} 是按玩家分的，两个同时打完仗的玩家各拿各的锁。
+     * 服务层写「读板子 → 加 → 落盘」的话，两次并发结算会有一次的击杀静默消失
+     * （内存版是后写覆盖前写，Mongo 版是整档替换互相盖），而症状只是"全服进度条好像少涨了一点"。
+     * 与 {@code NationStore#settleWeeklyTax} 同一条判断。
+     *
+     * <p><b>这一格把 {@code save} 那段"没有多写者读-改-写的形状"作废了</b>：本方法就是那个形状，
+     * 而它挡并发靠的是<b>实例临界区 + 全服单实例</b>这条前提（与 {@link #insertIfNoneActive} 同一条），
+     * 不是靠乐观锁版本。跨进程部署时这两处都要改成带版本的 CAS 或原子累加口。
+     *
+     * @param killerNationId 击杀者所属国家 id；查不到（没国籍或联盟退国）传 null，按无主处理
+     * @param killerPlayerId 击杀者玩家 id（赛季分的键），null 表示无主击杀
+     * @param units          消灭的单位数；<=0 时不动任何东西
+     * @return 归属结果。调用方只拿它打一行日志 —— <b>不许拿它做业务分支</b>：
+     *         国战记账是旁路，它成不成就都不该改变这场战斗的结果
+     */
+    KillResult recordKills(String killerNationId, String killerPlayerId, long units);
+
+    /**
+     * 归属判断的<b>唯一一份</b>实现，内存与 Mongo 两套存储共用（放在端口而不是任何一份实现里：
+     * Mongo 版不该依赖内存实现那个包）。
+     *
+     * <p>参战国走 {@link WarScoreBoard#recordKill(String, String, long)}（国家击杀分 + 全服进度 + 个人账），
+     * 没参战的人走 {@link WarScoreBoard#recordServerKill(String, long)}
+     * （只加全服进度与个人账 —— B13 §7 明写"不打国战的人的贡献也算"）。
+     * 这条分支如果两份实现各写一遍，早晚出现"内存版算了、Mongo 版没算"那种只在换存储那天才看见的事故。
+     *
+     * <p><b>它只改传入的那块板子，不落盘</b> —— 写回是调用方（存储层临界区内）的责任。
+     */
+    static KillResult applyKills(WarScoreBoard board, String killerNationId,
+                                 String killerPlayerId, long units) {
+        if (killerNationId != null && board.registeredNations().contains(killerNationId)) {
+            board.recordKill(killerNationId, killerPlayerId, units);
+            return KillResult.APPLIED;
+        }
+        board.recordServerKill(killerPlayerId, units);
+        return KillResult.SERVER_ONLY;
+    }
+
+    /**
      * 测试辅助：清空。
      */
     void clear();

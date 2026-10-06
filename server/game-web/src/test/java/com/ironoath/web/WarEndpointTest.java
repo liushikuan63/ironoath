@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +24,9 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.ironoath.battle.BattleResult;
+import com.ironoath.battle.BattleType;
+import com.ironoath.battle.Winner;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.json.JsonUtils;
 import com.ironoath.common.time.TimeService;
@@ -84,6 +88,8 @@ class WarEndpointTest {
     @Autowired private NationStore nations;
     @Autowired private NationRulesAssembler nationRules;
     @Autowired private TimeService timeService;
+    /** 所有战斗的唯一漏斗（打野/关卡/攻城/拦截都汇到这里）—— 击杀归属就挂在这一句上，所以要真的走它。 */
+    @Autowired private com.ironoath.web.battle.BattleReportService battleReports;
 
     /** 联盟名/标签的序号（@BeforeEach 重置）：同一条用例里建两个联盟时，固定名字会在第二个上撞名。 */
     private int allianceSeq;
@@ -372,6 +378,79 @@ class WarEndpointTest {
                 .isEqualTo(startedAt);
     }
 
+    // ---------- 击杀归属（切片 2b：生产漏斗 → 积分板 → 读端点）----------
+
+    /**
+     * 打野/关卡这类 PVE 结算的击杀要进当前那一场仗。
+     *
+     * <p><b>走的是 {@code BattleReportService.record} 这个真实漏斗</b>而不是直接调 {@code WarStore.recordKills}：
+     * 打野、关卡、攻城、拦截四条战斗路径都汇到这一句，挂在这里才等于"所有战斗都进账"。
+     * 战果本身是夹具（{@link #battleResult}）—— 内核真算出来的战果形状由 B05/B09 的用例覆盖，
+     * 本用例要钉的是<b>归属与累计</b>那一跳，不是战斗数值。
+     */
+    @Test
+    @DisplayName("打完一场打野：全服进度、该国击杀分与读端点的视图同时跟着变")
+    void battleFunnelFeedsTheWarBoardAndTheReadEndpoint() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        post200("/nation/war/declare", a.king, new WarDeclareReq(newRequestId(), b.nationId));
+        assertThat(get200("/nation/war", a.king).get("totalKills").asLong()).isZero();
+
+        battleReports.record(a.king, a.king, "mapmonster_7", "叛军小头目", null,
+                BattleType.PVE, List.of(), List.of(), battleResult(0L, 50L), timeService.serverNow());
+
+        JsonNode data = get200("/nation/war", a.king);
+        assertThat(data.get("totalKills").asLong())
+                .as("全服累计击杀第一次在生产路径上真的动起来")
+                .isEqualTo(50L);
+        assertThat(rowOf(data.get("scores"), a.nationId).get("killScore").asLong())
+                .as("国家击杀分 = 50 兵 × WAR_SCORE_KILL_PER_UNIT(1)")
+                .isEqualTo(50L);
+        assertThat(rowOf(data.get("scores"), b.nationId).get("killScore").asLong())
+                .as("对面那一国没打，就该一分不涨")
+                .isZero();
+        assertThat(wars.findLatest().orElseThrow().killsBy(a.king))
+                .as("个人账（V18 赛季分的键）必须留下 —— 只记国家维度，3b 就只能回头翻会过期的战报")
+                .isEqualTo(50L);
+    }
+
+    @Test
+    @DisplayName("PVP 双方各记一份战报：全服总数是双方阵亡之和，不是把同一批死亡算两遍")
+    void twoReportCopiesOfOnePvpBattleDoNotDoubleCount() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        post200("/nation/war/declare", a.king, new WarDeclareReq(newRequestId(), b.nationId));
+        long now = timeService.serverNow();
+        // 攻方阵亡 30、守方阵亡 70：两份战报的主人视角互为攻守
+        battleReports.record(a.king, a.king, b.king, "赤原王", "铁誓王",
+                BattleType.PVP_SOLO, List.of(), List.of(), battleResult(30L, 70L), now);
+        battleReports.record(b.king, a.king, b.king, "赤原王", "铁誓王",
+                BattleType.PVP_SOLO, List.of(), List.of(), battleResult(30L, 70L), now);
+
+        JsonNode data = get200("/nation/war", a.king);
+        assertThat(data.get("totalKills").asLong())
+                .as("70（A 消灭的）+ 30（B 消灭的）= 100；写成 170 就是把同一批死亡数了两遍，"
+                        + "而全服目标会提前达成、500 金币提前发出去")
+                .isEqualTo(100L);
+        assertThat(rowOf(data.get("scores"), a.nationId).get("killScore").asLong()).isEqualTo(70L);
+        assertThat(rowOf(data.get("scores"), b.nationId).get("killScore").asLong()).isEqualTo(30L);
+    }
+
+    @Test
+    @DisplayName("没有仗的时候打一场：战报照常落库，国战那条旁路只是 no-op")
+    void battleWithoutAWarIsUnaffected() throws Exception {
+        Kingdom a = kingdom("铁誓");
+
+        var report = battleReports.record(a.king, a.king, "mapmonster_8", "叛军小头目", null,
+                BattleType.PVE, List.of(), List.of(), battleResult(0L, 42L), timeService.serverNow());
+
+        assertThat(report.reportId()).as("战报必须落库（这一格不能反过来把战斗卡住）").isNotBlank();
+        assertThat(wars.findLatest())
+                .as("没有仗就是 NO_ACTIVE_WAR：什么都不记，也不凭空开一场")
+                .isEmpty();
+        assertThat(get200("/nation/war", a.king).get("hasWar").asBoolean()).isFalse();
+    }
+
     // ---------- 协议与内核同源 ----------
 
     @Test
@@ -417,6 +496,21 @@ class WarEndpointTest {
     private Nation nation(String id, String name) {
         return Nation.found(id, name, "K-" + id, "AL-" + id, 100L, 200L,
                 timeService.serverNow(), nationRules.rules());
+    }
+
+    /**
+     * 一份最小可用的战果：归属逻辑只读<b>阵亡数</b>（其余给空集合与零）。
+     *
+     * <p>刻意不跑 {@code BattleSimulator}：内核战果的形状由 B05/B09 的用例覆盖，
+     * 本类要钉的是「漏斗 → 归属 → 读端点」这一跳。把两个被测对象焊在一起，红了不知道该怪谁。
+     *
+     * <p><b>只有"阵亡"进账、伤兵不进</b>：伤兵治得回来（{@code ArmyState.admitWounded}），
+     * 把它算成被消灭会让全服进度虚高 —— 这条口径与 KILL 榜那一句是同一个三目式，
+     * 不是这里新定的。
+     */
+    private static BattleResult battleResult(long atkDead, long defDead) {
+        return new BattleResult(Winner.ATTACKER, List.of(), 0, Map.of(), Map.of(),
+                atkDead, 0L, 0L, defDead, 0L, 0L, Map.of(), 0L, 1L, List.of());
     }
 
     private static JsonNode rowOf(JsonNode rows, String nationId) {

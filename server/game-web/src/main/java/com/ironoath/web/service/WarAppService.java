@@ -14,19 +14,17 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.nation.Nation;
-import com.ironoath.core.social.Alliance;
+import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.core.social.PermissionMatrix;
-import com.ironoath.core.nation.WarScoreBoard;
-import com.ironoath.core.nation.WarScoreBoard;
 import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.dto.generated.WarNationScoreView;
 import com.ironoath.web.dto.generated.WarPhase;
 import com.ironoath.web.dto.generated.WarStatusResp;
+import com.ironoath.web.nation.NationMembership;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.social.SocialRulesAssembler;
-import com.ironoath.web.social.SocialStore;
 
 /**
  * 职责：国战状态的只读视图（B13 §一 §7、B21 §二 的 {@code WarStatusResp}）。
@@ -59,22 +57,22 @@ public class WarAppService {
     private final NationStore nations;
     private final WarRulesAssembler assembler;
     private final TimeService timeService;
-    /** 下面这四件是<b>写侧</b>（宣战）才需要的；读侧只用上面四件。 */
-    private final SocialStore socialStore;
+    /** 下面这几件是<b>写侧</b>（宣战）才需要的；读侧只用上面四件。 */
+    private final NationMembership membership;
     private final SocialRulesAssembler socialRules;
     private final PlayerLock playerLock;
     private final IdempotencyStore idempotency;
     private final ConfigRegistry configs;
 
     public WarAppService(WarStore wars, NationStore nations, WarRulesAssembler assembler,
-                         TimeService timeService, SocialStore socialStore,
+                         TimeService timeService, NationMembership membership,
                          SocialRulesAssembler socialRules, PlayerLock playerLock,
                          IdempotencyStore idempotency, ConfigRegistry configs) {
         this.wars = wars;
         this.nations = nations;
         this.assembler = assembler;
         this.timeService = timeService;
-        this.socialStore = socialStore;
+        this.membership = membership;
         this.socialRules = socialRules;
         this.playerLock = playerLock;
         this.idempotency = idempotency;
@@ -190,12 +188,11 @@ public class WarAppService {
 
     // ---------- 写侧的前置（与 NationAppService 同一套判定，不另起口径）----------
 
-    /** 国籍跟随联盟（B13 冲突规则：联盟 ⊂ 国家），所以"我是哪个国的"只能这么查。 */
+    /** 国籍跟随联盟（B13 冲突规则：联盟 ⊂ 国家）。两跳的口径收在 {@link NationMembership}，不在这里重写。 */
     private Nation requireNationOf(String playerId) {
-        Alliance alliance = socialStore.allianceOf(playerId).orElseThrow(() -> new BizException(
-                ErrorCode.NATION_NOT_FOUND, "你不在任何联盟中，而国籍跟随联盟"));
-        return nations.findByAlliance(alliance.id()).orElseThrow(() -> new BizException(
-                ErrorCode.NATION_NOT_FOUND, "你的联盟还没有加入任何国家"));
+        return membership.ofPlayer(playerId).orElseThrow(() -> new BizException(
+                ErrorCode.NATION_NOT_FOUND,
+                "你没有可宣战的国家：国籍跟随联盟，而「不在任何联盟」与「联盟还没入籍」对宣战是同一件事"));
     }
 
     /**
