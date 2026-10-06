@@ -232,7 +232,8 @@ public final class MongoWarStore implements WarStore {
      * 而不是把锁挪到服务层 —— 挪上去就退回"两个玩家各拿一把按玩家分的锁"那个窗口。
      */
     @Override
-    public WarStore.KillResult recordKills(String killerNationId, String killerPlayerId, long units) {
+    public WarStore.KillResult recordKills(String killerNationId, String killerPlayerId, long units,
+                                           long now) {
         if (units <= 0L) {
             return WarStore.KillResult.SKIPPED;
         }
@@ -243,6 +244,10 @@ public final class MongoWarStore implements WarStore {
                 return WarStore.KillResult.NO_ACTIVE_WAR;
             }
             WarScoreBoard board = WarScoreBoard.fromSnapshot(doc.state(), rules.rules());
+            // 按时间算已经打完的：不记账（#754）。结算与发奖仍由下一次读面板来做 —— 见 KillResult.EXPIRED
+            if (WarStore.dueToSettle(board, now)) {
+                return WarStore.KillResult.EXPIRED;
+            }
             WarStore.KillResult result = WarStore.applyKills(board, killerNationId, killerPlayerId, units);
             Update update = new Update()
                     .set("startedAt", board.startedAt())

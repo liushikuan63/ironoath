@@ -211,6 +211,19 @@ public interface WarStore {
         SERVER_ONLY,
         /** 没有任何一场未结束的仗：什么都没记 */
         NO_ACTIVE_WAR,
+        /**
+         * <b>这一场按时间算已经打完了，但还没被谁触发结算</b>：什么都没记。
+         *
+         * <p>与 {@link #NO_ACTIVE_WAR} 分开是因为它们是两件事：一个是"压根没有仗"，
+         * 另一个是"仗打完了但那一格还没被谁推一下"。日志与排查要分得出来
+         * （#754：修之前这一族击杀会照记，直到有人读面板才定格）。
+         *
+         * <p><b>为什么不在这里顺手把它结掉</b>：结算那一刻要发赛季分（3b/3b-2），
+         * 而那件事只有 `WarAppService#warStatus` 一条触发点（挂在 `Settlement#settledNow` 上）。
+         * 在写路径上再结一次 = 发奖出现第二个触发点，而"每场只发一次"这条证明要跟着写两遍。
+         * 所以这里只是**不记账**：那场仗仍由下一次读面板来结算并发奖（惰性推进的既有形状）。
+         */
+        EXPIRED,
         /** 零击杀：一次写入都不该发生（未破墙、平局、纯拦截失败都有可能是 0） */
         SKIPPED
     }
@@ -231,10 +244,14 @@ public interface WarStore {
      * @param killerNationId 击杀者所属国家 id；查不到（没国籍或联盟退国）传 null，按无主处理
      * @param killerPlayerId 击杀者玩家 id（赛季分的键），null 表示无主击杀
      * @param units          消灭的单位数；<=0 时不动任何东西
+     * @param now            服务端时刻。<b>由调用方传入，本方法不读时钟</b>（与 {@link #settleIfExpired} 同一条）——
+     *                       它只用来判「这一场按时间算还活着吗」：{@link #dueToSettle} 为真时回
+     *                       {@link KillResult#EXPIRED} 而不记账（#754：修之前那段窗口里的击杀会照记，
+     *                       直到有人读面板才定格，症状是"战争结束后打打野，国战榜仍然在动"）
      * @return 归属结果。调用方只拿它打一行日志 —— <b>不许拿它做业务分支</b>：
      *         国战记账是旁路，它成不成就都不该改变这场战斗的结果
      */
-    KillResult recordKills(String killerNationId, String killerPlayerId, long units);
+    KillResult recordKills(String killerNationId, String killerPlayerId, long units, long now);
 
     /**
      * 归属判断的<b>唯一一份</b>实现，内存与 Mongo 两套存储共用（放在端口而不是任何一份实现里：

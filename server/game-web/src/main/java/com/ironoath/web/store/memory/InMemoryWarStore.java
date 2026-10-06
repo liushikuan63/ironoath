@@ -70,7 +70,7 @@ public final class InMemoryWarStore implements WarStore {
      */
     @Override
     public synchronized WarStore.KillResult recordKills(String killerNationId, String killerPlayerId,
-                                                        long units) {
+                                                        long units, long now) {
         if (units <= 0L) {
             return WarStore.KillResult.SKIPPED;
         }
@@ -79,6 +79,10 @@ public final class InMemoryWarStore implements WarStore {
             return WarStore.KillResult.NO_ACTIVE_WAR;
         }
         WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        // 按时间算已经打完的：不记账（#754）。结算与发奖仍由下一次读面板来做 —— 见端口枚举那一段
+        if (WarStore.dueToSettle(board, now)) {
+            return WarStore.KillResult.EXPIRED;
+        }
         WarStore.KillResult result = WarStore.applyKills(board, killerNationId, killerPlayerId, units);
         // 改的是重建出来的那份，必须整份写回；漏这一行的症状是"全服进度条永远不动"而不报错
         byId.put(WarStore.documentIdOf(board), board.toSnapshot());

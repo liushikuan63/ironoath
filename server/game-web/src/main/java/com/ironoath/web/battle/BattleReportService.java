@@ -127,7 +127,7 @@ public class BattleReportService {
         // 刻意不包 try/catch：这一句与上一句、与战报落库是同级的写。给国战记账单独吞一次异常，
         // 症状是进度条悄悄不涨而没有任何地方报错 —— 那正是本仓反复防的"判定写了却没接上"。
         com.ironoath.web.nation.WarStore.KillResult warResult =
-                wars.recordKills(membership.nationIdOf(ownerId), ownerId, kills);
+                wars.recordKills(membership.nationIdOf(ownerId), ownerId, kills, now);
         if (LOG.isDebugEnabled() && warResult != com.ironoath.web.nation.WarStore.KillResult.SKIPPED) {
             LOG.debug("国战击杀归属 ownerId={} 结果={} 击杀数={}", ownerId, warResult, kills);
         }

@@ -399,7 +399,7 @@ class WarStoreEquivalenceTest {
             store.settleIfExpired(T0 + duration);
             String frozen = describe(store.findLatest().orElseThrow());
 
-            assertThat(store.recordKills("n1", "P9", 500L))
+            assertThat(store.recordKills("n1", "P9", 500L, T0 + duration))
                     .as("%s 已经结完的仗不是现役仗，再记一笔等于往历史账本上续写", label)
                     .isEqualTo(WarStore.KillResult.NO_ACTIVE_WAR);
             assertThat(describe(store.findLatest().orElseThrow()))
@@ -441,7 +441,7 @@ class WarStoreEquivalenceTest {
                     CountDownLatch go = new CountDownLatch(1);
                     Future<WarStore.KillResult> kill = pool.submit(() -> {
                         go.await();
-                        return store.recordKills("n1", "P1", 10L);
+                        return store.recordKills("n1", "P1", 10L, T0 + MINUTE);
                     });
                     Future<Optional<WarStore.Settlement>> settle = pool.submit(() -> {
                         go.await();
@@ -520,15 +520,15 @@ class WarStoreEquivalenceTest {
             long killsBefore = before.totalKills();
             long n1KillBefore = before.snapshot().get("n1").killScore();
 
-            assertThat(store.recordKills("n1", "P1", 10L))
+            assertThat(store.recordKills("n1", "P1", 10L, T0 + MINUTE))
                     .as("%s 参战国的人应当走 APPLIED", label).isEqualTo(WarStore.KillResult.APPLIED);
-            assertThat(store.recordKills("n-outside", "P9", 5L))
+            assertThat(store.recordKills("n-outside", "P9", 5L, T0 + MINUTE))
                     .as("%s 仗在打但这个人所属的国家没参战：SERVER_ONLY —— B13 §7 明写不打国战的人也算进全服目标", label)
                     .isEqualTo(WarStore.KillResult.SERVER_ONLY);
-            assertThat(store.recordKills(null, "P9", 3L))
+            assertThat(store.recordKills(null, "P9", 3L, T0 + MINUTE))
                     .as("%s 连国籍都没有（没联盟或联盟没入籍）：同样 SERVER_ONLY，不许抛", label)
                     .isEqualTo(WarStore.KillResult.SERVER_ONLY);
-            assertThat(store.recordKills("n1", "P1", 0L))
+            assertThat(store.recordKills("n1", "P1", 0L, T0 + MINUTE))
                     .as("%s 零击杀：一次写入都不该发生", label).isEqualTo(WarStore.KillResult.SKIPPED);
 
             WarScoreBoard back = store.findLatest().orElseThrow();
@@ -546,7 +546,7 @@ class WarStoreEquivalenceTest {
 
             back.settle(T0 + 40 * MINUTE);
             store.save(back);
-            assertThat(store.recordKills("n1", "P1", 1L))
+            assertThat(store.recordKills("n1", "P1", 1L, T0 + MINUTE))
                     .as("%s 已结算的历史不许再被记分（否则重启后 findLatest 读到的那份历史会一直涨）", label)
                     .isEqualTo(WarStore.KillResult.NO_ACTIVE_WAR);
             assertThat(store.findLatest().orElseThrow().totalKills())
@@ -559,7 +559,7 @@ class WarStoreEquivalenceTest {
     void killsWithoutAnyWarAreNoOpOnBothStores() {
         for (WarStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
-            assertThat(store.recordKills("n1", "P1", 5L))
+            assertThat(store.recordKills("n1", "P1", 5L, T0 + MINUTE))
                     .as("%s 空存储必须回 NO_ACTIVE_WAR", label)
                     .isEqualTo(WarStore.KillResult.NO_ACTIVE_WAR);
             assertThat(store.findLatest()).as("%s 不许因为一次归属就开出仗来", label).isEmpty();
@@ -593,7 +593,7 @@ class WarStoreEquivalenceTest {
                     futures.add(pool.submit(() -> {
                         startLine.await();
                         for (int i = 0; i < each; i++) {
-                            store.recordKills("n1", playerId, 1L);
+                            store.recordKills("n1", playerId, 1L, T0 + MINUTE);
                         }
                         return null;
                     }));
@@ -722,6 +722,44 @@ class WarStoreEquivalenceTest {
         return board;
     }
 
+    @Test
+    @DisplayName("#754 过期即视为没在打：按时间过了期的仗不再收击杀，而板子仍是 SIEGE（结算与发奖留给下一次读）")
+    void killsAfterExpiryAreRejectedOnBothStores() {
+        long duration = rules.rules().durationMillis();
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(richBoard(T0));
+
+            // ① 到期前一刻：照收 —— 别把边界划早（`dueToSettle` 用的是 `>=`）
+            assertThat(store.recordKills("n1", "P1", 7L, T0 + duration - 1_000L))
+                    .as("%s 到期之前照收", label).isEqualTo(WarStore.KillResult.APPLIED);
+
+            // ② 正好到点：不再进账，且板子一字未动
+            String atExpiry = describe(store.findLatest().orElseThrow());
+            assertThat(store.recordKills("n1", "P1", 999L, T0 + duration))
+                    .as("%s 到点那一刻起就不再进账（修之前这里会照记，直到有人读面板才定格）", label)
+                    .isEqualTo(WarStore.KillResult.EXPIRED);
+            assertThat(describe(store.findLatest().orElseThrow()))
+                    .as("%s 被拒的那一笔不许留下任何痕迹（国家分、全服进度、个人账三样都不动）", label)
+                    .isEqualTo(atExpiry);
+
+            // ③ 板子仍是 SIEGE：结算与发奖只挂在下一次读面板那一个触发点上（本笔刻意不加第二个触发点）
+            assertThat(store.findLatest().orElseThrow().phase())
+                    .as("%s 过期不等于已结算：那场仗仍由下一次读面板来结", label)
+                    .isEqualTo(WarScoreBoard.Phase.SIEGE);
+
+            // ④ 再过很久也一样（不是只挡一分钟）
+            assertThat(store.recordKills("n1", "P1", 1L, T0 + duration + 5L * duration))
+                    .as("%s 过期之后一直拒", label).isEqualTo(WarStore.KillResult.EXPIRED);
+
+            // ⑤ 到点之后读一次面板把它结掉：结算结果里**不含**那两笔被拒的击杀
+            WarStore.Settlement settled = store.settleIfExpired(T0 + duration + 5L * duration).orElseThrow();
+            assertThat(settled.settledNow()).as("%s 这一次读把它结掉了", label).isTrue();
+            assertThat(settled.board().killsBy("P1"))
+                    .as("%s 被拒的 999 与 1 都不该出现在终局里（夹具里 P1 原本 60000）", label)
+                    .isEqualTo(60_000L + 7L);
+        }
+    }
     @Test
     @DisplayName("settleIfExpired 把内核那一份 Result 带出来：有胜者时是那一国，且与 settledNow 互为条件")
     void settlementCarriesTheKernelResultOnBothStores() {
