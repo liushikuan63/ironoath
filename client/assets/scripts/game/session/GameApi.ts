@@ -111,7 +111,7 @@ import type {
   NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationPolicyProposeReq,
   NationPolicyProposeResp, NationPolicyRoundView, NationPolicyVoteReq, NationPolicyVoteResp,
   NationResp, NationTreasuryResp, NationTreasurySpendReq, NationTreasurySpendResp,
-  WarDeclareReq, WarStatusResp,
+  NationRelationsResp, WarDeclareReq, WarStatusResp,
 } from '../../net/generated/NationProtocol'
 import type {
   NationTechListView, NationTechResearchReq, NationTechResearchResp,
@@ -264,6 +264,17 @@ export class GameApi {
    * <p>这个口带惰性推进（服务端在这一次读里结算到期的那一场），所以面板每次打开都真拉，不缓存 ——
    * 与 {@link nationView} 那条同一条理由。
    */
+  /**
+   * GET /nation/relations —— 本国对全部已知国家的关系表（只读）。
+   *
+   * <p><b>为什么除了外交写口还要这一读</b>：写口回的那张表只在"改关系"那一次是新的 ——
+   * 宣战（`/nation/war/declare`）也会把对目标国那一行置成 HOSTILE，而它回的是国战状态不是关系表。
+   * 没有这一读，玩家宣完战切到外交页看到的还是旧关系。
+   */
+  nationRelations(): Promise<NetOutcome<NationRelationsResp>> {
+    return this.read<NationRelationsResp>('/nation/relations')
+  }
+
   warStatus(): Promise<NetOutcome<WarStatusResp>> {
     return this.read<WarStatusResp>('/nation/war')
   }

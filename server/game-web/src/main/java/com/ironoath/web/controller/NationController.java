@@ -16,6 +16,7 @@ import com.ironoath.web.dto.generated.NationDiplomacyResp;
 import com.ironoath.web.dto.generated.NationDisbandReq;
 import com.ironoath.web.dto.generated.NationDisbandResp;
 import com.ironoath.web.dto.generated.NationFoundReq;
+import com.ironoath.web.dto.generated.NationRelationsResp;
 import com.ironoath.web.dto.generated.NationJoinReq;
 import com.ironoath.web.dto.generated.NationLeaveReq;
 import com.ironoath.web.dto.generated.NationLeaveResp;
@@ -126,6 +127,19 @@ public class NationController {
                                                  @RequestBody NationDiplomacyReq req) {
         requirePlayer(playerId);
         return Result.ok(nations.diplomacy(playerId, req));
+    }
+
+    /**
+     * 本国的关系表（只读）。
+     *
+     * <p><b>为什么要有这个读口</b>：那张表原先只在「改关系」那一次写入时回，于是别的写入改了关系之后
+     * 客户端手里那份就旧了 —— 最典型的是宣战（把对目标国那一行置成 HOSTILE）。宣完战切到外交页，
+     * 屏上还是旧关系，读起来就是「宣战了却没敌对」。
+     */
+    @GetMapping("/relations")
+    public Result<NationRelationsResp> relations(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(nations.relations(playerId));
     }
 
     /** 我的国家。不在任何国家里时回「不存在」。 */

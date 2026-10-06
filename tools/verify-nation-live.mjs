@@ -683,6 +683,46 @@ if (process.env.NATION_LIVE_UI === '1') {
       await page.screenshot({ path: path.join(OUT, 'live-war-declared.png') })
       console.log(`  截图：${path.join(OUT, 'live-war-declared.png')}`)
 
+      // ---- 只读关系表：宣战改了关系，切到外交页必须看到「敌对」 ----
+      // 这一相验的就是那个缺口本身：`NationDiplomacyResp` 那张表只在"改关系"那一次是新的，
+      // 宣战也改关系而它回的是国战状态 —— 没有 `GET /nation/relations`，这一屏就是旧数据。
+      const diploPicked = await page.evaluate(`(() => {
+        const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        if (!panel || !panel.activeInHierarchy) return false
+        let target = null
+        const walk = (n) => { if (target) return; if (n.name === 'Tab_DIPLO' && n.activeInHierarchy) { target = n; return } for (const child of n.children) walk(child) }
+        walk(panel)
+        if (target === null) return false
+        target.emit('touch-start')
+        return true
+      })()`)
+      checkThat('（回读屏）切到外交页', diploPicked)
+      await page.waitForTimeout(1800)
+      const diploTexts = await page.evaluate(`(() => {
+        const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        const texts = []
+        if (panel && panel.activeInHierarchy) {
+          const walk = (n) => {
+            if (n.activeInHierarchy) {
+              const label = n.getComponent('cc.Label')
+              if (label && String(label.string ?? '').trim() !== '') texts.push(label.string)
+            }
+            for (const child of n.children) walk(child)
+          }
+          walk(panel)
+        }
+        return texts
+      })()`)
+      const diploShown = (diploTexts ?? []).join(' ').replace(/\s+/g, '')
+      // ⚠️ 只判 includes('敌对') 是**假绿**：外交页上「敌对」本来就是一个选项按钮的文案
+      // （实测第一版就这么过了，而屏幕上是空态 —— 那一行根本没画出来）。
+      // 真正只可能来自新状态的证据是：**那一行**（对方国名 + 关系）在，且空态那句不在了。
+      checkThat('（回读屏）外交页那一行是「敌对」而不是旧关系（否定式 + 正向式成对）',
+        diploShown.includes(uiTargetFound.data.nation.name) && diploShown.includes('敌对')
+          && !diploShown.includes('还没有打过一次交道'))
+      await page.screenshot({ path: path.join(OUT, 'live-diplo-after-declare.png') })
+      console.log(`  截图（宣战后的外交页）：${path.join(OUT, 'live-diplo-after-declare.png')}`)
+
       // ---- 负向相 ①（HTTP）：同一对两国再宣一次 ⇒ 冷却拦住，且**没有**开出第二场 ----
       const again = await call('POST', '/nation/war/declare', {
         requestId: rid('declare-again'), targetNationId: uiTargetNationId,

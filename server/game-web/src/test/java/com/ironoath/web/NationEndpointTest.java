@@ -39,6 +39,7 @@ import com.ironoath.web.dto.generated.AllianceSelfReq;
 import com.ironoath.web.dto.generated.DiplomacyRelation;
 import com.ironoath.web.dto.generated.NationAppointReq;
 import com.ironoath.web.dto.generated.NationDiplomacyReq;
+import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.dto.generated.NationDisbandReq;
 import com.ironoath.web.dto.generated.NationFoundReq;
 import com.ironoath.web.dto.generated.NationJoinReq;
@@ -775,6 +776,34 @@ class NationEndpointTest {
                 new NationDiplomacyReq(newRequestId(), k.nationB(), DiplomacyRelation.HOSTILE));
         assertThat(nationOf(k.nationA()).mayAttackNation(k.nationB()))
                 .as("敌对之间才可以进攻：关系一变，谁能打谁立刻跟着变").isTrue();
+    }
+
+    @Test
+    @DisplayName("只读关系表：宣战之后能读到 HOSTILE —— 这正是它存在的理由（宣战的响应里没有关系表）")
+    void relationsReadSeesHostileAfterDeclare() throws Exception {
+        TwoKingdoms k = twoKingdoms();
+
+        // 先宣战：它改的是**关系**（把对目标国那一行置成 HOSTILE），而响应回的是国战状态
+        JsonNode declared = post200("/nation/war/declare", k.kingA(),
+                new WarDeclareReq(newRequestId(), k.nationB()));
+        assertThat(declared.get("hasWar").asBoolean()).as("宣战成功").isTrue();
+
+        JsonNode rel = get200("/nation/relations", k.kingA());
+        JsonNode row = null;
+        for (JsonNode item : rel.get("allRelations")) {
+            if (k.nationB().equals(item.get("nationId").asText())) {
+                row = item;
+            }
+        }
+        assertThat(row).as("宣战之后那一行必须在关系表里").isNotNull();
+        assertThat(row.get("relation").asText())
+                .as("宣战把关系置成 HOSTILE —— 不重读这张表，外交页显示的就是旧关系").isEqualTo("HOSTILE");
+        assertThat(rel.get("serverNow").asLong()).as("服务端时间戳一并下发").isPositive();
+
+        // 负向：不在任何国家里读不到（与 /nation、/nation/treasury 同一条门槛）
+        JsonNode loner = perform(get("/nation/relations").header(PLAYER_HEADER, newPlayer(1)));
+        assertThat(loner.get("code").asInt())
+                .as("没有国籍就没有关系表：13000 而不是一张空表").isEqualTo(ErrorCode.NATION_NOT_FOUND.code());
     }
 
     @Test

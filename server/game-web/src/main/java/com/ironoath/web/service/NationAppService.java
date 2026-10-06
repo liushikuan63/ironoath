@@ -48,6 +48,7 @@ import com.ironoath.web.dto.generated.NationDiplomacyReq;
 import com.ironoath.web.dto.generated.NationDiplomacyResp;
 import com.ironoath.web.dto.generated.NationDisbandReq;
 import com.ironoath.web.dto.generated.NationDisbandResp;
+import com.ironoath.web.dto.generated.NationRelationsResp;
 import com.ironoath.web.dto.generated.NationRelationView;
 import com.ironoath.web.dto.generated.NationFoundReq;
 import com.ironoath.web.dto.generated.NationJoinReq;
@@ -529,6 +530,26 @@ public class NationAppService {
             idempotency.release(req.requestId());
             throw e;
         }
+    }
+
+    /**
+     * 只读的关系表（`GET /nation/relations`）。
+     *
+     * <p><b>为什么要有它</b>：那张表原先只在「改关系」那一次写入时回，于是**别的写入改了关系之后，
+     * 客户端手里那份就旧了** —— 最典型的是宣战（{@code WarAppService#declare} 会把对目标国那一行
+     * 置成 HOSTILE）。宣完战切到外交页，屏上还是旧关系，读起来就是「宣战了却没敌对」，
+     * 而客户端没有任何地方能把这张表重新读一遍。
+     *
+     * <p><b>不需要权限位</b>：这不是情报 —— 玩家打开外交页本来就该看到本国与谁是什么关系；
+     * 与 {@code /nation}、{@code /nation/treasury} 同一条：**只有"在不在一个国家里"这个前提**。
+     *
+     * <p><b>纯读，不加锁也不结周税</b>：不写任何东西，所以不进 {@code PlayerLock} 也不调
+     * {@code settleTax}（那两个是给写路径防整档覆盖用的）；它读的是 {@code nations.all()} 的现快照。
+     */
+    public NationRelationsResp relations(String playerId) {
+        long now = timeService.serverNow();
+        Nation nation = requireNationOf(playerId);
+        return new NationRelationsResp(relationsOf(nation), now);
     }
 
     /**

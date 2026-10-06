@@ -3347,6 +3347,18 @@ export class AppRoot {
    * 客户端一份表都不用抄（红线：不抄配置表）。"榜上有的国家"不等于"全部国家"，
    * 面板据此写「不是全部」。
    */
+  /**
+   * 重新读一次关系表。**宣战之后必须调**：宣战会把对目标国那一行置成 HOSTILE，
+   * 而国战状态里没有关系表 —— 不重读的话玩家切到外交页看到的还是旧关系。
+   * 失败时**不清空手里那一份**（与科技/国策同一条纪律）。
+   */
+  private async reloadNationRelations(): Promise<void> {
+    const outcome = await this.api.nationRelations()
+    if (outcome.kind === 'ok') {
+      this.nationRelations = outcome.data.allRelations
+    }
+  }
+
   private async loadNationCandidates(): Promise<void> {
     const outcome = await this.api.rankList('NATION', 1, AppRoot.NATION_CANDIDATE_ROWS)
     if (outcome.kind === 'ok') {
@@ -3580,6 +3592,11 @@ export class AppRoot {
     if (tab === 'TECH' && this.nationTechResp === null && this.nationResp !== null) {
       await this.loadNationTech()
     }
+    if (tab === 'DIPLO') {
+      // 外交页每次切都重读一次关系表：**别的写入也会改它**（宣战把目标国置 HOSTILE、
+      // 对方亡国会把它从表里去掉），只靠写口回的那一份会旧。
+      await this.reloadNationRelations()
+    }
     if ((tab === 'DIPLO' || tab === 'WAR') && this.nationCandidates.length === 0) {
       // 外交页与国战页的候选目标都来自国家榜（服务端没有"列出全部国家"的端点）：
       // 国战页也要它 —— 宣战要选一个国家，而候选从同一次读里来（不另开一个口）
@@ -3740,6 +3757,9 @@ export class AppRoot {
       return
     }
     this.nationWarResp = outcome.data
+    // 宣战改了外交关系（对目标国置 HOSTILE）⇒ 手里那张关系表旧了，当场重读一次，
+    // 免得玩家切到外交页看到"宣战了却没敌对"
+    await this.reloadNationRelations()
     // 只记"做成了"的那一枪（与 `setNationRelation` 同口径）：被冷却/权限挡住的不进这一格，
     // 它们的读数在服务端错误码里，混进来会把"想宣战"和"宣战成功"揉成一个数
     this.track(TRACK_EVENTS.warDeclare)
