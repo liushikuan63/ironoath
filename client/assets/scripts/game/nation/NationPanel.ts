@@ -34,13 +34,16 @@ import type { NationSectionsView } from './NationSections'
  * 提案段要等、投票段要等、还有生效段。与其放前面占掉「国库」之后那个位置，
  * 不如放在最后，让"要做事"的那几页聚在一起。
  */
-export type NationTabKey = 'TREASURY' | 'TECH' | 'DIPLO' | 'OFFICE' | 'POLICY'
+export type NationTabKey = 'TREASURY' | 'TECH' | 'DIPLO' | 'WAR' | 'OFFICE' | 'POLICY'
 
 /** 页签的中文名与它各自的键。表驱动是为了表现层只有一处 switch。 */
 export const NATION_TABS: readonly { key: NationTabKey; label: string }[] = [
   { key: 'TREASURY', label: '国库' },
   { key: 'TECH', label: '国家科技' },
   { key: 'DIPLO', label: '外交' },
+  // 国战跟在「外交」后面：外交定的是关系（和谁好、和谁敌对），国战是把关系打出去的下一跳，
+  // 两者读的是同一批国家。国策仍守最后一位（理由见它的注释：那是唯一一个要等一轮的动作页）。
+  { key: 'WAR', label: '国战' },
   { key: 'OFFICE', label: '任命' },
   { key: 'POLICY', label: '国策' },
 ]

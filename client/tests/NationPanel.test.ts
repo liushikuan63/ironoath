@@ -26,10 +26,12 @@ import {
 import type { NationPanelInput, NationPanelView, SpendDraft } from '../assets/scripts/game/nation/NationPanel'
 import {
   APPOINTABLE_OFFICES, DIPLOMACY_OPTIONS, buildAppointRows, buildDiplomacyRows, buildNationSections,
-  buildNationTechSection, diplomacyLabel, diplomacyNotice, nationTechBlockText,
+  buildNationTechSection, buildWarSection, capitalTextOf, diplomacyLabel, diplomacyNotice,
+  durationText, nationTechBlockText, warPhaseLabel,
 } from '../assets/scripts/game/nation/NationSections'
 import { codesOf, EMPTY_PERMISSIONS, gate, roleText, withPermissionScope, withoutNationPermissions } from '../assets/scripts/game/social/PermissionGates'
-import type { NationRelationView } from '../assets/scripts/net/generated/NationProtocol'
+import type { NationRelationView, WarNationScoreView, WarStatusResp }
+  from '../assets/scripts/net/generated/NationProtocol'
 import type { NationTechListView, NationTechView } from '../assets/scripts/net/generated/NationTechProtocol'
 import type {
   NationTreasuryResp, NationTreasurySpendResp, NationView, TreasuryLogView,
@@ -599,3 +601,91 @@ test('V13-d：三档 scope 各读各的槽位，NATION 不许落到联盟那一�
   assert.deepEqual([...codesOf(cleared, 'SQUAD')], ['KICK_MEMBER'], '清国家那一份不许动别的层级')
   assert.deepEqual([...codesOf(cleared, 'ALLIANCE')], ['EDIT_ANNOUNCEMENT'])
 })
+
+// ---------- 国战那一页（B13 §一 §7；V18 的客户端承接，只读） ----------
+
+function warScore(nationId = 'nation_a', nationName: string | null = '北伐营',
+  totalScore = 1500, gatesHeld = 1, attackQualified = true): WarNationScoreView {
+  return {
+    nationId, nationName,
+    occupyScore: 0, killScore: totalScore, buildingScore: 0, totalScore,
+    gatesHeld, attackQualified,
+  }
+}
+
+function warResp(overrides: Partial<WarStatusResp> = {}): WarStatusResp {
+  return {
+    hasWar: true, phase: 'SIEGE', startedAt: NOW, remainingSec: 600,
+    gateCount: 4, capitalHolder: null, capitalHolderName: null,
+    scores: [warScore()], totalKills: 0, serverGoalKills: 500, serverGoalReached: false,
+    myFatigue: 0, fatigueMax: 100, canMarch: true, serverNow: NOW, ...overrides,
+  }
+}
+
+test('国战那一页：没拉到 / 没有仗 / 有仗 三态各自说清，不许混成一句「暂无国战」', () => {
+  // ① 没拉到：这一句必须说"没读到"，否则断网会被读成"国战系统是关着的"
+  const missing = buildWarSection(null)
+  assert.equal(missing.hasWar, false)
+  assert.match(missing.emptyText ?? '', /没读到/)
+  assert.equal(/没有正在打的国战/.test(missing.emptyText ?? ''), false,
+    '没拉到不许说成"没有仗"：两件事的下一步动作完全不同（重进 vs 等下一场）')
+
+  // ② 拉到了、确实没有仗：全服进度与我的疲劳仍然要画（B13 §7：不打国战的人的贡献也算）
+  const idle = buildWarSection(warResp({ hasWar: false, totalKills: 1234, serverGoalKills: 5000 }))
+  assert.equal(idle.hasWar, false)
+  assert.match(idle.emptyText ?? '', /没有正在打的国战/)
+  assert.match(idle.goalText ?? '', /1,234 \/ 5,000/, '没有仗时全服进度照样要给出（含千分位）')
+  assert.match(idle.fatigueText ?? '', /我的疲劳/)
+  assert.equal(idle.rows.length, 0)
+
+  // ③ 有仗：阶段、剩余、王城、参战方行、全服进度、疲劳六样都在
+  const war = buildWarSection(warResp({
+    hasWar: true, phase: 'SIEGE', remainingSec: 3 * 3600 + 25 * 60,
+    capitalHolderName: '铁誓王国',
+    scores: [
+      warScore('nation_b', null, 800, 0, false),   // 没有关卡 ⇒ 没有进攻资格，那一句不该画
+      warScore('nation_a', '北伐营', 1500, 3, true),
+    ],
+    totalKills: 90, serverGoalKills: 500,
+  }))
+  assert.equal(war.hasWar, true)
+  assert.match(war.phaseText ?? '', /王城战进行中/)
+  assert.match(war.remainingText ?? '', /3 小时 25 分/, '剩余时间由服务端 remainingSec 现算，不引本机时钟')
+  assert.match(war.capitalText ?? '', /铁誓王国占着/)
+  assert.deepEqual(war.rows.map(r => r.name), ['北伐营', '未知国家'],
+    '按总分降序；国名缺失给回退语（协议里 nationName 不是必填）')
+  assert.deepEqual(war.rows.map(r => r.rankText), ['第 1 名', '第 2 名'])
+  assert.deepEqual(war.rows.map(r => r.scoreText), ['1,500', '800'])
+  assert.match(war.rows[0]?.gatesText ?? '', /关卡 3 \/ 共 4/, '关卡要写成"已占 x / 共 n"，n 来自服务端下发')
+  assert.equal(war.rows[0]?.qualifiedText, '已取得进攻资格')
+  assert.equal(war.rows[1]?.qualifiedText, null)
+  assert.match(war.goalText ?? '', /全服击杀 90 \/ 500/)
+
+  // 红线：内部 id 不上屏 —— 展示字段里一个 nation 开头的 id 都不许出现
+  const onScreen = [war.headline, war.phaseText, war.remainingText, war.capitalText,
+    war.goalText, war.fatigueText, ...war.rows.flatMap(r => [r.name, r.rankText, r.scoreText, r.gatesText, r.qualifiedText])]
+    .filter((v): v is string => v !== null).join('|')
+  assert.equal(/nation_[ab]/.test(onScreen), false, `国战那页印出了内部 id：${onScreen}`)
+})
+
+test('国战那一页：休战期不画剩余时间、平分时同名次（与内核「平分不给胜者」同口径）', () => {
+  const prep = buildWarSection(warResp({ hasWar: true, phase: 'PREPARATION', remainingSec: 0 }))
+  assert.equal(prep.remainingText, null,
+    '非 SIEGE 阶段服务端给的就是 0，面板画「剩余 0 分」会让玩家以为仗刚要开打')
+  assert.match(prep.phaseText ?? '', /筹备期/)
+
+  const tied = buildWarSection(warResp({
+    hasWar: true, phase: 'SIEGE', remainingSec: 60,
+    scores: [warScore('nation_a', '甲国', 700, 0, false), warScore('nation_b', '乙国', 700, 0, false)],
+  }))
+  assert.deepEqual(tied.rows.map(r => r.rankText), ['第 1 名', '第 1 名'],
+    '平分同名次：不按 id 字典序硬挑一个赢家（内核那条判定的界面口径）')
+
+  assert.equal(capitalTextOf(null), '王城：目前没有人占着')
+  assert.equal(capitalTextOf(''), '王城：目前没有人占着', '空串与 null 是同一件事，不许各说各话')
+  assert.throws(() => warPhaseLabel('NOPE' as never), /不认识的国战阶段/,
+    '加一段阶段时必须在这里登记一次，不许静默落到某一句上')
+  assert.equal(durationText(-5), '0 分', '负数夹到 0：服务端已 clamp，界面也不许印出负时间')
+  assert.equal(durationText(90), '1 分', '不足一分钟按分钟取整，不显示秒（秒位会让面板每帧都在变）')
+})
+

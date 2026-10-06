@@ -111,6 +111,7 @@ import type {
   NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationPolicyProposeReq,
   NationPolicyProposeResp, NationPolicyRoundView, NationPolicyVoteReq, NationPolicyVoteResp,
   NationResp, NationTreasuryResp, NationTreasurySpendReq, NationTreasurySpendResp,
+  WarStatusResp,
 } from '../../net/generated/NationProtocol'
 import type {
   NationTechListView, NationTechResearchReq, NationTechResearchResp,
@@ -251,6 +252,20 @@ export class GameApi {
    */
   nationView(): Promise<NetOutcome<NationResp>> {
     return this.read<NationResp>('/nation')
+  }
+
+  /**
+   * GET /nation/war —— 当前这一场国战的状态（B13 承载切片 1 的读口，B21 §二 点名的 `WarStatusResp`）。
+   *
+   * <p><b>「现在没有仗」是正常返回而不是错误</b>：`hasWar=false` 时 `phase`/`startedAt`/`capitalHolder`
+   * 一并缺席（协议刻意不给它们填 0 或空串 —— 一个事实只允许一种表示），所以调用方按 `hasWar` 分支，
+   * **不要拿 `phase === null` 当"没仗"**：那会把"字段缺了"和"真没有仗"混成同一件事。
+   *
+   * <p>这个口带惰性推进（服务端在这一次读里结算到期的那一场），所以面板每次打开都真拉，不缓存 ——
+   * 与 {@link nationView} 那条同一条理由。
+   */
+  warStatus(): Promise<NetOutcome<WarStatusResp>> {
+    return this.read<WarStatusResp>('/nation/war')
   }
 
   /**

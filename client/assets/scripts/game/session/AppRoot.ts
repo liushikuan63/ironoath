@@ -104,7 +104,7 @@ import type {
   DiplomacyRelation, NationLeaveResp, NationOffice, NationRelationView, NationResp, NationTreasuryResp,
 } from '../../net/generated/NationProtocol'
 import type { NationTechListView } from '../../net/generated/NationTechProtocol'
-import type { NationPolicyRoundView } from '../../net/generated/NationProtocol'
+import type { NationPolicyRoundView, WarStatusResp } from '../../net/generated/NationProtocol'
 import { buildPolicyPanel } from '../nation/NationPolicyPanel'
 import type { PolicyPanel } from '../nation/NationPolicyPanel'
 import { gameBus } from '../../core/EventBus'
@@ -673,6 +673,11 @@ export class AppRoot {
   private nationPayeesLoaded = false
   /** S2：当前页签。默认停在国库（余额与流水是这一屏最该先看见的东西）。 */
   private nationTab: NationTabKey = 'TREASURY'
+  /**
+   * 国战状态（`GET /nation/war`）。**「没拉到」与「没有仗」是两个值**：前者 null，
+   * 后者是 `hasWar=false` 的那一份响应 —— 面板据此说不同的话（见 `buildWarSection` 的三分支）。
+   */
+  private nationWarResp: WarStatusResp | null = null
   /** S2：国家科技那一棵树。没拉过为 null（面板据它说"这一次没读到"，不是空白）。 */
   private nationTechResp: NationTechListView | null = null
   /** 国策轮次。没拉过为 null —— 与「拉到了但本轮没有提案」是两件事。 */
@@ -3305,6 +3310,9 @@ export class AppRoot {
       // 国家层的权限位（V13-d：灰键的权威来源）。**只有在国里才有意义**，
       // 所以与国库一起在这一支里拉，而不是并进进社交页那次 pullSocialGates
       await this.loadNationPermissions()
+      // 国战状态：轻量读（一次内存/库读，顺带惰性结算到期的那一场）。**只在国里拉** ——
+      // 不在国里时那一页根本不画（sections 为 null），发了只是换一个没人看的响应回来。
+      await this.loadNationWar()
     } else {
       // 不在国里：把上一次那份清掉。留着就是让一个已经离开的国家继续授权
       this.permissions = withoutNationPermissions(this.permissions)
@@ -3535,7 +3543,7 @@ export class AppRoot {
       tab: this.nationTab,
       sections: buildNationSections(this.nationTechResp, this.nationRelations,
         this.nationCandidates, members, this.permissions.nation, this.permissions.nationLoaded,
-        this.nationPolicyPanel()),
+        this.nationPolicyPanel(), this.nationWarResp),
     })
     this.targets.nation?.(view)
   }
@@ -3580,6 +3588,11 @@ export class AppRoot {
     // 拿缓存的话玩家会在窗口已经关掉的屏上点「赞成」，点回去才被拒。
     if (tab === 'POLICY' && this.nationResp !== null) {
       await this.loadNationPolicy()
+    }
+    // 国战页**每次切都重拉**（与国策同一条理由，而且更硬）：读这一下顺带把到期的仗结算掉，
+    // 剩余时间也是服务端在那一次读里现算的 —— 拿缓存会让玩家盯着一份停住的时间。
+    if (tab === 'WAR' && this.nationResp !== null) {
+      await this.loadNationWar()
     }
     this.deliverNation()
   }
@@ -3644,6 +3657,20 @@ export class AppRoot {
   }
 
   /** 拉一次国家科技。失败时理由进 notice，**不清空手里那一份**（与榜/赛季同一条纪律）。 */
+  /**
+   * 拉一次国战状态。失败时理由进 notice，**不清空手里那一份**（与科技同一条纪律）。
+   */
+  private async loadNationWar(): Promise<void> {
+    const outcome = await this.api.warStatus()
+    if (outcome.kind === 'ok') {
+      this.nationWarResp = outcome.data
+      return
+    }
+    this.nationWarResp = null
+    this.nationNotice = AppRoot.reason(outcome)
+    this.nationNoticeTone = 'warn'
+  }
+
   private async loadNationTech(): Promise<void> {
     const outcome = await this.api.nationTech()
     if (outcome.kind === 'ok') {

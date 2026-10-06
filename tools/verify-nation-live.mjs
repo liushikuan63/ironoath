@@ -504,6 +504,55 @@ if (process.env.NATION_LIVE_UI === '1') {
       checkThat(`（回读屏）屏上的国名是刚建的那个（${nationName}）`, shown.includes(nationName))
       checkThat('（回读屏）屏上的国库是服务端那一份', shown.includes(String(treasury).replace(/\B(?=(\d{3})+(?!\d))/g, ',')))
       checkThat('（回读屏）屏上没有出现 nation_ 这类内部 id', !shown.includes('nation_'))
+
+      // ---- 国战那一页（V18 的客户端承接，只读）----
+      // 这一相的判据各挡一种"看着没问题其实没接上"：页签节点在（不是只有文案）、点得动、
+      // 空态与全服进度两行都在（B13 §7：不打国战的人的贡献也算）、
+      // 屏上不出现内部 id 与阶段枚举原文（本仓红线）。
+      const warClicked = await page.evaluate(`(() => {
+        const panel = window.cc.director.getScene()
+          .getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        if (!panel || !panel.activeInHierarchy) return false
+        let target = null
+        const walk = (n) => {
+          if (target) return
+          if (n.name === 'Tab_WAR' && n.activeInHierarchy) { target = n; return }
+          for (const child of n.children) walk(child)
+        }
+        walk(panel)
+        if (target === null) return false
+        target.emit('touch-start')
+        return true
+      })()`)
+      checkThat('（回读屏）国战页签点得开（节点名 Tab_WAR）', warClicked)
+      await page.waitForTimeout(1600)
+      const warScreen = await page.evaluate(`(() => {
+        const panel = window.cc.director.getScene()
+          .getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        const texts = []
+        if (panel && panel.activeInHierarchy) {
+          const walk = (n) => {
+            if (n.activeInHierarchy) {
+              const label = n.getComponent('cc.Label')
+              if (label && String(label.string ?? '').trim() !== '') texts.push(label.string)
+            }
+            for (const child of n.children) walk(child)
+          }
+          walk(panel)
+        }
+        return texts
+      })()`)
+      const warShown = (warScreen ?? []).join(' ')
+      console.log(`  国战页文字：${warShown}`)
+      checkThat('（回读屏）国战页画的是"这一场"那件事（空态或阶段二选一）',
+        warShown.includes('现在没有正在打的国战') || /筹备期|王城战进行中|已经结束/.test(warShown))
+      checkThat('（回读屏）全服击杀进度那一行在（B13 §7）', warShown.includes('全服击杀'))
+      checkThat('（回读屏）我的疲劳那一行在', warShown.includes('我的疲劳'))
+      checkThat('（回读屏）国战页不出现内部 id', !/nation_[a-z0-9]/.test(warShown))
+      checkThat('（回读屏）国战页不出现阶段枚举原文',
+        !/\b(PREPARATION|SIEGE|SETTLED)\b/.test(warShown))
+      await page.screenshot({ path: path.join(OUT, 'live-war-tab.png') })
+      console.log(`  截图：${path.join(OUT, 'live-war-tab.png')}`)
       check('（回读屏）零页面错误', errors.join(' | ') || '无', '无')
       await page.screenshot({ path: path.join(OUT, 'live-panel.png') })
       console.log(`  截图：${path.join(OUT, 'live-panel.png')}`)

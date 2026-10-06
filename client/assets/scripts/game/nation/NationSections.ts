@@ -15,7 +15,7 @@
  * （契约里明写两个 `TechSchool` / `TechEffectAttr` 逐字段同形、故意不分叉），
  * 定点比率走 `FixedPoint.percentText`。抄第二份就是留一个将来必然分叉的口径（#281 那一族）。
  */
-import type { NationRelationView } from '../../net/generated/NationProtocol'
+import type { NationRelationView, WarStatusResp, WarNationScoreView } from '../../net/generated/NationProtocol'
 import type { NationTechListView, NationTechView } from '../../net/generated/NationTechProtocol'
 import { effectAttrLabel, schoolLabel } from '../tech/TechPanel'
 import { amountText, permissionGateOf } from './NationPanel'
@@ -209,6 +209,12 @@ export interface NationSectionsView {
    * 在这里拼就等于让这一页有第二个家的风险。
    */
   readonly policy: PolicyPanel | null
+  /**
+   * 国战那一页（B13 §一 §7 / V18 的客户端承接）。**与前三块不同源**：它读的是
+   * `GET /nation/war`（`WarStatusResp`），是**全服级**的一条状态，不是本国的账 ——
+   * 放在这里是因为入口在国家面板里，而"哪个接口供数"与"画在哪一页"是两件事。
+   */
+  readonly war: WarSection
 }
 
 /**
@@ -225,7 +231,8 @@ export function buildNationSections(tech: NationTechListView | null,
   members: readonly { id: string; name: string }[],
   permissions: readonly string[] | null = null,
   permissionsLoaded = false,
-  policy: PolicyPanel | null = null): NationSectionsView {
+  policy: PolicyPanel | null = null,
+  war: WarStatusResp | null = null): NationSectionsView {
   const rows = buildDiplomacyRows(relations)
   const appointRows = buildAppointRows(members)
   return {
@@ -250,11 +257,153 @@ export function buildNationSections(tech: NationTechListView | null,
     // **默认 null**（不是空面板）：这一页没拉过时面板要说「这一次没拉到」，
     // 画一片空白会让玩家以为这个国家没有国策可议。
     policy,
+    war: buildWarSection(war),
   }
 }
 
-/** 关系变更之后给玩家看的那一句。**刻意不说"条约已生效"**：C21 裁决下要双方都记着才成立。 */
-export function diplomacyNotice(targetName: string, relation: string): string {
+// ---------- 国战那一页（B13 §一 §7；V18 的客户端承接） ----------
+
+/**
+ * 国战阶段 → 玩家语言。**switch + 未知即抛**（与榜那边 `isPersonalBoard` 同一种 fail-closed 形状）：
+ * 加一段阶段时编译期不报错，静默落到某一句上的代价是面板说了一句不相干的话。
+ */
+export function warPhaseLabel(phase: 'PREPARATION' | 'SIEGE' | 'SETTLED'): string {
+  switch (phase) {
+    case 'PREPARATION':
+      return '筹备期：各盟在争周边的关卡，拿到关卡才有进攻资格'
+    case 'SIEGE':
+      return '王城战进行中'
+    case 'SETTLED':
+      return '这一场已经结束（积分定格）'
+    default:
+      throw new Error(`不认识的国战阶段：${String(phase)}`)
+  }
+}
+
+/** 王城归属那一句：无人占领时说"无人占领"，**不拿空串当"没人"**。 */
+export function capitalTextOf(name: string | null): string {
+  return name === null || name === '' ? '王城：目前没有人占着' : `王城：${name}占着`
+}
+
+/** 国战那一页的展示数据（引擎无关，可脱离 Cocos 跑单测）。 */
+export interface WarSection {
+  readonly hasWar: boolean
+  /** 有仗时的一行状态；无仗时为 null（`emptyText` 顶上）。 */
+  readonly headline: string | null
+  readonly phaseText: string | null
+  readonly remainingText: string | null
+  readonly capitalText: string | null
+  readonly rows: readonly WarSideRowView[]
+  readonly goalText: string | null
+  readonly fatigueText: string | null
+  readonly emptyText: string | null
+}
+
+/** 一个参战方一行。**`key` 是 nationId，只用于发请求，永不上屏**（B13 红线）。 */
+export interface WarSideRowView {
+  readonly key: string
+  readonly name: string
+  readonly rankText: string
+  readonly scoreText: string
+  readonly gatesText: string
+  readonly qualifiedText: string | null
+}
+
+/**
+ * 国战状态 → 一页视图。
+ *
+ * <p><b>三态各自说清，别混成一态</b>：`null`（这一次没拉到 —— 网络/登录问题，该说"没读到"）、
+ * `hasWar=false`（拉到了，全服现在确实没有仗）、有仗。把前两者合成一句"暂时没有国战"，
+ * 玩家在断网时会以为国战系统是关着的。
+ *
+ * <p><b>剩余时间只用服务端给的 `remainingSec`</b>（铁律 5：不引本机时钟 —— 否则改手机时间
+ * 就能让面板显示任意剩余）。非 SIEGE 阶段它恒为 0，所以那一行只在 SIEGE 画。
+ *
+ * <p><b>国名缺失给回退语</b>：`nationName` 在协议里不是 required（国家解散后仍留着参战行），
+ * 印 `nationId` 是红线（内部 id 不进玩家面）。
+ */
+export function buildWarSection(resp: WarStatusResp | null): WarSection {
+  if (resp === null) {
+    return {
+      hasWar: false,
+      headline: null,
+      phaseText: null,
+      remainingText: null,
+      capitalText: null,
+      rows: [],
+      goalText: null,
+      fatigueText: null,
+      emptyText: '这一次没读到国战状态：重进这一页再试',
+    }
+  }
+  if (!resp.hasWar) {
+    return {
+      hasWar: false,
+      headline: null,
+      phaseText: null,
+      remainingText: null,
+      capitalText: null,
+      rows: [],
+      // 全服进度与我的疲劳**没有仗时也要画**：B13 §7 明写"不打国战的人的贡献也算"
+      // （打野、打关卡都进 totalKills），这一行正是那句话在界面上的落点；
+      // 疲劳则是"我还能不能出兵"的读数。两样都与"有没有仗"无关。
+      goalText: `全服击杀 ${amountText(resp.totalKills)} / ${amountText(resp.serverGoalKills)}`
+        + (resp.serverGoalReached ? '（全服目标已达成）' : ''),
+      fatigueText: `我的疲劳 ${amountText(resp.myFatigue)} / ${amountText(resp.fatigueMax)}`,
+      emptyText: '现在没有正在打的国战。全服的击杀进度会累计在上面那一行，'
+        + '下一场由国王在「外交」那一页挑一个目标提出来。',
+    }
+  }
+  const ranked = rankWarSides(resp.scores)
+  return {
+    hasWar: true,
+    headline: `本场开战于：${new Date(resp.startedAt ?? 0).toISOString().slice(0, 10)}（UTC）`,
+    phaseText: resp.phase === null ? null : warPhaseLabel(resp.phase),
+    remainingText: resp.phase === 'SIEGE' ? `王城战剩余：${durationText(resp.remainingSec)}` : null,
+    capitalText: capitalTextOf(resp.capitalHolderName ?? null),
+    rows: ranked.map((entry): WarSideRowView => ({
+      key: entry.row.nationId,
+      name: entry.row.nationName === null || entry.row.nationName === ''
+        ? '未知国家' : entry.row.nationName,
+      rankText: `第 ${entry.rank} 名`,
+      scoreText: amountText(entry.row.totalScore),
+      gatesText: `关卡 ${entry.row.gatesHeld} / 共 ${resp.gateCount}`,
+      qualifiedText: entry.row.attackQualified ? '已取得进攻资格' : null,
+    })),
+    goalText: `全服击杀 ${amountText(resp.totalKills)} / ${amountText(resp.serverGoalKills)}`
+      + (resp.serverGoalReached ? '（全服目标已达成）' : ''),
+    fatigueText: `我的疲劳 ${amountText(resp.myFatigue)} / ${amountText(resp.fatigueMax)}`
+      + (resp.canMarch ? '' : '（已到顶，这一轮出不了兵）'),
+    emptyText: null,
+  }
+}
+
+/** 名次按总分降序；平分同名次（与内核"平分不给胜者"同一口径：不硬挑）。 */
+function rankWarSides(sides: readonly WarNationScoreView[]):
+  readonly { row: WarNationScoreView; rank: number }[] {
+  const sorted = sides.map((row, index) => ({ row, index }))
+    .sort((a, b) => (b.row.totalScore - a.row.totalScore) || (a.index - b.index))
+  const out: { row: WarNationScoreView; rank: number }[] = []
+  let lastScore: number | null = null
+  let lastRank = 0
+  sorted.forEach((entry, position) => {
+    const rank = entry.row.totalScore === lastScore ? lastRank : position + 1
+    lastScore = entry.row.totalScore
+    lastRank = rank
+    out.push({ row: entry.row, rank })
+  })
+  return out
+}
+
+/** 秒 → 「x 小时 y 分」。**不显示秒**：一场仗以小时计，秒位只会让面板每帧都不一样。 */
+export function durationText(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(safe / 3600)
+  const minutes = Math.floor((safe % 3600) / 60)
+  return hours > 0 ? `${hours} 小时 ${minutes} 分` : `${minutes} 分`
+}
+
+/** 关系变更之后给玩家看的那一句。**刻意不说"条约已生效"**：C21 裁决下要双方都记着才成立。 */export function diplomacyNotice(targetName: string, relation: string): string {
   return `已把与 ${targetName} 的关系记为「${diplomacyLabel(relation)}」`
     + '（盟约与附庸要对方也记着同一句才双向生效）'
 }

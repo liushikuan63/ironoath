@@ -274,6 +274,9 @@ export class NationPanelView extends Component {
         case 'DIPLO':
           cursor = this.drawDiplomacy(left, innerWidth, cursor, data)
           break
+        case 'WAR':
+          cursor = this.drawWar(left, innerWidth, cursor, data)
+          break
         case 'OFFICE':
           cursor = this.drawAppoint(left, cursor, data)
           break
@@ -407,6 +410,74 @@ export class NationPanelView extends Component {
       ?? section.options.find(option => option.key === this.diproRelation)?.note ?? ''
     this.label(note, section.gate.reason === null ? COLOR_DIM : COLOR_WARN, 13, left, y, 'left')
     return y - 22
+  }
+
+  /**
+   * 国战那一页（B13 §一 §7 / V18 的客户端承接）。
+   *
+   * <p><b>只读</b>：宣战那颗键在下一片（它要选目标、二次确认、还要一个幂等键）——
+   * 这一片先把"这场仗现在什么样"画出来，因为在那之前玩家连"有没有仗"都看不到。
+   *
+   * <p><b>三态各有各的话</b>（没拉到 / 拉到了确无仗 / 有仗）：合成一句"暂无国战"会让断网
+   * 看起来像"国战系统没开"。见 `buildWarSection` 的三分支。
+   */
+  private drawWar(left: number, innerWidth: number, top: number, data: NationPanelData): number {
+    const section = data.sections?.war ?? null
+    if (section === null) {
+      this.label('国战这一页没拉到', COLOR_WARN, 14, left, top - 12, 'left')
+      return top - 32
+    }
+    let y = top - 12
+    if (!section.hasWar) {
+      this.label(section.emptyText ?? '现在没有正在打的国战', COLOR_DIM, 13, left, y, 'left')
+      y -= 30
+      // 即便没有仗，全服进度也是玩家会关心的一行（B13 §7：不打国战的人的贡献也算）——
+      // 有就画，没有（这一次没读到）就不画，不填 0 冒充
+      if (section.goalText !== null) {
+        this.label(section.goalText, COLOR_TEXT, 14, left, y, 'left')
+        y -= 24
+      }
+      if (section.fatigueText !== null) {
+        this.label(section.fatigueText, COLOR_DIM, 13, left, y, 'left')
+        y -= 24
+      }
+      return y
+    }
+    // 有仗：状态两行 + 王城一行
+    this.label(section.headline ?? '', COLOR_DIM, 13, left, y, 'left')
+    y -= 24
+    if (section.phaseText !== null) {
+      this.label(section.phaseText, COLOR_GOLD, 15, left, y, 'left')
+      y -= 24
+    }
+    if (section.remainingText !== null) {
+      this.label(section.remainingText, COLOR_TEXT, 15, left, y, 'left')
+      y -= 24
+    }
+    if (section.capitalText !== null) {
+      this.label(section.capitalText, COLOR_TEXT, 15, left, y, 'left')
+      y -= 28
+    }
+    section.rows.forEach(row => {
+      this.label(`${row.rankText} ${row.name}`, COLOR_TEXT, 15, left + 6, y, 'left')
+      this.label(row.gatesText, COLOR_DIM, 13, left + innerWidth - 150, y, 'right')
+      this.label(row.scoreText, COLOR_GOLD, 15, left + innerWidth - 40, y, 'right')
+      y -= ROW_HEIGHT
+      if (row.qualifiedText !== null) {
+        this.label(row.qualifiedText, COLOR_DIM, 12, left + 18, y, 'left')
+        y -= 20
+      }
+    })
+    y -= 6
+    if (section.goalText !== null) {
+      this.label(section.goalText, COLOR_TEXT, 14, left, y, 'left')
+      y -= 24
+    }
+    if (section.fatigueText !== null) {
+      this.label(section.fatigueText, COLOR_DIM, 13, left, y, 'left')
+      y -= 24
+    }
+    return y
   }
 
   private drawAppoint(left: number, top: number, data: NationPanelData): number {
