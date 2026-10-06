@@ -2,6 +2,7 @@ package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.nio.charset.StandardCharsets;
@@ -15,9 +16,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ironoath.common.ErrorCode;
@@ -25,13 +28,26 @@ import com.ironoath.common.json.JsonUtils;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.core.nation.Nation;
 import com.ironoath.core.nation.WarScoreBoard;
+import com.ironoath.core.player.PlayerRepository;
+import com.ironoath.core.player.PlayerResourceState;
+import com.ironoath.core.player.PlayerSave;
+import com.ironoath.web.dto.generated.AllianceCreateReq;
+import com.ironoath.web.dto.generated.AllianceIdReq;
+import com.ironoath.web.dto.generated.AllianceReviewReq;
+import com.ironoath.web.dto.generated.DiplomacyRelation;
+import com.ironoath.web.dto.generated.NationDiplomacyReq;
+import com.ironoath.web.dto.generated.NationDisbandReq;
+import com.ironoath.web.dto.generated.NationFoundReq;
 import com.ironoath.web.dto.generated.PlayerInitReq;
+import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.dto.generated.WarPhase;
 import com.ironoath.web.nation.NationRulesAssembler;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.service.PlayerInitService;
+import com.ironoath.web.social.SocialStore;
+import com.ironoath.web.store.memory.InMemoryPlayerStore;
 
 /**
  * 职责：{@code GET /nation/war}（B13 国战承载切片 1）的端到端验证。
@@ -61,16 +77,24 @@ class WarEndpointTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
+    @Autowired private PlayerRepository players;
+    @Autowired private SocialStore socialStore;
     @Autowired private WarStore wars;
     @Autowired private WarRulesAssembler warRules;
     @Autowired private NationStore nations;
     @Autowired private NationRulesAssembler nationRules;
     @Autowired private TimeService timeService;
 
+    /** 联盟名/标签的序号（@BeforeEach 重置）：同一条用例里建两个联盟时，固定名字会在第二个上撞名。 */
+    private int allianceSeq;
+
     @BeforeEach
     void resetStores() {
         wars.clear();
         nations.clear();
+        socialStore.clear();
+        ((InMemoryPlayerStore) players).clear();
+        allianceSeq = 0;
     }
 
     // ---------- 空态 ----------
@@ -210,6 +234,144 @@ class WarEndpointTest {
         assertThat(theirs.get("totalKills").asLong()).isEqualTo(mine.get("totalKills").asLong());
     }
 
+    // ---------- 宣战（切片 2a）----------
+
+    @Test
+    @DisplayName("宣战：开出 PREPARATION 的一场，两行参战国都带服务端下发的国名，并把关系转成敌对")
+    void declaringOpensTheWarAndFlipsTheRelation() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+
+        JsonNode data = post200("/nation/war/declare", a.king,
+                new WarDeclareReq(newRequestId(), b.nationId));
+
+        assertThat(data.get("hasWar").asBoolean()).isTrue();
+        assertThat(data.get("phase").asText()).isEqualTo("PREPARATION");
+        assertThat(data.get("remainingSec").asLong())
+                .as("剩余时间只在 SIEGE 阶段倒数；这里必须是 0 而不是把 3 小时直接印出来")
+                .isZero();
+        assertThat(data.get("scores")).hasSize(2);
+        assertThat(rowOf(data.get("scores"), a.nationId).get("nationName").asText())
+                .as("参战方那一行给的是服务端下发的国名（客户端不抄表）").isEqualTo("铁誓");
+        assertThat(rowOf(data.get("scores"), b.nationId).get("nationName").asText())
+                .isEqualTo("赤原");
+        assertThat(data.get("totalKills").asLong())
+                .as("击杀累计属切片 2b：宣完战就是零分。这条断言把「宣战 ≠ 国战能玩」钉进用例里，"
+                        + "下一格接击杀时必须改它，届时不会没人发现")
+                .isZero();
+
+        assertThat(nations.findById(a.nationId).orElseThrow().diplomacyWith(b.nationId))
+                .as("Nation.mayAttackNation 的注释里那句「宣战后转为敌对」从交付起没人执行过，这一格是它的执行点")
+                .isEqualTo(Nation.Diplomacy.HOSTILE);
+    }
+
+    @Test
+    @DisplayName("没有 DECLARE_WAR 的人不能宣战：同国的普通成员被拒，且没有开出任何仗")
+    void memberWithoutDeclarePermissionCannotOpenAWar() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+
+        JsonNode root = postRaw("/nation/war/declare", a.mate,
+                new WarDeclareReq(newRequestId(), b.nationId));
+
+        assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.SOCIAL_PERMISSION_DENIED.code());
+        assertThat(wars.findLatest())
+                .as("被拒的那一次不许留下半个写入：仗根本没开起来")
+                .isEmpty();
+        assertThat(nations.findById(a.nationId).orElseThrow().diplomacyWith(b.nationId))
+                .as("关系也不许被顺手改掉")
+                .isEqualTo(Nation.Diplomacy.NEUTRAL);
+    }
+
+    @Test
+    @DisplayName("不能对本国宣战；也不许把不存在的国家打成参战方")
+    void selfAndMissingTargetsAreRefused() throws Exception {
+        Kingdom a = kingdom("铁誓");
+
+        assertThat(postRaw("/nation/war/declare", a.king,
+                new WarDeclareReq(newRequestId(), a.nationId)).get("code").asInt())
+                .as("打自己是入参错误，不是「国战业务」错误 —— 它不该占用 WAR_* 那几个码")
+                .isEqualTo(ErrorCode.PARAM_INVALID.code());
+        assertThat(postRaw("/nation/war/declare", a.king,
+                new WarDeclareReq(newRequestId(), "n-never-exists")).get("code").asInt())
+                .isEqualTo(ErrorCode.WAR_TARGET_NATION_NOT_FOUND.code());
+        assertThat(wars.findLatest()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("已解散的国家不能当宣战目标：档还在（供审计），但不能再被拖进一场仗")
+    void disbandedNationCannotBeDeclaredOn() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        post200("/nation/disband", b.king, new NationDisbandReq(newRequestId()));
+
+        assertThat(postRaw("/nation/war/declare", a.king,
+                new WarDeclareReq(newRequestId(), b.nationId)).get("code").asInt())
+                .as("少了 isDisbanded 那道 filter，这里会开出一场打空国的仗，而积分板上永远挂着一行查不到名字的参战国")
+                .isEqualTo(ErrorCode.WAR_TARGET_NATION_NOT_FOUND.code());
+        assertThat(wars.findLatest()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("盟约挡宣战（B13 冲突规则 4：外交关系优先）")
+    void alliedNationCannotBeDeclaredOn() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        // C21：盟约要两侧各自宣布才成立，所以两边都说一次 ALLIED
+        post200("/nation/diplomacy", a.king,
+                new NationDiplomacyReq(newRequestId(), b.nationId, DiplomacyRelation.ALLIED));
+        post200("/nation/diplomacy", b.king,
+                new NationDiplomacyReq(newRequestId(), a.nationId, DiplomacyRelation.ALLIED));
+
+        assertThat(postRaw("/nation/war/declare", a.king,
+                new WarDeclareReq(newRequestId(), b.nationId)).get("code").asInt())
+                .isEqualTo(ErrorCode.WAR_TARGET_DIPLOMACY_BLOCKED.code());
+        assertThat(wars.findLatest()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("同时只有一场仗：第三国再宣战被拒（错误码而不是静默开出第二场）")
+    void secondWarWhileOneIsActiveIsRefused() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        Kingdom c = kingdom("苍梧");
+        post200("/nation/war/declare", a.king, new WarDeclareReq(newRequestId(), b.nationId));
+
+        assertThat(postRaw("/nation/war/declare", c.king,
+                new WarDeclareReq(newRequestId(), b.nationId)).get("code").asInt())
+                .as("两个国王各自握着按玩家分的锁，这里必须靠存储层的临界区而不是靠锁")
+                .isEqualTo(ErrorCode.WAR_ALREADY_ACTIVE.code());
+
+        WarScoreBoard live = wars.findLatest().orElseThrow();
+        assertThat(live.registeredNations())
+                .as("被拒的那一次不许往第一场里塞第三个参战国")
+                .containsExactlyInAnyOrder(a.nationId, b.nationId);
+    }
+
+    @Test
+    @DisplayName("幂等：缺 requestId 被拒；同一个 requestId 重放不产生第二场，也不重翻关系")
+    void declareIsIdempotentOnRequestId() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+
+        assertThat(postRaw("/nation/war/declare", a.king,
+                new WarDeclareReq("  ", b.nationId)).get("code").asInt())
+                .isEqualTo(ErrorCode.REQUEST_ID_MISSING.code());
+
+        String requestId = newRequestId();
+        assertThat(post200("/nation/war/declare", a.king,
+                new WarDeclareReq(requestId, b.nationId)).get("hasWar").asBoolean()).isTrue();
+        long startedAt = wars.findLatest().orElseThrow().startedAt();
+
+        assertThat(postRaw("/nation/war/declare", a.king,
+                new WarDeclareReq(requestId, b.nationId)).get("code").asInt())
+                .as("重放必须挡在门口，而不是靠「已有仗」那条兜住 —— 后者会把「你重复提交了」报成「仗还在打」")
+                .isEqualTo(ErrorCode.REQUEST_DUPLICATED.code());
+        assertThat(wars.findLatest().orElseThrow().startedAt())
+                .as("重放不许开出第二场，也不许挪走第一场的起点")
+                .isEqualTo(startedAt);
+    }
+
     // ---------- 协议与内核同源 ----------
 
     @Test
@@ -268,17 +430,78 @@ class WarEndpointTest {
 
     /** 建一个真玩家：读口虽不查玩家档，但身份头要来自真实存在的存档（与其余端点测试同一条）。 */
     private String newPlayer() {
-        return playerInitService.init(new PlayerInitReq(
+        return newPlayer(1);
+    }
+
+    /**
+     * 建国要主城 16 级、建盟要 500 金币（真实扣款），两样都在这里备好
+     * （与 {@code NationEndpointTest.newPlayer} 同一条夹具，抄过来而不是共用：那份 60KB 且属于别的用例族）。
+     */
+    private String newPlayer(int cityLevel) {
+        String playerId = playerInitService.init(new PlayerInitReq(
                 "req-" + UUID.randomUUID(), "dev-" + UUID.randomUUID(), "国战测试",
                 1_700_000_000_000L, "")).playerId();
+        if (cityLevel <= 1) {
+            return playerId;
+        }
+        PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
+        save.setCityLevel(cityLevel);
+        PlayerResourceState gold = save.resources().get("GOLD");
+        if (gold != null) {
+            save.putResource("GOLD", new PlayerResourceState(
+                    100_000L, gold.cap(), gold.protectedAmount(), gold.perHour(), gold.lastSettle()));
+        }
+        players.save(save);
+        return playerId;
+    }
+
+    /** 一个可用的宣战主体：国王、同盟成员（用来验"没权限的人"）、他自己的国家 id。 */
+    private record Kingdom(String king, String mate, String nationId) {
+    }
+
+    /**
+     * 真人路线建一个国：主城 16 级 → 建盟 → 拉一个成员入盟 → 建国。
+     *
+     * <p><b>刻意不走 {@code NationStore.insertIfAbsent} 直接塞档</b>：宣战的权限判定读的是
+     * 「这个人在这国担任什么官职」，而那份官职是 {@code /nation/found} 才写进去的 ——
+     * 自己抄近路建档，测的就是夹具而不是生产路径（本仓「判定写了没接上」那一族的反面教材）。
+     */
+    private Kingdom kingdom(String nationName) throws Exception {
+        String king = newPlayer(16);
+        String mate = newPlayer(16);
+        allianceSeq++;
+        String allianceId = post200("/alliance/create", king,
+                new AllianceCreateReq(newRequestId(), "国战联盟" + allianceSeq,
+                        String.format("G%03d", allianceSeq % 1000)))
+                .get("alliance").get("id").asText();
+        post200("/alliance/apply", mate, new AllianceIdReq(newRequestId(), allianceId));
+        post200("/alliance/review", king, new AllianceReviewReq(newRequestId(), mate, true));
+        String nationId = post200("/nation/found", king,
+                new NationFoundReq(newRequestId(), nationName, 100L + allianceSeq, 200L))
+                .get("nation").get("nationId").asText();
+        return new Kingdom(king, mate, nationId);
+    }
+
+    private static String newRequestId() {
+        return "req-" + UUID.randomUUID();
     }
 
     private JsonNode get200(String url, String playerId) throws Exception {
         return okData(perform(get(url).header(PLAYER_HEADER, playerId)));
     }
 
-    private JsonNode perform(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder builder)
-            throws Exception {
+    private JsonNode post200(String url, String playerId, Object req) throws Exception {
+        return okData(postRaw(url, playerId, req));
+    }
+
+    /** 回整份响应（含业务码），用来断言"被拒"那几条 —— 拒的时候要看的是码，不是 data。 */
+    private JsonNode postRaw(String url, String playerId, Object req) throws Exception {
+        return perform(post(url).header(PLAYER_HEADER, playerId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(JsonUtils.toJson(req)));
+    }
+
+    private JsonNode perform(MockHttpServletRequestBuilder builder) throws Exception {
         MvcResult result = mockMvc.perform(builder).andExpect(status().isOk()).andReturn();
         // MockMvc 默认按 ISO-8859-1 解码响应体，中文提示会变乱码
         return JsonUtils.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
@@ -289,4 +512,5 @@ class WarEndpointTest {
                 .as("业务码必须为 0，实际响应=%s", root).isZero();
         return root.get("data");
     }
+
 }

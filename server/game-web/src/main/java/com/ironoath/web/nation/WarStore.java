@@ -60,6 +60,27 @@ public interface WarStore {
     boolean insertIfAbsent(WarScoreBoard board);
 
     /**
+     * 原子地开一场新仗：<b>只在当前没有任何未结束的战事时</b>插入，否则返回 false。
+     *
+     * <p><b>为什么这条能力在存储端口上，而不是 service 里 {@code findLatest()} → 判空 → {@code insert}</b>：
+     * 宣战是<b>两个国王各自</b>都能做的动作，而 {@code PlayerLock} 是按玩家加锁的 —— 两把锁互不相干。
+     * 「查有没有仗」与「插一场」是两步，同一秒内各查各的都得到「没有」，于是插出<b>两场平行账</b>：
+     * 两份各自累积击杀、各自的 {@code findLatest()} 给出不同的一场，而全链路不报错。
+     * 与 {@code NationStore#settleWeeklyTax} 是同一条判断：幂等键挡得住重放，挡不住并发。
+     *
+     * <p><b>临界区的边界要说清，别把它当成通用不变量</b>：这一条挡住的是<b>同进程内</b>的并发 ——
+     * 内存版是对象监视器，Mongo 版是这个存储 bean 上的实例锁再加 {@code _id} 撞键兜底。
+     * <b>跨进程不提供</b>这一保证，因为「全服一个进程」是 {@code PlayerLock} 早就成立的前提；
+     * 真要横向扩展，先要给整个 web 层换分布式锁，而不是在这里加 sleep 重试。
+     *
+     * @param board 要开的这一场（{@code phase} 必须是未结束的那两段之一）
+     * @return true 表示仗开起来了；false 表示已经有一场未结束的仗 ——
+     *         <b>调用方要响亮拒绝（{@code WAR_ALREADY_ACTIVE}），不许改成"再试一次"</b>：
+     *         重试只会把一个"两个人抢着宣战"变成"其中一个人的请求超时"，那是同一件事更糟的表现
+     */
+    boolean insertIfNoneActive(WarScoreBoard board);
+
+    /**
      * 整档落盘（内核类注释那一条「结束时落盘一次」）。
      *
      * <p><b>不许静默插入</b>：建档只走 {@link #insertIfAbsent}。理由与 {@code NationStore#save} 同一条 ——
@@ -70,13 +91,17 @@ public interface WarStore {
     void save(WarScoreBoard board);
 
     /**
-     * 最近开战的那一场（{@code startedAt} 最大的一份），读端点用它。
+     * 当前这一场（{@code startedAt} 最大的一份），只读端点与击杀累计都用它。
      *
-     * <p><b>「最近一场」在这一切片是展示口径而不是领域规则</b>：现在没有任何写入路径，
-     * 生产上这一口恒空（表现是 {@code GET /nation/war} 回 {@code hasWar=false}）。
-     * 等开战那一步落地，如果同一时刻只允许一场未结束的仗，这里应当收紧成
-     * 「那一场未结束的」而不是「最新那一场」—— 收紧点在这一个方法里，不在调用方，
-     * 所以调用方不需要跟着改。
+     * <p><b>切片 2a 之后「最近一场」与「唯一一场」是同一件事</b>：{@link #insertIfNoneActive}
+     * 保证同时只有一场未结束的仗，所以取 {@code startedAt} 最大的那一份就是取那一场活的 ——
+     * 不需要在这里再判一次 phase。
+     *
+     * <p>⚠️ <b>这句话的成立前提是「所有建档都走 {@code insertIfNoneActive}」</b>。
+     * {@link #insertIfAbsent} 仍然公开着（等价测试与"按赛季预建多场"这类将来用法），
+     * 一旦有人用它开出第二场，这里就必须收紧成「{@code phase != SETTLED} 的那一场」，
+     * 否则结算完的历史仗会被当成当前仗读给玩家、而新仗永远看不见。
+     * 收紧点在这一个方法里（两套实现各一处），不在调用方，所以调用方不需要跟着改。
      *
      * @return 重建出来的板子（规则现取，见 {@link WarRulesAssembler}）；一份都没有时为 empty
      */

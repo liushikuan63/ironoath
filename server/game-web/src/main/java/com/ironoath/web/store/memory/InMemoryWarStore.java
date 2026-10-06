@@ -41,6 +41,25 @@ public final class InMemoryWarStore implements WarStore {
         return byId.putIfAbsent(WarStore.documentIdOf(board), snapshot) == null;
     }
 
+    /**
+     * 原子地开一场：判「有没有未结束的仗」与「插入」都在<b>同一把监视器里</b>（本方法的外层 monitor），
+     * 所以两个国王在同一秒各自宣战时，第二个人一定拿到 false。
+     *
+     * <p>写成 {@code findLatest().isEmpty()} 再插入的话，内存版在 dev 照样全绿 ——
+     * 因为测试都是单线程，而那对线程真正会撞上的窗口一次也没出现过。
+     */
+    @Override
+    public synchronized boolean insertIfNoneActive(WarScoreBoard board) {
+        WarScoreBoard.Snapshot snapshot = requireBoard(board).toSnapshot();
+        for (WarScoreBoard.Snapshot stored : byId.values()) {
+            if (stored.phase() != WarScoreBoard.Phase.SETTLED) {
+                return false;
+            }
+        }
+        byId.put(WarStore.documentIdOf(board), snapshot);
+        return true;
+    }
+
     @Override
     public synchronized void save(WarScoreBoard board) {
         String id = WarStore.documentIdOf(requireBoard(board));

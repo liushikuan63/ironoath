@@ -31,6 +31,7 @@ import com.ironoath.web.dto.generated.NationTechResearchResp;
 import com.ironoath.web.dto.generated.NationTreasuryResp;
 import com.ironoath.web.dto.generated.NationTreasurySpendReq;
 import com.ironoath.web.dto.generated.NationTreasurySpendResp;
+import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.dto.generated.WarStatusResp;
 import com.ironoath.web.service.NationAppService;
 import com.ironoath.web.service.WarAppService;
@@ -241,6 +242,26 @@ public class NationController {
             @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
         requirePlayer(playerId);
         return Result.ok(wars.warStatus(playerId));
+    }
+
+    /**
+     * 宣战（B13 §一 §7 的开局那一步）：对本国之外的某个国家开一场 3 小时限时的王城战。
+     *
+     * <p>权限走 {@code role_permission} 的 {@code DECLARE_WAR}（表里 v3 收窄到国主独有，
+     * 与 {@code B13:46} 官职表那句「大将军发起国战」不一致 —— <b>以表为准</b>，理由写在协议的
+     * {@code WarDeclareReq} 描述里）。回的是宣战后的完整视图，理由与其它写操作同一条。
+     *
+     * <p><b>这一格开的是账，不是王城</b>：关卡与王城还不是地图上的可占领实体，所以打完这一下
+     * 板子停在 {@code PREPARATION}、占领分与建筑分恒为 0，只有击杀（切片 2b）会动。
+     * B13 的禁止项「没有压测的情况下不要上线王城战」压的是<b>攻城那一步</b>，本端点没有开放攻城，
+     * 但它确实是那条红线往前挪了一步 —— 台账与验收矩阵都按这句话记账，不写成"王城战已上线"。
+     */
+    @PostMapping("/war/declare")
+    public Result<WarStatusResp> declareWar(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId,
+            @RequestBody WarDeclareReq req) {
+        requirePlayer(playerId);
+        return Result.ok(wars.declare(playerId, req));
     }
 
     private static void requirePlayer(String playerId) {

@@ -6,6 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -36,6 +41,11 @@ import com.ironoath.web.store.mongo.MongoWarStore;
  * <p>另一族是<b>两套实现同源</b>：{@code findLatest} 若内存版按插入顺序取最后一条、Mongo 按
  * {@code startedAt} 排序，dev 全绿而生产给出另一场仗 —— {@link #findLatestPicksNewestStartedNotLastInserted}
  * 专拦这一条。
+ *
+ * <p><b>切片 2a 起本类还守第二条不变量：全服同时只有一场未结束的仗</b>
+ * （{@link #onlyOneOpenWarSurvivesTheRaceOnBothStores}）。它是<b>多线程</b>用例：
+ * 单线程的那几条挡不住「先查后插」这种写法 —— 两个国王各自拿着一把按玩家分的锁，
+ * 同一秒宣战会插出两场平行账，而两份击杀与占领分互不可见且不报错。
  */
 class WarStoreEquivalenceTest {
 
@@ -161,6 +171,99 @@ class WarStoreEquivalenceTest {
                     .as("%s 没领过的人必须还能领，否则上一条会退化成「谁都领不到」的假绿", label).isTrue();
             assertThat(back.serverGoalClaimed())
                     .as("%s 领取人数 = 名单落回的那两人 + 新领的一人", label).isEqualTo(3);
+        }
+    }
+
+    // ---------- 单场不变量（切片 2a 宣战的存储侧）----------
+
+    @Test
+    @DisplayName("未结束的仗只允许一场：第二场必须 false，且不许动第一份")
+    void insertIfNoneActiveKeepsTheOneOpenWarOnBothStores() {
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            assertThat(store.insertIfNoneActive(richBoard(T0)))
+                    .as("%s 第一场仗应当开起来", label).isTrue();
+
+            assertThat(store.insertIfNoneActive(richBoard(T0 + 30 * MINUTE)))
+                    .as("%s 已有未结束的一场时，第二场必须开不起来", label).isFalse();
+
+            WarScoreBoard back = store.findLatest().orElseThrow();
+            assertThat(back.startedAt())
+                    .as("%s 被拒的那一次不许留下半个写入，也不许把当前这场挪走", label)
+                    .isEqualTo(T0);
+            assertThat(describe(back))
+                    .as("%s 第一场的积分与名单必须一字不变", label)
+                    .isEqualTo(describe(richBoard(T0)));
+        }
+    }
+
+    @Test
+    @DisplayName("结算之后才允许开下一场：历史那一场留着，不当成当前仗")
+    void settledWarOpensTheDoorToTheNextOneOnBothStores() {
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(richBoard(T0));
+            WarScoreBoard first = store.findLatest().orElseThrow();
+            first.settle(T0 + 10 * MINUTE);
+            store.save(first);
+
+            assertThat(store.insertIfNoneActive(richBoard(T0 + 20 * MINUTE)))
+                    .as("%s 上一场已经 SETTLED，下一场就该开得起来", label).isTrue();
+            assertThat(store.findLatest().orElseThrow().startedAt())
+                    .as("%s 读端点给的必须是新那一场，而不是结算完的历史", label)
+                    .isEqualTo(T0 + 20 * MINUTE);
+        }
+    }
+
+    /**
+     * 两个国王在同一秒各自宣战。<b>这条才是"单场"这句话的真判据</b>：
+     * 上面两条都是单线程，把 {@code InMemoryWarStore.insertIfNoneActive} 的 {@code synchronized} 去掉、
+     * 或把 Mongo 版写成「先 findLatest 判空再 insert」，它们照样全绿 ——
+     * 而生产上那两次请求真的会并发（{@code PlayerLock} 是按玩家的，两把锁互不相干）。
+     *
+     * <p><b>为什么要跑 15 轮</b>：单次竞态的窗口太窄，本地 mongod 上一次「查 + 插」只要几百微秒，
+     * 一条只跑一次的用例会因为"没撞上"而假绿。轮数不是越多越好 —— 这里是把<b>判据换成可统计的量</b>：
+     * 记下"两个都 true"的轮数并要求它为 0，撞上一次就红，而不是靠某一次的运气。
+     * （实测：只跑一轮时，去掉两处临界区保护的本子照样 12 条全绿 —— 那条判据当时是假的。）
+     */
+    @Test
+    @DisplayName("同一秒两个人抢着开战：15 轮里每轮恰好一个赢（内存与 Mongo 同一条）")
+    void onlyOneOpenWarSurvivesTheRaceOnBothStores() throws Exception {
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            ExecutorService pool = Executors.newFixedThreadPool(2);
+            try {
+                int bothWon = 0;
+                for (int round = 0; round < 15; round++) {
+                    store.clear();
+                    final long firstStartedAt = T0 + round;
+                    final long secondStartedAt = T0 + 1_000L + round;
+                    CountDownLatch go = new CountDownLatch(1);
+                    Future<Boolean> a = pool.submit(() -> {
+                        go.await();
+                        return store.insertIfNoneActive(richBoard(firstStartedAt));
+                    });
+                    Future<Boolean> b = pool.submit(() -> {
+                        go.await();
+                        return store.insertIfNoneActive(richBoard(secondStartedAt));
+                    });
+                    go.countDown();
+                    boolean wonA = a.get(10, TimeUnit.SECONDS);
+                    boolean wonB = b.get(10, TimeUnit.SECONDS);
+                    assertThat(wonA || wonB)
+                            .as("%s 第 %d 轮两个都 false，仗根本开不起来", label, round)
+                            .isTrue();
+                    if (wonA && wonB) {
+                        bothWon++;
+                    }
+                }
+                assertThat(bothWon)
+                        .as("%s 出现「两个都 true」的轮数必须为 0 —— 大于 0 就是「查」与「插」没收在同一个临界区里，"
+                                + "全服会开出两场平行账，各自的击杀与占领分互不可见且不报错", label)
+                        .isZero();
+            } finally {
+                pool.shutdownNow();
+            }
         }
     }
 

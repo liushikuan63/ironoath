@@ -35,6 +35,8 @@ public final class MongoWarStore implements WarStore {
 
     private final MongoTemplate mongo;
     private final WarRulesAssembler rules;
+    /** {@link #insertIfNoneActive} 的临界区：见该方法为什么用实例锁而不是 Mongo 唯一索引。 */
+    private final Object activeLock = new Object();
 
     public MongoWarStore(MongoTemplate mongo, WarRulesAssembler rules) {
         this.mongo = mongo;
@@ -55,6 +57,45 @@ public final class MongoWarStore implements WarStore {
         } catch (DuplicateKeyException e) {
             return false;
         }
+    }
+
+    /**
+     * 原子地开一场：<b>「有没有未结束的仗」与「插入」收进同一把锁</b>（本存储 bean 的实例锁）。
+     *
+     * <p><b>为什么这里用实例锁而不是 Mongo 的 partial unique index</b>：本进程就是全服唯一进程
+     * （{@code PlayerLock} 是 JVM 内的，这条前提在项目里早就成立），而 partial index 要为此
+     * 给文档再加一列"活着的槽位"并在结算时清掉它 —— 那是为假想的横向扩展付的代价。
+     * <b>锁只在这一个 bean 实例上有效</b>：端口 javadoc 里写明的是同进程保证，不许把它读成跨进程保证。
+     *
+     * <p>{@code _id} 撞键（同一毫秒开两场）翻成 false 是兜底，不是主判据。
+     */
+    @Override
+    public boolean insertIfNoneActive(WarScoreBoard board) {
+        String warId = WarStore.documentIdOf(requireBoard(board));
+        synchronized (activeLock) {
+            if (hasActiveWar()) {
+                return false;
+            }
+            try {
+                mongo.insert(WarDocument.fromDomain(warId, board), WarDocument.COLLECTION);
+                return true;
+            } catch (DuplicateKeyException e) {
+                return false;
+            }
+        }
+    }
+
+    /**
+     * 有没有任何一场未结束的仗。<b>按 {@code state.phase} 查而不是"取最新那场再看它的 phase"</b>：
+     * 后者会漏掉「旧的一场还没结算、又插进来一场更新的且已结算」这种形状 ——
+     * 那个形状今天只能由 {@code insertIfAbsent}（建档口的后门）造出来，
+     * 而判据写成"任意一场活的"就不依赖"没人走后门"这条假设。
+     *
+     * <p>集合里只有个位数文档，这一条不建索引（{@code idx_war_started_at} 服务的是读端点的排序）。
+     */
+    private boolean hasActiveWar() {
+        return mongo.exists(Query.query(Criteria.where("state.phase")
+                .ne(WarScoreBoard.Phase.SETTLED.name())), WarDocument.COLLECTION);
     }
 
     @Override

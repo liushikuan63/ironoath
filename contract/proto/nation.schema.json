@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ironoath.local/contract/proto/nation.schema.json",
   "title": "NationProtocol",
-  "description": "国家与国战协议契约（B13）：建国、官职任命、国库、外交、国战状态。唯一真源，由 tools/config-gen 生成 Java record 与 TS interface，禁止手改两侧。\n\n三条贯穿全部 def 的设计约束：\n1. **联盟 ⊂ 国家**：国家成员表的最小单位是**联盟**而不是玩家，个人跟随联盟入籍、不单独入籍。所以 NationView 给的是 allianceCount 与 memberCap，而不是一个玩家名单 —— 玩家名单在联盟那一侧，两处各存一份迟早对不上。\n2. **Bot 不得担任任何官职**（B13 §2 合规红线、B16 上线清单 §七）。这条不在协议里表达，而在服务端任命入口强制：协议里没有任何字段能让客户端声明「这个人是真人」，所以客户端无法绕过。\n3. **冲突优先级 国家 > 联盟 > 小队**：退出联盟即失去国籍（除非新联盟属同一国家），联盟被开除则全联盟失去国籍并进入 24h 冷却。这些规则由服务端在数据层强制，客户端只消费结果。\n\n本文件覆盖的是「国家的存在与成员构成」这一段：建国 / 入籍 / 退出国 / 官职任命 / 查看 / 外交 / 国库 / **国策投票** / **国战状态**。\n\n**国战那三份 def 是 2026-10-06 随 B13 承载切片 1 一起加的**（`WarPhase` / `WarNationScoreView` / `WarStatusResp`），同一批就有 `WarStore` 端口、内存与 Mongo 两套实现、装配点与 `GET /nation/war` 只读端点 —— 不是先占一份协议。先前这里写的是「国战状态的 DTO 仍随国战的 web 层一起加」，理由留作约束本身：**先定协议再写实现的做法在本项目吃过亏**，协议里的字段名会反过来限制实现，而实现没写出来之前，那些字段名只是猜测。⚠️ 但 DTO 有读口不等于玩法接通：击杀累计、疲劳累积、开战与结算仍无写入路径，`WarStatusResp` 的 description 里写明了这一条诚实边界。\n\n**国策这一段的四条设计约束**（2026-09-30 裁决，规格见 `B13S4_国策规格草案.md`）：\n1. **提案与投票是两个不同的动作、两个不同的时间窗**。`NationPolicyPhase` 三段而不是两段，理由见该枚举的说明。\n2. **票数与参与者一次给全**：`supporters` / `opponents` 两份名单不分页（B13 §4 明文要求「票数与参与者可查」；负载已算过，800 人国约 8KB，在 `PERF_PAYLOAD_MAX_BYTES` 预算内）。\n3. **Bot 不能投票**：`canVote` 由服务端算，Bot 恒为 false。协议里没有任何字段能让客户端声明「我是真人」，所以客户端绕不过去（同 `NationAppointReq` 拒绝 Bot 的那条设计）。\n4. **同轮多条提案通过时怎么分槽位**：`NationPolicyRoundView.slotOrderNote` 下发一句可上屏的说明，规则由服务端一处实现。B13/B21 都没写过这一条，它是实现侧定的规则。",
+  "description": "国家与国战协议契约（B13）：建国、官职任命、国库、外交、国战状态。唯一真源，由 tools/config-gen 生成 Java record 与 TS interface，禁止手改两侧。\n\n三条贯穿全部 def 的设计约束：\n1. **联盟 ⊂ 国家**：国家成员表的最小单位是**联盟**而不是玩家，个人跟随联盟入籍、不单独入籍。所以 NationView 给的是 allianceCount 与 memberCap，而不是一个玩家名单 —— 玩家名单在联盟那一侧，两处各存一份迟早对不上。\n2. **Bot 不得担任任何官职**（B13 §2 合规红线、B16 上线清单 §七）。这条不在协议里表达，而在服务端任命入口强制：协议里没有任何字段能让客户端声明「这个人是真人」，所以客户端无法绕过。\n3. **冲突优先级 国家 > 联盟 > 小队**：退出联盟即失去国籍（除非新联盟属同一国家），联盟被开除则全联盟失去国籍并进入 24h 冷却。这些规则由服务端在数据层强制，客户端只消费结果。\n\n本文件覆盖的是「国家的存在与成员构成」这一段：建国 / 入籍 / 退出国 / 官职任命 / 查看 / 外交 / 国库 / **国策投票** / **国战状态** / **宣战**。\n\n**国战那四份 def 是 2026-10-06 随 B13 承载切片一起加的**（`WarPhase` / `WarNationScoreView` / `WarStatusResp` 落切片 1，`WarDeclareReq` 落切片 2a），同一批就有 `WarStore` 端口、内存与 Mongo 两套实现、装配点、`GET /nation/war` 只读端点与 `POST /nation/war/declare` —— 不是先占一份协议。先前这里写的是「国战状态的 DTO 仍随国战的 web 层一起加」，理由留作约束本身：**先定协议再写实现的做法在本项目吃过亏**，协议里的字段名会反过来限制实现，而实现没写出来之前，那些字段名只是猜测。⚠️ 但 DTO 有读口不等于玩法接通：切片 2a 之后**开战有了写入路径**（宣战建板并登记参战国），而击杀累计、疲劳累积与结算仍无写入路径 ⇒ `WarStatusResp` 刚宣完战仍是零分，`验收矩阵.md` 的 B13 验收 6/7/10 继续挂 ⬜。这条诚实边界在 `WarStatusResp` 与 `WarDeclareReq` 的 description 里各写了一遍。\n\n**国策这一段的四条设计约束**（2026-09-30 裁决，规格见 `B13S4_国策规格草案.md`）：\n1. **提案与投票是两个不同的动作、两个不同的时间窗**。`NationPolicyPhase` 三段而不是两段，理由见该枚举的说明。\n2. **票数与参与者一次给全**：`supporters` / `opponents` 两份名单不分页（B13 §4 明文要求「票数与参与者可查」；负载已算过，800 人国约 8KB，在 `PERF_PAYLOAD_MAX_BYTES` 预算内）。\n3. **Bot 不能投票**：`canVote` 由服务端算，Bot 恒为 false。协议里没有任何字段能让客户端声明「我是真人」，所以客户端绕不过去（同 `NationAppointReq` 拒绝 Bot 的那条设计）。\n4. **同轮多条提案通过时怎么分槽位**：`NationPolicyRoundView.slotOrderNote` 下发一句可上屏的说明，规则由服务端一处实现。B13/B21 都没写过这一条，它是实现侧定的规则。",
   "x-java-package": "com.ironoath.web.dto.generated",
   "x-ts-module": "NationProtocol",
   "$defs": {
@@ -989,6 +989,27 @@
         "attackQualified": {
           "type": "boolean",
           "description": "是否已取得进攻资格（持有至少一座关卡）。**由服务端判**，客户端不许自己按 gatesHeld>0 再算一遍 —— 判定写两处就会有第二处不与领域层同步的那天。"
+        }
+      }
+    },
+    "WarDeclareReq": {
+      "type": "object",
+      "description": "`POST /nation/war/declare` 的入参：对本国之外的某一个国家宣战，开启一场 3 小时限时的王城战（B13 §一 §7）。\n\n**权限走 `role_permission` 表的 `DECLARE_WAR`**（`perm_nation_declare_war`：`allowLeader=true`、`allowOfficer=false`）。⚠️ 这与 `B13:46` 官职表里那句「大将军：发起国战」不一致，**以表为准**：`role_permission` 的 v3 设计说明把「任命官职、宣战、国策」三项明确收窄到国主独有（理由是「影响 800 人且不可逆」），而判定只长在表里那一处 —— 若照官职表放开到将军档，读路径（`GET /social/permissions?scope=NATION`）与写路径就会分叉，症状是「面板上那颗键亮着、点下去被拒」。Bot 结构性地不可能担任官职（B13 §2 合规红线），所以这里没有额外的 Bot 闸门。\n\n**全服同时只有一场未结束的仗**（由存储层的临界区保证，见 `WarStore#insertIfNoneActive`）：已经有一场就打不进第二次，错误码 `WAR_ALREADY_ACTIVE`(13020)。写成「先查后插」的话，两个国王在同一秒各自宣战会插出两场平行账，而两份各自算各自的击杀与占领分。\n\n**这一格交付的是「开战」这一步，不是王城战本身**：关卡与王城今天还不是地图上的可占领实体（`WorldEntityType` 只有城/野怪/资源/行军/建筑），所以宣战后板子停在 `PREPARATION`、`beginSiege` 进不去，积分只有击杀一项会动。占领时长分、建筑分与疲劳值仍属未接（`验收矩阵.md` 的 B13 验收 6/7 继续挂 ⬜）。",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "targetNationId"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64,
+          "description": "幂等键。重复提交不会开第二场 —— 与国库、国策那几处同一条：一场仗的起点必须由一次动作决定，而不是由重发的次数决定。"
+        },
+        "targetNationId": {
+          "type": "string",
+          "description": "被宣战国家的 id。**不得直接上屏**（B13 红线：内部 id 不印给玩家），面板用的是响应里 `WarStatusResp.scores[].nationName` 那一份服务端下发的国名。前置按这个顺序查：本国存在 → 有宣战权限 → 不是打自己 → 目标国存在 → 外交关系允许打（`Nation.mayAttackNation`，B13 验收 12「改关系即改可打名单」走的正是这一道）。"
         }
       }
     },
