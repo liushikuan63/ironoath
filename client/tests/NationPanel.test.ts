@@ -668,6 +668,29 @@ test('国战那一页：没拉到 / 没有仗 / 有仗 三态各自说清，不�
   assert.equal(/nation_[ab]/.test(onScreen), false, `国战那页印出了内部 id：${onScreen}`)
 })
 
+test('国战页的宣战门与目标：权限三态照 permissionGateOf，目标只带上屏要用的名字', () => {
+  const target = { nationId: 'nation_z', name: '北伐营' }
+  // ① 读到了、但没有这一位 ⇒ 灰，理由是身份结论
+  const denied = buildWarSection(warResp({ hasWar: false }), [target], [], true)
+  assert.equal(denied.declareGate.enabled, false)
+  assert.match(denied.declareGate.reason ?? '', /不能宣战/)
+  // ② 没读到 ⇒ 灰，理由是「还没读到」——不能写成「你不行」（那是让人去申请升职，而该做的只是重进）
+  const notLoaded = buildWarSection(warResp({ hasWar: false }), [target], null, false)
+  assert.equal(notLoaded.declareGate.enabled, false)
+  assert.equal(notLoaded.declareGate.reason, '权限还没读到')
+  // ③ 有这一位 ⇒ 亮
+  const allowed = buildWarSection(warResp({ hasWar: false }), [target], ['DECLARE_WAR'], true)
+  assert.equal(allowed.declareGate.enabled, true)
+  assert.equal(allowed.declareGate.reason, null)
+  // 目标：`name` 上屏、`key` 只用于发请求（红线：内部 id 不印给玩家）
+  assert.deepEqual(allowed.targets.map(t => t.name), ['北伐营'])
+  assert.equal(Object.keys(allowed.targets[0] ?? {}).join(), 'key,name')
+  // 默认参数：不传就空表 + 灰（面板按"还没读到"画，不是画一片空白）
+  const bare = buildWarSection(warResp({ hasWar: false }))
+  assert.equal(bare.targets.length, 0)
+  assert.equal(bare.declareGate.enabled, false)
+})
+
 test('国战那一页：休战期不画剩余时间、平分时同名次（与内核「平分不给胜者」同口径）', () => {
   const prep = buildWarSection(warResp({ hasWar: true, phase: 'PREPARATION', remainingSec: 0 }))
   assert.equal(prep.remainingText, null,

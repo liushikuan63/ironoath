@@ -257,7 +257,7 @@ export function buildNationSections(tech: NationTechListView | null,
     // **默认 null**（不是空面板）：这一页没拉过时面板要说「这一次没拉到」，
     // 画一片空白会让玩家以为这个国家没有国策可议。
     policy,
-    war: buildWarSection(war),
+    war: buildWarSection(war, targets, permissions, permissionsLoaded),
   }
 }
 
@@ -297,6 +297,10 @@ export interface WarSection {
   readonly goalText: string | null
   readonly fatigueText: string | null
   readonly emptyText: string | null
+  /** 可选的目标国（来自国家榜，`key` 是 nationId，只用于发请求、永不上屏）。 */
+  readonly targets: readonly { readonly key: string; readonly name: string }[]
+  /** 能不能宣战（权限位 `DECLARE_WAR`，V13-d；三态见 {@link permissionGateOf}）。 */
+  readonly declareGate: NationGate
 }
 
 /** 一个参战方一行。**`key` 是 nationId，只用于发请求，永不上屏**（B13 红线）。 */
@@ -322,7 +326,17 @@ export interface WarSideRowView {
  * <p><b>国名缺失给回退语</b>：`nationName` 在协议里不是 required（国家解散后仍留着参战行），
  * 印 `nationId` 是红线（内部 id 不进玩家面）。
  */
-export function buildWarSection(resp: WarStatusResp | null): WarSection {
+/**
+ * @param targets    可选目标国（来自国家榜）——**与外交页同一份来源**，不另拉一个口；
+ *                   `key` 只用于发请求，永不上屏（B13 红线）。
+ * @param permissions `GET /social/permissions?scope=NATION` 的权限位；宣战那一颗键读它。
+ */
+export function buildWarSection(resp: WarStatusResp | null,
+  targets: readonly { nationId: string; name: string }[] = [],
+  permissions: readonly string[] | null = null,
+  permissionsLoaded = false): WarSection {
+  const declareGate = permissionGateOf('DECLARE_WAR', '宣战', permissions, permissionsLoaded)
+  const targetViews = targets.slice(0, 8).map(t => ({ key: t.nationId, name: t.name }))
   if (resp === null) {
     return {
       hasWar: false,
@@ -334,6 +348,8 @@ export function buildWarSection(resp: WarStatusResp | null): WarSection {
       goalText: null,
       fatigueText: null,
       emptyText: '这一次没读到国战状态：重进这一页再试',
+      targets: targetViews,
+      declareGate,
     }
   }
   if (!resp.hasWar) {
@@ -351,7 +367,9 @@ export function buildWarSection(resp: WarStatusResp | null): WarSection {
         + (resp.serverGoalReached ? '（全服目标已达成）' : ''),
       fatigueText: `我的疲劳 ${amountText(resp.myFatigue)} / ${amountText(resp.fatigueMax)}`,
       emptyText: '现在没有正在打的国战。全服的击杀进度会累计在上面那一行，'
-        + '下一场由国王在「外交」那一页挑一个目标提出来。',
+        + '挑一个目标国、按两次「宣战」就能开一场（只有国王能做这件事）。',
+      targets: targetViews,
+      declareGate,
     }
   }
   const ranked = rankWarSides(resp.scores)
@@ -375,6 +393,8 @@ export function buildWarSection(resp: WarStatusResp | null): WarSection {
     fatigueText: `我的疲劳 ${amountText(resp.myFatigue)} / ${amountText(resp.fatigueMax)}`
       + (resp.canMarch ? '' : '（已到顶，这一轮出不了兵）'),
     emptyText: null,
+    targets: targetViews,
+    declareGate,
   }
 }
 

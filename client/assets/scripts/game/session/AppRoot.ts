@@ -3580,8 +3580,9 @@ export class AppRoot {
     if (tab === 'TECH' && this.nationTechResp === null && this.nationResp !== null) {
       await this.loadNationTech()
     }
-    if (tab === 'DIPLO' && this.nationCandidates.length === 0) {
-      // 外交页的候选目标也来自国家榜（服务端没有"列出全部国家"的端点）
+    if ((tab === 'DIPLO' || tab === 'WAR') && this.nationCandidates.length === 0) {
+      // 外交页与国战页的候选目标都来自国家榜（服务端没有"列出全部国家"的端点）：
+      // 国战页也要它 —— 宣战要选一个国家，而候选从同一次读里来（不另开一个口）
       await this.loadNationCandidates()
     }
     // 国策页**每次切都重拉**：轮次是在服务端惰性推进的，而投票窗只有 24 小时 ——
@@ -3718,6 +3719,35 @@ export class AppRoot {
    * <p>**成功后整张关系表换掉**（`allRelations` 是变更之后那张全表），
    * 于是第一次打完交道之后，这一页就能显示"与所有国家现在各是什么关系"。
    */
+  /**
+   * 宣战（B13 §一 §7 的开局那一步）。**不可逆、影响全服**：面板那边要按两次才走到这里
+   * （第一次只是武装），这里只管发那一枪并把结果折成一句给玩家看的话。
+   *
+   * <p><b>冷却与权限一律由服务端判</b>：客户端不自己算 24 小时、也不自己查"我是不是国王"——
+   * 两者服务端都会给带理由的拒绝码，原样显示。自己算一遍就是留一个与表分叉的第二真源，
+   * 而表改了的那天症状是"面板上那颗键亮着、点下去被拒"（V13 那轮已经栽过一次）。
+   *
+   * <p>成功之后**重拉一次国战状态**（写口回的也是那一份）：面板随即从空态变成"两行参战方"，
+   * 而不用等玩家手动切页签。
+   */
+  async declareNationWar(targetNationId: string): Promise<void> {
+    const name = this.nationCandidates.find(item => item.nationId === targetNationId)?.name ?? '那个国家'
+    const outcome = await this.api.declareWar({ targetNationId })
+    if (outcome.kind !== 'ok') {
+      this.nationNotice = AppRoot.reason(outcome)
+      this.nationNoticeTone = 'warn'
+      this.deliverNation()
+      return
+    }
+    this.nationWarResp = outcome.data
+    // 只记"做成了"的那一枪（与 `setNationRelation` 同口径）：被冷却/权限挡住的不进这一格，
+    // 它们的读数在服务端错误码里，混进来会把"想宣战"和"宣战成功"揉成一个数
+    this.track(TRACK_EVENTS.warDeclare)
+    this.nationNotice = `已对 ${name} 宣战：这一场打 3 小时，打完按人发赛季分`
+    this.nationNoticeTone = 'ok'
+    this.deliverNation()
+  }
+
   async setNationRelation(targetNationId: string, relation: DiplomacyRelation): Promise<void> {
     // 关系是协议里的四个枚举之一；不认识的值一律不发出去 ——
     // 发出去等于让服务端替我们猜一个玩家没选过的关系

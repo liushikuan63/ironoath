@@ -17,6 +17,7 @@ import { _decorator, Color, Component, EditBox, EventTouch, Graphics, Label, Nod
 import type {
   NationPanelView as NationPanelData, NationTabKey, PayeeType, SpendDraft,
 } from '../game/nation/NationPanel'
+import type { WarSection } from '../game/nation/NationSections'
 import { NATION_TABS, SPEND_AMOUNT_PRESETS, TREASURY_LOG_ROWS, amountText, spendDraftBlocker, spendSinkOptions } from '../game/nation/NationPanel'
 import { applySystemUiFont } from './UiFont'
 
@@ -130,10 +131,15 @@ export class NationPanelView extends Component {
   onResearchTech: ((techId: string) => void) | null = null
   /** 记一条外交关系。 */
   onSetRelation: ((targetNationId: string, relation: string) => void) | null = null
+  /** 宣战：**第一次点只是武装**，第二次点才发（不可逆动作的二次确认，与国库支出同一条形状）。 */
+  onDeclareWar: ((targetNationId: string) => void) | null = null
   /** 任命一名成员。 */
   onAppoint: ((playerId: string, office: string) => void) | null = null
   /** 外交页当前选中的目标国（`nationId`；null = 还没选）。 */
   private diproTarget: string | null = null
+  /** 国战页选中的目标国（只用于发请求，永不上屏）与"已经武装"那一位。 */
+  private warTarget: string | null = null
+  private warArmed = false
   private diproRelation = 'ALLIED'
   /** 任命页当前选中的人。 */
   private appointTarget: string | null = null
@@ -170,6 +176,7 @@ export class NationPanelView extends Component {
     this.onSelectTab = null
     this.onResearchTech = null
     this.onSetRelation = null
+    this.onDeclareWar = null
     this.onAppoint = null
   }
 
@@ -178,6 +185,8 @@ export class NationPanelView extends Component {
     this.draft = freshDraft()
     this.payees = []
     this.diproTarget = null
+    this.warTarget = null
+    this.warArmed = false
     this.diproRelation = 'ALLIED'
     this.appointTarget = null
   }
@@ -441,7 +450,10 @@ export class NationPanelView extends Component {
         this.label(section.fatigueText, COLOR_DIM, 13, left, y, 'left')
         y -= 24
       }
-      return y
+      // **宣战入口在"没有仗"这一支才最该出现**（有仗时按钮是灰的）：
+      // 第一版把它写在下面那一支的收尾，于是空态直接 return 走了 —— 探针点不到目标国，
+      // 而"这一屏有没有按钮"只有真跑看得见（单测只验视图模型，不验画没画）。
+      return this.drawWarDeclare(left, y, section)
     }
     // 有仗：状态两行 + 王城一行
     this.label(section.headline ?? '', COLOR_DIM, 13, left, y, 'left')
@@ -476,6 +488,62 @@ export class NationPanelView extends Component {
     if (section.fatigueText !== null) {
       this.label(section.fatigueText, COLOR_DIM, 13, left, y, 'left')
       y -= 24
+    }
+    return this.drawWarDeclare(left, y, section)
+  }
+
+  /**
+   * 宣战那一块（写侧）：选目标 → 第一次点只是武装、第二次点才真发。
+   *
+   * <p><b>空态与有仗两处都调它</b>：空态是最该宣战的那一屏（有仗时按钮本来就灰着），
+   * 而第一版只写在有仗那一支的收尾 —— 空态提前 return，玩家在新服里永远看不到这颗键。
+   *
+   * <p>灰掉的每一条原因都写清（与国库那三颗键同一条纪律）：权限没读到 / 职位不够 /
+   * 已经有一场没打完 / 还没选目标 —— 四种都印，不合并。
+   */
+  private drawWarDeclare(left: number, top: number, section: WarSection): number {
+    let y = top
+    if (section.targets.length > 0) {
+      this.label('对谁宣战', COLOR_DIM, 13, left, y, 'left')
+      y -= 26
+      const targetWidth = 110
+      section.targets.slice(0, 6).forEach((target, index) => {
+        const x = left + targetWidth / 2 + index * (targetWidth + 8)
+        this.button(`WarTarget-${target.key}`, target.name, x, y, targetWidth, true,
+          () => { this.warTarget = target.key; this.warArmed = false; this.redraw() },
+          this.warTarget === target.key)
+      })
+      y -= 34
+    }
+    const selected = section.targets.find(t => t.key === this.warTarget) ?? null
+    this.button('WarDeclare', this.warArmed ? '确认宣战' : '宣战', left + 60, y, 120,
+      section.declareGate.enabled && selected !== null && !section.hasWar,
+      () => {
+        if (selected === null) {
+          return
+        }
+        // 第一次点武装、第二次点才发：宣战不可逆（冷却 24 小时那一格也是这么写的）
+        if (!this.warArmed) {
+          this.warArmed = true
+          this.redraw()
+          return
+        }
+        this.warArmed = false
+        this.onDeclareWar?.(selected.key)
+      })
+    y -= 24
+    // 灰掉的原因逐条写清（与国库那三颗键同一条纪律）
+    const warReason = !section.declareGate.enabled
+      ? section.declareGate.reason
+      : (section.hasWar ? '已经有一场没打完的仗 —— 等它结束再宣下一场'
+        : (selected === null ? '先在上面选一个国家' : null))
+    if (warReason !== null) {
+      this.label(warReason, COLOR_DIM, 13, left, y, 'left')
+      y -= 22
+    } else if (this.warArmed) {
+      this.label(`再点一次「确认宣战」：对 ${selected?.name ?? ''} 开一场，冷却 24 小时`,
+        COLOR_WARN, 13, left, y, 'left')
+      y -= 22
     }
     return y
   }

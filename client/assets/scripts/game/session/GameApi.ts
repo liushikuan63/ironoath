@@ -111,7 +111,7 @@ import type {
   NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationPolicyProposeReq,
   NationPolicyProposeResp, NationPolicyRoundView, NationPolicyVoteReq, NationPolicyVoteResp,
   NationResp, NationTreasuryResp, NationTreasurySpendReq, NationTreasurySpendResp,
-  WarStatusResp,
+  WarDeclareReq, WarStatusResp,
 } from '../../net/generated/NationProtocol'
 import type {
   NationTechListView, NationTechResearchReq, NationTechResearchResp,
@@ -266,6 +266,18 @@ export class GameApi {
    */
   warStatus(): Promise<NetOutcome<WarStatusResp>> {
     return this.read<WarStatusResp>('/nation/war')
+  }
+
+  /**
+   * POST /nation/war/declare —— 对本国之外的某一个国家宣战（B13 §一 §7 的开局那一步）。
+   *
+   * <p>**幂等键由 {@link mutate} 每次新生成**：一次确认 = 一次新意图；重复提交不会开第二场
+   * （服务端那条「同时只有一场未结束的仗」在存储层挡）。**客户端不许自己判冷却或权限**：
+   * 两种情况服务端都会给带理由的拒绝码（`WAR_DECLARE_COOLDOWN` / `SOCIAL_PERMISSION_DENIED`），
+   * 原样显示即可 —— 自己算一遍就是留一个与表分叉的第二真源。
+   */
+  declareWar(req: Omit<WarDeclareReq, 'requestId'>): Promise<NetOutcome<WarStatusResp>> {
+    return this.mutate<WarDeclareReq, WarStatusResp>('/nation/war/declare', req)
   }
 
   /**

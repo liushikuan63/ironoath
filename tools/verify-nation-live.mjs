@@ -434,6 +434,29 @@ if (process.env.NATION_LIVE_UI === '1') {
   }, uiKing.playerId, uiKing.token)
   checkThat('（回读屏）先建出一个国家', uiFound.code === 0)
   if (uiFound.code === 0) {
+    // 宣战要有一个"别人家的国"：另起一个号建盟建国（走真 HTTP，不开夹具）
+    const uiTarget = await initPlayer('nationliveuitarget')
+    await call('POST', '/alliance/create', {
+      requestId: rid('alliance-ui-target'), name: `目标盟${runTag}`, tag: `T${runTag.slice(-4)}`,
+    }, uiTarget.playerId, uiTarget.token)
+    const uiTargetFound = await call('POST', '/nation/found', {
+      requestId: rid('found-ui-target'), name: `目标国${runTag}`, capitalX: 155, capitalY: 88,
+    }, uiTarget.playerId, uiTarget.token)
+    checkThat('（回读屏）另建一个目标国（用于验证宣战）', uiTargetFound.code === 0)
+    // 字段名是 `nationId` 不是 `id`（NationView）。第一版写错成 `.id` ⇒ 桩里的 id 是 undefined，
+    // JSON 把它丢掉 ⇒ 客户端拿到的 key 也是 undefined ⇒ 探针用 `WarTarget-undefined` 去找节点
+    // **照样命中**（两端都是 undefined、相等）—— 一条看起来精确的断言就这样假绿了，
+    // 直到看见请求体 `{requestId:...}` 才露馅。所以先钉住它非空，后面那条精确点击才算数。
+    const uiTargetNationId = uiTargetFound.data?.nation?.nationId
+    checkThat('（回读屏）目标国 id 非空（桩与精确点击都以它为准）',
+      typeof uiTargetNationId === 'string' && uiTargetNationId.length > 0)
+    // 国家榜是「按成员战力之和」的投影：新号没上报过战力，**榜上就看不到这个国**，
+    // 于是外交/宣战那一行的候选国也是空的。`/world/searchTargets` 会顺手刷新一次战力
+    // （`TargetSearchService` 的既定行为），两个号各调一次让两个国都上榜。
+    await call('POST', '/world/searchTargets', { radius: 12, maxCount: 5 },
+      uiTarget.playerId, uiTarget.token)
+    await call('POST', '/world/searchTargets', { radius: 12, maxCount: 5 },
+      uiKing.playerId, uiKing.token)
     const nationName = uiFound.data.nation.name
     const treasury = uiFound.data.nation.treasury
     const { chromium } = await import('playwright')
@@ -446,6 +469,23 @@ if (process.env.NATION_LIVE_UI === '1') {
     // **注入那个号的 deviceId**：真后端按 deviceId 建档，注入错的话面板打开的是别人的号
     await context.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v), uiKing.deviceId)
     const page = await context.newPage()
+    // ---- 只桩**一读**：国家榜 ----
+    // dev 后端没配 SEASON_START_AT ⇒ 赛季未启用 ⇒ POWER/KILL 上报被静默跳过
+    // ⇒ NATION 榜（按成员赛季分投影）恒为空 ⇒ 外交/国战两页的候选国列表也是空的，
+    // 而宣战必须选一个"真存在"的国家。这里把榜桩成**真建出来的那个目标国**
+    // （id 与名字都真），于是点下去那一枪打到真后端、真开一场仗 ——
+    // 桩掉的只是"榜上有没有它"这一读，宣战本身没有被桩。
+    const { makeStubRead } = await import('./lib/route-stub.mjs')
+    // 参数是**按字母序**排的（），所以匹配串不能写死  开头（
+    // 第一版就是栽在这里：桩挂上了却一条都没命中，界面仍旧空态）。
+    makeStubRead(context)('**/rank/list*type=NATION*', {
+      type: 'NATION',
+      entries: [{
+        rank: 1, id: uiTargetNationId, name: uiTargetFound.data.nation.name,
+        value: 1, tag: null,
+      }],
+      myRank: null, myValue: null, page: 1, pageSize: 20, hasMore: false, dayKey: '20261007',
+    })
     const errors = []
     page.on('pageerror', (error) => errors.push(error.message))
     try {
@@ -553,6 +593,87 @@ if (process.env.NATION_LIVE_UI === '1') {
         !/\b(PREPARATION|SIEGE|SETTLED)\b/.test(warShown))
       await page.screenshot({ path: path.join(OUT, 'live-war-tab.png') })
       console.log(`  截图：${path.join(OUT, 'live-war-tab.png')}`)
+
+      // ---- 宣战（写侧）：选目标 → 第一次点只是武装 → 第二次点才真发 ----
+      // 这一相刻意分三段判：武装后**请求必须还没发**（否则"二次确认"只是装饰）、
+      // 真发之后服务端 `/nation/war` 必须 hasWar=true、屏上必须随即画出参战方两行。
+      const clickByName = (name, exact) => page.evaluate(`(() => {
+        const panel = window.cc.director.getScene()
+          .getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        if (!panel || !panel.activeInHierarchy) return false
+        let target = null
+        const walk = (n) => {
+          if (target) return
+          const hit = ${exact ? 'true' : 'false'} ? n.name === '${name}' : n.name.startsWith('${name}')
+          if (hit && n.activeInHierarchy) { target = n; return }
+          for (const child of n.children) walk(child)
+        }
+        walk(panel)
+        if (target === null) return false
+        target.emit('touch-start')
+        return true
+      })()`)
+      // 按**目标国的 id** 精确点那一颗（不是"列表里的第一颗"）：候选里也有本国，
+      // 点错了会被服务端以「不能对本国宣战」拒掉，而那条拒绝看起来像"宣战功能坏了"
+      const picked = await clickByName(`WarTarget-${uiTargetNationId}`, true)
+      checkThat('（回读屏）国战页列出了可宣战的目标国（按 id 精确命中）', picked)
+      await page.waitForTimeout(800)
+
+      const armed = await clickByName('WarDeclare', true)
+      checkThat('（回读屏）宣战那颗键点得到', armed)
+      await page.waitForTimeout(800)
+      const armedTexts = await page.evaluate(`(() => {
+        const panel = window.cc.director.getScene()
+          .getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        const texts = []
+        if (panel && panel.activeInHierarchy) {
+          const walk = (n) => {
+            if (n.activeInHierarchy) {
+              const label = n.getComponent('cc.Label')
+              if (label && String(label.string ?? '').trim() !== '') texts.push(label.string)
+            }
+            for (const child of n.children) walk(child)
+          }
+          walk(panel)
+        }
+        return texts
+      })()`)
+      checkThat('（回读屏）第一次点只是武装（屏上出现「再点一次」）',
+        /再点一次/.test((armedTexts ?? []).join(' ')))
+      const beforeWar = await call('GET', '/nation/war', undefined, uiKing.playerId, uiKing.token)
+      check('（回读屏）武装那一下没有开战（请求还没发）', beforeWar.data?.hasWar, false)
+
+      await clickByName('WarDeclare', true)
+      await page.waitForTimeout(2200)
+      const afterWar = await call('GET', '/nation/war', undefined, uiKing.playerId, uiKing.token)
+      check('（回读屏）第二次点真的开了战（/nation/war hasWar=true）', afterWar.data?.hasWar, true)
+      const afterTexts = await page.evaluate(`(() => {
+        const panel = window.cc.director.getScene()
+          .getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        const texts = []
+        if (panel && panel.activeInHierarchy) {
+          const walk = (n) => {
+            if (n.activeInHierarchy) {
+              const label = n.getComponent('cc.Label')
+              if (label && String(label.string ?? '').trim() !== '') texts.push(label.string)
+            }
+            for (const child of n.children) walk(child)
+          }
+          walk(panel)
+        }
+        return texts
+      })()`)
+      const afterShown = (afterTexts ?? []).join(' ')
+      console.log('  开战后文字：' + afterShown.slice(0, 500))
+      // 判据要落在**开战之后才可能出现的那几个词**上：国名在那之前就画在页面上（标题与目标行），
+      // 拿国名当“画出了参战方”的证据是假绿（第一版就是这么写的，直到看见请求体才发现）。
+      checkThat('（回读屏）国战页随即画出参战方两行',
+        /王城战进行中|筹备期/.test(afterShown) && afterShown.includes('全服击杀')
+          && !afterShown.includes('现在没有正在打的国战'))
+      checkThat('（回读屏）开战成了一句给玩家的话', afterShown.includes('已对'))
+      checkThat('（回读屏）开战后屏上仍无内部 id', !/nation_[a-z0-9]/.test(afterShown))
+      await page.screenshot({ path: path.join(OUT, 'live-war-declared.png') })
+      console.log(`  截图：${path.join(OUT, 'live-war-declared.png')}`)
       check('（回读屏）零页面错误', errors.join(' | ') || '无', '无')
       await page.screenshot({ path: path.join(OUT, 'live-panel.png') })
       console.log(`  截图：${path.join(OUT, 'live-panel.png')}`)
@@ -561,6 +682,11 @@ if (process.env.NATION_LIVE_UI === '1') {
       await preview.close()
     }
     // 清掉回读屏那个国：不清的话每跑一轮就多占一个名额（上限只有 4）
+    const uiTargetDisband = await call('POST', '/nation/disband', {
+      requestId: rid('disband-ui-target'),
+    }, uiTarget.playerId, uiTarget.token)
+    check(`（回读屏）清掉目标国（${uiTargetDisband.detail ?? uiTargetDisband.msg}）`,
+      uiTargetDisband.code, 0)
     const uiDisband = await call('POST', '/nation/disband', {
       requestId: rid('disband-ui'),
     }, uiKing.playerId, uiKing.token)
