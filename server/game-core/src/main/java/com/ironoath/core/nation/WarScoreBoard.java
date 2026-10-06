@@ -103,6 +103,28 @@ public final class WarScoreBoard {
 
     private final Rules rules;
     private final long startedAt;
+    /**
+     * 发起这一场的国家 id；{@code null} 表示这一场没有发起方记录（历史档，或用例直接建的板子）。
+     *
+     * <p><b>为什么这件事必须记在板子上，而不是结算时推出来</b>：宣战与结算是<b>两次请求</b>，
+     * 中间只有这一块板子活着（{@code WarStore} 的既定形状是"开战载入、结束落盘一次"），
+     * 而今天没有任何一处存着"这一场谁先动的手"：
+     * <ul>
+     *   <li>{@code WarStore#findLatestBetween} 是<b>刻意对称</b>的（只挡发起国的话，被打的一方可以
+     *       立刻反宣、把击杀刷满），拿它当发起方来源会先把这条防刷破掉；</li>
+     *   <li>{@code Nation.diplomacyOf} 里的 HOSTILE 行记的是"我敌视他"，<b>跨场留存</b> —— 上一场由对面
+     *       发起，这一场两边就都是敌对行，推不出谁先动手。</li>
+     * </ul>
+     *
+     * <p><b>为什么不按"参战方里登记顺序的第一行"猜</b>：内核 {@link #settle(long)} 的平分判定确实按
+     * 行序遍历（见 {@link Snapshot} 的注释），但那是同一次遍历里的<b>比较</b>，不是把行序当业务身份。
+     * 把"第一行 = 发起国"当成发钱依据，任何一次改登记顺序（将来让盟友参战就会改）都会
+     * <b>静默把加成发给另一个国家</b>，而这条错误既不报错也不留日志。
+     *
+     * <p>为 {@code null} 留着的后果是安全的：{@code WAR_SEASON_INITIATOR_BONUS} 那一档不发而已
+     * （少发可以补，错发给别国再回收就是事故）。
+     */
+    private final String initiatorNationId;
     private Phase phase = Phase.PREPARATION;
     /** 参战国家 id → 积分 */
     private final Map<String, long[]> scores = new LinkedHashMap<>();
@@ -125,12 +147,28 @@ public final class WarScoreBoard {
     private final Set<String> goalClaimed = new LinkedHashSet<>();
     private long totalKills;
 
+    /** 建一块<b>没有发起方记录</b>的板子（{@code null} 那一档的含义见 {@link #initiatorNationId}）。 */
     public WarScoreBoard(Rules rules, long startedAt) {
+        this(rules, startedAt, null);
+    }
+
+    /**
+     * @param initiatorNationId 发起这一场的国家 id；{@code null} 表示没有发起方记录。
+     *                        <b>宣战那条路必须传</b>（{@code WarAppService#declare}），否则
+     *                        {@code WAR_SEASON_INITIATOR_BONUS} 永远发不出去，而它恰恰是 V18 那节的
+     *                        <b>主钩子</b>（"发动成本在发起方"）—— 这一档为 null 的表现不是报错，
+     *                        而是"宣战的人拿不到发起加成"，玩家只会觉得这游戏不公平。
+     *                        不校验它已经在 {@code scores} 里：登记参战方是调用方下一步的事，
+     *                        构造顺序反过来就会在这里抛，而那是夹具顺序问题不是数据问题。
+     */
+    public WarScoreBoard(Rules rules, long startedAt, String initiatorNationId) {
         if (rules == null) {
             throw new IllegalArgumentException("rules 不得为 null");
         }
         this.rules = rules;
         this.startedAt = startedAt;
+        this.initiatorNationId = initiatorNationId == null || initiatorNationId.isBlank()
+                ? null : initiatorNationId;
     }
 
     /** 加入一个参战方。 */
@@ -372,6 +410,11 @@ public final class WarScoreBoard {
         return startedAt;
     }
 
+    /** 发起这一场的国家 id；没有发起方记录时为 {@code null}（含义见 {@link #initiatorNationId}）。 */
+    public String initiatorNationId() {
+        return initiatorNationId;
+    }
+
     /** 剩余秒数（验收用的 WarStatusResp.remainingSec）。已结束为 0，绝不为负。 */
     public long remainingSeconds(long now) {
         if (phase != Phase.SIEGE) {
@@ -446,13 +489,18 @@ public final class WarScoreBoard {
      * 把某一次的值冻进存档，症状是改了 {@code global} 的 WAR_* 那几行对已有战事不生效且不报错。
      * 所以重建必须现取规则 —— 见 {@code WarRulesAssembler}。
      *
+     * <p><b>{@code initiatorNationId} 反过来说要进快照</b>：它是<b>这一场的事实</b>而不是规则，
+     * 而结算发发起加成发生在<b>另一次请求</b>里（宣战那次不会发奖）。不带它的表现是
+     * "内存板上有、落盘再读回来就没了" —— 于是 dev 上一切正常、生产上发起方永远领不到加成。
+     *
      * <p><b>为什么这里用 {@code List<NationRow>} 而不是内部的 {@code Map<String, long[]>}</b>：
      * 落盘形状只允许用<b>已经在 Mongo 那边验证过</b>的容器（List、Map&lt;String,Long&gt;、嵌套 record），
      * 原始类型数组进档在本仓没有先例，而这类转换问题只在真 Mongo 上炸、单测在内存实现上全绿
      * （同族前例：投影打在 record 文档上抛 {@code avatarId must not be null}）。
      * 顺带把「行序」变成显式的：{@link #settle} 的平分判定依赖遍历顺序，List 比 map 更诚实。
      */
-    public record Snapshot(long startedAt, Phase phase, List<NationRow> nations,
+    public record Snapshot(long startedAt, Phase phase, String initiatorNationId,
+                           List<NationRow> nations,
                            String capitalHolder, long capitalHeldSince,
                            Map<String, Long> fatigue, Map<String, Long> playerKills,
                            List<String> goalClaimed, long totalKills) {
@@ -499,7 +547,7 @@ public final class WarScoreBoard {
                     new Score(parts[0], parts[1], parts[2]),
                     held == null ? List.of() : List.copyOf(held)));
         }
-        return new Snapshot(startedAt, phase, rows, capitalHolder, capitalHeldSince,
+        return new Snapshot(startedAt, phase, initiatorNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
                 List.copyOf(goalClaimed), totalKills);
     }
@@ -522,7 +570,8 @@ public final class WarScoreBoard {
                     new long[]{score.occupyScore(), score.killScore(), score.buildingScore()});
             gateMap.put(row.nationId(), new LinkedHashSet<>(row.gates()));
         }
-        return restore(rules, snapshot.startedAt(), snapshot.phase(), scoreMap, gateMap,
+        return restore(rules, snapshot.startedAt(), snapshot.phase(),
+                snapshot.initiatorNationId(), scoreMap, gateMap,
                 snapshot.capitalHolder(), snapshot.capitalHeldSince(), snapshot.fatigue(),
                 snapshot.playerKills(), new LinkedHashSet<>(snapshot.goalClaimed()),
                 snapshot.totalKills());
@@ -530,11 +579,12 @@ public final class WarScoreBoard {
 
     /** 供仓储重建。 */
     public static WarScoreBoard restore(Rules rules, long startedAt, Phase phase,
+                                        String initiatorNationId,
                                         Map<String, long[]> scores, Map<String, Set<String>> gates,
                                         String capitalHolder, long capitalHeldSince,
                                         Map<String, Long> fatigue, Map<String, Long> playerKills,
                                         Set<String> goalClaimed, long totalKills) {
-        WarScoreBoard board = new WarScoreBoard(rules, startedAt);
+        WarScoreBoard board = new WarScoreBoard(rules, startedAt, initiatorNationId);
         board.phase = phase;
         // 逐份 clone 数组：传进来的那份 map 常常就是调用方手里的活对象，共享数组等于读返回别名
         for (Map.Entry<String, long[]> entry : scores.entrySet()) {

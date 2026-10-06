@@ -146,10 +146,37 @@ public interface WarStore {
      * 挂在后者上等于每一读都重新发一遍赛季分，而 {@code SeasonBoardStore.accumulate} 是<b>累加</b>语义，
      * 它会照单全收。这也是 {@code #753} 那条"结算返回的 `Result` 至今无消费者"里被接走的第一半。
      *
+     * <p><b>{@code result} 与 {@code settledNow} 是同一件事的两面，所以构造时互验</b>：
+     * 内核 {@link WarScoreBoard#settle(long)} <b>只有一次机会</b>给出终局（第二次调它直接抛，
+     * 而积分定格后也无法再重算），那份 {@link WarScoreBoard.Result} 里带着 {@code winnerId} —— 3b-2 的
+     * {@code WAR_SEASON_POINT_WINNER} 只能从它拿。<b>如果这里只带板子不带结果</b>，发奖那一侧就只有两条路：
+     * 要么再调一次 {@code settle}（撞内核护栏、挂在读端点上就是 500），要么自己在 Java 侧比一遍积分
+     * —— 那是把"平分不给胜者"这条判定搬到第二个家，而搬过去的那一份早晚和内核漂开（内核那条是按
+     * 参战方登记顺序遍历的）。所以这一格把它原样带出来，代价是记录多一个字段。
+     *
      * @param board      推进之后（或本来就好好的）那一场
      * @param settledNow 这一次读是否正好是把它结算掉的那一次
+     * @param result     {@link WarScoreBoard#settle(long)} 的返回值；<b>仅当 {@code settledNow} 为真时非空</b>
      */
-    record Settlement(WarScoreBoard board, boolean settledNow) {
+    record Settlement(WarScoreBoard board, boolean settledNow, WarScoreBoard.Result result) {
+
+        public Settlement {
+            if (settledNow && result == null) {
+                throw new IllegalArgumentException(
+                        "settledNow=true 却不带结算结果：这一场的胜者已经没有第二次机会被算出来了，"
+                                + "发奖那一侧只能把 WINNER 那一档静默跳过");
+            }
+            if (!settledNow && result != null) {
+                throw new IllegalArgumentException(
+                        "settledNow=false 却带了结算结果：那会造出「没结掉这一场但手里有终局」这种"
+                                + "谁也无法解释的状态，而发奖判断读的正是 settledNow");
+            }
+        }
+
+        /** 没结掉那一次的便捷构造（两套实现的"未到点"分支共用，免得各写一份 null 的形状）。 */
+        public static Settlement notSettled(WarScoreBoard board) {
+            return new Settlement(board, false, null);
+        }
     }
 
     /**

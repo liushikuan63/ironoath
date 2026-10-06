@@ -5522,3 +5522,33 @@ TEST_EXIT=0
 
 **下一步**：3b-2（花名册批量口 + 三条 bonus）与 #756 的 A／B 裁决；3c 客户端 `GameApi` + 榜入口 + 埋点
 （前台改动要真跑截图）。验收矩阵 B13 验收 6/7/8/10 在此之前继续挂 ⬜，本格未改矩阵一行。
+### 2026-10-06 18:5x｜会话 3b-2：B13 承载切片 3b-2（国家花名册批量口 + 三条 bonus 落地，出厂值 0）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| `NationMembership#playerIdsOf`（国家→成员联盟→盟内成员，一次 `allAlliances()` + Java 侧按登记顺序筛、去重）；三条 `WAR_SEASON_*` bonus 进 `global.json`（值 0）+ `SeasonRulesAssembler.warSeasonPoints()` 吃五项 + `bonusOf` 叠加口径；`WarStore.Settlement` 带出内核 `Result`（第一次有消费者）；`WarScoreBoard` 新增 `initiatorNationId` 并随快照落盘；`reportWarSeasonPoints` 按花名册发 WINNER/PARTICIPANT/INITIATOR，0 时整段跳过；名字改 `findBriefs` 一次批量 | 一格一笔（源码、判据、契约描述、台账同批；生成物无变化故 `npm run gen` 只复验不改文件） | `check.sh` **EXIT=0 · 45 道** · `test.sh` **2108 项 0 红 0 跳**（57+154+584+52+1254+7，前值 2097 加本格 11：`RankEndpointTest` +5、`WarStoreEquivalenceTest` +2、`NationRosterEquivalenceTest` +4）· 客户端 1018 项 0 红 · 相关六份用例 **73 项同轮 EXIT=0** · 两道台账门各 `EXIT=0`（不经管道取真码） | 四条变异植入**各点名红一次**：删「bonus<=0 就跳过」→ `RankEndpointTest#bonusZeroSkipsRosterReadsEntirely`（`allAlliances` 由 0 变 2）；花名册改逐盟 `allianceById` 点查 → `#nationRosterIsOneBatchReadNotPerAlliancePointQueries`（点查数由 0 变 2）；`bonusOf` 把平分当胜者 → `#tiedWarPaysNoWinnerBonus:520`（多出 7 分）；发起方不进快照 → `WarStoreEquivalenceTest#fullStateSurvivesRoundTripOnBothStores:121`（`initiator=n1` 对 `initiator=null`）。四条还原（`cp` + `touch` 强制重编译）后与主检出**逐字节一致**并同刻复跑 73 项 EXIT=0；m2 七只 jar 收工复位并 md5 复验 | 三条 bonus **出厂值是 0 ⇒ 今天仍然不发钱**，档位属新的经济投放、等 #756 拍板（进表只是消除"零引用参数"形状）；组织榜口径一字未动（#756 推荐 A 案：只改 V18 那句判据）；花名册按<b>参战国</b>各读一次（一场仗 2 次 `allAlliances()`），将来开放多国家参战要改成一次读回全世界；`initiatorNationId` 之前的历史档为 null ⇒ 那几场领不到发起加成（少发不误发，已在参数 why 里写明）；没有跑运行时探针与前台截图 —— 本格力求**零协议形状变化、零客户端改动**（`RankType` 与两份生成物一字未动），发奖语义的证据全在 JUnit 与真 Mongo 等价用例那一侧 |
+
+**关键决策与理由**
+- **发起方必须是板子上的显式字段，不能推**：宣战与结算是两次请求，中间只有那块板子活着。
+  推不出来的两条已核实 —— `WarStore#findLatestBetween` 是**刻意对称**的（只挡发起国的话，被打的一方
+  可以立刻反宣、在冷却期内把击杀刷满），而 `Nation.diplomacy` 的 HOSTILE 行跨场留存，
+  上一场由对面发起时两边也各自写着敌对。也**没有**按「参战方登记顺序的第一行」猜：内核 `settle()`
+  的平分判定确实按行序遍历，但那是同一次遍历里的比较；把行序当业务身份，任何一次改登记顺序
+  都会静默把加成发给另一个国家，不报错也不留日志。
+- **`Result` 从存储层带出来，而不是在榜服务里重算胜负**：内核 `settle()` 只有一次机会算出 `winnerId`
+  （第二次直接抛「重复结算会让积分被算两遍」）。只带板子的话发奖侧只剩两条错路 —— 再调一次 `settle`
+  撞护栏（挂在读端点上就是 500），或自己在 Java 侧比一遍积分（把「平分不给胜者」抄成第二份，
+  而内核那份是按参战方登记顺序遍历的）。所以 `Settlement` 多一个 `result` 字段，
+  并用紧凑构造器把 `settledNow ⟺ result != null` 钉成互为条件。
+- **三条 bonus 合一次 `accumulate`、名字一次 `findBriefs`**：三种身份在同一个人身上是叠加的
+  （发起国打赢了，他的成员同时是参与者、胜者、发起者），分三次写就是三次原子写三份条目；
+  而加了花名册之后"每人点查昵称"会把省下来的往返在下一跳原样还回去 —— 用投影口而不是整档口，
+  因为这里要的只有昵称（`PlayerRepository` 那两条批量口的分工写在它自己的注释里）。
+- **参战分按「不分胜负」实现**：与 `#756` 那条一起等拍板，但口径有两处硬依据 ——
+  V18 §六 防刷第 2 条明写要有一条用例钉住「没打也有参与分」；而平分时 `winnerId=null`，
+  若把参与分定义成「没赢的那一国」，平分就成了「两个都没赢所以两个都算没赢」的含话。
+  用例 `zeroBonusesAwardNothingToRosterMembers` 与 `tiedWarPaysNoWinnerBonus` 把这两支各钉一条。
+
+**下一步**：#756 的 A／B 裁决（组织榜要不要把国战分算进去）与三条 bonus 的档位数值 —— 两问都在
+`收口清单.md` #756 那一行；3c 客户端 `GameApi` + 榜入口 + 埋点（前台改动要真跑截图）。
+验收矩阵 B13 验收 6/7/8/10 在此之前继续挂 ⬜，本格未改矩阵一行。

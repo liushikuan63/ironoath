@@ -119,9 +119,12 @@ public class WarAppService {
             // 挂在"这一句把它结掉了"，不挂在"它现在是 SETTLED"上 —— 后者每一读都成立，
             // 而 SeasonBoardStore.accumulate 是累加语义，那样会变成每读一次发一遍赛季分。
             // 这一跳是本类唯一的经济写入，所以留一行审计（金额与人数都能从这里回查）。
-            int awarded = rankBoards.reportWarSeasonPoints(board);
-            LOG.info("国战赛季分进账 战事主键={} 进账人数={} 榜=WAR（由这一次读触发）",
-                    WarStore.documentIdOf(board), awarded);
+            // 带 result 进去：那是这一场唯一的胜负来源（内核 settle() 第二次调直接抛），
+            // 而 WINNER 那一档只认它 —— 见 WarStore.Settlement#result。
+            int awarded = rankBoards.reportWarSeasonPoints(board, progressedOne.result());
+            LOG.info("国战赛季分进账 战事主键={} 进账人数={} 胜者={} 榜=WAR（由这一次读触发）",
+                    WarStore.documentIdOf(board), awarded,
+                    progressedOne.result() == null ? "无" : progressedOne.result().winnerId());
         }
         Map<String, WarScoreBoard.Score> scores = board.snapshot();
         List<WarNationScoreView> rows = new ArrayList<>(scores.size());
@@ -211,7 +214,11 @@ public class WarAppService {
                 // phase 仍然是 SIEGE —— 于是"仗早打完了却再也宣不了战"，解锁条件落在别人的那一次读上。
                 // 结算与插入各自收在自己的临界区里，这里没有把判断搬到服务层（见 WarStore#insertIfNoneActive）
                 wars.settleIfExpired(now);
-                WarScoreBoard board = new WarScoreBoard(assembler.rules(), now);
+                // 发起国作为第三个参数交给板子：结算是另一次请求（面板那一次读），届时只能从档里读
+                // "谁先动的手"，而 WAR_SEASON_INITIATOR_BONUS 是 V18 那节的主钩子。
+                // 顺序仍然是 attacker 先 target 后 —— 内核 settle() 的平分判定按登记顺序遍历，
+                // 但发奖读的是显式的 initiatorNationId，不是行序（见 WarScoreBoard 那一段注释）。
+                WarScoreBoard board = new WarScoreBoard(assembler.rules(), now, attacker.id());
                 board.registerNation(attacker.id());
                 board.registerNation(target.id());
                 if (!wars.insertIfNoneActive(board)) {

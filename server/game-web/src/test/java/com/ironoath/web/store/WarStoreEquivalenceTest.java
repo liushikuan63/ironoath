@@ -722,6 +722,66 @@ class WarStoreEquivalenceTest {
         return board;
     }
 
+    @Test
+    @DisplayName("settleIfExpired 把内核那一份 Result 带出来：有胜者时是那一国，且与 settledNow 互为条件")
+    void settlementCarriesTheKernelResultOnBothStores() {
+        long duration = rules.rules().durationMillis();
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            // n1 占城且 60000 击杀、n2 只有 120 击杀 ⇒ n1 必然是胜者（不是平分那一支）
+            store.insertIfNoneActive(richBoard(T0));
+
+            WarStore.Settlement notYet = store.settleIfExpired(T0 + duration - 1_000L).orElseThrow();
+            assertThat(notYet.result())
+                    .as("%s 没有结掉这一场就没有终局：带出一份 Result 等于造出「没结算却已有胜负」这种假状态", label)
+                    .isNull();
+
+            WarStore.Settlement at = store.settleIfExpired(T0 + duration).orElseThrow();
+            assertThat(at.settledNow()).as("%s 到点那一次报 true", label).isTrue();
+            assertThat(at.result())
+                    .as("%s settledNow=true 却没带 Result：内核 settle() 只有一次机会算出 winnerId，" +
+                            "带不出来的话发奖那一侧就只剩两条错路（再调一次 settle 撞护栏，或自己比一遍积分）", label)
+                    .isNotNull();
+            assertThat(at.result().winnerId())
+                    .as("%s 胜者是积分高的那一国 —— Result 从这一格起有了消费者（#753 剩下的那一半）", label)
+                    .isEqualTo("n1");
+            assertThat(at.result().totalKills())
+                    .as("%s Result 里的全服击杀与板子现读的一致（两份数字不该来自两次遍历）", label)
+                    .isEqualTo(store.findLatest().orElseThrow().totalKills());
+
+            // 再读一次：旗标 false，Result 也必须 null —— 发奖只挂在第一次那一次转换上
+            WarStore.Settlement again = store.settleIfExpired(T0 + duration + 60_000L).orElseThrow();
+            assertThat(again.settledNow()).as("%s 第二次读旗标为 false", label).isFalse();
+            assertThat(again.result())
+                    .as("%s 第二次读不许再带出一份终局：赛季分是累加语义，带出来就有人可能再发一遍", label)
+                    .isNull();
+        }
+    }
+
+    /**
+     * 平分时内核给 null，存储层必须原样带出来（发奖那一侧怎么用它，见
+     * {@code RankEndpointTest#tiedWarPaysNoWinnerBonus}）。这里钉的是「存储层不替玩家挑赢家」。
+     */
+    @Test
+    @DisplayName("平分那一场在两套实现上 winnerId 都是 null，而终局积分两份都还在")
+    void tiedSettlementCarriesNullWinnerOnBothStores() {
+        long duration = rules.rules().durationMillis();
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            WarScoreBoard board = new WarScoreBoard(rules.rules(), T0, "n1");
+            board.registerNation("n1");
+            board.registerNation("n2");
+            board.recordKill("n1", "P1", 500L);
+            board.recordKill("n2", "P2", 500L);   // 两边同分
+            store.insertIfNoneActive(board);
+
+            WarStore.Settlement at = store.settleIfExpired(T0 + duration).orElseThrow();
+            assertThat(at.result().winnerId())
+                    .as("%s 同分时存储层不得自己补一个赢家出来", label).isNull();
+            assertThat(at.result().scores()).as("%s 但两份终局积分仍然都在（面板要画）", label)
+                    .hasSize(2);
+        }
+    }
     /**
      * 一份把九项状态都填过的板子（数值全用真实配置的增量，便于把断言写成具体数字）。
      *
@@ -729,7 +789,9 @@ class WarStoreEquivalenceTest {
      * 三项对称的值会让「读串了行」这类错误看不见。
      */
     private static WarScoreBoard richBoard(long startedAt) {
-        WarScoreBoard board = new WarScoreBoard(rules.rules(), startedAt);
+        // 第三个参数是发起国：3b-2 之后它是快照的一部分（发发起加成只认这一项）。
+        // 夹具不带它上去，等于「新字段在两套实现上都没被往返过」
+        WarScoreBoard board = new WarScoreBoard(rules.rules(), startedAt, "n1");
         board.registerNation("n1");
         board.registerNation("n2");
         board.captureGate("n1", "gate_1");
@@ -765,6 +827,9 @@ class WarStoreEquivalenceTest {
                 .append('|').append(board.totalKills())
                 .append('|').append(board.capitalHolder())
                 .append('|').append(board.serverGoalReached())
+                // 发起国必须在描述里：它是 3b-2 新加进快照的那一项。少持久化它的症状不是报错，
+                // 而是「内存板上明明有、落盘读回来就没了」⇒ 生产上发起方永远领不到发起加成
+                .append("|initiator=").append(board.initiatorNationId())
                 .append("|nations=");
         for (String nationId : board.registeredNations()) {
             WarScoreBoard.Score score = board.snapshot().get(nationId);

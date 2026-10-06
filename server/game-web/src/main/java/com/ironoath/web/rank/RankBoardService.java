@@ -16,6 +16,7 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.web.bot.BotRegistry;
 import com.ironoath.core.nation.Nation;
 import com.ironoath.core.nation.WarScoreBoard;
+import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.season.SeasonSettlement;
@@ -25,6 +26,7 @@ import com.ironoath.web.dto.generated.RankEntryView;
 import com.ironoath.web.dto.generated.RankListResp;
 import com.ironoath.web.dto.generated.RankSnapshotResp;
 import com.ironoath.web.dto.generated.RankType;
+import com.ironoath.web.nation.NationMembership;
 import com.ironoath.web.nation.NationStore;
 import com.ironoath.web.season.SeasonBoardStore;
 import com.ironoath.web.season.SeasonRulesAssembler;
@@ -62,6 +64,13 @@ public class RankBoardService {
     private final SeasonBoardStore boards;
     private final SocialStore social;
     private final NationStore nations;
+    /**
+     * 国战赛季分的三条 bonus 要按<b>国家花名册</b>给（胜国／参战国／发起国的<b>全体成员</b>，
+     * 不是只有打了人的那几个），而那一跳的唯一真源在这里 —— 不在本类自己写第二份
+     * （{@code NationMembership} 的类注释就是为这件事存在的：两个读者各写一遍，
+     * 先分叉的总是「没有联盟」与「有联盟但没入籍」这两种缺席怎么算）。
+     */
+    private final NationMembership membership;
     private final PlayerRepository players;
     private final BotRegistry bots;
     private final ConfigRegistry configs;
@@ -69,11 +78,12 @@ public class RankBoardService {
     private final TimeService time;
 
     public RankBoardService(SeasonBoardStore boards, SocialStore social, NationStore nations,
-                            PlayerRepository players, BotRegistry bots, ConfigRegistry configs,
-                            SeasonRulesAssembler assembler, TimeService time) {
+                            NationMembership membership, PlayerRepository players, BotRegistry bots,
+                            ConfigRegistry configs, SeasonRulesAssembler assembler, TimeService time) {
         this.boards = boards;
         this.social = social;
         this.nations = nations;
+        this.membership = membership;
         this.players = players;
         this.bots = bots;
         this.configs = configs;
@@ -103,8 +113,18 @@ public class RankBoardService {
     }
 
     /**
-     * 国战赛季分上报（V18，B13 承载 3b）：把一场国战<b>被结算的那一次</b>按人换成赛季分，
-     * 进 {@link SeasonSettlement.Board#WAR}。
+     * 国战赛季分上报（V18，B13 承载 3b / 3b-2）：把一场国战<b>被结算的那一次</b>按人换成赛季分，
+     * 进 {@link SeasonSettlement.Board#WAR}。分数由两部分组成：
+     * <ul>
+     *   <li><b>击杀分</b>：这一场里他的消灭数 × {@code WAR_SEASON_POINT_PER_KILLS}，
+     *       低于 {@code WAR_SEASON_POINT_MIN_KILLS} 的人<b>不建行</b>（3b-1 那一条）；</li>
+     *   <li><b>三条 bonus</b>：参战国成员每人 {@code PARTICIPANT}，胜国成员再加 {@code WINNER}，
+     *       发起国成员再加 {@code INITIATOR_BONUS} —— 这三条<b>按国家花名册发</b>，
+     *       所以没打的人只要在这个国里也拿得到（V18 §六 防刷第 2 条要的就是这个效果）。</li>
+     * </ul>
+     * 同一个人的两种分<b>合成一次 {@code accumulate}</b>（{@code accumulate} 是累加语义，
+     * 分三次写就是三次原子写，而榜上那一行读起来仍然是合计 —— 见
+     * {@code SeasonRulesAssembler.WarSeasonPoints#bonusOf}）。
      *
      * <p><b>只有一个调用点，而且它必须保证"每场仗只调一次"</b>（{@code WarStore.Settlement#settledNow}）。
      * 本方法走的是 {@code accumulate}（累加语义），调两次就是发两倍分。为什么不在这里再设一道幂等旗标：
@@ -112,36 +132,85 @@ public class RankBoardService {
      * 现在「结算转换只发生一次」是存储层临界区保证的、并且有用例钉住的更强事实，
      * 就不该为它再造第二份真相（同 B23 §五「不造第二本账」那条裁决的形状）。
      *
-     * <p><b>门槛不过的人根本不建行</b>，而不是建行给 0 分：0 分的行会占住一个位次并出现在分页里，
-     * 于是"挂着没打的人"和"打了没消灭到人的人"在榜上成了同一种存在，而这张榜的意图
-     * 恰恰是把"要不要真的参战"做成一个选择（V18：鼓励群体宣战）。
+     * <p><b>胜负的唯一来源是 {@code result}</b>（内核 {@code settle()} 那一次的返回值）：
+     * 平分时 {@code winnerId} 为 null（内核刻意不按 id 字典序硬挑赢家），此时<b>只发参与分与发起加成、
+     * 不发胜方分</b> —— 这条判定只长在内核一处，本类不重算第二遍。
+     * ⚠️ {@code result} <b>不许为 null</b>（{@code WarStore.Settlement} 的构造已经把「结掉了却没带结果」
+     * 挡成一次抛）：{@code settledNow=false} 那一次压根不该走到这里。参战方全集也取自它，
+     * 所以胜负与"这一场有哪些国家"是<b>同一次遍历</b>的产物，不存在两者对不上的窗口。
      *
-     * <p><b>赛季没开就直接返回</b>（与 {@link #reportKills} 同一条）：没有赛季就没有"赛季内国战分"，
-     * 硬记会记到一份谁也不认的榜上。
+     * <p><b>三条 bonus 全为 0 时连花名册都不查</b>：那是一次为 0 的发奖要付两次读（国家档 + 整国成员），
+     * 而这三条参数的<b>出厂值就是 0</b>（档位等 #756 拍板）。所以「为 0 就整段跳过」是这一格的一条判据，
+     * 用例把它钉住了 —— 删掉那句短路，读数就会红。
      *
-     * <p><b>每人一次点查取昵称</b>：{@code PlayerRepository} 没有批量口，而这条路每场仗只跑一次 ——
-     * 它是冷路径，不是 {@code list} 那种每次翻页都跑的热路径，所以
-     * {@code RankOrgBoardQueryCountTest} 那条按往返计数的判据不会被这里加的一行削弱（它测的是读路径）。
+     * <p><b>名字一次批量读回，且只读投影</b>（{@code PlayerRepository#findBriefs}）：加了 bonus 之后
+     * 这条路一发奖就是<b>整国成员</b>，每人一次 {@code findByPlayerId} 会把"花名册那一跳已经批量"
+     * 这件事在下一跳原样还回去。用 {@code findBriefs} 而不是 {@code findByPlayerIds}：这里要的只有昵称，
+     * 而整档里的资源表 / PVP 账本 / 科技 / 权益都是白搬白反序列化的字节
+     * （那两条口的分工写在 {@code PlayerRepository} 的注释里）。读档为 null 时给 null 名字，
+     * 由 {@link #displayNameOf} 那一份回退兜住 —— <b>不要在这里填 playerId</b>（红线：屏上不出现裸 id）。
      *
-     * @return 实际进账的人数（0 = 没发：赛季没开、没人打够门槛、或全是 Bot）
+     * @return 实际进账的人数（0 = 没发：赛季没开、没人打够门槛而且 bonus 又都是 0、或全是 Bot）
      */
-    public int reportWarSeasonPoints(WarScoreBoard board) {
+    public int reportWarSeasonPoints(WarScoreBoard board, WarScoreBoard.Result result) {
         String seasonId = seasonIdOrNull();
         if (seasonId == null) {
             return 0;
         }
         SeasonRulesAssembler.WarSeasonPoints rules = assembler.warSeasonPoints();
-        int applied = 0;
+        // 个人 → 这一场该进账的总分。LinkedHashMap：同一个人在击杀账和花名册里都出现时只留一行，
+        // 而插入顺序让"发奖日志"和用例读到的顺序一致（不依赖 map 的哈希顺序）。
+        Map<String, Long> pending = new LinkedHashMap<>();
         for (Map.Entry<String, Long> row : board.playerKillLedger().entrySet()) {
             long score = rules.pointsOf(row.getValue());
-            if (score <= 0L || bots.humanOnly(row.getKey(), "国战赛季分") == null) {
+            if (score > 0L) {
+                pending.merge(row.getKey(), score, Long::sum);
+            }
+        }
+
+        // 胜负来源只有一份：内核 settle() 那一次的返回值（第二次调它直接抛，积分也已定格）。
+        // 这里要求它非空而不是"没有就少发一档"—— 传 null 的调用方以为自己发了奖而实际没发，
+        // 那是一次静默少发；抛出来才能在下一次探针里被看见。
+        java.util.Objects.requireNonNull(result,
+                "国战赛季分必须带结算结果：winnerId 与参战方都只能从 WarScoreBoard#settle 那一份拿");
+        String winnerId = result.winnerId();
+        String initiatorId = board.initiatorNationId();
+        // result.scores() 的键集就是参战方全集，且行序与 winnerId 出自同一次遍历（两者不可能对不上）
+        for (String nationId : result.scores().keySet()) {
+            long bonus = rules.bonusOf(nationId, winnerId, initiatorId);
+            if (bonus <= 0L) {
                 continue;
             }
-            String name = players.findByPlayerId(row.getKey())
-                    .map(PlayerSave::nickName)
-                    .orElse(null);
+            // 只在真的要发的时候才去捞这一国的花名册 —— 上面那句短路是一条判据，不是一句优化
+            Nation nation = nations.findById(nationId).orElse(null);
+            for (String playerId : membership.playerIdsOf(nation)) {
+                pending.merge(playerId, bonus, Long::sum);
+            }
+        }
+
+        List<String> humans = new ArrayList<>();
+        for (Map.Entry<String, Long> row : pending.entrySet()) {
+            // bonus 全为 0 而击杀又没过门槛的人不会出现在 pending 里（两条路都给了 0 才被挡在门外），
+            // 所以"不建行"这一形状在击杀与 bonus 之间是同一条（见 pointsOf 与那行门槛参数的 why）。
+            if (row.getValue() <= 0L || bots.humanOnly(row.getKey(), "国战赛季分") == null) {
+                continue;
+            }
+            humans.add(row.getKey());
+        }
+        if (humans.isEmpty()) {
+            return 0;
+        }
+        // 名字一次批量读回（只取投影，不搬整档）：这条路一发奖就是整国成员，
+        // 每人一次 findByPlayerId 会把"花名册那一跳已经批量"这件事在下一跳原样还回去。
+        Map<String, PlayerBrief> briefs = players.findBriefs(humans);
+        int applied = 0;
+        for (String playerId : humans) {
+            long score = pending.get(playerId);
             boards.accumulate(seasonId, SeasonSettlement.Board.WAR,
-                    new SeasonSettlement.Entry(row.getKey(), name, score), score);
+                    new SeasonSettlement.Entry(playerId,
+                            briefs.get(playerId) == null ? null : briefs.get(playerId).nickName(),
+                            score),
+                    score);
             applied++;
         }
         return applied;

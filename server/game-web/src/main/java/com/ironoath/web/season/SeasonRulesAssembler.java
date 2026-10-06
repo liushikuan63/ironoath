@@ -246,7 +246,7 @@ public class SeasonRulesAssembler {
     }
 
     /**
-     * 国战赛季分（V18，B13 承载 3b）：把 global 的 {@code WAR_SEASON_*} 那两行装配成一份规则。
+     * 国战赛季分（V18，B13 承载 3b）：把 global 的 {@code WAR_SEASON_*} 那<b>五</b>行装配成一份规则。
      *
      * <p><b>为什么放在赛季装配器而不是 {@code WarRulesAssembler}</b>：这些分写的是
      * {@code SeasonBoardStore} 那张赛季榜，而读它的人（{@code RankBoardService#reportWarSeasonPoints}）
@@ -255,19 +255,29 @@ public class SeasonRulesAssembler {
      * 后者只在结算那一刻用一次，两者的生命周期不是一件事。
      *
      * <p><b>0 是合法值</b>：门槛给 0 = 不设门槛，每杀给 0 = 这一场不发分（运营旋钮的两种"关掉"），
-     * 所以校验只拦负数。
+     * 而 3b-2 那三条 bonus（{@code WINNER}／{@code PARTICIPANT}／{@code INITIATOR_BONUS}）
+     * 的<b>出厂值就是 0</b> —— 含义是「机制已接通、档位待 #756 拍板」，改表即生效、不改代码。
+     * 所以校验只拦负数；<b>这里刻意不替调用方判"0 就跳过"</b>（那是省读的判据，属 {@code RankBoardService}）。
      */
     public WarSeasonPoints warSeasonPoints() {
         return new WarSeasonPoints(
                 configs.longParam("WAR_SEASON_POINT_PER_KILL"),
-                configs.longParam("WAR_SEASON_POINT_MIN_KILLS"));
+                configs.longParam("WAR_SEASON_POINT_MIN_KILLS"),
+                configs.longParam("WAR_SEASON_POINT_WINNER"),
+                configs.longParam("WAR_SEASON_POINT_PARTICIPANT"),
+                configs.longParam("WAR_SEASON_INITIATOR_BONUS"));
     }
 
     /**
-     * @param pointPerKill 每消灭一个单位给的赛季分。来源 global.WAR_SEASON_POINT_PER_KILL
-     * @param minKills     挂机门槛。来源 global.WAR_SEASON_POINT_MIN_KILLS
+     * @param pointPerKill   每消灭一个单位给的赛季分。来源 global.WAR_SEASON_POINT_PER_KILL
+     * @param minKills       挂机门槛（<b>只管击杀分</b>，三条 bonus 不看个人击杀数，
+     *                       见 {@code WAR_SEASON_POINT_PARTICIPANT} 的 why）。来源 global.WAR_SEASON_POINT_MIN_KILLS
+     * @param winner         胜国成员每人一份。来源 global.WAR_SEASON_POINT_WINNER
+     * @param participant    参战国成员每人一份（不分胜负）。来源 global.WAR_SEASON_POINT_PARTICIPANT
+     * @param initiatorBonus 发起国成员在参与分之上再加一份。来源 global.WAR_SEASON_INITIATOR_BONUS
      */
-    public record WarSeasonPoints(long pointPerKill, long minKills) {
+    public record WarSeasonPoints(long pointPerKill, long minKills, long winner,
+                                  long participant, long initiatorBonus) {
 
         public WarSeasonPoints {
             if (pointPerKill < 0) {
@@ -277,6 +287,21 @@ public class SeasonRulesAssembler {
             }
             if (minKills < 0) {
                 throw new IllegalArgumentException("WAR_SEASON_POINT_MIN_KILLS 不得为负，实际=" + minKills);
+            }
+            // 三条 bonus 各写一条而不是共用一段：报错时要能直接看出是哪一行表被改坏了，
+            // 而这三档的语义并不相同（胜方分 / 参与分 / 发起加成），将来很可能只有其中一条被调成别的形状。
+            if (winner < 0) {
+                throw new IllegalArgumentException("WAR_SEASON_POINT_WINNER 不得为负，实际=" + winner
+                        + "。负的胜方分等于「打赢了扣赛季分」，那会把这一格唯一的正反馈反接成惩罚");
+            }
+            if (participant < 0) {
+                throw new IllegalArgumentException("WAR_SEASON_POINT_PARTICIPANT 不得为负，实际=" + participant
+                        + "。负的参与分直接反接 V18 §六 防刷第 2 条（空转仗也要给参与分）那条设计");
+            }
+            if (initiatorBonus < 0) {
+                throw new IllegalArgumentException("WAR_SEASON_INITIATOR_BONUS 不得为负，实际=" + initiatorBonus
+                        + "。它是 V18 那节明写的<b>主钩子</b>（发动成本在发起方），"
+                        + "给它负数就是在罚第一个动手的人，理性群体会永远不宣战");
             }
         }
 
@@ -289,6 +314,39 @@ public class SeasonRulesAssembler {
                 return 0L;
             }
             return kills * pointPerKill;
+        }
+
+        /**
+         * 这个国家本轮该给的 <b>bonus 合计</b>：参与分 + （打赢了才有的）胜方分 + （发起才有的）发起加成。
+         *
+         * <p><b>为什么给合计而不是三个各自的方法</b>：调用方要回答的是「这一国的成员因为国家身份进账多少」，
+         * 而三种身份在同一个人身上是<b>叠加</b>的 —— 发起国打赢了，它的成员同时是参与者、胜者、发起者。
+         * 分三次写进榜就是三次 {@code accumulate}（三次原子写、三份条目名字），收在一处只写一次；
+         * 榜上那一行的读法也仍然是「合计」，不需要玩家自己加三遍。
+         *
+         * <p><b>平分时不发胜方分</b>：{@code winnerId} 为 null 是内核 {@code WarScoreBoard#settle} 的
+         * 原样输出（两国同分刻意不按 id 字典序硬挑赢家），这里 {@code nationId.equals(null)} 恒不成立，
+         * 于是那一条判定只长在内核一处，没有被抄第二遍。
+         *
+         * <p><b>三条全为 0 时返回 0，调用方据此连花名册都不查</b> —— 这是「0 = 不发」在代码里的唯一落点，
+         * 也是那一条省读判据（别让一次为 0 的发奖付两次读）的根据。
+         *
+         * @param nationId    被问的那个参战国 id；null 时给 0（没有国家就没有成员）
+         * @param winnerId    内核结算给的胜者，平分时为 null
+         * @param initiatorId 发起这一场的国家 id，历史档可能为 null
+         */
+        public long bonusOf(String nationId, String winnerId, String initiatorId) {
+            if (nationId == null) {
+                return 0L;
+            }
+            long total = participant;
+            if (nationId.equals(winnerId)) {
+                total += winner;
+            }
+            if (nationId.equals(initiatorId)) {
+                total += initiatorBonus;
+            }
+            return total;
         }
     }
 

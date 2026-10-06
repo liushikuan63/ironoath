@@ -106,7 +106,8 @@ class RankEndpointTest {
         ConfigRegistry anchored = anchoredConfigs();
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
         SeasonBoardStore boards = new InMemorySeasonBoardStore();
-        ranks = new RankBoardService(boards, socialStore, nationStore, players, bots, anchored, assembler, timeService);
+        ranks = new RankBoardService(boards, socialStore, nationStore, membership(), players, bots,
+                anchored, assembler, timeService);
         settlements = new SeasonSettlementService(anchored, timeService, assembler, players,
                 rewardService, new com.ironoath.web.store.memory.InMemorySeasonLedger(), boards,
                 new com.ironoath.web.store.memory.InMemoryIdempotencyStore(), bots, battlePass);
@@ -192,8 +193,11 @@ class RankEndpointTest {
         board.registerNation("n2");
         board.recordKill("n1", hunter, points.minKills() + 40L);   // 打够门槛
         board.recordKill("n2", idler, points.minKills() - 1L);     // 差一个，不该建行
+        // 3b-2 起这个入口要的是内核那一次 settle() 的返回值（胜负与参战方都只从它拿），
+        // 而 settle() 第二次调直接抛 —— 所以下面两次上报共用这同一份 outcome
+        var outcome = board.settle(timeService.serverNow());
 
-        assertThat(ranks.reportWarSeasonPoints(board))
+        assertThat(ranks.reportWarSeasonPoints(board, outcome))
                 .as("只有打够门槛的那一个进账").isEqualTo(1);
         var view = ranks.list(hunter, RankType.WAR, 1, 0);
         assertThat(view.entries().stream().map(e -> e.id()).toList())
@@ -209,7 +213,7 @@ class RankEndpointTest {
 
         // 同一场再发一次：本方法自己不幂等 —— 这正是"每场仗只调一次"这条前提必须成立的直接证据，
         // 那条前提由 WarStore.Settlement#settledNow 保证（等价测试里钉着）。
-        ranks.reportWarSeasonPoints(board);
+        ranks.reportWarSeasonPoints(board, outcome);
         assertThat(ranks.list(hunter, RankType.WAR, 1, 0).entries().get(0).value())
                 .as("累加语义调两次就是两倍分 —— settledNow 旗标存在的全部理由")
                 .isEqualTo(2L * (points.minKills() + 40L) * points.pointPerKill());
@@ -246,7 +250,7 @@ class RankEndpointTest {
         boards.report(seasonId, SeasonSettlement.Board.POWER,
                 new SeasonSettlement.Entry(botId, "老 Bot", 888_888L));
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchoredConfigs());
-        var readSide = new RankBoardService(boards, socialStore, nationStore, players, bots,
+        var readSide = new RankBoardService(boards, socialStore, nationStore, membership(), players, bots,
                 anchoredConfigs(), assembler, timeService);
         assertThat(readSide.list(human, RankType.POWER, 1, 0).entries().stream().map(e -> e.id()).toList())
                 .as("读侧：只有 Bot 在榜时，榜是空的（而不是把 Bot 顶到第 1）")
@@ -314,7 +318,7 @@ class RankEndpointTest {
         ConfigRegistry anchored = anchoredConfigs();
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
         InMemorySeasonBoardStore boards = new InMemorySeasonBoardStore();
-        RankBoardService svc = new RankBoardService(boards, socialStore, nationStore, players, bots,
+        RankBoardService svc = new RankBoardService(boards, socialStore, nationStore, membership(), players, bots,
                 anchored, assembler, clock);
 
         String day1 = com.ironoath.common.time.DayKey.of(now[0]);
@@ -365,7 +369,7 @@ class RankEndpointTest {
         ConfigRegistry anchored = anchoredConfigs();
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
         InMemorySeasonBoardStore boards = new InMemorySeasonBoardStore();
-        RankBoardService svc = new RankBoardService(boards, socialStore, nationStore, players, bots,
+        RankBoardService svc = new RankBoardService(boards, socialStore, nationStore, membership(), players, bots,
                 anchored, assembler, clock);
 
         String day = com.ironoath.common.time.DayKey.of(now[0]);
@@ -461,6 +465,259 @@ class RankEndpointTest {
     }
 
     // ---------- 夹具 ----------
+    // ---------- 3b-2：胜负／参与／发起三条加成（按国家花名册给分） ----------
+
+    @Test
+    @DisplayName("3b-2 三条加成各归各位：发起国成员拿参与+发起，胜国成员拿参与+胜方")
+    void bonusesLandPerNationIdentityOnRosterMembers() throws Exception {
+        // 进攻方只打 12、防守方打 40 ⇒ 防守方胜，而发起方是那个输了的国家：三档各归一处，互不遮蔽
+        War war = warWithTwoNations(12L, 40L);
+        ConfigRegistry anchored = anchoredWithBonuses(7L, 5L, 3L);
+        var points = new SeasonRulesAssembler(anchored).warSeasonPoints();
+        assertThat(points.winner()).as("夹具前提：胜方分为正数").isPositive();
+        assertThat(points.participant()).as("夹具前提：参与分为正数").isPositive();
+        assertThat(points.initiatorBonus()).as("夹具前提：发起加成为正数").isPositive();
+        RankBoardService svc = warService(anchored);
+
+        assertThat(svc.reportWarSeasonPoints(war.board(), war.outcome()))
+                .as("四名人全进账：花名册是按国捞的，不是按击杀账")
+                .isEqualTo(4);
+        Map<String, Long> rows = warRows(svc, war);
+
+        // 发起国（这一场输了）那个只挂名的成员：参与分 + 发起加成，没有胜方分
+        assertThat(rows.get(war.initiatorMate()))
+                .as("发起国成员 = 参与分 + 发起加成（他一个人都没消灭，所以一毫无击杀分）")
+                .isEqualTo(points.participant() + points.initiatorBonus());
+        assertThat(rows.get(war.winnerMate()))
+                .as("胜国成员 = 参与分 + 胜方分（他没有发起加成）")
+                .isEqualTo(points.participant() + points.winner());
+        // 击杀分与 bonus 叠在同一个人身上，走的是同一次 accumulate
+        assertThat(rows.get(war.initiatorKiller()))
+                .as("同一个人的两种分合成一行：击杀×系数 + 参与 + 发起")
+                .isEqualTo(war.initiatorKills() * points.pointPerKill()
+                        + points.participant() + points.initiatorBonus());
+        assertThat(rows.get(war.winnerKiller()))
+                .isEqualTo(war.winnerKills() * points.pointPerKill()
+                        + points.participant() + points.winner());
+        assertThat(rows).as("榜上只有这四个人，花名册没有多捞出谁").hasSize(4);
+    }
+
+    @Test
+    @DisplayName("3b-2 平分时不发胜方分：winnerId=null 原样继承，只发参与分与发起加成")
+    void tiedWarPaysNoWinnerBonus() throws Exception {
+        War war = warWithTwoNations(40L, 40L);   // 两边同分 ⇒ 内核刻意不挑赢家
+        assertThat(war.outcome().winnerId())
+                .as("夹具前提：这一场真的打平了，否则下面那句断言什么都没测到").isNull();
+        ConfigRegistry anchored = anchoredWithBonuses(7L, 5L, 3L);
+        var points = new SeasonRulesAssembler(anchored).warSeasonPoints();
+        RankBoardService svc = warService(anchored);
+
+        svc.reportWarSeasonPoints(war.board(), war.outcome());
+        Map<String, Long> rows = warRows(svc, war);
+
+        assertThat(rows.get(war.winnerMate()))
+                .as("平分时没有人是胜者：只有参与分（这里多出 7 分就是系统替玩家挑了一个赢家）")
+                .isEqualTo(points.participant());
+        assertThat(rows.get(war.initiatorMate()))
+                .as("发起加成与胜负无关 —— 它正是 V18 那节的主钩子")
+                .isEqualTo(points.participant() + points.initiatorBonus());
+    }
+
+    @Test
+    @DisplayName("3b-2 出厂值 0 = 不发：花名册上的人一行都不进账，而打过门槛的人照拿击杀分")
+    void zeroBonusesAwardNothingToRosterMembers() throws Exception {
+        War war = warWithTwoNations(12L, 40L);
+        ConfigRegistry anchored = anchoredConfigs();
+        var points = new SeasonRulesAssembler(anchored).warSeasonPoints();
+        assertThat(points.winner() + points.participant() + points.initiatorBonus())
+                .as("夹具前提：表里这三条的出厂值必须真的是 0（改了表就要连带改这一条判据）")
+                .isZero();
+        RankBoardService svc = warService(anchored);
+
+        assertThat(svc.reportWarSeasonPoints(war.board(), war.outcome()))
+                .as("只发打过门槛的那两个人：另两名成员只因为「在这个国里」就想进账，那是这张榜故意不给的")
+                .isEqualTo(2);
+        Map<String, Long> rows = warRows(svc, war);
+        assertThat(rows).as("花名册上的人一个都没进账")
+                .doesNotContainKeys(war.initiatorMate(), war.winnerMate());
+        assertThat(rows.get(war.winnerKiller()))
+                .as("击杀分不受 bonus 为 0 影响：它就是击杀数 × 系数")
+                .isEqualTo(war.winnerKills() * points.pointPerKill());
+    }
+
+    @Test
+    @DisplayName("3b-2 花名册那一跳：一次批量读回整国成员，按盟点查为零（往返数与盟数、人数无关）")
+    void nationRosterIsOneBatchReadNotPerAlliancePointQueries() throws Exception {
+        // 一个国两个盟、每盟两人：如果实现是"逐个 allianceById 点查"，这里的读数就是 2；
+        // 批量口只有一次 allAlliances()。人再多也只涨结果集，不涨往返 —— 这一条不需要跑两轮才成立。
+        String nationId = nationWithTwoAlliances("花名册国");
+        RankOrgBoardQueryCountTest.QueryCounter counter = new RankOrgBoardQueryCountTest.QueryCounter();
+        com.ironoath.web.nation.NationMembership counted =
+                new com.ironoath.web.nation.NationMembership(
+                        counter.wrap(SocialStore.class, socialStore),
+                        counter.wrap(NationStore.class, nationStore));
+
+        List<String> roster = counted.playerIdsOf(nationStore.findById(nationId).orElseThrow());
+
+        // ---- 判据①：点查归零，批量恰好一次 ----
+        assertThat(counter.countOf("allianceById"))
+                .as("按盟点查的往返数与这个国有几个盟等长 —— 那正是这一格要防的形状").isZero();
+        assertThat(counter.countOf("allianceOf"))
+                .as("正向那两跳的口（玩家→联盟）在这里一次都不该用：那是按人数涨的另一族 N+1").isZero();
+        assertThat(counter.countOf("allAlliances"))
+                .as("整国成员只来自那<b>一次</b>批量读").isEqualTo(1);
+        // ---- 判据②：正向断言。只查"坏东西不存在"会在批量口整个没接上时也全绿 ----
+        assertThat(roster).as("两个盟四个人都在，一个不少").hasSize(4);
+        assertThat(roster).as("去重后的名单不允许出现同一个人两次")
+                .doesNotHaveDuplicates();
+    }
+
+    @Test
+    @DisplayName("3b-2 发奖读路：bonus 为 0 时连国家档与花名册都不碰；给正数时花名册按国一次、名字按人一次批量")
+    void bonusZeroSkipsRosterReadsEntirely() throws Exception {
+        War war = warWithTwoNations(12L, 40L);
+        RankOrgBoardQueryCountTest.QueryCounter counter = new RankOrgBoardQueryCountTest.QueryCounter();
+        SocialStore countedSocial = counter.wrap(SocialStore.class, socialStore);
+        NationStore countedNations = counter.wrap(NationStore.class, nationStore);
+        PlayerRepository countedPlayers = counter.wrap(PlayerRepository.class, players);
+
+        // ---- A 相：表里的出厂值（三条 bonus 全 0）----
+        ConfigRegistry zero = anchoredConfigs();
+        RankBoardService zeroSide = new RankBoardService(new InMemorySeasonBoardStore(),
+                countedSocial, countedNations,
+                new com.ironoath.web.nation.NationMembership(countedSocial, countedNations),
+                countedPlayers, bots, zero, new SeasonRulesAssembler(zero), timeService);
+        assertThat(zeroSide.reportWarSeasonPoints(war.board(), war.outcome()))
+                .as("这一场只发击杀分（两个打够门槛的人）").isEqualTo(2);
+        assertThat(counter.countOf("allAlliances"))
+                .as("三条 bonus 全为 0 时一次花名册都不该读 —— 删掉那句短路，这里就是 2").isZero();
+        assertThat(counter.countOf("findById"))
+                .as("连国家档都不该去捞（为 0 的发奖不该付两次读）").isZero();
+        assertThat(counter.countOf("findByPlayerId"))
+                .as("名字不许按人点查：那把花名册省下来的往返又在下一跳还回去").isZero();
+
+        // ---- B 相：同样的库存，把 bonus 摆成正数 ----
+        counter.reset();
+        ConfigRegistry paid = anchoredWithBonuses(7L, 5L, 3L);
+        RankBoardService paidSide = new RankBoardService(new InMemorySeasonBoardStore(),
+                countedSocial, countedNations,
+                new com.ironoath.web.nation.NationMembership(countedSocial, countedNations),
+                countedPlayers, bots, paid, new SeasonRulesAssembler(paid), timeService);
+        assertThat(paidSide.reportWarSeasonPoints(war.board(), war.outcome()))
+                .as("四个成员全进账：两个击杀者 + 两个只挂名的").isEqualTo(4);
+        assertThat(counter.countOf("allAlliances"))
+                .as("花名册按<b>参战国</b>一次一趟（这一场有两个参战国），而不是按人也不按盟")
+                .isEqualTo(2);
+        assertThat(counter.countOf("findBriefs"))
+                .as("名字一次批量读回，覆盖全部四名进账的人").isEqualTo(1);
+        assertThat(counter.countOf("findByPlayerId")).as("B 相同样没有点查").isZero();
+    }
+
+    /** 建一个「两个盟、每盟两人」的国家（多出来的那个盟是后来整体加入的，走的是真入籍动作）。 */
+    private String nationWithTwoAlliances(String nationName) throws Exception {
+        String leader = newPlayer(16);
+        String mate = newPlayer(16);
+        String allianceId = createAlliance(leader, mate);
+        post200("/nation/found", leader, new NationFoundReq(newRequestId(), nationName, 100L, 200L));
+        String nationId = nationStore.findByAlliance(allianceId).orElseThrow().id();
+
+        String second = newPlayer(16);
+        String secondMate = newPlayer(16);
+        String secondAlliance = createAlliance(second, secondMate);
+        // 联盟整体入籍（B13 §二：国家不招人，招人的是联盟）—— 走内核那条真判定，不直接塞表
+        com.ironoath.core.nation.Nation nation = nationStore.findById(nationId).orElseThrow();
+        nation.admitAlliance(secondAlliance, timeService.serverNow());
+        nationStore.save(nation, nation.version());
+        return nationId;
+    }
+
+    // ---------- 3b-2 的夹具 ----------
+
+    /**
+     * 一场「防守方打赢、但发起方是进攻方」的国战：两边各一个两人盟，盟主是击杀者、另一人只挂名。
+     * 故意让发起方输 —— 这样发起加成与胜方分落在<b>不同的国家</b>上，写错一档当场看得见。
+     */
+    private record War(com.ironoath.core.nation.WarScoreBoard board,
+                       com.ironoath.core.nation.WarScoreBoard.Result outcome,
+                       String initiatorKiller, String initiatorMate, long initiatorKills,
+                       String winnerKiller, String winnerMate, long winnerKills) {
+    }
+
+    private War warWithTwoNations(long attackerKills, long defenderKills) throws Exception {
+        String attackerLeader = newPlayer(16);
+        String attackerMate = newPlayer(16);
+        String attackerAlliance = createAlliance(attackerLeader, attackerMate);
+        post200("/nation/found", attackerLeader, new NationFoundReq(newRequestId(), "发起国", 100L, 200L));
+        String attackerNation = nationStore.findByAlliance(attackerAlliance).orElseThrow().id();
+
+        String defenderLeader = newPlayer(16);
+        String defenderMate = newPlayer(16);
+        String defenderAlliance = createAlliance(defenderLeader, defenderMate);
+        post200("/nation/found", defenderLeader, new NationFoundReq(newRequestId(), "接战国", 300L, 400L));
+        String defenderNation = nationStore.findByAlliance(defenderAlliance).orElseThrow().id();
+
+        var rules = new com.ironoath.web.nation.WarRulesAssembler(anchoredConfigs()).rules();
+        // 第三个参数是发起国：宣战那一次必须把它带上（板子是唯一活到结算那一刻的东西）
+        com.ironoath.core.nation.WarScoreBoard board =
+                new com.ironoath.core.nation.WarScoreBoard(rules, timeService.serverNow(), attackerNation);
+        board.registerNation(attackerNation);
+        board.registerNation(defenderNation);
+        board.recordKill(attackerNation, attackerLeader, attackerKills);
+        board.recordKill(defenderNation, defenderLeader, defenderKills);
+        return new War(board, board.settle(timeService.serverNow()),
+                attackerLeader, attackerMate, attackerKills,
+                defenderLeader, defenderMate, defenderKills);
+    }
+
+    /** 用给定配置换一个榜服务（榜存储每次新建，免得三个用例互相看见条目）。 */
+    private RankBoardService warService(ConfigRegistry configs) {
+        return new RankBoardService(new InMemorySeasonBoardStore(), socialStore, nationStore,
+                membership(), players, bots, configs, new SeasonRulesAssembler(configs), timeService);
+    }
+
+    private Map<String, Long> warRows(RankBoardService svc, War war) {
+        return svc.list(war.initiatorMate(), RankType.WAR, 1, 0).entries().stream()
+                .collect(java.util.stream.Collectors.toMap(e -> e.id(), e -> e.value()));
+    }
+
+    /** 花名册那一跳的唯一真源：夹具也走同一个构造，不在用例里重写两跳。 */
+    private com.ironoath.web.nation.NationMembership membership() {
+        return new com.ironoath.web.nation.NationMembership(socialStore, nationStore);
+    }
+
+    /** 把三条 bonus 摆成正数档位（表里出厂是 0，测发奖必须自己给数）。 */
+    private static ConfigRegistry anchoredWithBonuses(long winner, long participant, long initiator) {
+        ConfigRegistry registry = ConfigRegistry.loadFromDirectory(locateConfigDir());
+        registry.reload(ConfigRegistry.TABLE_GLOBAL, com.ironoath.config.model.GlobalCfg.class,
+                withSeasonStartAndBonusJson(winner, participant, initiator));
+        return registry;
+    }
+
+    private static String withSeasonStartAndBonusJson(long winner, long participant, long initiator) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            ObjectNode table = (ObjectNode) mapper.readTree(withSeasonStartJson());
+            putGlobalValue(table, "WAR_SEASON_POINT_WINNER", winner);
+            putGlobalValue(table, "WAR_SEASON_POINT_PARTICIPANT", participant);
+            putGlobalValue(table, "WAR_SEASON_INITIATOR_BONUS", initiator);
+            return mapper.writeValueAsString(table);
+        } catch (Exception e) {
+            throw new IllegalStateException("无法构造带 bonus 档位的 global 表", e);
+        }
+    }
+
+    /** 改一行的 value。<b>找不到那一行就抛</b>：表里删了参数而用例还在改它，那是要响的，不是静默给 0。 */
+    private static void putGlobalValue(ObjectNode table, String id, long value) {
+        ArrayNode rows = (ArrayNode) table.get("rows");
+        for (JsonNode node : rows) {
+            if (id.equals(node.get("id").asText())) {
+                ((ObjectNode) node).put("value", value);
+                return;
+            }
+        }
+        throw new IllegalStateException("global 表里没有这一行：" + id);
+    }
+
     private String newPlayer(int cityLevel) {
         String playerId = playerInitService.init(new PlayerInitReq("req-" + UUID.randomUUID(),
                 "dev-" + UUID.randomUUID(), "榜测试", 1_700_000_000_000L, "")).playerId();

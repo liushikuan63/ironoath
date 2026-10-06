@@ -147,15 +147,17 @@ public final class MongoWarStore implements WarStore {
             }
             WarScoreBoard board = WarScoreBoard.fromSnapshot(doc.state(), rules.rules());
             if (!WarStore.dueToSettle(board, now)) {
-                return Optional.of(new WarStore.Settlement(board, false));
+                return Optional.of(WarStore.Settlement.notSettled(board));
             }
-            board.settle(now);
+            // 这份 Result 必须带出去：内核 settle() 只有一次机会算出 winnerId（第二次直接抛），
+            // 而 3b-2 的 WAR_SEASON_POINT_WINNER 只认它 —— 见 WarStore.Settlement#result
+            WarScoreBoard.Result result = board.settle(now);
             Update update = new Update()
                     .set("startedAt", board.startedAt())
                     .set("state", board.toSnapshot());
             mongo.updateFirst(Query.query(Criteria.where("_id").is(doc.warId())),
                     update, WarDocument.class, WarDocument.COLLECTION);
-            return Optional.of(new WarStore.Settlement(board, true));
+            return Optional.of(new WarStore.Settlement(board, true, result));
         }
     }
 

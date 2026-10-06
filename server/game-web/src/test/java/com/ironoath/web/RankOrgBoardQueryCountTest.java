@@ -113,9 +113,14 @@ class RankOrgBoardQueryCountTest {
         counter.reset();
         seasonId = assembler.timelineRules().seasonId();
         assertThat(seasonId).as("夹具前提：seasonId 来自 season 表首行，恒非空").isNotBlank();
+        SocialStore countedSocial = counter.wrap(SocialStore.class, socialStore);
+        NationStore countedNations = counter.wrap(NationStore.class, nationStore);
         ranks = new RankBoardService(boards,
-                counter.wrap(SocialStore.class, socialStore),
-                counter.wrap(NationStore.class, nationStore),
+                countedSocial,
+                countedNations,
+                // 花名册那一跳也架在<b>同一对计数代理</b>上：它读的是这两个端口，漏包一层就等于
+                // 给"组织榜的往返数"留了一个不记账的旁路（3b-2 之后榜服务确实会走它）
+                new com.ironoath.web.nation.NationMembership(countedSocial, countedNations),
                 counter.wrap(PlayerRepository.class, players),
                 bots, configs, assembler, timeService);
     }

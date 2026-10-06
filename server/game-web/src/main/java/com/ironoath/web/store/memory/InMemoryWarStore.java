@@ -115,12 +115,13 @@ public final class InMemoryWarStore implements WarStore {
         }
         WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
         boolean settledNow = WarStore.dueToSettle(board, now);
+        WarScoreBoard.Result result = null;
         if (settledNow) {
-            board.settle(now);
+            result = board.settle(now);
             // 主键按 startedAt 推导，settle 不动它 ⇒ 写回必然落在同一档上（历史不会被"挪个位置"）
             byId.put(WarStore.documentIdOf(board), board.toSnapshot());
         }
-        return Optional.of(new WarStore.Settlement(board, settledNow));
+        return Optional.of(new WarStore.Settlement(board, settledNow, result));
     }
 
     /**

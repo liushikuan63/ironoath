@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ironoath.local/contract/proto/rank.schema.json",
   "title": "RankProtocol",
-  "description": "排行榜协议（B23）。五类榜各自一个数据源：POWER 来自战力上报、KILL 来自战斗结算的击杀累计、ALLIANCE / NATION 是成员赛季分的合计（B23 §五 裁决①：与赛季结算同源，不造第二本账）；`WAR` 是国战赛季分（V18，只在国战结算那一刻按人累加，**不是**结算依据，也不自动并进组织榜）。实时榜只用于展示，结算依据永远是快照（B14 禁止项）。\n\n**`WAR` 这一张的写入形状与前四张不同**（B13 承载 3b）：POWER 每次重算上报、KILL 每场战斗即时累加，而它只在**一场国战被结算的那一刻**按人写一次，分数 = 这一场里他的消灭数 × `WAR_SEASON_POINT_PER_KILL`，低于 `WAR_SEASON_POINT_MIN_KILLS` 的人**不建行**（不是给 0 分 —— 0 分的行会占住一个位次并出现在分页里）。「每场只发一次」由存储层的结算转换保证（`WarStore.Settlement#settledNow`），而榜侧那个入口**自己不幂等**：调两次就是两倍分，这是判据里刻意留下的一条正向证明。⚠️ 胜负与参与那三条加成（V18 的 `WINNER` / `PARTICIPANT` / `INITIATOR_BONUS`）**还没接**：它们要按国家花名册给分，而存储层目前没有「某国全部成员玩家」的批量口，参数先不进表（进了就是三行零引用参数）—— 连同「组织榜要不要把国战分算进去」一起记在 `#756`。",
+  "description": "排行榜协议（B23）。五类榜各自一个数据源：POWER 来自战力上报、KILL 来自战斗结算的击杀累计、ALLIANCE / NATION 是成员赛季分的合计（B23 §五 裁决①：与赛季结算同源，不造第二本账）；`WAR` 是国战赛季分（V18，只在国战结算那一刻按人累加，**不是**结算依据，也不自动并进组织榜）。实时榜只用于展示，结算依据永远是快照（B14 禁止项）。\n\n**`WAR` 这一张的写入形状与前四张不同**（B13 承载 3b）：POWER 每次重算上报、KILL 每场战斗即时累加，而它只在**一场国战被结算的那一刻**按人写一次，分数 = 这一场里他的消灭数 × `WAR_SEASON_POINT_PER_KILL`，低于 `WAR_SEASON_POINT_MIN_KILLS` 的人**不建行**（不是给 0 分 —— 0 分的行会占住一个位次并出现在分页里）。「每场只发一次」由存储层的结算转换保证（`WarStore.Settlement#settledNow`），而榜侧那个入口**自己不幂等**：调两次就是两倍分，这是判据里刻意留下的一条正向证明。3b-2 已经把胜负与参与那三条加成（`WINNER` / `PARTICIPANT` / `INITIATOR_BONUS`）**接通**：它们按国家花名册给分（`NationMembership#playerIdsOf`，一次批量读回某国全部成员 id，往返数不随人数涨），胜负读的是内核 `WarScoreBoard#settle` 那一份 `Result`（第一次有消费者；平分时 `winnerId` 为 null，此时只发参与分与发起加成）。⚠️ 三条参数的**出厂值是 0**（= 这一档暂不发，档位属新的经济投放，等 `#756` 连同「组织榜要不要把国战分算进去」一起拍板），为 0 时那条路连花名册都不查。",
   "x-java-package": "com.ironoath.web.dto.generated",
   "x-ts-module": "RankProtocol",
   "$defs": {
