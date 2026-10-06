@@ -111,6 +111,14 @@ public final class MongoIndexes {
         String byMemberAlliance = nationIndexes.ensureIndex(new Index()
                 .on("memberAllianceIds", Sort.Direction.ASC)
                 .named("idx_member_alliance_ids"));
+        // 国战战事：findLatest 是「按 startedAt 降序取第一条」，这一条索引给那个排序一个确定来源。
+        // 与 nation 那两条同理，建它不是为了快（一场仗一份文档），而是为了让两套实现排序读到同一批：
+        // 内存版按 startedAt 取最大、Mongo 按这一列降序取首条，缺索引时 Mongo 仍给同一条，
+        // 但排序成本随历史场次线性涨 —— 等到国战按季保留历史时，这一条已经在位子了
+        IndexOperations warIndexes = mongo.indexOps(WarDocument.COLLECTION);
+        String byWarStartedAt = warIndexes.ensureIndex(new Index()
+                .on("startedAt", Sort.Direction.DESC)
+                .named("idx_war_started_at"));
         // 赛季账本：归档与申诉还原都是"给我这一季的全部记录（按玩家稳定顺序）"，
         // seasonIds() 的 distinct 也走这个索引的前缀。
         // 刻意不建 {playerId}：跨季查荣耀走的是逐季按 _id 点查（季数是归档保留数，个位数），
@@ -250,6 +258,7 @@ public final class MongoIndexes {
                 + byStatusAndCreatedAt
                 + "；" + BattleReportDocument.COLLECTION + " → " + byOwner + " / " + byExpiry
                 + "；" + NationDocument.COLLECTION + " → " + uniqueName + " / " + byMemberAlliance
+                + "；" + WarDocument.COLLECTION + " → " + byWarStartedAt
                 + "；" + SeasonLedgerDocument.COLLECTION + ".{seasonId,playerId} → "
                 + bySeasonAndPlayer
                 + "；" + SeasonBoardDocument.COLLECTION + ".{seasonId,board,score} → "

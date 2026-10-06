@@ -29,7 +29,6 @@ ALLOWED="$(mktemp)"; CLASSES="$(mktemp)"; WORDS="$(mktemp)"
 trap 'rm -f "$ALLOWED" "$CLASSES" "$WORDS"' EXIT
 cat > "$ALLOWED" <<'EOF'
 InMemoryRewardPorts	故意的测试替身：四个发放端口的内存实现。放在 game-core 而不是 web 的 test 目录，是「RewardGrantor 可脱离容器单测」这条铁律的证明（见该类 javadoc）。生产实现是另一族 Spring Bean。撤销条件：无（它本来就不该有生产引用）。
-WarScoreBoard	B13 国战整块未接线的已知缺口（不是"设计如此"）：该类 javadoc 写着「由 game-web 在国战开始时载入、结束时落盘一次」，但国战会话至今没有承载（`Nation` 聚合里没有积分板状态，也没有任何服务 new 它），所以硬加领取端点只会读一张永远为空的板 —— 那是第二处假绿。台账见 收口清单.md §七「2026-10-06 07:3x」与 验收矩阵.md:264 的就地更正。**撤销条件**：game-web 的 src/main 里出现 `WarScoreBoard` 的真实装配点（服务或 Bean 配置 new/restore 它）⇒ 立刻删掉本行。
 EOF
 
 if [ ! -d "$CORE_DIR" ]; then

@@ -5326,3 +5326,28 @@ TEST_EXIT=0
 **下一步**：① 9 条"拿不准"要逐个补读数或提口径（已写进队列，不依赖裁决的那几条我可以继续做）；
 ② `RewardToastQueue` 接进 `showHint` 是**最小可交付**的客户端一格（改判后它有明确的撤销条件）；
 ③ B13 国战承载六步顺序见本文件 §四 08:0x 那格。
+
+
+### 2026-10-06 11:3x｜会话 cb032d0d：B13 国战承载切片 1（`WarStore` 一族 + 只读端点 `GET /nation/war`）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 承载落地：core 的 `WarScoreBoard.Snapshot`（完整快照出口）+ `web/nation/WarStore` 端口 + 内存与 Mongo 两套实现 + `WarRulesAssembler` + 内存 bean `WarBeansConfig` + 新开存储端口的四个登记点（`MongoStoreConfig`、`MongoStorageGuard`、`BeanAssemblyTest`、`MongoIndexes` 新索引）+ 契约三份 def 与 `GET /nation/war` | 一格一笔（源码、判据、台账同批） | `check.sh` **EXIT=0 · 45 道** · `test.sh` **2069 项 0 红 0 跳**（拆解 57+154+584+52+1215+7，基线 2054 加本格 15） · 客户端 **1018 项 0 红** · harness **合格 19 / 不合格 0 / 残留 0** · `check-core-wiring.sh` **EXIT=0 且豁免已从 2 条降到 1 条** · `npm run gen` 后契约门无 diff | 真启动一台在 **8299**（本机 8080 是 phpmyadmin）：`GET /nation/war` → **200 + code 0**，`gateCount=4`、`fatigueMax=100`、`serverGoalKills=50000` 照旧下发；**对照组** `/nation/war-nope` 与 `/nope/zzz` 均 **404**；启动日志有「使用内存国战存储」⇒ 装配点在活 JVM 里被实例化 | 击杀累计与疲劳累积**没有任何写入路径** ⇒ 视图恒 `hasWar=false`；领取端点、客户端 `GameApi` 方法与面板入口、埋点全部未做；`验收矩阵.md` 的 `:261`/`:262`/`:264` **仍是 ⬜，本格一行未改** |
+| 反证：变异植入三条用例必须红 | 同上一笔 | 15 跑 **3 红**：`fullStateSurvivesRoundTripOnBothStores`、`goalClaimedListSurvivesRoundTripOnBothStores`、`fatigueAndMarchGateArePerPlayer`；还原后 15 跑 0 红 | 变异只做在 `git worktree` 沙箱（主检出未动）；植入脚本自证哈希变化（`173956dc→174449aa`、`0ecbad21→bc3937d5`） | 「快照少带 `fatigue`／`capitalHeldSince`」这两支没有单独植入过，靠同一族的两条断言覆盖；`capitalHeldSince` 内核未暴露 getter，只能从行为侧（换手时结算的分钟数）钉 |
+
+**关键决策与理由**
+- **落盘形状选 `List<NationRow>`，不选内部的 `Map<String, long[]>`**：原始类型数组进 Mongo 在本仓没有先例，而这类转换问题只在真 Mongo 上炸、内存实现全绿
+  （同族前例是投影打在 record 文档上抛 `avatarId must not be null`）。附带好处：参战方的行序变成显式的，而 `settle()` 的平分判定依赖行序。
+- **端口不带乐观锁版本**，与 `NationStore.save(nation, expectedVersion)` 故意不同：内核类注释写的是"开战载入、结束落盘一次"，
+  本切片没有多写者读-改-写抢同一档的形状。这条窗口没有藏起来 —— 用 `lastWriteWinsOnBothStores` 把它写成能失败的证据，
+  并在 `WarStore` 的 javadoc 里写明"改成中途 flush 时必须回来加版本或改原子累加"。
+- **主键从 `startedAt` 一处推导**（`WarStore.documentIdOf`），而不是再造一个 warId 或给内核加 id 字段：`startedAt` 是 final ⇒ 主键永不受写操作影响，
+  一次 save 不可能把这一档挪到另一个键上。共用一个函数是刻意的：两套实现各写一份，等价测试照样全绿（两边都读自己写的键）。
+- **全量 mvn 一律在沙箱跑**：主检出 8199 是另一条会话的活后端，classpath 首条就是主检出 `target/classes`。
+  跑完把被重建的三个 m2 jar 从备份还原并 md5 复验 **7/7 与开工前逐字节一致** —— 并行会话的环境不许被我顺手换掉。
+- 契约落点与 B21 §二 不同（那里写的是另建 `contract/proto/war.schema.json`）：本格按端点归属落在 `nation.schema.json`
+  （`/nation/war` 与国策同域），并把这条分歧与"将来拆文件时要整份迁走、不许两处各留一份"写进了文件头描述。
+
+**下一步**：① 承载切片 2 = 击杀累计，第一件事是**定数据源接在哪个事件上**（B07 行军结算还是 B10 集结的战损回报），
+这一步会直接决定上面的版本决策，所以不能反过来先写 flush；② 之后才是领取端点（`claimServerGoal` 目前在生产里零调用点）、
+客户端 `GameApi` 方法与面板入口、埋点；③ 王城战真上线压着 B21 验收 10 的压测报告（B13 禁止项），那一格不在承载链里。

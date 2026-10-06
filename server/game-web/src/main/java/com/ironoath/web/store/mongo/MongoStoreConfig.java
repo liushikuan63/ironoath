@@ -135,6 +135,21 @@ public class MongoStoreConfig {
     }
 
     /**
+     * 国战战事（B13 承载切片 1）。契约见 {@code WarStoreEquivalenceTest}（内存与真实 Mongo 同一组断言）。
+     * 与 nation 同为「内核早写好、外层没装配」那一档的补法：装配点落在这里，
+     * {@code scripts/check-core-wiring.sh} 对 {@code WarScoreBoard} 的豁免才撤得掉。
+     *
+     * <p>需要 {@code WarRulesAssembler}：规则不进快照（进了就等于把一次热更冻进存档），
+     * 而两套实现的读都返回副本，所以重建一块能算剩余时间与疲劳闸门的板子必须现取规则。
+     */
+    @Bean
+    public com.ironoath.web.nation.WarStore warStore(MongoTemplate mongo,
+            com.ironoath.web.nation.WarRulesAssembler rules) {
+        LOG.info("使用 MongoDB 国战存储（积分、疲劳与全服目标的领取名单不再随进程消失）");
+        return new MongoWarStore(mongo, rules);
+    }
+
+    /**
      * 赛季账本。契约见 {@code SeasonLedgerStoreEquivalenceTest}。
      * 这一档防的不是"数据丢了不好看的"，而是<b>重启之后再点一次结算就把金币重复发出去</b> ——
      * 账本就是"这一季已经付过"的唯一持久凭据。

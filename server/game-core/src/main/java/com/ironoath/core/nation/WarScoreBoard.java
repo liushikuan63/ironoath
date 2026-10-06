@@ -1,8 +1,10 @@
 package com.ironoath.core.nation;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -363,6 +365,100 @@ public final class WarScoreBoard {
         return Collections.unmodifiableMap(out);
     }
 
+    /**
+     * 落盘用的完整快照：除 {@code rules} 之外，{@link #restore} 要吃的每一项都在这里。
+     *
+     * <p><b>为什么已有的 {@link #snapshot()} 不够</b>：那份只回积分明细，是给面板中途查询用的。
+     * 重建一块板还必须知道 phase、关卡归属、王城持有者、<b>当前这段占领的起点</b>、疲劳表、
+     * 已领取名单、全服击杀数。少带任何一项的表现都不是报错，而是<b>复活出一个假状态</b>：
+     * <ul>
+     *   <li>少 {@code capitalHeldSince}：同一段占领会被重新累积一遍（占领分翻倍）；</li>
+     *   <li>少 {@code goalClaimed}：验收 10 的「每人只领一次」变成「重启就能再领一次」——那是刷金入口；</li>
+     *   <li>少 {@code fatigue}：验收 7 的疲劳上限每次重启清零，「逼迫联盟调度」这条设计当场作废；</li>
+     *   <li>少 {@code phase}：一场已结算的仗会被当成还在打，而 {@link #settle} 会再结算一次。</li>
+     * </ul>
+     *
+     * <p><b>{@code rules} 刻意不进快照</b>，与 {@code Nation.Snapshot} 同一条理由：规则来自配置表且会热更，
+     * 把某一次的值冻进存档，症状是改了 {@code global} 的 WAR_* 那几行对已有战事不生效且不报错。
+     * 所以重建必须现取规则 —— 见 {@code WarRulesAssembler}。
+     *
+     * <p><b>为什么这里用 {@code List<NationRow>} 而不是内部的 {@code Map<String, long[]>}</b>：
+     * 落盘形状只允许用<b>已经在 Mongo 那边验证过</b>的容器（List、Map&lt;String,Long&gt;、嵌套 record），
+     * 原始类型数组进档在本仓没有先例，而这类转换问题只在真 Mongo 上炸、单测在内存实现上全绿
+     * （同族前例：投影打在 record 文档上抛 {@code avatarId must not be null}）。
+     * 顺带把「行序」变成显式的：{@link #settle} 的平分判定依赖遍历顺序，List 比 map 更诚实。
+     */
+    public record Snapshot(long startedAt, Phase phase, List<NationRow> nations,
+                           String capitalHolder, long capitalHeldSince,
+                           Map<String, Long> fatigue, List<String> goalClaimed, long totalKills) {
+
+        public Snapshot {
+            if (phase == null) {
+                throw new IllegalArgumentException("phase 不得为 null：没有 phase 就不知道该不该继续记分");
+            }
+            nations = List.copyOf(nations == null ? List.of() : nations);
+            fatigue = Collections.unmodifiableMap(new LinkedHashMap<>(
+                    fatigue == null ? Map.of() : fatigue));
+            goalClaimed = List.copyOf(goalClaimed == null ? List.of() : goalClaimed);
+        }
+    }
+
+    /**
+     * 快照里一个参战方的那一行：积分三项 + 它已占领的关卡。
+     *
+     * <p>关卡用 {@code List} 而不是 {@code Set}：落盘要保序，而「这座关卡归谁」本来就是排他的
+     * （见 {@link #captureGate}），重复关卡是脏数据而不是另一种状态。
+     */
+    public record NationRow(String nationId, Score score, List<String> gates) {
+
+        public NationRow {
+            if (nationId == null || nationId.isBlank()) {
+                throw new IllegalArgumentException("nationId 不得为空：空 id 的参战行谁都查不到");
+            }
+            if (score == null) {
+                throw new IllegalArgumentException("score 不得为 null：少一份积分就没有那一方的名次");
+            }
+            gates = List.copyOf(gates == null ? List.of() : gates);
+        }
+    }
+
+    /** 完整快照（落盘用）。与 {@link #snapshot()} 那份积分明细不是一件事，理由见 {@link Snapshot}。 */
+    public Snapshot toSnapshot() {
+        List<NationRow> rows = new ArrayList<>(scores.size());
+        for (Map.Entry<String, long[]> entry : scores.entrySet()) {
+            long[] parts = entry.getValue();
+            Set<String> held = gates.get(entry.getKey());
+            rows.add(new NationRow(entry.getKey(),
+                    new Score(parts[0], parts[1], parts[2]),
+                    held == null ? List.of() : List.copyOf(held)));
+        }
+        return new Snapshot(startedAt, phase, rows, capitalHolder, capitalHeldSince,
+                new LinkedHashMap<>(fatigue), List.copyOf(goalClaimed), totalKills);
+    }
+
+    /**
+     * 由完整快照重建。
+     *
+     * @param rules 当前配置下的国战规则。<b>必须由调用方注入</b>：它不进快照（理由见 {@link Snapshot}），
+     *              没有它就连「还剩多少秒」「还能不能再行军」都算不出来
+     */
+    public static WarScoreBoard fromSnapshot(Snapshot snapshot, Rules rules) {
+        if (snapshot == null) {
+            throw new IllegalArgumentException("快照不得为 null：没有快照就没有重建");
+        }
+        Map<String, long[]> scoreMap = new LinkedHashMap<>();
+        Map<String, Set<String>> gateMap = new LinkedHashMap<>();
+        for (NationRow row : snapshot.nations()) {
+            Score score = row.score();
+            scoreMap.put(row.nationId(),
+                    new long[]{score.occupyScore(), score.killScore(), score.buildingScore()});
+            gateMap.put(row.nationId(), new LinkedHashSet<>(row.gates()));
+        }
+        return restore(rules, snapshot.startedAt(), snapshot.phase(), scoreMap, gateMap,
+                snapshot.capitalHolder(), snapshot.capitalHeldSince(), snapshot.fatigue(),
+                new LinkedHashSet<>(snapshot.goalClaimed()), snapshot.totalKills());
+    }
+
     /** 供仓储重建。 */
     public static WarScoreBoard restore(Rules rules, long startedAt, Phase phase,
                                         Map<String, long[]> scores, Map<String, Set<String>> gates,
@@ -371,7 +467,10 @@ public final class WarScoreBoard {
                                         long totalKills) {
         WarScoreBoard board = new WarScoreBoard(rules, startedAt);
         board.phase = phase;
-        board.scores.putAll(scores);
+        // 逐份 clone 数组：传进来的那份 map 常常就是调用方手里的活对象，共享数组等于读返回别名
+        for (Map.Entry<String, long[]> entry : scores.entrySet()) {
+            board.scores.put(entry.getKey(), entry.getValue().clone());
+        }
         for (Map.Entry<String, Set<String>> entry : gates.entrySet()) {
             board.gates.put(entry.getKey(), new LinkedHashSet<>(entry.getValue()));
         }

@@ -31,10 +31,12 @@ import com.ironoath.web.dto.generated.NationTechResearchResp;
 import com.ironoath.web.dto.generated.NationTreasuryResp;
 import com.ironoath.web.dto.generated.NationTreasurySpendReq;
 import com.ironoath.web.dto.generated.NationTreasurySpendResp;
+import com.ironoath.web.dto.generated.WarStatusResp;
 import com.ironoath.web.service.NationAppService;
+import com.ironoath.web.service.WarAppService;
 
 /**
- * 职责：国家域 HTTP 入口（B13）—— 建国、联盟入籍与退出国、解散国家、任命官职、外交、查看本国与国库流水。
+ * 职责：国家域 HTTP 入口（B13）—— 建国、联盟入籍与退出国、解散国家、任命官职、外交、查看本国与国库流水、国策、国战状态。
  * 依赖：Spring Web、{@link NationAppService}。
  *
  * <p><b>写操作都返回操作后的完整视图</b>而不是只回 ok：客户端据此刷新面板，
@@ -42,20 +44,24 @@ import com.ironoath.web.service.NationAppService;
  * 两个例外是 {@code /leave} 与 {@code /disband}：那两次操作之后调用方已经没有国家可看了，
  * 回一份他无权查询的视图是假动作，所以各回自己那件最该被显示的事实（何时能再入籍 / 亡国的审计四件套）。
  *
- * <p><b>还缺的端点</b>：国策投票、国战状态。
- * 各自的领域前置未就位（国策需要提案表、国战需要与 B07 地图和 B10 集结接线并压测；
- * 国库支出已在 2026-09-11 接通 —— 见 /treasury/spend）。
- * B13 禁止项明写「不要在没有压测的情况下上线王城战」，所以那几个端点刻意不先开出来 ——
- * 一个能调用但结算不了的宣战接口，比没有这个接口更危险。
+ * <p><b>国战这一侧现在只有读口</b>（{@code GET /nation/war}，2026-10-06 的承载切片 1）：
+ * 存储端口、内存与 Mongo 两套实现、装配点与这份视图齐了，但<b>没有任何写入路径</b> ——
+ * 击杀累计、疲劳累积、开战与结算都还没接线，所以视图在生产上恒回 {@code hasWar=false}。
+ * 还缺的写侧刻意不先开出来：B13 禁止项明写「不要在没有压测的情况下上线王城战」
+ * （B21 验收 10 要的是一份 5000 在线 / 行军 200 QPS 的压测报告），
+ * 而一个能调用但结算不了的宣战接口，比没有这个接口更危险。
+ * 国策投票已在 2026-09-30 接通（{@code /policy/*} 三个端点），不再属于「还缺」。
  */
 @RestController
 @RequestMapping("/nation")
 public class NationController {
 
     private final NationAppService nations;
+    private final WarAppService wars;
 
-    public NationController(NationAppService nations) {
+    public NationController(NationAppService nations, WarAppService wars) {
         this.nations = nations;
+        this.wars = wars;
     }
 
     /** 建国。前置（主城 16 级 / 开服 D14 / 在联盟中）全部由服务端校验。 */
@@ -214,6 +220,27 @@ public class NationController {
             @RequestBody NationPolicyVoteReq req) {
         requirePlayer(playerId);
         return Result.ok(nations.voteNationPolicy(playerId, req));
+    }
+
+    // ---------- 国战（B13 §一 §7，2026-10-06 承载切片 1：只读） ----------
+
+    /**
+     * 国战状态（B21 §二 点名的 {@code WarStatusResp}）：阶段、三类积分、占领者、全服击杀进度、
+     * 本人的疲劳与行军闸门。
+     *
+     * <p><b>没有成员关系门槛</b>：国战是全服事件而不是某一国的内部事务，与 {@code /nation/treasury}
+     * 那条相反（那本账是公共资产，这本账是公共进度）。
+     *
+     * <p><b>这一格现在证明的是承载，不是玩法</b>：读口、存储端口、两套实现与装配点都接通了，
+     * 但击杀累计与疲劳累积还没有写入路径，所以生产上恒为 {@code hasWar=false}、积分与击杀全 0。
+     * 验收矩阵里 B13 的疲劳上限（{@code :261}）与国家集结门槛（{@code :262}）仍是 ⬜，
+     * <b>不因这个端点能 200 而变</b> —— 别拿这一条响应当那两条的证据。
+     */
+    @GetMapping("/war")
+    public Result<WarStatusResp> warStatus(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(wars.warStatus(playerId));
     }
 
     private static void requirePlayer(String playerId) {
