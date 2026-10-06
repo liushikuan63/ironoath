@@ -200,6 +200,31 @@ public final class MongoWarStore implements WarStore {
         return mongo.findOne(query, WarDocument.class, WarDocument.COLLECTION);
     }
 
+    /**
+     * 这一对两国最近那一场：把「两方都在参战方里」下推成 {@code $and} 两个独立条件，
+     * 按 {@code startedAt} 降序取第一条。
+     *
+     * <p><b>为什么必须拆成 {@code $and} 而不是 {@code in(a, b)}</b>：Mongo 对数组字段的条件
+     * <b>各自独立</b>地对整个数组求值，所以 {@code $and:[{path:a},{path:b}]} 的意思是
+     * 「存在一个元素等于 a <b>且</b>存在一个元素等于 b」—— 正是"这一对交过手"。
+     * 写成 {@code in(a,b)} 就退化成「有任一元素等于 a <b>或</b> b」，于是只跟 A 打过仗的 C
+     * 也会被算进 A-B 那一档，冷却期凭空多出一堵挡错人的墙。
+     *
+     * <p>不加锁：这是纯读，且它的答案只用来<b>拒绝</b>一次写入（真正的仲裁者仍是
+     * {@link #insertIfNoneActive} 那条临界区），读到稍旧一档最多是"这次拒绝的理由晚一分钟生效"，
+     * 不会开出两场仗。
+     */
+    @Override
+    public Optional<WarScoreBoard> findLatestBetween(String nationA, String nationB) {
+        Query query = new Query(new Criteria().andOperator(
+                        Criteria.where("state.nations.nationId").is(nationA),
+                        Criteria.where("state.nations.nationId").is(nationB)))
+                .with(Sort.by(Sort.Direction.DESC, "startedAt"))
+                .limit(1);
+        return Optional.ofNullable(mongo.findOne(query, WarDocument.class, WarDocument.COLLECTION))
+                .map(this::toDomain);
+    }
+
     @Override
     public void clear() {
         mongo.remove(new Query(), WarDocument.COLLECTION);

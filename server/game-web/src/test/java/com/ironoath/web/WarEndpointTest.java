@@ -551,6 +551,65 @@ class WarEndpointTest {
                 .isFalse();
     }
 
+    // ---------- 宣战冷却（切片 3a：warCooldownHours 从零消费者变成有执行点）----------
+
+    @Test
+    @DisplayName("冷却内对同一目标再宣被拒（13023 而不是 13020），换个目标立刻放行")
+    void samePairWithinCooldownIsRefusedWhileAnotherTargetIsOpen() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        Kingdom c = kingdom("苍梧");
+        // 摆一场「四小时前开的」A-B 仗，它同时跨过两条线：超过 3 小时的战事时长（所以挡住下一次宣战的
+        // 理由只能是冷却，不能是"那场还在打"），又仍在 24 小时冷却之内。
+        seedPairWar(a.nationId, b.nationId, timeService.serverNow() - 4 * HOUR);
+
+        assertThat(postRaw("/nation/war/declare", a.king,
+                new WarDeclareReq(newRequestId(), b.nationId)).get("code").asInt())
+                .as("这一码与 13020 的分工要分得开：回「等这一场打完」是误导 —— 那场仗只有 3 小时，"
+                        + "按它说的等完还会再被拒一次，而玩家已经付了一次点击")
+                .isEqualTo(ErrorCode.WAR_DECLARE_COOLDOWN.code());
+
+        assertThat(post200("/nation/war/declare", a.king,
+                new WarDeclareReq(newRequestId(), c.nationId)).get("hasWar").asBoolean())
+                .as("换目标必须放行：冷却按「那一对」取档，不是把全国锁一天")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("冷却对这一对是对称的：被打的一方反宣同样被挡（否则可以乒乓刷击杀）")
+    void theDefenderCannotCounterDeclareWithinCooldown() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        seedPairWar(a.nationId, b.nationId, timeService.serverNow() - 4 * HOUR);
+
+        assertThat(postRaw("/nation/war/declare", b.king,
+                new WarDeclareReq(newRequestId(), a.nationId)).get("code").asInt())
+                .as("只挡发起国的写法在这里会退成 200：B 反宣成功，而反宣又让 A 重新进入冷却 —— "
+                        + "同一对两国可以在 24 小时里靠乒乓互宣把击杀刷满，那正是 warCooldownHours 的理由")
+                .isEqualTo(ErrorCode.WAR_DECLARE_COOLDOWN.code());
+    }
+
+    @Test
+    @DisplayName("冷却走完就能再宣同一对：判据是上一场的开场时刻 + warCooldownMillis")
+    void theSamePairMayDeclareAgainOnceTheCooldownExpires() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        long cooldown = nations.findById(a.nationId).orElseThrow().warCooldownMillis();
+        assertThat(cooldown)
+                .as("前置：本国那一档的冷却是 24 小时（nation_config 三档同为 24）——"
+                        + "下面那 25 小时是按这个数摆的，配置改了要重算")
+                .isEqualTo(24 * HOUR);
+        seedPairWar(a.nationId, b.nationId, timeService.serverNow() - 25 * HOUR);
+
+        assertThat(post200("/nation/war/declare", a.king,
+                new WarDeclareReq(newRequestId(), b.nationId)).get("hasWar").asBoolean())
+                .as("过了那一刻就必须放行，否则冷却变成「永久」，而国战变成一赛季一次的仪式")
+                .isTrue();
+        assertThat(wars.findLatest().orElseThrow().registeredNations())
+                .as("新那一场登记的是这一对，而不是把历史那一场改回来")
+                .containsExactlyInAnyOrder(a.nationId, b.nationId);
+    }
+
     // ---------- 协议与内核同源 ----------
 
     @Test
@@ -591,6 +650,20 @@ class WarEndpointTest {
             board.addFatigue("someone-else", myFatigue / 5L, myFatigue % 5L);
         }
         return board;
+    }
+
+    /**
+     * 往存储里摆一场「这两国之间、开场于某时刻」的仗（3a 的冷却判据只读参战方与 {@code startedAt}）。
+     *
+     * <p>刻意不跑真实的宣战去产生它：宣战的 {@code startedAt} 就是此刻，冷却永远不可能在
+     * 同一条用例里"已经过完"。把历史那一档<b>直接摆进存储</b>，才量得到冷却这一条判据本身；
+     * 而"仗确实这么开出来过"由上面那几条宣战用例负责。
+     */
+    private void seedPairWar(String nationA, String nationB, long startedAt) {
+        WarScoreBoard board = new WarScoreBoard(warRules.rules(), startedAt);
+        board.registerNation(nationA);
+        board.registerNation(nationB);
+        wars.insertIfAbsent(board);
     }
 
     private Nation nation(String id, String name) {

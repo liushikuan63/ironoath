@@ -137,6 +137,26 @@ public final class InMemoryWarStore implements WarStore {
                 .orElseThrow());
     }
 
+    /**
+     * 这一对两国最近那一场。<b>与 Mongo 版是两种机制</b>（这里在 Java 侧筛行，那里用
+     * {@code $and} 打在嵌套数组上），所以"两边给出同一场"这件事必须由
+     * {@code WarStoreEquivalenceTest} 现证 —— 数组查询的语义（两个条件各自独立地对数组求值，
+     * 因此要求<b>两个元素</b>都在）正是最容易在一侧写错成「一个元素满足任一条件」的地方。
+     */
+    @Override
+    public synchronized Optional<WarScoreBoard> findLatestBetween(String nationA, String nationB) {
+        return byId.values().stream()
+                .filter(stored -> holdsBoth(stored, nationA, nationB))
+                .max(Comparator.comparingLong(WarScoreBoard.Snapshot::startedAt))
+                .map(s -> WarScoreBoard.fromSnapshot(s, rules.rules()));
+    }
+
+    /** 参战方那几行里是否同时出现这两个国家 id。 */
+    private static boolean holdsBoth(WarScoreBoard.Snapshot stored, String nationA, String nationB) {
+        return stored.nations().stream().anyMatch(row -> row.nationId().equals(nationA))
+                && stored.nations().stream().anyMatch(row -> row.nationId().equals(nationB));
+    }
+
     @Override
     public synchronized void clear() {
         byId.clear();

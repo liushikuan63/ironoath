@@ -139,6 +139,27 @@ public interface WarStore {
     Optional<WarScoreBoard> settleIfExpired(long now);
 
     /**
+     * 这一对两国之间<b>最近的那一场</b>，<b>不论打完没打完</b> —— 宣战冷却的唯一数据源。
+     *
+     * <p><b>为什么从历史里推，而不是在 {@code Nation} 上加一个 {@code lastWarDeclaredAt} 字段</b>：
+     * 前者只多一个查询口，后者要动聚合、动 {@code Nation.Snapshot}、动别人在写的
+     * {@code NationStoreEquivalenceTest}。而这份集合里<b>只有个位数文档</b>（一场仗一档，
+     * 全服同时只有一场活的），扫一遍比给国家档再加一列便宜得多。
+     * 更实的一条：那个字段是<b>第二份真相</b> —— 仗的档里已经写着谁和谁、什么时候开的，
+     * 国家档里再记一次「上次宣战」，两处一旦漂移（写成功一处、失败一处）就没有仲裁者。
+     *
+     * <p><b>判定按「这一对」而不是「发起国打过谁」，是对称的</b>：只挡发起国的话，
+     * 被打的一方可以立刻反宣，而反宣成功又让对面重新进入冷却 ——
+     * 同一对两国能在冷却期内靠乒乓互宣把击杀刷满，那正是这一格要防的形状。
+     * 对称不影响任何一国打<b>第三国</b>：判据按那一对取档，换目标就换一个档去查。
+     *
+     * @param nationA 这一对里的一个（顺序无关）
+     * @param nationB 另一个
+     * @return 两方都在的档里 {@code startedAt} 最大的那一份；这一对从来没打过时为 empty
+     */
+    Optional<WarScoreBoard> findLatestBetween(String nationA, String nationB);
+
+    /**
      * 击杀归属的结果（四个值各对应一种"要不要记账"的判断，不是一个笼统的 boolean）：
      * 战斗每天都在发生，把四种情况压成一个布尔，日志与排查就只能靠猜。
      */

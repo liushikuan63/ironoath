@@ -461,6 +461,41 @@ class WarStoreEquivalenceTest {
         }
     }
 
+    // ---------- 宣战冷却的查询口（切片 3a：warCooldownHours 第一次有消费者）----------
+
+    /**
+     * <b>这一条防的是 Mongo 那一侧的数组查询退化</b>：把「两方都在」写成
+     * {@code in(nationA, nationB)}，语义就变成「有一个元素等于 a <b>或</b> b」，
+     * 于是只跟 n1 打过的 n3 会被算进 n1-n2 那一档 —— 内存版照样给出 empty，
+     * 两边不一致，而症状是「明明没跟这国打过，冷却却挡着不让宣战」。
+     *
+     * <p>{@code (n2, n3)} 那一句是这个退化唯一能被抓到的地方，别把它当冗余删掉。
+     */
+    @Test
+    @DisplayName("findLatestBetween 只认「两方都在」的档、取最近一场、顺序无关；两套实现同一条")
+    void latestBetweenPairsIsIdenticalOnBothStores() {
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            // n1-n2 打过两场（一旧一新），n1-n3 打过一场，n2-n3 从来没有
+            store.insertIfAbsent(pair(T0, "n1", "n2"));
+            store.insertIfAbsent(pair(T0 + 30 * MINUTE, "n1", "n2"));
+            store.insertIfAbsent(pair(T0 + 10 * MINUTE, "n1", "n3"));
+
+            assertThat(store.findLatestBetween("n1", "n2").orElseThrow().startedAt())
+                    .as("%s 同一对打过两场，取的必须是最近那一场（冷却从最近一次算起）", label)
+                    .isEqualTo(T0 + 30 * MINUTE);
+            assertThat(store.findLatestBetween("n2", "n1").orElseThrow().startedAt())
+                    .as("%s 顺序无关：冷却按「这一对」算，攻防互换同样要等", label)
+                    .isEqualTo(T0 + 30 * MINUTE);
+            assertThat(store.findLatestBetween("n1", "n3").orElseThrow().startedAt())
+                    .as("%s 换一对就换一档去查，不许把别的档算进来", label)
+                    .isEqualTo(T0 + 10 * MINUTE);
+            assertThat(store.findLatestBetween("n2", "n3"))
+                    .as("%s 这两国从没打过必须是 empty —— 写成 in(a,b) 时这一句会捞出 n1-n2 那一档", label)
+                    .isEmpty();
+        }
+    }
+
     // ---------- 击杀归属（切片 2b：内核的 recordKill 第一次有了生产写路径）----------
 
     @Test
@@ -665,6 +700,14 @@ class WarStoreEquivalenceTest {
     private static void requireMongo() {
         Assumptions.assumeTrue(db != null,
                 "本机没有可用的 MongoDB（" + TestMongo.uri() + "）—— 见「跳过即未验证」那条");
+    }
+
+    /** 只登记两国的最小一档（冷却那一族只读 {@code nations} 与 {@code startedAt}，不需要别的状态）。 */
+    private static WarScoreBoard pair(long startedAt, String nationA, String nationB) {
+        WarScoreBoard board = new WarScoreBoard(rules.rules(), startedAt);
+        board.registerNation(nationA);
+        board.registerNation(nationB);
+        return board;
     }
 
     /**

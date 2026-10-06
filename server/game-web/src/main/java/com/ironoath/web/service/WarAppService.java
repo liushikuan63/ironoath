@@ -126,7 +126,8 @@ public class WarAppService {
      * 宣战（B13 §一 §7 的开局那一步）：立一块积分板、把攻守两国登记成参战方，并把关系转成敌对。
      *
      * <p><b>前置的顺序是算过的</b>：本国存在 → 有 {@code DECLARE_WAR} 权限 → 不是打自己 →
-     * 外交关系允许打 → 目标国存在且没解散 → （推进上一场的时间）→ 当前没有未结束的仗。
+     * 外交关系允许打 → 目标国存在且没解散 → 这一对两国不在冷却期 →
+     * （推进上一场的时间）→ 当前没有未结束的仗。
      * 把「没有未结束的仗」放在最后不是疏忽：前面几条都是<b>不写任何东西就能否掉</b>的，
      * 而"有没有仗"这条必须和插入收在同一个临界区里才成立（见 {@link WarStore#insertIfNoneActive}）——
      * 提前查它就等于用一次带竞争的读去决定要不要走后面那条无竞争的路径，白多一个窗口。
@@ -170,6 +171,20 @@ public class WarAppService {
                                 "targetNationId=" + targetId
                                         + "（查不到或已解散：解散记录仍然留在档里，所以必须过 isDisbanded）"));
 
+                // 宣战冷却：从「这一对两国最近那一场」的<b>开场时刻</b>起算，不是从结算那一刻。
+                // 表里那句「取 24 小时 = 每个国家每天最多宣战一次，配合 3 小时的战斗时长」
+                // 说的就是开场时刻的间隔；从结束起算会把它变成 27 小时，那是设计者没写过的东西。
+                // 毫秒口已经在 Nation 上（LevelRule.warCooldownHours() × 3600 × 1000），这里不乘第二遍。
+                long cooldownMillis = attacker.warCooldownMillis();
+                wars.findLatestBetween(attacker.id(), targetId)
+                        .filter(last -> now < last.startedAt() + cooldownMillis)
+                        .ifPresent(last -> {
+                            throw new BizException(ErrorCode.WAR_DECLARE_COOLDOWN,
+                                    "发起国=" + attacker.id() + " 目标=" + targetId
+                                            + " 上一场开场于=" + last.startedAt()
+                                            + " 冷却=" + cooldownMillis + "ms 剩余="
+                                            + (last.startedAt() + cooldownMillis - now) / 1000L + "s");
+                        });
                 // 先推进上一场的时间，再判"有没有活着的仗"。不这么做的表现不是报错而是卡死式的：
                 // insertIfNoneActive 读的是存储里的 phase 字面值，而一场打满 3 小时的仗在有人打开面板之前
                 // phase 仍然是 SIEGE —— 于是"仗早打完了却再也宣不了战"，解锁条件落在别人的那一次读上。
