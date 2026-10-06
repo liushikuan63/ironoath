@@ -104,7 +104,7 @@ import type {
   DiplomacyRelation, NationLeaveResp, NationOffice, NationRelationView, NationResp, NationTreasuryResp,
 } from '../../net/generated/NationProtocol'
 import type { NationTechListView } from '../../net/generated/NationTechProtocol'
-import type { NationPolicyRoundView, WarStatusResp } from '../../net/generated/NationProtocol'
+import type { NationPolicyRoundView, WarCooldownsResp, WarStatusResp } from '../../net/generated/NationProtocol'
 import { buildPolicyPanel } from '../nation/NationPolicyPanel'
 import type { PolicyPanel } from '../nation/NationPolicyPanel'
 import { gameBus } from '../../core/EventBus'
@@ -678,6 +678,8 @@ export class AppRoot {
    * 后者是 `hasWar=false` 的那一份响应 —— 面板据此说不同的话（见 `buildWarSection` 的三分支）。
    */
   private nationWarResp: WarStatusResp | null = null
+  /** 我国对各目标的剩余冷却（#755）。与国战态同一支里拉 —— 面板要用它把冷却中的目标灰掉。 */
+  private nationWarCooldowns: WarCooldownsResp | null = null
   /** S2：国家科技那一棵树。没拉过为 null（面板据它说"这一次没读到"，不是空白）。 */
   private nationTechResp: NationTechListView | null = null
   /** 国策轮次。没拉过为 null —— 与「拉到了但本轮没有提案」是两件事。 */
@@ -3555,7 +3557,7 @@ export class AppRoot {
       tab: this.nationTab,
       sections: buildNationSections(this.nationTechResp, this.nationRelations,
         this.nationCandidates, members, this.permissions.nation, this.permissions.nationLoaded,
-        this.nationPolicyPanel(), this.nationWarResp),
+        this.nationPolicyPanel(), this.nationWarResp, this.nationWarCooldowns),
     })
     this.targets.nation?.(view)
   }
@@ -3680,6 +3682,12 @@ export class AppRoot {
    */
   private async loadNationWar(): Promise<void> {
     const outcome = await this.api.warStatus()
+    // 冷却表与国战态一起拉：面板上"哪些目标现在不能打"与"这一场打到哪一步"是同一屏的两半，
+    // 分两次到会让玩家看到半截（例如目标已经灰了而参战方那一块还是旧的）
+    const cd = await this.api.warCooldowns()
+    if (cd.kind === 'ok') {
+      this.nationWarCooldowns = cd.data
+    }
     if (outcome.kind === 'ok') {
       this.nationWarResp = outcome.data
       return
@@ -3760,6 +3768,9 @@ export class AppRoot {
     // 宣战改了外交关系（对目标国置 HOSTILE）⇒ 手里那张关系表旧了，当场重读一次，
     // 免得玩家切到外交页看到"宣战了却没敌对"
     await this.reloadNationRelations()
+    // 同时重读国战态与冷却表：宣战这一刻起，**这一对进入冷却**（#755）—— 面板要立刻把那个目标灰掉，
+    // 否则玩家会以为还能立刻再宣一次
+    await this.loadNationWar()
     // 只记"做成了"的那一枪（与 `setNationRelation` 同口径）：被冷却/权限挡住的不进这一格，
     // 它们的读数在服务端错误码里，混进来会把"想宣战"和"宣战成功"揉成一个数
     this.track(TRACK_EVENTS.warDeclare)

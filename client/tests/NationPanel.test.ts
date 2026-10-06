@@ -668,6 +668,22 @@ test('国战那一页：没拉到 / 没有仗 / 有仗 三态各自说清，不�
   assert.equal(/nation_[ab]/.test(onScreen), false, `国战那页印出了内部 id：${onScreen}`)
 })
 
+test('宣战目标带冷却（#755）：冷却中的目标灰着并写出还要等多久，解禁的不带任何标注', () => {
+  const target = { nationId: 'nation_z', name: '北伐营' }
+  const cooling = buildWarSection(warResp({ hasWar: false }), [target], ['DECLARE_WAR'], true, {
+    cooldowns: [{ targetNationId: 'nation_z', targetNationName: '北伐营', remainingSec: 3 * 3600 + 25 * 60 }],
+    serverNow: NOW,
+  })
+  assert.equal(cooling.targets[0]?.cooldownText, '还要等 3 小时 25 分',
+    '冷却中的目标要写出还要等多久 —— 那是 #755 的全部意义（不让玩家点下去才知道被拒）')
+  const ready = buildWarSection(warResp({ hasWar: false }), [target], ['DECLARE_WAR'], true, {
+    cooldowns: [], serverNow: NOW,
+  })
+  assert.equal(ready.targets[0]?.cooldownText, null, '解禁的目标不带任何标注（亮着就是能打）')
+  // 没拉到冷却表（null）时同样不标注：不在一份没读到的数据上编状态
+  const unknown = buildWarSection(warResp({ hasWar: false }), [target], ['DECLARE_WAR'], true, null)
+  assert.equal(unknown.targets[0]?.cooldownText, null)
+})
 test('国战全服奖励的三态：还没达成 / 可以领 / 已经领过（都由服务端下发的两位决定）', () => {
   // ① 还没达成：键不画、note 说清差在哪（客户端不自己比 totalKills 与目标大小）
   const notYet = buildWarSection(warResp({ hasWar: true, serverGoalReached: false, myGoalClaimed: false }))
@@ -705,7 +721,8 @@ test('国战页的宣战门与目标：权限三态照 permissionGateOf，目标
   assert.equal(allowed.declareGate.reason, null)
   // 目标：`name` 上屏、`key` 只用于发请求（红线：内部 id 不印给玩家）
   assert.deepEqual(allowed.targets.map(t => t.name), ['北伐营'])
-  assert.equal(Object.keys(allowed.targets[0] ?? {}).join(), 'key,name')
+  assert.equal(Object.keys(allowed.targets[0] ?? {}).join(), 'key,name,cooldownText',
+    '目标行带上屏要用的三样（id 仍是 key、不发散）；冷却是 #755 那一列')
   // 默认参数：不传就空表 + 灰（面板按"还没读到"画，不是画一片空白）
   const bare = buildWarSection(warResp({ hasWar: false }))
   assert.equal(bare.targets.length, 0)

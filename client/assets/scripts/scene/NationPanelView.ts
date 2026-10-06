@@ -512,10 +512,17 @@ export class NationPanelView extends Component {
       const targetWidth = 110
       section.targets.slice(0, 6).forEach((target, index) => {
         const x = left + targetWidth / 2 + index * (targetWidth + 8)
-        this.button(`WarTarget-${target.key}`, target.name, x, y, targetWidth, true,
+        // 冷却中的目标**灰着**（#755）：口径来自服务端那张表，客户端不自己算 ——
+        // 于是"灰下去"与"点下去被拒"是同一刻，不会出现面板说能打、点了被拒
+        this.button(`WarTarget-${target.key}`, target.name, x, y, targetWidth,
+          target.cooldownText === null,
           () => { this.warTarget = target.key; this.warArmed = false; this.redraw() },
           this.warTarget === target.key)
+        if (target.cooldownText !== null) {
+          this.label(target.cooldownText, COLOR_DIM, 11, x, y - 18, 'center')
+        }
       })
+      y -= 12
       y -= 34
     }
     const selected = section.targets.find(t => t.key === this.warTarget) ?? null
@@ -539,7 +546,9 @@ export class NationPanelView extends Component {
     const warReason = !section.declareGate.enabled
       ? section.declareGate.reason
       : (section.hasWar ? '已经有一场没打完的仗 —— 等它结束再宣下一场'
-        : (selected === null ? '先在上面选一个国家' : null))
+        : (selected === null
+          ? '先在上面选一个国家'
+          : (selected.cooldownText === null ? null : `${selected.cooldownText}：这一对刚交过手，冷却期内不能再宣`)))
     if (warReason !== null) {
       this.label(warReason, COLOR_DIM, 13, left, y, 'left')
       y -= 22

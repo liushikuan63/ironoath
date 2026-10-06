@@ -32,6 +32,7 @@ import com.ironoath.web.dto.generated.NationTechResearchResp;
 import com.ironoath.web.dto.generated.NationTreasuryResp;
 import com.ironoath.web.dto.generated.NationTreasurySpendReq;
 import com.ironoath.web.dto.generated.NationTreasurySpendResp;
+import com.ironoath.web.dto.generated.WarCooldownsResp;
 import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.dto.generated.WarGoalClaimReq;
 import com.ironoath.web.dto.generated.WarGoalClaimResp;
@@ -278,6 +279,19 @@ public class NationController {
             @RequestBody WarDeclareReq req) {
         requirePlayer(playerId);
         return Result.ok(wars.declare(playerId, req));
+    }
+
+    /**
+     * 我国对各目标还在冷却中的剩余秒数（#755）。
+     *
+     * <p>与宣战那一枪共用同一个判据（`findLatestBetween` + `warCooldownMillis`），所以面板上灰下去的
+     * 那一刻正是服务端会拒的那一刻 —— 客户端因此不需要自己算冷却（那是第二真源）。
+     */
+    @GetMapping("/war/cooldowns")
+    public Result<WarCooldownsResp> warCooldowns(
+            @RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(wars.cooldowns(playerId));
     }
 
     @PostMapping("/war/goal/claim")

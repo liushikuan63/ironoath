@@ -21,6 +21,8 @@ import com.ironoath.core.reward.RewardItem;
 import com.ironoath.core.reward.RewardService;
 import com.ironoath.core.reward.RewardType;
 import com.ironoath.core.social.PermissionMatrix;
+import com.ironoath.web.dto.generated.WarCooldownView;
+import com.ironoath.web.dto.generated.WarCooldownsResp;
 import com.ironoath.web.dto.generated.WarDeclareReq;
 import com.ironoath.web.dto.generated.WarGoalClaimReq;
 import com.ironoath.web.dto.generated.WarGoalClaimResp;
@@ -156,6 +158,44 @@ public class WarAppService {
                 // 本人领过没有：面板要区分"可以领/已经领过"，否则那颗键点了就被拒（验收 10 的形状）。
                 // 注意它是**最后一个组件**（生成器按 schema 的 properties 顺序排，我在属性表里追加在末尾）
                 board.goalClaimedBy(playerId));
+    }
+
+    /**
+     * 我国对各目标还在冷却中的剩余秒数（`GET /nation/war/cooldowns`；#755 那一格）。
+     *
+     * <p><b>为什么单开这个口</b>：`WarStatusResp` 是全服一份的视图，而冷却是**按国家那一对**算的 ——
+     * 一个全服标量装不下 N×N 个状态。所以这里按请求者下发一张只含「我国 × 各目标」的表。
+     *
+     * <p><b>只回还没解禁的</b>：面板的用法是"把候选目标里还在冷却的那些灰掉并写下还要等多久"，
+     * 解禁的目标本来就该是亮的、不需要任何标注。
+     *
+     * <p><b>冷却是对称的</b>（判据读的是那一对两国之间最近那一场），所以同一个目标在两边都会出现：
+     * 防守方看到的是「对方还在冷却」—— 这正是设计意图（同一对两国靠乒乓互宣在冷却期内刷击杀，
+     * 是国战那一段刻意防的形状）。
+     *
+     * <p><b>口径与宣战那一枪共用同一个判据</b>（`WarStore#findLatestBetween` 与 `warCooldownMillis`）：
+     * 面板上灰下去的那一刻，正是服务端会拒的那一刻 —— 两处各算一遍就会分叉，
+     * 症状是"面板说能打、点下去被拒"（B13 那条红线：不许把内部状态印给玩家的反面）。
+     */
+    public WarCooldownsResp cooldowns(String playerId) {
+        long now = timeService.serverNow();
+        Nation mine = requireNationOf(playerId);
+        long cooldownMillis = mine.warCooldownMillis();
+        List<WarCooldownView> out = new ArrayList<>();
+        for (Nation other : nations.all()) {
+            if (other.id().equals(mine.id()) || other.isDisbanded()) {
+                continue;
+            }
+            long remaining = wars.findLatestBetween(mine.id(), other.id())
+                    .map(last -> last.startedAt() + cooldownMillis - now)
+                    .orElse(0L);
+            if (remaining > 0L) {
+                // 向上取整到 1 秒：契约写明这一位**恒为正**，而"剩 0.4 秒"四舍五入成 0 会让
+                // 面板既不灰它、点下去又被拒（差的那一下就是这一格要消灭的东西）
+                out.add(new WarCooldownView(other.id(), other.name(), Math.max(1L, remaining / 1000L)));
+            }
+        }
+        return new WarCooldownsResp(List.copyOf(out), now);
     }
 
     /**

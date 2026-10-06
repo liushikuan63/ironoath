@@ -245,6 +245,54 @@ class WarEndpointTest {
         assertThat(theirs.get("totalKills").asLong()).isEqualTo(mine.get("totalKills").asLong());
     }
 
+    @Test
+    @DisplayName("宣战冷却进视图（#755）：宣完战，两边都能看到对方在冷却里、还要等多久；没交过手的第三国不出现")
+    void cooldownsAreVisibleForBothSidesOfTheRecentWar() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        Kingdom c = kingdom("旁观国");
+
+        post200("/nation/war/declare", a.king, new WarDeclareReq(newRequestId(), b.nationId));
+
+        JsonNode fromA = get200("/nation/war/cooldowns", a.king);
+        JsonNode rowForB = null;
+        for (JsonNode row : fromA.get("cooldowns")) {
+            if (b.nationId.equals(row.get("targetNationId").asText())) {
+                rowForB = row;
+            }
+            assertThat(row.get("targetNationId").asText())
+                    .as("没交过手的第三国不许出现在这份表里（表里只有「还在冷却」的）")
+                    .isNotEqualTo(c.nationId);
+        }
+        assertThat(rowForB).as("刚宣过战的目标必须在表里").isNotNull();
+        assertThat(rowForB.get("targetNationName").asText())
+                .as("国名服务端下发（面板不许印 id）").isEqualTo("赤原");
+        long remaining = rowForB.get("remainingSec").asLong();
+        assertThat(remaining).as("剩余秒数恒为正").isPositive();
+        assertThat(remaining).as("冷却 24 小时 = 86400 秒，不会算出一个更大的数")
+                .isLessThanOrEqualTo(24L * 3600L);
+
+        // 对称：被打的一方也看得到"对方还在冷却"（同一对两国靠乒乓互宣刷击杀，是刻意防的形状）
+        JsonNode fromB = get200("/nation/war/cooldowns", b.king);
+        JsonNode rowForA = null;
+        for (JsonNode row : fromB.get("cooldowns")) {
+            if (a.nationId.equals(row.get("targetNationId").asText())) {
+                rowForA = row;
+            }
+        }
+        assertThat(rowForA).as("冷却是对称的：防守方也要看得到").isNotNull();
+        // 两侧的读数来自**同一份档**，但两次调用之间服务端时钟在走 ⇒ 差只可能来自那一小段流逝，
+        // 而秒级取整会把它放大成 1 秒。判**不变量**（差 ≤ 1 秒）而不是判相等 ——
+        // 判相等在跨秒边界时会 flaky（本用例第一版就这么红过一次），而 sleep 掩盖法本仓不用。
+        assertThat(Math.abs(rowForA.get("remainingSec").asLong() - remaining))
+                .as("两侧读到的是同一份冷却，差值只可能来自两次读之间的那一小段流逝")
+                .isLessThanOrEqualTo(3L);   // 3 秒的余量只为容两次 HTTP 往返的间隔，不掩盖两侧不同源（那会差几小时）
+
+        // 没国籍就没有这份表（与 /nation、/nation/treasury 同一条门槛）
+        JsonNode loner = perform(get("/nation/war/cooldowns").header(PLAYER_HEADER, newPlayer(1)));
+        assertThat(loner.get("code").asInt()).as("没有国籍：13000 而不是一张空表")
+                .isEqualTo(ErrorCode.NATION_NOT_FOUND.code());
+    }
     // ---------- 全服目标奖励（切片 3d）----------
 
     @Test

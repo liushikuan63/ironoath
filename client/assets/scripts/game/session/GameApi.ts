@@ -111,7 +111,8 @@ import type {
   NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationPolicyProposeReq,
   NationPolicyProposeResp, NationPolicyRoundView, NationPolicyVoteReq, NationPolicyVoteResp,
   NationResp, NationTreasuryResp, NationTreasurySpendReq, NationTreasurySpendResp,
-  NationRelationsResp, WarDeclareReq, WarGoalClaimReq, WarGoalClaimResp, WarStatusResp,
+  NationRelationsResp, WarCooldownsResp, WarDeclareReq, WarGoalClaimReq, WarGoalClaimResp,
+  WarStatusResp,
 } from '../../net/generated/NationProtocol'
 import type {
   NationTechListView, NationTechResearchReq, NationTechResearchResp,
@@ -273,6 +274,16 @@ export class GameApi {
    */
   nationRelations(): Promise<NetOutcome<NationRelationsResp>> {
     return this.read<NationRelationsResp>('/nation/relations')
+  }
+
+  /**
+   * GET /nation/war/cooldowns —— **我国**对仍在冷却中的各目标的剩余秒数（#755）。
+   *
+   * <p>面板拿它把候选目标里还在冷却的那些灰掉并写下"还要等多久" —— 口径与宣战那一枪共用同一个判据，
+   * 所以灰下去的那一刻正是服务端会拒的那一刻（客户端不自己算冷却：那是第二真源）。
+   */
+  warCooldowns(): Promise<NetOutcome<WarCooldownsResp>> {
+    return this.read<WarCooldownsResp>('/nation/war/cooldowns')
   }
 
   /**

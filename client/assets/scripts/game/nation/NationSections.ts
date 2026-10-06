@@ -15,7 +15,9 @@
  * （契约里明写两个 `TechSchool` / `TechEffectAttr` 逐字段同形、故意不分叉），
  * 定点比率走 `FixedPoint.percentText`。抄第二份就是留一个将来必然分叉的口径（#281 那一族）。
  */
-import type { NationRelationView, WarStatusResp, WarNationScoreView } from '../../net/generated/NationProtocol'
+import type {
+  NationRelationView, WarCooldownsResp, WarStatusResp, WarNationScoreView,
+} from '../../net/generated/NationProtocol'
 import type { NationTechListView, NationTechView } from '../../net/generated/NationTechProtocol'
 import { effectAttrLabel, schoolLabel } from '../tech/TechPanel'
 import { amountText, permissionGateOf } from './NationPanel'
@@ -232,7 +234,8 @@ export function buildNationSections(tech: NationTechListView | null,
   permissions: readonly string[] | null = null,
   permissionsLoaded = false,
   policy: PolicyPanel | null = null,
-  war: WarStatusResp | null = null): NationSectionsView {
+  war: WarStatusResp | null = null,
+  warCooldowns: WarCooldownsResp | null = null): NationSectionsView {
   const rows = buildDiplomacyRows(relations)
   const appointRows = buildAppointRows(members)
   return {
@@ -257,7 +260,7 @@ export function buildNationSections(tech: NationTechListView | null,
     // **默认 null**（不是空面板）：这一页没拉过时面板要说「这一次没拉到」，
     // 画一片空白会让玩家以为这个国家没有国策可议。
     policy,
-    war: buildWarSection(war, targets, permissions, permissionsLoaded),
+    war: buildWarSection(war, targets, permissions, permissionsLoaded, warCooldowns),
   }
 }
 
@@ -297,8 +300,17 @@ export interface WarSection {
   readonly goalText: string | null
   readonly fatigueText: string | null
   readonly emptyText: string | null
-  /** 可选的目标国（来自国家榜，`key` 是 nationId，只用于发请求、永不上屏）。 */
-  readonly targets: readonly { readonly key: string; readonly name: string }[]
+  /**
+   * 可选的目标国（来自国家榜，`key` 是 nationId，只用于发请求、永不上屏）。
+   *
+   * <p>`cooldownText` 非空表示这一对还在冷却里（#755）：面板据此把那一颗灰掉并写出"还要等多久"——
+   * 于是玩家不用点下去才知道被拒。B13 那条红线（不许把内部状态印给玩家）的反面，就是连"能不能点"都不说。
+   */
+  readonly targets: readonly {
+    readonly key: string
+    readonly name: string
+    readonly cooldownText: string | null
+  }[]
   /** 能不能宣战（权限位 `DECLARE_WAR`，V13-d；三态见 {@link permissionGateOf}）。 */
   readonly declareGate: NationGate
   /**
@@ -352,9 +364,21 @@ export interface WarSideRowView {
 export function buildWarSection(resp: WarStatusResp | null,
   targets: readonly { nationId: string; name: string }[] = [],
   permissions: readonly string[] | null = null,
-  permissionsLoaded = false): WarSection {
+  permissionsLoaded = false,
+  cooldowns: WarCooldownsResp | null = null): WarSection {
+  // 冷却表 → 按目标 id 查：缺失即「没有冷却」（服务端只回还没解禁的，见契约）
+  const cooldownByTarget = new Map<string, number>()
+  for (const row of cooldowns?.cooldowns ?? []) {
+    cooldownByTarget.set(row.targetNationId, row.remainingSec)
+  }
   const declareGate = permissionGateOf('DECLARE_WAR', '宣战', permissions, permissionsLoaded)
-  const targetViews = targets.slice(0, 8).map(t => ({ key: t.nationId, name: t.name }))
+  const targetViews = targets.slice(0, 8).map(t => ({
+    key: t.nationId,
+    name: t.name,
+    cooldownText: cooldownByTarget.has(t.nationId)
+      ? `还要等 ${durationText(cooldownByTarget.get(t.nationId) ?? 0)}`
+      : null,
+  }))
   // 全服奖励的三态（见 WarGoalClaimView）：两位都由服务端下发，客户端只做展示判定
   const goalClaim: WarGoalClaimView = resp === null
     ? { claimable: false, claimed: false, note: null }

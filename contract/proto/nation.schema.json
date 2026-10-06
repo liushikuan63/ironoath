@@ -1165,6 +1165,54 @@
           "description": "**请求者本人**领过这一场的全服奖励没有（`X-Player-Id` 那位）。`hasWar=false` 时为 false。\n\n**为什么必须下发这一位**：面板要能区分三种状态 —— 还没达成 / 可以领 / 已经领过了。只有 `serverGoalReached` 与「已领人数」两个读数时第三种画不出来，玩家会对着一个点了就被拒的键反复点，而那正是验收 10「每人只领一次」想避免的形状。\n\n**判定在服务端**：领取名单在战事档里（`goalClaimed`），客户端本地记一个「我刚领过」在换设备/重登之后就假了。"
         }
       }
+    },
+    "WarCooldownView": {
+      "type": "object",
+      "description": "一条「我国对某个目标还要等多久」。**只对请求者本国算**：冷却判据是那一对两国之间最近那一场（`WarStore#findLatestBetween`，双向对称），所以同一个目标在两边都会出现——防守方看到的是「对方还在冷却」，这正是设计意图（同一对两国在冷却期内靠乒乓互宣刷击杀，是 #754 那一族要防的形状）。",
+      "additionalProperties": false,
+      "required": [
+        "targetNationId",
+        "targetNationName",
+        "remainingSec"
+      ],
+      "properties": {
+        "targetNationId": {
+          "type": "string",
+          "description": "目标国家 id。**不得直接上屏**。"
+        },
+        "targetNationName": {
+          "type": "string",
+          "description": "目标国名（服务端下发）。缺名时面板给回退语，不许印 id。"
+        },
+        "remainingSec": {
+          "type": "integer",
+          "format": "int64",
+          "description": "还差多少秒解禁。**恒为正**：解禁的目标不出现在这份表里（一份满是 0 的表只是噪声）。"
+        }
+      }
+    },
+    "WarCooldownsResp": {
+      "type": "object",
+      "description": "GET /nation/war/cooldowns 的响应：**我国**对全部仍在冷却中的目标的剩余秒数。\n\n**为什么单开一个口而不是塞进 `WarStatusResp`**：#755 现读代码确认 —— `WarStatusResp` 是**全服一份**的视图（谁读都是同一份），而冷却是**按国家那一对**算的：一个全服标量装不下 N×N 个冷却状态。所以按请求者下发一张只含「我国 × 各目标」的表，目标这一维由每一行自己带。\n\n**为什么只回还没解禁的**：面板的用法是\"把候选目标里还在冷却的那些灰掉并写下还要等多久\"，解禁的目标不需要任何标注（它们本来就该是亮的）。",
+      "additionalProperties": false,
+      "required": [
+        "cooldowns",
+        "serverNow"
+      ],
+      "properties": {
+        "cooldowns": {
+          "type": "array",
+          "description": "我国对各个仍在冷却中的目标。按国家表的稳定顺序，不按剩余时间排（同一份库存上每次读出来的顺序一致，\"为什么这一条排前面\"才可复现）。",
+          "items": {
+            "$ref": "#/$defs/WarCooldownView"
+          }
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64",
+          "description": "服务端时间戳。"
+        }
+      }
     }
   }
 }

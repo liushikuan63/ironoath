@@ -741,6 +741,56 @@ if (process.env.NATION_LIVE_UI === '1') {
       })()`)
       checkThat('（回读屏）没达成时全服奖励那颗键不画（节点 WarGoalClaim 不存在）', goalKeyShown === false)
 
+      // ---- #755：冷却进视图 —— 两边都能看到那一对在冷却里，且面板把刚打过的目标写出来 ----
+      const kingNationId = uiFound.data?.nation?.nationId
+      checkThat('（回读屏）夹具前提：发起国的 nationId 非空（后面按它找冷却行）',
+        typeof kingNationId === 'string' && kingNationId.length > 0)
+      const cdFromKing = await call('GET', '/nation/war/cooldowns', undefined, uiKing.playerId, uiKing.token)
+      const rowToTarget = (cdFromKing.data?.cooldowns ?? [])
+        .find((row) => row.targetNationId === uiTargetNationId)
+      checkThat('（回读屏）刚宣过的目标出现在我国的冷却表里', rowToTarget !== undefined)
+      check('（回读屏）冷却剩余秒数为正且不超过 24 小时',
+        rowToTarget !== undefined && rowToTarget.remainingSec > 0
+          && rowToTarget.remainingSec <= 24 * 3600, true)
+      const cdFromTarget = await call('GET', '/nation/war/cooldowns', undefined, uiTarget.playerId, uiTarget.token)
+      const rowToKing = (cdFromTarget.data?.cooldowns ?? [])
+        .find((row) => row.targetNationId === kingNationId)
+      checkThat('（回读屏）冷却是对称的：被打的一方也看得到对方在冷却里', rowToKing !== undefined)
+      // 屏上那一条要落在**只可能来自冷却**的形状上：「还要等 N 小时/分」（静态文案里没有这个短语），
+      // 再叠上目标国名 —— 单判国名会假绿（它在目标行本来就有），单判短语也不够（要证是这一行）。
+      // ⚠️ **先切回「国战」页再读再拍**：上一相把面板留在了外交页，而第一版就是在那儿拍的 ——
+      // 断言读的是宣战那一刻的 afterShown（没假），图却是外交页（假证据）。截图必须拍它所声称的那一屏。
+      const readNationPanelTexts = () => page.evaluate(`(() => {
+        const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        const texts = []
+        if (panel && panel.activeInHierarchy) {
+          const walk = (n) => {
+            if (n.activeInHierarchy) {
+              const label = n.getComponent('cc.Label')
+              if (label && String(label.string ?? '').trim() !== '') texts.push(label.string)
+            }
+            for (const child of n.children) walk(child)
+          }
+          walk(panel)
+        }
+        return texts.join(\u0020).replace(/\s+/g, \u0027\u0027)
+      })()`)
+      const clickNationTab = (name) => page.evaluate(`(() => {
+        const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+        let target = null
+        const walk = (n) => { if (target) return; if (n.name === '${name}' && n.activeInHierarchy) { target = n; return } for (const child of n.children) walk(child) }
+        walk(panel)
+        if (target) target.emit('touch-start')
+        return target !== null
+      })()`)
+      checkThat('（回读屏）切回国战页', await clickNationTab('Tab_WAR'))
+      await page.waitForTimeout(1600)
+      const cdScreen = await readNationPanelTexts()
+      checkThat('（回读屏）国战页上写着冷却标注（还要等 N 小时/分 + 目标国名）',
+        /还要等 \d+ (小时|分)/.test(cdScreen) && cdScreen.includes(uiTargetFound.data.nation.name))
+      await page.screenshot({ path: path.join(OUT, 'live-war-cooldown.png') })
+      console.log(`  截图（宣战后的冷却标注）：${path.join(OUT, 'live-war-cooldown.png')}`)
+
       // ---- 负向相 ①（HTTP）：同一对两国再宣一次 ⇒ 冷却拦住，且**没有**开出第二场 ----
       const again = await call('POST', '/nation/war/declare', {
         requestId: rid('declare-again'), targetNationId: uiTargetNationId,
