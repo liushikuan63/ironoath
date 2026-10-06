@@ -205,8 +205,10 @@ if (first === null || !first.active) {
 }
 ok('战力页打开了')
 
-// 验收：六个页签都在（明细 + 四类榜 + 赛季）。页签是点进榜的唯一入口，缺一个就有一张榜看不到
-for (const label of ['明细', '战力榜', '击杀榜', '联盟榜', '国家榜', '赛季']) {
+// 验收：七个页签都在（明细 + 五类榜 + 赛季）。页签是点进榜的唯一入口，缺一个就有一张榜看不到
+// —— V18 加第五张榜（国战榜）时这一条就是它的入口判据：只改服务端发奖、页签没加上，
+// 玩家永远看不到那一列，而服务端读数全绿。
+for (const label of ['明细', '战力榜', '击杀榜', '国战榜', '联盟榜', '国家榜', '赛季']) {
   check(`页签条上有「${label}」`, has(first.labels, label), true)
 }
 // 默认停在明细页：原来那一页的内容一行没少（总计那一行是它最显眼的标志）
@@ -295,6 +297,40 @@ const kill = await readPanel()
 check('切到击杀榜后 /rank/list 的次数', rankCalls(), 2)
 check('击杀榜那一屏也画出来了（"这个榜还没有人"）', has(kill.labels, '这个榜还没有人'), true)
 checkInsidePanel(kill, '击杀榜')
+
+// 国战榜（V18 第五张榜，B13 承载 3b-2 的客户端承接）。三条判据各挡一种"看着绿其实没接上"：
+// ① 点页签真的按 type=WAR 拉了一次 —— 挡"页签画了但回调还指着上一张榜"；
+// ② 空榜说明里带着"一场仗打完那一刻"那一句 —— 挡"刚宣完战就点开的人把空榜读成功能没生效"，
+//    这一句是**只有这张榜才有**的文案，所以它同时也是"画的是国战榜而不是别的榜"的证据；
+// ③ 屏上不出现内部标识原文 WAR —— 本仓红线（裸 id 不许印给玩家），静态黑话门看不见运行期插值。
+await clickTab('WAR')
+const war = await readPanel()
+check('切到国战榜后又发了一次 /rank/list', rankCalls(), 3)
+check('那一次请求的 type 真的是 WAR',
+  requests.filter((u) => u.includes('/rank/list') && u.includes('type=WAR')).length, 1)
+check('国战榜那一屏画出来了（"这个榜还没有人"）', has(war.labels, '这个榜还没有人'), true)
+const warCompact = war.labels.join(' ').replace(/\s+/g, '')
+check('空榜说明写了发分时点（一场仗打完那一刻）', warCompact.includes('一场仗打完那一刻'), true)
+check('国战榜那一屏不出现内部标识原文 WAR',
+  /(^|[^A-Za-z])WAR([^A-Za-z]|$)/.test(warCompact), false)
+// 下面两条补的是**量具自己漏掉的那一维**（2026-10-06 实测）：页签与文案都对了，
+// 但"这张榜是玩家榜还是组织投影"没人判，于是组织榜那句提示串到国战榜上、
+// 而"我自己那一行"永不高亮 —— 41 项读数全绿，截图一眼看见。
+check('国战榜没有串到组织榜那句提示（它不是联盟/国家的账）',
+  warCompact.includes('你所在的联盟'), false)
+check('未上榜说的是自己（玩家维度那一句）', warCompact.includes('你还没有上榜'), true)
+// 页签**节点**在不在（节点名是 `tab-WAR`）：文案里出现"国战榜"三个字可能是别处的说明文字，
+// 而这个节点才是入口 —— 缺它的话玩家看得到词、点不进去。
+const warTabNode = await page.evaluate(`(() => {
+  const scene = window.cc.director.getScene()
+  const game = scene.getChildByName('Canvas').getChildByName('Game')
+  const panel = (${FIND_PANEL})(game)
+  return panel.node.getChildByName('tab-WAR') !== null
+})()`)
+check('国战榜的页签节点真在面板上（点得进去，不只是有这句文案）', warTabNode, true)
+checkInsidePanel(war, '国战榜')
+await page.screenshot({ path: path.join(OUT, 'rank-board-war.png') })
+console.log(`  截图（国战榜空榜）：${path.join(OUT, 'rank-board-war.png')}`)
 
 // 明细页来回切：不重复发榜请求
 const beforeBack = rankCalls()

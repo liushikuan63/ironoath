@@ -9,7 +9,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildRankBoard, buildRankSnapshotView, boardHintOf, isBoardTab, valueLabelOf, RANK_TABS,
+  buildRankBoard, buildRankSnapshotView, boardHintOf, isBoardTab, isPersonalBoard, valueLabelOf, RANK_TABS,
 } from '../assets/scripts/game/power/RankBoard'
 import type { RankEntryView, RankListResp } from '../assets/scripts/net/generated/RankProtocol'
 
@@ -88,7 +88,8 @@ test('空榜与未加载：各有各的说明，且空榜会告诉玩家这个�
   const loading = buildRankBoard(null, 'KILL', 'P-1')
   assert.equal(loading.emptyText, '正在载入…')
   assert.equal(loading.rows.length, 0)
-  assert.deepEqual(loading.tabs.map(t => t.active), [false, false, true, false, false, false])
+  assert.deepEqual(loading.tabs.map(t => t.active),
+    [false, false, true, false, false, false, false], '七个页签里只有击杀榜高亮')
 })
 
 test('明细页签不画榜：那是 /player/power 的地盘，串台会让玩家以为榜值是自己的战力明细', () => {
@@ -107,21 +108,59 @@ test('响应与页签不是同一张榜时按载入中处理：绝不在 KILL �
   assert.equal(stale.rows.length, 0)
   assert.equal(stale.emptyText, '正在载入…')
   assert.equal(stale.mine, null, '上一张榜的我的名次也不许带过来')
-  assert.deepEqual(stale.tabs.map(t => t.active), [false, false, true, false, false, false])
+  assert.deepEqual(stale.tabs.map(t => t.active),
+    [false, false, true, false, false, false, false], '串台时高亮也跟着 active 走，而不是留在上一张榜')
 })
 
-test('页签顺序固定（明细 + 四类榜 + 赛季），标签与量纲一一对应 —— 顺序变了玩家的肌肉记忆就废了', () => {
+test('页签顺序固定（明细 + 五张榜 + 赛季），标签与量纲一一对应 —— 顺序变了玩家的肌肉记忆就废了', () => {
   assert.deepEqual(RANK_TABS.map(t => t.key),
-    ['DETAIL', 'POWER', 'KILL', 'ALLIANCE', 'NATION', 'SEASON'])
+    ['DETAIL', 'POWER', 'KILL', 'WAR', 'ALLIANCE', 'NATION', 'SEASON'])
   assert.equal(isBoardTab('DETAIL'), false)
   assert.equal(isBoardTab('SEASON'), false, '赛季页不是一张榜：它由 /season/status 供数')
   assert.equal(isBoardTab('KILL'), true)
-  const labels = (['POWER', 'KILL', 'ALLIANCE', 'NATION'] as const).map(k => valueLabelOf(k))
-  assert.deepEqual(labels, ['匹配战力', '赛季击杀', '联盟赛季分', '国家赛季分'])
-  assert.equal(new Set(labels).size, 4, '四个量纲不许共用同一个标签')
+  assert.equal(isBoardTab('WAR'), true, '国战榜是一张榜：它不许被当成赛季页那种非榜页签')
+  const labels = (['POWER', 'KILL', 'WAR', 'ALLIANCE', 'NATION'] as const).map(k => valueLabelOf(k))
+  assert.deepEqual(labels, ['匹配战力', '赛季击杀', '国战赛季分', '联盟赛季分', '国家赛季分'])
+  assert.equal(new Set(labels).size, labels.length, '五个量纲不许共用同一个标签')
   assert.match(boardHintOf('POWER'), /匹配战力/)
   assert.match(boardHintOf('KILL'), /击杀/)
+  // 国战榜不是实时累计的榜（一场仗打完那一刻才发一次），提示里少了这一句，空榜会被读成"功能没生效"
+  assert.match(boardHintOf('WAR'), /一场仗打完那一刻/)
   assert.throws(() => valueLabelOf('NOPE' as never), /不认识的榜类型/)
+})
+
+test('国战榜那一页屏上不出现裸枚举原文（红线：WAR 是内部标识，玩家读的只有中文）', () => {
+  const war = buildRankBoard(list({ type: 'WAR', entries: [], myRank: null, myValue: null }),
+    'WAR', 'P-1')
+  // 空榜那句是这一页唯一会印出来的长文案，所以直接量它，而不是量"拼起来的字符串里有没有中文"
+  assert.match(war.emptyText ?? '', /国战/)
+  assert.match(war.emptyText ?? '', /一场仗打完那一刻/,
+    '少这一句，刚宣完战就点开的人会把它读成"这功能没生效"')
+  const onScreen = [
+    ...war.tabs.map(t => t.label),
+    war.emptyText ?? '',
+    war.mine?.valueLabel ?? '',
+  ].join('|')
+  assert.equal(/(^|[^A-Za-z])WAR([^A-Za-z]|$)/.test(onScreen), false,
+    `榜页上出现了内部标识原文：${onScreen}`)
+})
+
+test('国战榜是**玩家榜**：未上榜那句不许提联盟/国家，而我自己那一行必须被标出来', () => {
+  // 这两条是 2026-10-06 真跑截图抓出来的那一族：`personal` 原先写成 POWER/KILL 白名单，
+  // 第五张榜静默掉到组织那一支 —— 文案串台 + mine 高亮永远不亮，而机器读数全绿。
+  const notRanked = buildRankBoard(list({ type: 'WAR', myRank: null, myValue: null }), 'WAR', 'P-1')
+  assert.equal(notRanked.notRankedText?.includes('联盟'), false,
+    `国战榜不是联盟/国家的账，那句提示串台了：${notRanked.notRankedText}`)
+  assert.equal(notRanked.notRankedText?.includes('国家'), false,
+    `同上：${notRanked.notRankedText}`)
+  assert.match(notRanked.notRankedText ?? '', /你还没有上榜/)
+  const ranked = buildRankBoard(list({ type: 'WAR' }), 'WAR', 'P-2')
+  assert.equal(ranked.rows.find(r => r.mine)?.rank, 2,
+    '我自己那一行要标出来：personal 判错时这一格永远不亮，而榜上其它行看着完全正常')
+  assert.equal(isPersonalBoard('WAR'), true)
+  assert.equal(isPersonalBoard('NATION'), false)
+  assert.throws(() => isPersonalBoard('NOPE' as never), /不认识的榜类型/,
+    '加一张榜必须在这里登记一次，不许静默归到某一支')
 })
 
 test('赛季页签不画榜：手里那张榜的响应绝不会漏到赛季页签下面', () => {
@@ -129,9 +168,11 @@ test('赛季页签不画榜：手里那张榜的响应绝不会漏到赛季页�
   assert.equal(season.rows.length, 0)
   assert.equal(season.mine, null, '别把上一张榜的"我的名次"带到赛季页')
   assert.equal(season.emptyText, null, '赛季页的正文由赛季视图画，榜这边连说明都不留')
-  assert.equal(season.tabs.length, 6)
-  assert.equal(season.tabs[5]?.key, 'SEASON')
-  assert.equal(season.tabs[5]?.active, true)
+  // 六个页签变七个（V18 的国战榜）：这一条数的是"页签总数"，加榜时必须跟着改 —— 它拦的是
+  // "改了 RANK_TABS 却忘了回写这两行下标"（tabs[6] 写成 tabs[5] 的话，页签少一个也照样绿）
+  assert.equal(season.tabs.length, 7)
+  assert.equal(season.tabs[6]?.key, 'SEASON')
+  assert.equal(season.tabs[6]?.active, true)
 })
 
 test('拉榜失败时那一行提示由编排层给，原样透传（客户端不重写服务端的理由）', () => {

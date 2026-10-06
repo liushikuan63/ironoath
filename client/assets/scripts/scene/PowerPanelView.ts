@@ -293,7 +293,7 @@ export class PowerPanelView extends Component {
     this.rows.push(button)
   }
 
-  /** 页签条：五个页签等宽排开，当前那个用高亮底色（点击回调交给编排层）。 */
+  /** 页签条：按页签个数等宽排开（加一张榜只改 `RANK_TABS`，这里不按个数写死），当前那个用高亮底色。 */
   private drawTabs(y: number): number {
     const tabs = this.rankView?.tabs ?? RANK_TABS.map(tab => ({
       key: tab.key, label: tab.label, active: tab.key === 'DETAIL',
