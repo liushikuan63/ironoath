@@ -175,6 +175,9 @@ public class WarAppService {
                 // 表里那句「取 24 小时 = 每个国家每天最多宣战一次，配合 3 小时的战斗时长」
                 // 说的就是开场时刻的间隔；从结束起算会把它变成 27 小时，那是设计者没写过的东西。
                 // 毫秒口已经在 Nation 上（LevelRule.warCooldownHours() × 3600 × 1000），这里不乘第二遍。
+                // 还有一条要说清的边界：那一档是<b>宣战方当前等级</b>给的。今天 nation_config 三档都是 24，
+                // 所以攻守各算各的也得到同一个数，看不出分叉；真按等级分档那天要先定「用哪一方那一档」——
+                // 现在这个写法意味着等级不同的两国会算出两个不同的解禁时刻，而不是一个。
                 long cooldownMillis = attacker.warCooldownMillis();
                 wars.findLatestBetween(attacker.id(), targetId)
                         .filter(last -> now < last.startedAt() + cooldownMillis)
