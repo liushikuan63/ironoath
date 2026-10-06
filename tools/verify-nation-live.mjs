@@ -436,8 +436,16 @@ if (process.env.NATION_LIVE_UI === '1') {
   if (uiFound.code === 0) {
     // 宣战要有一个"别人家的国"：另起一个号建盟建国（走真 HTTP，不开夹具）
     const uiTarget = await initPlayer('nationliveuitarget')
-    await call('POST', '/alliance/create', {
+    const uiTargetAlliance = await call('POST', '/alliance/create', {
       requestId: rid('alliance-ui-target'), name: `目标盟${runTag}`, tag: `T${runTag.slice(-4)}`,
+    }, uiTarget.playerId, uiTarget.token)
+    // 第三个号：一个**不是国王**的成员，用来验「权限位没有 DECLARE_WAR 时那颗键灰且点了零请求」
+    const uiMember = await initPlayer('nationliveuimember')
+    await call('POST', '/alliance/apply', {
+      requestId: rid('apply-ui-member'), allianceId: uiTargetAlliance.data?.alliance?.id,
+    }, uiMember.playerId, uiMember.token)
+    await call('POST', '/alliance/review', {
+      requestId: rid('review-ui-member'), applicantId: uiMember.playerId, approve: true,
     }, uiTarget.playerId, uiTarget.token)
     const uiTargetFound = await call('POST', '/nation/found', {
       requestId: rid('found-ui-target'), name: `目标国${runTag}`, capitalX: 155, capitalY: 88,
@@ -674,6 +682,94 @@ if (process.env.NATION_LIVE_UI === '1') {
       checkThat('（回读屏）开战后屏上仍无内部 id', !/nation_[a-z0-9]/.test(afterShown))
       await page.screenshot({ path: path.join(OUT, 'live-war-declared.png') })
       console.log(`  截图：${path.join(OUT, 'live-war-declared.png')}`)
+
+      // ---- 负向相 ①（HTTP）：同一对两国再宣一次 ⇒ 冷却拦住，且**没有**开出第二场 ----
+      const again = await call('POST', '/nation/war/declare', {
+        requestId: rid('declare-again'), targetNationId: uiTargetNationId,
+      }, uiKing.playerId, uiKing.token)
+      check('（回读屏）同一对两国再宣战被冷却拦住（13023）', again.code, 13023)
+      const stillOne = await call('GET', '/nation/war', undefined, uiKing.playerId, uiKing.token)
+      check('（回读屏）被拦之后仍然只有那一场', stillOne.data?.hasWar, true)
+
+      // ---- 负向相 ②（真 UI）：非国王那一号点宣战 ⇒ 键灰、写明理由、**零请求** ----
+      const memberContext = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+      await memberContext.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v), uiMember.deviceId)
+      const memberPage = await memberContext.newPage()
+      let memberDeclares = 0
+      memberPage.on('request', (r) => { if (r.url().includes('/nation/war/declare')) memberDeclares += 1 })
+      try {
+        await memberPage.goto(`${preview.origin}/?panel=social`, { waitUntil: 'networkidle' })
+        await memberPage.waitForFunction(() => window.cc !== undefined && window.cc.director?.getScene() !== null,
+          null, { timeout: 60_000 })
+        await memberPage.waitForTimeout(3500)
+        await hideGuideOverlay(memberPage)
+        await memberPage.waitForTimeout(400)
+        const opened = await memberPage.evaluate(`(() => {
+          const scene = window.cc.director.getScene()
+          const social = scene.getChildByName('Canvas').getChildByName('Game').getChildByName('social')
+          if (!social) return false
+          social.getChildByName('Tab_alliance').emit('touch-start')
+          let target = null
+          const walk = (n) => {
+            if (target) return
+            if (/^ActionButton[23]?$/.test(n.name) && n.activeInHierarchy) {
+              const caption = n.getComponentInChildren('cc.Label')
+              if (caption && String(caption.string) === '国家') { target = n; return }
+            }
+            for (const child of n.children) walk(child)
+          }
+          walk(social)
+          if (target === null) return false
+          target.emit('touch-start')
+          return true
+        })()`)
+        checkThat('（负向相）非国王那个号也点得开国家面板', opened)
+        await memberPage.waitForTimeout(2000)
+        const memberTab = await memberPage.evaluate(`(() => {
+          const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+          if (!panel || !panel.activeInHierarchy) return false
+          let target = null
+          const walk = (n) => { if (target) return; if (n.name === 'Tab_WAR' && n.activeInHierarchy) { target = n; return } for (const child of n.children) walk(child) }
+          walk(panel)
+          if (target === null) return false
+          target.emit('touch-start')
+          return true
+        })()`)
+        checkThat('（负向相）切到国战页', memberTab)
+        await memberPage.waitForTimeout(1800)
+        const memberTexts = await memberPage.evaluate(`(() => {
+          const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+          const texts = []
+          if (panel && panel.activeInHierarchy) {
+            const walk = (n) => {
+              if (n.activeInHierarchy) {
+                const label = n.getComponent('cc.Label')
+                if (label && String(label.string ?? '').trim() !== '') texts.push(label.string)
+              }
+              for (const child of n.children) walk(child)
+            }
+            walk(panel)
+          }
+          return texts
+        })()`)
+        const memberShown = (memberTexts ?? []).join(' ').replace(/\s+/g, '')
+        checkThat('（负向相）非国王看到的是「职位不能宣战」那条灰键理由',
+          memberShown.includes('你当前的职位不能宣战'))
+        // 点一下那颗灰键：`button(...)` 在 disabled 时不绑 touch-start ⇒ 零请求
+        await memberPage.evaluate(`(() => {
+          const panel = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+          let target = null
+          const walk = (n) => { if (target) return; if (n.name === 'WarDeclare' && n.activeInHierarchy) { target = n; return } for (const child of n.children) walk(child) }
+          walk(panel)
+          if (target !== null) target.emit('touch-start')
+        })()`)
+        await memberPage.waitForTimeout(900)
+        check('（负向相）点灰键零请求（一条 declare 都没发）', memberDeclares, 0)
+        await memberPage.screenshot({ path: path.join(OUT, 'live-war-permission-gate.png') })
+        console.log(`  截图（非国王的灰键）：${path.join(OUT, 'live-war-permission-gate.png')}`)
+      } finally {
+        await memberContext.close()
+      }
       check('（回读屏）零页面错误', errors.join(' | ') || '无', '无')
       await page.screenshot({ path: path.join(OUT, 'live-panel.png') })
       console.log(`  截图：${path.join(OUT, 'live-panel.png')}`)
