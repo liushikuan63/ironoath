@@ -5438,3 +5438,30 @@ TEST_EXIT=0
 **下一步**：2c 惰性结算（读到 `now >= startedAt + 时长` 就结算，服务端禁定时器，与国策轮次同一手法）
 → 3a 宣战冷却接上 `warCooldownHours` → 3b 赛季分进 `Board.WAR`（原子累加口 `SeasonBoardStore.accumulate` 已有）
 → 3c 客户端 `GameApi` + 面板 + 埋点（前台改动要真跑截图）。验收矩阵 B13 验收 6/7/8/10 在此之前**继续挂 ⬜**。
+
+### 2026-10-06 15:0x｜会话 aa34087e：B13 承载切片 2c（国战惰性结算：读到即结算并落盘）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| `WarStore.settleIfExpired(now)` 端口 + 两套实现（内存版本对象监视器、Mongo 版 `activeLock`，与既有 `insertIfNoneActive`／`recordKills` **同一把锁**）+ `WarStore.dueToSettle` 那份唯一判据；`warStatus` 读到即推进，`declare` 在判「有没有活仗」之前也先推进一次 | 一格一笔（源码、判据、台账、契约描述同批） | `check.sh` **EXIT=0 · 45 道**（未增删门）· `test.sh` **2091 项 0 红 0 错 0 跳**（拆解 57+154+584+52+1237+7，前值 2085 加本格 6）· 客户端 1018 项 0 红 · **真启动**：`--ironoath.storage=mongo` 在 8299 起服务，往 `ironoath_war2c.war` 摆一场四小时前的 `SIEGE`，`GET /nation/war` 回 `phase=SETTLED`、`remainingSec=0`、`hasWar=true`，第二次读逐字段相同，`mongosh` 复核库内已是 `phase=SETTLED totalKills=700`；对照组打不存在的路径回 `HTTP=404` | 反证六次各点名红一次：① 去掉 `dueToSettle` 里 `phase != SETTLED` ⇒ `lazySettleRunsExactlyOnceOnBothStores` 抛「国战已经结算过了」且 HTTP 侧那条变 500；② `>=` 改 `>` ⇒ 三条等价用例红在「到点这一刻必须当场定格」；③ 结而不落盘 ⇒ 等价 + HTTP 两条红，其中 `declaringSettlesTheExpiredWarWithoutAPanelRead` 回 13020；④ 读端点退回 `findLatest` ⇒ `expiredWarSettlesOnThePanelRead` 红；⑤ 宣战口拿掉推进 ⇒ `declaring...` 红成 13020；⑥ 拆掉 Mongo 版 `synchronized (activeLock)` ⇒ 前五条**全绿**（都是单线程用例，锁只在两个线程错开时可见），于是补 `settleAndKillsShareTheCriticalSectionOnBothStores`（30 轮线性判据）后它点名 `MongoWarStore` 红；还原并刷 mtime 后 37 条连跑两次全绿；`javap -c` 证本轮字节码 `monitorenter=3` | 胜者发奖无产品口径（记 #753，结算返回的 `Result` 至今无消费者）；`recordKills` 不看时间 ⇒ 过期未结算那段窗口里击杀仍然进账（记 #754）；结算本身不打审计日志（只能从落盘的 `phase` 反推）；宣战冷却 `warCooldownHours` 仍零消费者（下一格 3a）；关卡与王城不是可占领物 ⇒ 生产上结出来的板子只有击杀分，验收矩阵 B13 验收 6/7/8/10 继续挂 ⬜ |
+
+**关键决策与理由**
+
+- **结算口长在存储端口上，而不是服务层写 `findLatest() → settle() → save()`**：那是一次没有保护的读-改-写，
+  而它抢的档与 `insertIfNoneActive`／`recordKills` 是同一块板子。两个人同时打开面板就各推一次，
+  第二次撞在内核 `settle()` 那条「重复结算会让积分被算两遍」的护栏上 —— 玩家侧是面板 500。
+  变异 ① 就是把那道 `phase` 判定摘掉，症状与这段推理逐字吻合，所以这句话不是推测。
+- **返回板子而不是返回 boolean**：调用方紧接着要用这块板画视图；让它再 `findLatest()` 一次等于把窗口重开，
+  那一读完全可能读到别人刚开的新一场，于是同一秒里「上一场刚结完」与「新一场 0 分」同时出现在一张面板上。
+- **多做的一处：宣战口也推进时间**（施工单只要求读链路）。理由是 `insertIfNoneActive` 读的是存储里 `phase` 的
+  **字面值**，一场打满 3 小时的仗在有人读面板之前那个字面值仍是 `SIEGE` —— 只有读口会结算的话，
+  「仗早打完了却再也宣不了战」的解锁条件会挂在**别人**的某一次读取上。变异 ⑤ 单独钉这一处。
+- **结算返回的 `Result` 就地丢弃，不是漏接**：B13/B21 都没写赢了给什么，`WAR_SERVER_GOAL_GOLD` 是全服目标奖励
+  （另一条正交条件，且领取端点未做）。少发东西玩家可以抱怨，多发东西要回收就是事故 ⇒ 口径记 #753 等拍板。
+- **并发判据从「数值」改写成「线性」**：结算与击杀同时发生时合法结果有两种（击杀先落 ⇒ 板子上带着那 10 个；
+  结算先落 ⇒ 击杀被 `NO_ACTIVE_WAR` 拒掉），断言只能挂在**击杀自己的返回值**上。写死一个数必然假红。
+  这条也是新补的：拆锁那次（变异 ⑥）前五条判据全绿，说明"共用同一把锁"这句话当时是**不可失败的断言**。
+
+**下一步**：3a 宣战冷却（把 `warCooldownHours` 那列从零消费者变成有执行点，推荐从 war 历史推、不新增存档）
+→ 3b 赛季分进 `Board.WAR` → 3c 客户端 `GameApi` + 面板 + 埋点（前台改动要真跑截图）。
+验收矩阵 B13 验收 6/7/8/10 在上述落地前继续挂 ⬜，本格未改矩阵一行。

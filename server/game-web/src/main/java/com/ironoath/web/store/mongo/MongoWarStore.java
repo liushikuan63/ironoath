@@ -128,6 +128,38 @@ public final class MongoWarStore implements WarStore {
     }
 
     /**
+     * 惰性结算：<b>判到期、{@code settle()}、整档写回收在 {@code activeLock} 这一把锁里</b>，
+     * 与 {@link #insertIfNoneActive}／{@link #recordKills} 共用同一把 —— 三条写路径改的是同一块板子，
+     * 分成三把锁就等于「两个人各自打开面板会各结算一次」，而第二次会敲在内核那条
+     * 「重复结算会让积分被算两遍」的护栏上，玩家侧表现是面板 500。
+     *
+     * <p>落盘用 {@code updateFirst} 而不是 {@code save}：主键按 {@code startedAt} 推导，结算不动它，
+     * 所以写回必然落在<b>原来那一条档</b>上。这一点是"历史留档"的另一半 —— 若结算变成
+     * 删旧插新，{@link #insertIfNoneActive} 之后 {@code insertIfAbsent(那一场)} 就不会再撞键，
+     * 而等价测试里那条专门盯这件事的断言会红。
+     */
+    @Override
+    public Optional<WarScoreBoard> settleIfExpired(long now) {
+        synchronized (activeLock) {
+            WarDocument doc = latestDocument();
+            if (doc == null || doc.state() == null) {
+                return Optional.empty();
+            }
+            WarScoreBoard board = WarScoreBoard.fromSnapshot(doc.state(), rules.rules());
+            if (!WarStore.dueToSettle(board, now)) {
+                return Optional.of(board);
+            }
+            board.settle(now);
+            Update update = new Update()
+                    .set("startedAt", board.startedAt())
+                    .set("state", board.toSnapshot());
+            mongo.updateFirst(Query.query(Criteria.where("_id").is(doc.warId())),
+                    update, WarDocument.class, WarDocument.COLLECTION);
+            return Optional.of(board);
+        }
+    }
+
+    /**
      * 击杀归属：<b>读、判、改、写回收在 {@code activeLock} 这一把锁里</b>，与
      * {@link #insertIfNoneActive} 共用同一把 —— 所以"刚宣完战的第一场"与"同一秒打完的那一仗"
      * 不会各自拿着旧副本互相盖。

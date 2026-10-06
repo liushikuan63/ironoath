@@ -108,6 +108,37 @@ public interface WarStore {
     Optional<WarScoreBoard> findLatest();
 
     /**
+     * 惰性推进这一场仗的时间：<b>最新那一场如果已经打完了规定时长，就在这一句里结算并落盘</b>。
+     *
+     * <p><b>为什么结算挂在「读」上而不是定时任务</b>：服务端禁常驻定时器（{@code check-no-scheduled.sh}
+     * 是门禁，时间推进一律惰性驱动），所以「到点结算」必须找一个必然发生的动作当载体。
+     * 与国策轮次（{@code NationAppService#nationPolicy} 读视图顺带 {@code settlePolicy}）、
+     * 国库周税（{@code NationStore#settleWeeklyTax}）是同一手法，不是这里图省事。
+     *
+     * <p><b>为什么这个口长在存储端口上，而不是服务层写 {@code findLatest() → settle() → save()}</b>：
+     * 那是一次<b>没有保护的读-改-写</b>，而它抢的档与 {@link #insertIfNoneActive}、{@link #recordKills}
+     * 是同一块板子。两个玩家同时打开面板会各推一次，第二次落在内核那条
+     * {@link WarScoreBoard#settle(long)} 的护栏上直接抛 {@code IllegalStateException} ——
+     * 挂在读端点上就是 500；更糟的是「结算写回」与「同一秒有人刚记进来的击杀」互相整档覆盖。
+     * 因此<b>判到期、结算、落盘三件事必须在同一个临界区里</b>，且用那两条已经 in use 的同一把锁
+     * （内存版是本对象的监视器，Mongo 版是 {@code activeLock}）。
+     *
+     * <p><b>返回板子而不是返回 boolean</b>：调用方紧接着就要拿这一块板画视图，让它再
+     * {@link #findLatest()} 一次等于把窗口重新打开 —— 那一读完全可能读到别人刚开的<b>新</b>一场，
+     * 于是玩家在同一秒看到「刚结算完」的状态变迁与「新仗 0 分」的面板。
+     *
+     * <p><b>{@code durationMillis} 取的是当前配置而不是建档那一刻</b>（规则不进快照，见
+     * {@link WarRulesAssembler}）：热调 {@code WAR_DURATION_HOURS} 会立刻影响已开着的仗。
+     * 这与本类其余读口的口径一致（数值一律现取），记在这里是因为「缩短时长能不能提前结束一场
+     * 正在打的仗」是一个有人会以为是锁死的语义问题。
+     *
+     * @param now 服务端时刻。<b>由调用方传入，本方法不读时钟</b> —— 与 {@link #recordKills} 同一条纪律，
+     *            这样「跨过那一刻」这个边界能被测试精确摆位，不必 sleep
+     * @return 最新那一场（可能就是刚刚被这一句结算完的那份）；一份都没有时为 empty
+     */
+    Optional<WarScoreBoard> settleIfExpired(long now);
+
+    /**
      * 击杀归属的结果（四个值各对应一种"要不要记账"的判断，不是一个笼统的 boolean）：
      * 战斗每天都在发生，把四种情况压成一个布尔，日志与排查就只能靠猜。
      */
@@ -162,6 +193,28 @@ public interface WarStore {
         }
         board.recordServerKill(killerPlayerId, units);
         return KillResult.SERVER_ONLY;
+    }
+
+    /**
+     * 「这一场该结算了」的<b>唯一一份</b>判据，两套实现共用（与 {@link #applyKills} 同一条理由：
+     * 放在任何一份实现里，另一份早晚漂掉）。
+     *
+     * <p>两个条件各挡一种误判，缺一个都不是"少一条保险"而是少一条正确性：
+     * <ul>
+     *   <li>{@code phase != SETTLED} —— 已是历史的档必须直接放过。不写这一条，第二次读会撞内核
+     *       {@link WarScoreBoard#settle(long)} 那条「重复结算会让积分被算两遍」的护栏并抛到端点上。
+     *       内核那条护栏<b>保留且不许绕过</b>：它挡的是"有人不经存储层自己 settle"，
+     *       而这里先判是为了让<b>正常路径</b>不去敲它。</li>
+     *   <li>{@code now >= startedAt + durationMillis} —— 未到期不许结算。写宽（比如用 {@code >} 配
+     *       分钟取整）会让最后不足一分钟的那段占领分被提前定格，而占领分正是防偷家的全部机制。</li>
+     * </ul>
+     *
+     * <p>用 {@code >=} 而不是 {@code >}：时长是配置里的整数小时，"刚好到点"那一次读必须算到期，
+     * 否则玩家看到的面板会停在 {@code remainingSec=0} 而 {@code phase=SIEGE} —— 一个自相矛盾的读数。
+     */
+    static boolean dueToSettle(WarScoreBoard board, long now) {
+        return board.phase() != WarScoreBoard.Phase.SETTLED
+                && now >= board.startedAt() + board.rules().durationMillis();
     }
 
     /**

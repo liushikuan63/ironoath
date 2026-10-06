@@ -102,6 +102,27 @@ public final class InMemoryWarStore implements WarStore {
     }
 
     /**
+     * 惰性结算。<b>{@code synchronized} 不是装饰</b>：判到期、{@code settle()}、整份写回三步必须在
+     * 本对象的同一把监视器里，与 {@link #insertIfNoneActive}／{@link #recordKills} 共用同一把锁 ——
+     * 否则「两个人同时打开面板」会各推一次结算（第二次落在内核护栏上抛 {@code IllegalStateException}），
+     * 而 dev 下单线程用例全绿，看不见这个窗口。
+     */
+    @Override
+    public synchronized Optional<WarScoreBoard> settleIfExpired(long now) {
+        WarScoreBoard.Snapshot stored = latestSnapshot().orElse(null);
+        if (stored == null) {
+            return Optional.empty();
+        }
+        WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        if (WarStore.dueToSettle(board, now)) {
+            board.settle(now);
+            // 主键按 startedAt 推导，settle 不动它 ⇒ 写回必然落在同一档上（历史不会被"挪个位置"）
+            byId.put(WarStore.documentIdOf(board), board.toSnapshot());
+        }
+        return Optional.of(board);
+    }
+
+    /**
      * 按 {@code startedAt} 取最近那一份。<b>不依赖插入顺序</b>：内存 map 的顺序是写入顺序，
      * 而「先落盘的旧一场、后建档的新一场」完全可能让两者不一致 —— 拿顺序当时间就会在
      * Mongo 版（按 startedAt 排序）那边分家，等价测试正是为拦这个而存在。

@@ -36,9 +36,11 @@ import com.ironoath.web.social.SocialRulesAssembler;
  * 这里也不做权限位：{@code role_permission} 表里没有 VIEW_WAR 这一位，凭空加一道只会让人以为
  * 「普通玩家看不到国战进度」是设计意图。
  *
- * <p><b>本类是承载，不是玩法</b>：这一切片没有任何写入路径（击杀累计、疲劳累积、开战与结算都未接线），
- * 所以生产上 {@code findLatest()} 恒空、视图恒回 {@code hasWar=false}。
- * 验收矩阵里 B13 的疲劳值上限与国家集结门槛两条因此继续挂 ⬜，<b>不因为这个端点存在而变</b> ——
+ * <p><b>本类是承载，不是玩法</b>：写侧今天通了半条 —— 开战（{@link #declare}）、击杀累计
+ * （挂在 {@code BattleReportService.record} 那个唯一漏斗上）、到期结算（{@link #warStatus} 顺带推进，
+ * 见 {@link WarStore#settleIfExpired}）三样都有执行者。仍<b>没有</b>执行者的是：疲劳累积（{@code addFatigue}
+ * 无生产调用点）、占领分与建筑分（关卡和王城今天不是地图上的可占领物，{@code beginSiege} 进不去）。
+ * 所以验收矩阵里 B13 的疲劳值上限与国家集结门槛两条继续挂 ⬜，<b>不因为这条读链路存在而变</b> ——
  * 把它当「国战通了」的证据是错的，这条边界在 {@code WarStatusResp} 的协议描述里也写了同一句。
  *
  * <p><b>数值一律现取，不缓存</b>：规则来自 {@link WarRulesAssembler}（每次装配一遍，热更立刻生效），
@@ -89,7 +91,10 @@ public class WarAppService {
     public WarStatusResp warStatus(String playerId) {
         long now = timeService.serverNow();
         WarScoreBoard.Rules rules = assembler.rules();
-        Optional<WarScoreBoard> latest = wars.findLatest();
+        // 读这一句顺带把时间推进一格：到点的那一场在这里结算并落盘（服务端禁常驻定时器）。
+        // 用 settleIfExpired 而不是 findLatest —— 后者只看不动，一场打满 3 小时的仗会永远停在 SIEGE，
+        // 而"什么时候算打完"这个问题没有别的执行者。
+        Optional<WarScoreBoard> latest = wars.settleIfExpired(now);
         if (latest.isEmpty()) {
             // 无战事：积分与击杀给 0（那是"没有任何事发生过"的真值），而 phase/startedAt/占领者给 null
             // （那三项没有真值可给，填 0 会被读成"1970 年开过一场仗"）。
@@ -121,7 +126,7 @@ public class WarAppService {
      * 宣战（B13 §一 §7 的开局那一步）：立一块积分板、把攻守两国登记成参战方，并把关系转成敌对。
      *
      * <p><b>前置的顺序是算过的</b>：本国存在 → 有 {@code DECLARE_WAR} 权限 → 不是打自己 →
-     * 外交关系允许打 → 目标国存在且没解散 → 当前没有未结束的仗。
+     * 外交关系允许打 → 目标国存在且没解散 → （推进上一场的时间）→ 当前没有未结束的仗。
      * 把「没有未结束的仗」放在最后不是疏忽：前面几条都是<b>不写任何东西就能否掉</b>的，
      * 而"有没有仗"这条必须和插入收在同一个临界区里才成立（见 {@link WarStore#insertIfNoneActive}）——
      * 提前查它就等于用一次带竞争的读去决定要不要走后面那条无竞争的路径，白多一个窗口。
@@ -129,7 +134,10 @@ public class WarAppService {
      * <p><b>为什么这一格里还发不了奖、也没有王城</b>：关卡与王城今天不是地图上的可占领实体
      * （{@code WorldEntityType} 只有城/野怪/资源/行军/建筑），所以这块板会停在
      * {@code PREPARATION}，{@code beginSiege} 进不去，占领分与建筑分永远为 0，
-     * 只有击杀（切片 2b）会动。验收矩阵 B13 的验收 6/7 因此仍挂 ⬜。
+     * 会动的只有击杀（切片 2b）；打满 {@code WAR_DURATION_HOURS} 之后由读取惰性结算（切片 2c）。
+     * <b>胜者不发奖</b>：B13/B21 都没写「赢了给什么」（{@code WAR_SERVER_GOAL_GOLD} 是另一件事 ——
+     * 全服目标奖励，且领取端点也还没做），那是产品口径，已登记待裁决而不是在这里替产品决定。
+     * 验收矩阵 B13 的验收 6/7 仍挂 ⬜。
      *
      * @return 宣战之后的完整国战视图（写操作回视图而不是只回 ok，与 {@code /nation/found} 那几条同一条理由：
      *         客户端据此刷新面板，少一次往返在弱网下就是少一次超时）
@@ -162,6 +170,11 @@ public class WarAppService {
                                 "targetNationId=" + targetId
                                         + "（查不到或已解散：解散记录仍然留在档里，所以必须过 isDisbanded）"));
 
+                // 先推进上一场的时间，再判"有没有活着的仗"。不这么做的表现不是报错而是卡死式的：
+                // insertIfNoneActive 读的是存储里的 phase 字面值，而一场打满 3 小时的仗在有人打开面板之前
+                // phase 仍然是 SIEGE —— 于是"仗早打完了却再也宣不了战"，解锁条件落在别人的那一次读上。
+                // 结算与插入各自收在自己的临界区里，这里没有把判断搬到服务层（见 WarStore#insertIfNoneActive）
+                wars.settleIfExpired(now);
                 WarScoreBoard board = new WarScoreBoard(assembler.rules(), now);
                 board.registerNation(attacker.id());
                 board.registerNation(target.id());

@@ -78,6 +78,8 @@ class WarEndpointTest {
 
     private static final String PLAYER_HEADER = "X-Player-Id";
     private static final long MINUTE = 60_000L;
+    /** 摆「早已打过 {@code WAR_DURATION_HOURS}」那两场用的量具单位（不是配置值，配置值现取）。 */
+    private static final long HOUR = 60 * MINUTE;
 
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
@@ -449,6 +451,104 @@ class WarEndpointTest {
                 .as("没有仗就是 NO_ACTIVE_WAR：什么都不记，也不凭空开一场")
                 .isEmpty();
         assertThat(get200("/nation/war", a.king).get("hasWar").asBoolean()).isFalse();
+    }
+
+    // ---------- 惰性结算（切片 2c：读端点顺带把时间推进一格）----------
+
+    /**
+     * 一场打满了 {@code WAR_DURATION_HOURS} 的仗，靠这一次读面板定格。
+     *
+     * <p><b>夹具把 {@code startedAt} 摆到四小时前</b>而不是 sleep、也不是拨系统时钟：
+     * 到期判据是 {@code now >= startedAt + duration}，动 {@code startedAt} 这一侧就能精确跨过那一刻。
+     *
+     * <p><b>「未到期不许结」这一半由 {@link #warBoardReadsThroughTheStoreOnEveryDimension} 钉住</b>
+     * （它把 {@code startedAt} 摆在一分钟前并断言 {@code phase=SIEGE} 与 {@code remainingSec≈10740}）——
+     * 把结算改成无条件执行，那一条会红。所以这一条只需专攻"到期之后"那一半。
+     */
+    @Test
+    @DisplayName("打到结束时间：读一次面板即结算并落盘，第二次读一个字都不动")
+    void expiredWarSettlesOnThePanelRead() throws Exception {
+        String playerId = newPlayer();
+        nations.insertIfAbsent(nation("n_live", "铁誓王国"));
+        nations.insertIfAbsent(nation("n_ghost", "无名之国"));
+        long startedAt = timeService.serverNow() - 4 * HOUR;   // 远超 3 小时的时长
+        wars.insertIfAbsent(board(startedAt, 0L));
+        assertThat(wars.findLatest().orElseThrow().phase())
+                .as("前置：findLatest 只读不动，此刻档里仍然是一场没结束的仗（结算不能是建档的副作用）")
+                .isEqualTo(WarScoreBoard.Phase.SIEGE);
+
+        JsonNode first = get200("/nation/war", playerId);
+        assertThat(first.get("hasWar").asBoolean())
+                .as("结算完不是 hasWar=false：那等于把打过的那一场从玩家眼前抹掉")
+                .isTrue();
+        assertThat(first.get("phase").asText()).isEqualTo("SETTLED");
+        assertThat(first.get("remainingSec").asLong())
+                .as("验收 6 的面板读数：已结束为 0，绝不为负")
+                .isZero();
+        assertThat(first.get("startedAt").asLong())
+                .as("结算不许挪走这一场的起点（主键就是按它推导的）")
+                .isEqualTo(startedAt);
+        long occupy = rowOf(first.get("scores"), "n_live").get("occupyScore").asLong();
+        assertThat(occupy)
+                .as("结算是真跑了一次：n_live 从 startedAt+1min 起占着王城，结算把这段占领分结进去"
+                        + "（结算前这一项恒为 0）")
+                .isPositive();
+        assertThat(first.get("totalKills").asLong()).isEqualTo(60_120L);
+
+        JsonNode second = get200("/nation/war", playerId);
+        assertThat(second.get("scores"))
+                .as("第二次读不许再动任何分：再结一次会撞内核 settle() 的护栏（响应变成 500），"
+                        + "绕过它则占领分被算两遍")
+                .isEqualTo(first.get("scores"));
+        assertThat(second.get("phase").asText()).isEqualTo("SETTLED");
+        // 直接查存储而不是再走端点：findLatest 不做推进，所以它给出的 SETTLED 只能来自真的写回过
+        assertThat(wars.findLatest().orElseThrow().phase())
+                .as("结算是落盘的，不是只改了这一次读手里的副本 —— 后者会让下一次读看到一场还在打的仗")
+                .isEqualTo(WarScoreBoard.Phase.SETTLED);
+    }
+
+    /**
+     * <b>宣战口自己也推进时间</b>：过期那一场不需要"先有人打开面板"才能解锁下一场。
+     *
+     * <p>这条要拦的形状很具体：{@code insertIfNoneActive} 的判据是存储里的 {@code phase != SETTLED}
+     * 字面值，而一场打满 3 小时的仗在结算之前那个字面值仍然是 {@code PREPARATION}。
+     * 于是如果只有读端点会结算，玩家侧表现就是「仗明明早打完了，宣战却一直回 WAR_ALREADY_ACTIVE」，
+     * 解锁条件落在<b>别人</b>的某一次面板读取上 —— 那是"判定读了字面值而不是语义真值"那一族缺陷。
+     */
+    @Test
+    @DisplayName("过期没人读过：直接宣战就能开出新的一场，且过期那一场被就地结掉")
+    void declaringSettlesTheExpiredWarWithoutAPanelRead() throws Exception {
+        Kingdom a = kingdom("铁誓");
+        Kingdom b = kingdom("赤原");
+        Kingdom c = kingdom("苍梧");
+        long staleStartedAt = timeService.serverNow() - 4 * HOUR;
+        WarScoreBoard stale = new WarScoreBoard(warRules.rules(), staleStartedAt);
+        stale.registerNation(a.nationId);
+        stale.registerNation(b.nationId);
+        stale.recordKill(a.nationId, 700L);
+        wars.insertIfAbsent(stale);
+        assertThat(wars.findLatest().orElseThrow().phase())
+                .as("前置：这一场是「过期但没结算」的活仗，而且全程没人读过面板")
+                .isEqualTo(WarScoreBoard.Phase.PREPARATION);
+
+        JsonNode data = post200("/nation/war/declare", c.king,
+                new WarDeclareReq(newRequestId(), a.nationId));
+
+        assertThat(data.get("hasWar").asBoolean()).isTrue();
+        assertThat(data.get("phase").asText())
+                .as("开出来的是新那一场：停在 PREPARATION（关卡与王城还不是可占领物，beginSiege 进不去）")
+                .isEqualTo(WarScoreBoard.Phase.PREPARATION.name());
+        assertThat(data.get("totalKills").asLong())
+                .as("视图必须是新那一场，过期那场的 700 击杀不能带过来")
+                .isZero();
+        assertThat(wars.findLatest().orElseThrow().startedAt())
+                .as("当前这场已经换成刚宣的那一场")
+                .isGreaterThan(staleStartedAt);
+        // 宣战能成这件事本身就是"过期那一场已被就地结掉"的证据：
+        // 没结掉就会走 insertIfNoneActive 返回 false 那一支，响应是 WAR_ALREADY_ACTIVE 而不是 200。
+        assertThat(wars.insertIfAbsent(stale))
+                .as("过期那一场仍然留在原主键上（结完就查无此仗，历史与赛季榜都失去依据）")
+                .isFalse();
     }
 
     // ---------- 协议与内核同源 ----------

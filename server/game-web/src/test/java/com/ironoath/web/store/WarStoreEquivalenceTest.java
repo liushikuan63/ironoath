@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -261,6 +262,198 @@ class WarStoreEquivalenceTest {
                 assertThat(bothWon)
                         .as("%s 出现「两个都 true」的轮数必须为 0 —— 大于 0 就是「查」与「插」没收在同一个临界区里，"
                                 + "全服会开出两场平行账，各自的击杀与占领分互不可见且不报错", label)
+                        .isZero();
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    // ---------- 惰性结算（切片 2c：「到点结束」终于有了执行者，而服务端不许常驻定时器）----------
+
+    /**
+     * <b>本类里唯一一条把「时刻」当参数的用例</b>：{@code settleIfExpired(now)} 不读时钟，
+     * 所以到期、未到期、到点这三档都能精确摆位，不需要 sleep（也不需要谁去拨系统时间）。
+     *
+     * <p>三条判据分别对应三种真实缺陷形状，缺一不可：未到期就动 = 最后一段占领分被提前定格
+     * （防偷家机制作废）；到期后第二次读再动 = 撞内核 {@code settle()} 的护栏，玩家侧是面板 500；
+     * 只改手里那份副本不落盘 = 下一次读看到一场还在打的仗，而面板已经显示结束了。
+     */
+    @Test
+    @DisplayName("到期判定：差一秒不动、到点定格一次、第二次读不许再动任何分")
+    void lazySettleRunsExactlyOnceOnBothStores() {
+        long duration = rules.rules().durationMillis();
+        assertThat(duration)
+                .as("前置：本用例的边界数字全按 WAR_DURATION_HOURS 算，先钉住它是 3 小时。"
+                        + "配置改了这条会红，那是提醒重新算数，不是缺陷")
+                .isEqualTo(3L * 60L * MINUTE);
+
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(richBoard(T0));   // n1 从 T0+7min 起占着王城
+            String beforeSettle = describe(richBoard(T0));
+
+            // 第一档：差一秒没到期 —— 一分都不许动
+            WarScoreBoard notYet = store.settleIfExpired(T0 + duration - 1_000L).orElseThrow();
+            assertThat(notYet.phase())
+                    .as("%s 未到期就结算，等于把最后不足一分钟的占领分提前定格", label)
+                    .isEqualTo(WarScoreBoard.Phase.SIEGE);
+            assertThat(describe(notYet))
+                    .as("%s 未到期那一次读必须一字不动（动了就是提前结算，而全链路不报错）", label)
+                    .isEqualTo(beforeSettle);
+
+            // 第二档：正好到点 —— 用 >= 而不是 >，否则面板会停在 remainingSec=0 而 phase=SIEGE
+            WarScoreBoard at = store.settleIfExpired(T0 + duration).orElseThrow();
+            assertThat(at.phase())
+                    .as("%s 到点这一刻必须当场定格", label)
+                    .isEqualTo(WarScoreBoard.Phase.SETTLED);
+            assertThat(at.remainingSeconds(T0 + duration))
+                    .as("%s 已结束的仗剩余秒数为 0（验收 6 的面板读数）", label).isZero();
+            String settled = describe(at);
+            // n1 从 T0+7min 占到 T0+180min = 173 分钟 × WAR_SCORE_OCCUPY_PER_MINUTE(10)
+            assertThat(settled)
+                    .as("%s 结算要把最后一段占领分结进去：这一项在结算前恒为 0，"
+                            + "是最能分辨「到底结没结」的量（击杀与建筑分结算前后一样）", label)
+                    .contains("n1=1730,60000,100");
+
+            // 第三档：时间再走 4 小时再读一次 —— 不许再动，也不许敲内核那条「重复结算」的护栏
+            WarScoreBoard after = store.settleIfExpired(T0 + duration + 4L * 60L * MINUTE).orElseThrow();
+            assertThat(describe(after))
+                    .as("%s 第二次读必须与第一次一字不差。再结一次会撞内核 settle() 的护栏（抛到端点上就是 500），"
+                            + "而绕过它去 catch 则会把占领分算两遍 —— 两个都不许发生", label)
+                    .isEqualTo(settled);
+
+            // 落盘判据：findLatest 只读不动，所以它看到的 SETTLED 只能来自上一次真的写回
+            assertThat(describe(store.findLatest().orElseThrow()))
+                    .as("%s 结算没有 save 的话，下一次读会看到一场还在打的仗，而玩家面板已经显示结束了", label)
+                    .isEqualTo(settled);
+        }
+    }
+
+    /**
+     * 判据③的存储侧：<b>结算完才允许开下一场</b>，且历史那一场留在<b>原主键</b>上。
+     *
+     * <p>与 {@link #settledWarOpensTheDoorToTheNextOneOnBothStores} 的区别不是重复：那一条是
+     * 测试<b>手动</b> {@code settle()} + {@code save()}，等于假设了结算这件事有人做；这一条全程
+     * 只调惰性推进口，所以它钉的是「2c 交付的那一跳确实把仗结掉了」——把 {@code settleIfExpired}
+     * 整个方法体删掉直接 return，这条会红而那一条照样绿。
+     *
+     * <p>历史留档用 {@code insertIfAbsent} <b>撞键</b>来证，而不是数文档条数：内存版没有条数概念
+     * （两套实现都得有同一条断言才叫等价）。{@code documentIdOf} 按 {@code startedAt} 推导，
+     * 撞键即证明那一场还在<b>原来那个键</b>上 —— 结算若写成「删旧插新」，这一句会返回 true。
+     */
+    @Test
+    @DisplayName("惰性结算后：历史仍在原档上（撞键可证），下一场开得起来，且新那一场也读得到")
+    void settledHistoryStaysPutAndTheNextWarOpensOnBothStores() {
+        long duration = rules.rules().durationMillis();
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(richBoard(T0));
+            assertThat(store.settleIfExpired(T0 + duration).orElseThrow().phase())
+                    .as("%s 前置：第一场确实被这一句结掉了", label)
+                    .isEqualTo(WarScoreBoard.Phase.SETTLED);
+
+            assertThat(store.insertIfAbsent(richBoard(T0)))
+                    .as("%s 历史那一场必须还留在原主键上：结完就查无此仗，V18 的赛季榜与运维复盘双双失去依据", label)
+                    .isFalse();
+
+            assertThat(store.insertIfNoneActive(richBoard(T0 + 2 * duration)))
+                    .as("%s 单场不变量只看未结束的那几场，结完了就该放行", label).isTrue();
+            assertThat(store.findLatest().orElseThrow().startedAt())
+                    .as("%s 读端点给的必须是新那一场，而不是刚结完的历史", label)
+                    .isEqualTo(T0 + 2 * duration);
+
+            assertThat(store.settleIfExpired(T0 + 3 * duration).orElseThrow().phase())
+                    .as("%s 结算口不是只对第一场生效的一次性代码", label)
+                    .isEqualTo(WarScoreBoard.Phase.SETTLED);
+        }
+    }
+
+    /**
+     * 结完的那一场不许再被记分 —— 这是惰性结算的另一半。{@link WarScoreBoard} 的类注释写着
+     * 「国战已结算，不能再改积分」，而 {@code requireSiegeOrPrep} 只在有人直接调内核时生效；
+     * 存储层的 {@code recordKills} 自己也判一次 phase，这一条钉的就是那一次判定<b>接的是惰性结完之后</b>。
+     *
+     * <p>与 {@link #lazySettleRunsExactlyOnceOnBothStores} 分成两条不是冗余：那一条管"结算本身只跑一次"，
+     * 这一条管"结完之后别的写路径也被挡住"，两处 phase 判定在不同方法里，合成一条会红了不知道该怪谁。
+     */
+    @Test
+    @DisplayName("结算之后再来击杀：两套实现都给 NO_ACTIVE_WAR，定格的那份一分不动")
+    void killsAfterTheLazySettleAreRefusedOnBothStores() {
+        long duration = rules.rules().durationMillis();
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(richBoard(T0));
+            store.settleIfExpired(T0 + duration);
+            String frozen = describe(store.findLatest().orElseThrow());
+
+            assertThat(store.recordKills("n1", "P9", 500L))
+                    .as("%s 已经结完的仗不是现役仗，再记一笔等于往历史账本上续写", label)
+                    .isEqualTo(WarStore.KillResult.NO_ACTIVE_WAR);
+            assertThat(describe(store.findLatest().orElseThrow()))
+                    .as("%s 被拒的这一次国家分、全服数与 P9 的个人账都不许动", label)
+                    .isEqualTo(frozen);
+        }
+    }
+
+    /**
+     * <b>结算与击杀共用同一把锁，这一条才是那句话的可失败证据</b>。
+     *
+     * <p>为什么单靠上面三条不够：把 {@code MongoWarStore.settleIfExpired} 的 {@code synchronized}
+     * 拆掉，上面三条<b>实测全绿</b>（本会话植过一次，见开发包 §四 那一格的「未做」列）——
+     * 它们全是单线程用例，而锁只在两个线程真的错开时才可见。
+     *
+     * <p><b>判据写成"线性"而不是"数值"</b>：一次结算与一次击杀同时发生，合法结果只有两种
+     * （击杀先落 ⇒ 板子上是 {@code SETTLED} 且带着那 10 个；结算先落 ⇒ 击杀被 {@code NO_ACTIVE_WAR} 拒掉）。
+     * 所以断言挂在<b>击杀自己的返回值</b>上：它说 APPLIED，最终档里就必须有那 10 个。
+     * 拆锁后会出现第三种形状 —— 结算拿着<b>加 10 之前</b>的副本最后写回，把那一笔整档盖掉，
+     * 而全链路一个错都不报（症状只是"全服进度好像少涨了一点"）。
+     *
+     * <p><b>这条判据不会假红</b>：两种合法形状都被容纳，加锁的实现无论怎么调度都绿。
+     * 只有被植坏的那一份有运气成分，所以跑 30 轮并按<b>违规轮数</b>断言 0，与
+     * {@link #onlyOneOpenWarSurvivesTheRaceOnBothStores} 同一条量具设计。
+     */
+    @Test
+    @DisplayName("结算与击杀抢同一把锁：30 轮里 APPLIED 的那一笔永远不能被盖掉")
+    void settleAndKillsShareTheCriticalSectionOnBothStores() throws Exception {
+        long duration = rules.rules().durationMillis();
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            ExecutorService pool = Executors.newFixedThreadPool(2);
+            try {
+                int lostKills = 0;
+                int resurrected = 0;
+                for (int round = 0; round < 30; round++) {
+                    store.clear();
+                    store.insertIfAbsent(richBoard(T0));   // totalKills = 60_120
+                    CountDownLatch go = new CountDownLatch(1);
+                    Future<WarStore.KillResult> kill = pool.submit(() -> {
+                        go.await();
+                        return store.recordKills("n1", "P1", 10L);
+                    });
+                    Future<Optional<WarScoreBoard>> settle = pool.submit(() -> {
+                        go.await();
+                        return store.settleIfExpired(T0 + duration);
+                    });
+                    go.countDown();
+                    WarStore.KillResult kr = kill.get(10, TimeUnit.SECONDS);
+                    settle.get(10, TimeUnit.SECONDS);
+
+                    WarScoreBoard back = store.findLatest().orElseThrow();
+                    if (back.phase() != WarScoreBoard.Phase.SETTLED) {
+                        resurrected++;
+                    }
+                    if (kr == WarStore.KillResult.APPLIED && back.totalKills() != 60_130L) {
+                        lostKills++;
+                    }
+                }
+                assertThat(lostKills)
+                        .as("%s 出现「击杀返回 APPLIED 却不在最终档里」的轮数必须为 0 —— 大于 0 就是结算与击杀"
+                                + "各自拿着旧副本整档互盖，那笔击杀静默消失", label)
+                        .isZero();
+                assertThat(resurrected)
+                        .as("%s 出现「两个动作都跑完之后板子又不是 SETTLED」的轮数必须为 0 —— "
+                                + "那是击杀把已结算的那一场写回了未结束状态", label)
                         .isZero();
             } finally {
                 pool.shutdownNow();
