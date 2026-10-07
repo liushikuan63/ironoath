@@ -137,9 +137,9 @@
 | — | `ui.panel.kingdom`（存量） | `ui/generated/ui/panel-kingdom-v1` | A | **保留**：`CityPanelView`/`MarchPanelView` 已在用，且 `PANEL_FRAME_BAND` 与 meta 由 `client/tests/ArtFamilies.test.ts` 对账；换它 = 另开一格（§七 Q1） |
 | — | `ui.button.chip*` / `ui.nav.tab*`（存量 5 张） | 同目录 | C | 保留，本轮不动（避免碰导航与 chip 的既有探针读数） |
 
-**生产进度（2026-10-08 现跑）**：18 件里已出 **4 件母版**（#1 `panel-iron` 的 v0+v1、#12 `banner-crest`、#5 `plate-band`），
-四件都过 `art-src/check_nineslice_ready.py`（按各自档退 0）；其余 14 件未开工。
-⚠️ **交付尺寸不许套同一张表**：三件实测 bbox 分别是 **1.49:1**（A 档底板）、**2.21:1**（匾额）、**10.76:1**（条行），
+**生产进度（2026-10-08 现跑）**：18 件里已出 **5 件母版**（#1 `panel-iron` 的 v0+v1、#12 `banner-crest`、#5 `plate-band`、#7 `button-iron`），
+五件都过 `art-src/check_nineslice_ready.py`（按各自档退 0；`button-iron` 的斜切角是**目视抓出来的**，量具不判这一维）；其余 13 件未开工。
+⚠️ **交付尺寸不许套同一张表**：实测 bbox 分别是 **1.49:1**（A 档底板）、**2.21:1**（匾额）、**10.76:1**（条行）、**4.34:1**（按钮），
 互不相同 ⇒ 每件按自己的 bbox 定尺寸，否则会被 `accept_to_runtime.py` 的"比例差 >3% 直接失败"逐个拒掉。
 
 **接入纪律**（`game/art/ArtFamilies.ts:47-52` 原文要求）：只登记**已随包下发且已有消费面板**的族——不许先把 18 张全塞进 `FAMILY_ASSETS` 等消费点。V25-b 只生产，V25-c/d 接一个登记一个。
@@ -183,7 +183,7 @@ Nine-slice constraints (mandatory):
 | **P-04** `panel-gilt` | 同 P-01 构图，`ornate bronze-gilt frame with a short hanging gold chain and a small wax seal at the top centre` |
 | **P-05** `plate-band` | `Asset type: nine-slice list-row plate, 512x128` · `narrow iron strip with a 4px bronze bevel along top and bottom edges, very shallow, flat, no corners ornament` |
 | **P-06** `plate-band-active` | 同 P-05 形状，`bronze bevel lit up as if selected, faint dark red glow inside the bevel only` |
-| **P-07** `button-iron` | `Asset type: nine-slice command button, 160x52` · `forged iron button face, bronze bevel that occupies about 8% of the height, two small rivets near the left and right ends, completely flat front-facing` · `Constraints: generous clear centre for a Chinese label, no text, no letters, no icons` |
+| **P-07** `button-iron` | `Asset type: nine-slice command button, 160x52`（实测出图 bbox **4.34:1**，与 3.08:1 不同 ⇒ 交付尺寸按实测定） · `forged iron button face, bronze bevel that occupies about 8% of the height, two small rivets near the left and right ends, completely flat front-facing` · **`corners must be square 90 degrees — no chamfer, no bevelled corner, no rounded corner`**（v0 给了 45° 斜切角，与 6·4 的薄 border 九宫格冲突，见 §4.7） · `Constraints: generous clear centre for a Chinese label, no text, no letters, no icons` |
 | **P-08** `chip-close` | `Asset type: small square button sprite, 52x52` · `dark iron square button with bronze bevel and a single rivet at each corner, empty centre` · **必须写明** `no X glyph, no cross, no symbol`（符号由 Label 画，见 §八 禁止项 3） |
 | **P-09** `plate-tooltip` | 同 P-05，尺寸 `256x64` · `slightly warmer iron, thinner bevel, for tooltips and floating text` |
 | **P-10** `banner-crest` | `Asset type: single non-sliced decorative title plaque, 512x128` · `horizontal bronze-framed war banner with two crossed short spears behind the top edge and a small crown relief at the centre top; the plaque face is completely blank` · **不加** 4.2，改加 `Constraints: keep the whole plaque on one piece, do not tile, transparent or pure green background outside the silhouette` |
@@ -296,6 +296,21 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 3. **匾额待验一项**：2.213:1 的整图压在 460~720 宽面板的上沿，若按"占面板宽 55%"排布，
    720 宽时高约 195px，可能吃掉内容区 ⇒ **未验证**，判据要在 V25-c 用 `shot-panel-sweep.mjs` 实拍后定，
    不在这里拍数。
+
+**C 档第一次实测（`button-iron-v0`，同日 01:5x）又抓到两条，都不是"再出一张"能糊过去的**：
+
+1. **四角是 45° 斜切（chamfered corner），与"薄 border 九宫格"结构冲突**。C 档 border 只有 6·4，
+   切分线落在斜切区内 ⇒ 横向拉伸时斜角会被切成两段错位，正是 §二 要防的那类"素材画不上去"。
+   ⇒ P-07 提示词已补 `corners must be square 90° (no chamfer, no rounded corner)`；
+   若模型仍给斜切，退路是**C 档不走九宫格**（像 G8 页签那样按格子比例整幅画满），两条路在 V25-b 后续二选一。
+2. **边带厚度依旧没有有效量法（这是第三次）**。新写的剖面法先给出 0px 的离谱读数（假设亮带从最外沿连续，
+   实际最外一圈是暗描边：顶行 luma 45.7、第 12 行才 175.4），改成"上下 1/4 区内数亮行数"后又与目视**反向**
+   （目视铜边明显的条行印出 4.4%，铜边较细的按钮印出 10.2%）。
+   ⇒ 该数值在 `check_nineslice_ready.py` 里**降级为"仅提示、不作判据"**并写明原因；
+   §二 的 [0.07, 0.25] 目前只能靠**人工标尺 + 目视**核，不许拿这条当门（抓不住真值的判据会同时放过缺陷和误杀好素材）。
+
+量具最终状态（复验读数）：两份真素材 `--kind plain` **退 0**、蓝底负向对照 **退 1**（`bg-not-pure-green`）
+⇒ 三条可机器判据既不误杀也能失败；第四、第五维（边中饰、边带厚度）都显式标为未判/未验证。
 
 ---
 

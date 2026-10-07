@@ -67,6 +67,33 @@ def luma_std(px, mask, x0, y0, x1, y1, step=2):
     return (sum((v - m) ** 2 for v in vals) / len(vals)) ** 0.5
 
 
+def bevel_band_ratio(px, mask, l, t, r, b):
+    """量「上下边带厚度占图高比」—— C/B 档的可见性判据（G9 实测 1.7% 铺到 32px 就消失 ⇒ 下限 7%）。
+
+    <p>不要求亮带从最外沿连续：素材最外一圈常是暗描边（实测 button-iron-v0 顶行 luma 45.7、
+    第 12 行才 175.4），从边缘数连续亮像素会得到 0 这种离谱读数。改成在上下 1/4 区内数亮行数。
+    """
+    bh = b - t + 1
+    bw = r - l + 1
+    if bh < 8 or bw < 8:
+        return None
+    lumas = []
+    for y in range(t, b + 1):
+        xs = [x for x in range(l + bw // 3, l + 2 * bw // 3) if mask[y][x]]
+        if not xs:
+            continue
+        seg = [0.299 * px[x, y][0] + 0.587 * px[x, y][1] + 0.114 * px[x, y][2] for x in xs]
+        lumas.append((y, sum(seg) / len(seg)))
+    if len(lumas) < 8:
+        return None
+    vs = [v for _, v in lumas]
+    thr = min(vs) + (max(vs) - min(vs)) * 0.45
+    q = max(1, len(lumas) // 4)
+    top = sum(1 for _, v in lumas[:q] if v >= thr)
+    bot = sum(1 for _, v in lumas[-q:] if v >= thr)
+    return (top + bot) / float(bh)
+
+
 def check(path, kind):
     im = Image.open(path).convert('RGBA')
     w, h = im.size
@@ -111,6 +138,16 @@ def check(path, kind):
         # plain 档上下两道铜边是设计要求，环带 σ 必然高于中心（实测 rel=2.77 而素材合格）；
         # art 档永不拉伸，中心含装饰是设计。⇒ 对这两类跑 σ 判据只会稳定假红。
         notes.append('σ 判据       : 不适用（%s 档；中心/边带的亮度差是设计，不是缺陷）' % kind)
+        if kind == 'plain':
+            br = bevel_band_ratio(px, mask, l, t, r, b)
+            if br is None:
+                notes.append('边带占高比   : 无法度量（采样区太小）')
+            else:
+                # **只印不判**：本量法与目视不一致（合格条行印出 4.4%、目视约 6% 的按钮印出 10.2%，
+                # 方向相反），说明"宽度中段 1/3 + 45% 亮度分位"这套取法测的不是边带厚度本身。
+                # 拿一条抓不住真值的判据当门，会同时放过缺陷和误杀好素材 ⇒ 降级为提示，
+                # 有效量法待 V25-b 后续用剖面峰值法或人工标尺重建（规格 §4.6 的"边厚未验证"仍未关）。
+                notes.append('边带占高比   : %.1f%%（**仅提示，未验证**：量法与目视不一致，不作判据）' % (br * 100,))
     elif center is None or ring is None:
         fails.append('sigma-unmeasurable')
         notes.append('σ 中心/环带  : 采样区太小，无法度量')
