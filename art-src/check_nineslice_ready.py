@@ -94,6 +94,22 @@ def bevel_band_ratio(px, mask, l, t, r, b):
     return (top + bot) / float(bh)
 
 
+def corner_squareness(px, mask, l, t, r, b, k=6):
+    """量四角 6x6 的"主体填充率"，判剪影是不是直角。
+
+    <p>为什么用填充率而不是 σ：这是**形状**问题，不是亮度问题。实测分得很开——
+    真 45° 斜切的按钮四角全空（0%），直角按钮给 72%（差的是尖点抗锯齿，不是切角）。
+    <p>阈值取 50% 而不是 90%：来自 v0=0% 与 v1=72% 两个实测点之间的分界，**n=2**，
+    V25-b 扩样本后要复校（不假装知道边界在哪）。
+    """
+    out = []
+    for x0, y0 in ((l, t), (r - k + 1, t), (l, b - k + 1), (r - k + 1, b - k + 1)):
+        c = sum(1 for y in range(y0, y0 + k) for x in range(x0, x0 + k)
+                if 0 <= y < len(mask) and 0 <= x < len(mask[0]) and mask[y][x])
+        out.append(c * 100.0 / (k * k))
+    return min(out)
+
+
 def check(path, kind):
     im = Image.open(path).convert('RGBA')
     w, h = im.size
@@ -148,6 +164,12 @@ def check(path, kind):
                 # 拿一条抓不住真值的判据当门，会同时放过缺陷和误杀好素材 ⇒ 降级为提示，
                 # 有效量法待 V25-b 后续用剖面峰值法或人工标尺重建（规格 §4.6 的"边厚未验证"仍未关）。
                 notes.append('边带占高比   : %.1f%%（**仅提示，未验证**：量法与目视不一致，不作判据）' % (br * 100,))
+            sq = corner_squareness(px, mask, l, t, r, b)
+            if sq is not None:
+                ok_s = sq >= 50.0
+                notes.append('四角最小填充率 : %.0f%%（直角剪影判据，阈值 50%% 取自 v0=0%% 与 v1=72%% 两点之间，n=2 待复校）⇒ %s' % (sq, ok_s))
+                if not ok_s:
+                    fails.append('corner-not-square-for-nine-slice')
     elif center is None or ring is None:
         fails.append('sigma-unmeasurable')
         notes.append('σ 中心/环带  : 采样区太小，无法度量')

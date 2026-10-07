@@ -137,8 +137,9 @@
 | — | `ui.panel.kingdom`（存量） | `ui/generated/ui/panel-kingdom-v1` | A | **保留**：`CityPanelView`/`MarchPanelView` 已在用，且 `PANEL_FRAME_BAND` 与 meta 由 `client/tests/ArtFamilies.test.ts` 对账；换它 = 另开一格（§七 Q1） |
 | — | `ui.button.chip*` / `ui.nav.tab*`（存量 5 张） | 同目录 | C | 保留，本轮不动（避免碰导航与 chip 的既有探针读数） |
 
-**生产进度（2026-10-08 现跑）**：18 件里已出 **5 件母版**（#1 `panel-iron` 的 v0+v1、#12 `banner-crest`、#5 `plate-band`、#7 `button-iron`），
-五件都过 `art-src/check_nineslice_ready.py`（按各自档退 0；`button-iron` 的斜切角是**目视抓出来的**，量具不判这一维）；其余 13 件未开工。
+**生产进度（2026-10-08 现跑）**：18 件里已出 **6 版母版 / 5 件**（#1 `panel-iron` v0+v1、#12 `banner-crest`、#5 `plate-band`、#7 `button-iron` v0+v1），
+全部过 `art-src/check_nineslice_ready.py` 的对应档（`button-iron-v1` 起还过「直角剪影」那条），其余 13 件未开工。
+**P-07 的 `corners must be square` 已复验生效**（v0 斜切 0% → v1 直角 75%，见 §4.7）。
 ⚠️ **交付尺寸不许套同一张表**：实测 bbox 分别是 **1.49:1**（A 档底板）、**2.21:1**（匾额）、**10.76:1**（条行）、**4.34:1**（按钮），
 互不相同 ⇒ 每件按自己的 bbox 定尺寸，否则会被 `accept_to_runtime.py` 的"比例差 >3% 直接失败"逐个拒掉。
 
@@ -311,6 +312,15 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 
 量具最终状态（复验读数）：两份真素材 `--kind plain` **退 0**、蓝底负向对照 **退 1**（`bg-not-pure-green`）
 ⇒ 三条可机器判据既不误杀也能失败；第四、第五维（边中饰、边带厚度）都显式标为未判/未验证。
+**斜切角那条待判伪已当场关掉（同日 02:1x，`button-iron-v1`）**：加了 `corners must be square 90 degrees`
+重出的第二版，**角点放大目视确认外轮廓是直角**——图里那条 45° 线是铜边内部的**拼角缝（miter joint）装饰**，
+不是剪切角；v0 才是真斜切（角被切掉约 20px）。顺带把这件事做成了一条**能用的判据**：
+量四角 6×6 的「主体填充率」（形状量，不是 σ）——**v0 = 0%、v1 = 75%、条行 = 92%**，
+真斜切退 1、两张合格素材退 0 ⇒ 既不误杀也能失败。阈值取 50%（落在 0 与 75 之间），
+**n=2 拍的、扩样本后要复校**，别当已知边界。
+⇒ `plain` 档现在有两条判据：三条通用的 + 这条「直角剪影」；`frame` 档**不跑**它
+（A 档角部本来就该有角帽造型，实测填充率只有 33%~67%，跑上去就是第三次犯「判据跨档复用」那个错）。
+
 
 ---
 
