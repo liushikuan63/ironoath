@@ -121,6 +121,19 @@ public class SocialRulesAssembler {
     }
 
     /**
+     * 国家集结规则（V22-a，B13 §46）。与上两档同形：只装配下限与准备时长区间，
+     * 上限仍从 {@link #rallyMaxSize(Rally.Scope)} 按 NATION 单取。
+     *
+     * <p>为什么要有这一个小方法而不是让调用方直接 {@code rallyRules(...)}：
+     * {@code initiateRally} 原先写的是 {@code scope == SQUAD ? squad : alliance} 两分支，
+     * 国家层会<b>静默拿到联盟的下限与准备时长</b>且不报错（收口清单 V22 现状 ③）。
+     * 三分支各有一个具名入口，漏哪一支都会在编译期暴露。
+     */
+    public Rally.Rules nationRallyRules() {
+        return rallyRules("RALLY_MAX_SIZE_NATION");
+    }
+
+    /**
      * 捐献三档（免费 / 资源 / 金币）。
      *
      * <p>档位顺序与 B10 §2 一致：0 免费、1 资源、2 金币。

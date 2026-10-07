@@ -3,7 +3,7 @@
 package com.ironoath.web.dto.generated;
 
 /**
- * 集结发起/加入的响应体（小队与联盟共用，靠 RallyView.scope 区分）。
+ * 集结发起/加入的响应体（小队、联盟、国家三层共用，靠 RallyView.scope 区分）。
  */
 public record RallyResp(
         RallyView rally,   // 集结视图

@@ -72,6 +72,7 @@ import com.ironoath.core.social.Rally;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import com.ironoath.web.dto.generated.AllianceRallyReq;
+import com.ironoath.web.dto.generated.NationRallyReq;
 import com.ironoath.web.dto.generated.RallyHeroSlotState;
 import com.ironoath.web.dto.generated.RallyHeroSlotView;
 import com.ironoath.web.dto.generated.RallyJoinReq;
@@ -144,6 +145,15 @@ public class SocialAppService {
     private final com.ironoath.web.nation.NationStore nations;
     /** 与 NationAppService 共用同一份议员席注入规则。 */
     private final com.ironoath.web.nation.NationLeaders nationLeaders;
+    /**
+     * 国家花名册的唯一口径（玩家 → 国家、国家 → 成员）。
+     *
+     * <p>国家集结的人数上限要数「本国此刻实有人数」，而这个数在别处已经有唯一一个实现
+     * （{@code NationMembership.playerIdsOf}，国战发奖与击杀归属都走它）。在本类里再写一遍
+     * 盟→人的展开，就会出现"发奖用的国人数与集结上限用的国人数不是同一个口径"——
+     * 那正是 {@code alliance_tech.json:5} 记的那起「一个数字两个家」事故的形状。
+     */
+    private final com.ironoath.web.nation.NationMembership membership;
     /** 集结随军武将的归属与编队上限校验（与个人出征同一个入口）。 */
     private final HeroAppService heroAppService;
     /**
@@ -179,6 +189,7 @@ public class SocialAppService {
                             AttackGuardService attackGuard,
                             com.ironoath.web.nation.NationStore nations,
                             com.ironoath.web.nation.NationLeaders nationLeaders,
+                            com.ironoath.web.nation.NationMembership membership,
                             com.ironoath.core.city.CityRepository cities,
                             com.ironoath.web.social.HelpRequestRegistrar helpRequests,
                             HeroAppService heroAppService,
@@ -199,6 +210,7 @@ public class SocialAppService {
         this.attackGuard = attackGuard;
         this.nations = nations;
         this.nationLeaders = nationLeaders;
+        this.membership = membership;
         this.cities = cities;
         this.helpRequests = helpRequests;
         this.heroAppService = heroAppService;
@@ -2353,18 +2365,20 @@ public class SocialAppService {
     }
 
     /**
-     * GET /rally/policy（B26 S13）：小队与联盟两份集结政策一次给全。
+     * GET /rally/policy（B26 S13 + V22-a）：小队、联盟、国家三份集结政策一次给全。
      *
-     * <p>存在的理由与 {@code /social/createPolicy} 同一条：联盟集结要收 {@code maxMembers}
+     * <p>存在的理由与 {@code /social/createPolicy} 同一条：集结要收 {@code maxMembers}
      * 与 {@code prepareMinutes} 两个数，而它们的上下界都在 global 表里。客户端不许抄表，
      * 也不许自己挑默认值 —— 否则滑条显示 30 人、服务端悄悄夹成 4 人，玩家以为自己设过了。
      *
      * <p>{@code maxMembers} 给的是<b>此刻</b>的上限：取「配置上限」与「我这个组织实际人数」
      * 的小值 —— 与 {@link #allianceRally} 里那句夹取同一个式子。写口夹什么，读口就说什么，
-     * 两条不一致时界面上亮着的数字就是假的。
+     * 两条不一致时界面上亮着的数字就是假的。国家那一层的同一个式子收在
+     * {@link #nationRallyCap(String)} 这一个折叠点里，读口与写口都调它。
      */
     public RallyPolicyResp rallyPolicy(String playerId, long now) {
-        return new RallyPolicyResp(squadPolicy(playerId, now), alliancePolicy(playerId), now);
+        return new RallyPolicyResp(squadPolicy(playerId, now), alliancePolicy(playerId),
+                nationPolicy(playerId), now);
     }
 
     /** 小队那一层的政策。组织不在、职位不够、人数不够，都在这一个地方说成一句人话。 */
@@ -2420,6 +2434,73 @@ public class SocialAppService {
                 (int) minMinutes, (int) maxMinutes, (int) maxMinutes, canStart, reason);
     }
 
+    /** 此刻这个玩家所属的、还没解散的国家。亡国在这一处就断掉：它已经不是能发起集结的组织。 */
+    private java.util.Optional<Nation> activeNationOf(String playerId) {
+        return this.membership.ofPlayer(playerId).filter(nation -> !nation.isDisbanded());
+    }
+
+    /** 写口用的国家档：不在任何国家（或国家已解散）就是要报的错，不是"上限 0"。 */
+    private Nation requireNationOf(String playerId) {
+        return activeNationOf(playerId).orElseThrow(() ->
+                new BizException(ErrorCode.NATION_NOT_FOUND,
+                        "playerId=" + playerId + " 不在任何国家里，或所属国家已解散"));
+    }
+
+    /**
+     * 国家层集结人数上限的<b>唯一折叠点</b>（V24-D1：上限是一个函数，不是三个数）。
+     *
+     * <p>式子 = {@code min(配置上限 RALLY_MAX_SIZE_NATION, 本国此刻实有人数)}。
+     * 写口（{@link #nationRally} 发起时夹 maxMembers）与读口（{@link #nationPolicy} 亮给玩家的那个
+     * 数字）<b>都调这一个方法</b>，两边各算一遍就会分叉 —— 上面 {@code rallyPolicy} 的注释写的
+     * 「写口夹什么，读口就说什么」在这里是靠这一个方法成立的，不是靠两边写得像。
+     *
+     * <p>⚠️ 本格（V22）到此为止；V24 要在<b>这一个点</b>上继续叠「科技万分比」与「已购永久格」，
+     * 所以这里不许出现字面量 50。
+     *
+     * <p><b>留给 V24 的一处已知不一致</b>（不在本格修，因为改了会把"能不能发起"的既有口径整层挪动）：
+     * {@link #nationPolicy} 的三条<b>灰键分支</b>仍单独读 {@code rallyMaxSize(NATION)} 拿配置原值 ——
+     * 这是照小队与联盟两层写的（那两层的失败分支同样给配置原值而不是折叠值）。灰键时那个数不可操作，
+     * 所以现在没有症状；但 V24 把上限抬起来之后，"职位不够的国民看到的上限"会与"他升到官职后真能设的
+     * 上限"分叉，而<b>现有用例抓不到这一条</b>（那时 canStart=false，界面上的数字不参与任何断言）。
+     *
+     * <p>国家人数走 {@code NationMembership.playerIdsOf}：那是全国花名册的唯一实现（国战发奖与
+     * 击杀归属都调它），代价是一次全联盟批量读。在本类里另写一遍盟→人的展开，症状是
+     * 「集结上限用的国人数与发奖用的国人数不是一个口径」—— {@code alliance_tech.json:5} 记的
+     * 那起「一个数字两个家」事故正是这个形状。
+     *
+     * @return 此刻可给这个玩家的国家集结用的人数上限；不在任何国家时回 0
+     */
+    int nationRallyCap(String playerId) {
+        return activeNationOf(playerId)
+                .map(nation -> Math.min(this.rules.rallyMaxSize(Rally.Scope.NATION),
+                        this.membership.playerIdsOf(nation).size()))
+                .orElse(0);
+    }
+
+    /**
+     * 国家那一层的政策。口径与小队/联盟完全一致：先看在不在，再看职位，最后看人数。
+     *
+     * <p>职位读的是 {@link #nationRoleOf}（它会先 {@code NationLeaders.bind} 再问官职），
+     * 而不是直接问官职 —— 议员是派生席位，少一次 bind 时议员会掉回 MEMBER 档，
+     * 而两者权限恰好相同，症状只在按钮亮不亮上，很难归因。
+     */
+    private RallyPolicyView nationPolicy(String playerId) {
+        Rally.Rules rulesOf = this.rules.nationRallyRules();
+        int cap = this.rules.rallyMaxSize(Rally.Scope.NATION);
+        if (activeNationOf(playerId).isEmpty()) {
+            return policyView(rulesOf, cap, false, "你还没有国家，先让联盟加入一个国家再发起集结");
+        }
+        if (!mayStartRally(PermissionMatrix.Scope.NATION, nationRoleOf(playerId))) {
+            return policyView(rulesOf, cap, false, "你当前的职位不能发起集结");
+        }
+        int room = nationRallyCap(playerId);
+        if (room < rulesOf.minMembers()) {
+            return policyView(rulesOf, cap, false,
+                    "国家现在只有 " + room + " 个人，凑不满一次集结的最少人数");
+        }
+        return policyView(rulesOf, room, true, null);
+    }
+
     /** 发起联盟集结。人数上限与准备时长都按配置夹住，越界不拒绝（理由见 Rally.initiate 的注释）。 */
     public RallyResp allianceRally(String playerId, AllianceRallyReq req) {
         long now = timeService.serverNow();
@@ -2451,6 +2532,39 @@ public class SocialAppService {
         }
     }
 
+    /**
+     * 发起国家层集结（V22-a，B13 §46 大将军「发起国战、调动集结」）。
+     *
+     * <p>形状与 {@link #allianceRally} 一致，三处不同：权限读 NATION 档的 {@code START_RALLY}、
+     * groupId 用国家 id、人数上限从 {@link #nationRallyCap} 取而不是在这里再算一遍。
+     */
+    public RallyResp nationRally(String playerId, NationRallyReq req) {
+        long now = timeService.serverNow();
+        acquire(req == null ? null : req.requestId(), now);
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+                Nation nation = requireNationOf(playerId);
+                requirePermission(PermissionMatrix.Scope.NATION, nationRoleOf(playerId),
+                        "START_RALLY");
+                int maxSize = Math.min(Math.max(req.maxMembers(), rules.nationRallyRules().minMembers()),
+                        nationRallyCap(playerId));
+                Rally rally = initiateRally(playerId, Rally.Scope.NATION, nation.id(),
+                        req.targetCoord(), req.targetType(), troopsOf(req.troops()),
+                        req.heroes(), maxSize, req.prepareMinutes() * 60_000L, now);
+                LOG.info("国家集结已发起 rallyId={} nationId={} 发起人={} 承诺兵力={} 人数上限={} 准备={}分钟",
+                        rally.rallyId(), nation.id(), playerId, rally.totalTroops(), maxSize,
+                        rally.prepareMillis() / 60_000L);
+                // 与联盟层同一句 RALLY_CALL：集结开出来了，发起人在自己的频道喊一句
+                events.publishEvent(new com.ironoath.web.bot.BotChatEvent(playerId, playerId,
+                        com.ironoath.core.bot.BotChatBook.Scene.RALLY_CALL, now));
+                return new RallyResp(toRallyView(rally, now), now);
+            });
+        } catch (RuntimeException e) {
+            idempotency.release(req.requestId());
+            throw e;
+        }
+    }
+
     /** 加入集结并承诺兵力（承诺即锁定：当场从城内军队扣除）。 */
     public RallyResp rallyJoin(String playerId, RallyJoinReq req) {
         long now = timeService.serverNow();
@@ -2466,6 +2580,7 @@ public class SocialAppService {
                 // 与个人出征共用同一个校验入口：归属、去重、上限。必须在扣兵之前
                 heroAppService.requireOnMarch(playerId, req.heroes());
                 requireMembership(playerId, rally);
+                requireJoinPermission(playerId, rally);
                 commitTroops(playerId, troops);
                 try {
                     rally.join(playerId, troops, req.heroes());
@@ -2552,7 +2667,13 @@ public class SocialAppService {
         });
     }
 
-    /** 某个组织（小队 / 联盟）里进行中的集结，给面板列表用。 */
+    /**
+     * 某个组织（小队 / 联盟 / 国家）里进行中的集结，给面板列表用。
+     *
+     * <p><b>三支都要有</b>：这一份是面板唯一的列表来源，少一支的症状不是报错而是"看不见的集结"——
+     * 国家层能发起（{@code /rally/nation} 返回 200 与 rallyId），但面板永远列不出那一次，
+     * 玩家会以为集结没发出去、再发一次，兵也被再锁一次。
+     */
     public RallyListResp preparingRallies(String playerId) {
         long now = timeService.serverNow();
         List<RallyView> out = new ArrayList<>();
@@ -2564,6 +2685,12 @@ public class SocialAppService {
         });
         store.allianceOf(playerId).ifPresent(alliance -> {
             for (Rally rally : store.preparingRalliesOf(alliance.id())) {
+                expireIfDue(rally, now);
+                out.add(toRallyView(rally, now));
+            }
+        });
+        activeNationOf(playerId).ifPresent(nation -> {
+            for (Rally rally : store.preparingRalliesOf(nation.id())) {
                 expireIfDue(rally, now);
                 out.add(toRallyView(rally, now));
             }
@@ -2584,8 +2711,15 @@ public class SocialAppService {
         }
         // 武将校验排在扣兵之前：被拒时一个兵都不该动（与个人出征同一条纪律）
         heroAppService.requireOnMarch(playerId, heroes);
-        int minMembers = (scope == Rally.Scope.SQUAD ? rules.squadRallyRules() : rules.allianceRallyRules())
-                .minMembers();
+        // 三档各取自己那一份规则，一次算好往下传。原先这里写的是
+        // `scope == SQUAD ? squad : alliance` 两分支，国家层会静默拿到联盟的下限与准备时长
+        // —— 不报错，只是用错一档，且两处（下限、Rally.initiate）都错。
+        Rally.Rules rulesOf = switch (scope) {
+            case SQUAD -> rules.squadRallyRules();
+            case ALLIANCE -> rules.allianceRallyRules();
+            case NATION -> rules.nationRallyRules();
+        };
+        int minMembers = rulesOf.minMembers();
         if (maxSize < minMembers) {
             // 组织本身就没那么多人：这种情况必须说清楚，而不是建一个永远出不了发的集结
             throw new BizException(ErrorCode.RALLY_MEMBER_NOT_ENOUGH,
@@ -2601,7 +2735,7 @@ public class SocialAppService {
         try {
             Rally rally = Rally.initiate("rally_" + playerId + "_" + now, scope, groupId, playerId,
                     troops, heroes, maxSize, requestedPrepareMillis, now,
-                    scope == Rally.Scope.SQUAD ? rules.squadRallyRules() : rules.allianceRallyRules(),
+                    rulesOf,
                     coord.x(), coord.y(), targetType.name());
             // 创建集结：expectedVersion=0，库里已有同 id 才是冲突（rallyId 里已带 now，正常不会撞）
             store.saveRally(rally, 0L);
@@ -2764,11 +2898,35 @@ public class SocialAppService {
                     .map(squad -> squad.id().equals(rally.groupId())).orElse(false);
             case ALLIANCE -> store.allianceOf(playerId)
                     .map(alliance -> alliance.id().equals(rally.groupId())).orElse(false);
-            case NATION -> false;
+            // 国家层的归属 = 我这个联盟所属的国家，正好是那次集结的 groupId。
+            // 这一支原先写死 false：国家集结建得出来，但<b>任何人都加不进去</b>
+            // （含发起人自己重进面板），症状是"发出去了却没人能进"，而且不报错。
+            // 亡国按"不在国家里"处理，与 nationRoleOf 同一口径。
+            case NATION -> activeNationOf(playerId)
+                    .map(nation -> nation.id().equals(rally.groupId())).orElse(false);
         };
         if (!member) {
             throw new BizException(ErrorCode.RALLY_NOT_FOUND,
                     "这次集结属于另一个组织，你不能加入（scope=" + rally.scope() + "）");
+        }
+    }
+
+    /**
+     * 加入资格里的权限位那一半（V22-a 只动国家层）。
+     *
+     * <p>小队与联盟层<b>没有</b>「参加集结」这一位（role_permission 表里只有 NATION 档有
+     * {@code JOIN_NATIONAL_RALLY}），那两档的加入资格就是"是不是这个组织的成员"，
+     * 由 {@link #requireMembership} 判完。国家层多一道位是因为它摇动的是全国兵力：
+     * 国籍之外还要看职位档位（三档全开，所以实际是"在国就能进"）。
+     *
+     * <p>为什么这一位必须接上：它 {@code allow*} 三档全 true，<b>当前行为与不判一样</b>，
+     * 所以漏掉它不会有任何用例变红 —— 而它一旦有人收紧（比如只给官职档），没接上的那一半
+     * 就是"表说不能进、服务端照收"。本仓头号缺陷形状正是「判定写了没接上」。
+     */
+    private void requireJoinPermission(String playerId, Rally rally) {
+        if (rally.scope() == Rally.Scope.NATION) {
+            requirePermission(PermissionMatrix.Scope.NATION, nationRoleOf(playerId),
+                    "JOIN_NATIONAL_RALLY");
         }
     }
 

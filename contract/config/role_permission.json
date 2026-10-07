@@ -216,6 +216,16 @@
       "why": "全员可参与国战。国战是国家级集体行动，参与门槛必须为零——B00 铁律三的社交逐级展开，最外层要能让每个人都进得来。"
     },
     {
+      "id": "perm_nation_start_rally",
+      "scope": "NATION",
+      "permission": "START_RALLY",
+      "permissionName": "发起集结",
+      "allowLeader": true,
+      "allowOfficer": true,
+      "allowMember": false,
+      "why": "国家集结一次摇动的是全国兵力（上限 50 人，是小队的 10 倍），影响范围最大那一档收得最紧：国王与官职档（首相/大将军/内政官/外交官）可发起，普通国民与民意代表不可。依据是 B13 §46 官职表把「发起国战、调动集结」同时给了大将军，而这一行与 SQUAD/ALLIANCE 两档的 START_RALLY 用同一个权限位名 —— 2026-10-07 裁决（V22 口径①），口径就是「与联盟层同形，新增角色只改这张表」（B10 验收 4）。"
+    },
+    {
       "id": "perm_nation_send_nation_mail",
       "scope": "NATION",
       "permission": "SEND_NATION_MAIL",

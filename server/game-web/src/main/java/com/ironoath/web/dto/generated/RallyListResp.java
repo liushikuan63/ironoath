@@ -5,7 +5,7 @@ package com.ironoath.web.dto.generated;
 import java.util.List;
 
 /**
- * GET /rally/list 响应：我所在的小队与联盟里**进行中**的集结。面板列表用 —— 只返回 PREPARING 的，已出发或已取消的集结留在面板上没有意义，而「点进去发现早就出发了」比「看不到」更让人困惑。
+ * GET /rally/list 响应：我所在的小队、联盟与国家里**进行中**的集结（国家那一支由 V22-a 接上）。面板列表用 —— 只返回 PREPARING 的，已出发或已取消的集结留在面板上没有意义，而「点进去发现早就出发了」比「看不到」更让人困惑。
  */
 public record RallyListResp(
         List<RallyView> rallies,   // 进行中的集结，按创建时刻升序（先发起的排前面，因为它的准备窗口先结束）。

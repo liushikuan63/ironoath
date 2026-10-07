@@ -512,11 +512,14 @@ export interface RallyPolicyView {
 }
 
 /**
- * GET /rally/policy 响应体（B26 S13）：小队与联盟两份政策一次给全（与 SocialCreatePolicyResp 同形状，少一次往返）。国家层级暂不在这里：B13 的国战集结还没有玩家入口，给了就是一个没人读的字段。
+ * GET /rally/policy 响应体（B26 S13）：小队、联盟、国家三份政策一次给全（与 SocialCreatePolicyResp 同形状，少一次往返）。
+ *
+ * 【2026-10-07 更正（V22 口径① 裁决）】本字段原先写着「国家层级暂不在这里：B13 的国战集结还没有玩家入口，给了就是一个没人读的字段」—— 那句话的前提已经不存在：国家层现在有发起入口（`POST /rally/nation`），而客户端的灰键与界面上的人数上限<b>只能</b>从这份响应取。少给这一份的症状是两套数：客户端 `AppRoot.rallyPolicyOf` 对非 SQUAD 一律回联盟那一份，于是国家集结界面上亮着联盟的 20 人、服务端夹的却是国家的上限 ——「写口夹什么，读口就说什么」这条纪律在国家这一层会直接失效。原句留作理由记录，不删。
  */
 export interface RallyPolicyResp {
   squad: RallyPolicyView
   alliance: RallyPolicyView
+  nation: RallyPolicyView
   /** 服务端时间戳 */
   serverNow: number
 }
@@ -538,7 +541,7 @@ export interface SquadRallyReq {
 }
 
 /**
- * 集结发起/加入的响应体（小队与联盟共用，靠 RallyView.scope 区分）。
+ * 集结发起/加入的响应体（小队、联盟、国家三层共用，靠 RallyView.scope 区分）。
  */
 export interface RallyResp {
   /** 集结视图 */
@@ -652,6 +655,26 @@ export interface AllianceRallyReq {
   /** 目标类型 */
   targetType: SocialTargetType
   /** 期望的参与人数上限。**服务端会夹到 RALLY_MAX_SIZE_ALLIANCE(20)** 而不是拒绝：发起人在滑块上很容易越界，拒绝会让他以为集结功能坏了 */
+  maxMembers: number
+  /** 准备时长（分钟）。服务端会夹到 [RALLY_PREPARE_MIN_SECONDS, RALLY_PREPARE_MAX_SECONDS] 区间 */
+  prepareMinutes: number
+  /** 发起人承诺出征的兵力（按 unitId → 数量，与行军同一口径）。**必填，且不得为空**：Rally.initiate 需要发起人的兵力才能建出第一个 Participant，而发起人一旦成为参与者就不能再 join 自己的集结（domain 会以「重复加入会让同一个人的兵被算两遍」拒绝），所以发起人的兵只有这一个入口。缺了这个字段的话，一次集结永远只能带着别人的兵出发。承诺即锁定：这些兵会当场从城内军队扣除，退出或集结取消时原路退回。 */
+  troops: RallyTroop[]
+  /** 发起人随军的武将 id，可为空。上限口径与小队集结一致。 */
+  heroes: string[] | null
+}
+
+/**
+ * POST /rally/nation 请求体（V22-a，B13 §46 大将军「发起国战、调动集结」）。**字段集合与 AllianceRallyReq 完全一致，且刻意不带 scope 字段**：层级由接口路径区分 —— 请求体里带上 scope 等于让客户端自己声明「我代表哪一层」，而那是服务端按国籍与职位判定的事，不能由调用方申报。同一条口径的既有先例：发起联盟集结时请求体也不带 allianceId，组织由服务端从 playerId 反查（`SocialAppService.allianceRally` 里的 `requireAllianceOf`）。
+ */
+export interface NationRallyReq {
+  /** 幂等键 */
+  requestId: string
+  /** 集结目标坐标 */
+  targetCoord: SocialCoord
+  /** 目标类型 */
+  targetType: SocialTargetType
+  /** 期望的参与人数上限。**服务端会夹到国家层此刻的上限**（`SocialAppService.nationRallyCap` 的折叠值 = 配置上限与本国实有人数的小值）而不是拒绝：发起人在滑块上很容易越界，拒绝会让他以为集结功能坏了。这里不写死数字 —— 上限随科技放开是 V24 的口径，界值唯一来源是 `GET /rally/policy` 的 nation 视图 */
   maxMembers: number
   /** 准备时长（分钟）。服务端会夹到 [RALLY_PREPARE_MIN_SECONDS, RALLY_PREPARE_MAX_SECONDS] 区间 */
   prepareMinutes: number
@@ -1032,7 +1055,7 @@ export interface AllianceTechResp {
 }
 
 /**
- * GET /rally/list 响应：我所在的小队与联盟里**进行中**的集结。面板列表用 —— 只返回 PREPARING 的，已出发或已取消的集结留在面板上没有意义，而「点进去发现早就出发了」比「看不到」更让人困惑。
+ * GET /rally/list 响应：我所在的小队、联盟与国家里**进行中**的集结（国家那一支由 V22-a 接上）。面板列表用 —— 只返回 PREPARING 的，已出发或已取消的集结留在面板上没有意义，而「点进去发现早就出发了」比「看不到」更让人困惑。
  */
 export interface RallyListResp {
   /** 进行中的集结，按创建时刻升序（先发起的排前面，因为它的准备窗口先结束）。 */

@@ -13,6 +13,7 @@ import com.ironoath.common.ErrorCode;
 import com.ironoath.common.Result;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.web.dto.generated.AllianceRallyReq;
+import com.ironoath.web.dto.generated.NationRallyReq;
 import com.ironoath.web.dto.generated.RallyJoinReq;
 import com.ironoath.web.dto.generated.RallyListResp;
 import com.ironoath.web.dto.generated.RallyPolicyResp;
@@ -21,15 +22,15 @@ import com.ironoath.web.dto.generated.SquadRallyReq;
 import com.ironoath.web.service.SocialAppService;
 
 /**
- * 职责：集结域 HTTP 入口（B10 §5）—— 发起（小队 / 联盟）、加入、退出、取消、详情、列表。
+ * 职责：集结域 HTTP 入口（B10 §5）—— 发起（小队 / 联盟 / 国家）、加入、退出、取消、详情、列表。
  * 依赖：Spring Web、{@link SocialAppService}。
  *
  * <p><b>单独一个 Controller 而不是塞进 SquadController / AllianceController</b>：
- * 集结横跨两个层级（B13 还有国家级），按发起层级拆到两个 Controller 里，
+ * 集结横跨三个层级（B13 的国家级已由 V22-a 接上），按发起层级拆到两个 Controller 里，
  * 「集结相关的接口在哪」就没有一个确定答案了 —— 而加入/退出/取消这三个操作
  * 与发起层级完全无关，拆开只会让它们出现在两处或者随便挑一处。
  *
- * <p><b>四个写端点都要 requestId</b>：加入会锁定兵力（当场从城内军队扣除），
+ * <p><b>五个写端点都要 requestId</b>：加入会锁定兵力（当场从城内军队扣除），
  * 重放一次就会锁两遍，玩家的兵会凭空少一份。这是本项目所有写接口的同一条纪律。
  */
 @RestController
@@ -72,6 +73,14 @@ public class RallyController {
         return Result.ok(social.allianceRally(playerId, req));
     }
 
+    /** 发起国家集结。权限位 perm_nation_start_rally（国王与官职档，普通国民不行）；人数上限取自服务端折叠点而不是这里的字面量。 */
+    @PostMapping("/nation")
+    public Result<RallyResp> nation(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                    @RequestBody NationRallyReq req) {
+        requirePlayer(playerId);
+        return Result.ok(social.nationRally(playerId, req));
+    }
+
     /** 加入集结并承诺兵力（承诺即锁定）。 */
     @PostMapping("/join")
     public Result<RallyResp> join(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
@@ -104,7 +113,7 @@ public class RallyController {
         return Result.ok(social.rallyView(playerId, rallyId));
     }
 
-    /** 我所在的小队与联盟里进行中的集结（面板列表）。 */
+    /** 我所在的小队、联盟与国家里进行中的集结（面板列表）。 */
     @GetMapping("/list")
     public Result<RallyListResp> list(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
         requirePlayer(playerId);
