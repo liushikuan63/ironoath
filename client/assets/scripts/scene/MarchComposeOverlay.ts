@@ -47,6 +47,21 @@ const ROW_COUNT_X = ROW_MINUS_X - 19 - 12
 const VISIBLE_ROWS = 5
 /** 一次点 ＋/− 走多少：10 是"来回点几下就能调到位"与"点一下不心疼"之间的取中值。 */
 const STEP = 10
+/**
+ * 召集范围的三颗键（V22-b）。顺序就是面板上的顺序，也是量具 `层级-*` 节点名的依据 ——
+ * 名字带 scope 而不带下标，所以加一颗不会让后面那行的读数错位。
+ */
+const BAND_CHIP_SCOPES: readonly RallyScope[] = ['SQUAD', 'ALLIANCE', 'NATION']
+/**
+ * 三颗键 42 宽、间距 6（第一版按"两行的 62 宽 + 66 距"缩到三颗是 48 + 6，实测压住了「人数」）。
+ * 数字是量出来的不是推出来的：band 净宽 572（左右各内缩 24），「人数」那颗表头在 -110、
+ * 实测文字盒宽 32 ⇒ 左边缘 -126；第三颗的中心 -161、半宽 21 ⇒ 右边缘 -140，留 16 空。
+ * 判据在 `tools/verify-nation-rally-runtime.mjs` 的「盒子互不相交」那一条（台账 #774 同一族）。
+ */
+const BAND_CHIP_WIDTH = 42
+const BAND_CHIP_GAP = 6
+/** 第一颗的中心：band 左内缩 8 ⇒ -286 + 8 + 半宽 */
+const BAND_CHIP_START_X = -ROW_WIDTH / 2 + 8 + BAND_CHIP_WIDTH / 2
 
 export class MarchComposeOverlay {
   private readonly node: Node
@@ -135,11 +150,13 @@ export class MarchComposeOverlay {
     bandBg.fillColor = COLOR_ROW
     bandBg.roundRect(-(PANEL_WIDTH - 48) / 2, -ROW_HEIGHT, PANEL_WIDTH - 48, ROW_HEIGHT, 6)
     bandBg.fill()
-    const scopes: readonly RallyScope[] = ['SQUAD', 'ALLIANCE']
-    for (let index = 0; index < scopes.length; index++) {
-      const scope = scopes[index] as RallyScope
-      const chip = this.bandButton(`层级-${scope}`, '', -252 + index * 66, -ROW_HEIGHT / 2, 62,
-        () => this.onPickScope?.(scope))
+    // 三档层级键一行排开（V22-b 加第三颗）；宽度、间距与起点的算法与"为什么不压住表头"
+    // 写在 BAND_CHIP_* 那几条常量上（那里有实测出来的盒子数字）。
+    for (let index = 0; index < BAND_CHIP_SCOPES.length; index++) {
+      const scope = BAND_CHIP_SCOPES[index] as RallyScope
+      const chip = this.bandButton(`层级-${scope}`, '',
+        BAND_CHIP_START_X + index * (BAND_CHIP_WIDTH + BAND_CHIP_GAP), -ROW_HEIGHT / 2,
+        BAND_CHIP_WIDTH, () => this.onPickScope?.(scope))
       this.bandChips.push({ scope, ...chip })
     }
     // 版式按"整盒不重叠"排（截图抓到的第一版把 Cocos 默认的 label 字样留在了 −/＋ 上，

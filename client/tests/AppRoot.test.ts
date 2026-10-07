@@ -3258,7 +3258,10 @@ function rallyPolicyBody(): Record<string, unknown> {
     minMembers: 2, maxMembers, minPrepareMinutes: 10, maxPrepareMinutes: 30,
     defaultPrepareMinutes: 30, canStart: true, reason: null,
   })
-  return { squad: view(5), alliance: view(12), serverNow: SERVER_NOW }
+  // 三份的上界**刻意给三个不同的数**（5 / 12 / 30）：国家那档如果回落到联盟那一份（原
+  // `scope === 'SQUAD' ? squad : alliance` 的写法），断言"切到国家层亮 30"就会红。
+  // 同值的话这条判据钉不住任何东西（台账 #787 记的就是"三档同值 ⇒ 改错也绿"这一族）。
+  return { squad: view(5), alliance: view(12), nation: view(30), serverNow: SERVER_NOW }
 }
 
 /**
@@ -3485,6 +3488,7 @@ async function rallyComposeHarness(policy?: Record<string, unknown>): Promise<Ha
   }))
   h.http.overrides.set('/rally/squad', { rally: rallyShape(), serverNow: SERVER_NOW })
   h.http.overrides.set('/rally/alliance', { rally: rallyShape(), serverNow: SERVER_NOW })
+  h.http.overrides.set('/rally/nation', { rally: rallyShape(), serverNow: SERVER_NOW })
   if (policy !== undefined) {
     h.http.overrides.set('/rally/policy', policy)
   }
@@ -3497,12 +3501,12 @@ async function rallyComposeHarness(policy?: Record<string, unknown>): Promise<Ha
   return h
 }
 
-test('B26 S14：编成里的层级两行都在，小队层不带数字，切到联盟就按政策填出那两个数', async () => {
+test('B26 S14：编成里的层级三行都在（V22-b 加国家档），小队层不带数字，切到联盟就按政策填出那两个数', async () => {
   const h = await rallyComposeHarness()
   assert.equal(h.lastCompose?.mode, 'RALLY')
   assert.deepEqual(h.lastCompose?.rallyScopes?.map(row => [row.scope, row.label, row.blocked]),
-    [['SQUAD', '小队', null], ['ALLIANCE', '联盟', null]],
-    '两行都带服务端那句"能不能发起"，客户端不再判第二遍')
+    [['SQUAD', '小队', null], ['ALLIANCE', '联盟', null], ['NATION', '国家', null]],
+    '三行都带服务端那句"能不能发起"，客户端不再判第二遍')
   assert.equal(h.lastCompose?.rallyScope, 'SQUAD', '进集结态先停在玩家已经点过的那条路（小队）')
   assert.equal(h.lastCompose?.rallyNumbers?.length, 0, '小队层的上限与时长由服务端自己定，没有可填的数')
 
@@ -3532,6 +3536,96 @@ test('B26 S14：联盟层确认 → 发 /rally/alliance 带那两个数与承诺
   assert.equal(h.http.countOf('/world/march'), 0)
   assert.deepEqual(h.events.find(e => e.name === 'rally_initiate')?.params,
     { scope: 'ALLIANCE', troops: '30' }, '层级要分得开：看板靠它才知道联盟集结有没有人用')
+})
+
+// ---------- V22-b：国家层集结的客户端入口 ----------
+
+test('V22-b：切到国家层亮的是政策里 nation 那一份数，不是联盟那一份', async () => {
+  const h = await rallyComposeHarness()
+  h.root.setComposeRallyScope('NATION')
+  assert.equal(h.lastCompose?.rallyScope, 'NATION')
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => [row.field, row.text]),
+    [['maxMembers', '30/30人'], ['prepareMinutes', '30分']],
+    '国家层的人数上限只能是服务端折出来的那一份：写口夹 nationRallyCap，读口若回联盟的 12 就是两套数（V24-D1 点名处）')
+  assert.equal(h.http.countOf('/rally/nation'), 0, '选层级不发请求')
+})
+
+test('V22-b：国家层确认 → 发 /rally/nation 带那两个数与承诺的兵，不打联盟口也不打小队口', async () => {
+  const h = await rallyComposeHarness()
+  h.root.setComposeRallyScope('NATION')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  h.events.length = 0
+  await h.root.confirmMarch()
+  const sent = h.http.calls.filter(c => c.path === '/rally/nation').at(-1)
+  assert.ok(sent !== undefined, '国家集结要真发出去')
+  assert.equal(sent?.body.targetType, 'PLAYER_CITY')
+  assert.equal(sent?.body.maxMembers, 30, '人数上限照政策那一刻的国家值')
+  assert.equal(sent?.body.prepareMinutes, 30)
+  assert.deepEqual(sent?.body.troops, [{ unitId: 'unit_infantry_t1', count: 30 }])
+  assert.ok(String(sent?.body.requestId ?? '').length > 0, 'requestId 由传输层注入（一次确认 = 一次新意图）')
+  assert.equal(h.http.countOf('/rally/alliance'), 0, '选了国家层就不该打到联盟口')
+  assert.equal(h.http.countOf('/rally/squad'), 0)
+  assert.equal(h.http.countOf('/world/march'), 0)
+  assert.deepEqual(h.events.find(e => e.name === 'rally_initiate')?.params,
+    { scope: 'NATION', troops: '30' }, '三档的埋点要分得开')
+})
+
+test('V22-b：政策说国家层发起不了 → 点「国家」不切过去、把那一句人话写在提示行、一条写请求都不发', async () => {
+  const h = await rallyComposeHarness({
+    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: true, reason: null },
+    alliance: { minMembers: 2, maxMembers: 12, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: true, reason: null },
+    nation: { minMembers: 2, maxMembers: 50, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: false,
+      reason: '你当前的职位不能发起集结' },
+    serverNow: SERVER_NOW,
+  })
+  const row = h.lastCompose?.rallyScopes?.find(r => r.scope === 'NATION')
+  assert.equal(row?.blocked, '你当前的职位不能发起集结',
+    '灰键与理由只有一个出处：政策那份视图（客户端不按职位自己判，也不印 OFFICER 这类原文）')
+  h.root.setComposeRallyScope('NATION')
+  assert.equal(h.lastCompose?.rallyScope, 'SQUAD', '政策说不能就不切层')
+  assert.equal(h.lastCompose?.notice, '你当前的职位不能发起集结')
+  assert.equal(h.http.countOf('/rally/nation'), 0, '灰了就一个请求都不发')
+  // 另一档仍可发起：不能被国家层的拒绝连着把联盟也灰掉
+  h.root.setComposeRallyScope('ALLIANCE')
+  assert.equal(h.lastCompose?.rallyScope, 'ALLIANCE')
+})
+
+test('V22-b：国家层的两个数按国家的界夹，不借联盟的界', async () => {
+  const h = await rallyComposeHarness()
+  h.root.setComposeRallyScope('NATION')
+  for (let i = 0; i < 40; i++) {
+    // 一次一档（RALLY_STEPS 定的是"按人走一步"），所以到界要来回点够数，不是一次 -100
+    h.root.adjustComposeRallyNumber('maxMembers', 1)
+  }
+  assert.equal(h.lastCompose?.rallyNumbers?.[0]?.value, 30,
+    '上界是国家那份的 30：若夹到联盟的 12，玩家会以为"加不上去是功能坏了"')
+  assert.equal(h.lastCompose?.rallyNumbers?.[0]?.max, 30)
+  for (let i = 0; i < 40; i++) {
+    h.root.adjustComposeRallyNumber('maxMembers', -1)
+    h.root.adjustComposeRallyNumber('prepareMinutes', -1)
+  }
+  assert.deepEqual(h.lastCompose?.rallyNumbers?.map(row => row.value), [2, 10],
+    '下界同样来自国家那份政策（最少人数与最短时长）')
+})
+
+test('V22-b：旧后端没有 nation 那一份时不当成"用联盟的" —— 层级切得过去但不猜数', async () => {
+  const h = await rallyComposeHarness({
+    squad: { minMembers: 2, maxMembers: 5, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: true, reason: null },
+    alliance: { minMembers: 2, maxMembers: 12, minPrepareMinutes: 10, maxPrepareMinutes: 30,
+      defaultPrepareMinutes: 30, canStart: true, reason: null },
+    serverNow: SERVER_NOW,
+  })
+  h.root.setComposeRallyScope('NATION')
+  assert.equal(h.lastCompose?.rallyScope, 'NATION', '读不到国家政策不是"你不行"')
+  assert.equal(h.lastCompose?.rallyNumbers?.length, 0,
+    '缺的那一份就是没有 ⇒ 一行数都不画；回联盟那一份会把 12 说成国家的上限')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  await h.root.confirmMarch()
+  assert.equal(h.http.countOf('/rally/nation'), 0, '猜出来的数不许真的发出去')
 })
 
 test('B26 S14：政策说这一层发起不了 → 点「联盟」不切过去，把那一句人话写在提示行', async () => {

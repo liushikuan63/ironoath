@@ -186,8 +186,19 @@ function clamp(value: number, min: number, max: number): number {
 
 // ---------- 集结层级与那两个数（B26 S14）----------
 
-/** 这一份编成要发给哪一层：小队列还是联盟列。 */
-export type RallyScope = 'SQUAD' | 'ALLIANCE'
+/** 这一份编成要发给哪一层：小队 / 联盟 / 国家（V22-b 接上国家那一档）。 */
+export type RallyScope = 'SQUAD' | 'ALLIANCE' | 'NATION'
+
+/**
+ * 这一层在编成面板上要不要玩家填那两个数（人数上限、等待时长）。
+ *
+ * <p>写成一条谓词而不是四处 `=== 'ALLIANCE'`：小队层的那两个数由服务端自己定，
+ * 而联盟与国家两层收的是同一对字段（`AllianceRallyReq` 与 `NationRallyReq` 字段集一致）。
+ * 判断散在四处时，漏改其中一处的症状是"切到国家层那两个数不画 ⇒ 提交被拦成政策还没拉到"。
+ */
+export function rallyTakesNumbers(scope: RallyScope): boolean {
+  return scope === 'ALLIANCE' || scope === 'NATION'
+}
 
 /** 联盟集结要收的两个数所在的行。 */
 export type RallyField = 'maxMembers' | 'prepareMinutes'

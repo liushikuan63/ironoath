@@ -47,7 +47,7 @@ import { buildRankBoard, buildRankSnapshotView } from '../power/RankBoard'
 import { buildStaminaBoard } from '../stage/StaminaBoard'
 import {
   adjustRallyNumber, buildCompose, marchUnitsOf, rallyFormBlocked, rallyFormOf, rallyNumbersOf,
-  rallySwitchBlocked, rememberMarch, repeatBlockedReason, setPick,
+  rallySwitchBlocked, rallyTakesNumbers, rememberMarch, repeatBlockedReason, setPick,
 } from '../world/MarchCompose'
 import type {
   ComposeView, MarchSpec, RallyField, RallyForm, RallyNumberRow, RallyScope, RallyScopeRow,
@@ -1940,9 +1940,9 @@ export class AppRoot {
     }
     if (rally.kind === 'ok') {
       this.rallyPolicy = rally.data
-      // 编成面板正停在联盟层等这两个数：政策晚到一步就要立刻补上，否则那一屏停在"读取中"
-      if (this.rallyForm === null && this.composeRally && this.composeRallyScope === 'ALLIANCE') {
-        this.rallyForm = rallyFormOf(this.rallyPolicyOf('ALLIANCE'))
+      // 编成面板正停在要填数的那一层等这两个数：政策晚到一步就要立刻补上，否则那一屏停在"读取中"
+      if (this.rallyForm === null && this.composeRally && rallyTakesNumbers(this.composeRallyScope)) {
+        this.rallyForm = rallyFormOf(this.rallyPolicyOf(this.composeRallyScope))
       }
     } else {
       this.say('social', rally)
@@ -4290,19 +4290,30 @@ export class AppRoot {
     }
   }
 
-  /** 某一层级的政策；还没拉到就是 null（面板不为它猜界）。 */
+  /**
+   * 某一层级的政策；还没拉到就是 null（面板不为它猜界）。
+   *
+   * <p>第三档必须真的走 `nation` 那一份：原写法是 `scope === 'SQUAD' ? squad : alliance`，
+   * 于是国家层亮的是**联盟的人数上限**，而写口夹的是国家折叠上限 ——「写口夹什么，读口就说什么」
+   * 在国家这一层直接失效（V24-D1 点名的"两套数"藏身处）。认不出来的档位回 null 而不是回某一份
+   * 看着合理的：回错那份和回对长得一样，只有玩家能看出来。
+   */
   private rallyPolicyOf(scope: RallyScope): RallyPolicyView | null {
     if (this.rallyPolicy === null) {
       return null
     }
-    return scope === 'SQUAD' ? this.rallyPolicy.squad : this.rallyPolicy.alliance
+    const view = scope === 'SQUAD' ? this.rallyPolicy.squad
+      : scope === 'ALLIANCE' ? this.rallyPolicy.alliance
+        : scope === 'NATION' ? this.rallyPolicy.nation : null
+    // 旧后端（契约加 nation 之前打的 jar）那份响应里没这个键：缺就是没有政策，不是"用联盟的"
+    return view ?? null
   }
 
   /**
-   * 换集结的召集范围：小队 / 联盟（B26 S14）。
+   * 换集结的召集范围：小队 / 联盟 / 国家（B26 S14 起两档，V22-b 接第三档）。
    *
    * <p>政策说不能时才拦下并给服务端那句原因；**政策没拉到时不拦**（"暂时不知道"不是"你不行"，
-   * 同一口径见 {@link rallyBlockedReason}）。切到联盟才填那两个数：小队层的上限与时长
+   * 同一口径见 {@link rallyBlockedReason}）。切到要填数的那几层才填那两个数：小队层的上限与时长
    * 由服务端按自己的配置定，客户端没有可填的字段。
    */
   setComposeRallyScope(scope: RallyScope): void {
@@ -4316,17 +4327,18 @@ export class AppRoot {
       return
     }
     this.composeRallyScope = scope
-    this.rallyForm = scope === 'ALLIANCE' ? rallyFormOf(this.rallyPolicyOf(scope)) : null
+    this.rallyForm = rallyTakesNumbers(scope) ? rallyFormOf(this.rallyPolicyOf(scope)) : null
     this.composeNotice = null
     this.deliverCompose()
   }
 
   /** 把人数上限 / 等待时长调一档。夹取在纯逻辑里按政策的界做，表现层不自己算。 */
   adjustComposeRallyNumber(field: RallyField, direction: number): void {
-    if (!this.composeRally || this.composeRallyScope !== 'ALLIANCE') {
+    if (!this.composeRally || !rallyTakesNumbers(this.composeRallyScope)) {
       return
     }
-    this.rallyForm = adjustRallyNumber(this.rallyForm, this.rallyPolicyOf('ALLIANCE'), field, direction)
+    this.rallyForm = adjustRallyNumber(this.rallyForm, this.rallyPolicyOf(this.composeRallyScope),
+      field, direction)
     this.composeNotice = null
     this.deliverCompose()
   }
@@ -4475,6 +4487,56 @@ export class AppRoot {
     this.deliverCompose()
   }
 
+  /**
+   * 发起国家层集结（V22-b，B13 §46 大将军「发起国战、调动集结」）。
+   *
+   * <p>与联盟那条的差别只有一处：走 `POST /rally/nation`。那两个数的界**照旧只来自
+   * `/rally/policy` 的 nation 视图**（服务端把它折成 min(配置上限, 本国实有人数)，V24 还要在这个
+   * 折叠点上叠科技与已购格）⇒ 这里一个数字都不许写死，也不许退回联盟那一份。
+   *
+   * <p>「能不能发起」同样不在这里判：政策说不能时层级根本切不过来（{@link setComposeRallyScope}），
+   * 真发出去被服务端拒了就走同一句人话回显。
+   */
+  private async confirmNationRally(target: { x: number, y: number, name: string },
+                                   units: readonly { unitId: string, count: number }[]): Promise<void> {
+    const form = this.rallyForm
+    if (form === null) {
+      this.composeNotice = rallyFormBlocked(form)
+      this.deliverCompose()
+      return
+    }
+    this.track(TRACK_EVENTS.rallyInitiate, {
+      scope: trackParam('NATION'),
+      troops: trackParam(units.reduce((sum, unit) => sum + unit.count, 0)),
+    })
+    this.composeSubmitting = true
+    this.composeNotice = null
+    this.deliverCompose()
+    const outcome = await this.api.nationRally({
+      targetCoord: { x: target.x, y: target.y }, targetType: 'PLAYER_CITY',
+      maxMembers: form.maxMembers, prepareMinutes: form.prepareMinutes,
+      troops: units.map(unit => ({ ...unit })), heroes: [],
+    })
+    this.composeSubmitting = false
+    if (outcome.kind === 'ok') {
+      this.composeRally = false
+      this.composeScout = false
+      this.composeRallyScope = 'SQUAD'
+      this.rallyForm = null
+      this.composeTarget = null
+      this.composePicks = {}
+      this.composeNotice = `已发起国家集结：${target.name}`
+      this.deliverCompose()
+      void this.refresh('social')
+      return
+    }
+    this.composeNotice = outcome.kind === 'biz'
+      ? (outcome.detail ?? outcome.msg)
+      : AppRoot.reason(outcome)
+    this.say('targets', outcome)
+    this.deliverCompose()
+  }
+
   /** 勾选/改数量。夹取在纯逻辑里做（表现层不做夹取，也不做判定）。 */
   pickMarchUnit(unitId: string, count: number): void {
     if (this.armyResp === null || this.composeTarget === null) {
@@ -4525,7 +4587,9 @@ export class AppRoot {
       return
     }
     if (this.composeRally) {
-      if (this.composeRallyScope === 'ALLIANCE') {
+      if (this.composeRallyScope === 'NATION') {
+        await this.confirmNationRally(target, units)
+      } else if (this.composeRallyScope === 'ALLIANCE') {
         await this.confirmAllianceRally(target, units)
       } else {
         await this.confirmSquadRally(target, units)
@@ -4633,21 +4697,21 @@ export class AppRoot {
       rallyBlocked: this.rallyBlockedReason(),
       rallyScope: this.composeRallyScope,
       rallyScopes: this.composeRally ? this.rallyScopeRows() : [],
-      rallyNumbers: this.composeRally && this.composeRallyScope === 'ALLIANCE'
-        ? rallyNumbersOf(this.rallyForm, this.rallyPolicyOf('ALLIANCE'))
+      rallyNumbers: this.composeRally && rallyTakesNumbers(this.composeRallyScope)
+        ? rallyNumbersOf(this.rallyForm, this.rallyPolicyOf(this.composeRallyScope))
         : [],
     })
   }
 
   /**
-   * 集结态下的两行层级入口。原因直接抄政策那句（服务端已经把"不在盟/职位不够/人数不够"
-   * 说成人话了，客户端不再判第二遍）。政策没拉到时两行都不带原因 —— 点下去由服务端裁决。
+   * 集结态下的三行层级入口。原因直接抄政策那句（服务端已经把"不在盟/职位不够/人数不够"
+   * 说成人话了，客户端不再判第二遍）。政策没拉到时三行都不带原因 —— 点下去由服务端裁决。
    */
   private rallyScopeRows(): RallyScopeRow[] {
     const rowOf = (scope: RallyScope, label: string): RallyScopeRow => ({
       scope, label, blocked: rallySwitchBlocked(this.rallyPolicyOf(scope)),
     })
-    return [rowOf('SQUAD', '小队'), rowOf('ALLIANCE', '联盟')]
+    return [rowOf('SQUAD', '小队'), rowOf('ALLIANCE', '联盟'), rowOf('NATION', '国家')]
   }
 
   // ---------- 目标搜索与流亡 ----------

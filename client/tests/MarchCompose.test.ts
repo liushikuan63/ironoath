@@ -10,7 +10,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   adjustRallyNumber, buildCompose, marchUnitsOf, rallyFormBlocked, rallyFormOf, rallyNumbersOf,
-  rallySwitchBlocked, rememberMarch, repeatBlockedReason, repeatRequestOf, setPick,
+  rallySwitchBlocked, rallyTakesNumbers, rememberMarch, repeatBlockedReason, repeatRequestOf, setPick,
 } from '../assets/scripts/game/world/MarchCompose'
 import type { MarchSpec, RallyForm } from '../assets/scripts/game/world/MarchCompose'
 import type { RallyPolicyView } from '../assets/scripts/net/generated/SocialProtocol'
@@ -168,4 +168,11 @@ test('画出来的两行带界与格式化好的字：数字与上界同屏，�
   assert.deepEqual(rallyNumbersOf({ maxMembers: 7, prepareMinutes: 20 }, null), [])
   assert.equal(rallyFormBlocked({ maxMembers: 7, prepareMinutes: 20 }), null)
   assert.match(rallyFormBlocked(null) ?? '', /还没拉到/)
+})
+
+test('V22-b：要填数的那几层是一条谓词，不是散在各处的 === "ALLIANCE"', () => {
+  // 小队层那两个数由服务端自己定（协议里就没有那两个字段）；联盟与国家两层收的是同一对字段。
+  // 判断只写一处：漏改任何一处的症状是"切到国家层不画数 ⇒ 确认被拦成政策还没拉到"。
+  assert.deepEqual(['SQUAD', 'ALLIANCE', 'NATION'].map(s => rallyTakesNumbers(s as never)),
+    [false, true, true])
 })

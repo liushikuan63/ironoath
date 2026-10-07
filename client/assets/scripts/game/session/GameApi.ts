@@ -83,7 +83,7 @@ import type {
   HelpReq, HelpResp, PermissionListResp, RallyJoinReq, RallyPolicyResp, RallyResp, SocialEventAckReq,
   SocialCreatePolicyResp, SocialHelpListResp, SocialSummaryResp, SquadCreateReq, SquadIdReq,
   SquadListResp, SquadMemberReq, SquadRallyReq,
-  SquadSelfReq, AllianceRallyReq, ReddotTreeResp, RallyListResp,
+  SquadSelfReq, AllianceRallyReq, NationRallyReq, ReddotTreeResp, RallyListResp,
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import type { QuestClaimReq, QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
@@ -1034,7 +1034,7 @@ export class GameApi {
     return this.read<RallyPolicyResp>('/rally/policy')
   }
 
-  /** POST /squad/rally。人数上限由服务端按 global.RALLY_MAX_SIZE_SQUAD 夹，客户端不自己夹。 */
+  /** POST /rally/squad（真路径见 `RallyController`，台账 #788）。人数上限由服务端按 global.RALLY_MAX_SIZE_SQUAD 夹，客户端不自己夹。 */
   squadRally(req: Omit<SquadRallyReq, 'requestId'>): Promise<NetOutcome<RallyResp>> {
     return this.mutate<SquadRallyReq, RallyResp>('/rally/squad', req)
   }
@@ -1097,6 +1097,17 @@ export class GameApi {
 
   allianceRally(req: Omit<AllianceRallyReq, 'requestId'>): Promise<NetOutcome<RallyResp>> {
     return this.mutate<AllianceRallyReq, RallyResp>('/rally/alliance', req)
+  }
+
+  /**
+   * POST /rally/nation（V22-b，服务端 `RallyController` 的 `@PostMapping("/nation")`）。
+   *
+   * <p>请求体刻意不带 scope：层级由路径决定，"我代表哪一层"是服务端按国籍与职位判定的事，
+   * 不让调用方申报（同一口径见 `NationRallyReq` 的注释）。人数上限也不在这里夹 ——
+   * 界只在 `/rally/policy` 的 nation 视图里，抄进客户端就是留第二个真源。
+   */
+  nationRally(req: Omit<NationRallyReq, 'requestId'>): Promise<NetOutcome<RallyResp>> {
+    return this.mutate<NationRallyReq, RallyResp>('/rally/nation', req)
   }
 
   /** POST /rally/join。承诺的兵力会被锁定，所以必须幂等。 */

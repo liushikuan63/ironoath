@@ -112,11 +112,13 @@ while read -r f; do
   [ -z "$port_env" ] && port_env="PROBE_PORT"
   # 2026-10-05：**dev 提速档是要设在「后端进程」上的**（`IRONOATH_DEV_CITY_LEVEL=16` +
   # `IRONOATH_DEV_START_AMOUNT=2000000`，只在 dev profile 生效），探针侧设了没用。
-  # ⇒ 给这几份单独指一台提速档后端：`BOOST_BACKEND`（可空）+ `BOOST_PROBES`（正则，默认覆盖 nation 两份）。
+  # ⇒ 给这几份单独指一台提速档后端：`BOOST_BACKEND`（可空）+ `BOOST_PROBES`（正则，默认覆盖 nation 三份）。
+  # `verify-nation-rally-runtime`（V22-c）也在里面：它要**建国**（主城 16 级），而它**不能**去真仗档那一台 ——
+  # 那一台带 `IRONOATH_DEV_TIME_SPEED`，会把"练兵到齐"与"准备窗口还开着"这两段时间前提一起改掉。
   # 不配 `BOOST_BACKEND` ⇒ 行为与改动前完全一致（仍打 `$BACKEND`）。
   target_backend="$BACKEND"
   if [ -n "${BOOST_BACKEND:-}" ]; then
-    boost_re="${BOOST_PROBES:-verify-nation-live|verify-nation-policy-ui}"
+    boost_re="${BOOST_PROBES:-verify-nation-live|verify-nation-policy-ui|verify-nation-rally-runtime}"
     if printf '%s' "$base" | grep -qE "$boost_re"; then
       target_backend="$BOOST_BACKEND"
     fi
