@@ -6,7 +6,8 @@
  * 探针护栏 —— `verify-march-runtime.mjs` 全打桩、`verify-nation-live.mjs` 只到"双国+宣战"，
  * 攻城那一段是"判定写了没接上"最爱的藏身处。本探针走**完整真实链路**，一步都不注入假数据：
  * 真练兵（POST /army/train，等待真完成）、真行军（POST /world/march）、真结算
- * （GET /world/marches 跨过 arriveAt 的那次读触发）、再回读国战账与 WAR 榜。
+ * （GET /world/marches 跨过 arriveAt 的那次读触发）、再回读国战账与 WAR 榜；末段含 #769 相位：
+ * 连发 SCOUT 到顶（每次 +5）后，**新发起必须被 13026 拒**（验收 7 的服务端执行者）。
  *
  * <p><b>为什么不是"作弊发兵"</b>：本仓把"给探针塞兵"划成作弊端点（那会让"账目正确"变成
  * 兵不需要练、仗不需要打的假承诺）。这里所有兵力都经兵营训练生产出来 —— 慢，但真的。
@@ -234,9 +235,16 @@ checkThat(`守方兵力到齐（读到 ${gotB ?? '超时'}，目标 ${bCount}）
 // ---------- 4. 建国（两国；击杀要记进国战账，双方都得在国里） ----------
 const runTag = `${Date.now() % 1000000}`
 async function foundNation(player, nick, tagPrefix, capitalX, capitalY) {
-  const alliance = await call('POST', '/alliance/create', {
-    requestId: rid('alliance'), name: `实战盟${nick}${runTag}`, tag: `${tagPrefix}${runTag.slice(-3)}`,
-  }, player)
+  // tag（≤4 字符）尾数只有 1000 组，而 dev 内存跨轮不清（国家收尾会解散，**联盟不会**）
+  // ⇒ 重复跑必然撞 10016。撞了就换尾数重试——别把"上一轮的联盟还在"当成功能坏了。
+  let alliance = null
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const tag = `${tagPrefix}${String((Number(runTag) + attempt * 137) % 1000).padStart(3, '0')}`
+    alliance = await call('POST', '/alliance/create', {
+      requestId: rid('alliance'), name: `实战盟${nick}${runTag}${attempt}`, tag,
+    }, player)
+    if (alliance.code === 0 || alliance.code !== 10016) break
+  }
   check(`${nick} 建盟成功（${alliance.detail ?? alliance.msg}）`, alliance.code, 0)
   const found = await call('POST', '/nation/found', {
     requestId: rid('found'), name: `实战国${nick}${runTag}`, capitalX, capitalY,
@@ -328,8 +336,78 @@ check('战报列表可读（GET /battle/reports）', reports.code, 0)
 const missing = await call('GET', `/definitely-not-a-route-${runTag}`)
 check('对照组：不存在的路径回 404', missing.http, 404)
 
+// ---------- 8.5 到顶拒发起（#769：验收 7「超过上限后无法继续行军」的服务端执行者） ----------
+// ⚠️ 前置认知（本相位第一版实测踩到）：**结算后疲劳不再累积** —— addFatigue 对已 SETTLED 的板子
+// 记 NO_ACTIVE_WAR（日志实测），疲劳停在战后值、永远到不了顶。所以本相位先对**新第三国**重开
+// 一场活跃战事（旧对手有 24h 宣战冷却，第三国没有交手史）。然后连发 SCOUT 到空地（每次 +5），
+// 到顶（myFatigue >= fatigueMax）后的下一次发起必须被 13026（WAR_FATIGUE_MAX_REACHED）拒。
+// 兵：SCOUT 到达自动返程、到家归还（#768 修复的形状），少量兵即可周转；战损后不足先补练。
+const WAR_FATIGUE_MAX_REACHED = 13026   // 出处：ErrorCode.java（探针不引 Java 枚举）
+let capRival = null
+{
+  const c = await initPlayer('warcap-c')
+  if (c === null) {
+    bad('到顶相前置：第三国号建不出来')
+  } else {
+    const cAlliance = await call('POST', '/alliance/create', {
+      requestId: rid('cap-alliance'), name: `到顶相国${runTag}`, tag: `FC${runTag.slice(-2)}`,
+    }, c)
+    const cFound = cAlliance.code === 0 ? await call('POST', '/nation/found', {
+      requestId: rid('cap-found'), name: `到顶相国${runTag}`, capitalX: 430 + (runTag % 30), capitalY: 430 + (runTag % 27),
+    }, c) : { code: cAlliance.code, detail: cAlliance.detail ?? cAlliance.msg }
+    checkThat(`到顶相前置：第三国建成（盟 ${cAlliance.code} / 国 ${cFound.code}）`, cFound.code === 0)
+    if (cFound.code === 0) {
+      capRival = c
+      const reDeclare = await call('POST', '/nation/war/declare', {
+        requestId: rid('cap-declare'), targetNationId: cFound.data?.nation?.nationId,
+      }, attacker)
+      check(`到顶相前置：对第三国重开一场活跃战事（${reDeclare.detail ?? reDeclare.msg}）`, reDeclare.code, 0)
+    }
+  }
+}
+const capHome = (await call('GET', '/world/marches', undefined, attacker)).data?.home ?? null
+checkThat('到顶相前置：攻方家坐标可读', capHome !== null && Number.isInteger(capHome.x))
+if (capHome !== null && capRival !== null) {
+  const armyNow = await call('GET', '/army/list', undefined, attacker)
+  const haveNow = (armyNow.data?.units ?? []).find((u) => u.unitId === T1)?.count ?? 0
+  if (haveNow < 6) {
+    const need = 6 - haveNow
+    const retrain = await call('POST', '/army/train', { requestId: rid('cap-train'), unitId: T1, count: need }, attacker)
+    check(`到顶相：补练 ${need} 兵下单（战损后周转）`, retrain.code, 0)
+    await waitUntil(async () => {
+      const list = await call('GET', '/army/list', undefined, attacker)
+      const unit = (list.data?.units ?? []).find((u) => u.unitId === T1)
+      return (unit?.count ?? 0) >= 6 ? unit.count : null
+    }, 300_000, 3000, '到顶相：补练到齐')
+  }
+  let capVerdict = null
+  for (let round = 1; round <= 30; round++) {
+    const war = await call('GET', '/nation/war', undefined, attacker)
+    const fatigue = war.data?.myFatigue ?? -1
+    const fatigueMax = war.data?.fatigueMax ?? -1
+    const shot = await call('POST', '/world/march', {
+      requestId: rid('cap-march'), toX: capHome.x + 2, toY: capHome.y + 2,
+      units: [{ unitId: T1, count: 1 }], action: 'SCOUT',
+    }, attacker)
+    if (fatigue >= fatigueMax && fatigueMax > 0) {
+      capVerdict = { round, code: shot.code, detail: shot.detail ?? shot.msg, fatigue, fatigueMax }
+      break
+    }
+    console.log(`    （到顶相）第 ${round} 次：code=${shot.code} 疲劳(发前)=${fatigue}${shot.code !== 0 ? ` ${shot.detail ?? shot.msg}` : ''}`)
+    if (shot.code !== 0) break   // 别的条件先挡（队列/兵等）：不硬判——下面的作废结论会照实说
+    await sleep(900)
+  }
+  if (capVerdict === null) {
+    bad('到顶相：30 轮内没取到判据（疲劳没到顶或别的条件先挡——上面逐轮读数与服务端日志可查）')
+  } else {
+    checkThat(`到顶相：疲劳 ${capVerdict.fatigue}/${capVerdict.fatigueMax} 时第 ${capVerdict.round} 次发起被拒`
+      + `（code=${capVerdict.code} ${capVerdict.detail}）`, capVerdict.code === WAR_FATIGUE_MAX_REACHED)
+  }
+}
+
 // ---------- 9. 收尾（尽力而为，不判错）：解散两国，给下一轮让名额 ----------
-for (const [player, nick] of [[attacker, '攻方'], [defender, '守方']]) {
+for (const [player, nick] of [[attacker, '攻方'], [defender, '守方'], [capRival, '丙方（到顶相第三国）']]) {
+  if (player === null || player === undefined) continue
   const disband = await call('POST', '/nation/disband', { requestId: rid('disband') }, player)
   console.log(`  （收尾）${nick} 解散：code=${disband.code} ${disband.detail ?? disband.msg}${disband.code !== 0 ? '（有活跃战事时被拒是预期形状之一）' : ''}`)
 }
