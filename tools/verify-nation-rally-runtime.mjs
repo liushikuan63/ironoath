@@ -492,9 +492,11 @@ async function main() {
       '点灰着的那一颗：一个 /rally/nation 请求都没发（真数个数，不只看按钮颜色）',
       `点击前=${beforeCount} 点击后=${afterCount} 全部集结请求=${JSON.stringify(requests)}`)
     view = await page.evaluate(readComposeOverlay)
-    const goldAfterClick = view.chips.find(c => c.scope === 'NATION')?.fill
-    verdict(!(Array.isArray(goldAfterClick) && goldAfterClick[0] > 150 && goldAfterClick[1] > 100),
-      '点完那颗键仍不是选中态（选中=金底：184,134,11）', `fill=${JSON.stringify(goldAfterClick)}`)
+    const goldAfterClick = view.chips.filter(c => c.active !== false)
+      .find(c => c.scope === 'NATION')?.fill
+    // 正向 + 否定一起判：只断言"不是金底"，那颗键根本不存在时也会通过（空转的假绿，同族第三处）
+    verdict(Array.isArray(goldAfterClick) && !(goldAfterClick[0] > 150 && goldAfterClick[1] > 100),
+      '国家那颗键画着、且点完仍不是选中态（选中=金底：184,134,11）', `fill=${JSON.stringify(goldAfterClick)}`)
     // 版式那两条放在相③（数字真画出来的那一屏）：这一相的表头节点是 active=false，
     // Cocos 不给隐藏节点排版 ⇒ contentSize 停在默认 100 宽，量出来的盒子是假的（实测踩到一次）。
     const hiddenBeforeShot = await hideCoveringPopups(page)
