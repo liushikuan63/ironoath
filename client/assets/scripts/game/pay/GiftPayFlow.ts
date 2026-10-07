@@ -40,6 +40,15 @@ export interface PayView {
   readonly rewards: OrderStatusResp['rewards']
   /** 处于"发货处理中"时给客服入口留的位（面板据此显示入口）。 */
   readonly showSupport: boolean
+  /**
+   * 服务端随**下单回执**给的未成年付费额度提示，原样搬运（客户端不算额度、不改写、不翻译）。
+   * null = 本次无需提示（成年、或年龄未知）。
+   *
+   * <p>这一列是那句提示**唯一的送达路径**：#489 裁决把限额从"硬拦"改成"提示"，
+   * `PAY_MINOR_LIMIT(15002)` 从此不再抛出，而动态文案放 `Result.detail` 玩家永远看不到
+   * （prod 被置 null）—— 谁不读这一列，那条合规提示就整条落空，而屏上什么都不会报错。
+   */
+  readonly minorNotice: string | null
 }
 
 export interface PayFlowDeps {
@@ -81,21 +90,25 @@ export class GiftPayFlow {
     const order = await this.deps.createOrder(productId)
     if (order.kind === 'biz') {
       // 服务端的 msg 是写给玩家的（15011 今天买过了 / 15012 报价过期），原样用它
-      return failed(order.msg, order.detail)
+      return failed(order.msg, order.detail, null)
     }
     if (order.kind === 'network') {
-      return failed('网络不可用，请稍后再试', '下单请求没有发出去，没有扣款')
+      return failed('网络不可用，请稍后再试', '下单请求没有发出去，没有扣款', null)
     }
+
+    // 下单成功才有这一列：它说的是"本月还剩多少"，与后面的支付结果无关（超限也照常下单），
+    // 所以取一次、带到底，四种结局都把它捎上 —— 而不是只在"成功"那一支显示。
+    const minorNotice = order.data.minorNotice
 
     const paid = await this.deps.invokePayment(order.data.payParams)
     if (paid === 'unsupported') {
       // 浏览器/编辑器：不给死按钮，明确说清这一步在开发环境里做不了
-      return failed('当前环境不支持支付', '请在微信小游戏里打开本游戏；浏览器仅供开发调试')
+      return failed('当前环境不支持支付', '请在微信小游戏里打开本游戏；浏览器仅供开发调试', minorNotice)
     }
     if (paid === 'failed') {
       // 拉起支付本身失败（非用户取消，例如余额不足/风控拦截）：**不能去轮询** ——
       // 轮询会把"什么都没发生"读成 PENDING，最后显示成"发货处理中"，而那一刻一分钱都没扣
-      return failed('支付没有完成', '本次没有扣款；如已扣款请联系客服')
+      return failed('支付没有完成', '本次没有扣款；如已扣款请联系客服', minorNotice)
     }
     if (paid === 'cancelled') {
       return {
@@ -104,14 +117,15 @@ export class GiftPayFlow {
         detail: '本次没有扣款，礼包还在等你',
         rewards: [],
         showSupport: false,
+        minorNotice,
       }
     }
 
-    return this.poll(order.data.orderId)
+    return this.poll(order.data.orderId, minorNotice)
   }
 
   /** 轮询订单状态，直到拿到确定结果或用完次数（用完**不报失败**，见类注释第 2 条）。 */
-  private async poll(orderId: string): Promise<PayView> {
+  private async poll(orderId: string, minorNotice: string | null): Promise<PayView> {
     for (let attempt = 0; attempt < this.config.maxPolls; attempt += 1) {
       if (attempt > 0) {
         await this.deps.delay(this.config.pollIntervalMs)
@@ -122,12 +136,12 @@ export class GiftPayFlow {
       }
       if (status.kind === 'biz') {
         // 查单被业务拒绝（订单不存在等）：这是真失败，且钱那一侧由服务端账本说了算
-        return failed(status.msg, status.detail)
+        return failed(status.msg, status.detail, minorNotice)
       }
 
       const data = status.data
       if (data.status === 'FAILED') {
-        return failed('支付未成功', '本次没有扣款；如已扣款请联系客服')
+        return failed('支付未成功', '本次没有扣款；如已扣款请联系客服', minorNotice)
       }
       if (data.status === 'SUCCESS') {
         if (data.rewards.length > 0) {
@@ -137,27 +151,29 @@ export class GiftPayFlow {
             detail: null,
             rewards: data.rewards,
             showSupport: false,
+            minorNotice,
           }
         }
         // 钱到了、货还在补单队列里 —— 这一支必须与"已到账"分开表达
-        return processing()
+        return processing(minorNotice)
       }
       // PENDING：继续问
     }
-    return processing()
+    return processing(minorNotice)
   }
 }
 
-function failed(title: string, detail: string | null): PayView {
-  return { phase: 'failed', title, detail, rewards: [], showSupport: false }
+function failed(title: string, detail: string | null, minorNotice: string | null): PayView {
+  return { phase: 'failed', title, detail, rewards: [], showSupport: false, minorNotice }
 }
 
-function processing(): PayView {
+function processing(minorNotice: string | null): PayView {
   return {
     phase: 'processing',
     title: '发货处理中',
     detail: '款项已收到，奖励正在发放；稍后在邮件里查收，也可通过设置页的客服入口咨询',
     rewards: [],
     showSupport: true,
+    minorNotice,
   }
 }

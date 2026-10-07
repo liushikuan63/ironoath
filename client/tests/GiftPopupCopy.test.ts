@@ -53,3 +53,32 @@ test('协议里确有 productName；配置表每一档商品也都有中文名�
   assert.deepEqual(nameless.map((row) => row.id), [],
     'pay_product 有行缺中文名（或名字就是 id）：服务端只能把 id 下发出去')
 })
+
+/**
+ * 未成年付费提示的**面板半边**（#489 裁决后那句提示唯一的送达路径）。
+ *
+ * <p>为什么又要源码级判据：`GiftPopupView` 是 cc 组件，headless 没有 cc 运行时，
+ * 而这一族的缺陷形状恰好是"流程把列带出来了、面板没画"—— 那屏上什么都不会报错，
+ * 玩家看不见提示、机器也看不见（`GiftPayFlow.test.ts` 那三条只会绿）。
+ * 反向同理：`view.minorNotice` 一旦被删掉，那三条用例仍然全绿。
+ */
+test('结果区必须真把 minorNotice 画出来（流程带出来了不等于屏上有）', () => {
+  const source = readFileSync(VIEW, 'utf8')
+  assert.ok(/lines\.push\(view\.minorNotice\)/.test(source),
+    '结果区没有拼 view.minorNotice —— 服务端随下单回执给的额度提示到不了玩家眼前')
+  // 空值那一行不许被造出来：不追加，而不是追加一句"没有额度限制"
+  assert.ok(/if \(view\.minorNotice !== null/.test(source),
+    '空提示必须整行不加（成年与"年龄未知"是两种态，客户端替它合并就造出第二真相）')
+})
+
+test('客户端不许自己造额度文案（提示只能来自那一列）', () => {
+  // **先剥注释再扫字面量**：不剥的话，注释里举一个反例（"本月无额度限制"）就把门判红 ——
+  // 那是"门被自己的写法判红"的假红（本仓栽过好几次：正向判据不剥注释必然误报）。
+  const code = readFileSync(VIEW, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  // 三种引号里的 \u0060 是反引号：写成字面反引号会被这套模板串自己的语法吞掉
+  const quoted = new RegExp('[\\u0022\\u0027\\u0060][^\\u0022\\u0027\\u0060]*额度')
+  assert.ok(!quoted.test(code),
+    '视图代码里出现了带「额度」的字符串字面量 —— 额度文案的作者只能是服务端')
+})

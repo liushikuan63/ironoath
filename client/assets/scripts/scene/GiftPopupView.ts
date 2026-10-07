@@ -75,7 +75,17 @@ export class GiftPopupView extends Component {
       return
     }
     if (this.result !== null) {
-      this.result.string = view.detail === null ? view.title : `${view.title}\n${view.detail}`
+      const lines: string[] = [view.title]
+      if (view.detail !== null) {
+        lines.push(view.detail)
+      }
+      // 未成年付费额度提示：服务端给了就原样念一句，没给就**一行都不加**
+      // （不写「本月无额度限制」这类客户端自造的话 —— 成年与"年龄未知"在服务端是两种态，
+      //  客户端替它合并就造出了第二个真相）。
+      if (view.minorNotice !== null && view.minorNotice !== '') {
+        lines.push(view.minorNotice)
+      }
+      this.result.string = lines.join('\n')
     }
     // 只有"已到账"和"失败/取消"才是终点；处理中也要把按钮收起来，避免重复下单
     this.setBuyEnabled(false)

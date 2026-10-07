@@ -174,3 +174,66 @@ test('拉起支付本身失败（非取消）⇒ 不轮询、报失败：那一�
   assert.ok((view.detail ?? '').includes('没有扣款'), `要说清没扣钱，实际：${view.detail}`)
   assert.equal(h.orderStatusCalls.length, 0, '没付款就没有可查的订单状态')
 })
+
+/**
+ * #489 之后那句"未成年付费额度还剩多少"只有一条送达路径：`CreateOrderResp.minorNotice`。
+ * 错误码 `PAY_MINOR_LIMIT(15002)` 已不再抛出，动态文案放 `Result.detail` 在 prod 会被置 null，
+ * 所以这一列一旦被流程丢掉，合规提示就整条落空——而屏上什么都不会报错。
+ * 三条用例分别钉「原样搬运」「空值不许自造话」「四种结局都不丢」。
+ */
+const MINOR_NOTICE = '本次可正常下单。本月未成年消费额度还剩 30 元。'
+
+function orderWithNotice(minorNotice: string | null): NetOutcome<CreateOrderResp> {
+  return okOutcome<CreateOrderResp>({ orderId: 'order-1', minorNotice, payParams: PAY_PARAMS })
+}
+
+test('未成年提示：服务端给了就逐字带出来（客户端不加工、不改一个标点）', async () => {
+  const h = harness({
+    createOrder: orderWithNotice(MINOR_NOTICE),
+    statuses: [success([{ type: 'RESOURCE', id: 'GOLD', count: 180 }])],
+  })
+
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(view.phase, 'delivered')
+  // 严格相等而不是 includes：includes 放过"顺手把句号改成感叹号/把金额重排"的改写
+  assert.equal(view.minorNotice, MINOR_NOTICE, '这一列必须原样搬运，客户端不是文案的作者')
+})
+
+test('未成年提示：服务端说本次无需提示（null）⇒ 视图也是 null，客户端不许替它造一句', async () => {
+  const h = harness({
+    createOrder: orderWithNotice(null),
+    statuses: [success([{ type: 'RESOURCE', id: 'GOLD', count: 180 }])],
+  })
+
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(view.minorNotice, null)
+  // 「成年」与「年龄未知」在服务端是两种态，客户端合并成一句"没有额度限制"就是第二个真相
+  assert.ok(!JSON.stringify(view).includes('额度'), `不许出现客户端自造的额度措辞，实际：${JSON.stringify(view)}`)
+})
+
+test('未成年提示：四种结局都带着它（它与支付成败无关——超限也照常下单）', async () => {
+  const delivered = await harness({
+    createOrder: orderWithNotice(MINOR_NOTICE),
+    statuses: [success([{ type: 'RESOURCE', id: 'GOLD', count: 1 }])],
+  }).flow.buy('gift_stuck_supply')
+  const processingView = await harness({
+    createOrder: orderWithNotice(MINOR_NOTICE),
+    statuses: [success([])],
+  }).flow.buy('gift_stuck_supply')
+  const cancelled = await harness({
+    createOrder: orderWithNotice(MINOR_NOTICE),
+    payment: 'cancelled',
+  }).flow.buy('gift_stuck_supply')
+  const payFailed = await harness({
+    createOrder: orderWithNotice(MINOR_NOTICE),
+    payment: 'failed',
+  }).flow.buy('gift_stuck_supply')
+
+  for (const [phase, view] of [['delivered', delivered], ['processing', processingView],
+    ['cancelled', cancelled], ['failed', payFailed]] as const) {
+    assert.equal(view.phase, phase, `夹具没造出这一支：${view.phase}`)
+    assert.equal(view.minorNotice, MINOR_NOTICE, `${phase} 这一支把提示弄丢了`)
+  }
+})

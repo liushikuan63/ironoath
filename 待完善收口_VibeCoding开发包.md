@@ -420,6 +420,11 @@ V10/V11/V12/V14/V16/V13-S1/S2/V15/V17(A~H)/V18 都在 §四 有格子与读数�
 | `客户端发送口缺口清单.md:26-41 / :33 / :36 / :66` | 「现数 11 个」「27 道门」「降到 0 之后再挂门」 | 现数 0（见 §二·补·一）；门 **45 道**；该报告器**早已是 `check.sh` 里的一道门** |
 
 ⇒ 收口动作走 **V23**（本包新增，纯文档、可失败判据齐全），不改一行业务码。
+**〔16:2x 进度：D 组 6 处全部已就地补注完毕（矩阵两行 + 上线清单 643 那条 + CC 全流程 740/741/742/743 四行 +
+收口清单 1893 段另起一行 + 发送口清单两处引用块），原始理由与日期一条都没删；
+两道台账门 `check-checklist-append-only`（HEAD 的 1727 个非空行全部仍在）与 `check-checklist-table` 均 EXIT=0。
+过程中新抓到的两条也一并写进了对应行：未成年时长限制的客户端提示那半仍未消费（并入 V19 未做列）、
+`holiday.json` 是 `rows: []` + `status: RESERVED`（等运营逐年填，属外部材料，不算实现缺失）〕**
 
 ### 二·补·三 上面的数怎么重跑（下一格自证用，逐条可直接粘）
 
@@ -471,6 +476,27 @@ grep -rn "mayEnterRankTop" server --include=*.java | grep -v "/test/"           
 禁止：把提示做成硬拦截（#489 明写不许，且 `Result.detail` 在 prod 置 null，走错误路径玩家永远看不到文案）；
       客户端自己算「本月还剩多少」；把 `PAY_MINOR_LIMIT` 重新抛出来当显示通道。
 完成定义：`bash scripts/check.sh` 退 0 + `bash scripts/test.sh` 退 0 + 真产物探针（有提示 / 无提示两张截图）。
+
+**进度（2026-10-07 16:2x 本格落地）**：
+- **落法与卡片原写法有一处不同（照实订正）**：V19-a **不需要给 GameApi 加方法** —— `minorNotice` 早就随
+  `CreateOrderResp` 下发，缺的是 `GiftPayFlow.buy()` 把它丢掉了（只用了 `payParams` 与 `orderId`）。
+  所以本格的读侧接线打在**流程与视图**两处：`PayView` 加 `minorNotice: string | null` 一列、
+  `buy()` 取一次带到底（**四种结局都捎上**，因为超限也照常下单、提示与支付成败无关）、
+  `GiftPopupView.renderResult` 把 `title / detail / minorNotice` 三段成行、**空值一行都不加**。
+- **判据 5 条已落地并跑绿**：`client/tests/GiftPayFlow.test.ts` +3（逐字相等而不是 includes、
+  null 时不许出现客户端自造的「额度」措辞、四种结局各自都带着）、`client/tests/GiftPopupCopy.test.ts` +2
+  （源码级钉「流程带出来了不等于屏上有」与「额度文案的作者只能是服务端」）。
+  同刻读数：`bash scripts/test-client.sh` EXIT=0 ⇒ **1030 跑 / 1030 通过 / 0 失败 / 0 跳过**（1025 → 1030）；
+  `check-client-typecheck` / `check-player-copy-jargon` / `check-track-coverage`（85 个动作）/
+  `check-client-send-paths` / `check-layering` 五道 EXIT=0。
+- **植入取证 3 条各点名红**（判据能失败才算数）：摘掉 `lines.push(view.minorNotice)` ⇒ #475 红；
+  把 delivered 那一支置 `minorNotice: null` ⇒ #470 与 #472 红；植入态 `EXIT=1`（不是 NO-RUN）。
+- **未做（阻塞，写明条件）**：① **真产物 + 浏览器截图（有提示 / 无提示两张）未做** ——
+  `build-webmobile.sh` 中途会清空 `client/build/web-mobile`，而此刻 8080 上有另一条会话的活后端
+  （PID 43152），对方若正在跑运行时探针就会被我的构建打成 `ENOENT index.html`（AGENTS §三 写死"构建与量具不能并行"）
+  ⇒ 这一相要**排队**跑，不是本机能力缺失；② 探针 `tools/verify-*` 一份未新增（同上，且需要 route 桩注入 `minorNotice`，
+  dev 上没有未成年账号与真渠道）；③ 时长提示同族第二处（`MINOR_CURFEW(15013)` 的"下次可玩时刻"提示）
+  客户端仍未消费 —— 与本格同一形状，留给 V19-b 之后。
 ```
 
 ### V20 · 飘字队列接进生产提示出口（A2）
@@ -5971,4 +5997,6 @@ TEST_EXIT=0
 | 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
 |---|---|---|---|---|
 | 新增 §二·补（进度盘点 + 未完成项四组分类 + 复跑命令）、§二·补·四（V19 未成年提示 / V20 飘字队列接线 / V21 Bot 前 3 / V22 国家层集结 / V23 文档对齐清扫）、§二·补·五（工程侧五项）；更正本包 §1.1 与 §三 两张表的过期读法（**就地加注不删原表**） | 本笔（推送攒批，随下一阶段收口统一推） | **全部本轮现跑**：`check-doc-counts.sh` EXIT=0 且打印「静态门道数一致：45 道（现数 45）」；`report-client-send-paths.mjs` EXIT=0 ⇒「136 方法 / 生产零调用点 0 / 连测试探针也没碰过 0 / 仅 GameApi 内部被调 3」；验收矩阵按编号行取状态列 ⇒ **265 条 = 229✅ / 22🟡 / 14⬜**（+1 行状态列被就地补注吃掉；**本格收尾时改成 230✅ / 22🟡 / 13⬜ —— 见下方「矩阵两行就地更正」那一格**）；`上线检查清单.md` ⇒ `[x] 70 / [ ] 38`；`ls tools/verify-*.mjs` ⇒ 60 份 | A 组四条缺口的调用点证据（每条一条 grep，命令在 §二·补·三）：`minorNotice` 客户端非生成物命中 **0**、`RewardToastQueue` 生产引用 **0**、`mayEnterRankTop` 生产 **0**（`RankBoardService.java:494` 注释自陈）、`RallyScope.java:8` 注释自陈「国家层在 B13 落地前不会产生」；D 组六处漂移逐条给「文档行号 vs 现跑真值」（`验收矩阵.md:556/557` ↔ `B25_减负三件套.md:87/88`、`上线检查清单.md:643` ↔ `MinorPlayGate.java`、`CC开发全流程.md:740/743` ↔ `AppRoot.ts:4536/4579` + `GameApi.ts:174`、`收口清单.md:1893` ↔ §四 10-07 各格、`客户端发送口缺口清单.md` ↔ 现数 0） | **未复跑 `check.sh` 与 `test.sh`**（本轮纯文档；且 8080 上有活后端 PID 43152，主树跑门会经 `contract-sync` 的 `-am install` 换掉它 classpath 上的 ironoath jar —— 按项目记忆要进 worktree 沙箱才跑，成本与本轮判据不配比）；用例总量 2117/1025 是**上一格同树读数**，本轮未证；V19~V23 **只出卡未实现**；D 组漂移**只登记未改**（改它 = V23 那一格，含 `收口清单.md` 的行尾补注纪律）；子代理报告的 6 条抽验了 5 条（`mayEnterRankTop` / `RewardToastQueue` / `MinorPlayGate` / `minorNotice` / `worldMarch`+`seasonStatus`），**未抽验**：上线清单 401/403/404 看板那三行、`CC开发全流程.md:596` 战报邮件缺生产者 |
-| 同轮续做（V23 第 1 处，关掉本轮发现的最硬漂移）：`验收矩阵.md:556/557` 两行「⬜ 未开工（S3）」就地补注 —— #7 由 ⬜ **翻 ✅**（四句都有用例），#6 **状态留 ⬜ 但理由改真值**（事件类逐条对得上，卡的是「资源那一行是估算 ⇒ 要产品裁口径」，按矩阵图例 ⬜ 定义含「缺产品裁决」，不硬翻绿） | 本笔（与上一行同批提交、攒批不推） | **本轮同刻现跑**：`bash scripts/test-client.sh` EXIT=0（Node 20）⇒ **# tests 1025 / pass 1025 / fail 0 / skipped 0**；`client/tests/OfflineReport.test.ts` 现数 **6 条**（4 条标「验收 7」：新号无起点 / 阈值不足（含"改成 3 就当场判掉"的反证）/ 同一批指纹不重弹 / 不伪称离线时长；2 条标「验收 6」）；闸门与指纹函数 `OfflineReport.ts:162 / :139` 在生产；阈值出处 `global.OFFLINE_REPORT_MIN_IDLE_MINUTES=10` + `OFFLINE_REPORT_MIN_ITEMS=1`（客户端零填写）；改后矩阵复数 ⇒ **265 条 = 230✅ / 22🟡 / 13⬜**（净变化恰为 #7 一行，反证了改动的归属） | 判据是「可失败」的两条：① 两行列数必须仍为 **3**（与 `551/552/558` 同形，写成 4 列会把证据劈进不存在的列）且带行尾竖线 —— 现跑 `列=3 尾竖线=true`；② 计数脚本若按 `[0]` 切 emoji 会把 22 条 🟡 数成乱码 key（本轮实测踩过，正解 `String.fromCodePoint(codePointAt(0))`） | **服务端 `mvn test` 与 `check.sh` 本轮仍未复跑**（活后端 PID 43152 占 8080，主树跑会换它 classpath 上的 jar；要跑走 worktree 沙箱）；V23 其余 **5 处漂移未关**（`上线检查清单.md:643`、`CC开发全流程.md:740/743`、`收口清单.md:1893`、`客户端发送口缺口清单.md` 旧数、本包 §1.1/§三 两张表）；#6 的产品口径未裁 ⇒ 那条不是工程活 |
+| 同轮续做（V23 第 1 处，关掉本轮发现的最硬漂移）：`验收矩阵.md:556/557` 两行「⬜ 未开工（S3）」就地补注 —— #7 由 ⬜ **翻 ✅**（四句都有用例），#6 **状态留 ⬜ 但理由改真值**（事件类逐条对得上，卡的是「资源那一行是估算 ⇒ 要产品裁口径」，按矩阵图例 ⬜ 定义含「缺产品裁决」，不硬翻绿） | 本笔（与上一行同批提交、攒批不推） | **本轮同刻现跑**：`bash scripts/test-client.sh` EXIT=0（Node 20）⇒ **# tests 1025 / pass 1025 / fail 0 / skipped 0**；`client/tests/OfflineReport.test.ts` 现数 **6 条**（4 条标「验收 7」：新号无起点 / 阈值不足（含"改成 3 就当场判掉"的反证）/ 同一批指纹不重弹 / 不伪称离线时长；2 条标「验收 6」）；闸门与指纹函数 `OfflineReport.ts:162 / :139` 在生产；阈值出处 `global.OFFLINE_REPORT_MIN_IDLE_MINUTES=10` + `OFFLINE_REPORT_MIN_ITEMS=1`（客户端零填写）；改后矩阵复数 ⇒ **265 条 = 230✅ / 22🟡 / 13⬜**（净变化恰为 #7 一行，反证了改动的归属） | 判据是「可失败」的两条：① 两行列数必须仍为 **3**（与 `551/552/558` 同形，写成 4 列会把证据劈进不存在的列）且带行尾竖线 —— 现跑 `列=3 尾竖线=true`；② 计数脚本若按 `[0]` 切 emoji 会把 22 条 🟡 数成乱码 key（本轮实测踩过，正解 `String.fromCodePoint(codePointAt(0))`） | **服务端 `mvn test` 与 `check.sh` 本轮仍未复跑**（活后端 PID 43152 占 8080，主树跑会换它 classpath 上的 jar；要跑走 worktree 沙箱）；V23 六处漂移**已在本轮全部就地补注完毕**（见下面两格）；#6 的产品口径未裁 ⇒ 那条不是工程活 |
+| **V23 收口（六处漂移全部就地补注）**：`上线检查清单.md:643` 那条未成年时长限制补上"三样都已落地"的真值（`MinorPlayGate.java` + `holiday.json`（现读 `rows: []` + `status: RESERVED`，等运营逐年填＝外部材料不是没做）+ `global.MINOR_PLAY_WINDOW_START/END_HOUR` + `MINOR_CURFEW(15013)` 在 `ErrorCode.java:551` + `PlayerInitService.java:66/83` 注入），**但那条 `- [ ]` 故意不勾**（客户端"到期友好提示"那半真未消费，勾了就是第二种假绿）；`CC开发全流程.md:740/741/742/743` 四行补现跑调用点（`worldMarch` 于 `AppRoot.ts:4536`/`:4579`，`squadRally`/`allianceRally`/`rallyJoin`/`techResearch` 各 1 处、`forgeEquip` 2 处、`seasonStatus()` 在 `GameApi.ts:174`）；`收口清单.md:1893` 段**另起一行**承载补注（那格末行不足 60 字符，走行尾会被 append-only 门判红 —— 本仓的短行例外）；`客户端发送口缺口清单.md` 顶部加本轮最新数（136/0/0/3）+「什么时候进门」那节更正为"已进门（45 道之一）" | 本笔（与下一格 V19 同批、攒批未推） | 台账两道门 EXIT=0：`check-checklist-append-only`（**HEAD 的 1727 个非空行全部仍在**）、`check-checklist-table`；`check-eol-policy` EXIT=0；`check-doc-counts` 退 0（45 道不变）；每处补注 `grep -c` 各命中 1 | 六处都只加在**行尾或另起新行**，被更正的旧句与日期一条没删；`CC开发全流程.md:741` 的"战略目标物契约"那半句仍成立 ⇒ 只更正前半；`上线检查清单.md` 那条不勾；`holiday.json` 的空行集**没被当成缺陷**（原文就写明"仓库里不放猜的节假日"） |
+| **V19 代码切片（未成年付费提示上屏）**：`PayView` 加 `minorNotice: string \| null` 一列 + `GiftPayFlow.buy()` 取一次带到底（**四种结局都捎上**，因为超限也照常下单、提示与支付成败无关）+ `poll/failed/processing` 三个签名跟着带 + `GiftPopupView.renderResult` 把 `title/detail/minorNotice` 三段成行、**空值一行都不加** | 本笔（源码、判据、开发包回写同批；攒批未推） | `bash scripts/test-client.sh` EXIT=0 ⇒ **1030 跑 / 1030 通过 / 0 失败 / 0 跳过**（新增 5 条：`GiftPayFlow.test.ts` +3 用严格相等而非 includes、null 时不许出现自造「额度」措辞、四种结局各自都带着；`GiftPopupCopy.test.ts` +2 源码级钉"流程带出来了不等于屏上有"与"额度文案作者只能是服务端"）；`check-client-typecheck` / `check-player-copy-jargon` / `check-track-coverage`（85 个动作）/ `check-client-send-paths`（136 发送口全有生产调用点）/ `check-layering` 五道 EXIT=0 | **植入取证 3 条各点名红**：摘 `lines.push(view.minorNotice)` ⇒ #475 红；delivered 那支置 `minorNotice: null` ⇒ #470 与 #472 红；植入态 `EXIT=1`（干净 FAIL，不是 NO-RUN），还原后 1030 复跑到绿 | **未做视觉验证 + 原因**：真产物与浏览器两张截图（有提示 / 无提示）未拍 —— `build-webmobile.sh` 会清空 `client/build/web-mobile`，而 8080 上是另一条会话的活后端（PID 43152），构建会把对方正在加载页面的探针打成 `ENOENT index.html`（AGENTS §三 写死"构建与量具不能并行"）⇒ **要排队**，不是本机能力缺失；探针未新增（同因，且 dev 没有未成年账号与真渠道，需 route 桩注入 `minorNotice`）；**时长提示同族第二处**（`MINOR_CURFEW(15013)` 的"下次可玩时刻"）客户端仍未消费；**本格自挖的坑**：还原植入时错用了"改动之前"拍的备份，把实现一起抹掉后重放 ⇒ 备份要拍在改动**之后**、还原后必须核文件仍在 `git status` 里（本轮靠这条才发现） |
