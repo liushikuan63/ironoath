@@ -162,13 +162,13 @@ C 64×26 用 4 顶底 ⇒ 8/26 = 0.31 ≤ 0.6 ✓ 且 4/52 = 0.077 ≥ 0.07 ✓�
 | — | `ui.panel.kingdom`（存量） | `ui/generated/ui/panel-kingdom-v1` | A | **保留**：`CityPanelView`/`MarchPanelView` 已在用，且 `PANEL_FRAME_BAND` 与 meta 由 `client/tests/ArtFamilies.test.ts` 对账；换它 = 另开一格（§七 Q1） |
 | — | `ui.button.chip*` / `ui.nav.tab*`（存量 5 张） | 同目录 | C | 保留，本轮不动（避免碰导航与 chip 的既有探针读数） |
 
-**生产进度（2026-10-08 04:0x 现跑）：18 / 18 件全部出齐**，逐件过 `art-src/check_nineslice_ready.py` 对应档（退 0）+ 逐件目视
+**生产进度（2026-10-08 07:1x 现跑）：18 / 18 件全部出齐**，逐件过 `art-src/check_nineslice_ready.py` 对应档（退 0）+ 逐件目视
 （取证图由量具 `--crop-preview` 按 alpha bbox 定位生成）+ 逐件现量 bbox 定交付尺寸（尺寸与量化体积见 §二 表）。
 
 | 状态 | 件 |
 |---|---|
 | 已出并过判据（14） | #1 `panel-iron`、#2 `panel-parchment`、#3 `panel-warning`（**v0 判红，v1 过**）、#4 `panel-gilt`、#5 `plate-band`、#7 `button-iron`（v0 斜切作废 → v1）、#10 `chip-close`（**v0 角饰过大、v1 无绿底，v2 才过**）、#11 `plate-tooltip`、#12 `banner-crest`、#13~16 `crest-league/nation/battle/reward`、#17 `seal-wax`、#18 `divider-rope` |
-| 派生（4） | #6 `plate-band-active`（brightness 1.16 / color 1.22，**§七 Q3 已裁：走派生不再出第二张母版**）、#8/#9 `button-iron-hover/disabled`（`derive_button_states.py`） |
+| 派生（3） | #6 `plate-band-active`（brightness 1.16 / color 1.22，**§七 Q3 已裁：走派生不再出第二张母版**）、#8/#9 `button-iron-hover/disabled`（`derive_button_states.py`） |
 | 作废重出（3 版留证） | `panel-warning-v0`（边正中一块暗红绶带 = §4.6 修正 ② 那个缺陷在新素材上复发）、`chip-close-v0`（角部铜凸台占 25% 图宽，切分线必穿）、`chip-close-v1`（满幅无绿底，抠绿前提不成立） |
 
 **P-07 的 `corners must be square` 已复验生效**（v0 斜切 0% → v1 直角 75%，见 §4.7）；本轮它在新出的 `chip-close-v2`（78%）
@@ -361,7 +361,7 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 
 ---
 
-### 4.8 V25-b 生产轮实测（2026-10-08 02:3x~04:0x，出满 14 件母版 + 4 件派生）
+### 4.8 V25-b 生产轮实测（2026-10-08 06:5x~07:1x，新出 **11 张母版 + 3 张派生** ⇒ 18/18 件出齐）
 
 命令：`python art-src/check_nineslice_ready.py <图> --kind frame|plain|art [--crop-preview DIR]`
 → `python art-src/process_generated.py art-src/generated/drafts/batch-2026-10-08-ui-style.json`
@@ -454,7 +454,7 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 验收：① 18 张全部落到 `art-src/generated/drafts/`，残留绿读数逐张为 0.000%；② 逐张实测 `inset` ÷ 图高落在 [0.07, 0.6]；③ 新增总量 ≤ 450KB（`du` 实测）；④ **把 P-01 的 border 临时改成 200 重跑一次 `verify-art-runtime.mjs`，必须报"退化/吃内容"红**（证明判据能失败，才允许进 V25-c）。
 产出文件：`art-src/generated/drafts/batch-<日期>-ui-style.json`、`art-src/GENERATION_PROMPTS.md`（新增 §12 本批）、`art-src/ATTRIBUTION.md`（AI 生成条目的署名口径）。
 
-**状态（2026-10-08 04:0x 本格收口，台账 #807）**：18 / 18 件出齐（14 张母版 + 4 张派生），逐件过判据 + 逐件目视 + 逐件现量交付尺寸，
+**状态（2026-10-08 07:1x 本格收口，台账 #807）**：18 / 18 件出齐（本轮新出 11 张母版 + 3 张派生；上一轮已出 4 张母版），逐件过判据 + 逐件目视 + 逐件现量交付尺寸，
 尺寸与体积表见 §二，实测过程与换来的判据边界见 §4.8。四条验收逐条对账：
 ① **按字面未达、按意图过** —— 残留绿实测 0.004%~0.274%，"逐张为 0.000%"这个阈值写坏了（抗锯齿过渡沿必然留软边，
 `process_generated.py` 的真判据是 ≤0.5%），14 件全在 0.5% 内且整批退 0；
