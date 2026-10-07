@@ -123,7 +123,7 @@ B13 的国策一轮要 **48 小时**（24h 投票窗 + 24h 生效段），赛季
    `@Profile("dev")` —— **起 `local` profile 时这两个 bean 整个不存在**，城市档与时间档**静默失效**
    （只有 `DevNewPlayerBoost` 开档时会打一行 INFO，日志里能看出来；`DevClockSpeed` 同理）。
 2. **`IRONOATH_DEV_TIME_SPEED` 要给「后端」和「探针进程」两边都设。** 探针
-   `tools/verify-nation-policy-ui.mjs:363` 读的是**自己进程的环境变量**，不是后端的 ——
+   `tools/verify-nation-policy-ui.mjs:393`（行号 2026-10-07 现跑）读的是**自己进程的环境变量**，不是后端的 ——
    只给后端设会被判成「未设」并跳过投票段。
 
 一次跑通（B13 国策收官，2026-10-01 实测 41 通过 / 0 失败）：

@@ -49,7 +49,7 @@ python -m http.server 8090
 **不需要编辑器也能看**；要改代码/场景时再开编辑器：
 
 ```powershell
-& 'D:\Cocos\Creator\3.8.7\CocosCreator.exe' --project 'D:\Java\GitHub\tieshi\client'
+& 'D:\Cocos\Creator\3.8.7\CocosCreator.exe' --project 'D:\Java\GitHub\ironoath\client'
 ```
 
 首次打开编辑器需要**登录 Cocos 账号**（编辑器自身要求，与游戏无关）；
@@ -122,7 +122,7 @@ python -m http.server 8090
 
 ```powershell
 # 1) 出包（debug 给开发者工具，release 给提审；两者都先 --force）
-& 'D:\Cocos\Creator\3.8.7\CocosCreator.exe' --project 'D:\Java\GitHub\tieshi\client' `
+& 'D:\Cocos\Creator\3.8.7\CocosCreator.exe' --project 'D:\Java\GitHub\ironoath\client' `
   --build 'platform=wechatgame;debug=true;startScene=bdd25b4c-ff73-4d64-953d-e6119fc37fd8' --force
 
 # 2) 方向归一化（Cocos 的微信方向在嵌套选项里，CLI 传不进去）
@@ -173,5 +173,5 @@ bash scripts/check-package-size.sh
 ## 八、下一步（按价值排序）
 
 1. **微信开发者工具（5.1）**：安装并注册测试 AppID，用已生成的 `client/build/wechatgame` 做真机预览。
-2. **平台登录（5.3）**：服务端 B15 的 `wx.login → openid → session` 尚未实现，当前不能声称真机登录完成。
+2. **平台登录（5.3）**：**[2026-10-07 就地更正：服务端已实现]** `wx.login → openid → session` 服务端在册（`WeChatSessionCodeExchanger` + `LocalDevWeChatCodeExchanger`，`SecurityBeansConfig` 装配、`WeChatLoginTest` 在库；客户端 `GameSession`/`GameBootstrap` 亦在调 `wx.login`）——但**仍不能声称真机登录完成**：缺的是真机端到端（与本节"真机预览未验证"同因，原句"尚未实现"作废）。
 3. **真机性能（阶段 6）**：drawcall/FPS 目前只有无头浏览器基线（内城 115 / 地图 45），需在低端安卓上复核。
