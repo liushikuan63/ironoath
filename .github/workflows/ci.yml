@@ -18,6 +18,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 同一分支上后一次 push 取消还在跑的前一次。为什么值得加：实测最近 460 次成功 run 的推送间隔里
+# 36% 小于单次耗时（5.4 分钟）—— 那一批 run 的结果没有任何人看，但钱照烧。
+# ⚠ 别把它当"省一半"：被取消的 run **已消耗的分钟照常计费**，回收的只是取消之后不再跑的那半截，
+#   按上面 36% 的命中率折算约 22%。Free 档 2000 分钟/月是被日均 29 次 run（≈158 分钟/天）烧穿的，
+#   这条闸门只把 2.4 倍超支压到 1.8 倍，**不足以单独达标** —— 另一半靠自托管车道
+#   （`.github/workflows/ci-selfhosted.yml`，不消耗托管分钟）。
+# 为什么没有 paths-ignore：最近 120 笔提交里"只动 docs/"的是 **0 笔**（本仓纪律就是文档与代码同批），
+#   命中率 0；而把 `**.md` 放进忽略名单会连带跳过 3 道真读 md 的门
+#   （`check-checklist-*` 读收口清单.md、`check-doc-counts` 读 AGENTS.md、`check-eol-policy` 扫 *.md 行尾）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
