@@ -155,7 +155,9 @@ async function main() {
   await page.screenshot({ path: shot })
   lines.push(`SHOT  ${shot}`)
 
-  // ③ 点第一条会跳到内城（那一条的 jump 是 city）：跳转要经编排层，且那一层要收起
+  // ③ 点条目会跳到目标面板：跳转要经编排层，**且那一层要收起**
+  // （「要收起」这半句原先是注释里的承诺、没进判据 —— 2026-10-07 #767 实测 active 一直是 true：
+  //  弹层盖着刚跳到的页；同族第二处是与它共用收起出口的「知道了」按钮）
   await page.evaluate(() => {
     const scene = window.cc.director.getScene()
     const game = scene.getChildByName('Canvas')?.getChildByName('Game')
@@ -172,6 +174,33 @@ async function main() {
   verdict(afterJump.currentKey === 'reports',
     '点「2 场战斗」那一行：导航切到了战报页（跳转真的经编排层走通了）',
     `当前格=${afterJump.currentKey}`)
+  verdict(afterJump.active === false, '跳页时那一层收起了（不盖着刚跳到的面板）', `active=${afterJump.active}`)
+
+  // ④ 点「知道了」也收起（#767 的另一条路径：`onDismiss` 曾全仓无赋值、按钮点了零反应）
+  await page.evaluate((view) => {
+    const scene = window.cc.director.getScene()
+    const game = scene.getChildByName('Canvas')?.getChildByName('Game')
+    game.getComponent('GameBootstrap').offlineReport.render(view)
+  }, SAMPLE_VIEW)
+  await page.waitForTimeout(400)
+  await page.evaluate(() => {
+    const scene = window.cc.director.getScene()
+    const game = scene.getChildByName('Canvas')?.getChildByName('Game')
+    const node = game?.getChildByName('OfflineReport')
+    for (const child of node?.children ?? []) {
+      if (child.name === '离线汇总知道了') {
+        child.emit('touch-start')
+        return
+      }
+    }
+  })
+  await page.waitForTimeout(400)
+  const afterDismiss = await page.evaluate(readOverlay)
+  verdict(afterDismiss.active === false, '点「知道了」收起这一层', `active=${afterDismiss.active}`)
+  const shotAfter = path.join(SHOT_DIR, 'offline-report-dismissed.png')
+  await page.screenshot({ path: shotAfter })
+  lines.push(`SHOT  ${shotAfter}`)
+
   verdict(errors.length === 0, '全程零页面异常', `errors=${errors.length}${errors.length > 0 ? ' → ' + errors[0] : ''}`)
 
   await browser.close()

@@ -89,6 +89,16 @@ export class OfflineReportOverlay {
     })
   }
 
+  /**
+   * 收起这一屏（两条路径共用：点「知道了」与点条目跳页 —— #767 之前两条都断了，弹层会盖着屏）。
+   *
+   * <p><b>「同一批不再弹」不归这里管</b>：指纹在投递那一刻就被 `AppRoot.deliverOfflineReport` 记下
+   * （弹了就记，与玩家点不点无关）。这里只管显示层的收起，别在这里再记一遍。
+   */
+  hide(): void {
+    this.node.active = false
+  }
+
   private createRow(index: number, height: number): { node: Node; text: Label; detail: Label } {
     const node = new Node(`offlineRow${index}`)
     this.node.addChild(node)

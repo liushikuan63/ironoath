@@ -1597,7 +1597,13 @@ export class GameBootstrap extends Component {
     // 出征编成弹层（B25-S1）：挂在最上层，编排层给什么画什么；它是弹层不是面板，所以不走 panel()
     // 「自上次登录以来」那一屏（B25-S3）：挂在导航之后 ⇒ 同层兄弟里它排在更后，遮罩压得住面板与导航条
     this.offlineReport = new OfflineReportOverlay(this.node)
-    this.offlineReport.onJump = jump => this.root?.offlineReportJump(jump)
+    // 点条目 = 玩家就是要看那一页：先收起这一屏再跳，否则弹层盖着刚跳到的面板（#767 实测过）
+    this.offlineReport.onJump = jump => {
+      this.offlineReport?.hide()
+      this.root?.offlineReportJump(jump)
+    }
+    // 「知道了」的唯一出口（#767 之前 onDismiss 全仓没人赋值 ⇒ 点了零反应）
+    this.offlineReport.onDismiss = () => this.offlineReport?.hide()
     this.armyQueue = new ChoiceOverlay(this.node, '这一口队列', 520)
     // 「用哪一张训练令加速治疗」（V12）：与队列菜单同一个组件、另开一个实例 ——
     // 标题不同（构造时定死），复用同一个实例会让标题对不上玩家正在做的事
