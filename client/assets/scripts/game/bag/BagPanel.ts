@@ -21,6 +21,7 @@
  */
 
 import * as FixedPoint from '../../core/FixedPoint'
+import { resourceName } from '../ui/ResourceNames'
 import type {
   BagItem, BagListResp, OpenBatchResp, OutputBreak, ResourceDetail, ResourceDetailResp,
   RewardItemView,
@@ -111,7 +112,9 @@ export function buildResourcePanel(resp: ResourceDetailResp): ResourcePanelView 
   const fullTypes: string[] = []
   for (const row of rows) {
     if (row.full) {
-      fullTypes.push(row.type)
+      // 这句是**给玩家看的**（截图上就是"STAMINA 已满仓，产出已停止…"）⇒ 资源码要翻成中文名。
+      // `row.type` 仍然原样留在行里给图标与诊断用，只有进文案的这一个字段过 resourceName。
+      fullTypes.push(resourceName(row.type))
     }
   }
   return {

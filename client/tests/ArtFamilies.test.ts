@@ -17,6 +17,7 @@ import path from 'node:path'
 import {
   FAMILY_ASSETS, EQUIP_ICON_BY_CONFIG, ITEM_ICON_BY_CONFIG, ACTIVITY_ICON_BY_CONFIG,
   itemArtKeyForConfig, activityIconKey, buildingArtKey, familyArtKey, PANEL_FRAME_BAND,
+  PANEL_IRON_INSET,
   CITY_STAGE_ASSETS,
 } from '../assets/scripts/game/art/ArtFamilies'
 
@@ -195,6 +196,16 @@ test('面板框的四角带厚只有一个真源：图的 meta border* ↔ 交�
     + `两者不同值时要么内容压在角饰上，要么白让一圈`)
 })
 
+test('V25 铁誓底板的带厚也只有一个真源：panel-iron-v1 的 meta border ↔ PANEL_IRON_INSET', () => {
+  assert.deepEqual(frameBorders('panel-iron-v1'), {
+    left: PANEL_IRON_INSET.left,
+    right: PANEL_IRON_INSET.right,
+    top: PANEL_IRON_INSET.top,
+    bottom: PANEL_IRON_INSET.bottom,
+  }, `meta 与 PANEL_IRON_INSET 不一致：布局按常量让边、画面按 meta 切角，`
+    + `V25-c 首版截图抓到过它的后果 —— 标题压在铜边内线上、底部那句被下铜边切掉半截`)
+})
+
 test('ArtCatalog 不许再抄一份九宫格边框（后写的那份会盖掉 meta，让 meta 变成骗人的死字段）', () => {
   const src = fs.readFileSync(ART_CATALOG_SRC, 'utf8')
   assert.equal(/insets\s*:/.test(src), false,
@@ -206,7 +217,9 @@ test('ArtCatalog 不许再抄一份九宫格边框（后写的那份会盖掉 me
 test('运行时的 ui 图只剩三族：面板框、chip、页签（装饰母版已因零消费退出包）', () => {
   const pngs = fs.readdirSync(GENERATED_UI).filter((name) => name.endsWith('.png')).sort()
   assert.deepEqual(pngs, [
+    'banner-crest-v1.png',
     'button-chip-disabled-v1.png', 'button-chip-hover-v1.png', 'button-chip-v1.png',
-    'nav-tab-selected-v1.png', 'nav-tab-v1.png', 'panel-kingdom-v1.png',
+    'button-iron-v1.png',
+    'nav-tab-selected-v1.png', 'nav-tab-v1.png', 'panel-iron-v1.png', 'panel-kingdom-v1.png',
   ], '包里多了/少了 ui 图 —— 加图要连同消费点与判据一起进来，删图要确认零消费（#216 的口径）')
 })

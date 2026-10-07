@@ -43,6 +43,18 @@ export const CITY_STAGE_ASSETS = {
 export const PANEL_FRAME_BAND = 44
 
 /**
+ * V25「铁誓」主底板 `ui/generated/ui/panel-iron-v1` 的四边带厚，给**内容排版**用。
+ *
+ * <p>与上面同一条纪律：真源是那张图的 `.png.meta`，这里只是镜像，
+ * 由 `client/tests/ArtFamilies.test.ts` 逐值对账（改图不改这里 ⇒ 测试红）。
+ *
+ * <p>为什么非要有它：首版接线只把底板换成贴图、内容 y 坐标沿用旧的 `PANEL_H / 2 - 34`，
+ * 结果标题压在铜边内线上、底部那句被下铜边切掉半截（V25-c 真截图抓到的）。
+ * 铜边占掉的上下空间必须显式还给内容，否则"换了材质"就等于"文字被材质盖住"。
+ */
+export const PANEL_IRON_INSET = { left: 48, right: 48, top: 36, bottom: 36 } as const
+
+/**
  * 族内成员 → resources 相对路径（不带 /spriteFrame，那是加载层的事）。
  *
  * <p>本表**只登记已随包下发且已有消费面板的族**（背包的 item/equip、武将面板的 hero、

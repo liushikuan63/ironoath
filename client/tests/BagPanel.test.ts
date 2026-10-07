@@ -116,7 +116,12 @@ test('满仓要标红并汇总提示：产出停了而玩家不知道，他会�
     detail({ type: 'STONE' }),
     detail({ type: 'GRAIN', full: true, current: 9000, cap: 9000 }),
   ]))
-  assert.equal(panel.fullWarning, 'WOOD、GRAIN 已满仓，产出已停止。扩建仓库或消耗掉一部分后才会恢复')
+  assert.equal(panel.fullWarning, '木材、粮草 已满仓，产出已停止。扩建仓库或消耗掉一部分后才会恢复')
+  // 负向断言：这句话是**直接印给玩家**的（真截图上曾写着「STAMINA 已满仓」），
+  // 所以屏上一个资源码都不许出现。只钉正向中文名的话，将来加一种资源又漏翻是抓不到的。
+  for (const code of ['WOOD', 'STONE', 'IRON', 'GRAIN', 'GOLD', 'STAMINA']) {
+    assert.ok(!panel.fullWarning!.includes(code), `满仓提示里还有裸资源码 ${code}`)
+  }
   assert.equal(buildResourcePanel(detailResp([detail()])).fullWarning, null)
 })
 

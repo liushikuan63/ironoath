@@ -19,7 +19,9 @@ import { startPreviewServer } from './lib/preview-server.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 import { nodeScreenPos } from './lib/node-screen-pos.mjs'
 
-const ROOT = 'client/build/web-mobile'
+// SWEEP_ROOT 可指向独立构建产物（`outputName=xxx` 建出来的那一份）：
+// 默认仍吃 web-mobile，但并行会话正在用那份产物跑探针时，覆盖它才能拍到本批改动而不打断别人。
+const ROOT = process.env.SWEEP_ROOT ?? 'client/build/web-mobile'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.SWEEP_PORT ?? 8297)
 const OUT = process.env.SWEEP_OUT ?? 'tmp/layout-shots'

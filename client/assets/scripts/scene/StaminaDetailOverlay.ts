@@ -15,6 +15,8 @@ import {
 } from 'cc'
 import type { StaminaDetailView } from '../game/ui/StaminaDetail'
 import { applySystemUiFont } from './UiFont'
+import { applySlicedSprite } from './ArtCatalog'
+import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 
 const PANEL_W = 360
 const PANEL_H = 260
@@ -63,25 +65,36 @@ export class StaminaDetailOverlay {
     panel.layer = this.node.layer
     this.node.addChild(panel)
     panel.addComponent(UITransform).setContentSize(new Size(PANEL_W, PANEL_H))
-    const panelGraphics = panel.addComponent(Graphics)
-    panelGraphics.fillColor = COLOR_PANEL
-    panelGraphics.strokeColor = COLOR_BORDER
-    panelGraphics.lineWidth = 2
-    panelGraphics.roundRect(-PANEL_W / 2, -PANEL_H / 2, PANEL_W, PANEL_H, 10)
-    panelGraphics.fill()
-    panelGraphics.stroke()
+    // 底板走 A 档九宫格（360×260 ⇒ 顶底 36 占高 28%，在 §二 的余量内）。
+    // 加载失败退回原来的"填充 + 2px 描边"，两条路径都在屏上验过才算数。
+    if (!applySlicedSprite(panel, 'ui.panel.iron', PANEL_W, PANEL_H)) {
+      const panelGraphics = panel.addComponent(Graphics)
+      panelGraphics.fillColor = COLOR_PANEL
+      panelGraphics.strokeColor = COLOR_BORDER
+      panelGraphics.lineWidth = 2
+      panelGraphics.roundRect(-PANEL_W / 2, -PANEL_H / 2, PANEL_W, PANEL_H, 10)
+      panelGraphics.fill()
+      panelGraphics.stroke()
+    }
     // **面板要吞掉自己的触摸**：它没有别的监听者，不吞的话点在面板内部会落到背景板上把弹层关掉
     panel.on('touch-start', () => {}, this)
 
-    this.titleLabel = this.addLabel(panel, 'Title', 0, PANEL_H / 2 - 34, COLOR_BORDER, 20, PANEL_W - 40)
-    this.recoverLabel = this.addLabel(panel, 'Recover', 0, PANEL_H / 2 - 68, COLOR_DIM, 14, PANEL_W - 40)
-    this.nextLabel = this.addLabel(panel, 'Next', 0, PANEL_H / 2 - 92, COLOR_DIM, 14, PANEL_W - 40)
-    this.boughtLabel = this.addLabel(panel, 'Bought', 0, PANEL_H / 2 - 116, COLOR_DIM, 14, PANEL_W - 40)
+    // 内容必须落在九宫格的**净区**里：铜边占掉上下各 PANEL_IRON_INSET.top/bottom、左右各 .left/.right。
+    // 首版沿用旧的 `PANEL_H / 2 - 34` 排版，真截图上的后果是标题压在铜边内线上、
+    // 底部那句被下铜边切掉半截 —— 换材质不等于自动就有安全区，这一圈要显式还给内容。
+    const top = PANEL_H / 2 - PANEL_IRON_INSET.top
+    const bottom = -PANEL_H / 2 + PANEL_IRON_INSET.bottom
+    const innerW = PANEL_W - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right
+
+    this.titleLabel = this.addLabel(panel, 'Title', 0, top - 22, COLOR_BORDER, 20, innerW)
+    this.recoverLabel = this.addLabel(panel, 'Recover', 0, top - 48, COLOR_DIM, 14, innerW)
+    this.nextLabel = this.addLabel(panel, 'Next', 0, top - 70, COLOR_DIM, 14, innerW)
+    this.boughtLabel = this.addLabel(panel, 'Bought', 0, top - 92, COLOR_DIM, 14, innerW)
 
     const buy = new Node('BuyButton')
     buy.layer = panel.layer
     panel.addChild(buy)
-    buy.setPosition(new Vec3(0, -PANEL_H / 2 + 62, 0))
+    buy.setPosition(new Vec3(0, bottom + 40, 0))
     buy.addComponent(UITransform).setContentSize(new Size(BUY_W, BUY_H))
     this.buyBackground = buy.addComponent(Graphics)
     this.buyCaption = this.addLabel(buy, 'Caption', 0, 0, COLOR_TEXT, 15, BUY_W - 12)
@@ -91,7 +104,7 @@ export class StaminaDetailOverlay {
       }
     }, this)
 
-    this.noteLabel = this.addLabel(panel, 'Note', 0, -PANEL_H / 2 + 28, COLOR_DIM, 12, PANEL_W - 40)
+    this.noteLabel = this.addLabel(panel, 'Note', 0, bottom + 12, COLOR_DIM, 12, innerW)
 
     const close = new Node('CloseButton')
     close.layer = panel.layer

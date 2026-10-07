@@ -3,6 +3,7 @@
 import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3 } from 'cc'
 import type { ChoiceOption } from '../game/session/Choices'
 import { applySystemUiFont } from './UiFont'
+import { applySlicedSprite } from './ArtCatalog'
 
 const COLOR_MASK = new Color(12, 10, 9, 238)
 /**
@@ -58,10 +59,17 @@ export class ChoiceOverlay {
       // 压暗层自己也要吞点击：它比 `this.node` 的命中盒大，不吞就会漏到下层
     }, this)
 
-    const background = this.node.addComponent(Graphics)
-    background.fillColor = COLOR_MASK
-    background.roundRect(-width / 2, -215, width, 430, 10)
-    background.fill()
+    // 底板换成 V25「铁誓」A 档九宫格。挂在根节点上是安全的：`applySlicedSprite` 只停用
+    // **本节点**的 Graphics，标题与选项行都是子节点。尺寸必须先钉住 ——
+    // 否则 Sprite 会按引擎默认的 100 宽画（隐藏节点 contentSize 停在默认值那一族，#792）。
+    const plateBox = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)
+    plateBox.setContentSize(new Size(width, 430))
+    if (!applySlicedSprite(this.node, 'ui.panel.iron', width, 430)) {
+      const background = this.node.addComponent(Graphics)
+      background.fillColor = COLOR_MASK
+      background.roundRect(-width / 2, -215, width, 430, 10)
+      background.fill()
+    }
 
     this.titleLabel = this.addLabel(0, 178, 22, COLOR_GOLD)
     this.titleLabel.string = title

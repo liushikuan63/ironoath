@@ -19,6 +19,9 @@ import { ArtFamily, CITY_STAGE_ASSETS, FAMILY_ASSETS } from '../game/art/ArtFami
 
 type StaticArtKey =
   | 'ui.panel.kingdom'
+  | 'ui.panel.iron'
+  | 'ui.button.iron'
+  | 'ui.banner.crest'
   | 'ui.button.chip'
   | 'ui.button.chip.hover'
   | 'ui.button.chip.disabled'
@@ -111,6 +114,16 @@ const TERRAIN_VARIANT_COUNT = TERRAIN_COLUMNS * TERRAIN_ROWS_USED
 const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.panel.kingdom': {
     path: 'ui/generated/ui/panel-kingdom-v1',
+  },
+  // V25「铁誓」一族：切分几何只写在各自的 .png.meta 里，这里**不许**再写 insets（#213 的成因）。
+  'ui.panel.iron': {
+    path: 'ui/generated/ui/panel-iron-v1',
+  },
+  'ui.button.iron': {
+    path: 'ui/generated/ui/button-iron-v1',
+  },
+  'ui.banner.crest': {
+    path: 'ui/generated/ui/banner-crest-v1',
   },
   'ui.button.chip': {
     path: 'ui/generated/ui/button-chip-v1',

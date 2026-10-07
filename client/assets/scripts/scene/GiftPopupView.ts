@@ -17,6 +17,7 @@ import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3,
 import type { GiftPopupResp } from '../net/generated/PayProtocol'
 import type { PayView } from '../game/pay/GiftPayFlow'
 import { applySystemUiFont } from './UiFont'
+import { applySlicedSprite } from './ArtCatalog'
 
 const { ccclass } = _decorator
 
@@ -142,10 +143,27 @@ export class GiftPopupView extends Component {
 
     const panel = new Node('panel')
     panel.addComponent(UITransform).setContentSize(PANEL_WIDTH, PANEL_HEIGHT)
-    const bg = panel.addComponent(Graphics)
-    bg.fillColor = COLOR_PANEL
-    bg.fillRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT)
     root.addChild(panel)
+
+    // 底板单独一个子节点：`applySlicedSprite` 会把它所挂节点上的 Graphics 清空并停用，
+    // 底板与内容不同节点才不会顺手把标题、倒计时的绘制一起关掉（V25-c 的关键约束）。
+    // 素材没加载成功就退回原来那块实心矩形 —— 兜底用的仍是局部常量，删它的前提是这一屏截图验收通过。
+    const plate = new Node('plate')
+    plate.addComponent(UITransform).setContentSize(PANEL_WIDTH, PANEL_HEIGHT)
+    if (!applySlicedSprite(plate, 'ui.panel.iron', PANEL_WIDTH, PANEL_HEIGHT)) {
+      const bg = plate.addComponent(Graphics)
+      bg.fillColor = COLOR_PANEL
+      bg.fillRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT)
+    }
+    panel.addChild(plate)
+
+    // 标题匾额是**整图装饰件**（meta 里 border 全 0 ⇒ SLICED 等价于整幅，不会被切开拉伸）。
+    // 先挂它、后挂 Label ⇒ 文字在匾额之上。240×108 就是素材实测比例 2.213，不压扁。
+    const banner = new Node('banner')
+    banner.addComponent(UITransform).setContentSize(240, 108)
+    banner.setPosition(new Vec3(0, 104, 0))
+    applySlicedSprite(banner, 'ui.banner.crest', 240, 108)
+    panel.addChild(banner)
 
     // 纵向排布：标题 / 显示名 / 倒计时 / 按钮 / 结果，**逐行不重叠**。
     // 2026-09-21 复检抓到「剩 59:59」被「立即购买」按钮压住（倒计时 y=24、按钮盒 y∈[-28,28]）：
@@ -158,9 +176,12 @@ export class GiftPopupView extends Component {
     this.buyButton = new Node('buy')
     this.buyButton.addComponent(UITransform).setContentSize(200, 56)
     this.buyButton.setPosition(new Vec3(0, -28, 0))
-    const buttonBg = this.buyButton.addComponent(Graphics)
-    buttonBg.fillColor = COLOR_BUTTON
-    buttonBg.fillRect(-100, -28, 200, 56)
+    // C 档铁钮：200×56 走九宫格（border 6·4 ⇒ 顶底占高 14%，在 §二 的 [7%, 60%] 区间内）。
+    if (!applySlicedSprite(this.buyButton, 'ui.button.iron', 200, 56)) {
+      const buttonBg = this.buyButton.addComponent(Graphics)
+      buttonBg.fillColor = COLOR_BUTTON
+      buttonBg.fillRect(-100, -28, 200, 56)
+    }
     // label() 自己把节点挂到 parent 上并返回 Label 组件 —— 再 addChild 一次挂的就是
     // 一个组件而不是节点（真机上是 addChild 直接抛错，而这一步只有真正弹过窗才会走到）
     this.label(this.buyButton, '立即购买', 0, 0, 20, COLOR_TEXT)

@@ -364,6 +364,19 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 必做：`ArtCatalog.ts` 的 `StaticArtKey` 与 `SPECS` 增 4 个 A 档键；`GiftPopupView`（**改掉 `fillRect` 直角矩形**，:145-147）、`ChoiceOverlay:63`、`MarchComposeOverlay:125`、`StaminaDetailOverlay:70` 换 `applySlicedSprite`；标题换 `banner-crest` 匾额；关闭键统一到一种形态（现跑两种并存，§〇）。
 关键约束：`applySlicedSprite` 会自动 `addComponent(Sprite)`、把该 node 上的 `Graphics` `clear()+enabled=false`（`ArtCatalog.ts:469-485`）⇒ **底框节点与内容节点必须分离**，否则内容 Graphics 被一起关掉。这条要在验收里用一条能失败的判据钉住。
 验收：逐屏截图 8 份（用 `tools/shot-panel-sweep.mjs`，1440×900 留帧）+ `verify-art-runtime.mjs` 全绿 + `verify-gift-popup.mjs`（弹窗文案与几何既有门）绿。
+- **已完成（2026-10-08，台账 #803）**，四处与本卡原稿不同，都以现跑为准：
+  ① 原稿列的 4 处底板只接了 **3 处**（`GiftPopupView` / `ChoiceOverlay` / `StaminaDetailOverlay`）——
+  `MarchComposeOverlay` 动手时是脏的（另一会话在途）⇒ 按领地纪律跳过，不在别人文件上叠改动。
+  ② **原稿漏写了一条硬要求：内容必须按框带厚内缩。** 首版只换底板、内容 y 沿用旧值，
+  真截图上就是"标题压在铜边内线上、底部那句被下铜边切掉半截" ⇒ 新增 `PANEL_IRON_INSET`
+  （与 `.png.meta` 由 `client/tests/ArtFamilies.test.ts` 对账）并把 y/宽度都从 inset 起算。
+  **换材质不等于自动有安全区，这一圈要显式还给内容。**
+  ③ 验收判据落在新的 `tools/verify-ui-v25-runtime.mjs`（15 条，回读运行时 inset 与 meta 逐值相等 +
+  沿真实链路画出 + 不退化），比"跑一遍既有探针"更能钉手写 meta 的正确性。
+  ④ 构建走 `outputName=ui-v25` 独立产物（`SWEEP_ROOT` 可覆盖），**不打断并行会话的探针**；
+  `plate-band` 因无消费点被既有白名单守卫拦回草稿区（同 #216 那道门）。
+  未做：礼包那一屏没有玩家路径截图（新号 `/gift/popup` 不返内容 ⇒ 进不去），
+  其接线按**未做视觉验证**处理；「买 1 次」按钮仍是纯色块（带置灰逻辑，另格做）。
 
 ### V25-d · B/C 档接线（43 + 52 处，含按钮 chip 与条行）
 

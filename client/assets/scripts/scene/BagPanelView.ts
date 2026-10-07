@@ -22,6 +22,7 @@ import type { ChoiceOption, SpeedupChoice } from '../game/session/Choices'
 import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../net/generated/BagProtocol'
 import { applyAnyIconSprite, applyCommandButton, ensureFamily, resourceIconKey } from './ArtCatalog'
 import { itemArtKeyForConfig } from '../game/art/ArtFamilies'
+import { resourceName } from '../game/ui/ResourceNames'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
 import { applySystemUiFont, capWidth } from './UiFont'
@@ -523,7 +524,7 @@ export class BagPanelView extends Component {
       // 玩家自己拿计算器加一遍就能发现，悄悄显示等于默认数值造假（B04 验收 5）
       return mismatch.length === 0
         ? ''
-        : `${mismatch.map((row) => row.type).join('、')} 的产出明细与总产量不符，已上报`
+        : `${mismatch.map((row) => resourceName(row.type)).join('、')} 的产出明细与总产量不符，已上报`
     }
     if (this.bag?.capacityFull === true) {
       return '背包已满，再获得道具可能无法入包'
@@ -703,7 +704,10 @@ function resourceSummaryDraft(resource: ResourceRow): RowDraft {
     details.push(resource.fullText)
   }
   return {
-    title: resource.type,
+    // 标题走中文名：`resource.type` 是服务端下发的资源码（WOOD / STAMINA），
+    // 直接印出来就是把内部 id 摆给玩家 —— 内城资源条早就走了 resourceName，这页是漏接的一处
+    //（`game/ui/ResourceNames` 的注释明写这是同族缺陷的第三次，收口清单 #255）。
+    title: resourceName(resource.type),
     titleColor: resource.full ? COLOR_WARNING : COLOR_COPPER_GOLD,
     detail: details.join(' · '),
     detailColor: resource.full ? COLOR_WARNING : COLOR_TEXT_DIM,
