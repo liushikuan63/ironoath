@@ -121,7 +121,8 @@ push('找到并调用 onStamina（真实触发链）', clicked.called > 0,
   `命中 ${clicked.called} 处：${clicked.names.slice(0, 2).join(', ') || '无'}`)
 await page.waitForTimeout(2500)
 
-// 三、回读屏上是否真有一块 SLICED 的图在画着，并核它没退化（与 verify-art-runtime 同一条判据）。
+// 三、回读屏上是否真有一块 SLICED 的图在画着，并核它两条：没退化、边框也没吃掉可读区
+//     （与 verify-art-runtime 同一条判据；V25-e 把它同时接进这一份，因为**只有这一份会画到 panel-iron**）。
 const rendered = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   const found = []
@@ -153,6 +154,15 @@ for (const r of rendered) {
   push(`未退化：${r.node} (${r.frame})`, !!r.box && !r.degenerate,
     r.box ? `消费 ${r.box.join('x')} vs inset 和 L+R=${r.inset[0] + r.inset[1]} T+B=${r.inset[2] + r.inset[3]}，type=${r.type}`
       : '读不到 cc.UITransform —— 量具问题，不是退化')
+  // V25-e：不退化只是"引擎没把整张图缩小"，还要"边框没吃掉可读区"（规格 §二 的 0.6）。
+  // 这条在这一份里比在 verify-art-runtime 里更值钱：只有这一份沿真实链路画出 panel-iron/button-iron。
+  const ratio = r.box && r.box[0] > 0 && r.box[1] > 0
+    ? Math.max((r.inset[0] + r.inset[1]) / r.box[0], (r.inset[2] + r.inset[3]) / r.box[1])
+    : null
+  push(`边厚不吃可读区：${r.node} (${r.frame})`, ratio !== null && ratio <= 0.6,
+    ratio === null ? '读不到消费尺寸 —— 量具问题，不是通过'
+      : `边框占可读区 ${ratio.toFixed(2)}（阈 0.6），消费 ${r.box.join('x')}`
+        + ` / 边框和 ${r.inset[0] + r.inset[1]}x${r.inset[2] + r.inset[3]}`)
 }
 
 // 三之二、置灰：运行时驱动这一支**未执行** —— 遍历场景找不到带 render 的弹层组件实例
