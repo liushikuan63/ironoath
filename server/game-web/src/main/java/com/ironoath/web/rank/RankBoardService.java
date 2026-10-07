@@ -485,14 +485,28 @@ public class RankBoardService {
         List<SeasonSettlement.Entry> rows = boards.board(seasonId,
                 SeasonSettlement.Board.valueOf(type.name()));
         List<SeasonSettlement.Entry> out = new ArrayList<>(rows.size());
+        // 口径来自表而不是代码：TOP_N = Bot 只让出奖励坑位（默认，2026-10-07 按台账 #214 的裁决落地）；
+        // ALL = 回到旧口径（整张榜摘除）。写在这里而不是写死，是因为"榜上到底有没有 Bot 陪榜"
+        // 是 B11 的生态决策，改它不该动代码。
+        boolean wholeBoardExcluded = "ALL".equals(configs.stringParam("RANK_BOT_SUPPRESSION"));
         for (SeasonSettlement.Entry entry : rows) {
             // 读侧兜底：写入侧已经拦过，但库里可能存着规则生效前的条目（赛季榜恢复时同一条理由）
             //
             // 那句 "榜前 N 奖励坑位" 命名的是它服务的**红线条款**（B13 §七：Bot 不得占据需真人竞争的
-            // 前 3 名奖励坑位；`RankEndpointTest` 验收 3 用同一措辞），**不是这里的过滤宽度** ——
-            // 实际执行更严：Bot 从整张榜摘掉。别把这句改成"整榜排除"，那会切断代码与红线的对应；
-            // 也别以为改 `BotTuning.mayEnterRankTop` 能改变这里（那个方法在生产里没有调用点，理由见它的注释）。
-            if (bots.humanOnly(entry.id(), "榜前 " + REWARDED_TOP_N + " 奖励坑位") == null) {
+            // 前 3 名奖励坑位；`RankEndpointTest` 验收 3 用同一措辞）。判据就是 `BotTuning.mayEnterRankTop`
+            // —— 它现在**真的**是这里的执行者（此前它只有成文表述、零生产调用点，症状是"验收句写着前 3、
+            // 代码执行整榜"，两边都对不上）。
+            // ⚠️ 这里**不重排名次**：Bot 让坑位不等于把它挪到第 N+1 名去 —— 分数序是榜的唯一秩序，
+            // 人为挪位会让"第 4 名"既不是分数第 4、也不是玩家看到的那个数。
+            //
+            // ⚠️ 这里**不许出现 if (isBot)**：`check-no-bot-privilege` 规定合规判定（不任官职、
+            // 不占奖励坑位、不进付费场景）只能问 `BotRegistry`，两处各判一次其中一处迟早会漏。
+            // 所以"是不是 Bot"这件事藏在 `mayEnterRankTop` / `humanOnly` 的签名里。
+            if (wholeBoardExcluded) {
+                if (bots.humanOnly(entry.id(), "整榜 Bot 抑制（RANK_BOT_SUPPRESSION=ALL）") == null) {
+                    continue;
+                }
+            } else if (!bots.mayEnterRankTop(entry.id(), out.size() + 1, REWARDED_TOP_N)) {
                 continue;
             }
             out.add(entry);

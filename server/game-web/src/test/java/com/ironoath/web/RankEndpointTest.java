@@ -299,6 +299,79 @@ class RankEndpointTest {
                 .isEmpty();
     }
 
+    /**
+     * 台账 #214 的裁决落地：验收句写的是「Bot 不进榜<b>前 3</b>」，而此前生产执行的是整榜摘除 ——
+     * 两边都不对得上。现在宽度由 {@code global.RANK_BOT_SUPPRESSION} 决定，默认 TOP_N，
+     * 且两条口径各有用例钉住（只测默认那一条的话，改错默认值没人知道）。
+     *
+     * <p>夹具直接往存储层塞条目（绕过写入侧），因为要模拟的正是"规则生效前库里已有的数据"。
+     */
+    @Test
+    @DisplayName("#214：默认口径只让 Bot 让出前 3，第 4 名起照样陪榜；ALL 才整榜摘除")
+    void botSuppressionWidthComesFromTheTable() throws Exception {
+        String h1 = newPlayer(16);
+        String h2 = newPlayer(16);
+        String h3 = newPlayer(16);
+        String h4 = newPlayer(16);
+        String lowBot = newPlayer(16);
+        String topBot = newPlayer(16);
+        bots.register(botProfile(lowBot));
+        bots.register(botProfile(topBot));
+
+        SeasonBoardStore seeded = new InMemorySeasonBoardStore();
+        seeded.report(seasonId, SeasonSettlement.Board.POWER, new SeasonSettlement.Entry(h4, "丁", 4_000L));
+        seeded.report(seasonId, SeasonSettlement.Board.POWER, new SeasonSettlement.Entry(h3, "丙", 3_000L));
+        seeded.report(seasonId, SeasonSettlement.Board.POWER, new SeasonSettlement.Entry(h2, "乙", 2_000L));
+        seeded.report(seasonId, SeasonSettlement.Board.POWER, new SeasonSettlement.Entry(h1, "甲", 1_000L));
+        // 高分 Bot 本该第 1（要它让坑位）；低分 Bot 的原始名次在第 5（要它留下陪榜）
+        seeded.report(seasonId, SeasonSettlement.Board.POWER, new SeasonSettlement.Entry(topBot, "高分 Bot", 9_000L));
+        seeded.report(seasonId, SeasonSettlement.Board.POWER, new SeasonSettlement.Entry(lowBot, "陪榜 Bot", 500L));
+
+        SeasonRulesAssembler rules = new SeasonRulesAssembler(anchoredConfigs());
+        var topN = new RankBoardService(seeded, socialStore, nationStore, membership(), players, bots,
+                anchoredConfigs(), rules, timeService);
+        var ids = topN.list(h1, RankType.POWER, 1, 0).entries().stream().map(e -> e.id()).toList();
+
+        assertThat(ids.subList(0, 3)).as("前 3 名里没有 Bot（高分 Bot 让出奖励坑位）")
+                .doesNotContain(topBot, lowBot);
+        assertThat(ids).as("TOP_N 口径下 Bot 没有整榜消失：低分 Bot 仍在榜上（B11 的生态要这一行）")
+                .contains(lowBot);
+        assertThat(ids).as("让坑位不等于挪位：高分 Bot 不会被补到第 4 名之后").doesNotContain(topBot);
+
+        var wholeBoard = new RankBoardService(seeded, socialStore, nationStore, membership(), players, bots,
+                configsSuppressingAll(), rules, timeService);
+        assertThat(wholeBoard.list(h1, RankType.POWER, 1, 0).entries().stream().map(e -> e.id()).toList())
+                .as("ALL 口径＝2026-10-07 之前的行为：整张榜摘除").doesNotContain(topBot, lowBot);
+    }
+
+    /**
+     * 把 {@code RANK_BOT_SUPPRESSION} 改成 ALL 的一份配置。
+     * **自证替换命中**：没改到就抛，而不是拿一份"其实没改过"的配置去断言 ALL 行为 ——
+     * 那种夹具会安静地让两条口径的用例测同一份数据（假绿）。
+     *
+     * <p>用解析改值而不是字符串 replace：第一版按 {@code "value": "TOP_N"} 的字面形状替换，
+     * 结果被自己的守卫抓到没命中（序列化后的空格与键序不是人能背下来的形状）。
+     */
+    private static ConfigRegistry configsSuppressingAll() throws Exception {
+        ConfigRegistry registry = ConfigRegistry.loadFromDirectory(locateConfigDir());
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var root = mapper.readTree(withSeasonStartJson());
+        boolean found = false;
+        for (var row : root.withArray("rows")) {
+            if (row instanceof com.fasterxml.jackson.databind.node.ObjectNode object
+                    && "RANK_BOT_SUPPRESSION".equals(object.path("id").asText())) {
+                object.put("value", "ALL");
+                found = true;
+            }
+        }
+        if (!found) {
+            throw new IllegalStateException("global 夹具里没有 RANK_BOT_SUPPRESSION 这一行 —— 表与用例失效，不许静默当绿");
+        }
+        registry.reload(ConfigRegistry.TABLE_GLOBAL, com.ironoath.config.model.GlobalCfg.class,
+                mapper.writeValueAsString(root));
+        return registry;
+    }
+
     @Test
     @DisplayName("端点：不认识的榜类型回参数错误（空榜会被读成「这个榜还没人」），没锚点时榜是空的")
     void endpointRejectsUnknownTypeAndShowsAnEmptyBoardWhenNothingWasReported() throws Exception {

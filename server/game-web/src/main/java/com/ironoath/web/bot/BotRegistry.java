@@ -181,6 +181,26 @@ public class BotRegistry {
         return isBot(playerId) ? null : playerId;
     }
 
+    /**
+     * Bot 能不能占据这一名次（§七 红线：前 N 名的奖励坑位要留给真人竞争）。
+     *
+     * <p><b>真人一律开放；Bot 的答案来自 {@link BotTuning#mayEnterRankTop}</b> —— 与
+     * {@link #mayHoldOffice} 同一条形状：本类只做「真人不问、Bot 才问规则」这层门面，
+     * 规则本身住在 game-core。现装配而不是缓存：配置可热更（与 {@code BotRulesAssembler} 同一条纪律）。
+     *
+     * <p>这个方法此前<b>只有成文表述、没有生产调用点</b>，症状是「验收句写着前 3、代码执行整榜摘除」
+     * （台账 #214）；2026-10-07 由 {@code RankBoardService.rankedEntries} 接成真正的执行者。
+     *
+     * @param rank 名次，1 起（由调用方按"榜上已有几行"给；本类不重排分数序）
+     * @param rewardedTopN 有奖励的前 N 名
+     */
+    public boolean mayEnterRankTop(String playerId, int rank, int rewardedTopN) {
+        if (!isBot(playerId)) {
+            return true;
+        }
+        return new BotTuning(assembler.tuningRules()).mayEnterRankTop(rank, rewardedTopN);
+    }
+
     public Collection<String> botIds() {
         return profiles.keySet();
     }
