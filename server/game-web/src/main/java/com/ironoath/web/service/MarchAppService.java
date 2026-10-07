@@ -224,6 +224,9 @@ public class MarchAppService {
         // （`WarScoreBoard.canMarch`），所以面板上灰下去的那一刻正是这里会拒的那一刻。
         // 口径与 addFatigue 的 NOT_PARTICIPANT 一致：只在"本国有活跃战事"时吃这道闸
         // （WarAppService：「疲劳闸门只在国战里生效，没有仗就没有那道闸」）。
+        // 与 addFatigue 端口注释「记账是旁路、不得改变那一枪本身的结果」的关系：那道口在发起
+        // **之后**记账，所以它永不拦当次；这道闸拦的是**下一次**发起 —— 两处不打架，别把
+        // "记账不拦"读成"不该有闸"。
         // ⚠️ 用 findLatest 读快照而不是 settleIfExpired：后者会发赛季分，行军路径不能成为
         // 第二个发奖触发点（#764 收口的同一条纪律：「发奖只有一个触发点」）。
         String fatigueNationId = membership.nationIdOf(playerId);
