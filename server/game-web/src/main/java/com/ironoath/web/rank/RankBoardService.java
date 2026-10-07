@@ -57,6 +57,20 @@ public class RankBoardService {
      * 原先硬编码那句「可选 POWER / KILL / ALLIANCE / NATION」就变成一句<b>教玩家怎么写错</b>的假话 ——
      * 而这条错误路径恰好只验了"拼错会被拒"，验不到"名单与枚举不一致"。
      */
+    /**
+     * <b>玩家维度</b>的那几张榜：组织榜就是把它们逐人之和按组织归并出来的投影。
+     *
+     * <p><b>为什么是这三张</b>（2026-10-07 用户口径：「国家榜和联盟榜都改为赛季总分之和」）：
+     * B23 §五 裁决① 的原话就是「ALLIANCE / NATION = **赛季积分合计**」，而玩家维度上一共有三张榜
+     * （战力 POWER / 击杀 KILL / 国战 WAR）—— 只取 POWER 是当时只有它一张的实现选择，
+     * 代价是「打完一场国战后国家榜一动不动」，这与 V18 想验的那半句正好相反（收口清单 #756）。
+     *
+     * <p><b>结算依据不受影响</b>：赛季末发奖仍看 {@code Rules.snapshotBoard}（战力榜，B14 §四），
+     * 本常量只改"展示榜怎么合计"，不改任何一笔已发放的赛季币。
+     */
+    private static final List<RankType> MEMBER_BOARDS =
+            List.of(RankType.POWER, RankType.KILL, RankType.WAR);
+
     private static final String TYPE_OPTIONS = java.util.Arrays.stream(RankType.values())
             .map(Enum::name)
             .collect(java.util.stream.Collectors.joining(" / "));
@@ -499,7 +513,20 @@ public class RankBoardService {
      * 判据是往返计数而不是结果：{@code RankOrgBoardQueryCountTest}。
      */
     private List<SeasonSettlement.Entry> projectOrgBoard(String seasonId, RankType type) {
-        List<SeasonSettlement.Entry> members = rankedEntries(RankType.POWER);
+        // 成员的**赛季总分**：三张玩家榜逐人相加（见 MEMBER_BOARDS）。
+        // ⚠️ 三张榜的行集不一定相同：只上报过战力的人、只打过仗的人各只出现在其中一张里 ——
+        // 所以这里是"并集求和"，不是"按战力榜那批人补齐"（后者会把没上报战力的人整个丢掉）。
+        Map<String, Long> scoreByPlayer = new LinkedHashMap<>();
+        Map<String, String> nameByPlayer = new LinkedHashMap<>();
+        for (RankType memberBoard : MEMBER_BOARDS) {
+            for (SeasonSettlement.Entry row : rankedEntries(memberBoard)) {
+                scoreByPlayer.merge(row.id(), row.score(), Long::sum);
+                nameByPlayer.putIfAbsent(row.id(), row.name());
+            }
+        }
+        List<SeasonSettlement.Entry> members = new ArrayList<>(scoreByPlayer.size());
+        scoreByPlayer.forEach((playerId, total) ->
+                members.add(new SeasonSettlement.Entry(playerId, nameByPlayer.get(playerId), total)));
         Map<String, Alliance> allianceByPlayer = social.alliancesOf(
                 members.stream().map(SeasonSettlement.Entry::id).toList());
         Map<String, Nation> nationByAlliance = type == RankType.NATION

@@ -94,6 +94,8 @@ class RankEndpointTest {
 
     /** 锚好赛季的一整套（榜服务 + 赛季上报服务）—— 用的是内存榜存储，与全局那份互不干扰。 */
     private RankBoardService ranks;
+    /** 这一份榜存储与 {@link #ranks} 用的是同一个实例（直接往 WAR 榜写一行造国战发过分的状态）。 */
+    private SeasonBoardStore rankBoards;
     private SeasonSettlementService settlements;
     private String seasonId;
 
@@ -106,6 +108,7 @@ class RankEndpointTest {
         ConfigRegistry anchored = anchoredConfigs();
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(anchored);
         SeasonBoardStore boards = new InMemorySeasonBoardStore();
+        rankBoards = boards;
         ranks = new RankBoardService(boards, socialStore, nationStore, membership(), players, bots,
                 anchored, assembler, timeService);
         settlements = new SeasonSettlementService(anchored, timeService, assembler, players,
@@ -144,16 +147,21 @@ class RankEndpointTest {
         assertThat(kill.entries().get(1).value())
                 .as("同一人的两次击杀累加（120 + 30）").isEqualTo(150L);
 
+        // 组织榜 = 成员**赛季总分**之和（#756 用户口径）：成员总分 = 战力 + 击杀 + 国战三张玩家榜之和。
+        // 这一格里 king = 9000 战力 + 150 击杀；mate = 3000 战力 + 200 击杀 ⇒ 合计 12,350。
+        // **这一条正是「打完国战国家榜也会动」那条判据的算术根据**（国战分进的是 WAR 榜，同样计入总分）。
         var alliance = ranks.list(king, RankType.ALLIANCE, 1, 0);
-        assertThat(alliance.entries()).as("联盟榜：成员赛季分合计").hasSize(1);
+        assertThat(alliance.entries()).as("联盟榜：成员赛季总分合计").hasSize(1);
         assertThat(alliance.entries().get(0).id()).isEqualTo(allianceId);
         assertThat(alliance.entries().get(0).value())
-                .as("12,000 = 9,000 + 3,000，不是任何一个人的分").isEqualTo(12_000L);
+                .as("12,350 = (9,000 + 150) + (3,000 + 200)：战力与击杀都算进总分")
+                .isEqualTo(12_350L);
         assertThat(alliance.entries().get(0).tag()).as("联盟榜带缩写").isNotBlank();
 
         var nation = ranks.list(king, RankType.NATION, 1, 0);
         assertThat(nation.entries()).as("国家榜：成员联盟的合计").hasSize(1);
-        assertThat(nation.entries().get(0).value()).isEqualTo(12_000L);
+        assertThat(nation.entries().get(0).value()).as("与联盟榜同一份总分（这一国只有一个盟）")
+                .isEqualTo(12_350L);
 
         // 我的名次：组织榜回的是我所在组织那一行（个人榜回我自己）
         assertThat(ranks.me(mate, RankType.ALLIANCE).myRank())
@@ -219,6 +227,40 @@ class RankEndpointTest {
                 .isEqualTo(2L * (points.minKills() + 40L) * points.pointPerKill());
     }
 
+    @Test
+    @DisplayName("#756 组织榜 = 成员赛季总分之和（三张玩家榜）：国战分进 WAR 榜之后，联盟榜与国家榜跟着变")
+    void orgBoardsTrackMembersSeasonTotalsIncludingWarPoints() throws Exception {
+        String king = newPlayer(16);
+        String mate = newPlayer(16);
+        String allianceId = createAlliance(king, mate);
+        post200("/nation/found", king, new NationFoundReq(newRequestId(), "铁誓王国", 100L, 200L));
+
+        settlements.report(king, "老王", 9_000L);   // POWER（战力）
+        ranks.reportKills(king, "老王", 120L);      // KILL（击杀）
+        // WAR：直接往那张榜写一行 —— 线上由 WarStore 结算那一刻按人累加（那一跳的判据在 WarEndpointTest），
+        // 这里要验的是**投影口径**：组织榜把三张玩家榜都算进成员总分
+        rankBoards.report(seasonId, SeasonSettlement.Board.WAR,
+                new SeasonSettlement.Entry(king, "老王", 500L));
+
+        var beforeWar = 9_000L + 120L;
+        var alliance = ranks.list(king, RankType.ALLIANCE, 1, 0);
+        assertThat(alliance.entries().get(0).value())
+                .as("联盟榜 = 成员总分之和：9,000（战力）+ 120（击杀）+ 500（国战）= 9,620")
+                .isEqualTo(beforeWar + 500L);
+        assertThat(ranks.list(king, RankType.NATION, 1, 0).entries().get(0).value())
+                .as("国家榜同一份总分（这一国只有一个盟）").isEqualTo(beforeWar + 500L);
+
+        // 反证这一条真的在量国战分也算：再往 mate 名下写一笔国战分，两个组织榜都要跟着涨
+        rankBoards.report(seasonId, SeasonSettlement.Board.WAR,
+                new SeasonSettlement.Entry(mate, "小李", 300L));
+        assertThat(ranks.list(king, RankType.ALLIANCE, 1, 0).entries().get(0).value())
+                .as("成员 A 的国战分让整个盟的榜值涨 300").isEqualTo(beforeWar + 800L);
+
+        // 结算依据不受影响：赛季末发奖看的是战力那张快照（B14 §四），本改动只动展示
+        assertThat(ranks.list(king, RankType.POWER, 1, 0).entries().get(0).value())
+                .as("战力榜本身照旧只有战力，不被总分污染").isEqualTo(9_000L);
+        assertThat(allianceId).as("夹具前提：联盟建出来了").isNotBlank();
+    }
     @Test
     @DisplayName("验收 2：未上榜给 null，不用 0 冒充（0 会与「第 0 名」混淆）")
     void unrankedPlayerGetsNullNotZero() throws Exception {
