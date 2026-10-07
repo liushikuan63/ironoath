@@ -1,0 +1,56 @@
+# 职责：在**不消耗 GitHub 托管分钟**的前提下，把 46 道静态门接回一个不由人记不记得的执行者。
+#
+# 为什么要有这一份：账户是 GitHub Free，托管 runner 每月只送 2000 分钟，
+# 而本仓日均 29 次 run × 5.4 分钟 ≈ 158 分钟/天 —— 2.4 倍超支，2026-10-05 08:29 起配额见底，
+# 此后所有托管 job 都是"2 秒 0 步"的假红（annotation：`recent account payments have failed
+# or your spending limit needs to be increased`）。自托管 runner 由本机出算力，**不计入那 2000 分钟**，
+# 于是解冻前也能拿到真读数。
+#
+# ⚠ 这一份**不替代** `ci.yml`，两件事它做不到：
+#   1. 跑不了 `scripts/build.sh`（服务端全量编译 + 测试要真 Mongo，而 `jobs.<id>.services`
+#      在自托管 runner 上不支持 —— 那是 GitHub 托管 runner 专有的能力）；
+#   2. 给不了"必然是一次全新检出"这个性质（`ci.yml` 开头论证过：ubuntu 干净镜像才能暴露
+#      行尾/大小写/路径分隔符这类"只在我这台机器上成立"的问题）。本机环境是既成事实的一部分。
+# 所以：**托管车道仍是权威门禁**，这份是配额冻结期的降级覆盖，解冻后两者并存。
+#
+# runner 掉线（本机关机 / 休眠）时，这里的 job 会一直排队到超时 —— 那属于"没验"，
+# 不能读成"通过"，也不能读成"代码红"。判据见 AGENTS.md 的门禁阅读口径。
+name: gates-selfhosted
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# 与托管车道同一套取消语义：后一次 push 取消还在排的前一次。
+concurrency:
+  group: selfhosted-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-gates:
+    # 只认这台机器：label 由注册时的 --labels ironoath-self 决定，
+    # 不写 self-hosted 单独一项是为了避免将来别的 runner 进来后误派。
+    runs-on: [self-hosted, ironoath-self]
+    steps:
+      - uses: actions/checkout@v4
+
+      # node 必须是 20：本机默认 node 是 v24，而 `node --test` 的目录形态在 24 上跑不起来
+      # （实测 check.sh 末段 test-client 判红，仓库文档给的本机做法也是切 20）。
+      # 这里显式装 20 而不是复用本机路径 —— 复用 D:\Java\nodejs\node20.13.0 会让这份文件
+      # 依赖"这台机器恰好装在那儿"，换机即静默漂移。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      # check.sh 里的客户端门要 node_modules（typecheck 直接跑 `npm run typecheck`）。
+      - name: Install client toolchain
+        run: npm ci
+        working-directory: client
+
+      - name: Static gates
+        shell: bash
+        run: bash scripts/check.sh
