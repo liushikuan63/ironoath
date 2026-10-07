@@ -43,6 +43,7 @@ import com.ironoath.web.dto.generated.RallyTroop;
 import com.ironoath.web.dto.generated.SocialCoord;
 import com.ironoath.web.dto.generated.SocialTargetType;
 import com.ironoath.web.service.PlayerInitService;
+import com.ironoath.web.service.SocialAppService;
 import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.store.memory.InMemoryArmyStore;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
@@ -155,6 +156,36 @@ class NationRallyEndpointTest {
         assertThat(above.get("maxMembers").asInt())
                 .as("上限之上（cap+1）夹到 cap 而不是拒绝：越界拒绝会让玩家以为集结功能坏了")
                 .isEqualTo(cap);
+    }
+
+    @Test
+    @DisplayName("同一毫秒连发两次集结：id 必须互异（唯一性不靠时间戳）")
+    void rallyIdsDoNotCollideWithinTheSameMillisecond() {
+        // 机制复现，不是现场抽样：把"同玩家 + 同毫秒"这个确定态直接造出来。
+        // 旧实现（rally_<player>_<now>）在这一步只会给出一个 id ⇒ 断言 50 必红；
+        // 而靠"全量批跑三趟撞红两次"那种抽样，抽不到就会被当成"没这回事"（台账 #802 实测）。
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < 50; i += 1) {
+            seen.add(SocialAppService.rallyIdOf("P-same", 1_700_000_000_000L));
+        }
+        assertThat(seen).as("同输入 50 次必须给出 50 个互异的 id").hasSize(50);
+        assertThat(seen.iterator().next())
+                .as("毫秒仍留在 id 里：日志与工单都按 rally_<玩家>_<时刻> grep")
+                .startsWith("rally_P-same_1700000000000_");
+    }
+
+    @Test
+    @DisplayName("同一名国王连着发两次国家集结：两次都成且 id 互异（旧实现第二次报 10057）")
+    void twoConsecutiveNationalRalliesBothSucceed() throws Exception {
+        Nation nation = nation(3);
+        giveTroops(nation.king, 2_000L);
+
+        JsonNode first = post200("/rally/nation", nation.king, request(3)).get("rally");
+        JsonNode second = post200("/rally/nation", nation.king, request(3)).get("rally");
+
+        assertThat(second.get("rallyId").asText())
+                .as("第二次不该被第一次的建档挡下来")
+                .isNotEqualTo(first.get("rallyId").asText());
     }
 
     // ---------- 装配：国家那一档不能静默用联盟的 ----------

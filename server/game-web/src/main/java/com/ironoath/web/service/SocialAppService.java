@@ -2732,18 +2732,51 @@ public class SocialAppService {
         attackGuard.guardRally(playerId,
                 com.ironoath.core.world.Coord.of(coord.x(), coord.y()), maxSize, now);
         commitTroops(playerId, troops);
+        Rally rally;
         try {
-            Rally rally = Rally.initiate("rally_" + playerId + "_" + now, scope, groupId, playerId,
+            rally = Rally.initiate(rallyIdOf(playerId, now), scope, groupId, playerId,
                     troops, heroes, maxSize, requestedPrepareMillis, now,
                     rulesOf,
                     coord.x(), coord.y(), targetType.name());
-            // 创建集结：expectedVersion=0，库里已有同 id 才是冲突（rallyId 里已带 now，正常不会撞）
-            store.saveRally(rally, 0L);
-            return rally;
-        } catch (IllegalArgumentException | IllegalStateException e) {
+        } catch (IllegalArgumentException e) {
+            // 只有这一支才是"发起人填的数不合法"（准备时长、人数下限、缺目标）—— 保持原错误码
             refundTroops(playerId, troops);
             throw new BizException(ErrorCode.RALLY_PREPARE_INVALID, e.getMessage());
         }
+        try {
+            // 创建集结：expectedVersion=0，库里已有同 id 才是冲突。
+            // 原先的注释写着"rallyId 里已带 now，正常不会撞"—— 那句话是错的：同一名玩家在同一毫秒
+            // 内连发两次（双击、或连着发两个目标）算出来的 id 一模一样，撞号后抛
+            // IllegalStateException，被旧写法兜成 10057「准备时长不在允许区间内」⇒
+            // 玩家听到的理由和被拒的真实原因不是一句话（台账 #802，红证据见 NationRallyEndpointTest）。
+            store.saveRally(rally, 0L);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            // 建档冲突是内部一致性问题，不是业务校验失败 ⇒ 报"系统繁忙"这一档，别借 10057 那张嘴
+            // （借来的那句会让玩家去改准备时长，而改多少都没用）。
+            // 句式和 ExileAppService:150 / SeasonSettlementService:207 那两处 SYSTEM_ERROR 保持一致：
+            // 先给人话与"请重试"，内部原因跟在后面给工单与日志用。
+            LOG.warn("集结建档冲突（内部 id 撞号）playerId={} 原因={}", playerId, e.getMessage());
+            refundTroops(playerId, troops);
+            throw new BizException(ErrorCode.SYSTEM_ERROR,
+                    "这次集结没能开出来，请重试一次（内部原因：" + e.getMessage() + "）");
+        }
+        return rally;
+    }
+
+    /**
+     * 集结 id：**唯一性不靠时间戳**。
+     *
+     * <p>原先是 {@code rally_<playerId>_<now>}，同一玩家同一毫秒内两次发起就会算出同一个 id，
+     * 建档那一侧（{@code expectedVersion<=0}）当场拒绝 ⇒ 第二个人（或他自己的第二次）被误报成业务错。
+     * 毫秒仍然留在 id 里，因为日志与工单都按它 grep；后面接一段随机尾保证唯一
+     * （同一份文件里 {@code msg_} / {@code report_} 早就是这么做的，见 :1587 与 :1774）。
+     *
+     * <p>{@code public} 只为了跨包可测（用例在 {@code com.ironoath.web}，本类在 {@code ...web.service}）：
+     * 这是一个纯函数，暴露它比用反射撬开更诚实，且"同输入必须不同输出"这条不变量正是要被钉住的东西。
+     */
+    public static String rallyIdOf(String playerId, long now) {
+        return "rally_" + playerId + "_" + now + "_"
+                + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
     }
 
     /**
