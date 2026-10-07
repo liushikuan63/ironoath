@@ -20,3 +20,15 @@ verify-label-fit-runtime.mjs    # 每格都已在跑，重复跑没有信息量
 # ⚠️ 只跑单后端 `run-runtime-probes.sh`（不传 `BOOST_BACKEND`）时它会**报前提不足退 2** ——
 #    那是**环境造成的**、不是功能红，⚠️ 但它仍会占掉汇总里的一个 `PREREQ`。
 # ⇒ **批跑请走 `scripts/run-batch-dual-backend.sh`**（单后端入口留给"只想跑一部分/不需 nation 族"的场合）。
+
+# 2026-10-07（工程侧④）加：`verify-devtools-runtime.mjs` **必须**排在这里，而且理由与上面那条不同族。
+# 它量的是**微信开发者工具模拟器**那一次启动留下的 `boot_check` / `panel_load_failed` 回执
+# （读 `/ops/track/recent`），本脚本不起模拟器、也不驱动 IDE ⇒ 批跑这台后端上那些回执**必然为空**。
+# ⚠️ 为什么以前它"只是 SKIP"而现在会变成一个**假红**：旧谓词看到 `DEVTOOLS_OPS_TOKEN` 没设就 SKIP；
+#    而本轮把批跑 mint 的令牌**注入给所有声明 `*_OPS_TOKEN` 的探针**（那正是 5 份恒 SKIP 的修法），
+#    它于是拿到了令牌、真的跑起来、然后因为读不到回执而判红 —— 那是环境，不是产品。
+#    排除名单的判据就是这一句："在默认批跑环境下跑它，得到的是环境造成的假红"。
+# ⇒ 这一份只能在**真人起过模拟器之后**手跑（`DEVTOOLS_OPS_TOKEN=<与那台后端同一个值>`），
+#    与 C 组（真机类）那一族同一个解锁点。同目录的 `verify-devtools-panels.mjs` **不排**：
+#    它用 playwright 打 web 产物，令牌只用于 `/ops/mail/send` 夹具，批跑环境正是它的射程。
+verify-devtools-runtime.mjs    # 要微信开发者工具模拟器的 boot_check 回执，批跑这台后端上必然为空 ⇒ 假红

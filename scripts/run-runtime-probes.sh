@@ -6,6 +6,9 @@
 # **每份退出码显式写进日志**：后台任务通知里的 exit 0 属于整条命令链，不能当判据。
 #
 # 用法：BACKEND=http://localhost:8199 bash scripts/run-runtime-probes.sh [文件清单]
+#   可选分流：BOOST_BACKEND + BOOST_PROBES（提速档那两份）；WAR_BACKEND + WAR_PROBES（真仗档，默认
+#     只分流 `verify-war-real-battle`）；OPS_TOKEN_VALUE（批跑入口自 mint 的运维令牌，注入给
+#     声明了 `*_OPS_TOKEN` 的探针 —— 三者都不传时行为与改动前完全一致）。
 # 超时：RUNTIME_PROBES_TIMEOUT=<秒>（默认 900，理由见下面 PROBE_TIMEOUT 那段）—— 一份量具卡住不能让
 #   整批停摆（2026-09-23 实测：run1 跑到 `verify-perf-runtime` 就 9 分钟不再输出一个字节，只能手动停）。
 #   超时记成 TIMEOUT，**与"跑出来是红"分开计**（同 NO-RUN 那条纪律：没跑完不等于验出了问题）。
@@ -77,13 +80,32 @@ while read -r f; do
   case "$base" in
     verify-label-fit-runtime.mjs) continue ;;   # 这一份每格都在跑，不必重复
   esac
-  # 缺凭据的那几份**按谓词筛**，不按文件名点名（#416 那版只写死了 `verify-art`，
-  # 于是同样要令牌的 `verify-devtools` 被记成一次普通的红，汇总里的"非零份数"就不数了）。
+  # 凭据这一族（2026-10-07 重写谓词，取证见 收口清单 #776）。
+  # 旧写法 `[ -z "${!tok_env:-}" ]` 只看"shell 里有没有那个变量名"，**不看探针自带的默认值**，
+  # 于是 7 份里有 5 份（源码写了 `?? 'art-verify-local'`）常年被记成 SKIP —— 而它们本来就能跑：
+  # `scripts/verify-runtime.sh:18` 早就在用同一个串给本地后端自 mint ops token。
+  # 新判据三段，顺序固定：
+  #   ① shell 里已经显式设了那个变量 ⇒ 用它（人的意图最大）；
+  #   ② 本轮由批跑入口 mint 了 `OPS_TOKEN_VALUE` ⇒ 注入它。**必须注入而不是让探针用自己的默认值**：
+  #      两边各自默认而没人对齐时，症状是 `/ops/*` 全片 1009，一片红看着像功能坏了；
+  #   ③ 两者都没有 ⇒ 记 **NO-RUN 凭据**（这台后端的 token 我无从得知 ⇒ 与"红"和"量具没起来"分开计，
+  #      绝不记成 SKIP 混进通过率，也绝不代填）。
+  # ⚠️ ③ 里"探针自带 `?? 'art-verify-local'` 默认值"**不作为放行的理由**：单后端入口的 `BACKEND`
+  #    可以指向任何一台后端（包括别人起的、令牌不是那个串的后端），照跑得到的是一片 1009 假红。
+  #    默认值只在"这批的后端是本脚本起的、令牌是脚本 mint 的"这一条路上才成立 —— 那条路由 ② 覆盖。
   tok_env="$(grep -oE 'process\.env\.[A-Z_]*TOKEN[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
-  if [ -n "$tok_env" ] && [ -z "${!tok_env:-}" ]; then
-    echo "SKIP $base 需要 $tok_env（凭据，不代填）" | tee -a "$OUT"
-    continue
+  tok_assign=""
+  if [ -n "$tok_env" ]; then
+    tok_value="${!tok_env:-}"
+    [ -z "$tok_value" ] && tok_value="${OPS_TOKEN_VALUE:-}"
+    if [ -z "$tok_value" ]; then
+      echo "NO-RUN $base 缺凭据 $tok_env（探针要的令牌没有来源：既没设 $tok_env，本轮批跑也没 mint ⇒ 这一份没跑成，不是红）" | tee -a "$OUT"
+      continue
+    fi
+    tok_assign="$tok_env=$tok_value"
   fi
+  tok_args=()
+  [ -n "$tok_assign" ] && tok_args+=("$tok_assign")
   backend_env="$(grep -oE 'process\.env\.[A-Z_]*BACKEND[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
   port_env="$(grep -oE 'process\.env\.[A-Z_]*PORT[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
   [ -z "$backend_env" ] && backend_env="BACKEND_ORIGIN"
@@ -99,12 +121,25 @@ while read -r f; do
       target_backend="$BOOST_BACKEND"
     fi
   fi
+  # 2026-10-07 加：**真仗档**（第三台后端）。`verify-war-real-battle` 要的提速是
+  # `IRONOATH_DEV_TIME_SPEED=100`（后端进程的环境变量，不是探针侧的，探针自己量倍速、<50× 就退 2），
+  # 而**这个倍速会改掉 nation 那两份的时间前提**（练兵、行军、3 小时国战窗口全走同一套 serverNow）
+  # ⇒ 不能复用提速档那一台，另起一台专给它（由 `run-batch-dual-backend.sh` 负责起与收）。
+  # 不传 `WAR_BACKEND` ⇒ 这一整段与改动前完全一致（真仗那份照旧打 `$BACKEND`，自己退 2 说前提不足）。
+  if [ -n "${WAR_BACKEND:-}" ]; then
+    war_re="${WAR_PROBES:-verify-war-real-battle}"
+    if printf '%s' "$base" | grep -qE "$war_re"; then
+      target_backend="$WAR_BACKEND"
+    fi
+  fi
   port=$((8200 + i))
   logdir="${RUNTIME_PROBES_LOGDIR:-/d/tmp}"
   mkdir -p "$logdir"
   log="$logdir/probe-$base.log"
   run_probe() {   # $1=端口 $2=日志文件；**把退出码 echo 到 stdout**（调用方用 $(…) 取），超时 echo 124
-    env "$backend_env=$target_backend" "$port_env=$1" node "$f" > "$2" 2>&1 &
+    # 令牌用数组传，不用裸字符串：token 里只要有一个空格，未加引号的展开就会被拆成两个 `env` 参数，
+    # 第二个会被当成**另一个变量赋值**塞进子进程环境 —— 那是自己给自己开的一条注入面（bash 5.3 下空数组安全）
+    env "$backend_env=$target_backend" "$port_env=$1" "${tok_args[@]}" node "$f" > "$2" 2>&1 &
     local pid=$! waited=0 code
     while [ "$waited" -lt "$PROBE_TIMEOUT" ]; do
       kill -0 "$pid" 2>/dev/null || break
@@ -166,7 +201,7 @@ done < "$LIST"
 # 这张表只数"真正需要人看、且不是超时/前提不足"的那些。
 # ⚠️ 措辞用"需看的份数"而不是"非零退出的份数"（2026-10-04）：NO-RUN 与 PREREQ 都**没有可用的退出码**
 # （前者是量具没起来，后者是量具声明前提不足），旧措辞把它们算进"非零退出"会让人以为量具测出了红。
-echo "--- 汇总：需看的份数 = $(grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |# )' "$OUT")（其中 未跑成 NO-RUN = $(grep -c '^NO-RUN ' "$OUT")）  超时 = $(grep -c '^TIMEOUT ' "$OUT")  前提不足 PREREQ = $(grep -c '^PREREQ ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
+echo "--- 汇总：需看的份数 = $(grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |# )' "$OUT")（其中 未跑成 NO-RUN = $(grep -c '^NO-RUN ' "$OUT")，再其中 缺凭据 = $(grep -c '^NO-RUN .*缺凭据' "$OUT")）  超时 = $(grep -c '^TIMEOUT ' "$OUT")  前提不足 PREREQ = $(grep -c '^PREREQ ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
 grep -vE '^(0 |SKIP |TIMEOUT |PREREQ |# )' "$OUT" || true
 # 超时与"前提不足"各自单独列一遍：它们不在上面那张表里，但恰恰是最需要人看的一批
 grep '^TIMEOUT ' "$OUT" || true
