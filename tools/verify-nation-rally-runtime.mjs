@@ -13,6 +13,11 @@
  *   NR_OPS_TOKEN 本地自 mint 的运维令牌（默认 art-verify-local，**不是凭据**，见台账 #776）
  *   NR_TARGET_X / NR_TARGET_Y 集结目标格（默认 400,400 = 空地）
  *
+ * <p><b>在批跑里跑这一份必须给 `GAME_WEB_JAR` 指一份 V22-a 之后的 jar</b>（`run-batch-dual-backend.sh`
+ * 默认用主树 `server/game-web/target/game-web.jar`，而那份常年是旧的 —— 实测 10-08 批跑时它是 10-07 12:17，
+ * 早于 `POST /rally/nation`）。旧 jar 上这一份会**退 2 并点名"这台后端是 V22-a 之前的旧 jar"**，
+ * 那是量具没架对（fail-closed），不是功能红 —— 汇总里记成 PREREQ 而不是 FAIL。
+ *
  * <p><b>四相</b>：
  * ① 两个国家 + 官职差（`starter` 领大将军 = OFFICER 档、`plain` 是普通国民 = MEMBER 档），
  *    两者的 `/rally/policy` 那份 nation 视图先各给一次读数；
