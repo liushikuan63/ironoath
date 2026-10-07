@@ -149,6 +149,8 @@ if (attacker.cityLevel !== 16 || defender.cityLevel !== 16) {
   return 2
 }
 console.log(`  攻方号：${attacker.playerId}｜守方号：${defender.playerId}`)
+// 供"WAR 榜有行的客户端截图"登录同一个号：客户端按 deviceId 建/登号，注入错就是别人的空榜。
+console.log(`  攻方 deviceId：${attacker.deviceId}`)
 
 // ---------- 1.5 编队：补发武将 + 上阵（新号带兵上限=0，不上阵就练不了兵） ----------
 // 兵力一律真训练（本探针不做发兵作弊）；这里补的是"账号标准配置"——与 verify-army-queue.mjs
