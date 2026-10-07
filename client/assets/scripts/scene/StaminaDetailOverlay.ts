@@ -11,7 +11,7 @@
  * 到每日上限时按钮置灰而不是隐藏）。
  */
 import {
-  Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3,
+  Color, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3,
 } from 'cc'
 import type { StaminaDetailView } from '../game/ui/StaminaDetail'
 import { applySystemUiFont } from './UiFont'
@@ -29,6 +29,13 @@ const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_DIM = new Color(170, 158, 138, 255)
 const COLOR_BUY = new Color(184, 134, 11, 255)
 const COLOR_BUY_OFF = new Color(70, 62, 52, 255)
+/**
+ * 贴图路径的置灰：`Sprite.color` 与贴图相乘，白＝原色。
+ * 不用 `sprite.grayscale` —— 引擎运行时有，但本仓 headless 的 cc 类型桩里没有这个属性，
+ * `check-client-typecheck` 会直接报 TS2339（实测）。
+ */
+const COLOR_TINT_ON = new Color(255, 255, 255, 255)
+const COLOR_TINT_OFF = new Color(104, 96, 88, 255)
 
 export class StaminaDetailOverlay {
   readonly node: Node
@@ -38,7 +45,13 @@ export class StaminaDetailOverlay {
   private readonly boughtLabel: Label
   private readonly noteLabel: Label
   private readonly buyCaption: Label
-  private readonly buyBackground: Graphics
+  /**
+   * 买体力键的两条绘制路径，二选一：素材上来了走 `buySprite`（置灰 = `grayscale`），
+   * 没上来就退回 `buyBackground` 那块实心圆角矩形（置灰 = 换 fillColor）。
+   * 两条都留着是因为「置灰而不是隐藏」是协议明写的要求 —— 换成贴图不能把它弄丢。
+   */
+  private readonly buySprite: Sprite | null
+  private readonly buyBackground: Graphics | null
   private buyEnabled = false
   private view: StaminaDetailView | null = null
 
@@ -96,7 +109,9 @@ export class StaminaDetailOverlay {
     panel.addChild(buy)
     buy.setPosition(new Vec3(0, bottom + 40, 0))
     buy.addComponent(UITransform).setContentSize(new Size(BUY_W, BUY_H))
-    this.buyBackground = buy.addComponent(Graphics)
+    // C 档铁钮：先试贴图，失败才建 Graphics（`applySlicedSprite` 自己会 addComponent(Sprite)）。
+    this.buySprite = applySlicedSprite(buy, 'ui.button.iron', BUY_W, BUY_H) ? buy.getComponent(Sprite) : null
+    this.buyBackground = this.buySprite === null ? buy.addComponent(Graphics) : null
     this.buyCaption = this.addLabel(buy, 'Caption', 0, 0, COLOR_TEXT, 15, BUY_W - 12)
     buy.on('touch-start', (_event: EventTouch) => {
       if (this.buyEnabled) {
@@ -126,10 +141,17 @@ export class StaminaDetailOverlay {
     this.noteLabel.string = view.noteText ?? ''
     this.buyEnabled = view.buyEnabled
     // 置灰而不是隐藏（协议明写理由）：到上限那一天玩家仍看得见「明天还能买」
-    this.buyBackground.clear()
-    this.buyBackground.fillColor = view.buyEnabled ? COLOR_BUY : COLOR_BUY_OFF
-    this.buyBackground.roundRect(-BUY_W / 2, -BUY_H / 2, BUY_W, BUY_H, 8)
-    this.buyBackground.fill()
+    if (this.buySprite !== null) {
+      // 贴图路径：置灰交给引擎的 grayscale，文字同步压暗 —— 只灰底不灰字会读成"还能点"。
+      this.buySprite.color = view.buyEnabled ? COLOR_TINT_ON : COLOR_TINT_OFF
+      this.buyCaption.color = view.buyEnabled ? COLOR_TEXT : COLOR_BUY_OFF
+    } else if (this.buyBackground !== null) {
+      this.buyBackground.clear()
+      this.buyBackground.fillColor = view.buyEnabled ? COLOR_BUY : COLOR_BUY_OFF
+      this.buyBackground.roundRect(-BUY_W / 2, -BUY_H / 2, BUY_W, BUY_H, 8)
+      this.buyBackground.fill()
+      this.buyCaption.color = COLOR_TEXT
+    }
     this.node.active = true
   }
 

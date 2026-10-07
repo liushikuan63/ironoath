@@ -383,6 +383,12 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 必做：B 档 `plate-band` 接列表行（`BagPanelView:541`、`SocialPanelView:1213`、`BattleReportPanelView:504` 等）；C 档 `button-iron` 接 `ActionButton*` 一族；跨档复用**一律拒绝**。
 ⚠ 本格触碰共用件（行池 / 行序 / 按钮壳）——按 `AGENTS.md` 二节的批跑纪律：**单跑自己碰的不够**，必须带上「已有内容可见性」那一族（`verify-social-permission-runtime` · `verify-social-create-runtime` · `verify-rank-runtime`），并全量批跑 60 份（`bash scripts/run-batch-dual-backend.sh`，国家正链路那族要 `BOOST_BACKEND`）。
 另：改行视觉会动 `plate-coverage`（文字压底板）与 `label-fit`（压字）两道既有判据的前提，**先现跑取基线再改**，不许改完直接宣称绿。
+- **部分完成（2026-10-08，台账 #805）**：本卡的 ②「买 1 次那颗仍是纯色块」已做完 ——
+  BuyButton 走 `ui.button.iron`（探针回读 `BuyButton:button-iron-v1@220x36`，未退化），
+  置灰拆成两条路径各自生效（贴图态压 `Sprite.color`、兜底态保留 `fillColor` 换色），
+  协议"置灰而不是隐藏"由三条静态判据钉住。**一处实测约束**：`Sprite.grayscale` 在本仓 headless 类型桩里不存在
+  （`check-client-typecheck` 报 TS2339）⇒ 用 `color` 相乘，不去扩类型桩。
+  本卡 ①（B 档接列表行）与 ③（`MarchComposeOverlay` 底板）**未做**，各自挂在真实外部条件上（见队列 `- [~]`）。
 
 ### V25-e · 防腐（把"边厚 ÷ 消费尺寸"做成机制，不靠人记）
 

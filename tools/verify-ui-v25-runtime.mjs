@@ -155,12 +155,36 @@ for (const r of rendered) {
       : '读不到 cc.UITransform —— 量具问题，不是退化')
 }
 
+// 三之二、置灰：运行时驱动这一支**未执行** —— 遍历场景找不到带 render 的弹层组件实例
+// （实测 `overlay=false buy=true`：节点在、组件句柄拿不到，release 产物里 getter 不可靠）。
+// 不拿"跑不到的分支"凑绿，改成两条能失败的静态判据：贴图与兜底**两条路径都必须各自置灰**。
+// 删掉任一条分支，下面这条就红 —— 它防的是"换贴图时把置灰弄丢"这个具体回归。
+import { readFileSync } from 'node:fs'
+const overlaySrc = readFileSync(path.resolve(process.cwd(),
+  'client/assets/scripts/scene/StaminaDetailOverlay.ts'), 'utf8')
+push('置灰：贴图路径在（灰态压暗 tint）',
+  /buySprite\.color\s*=\s*[\s\S]{0,80}COLOR_TINT_ON[\s\S]{0,40}COLOR_TINT_OFF/.test(overlaySrc),
+  'render() 里必须有 `buySprite.color = 可点 ? TINT_ON : TINT_OFF`')
+push('置灰：兜底路径未被删（Graphics 换色）',
+  /buyBackground\.fillColor\s*=\s*[\s\S]{0,60}COLOR_BUY\s*:\s*COLOR_BUY_OFF/.test(overlaySrc),
+  '素材加载失败那条路仍要能置灰，否则贴图缺失时灰态消失')
+push('置灰：协议要求"画着但不响应"（active 不被置 false）',
+  !/buy\.active\s*=\s*false/.test(overlaySrc) && /buyEnabled/.test(overlaySrc),
+  '协议明写置灰而不是隐藏；这里断言没有把按钮 active 关掉')
+// 显式登记未执行项：它既不算通过也不算失败 —— 计入失败会淹没真红，静默跳过等于隐瞒。
+const SKIPPED = ['运行时驱动灰态读 tint（release 产物里拿不到弹层组件实例句柄，实测 overlay=false）'
+  + ' ⇒ 未验证；要补就走 tools/lib/panel-clicks.mjs 那套按节点名取壳的写法']
+
 const shot = path.join(OUT, 'ui-v25-stamina-on-screen.png')
 await page.screenshot({ path: shot })
 
 const failed = results.filter((r) => !r.pass)
 results.forEach((r) => console.log(`  ${r.pass ? 'PASS' : 'FAIL'}  ${r.name}  —  ${r.detail}`))
 console.log(`\n[ui-v25] ${results.length} 条判据 / 失败 ${failed.length}`)
+if (SKIPPED.length) {
+  console.log(`[ui-v25] 未执行 ${SKIPPED.length} 条（不算通过、也不算失败）：`)
+  SKIPPED.forEach((s) => console.log(`  SKIP  ${s}`))
+}
 console.log(`[ui-v25] 截图：${shot}`)
 if (errors.length) console.log(`[ui-v25] pageerror ${errors.length} 条：${errors.slice(0, 2).join(' | ')}`)
 await browser.close()
