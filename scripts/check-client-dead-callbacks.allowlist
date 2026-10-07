@@ -1,0 +1,9 @@
+# scripts/check-client-dead-callbacks.sh 的白名单
+#
+# 格式（TAB 分隔）：文件路径 <TAB> 回调名 <TAB> 理由 <TAB> 撤销条件
+# 例：client/assets/scripts/scene/Foo.ts	onBar	设计如此，宿主自己择机拉	宿主接上触摸或删字段时移除
+#
+# 纪律（与 check-client-orphans 同一条）：白名单只放"确实设计如此"的，
+# 且**腐烂的豁免比没有更危险** —— 扫描器会把不再命中的条目印成 NOTE 提示删除。
+#
+# 当前为空：2026-10-07 开门时唯一命中（QuestPanelView.onRefreshRequested）已按门的处置删除，不是豁免。

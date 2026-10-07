@@ -119,8 +119,6 @@ export class QuestPanelView extends Component {
 
   /** 玩家要领某条任务的奖励。`heroChoice` 为 null 表示这条任务没有候选（直接领） */
   onClaim: ((questId: string, heroChoice: string | null) => void) | null = null
-  /** 面板打开/需要刷新时由外层决定（本场景只画，不主动拉数据） */
-  onRefreshRequested: (() => void) | null = null
   /** 玩家要领某条活动的奖励。windowKey 由服务端判，这里只递 activityId */
   onClaimActivity: ((activityId: string) => void) | null = null
 
@@ -164,7 +162,6 @@ export class QuestPanelView extends Component {
     this.rowQuestIds.clear()
     this.optionHeroIds.clear()
     this.onClaim = null
-    this.onRefreshRequested = null
   }
 
   /** 装载任务列表。行顺序照搬服务端（它按章节/类型稳定排序）。 */

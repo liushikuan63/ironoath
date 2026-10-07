@@ -113,6 +113,11 @@ bash scripts/check-core-wiring.sh
 # B04 验收 8 的 ✅ 长期挂在 RewardToastQueue 的单测上，而生产提示出口 showHint 每次都往同一坐标
 # add 一个 Label ⇒ 多条必然重叠，正是验收项禁止的行为。域类这一维此前没人守。
 bash scripts/check-client-orphans.sh
+# 视图声明的 on* 回调必须真的有人调用（2026-10-07 开，台账 #770）：`GiftPopupView.onBuy` 声明着、
+# GameBootstrap 赋了值，但全仓没有一处调用 ⇒ 玩家点「立即购买」什么都不会发生，整条 B19 支付链
+# 在玩家侧不可达，而当时 45 道门 + 1031 项单测全绿：发送口门数 GameApi 那一层、孤儿门数文件 import，
+# 「契约有列 → 流程带出 → 视图不画/不接」这个第三层级此前没人守。
+bash scripts/check-client-dead-callbacks.sh
 # 文档里的门禁道数必须等于本脚本实际调用的道数（2026-10-06 开）：
 # AGENTS.md 写「32 道」而这里实际 40 道是现跑抓到的 —— 计数一漂，后面每次会话都拿旧数当
 # 「门全开」的证据。⚠️ 这道门自己也在被数之内：加/删门禁不改 AGENTS.md 的数字就会红。
