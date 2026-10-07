@@ -566,6 +566,18 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 参照 #756 那族"三份来源三个答案"的教训）；② 国家层集结的目标范围与行军距离是否有额外限制（B13/B21 没给出处）；
 ③ 50 人上限是硬上限还是随科技变化。三条都写进台账，裁完再开工。
 
+> **2026-10-07 三条已裁**（弹窗里用户选的，其中③**不是**推荐项，按选中的做）：
+> ① = `role_permission` 加一行 `scope=NATION / permission=START_RALLY`，LEADER+OFFICER 开、MEMBER 关
+> ——与小队/联盟层同形（写口 `SocialAppService.java:2431` 那句 `requirePermission(..., "START_RALLY")`
+> 与读口 `/rally/policy` 同一张表），客户端继续只看 policy、不自己判职位；
+> ② = **不额外限制**目标范围与行军距离，沿用 `initiateRally` 里 `attackGuard.guardRally(..., maxSize, now)`
+> 那条 `2.0×√N` 圈层与世界行军规则（B13/B21 没给出处，加了就是替产品发明规则）；
+> ③ = **上限随科技逐级放开**，且追加「科技满级后还能用资源消耗 / 付费继续抬更高上限」
+> ⇒ ③ 的实现**不在 V22 里做**，拆进新建的 **V24**（§二·补·六）。
+> **对 V22 的硬约束**（否则 V24 一落地就要回头拆 V22）：V22 不许在任何地方写死 50，
+> 国家层的人数上限从第一天起就走 V24-D1 定的那一个折叠函数 `nationRallyCap(playerId)`；
+> V22-c 探针的边界也不许写死 49/50，改成"先读 `/rally/policy` 给的 cap 再 ±1"。台账 #775。
+
 ```text
 任务（裁决落地后才开工）：给国家层集结一条真实的发起与结算路径，让 B13 验收 8 有可验的东西。
 必做：V22-a 服务端：发起时按成员所在国聚合候选、按裁决的权限位拒（拒绝要回带理由的错误码，不静默）；
@@ -609,6 +621,19 @@ B13 验收 8「国家集结 50 人门槛」进不去。
    补法：批量脚本按探针声明的前置自动带环境变量，缺前置的探针记 **NO-RUN 而不是红/绿**（沿用既有口径）。
 2. **7 份探针缺 OPS_TOKEN 恒 SKIP**：SKIP 混在通过率里会虚高。补法：从本机凭据文件读（**不入源码、不入日志、不入记忆摘要**），
    读不到就照实 NO-RUN 并在汇总里单列一节。
+   > **2026-10-07 取证更正（上面这两条都写错了，按这段改）**：
+   > ① 第 1 条里的 `TIME_SPEED` **不是探针侧环境变量**，是后端进程的 `IRONOATH_DEV_TIME_SPEED`
+   > （`DevClockSpeed`，只在 dev profile 生效）——与 `IRONOATH_DEV_CITY_LEVEL` 同一族；
+   > `verify-war-real-battle.mjs` 只读 `BACKEND_ORIGIN` / `WAR_REAL_OPS_TOKEN` / `WAR_REAL_HERO` 三个。
+   > ⇒ 补法是批跑**再起一台真仗档后端**（裁决④ = 工程侧④那一格），不是"给探针带环境变量"。
+   > ② **「7 份缺 OPS_TOKEN」是假阻塞，不需要任何授权**：`scripts/verify-runtime.sh:18` 早就在本地自 mint
+   > （`OPS_TOKEN="${RUNTIME_OPS_TOKEN:-art-verify-local}"`，并以 `--ironoath.ops.token=` 交给自己起的后端，
+   > `OpsTokenGuard` 的注释也明写"本地开发用 `--ironoath.ops.token=...` 传"）；而这 7 份里有 **5 份源码写了
+   > `?? 'art-verify-local'` 默认值**（army-queue / art-runtime / bag-open-batch / city-full-city / war-real-battle），
+   > 只有 devtools 两份默认空串、且它们要的是微信开发者工具那台环境、本来就不该进批跑。
+   > ⇒ 恒 SKIP 的真根因是 `run-runtime-probes.sh:83` 的谓词只看"shell 里有没有那个变量名"、**不看探针自带默认值**；
+   > 而批跑自己起的两台后端**没带** `--ironoath.ops.token` ⇒ 就算绕过 SKIP 也会全部 1009 红。
+   > 两处必须一起修（批跑自 mint + 谓词按"探针有没有自带默认值"判），台账 #776。
 3. **待裁决池（不要在实现里替产品决定）**：#756 剩的两条 bonus 出厂值（现为 0 ⇒ 国战积分对胜负无影响）、
    亡国复仇是否继承宣战冷却、关卡/王城是否做成可占领物（决定 B13 验收 6/7 能否收）、
    V22 的三条前置口径。这几条都**不挡** A 组与 B 组的活。
@@ -616,6 +641,200 @@ B13 验收 8「国家集结 50 人门槛」进不去。
    逐次单验的成本比一次扫码批量过一遍高 —— 与队列里那条「真机预览需要真人扫码」是同一个解锁点。
 5. **本包 §四 的实施记录表已经长得需要索引**：10-06 之后一格一小节、共 5000+ 行。补一条「按批次/会话的目录」
    在 §四 开头（只放指针，不搬正文），否则下一格找"这件事是否做过"只能全文 grep。
+
+---
+
+## 二·补·六 V24 · 国家集结人数上限：科技逐级放开 + 满级后资源/付费继续抬（口径③的落地）
+
+> 依赖：**V22**（国家层集结先要能发起，才谈得上升上限）｜ 工期：5 格（V24-a…e）｜ 并行：**否**（动契约、动付费、动存档）
+> **一句话风险**：上限不再是"一个数"而是"一个折叠函数"。本仓 2026-09-13 已经因为「一个数字两个家」
+> 退役过一整行联盟科技（原文在 `contract/config/alliance_tech.json:5` 的 designNote，明写
+> 「要重新引入，必须先回答它抬的是哪个上限、与既有来源怎么合流」）——**开工前先读那句原文**，
+> 三个来源（表基础值 / 科技 / 付费）只要分散写进读口与写口，就会重演同一起事故。
+
+### 开工提示词（整段可复制给 AI）
+
+```text
+你在给《列王纪·铁誓》(ironoath) 实现 V24：国家层集结人数上限 = 表基础值 50，
+由国家科技逐级放大，科技满级后还能用「消耗金币」或「付费买道具」获得的永久格继续抬，
+但绝不越过一个硬封顶。铁律（违反即视为任务失败）：
+1. 数值唯一真源：三个来源只能在**一个函数**里合流（ nationRallyCap ），读口与写口都调它；
+2. 客户端不抄表：屏上不许出现 50 / 90 / 100 任何一个字面量，界值一律来自 /rally/policy；
+3. 不发明数字：科技幅度、封顶值、价格、限购，凡无出处的先列进 §七 并停下来问；
+4. 服务端不跑定时器：永久权益落库存档，临时权益每次现推（两者理由相反，别互相抄）；
+5. 判定写了就要接上：每条判据用「生产调用点计数」复核，不是"类里有这个方法"；
+6. 未做完合规不许把付费点上货架（上线检查清单.md:38、:53）。
+第一步：复述你对 D1~D8 的理解（≤20 行）并反问 §七 里那 5 个问题，不许静默假设。
+```
+
+### 〇、现状（2026-10-07 现跑，逐条带证据；引用状态前请再现跑一次）
+
+- 国家层集结**还没有发起入口**（V22 在做）。上限唯一来源 `global.RALLY_MAX_SIZE_NATION=50`
+  （`contract/config/global.json:853`）；读口 `SocialRulesAssembler.rallyMaxSize`
+  （`server/game-web/src/main/java/com/ironoath/web/social/SocialRulesAssembler.java:229-236`）；
+  写口在发起时夹 `Math.min(配置上限, 组织当前人数)`（`SocialAppService.java:2433-2434`）；
+  满员拒绝在领域层（`server/game-core/src/main/java/com/ironoath/core/social/Rally.java:321-322`）。
+- 加入侧对国家层是**硬关**的：`requireMembership` 里 `case NATION -> false`（`SocialAppService.java:2767`），
+  而 `role_permission` 的 NATION 档**已有 `JOIN_NATIONAL_RALLY`（三档全开）却在生产零调用点**
+  （只在 `SocialRulesAssemblerTest.java:249` 与 `ConfigTablesAcceptanceTest.java:210` 出现）——
+  「判定写了没接上」的现行样本，V22 一并收。
+- 科技侧：国家科技只有 4 行、`effectAttr` 只有 4 个取值（`contract/config/nation_tech.json:10`），
+  **没有任何"上限"类属性**；三张科技表的折法只有一份算法
+  （`server/game-common/src/main/java/com/ironoath/common/config/TechBonusCore.java:56-71`），
+  单位是**定点万分比**（`effectValue` 注释：真实值 ×10000）。国家这一份的读取口是
+  `NationTechBonuses.percentFor`（`server/game-web/src/main/java/com/ironoath/web/nation/NationTechBonuses.java:74-92`）。
+- **付费抬上限只有一条已实现的先例，而且不是 B15**：`MARCH_MAX_CONCURRENT` 的三个生产读取点
+  （`MarchAppService.java:215-221`、`:594`、`:669-677`）全部直接用表值、没有任何"已购名额"叠加
+  ⇒ 文档里那句「B15 卖的额外名额」**在代码里不存在**（本轮现跑核对，台账 #776）。
+  唯一成立的一条是建造队列 +1：`pay_product.extraQueues` → `PaidPrivilegeGrants.java:74-97`
+  → `PaidProducts.entitlements`（`server/game-web/src/main/java/com/ironoath/web/pay/PaidProducts.java:293-314`）
+  → `CityAppService.cityRules`（`server/game-web/src/main/java/com/ironoath/web/service/CityAppService.java:148-181`，
+  加成并进 base/max/newbie **三数**）→ `CityRules.availableQueues`（`game-core/.../city/CityRules.java:78-85`，
+  `min(上限, 基础 + 额外)` 封顶）。**本格的合流式子就照这条抄。**
+- 道具侧：`item.json` 的 `effectKind` 里**已经有 `GRANT_RALLY_BONUS`**，也已经有道具行
+  `item_buff_rally_2h`（`type=BUFF`、`effectValue=7200`，单位是**秒**）；但 `BagAppService.java:341-351`
+  明确抛 `ITEM_CANNOT_USE`「尚未实现」，`activity.json:70` 记它 2026-09-16 已从活动奖励撤下，
+  台账 **#19** 挂着「加成幅度待裁决」。⇒ 那个枚举位是**预留词汇，不是可复用的机制**，别当捷径。
+- 生成物注释漂移（本轮顺手抓到、登记不改）：`server/game-web/src/main/java/com/ironoath/web/dto/generated/ShopCurrency.java:8`
+  （文字来自契约 schema 描述）自陈「当前唯一一行的货品是 `item_buff_rally_2h`」，
+  而 `shop.json` 现在 SEASON_COIN 那一页卖的是 `shop_season_boost` + 赛季头像框 ⇒ 台账 #777。
+- 国家人数盘子（封顶取值的对照面）：`nation_config.json` 的 `memberCap` = 200 / 400 / 800（Lv1/Lv2/Lv3）。
+
+### 一、设计决定（每条带理由与代价；实现**不许**自行取舍或换形状）
+
+**D1 上限是一个函数，不是三个数。**
+`nationRallyCap(playerId) = min(CEILING, scaleUp(RALLY_MAX_SIZE_NATION, 科技万分比) + 永久格)`，
+最后再与「本国此刻实有人数」取小（沿用 `SocialAppService.java:2400` 那句 `Math.min(cap, memberIds().size())` 的形状）。
+- **唯一折叠点**：新增 `SocialRulesAssembler.nationRallyCap(String playerId)`；写口（发起时夹 `maxMembers`）
+  与读口（`/rally/policy` 的 nation 视图）**必须都调它** —— 这条纪律的原文在 `SocialAppService.java:2362-2364`
+  「写口夹什么，读口就说什么；两条不一致时界面上亮着的数字就是假的」。
+- 代价（要提前接受）：V22-c 的边界测试不能写死 49/50，必须"读 policy 的 cap 再 ±1"，否则 V24 一落地
+  就把 V22 的用例钉成旧规格（**绿灯测试会把缺陷钉成规格**，本仓立过这条教训）。
+
+**D2 科技折加走「百分比放大基础值」，不走「+N 人/级」。**
+新 `nation_tech` 行用 `effectAttr=RALLY_CAPACITY`、`effectValue` 是每级万分比，折法复用
+`NationTechBonuses.percentFor` + `Rates.scaleUp` —— 先例是医院容量
+（`ArmyAppService.java:602-619`：基数来自建筑，加成按万分比放大，HALF_UP）。
+- 理由：绝对值 "+N 人/级" 要么新造一列语义、要么让同一张表的 `effectValue` 一会儿是率一会儿是人；
+  后者正是 `atech_rally` 退役那条理由的复发病。走百分比 ⇒ **零新算法**，`TechBonusCore` 不动。
+- 后果必须可测：满级倍率 = `1 + 每级幅度 × 级数`，落在验收 2 上正反各一条。
+
+**D3 必须有硬封顶，且封顶是新的 global 参数 `RALLY_MAX_SIZE_NATION_CEILING`。**
+- 这不是审美而是技术后果：`initiateRally` 拿 **maxSize** 去算可打目标的战力倍率
+  （`SocialAppService.java:2594-2599` → `attackGuard.guardRally(..., maxSize, now)`，B08 的 `2.0×√N`）。
+  50 人 ⇒ 14.1x；抬到 90 ⇒ 18.97x。**也就是说科技与付费在悄悄扩大 PVP 打击范围**，
+  封顶的作用是把这条副作用显式钉住、并让它成为一条可失败的验收（见验收 4）。
+- 与人数盘子对齐：Lv1 国家 `memberCap=200`，封顶要"碰得到"才有意义 ⇒ 提案落在 `[51, 100]`（值见 §七 Q2）。
+
+**D4 永久扩容归**发起人个人**（谁买谁带），不归全国。**
+- 三条理由：①国家级永久槽位要动 `Nation` 聚合 + 国库审计 + 亡国/退国处置（V22 验收④那一支**还没裁**），
+  改动面 ×3；②「一人付费、全国受益」会立刻催生代付与小号供养；③个人侧已有落库点（`PlayerSave`）。
+- 回旋路线（若产品坚持国家买）：`Nation` 加计数 + `Nation.Payee.Sink` 新增一项
+  （现只有 `NATIONAL_TECH` / `WAR_BOOST`，`Nation.java:361-366`），
+  两端枚举同步由 `NationPayEnumParityTest.java:162-166` 强制，还要重述与国库周限额
+  `NATION_OFFICER_SPEND_WEEKLY_RATIO` 的关系。**届时整段换掉，不许在个人版里留"国家版兼容分支"。**
+
+**D5 付费入口走 `ITEM`，不新增 `PayProductCfg.Kind`。**
+`product_reward.rewardType` 只允许 `RESOURCE,ITEM`（`contract/config/product_reward.json:10`），
+`PRIVILEGE` 是服务端按 kind 生成的（`ProductFulfilment.java:109-131`），而落库口的 switch 只认
+月卡/基金/首充/战令四种（`PaidPrivilegeGrants.java:74-97`）。⇒ 卖"扩容道具"走**既有 ITEM 发货路**，
+不动 kind、不动 switch；「消耗资源」那一半走 `shop.json` 的 `priceCurrency=GOLD`
+（金币就是 `resource` 表的 GOLD，缺钱语义已有 `RESOURCE_NOT_ENOUGH(4000)`）。
+- 省这一刀的真实价值：新增 kind 会连带 `ProductFulfilment` 的分支与"付费内容不成立"那族事故面
+  —— **#19 就是这条路上产生的**。
+
+**D6 道具效果用新枚举 `RAISE_RALLY_CAP`，不复用 `GRANT_RALLY_BONUS`。**
+后者的 `effectValue` 已经是「秒」（`item_buff_rally_2h=7200`），把「人」塞进同一列就是
+「一个数字两个家」的新形态；而且 **#19 的「加成幅度待裁决」必须原样留着**，本格不替它决定。
+
+**D7 永久权益必须落库（与建造队列那条"每次现推"相反，别抄错）。**
+`CityAppService.java:157` 那段「每次现推、不写进存档」成立的前提是**有到期时刻**（月卡到期没人收就是 bug）；
+永久格没有到期时刻，而服务端不许起定时器（红线：`check-no-scheduled.sh`）⇒ 落库是唯一正确形态。
+`PlayerSave` 新增一个计数列 + Mongo 文档字段同批加。
+- ⚠️ 本仓在 Mongo 投影读模型上炸过（投影打在 record 文档上抛 `xxx must not be null`）⇒
+  新列必须同批复核所有投影口，不能只改写入侧。
+
+**D8 到达封顶后在**售卖/使用处**就拒，且不许扣道具。**
+先例是装备铸造的封顶分支 `EQUIP_FORGE_MAX`（`EquipAppService.java:142`）。
+- 不复用 `ITEM_CANNOT_USE`：那枚的语义是「这道具的效果根本没实现」（`BagAppService.java:344-350` 就这么用的），
+  而这里道具效果是好的、只是买家满了 —— 两句话共用一枚码，客户端就只能写「条件不足」这种没人看得懂的废话。
+- 「扣了道具没抬上限」是必须写成一条验收的形状（#19 那一族的成因）。
+
+### 二、输入 / 输出契约（改完必跑 `npm run gen`，生成物不许手改）
+
+| 文件 | 改动 | 会被哪道门/用例兜住 |
+|---|---|---|
+| `contract/config/nation_tech.json` | `effectAttr` ENUM 加 `RALLY_CAPACITY`；新增一行（军事系、`requireNationLevel>=2`，与既有两条军事线一致） | `ContractEnumParityTest.java:78-89`、`check-config-consumers.js:84-114` |
+| `contract/config/global.json` | `RALLY_MAX_SIZE_NATION` 的 `source`/`why` 就地改成「基础值（V24 起科技与永久格在它之上抬，封顶见 `_CEILING`）」，**值 50 不动**；新增 `RALLY_MAX_SIZE_NATION_CEILING` | `check-doc-counts` 不涉；由验收 1 的调用点计数兜 |
+| `contract/config/item.json` | `effectKind` ENUM 加 `RAISE_RALLY_CAP`；新增一行扩容道具 | `ItemCfg` 生成枚举 + 背包过滤 |
+| `contract/config/shop.json` / `pay_product.json` / `product_reward.json` | 各加一行；**价格仍只放 global 的参数名指针**（`pay_product.json` designNote 第 1 条） | `check-config-refs` 规则 3、`ProductRewardConsistencyTest` |
+| `contract/proto/nationTech.schema.json` | `NationTechEffectAttr` 枚举加 `RALLY_CAPACITY`（**与表同源，改一边不改另一边必红**） | 同上 parity 测试 |
+| `contract/proto/social.schema.json` | `RallyPolicyView` 加 nation 一份（V22 已需）+ 扩容三列 `techPercent` / `paidSlots` / `ceiling`；`RallyScope` 那句「国家层在 B13 落地前不会产生」必须改（它是 A4 缺口的自陈） | `npm run gen` + 双端类型 |
+| `client/assets/scripts/**` | 界值全部来自 `/rally/policy`；屏上不出现裸 id/枚举原文（红线） | `check-client-*` 那族 + 「屏上不出现裸 id」运行时那一维 |
+
+### 三、固定约定（本批沿用 + 新增）
+
+- 一格一次原子提交，message 写「判据 + 反证 + 坑」；**推送攒批**（AGENTS.md §八，防 GitHub 免费额度烧穿）。
+- 全量门与 `mvn test` 一律进 `git worktree` 沙箱跑（主树跑 `check.sh` 会经 contract-sync 的 `-am install`
+  换掉并行会话活后端 classpath 上的 ironoath jar）：`JAVA_HOME=/d/Java/jdk/microsoft-jdk-17`、
+  沙箱 `client/node_modules` 用 junction 接主树、`mvn` 必带 `-am`；客户端用例要 Node 20。
+- 本地跑生成器可以免 install：`mvn -f server/pom.xml -pl tools/config-gen compile exec:java`（见 `scripts/gen.sh` 的理由段）。
+- 新增 `.ts` 连 `.ts.meta` 一起提交；新增测试类先 `git add`（`check-dangling-test-refs.js` 只扫已跟踪文件）。
+- 台账纪律：`收口清单.md` 一行一条、带行尾竖线、补注只加行尾（动前 60 字符会被 append-only 门判红）。
+
+### 四、验收标准（每条都能失败；判定方式写死，不许"看起来对了"）
+
+1. **折叠点唯一**：`grep -rn "RALLY_MAX_SIZE_NATION\b" server --include=*.java | grep -v /test/` 只命中**一处**
+   （装配器内部），其余全走 `nationRallyCap`。用生产调用点计数判，不是"类里有这个方法"。
+2. **科技生效（正反各一条）**：JUnit 造一个国家，`RALLY_CAPACITY` 行 0 级与满级各读一次 policy ⇒
+   `maxMembers` 严格等于 `min(ceiling, scaleUp(50, percent) + paid)`；**把科技等级改回 0 后数字必须变小**
+   —— 只测变大不测变小，clamp 写反了也会绿。
+3. **封顶生效**：科技 + 永久格推到超过封顶 ⇒ 读口与写口给同一个 `ceiling`；发起时传更大的 `maxMembers`
+   被**夹住而不是报错**（沿用 `Rally.initiate` 越界不拒绝的既有口径，`SocialAppService.java:2423` 注释）。
+4. **副作用显式**：一条用例断言「封顶对应的 `2.0×√N` 可打倍率」落在 D3 写的区间内 ⇒
+   抬上限不许静默扩大 PVP 打击范围（这条是 D3 的全部理由，必须留成可失败的判据）。
+5. **永久格落库**：用一次道具 ⇒ 计数 +1 且**重启后仍在**（证据是 Mongo 文档里那一列，不是内存读数）；
+   到封顶再用 ⇒ **不扣道具**、回专用错误码；扣数与计数增长同临界区（不许"扣了没抬"）。
+   ⚠️ 投影读模型同批复核（见 D7）。
+6. **付费**：`createOrder` → 回调验签 → `deliver` 只发一次（重复回调幂等，沿用既有用例形状）；
+   **未开付费时这一格商品不可见、不可下单**（`上线检查清单.md:38` 做完合规前不许上线任何付费、`:53` 无版号不得开付费）；
+   未成年走 `minorNotice` 提示不闸门（裁决 #489），V19 那条出口直接复用，不新造提示路径。
+7. **探针**：V22-c 那份改成两组边界各 ±1（基础态一组、科技满态一组），"屏上不出现裸 id"那一维照旧必测；
+   接进 `scripts/run-batch-dual-backend.sh`（与工程侧④同一格）。
+8. **文档同步**：`RallyScope` 生成物注释、`global` 两行的 `why`、以及
+   `alliance_tech.json:5` 那句「要重新引入必须先回答它抬的是哪个上限、与既有来源怎么合流」——
+   本格的答案必须能在 §一 D1/D2/D3 里逐字找到（这是给下一位读的反漂移锚）。
+
+### 五、需要产出的文件（文件边界写死，不越界）
+
+- 契约：`contract/config/{nation_tech,global,item,shop,pay_product,product_reward}.json`、
+  `contract/proto/{nationTech,social}.schema.json` + `npm run gen` 的生成物
+- 服务端：`SocialRulesAssembler`（`nationRallyCap`）、`NationTechBonuses`（新属性方法）、
+  `SocialAppService`（写口夹取 + policy 的 nation 视图）、`BagAppService`（`RAISE_RALLY_CAP` 分支）、
+  `PlayerSave` + `InMemory/Mongo` 两份 store（落库列与投影）、`ErrorCode`（专用封顶码）
+- 用例：验收 1~6 每条至少一条，**必含反向对照**（改回 0 级要变小、到封顶不扣道具）
+- 量具：`tools/verify-nation-rally-cap.mjs`（或并进 V22-c 那一本，加相位而不是新起一本）
+- 台账：`收口清单.md`、`验收矩阵.md`（B13 验收 8 那行）、本包 §四 实施记录
+
+### 六、禁止项（防自由发挥）
+
+- ❌ 把 `effectValue` 当「人数」用（它是定点万分比）；❌ 在客户端写 50 / 90 / 100；
+- ❌ 新增 `PayProductCfg.Kind`（走 D5 的 ITEM 路）；❌ 复用 `GRANT_RALLY_BONUS`；
+- ❌ 加 `@Scheduled` 来收/放名额（服务端红线）；❌ 给"国家版"预留兼容分支或开关；
+- ❌ 替 #19 决定「集结 buff 的加成幅度」——它仍是待裁决；
+- ❌ 未做完合规就把扩容商品挂上货架 / 写进活动奖励；
+- ❌ 只跑单测就宣称"玩家闭环完成"（本仓判据：`check.sh` + `test.sh` + 构建 + 真启动/探针，同轮记录退出码）；
+- ❌ 为了让数字好看，把 `RALLY_MAX_SIZE_NATION` 的 50 直接改成最终期望值（基础值与封顶是两个概念）。
+
+### 七、需要确认的开放问题（AI 第一步必须反问，不许静默填值）
+
+| # | 问题 | 现有锚点 | 本轮提案（**待产品复核，未复核不许上线**） |
+|---|---|---|---|
+| Q1 | 新科技行的每级幅度与级数上限 | 同表既有 4 行都是 `0.03~0.05/级`、`maxLevel=20`；且「国家满级一律低于个人满级」是 `nation_tech.json:5` 的明文取向 | 幅度 `0.04/级` × 20 级 ⇒ 满级 +80% ⇒ 基础 50 抬到 90 |
+| Q2 | `RALLY_MAX_SIZE_NATION_CEILING` 取值 | B13 只给了 50 一个数；`memberCap` Lv1=200 | 落在 `[51,100]`；100 时 √N 倍率 = 20x，需确认这档 PVP 打击面可接受 |
+| Q3 | 扩容归个人还是归国家（D4 的反面） | 个人：已有 `PlayerSave`；国家：要动 `Nation` + `Sink` 枚举 + 周限额 | 个人（D4） |
+| Q4 | 扩容道具的 `type` 归属 | 现 `type` ENUM = SPEEDUP/RESOURCE/CHEST/MATERIAL/BUFF/EQUIP；永久能力既不是 BUFF（有时长）也不是 MATERIAL（可合成） | **不许静默新增 type**；先按 Q3 结论问产品要不要给 `type` 加一档 |
+| Q5 | 价格与限购（金币档 + 付费档） | 商店金币价口径见 `product_reward.json` designNote（建造令 1h=40、练兵令 1h=45 等）；`pay_product` 价格住在 `global` 的 `PRODUCT_*_CENTS` | 无出处 ⇒ 只列问题，不填数 |
 
 ---
 
@@ -628,6 +847,7 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 > | 静态门（现 **46 道**）逐道的开启动机与自测 | `grep -n "道门\|check-doc-counts\|dead-callbacks\|check-client-orphans" 待完善收口_VibeCoding开发包.md`；道数真值永远以 `bash scripts/check-doc-counts.sh` 为准 |
 > | 植入取证 / 量具假绿的形状 | `grep -n "植入\|对照组\|NO-RUN\|假绿" 待完善收口_VibeCoding开发包.md`（最密的一批在 10-04 全量批跑与 10-07 各格） |
 > | 国战 B13 承载线（3c~3g：只读页 / 宣战 / 关系表 / 全服奖励 / 疲劳 / 冷却） | 小节标题含「B13 承载」与「国战承载」；台账对应 #754~#765、#768、#769 |
+> | **国家集结上限（V22 裁决 / V24 设计与合流式子）** | 卡在本包 **§二·补·六**；三条裁决原文在台账 **#775**；「OPS_TOKEN 是假阻塞」「B15 名额不存在」的取证在 **#776** |
 > | 榜与赛季（第五张榜 WAR、组织榜口径 #756） | 「3c（客户端承接第五张榜」「B23 组织榜口径落地」两节 |
 > | 合规与商业化（抽卡记录 V10、署名页 V14、未成年提示 V19、死按钮 #770、飘字队列 #772/#773） | `grep -n "V10\|V14\|V19\|#770\|#772\|#773" 待完善收口_VibeCoding开发包.md` |
 > | 文档漂移清扫（V16 / V23 / 台账就地补注） | 「V23 收口」「台账漂移」「就地更正」三处；判据永远是 `check-checklist-append-only` + `check-checklist-table` |
@@ -6037,3 +6257,4 @@ TEST_EXIT=0
 | **#770 死按钮修复（V19 的视觉相顺带抓到）+ 新探针 `tools/verify-minor-notice.mjs`**：`GiftPopupView` 给 `buy` 与 `close` 各注册一处 `touch-start`（沿用 `ArmyPanelView.ts:303` 的写法）+ `productId` 随每次弹窗刷新（不做"记住上一个"，那会绕开服务端频控） | 本笔（源码、判据、探针、台账 #770 同批；攒批未推） | 客户端 `test-client.sh` EXIT=0 ⇒ **1031 跑 / 1031 通过 / 0 失败 / 0 跳过**（+1 源码级判据：四句钉"注册了、交得出去、close 也注册、productId 随弹窗刷新"）；`check-client-typecheck` 退 0；**两次 headless 构建**（改视图前后各一次）`missing or invalid = 0`；**真跑探针 13 条全绿**（独占后端 8355 + 独占端口 8369，跑完已 `taskkill`，8080 上别人的后端未动）；台账两道门 `check-checklist-append-only` / `check-checklist-table` 退 0（#770 那条 8 增 0 删） | 截图两张目视核对：`with-notice.png` 三行（提示句在屏、倒计时「剩 30:00」、无裸编号、未被压住）／`without-notice.png` 两行（对照组不多一行）。**植入取证两轮**：删夹具的 `serverNow` ⇒ 两条 NaN 判据点名红（`剩 NaN:NaN`）；摘 `lines.push(view.minorNotice)` 与把 delivered 置 null ⇒ 三条各点名红，还原后同刻复跑到绿 | **「判定写了没接上」有了第三个层级**：契约有列 → 流程带出 → **视图不画/不接**，前两层各有门（`check-contract-defs`、`check-client-send-paths`），第三层没有 ⇒ 已在 §二·补·五 记一条候选门；**试写的"死回调扫描器"报 0 候选而手工 grep 抓到 2 处 ⇒ 那个 0 不可信，脚本自身有缺陷未修，没拿它当"没有同族缺陷"的证据**；`setBuyEnabled` 用 `active=false` 藏按钮 ⇒ 点过一次后按钮消失（截图里看不到按钮是这个原因，不是缺陷）；真机/开发者工具那一跑仍未做 |
 | **第 46 道门 `check-client-dead-callbacks`（#770 带出的机制化）**：视图声明的 `on*` 回调必须真有人调用（赋值 ≠ 调用） | `d2299f09` | 基线 136 个 .ts / 133 条回调 / 未接 0；**开门当场抓到 `QuestPanelView.onRefreshRequested` 只有声明与一次置 null** ⇒ 按门给的处置删字段（不加豁免），删前核过源码零引用、`.scene/.prefab` 零引用；`check-doc-counts` 退 0（AGENTS.md 已同步成 46 道） | 植入取证：加一条 `onZZProbeOnly` ⇒ 退 1 且点名该文件行号，还原 ⇒ 退 0、声明数 134→133 自洽。**误报自查救了一次**：第一版谓词 `^ {2,4}on(Name)\s*:\s*[(!]` 把跨行**方法参数名** `onClick: () => void): void {` 当字段声明，一次误报 10 处 —— 收紧成要求结尾 `\| null = null` 后只剩 1 条真缺陷 | 覆盖面限制已写在扫描器注释里：宿主用变量名动态取回调（`obj[key]()`）扫不到；出现时按白名单登记理由而不是放宽谓词 |
 | **V20 两片 + 前台证据（#772 / #773，B04 验收 8 收口）** | `39bdfcc3`（契约下发）+ `ac2d3489`（客户端接线）+ `0fb54b6c`（探针与矩阵） | 服务端：`PlayerInitTest` 14 跑 0 红（新增那条逐列比对 `jsonPath` 与 `configs.longParam`）、沙箱全量 `mvn test` **2119/0/0/0**；客户端：`test-client.sh` **1034/1034/0/0**（+3 条源码级判据）；`check-client-typecheck` / `check-client-orphans`（**删掉 RewardToastQueue 豁免后仍退 0**＝真被 import）/ `check-client-dead-callbacks` / `check-track-coverage` / `check-ts-meta` 全绿；**前台探针 9 条全绿**（连发三条第一时刻只 1 条、相交 0 处；参数逐等于下发值） | 三处植入/对照取证：服务端 gapMs 写死 0 ⇒ 1 条红 `expected:<120> but was:<0>`；客户端不走队列 + 写死 120 ⇒ 恰好 2 条点名红；**探针对照组=运行时把队列置 null ⇒ 屏上 4 条、6 处压住**。截图 `tmp/hint-queue/queued-first.png`（1 条）与 `planted-stacked.png`（叠在一起）逐张目视 | **两个"像产品缺陷其实是量具/环境"的坑已记进 #773**：① 探针在 `getScene()` 就绪时读，init 还没处理完 ⇒ 误判"没接线"，正解 `waitForFunction` 等队列建起来；② 用**改动前打的 jar** 起后端 ⇒ `toast` 列静默不存在、客户端走降级支路，正解是沙箱重打 + 跑依赖新字段的探针前先 curl 看那一列在不在。**目视另抓到 #774**（提示压住底部中央「建造」按钮，旧行为、坐标没动）⇒ 登记未修，收法是先做成判据再定高度，不凭感觉挪像素。未做：探针未接批量脚本；真机/开发者工具那一跑未做 |
+| **V24 设计卡 + V22 三条口径裁决落档**（本轮零代码：口径①②③ 与工程侧④ 由弹窗裁定，设计写成 §二·补·六 的七段卡） | 本笔（卡、台账 #775~#777、§四 指针索引同批；攒批未推） | 判据是**把卡里每条 文件:行号 断言逐条现跑**：一次性核验脚本 28 条 **MISS 0、EXIT=0**，并自带反向对照（断言"尚不存在的参数名 `RALLY_MAX_SIZE_NATION_CEILING` 命中 = false"，防核验脚本恒真）；首跑 2 条 MISS **归因到核验脚本本身**（把 token 钉在区间第一行，而文档写的本是 `:2433-2434` 与 `:148-181` 两个区间），改判据位置后复跑 28/28 全绿；台账两道门 EXIT=0（`check-checklist-table` 无内容会被丢掉、`check-checklist-append-only` HEAD 的 1763 个非空行全部仍在） | 两条"文档说 A、代码是 B"都给了位置证据：`MarchAppService.java:215-221`、`:594`、`:669-677` 三个 `MARCH_MAX_CONCURRENT` 生产读点全部直接用表值 ⇒ 「B15 卖额外行军名额」在代码里不存在；`ShopCurrency.java:8` 自陈赛季币唯一货品是 `item_buff_rally_2h`，而 `shop.json` 在售的是 `shop_season_boost` 与 `shop_season_frame` ⇒ 生成物注释过期（#777）。另 `BagAppService.java:341-351` 的注释自己承认 `GRANT_RALLY_BONUS` 未实现，是 V24-D6 决定不复用它的直接依据 | **未做（照实写）**：本轮**一行代码没动** —— V22 与 V24 的实现都没开工；V24 的 Q1~Q5 五个数（每级幅度、封顶值、归个人还是归国家、道具 `type` 归属、价格与限购）**全部未裁**，卡里只给提案与锚点，实现第一步必须反问；工程侧④ 只完成取证与形态裁定（第三台真仗档后端），批跑脚本还没改、5 份探针仍处恒 SKIP 态；#776 里那两句承诺了不存在功能的文案（`MarchAppService.java:220`）仍原样挂着，改它属产品口径；主树 `check.sh` 与 `mvn test` 本轮未跑（纯文档格，且 8080 仍是另一条会话的活后端，跑门会经 contract-sync 换掉它的 jar） |
