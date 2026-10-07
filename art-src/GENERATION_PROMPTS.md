@@ -244,3 +244,38 @@ v1 改请求 **1792×1024 → 真拿到 1792×1024**，采用 v1）：
 **这一批目视评审发现两处必须重出的缺陷**（详见 §十一）：① 主堡旗面出现"圆环十字"徽记（现实宗教感符号，
 规格 §1.2 禁止）；② 母版自带岩石地台与一圈城墙，会与 A17 地坪层叠成浮岛、并让装饰城墙冒充功能 `wall`。
 ⇒ 下一批提示词必须钉死"旗帜只用原创几何纹（王冠/星/菱形连续纹）"与"底部直接收口、无地台无基座盘"。
+
+## 12. V25 弹窗「铁誓」族 P-01~P-13（2026-10-08 实跑，V25-b 生产轮）
+
+草稿图**不入库**（`.gitignore` 忽略 `vibe_images/` 与 `art-src/generated/drafts/`）⇒ **本节就是可复现物**。
+共用段一律逐字取 `art-src/弹窗面板美术风格_VibeCoding规格.md` 的 §4.1（风格锚）、§4.2（九宫格约束，**只有九宫格件加**）、
+§4.4（Avoid 负面段）。下面只写每件接在中间的**主体段**与画布尺寸。
+
+**三条本轮换来的通用写法，缺一条就白跑**：
+- 九宫格件的边带饰物**必须贯穿整条边或只待在四角**，"居中一块"是拉伸杀手（P-03 v0 实测复发）；
+- 铜内线（inlay）要写明"留在边带内侧、别压到图面中线 20% 采样窗"，否则 σ 判据稳定误红（P-03 v0 rel=2.51）；
+- **禁写** `filling the canvas nearly edge to edge` —— 会把小方件画成满幅、四角没绿底，抠绿前提直接崩（P-08 v1 实测）。
+  正向写法：`floating at about 70% of the canvas, flat pure green reaching all four corners`。
+
+| 件 | 画布 | 主体段（关键句，逐字） | 结果 |
+|---|---|---|---|
+| P-01 `panel-iron` | 1024×768 | 见 §4.3 原行 | v1 过（上一轮） |
+| P-02 `panel-parchment` | 1024×768 | `an aged parchment sheet as the inner face, surrounded by a hammered dark iron frame band with aged bronze corner caps and four rivets per cap, thin bronze inlay line running the inner edge; the parchment's deckle (torn) edges stay strictly inside the frame band and run roughly parallel to it on all four sides` + `the paper face must read dim and desaturated — a greyed tan one step darker than ordinary parchment, so dark text stays readable; no bright cream, no sun-bleached yellow, no glow` | 过（rel 4.47 / 512×373 / 59.0KB） |
+| P-03 `panel-warning` | 1024×768 | v0 用 §4.3 原文 ⇒ **边中独立红绶带，判红作废**；v1 改 `a dark oxblood silk stripe painted as a STRAIGHT, CONSTANT-WIDTH horizontal band that spans the ENTIRE top frame band from the left corner cap to the right corner cap, edge to edge` + `Hard prohibitions: NO ribbon ends, NO hanging tails, NO knot, NO rosette, NO fold crossing the middle, NO bronze clasp sitting at the centre, NO highlight blob in the middle, NO short centred segment` + `the frame band is a little wider so the inlay line stays well outside the middle of the plate` | v1 过（rel 3.24 / 512×348 / 49.2KB） |
+| P-04 `panel-gilt` | 1024×768 | `an ornate bronze-gilt frame band around a dark hammered iron face; the warm gilt finish is CONTINUOUS and even along all four edges, and the extra gilt scrollwork / raised bead ornament lives only on the four corner caps` + `do NOT place a hanging chain, a wax seal, a medallion, a crown, a gem or any other centred ornament on the middle of any edge — reward chains and wax seals are separate decorative assets laid on top at runtime` | 过（rel 4.79 / 512×357 / 51.9KB） |
+| P-05/P-06 `plate-band`（+ active 派生） | 1792×1024 | 上一轮已出；本轮 active **不再生成**，用 `ImageEnhance` brightness 1.16 / color 1.22 派生（alpha 逐像素相同） | 512×52 / 8.9KB；active 10.1KB |
+| P-07 `button-iron` | 1792×1024 | 见 §4.3（含 `corners must be square 90 degrees`） | v1 过；hover 6.9KB / disabled 3.9KB |
+| P-08 `chip-close` | 1024×1024 | v0 `a dark hammered iron square plate with an aged bronze bevel frame and exactly one rivet at each of the four corners` ⇒ 模型给成**四角大铜凸台**；v1 加 `every ornament must live inside the outer 8% … NO large bronze corner plates, NO big round bosses` ⇒ **满幅无绿底**；v2 再去掉 `filling it nearly edge to edge`、改 `floating in the middle at about 70% of the canvas width, with a wide margin of flat pure green on ALL FOUR sides` | v2 过（52×52 / 2.0KB，填充率 78%，目视四角只有小铆钉点、中心无 × 符号） |
+| P-09 `plate-tooltip` | 1792×1024 | `a slightly warmer dark iron strip than the main panels, with a thin aged bronze bevel line along the top and bottom edges only; very shallow, flat, no corner ornament, no rivets, no emblem anywhere` + `displayed only 26-38 pixels tall ⇒ the top and bottom bevels must be bold, about 8% of the sprite height each` + `corners must be square 90 degrees` | 过（256×61 / 4.4KB，填充率 81%） |
+| P-10 `banner-crest` | 1792×1024 | 上一轮已出 | 512×234 / 27.2KB |
+| P-11 `crest-league` | 1024×1024 | `alliance war-banner emblem — a forked dark-red (oxblood) silk flag hanging from an aged bronze crossbar on a bronze pole, with a small iron fringe along the bottom edge of the cloth, and a blank shield face in the centre of the flag (empty, no charge, no device)` | 过（178×256 / 12.9KB，目视无文字无符号） |
+| P-11 族 `crest-nation` | 1024×1024 | 同母版语言，主体换 `a square aged-bronze imperial seal plate seen face-on, with a dark red wax seal impression pressed into its centre; the wax face must stay BLANK (a plain depressed disc with a bronze rim, no carving inside it)` + `no seal-script carving` | 过（246×256 / **30.3KB**，超装饰件旧预算线，见规格 §七 Q7） |
+| P-11 族 `crest-battle` | 1024×1024 | `two crossed short spears with iron heads behind a small forked dark-red (oxblood) war pennant, bound at the crossing with an aged bronze ring; the pennant cloth stays blank` + `no skull` | 过（223×256 / 18.4KB）⚠ 中心环内是交叉枪杆，小尺寸可能读成 × ⇒ 规格 §七 Q8 |
+| P-11 族 `crest-reward` | 1024×1024 | `a short gold chain looped over an aged bronze crossbar, hanging a folded dark-red (oxblood) silk ribbon with a small warm gilt pendant plate at its foot; the pendant plate face stays completely blank` | 过（207×256 / 16.9KB） |
+| P-12 `seal-wax` | 1024×1024 | `a round dark red (oxblood) wax seal blob with irregular pressed edges, an impressed aged bronze ring near its rim, and a completely BLANK depressed centre — plain wax, nothing carved in it` + `no letter, no rune, no character, no monogram, no sunburst` | 过（256×256 / 19.8KB） |
+| P-13 `divider-rope` | 1792×1024 | `a braided dark leather cord running horizontally, with two small aged bronze beads slid onto it (one left of centre, one right of centre) and a dark red (oxblood) diamond knot in the exact centre; both ends taper and fade to nothing` + `a very wide, very thin horizontal strip … its height only about one sixth of its width` + `the cord must stay perfectly straight and horizontal` | 过（512×40 / 5.1KB） |
+
+**尺寸口径**：交付尺寸 = 该件 keyed 草稿的 **PIL `alpha>0` `getbbox()`** 反算（与 `accept_to_runtime.py` 同一把尺），
+长边按档取 A/B/装饰横件 512、C 按钮与提示条 256、方 chip 52、顶饰 256。
+用 `>160` 的 mask 量会系统性偏小，10:1 以上长条差 5px 就是 10% 比例误差 ⇒ 会被">3% 直接失败"拒（本轮真实撞过 4 件）。
+

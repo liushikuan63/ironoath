@@ -23,8 +23,17 @@
          只判背景纯绿与残留绿两条。误用 frame 判它必然假红（实测匾额中心含矛杆，σ 反而高于环带）。
 """
 import argparse
+import os
 import sys
 from PIL import Image
+
+# Windows 控制台默认 GBK：打印 '⇒' 这类字符会 UnicodeEncodeError，量具崩在半途、退码 1，
+# 症状与"素材判红"一模一样（实测撞过一次：button-iron-v1 明明合格却被判退 1）。
+# ⇒ 输出必须与判据解耦：强制 UTF-8 + 不可编码字符降级替换，绝不让打印把判据带崩。
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 GREEN_HI = 110      # 与 process_generated.py 同口径，两处改要一起改
 GREEN_LO = 30
@@ -110,6 +119,57 @@ def corner_squareness(px, mask, l, t, r, b, k=6):
     return min(out)
 
 
+def crop_preview(path, out_dir, ts=None):
+    """按 **alpha bbox** 定位，裁出九宫格拉伸时的四个受力点（四边正中）+ 四角 + 中心，拼成 3x3 目视取证图。
+
+    为什么强调 bbox：第一版裁切框按"图片尺寸"取中，结果裁到了边带中段——等于没有证据。
+    这一维是**只能目视**的那一维（σ 测不出色相差异，台账 #796），所以工具只负责把
+    正确的像素摆到眼前并印出坐标，判仍由人判，绝不在这里生成结论。
+    """
+    im = Image.open(path).convert('RGBA')
+    w, h = im.size
+    px = im.load()
+    mask = [[alpha_of(px, x, y) > 160 for x in range(w)] for y in range(h)]
+    xs = [x for y in range(h) for x in range(w) if mask[y][x]]
+    ys = [y for y in range(h) for x in range(w) if mask[y][x]]
+    if not xs:
+        print('%s  主体为空，无法裁切' % path)
+        return None
+    l, t, r, b = min(xs), min(ys), max(xs), max(ys)
+    bw, bh = r - l + 1, b - t + 1
+    if ts is None:
+        ts = max(64, min(220, min(bw, bh) // 5))
+    cx, cy = l + bw // 2, t + bh // 2
+    tiles = [
+        ('TL角', (l, t, min(l + ts, r + 1), t + ts)),
+        ('TM边上中', (max(cx - ts // 2, l), t, min(cx + ts // 2, r + 1), t + ts)),
+        ('TR角', (max(r - ts + 1, l), t, r + 1, t + ts)),
+        ('LM边正中', (l, max(cy - ts // 2, t), l + ts, min(cy + ts // 2, b + 1))),
+        ('中心', (max(cx - ts // 2, l), max(cy - ts // 2, t),
+                  min(cx + ts // 2, r + 1), min(cy + ts // 2, b + 1))),
+        ('RM边正中', (max(r - ts + 1, l), max(cy - ts // 2, t),
+                      r + 1, min(cy + ts // 2, b + 1))),
+        ('BL角', (l, max(b - ts + 1, t), min(l + ts, r + 1), b + 1)),
+        ('BM边正中', (max(cx - ts // 2, l), max(b - ts + 1, t),
+                      min(cx + ts // 2, r + 1), b + 1)),
+        ('BR角', (max(r - ts + 1, l), max(b - ts + 1, t), r + 1, b + 1)),
+    ]
+    gap = 8
+    sheet = Image.new('RGB', (3 * ts + 2 * gap, 3 * ts + 2 * gap), (24, 24, 24))
+    for i, (name, box) in enumerate(tiles):
+        crop = im.crop(box).convert('RGB')
+        if crop.size != (ts, ts):          # 贴边时裁不满，居中放置而不是拉伸
+            pad = Image.new('RGB', (ts, ts), (12, 12, 12))
+            pad.paste(crop, ((ts - crop.size[0]) // 2, (ts - crop.size[1]) // 2))
+            crop = pad
+        sheet.paste(crop, ((i % 3) * (ts + gap), (i // 3) * (ts + gap)))
+        print('    %-9s box=%s' % (name, box))
+    out = os.path.join(out_dir, os.path.splitext(os.path.basename(path))[0] + '-cropgrid.png')
+    sheet.save(out)
+    print('  目视取证图   : %s（每格 %dpx，bbox=%d..%d x %d..%d）' % (out, ts, l, r, t, b))
+    return out
+
+
 def check(path, kind):
     im = Image.open(path).convert('RGBA')
     w, h = im.size
@@ -185,7 +245,13 @@ def check(path, kind):
             if rel > 2.0:
                 fails.append('plain-band-carries-ornament')
 
-    notes.append('** 未判（只能目视）：四条边的正中是否混入独立饰块 —— σ 测不出色相差异，见台账 #796')
+    if kind == 'art':
+        # 装饰件按原比例整幅缩放、永不拉伸 ⇒ 没有切分线，"边中饰会不会被糊开"这一维对它没有意义。
+        # 第一版无差别打印那条"未判"，会让读的人以为装饰件也欠一次边中检查（台账 #796 的口径只针对九宫格）。
+        notes.append('** 未判（只能目视）：art 档不参与九宫格切分，边中饰一维不适用；'
+                     '目视只核两件事——有没有烘焙进去的文字/符号，以及中心空面够不够放字')
+    else:
+        notes.append('** 未判（只能目视）：四条边的正中是否混入独立饰块 —— σ 测不出色相差异，见台账 #796')
     return fails, notes
 
 
@@ -193,6 +259,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('paths', nargs='+')
     ap.add_argument('--kind', choices=('frame', 'plain', 'art'), default='frame')
+    ap.add_argument('--crop-preview', metavar='DIR', default=None,
+                    help='额外产出按 alpha bbox 定位的 3x3 目视取证图到 DIR（只给证据，不参与退码）')
     a = ap.parse_args()
     bad = 0
     for p in a.paths:
@@ -200,6 +268,8 @@ def main():
         print('\n[%s] %s' % (a.kind, p))
         for n in notes:
             print('  ' + n)
+        if a.crop_preview:
+            crop_preview(p, a.crop_preview)
         if fails:
             bad += 1
             print('  判据失败：%s' % ' / '.join(fails))

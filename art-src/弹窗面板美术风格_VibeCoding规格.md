@@ -93,12 +93,37 @@
 
 | 档 | 素材长边 | border（L/R · T/B） | 中心净区 | 消费尺寸下限 | 复用禁令 |
 |---|---|---|---|---|---|
-| **A 底板** | 512×344 | **48 · 36** | 416×272 | 460×300（现跑最小底板） | 不得用于 B/C |
-| **B 条行** | 512×48 | **12 · 8** | 488×32 | 180×40（现跑 B 档最矮） | 不得用于 C |
-| **C 小件** | 160×52 | **6 · 4** | 148×44 | 64×26（现跑 C 档最小） | 不得用于 A/B |
-| 装饰件 | 整图（非九宫格） | 不适用 | — | 按原比例缩放，比例差 >3% 直接失败（`accept_to_runtime.py` 现有判据） | 不参与退化判据 |
+| **A 底板** | 512×344 ～ 512×373（**逐件现量**，见下表） | ~~48 · 36~~ → **80 · 72**（2026-10-08 裁决，理由见 §4.8 第 1 条） | 352×200 | 460×300（现跑最小底板） | 不得用于 B/C |
+| **B 条行** | 512×52（实测，原写 512×48 是被 `>160` 的 bbox 骗了） | **12 · 8** | 488×36 | 180×40（现跑 B 档最矮） | 不得用于 C |
+| **C 小件** | 256×65（按钮 / 提示条）· 52×52（方 chip） | **6 · 4** | 244×57 | 64×26（现跑 C 档最小） | 不得用于 A/B |
+| 装饰件 | 整图（非九宫格），**每件按自己 bbox 定 WxH** | 不适用 | — | 按原比例缩放，比例差 >3% 直接失败（`accept_to_runtime.py` 现有判据） | 不参与退化判据 |
 
-现跑最小消费尺寸套上去自检：A 460×300 用 36 顶底 ⇒ 72/300 = 0.24 ≤ 0.6 ✓；C 64×26 用 4 顶底 ⇒ 8/26 = 0.31 ≤ 0.6 ✓ 且 4/52 = 0.077 ≥ 0.07 ✓。
+**18 件实测交付尺寸与量化体积（2026-10-08 现跑，`process_generated.py` → `accept_to_runtime.py` 全管线，产物落临时目录未进包）**：
+
+| 件 | 档 | 交付尺寸 | 量化后 | 件 | 档 | 交付尺寸 | 量化后 |
+|---|---|---|---|---|---|---|---|
+| `panel-iron-v1` | A | 512×359 | 51.9KB | `crest-league-v1` | 装饰 | 178×256 | 12.9KB |
+| `panel-parchment-v1` | A | 512×373 | 59.0KB | `crest-nation-v1` | 装饰 | 246×256 | **30.3KB** |
+| `panel-warning-v1` | A | 512×348 | 49.2KB | `crest-battle-v1` | 装饰 | 223×256 | 18.4KB |
+| `panel-gilt-v1` | A | 512×357 | 51.9KB | `crest-reward-v1` | 装饰 | 207×256 | 16.9KB |
+| `plate-band-v1` | B | 512×52 | 8.9KB | `seal-wax-v1` | 装饰 | 256×256 | 19.8KB |
+| `plate-band-active-v1` | B | 512×52 | 10.1KB | `divider-rope-v1` | 装饰 | 512×40 | 5.1KB |
+| `button-iron-v1` | C | 256×65 | 5.4KB | `banner-crest-v1` | 装饰 | 512×234 | **27.2KB** |
+| `button-iron-hover-v1` | C | 256×65 | 6.9KB | `chip-close-v1` | C | 52×52 | 2.0KB |
+| `button-iron-disabled-v1` | C | 256×65 | 3.9KB | `plate-tooltip-v1` | C | 256×61 | 4.4KB |
+
+⇒ 全套合计 **≈400KB**，在 §二 "新增全套 ≤450KB" 内；A/B/C 三档逐张都达标。
+**唯一被实测否证的预算线**：装饰件 ≤20KB/张 —— `crest-nation` 30.3KB、`banner-crest` 27.2KB 都在 255 色量化后仍然超，
+因为这两张是"满幅铜纹 + 龙纹浮雕"，细节密度天然高。⇒ **装饰件预算改 ≤32KB/张**（其余 5 张仍 ≤20KB），
+不改量化参数也不减细节：为凑 20KB 去压色数，会在暗红丝绒上出明显色阶。
+
+⚠️ **A 档 border 80·72 是本轮裁决，尚未在真机上复验**：`client/assets/scripts/game/art/ArtFamilies.ts:55`
+的 `PANEL_IRON_INSET` 现值仍是 `{left:48, right:48, top:36, bottom:36}`，且已被 `MarchComposeOverlay.ts` 消费。
+**本格不改那个文件**（V25-c 领地），交接项＝V25-c 把 meta 的 `border*` 与 `PANEL_IRON_INSET` **同批**改成 80·72
+并用 `tools/verify-ui-v25-runtime.mjs` 回读 inset 才算落地（记忆已证：border 有两处可写、后写者赢）。
+
+现跑最小消费尺寸套上去自检：A 460×300 用 **72** 顶底 ⇒ 144/300 = **0.48** ≤ 0.6 ✓（border 从 36 抬到 72 后这条仍成立，但只剩 0.12 的余量 —— 460×300 是最小的一档，V25-c 实拍必须专门看它）；
+C 64×26 用 4 顶底 ⇒ 8/26 = 0.31 ≤ 0.6 ✓ 且 4/52 = 0.077 ≥ 0.07 ✓。
 （A 档的 512×344 不是拍脑袋：它是 §4.6 首版实测的出图比例 1.487:1，改这个数是因为 `accept_to_runtime.py` 的 >3% 比例判据会拒 4:3。B 档 512×48 同理，实测出图 10.755:1，见 §4.7。）
 ⚠️ **96 高的卡片格（`HeroPanelView.ts:351` 的 680×96）另案**：它名义上落在 B 档区间里，但拿 48 高的条行图放大两倍去铺它会糊 ⇒ V25-d 现跑那一处消费点之后单独定尺寸，不许顺手复用。
 
@@ -137,11 +162,23 @@
 | — | `ui.panel.kingdom`（存量） | `ui/generated/ui/panel-kingdom-v1` | A | **保留**：`CityPanelView`/`MarchPanelView` 已在用，且 `PANEL_FRAME_BAND` 与 meta 由 `client/tests/ArtFamilies.test.ts` 对账；换它 = 另开一格（§七 Q1） |
 | — | `ui.button.chip*` / `ui.nav.tab*`（存量 5 张） | 同目录 | C | 保留，本轮不动（避免碰导航与 chip 的既有探针读数） |
 
-**生产进度（2026-10-08 现跑）**：18 件里已出 **6 版母版 / 5 件**（#1 `panel-iron` v0+v1、#12 `banner-crest`、#5 `plate-band`、#7 `button-iron` v0+v1），
-全部过 `art-src/check_nineslice_ready.py` 的对应档（`button-iron-v1` 起还过「直角剪影」那条），其余 13 件未开工。
-**P-07 的 `corners must be square` 已复验生效**（v0 斜切 0% → v1 直角 75%，见 §4.7）。
-⚠️ **交付尺寸不许套同一张表**：实测 bbox 分别是 **1.49:1**（A 档底板）、**2.21:1**（匾额）、**10.76:1**（条行）、**4.34:1**（按钮），
-互不相同 ⇒ 每件按自己的 bbox 定尺寸，否则会被 `accept_to_runtime.py` 的"比例差 >3% 直接失败"逐个拒掉。
+**生产进度（2026-10-08 04:0x 现跑）：18 / 18 件全部出齐**，逐件过 `art-src/check_nineslice_ready.py` 对应档（退 0）+ 逐件目视
+（取证图由量具 `--crop-preview` 按 alpha bbox 定位生成）+ 逐件现量 bbox 定交付尺寸（尺寸与量化体积见 §二 表）。
+
+| 状态 | 件 |
+|---|---|
+| 已出并过判据（14） | #1 `panel-iron`、#2 `panel-parchment`、#3 `panel-warning`（**v0 判红，v1 过**）、#4 `panel-gilt`、#5 `plate-band`、#7 `button-iron`（v0 斜切作废 → v1）、#10 `chip-close`（**v0 角饰过大、v1 无绿底，v2 才过**）、#11 `plate-tooltip`、#12 `banner-crest`、#13~16 `crest-league/nation/battle/reward`、#17 `seal-wax`、#18 `divider-rope` |
+| 派生（4） | #6 `plate-band-active`（brightness 1.16 / color 1.22，**§七 Q3 已裁：走派生不再出第二张母版**）、#8/#9 `button-iron-hover/disabled`（`derive_button_states.py`） |
+| 作废重出（3 版留证） | `panel-warning-v0`（边正中一块暗红绶带 = §4.6 修正 ② 那个缺陷在新素材上复发）、`chip-close-v0`（角部铜凸台占 25% 图宽，切分线必穿）、`chip-close-v1`（满幅无绿底，抠绿前提不成立） |
+
+**P-07 的 `corners must be square` 已复验生效**（v0 斜切 0% → v1 直角 75%，见 §4.7）；本轮它在新出的 `chip-close-v2`（78%）
+与 `plate-tooltip-v0`（81%）上继续成立 ⇒ **n 从 2 涨到 4，阈值 50% 未再被逼近**（最高 92%、最低 75%，中间仍是 0% 那类真斜切）。
+⚠️ **交付尺寸不许套同一张表**：实测 bbox 已见 **1.371 / 1.433 / 1.470 / 1.425 / 9.827 / 3.938 / 0.992 / 4.189 / 2.188 /
+0.697 / 0.963 / 0.871 / 0.808 / 1.016 / 12.700** 十五种，互不相同 ⇒ 每件按自己的 bbox 定尺寸，
+否则会被 `accept_to_runtime.py` 的"比例差 >3% 直接失败"逐个拒掉。
+⚠ **而且必须用 `accept_to_runtime.py` 同一把尺量**（PIL `alpha>0` 的 `getbbox()`）：量具的 `alpha_of>160` 会漏掉抠绿过渡沿
+的半透明一圈，普通件差 0.001 无所谓，**10:1 以上的长条差 5px 就是 10% 比例误差** ⇒ 本轮四件（条行 / 按钮 / 提示条 / 绳结）
+第一次收编全被拒，换成同一把尺后 14/14 退 0（取证见 §4.8 第 3 条）。
 
 **接入纪律**（`game/art/ArtFamilies.ts:47-52` 原文要求）：只登记**已随包下发且已有消费面板**的族——不许先把 18 张全塞进 `FAMILY_ASSETS` 等消费点。V25-b 只生产，V25-c/d 接一个登记一个。
 
@@ -180,12 +217,12 @@ Nine-slice constraints (mandatory):
 |---|---|
 | **P-01** `panel-iron` | `Asset type: 2D mobile strategy game UI nine-slice panel, delivered at 512x344 (about 3:2)` · `Primary request: hammered dark iron panel plate with aged bronze corner caps and four rivets per cap, thin bronze inlay line running the inner edge` · `Color palette: charcoal brown, aged bronze, muted dark red accents` |
 | **P-02** `panel-parchment` | 同上尺寸 · `aged parchment sheet as the inner face, iron-and-bronze frame band around it, deckle edges kept inside the band`（**约束**：纸面必须比正文暗一档，防止与浅字打架） |
-| **P-03** `panel-warning` | 同 P-01 构图，`with a dark oxblood silk ribbon folded across the top band and a bronze clasp at each end` |
-| **P-04** `panel-gilt` | 同 P-01 构图，`ornate bronze-gilt frame with a short hanging gold chain and a small wax seal at the top centre` |
+| **P-03** `panel-warning` | 同 P-01 构图，**原文 `a dark oxblood silk ribbon folded across the top band and a bronze clasp at each end` 与 §4.2 直接冲突，已改**：`a dark oxblood silk stripe painted as a STRAIGHT, CONSTANT-WIDTH band spanning the ENTIRE top frame band edge to edge, terminating at the two top corner caps` + 硬禁项 `NO ribbon ends, NO tails, NO knot, NO rosette, NO fold crossing the middle, NO clasp sitting at the centre`（v0 按原文出图 ⇒ 顶边正中一块独立红绶带，正是 §4.6 修正 ② 那个缺陷在新素材上复发；v1 按新文案出图 ⇒ 绶带贯穿整条顶带，横向拉伸安全）· 另加 `the frame band is a little wider so the bronze inlay line stays well outside the middle of the plate`（见 §4.8 第 2 条：内线落在 20% 采样窗内会把 σ 判据推红） |
+| **P-04** `panel-gilt` | 同 P-01 构图，**原文 `a short hanging gold chain and a small wax seal at the top centre` 与 §4.2 冲突，已改**：`ornate bronze-gilt frame band, gilt finish continuous and even along all four edges, the extra gilt scrollwork lives ONLY on the four corner caps` + 硬禁项 `do NOT place a chain / wax seal / medallion / crown / gem on the middle of any edge — reward chains and wax seals are separate decorative assets laid on top at runtime`（金链与火漆本来就是 §一 的**顶饰**，属于 #16 `crest-reward` 与 #17 `seal-wax`，不该烘进会被拉伸的底板边带） |
 | **P-05** `plate-band` | `Asset type: nine-slice list-row plate, 512x128` · `narrow iron strip with a 4px bronze bevel along top and bottom edges, very shallow, flat, no corners ornament` |
 | **P-06** `plate-band-active` | 同 P-05 形状，`bronze bevel lit up as if selected, faint dark red glow inside the bevel only` |
 | **P-07** `button-iron` | `Asset type: nine-slice command button, 160x52`（实测出图 bbox **4.34:1**，与 3.08:1 不同 ⇒ 交付尺寸按实测定） · `forged iron button face, bronze bevel that occupies about 8% of the height, two small rivets near the left and right ends, completely flat front-facing` · **`corners must be square 90 degrees — no chamfer, no bevelled corner, no rounded corner`**（v0 给了 45° 斜切角，与 6·4 的薄 border 九宫格冲突，见 §4.7） · `Constraints: generous clear centre for a Chinese label, no text, no letters, no icons` |
-| **P-08** `chip-close` | `Asset type: small square button sprite, 52x52` · `dark iron square button with bronze bevel and a single rivet at each corner, empty centre` · **必须写明** `no X glyph, no cross, no symbol`（符号由 Label 画，见 §八 禁止项 3） |
+| **P-08** `chip-close` | `Asset type: small square button sprite, 52x52` · `dark iron square button with bronze bevel and a single rivet at each corner, empty centre` · **必须写明** `no X glyph, no cross, no symbol`（符号由 Label 画，见 §八 禁止项 3）· **本轮补两条（三版才出一张能用的）**：① `every ornament must live inside the outer 8% of the sprite; NO large bronze corner plates, NO big round bosses` —— v0 给了四角大铜凸台（各占约 25% 图宽），C 档 border 只有 6·4 ⇒ 切分线直接穿过凸台；② **禁写** `filling the canvas nearly edge to edge` —— v1 照这句画成满幅、四角没有绿底，抠绿前提直接不成立（量具退 1，`bg-not-pure-green`）；改成正向表述 `floating at about 70% of the canvas, flat pure green reaching all four corners` 后 v2 过（残留绿 0.112%、直角填充率 78%、目视四角只有小铆钉点） |
 | **P-09** `plate-tooltip` | 同 P-05，尺寸 `256x64` · `slightly warmer iron, thinner bevel, for tooltips and floating text` |
 | **P-10** `banner-crest` | `Asset type: single non-sliced decorative title plaque, 512x128` · `horizontal bronze-framed war banner with two crossed short spears behind the top edge and a small crown relief at the centre top; the plaque face is completely blank` · **不加** 4.2，改加 `Constraints: keep the whole plaque on one piece, do not tile, transparent or pure green background outside the silhouette` |
 | **P-11** `crest-league` | `Asset type: single non-sliced emblem, 256x256` · `alliance war banner emblem: forked dark-red silk flag on a bronze pole with iron fringe, blank shield face in the centre` |
@@ -324,7 +361,65 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 
 ---
 
+### 4.8 V25-b 生产轮实测（2026-10-08 02:3x~04:0x，出满 14 件母版 + 4 件派生）
+
+命令：`python art-src/check_nineslice_ready.py <图> --kind frame|plain|art [--crop-preview DIR]`
+→ `python art-src/process_generated.py art-src/generated/drafts/batch-2026-10-08-ui-style.json`
+→ `python art-src/accept_to_runtime.py --drafts <单件目录> --out <临时目录> --size WxH`（**收编产物本轮不进 `client/`**，理由见第 7 条）。
+
+1. **A 档 border 从 48·36 抬到 80·72（用户裁决，实测撑住）**。量法：在角帽高度上取一行、沿宽度分 16 段取平均亮度，
+   铜帽段与铁带段亮度差 40~55 ⇒ 边界清楚。读数 `panel-iron-v1` 角帽占宽 **12.5%**（16 段里两端各亮 2 段）、
+   `panel-gilt-v0` **约 19%**（各亮 3 段），目视大格（250px）标尺一致 ⇒ 交付 512 宽下角帽实际 64~97px，
+   而契约 border 只有 48 ⇒ **切分线必然穿过角帽**，拉到 720 宽时角帽内沿会被拉成约 1.5 倍。
+   代价照实写：460×300 那档上下 chrome 合计 144px = **48%**，自检 0.48 ≤ 0.6 只剩 0.12 余量 ⇒ **V25-c 必须实拍这一档**。
+2. **σ 判据有第二个已知误红源：铜内线的位置**。`panel-warning-v0` 给 rel=**2.51**（判红），
+   目视+裁切确认中心 60% 采样窗（20%~80%）里**穿过了那条铜内线**（顶行与左行各压到一条亮线）⇒ 中心"干净但被内线穿过"。
+   这不是素材缺陷（内线平行于边，横向拉伸不会糊），是**判据把"亮度离散"当成了"有装饰"**。
+   v1 用"把 frame 带画宽一点、内线留在窗外"重出 ⇒ rel **3.24** 过。
+   ⇒ 记进边界清单：**σ 判据对"边带宽度 / 图幅"之比敏感**，窄边带素材会被稳定推红；下一次再撞不要先怀疑素材。
+   ⚠ 同一张 v0 **另有真缺陷**（顶边正中一块独立红绶带，目视抓到）⇒ 这次判红与真缺陷**同源不同因**，
+   不能拿"判据反正红了"当省事理由，两条要分开记（否则会把误红规律当成缺陷规律）。
+3. **量具有两把 bbox 尺，收编只认其中一把**。量具用 `alpha_of>160`（绿底图没有真 alpha，只能按绿色度造 mask），
+   而 `accept_to_runtime.py` 用 PIL `split()[3].getbbox()`（**alpha>0**，含抠绿过渡沿的半透明一圈）。
+   普通件两者差 <0.2% 无所谓；**10:1 以上的长条差 5px 就是 10% 比例误差** ⇒ 本轮第一次收编有 **4 件**
+   （条行 9.827 vs 目标 10.894、按钮 3.938 vs 4.129、提示条 4.189 vs 4.414、绳结 12.700 vs 14.222）
+   被">3% 直接失败"拒。改成与收编同一把尺现量后 **14/14 退 0**，且比例差全部 ≤1.6%。
+   ⇒ §三 那条"交付尺寸逐件现量"必须补一句：**量的必须是 keyed 草稿的 `alpha>0` bbox，不是 raw 绿底图的 >160 mask**。
+4. **量具自己崩会被读成素材判红（本轮真实撞上一次）**：Windows 控制台默认 GBK，`plain` 档那行提示里有 `⇒`，
+   `print` 抛 `UnicodeEncodeError` ⇒ **退码 1**，而素材本身三条判据全过。
+   修法＝输出与判据解耦（`sys.stdout.reconfigure(encoding='utf-8', errors='replace')`），
+   复验双向：合格件 `button-iron-v1 --kind plain` 退 **0**、负向对照（`panel-iron-v1` 左上 8×8 涂蓝）退 **1** 且报 `bg-not-pure-green`。
+5. **新增目视取证器 `--crop-preview DIR`**（就在量具里，不另写第二份）：按 alpha bbox 定位裁出
+   四角 + 四边正中 + 中心共 9 格拼一张 3×3，并把每格 box 坐标印出来。
+   **为什么必须按 bbox**：第一版按"图片尺寸"取中，裁到了边带中段＝没有证据。
+   自证生效：印出的 TL 起点 == 量具自己的 bbox 左/上，BR 终点 == 右+1/下+1（`panel-parchment` bbox=34..989×38..729 ⇒ TL=(34,38)、BR=(852,592)+格宽）。
+   本轮 14 件逐件出取证图并目视，**四条边的正中有无独立饰块**这一维全部按档核过。
+6. **`art` 档不该收到"边中饰未判"那句提示**：装饰件永不拉伸 ⇒ 没有切分线，那一维对它没有意义。
+   已按档分开：`art` 现在印"目视只核两件事——有没有烘焙进去的文字/符号，以及中心空面够不够放字"。
+7. **收编产物本轮不进 `client/assets/resources/**`**：V25-c 正被另一条会话写
+   （`tools/verify-ui-v25-runtime.mjs` mtime 10-08 02:17、`PANEL_IRON_INSET` 已进 `ArtFamilies.ts:55` 并被 `MarchComposeOverlay.ts` 消费，
+   runtime 里 `panel-iron-v1.png` / `button-iron-v1.png` / `banner-crest-v1.png` 三张是**它的未跟踪产物**）。
+   ⇒ 本轮只出"尺寸 + 量化体积"两个读数（§二 表），落地交给 V25-c。**撞车判据**：动手前 `git status --porcelain -- <落点>` 逐路径核，
+   别只看 `git status | head -30`（本轮就是被截断的输出误导过一次，漏看了 8 条 `?? client/assets/...`）。
+8. **派生态"造型不漂移"是可证的，不用目视**：`derive_button_states.py` 与 active 派生都只动 RGB、alpha 原样带过去 ⇒
+   断言"派生态与常态 alpha 逐像素差异 = **0** 像素"，并配**对照组**（条行 vs 按钮两张不同素材）差异 = **42960** 像素
+   ⇒ 这条断言既能过也能失败。三张派生态（hover 6.9KB / disabled 3.9KB / active 10.1KB）因此**继承常态的退 0**，不必重跑判据。
+   active 的系数 **brightness 1.16 / color 1.22** 写在这里而不是塞进 `STATES`：那个字典被 `ArtCatalog.applyCommandButton` 认，
+   加一行就会让按钮族多出一个没人画的状态。
+9. **复核上一轮已收的两件，结论没翻**：`plate-band-v0` 与 `button-iron-v1` 用新裁切器逐边看，
+   四条边正中都只有贯穿的铜边/皮革纹，**无独立饰块**（上一轮只目视了角部，这一维当时其实没查过 ⇒ 现在是查过了）。
+10. **`crest-battle` 一处待 V25-c 实拍定夺**：中心铜环里穿过去的是两根交叉枪杆，缩到 256 以下可能读成"×"
+    （§八 禁止项 3 的_close symbol_ 形状风险）。本轮判**可用**（语义就是交叉长枪，且顶饰不会出现在关闭键的位置），
+    但**未做视觉验证的边界要照实说**：没有前台截图。若 V25-c 实拍误读，改法＝提示词去掉中央铜环，只留交叉枪。
+
+**本轮仍未做 / 未验证**：无任何前台截图（"铺到面板上好不好看"仍归 V25-c）；border 80·72 未在真机复验；
+`check.sh` 全量与 `mvn test` 本会话未跑（主检出会换掉另一条会话活后端用的 jar）；
+三条可机器判据**尚未接进任何门或探针**（V25-e）；角帽占宽用的是"单行分段亮度 + 目视标尺"，
+**不是**可当门的自动判据（同 §4.7 那条"边带厚度无有效量法"，第四次尝试仍只做成了提示）。
+
 ## 五、任务卡（V25-a…V25-e，每格独立可验证可提交）
+
+
 
 ### V25-a · 风格锁定 + tokens 收口（不做就不许动视图）
 
@@ -358,6 +453,19 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 ⚠️ 第四问**不许用统计量代签**：§4.6 实测三种 σ 写法（平均 / 最差 / 同边正中比旁侧）在"真有红块"的样本上分别给出 0.60 / 0.96 / 1.13，前两种判"过"、第三种与无块样本（1.03）分不开 —— 因为饰块与周围材质**差在色相不差在亮度**。可机器判的只有三条：背景纯绿、残留绿 ≤0.5%、中心 σ 显著低于环带 σ。
 验收：① 18 张全部落到 `art-src/generated/drafts/`，残留绿读数逐张为 0.000%；② 逐张实测 `inset` ÷ 图高落在 [0.07, 0.6]；③ 新增总量 ≤ 450KB（`du` 实测）；④ **把 P-01 的 border 临时改成 200 重跑一次 `verify-art-runtime.mjs`，必须报"退化/吃内容"红**（证明判据能失败，才允许进 V25-c）。
 产出文件：`art-src/generated/drafts/batch-<日期>-ui-style.json`、`art-src/GENERATION_PROMPTS.md`（新增 §12 本批）、`art-src/ATTRIBUTION.md`（AI 生成条目的署名口径）。
+
+**状态（2026-10-08 04:0x 本格收口，台账 #807）**：18 / 18 件出齐（14 张母版 + 4 张派生），逐件过判据 + 逐件目视 + 逐件现量交付尺寸，
+尺寸与体积表见 §二，实测过程与换来的判据边界见 §4.8。四条验收逐条对账：
+① **按字面未达、按意图过** —— 残留绿实测 0.004%~0.274%，"逐张为 0.000%"这个阈值写坏了（抗锯齿过渡沿必然留软边，
+`process_generated.py` 的真判据是 ≤0.5%），14 件全在 0.5% 内且整批退 0；
+② **未达且无法达** —— `inset ÷ 图高` 到本轮结束仍**没有有效量法**（第四次尝试：单行分段亮度只能定角帽范围，定不了边带厚度），
+现用"目视标尺 + 量具仅印不判"顶替，[0.07, 0.6] 这一维**未进门**；
+③ **过** —— 18 件合计 **424.2KB** ≤ 450KB（本批 14+3 件 372.3KB + 已收编的 `panel-iron-v1` 51.9KB，逐张 `os.path.getsize` 实测）；
+④ **未做（领地原因，不是漏做）** —— 该判据要临时改 `client/assets/resources/**` 的 meta border 并重跑 `verify-art-runtime.mjs`，
+而 V25-c 正被另一条会话写（`tools/verify-ui-v25-runtime.mjs` 02:17、`PANEL_IRON_INSET` 已在 `ArtFamilies.ts:55`）。
+⇒ **这一条是 V25-c 的准入门，本格把它原样交接过去**，并附一条更狠的对照：border 改成 200 之外，
+还应改 **80·72 → 48·36** 复跑一次，看运行时回读的 inset 是否真的跟着 meta 变（不变就说明代码侧 `insetLeft` 后写赢了，那是 §4.8 第 7 条那处双写口的病灶）。
+
 
 ### V25-c · A 档底板接线（4 处底板 + 待人工判档的表达式点）
 
@@ -421,9 +529,20 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 
 1. **存量 `panel-kingdom-v1`（RGBA 170.9KB 未量化）怎么办**——量化它（省 ~130KB，但软边可能出锯齿）、还是给 `check-art-quantized.sh` 开一条白名单并注明理由、还是随 V25-c 一起换成 `panel-iron`？
 2. **羊皮纸亮度定案**：浅内衬要不要配"深字 tokens"（现跑文字基本是金字/白字压在深底上）？若浅底 + 金字，对比度会掉，`verify-label-fit-runtime` 与导航对比度判据可能一起变红。推荐：纸面只提一档 + 正文改深墨色，顶饰标题保留金字。
-3. **B 档选中态**：由常态派生（`derive_button_states.py` 系数写死，零漂移风险）还是 AI 另出母版（观感更好，但形状会漂）？推荐前者。
+3. ~~**B 档选中态**：由常态派生还是 AI 另出母版？~~ **已裁（2026-10-08）：走派生**，系数 brightness 1.16 / color 1.22，
+   证据＝派生态与常态 alpha 逐像素差异 0（对照组两张不同素材差 42960 像素）⇒ 形状不可能漂。见 §4.8 第 8 条。
 4. 关闭键统一成哪一种：`×` 字符（现有 2 处）还是 Graphics 圆角 + 文字「关闭」（现有 6 处）？推荐保留「关闭」文字（新手可读性），`×` 那两处并入。
 5. 本轮要不要顺带把 `GuideView`/`Choices` 这类引导浮层一起换？（会加 ~10 个绘制点，且引导有独立探针族）
+6. **【V25-c 必答】A 档 border 80·72 在 460×300 那档是否可接受**：自检 144/300 = 0.48 ≤ 0.6 成立但只剩 0.12 余量，
+   而角帽实测占宽 12.5%~19%（512 交付 = 64~97px），48·36 会让切分线穿过角帽。
+   判据＝`shot-panel-sweep.mjs` 实拍 460×300 与 720×600 两档，看铜帽有没有被拉长、内容区是否够用；
+   若 460×300 太挤，退路不是把 border 调回去（那会重新切穿角帽），而是**把这一档面板抬高到 ≥520×360**（属布局改动，另开格）。
+   ⚠ 改的时候 `borderTop/Bottom/Left/Right`（`.png.meta`）与 `ArtFamilies.ts:55` 的 `PANEL_IRON_INSET` **必须同批**，
+   两处可写、后写者赢（记忆 `project-cocos-subpackage-and-trim-facts`），且要运行时回读 inset 才算落地。
+7. **装饰件预算线**：`crest-nation` 30.3KB、`banner-crest` 27.2KB 超 §二 的 ≤20KB/张。本轮按"改预算线到 ≤32KB"处置
+   （不动色数、不减细节），但这条线是不是该由 V25-e 做成门、超线要不要逐张点名，**待定**。
+8. **`crest-battle` 中心铜环里的交叉枪杆在小尺寸下可能读成 `×`**（§八 禁止项 3 的形状风险）。本轮判可用，
+   判伪方法＝V25-c 把顶饰缩到实际消费尺寸截图看是否误读；若误读，改法＝提示词去掉中央铜环。
 
 ---
 
