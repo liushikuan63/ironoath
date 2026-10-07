@@ -263,6 +263,13 @@ python art-src/derive_button_states.py <母版.png> <输出前缀.png>
 - 必做：`game/ui/UiTokens.ts` + `.ts.meta`；把 §一 色族表写进文件头注释；`client/tests/UiTokens.test.ts` 钉住"遮罩只有 1 个值、铜金只有 1 个值"。
 - 验收：`node --test`（**必须 Node 20**：`export PATH="/d/Java/nodejs/node20.13.0:$PATH"`）绿；`bash scripts/check-ts-meta.sh` 绿；`bash scripts/check.sh` 退 0。
 - 产出文件：`client/assets/scripts/game/ui/UiTokens.ts{,.meta}`、`client/tests/UiTokens.test.ts`（用例目录不扫 meta）。
+- **已完成（2026-10-08）**：三件产出文件落地，6 条用例绿（`client/tests/UiTokens.test.ts`，植入取证见台账 **#795**）。
+  两处与本卡原稿不同的实测结论，**以现跑为准**：
+  ① 原稿写"导出六组常量"含框带厚 —— 实际**不收**，因为 `ArtFamilies.PANEL_FRAME_BAND` 与 `.png.meta` 已由
+  `client/tests/ArtFamilies.test.ts` 对账，放第三份就是 #213；用例把"本文件不得出现 FRAME/BAND/INSET/BORDER 键"钉成判据。
+  ② 原稿没提引擎依赖 —— 实际第一版 `import { Color } from 'cc'` 会让这层用例在 import 阶段崩
+  （`game/` 81 个模块现跑零引擎依赖），故颜色以 RGBA 元组下发、`new Color(...)` 留给 `scene/` 侧。
+  **本格未删任何视图局部常量**（接线时机在 V25-c/d 的截图验收之后）⇒ 玩家可见效果目前为 0，这是刻意的。
 
 ### V25-b · 素材生产（11 张 AI 母版 + 3 张派生 + 逐张目视）
 
