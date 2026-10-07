@@ -561,6 +561,13 @@ grep -rn "mayEnterRankTop" server --include=*.java | grep -v "/test/"           
 `global.RALLY_MAX_SIZE_SQUAD(5) / _ALLIANCE(20) / _NATION(50)`，并明写「国家层在 B13 落地前不会产生，枚举先留位以免届时改协议」）；
 但服务端只有联盟层能创建集结（`SocialAppService.java:2819` 只做读侧 `valueOf` 转换），客户端没有国家层入口 ⇒
 B13 验收 8「国家集结 50 人门槛」进不去。
+**同一条链上还缺三样（2026-10-07 现跑，逐条给位置）**：① `/rally/policy` 的响应只有小队与联盟两份
+（`contract/proto/social.schema.json` 的 `RallyPolicyResp.required = squad, alliance, serverNow`，
+其描述原文写着"国家层级暂不在这里"）⇒ 客户端灰键没有依据来源，这一列必须先加进契约；
+② `role_permission` 的 NATION 档没有"发起"位（只有 `JOIN_NATIONAL_RALLY`，且它在生产零调用点）；
+③ 装配侧 `SocialRulesAssembler.rallyRules(...)` 只装配了 `squadRallyRules` / `allianceRallyRules` 两份，
+`initiateRally` 里那句 `scope == SQUAD ? squad : alliance`（`SocialAppService.java:2587`、:2604）
+会把国家层**静默当成联盟层**装配 ⇒ 下限与准备时长用错一档，且不报错。
 
 **必须先裁的三条（不许由实现硬填）**：① 谁能发起国家层集结（权限位与 `role_permission` 表的口径，
 参照 #756 那族"三份来源三个答案"的教训）；② 国家层集结的目标范围与行军距离是否有额外限制（B13/B21 没给出处）；
@@ -581,6 +588,11 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 ```text
 任务（裁决落地后才开工）：给国家层集结一条真实的发起与结算路径，让 B13 验收 8 有可验的东西。
 必做：V22-a 服务端：发起时按成员所在国聚合候选、按裁决的权限位拒（拒绝要回带理由的错误码，不静默）；
+      ⚠️ **两处本轮现跑确认的硬关，只做发起口不够**：
+        · `requireMembership` 的 `case NATION -> false`（`SocialAppService.java:2767`）—— 不改这里，
+          国家集结建得出来但**任何人都加不进去**（含发起人自己重进面板）；
+        · `preparingRallies` 只遍历小队与联盟两支（`SocialAppService.java:2556-2572`，现跑 grep 出
+          国家这一支为零）—— 不改这里，症状是"发得出去、面板永远看不到那次集结"。
       V22-b 客户端：集结面板 `case 'NATION'` 已有显示分支，缺的是发起入口与灰键理由（依据服务端权限位，不自己判职位）；
       V22-c 探针：造两个国家、真发一次国家层集结 ⇒ 人数门槛在两侧边界各一条（49/50）；
       V22-d `RALLY_MAX_SIZE_NATION` 的生产调用点计数从 0 变成 ≥1（这条是"判定写了没接上"的直接反证）。

@@ -52,6 +52,10 @@ JAR="${GAME_WEB_JAR:-server/game-web/target/game-web.jar}"
 OPS_TOK="${RUNTIME_OPS_TOKEN:-art-verify-local}"
 
 mkdir -p "$(dirname "$LOG")"
+# 后端日志落在 $LOGDIR 下，而 `java ... >> "$LOGDIR/dual-backend.log"` 发生在任何 mkdir 之前：
+# LOGDIR 指到一个新目录时重定向直接失败 ⇒ **JVM 根本没起来**，脚本却只报"普通后端没起来（探活失败）"，
+# 看起来像产品/端口问题（2026-10-07 全量批跑就是这么在 2 秒内退 2 的）。
+mkdir -p "$LOGDIR"
 : > "$LOG"
 
 # 探活到返回就 0，最多 70 秒
