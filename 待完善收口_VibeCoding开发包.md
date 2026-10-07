@@ -5719,3 +5719,9 @@ TEST_EXIT=0
 
 **下一步**：每日快照与赛季结算两项已闭合（见上格更正：每日快照按设计自动跟新口径；赛季结算走 `SEASON_SETTLE_BOARD` 自己的存储，本就不在组织榜口径的路径上）；
 "结算侧要不要跟随"这一问随之关闭；其余剩下的是外部条件（有仗态真打一仗的截图、真机预览、CI——账户计费仍被挡，见 #757）。
+
+### 2026-10-07 11:3x｜会话 3eb281a1：真链路打真仗探针 —— 攻城段第一次有护栏（40 通过 / 0 失败）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 新探针 `tools/verify-war-real-battle.mjs`：双号**真链路**打一场真仗（真练兵/真行军/真结算），断言击杀进国战账 + WAR 榜 + 疲劳 + 404 对照组；用 `/ops/mail/send`(HERO)→`claimAll`→`hero/lineup` 撑带兵上限（照 `verify-army-queue.mjs` 先例，**不做发兵作弊**，兵力全部真训练） | 待推（攒批：2026-10-07 推送改规=小改动只提交、阶段收口统一推） | 真跑 **40 通过 / 0 失败**（dev 后端 8299：`IRONOATH_DEV_CITY_LEVEL=16` + `START_AMOUNT=2000000` + `TIME_SPEED=100` + `OPS_TOKEN=art-verify-local`）；`check.sh` EXIT=0 · 45 道；5 轮迭代踩坑：倍速读 0（/time/sync 字段路径）→ `process.exit` 在 win 崩（改 IIFE+exitCode）→ `troopCap=0`（新号无上阵武将）→ 联盟 tag 撞名 → 结算判据（`hasWar` 恒 true，要看 `phase=SETTLED`） | 后端日志：`国战赛季分进账 战事主键=… 进账人数=2 胜者=…`；盘面：`totalKills 0→114`、`myFatigue=5`、`WAR 榜 myRank=4 / myValue=38`；对照读：结算后 `hasWar=true` 且 `phase=SETTLED`（此前误判为"没结算"） | WAR 榜"有行"的**客户端截图**（需 web 产物 + 浏览器，另立一格）；探针未接进批量脚本（`run-batch-dual-backend.sh` 不传 `TIME_SPEED`）；dev 内存跨轮堆积（多轮后重启后端即清） |
