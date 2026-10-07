@@ -690,13 +690,18 @@ B13 验收 8「国家集结 50 人门槛」进不去。
   而 `role_permission` 的 NATION 档**已有 `JOIN_NATIONAL_RALLY`（三档全开）却在生产零调用点**
   （只在 `SocialRulesAssemblerTest.java:249` 与 `ConfigTablesAcceptanceTest.java:210` 出现）——
   「判定写了没接上」的现行样本，V22 一并收。
-- 科技侧：国家科技只有 4 行、`effectAttr` 只有 4 个取值（`contract/config/nation_tech.json:10`），
-  **没有任何"上限"类属性**；三张科技表的折法只有一份算法
-  （`server/game-common/src/main/java/com/ironoath/common/config/TechBonusCore.java:56-71`），
-  单位是**定点万分比**（`effectValue` 注释：真实值 ×10000）。国家这一份的读取口是
-  `NationTechBonuses.percentFor`（`server/game-web/src/main/java/com/ironoath/web/nation/NationTechBonuses.java:74-92`）。
-- **付费抬上限只有一条已实现的先例，而且不是 B15**：`MARCH_MAX_CONCURRENT` 的三个生产读取点
-  （`MarchAppService.java:215-221`、`:594`、`:669-677`）全部直接用表值、没有任何"已购名额"叠加
+- 科技侧：国家科技只有 4 行、`effectAttr` 只有 4 个取值（`contract/config/nation_tech.json:10`，
+  每级幅度实测是 **0.02~0.04**：`nt_mil_train` 0.02 / `nt_fort_build` 0.03 / `nt_com_march` 0.03 / `nt_agri_grain` 0.04），
+  **没有任何"上限"类属性**。⚠️ **「三张科技表共用一份折法算法」这句话是错的**（独立对抗审查抓到，本轮现跑复核）：
+  `TechBonusCore` 只有**个人科技**在用（`TechEffects.java:107`），
+  联盟与国家两份各写了一遍内联循环 —— `grep -c TechBonusCore` 在
+  `server/game-web/src/main/java/com/ironoath/web/battle/AllianceTechBonuses.java` 与
+  `server/game-web/src/main/java/com/ironoath/web/nation/NationTechBonuses.java` 里都是 **0**
+  （国家的折法在 `NationTechBonuses.percentFor`，:74-92，自己 `total += row.effectValue() * level`）。
+  ⇒ 新属性要在**国家那一份**里加方法，"改一处就全表生效"是不存在的；这也让 D2 的成本比我原先写的高一格。
+- **付费抬上限只有一条已实现的先例，而且不是 B15**：`MARCH_MAX_CONCURRENT` 的**四个**生产读取点
+  （`MarchAppService.java:215-221`、`:594`、`:669-677`、`server/game-web/src/main/java/com/ironoath/web/bot/BotWorldAdapter.java:297`，
+  本轮现跑 `grep -c` = 4；原先这里写"三个"是漏了 Bot 那一处）全部直接用表值、没有任何"已购名额"叠加
   ⇒ 文档里那句「B15 卖的额外名额」**在代码里不存在**（本轮现跑核对，台账 #776）。
   唯一成立的一条是建造队列 +1：`pay_product.extraQueues` → `PaidPrivilegeGrants.java:74-97`
   → `PaidProducts.entitlements`（`server/game-web/src/main/java/com/ironoath/web/pay/PaidProducts.java:293-314`）
@@ -717,19 +722,40 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 **D1 上限是一个函数，不是三个数。**
 `nationRallyCap(playerId) = min(CEILING, scaleUp(RALLY_MAX_SIZE_NATION, 科技万分比) + 永久格)`，
 最后再与「本国此刻实有人数」取小（沿用 `SocialAppService.java:2400` 那句 `Math.min(cap, memberIds().size())` 的形状）。
-- **唯一折叠点**：新增 `SocialRulesAssembler.nationRallyCap(String playerId)`；写口（发起时夹 `maxMembers`）
-  与读口（`/rally/policy` 的 nation 视图）**必须都调它** —— 这条纪律的原文在 `SocialAppService.java:2362-2364`
-  「写口夹什么，读口就说什么；两条不一致时界面上亮着的数字就是假的」。
+- ⚠️ **落点不能是 `SocialRulesAssembler`**（我原先写在这里，被独立对抗审查推翻并现跑证实）：
+  该类的构造器只接 `ConfigRegistry`（`SocialRulesAssembler.java:48`），**够不到国家聚合与成员表**，
+  而这三项恰好是这条式子的输入；同时它有**三处手工 `new` 的夹具**
+  （`SocialRulesAssemblerTest.java:49`、`SocialStoreEquivalenceTest.java:55`、`NationRosterEquivalenceTest.java:77`）
+  ⇒ 往里加仓储参数会一次破三个测试类。
+- **正解落点**：`SocialAppService`（它已经同时持有 `store`、`rules`、`configs` 与国家通路），
+  做成一个私有折叠 + 一个**包可见**的方法给 `preparingRallies`/`rallyPolicy`/`nationRally` 三处共用；
+  科技那一档从 `NationTechBonuses` 取（它已有 `nationOf` 解析，:104-117）。
+- **唯一折叠点**：写口（发起时夹 `maxMembers`）与读口（`/rally/policy` 的 nation 视图）**必须都调它** ——
+  这条纪律的原文在 `SocialAppService.java:2362-2364`「写口夹什么，读口就说什么；两条不一致时界面上亮着的数字就是假的」。
+- ⚠️ 读口侧另有一处**已经存在的分派缺陷**会让"唯一"变成空话：客户端
+  `AppRoot.rallyPolicyOf`（`client/assets/scripts/game/session/AppRoot.ts:4294-4300`）写的是
+  `scope === 'SQUAD' ? squad : alliance` —— **非 SQUAD 一律回联盟那一份**。
+  ⇒ 不加 `nation` 分支，国家集结界面上亮着的就是联盟的 20 人，而服务端说的是 50：这就是"两套数"的真实藏身处，
+  必须进 V22-b 的必做清单（不是可选优化）。
 - 代价（要提前接受）：V22-c 的边界测试不能写死 49/50，必须"读 policy 的 cap 再 ±1"，否则 V24 一落地
   就把 V22 的用例钉成旧规格（**绿灯测试会把缺陷钉成规格**，本仓立过这条教训）。
 
-**D2 科技折加走「百分比放大基础值」，不走「+N 人/级」。**
-新 `nation_tech` 行用 `effectAttr=RALLY_CAPACITY`、`effectValue` 是每级万分比，折法复用
-`NationTechBonuses.percentFor` + `Rates.scaleUp` —— 先例是医院容量
-（`ArmyAppService.java:602-619`：基数来自建筑，加成按万分比放大，HALF_UP）。
-- 理由：绝对值 "+N 人/级" 要么新造一列语义、要么让同一张表的 `effectValue` 一会儿是率一会儿是人；
-  后者正是 `atech_rally` 退役那条理由的复发病。走百分比 ⇒ **零新算法**，`TechBonusCore` 不动。
-- 后果必须可测：满级倍率 = `1 + 每级幅度 × 级数`，落在验收 2 上正反各一条。
+> 4. **采纳这串数就必须推翻 D2 的"百分比折法"（第四条冲突，本轮算出来的）**：
+>    科技线要从基础 50 走到 **500**，而 `nation_tech` 的级数是 20（`maxLevel: 20`）⇒
+>    走"万分比放大基础值"需要每级 **+45%/级**（20 级累计 ×10），而这张表现有的最大幅度是
+>    **0.04/级**（`nt_agri_grain`），个人科技最高也只有 0.05/级 —— 要 45%/级 等于给这张表造一个
+>    比全表大 10 倍的异类值，且它一进 `TechBonusCore` 的万分比语义就会与另外四条产率/速度线互相看不懂。
+>    ⇒ **D2 已按此改写**（见下），改成"科技等级 → 档位表取绝对值"，不再用百分比放大。
+
+**D2（2026-10-07 第二轮改写，原"百分比放大基础值"作废）**：科技放开上限**不走万分比**，
+改成**档位表按等级取绝对值**：新表 `rally_cap_tier.json` 的每一档写死 `cap`（人）与它的解锁来源，
+科技线读的是"这一系的当前等级 → 落在哪一档"，因此 `effectValue` 那一列**不参与**上限计算。
+- 为什么改：见上面第 4 条算术；更重要的是这样**读得懂** —— 策划看表就知道"LV3 国家 + 科技 12 级 ⇒ 集结上限 600"，
+  而不是"把 50 乘上一个 1.45 的十次方"。
+- 代价：上限这条线**不进** `TechBonusCore` / `NationTechBonuses.percentFor` 那三个既有折叠口
+  （它们只服务产率/速度/攻防那类万分比效果）⇒ 新增一个独立读取口（`RallyCapTiers`），
+  它只读表 + 等级，不做百分比乘法；同时 `nation_tech` 要不要为它加一行**取决于 Q6 的裁决**
+  （见 §七：已裁"新增第 5 学派"，那一行承载的是"科技等级"这个前置，不是数值本身）。
 
 **D3 必须有硬封顶，且封顶是新的 global 参数 `RALLY_MAX_SIZE_NATION_CEILING`。**
 - 这不是审美而是技术后果：`initiateRally` 拿 **maxSize** 去算可打目标的战力倍率
@@ -737,6 +763,31 @@ B13 验收 8「国家集结 50 人门槛」进不去。
   50 人 ⇒ 14.1x；抬到 90 ⇒ 18.97x。**也就是说科技与付费在悄悄扩大 PVP 打击范围**，
   封顶的作用是把这条副作用显式钉住、并让它成为一条可失败的验收（见验收 4）。
 - 与人数盘子对齐：Lv1 国家 `memberCap=200`，封顶要"碰得到"才有意义 ⇒ 提案落在 `[51, 100]`（值见 §七 Q2）。
+
+**D3-b 2026-10-07 第二轮裁决（用户亲自给的阶梯，不是本文提案）与它的三处算术冲突**
+
+裁决原文：**科技（国家升级）线最多到 500 人**；**用材料扩充（也可以付费）到 600 / 800 / 1200**；
+**纯付费到 1500 / 3000 / 6000 封顶**。
+⇒ 实现形态随之从"一个 `_CEILING` 参数"改成**一张档位表**（新表 `rally_cap_tier.json`：
+`tier` / `cap` / `source ∈ {TECH, MIXED, PAID}` / 成本列 / `why`），理由与 `pay_product` 同一条：
+**档位是产品数据，不许写成代码里的常数**；客户端拿到的仍然是 `/rally/policy` 那一个数（铁律 1 不变）。
+
+> ⚠️ 下面三条是本轮**现跑**算出来的冲突，不是猜测；实现**不许**擅自改数，先拍再动（台账 #782）。
+> 1. **有 4 档永远碰不到**：`nation_config.json` 实测只有 **3 个等级**，`memberCap` = **200 / 400 / 800**。
+>    而集结人数在发起时被"组织实有人数"**夹住**（`SocialAppService.java:2433-2434`，读口同式 :2400）⇒
+>    `1200 / 1500 / 3000 / 6000` 这四档**超过历史上任何一刻的国家人数上限**，买了也不会生效；
+>    `800` 档只有在 Lv3 且全国满员时才碰得到，等价于"全国所有人出征一次"。
+>    ⇒ 要么同批把 `memberCap`（以及它牵动的国库周税口径"每盟每周 10000"、`nation_config` 等级数）一起抬，
+>    要么明确这几档是"未来国家扩容的预留位"并**在表里写死这个语义** ——
+>    否则就是 **#19「卖了没用」的付费版**，而付费场景里这是最贵的一种缺陷。
+> 2. **PVP 打击面按 `2.0×√N` 一起放大**（圈层算式吃的是夹后的 `maxSize`，
+>    `AttackGuardService.guardRally` → `SocialAppService.java:2598-2599`）：
+>    500 ⇒ **44.7x**、600 ⇒ 49.0x、800 ⇒ 56.6x、1200 ⇒ 69.3x、1500 ⇒ 77.5x、3000 ⇒ 109.5x、6000 ⇒ **154.9x**
+>    （对照 B13 的原意：50 人 ⇒ 14.1x，"弱者靠组织够到强者"）。
+>    ⇒ 采纳这串数就是把"一次集结能讨伐 155 倍战力的目标"变成合法玩法，必须显式认下来。
+> 3. **与 B13 批次文件原文冲突**：`B13_国家与国战.md:92` 明写"国家集结最多 50 人（对比小队 5 人、联盟 20 人）"，
+>    `:148` 的验收 8 也按 `2.0×√50 ≈ 14x` 立判据 ⇒ 采纳七档阶梯必须同批**就地补注**这两处
+>    （划掉 + 写新口径 + 保留原文与日期，不删条目），否则 `验收矩阵.md` 与批次文件同时变成假陈述。
 
 **D4 永久扩容归**发起人个人**（谁买谁带），不归全国。**
 - 三条理由：①国家级永久槽位要动 `Nation` 聚合 + 国库审计 + 亡国/退国处置（V22 验收④那一支**还没裁**），
@@ -749,9 +800,14 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 **D5 付费入口走 `ITEM`，不新增 `PayProductCfg.Kind`。**
 `product_reward.rewardType` 只允许 `RESOURCE,ITEM`（`contract/config/product_reward.json:10`），
 `PRIVILEGE` 是服务端按 kind 生成的（`ProductFulfilment.java:109-131`），而落库口的 switch 只认
-月卡/基金/首充/战令四种（`PaidPrivilegeGrants.java:74-97`）。⇒ 卖"扩容道具"走**既有 ITEM 发货路**，
+月卡/基金/首充/战令四种（`PaidPrivilegeGrants.java:74-97`）。⇒ **买**这一半走既有 ITEM 发货路，
 不动 kind、不动 switch；「消耗资源」那一半走 `shop.json` 的 `priceCurrency=GOLD`
 （金币就是 `resource` 表的 GOLD，缺钱语义已有 `RESOURCE_NOT_ENOUGH(4000)`）。
+- ⚠️ **但"使用"这一半不是零改动**（独立对抗审查抓到、本轮现跑证实 —— 我原先把它说轻了）：
+  `BagAppService.useBuffItem` 在分派之前有一道白名单闸，非 `GRANT_SHIELD`/`CLOSE_CITY` 一律先抛
+  `ITEM_CANNOT_USE`（`BagAppService.java:344-350`），而闸后面的逻辑又把 `effectValue` 硬绑成时长
+  （`:357` 那句 `item.effectValue() * req.count() * 1000L` ⇒ 秒）。
+  ⇒ 永久格**必须新开一条按 `effectKind` 分派的使用分支**，不能指望它自动走进 `useBuffItem`。
 - 省这一刀的真实价值：新增 kind 会连带 `ProductFulfilment` 的分支与"付费内容不成立"那族事故面
   —— **#19 就是这条路上产生的**。
 
@@ -776,7 +832,7 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 
 | 文件 | 改动 | 会被哪道门/用例兜住 |
 |---|---|---|
-| `contract/config/nation_tech.json` | `effectAttr` ENUM 加 `RALLY_CAPACITY`；新增一行（军事系、`requireNationLevel>=2`，与既有两条军事线一致） | `ContractEnumParityTest.java:78-89`、`check-config-consumers.js:84-114` |
+| `contract/config/nation_tech.json` | `effectAttr` ENUM 加 `RALLY_CAPACITY`；新增一行（军事系、`requireNationLevel>=2`，与既有两条军事线一致） | ⚠️ **不是** `ContractEnumParityTest`（本轮现跑：那份里零 `NationTech` 引用，它比的是个人 `tech` 表）——真正会红的是 `server/game-config/src/test/java/com/ironoath/config/NationTechCostTest.java:82`（`hasSize(4)`）与 `:86`（**每学派恰好一行**），加一行**必红** ⇒ 见 §七 Q6 那条要先拍的裁决；`check-config-consumers.js:84-114` 只按**表类**粒度判"这张表有人在读"，所以**新行零消费点照样绿** ⇒ 这条门挡不住本卡的头号风险，必须靠 §四 验收 1 的那条调用点判据补 |
 | `contract/config/global.json` | `RALLY_MAX_SIZE_NATION` 的 `source`/`why` 就地改成「基础值（V24 起科技与永久格在它之上抬，封顶见 `_CEILING`）」，**值 50 不动**；新增 `RALLY_MAX_SIZE_NATION_CEILING` | `check-doc-counts` 不涉；由验收 1 的调用点计数兜 |
 | `contract/config/item.json` | `effectKind` ENUM 加 `RAISE_RALLY_CAP`；新增一行扩容道具 | `ItemCfg` 生成枚举 + 背包过滤 |
 | `contract/config/shop.json` / `pay_product.json` / `product_reward.json` | 各加一行；**价格仍只放 global 的参数名指针**（`pay_product.json` designNote 第 1 条） | `check-config-refs` 规则 3、`ProductRewardConsistencyTest` |
@@ -796,15 +852,26 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 
 ### 四、验收标准（每条都能失败；判定方式写死，不许"看起来对了"）
 
-1. **折叠点唯一**：`grep -rn "RALLY_MAX_SIZE_NATION\b" server --include=*.java | grep -v /test/` 只命中**一处**
-   （装配器内部），其余全走 `nationRallyCap`。用生产调用点计数判，不是"类里有这个方法"。
+1. **折叠点唯一**：⚠️ 原先这条写的是"`grep RALLY_MAX_SIZE_NATION` 只命中一处"—— 独立对抗审查抓到、
+   本轮现跑证实：**零实现时它就已经只命中一处**（实测 = 1，正是 `SocialRulesAssembler.java:233` 那行 switch）
+   ⇒ **无论实现对错都会绿，作废**。换成两条真能失败的：
+   ① 折叠方法 `nationRallyCap` 在**非测试源码**里的生产调用点 `>= 2`（写口 + 读口各一）：
+      `grep -rn "nationRallyCap(" server --include=*.java | grep -v /test/ | wc -l`；
+   ② JUnit **同刻**比对：同一玩家同一状态下 `/rally/policy` 给的 `nation.maxMembers`
+      与发起后 `RallyView.maxMembers` 必须相等 ⇒ 写口绕开折叠点自己算一次就会红
+      （这才是"读口写口两套数"那族的直接判据，光看 grep 永远看不见）。
 2. **科技生效（正反各一条）**：JUnit 造一个国家，`RALLY_CAPACITY` 行 0 级与满级各读一次 policy ⇒
    `maxMembers` 严格等于 `min(ceiling, scaleUp(50, percent) + paid)`；**把科技等级改回 0 后数字必须变小**
    —— 只测变大不测变小，clamp 写反了也会绿。
 3. **封顶生效**：科技 + 永久格推到超过封顶 ⇒ 读口与写口给同一个 `ceiling`；发起时传更大的 `maxMembers`
    被**夹住而不是报错**（沿用 `Rally.initiate` 越界不拒绝的既有口径，`SocialAppService.java:2423` 注释）。
-4. **副作用显式**：一条用例断言「封顶对应的 `2.0×√N` 可打倍率」落在 D3 写的区间内 ⇒
-   抬上限不许静默扩大 PVP 打击范围（这条是 D3 的全部理由，必须留成可失败的判据）。
+4. **副作用显式（原写法测不到，已改成运行时判据）**：原先这条只写"断言封顶对应的 `2.0×√N` 可打倍率
+   落在 D3 的区间内"—— 那是**对着配置表做算术**：`attackGuard.guardRally` 到底吃到的是夹后的 `maxSize`
+   还是客户端传来的原始值，它一概不知（调用点在 `SocialAppService.java:2598-2599`）⇒ 作废，换成：
+   发起一次 `maxMembers` 远大于封顶的国家集结，回读 `RallyView.maxMembers == ceiling`；
+   再挑一个"按原始值够得着、按封顶够不着"的目标坐标 ⇒ **必须被圈层拒**。
+   **配套植入自证**：把 `guardRally(...)` 的第三个参数换成请求里的原始 `maxMembers`，这条用例必须红
+   —— 不红就说明它没在测这件事（本仓"绿灯测试会把缺陷钉成规格"那条教训的直接应用）。
 5. **永久格落库**：用一次道具 ⇒ 计数 +1 且**重启后仍在**（证据是 Mongo 文档里那一列，不是内存读数）；
    到封顶再用 ⇒ **不扣道具**、回专用错误码；扣数与计数增长同临界区（不许"扣了没抬"）。
    ⚠️ 投影读模型同批复核（见 D7）。
@@ -842,11 +909,14 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 
 | # | 问题 | 现有锚点 | 本轮提案（**待产品复核，未复核不许上线**） |
 |---|---|---|---|
-| Q1 | 新科技行的每级幅度与级数上限 | 同表既有 4 行都是 `0.03~0.05/级`、`maxLevel=20`；且「国家满级一律低于个人满级」是 `nation_tech.json:5` 的明文取向 | 幅度 `0.04/级` × 20 级 ⇒ 满级 +80% ⇒ 基础 50 抬到 90 |
+| Q1 | 新科技行的每级幅度与级数上限 | 同表既有 4 行的实测幅度是 **0.02 / 0.03 / 0.03 / 0.04**（`nt_mil_train`/`nt_fort_build`/`nt_com_march`/`nt_agri_grain`），级数一律 20；且「国家满级一律低于个人满级」是 `nation_tech.json:5` 的明文取向 | 幅度取**区间内偏低的一档**（推荐 0.03/级 × 20 级 ⇒ 满级 +60% ⇒ 基础 50 抬到 80），军事系与 `nt_mil_train` 同 0.02~0.03 量级；**待产品复核**（B13 只给了 50 这一个数） |
 | Q2 | `RALLY_MAX_SIZE_NATION_CEILING` 取值 | B13 只给了 50 一个数；`memberCap` Lv1=200 | 落在 `[51,100]`；100 时 √N 倍率 = 20x，需确认这档 PVP 打击面可接受 |
 | Q3 | 扩容归个人还是归国家（D4 的反面） | 个人：已有 `PlayerSave`；国家：要动 `Nation` + `Sink` 枚举 + 周限额 | 个人（D4） |
 | Q4 | 扩容道具的 `type` 归属 | 现 `type` ENUM = SPEEDUP/RESOURCE/CHEST/MATERIAL/BUFF/EQUIP；永久能力既不是 BUFF（有时长）也不是 MATERIAL（可合成） | **不许静默新增 type**；先按 Q3 结论问产品要不要给 `type` 加一档 |
 | Q5 | 价格与限购（金币档 + 付费档） | 商店金币价口径见 `product_reward.json` designNote（建造令 1h=40、练兵令 1h=45 等）；`pay_product` 价格住在 `global` 的 `PRODUCT_*_CENTS` | 无出处 ⇒ 只列问题，不填数 |
+| Q6 | **国家科技"每学派恰好一行"这条既有裁决要不要放开**（本轮新增，**它挡在 V24-a 前面**） | `nation_tech.json:4-5` 的 designNote 明写"每学派一行、共 4 行（§五③）"，而 `NationTechCostTest.java:82` 把 `hasSize(4)`、`:86` 把"一系多行就红"钉成了回归卡口 ⇒ **再加一行军事系科技就会撞这条裁决**，而"科技逐级放开上限"正需要一行新科技 | 推荐**改裁决承载**：把新行挂在**新的第 5 系（如"编制"）**上而不是给军事系加第二行 —— 既守住"每学派一行"这条原本用来限制国库沉没口形状的裁决，又不动 `NationTechCostTest` 的语义（只把 `hasSize(4)` 改成 5 并同步那条 designNote）。次选：允许一系两行并改写测试与 §五③ 的理由原文。**这条必须由产品拍，不由实现选** ⇒ **已裁（2026-10-07 第二轮弹窗，选了推荐项）**：新增第 5 学派（建议名"编制 / LOGISTICS"），`hasSize(4)` 同批改 5，`:86` 那条"一系两行就红"的断言**原样保留** |
+| Q8 | **六档阶梯要不要连带抬 `memberCap`**（不抬就有 4 档是"付了钱买不到东西"） | `nation_config.json` 实测只有 3 级、`memberCap` = 200 / 400 / 800；而集结上限在发起时被"组织实有人数"夹住（`SocialAppService.java:2433-2434`，读口同式 :2400）⇒ `1200 / 1500 / 3000 / 6000` 四档**永远碰不到** | **待拍**（本轮只登记、实现不许自己挑）：推荐**这四档先不入表**，等"国家规模 / memberCap"那条裁决一起落地；若产品坚持入表，必须在 `rally_cap_tier` 的 `why` 里写死"当前国家人数上限之下此档为预留位"，并且 `/rally/policy` 的界值仍以 `min(档位, 实有人数)` 为准 —— 否则就是 **#19「卖了没用」的付费版** |
+| Q7 | 道具"使用"这一半要不要走 `useBuffItem` | `BagAppService.java:344-350` 的白名单闸会把非 SHIELD/CLOSE_CITY 的 BUFF 一律抛 `ITEM_CANNOT_USE`，而 `:357` 把 `effectValue` 当秒算 ⇒ 永久格**不可能**沿用那条路 | 推荐新增一条按 `effectKind` 分派的永久能力分支（与 D6 一致），**不要**为了少改代码把 `RAISE_RALLY_CAP` 塞进 BUFF 类型 |
 
 ---
 
