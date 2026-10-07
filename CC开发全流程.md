@@ -737,10 +737,10 @@
 
 | 范围 | 本轮观察到的事实 | 开发边界与证据入口 |
 |---|---|---|
-| 首次出征 | `GameApi.worldMarch` 有定义无生产调用，`TargetSearchView.onTargetSelected` 无非空绑定；行军面板只有已有队伍的操作 | V01 先补目标→编成确认→出征→结果，再做重复；`client/assets/scripts/game/session/GameApi.ts`、`client/assets/scripts/scene/TargetSearchView.ts`、`B25_减负三件套.md` §〇 |
-| 普通集结与国战 | 集结 API 存在但无客户端生产调用；战略目标物契约、国战计分消费仍有缺口，不能把普通集结等同完整国战 | V02 分别收口；`GameApi.squadRally/allianceRally/rallyJoin`、`WarScoreBoard`、B21；压测仍是国战前置 |
-| 个人科技/国家科技/装备强化 | 后端领域、服务与相关协议已有，客户端 `GameApi` 尚无对应研究/强化绑定 | V03 补消费界面和契约适配，不重写 B20 服务；`TechController`、`EquipController`、B20 |
-| 赛季展示 | 后端有 `/season/status` 等能力，客户端尚无该状态接口绑定与完整资产去向展示 | V04 先列保留/重置矩阵再展示；`SeasonController`、B14/B21/B24；不擅自改变跨季资产规则 |
+| 首次出征 | `GameApi.worldMarch` 有定义无生产调用，`TargetSearchView.onTargetSelected` 无非空绑定；行军面板只有已有队伍的操作 **[2026-10-07 盘点轮现跑更正：过期 —— `AppRoot.ts:4536` 与 `:4579` 两处真调 `worldMarch`；同刻 `node tools/report-client-send-paths.mjs` 报「136 方法 / 生产零调用点 0」]** | V01 先补目标→编成确认→出征→结果，再做重复；`client/assets/scripts/game/session/GameApi.ts`、`client/assets/scripts/scene/TargetSearchView.ts`、`B25_减负三件套.md` §〇 |
+| 普通集结与国战 | 集结 API 存在但无客户端生产调用；战略目标物契约、国战计分消费仍有缺口，不能把普通集结等同完整国战 **[2026-10-07 现跑更正：前半过期——`squadRally`/`allianceRally`/`rallyJoin` 各有 1 个生产调用点（`AppRoot.ts:4445` 等）；「计分消费」那半也已接（赛季分进 `Board.WAR` + 真链路探针打出「国战赛季分进账 … 进账人数=2」）。**仍成立的只有"战略目标物契约"**：关卡/王城不可占领 ⇒ `beginSiege` 进不去；国家层集结（`RallyScope.NATION`）无发起入口，见开发包 V22]** | V02 分别收口；`GameApi.squadRally/allianceRally/rallyJoin`、`WarScoreBoard`、B21；压测仍是国战前置 |
+| 个人科技/国家科技/装备强化 | 后端领域、服务与相关协议已有，客户端 `GameApi` 尚无对应研究/强化绑定 **[2026-10-07 现跑更正：过期 —— `techResearch` 有 1 个生产调用点、`forgeEquip` 有 2 个；装备强化写侧见开发包 §四 V11 那格（探针 19 通过 0 失败，含灰键零请求的对照组）]** | V03 补消费界面和契约适配，不重写 B20 服务；`TechController`、`EquipController`、B20 |
+| 赛季展示 | 后端有 `/season/status` 等能力，客户端尚无该状态接口绑定与完整资产去向展示 **[2026-10-07 现跑更正：绑定那半过期——`GameApi.ts:174 seasonStatus()` 已绑 `GET /season/status`；"完整资产去向展示"仍按 V04 口径未完]** | V04 先列保留/重置矩阵再展示；`SeasonController`、B14/B21/B24；不擅自改变跨季资产规则 |
 | 排行/社交/战报分享 | 排行页已有组合根接线，关注/举报/拉黑及战报分享已有 `AppRoot` 调用 | 不能继续写“零实现”；`GameBootstrap` 的 `renderRank` 绑定、`AppRoot.socialFollow/socialReport/socialBlock/shareReport` 相关调用；本轮未实机回归 |
 | 礼包与支付 | `AppRoot.showGiftPopup`、`invokePayment` 和 `MidasPayment.requestMidasPayment` 桥接已有代码 | 不另造支付链；本轮未验证真实微信支付、授权环境和到账结果 |
 | 减负三件 | 首次出征是前置；自动策略的启停/预算/停止原因不是单次训练请求；上次登录不等于离线起点 | V05 按 B25 四项待裁决分拆；`previousLoginAt` 若被采用，文案只能称“自上次登录以来” |
