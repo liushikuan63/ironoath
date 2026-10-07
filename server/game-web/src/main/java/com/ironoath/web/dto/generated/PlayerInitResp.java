@@ -16,6 +16,7 @@ public record PlayerInitResp(
         Map<ResourceType, ResourceState> resources,   // 五种资源快照
         PowerSnapshot power,
         Long protectUntil,   // 新手保护到期时间（服务端毫秒时间戳）；null 表示无保护
-        OfflineReportView offlineReport)   // 「自上次登录以来」的汇总**判定依据**（B25-S3）。下发的是时间边界与两个阈值，不是一个算好的汇总 —— 汇总由客户端从它已经拉到的面板数据里聚合（裁决①(a)：只聚合既有账本，不新造第二本账）
+        OfflineReportView offlineReport,   // 「自上次登录以来」的汇总**判定依据**（B25-S3）。下发的是时间边界与两个阈值，不是一个算好的汇总 —— 汇总由客户端从它已经拉到的面板数据里聚合（裁决①(a)：只聚合既有账本，不新造第二本账）
+        ToastTuning toast)   // 飘字队列的参数包。放在 init 而不是每个面板各自问一次：队列住在编排层（整个客户端只有一个出口），而 init 是它唯一必然先于任何提示发生的时刻。
 {
 }

@@ -394,4 +394,33 @@ class PlayerInitTest {
     private static String json(Object value) {
         return JsonUtils.toJson(value);
     }
+
+    /**
+     * B04 验收 8 的服务端半边：飘字队列的三个参数必须随 init 下发，且逐列等于表里的值。
+     *
+     * <p>为什么钉在服务端而不是只测客户端：红线是「客户端不抄配置表」，而
+     * {@code RewardToastQueue} 的构造参数就这三个 —— 不下发就只能写死，写死的那一份
+     * 与表分叉时，运营改队列上限只有服务端会动（台账 #770 同族：功能在、参数没人递）。
+     */
+    @Test
+    @DisplayName("B04 验收 8：飘字队列的三个参数随 init 下发，逐列等于 global 表")
+    void toastTuningIsSentFromTheTable() throws Exception {
+        MvcResult result = mockMvc.perform(post(INIT_URL)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(newInitReq())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.toast.gapMs")
+                        .value((int) configs.longParam("TOAST_GAP_MS")))
+                .andExpect(jsonPath("$.data.toast.maxQueued")
+                        .value((int) configs.longParam("TOAST_MAX_QUEUE")))
+                .andExpect(jsonPath("$.data.toast.stuckTimeoutMs")
+                        .value((int) configs.longParam("TOAST_STUCK_TIMEOUT_MS")))
+                .andReturn();
+
+        // 队列上限必须是正数：0 会被队列读成"一条都不许排"，而表里给的不是那个值
+        JsonNode toast = JsonUtils.readTree(body(result)).get("data").get("toast");
+        assertThat(toast.get("maxQueued").asInt()).isPositive();
+        assertThat(toast.get("gapMs").asInt()).isPositive();
+    }
+
 }

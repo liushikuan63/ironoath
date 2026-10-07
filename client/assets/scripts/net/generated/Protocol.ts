@@ -137,6 +137,8 @@ export interface PlayerInitResp {
   protectUntil: number | null
   /** 「自上次登录以来」的汇总**判定依据**（B25-S3）。下发的是时间边界与两个阈值，不是一个算好的汇总 —— 汇总由客户端从它已经拉到的面板数据里聚合（裁决①(a)：只聚合既有账本，不新造第二本账） */
   offlineReport: OfflineReportView
+  /** 飘字队列的参数包。放在 init 而不是每个面板各自问一次：队列住在编排层（整个客户端只有一个出口），而 init 是它唯一必然先于任何提示发生的时刻。 */
+  toast: ToastTuning
 }
 
 /**
@@ -264,4 +266,16 @@ export interface StaminaBuyResp {
   costGold: number
   /** 今日累计购买次数 */
   boughtToday: number
+}
+
+/**
+ * 飘字队列的三个参数（B04 验收 8「多个奖励按顺序播放、不可同时堆叠遮挡」）。**为什么必须下发而不是客户端写死**：这三个数住在 contract/config/global.json（TOAST_GAP_MS / TOAST_MAX_QUEUE / TOAST_STUCK_TIMEOUT_MS），是本仓红线「客户端不抄配置表」覆盖的数值 —— 客户端硬编码一份就等于给队列上限造了第二个真相，运营改表时只有服务端那一半会动。
+ */
+export interface ToastTuning {
+  /** 两条飘字之间的间隔毫秒。来源 global.TOAST_GAP_MS */
+  gapMs: number
+  /** 队列长度上限，超出丢弃并告警。来源 global.TOAST_MAX_QUEUE */
+  maxQueued: number
+  /** 单条飘字最长播放时间，超时强制推进（降级路径）。来源 global.TOAST_STUCK_TIMEOUT_MS */
+  stuckTimeoutMs: number
 }

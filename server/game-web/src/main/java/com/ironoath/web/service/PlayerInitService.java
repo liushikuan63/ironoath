@@ -14,6 +14,7 @@ import com.ironoath.core.player.PlayerSave;
 import com.ironoath.web.config.NewPlayerBoost;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.PlayerInitResp;
+import com.ironoath.web.dto.generated.ToastTuning;
 import com.ironoath.web.security.AuthSessionService;
 import com.ironoath.web.security.WeChatCodeExchanger;
 import org.slf4j.Logger;
@@ -180,7 +181,7 @@ public class PlayerInitService {
             // 资源用存档里那一份（刚建档算出来的，与 now 同源），不走结算
             return PlayerDtoMapper.toInitResp(save, now, null, save.resources(),
                     sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
-                    configs.longParam("OFFLINE_REPORT_MIN_ITEMS"));
+                    configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning());
         } catch (RuntimeException e) {
             // 建号失败必须释放幂等键：副作用没有产生，让客户端能安全重试
             idempotency.release(req.requestId());
@@ -206,7 +207,7 @@ public class PlayerInitService {
         return PlayerDtoMapper.toInitResp(save, now, previousLoginAt, resourceRates.settledView(
                 save, cities.findByPlayerId(save.playerId()).orElse(null), now),
                 sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
-                configs.longParam("OFFLINE_REPORT_MIN_ITEMS"));
+                configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning());
     }
 
     /**
@@ -215,6 +216,20 @@ public class PlayerInitService {
      */
     private long offlineMinIdleMinutes() {
         return configs.longParam("OFFLINE_REPORT_MIN_IDLE_MINUTES");
+    }
+
+    /**
+     * 飘字队列的三个参数。**值来自表**（与上面那两个阈值同一条纪律）：客户端读不到 global 表，
+     * 所以队列的间隔 / 上限 / 卡住超时只能由这里下发 —— 客户端写死一份就是第二个真相
+     * （B04 验收 8 那条「多个奖励按序播放、不堆叠遮挡」此前收不了，正是因为队列有了、参数没人递）。
+     */
+    private ToastTuning toastTuning() {
+        // 契约里这三列是 integer ⇒ 生成物取 int，而表读出来是 long：显式窄化而不是悄悄丢精度。
+        // 这三个数的量级（毫秒与队列条数）远小于 int 上限，窄化在此处是有意的、不是遗漏。
+        return new ToastTuning(
+                (int) configs.longParam("TOAST_GAP_MS"),
+                (int) configs.longParam("TOAST_MAX_QUEUE"),
+                (int) configs.longParam("TOAST_STUCK_TIMEOUT_MS"));
     }
 
     /**
