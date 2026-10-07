@@ -26,7 +26,6 @@ ASSET_DIR="${ORPHAN_ASSET_DIR:-client/assets}"
 ALLOWED="$(mktemp)"; FILES="$(mktemp)"; IMPORTED="$(mktemp)"
 trap 'rm -f "$ALLOWED" "$FILES" "$IMPORTED"' EXIT
 cat > "$ALLOWED" <<'EOF'
-RewardToastQueue	已知缺口，不是"设计如此"：B04 验收 8 要求「多个奖励按顺序播放、不可同时堆叠遮挡」，而生产提示的唯一出口是 scene/GameBootstrap.ts:777 的 showHint —— 它每次调用都在同一坐标 addChild 一个 Label、3 秒后自毁，多条必然叠在一起。本类是为此写的串行队列（含 TOAST_MAX_QUEUE 上限与卡死兜底），但 game/ 与 scene/ 下没有任何文件 import 它（现跑：只有 client/tests/RewardToastQueue.test.ts 两处）。**撤销条件**：showHint（或奖励展示出口）改走本类、且矩阵 B04 验收 8 的 ✅ 复验通过 ⇒ 删掉本行。
 MainCity	B01 阶段的占位主城场景，**它自己的文件注释就写着**「删掉这个文件，游戏逻辑不受任何影响 —— 这是判断表现层有没有越界的尺子」。现跑：Boot.scene 里没有它的压缩 uuid（meta 头 8b2dd467 在场景里 0 命中），其余提及全在别的视图文件注释里。⇒ 是"留作参照的死码"，不是没接的功能。**撤销条件**：要么删掉本文件（连带删 .ts.meta 并复跑 check-ts-meta），要么把它接回某个场景 ⇒ 删掉本行。
 EOF
 

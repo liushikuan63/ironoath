@@ -88,6 +88,8 @@ import { OfflineReportOverlay } from './OfflineReportOverlay'
 import { WorldMap } from './WorldMap'
 import { PanelNav } from './PanelNav'
 import { installAudio, isMuted, playSfx, setMuted } from './AudioService'
+import { RewardToastQueue } from '../game/reward/RewardToastQueue'
+import type { ToastTuning } from '../net/generated/Protocol'
 import { preloadRuntimeArt } from './ArtCatalog'
 import { claimReceiptText } from '../game/activity/ActivityPanel'
 
@@ -774,9 +776,50 @@ export class GameBootstrap extends Component {
    * <p>不引第三方 Toast：这里的用途只有"把刚刚那次点击的结果说清楚"，
    * 而一个挂在画布上的 Label 就是它的全部实现。
    */
+  /** 提示队列（B04 验收 8）。null = 还没拿到 init 下发的参数，此时直接显示而不是丢弃。 */
+  private hintQueue: RewardToastQueue | null = null
+  private hintSeq = 0
+  /** 一条提示的停留时长。**版式常量**（一屏文字读完要多久），不是业务口径，所以不进配置表。 */
+  private static readonly HINT_HOLD_MS = 3000
+
+  /**
+   * 注入飘字 / 提示队列的三个参数（B04 验收 8）。
+   *
+   * <p>由编排层在 /player/init 回来后递进来（见 AppRoot 的 hintTuning），
+   * 与目标搜索面板"先注入半径上下界再 attach"是同一条形状：
+   * **数值住在服务端的 global 表里，客户端只有类型**（B00 铁律），所以队列不能自己挑三个数。
+   */
+  applyHintTuning(toast: ToastTuning | null | undefined): void {
+    if (toast === null || toast === undefined) {
+      this.hintQueue = null
+      return
+    }
+    this.hintQueue = new RewardToastQueue(
+      { play: (item) => this.paintHint(item.text) },
+      { gapMs: toast.gapMs, maxQueued: toast.maxQueued, stuckTimeoutMs: toast.stuckTimeoutMs },
+    )
+  }
+
   private showHint(text: string): void {
     // 有话要说就要有声音：这条是"结果提示"的唯一出口，音效挂在这里而不是挂在各视图的失败分支上
     playSfx('alert')
+    const queue = this.hintQueue
+    if (queue === null) {
+      // 首屏之前（参数还没到）宁可叠一次也不丢提示 —— 丢提示等于把"点了没反应"留给玩家
+      void this.paintHint(text)
+      return
+    }
+    this.hintSeq += 1
+    queue.enqueue([{ id: 'hint-' + this.hintSeq, text, kind: 'item' }])
+  }
+
+  /**
+   * 画一条提示，停留时长结束后才 resolve。
+   *
+   * <p>这个 Promise 是队列串行的唯一依据：提前 resolve 会让下一条叠上来（正是验收 8 禁止的），
+   * 永不 resolve 会冻结队列（由 stuckTimeoutMs 兜底，那已经是降级路径）。
+   */
+  private paintHint(text: string): Promise<void> {
     const canvas = this.node.parent ?? this.node
     const hint = new Node('SettingsHint')
     canvas.addChild(hint)
@@ -797,7 +840,12 @@ export class GameBootstrap extends Component {
       background.roundRect(-(visible.width - 80) / 2, -18, visible.width - 80, 36, 6)
       background.fill()
     }
-    setTimeout(() => hint.destroy(), 3000)
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        hint.destroy()
+        resolve()
+      }, GameBootstrap.HINT_HOLD_MS)
+    })
   }
 
   /**
@@ -1686,6 +1734,8 @@ export class GameBootstrap extends Component {
       // 空态的「再次出征」：够不够、发不发由编排层判（表现层不碰这些）
       world.onRepeatLastMarch = () => { void this.root?.repeatLastMarch() }
     }
+    // 队列参数不属于任何一块面板，但必须早于任何一次提示 —— 挂在 targets 上由 init 递进来
+    out.hintTuning = (toast) => this.applyHintTuning(toast)
     return out
   }
 }

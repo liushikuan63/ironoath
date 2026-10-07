@@ -411,6 +411,12 @@ export interface PanelTargets {
   reports?(resp: BattleReportListResp, serverNowMs: number): void
   /** 敌情列表（B26 S19）：与战报同一块面板的第二个页签，同样由视图自己装配 */
   scoutIntel?(resp: ScoutListResp, serverNowMs: number): void
+  /**
+   * 提示 / 飘字队列的参数（B04 验收 8）：init 一回来就递给表现层。
+   * 这里刻意写结构类型而不是生成的名字：契约改列时这一行必须跟着红一次 ——
+   * 只有一处引用的话，改协议时它不会动，队列就会静默读到 undefined。
+   */
+  hintTuning?(toast: { gapMs: number, maxQueued: number, stuckTimeoutMs: number } | null): void
   /** 「自上次登录以来」那一屏（B25-S3）。条目为空时编排层不会调它 —— 一个空面板比不弹更糟。 */
   offlineReport?(view: OfflineReportPopup): void
   /** 汇总里点了一条：跳到那一页（key 与 PanelNav 的 key 一致）。 */
@@ -786,6 +792,8 @@ export class AppRoot {
     // 边界与阈值随登录一起下发（B25-S3）：previousLoginAt 是"自上次登录以来"的起点，
     // 而 profile.lastLoginAt 此刻已被推进成现在 —— 两者差一个"永远是 0 秒"的 bug
     this.offlineConfig = outcome.data.offlineReport ?? null
+    // 队列参数与离线汇总同源同刻：都在 init 这一次响应里，且都必须早于任何一次提示
+    this.targets.hintTuning?.(outcome.data.toast ?? null)
     await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'stamina', 'social', 'power',
       'world', 'quest', 'reddot')
     // 首屏拉齐之后再弹「自上次登录以来」（B25-S3）：它要读城市/社交那两份已到的数据，
