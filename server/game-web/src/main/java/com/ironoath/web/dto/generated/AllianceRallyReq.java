@@ -5,7 +5,7 @@ package com.ironoath.web.dto.generated;
 import java.util.List;
 
 /**
- * POST /alliance/rally 请求体（B10 §二）。
+ * POST /rally/alliance 请求体（B10 §二；真路径同 `SquadRallyReq` 那条）。本行原先写的是 `POST /alliance/rally`，与真路径相反 —— 台账 #788。
  */
 public record AllianceRallyReq(
         String requestId,   // 幂等键

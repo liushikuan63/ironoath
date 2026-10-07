@@ -525,7 +525,7 @@ export interface RallyPolicyResp {
 }
 
 /**
- * POST /squad/rally 请求体（B10 §二）。
+ * POST /rally/squad 请求体（B10 §二；路径由 `RallyController` 的 `@RequestMapping("/rally")` + `@PostMapping("/squad")` 决定）。本行原先写的是 `POST /squad/rally`，与真路径相反 —— 台账 #788。
  */
 export interface SquadRallyReq {
   /** 幂等键 */
@@ -645,7 +645,7 @@ export interface AllianceDonateResp {
 }
 
 /**
- * POST /alliance/rally 请求体（B10 §二）。
+ * POST /rally/alliance 请求体（B10 §二；真路径同 `SquadRallyReq` 那条）。本行原先写的是 `POST /alliance/rally`，与真路径相反 —— 台账 #788。
  */
 export interface AllianceRallyReq {
   /** 幂等键 */

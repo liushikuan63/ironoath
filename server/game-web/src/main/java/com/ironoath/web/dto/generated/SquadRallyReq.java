@@ -5,7 +5,7 @@ package com.ironoath.web.dto.generated;
 import java.util.List;
 
 /**
- * POST /squad/rally 请求体（B10 §二）。
+ * POST /rally/squad 请求体（B10 §二；路径由 `RallyController` 的 `@RequestMapping("/rally")` + `@PostMapping("/squad")` 决定）。本行原先写的是 `POST /squad/rally`，与真路径相反 —— 台账 #788。
  */
 public record SquadRallyReq(
         String requestId,   // 幂等键
