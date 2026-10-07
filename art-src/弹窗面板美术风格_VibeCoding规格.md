@@ -1,0 +1,331 @@
+# 弹窗面板美术风格 · Vibe Coding 规格（V25 · 代号「铁誓 UI」）
+
+> 依赖：**无功能依赖**（可与 V22-b / V22-c 并行，领地只在 `client/assets/scripts/scene` + `game/ui` + `art-src`）
+> ｜ 落地拆分：**V25-a…V25-e**（见 §五）｜ 并行：**否**（一次改 32 个视图文件，全量探针必须整体重跑）
+>
+> **一句话风险**：本仓已经有过一次「素材做出来却画不上去」的事故——`ui-button-command-v1` 端帽 54 / 边框 40，
+> 而全仓 24 个按钮消费点高度只有 **26~34**，四张 300KB 图从来没有被九宫格画过一次，已退出运行时
+> （原文与判据见 `art-src/GENERATION_PROMPTS.md` 「已采用」段 + `tools/verify-art-runtime.mjs:765-772`）。
+> ⇒ **本方案的第一约束不是好不好看，而是「边厚 ÷ 消费尺寸」**。§二 的三档契约就是为防止重演而存在的，
+> 任何素材复用跨档，一律按缺陷处理，不按"观感差异"处理。
+
+---
+
+## 〇、现状（2026-10-07 现跑读数；引用前请再现跑一次）
+
+统计方法：正则按行抽 `roundRect(x, y, w, h, r)` 的第 3/4 参，同文件 `const` 数字表解析；参数是运行时表达式的会落进"待人工判档"，**不当已判**。
+
+| 维度 | 现跑读数 | 证据 |
+|---|---|---|
+| 圆角矩形绘制点 | `roundRect` **133 处 / 32 文件** | `client/assets/scripts` 全量 grep |
+| 直角矩形绘制点 | `.rect(` **85 处**；`fillRect` **3 处（全在 1 个文件）** | `scene/GiftPopupView.ts:147` |
+| 真素材上屏的唯一入口 | `applySlicedSprite` **只有 5 处调用** | `scene/ArtCatalog.ts:382`、消费点 `CityPanelView.ts:1146`、`MarchPanelView.ts:195` |
+| 已有面板贴图 | **1 张**：`ui/generated/ui/panel-kingdom-v1.png`（384×266 RGBA **170.9KB 未量化**，meta 四向 border=44） | 该图 `.png.meta` 的 `borderTop/Bottom/Left/Right` |
+| 面板底色常量 | `COLOR_PANEL` **17 处各自定义、5 个不同取值**（主流 `new Color(40,33,27,255)` 占 12 处；离群 `(36,30,25,250)`/`(38,30,22,245)`/`(38,31,26,255)`/`(43,36,29,255)`） | 各 `*PanelView.ts` 头部 |
+| 遮罩色 | **6 个不同取值**，alpha 从 160 到 238 不等 | 各视图 `COLOR_MASK` |
+| tokens 文件 | **不存在**（无 Theme/tokens，色值散成 333 处局部常量） | `client/assets/scripts` 全量 |
+| 标题栏 | 全是**裸 Label，无底色块**：`GiftPopupView.ts:153`（26 号铜金）、`NationPanelView.ts:262`（22 号金，左对齐）、`BagPanelView.ts:291`（22 号铜金） | 同左 |
+| 关闭键 | **两形态并存**：文字 `×` 裸节点 36×36 无 Graphics（`GiftPopupView.ts:180-183`、`StaminaDetailOverlay.ts:101`）vs Graphics 圆角 + 文字「关闭」（`NationPanelView.ts:945-959`、`CreditsOverlay.ts:113`、`EquipPanelView.ts:237`、`TechPanelView.ts:303`、`GachaHistoryView.ts:114`、`MarchPanelView.ts:222`） | 同左 |
+| 字体 | 统一入口已存在且可用，**本轮不动** | `scene/UiFont.ts:9-20` |
+
+**用户诉求的物证**：礼包弹窗底板 = `fillRect` 直角实心矩形（`GiftPopupView.ts:145-147`），标题 = 浮在矩形上的一行字，关闭 = 一个 `×` 字符。这就是"方方正正的框框"的字面含义。
+
+### 消费尺寸三档实测（决定素材边厚上限）
+
+| 档 | 实测消费尺寸 | 出现值（高） | 位置样例 |
+|---|---|---|---|
+| **A 主弹窗底板** | 460×300 ～ 720×600 | 300 / 356 / 420 / 430 / 460 / 600 | `GiftPopupView.ts:30-31`（460×300）、`ChoiceOverlay.ts:63`（w×430）、`MarchPanelView.ts:200`（720×356）、`OfflineReportOverlay.ts:25-26` |
+| **B 条行 / 卡片** | 高 40 ～ 96 | 40 / 44 / 46 / 52 / 56 / 58 / 60 / 62 / 66 / 74 / 96 | `BagPanelView.ts:541`（680×46）、`SocialPanelView.ts:1213`（680×52）、`HeroPanelView.ts:351`（680×96） |
+| **C 小件（chip / 按钮 / 角标）** | 高 **26 ～ 38** | 26 / 28 / 30 / 32 / 34 / 38 | `ChoiceOverlay.ts:177`（120×38）、`OfflineReportOverlay.ts:143`（180×38）、`PanelNav.ts` 导航格 |
+
+> ⚠ 上一版把「一张框打天下」的想法用在 C 档上，就产出了零消费的 `ui-button-command-v1`。
+> 另一条同源经验：G9 的 chip 第一版边框只占图高 **1.7%**，铺到 32px 高的格子上边框直接消失、作废重出
+> （`art-src/GENERATION_PROMPTS.md` §7 G9）。⇒ **C 档素材的可见边厚下限 = 图高的 7%，上限 = 消费高的 25%**。
+
+---
+
+## 一、风格锁定：「铁誓」材质语法（2026-10-07 拍板，A 案）
+
+**一句话基调**：暗铁为骨、古铜为框、羊皮为面、暗红为号——弹窗是一块**挂在城墙上的军令牌**，不是一个网页对话框。
+
+材质语法六条，逐条都是可核对的：
+
+| # | 部位 | 必须满足 | 明确不接受 |
+|---|---|---|---|
+| 1 | 底板 | 锤面暗铁为底 + 古铜包角（四角各一块角帽）+ 角帽上铆钉；中心区必须是**纯净无装饰的深色面**（九宫格可切） | 纯色填充矩形、圆角矩形、现代卡片阴影、玻璃拟态 |
+| 2 | 内衬 | 长文内容（礼包说明、离线战报、鸣谢）用羊皮纸内衬，纸面有纤维与烧边，但**不遮字**：纸亮度只提一档，靠深字 tokens 保对比度 | 满屏米黄、纸纹花到影响读字、纸面压住数值 |
+| 3 | 标题 | 铜框匾额横幅（整图非九宫格，中央留空放字），压住底板上沿中线 | 浮空一行字没有承载物、把标题烘焙进素材（违反"不带文字"铁律） |
+| 4 | 顶饰 | 按语义换**小顶饰**（见下表），只出材质不出文字 | 每张面板临时决定装饰、用 emoji 或几何色块充当顶饰 |
+| 5 | 按钮 | C 档薄边铁钮（4px 级），主按钮铜面高光，禁用态降饱和不降形状 | 现代 app 的圆角胶囊、糖果渐变、发光描边 |
+| 6 | 遮罩 | 全场统一一个值（见 §六 tokens），带极轻的暗角 | 每个面板自己定 alpha（现状是 6 个值并存） |
+
+**语义顶饰映射**（决定 V25-b 要出哪几张顶饰，不靠临场发挥）：
+
+| 语义 | 顶饰 | 落位视图（现跑文件名） |
+|---|---|---|
+| 信息 / 列表 | 无顶饰，仅匾额 | `BagPanelView`、`HeroPanelView`、`QuestPanelView`、`TechPanelView` |
+| 确认 / 警示 | 铁框 + 暗红绶带角 | `ChoiceOverlay`、`SocialCreateOverlay`、`LineupEditOverlay` |
+| 奖励 / 礼包 | 金链绶带 + 火漆印 | `GiftPopupView`、`ShopPanelView`、`GachaHistoryView` |
+| 联盟 | 旗帜纹章 | `SocialPanelView`、集结类面板 |
+| 国家 | 玉玺火漆 | `NationPanelView`、`AvatarFramePanelView` |
+| 战斗 | 交叉长枪 | `BattleReportPanelView`、`MarchPanelView`、`MarchComposeOverlay` |
+
+**色族**（起点值，不是定案——V25-b 必须目视校准后写回本表；不改字体、不改场景美术基线）：
+
+| 角色 | 起点值 | 依据 |
+|---|---|---|
+| 遮罩 | `Color(8, 6, 5, 190)` | 收敛现跑 6 个值到 1 个，取中位 alpha |
+| 底板铁面 | `Color(22, 18, 16, 255)` | 现跑基线（`BagPanelView.ts:32-35`），素材缺失时的兜底色 |
+| 面板兜底 | `Color(40, 33, 27, 255)` | 现跑 17 处里的主流值（12 处），保留以免一次性推翻 |
+| 铜金高光 | `Color(184, 134, 11, 255)` | 现跑基线（`BagPanelView.ts:36`），与内城规格 §1.1「铜金集中给王权/交互」同一条 |
+| 羊皮纸面 | 候选 `#D9C89E` ～ `#C9B482` 区间，**待定** | 新值，必须与铜金同色相族且深字对比度 ≥ 4.5:1，实测后定案（§七 Q2） |
+| 暗红号色 | 候选 `#7B2B25` ～ `#5E1F1B` | 同上，与现有暗旌旗同族 |
+
+---
+
+## 二、三档素材契约（防「零消费素材」的硬判据）
+
+判据公式（与 `tools/verify-art-runtime.mjs:765-772` 同一条，另加安全余量）：
+
+- **不退化**（既有门）：`contentWidth ≥ insetLeft + insetRight` 且 `contentHeight ≥ insetTop + insetBottom`；
+- **不吃内容**（本批新增，V25-e 进门）：同一组不等式右侧 ÷ 尺寸 ≤ **0.6**，否则边框吃掉可读区；
+- **可见下限**（G9 教训）：边厚 ÷ 图高 ≥ **0.07**。
+
+| 档 | 素材长边 | border（L/R · T/B） | 中心净区 | 消费尺寸下限 | 复用禁令 |
+|---|---|---|---|---|---|
+| **A 底板** | 512×344 | **48 · 36** | 416×272 | 460×300（现跑最小底板） | 不得用于 B/C |
+| **B 条行** | 512×128 | **12 · 8** | 488×112 | 180×40（现跑 B 档最矮） | 不得用于 C |
+| **C 小件** | 160×52 | **6 · 4** | 148×44 | 64×26（现跑 C 档最小） | 不得用于 A/B |
+| 装饰件 | 整图（非九宫格） | 不适用 | — | 按原比例缩放，比例差 >3% 直接失败（`accept_to_runtime.py` 现有判据） | 不参与退化判据 |
+
+现跑最小消费尺寸套上去自检：A 460×300 用 36 顶底 ⇒ 72/300 = 0.24 ≤ 0.6 ✓；C 64×26 用 4 顶底 ⇒ 8/26 = 0.31 ≤ 0.6 ✓ 且 4/52 = 0.077 ≥ 0.07 ✓。
+（A 档的 512×344 不是拍脑袋：它是 §4.6 首版实测的出图比例 1.487:1，改这个数是因为 `accept_to_runtime.py` 的 >3% 比例判据会拒 4:3。）
+
+**包体预算**（现跑基线：`resources/ui/generated/` 共 4.6MB，其中 `ui/` 子目录 224KB；小件已量化到 2.4~4.5KB 的 `P` 模式，`panel-kingdom-v1` 是 RGBA 170.9KB 的**存量例外**）：
+
+- 新增全套目标 ≤ **450KB**（A 档 ≤80KB/张、B 档 ≤20KB/张、C 档 ≤8KB/张、装饰件 ≤20KB/张）；
+- 单张 > 120KB 必须点名并说明为什么不能量化（软边/半透明是合法理由，"忘了跑 `accept_to_runtime.py`" 不是）；
+- `resources` 已配微信小游戏分包，不进首包（`ArtFamilies.ts:47-52` 注释 + 收口清单 #196）。
+
+---
+
+## 三、素材清单（18 张 = AI 母版 11 + 派生 3 + 复用现有 4）
+
+命名沿用现跑规律：`<件>-v1.png`，ArtKey 点分，注册在 `scene/ArtCatalog.ts` 的 `SPECS` 与 `game/art/ArtFamilies.ts`。
+
+| # | ArtKey | 资源路径 | 档 | 产出方式 |
+|---|---|---|---|---|
+| 1 | `ui.panel.iron` | `ui/generated/ui/panel-iron-v1` | A | AI 母版（§四 P-01） |
+| 2 | `ui.panel.parchment` | `ui/generated/ui/panel-parchment-v1` | A | AI 母版（P-02） |
+| 3 | `ui.panel.warning` | `ui/generated/ui/panel-warning-v1` | A | AI 母版（P-03，与 P-01 同构图） |
+| 4 | `ui.panel.gilt` | `ui/generated/ui/panel-gilt-v1` | A | AI 母版（P-04，奖励/礼包） |
+| 5 | `ui.plate.band` | `ui/generated/ui/plate-band-v1` | B | AI 母版（P-05） |
+| 6 | `ui.plate.band.active` | `ui/generated/ui/plate-band-active-v1` | B | 由 5 派生或 AI（P-06，二选一见 §七 Q3） |
+| 7 | `ui.button.iron` | `ui/generated/ui/button-iron-v1` | C | AI 母版（P-07） |
+| 8 | `ui.button.iron.hover` | `ui/generated/ui/button-iron-hover-v1` | C | `derive_button_states.py`（brightness 1.30 / color 1.18） |
+| 9 | `ui.button.iron.disabled` | `ui/generated/ui/button-iron-disabled-v1` | C | `derive_button_states.py`（brightness 0.62 / color 0.25） |
+| 10 | `ui.chip.close` | `ui/generated/ui/chip-close-v1` | C | AI 母版（P-08，**不含 × 符号**，× 仍由 Label 画） |
+| 11 | `ui.plate.tooltip` | `ui/generated/ui/plate-tooltip-v1` | C | AI 母版（P-09） |
+| 12 | `ui.banner.crest` | `ui/generated/ui/banner-crest-v1` | 装饰 | AI 母版（P-10，标题匾额） |
+| 13 | `ui.crest.league` | `ui/generated/ui/crest-league-v1` | 装饰 | AI 母版（P-11） |
+| 14 | `ui.crest.nation` | `ui/generated/ui/crest-nation-v1` | 装饰 | 与 P-11 同母版换纹 |
+| 15 | `ui.crest.battle` | `ui/generated/ui/crest-battle-v1` | 装饰 | 同上 |
+| 16 | `ui.crest.reward` | `ui/generated/ui/crest-reward-v1` | 装饰 | 同上 |
+| 17 | `ui.seal.wax` | `ui/generated/ui/seal-wax-v1` | 装饰 | AI 母版（P-12，火漆印） |
+| 18 | `ui.divider.rope` | `ui/generated/ui/divider-rope-v1` | 装饰 | AI 母版（P-13，横向整图） |
+| — | `ui.panel.kingdom`（存量） | `ui/generated/ui/panel-kingdom-v1` | A | **保留**：`CityPanelView`/`MarchPanelView` 已在用，且 `PANEL_FRAME_BAND` 与 meta 由 `client/tests/ArtFamilies.test.ts` 对账；换它 = 另开一格（§七 Q1） |
+| — | `ui.button.chip*` / `ui.nav.tab*`（存量 5 张） | 同目录 | C | 保留，本轮不动（避免碰导航与 chip 的既有探针读数） |
+
+**接入纪律**（`game/art/ArtFamilies.ts:47-52` 原文要求）：只登记**已随包下发且已有消费面板**的族——不许先把 18 张全塞进 `FAMILY_ASSETS` 等消费点。V25-b 只生产，V25-c/d 接一个登记一个。
+
+---
+
+## 四、AI 生图规范（整段可复制）
+
+### 4.1 共用风格锚（每件都带，一字不改地放在提示词开头）
+
+```text
+Use case: stylized-concept
+Style anchor: medieval Chinese-inspired strategy game (iron, aged bronze, dark oxblood banners),
+painterly hand-drawn game UI, NOT flat vector, NOT glossy mobile app styling
+Lighting: single key light from upper-left, matching the city scene's light direction
+Background: completely flat solid pure green (#00FF00), no cast shadow on it, crisp painted alpha edges
+```
+
+### 4.2 九宫格专属约束（**只有九宫格素材加，装饰件不加**——这是能否用起来的命门）
+
+```text
+Nine-slice constraints (mandatory):
+- Ornamentation lives ONLY inside the outer band: corners carry the bronze caps and rivets,
+  edge midpoints carry a plain repeating iron/leather texture with NO distinctive features at the seam
+- The inner ~60% of width and height must be a clean, uniform, decoration-free surface
+  (nothing that would tile or repeat visibly when the frame is stretched)
+- Corners are mirror-symmetric across both axes; top and bottom bands are mirror images
+- Do not draw any drop shadow or glow outside the frame edge (it would be sliced away)
+- The frame band must read **uniform along its whole length except at the four corners**
+  (no centred medallion, no ribbon block, no emblem sitting at the middle of an edge —
+  a mid-edge feature gets stretched into a smeared blob on a wide panel)
+```
+
+### 4.3 逐件主体提示词
+
+| 编号 | 主体（接在 4.1 + 4.2 之后） |
+|---|---|
+| **P-01** `panel-iron` | `Asset type: 2D mobile strategy game UI nine-slice panel, delivered at 512x344 (about 3:2)` · `Primary request: hammered dark iron panel plate with aged bronze corner caps and four rivets per cap, thin bronze inlay line running the inner edge` · `Color palette: charcoal brown, aged bronze, muted dark red accents` |
+| **P-02** `panel-parchment` | 同上尺寸 · `aged parchment sheet as the inner face, iron-and-bronze frame band around it, deckle edges kept inside the band`（**约束**：纸面必须比正文暗一档，防止与浅字打架） |
+| **P-03** `panel-warning` | 同 P-01 构图，`with a dark oxblood silk ribbon folded across the top band and a bronze clasp at each end` |
+| **P-04** `panel-gilt` | 同 P-01 构图，`ornate bronze-gilt frame with a short hanging gold chain and a small wax seal at the top centre` |
+| **P-05** `plate-band` | `Asset type: nine-slice list-row plate, 512x128` · `narrow iron strip with a 4px bronze bevel along top and bottom edges, very shallow, flat, no corners ornament` |
+| **P-06** `plate-band-active` | 同 P-05 形状，`bronze bevel lit up as if selected, faint dark red glow inside the bevel only` |
+| **P-07** `button-iron` | `Asset type: nine-slice command button, 160x52` · `forged iron button face, bronze bevel that occupies about 8% of the height, two small rivets near the left and right ends, completely flat front-facing` · `Constraints: generous clear centre for a Chinese label, no text, no letters, no icons` |
+| **P-08** `chip-close` | `Asset type: small square button sprite, 52x52` · `dark iron square button with bronze bevel and a single rivet at each corner, empty centre` · **必须写明** `no X glyph, no cross, no symbol`（符号由 Label 画，见 §八 禁止项 3） |
+| **P-09** `plate-tooltip` | 同 P-05，尺寸 `256x64` · `slightly warmer iron, thinner bevel, for tooltips and floating text` |
+| **P-10** `banner-crest` | `Asset type: single non-sliced decorative title plaque, 512x128` · `horizontal bronze-framed war banner with two crossed short spears behind the top edge and a small crown relief at the centre top; the plaque face is completely blank` · **不加** 4.2，改加 `Constraints: keep the whole plaque on one piece, do not tile, transparent or pure green background outside the silhouette` |
+| **P-11** `crest-league` | `Asset type: single non-sliced emblem, 256x256` · `alliance war banner emblem: forked dark-red silk flag on a bronze pole with iron fringe, blank shield face in the centre` |
+| **P-12** `seal-wax` | `Asset type: single non-sliced emblem, 256x256` · `dark red wax seal with an impressed bronze ring and a blank centre (no letter, no rune)` |
+| **P-13** `divider-rope` | `Asset type: single non-sliced horizontal divider, 512x32` · `braided leather cord with two small bronze beads and a dark red diamond knot at the centre, ends fade to nothing` |
+
+（P-11 顶饰族：league / nation / battle / reward 四件同母版语言，一次生成四张，只换主体物件——**nation 用玉玺火漆纹、battle 用交叉长枪、reward 用金链与小冠**，不许改边框材质与光向。）
+
+### 4.4 统一负面约束（每件 Avoid 段）
+
+```text
+Avoid: blue sci-fi accents, neon, glossy candy gradients, rounded app-style cards, photorealism,
+any text, any letters, any numbers, any runes, any watermark, any UI control drawn inside the surface
+(checkbox, close cross, arrow, progress bar), any baked-in drop shadow outside the frame
+```
+
+### 4.5 处理管线（现成脚本，不要另写一套）
+
+```bash
+# 1) 生成物入草稿（ImageGen 落盘带时间戳后缀，逐张对应到 batch json）
+#    目录约定：art-src/generated/drafts/raw/<日期>/<件>-raw.png
+# 2) 批次清单：顶层数组，条目字段只有 raw / out / size，可选 mode:"plain"，
+#    母版拆格用 grid:{cols,rows,out_dir,names[]}   ← 现跑自 process_generated.py:2-5 与其读取逻辑
+#    （没有 prompt 字段；提示词只写在 art-src/GENERATION_PROMPTS.md）
+python art-src/process_generated.py art-src/generated/drafts/batch-<日期>-ui-style.json
+#    抠绿常量 GREEN_HI 110 / GREEN_LO 30 / MARGIN 6，残留绿 > 0.5% 即 WARN 且整批退码 1
+#    背景取样非绿或色相差 >60 直接 SystemExit；拆格投影分段数 ≠ grid 数即 FAIL（绝不静默等分）
+# 3) 收编进运行时（非方形要带 WxH，比例差 >3% 直接失败）
+python art-src/accept_to_runtime.py --size 512x344   # A 档（比例取自 §4.6 实测出图，勿写 4:3）
+python art-src/accept_to_runtime.py --size 160x52    # C 档
+# 4) 状态派生（不再生第二张母版，防造型漂移；不 resize）
+python art-src/derive_button_states.py <母版.png> <输出前缀.png>
+```
+
+---
+
+### 4.6 首版实测（P-01 已真跑出图，2026-10-08 00:0x，ImageGen 1024×768）
+
+产物 `vibe_images/panel-iron-v0_1791388903866_9be107b8.png`（**1.05MB，不入库**：`.gitignore:25` 忽略 `vibe_images/`、`:23` 忽略 `art-src/generated/drafts/` ⇒ 本仓草稿图一律不入库，**可复现物是下面的提示词本身**，不是这张图）；量具 `nineslice-measure.py`（临时件，判据设计见下）。
+
+| 判据 | 读数 | 结论 |
+|---|---|---|
+| 背景纯绿（抠绿前提） | 四角 `(15,245,1)` `(12,246,8)` `(13,244,2)` `(9,249,5)` | **过** ⇒ `process_generated.py` 不会在取样处 SystemExit |
+| 残留绿占比 | **0.163%**（管线阈值 0.5%） | **过** |
+| 装饰是否只在外圈 | 中心 60% 区 σ=**7.7**，四条环带 σ=**30~45**（11.6×） | **过** ⇒ 这是"能不能切"的核心判据，实测成立 |
+| 出图比例 | alpha bbox 870×585 = **1.487:1**，距 4:3 偏 **11.5%** | **不过** ⇒ 见下方修正 1 |
+| 角帽左右镜像 | TL/TR 差 **8.5%**、BL/BR 差 **3.1%** | **过** |
+| 角帽上下镜像 | 上带比下带亮 **43%** | **不是缺陷**——是"单主光来自左上"的必然结果，见修正 3 |
+| 目视（384 缩略） | 暗铁面 + 四角铜帽带铆钉 + 铜内线，中心无装饰 | 可用度高，直接进 V25-b 批量 |
+
+**三条必须回写规格的结论**：
+
+1. **尺寸契约已按本条改定**：§二 原先定 A 档 `512×384`（4:3），与 AI 实际出图 1.487:1 冲突，而 `art-src/accept_to_runtime.py` 的既有判据是"素材长宽比与目标差 >3% 直接失败（防止把图压扁收进包）"⇒ **照原契约收编会必然被拒**。两条出路：(a) 收编前按 alpha bbox 裁成正好目标比例（裁边不缩放，代价是丢两侧像素）；(b) 把 A 档素材尺寸改成 **512×344**（=实测 1.487）并把 border 改定为 **48·36**，自检仍走 §二 公式（460×300 消费 ⇒ 72/300 = 0.24 ≤ 0.6 ✓）。**已采纳 (b) 并写回 §二**——不丢像素、不跟模型的比例习惯对抗；(a) 留作"某件素材出图比例离谱"时的兜底手段。
+2. **4.2 约束已加一句**：本张图的**边中段各有一块暗红皮饰**（上下左右四条边的正中），九宫格横向拉伸到 720 宽时会变成糊开的长条。⇒ 提示词已补 `edge band must read uniform along its whole length except at the four corners`。**这条是本轮实测换来的，不是先验写的。**
+3. **对称判据只能比左右镜像，不能比上下**：谁写"四角亮度差 ≤12%"这种判据，就会把主光方向正常的素材误杀（本张上下差 43% 而左右差 8.5%）。V25-e 的量具与 V25-b 的目视清单按此口径执行。
+
+**未做 / 未验证（照实写）**：
+
+- **边厚占比没量出来**：脚本用"沿水平中线找第一个亮度跳变"估左边带，读数 4px——落在 alpha 过渡沿上，是**无效读数**（判据设计缺陷，不是素材缺陷）。边厚要用梯度累计法或目视标尺定，**当前未验证**。
+- 本张只证"可切"，**未证"铺到 460×300 上好看"**——那要 V25-c 接上面板后 `shot-panel-sweep.mjs` 真截图才算，本轮无前台截图。
+- 未跑 `process_generated.py` 全管线（要先建 batch json 并往 `art-src/generated/drafts/` 写产物，属 V25-b 的活）；未重出第二张验证修正 2 的新约束是否真能去掉边中饰 ⇒ **待判伪**，判伪方法：用加了新约束的提示词再出一张，看四条边正中是否仍有独立饰块。
+
+---
+
+## 五、任务卡（V25-a…V25-e，每格独立可验证可提交）
+
+### V25-a · 风格锁定 + tokens 收口（不做就不许动视图）
+
+```text
+你在给《列王纪·铁誓》(ironoath) 做 V25-a：把弹窗的视觉语言收进一个 tokens 文件，不改任何素材。
+铁律（违反即视为任务失败）：
+1. 只建一个真源：新建 client/assets/scripts/game/ui/UiTokens.ts，导出遮罩/兜底色/铜金/暗红/圆角/框带六组常量；
+2. 值必须来自现跑：兜底色取现跑主流值 Color(40,33,27,255)，铜金取 Color(184,134,11,255)，
+   遮罩把 6 个并存值收敛成 1 个（Color(8,6,5,190)），不许凭感觉另起一个色；
+3. 羊皮纸与暗红号色先留 TBD 常量并注释"待 V25-b 目视定案"，不许填感觉值；
+4. 本格不删各视图的局部 COLOR_*（删在 V25-c/d 接线时逐文件删，防止半接线状态）；
+5. 新增 .ts 在 client/assets/scripts 下必须连 .ts.meta 一起入库（check-ts-meta.sh 只扫这个目录），
+   而 client/tests/ 下的用例**不需要** meta（现跑该目录 0 个 .meta）。
+第一步：复述你的理解（≤20 行），并反问本卡末尾的 3 个开放问题。
+```
+
+- 必做：`game/ui/UiTokens.ts` + `.ts.meta`；把 §一 色族表写进文件头注释；`client/tests/UiTokens.test.ts` 钉住"遮罩只有 1 个值、铜金只有 1 个值"。
+- 验收：`node --test`（**必须 Node 20**：`export PATH="/d/Java/nodejs/node20.13.0:$PATH"`）绿；`bash scripts/check-ts-meta.sh` 绿；`bash scripts/check.sh` 退 0。
+- 产出文件：`client/assets/scripts/game/ui/UiTokens.ts{,.meta}`、`client/tests/UiTokens.test.ts`（用例目录不扫 meta）。
+
+### V25-b · 素材生产（11 张 AI 母版 + 3 张派生 + 逐张目视）
+
+必做：按 §四 逐件出图 → `process_generated.py` → `accept_to_runtime.py` 量化 → **逐张 1:1 目视**（机器指标全绿不代表可用，这是本仓既有教训）→ 目视判据三问：中心净区真的净吗？边厚铺到 §二 的消费尺寸上还在吗？光向和主城一致吗？
+验收：① 18 张全部落到 `art-src/generated/drafts/`，残留绿读数逐张为 0.000%；② 逐张实测 `inset` ÷ 图高落在 [0.07, 0.6]；③ 新增总量 ≤ 450KB（`du` 实测）；④ **把 P-01 的 border 临时改成 200 重跑一次 `verify-art-runtime.mjs`，必须报"退化/吃内容"红**（证明判据能失败，才允许进 V25-c）。
+产出文件：`art-src/generated/drafts/batch-<日期>-ui-style.json`、`art-src/GENERATION_PROMPTS.md`（新增 §12 本批）、`art-src/ATTRIBUTION.md`（AI 生成条目的署名口径）。
+
+### V25-c · A 档底板接线（4 处底板 + 待人工判档的表达式点）
+
+必做：`ArtCatalog.ts` 的 `StaticArtKey` 与 `SPECS` 增 4 个 A 档键；`GiftPopupView`（**改掉 `fillRect` 直角矩形**，:145-147）、`ChoiceOverlay:63`、`MarchComposeOverlay:125`、`StaminaDetailOverlay:70` 换 `applySlicedSprite`；标题换 `banner-crest` 匾额；关闭键统一到一种形态（现跑两种并存，§〇）。
+关键约束：`applySlicedSprite` 会自动 `addComponent(Sprite)`、把该 node 上的 `Graphics` `clear()+enabled=false`（`ArtCatalog.ts:469-485`）⇒ **底框节点与内容节点必须分离**，否则内容 Graphics 被一起关掉。这条要在验收里用一条能失败的判据钉住。
+验收：逐屏截图 8 份（用 `tools/shot-panel-sweep.mjs`，1440×900 留帧）+ `verify-art-runtime.mjs` 全绿 + `verify-gift-popup.mjs`（弹窗文案与几何既有门）绿。
+
+### V25-d · B/C 档接线（43 + 52 处，含按钮 chip 与条行）
+
+必做：B 档 `plate-band` 接列表行（`BagPanelView:541`、`SocialPanelView:1213`、`BattleReportPanelView:504` 等）；C 档 `button-iron` 接 `ActionButton*` 一族；跨档复用**一律拒绝**。
+⚠ 本格触碰共用件（行池 / 行序 / 按钮壳）——按 `AGENTS.md` 二节的批跑纪律：**单跑自己碰的不够**，必须带上「已有内容可见性」那一族（`verify-social-permission-runtime` · `verify-social-create-runtime` · `verify-rank-runtime`），并全量批跑 60 份（`bash scripts/run-batch-dual-backend.sh`，国家正链路那族要 `BOOST_BACKEND`）。
+另：改行视觉会动 `plate-coverage`（文字压底板）与 `label-fit`（压字）两道既有判据的前提，**先现跑取基线再改**，不许改完直接宣称绿。
+
+### V25-e · 防腐（把"边厚 ÷ 消费尺寸"做成机制，不靠人记）
+
+必做：
+1. `tools/verify-art-runtime.mjs` 在既有 `degenerateSlices`（:765-772）旁增一条 gate「九宫格边厚吃内容」：`insetTop+insetBottom > contentHeight*0.6` 或 `insetLeft+insetRight > contentWidth*0.6` 即红；
+2. 新增静态门 `scripts/check-art-quantized.sh`：`resources/ui/generated/**` 下单张 > 120KB 且 PNG mode 非 `P` ⇒ 点名（现跑会命中存量 `panel-kingdom-v1` 170.9KB RGBA，**先决定是量化它还是进白名单**，§七 Q1）；
+3. 素材键↔盘对账：现跑只在探针里判（`verify-art-runtime.mjs:1031`），把"A 档键不得登记进 C 档消费点"落成 `client/tests/ArtFamilies.test.ts` 的一条表驱动断言。
+⚠ 加门会改计数：`AGENTS.md:22` 写着「静态门（46 道）」，且该计数由 `scripts/check-doc-counts.sh`（:29、:44-52）对账 ⇒ **同批改 AGENTS.md 与对账脚本**，否则门自己变红。
+
+---
+
+## 六、固定约定（本批新增/沿用）
+
+- 沿用：素材源料进 `art-src/`，运行时产物只进 `client/assets/resources/ui/generated/**`；`resources` 走分包；不预接无人消费的资源。
+- 沿用：切分几何的**唯一真源是那张图的 `.png.meta`**（`ArtFamilies.ts:36-42` 已因"两份数字"咬过一口，收口清单 #213）；代码里只留 `PANEL_FRAME_BAND` 这类给布局用的框带厚，且由测试对账。
+- 新增：任何新素材必须先在 §二 表里登记档位与 border，**再**去生成；反过来做会产零消费素材。
+- 新增：`UiTokens.ts` 是颜色唯一入口；视图里的局部 `COLOR_*` 随接线逐文件删除，删除顺序 = 该文件截图验收通过之后。
+
+---
+
+## 七、需要确认的开放问题（AI 第一步先反问，不许静默假设）
+
+1. **存量 `panel-kingdom-v1`（RGBA 170.9KB 未量化）怎么办**——量化它（省 ~130KB，但软边可能出锯齿）、还是给 `check-art-quantized.sh` 开一条白名单并注明理由、还是随 V25-c 一起换成 `panel-iron`？
+2. **羊皮纸亮度定案**：浅内衬要不要配"深字 tokens"（现跑文字基本是金字/白字压在深底上）？若浅底 + 金字，对比度会掉，`verify-label-fit-runtime` 与导航对比度判据可能一起变红。推荐：纸面只提一档 + 正文改深墨色，顶饰标题保留金字。
+3. **B 档选中态**：由常态派生（`derive_button_states.py` 系数写死，零漂移风险）还是 AI 另出母版（观感更好，但形状会漂）？推荐前者。
+4. 关闭键统一成哪一种：`×` 字符（现有 2 处）还是 Graphics 圆角 + 文字「关闭」（现有 6 处）？推荐保留「关闭」文字（新手可读性），`×` 那两处并入。
+5. 本轮要不要顺带把 `GuideView`/`Choices` 这类引导浮层一起换？（会加 ~10 个绘制点，且引导有独立探针族）
+
+---
+
+## 八、禁止项（防自由发挥）
+
+1. **不许把任何文字、数字、字母、符文、`×`、箭头烘焙进素材**——屏上的字一律 Label（`UiFont.ts` 是唯一字体入口，本批不动字体）。
+2. **不许跨档复用素材**，也不许"先随便用一张凑合"（§二 是判据不是建议）。
+3. **不许新增 `Graphics.roundRect` 当作最终视觉**——Graphics 只能作为素材未加载时的兜底路径，且兜底必须走 `UiTokens` 的颜色。
+4. **不许手改生成物**：`client/assets/scripts/net/generated/**`、`**/config/cfg/**` 与 `*.png.meta` 的 border 改了要同批过 `client/tests/ArtFamilies.test.ts` 对账。
+5. **不许发明数字**：包体、对比度、边厚凡未实测的写进 §七，不填感觉值。
+6. 不许为了"看起来统一"一次性推翻 17 处 `COLOR_PANEL` 的主流值——那只保证 12 个面板不变，另外 5 个是有意区分还是漂移，**必须先逐一定位来源**。
+
+---
+
+## 九、验收与台账（做完往哪里写）
+
+- 实施记录：`待完善收口_VibeCoding开发包.md` §四，一格一行（格 | 提交 | 验证读数 | 截图/证据 | 未做），**「未做」列照实写**。
+- 台账：`收口清单.md` 一行一条、带行尾竖线、编号先让后取，插完跑 `bash scripts/check-checklist-table.sh`。
+- 任务卡：`待完善收口_VibeCoding开发包.md` 的 V25（本规格的索引卡）。
+- 接续：`.qoder-work-queue.md`（未跟踪，主检出与 worktree 两份同写）。
+- 视觉验收的最终判据是**截图**，不是探针退 0：每格至少留 8 屏 1440×900 留帧，与改动前对照。
