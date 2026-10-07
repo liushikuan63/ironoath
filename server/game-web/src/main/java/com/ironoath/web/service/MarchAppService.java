@@ -607,7 +607,14 @@ public class MarchAppService {
                 if (advance(march, now)) {
                     processed++;
                 }
-                dueQueue.cancel(marchId);
+                // ⚠️ 不能无条件撤销：advance 在「到达/打完转入返程」时会 reschedule 新的到期时刻
+                // （returnArriveAt），这里再 cancel 会把刚登记的返程吞掉 —— 症状是队伍永远停在
+                // RETURNING：兵不回城、出征名额不释放（B13 名额走查实测：SCOUT 到达那次扫描推进=1
+                // 之后队列为空，返程到点也再没人推）。只有「已到家/记录已删、或不再需要到期推进」
+                // 的行军才撤销登记（到家路径 arriveHome 内已自行 cancel 过一次，重复撤销是幂等的）。
+                if (march.status() != March.Status.MARCHING && march.status() != March.Status.RETURNING) {
+                    dueQueue.cancel(marchId);
+                }
             } catch (RuntimeException e) {
                 // 单支失败不影响其余：一次到期扫描里如果有 1000 支，
                 // 因为其中一支的数据异常就整批放弃，会让另外 999 支也卡住

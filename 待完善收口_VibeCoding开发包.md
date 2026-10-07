@@ -5737,3 +5737,9 @@ TEST_EXIT=0
 | 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
 |---|---|---|---|---|
 | 修收口清单 #767（B25-S3 弹窗「知道了」点不响应收起）：`OfflineReportOverlay` 加 `hide()`；`GameBootstrap` 接 `onDismiss → hide` 并给 `onJump` 补"先收起再跳"（同族第二处：修前跳页也盖着目标面板）；`verify-offline-runtime.mjs` 补两条判据（跳页收起 / 点「知道了」收起）+「收起后」截图 | 本笔提交（随格推送） | **修前实证**（一次性 diag 两相）：点条目后 active=true（跳页走通但盖着目标页）、点「知道了」taps 0→1 到达而 active=true；**修后探针 12 条全绿**（两条新判据 active=false）；**植入取证**（运行时把 onDismiss 置 null / onJump 只跳不收）：两条新判据各会红、且植入 B 下跳页判据仍绿（只拆"收起"、精确）；回归 `check.sh` EXIT=0 · 45 道（Node 20）、客户端 1025 项 0 红、双工程 tsc 退 0；**抽样探针批跑**（`run-batch-dual-backend.sh` 双后端）：rank 0 / offline 0 / city-build-many 0，bag-open-batch 记 SKIP（需 `BAG_BATCH_OPS_TOKEN`，未代填 ⇒ NO-RUN 不计绿）；emit 谜底：分发有效、返回值 falsy（见 #767 补注） | 前后对照截图 `client/build/offline-verify/offline-report.png`（弹窗盖内城）／`offline-report-dismissed.png`（收起后战报页露出）——均已目视核对 | 未跑服务端 test.sh（本笔零服务端改动；上一轮同树 2115 项读数）；微信开发者工具/真机未跑（web-mobile + Chromium 覆盖绘制路径，与既有各格同口径）；bag 探针那份是 NO-RUN（凭据未代填）不是绿；一次性 diag/plant 脚本用后即删（配方留档：preview 8246/8247 + 注入 `SAMPLE_VIEW.render` + 运行时替换 `bootstrap.offlineReport.onX`） |
+
+### 2026-10-07 14:xx｜会话 240399d1：主会话委托的「疲劳到顶」读数 → 顺链抓出两个真缺陷（一修一登记）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| ① 停表实验坐实 `processDue` 吞返程登记（台账 **#768**）→ 修复 + 用例 + 三读数取证；② 疲劳到顶读数（台账 **#769**）：真后端 21 连发到顶（100/100）后仍能发起（`code=0`）——「到顶拒行军」的服务端执行者缺失 | 本笔提交（随格推送） | #768：修复版 5/5 绿 → 植入修复前版本 → **新用例唯一红**（"第二次扫描后必须到家"）→ 还原 5/5 绿；真后端停表实验从"第 1 支仍在库"→"已清"；疲劳走查 21 连发畅通（修复前第 4 支即 6005 名额上限）；**全量 `test.sh` EXIT=0**（服务端 **2116 项 0 红 0 跳**（57+154+584+52+1262+7，+1 本格用例）+ 客户端 **1025 项 0 红**）；`check.sh` 见下（推送前同轮） | 停表/走查读数（一次性脚本 `tmp/fatigue-cap/`，用后清理）；用例 `MarchRepeatInvariantsTest#returningMarchReachesHomeOnTheNextScan`；修复点 `MarchAppService.processDue`（条件式 cancel） | **#769 未修**（错误码/文案口径待定；修法方向已写进台账 #769）；`verify-war-real-battle.mjs` 应补"返程到家（记录消失）"断言（已留队列）；并发/多玩家维度未压（单号 21 连发） |

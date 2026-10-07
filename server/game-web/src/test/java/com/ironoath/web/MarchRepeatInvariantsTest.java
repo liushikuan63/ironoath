@@ -67,6 +67,7 @@ class MarchRepeatInvariantsTest {
     @Autowired private com.ironoath.core.world.WorldRepository world;
     @Autowired private com.ironoath.core.march.MarchRepository marches;
     @Autowired private com.ironoath.core.hero.HeroRepository heroes;
+    @Autowired private com.ironoath.web.service.MarchAppService marchAppService;
 
     @BeforeEach
     void resetStores() {
@@ -169,6 +170,34 @@ class MarchRepeatInvariantsTest {
         assertThat(ok).as("失败的那次必须把幂等键让出来，否则玩家点了被拒就再也发不出去")
                 .isNotEmpty();
         assertThat(marches.activeCountOf(self)).as("改目标后真的出发了").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("到期扫描里转返程的行军，返程到点必须被推进到家：processDue 不许吞掉 advance 里新登记的返程")
+    void returningMarchReachesHomeOnTheNextScan() throws Exception {
+        // 落在这个类是因为它的夹具已覆盖行军全链（建号/给兵/发 march/查库）——用例本体是
+        // 「行军生命周期」而不是"重复出征"：SCOUT 到空地是"扫描里转返程"的最小复现形状，
+        // 不需要战斗、国战与靶子（advance 的 SCOUT 分支里 beginReturn + reschedule 新到期，
+        // 正是被旧外层无条件 cancel 吞掉的那一笔登记）。
+        String self = newPlayerAt(256, 256);
+        giveTroops(self, 10L);
+        String marchId = march(self, new MarchReq(newRequestId(), 258, 256,
+                List.of(new MarchUnit(UNIT, 1L)), List.of(), MarchAction.SCOUT));
+
+        var arrived = marches.findById(marchId).orElseThrow();
+        marchAppService.processDue(self, arrived.arriveAt() + 1L);
+        var returning = marches.findById(marchId).orElseThrow();
+        assertThat(returning.status())
+                .as("第一次扫描：去程到点，转入返程").isEqualTo(com.ironoath.core.march.March.Status.RETURNING);
+        Long returnAt = returning.returnArriveAt();
+        assertThat(returnAt).as("返程时刻已登记（非空）").isNotNull();
+
+        marchAppService.processDue(self, returnAt + 1L);
+        assertThat(marches.findById(marchId))
+                .as("第二次扫描（返程到点）后必须到家 —— 修复前：外层无条件 cancel 把刚登记的返程吞掉，"
+                        + "队伍永远停在 RETURNING、兵与名额都不归还").isEmpty();
+        assertThat(marches.activeCountOf(self)).as("出征名额随到家释放").isZero();
+        assertThat(armies.findByPlayerId(self).orElseThrow().countOf(UNIT)).as("兵已归还").isEqualTo(10L);
     }
 
     // ---------- 夹具 ----------
