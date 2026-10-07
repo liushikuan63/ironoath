@@ -17,6 +17,13 @@ mkdirSync(OUT, { recursive: true })
  */
 const ART_PORT = Number(process.env.ART_VERIFY_PORT ?? 8190)
 /**
+ * 产物根目录。**默认逐字节等于改动前**（模式隔离），加它只为了一件事：
+ * 植入取证要改某张图的 `.png.meta` 里的 border，而 meta 只有**重新构建**才进得了运行时
+ * —— 直接重建共享的 `client/build/web-mobile` 会把并行会话正在跑的探针产物清空（`AGENTS.md` 三节）。
+ * 所以取证走 `outputName=<独立名>` 建一份，再用本变量指过去。
+ */
+const ART_ROOT = process.env.ART_VERIFY_ROOT ?? 'client/build/web-mobile'
+/**
  * 后端默认仍是产物里写死的那台（8080）；要指向**本轮自己起的那台**用 `ART_VERIFY_BACKEND`。
  *
  * <p>加这个开关不是洁癖：本工具里另有三处 `fetch('http://localhost:8080/…')`
@@ -26,7 +33,7 @@ const ART_PORT = Number(process.env.ART_VERIFY_PORT ?? 8190)
  */
 const BACKEND = process.env.ART_VERIFY_BACKEND ?? 'http://localhost:8080'
 const preview = await startPreviewServer({
-  root: 'client/build/web-mobile',
+  root: ART_ROOT,
   backend: BACKEND,
   port: ART_PORT,
 })
@@ -779,6 +786,78 @@ const degenerateSlices = Array.from(new Set([
   ...findDegenerateSlices(worldZoom),
 ]))
 
+/**
+ * **九宫格边厚吃掉可读区**（V25-e，规格 §二 那条「不吃内容」判据的机器化）。
+ *
+ * <p>比上面那条**严一档**：退化判据只在「目标尺寸小于自身边框之和」时红 —— 那时引擎把整张图
+ * 缩小，画出来明显不对。但「目标大于边框之和、边框却占了可读区 60% 以上」那一段是**绿的**，
+ * 而玩家看到的正是四条铜边夹一小块内容、净区里放不下一行正文。§二 的自检就是这条线：
+ * A 档 48·36 铺到 460×300 ⇒ 72/300 = 0.24，C 档 6·4 铺到 64×26 ⇒ 8/26 = 0.31，都在阈内；
+ * 把 A 档母版（border 48·36）挪去铺 C 档小件会直接落到这条上 —— 所以它同时是
+ * §八.2「不许跨档复用」在**消费侧**的机器判据（登记侧由 `client/tests/ArtFamilies.test.ts` 钉）。
+ *
+ * <p>**判全部 SLICED，但带一张必须写理由的豁免名单**（2026-10-08 拍板的口径）。
+ * 为什么要豁免：第一次现跑（2026-10-08）无条件判全部 SLICED 时打出 19 条命中，全部是
+ * `button-chip-*`（12·12 的边框铺在 26~34 高的格子上，竖边占 0.71~0.92）。量了那张 chip：
+ * 边带 4512 px 里 4074 px 不透明、中心净区只有 **8 种颜色** ⇒ 它是**纯色平底**，
+ * 边带里没有任何独立装饰，"边框吃掉可读区"这个前提对它不成立（玩家看到的仍是整块底色 + 字）。
+ * 豁免条目自己会烂，所以 `staleExemptions` 那条会核：**前缀在盘上对应不到任何 png 就判红** ——
+ * 与本仓 `scripts/check-art-quantized.sh` 的白名单完整性是同一族纪律。
+ *
+ * <p>能失败的方式：任何消费者把大 border 的母版铺到小格子；素材改了 border 而消费尺寸没跟着改。
+ * 取证（2026-10-08）：把 `panel-iron-v1.png.meta` 的 border 临时改成 200 重建产物，
+ * 本条点名 5 处，而同一轮旧退化判据只点名 1 处 ⇒ 另外 4 处只有这条抓得到（严一档是真的）。
+ * `borderRatioWorst` 是**读数不是判据**：它印出当前屏上最凶的那一档，改阈值前先看得见现状。
+ */
+const BORDER_RATIO_LIMIT = 0.6
+/** 豁免名单：frame 前缀 → 为什么这条判据对它不成立（理由要能被实测复核）。 */
+const BORDER_RATIO_EXEMPT = [
+  {
+    prefix: 'button-chip',
+    reason: '纯色平底：实测边带 4074/4512 像素不透明而中心净区只有 8 种颜色，边带里没有独立装饰',
+  },
+]
+const borderRatio = (sprite) => Math.max(
+  (sprite.insetLeft + sprite.insetRight) / sprite.contentWidth,
+  (sprite.insetTop + sprite.insetBottom) / sprite.contentHeight,
+)
+const isExemptFrame = (sprite) => BORDER_RATIO_EXEMPT
+  .some((entry) => (sprite.frameName ?? '').startsWith(entry.prefix))
+const judgedSlices = [city, bag, army, hero, world, worldZoom].flat()
+  .filter((sprite) => sprite.typeName === 'SLICED'
+    && sprite.contentWidth > 0 && sprite.contentHeight > 0)
+  .filter((sprite) => !isExemptFrame(sprite))
+function findContentEatenSlices(sprites) {
+  return sprites
+    .filter((sprite) => borderRatio(sprite) > BORDER_RATIO_LIMIT)
+    .map((sprite) => `${sprite.frameName} 画在 ${sprite.name}`
+      + ` ${sprite.contentWidth.toFixed(1)}x${sprite.contentHeight.toFixed(1)}`
+      + ` ⇒ 边框占可读区 横${((sprite.insetLeft + sprite.insetRight) / sprite.contentWidth).toFixed(2)}`
+      + `/纵${((sprite.insetTop + sprite.insetBottom) / sprite.contentHeight).toFixed(2)}`
+      + `（阈 ${BORDER_RATIO_LIMIT}，边框 ${sprite.insetLeft + sprite.insetRight}`
+      + `x${sprite.insetTop + sprite.insetBottom}）`)
+}
+const contentEatenSlices = Array.from(new Set(findContentEatenSlices(judgedSlices)))
+/** 现跑最凶的一档（读数，不作判据）。 */
+const borderRatioWorst = judgedSlices.length === 0 ? null
+  : judgedSlices.map((sprite) => ({
+    frameName: sprite.frameName,
+    drawnOn: sprite.name,
+    size: `${sprite.contentWidth}x${sprite.contentHeight}`,
+    ratio: Number(borderRatio(sprite).toFixed(3)),
+  })).sort((a, b) => b.ratio - a.ratio)[0]
+/**
+ * 豁免名单的完整性：前缀在盘上对应不到任何 png 就是**烂条目**（文件已删/改名，豁免还留着），
+ * 判红而不是放过 —— 与本仓「白名单自己也在被检之内」同一条纪律。
+ */
+const UI_GENERATED_DIR = 'client/assets/resources/ui/generated/ui'
+const uiPngNames = existsSync(UI_GENERATED_DIR)
+  ? readdirSync(UI_GENERATED_DIR).filter((name) => name.endsWith('.png'))
+  : []
+const staleExemptions = BORDER_RATIO_EXEMPT
+  .filter((entry) => !uiPngNames.some((name) => name.startsWith(entry.prefix)))
+  .map((entry) => `豁免条目 ${entry.prefix} 在盘上没有对应 png（理由：${entry.reason}）`)
+
 const cityIcons = city.filter((sprite) => sprite.name === 'BuildingIcon')
 const bagIcons = bag.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
 // 资源行的图集映射断言原来钉死在 grain 的矩形上，而"哪几行在屏内"由服务端 map 顺序决定 ——
@@ -952,6 +1031,11 @@ const result = {
   fontPolicyFailures: fontPolicyFailures.map((font) => font.name),
   panelMismatches,
   degenerateSlices,
+  contentEatenSlices,
+  borderRatioWorst,
+  judgedSliceCount: judgedSlices.length,
+  borderRatioExempt: BORDER_RATIO_EXEMPT.map((entry) => entry.prefix),
+  staleExemptions,
   frame: {
     bandFromSource: FRAME_BAND,
     march: frameMarch,
@@ -1002,6 +1086,14 @@ const gates = [
   ['框带厚与源码常量分家', frameBandDrift.length > 0],
   ['内容压到框的角饰上', frameOverlaps.length > 0],
   ['九宫格退化（目标小于自身边框）', degenerateSlices.length > 0],
+  // V25-e：比上一条严一档 —— 没退化但边框吃掉 60% 以上可读区（规格 §二「不吃内容」）。
+  // 取证：`panel-iron-v1.png.meta` 的 border 植入 200 后本条点名 5 处、上一条只点名 1 处。
+  ['九宫格边厚吃掉可读区（边框占内容 > 0.6）', contentEatenSlices.length > 0],
+  // 反空转（本仓那条"只查坏东西不存在必假绿"）：上一条要判，这一屏就必须真的量到九宫格；
+  // 量到 0 张就是判据根本没跑（面板没画出来 / 收集口坏了），不能读成绿。
+  ['九宫格一帧都没量到（0.6 判据空转）', judgedSlices.length === 0],
+  // 豁免名单自己会烂：文件删了或改名而条目留着 = 给下一个越界件开的后门。
+  ['边厚判据的豁免条目已失效（盘上无对应 png）', staleExemptions.length > 0],
   ['导航对比度读不到', navContrast.error !== undefined],
   ['导航格数不足', (navContrast.cells ?? []).length < NAV_CELLS_EXPECTED],
   ['导航格与面板清单对不上', navMissingCells.length > 0],

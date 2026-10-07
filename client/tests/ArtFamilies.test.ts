@@ -223,3 +223,117 @@ test('运行时的 ui 图只剩三族：面板框、chip、页签（装饰母版
     'nav-tab-selected-v1.png', 'nav-tab-v1.png', 'panel-iron-v1.png', 'panel-kingdom-v1.png',
   ], '包里多了/少了 ui 图 —— 加图要连同消费点与判据一起进来，删图要确认零消费（#216 的口径）')
 })
+
+/** 规格 §二 的档位（A 底板 / B 条行 / C 小件 / 装饰件不参与九宫格）。 */
+type Tier = 'A' | 'B' | 'C' | 'decor'
+
+/**
+ * §二 三档契约里**登记层能被机器判到的那两维**：该档允许的 png 前缀、该档的 border。
+ * 「消费尺寸下限」刻意不在这里判 —— 那是 §七 的待裁决项（现跑 V25-c 已接的体力弹层是 360×260，
+ * 低于 §二 写的 460×300），拿未裁决的数当判据会把别人的在途文件判红。
+ */
+const TIER_CONTRACT: Record<Tier, {
+  border: { left: number, top: number, right: number, bottom: number } | null
+  pngPrefixes: string[]
+}> = {
+  A: { border: { left: 48, top: 36, right: 48, bottom: 36 }, pngPrefixes: ['panel-'] },
+  B: { border: { left: 12, top: 8, right: 12, bottom: 8 }, pngPrefixes: ['plate-'] },
+  C: { border: { left: 6, top: 4, right: 6, bottom: 4 }, pngPrefixes: ['button-', 'chip-'] },
+  decor: { border: null, pngPrefixes: ['banner-', 'crest-', 'seal-'] },
+}
+
+/** §三 清单里 V25 那一族的 ArtKey → 档。键还没接线时可以暂不列，列进来就必须与目录一致。 */
+const V25_KEY_TIER: Record<string, Tier> = {
+  'ui.panel.iron': 'A',
+  'ui.plate.band': 'B',
+  'ui.button.iron': 'C',
+  'ui.chip.close': 'C',
+  'ui.plate.tooltip': 'C',
+  'ui.banner.crest': 'decor',
+}
+
+/** V25 之前的遗留件：不参与 §二 的 border 契约，但点名登记，免得"没在表里"变成"没人管"。 */
+const LEGACY_UI_PNGS = [
+  'panel-kingdom-v1.png',
+  'button-chip-v1.png', 'button-chip-hover-v1.png', 'button-chip-disabled-v1.png',
+  'nav-tab-v1.png', 'nav-tab-selected-v1.png',
+]
+
+/**
+ * 从 `ArtCatalog` 的 `SPECS` 现取「键 → 资源路径」。
+ * 不在测试里抄第二份表：抄了就会与真源漂移（#213 那次"两份数字"的同一个形状）。
+ */
+function specsFromCatalog(): Map<string, string> {
+  const src = fs.readFileSync(ART_CATALOG_SRC, 'utf8')
+  const out = new Map<string, string>()
+  const re = /'([\w.]+)':\s*\{[^}]*?path:\s*'([^']+)'/g
+  let m = re.exec(src)
+  while (m !== null) {
+    const [, key, res] = m
+    if (key !== undefined && res !== undefined) {
+      out.set(key, res)
+    }
+    m = re.exec(src)
+  }
+  return out
+}
+
+test('V25 档位登记表：一个键只有一个档，它登记的 png 与那张图的 meta border 必须属于那个档（§八.2 跨档复用在登记层判掉）', () => {
+  const specs = specsFromCatalog()
+  const registered = Object.entries(V25_KEY_TIER).filter(([key]) => specs.has(key))
+  assert.ok(registered.length >= 3,
+    `档位表里 ${Object.keys(V25_KEY_TIER).length} 个键，ArtCatalog 只认到 ${registered.length} 个`
+    + ' —— 表与目录脱节时本用例等于没判，先修表或修目录')
+  const pngTier = new Map<string, string>()
+  const bad: string[] = []
+  for (const [key, tier] of registered) {
+    const res = specs.get(key) as string
+    const base = `${path.basename(res)}.png`
+    const contract = TIER_CONTRACT[tier]
+    if (!contract.pngPrefixes.some((prefix) => base.startsWith(prefix))) {
+      bad.push(`${key} 登记为 ${tier} 档，指的却是 ${base}`
+        + `（该档只允许前缀 ${contract.pngPrefixes.join(' / ')}）`)
+    }
+    const shared = pngTier.get(base)
+    if (shared !== undefined && shared !== tier) {
+      bad.push(`${base} 同时被 ${shared} 档与 ${tier} 档的键登记 = 一张图跨两档用`)
+    }
+    pngTier.set(base, tier)
+    if (!fs.existsSync(path.join(GENERATED_UI, base))) {
+      bad.push(`${key} → ${base} 在盘上没有这张图`)
+      continue
+    }
+    if (contract.border === null) {
+      continue
+    }
+    const border = frameBorders(path.basename(res))
+    for (const side of ['left', 'top', 'right', 'bottom'] as const) {
+      if (border[side] !== contract.border[side]) {
+        bad.push(`${key}（${tier} 档）的 ${base} meta border.${side}=${border[side]}，`
+          + `§二 契约要 ${contract.border[side]} —— border 换了档就等于素材换了档`)
+      }
+    }
+  }
+  assert.deepEqual(bad, [])
+})
+
+test('每张在盘的 ui 图都必须被某个 ArtKey 登记；遗留件名单里不许留已消失的条目', () => {
+  // 上面那条「只剩三族」钉的是**文件清单**，换掉文件名它就看不见 ⇒ 这条钉的是**消费**：
+  // 零消费素材进包（V25-b 的 plate-band 就是这么被拦回去的）此前只在人工环节判过。
+  const specs = specsFromCatalog()
+  const registered = new Set<string>()
+  for (const [key, res] of specs) {
+    if (!res.startsWith('ui/generated/ui/')) {
+      continue
+    }
+    registered.add(`${path.basename(res)}.png`)
+    assert.ok(fs.existsSync(path.join(GENERATED_UI, `${path.basename(res)}.png`)),
+      `键 ${key} 指的 ${res} 不在盘上（面板上就是一个永远不出图的空位）`)
+  }
+  const pngs = fs.readdirSync(GENERATED_UI).filter((name) => name.endsWith('.png'))
+  const unowned = pngs.filter((name) => !registered.has(name) && !LEGACY_UI_PNGS.includes(name))
+  assert.deepEqual(unowned, [], `这些 ui 图没有任何 ArtKey 消费：${unowned.join(', ')} —— 退回 art-src 草稿区，别占分包`)
+  const gone = LEGACY_UI_PNGS.filter((name) => !pngs.includes(name))
+  assert.deepEqual(gone, [], `遗留件名单里有已不存在的条目：${gone.join(', ')} —— 删掉它，`
+    + '否则下一张同前缀的新图会蹭到"不用过档位表"的豁免')
+})

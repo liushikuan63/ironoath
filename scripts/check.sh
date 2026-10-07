@@ -60,6 +60,10 @@ bash scripts/check-player-copy-jargon.sh
 bash scripts/check-track-dictionary.sh
 bash scripts/check-track-params.sh
 bash scripts/check-icon-legibility.sh
+# 素材量化（V25-e，规格 §二 包体预算）：`resources/ui/generated/**` 里单张 >120KB 且不是调色板(P)
+# 就点名 —— "小件都已量化"这句话此前只在文档里，而绕过 `accept_to_runtime.py` 直接拷图进包不会有任何东西变红。
+# 白名单条目必须带实测理由 + 台账编号，且"文件已消失"与"条目已不需要"两类都会判红（名单自己也会烂）。
+bash scripts/check-art-quantized.sh
 bash scripts/check-no-scheduled.sh
 bash scripts/check-mongo-set-coverage.sh
 bash scripts/check-identity-used.sh
