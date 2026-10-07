@@ -39,6 +39,9 @@ import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
 import com.ironoath.web.dto.generated.DiplomacyRelation;
+import com.ironoath.web.dto.generated.MarchAction;
+import com.ironoath.web.dto.generated.MarchReq;
+import com.ironoath.web.dto.generated.MarchUnit;
 import com.ironoath.web.dto.generated.NationDiplomacyReq;
 import com.ironoath.web.dto.generated.NationDisbandReq;
 import com.ironoath.web.dto.generated.NationFoundReq;
@@ -95,6 +98,9 @@ class WarEndpointTest {
     @Autowired private ConfigRegistry configs;
     /** 所有战斗的唯一漏斗（打野/关卡/攻城/拦截都汇到这里）—— 击杀归属就挂在这一句上，所以要真的走它。 */
     @Autowired private com.ironoath.web.battle.BattleReportService battleReports;
+
+    /** 给号发兵用（#769 的疲劳拒行军用例要过"必须派兵"那道校验，与 MarchRepeatInvariantsTest 同一手法）。 */
+    @Autowired private com.ironoath.core.army.ArmyRepository armies;
 
     /** 联盟名/标签的序号（@BeforeEach 重置）：同一条用例里建两个联盟时，固定名字会在第二个上撞名。 */
     private int allianceSeq;
@@ -243,6 +249,49 @@ class WarEndpointTest {
                 .isFalse();
         // 全服那一半不因身份而变
         assertThat(theirs.get("totalKills").asLong()).isEqualTo(mine.get("totalKills").asLong());
+    }
+
+    @Test
+    @DisplayName("参战方疲劳到顶 ⇒ 新行军被拒（13026）；同国没出过力的成员照常能发（#769）")
+    void fatigueCapRejectsNewMarchesOfSpentParticipants() throws Exception {
+        Kingdom attacker = kingdom("疲劳闸门国");
+        Kingdom defender = kingdom("被宣国");
+        post200("/nation/war/declare", attacker.king(),
+                new WarDeclareReq(newRequestId(), defender.nationId()));
+
+        // 用生产口把国王拉满（每行军 +5，20 次到顶）——这样造的疲劳与真发 20 次走的是同一笔账，
+        // 省掉的只是 20 次往返；"这一笔真记进参战国的板子"由下面那句自证（那句红了先查夹具，
+        // 别去怀疑被拒的那条断言 —— 没有活跃战事时 addFatigue 会按 NOT_PARTICIPANT 不记账）
+        wars.addFatigue(attacker.nationId(), attacker.king(), 20L, 0L);
+        assertThat(wars.findLatest().orElseThrow().fatigueOf(attacker.king()))
+                .as("夹具自证：宣战后疲劳已记到顶")
+                .isEqualTo(configs.longParam("WAR_FATIGUE_MAX"));
+
+        giveTroops(attacker.king(), 5L);
+        giveTroops(attacker.mate(), 5L);
+        // SCOUT 到 (1,1)：免战力圈层、免战斗结算 —— 让"疲劳"成为这一发唯一的变量
+        // （SCOUT 是唯一"到了自动返程"的动作，也正是 #768 修复后名额会释放的那条路）
+        JsonNode rejected = postRaw("/world/march", attacker.king(), new MarchReq(
+                newRequestId(), 1, 1, List.of(new MarchUnit("unit_infantry_t1", 1L)), List.of(), MarchAction.SCOUT));
+        assertThat(rejected.get("code").asInt())
+                .as("到顶之后不能再行军：验收 7「超过上限后无法继续行军」的服务端执行者（响应=%s）", rejected)
+                .isEqualTo(ErrorCode.WAR_FATIGUE_MAX_REACHED.code());
+
+        JsonNode mateOk = postRaw("/world/march", attacker.mate(), new MarchReq(
+                newRequestId(), 1, 1, List.of(new MarchUnit("unit_infantry_t1", 1L)), List.of(), MarchAction.SCOUT));
+        assertThat(mateOk.get("code").asInt())
+                .as("疲劳按人记：同国没出过力的成员照常能发（响应=%s）", mateOk).isZero();
+    }
+
+    /** 给号发兵（SCOUT 要过"必须派兵"那道校验；与 MarchRepeatInvariantsTest 同一手法）。 */
+    private void giveTroops(String playerId, long count) {
+        if (armies.findByPlayerId(playerId).isEmpty()) {
+            armies.insertIfAbsent(playerId, new com.ironoath.core.army.ArmyState());
+        }
+        var army = armies.findByPlayerId(playerId).orElseThrow();
+        long version = armies.versionOf(playerId);
+        army.add("unit_infantry_t1", count);
+        armies.save(playerId, army, version);
     }
 
     @Test

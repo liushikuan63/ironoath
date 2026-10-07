@@ -220,6 +220,21 @@ public class MarchAppService {
                             + " 支。可开启额外名额（B15 特权）");
         }
 
+        // 国战疲劳（B13 §7、验收 7）：参战方到顶 ⇒ 拒新行军 —— 判定与 warStatus 报文同源
+        // （`WarScoreBoard.canMarch`），所以面板上灰下去的那一刻正是这里会拒的那一刻。
+        // 口径与 addFatigue 的 NOT_PARTICIPANT 一致：只在"本国有活跃战事"时吃这道闸
+        // （WarAppService：「疲劳闸门只在国战里生效，没有仗就没有那道闸」）。
+        // ⚠️ 用 findLatest 读快照而不是 settleIfExpired：后者会发赛季分，行军路径不能成为
+        // 第二个发奖触发点（#764 收口的同一条纪律：「发奖只有一个触发点」）。
+        String fatigueNationId = membership.nationIdOf(playerId);
+        if (fatigueNationId != null) {
+            com.ironoath.core.nation.WarScoreBoard warBoard = wars.findLatest().orElse(null);
+            if (warBoard != null && warBoard.registeredNations().contains(fatigueNationId)
+                    && !warBoard.canMarch(playerId)) {
+                throw new BizException(ErrorCode.WAR_FATIGUE_MAX_REACHED);
+            }
+        }
+
         WorldGenerator.Cell cell = worldAppService.cellAt(target);
         March.Action action = March.Action.valueOf(req.action().name());
         March.TargetType targetType = resolveTargetType(cell, target);
