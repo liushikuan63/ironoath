@@ -175,6 +175,24 @@ push('置灰：协议要求"画着但不响应"（active 不被置 false）',
 const SKIPPED = ['运行时驱动灰态读 tint（release 产物里拿不到弹层组件实例句柄，实测 overlay=false）'
   + ' ⇒ 未验证；要补就走 tools/lib/panel-clicks.mjs 那套按节点名取壳的写法']
 
+// 三之三、MarchComposeOverlay 的遮罩不能被材质换图顺手删掉。
+// 风险形状：该弹层原先把「整屏遮罩 rect」与「底板 roundRect」画在**同一个 Graphics** 上，
+// 而 applySlicedSprite 会清空所挂节点的整张画布 ⇒ 若把底板换回原节点，遮罩会一起消失，
+// 底下搜索面板的字与标题叠在一起（该文件注释里记着 `compose-mode-*.png` 那次两张都拍到的事故）。
+// 打开这个弹层要造部队 + 目标（成本高、且会占集结名额），所以这里钉**结构**而不是钉像素：
+// 遮罩必须还画在 background 上，而贴图/兜底底板必须在**另一个节点**里。
+const composeSrc = readFileSync(path.resolve(process.cwd(),
+  'client/assets/scripts/scene/MarchComposeOverlay.ts'), 'utf8')
+const scrimStillOnBackground = /background\.rect\(\s*-screen\.width/.test(composeSrc)
+const plateOnOwnNode = /new Node\('plate'\)[\s\S]{0,400}applySlicedSprite\(plate,\s*'ui\.panel\.iron'/.test(composeSrc)
+const plateNotDrawnOnBackground = !/background\.roundRect\(\s*-width\s*\/\s*2/.test(composeSrc)
+push('集结弹层：整屏遮罩仍画在 background 上', scrimStillOnBackground,
+  '断言 `background.rect(-screen.width…)` 还在 —— 少了它弹层打开时底下面板照常亮')
+push('集结弹层：底板在独立 plate 节点（贴图路径）', plateOnOwnNode,
+  "断言有 `new Node('plate')` 且对它调 applySlicedSprite('ui.panel.iron')")
+push('集结弹层：底板不再画回 background（否则遮罩会被一起清空）', plateNotDrawnOnBackground,
+  '兜底 roundRect 必须画在 plate 自己的 Graphics 上，不能回到 background')
+
 const shot = path.join(OUT, 'ui-v25-stamina-on-screen.png')
 await page.screenshot({ path: shot })
 

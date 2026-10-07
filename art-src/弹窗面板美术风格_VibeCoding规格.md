@@ -388,7 +388,15 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
   置灰拆成两条路径各自生效（贴图态压 `Sprite.color`、兜底态保留 `fillColor` 换色），
   协议"置灰而不是隐藏"由三条静态判据钉住。**一处实测约束**：`Sprite.grayscale` 在本仓 headless 类型桩里不存在
   （`check-client-typecheck` 报 TS2339）⇒ 用 `color` 相乘，不去扩类型桩。
-  本卡 ①（B 档接列表行）与 ③（`MarchComposeOverlay` 底板）**未做**，各自挂在真实外部条件上（见队列 `- [~]`）。
+  **③ 已完成（同日 02:5x，台账 #806）**：`MarchComposeOverlay` 接 `ui.panel.iron`，并拆掉一颗结构性雷 ——
+  该弹层原先把**整屏遮罩**与**底板**画在同一个 Graphics 上，而 `applySlicedSprite` 会清空所挂节点的整张画布，
+  直接换贴图会**连遮罩一起删掉**（该文件注释记着那次字叠字的截图事故）⇒ 底板进独立 `plate` 子节点。
+  内容安全区同 #803 再应用一次：标题原 `PANEL_HEIGHT/2-28=202` 已越过净区上沿 194（压进铜帽 8px），
+  行宽 `PANEL_WIDTH-48` 也改成减掉左右两条铜帽带。判据用**三条结构断言**（遮罩在 background / 底板在 plate /
+  底板不画回 background）+ 植入取证（改坏两处 → 两条点名红、退码 1；还原 → 23 条 / 0）。
+  **未验证**：`verify-rally-runtime` 与 `verify-march-runtime` 硬编码吃 `web-mobile`，本轮只建独立产物 ⇒
+  接线对这两道既有门的影响未跑；弹层像素级视觉也没拍（要造部队+目标且占集结名额）。
+  本卡 ①（B 档接列表行）**未做**，挂在批跑独占产物这个真实外部条件上（见队列 `- [~]`）。
 
 ### V25-e · 防腐（把"边厚 ÷ 消费尺寸"做成机制，不靠人记）
 

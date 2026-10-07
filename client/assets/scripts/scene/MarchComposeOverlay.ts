@@ -17,6 +17,8 @@ import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view
 import type { MarchComposeView } from '../game/session/AppRoot'
 import type { RallyField, RallyNumberRow, RallyScope, RallyScopeRow } from '../game/world/MarchCompose'
 import { applySystemUiFont } from './UiFont'
+import { applySlicedSprite } from './ArtCatalog'
+import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 
 const COLOR_MASK = new Color(12, 10, 9, 232)
 /** 整屏遮罩色，与 `AwakenPickOverlay` / `ComposePickOverlay` 同一份参数 */
@@ -32,7 +34,8 @@ const PANEL_WIDTH = 620
 const PANEL_HEIGHT = 460
 const ROW_HEIGHT = 44
 /** 行条宽（面板左右各内缩 24）：行内四件事的落点全部从它推，不各写一个魔数。 */
-const ROW_WIDTH = PANEL_WIDTH - 48
+/** 行宽 = 面板宽减掉左右两条铜帽带（各 48）：原先只减 48 总量，行两端会压在铜帽上。 */
+const ROW_WIDTH = PANEL_WIDTH - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right
 /**
  * 兵种名**左对齐**贴行条左内缩。原先它是中心对齐、却放在同一个左内缩点上
  * ⇒ 文字以那个点为中心向两边铺开，条带左边缘挡不住它（master 5b7bc28 同一处，
@@ -121,14 +124,27 @@ export class MarchComposeOverlay {
     background.fillColor = COLOR_SCRIM
     background.rect(-screen.width / 2, -screen.height / 2, screen.width, screen.height)
     background.fill()
-    background.fillColor = COLOR_MASK
-    background.roundRect(-width / 2, -PANEL_HEIGHT / 2, width, PANEL_HEIGHT, 10)
-    background.fill()
+    // 底板必须与遮罩**分节点**：这两块原先共用同一个 Graphics，而 `applySlicedSprite` 会把它
+    // 所挂节点的整张画布清空 ⇒ 直接在原节点上换贴图会连整屏遮罩一起丢掉，
+    // 底下搜索面板的字会和标题叠在一起（上面注释记着那次 `compose-mode-*.png` 两张都拍到的事故）。
+    const plate = new Node('plate')
+    plate.layer = this.node.layer
+    plate.addComponent(UITransform).setContentSize(new Size(width, PANEL_HEIGHT))
+    if (!applySlicedSprite(plate, 'ui.panel.iron', width, PANEL_HEIGHT)) {
+      const plateBg = plate.addComponent(Graphics)
+      plateBg.fillColor = COLOR_MASK
+      plateBg.roundRect(-width / 2, -PANEL_HEIGHT / 2, width, PANEL_HEIGHT, 10)
+      plateBg.fill()
+    }
+    this.node.addChild(plate)
 
-    this.titleLabel = this.addLabel(0, PANEL_HEIGHT / 2 - 28, 22, COLOR_GOLD)
-    this.coordLabel = this.addLabel(0, PANEL_HEIGHT / 2 - 56, 15, COLOR_DIM)
-    this.totalLabel = this.addLabel(0, -PANEL_HEIGHT / 2 + 92, 17, COLOR_TEXT)
-    this.noticeLabel = this.addLabel(0, -PANEL_HEIGHT / 2 + 66, 15, COLOR_WARN)
+    // 内容从铜边**内侧**起算（inset 48/36）：原先的 `PANEL_HEIGHT / 2 - 28` 会把标题压进铜帽带。
+    const top = PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top
+    const bottom = -PANEL_HEIGHT / 2 + PANEL_IRON_INSET.bottom
+    this.titleLabel = this.addLabel(0, top - 24, 22, COLOR_GOLD)
+    this.coordLabel = this.addLabel(0, top - 50, 15, COLOR_DIM)
+    this.totalLabel = this.addLabel(0, bottom + 56, 17, COLOR_TEXT)
+    this.noticeLabel = this.addLabel(0, bottom + 30, 15, COLOR_WARN)
 
     for (let index = 0; index < VISIBLE_ROWS; index++) {
       const row = this.createRow(index)
@@ -145,7 +161,7 @@ export class MarchComposeOverlay {
     this.node.addChild(this.bandNode)
     const bandY = PANEL_HEIGHT / 2 - 92 - (VISIBLE_ROWS - 1) * (ROW_HEIGHT + 4)
     this.bandNode.setPosition(new Vec3(0, bandY, 0))
-    this.bandNode.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH - 48, ROW_HEIGHT))
+    this.bandNode.addComponent(UITransform).setContentSize(new Size(ROW_WIDTH, ROW_HEIGHT))
     const bandBg = this.bandNode.addComponent(Graphics)
     bandBg.fillColor = COLOR_ROW
     bandBg.roundRect(-(PANEL_WIDTH - 48) / 2, -ROW_HEIGHT, PANEL_WIDTH - 48, ROW_HEIGHT, 6)
