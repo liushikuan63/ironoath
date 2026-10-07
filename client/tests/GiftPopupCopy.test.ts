@@ -82,3 +82,24 @@ test('客户端不许自己造额度文案（提示只能来自那一列）', ()
   assert.ok(!quoted.test(code),
     '视图代码里出现了带「额度」的字符串字面量 —— 额度文案的作者只能是服务端')
 })
+
+/**
+ * 「画了不等于点得动」（2026-10-07 现跑抓到的真缺陷）：`onBuy` 一直声明在这里、
+ * GameBootstrap 也一直赋了值（`giftPopup.onBuy = productId => root.buyGift(productId)`），
+ * 但整个文件**没有任何触摸注册** ⇒ 玩家点「立即购买」什么都不会发生，
+ * 而单测（GiftPayFlow 15 条）、类型检查、45 道静态门全都不会红 ——
+ * `check-client-send-paths` 数的是 GameApi 发送口的调用点，那个调用点在 AppRoot 里（作为 flow 的 deps），
+ * 断的是 UI 这一层。所以这一条必须钉"视图自己有没有把点击交出去"。
+ */
+test('「立即购买」与「×」必须注册触摸并把点击交给宿主（B19 支付链的入口）', () => {
+  const source = readFileSync(VIEW, 'utf8')
+  assert.ok(/this\.buyButton\.on\('touch-start'/.test(source),
+    '「立即购买」没有触摸注册 —— 弹窗能弹、按钮点不动，整条支付链在玩家侧不可达')
+  assert.ok(/this\.onBuy\?\.\(/.test(source),
+    'buy 的回调没有交给宿主（onBuy 只是被赋值的死字段）')
+  assert.ok(/close\.on\('touch-start'/.test(source), '「×」同样只画不接')
+  assert.ok(/this\.onClose\?\.\(/.test(source), '关闭没有通知编排层')
+  // 下单入参必须取自**本次**弹窗，不能是"记住的上一个"（那会绕开服务端频控）
+  assert.ok(/this\.productId = resp\.productId/.test(source),
+    'productId 没有随每次弹窗刷新')
+})

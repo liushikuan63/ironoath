@@ -13,7 +13,7 @@
  * <p><b>倒计时读服务端时刻</b>（`offerExpireAt - serverNow`）：客户端时钟可以改，
  * 用它算倒计时会让"还剩几分钟"变成一句随时会错的话。
  */
-import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3 } from 'cc'
+import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, type EventTouch } from 'cc'
 import type { GiftPopupResp } from '../net/generated/PayProtocol'
 import type { PayView } from '../game/pay/GiftPayFlow'
 import { applySystemUiFont } from './UiFont'
@@ -43,6 +43,11 @@ export class GiftPopupView extends Component {
   private countdown: Label | null = null
   private result: Label | null = null
   private buyButton: Node | null = null
+  /**
+   * 这一档要下单的**商品 id**（`pay_product.id`，服务端随弹窗下发）。
+   * 只用来把 `onBuy` 的入参递回去，**绝不上屏**（把 `gift_stuck_supply` 印给玩家是 #255/#268 那一族）。
+   */
+  private productId: string | null = null
 
   /** 服务端说"这一刻要弹"：画出来并显示。 */
   attach(resp: GiftPopupResp): void {
@@ -61,6 +66,8 @@ export class GiftPopupView extends Component {
       // 旧服务端不下发这一位时留空，用一句空话代替一句内部编号。
       this.subtitle.string = resp.productName ?? ''
     }
+    // 下单入参只能取自本次弹窗（常驻挂件式的"记住上一个"会被频控绕开）
+    this.productId = resp.productId
     if (this.result !== null) {
       this.result.string = ''
     }
@@ -158,12 +165,29 @@ export class GiftPopupView extends Component {
     // 一个组件而不是节点（真机上是 addChild 直接抛错，而这一步只有真正弹过窗才会走到）
     this.label(this.buyButton, '立即购买', 0, 0, 20, COLOR_TEXT)
     panel.addChild(this.buyButton)
+    // 「立即购买」以前**只画不接**：`onBuy` 声明在这里、GameBootstrap 也赋了值（`giftPopup.onBuy = ...`），
+    // 但整个文件没有任何触摸注册 ⇒ 玩家点它什么都不会发生，整条 B19 支付链（下单 → 支付 → 轮询 →
+    // 结果文案 → 未成年额度提示）在玩家侧不可达。`check-client-send-paths` 抓不到它：
+    // 那道门数的是 GameApi 发送口的调用点，而 `createPayOrder` 的调用点在 AppRoot 里（作为 flow 的 deps），
+    // 断的是 UI 这一层 —— 门禁的覆盖面止于发送口，管不到"视图有没有把玩家的点击交出去"。
+    this.buyButton.on('touch-start', (_event: EventTouch) => {
+      const productId = this.productId
+      if (productId !== null) {
+        this.onBuy?.(productId)
+      }
+    }, this)
 
     const close = new Node('close')
     close.addComponent(UITransform).setContentSize(36, 36)
     close.setPosition(new Vec3(PANEL_WIDTH / 2 - 28, PANEL_HEIGHT / 2 - 28, 0))
     this.label(close, '×', 0, 0, 22, COLOR_TEXT_DIM)
     panel.addChild(close)
+    // 「×」与「立即购买」同族：`onClose` 也只是声明着、没人调用过。
+    // 点关闭要先把自己藏起来（`hide()`），再通知编排层 —— 顺序反了会留下"宿主以为还开着"的态
+    close.on('touch-start', (_event: EventTouch) => {
+      this.hide()
+      this.onClose?.()
+    }, this)
 
     this.node.active = false
   }
