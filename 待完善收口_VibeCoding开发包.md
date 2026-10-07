@@ -367,7 +367,7 @@ B21 §五④ 已裁的 4 条 buff 候选表、乘区归属三方案、以及一�
 |---|---|---|
 | 静态门 | **45 道**（AGENTS.md 声明值与 `check.sh` 实际调用数一致，门自己核过） | `bash scripts/check-doc-counts.sh` ⇒ 退 0 并打印「45 道（现数 45）」 |
 | 客户端发送口 | GameApi **136 方法 / 生产零调用点 0 / 连测试与探针也没碰过 0**；仅 GameApi 内部被调 **3**（`worldExile`、`worldRecall`、`worldCollectGather`，要顺入口方法复验） | `node tools/report-client-send-paths.mjs` |
-| 验收矩阵 | 编号验收项 **265 条 = 230 ✅ / 22 🟡 / 13 ⬜**（**本格把 B25 验收 7 由 ⬜「未开工」翻成 ✅**：四句都有用例，且 `test-client.sh` 同刻全绿；相邻的验收 6 仍留 ⬜，卡点是「资源那一行是估算」要产品裁口径，见 §二·补·二 D 组第 1 行） | 见 §二·补·三 的那条 node 一行脚本 |
+| 验收矩阵 | 编号验收项 **265 条 = 231 ✅ / 22 🟡 / 12 ⬜**（本会话内翻绿两次：**B25 验收 7**（#7 四句都有用例，`test-client.sh` 同刻全绿）与 **B23 验收 3**（#771 落地 `mayEnterRankTop`，沙箱全量 2118/0/0/0）；相邻的 B25 验收 6 仍留 ⬜，卡点是「资源那一行是估算」要产品裁口径，见 §二·补·二 D 组第 1 行） | 见 §二·补·三 的那条 node 一行脚本 |
 | 上线检查清单 | `- [x]` **70** / `- [ ]` **38** | `node -e '…'`（§二·补·三） |
 | 运行时探针 | `tools/verify-*.mjs` **60 份** | `ls tools/verify-*.mjs \| wc -l` |
 | 用例总量 | 客户端 **1025 跑 / 1025 通过 / 0 失败 / 0 跳过**（**本轮同刻现跑**：`bash scripts/test-client.sh` EXIT=0，Node 20）；服务端 **2117 项 0 红 0 跳** 是**上一格同树读数、本轮未复跑** | `bash scripts/test.sh`（⚠️ 主树跑会经 `contract-sync` 的 `-am install` 重写活后端 classpath 上的 jar，见项目记忆「Java 用例的沙箱配方」；本轮 8080 上确有活后端 PID 43152） |
@@ -390,7 +390,7 @@ V10/V11/V12/V14/V16/V13-S1/S2/V15/V17(A~H)/V18 都在 §四 有格子与读数�
 |---|---|---|---|
 | A1 | **未成年付费提示没上屏**：服务端把提示算好随响应下发，客户端一行都没读 ⇒ 合规文案到不了玩家眼前 | `PayAppService.java:254 minorNotice = minorLimitNotice(...)`、`CreateOrderResp.java:10` 有该列；客户端 `grep -rn minorNotice client/assets/scripts --include=*.ts \| grep -v /net/generated/` **命中 0**（只有生成物 `PayProtocol.ts:81`） | 新增卡 **V19** |
 | A2 | **飘字队列没有生产入口**：`RewardToastQueue` 单测在、类在，但没有任何生产文件引用它 ⇒ 多条提示仍走 `showHint` 同坐标叠加（正是 B04 验收 8 禁止的行为） | `grep -rn RewardToastQueue client/assets/scripts --include=*.ts` 只命中 `game/reward/RewardToastQueue.ts` 自身 | 新增卡 **V20** |
-| A3 | **Bot 不进榜「前 3」的口径没落地**：2026-10-06 已裁决验收按「前 3」，而生产是 `bots.humanOnly` 全榜摘除；专用判据函数无人调用 | `BotTuning.java:313 mayEnterRankTop` 定义在；生产调用点 **0**，且 `RankBoardService.java:494` 注释自陈「那个方法在生产里没有调用点」 | 新增卡 **V21** |
+| A3 | **Bot 不进榜「前 3」的口径没落地**：2026-10-06 已裁决验收按「前 3」，而生产是 `bots.humanOnly` 全榜摘除；专用判据函数无人调用 | `BotTuning.java:313 mayEnterRankTop` 定义在；生产调用点 **0**，且 `RankBoardService.java:494` 注释自陈「那个方法在生产里没有调用点」 | 新增卡 **V21**。**〔17:3x 已落地＝#771：抑制宽度改由 `global.RANK_BOT_SUPPRESSION` 决定（默认 TOP_N、ALL 可配），`mayEnterRankTop` 有了第一个生产调用点，矩阵 B23 验收 3 翻 ✅。遗留：写侧仍拦 Bot 上报 ⇒ 真陪榜要先放开写侧，而它与 B14 发奖排除同源 ⇒ 待裁〕** |
 | A4 | **国家层集结没有发起入口**：协议留位三档（SQUAD/ALLIANCE/NATION），服务端只有联盟层能发起 ⇒ B13 验收 8 的「50 人门槛」进不去 | `dto/generated/RallyScope.java:8` 注释原文「国家层在 B13 落地前不会产生，枚举先留位以免届时改协议」；`SocialAppService.java:2819` 只做 `RallyScope.valueOf(...)` 读侧转换，无国家层创建分支 | 新增卡 **V22**（双端 + 要先裁「谁能发起国家集结」） |
 
 **B 组·只缺验证证据（代码在，判据没跑到；补证据不用改产品码）**
