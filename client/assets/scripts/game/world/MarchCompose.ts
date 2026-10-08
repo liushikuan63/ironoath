@@ -220,9 +220,9 @@ export interface RallyScopeRow {
 /** 画出来的一行数字（带界，表现层据此点亮 −/＋，不自己算、也不自己拼字）。 */
 export interface RallyNumberRow {
   readonly field: RallyField
-  /** 数前面那两个字的表头 */
-  readonly caption: string
-  /** 格式化好的数（带单位与上界）：格式化只有一份，不然两屏各写一遍迟早对不上 */
+  /** 格式化好的数（带单位与上界）：格式化只有一份，不然两屏各写一遍迟早对不上。
+   *  这一串是**自描述**的（"2/2人"、"30分"）—— 铁誓底板把净区收到 460 之后同一行放不下
+   *  "表头 + 数"，省掉的是表头而不是数（推导见 `MarchComposeOverlay` 的 BAND_* 常量）。 */
   readonly text: string
   readonly value: number
   readonly min: number
@@ -276,8 +276,8 @@ export function adjustRallyNumber(form: RallyForm | null, policy: RallyPolicyVie
 }
 
 /**
- * 编成面板上那两行数字（只给联盟层）：界与值一起下发，
- * 表现层不再自己夹取（同一份界在两处写的结局是滑条显示一个必然被服务端夹掉的上限）。
+ * 编成面板上那两行数字（给要填数的那几层：联盟与国家，见 {@link rallyTakesNumbers}）：
+ * 界与值一起下发，表现层不再自己夹取（同一份界在两处写的结局是滑条显示一个必然被服务端夹掉的上限）。
  */
 export function rallyNumbersOf(form: RallyForm | null, policy: RallyPolicyView | null): readonly RallyNumberRow[] {
   if (form === null || policy === null) {
@@ -285,12 +285,12 @@ export function rallyNumbersOf(form: RallyForm | null, policy: RallyPolicyView |
   }
   return [
     {
-      field: 'maxMembers', caption: '人数', value: form.maxMembers,
+      field: 'maxMembers', value: form.maxMembers,
       min: policy.minMembers, max: policy.maxMembers,
       text: `${form.maxMembers}/${policy.maxMembers}人`,
     },
     {
-      field: 'prepareMinutes', caption: '等待', value: form.prepareMinutes,
+      field: 'prepareMinutes', value: form.prepareMinutes,
       min: policy.minPrepareMinutes, max: policy.maxPrepareMinutes,
       text: `${form.prepareMinutes}分`,
     },

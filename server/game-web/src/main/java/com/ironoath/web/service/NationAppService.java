@@ -134,6 +134,15 @@ public class NationAppService {
      */
     private final RewardService rewardService;
 
+    /**
+     * 社交侧的装配（亡国时要结清该国**正在准备中**的集结）。
+     *
+     * <p>用 {@code ObjectProvider} 而不是直接注入：{@code SocialAppService} 那一侧需要国家的
+     * 装配规则（{@code NationLeaders} / {@code NationMembership}），两个 app service 互相直连
+     * 会让容器在构造期转不出来。本仓破这类环只用这一种写法（见 {@code PlayerInitService} 同注释）。
+     */
+    private final org.springframework.beans.factory.ObjectProvider<SocialAppService> social;
+
     public NationAppService(NationStore nations, NationRulesAssembler assembler,
                             SocialRulesAssembler socialRules, SocialStore socialStore,
                             NationLeaders leaders,
@@ -141,7 +150,8 @@ public class NationAppService {
                             IdempotencyStore idempotency, TimeService timeService,
                             ConfigRegistry configs, BotRegistry bots,
                             com.ironoath.web.ws.SocialPushPublisher pushPublisher,
-                            RewardService rewardService) {
+                            RewardService rewardService,
+                            org.springframework.beans.factory.ObjectProvider<SocialAppService> social) {
         this.nations = nations;
         this.assembler = assembler;
         this.socialRules = socialRules;
@@ -155,6 +165,7 @@ public class NationAppService {
         this.bots = bots;
         this.pushPublisher = pushPublisher;
         this.rewardService = rewardService;
+        this.social = social;
     }
 
     // ---------- 建国（B13 §1） ----------
@@ -361,6 +372,11 @@ public class NationAppService {
                     throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED, e.getMessage());
                 }
                 nations.save(nation, nation.version());
+                // 亡国即取消并退兵（V22 验收④，2026-10-08 裁决）：此刻还在准备中的国家集结必须在这一手
+                // 结清。不结清的症状是"兵锁在一个谁也列不出来的集结上"—— 亡国之后集结面板会过滤掉
+                // 已解散的国家（activeNationOf），而惰性扫描 expireIfDue 只在有人读那一支时才跑。
+                int ralliesCancelled = social.getObject().cancelNationalRalliesOf(nation.id(), now);
+                LOG.info("亡国结清集结 nationId={} 取消数={}", nation.id(), ralliesCancelled);
                 notifyNation("NATION_DISBANDED",
                         "国家「" + nation.name() + "」已被国王解散", audience, playerId, nation.id(), now);
                 LOG.info("解散国家 nationId={} name={} 国王={} 影响成员联盟={} 影响人数={} 核销国库={}："

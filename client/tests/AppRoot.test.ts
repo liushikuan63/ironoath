@@ -623,6 +623,10 @@ interface Harness {
   readonly lastApplications: ApplicationView | null
   /** 最近一次推给出征编成面板的整块视图。 */
   readonly lastCompose: MarchComposeView | null
+  /** #791：飘字出口收到的回执（按送达顺序）。 */
+  readonly hintReceipts: readonly string[]
+  /** 清空回执记录（断言"这一次动作说了什么"，不带上前面动作的）。 */
+  resetHints(): void
   /** 最近一次推给商店面板的整块视图。 */
   readonly lastShop: ShopView | null
   /** 最近一次推给集结面板的整块数据（响应 + 我的 id + 提示行）。 */
@@ -734,6 +738,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastSquadDiscovery: SquadListView | null = null
   let lastApplications: ApplicationView | null = null
   let lastCompose: MarchComposeView | null = null
+  /** #791：结果回执的唯一出口。写在弹层自己的提示行上等于没写（那一帧面板就关了）。 */
+  const hintReceipts: string[] = []
   let lastShop: ShopView | null = null
   let lastRallies: RallyPanelData | null = null
   let lastOfflineReport: OfflineReportPopup | null = null
@@ -860,6 +866,9 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     marchCompose: (view) => {
       attached.push('marchCompose')
       lastCompose = view
+    },
+    hint: (text) => {
+      hintReceipts.push(text)
     },
     shop: view => {
       attached.push('shop')
@@ -1012,6 +1021,12 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     },
     get lastCompose() {
       return lastCompose
+    },
+    get hintReceipts() {
+      return hintReceipts
+    },
+    resetHints() {
+      hintReceipts.length = 0
     },
     get lastShop() {
       return lastShop
@@ -3626,6 +3641,54 @@ test('V22-b：旧后端没有 nation 那一份时不当成"用联盟的" —— 
   h.root.pickMarchUnit('unit_infantry_t1', 30)
   await h.root.confirmMarch()
   assert.equal(h.http.countOf('/rally/nation'), 0, '猜出来的数不许真的发出去')
+})
+
+// ---------- #791：发起成功的回执必须有玩家看得见的出口 ----------
+
+/**
+ * 回执原先写成 `composeNotice`，而成功那一帧同时 `composeTarget = null`
+ * ⇒ `MarchComposeOverlay.render` 见到空 target 直接隐藏早退，那句话写在看不见的层上。
+ * 这三条钉的是"改走全局飘字之后"：回执必须从 `hint` 出口出来，且**不再**留在编成视图里。
+ */
+for (const [scope, path, expect] of [
+  ['SQUAD', '/rally/squad', '已发起集结：邻居'],
+  ['ALLIANCE', '/rally/alliance', '已发起联盟集结：邻居'],
+  ['NATION', '/rally/nation', '已发起国家集结：邻居'],
+] as const) {
+  test(`#791：${scope} 层发起成功 → 回执走全局飘字，不留在已关闭的编成层里`, async () => {
+    const h = await rallyComposeHarness()
+    if (scope !== 'SQUAD') {
+      h.root.setComposeRallyScope(scope)
+    }
+    h.root.pickMarchUnit('unit_infantry_t1', 30)
+    h.resetHints()
+    await h.root.confirmMarch()
+    assert.equal(h.http.countOf(path), 1, '这一层要真发出去（回执的前提是成功）')
+    assert.deepEqual(h.hintReceipts as string[], [expect],
+      '那句"已发起…"必须交给飘字出口 —— 它是玩家唯一能看到的成功确认')
+    assert.notEqual(h.lastCompose?.notice, expect,
+      '同一句不许再写回编成层的提示行（那一层此刻已经关了，写了就是死码）')
+  })
+}
+
+test('#791：出征成功那句也走同一个出口（五处同形，一次扫干净）', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  h.resetHints()
+  await h.root.confirmMarch()
+  assert.equal(h.http.countOf('/world/march'), 1)
+  assert.deepEqual(h.hintReceipts as string[], ['已出征：邻居'])
 })
 
 test('B26 S14：政策说这一层发起不了 → 点「联盟」不切过去，把那一句人话写在提示行', async () => {

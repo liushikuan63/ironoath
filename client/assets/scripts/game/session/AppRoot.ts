@@ -417,6 +417,12 @@ export interface PanelTargets {
    * 只有一处引用的话，改协议时它不会动，队列就会静默读到 undefined。
    */
   hintTuning?(toast: { gapMs: number, maxQueued: number, stuckTimeoutMs: number } | null): void
+  /**
+   * 一句结果回执（#791）。存在的理由：编成弹层在成功那一帧就被关掉（`composeTarget = null`），
+   * 于是写在 `composeNotice` 上的"已发起…/已出征…"是写给一个已经隐藏的层 —— 玩家点了确认之后
+   * 屏幕上什么都没发生。这类回执只有一个出口：视图层的 `showHint`（V20 的飘字队列）。
+   */
+  hint?(text: string): void
   /** 「自上次登录以来」那一屏（B25-S3）。条目为空时编排层不会调它 —— 一个空面板比不弹更糟。 */
   offlineReport?(view: OfflineReportPopup): void
   /** 汇总里点了一条：跳到那一页（key 与 PanelNav 的 key 一致）。 */
@@ -4354,6 +4360,16 @@ export class AppRoot {
   }
 
   /**
+   * 一句"这件事成了"的回执（#791）。**不要**把它写成 `composeNotice`：编成弹层在成功那一帧
+   * 就 `composeTarget = null` 了，而 `MarchComposeOverlay.render` 见到空 target 直接隐藏并早退
+   * ⇒ 提示行写在一个已经看不见的层上，玩家点了确认等于没反应（小队/联盟/国家/加入/出征五处同形）。
+   * 视图没接这个口时（单测、或将来换宿主）宁可什么都不说，也不要把话写进一个隐藏的面板。
+   */
+  private receipt(text: string): void {
+    this.targets.hint?.(text)
+  }
+
+  /**
    * 在出征与派侦察之间切（B26 S18）。
    *
    * <p>落点与集结同一条理由：同一份兵、同一个目标，换的只是命令种类 —— `ScoutReq.units`
@@ -4428,7 +4444,8 @@ export class AppRoot {
       this.composeRally = false
       this.composeTarget = null
       this.composePicks = {}
-      this.composeNotice = `已发起集结：${target.name}`,
+      this.composeNotice = null
+      this.receipt(`已发起集结：${target.name}`)
       this.deliverCompose()
       void this.refresh('social')
       return
@@ -4475,7 +4492,8 @@ export class AppRoot {
       this.rallyForm = null
       this.composeTarget = null
       this.composePicks = {}
-      this.composeNotice = `已发起联盟集结：${target.name}`
+      this.composeNotice = null
+      this.receipt(`已发起联盟集结：${target.name}`)
       this.deliverCompose()
       void this.refresh('social')
       return
@@ -4525,7 +4543,8 @@ export class AppRoot {
       this.rallyForm = null
       this.composeTarget = null
       this.composePicks = {}
-      this.composeNotice = `已发起国家集结：${target.name}`
+      this.composeNotice = null
+      this.receipt(`已发起国家集结：${target.name}`)
       this.deliverCompose()
       void this.refresh('social')
       return
@@ -4615,7 +4634,8 @@ export class AppRoot {
       })
       this.composeTarget = null
       this.composePicks = {}
-      this.composeNotice = `已出征：${target.name}`
+      this.composeNotice = null
+      this.receipt(`已出征：${target.name}`)
       this.deliverCompose()
       void this.refresh('world')
       return

@@ -65,6 +65,19 @@ const BAND_CHIP_WIDTH = 42
 const BAND_CHIP_GAP = 6
 /** 第一颗的中心：band 左内缩 8 ⇒ -286 + 8 + 半宽 */
 const BAND_CHIP_START_X = -ROW_WIDTH / 2 + 8 + BAND_CHIP_WIDTH / 2
+/** 两组「− 数 ＋」的格子宽度：全部从层级键的右边缘往后推，不写死面板坐标。 */
+const BAND_STEP_W = 38
+const BAND_VALUE_W = 56
+const BAND_INNER_GAP = 3
+const BAND_GROUP_GAP = 8
+/** 三颗层级键占到的右边缘（最后一颗的中心 + 半宽） */
+const BAND_CHIP_RIGHT = BAND_CHIP_START_X
+  + (BAND_CHIP_SCOPES.length - 1) * (BAND_CHIP_WIDTH + BAND_CHIP_GAP) + BAND_CHIP_WIDTH / 2
+/** 第 `index` 组「− 数 ＋」的左边缘。 */
+function bandGroupLeft(index: number): number {
+  const groupW = 2 * BAND_STEP_W + BAND_VALUE_W + 2 * BAND_INNER_GAP
+  return BAND_CHIP_RIGHT + 8 + index * (groupW + BAND_GROUP_GAP)
+}
 
 export class MarchComposeOverlay {
   private readonly node: Node
@@ -86,7 +99,7 @@ export class MarchComposeOverlay {
   private readonly bandChips: {
     scope: RallyScope; node: Node; label: Label; paint: (color: Color) => void
   }[] = []
-  private readonly bandGroups: { caption: Label; value: Label; minus: Node; plus: Node }[] = []
+  private readonly bandGroups: { value: Label; minus: Node; plus: Node }[] = []
   /** 两个数组当前各自管的是哪一行数字（渲染时按视图给的顺序贴上去） */
   private bandFields: RallyField[] = []
   private view: MarchComposeView | null = null
@@ -191,23 +204,25 @@ export class MarchComposeOverlay {
       this.bandChips.push({ scope, ...chip })
     }
     // 版式按"整盒不重叠"排（截图抓到的第一版把 Cocos 默认的 label 字样留在了 −/＋ 上，
-    // 而那颗字正好压在数字头上）：每组 表头 → − → 数 → ＋ 各占自己的格子。
-    const groups = [
-      { caption: -110, minus: -60, value: -8, plus: 44 },
-      { caption: 100, minus: 150, value: 202, plus: 252 },
-    ]
-    for (let index = 0; index < groups.length; index++) {
-      const box = groups[index] as { caption: number; minus: number; value: number; plus: number }
-      const caption = this.childLabel(this.bandNode, box.caption, -ROW_HEIGHT / 2, 16, COLOR_DIM)
-      const value = this.childLabel(this.bandNode, box.value, -ROW_HEIGHT / 2, 16, COLOR_GOLD)
+    // 而那颗字正好压在数字头上）。
+    //
+    // **两组可调的数不再画表头**（「人数」「等待」）：铁誓底板把净区从 572 收到 460 之后，
+    // 三颗层级键 + 两组「表头 −数＋」在这一行里放不下（要 344 而只剩 314），
+    // 而第二组按老的写死坐标还会溢出面板右缘。数本身是自描述的（"2/2人"、"30分"），
+    // 所以省掉的是表头而不是数。位置全部由 BAND_CHIP_* 与 ROW_WIDTH 推出来，
+    // 不再写死数字 —— 台账 #812 那条"面板宽 − 固定数"的连锁就是这么再犯一次的。
+    for (let index = 0; index < 2; index++) {
+      const left = bandGroupLeft(index)
+      const valueX = left + BAND_STEP_W + BAND_INNER_GAP + BAND_VALUE_W / 2
+      const plusX = left + BAND_STEP_W + BAND_INNER_GAP + BAND_VALUE_W + BAND_INNER_GAP + BAND_STEP_W / 2
+      const value = this.childLabel(this.bandNode, valueX, -ROW_HEIGHT / 2, 16, COLOR_GOLD)
       // 名字给死：量具按下标读会被后加的一行错位（同一族缺陷在 #291 抓到过一次）
-      caption.node.name = `数-${index}-表头`
       value.node.name = `数-${index}-数`
-      const minus = this.bandButton(`数-${index}-减`, '−', box.minus, -ROW_HEIGHT / 2, 38,
-        () => this.tapNumber(index, -1))
-      const plus = this.bandButton(`数-${index}-加`, '＋', box.plus, -ROW_HEIGHT / 2, 38,
+      const minus = this.bandButton(`数-${index}-减`, '−', left + BAND_STEP_W / 2, -ROW_HEIGHT / 2,
+        BAND_STEP_W, () => this.tapNumber(index, -1))
+      const plus = this.bandButton(`数-${index}-加`, '＋', plusX, -ROW_HEIGHT / 2, BAND_STEP_W,
         () => this.tapNumber(index, 1))
-      this.bandGroups.push({ caption, value, minus: minus.node, plus: plus.node })
+      this.bandGroups.push({ value, minus: minus.node, plus: plus.node })
     }
     this.bandNode.active = false
 
@@ -315,12 +330,10 @@ export class MarchComposeOverlay {
       const group = this.bandGroups[index]!
       const row = numbers[index]
       const shown = row !== undefined
-      group.caption.node.active = shown
       group.value.node.active = shown
       group.minus.active = shown && row.value > row.min
       group.plus.active = shown && row.value < row.max
       if (row !== undefined) {
-        group.caption.string = row.caption
         group.value.string = row.text
       }
     }

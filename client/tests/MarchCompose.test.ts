@@ -161,8 +161,9 @@ test('加减一档夹在政策的界内：人数按 1 走、分钟按 5 走，�
 
 test('画出来的两行带界与格式化好的字：数字与上界同屏，玩家才知道自己被夹在哪一档', () => {
   const rows = rallyNumbersOf({ maxMembers: 7, prepareMinutes: 20 }, policy())
-  assert.deepEqual(rows.map(r => [r.field, r.caption, r.text]),
-    [['maxMembers', '人数', '7/12人'], ['prepareMinutes', '等待', '20分']])
+  assert.deepEqual(rows.map(r => [r.field, r.text]),
+    [['maxMembers', '7/12人'], ['prepareMinutes', '20分']],
+    '数本身自描述（带单位与上界）—— 底板收净区后同一行不再放表头，画不下的从来不是数')
   assert.deepEqual(rows.map(r => [r.min, r.max]), [[2, 12], [10, 30]])
   assert.deepEqual(rallyNumbersOf(null, policy()), [], '表单没填出来就一行都不画')
   assert.deepEqual(rallyNumbersOf({ maxMembers: 7, prepareMinutes: 20 }, null), [])

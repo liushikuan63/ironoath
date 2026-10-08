@@ -265,6 +265,33 @@ function readComposeOverlay() {
 }
 
 /**
+ * 读全局飘字那一层（#791 之后，发起成功的回执走的就是这一条出口）。
+ * 节点名 `SettingsHint`（`GameBootstrap.paintHint` 建在 Canvas 上）；隐藏的不算（#800 那条纪律）。
+ */
+function readHintTexts() {
+  const canvas = window.cc.director.getScene().getChildByName('Canvas')
+  const out = []
+  const walk = (node) => {
+    if (node.activeInHierarchy === false) {
+      return
+    }
+    const label = node.getComponent && node.getComponent('cc.Label')
+    if (label !== null && label !== undefined && label.string !== '') {
+      out.push(label.string)
+    }
+    for (const child of node.children ?? []) {
+      walk(child)
+    }
+  }
+  for (const child of canvas?.children ?? []) {
+    if (child.name === 'SettingsHint') {
+      walk(child)
+    }
+  }
+  return out
+}
+
+/**
  * 把编成弹层的集结那一条读到"Cocos 真的量过文字"为止。
  *
  * <p>Label 的 contentSize 在首帧前是引擎默认的 100 宽，直接拿它算盒子会得到
@@ -591,19 +618,27 @@ async function main() {
     const afterWrite = requests.filter(r => r.includes('/rally/nation')).length
     verdict(afterWrite > beforeWrite,
       '确认键真的把 POST /rally/nation 打到活后端（不是桩）', `请求=${JSON.stringify(requests.slice(beforeWrite))}`)
-    // 成功回执：`confirmNationRally` 把 `已发起国家集结：X` 写进 composeNotice 的**同一帧**
-    // 把 composeTarget 置空，弹层 render 见到空 target 直接 `node.active=false` 早退 ⇒ 那句写在
-    // 一个已经关掉的层上。轮询 3 秒抓不到就是抓不到，但这是**三层共有的既有形状**（小队/联盟同），
-    // 不是 V22-b 引入的 —— 已登记台账 #790，不判红（判红了下一次没人分得清是新缺陷还是旧账）。
+    // #791：发起成功的回执原先写在同一帧就关掉的编成层上（玩家看不见），现已改走全局飘字
+    // （`AppRoot.receipt` → `PanelTargets.hint` → `GameBootstrap.showHint` → V20 的飘字队列）。
+    // 这一条判据钉的就是"那句话真的上过屏"，两路都读：飘字层是主证，编成层是反证（不许再写在那儿）。
     let receipt = null
-    for (let i = 0; i < 15 && receipt === null; i += 1) {
-      const snapshot = await page.evaluate(readComposeOverlay)
-      receipt = snapshot.texts.find(t => /已发起国家集结/.test(t)) ?? null
-      if (receipt === null) {
-        await page.waitForTimeout(200)
+    let writtenOnClosedPanel = null
+    for (let i = 0; i < 25 && receipt === null; i += 1) {
+      const hints = await page.evaluate(readHintTexts)
+      receipt = hints.find(t => /已发起国家集结/.test(t)) ?? null
+      if (receipt !== null) {
+        break
       }
+      const snapshot = await page.evaluate(readComposeOverlay)
+      writtenOnClosedPanel = snapshot.texts.find(t => /已发起国家集结/.test(t)) ?? null
+      await page.waitForTimeout(200)
     }
-    lines.push(`NOTE  成功回执${receipt === null ? '未上屏（面板同帧关闭，三层共有，见台账 #790）' : `上屏："${receipt}"`}`)
+    verdict(receipt !== null,
+      '发起成功的回执上过屏（走全局飘字出口，不是写在已关闭的编成层里）',
+      `抓到="${receipt ?? '没抓到'}"`)
+    verdict(writtenOnClosedPanel === null,
+      '同一句不再留在已关闭的编成层（那是一帧就消失的死码，#791 的原始形状）',
+      `编成层命中="${writtenOnClosedPanel ?? '无'}"`)
     await hideCoveringPopups(page)
     const shotSent = path.join(SHOT_DIR, 'nation-rally-compose.png')
     await page.screenshot({ path: shotSent })

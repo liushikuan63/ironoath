@@ -188,6 +188,31 @@ class NationRallyEndpointTest {
                 .isNotEqualTo(first.get("rallyId").asText());
     }
 
+    @Test
+    @DisplayName("亡国即结清（V22 验收④）：解散国家后承诺的兵退回原主，那支集结不再挂在人身上")
+    void disbandingTheNationRefundsTheRallyItWasHolding() throws Exception {
+        Nation nation = nation(3);
+        giveTroops(nation.king, 2_000L);
+        long before = troopsOf(nation.king);
+
+        JsonNode rally = post200("/rally/nation", nation.king, request(3)).get("rally");
+        String rallyId = rally.get("rallyId").asText();
+        assertThat(troopsOf(nation.king))
+                .as("发起即锁定：承诺的兵当场从城内扣掉（这是「锁着」的读数，不是猜的）")
+                .isLessThan(before);
+
+        post200("/nation/disband", nation.king,
+                java.util.Map.of("requestId", newRequestId()));
+
+        assertThat(troopsOf(nation.king))
+                .as("亡国之后兵必须回家。不结清的症状是：兵锁在一支谁也列不出来的集结上"
+                        + "（亡国后 /rally/list 会过滤掉已解散的国，而 expireIfDue 只在有人读它时才跑）")
+                .isEqualTo(before);
+        assertThat(get200("/rally/list", nation.king).get("rallies"))
+                .as("解散后这一支不再挂在国王的面板上")
+                .allMatch(r -> !rallyId.equals(r.get("rallyId").asText()));
+    }
+
     // ---------- 装配：国家那一档不能静默用联盟的 ----------
 
     @Test

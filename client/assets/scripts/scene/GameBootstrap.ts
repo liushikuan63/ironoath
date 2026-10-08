@@ -1736,6 +1736,9 @@ export class GameBootstrap extends Component {
     }
     // 队列参数不属于任何一块面板，但必须早于任何一次提示 —— 挂在 targets 上由 init 递进来
     out.hintTuning = (toast) => this.applyHintTuning(toast)
+    // 结果回执走这一条（#791）：编成弹层在成功那一帧就关了，写在它自己的提示行上玩家看不见。
+    // `showHint` 是"结果提示"的唯一出口（音效 + V20 的飘字队列都挂在那里），所以这里不再另画一份。
+    out.hint = (text) => this.showHint(text)
     return out
   }
 }

@@ -2658,6 +2658,40 @@ public class SocialAppService {
         }
     }
 
+    /**
+     * 亡国之后：这个国**此刻还在准备中**的国家集结一律取消并把兵退回原主
+     * （V22 验收④，2026-10-08 裁决「亡国即取消并退兵」）。
+     *
+     * <p><b>为什么由 {@code NationAppService.disband} 显式调，而不是靠惰性扫描</b>：
+     * {@link #expireIfDue} 只在有人去读/驱动那一支集结时才跑。亡国是一个**已经发生的确定事件**，
+     * 靠惰性扫描的结果是：兵一直锁着，既不回家也不出发，直到某个玩家恰好又打开集结面板为止 ——
+     * 而亡国之后那个面板也再也列不出这一支（{@code activeNationOf} 会过滤掉已解散的国），
+     * 于是它变成一个**没人能看见、却占着玩家兵力**的第三种状态。服务端禁常驻定时器（红线），
+     * 所以确定事件必须由触发它的那一手处理。
+     *
+     * <p>取消与退款都走既有那一条路（{@code rally.cancel} + {@link #refundAll}，与发起人主动取消
+     * 同一份实现），这里不重算退款口径；操作者传发起人本人 —— 这不是玩家动作，
+     * 而是国家这个组织已经不存在了，所以不走"只有发起人能取消"那道权限判断。
+     *
+     * @return 被取消的集结数（给日志与用例断言用；0 是正常情况）
+     */
+    public int cancelNationalRalliesOf(String nationId, long now) {
+        int cancelled = 0;
+        for (Rally rally : List.copyOf(store.preparingRalliesOf(nationId))) {
+            if (rally.scope() != Rally.Scope.NATION) {
+                continue;
+            }
+            long expectedVersion = rally.version();
+            rally.cancel(rally.initiatorId());
+            refundAll(rally);
+            store.saveRally(rally, expectedVersion);
+            cancelled += 1;
+            LOG.info("亡国取消集结 rallyId={} nationId={} 发起人={} 退回人数={} 时刻={}",
+                    rally.rallyId(), nationId, rally.initiatorId(), rally.memberIds().size(), now);
+        }
+        return cancelled;
+    }
+
     /** 集结详情。到点的集结会先被处理（见 {@link #expireIfDue}），所以这里返回的状态永远是当前的。 */
     public RallyResp rallyView(String playerId, String rallyId) {
         long now = timeService.serverNow();
