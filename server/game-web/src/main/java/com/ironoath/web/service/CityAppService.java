@@ -281,7 +281,10 @@ public class CityAppService {
         if (finishAt > now) {
             helpRequests.register("help_" + playerId + "_" + instance.instanceId() + "_" + finishAt,
                     playerId, com.ironoath.web.dto.generated.HelpTargetKind.BUILDING,
-                    instance.instanceId(), req.configId() + " 升到 " + targetLevel + " 级", finishAt, now);
+                    // 这句是广播给**全盟其他人**看的标题：受众并没有发这个请求，所以把请求里的
+                    // configId 原样拼进去不算"回显玩家输入"，而是服务端把内部行 id 转送到别人屏上
+                    //（台账 #821 的谓词、#832）。同方法上方已有 cfg，用它中文名。
+                    instance.instanceId(), cfg.name() + " 升到 " + targetLevel + " 级", finishAt, now);
         }
 
         long powerDelta = powerDelta(cfg, targetLevel);

@@ -265,6 +265,29 @@ class NationRallyEndpointTest {
                 .anyMatch(r -> rallyId.equals(r.get("rallyId").asText()));
     }
 
+    @Test
+    @DisplayName("联盟解散（不是主动退国）也要结清该盟成员的国家集结 —— 独立审查抓出的漏网（台账 #830）")
+    void disbandingTheAllianceAlsoSettlesTheNationRallyItWasHolding() throws Exception {
+        Nation nation = nation(3);
+        giveTroops(nation.king, 2_000L);
+        long before = troopsOf(nation.king);
+
+        String rallyId = post200("/rally/nation", nation.king, request(3))
+                .get("rally").get("rallyId").asText();
+        assertThat(troopsOf(nation.king)).as("发起即锁定").isLessThan(before);
+
+        // 解散联盟这条路与 /nation/leave 不同：它不经过 leave，但同样会让联盟脱离国家
+        post200("/alliance/disband", nation.king,
+                java.util.Map.of("requestId", newRequestId()));
+
+        assertThat(troopsOf(nation.king))
+                .as("联盟没了 ⇒ 这一支「本国集结」再也无人能列出、也永远不会出发；不结清就是兵被锁死")
+                .isEqualTo(before);
+        assertThat(get200("/rally/list", nation.king).get("rallies"))
+                .as("解散后这一支不再挂在面板上")
+                .allMatch(r -> !rallyId.equals(r.get("rallyId").asText()));
+    }
+
     // ---------- 装配：国家那一档不能静默用联盟的 ----------
 
     @Test

@@ -681,6 +681,13 @@ class CityEndpointTest {
                 .as("没有 targetKey 的话，帮助找不到要加速的那栋楼，只能加计数与红点")
                 .isEqualTo(upgrade.buildingId());
         assertThat(request.finishAt()).isEqualTo(upgrade.finishAt());
+        // 求助是**广播给全盟其他人**的（HelpRequestRegistrar 把它拼成 "X 请求帮助：<这句>" 推给同盟的人），
+        // 受众没有发过这个请求 ⇒ 把请求里的 configId 原样拼进去不算回显玩家输入，而是服务端把内部行 id
+        // 转送到别人的屏幕上（红线「屏上不出现裸 id」，台账 #832）。名字从生产表现取，不写字面量。
+        String buildingName = configs.get(com.ironoath.config.cfg.BuildingCfg.class, "lumber_camp").name();
+        assertThat(request.targetDesc())
+                .as("要说「伐木场 升到 N 级」这样的中文名，而不是表行 id")
+                .contains(buildingName).doesNotContain("lumber_camp");
     }
 
     @Test

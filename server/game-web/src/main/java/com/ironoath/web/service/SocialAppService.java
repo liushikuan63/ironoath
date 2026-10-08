@@ -949,7 +949,7 @@ public class SocialAppService {
                 requirePermission(PermissionMatrix.Scope.ALLIANCE, alliance.roleOf(playerId), "DISBAND_ALLIANCE");
                 // 排第一，且在联盟侧任何写操作之前：国家那一次带版本写如果撞了锁，整次解散就该失败，
                 // 而不是留下"联盟已经没了、国家的成员表里还挂着它"这种半状态（幽灵席位白占一个名额）
-                detachFromNation(alliance.id(), playerId, now);
+                detachFromNation(alliance.id(), alliance.memberIds(), playerId, now);
                 List<String> members = alliance.memberIds();
                 try {
                     alliance.disband(playerId, now);
@@ -2192,14 +2192,21 @@ public class SocialAppService {
      * <p><b>写回失败就让整次解散失败</b>：这里不吞异常也不重试。吞掉的表现为"解散成功、国家里多个幽灵"，
      * 而那种状态没人会去清。
      */
-    private void detachFromNation(String allianceId, String actorId, long now) {
+    private void detachFromNation(String allianceId, java.util.Collection<String> allianceMemberIds,
+                                  String actorId, long now) {
         nations.findByAlliance(allianceId).ifPresent(loaded -> {
             Nation nation = nationLeaders.bind(loaded);
             nation.removeAlliance(allianceId, false, actorId, now);
             nations.save(nation, nation.version());
-            LOG.info("联盟解散连带出国家 allianceId={} nationId={} 原因=联盟已解散 剩余成员联盟={} 入籍冷却至={} 国家是否随之解散={}",
+            // 结清必须跟在国家写回之后、且在联盟自身解散之前：联盟先没的话成员就查不到了。
+            // 这一支以前只解国籍不结清集结 ⇒ 兵锁在一支再也列不出来的"本国集结"上
+            //（正是 cancelNationalRalliesOf 注释里要防的那个态）。亡国走整国取消，否则只结清该盟成员。
+            int settled = nation.isDisbanded()
+                    ? cancelNationalRalliesOf(nation.id(), now)
+                    : settleNationalRalliesForMembers(nation.id(), allianceMemberIds, now);
+            LOG.info("联盟解散连带出国家 allianceId={} nationId={} 原因=联盟已解散 剩余成员联盟={} 入籍冷却至={} 国家是否随之解散={} 结清集结={} 条",
                     allianceId, nation.id(), nation.memberAllianceCount(),
-                    nation.joinCooldownUntil(allianceId), nation.isDisbanded());
+                    nation.joinCooldownUntil(allianceId), nation.isDisbanded(), settled);
         });
     }
 
