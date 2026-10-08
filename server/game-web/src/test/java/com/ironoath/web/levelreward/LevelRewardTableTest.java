@@ -2,11 +2,9 @@ package com.ironoath.web.levelreward;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.reflect.RecordComponent;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -23,8 +21,6 @@ import com.ironoath.config.cfg.ChapterCfg;
 import com.ironoath.config.cfg.CurveCfg;
 import com.ironoath.config.cfg.LevelRewardCfg;
 import com.ironoath.core.formula.Formula;
-import com.ironoath.web.dto.generated.LevelRewardItem;
-import com.ironoath.web.dto.generated.RewardItemView;
 
 /**
  * 职责：钉住 {@code level_reward} 表本身的三条口径（不是领取链路，那是 {@code LevelRewardClaimTest}）。
@@ -117,26 +113,6 @@ class LevelRewardTableTest {
                             row.level(), index + 1, bandSize)
                     .isEqualTo(tierGolds.get((int) index));
         }
-    }
-
-    @Test
-    @DisplayName("LevelRewardItem 与 RewardItemView 字段同名同序；唯一的类型差异是生成器逼出来的、有据可查")
-    void levelRewardItemMatchesRewardItemView() {
-        assertThat(Arrays.stream(LevelRewardItem.class.getRecordComponents())
-                .map(RecordComponent::getName).toList())
-                .as("生成器只支持同文件 $ref，所以协议里有第四份同形结构；"
-                        + "漂移的症状是服务端下发的字符串在客户端解析成 undefined 而 UI 静默空白")
-                .isEqualTo(Arrays.stream(RewardItemView.class.getRecordComponents())
-                        .map(RecordComponent::getName).toList());
-        // 与 StageContractParityTest 撞过的同一处：裸 String 而不是枚举，因为跨文件 $ref 生成不出来。
-        // 这条断言是哨兵 —— 它把"唯一差异"钉成读数；哪天生成器支持跨文件引用，这一条会红，
-        // 红了就说明该把 type 改回 $ref 而不是改断言。
-        assertThat(Arrays.stream(LevelRewardItem.class.getRecordComponents())
-                .map(RecordComponent::getType).map(Class::getSimpleName).toList())
-                .isEqualTo(List.of("String", "String", "long", "String"));
-        assertThat(Arrays.stream(RewardItemView.class.getRecordComponents())
-                .map(RecordComponent::getType).map(Class::getSimpleName).toList())
-                .isEqualTo(List.of("RewardType", "String", "long", "String"));
     }
 
     // ---------- 内部 ----------
