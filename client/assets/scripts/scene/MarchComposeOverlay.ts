@@ -130,6 +130,9 @@ export class MarchComposeOverlay {
     const plate = new Node('plate')
     plate.layer = this.node.layer
     plate.addComponent(UITransform).setContentSize(new Size(width, PANEL_HEIGHT))
+    // 出征/战斗语义的顶饰（§一 映射表：战斗 → 交叉长枪）。贴在**顶带正中**：
+    // 顶带高 PANEL_IRON_INSET.top=72，取 44×50 居中在 230-36=194 ⇒ 上下各留 11px 铜边，
+    // 不与净区里的标题（y=136 那一档）相压。
     if (!applySlicedSprite(plate, 'ui.panel.iron', width, PANEL_HEIGHT)) {
       const plateBg = plate.addComponent(Graphics)
       plateBg.fillColor = COLOR_MASK
@@ -137,6 +140,16 @@ export class MarchComposeOverlay {
       plateBg.fill()
     }
     this.node.addChild(plate)
+
+    // 出征/战斗语义顶饰（§一 映射表：战斗 → 交叉长枪），贴在顶带正中、挂在底板之后（否则被底板盖住）。
+    // 顶带高 72 ⇒ 取 44×50 居中在 PANEL_HEIGHT/2 - 36，上下各留 11px 铜边；净区里的标题在
+    // `top - 24` 那一档，两者不同带、不相压。
+    const crest = new Node('crest')
+    crest.layer = this.node.layer
+    crest.addComponent(UITransform).setContentSize(new Size(44, 50))
+    crest.setPosition(new Vec3(0, PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top / 2, 0))
+    applySlicedSprite(crest, 'ui.crest.battle', 44, 50)
+    this.node.addChild(crest)
 
     // 内容从铜边**内侧**起算（inset 48/36）：原先的 `PANEL_HEIGHT / 2 - 28` 会把标题压进铜帽带。
     const top = PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top

@@ -26,10 +26,28 @@ const PORT = Number(process.env.SWEEP_PORT ?? 8298)
 const OUT = process.env.UI25_OUT ?? 'tmp/ui-v25-shots'
 
 // 期望值来自 art-src/弹窗面板美术风格_VibeCoding规格.md §二 三档契约 + §4.7 实测尺寸。
+// ⚠ w/h 填的是**交付尺寸（未裁边）**：Cocos 导入会 trim 掉 1~2px 透明边，meta 的 width/height 是裁后的，
+//    而运行时 frame 报的是原图尺寸 ⇒ 照 meta 抄会每条差 1~2px 全红（本轮实测撞过一次）。
 const EXPECT = [
-  { key: 'ui.panel.iron', res: 'ui/generated/ui/panel-iron-v1', w: 512, h: 359, inset: [48, 48, 36, 36] },
+  // A 档 inset 从 48·36 改到 80·72（2026-10-08 裁决，规格 §二 / 台账 #807）：
+  // 角帽实测占图宽 12.5%~19% ⇒ 512 交付下 64~97px，48 会让切分线穿过角帽。
+  // 本表与 .png.meta 不一致时，本探针报的正是"改了图没改布局常量"那一族。
+  { key: 'ui.panel.iron', res: 'ui/generated/ui/panel-iron-v1', w: 512, h: 359, inset: [80, 80, 72, 72] },
+  { key: 'ui.panel.parchment', res: 'ui/generated/ui/panel-parchment-v1', w: 512, h: 373, inset: [80, 80, 72, 72] },
+  { key: 'ui.panel.warning', res: 'ui/generated/ui/panel-warning-v1', w: 512, h: 348, inset: [80, 80, 72, 72] },
+  { key: 'ui.panel.gilt', res: 'ui/generated/ui/panel-gilt-v1', w: 512, h: 357, inset: [80, 80, 72, 72] },
   { key: 'ui.button.iron', res: 'ui/generated/ui/button-iron-v1', w: 256, h: 65, inset: [6, 6, 4, 4] },
+  { key: 'ui.chip.close', res: 'ui/generated/ui/chip-close-v1', w: 52, h: 52, inset: [6, 6, 4, 4] },
+  { key: 'ui.plate.band', res: 'ui/generated/ui/plate-band-v1', w: 512, h: 52, inset: [12, 12, 8, 8] },
+  { key: 'ui.plate.tooltip', res: 'ui/generated/ui/plate-tooltip-v1', w: 256, h: 61, inset: [6, 6, 4, 4] },
   { key: 'ui.banner.crest', res: 'ui/generated/ui/banner-crest-v1', w: 512, h: 231, inset: [0, 0, 0, 0] },
+  // 装饰件（顶饰 / 火漆 / 分隔线）inset 全 0：它们按原比例整幅缩放、永不拉伸。
+  { key: 'ui.crest.league', res: 'ui/generated/ui/crest-league-v1', w: 178, h: 256, inset: [0, 0, 0, 0] },
+  { key: 'ui.crest.nation', res: 'ui/generated/ui/crest-nation-v1', w: 246, h: 256, inset: [0, 0, 0, 0] },
+  { key: 'ui.crest.battle', res: 'ui/generated/ui/crest-battle-v1', w: 223, h: 256, inset: [0, 0, 0, 0] },
+  { key: 'ui.crest.reward', res: 'ui/generated/ui/crest-reward-v1', w: 207, h: 256, inset: [0, 0, 0, 0] },
+  { key: 'ui.seal.wax', res: 'ui/generated/ui/seal-wax-v1', w: 256, h: 256, inset: [0, 0, 0, 0] },
+  { key: 'ui.divider.rope', res: 'ui/generated/ui/divider-rope-v1', w: 512, h: 40, inset: [0, 0, 0, 0] },
 ]
 // ui.plate.band 不在这里：它还没有消费点，已退回 art-src/generated/drafts/（#216 那条守卫就是为拦这个）。
 

@@ -64,7 +64,9 @@ export class ChoiceOverlay {
     // 否则 Sprite 会按引擎默认的 100 宽画（隐藏节点 contentSize 停在默认值那一族，#792）。
     const plateBox = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform)
     plateBox.setContentSize(new Size(width, 430))
-    if (!applySlicedSprite(this.node, 'ui.panel.iron', width, 430)) {
+    // 确认/警示语义 ⇒ 暗红绶带那一版底板（规格 §一 映射表）。与 iron 同构图、同 border 80·72，
+    // 所以内容坐标不需要重排 —— 换的是号色，不是几何。
+    if (!applySlicedSprite(this.node, 'ui.panel.warning', width, 430)) {
       const background = this.node.addComponent(Graphics)
       background.fillColor = COLOR_MASK
       background.roundRect(-width / 2, -215, width, 430, 10)

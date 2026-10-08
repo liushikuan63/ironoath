@@ -17,7 +17,7 @@ import {
 } from 'cc'
 import { ArtFamily, CITY_STAGE_ASSETS, FAMILY_ASSETS } from '../game/art/ArtFamilies'
 
-type StaticArtKey =
+export type StaticArtKey =
   | 'ui.panel.kingdom'
   | 'ui.panel.iron'
   | 'ui.button.iron'
@@ -27,6 +27,21 @@ type StaticArtKey =
   | 'ui.button.chip.disabled'
   | 'ui.nav.tab'
   | 'ui.nav.tab.selected'
+  // V25-b 生产轮补齐的铁誓族（规格 §三 18 件里剩下的那些）。每张都必须有消费点，
+  // 由 client/tests/ArtFamilies.test.ts 逐张点名 —— 零消费素材是本仓明写的缺陷形状（#216）。
+  | 'ui.panel.parchment'
+  | 'ui.panel.warning'
+  | 'ui.panel.gilt'
+  | 'ui.plate.band'
+  | 'ui.plate.tooltip'
+  | 'ui.button.iron.hover'
+  | 'ui.chip.close'
+  | 'ui.crest.league'
+  | 'ui.crest.nation'
+  | 'ui.crest.battle'
+  | 'ui.crest.reward'
+  | 'ui.seal.wax'
+  | 'ui.divider.rope'
   | 'city.ridge'
   | 'city.ground'
   | 'city.wall'
@@ -140,6 +155,21 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.nav.tab.selected': {
     path: 'ui/generated/ui/nav-tab-selected-v1',
   },
+  // 以下全部来自 V25-b 生产轮；切分几何同样只在各自 .png.meta 里（A 档 80·72 / B 档 12·8 / C 档 6·4，
+  // 装饰件 border 全 0 —— 它按原比例整幅缩放、永不拉伸）。
+  'ui.panel.parchment': { path: 'ui/generated/ui/panel-parchment-v1' },
+  'ui.panel.warning': { path: 'ui/generated/ui/panel-warning-v1' },
+  'ui.panel.gilt': { path: 'ui/generated/ui/panel-gilt-v1' },
+  'ui.plate.band': { path: 'ui/generated/ui/plate-band-v1' },
+  'ui.plate.tooltip': { path: 'ui/generated/ui/plate-tooltip-v1' },
+  'ui.button.iron.hover': { path: 'ui/generated/ui/button-iron-hover-v1' },
+  'ui.chip.close': { path: 'ui/generated/ui/chip-close-v1' },
+  'ui.crest.league': { path: 'ui/generated/ui/crest-league-v1' },
+  'ui.crest.nation': { path: 'ui/generated/ui/crest-nation-v1' },
+  'ui.crest.battle': { path: 'ui/generated/ui/crest-battle-v1' },
+  'ui.crest.reward': { path: 'ui/generated/ui/crest-reward-v1' },
+  'ui.seal.wax': { path: 'ui/generated/ui/seal-wax-v1' },
+  'ui.divider.rope': { path: 'ui/generated/ui/divider-rope-v1' },
   'city.ridge': { path: CITY_STAGE_ASSETS.ridge },
   'city.ground': { path: CITY_STAGE_ASSETS.ground },
   'city.wall': { path: CITY_STAGE_ASSETS.wall },
@@ -441,6 +471,26 @@ function chipArtKey(state: CommandButtonState): StaticArtKey {
 export function applyCommandButton(node: Node, state: CommandButtonState,
                                    width: number, height: number): boolean {
   return applySlicedSprite(node, chipArtKey(state), width, height)
+}
+
+/**
+ * 铁誓主按钮（C 档 `ui.button.iron` 一族）的三态取键。
+ *
+ * <p>为什么不复用 `chipArtKey`：chip 是"装饰母版装不下的格子"那一路（四边 border 12），
+ * 铁钮是 border 6·4 的薄边件，两者最小可画尺寸差一倍，混用会把 #216 那条退化判据引回来。
+ * <p>置灰走**专门的 disabled 素材**而不是运行时滤镜：台账 #805 已经记下"置灰在贴图路径要另走一条"，
+ * 而 disabled 素材是常态图的确定性派生（alpha 逐像素相同、只压亮度与饱和），两态切换不会抖边。
+ */
+export function ironButtonArtKey(state: CommandButtonState): StaticArtKey {
+  // 只有两态。禁用**不在这里**：#805 已定"贴图路径的置灰用 `sprite.color` 乘灰"，
+  // 并被 `tools/verify-ui-v25-runtime.mjs` 钉成判据 ⇒ `ui.button.iron.disabled` 没有诚实消费位，
+  // 按 #216 的口径留在 art-src 草稿区、不进包（素材与派生系数都在规格 §二 表里，要接随时接）。
+  return state === 'hover' ? 'ui.button.iron.hover' : 'ui.button.iron'
+}
+
+export function applyIronButton(node: Node, state: CommandButtonState,
+                                width: number, height: number): boolean {
+  return applySlicedSprite(node, ironButtonArtKey(state), width, height)
 }
 
 /**

@@ -52,7 +52,7 @@ export const PANEL_FRAME_BAND = 44
  * 结果标题压在铜边内线上、底部那句被下铜边切掉半截（V25-c 真截图抓到的）。
  * 铜边占掉的上下空间必须显式还给内容，否则"换了材质"就等于"文字被材质盖住"。
  */
-export const PANEL_IRON_INSET = { left: 48, right: 48, top: 36, bottom: 36 } as const
+export const PANEL_IRON_INSET = { left: 80, right: 80, top: 72, bottom: 72 } as const
 
 /**
  * 族内成员 → resources 相对路径（不带 /spriteFrame，那是加载层的事）。

@@ -117,10 +117,11 @@
 因为这两张是"满幅铜纹 + 龙纹浮雕"，细节密度天然高。⇒ **装饰件预算改 ≤32KB/张**（其余 5 张仍 ≤20KB），
 不改量化参数也不减细节：为凑 20KB 去压色数，会在暗红丝绒上出明显色阶。
 
-⚠️ **A 档 border 80·72 是本轮裁决，尚未在真机上复验**：`client/assets/scripts/game/art/ArtFamilies.ts:55`
-的 `PANEL_IRON_INSET` 现值仍是 `{left:48, right:48, top:36, bottom:36}`，且已被 `MarchComposeOverlay.ts` 消费。
-**本格不改那个文件**（V25-c 领地），交接项＝V25-c 把 meta 的 `border*` 与 `PANEL_IRON_INSET` **同批**改成 80·72
-并用 `tools/verify-ui-v25-runtime.mjs` 回读 inset 才算落地（记忆已证：border 有两处可写、后写者赢）。
+✅ **A 档 border 80·72 已于 2026-10-08 07:5x 落地并真机复验**（台账 #811）：
+`ArtFamilies.ts` 的 `PANEL_IRON_INSET` 与 14 张图的 `.png.meta` 同批改，运行时回读到
+`panel-iron-v1 消费 620×460 / inset 和 L+R=160 T+B=144`（= 80·72）⇒ 几何这条链通了（取证见 §4.9 第 1 条）。
+**代价也实测到了**：抬高 border 之后，300/260 高的两档面板装不下原有内容，
+已按 §七 Q6 的退路把 `GiftPopupView` 抬到 **520×360**、`StaminaDetailOverlay` 抬到 **440×360**（不是把 border 调回去）。
 
 现跑最小消费尺寸套上去自检：A 460×300 用 **72** 顶底 ⇒ 144/300 = **0.48** ≤ 0.6 ✓（border 从 36 抬到 72 后这条仍成立，但只剩 0.12 的余量 —— 460×300 是最小的一档，V25-c 实拍必须专门看它）；
 C 64×26 用 4 顶底 ⇒ 8/26 = 0.31 ≤ 0.6 ✓ 且 4/52 = 0.077 ≥ 0.07 ✓。
@@ -168,7 +169,7 @@ C 64×26 用 4 顶底 ⇒ 8/26 = 0.31 ≤ 0.6 ✓ 且 4/52 = 0.077 ≥ 0.07 ✓�
 | 状态 | 件 |
 |---|---|
 | 已出并过判据（14） | #1 `panel-iron`、#2 `panel-parchment`、#3 `panel-warning`（**v0 判红，v1 过**）、#4 `panel-gilt`、#5 `plate-band`、#7 `button-iron`（v0 斜切作废 → v1）、#10 `chip-close`（**v0 角饰过大、v1 无绿底，v2 才过**）、#11 `plate-tooltip`、#12 `banner-crest`、#13~16 `crest-league/nation/battle/reward`、#17 `seal-wax`、#18 `divider-rope` |
-| 派生（3） | #6 `plate-band-active`（brightness 1.16 / color 1.22，**§七 Q3 已裁：走派生不再出第二张母版**）、#8/#9 `button-iron-hover/disabled`（`derive_button_states.py`） |
+| 派生（3 出 / 1 进包） | #8 `button-iron-hover` **已进包**（触屏无 hover ⇒ 用作按下态）；#6 `plate-band-active`（brightness 1.16 / color 1.22，§七 Q3 已裁走派生）与 #9 `button-iron-disabled` **出好但退回草稿区** —— 前者全仓没有任何列表选中态可挂（`grep selectedIndex|selectedRow|activeRow|highlight` = 0 命中），后者撞 #805 已定的"贴图路径置灰用 color 乘灰"那条判据。两张都由 `ArtFamilies.test.ts` 的"每张在盘的 ui 图必须有 ArtKey 消费"当场判红拦下的（取证见 §4.9 第 3 条）。⇒ **§三 的 18 件里 16 件在包、2 件在草稿区等消费位** |
 | 作废重出（3 版留证） | `panel-warning-v0`（边正中一块暗红绶带 = §4.6 修正 ② 那个缺陷在新素材上复发）、`chip-close-v0`（角部铜凸台占 25% 图宽，切分线必穿）、`chip-close-v1`（满幅无绿底，抠绿前提不成立） |
 
 **P-07 的 `corners must be square` 已复验生效**（v0 斜切 0% → v1 直角 75%，见 §4.7）；本轮它在新出的 `chip-close-v2`（78%）
@@ -416,6 +417,44 @@ python art-src/check_nineslice_ready.py <图...> --kind frame|plain|art   # 退 
 `check.sh` 全量与 `mvn test` 本会话未跑（主检出会换掉另一条会话活后端用的 jar）；
 三条可机器判据**尚未接进任何门或探针**（V25-e）；角帽占宽用的是"单行分段亮度 + 目视标尺"，
 **不是**可当门的自动判据（同 §4.7 那条"边带厚度无有效量法"，第四次尝试仍只做成了提示）。
+
+### 4.9 接线轮实测（2026-10-08 07:3x~08:0x，14 件收编进包 + 真截图 + 全量回归）
+
+命令（独立产物，不覆盖并行会话正在吃的 `web-mobile`）：
+`python art-src/write_sprite_meta.py <png> --border 80,80,72,72`（新工具，meta 的 border 是切分几何唯一真源）
+→ `CocosCreator --build "...;outputName=v25-wire"` → `SWEEP_ROOT=client/build/v25-wire node tools/verify-ui-v25-runtime.mjs`。
+
+1. **border 80·72 真的到运行时了**：探针回读 `plate (panel-iron-v1) 消费 620×460 vs inset 和 L+R=160 T+B=144`
+   ⇒ meta 的 80·72 经构建进了 `capInsets`，占可读区 0.31 ≤ 0.6。**这条链以前只有单测对账，没有运行时读数。**
+2. **截图抓到三处"判据全绿但画面坏了"**（正是本仓那条"机器指标全绿不代表可用"）：
+   - ① **离线战报的条行铺进铜边**：行宽写的是 `PANEL_WIDTH - 48 = 572`，而 border 抬到 80 之后净区只有 460
+     ⇒ 行末「查看 ›」被切掉、「知道了」落在下铜边上。**修法**：行宽/按钮 y 全部从 `PANEL_IRON_INSET` 推。
+     根因形状：`- 48` 这种"面板宽减一个固定数"的写法，在 border 变了之后不会自己跟着变 —— 全仓还有多少处**未逐条扫**。
+   - ② **体力弹层两行字叠在一起**：360×260 的面板在 80·72 下净区只剩 116px，装不下"4 行 + 按钮 + 注脚"。
+     **修法**：按 §七 Q6 的裁决退路**抬高面板**到 440×360（不是把 border 调回去）。礼包同理 460×300 → 520×360。
+     ⇒ §二 的"边厚占可读区 ≤0.6"这条**看不见这件事**：它只比"边框 ÷ 内容盒"，不比"内容盒 ÷ 有几行内容"。
+     这条要补成判据（V25-e）：`净区高 ≥ 行数 × 行距 + 按钮高`。
+   - ③ **关闭键压在角帽上**：`(W/2-28, H/2-28)` 在 border 48 时落在铁面上，border 80 后正好落在铜帽与铆钉上。
+     **修法**：改成 `W/2 - inset.left - 20`。
+3. **两件素材被"零消费"这条挡回草稿区**（`ArtFamilies.test.ts` 的 `每张在盘的 ui 图都必须被某个 ArtKey 消费` 判红，
+   不是人工发现 —— 这条守卫第一次真的拦下东西）：
+   - `plate-band-active-v1`：全仓 `grep selectedIndex|selectedRow|activeRow|highlight` = **0 命中**，
+     没有任何"列表选中态"可以挂它 ⇒ 退回 `art-src/generated/drafts/`，等 V25-d 的选中态落地再收编。
+   - `button-iron-disabled-v1`：#805 已定"贴图路径的置灰用 `sprite.color` 乘灰"并被探针钉成判据；
+     我一度换成 disabled 素材，**跑探针当场红一条** ⇒ 还原他们的机制、素材退草稿。
+     教训写死：**换别人刚定的机制前先看它有没有被判据钉住**，钉住了就要连判据一起谈，不能只改代码。
+   - `button-iron-hover-v1` 留下了：触屏没有 hover，把它用作**按下态**（`touch-start` 换图、`touch-end` 换回）。
+4. **Cocos 导入会 trim 掉 1~2px 透明边**，`meta.width/height` 是裁后的、运行时 `frame` 报的是原图尺寸
+   ⇒ 探针的 EXPECT 必须填**交付尺寸（未裁边）**，照 meta 抄会 9 条全红（本轮实测撞过）。
+5. **回归读数**（全部真跑、各自退出码）：`test-client` **1049 跑 / 0 红**；`verify-ui-v25-runtime` **67 条 / 0 红**（SKIP 1 条照实记）；
+   `shot-panel-sweep` **17 页 + 抽屉 1 帧、pageerror 0**；`verify-social-create` **91/0**；`verify-social-permission` **67/0**；
+   `verify-rank` **43/0**；`verify-bag-open-batch` 全绿；`verify-gift-popup` 全绿；`verify-offline-runtime` 11 PASS。
+   四份探针的产物根以前是硬编码 `client/build/web-mobile` ⇒ 各加了一个 `*_ARTIFACT_ROOT` 旋钮，**默认值不变**。
+
+**未做 / 未验证**：`ui.plate.tooltip` 在背包说明行上的渲染位置**没有拿到 1:1 目视确认**（说明行只在有回执/满仓时写字，
+截图那一刻是空文案，条子空着看不出）；`ChoiceOverlay` 换 warning 底板后**5 行以上**的场景未验证（4 行实测落在净区内）；
+NationPanel 的两件顶饰/火漆、SocialCreate 的联盟顶饰、MarchCompose 的战斗顶饰**只过了判据与包体，未逐张 1:1 目视**；
+`- 48` 那一族还有多少处未扫；离线战报截图上引导层压住面板上沿（探针没调 `hideGuideOverlay`，属既有行为，未修）。
 
 ## 五、任务卡（V25-a…V25-e，每格独立可验证可提交）
 

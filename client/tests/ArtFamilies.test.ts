@@ -214,13 +214,20 @@ test('ArtCatalog 不许再抄一份九宫格边框（后写的那份会盖掉 me
     '运行期改写了 SpriteFrame 的边框 ⇒ meta 里的 border 从此不影响画面')
 })
 
-test('运行时的 ui 图只剩三族：面板框、chip、页签（装饰母版已因零消费退出包）', () => {
+test('包里的 ui 图逐张点名：V25 铁誓族已把这一屏从"三族"扩到 23 张，多一张少一张都要在这里说清', () => {
   const pngs = fs.readdirSync(GENERATED_UI).filter((name) => name.endsWith('.png')).sort()
   assert.deepEqual(pngs, [
     'banner-crest-v1.png',
     'button-chip-disabled-v1.png', 'button-chip-hover-v1.png', 'button-chip-v1.png',
-    'button-iron-v1.png',
-    'nav-tab-selected-v1.png', 'nav-tab-v1.png', 'panel-iron-v1.png', 'panel-kingdom-v1.png',
+'button-iron-hover-v1.png', 'button-iron-v1.png',
+    'chip-close-v1.png',
+    'crest-battle-v1.png', 'crest-league-v1.png', 'crest-nation-v1.png', 'crest-reward-v1.png',
+    'divider-rope-v1.png',
+    'nav-tab-selected-v1.png', 'nav-tab-v1.png',
+    'panel-gilt-v1.png', 'panel-iron-v1.png', 'panel-kingdom-v1.png',
+    'panel-parchment-v1.png', 'panel-warning-v1.png',
+    'plate-band-v1.png', 'plate-tooltip-v1.png',
+    'seal-wax-v1.png',
   ], '包里多了/少了 ui 图 —— 加图要连同消费点与判据一起进来，删图要确认零消费（#216 的口径）')
 })
 
@@ -236,10 +243,17 @@ const TIER_CONTRACT: Record<Tier, {
   border: { left: number, top: number, right: number, bottom: number } | null
   pngPrefixes: string[]
 }> = {
-  A: { border: { left: 48, top: 36, right: 48, bottom: 36 }, pngPrefixes: ['panel-'] },
+  // A 档 border 从 48·36 抬到 80·72：实测角帽占图宽 12.5%~19%（512 交付 = 64~97px），
+  // 48 会让切分线穿过角帽、拉到 720 宽时角帽内沿约 1.5 倍变形（规格 §二 / 台账 #807）。
+  A: { border: { left: 80, top: 72, right: 80, bottom: 72 }, pngPrefixes: ['panel-'] },
   B: { border: { left: 12, top: 8, right: 12, bottom: 8 }, pngPrefixes: ['plate-'] },
-  C: { border: { left: 6, top: 4, right: 6, bottom: 4 }, pngPrefixes: ['button-', 'chip-'] },
-  decor: { border: null, pngPrefixes: ['banner-', 'crest-', 'seal-'] },
+  // 'plate-tooltip-' 是 C 档里唯一的例外前缀：它是浮动提示条（256×61、border 6·4），
+  // 归 C 不归 B —— B 档条行是 512×52 的 12·8 薄边，两者 border 差一倍，混档就是 §八.2 判的那件事。
+  C: {
+    border: { left: 6, top: 4, right: 6, bottom: 4 },
+    pngPrefixes: ['button-', 'chip-', 'plate-tooltip-'],
+  },
+  decor: { border: null, pngPrefixes: ['banner-', 'crest-', 'seal-', 'divider-'] },
 }
 
 /** §三 清单里 V25 那一族的 ArtKey → 档。键还没接线时可以暂不列，列进来就必须与目录一致。 */
@@ -250,6 +264,16 @@ const V25_KEY_TIER: Record<string, Tier> = {
   'ui.chip.close': 'C',
   'ui.plate.tooltip': 'C',
   'ui.banner.crest': 'decor',
+  'ui.panel.parchment': 'A',
+  'ui.panel.warning': 'A',
+  'ui.panel.gilt': 'A',
+  'ui.button.iron.hover': 'C',
+  'ui.crest.league': 'decor',
+  'ui.crest.nation': 'decor',
+  'ui.crest.battle': 'decor',
+  'ui.crest.reward': 'decor',
+  'ui.seal.wax': 'decor',
+  'ui.divider.rope': 'decor',
 }
 
 /** V25 之前的遗留件：不参与 §二 的 border 契约，但点名登记，免得"没在表里"变成"没人管"。 */

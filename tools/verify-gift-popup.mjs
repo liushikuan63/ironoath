@@ -20,7 +20,8 @@ import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 
-const ROOT = 'client/build/web-mobile'
+// 默认仍吃 web-mobile；并行会话用 `outputName=` 建独立产物时用它指过去，不去覆盖别人的那一份。
+const ROOT = process.env.GIFT_ARTIFACT_ROOT ?? 'client/build/web-mobile'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.GIFT_PROBE_PORT ?? 8280)
 const SHOT = 'client/build/art-verify/recheck-gift-popup.png'

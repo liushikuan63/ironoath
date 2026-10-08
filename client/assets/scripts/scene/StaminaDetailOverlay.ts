@@ -15,11 +15,14 @@ import {
 } from 'cc'
 import type { StaminaDetailView } from '../game/ui/StaminaDetail'
 import { applySystemUiFont } from './UiFont'
-import { applySlicedSprite } from './ArtCatalog'
+import { applyIronButton, applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 
-const PANEL_W = 360
-const PANEL_H = 260
+// 360×260 → 440×360：border 抬到 80·72 后，260 高的净区只剩 116px，
+// 「已买次数」那一行被按钮盒压住（1:1 截图上是两行字叠在一起）。退路同礼包：抬高面板，
+// 不把 border 调回去（调回去 = 切分线重新穿过角帽）。规格 §七 Q6 / 台账 #811。
+const PANEL_W = 440
+const PANEL_H = 360
 const BUY_W = 220
 const BUY_H = 36
 const COLOR_BACKDROP = new Color(0, 0, 0, 170)
@@ -28,14 +31,15 @@ const COLOR_BORDER = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_DIM = new Color(170, 158, 138, 255)
 const COLOR_BUY = new Color(184, 134, 11, 255)
+/** #805 定的置灰机制：贴图路径用 color 乘灰（引擎运行时有 `grayscale`，本仓 headless 的 cc 类型桩里没有）。 */
+const COLOR_TINT_ON = new Color(255, 255, 255, 255)
+const COLOR_TINT_OFF = new Color(104, 96, 88, 255)
 const COLOR_BUY_OFF = new Color(70, 62, 52, 255)
 /**
  * 贴图路径的置灰：`Sprite.color` 与贴图相乘，白＝原色。
  * 不用 `sprite.grayscale` —— 引擎运行时有，但本仓 headless 的 cc 类型桩里没有这个属性，
  * `check-client-typecheck` 会直接报 TS2339（实测）。
  */
-const COLOR_TINT_ON = new Color(255, 255, 255, 255)
-const COLOR_TINT_OFF = new Color(104, 96, 88, 255)
 
 export class StaminaDetailOverlay {
   readonly node: Node
@@ -110,12 +114,21 @@ export class StaminaDetailOverlay {
     buy.setPosition(new Vec3(0, bottom + 40, 0))
     buy.addComponent(UITransform).setContentSize(new Size(BUY_W, BUY_H))
     // C 档铁钮：先试贴图，失败才建 Graphics（`applySlicedSprite` 自己会 addComponent(Sprite)）。
-    this.buySprite = applySlicedSprite(buy, 'ui.button.iron', BUY_W, BUY_H) ? buy.getComponent(Sprite) : null
+    // 按下换 hover 那一态（更亮更饱和，触屏没有悬停、这张素材的语言就是"这一颗是当前项"）；
+    // **置灰仍走 #805 定的 color 乘灰**（`tools/verify-ui-v25-runtime.mjs` 把那条钉成了判据）。
+    this.buySprite = applyIronButton(buy, 'normal', BUY_W, BUY_H) ? buy.getComponent(Sprite) : null
     this.buyBackground = this.buySprite === null ? buy.addComponent(Graphics) : null
     this.buyCaption = this.addLabel(buy, 'Caption', 0, 0, COLOR_TEXT, 15, BUY_W - 12)
     buy.on('touch-start', (_event: EventTouch) => {
       if (this.buyEnabled) {
+        // 按下给"更亮更饱和"那一态：触屏没有 hover，但这张素材本来就是"这一颗是当前项"的语言。
+        applyIronButton(buy, 'hover', BUY_W, BUY_H)
         this.onBuy?.()
+      }
+    }, this)
+    buy.on('touch-end', () => {
+      if (this.buySprite !== null) {
+        applyIronButton(buy, 'normal', BUY_W, BUY_H)
       }
     }, this)
 
@@ -124,7 +137,9 @@ export class StaminaDetailOverlay {
     const close = new Node('CloseButton')
     close.layer = panel.layer
     panel.addChild(close)
-    close.setPosition(new Vec3(PANEL_W / 2 - 30, PANEL_H / 2 - 24, 0))
+    // 关闭键留在净区内：角上 (190,156) 正好落在右上角铜帽与铆钉上（A 档角帽占宽 12.5%~19%）。
+    close.setPosition(new Vec3(PANEL_W / 2 - PANEL_IRON_INSET.left - 20,
+      PANEL_H / 2 - PANEL_IRON_INSET.top - 20, 0))
     close.addComponent(UITransform).setContentSize(new Size(40, 40))
     this.addLabel(close, 'Caption', 0, 0, COLOR_TEXT, 16, 40).string = '×'
     close.on('touch-start', () => this.hide(), this)
@@ -142,7 +157,7 @@ export class StaminaDetailOverlay {
     this.buyEnabled = view.buyEnabled
     // 置灰而不是隐藏（协议明写理由）：到上限那一天玩家仍看得见「明天还能买」
     if (this.buySprite !== null) {
-      // 贴图路径：置灰交给引擎的 grayscale，文字同步压暗 —— 只灰底不灰字会读成"还能点"。
+      // 贴图路径：置灰交给 color 乘灰，文字同步压暗 —— 只灰底不灰字会读成"还能点"。
       this.buySprite.color = view.buyEnabled ? COLOR_TINT_ON : COLOR_TINT_OFF
       this.buyCaption.color = view.buyEnabled ? COLOR_TEXT : COLOR_BUY_OFF
     } else if (this.buyBackground !== null) {

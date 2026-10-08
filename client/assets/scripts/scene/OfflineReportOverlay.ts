@@ -13,6 +13,8 @@
  */
 
 import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3 } from 'cc'
+import { applySlicedSprite } from './ArtCatalog'
+import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import type { OfflineReportPopup } from '../game/session/AppRoot'
 import { applySystemUiFont } from './UiFont'
 
@@ -21,11 +23,27 @@ const COLOR_ROW = new Color(52, 43, 35, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_DIM = new Color(150, 140, 124, 255)
 const COLOR_GOLD = new Color(184, 134, 11, 255)
+/**
+ * 羊皮纸内衬上的**墨色**，不是可选审美：`panel-parchment-v1` 中心净区实测均色 `(142,124,93)`
+ * （相对亮度 L=0.210），拿 WCAG 对比度逐个算过 —— 金字 1.24:1、白字 3.14:1、面板深 3.92:1、
+ * 暗红 3.08:1 全不过 4.5:1，只有铁墨 `(22,18,16)` 给 **4.60:1**。
+ * ⇒ 规格 §一 第 2 条"纸面比正文暗一档、靠深字 tokens 保对比度"在这里落地成这一个常量；
+ *   次级文字不再换色（换浅一点就掉出 4.5），只靠字号分层。
+ */
+const COLOR_INK = new Color(22, 18, 16, 255)
 
 const PANEL_WIDTH = 620
 const ROW_HEIGHT = 46
 /** 最多画几条。条目类别只有四类（资源/建筑/战斗/社交），四条之外不会再长出来 —— 纯逻辑那边数过。 */
 const VISIBLE_ROWS = 4
+/**
+ * 面板高 = 上下铜边（A 档 border 实测 72×2）+ 内容 276（标题 30 + 四条行 184 + 两处间距 20 + 按钮 42）。
+ *
+ * <p>为什么从 304 抬到 420：border 从 36 抬到 72 之后，304 高的净区只剩 160px，
+ * 装不下"标题 + 4 行 46 + 按钮"这一套（会压进铜边）。规格 §七 Q6 预判的正是这件事，
+ * 裁决给的退路是**抬高面板**而不是把 border 调回去（调回去等于重新让切分线穿过角帽）。
+ */
+const PANEL_HEIGHT = PANEL_IRON_INSET.top + PANEL_IRON_INSET.bottom + 276
 
 export class OfflineReportOverlay {
   private readonly node: Node
@@ -41,7 +59,7 @@ export class OfflineReportOverlay {
   onDismiss: (() => void) | null = null
 
   constructor(parent: Node, width = PANEL_WIDTH) {
-    const height = 120 + VISIBLE_ROWS * ROW_HEIGHT
+    const height = PANEL_HEIGHT
     this.node = new Node('OfflineReport')
     this.node.layer = parent.layer
     parent.addChild(this.node)
@@ -55,7 +73,18 @@ export class OfflineReportOverlay {
     background.roundRect(-width / 2, -height / 2, width, height, 10)
     background.fill()
 
-    this.titleLabel = this.addLabel(0, height / 2 - 30, 21, COLOR_GOLD)
+    // 底板必须与这层遮罩底色**分节点**：`applySlicedSprite` 会把它所挂节点上的 Graphics
+    // clear + 停用（#806 拆过的雷 —— 共用一个 Graphics 时换贴图会把整块底色一起清空）。
+    // 长文汇总走羊皮纸内衬（规格 §一 第 2 条），所以这一屏的文字全部换成 COLOR_INK。
+    const plate = new Node('plate')
+    plate.layer = this.node.layer
+    plate.addComponent(UITransform).setContentSize(new Size(width, height))
+    applySlicedSprite(plate, 'ui.panel.parchment', width, height)
+    this.node.addChild(plate)
+
+    // 内容一律从 inset 推，不写死：铜边占掉的上下各 72px 要显式还给文字。
+    const contentTop = height / 2 - PANEL_IRON_INSET.top
+    this.titleLabel = this.addLabel(0, contentTop - 18, 21, COLOR_INK)
     this.titleLabel.string = '自上次登录以来'
 
     for (let index = 0; index < VISIBLE_ROWS; index++) {
@@ -65,7 +94,9 @@ export class OfflineReportOverlay {
       this.rowDetailLabels.push(row.detail)
     }
 
-    this.createButton('离线汇总知道了', 0, -height / 2 + 30, () => this.onDismiss?.())
+    // 按钮也留在净区内（原先 -height/2 + 30 落在下铜边里，1:1 截图上它就是压在角帽上）。
+    this.createButton('离线汇总知道了', 0,
+      -height / 2 + PANEL_IRON_INSET.bottom + 26, () => this.onDismiss?.())
     this.node.active = false
   }
 
@@ -102,27 +133,41 @@ export class OfflineReportOverlay {
   private createRow(index: number, height: number): { node: Node; text: Label; detail: Label } {
     const node = new Node(`offlineRow${index}`)
     this.node.addChild(node)
-    const y = height / 2 - 66 - index * ROW_HEIGHT
+    // 行起点从净区推：contentTop(138) - 46 起，逐行下移一个行高 ⇒ 四行落在 92/46/0/-46，
+    // 最后一行下沿 -69 与按钮上沿 -90 之间留 21px，谁都不压铜边。
+    const y = height / 2 - PANEL_IRON_INSET.top - 46 - index * ROW_HEIGHT
     node.setPosition(new Vec3(0, y, 0))
-    node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH - 48, ROW_HEIGHT))
-    const graphics = node.addComponent(Graphics)
-    graphics.fillColor = COLOR_ROW
-    graphics.roundRect(-(PANEL_WIDTH - 48) / 2, -ROW_HEIGHT / 2, PANEL_WIDTH - 48, ROW_HEIGHT, 6)
-    graphics.fill()
+    // 行宽必须从**净区**推，不能按面板宽减一个固定数：A 档 border 抬到 80 之后，
+    // 原先的 PANEL_WIDTH - 48 = 572 比净区 460 宽出 112px ⇒ 条行铺进铜边、行末的「查看 ›」被切掉
+    // （1:1 裁切截图抓到的，见规格 §4.9）。
+    const rowW = PANEL_WIDTH - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right
+    node.addComponent(UITransform).setContentSize(new Size(rowW, ROW_HEIGHT))
+    // B 档条行贴在羊皮纸上 = "军令状贴在文书上"。行内文字仍是浅色（浅字压深行 4.5:1 以上），
+    // 深色墨只给直接落在纸面上的标题 —— 两套底色各用各的字色，不拿一个常量糊两层。
+    const band = new Node('band')
+    band.layer = node.layer
+    band.addComponent(UITransform).setContentSize(new Size(rowW, ROW_HEIGHT))
+    node.addChild(band)
+    if (!applySlicedSprite(band, 'ui.plate.band', rowW, ROW_HEIGHT)) {
+      const graphics = band.addComponent(Graphics)
+      graphics.fillColor = COLOR_ROW
+      graphics.roundRect(-rowW / 2, -ROW_HEIGHT / 2, rowW, ROW_HEIGHT, 6)
+      graphics.fill()
+    }
 
-    const text = this.childLabel(node, -(PANEL_WIDTH - 48) / 2 + 16, 9, 17, COLOR_TEXT)
+    const text = this.childLabel(node, -rowW / 2 + 16, 9, 17, COLOR_TEXT)
     text.horizontalAlign = Label.HorizontalAlign.LEFT
     text.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     text.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 100, 22))
     text.overflow = Label.Overflow.SHRINK
-    const detail = this.childLabel(node, -(PANEL_WIDTH - 48) / 2 + 16, -10, 14, COLOR_DIM)
+    const detail = this.childLabel(node, -rowW / 2 + 16, -10, 14, COLOR_DIM)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     detail.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 100, 20))
     detail.overflow = Label.Overflow.SHRINK
 
     // 「查看 ›」是这一行的可点提示：没有它，玩家不会知道这一行能点
-    const hint = this.childLabel(node, (PANEL_WIDTH - 48) / 2 - 26, 0, 15, COLOR_GOLD)
+    const hint = this.childLabel(node, rowW / 2 - 26, 0, 15, COLOR_GOLD)
     hint.string = '查看 ›'
     node.on('touch-start', (_event: EventTouch) => {
       const item = this.view?.items[index]

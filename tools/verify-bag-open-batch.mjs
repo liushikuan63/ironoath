@@ -17,7 +17,8 @@ import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 
-const ROOT = 'client/build/web-mobile'
+// 默认仍吃 web-mobile；并行会话用 `outputName=` 建独立产物时指过去，不去覆盖别人的那一份。
+const ROOT = process.env.BAG_BATCH_ARTIFACT_ROOT ?? 'client/build/web-mobile'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.BAG_BATCH_PORT ?? 8299)
 const OPS_TOKEN = process.env.BAG_BATCH_OPS_TOKEN ?? 'art-verify-local'

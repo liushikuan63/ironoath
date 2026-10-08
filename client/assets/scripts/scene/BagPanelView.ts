@@ -20,7 +20,7 @@ import {
 import type { BagItemRow, BagPanelView as BagPanelData, ResourcePanelView, ResourceRow } from '../game/bag/BagPanel'
 import type { ChoiceOption, SpeedupChoice } from '../game/session/Choices'
 import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../net/generated/BagProtocol'
-import { applyAnyIconSprite, applyCommandButton, ensureFamily, resourceIconKey } from './ArtCatalog'
+import { applyAnyIconSprite, applyCommandButton, applySlicedSprite, ensureFamily, resourceIconKey } from './ArtCatalog'
 import { itemArtKeyForConfig } from '../game/art/ArtFamilies'
 import { resourceName } from '../game/ui/ResourceNames'
 import { ChoiceOverlay } from './ChoiceOverlay'
@@ -290,6 +290,14 @@ export class BagPanelView extends Component {
   private buildHeader(height: number): void {
     const top = height / 2 - PADDING
     this.headerLabel = this.addLabel(this.node, 'Header', 0, top - 20, COLOR_COPPER_GOLD, 22)
+    // 说明行的载体：C 档浮动提示条（比主面板暖一档的铁面 + 细铜边），替掉原先"字直接浮在面板上"。
+    // 挂在说明行之前 ⇒ 文字在条子之上；26 高对 border 4 顶底 = 0.15 ≤ §二 的 0.6，不吃内容。
+    const hint = new Node('WarningPlate')
+    hint.layer = this.node.layer
+    this.node.addChild(hint)
+    hint.addComponent(UITransform).setContentSize(new Size(420, 26))
+    hint.setPosition(new Vec3(0, top - 48, 0))
+    applySlicedSprite(hint, 'ui.plate.tooltip', 420, 26)
     this.warningLabel = this.addLabel(this.node, 'Warning', 0, top - 48, COLOR_WARNING, 15)
     // 两颗翻页键与那句页码同一行、摆在行区下方那一格，y 由 render() 跟着最后一行走
     this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)

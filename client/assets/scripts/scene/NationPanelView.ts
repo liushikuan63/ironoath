@@ -20,6 +20,7 @@ import type {
 import type { WarSection } from '../game/nation/NationSections'
 import { NATION_TABS, SPEND_AMOUNT_PRESETS, TREASURY_LOG_ROWS, amountText, spendDraftBlocker, spendSinkOptions } from '../game/nation/NationPanel'
 import { applySystemUiFont } from './UiFont'
+import { applySlicedSprite, type StaticArtKey } from './ArtCatalog'
 
 const { ccclass } = _decorator
 
@@ -260,6 +261,10 @@ export class NationPanelView extends Component {
     const innerWidth = PANEL_WIDTH - PADDING * 2
 
     this.label(data.title, COLOR_GOLD, 22, left, top - 18, 'left')
+    // 国家语义的两件装饰（§一 映射表：国家 → 玉玺火漆）：顶饰居中、火漆压在标题行右端。
+    // 必须记进 `this.nodes` —— `redraw()` 每次先整批 destroy 重建，漏记就会一次比一次多一层。
+    this.decor('ui.crest.nation', 40, 42, 0, top - 20)
+    this.decor('ui.seal.wax', 34, 34, PANEL_WIDTH / 2 - PADDING - 120, top - 18)
     this.button('CloseButton', '关闭', PANEL_WIDTH / 2 - PADDING - 38, top - 18, 76, true,
       () => this.onClose?.())
     this.label(data.headline, COLOR_HINT, 14, left, top - 44, 'left')
@@ -1050,6 +1055,17 @@ export class NationPanelView extends Component {
       ? Label.HorizontalAlign.LEFT
       : align === 'right' ? Label.HorizontalAlign.RIGHT : Label.HorizontalAlign.CENTER
     node.setPosition(new Vec3(x, y, 0))
+    this.nodes.push(node)
+  }
+
+  /** 整图装饰件（顶饰 / 火漆）：不参与九宫格，按素材实测比例给尺寸，同样记进 `this.nodes`。 */
+  private decor(key: StaticArtKey, w: number, h: number, x: number, y: number): void {
+    const node = new Node('decor')
+    node.layer = this.node.layer
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(w, h))
+    node.setPosition(new Vec3(x, y, 0))
+    applySlicedSprite(node, key, w, h)
     this.nodes.push(node)
   }
 }

@@ -44,7 +44,8 @@ const check = (msg, actual, expected) => {
 }
 
 const preview = await startPreviewServer({
-  root: 'client/build/web-mobile',
+  // 默认仍吃 web-mobile；并行会话用 `outputName=` 建独立产物时指过去，不去覆盖别人的那一份。
+  root: process.env.RANK_ARTIFACT_ROOT ?? 'client/build/web-mobile',
   backend: BACKEND,
   port: PORT,
 })

@@ -18,6 +18,7 @@ import type { GiftPopupResp } from '../net/generated/PayProtocol'
 import type { PayView } from '../game/pay/GiftPayFlow'
 import { applySystemUiFont } from './UiFont'
 import { applySlicedSprite } from './ArtCatalog'
+import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 
 const { ccclass } = _decorator
 
@@ -28,8 +29,11 @@ const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 const COLOR_BUTTON = new Color(122, 82, 24, 255)
 
-const PANEL_WIDTH = 460
-const PANEL_HEIGHT = 300
+// 460×300 → 520×360：A 档 border 抬到 80·72 之后，300 高只剩 156px 净区，
+// 装不下「标题 + 显示名 + 倒计时 + 分隔线 + 按钮 + 结果」这六段（1:1 截图上分隔线与按钮盒相接）。
+// 规格 §七 Q6 给的退路就是抬高这一档面板，而不是把 border 调回去（调回去等于重新让切分线穿过角帽）。
+const PANEL_WIDTH = 520
+const PANEL_HEIGHT = 360
 
 @ccclass('GiftPopupView')
 export class GiftPopupView extends Component {
@@ -150,7 +154,8 @@ export class GiftPopupView extends Component {
     // 素材没加载成功就退回原来那块实心矩形 —— 兜底用的仍是局部常量，删它的前提是这一屏截图验收通过。
     const plate = new Node('plate')
     plate.addComponent(UITransform).setContentSize(PANEL_WIDTH, PANEL_HEIGHT)
-    if (!applySlicedSprite(plate, 'ui.panel.iron', PANEL_WIDTH, PANEL_HEIGHT)) {
+    // 礼包属"奖励"语义 ⇒ 用鎏金底板（规格 §一 语义映射：奖励/礼包 → 金链绶带 + 火漆印 + 铜鎏框）。
+    if (!applySlicedSprite(plate, 'ui.panel.gilt', PANEL_WIDTH, PANEL_HEIGHT)) {
       const bg = plate.addComponent(Graphics)
       bg.fillColor = COLOR_PANEL
       bg.fillRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT)
@@ -161,21 +166,46 @@ export class GiftPopupView extends Component {
     // 先挂它、后挂 Label ⇒ 文字在匾额之上。240×108 就是素材实测比例 2.213，不压扁。
     const banner = new Node('banner')
     banner.addComponent(UITransform).setContentSize(240, 108)
-    banner.setPosition(new Vec3(0, 104, 0))
+    // 匾额压在顶带中线上（§一 第 3 条），坐标从 inset 推：bandCenter = 180 - 72/2 = 144
+    const bandCenter = PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top / 2
+    banner.setPosition(new Vec3(0, bandCenter, 0))
     applySlicedSprite(banner, 'ui.banner.crest', 240, 108)
     panel.addChild(banner)
 
-    // 纵向排布：标题 / 显示名 / 倒计时 / 按钮 / 结果，**逐行不重叠**。
-    // 2026-09-21 复检抓到「剩 59:59」被「立即购买」按钮压住（倒计时 y=24、按钮盒 y∈[-28,28]）：
+    // 顶饰：奖励语义的"金链 + 小冠 + 空牌"，规格 §一 第 4 条要求按语义换、只出材质不出文字。
+    // 放在匾额**正上方且不重叠**：匾额上沿在 y=158（104 + 108/2），顶饰取 52×64（实测比例 207:256）
+    // 中心 y=190 ⇒ 下沿正好落在 158，两者相切不相盖，也就无需靠挂载顺序压 z 序。
+    const crest = new Node('crest')
+    crest.addComponent(UITransform).setContentSize(52, 64)
+    crest.setPosition(new Vec3(0, PANEL_HEIGHT / 2 + 6, 0))
+    applySlicedSprite(crest, 'ui.crest.reward', 52, 64)
+    panel.addChild(crest)
+
+    // 内容必须落在九宫格**净区**内：A 档 border 实测抬到 80·72 之后，460×300 这块最小底板
+    // 上下各被铜边吃掉 72px ⇒ 净区只剩 y∈[-78,78]（原先按 48·36 排的字会压进边带）。
+    // 这一圈是规格 §二 那条"换材质不等于自动有安全区"的现跑版本，坐标一律从 inset 推，不写死。
+    const contentTop = PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top
+    const contentBottom = -PANEL_HEIGHT / 2 + PANEL_IRON_INSET.bottom
+
+    // 分隔线：把"礼包名/倒计时"与"报价/按钮"分成两段，替掉原先靠空行硬撑的读法。
+    // 512×40 是实测比例 ⇒ 260×20 不压扁；装饰件永不拉伸，整幅贴就够。
+    const divider = new Node('divider')
+    divider.addComponent(UITransform).setContentSize(260, 20)
+    divider.setPosition(new Vec3(0, contentTop - 82, 0))
+    applySlicedSprite(divider, 'ui.divider.rope', 260, 20)
+    panel.addChild(divider)
+
+    // 纵向排布：标题 / 显示名 / 倒计时 / 分隔线 / 按钮 / 结果，**逐行不重叠且全部落在净区内**。
+    // 2026-09-21 复检抓到「剩 59:59」被「立即购买」按钮压住（倒计时 y=24、按钮盒 y∈[-28,28]）；
     // 报价过期时间是这一屏唯一的时效信息，被按钮盖掉等于玩家看不见它。
-    this.title = this.label(panel, '礼包', 0, 108, 26, COLOR_COPPER_GOLD)
-    this.subtitle = this.label(panel, '', 0, 68, 18, COLOR_TEXT)
-    this.countdown = this.label(panel, '', 0, 36, 16, COLOR_TEXT_DIM)
-    this.result = this.label(panel, '', 0, -84, 16, COLOR_TEXT)
+    this.title = this.label(panel, '礼包', 0, PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top / 2, 26, COLOR_COPPER_GOLD)
+    this.subtitle = this.label(panel, '', 0, contentTop - 36, 18, COLOR_TEXT)
+    this.countdown = this.label(panel, '', 0, contentTop - 60, 16, COLOR_TEXT_DIM)
+    this.result = this.label(panel, '', 0, contentBottom + 38, 16, COLOR_TEXT)
 
     this.buyButton = new Node('buy')
     this.buyButton.addComponent(UITransform).setContentSize(200, 56)
-    this.buyButton.setPosition(new Vec3(0, -28, 0))
+    this.buyButton.setPosition(new Vec3(0, contentTop - 122, 0))
     // C 档铁钮：200×56 走九宫格（border 6·4 ⇒ 顶底占高 14%，在 §二 的 [7%, 60%] 区间内）。
     if (!applySlicedSprite(this.buyButton, 'ui.button.iron', 200, 56)) {
       const buttonBg = this.buyButton.addComponent(Graphics)
@@ -200,7 +230,13 @@ export class GiftPopupView extends Component {
 
     const close = new Node('close')
     close.addComponent(UITransform).setContentSize(36, 36)
-    close.setPosition(new Vec3(PANEL_WIDTH / 2 - 28, PANEL_HEIGHT / 2 - 28, 0))
+    // 关闭键从"角上"挪进净区：A 档角帽实测占图宽 15%~19%，460 宽下右上角铜帽覆盖 x∈[150,230]、
+    // y∈[78,150] —— 原先 (202,122) 那颗 × 正好压在铜帽与铆钉上（截图读成"角上有个脏点"）。
+    // 净区右上角 = (PANEL_WIDTH/2 - inset.left - 18, PANEL_HEIGHT/2 - inset.top - 18)。
+    close.setPosition(new Vec3(PANEL_WIDTH / 2 - PANEL_IRON_INSET.left - 18,
+      PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top - 18, 0))
+    // C 档薄边铁片：× 仍由 Label 画（规格 §八 第 3 条禁止把符号烘进素材），贴图只给"这是一颗键"的载体。
+    applySlicedSprite(close, 'ui.chip.close', 36, 36)
     this.label(close, '×', 0, 0, 22, COLOR_TEXT_DIM)
     panel.addChild(close)
     // 「×」与「立即购买」同族：`onClose` 也只是声明着、没人调用过。

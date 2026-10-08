@@ -11,7 +11,7 @@
  */
 import { _decorator, Color, Component, EditBox, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { CreateForm } from '../game/social/SocialCreate'
-import { applyCommandButton } from './ArtCatalog'
+import { applyCommandButton, applySlicedSprite } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
@@ -160,6 +160,14 @@ export class SocialCreateOverlay extends Component {
 
     this.drawScrim()
     this.drawCard(titleY + 26, buttonY - BUTTON_HEIGHT / 2 - 18)
+    // 联盟语义的顶饰（规格 §一 第 4 条 + 映射表"联盟 → 旗帜纹章"）：贴在卡片上沿之上、居中，
+    // 与标题错开 —— 标题在 titleY±12，顶饰中心在 titleY + 56、高 58 ⇒ 下沿 titleY+27，不相压。
+    const crest = new Node('crest')
+    crest.layer = this.node.layer
+    crest.addComponent(UITransform).setContentSize(new Size(40, 58))
+    crest.setPosition(new Vec3(0, titleY + 56, 0))
+    applySlicedSprite(crest, 'ui.crest.league', 40, 58)
+    this.node.addChild(crest)
     this.titleLabel = this.addLabel('title', form.titleText, 0, titleY, COLOR_COPPER_GOLD, 20)
     this.nameBox = this.addField(form.nameLabel, 'name-field', nameY, nameCapY, 'name')
     if (hasTag) {
