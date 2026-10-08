@@ -4,6 +4,7 @@ import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3 } fro
 import type { ChoiceOption } from '../game/session/Choices'
 import { applySystemUiFont } from './UiFont'
 import { applySlicedSprite } from './ArtCatalog'
+import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 
 const COLOR_MASK = new Color(12, 10, 9, 238)
 /**
@@ -155,7 +156,9 @@ export class ChoiceOverlay {
     node.layer = this.node.layer
     this.node.addChild(node)
     node.setPosition(new Vec3(0, 92 - index * 60, 0))
-    const bandWidth = this.width - 40
+    // 同族第四处：原先按 `面板宽 - 40` 算行底，而 A 档 border 抬到 80 之后净宽是 `宽 - 160` ⇒
+    // 行底左右各铺进铜边 60px。改成从 inset 推。
+    const bandWidth = this.width - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right
     node.addComponent(UITransform).setContentSize(new Size(bandWidth, 52))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW

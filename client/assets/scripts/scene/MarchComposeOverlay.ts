@@ -177,7 +177,9 @@ export class MarchComposeOverlay {
     this.bandNode.addComponent(UITransform).setContentSize(new Size(ROW_WIDTH, ROW_HEIGHT))
     const bandBg = this.bandNode.addComponent(Graphics)
     bandBg.fillColor = COLOR_ROW
-    bandBg.roundRect(-(PANEL_WIDTH - 48) / 2, -ROW_HEIGHT, PANEL_WIDTH - 48, ROW_HEIGHT, 6)
+    // 行底宽从 inset 推（同台账 #811 ① 那一族）：原先 PANEL_WIDTH - 48 = 572，而 A 档 border 80 之后
+    // 净区只有 460 ⇒ 这块 Graphics 行底左右各铺进铜边 56px。
+    bandBg.roundRect(-ROW_WIDTH / 2, -ROW_HEIGHT, ROW_WIDTH, ROW_HEIGHT, 6)
     bandBg.fill()
     // 三档层级键一行排开（V22-b 加第三颗）；宽度、间距与起点的算法与"为什么不压住表头"
     // 写在 BAND_CHIP_* 那几条常量上（那里有实测出来的盒子数字）。

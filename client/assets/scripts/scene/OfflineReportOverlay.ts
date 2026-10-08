@@ -158,12 +158,14 @@ export class OfflineReportOverlay {
     const text = this.childLabel(node, -rowW / 2 + 16, 9, 17, COLOR_TEXT)
     text.horizontalAlign = Label.HorizontalAlign.LEFT
     text.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    text.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 100, 22))
+    // 标签盒宽必须跟着**行宽**走：原先写 PANEL_WIDTH - 100 = 520，而行宽已收到净区 460 ⇒
+    // 盒子比它所在的条行还宽 60px，SHRINK 会按这个假宽度排版、长文案压到「查看 ›」上（同族第三处）。
+    text.node.getComponent(UITransform)?.setContentSize(new Size(rowW - 100, 22))
     text.overflow = Label.Overflow.SHRINK
     const detail = this.childLabel(node, -rowW / 2 + 16, -10, 14, COLOR_DIM)
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 100, 20))
+    detail.node.getComponent(UITransform)?.setContentSize(new Size(rowW - 100, 20))
     detail.overflow = Label.Overflow.SHRINK
 
     // 「查看 ›」是这一行的可点提示：没有它，玩家不会知道这一行能点
