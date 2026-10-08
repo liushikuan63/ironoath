@@ -1,0 +1,342 @@
+{
+  "table": "level_reward",
+  "version": 1,
+  "comment": "等级奖励表。一行一等级（1..40，对应主城等级），每行给该级「可领取」的木/石/金币绝对值。裁决三连（2026-10-08 弹窗，收口清单 #829）：载体＝本表；发放时机＝玩家进「等级奖励」面板点「领取」才入账（不是升级到即发）；可见入口＝客户端新建的等级奖励面板。数值口径（同轮裁决，比例本身此前从未裁）：木/石 = 该级主城造价 × 段比例，段比例 1→30 取 5%、31→40 取 25%（分段而非全表统一，把奖励集中到 #591 指定的「31~40 只给资源奖励」那 10 级）；金币不按造价算（主城不吃铁粮、也没有金币造价可锚），改锚 `chapter.rewardGold` 的现读档价 200/400/600/800/1000，档位边界 = maxLevel ÷ 章节数 = 8 级一档。",
+  "designNote": "【为什么每行存绝对值而不是存比例】本仓铁律是「表只给基数、派生由 Formula 套 curve」。这条在本表被有意打破，理由是产品口径就落在「每一级具体给多少」上（31 级跳到 25% 是台阶，不是曲线），存比例反而要把段边界再编码一遍。\n【那造价变了怎么办】正是 `LevelRewardTableTest` 那两条比值判据的职责：判据每轮用 Formula.buildingCost 现算造价、再比本表累计奖励，curve 或 building 基数一改、比值立刻偏离 5%/25% ⇒ 表不会静默过期，它会变红。\n【金币档价为什么能叫「同量级」而不是发明】200/400/600/800/1000 五个数逐个来自 contract/config/chapter.json 现读，档位边界 8 来自本表上界 40 ÷ 章节数 5，两个都是现读量，没有新增常数。\n【与既有发放口的关系】金币走金币、木石走资源结算（含仓容截断）。本表不新增任何施舍通道：未领取的等级一直挂着，玩家任何时候进面板都能补领，与 quest/battle_pass 的「点领取才发」同形。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "level": "LONG_POS",
+    "rewardWood": "LONG_NONNEG",
+    "rewardStone": "LONG_NONNEG",
+    "rewardGold": "LONG_NONNEG",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "lr_lv1",
+      "name": "主城 1 级奖励",
+      "level": 1,
+      "rewardWood": 50,
+      "rewardStone": 50,
+      "rewardGold": 200,
+      "why": "首行：1 级 = 出生即达，奖励 50 木石是「进面板看一眼」的彩头，不构成任何节奏影响。"
+    },
+    {
+      "id": "lr_lv2",
+      "name": "主城 2 级奖励",
+      "level": 2,
+      "rewardWood": 61,
+      "rewardStone": 61,
+      "rewardGold": 200
+    },
+    {
+      "id": "lr_lv3",
+      "name": "主城 3 级奖励",
+      "level": 3,
+      "rewardWood": 74,
+      "rewardStone": 74,
+      "rewardGold": 200
+    },
+    {
+      "id": "lr_lv4",
+      "name": "主城 4 级奖励",
+      "level": 4,
+      "rewardWood": 91,
+      "rewardStone": 91,
+      "rewardGold": 200
+    },
+    {
+      "id": "lr_lv5",
+      "name": "主城 5 级奖励",
+      "level": 5,
+      "rewardWood": 111,
+      "rewardStone": 111,
+      "rewardGold": 200
+    },
+    {
+      "id": "lr_lv6",
+      "name": "主城 6 级奖励",
+      "level": 6,
+      "rewardWood": 135,
+      "rewardStone": 135,
+      "rewardGold": 200
+    },
+    {
+      "id": "lr_lv7",
+      "name": "主城 7 级奖励",
+      "level": 7,
+      "rewardWood": 165,
+      "rewardStone": 165,
+      "rewardGold": 200
+    },
+    {
+      "id": "lr_lv8",
+      "name": "主城 8 级奖励",
+      "level": 8,
+      "rewardWood": 201,
+      "rewardStone": 201,
+      "rewardGold": 200
+    },
+    {
+      "id": "lr_lv9",
+      "name": "主城 9 级奖励",
+      "level": 9,
+      "rewardWood": 245,
+      "rewardStone": 245,
+      "rewardGold": 400
+    },
+    {
+      "id": "lr_lv10",
+      "name": "主城 10 级奖励",
+      "level": 10,
+      "rewardWood": 299,
+      "rewardStone": 299,
+      "rewardGold": 400
+    },
+    {
+      "id": "lr_lv11",
+      "name": "主城 11 级奖励",
+      "level": 11,
+      "rewardWood": 365,
+      "rewardStone": 365,
+      "rewardGold": 400
+    },
+    {
+      "id": "lr_lv12",
+      "name": "主城 12 级奖励",
+      "level": 12,
+      "rewardWood": 446,
+      "rewardStone": 446,
+      "rewardGold": 400
+    },
+    {
+      "id": "lr_lv13",
+      "name": "主城 13 级奖励",
+      "level": 13,
+      "rewardWood": 544,
+      "rewardStone": 544,
+      "rewardGold": 400
+    },
+    {
+      "id": "lr_lv14",
+      "name": "主城 14 级奖励",
+      "level": 14,
+      "rewardWood": 663,
+      "rewardStone": 663,
+      "rewardGold": 400
+    },
+    {
+      "id": "lr_lv15",
+      "name": "主城 15 级奖励",
+      "level": 15,
+      "rewardWood": 809,
+      "rewardStone": 809,
+      "rewardGold": 400
+    },
+    {
+      "id": "lr_lv16",
+      "name": "主城 16 级奖励",
+      "level": 16,
+      "rewardWood": 987,
+      "rewardStone": 987,
+      "rewardGold": 400
+    },
+    {
+      "id": "lr_lv17",
+      "name": "主城 17 级奖励",
+      "level": 17,
+      "rewardWood": 1204,
+      "rewardStone": 1204,
+      "rewardGold": 600
+    },
+    {
+      "id": "lr_lv18",
+      "name": "主城 18 级奖励",
+      "level": 18,
+      "rewardWood": 1469,
+      "rewardStone": 1469,
+      "rewardGold": 600
+    },
+    {
+      "id": "lr_lv19",
+      "name": "主城 19 级奖励",
+      "level": 19,
+      "rewardWood": 1792,
+      "rewardStone": 1792,
+      "rewardGold": 600
+    },
+    {
+      "id": "lr_lv20",
+      "name": "主城 20 级奖励",
+      "level": 20,
+      "rewardWood": 2187,
+      "rewardStone": 2187,
+      "rewardGold": 600
+    },
+    {
+      "id": "lr_lv21",
+      "name": "主城 21 级奖励",
+      "level": 21,
+      "rewardWood": 2668,
+      "rewardStone": 2668,
+      "rewardGold": 600
+    },
+    {
+      "id": "lr_lv22",
+      "name": "主城 22 级奖励",
+      "level": 22,
+      "rewardWood": 3255,
+      "rewardStone": 3255,
+      "rewardGold": 600
+    },
+    {
+      "id": "lr_lv23",
+      "name": "主城 23 级奖励",
+      "level": 23,
+      "rewardWood": 3971,
+      "rewardStone": 3971,
+      "rewardGold": 600
+    },
+    {
+      "id": "lr_lv24",
+      "name": "主城 24 级奖励",
+      "level": 24,
+      "rewardWood": 4844,
+      "rewardStone": 4844,
+      "rewardGold": 600
+    },
+    {
+      "id": "lr_lv25",
+      "name": "主城 25 级奖励",
+      "level": 25,
+      "rewardWood": 5910,
+      "rewardStone": 5910,
+      "rewardGold": 800
+    },
+    {
+      "id": "lr_lv26",
+      "name": "主城 26 级奖励",
+      "level": 26,
+      "rewardWood": 7211,
+      "rewardStone": 7211,
+      "rewardGold": 800
+    },
+    {
+      "id": "lr_lv27",
+      "name": "主城 27 级奖励",
+      "level": 27,
+      "rewardWood": 8797,
+      "rewardStone": 8797,
+      "rewardGold": 800
+    },
+    {
+      "id": "lr_lv28",
+      "name": "主城 28 级奖励",
+      "level": 28,
+      "rewardWood": 10732,
+      "rewardStone": 10732,
+      "rewardGold": 800
+    },
+    {
+      "id": "lr_lv29",
+      "name": "主城 29 级奖励",
+      "level": 29,
+      "rewardWood": 13093,
+      "rewardStone": 13093,
+      "rewardGold": 800
+    },
+    {
+      "id": "lr_lv30",
+      "name": "主城 30 级奖励",
+      "level": 30,
+      "rewardWood": 15974,
+      "rewardStone": 15974,
+      "rewardGold": 800,
+      "why": "1→30 段末行：段比例 5%（2026-10-08 弹窗裁决）。属性增长到 30 级为止（B02 裁决 #591），这一段奖励只当签到彩头。"
+    },
+    {
+      "id": "lr_lv31",
+      "name": "主城 31 级奖励",
+      "level": 31,
+      "rewardWood": 97440,
+      "rewardStone": 97440,
+      "rewardGold": 800,
+      "why": "31→40 段首行：段比例跳到 25%。#591 定的形态是「31~40 级只给资源奖励、属性不再增长」，这一段没有别的收益，奖励必须给得出来才有升级动机。"
+    },
+    {
+      "id": "lr_lv32",
+      "name": "主城 32 级奖励",
+      "level": 32,
+      "rewardWood": 118876,
+      "rewardStone": 118876,
+      "rewardGold": 800
+    },
+    {
+      "id": "lr_lv33",
+      "name": "主城 33 级奖励",
+      "level": 33,
+      "rewardWood": 145029,
+      "rewardStone": 145029,
+      "rewardGold": 1000
+    },
+    {
+      "id": "lr_lv34",
+      "name": "主城 34 级奖励",
+      "level": 34,
+      "rewardWood": 176935,
+      "rewardStone": 176935,
+      "rewardGold": 1000
+    },
+    {
+      "id": "lr_lv35",
+      "name": "主城 35 级奖励",
+      "level": 35,
+      "rewardWood": 215861,
+      "rewardStone": 215861,
+      "rewardGold": 1000
+    },
+    {
+      "id": "lr_lv36",
+      "name": "主城 36 级奖励",
+      "level": 36,
+      "rewardWood": 263351,
+      "rewardStone": 263351,
+      "rewardGold": 1000
+    },
+    {
+      "id": "lr_lv37",
+      "name": "主城 37 级奖励",
+      "level": 37,
+      "rewardWood": 321288,
+      "rewardStone": 321288,
+      "rewardGold": 1000
+    },
+    {
+      "id": "lr_lv38",
+      "name": "主城 38 级奖励",
+      "level": 38,
+      "rewardWood": 391971,
+      "rewardStone": 391971,
+      "rewardGold": 1000
+    },
+    {
+      "id": "lr_lv39",
+      "name": "主城 39 级奖励",
+      "level": 39,
+      "rewardWood": 478205,
+      "rewardStone": 478205,
+      "rewardGold": 1000
+    },
+    {
+      "id": "lr_lv40",
+      "name": "主城 40 级奖励",
+      "level": 40,
+      "rewardWood": 583410,
+      "rewardStone": 583410,
+      "rewardGold": 1000,
+      "why": "末行 = 主城上限（building.main_city.maxLevel 现读 40），本表行数上界与建筑顶满同界（#829）。"
+    }
+  ]
+}

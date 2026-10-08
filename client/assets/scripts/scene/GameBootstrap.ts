@@ -81,6 +81,7 @@ import { PowerPanelView } from './PowerPanelView'
 import { ShopPanelView } from './ShopPanelView'
 import { AvatarFramePanelView } from './AvatarFramePanelView'
 import { BattlePassPanelView } from './BattlePassPanelView'
+import { LevelRewardPanelView } from './LevelRewardPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
@@ -355,6 +356,11 @@ export class GameBootstrap extends Component {
       // 战令同理（B24 S-d-e）：它的进度由任务与活动推进，缓存会让"刚刚领任务加的分"迟到
       if (key === 'battlePass') {
         void this.root?.refresh('battlePass')
+      }
+      // 等级奖励同理（收口清单 #829 裁决②）：能不能领由服务端按主城等级现算，
+      // 而主城刚升的那一级就是它唯一的触发源 —— 用缓存会让"刚升上的那一行"仍是灰的
+      if (key === 'levelReward') {
+        void this.root?.refresh('levelReward')
       }
       // 战力页重拉"当前页签那一份"：赛季页那一行是倒计时，而面板节点常驻、不会自己重画，
       // 复用上一次的值会显示一个已经过期的「还剩 N 天」（榜那一侧同理，名次一直在变）
@@ -1228,6 +1234,7 @@ export class GameBootstrap extends Component {
     const shop = this.panel(ShopPanelView, 'shop')
     const avatarFrames = this.panel(AvatarFramePanelView, 'avatarFrames')
     const battlePass = this.panel(BattlePassPanelView, 'battlePass')
+    const levelReward = this.panel(LevelRewardPanelView, 'levelReward')
     const giftPopup = this.panel(GiftPopupView, 'giftPopup')
     const tech = this.panel(TechPanelView, 'techPanel')
     const equip = this.panel(EquipPanelView, 'equipPanel')
@@ -1248,7 +1255,7 @@ export class GameBootstrap extends Component {
     // 刻意在这里记而不是在别处再数一遍回调键名 —— 视图找没找到只在这儿知道
     const views = {
       city, army, hero, bag, stage, reports, social, power, search, quest, mail, world, settings,
-      shop, avatarFrames, battlePass, giftPopup,
+      shop, avatarFrames, battlePass, levelReward, giftPopup,
     }
     this.panelViews = {
       attempted: Object.keys(views).length,
@@ -1714,6 +1721,10 @@ export class GameBootstrap extends Component {
     if (battlePass !== null) {
       out.battlePass = data => battlePass.attach(data)
       battlePass.onClaim = (tier, track) => { void this.root?.claimBattlePassTier(tier, track) }
+    }
+    if (levelReward !== null) {
+      out.levelReward = data => levelReward.attach(data)
+      levelReward.onClaim = level => { void this.root?.claimLevelReward(level) }
     }
     if (avatarFrames !== null) {
       out.avatarFrames = view => avatarFrames.attach(view)

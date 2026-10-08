@@ -37,6 +37,9 @@ import type {
   BattlePassClaimReq, BattlePassClaimResp, BattlePassStatusResp,
 } from '../../net/generated/BattlePassProtocol'
 import type {
+  LevelRewardClaimReq, LevelRewardClaimResp, LevelRewardListResp,
+} from '../../net/generated/LevelRewardProtocol'
+import type {
   CityCancelReq, CityCancelResp, CityCollectReq, CityCollectResp, CityListResp, CityPauseReq,
   CityPauseResp, CityResumeReq, CityResumeResp, CityUpgradeReq,
   CityUpgradeResp, SpeedUpReq, SpeedUpResp,
@@ -1246,6 +1249,24 @@ export class GameApi {
    */
   battlePassClaim(req: Omit<BattlePassClaimReq, 'requestId'>): Promise<NetOutcome<BattlePassClaimResp>> {
     return this.mutate<BattlePassClaimReq, BattlePassClaimResp>('/battlePass/claim', req)
+  }
+
+  // ---------- 等级奖励（收口清单 #829） ----------
+
+  /** GET /level-reward/list：逐级奖励与三态。纯读，服务端不推进任何状态。 */
+  levelRewardList(): Promise<NetOutcome<LevelRewardListResp>> {
+    return this.read<LevelRewardListResp>('/level-reward/list')
+  }
+
+  /**
+   * POST /level-reward/claim：领一级的奖励。requestId 由 `mutate` 统一注入（不在这里手填，
+   * 忘了填的症状是弱网重试刷出一份奖励）。
+   *
+   * <p>回执里是**实入账的明细**（装不下的部分已被服务端转邮件），
+   * 所以飘字照回执念，不照本地那一行念。
+   */
+  levelRewardClaim(req: Omit<LevelRewardClaimReq, 'requestId'>): Promise<NetOutcome<LevelRewardClaimResp>> {
+    return this.mutate<LevelRewardClaimReq, LevelRewardClaimResp>('/level-reward/claim', req)
   }
 
   // ---------- 内部 ----------

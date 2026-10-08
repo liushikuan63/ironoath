@@ -80,6 +80,14 @@ public enum ErrorCode {
     TECH_LEVEL_MAX(3012, "该科技已达最高等级"),
     TECH_NOT_RESEARCHING(3013, "当前没有进行中的研究"),
 
+    // ---------- 301x~302x 等级奖励（收口清单 #829 三项裁决）----------
+    // 落在城建档内：本域的「等级」就是主城等级（building.main_city.maxLevel 现读 40），
+    // 判据读的是玩家存档上的 cityLevel，与城建/科技同一个域、同一把玩家锁 —— 另开一段会把
+    // 「主城还没到这一级」与已有的 3000「主城等级不足」拆成两个同义码。
+    LEVEL_REWARD_NOT_FOUND(3014, "这一级的奖励不存在"),
+    LEVEL_REWARD_NOT_REACHED(3015, "主城还没升到这一级"),
+    LEVEL_REWARD_ALREADY_CLAIMED(3016, "这一级的奖励已经领过了"),
+
     // ---------- 4xxx 资源 / 背包（B04 填充） ----------
     RESOURCE_NOT_ENOUGH(4000, "资源不足"),
     ITEM_NOT_FOUND(4002, "道具不存在"),

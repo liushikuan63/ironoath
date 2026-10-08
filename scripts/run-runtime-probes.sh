@@ -118,7 +118,7 @@ while read -r f; do
   # 不配 `BOOST_BACKEND` ⇒ 行为与改动前完全一致（仍打 `$BACKEND`）。
   target_backend="$BACKEND"
   if [ -n "${BOOST_BACKEND:-}" ]; then
-    boost_re="${BOOST_PROBES:-verify-nation-live|verify-nation-policy-ui|verify-nation-rally-runtime}"
+    boost_re="${BOOST_PROBES:-verify-nation-live|verify-nation-policy-ui|verify-nation-rally-runtime|verify-level-reward-runtime}"
     if printf '%s' "$base" | grep -qE "$boost_re"; then
       target_backend="$BOOST_BACKEND"
     fi

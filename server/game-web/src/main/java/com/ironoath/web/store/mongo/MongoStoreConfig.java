@@ -193,6 +193,16 @@ public class MongoStoreConfig {
     }
 
     /**
+     * 等级奖励的领取账本（收口清单 #829）。这一档防的是「领过的等级随进程消失，于是同一级能再领一遍」：
+     * 已领是历史事实，存档上没有任何一位能反推它（奖励早就被花掉了）。
+     */
+    @Bean
+    public com.ironoath.web.levelreward.LevelRewardClaimStore levelRewardClaimStore(MongoTemplate mongo) {
+        LOG.info("使用 MongoDB 等级奖励账本（已领等级不再随进程消失）");
+        return new MongoLevelRewardClaimStore(mongo);
+    }
+
+    /**
      * 邮件（B12 §2）。这一档防的是「玩家该得的东西随进程消失」：
      * 邮件里装着<b>没领走的附件</b>（发奖溢出的补发、运营补偿），内存版重启就是丢玩家资产，
      * 而它没有任何重算入口 —— 与任务进度不同，进度至少还能从当前状态反推一部分。

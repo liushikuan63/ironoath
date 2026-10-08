@@ -143,6 +143,15 @@ import type { AvatarFrameListResp } from '../../net/generated/Protocol'
 import type { BattlePassStatusResp, BattlePassTrack } from '../../net/generated/BattlePassProtocol'
 import type { RallyListResp } from '../../net/generated/SocialProtocol'
 import { buildBattlePassPanel, claimBodyOf, claimResultText } from '../battlePass/BattlePassPanel'
+// 等级奖励（收口清单 #829）。`claimBodyOf` / `claimResultText` 与战令那两个同名，所以带域前缀引入 ——
+// 同名不同物是本仓反复出现过的形状（两个 remainTextOf 一个给词一个给空串），不给别名就会静默覆盖。
+import {
+  buildLevelRewardPanel,
+  claimBodyOf as levelRewardClaimBodyOf,
+  claimResultText as levelRewardClaimResultText,
+} from '../levelReward/LevelRewardPanel'
+import type { LevelRewardPanelData } from '../levelReward/LevelRewardPanel'
+import type { LevelRewardListResp } from '../../net/generated/LevelRewardProtocol'
 import { buildOfflineItems, offlineReportGate } from '../offline/OfflineReport'
 import type { OfflineItem } from '../offline/OfflineReport'
 import type { TrainMemory } from '../army/AutoTrain'
@@ -433,6 +442,8 @@ export interface PanelTargets {
   avatarFrames?(view: AvatarFramesView): void
   /** 战令面板（B24 S-d-e）：原始响应 + 上一次领取的结果。 */
   battlePass?(data: BattlePassPanelData): void
+  /** 等级奖励面板（收口清单 #829）：同形 —— 原始响应 + 上一次领取的结果，判定全在服务端那一份里。 */
+  levelReward?(data: LevelRewardPanelData): void
   /** 集结面板（V02-S1）。 */
   rallies?(data: RallyPanelData): void
   /** 一场的完整战果 + 回放参数。回放怎么演由 {@code playbackOptionsOf} 装配，本类不算。 */
@@ -489,7 +500,7 @@ export interface PanelTargets {
 export type PanelKey =
   'city' | 'army' | 'hero' | 'bag' | 'resources' | 'stage' | 'stamina' | 'social' | 'power' | 'world'
   | 'quest' | 'reddot' | 'mail' | 'reports' | 'activity' | 'guide' | 'shop' | 'avatarFrames'
-  | 'battlePass' | 'rallies' | 'tech' | 'equip' | 'gacha'
+  | 'battlePass' | 'rallies' | 'tech' | 'equip' | 'gacha' | 'levelReward'
 
 /** 「全开」这一档的天花板：`OpenBatchReq.count` 的协议上界（逐箱上限由服务端判，超了会明确拒）。 */
 const CHEST_OPEN_CEILING = 100
@@ -547,6 +558,9 @@ export class AppRoot {
   /** 战令：最近一次状态与上一次领取的结果（临时提示）。**进度两位都取自响应，本地不改**。 */
   private battlePassResp: BattlePassStatusResp | null = null
   private battlePassNotice: string | null = null
+  /** 等级奖励（收口清单 #829）：**已领/待领/未达三位全部取自服务端，本地一位都不改**。 */
+  private levelRewardResp: LevelRewardListResp | null = null
+  private levelRewardNotice: string | null = null
   /** 服务端给的边界与阈值（init 响应里那一块）；登录失败时为 null。 */
   private offlineConfig: OfflineReportView | null = null
   /** 已经给玩家看过的那一批明细的指纹：同一批不再弹（明细变了 = 指纹变了，会再弹一次）。 */
@@ -1042,6 +1056,14 @@ export class AppRoot {
         this.deliver('battlePass', await this.api.battlePassStatus(), r => {
           this.battlePassResp = r
           this.deliverBattlePass()
+        })
+        return
+      case 'levelReward':
+        // 打开时才拉（不进首屏批次）：40 行是面板自己的数据，玩家没点开就等于白发一次请求。
+        // 每次打开都重拉 —— 「刚升的那两级能不能领」必须以服务端为准，缓存会让它迟到。
+        this.deliver('levelReward', await this.api.levelRewardList(), r => {
+          this.levelRewardResp = r
+          this.deliverLevelReward()
         })
         return
       case 'avatarFrames':
@@ -1811,6 +1833,45 @@ export class AppRoot {
       this.battlePassNotice = claimResultText(r.reward)
       this.deliverBattlePass()
     })
+  }
+
+  /** 组装并递一次等级奖励视图（窗口由视图按实测高度现算，这里只递原始响应与提示行）。 */
+  private deliverLevelReward(): void {
+    const resp = this.levelRewardResp
+    if (resp === null) {
+      return
+    }
+    this.targets.levelReward?.({ source: resp, notice: this.levelRewardNotice })
+  }
+
+  /**
+   * 领一级的奖励（收口清单 #829 裁决②：这是客户端唯一能让等级奖励入账的动作）。
+   *
+   * <p><b>不能领的那一次不发请求</b>：三态是服务端算好的（未达 / 已领 / 可领），
+   * 面板本来就不给不可领的行画亮按钮（见 `game/levelReward/LevelRewardPanel.ts`），这里是第二道。
+   *
+   * <p><b>写完之后重拉本域列表</b>：回执只带「实发的那几项」（协议注释），不带全量 40 行 ——
+   * 战令那条路能省一次 GET 是因为它的回执自带全量状态，这里省不了。
+   * 「已领」这一位由服务端那份列表翻，客户端不本地改（改了就会出现"界面说领过而服务端说没有"）。
+   */
+  claimLevelReward(level: number): Promise<void> {
+    const resp = this.levelRewardResp
+    if (resp === null) {
+      this.rejectNeeds('levelReward', '等级奖励还没拉回来，稍后再试')
+      return Promise.resolve()
+    }
+    const view = buildLevelRewardPanel(resp, resp.rows.length)
+    const row = view.rows.find((candidate) => candidate.level === level) ?? null
+    const body = row === null ? null : levelRewardClaimBodyOf(row)
+    if (body === null) {
+      this.rejectNeeds('levelReward', '这一级现在还领不了 —— 要么主城还没升到这一级，要么已经领过了')
+      return Promise.resolve()
+    }
+    this.track(TRACK_EVENTS.levelRewardClaim, { level: String(level) })
+    return this.write('levelReward', this.api.levelRewardClaim(body),
+      ['bag', 'resources', 'levelReward'], r => {
+        this.levelRewardNotice = levelRewardClaimResultText(r)
+      })
   }
 
   /** 组装并递一次外观视图。`notice` 是**上一次操作的结果**，进面板时一并带上（面板只画一次）。 */
@@ -4817,6 +4878,10 @@ export class AppRoot {
       case 'battlePass':
         this.battlePassNotice = message
         this.deliverBattlePass()
+        return
+      case 'levelReward':
+        this.levelRewardNotice = message
+        this.deliverLevelReward()
         return
       case 'avatarFrames':
         this.frameNotice = message

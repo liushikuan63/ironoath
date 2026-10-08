@@ -107,6 +107,11 @@ export const TRACK_EVENTS = {
    * 领一档战令奖励（B24）。 区分免费/付费 —— 两条线的领取比例是'付费线值不值'的第一手证据。
    */
   battlePassClaim: 'battle_pass_claim',
+  /**
+   * 领一级的等级奖励（收口清单 #829 裁决②）。带 `level`：领取率按等级拆开才看得出
+   * 「玩家是真的在为这条线升主城，还是只把攒着的几级顺手点掉」—— 那是这条机制唯一的验收证据。
+   */
+  levelRewardClaim: 'level_reward_claim',
   /** 尝试卖出道具。服务端还没有出售端点，所以这个名字同时也是那条缺口的计数器。 */
   /** 踢成员。`from` 区分小队与联盟。 */
   memberKick: 'member_kick',

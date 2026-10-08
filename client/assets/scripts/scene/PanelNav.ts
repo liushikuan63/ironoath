@@ -31,6 +31,7 @@ import { TargetSearchView } from './TargetSearchView'
 import { RecruitPanelView } from './RecruitPanelView'
 import { QuestPanelView } from './QuestPanelView'
 import { BattlePassPanelView } from './BattlePassPanelView'
+import { LevelRewardPanelView } from './LevelRewardPanelView'
 import { MailPanelView } from './MailPanelView'
 import { BattleReportPanelView } from './BattleReportPanelView'
 import { WorldMap } from './WorldMap'
@@ -67,12 +68,16 @@ interface PanelDef {
 }
 
 /**
- * 面板清单（**当前 17 项**，2026-09-21 现数）。**顺序就是面板的定义顺序**；
+ * 面板清单（**当前 18 项**，2026-10-08 现数：原 17 项 + 等级奖励）。**顺序就是面板的定义顺序**；
  * 导航条上从左到右只画常驻那几格（见 {@link MORE_KEYS}），其余进「更多」抽屉。
  *
  * <p>**这份注释里的计数是一个已经漂移过两次的读数**（阶段 2 写"九个系统"、阶段 5/7 之后
  * 陆续加到 17，而注释与 `CC开发全流程.md` 阶段总览都停在旧数）。改这一行时请顺手改
  * `CC开发全流程.md` 阶段总览/3.1/7 三处 —— 判据：`grep -c "{ key: '" 本文件` 必须等于注释里的数字。
+ *
+ * <p>⚠ **这条判据本身差一格**（2026-10-08 现数）：上面那句 `grep -c` 的匹配串在本注释里也出现一次，
+ * 所以字面读数恒为「行数 + 1」（18 行 ⇒ grep 19）。注释里的数写的是**真实行数**，
+ * 用它核对时要么 `grep -c` 再减 1，要么只数 `PANELS` 那一段（`sed -n '/^const PANELS/,/^]/p' | grep -c "{ key: '"`）。
  *
  * <p>地图（WorldMap）是倒数第二项：它带镜头与拖拽输入，且依赖 enterWorld 初始化过的世界模型
  * （AppRoot.start 里已经拉过），所以挂上就能用，不需要额外的装配。
@@ -92,6 +97,9 @@ const PANELS: readonly PanelDef[] = [
   // 战令紧跟任务（B24 S-d-e）：它的积分只来自任务与活动 —— 两个入口挨着，
   // 「分从哪来」就不需要在界面上解释一遍
   { key: 'battlePass', label: '战令', view: BattlePassPanelView, reddotKey: null },
+  // 等级奖励紧跟战令：两者都是「升到/攒到之后回来点一下」的领取型入口，挨着放玩家不用找第二遍。
+  // 标签只用两个字 —— 抽屉那一格宽 52.9px 量级，四字标签会贴上格边（本文件 MORE_KEYS 的注释记过这条）。
+  { key: 'levelReward', label: '等级', view: LevelRewardPanelView, reddotKey: null },
   // 邮件紧跟任务：两者都是「每天进来清一次」的入口，而它的角标绑在服务端 mail/unread 叶子上
   // （B12 §4：红点判据只有一处，客户端不参与算）。
   { key: 'mail', label: '邮件', view: MailPanelView, reddotKey: 'mail' },
@@ -124,7 +132,7 @@ const PANELS: readonly PanelDef[] = [
  *   <li>内城 / 军队 / 武将 / 任务 / 地图 —— 主线循环：引导七步与主线任务在这五格之间来回，
  *       多一次"先展开抽屉"就是把新手引导的每一步都加长一截。</li>
  * </ul>
- * 抽屉里那 10 项都是"点开看一眼、顺手做一件事"的常驻功能，收起来不影响主线推进；
+ * 抽屉里那 11 项都是"点开看一眼、顺手做一件事"的常驻功能，收起来不影响主线推进；
  * 它们各自的红点仍在（抽屉格子上照画），并在「更多」上合并成一个总点，收起时也看得见。
  *
  * <p>面板清单仍只有 {@link PANELS} 一份出处：这里只列 key，标签 / 视图 / 红点路径都从它取。
@@ -132,7 +140,7 @@ const PANELS: readonly PanelDef[] = [
  * "条上 + 抽屉里的格子合计 = PANELS 行数" 断言，漏一个就红。
  */
 const MORE_KEYS: readonly string[] = [
-  'gacha', 'bag', 'stage', 'reports', 'battlePass',
+  'gacha', 'bag', 'stage', 'reports', 'battlePass', 'levelReward',
   'social', 'power', 'shop', 'avatarFrames', 'targets',
 ]
 
@@ -143,7 +151,7 @@ const MORE_PANELS: readonly PanelDef[] = MORE_KEYS
   .map((key) => PANELS.find((def) => def.key === key) ?? null)
   .filter((def): def is PanelDef => def !== null)
 
-/** 抽屉的几何：5 列 × 2 行，格子高度与导航格一致，省得两套手感。 */
+/** 抽屉的几何：5 列，行数按 `MORE_PANELS.length` 现算（11 项 = 3 行），格子高度与导航格一致，省得两套手感。 */
 const MORE_COLUMNS = 5
 const MORE_GAP = 8
 const MORE_PADDING = 10
