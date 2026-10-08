@@ -312,6 +312,13 @@ public class NationAppService {
                 Nation nation = settleTax(loaded.id(), now);
                 nation.removeAlliance(alliance.id(), false, playerId, now);
                 nations.save(nation, nation.version());
+                // 裁决（2026-10-08）：退国要结清该盟成员的国家集结 —— 人已经不在国里，
+                // 却还挂在"本国集结"名单上会让别人以为他还在等人。被开除那条本轮明确留后。
+                // 亡国（最后一个联盟退出即解散）走整国取消那一支，与 #815 同一口径。
+                int ralliesSettled = nation.isDisbanded()
+                        ? social.getObject().cancelNationalRalliesOf(nation.id(), now)
+                        : social.getObject().settleNationalRalliesForMembers(
+                                nation.id(), alliance.memberIds(), now);
                 long cooldownUntil = nation.joinCooldownUntil(alliance.id());
                 // 发起的盟主知道自己点了什么，而他的联盟成员是被动失去国籍的 —— 收件人是全盟成员、
                 // 排除发起人。放在 save 之后：国家那边写回失败就该整次失败，不该留下一条已发出的通知。
@@ -323,6 +330,9 @@ public class NationAppService {
                         alliance.memberIds(), playerId, nation.id(), now);
                 LOG.info("联盟退出国 nationId={} allianceId={} 发起盟主={} 影响成员={} 可再入籍时刻={} 国家是否随之解散={}（冷却来自 global.NATION_JOIN_COOLDOWN_HOURS）",
                         nation.id(), alliance.id(), playerId, alliance.memberIds().size(), cooldownUntil,
+                        nation.isDisbanded());
+                LOG.info("退国结清国家集结 nationId={} allianceId={} 盟内成员={} 结清条数={} 国家是否随之解散={}",
+                        nation.id(), alliance.id(), alliance.memberIds().size(), ralliesSettled,
                         nation.isDisbanded());
                 return new NationLeaveResp(nation.id(), nation.name(), cooldownUntil, now);
             });

@@ -2693,6 +2693,44 @@ public class SocialAppService {
         return cancelled;
     }
 
+    /**
+     * 退国结算：把这批玩家在该国「准备中」的国家集结结清（裁决 2026-10-08：只补退国，被开除留后）。
+     *
+     * <p><b>为什么不能整国取消</b>：退国走的是「一个联盟退出国家」，而这个国里可能还有别的联盟；
+     * 把别人的集结一起取消等于让一次退国伤到无关的人 —— 那与亡国（国家已不存在）不是同一种情况。
+     *
+     * <p><b>两种身份分两条退法</b>（与 {@code /rally/quit} 那条端点同形，保证两处行为一致）：
+     * 发起人退出 ⇒ 整个集结取消、所有人的兵都退；普通参与者退出 ⇒ 只退他这一份，集结继续等人。
+     */
+    public int settleNationalRalliesForMembers(String nationId, java.util.Collection<String> playerIds,
+                                               long now) {
+        int settled = 0;
+        for (String playerId : playerIds) {
+            for (Rally rally : List.copyOf(store.preparingRalliesOf(nationId))) {
+                if (rally.scope() != Rally.Scope.NATION) {
+                    continue;
+                }
+                Rally.Participant mine = rally.participant(playerId);
+                if (mine == null) {
+                    continue;
+                }
+                long expectedVersion = rally.version();
+                boolean wasInitiator = rally.initiatorId().equals(playerId);
+                rally.quit(playerId);
+                if (wasInitiator) {
+                    refundAll(rally);
+                } else {
+                    refundTroops(playerId, mine.troops());
+                }
+                store.saveRally(rally, expectedVersion);
+                settled += 1;
+                LOG.info("退国结清集结 rallyId={} 国家={} 玩家={} 本人是发起人={} 退回兵力={} 新状态={}",
+                        rally.rallyId(), nationId, playerId, wasInitiator, mine.troops(), rally.status());
+            }
+        }
+        return settled;
+    }
+
     /** 集结详情。到点的集结会先被处理（见 {@link #expireIfDue}），所以这里返回的状态永远是当前的。 */
     public RallyResp rallyView(String playerId, String rallyId) {
         long now = timeService.serverNow();

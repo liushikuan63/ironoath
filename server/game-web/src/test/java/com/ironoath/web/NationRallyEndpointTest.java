@@ -83,6 +83,7 @@ class NationRallyEndpointTest {
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
     @Autowired private ArmyRepository armies;
+    @Autowired private com.ironoath.web.service.SocialAppService social;
     @Autowired private SocialStore socialStore;
     @Autowired private com.ironoath.web.nation.NationStore nationStore;
     @Autowired private com.ironoath.web.service.PowerRefreshService powerRefreshService;
@@ -211,6 +212,57 @@ class NationRallyEndpointTest {
         assertThat(get200("/rally/list", nation.king).get("rallies"))
                 .as("解散后这一支不再挂在国王的面板上")
                 .allMatch(r -> !rallyId.equals(r.get("rallyId").asText()));
+    }
+
+    @Test
+    @DisplayName("退国结清（裁决 2026-10-08：只补退国，被开除留后）：发起人随自己盟退出 ⇒ 这一支取消、兵回家")
+    void leavingTheNationCancelsTheRallyItsInitiatorStarted() throws Exception {
+        Nation nation = nation(3);
+        giveTroops(nation.king, 2_000L);
+        long before = troopsOf(nation.king);
+
+        String rallyId = post200("/rally/nation", nation.king, request(3))
+                .get("rally").get("rallyId").asText();
+        assertThat(troopsOf(nation.king)).as("发起即锁定").isLessThan(before);
+
+        post200("/nation/leave", nation.king, java.util.Map.of("requestId", newRequestId()));
+
+        assertThat(troopsOf(nation.king))
+                .as("人已经不在国里，兵却还锁在「本国集结」上 —— 症状是别人以为还在等他，"
+                        + "而他自己再也点不进这一支")
+                .isEqualTo(before);
+        assertThat(get200("/rally/list", nation.king).get("rallies"))
+                .as("他发起的那一支随退国取消，不再挂在面板上")
+                .allMatch(r -> !rallyId.equals(r.get("rallyId").asText()));
+    }
+
+    @Test
+    @DisplayName("退国只退「他这一份」：非发起人退出时集结仍然成立，别人的兵不许被一起退掉")
+    void aNonInitiatorLeavingRefundsOnlyHisOwnTroops() throws Exception {
+        Nation nation = nation(3);
+        String mate = nation.mates.get(0);
+        giveTroops(nation.king, 1_000L);
+        giveTroops(mate, 800L);
+        long mateBefore = troopsOf(mate);
+
+        String rallyId = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", mate, new RallyJoinReq(newRequestId(), rallyId,
+                List.of(new RallyTroop(UNIT, 200L)), List.of()));
+        assertThat(troopsOf(mate)).as("加入即锁定他的兵").isLessThan(mateBefore);
+        long kingCommitted = troopsOf(nation.king);
+
+        int settled = social.settleNationalRalliesForMembers(nation.nationId, List.of(mate),
+                System.currentTimeMillis());
+
+        assertThat(settled).as("只该结清一条").isEqualTo(1);
+        assertThat(troopsOf(mate)).as("他的兵回家").isEqualTo(mateBefore);
+        assertThat(troopsOf(nation.king))
+                .as("国王的兵必须仍然锁着 —— 走错成整国取消会把他一起退掉，那会误伤无关的联盟")
+                .isEqualTo(kingCommitted);
+        assertThat(get200("/rally/list", nation.king).get("rallies"))
+                .as("集结还在等别人，不能因为一个人退国就消失")
+                .anyMatch(r -> rallyId.equals(r.get("rallyId").asText()));
     }
 
     // ---------- 装配：国家那一档不能静默用联盟的 ----------
