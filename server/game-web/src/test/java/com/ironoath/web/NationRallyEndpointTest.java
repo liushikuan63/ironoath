@@ -1,15 +1,21 @@
 package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,6 +36,7 @@ import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerResourceState;
 import com.ironoath.core.player.PlayerSave;
+import com.ironoath.core.social.Rally;
 import com.ironoath.web.dto.generated.AllianceCreateReq;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
@@ -91,6 +98,11 @@ class NationRallyEndpointTest {
     /** 联盟名/标签与国名的序号：同一轮里要建好几个组织，重名会在 NAME_TAKEN 上报错而测不到逻辑。 */
     private int seq;
 
+    /** 撞锁注入器（见 {@link #injectConflicts}）；null 表示这一支用例没换过 store 字段。 */
+    private SaveRallyConflicts conflicts;
+    private SocialStore realStore;
+    private Object installedProxy;
+
     @BeforeEach
     void resetStores() {
         ((InMemoryPlayerStore) players).clear();
@@ -98,6 +110,27 @@ class NationRallyEndpointTest {
         socialStore.clear();
         nationStore.clear();
         seq = 0;
+    }
+
+    /**
+     * 还原 {@code SocialAppService.store}。这个 Spring 上下文在同一台 JVM 里被别的用例类共用，
+     * 没还原等于给下一支笔留一颗地雷（它拿到的 store 会 randomly 撞锁）。
+     * 断言写在还原之后：还原失败必须当场红，而不是留到下一个用例以"看不懂的红"的形式出现。
+     */
+    @AfterEach
+    void restoreSettlingSeam() throws Exception {
+        if (conflicts == null) {
+            return;
+        }
+        storeField().set(social, realStore);
+        assertThat(storeField().get(social)).as("注入器已还原成真实现").isSameAs(realStore);
+        conflicts = null;
+    }
+
+    private static java.lang.reflect.Field storeField() throws NoSuchFieldException {
+        java.lang.reflect.Field field = SocialAppService.class.getDeclaredField("store");
+        field.setAccessible(true);
+        return field;
     }
 
     // ---------- 读口与写口同源 ----------
@@ -296,6 +329,147 @@ class NationRallyEndpointTest {
                 .allMatch(r -> !rallyId.equals(r.get("rallyId").asText()));
     }
 
+    // ---------- 结清路径的重试支路（台账 #833） ----------
+
+    @Test
+    @DisplayName("结清撞锁一趟：重试必须靠重读写进去，兵只退一次")
+    void conflictThenRetryRefundsExactlyOnceOnTheInitiatorSide() throws Exception {
+        Nation nation = nation(3);
+        giveTroops(nation.king, 2_000L);
+        long idle = troopsOf(nation.king);
+        String rallyId = post200("/rally/nation", nation.king, request(3))
+                .get("rally").get("rallyId").asText();
+        assertThat(troopsOf(nation.king)).as("发起即锁定").isLessThan(idle);
+
+        injectConflicts(rallyId, 1);
+        int settled = social.settleNationalRalliesForMembers(nation.nationId, List.of(nation.king),
+                System.currentTimeMillis());
+
+        assertThat(conflicts.targetedWrites)
+                .as("第一趟撞锁、第二趟写进去 ⇒ 恰好两次带版本写；三趟说明重试失控，零趟说明这一支根本没走")
+                .isEqualTo(2);
+        assertThat(settled).as("这一支结清了").isEqualTo(1);
+        assertThat(troopsOf(nation.king))
+                .as("退款不许翻倍：多退的那部分是凭空造出来的兵，而少退就是兵锁死")
+                .isEqualTo(idle);
+        assertThat(socialStore.rallyOf(rallyId)).as("库里那一支已取消")
+                .map(Rally::status).contains(Rally.Status.CANCELLED);
+        assertThat(get200("/rally/list", nation.king).get("rallies"))
+                .as("取消后不再挂在面板上")
+                .allMatch(r -> !rallyId.equals(r.get("rallyId").asText()));
+    }
+
+    @Test
+    @DisplayName("非发起人那一支撞锁重试：只退他这一份，别人的兵继续锁着、集结继续等人")
+    void conflictThenRetryRefundsOnlyTheQuitter() throws Exception {
+        Nation nation = nation(3);
+        String mate = nation.mates.get(0);
+        giveTroops(nation.king, 1_000L);
+        giveTroops(mate, 800L);
+        long mateIdle = troopsOf(mate);
+        String rallyId = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", mate, new RallyJoinReq(newRequestId(), rallyId,
+                List.of(new RallyTroop(UNIT, 200L)), List.of()));
+        long kingLocked = troopsOf(nation.king);
+        assertThat(troopsOf(mate)).as("加入即锁定他的兵").isLessThan(mateIdle);
+
+        injectConflicts(rallyId, 1);
+        int settled = social.settleNationalRalliesForMembers(nation.nationId, List.of(mate),
+                System.currentTimeMillis());
+
+        assertThat(conflicts.targetedWrites).isEqualTo(2);
+        assertThat(settled).isEqualTo(1);
+        assertThat(troopsOf(mate)).as("他的兵回家且只回一次").isEqualTo(mateIdle);
+        assertThat(troopsOf(nation.king))
+                .as("走成整国取消就把国王那份一起退了 —— 那是误伤无关的人")
+                .isEqualTo(kingLocked);
+        assertThat(socialStore.rallyOf(rallyId)).as("一个人退出不足以取消整支集结")
+                .map(Rally::status).contains(Rally.Status.PREPARING);
+        assertThat(socialStore.rallyOf(rallyId).orElseThrow().participant(mate))
+                .as("他的名字从参与者表里摘掉了，否则第二个人退国还会再退他一遍").isNull();
+
+        assertThat(social.settleNationalRalliesForMembers(nation.nationId, List.of(mate),
+                System.currentTimeMillis()))
+                .as("同一个人再处理一次一条都不结").isZero();
+        assertThat(troopsOf(mate)).as("再结一次不许又退一遍兵").isEqualTo(mateIdle);
+    }
+
+    @Test
+    @DisplayName("连撞两趟：异常必须冒出去，不许静默放弃结清")
+    void secondConflictPropagatesInsteadOfQuietlySkippingTheRefund() throws Exception {
+        Nation nation = nation(3);
+        giveTroops(nation.king, 2_000L);
+        String rallyId = post200("/rally/nation", nation.king, request(3))
+                .get("rally").get("rallyId").asText();
+        long locked = troopsOf(nation.king);
+
+        injectConflicts(rallyId, 2);
+        assertThatThrownBy(() -> social.settleNationalRalliesForMembers(
+                nation.nationId, List.of(nation.king), System.currentTimeMillis()))
+                .as("第二趟还撞就交给上层：吞掉的话这一支既没取消也没退款，而调用方以为成功了")
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(conflicts.targetedWrites)
+                .as("只试两趟就收口（第三趟意味着重试没有上限）").isEqualTo(2);
+        assertThat(socialStore.rallyOf(rallyId)).as("写没成功 ⇒ 库里状态一格没动")
+                .map(Rally::status).contains(Rally.Status.PREPARING);
+        assertThat(troopsOf(nation.king)).as("写没成功 ⇒ 不许退款").isEqualTo(locked);
+    }
+
+    @Test
+    @DisplayName("退国整笔原子（#831 口径）：结清失败时国家那一笔写没发生")
+    void leaveIsAtomicWhenTheSettleKeepsConflicting() throws Exception {
+        Nation nation = nation(3);
+        giveTroops(nation.king, 2_000L);
+        String rallyId = post200("/rally/nation", nation.king, request(3))
+                .get("rally").get("rallyId").asText();
+        long locked = troopsOf(nation.king);
+
+        injectConflicts(rallyId, 2);
+        JsonNode root = postExpectServerFailure("/nation/leave", nation.king,
+                java.util.Map.of("requestId", newRequestId()));
+        assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.SYSTEM_ERROR.code());
+        assertThat(conflicts.targetedWrites).isEqualTo(2);
+
+        var stored = nationStore.findById(nation.nationId);
+        assertThat(stored).as("夹具前提：国家本身还在（下面比的是成员表动没动）").isPresent();
+        assertThat(stored.orElseThrow().hasAlliance(nation.allianceId))
+                .as("先结清再写国家：结清失败 ⇒ nations.save 根本没跑，国籍一个字没改")
+                .isTrue();
+        assertThat(stored.orElseThrow().isDisbanded()).as("国家没被写成已解散").isFalse();
+        assertThat(troopsOf(nation.king)).as("兵仍然锁着，退款没跑").isEqualTo(locked);
+        assertThat(socialStore.rallyOf(rallyId)).map(Rally::status)
+                .contains(Rally.Status.PREPARING);
+    }
+
+    @Test
+    @DisplayName("联盟解散那条入口同理（detachFromNation）：结清失败 ⇒ 联盟没解散、国家没改")
+    void allianceDisbandIsAtomicWhenTheSettleKeepsConflicting() throws Exception {
+        Nation nation = nation(3);
+        giveTroops(nation.king, 2_000L);
+        String rallyId = post200("/rally/nation", nation.king, request(3))
+                .get("rally").get("rallyId").asText();
+        long locked = troopsOf(nation.king);
+
+        injectConflicts(rallyId, 2);
+        JsonNode root = postExpectServerFailure("/alliance/disband", nation.king,
+                java.util.Map.of("requestId", newRequestId()));
+        assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.SYSTEM_ERROR.code());
+        assertThat(conflicts.targetedWrites).isEqualTo(2);
+
+        var stored = nationStore.findByAlliance(nation.allianceId);
+        assertThat(stored)
+                .as("结清失败 ⇒ detachFromNation 里 nations.save 根本没跑：联盟还挂在国家的成员表上")
+                .isPresent();
+        assertThat(stored.orElseThrow().hasAlliance(nation.allianceId)).isTrue();
+        assertThat(socialStore.allianceOf(nation.king)).as("联盟还在，解散没跑一半")
+                .isPresent();
+        assertThat(troopsOf(nation.king)).isEqualTo(locked);
+        assertThat(socialStore.rallyOf(rallyId)).map(Rally::status)
+                .contains(Rally.Status.PREPARING);
+    }
+
     // ---------- 装配：国家那一档不能静默用联盟的 ----------
 
     @Test
@@ -479,6 +653,95 @@ class NationRallyEndpointTest {
     }
 
     private record Nation(String king, List<String> mates, String allianceId, String nationId) {
+    }
+
+    /**
+     * 让指定集结的前 {@code times} 次带版本写真的撞乐观锁。
+     *
+     * <p><b>做法</b>：把 {@code SocialAppService.store} 换成一层只实现 {@code saveRally} 的委托代理。
+     * 命中时先<b>把库里那一版原样按 version+1 再写回去</b>（模拟"另一个人刚好提交了一版"），
+     * 再抛 {@code IllegalStateException} —— 这正是 {@code settleOneRally} 注释里那种并发。
+     *
+     * <p><b>为什么不能只抛不改库</b>：库里版本没动的话，"重试时拿旧 expectedVersion 再写一次"与
+     * "重试时 {@code requireRally} 重读"两种写法都会绿，那这一支只测到"走了第二趟循环"，
+     * 没测到"第二趟凭什么写得进去"。抬了版本之后不重读就必然再撞。
+     *
+     * <p>抬版本用反射改 {@code Rally.version}：那是 {@code private long}（非 final），
+     * 而 {@code Rally.restore} 这个公开重建工厂要 15 个参数、其中 {@code minMembers} 只能从
+     * {@code minMembersRequired()}（= min(max, min)）反推 —— 为了一个测试夹具去猜领域字段，
+     * 比反射一个字段更容易在下次改表时静默失真。
+     */
+    private void injectConflicts(String rallyId, int times) throws Exception {
+        realStore = (SocialStore) storeField().get(social);
+        conflicts = new SaveRallyConflicts(realStore, rallyId, times);
+        installedProxy = Proxy.newProxyInstance(SocialStore.class.getClassLoader(),
+                new Class<?>[]{SocialStore.class}, conflicts);
+        storeField().set(social, installedProxy);
+        assertThat(storeField().get(social))
+                .as("注入器确实装上了（没装上的话下面每一条读数都是空跑）").isSameAs(installedProxy);
+    }
+
+    /** 只在测试里用的撞锁注入器（见 {@link #injectConflicts}）。 */
+    private static final class SaveRallyConflicts implements InvocationHandler {
+
+        private static final java.lang.reflect.Field RALLY_VERSION;
+
+        static {
+            try {
+                RALLY_VERSION = Rally.class.getDeclaredField("version");
+                RALLY_VERSION.setAccessible(true);
+            } catch (NoSuchFieldException e) {
+                throw new IllegalStateException("Rally 的版本字段改名了，撞锁注入器要跟着改", e);
+            }
+        }
+
+        private final SocialStore delegate;
+        private final String rallyId;
+        private int toThrow;
+
+        /** 命中过那支集结的带版本写次数 —— "这一支走没走到"的读数，必须进每条判据。 */
+        int targetedWrites;
+
+        SaveRallyConflicts(SocialStore delegate, String rallyId, int toThrow) {
+            this.delegate = delegate;
+            this.rallyId = rallyId;
+            this.toThrow = toThrow;
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (method.getName().equals("saveRally") && args != null && args.length == 2
+                    && args[0] instanceof Rally rally && rallyId.equals(rally.rallyId())) {
+                targetedWrites++;
+                if (toThrow > 0) {
+                    toThrow--;
+                    Rally asRead = delegate.rallyOf(rallyId).orElseThrow();
+                    long versionAsRead = asRead.version();
+                    RALLY_VERSION.setLong(asRead, versionAsRead + 1L);
+                    delegate.saveRally(asRead, versionAsRead);
+                    throw new IllegalStateException(
+                            "集结 " + rallyId + " 乐观锁冲突（测试植入的并发，不是真实抢锁）");
+                }
+            }
+            try {
+                return method.invoke(delegate, args);
+            } catch (InvocationTargetException e) {
+                throw e.getCause();
+            }
+        }
+    }
+
+    /**
+     * 失败路径不能用 {@link #perform}（它断言 200）：结清撞锁冒出去时兜底处理器给的是
+     * 500 + {@code SYSTEM_ERROR}，而那正是"整笔失败"的可观察面。
+     */
+    private JsonNode postExpectServerFailure(String url, String playerId, Object req)
+            throws Exception {
+        MvcResult result = mockMvc.perform(post(url).header(PLAYER_HEADER, playerId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(JsonUtils.toJson(req)))
+                .andExpect(status().isInternalServerError()).andReturn();
+        return JsonUtils.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
     }
 
     private long troopsOf(String playerId) {
