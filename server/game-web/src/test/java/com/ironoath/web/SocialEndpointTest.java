@@ -867,6 +867,52 @@ class SocialEndpointTest {
                 .hasSize(1);
     }
 
+    @Test
+    @DisplayName("消一条未读只该消掉一条：未读计数、返回值与红点三者必须同步（台账 #819 的第二半）")
+    void ackingOneEventMovesCountAndReddotTogether() throws Exception {
+        String leader = newPlayer(10);
+        String mate = newPlayer(10);
+        String allianceId = post200("/alliance/create", leader,
+                new AllianceCreateReq(newRequestId(), "同步盟", "PUSH"))
+                .get("alliance").get("id").asText();
+        post200("/alliance/apply", mate, new AllianceIdReq(newRequestId(), allianceId));
+        post200("/alliance/review", leader, new AllianceReviewReq(newRequestId(), mate, true));
+
+        // 建盟与审核本身会给盟主推事件（ALLIANCE_APPLIED 等），不清空的话下面的计数会把它们算进去。
+        // 顺手把「空数组 = 全部标记」这条语义也钉住：它是本页「一键已读」的落地方式。
+        post200("/social/ackEvents", leader,
+                new com.ironoath.web.dto.generated.SocialEventAckReq(newRequestId(), java.util.List.of()));
+        assertThat(get200("/social/summary", leader).get("events").size())
+                .as("夹具前提：清空之后信箱是空的（否则下面的 +1/+2 都是在跟噪声比）").isZero();
+
+        long now = System.currentTimeMillis();
+        social.notifyMemberAttacked(mate, "侵略者甲", 300L, 200L, now);
+        social.notifyMemberAttacked(mate, "侵略者乙", 310L, 210L, now);
+        var attacks = socialStore.unreadEvents(leader).stream()
+                .filter(e -> "MEMBER_ATTACKED".equals(e.type())).toList();
+        assertThat(attacks).as("夹具前提：两条未读").hasSize(2);
+        assertThat(litOf(get200("/social/reddot", leader).get("nodes"), "social/events"))
+                .as("夹具前提：有未读时社交事件那片叶子是亮的").isTrue();
+
+        JsonNode afterOne = post200("/social/ackEvents", leader,
+                new com.ironoath.web.dto.generated.SocialEventAckReq(
+                        newRequestId(), java.util.List.of(attacks.get(0).eventId())));
+        assertThat(afterOne.get("events").size())
+                .as("ack 一条之后未读只剩一条 —— 旧写法两条同 id 时这里会直接归零")
+                .isEqualTo(1);
+        assertThat(litOf(get200("/social/reddot", leader).get("nodes"), "social/events"))
+                .as("还有一条没看过，红点就不该灭")
+                .isTrue();
+
+        JsonNode afterAll = post200("/social/ackEvents", leader,
+                new com.ironoath.web.dto.generated.SocialEventAckReq(
+                        newRequestId(), java.util.List.of(attacks.get(1).eventId())));
+        assertThat(afterAll.get("events").size()).as("第二条消完，未读归零").isZero();
+        assertThat(litOf(get200("/social/reddot", leader).get("nodes"), "social/events"))
+                .as("未读为零时叶子必须灭 —— 否则症状是「点进去了红点还亮着」")
+                .isFalse();
+    }
+
     private long goldOf(String playerId) {
         return balanceOf(playerId, "GOLD");
     }
