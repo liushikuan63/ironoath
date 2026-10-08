@@ -42,6 +42,7 @@ import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.AllianceReviewReq;
 import com.ironoath.web.dto.generated.NationAppointReq;
 import com.ironoath.web.dto.generated.NationFoundReq;
+import com.ironoath.web.dto.generated.NationJoinReq;
 import com.ironoath.web.dto.generated.NationOffice;
 import com.ironoath.web.dto.generated.NationRallyReq;
 import com.ironoath.web.dto.generated.PlayerInitReq;
@@ -470,6 +471,81 @@ class NationRallyEndpointTest {
                 .contains(Rally.Status.PREPARING);
     }
 
+    // ---------- 一个国里有两个联盟（台账 #834，端点级） ----------
+
+    @Test
+    @DisplayName("端点级：B 盟退国只结清 B，A 盟发起的那一支仍在准备中、A 的兵没被退")
+    void leavingAnAllianceFromATwoAllianceNationDoesNotTouchTheOtherOne() throws Exception {
+        Nation nation = nation(3);
+        SecondAlliance second = joinSecondAlliance(nation);
+
+        giveTroops(nation.king, 2_000L);
+        String kingRally = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        long kingLocked = troopsOf(nation.king);
+
+        giveTroops(second.leader, 2_000L);
+        giveTroops(second.mate, 1_200L);
+        long leaderIdle = troopsOf(second.leader), mateIdle = troopsOf(second.mate);
+        String secondRally = post200("/rally/nation", second.leader, request(4))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", second.mate, new RallyJoinReq(newRequestId(), secondRally,
+                List.of(new RallyTroop(UNIT, 300L)), List.of()));
+        assertThat(troopsOf(second.leader)).as("B 自己发起即锁定").isLessThan(leaderIdle);
+        assertThat(troopsOf(second.mate)).as("B 的成员加入即锁定").isLessThan(mateIdle);
+
+        post200("/nation/leave", second.leader, java.util.Map.of("requestId", newRequestId()));
+
+        assertThat(socialStore.rallyOf(secondRally)).as("B 自己发起的那一支随退国取消")
+                .map(Rally::status).contains(Rally.Status.CANCELLED);
+        assertThat(troopsOf(second.leader)).as("发起人那份由 refundAll 退").isEqualTo(leaderIdle);
+        assertThat(troopsOf(second.mate)).as("参与者那份也由同一笔 refundAll 退，且只退一次")
+                .isEqualTo(mateIdle);
+
+        assertThat(socialStore.rallyOf(kingRally))
+                .as("A 盟那一支与这次退国无关：走成整国取消就是误伤无关的联盟")
+                .map(Rally::status).contains(Rally.Status.PREPARING);
+        assertThat(troopsOf(nation.king)).as("A 的兵必须仍然锁着").isEqualTo(kingLocked);
+        assertThat(get200("/rally/list", nation.king).get("rallies"))
+                .as("A 的面板还看得见自己那一支")
+                .anyMatch(r -> kingRally.equals(r.get("rallyId").asText()));
+
+        var stored = nationStore.findById(nation.nationId).orElseThrow();
+        assertThat(stored.hasAlliance(nation.allianceId)).isTrue();
+        assertThat(stored.hasAlliance(second.allianceId)).as("只有 B 离开了").isFalse();
+    }
+
+    @Test
+    @DisplayName("端点级：B 盟解散同样只结清 B（#830 那条入口在多联盟国家上的读数）")
+    void disbandingAnAllianceFromATwoAllianceNationDoesNotTouchTheOtherOne() throws Exception {
+        Nation nation = nation(3);
+        SecondAlliance second = joinSecondAlliance(nation);
+
+        giveTroops(nation.king, 2_000L);
+        String kingRally = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        long kingLocked = troopsOf(nation.king);
+
+        giveTroops(second.leader, 2_000L);
+        long leaderIdle = troopsOf(second.leader);
+        String secondRally = post200("/rally/nation", second.leader, request(4))
+                .get("rally").get("rallyId").asText();
+        assertThat(troopsOf(second.leader)).isLessThan(leaderIdle);
+
+        post200("/alliance/disband", second.leader, java.util.Map.of("requestId", newRequestId()));
+
+        assertThat(socialStore.rallyOf(secondRally)).map(Rally::status)
+                .contains(Rally.Status.CANCELLED);
+        assertThat(troopsOf(second.leader)).isEqualTo(leaderIdle);
+        assertThat(socialStore.rallyOf(kingRally)).map(Rally::status)
+                .contains(Rally.Status.PREPARING);
+        assertThat(troopsOf(nation.king)).as("解散一个盟不该退别的盟的兵").isEqualTo(kingLocked);
+
+        var stored = nationStore.findById(nation.nationId).orElseThrow();
+        assertThat(stored.hasAlliance(second.allianceId)).isFalse();
+        assertThat(stored.memberAllianceCount()).as("国还在，只剩 A 一个成员联盟").isEqualTo(1);
+    }
+
     // ---------- 装配：国家那一档不能静默用联盟的 ----------
 
     @Test
@@ -653,6 +729,41 @@ class NationRallyEndpointTest {
     }
 
     private record Nation(String king, List<String> mates, String allianceId, String nationId) {
+    }
+
+    /** 已入籍的第二个联盟：盟主 + 一名成员。{@link #joinSecondAlliance} 造它。 */
+    private record SecondAlliance(String leader, String mate, String allianceId) {
+    }
+
+    /**
+     * 往国家里再塞一个联盟，并把它提到官职档。
+     *
+     * <p><b>为什么这一格非做不可</b>：{@link #nation(int)} 造出来的国恒只有一个联盟，
+     * 于是「退国只结清这一盟、不误伤别的联盟」在 #825/#831 里只有服务级断言、端点上始终没有读数。
+     *
+     * <p><b>为什么要 appoint</b>：{@code role_permission} 里 NATION 档的 START_RALLY 只开给国王与
+     * 官职档，民意代表与普通国民发不起国家集结（同 {@link #memberTierCannotStartANationalRally}）。
+     * 不提档的话「B 自己发起的那一支」根本没有输入，用例就只能让 A 替 B 发起 —— 那不是被测的那件事。
+     */
+    private SecondAlliance joinSecondAlliance(Nation nation) throws Exception {
+        seq++;
+        String leader = newPlayer(16);
+        String mate = newPlayer(16);
+        String allianceId = post200("/alliance/create", leader,
+                new AllianceCreateReq(newRequestId(), "入籍盟" + seq,
+                        String.format("B%03d", seq % 1000)))
+                .get("alliance").get("id").asText();
+        post200("/alliance/apply", mate, new AllianceIdReq(newRequestId(), allianceId));
+        post200("/alliance/review", leader, new AllianceReviewReq(newRequestId(), mate, true));
+
+        JsonNode joined = post200("/nation/join", leader,
+                new NationJoinReq(newRequestId(), nation.nationId)).get("nation");
+        assertThat(joined.get("allianceCount").asInt())
+                .as("夹具前提：这个国里真的有两个联盟（前提不成立时后面的「没误伤」是空跑）").isEqualTo(2);
+
+        post200("/nation/appoint", nation.king,
+                new NationAppointReq(newRequestId(), leader, NationOffice.GENERAL));
+        return new SecondAlliance(leader, mate, allianceId);
     }
 
     /**
