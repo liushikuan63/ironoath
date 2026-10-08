@@ -1741,8 +1741,10 @@ public final class Nation {
         }
         for (PolicyProposal existing : policyProposals.values()) {
             if (existing.policyId().equals(policyId)) {
+                // 这句会经 BizException 一路到玩家屏幕上，所以不印 proposalId ——
+                // 内部 id 外泄是本仓红线，而静态黑话门看不见插值里的那一个。
                 throw new PolicyException(PolicyBlock.ALREADY_PROPOSED,
-                        "本轮已经提过这一条国策（提案 " + existing.id() + "）");
+                        "本轮已经提过这一条国策");
             }
         }
         // 本轮的第一条提案把开窗时刻推到「一个提案段之后」，否则国王点一下就把 24 小时窗口

@@ -214,6 +214,52 @@ class NationPolicyEndpointTest {
     }
 
     @Test
+    @DisplayName("同一毫秒内的两条提案不能是同一个 id：领域层按 id 往 Map 里 put，撞号就是把第一条挤掉（台账 #818）")
+    void proposalIdsDoNotCollideWithinTheSameMillisecond() {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (int i = 0; i < 50; i++) {
+            assertThat(ids.add(com.ironoath.web.service.NationAppService
+                    .proposalIdOf("p_same", 1700000000000L)))
+                    .as("第 " + (i + 1) + " 次生成的提案 id 与前面重复 —— 只带毫秒的 id 挡不住同一毫秒内的两次提案")
+                    .isTrue();
+        }
+        assertThat(ids).hasSize(50);
+    }
+
+    @Test
+    @DisplayName("同一个提案人连提两条不同的国策，公示上两条都要在（#818：原先第二条 put 掉第一条）")
+    void twoDifferentPoliciesFromTheSameProposerBothStayOnTheBoard() throws Exception {
+        Fixture f = nation();
+        JsonNode first = post200("/nation/policy/propose", f.minister,
+                new NationPolicyProposeReq(newRequestId(), "np_harvest"));
+        JsonNode second = post200("/nation/policy/propose", f.minister,
+                new NationPolicyProposeReq(newRequestId(), "np_fortress"));
+
+        assertThat(second.get("proposalId").asText())
+                .as("两次请求必须各自拿到一个 id").isNotEqualTo(first.get("proposalId").asText());
+        assertThat(get200("/nation/policy", f.king).get("proposals"))
+                .as("公示上两条都在 —— id 唯一是这条的前提而不是结论")
+                .hasSize(2);
+    }
+
+    @Test
+    @DisplayName("13018 的回执里不出现内部 id：红线「不把内部 id 印给玩家」，而静态黑话门看不见插值里那一个（台账 #820）")
+    void theRejectionMessageDoesNotPrintTheProposalId() throws Exception {
+        Fixture f = nation();
+        String existing = post200("/nation/policy/propose", f.king,
+                new NationPolicyProposeReq(newRequestId(), "np_harvest"))
+                .get("proposalId").asText();
+
+        JsonNode twice = postRaw("/nation/policy/propose", f.minister,
+                new NationPolicyProposeReq(newRequestId(), "np_harvest"));
+        assertThat(twice.get("code").asInt())
+                .isEqualTo(ErrorCode.NATION_POLICY_ALREADY_PROPOSED.code());
+        assertThat(twice.toString())
+                .as("整份回执都不许带上那条提案的内部 id（旧文案是「本轮已经提过这一条国策（提案 np_xxx_毫秒）」）")
+                .doesNotContain(existing).doesNotContain("np_");
+    }
+
+    @Test
     @DisplayName("表里没有的国策 id 被拒，且理由点名是哪张表的哪一行")
     void anUnknownPolicyIdIsRejectedByName() throws Exception {
         Fixture f = nation();

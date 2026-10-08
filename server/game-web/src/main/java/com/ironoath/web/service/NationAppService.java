@@ -1017,6 +1017,20 @@ public class NationAppService {
         });
     }
 
+    /**
+     * 提案 id：由这一层生成（领域层不造 id，与 techId 同一条分工），带前缀是为了日志一眼看出它是提案。
+     *
+     * <p><b>随机后缀是必需的而不是装饰</b>（与 {@code SocialAppService.rallyIdOf} 同一条判据，
+     * 台账 #802 / #818）：领域层按 {@code proposalId} 往 Map 里 {@code put}，而
+     * {@code Nation.proposeBlock} 只挡「同一条国策提两次」、不挡同一个提案人提两条<b>不同</b>的国策
+     * ⇒ 只带毫秒时同一毫秒内的两条提案会是同一个 id，第二条 {@code put} 掉第一条，
+     * 玩家面板上第一条提案静默消失（日志里它还开过窗，屏幕上已经没有它）。
+     */
+    public static String proposalIdOf(String playerId, long now) {
+        return "np_" + playerId + "_" + now + "_"
+                + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+    }
+
     /** 提案。**Bot 在进领域层之前就被挡掉**（理由同 {@link #nationPolicy}）。 */
     public NationPolicyProposeResp proposeNationPolicy(String playerId, NationPolicyProposeReq req) {
         long now = timeService.serverNow();
@@ -1043,9 +1057,7 @@ public class NationAppService {
                             "国家等级不足（要 Lv" + row.requireNationLevel() + "，当前 Lv"
                                     + nation.level() + "）");
                 }
-                // 提案 id 由这一层生成：领域层不造 id（与 techId 同一条分工）。
-                // 带上前缀是为了让日志与排查一眼看出它是提案而不是别的 id。
-                String proposalId = "np_" + playerId + "_" + now;
+                String proposalId = proposalIdOf(playerId, now);
                 try {
                     nation.propose(proposalId, policyId, playerId,
                             allows(nation, playerId, "SET_NATIONAL_POLICY"), now);
