@@ -294,7 +294,7 @@ export type BuildingType =
  * 配置表 building 的一行。
  * 建筑表。每建筑一行，只给「基数」；每级的耗时/消耗/产出/战力由 game-core 的 Formula 套 curve 表的曲线算出（铁律 6：新增建筑只改配置表，不改代码）。timeBaseSec=0 表示沿用 curve.BUILDING_TIME 自带的基数（30 秒）。costBase* 是 1→2 级的消耗，按 BUILDING_COST（比率 1.22）递增；outputBasePerHour 是 1 级产量，按 BUILDING_OUTPUT（指数 1.08）递增；powerBase 是 1 级战力贡献，按 POWER_CONTRIB（指数 1.15）递增。
  *
- * 源表 version=3
+ * 源表 version=4
  */
 export interface BuildingCfg {
   /** 主键 */
@@ -314,6 +314,7 @@ export interface BuildingCfg {
   capBase: number
   woundedCapBase: number
   powerBase: number
+  powerLevelCap?: number | null
   /** 外键，指向 building 表的 id */
   requireBuilding?: string
   requireMainLevel: number

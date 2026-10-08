@@ -1,4 +1,4 @@
-// 由 tools/config-gen 依据 contract/config/building.json（表 version=3） 自动生成，禁止手改。
+// 由 tools/config-gen 依据 contract/config/building.json（表 version=4） 自动生成，禁止手改。
 // 要改协议请改 Schema，然后运行 `npm run gen`；CI 会用 scripts/check-contract-sync.sh 校验同步性。
 package com.ironoath.config.cfg;
 
@@ -23,6 +23,7 @@ public record BuildingCfg(
         long capBase,
         long woundedCapBase,
         long powerBase,
+        Long powerLevelCap,
         String requireBuilding,   // 外键，指向 building 表的 id
         long requireMainLevel)
 {

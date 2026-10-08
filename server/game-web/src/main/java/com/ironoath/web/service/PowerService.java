@@ -212,7 +212,8 @@ public class PowerService {
                 continue;
             }
             total += FixedPoint.round(
-                    Formula.powerContribution(FixedPoint.of(cfg.powerBase()), b.level(), exponent));
+                    Formula.powerContribution(FixedPoint.of(cfg.powerBase()),
+                            Formula.contributionLevel(b.level(), cfg.powerLevelCap()), exponent));
         }
         return total;
     }

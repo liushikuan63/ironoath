@@ -214,4 +214,17 @@ class FormulaTest {
         // 再次读取仍为 0，而不是被误判成「未计算」
         assertThat(formula.evaluate("DECAY", 6)).isZero();
     }
+
+    @Test
+    @DisplayName("contributionLevel：缺省（null）不封顶，填了 cap 就到 cap 为止（台账 #826 的裁决落地）")
+    void contributionLevelHonoursOptionalCap() {
+        assertThat(Formula.contributionLevel(17, null))
+                .as("表里没填这一列时，战力贡献必须照实等级算 —— 现有各行的读数一字不变的前提就在这里")
+                .isEqualTo(17);
+        assertThat(Formula.contributionLevel(17, 30L)).as("cap 高于当前等级时不起作用").isEqualTo(17);
+        assertThat(Formula.contributionLevel(17, 10L)).as("cap 低于当前等级时按 cap 计费").isEqualTo(10);
+        assertThat(Formula.contributionLevel(0, 0L))
+                .as("0 是「产品真填了 0」这个合法取值，而「没填」是 null —— 两者混起来就等于把所有建筑封在 1 级")
+                .isZero();
+    }
 }

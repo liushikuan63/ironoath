@@ -229,6 +229,18 @@ public final class Formula {
         return powerLaw(base, level, exponentFixed);
     }
 
+    /**
+     * 战力贡献的**计费等级**：产品给某建筑设了封顶（{@code building.powerLevelCap}）就按封顶算，
+     * 没设（缺省 = null）就照实等级算（裁决 2026-10-08：字段可选，现有各行的行为一字不变）。
+     *
+     * <p><b>为什么 null 而不是 0</b>：配置生成器对 optional 的 LONG 产出包装类型 {@code Long}
+     * （见 tools/config-gen 的 ConfigTableSchema），所以"没填"与"填 0"是两回事 ——
+     * 若这里把缺省当 0，等于把所有建筑的战力封在 1 级，而表里一个字都没改，症状却出现在线上。
+     */
+    public static int contributionLevel(int level, Long cap) {
+        return cap == null ? level : Math.min(level, cap.intValue());
+    }
+
     /** 武将成长：H(n) = base × n^exponent，指数来自 curve 表 HERO_GROWTH.exponent。签名偏离理由同 {@link #buildingOutput}。 */
     public static long heroGrowth(long base, int level, long exponentFixed) {
         return powerLaw(base, level, exponentFixed);

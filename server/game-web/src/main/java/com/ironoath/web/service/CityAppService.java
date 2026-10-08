@@ -425,9 +425,11 @@ public class CityAppService {
             return 0L;
         }
         long exponent = configs.curve("POWER_CONTRIB").exponentFixed();
-        long after = Formula.powerContribution(FixedPoint.of(cfg.powerBase()), targetLevel, exponent);
+        long after = Formula.powerContribution(FixedPoint.of(cfg.powerBase()),
+                Formula.contributionLevel(targetLevel, cfg.powerLevelCap()), exponent);
         long before = targetLevel <= 1 ? 0L
-                : Formula.powerContribution(FixedPoint.of(cfg.powerBase()), targetLevel - 1, exponent);
+                : Formula.powerContribution(FixedPoint.of(cfg.powerBase()),
+                        Formula.contributionLevel(targetLevel - 1, cfg.powerLevelCap()), exponent);
         return FixedPoint.round(after - before);
     }
 

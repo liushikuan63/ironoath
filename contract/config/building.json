@@ -1,6 +1,6 @@
 {
   "table": "building",
-  "version": 3,
+  "version": 4,
   "comment": "建筑表。每建筑一行，只给「基数」；每级的耗时/消耗/产出/战力由 game-core 的 Formula 套 curve 表的曲线算出（铁律 6：新增建筑只改配置表，不改代码）。timeBaseSec=0 表示沿用 curve.BUILDING_TIME 自带的基数（30 秒）。costBase* 是 1→2 级的消耗，按 BUILDING_COST（比率 1.22）递增；outputBasePerHour 是 1 级产量，按 BUILDING_OUTPUT（指数 1.08）递增；powerBase 是 1 级战力贡献，按 POWER_CONTRIB（指数 1.15）递增。",
   "designNote": "v2 增 capBase 一列：该建筑每级为四种基础资源各提供的仓储容量，0 表示不提供。\n只有 warehouse 非 0（1000/级），因为 B04 §1 把容量定义为「基础值 + Σ仓库等级容量」——容量必须是一个专门建筑的职责，不能让伐木场顺便加容量，否则「仓库」这个升级选择就不存在了，玩家也就永远看不到「已满」红标（B04 验收 1）。\n\n【为什么 capBase 取 1000】仓库容量走 BUILDING_OUTPUT 曲线（POWER，指数 1.08），与伐木场产量同一条曲线 ⇒ 「容量 ÷ 每小时产量」这个比值与等级无关，恒等于 capBase/120 ≈ 8.3 小时。再叠加 resource 表的 initCap（WOOD 20000，不随等级变化），实际可囤时长随等级递减：1 级约 65 小时、10 级约 19.5 小时、20 级约 13.4 小时、40 级约 11.1 小时。\n这条递减曲线是刻意的：前期不该被容量卡住（零氪第 7 天要囤够升 13 级主城的约 1.1 万木石，initCap 20000 正是为此，见 global 的锚点说明），中后期必须让仓库成为一个真实的升级取舍。\n\n【为什么复用 BUILDING_OUTPUT 而不是新开一条曲线】容量与产量必须同步增长，否则调了产量成长率就会悄悄改变「能囤几小时」，而这个比值才是玩家体感到的东西。复用同一条曲线让这个比值成为常量，是耦合而非疏漏。\n\n【GOLD 不吃仓库容量】金币在 resource 表里 kind=CURRENCY，不是仓储物资，容量恒为 initCap(1000000)。付费货币如果被仓库等级卡住，玩家会认为付费被惩罚。\n\nv3 增 woundedCapBase 一列：该建筑每级提供的<b>伤兵容量</b>，只有 hospital 非 0（200/级）。走与产出同一条 BUILDING_OUTPUT 曲线（POWER，指数 1.08），所以 1 级 200、40 级约 10680。\n为什么伤兵容量要单独一列而不复用 capBase：capBase 是「四种基础资源各加多少仓储」，伤兵不是资源，它不进资源条、不参与惰性产出结算，也不会「满仓停产」——伤兵超容量的后果是<b>直接死亡</b>（B05 §1.5、B00 陷阱清单里明写的那条）。两种容量共用一列会让「升仓库顺便加伤兵位」这种荒谬的联动变成可能。\n为什么只有医院提供：伤兵容量必须是一个专门的升级取舍，否则玩家永远感受不到「医院不够，伤兵变成阵亡」这个压力，而那个压力正是 B05 伤兵规则存在的意义 —— 它让战斗有代价，代价让谨慎成为策略。",
   "fieldTypes": {
@@ -18,6 +18,7 @@
     "capBase": "LONG_NONNEG",
     "woundedCapBase": "LONG_NONNEG",
     "powerBase": "LONG_NONNEG",
+    "powerLevelCap": "?LONG_POS",
     "requireBuilding": "?REF:building",
     "requireMainLevel": "LONG_NONNEG",
     "why": "?STRING",
