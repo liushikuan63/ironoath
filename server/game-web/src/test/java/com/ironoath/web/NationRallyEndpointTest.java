@@ -263,6 +263,14 @@ class NationRallyEndpointTest {
         assertThat(get200("/rally/list", nation.king).get("rallies"))
                 .as("集结还在等别人，不能因为一个人退国就消失")
                 .anyMatch(r -> rallyId.equals(r.get("rallyId").asText()));
+
+        // 重入必须无害：结清是按"当前这本账"重读后再写的，同一个人被再处理一次不该又退一遍兵
+        //（台账 #831 的"重试那份是新读的副本，所以不会重复入账"这一句，用最便宜的方式钉住它的可观察面）
+        long afterFirst = troopsOf(mate);
+        int settledAgain = social.settleNationalRalliesForMembers(nation.nationId, List.of(mate),
+                System.currentTimeMillis());
+        assertThat(settledAgain).as("他已经不在这支集结里了 ⇒ 第二次一条都不该结").isZero();
+        assertThat(troopsOf(mate)).as("再结一次不许又退一遍（那等于凭空造兵）").isEqualTo(afterFirst);
     }
 
     @Test

@@ -311,14 +311,16 @@ public class NationAppService {
                         ErrorCode.NATION_NOT_FOUND, "你的联盟不属于任何国家"));
                 Nation nation = settleTax(loaded.id(), now);
                 nation.removeAlliance(alliance.id(), false, playerId, now);
-                nations.save(nation, nation.version());
                 // 裁决（2026-10-08）：退国要结清该盟成员的国家集结 —— 人已经不在国里，
-                // 却还挂在"本国集结"名单上会让别人以为他还在等人。被开除那条本轮明确留后。
+                // 却还挂在「本国集结」名单上会让别人以为他还在等人。被开除那条本轮明确留后。
                 // 亡国（最后一个联盟退出即解散）走整国取消那一支，与 #815 同一口径。
+                // **先结清再写国家**（#831）：这条路径不持各成员的玩家锁，退款与集结写回都可能撞乐观锁；
+                // 顺序反过来会留下「国籍已改、兵已退、集结还挂着」的半状态，而半状态没人能自愈。
                 int ralliesSettled = nation.isDisbanded()
                         ? social.getObject().cancelNationalRalliesOf(nation.id(), now)
                         : social.getObject().settleNationalRalliesForMembers(
                                 nation.id(), alliance.memberIds(), now);
+                nations.save(nation, nation.version());
                 long cooldownUntil = nation.joinCooldownUntil(alliance.id());
                 // 发起的盟主知道自己点了什么，而他的联盟成员是被动失去国籍的 —— 收件人是全盟成员、
                 // 排除发起人。放在 save 之后：国家那边写回失败就该整次失败，不该留下一条已发出的通知。

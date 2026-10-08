@@ -2197,13 +2197,13 @@ public class SocialAppService {
         nations.findByAlliance(allianceId).ifPresent(loaded -> {
             Nation nation = nationLeaders.bind(loaded);
             nation.removeAlliance(allianceId, false, actorId, now);
-            nations.save(nation, nation.version());
-            // 结清必须跟在国家写回之后、且在联盟自身解散之前：联盟先没的话成员就查不到了。
-            // 这一支以前只解国籍不结清集结 ⇒ 兵锁在一支再也列不出来的"本国集结"上
-            //（正是 cancelNationalRalliesOf 注释里要防的那个态）。亡国走整国取消，否则只结清该盟成员。
+            // 结清排在国家写回<b>之前</b>（台账 #831 的口径：先结清再写，撞锁就整笔失败）：
+            // 这条路径不持各成员的玩家锁，反过来写会留下「联盟已脱离、兵已退、集结还挂着」的半状态。
+            // 亡国 ⇒ 整国取消；否则 ⇒ 只结清这一盟的成员（成员表必须在联盟自身解散之前取）。
             int settled = nation.isDisbanded()
                     ? cancelNationalRalliesOf(nation.id(), now)
                     : settleNationalRalliesForMembers(nation.id(), allianceMemberIds, now);
+            nations.save(nation, nation.version());
             LOG.info("联盟解散连带出国家 allianceId={} nationId={} 原因=联盟已解散 剩余成员联盟={} 入籍冷却至={} 国家是否随之解散={} 结清集结={} 条",
                     allianceId, nation.id(), nation.memberAllianceCount(),
                     nation.joinCooldownUntil(allianceId), nation.isDisbanded(), settled);
@@ -2667,7 +2667,48 @@ public class SocialAppService {
     }
 
     /**
-     * 亡国之后：这个国**此刻还在准备中**的国家集结一律取消并把兵退回原主
+     * 结清一支准备中的集结：状态迁移 + 带版本写回 + 退兵；撞乐观锁时<b>重读重试一次</b>。
+     *（裁决 2026-10-08，台账 #831：结清要么成、要么整笔失败，不许留下「兵已回家、
+     * 集结还挂在面板上」这种半状态 —— 这条路径不持玩家锁，而 {@code refundTroops} 与
+     * {@code store.saveRally} 都是带版本写，同一玩家的另一条请求插进来就会撞。）
+     *
+     * <p><b>退款排在写回成功之后</b>：写回抛了就整笔不动；重试那份是新读到的副本，所以不会重复入账。
+     * 第二次仍撞锁就让异常冒出去，由调用方那一笔请求整体失败（调用方已把结清排在国家写回之前）。
+     */
+    private void settleOneRally(String rallyId, Rally rally, String quitterId, long now) {
+        Rally current = rally;
+        for (int attempt = 1; ; attempt++) {
+            Rally.Participant mine = quitterId == null ? null : current.participant(quitterId);
+            if (quitterId != null && mine == null) {
+                return; // 重试那一趟里他已被取消动作清掉，不该再退一次
+            }
+            boolean asInitiator = quitterId == null || current.initiatorId().equals(quitterId);
+            long expectedVersion = current.version();
+            if (asInitiator) {
+                current.cancel(current.initiatorId());
+            } else {
+                current.quit(quitterId);
+            }
+            try {
+                store.saveRally(current, expectedVersion);
+            } catch (IllegalStateException conflict) {
+                if (attempt >= 2) {
+                    throw conflict;
+                }
+                current = requireRally(rallyId, now);
+                LOG.warn("集结结清撞乐观锁，重读后重试 rallyId={} 第{}趟", rallyId, attempt);
+                continue;
+            }
+            if (asInitiator) {
+                refundAll(current);
+            } else {
+                refundTroops(quitterId, mine.troops());
+            }
+            return;
+        }
+    }
+
+    /**
      * （V22 验收④，2026-10-08 裁决「亡国即取消并退兵」）。
      *
      * <p><b>为什么由 {@code NationAppService.disband} 显式调，而不是靠惰性扫描</b>：
@@ -2689,10 +2730,7 @@ public class SocialAppService {
             if (rally.scope() != Rally.Scope.NATION) {
                 continue;
             }
-            long expectedVersion = rally.version();
-            rally.cancel(rally.initiatorId());
-            refundAll(rally);
-            store.saveRally(rally, expectedVersion);
+            settleOneRally(rally.rallyId(), rally, null, now);
             cancelled += 1;
             LOG.info("亡国取消集结 rallyId={} nationId={} 发起人={} 退回人数={} 时刻={}",
                     rally.rallyId(), nationId, rally.initiatorId(), rally.memberIds().size(), now);
@@ -2721,15 +2759,8 @@ public class SocialAppService {
                 if (mine == null) {
                     continue;
                 }
-                long expectedVersion = rally.version();
                 boolean wasInitiator = rally.initiatorId().equals(playerId);
-                rally.quit(playerId);
-                if (wasInitiator) {
-                    refundAll(rally);
-                } else {
-                    refundTroops(playerId, mine.troops());
-                }
-                store.saveRally(rally, expectedVersion);
+                settleOneRally(rally.rallyId(), rally, playerId, now);
                 settled += 1;
                 LOG.info("退国结清集结 rallyId={} 国家={} 玩家={} 本人是发起人={} 退回兵力={} 新状态={}",
                         rally.rallyId(), nationId, playerId, wasInitiator, mine.troops(), rally.status());
