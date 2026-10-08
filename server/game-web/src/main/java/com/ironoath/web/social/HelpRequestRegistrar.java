@@ -69,7 +69,7 @@ public class HelpRequestRegistrar {
         String title = nickname(playerId) + " 请求帮助：" + targetDesc;
         for (String peer : store.peerPlayerIds(playerId)) {
             store.pushEvent(peer, new SocialStore.SocialEvent(
-                    "evt_HELP_REQUESTED_" + requestId + "_" + now, "HELP_REQUESTED", title, null,
+                    SocialEventIds.of("evt_HELP_REQUESTED_" + requestId + "_" + now), "HELP_REQUESTED", title, null,
                     null, null, requestId, now, now + SocialStore.EVENT_TTL_MILLIS));
         }
         LOG.info("登记求助请求 requestId={} 发起人={} 目标={} 完成于={} 通知同组织={}人",

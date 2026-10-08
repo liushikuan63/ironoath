@@ -96,6 +96,7 @@ import com.ironoath.web.dto.generated.SquadMember;
 import com.ironoath.web.dto.generated.SquadMemberReq;
 import com.ironoath.web.dto.generated.SquadSelfReq;
 import com.ironoath.web.dto.generated.SquadView;
+import com.ironoath.web.social.SocialEventIds;
 import com.ironoath.web.social.SocialRulesAssembler;
 import com.ironoath.web.social.SocialStore;
 
@@ -1523,7 +1524,7 @@ public class SocialAppService {
     public void notifyMemberAttacked(String victimId, String attackerName, long coordX, long coordY,
                                      long now, long expireAt) {
         SocialStore.SocialEvent record = new SocialStore.SocialEvent(
-                "evt_attack_" + victimId + "_" + now, "MEMBER_ATTACKED",
+                SocialEventIds.of("evt_attack_" + victimId + "_" + now), "MEMBER_ATTACKED",
                 "盟友 " + nickname(victimId) + " 正在被 " + attackerName + " 攻击",
                 "点击跳转支援", coordX, coordY, victimId, now, expireAt);
         var peers = peersOf(victimId);
@@ -2162,7 +2163,7 @@ public class SocialAppService {
     private static SocialStore.SocialEvent event(String type, String title, String body,
                                                         String relatedId, long now) {
         return new SocialStore.SocialEvent(
-                "evt_" + type + "_" + relatedId + "_" + now, type, title, body,
+                SocialEventIds.of("evt_" + type + "_" + relatedId + "_" + now), type, title, body,
                 null, null, relatedId, now, now + EVENT_TTL_MILLIS);
     }
 

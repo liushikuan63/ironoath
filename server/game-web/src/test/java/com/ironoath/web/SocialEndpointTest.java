@@ -832,6 +832,41 @@ class SocialEndpointTest {
                 .as("受害者不进自己那条通知的收件人").isZero();
     }
 
+    @Test
+    @DisplayName("#819：同一毫秒内同一盟友挨两次打，两条通知要各有各的 id —— 读掉一条不许把另一条一起删没")
+    void twoAttacksInTheSameMillisecondGetDistinctEventIds() throws Exception {
+        String leader = newPlayer(10);
+        String mate = newPlayer(10);
+        String allianceId = post200("/alliance/create", leader,
+                new AllianceCreateReq(newRequestId(), "撞号盟", "PUSH"))
+                .get("alliance").get("id").asText();
+        post200("/alliance/apply", mate, new AllianceIdReq(newRequestId(), allianceId));
+        post200("/alliance/review", leader, new AllianceReviewReq(newRequestId(), mate, true));
+        assertThat(socialStore.allianceOf(mate))
+                .as("夹具前提：mate 必须已入盟（否则下面两条通知根本没有收件人）").isPresent();
+
+        // 同一个 now 两次调用 —— 这正是 processDue(playerId, now) 一个批次扫到两支到期行军时的形状，
+        // 不是人造的极端时刻：那一批里守方只有一个，而 id 原先只含「类型 + 守方 + 时刻」
+        long now = System.currentTimeMillis();
+        social.notifyMemberAttacked(mate, "侵略者甲", 300L, 200L, now);
+        social.notifyMemberAttacked(mate, "侵略者乙", 310L, 210L, now);
+
+        var attacks = socialStore.unreadEvents(leader).stream()
+                .filter(e -> "MEMBER_ATTACKED".equals(e.type()))
+                .toList();
+        assertThat(attacks).as("两次攻击各留一条通知").hasSize(2);
+        assertThat(attacks.get(0).eventId())
+                .as("两条通知的 id 必须不同 —— 相同的话下面那次 ack 会把两条一起删掉")
+                .isNotEqualTo(attacks.get(1).eventId());
+
+        int acked = socialStore.ackEvents(leader, java.util.List.of(attacks.get(0).eventId()));
+        assertThat(acked).as("只该消掉玩家点看的那一条").isEqualTo(1);
+        assertThat(socialStore.unreadEvents(leader).stream()
+                .filter(e -> "MEMBER_ATTACKED".equals(e.type())).toList())
+                .as("另一条必须还是未读：玩家从没看过它，它却已经从收件箱消失了")
+                .hasSize(1);
+    }
+
     private long goldOf(String playerId) {
         return balanceOf(playerId, "GOLD");
     }

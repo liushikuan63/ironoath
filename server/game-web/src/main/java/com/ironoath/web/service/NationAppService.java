@@ -669,7 +669,8 @@ public class NationAppService {
     private void notifyNation(String type, String title, List<String> recipients,
                               String excludeId, String relatedId, long now) {
         SocialStore.SocialEvent record = new SocialStore.SocialEvent(
-                "evt_" + type + "_" + relatedId + "_" + now, type, title, null,
+                com.ironoath.web.social.SocialEventIds.of("evt_" + type + "_" + relatedId + "_" + now),
+                type, title, null,
                 null, null, relatedId, now, now + SocialStore.EVENT_TTL_MILLIS);
         List<String> audience = new ArrayList<>();
         for (String playerId : recipients) {

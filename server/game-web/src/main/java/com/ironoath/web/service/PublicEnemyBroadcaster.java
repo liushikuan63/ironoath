@@ -141,7 +141,7 @@ public class PublicEnemyBroadcaster {
         Long x = world.cityOf(playerId).map(c -> (long) c.x()).orElse(null);
         Long y = world.cityOf(playerId).map(c -> (long) c.y()).orElse(null);
         SocialStore.SocialEvent event = new SocialStore.SocialEvent(
-                "evt_public_enemy_" + playerId + "_" + now, EVENT_TYPE,
+                com.ironoath.web.social.SocialEventIds.of("evt_public_enemy_" + playerId + "_" + now), EVENT_TYPE,
                 "公敌 " + save.nickName() + " 正在被全服围剿",
                 "坐标已暴露，任何人对他的攻击都有围剿加成", x, y, playerId, now,
                 now + intervalMillis);
