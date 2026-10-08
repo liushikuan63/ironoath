@@ -131,7 +131,7 @@ public class TechAppService {
             int current = tech.levelOf(cfg.id());
             if (current >= cfg.maxLevel()) {
                 throw new BizException(ErrorCode.TECH_LEVEL_MAX,
-                        cfg.id() + " 已经研究到上限 " + cfg.maxLevel() + " 级");
+                        cfg.name() + " 已经研究到上限 " + cfg.maxLevel() + " 级");
             }
             if (tech.isResearching()) {
                 throw new BizException(ErrorCode.TECH_QUEUE_BUSY,

@@ -277,10 +277,16 @@ class TechEndpointTest {
         assertThat(view.nextTimeSec()).isZero();
         assertThat(view.nextCost()).isEmpty();
 
-        assertThatThrownBy(() -> research(playerId, WOOD_TECH))
-                .isInstanceOf(BizException.class)
-                .extracting(e -> ((BizException) e).errorCode())
-                .isEqualTo(ErrorCode.TECH_LEVEL_MAX);
+        BizException rejected = org.assertj.core.api.Assertions
+                .catchThrowableOfType(() -> research(playerId, WOOD_TECH), BizException.class);
+        assertThat(rejected.errorCode()).isEqualTo(ErrorCode.TECH_LEVEL_MAX);
+
+        // 这句会进 Result.detail，而客户端展示用的正是 detail ?? msg（AppRoot.ts:1720）⇒ 它是玩家文案，不是日志。
+        // 旧文案开头是配置表行 id（症状与历史上的「main_city Lv1」同形），静态黑话门看不见插值里那一个。
+        assertThat(rejected.detail()).as("给玩家的那句要带科技中文名（从生产表里现取，不是写死的字面量）")
+                .contains(cfg.name());
+        assertThat(rejected.detail()).as("不得带配置表行 id —— 屏上不出现裸 id 这一维在错误文案上同样成立")
+                .doesNotContain(cfg.id());
     }
 
     @Test

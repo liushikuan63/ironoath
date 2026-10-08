@@ -1101,7 +1101,7 @@ public class SocialAppService {
                 int cap = alliance.techLevelCap(tableMax);
                 if (current >= cap) {
                     throw new BizException(ErrorCode.ALLIANCE_TECH_LEVEL_MAX,
-                            tech.id() + " 在联盟 " + alliance.level() + " 级下最高 " + cap + " 级");
+                            tech.name() + " 在联盟 " + alliance.level() + " 级下最高 " + cap + " 级");
                 }
                 if (current + req.levels() > cap) {
                     throw new BizException(ErrorCode.ALLIANCE_TECH_LEVEL_MAX,
