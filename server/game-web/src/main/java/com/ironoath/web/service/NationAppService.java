@@ -214,9 +214,12 @@ public class NationAppService {
                 if (!nations.insertIfAbsent(nation)) {
                     // 走到这里说明"按名字/按联盟查"与建档之间被插了一队
                     // （同一个玩家用两个不同 requestId 同时建国就是这种形状）。
-                    // 复用 NATION_LOCKED（它的语义正是"建国条件未满足"），不新增一个只会多一处漏网码
+                    // 复用 NATION_LOCKED（它的语义正是"建国条件未满足"），不新增一个只会多一处漏网码。
+                    // 这句会上屏，所以不印 nationId —— 它是 "nation_" + playerId，等于把玩家内部 id 也一起印出去；
+                    // 排查要的那两个 id 走下面这行日志（台账 #821）。
+                    LOG.warn("并发建国被建档挡下 玩家={} 拟建档={}", playerId, nation.id());
                     throw new BizException(ErrorCode.NATION_LOCKED,
-                            "建档时该国家已存在（并发建国）：nationId=" + nation.id());
+                            "建国请求重复提交了（同一秒内点了两次），刷新一下再看国家列表");
                 }
                 // 结算必须排在 save 之后：settleWeeklyTax 改的是"已经在册"的那个对象，
                 // 而建国时它还没进存储 —— 原先这里先结算再 save，那一笔第一周税静默为 0
@@ -413,8 +416,11 @@ public class NationAppService {
             other.admitBlockFor(allianceId, now)
                     .filter(block -> block.reason() == Nation.AdmitRejection.COOLDOWN)
                     .ifPresent(block -> {
+                        // nationId 只进日志不进文案（红线「屏上不出现内部 id」，台账 #821）：
+                        // 玩家要的是「换国家没用」这句判断，不是冷却记在哪个内部 id 上。
+                        LOG.info("入籍冷却挡住 冷却记在国家={} 联盟={}", other.id(), allianceId);
                         throw new BizException(ErrorCode.NATION_JOIN_COOLDOWN,
-                                block.message() + "（冷却记在 nationId=" + other.id() + " 上，换国家没用）");
+                                block.message() + "（冷却记在你上一支国家上，换国家没用）");
                     });
         }
     }

@@ -174,8 +174,15 @@ class GuideEndpointTest {
         JsonNode root = request(progressBuilder(playerId, FIRST, GuideAction.SKIP));
 
         assertThat(root.get("code").asInt()).isEqualTo(ErrorCode.GUIDE_STEP_NOT_SKIPPABLE.code());
+        // 这条断言原先写的是 contains(FIRST)（FIRST 就是步骤 id "guide_01_upgrade_main"），
+        // 也就是**把红线违规钉成了规格**：detail 会经 Result 上屏（客户端读 detail ?? msg）。
+        // 现在钉的是"序号要说清是哪一步"+"屏上不许出现步骤 id"，一正一负。
         assertThat(root.get("detail").asText())
-                .as("错误要说清是哪一步：客服拿到的不该是一句\"不能跳过\"").contains(FIRST);
+                .as("错误要用序号说清是哪一步：客服拿到的不该是一句\"不能跳过\"")
+                .containsPattern("第 \\d+ 步");
+        assertThat(root.get("detail").asText())
+                .as("内部步骤 id 不得出现在给玩家的文案里（台账 #821）")
+                .doesNotContain(FIRST);
         assertThat(guideOf(playerId).stepIndex()).as("被拒之后位置不动").isZero();
     }
 

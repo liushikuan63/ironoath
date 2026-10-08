@@ -131,10 +131,15 @@ public class GuideAppService {
             case STEP_NOT_FOUND -> throw new BizException(ErrorCode.GUIDE_STEP_NOT_FOUND,
                     "脚本里没有步骤 " + req.stepId() + "（当前脚本版本 " + assembler.version()
                             + "）：客户端手里的是旧脚本，重新拉一次即可");
-            case NOT_SKIPPABLE -> throw new BizException(ErrorCode.GUIDE_STEP_NOT_SKIPPABLE,
-                    stepById(script, req.stepId())
-                            .map(s -> "第 " + s.stepIndex() + " 步（" + s.id() + "）是必须做的，不能跳过")
-                            .orElse("这一步不能跳过"));
+            case NOT_SKIPPABLE -> {
+                // 步骤 id 只进日志、不进文案（红线「屏上不出现内部 id」，台账 #821）：
+                // 玩家侧说清"是哪一步"靠序号，客服侧靠下面这行日志里的 stepId。
+                String notSkippable = stepById(script, req.stepId())
+                        .map(s -> "第 " + s.stepIndex() + " 步是必须做的，不能跳过")
+                        .orElse("这一步不能跳过");
+                LOG.info("引导强制步被请求跳过 玩家={} 步骤={}", playerId, req.stepId());
+                throw new BizException(ErrorCode.GUIDE_STEP_NOT_SKIPPABLE, notSkippable);
+            }
             case OUT_OF_ORDER -> throw new BizException(ErrorCode.GUIDE_STEP_OUT_OF_ORDER,
                     "当前该做第 " + outcome.stepIndex() + " 步，上报的却是 " + req.stepId()
                             + "：引导必须按序推进");

@@ -351,6 +351,12 @@ class NationEndpointTest {
                 .isEqualTo(ErrorCode.NATION_JOIN_COOLDOWN.code());
         assertThat(root.path("detail").asText()).as("要给出还要等多久，否则玩家只会反复试")
                 .contains("秒");
+        assertThat(root.path("detail").asText())
+                .as("这句会经 Result.detail 上屏，内部 nationId 不得出现在里面（台账 #821；它现在走日志）。\n"
+                        + "⚠ 这里原先写的是 doesNotContain(k.nationB())，被植入反证当场判死：\n"
+                        + "   冷却实际记在**上一个**国家上，那句话里印的是它的 id 而不是 nationB ⇒ 断言看不见目标串、恒成立。\n"
+                        + "   改成对 id 形状本身断言（前缀 nation_ 与字段名 nationId= 都不许出现在玩家文案里）。")
+                .doesNotContain("nationId=").doesNotContain("nation_");
         assertThat(nationOf(k.nationB()).memberAllianceCount()).isEqualTo(1);
     }
 
