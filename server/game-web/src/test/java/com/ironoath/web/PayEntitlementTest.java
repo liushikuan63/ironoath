@@ -346,6 +346,13 @@ class PayEntitlementTest {
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).errorCode())
                 .isEqualTo(ErrorCode.PAY_ALREADY_CLAIMED);
+
+        // 这句会进 Result.detail，而客户端展示的正是 detail ?? msg（AppRoot.ts:1720）⇒
+        // 「屏上不出现裸 id」这一维必须管到错误文案，而不是只管面板上的名字（台账 #821）
+        BizException rejected = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> claims.claimFund(playerId, new FundClaimReq(newRequestId(), tierId)), BizException.class);
+        assertThat(rejected.detail()).as("给玩家的话要说「主城几级那一档」，不是配置表行 id")
+                .doesNotContain(tierId).contains("那一档已经领过了");
     }
 
     @Test

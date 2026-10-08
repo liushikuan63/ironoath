@@ -166,18 +166,20 @@ public class PaidClaimsAppService {
                 PlayerPaid paid = save.paid();
                 ProductRewardCfg row = tierRowOf(req.tierId());
                 if (!paid.fundPurchased()) {
+                    // 这三句都会进 Result.detail，而客户端展示的就是 detail ?? msg ⇒ 不写 row.id()（台账 #821）；
+                    // 玩家认的是「主城几级那一档」，不是配置表行名。
                     throw new BizException(ErrorCode.PAY_NOT_ENTITLED,
-                            "成长基金尚未购买（或购买的那笔订单还没发货），档位 " + row.id() + " 无从领取");
+                            "成长基金尚未购买（或购买的那笔订单还没发货），这一档无从领取");
                 }
                 if (paid.fundTierClaimed(row.id())) {
                     throw new BizException(ErrorCode.PAY_ALREADY_CLAIMED,
-                            "档位 " + row.id() + "（主城 " + row.requireMainLevel() + " 级）已经领过了，"
+                            "主城 " + row.requireMainLevel() + " 级那一档已经领过了，"
                                     + "基金档位是一次性的");
                 }
                 if (save.cityLevel() < row.requireMainLevel()) {
                     throw new BizException(ErrorCode.PAY_TIER_LOCKED,
-                            "档位 " + row.id() + " 需要主城 " + row.requireMainLevel()
-                                    + " 级，当前 " + save.cityLevel() + " 级");
+                            "这一档要主城 " + row.requireMainLevel()
+                                    + " 级才解锁（你当前主城 " + save.cityLevel() + " 级）");
                 }
                 var result = rewardService.grant(playerId,
                         catalog.toDomainRewards(List.of(row), 1L),
