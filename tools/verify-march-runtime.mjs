@@ -671,7 +671,9 @@ const BAND_LAYOUT = `(() => {
   const band = overlay?.getChildByName('rallyBand')
   if (!band) return null
   const boxes = []
+  const allChildren = []
   for (const child of band.children) {
+    allChildren.push(child.name + (child.active ? '' : ':隐藏'))
     if (!child.active) continue
     const t = child.getComponent('cc.UITransform')
     const isButton = /^(层级|数)-/.test(child.name) && child.name !== undefined
@@ -699,12 +701,21 @@ const BAND_LAYOUT = `(() => {
   const half = band.getComponent('cc.UITransform').width / 2
   const outside = boxes.filter((b) => Math.abs(b.left) > half || Math.abs(b.right) > half)
     .map((b) => b.name)
-  return { count: boxes.length, overlaps, leaked, outside }
+  return { count: boxes.length, overlaps, leaked, outside, names: boxes.map((b) => b.name), allChildren }
 })()`
 
 const layout = await page.evaluate(BAND_LAYOUT)
-check('那条带里画得出 8 件东西（两颗层级键 + 两组 表头/数/−/＋ 里没被界挡住的）',
-  layout?.count, 8)
+// 旧写法是「期望 8」这个光秃秃的计数：V22-b 加第三颗键 +1、#816 删掉两颗表头 −2，
+// 两笔叠起来计数还是对的，直到两处都进了同一棵树才红 —— 而计数红的时候说不出是哪颗没了。
+// 现在钉的是**组成**：这一相里两个数都顶着上限（上一条判据已证 ["12/12人","30分"]），
+// 所以按设计画出的就是「三颗层级键 + 两组 数/−」，而置隐的必须**只有**那两颗 ＋。
+const BAND_DRAWN_SET = JSON.stringify(
+  ['层级-SQUAD', '层级-ALLIANCE', '层级-NATION', '数-0-数', '数-0-减', '数-1-数', '数-1-减'])
+const BAND_HIDDEN_SET = JSON.stringify(['数-0-加:隐藏', '数-1-加:隐藏'])
+check('那条带画出的就是这 7 颗（三颗层级键 + 两组 数/−；两个数都到上限故两颗 ＋ 该隐）',
+  JSON.stringify(layout?.names), BAND_DRAWN_SET)
+check('置隐的只有那两颗 ＋（别的控件掉线就是缺陷，不是设计）',
+  JSON.stringify((layout?.allChildren ?? []).filter((n) => n.endsWith(':隐藏'))), BAND_HIDDEN_SET)
 check('带内控件两两不重叠（第一版 −/＋ 压在数字头上）',
   JSON.stringify(layout?.overlaps), '[]')
 check('没有引擎默认的 label 字样漏到屏幕上', JSON.stringify(layout?.leaked), '[]')
