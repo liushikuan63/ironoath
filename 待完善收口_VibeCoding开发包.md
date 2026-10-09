@@ -2329,6 +2329,24 @@ Grid-7/11/21/31 全部命中
 
 ⇒ **影响面 1/36 → 0/36**，那条稳定可复现的未命中消失。
 
+### 2026-10-09 自托管静态门的 Git Bash 入口修复
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 自托管 Windows 静态门改用 PowerShell 显式启动 Git Bash，避免 PATH 中 WSL bash 抢占 | 本笔（独立工作树提交，待批次推送） | 现有 YAML 1.2 与 SnakeYAML 解析均退 0；从 workflow 提取原样 run 命令实跑 47 道门退 0，客户端 1071/1071、点击工具 11/11；负向对照把子进程改为 exit 23，外层实际返回 23，未吞错 | 隔离验收目录 work/push-integration/ironoath-logs 的 ci-shellcheck.log、ci-static-gates.ps1、ci-negative-control.ps1；官方 workflow shell 语义 https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell | 未替代托管门；新 workflow 尚未在 GitHub runner 上执行，需推送后核实际 run；只改本仓步骤，不改机器全局 PATH 或业务代码 |
+
+### 2026-10-09 批次推送前隔离验收（保留原工作区在途改动）
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 主分支已提交批次与远程 MIT 许可正常合并，隔离工作树完整验收后等待统一快进推送 | 本笔；初始原主分支 1a18e462、远程 9f214926；最后只补入已确认文档/许可的原主分支 0fc49289 | check.sh 47 门退 0；build.sh（内含 test.sh）退 0，JUnit 223 份报告共2175/0失败/0错误/0跳过，客户端1071/0失败/0跳过；Cocos全新web-mobile脚本退0（引擎36按新产物与资源零缺失判），网页产物门退0；15份相关真运行探针逐份全部退0，严格汇总退0，三后端端口清理复验通过；合文档后表格形状/只增/门数及YAML复验均退0 | work/push-integration/ironoath-logs 的 check.log、build.log、cocos-build.log、runtime-exitcodes.txt、runtime-batch.log；等级奖励普通/高/极矮窗截图与国家集结截图；普通窗口分页已目视 | 待主代理快进推送与远程Actions终态；本轮未做微信构建/微信真机，运行探针只跑15份关键相关项、未扩成65份全量；#842国家并发跨存储事务与#843国策净区既有欠账保持原记录，未以本轮业务绿替代；原工作区未提交文件未夹带 |
+
+### 2026-10-09 推送前全范围 whitespace 检查更正
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 更正上一格检查范围：完整 origin/master...HEAD 抓到 GENERATION_PROMPTS.md 的多余 EOF 空行，仅删除该空行 | 本笔（独立工作树文档小提交） | 推送前完整范围 diff --check 曾退非零并点名 art-src/GENERATION_PROMPTS.md:281；删掉多余 EOF 空行后对完整 origin/master...HEAD 复验退 0；上一格局部 diff --check 退 0 只覆盖当时工作区，不能代替整个待推批次的范围检查 | art-src/GENERATION_PROMPTS.md 末尾；主代理完整范围检查反馈；隔离树 git diff --check origin/master...HEAD | 未重跑业务测试：本笔只删空行与追加记录，业务及 CI 内容未改；远程推送和 Actions 实际终态仍待主代理核验 |
+
 ## 本轮两条授权修复小结
 
 | 缺陷 | 改了什么 | 判据 | 结果 |
