@@ -27,7 +27,7 @@ import { buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont, capWidth, oneLineFloorHeight } from './UiFont'
 import {
   DISTRICT_TINT_RGB, SCENE_RUNTIME_HEIGHT, SCENE_RUNTIME_WIDTH,
-  SCENE_STAGE_HEIGHT, SCENE_STAGE_WIDTH, projectSceneLayout,
+  SCENE_STAGE_HEIGHT, SCENE_STAGE_WIDTH, projectSceneLayout, scenePlatesBackToFront,
 } from '../game/city/CitySceneAnchors'
 import type { ProjectedPlate, SceneDistrict, SceneLayout } from '../game/city/CitySceneAnchors'
 
@@ -808,9 +808,8 @@ export class CityPanelView extends Component {
     grid.setPosition(new Vec3(0, 0, 0))
     this.buildGround(grid)
     this.buildPreviews(grid)
-    // 按格位排序后再挂：Cocos 按子节点次序绘制，靠城门（y 大）的格子要后画才压得住前面的
-    const ordered = [...this.sceneLayout.plates]
-      .sort((a, b) => (a.gridY * CITY_GRID_WIDTH + a.gridX) - (b.gridY * CITY_GRID_WIDTH + b.gridX))
+    // Cocos 按子节点次序绘制。落地越靠画面下方越晚画；服务器格位只负责取数据。
+    const ordered = scenePlatesBackToFront(this.sceneLayout.plates)
     for (const plate of ordered) {
       const index = plate.gridY * CITY_GRID_WIDTH + plate.gridX
       const tile = new Node(`Grid-${index}`)
@@ -1331,28 +1330,28 @@ export class CityPanelView extends Component {
      *   <li><b>有事可做</b>：可收割 ⇒ 换成绿色光环（alpha 58 + 2px 描边），一眼看出哪栋能收；</li>
      *   <li><b>选中</b>：金色光环 + 正稿底下那圈 rim 提到 alpha 150（见下面的 `rim.color`）。</li>
      * </ol>
-     * 椭圆一律压扁（0.5 : 0.15）贴着地面透视走，颜色取自画面自己的暖调（214,186,132 /
+     * 椭圆宽深读同一块地皮，不随楼体贴图放大而侵入邻地。颜色取自画面自己的暖调（214,186,132 /
      * 铜金 184,134,11），不用饱和原色 —— 所以它像地上的光，不像叠上去的图形。
      *
      * <p>主堡（`onBase`）不走一级台座：它是画在底图里的，脚下那一片是画好的城门石阶，
      * 再叠一枚椭圆就是往画上抹一块斑。它的可操作提示由等级牌与名字底衬承担（下面那两块）。
      */
-    if (selected || row.collectable) {
+    if (!onBase && (selected || row.collectable)) {
       graphics.fillColor = row.collectable
         ? new Color(120, 176, 96, 58) : new Color(184, 134, 11, 48)
-      graphics.ellipse(0, 0, iconSide * 0.54, iconSide * 0.16)
+      graphics.ellipse(0, 0, tile.plate.width / 2, tile.plate.height / 2)
       graphics.fill()
       graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
       graphics.lineWidth = 2
-      graphics.ellipse(0, 0, iconSide * 0.54, iconSide * 0.16)
+      graphics.ellipse(0, 0, tile.plate.width / 2, tile.plate.height / 2)
       graphics.stroke()
     } else if (built && !onBase) {
       graphics.fillColor = new Color(214, 186, 132, 26)
-      graphics.ellipse(0, 0, iconSide * 0.5, iconSide * 0.15)
+      graphics.ellipse(0, 0, tile.plate.width / 2, tile.plate.height / 2)
       graphics.fill()
       graphics.strokeColor = new Color(214, 186, 132, 46)
       graphics.lineWidth = 1
-      graphics.ellipse(0, 0, iconSide * 0.5, iconSide * 0.15)
+      graphics.ellipse(0, 0, tile.plate.width / 2, tile.plate.height / 2)
       graphics.stroke()
     }
 
@@ -1372,6 +1371,13 @@ export class CityPanelView extends Component {
       const plateW = Math.max(104, tile.plate.width * 1.15)
       graphics.roundRect(-plateW / 2 * u, -78 * u, plateW * u, 42 * u, 7 * u)
       graphics.fill()
+      // 参考底图主堡的锚点在塔楼上，地面椭圆会悬在空中；选中提示改在自己的名牌上。
+      if (selected || row.collectable) {
+        graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
+        graphics.lineWidth = 2 * u
+        graphics.roundRect(-plateW / 2 * u, -78 * u, plateW * u, 42 * u, 7 * u)
+        graphics.stroke()
+      }
     }
     tile.levelLabel.fontSize = onBase ? 16 : 12
     tile.levelLabel.string = `Lv${row.level}`

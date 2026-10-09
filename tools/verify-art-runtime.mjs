@@ -106,6 +106,7 @@ async function inspectPanel(panel) {
     return nav !== null && nav !== undefined && nav.currentKey === expected
   }, panel, { timeout: PANEL_READY_MS }).catch(() => {})
   await page.waitForTimeout(SETTLE_MS)
+  await hideGuideOverlay(page)
   const activePanel = await page.evaluate(() => {
     const scene = window.cc.director.getScene()
     const nav = scene.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('PanelNav')
@@ -356,6 +357,12 @@ async function collectCityStage() {
       ? referenceSprite.spriteFrame.name : null
     const grid = byName('CityGrid')
     const gridBox = grid === null ? null : grid.getComponent('cc.UITransform')
+    const cityView = grid?.parent?.getComponent('CityPanelView')
+      ?? scene.getComponentInChildren('CityPanelView')
+    const depthByGrid = new Map((cityView?.gridTiles ?? [])
+      .map((tile) => [tile.node.name, tile.plate.depth]))
+    const depthOrder = (grid?.children ?? []).filter((node) => /^Grid-\d+$/.test(node.name))
+      .map((node) => ({ name: node.name, depth: depthByGrid.get(node.name) ?? null }))
     const visible = window.cc.view.getVisibleSize()
     let builtCount = null
     let builtTotal = null
@@ -377,6 +384,7 @@ async function collectCityStage() {
       visibleSize: [Math.round(visible.width), Math.round(visible.height)],
       builtCount,
       builtTotal,
+      depthOrder,
     }
   })
 }
@@ -562,6 +570,49 @@ const familyAfterBag = resourcePngRequests.size
 const hero = heroResult.sprites
 const world = worldResult.sprites
 
+/** 只读实际场景几何；合规迷雾与已探索地形分别计数，不能把黑雾面积报成漏绘。 */
+async function collectWorldSceneLayout() {
+  return page.evaluate(() => {
+    const scene = window.cc.director.getScene()
+    let map = null
+    const visit = (node) => {
+      const component = node.getComponent?.('WorldMap')
+      if (component) map = component
+      for (const child of node.children) visit(child)
+    }
+    visit(scene)
+    if (!map?.sceneLayout || !map.mapLayer) return { error: 'WorldMap 净区布局读不到' }
+    const layout = map.sceneLayout
+    const visible = window.cc.view.getVisibleSize()
+    const backdrop = map.backdropNode?.getComponent('cc.UITransform')
+    const toolbar = map.toolbarNode
+    const buttons = layout.buttons.map((button) => {
+      const node = toolbar?.getChildByName(button.name)
+      const box = node?.getComponent('cc.UITransform')
+      const sprite = node?.getComponent('cc.Sprite')
+      return { name: button.name, x: node?.position.x, y: node?.position.y,
+        width: box?.width, height: box?.height,
+        sliced: sprite?.type === window.cc.Sprite.Type.SLICED }
+    })
+    const tiles = [...map.drawnTiles.values()]
+    return {
+      visible: [visible.width, visible.height],
+      layout: { width: layout.width, height: layout.height, hudHeight: layout.hudHeight,
+        mapBottom: layout.mapBottom, mapTop: layout.mapTop, mapHeight: layout.mapHeight },
+      backdropSize: backdrop ? [backdrop.width, backdrop.height] : null,
+      toolbarCount: map.hudLayer.children.filter((node) => node.name === 'WorldToolbar').length,
+      buttons,
+      tileCount: tiles.length,
+      exploredTileCount: tiles.filter((node) => map.refs.get(node)?.spriteNode.active).length,
+      fogTileCount: tiles.filter((node) => map.refs.get(node)?.tilePaintSignature?.includes(':true:')).length,
+      entityCount: map.drawnEntities.size,
+      coord: map.coordLabel?.string ?? '',
+    }
+  })
+}
+
+const worldSceneLayouts = [await collectWorldSceneLayout()]
+
 /**
  * 名牌与选中环只在放大档出现（zoom 0 按设计不写 caption）。
  * 调 WorldMap 的公开 zoomIn **一档**后：屏内必须数得到非空名牌文字 —— 数不到就是
@@ -607,6 +658,53 @@ const worldCaptions = await page.evaluate(() => {
   return count
 })
 await page.screenshot({ path: path.join(OUT, 'art-world-zoom-runtime.png') })
+
+// 真实浏览器点击已画出来的实体。坐标从同一 MapLayer 经相机换算，不能只调用 handleTap 伪造命中。
+const worldEntityTarget = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  let map = null
+  const visit = (node) => {
+    const component = node.getComponent?.('WorldMap')
+    if (component) map = component
+    for (const child of node.children) visit(child)
+  }
+  visit(scene)
+  const camera = scene.getComponentInChildren('cc.Camera')
+  const canvas = document.querySelector('canvas')
+  if (!map || !camera || !canvas) return null
+  const rect = canvas.getBoundingClientRect()
+  const pixels = window.cc.view.getVisibleSizeInPixel()
+  for (const [key, node] of map.drawnEntities) {
+    const transform = node.getComponent('cc.UITransform')
+    const screen = camera.worldToScreen(transform.convertToWorldSpaceAR(new window.cc.Vec3(0, 0, 0)))
+    const x = rect.left + screen.x / pixels.width * rect.width
+    const y = rect.top + rect.height - screen.y / pixels.height * rect.height
+    const localY = node.position.y + map.mapLayer.position.y
+    if (x > rect.left + 20 && x < rect.right - 20
+      && localY > map.sceneLayout.mapBottom + 20 && localY < map.sceneLayout.mapTop - 20) {
+      return { key, x, y }
+    }
+  }
+  return null
+})
+let worldEntityClick = { tested: false, expected: null, selected: null }
+if (worldEntityTarget) {
+  await page.mouse.click(worldEntityTarget.x, worldEntityTarget.y)
+  await page.waitForTimeout(100)
+  const selected = await page.evaluate(() => {
+    const visit = (node) => node.getComponent?.('WorldMap')
+      ?? node.children.map(visit).find(Boolean)
+    return visit(window.cc.director.getScene())?.selectedKey ?? null
+  })
+  worldEntityClick = { tested: true, expected: worldEntityTarget.key, selected }
+}
+worldSceneLayouts.push(await collectWorldSceneLayout())
+for (const [width, height] of [[1280, 720], [375, 667], [1440, 900]]) {
+  await page.setViewportSize({ width, height })
+  await page.waitForTimeout(350)
+  worldSceneLayouts.push(await collectWorldSceneLayout())
+  if (width !== 1440) await page.screenshot({ path: path.join(OUT, `art-world-${width}x${height}-runtime.png`) })
+}
 
 /**
  * 行军面板：先 show() 再量。构造函数里 Label 的 string 还是空串，而空串的 Label 宽度是 0 ——
@@ -957,6 +1055,10 @@ const cityCriteria = {
     && cityIconsVisible.filter((sprite) => !isDrawnOnAtlas(sprite) && !isMainCityFrame(sprite))
       .length === 0,
   atlasFallbackIcons: cityIconsVisible.filter(isDrawnOnAtlas).length,
+  depthOrder: cityStageProbe.depthOrder,
+  depthOrderInvalid: cityStageProbe.depthOrder.length !== cityStageProbe.builtTotal
+    || cityStageProbe.depthOrder.some((entry, index, entries) => entry.depth === null
+      || (index > 0 && entries[index - 1].depth > entry.depth)),
 }
 // 按钮按**帧名**认，不按 insets 认 —— insets 各家族不同（面板框 44、chip 12），
 // 拿一个数字当身份就是给下一个家族埋雷（#213 那条判据的同族教训）。
@@ -1022,6 +1124,8 @@ const result = {
     chips: chipButtons.length,
     fontLabels: fonts.length,
     worldCaptions,
+    worldSceneLayouts,
+    worldEntityClick,
   },
   chipButtonSizes,
   chipButtonsNotSliced: chipButtonsNotSliced.map((sprite) => sprite.name),
@@ -1118,6 +1222,7 @@ const gates = [
   ['内城：城景内容区不等于视口', cityCriteria.gridOffViewport],
   ['内城：读不到「建筑 N/36」标题', cityCriteria.headerMissing],
   ['内城：已建 ≥2 栋却没有一栋正稿', cityCriteria.iconsMissing],
+  ['内城：建筑绘制次序没有按实际落地深度', cityCriteria.depthOrderInvalid],
   ['背包图标数为 0', bagIcons.length === 0],
   ['军队图标数为 0', armyIcons.length === 0],
   ['必需的艺术映射未命中', requiredMappings.some((key) => iconMappings[key] !== true)],
@@ -1132,6 +1237,17 @@ const gates = [
   ['地图实体美术为 0', entityArt.length === 0],
   ['按需族增量与磁盘张数不符', familyAfterBag - familyBeforeBag !== FAMILY_PNG_EXPECTED],
   ['世界地图名牌为 0', worldCaptions === 0],
+  ['世界地图净区或静态雾底未跟随视口', worldSceneLayouts.some((entry) => entry.error
+    || entry.visible[0] !== entry.layout.width || entry.visible[1] !== entry.layout.height
+    || entry.layout.mapHeight <= 0 || !entry.backdropSize
+    || entry.backdropSize[0] < entry.visible[0] || entry.backdropSize[1] < entry.visible[1])],
+  ['世界地图操作条缺失、重复或越过净区', worldSceneLayouts.some((entry) => entry.error
+    || entry.toolbarCount !== 1 || entry.buttons.length !== 5
+    || entry.buttons.some((button) => !button.sliced || button.height > 40
+      || button.y - button.height / 2 < entry.layout.mapTop
+      || Math.abs(button.x) + button.width / 2 > entry.visible[0] / 2 + 0.5))],
+  ['世界地图真实实体点击没选中同一单位', !worldEntityClick.tested
+    || worldEntityClick.expected !== worldEntityClick.selected],
   ['背包页签读数失败', bagTab.error !== undefined],
   ['背包道具行不足', bagTab.itemRows < 4],
   ['背包图标行不足', bagTab.iconRows < 4],

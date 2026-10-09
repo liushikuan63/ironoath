@@ -25,6 +25,10 @@ import { exileSnapshot, worldModel, worldRequester } from '../game/world/WorldCo
 import type { ExileSnapshot } from '../game/world/WorldContext'
 import { exileCanRequest, exileLabel } from '../game/world/ExileAction'
 import { baseCellPixels, cellPixels } from '../game/world/WorldZoom'
+import {
+  WORLD_BUTTON_HEIGHT, worldCaptionViewport, worldMapInputAllowed,
+  worldMapTranslation, worldSceneLayout,
+} from '../game/world/WorldSceneLayout'
 import type { WorldViewModel } from '../game/world/WorldViewModel'
 import type { WorldFrame, ChunkTile, MarchRender } from '../game/world/WorldViewModel'
 import { buildMarchPanel } from '../game/world/MarchPanel'
@@ -32,7 +36,7 @@ import type { MarchPanelAction } from '../game/world/MarchPanel'
 import type { WorldEntityType } from '../net/generated/WorldProtocol'
 import { NodePool } from './NodePool'
 import { MarchPanelView } from './MarchPanelView'
-import { applySimpleSprite, applyTerrainSprite, applyTiledSprite } from './ArtCatalog'
+import { applyCommandButton, applySimpleSprite, applyTerrainSprite, applyTiledSprite } from './ArtCatalog'
 import type { ArtKey } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
 import {
@@ -49,9 +53,7 @@ const { ccclass } = _decorator
 const COLOR_BACKGROUND = new Color(16, 14, 12, 255)
 const COLOR_GROUND = new Color(52, 42, 33, 255)
 const COLOR_GROUND_GRID = new Color(70, 57, 45, 255)
-/** 迷雾：B07 §3 要求未探索区域为黑色遮罩。刻意用纯黑而不是半透明 —— 半透明等于给了透视的余地 */
-/** 迷雾是"还没探索"，不是"这里没有世界"：纯黑读成渲染漏洞（2026-09-26 排版审查
- * 实测视野边缘一条黑带被读成地图残缺），改成冷灰雾色后它读成雾。 */
+/** 不透明的冷灰战争迷雾。纹理只表现遮罩，不铺地形，也不绘制服务端隐藏的实体。 */
 const COLOR_FOG = new Color(26, 28, 32, 255)
 /** 请求已发出但响应还没回来。必须与迷雾区分：一个是网络慢，一个是没探索过 */
 const COLOR_LOADING = new Color(30, 30, 34, 255)
@@ -83,15 +85,6 @@ const CITY_SIZE_RATIO = 1.5
 const TERRAIN_TILE_SCALE = 2
 const MARCH_SIZE_RATIO = 0.9
 
-/** 顶部 HUD 条带高度（像素）。落在这条带里的触摸不触发拖动，否则点按钮会同时把地图拖走。 */
-const HUD_BAND_HEIGHT = 104
-/** PanelNav 的导航条占 y ∈ [-h/2+8, -h/2+60]；地图名牌只允许画到它的上边界。 */
-const MAP_BOTTOM_INSET = 60
-const HUD_BUTTON_SIZE = 84
-const HUD_BUTTON_GAP = 12
-/** 流亡按钮要显示「冷却 N 天 M 小时」，不能沿用 84px 的方形尺寸。 */
-const HUD_EXILE_BUTTON_WIDTH = 180
-const MARCH_BUTTON_WIDTH = 120
 /** 流亡迁城的二次确认窗口：过了就得重新按两下。宁短勿长 —— 拖着确认状态去干别的再回来点到，正是误操作的样子。 */
 const EXILE_CONFIRM_WINDOW_MS = 5_000
 /** 双指间距相对本次手势起点扩大 / 缩小到这个比例时，缩放一档。 */
@@ -117,6 +110,8 @@ interface MarkerRefs {
   readonly plate: Graphics
   /** 最近一次画出的本体尺寸：命中测试与选中环半径都读它，不再各处猜一个 */
   size: number
+  /** 雾层参数没变就保留 Graphics，避免静态背景每帧清除重画。 */
+  tilePaintSignature?: string
 }
 
 @ccclass('WorldMap')
@@ -139,6 +134,8 @@ export class WorldMap extends Component {
   private backdropNode: Node | null = null
   private backdropPainted = false
   private hudLayer: Node | null = null
+  private toolbarNode: Node | null = null
+  private sceneLayout = worldSceneLayout(960, 600)
   private tilePool: NodePool | null = null
   private entityPool: NodePool | null = null
   private marchPool: NodePool | null = null
@@ -190,6 +187,7 @@ export class WorldMap extends Component {
 
   override onLoad(): void {
     const size = view.getVisibleSize()
+    this.sceneLayout = worldSceneLayout(size.width, size.height)
     this.buildBackground(size.width, size.height)
     this.mapLayer = this.buildLayer('MapLayer', size.width, size.height)
     this.hudLayer = this.buildLayer('HudLayer', size.width, size.height)
@@ -199,7 +197,13 @@ export class WorldMap extends Component {
     this.marchLines = this.createOverlayGraphics('MarchLines')
     this.selectionRing = this.createOverlayGraphics('SelectionRing')
     this.buildHud(size.width, size.height)
-    this.marchPanel = new MarchPanelView(this.hudLayer ?? this.node, size.width, size.height)
+    this.buildMarchPanel(size.width, size.height)
+    this.bindInput()
+    this.bindModel()
+  }
+
+  private buildMarchPanel(width: number, height: number): void {
+    this.marchPanel = new MarchPanelView(this.hudLayer ?? this.node, width, height)
     this.marchPanel.onClose = () => {
       this.marchPanel?.hide()
       // 关闭用的这一下不能再落到地图拖动上，否则松手时地图会跟着跳一段。
@@ -208,8 +212,38 @@ export class WorldMap extends Component {
     this.marchPanel.onAction = (action, marchId) => this.requestMarchAction(action, marchId)
     // 「再次出征」（B25-S1 裁决②(a)）：地图不认识编排层，只把意图转出去（同 onEnterCity 那条形状）
     this.marchPanel.onRepeat = () => this.onRepeatLastMarch?.()
-    this.bindInput(size.height)
-    this.bindModel()
+  }
+
+  /** 仅视口改变时重排操作条与弹窗；地图节点池、玩家焦点、行军状态均继续复用。 */
+  private syncViewport(): void {
+    const size = view.getVisibleSize()
+    if (size.width === this.sceneLayout.width && size.height === this.sceneLayout.height) return
+    this.sceneLayout = worldSceneLayout(size.width, size.height)
+    this.node.getComponent(UITransform)?.setContentSize(size.width, size.height)
+    this.mapLayer?.getComponent(UITransform)?.setContentSize(size.width, size.height)
+    this.hudLayer?.getComponent(UITransform)?.setContentSize(size.width, size.height)
+    const background = this.node.getChildByName('Background')
+    background?.getComponent(UITransform)?.setContentSize(size.width, size.height)
+    const graphics = background?.getComponent(Graphics)
+    if (graphics !== null && graphics !== undefined) {
+      graphics.clear()
+      graphics.fillColor = COLOR_BACKGROUND
+      graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
+      graphics.fill()
+    }
+    this.backdropPainted = false
+    this.toolbarNode?.removeFromParent()
+    this.toolbarNode?.destroy()
+    this.toolbarNode = null
+    this.lastHint = ''
+    this.lastExileCaption = ''
+    this.lastMarchButtonCaption = ''
+    this.buildHud(size.width, size.height)
+    const panelVisible = this.marchPanel?.isVisible ?? false
+    this.marchPanel?.destroy()
+    this.buildMarchPanel(size.width, size.height)
+    if (panelVisible) this.marchPanel?.show()
+    this.resetGesture()
   }
 
   override onDestroy(): void {
@@ -247,6 +281,7 @@ export class WorldMap extends Component {
   }
 
   override update(): void {
+    this.syncViewport()
     const model = worldModel()
     if (model === null) {
       this.showHint('未连接世界服务')
@@ -376,12 +411,7 @@ export class WorldMap extends Component {
     graphics.fillColor = COLOR_BACKGROUND
     graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
-    // 视野只有 3×3 块、相机却按玩家在块内的位置居中，于是偏移大时屏幕一侧
-    // 没有块可画 —— 实测左缘露出一条纯黑竖带，玩家读成"地图残缺"；缩小档更甚，
-    // 3×3 块只占画面中央一小块，其余全是虚空。静态底衬不跟 mapLayer 平移，
-    // 永远盖满视口：露出的边缘是草地而不是虚空。
-    // 不在 onLoad 建：启动预载完成前 `map.terrain.grass` 还没有帧，一次性的
-    // 建法会静默失败；改在 renderTiles 里惰性建（那时块自己已经能画上地形）。
+    // 3×3块外仍有世界，但尚未收到数据；不透明雾底衬盖满画布，不能用假草地补洞。
     const backdrop = new Node('BackgroundTerrain')
     backdrop.layer = background.layer
     background.addChild(backdrop)
@@ -397,52 +427,82 @@ export class WorldMap extends Component {
       return
     }
     const size = view.getVisibleSize()
-    const graphics = backdrop.addComponent(Graphics)
-    graphics.fillColor = COLOR_FOG
-    graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
-    graphics.fill()
+    backdrop.getComponent(UITransform)?.setContentSize(size.width, size.height)
+    const graphics = backdrop.getComponent(Graphics) ?? backdrop.addComponent(Graphics)
+    this.drawFog(graphics, size.width, size.height, 0)
     this.backdropPainted = true
   }
 
-  /**
-   * 顶部 HUD：坐标读数 + 放大 / 缩小 / 回城 + 流亡迁城。
-   *
-   * <p>流亡按钮比方形按钮宽：冷却文案「冷却 3 天 0 小时」塞进 84px 会横向溢出，
-   * 盖住旁边的回城按钮。布局按实际宽度逐个推进，不用固定索引乘方形尺寸。
-   */
+  /** 低密度、固定形状的雾团压在不透明底色上；无资源载入、无动画、无地貌信息。 */
+  private drawFog(graphics: Graphics, width: number, height: number, seed: number): void {
+    graphics.clear()
+    graphics.fillColor = COLOR_FOG
+    graphics.rect(-width / 2, -height / 2, width, height)
+    graphics.fill()
+    // 整张 Graphics 内不出界；块之间仍是相同不透明底色，不产生未探索的地形轮廓。
+    for (let row = 0; row < 3; row++) {
+      for (let column = 0; column < 3; column++) {
+        const variation = (seed + row * 7 + column * 11) % 5
+        graphics.fillColor = new Color(34 + variation, 37 + variation, 42 + variation, 105)
+        const radiusX = width * (0.1 + variation * 0.01)
+        const radiusY = height * (0.06 + variation * 0.006)
+        graphics.ellipse((column - 1) * width * 0.3,
+          (row - 1) * height * 0.3, radiusX, radiusY)
+        graphics.fill()
+      }
+    }
+  }
+
+  /** 复用薄边按钮资源；操作条换行，坐标与提示留在独立状态行。 */
   private buildHud(width: number, height: number): void {
-    const y = height / 2 - HUD_BAND_HEIGHT / 2
+    const toolbar = new Node('WorldToolbar')
+    toolbar.layer = this.node.layer
+    const parent = this.hudLayer ?? this.node
+    parent.addChild(toolbar)
+    toolbar.addComponent(UITransform).setContentSize(width, height)
+    this.toolbarNode = toolbar
+    const graphics = toolbar.addComponent(Graphics)
+    graphics.fillColor = new Color(20, 18, 17, 242)
+    graphics.rect(-width / 2, height / 2 - this.sceneLayout.hudHeight, width, this.sceneLayout.hudHeight)
+    graphics.fill()
+    graphics.strokeColor = COLOR_PLATE_EDGE
+    graphics.lineWidth = 1
+    graphics.moveTo(-width / 2, height / 2 - this.sceneLayout.hudHeight)
+    graphics.lineTo(width / 2, height / 2 - this.sceneLayout.hudHeight)
+    graphics.stroke()
 
-    this.coordLabel = this.createHudLabel('CoordLabel', '', width / 2 - 16, y + 18)
-    this.coordLabel.horizontalAlign = Label.HorizontalAlign.RIGHT
+    const coordWidth = Math.min(230, width * 0.45)
+    this.coordLabel = this.createHudLabel('CoordLabel', '', -width / 2 + 12, this.sceneLayout.statusY)
+    this.coordLabel.horizontalAlign = Label.HorizontalAlign.LEFT
+    this.coordLabel.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    this.coordLabel.node.getComponent(UITransform)?.setContentSize(coordWidth, 26)
 
-    this.hintLabel = this.createHudLabel('HintLabel', '', width / 2 - 16, y - 18)
+    this.hintLabel = this.createHudLabel('HintLabel', '', width / 2 - 12, this.sceneLayout.statusY)
     this.hintLabel.horizontalAlign = Label.HorizontalAlign.RIGHT
     this.hintLabel.color = COLOR_TEXT_DIM
     this.hintLabel.fontSize = 16
+    this.hintLabel.node.getComponent(UITransform)?.setContentSize(Math.max(1, width - coordWidth - 36), 26)
 
     const buttons: Array<{ name: string; text: string; onTap: () => void }> = [
       { name: 'ZoomInButton', text: '放大', onTap: () => this.zoomIn() },
       { name: 'ZoomOutButton', text: '缩小', onTap: () => this.zoomOut() },
       { name: 'HomeButton', text: '回城', onTap: () => this.backHome() },
     ]
-    let nextLeft = -width / 2 + HUD_BUTTON_GAP
     for (const button of buttons) {
-      const node = this.createButton(button.name, button.text,
-        nextLeft + HUD_BUTTON_SIZE / 2, y)
+      const position = this.sceneLayout.buttons.find((entry) => entry.name === button.name)!
+      const node = this.createButton(button.name, button.text, position.x, position.y, position.width)
       node.on('touch-start', button.onTap, this)
-      nextLeft += HUD_BUTTON_SIZE + HUD_BUTTON_GAP
     }
 
     // 流亡迁城的按钮文字要显示冷却倒计时与确认状态，所以不走上面那个固定文案的数组
+    const exilePosition = this.sceneLayout.buttons.find((entry) => entry.name === 'ExileButton')!
     const exileNode = this.createButton('ExileButton', '流亡',
-      nextLeft + HUD_EXILE_BUTTON_WIDTH / 2, y, HUD_EXILE_BUTTON_WIDTH)
+      exilePosition.x, exilePosition.y, exilePosition.width)
     this.exileCaption = exileNode.getChildByName('ExileButton_Caption')?.getComponent(Label) ?? null
     exileNode.on('touch-start', () => this.requestExile(), this)
-    nextLeft += HUD_EXILE_BUTTON_WIDTH + HUD_BUTTON_GAP
-
+    const marchPosition = this.sceneLayout.buttons.find((entry) => entry.name === 'MarchButton')!
     const marchNode = this.createButton('MarchButton', '行军',
-      nextLeft + MARCH_BUTTON_WIDTH / 2, y, MARCH_BUTTON_WIDTH)
+      marchPosition.x, marchPosition.y, marchPosition.width)
     this.marchButtonCaption = marchNode.getChildByName('MarchButton_Caption')?.getComponent(Label) ?? null
     marchNode.on('touch-start', () => this.toggleMarchPanel(), this)
   }
@@ -450,8 +510,8 @@ export class WorldMap extends Component {
   private createHudLabel(name: string, text: string, x: number, y: number): Label {
     const node = new Node(name)
     node.layer = this.node.layer
-    if (this.hudLayer !== null) {
-      this.hudLayer.addChild(node)
+    if (this.toolbarNode !== null) {
+      this.toolbarNode.addChild(node)
     } else {
       this.node.addChild(node)
     }
@@ -462,39 +522,42 @@ export class WorldMap extends Component {
     const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.color = COLOR_TEXT
-    label.fontSize = 20
+    label.fontSize = 16
+    label.overflow = Label.Overflow.SHRINK
     label.verticalAlign = Label.VerticalAlign.CENTER
     return label
   }
 
   private createButton(name: string, text: string, x: number, y: number,
-                       width = HUD_BUTTON_SIZE): Node {
+                       width: number): Node {
     const node = new Node(name)
     node.layer = this.node.layer
-    if (this.hudLayer !== null) {
-      this.hudLayer.addChild(node)
+    if (this.toolbarNode !== null) {
+      this.toolbarNode.addChild(node)
     } else {
       this.node.addChild(node)
     }
     node.setPosition(new Vec3(x, y, 0))
     const transform = node.addComponent(UITransform)
-    transform.setContentSize(width, HUD_BUTTON_SIZE)
-    const graphics = node.addComponent(Graphics)
-    graphics.fillColor = COLOR_GROUND_GRID
-    graphics.strokeColor = COLOR_MARCH
-    graphics.lineWidth = 2
-    graphics.roundRect(-width / 2, -HUD_BUTTON_SIZE / 2, width, HUD_BUTTON_SIZE, 8)
-    graphics.fill()
-    graphics.stroke()
+    transform.setContentSize(width, WORLD_BUTTON_HEIGHT)
+    if (!applyCommandButton(node, 'normal', width, WORLD_BUTTON_HEIGHT)) {
+      const graphics = node.addComponent(Graphics)
+      graphics.fillColor = COLOR_GROUND_GRID
+      graphics.strokeColor = COLOR_MARCH
+      graphics.lineWidth = 2
+      graphics.roundRect(-width / 2, -WORLD_BUTTON_HEIGHT / 2, width, WORLD_BUTTON_HEIGHT, 4)
+      graphics.fill()
+      graphics.stroke()
+    }
 
     const caption = new Node(`${name}_Caption`)
     caption.layer = node.layer
     node.addChild(caption)
-    caption.addComponent(UITransform).setContentSize(width - 8, HUD_BUTTON_SIZE - 8)
+    caption.addComponent(UITransform).setContentSize(width - 8, WORLD_BUTTON_HEIGHT - 4)
     const label = applySystemUiFont(caption.addComponent(Label))
     label.string = text
     label.color = COLOR_TEXT
-    label.fontSize = 20
+    label.fontSize = 16
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
     label.overflow = Label.Overflow.SHRINK
@@ -539,12 +602,8 @@ export class WorldMap extends Component {
     return node
   }
 
-  /**
-   * @param height 可见高度。getUILocation 返回的是 UI 空间坐标（原点在屏幕左下角、y 向上），
-   *               所以 HUD 条带的下边界是 height - HUD_BAND_HEIGHT，不是 height/2 - …
-   *               后者是节点空间（原点居中）的写法，两个空间混用会让按钮区判定整体偏移半屏
-   */
-  private bindInput(height: number): void {
+  /** 触摸读取当前布局；resize 后不能继续用首次创建时的高度判断顶栏。 */
+  private bindInput(): void {
     this.node.on('touch-start', (event: EventTouch) => {
       this.syncActiveTouches(event)
       if (this.activeTouches.size >= 2) {
@@ -562,7 +621,7 @@ export class WorldMap extends Component {
       // 落在 HUD 条带里的触摸不启动拖动，否则点按钮的同时会把地图拖走
       this.dragging = !suppressed
         && !(this.marchPanel?.isVisible ?? false)
-        && event.getUILocation().y < height - HUD_BAND_HEIGHT
+        && worldMapInputAllowed(this.sceneLayout, event.getUILocation().y)
     }, this)
     this.node.on('touch-move', (event: EventTouch) => {
       this.syncActiveTouches(event)
@@ -639,7 +698,10 @@ export class WorldMap extends Component {
     this.dragging = false
     this.suppressDragUntilRelease = true
     this.pinchZoomTriggered = false
-    this.pinchAnchorDistance = pinchDistance(Array.from(this.activeTouches.values()))
+    const points = Array.from(this.activeTouches.values())
+    this.pinchAnchorDistance = !(this.marchPanel?.isVisible ?? false)
+      && points.every((point) => worldMapInputAllowed(this.sceneLayout, point.y))
+      ? pinchDistance(points) : null
   }
 
   /** 双指间距越过一档阈值才缩放；整个手势期间不把双指平移写成相机拖动。 */
@@ -746,11 +808,11 @@ export class WorldMap extends Component {
    * 这样窗口尺寸、设计分辨率适配、以及以后加分屏/横竖屏切换都不用再回来改常量。
    */
   private baseCell(model: WorldViewModel): number {
-    const size = view.getVisibleSize()
-    return baseCellPixels(size.width, size.height, model.chunkSize)
+    return baseCellPixels(this.sceneLayout.width, this.sceneLayout.mapHeight, model.chunkSize)
   }
 
   private render(frame: WorldFrame, model: WorldViewModel): void {
+    this.syncViewport()
     this.bindModel()
     const zoom = frame.zoom
     const cell = cellPixels(zoom, this.baseCell(model))
@@ -759,7 +821,8 @@ export class WorldMap extends Component {
     }
     const cameraX = frame.center.x + this.panAccumX
     const cameraY = frame.center.y + this.panAccumY
-    this.mapLayer.setPosition(new Vec3(-(cameraX + 0.5) * cell, -(cameraY + 0.5) * cell, 0))
+    const translation = worldMapTranslation(this.sceneLayout, cameraX, cameraY, cell)
+    this.mapLayer.setPosition(new Vec3(translation.x, translation.y, 0))
 
     this.renderTiles(frame.tiles, model.chunkSize, cell)
     // 候选表每帧在实体与行军两侧**之前**清空（放在任何一侧里都会漏：那一侧提前 return 时，
@@ -807,18 +870,24 @@ export class WorldMap extends Component {
       if (!artApplied) {
         const graphics = refs.graphics
         graphics.enabled = true
-        graphics.clear()
-        graphics.fillColor = tileColor(tile)
-        graphics.rect(-size / 2, -size / 2, size, size)
-        graphics.fill()
-      }
-      // 已探索的块描一条边，让玩家看清 32×32 的分块边界（也便于核对视野确实是 3×3）
-      if (!tile.fogged && tile.loaded && !artApplied) {
-        const graphics = refs.graphics
-        graphics.strokeColor = COLOR_GROUND_GRID
-        graphics.lineWidth = 1
-        graphics.rect(-size / 2, -size / 2, size, size)
-        graphics.stroke()
+        const signature = `${tile.key}:${size}:${tile.fogged}:${tile.loaded}`
+        if (refs.tilePaintSignature !== signature) {
+          refs.tilePaintSignature = signature
+          if (tile.fogged) {
+            this.drawFog(graphics, size, size, Math.abs(tile.cx * 17 + tile.cy * 13))
+          } else {
+            graphics.clear()
+            graphics.fillColor = tileColor(tile)
+            graphics.rect(-size / 2, -size / 2, size, size)
+            graphics.fill()
+            if (tile.loaded) {
+              graphics.strokeColor = COLOR_GROUND_GRID
+              graphics.lineWidth = 1
+              graphics.rect(-size / 2, -size / 2, size, size)
+              graphics.stroke()
+            }
+          }
+        }
       }
       refs.label.string = ''
     }
@@ -876,16 +945,7 @@ export class WorldMap extends Component {
 
   /** 藏牌口径在 `game/world/WorldLabels.ts`（引擎无关、可单测），这里只负责"按结论画或不画"。 */
   private applyCaptions(cameraX: number, cameraY: number, cell: number): void {
-    const size = view.getVisibleSize()
-    // mapLayer 的局部坐标是世界像素，不是屏幕中心坐标：屏幕中心对应相机格中心的 `(camera + 0.5) * cell`。
-    const centerX = (cameraX + 0.5) * cell
-    const centerY = (cameraY + 0.5) * cell
-    const viewport = {
-      minX: centerX - size.width / 2,
-      maxX: centerX + size.width / 2,
-      minY: centerY - size.height / 2 + MAP_BOTTOM_INSET,
-      maxY: centerY + size.height / 2 - HUD_BAND_HEIGHT,
-    }
+    const viewport = worldCaptionViewport(this.sceneLayout, cameraX, cameraY, cell)
     const withCaption = this.pendingPlates.filter((entry) => entry.caption !== '')
     const visible = pickVisibleCaptions(withCaption.map((entry) => ({
       key: entry.key,
@@ -1272,7 +1332,7 @@ export class WorldMap extends Component {
     if (this.hintLabel === null) {
       return
     }
-    const next = text ?? ''
+    const next = text ?? '灰雾为未探索区域'
     if (next === this.lastHint) {
       return
     }

@@ -18,7 +18,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SCENE_ANCHORS, SCENE_GRID_WIDTH, SCENE_GRID_HEIGHT, projectSceneLayout,
-  SCENE_RUNTIME_WIDTH, SCENE_RUNTIME_HEIGHT,
+  SCENE_RUNTIME_WIDTH, SCENE_RUNTIME_HEIGHT, scenePlatesBackToFront,
 } from '../assets/scripts/game/city/CitySceneAnchors'
 
 /** 与 `CityPanelView` 同一组真源，避免视图变大而测试仍拿旧棋盘尺寸判绿。 */
@@ -88,4 +88,24 @@ test('缩放各向同性，且格子的疏密确实拉开了（不是把棋盘�
   // 棋盘的样子是"所有脚印一样大且等距"；这里要求投影后的宽度**至少出现三种**
   const widths = new Set(layout.plates.map((p) => Math.round(p.width)))
   assert.ok(widths.size >= 3, `投影后只有 ${widths.size} 种地皮宽度，读起来仍是一排排等宽格子`)
+})
+
+test('非均匀锚点按真实落地深度绘制，服务器后排不盖住画面前排', () => {
+  const sorted = scenePlatesBackToFront(layout.plates)
+  const front = sorted.findIndex((p) => p.gridX === 5 && p.gridY === 2)
+  const back = sorted.findIndex((p) => p.gridX === 5 && p.gridY === 3)
+  assert.ok(front > back, 'p25 在画面前方，却比 p35 先画；按 gridY 排会重现这处遮挡')
+  for (let i = 1; i < sorted.length; i++) {
+    assert.ok(sorted[i]!.depth >= sorted[i - 1]!.depth)
+  }
+  assert.equal(new Set(sorted.map((p) => `${p.gridX},${p.gridY}`)).size, layout.plates.length)
+})
+
+test('深度排序不改变源数组或格位，输入次序变化也不让同深度建筑闪烁', () => {
+  const original = [...layout.plates]
+  const sorted = scenePlatesBackToFront(layout.plates)
+  assert.deepEqual(layout.plates, original)
+  assert.deepEqual(scenePlatesBackToFront([...layout.plates].reverse()), sorted)
+  assert.deepEqual([...sorted].sort((a, b) => a.gridY * 6 + a.gridX - b.gridY * 6 - b.gridX),
+    [...original].sort((a, b) => a.gridY * 6 + a.gridX - b.gridY * 6 - b.gridX))
 })

@@ -199,6 +199,12 @@ export interface SceneLayout {
   readonly plates: readonly ProjectedPlate[]
 }
 
+/** 深度来自画面落地位置，不能用服务端 gridY 代替；锚点表刻意不按网格行布景。 */
+export function scenePlatesBackToFront(plates: readonly ProjectedPlate[]): ProjectedPlate[] {
+  return [...plates].sort((a, b) => a.depth - b.depth || a.x - b.x
+    || (a.gridY * SCENE_GRID_WIDTH + a.gridX) - (b.gridY * SCENE_GRID_WIDTH + b.gridX))
+}
+
 /**
  * 把 36 个锚点**按工作视图直接线性映射**进内容区。
  *
