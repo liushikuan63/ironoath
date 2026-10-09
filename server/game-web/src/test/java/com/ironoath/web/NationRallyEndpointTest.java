@@ -419,6 +419,74 @@ class NationRallyEndpointTest {
     }
 
     @Test
+    @DisplayName("国家解散结清连撞两趟：国家保持原样，同一个 requestId 能在冲突结束后重试")
+    void nationDisbandRemainsRetryableWhenTheSettleKeepsConflicting() throws Exception {
+        Nation nation = nation(3);
+        String mate = nation.mates.get(0);
+        giveTroops(nation.king, 2_000L);
+        giveTroops(mate, 800L);
+        long kingIdle = troopsOf(nation.king);
+        long mateIdle = troopsOf(mate);
+        String rallyId = post200("/rally/nation", nation.king, request(3))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", mate, new RallyJoinReq(newRequestId(), rallyId,
+                List.of(new RallyTroop(UNIT, 200L)), List.of()));
+        long kingLocked = troopsOf(nation.king);
+        long mateLocked = troopsOf(mate);
+        var before = nationStore.findById(nation.nationId).orElseThrow().snapshot();
+        var req = java.util.Map.of("requestId", newRequestId());
+
+        injectConflicts(rallyId, 2);
+        JsonNode failed = postExpectServerFailure("/nation/disband", nation.king, req);
+
+        assertThat(failed.get("code").asInt()).isEqualTo(ErrorCode.SYSTEM_ERROR.code());
+        assertThat(conflicts.targetedWrites).as("两趟撞锁后必须把失败交回调用方").isEqualTo(2);
+        assertThat(nationStore.findById(nation.nationId).orElseThrow().snapshot())
+                .as("结清失败不能先存亡国：成员、官职、国库、日志与冷却必须全部保持原样")
+                .isEqualTo(before);
+        assertThat(socialStore.rallyOf(rallyId)).map(Rally::status).contains(Rally.Status.PREPARING);
+        assertThat(troopsOf(nation.king)).as("结清没写成功，国王的兵还锁着").isEqualTo(kingLocked);
+        assertThat(troopsOf(mate)).as("参与者的兵也不能先退").isEqualTo(mateLocked);
+        assertThat(get200("/rally/list", nation.king).get("rallies"))
+                .as("失败之后集结仍可见，玩家有重试路径")
+                .anyMatch(r -> rallyId.equals(r.get("rallyId").asText()));
+
+        // 注入器只撞前两次，第三次真实写入；复用 requestId 验证失败没有烧掉幂等键。
+        post200("/nation/disband", nation.king, req);
+        assertThat(conflicts.targetedWrites).as("重试只再写一趟，不能重复结清").isEqualTo(3);
+        assertThat(nationStore.findById(nation.nationId).orElseThrow().isDisbanded()).isTrue();
+        assertThat(socialStore.rallyOf(rallyId)).map(Rally::status).contains(Rally.Status.CANCELLED);
+        assertThat(troopsOf(nation.king)).as("恢复后国王的兵恰好退一次").isEqualTo(kingIdle);
+        assertThat(troopsOf(mate)).as("恢复后参与者的兵恰好退一次").isEqualTo(mateIdle);
+    }
+
+    @Test
+    @DisplayName("国家解散结清只撞一趟：重读后成功解散，全体参与者各退一份兵")
+    void nationDisbandRetriesOneConflictAndRefundsEveryParticipantOnce() throws Exception {
+        Nation nation = nation(3);
+        String mate = nation.mates.get(0);
+        giveTroops(nation.king, 2_000L);
+        giveTroops(mate, 800L);
+        long kingIdle = troopsOf(nation.king);
+        long mateIdle = troopsOf(mate);
+        String rallyId = post200("/rally/nation", nation.king, request(3))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", mate, new RallyJoinReq(newRequestId(), rallyId,
+                List.of(new RallyTroop(UNIT, 200L)), List.of()));
+        assertThat(troopsOf(nation.king)).as("前提：国王的兵已锁定").isLessThan(kingIdle);
+        assertThat(troopsOf(mate)).as("前提：参与者的兵已锁定").isLessThan(mateIdle);
+
+        injectConflicts(rallyId, 1);
+        post200("/nation/disband", nation.king, java.util.Map.of("requestId", newRequestId()));
+
+        assertThat(conflicts.targetedWrites).as("第一趟冲突，重读后第二趟成功").isEqualTo(2);
+        assertThat(nationStore.findById(nation.nationId).orElseThrow().isDisbanded()).isTrue();
+        assertThat(socialStore.rallyOf(rallyId)).map(Rally::status).contains(Rally.Status.CANCELLED);
+        assertThat(troopsOf(nation.king)).as("国王的兵只退一次").isEqualTo(kingIdle);
+        assertThat(troopsOf(mate)).as("参与者的兵只退一次").isEqualTo(mateIdle);
+    }
+
+    @Test
     @DisplayName("退国整笔原子（#831 口径）：结清失败时国家那一笔写没发生")
     void leaveIsAtomicWhenTheSettleKeepsConflicting() throws Exception {
         Nation nation = nation(3);

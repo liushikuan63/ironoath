@@ -207,6 +207,8 @@ public class NationAppService {
                 if (nations.findByAlliance(alliance.id()).isPresent()) {
                     throw new BizException(ErrorCode.NATION_LOCKED, "你的联盟已经属于一个国家");
                 }
+                // 建国者直接成为国王，不能只在 appoint 挡 Bot 而漏掉这个直授入口（B13 §2）。
+                bots.requireMayHoldOffice(playerId, "NATION", true, true, "国王");
                 // bind 在 insert 之前：让存进去的第一份快照就与任何一次读出来的派生结果一致，
                 // 否则"建国档里议员表为空、下次写入后非空"这种前后不一致只会被读日志的人当成两回事
                 Nation nation = leaders.bind(Nation.found("nation_" + playerId, name, playerId, alliance.id(),
@@ -386,11 +388,13 @@ public class NationAppService {
                     // 走到这里基本只可能是并发下国王已经换了人 —— 领域层那句原话直接进 detail
                     throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED, e.getMessage());
                 }
-                nations.save(nation, nation.version());
                 // 亡国即取消并退兵（V22 验收④，2026-10-08 裁决）：此刻还在准备中的国家集结必须在这一手
                 // 结清。不结清的症状是"兵锁在一个谁也列不出来的集结上"—— 亡国之后集结面板会过滤掉
                 // 已解散的国家（activeNationOf），而惰性扫描 expireIfDue 只在有人读那一支时才跑。
+                // 与退国同一条顺序（#831）：结清成功后才能存亡国。否则结清撞锁失败时国家已经
+                // 解散，再试会在 activeNationOfKing 被挡住，未结清的集结与兵都失去恢复入口。
                 int ralliesCancelled = social.getObject().cancelNationalRalliesOf(nation.id(), now);
+                nations.save(nation, nation.version());
                 LOG.info("亡国结清集结 nationId={} 取消数={}", nation.id(), ralliesCancelled);
                 notifyNation("NATION_DISBANDED",
                         "国家「" + nation.name() + "」已被国王解散", audience, playerId, nation.id(), now);

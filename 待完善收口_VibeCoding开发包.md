@@ -6599,3 +6599,4 @@ TEST_EXIT=0
 | 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
 |---|---|---|---|---|
 | 分析与实施顺序落地（#837）：国家解散失败恢复、Bot 建国门禁、等级奖励全部可达及账本等价性 | 本笔（本地提交，攒批未推） | 开工 HEAD 9f8ff2ee；本地 HEAD 与 origin/master 74/0，未 fetch；check.sh 退 1，唯一现跑失败 UiTokens 零生产导入；发送口 139 个、零调用点 0 | 待完善分析与实施_2026-10-09.md；D:/tmp/ironoath-audit-20261009/check-baseline.log；生产代码复核与三条只读审查交叉对照 | 本格仅落分析与先验判据，业务修复和最终验证另记；平台实名/支付/真机性能及产品待裁数值不据本机结果改判；原有未跟踪文件保留 |
+| 国家生命周期补口（#838）：Bot 建国直授国王走统一闸门，亡国先结清后保存 | 本笔（本地提交，攒批未推） | 旧实现定向 3 项/2 红/退 1；修后两类共 61 项/0 红/0 错/0 跳/退 0；git diff --check 退 0 | NationEndpointTest 与 NationRallyEndpointTest 新增 3 条；tmp/server-nation-regression-red.log、tmp/server-nation-regression-green.log | 故障注入仅内存 profile；Mongo 碰撞、军队保存失败与跨文档事务边界留后；全量构建和运行时批跑在本批收口格另记 |

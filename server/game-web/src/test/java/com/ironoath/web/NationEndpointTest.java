@@ -61,8 +61,8 @@ import com.ironoath.web.social.SocialStore;
  * <p><b>本类最重要的一条是 Bot 合规红线</b>：B13 §2 与 B16 上线清单 §七 都写着
  * 「Bot 不得担任任何国家官职」，而 {@code BotTuning.mayHoldOffice} 这个判定函数
  * 交付之后长期<b>没有任何调用点</b> —— 判定写了却没接上，等于红线只存在于文档里。
- * 现在任命路径与议员席（派生）两个调用点都转调它（{@code BotRegistry.requireMayHoldOffice}
- * 与 {@code BotRegistry.mayHoldOffice}），下面的两条用例就是它真的生效的证据。
+ * 现在建国直授国王、任命路径与议员席（派生）三个入口都转调它（{@code BotRegistry.requireMayHoldOffice}
+ * 与 {@code BotRegistry.mayHoldOffice}），对应的三条用例钉住这些入口都不能绕过红线。
  * {@code BotRegistryComplianceTest} 另有一条用例钉住"判定确实来自那张表"而不是一刀切。
  *
  * <p><b>「联盟 ⊂ 国家」是靠数据结构保证的，但用例仍然要验</b>：
@@ -134,6 +134,34 @@ class NationEndpointTest {
         assertThat(mine.get("nationId").asText()).isEqualTo(nation.get("nationId").asText());
         assertThat(mine.get("myOffice").isNull() || mine.get("myOffice").asText().isEmpty())
                 .as("普通成员没有官职").isTrue();
+    }
+
+    @Test
+    @DisplayName("建国直授国王也必须挡住 Bot：拒绝前不建档、不入籍，失败幂等键可重试")
+    void botsCannotBecomeKingByFoundingANation() throws Exception {
+        Kingdom k = kingdom();
+        String allianceId = socialStore.allianceOf(k.king).orElseThrow().id();
+        NationFoundReq req = new NationFoundReq(newRequestId(), "直授国王红线", 100L, 200L);
+        bots.register(botProfile(k.king));
+
+        JsonNode rejected = postRaw("/nation/found", k.king, req);
+
+        assertThat(rejected.get("code").asInt())
+                .as("建国者直接成为国王，而国王也是 B13 §2 禁止 Bot 担任的国家官职")
+                .isEqualTo(ErrorCode.BOT_NOT_ELIGIBLE.code());
+        assertThat(nationStore.all()).as("拒绝必须发生在建国写入之前，不能留下空壳国家").isEmpty();
+        assertThat(nationStore.findByAlliance(allianceId)).as("全盟没有因失败的建国而入籍").isEmpty();
+        assertThat(postRaw("/nation/found", k.king, req).get("code").asInt())
+                .as("失败释放幂等键，同一请求仍按身份闸门拒绝而不是按重放拒绝")
+                .isEqualTo(ErrorCode.BOT_NOT_ELIGIBLE.code());
+
+        bots.unregister(k.king);
+        JsonNode founded = post200("/nation/found", k.king, req).get("nation");
+        assertThat(founded.get("kingId").asText()).isEqualTo(k.king);
+        assertThat(founded.get("myOffice").asText()).isEqualTo("KING");
+        assertThat(nationStore.all()).as("同一个请求在身份恢复后只建一份国家").hasSize(1);
+        assertThat(get200("/nation", k.mate).get("nation").get("nationId").asText())
+                .as("真人建国照常让全盟入籍").isEqualTo(founded.get("nationId").asText());
     }
 
     @Test
