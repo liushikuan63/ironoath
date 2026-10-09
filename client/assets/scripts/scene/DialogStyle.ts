@@ -101,6 +101,11 @@ function bitmapTarget(node: Node, name: string): Node {
   return rendererChild(node, name, box.width, box.height)
 }
 
+function inheritDialogLayer(parent: Node): void {
+  const inherit = (node: Node): void => { node.layer = parent.layer; node.children.forEach(inherit) }
+  parent.children.forEach(inherit)
+}
+
 /** 净区不足以容纳 A 档铜边时画同色薄边；三档位图仍各守自己的消费尺寸。 */
 export function paintCompactDialogFrame(node: Node, width: number, height: number): void {
   node.getComponent(UITransform)!.setContentSize(width, height)
@@ -172,8 +177,7 @@ export function createDialogScroll(parent: Node, name: string, width: number, he
 export function finishLegacyDialog(parent: Node, nodes: Node[],
                                    key: 'ui.panel.iron' | 'ui.panel.warning' | 'ui.panel.parchment' = 'ui.panel.iron'): void {
   // 旧代码建节点未继承UI层：有spriteFrame仍可能不在UI相机的可见层，点击也到不了该节点。
-  const inheritLayer = (node: Node): void => { node.layer = parent.layer; node.children.forEach(inheritLayer) }
-  nodes.forEach(inheritLayer)
+  inheritDialogLayer(parent)
   const card = nodes.find(node => node.name === 'card' || node.name === 'CreditsCard')
   const box = card?.getComponent(UITransform)
   if (card === undefined || box === null || box === undefined) return
@@ -204,6 +208,8 @@ export function finishLegacyDialog(parent: Node, nodes: Node[],
 export function fitExistingDialog(parent: Node, card: Node, body: readonly Node[], footer: readonly Node[],
                                   key: DialogKey, width: number, height: number,
                                   registerViewport?: (node: Node) => void): () => void {
+  // Gift等旧弹层的遮罩/装饰也在此首次装配，必须与宿主处在同一UI相机层。
+  inheritDialogLayer(parent)
   const originalY = body.map(node => node.position.y)
   const wrapped = createDialogScroll(parent, 'DialogContent', width - FRAME_SIDE, 1, 0, 0)
   // Node.destroy延迟到帧尾；登记创建出的引用，不能同名查询拿到尚未移除的旧Mask。

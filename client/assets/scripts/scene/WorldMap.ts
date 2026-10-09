@@ -103,6 +103,8 @@ interface MarkerRefs {
   readonly graphicsNode: Node
   readonly graphics: Graphics
   readonly label: Label
+  /** 名牌始终与池化本体成对；显示时移入顶层，回收时归还本体。 */
+  readonly captionNode: Node
   /** 名牌底板：文字后面那块暗底铜边的圆角小牌（同类 SLG 的通用名牌语言） */
   readonly plate: Graphics
   /** 最近一次画出的本体尺寸：命中测试与选中环半径都读它，不再各处猜一个 */
@@ -128,6 +130,7 @@ export class WorldMap extends Component {
   private readonly unsubscribes: Unsubscribe[] = []
 
   private mapLayer: Node | null = null
+  private captionLayer: Node | null = null
   private backdropNode: Node | null = null
   private backdropPainted = false
   private hudLayer: Node | null = null
@@ -193,6 +196,10 @@ export class WorldMap extends Component {
     this.marchPool = new NodePool(this.mapLayer, () => this.createMarker())
     this.marchLines = this.createOverlayGraphics('MarchLines')
     this.selectionRing = this.createOverlayGraphics('SelectionRing')
+    this.captionLayer = new Node('CaptionLayer')
+    this.captionLayer.layer = this.mapLayer.layer
+    this.mapLayer.addChild(this.captionLayer)
+    this.captionLayer.addComponent(UITransform)
     this.buildHud(size.width, size.height)
     this.buildMarchPanel(size.width, size.height)
     this.bindInput()
@@ -264,6 +271,7 @@ export class WorldMap extends Component {
     this.drawnEntities.clear()
     this.drawnMarches.clear()
     this.drawnTiles.clear()
+    this.captionLayer = null
     this.backdropNode = null
     this.backdropPainted = false
     this.flash.clear()
@@ -561,7 +569,7 @@ export class WorldMap extends Component {
   }
 
   /**
-   * 造一个池化节点：本体一块 Graphics，子节点一个 Label（等级 / 昵称）。
+   * 造一个池化节点及配对名牌；名牌文字和底板在同一根节点下共同升层。
    *
    * <p>Label 放在子节点而不是本体上：Graphics 与 Label 都是渲染组件，
    * 挂在同一个节点上时两者的渲染顺序由引擎内部决定，压字的情况在编辑器里改不动。
@@ -580,21 +588,26 @@ export class WorldMap extends Component {
     node.addChild(graphicsNode)
     graphicsNode.addComponent(UITransform)
     const graphics = graphicsNode.addComponent(Graphics)
+    const captionNode = new Node('MarkerCaption')
+    captionNode.layer = node.layer
+    node.addChild(captionNode)
+    captionNode.addComponent(UITransform)
+    captionNode.active = false
     const plateNode = new Node('CaptionPlate')
     plateNode.layer = node.layer
-    node.addChild(plateNode)
+    captionNode.addChild(plateNode)
     plateNode.addComponent(UITransform)
     const plate = plateNode.addComponent(Graphics)
     const caption = new Node('Caption')
     caption.layer = node.layer
-    node.addChild(caption)
+    captionNode.addChild(caption)
     caption.addComponent(UITransform)
     const label = applySystemUiFont(caption.addComponent(Label))
     label.fontSize = 12
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
     label.color = COLOR_TEXT
-    this.refs.set(node, { spriteNode, graphicsNode, graphics, label, plate, size: 0 })
+    this.refs.set(node, { spriteNode, graphicsNode, graphics, label, captionNode, plate, size: 0 })
     return node
   }
 
@@ -965,7 +978,18 @@ export class WorldMap extends Component {
       if (entry.refs === undefined) {
         continue
       }
+      const caption = entry.refs.captionNode
+      if (this.captionLayer !== null) {
+        if (caption.parent !== this.captionLayer) this.captionLayer.addChild(caption)
+        // 顶层仍在同一 MapLayer 本地坐标中，只把原本体位置平移给配对名牌。
+        caption.setPosition(new Vec3(entry.x, entry.y, 0))
+      }
       this.drawCaptionPlate(entry.refs, visible.has(entry.key) ? entry.caption : '', entry.size)
+    }
+    // 池中新本体会追加为兄弟节点；名牌在所有实体、行军及轨迹之后统一绘制。
+    if (this.captionLayer !== null && this.mapLayer !== null
+      && this.mapLayer.children[this.mapLayer.children.length - 1] !== this.captionLayer) {
+      this.captionLayer.setSiblingIndex(this.mapLayer.children.length - 1)
     }
   }
 
@@ -1086,12 +1110,21 @@ export class WorldMap extends Component {
   }
 
   private recycle(pool: NodePool, drawn: Map<string, Node>, seen: ReadonlySet<string>): void {
-        for (const [key, node] of Array.from(drawn)) {
+    for (const [key, node] of Array.from(drawn)) {
       if (!seen.has(key)) {
+        const refs = this.refs.get(node)
+        if (refs !== undefined) this.restoreCaptionOwner(node, refs)
         pool.release(node)
         drawn.delete(key)
       }
     }
+  }
+
+  /** 名牌回到原本体后随同池化/销毁，顶层不积留视野外的节点。 */
+  private restoreCaptionOwner(node: Node, refs: MarkerRefs): void {
+    refs.captionNode.active = false
+    if (refs.captionNode.parent !== node) node.addChild(refs.captionNode)
+    refs.captionNode.setPosition(new Vec3(0, 0, 0))
   }
 
   /** 只画图标那一块。名牌不在这里画 —— 它要等一整帧的候选凑齐后由 {@link applyCaptions} 统一判。 */
@@ -1133,6 +1166,7 @@ export class WorldMap extends Component {
     const plateNode = plate.node
     const plateBox = plateNode.getComponent(UITransform)
     const y = size / 2 + 11
+    refs.captionNode.active = caption !== ''
     if (caption === '') {
       label.string = ''
       plate.enabled = false

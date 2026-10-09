@@ -620,6 +620,30 @@ async function collectWorldSceneLayout() {
       && node.position.y >= tile.y - tile.chunkHeight / 2
       && node.position.y < tile.y + tile.chunkHeight / 2)).length
     const fogPaint = map.backdropNode?.getComponent('cc.Graphics')
+    const captionLayer = map.captionLayer
+    const markers = [...map.drawnEntities.values(), ...map.drawnMarches.values()]
+    const captions = markers.map((node) => {
+      const refs = map.refs.get(node)
+      const root = refs?.captionNode
+      const bodyAt = node.worldPosition
+      const captionAt = root?.worldPosition
+      return {
+        visible: root?.activeInHierarchy === true && refs.label.string !== '',
+        ownedByLayer: root?.parent === captionLayer,
+        partsTogether: refs?.plate.node.parent === root && refs?.label.node.parent === root,
+        textAfterPlate: refs?.label.node.getSiblingIndex() > refs?.plate.node.getSiblingIndex(),
+        aligned: captionAt != null && Math.abs(captionAt.x - bodyAt.x) < 0.1
+          && Math.abs(captionAt.y - bodyAt.y) < 0.1,
+        layerAfterBody: captionLayer?.getSiblingIndex() > node.getSiblingIndex(),
+      }
+    })
+    const captionOrderInvalid = captionLayer?.parent !== map.mapLayer
+      || captionLayer.getSiblingIndex() !== map.mapLayer.children.length - 1
+      || captions.some((caption) => !caption.ownedByLayer || !caption.partsTogether
+        || !caption.textAfterPlate || !caption.aligned || !caption.layerAfterBody)
+      || captionLayer.children.length > markers.length
+      || [...map.refs].some(([node, refs]) => !node.activeInHierarchy
+        && refs.captionNode?.activeInHierarchy === true)
     return {
       visible: [visible.width, visible.height],
       layout: { width: layout.width, height: layout.height, hudHeight: layout.hudHeight,
@@ -632,6 +656,8 @@ async function collectWorldSceneLayout() {
       fogTileCount: tiles.filter((node) => map.refs.get(node)?.tilePaintSignature?.includes(':true:')).length,
       tilePaint, entitiesUnderFog,
       fogOpaque: fogPaint?.enabled === true && fogPaint.fillColor.a === 255,
+      captionOrderInvalid, visibleCaptions: captions.filter((caption) => caption.visible).length,
+      captionNodeCount: captionLayer?.children.length ?? 0,
       entityCount: map.drawnEntities.size,
       coord: map.coordLabel?.string ?? '',
     }
@@ -685,6 +711,37 @@ const worldCaptions = await page.evaluate(() => {
   return count
 })
 await page.screenshot({ path: path.join(OUT, 'art-world-zoom-runtime.png') })
+
+// 实际层序负向控制：冻结本帧，把名牌层放到地形/实体后面，截图与同一读数必须翻红。
+// 随即恢复原层序与组件状态；名牌位置、藏牌集合和业务数据完全不改。
+const captionOrderControl = { before: await collectWorldSceneLayout(), planted: null, restored: null }
+const captionOrderPrepared = await page.evaluate(() => {
+  const visit = (node) => node.getComponent?.('WorldMap')
+    ?? node.children.map(visit).find(Boolean)
+  const map = visit(window.cc.director.getScene())
+  if (!map?.captionLayer) return false
+  map.__artCaptionOrderRestore = { enabled: map.enabled, index: map.captionLayer.getSiblingIndex() }
+  map.enabled = false
+  map.captionLayer.setSiblingIndex(0)
+  return true
+})
+if (captionOrderPrepared) {
+  await page.waitForTimeout(100)
+  captionOrderControl.planted = await collectWorldSceneLayout()
+  await page.screenshot({ path: path.join(OUT, 'art-world-caption-order-red.png') })
+  await page.evaluate(() => {
+    const visit = (node) => node.getComponent?.('WorldMap')
+      ?? node.children.map(visit).find(Boolean)
+    const map = visit(window.cc.director.getScene())
+    const original = map.__artCaptionOrderRestore
+    map.captionLayer.setSiblingIndex(original.index)
+    map.enabled = original.enabled
+    delete map.__artCaptionOrderRestore
+  })
+  await page.waitForTimeout(100)
+  captionOrderControl.restored = await collectWorldSceneLayout()
+  await page.screenshot({ path: path.join(OUT, 'art-world-caption-order-restored.png') })
+}
 
 // 真实浏览器点击已画出来的实体。坐标从同一 MapLayer 经相机换算，不能只调用 handleTap 伪造命中。
 const worldEntityTarget = await page.evaluate(() => {
@@ -1152,6 +1209,7 @@ const result = {
     fontLabels: fonts.length,
     worldCaptions,
     worldSceneLayouts,
+    captionOrderControl,
     worldEntityClick,
   },
   chipButtonSizes,
@@ -1264,6 +1322,13 @@ const gates = [
   ['地图实体美术为 0', entityArt.length === 0],
   ['按需族增量与磁盘张数不符', familyAfterBag - familyBeforeBag !== FAMILY_PNG_EXPECTED],
   ['世界地图名牌为 0', worldCaptions === 0],
+  ['世界地图名牌层序/位置/配对回收失败', worldSceneLayouts.some((entry) => entry.error
+    || entry.captionOrderInvalid)],
+  ['世界地图名牌层序植入未翻红或还原未绿', captionOrderControl.before.captionOrderInvalid
+    || captionOrderControl.before.visibleCaptions === 0
+    || captionOrderControl.planted?.captionOrderInvalid !== true
+    || captionOrderControl.restored?.captionOrderInvalid !== false
+    || captionOrderControl.restored.visibleCaptions === 0],
   ['世界地图净区或静态雾底未跟随视口', worldSceneLayouts.some((entry) => entry.error
     || entry.visible[0] !== entry.layout.width || entry.visible[1] !== entry.layout.height
     || entry.layout.mapHeight <= 0 || !entry.backdropSize

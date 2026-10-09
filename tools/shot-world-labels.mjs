@@ -457,9 +457,10 @@ const overlap = await page.evaluate(() => {
      * 量 `CaptionPlate`（板子本体），不量 `Caption`：后者挂着 `Label`，它的 `UITransform`
      * 每帧被组件按文字尺寸重写（实测 24×50），量到的不是玩家看见的那块牌。
      */
-    const plateNode = node.getChildByName('CaptionPlate')
+    const markerRefs = map.refs.get(node)
+    const plateNode = markerRefs?.plate.node ?? null
     const box = plateNode !== null ? plateNode.getComponent('cc.UITransform') : null
-    const caption = node.getChildByName('Caption')
+    const caption = markerRefs?.label.node ?? null
     const label = caption !== null ? caption.getComponent('cc.Label') : null
     if (box === null || label === null || label.string === '') continue
     if (!node.activeInHierarchy || !box.node.activeInHierarchy) continue
@@ -486,7 +487,7 @@ const overlap = await page.evaluate(() => {
     }
   }
   /**
-   * HUD 占掉的区域：顶带 = `HudLayer` 全部子节点外接盒的并，底带 = `NavBar` 自己的外接盒。
+   * HUD 占掉的区域：顶带 = 实际操作条的按钮/状态行外接盒的并，底带 = `NavBar` 自己的外接盒。
    *
    * <p>刻意**不拿 `view.getVisibleSize()` 去换算带子位置**：量具里牌的盒子和 HUD 的盒子
    * 都是 `getBoundingBoxToWorld()`，同一个空间；而 `getVisibleSize()` 是设计分辨率单位
@@ -512,14 +513,14 @@ const overlap = await page.evaluate(() => {
     return box
   }
   /**
-   * 顶带 = `HudLayer` **直接子节点**里"像一条带子"的那些（自身高度 ≤ 屏高 1/4）。
+   * 顶带 = 生产 `WorldToolbar` **直接子节点**里"像一条带子"的那些（自身高度 ≤ 屏高 1/4）。
    *
    * <p>第一版没加这个限高，把整块行军面板并了进去 ⇒ 顶带读成 944×591（≈整屏），
    * 于是"28 张牌压 HUD"是假的。**带子的判据必须自己看着像带子**：现在打出来应当是
-   * 一条 ~156px 高的横带（`HUD_BAND_HEIGHT = 104` 设计单位 × 1.5 像素比）。
+   * 一条与当前操作条相符的横带，不能把整块弹窗或操作条全屏容器当作顶带。
    */
   const pixelH = window.cc.view.getVisibleSizeInPixel().height
-  // 定点诊断：顶带到底被谁撑大的 —— 把 HudLayer 直接子节点的名字与自身高度列出来。
+  // 定点诊断：顶带到底被谁撑大的 —— 把实际操作条子节点的名字与自身高度列出来。
   const hud = (() => {
     let found = null
     const visit = (node) => {
@@ -530,14 +531,15 @@ const overlap = await page.evaluate(() => {
     visit(window.cc.director.getScene())
     return found
   })()
-  const hudChildren = hud === null || hud === undefined ? [] : hud.children.map((c) => {
+  const toolbar = map.toolbarNode ?? hud
+  const hudChildren = toolbar === null || toolbar === undefined ? [] : toolbar.children.map((c) => {
     const t = c.getComponent('cc.UITransform')
     const r = t === null ? null : t.getBoundingBoxToWorld()
     return `${c.name}:${t === null ? 'noUI' : `${Math.round(t.width)}x${Math.round(t.height)}`}`
       + `${r === null ? '' : `@(${Math.round(r.x)},${Math.round(r.y)})`}`
   })
   const topBand = bandOf((node) => {
-    if (node.parent === null || node.parent.name !== 'HudLayer') return false
+    if (node.parent === null || node.parent !== toolbar) return false
     const t = node.getComponent('cc.UITransform')
     // 宽 0 的空提示（HintLabel 平时没有文字）停在原点上，会把"带子"撑成整屏 —— 第一版就是这么假的
     return t !== null && t.width > 0 && t.height > 0 && t.height <= pixelH / 4
@@ -616,7 +618,7 @@ if (!bandSane(overlap.bands.navBand)) {
     + ' —— 量具的取盒口径坏了，压 HUD 的读数不可信')
   process.exit(2)
 }
-if (overlap.bands.topBand !== null && !bandSane(overlap.bands.topBand)) {
+if (overlap.bands.topBand === null || !bandSane(overlap.bands.topBand)) {
   console.error(`[world][前置] 顶带读出来不像一条带子（${JSON.stringify(overlap.bands.topBand)}）—— 同上`)
   process.exit(2)
 }

@@ -22,9 +22,8 @@
  *   ③ 于是要补"给测试号一个武将 + 设编队"（仓库唯一那条凭空发奖励的通路 `/ops/mail/send`
  *      支持 `type=HERO`；编队用 `heroSetLineup`）。
  *
- * <p><b>当前状态：本探针停在 ②</b> —— 建号 → 升主城到 3 → 建兵营都通了，训练那一步因为
- * "没有上阵武将"被拒（退出码 2，前置不满足）。③ 那一段没做，所以**这只探针还没有产出全绿读数**；
- * 客户端接线本身（`b7b6a2a`）已过类型检查与 848 条单测，但"点了会发生什么"**尚未在实机上验过**。
+ * <p>登录时服务端可能下发升级礼包，它的模态输入层会先接到军队按钮位置上的点击。
+ * 测量前须真实点击礼包关闭键并确认宿主已隐藏，不能直接调用 hide 或发射触摸事件绕过输入层。
  */
 import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
@@ -70,7 +69,7 @@ const HEAD = { 'X-Player-Id': playerId }
 /**
  * 先备好兵营：**新号一个兵种都训不了**（`unlocked=false`，提示"需要兵营 1 级（当前 0 级）"）。
  * 这是前置而不是判据 —— 探针要量的"训练队列的两只动作按钮"必须先有一批在训练。
- * 兵营要主城 2 级，所以先升主城；每一步都等它真的到点（服务端时间差，不用 sleep 猜）。
+ * 兵营要主城 3 级，所以先升主城；每一步都等它真的到点（服务端时间差，不用 sleep 猜）。
  */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const upgradeAndWait = async (configId, coords) => {
@@ -145,7 +144,8 @@ if (start.code !== 0) {
 console.log(`[army-queue] 建号 ${playerId}：${trainable.name ?? trainable.unitId} 已开始训练 10 个`)
 
 const preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
-const browser = await chromium.launch({ headless: true })
+let browser
+const verifyArmyQueue = async () => {
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript((value) => localStorage.setItem('ironoath.deviceId', value), deviceId)
 const page = await context.newPage()
@@ -182,6 +182,43 @@ await page.evaluate(() => {
   }
   visit(scene)
 })
+
+// 升城前置会触发登录礼包；必须先走玩家的关闭入口，才能测到下面的军队动作。
+const giftPopupState = await page.evaluate(() => {
+  const game = window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+  const popup = game?.getChildByName('giftPopup')
+  const nodes = []
+  const visit = (node) => {
+    if (['giftPopup', 'mask', 'panel', 'plate', 'close', 'DialogContent', 'DialogFooter'].includes(node.name)) {
+      const sprite = node.getComponent('cc.Sprite')
+      const graphics = node.getComponent('cc.Graphics')
+      nodes.push({ name: node.name, layer: node.layer, active: node.activeInHierarchy,
+        spriteEnabled: sprite?.enabled ?? null, spriteFrame: sprite?.spriteFrame?.name ?? null,
+        graphicsEnabled: graphics?.enabled ?? null })
+    }
+    for (const child of node.children) visit(child)
+  }
+  if (popup) visit(popup)
+  return { active: popup?.activeInHierarchy === true, nodes }
+})
+console.log(`[army-queue] 登录礼包材质与可见层：${JSON.stringify(giftPopupState)}`)
+if (giftPopupState.active) {
+  const popupShot = path.join(OUT, '17-army-queue-gift-before-close.png')
+  await page.screenshot({ path: popupShot })
+  const closePoint = await clickNodeViaCocos(page, { name: 'close', within: 'giftPopup' })
+  const closed = closePoint.clicked && await page.waitForFunction(() => {
+    const game = window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+    return game?.getChildByName('giftPopup')?.activeInHierarchy === false
+  }, null, { timeout: 5000 }).then(() => true, () => false)
+  console.log(`[army-queue] 登录礼包真实关闭：${JSON.stringify(closePoint)} 关闭=${closed} 截图=${popupShot}`)
+  if (!closed) {
+    console.error('[army-queue][前置] 登录礼包关闭键没有关闭模态输入层，军队动作尚不能测量')
+    process.exitCode = 2
+    return
+  }
+} else {
+  console.log('[army-queue] 登录礼包未显示，无需关闭')
+}
 
 /**
  * 训练中那一行的读数。
@@ -281,8 +318,6 @@ if (cancelPoint.clicked) {
 }
 const afterCancel = await rowReadout()
 await page.screenshot({ path: SHOT })
-await browser.close()
-await preview.close()
 
 console.log(`[army-queue] 点「取消」→ /army/* 新增 [${armyPosts.slice(postsBeforeCancel).join('、') || '(无)'}]`
   + ` 取消后训练中的行=${afterCancel.active === null ? '(没有了)' : `加速键=${afterCancel.active.speed} 取消键=${afterCancel.active.cancel}`}`)
@@ -318,6 +353,18 @@ if (errors.length > 0) {
 }
 if (failures.length > 0) {
   console.error(`[army-queue] 判据失败：${failures.join('；')}`)
-  process.exit(1)
+  process.exitCode = 1
+  return
 }
 console.log('[army-queue] 全绿：训练行出现两只动作按钮，加速发了请求且倒计时变短，取消发了请求且按钮收起')
+}
+try {
+  browser = await chromium.launch({ headless: true })
+  await verifyArmyQueue()
+} finally {
+  try {
+    await browser?.close()
+  } finally {
+    await preview.close()
+  }
+}

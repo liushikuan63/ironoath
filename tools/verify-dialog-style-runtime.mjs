@@ -123,6 +123,16 @@ try {
         && geometry.frameInArea && geometry.clipInArea && geometry.separation && geometry.footer.every(row => row.inArea && (!row.active || row.material)), geometry)
       if (geometry.error) continue
       check(`${spec.host}/${name} 仅一个真实滚动窗且正文非空`, geometry.viewportCount === 1 && geometry.seen.length > 0, geometry)
+      if (spec.host === 'giftPopup') {
+        const mask = await page.evaluate(() => {
+          const cc = window.cc, host = cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('giftPopup')
+          const node = host.getChildByName('mask'), graphics = node.getComponent('cc.Graphics'), box = node.getComponent('cc.UITransform'), size = cc.view.getVisibleSize()
+          return { active: node.activeInHierarchy, visible: node.layer === host.layer && graphics.enabled
+              && node._uiProps.uiComp === graphics && graphics.fillColor.a === 190,
+            full: Math.abs(box.width - size.width) < 1 && Math.abs(box.height - size.height) < 1, layer: node.layer, hostLayer: host.layer }
+        })
+        check(`Gift/${name} 遮罩真实绘制且全屏，避免透明层截点击`, mask.active && mask.visible && mask.full, mask)
+      }
       if (spec.host === 'composePick' && name === 'normal') {
         for (const target of ['card', 'cancel']) {
           await page.evaluate(nodeName => {
@@ -217,6 +227,13 @@ try {
       await page.evaluate(scrollDialogTo, { ...spec, offset: 0 })
       await page.waitForTimeout(80)
       await page.screenshot({ path: path.join(OUT, `${spec.host}-${name}.png`) })
+    }
+    if (spec.host === 'giftPopup') {
+      const close = await page.evaluate(resolveCocosClickPoint, { name: 'close', within: 'giftPopup' })
+      check('Gift真实关闭坐标经引擎自命中', close.verified, close)
+      if (close.verified) await page.mouse.click(close.x, close.y)
+      await page.waitForTimeout(80)
+      check('Gift真实关闭后整层退场释放点击', await page.evaluate(() => window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('giftPopup').active === false))
     }
   }
   check('所有弹窗路径无浏览器异常', errors.length === 0, errors)
