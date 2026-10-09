@@ -1,5 +1,5 @@
 /**
- * 职责：V25 素材的运行时验收 —— 证明四件新图**能加载、九宫格几何与 .png.meta 自洽**，
+ * 职责：V25 素材的运行时验收 —— 证明包内素材**能加载、九宫格几何与 .png.meta 自洽**，
  *       并且**沿真实玩家路径画到屏上**（点体力 → 详情弹层用的就是 `ui.panel.iron`），留一张肉眼可判的截图。
  * 依赖：playwright、`tools/lib/preview-server.mjs`、独立构建产物（`outputName=ui-v25`）、一台活后端。
  *
@@ -29,27 +29,24 @@ const OUT = process.env.UI25_OUT ?? 'tmp/ui-v25-shots'
 // ⚠ w/h 填的是**交付尺寸（未裁边）**：Cocos 导入会 trim 掉 1~2px 透明边，meta 的 width/height 是裁后的，
 //    而运行时 frame 报的是原图尺寸 ⇒ 照 meta 抄会每条差 1~2px 全红（本轮实测撞过一次）。
 const EXPECT = [
-  // A 档 inset 从 48·36 改到 80·72（2026-10-08 裁决，规格 §二 / 台账 #807）：
-  // 角帽实测占图宽 12.5%~19% ⇒ 512 交付下 64~97px，48 会让切分线穿过角帽。
+  // 统一 v3 五种底板采用同一张 512×326 薄框母版；角帽约16–18px，四边24保角并留缓冲。
   // 本表与 .png.meta 不一致时，本探针报的正是"改了图没改布局常量"那一族。
-  { key: 'ui.panel.iron', res: 'ui/generated/ui/panel-iron-v1', w: 512, h: 359, inset: [80, 80, 72, 72] },
-  { key: 'ui.panel.parchment', res: 'ui/generated/ui/panel-parchment-v1', w: 512, h: 373, inset: [80, 80, 72, 72] },
-  { key: 'ui.panel.warning', res: 'ui/generated/ui/panel-warning-v1', w: 512, h: 348, inset: [80, 80, 72, 72] },
-  { key: 'ui.panel.gilt', res: 'ui/generated/ui/panel-gilt-v1', w: 512, h: 357, inset: [80, 80, 72, 72] },
+  { key: 'ui.panel.kingdom', res: 'ui/generated/ui/panel-kingdom-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
+  { key: 'ui.panel.iron', res: 'ui/generated/ui/panel-iron-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
+  { key: 'ui.panel.parchment', res: 'ui/generated/ui/panel-parchment-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
+  { key: 'ui.panel.warning', res: 'ui/generated/ui/panel-warning-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
+  { key: 'ui.panel.gilt', res: 'ui/generated/ui/panel-gilt-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
   { key: 'ui.button.iron', res: 'ui/generated/ui/button-iron-v1', w: 256, h: 65, inset: [6, 6, 4, 4] },
   { key: 'ui.chip.close', res: 'ui/generated/ui/chip-close-v1', w: 52, h: 52, inset: [6, 6, 4, 4] },
   { key: 'ui.plate.band', res: 'ui/generated/ui/plate-band-v1', w: 512, h: 52, inset: [12, 12, 8, 8] },
   { key: 'ui.plate.tooltip', res: 'ui/generated/ui/plate-tooltip-v1', w: 256, h: 61, inset: [6, 6, 4, 4] },
-  { key: 'ui.banner.crest', res: 'ui/generated/ui/banner-crest-v1', w: 512, h: 231, inset: [0, 0, 0, 0] },
   // 装饰件（顶饰 / 火漆 / 分隔线）inset 全 0：它们按原比例整幅缩放、永不拉伸。
   { key: 'ui.crest.league', res: 'ui/generated/ui/crest-league-v1', w: 178, h: 256, inset: [0, 0, 0, 0] },
   { key: 'ui.crest.nation', res: 'ui/generated/ui/crest-nation-v1', w: 246, h: 256, inset: [0, 0, 0, 0] },
   { key: 'ui.crest.battle', res: 'ui/generated/ui/crest-battle-v1', w: 223, h: 256, inset: [0, 0, 0, 0] },
-  { key: 'ui.crest.reward', res: 'ui/generated/ui/crest-reward-v1', w: 207, h: 256, inset: [0, 0, 0, 0] },
   { key: 'ui.seal.wax', res: 'ui/generated/ui/seal-wax-v1', w: 256, h: 256, inset: [0, 0, 0, 0] },
-  { key: 'ui.divider.rope', res: 'ui/generated/ui/divider-rope-v1', w: 512, h: 40, inset: [0, 0, 0, 0] },
 ]
-// ui.plate.band 不在这里：它还没有消费点，已退回 art-src/generated/drafts/（#216 那条守卫就是为拦这个）。
+// 零消费的礼包旗帜、奖章与绳线已退回草稿区；余下条目继续逐件核对加载与几何。
 
 if (!existsSync(path.resolve(process.cwd(), ROOT, 'index.html'))) {
   console.error(`[ui-v25][前置] 产物不存在：${ROOT}（先构建 outputName=ui-v25）`)
@@ -152,7 +149,7 @@ const rendered = await page.evaluate(() => {
       // 直接读 n.uiTransform 在压缩后拿不到，会把盒子读成 0x0 并伪装成"退化"（实测踩过）。
       const ut = n.getComponent('cc.UITransform')
       const name = String(f.name || '')
-      if (/panel-iron|plate-band|button-iron|banner-crest/.test(name)) {
+      if (/panel-iron|plate-band|button-iron/.test(name)) {
         found.push({
           node: n.name, frame: name, type: sp.type,
           box: ut ? [ut.width, ut.height] : null,

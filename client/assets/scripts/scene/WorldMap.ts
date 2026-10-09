@@ -38,6 +38,7 @@ import { NodePool } from './NodePool'
 import { MarchPanelView } from './MarchPanelView'
 import {
   applyCommandButton, applySimpleSprite, applyTerrainSprite, applyTiledSprite, artFrame, terrainArtKey,
+  TERRAIN_VARIANT_COUNT,
 } from './ArtCatalog'
 import type { ArtKey } from './ArtCatalog'
 import { applySystemUiFont, capWidth } from './UiFont'
@@ -1429,12 +1430,12 @@ function entityArtKey(type: WorldEntityType): ArtKey | null {
 }
 
 /**
- * 地形图集有 8 个纯表现变体；服务端当前不区分地貌，客户端只按块坐标做稳定的无随机映射，
+ * 地形图集有 16 个纯表现变体；服务端当前不区分地貌，客户端只按块坐标做稳定的无随机映射，
  * 避免重绘时贴图跳变，也不把视觉选择误当成玩法数据。
  */
 function terrainVariantForChunk(cx: number, cy: number): number {
   const hash = Math.imul(cx + 17, 73_856_093) ^ Math.imul(cy + 31, 19_349_663)
-  return (hash >>> 0) % 8
+  return (hash >>> 0) % TERRAIN_VARIANT_COUNT
 }
 
 /** 城比野怪大一圈：占位美术阶段「谁更重要」只能靠尺寸表达。 */

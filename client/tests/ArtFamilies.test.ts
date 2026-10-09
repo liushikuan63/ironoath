@@ -196,14 +196,16 @@ test('面板框的四角带厚只有一个真源：图的 meta border* ↔ 交�
     + `两者不同值时要么内容压在角饰上，要么白让一圈`)
 })
 
-test('V25 铁誓底板的带厚也只有一个真源：panel-iron-v1 的 meta border ↔ PANEL_IRON_INSET', () => {
-  assert.deepEqual(frameBorders('panel-iron-v1'), {
-    left: PANEL_IRON_INSET.left,
-    right: PANEL_IRON_INSET.right,
-    top: PANEL_IRON_INSET.top,
-    bottom: PANEL_IRON_INSET.bottom,
-  }, `meta 与 PANEL_IRON_INSET 不一致：布局按常量让边、画面按 meta 切角，`
-    + `V25-c 首版截图抓到过它的后果 —— 标题压在铜边内线上、底部那句被下铜边切掉半截`)
+test('统一v3五种底板使用现采用512×326薄框，四边24与布局镜像一致，不残留粗框混搭', () => {
+  assert.deepEqual(PANEL_IRON_INSET, { left: 24, right: 24, top: 24, bottom: 24 })
+  assert.equal(PANEL_FRAME_BAND, 24)
+  for (const name of ['panel-iron-v1', 'panel-parchment-v1', 'panel-warning-v1', 'panel-gilt-v1', 'panel-kingdom-v1']) {
+    const png = fs.readFileSync(path.join(GENERATED_UI, `${name}.png`))
+    assert.equal(png.readUInt32BE(16), 512, `${name} 未同步采用版宽度`)
+    assert.equal(png.readUInt32BE(20), 326, `${name} 未同步采用版高度`)
+    assert.deepEqual(frameBorders(name), PANEL_IRON_INSET,
+      `${name} meta 与布局镜像不一致：采用版角帽约16–18px，四边24保角并让正文离开铜线`)
+  }
 })
 
 test('ArtCatalog 不许再抄一份九宫格边框（后写的那份会盖掉 meta，让 meta 变成骗人的死字段）', () => {
@@ -214,15 +216,51 @@ test('ArtCatalog 不许再抄一份九宫格边框（后写的那份会盖掉 me
     '运行期改写了 SpriteFrame 的边框 ⇒ meta 里的 border 从此不影响画面')
 })
 
-test('包里的 ui 图逐张点名：V25 铁誓族已把这一屏从"三族"扩到 23 张，多一张少一张都要在这里说清', () => {
+test('地形图集16格都进入实际地图选择，重绘及负坐标不改变变体或落到目录外', () => {
+  const catalog = fs.readFileSync(ART_CATALOG_SRC, 'utf8')
+  const keyBlock = /export type TerrainArtKey =([\s\S]*?)\r?\n\r?\n/.exec(catalog)?.[1]
+  assert.ok(keyBlock !== undefined, '找不到 TerrainArtKey 声明，无法核对图集与消费键')
+  const terrainKeys = new Set(Array.from(keyBlock.matchAll(/'map\.terrain\.(\d+)'/g),
+    (match) => Number(match[1])))
+  assert.deepEqual(Array.from(terrainKeys).sort((a, b) => a - b),
+    Array.from({ length: 16 }, (_, index) => index), '4×4图集不能只声明前两行的键')
+  const columns = Number(/const TERRAIN_COLUMNS = (\d+)/.exec(catalog)?.[1])
+  const rows = Number(/const TERRAIN_ROWS_USED = (\d+)/.exec(catalog)?.[1])
+  const countExpression = /^export const TERRAIN_VARIANT_COUNT = (.+)$/m.exec(catalog)?.[1]
+  assert.ok(countExpression !== undefined, '地图与目录必须共享生产变体总数')
+  const variantCount = new Function('TERRAIN_COLUMNS', 'TERRAIN_ROWS_USED',
+    `return (${countExpression})`)(columns, rows) as number
+  assert.equal(columns * rows, variantCount, '变体总数必须包含图集的全部四行')
+  assert.equal(variantCount, terrainKeys.size, '图集裁帧总数必须与地形键覆盖数一致')
+
+  // 场景依赖 cc，不能直接 import；只执行生产代码中这一段无引擎、无副作用的坐标映射。
+  const mapSource = fs.readFileSync(path.join(repoRoot(),
+    'client/assets/scripts/scene/WorldMap.ts'), 'utf8')
+  const body = /^function terrainVariantForChunk\(cx: number, cy: number\): number \{([\s\S]*?)^\}/m
+    .exec(mapSource)?.[1]
+  assert.ok(body !== undefined, '找不到生产坐标映射，不能以另一份算法代替真实选择器')
+  const variant = new Function('cx', 'cy', 'TERRAIN_VARIANT_COUNT', body) as
+    (cx: number, cy: number, count: number) => number
+  const seen = new Set<number>()
+  for (let cx = -16; cx < 16; cx++) {
+    for (let cy = -16; cy < 16; cy++) {
+      const chosen = variant(cx, cy, variantCount)
+      assert.ok(terrainKeys.has(chosen), `块(${cx},${cy})选择了未登记的地形${chosen}`)
+      assert.equal(variant(cx, cy, variantCount), chosen, '同一坐标重绘不得跳变')
+      seen.add(chosen)
+    }
+  }
+  assert.deepEqual(Array.from(seen).sort((a, b) => a - b),
+    Array.from(terrainKeys).sort((a, b) => a - b), '后两行裁帧加载了却没有进入实际地图选择')
+})
+
+test('包里的 ui 图逐张点名，多一张少一张都必须更新消费点与判据', () => {
   const pngs = fs.readdirSync(GENERATED_UI).filter((name) => name.endsWith('.png')).sort()
   assert.deepEqual(pngs, [
-    'banner-crest-v1.png',
     'button-chip-disabled-v1.png', 'button-chip-hover-v1.png', 'button-chip-v1.png',
 'button-iron-hover-v1.png', 'button-iron-v1.png',
     'chip-close-v1.png',
-    'crest-battle-v1.png', 'crest-league-v1.png', 'crest-nation-v1.png', 'crest-reward-v1.png',
-    'divider-rope-v1.png',
+    'crest-battle-v1.png', 'crest-league-v1.png', 'crest-nation-v1.png',
     'nav-tab-selected-v1.png', 'nav-tab-v1.png',
     'panel-gilt-v1.png', 'panel-iron-v1.png', 'panel-kingdom-v1.png',
     'panel-parchment-v1.png', 'panel-warning-v1.png',
@@ -243,9 +281,8 @@ const TIER_CONTRACT: Record<Tier, {
   border: { left: number, top: number, right: number, bottom: number } | null
   pngPrefixes: string[]
 }> = {
-  // A 档 border 从 48·36 抬到 80·72：实测角帽占图宽 12.5%~19%（512 交付 = 64~97px），
-  // 48 会让切分线穿过角帽、拉到 720 宽时角帽内沿约 1.5 倍变形（规格 §二 / 台账 #807）。
-  A: { border: { left: 80, top: 72, right: 80, bottom: 72 }, pngPrefixes: ['panel-'] },
+  // 统一v3采用版角帽约16–18px；现meta四边24保角，不能继续用旧80·72粗框合同。
+  A: { border: { ...PANEL_IRON_INSET }, pngPrefixes: ['panel-'] },
   B: { border: { left: 12, top: 8, right: 12, bottom: 8 }, pngPrefixes: ['plate-'] },
   // 'plate-tooltip-' 是 C 档里唯一的例外前缀：它是浮动提示条（256×61、border 6·4），
   // 归 C 不归 B —— B 档条行是 512×52 的 12·8 薄边，两者 border 差一倍，混档就是 §八.2 判的那件事。
@@ -258,12 +295,12 @@ const TIER_CONTRACT: Record<Tier, {
 
 /** §三 清单里 V25 那一族的 ArtKey → 档。键还没接线时可以暂不列，列进来就必须与目录一致。 */
 const V25_KEY_TIER: Record<string, Tier> = {
+  'ui.panel.kingdom': 'A',
   'ui.panel.iron': 'A',
   'ui.plate.band': 'B',
   'ui.button.iron': 'C',
   'ui.chip.close': 'C',
   'ui.plate.tooltip': 'C',
-  'ui.banner.crest': 'decor',
   'ui.panel.parchment': 'A',
   'ui.panel.warning': 'A',
   'ui.panel.gilt': 'A',
@@ -271,14 +308,11 @@ const V25_KEY_TIER: Record<string, Tier> = {
   'ui.crest.league': 'decor',
   'ui.crest.nation': 'decor',
   'ui.crest.battle': 'decor',
-  'ui.crest.reward': 'decor',
   'ui.seal.wax': 'decor',
-  'ui.divider.rope': 'decor',
 }
 
 /** V25 之前的遗留件：不参与 §二 的 border 契约，但点名登记，免得"没在表里"变成"没人管"。 */
 const LEGACY_UI_PNGS = [
-  'panel-kingdom-v1.png',
   'button-chip-v1.png', 'button-chip-hover-v1.png', 'button-chip-disabled-v1.png',
   'nav-tab-v1.png', 'nav-tab-selected-v1.png',
 ]

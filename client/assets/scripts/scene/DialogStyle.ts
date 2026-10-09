@@ -255,7 +255,8 @@ export function fitExistingDialog(parent: Node, card: Node, body: readonly Node[
     if (layout.compact) paintCompactDialogFrame(card, layout.width, layout.height)
     else paintFrame(card, key, layout.width, layout.height)
     if (key === 'ui.panel.parchment') {
-      const ink = layout.compact ? new Color(226, 214, 190, 255) : new Color(22, 18, 16, 255)
+      // 语义键沿用，但统一v3的纸面键已换成同一张暗铁框，正文须用现有浅字色。
+      const ink = new Color(226, 214, 190, 255)
       for (const node of body) {
         const label = node.getComponent(Label)
         if (label !== null) label.color = ink

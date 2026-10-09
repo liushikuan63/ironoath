@@ -85,6 +85,90 @@ async function renderFixture(spec) {
   return node.name
 }
 
+/** 观察生产Gift正文的首渲染组件、字色和leading；截图仍需目视，组件读数不能代替字形像素验收。 */
+function readGiftPaint() {
+  const scene = window.cc.director.getScene()
+  const game = scene.getChildByName('Canvas')?.getChildByName('Game')
+  const cameras = []
+  const collectCameras = node => {
+    const camera = node.getComponent('cc.Camera')
+    if (camera?.enabled && node.activeInHierarchy) cameras.push(camera)
+    node.children.forEach(collectCameras)
+  }
+  collectCameras(scene)
+  const host = game?.getChildByName('giftPopup')
+  const content = host?.getChildByName('DialogContent')?.getComponent('cc.ScrollView')?.content
+  const rows = []
+  const walk = node => {
+    const label = node.getComponent('cc.Label')
+    if (node.activeInHierarchy && label?.string) {
+      const text = label.string
+      const role = text === '限时礼包' ? 'title' : text === '验收礼包' ? 'product'
+        : /^剩 \d+:\d{2}$/.test(text) ? 'countdown' : text.includes('末项额度说明') ? 'result' : 'unknown'
+      const color = label.color
+      rows.push({ role, text, color: [color.r, color.g, color.b, color.a],
+        fontSize: label.fontSize, lineHeight: label.lineHeight,
+        active: node.activeInHierarchy, enabled: label.enabled === true,
+        renderer: node._uiProps.uiComp === label, layer: node.layer === host.layer,
+        cameraVisible: cameras.some(camera => (camera.visibility & node.layer) !== 0) })
+    }
+    node.children.forEach(walk)
+  }
+  if (content) walk(content)
+  return rows
+}
+
+const GIFT_PAINT = {
+  title: { color: [184, 134, 11, 255], fontSize: 26, lineHeight: 36 },
+  product: { color: [226, 214, 190, 255], fontSize: 18, lineHeight: 25 },
+  countdown: { color: [150, 140, 124, 255], fontSize: 16, lineHeight: 22 },
+  result: { color: [226, 214, 190, 255], fontSize: 16, lineHeight: 22 },
+}
+const giftPaintIssues = rows => {
+  const issues = []
+  const roles = rows.map(row => row.role).sort()
+  if (JSON.stringify(roles) !== JSON.stringify(Object.keys(GIFT_PAINT).sort())) issues.push('四段生产正文缺失或重复')
+  for (const row of rows) {
+    const expected = GIFT_PAINT[row.role]
+    if (!expected) { issues.push(`未知正文：${row.text}`); continue }
+    if (!row.active || !row.enabled || !row.renderer || !row.layer || !row.cameraVisible) {
+      issues.push(`${row.role} 首Label没有在宿主层有效渲染`)
+    }
+    if (JSON.stringify(row.color) !== JSON.stringify(expected.color)) issues.push(`${row.role} 字色偏离暗铁面合同：${row.color}`)
+    if (row.fontSize !== expected.fontSize || row.lineHeight !== expected.lineHeight) {
+      issues.push(`${row.role} 字号/leading偏离既有正文合同：${row.fontSize}/${row.lineHeight}`)
+    }
+  }
+  return issues
+}
+
+/** 直接改生产Label与正文位置，保存真实实例后还原；不改量具回读或请求数据。 */
+function mutateGiftPaint(mode) {
+  if (mode === 'restore') {
+    const saved = window.__giftPaintRestore
+    if (!saved) return false
+    saved.label.color = saved.color
+    saved.label.enabled = saved.enabled
+    saved.node.setPosition(saved.position)
+    delete window.__giftPaintRestore
+    return true
+  }
+  const host = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('giftPopup')
+  const content = host?.getChildByName('DialogContent')?.getComponent('cc.ScrollView')?.content
+  const title = content?.children.find(node => node.getComponent('cc.Label')?.string === '限时礼包')
+  const node = content?.children.find(candidate => candidate.getComponent('cc.Label')?.string === '验收礼包')
+  const label = node?.getComponent('cc.Label')
+  if (!node || !title || !label || node._uiProps.uiComp !== label) return false
+  window.__giftPaintRestore = { node, label, color: label.color.clone(), enabled: label.enabled, position: node.position.clone() }
+  if (mode === 'ink') {
+    const color = label.color.clone()
+    color.r = 22; color.g = 18; color.b = 16
+    label.color = color
+  } else if (mode === 'disabled') label.enabled = false
+  else node.setPosition(title.position)
+  return true
+}
+
 try {
   await page.goto(`${preview.origin}/?panel=city`)
   await page.waitForFunction(() => window.cc?.director?.getScene()?.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('GameBootstrap')?.root != null, null, { timeout: 60000 })
@@ -128,7 +212,7 @@ try {
         && geometry.frameInArea && geometry.clipInArea && geometry.separation && geometry.footer.every(row => row.inArea && (!row.active || row.material)), geometry)
       if (geometry.error) continue
       check(`${spec.host}/${name} 仅一个真实滚动窗且正文非空`, geometry.viewportCount === 1 && geometry.seen.length > 0, geometry)
-      if (spec.host === 'MarchCompose' || spec.host === 'OfflineReport') {
+      if (spec.host === 'MarchCompose' || spec.host === 'OfflineReport' || spec.host === 'giftPopup') {
         check(`${spec.host}/${name} 标题、坐标、正文行和说明自身框不相交`, geometry.bodyOverlaps.length === 0, geometry.bodyOverlaps)
         if (spec.host === 'MarchCompose') {
           check(`MarchCompose/${name} 条行自身框上锚与实际向下绘制一致`, geometry.bodyBoxes.filter(row => /^composeRow|^rallyBand$/.test(row.name)).every(row => row.anchorY === 1), geometry.bodyBoxes)
@@ -136,6 +220,10 @@ try {
         }
       }
       if (spec.host === 'giftPopup') {
+        const paint = await page.evaluate(readGiftPaint)
+        check(`Gift/${name} 四段正文首Label有效且暗铁面字色/leading正确`, giftPaintIssues(paint).length === 0,
+          { rows: paint, issues: giftPaintIssues(paint) })
+        console.log(` Gift/${name} 画色观察（对应本档截图）：${JSON.stringify(paint.map(({ role, color, fontSize, lineHeight }) => ({ role, color, fontSize, lineHeight })))}`)
         const mask = await page.evaluate(() => {
           const cc = window.cc, host = cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('giftPopup')
           const node = host.getChildByName('mask'), graphics = node.getComponent('cc.Graphics'), box = node.getComponent('cc.UITransform'), size = cc.view.getVisibleSize()
@@ -144,6 +232,35 @@ try {
             full: Math.abs(box.width - size.width) < 1 && Math.abs(box.height - size.height) < 1, layer: node.layer, hostLayer: host.layer }
         })
         check(`Gift/${name} 遮罩真实绘制且全屏，避免透明层截点击`, mask.active && mask.visible && mask.full, mask)
+        if (name === 'normal') {
+          for (const [mode, caption] of [['ink', '旧深墨字'], ['disabled', '禁用真实首Label'], ['overlap', '商品名移到标题中心']]) {
+            const baselinePaint = await page.evaluate(readGiftPaint)
+            const baselineGeometry = await page.evaluate(readDialogGeometry, spec)
+            const baselineClean = giftPaintIssues(baselinePaint).length === 0 && baselineGeometry.bodyOverlaps.length === 0
+            let restored = false
+            try {
+              const planted = await page.evaluate(mutateGiftPaint, mode)
+              await page.waitForTimeout(40)
+              const brokenPaint = await page.evaluate(readGiftPaint)
+              const brokenGeometry = await page.evaluate(readDialogGeometry, spec)
+              const issues = giftPaintIssues(brokenPaint)
+              const titleProductOverlap = brokenGeometry.bodyOverlaps.some(overlap =>
+                (overlap.aText === '限时礼包' && overlap.bText === '验收礼包')
+                || (overlap.bText === '限时礼包' && overlap.aText === '验收礼包'))
+              check(`Gift ${caption}负控由同一真实判据翻红`, baselineClean && planted && (mode === 'overlap'
+                ? titleProductOverlap : issues.some(issue => issue.includes(mode === 'ink' ? '字色偏离' : '首Label没有'))),
+                { baselineClean, paint: brokenPaint, issues, overlaps: brokenGeometry.bodyOverlaps })
+              await page.screenshot({ path: path.join(OUT, `giftPopup-${mode}-negative.png`) })
+            } finally {
+              restored = await page.evaluate(mutateGiftPaint, 'restore')
+            }
+            await page.waitForTimeout(40)
+            const restoredPaint = await page.evaluate(readGiftPaint)
+            const restoredGeometry = await page.evaluate(readDialogGeometry, spec)
+            check(`Gift ${caption}撤桩后首Label画色与正文碰撞复绿`, restored && giftPaintIssues(restoredPaint).length === 0
+              && restoredGeometry.bodyOverlaps.length === 0, { paint: restoredPaint, overlaps: restoredGeometry.bodyOverlaps })
+          }
+        }
       }
       if (spec.host === 'composePick' && name === 'normal') {
         for (const target of ['card', 'cancel']) {

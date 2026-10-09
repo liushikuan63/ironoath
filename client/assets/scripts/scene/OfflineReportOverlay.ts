@@ -25,13 +25,9 @@ const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_DIM = new Color(150, 140, 124, 255)
 const COLOR_GOLD = new Color(184, 134, 11, 255)
 /**
- * 羊皮纸内衬上的**墨色**，不是可选审美：`panel-parchment-v1` 中心净区实测均色 `(142,124,93)`
- * （相对亮度 L=0.210），拿 WCAG 对比度逐个算过 —— 金字 1.24:1、白字 3.14:1、面板深 3.92:1、
- * 暗红 3.08:1 全不过 4.5:1，只有铁墨 `(22,18,16)` 给 **4.60:1**。
- * ⇒ 规格 §一 第 2 条"纸面比正文暗一档、靠深字 tokens 保对比度"在这里落地成这一个常量；
- *   次级文字不再换色（换浅一点就掉出 4.5），只靠字号分层。
+ * 语义键仍为parchment，但统一v3采用的已是暗铁面；标题沿用现有浅正文色，不能保留旧浅纸墨色。
  */
-const COLOR_INK = new Color(22, 18, 16, 255)
+const COLOR_INK = new Color(226, 214, 190, 255)
 
 const PANEL_WIDTH = 620
 const ROW_HEIGHT = 46

@@ -28,9 +28,9 @@ LIMIT_BYTES=$((LIMIT_KB * 1024))
 # 白名单：路径 | 为什么不能量化 | 台账编号。
 # ⚠️ 三张的理由都带**现跑实测数**（uniqRGBA / uniqAlpha，PIL 量出来的），不是"软边所以别动"这种感觉值：
 #    规格 §二 要的是"说明为什么不能量化"，而实测到的 alpha 档数才是那句话的证据。
-ALLOWLIST=(
-  "client/assets/resources/ui/generated/ui/panel-kingdom-v1.png|实测量化不可接受：255 色 FASTOCTREE 的两档抖动（默认 / 关）都在皮革内衬出可见斑块（对照条 D:/tmp/v25e/crops/pk-variants.png），该图 249 档 alpha、23006 种 RGBA；V25-d 换完 panel-iron 后应随零消费退出包|#805"
-)
+ALLOWLIST=()
+# 2026-10-10 统一母版重制：Kingdom 已与其他四种面板采用同一张量化薄框，
+# 28573B / colorType=3；旧 RGBA 豁免失效，分类与两条自证继续原样执行。
 # ⚠️ 名单只放"现在还做不到"的：icons-atlas 与 terrain-atlas 曾在名单里，2026-10-08 量化实测
 #    （运行时截图对照：图标 0.00% 像素变化；地形按游戏内 64 格目视无差）通过后就删条目。
 #    做不到的事一旦做成而条目留着 = 给下一个越界文件开的后门 ⇒ 下面"条目已不需要"那条判红管住它。

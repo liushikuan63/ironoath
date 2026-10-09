@@ -30,9 +30,11 @@ export function dialogLayout(area: DialogRect, contentWidth: number, naturalHeig
   readonly compact: boolean;
 } {
   const width = Math.min(area.width - 24, contentWidth + PANEL_IRON_INSET.left + PANEL_IRON_INSET.right)
-  const height = Math.min(area.height - 16, naturalHeight + PANEL_IRON_INSET.top + PANEL_IRON_INSET.bottom)
+  const availableHeight = area.height - 16
+  const height = Math.min(availableHeight, naturalHeight + PANEL_IRON_INSET.top + PANEL_IRON_INSET.bottom)
   const centerY = area.y + area.height / 2
-  const compact = height < 240
+  // 薄框使自然短窗也会低于240；是否换矮屏兜底取决于真实净区，而非正文长短。
+  const compact = availableHeight < 240
   const inset = compact ? DIALOG_COMPACT_INSET : PANEL_IRON_INSET
   const innerTop = centerY + height / 2 - inset.top
   const innerBottom = centerY - height / 2 + inset.bottom

@@ -21,7 +21,6 @@ export type StaticArtKey =
   | 'ui.panel.kingdom'
   | 'ui.panel.iron'
   | 'ui.button.iron'
-  | 'ui.banner.crest'
   | 'ui.button.chip'
   | 'ui.button.chip.hover'
   | 'ui.button.chip.disabled'
@@ -39,9 +38,7 @@ export type StaticArtKey =
   | 'ui.crest.league'
   | 'ui.crest.nation'
   | 'ui.crest.battle'
-  | 'ui.crest.reward'
   | 'ui.seal.wax'
-  | 'ui.divider.rope'
   | 'city.ridge'
   | 'city.ground'
   | 'city.wall'
@@ -93,6 +90,14 @@ export type TerrainArtKey =
   | 'map.terrain.5'
   | 'map.terrain.6'
   | 'map.terrain.7'
+  | 'map.terrain.8'
+  | 'map.terrain.9'
+  | 'map.terrain.10'
+  | 'map.terrain.11'
+  | 'map.terrain.12'
+  | 'map.terrain.13'
+  | 'map.terrain.14'
+  | 'map.terrain.15'
 
 export type ArtKey = StaticArtKey | IconArtKey | TerrainArtKey
 /**
@@ -124,7 +129,7 @@ const TERRAIN_GRASS_PATH = 'ui/generated/map/terrain-grass-v1'
 const TERRAIN_COLUMNS = 4
 /** 图集有 4×4 格；四行都要用，否则山岩与荒地在运行时永远不会出现。 */
 const TERRAIN_ROWS_USED = 4
-const TERRAIN_VARIANT_COUNT = TERRAIN_COLUMNS * TERRAIN_ROWS_USED
+export const TERRAIN_VARIANT_COUNT = TERRAIN_COLUMNS * TERRAIN_ROWS_USED
 
 const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.panel.kingdom': {
@@ -136,9 +141,6 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
   },
   'ui.button.iron': {
     path: 'ui/generated/ui/button-iron-v1',
-  },
-  'ui.banner.crest': {
-    path: 'ui/generated/ui/banner-crest-v1',
   },
   'ui.button.chip': {
     path: 'ui/generated/ui/button-chip-v1',
@@ -155,7 +157,7 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.nav.tab.selected': {
     path: 'ui/generated/ui/nav-tab-selected-v1',
   },
-  // 以下全部来自 V25-b 生产轮；切分几何同样只在各自 .png.meta 里（A 档 80·72 / B 档 12·8 / C 档 6·4，
+  // 以下全部来自 V25-b 生产轮；切分几何同样只在各自 .png.meta 里（A 档 24 / B 档 12·8 / C 档 6·4，
   // 装饰件 border 全 0 —— 它按原比例整幅缩放、永不拉伸）。
   'ui.panel.parchment': { path: 'ui/generated/ui/panel-parchment-v1' },
   'ui.panel.warning': { path: 'ui/generated/ui/panel-warning-v1' },
@@ -167,9 +169,7 @@ const SPECS: Record<StaticArtKey, ArtSpec> = {
   'ui.crest.league': { path: 'ui/generated/ui/crest-league-v1' },
   'ui.crest.nation': { path: 'ui/generated/ui/crest-nation-v1' },
   'ui.crest.battle': { path: 'ui/generated/ui/crest-battle-v1' },
-  'ui.crest.reward': { path: 'ui/generated/ui/crest-reward-v1' },
   'ui.seal.wax': { path: 'ui/generated/ui/seal-wax-v1' },
-  'ui.divider.rope': { path: 'ui/generated/ui/divider-rope-v1' },
   'city.ridge': { path: CITY_STAGE_ASSETS.ridge },
   'city.ground': { path: CITY_STAGE_ASSETS.ground },
   'city.wall': { path: CITY_STAGE_ASSETS.wall },

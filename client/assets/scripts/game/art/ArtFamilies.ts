@@ -19,11 +19,10 @@ export type ArtFamily = 'item' | 'equip' | 'hero' | 'activity' | 'building'
  * 真源放在这层而不是 `ArtCatalog`，让 node:test 能在不 import `cc` 的前提下
  * 对账“键表 → 磁盘 PNG”；运行期加载仍统一走 `ArtCatalog`。
  *
- * <p>`reference` 自 2026-09-26 起指向 **AI 重绘版底图 v2** `city-base-v2`：v1 那次擦除
- * 用十个巨大矩形掩膜一次调用完成，模型把抹空区填成了带光晕的喷枪疤（玩家读成贴图断裂）。
- * v2 改为紧掩膜、分四pass 串行擦除，再对草地做确定性去相关（`art-src/patch_city_base.py`）
- * 打散模型自带的重复草纹。授权口径不变：仍是重绘版，不用用户原图（见 `art-src/ATTRIBUTION.md`）。
- * 画中保留的礼拜堂是**环境建筑**，不属于 15 类功能正稿，不构成"未建预画"。
+ * <p>`reference` 当前采用统一写实 v3 的 ground-only 舞台：1536×1024 的石台、道路、草地与远景，
+ * 不烘焙主城或任何功能建筑，已建建筑由生产节点逐栋叠加。
+ * 运行期沿用 `city-base-v2` 路径与 UUID；CityPanelView 按 SpriteFrame 的原尺寸等比 cover，
+ * 不把 3:2 母版压成 8:5。原稿与采用记录见 `art-src/generated/accepted/iron-unified-v3/`。
  */
 export const CITY_STAGE_ASSETS = {
   ground: 'ui/generated/city/city-ground-cobble-v1',
@@ -40,7 +39,7 @@ export const CITY_STAGE_ASSETS = {
  * 的覆盖，后写且生效，于是 meta 里的 border 改了个像素都不会变（收口清单 #213）。
  * 两者现在由 `tests/ArtFamilies.test.ts` 对账：改图不改这里，测试就红。
  */
-export const PANEL_FRAME_BAND = 44
+export const PANEL_FRAME_BAND = 24
 
 /**
  * V25「铁誓」主底板 `ui/generated/ui/panel-iron-v1` 的四边带厚，给**内容排版**用。
@@ -51,8 +50,10 @@ export const PANEL_FRAME_BAND = 44
  * <p>为什么非要有它：首版接线只把底板换成贴图、内容 y 坐标沿用旧的 `PANEL_H / 2 - 34`，
  * 结果标题压在铜边内线上、底部那句被下铜边切掉半截（V25-c 真截图抓到的）。
  * 铜边占掉的上下空间必须显式还给内容，否则"换了材质"就等于"文字被材质盖住"。
+ * 统一 v3 采用版为 512×326，角帽实测约16–18px；四边24完整保角并留出文字净区。
+ * 五种底板同步使用这张薄框母版，不再让 Kingdom 的44与 A 档的80·72混用。
  */
-export const PANEL_IRON_INSET = { left: 80, right: 80, top: 72, bottom: 72 } as const
+export const PANEL_IRON_INSET = { left: 24, right: 24, top: 24, bottom: 24 } as const
 
 /**
  * 族内成员 → resources 相对路径（不带 /spriteFrame，那是加载层的事）。

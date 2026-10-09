@@ -35,6 +35,19 @@ test('240逻辑高用token薄边兜底，确认与正文不碰撞且不跨档拉
   }
 })
 
+test('普通大净区中的短正文保留位图框，只有真实可用高不足才切矮屏兜底', () => {
+  const roomy = dialogLayout({ x: -480, y: -420, width: 960, height: 840 }, 560, 80)
+  assert.equal(roomy.compact, false)
+  assert.ok(roomy.height < 240, '短正文自然框高已低于旧判档阈值，不能让正文长短选择框材质')
+  assert.ok(roomy.viewportHeight > 0)
+  assert.ok(roomy.footerY - 18 >= roomy.innerBottom)
+  assert.ok(roomy.innerTop - roomy.viewportHeight >= roomy.footerY + 22)
+  const cramped = dialogLayout({ x: -480, y: -60, width: 960, height: 180 }, 560, 80)
+  assert.equal(cramped.compact, true)
+  assert.ok(cramped.footerY - 18 >= cramped.innerBottom)
+  assert.ok(cramped.innerTop - cramped.viewportHeight >= cramped.footerY + 22)
+})
+
 test('真实引擎包同时启用Mask与UI，生产滚动层直接消费Mask而非只在类型桩声明', () => {
   const clientDir = existsSync(path.resolve(process.cwd(), 'client/settings'))
     ? path.resolve(process.cwd(), 'client') : process.cwd()
@@ -49,20 +62,21 @@ test('真实引擎包同时启用Mask与UI，生产滚动层直接消费Mask而�
   assert.match(source, /viewport\.addComponent\(Mask\)\.type = Mask\.Type\.GRAPHICS_RECT/)
 })
 
-test('内容的宽高与80·72铜边分别计账，空态小窗也不会把字塞入边带', () => {
+test('采用版四边24独立于正文计账，短窗完整保留152正文净高与100滚动高', () => {
   const area = { x: -480, y: -260, width: 960, height: 580 }
   const layout = dialogLayout(area, 560, 152)
-  assert.equal(layout.width, 720)
-  assert.equal(layout.height, 296)
+  assert.equal(layout.width, 608)
+  assert.equal(layout.height, 200)
   assert.equal(layout.innerTop - layout.innerBottom, 152)
   assert.equal(layout.viewportHeight, 100)
-  assert.ok(144 / layout.height < 0.6)
+  assert.ok(48 / layout.height < 0.6)
+  assert.equal(layout.compact, false)
 })
 
 test('窄净区限制外框宽度，内宽由同一份切分边厚扣除', () => {
   const layout = dialogLayout({ x: -360, y: -220, width: 720, height: 440 }, 760, 1200)
   assert.equal(layout.width, 696)
-  assert.equal(layout.innerWidth, 536)
+  assert.equal(layout.innerWidth, 648)
   assert.equal(layout.height, 424)
 })
 
