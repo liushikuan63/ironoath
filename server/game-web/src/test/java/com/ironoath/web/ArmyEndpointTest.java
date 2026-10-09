@@ -363,6 +363,47 @@ class ArmyEndpointTest {
     }
 
     @Test
+    @DisplayName("选择训练令后队列已到期：拒绝加速且不能吞掉道具")
+    void speedUpAfterTrainingFinishedDoesNotConsumeItem() {
+        String playerId = newPlayer();
+        prepareBarracks(playerId);
+        giveResources(playerId, 1_000_000L);
+        fieldHeroForCap(playerId, "hero_ssr_02");
+        giveItems(playerId, "item_speedup_train_1h", 2L);
+        armyAppService.train(playerId, new TrainReq(newRequestId(), "unit_infantry_t1", 100L));
+        rewindTraining(playerId, "unit_infantry_t1");
+
+        assertThatThrownBy(() -> armyAppService.speedUp(playerId,
+                new ArmyUnitReq(newRequestId(), "unit_infantry_t1", null, "item_speedup_train_1h")))
+                .isInstanceOf(BizException.class).hasMessageContaining("不在训练队列");
+        assertThat(countOf(playerId, "item_speedup_train_1h"))
+                .as("选择器打开时可训练，确认时已到期，不得扣训练令").isEqualTo(2L);
+        UnitView after = unitOf(armyAppService.list(playerId), "unit_infantry_t1");
+        assertThat(after.training()).isZero();
+        assertThat(after.count()).as("正常惰性收割仍归队一次").isEqualTo(100L);
+    }
+
+    @Test
+    @DisplayName("选择训练令后队列被取消：拒绝加速且不能吞掉道具")
+    void speedUpAfterTrainingCancelledDoesNotConsumeItem() {
+        String playerId = newPlayer();
+        prepareBarracks(playerId);
+        giveResources(playerId, 1_000_000L);
+        fieldHeroForCap(playerId, "hero_ssr_02");
+        giveItems(playerId, "item_speedup_train_1h", 2L);
+        armyAppService.train(playerId, new TrainReq(newRequestId(), "unit_infantry_t1", 100L));
+        armyAppService.cancel(playerId,
+                new ArmyUnitReq(newRequestId(), "unit_infantry_t1", null, null));
+
+        assertThatThrownBy(() -> armyAppService.speedUp(playerId,
+                new ArmyUnitReq(newRequestId(), "unit_infantry_t1", null, "item_speedup_train_1h")))
+                .isInstanceOf(BizException.class).hasMessageContaining("不在训练队列");
+        assertThat(countOf(playerId, "item_speedup_train_1h"))
+                .as("另一次操作已经取消训练，确认旧选择器不得扣训练令").isEqualTo(2L);
+        assertThat(armyOf(playerId).queue()).doesNotContainKey("unit_infantry_t1");
+    }
+
+    @Test
     @DisplayName("建造令走 /item/use 时按 effectKind 分流到城建，训练令分流到军队")
     void itemUseRoutesSpeedUpByEffectKind() {
         String playerId = newPlayer();

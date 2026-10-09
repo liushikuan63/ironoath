@@ -206,10 +206,25 @@ test('治疗加速只列训练令 —— 与服务端 treatSpeedUp 的校验同�
     ],
   } as never
   assert.deepEqual(buildTrainSpeedupChoices(bag).map((o) => `${o.itemId}:${o.count}`),
-    ['i_train:1', 'i_train:4'],
+    ['i_train:1'],
     '服务端要求 effectKind 正是 REDUCE_TRAIN_SECONDS，挑错了会被 ITEM_CANNOT_USE 拒 —— 所以不列出来')
   // 同一个参数化函数的两条路径各筛各的：研究那一半一字不变（改这一格不许动到它）
   assert.deepEqual(buildResearchSpeedupChoices(bag).map((o) => o.itemId),
     ['i_research', 'i_research'])
   assert.deepEqual(buildTrainSpeedupChoices(null), [], '背包没读到不猜')
+})
+
+test('训练与治疗每次只吃一张，正库存才可选，研究仍保留全用', () => {
+  const choices = buildTrainSpeedupChoices({ items: [
+    { itemId: 't0', name: '空训练令', type: 'SPEEDUP', effectKind: 'REDUCE_TRAIN_SECONDS', count: 0 },
+    { itemId: 'tn', name: '负库存', type: 'SPEEDUP', effectKind: 'REDUCE_TRAIN_SECONDS', count: -1 },
+    { itemId: 't4', name: '训练令', type: 'SPEEDUP', effectKind: 'REDUCE_TRAIN_SECONDS', count: 4 },
+    { itemId: 'r3', name: '研究令', type: 'SPEEDUP', effectKind: 'REDUCE_RESEARCH_SECONDS', count: 3 },
+  ] } as never)
+  assert.deepEqual(choices.map(choice => [choice.id, choice.itemId, choice.count, choice.detail]),
+    [['t4:one', 't4', 1, '用 1 张 · 持有 4 张']])
+  assert.equal(choices.some(choice => /全用|退回/.test(choice.detail + choice.label)), false)
+  assert.deepEqual(buildResearchSpeedupChoices({ items: [
+    { itemId: 'r3', name: '研究令', type: 'SPEEDUP', effectKind: 'REDUCE_RESEARCH_SECONDS', count: 3 },
+  ] } as never).map(choice => choice.count), [1, 3])
 })

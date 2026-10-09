@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { dialogLayout, DIALOG_COMPACT_INSET } from '../assets/scripts/game/ui/DialogLayout'
+import { dialogBodyFlow, dialogLayout, DIALOG_COMPACT_INSET } from '../assets/scripts/game/ui/DialogLayout'
 
 test('普通与矮窗的长名单只增长滚动内容，框和固定操作仍在真实净区', () => {
   for (const height of [640, 540, 320]) {
@@ -64,4 +64,26 @@ test('窄净区限制外框宽度，内宽由同一份切分边厚扣除', () =>
   assert.equal(layout.width, 696)
   assert.equal(layout.innerWidth, 536)
   assert.equal(layout.height, 424)
+})
+
+test('真实长标题与坐标后才排上锚条行，隐藏条目不占空间，末项说明保留', () => {
+  const boxes = [
+    { height: 92, anchorY: 0.5, visible: true },
+    { height: 26.46, anchorY: 0.5, visible: true },
+    { height: 44, anchorY: 1, visible: true },
+    { height: 44, anchorY: 1, visible: false },
+    { height: 52, anchorY: 0.5, visible: true },
+  ]
+  const flow = dialogBodyFlow(boxes)
+  assert.equal(flow.positions[0], -46)
+  assert.equal(flow.positions[2], -130.46)
+  assert.equal(flow.height, 232.46)
+  const visible = boxes.map((box, index) => ({ ...box, y: flow.positions[index]! })).filter(box => box.visible)
+  for (let index = 1; index < visible.length; index++) {
+    const above = visible[index - 1]!, below = visible[index]!
+    assert.ok(below.y + below.height * (1 - below.anchorY) <= above.y - above.height * above.anchorY - 6 + 1e-6)
+  }
+  const compact = dialogLayout({ x: -480, y: -60, width: 960, height: 180 }, 460, flow.height)
+  assert.ok(flow.height > compact.viewportHeight)
+  assert.equal(dialogBodyFlow([]).height, 0)
 })

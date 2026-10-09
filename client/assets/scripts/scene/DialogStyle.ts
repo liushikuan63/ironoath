@@ -2,7 +2,7 @@
 import { _decorator, Color, Component, Graphics, Label, Mask, Node, ScrollView, Size, Sprite, UITransform, Vec2, Vec3, view } from 'cc'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import { BRONZE_GOLD, CORNER_RADIUS, IRON_SURFACE, MASK_SCRIM, PANEL_FALLBACK } from '../game/ui/UiTokens'
-import { dialogLayout } from '../game/ui/DialogLayout'
+import { dialogBodyFlow, dialogLayout } from '../game/ui/DialogLayout'
 import { applyCommandButton, applyIronButton, applySlicedSprite } from './ArtCatalog'
 import type { PanelNav } from './PanelNav'
 
@@ -200,37 +200,56 @@ export function finishLegacyDialog(parent: Node, nodes: Node[],
     applyDialogButton(node, enabled, size.width, size.height)
   }
   const layout = fitExistingDialog(parent, card, body, footerNodes, key, width, height,
-    viewport => nodes.push(viewport))
+    { registerViewport: viewport => nodes.push(viewport) })
   layout()
 }
 
 /** 已接 A 档的短弹窗沿用其外框大小；矮屏只缩内容窗口，操作仍在净区内。 */
 export function fitExistingDialog(parent: Node, card: Node, body: readonly Node[], footer: readonly Node[],
                                   key: DialogKey, width: number, height: number,
-                                  registerViewport?: (node: Node) => void): () => void {
+                                  options: { readonly registerViewport?: (node: Node) => void;
+                                    readonly flow?: boolean } = {}): () => void {
   // Gift等旧弹层的遮罩/装饰也在此首次装配，必须与宿主处在同一UI相机层。
   inheritDialogLayer(parent)
   const originalY = body.map(node => node.position.y)
   const wrapped = createDialogScroll(parent, 'DialogContent', width - FRAME_SIDE, 1, 0, 0)
   // Node.destroy延迟到帧尾；登记创建出的引用，不能同名查询拿到尚未移除的旧Mask。
-  registerViewport?.(wrapped.node)
+  options.registerViewport?.(wrapped.node)
   for (const node of body) {
     node.removeFromParent()
     wrapped.content.addChild(node)
   }
   const applyLayout = (reset = true): void => {
     const offset = wrapped.scroll.getScrollOffset().y
+    const layout = dialogLayout(dialogContentRect(parent), width - FRAME_SIDE, height - FRAME_VERTICAL)
+    if (options.flow) {
+      // 仅显式顺序正文使用流排；标题与说明按当前真实内宽换行，再量自身高度。
+      for (const node of body) {
+        const label = node.getComponent(Label)
+        if (label === null) continue
+        const box = node.getComponent(UITransform)!
+        box.setContentSize(layout.innerWidth, box.height)
+        label.overflow = Label.Overflow.RESIZE_HEIGHT
+        label.enableWrapText = true
+      }
+    }
     // RESIZE_HEIGHT 的文案在 attach/render 后才有实际高度，每次布局按当前字串量取。
-    const bodyBounds = body.map((node, index) => {
+    const boxes = body.map(node => {
       node.getComponent(Label)?.updateRenderData(true)
       const box = node.getComponent(UITransform)!
-      return { top: originalY[index]! + box.height * (1 - box.anchorY),
-        bottom: originalY[index]! - box.height * box.anchorY }
+      const label = node.getComponent(Label)
+      return { height: box.height, anchorY: box.anchorY,
+        visible: node.active && (label === null || label.string.length > 0) }
     })
-    const naturalTop = Math.max(0, ...bodyBounds.map(box => box.top))
-    const naturalBottom = Math.min(0, ...bodyBounds.map(box => box.bottom))
-    body.forEach((node, index) => node.setPosition(new Vec3(node.position.x, originalY[index]! - naturalTop, 0)))
-    const layout = dialogLayout(dialogContentRect(parent), width - FRAME_SIDE, height - FRAME_VERTICAL)
+    const flow = options.flow ? dialogBodyFlow(boxes) : null
+    const positions = flow?.positions ?? originalY
+    const bodyBounds = boxes.map((box, index) => ({
+      top: positions[index]! + box.height * (1 - box.anchorY),
+      bottom: positions[index]! - box.height * box.anchorY,
+    }))
+    const naturalTop = flow === null ? Math.max(0, ...bodyBounds.map(box => box.top)) : 0
+    const naturalBottom = flow === null ? Math.min(0, ...bodyBounds.map(box => box.bottom)) : -flow.height
+    body.forEach((node, index) => node.setPosition(new Vec3(node.position.x, positions[index]! - naturalTop, 0)))
     const localCenter = card === parent ? layout.centerY : 0
     card.setPosition(new Vec3(0, layout.centerY, 0))
     if (layout.compact) paintCompactDialogFrame(card, layout.width, layout.height)

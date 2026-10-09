@@ -57,8 +57,13 @@ async function renderFixture(spec) {
     const owner = bootstrap?.[spec.owner]
     if (!owner) throw new Error(`缺生产 ${spec.owner}`)
     if (spec.owner === 'armyQueue') { owner.node.name = spec.host; owner.show(Array.from({ length: 9 }, (_, index) => ({ id: `option-${index}`, label: `可选项${index + 1}`, detail: '测试选择' })), () => {}); return owner.node.name }
-    if (spec.owner === 'marchCompose') { owner.render({ targetId: 'fixture-target', targetName: '验收目标', mode: 'MARCH', coordText: '1,1', notice: '末项编成说明', submitting: false,
+    if (spec.owner === 'marchCompose') {
+      window.__marchPickIntents = []
+      owner.onPick = (unitId, count) => { window.__marchPickIntents.push({ unitId, count }) }
+      owner.render({ targetId: 'fixture-target', targetName: '验收目标长名称'.repeat(12), mode: 'MARCH', coordText: '1,1', notice: '编成条件说明'.repeat(24) + '末项编成说明', submitting: false,
       compose: { totalText: '0', options: Array.from({ length: 5 }, (_, index) => ({ unitId: `fixture-unit-${index}`, name: `测试兵种${index + 1}`, selected: 0, available: 10, unlocked: true })) } }); return 'MarchCompose' }
+    window.__offlineJumpIntents = []
+    owner.onJump = jump => { window.__offlineJumpIntents.push(jump) }
     owner.render({ items: ['资源汇总', '建筑汇总', '战斗汇总', '末项社交汇总'].map((text, index) => ({ text, detail: '点击查看', jump: ['city', 'city', 'world', 'social'][index] })) })
     return owner.node.name
   }
@@ -123,6 +128,13 @@ try {
         && geometry.frameInArea && geometry.clipInArea && geometry.separation && geometry.footer.every(row => row.inArea && (!row.active || row.material)), geometry)
       if (geometry.error) continue
       check(`${spec.host}/${name} 仅一个真实滚动窗且正文非空`, geometry.viewportCount === 1 && geometry.seen.length > 0, geometry)
+      if (spec.host === 'MarchCompose' || spec.host === 'OfflineReport') {
+        check(`${spec.host}/${name} 标题、坐标、正文行和说明自身框不相交`, geometry.bodyOverlaps.length === 0, geometry.bodyOverlaps)
+        if (spec.host === 'MarchCompose') {
+          check(`MarchCompose/${name} 条行自身框上锚与实际向下绘制一致`, geometry.bodyBoxes.filter(row => /^composeRow|^rallyBand$/.test(row.name)).every(row => row.anchorY === 1), geometry.bodyBoxes)
+          check(`MarchCompose/${name} 长标题真实内宽换行`, geometry.seen.some(row => row.text.startsWith('出征：') && row.box.height > 60), geometry.seen)
+        }
+      }
       if (spec.host === 'giftPopup') {
         const mask = await page.evaluate(() => {
           const cc = window.cc, host = cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('giftPopup')
@@ -222,6 +234,24 @@ try {
           if (point.verified) await page.mouse.click(point.x, point.y)
           await page.waitForTimeout(60)
         }
+      }
+      if (name === 'short240' && (spec.host === 'MarchCompose' || spec.host === 'OfflineReport')) {
+        const before = posts.length
+        const count = spec.host === 'MarchCompose' ? 5 : 4
+        for (let index = 0; index < count; index++) {
+          const rowName = spec.host === 'MarchCompose' ? `composeRow${index}` : `offlineRow${index}`
+          await page.evaluate(revealDialogNode, { ...spec, name: rowName })
+          await page.waitForTimeout(80)
+          const point = await page.evaluate(resolveCocosClickPoint,
+            spec.host === 'MarchCompose' ? { name: 'row-＋', within: rowName } : { name: rowName, within: spec.host })
+          check(`${spec.host}/short240 第${index + 1}行实际动作真实命中`, point.verified, point)
+          if (point.verified) await page.mouse.click(point.x, point.y)
+          await page.waitForTimeout(60)
+        }
+        const intents = await page.evaluate(host => host === 'MarchCompose' ? window.__marchPickIntents : window.__offlineJumpIntents, spec.host)
+        check(`${spec.host}/short240 所有行真实点击仅表达一次意图`, intents.length === count
+          && (spec.host !== 'MarchCompose' || new Set(intents.map(row => row.unitId)).size === 5), intents)
+        check(`${spec.host}/short240 行动作未直接发送请求`, posts.length === before)
       }
       await page.screenshot({ path: path.join(OUT, `${spec.host}-${name}-bottom.png`) })
       await page.evaluate(scrollDialogTo, { ...spec, offset: 0 })

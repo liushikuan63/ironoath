@@ -8,8 +8,8 @@
  *
  * <p>判据（都能失败）：
  *   ① 训练中那一行必须出现「加速」「取消」两只按钮（**只在训练时出现**：没在训练还摆着就是骗点击）；
- *   ② 点「加速」必须发出 `/army/speedUp`，且该行倒计时**变短**（不是只发请求就算过）；
- *   ③ 点「取消」必须发出 `/army/cancel`，且该行不再处于训练态（文本里没有"训练中"）。
+ *   ② 点「加速」并真实选择一张训练令，`/army/speedUp` 业务成功；同批次 finishAt 按回执提前、库存只减一；
+ *   ③ 点「取消」必须发出业务成功的 `/army/cancel`，权威列表和该行都不再处于训练态。
  *
  * 退出码：0 全绿；1 判据失败；2 前置不满足（产物/后端/建号/没找到可训练的兵种）。
  *
@@ -36,6 +36,7 @@ const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.ARMY_QUEUE_PORT ?? 8298)
 const OUT = 'client/build/art-verify'
 const SHOT = path.join(OUT, '17-army-queue-actions.png')
+console.log(`[army-queue] 后端 ${BACKEND} 预览端口 ${PORT}`)
 
 if (!existsSync(path.resolve(process.cwd(), ROOT, 'index.html'))) {
   console.error('[army-queue][前置] 产物不存在（先跑 scripts/build-webmobile.sh）')
@@ -97,10 +98,19 @@ console.log(`[army-queue] 兵营已建在 (${free[0]},${free[1]})`)
 // 而上限由"上阵武将的统帅值"决定 ⇒ 必须真有一个武将在编队里。
 // 武将从仓库**唯一那条**凭空发奖励的通路来（`/ops/mail/send`，`type=HERO` 合法），与整城验收补资源同一条。
 const HERO_ID = process.env.ARMY_QUEUE_HERO ?? 'hero_ssr_01'
+const TRAIN_ITEM_ID = process.env.ARMY_QUEUE_TRAIN_ITEM ?? 'item_speedup_train_1h'
+// 一小时训练令会直接完成 10 人批次；用 100 人批次保留之后的取消前提。
+const TRAIN_COUNT = 100
 const mail = await post('/ops/mail/send', {
   requestId: `army-queue-hero-${Date.now()}`, playerId,
   title: '军队队列探针用武将', text: '自动化量具建号后的补发（dev 后端限定）', actor: 'tools/verify-army-queue',
-  rewards: [{ type: 'HERO', id: HERO_ID, count: 1, name: HERO_ID }],
+  rewards: [
+    { type: 'HERO', id: HERO_ID, count: 1, name: HERO_ID },
+    { type: 'ITEM', id: TRAIN_ITEM_ID, count: 2, name: '训练令' },
+    // dev 量具预算，覆盖 100 人批次；不改变产品的新号初始资源。
+    { type: 'RESOURCE', id: 'IRON', count: 10_000, name: '铁矿' },
+    { type: 'RESOURCE', id: 'GRAIN', count: 10_000, name: '粮草' },
+  ],
 }, { 'X-Ops-Token': process.env.ARMY_QUEUE_OPS_TOKEN ?? 'art-verify-local' })
 if (mail.code !== 0) {
   console.error(`[army-queue][前置] 补发武将被拒（令牌没配？）：${JSON.stringify(mail)}`)
@@ -135,13 +145,27 @@ if (trainable === undefined) {
   console.error('[army-queue][前置] 没有可训练的兵种（新号也应当有第一个）')
   process.exit(2)
 }
+// 奖励入账会受仓容截断；按本次真实下发的单兵消耗核算，不能只相信发奖请求成功。
+const budgetCity = await get('/city/list', HEAD)
+const trainingBudget = (trainable.trainCost ?? []).map(cost => ({
+  type: cost.type, needed: cost.amount * TRAIN_COUNT,
+  current: budgetCity.data?.resources?.[cost.type]?.current,
+  cap: budgetCity.data?.resources?.[cost.type]?.cap,
+}))
+console.log(`[army-queue] 训练资源与仓容：${JSON.stringify(trainingBudget)}`)
+if (budgetCity.code !== 0 || trainingBudget.length === 0 || trainingBudget.some(resource =>
+  typeof resource.current !== 'number' || typeof resource.cap !== 'number'
+  || resource.current < resource.needed || resource.cap < resource.needed)) {
+  console.error('[army-queue][前置] 发奖后资源或仓容仍容不下本次训练预算')
+  process.exit(2)
+}
 const start = await post('/army/train',
-  { requestId: `army-queue-train-${Date.now()}`, unitId: trainable.unitId, count: 10 }, HEAD)
+  { requestId: `army-queue-train-${Date.now()}`, unitId: trainable.unitId, count: TRAIN_COUNT }, HEAD)
 if (start.code !== 0) {
   console.error(`[army-queue][前置] 发起训练失败（${trainable.unitId}）：${JSON.stringify(start)}`)
   process.exit(2)
 }
-console.log(`[army-queue] 建号 ${playerId}：${trainable.name ?? trainable.unitId} 已开始训练 10 个`)
+console.log(`[army-queue] 建号 ${playerId}：${trainable.name ?? trainable.unitId} 已开始训练 ${TRAIN_COUNT} 个`)
 
 const preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
 let browser
@@ -298,29 +322,100 @@ const activeRow = training.active
 console.log(`[army-queue] 行数=${training.rowCount} 训练中那一行：加速键=${activeRow?.speed} 取消键=${activeRow?.cancel}`
   + ` 倒计时=${activeRow?.countdown ?? '(无)'} 文本=${JSON.stringify(activeRow?.texts ?? null)}`)
 
-// 点「加速」→ 请求要出去，倒计时要变短
+// 读权威批次与库存；自然过去两秒不能冒充道具加速成功。
 const before = activeRow?.countdown ?? null
+const armyBefore = await get('/army/list', HEAD)
+const unitBefore = armyBefore.data?.units?.find(unit => unit.unitId === trainable.unitId)
+const bagBefore = await get('/bag/list', HEAD)
+const itemBefore = bagBefore.data?.items?.find(item => item.itemId === TRAIN_ITEM_ID)
+const captureArmyResponse = endpoint => page.waitForResponse(response =>
+  response.request().method() === 'POST' && new URL(response.url()).pathname === `/army/${endpoint}`,
+{ timeout: 10_000 }).then(async response => ({ status: response.status(),
+  request: response.request().postDataJSON(), ...await response.json() }))
+  .catch(error => ({ missing: error.message }))
+
 const postsBeforeSpeed = armyPosts.length
+const speedResponsePromise = captureArmyResponse('speedUp')
 const speedPoint = await clickNode('SpeedTrainButton')
+let speedChoice = null
+let choicePoint = { clicked: false, reason: 'speedup-picker-not-found' }
 if (speedPoint.clicked) {
-  await page.waitForTimeout(2000)
+  await page.waitForFunction(() => {
+    const walk = node => (node.name === 'ChoiceOverlay' && node.activeInHierarchy)
+      || node.children.some(walk)
+    return walk(window.cc.director.getScene())
+  }, null, { timeout: 3000 }).catch(() => {})
+  speedChoice = await page.evaluate(itemName => {
+    let popup = null
+    const walk = node => {
+      if (node.name === 'ChoiceOverlay' && node.activeInHierarchy) popup = node
+      for (const child of node.children) walk(child)
+    }
+    walk(window.cc.director.getScene())
+    if (!popup) return null
+    const options = []
+    const rows = node => {
+      if (/^Choice-\d+$/.test(node.name) && node.activeInHierarchy) {
+        const texts = []
+        const labels = child => {
+          const text = child.getComponent('cc.Label')?.string
+          if (text) texts.push(text)
+          for (const grand of child.children) labels(grand)
+        }
+        labels(node)
+        options.push({ name: node.name, texts })
+      }
+      for (const child of node.children) rows(child)
+    }
+    rows(popup)
+    const picked = options.find(option => option.texts.includes(itemName)
+      && option.texts.some(text => text.startsWith('用 1 张')))
+    popup.name = 'ArmyQueueProbeSpeedupPicker'
+    return { options, picked: picked?.name ?? null }
+  }, itemBefore?.name ?? '')
+  if (speedChoice?.picked) {
+    await page.screenshot({ path: path.join(OUT, '17-army-queue-speedup-choice.png') })
+    choicePoint = await clickNodeViaCocos(page,
+      { name: speedChoice.picked, within: 'ArmyQueueProbeSpeedupPicker' })
+  }
+  await page.evaluate(() => {
+    const walk = node => {
+      if (node.name === 'ArmyQueueProbeSpeedupPicker') node.name = 'ChoiceOverlay'
+      for (const child of node.children) walk(child)
+    }
+    walk(window.cc.director.getScene())
+  })
 }
+const speedResponse = await speedResponsePromise
+await page.waitForTimeout(1500)
 const afterSpeed = await rowReadout()
 const afterText = afterSpeed.active?.countdown ?? null
+const armyAfterSpeed = await get('/army/list', HEAD)
+const unitAfterSpeed = armyAfterSpeed.data?.units?.find(unit => unit.unitId === trainable.unitId)
+const bagAfterSpeed = await get('/bag/list', HEAD)
+const itemAfterSpeed = bagAfterSpeed.data?.items?.find(item => item.itemId === TRAIN_ITEM_ID)
 console.log(`[army-queue] 点「加速」→ /army/* 新增 [${armyPosts.slice(postsBeforeSpeed).join('、') || '(无)'}]`
   + ` 倒计时：${before ?? '(无)'} → ${afterText ?? '(无)'}`)
+console.log(`[army-queue] 真实训练令选项=${JSON.stringify(speedChoice)} 点击=${JSON.stringify(choicePoint)}`)
+console.log(`[army-queue] 加速回执=${JSON.stringify(speedResponse)} 权威finishAt=${unitBefore?.finishAt}→${unitAfterSpeed?.finishAt}`
+  + ` 库存=${itemBefore?.count ?? 0}→${itemAfterSpeed?.count ?? 0}`)
 
 // 再点「取消」：训练态应当消失（取消不返还到 UI 文本里，但队列要腾出来）
 const postsBeforeCancel = armyPosts.length
+const cancelResponsePromise = captureArmyResponse('cancel')
 const cancelPoint = await clickNode('CancelTrainButton')
+const cancelResponse = await cancelResponsePromise
 if (cancelPoint.clicked) {
   await page.waitForTimeout(2000)
 }
 const afterCancel = await rowReadout()
+const armyAfterCancel = await get('/army/list', HEAD)
+const unitAfterCancel = armyAfterCancel.data?.units?.find(unit => unit.unitId === trainable.unitId)
 await page.screenshot({ path: SHOT })
 
 console.log(`[army-queue] 点「取消」→ /army/* 新增 [${armyPosts.slice(postsBeforeCancel).join('、') || '(无)'}]`
   + ` 取消后训练中的行=${afterCancel.active === null ? '(没有了)' : `加速键=${afterCancel.active.speed} 取消键=${afterCancel.active.cancel}`}`)
+console.log(`[army-queue] 取消回执=${JSON.stringify(cancelResponse)} 权威training=${unitAfterCancel?.training}`)
 console.log(`[army-queue] 截图：${SHOT}`)
 console.log(`[army-queue] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
 
@@ -337,6 +432,24 @@ if (activeRow === null) {
 if (!armyPosts.includes('speedUp')) {
   failures.push('点了「加速」没有发出 /army/speedUp —— 按钮没接上')
 }
+if (!choicePoint.clicked || speedChoice?.options?.length !== 1) {
+  failures.push(`没有真实选择唯一的「用 1 张」训练令：${JSON.stringify(speedChoice)} ${choicePoint.reason ?? ''}`)
+}
+if (speedResponse.status !== 200 || speedResponse.code !== 0
+    || speedResponse.request?.unitId !== trainable.unitId || speedResponse.request?.itemId !== TRAIN_ITEM_ID) {
+  failures.push(`加速未以正确兵种与道具业务成功：${JSON.stringify(speedResponse)}`)
+}
+const reducedSeconds = speedResponse.data?.reducedSeconds
+if (!Number.isSafeInteger(reducedSeconds) || reducedSeconds <= 0
+    || unitBefore?.finishAt - speedResponse.data?.finishAt !== reducedSeconds * 1000
+    || unitAfterSpeed?.finishAt !== speedResponse.data?.finishAt
+    || unitAfterSpeed?.training !== TRAIN_COUNT) {
+  failures.push(`权威同批次finishAt未按回执提前：${unitBefore?.finishAt}→${unitAfterSpeed?.finishAt}，回执=${JSON.stringify(speedResponse.data)}`)
+}
+if (itemBefore?.effectKind !== 'REDUCE_TRAIN_SECONDS' || itemBefore?.count !== 2
+    || (itemAfterSpeed?.count ?? 0) !== itemBefore.count - 1) {
+  failures.push(`训练令未恰好消费一张：${itemBefore?.count ?? 0}→${itemAfterSpeed?.count ?? 0}`)
+}
 if (before === null || afterText === null) {
   failures.push(`训练行的倒计时读不到（${before ?? '(无)'} → ${afterText ?? '(无)'}）—— 这条判据走不到，不许当绿`)
 } else if (before === afterText) {
@@ -345,7 +458,11 @@ if (before === null || afterText === null) {
 if (!armyPosts.includes('cancel')) {
   failures.push('点了「取消」没有发出 /army/cancel —— 按钮没接上')
 }
-if (afterCancel.active !== null && afterCancel.active.cancel === true) {
+if (cancelResponse.status !== 200 || cancelResponse.code !== 0
+    || cancelResponse.request?.unitId !== trainable.unitId || unitAfterCancel?.training !== 0) {
+  failures.push(`取消未业务成功并清空权威训练状态：${JSON.stringify(cancelResponse)} training=${unitAfterCancel?.training}`)
+}
+if (afterCancel.active !== null) {
   failures.push('取消之后「取消」键还在 —— 那一行已经不在训练中了，按钮该收起来')
 }
 if (errors.length > 0) {
@@ -356,7 +473,7 @@ if (failures.length > 0) {
   process.exitCode = 1
   return
 }
-console.log('[army-queue] 全绿：训练行出现两只动作按钮，加速发了请求且倒计时变短，取消发了请求且按钮收起')
+console.log('[army-queue] 全绿：真选一张训练令、业务成功、权威finishAt按回执提前且库存减一；真取消业务成功且训练行收起')
 }
 try {
   browser = await chromium.launch({ headless: true })

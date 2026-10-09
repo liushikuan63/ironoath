@@ -57,6 +57,21 @@ export function readDialogGeometry(spec) {
   if (scroll) {
     const content = scroll.content
     const transform = content.getComponent('cc.UITransform')
+    // 正文的同胞自身框用于查标题/坐标与整条行相压；不把条行内部文字的合理叠层混进来。
+    const bodyBoxes = content.children.filter(node => node.activeInHierarchy)
+      .map(node => ({ node, box: bounds(node), label: node.getComponent('cc.Label') }))
+      .filter(row => row.box && (!row.label || row.label.string.length > 0))
+      .map(row => ({ name: row.node.name, text: row.label?.string ?? null, box: row.box,
+        anchorY: row.node.getComponent('cc.UITransform').anchorY }))
+    const bodyOverlaps = []
+    for (let index = 0; index < bodyBoxes.length; index++) {
+      for (const other of bodyBoxes.slice(index + 1)) {
+        const row = bodyBoxes[index], a = row.box, b = other.box
+        const width = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
+        const height = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+        if (width > 1 && height > 1) bodyOverlaps.push({ a: row.name, aText: row.text, b: other.name, bText: other.text, width, height })
+      }
+    }
     const labels = []
     const collect = (node, key) => { labels.push({ node, key }); node.children.forEach((child, index) => collect(child, `${key}.${index}`)) }
     content.children.forEach((node, index) => collect(node, String(index)))
@@ -70,7 +85,7 @@ export function readDialogGeometry(spec) {
         visibleTo: Math.min(box.height, box.y + box.height - clip.y), width: box.width, overflow: label.overflow })
     }
     return { area, clip, frameBox, frameInArea: inside(frameBox, area), clipInArea: inside(clip, area),
-      masked: !!viewport.getComponent('cc.Mask'), footer, separation, seen,
+      masked: !!viewport.getComponent('cc.Mask'), footer, separation, seen, bodyBoxes, bodyOverlaps,
       material: bitmapFrame || (frameLayerVisible && vectorFrame), frameStyle: bitmapFrame ? 'A-bitmap' : frameLayerVisible && vectorFrame ? 'token-vector' : 'missing',
       hostLayer: host.layer, frameLayer: frameRender?.layer, frameRenderer: frameRender?._uiProps.uiComp?.constructor?.name,
       viewportCount: host.children.filter(node => node.name === (spec.viewport ?? 'DialogContent')).length,

@@ -105,7 +105,8 @@ export class OfflineReportOverlay {
     const dismiss = this.createButton('离线汇总知道了', 0,
       -height / 2 + PANEL_IRON_INSET.bottom + 26, () => this.onDismiss?.())
     this.layoutDialog = fitExistingDialog(this.node, plate,
-      [this.titleLabel.node, ...this.rowNodes], [dismiss], 'ui.panel.parchment', width, height)
+      [this.titleLabel.node, ...this.rowNodes], [dismiss], 'ui.panel.parchment', width, height,
+      { flow: true })
     this.node.active = false
   }
 
@@ -117,7 +118,6 @@ export class OfflineReportOverlay {
       return
     }
     this.node.active = true
-    this.layoutDialog()
     this.rowNodes.forEach((row, index) => {
       const item = view.items[index]
       row.active = item !== undefined
@@ -128,6 +128,8 @@ export class OfflineReportOverlay {
       this.rowDetailLabels[index]!.string = item.detail ?? ''
       this.rowDetailLabels[index]!.color = item.detail === null ? COLOR_DIM : COLOR_DIM
     })
+    // 当帧先更新行显隐与文字，流排才能按真实标题高度和当前条目数计算滚动范围。
+    this.layoutDialog()
   }
 
   /**

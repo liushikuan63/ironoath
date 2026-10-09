@@ -471,9 +471,10 @@ export interface PanelTargets {
   /** 军队那一行的「队列」菜单（B26 S15）：选项与"点了做什么"都由编排层给，面板只画与回抛 */
   armyQueueChoice?(options: readonly ChoiceOption[], onPick: (id: string) => void): void
   /**
-   * 用哪一张训练令加速治疗（V12）。选项由编排层按 `effectKind` 筛好，面板只画与回抛 ——
+   * 用哪一张训练令加速训练或治疗。两者共用标题「用哪一张加速」的选择器。
+   * 选项由编排层按 `effectKind` 筛好，面板只画与回抛 ——
    * 与 `speedupTargetChoice` 分开，是因为两者回抛的东西不同：那个回 `targetId`（给 `/item/use`），
-   * 这个回 `itemId`（给 `/army/treatSpeedUp`，一次只吃一张）。
+   * 这个回 `itemId`（给军队的训练或治疗加速端点，一次只吃一张）。
    */
   treatSpeedupChoice?(options: readonly ResearchSpeedupChoice[],
     onPick: (choice: ResearchSpeedupChoice) => void): void
@@ -1152,11 +1153,36 @@ export class AppRoot {
       ['city', 'reddot'])
   }
 
-  /** 军队：加速正在训练的那一批（B05）。`seconds` 与 `itemId` 由服务端按来源裁定，客户端不自己算时长。 */
+  /** 训练加速必须由玩家选择一张训练令，秒数由服务端道具配置裁定。 */
   speedUpTraining(unitId: string): Promise<void> {
-    this.track(TRACK_EVENTS.speedupUsed, { target: unitId, source: 'TRAIN' })
-    return this.write('army', this.api.armySpeedUp({ unitId, seconds: null, itemId: null }),
-      ['army', 'reddot'])
+    if (this.armyResp === null) {
+      this.rejectNeeds('army', '军队清单还没读到，稍后再试')
+      return Promise.resolve()
+    }
+    const unit = this.armyResp.units.find(row => row.unitId === unitId)
+    if (unit === undefined || unit.training <= 0) {
+      this.rejectNeeds('army', '这一队没有在训练，用不了加速')
+      return Promise.resolve()
+    }
+    if (this.bagResp === null) {
+      this.rejectNeeds('army', '道具清单还没读到，稍后再试')
+      return Promise.resolve()
+    }
+    const options = buildTrainSpeedupChoices(this.bagResp)
+    if (options.length === 0) {
+      this.rejectNeeds('army', '手里没有训练令（建造令与研究令用不到训练上）')
+      return Promise.resolve()
+    }
+    if (this.targets.treatSpeedupChoice === undefined) {
+      this.rejectNeeds('army', pickUnavailable('加速道具'))
+      return Promise.resolve()
+    }
+    this.targets.treatSpeedupChoice(options, picked => {
+      this.track(TRACK_EVENTS.speedupUsed, { target: unitId, source: 'TRAIN', itemId: picked.itemId })
+      void this.write('army', this.api.armySpeedUp({ unitId, seconds: null, itemId: picked.itemId }),
+        ['army', 'bag', 'reddot'])
+    })
+    return Promise.resolve()
   }
 
   /**

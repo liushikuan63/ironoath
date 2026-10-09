@@ -9,6 +9,20 @@ export const DIALOG_COMPACT_INSET = {
   left: CORNER_RADIUS, right: CORNER_RADIUS, top: CORNER_RADIUS, bottom: CORNER_RADIUS,
 } as const
 
+/** 按真实自身框顺序排正文；上锚条行与中心锚文字都从同一条上沿往下计账。 */
+export function dialogBodyFlow(boxes: readonly {
+  readonly height: number; readonly anchorY: number; readonly visible: boolean
+}[]): { readonly positions: readonly number[]; readonly height: number } {
+  let top = 0
+  const positions = boxes.map(box => {
+    if (!box.visible) return 0
+    const position = -top - box.height * (1 - box.anchorY)
+    top += box.height + CORNER_RADIUS
+    return position
+  })
+  return { positions, height: Math.max(0, top - CORNER_RADIUS) }
+}
+
 export function dialogLayout(area: DialogRect, contentWidth: number, naturalHeight: number): {
   readonly width: number; readonly height: number; readonly centerY: number;
   readonly innerTop: number; readonly innerBottom: number; readonly innerWidth: number;

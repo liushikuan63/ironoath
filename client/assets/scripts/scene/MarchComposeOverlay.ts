@@ -190,6 +190,7 @@ export class MarchComposeOverlay {
     const bandY = PANEL_HEIGHT / 2 - 92 - (VISIBLE_ROWS - 1) * (ROW_HEIGHT + 4)
     this.bandNode.setPosition(new Vec3(0, bandY, 0))
     this.bandNode.addComponent(UITransform).setContentSize(new Size(ROW_WIDTH, ROW_HEIGHT))
+    this.bandNode.getComponent(UITransform)!.setAnchorPoint(0.5, 1)
     const bandBg = this.bandNode.addComponent(Graphics)
     bandBg.fillColor = COLOR_ROW
     // 行底宽从 inset 推（同台账 #811 ① 那一族）：原先 PANEL_WIDTH - 48 = 572，而 A 档 border 80 之后
@@ -254,8 +255,9 @@ export class MarchComposeOverlay {
       if (label !== null && label !== undefined) label.color = COLOR_TEXT
     })
     this.layoutDialog = fitExistingDialog(this.node, plate,
-      [crest, this.titleLabel.node, this.coordLabel.node, this.totalLabel.node, this.noticeLabel.node,
-        ...this.rowNodes, this.bandNode], footer, 'ui.panel.iron', width, PANEL_HEIGHT)
+      [crest, this.titleLabel.node, this.coordLabel.node, ...this.rowNodes, this.bandNode,
+        this.totalLabel.node, this.noticeLabel.node], footer, 'ui.panel.iron', width, PANEL_HEIGHT,
+      { flow: true })
 
     this.node.active = false
   }
@@ -391,6 +393,8 @@ export class MarchComposeOverlay {
     const y = PANEL_HEIGHT / 2 - 92 - index * (ROW_HEIGHT + 4)
     node.setPosition(new Vec3(0, y, 0))
     node.addComponent(UITransform).setContentSize(new Size(ROW_WIDTH, ROW_HEIGHT))
+    // Graphics从行上沿往下画44；真实自身框与命中区也用上锚，不能向上多占半行。
+    node.getComponent(UITransform)!.setAnchorPoint(0.5, 1)
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW
     graphics.roundRect(-ROW_WIDTH / 2, -ROW_HEIGHT, ROW_WIDTH, ROW_HEIGHT, 6)

@@ -110,7 +110,7 @@ export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
 }
 
 /**
- * 加速道具的候选：**按服务端下发的 `effectKind` 筛**，一次给两个档位（用 1 张 / 全用）。
+ * 加速道具候选按服务端下发的 `effectKind` 筛；研究给「用 1 张 / 全用」，训练和治疗只给一张。
  *
  * <p><b>为什么敢给"全用"</b>：服务端对 `count` 只校验"为正"与"背包里够"，而且**用超了会退**
  * （`TechAppService.applySpeedUp` 里那句 `refundItems`：研究提前完成后剩下的张数原路归还），
@@ -124,13 +124,15 @@ export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
  * （`ArmyAppService.treatSpeedUp` 的注释："两者的语义完全相同，再开一种只会让玩家背包里多两种功能重复的道具"），
  * 所以调用方只需要给出正确的 `effectKind`。
  */
-function buildSpeedupItemChoices(bag: BagListResp | null, effectKind: string): readonly ResearchSpeedupChoice[] {
+function buildSpeedupItemChoices(bag: BagListResp | null, effectKind: string,
+                                allowAll = true): readonly ResearchSpeedupChoice[] {
   if (bag === null) {
     return []
   }
   const out: ResearchSpeedupChoice[] = []
   for (const item of bag.items) {
-    if (item.type !== 'SPEEDUP' || item.effectKind !== effectKind) {
+    if (item.type !== 'SPEEDUP' || item.effectKind !== effectKind
+        || (!allowAll && item.count <= 0)) {
       continue
     }
     // `BagItem` 里没有 `effectValue` —— 一张减多少秒**没下发**，所以这句不许编：
@@ -139,7 +141,7 @@ function buildSpeedupItemChoices(bag: BagListResp | null, effectKind: string): r
       id: `${item.itemId}:one`, itemId: item.itemId, count: 1,
       label: item.name, detail: `用 1 张 · 持有 ${item.count} 张`,
     })
-    if (item.count > 1) {
+    if (allowAll && item.count > 1) {
       out.push({
         id: `${item.itemId}:all`, itemId: item.itemId, count: item.count,
         label: `${item.name} 全用`, detail: `一次用掉 ${item.count} 张 · 用不完的会退回`,
@@ -160,9 +162,10 @@ export function buildResearchSpeedupChoices(bag: BagListResp | null): readonly R
  * <p><b>为什么两者共用一份</b>：`ArmyAppService.treatSpeedUp` 里写明治疗与训练共用"减少秒数"这一类道具 ——
  * 服务端要求 `itemId` 的 `effectKind` 必须正是 `REDUCE_TRAIN_SECONDS`（"秒数只能来自道具配置"）。
  * 而 `/army/treatSpeedUp` 的请求体只有 `{requestId, itemId}`（治疗是**全局一批**，没有 unitId/targetId）。
+ * 两个军队端点每次只吃一张，因此只给「用 1 张」，不展示仅研究支持的「全用」。
  */
 export function buildTrainSpeedupChoices(bag: BagListResp | null): readonly ResearchSpeedupChoice[] {
-  return buildSpeedupItemChoices(bag, 'REDUCE_TRAIN_SECONDS')
+  return buildSpeedupItemChoices(bag, 'REDUCE_TRAIN_SECONDS', false)
 }
 
 /** 未放置建筑候选。地块能否放置由玩家点选坐标后交给服务端判定。 */

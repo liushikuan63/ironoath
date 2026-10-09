@@ -588,6 +588,8 @@ interface Harness {
   /** 递给「用哪一张加速」的候选，以及点其中一张 */
   readonly researchSpeedupOptions: readonly ResearchSpeedupChoice[]
   pickResearchSpeedup(itemId: string, count: number): void
+  readonly armySpeedupOptions: readonly ResearchSpeedupChoice[]
+  pickArmySpeedup(itemId: string): void
   readonly lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null
   /** 最近一次购买回执里服务端说的到账与扣币 */
   readonly lastStaminaBought: { granted: number, costGold: number } | null
@@ -668,7 +670,7 @@ interface Harness {
   pickShareChannel(channel: string): void
 }
 
-function harness(options: { transportFails?: boolean } = {}): Harness {
+function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolean } = {}): Harness {
   resetWorld()
   const http = new RoutingHttp()
   const sockets: RecordingSocket[] = []
@@ -764,6 +766,8 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
   let lastCityCancel: number | null = null
   let researchSpeedupOptions: ResearchSpeedupChoice[] = []
   let researchSpeedupPick: ((choice: ResearchSpeedupChoice) => void) | null = null
+  let armySpeedupOptions: ResearchSpeedupChoice[] = []
+  let armySpeedupPick: ((choice: ResearchSpeedupChoice) => void) | null = null
   let lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null = null
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
@@ -917,6 +921,13 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
       researchSpeedupOptions = [...options]
       researchSpeedupPick = onPick
     },
+    ...(options.armySpeedupPicker === false ? {} : {
+      treatSpeedupChoice: (choices: readonly ResearchSpeedupChoice[],
+        onPick: (choice: ResearchSpeedupChoice) => void) => {
+        armySpeedupOptions = [...choices]
+        armySpeedupPick = onPick
+      },
+    }),
     techSpeededUp: (resp) => {
       attached.push('techSpeededUp')
       lastTechSpeedUp = {
@@ -1082,6 +1093,13 @@ function harness(options: { transportFails?: boolean } = {}): Harness {
     pickResearchSpeedup(itemId, count) {
       const choice = researchSpeedupOptions.find(o => o.itemId === itemId && o.count === count)
       if (choice !== undefined) researchSpeedupPick?.(choice)
+    },
+    get armySpeedupOptions() {
+      return armySpeedupOptions
+    },
+    pickArmySpeedup(itemId) {
+      const choice = armySpeedupOptions.find(o => o.itemId === itemId && o.count === 1)
+      if (choice !== undefined) armySpeedupPick?.(choice)
     },
     get lastTechSpeedUp() {
       return lastTechSpeedUp
@@ -4368,6 +4386,121 @@ test('没在研究时点取消：一个请求都不发，说的是"不用取消"
   // console 那条只有开发者看得见（#356/#357）；同一句话要落到科技页那条 `noticeText` 上，
   // 而落点走的是**纯重递**——上面那条 `calls.length` 不变就是它没顺手去重拉列表的证据
   assert.match(String(h.lastTech?.noticeText), /没有在研究的项目/)
+})
+
+const TRAINING_FOR_SPEEDUP = {
+  ...ARMY_FOR_MARCH,
+  units: [{ ...ARMY_FOR_MARCH.units[0], training: 100,
+    finishAt: SERVER_NOW + 6_000_000, remainingSeconds: 6000 }],
+}
+
+const BAG_FOR_TRAIN_SPEEDUP = {
+  items: [
+    { itemId: 'item_speedup_train_1h', name: '一小时训练令', type: 'SPEEDUP', rarity: 'R',
+      count: 2, stackMax: 999, sortKey: 1, effectKind: 'REDUCE_TRAIN_SECONDS', effectTarget: null },
+    { itemId: 'item_speedup_build_1h', name: '建造令', type: 'SPEEDUP', rarity: 'R',
+      count: 9, stackMax: 999, sortKey: 2, effectKind: 'REDUCE_BUILD_SECONDS', effectTarget: null },
+    { itemId: 'item_speedup_research_1h', name: '研究令', type: 'SPEEDUP', rarity: 'R',
+      count: 3, stackMax: 999, sortKey: 3, effectKind: 'REDUCE_RESEARCH_SECONDS', effectTarget: null },
+  ],
+  capacityUsed: 3, capacityMax: 100,
+}
+
+test('训练加速：真选择前零请求，确认后带正确训练令并刷新军队背包红点', async () => {
+  const h = harness()
+  h.http.overrides.set('/army/list', TRAINING_FOR_SPEEDUP)
+  h.http.overrides.set('/bag/list', BAG_FOR_TRAIN_SPEEDUP)
+  h.http.overrides.set('/army/speedUp', { unitId: 'unit_infantry_t1', count: 100,
+    finishAt: SERVER_NOW + 2_400_000, remainingSeconds: 2400, reducedSeconds: 3600,
+    cost: [], troopsInUse: 500, troopCap: 1000, serverNow: SERVER_NOW })
+  await h.root.start('dev-1', '君')
+
+  await h.root.speedUpTraining('unit_infantry_t1')
+  assert.equal(h.http.countOf('/army/speedUp'), 0, '玩家尚未选择，不得直接消耗或发送空 itemId')
+  assert.deepEqual(h.armySpeedupOptions.map(o => [o.itemId, o.count, o.detail]),
+    [['item_speedup_train_1h', 1, '用 1 张 · 持有 2 张']])
+  const reads = ['/army/list', '/bag/list', '/social/reddot'].map(path => h.http.countOf(path))
+
+  h.pickArmySpeedup('item_speedup_train_1h')
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  const calls = h.http.calls.filter(c => c.path === '/army/speedUp')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.body.unitId, 'unit_infantry_t1')
+  assert.equal(calls[0]?.body.itemId, 'item_speedup_train_1h')
+  assert.equal(calls[0]?.body.seconds, null, '加速量仍由道具配置裁定')
+  assert.ok(typeof calls[0]?.body.requestId === 'string' && calls[0].body.requestId.length > 0)
+  assert.deepEqual(['/army/list', '/bag/list', '/social/reddot'].map(path => h.http.countOf(path)),
+    reads.map(count => count + 1), '道具被扣之后必须重读背包，不能留下旧持有量')
+  assert.equal(h.errors.length, 0)
+})
+
+test('训练加速：军队清单未读到时零请求并明确读取前提', async () => {
+  const h = harness()
+  await h.root.speedUpTraining('unit_infantry_t1')
+  assert.equal(h.http.countOf('/army/speedUp'), 0)
+  assert.equal(h.armySpeedupOptions.length, 0)
+  assert.ok(h.errors.some(e => /军队清单还没读到/.test(e[1])))
+})
+
+test('训练加速：背包未读到时零请求并区分未读取与无道具', async () => {
+  const h = harness()
+  h.http.overrides.set('/army/list', TRAINING_FOR_SPEEDUP)
+  await h.root.refresh('army')
+  await h.root.speedUpTraining('unit_infantry_t1')
+  assert.equal(h.http.countOf('/army/speedUp'), 0)
+  assert.equal(h.armySpeedupOptions.length, 0)
+  assert.ok(h.errors.some(e => /道具清单还没读到/.test(e[1])))
+})
+
+test('训练加速：没有正库存训练令时不列建造令研究令，也不发空道具请求', async () => {
+  const h = harness()
+  h.http.overrides.set('/army/list', TRAINING_FOR_SPEEDUP)
+  h.http.overrides.set('/bag/list', { ...BAG_FOR_TRAIN_SPEEDUP,
+    items: BAG_FOR_TRAIN_SPEEDUP.items.map(item => item.effectKind === 'REDUCE_TRAIN_SECONDS'
+      ? { ...item, count: 0 } : item) })
+  await h.root.start('dev-1', '君')
+  await h.root.speedUpTraining('unit_infantry_t1')
+  assert.equal(h.http.countOf('/army/speedUp'), 0)
+  assert.equal(h.armySpeedupOptions.length, 0)
+  assert.ok(h.errors.some(e => /没有训练令/.test(e[1])))
+})
+
+test('训练加速：已完成或不存在的队列不消耗道具', async () => {
+  const h = harness()
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  h.http.overrides.set('/bag/list', BAG_FOR_TRAIN_SPEEDUP)
+  await h.root.start('dev-1', '君')
+  await h.root.speedUpTraining('unit_infantry_t1')
+  await h.root.speedUpTraining('unknown-unit')
+  assert.equal(h.http.countOf('/army/speedUp'), 0)
+  assert.equal(h.armySpeedupOptions.length, 0)
+  assert.ok(h.errors.some(e => /没有在训练/.test(e[1])))
+})
+
+test('训练加速：选择器缺失时明确失败而不自动选第一张', async () => {
+  const h = harness({ armySpeedupPicker: false })
+  h.http.overrides.set('/army/list', TRAINING_FOR_SPEEDUP)
+  h.http.overrides.set('/bag/list', BAG_FOR_TRAIN_SPEEDUP)
+  await h.root.start('dev-1', '君')
+  await h.root.speedUpTraining('unit_infantry_t1')
+  assert.equal(h.http.countOf('/army/speedUp'), 0)
+  assert.ok(h.errors.some(e => /加速道具/.test(e[1])))
+})
+
+test('训练加速：道具在确认前已被用掉时保留业务错误并禁止成功刷新', async () => {
+  const h = harness()
+  h.http.overrides.set('/army/list', TRAINING_FOR_SPEEDUP)
+  h.http.overrides.set('/bag/list', BAG_FOR_TRAIN_SPEEDUP)
+  await h.root.start('dev-1', '君')
+  await h.root.speedUpTraining('unit_infantry_t1')
+  const total = h.http.calls.length
+  h.http.bizFailNext = { code: 4003, msg: '道具数量不足', detail: '需要训练令 1 张' }
+  h.pickArmySpeedup('item_speedup_train_1h')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(h.http.calls.length, total + 1, '业务失败只发送该次写请求，不按成功重拉')
+  assert.equal(h.http.calls.at(-1)?.path, '/army/speedUp')
+  assert.ok(h.errors.some(e => /需要训练令 1 张/.test(e[1])))
 })
 
 test('研究加速：先问用哪一张，选完发一条带幂等键的 POST 并重拉', async () => {

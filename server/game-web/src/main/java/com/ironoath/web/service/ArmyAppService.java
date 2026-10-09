@@ -444,11 +444,28 @@ public class ArmyAppService {
             long version = armies.versionOf(playerId);
             army.collectFinished(snap.now());
 
-            long seconds = resolveSpeedUpSeconds(playerId, req);
-            long reduced = army.speedUp(req.unitId(), seconds, snap.now());
-            if (reduced <= 0L) {
+            // 选择器打开后训练可能到期或被取消；同一玩家锁与同一次时钟下先验目标再扣令。
+            ArmyState.TrainingTask activeTask = army.queue().get(req.unitId());
+            if (activeTask == null) {
+                throw new BizException(ErrorCode.UNIT_TRAIN_QUEUE_FULL,
+                        "兵种 " + req.unitId() + " 不在训练队列里");
+            }
+            if (activeTask.remainingSeconds(snap.now()) <= 0L) {
                 throw new BizException(ErrorCode.PARAM_INVALID,
                         "兵种 " + req.unitId() + " 的训练已完成，请领取而不是加速");
+            }
+            long seconds = resolveSpeedUpSeconds(playerId, req);
+            long reduced;
+            try {
+                reduced = army.speedUp(req.unitId(), seconds, snap.now());
+                if (reduced <= 0L) {
+                    throw new BizException(ErrorCode.PARAM_INVALID,
+                            "兵种 " + req.unitId() + " 的训练已完成，请领取而不是加速");
+                }
+            } catch (RuntimeException e) {
+                // 与治疗相同：领域层拒绝加速时，把刚扣的一张令归还。
+                bagPort.add(playerId, req.itemId(), 1L);
+                throw e;
             }
             armies.save(playerId, army, version);
 
