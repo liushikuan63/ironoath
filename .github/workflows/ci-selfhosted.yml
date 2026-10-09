@@ -52,5 +52,8 @@ jobs:
         working-directory: client
 
       - name: Static gates
-        shell: bash
-        run: bash scripts/check.sh
+        # Windows PATH 也有 WSL 的 bash.exe；显式调用本机已验证的 Git Bash。
+        shell: powershell
+        run: |
+          & 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc -e -o pipefail scripts/check.sh
+          exit $LASTEXITCODE

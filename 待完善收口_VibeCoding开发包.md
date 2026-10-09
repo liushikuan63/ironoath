@@ -2329,6 +2329,12 @@ Grid-7/11/21/31 全部命中
 
 ⇒ **影响面 1/36 → 0/36**，那条稳定可复现的未命中消失。
 
+### 2026-10-09 自托管静态门的 Git Bash 入口修复
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 自托管 Windows 静态门改用 PowerShell 显式启动 Git Bash，避免 PATH 中 WSL bash 抢占 | 本笔（独立工作树提交，待批次推送） | 现有 YAML 1.2 与 SnakeYAML 解析均退 0；从 workflow 提取原样 run 命令实跑 47 道门退 0，客户端 1071/1071、点击工具 11/11；负向对照把子进程改为 exit 23，外层实际返回 23，未吞错 | 隔离验收目录 work/push-integration/ironoath-logs 的 ci-shellcheck.log、ci-static-gates.ps1、ci-negative-control.ps1；官方 workflow shell 语义 https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell | 未替代托管门；新 workflow 尚未在 GitHub runner 上执行，需推送后核实际 run；只改本仓步骤，不改机器全局 PATH 或业务代码 |
+
 ## 本轮两条授权修复小结
 
 | 缺陷 | 改了什么 | 判据 | 结果 |
