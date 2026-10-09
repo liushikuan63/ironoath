@@ -341,43 +341,51 @@ try {
   checkThat(`⑤-b 槽位说明里没有内部 id 与工程符号（屏上是「${slotLine}」）`,
     slotLine !== '' && !slotLine.includes('国策 id') && !slotLine.includes('N = '))
   // ⑤-c 候选区的「提案」键不许压住效果说明，**而且必须真的画出来**（几何判据，文本断言抓不到）
-  const geom = await page.evaluate(`(() => {
+  const policyCandidates = (roundResp?.data?.policies ?? []).map(policy => ({ id: policy.policyId, text: `${policy.name} · ${policy.effectText}` }))
+  const geom = await page.evaluate(expected => {
     const panel = window.cc.director.getScene()
       .getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
     if (!panel || !panel.activeInHierarchy) return { hits: -1, buttons: -1, texts: -1, lefts: [] }
-    const texts = []
-    const buttons = []
+    const nodes = []
     const walk = (n) => {
-      if (n.activeInHierarchy) {
-        const t = n.getComponent('cc.UITransform')
-        if (t === null || t === undefined) { return }
-        const p = n.worldPosition
-        if (n.name.startsWith('PolicyPropose-')) {
-          buttons.push({ l: p.x - t.contentSize.width / 2, n: n.name, x: p.x, y: p.y, w: t.contentSize.width, a: n.activeInHierarchy })
-        } else {
-          const label = n.getComponent('cc.Label')
-          if (label && /^.+ (攻击|防御|资源产出|行军速度) [+-]/.test(String(label.string))) {
-            texts.push({ x: p.x })
-          }
-        }
-      }
+      if (n.activeInHierarchy) nodes.push(n)
       for (const child of n.children) walk(child)
     }
     walk(panel)
-    let hits = 0
-    for (const b of buttons) for (const t of texts) if (t.x > b.l) hits += 1
-    // **键数与文字数一起回传**：第一版只回传"违例数"，而那个判据写成了两条互相矛盾的
-    // 条件（b.l < t.x 与 t.x > b.l 是同一句），恒不成立 —— 于是一个键都没画出来也报 0，
-    // 而截图上确实一个键都没有。判据要么能失败，要么就是装饰。
-    return { hits, buttons: buttons.length, texts: texts.length, lefts: buttons.map(b => b.l) }
-  })()`)
-  // 只钉「文字起点在键左边」这一条：Label 的 anchor 语义是"节点在左端"还是"节点在框中心"
-  // 两种都说得通，而 `text.x < buttonLeft` 在两种下都成立 ——
-  // 判据写成"两框不相交"会在语义不确定时报假红。
+    const rect = node => {
+      const box = node.getComponent('cc.UITransform')
+      const low = box.convertToWorldSpaceAR(new window.cc.Vec3(-box.width * box.anchorX, -box.height * box.anchorY, 0))
+      const high = box.convertToWorldSpaceAR(new window.cc.Vec3(box.width * (1 - box.anchorX), box.height * (1 - box.anchorY), 0))
+      return { l: low.x, r: high.x, top: high.y }
+    }
+    const pairs = expected.map(row => {
+      const button = nodes.find(node => node.name === `PolicyPropose-${row.id}`)
+      if (!button) return { button: false, text: false, hit: true, left: null }
+      const b = rect(button)
+      // 同名国策可能同时出现在提案区；按与此按钮相同的真实上边缘匹配候选正文。
+      const text = nodes.find(node => node.getComponent('cc.Label')?.string === row.text && Math.abs(rect(node).top - b.top) < 1)
+      return { button: true, text: !!text, hit: !text || rect(text).r >= b.l, left: b.l }
+    })
+    return { hits: pairs.filter(pair => pair.hit).length, buttons: pairs.filter(pair => pair.button).length,
+      texts: pairs.filter(pair => pair.text).length, lefts: pairs.map(pair => pair.left) }
+  }, policyCandidates)
+  // 候选数量与名字/效果来自本轮服务端；不再假定旧视图截断后的4条，也不把提案正文算作候选。
   checkThat(`⑤-c1 候选区的「提案」键真的画出来了（键数=${geom.buttons}，左边缘=${JSON.stringify(geom.lefts)}）`,
-    geom.buttons === 4)
-  checkThat(`⑤-c2 每一条效果说明的起点都在键的左边（文字数=${geom.texts} 违例=${geom.hits}）`,
-    geom.texts === 4 && geom.hits === 0)
+    policyCandidates.length > 0 && geom.buttons === policyCandidates.length)
+  checkThat(`⑤-c2 每条名称与效果的真实宽框都不侵占提案键（文字数=${geom.texts} 违例=${geom.hits}）`,
+    geom.texts === policyCandidates.length && geom.hits === 0)
+  const liveSpec = { host: 'nation', frame: 'NationCard', viewport: 'PolicyViewport', footer: ['PolicyScrollTop', 'PolicyScrollBottom'] }
+  const liveGeometry = await page.evaluate(readDialogGeometry, liveSpec), reachedCandidates = new Set()
+  for (let offset = 0; offset <= liveGeometry.maxOffset + liveGeometry.clip.height; offset += Math.max(1, liveGeometry.clip.height / 2)) {
+    await page.evaluate(scrollDialogTo, { ...liveSpec, offset: Math.min(offset, liveGeometry.maxOffset) })
+    await page.waitForTimeout(32)
+    const visible = await page.evaluate(readDialogGeometry, liveSpec)
+    for (const row of visible.seen) if (row.visibleFrom < 1 && row.visibleTo >= row.box.height - 1
+      && policyCandidates.some(candidate => row.text === candidate.text)) reachedCandidates.add(row.text)
+  }
+  checkThat(`⑤-c3 服务端全部${policyCandidates.length}候选的真实文字均可滚动查看`, reachedCandidates.size === policyCandidates.length, JSON.stringify([...reachedCandidates]))
+  await page.evaluate(scrollDialogTo, { ...liveSpec, offset: 0 })
+  await page.waitForTimeout(80)
   await page.screenshot({ path: path.join(OUT, '02-policy-proposed.png') })
   console.log(`  截图：${path.join(OUT, '02-policy-proposed.png')}`)
 
@@ -531,7 +539,7 @@ await page.evaluate(() => {
 })
 const layoutSpec = { host: 'nation', frame: 'NationCard', viewport: 'PolicyViewport', footer: ['PolicyScrollTop', 'PolicyScrollBottom'] }
 const layoutEvidence = []
-for (const [name, viewport, logicalHeight] of [['normal', { width: 1440, height: 1350 }, 900], ['short320', { width: 1440, height: 480 }, 320], ['short240', { width: 1440, height: 360 }, 240], ['portrait', { width: 720, height: 1200 }, 1600]]) {
+for (const [name, viewport, logicalHeight] of [['normal', { width: 1440, height: 1350 }, 900], ['short320', { width: 1440, height: 480 }, 320], ['short240', { width: 1440, height: 360 }, 240], ['portrait', { width: 960, height: 1600 }, 1600]]) {
   await page.setViewportSize(viewport)
   await page.waitForTimeout(500)
   const geometry = await page.evaluate(readDialogGeometry, layoutSpec)
@@ -543,6 +551,7 @@ for (const [name, viewport, logicalHeight] of [['normal', { width: 1440, height:
   const coverage = new Map()
   for (let offset = 0; offset <= geometry.maxOffset + geometry.clip.height; offset += Math.max(1, geometry.clip.height / 2)) {
     await page.evaluate(scrollDialogTo, { ...layoutSpec, offset: Math.min(offset, geometry.maxOffset) })
+    await page.waitForTimeout(32)
     const sample = await page.evaluate(readDialogGeometry, layoutSpec)
     for (const row of sample.seen) if (row.visibleHeight > 5) {
       if (/第[1234]条国策/.test(row.text) && row.visibleFrom < 1) seen.add(row.text.match(/第[1234]条国策/)[0])
@@ -587,6 +596,7 @@ await page.waitForTimeout(450)
 for (const [label, name] of [['可投', 'PolicyYes-layout-proposal-0'], ['可提', 'PolicyPropose-layout-policy-0']]) {
   await page.evaluate(() => { window.__policyLayoutWrites = 0 })
   await page.evaluate(revealDialogNode, { ...layoutSpec, name })
+  await page.waitForTimeout(80)
   const button = await page.evaluate(resolveCocosClickPoint, { name, within: 'nation' })
   checkThat(`国策${label}按钮真实命中`, button.verified, JSON.stringify(button))
   if (!button.verified) continue
@@ -594,6 +604,7 @@ for (const [label, name] of [['可投', 'PolicyYes-layout-proposal-0'], ['可提
   await page.waitForTimeout(250)
   check(`从${label}按钮开始拖动零写意图`, await page.evaluate(() => window.__policyLayoutWrites), 0)
   await page.evaluate(revealDialogNode, { ...layoutSpec, name })
+  await page.waitForTimeout(80)
   const click = await page.evaluate(resolveCocosClickPoint, { name, within: 'nation' })
   checkThat(`国策${label}按钮重定位点击真实命中`, click.verified, JSON.stringify(click))
   if (click.verified) await page.mouse.click(click.x, click.y)

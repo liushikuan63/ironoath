@@ -85,7 +85,7 @@ try {
   await page.waitForFunction(() => window.cc?.director?.getScene()?.getChildByName('Canvas')?.getChildByName('Game')?.getComponent('GameBootstrap')?.root != null, null, { timeout: 60000 })
   await page.waitForTimeout(2500)
   // 先验真实新号引导：使用服务器下发的当前帧，随后才暂藏，避免盖住其他弹窗的量具。
-  for (const [name, viewport] of [['normal', { width: 1440, height: 1350 }], ['short320', { width: 1440, height: 480 }], ['short240', { width: 1440, height: 360 }], ['portrait', { width: 720, height: 1200 }]]) {
+  for (const [name, viewport] of [['normal', { width: 1440, height: 1350 }], ['short320', { width: 1440, height: 480 }], ['short240', { width: 1440, height: 360 }], ['portrait', { width: 960, height: 1600 }]]) {
     await page.setViewportSize(viewport)
     await page.waitForTimeout(450)
     const guide = await page.evaluate(() => {
@@ -112,14 +112,33 @@ try {
     await page.waitForTimeout(350)
     await page.evaluate(renderFixture, spec)
     await page.waitForTimeout(100)
-    for (const [name, viewport, logicalHeight] of [['normal', { width: 1440, height: 1350 }, 900], ['short320', { width: 1440, height: 480 }, 320], ['short240', { width: 1440, height: 360 }, 240], ['portrait', { width: 720, height: 1200 }, 1600]]) {
+    for (const [name, viewport, logicalHeight] of [['normal', { width: 1440, height: 1350 }, 900], ['short320', { width: 1440, height: 480 }, 320], ['short240', { width: 1440, height: 360 }, 240], ['portrait', { width: 960, height: 1600 }, 1600]]) {
       await page.setViewportSize(viewport)
       await page.waitForTimeout(500)
       const geometry = await page.evaluate(readDialogGeometry, spec)
       check(`${spec.host}/${name} 同页真实可视高`, Math.abs((geometry.visibleSize?.height ?? 0) - logicalHeight) < 2, geometry)
       check(`${spec.host}/${name} 材质、Mask、框与操作在净区`, !geometry.error && geometry.material && geometry.masked
-        && geometry.frameInArea && geometry.clipInArea && geometry.separation && geometry.footer.every(row => row.inArea && row.material), geometry)
+        && geometry.frameInArea && geometry.clipInArea && geometry.separation && geometry.footer.every(row => row.inArea && (!row.active || row.material)), geometry)
       if (geometry.error) continue
+      check(`${spec.host}/${name} 仅一个真实滚动窗且正文非空`, geometry.viewportCount === 1 && geometry.seen.length > 0, geometry)
+      if (spec.host === 'composePick' && name === 'normal') {
+        for (const target of ['card', 'cancel']) {
+          await page.evaluate(nodeName => {
+            const host = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('composePick')
+            const node = host.getChildByName(nodeName)
+            window.__dialogLayerRestore = { node, layer: node.layer }
+            node.layer = node.layer === 1 ? 2 : 1
+          }, target)
+          await page.waitForTimeout(40)
+          const bad = await page.evaluate(readDialogGeometry, spec)
+          check(`真实${target}错层负对照判红`, target === 'card' ? bad.material === false : bad.footer.find(row => row.name === target)?.material === false, bad)
+          await page.screenshot({ path: path.join(OUT, `composePick-${target}-wrong-layer.png`) })
+          await page.evaluate(() => { const old = window.__dialogLayerRestore; old.node.layer = old.layer })
+          await page.waitForTimeout(40)
+          const restored = await page.evaluate(readDialogGeometry, spec)
+          check(`真实${target}层还原复绿`, target === 'card' ? restored.material === true : restored.footer.find(row => row.name === target)?.material === true, restored)
+        }
+      }
       if (spec.disabled) {
         const before = posts.length
         const point = await page.evaluate(resolveCocosClickPoint, { name: spec.disabled, within: spec.host })
@@ -132,6 +151,7 @@ try {
       const coverage = new Map()
       for (let offset = 0; offset <= geometry.maxOffset + Math.max(1, geometry.clip.height); offset += Math.max(1, geometry.clip.height / 2)) {
         await page.evaluate(scrollDialogTo, { ...spec, offset: Math.min(offset, geometry.maxOffset) })
+        await page.waitForTimeout(32)
         const sampled = await page.evaluate(readDialogGeometry, spec)
         for (const row of sampled.seen) if (row.visibleHeight > 1) {
           const bands = coverage.get(row.key) ?? []
@@ -151,6 +171,7 @@ try {
       check(`${spec.host}/${name} 正文真实宽度不溢出裁剪区`, overflow.length === 0, overflow)
       if (name === 'short320' && spec.host === 'composePick') {
         await page.evaluate(revealDialogNode, { ...spec, name: 'compose-fixture-0' })
+        await page.waitForTimeout(80)
         const point = await page.evaluate(resolveCocosClickPoint, { name: 'compose-fixture-0', within: spec.host })
         check('可选行拖动坐标经引擎自命中', point.verified, point)
         const before = posts.length
@@ -159,6 +180,7 @@ try {
         check('长名单真实拖动改变滚动位置', (await page.evaluate(readDialogGeometry, spec)).offset > beforeOffset + 10)
         check('从可选行起步拖动零选择意图与零发送', await page.evaluate(() => window.__dialogPickIntents) === 0 && posts.length === before)
         await page.evaluate(revealDialogNode, { ...spec, name: 'compose-fixture-0' })
+        await page.waitForTimeout(80)
         const click = await page.evaluate(resolveCocosClickPoint, { name: 'compose-fixture-0', within: spec.host })
         if (click.verified) await page.mouse.click(click.x, click.y)
         check('可选行放开点击仍只表达一次意图', await page.evaluate(() => window.__dialogPickIntents) === 1)
@@ -168,6 +190,7 @@ try {
         for (let index = 0; index < 3; index++) {
           for (let offset = 0; offset <= geometry.maxOffset + geometry.clip.height; offset += Math.max(1, geometry.clip.height / 2)) {
             await page.evaluate(scrollDialogTo, { ...spec, offset: Math.min(offset, geometry.maxOffset) })
+            await page.waitForTimeout(32)
             const visible = await page.evaluate(readDialogGeometry, spec)
             visible.seen.filter(row => /^可选项[0-9]+$/.test(row.text) && row.visibleFrom < 1 && row.visibleTo >= row.box.height - 1)
               .forEach(row => reached.add(row.text))
@@ -176,6 +199,7 @@ try {
             const point = await page.evaluate(resolveCocosClickPoint, { name: 'ChoiceNext', within: spec.host })
             check(`Choice/${name} 下一页真实命中`, point.verified, point)
             if (point.verified) await page.mouse.click(point.x, point.y)
+            await page.waitForTimeout(60)
           }
         }
         check(`Choice/${name} 9个选项全部分页与滚动可达`, reached.size === 9, [...reached])
@@ -183,8 +207,12 @@ try {
         for (let index = 0; index < 2; index++) {
           const point = await page.evaluate(resolveCocosClickPoint, { name: 'ChoicePrev', within: spec.host })
           if (point.verified) await page.mouse.click(point.x, point.y)
+          await page.waitForTimeout(60)
         }
       }
+      await page.screenshot({ path: path.join(OUT, `${spec.host}-${name}-bottom.png`) })
+      await page.evaluate(scrollDialogTo, { ...spec, offset: 0 })
+      await page.waitForTimeout(80)
       await page.screenshot({ path: path.join(OUT, `${spec.host}-${name}.png`) })
     }
   }
