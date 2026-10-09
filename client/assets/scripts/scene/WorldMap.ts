@@ -27,7 +27,7 @@ import { exileCanRequest, exileLabel } from '../game/world/ExileAction'
 import { baseCellPixels, cellPixels } from '../game/world/WorldZoom'
 import {
   WORLD_BUTTON_HEIGHT, worldCaptionViewport, worldMapInputAllowed,
-  worldMapTranslation, worldSceneLayout,
+  worldMapTranslation, worldSceneLayout, worldTerrainTileScale, worldFogContours,
 } from '../game/world/WorldSceneLayout'
 import type { WorldViewModel } from '../game/world/WorldViewModel'
 import type { WorldFrame, ChunkTile, MarchRender } from '../game/world/WorldViewModel'
@@ -36,7 +36,9 @@ import type { MarchPanelAction } from '../game/world/MarchPanel'
 import type { WorldEntityType } from '../net/generated/WorldProtocol'
 import { NodePool } from './NodePool'
 import { MarchPanelView } from './MarchPanelView'
-import { applyCommandButton, applySimpleSprite, applyTerrainSprite, applyTiledSprite } from './ArtCatalog'
+import {
+  applyCommandButton, applySimpleSprite, applyTerrainSprite, applyTiledSprite, artFrame, terrainArtKey,
+} from './ArtCatalog'
 import type { ArtKey } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
 import {
@@ -78,11 +80,6 @@ const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
 /** 实体色块的边长占一格的比例。留出缝隙才能看清格子边界，也避免相邻实体糊成一片。 */
 const ENTITY_SIZE_RATIO = 0.72
 const CITY_SIZE_RATIO = 1.5
-/**
- * 地貌平铺周期放大倍数。地貌块是 256² 的整幅画，按原生尺寸平铺时同一山形
- * 每 ~95px 重复一次、整张地图读成壁纸；放大周期让重复稀疏到读不出网格。
- */
-const TERRAIN_TILE_SCALE = 2
 const MARCH_SIZE_RATIO = 0.9
 
 /** 流亡迁城的二次确认窗口：过了就得重新按两下。宁短勿长 —— 拖着确认状态去干别的再回来点到，正是误操作的样子。 */
@@ -429,28 +426,27 @@ export class WorldMap extends Component {
     const size = view.getVisibleSize()
     backdrop.getComponent(UITransform)?.setContentSize(size.width, size.height)
     const graphics = backdrop.getComponent(Graphics) ?? backdrop.addComponent(Graphics)
-    this.drawFog(graphics, size.width, size.height, 0)
+    this.drawFog(graphics, size.width, size.height)
     this.backdropPainted = true
   }
 
-  /** 低密度、固定形状的雾团压在不透明底色上；无资源载入、无动画、无地貌信息。 */
-  private drawFog(graphics: Graphics, width: number, height: number, seed: number): void {
+  /** 全视口同一层迷雾：没有按 chunk 重复的椭圆/接缝，完整不透明底色不泄露地形。 */
+  private drawFog(graphics: Graphics, width: number, height: number): void {
     graphics.clear()
     graphics.fillColor = COLOR_FOG
     graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
-    // 整张 Graphics 内不出界；块之间仍是相同不透明底色，不产生未探索的地形轮廓。
-    for (let row = 0; row < 3; row++) {
-      for (let column = 0; column < 3; column++) {
-        const variation = (seed + row * 7 + column * 11) % 5
-        graphics.fillColor = new Color(34 + variation, 37 + variation, 42 + variation, 105)
-        const radiusX = width * (0.1 + variation * 0.01)
-        const radiusY = height * (0.06 + variation * 0.006)
-        graphics.ellipse((column - 1) * width * 0.3,
-          (row - 1) * height * 0.3, radiusX, radiusY)
-        graphics.fill()
+    for (const contour of worldFogContours(width, height)) {
+      graphics.fillColor = new Color(45, 49, 55, contour.opacity)
+      for (let index = 0; index < contour.points.length; index++) {
+        const point = contour.points[index]!
+        if (index === 0) graphics.moveTo(point.x, point.y)
+        else graphics.lineTo(point.x, point.y)
       }
+      graphics.close()
+      graphics.fill()
     }
+    graphics.fillColor = COLOR_FOG
   }
 
   /** 复用薄边按钮资源；操作条换行，坐标与提示留在独立状态行。 */
@@ -862,37 +858,49 @@ export class WorldMap extends Component {
         continue
       }
       const terrainVariant = terrainVariantForChunk(tile.cx, tile.cy)
+      const signature = `${tile.key}:${size}:${tile.fogged}:${tile.loaded}`
+      if (tile.fogged) {
+        // 没画未探索地形，露出的只有下方同一张不透明雾底，邻块之间没有纹样拼缝。
+        refs.spriteNode.active = false
+        refs.graphicsNode.active = false
+        if (refs.tilePaintSignature !== signature) {
+          refs.graphics.clear()
+          refs.tilePaintSignature = signature
+        }
+        refs.label.string = ''
+        continue
+      }
+      const terrainFrame = artFrame(terrainArtKey(terrainVariant))
+      const grassFrame = artFrame('map.terrain.grass')
       const artApplied = !tile.fogged && tile.loaded
-        && (applyTerrainSprite(refs.spriteNode, terrainVariant, size, size, TERRAIN_TILE_SCALE)
-          || applyTiledSprite(refs.spriteNode, 'map.terrain.grass', size, size, TERRAIN_TILE_SCALE))
+        && (applyTerrainSprite(refs.spriteNode, terrainVariant, size, size,
+          worldTerrainTileScale(size, terrainFrame?.rect.width ?? 1))
+          || applyTiledSprite(refs.spriteNode, 'map.terrain.grass', size, size,
+            worldTerrainTileScale(size, grassFrame?.rect.width ?? 1)))
       refs.spriteNode.active = artApplied
       refs.graphicsNode.active = !artApplied
+      if (artApplied) delete refs.tilePaintSignature
       if (!artApplied) {
         const graphics = refs.graphics
         graphics.enabled = true
-        const signature = `${tile.key}:${size}:${tile.fogged}:${tile.loaded}`
         if (refs.tilePaintSignature !== signature) {
           refs.tilePaintSignature = signature
-          if (tile.fogged) {
-            this.drawFog(graphics, size, size, Math.abs(tile.cx * 17 + tile.cy * 13))
-          } else {
-            graphics.clear()
-            graphics.fillColor = tileColor(tile)
+          graphics.clear()
+          graphics.fillColor = tileColor(tile)
+          graphics.rect(-size / 2, -size / 2, size, size)
+          graphics.fill()
+          if (tile.loaded) {
+            graphics.strokeColor = COLOR_GROUND_GRID
+            graphics.lineWidth = 1
             graphics.rect(-size / 2, -size / 2, size, size)
-            graphics.fill()
-            if (tile.loaded) {
-              graphics.strokeColor = COLOR_GROUND_GRID
-              graphics.lineWidth = 1
-              graphics.rect(-size / 2, -size / 2, size, size)
-              graphics.stroke()
-            }
+            graphics.stroke()
           }
         }
       }
       refs.label.string = ''
     }
     // 离开视野的块立刻归还池子 —— 这是验收 3「内存不随拖动增长」的落地点
-        for (const [key, node] of Array.from(this.drawnTiles)) {
+    for (const [key, node] of Array.from(this.drawnTiles)) {
       if (!seen.has(key)) {
         pool.release(node)
         this.drawnTiles.delete(key)

@@ -595,6 +595,31 @@ async function collectWorldSceneLayout() {
         sliced: sprite?.type === window.cc.Sprite.Type.SLICED }
     })
     const tiles = [...map.drawnTiles.values()]
+    const tilePaint = tiles.map((node) => {
+      const refs = map.refs.get(node)
+      const chunkBox = node.getComponent('cc.UITransform')
+      const sprite = refs?.spriteNode.getComponent('cc.Sprite')
+      const spriteBox = refs?.spriteNode.getComponent('cc.UITransform')
+      const activeArt = refs?.spriteNode.active === true && sprite?.enabled === true
+        && sprite?.spriteFrame != null
+      return {
+        key: node.name, x: node.position.x, y: node.position.y,
+        chunkWidth: chunkBox?.width, chunkHeight: chunkBox?.height,
+        fogged: refs?.tilePaintSignature?.includes(':true:') ?? false,
+        activeArt, activeChunkPaint: refs?.graphicsNode.active === true,
+        repeatsX: activeArt ? spriteBox.width / sprite.spriteFrame.rect.width : null,
+        repeatsY: activeArt ? spriteBox.height / sprite.spriteFrame.rect.height : null,
+        coverageWidth: activeArt ? spriteBox.width * refs.spriteNode.scale.x : null,
+        coverageHeight: activeArt ? spriteBox.height * refs.spriteNode.scale.y : null,
+      }
+    })
+    const fogTiles = tilePaint.filter((tile) => tile.fogged)
+    const entitiesUnderFog = [...map.drawnEntities.values()].filter((node) => fogTiles.some((tile) =>
+      node.position.x >= tile.x - tile.chunkWidth / 2
+      && node.position.x < tile.x + tile.chunkWidth / 2
+      && node.position.y >= tile.y - tile.chunkHeight / 2
+      && node.position.y < tile.y + tile.chunkHeight / 2)).length
+    const fogPaint = map.backdropNode?.getComponent('cc.Graphics')
     return {
       visible: [visible.width, visible.height],
       layout: { width: layout.width, height: layout.height, hudHeight: layout.hudHeight,
@@ -605,6 +630,8 @@ async function collectWorldSceneLayout() {
       tileCount: tiles.length,
       exploredTileCount: tiles.filter((node) => map.refs.get(node)?.spriteNode.active).length,
       fogTileCount: tiles.filter((node) => map.refs.get(node)?.tilePaintSignature?.includes(':true:')).length,
+      tilePaint, entitiesUnderFog,
+      fogOpaque: fogPaint?.enabled === true && fogPaint.fillColor.a === 255,
       entityCount: map.drawnEntities.size,
       coord: map.coordLabel?.string ?? '',
     }
@@ -1246,6 +1273,15 @@ const gates = [
     || entry.buttons.some((button) => !button.sliced || button.height > 40
       || button.y - button.height / 2 < entry.layout.mapTop
       || Math.abs(button.x) + button.width / 2 > entry.visible[0] / 2 + 0.5))],
+  ['世界地图雾底不透明性或未探索区域防泄露失败', worldSceneLayouts.some((entry) => entry.error
+    || !entry.fogOpaque || entry.fogTileCount === 0 || entry.entitiesUnderFog > 0
+    || entry.tilePaint.some((tile) => tile.fogged && (tile.activeArt || tile.activeChunkPaint)))],
+  ['世界地图纹样缩放密度或图层覆盖面积漂移', worldSceneLayouts.some((entry) => entry.error
+    || !entry.tilePaint.some((tile) => tile.activeArt)
+    || entry.tilePaint.some((tile) => tile.activeArt
+      && (tile.repeatsX > 2.01 || tile.repeatsY > 2.01
+        || Math.abs(tile.coverageWidth - tile.chunkWidth) > 0.5
+        || Math.abs(tile.coverageHeight - tile.chunkHeight) > 0.5)))],
   ['世界地图真实实体点击没选中同一单位', !worldEntityClick.tested
     || worldEntityClick.expected !== worldEntityClick.selected],
   ['背包页签读数失败', bagTab.error !== undefined],

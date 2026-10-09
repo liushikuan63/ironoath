@@ -85,3 +85,40 @@ export function worldCaptionViewport(
 export function worldMapInputAllowed(layout: WorldSceneLayout, uiY: number): boolean {
   return uiY >= WORLD_NAV_INSET && uiY < layout.height - layout.hudHeight
 }
+
+/** 实际裁帧按一块至多 2×2 个纹样铺地，随投影放大；不改变地貌 variant 或世界坐标。 */
+export function worldTerrainTileScale(chunkPixels: number, framePixels: number): number {
+  return Math.max(1, chunkPixels / (Math.max(1, framePixels) * 2))
+}
+
+export interface WorldFogContour {
+  readonly points: readonly { readonly x: number; readonly y: number }[]
+  readonly opacity: number
+}
+
+/**
+ * 同一视口只画四组缓淡雾纹，不以 chunk 或格子重复。
+ * 不透明底层由视图先铺满；这些固定低密度轮廓不读取任何世界数据，也不随时间动画。
+ */
+export function worldFogContours(width: number, height: number): readonly WorldFogContour[] {
+  const clouds = [
+    [-0.36, 0.21, 0.44, 0.30, 0.4], [0.18, -0.31, 0.52, 0.32, 1.9],
+    [0.47, 0.26, 0.38, 0.34, 3.6], [-0.45, -0.44, 0.31, 0.24, 5.1],
+  ] as const
+  const contours: WorldFogContour[] = []
+  for (const [x, y, rx, ry, phase] of clouds) {
+    for (let band = 0; band < 6; band++) {
+      const shrink = 1 - band * 0.09
+      const points = []
+      for (let point = 0; point < 32; point++) {
+        const angle = point * Math.PI * 2 / 32
+        const irregularity = 1 + 0.13 * Math.sin(angle * 3 + phase)
+          + 0.07 * Math.cos(angle * 5 - phase)
+        points.push({ x: width * (x + Math.cos(angle) * rx * shrink * irregularity),
+          y: height * (y + Math.sin(angle) * ry * shrink * irregularity) })
+      }
+      contours.push({ points, opacity: 8 })
+    }
+  }
+  return contours
+}

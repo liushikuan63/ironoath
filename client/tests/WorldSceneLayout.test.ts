@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   WORLD_BUTTON_HEIGHT, WORLD_NAV_INSET, worldSceneLayout,
   worldMapTranslation, worldCaptionViewport, worldMapInputAllowed,
+  worldTerrainTileScale, worldFogContours,
 } from '../assets/scripts/game/world/WorldSceneLayout'
 import { baseCellPixels, cellPixels } from '../assets/scripts/game/world/WorldZoom'
 
@@ -79,5 +80,40 @@ test('3×3地图视野仍覆盖净区长边，缩放尺寸随实际净区而非�
     const layout = worldSceneLayout(w, h)
     const extent = 3 * 32 * baseCellPixels(w, layout.mapHeight, 32)
     assert.ok(extent >= Math.max(w, layout.mapHeight) - 0.5)
+  }
+})
+
+test('地形裁帧的重复密度随投影缩放，图层覆盖面积及世界格保持原值', () => {
+  for (const [w, h] of sizes) {
+    const layout = worldSceneLayout(w, h)
+    for (const zoom of [0, 1]) {
+      const chunkPixels = 32 * cellPixels(zoom, baseCellPixels(w, layout.mapHeight, 32))
+      for (const framePixels of [64, 256]) {
+        const scale = worldTerrainTileScale(chunkPixels, framePixels)
+        const nodePixels = chunkPixels / scale
+        assert.ok(nodePixels / framePixels <= 2 + 1e-9)
+        assert.ok(Math.abs(nodePixels * scale - chunkPixels) < 1e-9)
+      }
+    }
+  }
+  assert.equal(worldTerrainTileScale(1440, 64) / worldTerrainTileScale(480, 64), 3)
+})
+
+test('迷雾纹理不按九块重复：固定轮廓数、无时间输入、宽高变化仅缩放几何', () => {
+  const contours = worldFogContours(1440, 900)
+  assert.deepEqual(worldFogContours(1440, 900), contours)
+  assert.ok(contours.length > 0 && contours.length <= 24)
+  const portrait = worldFogContours(375, 667)
+  for (let index = 0; index < contours.length; index++) {
+    const contour = contours[index]!
+    assert.ok(contour.opacity <= 12)
+    assert.ok(contour.points.length <= 32)
+    for (let point = 0; point < contour.points.length; point++) {
+      const a = contour.points[point]!
+      const b = portrait[index]!.points[point]!
+      assert.ok(Number.isFinite(a.x) && Number.isFinite(a.y))
+      assert.ok(Math.abs(a.x / 1440 - b.x / 375) < 1e-9)
+      assert.ok(Math.abs(a.y / 900 - b.y / 667) < 1e-9)
+    }
   }
 })
