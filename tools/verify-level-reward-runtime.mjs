@@ -12,9 +12,10 @@
  * 可覆盖：`LEVEL_REWARD_BACKEND` · `LEVEL_REWARD_PORT`（预览端口，**绝不能等于后端端口**）· `LEVEL_REWARD_OUT`
  *
  * 七相：
- *   A 深链进面板 → 40 行真画出来、三态文案与 HTTP 现读一致、屏上不出现裸 id
+ *   A 深链进面板 → 当前页真画出来、三态文案与 HTTP 现读一致、屏上不出现裸 id
  *   B 点「领取」→ 屏上那一行真翻成已领（点了不换屏 = 假绿），并让服务端复验
  *   C 走玩家路径（导航条 →「更多」抽屉 →「等级」）重新进入 → 已领与待领同时可辨 + 截图
+ *   P 普通/高/极矮窗口逐页真点击 → 1..40 全可达、范围与实画一致、分页净区/边界、翻页领取保留页
  *   M1 植入：把服务端下发的中文名换成内部码 → 裸 id 判据**必须**报红
  *   M2 植入：把 claimable 全置 false 而 claimableCount 留 1 → 计数同源判据**必须**报红
  *   R  还原：撤掉桩重开 → 两条植入判据复绿
@@ -149,6 +150,78 @@ const dumpRows = () => page.evaluate(() => {
   walk(scene)
   return out
 })
+
+/** 分页壳与净区盒子；坐标和现有点击助手一样从相机换算，不按页码等分猜位置。 */
+const dumpPaging = () => page.evaluate(() => {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  let cam = null
+  let panel = null
+  const find = (node) => {
+    if (cam === null) cam = node.getComponent('cc.Camera')
+    if (node.name === 'levelReward' && node.activeInHierarchy) panel = node
+    node.children.forEach(find)
+  }
+  find(scene)
+  const canvas = document.querySelector('canvas').getBoundingClientRect()
+  const boxOf = (node) => {
+    const b = node.getComponent('cc.UITransform').getBoundingBoxToWorld()
+    return { x: b.x, y: b.y, width: b.width, height: b.height }
+  }
+  const buttonOf = (name) => {
+    const node = panel?.getChildByName(name)
+    if (!node?.activeInHierarchy || cam === null) return null
+    const box = boxOf(node)
+    const p = cam.worldToScreen(new cc.Vec3(box.x + box.width / 2, box.y + box.height / 2, 0))
+    const color = node.getChildByName('Caption').getComponent('cc.Label').color
+    return {
+      box, pos: { x: p.x + canvas.left, y: canvas.top + canvas.height - p.y },
+      dim: color.r === 150 && color.g === 140 && color.b === 124,
+    }
+  }
+  const header = panel?.getChildByName('Header')?.getComponent('cc.Label')?.string ?? ''
+  const notice = panel?.getChildByName('PageNotice')
+  return {
+    header,
+    pageText: notice?.activeInHierarchy ? notice.getComponent('cc.Label').string : '',
+    pageBox: notice?.activeInHierarchy ? boxOf(notice) : null,
+    prev: buttonOf('PrevPageButton'), next: buttonOf('NextPageButton'),
+    rowBoxes: (panel?.children ?? []).filter(n => n.name === 'LevelRow' && n.activeInHierarchy).map(boxOf),
+    headerBoxes: (panel?.children ?? []).filter(n => ['Header', 'Summary', 'Notice'].includes(n.name)
+      && n.activeInHierarchy && n.getComponent('cc.Label')?.string !== '').map(boxOf),
+    visible: { width: cc.view.getVisibleSize().width, height: cc.view.getVisibleSize().height },
+  }
+})
+
+const intersects = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width
+  && a.y < b.y + b.height && b.y < a.y + a.height
+const pagingLayoutErrors = (paging) => {
+  const boxes = [paging.prev?.box, paging.pageBox, paging.next?.box].filter(Boolean)
+  const issues = []
+  if (boxes.length !== 3) issues.push('页码或两颗翻页键缺失')
+  for (const [index, box] of boxes.entries()) {
+    if (box.y < 68 || box.y + box.height > paging.visible.height
+      || box.x < 0 || box.x + box.width > paging.visible.width) {
+      issues.push(`分页盒 ${index} 越出净区：${JSON.stringify(box)}`)
+    }
+    if (paging.rowBoxes.some(row => intersects(row, box))) issues.push(`分页盒 ${index} 与奖励行相撞`)
+    if (paging.headerBoxes.some(header => intersects(header, box))) issues.push(`分页盒 ${index} 与表头文案相撞`)
+    if (boxes.slice(index + 1).some(other => intersects(other, box))) issues.push(`分页盒 ${index} 与同排按钮/页码相撞`)
+  }
+  return issues
+}
+
+const pageRangeErrors = (paging, rows, source) => {
+  const levels = rows.map(row => source.rows.find(candidate => candidate.name === row.name)?.level)
+  const range = paging.header.match(/第 (\d+)–(\d+) 级 \/ 共 (\d+) 级/)
+  if (range === null || levels.length === 0 || levels.some(level => level === undefined)) return ['表头/等级行缺失']
+  const errors = []
+  if (Number(range[1]) !== levels[0] || Number(range[2]) !== levels.at(-1)
+    || Number(range[3]) !== source.rows.length) errors.push(`表头 ${paging.header} 与实画 ${levels.join(',')} 不符`)
+  const declared = source.rows.filter(row => row.level >= Number(range[1]) && row.level <= Number(range[2])).map(row => row.level)
+  if (JSON.stringify(levels) !== JSON.stringify(declared)) errors.push('范围内有漏画或重复等级')
+  return errors
+}
 
 /** 导航格（条上与抽屉里都算）：按名字取屏幕坐标，点不到就返回 null（不许用写死的等分）。 */
 const navPos = (key) => page.evaluate((target) => {
@@ -325,6 +398,158 @@ ok('C3 重开之后屏上仍不出现裸 id', bareIdHits(labelsC).length === 0, 
 ok('C4 汇总行的两个数与同刻服务端现读一致（不许客户端自己数、也不许用旧缓存）',
   summaryMismatch(labelsC, liveC).length === 0, summaryMismatch(labelsC, liveC).join('；'))
 await page.screenshot({ path: path.join(OUT, 'c-two-states.png') })
+
+// ============ 相 P：真实翻页、完整可达与写后保留页（普通/高/极矮窗口） ============
+let claimRequests = 0
+page.on('request', request => {
+  if (request.method() === 'POST' && request.url().includes('/level-reward/claim')) claimRequests += 1
+})
+const clickPager = async (direction) => {
+  await hideGuide()
+  const button = (await dumpPaging())[direction]
+  if (button === null) return false
+  // 真鼠标点击经过 Cocos 命中测试；emit 只证明处理器有接线，不能证明玩家按得着。
+  await page.mouse.click(button.pos.x, button.pos.y)
+  await page.waitForTimeout(120)
+  return true
+}
+for (const [phase, viewport] of [
+  ['P普通', { width: 1440, height: 900 }],
+  ['P高窗', { width: 1200, height: 1400 }],
+  // 项目的 FIXED_WIDTH=960，真实视口 1440×480 对应可视高 320，容量只剩一个内容槽位。
+  ['P极矮', { width: 1440, height: 480 }],
+]) {
+  await page.setViewportSize(viewport)
+  await openByDeepLink()
+  const source = (await getPlayer(playerId, '/level-reward/list')).data
+  const shotPrefix = phase === 'P普通' ? 'p-normal' : phase === 'P高窗' ? 'p-tall' : 'p-short'
+  let paging = await dumpPaging()
+  if (paging.prev === null || paging.next === null) {
+    ok(`${phase} 分页控件存在`, false, '找不到上一页/下一页，40 行仍只露一个窗口')
+    continue
+  }
+  // 首开位于待领附近时先翻回第一页，再按玩家的操作逐页看完；全过程不发领取。
+  const writesBeforePaging = claimRequests
+  for (let guard = 0; guard < source.rows.length && !paging.prev.dim; guard += 1) {
+    const previous = paging.pageText
+    await clickPager('prev')
+    paging = await dumpPaging()
+    if (paging.pageText === previous) {
+      fail.push(`${phase} 上一页真点击后页码没变`)
+      break
+    }
+  }
+  const firstText = paging.pageText
+  await clickPager('prev')
+  ok(`${phase} 首页上一页置灰且点击不变页`, paging.prev.dim && (await dumpPaging()).pageText === firstText,
+    `首页 ${firstText}，点击后 ${(await dumpPaging()).pageText}`)
+  const seen = []
+  const rangeErrors = []
+  const layoutErrors = []
+  let lastRows = []
+  for (let guard = 0; guard < source.rows.length; guard += 1) {
+    paging = await dumpPaging()
+    const rows = await dumpRows()
+    lastRows = rows
+    seen.push(...rows.map(row => source.rows.find(candidate => candidate.name === row.name)?.level))
+    rangeErrors.push(...pageRangeErrors(paging, rows, source))
+    layoutErrors.push(...pagingLayoutErrors(paging))
+    if (rows.length > 5) rangeErrors.push(`分页后实画 ${rows.length} 内容行，越过六节点池应留一槽给分页的上限`)
+    if (paging.next === null || paging.next.dim) break
+    const previous = paging.pageText
+    await clickPager('next')
+    if ((await dumpPaging()).pageText === previous) {
+      fail.push(`${phase} 下一页真点击后页码没变：${previous}`)
+      break
+    }
+  }
+  ok(`${phase} 逐页真点击可达全部等级且顺序无漏项/重复`,
+    JSON.stringify(seen) === JSON.stringify(source.rows.map(row => row.level)), `实画 ${JSON.stringify(seen)}`)
+  ok(`${phase} 每页表头范围等于真正画出的行`, rangeErrors.length === 0, rangeErrors.slice(0, 3).join('；'))
+  ok(`${phase} 页码和按钮位于净区且不与奖励行/彼此碰撞`, layoutErrors.length === 0,
+    layoutErrors.slice(0, 3).join('；'))
+  const lastText = paging.pageText
+  await clickPager('next')
+  ok(`${phase} 末页下一页置灰且点击不变页`, paging.next?.dim && (await dumpPaging()).pageText === lastText,
+    `末页 ${lastText}，点击后 ${(await dumpPaging()).pageText}`)
+  ok(`${phase} 翻页和灰键点击不发领取请求`, claimRequests === writesBeforePaging,
+    `领取请求 ${writesBeforePaging}→${claimRequests}`)
+  readings.push(`${phase} 视口 ${viewport.width}×${viewport.height}，全程实画 ${seen.length} 级，末页 ${lastText}`)
+  if (phase === 'P极矮') {
+    ok('P极矮 真可视高320且每页仅画一行', Math.abs(paging.visible.height - 320) < 1
+      && lastRows.length === 1, `可视高 ${paging.visible.height}，实画 ${lastRows.length} 行`)
+  }
+  await page.screenshot({ path: path.join(OUT, `${shotPrefix}-last.png`) })
+
+  // 两个几何/范围判据各植入一次：少画一行、把下一页挪到内容行中心，必须被同一判据抓住。
+  const plantedIndex = await page.evaluate(() => {
+    const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+    const panel = game?.getChildByName('levelReward')
+    const index = panel?.children.findIndex(node => node.name === 'LevelRow' && node.activeInHierarchy) ?? -1
+    if (index >= 0) panel.children[index].active = false
+    return index
+  })
+  bad(`${phase} 少画一行时范围判据翻红`, plantedIndex >= 0
+    && pageRangeErrors(await dumpPaging(), await dumpRows(), source).length > 0, '少画行植入未被范围判据抓住')
+  await page.evaluate(index => {
+    const panel = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('levelReward')
+    if (index >= 0) panel.children[index].active = true
+  }, plantedIndex)
+  const oldY = await page.evaluate(() => {
+    const panel = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('levelReward')
+    const button = panel?.getChildByName('NextPageButton')
+    const row = panel?.children.find(node => node.name === 'LevelRow' && node.activeInHierarchy)
+    if (!button || !row) return null
+    const original = button.position.y
+    button.setPosition(new window.cc.Vec3(button.position.x, row.position.y, 0))
+    return original
+  })
+  await page.waitForTimeout(80)
+  bad(`${phase} 按钮挪入奖励行时碰撞判据翻红`, oldY !== null
+    && pagingLayoutErrors(await dumpPaging()).length > 0, '按钮碰撞植入未被净区判据抓住')
+  await page.evaluate(y => {
+    const panel = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('levelReward')
+    const button = panel?.getChildByName('NextPageButton')
+    if (button && y !== null) button.setPosition(new window.cc.Vec3(button.position.x, y, 0))
+  }, oldY)
+  await page.waitForTimeout(80)
+  ok(`${phase} 撤桩后范围和碰撞判据复绿`, pageRangeErrors(await dumpPaging(), await dumpRows(), source).length === 0
+    && pagingLayoutErrors(await dumpPaging()).length === 0, `撤桩后行数 ${lastRows.length}`)
+
+  // 特意翻到第二页后领取，确保刷新没有按下一个待领等级把玩家搬回第一页。
+  paging = await dumpPaging()
+  for (let guard = 0; guard < source.rows.length && !paging.prev.dim; guard += 1) {
+    await clickPager('prev')
+    paging = await dumpPaging()
+  }
+  await clickPager('next')
+  const beforeClaim = await dumpPaging()
+  const claimRow = (await dumpRows()).find(row => row.state === '待领取' && row.pos !== null)
+  if (claimRow === undefined) {
+    skip.push(`${phase} 第二页没有待领行，未执行翻页后领取保留页判据`)
+  } else {
+    const beforeList = (await getPlayer(playerId, '/level-reward/list')).data
+    const level = beforeList.rows.find(row => row.name === claimRow.name)?.level
+    await hideGuide()
+    await page.mouse.click(claimRow.pos.x, claimRow.pos.y)
+    let claimed = false
+    for (let attempt = 0; attempt < 24 && !claimed; attempt += 1) {
+      await page.waitForTimeout(500)
+      claimed = (await dumpRows()).some(row => row.name === claimRow.name && row.state === '已领取')
+    }
+    const afterClaim = await dumpPaging()
+    const live = (await getPlayer(playerId, '/level-reward/list')).data
+    ok(`${phase} 翻页领取后保留页码和范围且本行真翻成已领`, claimed
+      && afterClaim.pageText === beforeClaim.pageText && afterClaim.header === beforeClaim.header
+      && live.rows.find(row => row.level === level)?.claimed === true,
+      `${beforeClaim.pageText} / ${beforeClaim.header}→${afterClaim.pageText} / ${afterClaim.header}，已领=${claimed}`)
+    ok(`${phase} 领取刷新后汇总仍与权威读数一致`, summaryMismatch(await dumpLabels(), live).length === 0,
+      summaryMismatch(await dumpLabels(), live).join('；'))
+    await page.screenshot({ path: path.join(OUT, `${shotPrefix}-claimed.png`) })
+  }
+}
+// 植入相沿用原先的普通窗口，避免改变 A/C 的量具前提。
+await page.setViewportSize({ width: 1440, height: 900 })
 
 // ============ 相 M1：把中文名换成内部码（裸 id 判据必须翻红） ============
 const planted = JSON.parse(JSON.stringify(expectA.data))

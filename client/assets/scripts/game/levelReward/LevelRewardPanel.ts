@@ -16,6 +16,7 @@ import type {
   LevelRewardListResp,
   LevelRewardRow,
 } from '../../net/generated/LevelRewardProtocol'
+import { clampPage, contentPerPage, pageCount, pageWindow } from '../ui/PanelPaging'
 
 /** 编排层递给面板的那一块：原始响应 + 上一次操作的结果行（面板只画一次）。 */
 export type LevelRewardPanelData = {
@@ -46,6 +47,11 @@ export type LevelRewardView = {
   readonly noticeText: string
   readonly totalRows: number
   readonly windowStart: number
+  readonly page: number
+  readonly pages: number
+  readonly perPage: number
+  readonly canPrev: boolean
+  readonly canNext: boolean
 }
 
 /** 千分位：6 位以上的奖励数（31 级起就上万）没有分隔符时玩家要逐位数。 */
@@ -89,15 +95,10 @@ function stateTextOf(row: LevelRewardRow, mainLevel: number): string {
 }
 
 /**
- * 窗口起点：先落在「第一个还没领的等级」，再往前回看 {@link CLAIM_LOOKBACK} 级。
- *
- * <p><b>为什么要回看</b>：纯按"下一个该领"起屏的话，刚领完的那一行立刻被推出屏幕 ——
- * 玩家点完「领取」看到键变灰，却找不到是哪一级领过了；而「已领/待领两态可辨」这条验收
- * 在只画待领的那一屏上根本无法成立（运行时量具 C 相就是查这一条，量出来的会是"屏上只有一种态"）。
- * 回看两级之后同一屏上既有刚领掉的、也有接下来要领的。
+ * 首开锚点：先找待领等级，再找尚未达成的等级。分页时选包含锚点的一页，
+ * 页内前面的已领等级可回看；若锚点恰好在页首，之前的等级由「上一页」查看。
+ * 写后刷新保留当前页，不把刚领完的行推出屏幕。
  */
-const CLAIM_LOOKBACK = 2
-
 export function windowStartOf(resp: LevelRewardListResp): number {
   const rows = resp.rows
   for (let i = 0; i < rows.length; i += 1) {
@@ -116,16 +117,19 @@ export function windowStartOf(resp: LevelRewardListResp): number {
 /**
  * 组装这一屏。
  *
- * @param maxRows 视图按实测可视高度算出来的行数（写死行数会在矮窗口把最后一行压进导航条，
+ * @param capacity 视图按实测可视高度与行池共同算出来的槽位数（写死行数会在矮窗口把最后一行压进导航条，
  *                与战令/商店/军队同一条纪律 —— 台账 #811 的净区高判据就是为这一族立的）
+ * @param page null 首开自动落在待领附近；传页码时保留玩家当前页，只有越界才夹回。
  */
-export function buildLevelRewardPanel(resp: LevelRewardListResp, maxRows: number): LevelRewardView {
+export function buildLevelRewardPanel(resp: LevelRewardListResp, capacity: number,
+                                     page: number | null = null): LevelRewardView {
   const all = resp.rows
-  const anchor = windowStartOf(resp)
-  const capacity = Math.max(0, all.length - Math.max(1, maxRows))
-  const start = Math.min(Math.max(0, anchor - CLAIM_LOOKBACK), capacity)
-  const window = all.slice(start, start + Math.max(1, maxRows))
-  const last = window.length === 0 ? start : start + window.length - 1
+  const perPage = contentPerPage(all.length, capacity)
+  const pages = pageCount(all.length, perPage)
+  const currentPage = clampPage(page ?? Math.floor(windowStartOf(resp) / perPage), all.length, perPage)
+  const { start, end } = pageWindow(all.length, currentPage, perPage)
+  const window = all.slice(start, end)
+  const last = end - 1
   const rows: LevelRewardRowView[] = window.map((row) => ({
     level: row.level,
     nameText: row.name,
@@ -146,6 +150,11 @@ export function buildLevelRewardPanel(resp: LevelRewardListResp, maxRows: number
     noticeText: all.length === 0 ? '暂时没有任何等级奖励' : '',
     totalRows: all.length,
     windowStart: start,
+    page: currentPage,
+    pages,
+    perPage,
+    canPrev: currentPage > 0,
+    canNext: currentPage < pages - 1,
   }
 }
 
