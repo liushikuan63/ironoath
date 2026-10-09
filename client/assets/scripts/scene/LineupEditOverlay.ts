@@ -8,8 +8,7 @@
  * <p>三槽**一直画着**（空位写「空」）：藏掉空位的话玩家不知道自己少排了一个人，
  * 而少排一个人直接影响缘分与统率加成。
  *
- * <p>几何照已目视过的比例（行 56 / 板 50），行数按**可视高度**现算：
- * 名单可能比一屏长（名册十几人），装不下就少画几行并写明「另有 N 名未列出」。
+ * <p>行 56 / 板 50 的比例保持，三槽与完整名册进入可滚动正文，取消、清空与保存固定在净区内。
  */
 import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { LineupEditView, PickRow, SlotRow } from '../game/hero/LineupEdit'

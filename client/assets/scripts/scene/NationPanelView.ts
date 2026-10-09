@@ -687,7 +687,7 @@ export class NationPanelView extends Component {
     }
     for (const row of policy.proposals) {
       const rowTop = y
-      const titleBottom = this.policyText(row.name, COLOR_TEXT, 14, left, rowTop, innerWidth - 176)
+      const titleBottom = this.policyText(`${row.name} · ${row.effectText}`, COLOR_TEXT, 14, left, rowTop, innerWidth - 176)
       this.button(`PolicyYes-${row.proposalId ?? 'x'}`, '赞成', left + innerWidth - 126, rowTop - 15, 74, row.voteGate.enabled,
         () => { if (row.proposalId !== null) this.onVotePolicy?.(row.proposalId, true) })
       this.button(`PolicyNo-${row.proposalId ?? 'x'}`, '反对', left + innerWidth - 42, rowTop - 15, 74, row.voteGate.enabled,
@@ -713,7 +713,7 @@ export class NationPanelView extends Component {
     const candidates = policy.candidates
     for (const row of candidates) {
       const rowTop = y
-      const textBottom = this.policyText(row.effectText, COLOR_TEXT, 12, left, rowTop, innerWidth - 92)
+      const textBottom = this.policyText(`${row.name} · ${row.effectText}`, COLOR_TEXT, 12, left, rowTop, innerWidth - 92)
       this.button(`PolicyPropose-${row.policyId}`, '提案', proposeButtonX, rowTop - 15, 70, row.proposeGate.enabled,
         () => this.onProposePolicy?.(row.policyId))
       y = Math.min(textBottom, rowTop - BUTTON_HEIGHT) - 8

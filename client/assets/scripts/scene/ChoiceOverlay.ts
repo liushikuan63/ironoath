@@ -248,7 +248,7 @@ export class ChoiceOverlay {
     node.off('touch-start')
     if (enabled) node.on('touch-start', onTap, this)
     applyDialogButton(node, enabled, 100, 38)
-    const label = node.children[0]?.getComponent(Label)
+    const label = node.getChildByName('Label')?.getComponent(Label)
     if (label !== null && label !== undefined) label.color = enabled ? COLOR_TEXT : COLOR_DIM
   }
 

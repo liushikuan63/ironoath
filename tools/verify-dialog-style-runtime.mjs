@@ -128,15 +128,27 @@ try {
         await page.waitForTimeout(60)
         check(`${spec.host}/${name} 灰键无监听且零发送`, geometry.footer.find(row => row.name === spec.disabled)?.listening === false && posts.length === before)
       }
-      if (spec.last) {
-        let seen = false
-        for (let offset = 0; offset <= geometry.maxOffset + Math.max(1, geometry.clip.height); offset += Math.max(1, geometry.clip.height / 2)) {
-          await page.evaluate(scrollDialogTo, { ...spec, offset: Math.min(offset, geometry.maxOffset) })
-          const sampled = await page.evaluate(readDialogGeometry, spec)
-          seen ||= sampled.seen.some(row => row.text.includes(spec.last) && row.visibleHeight > 5 && row.visibleTo >= row.box.height - 1)
+      let lastSeen = false
+      const coverage = new Map()
+      for (let offset = 0; offset <= geometry.maxOffset + Math.max(1, geometry.clip.height); offset += Math.max(1, geometry.clip.height / 2)) {
+        await page.evaluate(scrollDialogTo, { ...spec, offset: Math.min(offset, geometry.maxOffset) })
+        const sampled = await page.evaluate(readDialogGeometry, spec)
+        for (const row of sampled.seen) if (row.visibleHeight > 1) {
+          const bands = coverage.get(row.key) ?? []
+          bands.push([row.visibleFrom, row.visibleTo]); coverage.set(row.key, bands)
+          if (spec.last && row.text.includes(spec.last) && row.visibleTo >= row.box.height - 1) lastSeen = true
         }
-        check(`${spec.host}/${name} 末项真实滚动可见`, seen)
       }
+      if (spec.last) check(`${spec.host}/${name} 末项真实滚动可见`, lastSeen)
+      const uncovered = geometry.seen.filter(row => {
+        const bands = (coverage.get(row.key) ?? []).sort((a, b) => a[0] - b[0]); let end = 0
+        for (const band of bands) { if (band[0] > end + 1) return true; end = Math.max(end, band[1]) }
+        return end < row.box.height - 1
+      })
+      check(`${spec.host}/${name} 全部正文文字盒完整滚动可达`, uncovered.length === 0, uncovered)
+      const overflow = geometry.seen.filter(row => row.box.x < geometry.clip.x - 2
+        || row.box.x + row.box.width > geometry.clip.x + geometry.clip.width + 2)
+      check(`${spec.host}/${name} 正文真实宽度不溢出裁剪区`, overflow.length === 0, overflow)
       if (name === 'short320' && spec.host === 'composePick') {
         await page.evaluate(revealDialogNode, { ...spec, name: 'compose-fixture-0' })
         const point = await page.evaluate(resolveCocosClickPoint, { name: 'compose-fixture-0', within: spec.host })

@@ -51,7 +51,9 @@ public final class InMemoryArmyStore implements ArmyRepository {
         if (army == null) {
             throw new IllegalArgumentException("army 不得为 null");
         }
-        return byPlayer.putIfAbsent(playerId, new Entry(copyOf(army))) == null;
+        if (byPlayer.putIfAbsent(playerId, new Entry(copyOf(army))) != null) { return false; }
+        army.bindRepositoryVersion(0L);
+        return true;
     }
 
     @Override

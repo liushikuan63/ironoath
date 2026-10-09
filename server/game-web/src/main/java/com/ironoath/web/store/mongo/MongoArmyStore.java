@@ -46,6 +46,7 @@ public final class MongoArmyStore implements ArmyRepository {
         }
         try {
             mongo.insert(ArmyDocument.fromDomain(playerId, 0L, army), ArmyDocument.COLLECTION);
+            army.bindRepositoryVersion(0L);
             return true;
         } catch (DuplicateKeyException e) {
             return false;

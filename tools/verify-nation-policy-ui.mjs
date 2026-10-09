@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { readDialogGeometry, scrollDialogTo } from './lib/dialog-geometry.mjs'
+import { readDialogGeometry, scrollDialogTo, revealDialogNode } from './lib/dialog-geometry.mjs'
 import { resolveCocosClickPoint } from './lib/cocos-click.mjs'
 
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
@@ -581,19 +581,23 @@ for (const [name, viewport, logicalHeight] of [['normal', { width: 1440, height:
   layoutEvidence.push({ name, geometry, seen: [...seen] })
   await page.screenshot({ path: path.join(OUT, `layout-${name}.png`) })
 }
-// 正常视口从一颗可投按钮起步拖动：touch-start不表达写意图，ScrollView取消touch-end。
+// 从可投与可提按钮起步拖动：touch-start不表达写意图，ScrollView取消touch-end。
 await page.setViewportSize({ width: 1440, height: 1350 })
 await page.waitForTimeout(450)
-await page.evaluate(scrollDialogTo, { ...layoutSpec, offset: 0 })
-const button = await page.evaluate(resolveCocosClickPoint, { name: 'PolicyYes-layout-proposal-0', within: 'nation' })
-checkThat('国策可投按钮真实命中', button.verified, JSON.stringify(button))
-if (button.verified) {
+for (const [label, name] of [['可投', 'PolicyYes-layout-proposal-0'], ['可提', 'PolicyPropose-layout-policy-0']]) {
+  await page.evaluate(() => { window.__policyLayoutWrites = 0 })
+  await page.evaluate(revealDialogNode, { ...layoutSpec, name })
+  const button = await page.evaluate(resolveCocosClickPoint, { name, within: 'nation' })
+  checkThat(`国策${label}按钮真实命中`, button.verified, JSON.stringify(button))
+  if (!button.verified) continue
   await page.mouse.move(button.x, button.y); await page.mouse.down(); await page.mouse.move(button.x, button.y - 60, { steps: 10 }); await page.mouse.up()
   await page.waitForTimeout(250)
-  check('从可投按钮开始拖动零写意图', await page.evaluate(() => window.__policyLayoutWrites), 0)
-  await page.evaluate(scrollDialogTo, { ...layoutSpec, offset: 0 })
-  await page.mouse.click(button.x, button.y)
-  check('可投按钮放开点击仍只表达一次意图', await page.evaluate(() => window.__policyLayoutWrites), 1)
+  check(`从${label}按钮开始拖动零写意图`, await page.evaluate(() => window.__policyLayoutWrites), 0)
+  await page.evaluate(revealDialogNode, { ...layoutSpec, name })
+  const click = await page.evaluate(resolveCocosClickPoint, { name, within: 'nation' })
+  checkThat(`国策${label}按钮重定位点击真实命中`, click.verified, JSON.stringify(click))
+  if (click.verified) await page.mouse.click(click.x, click.y)
+  check(`${label}按钮放开点击仍只表达一次意图`, await page.evaluate(() => window.__policyLayoutWrites), 1)
 }
 fs.writeFileSync(path.join(OUT, 'layout-results.json'), JSON.stringify(layoutEvidence, null, 2))
 await page.evaluate(() => {

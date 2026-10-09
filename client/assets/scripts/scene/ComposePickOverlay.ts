@@ -10,8 +10,7 @@
  * <p>碎片不够的那一行**照样画出来**（灰字 + 还差几片），而不是藏掉：藏掉的语义是"这个武将不存在"，
  * 玩家会以为养成线断了。
  *
- * <p>行数按**可视高度**现算、卡片高度按实际行数算：写死行数会把第 N 行挤到屏外
- * （#262 的科技页、#273 的觉醒弹层都是截图才发现的），而 12 名武将全未拥有时正好越界。
+ * <p>全部候选进入滚动正文，外框按真实可视净区约束；固定确认与取消不随名单滚走。
  */
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
 import type { HeroComposeRow, HeroComposeView } from '../game/hero/HeroCompose'
@@ -103,7 +102,7 @@ export class ComposePickOverlay extends Component {
     return PADDING + 10 + PURSE_DROP + this.purseLines().length * PURSE_LINE + ROWS_CLEAR + ROW_HEIGHT / 2
   }
 
-  /** 卡片高度按**实际行数**算（截断后剩下的那些行），空态也占一行 —— 说明文字要有地方落。 */
+  /** 自然内容高度按全部行数算，空态也占一行；外框与裁剪高度由共享布局约束。 */
   private cardHeight(): number {
     return this.headerHeight() + Math.max(this.shown().length, 1) * ROW_HEIGHT + BUTTON_BAND
   }
