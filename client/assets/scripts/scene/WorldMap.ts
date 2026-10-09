@@ -40,7 +40,7 @@ import {
   applyCommandButton, applySimpleSprite, applyTerrainSprite, applyTiledSprite, artFrame, terrainArtKey,
 } from './ArtCatalog'
 import type { ArtKey } from './ArtCatalog'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 import {
   CAPTION_PLATE_HEIGHT, captionBox, captionPlateWidth, entityCaption, pickVisibleCaptions,
 } from '../game/world/WorldLabels'
@@ -471,13 +471,13 @@ export class WorldMap extends Component {
     this.coordLabel = this.createHudLabel('CoordLabel', '', -width / 2 + 12, this.sceneLayout.statusY)
     this.coordLabel.horizontalAlign = Label.HorizontalAlign.LEFT
     this.coordLabel.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    this.coordLabel.node.getComponent(UITransform)?.setContentSize(coordWidth, 26)
+    capWidth(this.coordLabel, coordWidth)
 
     this.hintLabel = this.createHudLabel('HintLabel', '', width / 2 - 12, this.sceneLayout.statusY)
     this.hintLabel.horizontalAlign = Label.HorizontalAlign.RIGHT
     this.hintLabel.color = COLOR_TEXT_DIM
     this.hintLabel.fontSize = 16
-    this.hintLabel.node.getComponent(UITransform)?.setContentSize(Math.max(1, width - coordWidth - 36), 26)
+    capWidth(this.hintLabel, Math.max(1, width - coordWidth - 36))
 
     const buttons: Array<{ name: string; text: string; onTap: () => void }> = [
       { name: 'ZoomInButton', text: '放大', onTap: () => this.zoomIn() },

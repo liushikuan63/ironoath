@@ -837,10 +837,7 @@ export class CityPanelView extends Component {
       iconBox.setContentSize(new Size(plate.width, plate.width))
       const levelLabel = this.addLabel(tile, 'Level', 0, 0, COLOR_TEXT_DIM, 10)
       this.outlineFor(levelLabel)
-      // 这颗字**画在半径 9 的徽章圆盘里**（`drawTileBadge` 把位置钉到圆心、盒子钉到 20×14），
-      // 抬到 27 的地板就会让字长出圆盘。它是 27 地板的一条有意例外，留在横扫基线里。
-      levelLabel.node.getComponent(UITransform)?.setContentSize(new Size(20, 14))
-      levelLabel.overflow = Label.Overflow.SHRINK
+      capWidth(levelLabel, 36)
       const nameLabel = this.addLabel(tile, 'Name', 0, -12, COLOR_TEXT, 10)
       this.outlineFor(nameLabel)
       nameLabel.node.getComponent(UITransform)?.setContentSize(new Size(plate.width, 12))
@@ -1359,23 +1356,25 @@ export class CityPanelView extends Component {
     // main_city 的 iconSide 是 300（2.3 倍脚印），badgeY=246 会把徽章推到画面上边之外
     // （主堡基座离顶只有约 121px），等级和名字就都看不见了。
     //
-    // 下移到 -62/-44 是为了**避开顶部信息带**：基座离画面顶只有约 121 物理像素，
+    // 下移到 -68/-44 是为了**避开顶部信息带**，并给两行真实字形留出间距：基座离画面顶只有约 121 物理像素，
     // 而资源条正好占着那一条，标签贴太近就会与「体力 100/100」那一行互相压住。
     const badgeX = onBase ? 0 : iconSide * 0.43
-    const badgeY = onBase ? -62 : iconSide * 0.82
+    const badgeY = onBase ? -68 : iconSide * 0.82
+    const badgeWidth = onBase ? 48 : 36
+    const badgeHeight = oneLineFloorHeight()
     const showIdentity = true
     if (onBase) {
       // 主堡的等级与名字要底衬：城景是亮暗交错的厚涂，纯文字压在上面读不出来
       // （审计 §5.3「信息辨识度极低」指的就是这一类）。底衬同时把标签与堡体分开。
       graphics.fillColor = new Color(14, 11, 9, 220)
       const plateW = Math.max(104, tile.plate.width * 1.15)
-      graphics.roundRect(-plateW / 2 * u, -78 * u, plateW * u, 42 * u, 7 * u)
+      graphics.roundRect(-plateW / 2 * u, -84 * u, plateW * u, 52 * u, 7 * u)
       graphics.fill()
       // 参考底图主堡的锚点在塔楼上，地面椭圆会悬在空中；选中提示改在自己的名牌上。
       if (selected || row.collectable) {
         graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
         graphics.lineWidth = 2 * u
-        graphics.roundRect(-plateW / 2 * u, -78 * u, plateW * u, 42 * u, 7 * u)
+        graphics.roundRect(-plateW / 2 * u, -84 * u, plateW * u, 52 * u, 7 * u)
         graphics.stroke()
       }
     }
@@ -1384,16 +1383,18 @@ export class CityPanelView extends Component {
     tile.levelLabel.node.active = showIdentity
     if (showIdentity) {
       graphics.fillColor = new Color(16, 13, 11, 235)
-      graphics.circle(badgeX * u, badgeY * u, (onBase ? 10 : 11) * u)
+      graphics.roundRect((badgeX - badgeWidth / 2) * u, (badgeY - badgeHeight / 2) * u,
+        badgeWidth * u, badgeHeight * u, 5 * u)
       graphics.fill()
       graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
       graphics.lineWidth = 1 * u
-      graphics.circle(badgeX * u, badgeY * u, (onBase ? 10 : 11) * u)
+      graphics.roundRect((badgeX - badgeWidth / 2) * u, (badgeY - badgeHeight / 2) * u,
+        badgeWidth * u, badgeHeight * u, 5 * u)
       graphics.stroke()
       tile.levelLabel.color = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
       tile.levelLabel.node.setPosition(new Vec3(badgeX * u, badgeY * u, 0))
       tile.levelLabel.node.setScale(u, u, 1)
-      tile.levelLabel.getComponent(UITransform)?.setContentSize(new Size(26, 18))
+      capWidth(tile.levelLabel, badgeWidth)
     }
 
     // 暂停没有文字可写了（名字与状态都收进下面的选择栏），所以给它一枚实心琥珀点。

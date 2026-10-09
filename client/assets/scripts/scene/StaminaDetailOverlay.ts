@@ -24,7 +24,7 @@ import { DIALOG_SCRIM, applyDialogButton, fitExistingDialog } from './DialogStyl
 // 不把 border 调回去（调回去 = 切分线重新穿过角帽）。规格 §七 Q6 / 台账 #811。
 const PANEL_W = 440
 const PANEL_H = 360
-const BUY_W = 220
+const BUY_W = 180
 const BUY_H = 36
 const COLOR_BACKDROP = DIALOG_SCRIM
 const COLOR_PANEL = new Color(38, 30, 22, 245)
@@ -143,13 +143,14 @@ export class StaminaDetailOverlay {
     close.setPosition(new Vec3(PANEL_W / 2 - PANEL_IRON_INSET.left - 20,
       PANEL_H / 2 - PANEL_IRON_INSET.top - 20, 0))
     close.addComponent(UITransform).setContentSize(new Size(40, 40))
+    applyDialogButton(close, true, 40, 40)
     this.addLabel(close, 'Caption', 0, 0, COLOR_TEXT, 16, 40).string = '×'
     close.on('touch-start', () => this.hide(), this)
     close.setPosition(new Vec3(100, close.position.y, 0))
     buy.setPosition(new Vec3(-20, buy.position.y, 0))
     // 两个操作在下沿并排，短屏仍可取消；说明与恢复节奏完整进入滚动净区。
-    buy.getComponent(UITransform)!.setContentSize(180, BUY_H)
-    applyDialogButton(buy, true, 180, BUY_H)
+    buy.getComponent(UITransform)!.setContentSize(BUY_W, BUY_H)
+    applyDialogButton(buy, true, BUY_W, BUY_H)
     this.layoutDialog = fitExistingDialog(this.node, panel,
       [this.titleLabel.node, this.recoverLabel.node, this.nextLabel.node, this.boughtLabel.node, this.noteLabel.node],
       [buy, close], 'ui.panel.iron', PANEL_W, PANEL_H)

@@ -30,6 +30,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { clickNodeViaCocos } from './lib/cocos-click.mjs'
 
 const ROOT = 'client/build/web-mobile'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
@@ -222,27 +223,38 @@ const rowReadout = () => page.evaluate(() => {
   return { rows, active, rowCount: rows.length }
 })
 
-const clickNode = (nodeName) => page.evaluate((name) => {
-  const cc = window.cc
-  const scene = cc.director.getScene()
-  let target = null
-  const visit = (node) => {
-    if (node.name === name && node.activeInHierarchy === true) target = node
-    for (const child of node.children) visit(child)
+// 量具先过引擎 hitTest 与相机往返，不能把设计空间归一化后的错点当成按钮断线。
+const clickNode = async (nodeName) => {
+  // 同名池化行的非训练按钮也存在；临时命名已显示的训练行，限制引擎查找范围。
+  const scoped = await page.evaluate((name) => {
+    const rows = []
+    const visit = (node) => {
+      if (node.name === 'UnitRow' && node.activeInHierarchy) rows.push(node)
+      for (const child of node.children) visit(child)
+    }
+    visit(window.cc.director.getScene())
+    const row = rows.find((node) => node.children.some((child) =>
+      child.getComponent('cc.Label')?.string.includes('训练中'))
+      && node.getChildByName(name)?.activeInHierarchy === true)
+    if (!row) return false
+    row.name = 'ArmyQueueProbeTrainingRow'
+    return true
+  }, nodeName)
+  if (!scoped) return { clicked: false, reason: 'training-row-not-found' }
+  try {
+    const point = await clickNodeViaCocos(page, { name: nodeName, within: 'ArmyQueueProbeTrainingRow' })
+    console.log(`[army-queue] 点击 ${nodeName}：${JSON.stringify(point)}`)
+    return point
+  } finally {
+    await page.evaluate(() => {
+      const visit = (node) => {
+        if (node.name === 'ArmyQueueProbeTrainingRow') node.name = 'UnitRow'
+        for (const child of node.children) visit(child)
+      }
+      visit(window.cc.director.getScene())
+    })
   }
-  visit(scene)
-  if (target === null) return null
-  const box = target.getComponent('cc.UITransform')
-  const camera = scene.getComponentInChildren('cc.Camera')
-  if (box === null || camera === null) return null
-  const screen = camera.worldToScreen(box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
-  const rect = document.querySelector('canvas').getBoundingClientRect()
-  const pixel = cc.view.getVisibleSizeInPixel()
-  return {
-    x: rect.left + (screen.x / pixel.width) * rect.width,
-    y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
-  }
-}, nodeName)
+}
 
 const training = await rowReadout()
 const activeRow = training.active
@@ -253,8 +265,7 @@ console.log(`[army-queue] 行数=${training.rowCount} 训练中那一行：加�
 const before = activeRow?.countdown ?? null
 const postsBeforeSpeed = armyPosts.length
 const speedPoint = await clickNode('SpeedTrainButton')
-if (speedPoint !== null) {
-  await page.mouse.click(speedPoint.x, speedPoint.y)
+if (speedPoint.clicked) {
   await page.waitForTimeout(2000)
 }
 const afterSpeed = await rowReadout()
@@ -265,8 +276,7 @@ console.log(`[army-queue] 点「加速」→ /army/* 新增 [${armyPosts.slice(p
 // 再点「取消」：训练态应当消失（取消不返还到 UI 文本里，但队列要腾出来）
 const postsBeforeCancel = armyPosts.length
 const cancelPoint = await clickNode('CancelTrainButton')
-if (cancelPoint !== null) {
-  await page.mouse.click(cancelPoint.x, cancelPoint.y)
+if (cancelPoint.clicked) {
   await page.waitForTimeout(2000)
 }
 const afterCancel = await rowReadout()
@@ -280,6 +290,8 @@ console.log(`[army-queue] 截图：${SHOT}`)
 console.log(`[army-queue] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
 
 const failures = []
+if (!speedPoint.clicked) failures.push(`加速按钮点击坐标不可信：${speedPoint.reason}`)
+if (!cancelPoint.clicked) failures.push(`取消按钮点击坐标不可信：${cancelPoint.reason}`)
 if (activeRow === null) {
   failures.push('屏幕上没有"训练中"的行 —— 前置没生效，判据走不到（不许当绿）')
 } else {

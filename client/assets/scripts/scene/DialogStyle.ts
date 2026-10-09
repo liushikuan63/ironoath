@@ -132,6 +132,9 @@ export function createDialogScroll(parent: Node, name: string, width: number, he
 /** 把旧选择窗的既有内容放进净区，保留节点名/回调；确认取消在下沿固定。 */
 export function finishLegacyDialog(parent: Node, nodes: Node[],
                                    key: 'ui.panel.iron' | 'ui.panel.warning' | 'ui.panel.parchment' = 'ui.panel.iron'): void {
+  // 旧代码建节点未继承UI层：有spriteFrame仍可能不在UI相机的可见层，点击也到不了该节点。
+  const inheritLayer = (node: Node): void => { node.layer = parent.layer; node.children.forEach(inheritLayer) }
+  nodes.forEach(inheritLayer)
   const card = nodes.find(node => node.name === 'card' || node.name === 'CreditsCard')
   const box = card?.getComponent(UITransform)
   if (card === undefined || box === null || box === undefined) return
@@ -153,16 +156,19 @@ export function finishLegacyDialog(parent: Node, nodes: Node[],
     const enabled = listener.hasEventListener('touch-start') || listener.hasEventListener('touch-end')
     applyDialogButton(node, enabled, size.width, size.height)
   }
-  const layout = fitExistingDialog(parent, card, body, footerNodes, key, width, height)
-  nodes.push(parent.getChildByName('DialogContent')!)
+  const layout = fitExistingDialog(parent, card, body, footerNodes, key, width, height,
+    viewport => nodes.push(viewport))
   layout()
 }
 
 /** 已接 A 档的短弹窗沿用其外框大小；矮屏只缩内容窗口，操作仍在净区内。 */
 export function fitExistingDialog(parent: Node, card: Node, body: readonly Node[], footer: readonly Node[],
-                                  key: DialogKey, width: number, height: number): () => void {
+                                  key: DialogKey, width: number, height: number,
+                                  registerViewport?: (node: Node) => void): () => void {
   const originalY = body.map(node => node.position.y)
   const wrapped = createDialogScroll(parent, 'DialogContent', width - FRAME_SIDE, 1, 0, 0)
+  // Node.destroy延迟到帧尾；登记创建出的引用，不能同名查询拿到尚未移除的旧Mask。
+  registerViewport?.(wrapped.node)
   for (const node of body) {
     node.removeFromParent()
     wrapped.content.addChild(node)
