@@ -21,9 +21,20 @@ const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1350 } })
 await context.addInitScript(value => localStorage.setItem('ironoath.deviceId', value), deviceId)
 const page = await context.newPage()
-const errors = [], posts = [], results = []
+const errors = [], posts = [], allPosts = [], telemetryPosts = [], results = []
 page.on('pageerror', error => errors.push(error.message))
-page.on('request', request => { if (request.method() === 'POST') posts.push(request.url()) })
+// 周期埋点不代表行操作写业务。只单列当前后端的精确上报路径；未知路径、其它 origin 仍受零发送门约束。
+const isTelemetryPost = value => {
+  const url = new URL(value)
+  return url.origin === new URL(BACKEND).origin && url.pathname === '/ops/track/batch'
+}
+page.on('request', request => {
+  if (request.method() !== 'POST') return
+  const url = request.url()
+  allPosts.push(url)
+  ;(isTelemetryPost(url) ? telemetryPosts : posts).push(url)
+})
+const noActionPosts = before => posts.length === before
 const check = (name, pass, detail) => { results.push({ name, pass, detail }); console.log(` ${pass ? 'PASS' : 'FAIL'} ${name}${pass ? '' : ` ${JSON.stringify(detail)}`}`) }
 const specs = [
   { host: 'expPick', component: 'ExpPickOverlay', footer: ['cancel', 'confirm'], disabled: 'confirm', last: '末项经验书' },
@@ -287,7 +298,7 @@ try {
         check(`${spec.host}/${name} 灰键真实命中`, point.verified, point)
         if (point.verified) await page.mouse.click(point.x, point.y)
         await page.waitForTimeout(60)
-        check(`${spec.host}/${name} 灰键无监听且零发送`, geometry.footer.find(row => row.name === spec.disabled)?.listening === false && posts.length === before, posts.slice(before))
+        check(`${spec.host}/${name} 灰键无监听且零发送`, geometry.footer.find(row => row.name === spec.disabled)?.listening === false && noActionPosts(before), posts.slice(before))
       }
       let lastSeen = false
       const coverage = new Map()
@@ -320,7 +331,7 @@ try {
         const beforeOffset = (await page.evaluate(readDialogGeometry, spec)).offset
         if (point.verified) { await page.mouse.move(point.x, point.y); await page.mouse.down(); await page.mouse.move(point.x, point.y - 45, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(250) }
         check('长名单真实拖动改变滚动位置', (await page.evaluate(readDialogGeometry, spec)).offset > beforeOffset + 10)
-        check('从可选行起步拖动零选择意图与零发送', await page.evaluate(() => window.__dialogPickIntents) === 0 && posts.length === before, posts.slice(before))
+        check('从可选行起步拖动零选择意图与零发送', await page.evaluate(() => window.__dialogPickIntents) === 0 && noActionPosts(before), posts.slice(before))
         await page.evaluate(revealDialogNode, { ...spec, name: 'compose-fixture-0' })
         await page.waitForTimeout(80)
         const click = await page.evaluate(resolveCocosClickPoint, { name: 'compose-fixture-0', within: spec.host })
@@ -368,7 +379,7 @@ try {
         const intents = await page.evaluate(host => host === 'MarchCompose' ? window.__marchPickIntents : window.__offlineJumpIntents, spec.host)
         check(`${spec.host}/short240 所有行真实点击仅表达一次意图`, intents.length === count
           && (spec.host !== 'MarchCompose' || new Set(intents.map(row => row.unitId)).size === 5), intents)
-        check(`${spec.host}/short240 行动作未直接发送请求`, posts.length === before, posts.slice(before))
+        check(`${spec.host}/short240 行动作未直接发送请求`, noActionPosts(before), posts.slice(before))
       }
       await page.screenshot({ path: path.join(OUT, `${spec.host}-${name}-bottom.png`) })
       await page.evaluate(scrollDialogTo, { ...spec, offset: 0 })
@@ -383,8 +394,25 @@ try {
       check('Gift真实关闭后整层退场释放点击', await page.evaluate(() => window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('giftPopup').active === false))
     }
   }
+  check('仅当前后端精确track/batch属于遥测', isTelemetryPost(`${BACKEND}/ops/track/batch`)
+    && !isTelemetryPost(`${BACKEND}/ops/track/batch-extra`)
+    && !isTelemetryPost('https://telemetry-negative.invalid/ops/track/batch'))
+  // 真实页面发 POST，路由在浏览器截住避免改玩家数据；同一零业务发送判据必须由绿转红。
+  for (const endpoint of ['/world/march', '/unknown-dialog-negative']) {
+    const url = `${BACKEND}${endpoint}`
+    const before = posts.length
+    check(`${endpoint}负控前零业务发送基线`, noActionPosts(before))
+    await page.route(url, route => route.fulfill({ status: 200, contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST, OPTIONS' },
+      body: '{"code":9000,"msg":"量具负控"}' }))
+    try {
+      await page.evaluate(async url => { await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }) }, url)
+      check(`${endpoint}真实POST由同一零发送判据翻红`, !noActionPosts(before) && posts.slice(before).includes(url), posts.slice(before))
+    } finally { await page.unroute(url) }
+  }
   check('所有弹窗路径无浏览器异常', errors.length === 0, errors)
-  fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ backend: BACKEND, errors, results }, null, 2))
+  fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ backend: BACKEND, errors, results,
+    requests: { allPosts, businessPosts: posts, telemetryPosts } }, null, 2))
 } finally { await browser.close(); await preview.close() }
 console.log(`共享弹窗：${results.filter(row => row.pass).length} 通过 / ${results.filter(row => !row.pass).length} 失败`)
 process.exit(results.every(row => row.pass) ? 0 : 1)

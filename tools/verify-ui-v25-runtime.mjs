@@ -1,7 +1,8 @@
 /**
  * 职责：V25 素材的运行时验收 —— 证明包内素材**能加载、九宫格几何与 .png.meta 自洽**，
  *       并且**沿真实玩家路径画到屏上**（点体力 → 详情弹层用的就是 `ui.panel.iron`），留一张肉眼可判的截图。
- * 依赖：playwright、`tools/lib/preview-server.mjs`、独立构建产物（`outputName=ui-v25`）、一台活后端。
+ * 依赖：playwright、`tools/lib/preview-server.mjs`、本轮构建的 `client/build/web-mobile`、一台活后端。
+ *       独立构建产物可用 `SWEEP_ROOT` 显式指定；默认与批跑入口使用同一份 web-mobile。
  *
  * 为什么不只跑 shot-panel-sweep：那 17 页量的是导航条面板，而本批改的是三个弹窗底板
  * （礼包 / 选择弹层 / 体力详情）—— 它们不在导航条上，新号登录也不一定有可弹的礼包。
@@ -12,8 +13,9 @@
  * ⇒ 改成走真实调用链：找带 `onStamina` 的组件调一次，弹层由生产代码自己建。
  *
  * 跑法：
- *   BACKEND_ORIGIN=http://localhost:8311 SWEEP_ROOT=client/build/ui-v25 \
+ *   BACKEND_ORIGIN=http://localhost:8311 \
  *   SWEEP_PORT=8298 node tools/verify-ui-v25-runtime.mjs
+ *   独立产物：另设 SWEEP_ROOT=client/build/ui-v25（先构建 outputName=ui-v25）。
  */
 import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
@@ -22,7 +24,7 @@ import { startPreviewServer } from './lib/preview-server.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 import { resolveCocosClickPoint } from './lib/cocos-click.mjs'
 
-const ROOT = process.env.SWEEP_ROOT ?? 'client/build/ui-v25'
+const ROOT = path.resolve(process.env.SWEEP_ROOT ?? 'client/build/web-mobile')
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.SWEEP_PORT ?? 8298)
 const OUT = process.env.UI25_OUT ?? 'tmp/ui-v25-shots'
@@ -56,8 +58,12 @@ const EXPECT = [
 ]
 // 零消费的礼包旗帜、奖章与绳线已退回草稿区；余下条目继续逐件核对加载与几何。
 
-if (!existsSync(path.resolve(process.cwd(), ROOT, 'index.html'))) {
-  console.error(`[ui-v25][前置] 产物不存在：${ROOT}（先构建 outputName=ui-v25）`)
+console.log(`[ui-v25] 产物根目录=${ROOT} / 后端=${BACKEND}`)
+const missingArtifacts = ['index.html', 'application.js', 'assets/resources/config.json']
+  .filter(file => !existsSync(path.join(ROOT, file)))
+if (missingArtifacts.length > 0) {
+  console.error(`[ui-v25][前置] 产物不完整：${ROOT}，缺少 ${missingArtifacts.join('、')}`
+    + '（默认先跑 scripts/build-webmobile.sh；独立产物须先构建，再设 SWEEP_ROOT）')
   process.exit(2)
 }
 mkdirSync(OUT, { recursive: true })

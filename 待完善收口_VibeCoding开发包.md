@@ -6665,3 +6665,6 @@ TEST_EXIT=0
 | #870 同格补验：历史原偏移保留，进度投影重新追齐 | 本笔（文档补验，本地提交） | 新turn 01a12303-3cff-7242-b65c-d727ade0c892 已inProgress/无error，projection 222298514/ordinal4949与rollout同长；原4940条字节位置全部保，8行JSON空白补位不参与模型输入，旧主动中断正确持久投影，无新shrank | D:/tmp/ironoath-chat-recovery-20261010/offset-repair-manifest.json；原生wait与DB/日志独立快照 | 真工具执行尚待；compact心跳不能冒称成功。原任务负责随后两红与完整质量收口，恢复方仅观察、不并写源码/不构建 |
 
 | #871 独立复核：V25读旧独立产物、弹窗混入周期埋点 | 本笔（发现即本地文档提交，原任务续做） | dialog首复409/1唯一POST为同后端track/batch；V25旧ui-v25时间10-08、Simple/旧边值，与新web-mobile10-10/Sliced/新尺寸及border独立对照；未执行新包复跑 | D:/tmp/ironoath-chat-recovery-20261010/runtime-review.md；tools/verify-ui-v25-runtime.mjs:25、dialog:26/356及原首复日志 | 原任务先锁SWEEP_ROOT新包、精确单列同后端track路径，保全部业务/未知POST与负控及0.6/首renderer等门；灰态SKIP、fullcity终态、建筑标注质量及完整64/600s/统一push仍待，不把根因推理当新绿 |
+
+
+| #872 新包两项红复绿与真实业务POST反证 | 本笔（只提交量具根因修复，本地攒批） | 原7份smoke终态5绿2红，三后端已收且端口无监听；原聊天已完成官方compact及真实工具执行。V25默认改本轮web-mobile并打印绝对ROOT，19期望表及所有旧运行门逐字保留；缺包负控退2。现包复跑dialog415通过0失败、V25132判据0失败，逐份exit0；真实world/march及未知POST由同一零业务发送门转红，精确同后端track单列且所有请求留证 | D:/tmp/ironoath-visual-20261009/fixed-material-smoke-exitcodes.tsv与逐份日志；unified-smoke-shotproof保旧图及红；D:/tmp/ironoath-chat-recovery-20261010/recovery-verified.md | V25历史灰态1项仍未执行，另格补真实渲染；建筑铭牌源码/学院遮挡布局正在修，尚未新Cocos验随动；31meta三UUID及raw/border复核全保待后续收编。完整64/600s、label/B01/policy及fetch同步/阶段push尚未完成；真人IDE/低端机/外部回执及中途事务/Redis租约边界保留 |
