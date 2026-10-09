@@ -2341,6 +2341,12 @@ Grid-7/11/21/31 全部命中
 |---|---|---|---|---|
 | 主分支已提交批次与远程 MIT 许可正常合并，隔离工作树完整验收后等待统一快进推送 | 本笔；初始原主分支 1a18e462、远程 9f214926；最后只补入已确认文档/许可的原主分支 0fc49289 | check.sh 47 门退 0；build.sh（内含 test.sh）退 0，JUnit 223 份报告共2175/0失败/0错误/0跳过，客户端1071/0失败/0跳过；Cocos全新web-mobile脚本退0（引擎36按新产物与资源零缺失判），网页产物门退0；15份相关真运行探针逐份全部退0，严格汇总退0，三后端端口清理复验通过；合文档后表格形状/只增/门数及YAML复验均退0 | work/push-integration/ironoath-logs 的 check.log、build.log、cocos-build.log、runtime-exitcodes.txt、runtime-batch.log；等级奖励普通/高/极矮窗截图与国家集结截图；普通窗口分页已目视 | 待主代理快进推送与远程Actions终态；本轮未做微信构建/微信真机，运行探针只跑15份关键相关项、未扩成65份全量；#842国家并发跨存储事务与#843国策净区既有欠账保持原记录，未以本轮业务绿替代；原工作区未提交文件未夹带 |
 
+### 2026-10-09 推送前全范围 whitespace 检查更正
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| 更正上一格检查范围：完整 origin/master...HEAD 抓到 GENERATION_PROMPTS.md 的多余 EOF 空行，仅删除该空行 | 本笔（独立工作树文档小提交） | 推送前完整范围 diff --check 曾退非零并点名 art-src/GENERATION_PROMPTS.md:281；删掉多余 EOF 空行后对完整 origin/master...HEAD 复验退 0；上一格局部 diff --check 退 0 只覆盖当时工作区，不能代替整个待推批次的范围检查 | art-src/GENERATION_PROMPTS.md 末尾；主代理完整范围检查反馈；隔离树 git diff --check origin/master...HEAD | 未重跑业务测试：本笔只删空行与追加记录，业务及 CI 内容未改；远程推送和 Actions 实际终态仍待主代理核验 |
+
 ## 本轮两条授权修复小结
 
 | 缺陷 | 改了什么 | 判据 | 结果 |
