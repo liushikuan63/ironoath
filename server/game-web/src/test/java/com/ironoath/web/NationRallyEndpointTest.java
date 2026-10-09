@@ -101,6 +101,7 @@ class NationRallyEndpointTest {
 
     /** 撞锁注入器（见 {@link #injectConflicts}）；null 表示这一支用例没换过 store 字段。 */
     private SaveRallyConflicts conflicts;
+    private final List<Runnable> seamRestorers = new ArrayList<>();
     private SocialStore realStore;
     private Object installedProxy;
 
@@ -120,6 +121,8 @@ class NationRallyEndpointTest {
      */
     @AfterEach
     void restoreSettlingSeam() throws Exception {
+        for (Runnable restore : seamRestorers) { restore.run(); }
+        seamRestorers.clear();
         if (conflicts == null) {
             return;
         }
@@ -448,8 +451,10 @@ class NationRallyEndpointTest {
         assertThat(troopsOf(nation.king)).as("结清没写成功，国王的兵还锁着").isEqualTo(kingLocked);
         assertThat(troopsOf(mate)).as("参与者的兵也不能先退").isEqualTo(mateLocked);
         assertThat(get200("/rally/list", nation.king).get("rallies"))
-                .as("失败之后集结仍可见，玩家有重试路径")
-                .anyMatch(r -> rallyId.equals(r.get("rallyId").asText()));
+                .as("列表读取先重放未结清计划，已恢复取消的集结不再列出")
+                .noneMatch(r -> rallyId.equals(r.get("rallyId").asText()));
+        assertThat(troopsOf(nation.king)).isEqualTo(kingIdle);
+        assertThat(troopsOf(mate)).isEqualTo(mateIdle);
 
         // 注入器只撞前两次，第三次真实写入；复用 requestId 验证失败没有烧掉幂等键。
         post200("/nation/disband", nation.king, req);
@@ -752,6 +757,304 @@ class NationRallyEndpointTest {
         assertThat(rally.get("scope").asText()).isEqualTo("NATION");
         assertThat(rally.get("initiatorId").asText()).isEqualTo(general);
         assertThat(rally.get("groupId").asText()).isEqualTo(nation.nationId);
+    }
+
+    @Test
+    @DisplayName("亡国：第二人的军队存档失败，重试补完退兵且不重退第一人")
+    void disbandRecoversWhenARecipientsArmySaveFails() throws Exception {
+        Nation nation = nation(4);
+        String mate = nation.mates.get(0);
+        giveTroops(nation.king, 1_000L);
+        giveTroops(mate, 800L);
+        String rallyId = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", mate, new RallyJoinReq(newRequestId(), rallyId,
+                List.of(new RallyTroop(UNIT, 200L)), List.of()));
+        java.util.concurrent.atomic.AtomicInteger failures = new java.util.concurrent.atomic.AtomicInteger(2);
+        installSeam(social, "armies", ArmyRepository.class, armies, (method, args) -> {
+            if (method.getName().equals("save") && args[0].equals(mate)
+                    && failures.getAndDecrement() > 0) {
+                throw new IllegalStateException("injected Army save unavailable");
+            }
+            return invoke(armies, method, args);
+        });
+        var req = java.util.Map.of("requestId", newRequestId());
+        postExpectServerFailure("/nation/disband", nation.king, req);
+        assertThat(nationStore.findById(nation.nationId).orElseThrow().isDisbanded()).isFalse();
+        assertThat(troopsOf(nation.king)).isEqualTo(1_000L);
+        assertThat(troopsOf(mate)).isEqualTo(600L);
+        post200("/nation/disband", nation.king, req);
+        assertThat(troopsOf(nation.king)).as("已落档的退款不重复").isEqualTo(1_000L);
+        assertThat(troopsOf(mate)).as("已取消集结的退款仍有恢复入口").isEqualTo(800L);
+        assertThat(nationStore.findById(nation.nationId).orElseThrow().isDisbanded()).isTrue();
+    }
+
+    @Test
+    @DisplayName("亡国：军队写入成功但响应抛异常，读回幂等键后继续且不重退")
+    void disbandHandlesAnArmySaveWithUnknownOutcome() throws Exception {
+        Nation nation = nation(4);
+        String mate = nation.mates.get(0);
+        giveTroops(nation.king, 1_000L);
+        giveTroops(mate, 800L);
+        String rallyId = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", mate, new RallyJoinReq(newRequestId(), rallyId,
+                List.of(new RallyTroop(UNIT, 200L)), List.of()));
+        java.util.concurrent.atomic.AtomicInteger writes = new java.util.concurrent.atomic.AtomicInteger();
+        installSeam(social, "armies", ArmyRepository.class, armies, (method, args) -> {
+            Object result = invoke(armies, method, args);
+            if (method.getName().equals("save") && args[0].equals(nation.king)
+                    && writes.incrementAndGet() == 1) {
+                throw new IllegalStateException("injected acknowledgement lost after Army commit");
+            }
+            return result;
+        });
+        post200("/nation/disband", nation.king, java.util.Map.of("requestId", newRequestId()));
+        assertThat(writes.get()).isEqualTo(1);
+        assertThat(troopsOf(nation.king)).isEqualTo(1_000L);
+        assertThat(troopsOf(mate)).isEqualTo(800L);
+    }
+
+    @Test
+    @DisplayName("解散扫描期间官员发起须等国家锁，醒来重查已亡国且不扣兵")
+    void disbandAndAnOfficerStartingARallyUseTheSameNationLock() throws Exception {
+        Nation nation = nation(4);
+        String general = nation.mates.get(0);
+        giveTroops(general, 1_000L);
+        post200("/nation/appoint", nation.king,
+                new NationAppointReq(newRequestId(), general, NationOffice.GENERAL));
+        var scanned = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        installSeam(social, "store", SocialStore.class, socialStore, (method, args) -> {
+            Object result = invoke(socialStore, method, args);
+            if (method.getName().equals("preparingRalliesOf") && args[0].equals(nation.nationId)) {
+                scanned.countDown();
+                if (!release.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("test release timed out");
+                }
+            }
+            return result;
+        });
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var disband = executor.submit(() -> post200("/nation/disband", nation.king,
+                    java.util.Map.of("requestId", newRequestId())));
+            assertThat(scanned.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var start = executor.submit(() -> postRaw("/rally/nation", general, request(4)));
+            try {
+                assertThatThrownBy(() -> start.get(150, java.util.concurrent.TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            } finally {
+                release.countDown();
+            }
+            disband.get(3, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(start.get(3, java.util.concurrent.TimeUnit.SECONDS).get("code").asInt()).isNotZero();
+            assertThat(socialStore.preparingRalliesOf(nation.nationId)).isEmpty();
+            assertThat(troopsOf(general)).isEqualTo(1_000L);
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("多支集结第二支冲突：重试只补剩余集结，第一支不重退")
+    void disbandRecoversAfterOneOfSeveralRalliesWasSettled() throws Exception {
+        Nation nation = nation(4);
+        giveTroops(nation.king, 2_000L);
+        String first = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        String second = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        injectConflicts(second, 2);
+        var req = java.util.Map.of("requestId", newRequestId());
+        postExpectServerFailure("/nation/disband", nation.king, req);
+        assertThat(socialStore.rallyOf(first)).map(Rally::status).contains(Rally.Status.CANCELLED);
+        assertThat(troopsOf(nation.king)).isEqualTo(1_700L);
+        post200("/nation/disband", nation.king, req);
+        assertThat(troopsOf(nation.king)).isEqualTo(2_000L);
+        assertThat(socialStore.rallyOf(second)).map(Rally::status).contains(Rally.Status.CANCELLED);
+    }
+
+    @Autowired private com.ironoath.core.lock.PlayerLock playerLocks;
+
+    @Test
+    @DisplayName("官员先持国家锁完成发起：并发亡国随后扫描到新集结并退兵")
+    void officerStartBeforeDisbandIsIncludedInTheLockedScan() throws Exception {
+        Nation nation = nation(4);
+        String general = nation.mates.get(0);
+        giveTroops(general, 1_000L);
+        post200("/nation/appoint", nation.king,
+                new NationAppointReq(newRequestId(), general, NationOffice.GENERAL));
+        var written = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        installSeam(social, "store", SocialStore.class, socialStore, (method, args) -> {
+            Object result = invoke(socialStore, method, args);
+            if (method.getName().equals("saveRally") && args[0] instanceof Rally rally
+                    && rally.scope() == Rally.Scope.NATION && rally.initiatorId().equals(general)) {
+                written.countDown();
+                if (!release.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("test release timed out");
+                }
+            }
+            return result;
+        });
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var start = executor.submit(() -> post200("/rally/nation", general, request(4)));
+            assertThat(written.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var disband = executor.submit(() -> post200("/nation/disband", nation.king,
+                    java.util.Map.of("requestId", newRequestId())));
+            try {
+                assertThatThrownBy(() -> disband.get(150, java.util.concurrent.TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            } finally { release.countDown(); }
+            String rallyId = start.get(3, java.util.concurrent.TimeUnit.SECONDS)
+                    .get("rally").get("rallyId").asText();
+            disband.get(3, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(socialStore.rallyOf(rallyId)).map(Rally::status).contains(Rally.Status.CANCELLED);
+            assertThat(troopsOf(general)).isEqualTo(1_000L);
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("成员玩家锁被占用时国王仍可退款，不反向拿成员锁形成死锁")
+    void nationalRefundDoesNotAcquireAnotherPlayersLock() throws Exception {
+        Nation nation = nation(4);
+        String mate = nation.mates.get(0);
+        giveTroops(nation.king, 1_000L);
+        giveTroops(mate, 800L);
+        String rallyId = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", mate, new RallyJoinReq(newRequestId(), rallyId,
+                List.of(new RallyTroop(UNIT, 200L)), List.of()));
+        var held = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var holder = executor.submit(() -> playerLocks.runLocked(mate, 3_000L, () -> {
+                held.countDown();
+                try {
+                    if (!release.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("test release timed out");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+                return null;
+            }));
+            assertThat(held.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var disband = executor.submit(() -> post200("/nation/disband", nation.king,
+                    java.util.Map.of("requestId", newRequestId())));
+            try {
+                disband.get(1, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(troopsOf(mate)).isEqualTo(800L);
+            } finally { release.countDown(); }
+            holder.get(3, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("到期扫描拿到旧准备中快照，亡国后必须重读取消态而不能重复出发")
+    void anOldDueScanSnapshotCannotDepartADisbandedNationalRally() throws Exception {
+        Nation nation = nation(4);
+        String mate = nation.mates.get(0);
+        giveTroops(nation.king, 1_000L);
+        giveTroops(mate, 800L);
+        String rallyId = post200("/rally/nation", nation.king, request(4))
+                .get("rally").get("rallyId").asText();
+        post200("/rally/join", mate, new RallyJoinReq(newRequestId(), rallyId,
+                List.of(new RallyTroop(UNIT, 200L)), List.of()));
+        Rally stale = socialStore.rallyOf(rallyId).orElseThrow();
+        post200("/nation/disband", nation.king, java.util.Map.of("requestId", newRequestId()));
+        assertThat(social.settleDueRally(stale, stale.prepareUntil())).isEmpty();
+        assertThat(socialStore.rallyOf(rallyId)).map(Rally::status).contains(Rally.Status.CANCELLED);
+        assertThat(troopsOf(nation.king)).isEqualTo(1_000L);
+        assertThat(troopsOf(mate)).isEqualTo(800L);
+    }
+
+    @Autowired private com.ironoath.web.service.NationAppService nationApp;
+
+    @Test
+    @DisplayName("国家最后一次保存版本冲突：保留活国，重试重新读版且不重退兵")
+    void disbandRecoversAfterTheFinalNationSaveConflicts() throws Exception {
+        Nation nation = nation(4);
+        giveTroops(nation.king, 1_000L);
+        post200("/rally/nation", nation.king, request(4));
+        var conflict = new java.util.concurrent.atomic.AtomicBoolean(true);
+        installSeam(nationApp, "nations", com.ironoath.web.nation.NationStore.class,
+                nationStore, (method, args) -> {
+            if (method.getName().equals("save") && args[0] instanceof com.ironoath.core.nation.Nation n
+                    && n.isDisbanded() && conflict.getAndSet(false)) {
+                var newer = nationStore.findById(n.id()).orElseThrow();
+                nationStore.save(newer, newer.version());
+                throw new IllegalStateException("injected Nation version conflict");
+            }
+            return invoke(nationStore, method, args);
+        });
+        var req = java.util.Map.of("requestId", newRequestId());
+        postExpectServerFailure("/nation/disband", nation.king, req);
+        assertThat(nationStore.findById(nation.nationId).orElseThrow().isDisbanded()).isFalse();
+        assertThat(troopsOf(nation.king)).isEqualTo(1_000L);
+        post200("/nation/disband", nation.king, req);
+        assertThat(nationStore.findById(nation.nationId).orElseThrow().isDisbanded()).isTrue();
+        assertThat(troopsOf(nation.king)).isEqualTo(1_000L);
+    }
+
+    @Test
+    @DisplayName("国家最后写入成功但响应丢失：读回亡国终态，退兵与结果均成功")
+    void disbandHandlesAnUnknownFinalNationSaveOutcome() throws Exception {
+        Nation nation = nation(4);
+        giveTroops(nation.king, 1_000L);
+        post200("/rally/nation", nation.king, request(4));
+        var injected = new java.util.concurrent.atomic.AtomicBoolean();
+        installSeam(nationApp, "nations", com.ironoath.web.nation.NationStore.class,
+                nationStore, (method, args) -> {
+            Object result = invoke(nationStore, method, args);
+            if (method.getName().equals("save") && args[0] instanceof com.ironoath.core.nation.Nation n
+                    && n.isDisbanded() && !injected.getAndSet(true)) {
+                throw new IllegalStateException("injected Nation acknowledgement lost");
+            }
+            return result;
+        });
+        post200("/nation/disband", nation.king, java.util.Map.of("requestId", newRequestId()));
+        assertThat(injected).isTrue();
+        assertThat(nationStore.findById(nation.nationId).orElseThrow().isDisbanded()).isTrue();
+        assertThat(troopsOf(nation.king)).isEqualTo(1_000L);
+    }
+
+    @FunctionalInterface
+    private interface SeamInvocation {
+        Object call(Method method, Object[] args) throws Throwable;
+    }
+
+    private <T> void installSeam(Object target, String fieldName, Class<T> port, T delegate,
+                                 SeamInvocation invocation) throws Exception {
+        var field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        Object original = field.get(target);
+        Object proxy = Proxy.newProxyInstance(port.getClassLoader(), new Class<?>[]{port},
+                (ignored, method, args) -> invocation.call(method, args));
+        field.set(target, proxy);
+        seamRestorers.add(() -> {
+            try { field.set(target, original); }
+            catch (IllegalAccessException e) { throw new IllegalStateException(e); }
+        });
+    }
+
+    private static Object invoke(Object delegate, Method method, Object[] args) throws Throwable {
+        try { return method.invoke(delegate, args); }
+        catch (InvocationTargetException e) { throw e.getCause(); }
     }
 
     // ---------- 夹具 ----------

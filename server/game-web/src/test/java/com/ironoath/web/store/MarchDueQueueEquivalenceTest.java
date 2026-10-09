@@ -83,6 +83,27 @@ class MarchDueQueueEquivalenceTest {
     }
 
     @Test
+    @DisplayName("登记响应丢失重试：同 id 同时刻登记与改期不重复触发，取消后无残留")
+    void repeatedSameDeadlineRemainsOneDueEvent() {
+        for (MarchDueQueue queue : bothQueues()) {
+            String label = queue.getClass().getSimpleName();
+            queue.schedule("m-replay", 1_000L);
+            queue.schedule("m-replay", 1_000L);
+            queue.reschedule("m-replay", 1_000L);
+            assertThat(queue.size()).as("%s：重复登记仍只有一个事件", label).isEqualTo(1);
+            assertThat(queue.dueBefore(1_000L, 10)).as("%s：同事件不能重复扫出", label)
+                    .containsExactly("m-replay");
+            queue.reschedule("m-replay", 9_000L);
+            queue.reschedule("m-replay", 9_000L);
+            assertThat(queue.dueBefore(1_000L, 10)).isEmpty();
+            assertThat(queue.dueBefore(9_000L, 10)).containsExactly("m-replay");
+            queue.cancel("m-replay");
+            assertThat(queue.size()).isZero();
+            assertThat(queue.dueBefore(9_000L, 10)).isEmpty();
+        }
+    }
+
+    @Test
     @DisplayName("取消幂等：撤销存在的和不存在的结果一致，都不报错")
     void cancelIsIdempotent() {
         for (MarchDueQueue queue : bothQueues()) {

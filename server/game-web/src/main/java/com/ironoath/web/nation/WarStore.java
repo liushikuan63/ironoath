@@ -19,17 +19,10 @@ import com.ironoath.core.nation.WarScoreBoard;
  * （{@code InMemoryNationStore} 2026-09-10 那次教训：原先直接持有同一个引用，
  * 于是「忘记写回」在 dev 下看不出来、换 Mongo 就丢改动）。差异由 {@code WarStoreEquivalenceTest} 守着。
  *
- * <p><b>为什么这一份不带乐观锁版本，而 {@code NationStore.save} 带</b>：写形状不一样。
- * 国家那一族是<b>多个官员各改各的字段</b>（任命、外交、周税），且 {@code PlayerLock} 按玩家加锁，
- * 拦不住两个不同联盟同时改同一个国家 —— 只有版本号能把「后写的整档覆盖先写的」变成一次响。
- * 国战板的既定形状是内核类注释那一条：<b>开战载入、结束落盘一次</b>，中间不落盘
- * （禁止项明写「不要让国战积分在数据库层聚合」，200 QPS 的行军事件若在库里做 SUM，MongoDB 先崩）。
- * 所以本切片没有「两条读-改-写并发抢同一档」的形状，版本没有对手可挡。
- *
- * <p><b>这一条不适用于下一切片，届时必须回来改这里</b>：一旦击杀累计改成「中途定期 flush」
- * 或多实例各自累加再合并，端口就必须加版本（与 {@code CityRepository} 那四个版本化仓储同一条契约），
- * 或改成存储层的原子累加口。<b>现在留的口子是</b>：{@code save} 是整档替换，两个实例各持一份板子
- * 先后落盘，后写的会整块盖掉先写的积分与疲劳，而全链路不报错。这条窗口记在收口清单，不藏在注释里。
+ * <p>读与成功建档的对象绑定仓储版本，{@code save} 只接受该版本，旧副本保存必须失败。
+ * 同一战事的击杀、疲劳、领取及结算更新也做版本 CAS，冲突有界重读重算，
+ * 防止旧快照覆盖已持久化的 March 疲劳回执。积分仍由内核计算，不在数据库层聚合。
+ * 跨实例同时开出不同场的建档限制仍见 {@link #insertIfNoneActive}。
  */
 public interface WarStore {
 
@@ -86,7 +79,7 @@ public interface WarStore {
      * <p><b>不许静默插入</b>：建档只走 {@link #insertIfAbsent}。理由与 {@code NationStore#save} 同一条 ——
      * 静默插入会让「读不到就新建一份」这种错误写法的并发后果变成两份档，而不是一个异常。
      *
-     * @throws IllegalStateException 这一场还没建过（调用方走错了方法）
+     * @throws IllegalStateException 这一场还没建过、对象未绑定仓储版本，或读出的版本已过期
      */
     void save(WarScoreBoard board);
 
@@ -237,9 +230,8 @@ public interface WarStore {
      * （内存版是后写覆盖前写，Mongo 版是整档替换互相盖），而症状只是"全服进度条好像少涨了一点"。
      * 与 {@code NationStore#settleWeeklyTax} 同一条判断。
      *
-     * <p><b>这一格把 {@code save} 那段"没有多写者读-改-写的形状"作废了</b>：本方法就是那个形状，
-     * 而它挡并发靠的是<b>实例临界区 + 全服单实例</b>这条前提（与 {@link #insertIfNoneActive} 同一条），
-     * 不是靠乐观锁版本。跨进程部署时这两处都要改成带版本的 CAS 或原子累加口。
+     * <p>内存版收在实例临界区，Mongo 同时使用读取版本 CAS，冲突重读后重算。
+     * 这与开战的跨实例唯一性是不同边界：击杀不能覆盖同一档后来写入的行军回执。
      *
      * @param killerNationId 击杀者所属国家 id；查不到（没国籍或联盟退国）传 null，按无主处理
      * @param killerPlayerId 击杀者玩家 id（赛季分的键），null 表示无主击杀
@@ -334,6 +326,38 @@ public interface WarStore {
      *         国战记账是旁路，成不成都不得改变那一枪本身的结果
      */
     FatigueResult addFatigue(String fatigueNationId, String playerId, long marches, long wounded);
+
+    /**
+     * 按稳定 March ID 为一次真实出发记疲劳。回执与疲劳同档原子写入，无 TTL。
+     * 查原始 departedAt 所属战役，恢复不得记到后来开的战役。
+     * APPLIED 包括已确认的同身份回执；身份冲突抛 IllegalArgumentException。
+     * 原场已结算且没有回执时不再修改终局；没有原场返回 NO_ACTIVE_WAR。
+     * 同一战事其它更新也做版本 CAS，不能用旧快照覆盖已写回执。
+     */
+    FatigueResult addMarchFatigueOnce(String marchId, String fatigueNationId,
+                                    String playerId, long departedAt);
+
+    /** 内核判定共用一份；持久化仍由各仓储负责。 */
+    static FatigueResult applyMarchFatigue(WarScoreBoard board,
+                                           WarScoreBoard.MarchFatigueReceipt receipt) {
+        WarScoreBoard.MarchFatigueReceipt previous = board.marchFatigueReceipt(receipt.marchId());
+        if (previous != null) {
+            if (!previous.equals(receipt)) {
+                throw new IllegalArgumentException("同一 March ID 的疲劳回执身份发生变化");
+            }
+            return FatigueResult.APPLIED;
+        }
+        if (board.phase() == WarScoreBoard.Phase.SETTLED || receipt.departedAt() < board.startedAt()
+                || receipt.departedAt() - board.startedAt() >= board.rules().durationMillis()) {
+            return FatigueResult.NO_ACTIVE_WAR;
+        }
+        if (receipt.fatigueNationId() == null
+                || !board.registeredNations().contains(receipt.fatigueNationId())) {
+            return FatigueResult.NOT_PARTICIPANT;
+        }
+        board.addMarchFatigueOnce(receipt);
+        return FatigueResult.APPLIED;
+    }
 
     /**
      * 疲劳归属的<b>唯一一份</b>实现（两套存储共用，与 {@link #applyKills} 同一条理由）。

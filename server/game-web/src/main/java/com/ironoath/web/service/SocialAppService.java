@@ -135,6 +135,7 @@ public class SocialAppService {
     private final SocialRulesAssembler rules;
     private final PlayerRepository players;
     private final PlayerLock playerLock;
+    private final com.ironoath.web.nation.NationOperationLock nationLock;
     private final IdempotencyStore idempotency;
     private final TimeService timeService;
     private final ConfigRegistry configs;
@@ -202,6 +203,7 @@ public class SocialAppService {
         this.rules = rules;
         this.players = players;
         this.playerLock = playerLock;
+        this.nationLock = new com.ironoath.web.nation.NationOperationLock(playerLock);
         this.idempotency = idempotency;
         this.timeService = timeService;
         this.configs = configs;
@@ -2194,20 +2196,31 @@ public class SocialAppService {
      */
     private void detachFromNation(String allianceId, java.util.Collection<String> allianceMemberIds,
                                   String actorId, long now) {
-        nations.findByAlliance(allianceId).ifPresent(loaded -> {
-            Nation nation = nationLeaders.bind(loaded);
+        nations.findByAlliance(allianceId).ifPresent(loaded -> nationLock.runLocked(loaded.id(), () -> {
+            Nation latest = nations.findByAlliance(allianceId).orElse(null);
+            if (latest == null) { return null; }
+            Nation nation = nationLeaders.bind(latest);
             nation.removeAlliance(allianceId, false, actorId, now);
-            // 结清排在国家写回<b>之前</b>（台账 #831 的口径：先结清再写，撞锁就整笔失败）：
-            // 这条路径不持各成员的玩家锁，反过来写会留下「联盟已脱离、兵已退、集结还挂着」的半状态。
+            // 结清排在国家写回之前。失败时已完成项保留，未完成退款由持久日志恢复；
+            // 这不是跨文档事务，重试会先重放日志，不会重退成功成员。
             // 亡国 ⇒ 整国取消；否则 ⇒ 只结清这一盟的成员（成员表必须在联盟自身解散之前取）。
             int settled = nation.isDisbanded()
                     ? cancelNationalRalliesOf(nation.id(), now)
                     : settleNationalRalliesForMembers(nation.id(), allianceMemberIds, now);
-            nations.save(nation, nation.version());
+            try {
+                nations.save(nation, nation.version());
+            } catch (RuntimeException failure) {
+                Nation persisted = nations.findById(nation.id()).orElseThrow();
+                if (persisted.hasAlliance(allianceId)
+                        || persisted.joinCooldownUntil(allianceId) != nation.joinCooldownUntil(allianceId)) {
+                    throw failure;
+                }
+            }
             LOG.info("联盟解散连带出国家 allianceId={} nationId={} 原因=联盟已解散 剩余成员联盟={} 入籍冷却至={} 国家是否随之解散={} 结清集结={} 条",
                     allianceId, nation.id(), nation.memberAllianceCount(),
                     nation.joinCooldownUntil(allianceId), nation.isDisbanded(), settled);
-        });
+            return null;
+        }));
     }
 
     private int pendingInvitesOf(String playerId) {
@@ -2551,21 +2564,28 @@ public class SocialAppService {
         acquire(req == null ? null : req.requestId(), now);
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
-                Nation nation = requireNationOf(playerId);
-                requirePermission(PermissionMatrix.Scope.NATION, nationRoleOf(playerId),
-                        "START_RALLY");
-                int maxSize = Math.min(Math.max(req.maxMembers(), rules.nationRallyRules().minMembers()),
-                        nationRallyCap(playerId));
-                Rally rally = initiateRally(playerId, Rally.Scope.NATION, nation.id(),
-                        req.targetCoord(), req.targetType(), troopsOf(req.troops()),
-                        req.heroes(), maxSize, req.prepareMinutes() * 60_000L, now);
-                LOG.info("国家集结已发起 rallyId={} nationId={} 发起人={} 承诺兵力={} 人数上限={} 准备={}分钟",
-                        rally.rallyId(), nation.id(), playerId, rally.totalTroops(), maxSize,
-                        rally.prepareMillis() / 60_000L);
-                // 与联盟层同一句 RALLY_CALL：集结开出来了，发起人在自己的频道喊一句
-                events.publishEvent(new com.ironoath.web.bot.BotChatEvent(playerId, playerId,
-                        com.ironoath.core.bot.BotChatBook.Scene.RALLY_CALL, now));
-                return new RallyResp(toRallyView(rally, now), now);
+                String nationId = requireNationOf(playerId).id();
+                return nationLock.runLocked(nationId, () -> {
+                    com.ironoath.web.social.RallySettlementRecovery.recover(store, armies, nationId);
+                    Nation nation = requireNationOf(playerId);
+                    if (!nation.id().equals(nationId)) {
+                        throw new BizException(ErrorCode.NATION_NOT_FOUND, "所属国家已变更，请刷新后重试");
+                    }
+                    requirePermission(PermissionMatrix.Scope.NATION, nationRoleOf(playerId),
+                            "START_RALLY");
+                    int maxSize = Math.min(Math.max(req.maxMembers(), rules.nationRallyRules().minMembers()),
+                            nationRallyCap(playerId));
+                    Rally rally = initiateRally(playerId, Rally.Scope.NATION, nation.id(),
+                            req.targetCoord(), req.targetType(), troopsOf(req.troops()),
+                            req.heroes(), maxSize, req.prepareMinutes() * 60_000L, now);
+                    LOG.info("国家集结已发起 rallyId={} nationId={} 发起人={} 承诺兵力={} 人数上限={} 准备={}分钟",
+                            rally.rallyId(), nation.id(), playerId, rally.totalTroops(), maxSize,
+                            rally.prepareMillis() / 60_000L);
+                    // 与联盟层同一句 RALLY_CALL：集结开出来了，发起人在自己的频道喊一句
+                    events.publishEvent(new com.ironoath.web.bot.BotChatEvent(playerId, playerId,
+                            com.ironoath.core.bot.BotChatBook.Scene.RALLY_CALL, now));
+                    return new RallyResp(toRallyView(rally, now), now);
+                });
             });
         } catch (RuntimeException e) {
             idempotency.release(req.requestId());
@@ -2578,7 +2598,7 @@ public class SocialAppService {
         long now = timeService.serverNow();
         acquire(req == null ? null : req.requestId(), now);
         try {
-            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> withNationalRallyLock(req.rallyId(), () -> {
                 Rally rally = requireRally(req.rallyId(), now);
                 long expectedRallyVersion = rally.version();
                 Map<String, Long> troops = troopsOf(req.troops());
@@ -2604,7 +2624,7 @@ public class SocialAppService {
                 // 参战算一次（B12 §1 的 JOIN_RALLY）：周常要的正是"组织行为"这件事
                 questEvents.progress(playerId, com.ironoath.core.quest.GoalType.JOIN_RALLY, null, 1L, now);
                 return new RallyResp(toRallyView(rally, now), now);
-            });
+            }));
         } catch (RuntimeException e) {
             idempotency.release(req.requestId());
             throw e;
@@ -2616,12 +2636,17 @@ public class SocialAppService {
         long now = timeService.serverNow();
         acquire(req == null ? null : req.requestId(), now);
         try {
-            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> withNationalRallyLock(req.rallyId(), () -> {
                 Rally rally = requireRally(req.rallyId(), now);
                 long expectedRallyVersion = rally.version();
                 Rally.Participant mine = rally.participant(playerId);
                 if (mine == null) {
                     throw new BizException(ErrorCode.RALLY_NOT_FOUND, "你不是这次集结的参与者");
+                }
+                if (rally.scope() == Rally.Scope.NATION) {
+                    Rally settled = com.ironoath.web.social.RallySettlementRecovery.settle(
+                            store, armies, rally, playerId, false);
+                    return new RallyResp(toRallyView(settled, now), now);
                 }
                 boolean wasInitiator = rally.initiatorId().equals(playerId);
                 rally.quit(playerId);
@@ -2635,7 +2660,7 @@ public class SocialAppService {
                 LOG.info("退出集结 rallyId={} playerId={} 发起人退出={} 退回兵力={} 新状态={}",
                         rally.rallyId(), playerId, wasInitiator, mine.troops(), rally.status());
                 return new RallyResp(toRallyView(rally, now), now);
-            });
+            }));
         } catch (RuntimeException e) {
             idempotency.release(req.requestId());
             throw e;
@@ -2647,11 +2672,16 @@ public class SocialAppService {
         long now = timeService.serverNow();
         acquire(req == null ? null : req.requestId(), now);
         try {
-            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> withNationalRallyLock(req.rallyId(), () -> {
                 Rally rally = requireRally(req.rallyId(), now);
                 long expectedRallyVersion = rally.version();
                 if (!rally.initiatorId().equals(playerId)) {
                     throw new BizException(ErrorCode.RALLY_NOT_INITIATOR, "只有发起人能取消这次集结");
+                }
+                if (rally.scope() == Rally.Scope.NATION) {
+                    Rally settled = com.ironoath.web.social.RallySettlementRecovery.settle(
+                            store, armies, rally, null, false);
+                    return new RallyResp(toRallyView(settled, now), now);
                 }
                 rally.cancel(playerId);
                 refundAll(rally);
@@ -2659,53 +2689,16 @@ public class SocialAppService {
                 LOG.info("集结已取消 rallyId={} 发起人={} 退回人数={}",
                         rally.rallyId(), playerId, rally.memberIds().size());
                 return new RallyResp(toRallyView(rally, now), now);
-            });
+            }));
         } catch (RuntimeException e) {
             idempotency.release(req.requestId());
             throw e;
         }
     }
 
-    /**
-     * 结清一支准备中的集结：状态迁移 + 带版本写回 + 退兵；撞乐观锁时<b>重读重试一次</b>。
-     *（裁决 2026-10-08，台账 #831：结清要么成、要么整笔失败，不许留下「兵已回家、
-     * 集结还挂在面板上」这种半状态 —— 这条路径不持玩家锁，而 {@code refundTroops} 与
-     * {@code store.saveRally} 都是带版本写，同一玩家的另一条请求插进来就会撞。）
-     *
-     * <p><b>退款排在写回成功之后</b>：写回抛了就整笔不动；重试那份是新读到的副本，所以不会重复入账。
-     * 第二次仍撞锁就让异常冒出去，由调用方那一笔请求整体失败（调用方已把结清排在国家写回之前）。
-     */
-    private void settleOneRally(String rallyId, Rally rally, String quitterId, long now) {
-        Rally current = rally;
-        for (int attempt = 1; ; attempt++) {
-            Rally.Participant mine = quitterId == null ? null : current.participant(quitterId);
-            if (quitterId != null && mine == null) {
-                return; // 重试那一趟里他已被取消动作清掉，不该再退一次
-            }
-            boolean asInitiator = quitterId == null || current.initiatorId().equals(quitterId);
-            long expectedVersion = current.version();
-            if (asInitiator) {
-                current.cancel(current.initiatorId());
-            } else {
-                current.quit(quitterId);
-            }
-            try {
-                store.saveRally(current, expectedVersion);
-            } catch (IllegalStateException conflict) {
-                if (attempt >= 2) {
-                    throw conflict;
-                }
-                current = requireRally(rallyId, now);
-                LOG.warn("集结结清撞乐观锁，重读后重试 rallyId={} 第{}趟", rallyId, attempt);
-                continue;
-            }
-            if (asInitiator) {
-                refundAll(current);
-            } else {
-                refundTroops(quitterId, mine.troops());
-            }
-            return;
-        }
+    /** 国家锁内先持久记计划，状态写入与每人退款可跨请求/重启恢复。 */
+    private void settleOneRally(Rally rally, String quitterId) {
+        com.ironoath.web.social.RallySettlementRecovery.settle(store, armies, rally, quitterId, false);
     }
 
     /**
@@ -2718,24 +2711,27 @@ public class SocialAppService {
      * 于是它变成一个**没人能看见、却占着玩家兵力**的第三种状态。服务端禁常驻定时器（红线），
      * 所以确定事件必须由触发它的那一手处理。
      *
-     * <p>取消与退款都走既有那一条路（{@code rally.cancel} + {@link #refundAll}，与发起人主动取消
-     * 同一份实现），这里不重算退款口径；操作者传发起人本人 —— 这不是玩家动作，
+     * <p>取消与退款走持久结清日志，与国家层发起人主动取消同一份实现；
+     * 这里不重算退款口径；操作者传发起人本人 —— 这不是玩家动作,
      * 而是国家这个组织已经不存在了，所以不走"只有发起人能取消"那道权限判断。
      *
      * @return 被取消的集结数（给日志与用例断言用；0 是正常情况）
      */
     public int cancelNationalRalliesOf(String nationId, long now) {
-        int cancelled = 0;
-        for (Rally rally : List.copyOf(store.preparingRalliesOf(nationId))) {
-            if (rally.scope() != Rally.Scope.NATION) {
-                continue;
+        return nationLock.runLocked(nationId, () -> {
+            com.ironoath.web.social.RallySettlementRecovery.recover(store, armies, nationId);
+            int cancelled = 0;
+            for (Rally rally : List.copyOf(store.preparingRalliesOf(nationId))) {
+                if (rally.scope() != Rally.Scope.NATION) {
+                    continue;
+                }
+                settleOneRally(rally, null);
+                cancelled += 1;
+                LOG.info("亡国取消集结 rallyId={} nationId={} 发起人={} 退回人数={} 时刻={}",
+                        rally.rallyId(), nationId, rally.initiatorId(), rally.memberIds().size(), now);
             }
-            settleOneRally(rally.rallyId(), rally, null, now);
-            cancelled += 1;
-            LOG.info("亡国取消集结 rallyId={} nationId={} 发起人={} 退回人数={} 时刻={}",
-                    rally.rallyId(), nationId, rally.initiatorId(), rally.memberIds().size(), now);
-        }
-        return cancelled;
+            return cancelled;
+        });
     }
 
     /**
@@ -2749,33 +2745,36 @@ public class SocialAppService {
      */
     public int settleNationalRalliesForMembers(String nationId, java.util.Collection<String> playerIds,
                                                long now) {
-        int settled = 0;
-        for (String playerId : playerIds) {
-            for (Rally rally : List.copyOf(store.preparingRalliesOf(nationId))) {
-                if (rally.scope() != Rally.Scope.NATION) {
-                    continue;
+        return nationLock.runLocked(nationId, () -> {
+            com.ironoath.web.social.RallySettlementRecovery.recover(store, armies, nationId);
+            int settled = 0;
+            for (String playerId : playerIds) {
+                for (Rally rally : List.copyOf(store.preparingRalliesOf(nationId))) {
+                    if (rally.scope() != Rally.Scope.NATION) {
+                        continue;
+                    }
+                    Rally.Participant mine = rally.participant(playerId);
+                    if (mine == null) {
+                        continue;
+                    }
+                    boolean wasInitiator = rally.initiatorId().equals(playerId);
+                    settleOneRally(rally, playerId);
+                    settled += 1;
+                    LOG.info("退国结清集结 rallyId={} 国家={} 玩家={} 本人是发起人={} 退回兵力={} 新状态={}",
+                            rally.rallyId(), nationId, playerId, wasInitiator, mine.troops(), rally.status());
                 }
-                Rally.Participant mine = rally.participant(playerId);
-                if (mine == null) {
-                    continue;
-                }
-                boolean wasInitiator = rally.initiatorId().equals(playerId);
-                settleOneRally(rally.rallyId(), rally, playerId, now);
-                settled += 1;
-                LOG.info("退国结清集结 rallyId={} 国家={} 玩家={} 本人是发起人={} 退回兵力={} 新状态={}",
-                        rally.rallyId(), nationId, playerId, wasInitiator, mine.troops(), rally.status());
             }
-        }
-        return settled;
+            return settled;
+        });
     }
 
     /** 集结详情。到点的集结会先被处理（见 {@link #expireIfDue}），所以这里返回的状态永远是当前的。 */
     public RallyResp rallyView(String playerId, String rallyId) {
         long now = timeService.serverNow();
-        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> withNationalRallyLock(rallyId, () -> {
             Rally rally = requireRally(rallyId, now);
             return new RallyResp(toRallyView(rally, now), now);
-        });
+        }));
     }
 
     /**
@@ -2800,12 +2799,14 @@ public class SocialAppService {
                 out.add(toRallyView(rally, now));
             }
         });
-        activeNationOf(playerId).ifPresent(nation -> {
+        activeNationOf(playerId).ifPresent(nation -> nationLock.runLocked(nation.id(), () -> {
+            com.ironoath.web.social.RallySettlementRecovery.recover(store, armies, nation.id());
             for (Rally rally : store.preparingRalliesOf(nation.id())) {
                 expireIfDue(rally, now);
                 out.add(toRallyView(rally, now));
             }
-        });
+            return null;
+        }));
         return new RallyListResp(List.copyOf(out), now);
     }
 
@@ -2921,7 +2922,23 @@ public class SocialAppService {
      * @return 出发结果（合并后的兵力）；本次没有出发时为 empty
      */
     public java.util.Optional<Rally.Departure> settleDueRally(Rally rally, long now) {
-        long expectedRallyVersion = rally.version();
+        return runRallyDepartureLocked(rally.rallyId(), () -> {
+            Rally latest = store.rallyOf(rally.rallyId()).orElseThrow();
+            return doSettleDueRally(latest, now);
+        });
+    }
+
+    /** 出发消费/恢复和到期推进共用，国家分支从读权威集结到行军落档全程持国家锁。 */
+    public <T> T runRallyDepartureLocked(String rallyId, java.util.function.Supplier<T> action) {
+        return withNationalRallyLock(rallyId, () -> playerLock.runLocked(
+                "@rally-departure:" + rallyId, LOCK_TIMEOUT_MS, () -> {
+                    Rally latest = store.rallyOf(rallyId).orElseThrow();
+                    com.ironoath.web.social.RallySettlementRecovery.recover(store, armies, latest.groupId());
+                    return action.get();
+                }));
+    }
+
+    private java.util.Optional<Rally.Departure> doSettleDueRally(Rally rally, long now) {
         if (rally.status() != Rally.Status.PREPARING || !rally.dueAt(now)) {
             return java.util.Optional.empty();
         }
@@ -2929,19 +2946,24 @@ public class SocialAppService {
             refundInsufficient(rally);
             return java.util.Optional.empty();
         }
+        SocialStore.RallyDeparturePlan plan = store.putRallyDepartureIfAbsent(
+                new SocialStore.RallyDeparturePlan(rally.rallyId(), rally.groupId(), now,
+                        membership.nationIdOf(rally.initiatorId()), null));
+        long expectedRallyVersion = rally.version();
+        Rally.Departure departure = rally.depart(plan.departAt());
         try {
-            Rally.Departure departure = rally.depart(now);
             store.saveRally(rally, expectedRallyVersion);
-            LOG.info("集结出发 rallyId={} 发起人={} 参与人数={} 合并兵力={} 目标=({},{}) 类型={}",
-                    rally.rallyId(), rally.initiatorId(), departure.memberCount(),
-                    departure.mergedTroops(), rally.targetX(), rally.targetY(), rally.targetType());
-            return java.util.Optional.of(departure);
-        } catch (IllegalStateException e) {
-            // 只可能是并发下另一条线程已经出发过：那次的行军由它负责建，这里静默让路。
-            // 绝不能在这里退款 —— 兵已经跟着那一支行军出门了
-            LOG.info("集结已被另一次扫描出发，本次让路 rallyId={} 原因={}", rally.rallyId(), e.getMessage());
-            return java.util.Optional.empty();
+        } catch (RuntimeException failure) {
+            Rally persisted = store.rallyOf(rally.rallyId()).orElseThrow();
+            if (persisted.status() == Rally.Status.DEPARTED && persisted.departure() != null) {
+                return java.util.Optional.of(persisted.departure());
+            }
+            // 日志仍在，状态没有确认出发就留给下次请求；不能假定“别人已建行军”。
+            throw failure;
         }
+        LOG.info("集结出发已持久，等待消费计划 rallyId={} 发起人={} 参与人数={} 合并兵力={}",
+                rally.rallyId(), rally.initiatorId(), departure.memberCount(), departure.mergedTroops());
+        return java.util.Optional.of(departure);
     }
 
     /**
@@ -2952,20 +2974,31 @@ public class SocialAppService {
      * 集结已 DEPARTED，quit/cancel/退款三条路都只认 PREPARING，一个都走不到。
      */
     public void abortDeparture(String rallyId) {
-        Rally rally = store.rallyOf(rallyId).orElse(null);
-        if (rally == null) {
-            return;
-        }
-        long expectedRallyVersion = rally.version();
-        refundAll(rally);
-        rally.abortDeparted();
-        store.saveRally(rally, expectedRallyVersion);
-        LOG.error("集结 {} 已出发但合并行军未建立，已撤销出发并退回 {} 名成员的兵力",
-                rallyId, rally.memberIds().size());
+        runRallyDepartureLocked(rallyId, () -> {
+            Rally latest = store.rallyOf(rallyId).orElse(null);
+            if (latest != null && latest.status() == Rally.Status.DEPARTED) {
+                com.ironoath.web.social.RallySettlementRecovery.settle(store, armies, latest, null, true);
+            }
+            return null;
+        });
     }
 
     /** 人数不足到点：所有人的兵原路退回，集结取消（发起人自己的兵也在 participants 里，一起退）。 */
     private void refundInsufficient(Rally rally) {
+        if (rally.scope() == Rally.Scope.NATION) {
+            withNationalRallyLock(rally.rallyId(), () -> {
+                Rally latest = store.rallyOf(rally.rallyId()).orElseThrow();
+                if (latest.status() == Rally.Status.PREPARING
+                        && latest.joinedCount() < latest.minMembersRequired()) {
+                    com.ironoath.web.social.RallySettlementRecovery.settle(store, armies, latest, null, false);
+                }
+                return null;
+            });
+            if (store.rallyOf(rally.rallyId()).orElseThrow().status() == Rally.Status.CANCELLED) {
+                rally.cancel(rally.initiatorId());
+            }
+            return;
+        }
         long expectedRallyVersion = rally.version();
         int members = rally.memberIds().size();
         refundAll(rally);
@@ -3020,6 +3053,15 @@ public class SocialAppService {
         long version = armies.versionOf(playerId);
         troops.forEach(army::add);
         armies.save(playerId, army, version);
+    }
+
+    private <T> T withNationalRallyLock(String rallyId, java.util.function.Supplier<T> action) {
+        Rally observed = rallyId == null ? null : store.rallyOf(rallyId).orElse(null);
+        if (observed == null || observed.scope() != Rally.Scope.NATION) { return action.get(); }
+        return nationLock.runLocked(observed.groupId(), () -> {
+            com.ironoath.web.social.RallySettlementRecovery.recover(store, armies, observed.groupId());
+            return action.get();
+        });
     }
 
     private Rally requireRally(String rallyId, long now) {

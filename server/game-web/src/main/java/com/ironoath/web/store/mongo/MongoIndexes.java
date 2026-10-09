@@ -232,6 +232,10 @@ public final class MongoIndexes {
         String byAllianceMember = allianceIndexes.ensureIndex(new Index()
                 .on("members.playerId", Sort.Direction.ASC)
                 .named("idx_social_alliance_member"));
+        mongo.indexOps(RallyDepartureDocument.COLLECTION).ensureIndex(new Index()
+                .on("plan.departAt", Sort.Direction.ASC).named("idx_rally_departure_time"));
+        mongo.indexOps(RallySettlementDocument.COLLECTION).ensureIndex(new Index()
+                .on("groupId", Sort.Direction.ASC).named("idx_rally_settlement_group"));
         IndexOperations rallyIndexes = mongo.indexOps(RallyDocument.COLLECTION);
         String byRallyGroup = rallyIndexes.ensureIndex(new Index()
                 .on("groupId", Sort.Direction.ASC)

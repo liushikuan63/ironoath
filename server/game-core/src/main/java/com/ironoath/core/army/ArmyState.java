@@ -35,6 +35,20 @@ import java.util.Map;
 public final class ArmyState {
 
     private final Map<String, Long> troops = new LinkedHashMap<>();
+    private final java.util.Set<String> rallyRefunds = new java.util.LinkedHashSet<>();
+    /** 仓储读副本的版本，瞬时元数据，不进存档；防旧快照搭配后读的新版本覆盖并发退款。 */
+    private long repositoryVersion = -1L;
+
+    public void bindRepositoryVersion(long version) {
+        repositoryVersion = version;
+    }
+
+    public void requireRepositoryVersion(long expectedVersion) {
+        if (repositoryVersion >= 0L && repositoryVersion != expectedVersion) {
+            throw new IllegalStateException("军队快照版本与提交版本不符：快照=" + repositoryVersion
+                    + "，提交=" + expectedVersion + "。请重读军队存档后重试。");
+        }
+    }
     private final Map<String, TrainingTask> queue = new LinkedHashMap<>();
     /**
      * 自动续训的策略（B25 裁决③(a)）。**老档没有这一项 ⇒ 默认关**（{@link AutoTrainPolicy#off()}）：
@@ -51,6 +65,29 @@ public final class ArmyState {
     private int extraSlots;
 
     public ArmyState() {
+    }
+
+    /** 退款与凭据一起进入军队快照，由一次带版本写原子保存；未知写入结果可以安全重放。 */
+    public boolean refundRallyOnce(String settlementId, Map<String, Long> refunds) {
+        requireText(settlementId, "settlementId");
+        if (rallyRefunds.contains(settlementId)) {
+            return false;
+        }
+        Map<String, Long> next = new LinkedHashMap<>();
+        refunds.forEach((unit, count) -> {
+            requireText(unit, "unitId");
+            if (count == null || count <= 0L) {
+                throw new IllegalArgumentException("退款兵力必须为正数");
+            }
+            next.put(unit, Math.addExact(countOf(unit), count));
+        });
+        troops.putAll(next);
+        rallyRefunds.add(settlementId);
+        return true;
+    }
+
+    public boolean hasRallyRefund(String settlementId) {
+        return rallyRefunds.contains(settlementId);
     }
 
     // ---------- 读取 ----------
@@ -587,12 +624,22 @@ public final class ArmyState {
      */
     public record Snapshot(Map<String, Long> troops, List<TrainingTask> queue, Map<String, Long> wounded,
                            Long treatFinishAt, long treatTotalSeconds, long treatOriginalSeconds,
-                           Map<String, Long> treatCost, int extraSlots, AutoTrainPolicy autoTrain) {
+                           Map<String, Long> treatCost, int extraSlots, AutoTrainPolicy autoTrain,
+                           List<String> rallyRefunds) {
 
         public Snapshot {
             // 老档（或还没写这一项的新档）读出来是 null ⇒ 当作"关"：一个从没开过自动的号
             // 不该因为一次读档就开始花钱
             autoTrain = autoTrain == null ? AutoTrainPolicy.off() : autoTrain;
+            rallyRefunds = rallyRefunds == null ? List.of() : List.copyOf(rallyRefunds);
+        }
+
+        /** 老档与旧调用点没有退款凭据，按空集合恢复。 */
+        public Snapshot(Map<String, Long> troops, List<TrainingTask> queue, Map<String, Long> wounded,
+                        Long treatFinishAt, long treatTotalSeconds, long treatOriginalSeconds,
+                        Map<String, Long> treatCost, int extraSlots, AutoTrainPolicy autoTrain) {
+            this(troops, queue, wounded, treatFinishAt, treatTotalSeconds, treatOriginalSeconds,
+                    treatCost, extraSlots, autoTrain, List.of());
         }
 
         /** 不带自动策略的 8 参写法（旧调用点与只关心兵力/队列的测试用）。 */
@@ -607,7 +654,8 @@ public final class ArmyState {
     /** 取出完整快照（不可变，可安全跨线程/跨存储传递）。 */
     public Snapshot snapshot() {
         return new Snapshot(troops(), List.copyOf(queue().values()), wounded(), treatFinishAt(),
-                treatTotalSeconds(), treatOriginalSeconds(), treatCost(), extraSlots(), autoTrain);
+                treatTotalSeconds(), treatOriginalSeconds(), treatCost(), extraSlots(), autoTrain,
+                List.copyOf(rallyRefunds));
     }
 
     /** 由快照重建。写入语义完全交给 {@link #restore} —— 那里已有"入参可能是内部视图"的防护。 */
@@ -625,6 +673,7 @@ public final class ArmyState {
                 snapshot.treatCost(), snapshot.extraSlots());
         // 策略单独设：restore 的签名是四个调用点共用的（测试直接用），不为一个新字段去动它
         state.setAutoTrain(snapshot.autoTrain());
+        state.rallyRefunds.addAll(snapshot.rallyRefunds());
         return state;
     }
 

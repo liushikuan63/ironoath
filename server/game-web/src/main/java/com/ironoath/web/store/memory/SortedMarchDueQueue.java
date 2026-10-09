@@ -47,7 +47,9 @@ public final class SortedMarchDueQueue implements MarchDueQueue {
         }
         synchronized (this) {
             Long previous = dueAtOf.put(marchId, dueAtMillis);
-            if (previous != null && previous != dueAtMillis) {
+            if (previous != null) {
+                // 响应丢失后的同事件重放须保持唯一，不能只让反查表唯一而桶里重复。
+                if (previous == dueAtMillis) { return; }
                 removeFromBucket(previous, marchId);
             }
             byDueAt.computeIfAbsent(dueAtMillis, k -> new ArrayList<>()).add(marchId);

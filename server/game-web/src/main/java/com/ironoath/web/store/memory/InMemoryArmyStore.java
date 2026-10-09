@@ -23,7 +23,7 @@ public final class InMemoryArmyStore implements ArmyRepository {
 
     private static final class Entry {
         private final AtomicReference<ArmyState> army;
-        private long version;
+        private volatile long version;
 
         Entry(ArmyState army) {
             this.army = new AtomicReference<>(army);
@@ -35,7 +35,12 @@ public final class InMemoryArmyStore implements ArmyRepository {
     @Override
     public Optional<ArmyState> findByPlayerId(String playerId) {
         Entry entry = playerId == null ? null : byPlayer.get(playerId);
-        return entry == null ? Optional.empty() : Optional.of(copyOf(entry.army.get()));
+        if (entry == null) { return Optional.empty(); }
+        synchronized (entry) {
+            ArmyState copy = copyOf(entry.army.get());
+            copy.bindRepositoryVersion(entry.version);
+            return Optional.of(copy);
+        }
     }
 
     @Override
@@ -59,13 +64,15 @@ public final class InMemoryArmyStore implements ArmyRepository {
             throw new IllegalArgumentException("army 不得为 null");
         }
         synchronized (entry) {
+            army.requireRepositoryVersion(expectedVersion);
             if (entry.version != expectedVersion) {
                 throw new IllegalStateException("乐观锁冲突：playerId=" + playerId
                         + "，存储版本=" + entry.version + "，提交版本=" + expectedVersion
                         + "。请重读军队存档后重试。");
             }
             entry.army.set(copyOf(army));
-            return ++entry.version;
+            army.bindRepositoryVersion(++entry.version);
+            return entry.version;
         }
     }
 

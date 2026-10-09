@@ -57,6 +57,7 @@ public final class MongoArmyStore implements ArmyRepository {
         if (army == null) {
             throw new IllegalArgumentException("军队存档不得为 null");
         }
+        army.requireRepositoryVersion(expectedVersion);
         ArmyDocument doc = ArmyDocument.fromDomain(playerId, expectedVersion, army);
         Query query = Query.query(Criteria.where("_id").is(playerId).and("version").is(expectedVersion));
         // **每加一个 ArmyDocument 字段都必须在这里补一行**：这是 $set 白名单而不是整份替换，
@@ -73,6 +74,7 @@ public final class MongoArmyStore implements ArmyRepository {
                 .set("treatCost", doc.treatCost())
                 .set("extraSlots", doc.extraSlots())
                 .set("autoTrain", doc.autoTrain())
+                .set("rallyRefunds", doc.rallyRefunds())
                 .inc("version", 1L);
         UpdateResult result = mongo.updateFirst(query, update, ArmyDocument.class, ArmyDocument.COLLECTION);
         if (result.getMatchedCount() == 0L) {
@@ -84,6 +86,7 @@ public final class MongoArmyStore implements ArmyRepository {
             throw new IllegalStateException("乐观锁冲突：playerId=" + playerId
                     + "，提交版本=" + expectedVersion + "。请重读军队存档后重试。");
         }
+        army.bindRepositoryVersion(expectedVersion + 1L);
         return expectedVersion + 1L;
     }
 

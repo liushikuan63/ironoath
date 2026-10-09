@@ -502,6 +502,75 @@ public final class MongoSocialStore implements SocialStore {
     // ---------- 集结（B10 §5） ----------
 
     @Override
+    public RallyDeparturePlan putRallyDepartureIfAbsent(RallyDeparturePlan plan) {
+        try {
+            mongo.insert(new RallyDepartureDocument(plan.rallyId(), plan), RallyDepartureDocument.COLLECTION);
+            return plan;
+        } catch (DuplicateKeyException e) {
+            return rallyDepartureOf(plan.rallyId()).orElseThrow(() -> e);
+        }
+    }
+
+    @Override
+    public Optional<RallyDeparturePlan> rallyDepartureOf(String rallyId) {
+        return Optional.ofNullable(mongo.findById(rallyId, RallyDepartureDocument.class,
+                RallyDepartureDocument.COLLECTION)).map(RallyDepartureDocument::plan);
+    }
+
+    @Override
+    public List<RallyDeparturePlan> pendingRallyDepartures() {
+        return mongo.find(new Query().with(Sort.by(Sort.Order.asc("plan.departAt"), Sort.Order.asc("_id"))),
+                RallyDepartureDocument.class, RallyDepartureDocument.COLLECTION).stream()
+                .map(RallyDepartureDocument::plan).toList();
+    }
+
+    @Override
+    public RallyDeparturePlan attachRallyDepartureMarch(String rallyId,
+                                    com.ironoath.core.march.March.Snapshot march) {
+        RallyDeparturePlan found = rallyDepartureOf(rallyId).orElseThrow();
+        if (!found.marchId().equals(march.id()) || !rallyId.equals(march.rallyId())) {
+            throw new IllegalArgumentException("出发快照必须匹配计划的集结与固定行军身份");
+        }
+        mongo.updateFirst(Query.query(Criteria.where("_id").is(rallyId).and("plan.march").is(null)),
+                new Update().set("plan.march", march), RallyDepartureDocument.class,
+                RallyDepartureDocument.COLLECTION);
+        return rallyDepartureOf(rallyId).orElseThrow();
+    }
+
+    @Override
+    public void removeRallyDeparture(String rallyId) {
+        mongo.remove(Query.query(Criteria.where("_id").is(rallyId)), RallyDepartureDocument.COLLECTION);
+    }
+
+    @Override
+    public RallySettlement putRallySettlementIfAbsent(RallySettlement settlement) {
+        try {
+            mongo.insert(new RallySettlementDocument(settlement.settlementId(), settlement.groupId(),
+                    settlement), RallySettlementDocument.COLLECTION);
+            return settlement;
+        } catch (DuplicateKeyException e) {
+            RallySettlementDocument found = mongo.findById(settlement.settlementId(),
+                    RallySettlementDocument.class, RallySettlementDocument.COLLECTION);
+            if (found == null) { throw e; }
+            return found.settlement();
+        }
+    }
+
+    @Override
+    public List<RallySettlement> pendingRallySettlementsOf(String groupId) {
+        return mongo.find(Query.query(Criteria.where("groupId").is(groupId))
+                        .with(Sort.by(Sort.Direction.ASC, "_id")),
+                RallySettlementDocument.class, RallySettlementDocument.COLLECTION).stream()
+                .map(RallySettlementDocument::settlement).toList();
+    }
+
+    @Override
+    public void removeRallySettlement(String settlementId) {
+        mongo.remove(Query.query(Criteria.where("_id").is(settlementId)),
+                RallySettlementDocument.COLLECTION);
+    }
+
+    @Override
     public long saveRally(Rally rally, long expectedVersion) {
         Objects.requireNonNull(rally, "rally 不得为 null");
         RallyDocument document = RallyDocument.fromDomain(rally);
@@ -765,6 +834,8 @@ public final class MongoSocialStore implements SocialStore {
         mongo.remove(new Query(), SquadDocument.COLLECTION);
         mongo.remove(new Query(), AllianceDocument.COLLECTION);
         mongo.remove(new Query(), RallyDocument.COLLECTION);
+        mongo.remove(new Query(), RallySettlementDocument.COLLECTION);
+        mongo.remove(new Query(), RallyDepartureDocument.COLLECTION);
         mongo.remove(new Query(), ChatChannelDocument.COLLECTION);
         mongo.remove(new Query(), SocialPlayerDocument.COLLECTION);
         mongo.remove(new Query(), SocialApplicationDocument.COLLECTION);

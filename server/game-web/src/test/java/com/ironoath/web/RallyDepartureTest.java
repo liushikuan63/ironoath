@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -128,6 +129,176 @@ class RallyDepartureTest {
         ((com.ironoath.web.limit.InMemoryDailyCounter) dailyCounter).clear();
         battleReports.clear();
         socialStore.clear();
+    }
+
+    private final List<Runnable> restorers = new ArrayList<>();
+
+    @AfterEach
+    void restoreSeams() {
+        restorers.forEach(Runnable::run);
+        restorers.clear();
+    }
+
+    @FunctionalInterface private interface Invocation {
+        Object call(java.lang.reflect.Method method, Object[] args) throws Throwable;
+    }
+
+    private <T> void seam(Object target, String fieldName, Class<T> port, T delegate,
+                          Invocation callback) throws Exception {
+        var field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        Object original = field.get(target);
+        field.set(target, java.lang.reflect.Proxy.newProxyInstance(port.getClassLoader(),
+                new Class<?>[]{port}, (ignored, method, args) -> callback.call(method, args)));
+        restorers.add(() -> {
+            try { field.set(target, original); }
+            catch (IllegalAccessException e) { throw new IllegalStateException(e); }
+        });
+    }
+
+    private static Object invoke(Object target, java.lang.reflect.Method method, Object[] args) throws Throwable {
+        try { return method.invoke(target, args); }
+        catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+    }
+
+    /** 只选国家出发分支：组织归属验证不在这些存档竞态夹具的被测范围。 */
+    private void nationalScope(String rallyId) {
+        Rally original = socialStore.rallyOf(rallyId).orElseThrow();
+        Map<String, Rally.Participant> members = new LinkedHashMap<>();
+        original.memberIds().forEach(id -> members.put(id, original.participant(id)));
+        Rally national = Rally.restore(original.rallyId(), Rally.Scope.NATION, "N-test-" + rallyId,
+                original.initiatorId(), original.maxMembers(), original.minMembersRequired(),
+                original.createdAt(), original.prepareUntil(), members, original.status(), original.departure(),
+                original.targetX(), original.targetY(), original.targetType(), original.version() + 1L);
+        socialStore.saveRally(national, original.version());
+    }
+
+    private void changeCommittedTroops(String playerId, long difference) {
+        ArmyState army = armies.findByPlayerId(playerId).orElseThrow();
+        long version = armies.versionOf(playerId);
+        if (difference > 0L) { army.deduct(T1, difference); }
+        else { army.add(T1, -difference); }
+        armies.save(playerId, army, version);
+    }
+
+    @Test
+    void lateNationalJoinUsesTheSameHeroesAndTroopsAsThePersistedDeparture() throws Exception {
+        Squad squad = squadOf(player(1_000L, 0L), player(800L, 0L), player(800L, 0L));
+        grantHero(squad.mates().get(1), HERO_2);
+        String rallyId = initiate(squad, Map.of(T1, 300L));
+        join(squad.mates().get(0), rallyId, Map.of(T1, 200L));
+        nationalScope(rallyId);
+        var once = new java.util.concurrent.atomic.AtomicBoolean();
+        seam(marchAppService, "socialStore", SocialStore.class, socialStore, (method, args) -> {
+            Object result = invoke(socialStore, method, args);
+            if (method.getName().equals("dueRallies") && !once.getAndSet(true)) {
+                Rally latest = socialStore.rallyOf(rallyId).orElseThrow();
+                long version = latest.version();
+                changeCommittedTroops(squad.mates().get(1), 100L);
+                latest.join(squad.mates().get(1), Map.of(T1, 100L), List.of(HERO_2));
+                socialStore.saveRally(latest, version);
+            }
+            return result;
+        });
+        assertThat(depart(rallyId)).isEqualTo(1);
+        March actual = onlyMarch(squad.leader());
+        assertThat(actual.units()).containsEntry(T1, 600L);
+        assertThat(actual.heroes()).containsExactly(HERO_2);
+        assertThat(socialStore.rallyOf(rallyId).orElseThrow().memberIds()).contains(squad.mates().get(1));
+    }
+
+    @Test
+    void lateNationalJoinAlsoChangesTheForbiddenParticipantTarget() throws Exception {
+        Squad squad = squadOf(player(1_000L, 0L), player(800L, 0L), player(800L, 0L));
+        String target = squad.mates().get(1);
+        String rallyId = initiateAt(squad, target, Map.of(T1, 300L));
+        join(squad.mates().get(0), rallyId, Map.of(T1, 200L));
+        nationalScope(rallyId);
+        var once = new java.util.concurrent.atomic.AtomicBoolean();
+        seam(marchAppService, "socialStore", SocialStore.class, socialStore, (method, args) -> {
+            Object result = invoke(socialStore, method, args);
+            if (method.getName().equals("dueRallies") && !once.getAndSet(true)) {
+                Rally latest = socialStore.rallyOf(rallyId).orElseThrow();
+                long version = latest.version();
+                changeCommittedTroops(target, 100L);
+                latest.join(target, Map.of(T1, 100L), List.of());
+                socialStore.saveRally(latest, version);
+            }
+            return result;
+        });
+        assertThat(depart(rallyId)).isZero();
+        assertThat(marches.findByPlayerId(squad.leader())).isEmpty();
+        assertThat(socialStore.rallyOf(rallyId)).map(Rally::status).contains(Rally.Status.CANCELLED);
+        assertThat(countOf(target, T1)).isEqualTo(800L);
+    }
+
+    @Test
+    void lateNationalQuitRemovesTheHeroAndTheForbiddenTargetMembership() throws Exception {
+        Squad squad = squadOf(player(1_000L, 0L), player(800L, 0L), player(800L, 0L));
+        String quitter = squad.mates().get(0);
+        grantHero(quitter, HERO_2);
+        String rallyId = initiateAt(squad, quitter, Map.of(T1, 300L));
+        socials.rallyJoin(quitter, new RallyJoinReq(newRequestId(), rallyId,
+                troops(Map.of(T1, 200L)), List.of(HERO_2)));
+        join(squad.mates().get(1), rallyId, Map.of(T1, 100L));
+        nationalScope(rallyId);
+        var once = new java.util.concurrent.atomic.AtomicBoolean();
+        seam(marchAppService, "socialStore", SocialStore.class, socialStore, (method, args) -> {
+            Object result = invoke(socialStore, method, args);
+            if (method.getName().equals("dueRallies") && !once.getAndSet(true)) {
+                Rally latest = socialStore.rallyOf(rallyId).orElseThrow();
+                long version = latest.version();
+                latest.quit(quitter);
+                socialStore.saveRally(latest, version);
+                changeCommittedTroops(quitter, -200L);
+            }
+            return result;
+        });
+        assertThat(depart(rallyId)).isEqualTo(1);
+        assertThat(onlyMarch(squad.leader()).heroes()).isEmpty();
+        assertThat(onlyMarch(squad.leader()).units()).containsEntry(T1, 400L);
+        assertThat(countOf(quitter, T1)).isEqualTo(800L);
+    }
+
+    @Test
+    void aDepartedRallyIsRecoveredWhenTheSaveAcknowledgementWasLost() throws Exception {
+        Squad squad = squadOf(player(1_000L, 0L), player(800L, 0L));
+        String rallyId = initiate(squad, Map.of(T1, 300L));
+        join(squad.mates().get(0), rallyId, Map.of(T1, 200L));
+        nationalScope(rallyId);
+        var once = new java.util.concurrent.atomic.AtomicBoolean();
+        seam(socials, "store", SocialStore.class, socialStore, (method, args) -> {
+            Object result = invoke(socialStore, method, args);
+            if (method.getName().equals("saveRally") && args[0] instanceof Rally r
+                    && r.status() == Rally.Status.DEPARTED && !once.getAndSet(true)) {
+                throw new IllegalStateException("DEPARTED acknowledgement lost");
+            }
+            return result;
+        });
+        depart(rallyId);
+        depart(rallyId);
+        assertThat(marches.findByPlayerId(squad.leader())).hasSize(1);
+        assertThat(countOf(squad.leader(), T1)).isEqualTo(700L);
+        assertThat(countOf(squad.mates().get(0), T1)).isEqualTo(600L);
+    }
+
+    @Test
+    void aDerivedWorldFailureAfterMarchPersistenceNeverRefundsASecondArmy() throws Exception {
+        Squad squad = squadOf(player(1_000L, 0L), player(800L, 0L));
+        String rallyId = initiate(squad, Map.of(T1, 300L));
+        join(squad.mates().get(0), rallyId, Map.of(T1, 200L));
+        nationalScope(rallyId);
+        seam(marchAppService, "world", WorldRepository.class, world, (method, args) -> {
+            if (method.getName().equals("bumpChunkVersion")) {
+                throw new IllegalStateException("derived chunk invalidation unavailable");
+            }
+            return invoke(world, method, args);
+        });
+        depart(rallyId);
+        assertThat(marches.findByPlayerId(squad.leader())).hasSize(1);
+        assertThat(socialStore.rallyOf(rallyId)).map(Rally::status).contains(Rally.Status.DEPARTED);
+        assertThat(countOf(squad.leader(), T1)).isEqualTo(700L);
+        assertThat(countOf(squad.mates().get(0), T1)).isEqualTo(600L);
     }
 
     // ---------- 出发 ----------

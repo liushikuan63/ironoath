@@ -247,6 +247,38 @@ public interface SocialStore {
 
     // ---------- 集结（B10 §5） ----------
 
+    /** 跨集结/军队文档的持久结清计划。先记计划，再取消/退出，最后逐人幂等退兵。 */
+    record RallySettlement(String settlementId, String rallyId, String groupId, String quitterId,
+                           boolean abortDeparture, Map<String, Map<String, Long>> refunds) {
+        public RallySettlement {
+            java.util.LinkedHashMap<String, Map<String, Long>> copy = new java.util.LinkedHashMap<>();
+            refunds.forEach((player, troops) -> copy.put(player, Map.copyOf(troops)));
+            refunds = java.util.Collections.unmodifiableMap(copy);
+        }
+    }
+
+    /** 同一结清键只建一次；返回首次保存的计划，不能覆盖已开始执行的退款口径。 */
+    RallySettlement putRallySettlementIfAbsent(RallySettlement settlement);
+
+    /** 包括已取消集结的未结清计划，不能只扫描 PREPARING。 */
+    List<RallySettlement> pendingRallySettlementsOf(String groupId);
+
+    /** 所有退款已确认入档后才移除计划。军队凭据保留，防止删除响应丢失后的重放。 */
+    void removeRallySettlement(String settlementId);
+
+    /** 出发恢复日志；完整行军快照在首次建立行军之前冻结，恢复不会改出发时间/武将/目标。 */
+    record RallyDeparturePlan(String rallyId, String groupId, long departAt,
+                              String fatigueNationId, com.ironoath.core.march.March.Snapshot march) {
+        public String marchId() { return "march_rally_" + rallyId; }
+    }
+
+    RallyDeparturePlan putRallyDepartureIfAbsent(RallyDeparturePlan plan);
+    Optional<RallyDeparturePlan> rallyDepartureOf(String rallyId);
+    List<RallyDeparturePlan> pendingRallyDepartures();
+    /** 只冻结首次快照，重复调用返回已落档那份，不能按恢复时刻重算出发。 */
+    RallyDeparturePlan attachRallyDepartureMarch(String rallyId, com.ironoath.core.march.March.Snapshot march);
+    void removeRallyDeparture(String rallyId);
+
     /**
      * 写入或更新一次集结（乐观锁）。Rally 是可变对象，调用方改完必须写回来。
      *

@@ -142,6 +142,7 @@ public class NationAppService {
      * 会让容器在构造期转不出来。本仓破这类环只用这一种写法（见 {@code PlayerInitService} 同注释）。
      */
     private final org.springframework.beans.factory.ObjectProvider<SocialAppService> social;
+    private final com.ironoath.web.nation.NationOperationLock nationLock;
 
     public NationAppService(NationStore nations, NationRulesAssembler assembler,
                             SocialRulesAssembler socialRules, SocialStore socialStore,
@@ -159,6 +160,7 @@ public class NationAppService {
         this.leaders = leaders;
         this.players = players;
         this.playerLock = playerLock;
+        this.nationLock = new com.ironoath.web.nation.NationOperationLock(playerLock);
         this.idempotency = idempotency;
         this.timeService = timeService;
         this.configs = configs;
@@ -311,34 +313,44 @@ public class NationAppService {
                 requireAllianceLeader(alliance, playerId);
                 Nation loaded = nations.findByAlliance(alliance.id()).orElseThrow(() -> new BizException(
                         ErrorCode.NATION_NOT_FOUND, "你的联盟不属于任何国家"));
-                Nation nation = settleTax(loaded.id(), now);
-                nation.removeAlliance(alliance.id(), false, playerId, now);
-                // 裁决（2026-10-08）：退国要结清该盟成员的国家集结 —— 人已经不在国里，
-                // 却还挂在「本国集结」名单上会让别人以为他还在等人。被开除那条本轮明确留后。
-                // 亡国（最后一个联盟退出即解散）走整国取消那一支，与 #815 同一口径。
-                // **先结清再写国家**（#831）：这条路径不持各成员的玩家锁，退款与集结写回都可能撞乐观锁；
-                // 顺序反过来会留下「国籍已改、兵已退、集结还挂着」的半状态，而半状态没人能自愈。
-                int ralliesSettled = nation.isDisbanded()
-                        ? social.getObject().cancelNationalRalliesOf(nation.id(), now)
-                        : social.getObject().settleNationalRalliesForMembers(
-                                nation.id(), alliance.memberIds(), now);
-                nations.save(nation, nation.version());
-                long cooldownUntil = nation.joinCooldownUntil(alliance.id());
-                // 发起的盟主知道自己点了什么，而他的联盟成员是被动失去国籍的 —— 收件人是全盟成员、
-                // 排除发起人。放在 save 之后：国家那边写回失败就该整次失败，不该留下一条已发出的通知。
-                notifyNation("NATION_LEFT",
-                        nation.isDisbanded()
-                                ? "联盟「" + alliance.name() + "」已退出国家「" + nation.name()
-                                        + "」，它是最后一个成员联盟 —— 国家随之解散"
-                                : "联盟「" + alliance.name() + "」已退出国家「" + nation.name() + "」",
-                        alliance.memberIds(), playerId, nation.id(), now);
-                LOG.info("联盟退出国 nationId={} allianceId={} 发起盟主={} 影响成员={} 可再入籍时刻={} 国家是否随之解散={}（冷却来自 global.NATION_JOIN_COOLDOWN_HOURS）",
-                        nation.id(), alliance.id(), playerId, alliance.memberIds().size(), cooldownUntil,
-                        nation.isDisbanded());
-                LOG.info("退国结清国家集结 nationId={} allianceId={} 盟内成员={} 结清条数={} 国家是否随之解散={}",
-                        nation.id(), alliance.id(), alliance.memberIds().size(), ralliesSettled,
-                        nation.isDisbanded());
-                return new NationLeaveResp(nation.id(), nation.name(), cooldownUntil, now);
+                return nationLock.runLocked(loaded.id(), () -> {
+                    Nation nation = settleTax(loaded.id(), now);
+                    nation.removeAlliance(alliance.id(), false, playerId, now);
+                    // 裁决（2026-10-08）：退国要结清该盟成员的国家集结 —— 人已经不在国里，
+                    // 却还挂在「本国集结」名单上会让别人以为他还在等人。被开除那条本轮明确留后。
+                    // 亡国（最后一个联盟退出即解散）走整国取消那一支，与 #815 同一口径。
+                    // 先结清再写国家。持久日志跨请求恢复部分成功的退款，不假称跨文档事务；
+                    // 国家最终写入失败时仍保持原国籍，下次重读并继续，不重复退兵。
+                    int ralliesSettled = nation.isDisbanded()
+                            ? social.getObject().cancelNationalRalliesOf(nation.id(), now)
+                            : social.getObject().settleNationalRalliesForMembers(
+                                    nation.id(), alliance.memberIds(), now);
+                    try {
+                        nations.save(nation, nation.version());
+                    } catch (RuntimeException failure) {
+                        Nation persisted = nations.findById(nation.id()).orElseThrow();
+                        if (persisted.hasAlliance(alliance.id())
+                                || persisted.joinCooldownUntil(alliance.id()) != nation.joinCooldownUntil(alliance.id())) {
+                            throw failure;
+                        }
+                    }
+                    long cooldownUntil = nation.joinCooldownUntil(alliance.id());
+                    // 发起的盟主知道自己点了什么，而他的联盟成员是被动失去国籍的 —— 收件人是全盟成员、
+                    // 排除发起人。放在 save 之后：国家那边写回失败就该整次失败，不该留下一条已发出的通知。
+                    notifyNation("NATION_LEFT",
+                            nation.isDisbanded()
+                                    ? "联盟「" + alliance.name() + "」已退出国家「" + nation.name()
+                                            + "」，它是最后一个成员联盟 —— 国家随之解散"
+                                    : "联盟「" + alliance.name() + "」已退出国家「" + nation.name() + "」",
+                            alliance.memberIds(), playerId, nation.id(), now);
+                    LOG.info("联盟退出国 nationId={} allianceId={} 发起盟主={} 影响成员={} 可再入籍时刻={} 国家是否随之解散={}（冷却来自 global.NATION_JOIN_COOLDOWN_HOURS）",
+                            nation.id(), alliance.id(), playerId, alliance.memberIds().size(), cooldownUntil,
+                            nation.isDisbanded());
+                    LOG.info("退国结清国家集结 nationId={} allianceId={} 盟内成员={} 结清条数={} 国家是否随之解散={}",
+                            nation.id(), alliance.id(), alliance.memberIds().size(), ralliesSettled,
+                            nation.isDisbanded());
+                    return new NationLeaveResp(nation.id(), nation.name(), cooldownUntil, now);
+                });
             });
         } catch (RuntimeException e) {
             idempotency.release(req.requestId());
@@ -376,32 +388,41 @@ public class NationAppService {
                                     : "没有以你为国王的国家：解散不是一个无国籍者能发起的操作");
                 }
                 // 与 appoint / join 同一条顺序：先结清周税再改，否则这一笔税会被手里那份旧副本盖掉
-                Nation nation = settleTax(mine.id(), now);
-                int memberCount = nation.memberAllianceCount();
-                long writtenOff = nation.treasury();
-                // 名单必须在 disband 之前取：disband 会清空成员联盟表，事后再问"谁原本是这个国的人"
-                // 已经问不到了 —— 而恰恰是这些人需要被告知国没了
-                List<String> audience = nationMemberPlayerIds(nation);
-                try {
-                    nation.disband(playerId, now);
-                } catch (IllegalStateException e) {
-                    // 走到这里基本只可能是并发下国王已经换了人 —— 领域层那句原话直接进 detail
-                    throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED, e.getMessage());
-                }
-                // 亡国即取消并退兵（V22 验收④，2026-10-08 裁决）：此刻还在准备中的国家集结必须在这一手
-                // 结清。不结清的症状是"兵锁在一个谁也列不出来的集结上"—— 亡国之后集结面板会过滤掉
-                // 已解散的国家（activeNationOf），而惰性扫描 expireIfDue 只在有人读那一支时才跑。
-                // 与退国同一条顺序（#831）：结清成功后才能存亡国。否则结清撞锁失败时国家已经
-                // 解散，再试会在 activeNationOfKing 被挡住，未结清的集结与兵都失去恢复入口。
-                int ralliesCancelled = social.getObject().cancelNationalRalliesOf(nation.id(), now);
-                nations.save(nation, nation.version());
-                LOG.info("亡国结清集结 nationId={} 取消数={}", nation.id(), ralliesCancelled);
-                notifyNation("NATION_DISBANDED",
-                        "国家「" + nation.name() + "」已被国王解散", audience, playerId, nation.id(), now);
-                LOG.info("解散国家 nationId={} name={} 国王={} 影响成员联盟={} 影响人数={} 核销国库={}："
-                                + "这些联盟全部进入入籍冷却（与主动退出、被开除同一条规则），官职一律清空",
-                        nation.id(), nation.name(), playerId, memberCount, audience.size(), writtenOff);
-                return new NationDisbandResp(nation.id(), nation.name(), memberCount, writtenOff, now);
+                return nationLock.runLocked(mine.id(), () -> {
+                    Nation nation = settleTax(mine.id(), now);
+                    int memberCount = nation.memberAllianceCount();
+                    long writtenOff = nation.treasury();
+                    // 名单必须在 disband 之前取：disband 会清空成员联盟表，事后再问"谁原本是这个国的人"
+                    // 已经问不到了 —— 而恰恰是这些人需要被告知国没了
+                    List<String> audience = nationMemberPlayerIds(nation);
+                    try {
+                        nation.disband(playerId, now);
+                    } catch (IllegalStateException e) {
+                        // 走到这里基本只可能是并发下国王已经换了人 —— 领域层那句原话直接进 detail
+                        throw new BizException(ErrorCode.SOCIAL_PERMISSION_DENIED, e.getMessage());
+                    }
+                    // 亡国即取消并退兵（V22 验收④，2026-10-08 裁决）：此刻还在准备中的国家集结必须在这一手
+                    // 结清。不结清的症状是"兵锁在一个谁也列不出来的集结上"—— 亡国之后集结面板会过滤掉
+                    // 已解散的国家（activeNationOf），而惰性扫描 expireIfDue 只在有人读那一支时才跑。
+                    // 与退国同一条顺序（#831）：结清成功后才能存亡国。否则结清撞锁失败时国家已经
+                    // 解散，再试会在 activeNationOfKing 被挡住，未结清的集结与兵都失去恢复入口。
+                    int ralliesCancelled = social.getObject().cancelNationalRalliesOf(nation.id(), now);
+                    try {
+                        nations.save(nation, nation.version());
+                    } catch (RuntimeException failure) {
+                        // 最后一笔可能已提交但响应丢失；确认终态后继续交付。
+                        if (!nations.findById(nation.id()).map(Nation::isDisbanded).orElse(false)) {
+                            throw failure;
+                        }
+                    }
+                    LOG.info("亡国结清集结 nationId={} 取消数={}", nation.id(), ralliesCancelled);
+                    notifyNation("NATION_DISBANDED",
+                            "国家「" + nation.name() + "」已被国王解散", audience, playerId, nation.id(), now);
+                    LOG.info("解散国家 nationId={} name={} 国王={} 影响成员联盟={} 影响人数={} 核销国库={}："
+                                    + "这些联盟全部进入入籍冷却（与主动退出、被开除同一条规则），官职一律清空",
+                            nation.id(), nation.name(), playerId, memberCount, audience.size(), writtenOff);
+                    return new NationDisbandResp(nation.id(), nation.name(), memberCount, writtenOff, now);
+                });
             });
         } catch (RuntimeException e) {
             idempotency.release(req.requestId());

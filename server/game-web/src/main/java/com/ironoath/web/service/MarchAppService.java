@@ -313,52 +313,35 @@ public class MarchAppService {
                 .orElseGet(com.ironoath.core.player.PlayerTech::empty);
     }
 
-    /**
-     * 建一支行军、入库、登记到期队列、解锁沿途迷雾。
-     *
-     * <p><b>本方法刻意不含四件事</b>：幂等键、玩家锁、名额预检、目标校验，也<b>不含扣兵</b>。
-     * 那些是「个人出征」这条路径的职责（见 {@link #doSend}）；
-     * 集结出发要用的是同一套建行军逻辑，但它一个都不能要 ——
-     * 成员的兵在加入集结时就已经锁定扣走了，再扣一次就是双重扣兵。
-     *
-     * <p><b>抽出来而不是复制一份的理由</b>：队伍速度、负载上限、行军时长、迷雾解锁、
-     * 到期登记这五件事如果各写一份，漂移的症状是「集结行军比普通行军快一点」
-     * 或「集结不解锁迷雾」——两者都不会让任何测试变红，只会被玩家当成 bug 报上来。
-     *
-     * @param commit   入库成功后要提交的副作用（个人出征是「保存扣过兵的军队」，集结是空操作）
-     * @param rollback 任一步失败时的回滚（个人出征是「把兵退回去」，集结是撤销出发）
-     * @param rallyId  集结合并行军的归属；普通行军传 null
-     */
+    /** 个人与集结共享同一个速度、负载与科技装配，出发计划仅冻结结果而不复制数值规则。 */
+    private March assembleMarch(String marchId, String playerId, Coord home, Coord target,
+                                Map<String, Long> troops, List<String> heroes,
+                                March.TargetType targetType, String targetId, March.Action action,
+                                int teamSpeed, long loadCap, long now, String rallyId) {
+        com.ironoath.core.player.PlayerTech tech = techOf(playerId);
+        long carriedCap = Rates.scaleUp(loadCap, techEffects.loadCapacityPercent(tech));
+        long marchSpeedFixed = techEffects.marchSpeedPercent(tech)
+                + nationTechBonuses.marchSpeedPercent(playerId)
+                + policyBonuses.marchSpeedPercent(playerId);
+        long duration = MarchCalculator.durationSeconds(home.distanceTo(target), teamSpeed,
+                configs.fixedParam("MARCH_SECONDS_PER_TILE"), marchSpeedFixed);
+        March march = new March(marchId, playerId, home, target, now, now + duration * 1000L,
+                troops, heroes, carriedCap, teamSpeed, targetType, targetId, action);
+        if (rallyId != null) { march.attachToRally(rallyId); }
+        return march;
+    }
+
+    /** 个人行军的写入/队列/扣兵提交；集结的持久恢复由 consumeRallyDeparture 驱动。 */
     private March createMarch(String playerId, Coord home, Coord target, Map<String, Long> byUnitId,
                               List<String> heroes, March.TargetType targetType, String targetId,
                               March.Action action, int teamSpeed, long loadCap, long now, String rallyId,
                               Runnable commit, Runnable rollback) {
-        // 科技加成只在这一个地方折进来：个人出征与集结共用本方法（理由见方法注释），
-        // 所以「集结队伍比普行快一点」这类漂移在结构上就不可能出现。
-        // 集结按发起者的科技算 —— 一支队伍只有一份速度与负载，这与联盟科技在战斗里同一口径。
-        com.ironoath.core.player.PlayerTech tech = techOf(playerId);
-        long carriedCap = Rates.scaleUp(loadCap, techEffects.loadCapacityPercent(tech));
-        int distance = home.distanceTo(target);
-        // §五④：行军速度同样是"同类相加、作用一次" —— 国家那一份与个人的相加后交给
-        // MarchCalculator 的 speedBonusFixed 那一位（它内部是 ÷ (1 + 合计)）；分两处折就会漂
-        long marchSpeedFixed = techEffects.marchSpeedPercent(tech)
-                + nationTechBonuses.marchSpeedPercent(playerId)
-                + policyBonuses.marchSpeedPercent(playerId);
-        long duration = MarchCalculator.durationSeconds(distance, teamSpeed,
-                configs.fixedParam("MARCH_SECONDS_PER_TILE"), marchSpeedFixed);
         String marchId = "march_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 
         March march;
         try {
-            march = new March(marchId, playerId, home, target, now, now + duration * 1000L,
-                    byUnitId, heroes, carriedCap, teamSpeed, targetType, targetId, action);
-            // 必须在入库之前绑定：仓储读写都返回副本，入库之后再改，
-            // 已入库的那份副本看不到。而中间只要插进一次到期扫描，
-            // 到家时就会按「普通行军」处理 —— 全部幸存兵力记到发起人名下，
-            // 成员的兵有去无回。那正是返程分兵要修的 bug，不能由绑定顺序决定它出不出事
-            if (rallyId != null) {
-                march.attachToRally(rallyId);
-            }
+            march = assembleMarch(marchId, playerId, home, target, byUnitId, heroes,
+                    targetType, targetId, action, teamSpeed, loadCap, now, rallyId);
         } catch (RuntimeException e) {
             rollback.run();
             throw e;
@@ -409,8 +392,8 @@ public class MarchAppService {
         world.bumpChunkVersion(target.chunkKey(chunkSize()));
 
         LOG.info("出征 playerId={} marchId={} {}→{} 距离={}格 速度={} 时长={}秒 兵力={} 负载上限={} 目标={} 行为={}",
-                playerId, marchId, home, target, distance, teamSpeed, duration,
-                byUnitId, carriedCap, targetType, action);
+                playerId, marchId, home, target, home.distanceTo(target), teamSpeed,
+                (march.arriveAt() - now) / 1000L, byUnitId, march.loadCap(), targetType, action);
         return march;
     }
 
@@ -622,17 +605,7 @@ public class MarchAppService {
                 continue;
             }
             try {
-                if (advance(march, now)) {
-                    processed++;
-                }
-                // ⚠️ 不能无条件撤销：advance 在「到达/打完转入返程」时会 reschedule 新的到期时刻
-                // （returnArriveAt），这里再 cancel 会把刚登记的返程吞掉 —— 症状是队伍永远停在
-                // RETURNING：兵不回城、出征名额不释放（B13 名额走查实测：SCOUT 到达那次扫描推进=1
-                // 之后队列为空，返程到点也再没人推）。只有「已到家/记录已删、或不再需要到期推进」
-                // 的行军才撤销登记（到家路径 arriveHome 内已自行 cancel 过一次，重复撤销是幂等的）。
-                if (march.status() != March.Status.MARCHING && march.status() != March.Status.RETURNING) {
-                    dueQueue.cancel(marchId);
-                }
+                if (advanceDueMarch(marchId, now)) { processed++; }
             } catch (RuntimeException e) {
                 // 单支失败不影响其余：一次到期扫描里如果有 1000 支，
                 // 因为其中一支的数据异常就整批放弃，会让另外 999 支也卡住
@@ -655,8 +628,8 @@ public class MarchAppService {
      * <p><b>为什么不复用 {@link #send}</b>：{@code send} 那条路径上的四件事这里一件都不能做 ——
      * 幂等键（没有请求方）、玩家锁（锁的是成员，而本方法由任意一个玩家的扫描触发）、
      * 名额预检（下面单独做，见注释）、扣兵（成员的兵在加入集结时已锁定）。
-     * 复用到的部分是 {@link #createMarch}：速度、负载、时长、迷雾解锁、到期登记这五件事
-     * 必须与个人出征同一个实现，否则「集结行军比普通行军快一点」这种漂移没有任何测试会红。
+     * 速度、负载与时长沿用个人出征的装配口；固定行军身份、持久计划与队列登记由消费流程负责，
+     * 恢复时使用原始快照，不重复扣兵或重置出发时刻。
      *
      * <p><b>单个集结失败不影响其余</b>：与 {@code processDue} 同一纪律 ——
      * 一批里有十个集结，因为一个的目标坐标越界就整批放弃，会让另外九个成员的兵白锁着。
@@ -664,49 +637,112 @@ public class MarchAppService {
      * @return 本次实际出发的集结数
      */
     public int departDueRallies(long now) {
+        java.util.Set<String> candidates = new java.util.LinkedHashSet<>();
+        socialStore.pendingRallyDepartures().forEach(plan -> candidates.add(plan.rallyId()));
+        socialStore.dueRallies(now).forEach(rally -> candidates.add(rally.rallyId()));
         int departed = 0;
-        for (com.ironoath.core.social.Rally rally : socialStore.dueRallies(now)) {
-            long maxConcurrent = configs.longParam("MARCH_MAX_CONCURRENT");
-            if (marches.activeCountOf(rally.initiatorId()) >= maxConcurrent) {
-                // 发起人在途已满 ⇒ 本轮跳过，集结仍是 PREPARING、兵力仍是锁定的，下次扫描再试。
-                // 直接放行等于给「出发」开一条绕过行军上限的后门，
-                // 而 B15 卖的额外名额就白卖了；永久满名额的情况不会发生：行军都会到家
-                LOG.info("集结暂缓出发：发起人在途行军已满 rallyId={} 发起人={}",
-                        rally.rallyId(), rally.initiatorId());
-                continue;
-            }
-            java.util.Optional<com.ironoath.core.social.Rally.Departure> departure;
+        for (String rallyId : candidates) {
             try {
-                departure = socialAppService.settleDueRally(rally, now);
-            } catch (RuntimeException e) {
-                LOG.error("集结到点结算失败，保持准备中等待下次扫描 rallyId={} 发起人={}",
-                        rally.rallyId(), rally.initiatorId(), e);
-                continue;
-            }
-            if (departure.isEmpty()) {
-                continue;   // 人数不足已退款取消，或并发下别的扫描已经出发
-            }
-            try {
-                createRallyMarch(rally, departure.get(), now);
-                departed++;
-            } catch (RuntimeException e) {
-                // 兵已随出发锁定，而行军没建起来 ⇒ 既不到家也没法再退。
-                // 必须当场退款并把集结退回取消，否则成员的兵就永久锁在一次没有行军的集结里
-                socialAppService.abortDeparture(rally.rallyId());
-                LOG.error("集结出发后建行军失败，已撤销出发并退回成员兵力 rallyId={} 发起人={}",
-                        rally.rallyId(), rally.initiatorId(), e);
+                boolean created = socialAppService.runRallyDepartureLocked(rallyId, () -> {
+                    com.ironoath.core.social.Rally latest = socialStore.rallyOf(rallyId).orElseThrow();
+                    if (latest.status() == com.ironoath.core.social.Rally.Status.PREPARING) {
+                        if (marches.activeCountOf(latest.initiatorId()) >= configs.longParam("MARCH_MAX_CONCURRENT")) {
+                            return false;
+                        }
+                        socialAppService.settleDueRally(latest, now);
+                    }
+                    var plan = socialStore.rallyDepartureOf(rallyId).orElse(null);
+                    return plan != null && consumeRallyDeparture(plan, now);
+                });
+                if (created) { departed++; }
+            } catch (RuntimeException failure) {
+                // 日志与已写行军都保留。存储/队列/疲劳故障不得被误判成“没建军”而退第二份兵。
+                LOG.error("集结出发消费失败，保留持久计划等待下次请求 rallyId={}", rallyId, failure);
             }
         }
         return departed;
     }
 
+    private boolean consumeRallyDeparture(com.ironoath.web.social.SocialStore.RallyDeparturePlan plan, long now) {
+        com.ironoath.core.social.Rally actual = socialStore.rallyOf(plan.rallyId()).orElseThrow();
+        if (actual.status() != com.ironoath.core.social.Rally.Status.DEPARTED) {
+            // 到达/取消等终态不能因为日志删除响应丢失而重建旧行军。
+            if (actual.status() != com.ironoath.core.social.Rally.Status.PREPARING) {
+                socialStore.removeRallyDeparture(plan.rallyId());
+            }
+            return false;
+        }
+        March persisted = marches.findById(plan.marchId()).orElse(null);
+        boolean wasMissing = persisted == null;
+        if (plan.march() == null) {
+            March frozen;
+            if (persisted != null) {
+                frozen = persisted;
+            } else {
+                try {
+                    frozen = createRallyMarch(actual, actual.departure(), plan.marchId());
+                } catch (BizException invalidTarget) {
+                    // 只有已确认“未建行军”的结构性业务拒绝才撤销出发；退款自身有持久恢复计划。
+                    socialAppService.abortDeparture(plan.rallyId());
+                    socialStore.removeRallyDeparture(plan.rallyId());
+                    LOG.warn("集结目标结构不成立，已取消并退兵 rallyId={} 原因={}",
+                            plan.rallyId(), invalidTarget.getMessage());
+                    return false;
+                }
+            }
+            plan = socialStore.attachRallyDepartureMarch(plan.rallyId(), frozen.snapshot());
+        }
+        March intended = March.fromSnapshot(plan.march());
+        if (persisted == null) {
+            try {
+                marches.insertIfAbsent(intended);
+            } catch (RuntimeException failure) {
+                persisted = marches.findById(plan.marchId()).orElse(null);
+                if (persisted == null) { throw failure; }
+            }
+            persisted = marches.findById(plan.marchId()).orElseThrow();
+        }
+        if (!plan.rallyId().equals(persisted.rallyId())
+                || !intended.playerId().equals(persisted.playerId())) {
+            throw new IllegalStateException("固定行军身份与出发计划不匹配：" + plan.marchId());
+        }
+        // 登记可重复，时刻来自原快照/当前返程存档，恢复不以 now 重置倒计时。
+        if (persisted.status() == March.Status.MARCHING) {
+            dueQueue.schedule(persisted.id(), persisted.arriveAt());
+        } else if (persisted.status() == March.Status.RETURNING && persisted.returnArriveAt() != null) {
+            dueQueue.schedule(persisted.id(), persisted.returnArriveAt());
+        }
+        wars.addMarchFatigueOnce(intended.id(), plan.fatigueNationId(), intended.playerId(), intended.startAt());
+        updateRallyMarchVisibility(intended);
+        socialStore.removeRallyDeparture(plan.rallyId());
+        LOG.info("集结出发计划已消费 rallyId={} marchId={} 原始出发={} 新建={}",
+                plan.rallyId(), intended.id(), intended.startAt(), wasMissing);
+        return wasMissing;
+    }
+
+    /** 迷雾/地图版本是可重做的派生状态，失败不能撤销已经持久成立的行军。 */
+    private void updateRallyMarchVisibility(March march) {
+        try {
+            FogOfWar fog = world.fogOf(march.playerId());
+            fog.explorePath(march.from(), march.to(), chunkSize());
+            try {
+                world.saveFog(march.playerId(), fog, fog.version());
+            } catch (IllegalStateException conflict) {
+                FogOfWar fresh = world.fogOf(march.playerId());
+                fresh.explorePath(march.from(), march.to(), chunkSize());
+                world.saveFog(march.playerId(), fresh, fresh.version());
+            }
+            world.bumpChunkVersion(march.to().chunkKey(chunkSize()));
+        } catch (RuntimeException derivedFailure) {
+            LOG.warn("集结合并行军已成立，派生地图刷新失败不退兵 marchId={}", march.id(), derivedFailure);
+        }
+    }
+
     /**
      * 用合并兵力建集结合并行军。
      *
-     * <p><b>退款只做一次，所以传给 {@code createMarch} 的两个回调都是空操作</b>：
-     * 它内部的回滚负责「把扣掉的兵还回去」，而集结的兵是在加入时由社交域扣的，
-     * 这里的回滚是「撤销出发」（外层 catch 调 {@code abortDeparture}）。
-     * 两边都做就是双重退兵 —— 一次出发变两次发兵。
+     * <p>只装配，不入库。调用方先把完整结果写进出发计划，再幂等建立固定身份的行军。
+     * 集结的兵早已在加入时扣除；存储异常保留计划，只有确认未建军的结构拒绝才退兵。
      *
      * <p><b>随军武将的上限按整支集结算，不按人算</b>：合并名单取
      * {@code rally.selectedHeroes(LINEUP_HERO_COUNT)}（按加入顺序，满了或与他人重复就落选）。
@@ -714,8 +750,8 @@ public class MarchAppService {
      * 而 {@code LINEUP_HERO_COUNT} 是战斗平衡的地基，集结不能成为它的后门。
      * 落选的成员靠 {@code RallyView.heroSlots} 自己看得见原因。
      */
-    private void createRallyMarch(com.ironoath.core.social.Rally rally,
-                                  com.ironoath.core.social.Rally.Departure departure, long now) {
+    private March createRallyMarch(com.ironoath.core.social.Rally rally,
+                                  com.ironoath.core.social.Rally.Departure departure, String marchId) {
         String initiatorId = rally.initiatorId();
         Map<String, Long> troops = departure.mergedTroops();
         Coord target = requireCoord((int) rally.targetX(), (int) rally.targetY());
@@ -736,9 +772,9 @@ public class MarchAppService {
         long loadCap = MarchCalculator.loadCap(troops, loads);
         List<String> heroes = rally.selectedHeroes((int) configs.longParam("LINEUP_HERO_COUNT"));
 
-        createMarch(initiatorId, worldAppService.homeOf(initiatorId), target, troops,
+        return assembleMarch(marchId, initiatorId, worldAppService.homeOf(initiatorId), target, troops,
                 heroes, targetType, targetId, March.Action.ATTACK,
-                teamSpeed, loadCap, now, rally.rallyId(), () -> { }, () -> { });
+                teamSpeed, loadCap, departure.departAt(), rally.rallyId());
     }
 
     /**
@@ -788,6 +824,32 @@ public class MarchAppService {
                     "集结只能攻击野怪或玩家城，当前目标=" + parsed);
         }
         return parsed;
+    }
+
+    private boolean advanceDueMarch(String marchId, long now) {
+        March observed = marches.findById(marchId).orElse(null);
+        if (observed != null && observed.isRallyMarch()) {
+            return socialAppService.runRallyDepartureLocked(observed.rallyId(),
+                    () -> advanceDueMarchLocked(marchId, now));
+        }
+        return advanceDueMarchLocked(marchId, now);
+    }
+
+    private boolean advanceDueMarchLocked(String marchId, long now) {
+        March march = marches.findById(marchId).orElse(null);
+        if (march == null) { dueQueue.cancel(marchId); return false; }
+        if (march.isRallyMarch()) {
+            var pending = socialStore.rallyDepartureOf(march.rallyId()).orElse(null);
+            if (pending != null) { consumeRallyDeparture(pending, now); }
+            march = marches.findById(marchId).orElse(null);
+            if (march == null) { dueQueue.cancel(marchId); return false; }
+        }
+        boolean processed = advance(march, now);
+        // 到达后可能已登记返程，不能无条件 cancel，否则会吞掉那一笔新登记。
+        if (march.status() != March.Status.MARCHING && march.status() != March.Status.RETURNING) {
+            dueQueue.cancel(marchId);
+        }
+        return processed;
     }
 
     /** 把一支到点的行军推进到下一个状态。返回是否真的推进了。 */
@@ -1024,7 +1086,9 @@ public class MarchAppService {
             }
         }
 
-        marches.save(march, version);
+        // 集结返家保留 RETURNING 存档直到全部成员的同档返兵凭据完成。
+        // 若先保存 STATIONED 再删除，删除失败后下次 advance 会跳过它，行军永久滞留。
+        if (!march.isRallyMarch()) { marches.save(march, version); }
         marches.delete(march.id());
         dueQueue.cancel(march.id());
         dueQueue.cancel(march.id() + ":filled");
@@ -1073,8 +1137,8 @@ public class MarchAppService {
                     march.id(), march.rallyId(), march.units());
             return Map.of();
         }
-        // playerId → (unitId → 分回量)。先全部分完再一次人一次人入账，
-        // 否则中途某个人保存失败，会出现「一部分人已收到、剩下的永远收不到」
+        // playerId → (unitId → 分回量)。分配仍取已出发的固定成员承诺；
+        // 成员返兵与凭据同档保存，后续失败重放时不会给已成功成员多发一份。
         Map<String, Map<String, Long>> credits = new LinkedHashMap<>();
         long survivors = 0L;
         long credited = 0L;
@@ -1108,14 +1172,11 @@ public class MarchAppService {
         Map<String, Long> perPlayer = new LinkedHashMap<>();
         for (Map.Entry<String, Map<String, Long>> entry : credits.entrySet()) {
             String member = entry.getKey();
-            ArmyState army = loadArmy(member);
-            long armyVersion = armies.versionOf(member);
-            long each = 0L;
-            for (Map.Entry<String, Long> share : entry.getValue().entrySet()) {
-                army.add(share.getKey(), share.getValue());
-                each += share.getValue();
-            }
-            armies.save(member, army, armyVersion);
+            Map<String, Long> positiveShares = new LinkedHashMap<>();
+            entry.getValue().forEach((unit, count) -> { if (count > 0L) { positiveShares.put(unit, count); } });
+            com.ironoath.web.social.RallySettlementRecovery.refundOnce(armies, member,
+                    "rally-return:" + march.id(), positiveShares);
+            long each = entry.getValue().values().stream().mapToLong(Long::longValue).sum();
             perPlayer.put(member, each);
         }
         LOG.info("集结兵力分回 rallyId={} marchId={} 幸存={} 实分={} 参与人数={} 明细={}",

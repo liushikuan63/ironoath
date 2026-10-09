@@ -2,6 +2,10 @@ package com.ironoath.web.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,9 +17,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.bson.Document;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +32,10 @@ import com.ironoath.web.nation.WarRulesAssembler;
 import com.ironoath.web.nation.WarStore;
 import com.ironoath.web.store.memory.InMemoryWarStore;
 import com.ironoath.web.store.mongo.MongoWarStore;
+import com.ironoath.web.store.mongo.WarDocument;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.UpdateDefinition;
 
 /**
  * 职责：国战存储在<b>内存与真实 Mongo 上必须给出同一个结果</b>（B21 验收 9 的那一档）。
@@ -676,8 +685,8 @@ class WarStoreEquivalenceTest {
     }
 
     @Test
-    @DisplayName("save 是整档替换且后写的赢：两套实现同一条（端口 javadoc 里那条未关闭的窗口）")
-    void lastWriteWinsOnBothStores() {
+    @DisplayName("save 绑定读取版本：两套实现都拒绝后写的旧副本，保留最新积分")
+    void staleSaveIsRejectedOnBothStores() {
         for (WarStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
             store.insertIfAbsent(richBoard(T0));
@@ -686,14 +695,16 @@ class WarStoreEquivalenceTest {
             WarScoreBoard fresh = store.findLatest().orElseThrow();
             fresh.recordKill("n1", 1_000L);
             store.save(fresh);
-            store.save(stale);   // 拿着旧副本后写 —— 覆盖掉刚才那一千击杀
+            assertThatThrownBy(() -> store.save(stale)).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("版本冲突");
 
             WarScoreBoard back = store.findLatest().orElseThrow();
             assertThat(back.totalKills())
-                    .as("%s 这条断言不是为了证明实现好：端口没有乐观锁版本，"
-                            + "「中途 flush」一旦成为写形状就会盖数据，此处把窗口写成可失败的证据。"
-                            + "下一切片若给端口加版本，这一条必须改写成断言被拒", label)
-                    .isEqualTo(60_120L);
+                    .as("%s 旧副本被拒后，刚才写入的一千击杀必须保留", label)
+                    .isEqualTo(61_120L);
+            fresh.recordKill("n1", 1L);
+            store.save(fresh); // 同一成功保存对象已绑定新版本，可以继续保存。
+            assertThat(store.findLatest().orElseThrow().totalKills()).isEqualTo(61_121L);
         }
     }
 
@@ -710,8 +721,8 @@ class WarStoreEquivalenceTest {
     }
 
     private static void requireMongo() {
-        Assumptions.assumeTrue(db != null,
-                "本机没有可用的 MongoDB（" + TestMongo.uri() + "）—— 见「跳过即未验证」那条");
+        assertThat(db).as("真实 MongoDB 必须可用，未连接不能把等价判据记为通过：%s", TestMongo.uri())
+                .isNotNull();
     }
 
     /** 只登记两国的最小一档（冷却那一族只读 {@code nations} 与 {@code startedAt}，不需要别的状态）。 */
@@ -870,6 +881,293 @@ class WarStoreEquivalenceTest {
                     .as("%s 结算之后不再累积", label).isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
         }
     }
+    @Test
+    @DisplayName("March ID 回执与疲劳同档：重放、不同玩家、不同 ID 与副本隔离")
+    void marchFatigueIsAppliedExactlyOnceOnBothStores() {
+        long perMarch = rules.rules().fatiguePerMarch();
+        for (WarStore store : bothStores()) {
+            store.insertIfAbsent(pair(T0, "n1", "n2"));
+            assertThat(store.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                    .isEqualTo(WarStore.FatigueResult.APPLIED);
+            assertThat(store.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                    .isEqualTo(WarStore.FatigueResult.APPLIED);
+            assertThat(store.addMarchFatigueOnce("m2", "n1", "P1", T0 + 2L))
+                    .isEqualTo(WarStore.FatigueResult.APPLIED);
+            assertThat(store.addMarchFatigueOnce("m3", "n2", "P2", T0 + 3L))
+                    .isEqualTo(WarStore.FatigueResult.APPLIED);
+            WarScoreBoard board = store.findLatest().orElseThrow();
+            assertThat(board.fatigueOf("P1")).isEqualTo(2L * perMarch);
+            assertThat(board.fatigueOf("P2")).isEqualTo(perMarch);
+            assertThat(board.toSnapshot().marchFatigueReceipts()).hasSize(3);
+            assertThatThrownBy(() -> board.toSnapshot().marchFatigueReceipts().clear())
+                    .isInstanceOf(UnsupportedOperationException.class);
+            board.addMarchFatigueOnce(new WarScoreBoard.MarchFatigueReceipt("unwritten", "n1", "P1", T0 + 4L));
+            assertThat(store.findLatest().orElseThrow().marchFatigueReceipt("unwritten")).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("非法键与同 ID 不同身份拒绝，不能变更疲劳或回执")
+    void badMarchFatigueIdentityIsRejectedOnBothStores() {
+        for (WarStore store : bothStores()) {
+            store.insertIfAbsent(pair(T0, "n1", "n2"));
+            for (String invalid : new String[]{null, "", " "}) {
+                assertThatThrownBy(() -> store.addMarchFatigueOnce(invalid, "n1", "P1", T0))
+                        .isInstanceOf(IllegalArgumentException.class);
+                assertThatThrownBy(() -> store.addMarchFatigueOnce("m1", "n1", invalid, T0))
+                        .isInstanceOf(IllegalArgumentException.class);
+            }
+            assertThatThrownBy(() -> store.addMarchFatigueOnce("m1", "n1", "P1", -1L))
+                    .isInstanceOf(IllegalArgumentException.class);
+            store.addMarchFatigueOnce("m1", "n1", "P1", T0);
+            assertThatThrownBy(() -> store.addMarchFatigueOnce("m1", "n1", "P2", T0))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.addMarchFatigueOnce("m1", "n2", "P1", T0))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThat(store.findLatest().orElseThrow().fatigueOf("P1"))
+                    .isEqualTo(rules.rules().fatiguePerMarch());
+            assertThat(store.findLatest().orElseThrow().toSnapshot().marchFatigueReceipts()).hasSize(1);
+        }
+    }
+
+    @Test
+    @DisplayName("恢复按原始出发时间选战役：未开战、过期、不参战及新战役均不能错期入账")
+    void marchFatigueRecoveryCannotChargeAFutureWarOnBothStores() {
+        long duration = rules.rules().durationMillis();
+        for (WarStore store : bothStores()) {
+            assertThat(store.addMarchFatigueOnce("before", "n1", "P1", T0 - 1L))
+                    .isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
+            store.insertIfAbsent(pair(T0, "n1", "n2"));
+            assertThat(store.addMarchFatigueOnce("before", "n1", "P1", T0 - 1L))
+                    .isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
+            assertThat(store.addMarchFatigueOnce("outside", null, "P1", T0 + 1L))
+                    .isEqualTo(WarStore.FatigueResult.NOT_PARTICIPANT);
+            assertThat(store.addMarchFatigueOnce("unregistered", "n9", "P1", T0 + 1L))
+                    .isEqualTo(WarStore.FatigueResult.NOT_PARTICIPANT);
+            assertThat(store.addMarchFatigueOnce("expired", "n1", "P1", T0 + duration))
+                    .isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
+            store.addMarchFatigueOnce("original", "n1", "P1", T0 + 1L);
+            store.settleIfExpired(T0 + duration);
+            store.insertIfNoneActive(pair(T0 + duration + 10L, "n1", "n2"));
+            assertThat(store.addMarchFatigueOnce("original", "n1", "P1", T0 + 1L))
+                    .isEqualTo(WarStore.FatigueResult.APPLIED);
+            assertThat(store.addMarchFatigueOnce("late-unrecorded", "n1", "P1", T0 + 2L))
+                    .isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
+            assertThat(store.addMarchFatigueOnce("expired", "n1", "P1", T0 + duration))
+                    .isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
+            assertThat(store.findLatest().orElseThrow().fatigueOf("P1")).isZero();
+            assertThat(store.findLatest().orElseThrow().toSnapshot().marchFatigueReceipts()).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("新回执使旧副本保存失败；一般更新及结算必须完整保留回执")
+    void ordinaryWarWritesCannotEraseMarchReceiptsOnBothStores() {
+        for (WarStore store : bothStores()) {
+            store.insertIfAbsent(richBoard(T0));
+            WarScoreBoard stale = store.findLatest().orElseThrow();
+            store.addMarchFatigueOnce("m1", "n1", "P3", T0 + 1L);
+            assertThatThrownBy(() -> store.save(stale)).isInstanceOf(IllegalStateException.class);
+            store.recordKills("n1", "P3", 7L, T0 + 2L);
+            store.addFatigue("n1", "P3", 0L, 2L);
+            assertThat(store.claimServerGoal("P3")).isEqualTo(WarStore.GoalClaimResult.CLAIMED);
+            store.settleIfExpired(T0 + rules.rules().durationMillis());
+            WarScoreBoard board = store.findLatest().orElseThrow();
+            assertThat(board.marchFatigueReceipt("m1"))
+                    .isEqualTo(new WarScoreBoard.MarchFatigueReceipt("m1", "n1", "P3", T0 + 1L));
+            assertThat(board.fatigueOf("P3")).isEqualTo(rules.rules().fatiguePerMarch()
+                    + 2L * rules.rules().fatiguePerWounded());
+            assertThat(board.killsBy("P3")).isEqualTo(7L);
+            assertThat(board.goalClaimedBy("P3")).isTrue();
+            assertThat(store.addMarchFatigueOnce("m1", "n1", "P3", T0 + 1L))
+                    .isEqualTo(WarStore.FatigueResult.APPLIED);
+        }
+    }
+
+    @Test
+    @DisplayName("真实 Mongo 跨仓储实例保存旧副本不能抹回执，重建仓储后重放仍只一笔")
+    void staleMongoInstanceCannotEraseReceipts() {
+        MongoWarStore first = newMongoStore();
+        MongoWarStore second = newMongoStore();
+        first.insertIfAbsent(pair(T0, "n1", "n2"));
+        WarScoreBoard stale = first.findLatest().orElseThrow();
+        second.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L);
+        stale.recordKill("n1", 100L);
+        assertThatThrownBy(() -> first.save(stale)).isInstanceOf(IllegalStateException.class);
+        MongoWarStore reopened = newMongoStore();
+        assertThat(reopened.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                .isEqualTo(WarStore.FatigueResult.APPLIED);
+        assertThat(reopened.findLatest().orElseThrow().fatigueOf("P1"))
+                .isEqualTo(rules.rules().fatiguePerMarch());
+        assertThat(reopened.findLatest().orElseThrow().totalKills()).isZero();
+        assertThat(reopened.findLatest().orElseThrow().toSnapshot().marchFatigueReceipts()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("真实 Mongo 多实例同 ID 同读旧版本：CAS 输家重读后不得再次累加")
+    void concurrentMongoMarchReceiptIsAppliedOnce() throws Exception {
+        MongoWarStore first = newMongoStore();
+        first.insertIfAbsent(pair(T0, "n1", "n2"));
+        MongoTemplate delayed = spy(db.template());
+        CountDownLatch attempted = new CountDownLatch(1);
+        CountDownLatch resume = new CountDownLatch(1);
+        AtomicBoolean holdFirst = new AtomicBoolean(true);
+        doAnswer(invocation -> {
+            if (holdFirst.compareAndSet(true, false)) {
+                attempted.countDown();
+                assertThat(resume.await(10L, TimeUnit.SECONDS)).isTrue();
+            }
+            return invocation.callRealMethod();
+        }).when(delayed).updateFirst(any(Query.class), any(UpdateDefinition.class),
+                eq(WarDocument.class), eq(WarDocument.COLLECTION));
+        MongoWarStore second = new MongoWarStore(delayed, rules);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<WarStore.FatigueResult> pending = pool.submit(
+                    () -> second.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L));
+            assertThat(attempted.await(10L, TimeUnit.SECONDS)).isTrue();
+            assertThat(first.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                    .isEqualTo(WarStore.FatigueResult.APPLIED);
+            resume.countDown();
+            assertThat(pending.get(10L, TimeUnit.SECONDS)).isEqualTo(WarStore.FatigueResult.APPLIED);
+            assertThat(first.findLatest().orElseThrow().fatigueOf("P1"))
+                    .isEqualTo(rules.rules().fatiguePerMarch());
+            assertThat(first.findLatest().orElseThrow().toSnapshot().marchFatigueReceipts()).hasSize(1);
+        } finally {
+            resume.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("真实 Mongo 一般写口与回执同读旧版本：击杀、疲劳、领取、结算各自冲突重算")
+    void concurrentOrdinaryMongoWritesPreserveMarchReceipt() throws Exception {
+        for (int operation = 0; operation < 4; operation++) {
+            MongoWarStore winner = newMongoStore();
+            winner.clear();
+            winner.insertIfAbsent(richBoard(T0));
+            MongoTemplate delayed = spy(db.template());
+            CountDownLatch attempted = new CountDownLatch(1);
+            CountDownLatch resume = new CountDownLatch(1);
+            AtomicBoolean holdFirst = new AtomicBoolean(true);
+            doAnswer(invocation -> {
+                if (holdFirst.compareAndSet(true, false)) {
+                    attempted.countDown();
+                    assertThat(resume.await(10L, TimeUnit.SECONDS)).isTrue();
+                }
+                return invocation.callRealMethod();
+            }).when(delayed).updateFirst(any(Query.class), any(UpdateDefinition.class),
+                    eq(WarDocument.class), eq(WarDocument.COLLECTION));
+            MongoWarStore contender = new MongoWarStore(delayed, rules);
+            final int kind = operation;
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> pending = pool.submit(() -> {
+                    switch (kind) {
+                        case 0 -> assertThat(contender.recordKills("n1", "P3", 7L, T0 + 2L))
+                                .isEqualTo(WarStore.KillResult.APPLIED);
+                        case 1 -> assertThat(contender.addFatigue("n1", "P3", 0L, 2L))
+                                .isEqualTo(WarStore.FatigueResult.APPLIED);
+                        case 2 -> assertThat(contender.claimServerGoal("P3"))
+                                .isEqualTo(WarStore.GoalClaimResult.CLAIMED);
+                        case 3 -> assertThat(contender.settleIfExpired(
+                                T0 + rules.rules().durationMillis()).orElseThrow().settledNow()).isTrue();
+                        default -> throw new AssertionError("unknown operation");
+                    }
+                });
+                assertThat(attempted.await(10L, TimeUnit.SECONDS)).isTrue();
+                winner.addMarchFatigueOnce("m1", "n1", "P3", T0 + 1L);
+                resume.countDown();
+                pending.get(10L, TimeUnit.SECONDS);
+                WarScoreBoard board = winner.findLatest().orElseThrow();
+                assertThat(board.marchFatigueReceipt("m1")).isNotNull();
+                assertThat(board.toSnapshot().marchFatigueReceipts()).hasSize(1);
+                assertThat(board.fatigueOf("P3")).isEqualTo(rules.rules().fatiguePerMarch()
+                        + (kind == 1 ? 2L * rules.rules().fatiguePerWounded() : 0L));
+                if (kind == 0) {
+                    assertThat(board.killsBy("P3")).isEqualTo(7L);
+                } else if (kind == 2) {
+                    assertThat(board.goalClaimedBy("P3")).isTrue();
+                } else if (kind == 3) {
+                    assertThat(board.phase()).isEqualTo(WarScoreBoard.Phase.SETTLED);
+                }
+            } finally {
+                resume.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("真实 Mongo 更新成功响应丢失：读取同档回执确认，之后重放不重加")
+    void mongoMarchFatigueWriteAcknowledgementLossIsRecovered() {
+        MongoWarStore first = newMongoStore();
+        first.insertIfAbsent(pair(T0, "n1", "n2"));
+        MongoTemplate lostAck = spy(db.template());
+        AtomicBoolean failOnce = new AtomicBoolean(true);
+        doAnswer(invocation -> {
+            Object result = invocation.callRealMethod();
+            if (failOnce.compareAndSet(true, false)) {
+                throw new IllegalStateException("simulated acknowledgement loss");
+            }
+            return result;
+        }).when(lostAck).updateFirst(any(Query.class), any(UpdateDefinition.class),
+                eq(WarDocument.class), eq(WarDocument.COLLECTION));
+        MongoWarStore uncertain = new MongoWarStore(lostAck, rules);
+        assertThat(uncertain.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                .isEqualTo(WarStore.FatigueResult.APPLIED);
+        assertThat(first.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                .isEqualTo(WarStore.FatigueResult.APPLIED);
+        assertThat(first.findLatest().orElseThrow().fatigueOf("P1"))
+                .isEqualTo(rules.rules().fatiguePerMarch());
+        assertThat(first.findLatest().orElseThrow().toSnapshot().marchFatigueReceipts()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("真实 Mongo 更新未执行：不能假报确认，保留失败给调用方随后安全重放")
+    void failedMongoMarchFatigueWriteIsNotReportedAsApplied() {
+        MongoWarStore first = newMongoStore();
+        first.insertIfAbsent(pair(T0, "n1", "n2"));
+        MongoTemplate failed = spy(db.template());
+        doAnswer(invocation -> {
+            throw new IllegalStateException("simulated failure before write");
+        }).when(failed).updateFirst(any(Query.class), any(UpdateDefinition.class),
+                eq(WarDocument.class), eq(WarDocument.COLLECTION));
+        MongoWarStore uncertain = new MongoWarStore(failed, rules);
+        assertThatThrownBy(() -> uncertain.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("before write");
+        assertThat(first.findLatest().orElseThrow().fatigueOf("P1")).isZero();
+        assertThat(first.findLatest().orElseThrow().marchFatigueReceipt("m1")).isNull();
+        first.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L);
+        assertThat(first.findLatest().orElseThrow().fatigueOf("P1"))
+                .isEqualTo(rules.rules().fatiguePerMarch());
+    }
+
+    @Test
+    @DisplayName("真实 Mongo 老文档缺 version 与 March 回执字段：零版本读取并首次 CAS 补齐")
+    void legacyMongoWarDocumentDefaultsAndMigrates() {
+        MongoWarStore store = newMongoStore();
+        store.insertIfAbsent(pair(T0, "n1", "n2"));
+        Document raw = db.template().getCollection(WarDocument.COLLECTION)
+                .find(new Document("_id", "war_" + T0)).first();
+        assertThat(raw).isNotNull();
+        raw.remove("version");
+        raw.get("state", Document.class).remove("marchFatigueReceipts");
+        db.template().getCollection(WarDocument.COLLECTION)
+                .replaceOne(new Document("_id", "war_" + T0), raw);
+        assertThat(store.findLatest().orElseThrow().toSnapshot().marchFatigueReceipts()).isEmpty();
+        assertThat(store.addMarchFatigueOnce("m1", "n1", "P1", T0 + 1L))
+                .isEqualTo(WarStore.FatigueResult.APPLIED);
+        Document migrated = db.template().getCollection(WarDocument.COLLECTION)
+                .find(new Document("_id", "war_" + T0)).first();
+        assertThat(migrated.get("version", Number.class).longValue()).isEqualTo(1L);
+        assertThat(newMongoStore().findLatest().orElseThrow().fatigueOf("P1"))
+                .isEqualTo(rules.rules().fatiguePerMarch());
+        assertThat(newMongoStore().findLatest().orElseThrow().toSnapshot().marchFatigueReceipts()).hasSize(1);
+    }
+
     private static WarScoreBoard richBoard(long startedAt) {
         // 第三个参数是发起国：3b-2 之后它是快照的一部分（发发起加成只认这一项）。
         // 夹具不带它上去，等于「新字段在两套实现上都没被往返过」
@@ -930,7 +1228,8 @@ class WarStoreEquivalenceTest {
         for (String playerId : List.of("P1", "P2", "P3", "P9")) {
             b.append(playerId).append('=').append(board.killsBy(playerId)).append(',');
         }
-        b.append("|claimedCount=").append(board.serverGoalClaimed());
+        b.append("|claimedCount=").append(board.serverGoalClaimed())
+                .append("|marchReceipts=").append(board.toSnapshot().marchFatigueReceipts());
         return b.toString();
     }
 

@@ -56,6 +56,8 @@ public final class InMemorySocialStore implements SocialStore {
      * 「集结已经取消了，索引里还挂着」，于是面板上永远有一个点不进去的集结。
      */
     private final Map<String, com.ironoath.core.social.Rally> rallies = new LinkedHashMap<>();
+    private final Map<String, RallySettlement> rallySettlements = new LinkedHashMap<>();
+    private final Map<String, RallyDeparturePlan> rallyDepartures = new LinkedHashMap<>();
     private final Map<String, String> allianceIdByName = new HashMap<>();
     private final Map<String, String> allianceIdByTag = new HashMap<>();
     /** playerId → 解散保护期截止时刻（验收 7）。落在人身上而不是联盟上：联盟已经没了 */
@@ -461,6 +463,59 @@ public final class InMemorySocialStore implements SocialStore {
      */
     // ================= 集结（B10 §5） =================
 
+    @Override
+    public synchronized RallyDeparturePlan putRallyDepartureIfAbsent(RallyDeparturePlan plan) {
+        return rallyDepartures.computeIfAbsent(plan.rallyId(), ignored -> plan);
+    }
+
+    @Override
+    public synchronized Optional<RallyDeparturePlan> rallyDepartureOf(String rallyId) {
+        return Optional.ofNullable(rallyDepartures.get(rallyId));
+    }
+
+    @Override
+    public synchronized List<RallyDeparturePlan> pendingRallyDepartures() {
+        return rallyDepartures.values().stream()
+                .sorted(Comparator.comparingLong(RallyDeparturePlan::departAt)
+                        .thenComparing(RallyDeparturePlan::rallyId)).toList();
+    }
+
+    @Override
+    public synchronized RallyDeparturePlan attachRallyDepartureMarch(String rallyId,
+                                       com.ironoath.core.march.March.Snapshot march) {
+        RallyDeparturePlan plan = java.util.Objects.requireNonNull(rallyDepartures.get(rallyId));
+        if (!plan.marchId().equals(march.id()) || !rallyId.equals(march.rallyId())) {
+            throw new IllegalArgumentException("出发快照必须匹配计划的集结与固定行军身份");
+        }
+        if (plan.march() == null) {
+            plan = new RallyDeparturePlan(plan.rallyId(), plan.groupId(), plan.departAt(),
+                    plan.fatigueNationId(), march);
+            rallyDepartures.put(rallyId, plan);
+        }
+        return plan;
+    }
+
+    @Override
+    public synchronized void removeRallyDeparture(String rallyId) {
+        rallyDepartures.remove(rallyId);
+    }
+
+    @Override
+    public synchronized RallySettlement putRallySettlementIfAbsent(RallySettlement settlement) {
+        return rallySettlements.computeIfAbsent(settlement.settlementId(), ignored -> settlement);
+    }
+
+    @Override
+    public synchronized List<RallySettlement> pendingRallySettlementsOf(String groupId) {
+        return rallySettlements.values().stream().filter(s -> s.groupId().equals(groupId))
+                .sorted(Comparator.comparing(RallySettlement::settlementId)).toList();
+    }
+
+    @Override
+    public synchronized void removeRallySettlement(String settlementId) {
+        rallySettlements.remove(settlementId);
+    }
+
     /** 写入或更新一次集结。Rally 是可变对象，调用方改完必须写回来。 */
     @Override
     public synchronized long saveRally(com.ironoath.core.social.Rally rally, long expectedVersion) {
@@ -737,6 +792,8 @@ public final class InMemorySocialStore implements SocialStore {
         alliancesById.clear();
         allianceIdByPlayer.clear();
         rallies.clear();
+        rallySettlements.clear();
+        rallyDepartures.clear();
         allianceIdByName.clear();
         allianceIdByTag.clear();
         disbandProtectedUntil.clear();

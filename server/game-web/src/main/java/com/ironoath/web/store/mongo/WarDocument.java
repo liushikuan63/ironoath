@@ -8,9 +8,9 @@ import org.springframework.data.annotation.Id;
  * 依赖：{@link WarScoreBoard.Snapshot}（业务状态整体就是它）。
  *
  * <p>与 {@link NationDocument} 同一条取舍：<b>整个聚合序列化成 {@code state} 一个字段</b>，
- * 文档级只剩纯索引列。好处有两层：
+ * 文档级保留索引列与仓储版本。好处有两层：
  * <ol>
- *   <li>{@code save} 的写白名单永远只有 {@code state} 一列（加一门 {@code check-mongo-set-coverage}
+ *   <li>业务状态的写白名单只有 {@code state} 一列，索引与版本一起更新（{@code check-mongo-set-coverage}
  *       要求每个文档字段都被 {@code $set}，字段越少越不可能漏 —— 漏一列的症状不是报错而是<b>静默丢档</b>，
  *       本仓在 B25-S2 与 #16 各吃过一次）；</li>
  *   <li>内核加一个状态字段时，落盘自动跟着走，不需要改 Document 与 save 两处
@@ -27,13 +27,19 @@ import org.springframework.data.annotation.Id;
 public record WarDocument(
         @Id String warId,
         long startedAt,
-        WarScoreBoard.Snapshot state) {
+        WarScoreBoard.Snapshot state,
+        Long version) {
+
+    public WarDocument {
+        // Mongo 的旧文档缺列时传 null，不能让 primitive 构造参数在读档阶段拆箱失败。
+        version = version == null ? 0L : version;
+    }
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "war";
 
     static WarDocument fromDomain(String warId, WarScoreBoard board) {
         WarScoreBoard.Snapshot state = board.toSnapshot();
-        return new WarDocument(warId, state.startedAt(), state);
+        return new WarDocument(warId, state.startedAt(), state, 0L);
     }
 }

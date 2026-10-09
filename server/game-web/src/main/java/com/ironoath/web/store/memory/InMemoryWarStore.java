@@ -28,6 +28,7 @@ public final class InMemoryWarStore implements WarStore {
 
     /** 主键（见 {@link WarStore#documentIdOf}）→ 完整快照。用 LinkedHashMap 让 all 的顺序稳定。 */
     private final Map<String, WarScoreBoard.Snapshot> byId = new LinkedHashMap<>();
+    private final Map<String, Long> versions = new LinkedHashMap<>();
     /** 规则不进快照（进了就等于把一次热更冻进存档），所以每次重建都要现取。 */
     private final WarRulesAssembler rules;
 
@@ -38,7 +39,13 @@ public final class InMemoryWarStore implements WarStore {
     @Override
     public synchronized boolean insertIfAbsent(WarScoreBoard board) {
         WarScoreBoard.Snapshot snapshot = requireBoard(board).toSnapshot();
-        return byId.putIfAbsent(WarStore.documentIdOf(board), snapshot) == null;
+        String id = WarStore.documentIdOf(board);
+        if (byId.putIfAbsent(id, snapshot) != null) {
+            return false;
+        }
+        versions.put(id, 0L);
+        board.bindRepositoryVersion(0L);
+        return true;
     }
 
     /**
@@ -50,14 +57,13 @@ public final class InMemoryWarStore implements WarStore {
      */
     @Override
     public synchronized boolean insertIfNoneActive(WarScoreBoard board) {
-        WarScoreBoard.Snapshot snapshot = requireBoard(board).toSnapshot();
+        requireBoard(board);
         for (WarScoreBoard.Snapshot stored : byId.values()) {
             if (stored.phase() != WarScoreBoard.Phase.SETTLED) {
                 return false;
             }
         }
-        byId.put(WarStore.documentIdOf(board), snapshot);
-        return true;
+        return insertIfAbsent(board);
     }
 
     /**
@@ -78,14 +84,14 @@ public final class InMemoryWarStore implements WarStore {
         if (stored == null || stored.phase() == WarScoreBoard.Phase.SETTLED) {
             return WarStore.KillResult.NO_ACTIVE_WAR;
         }
-        WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        WarScoreBoard board = toDomain(stored);
         // 按时间算已经打完的：不记账（#754）。结算与发奖仍由下一次读面板来做 —— 见端口枚举那一段
         if (WarStore.dueToSettle(board, now)) {
             return WarStore.KillResult.EXPIRED;
         }
         WarStore.KillResult result = WarStore.applyKills(board, killerNationId, killerPlayerId, units);
         // 改的是重建出来的那份，必须整份写回；漏这一行的症状是"全服进度条永远不动"而不报错
-        byId.put(WarStore.documentIdOf(board), board.toSnapshot());
+        writeBound(board);
         return result;
     }
 
@@ -105,12 +111,32 @@ public final class InMemoryWarStore implements WarStore {
         if (stored == null || stored.phase() == WarScoreBoard.Phase.SETTLED) {
             return WarStore.FatigueResult.NO_ACTIVE_WAR;
         }
-        WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        WarScoreBoard board = toDomain(stored);
         WarStore.FatigueResult result =
                 WarStore.applyFatigue(board, fatigueNationId, playerId, marches, wounded);
         if (result == WarStore.FatigueResult.APPLIED) {
             // 改的是重建出来的那份，必须整份写回；漏这一行的症状是"疲劳永远归零、闸门形同不存在"
-            byId.put(WarStore.documentIdOf(board), board.toSnapshot());
+            writeBound(board);
+        }
+        return result;
+    }
+
+    @Override
+    public synchronized WarStore.FatigueResult addMarchFatigueOnce(String marchId, String fatigueNationId,
+                                                                   String playerId, long departedAt) {
+        WarScoreBoard.MarchFatigueReceipt receipt =
+                new WarScoreBoard.MarchFatigueReceipt(marchId, fatigueNationId, playerId, departedAt);
+        WarScoreBoard.Snapshot stored = byId.values().stream()
+                .filter(snapshot -> snapshot.startedAt() <= departedAt)
+                .max(Comparator.comparingLong(WarScoreBoard.Snapshot::startedAt)).orElse(null);
+        if (stored == null) {
+            return WarStore.FatigueResult.NO_ACTIVE_WAR;
+        }
+        WarScoreBoard board = toDomain(stored);
+        boolean previouslyRecorded = board.marchFatigueReceipt(marchId) != null;
+        WarStore.FatigueResult result = WarStore.applyMarchFatigue(board, receipt);
+        if (result == WarStore.FatigueResult.APPLIED && !previouslyRecorded) {
+            writeBound(board);
         }
         return result;
     }
@@ -129,11 +155,11 @@ public final class InMemoryWarStore implements WarStore {
         if (stored == null) {
             return WarStore.GoalClaimResult.NO_WAR;
         }
-        WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        WarScoreBoard board = toDomain(stored);
         WarStore.GoalClaimResult result = WarStore.applyGoalClaim(board, playerId);
         if (result == WarStore.GoalClaimResult.CLAIMED) {
             // 名单在板子上：标了不写回，下一次读还是"没领过"，于是这份奖励可以反复领
-            byId.put(WarStore.documentIdOf(board), board.toSnapshot());
+            writeBound(board);
         }
         return result;
     }
@@ -146,12 +172,12 @@ public final class InMemoryWarStore implements WarStore {
                     + "。建档请走 insertIfAbsent —— save 静默插入会让并发建档插出两份同开场的档，"
                     + "而两份各自算各自的积分与疲劳");
         }
-        byId.put(id, board.toSnapshot());
+        writeBound(board);
     }
 
     @Override
     public synchronized Optional<WarScoreBoard> findLatest() {
-        return latestSnapshot().map(s -> WarScoreBoard.fromSnapshot(s, rules.rules()));
+        return latestSnapshot().map(this::toDomain);
     }
 
     /**
@@ -166,13 +192,13 @@ public final class InMemoryWarStore implements WarStore {
         if (stored == null) {
             return Optional.empty();
         }
-        WarScoreBoard board = WarScoreBoard.fromSnapshot(stored, rules.rules());
+        WarScoreBoard board = toDomain(stored);
         boolean settledNow = WarStore.dueToSettle(board, now);
         WarScoreBoard.Result result = null;
         if (settledNow) {
             result = board.settle(now);
             // 主键按 startedAt 推导，settle 不动它 ⇒ 写回必然落在同一档上（历史不会被"挪个位置"）
-            byId.put(WarStore.documentIdOf(board), board.toSnapshot());
+            writeBound(board);
         }
         return Optional.of(new WarStore.Settlement(board, settledNow, result));
     }
@@ -203,7 +229,7 @@ public final class InMemoryWarStore implements WarStore {
         return byId.values().stream()
                 .filter(stored -> holdsBoth(stored, nationA, nationB))
                 .max(Comparator.comparingLong(WarScoreBoard.Snapshot::startedAt))
-                .map(s -> WarScoreBoard.fromSnapshot(s, rules.rules()));
+                .map(this::toDomain);
     }
 
     /** 参战方那几行里是否同时出现这两个国家 id。 */
@@ -215,6 +241,24 @@ public final class InMemoryWarStore implements WarStore {
     @Override
     public synchronized void clear() {
         byId.clear();
+        versions.clear();
+    }
+
+    private WarScoreBoard toDomain(WarScoreBoard.Snapshot snapshot) {
+        WarScoreBoard board = WarScoreBoard.fromSnapshot(snapshot, rules.rules());
+        board.bindRepositoryVersion(versions.get(WarStore.documentIdOf(board)));
+        return board;
+    }
+
+    private void writeBound(WarScoreBoard board) {
+        String id = WarStore.documentIdOf(board);
+        long current = versions.get(id);
+        if (board.repositoryVersion() != current) {
+            throw new IllegalStateException("战事快照版本冲突，请重读后重试：warId=" + id);
+        }
+        byId.put(id, board.toSnapshot());
+        versions.put(id, current + 1L);
+        board.bindRepositoryVersion(current + 1L);
     }
 
     private static WarScoreBoard requireBoard(WarScoreBoard board) {

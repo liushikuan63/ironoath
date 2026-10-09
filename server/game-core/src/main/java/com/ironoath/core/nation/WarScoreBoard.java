@@ -103,6 +103,16 @@ public final class WarScoreBoard {
 
     private final Rules rules;
     private final long startedAt;
+    /** 仓储读副本的版本，不进业务快照；旧副本不能覆盖后来写入的行军回执。 */
+    private long repositoryVersion = -1L;
+
+    public long repositoryVersion() {
+        return repositoryVersion;
+    }
+
+    public void bindRepositoryVersion(long version) {
+        repositoryVersion = version;
+    }
     /**
      * 发起这一场的国家 id；{@code null} 表示这一场没有发起方记录（历史档，或用例直接建的板子）。
      *
@@ -136,6 +146,8 @@ public final class WarScoreBoard {
     private long capitalHeldSince;
     /** 玩家 id → 疲劳值 */
     private final Map<String, Long> fatigue = new LinkedHashMap<>();
+    /** 行军疲劳的永久回执：与疲劳同档，恢复出发时不再加第二次。 */
+    private final Map<String, MarchFatigueReceipt> marchFatigueReceipts = new LinkedHashMap<>();
     /**
      * 玩家 id → 这一场里他消灭的单位数。<b>赛季积分要按人发，所以"谁打的"必须留在这块板上</b>：
      * 只记国家维度的击杀，到了赛季结算就分不出该给谁加分，届时唯一的补救办法是回头翻战报 ——
@@ -483,6 +495,39 @@ public final class WarScoreBoard {
         return Collections.unmodifiableMap(out);
     }
 
+    /** 永久行军回执，身份用于确认恢复请求确实对应同一次出发。 */
+    public record MarchFatigueReceipt(String marchId, String fatigueNationId,
+                                      String playerId, long departedAt) {
+        public MarchFatigueReceipt {
+            if (marchId == null || marchId.isBlank() || playerId == null || playerId.isBlank()
+                    || departedAt < 0L) {
+                throw new IllegalArgumentException("行军疲劳回执必须有 March ID、玩家及有效出发时间");
+            }
+        }
+    }
+
+    /** 查已入账的行军；只读，回执自身不可变。 */
+    public MarchFatigueReceipt marchFatigueReceipt(String marchId) {
+        return marchFatigueReceipts.get(marchId);
+    }
+
+    /** 只在这块板子上修改：仓储必须把疲劳和回执在同一步持久化。 */
+    public boolean addMarchFatigueOnce(MarchFatigueReceipt receipt) {
+        if (receipt == null) {
+            throw new IllegalArgumentException("行军疲劳回执不得为空");
+        }
+        MarchFatigueReceipt previous = marchFatigueReceipts.get(receipt.marchId());
+        if (previous != null) {
+            if (!previous.equals(receipt)) {
+                throw new IllegalArgumentException("同一 March ID 的疲劳回执身份发生变化");
+            }
+            return false;
+        }
+        addFatigue(receipt.playerId(), 1L, 0L);
+        marchFatigueReceipts.put(receipt.marchId(), receipt);
+        return true;
+    }
+
     /**
      * 落盘用的完整快照：除 {@code rules} 之外，{@link #restore} 要吃的每一项都在这里。
      *
@@ -510,11 +555,13 @@ public final class WarScoreBoard {
      * （同族前例：投影打在 record 文档上抛 {@code avatarId must not be null}）。
      * 顺带把「行序」变成显式的：{@link #settle} 的平分判定依赖遍历顺序，List 比 map 更诚实。
      */
+
     public record Snapshot(long startedAt, Phase phase, String initiatorNationId,
                            List<NationRow> nations,
                            String capitalHolder, long capitalHeldSince,
                            Map<String, Long> fatigue, Map<String, Long> playerKills,
-                           List<String> goalClaimed, long totalKills) {
+                           List<String> goalClaimed, long totalKills,
+                           List<MarchFatigueReceipt> marchFatigueReceipts) {
 
         public Snapshot {
             if (phase == null) {
@@ -526,6 +573,8 @@ public final class WarScoreBoard {
             playerKills = Collections.unmodifiableMap(new LinkedHashMap<>(
                     playerKills == null ? Map.of() : playerKills));
             goalClaimed = List.copyOf(goalClaimed == null ? List.of() : goalClaimed);
+            marchFatigueReceipts = List.copyOf(
+                    marchFatigueReceipts == null ? List.of() : marchFatigueReceipts);
         }
     }
 
@@ -560,7 +609,7 @@ public final class WarScoreBoard {
         }
         return new Snapshot(startedAt, phase, initiatorNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
-                List.copyOf(goalClaimed), totalKills);
+                List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()));
     }
 
     /**
@@ -581,11 +630,18 @@ public final class WarScoreBoard {
                     new long[]{score.occupyScore(), score.killScore(), score.buildingScore()});
             gateMap.put(row.nationId(), new LinkedHashSet<>(row.gates()));
         }
-        return restore(rules, snapshot.startedAt(), snapshot.phase(),
+        WarScoreBoard board = restore(rules, snapshot.startedAt(), snapshot.phase(),
                 snapshot.initiatorNationId(), scoreMap, gateMap,
                 snapshot.capitalHolder(), snapshot.capitalHeldSince(), snapshot.fatigue(),
                 snapshot.playerKills(), new LinkedHashSet<>(snapshot.goalClaimed()),
                 snapshot.totalKills());
+        for (MarchFatigueReceipt receipt : snapshot.marchFatigueReceipts()) {
+            MarchFatigueReceipt previous = board.marchFatigueReceipts.putIfAbsent(receipt.marchId(), receipt);
+            if (previous != null && !previous.equals(receipt)) {
+                throw new IllegalArgumentException("存档中同一 March ID 有相互冲突的疲劳回执");
+            }
+        }
+        return board;
     }
 
     /** 供仓储重建。 */
