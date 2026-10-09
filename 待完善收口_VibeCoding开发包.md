@@ -6661,3 +6661,5 @@ TEST_EXIT=0
 
 | 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
 | #870 原聊天加载恢复、工程证据重核及两项smoke红留证 | 本笔（仅文档，本地提交，原任务继续收口后阶段统一推） | 原4940条全备份/SHA；27图保字节/8记录定向修复，有效history784252B、55调用/55输出；官方同版initialize及thread/resume无error且idle。check47门、server2256/0红错跳、client1101/0红跳、辅助11/0；统一双端exit0、微信首2.76/分4.17/总6.93；新level130/0红0跳、art/build-many/zoom0，dialog首复1（409/1）、V25首复1（76判据33红另1跳），fullcity进行中 | D:/tmp/ironoath-chat-recovery-20261010/original-rollout.jsonl、repair-manifest.json、preserved-images/、thread-resume.json、continuation-context.md；D:/tmp/ironoath-visual-20261009/unified-smoke-exitcodes.tsv及逐份首复日志 | idle不等于推理已续；原任务后续真实执行须观察。两红需分清track请求量具口径与九宫格/导航真材质；建筑薄框/文字同主题并镜头跟随、学院主堡组合待验；完整默认64/600s及label/B01/policy、最终fetch/push未做。只提交两份文档，31meta保留；真机/外部回执/中途事务/Redis租约边界不续期 |
+
+| #870 同格补验：历史原偏移保留，进度投影重新追齐 | 本笔（文档补验，本地提交） | 新turn 01a12303-3cff-7242-b65c-d727ade0c892 已inProgress/无error，projection 222298514/ordinal4949与rollout同长；原4940条字节位置全部保，8行JSON空白补位不参与模型输入，旧主动中断正确持久投影，无新shrank | D:/tmp/ironoath-chat-recovery-20261010/offset-repair-manifest.json；原生wait与DB/日志独立快照 | 真工具执行尚待；compact心跳不能冒称成功。原任务负责随后两红与完整质量收口，恢复方仅观察、不并写源码/不构建 |
