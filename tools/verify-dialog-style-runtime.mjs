@@ -98,8 +98,10 @@ try {
       if (!bubble?.activeInHierarchy || !ui || !area) return { error: '缺真实GuideBubble/导航净区' }
       const box = ui.getBoundingBoxToWorld(), origin = game.getComponent('cc.UITransform')
       const point = origin.convertToNodeSpaceAR(new window.cc.Vec3(box.x, box.y, 0))
+      const plate = bubble.getChildByName('GuideBubblePlate'), sprite = plate?.getComponent('cc.Sprite')
       return { width: ui.width, height: ui.height, x: point.x, y: point.y, area,
-        material: !!bubble.getComponent('cc.Sprite')?.spriteFrame,
+        material: plate?.activeInHierarchy === true && plate.layer === root.layer && sprite?.enabled === true
+          && plate._uiProps.uiComp === sprite && !!sprite.spriteFrame,
         inArea: point.x >= area.x && point.y >= area.y && point.x + ui.width <= area.x + area.width + 1 && point.y + ui.height <= area.y + area.height + 1,
         text: component.bubbleText.string }
     })
@@ -125,7 +127,8 @@ try {
         for (const target of ['card', 'cancel']) {
           await page.evaluate(nodeName => {
             const host = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('composePick')
-            const node = host.getChildByName(nodeName)
+            const parent = host.getChildByName(nodeName)
+            const node = parent.getChildByName(nodeName === 'card' ? 'DialogFrameArt' : 'DialogButtonArt') ?? parent
             window.__dialogLayerRestore = { node, layer: node.layer }
             node.layer = node.layer === 1 ? 2 : 1
           }, target)

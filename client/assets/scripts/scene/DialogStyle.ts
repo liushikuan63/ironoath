@@ -60,8 +60,14 @@ function resizeScrims(parent: Node): void {
 
 function paintFrame(node: Node, key: DialogKey, width: number, height: number): void {
   node.getComponent(UITransform)!.setContentSize(width, height)
-  if (applySlicedSprite(node, key, width, height)) return
-  const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
+  const vector = node.getChildByName('DialogFrameVector')
+  if (vector !== null) vector.active = false
+  const target = bitmapTarget(node, 'DialogFrameArt')
+  if (applySlicedSprite(target, key, width, height)) return
+  const failedSprite = target.getComponent(Sprite)
+  if (failedSprite !== null) failedSprite.enabled = false
+  const fallback = rendererChild(node, 'DialogFrameVector', width, height)
+  const graphics = fallback.getComponent(Graphics) ?? fallback.addComponent(Graphics)
   graphics.enabled = true
   graphics.clear()
   graphics.fillColor = new Color(...PANEL_FALLBACK)
@@ -69,12 +75,43 @@ function paintFrame(node: Node, key: DialogKey, width: number, height: number): 
   graphics.fill()
 }
 
+function rendererChild(parent: Node, name: string, width: number, height: number): Node {
+  let node = parent.getChildByName(name)
+  if (node === null) {
+    node = new Node(name)
+    parent.addChild(node)
+    node.addComponent(UITransform)
+  }
+  node.layer = parent.layer
+  node.getComponent(UITransform)!.setContentSize(width, height)
+  node.active = true
+  node.setSiblingIndex(0)
+  return node
+}
+
+/** Cocos只登记每节点首个UIRenderer；已有Graphics时让位图独占子节点，不能只把旧组件禁用。 */
+function bitmapTarget(node: Node, name: string): Node {
+  const graphics = node.getComponent(Graphics)
+  if (graphics === null) return node
+  graphics.clear()
+  graphics.enabled = false
+  const sprite = node.getComponent(Sprite)
+  if (sprite !== null) sprite.enabled = false
+  const box = node.getComponent(UITransform)!
+  return rendererChild(node, name, box.width, box.height)
+}
+
 /** 净区不足以容纳 A 档铜边时画同色薄边；三档位图仍各守自己的消费尺寸。 */
 export function paintCompactDialogFrame(node: Node, width: number, height: number): void {
   node.getComponent(UITransform)!.setContentSize(width, height)
   const sprite = node.getComponent(Sprite)
   if (sprite !== null) sprite.enabled = false
-  const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics)
+  const bitmap = node.getChildByName('DialogFrameArt')
+  if (bitmap !== null) bitmap.active = false
+  const previousGraphics = node.getComponent(Graphics)
+  if (previousGraphics !== null) { previousGraphics.clear(); previousGraphics.enabled = false }
+  const vector = rendererChild(node, 'DialogFrameVector', width, height)
+  const graphics = vector.getComponent(Graphics) ?? vector.addComponent(Graphics)
   graphics.enabled = true
   graphics.clear()
   graphics.fillColor = new Color(...IRON_SURFACE)
@@ -99,9 +136,11 @@ export function dialogContentRect(node: Node): { x: number; y: number; width: nu
 
 /** C 档主按钮与小 chip 分工；disabled 只改变材质，能否点击仍由业务结论决定。 */
 export function applyDialogButton(node: Node, enabled: boolean, width: number, height: number, selected = false): void {
+  node.getComponent(UITransform)!.setContentSize(width, height)
+  const target = bitmapTarget(node, 'DialogButtonArt')
   const state = enabled ? (selected ? 'hover' : 'normal') : 'disabled'
-  if (width >= 100) applyIronButton(node, state, width, height)
-  else applyCommandButton(node, state, width, height)
+  if (width >= 100) applyIronButton(target, state, width, height)
+  else applyCommandButton(target, state, width, height)
 }
 
 export function createDialogScroll(parent: Node, name: string, width: number, height: number,

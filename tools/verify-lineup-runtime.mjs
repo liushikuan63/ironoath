@@ -129,7 +129,11 @@ const SNAPSHOT = (rootName) => `(() => {
   }
   walk(root)
   heroRows.sort((a, b) => b.y - a.y)
-  const viewport = root.getChildByName('DialogContent')?.getComponent('cc.UITransform')?.getBoundingBoxToWorld()
+  const clip = root.getChildByName('DialogContent')?.getComponent('cc.UITransform')
+  // getBoundingBoxToWorld包含content；碰撞只用实际Mask自身的四边。
+  const low = clip?.convertToWorldSpaceAR(new window.cc.Vec3(-clip.width * clip.anchorX, -clip.height * clip.anchorY, 0))
+  const high = clip?.convertToWorldSpaceAR(new window.cc.Vec3(clip.width * (1 - clip.anchorX), clip.height * (1 - clip.anchorY), 0))
+  const viewport = low && high ? { x: low.x, y: low.y, width: high.x - low.x, height: high.y - low.y } : null
   return { active: root.active, labels, plates, heroRows, viewport: viewport ? { x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height } : null }
 })()`
 

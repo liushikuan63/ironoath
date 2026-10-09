@@ -210,7 +210,7 @@ export class GuideView extends Component {
       return
     }
     const size = view.getVisibleSize()
-    // 420 宽的 B 档薄边气泡贴角，中央城堡与本步操作保留可见空间。
+    // 420 宽的 C 档提示气泡贴角，中央城堡与本步操作保留可见空间。
     const bubbleWidth = Math.min(size.width - BUBBLE_MARGIN * 2, 420)
 
     const bubble = new Node('GuideBubble')
@@ -225,8 +225,15 @@ export class GuideView extends Component {
     graphics.strokeColor = COLOR_BUBBLE_EDGE
     graphics.roundRect(-bubbleWidth / 2, -BUBBLE_HEIGHT / 2, bubbleWidth, BUBBLE_HEIGHT, 10)
     graphics.stroke()
-    // 气泡属 B 档轻提示：使用薄边暗铁条板，避免把 A 档 80·72 铜帽塞进 150 高提示。
-    applySlicedSprite(bubble, 'ui.plate.tooltip', bubbleWidth, BUBBLE_HEIGHT)
+    // C 档只给真实浮动提示；Sprite独占子节点，不能与已登记的Graphics争同一UIRenderer。
+    const plate = new Node('GuideBubblePlate')
+    plate.layer = bubble.layer
+    bubble.addChild(plate)
+    plate.addComponent(UITransform).setContentSize(bubbleWidth, BUBBLE_HEIGHT)
+    if (applySlicedSprite(plate, 'ui.plate.tooltip', bubbleWidth, BUBBLE_HEIGHT)) {
+      graphics.clear()
+      graphics.enabled = false
+    }
     // 气泡自己也吃触摸：否则点气泡空白处会穿到下层面板里，做出"引导让你做、你自己又点了别的"那种事
     bubble.on('touch-start', (_event: EventTouch) => undefined)
     this.bubble = bubble

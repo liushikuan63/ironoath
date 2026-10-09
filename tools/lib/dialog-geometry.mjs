@@ -32,20 +32,25 @@ export function readDialogGeometry(spec) {
   const clip = bounds(viewport)
   const frame = find(host, spec.frame ?? 'card')
   const frameBox = bounds(frame)
-  const frameSprite = frame?.getComponent('cc.Sprite')
-  const frameGraphics = frame?.getComponent('cc.Graphics')
+  const frameRender = frame?.getChildByName('DialogFrameArt')?.activeInHierarchy
+    ? frame.getChildByName('DialogFrameArt') : frame?.getChildByName('DialogFrameVector')?.activeInHierarchy
+      ? frame.getChildByName('DialogFrameVector') : frame
+  const frameSprite = frameRender?.getComponent('cc.Sprite')
+  const frameGraphics = frameRender?.getComponent('cc.Graphics')
   const fill = frameGraphics?.fillColor, stroke = frameGraphics?.strokeColor
-  const vectorFrame = frameGraphics?.enabled === true && fill?.r === 22 && fill?.g === 18 && fill?.b === 16
+  const vectorFrame = frameRender?._uiProps.uiComp === frameGraphics && frameGraphics?.enabled === true && fill?.r === 22 && fill?.g === 18 && fill?.b === 16
     && stroke?.r === 184 && stroke?.g === 134 && stroke?.b === 11 && frameGraphics.lineWidth === 2
-  const frameLayerVisible = frame?.activeInHierarchy === true && frame.layer === host.layer
-  const bitmapFrame = frameLayerVisible && frameSprite?.enabled === true && !!frameSprite.spriteFrame
+  const frameLayerVisible = frameRender?.activeInHierarchy === true && frameRender.layer === host.layer
+  const bitmapFrame = frameLayerVisible && frameRender?._uiProps.uiComp === frameSprite && frameSprite?.enabled === true && !!frameSprite.spriteFrame
   const footer = (spec.footer ?? []).map(name => {
     const node = find(host, name)
     const box = bounds(node)
-    const sprite = node?.getComponent('cc.Sprite')
+    const render = node?.getChildByName('DialogButtonArt') ?? node
+    const sprite = render?.getComponent('cc.Sprite')
     return { name, box, active: node?.activeInHierarchy === true, layer: node?.layer, inArea: inside(box, area),
       listening: !!node?.hasEventListener('touch-start') || !!node?.hasEventListener('touch-end'),
-      material: node?.activeInHierarchy === true && node.layer === host.layer && sprite?.enabled === true && !!sprite.spriteFrame }
+      material: node?.activeInHierarchy === true && node.layer === host.layer && render?.activeInHierarchy === true
+        && render.layer === host.layer && render._uiProps.uiComp === sprite && sprite?.enabled === true && !!sprite.spriteFrame }
   })
   const separation = footer.every(row => row.box && clip && row.box.y + row.box.height <= clip.y + 1)
   const seen = []
@@ -67,7 +72,8 @@ export function readDialogGeometry(spec) {
     return { area, clip, frameBox, frameInArea: inside(frameBox, area), clipInArea: inside(clip, area),
       masked: !!viewport.getComponent('cc.Mask'), footer, separation, seen,
       material: bitmapFrame || (frameLayerVisible && vectorFrame), frameStyle: bitmapFrame ? 'A-bitmap' : frameLayerVisible && vectorFrame ? 'token-vector' : 'missing',
-      hostLayer: host.layer, frameLayer: frame?.layer, viewportCount: host.children.filter(node => node.name === (spec.viewport ?? 'DialogContent')).length,
+      hostLayer: host.layer, frameLayer: frameRender?.layer, frameRenderer: frameRender?._uiProps.uiComp?.constructor?.name,
+      viewportCount: host.children.filter(node => node.name === (spec.viewport ?? 'DialogContent')).length,
       frameName: bitmapFrame ? frameSprite.spriteFrame.name : null,
       contentHeight: transform.height, maxOffset: Math.max(0, transform.height - clip.height),
       offset: scroll.getScrollOffset().y, visibleSize: cc.view.getVisibleSize() }
