@@ -17,7 +17,7 @@
  *   SWEEP_PORT=8298 node tools/verify-ui-v25-runtime.mjs
  *   独立产物：另设 SWEEP_ROOT=client/build/ui-v25（先构建 outputName=ui-v25）。
  */
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
@@ -86,7 +86,12 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 900 
 await context.addInitScript((v) => { localStorage.setItem('ironoath.deviceId', v) }, `ui25-${Date.now()}`)
 const page = await context.newPage()
 const errors = []
+const staminaRequests = []
 page.on('pageerror', (e) => errors.push(e.message))
+page.on('request', request => {
+  const pathname = new URL(request.url()).pathname
+  if (/\/stamina(?:\/buy)?$/.test(pathname)) staminaRequests.push({ method: request.method(), pathname })
+})
 await page.goto(preview.origin)
 await page.waitForFunction(() => window.cc?.director?.getScene() != null, null, { timeout: 60000 })
 await page.waitForTimeout(3000)
@@ -194,11 +199,9 @@ for (const r of rendered) {
         + ` / 边框和 ${r.inset[0] + r.inset[1]}x${r.inset[2] + r.inset[3]}`)
 }
 
-// 三之二、置灰：运行时驱动这一支**未执行** —— 遍历场景找不到带 render 的弹层组件实例
-// （实测 `overlay=false buy=true`：节点在、组件句柄拿不到，release 产物里 getter 不可靠）。
-// 不拿"跑不到的分支"凑绿，改成两条能失败的静态判据：贴图与兜底**两条路径都必须各自置灰**。
-// 删掉任一条分支，下面这条就红 —— 它防的是"换贴图时把置灰弄丢"这个具体回归。
-import { readFileSync } from 'node:fs'
+// 三之二、置灰：生产弹层是 targets() 里的普通类局部实例，不是节点上的 Component。
+// 先沿真实 GET 链捕获正在 render 的 this，再驱动同一实例；不 new 假节点，也不静默跳过。
+// 素材与 Graphics 兜底的静态判据继续保留，防止任一分支在换图时丢掉置灰语义。
 const overlaySrc = readFileSync(path.resolve(process.cwd(),
   'client/assets/scripts/scene/StaminaDetailOverlay.ts'), 'utf8')
 push('置灰：贴图路径在（灰态压暗 tint）',
@@ -210,9 +213,190 @@ push('置灰：兜底路径未被删（Graphics 换色）',
 push('置灰：协议要求"画着但不响应"（active 不被置 false）',
   !/buy\.active\s*=\s*false/.test(overlaySrc) && /buyEnabled/.test(overlaySrc),
   '协议明写置灰而不是隐藏；这里断言没有把按钮 active 关掉')
-// 显式登记未执行项：它既不算通过也不算失败 —— 计入失败会淹没真红，静默跳过等于隐瞒。
-const SKIPPED = ['运行时驱动灰态读 tint（release 产物里拿不到弹层组件实例句柄，实测 overlay=false）'
-  + ' ⇒ 未验证；要补就走 tools/lib/panel-clicks.mjs 那套按节点名取壳的写法']
+const captureRequestsBefore = staminaRequests.length
+const captured = await page.evaluate(async () => {
+  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const bootstrap = game?.getComponent('GameBootstrap')
+  const entry = typeof window.System?.entries === 'function'
+    ? Array.from(window.System.entries()).find(([key, module]) =>
+      /(?:^|\/)StaminaDetailOverlay\.ts(?:$|\?)/.test(key)
+      && typeof module?.StaminaDetailOverlay?.prototype?.render === 'function') : null
+  if (!bootstrap?.root || typeof bootstrap.root.openStaminaDetail !== 'function' || !entry) {
+    return { found: false, error: '缺 GameBootstrap.root 或实际 StaminaDetailOverlay 模块 export' }
+  }
+  const prototype = entry[1].StaminaDetailOverlay.prototype
+  const original = prototype.render
+  let owner = null, vm = null
+  prototype.render = function (view) {
+    const rendered = original.call(this, view)
+    if (this.node?.name === 'StaminaDetail' && this.node.parent === game) { owner = this; vm = view }
+    return rendered
+  }
+  try {
+    await bootstrap.root.openStaminaDetail()
+  } catch (error) {
+    return { found: false, error: `真实体力 GET 链失败：${error.message}` }
+  } finally {
+    prototype.render = original
+  }
+  if (!owner || !vm || typeof owner.render !== 'function' || owner.node.activeInHierarchy !== true) {
+    return { found: false, error: '真实 GET 链未 render 当前可见的体力弹层实例' }
+  }
+  const buy = owner.node.getChildByName('Panel')?.getChildByName('BuyButton')
+  if (!buy) return { found: false, error: '生产实例没有 BuyButton，不能以零意图冒充点击通过' }
+  const saved = { owner, view: owner.currentView ?? vm, onBuy: owner.onBuy, intents: 0, buy, touches: 0 }
+  saved.touchProbe = () => { saved.touches += 1 }
+  buy.on('touch-start', saved.touchProbe)
+  window.__ui25StaminaProbe = saved
+  owner.onBuy = () => { window.__ui25StaminaProbe.intents += 1 }
+  return { found: true, module: entry[0], prototypeRestored: prototype.render === original }
+})
+push('灰态运行时前置：真实 GET 捕获生产弹层实例并还原 prototype',
+  captured.found === true && captured.prototypeRestored === true, JSON.stringify(captured))
+const captureGets = staminaRequests.slice(captureRequestsBefore)
+  .filter(request => request.method === 'GET' && /\/stamina$/.test(request.pathname))
+push('灰态运行时前置：捕获实例经过真实体力 GET', captureGets.length > 0, JSON.stringify(captureGets))
+if (captured.found !== true) {
+  console.error(`[ui-v25][前置] ${captured.error}；灰态验收不能跳过`)
+  await browser.close()
+  await preview.close()
+  process.exit(2)
+}
+
+function readStaminaBuyPaint() {
+  const saved = window.__ui25StaminaProbe
+  const owner = saved?.owner
+  const scene = window.cc.director.getScene()
+  const buy = owner?.node?.getChildByName('Panel')?.getChildByName('BuyButton')
+  const art = buy?.getChildByName('DialogButtonArt') ?? buy
+  const sprite = art?.getComponent('cc.Sprite')
+  const caption = buy?.getChildByName('Caption')
+  const label = caption?.getComponent('cc.Label')
+  if (!buy || !art || !sprite?.spriteFrame || !label) return { found: false, error: '缺真实 BuyButton 首 Sprite 或 Caption' }
+  const cameras = scene.getComponentsInChildren('cc.Camera')
+    .filter(camera => camera.enabled && camera.node.activeInHierarchy)
+  const visible = node => cameras.some(camera => (camera.visibility & node.layer) !== 0)
+  const opaqueAncestors = node => {
+    for (let ancestor = node; ancestor; ancestor = ancestor.parent) {
+      if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) return false
+    }
+    return true
+  }
+  return { found: true, active: buy.activeInHierarchy && art.activeInHierarchy,
+    enabled: sprite.enabled, firstRenderer: art._uiProps?.uiComp === sprite,
+    layer: art.layer, parentLayer: art.parent?.layer, camera: visible(art), opaqueAncestors: opaqueAncestors(art),
+    frame: sprite.spriteFrame.name, type: sprite.type, tint: [sprite.color.r, sprite.color.g, sprite.color.b, sprite.color.a],
+    caption: label.string, captionActive: caption.activeInHierarchy, captionEnabled: label.enabled,
+    captionFirstRenderer: caption._uiProps?.uiComp === label, captionCamera: visible(caption),
+    captionLayer: caption.layer, captionParentLayer: caption.parent?.layer,
+    captionOpaqueAncestors: opaqueAncestors(caption), captionColor: [label.color.r, label.color.g, label.color.b, label.color.a],
+    buyEnabled: owner.currentView?.buyEnabled ?? owner.view?.buyEnabled,
+    intents: saved.intents, touches: saved.touches }
+}
+const staminaPaintConsumed = row => row.found === true && row.active && row.enabled && row.firstRenderer
+  && row.camera && row.opaqueAncestors && row.layer === row.parentLayer && row.type === 1
+  && row.frame === 'button-iron-v1' && row.tint?.[3] > 0
+  && row.captionActive && row.captionEnabled && row.captionFirstRenderer && row.captionCamera
+  && row.captionOpaqueAncestors && row.captionLayer === row.captionParentLayer && row.captionColor?.[3] > 0
+const staminaGrayIssues = row => {
+  const issues = []
+  if (!staminaPaintConsumed(row)) issues.push('真实按钮首 Sprite/字/相机/层未消费')
+  if (row.buyEnabled !== false || row.caption !== '今日已达上限') issues.push('未 render 实际禁用帧')
+  if (row.tint?.join(',') !== '104,96,88,255') issues.push(`首 Sprite 不是灰 tint：${row.tint}`)
+  if (row.captionColor?.join(',') !== '70,62,52,255') issues.push(`禁用字色错误：${row.captionColor}`)
+  return issues
+}
+const staminaGrayEvidence = { captured, captureGets }
+try {
+  await page.evaluate(() => {
+    const saved = window.__ui25StaminaProbe
+    saved.owner.render({ ...saved.view, buyEnabled: false, buyLabel: '今日已达上限' })
+  })
+  await page.waitForTimeout(80)
+  const gray = await page.evaluate(readStaminaBuyPaint)
+  staminaGrayEvidence.gray = gray
+  push('运行时灰态：真实首 Sprite 压暗、字色同步变灰、active 与可见层保留',
+    staminaGrayIssues(gray).length === 0, JSON.stringify({ paint: gray, issues: staminaGrayIssues(gray) }))
+  await hideGuideOverlay(page)
+  const purchasesBefore = staminaRequests.filter(request => /\/stamina\/buy$/.test(request.pathname)).length
+  const point = await page.evaluate(resolveCocosClickPoint, { name: 'BuyButton', within: 'StaminaDetail' })
+  push('运行时灰态：真实鼠标坐标通过相机往返与引擎命中', point.verified === true, JSON.stringify(point))
+  if (point.verified === true) await page.mouse.click(point.x, point.y)
+  await page.waitForTimeout(350)
+  const afterGrayClick = await page.evaluate(readStaminaBuyPaint)
+  const purchases = staminaRequests.filter(request => /\/stamina\/buy$/.test(request.pathname))
+  staminaGrayEvidence.disabledClick = { point, after: afterGrayClick, purchases }
+  push('运行时灰态：真实鼠标触摸抵达 BuyButton（避免被别的弹层吞掉而假绿）',
+    point.verified === true && afterGrayClick.touches === 1,
+    JSON.stringify({ point: { x: point.x, y: point.y }, touches: afterGrayClick.touches }))
+  push('运行时灰态：真点击零购买意图且零购买请求', point.verified === true
+    && afterGrayClick.found === true && afterGrayClick.touches === 1
+    && afterGrayClick.intents === 0 && purchases.length === purchasesBefore,
+    JSON.stringify({ touches: afterGrayClick.touches, intents: afterGrayClick.intents, requests: purchases.slice(purchasesBefore) }))
+  push('运行时灰态：真点击后首 Sprite 仍保持灰态', staminaGrayIssues(afterGrayClick).length === 0,
+    JSON.stringify({ paint: afterGrayClick, issues: staminaGrayIssues(afterGrayClick) }))
+  await page.screenshot({ path: path.join(OUT, 'ui-v25-stamina-disabled.png') })
+
+  // 改实际首 Sprite 的色，不改 readback 或 VM；同一灰态门必须因 tint 变白而红。
+  try {
+    const changed = await page.evaluate(() => {
+      const saved = window.__ui25StaminaProbe
+      const buy = saved.owner.node.getChildByName('Panel').getChildByName('BuyButton')
+      const art = buy.getChildByName('DialogButtonArt') ?? buy
+      const sprite = art.getComponent('cc.Sprite')
+      if (!sprite || art._uiProps?.uiComp !== sprite) return false
+      saved.spriteRestore = { sprite, color: sprite.color.clone() }
+      const color = sprite.color.clone()
+      color.r = 255; color.g = 255; color.b = 255
+      sprite.color = color
+      return true
+    })
+    await page.waitForTimeout(60)
+    const negative = await page.evaluate(readStaminaBuyPaint)
+    const issues = staminaGrayIssues(negative)
+    staminaGrayEvidence.negative = { changed, paint: negative, issues }
+    push('灰态负控：真实首 Sprite 改白使同一灰态门翻红', changed
+      && staminaPaintConsumed(negative) && issues.some(issue => issue.startsWith('首 Sprite 不是灰 tint：')),
+      JSON.stringify({ paint: negative, issues }))
+    await page.screenshot({ path: path.join(OUT, 'ui-v25-stamina-disabled-white-negative.png') })
+  } finally {
+    await page.evaluate(() => {
+      const saved = window.__ui25StaminaProbe
+      if (saved.spriteRestore) saved.spriteRestore.sprite.color = saved.spriteRestore.color
+      delete saved.spriteRestore
+    })
+  }
+  await page.waitForTimeout(60)
+  const restoredGray = await page.evaluate(readStaminaBuyPaint)
+  staminaGrayEvidence.restoredGray = restoredGray
+  push('灰态负控还原：同一灰态门恢复绿', staminaGrayIssues(restoredGray).length === 0,
+    JSON.stringify({ paint: restoredGray, issues: staminaGrayIssues(restoredGray) }))
+  await page.evaluate(() => {
+    const saved = window.__ui25StaminaProbe
+    saved.owner.render({ ...saved.view, buyEnabled: true })
+  })
+  await page.waitForTimeout(60)
+  const enabled = await page.evaluate(readStaminaBuyPaint)
+  staminaGrayEvidence.enabled = enabled
+  push('启用对照：生产 render 恢复白 tint 和原字色（不购买）', staminaPaintConsumed(enabled)
+    && enabled.buyEnabled === true && enabled.tint.join(',') === '255,255,255,255'
+    && enabled.captionColor.join(',') === '226,214,190,255' && enabled.intents === 0,
+    JSON.stringify(enabled))
+  const requestsAfterEnabled = staminaRequests.filter(request => /\/stamina\/buy$/.test(request.pathname))
+  push('灰态、负控和启用对照全过程零购买请求', requestsAfterEnabled.length === purchasesBefore,
+    JSON.stringify(requestsAfterEnabled.slice(purchasesBefore)))
+} finally {
+  await page.evaluate(() => {
+    const saved = window.__ui25StaminaProbe
+    if (!saved) return
+    try { saved.owner.render(saved.view) } finally {
+      saved.buy.off('touch-start', saved.touchProbe)
+      saved.owner.onBuy = saved.onBuy
+      delete window.__ui25StaminaProbe
+    }
+  })
+}
+writeFileSync(path.join(OUT, 'ui-v25-stamina-gray-evidence.json'), JSON.stringify(staminaGrayEvidence, null, 2))
 
 // 三之三、MarchComposeOverlay 的遮罩不能被材质换图顺手删掉。
 // 风险形状：该弹层原先把「整屏遮罩 rect」与「底板 roundRect」画在**同一个 Graphics** 上，
@@ -336,10 +520,6 @@ if (canDisable) {
 const failed = results.filter((r) => !r.pass)
 results.forEach((r) => console.log(`  ${r.pass ? 'PASS' : 'FAIL'}  ${r.name}  —  ${r.detail}`))
 console.log(`\n[ui-v25] ${results.length} 条判据 / 失败 ${failed.length}`)
-if (SKIPPED.length) {
-  console.log(`[ui-v25] 未执行 ${SKIPPED.length} 条（不算通过、也不算失败）：`)
-  SKIPPED.forEach((s) => console.log(`  SKIP  ${s}`))
-}
 console.log(`[ui-v25] 截图：${shot}`)
 if (errors.length) console.log(`[ui-v25] pageerror ${errors.length} 条：${errors.slice(0, 2).join(' | ')}`)
 await browser.close()

@@ -188,6 +188,22 @@ const BAND_BORDER = { left: 16, top: 4, right: 16, bottom: 4 }
 const NAV_BORDER = { left: 12, top: 12, right: 12, bottom: 12 }
 const WHOLE_IMAGE_BORDER = { left: 0, top: 0, right: 0, bottom: 0 }
 
+/** 原canvas与导入裁边各有一把尺：不能把合法透明裁边当成素材尺寸损坏。 */
+function assertFrameGeometry(data: Record<string, unknown>, width: number, height: number,
+                             name: string): void {
+  assert.equal(data.rawWidth, width, `${name} meta.rawWidth 与真实 PNG 尺寸不一致`)
+  assert.equal(data.rawHeight, height, `${name} meta.rawHeight 与真实 PNG 尺寸不一致`)
+  for (const key of ['trimX', 'trimY', 'width', 'height']) {
+    assert.ok(Number.isInteger(data[key]), `${name} meta.${key} 不是整数裁边几何`)
+  }
+  const x = data.trimX as number, y = data.trimY as number
+  const w = data.width as number, h = data.height as number
+  assert.ok(x >= 0 && y >= 0 && w > 0 && h > 0 && x + w <= width && y + h <= height,
+    `${name} meta 裁边矩形越出原 canvas`)
+  assert.equal(data.offsetX, x + w / 2 - width / 2, `${name} meta.offsetX 与裁边不一致`)
+  assert.equal(data.offsetY, height / 2 - y - h / 2, `${name} meta.offsetY 与裁边不一致`)
+}
+
 /** PNG 本体与导入帧同时对账；只改 meta 或只替换 PNG 都不能伪装成同步接入。 */
 function assertDiskFrame(name: string, width: number, height: number,
                          border: Record<'left' | 'top' | 'right' | 'bottom', number>): void {
@@ -196,12 +212,19 @@ function assertDiskFrame(name: string, width: number, height: number,
   assert.deepEqual({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) },
     { width, height }, `${name} 的真实 PNG 尺寸没有同步采用版`)
   const data = frameData(name)
-  for (const [key, expected] of [['width', width], ['height', height],
-    ['rawWidth', width], ['rawHeight', height]] as const) {
-    assert.equal(data[key], expected, `${name} meta.${key} 与真实 PNG 尺寸不一致`)
-  }
+  assertFrameGeometry(data, width, height, name)
   assert.deepEqual(frameBorders(name), border, `${name} 的切分线没有同步采用版合同`)
 }
+
+test('原画布与合法裁边同时验：透明边可裁，原图损坏/越界/偏移错误均拒绝', () => {
+  const valid = { rawWidth: 52, rawHeight: 52, width: 52, height: 50,
+    trimX: 0, trimY: 1, offsetX: 0, offsetY: 0 }
+  assert.doesNotThrow(() => assertFrameGeometry(valid, 52, 52, '合法透明边'))
+  assert.throws(() => assertFrameGeometry({ ...valid, rawHeight: 50 }, 52, 52, '错原图'), /rawHeight/)
+  assert.throws(() => assertFrameGeometry({ ...valid, trimX: -1 }, 52, 52, '负裁边'), /裁边矩形/)
+  assert.throws(() => assertFrameGeometry({ ...valid, height: 53 }, 52, 52, '越界裁边'), /裁边矩形/)
+  assert.throws(() => assertFrameGeometry({ ...valid, offsetY: 1 }, 52, 52, '错偏移'), /offsetY/)
+})
 
 test('统一v3的13张按钮、条行、提示、导航与整图件逐张核PNG和meta，不留chip/nav豁免', () => {
   const contracts = [
