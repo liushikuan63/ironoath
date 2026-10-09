@@ -74,6 +74,9 @@ fi
 # 但默认值一旦没落进输出，事后就分不清这批读数是哪个端机器给的（同族教训：静默回落 8080）
 echo "# 后端=$BACKEND 清单=$LIST 记账=$OUT" | tee -a "$OUT"
 while read -r f; do
+  # 显式清单也会由 Windows 工具写成 CRLF；read 会保留行尾 CR，导致真实文件被当成不存在。
+  # 只规范化行尾，不改路径正文，否则整批会得到 MODULE_NOT_FOUND / NO-RUN 而没有功能读数。
+  f="${f%$'\r'}"
   i=$((i + 1))
   base="$(basename "$f")"
   # 排除名单已在生成 $LIST 时过滤过（见上）；这里保留 case 只为兼容**显式传入** LIST 的旧用法。
