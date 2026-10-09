@@ -170,7 +170,7 @@ try {
         check(`${spec.host}/${name} 灰键真实命中`, point.verified, point)
         if (point.verified) await page.mouse.click(point.x, point.y)
         await page.waitForTimeout(60)
-        check(`${spec.host}/${name} 灰键无监听且零发送`, geometry.footer.find(row => row.name === spec.disabled)?.listening === false && posts.length === before)
+        check(`${spec.host}/${name} 灰键无监听且零发送`, geometry.footer.find(row => row.name === spec.disabled)?.listening === false && posts.length === before, posts.slice(before))
       }
       let lastSeen = false
       const coverage = new Map()
@@ -203,7 +203,7 @@ try {
         const beforeOffset = (await page.evaluate(readDialogGeometry, spec)).offset
         if (point.verified) { await page.mouse.move(point.x, point.y); await page.mouse.down(); await page.mouse.move(point.x, point.y - 45, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(250) }
         check('长名单真实拖动改变滚动位置', (await page.evaluate(readDialogGeometry, spec)).offset > beforeOffset + 10)
-        check('从可选行起步拖动零选择意图与零发送', await page.evaluate(() => window.__dialogPickIntents) === 0 && posts.length === before)
+        check('从可选行起步拖动零选择意图与零发送', await page.evaluate(() => window.__dialogPickIntents) === 0 && posts.length === before, posts.slice(before))
         await page.evaluate(revealDialogNode, { ...spec, name: 'compose-fixture-0' })
         await page.waitForTimeout(80)
         const click = await page.evaluate(resolveCocosClickPoint, { name: 'compose-fixture-0', within: spec.host })
@@ -251,7 +251,7 @@ try {
         const intents = await page.evaluate(host => host === 'MarchCompose' ? window.__marchPickIntents : window.__offlineJumpIntents, spec.host)
         check(`${spec.host}/short240 所有行真实点击仅表达一次意图`, intents.length === count
           && (spec.host !== 'MarchCompose' || new Set(intents.map(row => row.unitId)).size === 5), intents)
-        check(`${spec.host}/short240 行动作未直接发送请求`, posts.length === before)
+        check(`${spec.host}/short240 行动作未直接发送请求`, posts.length === before, posts.slice(before))
       }
       await page.screenshot({ path: path.join(OUT, `${spec.host}-${name}-bottom.png`) })
       await page.evaluate(scrollDialogTo, { ...spec, offset: 0 })

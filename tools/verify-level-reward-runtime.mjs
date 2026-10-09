@@ -443,7 +443,8 @@ for (const [phase, viewport] of [
   // 项目的 FIXED_WIDTH=960，真实视口 1440×480 对应可视高 320，容量只剩一个内容槽位。
   ['P极矮', { width: 1440, height: 480 }],
   ['P更矮', { width: 1440, height: 360 }],
-  ['P竖屏', { width: 390, height: 844 }],
+  // Web入口保留900px最小宽提示；960×1600验真实竖长可视区，不能把提示遮罩当游戏UI。
+  ['P竖屏', { width: 960, height: 1600 }],
 ]) {
   await page.setViewportSize(viewport)
   await openByDeepLink()

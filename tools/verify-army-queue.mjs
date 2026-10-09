@@ -285,36 +285,42 @@ const rowReadout = () => page.evaluate(() => {
 })
 
 // 量具先过引擎 hitTest 与相机往返，不能把设计空间归一化后的错点当成按钮断线。
+let trainingScopeSeq = 0
 const clickNode = async (nodeName) => {
-  // 同名池化行的非训练按钮也存在；临时命名已显示的训练行，限制引擎查找范围。
-  const scoped = await page.evaluate((name) => {
-    const rows = []
-    const visit = (node) => {
-      if (node.name === 'UnitRow' && node.activeInHierarchy) rows.push(node)
-      for (const child of node.children) visit(child)
+  let point = { clicked: false, reason: 'training-row-not-found' }
+  // 刷新与每秒倒计时会回收并重领行；每次从真实回调Map定位当前unit，不能沿用旧池节点名。
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const scope = `ArmyQueueProbeTrainingRow-${++trainingScopeSeq}`
+    const scoped = await page.evaluate(({ name, unitId, scope }) => {
+      const game = window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+      const army = game?.getChildByName('army')?.getComponent('ArmyPanelView')
+      const map = name === 'SpeedTrainButton' ? army?.speedButtons : army?.cancelButtons
+      const entry = Array.from(map?.entries() ?? []).find(([button, row]) =>
+        row?.unitId === unitId && row.trainingText !== null
+        && button.name === name && button.activeInHierarchy && button.parent?.activeInHierarchy)
+      if (!entry) return false
+      const row = entry[0].parent
+      window.armyQueueProbeRowScope = { node: row, originalName: row.name, scope }
+      row.name = scope
+      return true
+    }, { name: nodeName, unitId: trainable.unitId, scope })
+    if (!scoped) return { clicked: false, reason: 'active-training-action-not-found' }
+    try {
+      point = await clickNodeViaCocos(page, { name: nodeName, within: scope })
+      console.log(`[army-queue] 点击 ${nodeName} unit=${trainable.unitId} 定位=${attempt + 1}：${JSON.stringify(point)}`)
+      if (point.clicked || !['node-inactive', 'within-not-found'].includes(point.reason)) return point
+    } finally {
+      // 保存引用才能恢复已经离开场景树的池节点；仅扫scene会把临时名留在池里。
+      await page.evaluate(scope => {
+        const saved = window.armyQueueProbeRowScope
+        if (saved?.scope === scope) {
+          saved.node.name = saved.originalName
+          delete window.armyQueueProbeRowScope
+        }
+      }, scope)
     }
-    visit(window.cc.director.getScene())
-    const row = rows.find((node) => node.children.some((child) =>
-      child.getComponent('cc.Label')?.string.includes('训练中'))
-      && node.getChildByName(name)?.activeInHierarchy === true)
-    if (!row) return false
-    row.name = 'ArmyQueueProbeTrainingRow'
-    return true
-  }, nodeName)
-  if (!scoped) return { clicked: false, reason: 'training-row-not-found' }
-  try {
-    const point = await clickNodeViaCocos(page, { name: nodeName, within: 'ArmyQueueProbeTrainingRow' })
-    console.log(`[army-queue] 点击 ${nodeName}：${JSON.stringify(point)}`)
-    return point
-  } finally {
-    await page.evaluate(() => {
-      const visit = (node) => {
-        if (node.name === 'ArmyQueueProbeTrainingRow') node.name = 'UnitRow'
-        for (const child of node.children) visit(child)
-      }
-      visit(window.cc.director.getScene())
-    })
   }
+  return point
 }
 
 const training = await rowReadout()
