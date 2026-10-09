@@ -102,6 +102,469 @@
       "runtime": [
         "client/assets/resources/ui/generated/buildings/building-iron-mine-v1.png"
       ]
+    },
+    {
+      "id": "warehouse",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-warehouse-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-warehouse-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-warehouse-v1.png"
+      ]
+    },
+    {
+      "id": "barracks",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-barracks-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-barracks-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-barracks-v1.png"
+      ]
+    },
+    {
+      "id": "stable",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-stable-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-stable-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-stable-v1.png"
+      ]
+    },
+    {
+      "id": "archery-range",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-archery-range-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-archery-range-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-archery-range-v1.png"
+      ]
+    },
+    {
+      "id": "siege-workshop",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-siege-workshop-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-siege-workshop-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-siege-workshop-v1.png"
+      ]
+    },
+    {
+      "id": "drill-ground",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-drill-ground-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-drill-ground-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-drill-ground-v1.png"
+      ]
+    },
+    {
+      "id": "hospital",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-hospital-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-hospital-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-hospital-v1.png"
+      ]
+    },
+    {
+      "id": "academy",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-academy-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-academy-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-academy-v1.png"
+      ]
+    },
+    {
+      "id": "embassy",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-embassy-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-embassy-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-embassy-v1.png"
+      ]
+    },
+    {
+      "id": "wall",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-wall-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-wall-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-wall-v1.png"
+      ]
+    },
+    {
+      "id": "terrain-grass",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/terrain-grass-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/terrain-grass-v3.png",
+      "size": [
+        512,
+        512
+      ],
+      "transparent": false,
+      "runtime": [
+        "client/assets/resources/ui/generated/map/terrain-grass-v1.png"
+      ]
+    },
+    {
+      "id": "map-player-city",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/map-player-city-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/map-player-city-v3.png",
+      "size": [
+        128,
+        128
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/map/map-player-city-v1.png"
+      ]
+    },
+    {
+      "id": "map-monster-camp",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/map-monster-camp-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/map-monster-camp-v3.png",
+      "size": [
+        128,
+        128
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/map/map-monster-camp-v1.png"
+      ]
+    },
+    {
+      "id": "map-resource-point",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/map-resource-point-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/map-resource-point-v3.png",
+      "size": [
+        128,
+        128
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/map/map-resource-point-v1.png"
+      ]
+    },
+    {
+      "id": "map-alliance-building",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/map-alliance-building-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/map-alliance-building-v3.png",
+      "size": [
+        128,
+        128
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/map/map-alliance-building-v1.png"
+      ]
+    },
+    {
+      "id": "map-march-marker",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/map-march-marker-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/map-march-marker-v3.png",
+      "size": [
+        128,
+        128
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/map/map-march-marker-v1.png"
+      ]
+    },
+    {
+      "id": "button-base",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/button-base-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/button-base-v3.png",
+      "size": [
+        256,
+        49
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/button-chip-v1.png",
+        "client/assets/resources/ui/generated/ui/button-iron-v1.png"
+      ],
+      "borders": [
+        4,
+        4,
+        12,
+        12
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "button-hover",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/button-hover-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/button-hover-v3.png",
+      "size": [
+        256,
+        49
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/button-chip-hover-v1.png",
+        "client/assets/resources/ui/generated/ui/button-iron-hover-v1.png"
+      ],
+      "borders": [
+        4,
+        4,
+        12,
+        12
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "button-disabled",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/button-disabled-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/button-disabled-v3.png",
+      "size": [
+        256,
+        49
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/button-chip-disabled-v1.png"
+      ],
+      "borders": [
+        4,
+        4,
+        12,
+        12
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "plate-band",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/plate-band-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/plate-band-v3.png",
+      "size": [
+        512,
+        40
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/plate-band-v1.png"
+      ],
+      "borders": [
+        4,
+        4,
+        16,
+        16
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "plate-tooltip",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/plate-tooltip-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/plate-tooltip-v3.png",
+      "size": [
+        256,
+        50
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/plate-tooltip-v1.png"
+      ],
+      "borders": [
+        4,
+        4,
+        12,
+        12
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "nav-tab",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/nav-tab-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/nav-tab-v3.png",
+      "size": [
+        256,
+        100
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/nav-tab-v1.png"
+      ],
+      "borders": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "nav-tab-selected",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/nav-tab-selected-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/nav-tab-selected-v3.png",
+      "size": [
+        256,
+        100
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/nav-tab-selected-v1.png"
+      ],
+      "borders": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "chip-close",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/chip-close-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/chip-close-v3.png",
+      "size": [
+        52,
+        52
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/chip-close-v1.png"
+      ],
+      "borders": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "crest-league",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/crest-league-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/crest-league-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/crest-league-v1.png"
+      ],
+      "borders": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "crest-nation",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/crest-nation-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/crest-nation-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/crest-nation-v1.png"
+      ],
+      "borders": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "crest-battle",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/crest-battle-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/crest-battle-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/crest-battle-v1.png"
+      ],
+      "borders": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "seal-wax",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/seal-wax-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/seal-wax-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/seal-wax-v1.png"
+      ],
+      "borders": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "prepareBounds": true
+    },
+    {
+      "id": "terrain-atlas",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/terrain-atlas-v3-clean-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/terrain-atlas-v3.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "transparent": false,
+      "runtime": [
+        "client/assets/resources/ui/generated/map/terrain-atlas-v1.png"
+      ]
     }
   ]
 }

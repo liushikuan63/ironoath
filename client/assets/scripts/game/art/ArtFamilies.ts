@@ -259,3 +259,30 @@ export const ACTIVITY_ICON_BY_CONFIG: Readonly<Record<string, string>> = {
   activity_build_sprint: 'activity:build_sprint',
   activity_squad_help: 'activity:squad_help',
 }
+
+// BEGIN GENERATED BUILDING_ART_GEOMETRY
+/** 采用版实体(alpha>128)下缘到原canvas底的比例，只是贴图几何，不是玩法配表。
+ * install_unified_v3.py --write-building-geometry现读；Sprite.trim=false保Creator裁边后接地。
+ */
+const BUILDING_ART_FOOT_RATIO: Readonly<Record<string, number>> = {
+  academy: 0.08203125,
+  archery_range: 0.16015625,
+  barracks: 0.171875,
+  drill_ground: 0.19140625,
+  embassy: 0.1328125,
+  farm: 0.1640625,
+  hospital: 0.21484375,
+  iron_mine: 0.14453125,
+  lumber_camp: 0.21875,
+  main_city: 0.048828125,
+  quarry: 0.1328125,
+  siege_workshop: 0.140625,
+  stable: 0.1875,
+  wall: 0.1640625,
+  warehouse: 0.1640625,
+}
+
+export function buildingArtFootRatio(configId: string): number {
+  return BUILDING_ART_FOOT_RATIO[configId] ?? 0
+}
+// END GENERATED BUILDING_ART_GEOMETRY

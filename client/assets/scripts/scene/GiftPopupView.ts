@@ -13,11 +13,11 @@
  * <p><b>倒计时读服务端时刻</b>（`offerExpireAt - serverNow`）：客户端时钟可以改，
  * 用它算倒计时会让"还剩几分钟"变成一句随时会错的话。
  */
-import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, type EventTouch } from 'cc'
+import { _decorator, Color, Component, Graphics, Label, Node, Sprite, UITransform, Vec3, type EventTouch } from 'cc'
 import type { GiftPopupResp } from '../net/generated/PayProtocol'
 import type { PayView } from '../game/pay/GiftPayFlow'
 import { applySystemUiFont } from './UiFont'
-import { applySlicedSprite } from './ArtCatalog'
+import { applySimpleSprite, applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import { DIALOG_SCRIM, fitExistingDialog } from './DialogStyle'
 
@@ -209,9 +209,12 @@ export class GiftPopupView extends Component {
     // 初始关闭盒在净区内，装配流排后与购买键一起固定到下沿，不占正文或铜角帽。
     close.setPosition(new Vec3(PANEL_WIDTH / 2 - PANEL_IRON_INSET.left - 18,
       PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top - 18, 0))
-    // C 档薄边铁片：× 仍由 Label 画（规格 §八 第 3 条禁止把符号烘进素材），贴图只给"这是一颗键"的载体。
-    applySlicedSprite(close, 'ui.chip.close', 36, 36)
-    this.label(close, '×', 0, 0, 22, COLOR_TEXT_DIM)
+    // v3 关闭图含一个铜 X；整幅方形缩放保住符号，只在素材失败时显示原文字兜底。
+    const closeDrawn = applySimpleSprite(close, 'ui.chip.close', 36, 36)
+    const closeSprite = close.getComponent(Sprite) as (Sprite & { trim: boolean }) | null
+    if (closeSprite !== null) closeSprite.trim = false
+    const closeFallback = this.label(close, '×', 0, 0, 22, COLOR_TEXT_DIM)
+    closeFallback.node.active = !closeDrawn
     panel.addChild(close)
     // 「×」与「立即购买」同族：`onClose` 也只是声明着、没人调用过。
     // 点关闭要先把自己藏起来（`hide()`），再通知编排层 —— 顺序反了会留下"宿主以为还开着"的态

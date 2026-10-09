@@ -85,6 +85,8 @@
 
 ## 二、三档素材契约（防「零消费素材」的硬判据）
 
+> **2026-10-10 用户复审后的v3采用版修订（#869）**：旧表保留为历史读数，本轮实际合同以 `unified-v3-assets.json`、真实PNG/meta及 `ArtFamilies.test.ts` 为准。五种A底板统一512×326、四边24；B条行512×40、L/R16及T/B4；C按钮三态统一256×49、提示条256×50，L/R12及T/B4；导航256×100四边12且SLICED保角。关闭件52×52已采用带铜X的原创图，SIMPLE等比显示，原Label×仅加载失败兜底，不叠两份符号；该项覆盖下文旧“不含×”规定。三种徽记与火漆均256×256等比contain、trim=false，保宿主占位及触摸盒。旧banner/reward crest/rope零消费三图退草稿。中心材质统一哑光暗铁、古铜细边，字采用现有浅正文色；真实消费不退化与边占比≤0.6继续保留。原图alpha1～3噪声不当成内容宽高，UI格式接入复用既有TRIM_ALPHA16裁边与方形化，不改RGB或压扁造型；同母版hover/disabled由既有确定性脚本派生，alpha保持。低边占比在采用图和实际页面判断，旧0.07不强迫新薄框回到粗框。
+
 判据公式（与 `tools/verify-art-runtime.mjs:765-772` 同一条，另加安全余量）：
 
 - **不退化**（既有门）：`contentWidth ≥ insetLeft + insetRight` 且 `contentHeight ≥ insetTop + insetBottom`；

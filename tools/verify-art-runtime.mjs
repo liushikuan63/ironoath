@@ -379,6 +379,55 @@ async function collectCityStage() {
       .map((tile) => [tile.node.name, tile.plate.depth]))
     const depthOrder = (grid?.children ?? []).filter((node) => /^Grid-\d+$/.test(node.name))
       .map((node) => ({ name: node.name, depth: depthByGrid.get(node.name) ?? null }))
+    // 素材实体脚底来自当前产物的生产模块，不在探针里抄十五张图的 alpha 几何表。
+    const artFamilyEntry = typeof window.System?.entries === 'function'
+      ? Array.from(window.System.entries()).find(([key, module]) =>
+        /(?:^|\/)ArtFamilies\.ts(?:$|\?)/.test(key)
+        && typeof module?.buildingArtFootRatio === 'function') : undefined
+    const artFamilies = artFamilyEntry?.[1] ?? null
+    const footRows = cityView?.panel?.rows
+    const buildingFootExpected = (footRows ?? [])
+      .filter((row) => row.level > 0 || row.upgrading || row.paused || row.collectable)
+      .map((row) => ({ configId: row.configId, gridX: row.gridX, gridY: row.gridY }))
+    const rowsByPlate = new Map((footRows ?? [])
+      .map((row) => [`${row.gridX}:${row.gridY}`, row]))
+    const buildingFeet = (cityView?.gridTiles ?? []).filter((tile) => tile.icon.active === true)
+      .map((tile) => {
+        const row = rowsByPlate.get(`${tile.plate.gridX}:${tile.plate.gridY}`)
+        const icon = tile.icon
+        const sprite = icon.getComponent('cc.Sprite')
+        const box = icon.getComponent('cc.UITransform')
+        const baseBox = tile.node.getComponent('cc.UITransform')
+        const detail = { tile: tile.node.name, configId: row?.configId ?? null,
+          gridX: tile.plate.gridX, gridY: tile.plate.gridY }
+        if (!row || !artFamilies || !sprite?.spriteFrame || !box || !baseBox) {
+          return { ...detail, error: '建筑行、生产脚底函数、SpriteFrame或UITransform缺失' }
+        }
+        const footRatio = artFamilies.buildingArtFootRatio(row.configId)
+        const frame = sprite.spriteFrame
+        const expectedFrame = artFamilies.FAMILY_ASSETS?.building[row.configId]?.split('/').at(-1)
+        // trim=false 时height代表原canvas的实际显示高度；减锚点后才是alpha实体底的局部坐标。
+        const entityFootLocalY = box.height * (footRatio - box.anchorY)
+        const base = baseBox.convertToWorldSpaceAR(new window.cc.Vec3(0, 0, 0))
+        const origin = box.convertToWorldSpaceAR(new window.cc.Vec3(0, 0, 0))
+        const foot = box.convertToWorldSpaceAR(new window.cc.Vec3(0, entityFootLocalY, 0))
+        return {
+          ...detail,
+          frameName: frame.name,
+          expectedFrame: expectedFrame ?? null,
+          trim: sprite.trim,
+          anchorY: box.anchorY,
+          footRatio,
+          contentHeight: box.height,
+          originalHeight: frame.originalSize.height,
+          entityFootLocalY,
+          baseWorld: [base.x, base.y],
+          originWorld: [origin.x, origin.y],
+          entityFootWorld: [foot.x, foot.y],
+          originDistance: Math.hypot(origin.x - base.x, origin.y - base.y),
+          entityFootDistance: Math.hypot(foot.x - base.x, foot.y - base.y),
+        }
+      })
     const visible = window.cc.view.getVisibleSize()
     let builtCount = null
     let builtTotal = null
@@ -404,6 +453,10 @@ async function collectCityStage() {
       builtCount,
       builtTotal,
       depthOrder,
+      buildingFootSource: artFamilyEntry?.[0] ?? null,
+      buildingFootRowsAvailable: Array.isArray(footRows),
+      buildingFootExpected,
+      buildingFeet,
     }
   })
 }
@@ -1161,6 +1214,26 @@ const cityCriteria = {
   mainCityMissing: cityStageProbe.builtCount !== null && cityStageProbe.builtCount >= 1
     && !cityIconsVisible.some(isMainCityFrame),
   buildingTinted: cityIconsVisible.some((sprite) => sprite.color.some((channel) => channel !== 255)),
+  buildingFootSource: cityStageProbe.buildingFootSource,
+  buildingFootExpected: cityStageProbe.buildingFootExpected,
+  buildingFeet: cityStageProbe.buildingFeet,
+  buildingFootReadMissing: cityStageProbe.buildingFootSource === null
+    || !cityStageProbe.buildingFootRowsAvailable
+    || !cityStageProbe.buildingFeet.some((entry) => entry.configId === 'main_city')
+    || cityStageProbe.buildingFootExpected.some((expected) =>
+      !cityStageProbe.buildingFeet.some((entry) => entry.configId === expected.configId
+        && entry.gridX === expected.gridX && entry.gridY === expected.gridY))
+    || cityStageProbe.buildingFeet.some((entry) => entry.error !== undefined
+      || !Number.isFinite(entry.footRatio) || entry.footRatio < 0 || entry.footRatio >= 1
+      || !(entry.contentHeight > 0) || !(entry.originalHeight > 0)
+      || !entry.expectedFrame || !entry.frameName?.startsWith(entry.expectedFrame)),
+  buildingTrimInvalid: cityStageProbe.buildingFeet.some((entry) => entry.trim !== false),
+  buildingFootAnchorInvalid: cityStageProbe.buildingFeet.some((entry) =>
+    !Number.isFinite(entry.anchorY) || !Number.isFinite(entry.footRatio)
+    || Math.abs(entry.anchorY - entry.footRatio) > 1e-6),
+  buildingFootProjectionInvalid: cityStageProbe.buildingFeet.some((entry) =>
+    !Number.isFinite(entry.originDistance) || entry.originDistance > 0.5
+    || !Number.isFinite(entry.entityFootDistance) || entry.entityFootDistance > 0.5),
   gridOffViewport: !(Array.isArray(cityStageProbe.gridSize)
     && Array.isArray(cityStageProbe.visibleSize)
     && Math.abs(cityStageProbe.gridSize[0] - cityStageProbe.visibleSize[0]) <= 1
@@ -1337,6 +1410,10 @@ const gates = [
   ['内城：真实主城自身正稿没有登记绘制', cityCriteria.mainCityMissing],
   ['内城：地形舞台没有按原图比例 cover 视口', cityCriteria.referenceCoverInvalid],
   ['内城：建筑正稿被整图滤色，破坏统一母版的材质', cityCriteria.buildingTinted],
+  ['内城：建筑实体脚底读数或生产几何来源缺失', cityCriteria.buildingFootReadMissing],
+  ['内城：建筑Sprite未关闭透明裁边拉伸', cityCriteria.buildingTrimInvalid],
+  ['内城：建筑底锚与生产alpha脚底比例不一致', cityCriteria.buildingFootAnchorInvalid],
+  ['内城：建筑原点或实体脚底投影偏离真实基座', cityCriteria.buildingFootProjectionInvalid],
   ['内城：城景内容区不等于视口', cityCriteria.gridOffViewport],
   ['内城：读不到「建筑 N/36」标题', cityCriteria.headerMissing],
   ['内城：已建 ≥2 栋却没有一栋正稿', cityCriteria.iconsMissing],

@@ -17,7 +17,7 @@ import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view
 import type { MarchComposeView } from '../game/session/AppRoot'
 import type { RallyField, RallyNumberRow, RallyScope, RallyScopeRow } from '../game/world/MarchCompose'
 import { applySystemUiFont } from './UiFont'
-import { applySlicedSprite } from './ArtCatalog'
+import { applyContainedSprite, applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import { DIALOG_SCRIM, applyDialogButton, fitExistingDialog } from './DialogStyle'
 
@@ -163,7 +163,7 @@ export class MarchComposeOverlay {
     crest.layer = this.node.layer
     crest.addComponent(UITransform).setContentSize(new Size(44, 50))
     crest.setPosition(new Vec3(0, PANEL_HEIGHT / 2 - PANEL_IRON_INSET.top / 2, 0))
-    applySlicedSprite(crest, 'ui.crest.battle', 44, 50)
+    applyContainedSprite(crest, 'ui.crest.battle', 44, 50)
     this.node.addChild(crest)
 
     // 内容从铜边**内侧**起算（inset 48/36）：原先的 `PANEL_HEIGHT / 2 - 28` 会把标题压进铜帽带。

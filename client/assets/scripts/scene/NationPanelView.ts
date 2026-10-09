@@ -20,7 +20,7 @@ import type {
 import type { WarSection } from '../game/nation/NationSections'
 import { NATION_TABS, SPEND_AMOUNT_PRESETS, TREASURY_LOG_ROWS, amountText, spendDraftBlocker, spendSinkOptions } from '../game/nation/NationPanel'
 import { applySystemUiFont } from './UiFont'
-import { applySlicedSprite, type StaticArtKey } from './ArtCatalog'
+import { applyContainedSprite, type StaticArtKey } from './ArtCatalog'
 import { applyDialogButton, createDialogScroll, dialogContentRect, DIALOG_SCRIM, observeDialogSize, paintCompactDialogFrame } from './DialogStyle'
 
 const { ccclass } = _decorator
@@ -1100,7 +1100,7 @@ export class NationPanelView extends Component {
     this.node.addChild(node)
     node.addComponent(UITransform).setContentSize(new Size(w, h))
     node.setPosition(new Vec3(x, y, 0))
-    applySlicedSprite(node, key, w, h)
+    applyContainedSprite(node, key, w, h)
     this.nodes.push(node)
   }
 }

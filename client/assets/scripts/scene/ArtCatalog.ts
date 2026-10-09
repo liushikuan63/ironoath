@@ -441,6 +441,35 @@ export function applySimpleSprite(node: Node, key: ArtKey, width: number, height
   return applySprite(node, key, Sprite.Type.SIMPLE, width, height)
 }
 
+/** 保留宿主占位与命中盒，在独立 Sprite 子节点中按原 canvas 比例容纳徽记。 */
+export function applyContainedSprite(node: Node, key: ArtKey, width: number, height: number): boolean {
+  const frame = artFrame(key)
+  let art = node.getChildByName('ContainedArt')
+  if (frame === null || frame.originalSize.width <= 0 || frame.originalSize.height <= 0
+      || width <= 0 || height <= 0) {
+    if (art !== null) art.active = false
+    return false
+  }
+  if (art === null) {
+    art = new Node('ContainedArt')
+    node.addChild(art)
+    art.addComponent(UITransform)
+  }
+  art.layer = node.layer
+  art.active = true
+  art.setSiblingIndex(0)
+  const box = node.getComponent(UITransform)
+  art.setPosition((0.5 - (box?.anchorX ?? 0.5)) * width,
+    (0.5 - (box?.anchorY ?? 0.5)) * height, 0)
+  const scale = Math.min(width / frame.originalSize.width, height / frame.originalSize.height)
+  paintSprite(art, frame, Sprite.Type.SIMPLE,
+    frame.originalSize.width * scale, frame.originalSize.height * scale)
+  // Creator 裁掉透明边后仍以交付 canvas 排图；否则方形 fit 的留白会再次被拉满。
+  const sprite = art.getComponent(Sprite)! as Sprite & { trim: boolean }
+  sprite.trim = false
+  return true
+}
+
 export function applyIconSprite(node: Node, key: IconArtKey, width: number, height: number): boolean {
   return applySimpleSprite(node, key, width, height)
 }
@@ -451,7 +480,7 @@ export function applyTerrainSprite(node: Node, index: number,
 }
 
 /**
- * 游戏里的按钮一律走这张薄边 chip（meta 边框 12 ⇒ 最小可画 24×24，覆盖 46×26 ~ 132×34 全部消费点）。
+ * 游戏里的按钮走统一 v3 薄边 chip（meta 左右12、上下4 ⇒ 最小可画24×8，覆盖40×34与46×26小键）。
  *
  * <p>原来这里是一张 384×143 的装饰母版，左右端帽各 54、上下边框各 40 —— 而实际格子最高的只有 34，
  * 也就是说**它从来没有被九宫格画过**，引擎只能整图缩小，观感就是一团缩小的花纹（#216 的
@@ -476,10 +505,8 @@ export function applyCommandButton(node: Node, state: CommandButtonState,
 /**
  * 铁誓主按钮（C 档 `ui.button.iron` 一族）的三态取键。
  *
- * <p>为什么不复用 `chipArtKey`：chip 是"装饰母版装不下的格子"那一路（四边 border 12），
- * 铁钮是 border 6·4 的薄边件，两者最小可画尺寸差一倍，混用会把 #216 那条退化判据引回来。
- * <p>置灰走**专门的 disabled 素材**而不是运行时滤镜：台账 #805 已经记下"置灰在贴图路径要另走一条"，
- * 而 disabled 素材是常态图的确定性派生（alpha 逐像素相同、只压亮度与饱和），两态切换不会抖边。
+ * <p>chip 与铁钮采用同一 v3 母版和12·4薄边；独立取键保留各自既有状态消费。
+ * 铁钮禁用继续使用运行时 tint，chip 禁用使用常态的确定性派生图；两者边形均不抖动。
  */
 export function ironButtonArtKey(state: CommandButtonState): StaticArtKey {
   // 只有两态。禁用**不在这里**：#805 已定"贴图路径的置灰用 `sprite.color` 乘灰"，
@@ -494,12 +521,11 @@ export function applyIronButton(node: Node, state: CommandButtonState,
 }
 
 /**
- * 底部导航格的页签图。刻意**不**走九宫格：格子尺寸由条宽 ÷ 格数定死（≈63×44），
- * 而按钮母版的端帽就有 54px —— 九宫格在那个尺寸上退化成"整张图缩小"，画出来是一朵花
- * （收口清单 #215 的截图）。页签母版本来就是按这个比例画的，等比铺满即可。
+ * 底部导航采用统一 v3 空心薄框，四边12的九宫格保住角帽。
+ * 常驻条与更多抽屉的格宽不同；整幅 SIMPLE 会把256×100母版随格宽压扁或拉长。
  */
 export function applyNavTab(node: Node, selected: boolean, width: number, height: number): boolean {
-  return applySimpleSprite(node, selected ? 'ui.nav.tab.selected' : 'ui.nav.tab', width, height)
+  return applySlicedSprite(node, selected ? 'ui.nav.tab.selected' : 'ui.nav.tab', width, height)
 }
 
 /** 回到 Graphics 画面。池化节点在不同实体之间复用时必须显式切回，避免残留上一张图。 */

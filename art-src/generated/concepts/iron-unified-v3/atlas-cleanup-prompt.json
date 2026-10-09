@@ -1,0 +1,8 @@
+{
+  "generationMode": "built-in image_gen",
+  "references": [
+    "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/terrain-atlas-v3-raw.png",
+    "art-src/generated/concepts/iron-unified-v3/master-city-v3.png"
+  ],
+  "prompt": "Image 1 is an existing 4 by 4 medieval game terrain atlas. Edit this image, keep the same muted sage grass, cool-gray limestone, low shrubs, top-down camera, neutral daylight and sixteen equal cell layout. REMOVE every visible straight horizontal and vertical separator line and tonal seam: there must be NO drawn grid, hard rectangle borders, sharp square patches, gutters or frames. At the edges of every tile, make a quiet uniform sage grass surface so each cell tiles without obvious seams. All sixteen regions keep restrained natural variations of sparse low shrubs, low rock patches and earth, but vegetation does not accumulate into hedges along borders. Crisp game terrain texture with large quiet open surface for entity markers, never photographic satellite texture, no buildings, roads, people, labels or sky. Full bleed SQUARE output, all four canvas edges continuously covered with grass. Image 2 is a color/material style reference only."
+}

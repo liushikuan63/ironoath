@@ -162,13 +162,17 @@ test('道具映射表的目标键都真实存在；item.json 每一行都有图�
  * 取一张图 spriteFrame 子档的四边边框。
  * 子档的 key 是内容哈希（`6c48a`/`f9941` 这类），按 `name` 找才不会一重新导入就对不上。
  */
-function frameBorders(pngBaseName: string): Record<'left' | 'top' | 'right' | 'bottom', number> {
+function frameData(pngBaseName: string): Record<string, unknown> {
   const meta = JSON.parse(
     fs.readFileSync(path.join(GENERATED_UI, `${pngBaseName}.png.meta`), 'utf8'),
   ) as { subMetas: Record<string, { name?: string, userData?: Record<string, unknown> }> }
   const sub = Object.values(meta.subMetas).find((entry) => entry.name === 'spriteFrame')
   assert.ok(sub !== undefined, `${pngBaseName}.png.meta 里没有 spriteFrame 子档`)
-  const data = sub.userData ?? {}
+  return sub.userData ?? {}
+}
+
+function frameBorders(pngBaseName: string): Record<'left' | 'top' | 'right' | 'bottom', number> {
+  const data = frameData(pngBaseName)
   const border = (key: string): number => {
     const value = data[key]
     assert.equal(typeof value, 'number',
@@ -179,12 +183,42 @@ function frameBorders(pngBaseName: string): Record<'left' | 'top' | 'right' | 'b
     right: border('borderRight'), bottom: border('borderBottom') }
 }
 
-test('薄边 chip 四边都是 12：它是"装饰母版装不下的格子"那一路的唯一尺寸来源', () => {
-  for (const name of ['button-chip-v1', 'button-chip-hover-v1', 'button-chip-disabled-v1']) {
-    assert.deepEqual(frameBorders(name),
-      { left: 12, top: 12, right: 12, bottom: 12 },
-      `${name}：边框 12 ⇒ 最小可画 24×24，正好覆盖 46×26 这批小按钮；`
-      + '改大就会把 #216 那条"九宫格退化"判据重新引回来')
+const BUTTON_BORDER = { left: 12, top: 4, right: 12, bottom: 4 }
+const BAND_BORDER = { left: 16, top: 4, right: 16, bottom: 4 }
+const NAV_BORDER = { left: 12, top: 12, right: 12, bottom: 12 }
+const WHOLE_IMAGE_BORDER = { left: 0, top: 0, right: 0, bottom: 0 }
+
+/** PNG 本体与导入帧同时对账；只改 meta 或只替换 PNG 都不能伪装成同步接入。 */
+function assertDiskFrame(name: string, width: number, height: number,
+                         border: Record<'left' | 'top' | 'right' | 'bottom', number>): void {
+  const png = fs.readFileSync(path.join(GENERATED_UI, `${name}.png`))
+  assert.equal(png.toString('ascii', 12, 16), 'IHDR', `${name} 没有可核对尺寸的 PNG IHDR`)
+  assert.deepEqual({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) },
+    { width, height }, `${name} 的真实 PNG 尺寸没有同步采用版`)
+  const data = frameData(name)
+  for (const [key, expected] of [['width', width], ['height', height],
+    ['rawWidth', width], ['rawHeight', height]] as const) {
+    assert.equal(data[key], expected, `${name} meta.${key} 与真实 PNG 尺寸不一致`)
+  }
+  assert.deepEqual(frameBorders(name), border, `${name} 的切分线没有同步采用版合同`)
+}
+
+test('统一v3的13张按钮、条行、提示、导航与整图件逐张核PNG和meta，不留chip/nav豁免', () => {
+  const contracts = [
+    { names: ['button-chip-v1', 'button-chip-hover-v1', 'button-chip-disabled-v1',
+      'button-iron-v1', 'button-iron-hover-v1'], width: 256, height: 49, border: BUTTON_BORDER },
+    { names: ['plate-band-v1'], width: 512, height: 40, border: BAND_BORDER },
+    { names: ['plate-tooltip-v1'], width: 256, height: 50, border: BUTTON_BORDER },
+    { names: ['nav-tab-v1', 'nav-tab-selected-v1'], width: 256, height: 100, border: NAV_BORDER },
+    // 关闭件和crest按整图消费：四边0是现meta合同，不能借C档边框豁免磁盘几何。
+    { names: ['chip-close-v1'], width: 52, height: 52, border: WHOLE_IMAGE_BORDER },
+    { names: ['crest-league-v1', 'crest-nation-v1', 'crest-battle-v1'],
+      width: 256, height: 256, border: WHOLE_IMAGE_BORDER },
+  ]
+  assert.equal(contracts.reduce((sum, row) => sum + row.names.length, 0), 13,
+    '本轮13张资源必须全部进入真实PNG/meta合同，不能漏掉派生态或整图件')
+  for (const { names, width, height, border } of contracts) {
+    for (const name of names) assertDiskFrame(name, width, height, border)
   }
 })
 
@@ -269,8 +303,8 @@ test('包里的 ui 图逐张点名，多一张少一张都必须更新消费点�
   ], '包里多了/少了 ui 图 —— 加图要连同消费点与判据一起进来，删图要确认零消费（#216 的口径）')
 })
 
-/** 规格 §二 的档位（A 底板 / B 条行 / C 小件 / 装饰件不参与九宫格）。 */
-type Tier = 'A' | 'B' | 'C' | 'decor'
+/** 规格 §二 的档位；导航与原比例关闭件有独立磁盘合同，装饰件不参与九宫格。 */
+type Tier = 'A' | 'B' | 'C' | 'nav' | 'close' | 'decor'
 
 /**
  * §二 三档契约里**登记层能被机器判到的那两维**：该档允许的 png 前缀、该档的 border。
@@ -283,13 +317,11 @@ const TIER_CONTRACT: Record<Tier, {
 }> = {
   // 统一v3采用版角帽约16–18px；现meta四边24保角，不能继续用旧80·72粗框合同。
   A: { border: { ...PANEL_IRON_INSET }, pngPrefixes: ['panel-'] },
-  B: { border: { left: 12, top: 8, right: 12, bottom: 8 }, pngPrefixes: ['plate-'] },
-  // 'plate-tooltip-' 是 C 档里唯一的例外前缀：它是浮动提示条（256×61、border 6·4），
-  // 归 C 不归 B —— B 档条行是 512×52 的 12·8 薄边，两者 border 差一倍，混档就是 §八.2 判的那件事。
-  C: {
-    border: { left: 6, top: 4, right: 6, bottom: 4 },
-    pngPrefixes: ['button-', 'chip-', 'plate-tooltip-'],
-  },
+  B: { border: BAND_BORDER, pngPrefixes: ['plate-band-'] },
+  // 提示条与chip/iron共享左右12、上下4；B条行左右16，不用旧尺寸或文件前缀逃过对账。
+  C: { border: BUTTON_BORDER, pngPrefixes: ['button-', 'plate-tooltip-'] },
+  nav: { border: NAV_BORDER, pngPrefixes: ['nav-tab-'] },
+  close: { border: WHOLE_IMAGE_BORDER, pngPrefixes: ['chip-close-'] },
   decor: { border: null, pngPrefixes: ['banner-', 'crest-', 'seal-', 'divider-'] },
 }
 
@@ -299,7 +331,7 @@ const V25_KEY_TIER: Record<string, Tier> = {
   'ui.panel.iron': 'A',
   'ui.plate.band': 'B',
   'ui.button.iron': 'C',
-  'ui.chip.close': 'C',
+  'ui.chip.close': 'close',
   'ui.plate.tooltip': 'C',
   'ui.panel.parchment': 'A',
   'ui.panel.warning': 'A',
@@ -309,13 +341,12 @@ const V25_KEY_TIER: Record<string, Tier> = {
   'ui.crest.nation': 'decor',
   'ui.crest.battle': 'decor',
   'ui.seal.wax': 'decor',
+  'ui.button.chip': 'C',
+  'ui.button.chip.hover': 'C',
+  'ui.button.chip.disabled': 'C',
+  'ui.nav.tab': 'nav',
+  'ui.nav.tab.selected': 'nav',
 }
-
-/** V25 之前的遗留件：不参与 §二 的 border 契约，但点名登记，免得"没在表里"变成"没人管"。 */
-const LEGACY_UI_PNGS = [
-  'button-chip-v1.png', 'button-chip-hover-v1.png', 'button-chip-disabled-v1.png',
-  'nav-tab-v1.png', 'nav-tab-selected-v1.png',
-]
 
 /**
  * 从 `ArtCatalog` 的 `SPECS` 现取「键 → 资源路径」。
@@ -339,6 +370,8 @@ function specsFromCatalog(): Map<string, string> {
 test('V25 档位登记表：一个键只有一个档，它登记的 png 与那张图的 meta border 必须属于那个档（§八.2 跨档复用在登记层判掉）', () => {
   const specs = specsFromCatalog()
   const registered = Object.entries(V25_KEY_TIER).filter(([key]) => specs.has(key))
+  assert.deepEqual(Object.keys(V25_KEY_TIER).filter(key => !specs.has(key)), [],
+    '已登记素材键从ArtCatalog消失，不能仅过滤缺失键后把档位合同跑成假绿')
   assert.ok(registered.length >= 3,
     `档位表里 ${Object.keys(V25_KEY_TIER).length} 个键，ArtCatalog 只认到 ${registered.length} 个`
     + ' —— 表与目录脱节时本用例等于没判，先修表或修目录')
@@ -375,7 +408,7 @@ test('V25 档位登记表：一个键只有一个档，它登记的 png 与那�
   assert.deepEqual(bad, [])
 })
 
-test('每张在盘的 ui 图都必须被某个 ArtKey 登记；遗留件名单里不许留已消失的条目', () => {
+test('每张在盘的 ui 图都必须被某个 ArtKey 登记，chip/nav也不留遗留件豁免', () => {
   // 上面那条「只剩三族」钉的是**文件清单**，换掉文件名它就看不见 ⇒ 这条钉的是**消费**：
   // 零消费素材进包（V25-b 的 plate-band 就是这么被拦回去的）此前只在人工环节判过。
   const specs = specsFromCatalog()
@@ -389,9 +422,6 @@ test('每张在盘的 ui 图都必须被某个 ArtKey 登记；遗留件名单�
       `键 ${key} 指的 ${res} 不在盘上（面板上就是一个永远不出图的空位）`)
   }
   const pngs = fs.readdirSync(GENERATED_UI).filter((name) => name.endsWith('.png'))
-  const unowned = pngs.filter((name) => !registered.has(name) && !LEGACY_UI_PNGS.includes(name))
+  const unowned = pngs.filter((name) => !registered.has(name))
   assert.deepEqual(unowned, [], `这些 ui 图没有任何 ArtKey 消费：${unowned.join(', ')} —— 退回 art-src 草稿区，别占分包`)
-  const gone = LEGACY_UI_PNGS.filter((name) => !pngs.includes(name))
-  assert.deepEqual(gone, [], `遗留件名单里有已不存在的条目：${gone.join(', ')} —— 删掉它，`
-    + '否则下一张同前缀的新图会蹭到"不用过档位表"的豁免')
 })

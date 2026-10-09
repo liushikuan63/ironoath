@@ -19,6 +19,8 @@ import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
+import { resolveCocosClickPoint } from './lib/cocos-click.mjs'
 
 const ROOT = process.env.SWEEP_ROOT ?? 'client/build/ui-v25'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
@@ -36,14 +38,20 @@ const EXPECT = [
   { key: 'ui.panel.parchment', res: 'ui/generated/ui/panel-parchment-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
   { key: 'ui.panel.warning', res: 'ui/generated/ui/panel-warning-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
   { key: 'ui.panel.gilt', res: 'ui/generated/ui/panel-gilt-v1', w: 512, h: 326, inset: [24, 24, 24, 24] },
-  { key: 'ui.button.iron', res: 'ui/generated/ui/button-iron-v1', w: 256, h: 65, inset: [6, 6, 4, 4] },
-  { key: 'ui.chip.close', res: 'ui/generated/ui/chip-close-v1', w: 52, h: 52, inset: [6, 6, 4, 4] },
-  { key: 'ui.plate.band', res: 'ui/generated/ui/plate-band-v1', w: 512, h: 52, inset: [12, 12, 8, 8] },
-  { key: 'ui.plate.tooltip', res: 'ui/generated/ui/plate-tooltip-v1', w: 256, h: 61, inset: [6, 6, 4, 4] },
-  // 装饰件（顶饰 / 火漆 / 分隔线）inset 全 0：它们按原比例整幅缩放、永不拉伸。
-  { key: 'ui.crest.league', res: 'ui/generated/ui/crest-league-v1', w: 178, h: 256, inset: [0, 0, 0, 0] },
-  { key: 'ui.crest.nation', res: 'ui/generated/ui/crest-nation-v1', w: 246, h: 256, inset: [0, 0, 0, 0] },
-  { key: 'ui.crest.battle', res: 'ui/generated/ui/crest-battle-v1', w: 223, h: 256, inset: [0, 0, 0, 0] },
+  { key: 'ui.button.iron', res: 'ui/generated/ui/button-iron-v1', w: 256, h: 49, inset: [12, 12, 4, 4] },
+  { key: 'ui.button.iron.hover', res: 'ui/generated/ui/button-iron-hover-v1', w: 256, h: 49, inset: [12, 12, 4, 4] },
+  { key: 'ui.chip.close', res: 'ui/generated/ui/chip-close-v1', w: 52, h: 52, inset: [0, 0, 0, 0] },
+  { key: 'ui.plate.band', res: 'ui/generated/ui/plate-band-v1', w: 512, h: 40, inset: [16, 16, 4, 4] },
+  { key: 'ui.plate.tooltip', res: 'ui/generated/ui/plate-tooltip-v1', w: 256, h: 50, inset: [12, 12, 4, 4] },
+  { key: 'ui.button.chip', res: 'ui/generated/ui/button-chip-v1', w: 256, h: 49, inset: [12, 12, 4, 4] },
+  { key: 'ui.button.chip.hover', res: 'ui/generated/ui/button-chip-hover-v1', w: 256, h: 49, inset: [12, 12, 4, 4] },
+  { key: 'ui.button.chip.disabled', res: 'ui/generated/ui/button-chip-disabled-v1', w: 256, h: 49, inset: [12, 12, 4, 4] },
+  { key: 'ui.nav.tab', res: 'ui/generated/ui/nav-tab-v1', w: 256, h: 100, inset: [12, 12, 12, 12] },
+  { key: 'ui.nav.tab.selected', res: 'ui/generated/ui/nav-tab-selected-v1', w: 256, h: 100, inset: [12, 12, 12, 12] },
+  // 方形化装饰与关闭符号边框为0，消费端用 SIMPLE + trim=false 并按原 canvas contain。
+  { key: 'ui.crest.league', res: 'ui/generated/ui/crest-league-v1', w: 256, h: 256, inset: [0, 0, 0, 0] },
+  { key: 'ui.crest.nation', res: 'ui/generated/ui/crest-nation-v1', w: 256, h: 256, inset: [0, 0, 0, 0] },
+  { key: 'ui.crest.battle', res: 'ui/generated/ui/crest-battle-v1', w: 256, h: 256, inset: [0, 0, 0, 0] },
   { key: 'ui.seal.wax', res: 'ui/generated/ui/seal-wax-v1', w: 256, h: 256, inset: [0, 0, 0, 0] },
 ]
 // 零消费的礼包旗帜、奖章与绳线已退回草稿区；余下条目继续逐件核对加载与几何。
@@ -92,7 +100,7 @@ const loaded = await page.evaluate((specs) => new Promise((resolve) => {
       } else {
         out.push({
           res: s.res, ok: true,
-          px: [frame.width, frame.height],
+          px: [frame.originalSize.width, frame.originalSize.height],
           inset: [frame.insetLeft, frame.insetRight, frame.insetTop, frame.insetBottom],
         })
       }
@@ -220,6 +228,104 @@ push('集结弹层：底板不再画回 background（否则遮罩会被一起清
 
 const shot = path.join(OUT, 'ui-v25-stamina-on-screen.png')
 await page.screenshot({ path: shot })
+
+// 四、走真实鼠标入口读取导航两态和 chip 三态。私聊未选对象只切换显示，不点击发送。
+// 除加载之外，Sprite 必须成为首个 UI renderer，并被有效相机看到；enabled+frame 不能代替消费。
+function readSmallUi() {
+  const scene = window.cc.director.getScene()
+  const cameras = [], rows = []
+  const collect = node => {
+    const camera = node.getComponent('cc.Camera')
+    if (camera && camera.enabled && node.activeInHierarchy) cameras.push(camera)
+    for (const child of node.children ?? []) collect(child)
+  }
+  collect(scene)
+  const visit = node => {
+    if (!node.activeInHierarchy) return
+    const sprite = node.getComponent('cc.Sprite'), box = node.getComponent('cc.UITransform')
+    const frame = sprite?.spriteFrame, name = String(frame?.name ?? '')
+    if (frame && /button-chip|nav-tab/.test(name)) {
+      const border = [frame.insetLeft, frame.insetRight, frame.insetTop, frame.insetBottom]
+      rows.push({ node: node.name, frame: name, type: sprite.type, enabled: sprite.enabled,
+        active: node.activeInHierarchy, renderer: node._uiProps?.uiComp === sprite,
+        alpha: sprite.color?.a ?? 0, layer: node.layer, parentLayer: node.parent?.layer,
+        visible: cameras.some(camera => (camera.visibility & node.layer) !== 0),
+        box: box ? [box.width, box.height] : null, border,
+        ratio: box && box.width > 0 && box.height > 0
+          ? Math.max((border[0] + border[1]) / box.width, (border[2] + border[3]) / box.height) : null,
+        degenerate: !box || box.width <= 0 || box.height <= 0
+          || box.width < border[0] + border[1] || box.height < border[2] + border[3] })
+    }
+    for (const child of node.children ?? []) visit(child)
+  }
+  visit(scene)
+  return rows
+}
+const smallUiConsumed = row => row.active && row.enabled && row.renderer && row.visible
+  && row.alpha > 0 && row.layer === row.parentLayer && row.type === 1
+
+await hideGuideOverlay(page)
+let controlsReady = true
+for (const target of [
+  { name: 'CloseButton', within: 'StaminaDetail' },
+  { name: 'Nav-more' }, { name: 'Nav-social' },
+  { name: 'Tab_chat', within: 'social' },
+  { name: 'Channel_PRIVATE', within: 'social' },
+]) {
+  const point = await page.evaluate(resolveCocosClickPoint, target)
+  push(`真实小件入口：${target.name} 经引擎自命中`, point.verified, JSON.stringify(point))
+  if (!point.verified) { controlsReady = false; break }
+  await page.mouse.click(point.x, point.y)
+  await page.waitForTimeout(400)
+}
+const smallRows = await page.evaluate(readSmallUi)
+for (const spec of EXPECT.filter(spec => /button-chip|nav-tab/.test(spec.res))) {
+  const matches = smallRows.filter(row => row.frame === path.basename(spec.res))
+  push(`${spec.key} 在实际切页后可见`, controlsReady && matches.length > 0, JSON.stringify(matches))
+  push(`${spec.key} 真实首 renderer 消费`, matches.length > 0 && matches.every(smallUiConsumed),
+    JSON.stringify(matches))
+  push(`${spec.key} 九宫格有效且边占比≤0.6`, matches.length > 0
+    && matches.every(row => !row.degenerate && row.ratio !== null && row.ratio <= 0.6), JSON.stringify(matches))
+}
+await page.screenshot({ path: path.join(OUT, 'ui-v25-nav-chip-three-states.png') })
+
+// 禁用当前可见的真实选中导航 Sprite，必须使同一消费判据变红；finally 恢复实际材质。
+const negativeBaseline = smallRows.filter(row => /nav-tab-selected-v1/.test(row.frame))
+const canDisable = negativeBaseline.length > 0 && negativeBaseline.every(smallUiConsumed)
+push('导航消费负控前提：真实选中材质有效', canDisable, JSON.stringify(negativeBaseline))
+if (canDisable) {
+  try {
+    const changed = await page.evaluate(() => {
+      const find = node => {
+        if (!node.activeInHierarchy) return null
+        const sprite = node.getComponent('cc.Sprite')
+        if (/nav-tab-selected-v1/.test(String(sprite?.spriteFrame?.name ?? ''))) return sprite
+        for (const child of node.children ?? []) { const hit = find(child); if (hit) return hit }
+        return null
+      }
+      const sprite = find(window.cc.director.getScene())
+      if (!sprite) return false
+      window.__ui25DisabledSprite = { sprite, enabled: sprite.enabled }
+      sprite.enabled = false
+      return true
+    })
+    await page.waitForTimeout(60)
+    const negative = (await page.evaluate(readSmallUi)).filter(row => /nav-tab-selected-v1/.test(row.frame))
+    push('禁用真实导航材质使消费判据翻红', changed && negative.length > 0
+      && negative.some(row => !smallUiConsumed(row) && row.enabled === false), JSON.stringify(negative))
+    await page.screenshot({ path: path.join(OUT, 'ui-v25-nav-disabled-negative.png') })
+  } finally {
+    await page.evaluate(() => {
+      const saved = window.__ui25DisabledSprite
+      if (saved) saved.sprite.enabled = saved.enabled
+      delete window.__ui25DisabledSprite
+    })
+  }
+  await page.waitForTimeout(60)
+  const restored = (await page.evaluate(readSmallUi)).filter(row => /nav-tab-selected-v1/.test(row.frame))
+  push('导航材质还原后同一消费判据恢复绿', restored.length > 0 && restored.every(smallUiConsumed),
+    JSON.stringify(restored))
+}
 
 const failed = results.filter((r) => !r.pass)
 results.forEach((r) => console.log(`  ${r.pass ? 'PASS' : 'FAIL'}  ${r.name}  —  ${r.detail}`))

@@ -23,7 +23,7 @@ import {
   applyAnyIconSprite, applyCommandButton, applyIconSprite, applySimpleSprite,
   applySlicedSprite, applyTiledSprite, artFrame, buildingIconKey, ensureFamily,
 } from './ArtCatalog'
-import { buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
+import { buildingArtFootRatio, buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont, capWidth, oneLineFloorHeight } from './UiFont'
 import {
   DISTRICT_TINT_RGB, SCENE_RUNTIME_HEIGHT, SCENE_RUNTIME_WIDTH,
@@ -1209,7 +1209,8 @@ export class CityPanelView extends Component {
       }
       if (row.configId === 'main_city') {
         keepX = tile.plate.x
-        keepY = tile.plate.y + buildingIconSize(row.configId, tile.plate.width, this.contentHeight) / 2
+        const iconBox = tile.icon.getComponent(UITransform)
+        keepY = tile.plate.y + (iconBox?.height ?? 0) * (0.5 - (iconBox?.anchorY ?? 0))
       }
       tile.node.on('touch-start', (_event: EventTouch) => {
         this.buildMode = false
@@ -1277,6 +1278,8 @@ export class CityPanelView extends Component {
     }
 
     const iconSide = buildingIconSize(row.configId, tile.plate.width, this.contentHeight)
+    // 实体脚面来自最终素材的 alpha 下缘；节点原点仍是命中与深度排序使用的真实基座。
+    tile.icon.getComponent(UITransform)?.setAnchorPoint(0.5, buildingArtFootRatio(row.configId))
     /**
      * **标注不跟世界一起缩**：等级牌 / 名字 / 进度条是 UI，字号该停在设计尺寸上
      * （与全游戏其它文字同一把尺：设计 px × 设备比）。跟着舞台缩的话，默认 1.8 倍下
@@ -1374,8 +1377,11 @@ export class CityPanelView extends Component {
     tile.icon.active = iconVisible
     // 建筑母版与舞台使用同一材质、视角与光向；保持原色，避免整栋乘棕后失去石灰层次。
     if (iconVisible) {
-      const iconSprite = tile.icon.getComponent(Sprite)
+      const iconSprite = tile.icon.getComponent(Sprite) as (Sprite & { trim: boolean }) | null
       if (iconSprite !== null) {
+        // Cocos 3.8.7 SIMPLE 的 trim=false 保持 originalSize 几何；否则导入裁边会重拉满方形框，
+        // 基于原 canvas 的脚面比也随之失效。headless 桩尚未声明这条真实 Sprite API。
+        iconSprite.trim = false
         iconSprite.color = new Color(255, 255, 255, 255)
       }
     }

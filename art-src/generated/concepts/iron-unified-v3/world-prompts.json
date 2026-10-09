@@ -1,0 +1,41 @@
+{
+  "generationMode": "built-in image_gen",
+  "reference": "art-src/generated/concepts/iron-unified-v3/master-city-v3.png",
+  "assets": [
+    {
+      "id": "terrain-atlas",
+      "transparent": false,
+      "prompt": "Image 1 defines the palette and natural daylight, not buildings. Create a SQUARE full-bleed production terrain texture atlas, exactly 4 columns by 4 rows of 16 equally sized terrain variations for a medieval strategy WORLD MAP. No drawn grid, border, gutters, labels, objects, buildings, road networks, people, mountains, sky, perspective horizon or dramatic scene. Top-down orthographic map terrain texture, restrained muted sage grassland with cool-gray limestone patches and subtle dusty earth; quiet clearly differentiated broad natural shapes and sparse small clusters of overhead shrubs, readable at small tile sizes. Every variation reaches every edge with similar low-contrast grass so repeated edges remain continuous. Vary sparse grass density, small low rock patches, low shrubs and earth gently across all sixteen cells; no long cast shadows, round repeated stamps, blurry watercolor or photographic aerial image. Crisp hand-painted game texture, natural neutral daylight. Large quiet open surfaces support entity markers and labels. Atlas itself should be a cohesive sheet of sixteen subtle tile variations, not sixteen landscape thumbnails."
+    },
+    {
+      "id": "terrain-grass",
+      "transparent": false,
+      "prompt": "Image 1 defines palette and natural daylight only. Create one SQUARE full-bleed SEAMLESS top-down game map ground texture, no buildings, objects, people, sky, horizon, roads, labels, border or square platform. Restrained sage green-gray grass with subtle warm earth undertones and rare tiny cool limestone flecks. Broad quiet natural shapes with crisp fine grain, low contrast, neutral upper-left daylight with no cast shadows. All four edges have the same grass coverage and tonal value for seamless horizontal and vertical repetition, no strong line or corner landmark. Refined realistic hand-painted game texture, NOT a forest landscape or photographic satellite view. It must serve as the readable quiet ground of the SAME medieval castle world map."
+    },
+    {
+      "id": "map-player-city",
+      "transparent": true,
+      "prompt": "Image 1 is the sole art-style reference. Create original production map art for the SAME medieval stone-castle strategy game. Match cool limestone gray, charcoal slate, warm oak, restrained oxblood cloth, muted sage vegetation, clear neutral upper-left natural daylight. Refined realistic hand-painted 3D-game material with clean recognizable shapes, elevated orthographic camera, no toy/chibi, fantasy magic, gold glow, letters, interface, watermark, grass island, square platform, surrounding scene. One miniature gray limestone medieval castle settlement marker with central charcoal slate-roofed square keep and two short gate towers, one tiny muted oxblood pennant. Full object centered on a SQUARE transparent canvas, gentle ground-contact shadow and 12% transparent padding. Distinct large shapes and minimal fine details, readable at 128px. No surrounding city, terrain or circular badge."
+    },
+    {
+      "id": "map-monster-camp",
+      "transparent": true,
+      "prompt": "Image 1 is the sole art-style reference. Create original production map art for the SAME medieval stone-castle strategy game. Match cool limestone gray, charcoal slate, warm oak, restrained oxblood cloth, muted sage vegetation, clear neutral upper-left natural daylight. Refined realistic hand-painted 3D-game material with clean recognizable shapes, elevated orthographic camera, no toy/chibi, fantasy magic, gold glow, letters, interface, watermark, grass island, square platform, surrounding scene. One miniature grounded medieval hostile camp marker: a compact low gray-stone ruin with rough oak palisade, one muted dark-red cloth shelter and two simple wood stakes. No skulls, monsters, humans, glowing effects, trees or terrain platform. Full object centered on a SQUARE transparent canvas with 12% transparent padding, gentle contact shadow, clean distinct silhouette readable at 128px."
+    },
+    {
+      "id": "map-resource-point",
+      "transparent": true,
+      "prompt": "Image 1 is the sole art-style reference. Create original production map art for the SAME medieval stone-castle strategy game. Match cool limestone gray, charcoal slate, warm oak, restrained oxblood cloth, muted sage vegetation, clear neutral upper-left natural daylight. Refined realistic hand-painted 3D-game material with clean recognizable shapes, elevated orthographic camera, no toy/chibi, fantasy magic, gold glow, letters, interface, watermark, grass island, square platform, surrounding scene. One miniature medieval resource cache marker: a few neat oak logs, two small cool-gray stone blocks and a modest grain sack beside a low oak rack. No giant crops, mine mountain, coins, crystals, people or terrain platform. Full object centered on a SQUARE transparent canvas with 12% transparent padding and soft contact shadow, strong clear simple shapes readable at 128px."
+    },
+    {
+      "id": "map-alliance-building",
+      "transparent": true,
+      "prompt": "Image 1 is the sole art-style reference. Create original production map art for the SAME medieval stone-castle strategy game. Match cool limestone gray, charcoal slate, warm oak, restrained oxblood cloth, muted sage vegetation, clear neutral upper-left natural daylight. Refined realistic hand-painted 3D-game material with clean recognizable shapes, elevated orthographic camera, no toy/chibi, fantasy magic, gold glow, letters, interface, watermark, grass island, square platform, surrounding scene. One miniature allied outpost marker: compact low gray-limestone square fortified hall with charcoal slate roof, small oak gate and one restrained muted oxblood double pennant. Clearly lower and simpler than a player castle. No surrounding fortress wall ring, town, people or terrain island. Full object centered on a SQUARE transparent canvas, 12% transparent padding, soft contact shadow, clean large shapes readable at 128px."
+    },
+    {
+      "id": "map-march-marker",
+      "transparent": true,
+      "prompt": "Image 1 is the sole art-style reference. Create original production map art for the SAME medieval stone-castle strategy game. Match cool limestone gray, charcoal slate, warm oak, restrained oxblood cloth, muted sage vegetation, clear neutral upper-left natural daylight. Refined realistic hand-painted 3D-game material with clean recognizable shapes, elevated orthographic camera, no toy/chibi, fantasy magic, gold glow, letters, interface, watermark, grass island, square platform, surrounding scene. One miniature medieval marching army map marker: a single tall oak field standard with a simple weathered bronze spear finial, a clean muted oxblood hanging cloth banner without emblem or lettering, two small round shields at its base. No horses, people, arrows, scene, terrain platform or magical glow. SQUARE transparent canvas with full object and 12% padding, clean large shapes readable at 128px, modest ground contact shadow."
+    }
+  ]
+}

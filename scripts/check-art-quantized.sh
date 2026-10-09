@@ -141,14 +141,21 @@ while IFS= read -r f; do
   fi
   [ -n "$SAMPLE_RGBA" ] && [ -n "$SAMPLE_PAL" ] && break
 done < <(find "$ROOT" -type f -name '*.png' | sort)
-if [ -z "$SAMPLE_RGBA" ] || [ -z "$SAMPLE_PAL" ]; then
-  echo "[art-quantized][FAIL] 找不到两种模式的样本（真彩色:${SAMPLE_RGBA:-无} 调色板:${SAMPLE_PAL:-无}）⇒ 自证跑不了，不算通过" >&2
+if [ -z "$SAMPLE_PAL" ]; then
+  echo "[art-quantized][FAIL] 找不到调色板样本 ⇒ 自证跑不了，不算通过" >&2
   exit 2
 fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-cp "$SAMPLE_RGBA" "$TMP/rgba.png"
+if [ -n "$SAMPLE_RGBA" ]; then
+  cp "$SAMPLE_RGBA" "$TMP/rgba.png"
+else
+  # 统一采用版全部已量化，不能为了量具保留一张不量化的生产素材。
+  # 使用合法1×1 RGBA PNG技术夹具（IHDR colorType=6），仍走下面同一支classify。
+  # 原扫描/阈值/调色板样本与撑大反证不变，不将正确的全P目录判成前置不足。
+  printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGOQ0zD6DwACWAF41TTQUQAAAABJRU5ErkJggg==' | base64 --decode > "$TMP/rgba.png"
+fi
 cp "$SAMPLE_PAL" "$TMP/palette.png"
 truncate -s $((LIMIT_BYTES + 4096)) "$TMP/rgba.png" "$TMP/palette.png"
 CANARY_RGBA="$(classify "$TMP/rgba.png")"

@@ -25,6 +25,32 @@ def load_module(name, filename):
 
 acceptor = load_module('iron_acceptor', 'accept_to_runtime.py')
 meta_builder = load_module('iron_meta_builder', 'write_sprite_meta.py')
+preprocessor = load_module('iron_preprocessor', 'process_generated.py')
+
+
+def prepare_source(source, row, size):
+    """复用既有草稿裁边/方形化，去掉肉眼不可见的alpha噪声撑框。
+
+    只供声明的UI格式收编；不重绘、不改RGB，不覆盖ImageGen原图。
+    非方形采用版仍由acceptor的3%比例门阻止压扁。
+    """
+    if not row.get('prepareBounds'):
+        return source
+    if not row.get('transparent'):
+        raise ValueError('不透明地貌不能走透明裁边')
+    prepared = ROOT / 'art-src/generated/drafts/prepared/iron-unified-v3' / source.name
+    prepared.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(source) as image:
+        rgba = image.convert('RGBA')
+        alpha = rgba.getchannel('A')
+        rgba.putalpha(alpha.point(lambda value: value if value > preprocessor.TRIM_ALPHA else 0))
+        if rgba.getchannel('A').getbbox() is None:
+            raise ValueError(f'无可见主体：{source}')
+        if size[0] == size[1]:
+            preprocessor.square_and_save(rgba, str(prepared), size[0], row['id'])
+        else:
+            rgba.save(prepared, optimize=True)
+    return prepared
 
 
 def install_meta(path, size, borders):
@@ -49,10 +75,49 @@ def install_meta(path, size, borders):
     return previous['uuid']
 
 
+def write_building_geometry(rows):
+    """以采用版实体下边界生成显示枢轴，不抄服务端玩法配表。"""
+    values = []
+    for row in rows:
+        if not any('/buildings/building-' in path for path in row['runtime']):
+            continue
+        with Image.open(ROOT / row['accepted']) as image:
+            solid = image.convert('RGBA').getchannel('A').point(lambda value: 255 if value > 128 else 0)
+            bbox = solid.getbbox()
+            if bbox is None:
+                raise ValueError(f'建筑采用版没有实体：{row["id"]}')
+            ratio = (image.height - bbox[3]) / image.height
+        values.append((row['id'].replace('-', '_'), ratio))
+    if len(values) != 15 or len({key for key, _ in values}) != 15:
+        raise ValueError('建筑几何须覆盖15个唯一实际素材；不能空表或遗漏')
+    destination = ROOT / 'client/assets/scripts/game/art/ArtFamilies.ts'
+    source = destination.read_text(encoding='utf-8-sig')
+    start = '// BEGIN GENERATED BUILDING_ART_GEOMETRY'
+    end = '// END GENERATED BUILDING_ART_GEOMETRY'
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise ValueError('建筑几何生成区缺失或不唯一，禁止覆盖其它源码')
+    block = start + '''
+/** 采用版实体(alpha>128)下缘到原canvas底的比例，只是贴图几何，不是玩法配表。
+ * install_unified_v3.py --write-building-geometry现读；Sprite.trim=false保Creator裁边后接地。
+ */
+const BUILDING_ART_FOOT_RATIO: Readonly<Record<string, number>> = {
+''' + ''.join(f'  {key}: {ratio!r},\n' for key, ratio in sorted(values)) + '''}
+
+export function buildingArtFootRatio(configId: string): number {
+  return BUILDING_ART_FOOT_RATIO[configId] ?? 0
+}
+''' + end
+    prefix, tail = source.split(start)
+    _, suffix = tail.split(end)
+    destination.write_text(prefix + block + suffix, encoding='utf-8')
+    print(f'[unified-v3] 15 adopted建筑几何已生成到声明区，未知配置图退0，服务端格位不变')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--manifest', default='art-src/unified-v3-assets.json')
     parser.add_argument('--only', help='仅收编指定id，逗号分隔；未提供时处理全部')
+    parser.add_argument('--write-building-geometry', action='store_true', help='实际读取15个采用版生成显示枢轴')
     args = parser.parse_args()
     rows = json.loads((ROOT / args.manifest).read_text(encoding='utf-8-sig'))['assets']
     selected = set(args.only.split(',')) if args.only else None
@@ -73,7 +138,8 @@ def main():
                 if alpha.getextrema()[0] != 0 or alpha.getbbox() is None:
                     raise ValueError(f'缺真实透明背景或图像全透明：{source}')
         accepted.parent.mkdir(parents=True, exist_ok=True)
-        byte_size = acceptor.accept(str(source), str(accepted), size)
+        prepared = prepare_source(source, row, size)
+        byte_size = acceptor.accept(str(prepared), str(accepted), size)
         for destination in row['runtime']:
             target = ROOT / destination
             expected = ROOT / 'client/assets/resources/ui/generated'
@@ -91,6 +157,8 @@ def main():
             count += 1
     if count == 0:
         raise ValueError('收编清单为空，不允许空转')
+    if args.write_building_geometry:
+        write_building_geometry(rows)
     print(f'[unified-v3] 实际写入{count}个生产路径；原图与资源UUID保留，Cocos几何待真实导入复验')
     return 0
 

@@ -11,7 +11,7 @@
  */
 import { _decorator, Color, Component, EditBox, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { CreateForm } from '../game/social/SocialCreate'
-import { applyIronButton, applySlicedSprite } from './ArtCatalog'
+import { applyContainedSprite, applyIronButton } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
 import { DIALOG_SCRIM, finishLegacyDialog } from './DialogStyle'
 
@@ -172,7 +172,7 @@ export class SocialCreateOverlay extends Component {
     crest.layer = this.node.layer
     crest.addComponent(UITransform).setContentSize(new Size(40, 58))
     crest.setPosition(new Vec3(0, titleY + 56, 0))
-    applySlicedSprite(crest, 'ui.crest.league', 40, 58)
+    applyContainedSprite(crest, 'ui.crest.league', 40, 58)
     this.node.addChild(crest)
     this.nodes.push(crest)
     this.titleLabel = this.addLabel('title', form.titleText, 0, titleY, COLOR_COPPER_GOLD, 20)
