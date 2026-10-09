@@ -144,6 +144,11 @@ async function collectSprites() {
   return page.evaluate(() => {
     const scene = window.cc.director.getScene()
     const spriteTypes = window.cc.Sprite.Type
+    const map = scene.getComponentInChildren('WorldMap')
+    const artNodes = (markers) => new Set(Array.from(markers?.values() ?? [],
+      (node) => map.refs.get(node)?.spriteNode).filter(Boolean))
+    const terrainArtNodes = artNodes(map?.drawnTiles)
+    const entityArtNodes = artNodes(map?.drawnEntities)
     const out = []
     const visit = (node) => {
       const sprite = node.getComponent && node.getComponent('cc.Sprite')
@@ -151,6 +156,7 @@ async function collectSprites() {
         const transform = node.getComponent('cc.UITransform')
         out.push({
           name: node.name,
+          worldRole: terrainArtNodes.has(node) ? 'terrain' : entityArtNodes.has(node) ? 'entity' : null,
           enabled: sprite.enabled,
           // 层内 active：判"参考舞台在场时还叠着主城正稿"要用它 —— 只看 spriteFrame 有没有挂，
           // 会把"挂了但整个节点是关闭的"也算成重影。
@@ -1053,9 +1059,12 @@ const bagResourceIconMapped = bagIcons.some((sprite) => resourceRects.has(`${spr
 const armyIcons = army.filter((sprite) => sprite.name === 'Icon' && sprite.height === 128)
 const heroIcons = hero.filter((sprite) => sprite.name === 'Icon'
   && (sprite.height === 128 || sprite.height === 256))
-const terrainTiles = world.filter((sprite) => sprite.name === 'Art' && sprite.width === 64)
+// 地形归属来自生产 drawnTiles/refs，裁帧可随已验收图集分辨率改变，不能用帧宽猜实体类别。
+const terrainTiles = world.filter((sprite) => sprite.worldRole === 'terrain'
+  && sprite.activeInHierarchy && sprite.enabled && sprite.typeName === 'TILED')
 const terrainRects = new Set(terrainTiles.map((sprite) => `${sprite.x}:${sprite.y}`))
-const entityArt = world.filter((sprite) => sprite.name === 'Art' && sprite.width !== 64)
+const entityArt = world.filter((sprite) => sprite.worldRole === 'entity'
+  && sprite.activeInHierarchy && sprite.enabled)
 const catalogWarnings = warnings.filter((message) => message.includes('[ArtCatalog]'))
 /**
  * 内城那条（原 `cityMain`：要求主城格子必须画 `building-main-city` 正稿）**2026-09-21 删掉**：
