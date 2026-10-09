@@ -6668,3 +6668,5 @@ TEST_EXIT=0
 
 
 | #872 新包两项红复绿与真实业务POST反证 | 本笔（只提交量具根因修复，本地攒批） | 原7份smoke终态5绿2红，三后端已收且端口无监听；原聊天已完成官方compact及真实工具执行。V25默认改本轮web-mobile并打印绝对ROOT，19期望表及所有旧运行门逐字保留；缺包负控退2。现包复跑dialog415通过0失败、V25132判据0失败，逐份exit0；真实world/march及未知POST由同一零业务发送门转红，精确同后端track单列且所有请求留证 | D:/tmp/ironoath-visual-20261009/fixed-material-smoke-exitcodes.tsv与逐份日志；unified-smoke-shotproof保旧图及红；D:/tmp/ironoath-chat-recovery-20261010/recovery-verified.md | V25历史灰态1项仍未执行，另格补真实渲染；建筑铭牌源码/学院遮挡布局正在修，尚未新Cocos验随动；31meta三UUID及raw/border复核全保待后续收编。完整64/600s、label/B01/policy及fetch同步/阶段push尚未完成；真人IDE/低端机/外部回执及中途事务/Redis租约边界保留 |
+
+| #873 建筑同格薄框/中文级数、自然随镜头与真实导入几何收编 | 本笔（源码冻结后本地提交，攒批） | City同格96×22暗铁/1px古铜框，Name/Level直接Grid子节点保，取消逆缩、空楼不画、收割绿保；相关41纯测0失败0跳，headless/testcheck0。zoom生产模块实体脚面/逐楼名字级数/真拖缩与脱离恢复量具已接，实际readView和geometry两harness各9/0，共用点击11/0跳；31meta三UUID/raw/border全保，mjs语法/diff0 | CityPanelView、zoom与3份中文级数量具；D:/tmp/ironoath-visual-20261009/city-label-tests-v3、unified-meta-audit.json；旧fullcity实画及独立alpha面积 | 新名牌尚未进入Cocos，不把纯测/父链理论当随动绿。真实学院被主堡遮63.24%，另两个合法王庭格可严重遮挡；候选仅改显示锚、未改服务端坐标，下一格实施并真实重验。V25灰态真门补中；默认64/600s、label/B01/policy/fetch/push和平台/存储边界仍未完成 |

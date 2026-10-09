@@ -501,8 +501,8 @@ if (!cancelled.clicked) {
     failures.push(`取消返还的木材只有 ${refund}（B03 §2 要求退 60%，按 400 石料算应约 240）`)
   }
 }
-if (campA === null || !campA.labels.some((t) => /^Lv0$/.test(t))) {
-  failures.push(`升级中帧找不到"伐木场 + Lv0"：${JSON.stringify(campA?.labels ?? null)}`)
+if (campA === null || !campA.labels.some((t) => /^0级$/.test(t))) {
+  failures.push(`升级中帧找不到"伐木场 + 0级"：${JSON.stringify(campA?.labels ?? null)}`)
 }
 if (hint === null) {
   failures.push('可收取帧没有「N 个建筑已升级完成，点击收割」这句提示')

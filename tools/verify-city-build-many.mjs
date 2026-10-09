@@ -273,7 +273,7 @@ async function run() {
     for (const configId of ['main_city', ...TARGETS]) {
       const building = finalCity.buildings.find(row => row.configId === configId)
       const tile = tiles.find(row => row.gridX === building?.gridX && row.gridY === building?.gridY)
-      assert(tile?.name === building?.name && tile.level === `Lv${building.level}`, `权威实例与显示格不一致：${configId} ${JSON.stringify(tile)}`)
+      assert(tile?.name === building?.name && tile.level === `${building.level}级`, `权威实例与显示格不一致：${configId} ${JSON.stringify(tile)}`)
       assert(tile.drawable && tile.spriteFrame === `building-${configId.replaceAll('_', '-')}-v1`,
         `真实建筑的正稿未登记/未在可见层绘制：${configId} ${JSON.stringify(tile)}`)
       if (configId !== 'main_city') assert(building.level === 1, `首次建筑不是 Lv1：${configId}`)

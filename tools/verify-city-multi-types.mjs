@@ -619,7 +619,7 @@ const nonMainCount = expected.filter((b) => b.configId !== 'main_city').length
 if (nonMainCount < 4) {
   failures.push(`只建起 ${nonMainCount} 栋非主城建筑（要 4 栋才覆盖 4 类）—— 前置流程没走通`)
 }
-const byName = new Map(withArt.map((t) => [t.texts.find((x) => !/^Lv\d+$/.test(x)) ?? t.tile, t]))
+const byName = new Map(withArt.map((t) => [t.texts.find((x) => !/^\d+级$/.test(x)) ?? t.tile, t]))
 for (const building of expected) {
   const tile = byName.get(building.name)
   if (tile === undefined) {

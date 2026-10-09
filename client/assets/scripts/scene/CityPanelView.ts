@@ -46,6 +46,13 @@ const COLOR_GOOD = new Color(120, 176, 96, 255)
  * 取近黑的暖色而不是纯黑：纯黑描边在亮山脊上会现出一圈硬边，反而更"贴"。
  */
 const COLOR_LABEL_OUTLINE = new Color(12, 9, 7, 210)
+/** 建筑铭牌只占基座下的一条窄带；冷暗铁与古铜细边对应日光灰石城景。 */
+const COLOR_NAMEPLATE_IRON = new Color(30, 34, 33, 225)
+const COLOR_NAMEPLATE_BRONZE = new Color(144, 119, 79, 235)
+const COLOR_NAMEPLATE_IVORY = new Color(239, 232, 213, 255)
+const NAMEPLATE_WIDTH = 96
+const NAMEPLATE_HEIGHT = 22
+const NAMEPLATE_Y = -16
 
 /**
  * 五区地皮色。色值真源在 `CitySceneAnchors.DISTRICT_TINT_RGB`（引擎无关层）。
@@ -211,6 +218,9 @@ interface GridTileRefs {
   readonly graphics: Graphics
   /** 主体保持母版原色；交互反馈只画在真实基座上。 */
   readonly icon: Node
+  /** 与楼体同属本格、继承同一镜头变换的薄铭牌；在楼体之后绘制。 */
+  readonly nameplate: Node
+  readonly nameplateGraphics: Graphics
   readonly levelLabel: Label
   /**
    * 建筑名。#257 曾把它和状态一起收进选择栏，理由是"脚印只有 24~45 高塞不下三行字" ——
@@ -242,8 +252,6 @@ export class CityPanelView extends Component {
   private focusY = 0
   /** 玩家自己动过镜头（缩放 / 拖动）之后就不再按数据自动回中 —— 否则每次刷新都把玩家拽回主堡。 */
   private viewAdjusted = false
-  /** 上一次按哪个倍数画的标注；倍数变了要重画（标注按 1/zoom 画，见 `paintTile`）。 */
-  private lastPaintedZoom = 0
   /** 单指拖动与双指捏合的上一次触点（屏幕像素；差值除以 zoom 才是舞台上的位移）。 */
   private lastPointerX = 0
   private lastPointerY = 0
@@ -368,7 +376,6 @@ export class CityPanelView extends Component {
     this.selectionBarBackground = null
     this.frameGraphics = null
     this.referenceStage = false
-    this.lastPaintedZoom = 0
   }
 
   /**
@@ -637,26 +644,6 @@ export class CityPanelView extends Component {
     const x = Math.max(-maxX, Math.min(maxX, -this.focusX * this.zoom))
     const y = Math.max(-maxY, Math.min(maxY, -this.focusY * this.zoom))
     stage.setPosition(new Vec3(x, y, 0))
-    if (this.lastPaintedZoom !== this.zoom) {
-      this.lastPaintedZoom = this.zoom
-      this.repaintTiles()
-    }
-  }
-
-  /**
-   * 只重画 36 格的 Graphics 与标注（不重绑监听、不动选中态）。
-   * 缩放改倍数时标注要按新的 1/zoom 重画；比重跑 `render` 便宜，也不打断玩家正在看的选择栏。
-   */
-  private repaintTiles(): void {
-    const panel = this.panel
-    if (panel === null) {
-      return
-    }
-    const grid = buildCityGrid(panel.rows)
-    this.gridTiles.forEach((tile) => {
-      const index = tile.plate.gridY * CITY_GRID_WIDTH + tile.plate.gridX
-      this.paintTile(tile, grid.cells[index] ?? null)
-    })
   }
 
   /** 右下角两颗缩放键。滚轮只在 Web 上有、捏合在真机上容易和拖动打架，键是那条兜底路径。 */
@@ -816,22 +803,29 @@ export class CityPanelView extends Component {
       const iconBox = icon.addComponent(UITransform)
       iconBox.setAnchorPoint(0.5, 0)
       iconBox.setContentSize(new Size(plate.width, plate.width))
-      const levelLabel = this.addLabel(tile, 'Level', 0, 0, COLOR_TEXT_DIM, 10)
+      const nameplate = new Node('BuildingNameplate')
+      nameplate.layer = tile.layer
+      tile.addChild(nameplate)
+      nameplate.setPosition(new Vec3(0, NAMEPLATE_Y, 0))
+      nameplate.addComponent(UITransform).setContentSize(new Size(NAMEPLATE_WIDTH, NAMEPLATE_HEIGHT))
+      const nameplateGraphics = nameplate.addComponent(Graphics)
+      const levelLabel = this.addLabel(tile, 'Level', 28, NAMEPLATE_Y, COLOR_NAMEPLATE_IVORY, 10)
       this.outlineFor(levelLabel)
-      capWidth(levelLabel, 36)
-      const nameLabel = this.addLabel(tile, 'Name', 0, -12, COLOR_TEXT, 10)
+      capWidth(levelLabel, 28)
+      const nameLabel = this.addLabel(tile, 'Name', -16, NAMEPLATE_Y, COLOR_NAMEPLATE_IVORY, 11)
       this.outlineFor(nameLabel)
-      nameLabel.node.getComponent(UITransform)?.setContentSize(new Size(plate.width, 12))
-      nameLabel.overflow = Label.Overflow.SHRINK
-      this.gridTiles.push({ node: tile, graphics, icon, levelLabel, nameLabel, plate })
+      capWidth(nameLabel, 54)
+      // Name / Level 仍是 Grid 的直接子节点，保留既有状态探针与建筑选中的读取路径。
+      this.gridTiles.push({ node: tile, graphics, icon, nameplate, nameplateGraphics,
+        levelLabel, nameLabel, plate })
     }
   }
 
-  /** 给城景里的小字加一圈深色描边：见 {@link COLOR_LABEL_OUTLINE} 为什么存在。 */
+  /** 铭牌中的浅字加一圈细暗边，缩放后仍清楚，但不形成粗重黑字块。 */
   private outlineFor(label: Label): void {
     const outline = label.node.addComponent(LabelOutline)
     outline.color = COLOR_LABEL_OUTLINE
-    outline.width = 2
+    outline.width = 1
   }
 
   private buildPreviews(grid: Node): void {
@@ -1218,8 +1212,6 @@ export class CityPanelView extends Component {
         this.renderSelection(row)
       }, this)
     })
-    // 这一遍是按当前倍数画的，记下来：`applyStageTransform` 靠它判断要不要重画标注
-    this.lastPaintedZoom = this.zoom
     // 默认镜头对准真实主堡主体的中心：主堡从基座向上长，单看落地点会截掉塔顶。
     // 玩家自己缩放过或拖动过就不再抢镜头 —— 否则每次数据刷新都把人拽回主堡。
     if (!this.viewAdjusted && !Number.isNaN(keepX)) {
@@ -1255,9 +1247,14 @@ export class CityPanelView extends Component {
     const selected = row !== null && row.id === this.selectedId
     const graphics = tile.graphics
     graphics.clear()
+    const nameplateGraphics = tile.nameplateGraphics
+    nameplateGraphics.clear()
     if (row === null) {
       tile.levelLabel.string = ''
       tile.nameLabel.string = ''
+      tile.levelLabel.node.active = false
+      tile.nameLabel.node.active = false
+      tile.nameplate.active = false
       tile.icon.active = false
       // 默认城景没有“空格子”；只有进入建造模式才显示可落点。
       if (this.buildMode) {
@@ -1280,15 +1277,8 @@ export class CityPanelView extends Component {
     const iconSide = buildingIconSize(row.configId, tile.plate.width, this.contentHeight)
     // 实体脚面来自最终素材的 alpha 下缘；节点原点仍是命中与深度排序使用的真实基座。
     tile.icon.getComponent(UITransform)?.setAnchorPoint(0.5, buildingArtFootRatio(row.configId))
-    /**
-     * **标注不跟世界一起缩**：等级牌 / 名字 / 进度条是 UI，字号该停在设计尺寸上
-     * （与全游戏其它文字同一把尺：设计 px × 设备比）。跟着舞台缩的话，默认 1.8 倍下
-     * 主城的深色名牌会变成 187×76 的大黑块压在城堡门上、字号比任何 HUD 文字都大一号
-     * （2026-09-26 截图实测）。做法是几何一律乘 `u = 1/zoom` 画、Label 节点再 `setScale(u)`：
-     * 位置乘 u 后被父级的 zoom 乘回来（落点不变），尺寸乘 u 再乘 zoom 等于设计尺寸。
-     * 地面光环与正稿**不**乘 u —— 它们是画里的东西，该跟着世界走。
-     */
-    const u = 1 / this.zoom
+    // 铭牌、文字与状态条都使用格子的本地坐标，完整继承 CityStage 的平移和缩放。
+    // 不再逆缩放字或把屋顶旁的等级位置乘 1/zoom，避免放大后文字与楼体各走一把尺。
     // **未建成的楼不画**：取消首次放置之后，实例会留在 Lv0 + 空闲（服务端没有"移除建筑"的口子），
     // 那种格子如果照画正稿，玩家会看到一栋自己从没建成的楼（2026-09-22 取消功能上线后实测到）。
     // 口径与 build-many 那条判据一致：升级中 / 已暂停 / 待收割 / 已建成 才算这格有楼。
@@ -1329,45 +1319,35 @@ export class CityPanelView extends Component {
       graphics.stroke()
     }
 
-    const badgeX = iconSide * 0.43
-    const badgeY = iconSide * 0.82
-    const badgeWidth = 36
-    const badgeHeight = oneLineFloorHeight()
-    const showIdentity = true
-    tile.levelLabel.fontSize = 12
-    tile.levelLabel.string = `Lv${row.level}`
-    tile.levelLabel.node.active = showIdentity
-    if (showIdentity) {
-      graphics.fillColor = new Color(16, 13, 11, 235)
-      graphics.roundRect((badgeX - badgeWidth / 2) * u, (badgeY - badgeHeight / 2) * u,
-        badgeWidth * u, badgeHeight * u, 5 * u)
-      graphics.fill()
-      graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-      graphics.lineWidth = 1 * u
-      graphics.roundRect((badgeX - badgeWidth / 2) * u, (badgeY - badgeHeight / 2) * u,
-        badgeWidth * u, badgeHeight * u, 5 * u)
-      graphics.stroke()
-      tile.levelLabel.color = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-      tile.levelLabel.node.setPosition(new Vec3(badgeX * u, badgeY * u, 0))
-      tile.levelLabel.node.setScale(u, u, 1)
-      capWidth(tile.levelLabel, badgeWidth)
-    }
+    tile.nameplate.active = built
+    nameplateGraphics.fillColor = COLOR_NAMEPLATE_IRON
+    nameplateGraphics.strokeColor = row.collectable ? COLOR_GOOD
+      : selected ? COLOR_COPPER_GOLD : COLOR_NAMEPLATE_BRONZE
+    nameplateGraphics.lineWidth = 1
+    nameplateGraphics.roundRect(-NAMEPLATE_WIDTH / 2, -NAMEPLATE_HEIGHT / 2,
+      NAMEPLATE_WIDTH, NAMEPLATE_HEIGHT, 2)
+    nameplateGraphics.fill()
+    nameplateGraphics.stroke()
+    nameplateGraphics.moveTo(13, -6)
+    nameplateGraphics.lineTo(13, 6)
+    nameplateGraphics.stroke()
+    tile.levelLabel.string = `${row.level}级`
+    tile.levelLabel.node.active = built
+    tile.levelLabel.color = row.collectable ? COLOR_GOOD : COLOR_NAMEPLATE_IVORY
 
-    // 暂停没有文字可写了（名字与状态都收进下面的选择栏），所以给它一枚实心琥珀点。
-    // 少这一个记号就等于"暂停与升级中在城景里长得一样"，而玩家下一步要做的两件事不同。
+    // 暂停保持琥珀点的状态语言，位置在铭牌外侧，不遮楼体与建筑名。
     if (row.paused) {
       graphics.fillColor = COLOR_WARNING
-      graphics.circle(-badgeX * u, badgeY * u, 5 * u)
+      graphics.circle(-NAMEPLATE_WIDTH / 2 - 5, NAMEPLATE_Y, 3)
       graphics.fill()
     }
 
-    tile.nameLabel.fontSize = 12
-    tile.nameLabel.string = row.name
-    tile.nameLabel.node.active = showIdentity
-    tile.nameLabel.color = row.collectable ? COLOR_GOOD : COLOR_TEXT
-    tile.nameLabel.node.setPosition(new Vec3(0, -15 * u, 0))
-    tile.nameLabel.node.setScale(u, u, 1)
-    capWidth(tile.nameLabel, Math.max(84, iconSide * 0.9))
+    const displayName = typeof row.name === 'string' ? row.name.trim() : ''
+    // 中文显示名只读服务端；缺名或误下发内部标识时给人话回退，不另抄建筑配置表。
+    tile.nameLabel.string = displayName !== '' && !/^[A-Za-z][A-Za-z0-9_-]*$/.test(displayName)
+      ? displayName : '未知建筑'
+    tile.nameLabel.node.active = built
+    tile.nameLabel.color = COLOR_NAMEPLATE_IVORY
     const artKey = buildingArtKey(row.configId)
     let iconVisible = built && artKey !== null && applyAnyIconSprite(tile.icon, artKey, iconSide, iconSide)
     if (!iconVisible && built) {
@@ -1388,12 +1368,12 @@ export class CityPanelView extends Component {
 
     if (row.upgrading) {
       const ratio = row.collectable ? 1 : Math.min(1, Math.max(0, Number.parseInt(row.progressText ?? '0', 10) / 100))
-      const barWidth = Math.max(48, iconSide * 0.72)
+      const barWidth = NAMEPLATE_WIDTH - 8
       graphics.fillColor = COLOR_PANEL
-      graphics.rect(-barWidth / 2 * u, -23 * u, barWidth * u, 4 * u)
+      graphics.rect(-barWidth / 2, NAMEPLATE_Y - NAMEPLATE_HEIGHT / 2 - 4, barWidth, 2)
       graphics.fill()
       graphics.fillColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-      graphics.rect(-barWidth / 2 * u, -23 * u, barWidth * ratio * u, 4 * u)
+      graphics.rect(-barWidth / 2, NAMEPLATE_Y - NAMEPLATE_HEIGHT / 2 - 4, barWidth * ratio, 2)
       graphics.fill()
     }
   }
