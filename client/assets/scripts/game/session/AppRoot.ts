@@ -1869,7 +1869,7 @@ export class AppRoot {
     }
     this.track(TRACK_EVENTS.levelRewardClaim, { level: String(level) })
     return this.write('levelReward', this.api.levelRewardClaim(body),
-      ['bag', 'resources', 'levelReward'], r => {
+      ['bag', 'resources', 'levelReward', 'reddot'], r => {
         this.levelRewardNotice = levelRewardClaimResultText(r)
       })
   }

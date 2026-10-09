@@ -305,6 +305,30 @@ await openByDeepLink()
 const labelsA = await dumpLabels()
 const rowsA = await dumpRows()
 const expectA = await getPlayer(playerId, '/level-reward/list')
+const leafOf = (nodes, key) => {
+  for (const node of nodes) {
+    if (node.key === key) return node
+    const child = leafOf(node.children ?? [], key)
+    if (child !== null) return child
+  }
+  return null
+}
+const navDots = () => page.evaluate(() => {
+  let nav = null
+  const find = node => {
+    nav ??= node.getComponent('PanelNav')
+    node.children.forEach(find)
+  }
+  find(window.cc.director.getScene())
+  return { level: nav?.navDots?.get('levelReward')?.active ?? null,
+    more: nav?.navDots?.get('more')?.active ?? null }
+})
+const notificationA = (await getPlayer(playerId, '/social/reddot')).data
+ok('A等级奖励叶子和父链按权威可领数点亮',
+  leafOf(notificationA.nodes, 'levelReward/claimable')?.lit === (claimableNow > 0)
+    && leafOf(notificationA.nodes, 'levelReward')?.lit === (claimableNow > 0), JSON.stringify(notificationA))
+const dotsA = await navDots()
+ok('A等级入口与更多真实红点点亮', dotsA.level === true && dotsA.more === true, JSON.stringify(dotsA))
 readings.push(`A 画出 ${rowsA.length} 行 / 服务端 ${expectA.data.rows.length} 行`)
 ok('A1 面板真画出行', rowsA.length >= 3, `只画出 ${rowsA.length} 行`)
 ok('A2 行名逐条对得上服务端下发的中文名',
@@ -418,11 +442,14 @@ for (const [phase, viewport] of [
   ['P高窗', { width: 1200, height: 1400 }],
   // 项目的 FIXED_WIDTH=960，真实视口 1440×480 对应可视高 320，容量只剩一个内容槽位。
   ['P极矮', { width: 1440, height: 480 }],
+  ['P更矮', { width: 1440, height: 360 }],
+  ['P竖屏', { width: 390, height: 844 }],
 ]) {
   await page.setViewportSize(viewport)
   await openByDeepLink()
   const source = (await getPlayer(playerId, '/level-reward/list')).data
-  const shotPrefix = phase === 'P普通' ? 'p-normal' : phase === 'P高窗' ? 'p-tall' : 'p-short'
+  const shotPrefix = ({ P普通: 'p-normal', P高窗: 'p-tall', P极矮: 'p-short',
+    P更矮: 'p-compact', P竖屏: 'p-portrait' })[phase]
   let paging = await dumpPaging()
   if (paging.prev === null || paging.next === null) {
     ok(`${phase} 分页控件存在`, false, '找不到上一页/下一页，40 行仍只露一个窗口')
@@ -596,6 +623,46 @@ readings.push(`R 撤桩后画出 ${rowsR.length} 行 · 裸 id 命中 ${bareIdHi
 ok('R1 还原后裸 id 判据复绿', bareIdHits(labelsR).length === 0, JSON.stringify(bareIdHits(labelsR).slice(0, 2)))
 ok('R2 还原后同源判据复绿', summaryMismatch(labelsR, liveR).length === 0, summaryMismatch(labelsR, liveR).join('；'))
 await page.screenshot({ path: path.join(OUT, 'r-restored.png') })
+
+// 页面不重载的尺寸变化：内容与导航都需重排，并保住同一等级所在页。
+const beforeResize = await dumpRows()
+const firstLevelBeforeResize = liveR.rows.find(row => row.name === beforeResize[0]?.name)?.level
+await page.setViewportSize({ width: 1440, height: 360 })
+await page.waitForTimeout(400)
+const resizedPaging = await dumpPaging()
+const resizedRows = await dumpRows()
+ok('实时resize后同一等级仍在可见页且布局不压栏',
+  resizedRows.some(row => liveR.rows.find(candidate => candidate.name === row.name)?.level === firstLevelBeforeResize)
+    && pagingLayoutErrors(resizedPaging).length === 0, JSON.stringify(resizedPaging))
+await page.setViewportSize({ width: 1440, height: 900 })
+await page.waitForTimeout(400)
+ok('实时resize回普通窗口仍可翻页且范围与实画同源',
+  pageRangeErrors(await dumpPaging(), await dumpRows(), liveR).length === 0
+    && pagingLayoutErrors(await dumpPaging()).length === 0, JSON.stringify(await dumpPaging()))
+
+// 只剩最后一份可领取时，让玩家真点击领取；熄灭必须由写后刷新权威树完成。
+const remaining = liveR.rows.filter(row => row.claimable)
+ok('红点末项验收至少有一份真实可领奖励', remaining.length > 0, remaining.length)
+for (const row of remaining.slice(0, -1)) {
+  const response = await fetch(`${BACKEND}/level-reward/claim`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Player-Id': playerId },
+    body: JSON.stringify({ requestId: `${uniq}-notification-${row.level}`, level: row.level }) })
+  const claimed = await response.json()
+  ok(`红点前置领取第${row.level}级`, claimed.code === 0, JSON.stringify(claimed))
+}
+await openByDeepLink()
+const lastRow = (await dumpRows()).find(row => row.name === remaining.at(-1)?.name)
+if (lastRow?.pos !== null && lastRow?.pos !== undefined) {
+  await page.mouse.click(lastRow.pos.x, lastRow.pos.y)
+  await page.waitForTimeout(1200)
+}
+const notificationAfter = (await getPlayer(playerId, '/social/reddot')).data
+const finalDots = await navDots()
+ok('真实点击最后一份后权威叶子与父链同时熄灭',
+  leafOf(notificationAfter.nodes, 'levelReward/claimable')?.lit === false
+    && leafOf(notificationAfter.nodes, 'levelReward')?.lit === false, JSON.stringify(notificationAfter))
+ok('末项领取后不重载页面等级入口红点熄灭', finalDots.level === false, JSON.stringify(finalDots))
+await page.screenshot({ path: path.join(OUT, 'notification-cleared.png') })
 
 console.log('[level-reward] 读数：')
 for (const line of readings) console.log(`  - ${line}`)

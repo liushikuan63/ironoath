@@ -1060,10 +1060,11 @@ class SocialEndpointTest {
         JsonNode idle = get200("/social/reddot", helper);
         assertThat(idle.get("leafCount").asInt())
                 .as("注册点里的叶子数必须可见：它长期停在个位数说明有人在业务模块里自己判红点。"
-                        + "现在这六个是 social/help、social/invite、social/events、city/building、"
+                        + "现在这七个是 social/help、social/invite、social/events、city/building、"
                         + "mail/unread（B12 §2 邮件）、activity/claimable（B17 活动，"
-                        + "判定复用 ActivityAppService#claimableCount）—— 加一个就要在这里解释一次")
-                .isEqualTo(6);
+                        + "判定复用 ActivityAppService#claimableCount）、levelReward/claimable（等级奖励，"
+                        + "复用 LevelRewardAppService#claimableCount）—— 加一个就要在这里解释一次")
+                .isEqualTo(7);
         assertThat(litOf(idle.get("nodes"), "social")).isFalse();
 
         social.registerHelpRequest("rd-1", target, HelpTargetKind.BUILDING, "inst_rd_1", "伐木场 Lv7→8",

@@ -13,12 +13,13 @@
  * 领取刷新保留当前页，之前与之后的等级都能通过翻页查看。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
-import { buildLevelRewardPanel } from '../game/levelReward/LevelRewardPanel'
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, view } from 'cc'
+import { buildLevelRewardPanel, levelRewardLayout } from '../game/levelReward/LevelRewardPanel'
 import type { LevelRewardPanelData, LevelRewardView } from '../game/levelReward/LevelRewardPanel'
 import { pageNotice } from '../game/ui/PanelPaging'
 import { BRONZE_GOLD, IRON_SURFACE } from '../game/ui/UiTokens'
 import { applySystemUiFont, capWidth, keepOneLine } from './UiFont'
+import { applyIronButton, applySlicedSprite } from './ArtCatalog'
 
 const { ccclass } = _decorator
 
@@ -35,11 +36,9 @@ const PANEL_WIDTH = 700
 const ROW_HEIGHT = 66
 const ROW_GAP = 6
 /** 标题 + 那一行汇总 + 提示行合计占掉的高度（三行的 y 间距见 buildHeader）。 */
-const HEADER_HEIGHT = 128
 const PADDING = 16
 const ROW_POOL_SIZE = 6
 /** 屏幕底部要给导航条让出的高度（与其它面板同一个数：8 + 52 + 8）。 */
-const BOTTOM_RESERVED = 68
 const BUTTON_WIDTH = 84
 const BUTTON_HEIGHT = 30
 
@@ -66,6 +65,9 @@ export class LevelRewardPanelView extends Component {
   private nextPageButton: Node | null = null
   private prevPageCaption: Label | null = null
   private nextPageCaption: Label | null = null
+  private background: Node | null = null
+  private visibleWidth = 0
+  private visibleHeight = 0
 
   /** 领取某一级的奖励。能不能领由服务端说了算，编排层会再挡一次并说明原因。 */
   onClaim: ((level: number) => void) | null = null
@@ -85,6 +87,13 @@ export class LevelRewardPanelView extends Component {
     this.onClaim = null
   }
 
+  override update(): void {
+    const size = view.getVisibleSize()
+    if (size.width === this.visibleWidth && size.height === this.visibleHeight) return
+    this.buildBackground(size.width, size.height)
+    this.render()
+  }
+
   /** 装载整块视图（编排层递来的原始响应 + 上一次领取的结果行，本文件不改其中任何判定）。 */
   attach(data: LevelRewardPanelData): void {
     this.data = data
@@ -94,11 +103,19 @@ export class LevelRewardPanelView extends Component {
   // ---------- 搭建 ----------
 
   private buildBackground(width: number, height: number): void {
-    const node = new Node('Background')
-    node.layer = this.node.layer
-    this.node.addChild(node)
-    node.addComponent(UITransform).setContentSize(new Size(width, height))
-    const graphics = node.addComponent(Graphics)
+    const node = this.background ?? new Node('Background')
+    if (this.background === null) {
+      node.layer = this.node.layer
+      this.node.addChild(node)
+      node.addComponent(UITransform)
+      node.addComponent(Graphics)
+      this.background = node
+    }
+    this.visibleWidth = width
+    this.visibleHeight = height
+    node.getComponent(UITransform)!.setContentSize(new Size(width, height))
+    const graphics = node.getComponent(Graphics)!
+    graphics.clear()
     graphics.fillColor = COLOR_BACKGROUND
     graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
@@ -194,6 +211,7 @@ export class LevelRewardPanelView extends Component {
       graphics.roundRect(-32, -14, 64, 28, 4)
       graphics.fill()
       graphics.stroke()
+      this.styleButton(button, usable, 64, 28)
     }
   }
 
@@ -210,6 +228,7 @@ export class LevelRewardPanelView extends Component {
     graphics.fill()
 
     const name = this.addLabel('Name', -PANEL_WIDTH / 2 + PADDING, 14, COLOR_TEXT, 17, node)
+    applySlicedSprite(node, 'ui.plate.band', PANEL_WIDTH, ROW_HEIGHT)
     name.horizontalAlign = Label.HorizontalAlign.LEFT
     name.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     capWidth(name, 300)
@@ -234,6 +253,7 @@ export class LevelRewardPanelView extends Component {
     button.addComponent(UITransform).setContentSize(new Size(BUTTON_WIDTH, BUTTON_HEIGHT))
     const graphics = button.addComponent(Graphics)
     this.paintButton(graphics, COLOR_BUTTON_OFF)
+    this.styleButton(button, false, BUTTON_WIDTH, BUTTON_HEIGHT)
     const caption = this.addLabel('Caption', 0, 0, COLOR_TEXT, 14, button)
     button.on('touch-start', (_event: EventTouch) => {
       const level = this.rowLevels[index] ?? null
@@ -249,6 +269,12 @@ export class LevelRewardPanelView extends Component {
     graphics.fillColor = fill
     graphics.roundRect(-BUTTON_WIDTH / 2, -BUTTON_HEIGHT / 2, BUTTON_WIDTH, BUTTON_HEIGHT, 5)
     graphics.fill()
+  }
+
+  private styleButton(node: Node, enabled: boolean, width: number, height: number): void {
+    if (applyIronButton(node, enabled ? 'normal' : 'disabled', width, height)) {
+      node.getComponent(Sprite)!.color = enabled ? Color.WHITE : new Color(128, 128, 128, 255)
+    }
   }
 
   private addLabel(name: string, x: number, y: number, color: Color, fontSize: number,
@@ -275,19 +301,28 @@ export class LevelRewardPanelView extends Component {
       return
     }
     const size = view.getVisibleSize()
-    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
-    const navTop = -size.height / 2 + BOTTOM_RESERVED
-    const usable = topY + ROW_HEIGHT / 2 - navTop
-    const capacity = Math.min(this.rowNodes.length,
-      Math.max(1, Math.floor(usable / (ROW_HEIGHT + ROW_GAP))))
+    const layout = levelRewardLayout(size.height, this.rowNodes.length)
+    const { topY, capacity } = layout
+    const top = size.height / 2 - PADDING
+    this.headerLabel?.node.setPosition(new Vec3(0, top - (layout.compact ? 12 : 20), 0))
+    this.summaryLabel?.node.setPosition(new Vec3(layout.compact ? -180 : 0,
+      top - (layout.compact ? 40 : 50), 0))
+    this.noticeLabel?.node.setPosition(new Vec3(layout.compact ? 180 : 0,
+      top - (layout.compact ? 40 : 78), 0))
+    if (this.summaryLabel !== null) capWidth(this.summaryLabel, layout.compact ? 330 : PANEL_WIDTH)
+    if (this.noticeLabel !== null) capWidth(this.noticeLabel, layout.compact ? 340 : PANEL_WIDTH)
 
     // 视图按实测高度算好窗口，再让纯逻辑层组装这一屏该画哪几级（起点由 windowStartOf 给）
+    const initial = buildLevelRewardPanel(data.source, capacity, this.page)
+    if (this.currentView !== null && this.currentView.perPage !== initial.perPage) {
+      this.page = Math.floor(this.currentView.windowStart / initial.perPage)
+    }
     const view2: LevelRewardView = buildLevelRewardPanel(data.source, capacity, this.page)
     this.page = view2.page
     this.currentView = view2
 
     if (this.headerLabel !== null) {
-      this.headerLabel.string = view2.headerText
+      this.headerLabel.string = capacity > 0 ? view2.headerText : '窗口太矮，请调大窗口或转为竖屏查看'
     }
     if (this.summaryLabel !== null) {
       this.summaryLabel.string = view2.summaryText
@@ -301,7 +336,7 @@ export class LevelRewardPanelView extends Component {
     }
 
     this.rowNodes.forEach((node, index) => {
-      const row = view2.rows[index]
+      const row = capacity > 0 ? view2.rows[index] : undefined
       node.active = row !== undefined
       if (row === undefined) {
         this.rowLevels[index] = null
@@ -320,15 +355,23 @@ export class LevelRewardPanelView extends Component {
         graphics.fill()
       }
       this.rowNames[index]!.string = row.nameText
+      const rowSprite = node.getComponent(Sprite)
+      if (rowSprite !== null) rowSprite.color = row.claimable ? Color.WHITE : new Color(175, 175, 175, 255)
       this.rowNames[index]!.color = row.locked ? COLOR_TEXT_DIM : COLOR_TEXT
       this.rowRewards[index]!.string = row.rewardText
       this.rowStates[index]!.string = row.stateText
       this.rowStates[index]!.color = row.claimable ? COLOR_GOOD : COLOR_TEXT_DIM
       this.paintButton(this.buttons[index]!.getComponent(Graphics)!,
         row.claimable ? COLOR_GOOD : COLOR_BUTTON_OFF)
+      this.styleButton(this.buttons[index]!, row.claimable, BUTTON_WIDTH, BUTTON_HEIGHT)
       this.captions[index]!.string = row.claimed ? '已领' : (row.locked ? '未达' : '领取')
-      this.captions[index]!.color = row.claimable ? COLOR_BACKGROUND : COLOR_TEXT_DIM
+      this.captions[index]!.color = row.claimable ? COLOR_TEXT : COLOR_TEXT_DIM
     })
     this.paintPager(view2, topY, capacity)
+    if (capacity === 0) {
+      if (this.pageLabel !== null) this.pageLabel.node.active = false
+      if (this.prevPageButton !== null) this.prevPageButton.active = false
+      if (this.nextPageButton !== null) this.nextPageButton.active = false
+    }
   }
 }

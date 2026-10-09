@@ -99,7 +99,7 @@ const PANELS: readonly PanelDef[] = [
   { key: 'battlePass', label: '战令', view: BattlePassPanelView, reddotKey: null },
   // 等级奖励紧跟战令：两者都是「升到/攒到之后回来点一下」的领取型入口，挨着放玩家不用找第二遍。
   // 标签只用两个字 —— 抽屉那一格宽 52.9px 量级，四字标签会贴上格边（本文件 MORE_KEYS 的注释记过这条）。
-  { key: 'levelReward', label: '等级', view: LevelRewardPanelView, reddotKey: null },
+  { key: 'levelReward', label: '等级', view: LevelRewardPanelView, reddotKey: 'levelReward' },
   // 邮件紧跟任务：两者都是「每天进来清一次」的入口，而它的角标绑在服务端 mail/unread 叶子上
   // （B12 §4：红点判据只有一处，客户端不参与算）。
   { key: 'mail', label: '邮件', view: MailPanelView, reddotKey: 'mail' },
@@ -172,6 +172,8 @@ export class PanelNav extends Component {
   private moreLayer: Node | null = null
   private moreOpen = false
   private reddot: ClientReddotTree | null = null
+  private visibleWidth = 0
+  private visibleHeight = 0
 
   /** 切换面板时的回调。数据侧由 GameBootstrap 决定要不要补拉，导航层不碰网络。 */
   onShow: ((key: string) => void) | null = null
@@ -274,6 +276,8 @@ export class PanelNav extends Component {
 
   private buildBar(): void {
     const size = view.getVisibleSize()
+    this.visibleWidth = size.width
+    this.visibleHeight = size.height
     const width = Math.min(size.width - 24, 900)
     const bar = new Node('NavBar')
     bar.layer = this.node.layer
@@ -480,6 +484,25 @@ export class PanelNav extends Component {
     graphics.fillColor = active ? COLOR_ACTIVE : COLOR_IDLE
     graphics.roundRect(-width / 2, -height / 2, width, height, 6)
     graphics.fill()
+  }
+
+  override update(): void {
+    const size = view.getVisibleSize()
+    if (size.width === this.visibleWidth && size.height === this.visibleHeight) return
+    for (const node of this.panelNodes.values()) {
+      node.getComponent(UITransform)?.setContentSize(new Size(size.width, size.height))
+    }
+    const open = this.moreOpen
+    this.node.getChildByName('NavBar')?.destroy()
+    this.moreLayer?.destroy()
+    this.moreLayer = null
+    this.buttonNodes.clear()
+    this.buttonLabels.clear()
+    this.navDots.clear()
+    this.cellWidths.clear()
+    this.buildBar()
+    this.setMoreOpen(open)
+    this.refreshNavDots()
   }
 
   override onDestroy(): void {

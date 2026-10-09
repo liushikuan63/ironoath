@@ -19,6 +19,7 @@ import com.ironoath.common.ErrorCode;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.LevelRewardCfg;
 import com.ironoath.core.player.PlayerRepository;
+import com.ironoath.core.reddot.ReddotTree;
 import com.ironoath.web.dto.generated.LevelRewardClaimReq;
 import com.ironoath.web.dto.generated.LevelRewardClaimResp;
 import com.ironoath.web.dto.generated.LevelRewardListResp;
@@ -47,6 +48,7 @@ class LevelRewardClaimTest {
     @Autowired private PlayerRepository players;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private ConfigRegistry configs;
+    @Autowired private ReddotTree notifications;
 
     @BeforeEach
     void resetStores() {
@@ -239,6 +241,38 @@ class LevelRewardClaimTest {
         assertThat(levelRewards.claimableCount(playerId)).as("单独问红点必须与列表同一读数")
                 .isEqualTo(resp.claimableCount());
         assertThat(marked).as("12 级里领掉 2 级 ⇒ 还剩 10 级可领").isEqualTo(10L);
+    }
+
+    @Test
+    @DisplayName("等级奖励叶子与父链同源：出生可领即亮，领完熄灭，升级后重新亮")
+    void claimNotificationFollowsAuthoritativeList() {
+        String playerId = newPlayer("等级提示");
+        assertThat(notifications.leafKeys()).contains("levelReward/claimable");
+        assertThat(notifications.isLit("levelReward/claimable", playerId)).isTrue();
+        assertThat(notifications.isLit("levelReward", playerId)).isTrue();
+
+        levelRewards.claim(playerId, req(1L));
+        assertThat(levelRewards.list(playerId).claimableCount()).isZero();
+        assertThat(notifications.isLit("levelReward/claimable", playerId)).isFalse();
+        assertThat(notifications.isLit("levelReward", playerId)).isFalse();
+
+        setMainLevel(playerId, 2);
+        assertThat(levelRewards.list(playerId).claimableCount()).isEqualTo(1);
+        assertThat(notifications.isLit("levelReward", playerId)).isTrue();
+        levelRewards.claim(playerId, req(2L));
+        assertThat(notifications.isLit("levelReward", playerId)).isFalse();
+    }
+
+    @Test
+    @DisplayName("等级奖励提示按玩家隔离，失败的未达领取不熄灭别人的提示")
+    void claimNotificationIsPlayerScoped() {
+        String first = newPlayer("提示甲");
+        String second = newPlayer("提示乙");
+        levelRewards.claim(first, req(1L));
+        assertThat(notifications.isLit("levelReward", first)).isFalse();
+        assertThat(notifications.isLit("levelReward", second)).isTrue();
+        assertThatThrownBy(() -> levelRewards.claim(second, req(2L))).isInstanceOf(BizException.class);
+        assertThat(notifications.isLit("levelReward", second)).isTrue();
     }
 
     // ---------- 内部 ----------

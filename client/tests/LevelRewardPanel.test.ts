@@ -13,13 +13,32 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildLevelRewardPanel, claimBodyOf, claimResultText, windowStartOf,
+  buildLevelRewardPanel, claimBodyOf, claimResultText, levelRewardLayout, windowStartOf,
 } from '../assets/scripts/game/levelReward/LevelRewardPanel'
 import type {
   LevelRewardClaimResp, LevelRewardItem, LevelRewardListResp, LevelRewardRow,
 } from '../assets/scripts/net/generated/LevelRewardProtocol'
 
 const NOW = 1_700_000_000_000
+
+test('普通、高窗、极矮和更矮窗口的实画内容均留在导航净区之上', () => {
+  const source = resp(Array.from({ length: 40 }, (_, i) => row(i + 1, 16)), 16, 16)
+  for (const height of [238, 240, 280, 320, 480, 600, 1000]) {
+    const layout = levelRewardLayout(height, 6)
+    const actual = buildLevelRewardPanel(source, layout.capacity)
+    assert.ok(actual.rows.length <= 6)
+    const bottom = layout.topY - (actual.rows.length - 1) * 72 - 33
+    assert.ok(bottom >= layout.navTop, `${height}: ${bottom} < ${layout.navTop}`)
+  }
+  assert.equal(levelRewardLayout(240, 6).capacity, 1)
+  assert.equal(levelRewardLayout(1000, 6).capacity, 6)
+})
+
+test('连一个完整奖励行都放不下时容量为零，不强画压进导航的行', () => {
+  assert.equal(levelRewardLayout(200, 6).capacity, 0)
+  assert.equal(levelRewardLayout(0, 6).capacity, 0)
+  assert.equal(levelRewardLayout(600, 0).capacity, 0)
+})
 
 function item(id: string, name: string, count: number): LevelRewardItem {
   return { type: 'RESOURCE', id, count, name }

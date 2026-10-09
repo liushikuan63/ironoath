@@ -54,6 +54,19 @@ export type LevelRewardView = {
   readonly canNext: boolean
 }
 
+/** 展示几何，不含奖励规则。极矮窗口收紧表头，零容量时不强画越界内容。 */
+export function levelRewardLayout(height: number, poolSize: number): {
+  compact: boolean, capacity: number, topY: number, navTop: number,
+} {
+  const compact = height < 320
+  const headerHeight = compact ? 88 : 128
+  const navTop = -height / 2 + 68
+  const topY = height / 2 - 16 - headerHeight - 33
+  const usable = topY + 33 - navTop
+  return { compact, topY, navTop,
+    capacity: Math.min(poolSize, Math.max(0, Math.floor((usable + 6) / 72))) }
+}
+
 /** 千分位：6 位以上的奖励数（31 级起就上万）没有分隔符时玩家要逐位数。 */
 function groupThousands(value: number): string {
   return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
