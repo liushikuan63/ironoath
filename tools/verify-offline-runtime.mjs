@@ -66,10 +66,11 @@ function readOverlay() {
   }
   out.found = true
   out.active = node.activeInHierarchy !== false
-  for (const child of node.children) {
+  const body = node.getChildByName('DialogContent')?.getChildByName('DialogContentContent')
+  for (const child of [...node.children, ...(body?.children ?? [])]) {
     if (child.name === 'label') {
       const label = child.getComponent('cc.Label')
-      if (label !== null && label !== undefined && child.position.y > 40) {
+      if (label !== null && label !== undefined && label.string === '自上次登录以来') {
         out.title = label.string
       }
     }
@@ -163,9 +164,10 @@ async function main() {
     const scene = window.cc.director.getScene()
     const game = scene.getChildByName('Canvas')?.getChildByName('Game')
     const node = game?.getChildByName('OfflineReport')
-    for (const child of node?.children ?? []) {
+    const body = node?.getChildByName('DialogContent')?.getChildByName('DialogContentContent')
+    for (const child of [...(node?.children ?? []), ...(body?.children ?? [])]) {
       if (child.name === 'offlineRow2') {   // 第 3 行是战斗，jump=reports
-        child.emit('touch-start')
+        child.emit(child.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
         return
       }
     }
@@ -190,7 +192,7 @@ async function main() {
     const node = game?.getChildByName('OfflineReport')
     for (const child of node?.children ?? []) {
       if (child.name === '离线汇总知道了') {
-        child.emit('touch-start')
+        child.emit(child.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
         return
       }
     }

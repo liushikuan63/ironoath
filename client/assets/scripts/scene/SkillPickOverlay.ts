@@ -13,10 +13,11 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
 import type { SkillPickView, SkillRow } from '../game/hero/SkillPick'
 import { applySystemUiFont } from './UiFont'
+import { DIALOG_SCRIM, finishLegacyDialog, applyDialogButton } from './DialogStyle'
 
 const { ccclass } = _decorator
 
-const COLOR_SCRIM = new Color(0, 0, 0, 170)
+const COLOR_SCRIM = DIALOG_SCRIM
 const COLOR_BACKGROUND = new Color(24, 20, 18, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_ROW_SELECTED = new Color(62, 44, 26, 255)
@@ -64,6 +65,7 @@ export class SkillPickOverlay extends Component {
     this.drawCard()
     this.drawRows()
     this.drawButtons()
+    finishLegacyDialog(this.node, this.nodes)
   }
 
   private drawScrim(): void {
@@ -119,7 +121,7 @@ export class SkillPickOverlay extends Component {
     graphics.rect(-width / 2, -PLATE_HEIGHT / 2, width, PLATE_HEIGHT)
     graphics.fill()
     if (row.usable) {
-      graphics.node.on('touch-start', () => this.onPick?.(row.itemId))
+      graphics.node.on('touch-end', () => this.onPick?.(row.itemId))
     }
 
     const left = -width / 2 + 12
@@ -155,6 +157,7 @@ export class SkillPickOverlay extends Component {
     if (enabled) {
       graphics.node.on('touch-start', onClick)
     }
+    applyDialogButton(graphics.node, enabled, width, BUTTON_HEIGHT)
     this.label(text, enabled ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 18, x, y, 'center')
   }
 

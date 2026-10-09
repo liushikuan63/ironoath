@@ -91,6 +91,7 @@ declare module 'cc' {
     onDisable?(): void
     onDestroy?(): void
     getComponent<T extends Component>(type: { new(): T }): T | null
+    getComponent(type: string): Component | null
     addComponent<T extends Component>(type: { new(): T }): T
     schedule(callback: () => void, interval?: number): void
     unschedule(callback: () => void): void
@@ -132,6 +133,7 @@ declare module 'cc' {
     setScale(x: number, y: number, z?: number): void
     addComponent<T extends Component>(type: { new(): T }): T
     getComponent<T extends Component>(type: { new(): T }): T | null
+    getComponent(type: string): Component | null
     /**
      * 注册事件。回调的事件参数用泛型 T 表达 —— 原来写成 `(...args: unknown[]) => void`，
      * 在 strictFunctionTypes 下会拒绝 `(e: EventTouch) => void`（unknown 不可赋给 EventTouch）。
@@ -142,6 +144,8 @@ declare module 'cc' {
   }
 
   export class UITransform extends Component {
+    anchorX: number
+    anchorY: number
     width: number
     height: number
     setContentSize(size: Size): void
@@ -233,9 +237,31 @@ declare module 'cc' {
     verticalAlign: number
     overflow: number
     enableWrapText: boolean
+    /** Creator 3.8.7 UIRenderer：立即更新排版，RESIZE_HEIGHT 随真实字体与宽度测高。 */
+    updateRenderData(force?: boolean): void
     static HorizontalAlign: { LEFT: number; CENTER: number; RIGHT: number }
     static VerticalAlign: { TOP: number; CENTER: number; BOTTOM: number }
     static Overflow: { NONE: number; CLAMP: number; SHRINK: number; RESIZE_HEIGHT: number }
+  }
+
+  /** 3.8.7 cocos/2d/components/mask.ts：矩形裁剪只作用于子内容。 */
+  export class Mask extends Component {
+    type: number
+    static Type: { GRAPHICS_RECT: number }
+  }
+
+  /** 3.8.7 cocos/ui/scroll-view.ts：模态长文/名单的真实滚动容器。 */
+  export class ScrollView extends Component {
+    content: Node | null
+    horizontal: boolean
+    vertical: boolean
+    inertia: boolean
+    elastic: boolean
+    cancelInnerEvents: boolean
+    scrollToTop(timeInSecond?: number): void
+    scrollToBottom(timeInSecond?: number): void
+    scrollToOffset(offset: Vec2, timeInSecond?: number): void
+    getScrollOffset(): Vec2
   }
 
   /**

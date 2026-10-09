@@ -17,6 +17,7 @@ import type { StaminaDetailView } from '../game/ui/StaminaDetail'
 import { applySystemUiFont } from './UiFont'
 import { applyIronButton, applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
+import { DIALOG_SCRIM, applyDialogButton, fitExistingDialog } from './DialogStyle'
 
 // 360×260 → 440×360：border 抬到 80·72 后，260 高的净区只剩 116px，
 // 「已买次数」那一行被按钮盒压住（1:1 截图上是两行字叠在一起）。退路同礼包：抬高面板，
@@ -25,7 +26,7 @@ const PANEL_W = 440
 const PANEL_H = 360
 const BUY_W = 220
 const BUY_H = 36
-const COLOR_BACKDROP = new Color(0, 0, 0, 170)
+const COLOR_BACKDROP = DIALOG_SCRIM
 const COLOR_PANEL = new Color(38, 30, 22, 245)
 const COLOR_BORDER = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
@@ -58,6 +59,7 @@ export class StaminaDetailOverlay {
   private readonly buyBackground: Graphics | null
   private buyEnabled = false
   private view: StaminaDetailView | null = null
+  private readonly layoutDialog: () => void
 
   onBuy: (() => void) | null = null
 
@@ -143,6 +145,14 @@ export class StaminaDetailOverlay {
     close.addComponent(UITransform).setContentSize(new Size(40, 40))
     this.addLabel(close, 'Caption', 0, 0, COLOR_TEXT, 16, 40).string = '×'
     close.on('touch-start', () => this.hide(), this)
+    close.setPosition(new Vec3(100, close.position.y, 0))
+    buy.setPosition(new Vec3(-20, buy.position.y, 0))
+    // 两个操作在下沿并排，短屏仍可取消；说明与恢复节奏完整进入滚动净区。
+    buy.getComponent(UITransform)!.setContentSize(180, BUY_H)
+    applyDialogButton(buy, true, 180, BUY_H)
+    this.layoutDialog = fitExistingDialog(this.node, panel,
+      [this.titleLabel.node, this.recoverLabel.node, this.nextLabel.node, this.boughtLabel.node, this.noteLabel.node],
+      [buy, close], 'ui.panel.iron', PANEL_W, PANEL_H)
   }
 
   /** 画一帧。**不判定**：能不能买、该说什么，都是视图模型算好的。 */
@@ -168,6 +178,7 @@ export class StaminaDetailOverlay {
       this.buyCaption.color = COLOR_TEXT
     }
     this.node.active = true
+    this.layoutDialog()
   }
 
   hide(): void {

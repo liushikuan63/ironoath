@@ -11,6 +11,8 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { readDialogGeometry, scrollDialogTo } from './lib/dialog-geometry.mjs'
+import { resolveCocosClickPoint } from './lib/cocos-click.mjs'
 
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const ARTIFACT = 'client/build/web-mobile'
@@ -173,10 +175,10 @@ const clickByName = predicateSource => `(() => {
   // **灰键的判据是「有没有挂 touch-start 监听」**，不是 cc.Button.interactable ——
   // 面板的 button() 对灰键根本不挂监听（NationPanelView.ts:784-786），那才是
   // 「点下去零请求」的真正机制；用 interactable 判会永远读到 true。
-  if (typeof target.hasEventListener === 'function' && !target.hasEventListener('touch-start')) {
+  if (typeof target.hasEventListener === 'function' && !target.hasEventListener('touch-start') && !target.hasEventListener('touch-end')) {
     return 'greyed'
   }
-  target.emit('touch-start')
+  target.emit(target.hasEventListener('touch-start') ? 'touch-start' : 'touch-end')
   return 'ok'
 })()`
 
@@ -507,14 +509,105 @@ if (speedEnv === undefined || Number(speedEnv) < 2) {
   }
 }
 
+// 独立布局相：只给已挂载的生产视图传 max3/4 长文，不把夹具写到服务端。
+// 上面的真后端提案/投票/结算仍保留；这里对 UI 的写意图回调做计数，拖动必须为零。
+await page.evaluate(() => {
+  const game = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game')
+  const component = game.getChildByName('nation').getComponent('NationPanelView')
+  window.__policyLayoutSaved = { data: component.data, propose: component.onProposePolicy, vote: component.onVotePolicy }
+  window.__policyLayoutWrites = 0
+  component.onProposePolicy = () => { window.__policyLayoutWrites++ }
+  component.onVotePolicy = () => { window.__policyLayoutWrites++ }
+  const row = index => ({ policyId: `layout-policy-${index}`, proposalId: `layout-proposal-${index}`,
+    name: `第${index + 1}条国策`, effectText: '资源产出 +10%，附加公示说明'.repeat(3),
+    tallyText: '赞成 12 · 反对 8', supporters: '支持成员甲、支持成员乙、支持成员丙、'.repeat(15),
+    opponents: '反对成员甲、反对成员乙、'.repeat(15), mySupport: null,
+    voteGate: { enabled: true, reason: null }, proposeGate: { enabled: index !== 3, reason: index === 3 ? '本轮已提过' : null } })
+  const policy = { phase: 'VOTING', phaseText: '投票中', header: '国策投票中 · 生效槽位', countdownText: '还剩 60 秒',
+    activeText: '当前生效：测试国策', proposals: [0, 1, 2].map(row), candidates: [0, 1, 2, 3].map(row),
+    slotNote: '同轮多条提案都通过时，以得票与提案顺序选择生效槽位。'.repeat(12) + '末项槽位说明' }
+  component.attach({ ...component.data, tab: 'POLICY', sections: { ...component.data.sections, policy },
+    notice: '本轮操作结果说明。'.repeat(14) + '末项操作说明', noticeTone: 'warn' })
+})
+const layoutSpec = { host: 'nation', frame: 'NationCard', viewport: 'PolicyViewport', footer: ['PolicyScrollTop', 'PolicyScrollBottom'] }
+const layoutEvidence = []
+for (const [name, viewport, logicalHeight] of [['normal', { width: 1440, height: 1350 }, 900], ['short320', { width: 1440, height: 480 }, 320], ['short240', { width: 1440, height: 360 }, 240], ['portrait', { width: 720, height: 1200 }, 1600]]) {
+  await page.setViewportSize(viewport)
+  await page.waitForTimeout(500)
+  const geometry = await page.evaluate(readDialogGeometry, layoutSpec)
+  checkThat(`国策/${name} 同页resize采真实逻辑高度`, Math.abs((geometry.visibleSize?.height ?? 0) - logicalHeight) < 2, JSON.stringify(geometry))
+  checkThat(`国策/${name} 裁剪区与固定操作不侵占导航`, !geometry.error && geometry.material && geometry.masked
+    && geometry.clipInArea && geometry.frameInArea && geometry.separation && geometry.footer.every(row => row.inArea), JSON.stringify(geometry))
+  if (geometry.error) continue
+  const seen = new Set()
+  const coverage = new Map()
+  for (let offset = 0; offset <= geometry.maxOffset + geometry.clip.height; offset += Math.max(1, geometry.clip.height / 2)) {
+    await page.evaluate(scrollDialogTo, { ...layoutSpec, offset: Math.min(offset, geometry.maxOffset) })
+    const sample = await page.evaluate(readDialogGeometry, layoutSpec)
+    for (const row of sample.seen) if (row.visibleHeight > 5) {
+      if (/第[1234]条国策/.test(row.text) && row.visibleFrom < 1) seen.add(row.text.match(/第[1234]条国策/)[0])
+      if (row.text.includes('末项槽位说明') && row.visibleTo >= row.box.height - 1) seen.add('槽位说明')
+      if (row.text.includes('末项操作说明') && row.visibleTo >= row.box.height - 1) seen.add('操作说明')
+      const bands = coverage.get(row.key) ?? []; bands.push([row.visibleFrom, row.visibleTo]); coverage.set(row.key, bands)
+    }
+  }
+  checkThat(`国策/${name} 3提案4候选与长槽位notice完整滚动可达`, seen.size === 6, JSON.stringify([...seen]))
+  const uncovered = geometry.seen.filter(row => {
+    const bands = (coverage.get(row.key) ?? []).sort((a, b) => a[0] - b[0]); let end = 0
+    for (const band of bands) { if (band[0] > end + 1) return true; end = Math.max(end, band[1]) }
+    return end < row.box.height - 1
+  })
+  checkThat(`国策/${name} 每个完整文字盒都被可视滚动窗口覆盖`, uncovered.length === 0, JSON.stringify(uncovered))
+  const wrapped = geometry.seen.filter(row => row.text.includes('同轮多条提案') || row.text.includes('本轮操作结果'))
+  checkThat(`国策/${name} 长文使用真实width换行`, wrapped.length === 2 && wrapped.every(row => row.box.height > 35 && row.width <= geometry.clip.width + 1), JSON.stringify(wrapped))
+  const jump = await page.evaluate(resolveCocosClickPoint, { name: 'PolicyScrollTop', within: 'nation' })
+  checkThat(`国策/${name} 回到顶部坐标经引擎自命中`, jump.verified, JSON.stringify(jump))
+  if (jump.verified) await page.mouse.click(jump.x, jump.y)
+  await page.waitForTimeout(80)
+  checkThat(`国策/${name} 回到顶部真实点击有效`, (await page.evaluate(readDialogGeometry, layoutSpec)).offset < 1)
+  // 同一几何量具的负对照：真实挪动 Mask 进入导航，必须判红，恢复后再判绿。
+  const negative = await page.evaluate(() => {
+    const host = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+    const viewport = host.getChildByName('PolicyViewport'); const old = viewport.position.clone()
+    window.__policyViewportPosition = old; viewport.setPosition(old.x, old.y - window.cc.view.getVisibleSize().height, 0)
+  })
+  void negative
+  checkThat(`国策/${name} 导航侵占负对照能失败`, (await page.evaluate(readDialogGeometry, layoutSpec)).clipInArea === false)
+  await page.evaluate(() => {
+    const host = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation')
+    host.getChildByName('PolicyViewport').setPosition(window.__policyViewportPosition)
+  })
+  checkThat(`国策/${name} 恢复裁剪区复绿`, (await page.evaluate(readDialogGeometry, layoutSpec)).clipInArea === true)
+  layoutEvidence.push({ name, geometry, seen: [...seen] })
+  await page.screenshot({ path: path.join(OUT, `layout-${name}.png`) })
+}
+// 正常视口从一颗可投按钮起步拖动：touch-start不表达写意图，ScrollView取消touch-end。
+await page.setViewportSize({ width: 1440, height: 1350 })
+await page.waitForTimeout(450)
+await page.evaluate(scrollDialogTo, { ...layoutSpec, offset: 0 })
+const button = await page.evaluate(resolveCocosClickPoint, { name: 'PolicyYes-layout-proposal-0', within: 'nation' })
+checkThat('国策可投按钮真实命中', button.verified, JSON.stringify(button))
+if (button.verified) {
+  await page.mouse.move(button.x, button.y); await page.mouse.down(); await page.mouse.move(button.x, button.y - 60, { steps: 10 }); await page.mouse.up()
+  await page.waitForTimeout(250)
+  check('从可投按钮开始拖动零写意图', await page.evaluate(() => window.__policyLayoutWrites), 0)
+  await page.evaluate(scrollDialogTo, { ...layoutSpec, offset: 0 })
+  await page.mouse.click(button.x, button.y)
+  check('可投按钮放开点击仍只表达一次意图', await page.evaluate(() => window.__policyLayoutWrites), 1)
+}
+fs.writeFileSync(path.join(OUT, 'layout-results.json'), JSON.stringify(layoutEvidence, null, 2))
+await page.evaluate(() => {
+  const component = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('nation').getComponent('NationPanelView')
+  const saved = window.__policyLayoutSaved; component.onProposePolicy = saved.propose; component.onVotePolicy = saved.vote; component.attach(saved.data)
+})
+check('国策新增布局相无浏览器异常', errors.length, 0)
 console.log(`\n=== 国策页真机证据：${pass} 通过 / ${fail} 失败 ===`)
 } finally {
   await page.screenshot({ path: path.join(OUT, '03-final.png') })
   await browser.close()
   await preview.close()
+  // 布局相即使抛异常，也必须释放本轮国家名额。
+  const cleaned = await call('POST', '/nation/disband', { requestId: rid('disband') }, king.playerId, king.token)
+  check(`清掉本轮建的国家（${cleaned.detail ?? cleaned.msg}）`, cleaned.code, 0)
 }
-
-// 清掉本轮建的国家：不清的话每跑一轮就多占一个名额（上限只有 4）
-const cleaned = await call('POST', '/nation/disband', { requestId: rid('disband') }, king.playerId, king.token)
-check(`清掉本轮建的国家（${cleaned.detail ?? cleaned.msg}）`, cleaned.code, 0)
 process.exit(fail === 0 ? 0 : 1)

@@ -17,8 +17,9 @@ import { applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import type { OfflineReportPopup } from '../game/session/AppRoot'
 import { applySystemUiFont } from './UiFont'
+import { DIALOG_SCRIM, applyDialogButton, fitExistingDialog } from './DialogStyle'
 
-const COLOR_MASK = new Color(12, 10, 9, 232)
+const COLOR_MASK = DIALOG_SCRIM
 const COLOR_ROW = new Color(52, 43, 35, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_DIM = new Color(150, 140, 124, 255)
@@ -52,6 +53,7 @@ export class OfflineReportOverlay {
   private readonly rowTextLabels: Label[] = []
   private readonly rowDetailLabels: Label[] = []
   private view: OfflineReportPopup | null = null
+  private readonly layoutDialog: () => void
 
   /** 点某一条：编排层据此跳页面（并记一次埋点）。 */
   onJump: ((jump: string) => void) | null = null
@@ -68,9 +70,14 @@ export class OfflineReportOverlay {
     this.node.on('touch-start', (_event: EventTouch) => {
       /* 只吞不处理 */
     }, this)
-    const background = this.node.addComponent(Graphics)
+    const scrim = new Node('scrim')
+    scrim.layer = parent.layer
+    scrim.addComponent(UITransform).setContentSize(4000, 4000)
+    scrim.on('touch-start', () => {}, this)
+    this.node.addChild(scrim)
+    const background = scrim.addComponent(Graphics)
     background.fillColor = COLOR_MASK
-    background.roundRect(-width / 2, -height / 2, width, height, 10)
+    background.rect(-2000, -2000, 4000, 4000)
     background.fill()
 
     // 底板必须与这层遮罩底色**分节点**：`applySlicedSprite` 会把它所挂节点上的 Graphics
@@ -95,8 +102,10 @@ export class OfflineReportOverlay {
     }
 
     // 按钮也留在净区内（原先 -height/2 + 30 落在下铜边里，1:1 截图上它就是压在角帽上）。
-    this.createButton('离线汇总知道了', 0,
+    const dismiss = this.createButton('离线汇总知道了', 0,
       -height / 2 + PANEL_IRON_INSET.bottom + 26, () => this.onDismiss?.())
+    this.layoutDialog = fitExistingDialog(this.node, plate,
+      [this.titleLabel.node, ...this.rowNodes], [dismiss], 'ui.panel.parchment', width, height)
     this.node.active = false
   }
 
@@ -108,6 +117,7 @@ export class OfflineReportOverlay {
       return
     }
     this.node.active = true
+    this.layoutDialog()
     this.rowNodes.forEach((row, index) => {
       const item = view.items[index]
       row.active = item !== undefined
@@ -171,7 +181,7 @@ export class OfflineReportOverlay {
     // 「查看 ›」是这一行的可点提示：没有它，玩家不会知道这一行能点
     const hint = this.childLabel(node, rowW / 2 - 26, 0, 15, COLOR_GOLD)
     hint.string = '查看 ›'
-    node.on('touch-start', (_event: EventTouch) => {
+    node.on('touch-end', (_event: EventTouch) => {
       const item = this.view?.items[index]
       if (item !== undefined) {
         this.onJump?.(item.jump)
@@ -192,6 +202,8 @@ export class OfflineReportOverlay {
     const label = this.childLabel(node, 0, 0, 17, COLOR_MASK)
     label.string = '知道了'
     node.on('touch-start', (_event: EventTouch) => onTap(), this)
+    applyDialogButton(node, true, 180, 38)
+    label.color = COLOR_TEXT
     return node
   }
 

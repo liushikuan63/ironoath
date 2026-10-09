@@ -169,7 +169,7 @@ const tapInBag = (name) => `(() => {
   }
   walk(panel)
   if (hit === null) return false
-  hit.emit('touch-start')
+  hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`
 
@@ -217,7 +217,7 @@ const PICKER = `(() => {
       rowsAbove += 1
     }
   }
-  const row = (overlay.children || []).find((c) => c.name === 'Choice-0')
+  const row = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].find((c) => c.name === 'Choice-0')
   const labels = (row?.children || []).filter((c) => c.getComponent('cc.Label') !== null)
     .map((c) => ({
       name: c.name,
@@ -311,7 +311,7 @@ await page.evaluate(`(() => {
     for (const c of n.children) if (c.active) walk(c)
   }
   walk(panel)
-  if (hit !== null) hit.emit('touch-start')
+  if (hit !== null) hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return hit !== null
 })()`)
 await page.waitForTimeout(400)
@@ -328,7 +328,7 @@ const pageTapped = await page.evaluate(`(() => {
   }
   walk(panel)
   if (hit === null) return false
-  hit.emit('touch-start')
+  hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('类型页签里有「宝箱」那一颗，按得动', pageTapped)
@@ -359,7 +359,7 @@ const chestTapped = await page.evaluate(`(() => {
     && (c.children || []).some((k) => (k.getComponent('cc.Label')?.string ?? '').includes('宝箱')))
   const btn = (row?.children || []).find((c) => c.name === 'UseButton')
   if (btn === undefined) return false
-  btn.emit('touch-start')
+  btn.emit(btn.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('宝箱那一行上有可点的键', chestTapped)
@@ -384,7 +384,7 @@ await page.evaluate(`(() => {
     for (const c of n.children) if (c.active) walk(c)
   }
   walk(panel)
-  if (hit !== null) hit.emit('touch-start')
+  if (hit !== null) hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return hit !== null
 })()`)
 await page.waitForTimeout(1500)

@@ -264,7 +264,7 @@ const tapSearch = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const button = game?.getChildByName('targets')?.getChildByName('SearchButton')
   if (!button) return false
-  button.emit('touch-start')
+  button.emit(button.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('按得到搜索按钮那一颗（SearchButton 节点在）', tapSearch)
@@ -302,7 +302,7 @@ const tapRadius = (name, times) => page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const button = game?.getChildByName('targets')?.getChildByName('${name}')
   if (!button) return false
-  for (let i = 0; i < ${times}; i++) button.emit('touch-start')
+  for (let i = 0; i < ${times}; i++) button.emit(button.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 
@@ -323,7 +323,7 @@ const retapped = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const button = game?.getChildByName('targets')?.getChildByName('SearchButton')
   if (!button) return false
-  button.emit('touch-start')
+  button.emit(button.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('按得到「搜索」（把调好的半径发出去）', retapped)
@@ -384,7 +384,7 @@ const tapPanelButton = (name) => page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const button = game?.getChildByName('targets')?.getChildByName('${name}')
   if (!button) return false
-  button.emit('touch-start')
+  button.emit(button.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 
@@ -475,7 +475,7 @@ const tapRow = await page.evaluate(`(() => {
     ?.getChildByName('targets')
   const row = targets?.children.find((c) => c.name === 'TargetRow')
   if (!row) return false
-  row.emit('touch-start')
+  row.emit(row.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('点得动夹具那一行（TargetRow 在树里且能收 touch-start）', tapRow)
@@ -490,7 +490,7 @@ const COMPOSE = `(() => {
     const node = overlay.getChildByName(name)
     return node?.getChildByName('label')?.getComponent('cc.Label')?.string ?? null
   }
-  const title = (overlay.children || [])
+  const title = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])]
     .filter((c) => c.name === 'label')
     .map((c) => c.getComponent('cc.Label')?.string ?? '')
     .find((s) => s.includes('：')) ?? ''
@@ -523,7 +523,7 @@ const tapped = await page.evaluate(`(() => {
     ?.getChildByName('MarchCompose')
   const toggle = overlay?.getChildByName('编成种类')
   if (!toggle) return false
-  toggle.emit('touch-start')
+  toggle.emit(toggle.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('按得到「集结」那一颗', tapped)
@@ -594,7 +594,7 @@ const BAND = `(() => {
     const t = node.getComponent('cc.UITransform')
     return { top: node.position.y, bottom: node.position.y - t.height }
   }
-  const rows = (overlay.children || []).filter((c) => /^composeRow\\d+$/.test(c.name) && c.active)
+  const rows = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].filter((c) => /^composeRow\\d+$/.test(c.name) && c.active)
   const footer = ['编成取消', '编成出征', '编成种类'].map((n) => overlay.getChildByName(n)).filter(Boolean)
   return {
     found: true,
@@ -607,7 +607,7 @@ const BAND = `(() => {
     bandBottom: box(band).bottom,
     lastRowBottom: rows.length === 0 ? null : Math.min(...rows.map((r) => box(r).bottom)),
     footerTop: footer.length === 0 ? null : Math.max(...footer.map((f) => box(f).top)),
-    totalText: (overlay.children || [])
+    totalText: [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])]
       .filter((c) => c.name === 'label')
       .map((c) => c.getComponent('cc.Label')?.string ?? '')
       .find((s) => s.startsWith('共派')) ?? '',
@@ -621,7 +621,7 @@ const tapCompose = (trail) => page.evaluate(`(() => {
   let node = overlay
   for (const part of '${trail}'.split('/')) { node = node?.getChildByName(part) }
   if (!node) return false
-  node.emit('touch-start')
+  node.emit(node.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 
@@ -738,7 +738,7 @@ const tapRowPlus = await page.evaluate(`(() => {
   const row = (overlay?.children || []).find((c) => c.name === 'composeRow0')
   const plus = row?.getChildByName('row-＋')
   if (!plus) return false
-  plus.emit('touch-start')
+  plus.emit(plus.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('按得到第一行兵力的「＋」', tapRowPlus)
@@ -862,7 +862,7 @@ const tappedQueue = await page2.evaluate(`(() => {
   }
   walk(root)
   if (hit === null) return false
-  hit.emit('touch-start')
+  hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('按得到那颗「队列」', tappedQueue)
@@ -900,7 +900,7 @@ const oneLine = await page2.evaluate(`(() => {
   find(game)
   if (overlay === null) return null
   const panelW = overlay.getComponent('cc.UITransform')?.width ?? 0
-  const row = (overlay.children || []).find((c) => c.name === 'Choice-0')
+  const row = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].find((c) => c.name === 'Choice-0')
   const title = (row?.children || []).find((c) => (c.getComponent('cc.Label')?.string ?? '').includes('取消'))
   const t = title?.getComponent('cc.UITransform')
   const band = row?.getComponent('cc.UITransform')
@@ -929,7 +929,7 @@ const picked = await page2.evaluate(`(() => {
   // 可点的那一层是行的父节点：从字往上连发三次，谁挂了监听谁收到
   let node = target
   for (let i = 0; i < 3 && node !== null && node !== undefined; i++) {
-    node.emit('touch-start')
+    node.emit(node.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
     node = node.parent
   }
   return true
@@ -992,7 +992,7 @@ await page.evaluate(`(() => {
   const targets = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     ?.getChildByName('targets')
   const row = targets?.children.find((c) => c.name === 'TargetRow')
-  if (row) row.emit('touch-start')
+  if (row) row.emit(row.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return row !== null && row !== undefined
 })()`)
 await page.waitForTimeout(700)
@@ -1103,7 +1103,7 @@ checkTrue('按得到第一行兵力的「＋」', await page.evaluate(`(() => {
   const row = (overlay?.children || []).find((c) => c.name === 'composeRow0')
   const plus = row?.getChildByName('row-＋')
   if (!plus) return false
-  plus.emit('touch-start')
+  plus.emit(plus.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`))
 await page.waitForTimeout(300)

@@ -447,7 +447,7 @@ const tappedBuy = await page.evaluate(`(() => {
   const walk = (node) => { if (node.name === 'BuyStaminaButton') hit = node; for (const c of node.children) walk(c) }
   walk(panel)
   if (hit === null) return false
-  hit.emit('touch-start')
+  hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('按得到那颗「买体力」', tappedBuy)
@@ -489,7 +489,7 @@ const tappedChallenge = await page.evaluate(`(() => {
   }
   walk(panel)
   if (hit === null) return false
-  hit.emit('touch-start')
+  hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('按得到某一关那颗「挑战」', tappedChallenge)
@@ -503,9 +503,9 @@ const picker = await page.evaluate(`(() => {
   }
   walk(window.cc.director.getScene())
   if (overlay === null) return null
-  const row = overlay.getChildByName('Choice-0')
+  const row = (overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.getChildByName('Choice-0') ?? overlay.getChildByName('Choice-0'))
   return {
-    rowCount: overlay.children.filter((c) => /^Choice-[0-9]+$/.test(c.name)).length,
+    rowCount: [...overlay.children, ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].filter((c) => /^Choice-[0-9]+$/.test(c.name)).length,
     firstRowText: row?.getComponent('cc.Label')?.string
       ?? row?.children.map((c) => c.getComponent('cc.Label')?.string ?? '').join(' ') ?? '',
   }
@@ -525,9 +525,9 @@ if (heroFlip.mainSet) {
       for (const c of node.children) walk(c)
     }
     walk(window.cc.director.getScene())
-    const row = overlay?.getChildByName('Choice-0')
+    const row = (overlay?.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.getChildByName('Choice-0') ?? overlay?.getChildByName('Choice-0'))
     if (!row) return false
-    row.emit('touch-start')
+    row.emit(row.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
     return true
   })()`)
   checkTrue('按得到候选那一行', pickedLineup)

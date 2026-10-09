@@ -246,7 +246,7 @@ const TAP_NAMED = (name) => `(() => {
   }
   walk(root)
   if (found === null) return 'no-node'
-  found.emit('touch-start')
+  found.emit(found.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return 'tapped'
 })()`
 
@@ -273,7 +273,7 @@ const TAP_ANY = (text) => `(() => {
     node = node.parent
   }
   if (node === null) return 'no-button'
-  node.emit('touch-start')
+  node.emit(node.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return 'tapped'
 })()`
 /** 只扫 `ChoiceOverlay` 那棵子树的标签：`readRows()` 看的是面板行，拿它判弹层等于什么都没判。 */
@@ -346,7 +346,7 @@ const TAP_CAPTION2 = (text) => `(() => {
     const caption = second ? second.children.find((c) => c.name === 'Caption') : null
     const label = caption ? caption.getComponent('cc.Label') : null
     if (label && label.string === ${JSON.stringify(text)} && second.active) {
-      second.emit('touch-start')
+      second.emit(second.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
       return 'tapped'
     }
   }
@@ -374,7 +374,7 @@ const TAP_CAPTION = (text) => `(() => {
       const caption = button.children.find((c) => c.name === 'Caption')
       const label = caption ? caption.getComponent('cc.Label') : null
       if (label && label.string === ${JSON.stringify(text)} && button.active) {
-        button.emit('touch-start')
+        button.emit(button.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
         return 'tapped'
       }
     }

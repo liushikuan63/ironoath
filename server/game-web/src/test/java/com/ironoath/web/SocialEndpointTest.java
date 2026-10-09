@@ -1111,7 +1111,8 @@ class SocialEndpointTest {
             roots.add(leaf.substring(0, leaf.indexOf('/')));
         }
         assertThat(roots).as("注册过的分支就是这些（新增叶子时在这里解释一次）")
-                .containsExactlyInAnyOrder("social", "city", "mail", "activity");
+                // 等级奖励由 claimableCount 注册唯一叶子，入口已有真实面板与领取链路。
+                .containsExactlyInAnyOrder("social", "city", "mail", "activity", "levelReward");
         for (JsonNode top : nodes) {
             String key = top.get("key").asText();
             assertThat(roots).as("下发里出现了没注册过的顶层分支：" + key).contains(key);

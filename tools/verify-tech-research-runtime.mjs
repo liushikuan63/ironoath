@@ -278,7 +278,7 @@ await page.evaluate(`(() => {
   let hit = null
   const walk = (n) => { if (n.name === 'TechOpenButton') hit = n; for (const c of n.children) walk(c) }
   walk(game)
-  if (hit !== null) hit.emit('touch-start')
+  if (hit !== null) hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return hit !== null
 })()`)
 await page.waitForTimeout(1_200)
@@ -349,7 +349,7 @@ const tapped = await page.evaluate(`(() => {
   let hit = null
   const walk = (n) => { if (n.name === 'research-tech_agri_wood' && n.active) hit = n; for (const c of n.children) walk(c) }
   walk(game)
-  if (hit !== null) hit.emit('touch-start')
+  if (hit !== null) hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return hit !== null
 })()`)
 checkTrue('按得到可研究那一行的「研究」', tapped)
@@ -375,7 +375,7 @@ const speedTapped = await page.evaluate(`(() => {
   const walk = (n) => { if (n.name === 'SpeedUpResearchButton' && n.active) hit = n; for (const c of n.children) if (c.active) walk(c) }
   walk(game)
   if (hit === null) return false
-  hit.emit('touch-start')
+  hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('队列那一行旁边有颗「加速」且按得到', speedTapped)
@@ -413,7 +413,7 @@ const tappedTier = await page.evaluate(`(() => {
     for (const c of n.children) if (c.active) walk(c)
   }
   walk(game)
-  if (hit !== null) hit.emit('touch-start')
+  if (hit !== null) hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return hit !== null
 })()`)
 checkTrue('按得到「用 1 张」那一档', tappedTier)
@@ -436,7 +436,7 @@ const cancelTapped = await page.evaluate(`(() => {
   const walk = (n) => { if (n.name === 'CancelResearchButton' && n.active) hit = n; for (const c of n.children) if (c.active) walk(c) }
   walk(game)
   if (hit === null) return false
-  hit.emit('touch-start')
+  hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('在研那一行旁边有颗「取消研究」且按得到', cancelTapped)
@@ -463,7 +463,7 @@ await page.evaluate(`(() => {
   let hit = null
   const walk = (n) => { if (n.name === 'close') hit = n; for (const c of n.children) walk(c) }
   walk(game?.getChildByName('techPanel') ?? game)
-  if (hit !== null) hit.emit('touch-start')
+  if (hit !== null) hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return hit !== null
 })()`)
 await page.waitForTimeout(600)
@@ -661,7 +661,7 @@ const cancelBuildTapped = await page.evaluate(`(() => {
   const walk = (n) => { if (n.name === 'DetailCancelButton' && n.active) hit = n; for (const c of n.children) if (c.active) walk(c) }
   walk(panel)
   if (hit === null) return false
-  hit.emit('touch-start')
+  hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
 })()`)
 checkTrue('按得到那颗「取消」', cancelBuildTapped)

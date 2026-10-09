@@ -14,10 +14,11 @@
 import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { LineupEditView, PickRow, SlotRow } from '../game/hero/LineupEdit'
 import { applySystemUiFont } from './UiFont'
+import { DIALOG_SCRIM, finishLegacyDialog, applyDialogButton } from './DialogStyle'
 
 const { ccclass } = _decorator
 
-const COLOR_SCRIM = new Color(0, 0, 0, 170)
+const COLOR_SCRIM = DIALOG_SCRIM
 const COLOR_BACKGROUND = new Color(24, 20, 18, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_ROW_SELECTED = new Color(62, 44, 26, 255)
@@ -39,7 +40,6 @@ const BUTTON_BAND = 56
  */
 const BUTTON_CLEAR = 32
 const BUTTON_HEIGHT = 36
-const SAFE_MARGIN = 40
 
 @ccclass('LineupEditOverlay')
 export class LineupEditOverlay extends Component {
@@ -75,6 +75,7 @@ export class LineupEditOverlay extends Component {
     this.drawCard()
     this.drawBody()
     this.drawButtons()
+    finishLegacyDialog(this.node, this.nodes, 'ui.panel.warning')
   }
 
   private drawScrim(width: number, height: number): void {
@@ -90,13 +91,7 @@ export class LineupEditOverlay extends Component {
     if (data === null || data.pickingSlot === null) {
       return []
     }
-    return data.picks.slice(0, this.pickCapacity())
-  }
-
-  /** 名单画得下几行：由可视高度与"标题 + 三槽 + 按钮"占掉的高度现算，不写死。 */
-  private pickCapacity(): number {
-    const used = TITLE_DROP + 3 * ROW_HEIGHT + BUTTON_BAND + BUTTON_CLEAR + PADDING * 2 + SAFE_MARGIN * 2
-    return Math.max(1, Math.floor((view.getVisibleSize().height - used) / ROW_HEIGHT))
+    return data.picks
   }
 
   private cardHeight(): number {
@@ -149,7 +144,7 @@ export class LineupEditOverlay extends Component {
     graphics.fillColor = row.picking ? COLOR_ROW_SELECTED : COLOR_ROW
     graphics.rect(-width / 2, -PLATE_HEIGHT / 2, width, PLATE_HEIGHT)
     graphics.fill()
-    graphics.node.on('touch-start', () => this.onPickSlot?.(row.slot))
+    graphics.node.on('touch-end', () => this.onPickSlot?.(row.slot))
 
     const left = -width / 2 + 12
     this.label(row.label, COLOR_COPPER_GOLD, 15, left, y + 8, 'left')
@@ -164,7 +159,7 @@ export class LineupEditOverlay extends Component {
     graphics.fill()
     if (pick.usable) {
       // 不能点的那几行不吃触摸：原因已经写在行上了，点它只会有"按了没反应"
-      graphics.node.on('touch-start', () => this.onChoose?.(pick.heroId))
+      graphics.node.on('touch-end', () => this.onChoose?.(pick.heroId))
     }
     const left = -width / 2 + 12
     this.label(pick.name, pick.usable ? COLOR_TEXT : COLOR_TEXT_DIM, 17, left, y + 8, 'left')
@@ -209,6 +204,7 @@ export class LineupEditOverlay extends Component {
     if (enabled) {
       graphics.node.on('touch-start', onClick)
     }
+    applyDialogButton(graphics.node, enabled, width, BUTTON_HEIGHT)
     this.label(text, enabled ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 15, x, y, 'center')
   }
 

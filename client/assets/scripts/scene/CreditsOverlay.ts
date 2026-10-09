@@ -5,20 +5,21 @@
  * <p>铁律 2：本文件只画传入的数据，一个字都不自己写死 —— 署名内容改一个字就不是原作者给出的那份许可了，
  * 所以文本的唯一产地是 `Credits.ts`（它又逐字抄自 `art-src/ATTRIBUTION.md`）。
  *
- * <p><b>内容是静态的</b>（不依赖服务端）：所以它在 `onLoad` 里一次建好，`show()` 只切可见性；
- * 与「概率公示」那种每次都要重拉的合规屏不同 —— 素材许可不会在两次打开之间变化。
+ * <p>许可内容不依赖服务端；重开时按当前尺寸量取净区，长文完整进入可滚动窗口。
  */
 import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { CREDITS, wrapCredit } from '../game/settings/Credits'
 import type { CreditEntry } from '../game/settings/Credits'
 import { applySystemUiFont } from './UiFont'
+import { DIALOG_SCRIM, finishLegacyDialog, applyDialogButton } from './DialogStyle'
+import { IRON_SURFACE } from '../game/ui/UiTokens'
 
 const { ccclass } = _decorator
 
-const COLOR_MASK = new Color(0, 0, 0, 200)
+const COLOR_MASK = DIALOG_SCRIM
 const COLOR_CARD = new Color(28, 23, 20, 255)
-const COLOR_TEXT = new Color(226, 214, 190, 255)
-const COLOR_DIM = new Color(150, 140, 124, 255)
+const COLOR_TEXT = new Color(...IRON_SURFACE)
+const COLOR_DIM = COLOR_TEXT
 const COLOR_GOLD = new Color(184, 134, 11, 255)
 
 const CARD_WIDTH = 760
@@ -46,24 +47,18 @@ function licenseLine(entry: CreditEntry): string {
 export class CreditsOverlay extends Component {
   onClose: (() => void) | null = null
   private readonly nodes: Node[] = []
-  private built = false
 
   override onLoad(): void {
     this.build()
-    this.built = true
   }
 
   override onDestroy(): void {
-    this.built = false
     this.nodes.length = 0
     this.onClose = null
   }
 
   show(): void {
-    if (!this.built) {
-      this.build()
-      this.built = true
-    }
+    this.build()
     this.node.active = true
   }
 
@@ -89,7 +84,7 @@ export class CreditsOverlay extends Component {
     const top = cardHeight / 2 - PADDING
     const left = -CARD_WIDTH / 2 + PADDING
     let y = top - 22
-    this.label('开源许可与署名', COLOR_GOLD, 22, left, y, 'left')
+    this.label('开源许可与署名', COLOR_TEXT, 22, left, y, 'left')
     y -= TITLE_HEIGHT
 
     for (const entry of CREDITS) {
@@ -111,6 +106,7 @@ export class CreditsOverlay extends Component {
     }
 
     this.button('CreditsCloseButton', '关闭', 0, y - 6, 160)
+    finishLegacyDialog(this.node, this.nodes, 'ui.panel.parchment')
   }
 
   private button(name: string, text: string, x: number, y: number, width: number): void {
@@ -121,6 +117,7 @@ export class CreditsOverlay extends Component {
     graphics.roundRect(-width / 2, -height / 2, width, height, 6)
     graphics.stroke()
     graphics.node.on('touch-start', () => this.onClose?.(), this)
+    applyDialogButton(graphics.node, true, width, height)
     this.label(text, COLOR_GOLD, 17, x, y, 'center')
   }
 

@@ -97,7 +97,7 @@ function installHelpers() {
       if (node === null) {
         return 'no-node:' + name
       }
-      node.emit('touch-start')
+      node.emit(node.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
       return 'ok'
     },
     /** 点某一行行内的动作按钮（行内第 4 个子节点，见 SocialPanelView.createRow）。 */
@@ -130,7 +130,7 @@ function installHelpers() {
         if (button === undefined || button.active !== true) {
           return 'row-found-without-button'
         }
-        button.emit('touch-start')
+        button.emit(button.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
         return 'ok'
       }
       return 'no-row:' + matchText
@@ -212,20 +212,20 @@ function installHelpers() {
       // 菜单一共六项而弹层每页四项：「拉黑」「关注他」在第 2 页。
       // 翻页是这份弹层自己的导航，玩家也是这么够到那些项的 —— 探针不翻就等于判"这一项不存在"
       for (let page = 0; page < 4; page += 1) {
-        const hit = (overlay.children || []).find((row) => row.name.startsWith('Choice-')
+        const hit = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].find((row) => row.name.startsWith('Choice-')
           && row.activeInHierarchy
           && (row.children || []).some((child) => (child.getComponent('cc.Label')?.string ?? '')
             .includes(contains)))
         if (hit !== undefined) {
-          hit.emit('touch-start')
+          hit.emit(hit.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
           return 'ok'
         }
-        const next = (overlay.children || []).find((c) => c.name === 'ChoiceNext' && c.activeInHierarchy)
+        const next = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].find((c) => c.name === 'ChoiceNext' && c.activeInHierarchy)
         if (next === undefined) return 'no-choice:' + contains
-        const before = (overlay.children || []).filter((c) => c.activeInHierarchy
+        const before = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].filter((c) => c.activeInHierarchy
           && c.name.startsWith('Choice-')).map((c) => c.name).join(',')
-        next.emit('touch-start')
-        const after = (overlay.children || []).filter((c) => c.activeInHierarchy
+        next.emit(next.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
+        const after = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].filter((c) => c.activeInHierarchy
           && c.name.startsWith('Choice-')).map((c) => c.name).join(',')
         if (before === after) return 'no-choice:' + contains
       }

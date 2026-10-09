@@ -5,6 +5,7 @@ import type { ChoiceOption } from '../game/session/Choices'
 import { applySystemUiFont } from './UiFont'
 import { applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
+import { DIALOG_SCRIM, applyDialogButton, fitExistingDialog } from './DialogStyle'
 
 const COLOR_MASK = new Color(12, 10, 9, 238)
 /**
@@ -14,7 +15,7 @@ const COLOR_MASK = new Color(12, 10, 9, 238)
  * 边界读不出来（审计 §2.5 的视觉评审原话：「面板自身边界非常模糊，与背后同样暗沉的城景严重粘连」）。
  * 压暗层同时把"这一层是模态"讲清楚 —— 它下面的东西这一刻不能点。
  */
-const COLOR_SCRIM = new Color(8, 6, 5, 150)
+const COLOR_SCRIM = DIALOG_SCRIM
 const COLOR_PANEL = new Color(43, 36, 29, 255)
 const COLOR_ROW = new Color(59, 48, 38, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
@@ -35,6 +36,7 @@ export class ChoiceOverlay {
   private page = 0
   private onPick: ((id: string) => void) | null = null
   private onHide: (() => void) | null = null
+  private readonly layoutDialog: () => void
 
   constructor(parent: Node, title: string, width = 760) {
     this.width = width
@@ -85,7 +87,7 @@ export class ChoiceOverlay {
       this.optionDetailLabels.push(row.detail)
     }
 
-    this.createCommandButton('ChoicePrev', '上一页', -150, -170, () => {
+    this.createCommandButton('ChoicePrev', '上一页', -112, -170, () => {
       if (this.page > 0) {
         this.page--
         this.renderPage()
@@ -97,7 +99,10 @@ export class ChoiceOverlay {
         this.renderPage()
       }
     })
-    this.createCommandButton('ChoiceCancel', '取消', 150, -170, () => this.hide())
+    this.createCommandButton('ChoiceCancel', '取消', 112, -170, () => this.hide())
+    const footer = this.node.children.filter(node => ['ChoicePrev', 'ChoiceNext', 'ChoiceCancel'].includes(node.name))
+    this.layoutDialog = fitExistingDialog(this.node, this.node,
+      [this.titleLabel.node, this.pageLabel.node, ...this.optionNodes], footer, 'ui.panel.warning', width, 430)
     // 行是从 NodePool 里 acquire 出来的：宿主每次渲染都把行重新 addChild 到父节点末尾，
     // 而弹层建得比它们早 —— 于是"后加的压在弹层上面"。抬层不能只靠 `show()`（渲染发生在
     // 它之后，背包实测），也不能靠八个宿主各自记得抬一次（漏一个就是一个玩家可见缺陷）。
@@ -122,6 +127,7 @@ export class ChoiceOverlay {
     this.onPick = onPick
     this.onHide = onHide ?? null
     this.node.active = true
+    this.layoutDialog()
     this.renderPage()
   }
 
@@ -182,14 +188,15 @@ export class ChoiceOverlay {
     node.layer = this.node.layer
     this.node.addChild(node)
     node.setPosition(new Vec3(x, y, 0))
-    node.addComponent(UITransform).setContentSize(new Size(120, 38))
+    node.addComponent(UITransform).setContentSize(new Size(100, 38))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_PANEL
     graphics.strokeColor = COLOR_GOLD
     graphics.lineWidth = 1
-    graphics.roundRect(-60, -19, 120, 38, 6)
+    graphics.roundRect(-50, -19, 100, 38, 6)
     graphics.fill()
     graphics.stroke()
+    applyDialogButton(node, true, 100, 38)
     const label = this.addLabelTo(node, 0, 0, 15, COLOR_TEXT)
     label.string = text
     node.on('touch-start', (_event: EventTouch) => onTap(), this)
@@ -197,6 +204,8 @@ export class ChoiceOverlay {
 
   private renderPage(): void {
     const pages = this.pageCount()
+    this.updatePager('ChoicePrev', this.page > 0, () => { this.page--; this.renderPage() })
+    this.updatePager('ChoiceNext', this.page + 1 < pages, () => { this.page++; this.renderPage() })
     // 措辞要中立：这一层共用八个地方，"可选目标"对加速目标是通的，对「开几个」那种档位就是错的
     this.pageLabel.string = pages <= 1 ? `${this.options.length} 个可选项` : `第 ${this.page + 1}/${pages} 页`
     const pageOptions = this.options.slice(
@@ -209,6 +218,7 @@ export class ChoiceOverlay {
       }
       row.active = option !== undefined
       row.off('touch-start')
+      row.off('touch-end')
       if (option === undefined) {
         continue
       }
@@ -220,7 +230,7 @@ export class ChoiceOverlay {
       if (detail !== undefined) {
         detail.string = option.detail
       }
-      row.on('touch-start', (_event: EventTouch) => {
+      row.on('touch-end', (_event: EventTouch) => {
         const callback = this.onPick
         this.hide()
         callback?.(option.id)
@@ -230,6 +240,16 @@ export class ChoiceOverlay {
 
   private pageCount(): number {
     return Math.max(1, Math.ceil(this.options.length / OPTIONS_PER_PAGE))
+  }
+
+  private updatePager(name: string, enabled: boolean, onTap: () => void): void {
+    const node = this.node.getChildByName(name)
+    if (node === null) return
+    node.off('touch-start')
+    if (enabled) node.on('touch-start', onTap, this)
+    applyDialogButton(node, enabled, 100, 38)
+    const label = node.children[0]?.getComponent(Label)
+    if (label !== null && label !== undefined) label.color = enabled ? COLOR_TEXT : COLOR_DIM
   }
 
   private addLabel(x: number, y: number, size: number, color: Color): Label {

@@ -19,10 +19,11 @@ import type { RallyField, RallyNumberRow, RallyScope, RallyScopeRow } from '../g
 import { applySystemUiFont } from './UiFont'
 import { applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
+import { DIALOG_SCRIM, applyDialogButton, fitExistingDialog } from './DialogStyle'
 
 const COLOR_MASK = new Color(12, 10, 9, 232)
 /** 整屏遮罩色，与 `AwakenPickOverlay` / `ComposePickOverlay` 同一份参数 */
-const COLOR_SCRIM = new Color(0, 0, 0, 170)
+const COLOR_SCRIM = DIALOG_SCRIM
 const COLOR_PANEL = new Color(43, 36, 29, 255)
 const COLOR_ROW = new Color(59, 48, 38, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
@@ -103,6 +104,7 @@ export class MarchComposeOverlay {
   /** 两个数组当前各自管的是哪一行数字（渲染时按视图给的顺序贴上去） */
   private bandFields: RallyField[] = []
   private view: MarchComposeView | null = null
+  private readonly layoutDialog: () => void
 
   /** 勾选意图（unitId 与它要变成的数量）；由编排层夹取后再回来重画。 */
   onPick: ((unitId: string, count: number) => void) | null = null
@@ -243,6 +245,18 @@ export class MarchComposeOverlay {
     this.confirmNode = confirm.node
     this.confirmLabel = confirm.label
 
+    const footer = this.node.children.filter(node => ['编成取消', '编成侦察', '编成种类', '编成出征'].includes(node.name))
+    footer.forEach((node, index) => {
+      node.setPosition(new Vec3(-165 + index * 110, node.position.y, 0))
+      node.getComponent(UITransform)!.setContentSize(100, 38)
+      applyDialogButton(node, true, 100, 38)
+      const label = node.children.find(child => child.getComponent(Label) !== null)?.getComponent(Label)
+      if (label !== null && label !== undefined) label.color = COLOR_TEXT
+    })
+    this.layoutDialog = fitExistingDialog(this.node, plate,
+      [crest, this.titleLabel.node, this.coordLabel.node, this.totalLabel.node, this.noticeLabel.node,
+        ...this.rowNodes, this.bandNode], footer, 'ui.panel.iron', width, PANEL_HEIGHT)
+
     this.node.active = false
   }
 
@@ -301,6 +315,8 @@ export class MarchComposeOverlay {
     this.scoutLabel.color = view.mode === 'SCOUT' ? COLOR_GOLD : COLOR_TEXT
     this.confirmLabel.color = view.submitting ? COLOR_DIM : COLOR_MASK
     this.confirmNode.active = !view.submitting
+    this.confirmLabel.color = view.submitting ? COLOR_DIM : COLOR_TEXT
+    this.layoutDialog()
   }
 
 
@@ -365,7 +381,7 @@ export class MarchComposeOverlay {
       graphics.fill()
     }
     paint(COLOR_PANEL)
-    node.on('touch-start', (_event: EventTouch) => onTap(), this)
+    node.on('touch-end', (_event: EventTouch) => onTap(), this)
     return { node, label, paint }
   }
 
@@ -428,7 +444,7 @@ export class MarchComposeOverlay {
     graphics.fill()
     const label = this.childLabel(node, 0, 0, 18, COLOR_TEXT)
     label.string = text
-    node.on('touch-start', (_event: EventTouch) => onTap(), this)
+    node.on('touch-end', (_event: EventTouch) => onTap(), this)
     return node
   }
 

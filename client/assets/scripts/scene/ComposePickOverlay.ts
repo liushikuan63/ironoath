@@ -16,10 +16,11 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
 import type { HeroComposeRow, HeroComposeView } from '../game/hero/HeroCompose'
 import { applySystemUiFont } from './UiFont'
+import { DIALOG_SCRIM, finishLegacyDialog, applyDialogButton } from './DialogStyle'
 
 const { ccclass } = _decorator
 
-const COLOR_SCRIM = new Color(0, 0, 0, 170)
+const COLOR_SCRIM = DIALOG_SCRIM
 const COLOR_BACKGROUND = new Color(24, 20, 18, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_ROW_SELECTED = new Color(62, 44, 26, 255)
@@ -44,8 +45,6 @@ const ROWS_CLEAR = 24
 const BUTTON_BAND = 56
 const BUTTON_HEIGHT = 36
 const PADDING = 16
-/** 卡片上下各留一点空气，别让底板贴着屏幕边（#277 那次"名牌压在 HUD 上"量的就是这种贴边） */
-const SAFE_MARGIN = 40
 
 @ccclass('ComposePickOverlay')
 export class ComposePickOverlay extends Component {
@@ -77,6 +76,7 @@ export class ComposePickOverlay extends Component {
     this.drawCard()
     this.drawRows()
     this.drawButtons()
+    finishLegacyDialog(this.node, this.nodes)
   }
 
   private drawScrim(): void {
@@ -108,21 +108,11 @@ export class ComposePickOverlay extends Component {
     return this.headerHeight() + Math.max(this.shown().length, 1) * ROW_HEIGHT + BUTTON_BAND
   }
 
-  /**
-   * 画得下几行由**可视高度**现算：写死行数时第 5 行压在导航条下面（那个窗口可视高 540 而不是设计 640）。
-   * 装不下就少画几行并写明"另有 N 名未列出" —— 静默截断等于把武将藏起来。
-   */
-  private maxRows(): number {
-    const room = view.getVisibleSize().height - SAFE_MARGIN * 2 - this.headerHeight() - BUTTON_BAND
-    return Math.max(1, Math.floor(room / ROW_HEIGHT))
-  }
-
-  /** 截断到画得下的那些行；正好装得下时原样返回。 */
+  /** 滚动区承载完整名单，确认取消固定在净区底边。 */
   private shown(): readonly HeroComposeRow[] {
     const rows = this.data?.rows ?? []
-    const limit = this.maxRows()
-    // 装不下时给"另有 N 名未列出"那一行留出一格
-    return rows.length <= limit ? rows : rows.slice(0, limit - 1)
+    // 净区内滚动承载完整名单，不把超过一屏的武将藏起来。
+    return rows
   }
 
   private drawRows(): void {
@@ -187,7 +177,7 @@ export class ComposePickOverlay extends Component {
     graphics.fill()
     if (row.usable) {
       // 不可用的那行不吃触摸：它的原因已经写在行上了，点它只会有"按了没反应"
-      graphics.node.on('touch-start', () => this.onPick?.(row.heroId))
+      graphics.node.on('touch-end', () => this.onPick?.(row.heroId))
     }
 
     // 两行字都落在自己那块底板里（±PLATE_HEIGHT/2）：压到下一行就会被下一行的底板盖住
@@ -222,6 +212,7 @@ export class ComposePickOverlay extends Component {
     if (enabled) {
       graphics.node.on('touch-start', onClick)
     }
+    applyDialogButton(graphics.node, enabled, width, BUTTON_HEIGHT)
     this.label(text, enabled ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 18, x, y, 'center')
   }
 

@@ -19,13 +19,14 @@ import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, 
 import { GuideDriver } from '../game/guide/GuideDriver'
 import type { GuideFrame } from '../game/guide/GuideDriver'
 import type { GuideAction, GuideScriptResp } from '../net/generated/GuideProtocol'
-import { applyCommandButton } from './ArtCatalog'
+import { applyCommandButton, applySlicedSprite } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
+import { DIALOG_SCRIM, observeDialogSize } from './DialogStyle'
 
 const { ccclass } = _decorator
 
 /** 配色沿用各面板的「铜金 + 暗红」。美术常量，不是游戏数值。 */
-const COLOR_MASK = new Color(8, 6, 5, 168)
+const COLOR_MASK = DIALOG_SCRIM
 const COLOR_BUBBLE = new Color(38, 31, 25, 216)
 const COLOR_BUBBLE_EDGE = new Color(184, 134, 11, 255)
 /** 「这一步还没达成」那一句的暖红，与内城 `COLOR_WARNING` 同族。 */
@@ -77,6 +78,7 @@ export class GuideView extends Component {
   /** 收到一次脚本下发：换驱动器就等于重新开始读这一号的位置（服务端是唯一权威）。 */
   attach(resp: GuideScriptResp): void {
     this.driver = GuideDriver.from(resp)
+    observeDialogSize(this.node, () => this.repaint())
     this.repaint()
   }
 
@@ -208,10 +210,8 @@ export class GuideView extends Component {
       return
     }
     const size = view.getVisibleSize()
-    // 600 而不是铺满：引导气泡是临时层，不该把整幅城景压成一块不透明板
-    // （2026-09-26 排版审查：760 宽 + 246 不透明度时首步弹窗盖掉约 40% 画面）。
-    // 文案在 600-32 里折两行仍装得下（文本盒高 62）。
-    const bubbleWidth = Math.min(size.width - BUBBLE_MARGIN * 2, 600)
+    // 420 宽的 B 档薄边气泡贴角，中央城堡与本步操作保留可见空间。
+    const bubbleWidth = Math.min(size.width - BUBBLE_MARGIN * 2, 420)
 
     const bubble = new Node('GuideBubble')
     bubble.layer = this.node.layer
@@ -225,6 +225,8 @@ export class GuideView extends Component {
     graphics.strokeColor = COLOR_BUBBLE_EDGE
     graphics.roundRect(-bubbleWidth / 2, -BUBBLE_HEIGHT / 2, bubbleWidth, BUBBLE_HEIGHT, 10)
     graphics.stroke()
+    // 气泡属 B 档轻提示：使用薄边暗铁条板，避免把 A 档 80·72 铜帽塞进 150 高提示。
+    applySlicedSprite(bubble, 'ui.plate.tooltip', bubbleWidth, BUBBLE_HEIGHT)
     // 气泡自己也吃触摸：否则点气泡空白处会穿到下层面板里，做出"引导让你做、你自己又点了别的"那种事
     bubble.on('touch-start', (_event: EventTouch) => undefined)
     this.bubble = bubble
@@ -247,8 +249,8 @@ export class GuideView extends Component {
     text.addComponent(UITransform).setContentSize(new Size(bubbleWidth - 32, 62))
     text.setPosition(new Vec3(0, 6, 0))
     const textLabel = applySystemUiFont(text.addComponent(Label))
-    textLabel.fontSize = 24
-    textLabel.lineHeight = 30
+    textLabel.fontSize = 20
+    textLabel.lineHeight = 26
     textLabel.overflow = Label.Overflow.SHRINK
     textLabel.horizontalAlign = Label.HorizontalAlign.LEFT
     textLabel.color = COLOR_TEXT
@@ -343,7 +345,11 @@ export class GuideView extends Component {
     }
     const anchorTop = hole.y + hole.height < height / 2 ? hole.y + hole.height : height / 2
     const y = anchorTop - BUBBLE_HEIGHT / 2 - 12
-    this.bubble.setPosition(new Vec3(0, Math.max(y, -height / 2 + BUBBLE_HEIGHT / 2 + 8), 0))
+    const bubbleWidth = this.bubble.getComponent(UITransform)!.width
+    // 贴可用区右角，腾出城景中心与主堡；底边仍以真实净区而不是屏幕底边夹住。
+    const x = hole.x + hole.width - bubbleWidth / 2 - 12
+    this.bubble.setPosition(new Vec3(x,
+      Math.max(y, hole.y + BUBBLE_HEIGHT / 2 + 8), 0))
   }
 
   private complete(): void {

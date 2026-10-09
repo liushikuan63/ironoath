@@ -155,19 +155,19 @@ const SNAPSHOT = (rootName) => `(() => {
     if (label && label.string) {
       const labelBox = n.getComponent('cc.UITransform')
       labels.push({
-        text: label.string, x: n.getPosition().x, y: n.getPosition().y,
+        text: label.string, x: n.worldPosition.x, y: n.worldPosition.y,
         h: labelBox ? labelBox.contentSize.height : -1,
       })
     }
     const box = n.getComponent('cc.UITransform')
     if (/^compose-/.test(n.name)) {
-      rows.push({ name: n.name, y: n.getPosition().y, h: box ? box.contentSize.height : -1 })
+      rows.push({ name: n.name, y: n.worldPosition.y, h: box ? box.contentSize.height : -1 })
     }
     if (n.name === 'card') {
       card = { h: box ? box.contentSize.height : -1 }
     }
     if (n.name === 'confirm' || n.name === 'cancel') {
-      footers.push({ name: n.name, x: n.getPosition().x, y: n.getPosition().y })
+      footers.push({ name: n.name, x: n.worldPosition.x, y: n.worldPosition.y })
     }
     for (const child of n.children) walk(child)
   }
@@ -188,7 +188,7 @@ const TAP = (rootName, name) => `(() => {
   }
   walk(root)
   if (found === null) return 'missing'
-  found.emit('touch-start')
+  found.emit(found.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return 'tapped'
 })()`
 
@@ -403,10 +403,9 @@ check('宽列表这一幕点入口', await page.evaluate(TAP('hero', 'ComposeEnt
 await page.waitForTimeout(600)
 const wide = await page.evaluate(SNAPSHOT('composePick'))
 const totalCandidates = SR_POOL.length + WIDE_POOL.length
-checkTrue('候选总数大于画得下的行数（这一幕的前置）', wide.rows.length < totalCandidates)
-checkTrue('少画的那些有一句"另有 N 名未列出"',
-  wide.labels.some((l) => /另有 \d+ 名未列出/.test(l.text)))
-checkTrue('卡片仍在可视高度内（截断是有效的而不是把行推到屏外）', wide.card.h <= visible)
+check('宽名单全部进入生产滚动内容（末项不能只靠一句未列出代替）', wide.rows.length, totalCandidates)
+checkTrue('全量名单不再出现未列出提示', !wide.labels.some((l) => /另有 \d+ 名未列出/.test(l.text)))
+checkTrue('卡片仍在可视高度内（长内容由Mask裁剪）', wide.card.h <= visible)
 const wideYs = wide.rows.map((r) => r.y)
 check('画出来的行彼此不重叠', new Set(wideYs).size, wideYs.length)
 await page.screenshot({ path: path.join(OUT, 'compose-wide.png') })

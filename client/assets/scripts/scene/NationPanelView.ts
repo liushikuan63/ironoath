@@ -13,7 +13,7 @@
  * ② 余额/上限/流水条数都照服务端下发的数念；
  * ③ 支给谁与谁做的走 `payeeLabel` / `operatorLabel` 换过的词 —— 这里**永远不印 id**。
  */
-import { _decorator, Color, Component, EditBox, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { _decorator, Color, Component, EditBox, EventTouch, Graphics, Label, Node, ScrollView, Size, UITransform, Vec2, Vec3, view } from 'cc'
 import type {
   NationPanelView as NationPanelData, NationTabKey, PayeeType, SpendDraft,
 } from '../game/nation/NationPanel'
@@ -21,10 +21,11 @@ import type { WarSection } from '../game/nation/NationSections'
 import { NATION_TABS, SPEND_AMOUNT_PRESETS, TREASURY_LOG_ROWS, amountText, spendDraftBlocker, spendSinkOptions } from '../game/nation/NationPanel'
 import { applySystemUiFont } from './UiFont'
 import { applySlicedSprite, type StaticArtKey } from './ArtCatalog'
+import { applyDialogButton, createDialogScroll, dialogContentRect, DIALOG_SCRIM, observeDialogSize, paintCompactDialogFrame } from './DialogStyle'
 
 const { ccclass } = _decorator
 
-const COLOR_MASK = new Color(0, 0, 0, 190)
+const COLOR_MASK = DIALOG_SCRIM
 const COLOR_CARD = new Color(28, 23, 20, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_FIELD = new Color(22, 18, 15, 255)
@@ -57,16 +58,6 @@ const DEFAULT_FIELD_WIDTH = 150
 const LABEL_COL = 100
 /** 支出表单打开时流水只留这么几条：一屏装不下全部 + 表单（截掉几条由数据层报出来）。 */
 const LOG_ROWS_WHEN_ARMED = 2
-/**
- * 国策页一屏画几条提案 / 几条候选（B13 §4 的公示是明文要求可查项，所以截断要说清剩几条）。
- *
- * <p>取 3 是版式推导：一屏 600 逻辑高减掉标题、页签、倒计时、槽位说明之后剩约 340，
- * 每条提案占两行 + 门禁理由一行 ≈ 74，3 条 ≈ 222，候选区再留一屏的一半。
- * 刻意不取「能放多少放多少」：多画一条就把生效状态推出屏外，而那一行是玩家最该先看见的。
- */
-const POLICY_PROPOSAL_ROWS = 3
-const POLICY_CANDIDATE_ROWS = 4
-
 /** 临时的输入态。**不属于存档**：`beginSession` 每次打开都重置，免得"关掉再开还留着上次的字"。 */
 type DraftField = 'nationName' | 'capitalX' | 'capitalY' | 'reason'
 
@@ -117,6 +108,9 @@ export class NationPanelView extends Component {
   private readonly inputFields = new Map<string, DraftField>()
   /** 可选的收款人（id → 名字）。**id 只用于发请求，永不上屏**。 */
   private payees: { readonly id: string; readonly name: string }[] = []
+  private drawingParent: Node | null = null
+  private policyScroll: ScrollView | null = null
+  private policyOffset = 0
 
   onClose: (() => void) | null = null
   onFound: ((name: string, capitalX: number, capitalY: number) => void) | null = null
@@ -157,6 +151,8 @@ export class NationPanelView extends Component {
   override onLoad(): void {
     this.buildMask()
     this.buildCard()
+    this.refreshChrome()
+    observeDialogSize(this.node, () => { this.refreshChrome(); this.redraw() })
     this.built = true
     if (this.pending !== null) {
       const pending = this.pending
@@ -193,6 +189,7 @@ export class NationPanelView extends Component {
     this.warArmed = false
     this.diproRelation = 'ALLIED'
     this.appointTarget = null
+    this.policyOffset = 0
   }
 
   /** 递一份可收款名单（由编排层在拉完联盟成员后调用）。 */
@@ -246,7 +243,27 @@ export class NationPanelView extends Component {
     graphics.fill()
   }
 
+  private refreshChrome(): void {
+    const size = view.getVisibleSize()
+    const mask = this.node.getChildByName('NationMask')
+    const maskGraphics = mask?.getComponent(Graphics)
+    mask?.getComponent(UITransform)?.setContentSize(size.width, size.height)
+    if (maskGraphics !== null && maskGraphics !== undefined) {
+      maskGraphics.clear()
+      maskGraphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
+      maskGraphics.fill()
+    }
+    const area = dialogContentRect(this.node)
+    const card = this.node.getChildByName('NationCard')
+    if (card === null) return
+    card.setPosition(new Vec3(0, area.y + area.height / 2, 0))
+    paintCompactDialogFrame(card, Math.min(PANEL_WIDTH, area.width - 24), area.height - 12)
+  }
+
   private redraw(): void {
+    if (this.policyScroll !== null) this.policyOffset = this.policyScroll.getScrollOffset().y
+    this.policyScroll = null
+    this.drawingParent = null
     for (const node of this.nodes) {
       node.destroy()
     }
@@ -256,9 +273,11 @@ export class NationPanelView extends Component {
       return
     }
     const size = view.getVisibleSize()
-    const top = size.height / 2 - TOP_RESERVE
-    const left = -PANEL_WIDTH / 2 + PADDING
-    const innerWidth = PANEL_WIDTH - PADDING * 2
+    const compactPolicy = data.tab === 'POLICY' && size.height <= 320
+    const top = compactPolicy ? dialogContentRect(this.node).y + dialogContentRect(this.node).height - 12
+      : size.height / 2 - TOP_RESERVE
+    const innerWidth = Math.min(PANEL_WIDTH, dialogContentRect(this.node).width - 24) - PADDING * 2
+    const left = -innerWidth / 2
 
     this.label(data.title, COLOR_GOLD, 22, left, top - 18, 'left')
     // 国家语义的两件装饰（§一 映射表：国家 → 玉玺火漆）：顶饰居中、火漆压在标题行右端。
@@ -267,9 +286,9 @@ export class NationPanelView extends Component {
     this.decor('ui.seal.wax', 34, 34, PANEL_WIDTH / 2 - PADDING - 120, top - 18)
     this.button('CloseButton', '关闭', PANEL_WIDTH / 2 - PADDING - 38, top - 18, 76, true,
       () => this.onClose?.())
-    this.label(data.headline, COLOR_HINT, 14, left, top - 44, 'left')
+    if (!compactPolicy) this.label(data.headline, COLOR_HINT, 14, left, top - 44, 'left')
 
-    let cursor = top - TITLE_BAND
+    let cursor = top - (compactPolicy ? 36 : TITLE_BAND)
     if (data.mode === 'NONE') {
       cursor = this.drawFoundForm(left, cursor)
       cursor = this.drawCandidates(left, innerWidth, cursor, data)
@@ -302,7 +321,7 @@ export class NationPanelView extends Component {
           break
       }
     }
-    if (data.notice !== null) {
+    if (data.notice !== null && data.tab !== 'POLICY') {
       // **成功是金色、失败是红色**：这一屏同时承载公共资产的操作，
       // 把"研究完成"染成警告红，玩家读到的就是"出错了"。
       this.label(data.notice, data.noticeTone === 'ok' ? COLOR_GOLD : COLOR_WARN, 14,
@@ -636,9 +655,7 @@ export class NationPanelView extends Component {
    * 倒计时、槽位说明、公示名单，全部是服务端下发的那一位（铁律 2）。
    * 灰键不挂 touch-start ⇒ 点了零请求。
    *
-   * <p><b>版式取舍</b>：提案区每条占两行（国策名 + 票数与名单），
-   * 一屏放得下 3 条；再多的只画前 3 条并说清还剩几条 ——
-   * 公示是 B13 §4 明文要求的可查项，**不能说"更多"就把它省掉**。
+   * <p>文字按实际净宽换行，整份内容进入裁剪后的滚动区；公示名单和末尾说明完整可达。
    */
   private drawPolicy(left: number, innerWidth: number, top: number, data: NationPanelData): number {
     const policy = data.sections?.policy ?? null
@@ -646,76 +663,92 @@ export class NationPanelView extends Component {
       this.label('国策这一次没拉到', COLOR_WARN, 14, left, top - 12, 'left')
       return top - 32
     }
-    let y = top - 18
-    this.label(policy.header, COLOR_GOLD, 15, left, y, 'left')
-    y -= 24
-    this.label(policy.countdownText, COLOR_DIM, 13, left, y, 'left')
-    y -= 20
-    this.label(policy.activeText, COLOR_HINT, 13, left, y, 'left')
-    y -= 24
+    const area = dialogContentRect(this.node)
+    const bottom = area.y + 12
+    const viewportTop = top - 6
+    const viewportHeight = Math.max(1, viewportTop - bottom - 42)
+    const wrapped = createDialogScroll(this.node, 'PolicyViewport', innerWidth, viewportHeight, 0, viewportTop)
+    this.nodes.push(wrapped.node)
+    this.policyScroll = wrapped.scroll
+    this.drawingParent = wrapped.content
+    // content 锚点在顶边，所有排版以 y=0 起步；真实字体与宽度决定折行高度。
+    let y = -6
+    const line = (text: string, color: Color, size: number, width = innerWidth, x = left): void => {
+      y = this.policyText(text, color, size, x, y, width) - 8
+    }
+    line(policy.header, COLOR_GOLD, 15)
+    line(policy.countdownText, COLOR_DIM, 13)
+    line(policy.activeText, COLOR_HINT, 13)
 
     // ---------- 提案区 ----------
-    this.label(`本轮提案（${policy.proposals.length}）`, COLOR_DIM, 13, left, y, 'left')
-    y -= 24
+    line(`本轮提案（${policy.proposals.length}）`, COLOR_DIM, 13)
     if (policy.proposals.length === 0) {
-      this.label('本轮还没有提案 —— 国王或官员可以从下面挑一条提上来', COLOR_DIM, 13, left, y, 'left')
-      y -= 24
+      line('本轮还没有提案 —— 国王或官员可以从下面挑一条提上来', COLOR_DIM, 13)
     }
-    const shown = policy.proposals.slice(0, POLICY_PROPOSAL_ROWS)
-    for (const row of shown) {
-      this.label(row.name, COLOR_TEXT, 14, left, y, 'left')
-      this.label(row.tallyText, COLOR_DIM, 12, left + 150, y, 'left')
-      this.button(`PolicyYes-${row.proposalId ?? 'x'}`, '赞成', left + 420, y, 74, row.voteGate.enabled,
+    for (const row of policy.proposals) {
+      const rowTop = y
+      const titleBottom = this.policyText(row.name, COLOR_TEXT, 14, left, rowTop, innerWidth - 176)
+      this.button(`PolicyYes-${row.proposalId ?? 'x'}`, '赞成', left + innerWidth - 126, rowTop - 15, 74, row.voteGate.enabled,
         () => { if (row.proposalId !== null) this.onVotePolicy?.(row.proposalId, true) })
-      this.button(`PolicyNo-${row.proposalId ?? 'x'}`, '反对', left + 500, y, 74, row.voteGate.enabled,
+      this.button(`PolicyNo-${row.proposalId ?? 'x'}`, '反对', left + innerWidth - 42, rowTop - 15, 74, row.voteGate.enabled,
         () => { if (row.proposalId !== null) this.onVotePolicy?.(row.proposalId, false) })
-      y -= 20
-      this.label(`赞成：${row.supporters}`, COLOR_DIM, 12, left, y, 'left')
-      y -= 18
-      this.label(`反对：${row.opponents}`, COLOR_DIM, 12, left, y, 'left')
-      y -= 18
+      y = Math.min(titleBottom, rowTop - BUTTON_HEIGHT) - 6
+      line(row.tallyText, COLOR_DIM, 12)
+      line(`赞成：${row.supporters}`, COLOR_DIM, 12)
+      line(`反对：${row.opponents}`, COLOR_DIM, 12)
       // 灰键的理由**印在屏上**（不只在点不动时）：玩家要能读出"为什么我不能投"
       if (!row.voteGate.enabled && row.voteGate.reason !== null && row.voteGate.reason !== '') {
-        this.label(row.voteGate.reason, COLOR_WARN, 12, left, y, 'left')
-        y -= 18
+        line(row.voteGate.reason, COLOR_WARN, 12)
       }
       y -= 6
     }
-    const hiddenProposals = policy.proposals.length - shown.length
-    if (hiddenProposals > 0) {
-      this.label(`另有 ${hiddenProposals} 条提案没显示`, COLOR_DIM, 12, left, y, 'left')
-      y -= 20
-    }
 
     // ---------- 候选区（提案用） ----------
-    this.label('可提的国策', COLOR_DIM, 13, left, y, 'left')
-    y -= 24
+    line('可提的国策', COLOR_DIM, 13)
     // **单列，不是两列**。两列的第一版有两个叠在一起的毛病：键压在第二列文字上，
     // 改成两列各自带键之后，第二列的文字又跑出卡片右边界（截图里 T2/T4 那两行直接画到了
     // 卡片外面）。这里退回与科技页、任命页同一套已被验证的排版：
     // 文字贴 `left`，键排在右侧固定一处 —— 一列一行，键与文字不可能相压，也不可能出界。
     const proposeButtonX = left + innerWidth - 40
-    const candidates = policy.candidates.slice(0, POLICY_CANDIDATE_ROWS)
-    candidates.forEach((row, index) => {
-      const cy = y - index * 28
-      this.label(row.effectText, COLOR_TEXT, 12, left, cy, 'left')
-      this.button(`PolicyPropose-${row.policyId}`, '提案', proposeButtonX, cy, 70, row.proposeGate.enabled,
+    const candidates = policy.candidates
+    for (const row of candidates) {
+      const rowTop = y
+      const textBottom = this.policyText(row.effectText, COLOR_TEXT, 12, left, rowTop, innerWidth - 92)
+      this.button(`PolicyPropose-${row.policyId}`, '提案', proposeButtonX, rowTop - 15, 70, row.proposeGate.enabled,
         () => this.onProposePolicy?.(row.policyId))
-    })
-    y -= candidates.length * 28 + 2
-    const hiddenCandidates = policy.candidates.length - candidates.length
-    if (hiddenCandidates > 0) {
-      this.label(`另有 ${hiddenCandidates} 条国策没显示`, COLOR_DIM, 12, left, y, 'left')
-      y -= 20
+      y = Math.min(textBottom, rowTop - BUTTON_HEIGHT) - 8
     }
     // 提案的门禁理由**只显一次**（八行候选各自印一遍会把屏刷满）
     const proposeReason = candidates.find(row => !row.proposeGate.enabled)?.proposeGate.reason ?? ''
     if (proposeReason !== null && proposeReason !== '') {
-      this.label(proposeReason, COLOR_WARN, 12, left, y, 'left')
-      y -= 20
+      line(proposeReason, COLOR_WARN, 12)
     }
-    this.label(policy.slotNote, COLOR_DIM, 12, left, y, 'left')
-    return y - 20
+    line(policy.slotNote, COLOR_DIM, 12)
+    if (data.notice !== null) line(data.notice, data.noticeTone === 'ok' ? COLOR_GOLD : COLOR_WARN, 14)
+    const contentHeight = Math.max(viewportHeight, -y + 8)
+    wrapped.content.getComponent(UITransform)!.setContentSize(new Size(innerWidth, contentHeight))
+    this.drawingParent = null
+    const footerY = bottom + 16
+    this.button('PolicyScrollTop', '回到顶部', left + 54, footerY, 108, true,
+      () => { this.policyOffset = 0; this.policyScroll?.scrollToTop() })
+    this.button('PolicyScrollBottom', '查看说明', left + innerWidth - 54, footerY, 108, true,
+      () => this.policyScroll?.scrollToBottom())
+    this.label('上下滑动查看全部提案与说明', COLOR_DIM, 12, 0, footerY, 'center')
+    wrapped.scroll.scrollToOffset(new Vec2(0, Math.min(Math.max(0, this.policyOffset), contentHeight - viewportHeight)))
+    return bottom
+  }
+
+  private policyText(text: string, color: Color, size: number, x: number, top: number, width: number): number {
+    if (text === '') return top
+    const label = this.label(text, color, size, x, top, 'left')!
+    const transform = label.node.getComponent(UITransform)!
+    transform.setAnchorPoint(0, 1)
+    transform.setContentSize(new Size(width, size + 6))
+    label.overflow = Label.Overflow.RESIZE_HEIGHT
+    label.enableWrapText = true
+    label.verticalAlign = Label.VerticalAlign.TOP
+    label.updateRenderData(true)
+    return top - transform.height
   }
 
   // ---------- 无国家：创建 + 可加入列表 ----------
@@ -958,10 +991,11 @@ export class NationPanelView extends Component {
     graphics.lineWidth = 1
     graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 6)
     graphics.stroke()
+    applyDialogButton(graphics.node, enabled, width, BUTTON_HEIGHT, active)
     if (enabled) {
-      graphics.node.on('touch-start', onClick)
+      graphics.node.on(this.drawingParent === null ? 'touch-start' : 'touch-end', onClick)
     }
-    this.label(text, active ? COLOR_FIELD : (enabled ? COLOR_GOLD : COLOR_DIM), 15, x, y, 'center')
+    this.label(text, active ? COLOR_TEXT : (enabled ? COLOR_GOLD : COLOR_DIM), 15, x, y, 'center')
   }
 
   /**
@@ -1028,22 +1062,22 @@ export class NationPanelView extends Component {
   private surface(name: string, x: number, y: number, width: number, height: number): Graphics {
     const node = new Node(name)
     node.layer = this.node.layer
-    this.node.addChild(node)
+    ;(this.drawingParent ?? this.node).addChild(node)
     node.addComponent(UITransform).setContentSize(new Size(width, height))
     node.setPosition(new Vec3(x, y, 0))
-    this.nodes.push(node)
+    if (this.drawingParent === null) this.nodes.push(node)
     return node.addComponent(Graphics)
   }
 
   /** 造一个 Label：**锚点先按对齐方式定**再摆位置（默认中心锚点会让左对齐的边界参差）。 */
   private label(text: string, color: Color, size: number, x: number, y: number,
-    align: 'left' | 'right' | 'center'): void {
+    align: 'left' | 'right' | 'center'): Label | null {
     if (text === '') {
-      return
+      return null
     }
     const node = new Node('label')
     node.layer = this.node.layer
-    this.node.addChild(node)
+    ;(this.drawingParent ?? this.node).addChild(node)
     node.addComponent(UITransform).setAnchorPoint(
       align === 'left' ? 0 : align === 'right' ? 1 : 0.5, 0.5)
     const label = applySystemUiFont(node.addComponent(Label))
@@ -1055,7 +1089,8 @@ export class NationPanelView extends Component {
       ? Label.HorizontalAlign.LEFT
       : align === 'right' ? Label.HorizontalAlign.RIGHT : Label.HorizontalAlign.CENTER
     node.setPosition(new Vec3(x, y, 0))
-    this.nodes.push(node)
+    if (this.drawingParent === null) this.nodes.push(node)
+    return label
   }
 
   /** 整图装饰件（顶饰 / 火漆）：不参与九宫格，按素材实测比例给尺寸，同样记进 `this.nodes`。 */

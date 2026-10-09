@@ -107,12 +107,12 @@ const SNAPSHOT = (rootName) => `(() => {
     const t = n.getComponent('cc.UITransform')
     const label = n.getComponent('cc.Label')
     if (label && label.string) {
-      labels.push({ text: label.string, x: n.getPosition().x, y: n.getPosition().y,
-        h: t ? t.contentSize.height : -1 })
+      labels.push({ text: label.string, x: n.worldPosition.x, y: n.worldPosition.y,
+        h: t ? t.contentSize.height : -1, inScroll: n.parent?.name === 'DialogContentContent' })
     }
     if (/^(slot-|pick-|pool-|card$|cancel$|save$|clearSlot$|HeroRow$)/.test(n.name)
         && t && t.contentSize.width > 40) {
-      plates.push({ name: n.name, x: n.getPosition().x, y: n.getPosition().y,
+      plates.push({ name: n.name, x: n.worldPosition.x, y: n.worldPosition.y,
         w: t.contentSize.width, h: t.contentSize.height })
     }
     if (n.name === 'HeroRow') {
@@ -123,13 +123,14 @@ const SNAPSHOT = (rootName) => `(() => {
         for (const c of m.children) collect(c)
       }
       collect(n)
-      heroRows.push({ y: n.getPosition().y, texts })
+      heroRows.push({ y: n.worldPosition.y, texts })
     }
     for (const child of n.children) walk(child)
   }
   walk(root)
   heroRows.sort((a, b) => b.y - a.y)
-  return { active: root.active, labels, plates, heroRows }
+  const viewport = root.getChildByName('DialogContent')?.getComponent('cc.UITransform')?.getBoundingBoxToWorld()
+  return { active: root.active, labels, plates, heroRows, viewport: viewport ? { x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height } : null }
 })()`
 
 /** 按下某个名字的节点（限定子树，避免按到别的弹层里同名的按钮）。 */
@@ -145,7 +146,7 @@ const TAP = (rootName, name) => `(() => {
   }
   walk(root)
   if (found === null) return 'missing'
-  found.emit('touch-start')
+  found.emit(found.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return 'tapped'
 })()`
 
@@ -164,7 +165,7 @@ const TAP_ROW = (rootName, index) => `(() => {
   rows.sort((a, b) => b.getPosition().y - a.getPosition().y)
   const target = rows[${index}]
   if (target === undefined) return 'missing-row'
-  target.emit('touch-start')
+  target.emit(target.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return 'tapped'
 })()`
 
@@ -173,15 +174,25 @@ const textOf = (snapshot) => snapshot === null ? '' : snapshot.labels.map((l) =>
 
 /** 板与板两两矩形不相交（招募那一格刚踩到的判据，这里同一把尺子）。 */
 const plateCollisions = (snapshot) => {
-  const list = snapshot === null ? [] : snapshot.plates
+  const list = snapshot === null ? [] : snapshot.plates.filter(row => row.name !== 'card')
   const hits = []
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
       const a = list[i]
       const b = list[j]
+      const footer = row => /^(cancel|save|clearSlot)$/.test(row.name)
+      // 正文离屏部分被真实Mask裁掉，只比较其可画部分与固定按钮；行内几何仍完整检查。
       if (a.h <= 0 || b.h <= 0 || a.w <= 0 || b.w <= 0) continue
-      const vertical = Math.abs(a.y - b.y) < (a.h + b.h) / 2 - 0.5
-      const horizontal = Math.abs(a.x - b.x) < (a.w + b.w) / 2 - 0.5
+      const box = row => {
+        const raw = { left: row.x - row.w / 2, right: row.x + row.w / 2, bottom: row.y - row.h / 2, top: row.y + row.h / 2 }
+        if (footer(a) === footer(b) || footer(row) || !snapshot.viewport) return raw
+        const clip = snapshot.viewport
+        return { left: Math.max(raw.left, clip.x), right: Math.min(raw.right, clip.x + clip.width),
+          bottom: Math.max(raw.bottom, clip.y), top: Math.min(raw.top, clip.y + clip.height) }
+      }
+      const aa = box(a), bb = box(b)
+      const vertical = Math.min(aa.top, bb.top) > Math.max(aa.bottom, bb.bottom) + 0.5
+      const horizontal = Math.min(aa.right, bb.right) > Math.max(aa.left, bb.left) + 0.5
       if (vertical && horizontal) hits.push(`${a.name}×${b.name}`)
     }
   }
@@ -209,7 +220,7 @@ const everyRowFitsItsPlate = (snapshot) => {
   for (const plate of snapshot.plates) {
     if (!/^(slot-|pick-)/.test(plate.name)) continue
     // 只认"中心落在这块板带里"的字：底下那行「另有 N 名未列出」离得近但不属于这一行
-    const near = snapshot.labels.filter((l) => Math.abs(l.y - plate.y) < plate.h / 2 && l.h > 0)
+    const near = snapshot.labels.filter((l) => l.inScroll && Math.abs(l.y - plate.y) < plate.h / 2 && l.h > 0)
     for (const label of near) {
       if (Math.abs(label.y - plate.y) + label.h / 2 > plate.h / 2 + 0.5) {
         offenders.push(`${plate.name}:${label.text.slice(0, 6)}`)
@@ -226,7 +237,7 @@ const rowButtonGap = (snapshot) => {
   if (rows.length === 0 || buttons.length === 0) return -1
   const lowestRow = rows.reduce((a, b) => (a.y - a.h / 2 < b.y - b.h / 2 ? a : b))
   const highestButton = buttons.reduce((a, b) => (a.y + a.h / 2 > b.y + b.h / 2 ? a : b))
-  return lowestRow.y - lowestRow.h / 2 - (highestButton.y + highestButton.h / 2)
+  return (snapshot.viewport?.y ?? lowestRow.y - lowestRow.h / 2) - (highestButton.y + highestButton.h / 2)
 }
 
 const browser = await chromium.launch({ headless: true })
@@ -322,7 +333,7 @@ checkTrue('在别的队的那名（程远在第 1 队）**照常能点**，只�
 checkTrue('本队主将位占着的那名灰并写原因', has(overlay, '已在本队其他槽位'))
 checkTrue('屏上不出现 heroId（#255 一路同族判据）',
   !/hero_probe_/.test(textOf(overlay)))
-checkTrue('槽位行与名单行整盒不压叠', plateCollisions(overlay).join(','), '')
+check('槽位行与名单行整盒不压叠', plateCollisions(overlay).join(','), '')
 checkTrue('名单行两行字整盒在板里',
   linesInsidePlate(overlay, 'pick-hero_probe_c', ['李劲', '战力 2400']))
 check('每一块行板里的字都整盒在里面（抽查会漏掉最后一行）',

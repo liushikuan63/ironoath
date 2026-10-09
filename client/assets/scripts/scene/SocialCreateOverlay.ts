@@ -11,12 +11,13 @@
  */
 import { _decorator, Color, Component, EditBox, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { CreateForm } from '../game/social/SocialCreate'
-import { applyCommandButton, applySlicedSprite } from './ArtCatalog'
+import { applyIronButton, applySlicedSprite } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
+import { DIALOG_SCRIM, finishLegacyDialog } from './DialogStyle'
 
 const { ccclass } = _decorator
 
-const COLOR_SCRIM = new Color(0, 0, 0, 170)
+const COLOR_SCRIM = DIALOG_SCRIM
 /** 卡片背板（比面板底色略浅一点，压在 scrim 上才分得清"这是弹层，不是页面"）。 */
 const COLOR_CARD = new Color(30, 25, 22, 255)
 const COLOR_FIELD = new Color(40, 33, 28, 255)
@@ -66,6 +67,7 @@ export class SocialCreateOverlay extends Component {
   /** 上一次按什么结构建的（字段个数变了才要重建）。 */
   private builtHasTag = false
   private built = false
+  private builtHeight = 0
 
   /** 打字（不是意图动作：只改编排层那份输入态，一条请求都不发）。 */
   onType: ((field: 'name' | 'tag', value: string) => void) | null = null
@@ -83,6 +85,10 @@ export class SocialCreateOverlay extends Component {
     }
     this.form = form
     this.rebuild()
+  }
+
+  override update(): void {
+    if (this.built && this.node.active && this.builtHeight !== view.getVisibleSize().height) this.rebuild()
   }
 
   hide(): void {
@@ -123,7 +129,7 @@ export class SocialCreateOverlay extends Component {
       this.tagBox.string = form.tag
     }
     if (this.submitNode !== null && this.submitCaption !== null) {
-      applyCommandButton(this.submitNode, form.canSubmit ? 'normal' : 'disabled',
+      applyIronButton(this.submitNode, form.canSubmit ? 'normal' : 'disabled',
         BUTTON_WIDTH, BUTTON_HEIGHT)
       this.submitCaption.color = form.canSubmit ? COLOR_TEXT : COLOR_TEXT_DIM
       this.submitNode.off('touch-start')
@@ -168,6 +174,7 @@ export class SocialCreateOverlay extends Component {
     crest.setPosition(new Vec3(0, titleY + 56, 0))
     applySlicedSprite(crest, 'ui.crest.league', 40, 58)
     this.node.addChild(crest)
+    this.nodes.push(crest)
     this.titleLabel = this.addLabel('title', form.titleText, 0, titleY, COLOR_COPPER_GOLD, 20)
     this.nameBox = this.addField(form.nameLabel, 'name-field', nameY, nameCapY, 'name')
     if (hasTag) {
@@ -180,7 +187,9 @@ export class SocialCreateOverlay extends Component {
       form.canSubmit ? COLOR_TEXT_DIM : COLOR_WARNING, 14)
     this.addButton('cancel', '取消', -BUTTON_WIDTH / 2 - 8, buttonY, false)
     this.addButton('submit', '确认', BUTTON_WIDTH / 2 + 8, buttonY, !form.canSubmit)
+    finishLegacyDialog(this.node, this.nodes, 'ui.panel.warning')
     this.built = true
+    this.builtHeight = view.getVisibleSize().height
     this.builtHasTag = hasTag
   }
 
@@ -263,7 +272,7 @@ export class SocialCreateOverlay extends Component {
     this.nodes.push(node)
     node.setPosition(new Vec3(x, y, 0))
     node.addComponent(UITransform).setContentSize(new Size(BUTTON_WIDTH, BUTTON_HEIGHT))
-    if (!applyCommandButton(node, dim ? 'disabled' : 'normal', BUTTON_WIDTH, BUTTON_HEIGHT)) {
+    if (!applyIronButton(node, dim ? 'disabled' : 'normal', BUTTON_WIDTH, BUTTON_HEIGHT)) {
       const graphics = node.addComponent(Graphics)
       graphics.fillColor = COLOR_FIELD
       graphics.strokeColor = COLOR_COPPER_GOLD

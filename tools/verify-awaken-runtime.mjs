@@ -143,14 +143,14 @@ const SNAPSHOT = (rootName) => `(() => {
     // 字符串这条边走的是引擎内部的类名表，两种构建都稳。
     const label = n.getComponent('cc.Label')
     if (label && label.string) {
-      labels.push({ text: label.string, x: n.getPosition().x, y: n.getPosition().y })
+      labels.push({ text: label.string, x: n.worldPosition.x, y: n.worldPosition.y })
     }
     const box = n.getComponent('cc.UITransform')
     if (/^awaken-/.test(n.name)) {
-      rows.push({ name: n.name, y: n.getPosition().y, h: box ? box.contentSize.height : -1 })
+      rows.push({ name: n.name, y: n.worldPosition.y, h: box ? box.contentSize.height : -1 })
     }
     if (n.name === 'confirm' || n.name === 'cancel') {
-      footers.push({ name: n.name, x: n.getPosition().x, y: n.getPosition().y })
+      footers.push({ name: n.name, x: n.worldPosition.x, y: n.worldPosition.y })
     }
     for (const child of n.children) walk(child)
   }
@@ -175,7 +175,7 @@ const TAP = (rootName, name) => `(() => {
   }
   walk(root)
   if (found === null) return 'missing'
-  found.emit('touch-start')
+  found.emit(found.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return 'tapped'
 })()`
 

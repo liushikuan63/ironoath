@@ -19,10 +19,11 @@ import type { PayView } from '../game/pay/GiftPayFlow'
 import { applySystemUiFont } from './UiFont'
 import { applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
+import { DIALOG_SCRIM, fitExistingDialog } from './DialogStyle'
 
 const { ccclass } = _decorator
 
-const COLOR_MASK = new Color(0, 0, 0, 160)
+const COLOR_MASK = DIALOG_SCRIM
 const COLOR_PANEL = new Color(40, 33, 27, 255)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
@@ -48,6 +49,7 @@ export class GiftPopupView extends Component {
   private countdown: Label | null = null
   private result: Label | null = null
   private buyButton: Node | null = null
+  private layoutDialog: (() => void) | null = null
   /**
    * 这一档要下单的**商品 id**（`pay_product.id`，服务端随弹窗下发）。
    * 只用来把 `onBuy` 的入参递回去，**绝不上屏**（把 `gift_stuck_supply` 印给玩家是 #255/#268 那一族）。
@@ -79,6 +81,7 @@ export class GiftPopupView extends Component {
     this.setBuyEnabled(true)
     this.updateCountdown(resp)
     this.node.active = true
+    this.layoutDialog?.()
   }
 
   /** 购买结果：由 `GiftPayFlow` 给出的那句话，原样显示。 */
@@ -101,6 +104,7 @@ export class GiftPopupView extends Component {
     }
     // 只有"已到账"和"失败/取消"才是终点；处理中也要把按钮收起来，避免重复下单
     this.setBuyEnabled(false)
+    this.layoutDialog?.()
   }
 
   /** 面板藏起来（关闭按钮、或服务端说这一屏不弹）。 */
@@ -144,6 +148,7 @@ export class GiftPopupView extends Component {
     maskBg.fillColor = COLOR_MASK
     maskBg.fillRect(-1_000, -1_000, 2_000, 2_000)
     root.addChild(this.mask)
+    this.mask.on('touch-start', () => { this.hide(); this.onClose?.() }, this)
 
     const panel = new Node('panel')
     panel.addComponent(UITransform).setContentSize(PANEL_WIDTH, PANEL_HEIGHT)
@@ -161,6 +166,7 @@ export class GiftPopupView extends Component {
       bg.fillRect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT)
     }
     panel.addChild(plate)
+    plate.on('touch-start', () => {}, this)
 
     // 标题匾额是**整图装饰件**（meta 里 border 全 0 ⇒ SLICED 等价于整幅，不会被切开拉伸）。
     // 先挂它、后挂 Label ⇒ 文字在匾额之上。240×108 就是素材实测比例 2.213，不压扁。
@@ -202,15 +208,16 @@ export class GiftPopupView extends Component {
     this.subtitle = this.label(panel, '', 0, contentTop - 36, 18, COLOR_TEXT)
     this.countdown = this.label(panel, '', 0, contentTop - 60, 16, COLOR_TEXT_DIM)
     this.result = this.label(panel, '', 0, contentBottom + 38, 16, COLOR_TEXT)
+    this.result.node.getComponent(UITransform)!.setAnchorPoint(0.5, 1)
 
     this.buyButton = new Node('buy')
-    this.buyButton.addComponent(UITransform).setContentSize(200, 56)
+    this.buyButton.addComponent(UITransform).setContentSize(200, 36)
     this.buyButton.setPosition(new Vec3(0, contentTop - 122, 0))
     // C 档铁钮：200×56 走九宫格（border 6·4 ⇒ 顶底占高 14%，在 §二 的 [7%, 60%] 区间内）。
-    if (!applySlicedSprite(this.buyButton, 'ui.button.iron', 200, 56)) {
+    if (!applySlicedSprite(this.buyButton, 'ui.button.iron', 200, 36)) {
       const buttonBg = this.buyButton.addComponent(Graphics)
       buttonBg.fillColor = COLOR_BUTTON
-      buttonBg.fillRect(-100, -28, 200, 56)
+      buttonBg.fillRect(-100, -18, 200, 36)
     }
     // label() 自己把节点挂到 parent 上并返回 Label 组件 —— 再 addChild 一次挂的就是
     // 一个组件而不是节点（真机上是 addChild 直接抛错，而这一步只有真正弹过窗才会走到）
@@ -246,18 +253,29 @@ export class GiftPopupView extends Component {
       this.onClose?.()
     }, this)
 
+    this.buyButton.setPosition(new Vec3(-28, this.buyButton.position.y, 0))
+    close.setPosition(new Vec3(122, close.position.y, 0))
+    // 语义饰件与正文一同进入可滚动内容，短屏不让顶饰冲出可用区。
+    this.layoutDialog = fitExistingDialog(root, plate,
+      [banner, crest, divider, this.title.node, this.subtitle.node, this.countdown.node, this.result.node],
+      [this.buyButton, close], 'ui.panel.gilt', PANEL_WIDTH, PANEL_HEIGHT)
+
     this.node.active = false
   }
 
   private label(parent: Node, text: string, x: number, y: number, size: number,
                 color: Color): Label {
     const node = new Node('label')
+    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right, size + 8)
+    node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5)
     node.setPosition(new Vec3(x, y, 0))
     const label = node.addComponent(Label)
     label.string = text
     label.fontSize = size
     label.lineHeight = Math.round(size * 1.4)
     label.color = color
+    label.overflow = Label.Overflow.RESIZE_HEIGHT
+    label.enableWrapText = true
     applySystemUiFont(label)
     parent.addChild(node)
     return label

@@ -10,10 +10,11 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
 import type { ExpPickView } from '../game/hero/ExpPick'
 import { applySystemUiFont } from './UiFont'
+import { DIALOG_SCRIM, finishLegacyDialog, applyDialogButton } from './DialogStyle'
 
 const { ccclass } = _decorator
 
-const COLOR_SCRIM = new Color(0, 0, 0, 170)
+const COLOR_SCRIM = DIALOG_SCRIM
 const COLOR_BACKGROUND = new Color(24, 20, 18, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_ROW_ALT = new Color(48, 39, 33, 255)
@@ -62,13 +63,15 @@ export class ExpPickOverlay extends Component {
     this.drawTitle()
     this.drawRows()
     this.drawButtons()
+    finishLegacyDialog(this.node, this.rows)
   }
 
   private drawScrim(): void {
     const size = view.getVisibleSize()
     const node = new Node('scrim')
     this.node.addChild(node)
-    node.addComponent(UITransform)
+    node.addComponent(UITransform).setContentSize(size.width, size.height)
+    node.on('touch-start', () => {}, this)
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_SCRIM
     graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
@@ -79,7 +82,7 @@ export class ExpPickOverlay extends Component {
   private drawCard(): void {
     const node = new Node('card')
     this.node.addChild(node)
-    node.addComponent(UITransform)
+    node.addComponent(UITransform).setContentSize(CARD_WIDTH, CARD_HEIGHT)
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_BACKGROUND
     graphics.rect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT)
@@ -157,8 +160,9 @@ export class ExpPickOverlay extends Component {
     graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
     if (enabled) {
-      node.on('touch-start', onClick)
+      node.on(name === 'cancel' || name === 'confirm' ? 'touch-start' : 'touch-end', onClick)
     }
+    applyDialogButton(node, enabled, width, height)
     this.rows.push(node)
     this.label(text, enabled ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM,
       name === 'cancel' || name === 'confirm' ? 18 : 20, x, y, 'center')
