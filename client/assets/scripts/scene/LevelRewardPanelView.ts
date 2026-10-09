@@ -227,8 +227,13 @@ export class LevelRewardPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 5)
     graphics.fill()
 
+    const art = this.materialNode(node, 'RowArt', PANEL_WIDTH, ROW_HEIGHT)
+    art.active = applySlicedSprite(art, 'ui.plate.band', PANEL_WIDTH, ROW_HEIGHT)
+    if (art.active) {
+      graphics.clear()
+      graphics.enabled = false
+    }
     const name = this.addLabel('Name', -PANEL_WIDTH / 2 + PADDING, 14, COLOR_TEXT, 17, node)
-    applySlicedSprite(node, 'ui.plate.band', PANEL_WIDTH, ROW_HEIGHT)
     name.horizontalAlign = Label.HorizontalAlign.LEFT
     name.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     capWidth(name, 300)
@@ -272,9 +277,28 @@ export class LevelRewardPanelView extends Component {
   }
 
   private styleButton(node: Node, enabled: boolean, width: number, height: number): void {
-    if (applyIronButton(node, enabled ? 'normal' : 'disabled', width, height)) {
-      node.getComponent(Sprite)!.color = enabled ? Color.WHITE : new Color(128, 128, 128, 255)
+    const art = this.materialNode(node, 'ButtonArt', width, height)
+    art.active = applyIronButton(art, enabled ? 'normal' : 'disabled', width, height)
+    const graphics = node.getComponent(Graphics)!
+    graphics.enabled = !art.active
+    if (art.active) {
+      graphics.clear()
+      art.getComponent(Sprite)!.color = enabled ? Color.WHITE : new Color(128, 128, 128, 255)
     }
+  }
+
+  /** Cocos 只登记每节点首个 UIRenderer；贴图独占子节点，避免禁用 Graphics 后 Sprite 仍不绘制。 */
+  private materialNode(parent: Node, name: string, width: number, height: number): Node {
+    let node = parent.getChildByName(name)
+    if (node === null) {
+      node = new Node(name)
+      parent.addChild(node)
+      node.addComponent(UITransform)
+    }
+    node.layer = parent.layer
+    node.getComponent(UITransform)!.setContentSize(new Size(width, height))
+    node.setSiblingIndex(0)
+    return node
   }
 
   private addLabel(name: string, x: number, y: number, color: Color, fontSize: number,
@@ -355,8 +379,10 @@ export class LevelRewardPanelView extends Component {
         graphics.fill()
       }
       this.rowNames[index]!.string = row.nameText
-      const rowSprite = node.getComponent(Sprite)
-      if (rowSprite !== null) rowSprite.color = row.claimable ? Color.WHITE : new Color(175, 175, 175, 255)
+      const rowSprite = node.getChildByName('RowArt')?.getComponent(Sprite)
+      if (rowSprite !== null && rowSprite !== undefined) {
+        rowSprite.color = row.claimable ? Color.WHITE : new Color(175, 175, 175, 255)
+      }
       this.rowNames[index]!.color = row.locked ? COLOR_TEXT_DIM : COLOR_TEXT
       this.rowRewards[index]!.string = row.rewardText
       this.rowStates[index]!.string = row.stateText

@@ -15,7 +15,8 @@
  *   A 深链进面板 → 当前页真画出来、三态文案与 HTTP 现读一致、屏上不出现裸 id
  *   B 点「领取」→ 屏上那一行真翻成已领（点了不换屏 = 假绿），并让服务端复验
  *   C 走玩家路径（导航条 →「更多」抽屉 →「等级」）重新进入 → 已领与待领同时可辨 + 截图
- *   P 普通/高/极矮窗口逐页真点击 → 1..40 全可达、范围与实画一致、分页净区/边界、翻页领取保留页
+ *   P 五视口逐页真点击 → 1..40 全可达、范围与实画一致、分页净区/边界、翻页领取保留页
+ *     每页行/领取键/分页键检查实际 Sprite 消费；禁用材质、放错渲染层的负控必须翻红、撤桩复绿
  *   M1 植入：把服务端下发的中文名换成内部码 → 裸 id 判据**必须**报红
  *   M2 植入：把 claimable 全置 false 而 claimableCount 留 1 → 计数同源判据**必须**报红
  *   R  还原：撤掉桩重开 → 两条植入判据复绿
@@ -150,6 +151,88 @@ const dumpRows = () => page.evaluate(() => {
   walk(scene)
   return out
 })
+
+/** 读真正被引擎登记的渲染组件；enabled + spriteFrame 不能证明第二个 UIRenderer 会画出来。 */
+const dumpMaterials = () => page.evaluate(() => {
+  let panel = null
+  const cameras = []
+  const find = node => {
+    const camera = node.getComponent('cc.Camera')
+    if (camera?.enabled && node.activeInHierarchy) cameras.push(camera)
+    if (node.name === 'levelReward' && node.activeInHierarchy) panel = node
+    node.children.forEach(find)
+  }
+  find(window.cc.director.getScene())
+  const read = (host, childName, kind, name, tint) => {
+    // 兼容旧产物用于反证：旧节点的 Sprite 虽有帧，uiComp 仍是首个 Graphics，判据必须报红。
+    const art = host?.getChildByName(childName) ?? host
+    const sprite = art?.getComponent('cc.Sprite')
+    const box = art?.getComponent('cc.UITransform')
+    const hostBox = host?.getComponent('cc.UITransform')
+    const color = sprite?.color
+    return {
+      kind, name, node: art?.name ?? null,
+      active: host?.activeInHierarchy === true && art?.activeInHierarchy === true,
+      enabled: sprite?.enabled === true, frame: !!sprite?.spriteFrame,
+      renderer: !!sprite && art?._uiProps.uiComp === sprite,
+      layer: !!art && art.layer === host.layer && art.layer === panel.layer
+        && cameras.some(camera => (camera.visibility & art.layer) !== 0),
+      size: !!box && !!hostBox && box.width === hostBox.width && box.height === hostBox.height,
+      tint: !!color && color.r === tint && color.g === tint && color.b === tint && color.a === 255,
+    }
+  }
+  if (!panel) return []
+  const materials = []
+  for (const row of panel.children.filter(node => node.name === 'LevelRow' && node.activeInHierarchy)) {
+    const name = row.getChildByName('Name')?.getComponent('cc.Label')?.string ?? ''
+    const claimable = row.getChildByName('State')?.getComponent('cc.Label')?.string === '待领取'
+    materials.push(read(row, 'RowArt', 'row', name, claimable ? 255 : 175))
+    materials.push(read(row.getChildByName('ClaimButton'), 'ButtonArt', 'claim', name, claimable ? 255 : 128))
+  }
+  for (const name of ['PrevPageButton', 'NextPageButton']) {
+    const button = panel.getChildByName(name)
+    if (!button?.activeInHierarchy) continue
+    const color = button.getChildByName('Caption')?.getComponent('cc.Label')?.color
+    const dim = color?.r === 150 && color.g === 140 && color.b === 124
+    materials.push(read(button, 'ButtonArt', 'pager', name, dim ? 128 : 255))
+  }
+  return materials
+})
+
+const materialErrors = (materials, kind) => {
+  const targets = materials.filter(material => kind === undefined || material.kind === kind)
+  if (targets.length === 0) return [`${kind ?? '全部'}材质缺失`]
+  return targets.flatMap(material => ['active', 'enabled', 'frame', 'renderer', 'layer', 'size', 'tint']
+    .filter(key => material[key] !== true).map(key => `${material.kind}/${material.name}/${material.node}: ${key}=false`))
+}
+
+/** 临时改动三类实际渲染节点；还原保存的实例，禁止只改测试读数。 */
+const mutateMaterials = mode => page.evaluate(action => {
+  if (action === 'restore') {
+    const saved = window.__levelRewardMaterialMutation ?? []
+    for (const { node, sprite, enabled, layer } of saved) {
+      sprite.enabled = enabled
+      node.layer = layer
+    }
+    delete window.__levelRewardMaterialMutation
+    return saved.length
+  }
+  const panel = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('levelReward')
+  const row = panel?.children.find(node => node.name === 'LevelRow' && node.activeInHierarchy)
+  const hosts = [[row, 'RowArt'], [row?.getChildByName('ClaimButton'), 'ButtonArt'],
+    [panel?.getChildByName('NextPageButton'), 'ButtonArt']]
+  const saved = []
+  for (const [host, name] of hosts) {
+    const node = host?.getChildByName(name) ?? host
+    const sprite = node?.getComponent('cc.Sprite')
+    if (!node?.activeInHierarchy || !sprite) continue
+    saved.push({ node, sprite, enabled: sprite.enabled, layer: node.layer })
+    if (action === 'disable') sprite.enabled = false
+    else node.layer = 0
+  }
+  window.__levelRewardMaterialMutation = saved
+  return saved.length
+}, mode)
 
 /** 分页壳与净区盒子；坐标和现有点击助手一样从相机换算，不按页码等分猜位置。 */
 const dumpPaging = () => page.evaluate(() => {
@@ -344,6 +427,11 @@ ok('A3 三态文案与服务端那三位一致',
 ok('A4 奖励串里出现的是中文名而不是内部码',
   rowsA.every((r) => /×[\d,]+/.test(r.reward) && r.reward !== ''), '奖励串为空或没有数量')
 ok('A5 屏上不出现裸 id', bareIdHits(labelsA).length === 0, JSON.stringify(bareIdHits(labelsA).slice(0, 3)))
+const materialsA = await dumpMaterials()
+for (const [kind, caption] of [['row', '奖励行'], ['claim', '领取键'], ['pager', '分页键']]) {
+  const issues = materialErrors(materialsA, kind)
+  ok(`A ${caption}材质由有效层首个Sprite实际消费且三态着色正确`, issues.length === 0, issues.slice(0, 3).join('；'))
+}
 await page.screenshot({ path: path.join(OUT, 'a-panel-open.png') })
 
 // ============ 相 B：点「领取」真换屏 ============
@@ -388,6 +476,8 @@ if (target === undefined) {
   readings.push(`B4 表值 ${tableWood} · 装得下 ${fits} · 实入账 ${delta} · 提示「${noticeLine}」`)
   ok('B4 入账量与表值/提示行自洽（装不下就必须说出来）', selfConsistent,
     `表值 ${tableWood}、装得下 ${fits}、实入账 ${delta}、提示「${noticeLine}」`)
+  const materialsB = materialErrors(await dumpMaterials())
+  ok('B 领取刷新后三类材质实际消费与已领着色正确', materialsB.length === 0, materialsB.slice(0, 3).join('；'))
   await page.screenshot({ path: path.join(OUT, 'b-claimed.png') })
 }
 
@@ -421,6 +511,8 @@ ok('C2 已领与待领两态同时可辨', statesC.has('已领') && statesC.has(
 ok('C3 重开之后屏上仍不出现裸 id', bareIdHits(labelsC).length === 0, JSON.stringify(bareIdHits(labelsC).slice(0, 3)))
 ok('C4 汇总行的两个数与同刻服务端现读一致（不许客户端自己数、也不许用旧缓存）',
   summaryMismatch(labelsC, liveC).length === 0, summaryMismatch(labelsC, liveC).join('；'))
+const materialsC = materialErrors(await dumpMaterials())
+ok('C 玩家路径重开后三类材质仍由有效层首Sprite实际消费', materialsC.length === 0, materialsC.slice(0, 3).join('；'))
 await page.screenshot({ path: path.join(OUT, 'c-two-states.png') })
 
 // ============ 相 P：真实翻页、完整可达与写后保留页（普通/高/极矮窗口） ============
@@ -474,6 +566,7 @@ for (const [phase, viewport] of [
   const seen = []
   const rangeErrors = []
   const layoutErrors = []
+  const materialIssues = { row: [], claim: [], pager: [] }
   let lastRows = []
   for (let guard = 0; guard < source.rows.length; guard += 1) {
     paging = await dumpPaging()
@@ -482,6 +575,10 @@ for (const [phase, viewport] of [
     seen.push(...rows.map(row => source.rows.find(candidate => candidate.name === row.name)?.level))
     rangeErrors.push(...pageRangeErrors(paging, rows, source))
     layoutErrors.push(...pagingLayoutErrors(paging))
+    const materials = await dumpMaterials()
+    for (const kind of Object.keys(materialIssues)) {
+      materialIssues[kind].push(...materialErrors(materials, kind).map(issue => `${paging.pageText}: ${issue}`))
+    }
     if (rows.length > 5) rangeErrors.push(`分页后实画 ${rows.length} 内容行，越过六节点池应留一槽给分页的上限`)
     if (paging.next === null || paging.next.dim) break
     const previous = paging.pageText
@@ -496,6 +593,10 @@ for (const [phase, viewport] of [
   ok(`${phase} 每页表头范围等于真正画出的行`, rangeErrors.length === 0, rangeErrors.slice(0, 3).join('；'))
   ok(`${phase} 页码和按钮位于净区且不与奖励行/彼此碰撞`, layoutErrors.length === 0,
     layoutErrors.slice(0, 3).join('；'))
+  for (const [kind, caption] of [['row', '奖励行'], ['claim', '领取键'], ['pager', '分页键']]) {
+    ok(`${phase} 每页${caption}均实际消费材质与状态着色`, materialIssues[kind].length === 0,
+      materialIssues[kind].slice(0, 3).join('；'))
+  }
   const lastText = paging.pageText
   await clickPager('next')
   ok(`${phase} 末页下一页置灰且点击不变页`, paging.next?.dim && (await dumpPaging()).pageText === lastText,
@@ -508,6 +609,22 @@ for (const [phase, viewport] of [
       && lastRows.length === 1, `可视高 ${paging.visible.height}，实画 ${lastRows.length} 行`)
   }
   await page.screenshot({ path: path.join(OUT, `${shotPrefix}-last.png`) })
+
+  // 三类材质都在普通窗口做同一判据的反证；五视口每页的正相仍独立检查。
+  if (phase === 'P普通') {
+    for (const [mode, key, caption] of [['disable', 'enabled', '禁用真实Sprite'], ['wronglayer', 'layer', '真实材质移到不可见层']]) {
+      const planted = await mutateMaterials(mode)
+      await page.waitForTimeout(80)
+      const broken = await dumpMaterials()
+      bad(`${phase} ${caption}时三类消费判据均翻红`, planted === 3
+        && ['row', 'claim', 'pager'].every(kind => materialErrors(broken, kind).some(issue => issue.endsWith(`${key}=false`))),
+        `植入 ${planted} 个；${materialErrors(broken).slice(0, 5).join('；')}`)
+      await mutateMaterials('restore')
+      await page.waitForTimeout(80)
+      const restored = materialErrors(await dumpMaterials())
+      ok(`${phase} ${caption}撤桩后三类消费判据复绿`, restored.length === 0, restored.slice(0, 3).join('；'))
+    }
+  }
 
   // 两个几何/范围判据各植入一次：少画一行、把下一页挪到内容行中心，必须被同一判据抓住。
   const plantedIndex = await page.evaluate(() => {
@@ -544,17 +661,29 @@ for (const [phase, viewport] of [
   ok(`${phase} 撤桩后范围和碰撞判据复绿`, pageRangeErrors(await dumpPaging(), await dumpRows(), source).length === 0
     && pagingLayoutErrors(await dumpPaging()).length === 0, `撤桩后行数 ${lastRows.length}`)
 
-  // 特意翻到第二页后领取，确保刷新没有按下一个待领等级把玩家搬回第一页。
+  // 翻到首页之后尚有待领取的页，确保刷新没有把玩家搬回第一页。
+  // 极矮档每页一行，前一视口可能已经领过第二页；仍须真翻页找到新的待领行。
   paging = await dumpPaging()
   for (let guard = 0; guard < source.rows.length && !paging.prev.dim; guard += 1) {
     await clickPager('prev')
     paging = await dumpPaging()
   }
   await clickPager('next')
+  let claimRow = (await dumpRows()).find(row => row.state === '待领取' && row.pos !== null)
+  for (let guard = 0; guard < source.rows.length && claimRow === undefined; guard += 1) {
+    paging = await dumpPaging()
+    if (paging.next === null || paging.next.dim) break
+    const previous = paging.pageText
+    await clickPager('next')
+    if ((await dumpPaging()).pageText === previous) {
+      fail.push(`${phase} 查找待领页时下一页真点击后页码没变`)
+      break
+    }
+    claimRow = (await dumpRows()).find(row => row.state === '待领取' && row.pos !== null)
+  }
   const beforeClaim = await dumpPaging()
-  const claimRow = (await dumpRows()).find(row => row.state === '待领取' && row.pos !== null)
   if (claimRow === undefined) {
-    skip.push(`${phase} 第二页没有待领行，未执行翻页后领取保留页判据`)
+    skip.push(`${phase} 翻页后没有待领行，未执行领取保留页判据`)
   } else {
     const beforeList = (await getPlayer(playerId, '/level-reward/list')).data
     const level = beforeList.rows.find(row => row.name === claimRow.name)?.level
@@ -567,7 +696,7 @@ for (const [phase, viewport] of [
     }
     const afterClaim = await dumpPaging()
     const live = (await getPlayer(playerId, '/level-reward/list')).data
-    ok(`${phase} 翻页领取后保留页码和范围且本行真翻成已领`, claimed
+    ok(`${phase} 翻页领取后保留页码和范围且本行真翻成已领`, claimed && beforeClaim.prev?.dim === false
       && afterClaim.pageText === beforeClaim.pageText && afterClaim.header === beforeClaim.header
       && live.rows.find(row => row.level === level)?.claimed === true,
       `${beforeClaim.pageText} / ${beforeClaim.header}→${afterClaim.pageText} / ${afterClaim.header}，已领=${claimed}`)
@@ -623,6 +752,8 @@ const liveR = (await getPlayer(playerId, '/level-reward/list')).data
 readings.push(`R 撤桩后画出 ${rowsR.length} 行 · 裸 id 命中 ${bareIdHits(labelsR).length} · 汇总偏差 ${summaryMismatch(labelsR, liveR).length}`)
 ok('R1 还原后裸 id 判据复绿', bareIdHits(labelsR).length === 0, JSON.stringify(bareIdHits(labelsR).slice(0, 2)))
 ok('R2 还原后同源判据复绿', summaryMismatch(labelsR, liveR).length === 0, summaryMismatch(labelsR, liveR).join('；'))
+const materialsR = materialErrors(await dumpMaterials())
+ok('R 撤数据桩后三类材质消费复绿', materialsR.length === 0, materialsR.slice(0, 3).join('；'))
 await page.screenshot({ path: path.join(OUT, 'r-restored.png') })
 
 // 页面不重载的尺寸变化：内容与导航都需重排，并保住同一等级所在页。
@@ -635,11 +766,15 @@ const resizedRows = await dumpRows()
 ok('实时resize后同一等级仍在可见页且布局不压栏',
   resizedRows.some(row => liveR.rows.find(candidate => candidate.name === row.name)?.level === firstLevelBeforeResize)
     && pagingLayoutErrors(resizedPaging).length === 0, JSON.stringify(resizedPaging))
+const materialsResized = materialErrors(await dumpMaterials())
+ok('实时resize到更矮窗口后三类材质仍正确消费', materialsResized.length === 0, materialsResized.slice(0, 3).join('；'))
 await page.setViewportSize({ width: 1440, height: 900 })
 await page.waitForTimeout(400)
 ok('实时resize回普通窗口仍可翻页且范围与实画同源',
   pageRangeErrors(await dumpPaging(), await dumpRows(), liveR).length === 0
     && pagingLayoutErrors(await dumpPaging()).length === 0, JSON.stringify(await dumpPaging()))
+const materialsResizeBack = materialErrors(await dumpMaterials())
+ok('实时resize回普通窗口后三类材质仍正确消费', materialsResizeBack.length === 0, materialsResizeBack.slice(0, 3).join('；'))
 
 // 只剩最后一份可领取时，让玩家真点击领取；熄灭必须由写后刷新权威树完成。
 const remaining = liveR.rows.filter(row => row.claimable)

@@ -1,251 +1,300 @@
 /**
- * 职责：**多建筑叠加**的运行期验收 —— 走真实建造流程建一栋，看"未建不画、建了才叠正稿、主城不叠图"是否成立。
- * 依赖：`client/build/web-mobile` 产物 + 一台**本轮自己的** dev 后端（`BACKEND_ORIGIN`）+ Playwright。
- *
- * <p>为什么必须专门验：方案 A 的核心是"未建不画、建了才叠正稿"，而主城恰恰是**不叠图**的那一个
- * （底图上已经画着城堡），所以主城跑通并不证明其余 14 类也对 —— 这一步才是真正的验收。
- *
- * <p>只建不拆、不加速：建造会消耗本地 dev 后端的资源（内存存储，重启即清）。
- *
- * <p><b>建的是"选择器第 0 行"那栋（今天 = 伐木场），第二栋走第 1 行</b>（今天会被服务端以
- * "主城等级不足"拒绝 —— 那本身是一条负向用例）。断言按"主城 + 伐木场各一栋"写死，
- * **改流程要连这段注释一起改**。
- *
- * 退出码：0 全绿；1 判据失败（含"一格表现都没有"）；2 前置不满足（产物缺失）。
- *
- * <p>2026-09-21 从 `tmp/` 迁进 `tools/`（复检那一轮的一次性探针）。迁移时修掉两处硬伤：
- * ① 等待判据原先写的是 `texts.includes('收割')` —— 它命中常驻的「一键收割」按钮，
- *    于是第一次 5 秒检查就 break，拍出来的 `09-two-buildings-done.png` 其实是**建造中**的帧；
- *    现在改成"**重载后**读队列回到 0/N"（重载是因为队列计数来自 `/city/list` 快照，本地不重算）。
- * ② 原先没有任何退出码语义（跑完就算过），现在按仓库惯例补上 0/1/2。
+ * 连续建造两栋的实机验收：真实点击建造、空地和选择器，核对成功回执与权威城池，再验正稿。
+ * 依赖 client/build/web-mobile、本轮自己的 BACKEND_ORIGIN 后端与 Playwright。
+ * 当前契约的 lumber_camp、quarry 均允许主城 1 级首次建造；名称、选项、坐标与完成时刻现读服务端/场景。
+ * 不直接发建造请求，不以初始队列 0/N 或隐藏 ChoiceOverlay 的默认 label 当成功。
+ * 判据：两次 HTTP 200/code 0、对应实例和队列落库、两栋 Lv1/队列归零、真实 Sprite 登记与可见层，
+ * 主城不叠正稿、未建格不画。只建不拆、不加速。退出码：0 全绿；1 判据失败；2 缺产物。
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { clickNodeViaCocos, resolveCocosClickPoint } from './lib/cocos-click.mjs'
 
+const ROOT = 'client/build/web-mobile'
 const OUT = 'client/build/art-verify/cc-audit'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.CITY_MANY_PORT ?? 8212)
-mkdirSync(OUT, { recursive: true })
-if (!existsSync(path.resolve(process.cwd(), 'client/build/web-mobile/index.html'))) {
+const TARGETS = ['lumber_camp', 'quarry']
+console.log(`[build-many] 后端 ${BACKEND} 预览端口 ${PORT}`)
+if (!existsSync(path.resolve(ROOT, 'index.html'))) {
   console.error('[build-many][前置] 产物不存在（先跑 scripts/build-webmobile.sh）')
   process.exit(2)
 }
+mkdirSync(OUT, { recursive: true })
 
-const preview = await startPreviewServer({ root: 'client/build/web-mobile', backend: BACKEND, port: PORT })
-const browser = await chromium.launch({ headless: true })
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 })
-await context.addInitScript((v) => localStorage.setItem('ironoath.deviceId', v), `buildmany-${Date.now()}`)
-const page = await context.newPage()
-const errors = []
-page.on('pageerror', (e) => errors.push(e.message))
-await page.goto(`${preview.origin}/?panel=city`, { waitUntil: 'networkidle' })
-await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
+let preview, browser, page, session, initialCity, finalCity
+let queueZero = false
+const errors = [], receipts = [], failures = []
+let tiles = [], finalTexts = []
+const assert = (ok, message) => { if (!ok) throw new Error(message) }
+const isPost = (response, endpoint) =>
+  new URL(response.url()).pathname === endpoint && response.request().method() === 'POST'
 
-const GUIDE_COPY = /第\s*\d+\s*\/\s*\d+\s*步|我完成了|升级主城：/
-const clearGuide = () => page.evaluate((src) => {
-  const re = new RegExp(src)
-  const scene = window.cc.director.getScene()
-  const killed = []
-  const visit = (n) => {
-    const label = n.getComponent('cc.Label')
-    if (/Guide/i.test(n.name) || (label !== null && re.test(label.string ?? ''))) {
-      const v = n.getComponent('GuideView'); if (v !== null) v.enabled = false
-      n.removeFromParent(); killed.push(n.name); return
+async function readCity() {
+  const response = await fetch(`${BACKEND}/city/list`, {
+    headers: { 'X-Player-Id': session.playerId,
+      ...(session.authToken ? { Authorization: `Bearer ${session.authToken}` } : {}) },
+    signal: AbortSignal.timeout(15_000),
+  })
+  const body = await response.json()
+  assert(response.status === 200 && body.code === 0, `权威 city/list 失败：HTTP ${response.status} ${JSON.stringify(body)}`)
+  return body.data
+}
+
+const clearGuide = () => page.evaluate(() => {
+  const visit = node => {
+    const label = node.getComponent('cc.Label')
+    if (/Guide/i.test(node.name) || /第\s*\d+\s*\/\s*\d+\s*步|我完成了|升级主城：/.test(label?.string ?? '')) {
+      const view = node.getComponent('GuideView')
+      if (view) view.enabled = false
+      node.removeFromParent()
+      return 1
     }
-    for (const c of n.children) visit(c)
+    return node.children.reduce((sum, child) => sum + visit(child), 0)
   }
-  visit(scene)
-  return killed.length
-}, GUIDE_COPY.source)
+  return visit(window.cc.director.getScene())
+})
 
-await page.waitForTimeout(3500)
-console.log('[build-many] 清引导层：', await clearGuide())
-await page.waitForTimeout(500)
+async function click(name, within) {
+  const point = await clickNodeViaCocos(page, { name, within })
+  console.log(`[build-many] 真点击 ${within}/${name}：${JSON.stringify(point)}`)
+  assert(point.clicked === true, `点击量具未通过：${within}/${name} ${point.reason}`)
+  return point
+}
 
-const toPage = (name) => page.evaluate((n) => {
-  const cc = window.cc
-  const scene = cc.director.getScene()
-  let t = null
-  const visit = (x) => { if (x.name === n) t = x; for (const c of x.children) visit(c) }
-  visit(scene)
-  if (t === null) return null
-  const ui = t.getComponent('cc.UITransform')
-  if (ui === null) return null
-  const s = scene.getComponentInChildren('cc.Camera').worldToScreen(ui.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
-  const px = cc.view.getVisibleSizeInPixel()
-  const rect = document.querySelector('canvas').getBoundingClientRect()
-  return { x: rect.left + (s.x / px.width) * rect.width,
-           y: rect.top + rect.height - (s.y / px.height) * rect.height }
-}, name)
+async function loadCity(reload = false) {
+  const login = page.waitForResponse(response => isPost(response, '/player/init'), { timeout: 25_000 })
+    .then(response => ({ response }), error => ({ error }))
+  if (reload) await page.reload({ waitUntil: 'networkidle' })
+  else await page.goto(`${preview.origin}/?panel=city`, { waitUntil: 'networkidle' })
+  const result = await login
+  assert(result.response, `没有登录回执：${result.error?.message}`)
+  const body = await result.response.json()
+  assert(result.response.status() === 200 && body.code === 0 && body.data?.playerId, `登录失败：${JSON.stringify(body)}`)
+  assert(!session || session.playerId === body.data.playerId, '重载后玩家身份改变')
+  session = body.data
+  await page.waitForFunction(() => {
+    const game = window.cc?.director?.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+    return game?.getComponent('PanelNav')?.currentKey === 'city'
+      && game.getChildByName('city')?.getComponent('CityPanelView')?.resp?.buildings?.length > 0
+  }, null, { timeout: 25_000 })
+  console.log('[build-many] 清引导层：', await clearGuide())
+  // 登录刷新可能出现升级礼包；只能走真实关闭入口，不能隐藏渲染器绕过模态输入。
+  const giftActive = await page.evaluate(() => window.cc.director.getScene()
+    ?.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('giftPopup')?.activeInHierarchy === true)
+  if (giftActive) {
+    await click('close', 'giftPopup')
+    await page.waitForFunction(() => window.cc.director.getScene()
+      ?.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('giftPopup')?.activeInHierarchy === false,
+    null, { timeout: 5000 })
+  }
+  await page.waitForTimeout(500)
+}
+
+async function buildOne(configId) {
+  const before = await readCity()
+  const option = before.buildOptions.find(row => row.configId === configId)
+  assert(option?.name, `服务端没有本轮合法可建项：${configId}`)
+  assert(!before.buildings.some(row => row.configId === configId), `首次建造前已有实例：${configId}`)
+  await page.waitForFunction(id => {
+    const city = window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+      ?.getChildByName('city')?.getComponent('CityPanelView')
+    return city?.resp?.buildOptions?.some(row => row.configId === id)
+  }, configId, { timeout: 5000 })
+  await click('DetailBuildButton', 'city')
+
+  // 取实际 gridTiles 的空地与投影坐标，不按旧数组下标猜地块；只选引擎自命中成立的可视空地。
+  const empty = await page.evaluate(() => {
+    const city = window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+      ?.getChildByName('city')?.getComponent('CityPanelView')
+    return (city?.gridTiles ?? []).filter(tile => tile.node.activeInHierarchy && tile.levelLabel.string === '')
+      .map(tile => ({ tile: tile.node.name, gridX: tile.plate.gridX, gridY: tile.plate.gridY }))
+  })
+  const rect = await page.locator('canvas').evaluate(canvas => {
+    const r = canvas.getBoundingClientRect()
+    return { x: r.left, y: r.top, width: r.width, height: r.height }
+  })
+  const candidates = []
+  for (const tile of empty) {
+    const point = await page.evaluate(resolveCocosClickPoint, { name: tile.tile, within: 'CityGrid' })
+    // HUD 在上下边缘，缩放按钮在角落；候选落点留在城景中部，避免把 UI 遮挡当网格点击。
+    if (point.verified && point.x > rect.x + rect.width * 0.2 && point.x < rect.x + rect.width * 0.8
+        && point.y > rect.y + rect.height * 0.28 && point.y < rect.y + rect.height * 0.72) {
+      candidates.push({ ...tile, distance: Math.hypot(point.x - rect.x - rect.width / 2, point.y - rect.y - rect.height / 2) })
+    }
+  }
+  const tile = candidates.sort((a, b) => a.distance - b.distance)[0]
+  assert(tile, '没有可自命中且位于城景中部的空地')
+  await click(tile.tile, 'CityGrid')
+  await page.waitForFunction(() => window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('city')?.getComponent('CityPanelView')?.buildPicker?.node?.activeInHierarchy === true,
+  null, { timeout: 5000 })
+
+  // 多个 ChoiceOverlay 同名。保存真实 buildPicker 节点引用再临时命名，finally 恢复即使已离开场景的旧节点。
+  const scope = `CityBuildManyPicker-${receipts.length + 1}`
+  const pageCount = await page.evaluate(scope => {
+    const picker = window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+      ?.getChildByName('city')?.getComponent('CityPanelView')?.buildPicker
+    if (!picker?.node?.activeInHierarchy || !picker.optionNodes?.length) return 0
+    window.cityBuildManyPickerScope = { picker, node: picker.node, originalName: picker.node.name, scope }
+    picker.node.name = scope
+    return Math.ceil(picker.options.length / picker.optionNodes.length)
+  }, scope)
+  let result, selected
+  try {
+    assert(pageCount > 0, '实际建造选择器没有活跃选项')
+    for (let i = 0; i < pageCount; i++) {
+      selected = await page.evaluate(({ scope, configId }) => {
+        const saved = window.cityBuildManyPickerScope
+        if (saved?.scope !== scope || !saved.node.activeInHierarchy) return null
+        const picker = saved.picker
+        const index = picker.options.findIndex(row => row.id === configId)
+        const visible = index - picker.page * picker.optionNodes.length
+        const row = picker.optionNodes[visible]
+        if (index < 0 || visible < 0 || visible >= picker.optionNodes.length || !row?.activeInHierarchy) return null
+        return { node: row.name, label: picker.optionTitleLabels[visible]?.string, configId: picker.options[index].id }
+      }, { scope, configId })
+      if (selected) break
+      if (i + 1 < pageCount) {
+        await click('ChoiceNext', scope)
+        await page.waitForTimeout(150)
+      }
+    }
+    assert(selected?.label === option.name, `实际选择器没有该服务端选项：${JSON.stringify({ option, selected })}`)
+    const response = page.waitForResponse(response => {
+      if (!isPost(response, '/city/upgrade')) return false
+      try { return response.request().postDataJSON()?.configId === configId } catch { return false }
+    }, { timeout: 10_000 }).then(response => ({ response }), error => ({ error }))
+    await click(selected.node, scope)
+    result = await response
+  } finally {
+    await page.evaluate(scope => {
+      const saved = window.cityBuildManyPickerScope
+      if (saved?.scope === scope) {
+        saved.node.name = saved.originalName
+        delete window.cityBuildManyPickerScope
+      }
+    }, scope)
+  }
+  assert(result?.response, `真实选择后没有 city/upgrade 回执：${result?.error?.message}`)
+  const response = result.response
+  const body = await response.json(), request = response.request().postDataJSON()
+  const after = await readCity()
+  const building = after.buildings.find(row => row.configId === configId)
+  const receipt = { configId, name: option.name, tile, selected, request, httpStatus: response.status(),
+    response: body, building, queues: after.queues, serverNow: after.serverNow }
+  receipts.push(receipt)
+  console.log(`[build-many] 真实建造回执与权威实例：${JSON.stringify(receipt)}`)
+  assert(response.status() === 200 && body.code === 0, `建造业务失败：${JSON.stringify(body)}`)
+  assert(request.gridX === tile.gridX && request.gridY === tile.gridY, '实际请求与被点击地块不一致')
+  assert(building?.id === body.data.buildingId && building.gridX === tile.gridX && building.gridY === tile.gridY,
+    '成功回执没有对应权威实例与放置坐标')
+  assert(after.queues.used === after.buildings.filter(row => row.status === 'UPGRADING').length, '权威队列与升级中实例数不一致')
+  assert(building.status === 'UPGRADING' ? building.finishAt === body.data.finishAt && after.queues.used > 0
+    : building.level === 1 && building.status === 'IDLE', '首次建造未进入队列或完成态')
+  await page.waitForFunction(id => window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+    ?.getChildByName('city')?.getComponent('CityPanelView')?.resp?.buildings?.some(row => row.id === id),
+  building.id, { timeout: 5000 })
+}
 
 const texts = () => page.evaluate(() => {
-  const scene = window.cc.director.getScene()
   const out = []
-  const visit = (n, shown) => {
-    const vis = shown && n.active !== false
-    const l = n.getComponent('cc.Label')
-    if (vis && l !== null && l.string !== '') out.push(l.string)
-    for (const c of n.children) visit(c, vis)
+  const visit = node => {
+    if (!node.activeInHierarchy) return
+    const label = node.getComponent('cc.Label')
+    if (label?.string) out.push(label.string)
+    node.children.forEach(visit)
   }
-  visit(scene.getChildByName('Canvas'), true)
+  visit(window.cc.director.getScene().getChildByName('Canvas'))
   return out
 })
 
-/** 建一栋：点「建造」→ 点一块空地 → 在选择器里选第 optionIndex 行。 */
-async function buildOne(optionIndex, emptyIndex) {
-  await clearGuide()
-  const buildBtn = await toPage('DetailBuildButton')
-  if (buildBtn === null) { console.error('[判据失败] 找不到「建造」按钮'); return false }
-  await page.mouse.click(buildBtn.x, buildBtn.y)
-  await page.waitForTimeout(700)
-
-  const emptyTile = await page.evaluate((idx) => {
-    const scene = window.cc.director.getScene()
-    let grid = null
-    const visit = (n) => { if (n.name === 'CityGrid') grid = n; for (const c of n.children) visit(c) }
-    visit(scene)
-    if (grid === null) return null
-    const empty = grid.children.filter((c) => /^Grid-\d+$/.test(c.name)).filter((c) => {
-      const lv = c.getChildByName('Level')?.getComponent('cc.Label')
-      return lv !== null && lv.string === ''
+async function run() {
+  try {
+    preview = await startPreviewServer({ root: ROOT, backend: BACKEND, port: PORT })
+    browser = await chromium.launch({ headless: true })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 })
+    await context.addInitScript(deviceId => localStorage.setItem('ironoath.deviceId', deviceId), `buildmany-${Date.now()}`)
+    page = await context.newPage()
+    page.on('pageerror', error => errors.push(error.message))
+    await loadCity()
+    initialCity = await readCity()
+    assert(initialCity.buildings.length === 1 && initialCity.buildings[0].configId === 'main_city', '不是仅有主城的本轮新号')
+    for (const configId of TARGETS) await buildOne(configId)
+    await page.screenshot({ path: path.join(OUT, '08-two-buildings-queued.png') })
+    // 必须先有两次成功放置。用权威 city/list 惰性收割到期建筑，初始的 0/N 永远不能通过本判据。
+    for (let i = 0; i <= 12; i++) {
+      finalCity = await readCity()
+      const completed = TARGETS.every(id => finalCity.buildings.some(row => row.configId === id && row.level === 1 && row.status === 'IDLE'))
+      console.log(`[build-many] 第 ${i + 1} 次权威检查：queue=${finalCity.queues.used}/${finalCity.queues.available} ${JSON.stringify(finalCity.buildings)}`)
+      if (receipts.length === 2 && completed && finalCity.queues.used === 0) { queueZero = true; break }
+      if (i < 12) await page.waitForTimeout(5000)
+    }
+    assert(queueZero, '两次成功建造后未在 60 秒内到达两栋 Lv1/队列归零')
+    await loadCity(true)
+    await page.waitForFunction(ids => {
+      const city = window.cc.director.getScene()?.getChildByName('Canvas')?.getChildByName('Game')
+        ?.getChildByName('city')?.getComponent('CityPanelView')
+      return ids.every(id => city?.resp?.buildings?.some(row => row.configId === id && row.level === 1))
+        && (city.gridTiles ?? []).filter(tile => tile.nameLabel.string && tile.icon.activeInHierarchy)
+          .every(tile => tile.icon.getComponent('cc.Sprite')?.spriteFrame)
+    }, TARGETS, { timeout: 10_000 }).catch(() => {})
+    finalCity = await readCity()
+    finalTexts = await texts()
+    tiles = await page.evaluate(() => {
+      const scene = window.cc.director.getScene()
+      const city = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('city')?.getComponent('CityPanelView')
+      const cameras = scene.getComponentsInChildren('cc.Camera')
+      return (city?.gridTiles ?? []).map(tile => {
+        const icon = tile.icon, sprite = icon.getComponent('cc.Sprite')
+        const sameLayer = icon.layer === tile.node.layer && icon.layer === city.node.layer
+        const cameraVisible = cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & icon.layer) !== 0)
+        const rendererRegistered = !!sprite && icon._uiProps?.uiComp === sprite
+        const opaque = !sprite || sprite.color.a > 0
+        let ancestorOpacity = true
+        for (let node = icon; node; node = node.parent) {
+          if (node.getComponent('cc.UIOpacity')?.opacity === 0) ancestorOpacity = false
+        }
+        const iconActive = icon.activeInHierarchy === true
+        const hasSprite = !!sprite?.spriteFrame
+        const drawable = iconActive && hasSprite && sprite.enabled && rendererRegistered && sameLayer && cameraVisible && opaque && ancestorOpacity
+        return { tile: tile.node.name, gridX: tile.plate.gridX, gridY: tile.plate.gridY,
+          level: tile.levelLabel.string, name: tile.nameLabel.string, iconActive, hasSprite,
+          spriteFrame: sprite?.spriteFrame?.name ?? null, rendererRegistered, spriteEnabled: sprite?.enabled ?? false,
+          layer: icon.layer, sameLayer, cameraVisible, opaque, ancestorOpacity, drawable }
+      })
     })
-    return empty.length <= idx ? null : empty[idx].name
-  }, emptyIndex)
-  if (emptyTile === null) { console.error('[判据失败] 没有足够的空地'); return false }
-  const pt = await toPage(emptyTile)
-  await page.mouse.click(pt.x, pt.y)
-  await page.waitForTimeout(900)
-
-  const row = await toPage(`Choice-${optionIndex}`)
-  if (row === null) { console.error('[判据失败] 选择器里没有第', optionIndex, '行'); return false }
-  const label = await page.evaluate((i) => {
-    const scene = window.cc.director.getScene()
-    let t = null
-    const visit = (n) => { if (n.name === `Choice-${i}`) t = n; for (const c of n.children) visit(c) }
-    visit(scene)
-    if (t === null) return null
-    const labels = t.getComponentsInChildren('cc.Label')
-    return labels.length > 0 ? labels[0].string : null
-  }, optionIndex)
-  await page.mouse.click(row.x, row.y)
-  await page.waitForTimeout(1200)
-  console.log(`[build-many] 在 ${emptyTile} 发起建造「${label}」`)
-  return true
-}
-
-await buildOne(0, 2)   // 伐木场
-await buildOne(1, 8)   // 采石场
-
-await page.screenshot({ path: path.join(OUT, '08-two-buildings-queued.png') })
-console.log('[build-many] 建造中屏上文本：', (await texts()).filter((t) => /伐木场|采石场|升级|建造/.test(t)).join(' | '))
-
-/**
- * 等两栋建完（timeBaseSec=20 秒，队列 2 条并行），每 5 秒看一次队列。
- *
- * <p>**判据修过（2026-09-21）**：原来写的是 `if (t.some((x) => x.includes('收割'))) break`，
- * 而屏上常驻着「一键收割」按钮 —— 于是**第一次检查（第 5 秒）就 break**，
- * 拍出来的 `09-two-buildings-done.png` 其实是**建造中**的帧（伐木场 Lv0、队列 1/2）。
- * 现在的判据是「队列回到 0/N」；等满 60 秒也不成立就如实报"没等到"，不假装建完。
- */
-let queueZero = false
-for (let i = 0; i < 8; i++) {
-  await page.waitForTimeout(5000)
-  // **每轮重载一次再读**：队列计数来自 `/city/list` 的快照，本地每秒刷新的是倒计时、不是它 ——
-  // 不重载就会一直读到"1/2"（12 轮全是 1/2 的那次实测，见审计 §10.3 的说明），判据也就永远走不到。
-  await page.reload({ waitUntil: 'networkidle' })
-  await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
-  await page.waitForTimeout(2500)
-  await clearGuide()
-  const t = await texts()
-  const queue = t.find((x) => x.includes('建造队列')) ?? ''
-  const matched = /建造队列\s*(\d+)\s*\/\s*(\d+)/.exec(queue)
-  const queued = matched === null ? Number.NaN : Number(matched[1])
-  console.log(`[build-many] 第 ${i + 1} 次检查（重载后）：${queue}`)
-  if (Number.isFinite(queued) && queued === 0) { queueZero = true; break }
-}
-console.log(`[build-many] 队列归零：${queueZero ? '是' : '否（等满 60 秒）'}`)
-
-/**
- * 最后一张读数**重新载入面板再取**：倒计时是本地每帧算的，而等级、队列、可收割提示
- * 都来自上一次 `/city/list` 的快照 —— 不重载就读不到"建完了"这件事本身。
- */
-await page.reload({ waitUntil: 'networkidle' })
-await page.waitForFunction(() => window.cc !== undefined && window.cc.director.getScene() !== null)
-await page.waitForTimeout(3500)
-await clearGuide()
-await page.waitForTimeout(500)
-await page.screenshot({ path: path.join(OUT, '09-two-buildings-done.png') })
-
-const final = (await texts()).filter((t) => !/^(内城|军队|武将|招募|背包|关卡|战报|任务|战令|邮件|社交|战力|商店|外观|搜索|地图|设置)$/.test(t))
-console.log('[build-many] 最终屏上文本：', final.join(' | '))
-
-/** 逐格读：哪些格上有建筑图标、哪些是空的。 */
-const tiles = await page.evaluate(() => {
-  const scene = window.cc.director.getScene()
-  let grid = null
-  const visit = (n) => { if (n.name === 'CityGrid') grid = n; for (const c of n.children) visit(c) }
-  visit(scene)
-  if (grid === null) return []
-  return grid.children.filter((c) => /^Grid-\d+$/.test(c.name)).map((c) => {
-    const lv = c.getChildByName('Level')?.getComponent('cc.Label')
-    const name = c.getChildByName('Name')?.getComponent('cc.Label')
-    const icon = c.getChildByName('BuildingIcon')
-    const sprite = icon?.getComponent('cc.Sprite') ?? null
-    return { tile: c.name, level: lv?.string ?? '', name: name?.string ?? '',
-      iconActive: icon?.active !== false,
-      hasSprite: sprite !== null && sprite.spriteFrame !== null }
-  }).filter((t) => t.level !== '' || t.iconActive)
-})
-console.log('[build-many] 有建筑表现的格：')
-tiles.forEach((t) => console.log(`   ${t.tile}  ${t.name} ${t.level}  iconActive=${t.iconActive} hasSprite=${t.hasSprite}`))
-writeFileSync(path.join(OUT, 'multi-building-report.json'),
-  JSON.stringify({ queueZero, tiles, texts: final, pageErrors: errors }, null, 2))
-console.log(`[build-many] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
-await browser.close()
-await preview.close()
-
-/**
- * 判据（都能失败）：
- * ① 伐木场那格必须画着**正稿**（`iconActive && hasSprite`）—— 这就是"建了才叠正稿"；
- * ② 它的等级必须是 `Lv1` —— 建造真完成、面板真刷新过（防的正是本文件头注释里那个假绿）；
- * ③ 主城**一格都不许叠**（底图已有城堡，叠了就是重影）；
- * ④ 除这两栋外不许有第三个格子有建筑表现 —— "未建不画"；
- * ⑤ 队列必须回到 `0/N`；⑥ 一格表现都没有 ⇒ 判据走不到，算红（反空转）。
- */
-const failures = []
-const lumber = tiles.find((t) => t.name === '伐木场')
-const mainCity = tiles.find((t) => t.name === '主城')
-const others = tiles.filter((t) => t.name !== '伐木场' && t.name !== '主城')
-if (tiles.length === 0) {
-  failures.push('一格建筑表现都没有 —— 判据走不到，不许当绿')
-}
-if (lumber === undefined) {
-  failures.push('没看到伐木场的建筑表现 —— "建了才叠正稿"没成立')
-} else {
-  if (!lumber.iconActive || !lumber.hasSprite) {
-    failures.push(`伐木场那格没有正稿：${JSON.stringify(lumber)}`)
-  }
-  if (lumber.level !== 'Lv1') {
-    failures.push(`伐木场等级不是 Lv1（建造没完成或面板没刷新）：${JSON.stringify(lumber)}`)
+    await page.screenshot({ path: path.join(OUT, '09-two-buildings-done.png') })
+    console.log('[build-many] 最终屏上文本：', finalTexts.join(' | '))
+    for (const tile of tiles.filter(tile => tile.level || tile.iconActive)) console.log(`[build-many] 建筑表现：${JSON.stringify(tile)}`)
+    assert(finalCity.buildings.length === 3 && finalCity.queues.used === 0, '权威最终城池不是主城加两栋/队列归零')
+    for (const configId of ['main_city', ...TARGETS]) {
+      const building = finalCity.buildings.find(row => row.configId === configId)
+      const tile = tiles.find(row => row.gridX === building?.gridX && row.gridY === building?.gridY)
+      assert(tile?.name === building?.name && tile.level === `Lv${building.level}`, `权威实例与显示格不一致：${configId} ${JSON.stringify(tile)}`)
+      if (configId === 'main_city') assert(!tile.iconActive && !tile.drawable, `主城叠了正稿：${JSON.stringify(tile)}`)
+      else assert(building.level === 1 && tile.drawable, `建成的正稿未登记/未在可见层绘制：${JSON.stringify(tile)}`)
+    }
+    const empty = tiles.filter(tile => !finalCity.buildings.some(row => row.gridX === tile.gridX && row.gridY === tile.gridY))
+    assert(empty.length > 0 && empty.every(tile => !tile.iconActive && !tile.drawable && !tile.level && !tile.name), '未建格出现建筑表现或空地判据走不到')
+    assert(errors.length === 0, `页面报错 ${errors.length} 条：${errors[0]}`)
+    console.log('[build-many] 全绿：两次真实建造业务成功、两栋 Lv1 正稿登记绘制、主城不叠图、未建不画、权威队列归零')
+  } catch (error) {
+    failures.push(error.stack ?? String(error))
+    console.error(`[build-many] 判据失败：${error.message}`)
+    process.exitCode = 1
+    if (page && !page.isClosed()) await page.screenshot({ path: path.join(OUT, 'multi-building-failure.png') }).catch(() => {})
+  } finally {
+    try {
+      writeFileSync(path.join(OUT, 'multi-building-report.json'), JSON.stringify({ backend: BACKEND,
+        playerId: session?.playerId, initialCity, receipts, finalCity, queueZero, tiles, texts: finalTexts,
+        pageErrors: errors, failures }, null, 2))
+    } finally {
+      try { await browser?.close() } finally { await preview?.close() }
+    }
   }
 }
-if (mainCity !== undefined && (mainCity.iconActive || mainCity.hasSprite)) {
-  failures.push(`主城不该叠正稿（底图已有城堡）：${JSON.stringify(mainCity)}`)
-}
-if (others.length > 0) {
-  failures.push(`未建位置出现了建筑表现：${others.map((t) => `${t.tile} ${t.name}`).join('、')}`)
-}
-if (!queueZero) {
-  failures.push('建造队列没有回到 0/N —— 这是本文件头注释里那个"5 秒就 break"的假绿要防的事')
-}
-if (errors.length > 0) {
-  failures.push(`页面报错 ${errors.length} 条：${errors[0]}`)
-}
-if (failures.length > 0) {
-  console.error(`[build-many] 判据失败：${failures.join('；')}`)
-  process.exit(1)
-}
-console.log('[build-many] 全绿：建了才叠正稿、主城不叠图、未建不画、队列归零')
 
+await run()
