@@ -174,6 +174,7 @@ await page.waitForTimeout(400)
 const frame = await page.evaluate(() => {
   const cc = window.cc
   const scene = cc.director.getScene()
+  const cameras = scene.getComponentsInChildren('cc.Camera')
   const tiles = []
   const visit = (node, shown) => {
     const on = shown && node.activeInHierarchy === true
@@ -194,10 +195,19 @@ const frame = await page.evaluate(() => {
       const wp = ui === null ? null : ui.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
       const iconUi = icon === null ? null : icon.getComponent('cc.UITransform')
       const iwp = iconUi === null ? null : iconUi.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0))
+      let ancestorOpacity = true
+      for (let ancestor = icon; ancestor; ancestor = ancestor.parent) {
+        if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) ancestorOpacity = false
+      }
+      const drawable = !!icon && icon.activeInHierarchy && !!sprite?.spriteFrame && sprite.enabled
+        && icon._uiProps?.uiComp === sprite && icon.layer === node.layer
+        && cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & icon.layer) !== 0)
+        && sprite.color.a > 0 && ancestorOpacity
       tiles.push({
         tile: node.name,
         texts,
         iconActive: icon === null ? null : icon.active,
+        drawable,
         frameName: sprite === null || sprite.spriteFrame === null ? null : sprite.spriteFrame.name,
         geo: {
           wx: wp === null ? null : Math.round(wp.x), wy: wp === null ? null : Math.round(wp.y),
@@ -595,7 +605,7 @@ await page.screenshot({ path: SHOT })
 await browser.close()
 await preview.close()
 
-const withArt = frame.tiles.filter((t) => t.iconActive === true && t.frameName !== null)
+const withArt = frame.tiles.filter((t) => t.drawable === true)
 console.log('[multi-types] 有正稿的格子：')
 for (const tile of withArt) {
   console.log(`   ${tile.tile}  ${tile.texts.join(' ')}  帧名=${tile.frameName}`)
@@ -604,22 +614,19 @@ console.log(`[multi-types] 截图：${SHOT}`)
 console.log(`[multi-types] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
 
 const failures = []
-const expected = built.filter((b) => b.configId !== 'main_city')
-if (expected.length < 4) {
-  failures.push(`只建起 ${expected.length} 栋非主城建筑（要 4 栋才覆盖 4 类）—— 前置流程没走通`)
+const expected = built
+const nonMainCount = expected.filter((b) => b.configId !== 'main_city').length
+if (nonMainCount < 4) {
+  failures.push(`只建起 ${nonMainCount} 栋非主城建筑（要 4 栋才覆盖 4 类）—— 前置流程没走通`)
 }
 const byName = new Map(withArt.map((t) => [t.texts.find((x) => !/^Lv\d+$/.test(x)) ?? t.tile, t]))
 for (const building of expected) {
   const tile = byName.get(building.name)
   if (tile === undefined) {
     failures.push(`${building.name} 在画面上没有正稿（应有 building-* 帧名的可见图标）`)
-  } else if (!/^building-/.test(tile.frameName ?? '')) {
-    failures.push(`${building.name} 画的是 ${tile.frameName}，不是 building-* 正稿（退回图集小图标了）`)
+  } else if (tile.frameName !== `building-${building.configId.replaceAll('_', '-')}-v1`) {
+    failures.push(`${building.name} 画的是 ${tile.frameName}，不是自身正稿（退回图集或用了其它楼）`)
   }
-}
-const mainCityArt = withArt.find((t) => t.texts.some((x) => x.includes('主城')))
-if (mainCityArt !== undefined) {
-  failures.push(`主城不该叠正稿（底图已有城堡）：${mainCityArt.frameName}`)
 }
 const artWithoutBuilding = withArt.filter((t) => !expected.some((b) => t.texts.some((x) => x === b.name)))
 if (artWithoutBuilding.length > 0) {
@@ -649,4 +656,4 @@ if (failures.length > 0) {
   console.error(`[multi-types] 判据失败：${failures.join('；')}`)
   process.exit(1)
 }
-console.log(`[multi-types] 全绿：${expected.length} 类建筑各自叠着正稿、名字与等级都在，未建格子仍空着`)
+console.log(`[multi-types] 全绿：主城与 ${nonMainCount} 类建筑各自绘制正稿、名字与等级都在，未建格子仍空着`)

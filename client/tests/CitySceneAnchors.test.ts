@@ -67,6 +67,17 @@ test('锚点几何合法：脚印为正、落在工作视图内、越界格返�
   assert.equal(sceneAnchorAt(0.5, 0), null, '非整数格位不该拿到锚点')
 })
 
+test('默认主城的展示锚是王庭地面基座，不能继续命中旧背景的塔楼', () => {
+  const keep = sceneAnchorAt(3, 3)
+  assert.ok(keep !== null)
+  assert.equal(keep.anchorId, 'p33', '重标显示基座不能改变默认逻辑格位身份')
+  assert.equal(keep.district, 'crown')
+  assert.ok(keep.x / SCENE_VIEW_WIDTH >= 0.45 && keep.x / SCENE_VIEW_WIDTH <= 0.55,
+    '主堡基座应接在舞台的王庭主轴')
+  assert.ok(keep.y / SCENE_VIEW_HEIGHT >= 0.35 && keep.y / SCENE_VIEW_HEIGHT <= 0.45,
+    '主堡应落在王庭空基座，旧塔楼热区会把真实 Sprite 顶出画面')
+})
+
 test('投影表与 CityPanel 的网格常量同源（脱节必须在这里红，而不是在运行时少格）', () => {
   const src = fs.readFileSync(path.join(repoRoot(), 'client', 'assets', 'scripts',
     'game', 'city', 'CityPanel.ts'), 'utf8')

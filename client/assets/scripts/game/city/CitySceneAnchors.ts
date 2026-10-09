@@ -77,20 +77,19 @@ export interface SceneAnchor {
 /**
  * [gridX, gridY, district, x, y, 脚印宽, 脚印深, 道路]。
  *
- * <p><b>2026-09-21 重排</b>：底图换成 AI 重绘版（`city-base-v1`，抹掉了除主堡外的 15 类功能建筑，
- * 保留地形/道路/城墙/城门/民居）。本表按**新底图上真实存在的空位**重新标定 ——
- * 旧表是 A16 时代的构图，与用户效果图对不上，实测 p33 落在主堡下方的岩石上、城堡本体没有热区，
- * 玩家点最显眼的城堡会点空（见 `内城界面审计_2026-09-21.md` §2.3）。
+ * <p>舞台只提供地形与道路，全部功能建筑从真实实例画到基座上。
+ * p33 从旧底图塔楼上的热区移到王庭主路基座；其余格位沿原有显示映射，
+ * 格位身份、建造校验与服务器存档均不变。
  *
- * <p>坐标口径：1000×563 工作视图（与 A16 热区图同源），落点是**基座中心**。
+ * <p>坐标口径：1000×625 工作视图，落点是**基座中心**。
  * 格位与显示位置解耦：`(gridX, gridY)` 是服务器坐标，`x/y` 只决定画在哪，
  * 所以重排显示不会动玩家存档。
  *
- * <p>`p33` 是服务器默认主城格，对准底图上的城堡；其余功能建筑落在底图被抹空的位置。
+ * <p>`p33` 是服务器默认主城格；它的显示坐标是地面落点，不再依赖背景里预画的城堡。
  */
 const TABLE: ReadonlyArray<readonly [number, number, SceneDistrict, number, number, number, number, string]> = [
-  // ── 王庭高地：主堡与台地。p33 对准底图城堡
-  [3, 3, 'crown', 495, 84, 138, 52, '王庭主轴'],
+  // ── 王庭高地：主堡基座接在地面主轴，主体由 main_city 实例绘制。
+  [3, 3, 'crown', 495, 270, 138, 52, '王庭主轴'],
   [3, 1, 'crown', 490, 150, 74, 34, '王庭内阶'],
   [2, 2, 'crown', 425, 213, 72, 34, '主堡前庭西'],
   [4, 2, 'crown', 565, 213, 72, 34, '主堡前庭东'],
@@ -197,6 +196,17 @@ export interface SceneLayout {
   /** 工作视图 → 面板的统一缩放。 */
   readonly scale: number
   readonly plates: readonly ProjectedPlate[]
+}
+
+/** 地形舞台按原图比例铺满视口，超出的两侧由视口裁切，不能为了满屏压扁地貌。 */
+export function coverSceneSize(areaWidth: number, areaHeight: number,
+                               imageWidth: number, imageHeight: number): { width: number; height: number } {
+  if (!Number.isFinite(imageWidth) || !Number.isFinite(imageHeight)
+      || imageWidth <= 0 || imageHeight <= 0) {
+    return { width: areaWidth, height: areaHeight }
+  }
+  const scale = Math.max(areaWidth / imageWidth, areaHeight / imageHeight)
+  return { width: imageWidth * scale, height: imageHeight * scale }
 }
 
 /** 深度来自画面落地位置，不能用服务端 gridY 代替；锚点表刻意不按网格行布景。 */

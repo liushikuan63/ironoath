@@ -1,0 +1,107 @@
+{
+  "generationMode": "built-in image_gen",
+  "reference": "art-src/generated/concepts/iron-unified-v3/master-city-v3.png",
+  "assets": [
+    {
+      "id": "city-stage",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/city-ground-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/city-ground-v3.png",
+      "size": [
+        1536,
+        1024
+      ],
+      "transparent": false,
+      "runtime": [
+        "client/assets/resources/ui/generated/city/city-base-v2.png"
+      ]
+    },
+    {
+      "id": "main-city",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-main-city-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-main-city-v3.png",
+      "size": [
+        512,
+        512
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-main-city-v1.png"
+      ]
+    },
+    {
+      "id": "panel-iron",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/panel-iron-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/panel-iron-v3.png",
+      "size": [
+        512,
+        326
+      ],
+      "transparent": true,
+      "borders": [
+        24,
+        24,
+        24,
+        24
+      ],
+      "runtime": [
+        "client/assets/resources/ui/generated/ui/panel-iron-v1.png",
+        "client/assets/resources/ui/generated/ui/panel-parchment-v1.png",
+        "client/assets/resources/ui/generated/ui/panel-warning-v1.png",
+        "client/assets/resources/ui/generated/ui/panel-gilt-v1.png",
+        "client/assets/resources/ui/generated/ui/panel-kingdom-v1.png"
+      ]
+    },
+    {
+      "id": "lumber-camp",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-lumber-camp-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-lumber-camp-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-lumber-camp-v1.png"
+      ]
+    },
+    {
+      "id": "quarry",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-quarry-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-quarry-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-quarry-v1.png"
+      ]
+    },
+    {
+      "id": "farm",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-farm-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-farm-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-farm-v1.png"
+      ]
+    },
+    {
+      "id": "iron-mine",
+      "source": "art-src/generated/drafts/raw/2026-10-10/iron-unified-v3/building-iron-mine-v3-raw.png",
+      "accepted": "art-src/generated/accepted/iron-unified-v3/building-iron-mine-v3.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "runtime": [
+        "client/assets/resources/ui/generated/buildings/building-iron-mine-v1.png"
+      ]
+    }
+  ]
+}

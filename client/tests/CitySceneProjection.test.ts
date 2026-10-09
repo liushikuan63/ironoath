@@ -18,7 +18,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SCENE_ANCHORS, SCENE_GRID_WIDTH, SCENE_GRID_HEIGHT, projectSceneLayout,
-  SCENE_RUNTIME_WIDTH, SCENE_RUNTIME_HEIGHT, scenePlatesBackToFront,
+  SCENE_RUNTIME_WIDTH, SCENE_RUNTIME_HEIGHT, coverSceneSize, scenePlatesBackToFront,
 } from '../assets/scripts/game/city/CitySceneAnchors'
 
 /** 与 `CityPanelView` 同一组真源，避免视图变大而测试仍拿旧棋盘尺寸判绿。 */
@@ -32,6 +32,25 @@ const plateAt = (gridX: number, gridY: number) => {
   assert.ok(plate !== undefined, `第 ${gridY} 行第 ${gridX} 列没有投影落点`)
   return plate
 }
+
+test('1.5 比例地形在 1.6 视口中按原比覆盖，两端裁切而不是压扁', () => {
+  const size = coverSceneSize(960, 600, 1536, 1024)
+  assert.equal(size.width, 960)
+  assert.equal(size.height, 640)
+  assert.equal((size.height - 600) / 2, 20, '舞台居中时上下各裁 20 设计像素')
+  assert.equal(size.width / size.height, 1536 / 1024)
+})
+
+test('地形 cover 在横屏和竖屏均保比例、无露底，至少一边恰好贴合视口', () => {
+  const viewports = [[1440, 900], [960, 600], [480, 320], [600, 960]] as const
+  for (const [width, height] of viewports) {
+    const size = coverSceneSize(width, height, 1536, 1024)
+    assert.ok(size.width >= width && size.height >= height, 'cover 不能露出底图之外的背景')
+    assert.ok(Math.abs(size.width / size.height - 1.5) < 1e-9, 'cover 必须保持原图比例')
+    assert.ok(Math.abs(size.width - width) < 1e-9 || Math.abs(size.height - height) < 1e-9,
+      '至少一边贴合视口，不能无故额外放大并裁掉地形')
+  }
+})
 
 test('36 个锚点全部投影出来，格位与锚点表一一对上', () => {
   assert.equal(layout.plates.length, SCENE_GRID_WIDTH * SCENE_GRID_HEIGHT)

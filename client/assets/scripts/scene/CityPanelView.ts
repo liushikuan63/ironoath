@@ -21,13 +21,13 @@ import type {
 import { ChoiceOverlay } from './ChoiceOverlay'
 import {
   applyAnyIconSprite, applyCommandButton, applyIconSprite, applySimpleSprite,
-  applySlicedSprite, applyTiledSprite, buildingIconKey, ensureFamily, familyFrame,
+  applySlicedSprite, applyTiledSprite, artFrame, buildingIconKey, ensureFamily,
 } from './ArtCatalog'
 import { buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont, capWidth, oneLineFloorHeight } from './UiFont'
 import {
   DISTRICT_TINT_RGB, SCENE_RUNTIME_HEIGHT, SCENE_RUNTIME_WIDTH,
-  SCENE_STAGE_HEIGHT, SCENE_STAGE_WIDTH, projectSceneLayout, scenePlatesBackToFront,
+  SCENE_STAGE_HEIGHT, SCENE_STAGE_WIDTH, coverSceneSize, projectSceneLayout, scenePlatesBackToFront,
 } from '../game/city/CitySceneAnchors'
 import type { ProjectedPlate, SceneDistrict, SceneLayout } from '../game/city/CitySceneAnchors'
 
@@ -35,22 +35,6 @@ const { ccclass } = _decorator
 
 const COLOR_BACKGROUND = new Color(22, 18, 16, 255)
 const COLOR_PANEL = new Color(40, 33, 27, 255)
-/**
- * 建筑正稿的**分离描边**（同一张图放大一圈垫在下面）。
- *
- * <p>为什么需要它而不是换台基色：15 类正稿按通道均值量，仓库对 idle 台基 `(58,46,36)`
- * 只差 **4.1**、兵营 5.8、铁矿 6.0 —— 四栋暗房子压在自己的暗底座上糊成一片。
- * 但采石场很亮、仓库很暗分处两端，**没有任何一档暗色台基能同时拉开两者**
- * （把台基限制在面板暗色系里搜过，最优也只有 21.2，仍不到 25）。
- * 所以分离靠**边缘**而不是靠底色 —— 这也是同类 SLG 的通用做法。
- *
- * <p>取暖石亮色 + 半透明：它同时要对上"很亮的采石场"和"很暗的仓库"，
- * 而它自己压在三种台基上的最差对比是 100+（见 `tools` 里那条读数），
- * 不会把问题从"房子对底座"挪成"描边对底座"。
- */
-const COLOR_ART_RIM = new Color(238, 222, 188, 150)
-/** 正稿乘色：把绿底抠图的亮草垫压进底图 sepia 色域，见 paintTile 里用它的那段。 */
-const COLOR_ART_GRADE = new Color(208, 192, 160, 255)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
@@ -103,7 +87,8 @@ const BUILDING_PREVIEWS: Readonly<Record<string, readonly [number, number, numbe
   embassy: [4, 2, 0.96],
 }
 
-function buildingIconSize(configId: string, plateWidth: number): number {
+function buildingIconSize(configId: string, plateWidth: number,
+                          viewportHeight = SCENE_RUNTIME_HEIGHT): number {
   const factors: Readonly<Record<string, number>> = {
     main_city: 2.30,
     wall: 1.25,
@@ -115,7 +100,8 @@ function buildingIconSize(configId: string, plateWidth: number): number {
     farm: 1.72,
     drill_ground: 1.76,
   }
-  const upper = configId === 'main_city' ? 300 : 185
+  // 默认 1.8 倍仍需给顶部 HUD 与底部详情留出空间，主堡不能从基座一直顶出视口。
+  const upper = configId === 'main_city' ? Math.min(300, viewportHeight * 0.36) : 185
   return Math.max(76, Math.min(upper, plateWidth * (factors[configId] ?? 1.66)))
 }
 
@@ -223,8 +209,7 @@ type RowAction = 'build' | 'upgrade' | 'speedAd' | 'speedGold' | 'collect' | 'pa
 interface GridTileRefs {
   readonly node: Node
   readonly graphics: Graphics
-  /** 浅色描边：画在 `icon` 底下、同一张图放大一圈。见 COLOR_ART_RIM 为什么存在。 */
-  readonly iconRim: Node
+  /** 主体保持母版原色；交互反馈只画在真实基座上。 */
   readonly icon: Node
   readonly levelLabel: Label
   /**
@@ -501,14 +486,17 @@ export class CityPanelView extends Component {
     const reference = new Node('CityReferenceScene')
     reference.layer = stage.layer
     stage.addChild(reference)
-    reference.addComponent(UITransform).setContentSize(new Size(width, height))
-    if (applySimpleSprite(reference, 'city.scene.reference', width, height)) {
+    const referenceFrame = artFrame('city.scene.reference')
+    const cover = coverSceneSize(width, height,
+      referenceFrame?.originalSize.width ?? width, referenceFrame?.originalSize.height ?? height)
+    reference.addComponent(UITransform).setContentSize(new Size(cover.width, cover.height))
+    if (applySimpleSprite(reference, 'city.scene.reference', cover.width, cover.height)) {
       this.referenceStage = true
       this.applyStageTransform()
       return
     }
 
-    // 参考图是满屏城景：地表先铺满全屏，远山再压在上半部，城内只叠道路与建筑。
+    // 一体化地形舞台加载失败时，先铺地面再压远山；功能建筑仍由真实实例绘制。
     const ground = new Node('CityGround')
     ground.layer = stage.layer
     stage.addChild(ground)
@@ -820,13 +808,6 @@ export class CityPanelView extends Component {
       tile.addComponent(UITransform).setContentSize(
         new Size(Math.max(46, plate.width), Math.max(42, plate.height)))
       const graphics = tile.addComponent(Graphics)
-      // 描边先挂、正稿后挂 ⇒ 同一父节点下描边在正稿之后绘制不到它上面去（Cocos 按子节点次序画）
-      const iconRim = new Node('BuildingRim')
-      iconRim.layer = tile.layer
-      tile.addChild(iconRim)
-      iconRim.setPosition(new Vec3(0, -2, 0))
-      const rimBox = iconRim.addComponent(UITransform)
-      rimBox.setAnchorPoint(0.5, 0)
       const icon = new Node('BuildingIcon')
       icon.layer = tile.layer
       tile.addChild(icon)
@@ -842,7 +823,7 @@ export class CityPanelView extends Component {
       this.outlineFor(nameLabel)
       nameLabel.node.getComponent(UITransform)?.setContentSize(new Size(plate.width, 12))
       nameLabel.overflow = Label.Overflow.SHRINK
-      this.gridTiles.push({ node: tile, graphics, iconRim, icon, levelLabel, nameLabel, plate })
+      this.gridTiles.push({ node: tile, graphics, icon, levelLabel, nameLabel, plate })
     }
   }
 
@@ -1228,7 +1209,7 @@ export class CityPanelView extends Component {
       }
       if (row.configId === 'main_city') {
         keepX = tile.plate.x
-        keepY = tile.plate.y
+        keepY = tile.plate.y + buildingIconSize(row.configId, tile.plate.width, this.contentHeight) / 2
       }
       tile.node.on('touch-start', (_event: EventTouch) => {
         this.buildMode = false
@@ -1238,8 +1219,7 @@ export class CityPanelView extends Component {
     })
     // 这一遍是按当前倍数画的，记下来：`applyStageTransform` 靠它判断要不要重画标注
     this.lastPaintedZoom = this.zoom
-    // 默认镜头对准主堡的**基座**：放大到 1.8 倍时屏幕上只剩主堡周围那几栋，
-    // 而对准基座（而不是堡体中心）刚好让城堡整个落在画面里、上方还留出天空。
+    // 默认镜头对准真实主堡主体的中心：主堡从基座向上长，单看落地点会截掉塔顶。
     // 玩家自己缩放过或拖动过就不再抢镜头 —— 否则每次数据刷新都把人拽回主堡。
     if (!this.viewAdjusted && !Number.isNaN(keepX)) {
       this.setFocus(keepX, keepY)
@@ -1278,7 +1258,6 @@ export class CityPanelView extends Component {
       tile.levelLabel.string = ''
       tile.nameLabel.string = ''
       tile.icon.active = false
-      tile.iconRim.active = false
       // 默认城景没有“空格子”；只有进入建造模式才显示可落点。
       if (this.buildMode) {
         graphics.fillColor = new Color(184, 134, 11, 46)
@@ -1297,7 +1276,7 @@ export class CityPanelView extends Component {
       return
     }
 
-    const iconSide = buildingIconSize(row.configId, tile.plate.width)
+    const iconSide = buildingIconSize(row.configId, tile.plate.width, this.contentHeight)
     /**
      * **标注不跟世界一起缩**：等级牌 / 名字 / 进度条是 UI，字号该停在设计尺寸上
      * （与全游戏其它文字同一把尺：设计 px × 设备比）。跟着舞台缩的话，默认 1.8 倍下
@@ -1307,10 +1286,6 @@ export class CityPanelView extends Component {
      * 地面光环与正稿**不**乘 u —— 它们是画里的东西，该跟着世界走。
      */
     const u = 1 / this.zoom
-    // 底图上已经画着主堡（它也是新号默认就有的唯一建筑），再叠一层正稿就是重影；
-    // 其余 14 类在底图上已被抹成空地，**必须叠正稿**才能"建了才看得见" —— 这也是
-    // A18 那 15 张正稿真正被用上的地方（审计 §2.2 记的就是它们先前一格都没渲染）。
-    const onBase = this.referenceStage && row.configId === 'main_city'
     // **未建成的楼不画**：取消首次放置之后，实例会留在 Lv0 + 空闲（服务端没有"移除建筑"的口子），
     // 那种格子如果照画正稿，玩家会看到一栋自己从没建成的楼（2026-09-22 取消功能上线后实测到）。
     // 口径与 build-many 那条判据一致：升级中 / 已暂停 / 待收割 / 已建成 才算这格有楼。
@@ -1325,15 +1300,14 @@ export class CityPanelView extends Component {
      *   <li><b>常置台座</b>：凡建成的楼，脚下都有一枚极淡的暖色椭圆（alpha 26 填充 / 46 描边）。
      *       读作"这块地踩实了、是有主的"，而不是"这是个按钮"；</li>
      *   <li><b>有事可做</b>：可收割 ⇒ 换成绿色光环（alpha 58 + 2px 描边），一眼看出哪栋能收；</li>
-     *   <li><b>选中</b>：金色光环 + 正稿底下那圈 rim 提到 alpha 150（见下面的 `rim.color`）。</li>
+     *   <li><b>选中</b>：基座金色光环，不给楼体复制一圈描边。</li>
      * </ol>
      * 椭圆宽深读同一块地皮，不随楼体贴图放大而侵入邻地。颜色取自画面自己的暖调（214,186,132 /
      * 铜金 184,134,11），不用饱和原色 —— 所以它像地上的光，不像叠上去的图形。
      *
-     * <p>主堡（`onBase`）不走一级台座：它是画在底图里的，脚下那一片是画好的城门石阶，
-     * 再叠一枚椭圆就是往画上抹一块斑。它的可操作提示由等级牌与名字底衬承担（下面那两块）。
+     * <p>主堡与其它建筑走同一条基座状态路径，舞台不预画任何功能楼。
      */
-    if (!onBase && (selected || row.collectable)) {
+    if (selected || row.collectable) {
       graphics.fillColor = row.collectable
         ? new Color(120, 176, 96, 58) : new Color(184, 134, 11, 48)
       graphics.ellipse(0, 0, tile.plate.width / 2, tile.plate.height / 2)
@@ -1342,7 +1316,7 @@ export class CityPanelView extends Component {
       graphics.lineWidth = 2
       graphics.ellipse(0, 0, tile.plate.width / 2, tile.plate.height / 2)
       graphics.stroke()
-    } else if (built && !onBase) {
+    } else if (built) {
       graphics.fillColor = new Color(214, 186, 132, 26)
       graphics.ellipse(0, 0, tile.plate.width / 2, tile.plate.height / 2)
       graphics.fill()
@@ -1352,33 +1326,12 @@ export class CityPanelView extends Component {
       graphics.stroke()
     }
 
-    // 等级徽章：普通建筑贴在自己的图标右上；**主堡在底图上时改成基座下方居中** ——
-    // main_city 的 iconSide 是 300（2.3 倍脚印），badgeY=246 会把徽章推到画面上边之外
-    // （主堡基座离顶只有约 121px），等级和名字就都看不见了。
-    //
-    // 下移到 -68/-44 是为了**避开顶部信息带**，并给两行真实字形留出间距：基座离画面顶只有约 121 物理像素，
-    // 而资源条正好占着那一条，标签贴太近就会与「体力 100/100」那一行互相压住。
-    const badgeX = onBase ? 0 : iconSide * 0.43
-    const badgeY = onBase ? -68 : iconSide * 0.82
-    const badgeWidth = onBase ? 48 : 36
+    const badgeX = iconSide * 0.43
+    const badgeY = iconSide * 0.82
+    const badgeWidth = 36
     const badgeHeight = oneLineFloorHeight()
     const showIdentity = true
-    if (onBase) {
-      // 主堡的等级与名字要底衬：城景是亮暗交错的厚涂，纯文字压在上面读不出来
-      // （审计 §5.3「信息辨识度极低」指的就是这一类）。底衬同时把标签与堡体分开。
-      graphics.fillColor = new Color(14, 11, 9, 220)
-      const plateW = Math.max(104, tile.plate.width * 1.15)
-      graphics.roundRect(-plateW / 2 * u, -84 * u, plateW * u, 52 * u, 7 * u)
-      graphics.fill()
-      // 参考底图主堡的锚点在塔楼上，地面椭圆会悬在空中；选中提示改在自己的名牌上。
-      if (selected || row.collectable) {
-        graphics.strokeColor = row.collectable ? COLOR_GOOD : COLOR_COPPER_GOLD
-        graphics.lineWidth = 2 * u
-        graphics.roundRect(-plateW / 2 * u, -84 * u, plateW * u, 52 * u, 7 * u)
-        graphics.stroke()
-      }
-    }
-    tile.levelLabel.fontSize = onBase ? 16 : 12
+    tile.levelLabel.fontSize = 12
     tile.levelLabel.string = `Lv${row.level}`
     tile.levelLabel.node.active = showIdentity
     if (showIdentity) {
@@ -1405,48 +1358,25 @@ export class CityPanelView extends Component {
       graphics.fill()
     }
 
-    tile.nameLabel.fontSize = onBase ? 16 : 12
+    tile.nameLabel.fontSize = 12
     tile.nameLabel.string = row.name
     tile.nameLabel.node.active = showIdentity
     tile.nameLabel.color = row.collectable ? COLOR_GOOD : COLOR_TEXT
-    tile.nameLabel.node.setPosition(new Vec3(0, (onBase ? -44 : -15) * u, 0))
+    tile.nameLabel.node.setPosition(new Vec3(0, -15 * u, 0))
     tile.nameLabel.node.setScale(u, u, 1)
-    capWidth(tile.nameLabel, Math.max(84, (onBase ? tile.plate.width : iconSide) * 0.9))
-    if (onBase) {
-      tile.icon.active = false
-      tile.iconRim.active = false
-    } else {
-      const artKey = buildingArtKey(row.configId)
-      let iconVisible = built && artKey !== null && applyAnyIconSprite(tile.icon, artKey, iconSide, iconSide)
-      if (!iconVisible && built) {
-        // 没有正稿、或族图这一次没拉到：退回图集小图标，而不是留一个空格子
-        iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), iconSide, iconSide)
-      }
-      tile.icon.active = iconVisible
-      // 正稿是绿底抠图来的，自带一块亮黄绿草垫；直接叠在sepia厚涂的底图上
-      // 会像贴了一张别的游戏的贴纸。乘一层暖灰把草垫压进底图的色域
-      // （整栋一起变暖，与画面光向一致），分离感来自边缘描边而不是色差。
-      if (iconVisible) {
-        const iconSprite = tile.icon.getComponent(Sprite)
-        if (iconSprite !== null) {
-          iconSprite.color = COLOR_ART_GRADE
-        }
-      }
-      // 描边只配正稿：图集小图标本来就带一圈浅色描边，再垫一层会变成两圈糊边。
-      // 同一张图放大 12%、垫在正稿底下、着暖石亮色 ⇒ 分离来自边缘而不是底色。
-      const rimFrame = artKey === null ? null : familyFrame(artKey)
-      if (rimFrame === null || !iconVisible) {
-        tile.iconRim.active = false
-      } else {
-        const rim = tile.iconRim.getComponent(Sprite) ?? tile.iconRim.addComponent(Sprite)
-        rim.spriteFrame = rimFrame
-        rim.type = Sprite.Type.SIMPLE
-        rim.sizeMode = Sprite.SizeMode.CUSTOM
-        rim.color = selected ? COLOR_ART_RIM : new Color(238, 222, 188, 72)
-        rim.enabled = true
-        tile.iconRim.getComponent(UITransform)
-          ?.setContentSize(new Size(iconSide * 1.12, iconSide * 1.12))
-        tile.iconRim.active = true
+    capWidth(tile.nameLabel, Math.max(84, iconSide * 0.9))
+    const artKey = buildingArtKey(row.configId)
+    let iconVisible = built && artKey !== null && applyAnyIconSprite(tile.icon, artKey, iconSide, iconSide)
+    if (!iconVisible && built) {
+      // 没有正稿、或族图这一次没拉到：退回图集小图标，而不是留一个空格子
+      iconVisible = applyIconSprite(tile.icon, buildingIconKey(row.configId), iconSide, iconSide)
+    }
+    tile.icon.active = iconVisible
+    // 建筑母版与舞台使用同一材质、视角与光向；保持原色，避免整栋乘棕后失去石灰层次。
+    if (iconVisible) {
+      const iconSprite = tile.icon.getComponent(Sprite)
+      if (iconSprite !== null) {
+        iconSprite.color = new Color(255, 255, 255, 255)
       }
     }
 

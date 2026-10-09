@@ -143,6 +143,7 @@ async function collectFonts() {
 async function collectSprites() {
   return page.evaluate(() => {
     const scene = window.cc.director.getScene()
+    const cameras = scene.getComponentsInChildren('cc.Camera')
     const spriteTypes = window.cc.Sprite.Type
     const map = scene.getComponentInChildren('WorldMap')
     const artNodes = (markers) => new Set(Array.from(markers?.values() ?? [],
@@ -154,13 +155,21 @@ async function collectSprites() {
       const sprite = node.getComponent && node.getComponent('cc.Sprite')
       if (sprite !== null && sprite !== undefined && sprite.spriteFrame !== null) {
         const transform = node.getComponent('cc.UITransform')
+        let ancestorOpacity = true
+        for (let ancestor = node; ancestor; ancestor = ancestor.parent) {
+          if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) ancestorOpacity = false
+        }
+        const drawable = node.activeInHierarchy && sprite.enabled && node._uiProps?.uiComp === sprite
+          && cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & node.layer) !== 0)
+          && sprite.color.a > 0 && ancestorOpacity
         out.push({
           name: node.name,
           worldRole: terrainArtNodes.has(node) ? 'terrain' : entityArtNodes.has(node) ? 'entity' : null,
           enabled: sprite.enabled,
-          // 层内 active：判"参考舞台在场时还叠着主城正稿"要用它 —— 只看 spriteFrame 有没有挂，
-          // 会把"挂了但整个节点是关闭的"也算成重影。
+          // frame 挂载不等于绘制：主堡也必须登记为 uiComp，并处于相机可见层。
           activeInHierarchy: node.activeInHierarchy,
+          drawable,
+          color: [sprite.color.r, sprite.color.g, sprite.color.b, sprite.color.a],
           type: sprite.type,
           frameName: sprite.spriteFrame.name,
           typeName: Object.keys(spriteTypes).find((key) => spriteTypes[key] === sprite.type) ?? null,
@@ -359,6 +368,7 @@ async function collectCityStage() {
     }
     const reference = byName('CityReferenceScene')
     const referenceSprite = reference === null ? null : reference.getComponent('cc.Sprite')
+    const referenceBox = reference?.getComponent('cc.UITransform') ?? null
     const referenceFrame = referenceSprite !== null && referenceSprite.spriteFrame !== null
       ? referenceSprite.spriteFrame.name : null
     const grid = byName('CityGrid')
@@ -386,6 +396,9 @@ async function collectCityStage() {
       referenceVisible: reference !== null && reference.activeInHierarchy === true
         && referenceFrame !== null,
       referenceFrame,
+      referenceSize: referenceBox === null ? null : [referenceBox.width, referenceBox.height],
+      referenceArtSize: referenceSprite?.spriteFrame === null || referenceSprite?.spriteFrame === undefined ? null
+        : [referenceSprite.spriteFrame.originalSize.width, referenceSprite.spriteFrame.originalSize.height],
       gridSize: gridBox === null ? null : [Math.round(gridBox.width), Math.round(gridBox.height)],
       visibleSize: [Math.round(visible.width), Math.round(visible.height)],
       builtCount,
@@ -825,7 +838,7 @@ await page.screenshot({ path: path.join(OUT, 'art-march-runtime.png') })
  * <p>**内城卡片 2026-09-21 退出这一组**：满屏参考舞台之后 `CardFrame`
  * 是 `active=false`、不挂 Sprite 的空容器（`CityPanelView.buildCard`），
  * "九宫格带内排版"对它已不成立。它由下面 `cityCriteria` 那几条替换：
- * 内容区 = 视口、城景恰好一套、参考舞台在场时不叠主城正稿。行军面板照旧。
+ * 内容区 = 视口、地形舞台恰好一套、真实主城自身正稿必须登记绘制。行军面板照旧。
  */
 const frameEntries = [frameMarch]
 const frameBandDrift = frameEntries
@@ -1067,10 +1080,8 @@ const entityArt = world.filter((sprite) => sprite.worldRole === 'entity'
   && sprite.activeInHierarchy && sprite.enabled)
 const catalogWarnings = warnings.filter((message) => message.includes('[ArtCatalog]'))
 /**
- * 内城那条（原 `cityMain`：要求主城格子必须画 `building-main-city` 正稿）**2026-09-21 删掉**：
- * 满屏参考舞台的底图里已经画着城堡，`CityPanelView.paintTile` 因此刻意**不叠主城正稿**
- * （叠了就是重影）。方向反过来钉在 `cityCriteria.mainCityOverdrawn`：参考舞台在场时**不许**
- * 出现可见的主城正稿。下面这三条仍按原样"必须有"。
+ * 内城舞台只画地形与道路，主堡从真实实例绘制，`cityCriteria.mainCityMissing`
+ * 要求自身正稿实际登记绘制；不能依赖背景里预画的城堡。下面三条仍按原样"必须有"。
  */
 const iconMappings = {
   bagResourceIcon: bagResourceIconMapped,
@@ -1113,24 +1124,33 @@ const cityStage = [
  *
  * - `stageMissing`：参考舞台不在场时，程序化地面必须接上 ⇒ 两条路都不画才算红。
  * - `stageBothOn`：两套同时在画 ⇒ 重影（参考舞台铺底 + 程序化地表/山脊叠上去）。
- * - `mainCityOverdrawn`：参考舞台在场却又叠了**可见**的主城正稿 ⇒ 城堡画两遍。
+ * - `mainCityMissing`：有真实建筑却没绘制主堡自身正稿 ⇒ 用背景冒充实例或正稿没登记。
  * - `gridOffViewport`：城景内容区 ≠ 视口 ⇒ 满屏改造或 resize 重排断了（§8.1 第 5 条、§8.3 第 10 条）。
  * - `headerMissing`：读不到「内城 · 建筑 N/36」⇒ 下面那条判据走不到，不许静默算绿。
  * - `iconsMissing`：面板说已建 ≥2 栋，却**一栋正稿**都没画出来（`building-*` 帧名的可见图标）——
  *   正稿拉不到时 `CityPanelView` 会退回图集小图标，那正是这条要抓的形态（旧的 `cityMain` 想抓它，
- *   但写成了"主城必须有正稿"，而主城按设计恰恰不叠）。新号只有 1 栋（建筑 1/36）时**刻意不判**：
- *   那是"没有该画的东西"，不是"该画的没画"。
+ *   此条只判非主城实例，主城由独立的 `mainCityMissing` 覆盖。
  */
-const cityIconsVisible = cityIcons.filter((sprite) => sprite.activeInHierarchy === true)
+const cityIconsVisible = cityIcons.filter((sprite) => sprite.drawable === true)
 const isDrawnOnAtlas = (sprite) => !/^building-/.test(sprite.frameName ?? '')
 const isMainCityFrame = (sprite) => /^building-main-city/.test(sprite.frameName ?? '')
 const cityVisibleStage = cityStage.filter((entry) => entry.visible).map((entry) => entry.name)
 const cityGroundVisible = cityStage
   .find((entry) => entry.name === 'city-ground-cobble-v1')?.visible === true
 const referenceStageOn = cityStageProbe.referenceVisible === true
+const referenceCoverScale = Array.isArray(cityStageProbe.referenceArtSize)
+  && cityStageProbe.referenceArtSize.every(value => value > 0)
+  ? Math.max(cityStageProbe.visibleSize[0] / cityStageProbe.referenceArtSize[0],
+    cityStageProbe.visibleSize[1] / cityStageProbe.referenceArtSize[1]) : Number.NaN
 const cityCriteria = {
   referenceStageOn,
   referenceFrame: cityStageProbe.referenceFrame,
+  referenceSize: cityStageProbe.referenceSize,
+  referenceArtSize: cityStageProbe.referenceArtSize,
+  referenceCoverInvalid: referenceStageOn && !(Number.isFinite(referenceCoverScale)
+    && Array.isArray(cityStageProbe.referenceSize)
+    && cityStageProbe.referenceArtSize.every((side, index) =>
+      Math.abs(cityStageProbe.referenceSize[index] - side * referenceCoverScale) <= 1)),
   visibleStageKeys: cityVisibleStage,
   gridSize: cityStageProbe.gridSize,
   visibleSize: cityStageProbe.visibleSize,
@@ -1138,7 +1158,9 @@ const cityCriteria = {
   builtTotal: cityStageProbe.builtTotal,
   stageMissing: !referenceStageOn && !cityGroundVisible,
   stageBothOn: referenceStageOn && cityVisibleStage.length > 0,
-  mainCityOverdrawn: referenceStageOn && cityIconsVisible.some(isMainCityFrame),
+  mainCityMissing: cityStageProbe.builtCount !== null && cityStageProbe.builtCount >= 1
+    && !cityIconsVisible.some(isMainCityFrame),
+  buildingTinted: cityIconsVisible.some((sprite) => sprite.color.some((channel) => channel !== 255)),
   gridOffViewport: !(Array.isArray(cityStageProbe.gridSize)
     && Array.isArray(cityStageProbe.visibleSize)
     && Math.abs(cityStageProbe.gridSize[0] - cityStageProbe.visibleSize[0]) <= 1
@@ -1312,7 +1334,9 @@ const gates = [
   // 内城六条（城区形态 + 反重影 + 满屏 + 正稿；详见 cityCriteria 的注释）
   ['内城：两套城景都不在场', cityCriteria.stageMissing],
   ['内城：参考舞台与程序化城景同时在画', cityCriteria.stageBothOn],
-  ['内城：参考舞台之上又叠了主城正稿', cityCriteria.mainCityOverdrawn],
+  ['内城：真实主城自身正稿没有登记绘制', cityCriteria.mainCityMissing],
+  ['内城：地形舞台没有按原图比例 cover 视口', cityCriteria.referenceCoverInvalid],
+  ['内城：建筑正稿被整图滤色，破坏统一母版的材质', cityCriteria.buildingTinted],
   ['内城：城景内容区不等于视口', cityCriteria.gridOffViewport],
   ['内城：读不到「建筑 N/36」标题', cityCriteria.headerMissing],
   ['内城：已建 ≥2 栋却没有一栋正稿', cityCriteria.iconsMissing],

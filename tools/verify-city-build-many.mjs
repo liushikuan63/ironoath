@@ -4,7 +4,7 @@
  * 当前契约的 lumber_camp、quarry 均允许主城 1 级首次建造；名称、选项、坐标与完成时刻现读服务端/场景。
  * 不直接发建造请求，不以初始队列 0/N 或隐藏 ChoiceOverlay 的默认 label 当成功。
  * 判据：两次 HTTP 200/code 0、对应实例和队列落库、两栋 Lv1/队列归零、真实 Sprite 登记与可见层，
- * 主城不叠正稿、未建格不画。只建不拆、不加速。退出码：0 全绿；1 判据失败；2 缺产物。
+ * 主城和已建建筑都画真实正稿、未建格不画。只建不拆、不加速。退出码：0 全绿；1 判据失败；2 缺产物。
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -274,13 +274,14 @@ async function run() {
       const building = finalCity.buildings.find(row => row.configId === configId)
       const tile = tiles.find(row => row.gridX === building?.gridX && row.gridY === building?.gridY)
       assert(tile?.name === building?.name && tile.level === `Lv${building.level}`, `权威实例与显示格不一致：${configId} ${JSON.stringify(tile)}`)
-      if (configId === 'main_city') assert(!tile.iconActive && !tile.drawable, `主城叠了正稿：${JSON.stringify(tile)}`)
-      else assert(building.level === 1 && tile.drawable, `建成的正稿未登记/未在可见层绘制：${JSON.stringify(tile)}`)
+      assert(tile.drawable && tile.spriteFrame === `building-${configId.replaceAll('_', '-')}-v1`,
+        `真实建筑的正稿未登记/未在可见层绘制：${configId} ${JSON.stringify(tile)}`)
+      if (configId !== 'main_city') assert(building.level === 1, `首次建筑不是 Lv1：${configId}`)
     }
     const empty = tiles.filter(tile => !finalCity.buildings.some(row => row.gridX === tile.gridX && row.gridY === tile.gridY))
     assert(empty.length > 0 && empty.every(tile => !tile.iconActive && !tile.drawable && !tile.level && !tile.name), '未建格出现建筑表现或空地判据走不到')
     assert(errors.length === 0, `页面报错 ${errors.length} 条：${errors[0]}`)
-    console.log('[build-many] 全绿：两次真实建造业务成功、两栋 Lv1 正稿登记绘制、主城不叠图、未建不画、权威队列归零')
+    console.log('[build-many] 全绿：两次真实建造业务成功、两栋 Lv1 与主城正稿均登记绘制、未建不画、权威队列归零')
   } catch (error) {
     failures.push(error.stack ?? String(error))
     console.error(`[build-many] 判据失败：${error.message}`)

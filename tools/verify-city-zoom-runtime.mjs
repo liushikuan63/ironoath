@@ -122,6 +122,27 @@ const readView = () => page.evaluate((keepName) => {
   const keepNode = keep === null ? null : grid.children
     .find((tile) => tile.name.startsWith('Grid-')
       && String(tile.getChildByName('Name')?.getComponent('cc.Label')?.string ?? '') === keepName)
+  const keepIcon = keepNode?.getChildByName('BuildingIcon') ?? null
+  const keepSprite = keepIcon?.getComponent('cc.Sprite') ?? null
+  const keepBox = keepIcon?.getComponent('cc.UITransform') ?? null
+  const keepCenterLocal = keepNode === null || keepIcon === null || keepBox === null ? null : {
+    x: keepNode.position.x + keepIcon.position.x + (0.5 - keepBox.anchorX) * keepBox.width,
+    y: keepNode.position.y + keepIcon.position.y + (0.5 - keepBox.anchorY) * keepBox.height,
+  }
+  const keepBounds = keepNode === null || keepIcon === null || keepBox === null ? null : {
+    left: panelX(keepNode.position.x + keepIcon.position.x - keepBox.anchorX * keepBox.width),
+    right: panelX(keepNode.position.x + keepIcon.position.x + (1 - keepBox.anchorX) * keepBox.width),
+    bottom: panelY(keepNode.position.y + keepIcon.position.y - keepBox.anchorY * keepBox.height),
+    top: panelY(keepNode.position.y + keepIcon.position.y + (1 - keepBox.anchorY) * keepBox.height),
+  }
+  let ancestorOpacity = true
+  for (let ancestor = keepIcon; ancestor; ancestor = ancestor.parent) {
+    if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) ancestorOpacity = false
+  }
+  const keepDrawable = keepIcon !== null && keepIcon.activeInHierarchy && keepSprite?.enabled === true
+    && keepSprite.spriteFrame?.name === 'building-main-city-v1' && keepIcon._uiProps?.uiComp === keepSprite
+    && keepSprite.color.a > 0 && ancestorOpacity && scene.getComponentsInChildren('cc.Camera')
+      .some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & keepIcon.layer) !== 0)
   return {
     found: true,
     zoom: Number(zoom.toFixed(4)),
@@ -133,6 +154,9 @@ const readView = () => page.evaluate((keepName) => {
     /** 主堡那一格的**舞台本地坐标**：夹取上限算不算得对，要靠它自己复算一遍。 */
     keepLocal: keepNode === null ? null
       : { x: Number(keepNode.position.x.toFixed(2)), y: Number(keepNode.position.y.toFixed(2)) },
+    keepCenterLocal,
+    keepBounds,
+    keepDrawable,
     viewport: { width: visible.width, height: visible.height },
   }
 }, KEEP_NAME)
@@ -169,21 +193,25 @@ report(`默认缩放 = 源码常量 ${ZOOM_DEFAULT}`, near(first.zoom, ZOOM_DEFA
 /**
  * 镜头对准主堡 —— 判的是**夹取之后的精确落点**，不是"必须正中"。
  *
- * <p>主堡在底图上半部（本地 y 为正），1.8 倍下要把它摆到正中就得露出底图之外的深色底，
- * 而"底图必须铺满视口"是硬约束（`applyStageTransform` 的夹取上限 `content*(zoom-1)/2`）。
- * 所以这里按同一个公式复算期望偏移：焦点没生效（stage 停在 0,0）、或夹取写错，都会红。
- * 实测这一帧就是夹住的形状：本地 y≈219 ⇒ 期望 -394 被夹到 -240，主堡落在中心上方 ~154 设计px。
+ * <p>镜头目标来自主堡实际 Sprite 的主体中心，按铺满视口的夹取公式复算；
+ * 用旧塔楼热区或只对准基座，都会导致这一条或下面的完整主体边界判红。
  */
 const clamp = (value, limit) => Math.max(-limit, Math.min(limit, value))
 const maxX = first.viewport.width * (first.zoom - 1) / 2
 const maxY = first.viewport.height * (first.zoom - 1) / 2
-const expectedX = first.keepLocal === null ? Number.NaN : clamp(-first.keepLocal.x * first.zoom, maxX)
-const expectedY = first.keepLocal === null ? Number.NaN : clamp(-first.keepLocal.y * first.zoom, maxY)
-report('镜头对准主堡（= 夹取公式算出的落点，±1px）',
-  first.keepLocal !== null
+const expectedX = first.keepCenterLocal === null ? Number.NaN : clamp(-first.keepCenterLocal.x * first.zoom, maxX)
+const expectedY = first.keepCenterLocal === null ? Number.NaN : clamp(-first.keepCenterLocal.y * first.zoom, maxY)
+report('镜头对准主堡主体中心（= 夹取公式算出的落点，±1px）',
+  first.keepCenterLocal !== null
   && Math.abs(first.stageX - expectedX) <= 1 && Math.abs(first.stageY - expectedY) <= 1,
   first.keepLocal === null ? '屏上找不到「主城」那一格'
     : `stage=(${first.stageX}, ${first.stageY}) 期望=(${expectedX.toFixed(1)}, ${expectedY.toFixed(1)})`)
+report('真实主堡正稿登记在可见相机层', first.keepDrawable, JSON.stringify(first.keepBounds))
+report('默认镜头中的主堡主体完整进入视口', first.keepBounds !== null
+  && first.keepBounds.left >= -first.viewport.width / 2 - 1
+  && first.keepBounds.right <= first.viewport.width / 2 + 1
+  && first.keepBounds.bottom >= -first.viewport.height / 2 - 1
+  && first.keepBounds.top <= first.viewport.height / 2 + 1, JSON.stringify(first.keepBounds))
 report('主堡自己在默认这一屏里（"主城周围"必须包含主城）',
   first.keepPanel !== null
   && Math.abs(first.keepPanel.x) <= first.viewport.width / 2

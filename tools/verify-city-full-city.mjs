@@ -251,6 +251,7 @@ await page.evaluate((source) => {
 
 const frame = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
+  const cameras = scene.getComponentsInChildren('cc.Camera')
   const tiles = []
   const visit = (node, shown) => {
     const on = shown && node.activeInHierarchy === true
@@ -264,9 +265,18 @@ const frame = await page.evaluate(() => {
         for (const grand of child.children) collect(grand)
       }
       collect(node)
+      let ancestorOpacity = true
+      for (let ancestor = icon; ancestor; ancestor = ancestor.parent) {
+        if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) ancestorOpacity = false
+      }
+      const drawable = !!icon && icon.activeInHierarchy && !!sprite?.spriteFrame && sprite.enabled
+        && icon._uiProps?.uiComp === sprite && icon.layer === node.layer
+        && cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & icon.layer) !== 0)
+        && sprite.color.a > 0 && ancestorOpacity
       tiles.push({
         tile: node.name, texts,
         iconActive: icon === null ? null : icon.active,
+        drawable,
         frameName: sprite === null || sprite.spriteFrame === null ? null : sprite.spriteFrame.name,
       })
     }
@@ -281,7 +291,7 @@ await preview.close()
 
 // ---- 逐类判据：15 类都必须有一格画着 building-* 正稿，且名字对得上 ----
 const built = (await cityOf()).buildings
-const arts = frame.tiles.filter((tile) => tile.iconActive === true && tile.frameName !== null)
+const arts = frame.tiles.filter((tile) => tile.drawable === true)
 console.log(`[full-city] 城内 ${built.length} 栋；画面上有正稿的格子 ${arts.length} 个：`)
 for (const tile of arts) {
   console.log(`   ${tile.tile}  ${tile.texts.join(' ')}  帧名=${tile.frameName}`)
@@ -290,22 +300,15 @@ console.log(`[full-city] 截图：${SHOT}`)
 console.log(`[full-city] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
 
 for (const building of built) {
-  if (building.configId === 'main_city') {
-    continue
-  }
   const tile = arts.find((candidate) => candidate.texts.includes(building.name))
   if (tile === undefined) {
     failures.push(`${building.name}（${building.configId}）在画面上没有正稿`)
-  } else if (!/^building-/.test(tile.frameName ?? '')) {
-    failures.push(`${building.name} 画的是 ${tile.frameName}，不是 building-* 正稿`)
+  } else if (tile.frameName !== `building-${building.configId.replaceAll('_', '-')}-v1`) {
+    failures.push(`${building.name} 画的是 ${tile.frameName}，不是自身的建筑正稿`)
   }
 }
 if (built.length < 15) {
   failures.push(`只建起 ${built.length} 栋（应为 15：主城 + 14 类）`)
-}
-const mainCityArt = arts.find((tile) => tile.texts.includes('主城'))
-if (mainCityArt !== undefined) {
-  failures.push(`主城不该叠正稿（底图已有城堡）：${mainCityArt.frameName}`)
 }
 if (errors.length > 0) {
   failures.push(`页面报错 ${errors.length} 条：${errors[0]}`)
@@ -314,6 +317,6 @@ if (failures.length > 0) {
   console.error(`[full-city] 判据失败：${failures.join('；')}`)
   process.exit(1)
 }
-console.log('[full-city] 全绿：15 类建筑全部就位，每一类都画着自己的正稿，主城不叠图')
+console.log('[full-city] 全绿：15 类真实建筑全部就位，主城与每一类均登记绘制自身的正稿')
 void GRID
 void MAIN_CITY
