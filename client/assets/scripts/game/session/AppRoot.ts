@@ -109,6 +109,8 @@ import { buildPolicyPanel } from '../nation/NationPolicyPanel'
 import type { PolicyPanel } from '../nation/NationPolicyPanel'
 import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
+import { worldModel } from '../world/WorldContext'
+import { selectedVisibleMonster } from '../world/WorldViewModel'
 import type { QuestListResp } from '../../net/generated/QuestProtocol'
 import type {
   BattleReportBrief, BattleReportListResp, BattleReportResp, ShareChannel,
@@ -175,6 +177,8 @@ const EMPTY_ARMY: ArmyListResp = {
 /** 面板需要落地的一类数据。全部可选：某个场景里没有这个面板时就不实现。 */
 /** 出征编成面板的整块视图：目标 + 编成 + 提示。 */
 export interface MarchComposeView {
+  /** 野怪入口只提供普通讨伐，不借玩家城的侦察/集结参数。 */
+  readonly targetKind?: 'MONSTER'
   readonly targetId: string
   readonly targetName: string
   readonly coordText: string
@@ -575,7 +579,7 @@ export class AppRoot {
   /** 最近一次目标搜索的结果：出征要知道目标的坐标，而坐标只在下发的 brief 里（B25-S1） */
   private searchResp: SearchTargetsResp | null = null
   /** 当前正在编成的目标；没有编成时为 null */
-  private composeTarget: { id: string; name: string; x: number; y: number } | null = null
+  private composeTarget: { id: string; name: string; x: number; y: number; kind?: 'MONSTER' } | null = null
   /** 编成的勾选表（unitId → 数量）。**由本层持有**：面板重画时不能丢，也不该由表现层记 */
   private composePicks: Record<string, number> = {}
   private composeNotice: string | null = null
@@ -4344,6 +4348,25 @@ export class AppRoot {
     this.deliverCompose()
   }
 
+  /** 野怪来自当前探索视野；确认前只编成，坐标与可攻击性仍由出征服务裁定。 */
+  beginMonsterMarchCompose(entityKey: string): void {
+    const monster = selectedVisibleMonster(worldModel()?.frame(Date.now()) ?? null, entityKey)
+    if (monster === null || this.armyResp === null) {
+      this.receipt(monster === null ? '附近地图目标已变化，请重新选择' : '军队信息尚未就绪，请稍后再试')
+      return
+    }
+    this.composeTarget = { id: monster.id, name: monster.level === null ? '野怪' : `野怪 ${monster.level}级`,
+      x: monster.x, y: monster.y, kind: 'MONSTER' }
+    this.composeRallyId = null
+    this.composeRally = false
+    this.composeScout = false
+    this.composeRallyScope = 'SQUAD'
+    this.rallyForm = null
+    this.composePicks = {}
+    this.composeNotice = null
+    this.deliverCompose()
+  }
+
   /**
    * 在编成面板上把这条命令从"出征"切成"发起小队集结"（B26 S12）。
    *
@@ -4356,7 +4379,7 @@ export class AppRoot {
    * 真发出去由服务端裁决并回一句人话。
    */
   async toggleComposeRally(): Promise<void> {
-    if (this.composeTarget === null) {
+    if (this.composeTarget === null || this.composeTarget.kind === 'MONSTER') {
       return
     }
     if (!this.composeRally) {
@@ -4467,7 +4490,7 @@ export class AppRoot {
    * 这里不判"能不能侦察"（体力、目标合法性都在服务端），点下去由服务端裁决并回一句人话。
    */
   toggleComposeScout(): void {
-    if (this.composeTarget === null) {
+    if (this.composeTarget === null || this.composeTarget.kind === 'MONSTER') {
       return
     }
     this.composeScout = !this.composeScout
@@ -4798,6 +4821,7 @@ export class AppRoot {
     this.targets.marchCompose?.({
       targetId: this.composeTarget.id,
       targetName: this.composeTarget.name,
+      ...(this.composeTarget.kind === 'MONSTER' ? { targetKind: this.composeTarget.kind } : {}),
       coordText: `${this.composeTarget.x}, ${this.composeTarget.y}`,
       compose,
       notice: this.composeNotice,

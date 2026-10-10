@@ -100,6 +100,17 @@ export interface WorldFrame {
   readonly marches: readonly MarchRender[]
 }
 
+/** 只取此刻已加载、已探索的野怪；隐藏、卸载和消失目标不成为操作入口。 */
+export function selectedVisibleMonster(frame: WorldFrame | null, key: string | null): WorldEntity | null {
+  if (frame === null || key === null) return null
+  for (const tile of frame.tiles) {
+    if (!tile.loaded || tile.fogged) continue
+    const found = tile.entities.find(entity => entity.type === 'MONSTER' && `MONSTER:${entity.id}` === key)
+    if (found !== undefined) return found
+  }
+  return null
+}
+
 /** 数据变化通知。场景订阅它来重绘，而不是每帧轮询。 */
 export type WorldListener = () => void
 

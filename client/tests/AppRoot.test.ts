@@ -46,9 +46,67 @@ import type { SkillPickView } from '../assets/scripts/game/hero/SkillPick'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 import type { ChoiceOption } from '../assets/scripts/game/session/Choices'
 import type { ClientReddotTree } from '../assets/scripts/game/reddot/ReddotTree'
-import { resetWorld } from '../assets/scripts/game/world/WorldContext'
+import { resetWorld, initializeWorld, feedViewport } from '../assets/scripts/game/world/WorldContext'
 
 const SERVER_NOW = 1_788_000_000_000
+
+test('原生首战：选中可见野怪只编成，取消不出征，确认才发送实际坐标和所选兵力', async () => {
+  const h = harness()
+  await h.root.start('dev-pve', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  initializeWorld({ worldSize: 512, chunkSize: 32, maxChunks: 9 }, 0, { x: 16, y: 16 })
+  feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['0:0'], fogChunks: [],
+    chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
+      id: 'monster-internal-17', type: 'MONSTER', x: 17, y: 16, level: 1,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+    }] }] })
+  const root = h.root
+  root.beginMonsterMarchCompose('MONSTER:monster-internal-17')
+  assert.equal(h.lastCompose?.targetName, '野怪 1级')
+  assert.equal(h.lastCompose?.targetKind, 'MONSTER')
+  assert.equal(h.lastCompose?.compose.hasTroops, false, '不自动选择全军')
+  assert.equal(h.http.countOf('/world/march'), 0)
+  await h.root.toggleComposeRally()
+  h.root.toggleComposeScout()
+  assert.equal(h.lastCompose?.mode, 'MARCH', '野怪入口不得套用玩家城侦察或集结参数')
+  h.root.cancelMarchCompose()
+  assert.equal(h.http.countOf('/world/march'), 0)
+  assert.equal(h.events.filter(e => e.name === 'march_send').length, 0, '取消不能伪造出征埋点')
+  root.beginMonsterMarchCompose('MONSTER:monster-internal-17')
+  h.root.pickMarchUnit('unit_infantry_t1', 100)
+  await h.root.confirmMarch()
+  const sent = h.http.calls.filter(c => c.path === '/world/march')
+  assert.equal(sent.length, 1)
+  assert.equal(h.events.filter(e => e.name === 'march_send').length, 1, '确认恰好记录一次真实出征意图')
+  assert.deepEqual(sent[0]?.body.units, [{ unitId: 'unit_infantry_t1', count: 100 }])
+  assert.deepEqual([sent[0]?.body.toX, sent[0]?.body.toY, sent[0]?.body.action], [17, 16, 'ATTACK'])
+  assert.equal(h.http.countOf('/world/searchTargets'), 0, '野怪不走玩家搜索池')
+  resetWorld()
+})
+
+test('原生首战：迷雾、玩家城或已消失的选中目标均不能变成野怪编成', async () => {
+  const h = harness()
+  await h.root.start('dev-pve-missing', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  initializeWorld({ worldSize: 512, chunkSize: 32, maxChunks: 9 }, 0, { x: 16, y: 16 })
+  feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['1:0'], fogChunks: ['0:0'],
+    chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
+      id: 'hidden', type: 'MONSTER', x: 17, y: 16, level: 1,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+    }] }, { key: '1:0', version: 1, truncated: false, entities: [{
+      id: 'P9', type: 'CITY', x: 33, y: 16, level: 1,
+      ownerName: '邻居', allianceTag: null, marchStatus: null, resourceType: null, load: null,
+    }] }] })
+  const root = h.root
+  for (const key of ['MONSTER:hidden', 'CITY:P9', 'MONSTER:gone']) {
+    root.beginMonsterMarchCompose(key)
+    assert.ok(!h.lastCompose?.targetId)
+  }
+  assert.equal(h.http.countOf('/world/march'), 0)
+  resetWorld()
+})
 
 /** 出征编成那三条用例的军队：两个兵种，其中一个未解锁（顺带钉住编排层也不放它出去）。 */
 const ARMY_FOR_MARCH = {

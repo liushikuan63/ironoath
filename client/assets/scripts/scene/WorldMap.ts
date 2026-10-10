@@ -31,6 +31,7 @@ import {
 } from '../game/world/WorldSceneLayout'
 import type { WorldViewModel } from '../game/world/WorldViewModel'
 import type { WorldFrame, ChunkTile, MarchRender } from '../game/world/WorldViewModel'
+import { selectedVisibleMonster } from '../game/world/WorldViewModel'
 import { buildMarchPanel } from '../game/world/MarchPanel'
 import type { MarchPanelAction } from '../game/world/MarchPanel'
 import type { WorldEntityType } from '../net/generated/WorldProtocol'
@@ -120,6 +121,8 @@ export class WorldMap extends Component {
   onEnterCity: (() => void) | null = null
   /** 空态那个「再次出征」按钮：转发给 GameBootstrap 去调编排层。 */
   onRepeatLastMarch: (() => void) | null = null
+  /** 点选后由组合根打开既有编成；本场景不提交请求或判定战力。 */
+  onAttackMonster: ((entityKey: string) => void) | null = null
 
   private readonly refs = new Map<Node, MarkerRefs>()
   /** 已画出的实体：键 → 节点。每帧与渲染帧做差集，决定谁复用、谁归还 */
@@ -177,7 +180,7 @@ export class WorldMap extends Component {
   private lastMarchButtonCaption = ''
   /**
    * 点选中的实体键（`type:id`）。同类 SLG 的通用交互：点地图单位 → 脚下出选中环。
-   * 只做表现，不给任何操作入口 —— 行军/集结仍走 marchPanel，避免在这里长出第二套判定。
+   * 选中野怪后操作条显示讨伐；编成和请求复用组合根，不在地图重写判定。
    */
   private selectedKey: string | null = null
   private selectionRing: Node | null = null
@@ -280,6 +283,7 @@ export class WorldMap extends Component {
     this.marchRequesting.clear()
     this.marchButtonCaption = null
     this.onEnterCity = null
+    this.onAttackMonster = null
   }
 
   override onDisable(): void {
@@ -509,7 +513,11 @@ export class WorldMap extends Component {
     const marchNode = this.createButton('MarchButton', '行军',
       marchPosition.x, marchPosition.y, marchPosition.width)
     this.marchButtonCaption = marchNode.getChildByName('MarchButton_Caption')?.getComponent(Label) ?? null
-    marchNode.on('touch-start', () => this.toggleMarchPanel(), this)
+    marchNode.on('touch-start', () => {
+      const monster = selectedVisibleMonster(worldModel()?.frame(Date.now()) ?? null, this.selectedKey)
+      if (monster !== null && this.selectedKey !== null) this.onAttackMonster?.(this.selectedKey)
+      else this.toggleMarchPanel()
+    }, this)
   }
 
   private createHudLabel(name: string, text: string, x: number, y: number): Label {
@@ -1049,7 +1057,8 @@ export class WorldMap extends Component {
     const cameraX = Math.round(frame.center.x + this.panAccumX)
     const cameraY = Math.round(frame.center.y + this.panAccumY)
     this.coordLabel.string = `(${cameraX}, ${cameraY}) · 缩放 ${frame.zoom}`
-    const caption = frame.marches.length === 0 ? '行军' : `行军 ${frame.marches.length}`
+    const caption = selectedVisibleMonster(frame, this.selectedKey) !== null
+      ? '讨伐野怪' : frame.marches.length === 0 ? '行军' : `行军 ${frame.marches.length}`
     if (this.marchButtonCaption !== null && caption !== this.lastMarchButtonCaption) {
       this.lastMarchButtonCaption = caption
       this.marchButtonCaption.string = caption

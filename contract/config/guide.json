@@ -79,14 +79,14 @@
       "name": "打第一场野怪",
       "stepIndex": 5,
       "trigger": "PANEL_OPEN",
-      "panelKey": "targets",
-      "highlightPath": "targets",
+      "panelKey": "world",
+      "highlightPath": "world",
       "maskArea": "full",
-      "text": "搜索城外目标，挑一个打得过的流寇打一场：新号的第一个野怪必定打得过。",
+      "text": "打开地图，点选附近野怪，再点「讨伐野怪」并编成出征。首战获胜后回来领奖。",
       "skippable": false,
       "judge": "QUEST_DONE",
       "judgeTarget": "quest_main_04",
-      "why": "B00 五分钟体验的「首战野怪全胜」。强制：不打这一仗，后面的发奖与首抽都没有意义。"
+      "why": "B00 五分钟体验的「首战野怪全胜」。强制：不打这一仗，后面的发奖与首抽都没有意义。 2026-10-11首战入口核验：目标搜索池只返回玩家城，不能作为野怪入口；改用当前已探索地图实体与既有出征编成，不新增数值或自动选全军。"
     },
     {
       "id": "guide_06_first_pull",
