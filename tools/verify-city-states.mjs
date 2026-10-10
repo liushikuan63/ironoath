@@ -17,7 +17,7 @@
  *
  * <p>2026-09-22 从 `tmp/probe-city-states.mjs` 迁进 `tools/`（复检那一轮的一次性探针，判据当时已跑绿）。
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
@@ -28,6 +28,9 @@ const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
 const PORT = Number(process.env.STATE_PROBE_PORT ?? 8290)
 const OUT = 'client/build/art-verify'
 const deviceId = `state-probe-${Date.now()}`
+const cityRuleDocument = JSON.parse(readFileSync('contract/config/city_rule.json', 'utf8'))
+const cancelRefundRatio = Number((Array.isArray(cityRuleDocument) ? cityRuleDocument : cityRuleDocument.rows)
+  .find(row => row.id === 'city_rule_cancel_refund_ratio')?.value)
 
 if (!existsSync(path.resolve(process.cwd(), ROOT, 'index.html'))) {
   console.error(`[state][前置] 产物不存在：${ROOT}`)
@@ -218,6 +221,43 @@ const cancelReadout = () => page.evaluate(() => {
   visit(scene)
   return { cancel, title, status, selectedId: view?.selectedId ?? null }
 })
+
+/** 只接收本次真实取消点击产生的响应；回执监听在click之前注册。 */
+function matchesCancelResponse(response, buildingId) {
+  try {
+    const request = response.request()
+    return request.method() === 'POST' && new URL(response.url()).pathname === '/city/cancel'
+      && request.postDataJSON()?.buildingId === buildingId
+  } catch {
+    return false
+  }
+}
+
+function waitForCancelReceipt(page, buildingId) {
+  return page.waitForResponse(response => matchesCancelResponse(response, buildingId), { timeout: 10_000 })
+    .then(async response => ({ status: response.status(), envelope: await response.json(), error: null }))
+    .catch(error => ({ status: null, envelope: null,
+      error: `取消回执等待或JSON读取失败：${error.name}: ${error.message}` }))
+}
+
+/** 与屏上净增量分开：回执refund是本次退款，资源条还会计入惰性产出。 */
+function cancelReceiptFailures(receipt, expected) {
+  if (receipt == null) return ['真实取消回执缺失']
+  if (receipt.error != null) return [receipt.error]
+  const failures = []
+  const envelope = receipt.envelope
+  if (envelope?.code !== 0) failures.push(`取消回执业务code不是0：${JSON.stringify(envelope?.code)}`)
+  if (envelope?.data?.buildingId !== expected?.buildingId) {
+    failures.push(`取消回执buildingId不符：${JSON.stringify(envelope?.data?.buildingId)}，期望${expected?.buildingId}`)
+  }
+  const wood = Array.isArray(envelope?.data?.refund)
+    ? envelope.data.refund.filter(item => item?.type === 'WOOD') : []
+  if (!Number.isSafeInteger(expected?.refundWood) || expected.refundWood <= 0
+      || wood.length !== 1 || wood[0].amount !== expected.refundWood) {
+    failures.push(`取消回执WOOD退款不符：${JSON.stringify(wood)}，本次实际扣除×契约比例应为${expected?.refundWood}`)
+  }
+  return failures
+}
 
 /** 以开工回执的真实 id 找当前行及铭牌；独立检验真正接收触摸的 LabelAnchor。 */
 function inspectCancelCaption(expected) {
@@ -526,8 +566,13 @@ if (secondStart.code !== 0) {
   cancelled.countBefore = buildingCount(cancelled.headerBefore)
   const postsBefore = cityPosts.length
   const requestsBefore = cityRequests.length
+  const woodCost = secondStart.data.cost?.filter(item => item.type === 'WOOD') ?? []
   const expected = { buildingId: secondStart.data.buildingId, configId: secondConfig,
-    gridX: secondGrid[0], gridY: secondGrid[1], tileKey: tile?.key ?? null }
+    gridX: secondGrid[0], gridY: secondGrid[1], tileKey: tile?.key ?? null,
+    cost: secondStart.data.cost, refundRatio: cancelRefundRatio,
+    refundWood: woodCost.length === 1 && Number.isSafeInteger(woodCost[0].amount) && woodCost[0].amount > 0
+      && Number.isFinite(cancelRefundRatio) && cancelRefundRatio > 0 && cancelRefundRatio <= 1
+      ? Math.round(woodCost[0].amount * cancelRefundRatio) : null }
   cancelled.expected = expected
   if (tile !== null) {
     const caption = await page.evaluate(inspectCancelCaption, expected)
@@ -582,7 +627,13 @@ if (secondStart.code !== 0) {
       { name: 'DetailCancelButton', within: 'SelectionBar' }) : null
     cancelled.cancelPoint = cancelPoint
     if (cancelPoint?.verified === true) {
+      const receiptPromise = waitForCancelReceipt(page, expected.buildingId)
       await page.mouse.click(cancelPoint.x, cancelPoint.y)
+      cancelled.receipt = await receiptPromise
+      cancelled.receiptFailures = cancelReceiptFailures(cancelled.receipt, expected)
+      if (cancelled.receiptFailures.length > 0) cancelled.reason = cancelled.receiptFailures.join('；')
+      console.log(`[state] 真实取消回执：${JSON.stringify(cancelled.receipt)}`
+        + ` 期望WOOD=${expected.refundWood} 失败=${JSON.stringify(cancelled.receiptFailures)}`)
       await page.waitForTimeout(1500)
       cancelled.clicked = true
       cancelled.readout = await cancelReadout()
@@ -661,6 +712,7 @@ if (!upgrading.texts.some((t) => /建造队列\s*1\s*\//.test(t))) {
 if (!cancelled.selectionCorrect) {
   failures.push(`取消前未证明选中本次建筑：${cancelled.reason ?? 'selectedId/可见按钮不符'}`)
 }
+failures.push(...cancelReceiptFailures(cancelled.receipt, cancelled.expected))
 if (!cancelled.clicked) {
   failures.push('态三（取消升级）根本没跑到 —— 判据走不到不许当绿')
 } else {

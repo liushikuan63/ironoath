@@ -600,34 +600,81 @@ async function socialValuePass(page, tag) {
     const value = row?.getChildByName('Value')
     if (!value?.activeInHierarchy || !row.getChildByName('ActionButton')?.activeInHierarchy
       || !row.getChildByName('ActionButton2')?.activeInHierarchy) return false
-    globalThis.__socialFundValueRestore = { node: value, position: value.position.clone() }
-    // 历史单按钮位置：680/2-120=220；只移动当前显示节点，不改fixture或业务数据。
+    if (typeof view.renderRow !== 'function') return false
+    const saved = { view, renderRow: view.renderRow,
+      renderRowDescriptor: Object.getOwnPropertyDescriptor(view, 'renderRow'),
+      data: view.data, lastResp: view.lastResp, page: view.page, tab: view.tab, fundText,
+      positions: new Map([[value, value.position.clone()]]), renderRowHits: 0 }
+    globalThis.__socialFundValueRestore = saved
+    saved.wrapper = function (node, draft, ...args) {
+      const result = saved.renderRow.call(this, node, draft, ...args)
+      const current = node.getChildByName('Value')
+      // 行池重绘会换节点：只在原方法画出同一权威资金行后，维持该真实Value的历史位置。
+      if (this === view && draft.value === saved.fundText && current?.activeInHierarchy
+        && current.getComponent('cc.Label')?.string === saved.fundText
+        && node.getChildByName('ActionButton')?.activeInHierarchy
+        && node.getChildByName('ActionButton2')?.activeInHierarchy) {
+        saved.positions.set(current, current.position.clone())
+        current.setPosition(new window.cc.Vec3(220, current.position.y, current.position.z))
+        saved.renderRowHits++
+      }
+      return result
+    }
+    view.renderRow = saved.wrapper
+    // 历史单按钮位置：680/2-120=220；不改fixture或业务数据，保留跨渲染帧的等待。
     value.setPosition(new window.cc.Vec3(220, value.position.y, value.position.z))
     return true
   })
   checkTrue('资金遮挡负控前置：真实Value移回旧x220，保留两颗实际动作', moved)
   if (!moved) return
+  let restoreReceipt = null
   try {
     await page.waitForTimeout(180)
     const broken = await readSocialValueLayouts(page)
     const deviations = socialValueFailures(broken, true)
-    socialValueEvidence.push({ phase: '资金Value旧位置负控', snapshot: broken, failures: deviations })
+    const fundRows = broken.rows.filter(row => row.value.text === normal.sourceFundText)
+    const fixture = await page.evaluate(() => {
+      const saved = globalThis.__socialFundValueRestore
+      return { wrapperActive: saved.view.renderRow === saved.wrapper, renderRowHits: saved.renderRowHits,
+        preservedData: saved.view.data === saved.data, preservedLastResp: saved.view.lastResp === saved.lastResp }
+    })
+    const actualOldPosition = fundRows.length === 1 && fundRows[0].value.localPosition?.x === 220
+    socialValueEvidence.push({ phase: '资金Value旧位置负控', snapshot: broken, failures: deviations,
+      fixture: { ...fixture, actualOldPosition, actualFundX: fundRows[0]?.value.localPosition?.x ?? null } })
+    checkTrue('资金负控稳定前提：等待真实渲染后同一资金Value实际x220且包装仍生效',
+      actualOldPosition && fixture.wrapperActive)
     checkTrue('资金旧位置被同一真实自身盒覆盖门因Value/扩建重叠抓到红',
       deviations.some(issue => issue.includes(':Value×ActionButton:自身盒重叠')))
     await page.screenshot({ path: path.join(OUT, 'social-alliance-value-old-position.png') })
   } finally {
-    await page.evaluate(() => {
+    restoreReceipt = await page.evaluate(() => {
       const saved = globalThis.__socialFundValueRestore
-      saved.node.setPosition(saved.position)
+      if (saved.renderRowDescriptor) Object.defineProperty(saved.view, 'renderRow', saved.renderRowDescriptor)
+      else delete saved.view.renderRow
+      for (const [node, position] of saved.positions) node.setPosition(position)
+      saved.view.data = saved.data
+      saved.view.lastResp = saved.lastResp
+      saved.view.page = saved.page
+      saved.view.tab = saved.tab
+      saved.view.render()
+      const receipt = { methodRestored: saved.view.renderRow === saved.renderRow,
+        ownPropertyRestored: Object.hasOwn(saved.view, 'renderRow') === !!saved.renderRowDescriptor,
+        dataRestored: saved.view.data === saved.data && saved.view.lastResp === saved.lastResp,
+        pageRestored: saved.view.page === saved.page && saved.view.tab === saved.tab,
+        restoredNodeCount: saved.positions.size }
       delete globalThis.__socialFundValueRestore
+      return receipt
     })
   }
   await page.waitForTimeout(180)
   const restored = await readSocialValueLayouts(page)
   const restoredFailures = socialValueFailures(restored, true)
-  socialValueEvidence.push({ phase: '资金Value旧位置负控还原', snapshot: restored, failures: restoredFailures })
+  socialValueEvidence.push({ phase: '资金Value旧位置负控还原', snapshot: restored, failures: restoredFailures,
+    fixture: restoreReceipt })
   checkTrue('资金负控finally还原后同一覆盖门恢复绿且实际Value/动作盒回到正常快照',
-    restoredFailures.length === 0 && JSON.stringify(restored.rows) === JSON.stringify(normal.rows))
+    restoreReceipt.methodRestored && restoreReceipt.ownPropertyRestored && restoreReceipt.dataRestored
+      && restoreReceipt.pageRestored && restoredFailures.length === 0
+      && JSON.stringify(restored.rows) === JSON.stringify(normal.rows))
   await page.screenshot({ path: path.join(OUT, 'social-alliance-value-restored.png') })
 }
 
