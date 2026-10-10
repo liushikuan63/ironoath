@@ -22,7 +22,7 @@
  * 疑似放大那几颗**只报数不判红** —— 要不要升级成判据是待用户拍板的口径（见台账与 `.qoder-work-queue.md` ③），
  * 也不许为了让读数"看起来正常"去动任何盒高 / 字号。
  */
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
@@ -62,8 +62,10 @@ const PROBE_CASES = [
 ]
 
 let failures = 0
+const checks = []
 const check = (msg, evidence, pass) => {
   if (!pass) failures += 1
+  checks.push({ name: msg, evidence, pass })
   console.log(`  ${pass ? 'PASS' : 'FAIL'}  ${msg} —— ${evidence}`)
 }
 const fmt = (v, d = 1) => (Number.isFinite(v) ? Number(v).toFixed(d) : String(v))
@@ -156,8 +158,9 @@ function probeInkLabel(arg) {
   const ut = node.getComponent('cc.UITransform')
   if (window.__inkProbe === undefined || window.__inkProbe === null) {
     const p = node.position
-    window.__inkProbe = { node, fontSize: lb.fontSize, overflow: lb.overflow, w: ut.width, h: ut.height, x: p.x, y: p.y }
+    window.__inkProbe = { node, fontSize: lb.fontSize, overflow: lb.overflow, enabled: lb.enabled, w: ut.width, h: ut.height, x: p.x, y: p.y, z: p.z }
   }
+  if (arg.readOnly === true) return { saved: true }
   if (arg.center === true) {
     // 极端档要给到盒高 200：那颗按钮贴着屏幕上沿，盒子会伸出屏幕外，矩形被裁掉就量不准（实测偏移 104px）。
     // 挪到屏幕中央再量 —— 这是合成档，不是产品状态，还原时连位置一起写回。
@@ -199,11 +202,12 @@ function restoreInkProbe() {
   const ut = s.node.getComponent('cc.UITransform')
   lb.fontSize = s.fontSize
   lb.overflow = s.overflow
-  lb.enabled = true
+  lb.enabled = s.enabled
   ut.setContentSize(new window.cc.Size(s.w, s.h))
-  s.node.setPosition(new window.cc.Vec3(s.x, s.y, 0))
-  window.__inkProbe = null
-  return { fontSize: lb.fontSize, overflow: lb.overflow, enabled: lb.enabled, w: Math.round(ut.width), h: Math.round(ut.height) }
+  s.node.setPosition(new window.cc.Vec3(s.x, s.y, s.z))
+  // 保留拥有的真实引用，后绘复量完成后才清理；恢复与复量均不能再依赖stretched桶。
+  return { fontSize: lb.fontSize, overflow: lb.overflow, enabled: lb.enabled,
+    w: ut.width, h: ut.height, position: { x: s.node.position.x, y: s.node.position.y, z: s.node.position.z } }
 }
 
 /** 页内把探针那颗字的显隐翻一下（差分法的"改前/改后"就是这一翻，别的都不动）。 */
@@ -213,6 +217,71 @@ function setProbeLabelVisible(v) {
   const lb = s.node.getComponent('cc.Label')
   lb.enabled = v === true
   return { enabled: lb.enabled }
+}
+
+/** 两个固定完成绘制帧里直接读取同一真实Label，不force update、不按成功提前停止。 */
+function readInkProbeAfterDraw() {
+  const director = window.cc?.director
+  const event = window.cc?.Director?.EVENT_AFTER_DRAW
+  const samples = []
+  const timeoutMs = 5000
+  const evidence = stable => ({ event: event ?? null, requiredFrames: 2, timeoutMs,
+    frameIds: samples.map(sample => sample.frameId), stable, samples })
+  if (!director || !event || typeof director.on !== 'function' || typeof director.off !== 'function'
+    || typeof director.getTotalFrames !== 'function') return Promise.resolve({ error: '墨迹后绘事件或帧计数缺失', drawEvidence: evidence(false) })
+  const capture = () => {
+    const saved = window.__inkProbe
+    const node = saved?.node
+    const label = node?.getComponent('cc.Label')
+    const ui = node?.getComponent('cc.UITransform')
+    const scene = director.getScene()
+    if (!node?.activeInHierarchy || !label || !ui) return { error: '墨迹真实Label引用缺失' }
+    const box = ui.getBoundingBoxToWorld()
+    const cameras = scene.getComponentsInChildren('cc.Camera')
+    const renderer = node._uiProps.uiComp === label
+    const cameraVisible = cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & node.layer) !== 0)
+    if (!renderer || !cameraVisible) return { error: '墨迹真实Label不是首渲染组件或相机不可绘' }
+    const str = label.string
+    const fontScale = ui.height > 0 ? box.height / ui.height : 1
+    let units = 0
+    for (const ch of str) units += ch.charCodeAt(0) < 128 ? 0.55 : 1
+    const est = Math.min(units * label.fontSize * fontScale, box.width)
+    const align = label.horizontalAlign
+    const gx0 = align === 0 ? box.x : align === 2 ? box.x + box.width - est : box.x + (box.width - est) / 2
+    const target = { text: str, fontSize: label.fontSize, actualFontSize: label.actualFontSize,
+      overflow: label.overflow, enabled: label.enabled, renderer, cameraVisible, fontScale,
+      localBox: { w: ui.width, h: ui.height },
+      position: { x: node.position.x, y: node.position.y, z: node.position.z },
+      world: { x: box.x, y: box.y, width: box.width, height: box.height }, glyph: { x: gx0, width: est } }
+    const vis = window.cc.view.getVisibleSize()
+    return { target, vis: { width: vis.width, height: vis.height } }
+  }
+  return new Promise(resolve => {
+    let timer = null, attached = false, completed = false
+    const finish = error => {
+      if (completed) return
+      completed = true
+      if (attached) director.off(event, onAfterDraw)
+      clearTimeout(timer)
+      resolve({ ...(samples.at(-1)?.snapshot ?? {}), ...(error ? { error } : {}), drawEvidence: evidence(!error) })
+    }
+    const onAfterDraw = () => {
+      if (completed) return
+      let snapshot, frameId = null
+      try { snapshot = capture(); frameId = director.getTotalFrames() }
+      catch (error) { snapshot = { error: `墨迹后绘读取失败：${error.message}` } }
+      samples.push({ frameId, snapshot })
+      if (samples.length !== 2) return
+      const [a, b] = samples
+      finish(a.snapshot.error ?? b.snapshot.error
+        ?? (!Number.isSafeInteger(a.frameId) || a.frameId < 0 || b.frameId !== a.frameId + 1
+          ? '墨迹不是连续两个完成绘制帧'
+          : JSON.stringify(a.snapshot) !== JSON.stringify(b.snapshot) ? '墨迹真实属性或自身盒在两后绘帧间不稳定' : null))
+    }
+    timer = setTimeout(() => finish(`墨迹后绘超时：${samples.length}/2帧`), timeoutMs)
+    try { attached = true; director.on(event, onAfterDraw) }
+    catch (error) { finish(`墨迹后绘注册失败：${error.message}`) }
+  })
 }
 
 /**
@@ -348,62 +417,85 @@ for (const key of PANELS) {
 /* -------------------------------------- 尺子自检：原地旋钮探针（含零点标定与还原自证） */
 console.log('--- 尺子自检（这几条判红，疑似放大那些不判）---')
 const probeRows = []
-let probeRestored = { back: null, restored: null, diffShare: NaN }
-let baseImg = null
+let probeRestored = { back: null, restored: null, diffShare: NaN, original: null, propertiesMatch: false, originalSnapshot: null, restoredSnapshot: null }
+let syntheticReverse = null
+const drawReads = []
 const host = open.get(PROBE.panelKey)
+const captureProbe = async () => {
+  const read = await host.page.evaluate(readInkProbeAfterDraw)
+  drawReads.push(read)
+  if (read.error) throw new Error(read.error)
+  return read
+}
+const measureCase = async (p, screenshotName) => {
+  const changed = await host.page.evaluate(probeInkLabel,
+    { panelKey: PROBE.panelKey, text: PROBE.text, fontSize: p.fontSize, overflow: p.overflow,
+      boxH: p.boxH, center: true, enable: false })
+  if (!changed?.probed || changed.error) throw new Error(`旋钮失败：${JSON.stringify(changed)}`)
+  await captureProbe()
+  const off = decodePng(await host.page.screenshot())
+  const flip = await host.page.evaluate(setProbeLabelVisible, true)
+  const painted = await captureProbe()
+  const got = painted.target
+  const img = decodePng(await host.page.screenshot({ path: path.join(OUT, screenshotName) }))
+  const r = inkRow(img, painted.vis, got, off)
+  const a = alignOf({ ...r, vis: painted.vis }, got.world, got.glyph)
+  return { ...r, name: p.name, dx: a.dx, dy: a.dy, flipped: flip?.enabled === true, drawEvidence: painted.drawEvidence }
+}
 if (host === undefined) {
   check(`探针要挂在画出来的那一屏（${PROBE.panelKey}）上`, '这一格没画出来', false)
 } else {
-  for (const p of PROBE_CASES) {
-    let got = null
+  let originalPaint = null, originalImg = null, originalRow = null, originalSnapshot = null
+  try {
+    const saved = await host.page.evaluate(probeInkLabel, { panelKey: PROBE.panelKey, text: PROBE.text, readOnly: true })
+    if (!saved?.saved) throw new Error(`真实原样前提失败：${JSON.stringify(saved)}`)
+    const original = await captureProbe()
+    originalPaint = original.target
+    originalSnapshot = { target: original.target, vis: original.vis }
+    if (!originalPaint.enabled) throw new Error('墨迹原样Label未启用')
+    originalImg = decodePng(await host.page.screenshot({ path: path.join(OUT, 'probe-original-before.png') }))
+    originalRow = inkRow(originalImg, original.vis, originalPaint)
+    for (const p of PROBE_CASES) {
+      try {
+        const r = await measureCase(p, `probe-${p.name}.png`)
+        probeRows.push(r)
+        console.log(`  PROBE ${p.name}: 设定${r.fontSize}×缩放${fmt(r.fontScale, 2)}=${fmt(r.fontWorld)}`
+          + ` 盒${r.localH}  墨迹${r.inkH}px(${r.method}) = ${fmt(r.inkWorld)}号`
+          + ` 倍数${fmt(r.ratio, 3)} 对位Δx${fmt(r.dx)} Δy${fmt(r.dy)}`
+          + ` [${r.rect.x},${r.rect.y} ${r.rect.w}x${r.rect.h}]`
+          + (r.untrust === undefined ? '' : ` 不可信(${r.untrust})`))
+      } catch (error) { check(`旋钮「${p.name}」拧得动`, String(error), false) }
+    }
+    // 独立完成一次固定小盒真实画字，不依赖已不存在的产品Lv文案或shrunk桶。
+    syntheticReverse = await measureCase({ name: '独立反向对照(12/SHRINK/14)', fontSize: 12, overflow: 2, boxH: 14 }, 'probe-independent-reverse.png')
+  } catch (error) {
+    check('真实墨迹原样、标定与独立反向前提完整', String(error), false)
+  } finally {
     try {
-      got = await host.page.evaluate(probeInkLabel,
-        { panelKey: PROBE.panelKey, text: PROBE.text, fontSize: p.fontSize, overflow: p.overflow,
-          boxH: p.boxH, center: p.center === true, enable: false })
-    } catch (error) {
-      // 页内抛错要变成一条能看见的红，不能让整份量具崩掉把上面的读数一起带走
-      got = { error: String(error).split('\n')[0] }
+      const back = await host.page.evaluate(restoreInkProbe)
+      if (back?.error) throw new Error(back.error)
+      const painted = await captureProbe()
+      const img = decodePng(await host.page.screenshot({ path: path.join(OUT, 'probe-original-restored.png') }))
+      const restored = inkRow(img, painted.vis, painted.target)
+      const diffShare = originalImg && originalRow ? measureInkDiff(originalImg, img, originalRow.rect, { threshold: 20 }).share : NaN
+      const restoredSnapshot = { target: painted.target, vis: painted.vis }
+      const propertiesMatch = originalSnapshot !== null && JSON.stringify(originalSnapshot) === JSON.stringify(restoredSnapshot)
+      probeRestored = { back, restored, diffShare, original: originalRow, propertiesMatch, originalSnapshot, restoredSnapshot }
+      console.log(`  RESTORE 写回 ${JSON.stringify(back)}；原样自身区域改变 ${fmt(diffShare * 100, 2)}% 像元；属性一致=${propertiesMatch}`)
+    } catch (error) { check('旋钮finally真实恢复与复量完成', String(error), false) }
+    finally {
+      // 幂等恢复再清理本量具拥有的引用；复量抛错也不能留下临时字号/位置/禁用状态。
+      try { await host.page.evaluate(() => {
+        const s = window.__inkProbe
+        if (s) {
+          const lb = s.node.getComponent('cc.Label'), ut = s.node.getComponent('cc.UITransform')
+          lb.fontSize = s.fontSize; lb.overflow = s.overflow; lb.enabled = s.enabled
+          ut.setContentSize(new window.cc.Size(s.w, s.h)); s.node.setPosition(new window.cc.Vec3(s.x, s.y, s.z))
+          delete window.__inkProbe
+        }
+      }) } catch (error) { check('旋钮finally二次恢复与owned引用清理成功', String(error), false) }
     }
-    if (got === undefined || got === null || got.error !== undefined || got.probed !== true) {
-      check(`旋钮「${p.name}」拧得动`, JSON.stringify(got), false)
-      continue
-    }
-    // 属性已按这一档应用、字是关着的 ⇒ 这张当"改前"；只翻显隐再拍一张 ⇒ 差出来只有这颗字自己
-    await host.page.waitForTimeout(220)
-    const off = decodePng(await host.page.screenshot())
-    const flip = await host.page.evaluate(setProbeLabelVisible, true)
-    await host.page.waitForTimeout(220)
-    const img = decodePng(await host.page.screenshot())
-    await host.page.screenshot({ path: path.join(OUT, `probe-${p.name}.png`) })
-    if (baseImg === null) baseImg = img  // 基线档的"可见"图就是产品原样，给还原核对用
-    const r = inkRow(img, host.vis, got, off)
-    const a = alignOf({ ...r, vis: host.vis }, got.world, got.glyph)
-    r.name = p.name
-    r.dx = a.dx
-    r.dy = a.dy
-    r.flipped = flip !== null && flip.enabled === true
-    probeRows.push(r)
-    console.log(`  PROBE ${p.name}: 设定${r.fontSize}×缩放${fmt(r.fontScale, 2)}=${fmt(r.fontWorld)}`
-      + ` 盒${r.localH}  墨迹${r.inkH}px(${r.method}) = ${fmt(r.inkWorld)}号`
-      + `[中位数法${r.inkMedianH}px/@60 ${r.inkStrictH}px=${fmt(r.inkWorldStrict)}号]`
-      + `  倍数${fmt(r.ratio, 3)}  对位Δx${fmt(r.dx)} Δy${fmt(r.dy)}  [${r.rect.x},${r.rect.y} ${r.rect.w}x${r.rect.h}]`
-      + ` 带${r.bands}/峰列${r.peakCols}/占比${fmt(r.share, 2)}`
-      + (r.untrust === undefined ? '' : `  ⚠不可信(${r.untrust})`))
   }
-  // 还原 + 复量：读数必须回到基线那一行，否则这份量具把产品改坏了还量什么
-  const back = await host.page.evaluate(restoreInkProbe)
-  await host.page.waitForTimeout(260)
-  const img = decodePng(await host.page.screenshot())
-  const again = await host.page.evaluate(collectInkTargets, { panelKey: PROBE.panelKey })
-  const t = again === null ? null : again.stretched.find((x) => x.text === PROBE.text) ?? null
-  const restored = t === null ? null : inkRow(img, host.vis, t)
-  // 还原的强判据不是"墨迹数一样"，而是**像素回到改前那张**：基线区域里变了多少像元必须是 0
-  const baseRow = probeRows.find((r) => r.name.startsWith('基线'))
-  const diffShare = baseRow === undefined || baseImg === null ? NaN
-    : measureInkDiff(baseImg, img, baseRow.rect, { threshold: 20 }).share
-  console.log(`  RESTORE 写回 ${JSON.stringify(back)}；复量墨迹 ${restored === null ? '拿不到那颗' : `${restored.inkH}px`}；`
-    + `基线区域相对改前变了 ${Number.isFinite(diffShare) ? `${fmt(diffShare * 100, 2)}%` : '?'} 像元`)
-  probeRestored = { back, restored, diffShare }
 }
 
 const byName = (n) => probeRows.find((r) => r.name === n)
@@ -463,25 +555,22 @@ if (okRow(shrinkBig) && okRow(noneBig) && okRow(box36) && okRow(noneBig20)) {
     + `12 号给盒 200 → ${shrinkHuge === undefined ? '?' : `${shrinkHuge.inkH}px`}`
     + ` = ${shrinkHuge === undefined ? '?' : fmt(shrinkHuge.inkWorld)} 号（${shrinkHuge !== undefined && okRow(shrinkHuge) ? `设定 12 的 ${fmt(shrinkHuge.inkWorld / 12, 2)} 倍` : `档不可信:${shrinkHuge === undefined ? '无' : shrinkHuge.untrust}`}）`)
 }
-const lv1 = controlRows.find((r) => r.text.indexOf('Lv') === 0)
-check('反向对照 city/Lv1（基线里那颗被压小的）：墨迹要小于设定字号',
-  lv1 === undefined ? `这一屏没有 Lv 开头的被压小的颗（对照组拿不到：${controlRows.map((r) => r.text).join('、') || ' shrunk 桶空'}`
-    : `实测 ${fmt(lv1.inkWorld)} 号 vs 设定 ${fmt(lv1.fontWorld)}${lv1.untrust === undefined ? '' : `（${lv1.untrust}，不作数）`}`,
-  lv1 !== undefined && okRow(lv1) && lv1.inkWorld < lv1.fontWorld)
+check('独立小盒反向对照：同颗真实字的墨迹要小于设定字号',
+  syntheticReverse === null ? '独立12/SHRINK/14真实反向档拿不到'
+    : `实测 ${fmt(syntheticReverse.inkWorld)} 号 vs 设定 ${fmt(syntheticReverse.fontWorld)}；对位Δx${fmt(syntheticReverse.dx)}/Δy${fmt(syntheticReverse.dy)}`,
+  syntheticReverse !== null && okRow(syntheticReverse) && syntheticReverse.flipped
+    && syntheticReverse.dx <= 6 && syntheticReverse.dy <= 6 && syntheticReverse.inkWorld < syntheticReverse.fontWorld)
+
 const dirty = [...suspectRows, ...controlRows].filter((r) => r.untrust !== undefined)
 check('被量的那些产品标签都要干净（裁边或占比高就是量具没框住那颗字，读数不作数）',
   dirty.length === 0 ? `${suspectRows.length + controlRows.length} 颗全部未裁边且占比 < 0.4`
     : dirty.map((r) => `${r.text}:${r.untrust}`).join(' '),
   dirty.length === 0)
-if (base !== undefined && probeRestored.restored !== null) {
-  check('旋钮还原后必须回到改前的像素状态（复量读数一样不算数，要像素一字不变）',
-    `基线中位数法 ${base.inkMedianH}px vs 还原后 ${probeRestored.restored.inkH}px，基线区域变了 ${fmt((probeRestored.diffShare ?? 1) * 100, 2)}% 像元，`
-    + `写回 ${JSON.stringify(probeRestored.back)}`,
-    // 基线那档的 inkH 是差分量出来的，还原核对走中位数法 ⇒ 两边都取中位数口径才可比
-    probeRestored.restored.inkH === base.inkMedianH
-      && probeRestored.diffShare < 0.005
-      && probeRestored.back.fontSize === base.fontSize && probeRestored.back.overflow === 2)
-}
+check('旋钮还原后必须回到改前的像素状态（复量读数一样不算数，要像素一字不变）',
+  JSON.stringify(probeRestored),
+  probeRestored.original !== null && probeRestored.restored !== null
+    && probeRestored.restored.inkH === probeRestored.original.inkH
+    && probeRestored.diffShare < 0.005 && probeRestored.propertiesMatch)
 
 /* ------------------------------------------------------- 标定后的落地字号与报数表 */
 const cover12 = noneBig === undefined ? NaN : noneBig.inkWorld / noneBig.fontWorld
@@ -504,6 +593,7 @@ for (const r of suspectRows) {
 console.log(`=== 墨迹读数：疑似放大 ${suspectRows.length} 颗、反向对照 ${controlRows.length} 颗、旋钮 ${probeRows.length} 档；`
   + `尺子自检 ${failures === 0 ? '全绿' : `${failures} 条红`} ===`)
 
+writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ checks, failures, suspectRows, controlRows, probeRows, syntheticReverse, probeRestored, drawReads }, null, 2))
 await browser.close()
 preview.assertRewritten()
 await preview.close()
