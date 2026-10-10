@@ -88,7 +88,7 @@ interface Draft { lines: string[]; titleColor: Color; iconKey: null; heroId: str
 interface HeroHarness {
   node: Node; drawnRows: Node[]; rowHeroes: Map<Node, string>; onHeroAction: ((id: string, action: string) => void) | null
   onLineupEdit: ((preset: number) => void) | null; onLoad(): void; onDestroy(): void; attach(resp: HeroListResp): void; switchTab(tab: string): void
-  createRow(): Node; renderRow(node: Node, data: Draft, index: number): void; render(): void
+  createRow(): Node; renderRow(node: Node, data: Draft, index: number): void; layoutRow(node: Node): void; render(): void
   panel: { heroes: HeroRow[]; lineups: LineupPanel[]; troopCapText: string }
 }
 const COMMON = ['R 贺兰迟 · Lv1/100 · ★☆☆☆☆ · 觉醒 0/1', '兰迟突 Lv1/10｜顽抗 Lv1/10（仅副将位生效）',
@@ -126,6 +126,19 @@ function fit(node: Node): void {
     const box = own(label.node), parent = own(node); assert.ok(box.left >= parent.left && box.right <= parent.right && box.top <= parent.top && box.bottom >= parent.bottom)
   }
 }
+test('正文按名字定位，新增装饰节点或子节点换序后第四段仍按全文排在行内', () => {
+  const { hero } = setup(), n = row(hero)
+  const decoration = new Node('Decoration'); n.addChild(decoration)
+  n.children.unshift(n.children.pop()!)
+  const labels = ['Line1', 'Line2', 'Line3', 'Line4'].map(name => n.getChildByName(name)!.getComponent(Label)!)
+  labels[3]!.node.setPosition(new Vec3(labels[3]!.node.position.x, 999, 0))
+  hero.layoutRow(n)
+  for (const [index, label] of labels.entries()) {
+    assert.equal(label.string, COMMON[index]); assert.equal(label.parsedString.join(''), COMMON[index])
+    assert.equal(label.actualFontSize, label.fontSize)
+    assert.ok(own(label.node).top <= own(n).top && own(label.node).bottom >= own(n).bottom)
+  }
+})
 test('正文与54宽肖像保持至少12像素净隙，完整长文自身盒仍守住右侧16像素边距', () => {
   const { hero } = setup()
   for (const copy of [COMMON, COMMON.map(s => s + ' · ' + s)]) {

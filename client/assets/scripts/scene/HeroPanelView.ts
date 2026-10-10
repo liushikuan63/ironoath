@@ -354,7 +354,8 @@ export class HeroPanelView extends Component {
 
   /** 用当前四段全文的实际排版高度排开正文与动作，池化复用时重新量取。 */
   private layoutRow(node: Node): void {
-    const labels = node.children.slice(0, 4).map(child => child.getComponent(Label))
+    const labels = ['Line1', 'Line2', 'Line3', 'Line4']
+      .map(name => node.getChildByName(name)?.getComponent(Label) ?? null)
       .filter((label): label is Label => label !== null)
     const visible = labels.filter(label => label.string.length > 0)
     for (const label of labels) {
