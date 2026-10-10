@@ -10,7 +10,7 @@ import { guideBubbleLayout } from '../assets/scripts/game/ui/GuideLayout'
 import { buildQuestList, candidateLabel, chosenClaimReq } from '../assets/scripts/game/quest/QuestPanel'
 import type { HeroChoicePrompt } from '../assets/scripts/game/quest/QuestPanel'
 import type { GuideScriptResp } from '../assets/scripts/net/generated/GuideProtocol'
-import type { QuestListResp } from '../assets/scripts/net/generated/QuestProtocol'
+import type { QuestListResp, QuestView } from '../assets/scripts/net/generated/QuestProtocol'
 import * as paging from '../assets/scripts/game/ui/PanelPaging'
 import { dialogLayout } from '../assets/scripts/game/ui/DialogLayout'
 import { PANEL_IRON_INSET } from '../assets/scripts/game/art/ArtFamilies'
@@ -20,6 +20,8 @@ class Vec3 { constructor(public x = 0, public y = 0, public z = 0) {} }
 class Size { constructor(public width: number, public height: number) {} }
 class UITransform {
   width = 0; height = 0
+  anchorX = 0.5; anchorY = 0.5
+  setAnchorPoint(x: number, y: number): void { this.anchorX = x; this.anchorY = y }
   setContentSize(size: Size | number, height?: number): void {
     this.width = typeof size === 'number' ? size : size.width
     this.height = typeof size === 'number' ? height! : size.height
@@ -34,7 +36,7 @@ class Graphics {
   fill(): void {} stroke(): void {}
 }
 class Label {
-  static Overflow = { SHRINK: 2 }; static HorizontalAlign = { LEFT: 0, CENTER: 1 }
+  static Overflow = { SHRINK: 2 }; static HorizontalAlign = { LEFT: 0, CENTER: 1, RIGHT: 2 }
   static VerticalAlign = { CENTER: 1 }
   node!: Node; string = ''; fontSize = 0; lineHeight = 0; color: unknown
   overflow = 0; horizontalAlign = 0; verticalAlign = 0; enableWrapText = true
@@ -61,6 +63,7 @@ class Node {
   getChildByName(name: string): Node | null { return this.children.find(child => child.name === name) ?? null }
   setPosition(position: Vec3): void { this.position = position }
   on(type: string, listener: () => void): void { this.events.set(type, listener) }
+  off(type: string): void { this.events.delete(type) }
   hasEventListener(type: string): boolean { return this.events.has(type) }
   emit(type: string): void { this.events.get(type)?.() }
   removeFromParent(): void {
@@ -101,6 +104,8 @@ interface QuestHarness {
   onClaim: ((quest: string, hero: string | null) => void) | null; openPrompt: HeroChoicePrompt | null
   buildPrompt(): void; buildTabs(height: number): void; showPrompt(prompt: HeroChoicePrompt): void; hidePrompt(): void; onDestroy(): void
   attach(resp: QuestListResp): void; switchTab(key: string): void; rowPool: object | null
+  buildBackground(width: number, height: number): void; buildHeader(height: number): void
+  createRow(): Node; render(): void; drawnRows: Node[]; tab: string; page: number
   update(): void
 }
 const nativeSize = { width: 960, height: 443.6018957345971 }
@@ -253,8 +258,115 @@ function questWithGuide(guide: GuideHarness, area: Rect = { ...nativeArea }, mat
     applySlicedSprite: art, applyDialogButton: styles.applyDialogButton,
     paintCompactDialogFrame: styles.paintCompactDialogFrame, dialogContentRect: () => area,
     PANEL_IRON_INSET, dialogLayout })
-  const quest = new QuestPanel(); quest.buildTabs(size.height); quest.buildPrompt(); wireQuest(guide, quest); return quest
+  const quest = new QuestPanel(); quest.node = new Node('quest')
+  quest.node.addComponent(UITransform).setContentSize(size.width, size.height)
+  const host = new Node('Game'); host.addChild(quest.node); host.addChild(guide.node)
+  quest.buildBackground(size.width, size.height); quest.buildHeader(size.height)
+  quest.buildTabs(size.height); quest.buildPrompt(); wireQuest(guide, quest); return quest
 }
+function ownRect(node: Node, offset = new Vec3()): Rect {
+  const ui = dimensions(node)
+  return { x: offset.x + node.position.x - ui.anchorX * ui.width,
+    y: offset.y + node.position.y - ui.anchorY * ui.height, width: ui.width, height: ui.height }
+}
+function questRows(quest: QuestHarness, firstClaimable = false): void {
+  const Pool = sceneExports('NodePool', {}).NodePool as new (parent: Node, factory: () => Node) => object
+  quest.rowPool = new Pool(quest.node, () => quest.createRow())
+  const quests: QuestView[] = Array.from({ length: 20 }, (_, index) => ({
+    questId: `server-row-${index}`, name: `服务端任务${index}`, type: 'SIDE', goalType: 'GATHER_RESOURCE',
+    goalTarget: 'WOOD', goalValue: 5000, current: firstClaimable && index === 0 ? 5000 : 2500,
+    complete: firstClaimable && index === 0, claimed: false,
+    claimable: firstClaimable && index === 0, locked: false, preQuestId: null, heroChoices: [],
+  }))
+  quest.attach({ quests, claimableCount: firstClaimable ? 1 : 0, serverNow: 1 })
+}
+test('真实三页签关闭选择后Guide在Tabs下沿留12净隙，任务页签可返回且领取右列仍净空', () => {
+  const { guide, size, area } = setup('quest'), quest = questWithGuide(guide, area, true, size)
+  questRows(quest, true)
+  for (const height of [nativeSize.height, 600, 640]) {
+    size.height = height; Object.assign(area, height === nativeSize.height ? nativeArea
+      : { x: -480, y: -height / 2 + 60, width: 960, height: height - 60 })
+    quest.update(); guide.update()
+    quest.showPrompt(threeChoices); quest.node.getChildByName('Tab-achievement')!.emit('touch-start')
+    guide.update()
+    assert.equal(guide.bubble!.active, true); assert.equal(quest.promptPanel!.active, false)
+    const bubble = ownRect(guide.bubble!)
+    for (const key of ['quest', 'activity', 'achievement']) {
+      const tab = ownRect(quest.node.getChildByName(`Tab-${key}`)!)
+      assert.ok(bubble.y + bubble.height <= tab.y - 12 + 0.00001, `${height}: ${key}须留真实净隙`)
+      assert.equal(intersects(bubble, tab), false)
+    }
+    assert.equal(bubble.width, 420); assert.equal(bubble.height, 150)
+    assert.equal(guide.bubble!.getChildByName('GuideStepText')!.getComponent(Label)!.fontSize, 20)
+    quest.node.getChildByName('Tab-quest')!.emit('touch-start'); assert.equal(quest.tab, 'quest')
+    const row = quest.drawnRows[0]!, claim = row.getChildByName('ClaimButton')!
+    assert.equal(claim.active, true)
+    assert.equal(intersects(bubble, ownRect(claim, row.position)), false, '真实renderRow生成的首颗领取按钮须净空')
+  }
+})
+test('真实Tabs尺寸或同父位移变化触发Guide重排，只读自身盒不包含超大Caption子盒', () => {
+  const { guide, size, area } = setup('quest'), quest = questWithGuide(guide, area, true, size)
+  quest.node.setPosition(new Vec3(33, -11)); guide.node.setPosition(new Vec3(-27, 7)); guide.update()
+  const tab = quest.node.getChildByName('Tab-activity')!, ui = dimensions(tab)
+  const offset = new Vec3(quest.node.position.x - guide.node.position.x, quest.node.position.y - guide.node.position.y)
+  const before = ownRect(guide.bubble!)
+  assert.ok(before.y + before.height <= ownRect(tab, offset).y - 12 + 0.00001)
+  dimensions(tab.getChildByName('Caption')!).setContentSize(4000, 4000)
+  guide.update(); assert.equal(ownRect(guide.bubble!).y, before.y, '子节点自身盒不得扩大Tab矩形')
+  ui.setContentSize(ui.width, ui.height + 20); guide.update()
+  const afterSize = ownRect(guide.bubble!)
+  assert.ok(Math.abs(afterSize.y - (before.y - 10)) < 0.00001)
+  tab.setPosition(new Vec3(tab.position.x, tab.position.y - 9)); guide.update()
+  assert.ok(Math.abs(ownRect(guide.bubble!).y - (afterSize.y - 9)) < 0.00001)
+})
+test('真实Quest从600创建后短屏再600/640重排自身Tabs背景行和翻页键，未开选择窗也响应', () => {
+  const { guide, size, area } = setup('quest'); size.height = 600
+  Object.assign(area, { x: -480, y: -240, width: 960, height: 540 })
+  const quest = questWithGuide(guide, area, true, size); questRows(quest)
+  for (const height of [nativeSize.height, 600, 640, nativeSize.height]) {
+    size.height = height; Object.assign(area, height === nativeSize.height ? nativeArea
+      : { x: -480, y: -height / 2 + 60, width: 960, height: height - 60 })
+    quest.update()
+    for (const key of ['quest', 'activity', 'achievement']) {
+      const tab = ownRect(quest.node.getChildByName(`Tab-${key}`)!)
+      assert.ok(tab.y + tab.height <= Math.min(height / 2, area.y + area.height), '真实Tab不得被短屏上沿裁掉')
+      assert.ok(tab.y >= area.y)
+    }
+    const background = dimensions(quest.node.getChildByName('Background')!)
+    assert.equal(background.width, size.width); assert.equal(background.height, height)
+    assert.equal(dimensions(quest.node).height, height)
+    assert.equal(quest.node.getChildByName('Header')!.position.y, Math.min(height / 2, area.y + area.height) - 36)
+    assert.ok(quest.drawnRows.length > 0)
+    assert.equal(quest.drawnRows[0]!.position.y, Math.min(height / 2, area.y + area.height) - 123)
+    for (const name of ['PrevPageButton', 'NextPageButton']) {
+      const pager = quest.node.getChildByName(name)!, rect = ownRect(pager)
+      assert.equal(pager.active, true); assert.ok(rect.y >= area.y)
+      assert.ok(rect.y + rect.height < ownRect(quest.drawnRows.at(-1)!).y)
+    }
+    assert.equal(quest.openPrompt, null)
+  }
+})
+test('真实Quest安全净区改变只render一次，保留选择窗候选及页签状态并守住末层', () => {
+  const { guide, size, area } = setup('quest'), quest = questWithGuide(guide, area, true, size)
+  questRows(quest); quest.update(); quest.node.getChildByName('NextPageButton')!.emit('touch-start')
+  assert.equal(quest.page, 1); quest.showPrompt(threeChoices)
+  const panel = quest.promptPanel!, candidate = panel.getChildByName('HeroOption_server-hero-1')!
+  const original = quest.render.bind(quest); let renders = 0
+  quest.render = () => { renders++; original() }
+  const visible: boolean[] = []; const callback = quest.onPromptVisibility!
+  quest.onPromptVisibility = value => { visible.push(value); callback(value) }
+  area.x += 17; area.width -= 34; area.height -= 22; quest.update()
+  assert.equal(renders, 1); quest.update(); assert.equal(renders, 1, '同几何后续帧不能重复render')
+  assert.equal(quest.openPrompt?.questId, threeChoices.questId); assert.equal(panel.active, true)
+  assert.equal(panel.getChildByName('HeroOption_server-hero-1'), candidate)
+  assert.equal(quest.node.children.at(-1), panel); assert.equal(quest.tab, 'quest')
+  assert.equal(quest.page, 1, '几何改变不得重置仍有效的当前页')
+  assert.deepEqual(visible, []); assert.equal(guide.bubble!.active, false)
+  const top = area.y + area.height
+  assert.equal(quest.node.getChildByName('Header')!.position.y, top - 36)
+  assert.equal(quest.drawnRows[0]!.position.x, area.x + area.width / 2)
+  assert.equal(quest.drawnRows[0]!.position.y, top - 123)
+})
 const prompt: HeroChoicePrompt = { questId: 'server-quest', title: '服务器奖励',
   candidates: [{ heroId: 'hero-from-server', name: '服务器武将' }] }
 const threeChoices: HeroChoicePrompt = { questId: 'server-three', title: '服务器下发的任务奖励标题',

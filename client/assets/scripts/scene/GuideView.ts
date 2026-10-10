@@ -168,7 +168,36 @@ export class GuideView extends Component {
   }
 
   private geometryKey(width: number, height: number, hole: GuideRect): string {
+    const tabs = this.questTabs().map(node => {
+      const box = node.getComponent(UITransform)!
+      return `${node.position.x}:${node.position.y}:${box.width}:${box.height}:${box.anchorX}:${box.anchorY}`
+    }).join(';')
+    const quest = this.node.parent?.getChildByName('quest')
     return `${width}:${height}:${this.openPanelKey?.() ?? ''}:${hole.x}:${hole.y}:${hole.width}:${hole.height}`
+      + `:${this.node.position.x}:${this.node.position.y}:${quest?.position.x}:${quest?.position.y}:${tabs}`
+  }
+
+  private questTabs(): Node[] {
+    if (this.openPanelKey?.() !== 'quest') return []
+    const quest = this.node.parent?.getChildByName('quest')
+    if (quest === null || quest === undefined || !quest.active) return []
+    return ['Tab-quest', 'Tab-activity', 'Tab-achievement']
+      .map(name => quest.getChildByName(name))
+      .filter((node): node is Node => node !== null && node.active && node.getComponent(UITransform) !== null)
+  }
+
+  /** 遮罩洞仍覆盖任务操作区；提示单独避开页签的自身盒，给真实返回入口留下净隙。 */
+  private bubbleArea(hole: GuideRect): GuideRect {
+    if (this.openPanelKey?.() !== 'quest') return hole
+    const area = { ...hole, x: hole.x - this.node.position.x, y: hole.y - this.node.position.y }
+    const quest = this.node.parent?.getChildByName('quest')
+    let top = area.y + area.height
+    for (const tab of this.questTabs()) {
+      const box = tab.getComponent(UITransform)!
+      const bottom = (quest?.position.y ?? 0) + tab.position.y - box.anchorY * box.height - this.node.position.y
+      top = Math.min(top, bottom)
+    }
+    return { ...area, height: Math.max(1, top - area.y) }
   }
 
   /**
@@ -400,7 +429,7 @@ export class GuideView extends Component {
     if (this.bubble === null) {
       return
     }
-    const layout = guideBubbleLayout(hole, width, height, this.openPanelKey?.() ?? null,
+    const layout = guideBubbleLayout(this.bubbleArea(hole), width, height, this.openPanelKey?.() ?? null,
       { width: 420, height: BUBBLE_HEIGHT, margin: BUBBLE_MARGIN, buttonWidth: BUTTON_WIDTH })
     const bubble = this.bubble
     bubble.getComponent(UITransform)!.setContentSize(layout.width, layout.height)

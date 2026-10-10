@@ -126,6 +126,7 @@ export class QuestPanelView extends Component {
   private readonly optionHeroIds = new Map<Node, string>()
   private prompt: HeroChoicePrompt | null = null
   private promptLayoutKey = ''
+  private viewportLayoutKey = ''
 
   /** 玩家要领某条任务的奖励。`heroChoice` 为 null 表示这条任务没有候选（直接领） */
   onClaim: ((questId: string, heroChoice: string | null) => void) | null = null
@@ -179,10 +180,36 @@ export class QuestPanelView extends Component {
   }
 
   override update(): void {
+    const size = view.getVisibleSize(), area = dialogContentRect(this.node)
+    const viewportKey = `${size.width}:${size.height}:${area.x}:${area.y}:${area.width}:${area.height}`
+    if (viewportKey !== this.viewportLayoutKey) {
+      this.viewportLayoutKey = viewportKey
+      this.node.getComponent(UITransform)?.setContentSize(size.width, size.height)
+      const background = this.node.getChildByName('Background')
+      background?.getComponent(UITransform)?.setContentSize(size.width, size.height)
+      const graphics = background?.getComponent(Graphics)
+      if (graphics !== null && graphics !== undefined) {
+        graphics.clear()
+        graphics.fillColor = COLOR_BACKGROUND
+        graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
+        graphics.fill()
+      }
+      const top = Math.min(size.height / 2, area.y + area.height)
+      const centerX = area.x + area.width / 2
+      this.headerLabel?.node.setPosition(new Vec3(centerX, top - PADDING - 20, 0))
+      this.receiptLabel?.node.setPosition(new Vec3(centerX, top - PADDING - HEADER_HEIGHT + 2, 0))
+      const tabWidth = PANEL_WIDTH / TABS.length
+      let index = 0
+      for (const [tab] of this.tabNodes) {
+        tab.setPosition(new Vec3(centerX - PANEL_WIDTH / 2 + tabWidth * (index++ + 0.5),
+          top - PADDING - HEADER_HEIGHT + TAB_HEIGHT / 2 + 6, 0))
+      }
+      // 同一几何只重画一次；复用现有页签监听与选择窗，不触发关闭或领奖。
+      this.render()
+    }
     if (this.promptPanel === null || !this.promptPanel.active || this.prompt === null) return
     // NodePool会把后来取出的Rows追加到Quest末尾；弹窗开着时仍须守住层级。
     this.keepPromptAboveRows()
-    const size = view.getVisibleSize(), area = dialogContentRect(this.node)
     const topLimit = this.promptTopLimit(area.y + area.height, size.height)
     const key = `${size.width}:${size.height}:${area.x}:${area.y}:${area.width}:${area.height}:${topLimit}`
     if (key !== this.promptLayoutKey) this.layoutPrompt()
@@ -292,12 +319,14 @@ export class QuestPanelView extends Component {
 
   /** 页码与两颗键跟着这一屏最后画出的那行走；只有一页时整对收掉（#345）。 */
   private paintPager(total: number, pages: number, rowY: number): void {
+    const area = dialogContentRect(this.node)
+    const centerX = area.x + area.width / 2
     const paged = pages > 1
     this.canPrev = this.page > 0
     this.canNext = this.page < pages - 1
     if (this.overflowLabel !== null) {
       this.overflowLabel.string = paged ? `${pageNotice(this.page, pages)} · 共 ${total} 条` : ''
-      this.overflowLabel.node.setPosition(new Vec3(0, rowY, 0))
+      this.overflowLabel.node.setPosition(new Vec3(centerX, rowY, 0))
     }
     for (const [button, caption, usable] of [
       [this.prevPageButton, this.prevPageCaption, this.canPrev],
@@ -305,7 +334,7 @@ export class QuestPanelView extends Component {
     ] as Array<[Node | null, Label | null, boolean]>) {
       if (button === null || caption === null) continue
       button.active = paged
-      button.setPosition(new Vec3(button.position.x, rowY, 0))
+      button.setPosition(new Vec3(centerX + (button === this.prevPageButton ? -1 : 1) * (PANEL_WIDTH / 2 - 46), rowY, 0))
       caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
   }
@@ -475,10 +504,11 @@ export class QuestPanelView extends Component {
       ? row.type === 'ACHIEVEMENT'
       : row.type !== 'ACHIEVEMENT')
     const size = view.getVisibleSize()
-    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    const area = dialogContentRect(this.node)
+    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     // 行数按实测可视高度算，不写死：① 可视高度随窗口/机型变；② 多画的行会被底部导航条盖住，
     // 那是"画了但玩家看不见"，比少画一行更难发现（表头带抬到 76 之后这一屏更矮了一档）。
-    const navTop = -size.height / 2 + BOTTOM_RESERVED
+    const navTop = Math.max(-size.height / 2 + BOTTOM_RESERVED, area.y)
     const capacity = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
     // 共几页、夹到哪一页、切哪一段用同一个 perPage（`PanelPaging` 那条原话）：从前这里
     // slice(0, maxRows) 一刀切、再把「另有 N 条」拼到表头，剩下的任务一条也够不着（#307）。
@@ -496,7 +526,7 @@ export class QuestPanelView extends Component {
     }
     visible.forEach((row, index) => {
       const node = pool.acquire()
-      node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
+      node.setPosition(new Vec3(area.x + area.width / 2, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
       this.renderRow(node, row)
     })
@@ -515,7 +545,8 @@ export class QuestPanelView extends Component {
     }
     const data = this.activity
     const size = view.getVisibleSize()
-    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    const area = dialogContentRect(this.node)
+    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     if (data === null) {
       if (this.headerLabel !== null) {
         this.headerLabel.string = '活动 加载中'
@@ -527,7 +558,7 @@ export class QuestPanelView extends Component {
       return
     }
     // 与任务那一页同一口径：行数按实测可视高度算，装不下就翻页而不是只说"另有几条没画下"
-    const navTop = -size.height / 2 + BOTTOM_RESERVED
+    const navTop = Math.max(-size.height / 2 + BOTTOM_RESERVED, area.y)
     const capacity = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
     const total = data.rows.length
     const perPage = contentPerPage(total, capacity)
@@ -541,7 +572,7 @@ export class QuestPanelView extends Component {
     }
     visible.forEach((row, index) => {
       const node = pool.acquire()
-      node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
+      node.setPosition(new Vec3(area.x + area.width / 2, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnActivity.push(node)
       this.renderActivityRow(node, row)
     })
