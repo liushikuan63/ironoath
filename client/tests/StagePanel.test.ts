@@ -87,6 +87,18 @@ function sweepResp(executed: number, overrides: Partial<SweepResp> = {}): SweepR
 
 // ---------- 三态可区分 ----------
 
+test('关卡标题使用服务端序号与名称，不向玩家显示内部章节或关卡 id', () => {
+  const row = buildStageRow(entry({
+    chapterId: 'chapter_09_internal',
+    stageId: 'stage_09_07_internal',
+    stageNo: 7,
+    name: '山口防线',
+  }))
+  assert.equal(row.title, '第 7 关 山口防线')
+  assert.doesNotMatch(row.title, /chapter_|stage_/)
+  assert.equal(row.stageId, 'stage_09_07_internal', '操作标识仍使用服务端关卡 id')
+})
+
 test('「未挑战」「打过但 0 星」「N 星」三态必须能区分', () => {
   assert.equal(starText(entry({ attempted: false, progress: progress(0, 0, 0) })), '未挑战')
   assert.equal(starText(entry({ attempted: true, progress: progress(0, 0, 0) })), '0 星')

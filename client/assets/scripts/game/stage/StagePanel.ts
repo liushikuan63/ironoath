@@ -30,7 +30,7 @@ import type {
 /** 关卡列表的一行。 */
 export interface StageRow {
   readonly stageId: string
-  /** 「第 1 章 · 3/10 关卡名」这样的标题。章节与序号都由服务端给，客户端不排序 */
+  /** 「第 3 关 关卡名」这样的标题。序号与名称都由服务端给，客户端不排序 */
   readonly title: string
   /** 星级文本：未挑战 / 0 星 / N 星。三态必须可区分 */
   readonly starText: string
@@ -109,7 +109,7 @@ export function buildStageRow(entry: StageEntry): StageRow {
   }
   return {
     stageId: entry.stageId,
-    title: `${entry.chapterId} · 第 ${entry.stageNo} 关 ${entry.name}`,
+    title: `第 ${entry.stageNo} 关 ${entry.name}`,
     starText: starText(entry),
     conditionText: conditionText(entry),
     restrictionText: restrictionText(entry.unitRestriction),
