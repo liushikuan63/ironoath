@@ -7014,3 +7014,5 @@ TEST_EXIT=0
 | #1043 野怪首战玩家入口缺失定位与方案；后台截图量具反证纠正 | 本笔（原子发现留档，本批统一推送） | 主分支野怪编成入口0；两条RED实际缺函数；隔离候选生成0/类型检查0/客户端1228过0败0跳；首次错误cwd20 ENOENT保原日志；P367隐藏武将截图实际旧城图，不计完整视觉通过，own树清理0 | D:/tmp/ironoath-wechat-20261010/pve-entry-1043-red-test.log、pve-entry-1043-client-final.log；root-native-onboarding-v22/driver-1583-hero-preview-top.png；root-ide-v22-session7-background/visual-stop-reason.txt | 候选尚未主分支合入或全构建/真启动；后新F23不借F22；旧引擎独立登录待，完整七步/主5收割仍未验。本批未推 |
 
 | #1044 world野怪点选→原编成正常确认，原子合入并准备新F23 | 本笔（原子实现，本批统一推送） | immutable patch apply-check/主gen0；候选最终1228/0/0、两类typecheck0、track门纠正准备方法豁免后0；两条原缺函数RED保留，取消无写/无点、确认恰好一次 | D:/tmp/ironoath-wechat-20261010/pve-entry-1044.review.patch；pve-entry-1043-client-final.log；pve-entry-1044-main-gen.log；pve-entry-1043-track-first.log与retry1 | 主分支新F23全量/构建/同输入65及补项/原生新同号全七步与主5未执行，旧F22仅旧源；NWJS独立登录仍待，本批未推 |
+
+| #1045 首战脚本内容变更同步版本4，避免旧版本展示缓存 | 本笔（原子修正，本批统一推送） | GuideScriptResp与GuideRulesAssembler版本读取生产证据；guide version3→4 | contract/config/guide.json；server/game-web/src/main/java/com/ironoath/web/guide/GuideRulesAssembler.java | 新F23统一生成/全量及原生待，本批未推 |
