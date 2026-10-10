@@ -9,10 +9,12 @@
  *
  * 退出码：0 全绿；1 判据失败；2 前置不满足（产物/后端/建号/找不到启动组件）。
  */
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { resolveCocosClickPoint } from './lib/cocos-click.mjs'
+import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 
 const ROOT = 'client/build/web-mobile'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
@@ -55,97 +57,250 @@ await page.waitForFunction(() => window.cc?.director?.getScene?.() != null, null
   .catch(() => {})
 await page.waitForTimeout(2500)
 
-/**
- * 读 `worldReady`：从 `Canvas/Game` 的组件里找**持有 `root.api` 的那一个**（启动组件），
- * 再去 `root.api` 上读。不按类名找（产物里类名会被压成单字母，见排行榜探针那次的教训）。
- */
-const readWorldReady = () => page.evaluate(() => {
-  const scene = window.cc.director.getScene()
-  const game = scene.getChildByName('Canvas')?.getChildByName('Game') ?? null
-  if (game === null) return { found: false, reason: 'Game 节点不在' }
-  for (const component of game.components) {
-    const api = component?.root?.api
-    if (api !== undefined && api !== null) {
-      return { found: true, worldReady: api.worldReady === true, navKey: component?.nav?.currentKey ?? null }
+function worldReadySnapshot(expected = null) {
+  const scene = window.cc?.director?.getScene?.()
+  const unique = (parent, name) => {
+    const nodes = (parent?.children ?? []).filter(node => node.name === name)
+    return nodes.length === 1 ? nodes[0] : null
+  }
+  const game = unique(unique(scene, 'Canvas'), 'Game')
+  const hosts = (game?.components ?? []).filter(component => component?.root?.api != null)
+  const host = hosts.length === 1 ? hosts[0] : null
+  const found = host !== null && typeof host.root.api.worldReady === 'boolean'
+    && typeof host.nav?.currentKey === 'string'
+  const state = found
+    ? { found: true, worldReady: host.root.api.worldReady, navKey: host.nav.currentKey }
+    : { found: false, reason: `Expected unique Game/root.api and boolean worldReady/string navKey; hosts=${hosts.length}` }
+  return expected === null ? state
+    : state.found && state.navKey === expected.key && state.worldReady === expected.ready
+}
+
+function inputLayerSnapshot() {
+  const scene = window.cc?.director?.getScene?.()
+  const matches = (root, name) => {
+    const nodes = []
+    const visit = (node, depth) => {
+      if (!node || depth > 64) return
+      if (node.name === name) nodes.push(node)
+      for (const child of node.children ?? []) visit(child, depth + 1)
+    }
+    visit(root, 0)
+    return nodes
+  }
+  const gifts = matches(scene, 'giftPopup')
+  const guides = matches(scene, 'GuideNext').filter(node => node.activeInHierarchy === true)
+  const popup = gifts.length === 1 ? gifts[0] : null
+  const nodes = []
+  const visit = node => {
+    if (!node) return
+    const sprite = node.getComponent?.('cc.Sprite')
+    const graphics = node.getComponent?.('cc.Graphics')
+    const label = node.getComponent?.('cc.Label')
+    if (sprite || graphics || label || ['giftPopup', 'panel', 'close'].includes(node.name)) {
+      nodes.push({ name: node.name, active: node.activeInHierarchy === true,
+        spriteEnabled: sprite?.enabled ?? null, spriteFrame: sprite?.spriteFrame?.name ?? null,
+        graphicsEnabled: graphics?.enabled ?? null,
+        labelEnabled: label?.enabled ?? null, text: label?.string ?? null })
+    }
+    for (const child of node.children ?? []) visit(child)
+  }
+  visit(popup)
+  return { accepted: gifts.length === 1 && guides.length === 0,
+    giftCount: gifts.length, giftActive: popup?.activeInHierarchy ?? null,
+    activeGuideNextCount: guides.length, nodes }
+}
+
+function worldClickTarget(opts) {
+  const registry = window.__worldLeaveClickObservers ??= Object.create(null)
+  if (opts.action === 'read') {
+    const observer = registry[opts.token]
+    if (!observer) return { accepted: false, reason: 'observer-missing', events: [] }
+    observer.node.off('touch-start', observer.callback)
+    delete registry[opts.token]
+    return { accepted: observer.events.length === 1 && observer.events[0].locationMatches,
+      reason: observer.events.length === 1 && observer.events[0].locationMatches ? null : 'actual-target-event-missing-or-wrong',
+      events: observer.events }
+  }
+  const scene = window.cc?.director?.getScene?.()
+  const matches = (root, name) => {
+    const nodes = []
+    const visit = (node, depth) => {
+      if (!node || depth > 64) return
+      if (node.name === name) nodes.push(node)
+      for (const child of node.children ?? []) visit(child, depth + 1)
+    }
+    visit(root, 0)
+    return nodes
+  }
+  const hosts = matches(scene, opts.within)
+  const targets = hosts.length === 1 ? matches(hosts[0], opts.name) : []
+  const node = targets.length === 1 ? targets[0] : null
+  if (!node || node.activeInHierarchy !== true) {
+    return { accepted: false, reason: 'missing-duplicate-or-inactive-target', hostCount: hosts.length, targetCount: targets.length }
+  }
+  if (typeof node.hasEventListener !== 'function' || !node.hasEventListener('touch-start')) {
+    return { accepted: false, reason: 'target-has-no-production-touch-start-listener' }
+  }
+  const box = node.getComponent?.('cc.UITransform')
+  if (!box) return { accepted: false, reason: 'target-has-no-uitransform' }
+  if (opts.action === 'preflight') return { accepted: true, hostCount: 1, targetCount: 1, node: node.name }
+  const rect = document.querySelector('canvas')?.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  const point = opts.point
+  if (!rect || point?.verified !== true || point.node !== node.name
+      || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    return { accepted: false, reason: 'unverified-point' }
+  }
+  const engine = { x: (point.x - rect.left) * dpr, y: (rect.top + rect.height - point.y) * dpr }
+  if (box.hitTest(new window.cc.Vec2(engine.x, engine.y), 0) !== true) {
+    return { accepted: false, reason: 'independent-target-hittest-rejected' }
+  }
+  const rendered = []
+  const inspect = n => {
+    if (n.activeInHierarchy !== true) return
+    const sprite = n.getComponent?.('cc.Sprite')
+    const label = n.getComponent?.('cc.Label')
+    if (sprite?.enabled === true && sprite.spriteFrame) rendered.push({ type: 'Sprite', name: n.name, frame: sprite.spriteFrame.name })
+    if (label?.enabled === true && String(label.string ?? '').trim()) rendered.push({ type: 'Label', name: n.name, text: label.string })
+    for (const child of n.children ?? []) inspect(child)
+  }
+  inspect(node)
+  if (opts.name === 'close' && rendered.length === 0) return { accepted: false, reason: 'gift-close-has-no-active-renderer' }
+  if (registry[opts.token]) return { accepted: false, reason: 'duplicate-observer-token' }
+  const events = []
+  const callback = event => {
+    const location = typeof event?.getLocation === 'function' ? event.getLocation() : null
+    events.push({ type: event?.type ?? null, node: node.name,
+      x: location?.x ?? null, y: location?.y ?? null,
+      locationMatches: Number.isFinite(location?.x) && Number.isFinite(location?.y)
+        && Math.abs(location.x - engine.x) <= dpr * 2 && Math.abs(location.y - engine.y) <= dpr * 2 })
+  }
+  registry[opts.token] = { node, callback, events }
+  node.on('touch-start', callback)
+  return { accepted: true, node: node.name, engine, rendered, independentHit: true }
+}
+
+function waitWorldDraw() {
+  return new Promise(resolve => {
+    const cc = window.cc
+    const director = cc?.director
+    const event = cc?.Director?.EVENT_AFTER_DRAW
+    if (!director || !event || typeof director.getTotalFrames !== 'function') {
+      resolve({ accepted: false, reason: 'after-draw-unavailable', frames: [] }); return
+    }
+    const frames = []
+    const finish = reason => {
+      clearTimeout(timer)
+      director.off(event, tick)
+      resolve({ accepted: frames.length === 2, reason, frames })
+    }
+    const tick = () => {
+      const frame = director.getTotalFrames()
+      if (Number.isFinite(frame) && !frames.includes(frame)) frames.push(frame)
+      if (frames.length === 2) finish(null)
+    }
+    const timer = setTimeout(() => finish('after-draw-timeout'), 2000)
+    director.on(event, tick)
+  })
+}
+
+const readWorldReady = () => page.evaluate(worldReadySnapshot)
+
+async function clickWorldInput(name, within, phase) {
+  const options = { name, within, token: phase }
+  const preflight = await page.evaluate(worldClickTarget, { ...options, action: 'preflight' })
+  if (!preflight.accepted) return { accepted: false, preflight, reason: preflight.reason }
+  const point = await page.evaluate(resolveCocosClickPoint, { name, within })
+  if (point.verified !== true) return { accepted: false, point, reason: point.reason }
+  const armed = await page.evaluate(worldClickTarget, { ...options, action: 'arm', point })
+  if (!armed.accepted) return { accepted: false, point, armed, reason: armed.reason }
+  let drawn
+  let actual
+  try {
+    await page.mouse.click(point.x, point.y)
+    drawn = await page.evaluate(waitWorldDraw)
+  } finally {
+    actual = await page.evaluate(worldClickTarget, { ...options, action: 'read' })
+  }
+  const result = { accepted: drawn?.accepted === true && actual.accepted === true,
+    clicked: true, point, armed, drawn, actual }
+  console.log(`[world-leave] 实际点击 ${phase}：${JSON.stringify(result)}`)
+  return result
+}
+
+async function prepareNavigation(phase) {
+  const guideFixtureApplied = await hideGuideOverlay(page)
+  const drawn = await page.evaluate(waitWorldDraw)
+  const before = await page.evaluate(inputLayerSnapshot)
+  const result = { accepted: drawn.accepted && before.accepted, guideFixtureApplied, drawn, before }
+  if (result.accepted && before.giftActive === true) {
+    const beforeShot = path.join(OUT, `19-world-leave-${phase}-gift-before-close.png`)
+    await page.screenshot({ path: beforeShot })
+    result.beforeShot = beforeShot
+    result.close = await clickWorldInput('close', 'giftPopup', `${phase}-gift-close`)
+    result.after = await page.evaluate(inputLayerSnapshot)
+    result.accepted = result.close.accepted && result.after.accepted && result.after.giftActive === false
+    result.afterShot = path.join(OUT, `19-world-leave-${phase}-gift-after-close.png`)
+    await page.screenshot({ path: result.afterShot })
+  } else if (result.accepted) {
+    result.accepted = before.giftActive === false
+  }
+  console.log(`[world-leave] 导航输入前置 ${phase}：${JSON.stringify(result)}`)
+  return result
+}
+
+function worldLeaveFailures(readout) {
+  const failures = []
+  for (const [name, state, key, ready] of [
+    ['进世界', readout.first, 'world', true],
+    ['切回内城', readout.afterLeave, 'city', false],
+    ['再进世界', readout.reenter, 'world', true],
+  ]) {
+    if (state?.found !== true || state.navKey !== key || state.worldReady !== ready) {
+      failures.push(`${name}必须是 navKey=${key}/worldReady=${ready}，实际 ${JSON.stringify(state)}`)
     }
   }
-  return { found: false, reason: '没有组件持有 root.api' }
-})
-
-/** 点导航条上的某一格（按钮名是 `Nav-<key>`）。 */
-const clickNav = (key) => page.evaluate((name) => {
-  const cc = window.cc
-  const scene = cc.director.getScene()
-  let target = null
-  const visit = (node) => {
-    if (node.name === name && node.activeInHierarchy === true) target = node
-    for (const child of node.children) visit(child)
+  for (const phase of ['city', 'world']) {
+    if (readout[`${phase}Fixture`]?.accepted !== true) failures.push(`${phase} 导航输入前置未通过`)
+    if (readout[`${phase}Click`]?.accepted !== true) failures.push(`${phase} 唯一导航键未收到本次实际指针事件，或绘制未完成`)
+    if (readout[`${phase}Settled`] !== true) failures.push(`${phase} 导航状态未在期限内完成`)
   }
-  visit(scene)
-  if (target === null) return null
-  const box = target.getComponent('cc.UITransform')
-  const camera = scene.getComponentInChildren('cc.Camera')
-  if (box === null || camera === null) return null
-  const screen = camera.worldToScreen(box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
-  const rect = document.querySelector('canvas').getBoundingClientRect()
-  const pixel = cc.view.getVisibleSizeInPixel()
-  return {
-    x: rect.left + (screen.x / pixel.width) * rect.width,
-    y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
-  }
-}, `Nav-${key}`)
+  if (readout.errors.length > 0) failures.push(`页面报错 ${readout.errors.length} 条：${readout.errors[0]}`)
+  return failures
+}
 
 const first = await readWorldReady()
-if (!first.found) {
-  console.error(`[world-leave][前置] 找不到启动组件：${first.reason}`)
-  process.exit(2)
-}
 console.log(`[world-leave] 进世界后：导航键=${first.navKey} worldReady=${first.worldReady}`)
-
-// 切回内城 → 收尾应当发生（worldReady 变假）
-const cityPoint = await clickNav('city')
-if (cityPoint !== null) {
-  await page.mouse.click(cityPoint.x, cityPoint.y)
-  await page.waitForTimeout(1200)
-}
+const cityFixture = await prepareNavigation('city')
+const cityClick = first.found && first.navKey === 'world' && first.worldReady === true && cityFixture.accepted
+  ? await clickWorldInput('Nav-city', 'NavBar', 'city')
+  : { accepted: false, reason: 'initial-world-or-input-precondition-failed' }
+const citySettled = cityClick.accepted && await page.waitForFunction(worldReadySnapshot,
+  { key: 'city', ready: false }, { timeout: 5000 }).then(() => true, () => false)
 const afterLeave = await readWorldReady()
 console.log(`[world-leave] 切回内城后：导航键=${afterLeave.navKey} worldReady=${afterLeave.worldReady}`)
-
-// 再进世界 → 应当重新初始化（worldReady 又为真）
-const worldPoint = await clickNav('world')
-if (worldPoint !== null) {
-  await page.mouse.click(worldPoint.x, worldPoint.y)
-  await page.waitForTimeout(1800)
-}
+const worldFixture = citySettled ? await prepareNavigation('world')
+  : { accepted: false, reason: 'city-state-not-established' }
+const worldClick = citySettled && afterLeave.found && afterLeave.navKey === 'city'
+  && afterLeave.worldReady === false && worldFixture.accepted
+  ? await clickWorldInput('Nav-world', 'NavBar', 'world')
+  : { accepted: false, reason: 'city-or-input-precondition-failed' }
+const worldSettled = worldClick.accepted && await page.waitForFunction(worldReadySnapshot,
+  { key: 'world', ready: true }, { timeout: 10000 }).then(() => true, () => false)
 const reenter = await readWorldReady()
 console.log(`[world-leave] 再进世界后：导航键=${reenter.navKey} worldReady=${reenter.worldReady}`)
 await page.screenshot({ path: SHOT })
 await browser.close()
 await preview.close()
-
-console.log(`[world-leave] 截图：${SHOT}`)
+const readout = { first, cityFixture, cityClick, citySettled, afterLeave,
+  worldFixture, worldClick, worldSettled, reenter, errors, shot: SHOT }
+const failures = worldLeaveFailures(readout)
+const receipt = path.join(OUT, '19-world-leave-readout.json')
+writeFileSync(receipt, JSON.stringify({ ...readout, failures, accepted: failures.length === 0 }, null, 2) + '\n')
+console.log(`[world-leave] 截图：${SHOT}；独立读数：${receipt}`)
 console.log(`[world-leave] 页面报错 ${errors.length} 条${errors.length ? '：' + errors[0] : ''}`)
-
-const failures = []
-if (first.worldReady !== true) {
-  failures.push('进世界之后 worldReady 仍是假 —— 前置没生效，后面的翻转判据都无从谈起')
-}
-if (afterLeave.worldReady !== false) {
-  failures.push('切回内城之后 worldReady 仍为真 —— 离开世界没走 leaveWorld（绑了不解）')
-}
-// 第三段（再进世界）**本环境验不了**，如实记录而不是判红：
-// 新号点导航条上的 `Nav-world` 切不过去（导航键仍是 city），而深度链 `?panel=world` 是能进的
-// —— 疑似"世界地图按等级/引导门控、导航按钮被拦，深链绕过门控"。这是**另一件事**（导航门控），
-// 不该混进"离开世界的收尾"这一格；要验它得先弄清门控口径。
-if (reenter.worldReady !== true) {
-  console.log(`  SKIP  再进世界：导航键仍为 ${reenter.navKey} —— 新号点「世界」切不过去（疑似门控），`
-    + '这一条本环境验不了；`leaveWorld` 的接线已由上面 true→false 证明')
-}
-if (errors.length > 0) {
-  failures.push(`页面报错 ${errors.length} 条：${errors[0]}`)
-}
 if (failures.length > 0) {
   console.error(`[world-leave] 判据失败：${failures.join('；')}`)
   process.exit(1)
 }
-console.log('[world-leave] 全绿：进世界=true，切回内城=false（收尾发生了）')
+console.log('[world-leave] 全绿：导航 world→city→world，worldReady=true→false→true，两次真实指针命中')
