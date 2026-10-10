@@ -75,19 +75,11 @@ await page.waitForTimeout(2000)
  */
 const sawBuilding = await page.waitForFunction(() => {
   const scene = window.cc.director.getScene()
-  let ready = false
-  const visit = (n) => {
-    if (ready) return
-    if (/^Grid-\d+$/.test(n.name)) {
-      const level = n.getChildByName('Level')?.getComponent('cc.Label') ?? null
-      if (level !== null && level.string !== '') ready = true
-      return
-    }
-    for (const c of n.children) visit(c)
-  }
-  visit(scene)
-  return ready
-}, { timeout: 20000 }).then(() => true).catch(() => false)
+  const panel = scene.getComponentInChildren('CityPanelView')
+  // 名牌最后绘制，唯一真实 Label 已在 LabelAnchor；Grid 本体只有楼体和脚面。
+  return (panel?.gridTiles ?? []).some(tile => tile.levelLabel?.enabled
+    && tile.levelLabel.node.activeInHierarchy && tile.levelLabel.string !== '')
+}, null, { timeout: 20000 }).then(() => true).catch(() => false)
 if (!sawBuilding) {
   console.error('[city-grid][前置] 20 秒内没有任何一格拿到建筑数据 —— 后端没答上来或快照链路断了')
   await browser.close()
@@ -157,7 +149,10 @@ const probe = await page.evaluate(() => {
     for (const c of n.children) visit(c, shown)
   }
   visit(scene, true)
-  return { ok: true, groundFound: ground !== null, referenceStage, tiles, positions, labels: names }
+  const view = scene.getComponentInChildren('CityPanelView')
+  const buildingNames = (view?.gridTiles ?? []).filter(tile => tile.nameLabel?.enabledInHierarchy
+    && tile.nameLabel.node.activeInHierarchy).map(tile => tile.nameLabel.string)
+  return { ok: true, groundFound: ground !== null, referenceStage, tiles, positions, labels: names, buildingNames }
 })
 if (!probe.groundFound) {
   console.error('[city-grid][前置] 场景里没有 Ground 容器 —— 地皮那一层没画出来')
@@ -206,7 +201,7 @@ if (hanTokens.length === 0) {
 }
 const failures = []
 // 子串匹配，不是全等：选择栏的标题是「主城 Lv1」这种"名字 + 等级"的形状
-if (!probe.referenceStage && !labels.some((s) => s.includes(MAIN_CITY_NAME))) {
+if (!probe.buildingNames.includes(MAIN_CITY_NAME) || !labels.some((s) => s.includes(MAIN_CITY_NAME))) {
   failures.push(`屏幕上找不到含「${MAIN_CITY_NAME}」的文本 —— name 没下发时这里就该红，`
     + `而不是等下划线判据去猜`)
 }
@@ -221,7 +216,7 @@ if (failures.length > 0) {
   process.exit(1)
 }
 if (probe.referenceStage) {
-  console.log('[city-grid] 全绿：参考城景舞台已加载，默认隐藏建筑名；'
+  console.log('[city-grid] 全绿：参考地形已加载，实际建筑名牌显示服务端主城名称；'
     + '屏上没有 undefined、没有配置 id')
 } else {
   console.log(`[city-grid] 全绿：「${MAIN_CITY_NAME}」由服务端下发的 name 渲染出来了，`

@@ -17,6 +17,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { resolveCocosClickPoint } from './lib/cocos-click.mjs'
 
 const ROOT = 'client/build/web-mobile'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
@@ -137,50 +138,34 @@ await page.evaluate((source) => {
   if (offline !== null) offline.active = false
 }, /第\s*\d+\s*\/\s*\d+\s*步|我完成了|升级主城：/.source)
 
-/** 选中伐木场那一格（按名字找格子，不写死 index）。 */
-const clickNode = (nodeName) => page.evaluate((name) => {
-  const cc = window.cc
-  const scene = cc.director.getScene()
-  let target = null
-  const visit = (node) => {
-    if (node.name === name) target = node
-    for (const child of node.children) visit(child)
-  }
-  visit(scene)
-  if (target === null) return null
-  const box = target.getComponent('cc.UITransform')
-  const camera = scene.getComponentInChildren('cc.Camera')
-  if (box === null || camera === null) return null
-  const screen = camera.worldToScreen(box.convertToWorldSpaceAR(new cc.Vec3(0, 0, 0)))
-  const rect = document.querySelector('canvas').getBoundingClientRect()
-  const pixel = cc.view.getVisibleSizeInPixel()
-  return {
-    x: rect.left + (screen.x / pixel.width) * rect.width,
-    y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
-  }
-}, nodeName)
+/** 仍只产生真实触摸点；相机往返、引擎hitTest与画布边界由共用量具校验。 */
+const clickNode = nodeName => page.evaluate(resolveCocosClickPoint, { name: nodeName, within: 'SelectionBar' })
 
-const gridOf = (name) => page.evaluate((target) => {
+/** 名牌后绘层与实体不再共用父节点，按生产refs及权威行定位唯一建筑。 */
+function readPhoneBuilding({ configId, name }) {
   const scene = window.cc.director.getScene()
-  let found = null
-  const visit = (node) => {
-    if (/^Grid-\d+$/.test(node.name)) {
-      const collect = (child, out) => {
-        const label = child.getComponent && child.getComponent('cc.Label')
-        if (label !== null && label !== undefined && label.string.includes(target)) out.push(label.string)
-        for (const grand of child.children) collect(grand, out)
-      }
-      const texts = []
-      collect(node, texts)
-      if (texts.length > 0) found = node.name
-    }
-    for (const child of node.children) visit(child)
-  }
-  visit(scene)
-  return found
-}, name)
+  const city = scene.getComponentInChildren('CityPanelView')
+  const matches = (city?.gridTiles ?? []).filter(tile => {
+    const row = city.panel?.rows?.find(row => row.configId === configId
+      && row.gridX === tile.plate.gridX && row.gridY === tile.plate.gridY)
+    const label = tile.nameLabel
+    const plate = tile.nameplate
+    const renderer = plate?.getComponent('cc.Graphics')
+    return row != null && tile.node.activeInHierarchy && label?.node.activeInHierarchy
+      && label.enabled && label.node._uiProps.uiComp === label && label.string.includes(name)
+      && plate?.activeInHierarchy && renderer?.enabled && plate._uiProps.uiComp === renderer
+  })
+  if (matches.length !== 1) return null
+  const tile = matches[0]
+  const row = city.panel.rows.find(row => row.configId === configId
+    && row.gridX === tile.plate.gridX && row.gridY === tile.plate.gridY)
+  return { tileKey: tile.node.name, buildingId: row.id, captionAnchor: tile.labelAnchor.name }
+}
 
-const tileKey = await gridOf('伐木场')
+const gridOf = name => page.evaluate(readPhoneBuilding, { configId: 'lumber_camp', name })
+
+const building = await gridOf('伐木场')
+const tileKey = building?.tileKey ?? null
 if (tileKey === null) {
   console.error('[phone][前置] 画面上找不到伐木场那一格 —— 先确认建造真的起了')
   await browser.close()
@@ -208,30 +193,52 @@ const focusPhoneTile = async (name) => page.evaluate((n) => {
   visit(window.cc.director.getScene())
   if (view === null || target === null) return { ok: false, why: view === null ? 'no-view' : 'no-tile' }
   const p = target.position
+  const adjustedBefore = view.viewAdjusted
+  // 与生产拖动入口的镜头意图相同，防每秒刷新重新聚焦主堡；不改选中或建筑。
+  view.viewAdjusted = true
   view.setFocus(p.x, p.y)
   return { ok: true, want: [Math.round(p.x), Math.round(p.y)], got: [Math.round(view.focusX), Math.round(view.focusY)],
+    cameraFixture: true, adjustedBefore, adjustedAfter: view.viewAdjusted,
     clamped: Math.abs(view.focusX - p.x) > 1 || Math.abs(view.focusY - p.y) > 1 }
 }, name)
 
 const focusInfo = await focusPhoneTile(tileKey)
 await page.waitForTimeout(400)
-const tilePoint = await clickNode(tileKey)
-const inView = tilePoint !== null
+// 点真实铭牌的中心而非实体脚点；LabelAnchor的hit盒与铭牌同位，触摸转发仍走生产处理器。
+const tilePoint = await page.evaluate(resolveCocosClickPoint,
+  { name: building.captionAnchor, within: 'CityNameplates' })
+const inView = tilePoint.verified === true
   && tilePoint.x >= PHONE_RECT.left && tilePoint.x <= PHONE_RECT.left + PHONE_RECT.width
   && tilePoint.y >= PHONE_RECT.top && tilePoint.y <= PHONE_RECT.top + PHONE_RECT.height
 console.log(`[phone] ${tileKey} want焦点=${JSON.stringify(focusInfo.want ?? focusInfo.why)}`
   + ` 实际焦点=${JSON.stringify(focusInfo.got ?? null)} 被夹=${focusInfo.clamped ?? '?'}`
+  + ` 镜头fixture=${focusInfo.cameraFixture ?? false} 用户镜头标志=${focusInfo.adjustedBefore}→${focusInfo.adjustedAfter}`
   + ` 视口=${Math.round(PHONE_RECT.width)}x${Math.round(PHONE_RECT.height)}`
-  + ` 落点=${tilePoint === null ? 'null' : `(${Math.round(tilePoint.x)},${Math.round(tilePoint.y)})`} 在视口内=${inView}`)
-if (tilePoint !== null && inView) {
+  + ` 落点=${tilePoint.verified !== true ? tilePoint.reason : `(${Math.round(tilePoint.x)},${Math.round(tilePoint.y)})`} 在视口内=${inView}`)
+if (inView) {
   // 必须用**触摸**：这个上下文是 hasTouch/isMobile，鼠标事件不会走 Cocos 的触摸分发，
   // 第一版用 page.mouse.click 点格子 ⇒ 什么都没选中（而 1440×900 那套探针一直是鼠标，所以没暴露）。
   await page.touchscreen.tap(tilePoint.x, tilePoint.y)
   await page.waitForTimeout(700)
-} else if (tilePoint !== null) {
+} else {
   // ⚠️ 宁可这一格报「没量到」，也不要量一个被 Playwright 夹出来的假读数
   console.error(`[phone][未点] ${tileKey} 落在视口外（视口 ${Math.round(PHONE_RECT.width)}x${Math.round(PHONE_RECT.height)}）`
     + ' —— 这一份要跑在能看见那一格的视口/倍数上，否则量的是"夹完落在哪"，不是"点这一格会怎样"')
+  await browser.close()
+  await preview.close()
+  process.exit(2)
+}
+
+/** 选择前提读生产状态；不能以图上有名字或取消键坐标存在替代真正选中。 */
+function readPhoneSelection() {
+  const view = window.cc.director.getScene().getComponentInChildren('CityPanelView')
+  const cancel = Array.from(view?.actionButtons?.keys() ?? []).find(node => node.name === 'DetailCancelButton')
+  return { selectedId: view?.selectedId ?? null, cancelActive: cancel?.activeInHierarchy === true }
+}
+const selected = await page.evaluate(readPhoneSelection)
+console.log(`[phone] 触摸选择前提：期望id=${building.buildingId} 实选id=${selected.selectedId} 取消键active=${selected.cancelActive}`)
+if (selected.selectedId !== building.buildingId || selected.cancelActive !== true) {
+  console.error('[phone][前置] 真实铭牌触摸未选中本次伐木场或取消键未激活，不触摸隐藏按钮')
   await browser.close()
   await preview.close()
   process.exit(2)
@@ -243,6 +250,7 @@ const bar = await page.evaluate(() => {
   const camera = scene.getComponentInChildren('cc.Camera')
   const rect = document.querySelector('canvas').getBoundingClientRect()
   const pixel = window.cc.view.getVisibleSizeInPixel()
+  const dpr = window.devicePixelRatio || 1
   const buttons = []
   const visit = (node) => {
     if (/^Detail.*Button$/.test(node.name) || node.name === 'CollectAllButton') {
@@ -250,8 +258,8 @@ const bar = await page.evaluate(() => {
       const screen = box === null || camera === null
         ? null : camera.worldToScreen(box.convertToWorldSpaceAR(new window.cc.Vec3(0, 0, 0)))
       const point = screen === null ? null : {
-        x: rect.left + (screen.x / pixel.width) * rect.width,
-        y: rect.top + rect.height - (screen.y / pixel.height) * rect.height,
+        x: rect.left + screen.x / dpr,
+        y: rect.top + rect.height - screen.y / dpr,
       }
       buttons.push({
         name: node.name,
@@ -272,7 +280,7 @@ const bar = await page.evaluate(() => {
 
 const postsBefore = cityPosts.length
 const cancelPoint = await clickNode('DetailCancelButton')
-if (cancelPoint !== null) {
+if (cancelPoint.verified === true) {
   // 真机是**触摸**不是鼠标：用 touchscreen 点，走的是同一套命中测试但事件类型不同
   await page.touchscreen.tap(cancelPoint.x, cancelPoint.y)
   await page.waitForTimeout(1500)
@@ -282,7 +290,7 @@ await browser.close()
 await preview.close()
 
 console.log(`[phone] 画布 ${JSON.stringify(bar.canvas)} 设计分辨率 ${JSON.stringify(bar.designSize)}`
-  + ` 视口 ${PHONE.width}x${PHONE.height}`)
+  + ` 实际触摸视口 ${SMALL.width}x${SMALL.height}（窄窗前相 ${PHONE.width}x${PHONE.height}）`)
 for (const button of bar.buttons) {
   console.log(`   ${button.name} active=${button.active} 尺寸=${JSON.stringify(button.size)}`
     + ` 屏幕点=${JSON.stringify(button.point)}`)

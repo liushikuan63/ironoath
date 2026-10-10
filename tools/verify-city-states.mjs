@@ -17,10 +17,11 @@
  *
  * <p>2026-09-22 从 `tmp/probe-city-states.mjs` 迁进 `tools/`（复检那一轮的一次性探针，判据当时已跑绿）。
  */
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
+import { resolveCocosClickPoint } from './lib/cocos-click.mjs'
 
 const ROOT = 'client/build/web-mobile'
 const BACKEND = process.env.BACKEND_ORIGIN ?? 'http://localhost:8080'
@@ -78,9 +79,11 @@ const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
 /** 本次跑过的 /city/* POST —— 用来分辨"点了按钮没反应"是"事件没到"还是"回调没接上"。 */
 const cityPosts = []
+const cityRequests = []
 page.on('request', (request) => {
   if (request.method() === 'POST' && request.url().includes('/city/')) {
     cityPosts.push(request.url().split('/city/')[1])
+    cityRequests.push({ action: request.url().split('/city/')[1], body: request.postDataJSON() })
   }
 })
 
@@ -197,6 +200,7 @@ const clickNode = (nodeName) => page.evaluate((name) => {
 /** 取消这一态的读数：选择栏两行 + 「取消」键还在不在。 */
 const cancelReadout = () => page.evaluate(() => {
   const scene = window.cc.director.getScene()
+  const view = scene.getComponentInChildren('CityPanelView')
   let cancel = null
   let title = null
   let status = null
@@ -212,8 +216,104 @@ const cancelReadout = () => page.evaluate(() => {
     for (const child of node.children) visit(child)
   }
   visit(scene)
-  return { cancel, title, status }
+  return { cancel, title, status, selectedId: view?.selectedId ?? null }
 })
+
+/** 以开工回执的真实 id 找当前行及铭牌；独立检验真正接收触摸的 LabelAnchor。 */
+function inspectCancelCaption(expected) {
+  const cc = window.cc
+  const view = cc.director.getScene().getComponentInChildren('CityPanelView')
+  const rows = view?.panel?.rows?.filter(row => row.id === expected.buildingId) ?? []
+  const row = rows.length === 1 ? rows[0] : null
+  const ref = view?.gridTiles?.find(tile => tile.plate.gridX === expected.gridX
+    && tile.plate.gridY === expected.gridY) ?? null
+  const name = ref?.nameLabel?.node ?? null
+  const anchor = ref?.labelAnchor ?? null
+  const box = anchor?.getComponent('cc.UITransform') ?? null
+  const identityMatches = row !== null && row.configId === expected.configId
+    && row.gridX === expected.gridX && row.gridY === expected.gridY
+    && ref?.node.name === expected.tileKey && name?.parent === anchor
+    && ref?.nameLabel.string === row.name
+  return {
+    buildingId: row?.id ?? null, rowCount: rows.length, identityMatches,
+    tile: ref?.node.name ?? null, name: ref?.nameLabel.string ?? null,
+    node: name?.name ?? null, uuid: name?.uuid ?? null, anchor: anchor?.name ?? null,
+    drawable: name?.activeInHierarchy === true && anchor?.activeInHierarchy === true
+      && ref?.nameLabel.enabledInHierarchy === true && ref?.nameLabel.color.a > 0,
+    anchorHit: expected.engine == null ? null : box !== null
+      && box.hitTest(new cc.Vec2(expected.engine.x, expected.engine.y), 0) === true,
+  }
+}
+
+/** 仅建立可见镜头；viewAdjusted 与真实拖动/滚轮/缩放按钮记录镜头调整的标志相同。 */
+function focusCancelCaption(expected) {
+  const view = window.cc.director.getScene().getComponentInChildren('CityPanelView')
+  const row = view?.panel?.rows?.find(row => row.id === expected.buildingId)
+  const ref = view?.gridTiles?.find(tile => tile.plate.gridX === expected.gridX
+    && tile.plate.gridY === expected.gridY)
+  const state = () => ({ focus: [view.focusX, view.focusY], zoom: view.zoom,
+    viewAdjusted: view.viewAdjusted, selectedId: view.selectedId,
+    stage: [view.stage.position.x, view.stage.position.y] })
+  if (row?.configId !== expected.configId || ref?.node.name !== expected.tileKey
+      || row.gridX !== expected.gridX || row.gridY !== expected.gridY
+      || typeof view.setFocus !== 'function' || view.stage == null) return { ok: false }
+  const before = state()
+  const want = [ref.node.position.x, ref.node.position.y]
+  view.viewAdjusted = true
+  view.setFocus(want[0], want[1])
+  const got = state()
+  return { ok: true, cameraFixture: true,
+    flagSource: 'CityPanelView.wireStageInput touch-move/mouse-wheel and createZoomButton touch-start',
+    before, want, got, clamped: Math.abs(got.focus[0] - want[0]) > 0.5
+      || Math.abs(got.focus[1] - want[1]) > 0.5,
+    cameraOnly: got.zoom === before.zoom && got.selectedId === before.selectedId }
+}
+
+/** 实际 Name 与固定 HUD 的相机四角，使用与输入系统一致的 DPR/CSS 口径。 */
+function inspectCancelViewport({ expected, point }) {
+  const cc = window.cc
+  const scene = cc.director.getScene()
+  const view = scene.getComponentInChildren('CityPanelView')
+  const ref = view?.gridTiles?.find(tile => tile.plate.gridX === expected.gridX
+    && tile.plate.gridY === expected.gridY)
+  const bar = view?.selectionBar ?? null
+  const background = view?.selectionBarBackground ?? null
+  const canvas = document.querySelector('canvas')?.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  const cameras = scene.getComponentsInChildren('cc.Camera')
+  const screenBox = node => {
+    const box = node?.getComponent('cc.UITransform')
+    const camera = cameras.find(camera => camera.enabled && camera.node.activeInHierarchy
+      && node != null && (camera.visibility & node.layer) !== 0)
+    if (box == null || camera == null || canvas == null) return null
+    const points = [[-box.anchorX * box.width, -box.anchorY * box.height],
+      [(1 - box.anchorX) * box.width, -box.anchorY * box.height],
+      [-box.anchorX * box.width, (1 - box.anchorY) * box.height],
+      [(1 - box.anchorX) * box.width, (1 - box.anchorY) * box.height]].map(([x, y]) => {
+      const world = box.convertToWorldSpaceAR(new cc.Vec3(x, y, 0))
+      const screen = camera.worldToScreen(new cc.Vec3(world.x, world.y, world.z))
+      return { x: canvas.left + screen.x / dpr,
+        y: canvas.top + canvas.height - screen.y / dpr }
+    })
+    if (points.some(point => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return null
+    return { left: Math.min(...points.map(point => point.x)), right: Math.max(...points.map(point => point.x)),
+      top: Math.min(...points.map(point => point.y)), bottom: Math.max(...points.map(point => point.y)) }
+  }
+  const barBox = screenBox(bar)
+  const nameBox = screenBox(ref?.nameLabel?.node)
+  const backgroundDrawn = background?.activeInHierarchy === true
+    && background.getComponent('cc.Graphics')?.enabledInHierarchy === true
+  const pointInBar = point?.verified === true && barBox !== null
+    && point.x >= barBox.left && point.x <= barBox.right
+    && point.y >= barBox.top && point.y <= barBox.bottom
+  const nameOverlapsBar = nameBox !== null && barBox !== null
+    && nameBox.left < barBox.right && nameBox.right > barBox.left
+    && nameBox.top < barBox.bottom && nameBox.bottom > barBox.top
+  return { focus: [view?.focusX, view?.focusY], zoom: view?.zoom, viewAdjusted: view?.viewAdjusted,
+    selectedId: view?.selectedId, dpr, barBox, nameBox, backgroundDrawn, pointInBar,
+    nameOverlapsBar, blockedByHud: backgroundDrawn && (pointInBar || nameOverlapsBar),
+    geometryReady: barBox !== null && nameBox !== null }
+}
 
 /** configId → 中文名（格子是按显示名找的）。 */
 const NAME_OF = { lumber_camp: '伐木场', quarry: '采石场' }
@@ -352,7 +452,8 @@ console.log(`[state]   队列行=${harvestable.texts.find((t) => t.includes('建
 //
 // 放在最后：它要真的取消掉一栋楼，会把前面两态的状态搅乱。
 // 而且必须先**放开 /city/list 的拦截** —— 取消要读回执刷新，拦着列表面板就不会更新。
-const cancelled = { clicked: false, readout: null, stoneBefore: null, stoneAfter: null }
+const cancelled = { clicked: false, readout: null, stoneBefore: null, stoneAfter: null,
+  selectionCorrect: false, reason: null }
 await page.unroute('**/city/list*')
 // 第二栋用 HTTP 起（第一栋这时候已到点待收割，队列归零，位置够）
 const secondConfig = 'quarry'
@@ -368,6 +469,39 @@ if (secondStart.code !== 0) {
   await waitPanel()
   await clearGuide()
   await page.waitForTimeout(800)
+  // 落成贺礼在重载后会重新出现；复用生产关闭入口，避免弹层截获下面的真实Name点击。
+  cancelled.popupDismissal = await page.evaluate(() => {
+    const matches = []
+    const visit = node => {
+      if (node.name === 'giftPopup') matches.push(node)
+      for (const child of node.children) visit(child)
+    }
+    visit(window.cc.director.getScene())
+    const node = matches.length === 1 ? matches[0] : null
+    const view = node?.getComponent('GiftPopupView') ?? null
+    const activeBefore = node?.activeInHierarchy ?? null
+    if (view !== null && activeBefore === true) view.hide()
+    return { count: matches.length, viewFound: view !== null, activeBefore,
+      usedProductionHide: view !== null && activeBefore === true }
+  })
+  // 独立读当前节点状态，不以调用hide成功作为已解除输入遮挡的证据。
+  cancelled.popupReadout = await page.evaluate(() => {
+    const matches = []
+    const visit = node => {
+      if (node.name === 'giftPopup') matches.push(node)
+      for (const child of node.children) visit(child)
+    }
+    visit(window.cc.director.getScene())
+    return { count: matches.length,
+      inactive: matches.length === 1 && matches[0].activeInHierarchy === false }
+  })
+  const popupReady = cancelled.popupDismissal.count === 1
+    && cancelled.popupDismissal.viewFound && cancelled.popupReadout.count === 1
+    && cancelled.popupReadout.inactive === true
+  console.log(`[state] 取消弹层：beforeActive=${cancelled.popupDismissal.activeBefore}`
+    + ` productionHide=${cancelled.popupDismissal.usedProductionHide}`
+    + ` independentInactive=${cancelled.popupReadout.inactive}`)
+  if (!popupReady) cancelled.reason = '落成贺礼包生产关闭前置未成立，或独立读数仍可接收输入'
   const beforeFrame = await snapshot()
   const tile = tileOf(beforeFrame, NAME_OF[secondConfig] ?? secondConfig)
   // 资源行的格式是「石料 4601/20000」——**必须用正则取第一个数字**：
@@ -391,14 +525,63 @@ if (secondStart.code !== 0) {
   }
   cancelled.countBefore = buildingCount(cancelled.headerBefore)
   const postsBefore = cityPosts.length
+  const requestsBefore = cityRequests.length
+  const expected = { buildingId: secondStart.data.buildingId, configId: secondConfig,
+    gridX: secondGrid[0], gridY: secondGrid[1], tileKey: tile?.key ?? null }
+  cancelled.expected = expected
   if (tile !== null) {
-    const tilePoint = await clickNode(tile.key)
-    if (tilePoint !== null) {
-      await page.mouse.click(tilePoint.x, tilePoint.y)
+    const caption = await page.evaluate(inspectCancelCaption, expected)
+    cancelled.caption = caption
+    if (popupReady && caption.identityMatches && caption.drawable) {
+      const locator = { name: caption.node, within: caption.anchor }
+      const originalPoint = await page.evaluate(resolveCocosClickPoint, locator)
+      cancelled.beforeFocus = await page.evaluate(inspectCancelViewport, { expected, point: originalPoint })
+      cancelled.beforeFocus.point = originalPoint
+      cancelled.focus = await page.evaluate(focusCancelCaption, expected)
+      let captionPoint = await page.evaluate(resolveCocosClickPoint, locator)
+      const samples = []
+      let stable = 0
+      for (let i = 0; i < 12 && captionPoint.verified === true && stable < 2; i++) {
+        await page.waitForTimeout(120)
+        const next = await page.evaluate(resolveCocosClickPoint, locator)
+        const drift = next.verified === true ? Math.hypot(next.x - captionPoint.x, next.y - captionPoint.y) : null
+        samples.push({ x: next.x, y: next.y, drift, verified: next.verified })
+        stable = drift !== null && drift <= 0.5 ? stable + 1 : 0
+        captionPoint = next
+      }
+      cancelled.cameraSettle = { stable: stable >= 2, samples }
+      cancelled.afterFocus = await page.evaluate(inspectCancelViewport, { expected, point: captionPoint })
+      cancelled.captionPoint = captionPoint
+      const hit = await page.evaluate(inspectCancelCaption, { ...expected, engine: captionPoint.engine })
+      cancelled.captionHit = hit
+      console.log(`[state] 取消镜头：before=${JSON.stringify(cancelled.focus.before ?? null)}`
+        + ` want=${JSON.stringify(cancelled.focus.want ?? null)} got=${JSON.stringify(cancelled.focus.got ?? null)}`
+        + ` settled=${cancelled.cameraSettle.stable} HUD点中=${cancelled.beforeFocus.pointInBar}`
+        + `→${cancelled.afterFocus.pointInBar} HUD=${JSON.stringify(cancelled.afterFocus.barBox)}`)
+      if (captionPoint.verified === true && hit.identityMatches && hit.uuid === caption.uuid
+          && hit.anchorHit === true && cancelled.focus.ok && cancelled.focus.cameraOnly
+          && cancelled.cameraSettle.stable && cancelled.afterFocus.geometryReady
+          && !cancelled.afterFocus.blockedByHud) {
+        await page.mouse.click(captionPoint.x, captionPoint.y)
+      } else {
+        cancelled.reason = `铭牌点击前置不成立：${captionPoint.reason ?? (cancelled.afterFocus.blockedByHud
+          ? 'actual-selection-bar-overlap' : 'actual-anchor-hit/focus/settle-failed')}`
+      }
       await page.waitForTimeout(700)
+    } else {
+      cancelled.reason ??= '开工回执对应的真实建筑行/铭牌不可绘或身份不符'
     }
-    const cancelPoint = await clickNode('DetailCancelButton')
-    if (cancelPoint !== null) {
+    const selected = await cancelReadout()
+    cancelled.beforeCancel = selected
+    cancelled.selectionCorrect = cancelled.reason === null && selected.selectedId === expected.buildingId
+      && selected.cancel === true && (selected.title ?? '').includes(caption.name ?? '\u0000')
+    console.log(`[state] 取消前置：期望id=${expected.buildingId} 实选id=${selected.selectedId}`
+      + ` 铭牌=${caption.anchor}/${caption.node} 实际接收盒命中=${cancelled.captionHit?.anchorHit ?? false}`
+      + ` 取消键=${selected.cancel} 标题=「${selected.title ?? ''}」 原因=${cancelled.reason ?? '(无)'}`)
+    const cancelPoint = cancelled.selectionCorrect ? await page.evaluate(resolveCocosClickPoint,
+      { name: 'DetailCancelButton', within: 'SelectionBar' }) : null
+    cancelled.cancelPoint = cancelPoint
+    if (cancelPoint?.verified === true) {
       await page.mouse.click(cancelPoint.x, cancelPoint.y)
       await page.waitForTimeout(1500)
       cancelled.clicked = true
@@ -414,6 +597,7 @@ if (secondStart.code !== 0) {
       cancelled.countAfter = /建筑\s*(\d+)\s*\/\s*(\d+)/.exec(cancelled.headerAfter) === null
         ? null : Number.parseInt(/建筑\s*(\d+)\s*\/\s*(\d+)/.exec(cancelled.headerAfter)[1], 10)
       cancelled.queue = afterFrame.texts.find((text) => text.includes('建造队列')) ?? '(无)'
+      cancelled.requests = cityRequests.slice(requestsBefore)
       await page.screenshot({ path: path.join(OUT, '15-city-cancelled.png') })
       console.log(`[state] 取消：点「取消」@(${cancelPoint.x},${cancelPoint.y}) 后 /city/* 新增`
         + ` [${cityPosts.slice(postsBefore).join('、') || '(无)'}]`
@@ -421,9 +605,16 @@ if (secondStart.code !== 0) {
       console.log(`[state]   ${cancelled.label} ${cancelled.stoneBefore} → ${cancelled.stoneAfter}`
         + `（+${(cancelled.stoneAfter ?? 0) - (cancelled.stoneBefore ?? 0)}，B03 §2 应退 60%）`
         + ` 那一格还有名字=${cancelled.tileStillNamed} 表头=${cancelled.headerAfter} 队列=${cancelled.queue}`)
+    } else if (cancelled.reason === null) {
+      cancelled.reason = cancelled.selectionCorrect
+        ? `取消按钮点击坐标不可信：${cancelPoint?.reason ?? 'no-point'}`
+        : '真实铭牌点击后未选中开工回执对应的建筑，或取消键不可见'
     }
+  } else {
+    cancelled.reason = '屏上找不到本次新建采石场'
   }
 }
+writeFileSync(path.join(OUT, 'city-states-cancel-selection.json'), JSON.stringify(cancelled, null, 2))
 
 await browser.close()
 await preview.close()
@@ -467,11 +658,18 @@ if (!upgrading.texts.some((t) => /建造队列\s*1\s*\//.test(t))) {
   failures.push('升级中帧的队列行不是 1/N —— 这一帧没量到"正在建造"')
 }
 // 取消（B03 §2 的另一半）：请求要出去、面板要回「空闲」、格子正稿要撤掉、队列要归零、资源要退回来
+if (!cancelled.selectionCorrect) {
+  failures.push(`取消前未证明选中本次建筑：${cancelled.reason ?? 'selectedId/可见按钮不符'}`)
+}
 if (!cancelled.clicked) {
   failures.push('态三（取消升级）根本没跑到 —— 判据走不到不许当绿')
 } else {
   if (!cityPosts.includes('cancel')) {
     failures.push('点了「取消」但没有 /city/cancel 请求 —— 按钮没接上')
+  }
+  const cancelRequest = cancelled.requests?.filter(request => request.action === 'cancel') ?? []
+  if (cancelRequest.length !== 1 || cancelRequest[0].body?.buildingId !== cancelled.expected.buildingId) {
+    failures.push(`取消请求未准确对应本次开工id：${JSON.stringify(cancelRequest)}`)
   }
   const cancelText = `${cancelled.readout?.title ?? ''} ${cancelled.readout?.status ?? ''}`
   // #328 之后取消首次放置会把实例摘掉：那一格连名字都不该再有（格子真的空出来了）
