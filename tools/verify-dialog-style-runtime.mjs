@@ -62,7 +62,7 @@ function readChoicePaint() {
 
 function choiceFontIssues(rows) {
   const issues = []
-  if (rows.length !== 3) issues.push('缺真实当页三个选择行')
+  if (rows.length !== 4) issues.push('缺真实当页四个选择行')
   for (const row of rows) {
     for (const [role, expected] of [['title', 17], ['detail', 13]]) {
       const label = row[role]
@@ -285,7 +285,7 @@ try {
             const issues = choiceFontIssues(negative)
             choiceFontEvidence.push({ phase: '旧24/18短盒负控', paint: negative, issues })
             check('Choice真实旧短盒由同字号门因实际缩字翻红', choiceFontIssues(paint).length === 0
-              && negative.length === 3 && issues.some(issue => issue.includes('/title实际字号'))
+              && negative.length === 4 && issues.some(issue => issue.includes('/title实际字号'))
               && issues.some(issue => issue.includes('/detail实际字号')), { negative, issues })
             await page.screenshot({ path: path.join(OUT, 'armyQueueDialog-font-shortbox-negative.png') })
           } finally {
