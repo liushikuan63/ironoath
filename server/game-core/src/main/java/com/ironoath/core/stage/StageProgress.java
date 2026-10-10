@@ -66,6 +66,11 @@ public final class StageProgress {
         return byStage.getOrDefault(stageId, Record.none());
     }
 
+    /** 已结算过一次挑战；失败的 0 星记录也属于挑战过，不能与缺记录混成未挑战。 */
+    public boolean attempted(String stageId) {
+        return byStage.containsKey(stageId);
+    }
+
     public boolean cleared(String stageId) {
         return of(stageId).cleared();
     }

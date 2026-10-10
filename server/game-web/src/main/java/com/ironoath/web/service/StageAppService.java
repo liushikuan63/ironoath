@@ -181,7 +181,7 @@ public class StageAppService {
                     stage.staminaCost(), stage.roundLimit(),
                     UnitRestriction.valueOf(stage.unitRestriction().name()),
                     BossMechanic.valueOf(stage.bossMechanic().name()),
-                    lockedReason == null, lockedReason, record.cleared(), view(stage.id(), record)));
+                    lockedReason == null, lockedReason, progress.attempted(stage.id()), view(stage.id(), record)));
         }
         long stamina = wallet.available(playerId, StaminaService.RESOURCE_ID, now);
         return new StageListResp(entries, stamina, now);

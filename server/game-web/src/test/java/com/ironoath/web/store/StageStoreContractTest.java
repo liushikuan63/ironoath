@@ -52,6 +52,32 @@ class StageStoreContractTest extends VersionedStoreContractTest<StageProgress> {
         return store.versionOf(PLAYER);
     }
 
+    @Test
+    @DisplayName("失败 0 星记录经内存保存、重读和 copy 后仍是挑战过，邻关仍未挑战")
+    void failedZeroStarAttemptSurvivesRoundTripAndCopy() {
+        freshStore();
+        assertThat(insertInitialState()).isTrue();
+        StoreHandle<StageProgress> handle = read();
+        assertThat(handle.state().attempted(STAGE)).as("缺记录才是未挑战").isFalse();
+        assertThat(handle.state().recordResult(STAGE, false, true, true, 6,
+                1_800_000_001_000L)).isZero();
+        assertThat(handle.state().attempted(STAGE)).as("域内失败立即保留挑战事实").isTrue();
+        assertThat(handle.state().of(STAGE)).as("失败仍然 0 星，不用伪造胜利来标记挑战")
+                .isEqualTo(StageProgress.Record.none());
+        persist(handle);
+
+        StageProgress back = read().state();
+        assertThat(back.all()).as("没有键与有键但全零必须都落得住").containsKey(STAGE);
+        assertThat(back.attempted(STAGE)).isTrue();
+        assertThat(back.cleared(STAGE)).isFalse();
+        assertThat(back.stars(STAGE)).isZero();
+        assertThat(back.attempted("stage_01_02")).as("不能顺手把未打过的邻关标记").isFalse();
+        StageProgress copy = back.copy();
+        assertThat(copy.attempted(STAGE)).isTrue();
+        assertThat(copy.of(STAGE)).isEqualTo(StageProgress.Record.none());
+        assertThat(copy.attempted("stage_01_02")).isFalse();
+    }
+
     /**
      * null 键必须"当成没有存档"，而不是从 {@code ConcurrentHashMap.get(null)} 抛 NPE。
      * Mongo 侧那一档断言同样两条 —— 同一个非法调用两侧不能一种是静默、一种是异常。

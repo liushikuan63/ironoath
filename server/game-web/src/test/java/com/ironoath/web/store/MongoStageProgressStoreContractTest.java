@@ -79,6 +79,34 @@ class MongoStageProgressStoreContractTest extends VersionedStoreContractTest<Sta
         return store.versionOf(playerId);
     }
 
+    @Test
+    @DisplayName("失败 0 星记录经真实 Mongo 保存、新仓储重读和 copy 后仍是挑战过")
+    void failedZeroStarAttemptSurvivesRoundTripAndCopy() {
+        requireMongo();
+        freshStore();
+        assertThat(insertInitialState()).isTrue();
+        StoreHandle<StageProgress> handle = read();
+        assertThat(handle.state().attempted(STAGE)).as("缺记录才是未挑战").isFalse();
+        assertThat(handle.state().recordResult(STAGE, false, true, true, 6,
+                1_800_000_001_000L)).isZero();
+        assertThat(handle.state().attempted(STAGE)).as("域内失败立即保留挑战事实").isTrue();
+        assertThat(handle.state().of(STAGE)).as("失败仍然 0 星，不用伪造胜利来标记挑战")
+                .isEqualTo(StageProgress.Record.none());
+        persist(handle);
+
+        MongoStageProgressStore reopened = new MongoStageProgressStore(db.template());
+        StageProgress back = reopened.findByPlayerId(playerId).orElseThrow();
+        assertThat(back.all()).as("真实文档的全零失败条目不能被丢掉").containsKey(STAGE);
+        assertThat(back.attempted(STAGE)).isTrue();
+        assertThat(back.cleared(STAGE)).isFalse();
+        assertThat(back.stars(STAGE)).isZero();
+        assertThat(back.attempted(OTHER)).as("不能顺手把未打过的邻关标记").isFalse();
+        StageProgress copy = back.copy();
+        assertThat(copy.attempted(STAGE)).isTrue();
+        assertThat(copy.of(STAGE)).isEqualTo(StageProgress.Record.none());
+        assertThat(copy.attempted(OTHER)).isFalse();
+    }
+
     /**
      * 与 {@code StageStoreContractTest.nullKeyIsAnsweredPolitely} 同名配对：
      * 同一个非法调用（null playerId）在两侧必须给出同样的答案，而不是内存版静默、Mongo 版抛。

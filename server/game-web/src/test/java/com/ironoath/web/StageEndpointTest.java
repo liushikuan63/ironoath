@@ -166,6 +166,61 @@ class StageEndpointTest {
     }
 
     @Test
+    @DisplayName("没打过与打输 0 星必须区分：首次真实失败后列表 attempted=true")
+    void failedFirstChallengeIsAttemptedWithZeroStars() {
+        String playerId = newPlayer();
+        giveTroops(playerId, Map.of(UNIT, 1L));
+        StageEntry before = stageAppService.list(playerId).stages().stream()
+                .filter(entry -> entry.stageId().equals(STAGE_1)).findFirst().orElseThrow();
+        assertThat(before.attempted()).as("真正没打过的关卡").isFalse();
+        assertThat(before.progress().stars()).isZero();
+
+        ChallengeStageResp lost = stageAppService.challenge(playerId,
+                new ChallengeStageReq(newRequestId(), STAGE_1,
+                        List.of(new StageUnit(UNIT, 1L)), List.of()));
+        assertThat(lost.stars().cleared()).as("夹具必须真的输：1 兵打第一关").isFalse();
+        assertThat(lost.starsEarned()).isZero();
+        assertThat(lost.progress().stars()).isZero();
+
+        List<StageEntry> entries = stageAppService.list(playerId).stages();
+        StageEntry failed = entries.stream().filter(entry -> entry.stageId().equals(STAGE_1))
+                .findFirst().orElseThrow();
+        assertThat(failed.attempted()).as("打过但 0 星不能显示成未挑战").isTrue();
+        assertThat(failed.progress()).isEqualTo(lost.progress());
+        assertThat(entries.stream().filter(entry -> entry.stageId().equals(STAGE_2))
+                .findFirst().orElseThrow().attempted()).as("失败不能顺手标记邻关").isFalse();
+    }
+
+    @Test
+    @DisplayName("真实胜利后再输：仍挑战过，历史最好星级、回合和首通时刻不降")
+    void losingAfterVictoryKeepsAttemptedAndBestProgress() {
+        String playerId = newPlayer();
+        giveTroops(playerId, Map.of(UNIT, SENT));
+        giveHospital(playerId, 5);
+        ChallengeStageResp won = stageAppService.challenge(playerId,
+                new ChallengeStageReq(newRequestId(), STAGE_1,
+                        List.of(new StageUnit(UNIT, SENT)), List.of()));
+        assertThat(won.stars().total()).as("与三星真实胜利夹具同源").isEqualTo(3);
+        StageEntry cleared = stageAppService.list(playerId).stages().stream()
+                .filter(entry -> entry.stageId().equals(STAGE_1)).findFirst().orElseThrow();
+        assertThat(cleared.attempted()).isTrue();
+        assertThat(cleared.progress()).isEqualTo(won.progress());
+        assertThat(armies.findByPlayerId(playerId).orElseThrow().countOf(UNIT))
+                .as("从真实剩余兵力出 1 兵，不能伪造未持有的兵").isPositive();
+
+        ChallengeStageResp lost = stageAppService.challenge(playerId,
+                new ChallengeStageReq(newRequestId(), STAGE_1,
+                        List.of(new StageUnit(UNIT, 1L)), List.of()));
+        assertThat(lost.stars().cleared()).as("重试必须真的输，不能再跑一场胜利").isFalse();
+        assertThat(lost.starsEarned()).isZero();
+        StageEntry retried = stageAppService.list(playerId).stages().stream()
+                .filter(entry -> entry.stageId().equals(STAGE_1)).findFirst().orElseThrow();
+        assertThat(retried.attempted()).isTrue();
+        assertThat(retried.progress()).as("最好成绩所有字段都保留，而非只保总星数")
+                .isEqualTo(won.progress());
+    }
+
+    @Test
     @DisplayName("验收2：同一 stageId + 同一 seed，两次执行逐字段一致")
     void theSameSeedReproducesTheSameBattle() {
         String playerId = newPlayer();
