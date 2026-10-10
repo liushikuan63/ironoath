@@ -96,7 +96,7 @@ while read -r f; do
   # ⚠️ ③ 里"探针自带 `?? 'art-verify-local'` 默认值"**不作为放行的理由**：单后端入口的 `BACKEND`
   #    可以指向任何一台后端（包括别人起的、令牌不是那个串的后端），照跑得到的是一片 1009 假红。
   #    默认值只在"这批的后端是本脚本起的、令牌是脚本 mint 的"这一条路上才成立 —— 那条路由 ② 覆盖。
-  tok_env="$(grep -oE 'process\.env\.[A-Z_]*TOKEN[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
+  tok_env="$(grep -oE 'process\.env\.[A-Z0-9_]*TOKEN[A-Z0-9_]*' "$f" | head -1 | sed 's/process\.env\.//')"
   tok_assign=""
   if [ -n "$tok_env" ]; then
     tok_value="${!tok_env:-}"
@@ -109,8 +109,8 @@ while read -r f; do
   fi
   tok_args=()
   [ -n "$tok_assign" ] && tok_args+=("$tok_assign")
-  backend_env="$(grep -oE 'process\.env\.[A-Z_]*BACKEND[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
-  port_env="$(grep -oE 'process\.env\.[A-Z_]*PORT[A-Z_]*' "$f" | head -1 | sed 's/process\.env\.//')"
+  backend_env="$(grep -oE 'process\.env\.[A-Z0-9_]*BACKEND[A-Z0-9_]*' "$f" | head -1 | sed 's/process\.env\.//')"
+  port_env="$(grep -oE 'process\.env\.[A-Z0-9_]*PORT[A-Z0-9_]*' "$f" | head -1 | sed 's/process\.env\.//')"
   [ -z "$backend_env" ] && backend_env="BACKEND_ORIGIN"
   [ -z "$port_env" ] && port_env="PROBE_PORT"
   # 2026-10-05：**dev 提速档是要设在「后端进程」上的**（`IRONOATH_DEV_CITY_LEVEL=16` +

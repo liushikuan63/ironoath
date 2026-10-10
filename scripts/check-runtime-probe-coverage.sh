@@ -92,6 +92,49 @@ for name in $excluded_names; do
   fi
 done
 
+# 读取生产脚本实际用于自动识别的正则；固定变量名是预期值，不另抄一套识别正则。
+# 数字主变量必须完整命中并优先于备用变量，否则会静默兜底或截断变量名。
+env_regex_checks=0
+env_regex_failures=0
+for env_kind in TOKEN BACKEND PORT; do
+  case "$env_kind" in
+    TOKEN) env_assignment=tok_env ;;
+    BACKEND) env_assignment=backend_env ;;
+    PORT) env_assignment=port_env ;;
+  esac
+  env_pattern="$(sed -n "/^[[:space:]]*${env_assignment}=/s/.*grep -oE '\([^']*\)'.*/\1/p" scripts/run-runtime-probes.sh)"
+  if [ -z "$env_pattern" ] || [ "$(printf '%s\n' "$env_pattern" | wc -l)" -ne 1 ]; then
+    echo "[check-runtime-probe-coverage] 找不到唯一的生产 $env_kind 识别正则" >&2
+    env_regex_failures=$((env_regex_failures + 1))
+    fail=1
+    continue
+  fi
+  while IFS=$'\t' read -r case_kind sample expected_env; do
+    [ "$case_kind" = "$env_kind" ] || continue
+    env_regex_checks=$((env_regex_checks + 1))
+    actual_env="$(printf '%s\n' "$sample" | grep -oE "$env_pattern" | head -1 | sed 's/process\.env\.//' || true)"
+    if [ "$actual_env" != "$expected_env" ]; then
+      echo "[check-runtime-probe-coverage] $env_kind 识别错误：$sample → ${actual_env:-空}，应为 $expected_env" >&2
+      env_regex_failures=$((env_regex_failures + 1))
+      fail=1
+    fi
+  done <<'ENV_REGEX_CASES'
+TOKEN	process.env.AUDIT_TOKEN	AUDIT_TOKEN
+TOKEN	process.env.V2_OPS_TOKEN	V2_OPS_TOKEN
+TOKEN	process.env.AUDIT_TOKEN_V2	AUDIT_TOKEN_V2
+TOKEN	process.env.V2_OPS_TOKEN ?? process.env.OPS_TOKEN	V2_OPS_TOKEN
+BACKEND	process.env.AUDIT_BACKEND	AUDIT_BACKEND
+BACKEND	process.env.V2_BACKEND	V2_BACKEND
+BACKEND	process.env.AUDIT_BACKEND_V2	AUDIT_BACKEND_V2
+BACKEND	process.env.V2_BACKEND ?? process.env.BACKEND_ORIGIN	V2_BACKEND
+PORT	process.env.AUDIT_PORT	AUDIT_PORT
+PORT	process.env.NATION_S2_PORT	NATION_S2_PORT
+PORT	process.env.AUDIT_PORT_V2	AUDIT_PORT_V2
+PORT	process.env.NATION_S2_PORT ?? process.env.PROBE_PORT	NATION_S2_PORT
+ENV_REGEX_CASES
+done
+echo "[check-runtime-probe-coverage] 生产 env 正则自检：$env_regex_checks 项，错误 $env_regex_failures 项"
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
