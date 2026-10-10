@@ -107,7 +107,12 @@ class BotQuestClaimAndDonateTest {
         assertThat(roster.heroes()).extracting(com.ironoath.core.hero.HeroInstance::heroId)
                 .as("C19 要的可观察结果：Bot 真的拿到了主线赠的那名 SR")
                 .containsAnyOf("hero_sr_01", "hero_sr_02", "hero_sr_03");
-        assertThat(quests.claimableCount(botId)).as("领过就不该再可领（否则红点永远不灭）").isZero();
+        var afterGift = quests.list(botId).quests();
+        assertThat(afterGift.stream().filter(q -> q.questId().equals("quest_main_01")).findFirst().orElseThrow().claimed())
+                .as("赠将任务本身已经领取，不能再领同一份赠将或赠粮").isTrue();
+        assertThat(afterGift.stream().filter(q -> q.questId().equals("quest_main_02")).findFirst().orElseThrow().claimable())
+                .as("新增八千赠粮使攒粮任务达标，但必须另走正常领奖").isTrue();
+        assertThat(quests.claimableCount(botId)).as("当前红点来自尚未领取的攒粮任务").isEqualTo(1);
         // 刻意不断 troopCap：它读的是<b>编队</b>统帅值（HeroAppService#troopCap → stats.troopCap(roster, 0)），
         // 领到将但没上阵时仍然是 0。"Bot 要不要自动把新将上阵"是另一条尚未裁决的口径
         // （收口清单 §三·补 C19 只裁了领奖），在这里断成正数等于替那条裁决抢答。
@@ -123,11 +128,21 @@ class BotQuestClaimAndDonateTest {
 
         adapter.execute(botId, new BotDecisionTree.Decision(
                 BotDecisionTree.Action.CLAIM_QUEST, false, 0L, "第一次"), timeService.serverNow());
+        long grainAfterGift = players.findByPlayerId(botId).orElseThrow().resource("GRAIN").current();
         adapter.execute(botId, new BotDecisionTree.Decision(
                 BotDecisionTree.Action.CLAIM_QUEST, false, 0L, "第二次"), timeService.serverNow());
 
         assertThat(adapter.actionCounts().get("claimed"))
-                .as("第二次已经没有可领的了，claimed 不该涨到 2").isEqualTo(1L);
+                .as("第二次正常领取攒粮任务，而非重复领取赠将任务").isEqualTo(2L);
+        assertThat(players.findByPlayerId(botId).orElseThrow().resource("GRAIN").current())
+                .as("第二次只发攒粮任务奖励，不能再发八千赠粮")
+                .isEqualTo(grainAfterGift + configs.get(com.ironoath.config.cfg.QuestCfg.class, "quest_main_02").rewardGrain());
+        assertThat(heroStore.findByPlayerId(botId).orElseThrow().heroes()).hasSize(1);
+        adapter.execute(botId, new BotDecisionTree.Decision(
+                BotDecisionTree.Action.CLAIM_QUEST, false, 0L, "第三次"), timeService.serverNow());
+        assertThat(adapter.actionCounts().get("claimed"))
+                .as("两条真实任务均领过后，再次执行不能增加领奖次数").isEqualTo(2L);
+        assertThat(quests.claimableCount(botId)).isZero();
     }
 
     @Test
