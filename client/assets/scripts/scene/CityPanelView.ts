@@ -26,6 +26,7 @@ import {
 import { buildingArtFootRatio, buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont, capWidth, oneLineFloorHeight } from './UiFont'
 import { viewportSafeInsets } from './ViewportSafeArea'
+import { guideBubbleLayout } from '../game/ui/GuideLayout'
 import {
   DISTRICT_TINT_RGB, SCENE_RUNTIME_HEIGHT, SCENE_RUNTIME_WIDTH,
   SCENE_STAGE_HEIGHT, SCENE_STAGE_WIDTH, coverSceneSize, fitSceneLandmark, projectSceneLayout, scenePlatesBackToFront,
@@ -284,6 +285,8 @@ export class CityPanelView extends Component {
   private readonly previewNodes = new Map<string, Node>()
   private selectedId: string | null = null
   private buildMode = false
+  /** 选地/选择器取消后返回仍存在的原选择，不把主堡选择清除当作建造入口。 */
+  private buildSelectionId: string | null = null
   private selectedTitle: Label | null = null
   private selectedStatus: Label | null = null
   private selectionBar: Node | null = null
@@ -740,49 +743,83 @@ export class CityPanelView extends Component {
     // 居中排也要限宽：队列行最长那句会随服务端给的数变长，右端顶进右上角
     // 「一键收割」里（origin 线 #335 实测压住 29px）—— 让位给键，长句交给 SHRINK。
     const safeWidth = this.contentWidth - this.safeInsets.left - this.safeInsets.right
-    const centerX = (this.safeInsets.left - this.safeInsets.right) / 2
     const cornerX = this.contentWidth / 2 - this.safeInsets.right - FRAME_BAND - 76
-    const headerCap = safeWidth / 2 + cornerX - centerX - CORNER_KEY_WIDTH / 2 - 8
-    this.headerLabel = this.addLabel(card, 'Header', centerX, top - 14, COLOR_COPPER_GOLD, 22, false, headerCap)
-    this.queueLabel = this.addLabel(card, 'Queue', centerX, top - 38, COLOR_TEXT, 16, false, headerCap)
+    // 与实际Guide使用同一布局函数：只给右上提示留空间，不依赖引导状态，也不缩字号避让。
+    // 洞的底边不影响此处上沿/水平槽位；导航和City操作条都在信息区下面。
+    const guide = this.defaultGuideLayout()
+    const textLeft = -this.contentWidth / 2 + this.safeInsets.left + 22
+    const headerRight = Math.min(cornerX - CORNER_KEY_WIDTH / 2 - 8, guide.x - guide.width / 2 - 8)
+    const headerCap = Math.max(1, headerRight - textLeft)
+    this.headerLabel = this.addLabel(card, 'Header', textLeft, 0, COLOR_COPPER_GOLD, 22, true, headerCap)
+    const headerHeight = this.headerLabel.node.getComponent(UITransform)!.height
+    this.headerLabel.node.setPosition(new Vec3(textLeft, top - headerHeight / 2, 0))
+    this.queueLabel = this.addLabel(card, 'Queue', textLeft, 0, COLOR_TEXT, 16, true, headerCap)
+    const queueHeight = this.queueLabel.node.getComponent(UITransform)!.height
+    this.queueLabel.node.setPosition(new Vec3(textLeft, top - headerHeight - 4 - queueHeight / 2, 0))
 
     // 资源条只占左上角一块，不横跨整屏 —— 满屏城景下横跨会把城压成一条缝，
     // 而两列三行的底板右缘停在画面中线以左，不会盖住主堡（实测三列会盖住）。
     const columnWidth = Math.min(165, safeWidth / 5.4)
     const blockLeft = -this.contentWidth / 2 + this.safeInsets.left + 14
-    const blockTop = top - 52
-    const rowStep = 20
+    let blockTop = this.queueLabel.node.position.y - queueHeight / 2 - 4
     const rows = 3
     const columns = 2
     const blockWidth = columnWidth * columns + 12
-    const blockHeight = rowStep * rows + 12
     // 整块资源区要一块实底：顶部渐变到第二行已经淡得托不住字
     // （实测「木材 5000/20000」糊在亮山脊上读不出），六行字的对比度
     // 不该取决于底下那一段城景画的是山还是墙。
     const plate = new Node('ResourcePlate')
     plate.layer = card.layer
     card.addChild(plate)
-    plate.addComponent(UITransform).setContentSize(new Size(blockWidth, blockHeight))
-    plate.setPosition(new Vec3(blockLeft + blockWidth / 2, blockTop - blockHeight / 2 - 2, 0))
+    const plateTransform = plate.addComponent(UITransform)
     const plateGraphics = plate.addComponent(Graphics)
     plateGraphics.fillColor = new Color(14, 11, 9, 172)
-    plateGraphics.roundRect(-blockWidth / 2, -blockHeight / 2, blockWidth, blockHeight, 6)
-    plateGraphics.fill()
+    const labels: Array<{ label: Label, row: number }> = []
     for (let row = 0; row < rows; row++) {
       for (let column = 0; column < columns; column++) {
         // 左对齐 + 限定列宽：数值位数由服务端算，不可控（"1000000" 和 "200" 同栏）。
-        this.resourceLabels.push(this.addLabel(
+        const label = this.addLabel(
           card, `Resource-${row}-${column}`,
-          blockLeft + 8 + columnWidth * column, blockTop - 8 - row * rowStep,
-          COLOR_TEXT, 15, true, columnWidth - 10))
+          blockLeft + 8 + columnWidth * column, 0,
+          COLOR_TEXT, 15, true, columnWidth - 10)
+        this.resourceLabels.push(label)
+        labels.push({ label, row })
       }
     }
-    this.resourceOverflowLabel = this.addLabel(
-      card, 'ResourceOverflow', blockLeft + 8, blockTop - 8 - rows * rowStep,
-      COLOR_TEXT_DIM, 12, true, blockWidth * 2)
-
-    this.messageLabel = this.addLabel(card, 'Message', centerX,
-      -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26, COLOR_WARNING, 15)
+    const rowHeight = Math.max(...labels.map(({ label }) => label.node.getComponent(UITransform)!.height))
+    const rowStep = rowHeight + 4
+    const blockHeight = rowStep * rows + 12
+    // 短屏恢复字号后，信息区按实际盒高上移，保留研究/建造入口之上的净隙。
+    const toolbarTop = -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT + 34
+    const shift = Math.min(Math.max(0, toolbarTop + 4 - (blockTop - blockHeight)), 18)
+    if (shift > 0) {
+      this.headerLabel.node.setPosition(new Vec3(textLeft, this.headerLabel.node.position.y + shift, 0))
+      this.queueLabel.node.setPosition(new Vec3(textLeft, this.queueLabel.node.position.y + shift, 0))
+      blockTop += shift
+    }
+    plateTransform.setContentSize(new Size(blockWidth, blockHeight))
+    plate.setPosition(new Vec3(blockLeft + blockWidth / 2, blockTop - blockHeight / 2, 0))
+    plateGraphics.roundRect(-blockWidth / 2, -blockHeight / 2, blockWidth, blockHeight, 6)
+    plateGraphics.fill()
+    for (const { label, row } of labels) {
+      label.node.setPosition(new Vec3(label.node.position.x, blockTop - 8 - rowHeight / 2 - row * rowStep, 0))
+    }
+    // 消息落在资源板和默认主堡铭牌右侧、操作条上方，不压研究/建造入口。
+    const messageLeft = Math.max(blockLeft + blockWidth + 8, NAMEPLATE_WIDTH * CITY_ZOOM_DEFAULT / 2 + 12)
+    const messageRight = this.contentWidth / 2 - this.safeInsets.right - 12
+    this.messageLabel = this.addLabel(card, 'Message', (messageLeft + messageRight) / 2,
+      -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26,
+      COLOR_WARNING, 15, false, Math.max(1, messageRight - messageLeft))
+    // 多余资源提示复用详情上排的空位，不占恢复字号后的资源板或操作入口。
+    const zoom = card.getChildByName('ZoomInButton')
+    const zoomBox = zoom?.getComponent(UITransform)
+    const overflowRight = zoom != null && zoomBox != null
+      ? zoom.position.x - zoomBox.anchorX * zoomBox.width - 8 : messageRight
+    this.resourceOverflowLabel = this.addLabel(card, 'ResourceOverflow', blockLeft + blockWidth + 8, 0,
+      COLOR_TEXT_DIM, 12, true, Math.max(1, overflowRight - (blockLeft + blockWidth + 8)))
+    const overflowHeight = this.resourceOverflowLabel.node.getComponent(UITransform)!.height
+    this.resourceOverflowLabel.node.setPosition(new Vec3(blockLeft + blockWidth + 8,
+      -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT - 4 - overflowHeight / 2, 0))
   }
 
   private buildGrid(parent: Node): void {
@@ -1040,11 +1077,19 @@ export class CityPanelView extends Component {
     // 否则满屏城景下选择栏右半永远是一条空带（实测空约 45% 宽）。
     const clusterLeft = this.contentWidth / 2 - this.safeInsets.right - 12 - 430
     const textCap = Math.max(160, Math.min(300, clusterLeft - left - 8))
-    this.selectedTitle = this.addLabel(bar, 'SelectedTitle', left, 16, COLOR_COPPER_GOLD, 17, true, textCap)
-    this.selectedStatus = this.addLabel(bar, 'SelectedStatus', left, -8, COLOR_TEXT_DIM, 14, true, textCap)
+    this.selectedTitle = this.addLabel(bar, 'SelectedTitle', left, 0, COLOR_COPPER_GOLD, 17, true, textCap)
+    this.selectedStatus = this.addLabel(bar, 'SelectedStatus', left, 0, COLOR_TEXT_DIM, 14, true, textCap)
+    const titleHeight = this.selectedTitle.node.getComponent(UITransform)!.height
+    const statusHeight = this.selectedStatus.node.getComponent(UITransform)!.height
+    const titleY = ACTION_HEIGHT / 2 - 4 - titleHeight / 2
+    this.selectedTitle.node.setPosition(new Vec3(left, titleY, 0))
+    this.selectedStatus.node.setPosition(new Vec3(left, titleY - titleHeight / 2 - 4 - statusHeight / 2, 0))
     this.selectedStatus.overflow = Label.Overflow.SHRINK
 
-    this.createActionButton(bar, 'DetailBuildButton', '建造', clusterLeft, 'build')
+    // 建造是内城入口，不与选中建筑的升级键互斥。放在研究旁的净区，选择器打开时仍随栏隐藏。
+    const build = this.createActionButton(bar, 'DetailBuildButton', '建造',
+      -this.contentWidth / 2 + this.safeInsets.left + FRAME_BAND + 76 + CORNER_KEY_WIDTH + 12, 'build')
+    build.setPosition(new Vec3(build.position.x, ACTION_HEIGHT / 2 + 17, 0))
     this.createActionButton(bar, 'DetailUpgradeButton', '升级', clusterLeft - 12, 'upgrade')
     this.createActionButton(bar, 'DetailCollectButton', '收割', clusterLeft - 12, 'collect')
     this.createActionButton(bar, 'DetailSpeedAdButton', '广告加速', clusterLeft + 78, 'speedAd')
@@ -1103,27 +1148,34 @@ export class CityPanelView extends Component {
   }
 
   private createActionButton(parent: Node, name: string, text: string, x: number,
-                             kind: RowAction): void {
+                             kind: RowAction): Node {
     const button = new Node(name)
     button.layer = parent.layer
     parent.addChild(button)
     button.setPosition(new Vec3(x, -20, 0))
-    button.addComponent(UITransform).setContentSize(new Size(ACTION_BUTTON_WIDTH, ACTION_BUTTON_HEIGHT))
-    if (!applyCommandButton(button, 'normal', ACTION_BUTTON_WIDTH, ACTION_BUTTON_HEIGHT)) {
+    const width = kind === 'build' ? CORNER_KEY_WIDTH : ACTION_BUTTON_WIDTH
+    const height = kind === 'build' ? 34 : ACTION_BUTTON_HEIGHT
+    button.addComponent(UITransform).setContentSize(new Size(width, height))
+    if (!applyCommandButton(button, 'normal', width, height)) {
       const graphics = button.addComponent(Graphics)
       graphics.fillColor = COLOR_PANEL
       graphics.strokeColor = COLOR_COPPER_GOLD
       graphics.lineWidth = 1
-      graphics.roundRect(-ACTION_BUTTON_WIDTH / 2, -ACTION_BUTTON_HEIGHT / 2,
-        ACTION_BUTTON_WIDTH, ACTION_BUTTON_HEIGHT, 5)
+      graphics.roundRect(-width / 2, -height / 2, width, height, 5)
       graphics.fill()
       graphics.stroke()
     }
     const caption = this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 12)
     caption.string = text
     caption.overflow = Label.Overflow.SHRINK
+    if (kind === 'build') {
+      caption.lineHeight = caption.fontSize + 6
+      caption.enableWrapText = false
+      caption.node.getComponent(UITransform)!.setContentSize(new Size(width - 16, height - 8))
+    }
     button.active = false
     this.actionButtons.set(button, kind)
+    return button
   }
 
   private layoutCard(): void {
@@ -1225,7 +1277,7 @@ export class CityPanelView extends Component {
           const gridX = tile.plate.gridX
           const gridY = tile.plate.gridY
           tile.node.on('touch-start', (_event: EventTouch) => {
-            this.openBuildPicker(gridX, gridY)
+            if (this.buildMode) this.openBuildPicker(gridX, gridY)
           }, this)
         }
         return
@@ -1238,6 +1290,7 @@ export class CityPanelView extends Component {
       }
       tile.node.on('touch-start', (_event: EventTouch) => {
         this.buildMode = false
+        this.buildSelectionId = null
         this.selectedId = row.id
         this.renderSelection(row)
       }, this)
@@ -1245,13 +1298,21 @@ export class CityPanelView extends Component {
     // 默认主体与铭牌都要位于顶部文字和操作栏之间；只居中楼体会吞掉窄横屏的铭牌。
     // 玩家自己缩放过或拖动过就不再抢镜头 —— 否则每次数据刷新都把人拽回主堡。
     if (!this.viewAdjusted && !Number.isNaN(keepX)) {
-      const framing = this.mainCityFraming(keepY, keepSize)
+      const framing = this.mainCityFraming(keepY, keepSize, keepX)
       this.setFocus(keepX, -framing.stageY / this.zoom)
     }
   }
 
   /** 默认倍数决定实体尺寸；玩家缩放时只变舞台，不重新缩小楼体或铭牌。 */
-  private mainCityFraming(footY: number, preferredSize: number): { size: number, stageY: number } {
+  private defaultGuideLayout(): ReturnType<typeof guideBubbleLayout> {
+    const bottom = -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT
+    return guideBubbleLayout({ x: -this.contentWidth / 2 + this.safeInsets.left, y: bottom,
+      width: this.contentWidth - this.safeInsets.left - this.safeInsets.right,
+      height: this.contentHeight / 2 - this.safeInsets.top - bottom },
+    this.contentWidth, this.contentHeight, 'city', { width: 420, height: 150, margin: 24, buttonWidth: 150 })
+  }
+
+  private mainCityFraming(footY: number, preferredSize: number, footX = 0): { size: number, stageY: number } {
     const bar = this.selectionBar
     const barBox = bar?.getComponent(UITransform)
     const bottom = bar !== null && barBox != null
@@ -1265,10 +1326,43 @@ export class CityPanelView extends Component {
       }
     }
     const captionHalfHeight = Math.max(NAMEPLATE_HEIGHT, oneLineFloorHeight()) / 2
-    return fitSceneLandmark(this.contentHeight, CITY_ZOOM_DEFAULT, footY, preferredSize,
-      buildingArtFootRatio('main_city'),
+    const zoom = CITY_ZOOM_DEFAULT
+    const footRatio = buildingArtFootRatio('main_city')
+    const fit = () => fitSceneLandmark(this.contentHeight, zoom, footY, preferredSize, footRatio,
       { bottom: NAMEPLATE_Y - captionHalfHeight, top: NAMEPLATE_Y + captionHalfHeight },
       { bottom: bottom + LANDMARK_HUD_GAP, top: top - LANDMARK_HUD_GAP })
+    let framing = fit()
+    // 仅默认取景避让右上Guide；用户拖动和缩放仍沿用原舞台范围，不反向修正其镜头。
+    const maxFocusX = this.contentWidth * (zoom - 1) / (2 * zoom)
+    const centerX = footX * zoom - Math.max(-maxFocusX, Math.min(maxFocusX, footX)) * zoom
+    const bounds = () => ({ left: centerX - framing.size * zoom / 2, right: centerX + framing.size * zoom / 2,
+      bottom: footY * zoom + framing.stageY - framing.size * footRatio * zoom,
+      top: footY * zoom + framing.stageY + framing.size * (1 - footRatio) * zoom })
+    const guide = this.defaultGuideLayout()
+    let body = bounds()
+    if (body.right > guide.x - guide.width / 2 - 12 && body.left < guide.x + guide.width / 2 + 12
+        && body.top > guide.y - guide.height / 2 - 12 && body.bottom < guide.y + guide.height / 2 + 12) {
+      top = Math.min(top, guide.y - guide.height / 2 - 12 + LANDMARK_HUD_GAP)
+      framing = fit()
+    }
+    // 同一父卡片下按资源板自身盒计算；竖向收紧后主体也不能挤到资源读数后面。
+    const plate = this.card?.getChildByName('ResourcePlate')
+    const plateBox = plate?.getComponent(UITransform)
+    if (plate != null && plateBox != null) {
+      body = bounds()
+      const right = plate.position.x + (1 - plateBox.anchorX) * plateBox.width
+      const left = plate.position.x - plateBox.anchorX * plateBox.width
+      const low = plate.position.y - plateBox.anchorY * plateBox.height
+      const high = plate.position.y + (1 - plateBox.anchorY) * plateBox.height
+      if (body.left < right + LANDMARK_HUD_GAP && body.right > left - LANDMARK_HUD_GAP
+          && body.top > low - LANDMARK_HUD_GAP && body.bottom < high + LANDMARK_HUD_GAP) {
+        const width = 2 * (centerX - right - LANDMARK_HUD_GAP) / zoom
+        if (width > 0) preferredSize = Math.min(preferredSize, width)
+        else top = Math.min(top, low)
+        framing = fit()
+      }
+    }
+    return framing
   }
 
   private openBuildPicker(gridX: number, gridY: number): void {
@@ -1292,7 +1386,17 @@ export class CityPanelView extends Component {
       if (bar !== null && this.selectionBar === bar) {
         bar.active = true
       }
+      this.closeBuildSelection()
     })
+  }
+
+  private closeBuildSelection(): void {
+    this.buildMode = false
+    const row = this.panel?.rows.find((it) => it.id === this.buildSelectionId) ?? null
+    this.buildSelectionId = null
+    this.selectedId = row?.id ?? null
+    this.renderGrid(buildCityGrid(this.panel?.rows ?? []))
+    this.renderSelection(row)
   }
 
   private paintTile(tile: GridTileRefs, row: BuildingRow | null): void {
@@ -1329,7 +1433,7 @@ export class CityPanelView extends Component {
 
     const preferredSide = buildingIconSize(row.configId, tile.plate.width, this.contentHeight)
     const iconSide = row.configId === 'main_city'
-      ? this.mainCityFraming(tile.plate.y, preferredSide).size : preferredSide
+      ? this.mainCityFraming(tile.plate.y, preferredSide, tile.plate.x).size : preferredSide
     // 实体脚面来自最终素材的 alpha 下缘；节点原点仍是命中与深度排序使用的真实基座。
     tile.icon.getComponent(UITransform)?.setAnchorPoint(0.5, buildingArtFootRatio(row.configId))
     // 铭牌、文字与状态条都使用格子的本地坐标，完整继承 CityStage 的平移和缩放。
@@ -1465,7 +1569,7 @@ export class CityPanelView extends Component {
     for (const [button, kind] of Array.from(this.actionButtons)) {
       button.off('touch-start')
       const hasBuildChoices = (this.panel?.buildOptions.length ?? 0) > 0
-      const visible = kind === 'build' ? row === null && hasBuildChoices
+      const visible = kind === 'build' ? hasBuildChoices
         : row !== null && (kind === 'collect' ? row.collectable
           : kind === 'upgrade' ? !row.upgrading && !row.collectable && !row.paused
             // 暂停：只有"正在升级且还没到点"才可暂停；已暂停的那一行给「恢复」
@@ -1476,11 +1580,20 @@ export class CityPanelView extends Component {
                 : kind === 'cancel' ? (row.upgrading || row.paused) && !row.collectable
                   : row.upgrading && !row.collectable)
       button.active = visible
+      if (kind === 'build') {
+        const caption = button.getChildByName('Caption')?.getComponent(Label)
+        if (caption !== null && caption !== undefined) caption.string = this.buildMode ? '取消建造' : '建造'
+      }
       if (!visible || (row === null && kind !== 'build')) {
         continue
       }
       button.on('touch-start', (_event: EventTouch) => {
         if (kind === 'build') {
+          if (this.buildMode) {
+            this.closeBuildSelection()
+            return
+          }
+          this.buildSelectionId = this.selectedId
           this.buildMode = true
           this.selectedId = null
           this.showMessage('请选择一块空地', COLOR_COPPER_GOLD)
@@ -1529,6 +1642,8 @@ export class CityPanelView extends Component {
     label.string = ''
     label.color = color
     label.fontSize = fontSize
+    label.lineHeight = fontSize + 6
+    label.enableWrapText = false
     label.horizontalAlign = leftAligned ? Label.HorizontalAlign.LEFT : Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
     if (leftAligned) {
@@ -1537,10 +1652,19 @@ export class CityPanelView extends Component {
     if (maxWidth > 0) {
       // 盒高用量出来的下限：`字号 × 1.6` 在 16 号字上只有 26，而 SHRINK 会把字形压到 26/30
       // —— 那一行本来就是常态性小一号（台账 #366/#367 实测，`tools/verify-label-fit-runtime.mjs` 会点名）
-      transform.setContentSize(new Size(maxWidth, oneLineFloorHeight()))
+      transform.setContentSize(new Size(maxWidth, Math.max(oneLineFloorHeight(), label.lineHeight)))
       // SHRINK 而不是 CLAMP：这里装的是资源数值，裁掉尾数会读成另一个数（10000 变 1000），
       // 字变小至少还是那个值。
       label.overflow = Label.Overflow.SHRINK
+    } else if (name === 'Caption') {
+      const buttonBox = parent.getComponent(UITransform)
+      if (buttonBox !== null) {
+        transform.setContentSize(new Size(Math.max(1, buttonBox.width - 12),
+          Math.max(label.lineHeight, Math.min(buttonBox.height, oneLineFloorHeight()))))
+      }
+    } else {
+      // 不限宽的说明仍让Label自然测宽，但行高也有真实自身盒。
+      transform.setContentSize(new Size(transform.width, Math.max(oneLineFloorHeight(), label.lineHeight)))
     }
     return label
   }
