@@ -377,7 +377,8 @@ try {
   const held = await clickResponse('/guide/progress', { name: 'GuideNext', within: 'Guide' })
   must('只升一次后 COMPLETE 必须 HOLD在第1步', held.request.stepId === step(1).id && held.request.action === 'COMPLETE'
     && held.envelope.data.advanced === false && held.envelope.data.nextStepIndex === 1, held)
-  await wait('HOLD给玩家未达成提示', frame => frame.guide.position?.drawable && frame.guide.position.text === HELD_TEXT)
+  await wait('HOLD给玩家未达成提示并完成全文排版', frame => frame.guide.position?.drawable && frame.guide.position.text === HELD_TEXT
+    && copyIssues(frame.guide.position, HELD_TEXT, frame).length === 0)
   const heldFrame = await shot('guide1-hold-after-one-upgrade'), heldLabel = heldFrame.guide.position
   const heldIssues = copyIssues(heldLabel, HELD_TEXT, heldFrame)
   const heldGeometryIssues = guideTextBoxesIssues(heldFrame.guide)
@@ -412,6 +413,9 @@ try {
   await guideLayout('guide2-normal600', { width: 960, height: 600 }, 2)
   await guideLayout('guide2-normal640', { width: 960, height: 640 }, 2)
   await navigationBlocked('Guide2')
+
+  // 旧遮挡发生在原生短横屏；正常640高时旧气泡与第一行领取键不交，不能充当负控。
+  await guideLayout('guide2-short-negative-base', SHORT_VIEWPORT, 2)
 
   /** 仅负控修改几何，既不暂停驱动器也不隐藏任何引导节点；finally 原位还原。 */
   const oldGeometry = await page.evaluate(() => {
