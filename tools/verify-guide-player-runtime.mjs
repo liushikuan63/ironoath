@@ -41,6 +41,29 @@ const intersects = (a, b) => !!a && !!b && Math.min(a.right, b.right) - Math.max
 const contains = (outer, inner) => !!outer && !!inner && inner.verified && inner.left >= outer.left - 1
   && inner.top >= outer.top - 1 && inner.right <= outer.right + 1 && inner.bottom <= outer.bottom + 1
 
+/** 按真实自身盒判读；正文、表头与每颗文字都必须在气泡内，文字还必须在其按钮框内。 */
+function guideTextBoxesIssues(guide) {
+  const issues = []
+  const buttons = [guide.next, guide.skip].filter(button => button?.active)
+  const labels = [{ role: '步数/提示', box: guide.position?.box }, { role: '正文', box: guide.body?.box },
+    ...buttons.map(button => ({ role: `${button.name}文字`, box: button.caption?.box }))]
+  for (const label of labels) {
+    if (!contains(guide.box, label.box)) issues.push(`${label.role}自身盒越出气泡`)
+  }
+  for (let index = 0; index < labels.length; index++) {
+    for (const other of labels.slice(index + 1)) {
+      if (intersects(labels[index].box, other.box)) issues.push(`${labels[index].role}与${other.role}自身盒重叠`)
+    }
+  }
+  for (const button of buttons) {
+    if (!contains(guide.box, button.box)) issues.push(`${button.name}按钮框越出气泡`)
+    if (!contains(button.box, button.caption?.box)) issues.push(`${button.name}文字自身盒越出按钮框`)
+    if (intersects(guide.body?.box, button.box)) issues.push(`正文与${button.name}按钮框重叠`)
+    if (intersects(guide.position?.box, button.box)) issues.push(`步数/提示与${button.name}按钮框重叠`)
+  }
+  return issues
+}
+
 /** 场景只读：相机投影/往返、真实渲染登记、实际字号与引擎分行，不能用 string 存在代替画出来。 */
 function readPlayerFrame() {
   const cc = window.cc, scene = cc?.director?.getScene?.()
@@ -90,13 +113,14 @@ function readPlayerFrame() {
     return { text: label.string, parsedString: [...(layout?.parsedString ?? [])],
       fontSize: label.fontSize, actualFontSize: label.actualFontSize, fontScale: style?.fontScale,
       lineHeight: label.lineHeight, width: ui?.width, height: ui?.height, overflow: label.overflow, wrap: label.enableWrapText,
+      horizontalAlign: label.horizontalAlign, verticalAlign: label.verticalAlign,
       drawable: drawable(node, label), box: boxOf(node) }
   }
   const buttonOf = node => {
     if (!node) return null
     const sprite = node.getComponent('cc.Sprite'), graphics = node.getComponent('cc.Graphics')
     return { name: node.name, active: node.activeInHierarchy, box: boxOf(node),
-      width: node.getComponent('cc.UITransform')?.width,
+      width: node.getComponent('cc.UITransform')?.width, height: node.getComponent('cc.UITransform')?.height,
       material: drawable(node, sprite) && !!sprite.spriteFrame,
       frameName: sprite?.spriteFrame?.name ?? null, graphicsOn: graphics?.enabled ?? false,
       caption: labelOf(node.getChildByName('caption') ?? node.getChildByName('Caption')) }
@@ -131,7 +155,7 @@ function readPlayerFrame() {
     mainTileName: mainTile?.node.name, selectedTitle: labelOf(find(city, 'SelectedTitle')),
     cityActions: ['DetailUpgradeButton', 'DetailCollectButton'].map(name => buttonOf(find(city, name))),
     guide: { active: guide?.activeInHierarchy === true, bubbleActive: bubble?.activeInHierarchy === true,
-      width: bubble?.getComponent('cc.UITransform')?.width, box: boxOf(bubble),
+      width: bubble?.getComponent('cc.UITransform')?.width, height: bubble?.getComponent('cc.UITransform')?.height, box: boxOf(bubble),
       plateMaterial: drawable(plate, plateSprite) && !!plateSprite.spriteFrame,
       plateName: plateSprite?.spriteFrame?.name ?? null,
       body: labelOf(find(bubble, 'GuideStepText')), position: labelOf(find(bubble, 'GuideStepPosition')),
@@ -256,14 +280,24 @@ try {
       && !frame.viewportGuard.fullscreen, { cssViewport: frame.viewport, designVisibleSize: frame.visibleSize, guard: frame.viewportGuard })
     const compact = frame.current === 'city' && frame.visibleSize.height < 600
     const bodyIssues = copyIssues(guide.body, step(index).text, frame)
-    must(`${name}实际视口与响应式气泡宽度`, near(guide.width, compact ? 324 : 420)
+    must(`${name}实际视口与响应式150高气泡`, near(guide.width, compact ? 324 : 420) && near(guide.height, 150)
       && contains(frame.canvas, guide.box), { visibleSize: frame.visibleSize, width: guide.width, box: guide.box })
-    must(`${name}引导正文全文与标准化字号`, bodyIssues.length === 0,
+    must(`${name}引导正文全文保持20号字与62高/26行高`, bodyIssues.length === 0
+      && near(guide.body?.fontSize, 20) && near(normalize(guide.body), 20)
+      && near(guide.body?.height, 62) && near(guide.body?.lineHeight, 26),
       { issues: bodyIssues, label: guide.body, normalizedFontSize: normalize(guide.body) })
+    const positionText = `第 ${index} / ${table.rows.length} 步`
+    const positionIssues = copyIssues(guide.position, positionText, frame)
+    must(`${name}步数全文保持单行20号字与28高/22行高`, positionIssues.length === 0
+      && guide.position.parsedString.length === 1 && guide.position.wrap === false && guide.position.overflow === 2
+      && near(guide.position.fontSize, 20) && near(normalize(guide.position), 20)
+      && near(guide.position.height, 28) && near(guide.position.lineHeight, 22),
+    { issues: positionIssues, label: guide.position, normalizedFontSize: normalize(guide.position) })
     must(`${name}提示底板与完成键真实材质`, guide.plateMaterial && guide.next?.material
       && guide.next.frameName?.includes('button-chip') && !guide.next.graphicsOn, guide)
-    must(`${name}正文与按钮自身盒不重叠`, !intersects(guide.body.box, guide.next.caption?.box)
-      && contains(guide.box, guide.body.box) && contains(guide.box, guide.next.box), guide)
+    const geometryIssues = guideTextBoxesIssues(guide)
+    must(`${name}表头/正文/按钮文字互不交且自身盒全部容纳`, geometryIssues.length === 0,
+      { issues: geometryIssues, position: guide.position, body: guide.body, next: guide.next, skip: guide.skip })
     must(`${name}跳过可见性符合服务端`, guide.skip?.active === paired, guide.skip)
     if (paired) {
       must(`${name}两颗真按钮等高并排且完整可见`, guide.skip.material && guide.skip.frameName?.includes('button-chip')
@@ -275,7 +309,12 @@ try {
     }
     for (const button of [guide.next, ...(paired ? [guide.skip] : [])]) {
       const issues = copyIssues(button.caption, button.caption.text, frame)
-      must(`${name}/${button.name}按钮文字可读`, issues.length === 0, { issues, label: button.caption })
+      must(`${name}/${button.name}按钮文字全文保持单行22号字与44高/28行高`, issues.length === 0
+        && near(button.height, 44) && near(button.caption?.height, 44) && near(button.caption?.lineHeight, 28)
+        && near(button.caption?.fontSize, 22) && near(normalize(button.caption), 22)
+        && button.caption?.parsedString.length === 1 && button.caption.wrap === false && button.caption.overflow === 2
+        && button.caption.horizontalAlign === 1 && button.caption.verticalAlign === 1,
+      { issues, label: button.caption, normalizedFontSize: normalize(button.caption) })
     }
     if (frame.current === 'city') {
       must(`${name}引导避开真实升级/收割按钮`, frame.cityActions.filter(button => button?.active)
@@ -328,11 +367,13 @@ try {
   await wait('HOLD给玩家未达成提示', frame => frame.guide.position?.drawable && frame.guide.position.text === HELD_TEXT)
   const heldFrame = await shot('guide1-hold-after-one-upgrade'), heldLabel = heldFrame.guide.position
   const heldIssues = copyIssues(heldLabel, HELD_TEXT, heldFrame)
-  must('HOLD短提示保持单行24高与20号字且不压正文', heldIssues.length === 0
-    && heldLabel.parsedString.length === 1 && heldLabel.wrap === false && near(heldLabel.height, 24)
-    && near(heldLabel.lineHeight, 24) && near(heldLabel.fontSize, 20) && near(normalize(heldLabel), 20)
-    && contains(heldFrame.guide.box, heldLabel.box) && !intersects(heldLabel.box, heldFrame.guide.body.box),
-  { issues: heldIssues, label: heldLabel, normalizedFontSize: normalize(heldLabel), bodyBox: heldFrame.guide.body.box })
+  const heldGeometryIssues = guideTextBoxesIssues(heldFrame.guide)
+  must('HOLD短提示保持单行28高/22行高与20号字且各自身盒不交', heldIssues.length === 0
+    && heldLabel.parsedString.length === 1 && heldLabel.wrap === false && heldLabel.overflow === 2 && near(heldLabel.height, 28)
+    && near(heldLabel.lineHeight, 22) && near(heldLabel.fontSize, 20) && near(normalize(heldLabel), 20)
+    && heldGeometryIssues.length === 0,
+  { issues: heldIssues, geometryIssues: heldGeometryIssues, label: heldLabel,
+    normalizedFontSize: normalize(heldLabel), bodyBox: heldFrame.guide.body.box })
   // 真实提示的恢复计时器必须先走完；否则它稍后 repaint 会把负控几何悄悄还原。
   await wait('HOLD提示恢复当前步数', frame => frame.guide.position?.text.startsWith('第 '), 6_000)
   await wait('第二次升级键重新可用', frame => frame.cityActions.find(button => button?.name === 'DetailUpgradeButton')?.active)

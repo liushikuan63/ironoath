@@ -273,11 +273,11 @@ export class GuideView extends Component {
     const position = new Node('GuideStepPosition')
     position.layer = bubble.layer
     bubble.addChild(position)
-    position.addComponent(UITransform).setContentSize(new Size(bubbleWidth - 32, 24))
-    position.setPosition(new Vec3(0, BUBBLE_HEIGHT / 2 - 26, 0))
+    position.addComponent(UITransform).setContentSize(new Size(bubbleWidth - 32, 28))
+    position.setPosition(new Vec3(0, BUBBLE_HEIGHT / 2 - 22, 0))
     const positionLabel = applySystemUiFont(position.addComponent(Label))
     positionLabel.fontSize = 20
-    positionLabel.lineHeight = 24
+    positionLabel.lineHeight = 22
     positionLabel.overflow = Label.Overflow.SHRINK
     positionLabel.enableWrapText = false
     positionLabel.horizontalAlign = Label.HorizontalAlign.CENTER
@@ -290,7 +290,7 @@ export class GuideView extends Component {
     text.layer = bubble.layer
     bubble.addChild(text)
     text.addComponent(UITransform).setContentSize(new Size(bubbleWidth - 32, 62))
-    text.setPosition(new Vec3(0, 6, 0))
+    text.setPosition(new Vec3(0, 8, 0))
     const textLabel = applySystemUiFont(text.addComponent(Label))
     textLabel.fontSize = 20
     textLabel.lineHeight = 26
@@ -304,7 +304,7 @@ export class GuideView extends Component {
     row.layer = bubble.layer
     bubble.addChild(row)
     row.addComponent(UITransform).setContentSize(new Size(bubbleWidth - 32, BUTTON_HEIGHT))
-    row.setPosition(new Vec3(0, -BUBBLE_HEIGHT / 2 + BUTTON_HEIGHT / 2 + 12, 0))
+    row.setPosition(new Vec3(0, -BUBBLE_HEIGHT / 2 + BUTTON_HEIGHT / 2 + 8, 0))
     this.nextButton = this.button(row, 'GuideNext', BUTTON_WIDTH, '我完成了', false)
     this.nextCaption = this.nextButton.getChildByName('caption')?.getComponent(Label) ?? null
     this.skipButton = this.button(row, 'GuideSkip', BUTTON_WIDTH, '跳过这一步', true)
@@ -341,8 +341,12 @@ export class GuideView extends Component {
     label.addComponent(UITransform).setContentSize(new Size(width - 12, BUTTON_HEIGHT))
     const captionLabel = applySystemUiFont(label.addComponent(Label))
     captionLabel.fontSize = 22
-    captionLabel.lineHeight = BUTTON_HEIGHT
+    // NONE会按(1+BASELINE_RATIO)扩自己的高度；固定盒单行SHRINK保住字号与动作行边界。
+    captionLabel.lineHeight = 28
+    captionLabel.overflow = Label.Overflow.SHRINK
+    captionLabel.enableWrapText = false
     captionLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+    captionLabel.verticalAlign = Label.VerticalAlign.CENTER
     captionLabel.color = secondary ? COLOR_TEXT_DIM : COLOR_TEXT
     captionLabel.string = caption
     return node
@@ -403,7 +407,7 @@ export class GuideView extends Component {
       graphics.stroke()
     }
     // 对已有节点原位重排，不能只改外盒而留下旧Sprite、正文或触摸盒。
-    this.bubblePosition?.node.getComponent(UITransform)?.setContentSize(layout.innerWidth, 24)
+    this.bubblePosition?.node.getComponent(UITransform)?.setContentSize(layout.innerWidth, 28)
     this.bubbleText?.node.getComponent(UITransform)?.setContentSize(layout.innerWidth, 62)
     bubble.getChildByName('GuideButtons')?.getComponent(UITransform)?.setContentSize(layout.innerWidth, BUTTON_HEIGHT)
     this.buttonWidth = layout.buttonWidth

@@ -263,9 +263,55 @@ test('真实未达成回执只改短提示，步数保持固定单行盒且计�
   assert.equal(label.overflow, Label.Overflow.SHRINK); assert.equal(label.enableWrapText, false)
   assert.equal(label.horizontalAlign, Label.HorizontalAlign.CENTER)
   assert.equal(label.verticalAlign, Label.VerticalAlign.CENTER)
-  assert.equal(dimensions(position).width, 300); assert.equal(dimensions(position).height, 24)
+  assert.equal(dimensions(position).width, 300); assert.equal(dimensions(position).height, 28)
+  assert.equal(label.lineHeight, 22)
   const text = bubble.getChildByName('GuideStepText')!
-  assert.ok(position.position.y - 12 >= text.position.y + dimensions(text).height / 2)
+  assert.ok(position.position.y - 14 >= text.position.y + dimensions(text).height / 2)
   guide.setBubbleSuppressed('city', true); restoreHeld()
   assert.equal(label.string, '第 1 / 1 步'); assert.equal(bubble.active, false)
+})
+test('150高气泡的header正文与按钮自身盒互不相交，caption固定单行盒保22目标字号', () => {
+  for (const panel of ['city', 'quest']) {
+    const { guide, size, area } = setup(panel, true)
+    for (const height of [nativeSize.height, 600, 640, nativeSize.height]) {
+      size.height = height; Object.assign(area, height === nativeSize.height ? nativeArea
+        : { x: -480, y: -height / 2 + 60, width: 960, height: height - 60 }); guide.repaint()
+      const bubble = guide.bubble!, header = bubble.getChildByName('GuideStepPosition')!
+      const body = bubble.getChildByName('GuideStepText')!, buttons = bubble.getChildByName('GuideButtons')!
+      const bounds = (node: Node): { top: number, bottom: number } => ({
+        top: node.position.y + dimensions(node).height / 2,
+        bottom: node.position.y - dimensions(node).height / 2,
+      })
+      assert.equal(dimensions(bubble).height, 150)
+      assert.ok(bounds(header).bottom >= bounds(body).top, 'header与正文自身盒不交')
+      assert.ok(bounds(body).bottom >= bounds(buttons).top, '正文与动作行自身盒不交')
+      assert.equal(dimensions(header).height, 28); assert.equal(header.position.y, 53)
+      assert.equal(dimensions(body).height, 62); assert.equal(body.position.y, 8)
+      assert.equal(dimensions(buttons).height, 44); assert.equal(buttons.position.y, -45)
+      assert.equal(bounds(header).top, 67); assert.equal(bounds(buttons).bottom, -67)
+      const headerLabel = header.getComponent(Label)!
+      assert.equal(headerLabel.fontSize, 20); assert.equal(headerLabel.lineHeight, 22)
+      assert.equal(body.getComponent(Label)!.lineHeight, 26)
+      for (const button of buttons.children) {
+        const caption = button.getChildByName('caption')!, label = caption.getComponent(Label)!
+        assert.equal(dimensions(caption).height, 44); assert.equal(caption.position.y, 0)
+        assert.equal(label.fontSize, 22); assert.equal(label.lineHeight, 28)
+        assert.equal(label.overflow, Label.Overflow.SHRINK); assert.equal(label.enableWrapText, false)
+        assert.equal(label.horizontalAlign, Label.HorizontalAlign.CENTER)
+        assert.equal(label.verticalAlign, Label.VerticalAlign.CENTER)
+      }
+    }
+  }
+})
+test('单双动作Caption使用固定44高单行SHRINK，禁用NONE的55.44高自身盒扩张', () => {
+  for (const optional of [false, true]) {
+    const { guide } = setup('city', optional)
+    const row = guide.bubble!.getChildByName('GuideButtons')!
+    for (const button of row.children) {
+      const caption = button.getChildByName('caption')!, label = caption.getComponent(Label)!
+      assert.equal(label.overflow, Label.Overflow.SHRINK)
+      assert.equal(label.enableWrapText, false); assert.equal(label.verticalAlign, Label.VerticalAlign.CENTER)
+      assert.equal(dimensions(caption).height, 44); assert.equal(label.fontSize, 22); assert.equal(label.lineHeight, 28)
+    }
+  }
 })
