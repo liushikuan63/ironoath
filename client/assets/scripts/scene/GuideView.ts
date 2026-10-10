@@ -147,14 +147,24 @@ export class GuideView extends Component {
       this.bubble.active = !this.suppressedPanels.has(this.openPanelKey?.() ?? '')
     }
     this.node.active = true
+    this.keepAboveNavigation()
   }
 
   /** 原生安全区可在尺寸未变时改变，提示与导航洞必须同轮重排。 */
   override update(): void {
     if (this.driver === null || !this.node.active) return
+    // PanelNav在resize/安全区改变时重新addChild导航；尺寸未变的后续帧也要保持输入层级。
+    this.keepAboveNavigation()
     const size = view.getVisibleSize()
     const hole = this.holeOf(size.width, size.height)
     if (this.geometryKey(size.width, size.height, hole) !== this.layoutKey) this.repaint()
+  }
+
+  private keepAboveNavigation(): void {
+    const parent = this.node.parent
+    if (parent !== null && parent.children.indexOf(this.node) !== parent.children.length - 1) {
+      this.node.setSiblingIndex(parent.children.length - 1)
+    }
   }
 
   private geometryKey(width: number, height: number, hole: GuideRect): string {

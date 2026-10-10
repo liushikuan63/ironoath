@@ -43,6 +43,12 @@ class Node {
   private readonly events = new Map<string, () => void>()
   constructor(readonly name: string) {}
   addChild(node: Node): void { node.parent = this; this.children.push(node) }
+  setSiblingIndex(index: number): void {
+    if (this.parent === null) return
+    const siblings = this.parent.children
+    siblings.splice(siblings.indexOf(this), 1)
+    siblings.splice(Math.min(index, siblings.length), 0, this)
+  }
   addComponent<T extends object>(type: new () => T): T {
     const component = new type(); Object.assign(component, { node: this }); this.components.set(type, component)
     return component
@@ -170,6 +176,34 @@ test('安全区变化而尺寸不变时update仍更新气泡净区位置', () =>
   area.x += 17; area.width -= 31; guide.update()
   const after = bubbleRect(guide)
   assert.ok(Math.abs(after.x - (before.x - 14)) < 0.00001)
+})
+test('导航重建后尺寸不变也恢复Guide根层在最后，保住遮罩输入顺序', () => {
+  const { guide } = setup(), host = new Node('Canvas')
+  host.addChild(guide.node); host.addChild(new Node('NavBar'))
+  guide.update()
+  assert.equal(host.children.at(-1), guide.node)
+  assert.ok(guide.blockerNodes.length > 0)
+})
+test('重绘在新增导航和更多抽屉之上，不重建既有气泡', () => {
+  const { guide } = setup(), host = new Node('Canvas'), bubble = guide.bubble
+  host.addChild(guide.node); host.addChild(new Node('NavBar')); host.addChild(new Node('NavMoreLayer'))
+  guide.repaint()
+  assert.equal(host.children.at(-1), guide.node)
+  assert.equal(guide.bubble, bubble)
+})
+test('选择奖励收起气泡时Guide根层仍挡住洞外新导航', () => {
+  const { guide } = setup('quest'), host = new Node('Canvas')
+  host.addChild(guide.node); guide.setBubbleSuppressed('quest', true)
+  host.addChild(new Node('NavBar')); guide.update()
+  assert.equal(host.children.at(-1), guide.node)
+  assert.equal(guide.bubble!.active, false)
+  assert.ok(guide.blockerNodes.length > 0)
+})
+test('引导已结束后不抢新导航层级', () => {
+  const { guide } = setup(), host = new Node('Canvas'), nav = new Node('NavBar')
+  host.addChild(guide.node); guide.applyProgress(null); host.addChild(nav); guide.update()
+  assert.equal(host.children.at(-1), nav)
+  assert.equal(guide.node.active, false)
 })
 test('非city长文保原420宽；非对称安全区两角均在真实净区内', () => {
   const { guide } = setup('army')
