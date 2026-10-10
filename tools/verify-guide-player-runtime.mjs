@@ -41,6 +41,22 @@ const intersects = (a, b) => !!a && !!b && Math.min(a.right, b.right) - Math.max
 const contains = (outer, inner) => !!outer && !!inner && inner.verified && inner.left >= outer.left - 1
   && inner.top >= outer.top - 1 && inner.right <= outer.right + 1 && inner.bottom <= outer.bottom + 1
 
+/** 3.8.7 SHRINK 在原始栅格字号上取整；wrap 二分的 right 是 (初始字号+1)|0。 */
+function guideFontMetrics(label, target, maxFont) {
+  const validScale = !!label && Number.isFinite(label.fontScale) && label.fontScale > 0
+    && Number.isFinite(maxFont) && maxFont > 0 && Number.isFinite(target) && target > 0
+  let effectiveScale = validScale ? label.fontScale : NaN
+  if (effectiveScale * target > maxFont && target < maxFont) effectiveScale = maxFont / target
+  effectiveScale = Math.max(1, effectiveScale)
+  const rawMin = Math.floor(target * effectiveScale)
+  const rawMax = rawMin + (label?.wrap === true ? 1 : 0)
+  return { configured: label?.fontSize, target, fontScale: label?.fontScale, effectiveScale,
+    rawActual: label?.actualFontSize, rawMin, rawMax, normalized: label?.actualFontSize / effectiveScale,
+    validScale, pass: validScale && label.fontSize === target && label.overflow === 2
+      && typeof label.wrap === 'boolean' && Number.isInteger(label.actualFontSize)
+      && label.actualFontSize >= rawMin && label.actualFontSize <= rawMax }
+}
+
 /** 按真实自身盒判读；正文、表头与每颗文字都必须在气泡内，文字还必须在其按钮框内。 */
 function guideTextBoxesIssues(guide) {
   const issues = []
@@ -178,18 +194,15 @@ try {
   requireThat(existsSync(ccFile), '缺 Cocos 引擎产物，不能校准字号')
   const engine = readFileSync(ccFile, 'utf8')
   const maxFont = Number(engine.match(/_maxFontSize\s*=\s*(\d+)/)?.[1])
-  requireThat(Number.isFinite(maxFont) && engine.includes('_getStyleFontScale'), '当前引擎字号规则不可校准')
-  const normalize = label => {
-    if (!label || !Number.isFinite(label.fontScale)) return NaN
-    let scale = label.fontScale
-    if (scale * label.fontSize > maxFont && label.fontSize < maxFont) scale = maxFont / label.fontSize
-    return label.actualFontSize / Math.max(1, scale)
-  }
+  requireThat(Number.isFinite(maxFont) && engine.includes('_getStyleFontScale')
+    && engine.includes('_calculateShrinkFont') && /\.actualFontSize\s*\+\s*1/.test(engine), '当前引擎字号规则不可校准')
+  const fontMetrics = (label, target = label?.fontSize) => guideFontMetrics(label, target, maxFont)
   const copyIssues = (label, expected, frame) => {
     const issues = []
     if (!label?.drawable || !contains(frame.canvas, label.box)) issues.push('文字未真实绘制或超出画布')
     if (label?.text !== expected || label?.parsedString?.join('').replace(/\s/g, '') !== expected.replace(/\s/g, '')) issues.push('引擎分行未保留全文')
-    if (!Number.isFinite(normalize(label)) || normalize(label) < label.fontSize - 0.6) issues.push('标准化实际字号缩小')
+    const metrics = fontMetrics(label)
+    if (!metrics.validScale || !Number.isFinite(label?.actualFontSize) || label.actualFontSize < metrics.rawMin) issues.push('原始栅格实际字号缩水')
     if (label?.parsedString?.length * label.lineHeight > label.height + 1) issues.push('实际分行超过文本盒高度')
     return issues
   }
@@ -283,16 +296,16 @@ try {
     must(`${name}实际视口与响应式150高气泡`, near(guide.width, compact ? 324 : 420) && near(guide.height, 150)
       && contains(frame.canvas, guide.box), { visibleSize: frame.visibleSize, width: guide.width, box: guide.box })
     must(`${name}引导正文全文保持20号字与62高/26行高`, bodyIssues.length === 0
-      && near(guide.body?.fontSize, 20) && near(normalize(guide.body), 20)
+      && fontMetrics(guide.body, 20).pass
       && near(guide.body?.height, 62) && near(guide.body?.lineHeight, 26),
-      { issues: bodyIssues, label: guide.body, normalizedFontSize: normalize(guide.body) })
+      { issues: bodyIssues, label: guide.body, fontMetrics: fontMetrics(guide.body, 20) })
     const positionText = `第 ${index} / ${table.rows.length} 步`
     const positionIssues = copyIssues(guide.position, positionText, frame)
     must(`${name}步数全文保持单行20号字与28高/22行高`, positionIssues.length === 0
       && guide.position.parsedString.length === 1 && guide.position.wrap === false && guide.position.overflow === 2
-      && near(guide.position.fontSize, 20) && near(normalize(guide.position), 20)
+      && fontMetrics(guide.position, 20).pass
       && near(guide.position.height, 28) && near(guide.position.lineHeight, 22),
-    { issues: positionIssues, label: guide.position, normalizedFontSize: normalize(guide.position) })
+    { issues: positionIssues, label: guide.position, fontMetrics: fontMetrics(guide.position, 20) })
     must(`${name}提示底板与完成键真实材质`, guide.plateMaterial && guide.next?.material
       && guide.next.frameName?.includes('button-chip') && !guide.next.graphicsOn, guide)
     const geometryIssues = guideTextBoxesIssues(guide)
@@ -311,10 +324,10 @@ try {
       const issues = copyIssues(button.caption, button.caption.text, frame)
       must(`${name}/${button.name}按钮文字全文保持单行22号字与44高/28行高`, issues.length === 0
         && near(button.height, 44) && near(button.caption?.height, 44) && near(button.caption?.lineHeight, 28)
-        && near(button.caption?.fontSize, 22) && near(normalize(button.caption), 22)
+        && fontMetrics(button.caption, 22).pass
         && button.caption?.parsedString.length === 1 && button.caption.wrap === false && button.caption.overflow === 2
         && button.caption.horizontalAlign === 1 && button.caption.verticalAlign === 1,
-      { issues, label: button.caption, normalizedFontSize: normalize(button.caption) })
+      { issues, label: button.caption, fontMetrics: fontMetrics(button.caption, 22) })
     }
     if (frame.current === 'city') {
       must(`${name}引导避开真实升级/收割按钮`, frame.cityActions.filter(button => button?.active)
@@ -370,10 +383,10 @@ try {
   const heldGeometryIssues = guideTextBoxesIssues(heldFrame.guide)
   must('HOLD短提示保持单行28高/22行高与20号字且各自身盒不交', heldIssues.length === 0
     && heldLabel.parsedString.length === 1 && heldLabel.wrap === false && heldLabel.overflow === 2 && near(heldLabel.height, 28)
-    && near(heldLabel.lineHeight, 22) && near(heldLabel.fontSize, 20) && near(normalize(heldLabel), 20)
+    && near(heldLabel.lineHeight, 22) && fontMetrics(heldLabel, 20).pass
     && heldGeometryIssues.length === 0,
   { issues: heldIssues, geometryIssues: heldGeometryIssues, label: heldLabel,
-    normalizedFontSize: normalize(heldLabel), bodyBox: heldFrame.guide.body.box })
+    fontMetrics: fontMetrics(heldLabel, 20), bodyBox: heldFrame.guide.body.box })
   // 真实提示的恢复计时器必须先走完；否则它稍后 repaint 会把负控几何悄悄还原。
   await wait('HOLD提示恢复当前步数', frame => frame.guide.position?.text.startsWith('第 '), 6_000)
   await wait('第二次升级键重新可用', frame => frame.cityActions.find(button => button?.name === 'DetailUpgradeButton')?.active)
