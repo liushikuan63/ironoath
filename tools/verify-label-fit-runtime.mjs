@@ -26,7 +26,7 @@
  * Label，那里的"零缺陷"是读空集合读来的，别当成"没问题"。每一格读到几颗 Label 由 `READ` 行如实
  * 打印，`LABEL_FLOORS` 再钉一条下限挡住"夹具静默掉线"。
  */
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { chromium } from 'playwright'
@@ -501,6 +501,130 @@ async function walkPhase(page, key) {
   return read
 }
 
+// Sprite 按钮不在旧 Graphics 像素规划器里；这一维直接读生产行的 Value 与动作自身盒。
+const socialValueEvidence = []
+const readSocialValueLayouts = page => page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  const view = scene.getComponentInChildren('SocialPanelView')
+  if (!view?.node.activeInHierarchy || !Array.isArray(view.drawnRows)) return { found: false, rows: [] }
+  const cameras = scene.getComponentsInChildren('cc.Camera')
+  const drawable = (node, component) => {
+    if (!node?.activeInHierarchy || !component?.enabled || node._uiProps?.uiComp !== component
+      || !cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & node.layer) !== 0)) return false
+    for (let ancestor = node; ancestor; ancestor = ancestor.parent) {
+      if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) return false
+    }
+    return true
+  }
+  const selfBox = node => {
+    const box = node?.getComponent('cc.UITransform')
+    if (!box || box.width <= 0 || box.height <= 0) return null
+    const points = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([x, y]) =>
+      box.convertToWorldSpaceAR(new window.cc.Vec3((x - box.anchorX) * box.width, (y - box.anchorY) * box.height, 0)))
+    if (!points.every(point => [point.x, point.y].every(Number.isFinite))) return null
+    const xs = points.map(point => point.x), ys = points.map(point => point.y)
+    return { left: Math.min(...xs), right: Math.max(...xs), bottom: Math.min(...ys), top: Math.max(...ys) }
+  }
+  const rows = view.drawnRows.filter(row => row.activeInHierarchy).map((row, index) => {
+    const value = row.getChildByName('Value')
+    const label = value?.getComponent('cc.Label') ?? null
+    const actions = ['ActionButton', 'ActionButton2', 'ActionButton3'].map(name => row.getChildByName(name))
+      .filter(node => node?.activeInHierarchy).map(node => {
+        const sprite = node.getComponent('cc.Sprite')
+        return { node: node.name, text: String(node.getChildByName('Caption')?.getComponent('cc.Label')?.string ?? ''),
+          box: selfBox(node), drawable: drawable(node, sprite) && !!sprite.spriteFrame && sprite.color.a > 0,
+          frameName: sprite?.spriteFrame?.name ?? null }
+      })
+    return { index, title: String(row.getChildByName('Title')?.getComponent('cc.Label')?.string ?? ''),
+      hasValue: !!label, value: { text: String(label?.string ?? ''), box: selfBox(value),
+        drawable: drawable(value, label) && label.color.a > 0,
+        fontSize: label?.fontSize ?? null, actualFontSize: label?.actualFontSize ?? null, overflow: label?.overflow ?? null,
+        localPosition: value ? { x: value.position.x, y: value.position.y } : null }, actions }
+  })
+  return { found: true, rows, tab: view.tab, page: view.page,
+    sourceFundText: String(view.data?.alliance?.fundText ?? ''), sourceFund: view.lastResp?.alliance?.fund ?? null }
+})
+const socialValueFailures = (snapshot, requireFund = false) => {
+  if (!snapshot.found || snapshot.rows.length === 0) return ['生产SocialPanelView或当前可见行缺失']
+  const failures = []
+  const validBox = box => !!box && [box.left, box.right, box.top, box.bottom].every(Number.isFinite)
+    && box.right > box.left && box.top > box.bottom
+  const overlaps = (a, b) => Math.min(a.right, b.right) > Math.max(a.left, b.left)
+    && Math.min(a.top, b.top) > Math.max(a.bottom, b.bottom)
+  for (const row of snapshot.rows) {
+    if (!row.hasValue) { failures.push(`行${row.index}:真实Value Label缺失`); continue }
+    if (row.value.text === '') continue
+    if (!row.value.drawable || !validBox(row.value.box)) failures.push(`行${row.index}:Value未登记绘制或自身四角缺失`)
+    for (const action of row.actions) {
+      if (!action.drawable || !validBox(action.box)) failures.push(`行${row.index}:${action.node}真实Sprite绘制或自身四角缺失`)
+      else if (validBox(row.value.box) && overlaps(row.value.box, action.box)) {
+        failures.push(`行${row.index}:Value×${action.node}:自身盒重叠（${row.value.text}）`)
+      }
+    }
+  }
+  if (requireFund) {
+    const funds = snapshot.rows.filter(row => row.value.text === snapshot.sourceFundText && row.value.text !== '')
+    if (snapshot.sourceFund !== 12800 || snapshot.sourceFundText !== '联盟资金 12800' || funds.length !== 1) {
+      failures.push('已入盟权威fixture资金12800的完整Value字符串未唯一画出')
+    } else {
+      const fund = funds[0]
+      if (fund.value.overflow !== 2 || fund.value.fontSize !== 15 || !Number.isFinite(fund.value.actualFontSize)
+        || Math.abs(fund.value.actualFontSize - fund.value.fontSize) > 0.51) failures.push('资金Value SHRINK改变了原15号字的实际字号')
+      if (fund.actions.length !== 2 || !fund.actions.some(action => action.node === 'ActionButton' && action.text === '扩建')
+        || !fund.actions.some(action => action.node === 'ActionButton2' && action.text === '国家')) {
+        failures.push('资金概况行未画出真实扩建/国家两颗动作')
+      }
+    }
+  }
+  return failures
+}
+async function socialValuePass(page, tag) {
+  const requireFund = tag === 'social/alliance-joined'
+  const normal = await readSocialValueLayouts(page)
+  const normalFailures = socialValueFailures(normal, requireFund)
+  socialValueEvidence.push({ phase: tag, snapshot: normal, failures: normalFailures })
+  check(`${tag} 真实Value与所有可见Sprite动作自身盒无覆盖${requireFund ? '，完整资金12800且字号未缩' : ''}`,
+    JSON.stringify(normalFailures), '[]')
+  if (!requireFund) return
+  const moved = await page.evaluate(() => {
+    const view = window.cc.director.getScene().getComponentInChildren('SocialPanelView')
+    const fundText = view?.data?.alliance?.fundText
+    const row = view?.drawnRows?.find(row => row.activeInHierarchy
+      && row.getChildByName('Value')?.getComponent('cc.Label')?.string === fundText)
+    const value = row?.getChildByName('Value')
+    if (!value?.activeInHierarchy || !row.getChildByName('ActionButton')?.activeInHierarchy
+      || !row.getChildByName('ActionButton2')?.activeInHierarchy) return false
+    globalThis.__socialFundValueRestore = { node: value, position: value.position.clone() }
+    // 历史单按钮位置：680/2-120=220；只移动当前显示节点，不改fixture或业务数据。
+    value.setPosition(new window.cc.Vec3(220, value.position.y, value.position.z))
+    return true
+  })
+  checkTrue('资金遮挡负控前置：真实Value移回旧x220，保留两颗实际动作', moved)
+  if (!moved) return
+  try {
+    await page.waitForTimeout(180)
+    const broken = await readSocialValueLayouts(page)
+    const deviations = socialValueFailures(broken, true)
+    socialValueEvidence.push({ phase: '资金Value旧位置负控', snapshot: broken, failures: deviations })
+    checkTrue('资金旧位置被同一真实自身盒覆盖门因Value/扩建重叠抓到红',
+      deviations.some(issue => issue.includes(':Value×ActionButton:自身盒重叠')))
+    await page.screenshot({ path: path.join(OUT, 'social-alliance-value-old-position.png') })
+  } finally {
+    await page.evaluate(() => {
+      const saved = globalThis.__socialFundValueRestore
+      saved.node.setPosition(saved.position)
+      delete globalThis.__socialFundValueRestore
+    })
+  }
+  await page.waitForTimeout(180)
+  const restored = await readSocialValueLayouts(page)
+  const restoredFailures = socialValueFailures(restored, true)
+  socialValueEvidence.push({ phase: '资金Value旧位置负控还原', snapshot: restored, failures: restoredFailures })
+  checkTrue('资金负控finally还原后同一覆盖门恢复绿且实际Value/动作盒回到正常快照',
+    restoredFailures.length === 0 && JSON.stringify(restored.rows) === JSON.stringify(normal.rows))
+  await page.screenshot({ path: path.join(OUT, 'social-alliance-value-restored.png') })
+}
+
 /**
  * 像素法"底板压字"一趟：一张全图基线 + 每块候选底板一张（**按底板分组，不是一颗 Label 一张**），
  * 差在内存里裁字形带算。`tag` 让默认相与页签相位共用同一份实现（#409 把这一维推到那六屏上）。
@@ -508,6 +632,7 @@ async function walkPhase(page, key) {
  * 中途截的图不是玩家看到的样子。
  */
 async function platePass(page, key, tag) {
+  if (key === 'social') await socialValuePass(page, tag)
   if (process.env.LABELFIT_PLATES === '0') return
   const plan = await page.evaluate(planPlateCoverage, key)
   if (plan === null) return
@@ -823,8 +948,14 @@ if (process.env.LABELFIT_PLATES !== '0') {
 const measured = new Set(offenders)
 check('被压小的行**恰好**等于基线（新增会红；修好没删基线行也会红）',
   JSON.stringify([...measured].sort()) === JSON.stringify([...BASELINE].sort()), true)
+const expectedSocialValuePhases = [...labelsBy.keys()].filter(tag => tag === 'social' || tag.startsWith('social/')).sort()
+const actualSocialValuePhases = socialValueEvidence.map(item => item.phase).filter(tag => tag === 'social' || tag.startsWith('social/')).sort()
+checkTrue('真实Value/Sprite自身盒门的social相位集合非空', expectedSocialValuePhases.length > 0)
+check('所有已走到的social页签与翻页相都执行真实Value/Sprite自身盒门',
+  JSON.stringify(actualSocialValuePhases), JSON.stringify(expectedSocialValuePhases))
 
 console.log(`\n=== 通过 ${pass} 项，失败 ${fail} 项；SHRINK 行共 ${totalShrink} 颗（默认相那一趟的和；页签相位看各自 READ 行）===`)
+writeFileSync(path.join(OUT, 'social-value-layout-evidence.json'), JSON.stringify(socialValueEvidence, null, 2))
 await browser.close()
 await preview.close()
 process.exit(fail === 0 ? 0 : 1)

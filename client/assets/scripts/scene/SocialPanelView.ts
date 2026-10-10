@@ -562,6 +562,7 @@ export class SocialPanelView extends Component {
     const value = this.addLabel(node, 'Value', PANEL_WIDTH / 2 - 120, 0, COLOR_COPPER_GOLD, 15)
     value.horizontalAlign = Label.HorizontalAlign.RIGHT
     value.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    capWidth(value, 160)
 
     const action = new Node('ActionButton')
     action.layer = node.layer
@@ -1278,6 +1279,23 @@ export class SocialPanelView extends Component {
     }
     const visible = draft.actionText !== null
     button.active = visible
+    // 行池里的按钮数量会变，数值栏每次都按真实可见按钮的最左边界复位。
+    // 联盟概况有「扩建 / 国家」两颗键，不能仍把资金尾数放在单按钮的旧位置。
+    const actionLeft = Math.min(PANEL_WIDTH / 2 - PADDING,
+      ...[button, second, third].filter((action): action is Node => action !== undefined && action.active)
+        .map((action) => {
+          const box = action.getComponent(UITransform)
+          return action.position.x - (box?.width ?? 72) * (box?.anchorX ?? 0.5)
+        }))
+    const valueRight = Math.min(PANEL_WIDTH / 2 - 120, actionLeft - 8)
+    const textWidth = draft.value.length > 0
+      ? Math.min(380, valueRight - 160 - (-PANEL_WIDTH / 2 + PADDING) - 8) : 380
+    if (value !== undefined && value !== null) {
+      value.node.setPosition(new Vec3(valueRight, 0, 0))
+      capWidth(value, 160)
+    }
+    if (title !== undefined && title !== null) capWidth(title, textWidth)
+    if (detail !== undefined && detail !== null) capWidth(detail, textWidth)
     if (!visible) {
       return
     }
