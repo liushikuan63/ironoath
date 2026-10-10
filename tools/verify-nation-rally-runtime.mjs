@@ -212,7 +212,7 @@ async function equipAndTrain(player, nick, count) {
 }
 
 /** 浏览器里读编成弹层：节点名 + 屏上逐字文案 + 那颗键此刻的底色（选中=金）。 */
-function readComposeOverlay() {
+function readComposeOverlay(action = null) {
   const out = { found: false, active: false, texts: [], chips: [], numbers: [], bandBoxes: [] }
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas')?.getChildByName('Game')
@@ -241,7 +241,30 @@ function readComposeOverlay() {
     }
   }
   walk(overlay)
-  const band = overlay.getChildByName('rallyBand')
+  const uniqueChild = (parent, name) => {
+    const matches = (parent?.children ?? []).filter(node => node.name === name)
+    if (matches.length !== 1) throw new Error('Expected one child ' + name + ', got ' + matches.length)
+    return matches[0]
+  }
+  const viewports = overlay.children.filter(node => node.name === 'DialogContent')
+  if (viewports.length > 1) throw new Error('Duplicate DialogContent')
+  const content = viewports.length === 1 ? uniqueChild(viewports[0], 'DialogContentContent') : null
+  const children = [...overlay.children, ...(content?.children ?? [])]
+  const oneNode = name => {
+    const matches = children.filter(node => node.name === name)
+    if (matches.length !== 1) throw new Error('Expected one dialog node ' + name + ', got ' + matches.length)
+    return matches[0]
+  }
+  const band = oneNode('rallyBand')
+  if (action !== null) {
+    const target = action === 'nation' ? uniqueChild(band, '层级-NATION')
+      : action === 'confirm' ? oneNode('编成出征') : null
+    if (!target || target.activeInHierarchy === false) throw new Error('Missing active compose action ' + action)
+    const event = target.hasEventListener('touch-end') ? 'touch-end' : 'touch-start'
+    if (!target.hasEventListener(event)) throw new Error('Missing compose action listener ' + action)
+    target.emit(event)
+    return true
+  }
   for (const child of band?.children ?? []) {
     const text = labelOf(child) ?? (child.children ?? []).map(labelOf).find(t => t !== null) ?? ''
     if (child.name.startsWith('层级-')) {
@@ -504,16 +527,7 @@ async function main() {
     // 那颗键的"灰"在本仓的口径里 = **点下去不切层，并把服务端那句原因写到提示行**
     // （同一族既有注释写死了"置灰反而把原因一起藏了"，所以先点、再验屏上出现那句原话）。
     const beforeCount = requests.filter(r => r.includes('/rally/nation')).length
-    await page.evaluate(() => {
-      const band = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game')
-        .getChildByName('MarchCompose').getChildByName('rallyBand')
-      for (const child of band.children ?? []) {
-        if (child.name === '层级-NATION') {
-          child.emit('touch-start')
-          return
-        }
-      }
-    })
+    await page.evaluate(readComposeOverlay, 'nation')
     await page.waitForTimeout(900)
     view = await page.evaluate(readComposeOverlay)
     verdict(view.texts.some(t => t === plainNation?.reason),
@@ -547,16 +561,7 @@ async function main() {
   {
     const { context, page } = await openSession(starter)
     await openComposeRally(page)
-    await page.evaluate(() => {
-      const band = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game')
-        .getChildByName('MarchCompose').getChildByName('rallyBand')
-      for (const child of band.children ?? []) {
-        if (child.name === '层级-NATION') {
-          child.emit('touch-start')
-          return
-        }
-      }
-    })
+    await page.evaluate(readComposeOverlay, 'nation')
     await page.waitForTimeout(900)
     let view = await page.evaluate(readComposeOverlay)
     const nationChip = view.chips.find(c => c.scope === 'NATION' && c.active !== false)
@@ -598,22 +603,7 @@ async function main() {
       game.getComponent('GameBootstrap').root.pickMarchUnit('unit_infantry_t1', 5)
     })
     const beforeWrite = requests.filter(r => r.includes('/rally/nation')).length
-    await page.evaluate(() => {
-      const overlay = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game')
-        .getChildByName('MarchCompose')
-      // 按节点名找那颗壳（页脚四颗键的名字是中文，不是 'confirm'）；监听挂在节点自身
-      const walk = (node) => {
-        if (node.name === '编成出征') {
-          node.emit('touch-start')
-          return true
-        }
-        for (const child of node.children ?? []) {
-          if (walk(child)) return true
-        }
-        return false
-      }
-      return walk(overlay)
-    })
+    await page.evaluate(readComposeOverlay, 'confirm')
     await page.waitForTimeout(2_500)
     const afterWrite = requests.filter(r => r.includes('/rally/nation')).length
     verdict(afterWrite > beforeWrite,

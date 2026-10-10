@@ -481,8 +481,41 @@ const tapRow = await page.evaluate(`(() => {
 checkTrue('点得动夹具那一行（TargetRow 在树里且能收 touch-start）', tapRow)
 await page.waitForTimeout(700)
 
+const DIALOG_GEOMETRY = String.raw`const uniqueChild = (parent, name) => {
+  const matches = (parent?.children ?? []).filter(node => node.name === name)
+  if (matches.length !== 1) throw new Error('Expected one child ' + name + ', got ' + matches.length)
+  return matches[0]
+}
+const dialogChildren = overlay => {
+  if (!overlay) throw new Error('Missing dialog root')
+  const viewports = overlay.children.filter(node => node.name === 'DialogContent')
+  if (viewports.length > 1) throw new Error('Duplicate DialogContent')
+  const content = viewports.length === 1 ? uniqueChild(viewports[0], 'DialogContentContent') : null
+  return [...overlay.children, ...(content?.children ?? [])]
+}
+const dialogNode = (overlay, name) => {
+  const matches = dialogChildren(overlay).filter(node => node.name === name)
+  if (matches.length !== 1) throw new Error('Expected one dialog node ' + name + ', got ' + matches.length)
+  return matches[0]
+}
+const composeRows = overlay => {
+  const rows = dialogChildren(overlay).filter(node => /^composeRow\d+$/.test(node.name))
+  if (new Set(rows.map(node => node.name)).size !== rows.length) throw new Error('Duplicate compose rows')
+  return rows.filter(node => node.active)
+}
+const ownWorldBox = node => {
+  const box = node?.getComponent('cc.UITransform')
+  if (!box || box.width <= 0 || box.height <= 0) throw new Error('Missing or empty own UITransform')
+  const points = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([x, y]) =>
+    box.convertToWorldSpaceAR(new window.cc.Vec3((x - box.anchorX) * box.width, (y - box.anchorY) * box.height, 0)))
+  if (!points.every(point => [point.x, point.y].every(Number.isFinite))) throw new Error('Invalid own world corners')
+  const xs = points.map(point => point.x), ys = points.map(point => point.y)
+  return { left: Math.min(...xs), right: Math.max(...xs), bottom: Math.min(...ys), top: Math.max(...ys) }
+}`
+
 /** 编成弹层的可读状态：标题前缀 + 两颗键上的字。按节点名取，不按下标（加一颗键就会错位）。 */
 const COMPOSE = `(() => {
+  ${DIALOG_GEOMETRY}
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const overlay = game?.getChildByName('MarchCompose')
   if (!overlay) return { found: false }
@@ -490,7 +523,7 @@ const COMPOSE = `(() => {
     const node = overlay.getChildByName(name)
     return node?.getChildByName('label')?.getComponent('cc.Label')?.string ?? null
   }
-  const title = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])]
+  const title = dialogChildren(overlay)
     .filter((c) => c.name === 'label')
     .map((c) => c.getComponent('cc.Label')?.string ?? '')
     .find((s) => s.includes('：')) ?? ''
@@ -540,18 +573,19 @@ console.log(`  截图：${path.join(OUT, 'compose-mode-rally.png')}`)
 // 名字那颗按**锚点**判、不按当前数据长短判：dev 新号只有两种兵、名字两个字，"越界多少 px"量不出来
 // （实测 nameLeft == barLeft、0 越界），只盯墨迹会把"中心对齐放在左内缩点上"这个结构性缺陷读成正常。
 const ROW_BOXES = await page.evaluate(`(() => {
+  ${DIALOG_GEOMETRY}
   const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     ?.getChildByName('MarchCompose')
-  const rows = (overlay?.children ?? []).filter((c) => /^composeRow\\d+$/.test(c.name) && c.active)
+  const rows = composeRows(overlay)
   return rows.map((r) => {
-    const bar = r.getComponent('cc.UITransform').getBoundingBoxToWorld()
+    const bar = ownWorldBox(r)
     const kids = r.children.map((k) => {
       const t = k.getComponent('cc.UITransform')
-      const b = t.getBoundingBoxToWorld()
+      const b = ownWorldBox(k)
       return { text: (k.getComponent('cc.Label')?.string ?? '').slice(0, 10),
-        left: b.x, right: b.x + b.width, anchorX: t.anchorX }
+        left: b.left, right: b.right, anchorX: t.anchorX }
     })
-    return { barLeft: bar.x, barRight: bar.x + bar.width, name: kids[0], kids }
+    return { barLeft: bar.left, barRight: bar.right, name: kids[0], kids }
   })
 })()`)
 const spilledLeft = ROW_BOXES.filter((r) => r.name !== undefined && r.name.left < r.barLeft - 1)
@@ -582,20 +616,18 @@ check('遮罩命中区高 = 整屏高', scrim !== null && scrim.h >= scrim.scree
 // 相位 B 只证明"能切成集结"。这一相盯的是：层级切得动、政策给的两个数画得出来、
 // 越界那一侧的键不画、按节点名读得到（#291 的教训：只量中心在板内抓不到被切掉的半截字）。
 const BAND = `(() => {
+  ${DIALOG_GEOMETRY}
   const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     ?.getChildByName('MarchCompose')
-  const band = overlay?.getChildByName('rallyBand')
+  const band = dialogNode(overlay, 'rallyBand')
   if (!band) return { found: false }
   const labelOf = (name) => band.getChildByName(name)?.getComponent('cc.Label')?.string ?? null
   const chipText = (scope) => band.getChildByName('层级-' + scope)
     ?.getChildByName('label')?.getComponent('cc.Label')?.string ?? null
   const isActive = (name) => band.getChildByName(name)?.active ?? null
-  const box = (node) => {
-    const t = node.getComponent('cc.UITransform')
-    return { top: node.position.y, bottom: node.position.y - t.height }
-  }
-  const rows = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].filter((c) => /^composeRow\\d+$/.test(c.name) && c.active)
-  const footer = ['编成取消', '编成出征', '编成种类'].map((n) => overlay.getChildByName(n)).filter(Boolean)
+  const box = ownWorldBox
+  const rows = composeRows(overlay)
+  const footer = ['编成取消', '编成出征', '编成种类'].map((name) => dialogNode(overlay, name))
   return {
     found: true,
     active: band.active,
@@ -607,7 +639,7 @@ const BAND = `(() => {
     bandBottom: box(band).bottom,
     lastRowBottom: rows.length === 0 ? null : Math.min(...rows.map((r) => box(r).bottom)),
     footerTop: footer.length === 0 ? null : Math.max(...footer.map((f) => box(f).top)),
-    totalText: [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])]
+    totalText: dialogChildren(overlay)
       .filter((c) => c.name === 'label')
       .map((c) => c.getComponent('cc.Label')?.string ?? '')
       .find((s) => s.startsWith('共派')) ?? '',
@@ -616,10 +648,12 @@ const BAND = `(() => {
 
 /** 从编成弹层往下按节点名找（路径（'rallyBand/层级-ALLIANCE'）并喂一次 touch-start */
 const tapCompose = (trail) => page.evaluate(`(() => {
+  ${DIALOG_GEOMETRY}
   const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     ?.getChildByName('MarchCompose')
-  let node = overlay
-  for (const part of '${trail}'.split('/')) { node = node?.getChildByName(part) }
+  const parts = '${trail}'.split('/')
+  let node = dialogNode(overlay, parts[0])
+  for (const part of parts.slice(1)) node = uniqueChild(node, part)
   if (!node) return false
   node.emit(node.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
@@ -666,9 +700,10 @@ console.log(`  截图：${path.join(OUT, 'compose-rally-alliance.png')}`)
  * 那种缺陷读数全绿（值对、位置在板内），只有量盒子或看画面才抓得到。
  */
 const BAND_LAYOUT = `(() => {
+  ${DIALOG_GEOMETRY}
   const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     ?.getChildByName('MarchCompose')
-  const band = overlay?.getChildByName('rallyBand')
+  const band = dialogNode(overlay, 'rallyBand')
   if (!band) return null
   const boxes = []
   const allChildren = []
@@ -681,11 +716,10 @@ const BAND_LAYOUT = `(() => {
     const label = child.getComponent('cc.Label')
     if (!isButton && label === null) continue
     boxes.push({
+      ...ownWorldBox(child),
       name: child.name,
       text: isButton ? (child.getChildByName('label')?.getComponent('cc.Label')?.string ?? '')
         : (label?.string ?? ''),
-      left: child.position.x - t.width / 2, right: child.position.x + t.width / 2,
-      top: child.position.y + t.height / 2, bottom: child.position.y - t.height / 2,
     })
   }
   const overlaps = []
@@ -698,8 +732,9 @@ const BAND_LAYOUT = `(() => {
     }
   }
   const leaked = boxes.filter((b) => b.text === 'label' || b.text === '').map((b) => b.name)
-  const half = band.getComponent('cc.UITransform').width / 2
-  const outside = boxes.filter((b) => Math.abs(b.left) > half || Math.abs(b.right) > half)
+  const bandBox = ownWorldBox(band)
+  const outside = boxes.filter((box) => box.left < bandBox.left - 0.5 || box.right > bandBox.right + 0.5
+    || box.bottom < bandBox.bottom - 0.5 || box.top > bandBox.top + 0.5)
     .map((b) => b.name)
   return { count: boxes.length, overlaps, leaked, outside, names: boxes.map((b) => b.name), allChildren }
 })()`
@@ -733,10 +768,11 @@ check('人数停在上界不越界（越界的数发出去会被服务端夹回�
   (await page.evaluate(BAND))?.values?.[0], '12/12人')
 
 const tapRowPlus = await page.evaluate(`(() => {
+  ${DIALOG_GEOMETRY}
   const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     ?.getChildByName('MarchCompose')
-  const row = (overlay?.children || []).find((c) => c.name === 'composeRow0')
-  const plus = row?.getChildByName('row-＋')
+  const row = dialogNode(overlay, 'composeRow0')
+  const plus = uniqueChild(row, 'row-＋')
   if (!plus) return false
   plus.emit(plus.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
@@ -893,23 +929,60 @@ const menu = await page2.evaluate(MENU)
 checkTrue('菜单真的弹出来了（ChoiceOverlay 激活）', menu?.found === true)
 check('菜单挂在场景层（Game 节点）：面板每秒为倒计时重挂行，建在面板里的弹层会被压住',
   menu?.parentName, 'Game')
-const oneLine = await page2.evaluate(`(() => {
-  const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
-  let overlay = null
-  const find = (n) => { if (n.name === 'ChoiceOverlay' && n.active) overlay = n; for (const c of n.children) find(c) }
+const oneLine = await page2.evaluate(`(async () => {
+  ${DIALOG_GEOMETRY}
+  const director = window.cc.director
+  const event = window.cc.Director?.EVENT_AFTER_DRAW
+  if (!event || typeof director.on !== 'function' || typeof director.off !== 'function'
+      || typeof director.getTotalFrames !== 'function') return { found: false, reason: 'Missing after-draw evidence' }
+  const frameIds = []
+  const drawn = await new Promise(resolve => {
+    const finish = accepted => { clearTimeout(timer); director.off(event, onDraw); resolve(accepted) }
+    const onDraw = () => {
+      const id = director.getTotalFrames()
+      if (Number.isFinite(id) && !frameIds.includes(id)) frameIds.push(id)
+      if (frameIds.length >= 2) finish(true)
+    }
+    const timer = setTimeout(() => finish(false), 2000)
+    director.on(event, onDraw)
+  })
+  const game = director.getScene().getChildByName('Canvas')?.getChildByName('Game')
+  const overlays = []
+  const find = node => {
+    if (node.name === 'ChoiceOverlay' && node.activeInHierarchy) overlays.push(node)
+    for (const child of node.children) find(child)
+  }
   find(game)
-  if (overlay === null) return null
-  const panelW = overlay.getComponent('cc.UITransform')?.width ?? 0
-  const row = [...(overlay.children || []), ...(overlay.getChildByName('DialogContent')?.getChildByName('DialogContentContent')?.children ?? [])].find((c) => c.name === 'Choice-0')
-  const title = (row?.children || []).find((c) => (c.getComponent('cc.Label')?.string ?? '').includes('取消'))
-  const t = title?.getComponent('cc.UITransform')
-  const band = row?.getComponent('cc.UITransform')
-  return { panelW, titleH: t?.height ?? null, titleW: t?.width ?? null, bandW: band?.width ?? null }
+  if (overlays.length !== 1) throw new Error('Expected one active ChoiceOverlay, got ' + overlays.length)
+  const overlay = overlays[0]
+  const row = dialogNode(overlay, 'Choice-0')
+  const titles = row.children.filter(node => (node.getComponent('cc.Label')?.string ?? '').includes('取消'))
+  if (titles.length !== 1) throw new Error('Expected one cancellation title, got ' + titles.length)
+  const title = titles[0]
+  const label = title.getComponent('cc.Label')
+  const t = title.getComponent('cc.UITransform')
+  const font = [label.isItalic ? 'italic' : '', label.isBold ? 'bold' : '', label.fontSize + 'px', label.fontFamily].filter(Boolean).join(' ')
+  const context = document.createElement('canvas').getContext('2d')
+  if (!context || !label.useSystemFont || !label.fontFamily) throw new Error('Missing actual system-font measurement')
+  context.font = font
+  const naturalWidth = context.measureText(label.string).width
+  const titleBox = ownWorldBox(title), rowBox = ownWorldBox(row)
+  const inRow = titleBox.left >= rowBox.left - 0.5 && titleBox.right <= rowBox.right + 0.5
+    && titleBox.bottom >= rowBox.bottom - 0.5 && titleBox.top <= rowBox.top + 0.5
+  return { found: true, drawn, frameIds, text: label.string, fontSize: label.fontSize,
+    actualFontSize: label.actualFontSize, wrap: label.enableWrapText, useSystemFont: label.useSystemFont,
+    fontFamily: label.fontFamily, measuredFont: context.font, naturalWidth, titleBox, rowBox, inRow,
+    panelW: overlay.getComponent('cc.UITransform')?.width ?? 0, titleH: t.height, titleW: t.width,
+    bandW: row.getComponent('cc.UITransform')?.width ?? 0 }
 })()`)
-checkTrue('选项标题是一行（盒子高度不超过一行 17 号字）：被挤成两行就是版式没吃到面板宽',
-  oneLine !== null && oneLine.titleH !== null && oneLine.titleH <= 26)
+console.log('  Choice标题实绘：' + JSON.stringify(oneLine))
+checkTrue('选项标题实绘为一行且保留17号字（27高槽、自然单行宽在自身盒内）',
+  oneLine?.found === true && oneLine.drawn === true && oneLine.frameIds.length === 2
+    && oneLine.fontSize === 17 && oneLine.actualFontSize === 17 && oneLine.titleH === 27
+    && Number.isFinite(oneLine.naturalWidth) && oneLine.naturalWidth > 0
+    && oneLine.naturalWidth <= oneLine.titleW + 0.5 && !/[\r\n]/.test(oneLine.text))
 checkTrue('行的色带与标题盒子都在面板内（窄面板不再溢出）',
-  oneLine !== null && oneLine.bandW <= oneLine.panelW && oneLine.titleW <= oneLine.panelW)
+  oneLine?.found === true && oneLine.bandW <= oneLine.panelW && oneLine.titleW <= oneLine.panelW && oneLine.inRow)
 checkTrue('菜单里那条写的是「取消这一口训练」，并把在练的数量说清了',
   (menu?.texts ?? []).some((t) => t.includes('取消这一口训练'))
     && (menu?.texts ?? []).some((t) => t.includes('30') && t.includes('重步')), true)
@@ -1098,10 +1171,11 @@ await page.screenshot({ path: path.join(OUT, 'compose-scout-selected.png') })
 console.log('  截图：' + path.join(OUT, 'compose-scout-selected.png'))
 
 checkTrue('按得到第一行兵力的「＋」', await page.evaluate(`(() => {
+  ${DIALOG_GEOMETRY}
   const overlay = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
     ?.getChildByName('MarchCompose')
-  const row = (overlay?.children || []).find((c) => c.name === 'composeRow0')
-  const plus = row?.getChildByName('row-＋')
+  const row = dialogNode(overlay, 'composeRow0')
+  const plus = uniqueChild(row, 'row-＋')
   if (!plus) return false
   plus.emit(plus.hasEventListener('touch-end') ? 'touch-end' : 'touch-start')
   return true
