@@ -333,8 +333,9 @@ export class GameBootstrap extends Component {
       }
       // 活动不占首屏（B17 §六：它是任务面板里的一个页签），玩家真点开任务那一格才拉第一次。
       // 每次打开都拉而不是"只拉一次"：读取路径在服务端会顺手同步窗口，缓存会让 EXPIRED 迟到
+      // 任务进度也会被城建、训练与战斗推进：打开时重拉，才能领刚完成的任务。
       if (key === 'quest') {
-        void this.root?.refresh('activity')
+        void this.root?.refresh('quest', 'activity')
       }
       // 商店不占首屏：多一个并发请求会挤那 3 秒预算，而货架不在可交互的必需项里
       if (key === 'shop') {

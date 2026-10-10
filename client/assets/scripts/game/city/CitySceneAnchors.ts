@@ -256,3 +256,39 @@ export function projectSceneLayout(
     })),
   }
 }
+
+/** 舞台局部坐标中的纵向区间；HUD 区间不随镜头缩放。 */
+export interface SceneVerticalBounds {
+  readonly bottom: number
+  readonly top: number
+}
+
+/**
+ * 默认地标构图：联合楼体与基座铭牌避开实际 HUD，舞台仍覆盖整幅视口。
+ *
+ * 先限制实体边长，再尽量保留原主体居中位置。仅平移不能解决低高度横屏：
+ * 铭牌抬出操作栏时，原尺寸的塔顶会撞进顶部文字。
+ * 字体盒可能高于薄框，caption 必须包含框、名称与等级的实际联合边界。
+ */
+export function fitSceneLandmark(
+  viewportHeight: number, zoom: number, footY: number, preferredSize: number,
+  footRatio: number, caption: SceneVerticalBounds, safe: SceneVerticalBounds,
+): { size: number, stageY: number } {
+  const available = Math.max(0, safe.top - safe.bottom) / zoom
+  const coverLimit = Math.max(0, viewportHeight * (zoom - 1) / 2)
+  const fromTop = footRatio < 1 ? (available + caption.bottom) / (1 - footRatio) : Infinity
+  const fromBottom = footRatio > 0 ? (available - caption.top) / footRatio : Infinity
+  const reachTop = footRatio < 1
+    ? ((safe.top + coverLimit) / zoom - footY) / (1 - footRatio) : Infinity
+  const reachBottom = footRatio > 0
+    ? (footY - (safe.bottom - coverLimit) / zoom) / footRatio : Infinity
+  const size = Math.max(1, Math.min(preferredSize, available, fromTop, fromBottom, reachTop, reachBottom))
+  const bottom = footY + Math.min(-size * footRatio, caption.bottom)
+  const top = footY + Math.max(size * (1 - footRatio), caption.top)
+  const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value))
+  const centered = clamp(-(footY + size * (0.5 - footRatio)) * zoom, -coverLimit, coverLimit)
+  const low = Math.max(-coverLimit, safe.bottom - bottom * zoom)
+  const high = Math.min(coverLimit, safe.top - top * zoom)
+  // 极小视口或无法移动的格位可能没有可行交集，仍遵守铺满边界，不产生露底位移。
+  return { size, stageY: low <= high + 1e-8 ? clamp(centered, low, high) : centered }
+}

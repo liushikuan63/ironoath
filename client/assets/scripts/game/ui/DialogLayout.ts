@@ -1,8 +1,26 @@
-/** A 档弹窗几何：把内容与操作留在真实净区内，长内容交给滚动容器。 */
+/** UI净区与A档弹窗几何：内容和操作留在真实净区内，长内容交给滚动容器。 */
 import { PANEL_IRON_INSET } from '../art/ArtFamilies'
 import { CORNER_RADIUS } from './UiTokens'
 
 export interface DialogRect { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+
+export interface ViewportInsets {
+  readonly left: number; readonly right: number; readonly top: number; readonly bottom: number
+}
+
+/** 输入是引擎已转换好的UI Rect（左下原点），不再乘DPR或重新换算屏幕像素。 */
+export function safeAreaInsets(width: number, height: number, rect: DialogRect | null): ViewportInsets {
+  const zero = { left: 0, right: 0, top: 0, bottom: 0 }
+  if (![width, height].every(Number.isFinite) || width <= 0 || height <= 0 || rect === null
+      || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+      || rect.width <= 0 || rect.height <= 0) return zero
+  const left = Math.max(0, Math.min(width, rect.x))
+  const rightEdge = Math.max(0, Math.min(width, rect.x + rect.width))
+  const bottom = Math.max(0, Math.min(height, rect.y))
+  const topEdge = Math.max(0, Math.min(height, rect.y + rect.height))
+  if (rightEdge <= left || topEdge <= bottom) return zero
+  return { left, right: width - rightEdge, top: height - topEdge, bottom }
+}
 
 /** 极矮视口用 token 绘制薄边框；不把 C 档提示条拉成 A 档面板。 */
 export const DIALOG_COMPACT_INSET = {

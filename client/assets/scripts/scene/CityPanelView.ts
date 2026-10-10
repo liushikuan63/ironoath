@@ -25,9 +25,10 @@ import {
 } from './ArtCatalog'
 import { buildingArtFootRatio, buildingArtKey, PANEL_FRAME_BAND } from '../game/art/ArtFamilies'
 import { applySystemUiFont, capWidth, oneLineFloorHeight } from './UiFont'
+import { viewportSafeInsets } from './ViewportSafeArea'
 import {
   DISTRICT_TINT_RGB, SCENE_RUNTIME_HEIGHT, SCENE_RUNTIME_WIDTH,
-  SCENE_STAGE_HEIGHT, SCENE_STAGE_WIDTH, coverSceneSize, projectSceneLayout, scenePlatesBackToFront,
+  SCENE_STAGE_HEIGHT, SCENE_STAGE_WIDTH, coverSceneSize, fitSceneLandmark, projectSceneLayout, scenePlatesBackToFront,
 } from '../game/city/CitySceneAnchors'
 import type { ProjectedPlate, SceneDistrict, SceneLayout } from '../game/city/CitySceneAnchors'
 
@@ -53,6 +54,7 @@ const COLOR_NAMEPLATE_IVORY = new Color(239, 232, 213, 255)
 const NAMEPLATE_WIDTH = 96
 const NAMEPLATE_HEIGHT = 22
 const NAMEPLATE_Y = -16
+const LANDMARK_HUD_GAP = 4
 
 /**
  * 五区地皮色。色值真源在 `CitySceneAnchors.DISTRICT_TINT_RGB`（引擎无关层）。
@@ -265,6 +267,7 @@ export class CityPanelView extends Component {
   /** 城景内容区 = 整块可视区；onLoad 时按 `view.getVisibleSize()` 定，回退值见常量。 */
   private contentWidth = CONTENT_WIDTH_FALLBACK
   private contentHeight = CONTENT_HEIGHT_FALLBACK
+  private safeInsets = { left: 0, right: 0, top: 0, bottom: 0 }
   /** 36 格落点；与 `contentWidth/Height` 同源，参考图模式下它就是建筑与热区的唯一位置来源。 */
   private sceneLayout: SceneLayout =
     projectSceneLayout(CONTENT_WIDTH_FALLBACK, CONTENT_HEIGHT_FALLBACK, 0)
@@ -340,6 +343,7 @@ export class CityPanelView extends Component {
   private setup(width: number, height: number): void {
     this.contentWidth = width
     this.contentHeight = height
+    this.safeInsets = viewportSafeInsets(width, height)
     this.sceneLayout = projectSceneLayout(width, height, 0)
     this.decorScale = this.sceneLayout.scale / BASE_SCENE_LAYOUT.scale
     this.buildBackground(width, height)
@@ -350,6 +354,7 @@ export class CityPanelView extends Component {
     this.card = card
     this.buildCard()
     this.layoutCard()
+    this.setFocus(this.focusX, this.focusY)
     this.buildPicker = new ChoiceOverlay(card, '选择要建造的建筑', width - 24)
   }
 
@@ -388,7 +393,10 @@ export class CityPanelView extends Component {
    */
   private relayoutIfResized(): void {
     const size = view.getVisibleSize()
-    if (size.width === this.lastViewWidth && size.height === this.lastViewHeight) {
+    const safe = viewportSafeInsets(size.width, size.height)
+    if (size.width === this.lastViewWidth && size.height === this.lastViewHeight
+        && safe.left === this.safeInsets.left && safe.right === this.safeInsets.right
+        && safe.top === this.safeInsets.top && safe.bottom === this.safeInsets.bottom) {
       return
     }
     this.lastViewWidth = size.width
@@ -649,7 +657,7 @@ export class CityPanelView extends Component {
 
   /** 右下角两颗缩放键。滚轮只在 Web 上有、捏合在真机上容易和拖动打架，键是那条兜底路径。 */
   private buildZoomControls(parent: Node): void {
-    const x = this.contentWidth / 2 - FRAME_BAND - ZOOM_BUTTON_WIDTH / 2 - 6
+    const x = this.contentWidth / 2 - this.safeInsets.right - FRAME_BAND - ZOOM_BUTTON_WIDTH / 2 - 6
     // 2026-10-04：**缩放键挪出网格占用区**（裁决 callId 7e1d1eae-47d1-4480-84f8-e0ab2bce152c 选项一）。
     // 原来 `lowerY = -contentHeight/2 + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26`
     // —— 那个值比网格底边**还高 26px**，两颗键整个落在网格里。
@@ -660,7 +668,7 @@ export class CityPanelView extends Component {
     // 就是 `Grid-35` 被 `ZoomOutButton` 压住。
     // ⇒ 改放进**动作条带**（`-contentHeight/2 + NAV_BAR_HEIGHT` 起、高 `ACTION_HEIGHT`），
     // 那一带在网格之外，两颗键竖排正好放得下（34×2 + 4 间距 = 72 ≤ 76）。
-    const bandCenterY = -this.contentHeight / 2 + NAV_BAR_HEIGHT + ACTION_HEIGHT / 2
+    const bandCenterY = -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT / 2
     const stackGap = 4
     this.createZoomButton(parent, 'ZoomOutButton', '-', x, bandCenterY - (ZOOM_BUTTON_HEIGHT + stackGap) / 2)
     this.createZoomButton(parent, 'ZoomInButton', '+', x, bandCenterY + (ZOOM_BUTTON_HEIGHT + stackGap) / 2)
@@ -728,18 +736,20 @@ export class CityPanelView extends Component {
       shade.fill()
     }
 
-    const top = this.contentHeight / 2 - 18
+    const top = this.contentHeight / 2 - this.safeInsets.top - 18
     // 居中排也要限宽：队列行最长那句会随服务端给的数变长，右端顶进右上角
     // 「一键收割」里（origin 线 #335 实测压住 29px）—— 让位给键，长句交给 SHRINK。
-    const cornerX = this.contentWidth / 2 - FRAME_BAND - 76
-    const headerCap = this.contentWidth / 2 + cornerX - CORNER_KEY_WIDTH / 2 - 8
-    this.headerLabel = this.addLabel(card, 'Header', 0, top - 14, COLOR_COPPER_GOLD, 22, false, headerCap)
-    this.queueLabel = this.addLabel(card, 'Queue', 0, top - 38, COLOR_TEXT, 16, false, headerCap)
+    const safeWidth = this.contentWidth - this.safeInsets.left - this.safeInsets.right
+    const centerX = (this.safeInsets.left - this.safeInsets.right) / 2
+    const cornerX = this.contentWidth / 2 - this.safeInsets.right - FRAME_BAND - 76
+    const headerCap = safeWidth / 2 + cornerX - centerX - CORNER_KEY_WIDTH / 2 - 8
+    this.headerLabel = this.addLabel(card, 'Header', centerX, top - 14, COLOR_COPPER_GOLD, 22, false, headerCap)
+    this.queueLabel = this.addLabel(card, 'Queue', centerX, top - 38, COLOR_TEXT, 16, false, headerCap)
 
     // 资源条只占左上角一块，不横跨整屏 —— 满屏城景下横跨会把城压成一条缝，
     // 而两列三行的底板右缘停在画面中线以左，不会盖住主堡（实测三列会盖住）。
-    const columnWidth = Math.min(165, this.contentWidth / 5.4)
-    const blockLeft = -this.contentWidth / 2 + 14
+    const columnWidth = Math.min(165, safeWidth / 5.4)
+    const blockLeft = -this.contentWidth / 2 + this.safeInsets.left + 14
     const blockTop = top - 52
     const rowStep = 20
     const rows = 3
@@ -771,8 +781,8 @@ export class CityPanelView extends Component {
       card, 'ResourceOverflow', blockLeft + 8, blockTop - 8 - rows * rowStep,
       COLOR_TEXT_DIM, 12, true, blockWidth * 2)
 
-    this.messageLabel = this.addLabel(card, 'Message', 0,
-      -this.contentHeight / 2 + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26, COLOR_WARNING, 15)
+    this.messageLabel = this.addLabel(card, 'Message', centerX,
+      -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26, COLOR_WARNING, 15)
   }
 
   private buildGrid(parent: Node): void {
@@ -1010,7 +1020,7 @@ export class CityPanelView extends Component {
     this.selectionBar = bar
     bar.addComponent(UITransform).setContentSize(new Size(this.contentWidth, ACTION_HEIGHT))
     // 落在底部导航条之上：满屏城景后不能再按卡片高度算，否则会被导航压住
-    bar.setPosition(new Vec3(0, -this.contentHeight / 2 + NAV_BAR_HEIGHT + ACTION_HEIGHT / 2, 0))
+    bar.setPosition(new Vec3(0, -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT / 2, 0))
     const background = new Node('SelectionBarBackground')
     background.layer = bar.layer
     bar.addChild(background)
@@ -1025,10 +1035,10 @@ export class CityPanelView extends Component {
     graphics.fill()
     graphics.stroke()
 
-    const left = -this.contentWidth / 2 + 12
+    const left = -this.contentWidth / 2 + this.safeInsets.left + 12
     // 按钮簇整体靠右：左半给名字与状态，右半给动作，
     // 否则满屏城景下选择栏右半永远是一条空带（实测空约 45% 宽）。
-    const clusterLeft = this.contentWidth / 2 - 12 - 430
+    const clusterLeft = this.contentWidth / 2 - this.safeInsets.right - 12 - 430
     const textCap = Math.max(160, Math.min(300, clusterLeft - left - 8))
     this.selectedTitle = this.addLabel(bar, 'SelectedTitle', left, 16, COLOR_COPPER_GOLD, 17, true, textCap)
     this.selectedStatus = this.addLabel(bar, 'SelectedStatus', left, -8, COLOR_TEXT_DIM, 14, true, textCap)
@@ -1050,7 +1060,8 @@ export class CityPanelView extends Component {
     parent.addChild(collectAll)
     // 贴右上角，避开顶部渐变的文字带
     collectAll.setPosition(new Vec3(
-      this.contentWidth / 2 - FRAME_BAND - 76, this.contentHeight / 2 - FRAME_BAND - 4, 0))
+      this.contentWidth / 2 - this.safeInsets.right - FRAME_BAND - 76,
+      this.contentHeight / 2 - this.safeInsets.top - FRAME_BAND - 4, 0))
     collectAll.addComponent(UITransform).setContentSize(new Size(132, 34))
     if (!applyCommandButton(collectAll, 'normal', 132, 34)) {
       const collectGraphics = collectAll.addComponent(Graphics)
@@ -1075,8 +1086,8 @@ export class CityPanelView extends Component {
     tech.layer = parent.layer
     parent.addChild(tech)
     tech.setPosition(new Vec3(
-      -this.contentWidth / 2 + FRAME_BAND + 76,
-      -this.contentHeight / 2 + NAV_BAR_HEIGHT + ACTION_HEIGHT + 17, 0))
+      -this.contentWidth / 2 + this.safeInsets.left + FRAME_BAND + 76,
+      -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT + 17, 0))
     tech.addComponent(UITransform).setContentSize(new Size(CORNER_KEY_WIDTH, 34))
     if (!applyCommandButton(tech, 'normal', CORNER_KEY_WIDTH, 34)) {
       const techGraphics = tech.addComponent(Graphics)
@@ -1201,6 +1212,7 @@ export class CityPanelView extends Component {
     // 主堡在哪一格由服务端下发（gridX/gridY），所以默认对焦点要现读，不能写死坐标。
     let keepX = Number.NaN
     let keepY = Number.NaN
+    let keepSize = 0
     this.gridTiles.forEach((tile) => {
       // 按格位取格子，不按数组下标：下标一旦和锚点表的顺序耦合，改投影就会改玩法
       const index = tile.plate.gridY * CITY_GRID_WIDTH + tile.plate.gridX
@@ -1221,7 +1233,8 @@ export class CityPanelView extends Component {
       if (row.configId === 'main_city') {
         keepX = tile.plate.x
         const iconBox = tile.icon.getComponent(UITransform)
-        keepY = tile.plate.y + (iconBox?.height ?? 0) * (0.5 - (iconBox?.anchorY ?? 0))
+        keepY = tile.plate.y
+        keepSize = iconBox?.height ?? 0
       }
       tile.node.on('touch-start', (_event: EventTouch) => {
         this.buildMode = false
@@ -1229,11 +1242,33 @@ export class CityPanelView extends Component {
         this.renderSelection(row)
       }, this)
     })
-    // 默认镜头对准真实主堡主体的中心：主堡从基座向上长，单看落地点会截掉塔顶。
+    // 默认主体与铭牌都要位于顶部文字和操作栏之间；只居中楼体会吞掉窄横屏的铭牌。
     // 玩家自己缩放过或拖动过就不再抢镜头 —— 否则每次数据刷新都把人拽回主堡。
     if (!this.viewAdjusted && !Number.isNaN(keepX)) {
-      this.setFocus(keepX, keepY)
+      const framing = this.mainCityFraming(keepY, keepSize)
+      this.setFocus(keepX, -framing.stageY / this.zoom)
     }
+  }
+
+  /** 默认倍数决定实体尺寸；玩家缩放时只变舞台，不重新缩小楼体或铭牌。 */
+  private mainCityFraming(footY: number, preferredSize: number): { size: number, stageY: number } {
+    const bar = this.selectionBar
+    const barBox = bar?.getComponent(UITransform)
+    const bottom = bar !== null && barBox != null
+      ? bar.position.y + (1 - barBox.anchorY) * barBox.height
+      : -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT
+    let top = this.contentHeight / 2 - this.safeInsets.top
+    for (const label of [this.headerLabel, this.queueLabel]) {
+      const box = label?.node.getComponent(UITransform)
+      if (label !== null && box != null) {
+        top = Math.min(top, label.node.position.y - box.anchorY * box.height)
+      }
+    }
+    const captionHalfHeight = Math.max(NAMEPLATE_HEIGHT, oneLineFloorHeight()) / 2
+    return fitSceneLandmark(this.contentHeight, CITY_ZOOM_DEFAULT, footY, preferredSize,
+      buildingArtFootRatio('main_city'),
+      { bottom: NAMEPLATE_Y - captionHalfHeight, top: NAMEPLATE_Y + captionHalfHeight },
+      { bottom: bottom + LANDMARK_HUD_GAP, top: top - LANDMARK_HUD_GAP })
   }
 
   private openBuildPicker(gridX: number, gridY: number): void {
@@ -1292,7 +1327,9 @@ export class CityPanelView extends Component {
       return
     }
 
-    const iconSide = buildingIconSize(row.configId, tile.plate.width, this.contentHeight)
+    const preferredSide = buildingIconSize(row.configId, tile.plate.width, this.contentHeight)
+    const iconSide = row.configId === 'main_city'
+      ? this.mainCityFraming(tile.plate.y, preferredSide).size : preferredSide
     // 实体脚面来自最终素材的 alpha 下缘；节点原点仍是命中与深度排序使用的真实基座。
     tile.icon.getComponent(UITransform)?.setAnchorPoint(0.5, buildingArtFootRatio(row.configId))
     // 铭牌、文字与状态条都使用格子的本地坐标，完整继承 CityStage 的平移和缩放。

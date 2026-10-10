@@ -77,20 +77,23 @@ page.on('console', (message) => {
 
 const url = new URL(`${preview.origin}/`)
 url.searchParams.set('panel', 'city')
-await page.goto(url.toString(), { waitUntil: 'networkidle' })
-await page.waitForFunction(() => window.cc?.director?.getScene?.() != null, null, { timeout: 25_000 })
-  .catch(() => {})
-await page.waitForTimeout(3000)
-await hideGuideOverlay(page)
-await page.evaluate(() => {
-  const scene = window.cc.director.getScene()
-  const visit = node => {
-    if (node.name === 'giftPopup' && node.activeInHierarchy) node.getComponent('GiftPopupView')?.hide()
-    for (const child of node.children) visit(child)
-  }
-  visit(scene)
-})
-await page.waitForTimeout(180)
+const openCity = async () => {
+  await page.goto(url.toString(), { waitUntil: 'networkidle' })
+  await page.waitForFunction(() => window.cc?.director?.getScene?.() != null, null, { timeout: 25_000 })
+    .catch(() => {})
+  await page.waitForTimeout(3000)
+  await hideGuideOverlay(page)
+  await page.evaluate(() => {
+    const scene = window.cc.director.getScene()
+    const visit = node => {
+      if (node.name === 'giftPopup' && node.activeInHierarchy) node.getComponent('GiftPopupView')?.hide()
+      for (const child of node.children) visit(child)
+    }
+    visit(scene)
+  })
+  await page.waitForTimeout(180)
+}
+await openCity()
 
 /**
  * 读镜头与 36 格。
@@ -372,6 +375,17 @@ const defaultHudFailures = (snapshot) => {
       failures.push(`默认HUD门：主堡Sprite与真实${key}文字盒重叠`)
     }
   }
+  // 直接量实际HUD间隙，不把生产构图helper的平移/尺寸公式复制成“期望”。
+  const joint = [snapshot.keepScreenBox, main.frame, main.nameBox, main.levelBox]
+  if (joint.every(validBox) && validBox(hud?.selectionBar?.box)
+      && ['header', 'queue'].every(key => hud?.[key]?.drawable && validBox(hud[key].box))) {
+    const jointTop = Math.min(...joint.map(box => box.y - box.height / 2))
+    const jointBottom = Math.max(...joint.map(box => box.y + box.height / 2))
+    const hudTop = Math.max(...['header', 'queue'].map(key => hud[key].box.y + hud[key].box.height / 2))
+    const hudBottom = hud.selectionBar.box.y - hud.selectionBar.box.height / 2
+    if (jointTop < hudTop - 0.5) failures.push('默认HUD门：主堡主体与铭牌联合上沿侵入顶部文字带')
+    if (jointBottom > hudBottom + 0.5) failures.push('默认HUD门：主堡主体与铭牌联合下沿侵入操作栏')
+  }
   return failures
 }
 
@@ -449,11 +463,11 @@ const reportFollow = (label, before, after) => {
     `${before.buildings.length} 栋，zoom ${before.zoom} → ${after.zoom}${failures.length ? `；${failures.slice(0, 3).join('；')}` : '；框/名字/等级均跟随脚面'}`)
   return failures
 }
-const drag = async (dx, dy) => {
+const drag = async (dx, dy, origin = { x: 700, y: 450 }) => {
   await hideGuideOverlay(page, 120)
-  await page.mouse.move(700, 450)
+  await page.mouse.move(origin.x, origin.y)
   await page.mouse.down()
-  await page.mouse.move(700 + dx, 450 + dy, { steps: 6 })
+  await page.mouse.move(origin.x + dx, origin.y + dy, { steps: 6 })
   await page.mouse.up()
   await page.waitForTimeout(300)
 }
@@ -492,21 +506,21 @@ report('薄框与文字的投影坐标通过相机往返校验', first.buildings
   `${first.buildings.length} 栋，框/名字/等级各四角与中心往返偏差≤0.5世界单位`)
 report(`默认缩放 = 源码常量 ${ZOOM_DEFAULT}`, near(first.zoom, ZOOM_DEFAULT), `实测 ${first.zoom}`)
 /**
- * 镜头对准主堡 —— 判的是**夹取之后的精确落点**，不是"必须正中"。
- *
- * <p>镜头目标来自主堡实际 Sprite 的主体中心，按铺满视口的夹取公式复算；
- * 用旧塔楼热区或只对准基座，都会导致这一条或下面的完整主体边界判红。
+ * 水平对准主堡，纵向构图由真实主体+铭牌与HUD的间隙独立验收。
+ * 低高度横屏不能再要求“主体居中”：底部铭牌也必须看得见。
  */
 const clamp = (value, limit) => Math.max(-limit, Math.min(limit, value))
 const maxX = first.viewport.width * (first.zoom - 1) / 2
 const maxY = first.viewport.height * (first.zoom - 1) / 2
 const expectedX = first.keepCenterLocal === null ? Number.NaN : clamp(-first.keepCenterLocal.x * first.zoom, maxX)
-const expectedY = first.keepCenterLocal === null ? Number.NaN : clamp(-first.keepCenterLocal.y * first.zoom, maxY)
-report('镜头对准主堡主体中心（= 夹取公式算出的落点，±1px）',
+report('默认镜头水平对准真实主堡（夹取后±1px）',
   first.keepCenterLocal !== null
-  && Math.abs(first.stageX - expectedX) <= 1 && Math.abs(first.stageY - expectedY) <= 1,
+  && Math.abs(first.stageX - expectedX) <= 1,
   first.keepLocal === null ? '屏上找不到「主城」那一格'
-    : `stage=(${first.stageX}, ${first.stageY}) 期望=(${expectedX.toFixed(1)}, ${expectedY.toFixed(1)})`)
+    : `stageX=${first.stageX} 期望=${expectedX.toFixed(1)}`)
+report('默认安全构图仍遵守舞台铺满边界，不露底',
+  Math.abs(first.stageX) <= maxX + 1 && Math.abs(first.stageY) <= maxY + 1,
+  `stage=(${first.stageX}, ${first.stageY})，边界=(${maxX}, ${maxY})`)
 report('真实主堡正稿登记在可见相机层', first.keepDrawable, JSON.stringify(first.keepBounds))
 report('默认镜头中的主堡主体完整进入视口', first.keepBounds !== null
   && first.keepBounds.left >= -first.viewport.width / 2 - 1
@@ -536,7 +550,7 @@ report('默认主堡铭牌避开实际操作栏，主体避开Header/Queue文字
   initialHudFailures.length ? initialHudFailures.join('；') : JSON.stringify({ main: first.keepScreenBox, hud: first.hud }))
 
 // 同门负控：先经生产renderSelection展开真实栏，再把真实铭牌与文字移到栏心。
-const hudNegativeReady = await page.evaluate(() => {
+const putMainCaptionInBar = () => page.evaluate(() => {
   const scene = window.cc.director.getScene()
   const cityView = scene.getComponentInChildren('CityPanelView')
   const row = cityView?.panel?.rows?.find(row => row.configId === 'main_city')
@@ -560,6 +574,17 @@ const hudNegativeReady = await page.evaluate(() => {
   for (const node of nodes) node.setPosition(new window.cc.Vec3(node.position.x + dx, node.position.y + dy, node.position.z))
   return true
 })
+const restoreMainCaption = () => page.evaluate(() => {
+  const saved = globalThis.__cityZoomHudRestore
+  if (!saved) return
+  for (const entry of saved.nodes) entry.node.setPosition(entry.position)
+  saved.cityView.selectedId = saved.selectedId
+  saved.cityView.buildMode = saved.buildMode
+  saved.cityView.renderSelection(saved.cityView.panel?.rows.find(row => row.id === saved.selectedId) ?? null)
+  saved.cityView.selectionBar.active = saved.barActive
+  delete globalThis.__cityZoomHudRestore
+})
+const hudNegativeReady = await putMainCaptionInBar()
 report('HUD负控前置：真实主堡铭牌与文字移到真实操作栏中心', hudNegativeReady)
 try {
   if (hudNegativeReady) {
@@ -578,17 +603,7 @@ try {
     await page.screenshot({ path: path.join(OUT, 'city-zoom-negative-hud-nameplate.png') })
   }
 } finally {
-  await page.evaluate(() => {
-    const saved = globalThis.__cityZoomHudRestore
-    if (!saved) return
-    for (const entry of saved.nodes) entry.node.setPosition(entry.position)
-    saved.cityView.selectedId = saved.selectedId
-    saved.cityView.buildMode = saved.buildMode
-    const row = saved.cityView.panel?.rows.find(row => row.id === saved.selectedId) ?? null
-    saved.cityView.renderSelection(row)
-    saved.cityView.selectionBar.active = saved.barActive
-    delete globalThis.__cityZoomHudRestore
-  })
+  await restoreMainCaption()
 }
 if (hudNegativeReady) {
   await page.waitForTimeout(180)
@@ -739,8 +754,88 @@ const wheeled = await readView()
 report('真鼠标滚轮改变缩放倍数', !near(wheeled.zoom, oneStep.zoom), `${oneStep.zoom} → ${wheeled.zoom}`)
 reportFollow('真滚轮缩放之后薄框与文字保持脚面相对比例', oneStep, wheeled)
 await page.screenshot({ path: path.join(OUT, 'city-zoom-wheel.png') })
+
+// ---------- 第 6 相：微信窄横屏与标准尺寸；同一实际投影门、真实点击/拖动/缩放 ----------
+const viewportEvidence = []
+for (const [label, width, height] of [
+  ['wechat-landscape', 844, 390], ['design-640', 960, 640], ['common-600', 960, 600],
+]) {
+  await page.setViewportSize({ width, height })
+  await openCity()
+  const initial = await readView()
+  const targetHeight = 960 * height / width
+  report(`${label}实际可视区覆盖目标横屏比例`, initial.found === true
+    && near(initial.viewport?.width, 960, 0.1) && near(initial.viewport?.height, targetHeight, 0.1),
+    JSON.stringify(initial.viewport))
+  if (initial.found !== true) {
+    viewportEvidence.push({ label, viewport: { width, height }, initial, failures: ['城景舞台未加载'] })
+    continue
+  }
+  const failures = [...defaultHudFailures(initial), ...buildingSourceFailures(initial), ...captionOrderFailures(initial)]
+  viewportEvidence.push({ label, viewport: { width, height }, initial, failures })
+  hudEvidence.push({ phase: `${label}主堡主体与铭牌实际联合边界避开HUD`, snapshot: initial, failures })
+  report(`${label}默认主堡主体及薄框/名字/等级均位于实际HUD间隙`, failures.length === 0,
+    failures.length ? failures.slice(0, 4).join('；') : JSON.stringify({ main: initial.keepScreenBox, hud: initial.hud }))
+  report(`${label}默认1.5倍且舞台铺满边界有效`, near(initial.zoom, ZOOM_DEFAULT)
+    && Math.abs(initial.stageX) <= initial.viewport.width * (initial.zoom - 1) / 2 + 1
+    && Math.abs(initial.stageY) <= initial.viewport.height * (initial.zoom - 1) / 2 + 1)
+  await page.screenshot({ path: path.join(OUT, `city-zoom-${label}-default.png`) })
+
+  const negativeReady = await putMainCaptionInBar()
+  report(`${label}HUD负控前置：真实铭牌移动到真实操作栏`, negativeReady)
+  try {
+    if (negativeReady) {
+      await page.waitForTimeout(180)
+      const hidden = await readView()
+      const deviations = defaultHudFailures(hidden)
+      hudEvidence.push({ phase: `${label}负控：实际铭牌被操作栏覆盖`, snapshot: hidden, failures: deviations })
+      report(`${label}相同HUD门抓住真实铭牌遮挡，必须翻红`,
+        deviations.includes('默认HUD门：主堡frame与实际SelectionBar重叠'), deviations.join('；'))
+      await page.screenshot({ path: path.join(OUT, `city-zoom-${label}-negative-hud.png`) })
+    }
+  } finally {
+    await restoreMainCaption()
+  }
+  const restored = await readView()
+  const restoredFailures = defaultHudFailures(restored)
+  const mainBoxes = snapshot => {
+    const main = snapshot.buildings.find(building => building.configId === 'main_city')
+    return main ? [main.frame, main.nameBox, main.levelBox] : null
+  }
+  report(`${label}HUD负控还原后几何完全还原且同一门恢复绿`, restoredFailures.length === 0
+    && JSON.stringify(mainBoxes(restored)) === JSON.stringify(mainBoxes(initial)), restoredFailures.join('；'))
+  hudEvidence.push({ phase: `${label}负控还原`, snapshot: restored, failures: restoredFailures })
+
+  const clicked = await clickNodeViaCocos(page, { labelPrefix: KEEP_NAME, within: 'CityNameplates' })
+  await page.waitForTimeout(180)
+  const selected = await readView()
+  report(`${label}真实点击主堡名称可选中对应生产建筑`, clicked.clicked === true
+    && selected.selectionState.selectedId === initial.buildings.find(building => building.configId === 'main_city')?.id)
+  report(`${label}放大键实际命中`, await tapNode('ZoomInButton'))
+  const zoomed = await readView()
+  report(`${label}放大键确实改变倍数`, near(zoomed.zoom, ZOOM_DEFAULT + ZOOM_STEP, 0.03))
+  reportFollow(`${label}真点击放大后所有建筑框/文字仍随脚面同比例`, selected, zoomed)
+  const origin = zoomed.keepScreenBox ? { x: zoomed.keepScreenBox.x, y: zoomed.keepScreenBox.y } : null
+  report(`${label}拖动前置：真实主堡投影中心存在`, origin !== null)
+  if (origin !== null) {
+    await drag(90, 12, origin)
+    const moved = await readView()
+    const distance = Math.hypot(moved.stageX - zoomed.stageX, moved.stageY - zoomed.stageY)
+    report(`${label}真实拖动舞台移动超过20设计px`, distance > 20, distance.toFixed(2))
+    reportFollow(`${label}真拖后所有薄框/名字/等级仍跟随实体`, zoomed, moved)
+    await page.waitForTimeout(2200)
+    const refreshed = await readView()
+    report(`${label}秒级刷新不抢回玩家镜头`, Math.abs(refreshed.stageX - moved.stageX) <= 1
+      && Math.abs(refreshed.stageY - moved.stageY) <= 1,
+      JSON.stringify({ moved: [moved.stageX, moved.stageY], refreshed: [refreshed.stageX, refreshed.stageY] }))
+    reportFollow(`${label}刷新后框/文字仍随原建筑`, moved, refreshed)
+    viewportEvidence.push({ label, afterInput: refreshed, dragDistance: distance })
+    await page.screenshot({ path: path.join(OUT, `city-zoom-${label}-after-input.png`) })
+  }
+}
 writeFileSync(path.join(OUT, 'city-nameplate-follow.json'), JSON.stringify({
-  backend: BACKEND, deviceId, expectedBuildings: EXPECT_BUILDINGS, initial: first, hudEvidence, captionEvidence, followEvidence, errors,
+  backend: BACKEND, deviceId, expectedBuildings: EXPECT_BUILDINGS, initial: first,
+  hudEvidence, captionEvidence, followEvidence, viewportEvidence, errors,
 }, null, 2))
 
 await browser.close()

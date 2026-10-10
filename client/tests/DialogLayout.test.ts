@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { dialogBodyFlow, dialogLayout, DIALOG_COMPACT_INSET } from '../assets/scripts/game/ui/DialogLayout'
+import { dialogBodyFlow, dialogLayout, DIALOG_COMPACT_INSET, safeAreaInsets } from '../assets/scripts/game/ui/DialogLayout'
 
 test('普通与矮窗的长名单只增长滚动内容，框和固定操作仍在真实净区', () => {
   for (const height of [640, 540, 320]) {
@@ -100,4 +100,61 @@ test('真实长标题与坐标后才排上锚条行，隐藏条目不占空间�
   const compact = dialogLayout({ x: -480, y: -60, width: 960, height: 180 }, 460, flow.height)
   assert.ok(flow.height > compact.viewportHeight)
   assert.equal(dialogBodyFlow([]).height, 0)
+})
+
+test('微信原生UI安全矩形直接得到刘海与手势边距，不重复DPR或设计缩放', () => {
+  const width = 960, height = 443.6018957345971
+  const rect = { x: 53.459715639810426, y: 23.886255924170616,
+    width: 853.0805687203791, height: 419.7156398104265 }
+  const safe = safeAreaInsets(width, height, rect)
+  assert.ok(Math.abs(safe.left - 53.459715639810426) < 1e-7)
+  assert.ok(Math.abs(safe.right - 53.459715639810426) < 1e-7)
+  assert.ok(Math.abs(safe.bottom - 23.886255924170616) < 1e-7)
+  assert.ok(Math.abs(safe.top) < 1e-7)
+  assert.ok(Math.abs(width - safe.left - safe.right - rect.width) < 1e-7)
+  assert.ok(Math.abs(height - safe.top - safe.bottom - rect.height) < 1e-7)
+})
+
+test('非对称安全边缘不把左刘海复制到右侧或把底部手势区复制到顶部', () => {
+  assert.deepEqual(safeAreaInsets(960, 640, { x: 40, y: 18, width: 910, height: 592 }),
+    { left: 40, right: 10, top: 30, bottom: 18 })
+})
+
+test('Web和无安全矩形的600/640视口保持零边距，完整UI矩形同样为零', () => {
+  for (const height of [600, 640]) {
+    assert.deepEqual(safeAreaInsets(960, height, null), { left: 0, right: 0, top: 0, bottom: 0 })
+    assert.deepEqual(safeAreaInsets(960, height, { x: 0, y: 0, width: 960, height }),
+      { left: 0, right: 0, top: 0, bottom: 0 })
+  }
+})
+
+test('安全矩形越出视口时只取真实交集，不生成负边距', () => {
+  assert.deepEqual(safeAreaInsets(960, 640, { x: -20, y: -10, width: 1000, height: 670 }),
+    { left: 0, right: 0, top: 0, bottom: 0 })
+  assert.deepEqual(safeAreaInsets(960, 640, { x: -20, y: 15, width: 950, height: 610 }),
+    { left: 0, right: 30, top: 15, bottom: 15 })
+})
+
+test('空、非有限或完全不可交的安全矩形回退全视口，不能把HUD挤成负净宽', () => {
+  for (const rect of [
+    { x: NaN, y: 0, width: 960, height: 640 },
+    { x: 0, y: Infinity, width: 960, height: 640 },
+    { x: 0, y: 0, width: 0, height: 640 },
+    { x: 0, y: 0, width: 960, height: -1 },
+    { x: 1000, y: 0, width: 960, height: 640 },
+    { x: 0, y: -700, width: 960, height: 640 },
+  ]) {
+    assert.deepEqual(safeAreaInsets(960, 640, rect), { left: 0, right: 0, top: 0, bottom: 0 })
+  }
+  assert.deepEqual(safeAreaInsets(0, 640, null), { left: 0, right: 0, top: 0, bottom: 0 })
+})
+
+test('真实刘海负控：旧资源与选中标题坐标在安全区外，平移后整盒位于安全区', () => {
+  const safe = safeAreaInsets(960, 443.6018957345971,
+    { x: 53.459715639810426, y: 23.886255924170616, width: 853.0805687203791, height: 419.7156398104265 })
+  const inside = (x: number, width: number) => x >= safe.left && x + width <= 960 - safe.right
+  assert.equal(inside(22, 155), false, '旧资源首列确实被左刘海吞掉')
+  assert.equal(inside(12, 300), false, '旧主城详情标题确实被左刘海吞掉')
+  assert.equal(inside(safe.left + 22, 155), true)
+  assert.equal(inside(safe.left + 12, 300), true)
 })

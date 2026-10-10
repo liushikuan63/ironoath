@@ -39,6 +39,7 @@ import { SettingsPanelView } from './SettingsPanelView'
 import { applyNavTab } from './ArtCatalog'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
 import { applySystemUiFont } from './UiFont'
+import { viewportSafeInsets } from './ViewportSafeArea'
 
 const { ccclass } = _decorator
 
@@ -174,6 +175,7 @@ export class PanelNav extends Component {
   private reddot: ClientReddotTree | null = null
   private visibleWidth = 0
   private visibleHeight = 0
+  private safeInsets = { left: 0, right: 0, top: 0, bottom: 0 }
 
   /** 切换面板时的回调。数据侧由 GameBootstrap 决定要不要补拉，导航层不碰网络。 */
   onShow: ((key: string) => void) | null = null
@@ -203,10 +205,10 @@ export class PanelNav extends Component {
    *
    * <p>存在的理由有两个：① 调试时能直接打开某个面板，不用先点导航（"我要看地图"这件事
    * 不该依赖点击成功）；② Web 端将来做深链分享时，这一处就是入口。
-   * 小游戏没有 `location`，取不到就回退默认面板 —— 不抛错、不猜。
+   * 小游戏可能只有宿主 `location`；URL 查询解析能力不可用时回退默认面板，不抛错、不猜。
    */
   private initialPanelFromUrl(): string | null {
-    if (typeof location === 'undefined') {
+    if (typeof location === 'undefined' || typeof URLSearchParams !== 'function') {
       return null
     }
     try {
@@ -254,7 +256,7 @@ export class PanelNav extends Component {
   }
 
   /**
-   * 面板的可用区域（本节点本地坐标，左下角 + 宽高）：**全屏减去底部导航条那一条**。
+   * 面板的可用区域（本节点本地坐标，左下角 + 宽高）：**安全区减去底部导航条那一条**。
    *
    * <p>存在的唯一理由是引导遮罩要"挖洞"（B18 验收 6）：洞必须是玩家这一步真能操作的那块，
    * 而"哪些格子属于导航条"这件事只有本类知道 —— 把条高抄到引导层去，就是同一个几何两个家，
@@ -267,9 +269,11 @@ export class PanelNav extends Component {
       return null
     }
     const size = view.getVisibleSize()
-    // 导航条中心在 -h/2 + BAR_HEIGHT/2 + 8 ⇒ 它占的是 y ∈ [-h/2+8, -h/2+8+BAR_HEIGHT]
-    const bottom = -size.height / 2 + 8 + BAR_HEIGHT
-    return { x: -size.width / 2, y: bottom, width: size.width, height: size.height / 2 - bottom }
+    const safe = viewportSafeInsets(size.width, size.height)
+    // 导航与引导共用安全底边；导航抬高后，遮罩的洞不能仍覆盖它的上沿。
+    const bottom = -size.height / 2 + safe.bottom + 8 + BAR_HEIGHT
+    return { x: -size.width / 2 + safe.left, y: bottom,
+      width: size.width - safe.left - safe.right, height: size.height / 2 - safe.top - bottom }
   }
 
   // ---------- 导航条 ----------
@@ -278,11 +282,14 @@ export class PanelNav extends Component {
     const size = view.getVisibleSize()
     this.visibleWidth = size.width
     this.visibleHeight = size.height
-    const width = Math.min(size.width - 24, 900)
+    const safe = viewportSafeInsets(size.width, size.height)
+    this.safeInsets = safe
+    const width = Math.min(size.width - safe.left - safe.right - 24, 900)
     const bar = new Node('NavBar')
     bar.layer = this.node.layer
     this.node.addChild(bar)
-    bar.setPosition(new Vec3(0, -size.height / 2 + BAR_HEIGHT / 2 + 8, 0))
+    bar.setPosition(new Vec3((safe.left - safe.right) / 2,
+      -size.height / 2 + safe.bottom + BAR_HEIGHT / 2 + 8, 0))
     bar.addComponent(UITransform).setContentSize(new Size(width, BAR_HEIGHT))
     const background = new Node('BarBackground')
     background.layer = bar.layer
@@ -362,11 +369,12 @@ export class PanelNav extends Component {
    */
   private buildMoreLayer(barWidth: number): void {
     const size = view.getVisibleSize()
+    const safe = this.safeInsets
     const cellHeight = BAR_HEIGHT - 8
     const rows = Math.max(1, Math.ceil(MORE_PANELS.length / MORE_COLUMNS))
     const cellWidth = (barWidth - MORE_PADDING * 2 - MORE_GAP * (MORE_COLUMNS - 1)) / MORE_COLUMNS
     const plateHeight = MORE_PADDING * 2 + rows * cellHeight + (rows - 1) * MORE_GAP
-    const barStrip = 8 + BAR_HEIGHT
+    const barStrip = safe.bottom + 8 + BAR_HEIGHT
 
     const layer = new Node('NavMoreLayer')
     layer.layer = this.node.layer
@@ -388,7 +396,8 @@ export class PanelNav extends Component {
     tray.layer = layer.layer
     layer.addChild(tray)
     tray.addComponent(UITransform).setContentSize(new Size(barWidth, plateHeight))
-    tray.setPosition(new Vec3(0, -size.height / 2 + barStrip + 8 + plateHeight / 2, 0))
+    tray.setPosition(new Vec3((safe.left - safe.right) / 2,
+      -size.height / 2 + barStrip + 8 + plateHeight / 2, 0))
     const plate = new Node('TrayBackground')
     plate.layer = tray.layer
     tray.addChild(plate)
@@ -488,7 +497,10 @@ export class PanelNav extends Component {
 
   override update(): void {
     const size = view.getVisibleSize()
-    if (size.width === this.visibleWidth && size.height === this.visibleHeight) return
+    const safe = viewportSafeInsets(size.width, size.height)
+    if (size.width === this.visibleWidth && size.height === this.visibleHeight
+        && safe.left === this.safeInsets.left && safe.right === this.safeInsets.right
+        && safe.top === this.safeInsets.top && safe.bottom === this.safeInsets.bottom) return
     for (const node of this.panelNodes.values()) {
       node.getComponent(UITransform)?.setContentSize(new Size(size.width, size.height))
     }
