@@ -1700,6 +1700,10 @@ export class GameBootstrap extends Component {
       out.guide = resp => this.guide?.attach(resp)
     }
     if (quest !== null) {
+      quest.onPromptVisibility = visible => {
+        if (!this.destroyed && this.guide?.isValid) this.guide.setBubbleSuppressed('quest', visible)
+      }
+      if (this.guide?.isValid) this.guide.setBubbleSuppressed('quest', quest.openPrompt !== null)
       out.quest = resp => quest.attach(resp)
       out.activity = (resp, serverNowMs) => quest.attachActivity(resp, serverNowMs)
       out.activityClaimed = resp => quest.showReceipt(claimReceiptText(resp))

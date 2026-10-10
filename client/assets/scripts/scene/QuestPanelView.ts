@@ -121,6 +121,8 @@ export class QuestPanelView extends Component {
   onClaim: ((questId: string, heroChoice: string | null) => void) | null = null
   /** 玩家要领某条活动的奖励。windowKey 由服务端判，这里只递 activityId */
   onClaimActivity: ((activityId: string) => void) | null = null
+  /** 三选一真实开关交给装配层，让引导提示让出选择操作，遮罩仍由Guide管理。 */
+  onPromptVisibility: ((visible: boolean) => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -150,6 +152,8 @@ export class QuestPanelView extends Component {
   }
 
   override onDestroy(): void {
+    this.hidePrompt()
+    this.onPromptVisibility = null
     this.rowPool?.destroy()
     this.rowPool = null
     this.activityPool?.destroy()
@@ -703,6 +707,7 @@ export class QuestPanelView extends Component {
       })
     })
     panel.active = true
+    this.onPromptVisibility?.(true)
   }
 
   private hidePrompt(): void {
@@ -710,6 +715,7 @@ export class QuestPanelView extends Component {
     if (this.promptPanel !== null) {
       this.promptPanel.active = false
     }
+    this.onPromptVisibility?.(false)
   }
 
   /** 当前开着的弹窗（诊断与用例断言用）。 */

@@ -21,7 +21,8 @@ import type { GuideFrame } from '../game/guide/GuideDriver'
 import type { GuideAction, GuideScriptResp } from '../net/generated/GuideProtocol'
 import { applyCommandButton, applySlicedSprite } from './ArtCatalog'
 import { applySystemUiFont } from './UiFont'
-import { DIALOG_SCRIM, observeDialogSize } from './DialogStyle'
+import { DIALOG_SCRIM } from './DialogStyle'
+import { guideBubbleLayout } from '../game/ui/GuideLayout'
 
 const { ccclass } = _decorator
 
@@ -74,11 +75,26 @@ export class GuideView extends Component {
   /** 「还没达成」提示的还原计时器；`isValid` 守卫见 `showHeldHint`。 */
   private heldHintTimer: ReturnType<typeof setTimeout> | null = null
   private skipCaption: Label | null = null
+  /** 面板真实选择窗暂收提示；离页不等于选择窗关闭，不能随clearLayer丢掉。 */
+  private readonly suppressedPanels = new Set<string>()
+  private layoutKey = ''
+  private buttonWidth = BUTTON_WIDTH
+
+  /** 只收气泡，洞外遮罩继续有效；不读取任务或步骤id。 */
+  setBubbleSuppressed(panelKey: string, suppressed: boolean): void {
+    if (suppressed === this.suppressedPanels.has(panelKey)) {
+      return
+    }
+    if (suppressed) this.suppressedPanels.add(panelKey)
+    else this.suppressedPanels.delete(panelKey)
+    if (this.bubble !== null) {
+      this.bubble.active = !this.suppressedPanels.has(this.openPanelKey?.() ?? '')
+    }
+  }
 
   /** 收到一次脚本下发：换驱动器就等于重新开始读这一号的位置（服务端是唯一权威）。 */
   attach(resp: GuideScriptResp): void {
     this.driver = GuideDriver.from(resp)
-    observeDialogSize(this.node, () => this.repaint())
     this.repaint()
   }
 
@@ -104,9 +120,10 @@ export class GuideView extends Component {
     const size = view.getVisibleSize()
     const area = this.maskAreaOf(frame, size.width, size.height)
     const hole = this.holeOf(size.width, size.height)
+    this.layoutKey = this.geometryKey(size.width, size.height, hole)
     this.drawMask(area, hole)
     this.ensureBubble()
-    this.placeBubble(size.height, hole)
+    this.placeBubble(size.width, size.height, hole)
 
     if (this.bubbleText !== null) {
       this.bubbleText.string = frame.step.text
@@ -126,7 +143,22 @@ export class GuideView extends Component {
       this.skipCaption.string = '跳过这一步'
     }
     this.layoutButtons()
+    if (this.bubble !== null) {
+      this.bubble.active = !this.suppressedPanels.has(this.openPanelKey?.() ?? '')
+    }
     this.node.active = true
+  }
+
+  /** 原生安全区可在尺寸未变时改变，提示与导航洞必须同轮重排。 */
+  override update(): void {
+    if (this.driver === null || !this.node.active) return
+    const size = view.getVisibleSize()
+    const hole = this.holeOf(size.width, size.height)
+    if (this.geometryKey(size.width, size.height, hole) !== this.layoutKey) this.repaint()
+  }
+
+  private geometryKey(width: number, height: number, hole: GuideRect): string {
+    return `${width}:${height}:${this.openPanelKey?.() ?? ''}:${hole.x}:${hole.y}:${hole.width}:${hole.height}`
   }
 
   /**
@@ -246,6 +278,10 @@ export class GuideView extends Component {
     const positionLabel = applySystemUiFont(position.addComponent(Label))
     positionLabel.fontSize = 20
     positionLabel.lineHeight = 24
+    positionLabel.overflow = Label.Overflow.SHRINK
+    positionLabel.enableWrapText = false
+    positionLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+    positionLabel.verticalAlign = Label.VerticalAlign.CENTER
     positionLabel.color = COLOR_TEXT_DIM
     positionLabel.string = ''
     this.bubblePosition = positionLabel
@@ -325,7 +361,7 @@ export class GuideView extends Component {
       return
     }
     if (this.skipButton.active) {
-      const half = (BUTTON_WIDTH + BUTTON_GAP) / 2
+      const half = (this.buttonWidth + BUTTON_GAP) / 2
       this.nextButton.setPosition(new Vec3(-half, 0, 0))
       this.skipButton.setPosition(new Vec3(half, 0, 0))
       return
@@ -346,17 +382,47 @@ export class GuideView extends Component {
    * 顶部那一条是标题 / 队列 / 资源读数（读一次就够，且引导文案本身就在说要做的事），
    * 底部那一条是**这一步要按的键**（按不到就推不下去）。取前者。
    */
-  private placeBubble(height: number, hole: GuideRect): void {
+  private placeBubble(width: number, height: number, hole: GuideRect): void {
     if (this.bubble === null) {
       return
     }
-    const anchorTop = hole.y + hole.height < height / 2 ? hole.y + hole.height : height / 2
-    const y = anchorTop - BUBBLE_HEIGHT / 2 - 12
-    const bubbleWidth = this.bubble.getComponent(UITransform)!.width
-    // 贴可用区右角，腾出城景中心与主堡；底边仍以真实净区而不是屏幕底边夹住。
-    const x = hole.x + hole.width - bubbleWidth / 2 - 12
-    this.bubble.setPosition(new Vec3(x,
-      Math.max(y, hole.y + BUBBLE_HEIGHT / 2 + 8), 0))
+    const layout = guideBubbleLayout(hole, width, height, this.openPanelKey?.() ?? null,
+      { width: 420, height: BUBBLE_HEIGHT, margin: BUBBLE_MARGIN, buttonWidth: BUTTON_WIDTH })
+    const bubble = this.bubble
+    bubble.getComponent(UITransform)!.setContentSize(layout.width, layout.height)
+    bubble.setPosition(new Vec3(layout.x, layout.y, 0))
+    const plate = bubble.getChildByName('GuideBubblePlate')!
+    plate.getComponent(UITransform)!.setContentSize(layout.width, layout.height)
+    const graphics = bubble.getComponent(Graphics)!
+    graphics.clear()
+    const material = applySlicedSprite(plate, 'ui.plate.tooltip', layout.width, layout.height)
+    graphics.enabled = !material
+    if (!material) {
+      graphics.roundRect(-layout.width / 2, -layout.height / 2, layout.width, layout.height, 10)
+      graphics.fill()
+      graphics.stroke()
+    }
+    // 对已有节点原位重排，不能只改外盒而留下旧Sprite、正文或触摸盒。
+    this.bubblePosition?.node.getComponent(UITransform)?.setContentSize(layout.innerWidth, 24)
+    this.bubbleText?.node.getComponent(UITransform)?.setContentSize(layout.innerWidth, 62)
+    bubble.getChildByName('GuideButtons')?.getComponent(UITransform)?.setContentSize(layout.innerWidth, BUTTON_HEIGHT)
+    this.buttonWidth = layout.buttonWidth
+    for (const button of [this.nextButton, this.skipButton]) {
+      if (button === null) continue
+      button.getComponent(UITransform)!.setContentSize(layout.buttonWidth, BUTTON_HEIGHT)
+      const buttonGraphics = button.getComponent(Graphics)
+      buttonGraphics?.clear()
+      const buttonMaterial = applyCommandButton(button, 'normal', layout.buttonWidth, BUTTON_HEIGHT)
+      if (buttonGraphics !== null) {
+        buttonGraphics.enabled = !buttonMaterial
+        if (!buttonMaterial) {
+          buttonGraphics.roundRect(-layout.buttonWidth / 2, -BUTTON_HEIGHT / 2, layout.buttonWidth, BUTTON_HEIGHT, 8)
+          buttonGraphics.fill()
+          buttonGraphics.stroke()
+        }
+      }
+      button.getChildByName('caption')?.getComponent(UITransform)?.setContentSize(layout.buttonWidth - 12, BUTTON_HEIGHT)
+    }
   }
 
   private complete(): void {
@@ -411,7 +477,7 @@ export class GuideView extends Component {
     if (this.bubblePosition === null) {
       return
     }
-    this.bubblePosition.string = '这一步还没达成 —— 先完成上面的操作'
+    this.bubblePosition.string = '尚未完成，请先完成当前操作'
     this.bubblePosition.color = COLOR_HELD
     if (this.heldHintTimer !== null) {
       clearTimeout(this.heldHintTimer)
@@ -454,5 +520,6 @@ export class GuideView extends Component {
 
   override onDestroy(): void {
     this.clearLayer()
+    this.suppressedPanels.clear()
   }
 }
