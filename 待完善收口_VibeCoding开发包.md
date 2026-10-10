@@ -6904,3 +6904,5 @@ TEST_EXIT=0
 | #989 微信顶部净区纳入实际胶囊位置，系统安全区与胶囊分别保守计算 | 本笔（原子留档，本批统一推送） | 旧实现38=32通过6失败(actual1)；修后38通过0失败0跳过(actual0)、两类型检查0；main SHA/apply-check0；R7实际胶囊交集与GPU待验 | D:/tmp/ironoath-wechat-20261010/capsule-safe-area-fix.patch；capsule-safe-area-red.log/green-1.log；R6实际HELD截图97与public capsule111 | F17全量重构建、R7实际public胶囊矩形及HELD文字不相交/GPU完整字体待验；浏览器回归不替代原生；手机未验 |
 
 | #990 装备弹窗统一暗铁主题和短屏滚动净区，拖动取消不提前强化 | 本笔（原子留档，本批统一推送） | 旧实现新增4回归全部失败(actual1)；新实现5通过及相关三族48通过0失败0跳过(actual0)；两类型检查/主树apply-check/diff-check0；F17实画与实际拖动待验 | D:/tmp/ironoath-wechat-20261010/equip-dialog-theme-fix.patch；equip-dialog-theme-handoff-v17.json；equip-dialog-red-v17.log/green-v17.log；#984真实旧plaincard反证 | 新F17真实装备entry/row/forge/gray和短屏主题/固定footer/拖动零写入待验；纯Node几何不代替GPU字体与微信设备；手机未验 |
+
+| #991 训练页内城建设入口接正常导航，强制引导可先建设再返回训练 | 本笔（原子留档，本批统一推送） | 旧实现新增8回归0通过8失败(actual1)；新9/0、相关121/0、正常client cwd全1177/0/0实际0；两TS及diff-check0；main SHA/apply-check0；新原生强制链路待验 | D:/tmp/ironoath-wechat-20261010/guide-army-prerequisite-fix.patch；guide-army-prerequisite-independent-handoff.json；guide-army-prerequisite-red及green-3；#986原生入口缺失反证 | 主树刚合入，新F17真实内城建设鼠标、兵营自然完工、20名真实训练及Guide4进度推进待验；不能用pure GuideDriver或普通导航证明原生闭环；手机未验 |

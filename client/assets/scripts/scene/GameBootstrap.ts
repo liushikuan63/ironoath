@@ -1451,6 +1451,7 @@ export class GameBootstrap extends Component {
       // 「加速治疗」（V12）：军队四格最后一格 —— 点下去先弹"用哪一张训练令"，选择器复用已有的 ChoiceOverlay
       army.onTreatSpeedUp = () => this.root?.requestTreatSpeedUp()
       army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
+      army.onOpenCity = () => this.nav?.show('city')
       // 行上「队列」→ 编排层判有没有可取消的那一口，菜单再由本层画（B26 S15）
       army.onQueue = unitId => this.root?.openArmyQueue(unitId)
       out.armyQueueChoice = (options, onPick) => {

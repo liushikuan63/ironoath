@@ -115,6 +115,8 @@ export class ArmyPanelView extends Component {
   private hospitalLabel: Label | null = null
   private warningLabel: Label | null = null
   private autoTrainButton: Node | null = null
+  private openCityButton: Node | null = null
+  private openCityHeight = 0
   private collectTreatedButton: Node | null = null
   /** 「加速治疗」（V12）：只在**正在治疗**时出现（"到点可收"那一档由「收取伤兵」承担，两者互斥）。 */
   private treatSpeedUpButton: Node | null = null
@@ -136,6 +138,8 @@ export class ArmyPanelView extends Component {
   onQueue: ((unitId: string) => void) | null = null
   /** 点「自动续训 / 停止自动」。能不能开、续的是哪一批由编排层判定（B25-S2d） */
   onToggleAutoTrain: (() => void) | null = null
+  /** 前往内城建设训练所需建筑；只是导航，不代替服务端的训练解锁判定。 */
+  onOpenCity: (() => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -159,6 +163,8 @@ export class ArmyPanelView extends Component {
     this.onTreat = null
     this.onCollectTreated = null
     this.onTreatSpeedUp = null
+    this.onOpenCity = null
+    this.openCityButton = null
   }
 
   /**
@@ -199,6 +205,12 @@ export class ArmyPanelView extends Component {
   }
 
   override update(): void {
+    // 页内导航在列表未到时也可用；只在高度变化时原位移动，不重画或请求。
+    const height = view.getVisibleSize().height
+    if (this.openCityButton !== null && height !== this.openCityHeight) {
+      this.openCityButton.setPosition(new Vec3(-150, height / 2 - PADDING - 138, 0))
+      this.openCityHeight = height
+    }
     const resp = this.resp
     if (resp === null) {
       return
@@ -373,6 +385,29 @@ export class ArmyPanelView extends Component {
     // 而 `render()` 在 `panel === null` 时早退 ⇒ 列表没到/读失败那一态它会剩一个**没有字的空框**还能点。
     // 与同文件 `buildStaminaBand` 那条"没读到 /stamina 之前整条藏起来"是同一做法。
     autoTrain.active = false
+
+    // 页内保留建设入口：训练未解锁时也能先去建设，不依赖导航条或军队响应。
+    const openCity = new Node('OpenCityButton')
+    openCity.layer = this.node.layer
+    this.node.addChild(openCity)
+    openCity.setPosition(new Vec3(-150, top - 138, 0))
+    openCity.addComponent(UITransform).setContentSize(new Size(120, 34))
+    this.openCityButton = openCity
+    this.openCityHeight = height
+    if (!applyCommandButton(openCity, 'normal', 120, 34)) {
+      const cityGraphics = openCity.addComponent(Graphics)
+      cityGraphics.fillColor = COLOR_PANEL
+      cityGraphics.strokeColor = COLOR_COPPER_GOLD
+      cityGraphics.lineWidth = 2
+      cityGraphics.roundRect(-60, -17, 120, 34, 5)
+      cityGraphics.fill()
+      cityGraphics.stroke()
+    }
+    const cityCaption = this.addLabel(openCity, 'Caption', 0, 0, COLOR_TEXT, 14)
+    cityCaption.string = '内城建设'
+    keepOneLine(cityCaption, 14)
+    cityCaption.node.getComponent(UITransform)?.setContentSize(new Size(112, 20))
+    openCity.on('touch-start', (_event: EventTouch) => this.onOpenCity?.(), this)
 
     // 状态行：「重步兵 ×50 · 还剩 2 批」/ 停止原因 / 还没有可续的那一批。
     // 它读的是服务端下发的那份策略 —— 自动续训的账单是持续的，玩家必须能一眼看到它现在在做什么
