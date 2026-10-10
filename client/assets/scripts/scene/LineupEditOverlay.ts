@@ -32,6 +32,8 @@ const ROW_HEIGHT = 56
 const PLATE_HEIGHT = 50
 const TITLE_DROP = 40
 const PADDING = 16
+const BUTTON_GAP = 12
+const BUTTON_WIDTH = (CARD_WIDTH - PADDING * 2 - BUTTON_GAP * 2) / 3
 const BUTTON_BAND = 56
 /**
  * 行栈与按钮带之间的空气。不加这一条时卡片高度公式与行的排布**恰好抵消**，
@@ -173,7 +175,7 @@ export class LineupEditOverlay extends Component {
       return
     }
     const bottom = -this.cardHeight() / 2 + 28
-    this.button('cancel', '取消', -CARD_WIDTH / 2 + PADDING + 90, bottom, true, () => {
+    this.button('cancel', '取消', -CARD_WIDTH / 2 + PADDING + BUTTON_WIDTH / 2, bottom, true, () => {
       this.hide()
       this.onCancel?.()
     })
@@ -182,7 +184,7 @@ export class LineupEditOverlay extends Component {
         this.onClear?.()
       })
     }
-    this.button('save', data.saveText, CARD_WIDTH / 2 - PADDING - 90, bottom, data.canSave, () => {
+    this.button('save', data.saveText, CARD_WIDTH / 2 - PADDING - BUTTON_WIDTH / 2, bottom, data.canSave, () => {
       this.hide()
       this.onSave?.()
     })
@@ -191,7 +193,7 @@ export class LineupEditOverlay extends Component {
   /** 按钮：灰掉时**不吃触摸**（点了也不会发请求）。底板必须画出来 —— 它是"能不能点"的唯一视觉信号。 */
   private button(name: string, text: string, x: number, y: number, enabled: boolean,
     onClick: () => void): void {
-    const width = 180
+    const width = BUTTON_WIDTH
     const graphics = this.surface(name, x, y, width, BUTTON_HEIGHT)
     graphics.fillColor = enabled ? COLOR_ROW_SELECTED : COLOR_ROW
     graphics.roundRect(-width / 2, -BUTTON_HEIGHT / 2, width, BUTTON_HEIGHT, 6)
