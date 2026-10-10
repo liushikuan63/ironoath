@@ -9,6 +9,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import assert from 'node:assert/strict'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { clickNodeViaCocos, resolveCocosClickPoint } from './lib/cocos-click.mjs'
@@ -80,6 +81,70 @@ function guideTextBoxesIssues(guide) {
   return issues
 }
 
+/** 最末兄弟只有在同屏相机/同渲染根且未启用Sorting2D时才证明相对任务行的绘制顺序。 */
+function promptLayeringIssues(frame) {
+  const issues = [], context = frame.renderContext, prompt = frame.prompt
+  if (context?.apiAvailable !== true) return ['公开渲染测量API不可用']
+  if (!Array.isArray(context.sorting2D) || context.sorting2D.length !== 0) issues.push('存在active Sorting2D，不能按兄弟顺序推断绘制顺序')
+  if (!context.canvasActive || !context.canvasUuid || !context.canvasComponentUuid || !context.canvasCameraUuid) issues.push('当前Canvas及其屏幕相机不可确认')
+  if (!prompt?.parentIsQuest || prompt.siblingIndex !== prompt.siblingCount - 1
+    || !Array.isArray(prompt.laterQuestSiblings) || prompt.laterQuestSiblings.length !== 0) issues.push('选择窗后仍有任务兄弟可能覆盖候选')
+  const nodes = [{ role: '选择窗', render: prompt?.render },
+    ...[prompt?.title, prompt?.hint].filter(Boolean).map(label => ({ role: '选择窗文字', render: label.render })),
+    ...(prompt?.sprites ?? []).map(sprite => ({ role: `选择窗Sprite/${sprite.name}`, render: sprite.render })),
+    ...(frame.rows ?? []).map((row, index) => ({ role: `任务行${index}`, render: row.render })),
+    ...(frame.rows ?? []).filter(row => row.claim).map(row => ({ role: '任务领取按钮', render: row.claim.render })),
+    ...(frame.rows ?? []).flatMap((row, index) => [row.title, row.detail, row.status, row.claim?.caption]
+      .filter(Boolean).map(label => ({ role: `任务行${index}文字`, render: label.render }))),
+    ...(prompt?.options ?? []).filter(option => option.active).flatMap(option => [
+      { role: option.name, render: option.render }, { role: `${option.name}/Name`, render: option.label?.render },
+      ...(option.sprites ?? []).map(sprite => ({ role: `${option.name}/Sprite/${sprite.name}`, render: sprite.render })),
+    ])]
+  const layer = prompt?.render?.layer
+  for (const { role, render } of nodes) {
+    if (!render || !Number.isInteger(render.layer) || render.layer !== layer) issues.push(`${role}与选择窗不在同一实际layer`)
+    if (!render || render.canvasUuid !== context.canvasUuid || render.canvasComponentUuid !== context.canvasComponentUuid
+      || render.renderRootUuid !== context.canvasUuid || render.renderRootComponentUuid !== context.canvasComponentUuid) issues.push(`${role}不属于同一Canvas/最近RenderRoot`)
+    if (!Array.isArray(render?.screenCameraUuids) || render.screenCameraUuids.length !== 1
+      || render.screenCameraUuids[0] !== context.canvasCameraUuid) issues.push(`${role}没有唯一的同一屏幕相机`)
+  }
+  const camera = context.cameras?.filter(item => item.uuid === context.canvasCameraUuid)
+  if (camera?.length !== 1 || !camera[0].enabledInHierarchy || camera[0].cameraCreated !== true || camera[0].targetTexture !== false
+    || !Number.isFinite(camera[0].priority) || !Number.isInteger(camera[0].visibility)
+    || !['x', 'y', 'width', 'height'].every(key => Number.isFinite(camera[0].rect?.[key]))
+    || camera[0].rect.width <= 0 || camera[0].rect.height <= 0) issues.push('Canvas相机的公开屏幕绘制条件不可确认')
+  return issues
+}
+
+/** 3.8.7 Director.EVENT_AFTER_DRAW来自director.ts；这里只观察两次真实draw，不改帧率或发事件。 */
+function waitForPlayerDraws({ count, timeoutMs }) {
+  const cc = window.cc, director = cc?.director, event = cc?.Director?.EVENT_AFTER_DRAW
+  if (event !== 'director_after_draw' || typeof director?.on !== 'function' || typeof director?.off !== 'function'
+    || typeof director?.getTotalFrames !== 'function') return { ok: false, apiAvailable: false, reason: 'Director公开after-draw API不可用' }
+  let startedFrame
+  try { startedFrame = director.getTotalFrames() } catch (error) { return { ok: false, apiAvailable: false, reason: error.message } }
+  if (!Number.isInteger(startedFrame)) return { ok: false, apiAvailable: false, reason: 'Director公开帧号不可读' }
+  return new Promise(resolve => {
+    const frames = [], listenerTarget = {}
+    let timer, settled = false
+    const finish = result => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { director.off(event, onDraw, listenerTarget) } catch (error) { result = { ok: false, reason: `after-draw监听清理失败：${error.message}` } }
+      resolve({ apiAvailable: true, event, startedFrame, frames, ...result })
+    }
+    const onDraw = () => {
+      const frame = director.getTotalFrames()
+      if (!Number.isInteger(frame) || frame < startedFrame) { finish({ ok: false, reason: '实际draw帧号不可确认' }); return }
+      if (!frames.length || frame > frames[frames.length - 1]) frames.push(frame)
+      if (frames.length === count) finish({ ok: true, finishedFrame: frame })
+    }
+    timer = setTimeout(() => finish({ ok: false, reason: `${timeoutMs}ms内未观察到${count}个不同after-draw帧` }), timeoutMs)
+    try { director.on(event, onDraw, listenerTarget) } catch (error) { finish({ ok: false, reason: error.message }) }
+  })
+}
+
 /** 场景只读：相机投影/往返、真实渲染登记、实际字号与引擎分行，不能用 string 存在代替画出来。 */
 function readPlayerFrame() {
   const cc = window.cc, scene = cc?.director?.getScene?.()
@@ -95,8 +160,56 @@ function readPlayerFrame() {
   const cityView = city?.getComponent('CityPanelView'), questView = quest?.getComponent('QuestPanelView')
   const guide = find(game, 'Guide'), bubble = find(guide, 'GuideBubble')
   const canvas = document.querySelector('canvas')?.getBoundingClientRect()
+  if (typeof cc.js?.getClassName !== 'function') {
+    return { ready: false, renderContext: { apiAvailable: false, reason: 'cc.js.getClassName公开组件分类API不可用' } }
+  }
+  const sorting2D = []
+  const collect = node => {
+    if (!Array.isArray(node.components) || !Array.isArray(node.children)) throw Error('公开node.components/children不可读')
+    for (const component of node.components) {
+      if (typeof component.enabledInHierarchy !== 'boolean') throw Error('公开component.enabledInHierarchy不可读')
+      if (cc.js.getClassName(component) === 'cc.Sorting2D' && component.enabledInHierarchy) {
+        sorting2D.push({ nodeUuid: node.uuid, name: node.name, layer: node.layer,
+          sortingLayer: component.sortingLayer, sortingOrder: component.sortingOrder })
+      }
+    }
+    node.children.forEach(collect)
+  }
+  try { collect(scene) } catch (error) { return { ready: false, renderContext: { apiAvailable: false, reason: error.message } } }
   const cameras = scene.getComponentsInChildren('cc.Camera')
-  const cameraFor = node => cameras.find(cam => cam.enabled && cam.node.activeInHierarchy && (cam.visibility & node.layer) !== 0)
+  if (cameras.some(cam => typeof cam.uuid !== 'string' || typeof cam.enabledInHierarchy !== 'boolean'
+    || !('camera' in cam) || cam.camera === undefined || !('targetTexture' in cam) || cam.targetTexture === undefined
+    || !Number.isFinite(cam.priority) || !Number.isInteger(cam.visibility)
+    || !['x', 'y', 'width', 'height'].every(key => Number.isFinite(cam.rect?.[key])))) {
+    return { ready: false, renderContext: { apiAvailable: false, reason: 'Camera公开uuid/enabled/priority/visibility/rect/targetTexture不可读' } }
+  }
+  const screenCamerasFor = node => node ? cameras.filter(cam => cam.enabledInHierarchy && cam.camera !== null && cam.targetTexture === null
+    && (cam.visibility & node.layer) !== 0) : []
+  const cameraFor = node => { const matches = screenCamerasFor(node); return matches.length === 1 ? matches[0] : null }
+  const renderOf = node => {
+    if (!node) return null
+    let canvasAncestor, renderRootAncestor
+    for (let ancestor = node; ancestor; ancestor = ancestor.parent) {
+      if (!canvasAncestor) canvasAncestor = ancestor.components.find(component => cc.js.getClassName(component) === 'cc.Canvas' && component.enabledInHierarchy)
+      // 页面window.cc是legacyCC，没有RenderRoot2D构造器；Canvas本身也是正式RenderRoot。
+      if (!renderRootAncestor) renderRootAncestor = ancestor.components.find(component =>
+        ['cc.Canvas', 'cc.RenderRoot2D'].includes(cc.js.getClassName(component)) && component.enabledInHierarchy)
+    }
+    return { nodeUuid: node.uuid, name: node.name, layer: node.layer,
+      screenCameraUuids: screenCamerasFor(node).map(cam => cam.uuid), canvasUuid: canvasAncestor?.node.uuid ?? null,
+      canvasComponentUuid: canvasAncestor?.uuid ?? null, renderRootUuid: renderRootAncestor?.node.uuid ?? null,
+      renderRootComponentUuid: renderRootAncestor?.uuid ?? null, renderRootClassName: renderRootAncestor ? cc.js.getClassName(renderRootAncestor) : null }
+  }
+  const canvasNode = scene.getChildByName('Canvas'), canvasComponent = canvasNode?.components.find(component => cc.js.getClassName(component) === 'cc.Canvas')
+  if (canvasComponent && (!('cameraComponent' in canvasComponent) || canvasComponent.cameraComponent === undefined)) {
+    return { ready: false, renderContext: { apiAvailable: false, reason: 'Canvas公开cameraComponent不可读' } }
+  }
+  const renderContext = { apiAvailable: true, sorting2D, canvasUuid: canvasNode?.uuid ?? null,
+    canvasComponentUuid: canvasComponent?.uuid ?? null, canvasActive: canvasComponent?.enabledInHierarchy === true,
+    canvasCameraUuid: canvasComponent?.cameraComponent?.uuid ?? null,
+    cameras: cameras.filter(cam => cam.enabledInHierarchy).map(cam => ({ uuid: cam.uuid, nodeUuid: cam.node.uuid,
+      enabledInHierarchy: cam.enabledInHierarchy, cameraCreated: cam.camera !== null, priority: cam.priority, visibility: cam.visibility,
+      rect: { x: cam.rect.x, y: cam.rect.y, width: cam.rect.width, height: cam.rect.height }, targetTexture: cam.targetTexture !== null })) }
   const drawable = (node, component) => {
     if (!node?.activeInHierarchy || !component?.enabled || node._uiProps?.uiComp !== component || !cameraFor(node)) return false
     for (let ancestor = node; ancestor; ancestor = ancestor.parent) {
@@ -130,12 +243,12 @@ function readPlayerFrame() {
       fontSize: label.fontSize, actualFontSize: label.actualFontSize, fontScale: style?.fontScale,
       lineHeight: label.lineHeight, width: ui?.width, height: ui?.height, overflow: label.overflow, wrap: label.enableWrapText,
       horizontalAlign: label.horizontalAlign, verticalAlign: label.verticalAlign,
-      drawable: drawable(node, label), box: boxOf(node) }
+      drawable: drawable(node, label), box: boxOf(node), render: renderOf(node) }
   }
   const buttonOf = node => {
     if (!node) return null
     const sprite = node.getComponent('cc.Sprite'), graphics = node.getComponent('cc.Graphics')
-    return { name: node.name, active: node.activeInHierarchy, box: boxOf(node),
+    return { name: node.name, active: node.activeInHierarchy, box: boxOf(node), render: renderOf(node),
       width: node.getComponent('cc.UITransform')?.width, height: node.getComponent('cc.UITransform')?.height,
       material: drawable(node, sprite) && !!sprite.spriteFrame,
       frameName: sprite?.spriteFrame?.name ?? null, graphicsOn: graphics?.enabled ?? false,
@@ -144,13 +257,30 @@ function readPlayerFrame() {
   const main = cityView?.panel?.rows?.find(row => row.configId === 'main_city')
   const mainTile = (cityView?.gridTiles ?? []).find(tile => tile.plate.gridX === main?.gridX && tile.plate.gridY === main?.gridY)
   const rows = (questView?.drawnRows ?? []).filter(node => node.activeInHierarchy).map(node => ({
+    render: renderOf(node),
     questId: questView?.rowQuestIds?.get(node), title: labelOf(node.getChildByName('Title')),
     detail: labelOf(node.getChildByName('Detail')), status: labelOf(node.getChildByName('Status')),
     claim: buttonOf(node.getChildByName('ClaimButton')),
   }))
   const prompt = find(quest, 'HeroChoicePanel')
+  const promptIndex = quest?.children.indexOf(prompt) ?? -1
+  const laterQuestSiblings = (quest?.children ?? []).slice(promptIndex + 1).filter(node => node.activeInHierarchy)
+    .map(node => ({ name: node.name, box: boxOf(node) }))
+  const spritesIn = node => {
+    const result = []
+    const walk = current => {
+      if (!current) return
+      const sprite = current.getComponent('cc.Sprite')
+      if (sprite && drawable(current, sprite)) result.push({ name: current.name, frameName: sprite.spriteFrame?.name ?? null, render: renderOf(current) })
+      current.children.forEach(walk)
+    }
+    walk(node)
+    return result
+  }
   const options = (prompt?.children ?? []).filter(node => node.name.startsWith('HeroOption_')).map(node => ({
     name: node.name, active: node.activeInHierarchy, box: boxOf(node), label: labelOf(node.getChildByName('Name')),
+    width: node.getComponent('cc.UITransform')?.width, height: node.getComponent('cc.UITransform')?.height,
+    render: renderOf(node), sprites: spritesIn(node),
   }))
   const plate = find(bubble, 'GuideBubblePlate'), plateSprite = plate?.getComponent('cc.Sprite')
   const masks = (guide?.children ?? []).filter(node => node.name === 'GuideMask' && node.activeInHierarchy).map(boxOf)
@@ -163,7 +293,7 @@ function readPlayerFrame() {
   const viewportGuard = { found: !!guard, display: guard ? getComputedStyle(guard).display : null,
     text: guard?.textContent ?? null, fullscreen: !!document.fullscreenElement }
   return { ready: !!nav, current: nav?.currentKey, viewport: { width: innerWidth, height: innerHeight },
-    viewportGuard, sourceFields: { cityRows: Array.isArray(cityView?.panel?.rows), cityGridTiles: Array.isArray(cityView?.gridTiles),
+    viewportGuard, renderContext, sourceFields: { cityRows: Array.isArray(cityView?.panel?.rows), cityGridTiles: Array.isArray(cityView?.gridTiles),
       questDrawnRows: Array.isArray(questView?.drawnRows), questRowQuestIds: typeof questView?.rowQuestIds?.get === 'function' },
     visibleSize: { width: visible.width, height: visible.height }, scale: { x: cc.view.getScaleX(), y: cc.view.getScaleY() },
     canvas: canvas && { left: canvas.left, top: canvas.top, right: canvas.right, bottom: canvas.bottom }, dpr: window.devicePixelRatio,
@@ -178,10 +308,86 @@ function readPlayerFrame() {
       next: buttonOf(find(bubble, 'GuideNext')), skip: buttonOf(find(bubble, 'GuideSkip')), masks,
       navBlocked: !!navPoint && masks.some(box => box && navPoint.x >= box.left && navPoint.x <= box.right
         && navPoint.y >= box.top && navPoint.y <= box.bottom) },
-    rows, prompt: { active: prompt?.activeInHierarchy === true, box: boxOf(prompt),
-      title: labelOf(find(prompt, 'PromptTitle')), options },
+    rows, prompt: { active: prompt?.activeInHierarchy === true, box: boxOf(prompt), render: renderOf(prompt),
+      width: prompt?.getComponent('cc.UITransform')?.width, height: prompt?.getComponent('cc.UITransform')?.height,
+      parentIsQuest: prompt?.parent === quest, siblingIndex: promptIndex, siblingCount: quest?.children.length ?? 0,
+      laterQuestSiblings, sprites: spritesIn(prompt),
+      title: labelOf(find(prompt, 'PromptTitle')), hint: labelOf(find(prompt, 'PromptHint')), options },
   }
 }
+
+/** 同源纯量具fixture：不创建浏览器/预览/后端，也不读取或写入玩家状态。 */
+async function runLayerFixtures() {
+  const render = { layer: 33554432, screenCameraUuids: ['screen-camera'], canvasUuid: 'canvas', canvasComponentUuid: 'canvas-component',
+    renderRootUuid: 'canvas', renderRootComponentUuid: 'canvas-component' }
+  const measurement = () => structuredClone(render)
+  const positive = { renderContext: { apiAvailable: true, sorting2D: [], canvasActive: true, canvasUuid: 'canvas',
+    canvasComponentUuid: 'canvas-component', canvasCameraUuid: 'screen-camera', cameras: [{ uuid: 'screen-camera',
+      enabledInHierarchy: true, cameraCreated: true, priority: 0, visibility: 1108344832, targetTexture: false,
+      rect: { x: 0, y: 0, width: 1, height: 1 } }] }, rows: [{ render: measurement(), title: { render: measurement() },
+        claim: { render: measurement(), caption: { render: measurement() } } }],
+    prompt: { parentIsQuest: true, siblingIndex: 2, siblingCount: 3, laterQuestSiblings: [], render: measurement(),
+      sprites: [{ name: 'DialogFrameArt', render: measurement() }],
+      options: [0, 1, 2].map(index => ({ name: `HeroOption_fixture${index}`, active: true, render: measurement(),
+        label: { render: measurement() }, sprites: [{ name: 'DialogButtonArt', render: measurement() }] })) } }
+  const modified = change => { const frame = structuredClone(positive); change(frame); return frame }
+  const tests = [
+    ['same screen camera and nearest Canvas root allow sibling inference', () => assert.equal(promptLayeringIssues(positive).length, 0)],
+    ['wrong candidate Name camera cannot pass', () => assert.ok(promptLayeringIssues(modified(frame => { frame.prompt.options[0].label.render.screenCameraUuids = ['other-camera'] })).length)],
+    ['multiple matching screen cameras cannot pass', () => assert.ok(promptLayeringIssues(modified(frame => { frame.prompt.render.screenCameraUuids.push('other-camera') })).length)],
+    ['active Sorting2D cannot pass sibling inference', () => assert.ok(promptLayeringIssues(modified(frame => { frame.renderContext.sorting2D.push({ name: 'RowSorting', sortingOrder: 3 }) })).length)],
+    ['late task Rows cannot pass highest prompt inference', () => assert.ok(promptLayeringIssues(modified(frame => { frame.prompt.siblingIndex = 1; frame.prompt.laterQuestSiblings.push({ name: 'QuestRow' }) })).length)],
+    ['nested RenderRoot cannot borrow Canvas order', () => assert.ok(promptLayeringIssues(modified(frame => { frame.rows[0].render.renderRootUuid = 'nested-root' })).length)],
+    ['different candidate Name layer cannot pass', () => assert.ok(promptLayeringIssues(modified(frame => { frame.prompt.options[1].label.render.layer = 1 })).length)],
+    ['candidate Sprite cannot borrow Name layer', () => assert.ok(promptLayeringIssues(modified(frame => { frame.prompt.options[0].sprites[0].render.layer = 1 })).length)],
+    ['Claim background cannot borrow Caption camera', () => assert.ok(promptLayeringIssues(modified(frame => { frame.rows[0].claim.render.screenCameraUuids = ['other-camera'] })).length)],
+  ]
+  const savedWindow = globalThis.window
+  const mockDirector = () => {
+    let frame = 10, listeners = [], offCalls = 0
+    const director = { getTotalFrames: () => frame,
+      on: (event, callback, target) => listeners.push({ event, callback, target }),
+      off: (event, callback, target) => { offCalls++; listeners = listeners.filter(item => item.event !== event || item.callback !== callback || item.target !== target) } }
+    globalThis.window = { cc: { Director: { EVENT_AFTER_DRAW: 'director_after_draw' }, director } }
+    return { director, draw: next => { frame = next; for (const item of [...listeners]) item.callback.call(item.target) },
+      state: () => ({ listeners: listeners.length, offCalls }) }
+  }
+  tests.push(['two different draw frames clean only their own callback', async () => {
+    const mock = mockDirector(), unrelated = () => {}, unrelatedTarget = {}
+    mock.director.on('director_after_draw', unrelated, unrelatedTarget)
+    const pending = waitForPlayerDraws({ count: 2, timeoutMs: 200 })
+    mock.draw(10); mock.draw(10)
+    assert.equal(mock.state().listeners, 2)
+    mock.draw(11)
+    const receipt = await pending
+    assert.equal(receipt.ok, true); assert.deepEqual(receipt.frames, [10, 11])
+    assert.deepEqual(mock.state(), { listeners: 1, offCalls: 1 })
+  }], ['draw timeout cleans its callback and does not pass', async () => {
+    const mock = mockDirector(), receipt = await waitForPlayerDraws({ count: 2, timeoutMs: 20 })
+    assert.equal(receipt.ok, false); assert.deepEqual(mock.state(), { listeners: 0, offCalls: 1 })
+  }], ['missing after-draw API is prerequisite2', () => {
+    globalThis.window = { cc: {} }
+    const receipt = waitForPlayerDraws({ count: 2, timeoutMs: 20 })
+    assert.equal(receipt.apiAvailable, false)
+    assert.throws(() => requireThat(receipt.apiAvailable, receipt.reason), Prerequisite)
+  }], ['missing class inspection API cannot masquerade as empty Sorting2D', () => {
+    const savedDocument = globalThis.document, game = { name: 'Game', children: [], getComponent: () => null }
+    const scene = { getChildByName: () => ({ getChildByName: () => game }) }
+    globalThis.window = { cc: { director: { getScene: () => scene } } }
+    globalThis.document = { querySelector: () => null }
+    try {
+      const frame = readPlayerFrame()
+      assert.equal(frame.renderContext.apiAvailable, false)
+      assert.equal(frame.renderContext.sorting2D, undefined)
+      assert.throws(() => requireThat(frame.renderContext.apiAvailable !== false, frame.renderContext.reason), Prerequisite)
+    } finally { if (savedDocument === undefined) delete globalThis.document; else globalThis.document = savedDocument }
+  }])
+  try {
+    for (const [name, test] of tests) { await test(); console.log(`PASS ${name}`) }
+  } finally { if (savedWindow === undefined) delete globalThis.window; else globalThis.window = savedWindow }
+  console.log(`LAYER_FIXTURES=${tests.length} PASS=${tests.length} FAIL=0; pure fixtures only, no browser/backend/build`)
+}
+if (process.argv.includes('--layer-fixtures')) { await runLayerFixtures(); process.exit(0) }
 
 try {
   requireThat(BACKEND && /^https?:\/\//.test(BACKEND), '必须指定本轮 BACKEND_ORIGIN')
@@ -245,7 +451,11 @@ try {
       void response.json().then(body => responses.push({ route: url.pathname, body })).catch(() => {})
     }
   })
-  const read = () => page.evaluate(readPlayerFrame)
+  const read = async () => {
+    const frame = await page.evaluate(readPlayerFrame)
+    requireThat(frame.renderContext?.apiAvailable !== false, `公开渲染测量前提不足：${frame.renderContext?.reason}`)
+    return frame
+  }
   const wait = async (description, predicate, timeout = 12_000) => {
     const until = Date.now() + timeout
     let frame
@@ -275,6 +485,10 @@ try {
     return { envelope, request: response.request().postDataJSON() }
   }
   const shot = async name => {
+    const drawn = await page.evaluate(waitForPlayerDraws, { count: 2, timeoutMs: 4_000 })
+    requireThat(drawn.apiAvailable, `after-draw量具前提不足：${drawn.reason}`)
+    if (!drawn.ok) throw new Error(`${name}截图前真实渲染等待失败：${JSON.stringify(drawn)}`)
+    evidence.push({ phase: `${name}-after-draw`, drawn })
     const frame = await read()
     evidence.push({ phase: name, frame })
     await page.screenshot({ path: path.join(OUT, `${name}.png`), timeout: 12_000 })
@@ -464,6 +678,37 @@ try {
       && !frame.viewportGuard.fullscreen, { cssViewport: frame.viewport, designVisibleSize: frame.visibleSize, guard: frame.viewportGuard })
     must(`${name}生产选择窗只收引导气泡且保留遮罩`, frame.prompt.active && !frame.guide.bubbleActive
       && frame.guide.active && frame.guide.navBlocked, frame.guide)
+    const layeringIssues = promptLayeringIssues(frame)
+    must(`${name}同一屏幕相机/Canvas/RenderRoot且Sorting2D未改绘制顺序`, layeringIssues.length === 0,
+      { issues: layeringIssues, context: frame.renderContext, prompt: frame.prompt.render,
+        rows: frame.rows.map(row => row.render), options: options.map(option => ({ render: option.render, name: option.label?.render })) })
+    must(`${name}选择窗位于真实任务绘制层最上方`, frame.prompt.parentIsQuest
+      && frame.prompt.siblingIndex === frame.prompt.siblingCount - 1 && frame.prompt.laterQuestSiblings.length === 0,
+    { siblingIndex: frame.prompt.siblingIndex, siblingCount: frame.prompt.siblingCount, later: frame.prompt.laterQuestSiblings })
+    const compact = frame.visibleSize.height < 600
+    must(`${name}实际暗铁底板和三颗古铜边按钮完整可见`, contains(frame.canvas, frame.prompt.box)
+      && near(frame.prompt.width, 648) && near(frame.prompt.height, compact ? 256 : 302)
+      && frame.prompt.sprites.some(sprite => sprite.name === 'DialogFrameArt' && sprite.frameName === 'panel-iron-v1')
+      && options.length === 3 && options.every(option => near(option.height, compact ? 44 : 56)
+        && option.sprites.some(sprite => sprite.name === 'DialogButtonArt' && sprite.frameName === 'button-iron-v1')),
+    { prompt: frame.prompt.box, width: frame.prompt.width, height: frame.prompt.height,
+      sprites: frame.prompt.sprites, options: options.map(option => ({ height: option.height, sprites: option.sprites })) })
+    const title = frame.prompt.title, hint = frame.prompt.hint
+    for (const [role, label, text, font, height, lineHeight] of [
+      ['标题', title, questFrame.rows[0].title.text, 20, 28, 22],
+      ['提示', hint, '选择一名武将作为奖励（只能选一次）', 14, 22, 18],
+      ...options.map(option => [option.name, option.label, option.label?.text, 18, 40, 24]),
+    ]) {
+      const issues = copyIssues(label, text, frame)
+      must(`${name}/${role}全文单行字号与自身盒真实排版`, issues.length === 0 && fontMetrics(label, font).pass
+        && near(label.height, height) && near(label.lineHeight, lineHeight) && label.parsedString.length === 1
+        && label.wrap === false && label.overflow === 2 && label.horizontalAlign === 1 && label.verticalAlign === 1,
+      { issues, label, metrics: fontMetrics(label, font) })
+    }
+    const contentBoxes = [title.box, hint.box, ...options.map(option => option.box)]
+    must(`${name}标题提示候选自身盒全部在主题窗内且互不覆盖`, contentBoxes.every(box => contains(frame.prompt.box, box))
+      && contentBoxes.every((box, index) => contentBoxes.slice(index + 1).every(other => !intersects(box, other))),
+    { prompt: frame.prompt.box, contentBoxes })
     must(`${name}三名中文候选完整可见`, options.length === 3 && options.every((option, index) => {
       const candidate = firstQuest.heroChoices[index]
       return option.name === `HeroOption_${candidate.heroId}` && candidate.name !== candidate.heroId
@@ -477,7 +722,29 @@ try {
       evidence.push({ phase: `${name}-option-center`, option: option.name, point })
     }
     await navigationBlocked(`${name}选择窗打开时`)
+    const blank = { x: (frame.prompt.box.left + frame.prompt.box.right) / 2,
+      y: (hint.box.bottom + options[0].box.top) / 2 }
+    requireThat(blank.y > hint.box.bottom && blank.y < options[0].box.top, `${name}主题窗空白点击前提不足`)
+    const beforeBlank = requests.filter(request => request.route === '/quest/claim').length
+    await page.mouse.click(blank.x, blank.y)
+    evidence.push({ phase: `${name}-real-blank-mouse`, point: blank })
+    await page.waitForTimeout(160)
+    const afterBlank = await read()
+    must(`${name}真点主题窗矩形空白保持选择且零发奖`, afterBlank.prompt.active && afterBlank.current === 'quest'
+      && requests.filter(request => request.route === '/quest/claim').length === beforeBlank, afterBlank.prompt)
   }
+  await click({ name: 'Tab-achievement', within: 'quest' })
+  await wait('真实切页签关闭选择窗并恢复强制引导气泡', frame => !frame.prompt.active && frame.guide.bubbleActive)
+  must('关闭选择窗仍零领取请求', requests.filter(request => request.route === '/quest/claim').length === claimCount)
+  await shot('choice-real-tab-closed-guide-restored')
+  await click({ name: 'Tab-quest', within: 'quest' })
+  await wait('真实返回任务页仍可领取同一权威任务', frame => frame.rows[0]?.questId === firstQuest.questId && frame.rows[0]?.claim?.active)
+  await click({ name: 'ClaimButton', within: 'quest' })
+  await wait('真实再次领取重新打开三选一', frame => frame.prompt.active && frame.prompt.options.filter(option => option.active).length === 3)
+  const reopened = await shot('choice-real-reopened-normal640')
+  must('真实关闭再开仍在任务末层且未提前发奖', promptLayeringIssues(reopened).length === 0
+    && !reopened.guide.bubbleActive && reopened.guide.navBlocked
+    && requests.filter(request => request.route === '/quest/claim').length === claimCount, reopened.prompt)
   const chosen = firstQuest.heroChoices[0]
   const claimed = await clickResponse('/quest/claim', { name: `HeroOption_${chosen.heroId}`, within: 'HeroChoicePanel' })
   must('真实点中文候选中心按当前QuestClaimReq送出选项与幂等键', claimed.request.questId === firstQuest.questId

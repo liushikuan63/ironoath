@@ -15,7 +15,7 @@
  * 正式美术。列表 item 已按 B07 §4 池化。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, view } from 'cc'
 import { buildQuestList, candidateLabel, chosenClaimReq, claimIntentOf } from '../game/quest/QuestPanel'
 import {
   clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
@@ -26,9 +26,11 @@ import type { ActivityListResp } from '../net/generated/ActivityProtocol'
 import { buildActivityList } from '../game/activity/ActivityPanel'
 import type { ActivityListView, ActivityRow } from '../game/activity/ActivityPanel'
 import { NodePool } from './NodePool'
-import { applyAnyIconSprite, ensureFamily } from './ArtCatalog'
-import { activityIconKey } from '../game/art/ArtFamilies'
+import { applyAnyIconSprite, applySlicedSprite, ensureFamily } from './ArtCatalog'
+import { activityIconKey, PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
+import { applyDialogButton, dialogContentRect, paintCompactDialogFrame } from './DialogStyle'
+import { dialogLayout } from '../game/ui/DialogLayout'
 
 const { ccclass } = _decorator
 
@@ -63,6 +65,13 @@ const ROW_ICON_COLUMN = 34
 /** 三选一弹窗里每个候选按钮的高度与间距 */
 const OPTION_HEIGHT = 56
 const OPTION_GAP = 8
+const COMPACT_OPTION_HEIGHT = 44
+const COMPACT_OPTION_GAP = 6
+const PROMPT_TITLE_HEIGHT = 28
+const PROMPT_TITLE_GAP = 8
+const PROMPT_HINT_HEIGHT = 22
+const PROMPT_HINT_GAP = 12
+const OPTION_CAPTION_HEIGHT = 40
 
 /**
  * 三个页签。顺序即从左到右。
@@ -116,6 +125,7 @@ export class QuestPanelView extends Component {
   /** 弹窗里每个候选按钮 → 它的 heroId。每次开弹窗重建，避免残留上一条任务的候选 */
   private readonly optionHeroIds = new Map<Node, string>()
   private prompt: HeroChoicePrompt | null = null
+  private promptLayoutKey = ''
 
   /** 玩家要领某条任务的奖励。`heroChoice` 为 null 表示这条任务没有候选（直接领） */
   onClaim: ((questId: string, heroChoice: string | null) => void) | null = null
@@ -166,6 +176,16 @@ export class QuestPanelView extends Component {
     this.rowQuestIds.clear()
     this.optionHeroIds.clear()
     this.onClaim = null
+  }
+
+  override update(): void {
+    if (this.promptPanel === null || !this.promptPanel.active || this.prompt === null) return
+    // NodePool会把后来取出的Rows追加到Quest末尾；弹窗开着时仍须守住层级。
+    this.keepPromptAboveRows()
+    const size = view.getVisibleSize(), area = dialogContentRect(this.node)
+    const topLimit = this.promptTopLimit(area.y + area.height, size.height)
+    const key = `${size.width}:${size.height}:${area.x}:${area.y}:${area.width}:${area.height}:${topLimit}`
+    if (key !== this.promptLayoutKey) this.layoutPrompt()
   }
 
   /** 装载任务列表。行顺序照搬服务端（它按章节/类型稳定排序）。 */
@@ -331,20 +351,18 @@ export class QuestPanelView extends Component {
     const panel = new Node('HeroChoicePanel')
     panel.layer = this.node.layer
     this.node.addChild(panel)
-    const width = PANEL_WIDTH - PADDING * 2
-    const height = HEADER_HEIGHT + MAX_VISIBLE_ROWS / 2 * (OPTION_HEIGHT + OPTION_GAP)
-    panel.addComponent(UITransform).setContentSize(new Size(width, height))
-    const graphics = panel.addComponent(Graphics)
-    graphics.fillColor = COLOR_PANEL
-    graphics.strokeColor = COLOR_COPPER_GOLD
-    graphics.lineWidth = 2
-    graphics.roundRect(-width / 2, -height / 2, width, height, 8)
-    graphics.fill()
-    graphics.stroke()
+    panel.addComponent(UITransform)
+    // 矩形内的空白也吞触摸；页签仍在弹窗之外，保留原有切页关闭路径。
+    panel.on('touch-start', (_event: EventTouch) => undefined)
+    // Sprite独占底板节点，不能与Graphics争Cocos登记的首个UIRenderer。
+    const plate = new Node('DialogFrameArt')
+    plate.layer = panel.layer
+    panel.addChild(plate)
+    plate.addComponent(UITransform)
     this.promptPanel = panel
 
-    this.promptTitle = this.addLabel(panel, 'PromptTitle', 0, height / 2 - 26, COLOR_COPPER_GOLD, 20)
-    this.promptHint = this.addLabel(panel, 'PromptHint', 0, height / 2 - 52, COLOR_TEXT_DIM, 14)
+    this.promptTitle = this.addLabel(panel, 'PromptTitle', 0, 0, COLOR_COPPER_GOLD, 20)
+    this.promptHint = this.addLabel(panel, 'PromptHint', 0, 0, COLOR_TEXT_DIM, 14)
     this.promptHint.string = '选择一名武将作为奖励（只能选一次）'
     panel.active = false
   }
@@ -679,22 +697,12 @@ export class QuestPanelView extends Component {
     }
     this.optionHeroIds.clear()
 
-    const width = PANEL_WIDTH - PADDING * 4
-    prompt.candidates.forEach((choice, index) => {
+    prompt.candidates.forEach((choice) => {
       const option = new Node(`HeroOption_${choice.heroId}`)
       option.layer = panel.layer
       panel.addChild(option)
-      const y = panel.getComponent(UITransform)!.height / 2 - HEADER_HEIGHT - OPTION_HEIGHT / 2
-        - index * (OPTION_HEIGHT + OPTION_GAP)
-      option.setPosition(new Vec3(0, y, 0))
-      option.addComponent(UITransform).setContentSize(new Size(width, OPTION_HEIGHT))
-      const graphics = option.addComponent(Graphics)
-      graphics.fillColor = COLOR_ROW
-      graphics.strokeColor = COLOR_COPPER_GOLD
-      graphics.lineWidth = 1
-      graphics.roundRect(-width / 2, -OPTION_HEIGHT / 2, width, OPTION_HEIGHT, 6)
-      graphics.fill()
-      graphics.stroke()
+      option.addComponent(UITransform)
+      option.addComponent(Graphics)
       const label = this.addLabel(option, 'Name', 0, 0, COLOR_TEXT, 18)
       label.string = candidateLabel(choice)
       this.optionHeroIds.set(option, choice.heroId)
@@ -706,8 +714,97 @@ export class QuestPanelView extends Component {
         this.onClaim?.(req.questId, req.heroChoice)
       })
     })
+    this.layoutPrompt()
     panel.active = true
+    this.keepPromptAboveRows()
     this.onPromptVisibility?.(true)
+  }
+
+  private keepPromptAboveRows(): void {
+    const panel = this.promptPanel
+    if (panel !== null && this.node.children[this.node.children.length - 1] !== panel) {
+      panel.setSiblingIndex(this.node.children.length - 1)
+    }
+  }
+
+  private promptTopLimit(areaTop: number, height: number): number {
+    let top = Math.min(areaTop, height / 2 - PADDING - HEADER_HEIGHT + 6)
+    // 页签可能在另一个窗口尺寸下创建；使用其真实盒下沿，不能只凭新视口公式猜位置。
+    for (const [node] of this.tabNodes) {
+      const box = node.getComponent(UITransform)
+      if (node.active && box !== null) top = Math.min(top, node.position.y - box.height / 2)
+    }
+    return top
+  }
+
+  private layoutPrompt(): void {
+    const panel = this.promptPanel, prompt = this.prompt
+    if (panel === null || prompt === null || this.promptTitle === null || this.promptHint === null) return
+    const area = dialogContentRect(this.node), size = view.getVisibleSize()
+    const count = prompt.candidates.length
+    // 弹窗须给页签留下真实关闭入口；只取页签下沿至导航上沿的净区。
+    const topLimit = this.promptTopLimit(area.y + area.height, size.height)
+    const promptArea = { ...area, height: Math.max(1, topLimit - area.y) }
+    const normalHeight = PROMPT_TITLE_HEIGHT + PROMPT_TITLE_GAP + PROMPT_HINT_HEIGHT + PROMPT_HINT_GAP
+      + count * OPTION_HEIGHT + Math.max(0, count - 1) * OPTION_GAP
+      + PANEL_IRON_INSET.top + PANEL_IRON_INSET.bottom
+    const compact = normalHeight > promptArea.height - 16
+    const optionHeight = compact ? COMPACT_OPTION_HEIGHT : OPTION_HEIGHT
+    const optionGap = compact ? COMPACT_OPTION_GAP : OPTION_GAP
+    const titleGap = compact ? 6 : PROMPT_TITLE_GAP
+    const hintGap = compact ? 8 : PROMPT_HINT_GAP
+    const naturalHeight = PROMPT_TITLE_HEIGHT + titleGap + PROMPT_HINT_HEIGHT + hintGap
+      + count * optionHeight + Math.max(0, count - 1) * optionGap
+    const layout = dialogLayout(promptArea, PANEL_WIDTH - PADDING * 2 - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right,
+      naturalHeight)
+    panel.getComponent(UITransform)!.setContentSize(layout.width, layout.height)
+    panel.setPosition(new Vec3(area.x + area.width / 2, layout.centerY, 0))
+    const plate = panel.getChildByName('DialogFrameArt')!
+    plate.active = applySlicedSprite(plate, 'ui.panel.iron', layout.width, layout.height)
+    const fallback = panel.getChildByName('DialogFrameVector')
+    if (plate.active) {
+      if (fallback !== null) fallback.active = false
+    } else {
+      paintCompactDialogFrame(panel, layout.width, layout.height)
+    }
+
+    let top = layout.innerTop - layout.centerY
+    this.setPromptLabelBox(this.promptTitle, layout.innerWidth, PROMPT_TITLE_HEIGHT, 22)
+    this.promptTitle.node.setPosition(new Vec3(0, top - PROMPT_TITLE_HEIGHT / 2, 0))
+    top -= PROMPT_TITLE_HEIGHT + titleGap
+    this.setPromptLabelBox(this.promptHint, layout.innerWidth, PROMPT_HINT_HEIGHT, 18)
+    this.promptHint.node.setPosition(new Vec3(0, top - PROMPT_HINT_HEIGHT / 2, 0))
+    top -= PROMPT_HINT_HEIGHT + hintGap
+    prompt.candidates.forEach((choice, index) => {
+      const option = panel.getChildByName(`HeroOption_${choice.heroId}`)!
+      option.setPosition(new Vec3(0, top - optionHeight / 2 - index * (optionHeight + optionGap), 0))
+      applyDialogButton(option, true, layout.innerWidth, optionHeight)
+      // 共用按钮助手在素材缺失时停用旧Graphics，恢复同色兜底以保住真实可见的按钮。
+      const art = option.getChildByName('DialogButtonArt')?.getComponent(Sprite)
+      const graphics = option.getComponent(Graphics)!
+      if (art?.enabled !== true || art.spriteFrame === null) {
+        graphics.enabled = true
+        graphics.clear()
+        graphics.fillColor = COLOR_ROW
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.roundRect(-layout.innerWidth / 2, -optionHeight / 2, layout.innerWidth, optionHeight, 6)
+        graphics.fill()
+        graphics.stroke()
+      }
+      this.setPromptLabelBox(option.getChildByName('Name')!.getComponent(Label)!,
+        layout.innerWidth - PADDING * 2, OPTION_CAPTION_HEIGHT, 24)
+    })
+    this.promptLayoutKey = `${size.width}:${size.height}:${area.x}:${area.y}:${area.width}:${area.height}:${topLimit}`
+  }
+
+  private setPromptLabelBox(label: Label, width: number, height: number, lineHeight: number): void {
+    label.node.getComponent(UITransform)!.setContentSize(width, height)
+    label.lineHeight = lineHeight
+    label.overflow = Label.Overflow.SHRINK
+    label.enableWrapText = false
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
   }
 
   private hidePrompt(): void {
