@@ -107,7 +107,7 @@ function buildingIconSize(configId: string, plateWidth: number,
     farm: 1.72,
     drill_ground: 1.76,
   }
-  // 默认 1.8 倍仍需给顶部 HUD 与底部详情留出空间，主堡不能从基座一直顶出视口。
+  // 默认 1.5 倍仍需给顶部 HUD 与底部详情留出空间，主堡不能从基座一直顶出视口。
   const upper = configId === 'main_city' ? Math.min(300, viewportHeight * 0.36) : 185
   return Math.max(76, Math.min(upper, plateWidth * (factors[configId] ?? 1.66)))
 }
@@ -198,7 +198,7 @@ const CORNER_KEY_WIDTH = 132
  *
  * <p>**为什么默认是放大而不是"整城尽收"**：36 格铺满 960×600 时，一格只有 ~150 物理像素宽，
  * 建筑正稿缩到那个尺寸就读不出造型，玩家也分不清哪栋是哪栋（审计 §5.3「信息辨识度极低」）。
- * 默认 1.8 倍并对准主堡，一屏只剩主堡周围那几栋 —— 每栋都大到能认出，
+ * 默认 1.5 倍并对准主堡，让主体与基座铭牌留在顶部文字和底部操作栏之间，
  * 想看全城就缩小（下限 1.0 = 改动前那一屏，一寸不多留）。
  *
  * <p>**缩放的是"城景舞台"这一个容器**（底图 + 36 格），HUD（资源条 / 选择栏 / 提示）不跟着缩：
@@ -206,7 +206,7 @@ const CORNER_KEY_WIDTH = 132
  */
 const CITY_ZOOM_MIN = 1
 const CITY_ZOOM_MAX = 2.4
-const CITY_ZOOM_DEFAULT = 1.8
+const CITY_ZOOM_DEFAULT = 1.5
 const CITY_ZOOM_STEP = 0.3
 const ZOOM_BUTTON_WIDTH = 40
 const ZOOM_BUTTON_HEIGHT = 34

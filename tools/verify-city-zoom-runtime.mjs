@@ -3,7 +3,7 @@
  *       玩家动过镜头之后数据刷新不许把镜头抢回去；建筑薄框、名字与等级始终跟随真实脚面。
  * 依赖：`client/build/web-mobile` 产物 + 一台本轮自己的 dev 后端（`BACKEND_ORIGIN`）+ Playwright。
  *
- * <p>为什么需要它：这一格改的是"默认看得见什么"。默认 1.8 倍时屏上只剩主堡周围那几栋 ——
+ * <p>为什么需要它：这一格改的是"默认看得见什么"。默认放大时屏上只剩主堡周围那几栋 ——
  * 这件事**只有运行时数得清**（36 格里几格落在视口内），源码里读不出来；
  * 而"缩到 1 倍能看全城"是它的对照组：两个读数必须一起变，只报一个等于没量。
  *
@@ -248,6 +248,15 @@ const readView = () => page.evaluate((keepName) => {
       nameDrawable: drawable(name, nameLabel) && nameLabel.color.a > 0 && nameLabel.string !== '',
       levelDrawable: drawable(level, levelLabel) && levelLabel.color.a > 0 && levelLabel.string !== '' }]
   })
+  // HUD 与建筑使用同一真实相机口径；登记绘制不代表没有被后绘制的操作栏盖住。
+  const selectionBar = find(city, 'SelectionBar')
+  const selectionBackground = selectionBar?.getChildByName('SelectionBarBackground') ?? null
+  const hudLabel = (name) => {
+    const node = find(city, name)
+    const label = node?.getComponent('cc.Label') ?? null
+    return { box: screenBox(node), drawable: drawable(node, label) && label.color.a > 0 && label.string !== '',
+      text: String(label?.string ?? '') }
+  }
   return {
     found: true,
     zoom: Number(zoom.toFixed(4)),
@@ -262,6 +271,10 @@ const readView = () => page.evaluate((keepName) => {
     keepCenterLocal,
     keepBounds,
     keepDrawable,
+    keepScreenBox: screenBox(keepIcon),
+    hud: { selectionBar: { box: screenBox(selectionBar),
+      drawable: drawable(selectionBackground, selectionBackground?._uiProps?.uiComp ?? null) },
+      header: hudLabel('Header'), queue: hudLabel('Queue') },
     buildings,
     expectedBuildings,
     buildingDataReady: Array.isArray(cityView?.panel?.rows) && (cityView?.gridTiles?.length ?? 0) > 0,
@@ -299,6 +312,38 @@ const buildingSourceFailures = (snapshot) => {
     if (!row.tile || !building) { failures.push(`${row.configId}: 生产建筑缺少真实绘制格位`); continue }
     if (building.configId !== row.configId || building.name !== row.name || building.level !== row.level) {
       failures.push(`${row.tile}: 名字/等级未对应生产行（${building.name} ${building.level}，应为${row.name} ${row.level}）`)
+    }
+  }
+  return failures
+}
+
+/** 只钉默认镜头的实际 HUD 遮挡；玩家主动拖动后的裁切由玩家控制。 */
+const defaultHudFailures = (snapshot) => {
+  const failures = []
+  const mains = snapshot.buildings.filter(building => building.configId === 'main_city')
+  if (mains.length !== 1) return ['默认HUD门：必须有且仅有一栋真实主堡']
+  const main = mains[0]
+  const hud = snapshot.hud
+  const validBox = box => box?.verified === true
+    && [box.x, box.y, box.width, box.height].every(Number.isFinite) && box.width > 0 && box.height > 0
+  const overlaps = (a, b) => Math.min(a.x + a.width / 2, b.x + b.width / 2)
+    > Math.max(a.x - a.width / 2, b.x - b.width / 2)
+    && Math.min(a.y + a.height / 2, b.y + b.height / 2)
+    > Math.max(a.y - a.height / 2, b.y - b.height / 2)
+  if (!snapshot.keepDrawable || !validBox(snapshot.keepScreenBox)) failures.push('默认HUD门：主堡真实Sprite投影或登记绘制缺失')
+  if (!main.frameDrawable || !main.nameDrawable || !main.levelDrawable) failures.push('默认HUD门：主堡薄框、名字或级数未登记绘制')
+  if (!hud?.selectionBar?.drawable || !validBox(hud.selectionBar.box)) failures.push('默认HUD门：实际SelectionBar绘制或四角投影缺失')
+  for (const key of ['frame', 'nameBox', 'levelBox']) {
+    if (!validBox(main[key])) failures.push(`默认HUD门：主堡${key}真实投影缺失`)
+    else if (validBox(hud?.selectionBar?.box) && overlaps(main[key], hud.selectionBar.box)) {
+      failures.push(`默认HUD门：主堡${key}与实际SelectionBar重叠`)
+    }
+  }
+  for (const key of ['header', 'queue']) {
+    const text = hud?.[key]
+    if (!text?.drawable || !validBox(text.box)) failures.push(`默认HUD门：真实${key}文字绘制或四角投影缺失`)
+    else if (validBox(snapshot.keepScreenBox) && overlaps(snapshot.keepScreenBox, text.box)) {
+      failures.push(`默认HUD门：主堡Sprite与真实${key}文字盒重叠`)
     }
   }
   return failures
@@ -425,6 +470,65 @@ report('默认放大时屏上只有主堡周围那几栋（不是全城尽收）
   `可见 ${first.insideCount}/${first.tileCount} 格`)
 await page.screenshot({ path: path.join(OUT, 'city-zoom-default.png') })
 
+const hudEvidence = []
+const initialHudFailures = defaultHudFailures(first)
+hudEvidence.push({ phase: '默认主堡与真实HUD无覆盖', snapshot: first, failures: initialHudFailures })
+report('默认主堡铭牌避开实际操作栏，主体避开Header/Queue文字', initialHudFailures.length === 0,
+  initialHudFailures.length ? initialHudFailures.join('；') : JSON.stringify({ main: first.keepScreenBox, hud: first.hud }))
+
+// 同门负控：把真实铭牌及文字移到实际操作栏中心，只改三个显示节点的本地位置。
+const hudNegativeReady = await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  const cityView = scene.getComponentInChildren('CityPanelView')
+  const row = cityView?.panel?.rows?.find(row => row.configId === 'main_city')
+  const tile = row ? cityView.gridTiles.find(tile => tile.plate.gridX === row.gridX && tile.plate.gridY === row.gridY)?.node : null
+  const city = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('city') ?? null
+  const bar = city?.getChildByName('Card')?.getChildByName('SelectionBar') ?? null
+  const barBox = bar?.getComponent('cc.UITransform') ?? null
+  const tileBox = tile?.getComponent('cc.UITransform') ?? null
+  const nodes = ['BuildingNameplate', 'Name', 'Level'].map(name => tile?.getChildByName(name) ?? null)
+  if (!barBox || !tileBox || nodes.some(node => !node?.activeInHierarchy)) return false
+  const destination = tileBox.convertToNodeSpaceAR(barBox.convertToWorldSpaceAR(new window.cc.Vec3(0, 0, 0)))
+  if (![destination.x, destination.y, destination.z].every(Number.isFinite)) return false
+  const dx = destination.x - nodes[0].position.x, dy = destination.y - nodes[0].position.y
+  globalThis.__cityZoomHudRestore = nodes.map(node => ({ node, position: node.position.clone() }))
+  for (const node of nodes) node.setPosition(new window.cc.Vec3(node.position.x + dx, node.position.y + dy, node.position.z))
+  return true
+})
+report('HUD负控前置：真实主堡铭牌与文字移到真实操作栏中心', hudNegativeReady)
+if (hudNegativeReady) {
+  try {
+    await page.waitForTimeout(180)
+    const hidden = await readView()
+    const hiddenMain = hidden.buildings.find(building => building.configId === 'main_city')
+    const deviations = defaultHudFailures(hidden)
+    const barBox = hidden.hud?.selectionBar?.box
+    report('HUD负控：真实薄框与文字仍登记绘制且薄框位于栏心', !!hiddenMain?.frameDrawable
+      && hiddenMain.nameDrawable && hiddenMain.levelDrawable && !!hiddenMain.frame && !!barBox
+      && Math.hypot(hiddenMain.frame.x - barBox.x, hiddenMain.frame.y - barBox.y) <= 0.5)
+    hudEvidence.push({ phase: '负控：操作栏覆盖真实铭牌必须红', snapshot: hidden, failures: deviations })
+    report('HUD负控：同一默认可见性门因真实薄框与操作栏覆盖翻红',
+      deviations.includes('默认HUD门：主堡frame与实际SelectionBar重叠'), deviations.join('；'))
+    await page.screenshot({ path: path.join(OUT, 'city-zoom-negative-hud-nameplate.png') })
+  } finally {
+    await page.evaluate(() => {
+      for (const saved of globalThis.__cityZoomHudRestore) saved.node.setPosition(saved.position)
+      delete globalThis.__cityZoomHudRestore
+    })
+  }
+  await page.waitForTimeout(180)
+  const restored = await readView()
+  const restoredFailures = defaultHudFailures(restored)
+  const positions = snapshot => {
+    const main = snapshot.buildings.find(building => building.configId === 'main_city')
+    return main ? [main.frame, main.nameBox, main.levelBox] : null
+  }
+  hudEvidence.push({ phase: 'HUD负控还原后默认可见性门恢复绿', snapshot: restored, failures: restoredFailures })
+  report('HUD负控还原后同一可见性门恢复绿，真实框/文字投影回到首相', restoredFailures.length === 0
+    && JSON.stringify(positions(restored)) === JSON.stringify(positions(first)), restoredFailures.join('；'))
+  await page.screenshot({ path: path.join(OUT, 'city-zoom-restored-hud-nameplate.png') })
+}
+
 // ---------- 第 2 相：缩小到下限 ⇒ 全城尽收 ----------
 const stepsDown = Math.ceil((ZOOM_DEFAULT - ZOOM_MIN) / ZOOM_STEP) + 1
 let tapped = 0
@@ -546,7 +650,7 @@ report('真鼠标滚轮改变缩放倍数', !near(wheeled.zoom, oneStep.zoom), `
 reportFollow('真滚轮缩放之后薄框与文字保持脚面相对比例', oneStep, wheeled)
 await page.screenshot({ path: path.join(OUT, 'city-zoom-wheel.png') })
 writeFileSync(path.join(OUT, 'city-nameplate-follow.json'), JSON.stringify({
-  backend: BACKEND, deviceId, expectedBuildings: EXPECT_BUILDINGS, initial: first, followEvidence, errors,
+  backend: BACKEND, deviceId, expectedBuildings: EXPECT_BUILDINGS, initial: first, hudEvidence, followEvidence, errors,
 }, null, 2))
 
 await browser.close()
