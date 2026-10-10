@@ -110,7 +110,7 @@ function readArmy() {
     pickerActive: game.children.some((c) => c.name === 'ChoiceOverlay' && c.activeInHierarchy) }
 }
 
-/** 按节点名点一下（真 emit，与真人按下走同一个回调）。 */
+/** 按节点名 emit 已注册的按下事件；这不是物理指针输入。 */
 function clickNode(name) {
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas').getChildByName('Game')
@@ -126,25 +126,29 @@ function clickNode(name) {
   return true
 }
 
-/** 在**已打开的选择器**里按文本点一行（`ChoiceOverlay` 的行是运行时造的壳，没有 cc.Button）。 */
+/** 在已打开选择器的实际选项行上 emit 已注册事件；这不是物理指针输入。 */
 function clickPickerRow(text) {
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas').getChildByName('Game')
-  const picker = game.children.find((c) => c.name === 'ChoiceOverlay' && c.activeInHierarchy)
-  if (!picker) return false
-  let hit = null
-  const walk = (n) => {
-    if (hit) return
-    const label = n.getComponent('cc.Label')
-    if (label && String(label.string ?? '').includes(text)) { hit = n; return }
-    for (const child of n.children) walk(child)
+  const unique = (parent, name) => {
+    const nodes = (parent?.children ?? []).filter((node) => node.name === name)
+    return nodes.length === 1 ? nodes[0] : null
   }
-  walk(picker)
-  if (!hit) return false
-  // 从 Label 往上爬到那一行的壳（色带与点击都挂在壳上）
-  let row = hit
-  for (let p = hit.parent; p !== null && p !== picker; p = p.parent) row = p
-  row.emit('touch-start')
+  const pickers = game.children.filter((node) => node.name === 'ChoiceOverlay' && node.activeInHierarchy)
+  if (pickers.length !== 1) return false
+  const viewport = unique(pickers[0], 'DialogContent')
+  const content = unique(viewport, 'DialogContentContent')
+  const row = unique(content, 'Choice-0')
+  if (!row?.activeInHierarchy) return false
+  const titles = row.children.filter((node) => {
+    const label = node.getComponent('cc.Label')
+    return node.activeInHierarchy && label && String(label.string ?? '') === text
+  })
+  if (titles.length !== 1 || typeof row.hasEventListener !== 'function') return false
+  const event = row.hasEventListener('touch-end') ? 'touch-end'
+    : row.hasEventListener('touch-start') ? 'touch-start' : null
+  if (event === null) return false
+  row.emit(event)
   return true
 }
 
