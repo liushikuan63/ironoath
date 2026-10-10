@@ -6900,3 +6900,5 @@ TEST_EXIT=0
 | #987 F16默认65首次全0，五个未验子项经同构建真实补验证据消账 | 本笔（原子留档，本批统一推送） | 65/65首次实际0、无重跑/失败/超时/前提不足；原wrapper及durable actual1（5项未验）；政策87/0及装备69/0补验各actual0；补充严格汇总accepted=true/actual0；cleanup与release各0 | D:/tmp/ironoath-wechat-20261010/runtime-v16-retry3/summary-supplemented.json；phase-evidence-combined.json；root-supervised-v16-default-retry3.actual-exit.json；policy-retry3与equip-retry6 | 此次F16仍有原生胶囊遮挡、装备旧样式及Army建设路线已确认缺陷；随后四修复合入的新F17须全量重构建/批测/原生七步，不借本次旧包通过；手机未验 |
 
 | #988 关卡首通与汇总奖励名称走服务端配置，未知项按类别安全回退 | 本笔（原子留档，本批统一推送） | 独立旧实现28中4失败(actual1)，修后四套28通过0失败0错误0跳过(actual0)；main补丁SHA及apply-check0；后续F17全量测试和boss真实UI名称待验 | D:/tmp/ironoath-wechat-20261010/stage-reward-name-worktree；stage-reward-name-fix.patch；stage-reward-green2/maven.log；#980真实eq_bamboo_tally泄漏反证 | 主树刚合入尚未F17全量构建及真实十关boss名称竹符验收；旧F16通过不代表该变更通过；手机未验 |
+
+| #989 微信顶部净区纳入实际胶囊位置，系统安全区与胶囊分别保守计算 | 本笔（原子留档，本批统一推送） | 旧实现38=32通过6失败(actual1)；修后38通过0失败0跳过(actual0)、两类型检查0；main SHA/apply-check0；R7实际胶囊交集与GPU待验 | D:/tmp/ironoath-wechat-20261010/capsule-safe-area-fix.patch；capsule-safe-area-red.log/green-1.log；R6实际HELD截图97与public capsule111 | F17全量重构建、R7实际public胶囊矩形及HELD文字不相交/GPU完整字体待验；浏览器回归不替代原生；手机未验 |

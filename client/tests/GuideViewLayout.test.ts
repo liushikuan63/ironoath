@@ -12,7 +12,7 @@ import type { HeroChoicePrompt } from '../assets/scripts/game/quest/QuestPanel'
 import type { GuideScriptResp } from '../assets/scripts/net/generated/GuideProtocol'
 import type { QuestListResp, QuestView } from '../assets/scripts/net/generated/QuestProtocol'
 import * as paging from '../assets/scripts/game/ui/PanelPaging'
-import { dialogLayout } from '../assets/scripts/game/ui/DialogLayout'
+import { dialogLayout, safeAreaInsets } from '../assets/scripts/game/ui/DialogLayout'
 import { PANEL_IRON_INSET } from '../assets/scripts/game/art/ArtFamilies'
 import * as uiTokens from '../assets/scripts/game/ui/UiTokens'
 
@@ -93,6 +93,101 @@ function sceneExports(name: string, bindings: Record<string, unknown>): Record<s
 function sceneClass<T>(name: string, bindings: Record<string, unknown>): new () => T {
   return sceneExports(name, bindings)[name] as new () => T
 }
+
+const capsuleRect = { left: 746, top: 12, right: 834, bottom: 44, width: 88, height: 32 }
+const notchRect = { x: 53.459715639810426, y: 23.886255924170616,
+  width: 853.0805687203791, height: 419.7156398104265 }
+function actualViewportInsets(runtimeSys: Record<string, unknown>, runtimeWx?: Record<string, unknown>):
+  (width: number, height: number) => { left: number; right: number; top: number; bottom: number } {
+  return sceneExports('ViewportSafeArea', { sys: runtimeSys, safeAreaInsets,
+    view: { getFrameSize: () => ({ width: 844, height: 390 }) }, wx: runtimeWx,
+  }).viewportSafeInsets as ReturnType<typeof actualViewportInsets>
+}
+
+test('真实微信胶囊与HELD自身框相交时，实际净区入口保留字号并让文字整行离开胶囊', () => {
+  const insets = actualViewportInsets({ isBrowser: false, getSafeAreaRect: () => notchRect }, {
+    getMenuButtonBoundingClientRect: () => capsuleRect,
+    getWindowInfo: () => ({ windowWidth: 844, windowHeight: 390, screenTop: 0 }),
+  })(960, 443.6018957345971)
+  assert.ok(insets.top > 58 && insets.top < 58.1)
+  assert.ok(423.6018957345971 - insets.top < 393.5545023696683,
+    '旧HELD顶部必须整体低于原生胶囊底边，不能只判自身盒相交')
+  assert.equal(insets.left, notchRect.x)
+  assert.equal(insets.bottom, notchRect.y)
+})
+
+test('没有原生safeArea API时也实际查询微信胶囊并避让', () => {
+  const insets = actualViewportInsets({ isBrowser: false }, {
+    getMenuButtonBoundingClientRect: () => capsuleRect,
+    getWindowInfo: () => ({ windowWidth: 844, windowHeight: 390 }),
+  })(960, 443.6018957345971)
+  assert.ok(insets.top > 58 && insets.top < 58.1)
+})
+
+test('原生safeArea抛错后胶囊仍有效；较大的原生顶边不会重复扣除', () => {
+  const runtimeWx = { getMenuButtonBoundingClientRect: () => capsuleRect,
+    getWindowInfo: () => ({ windowWidth: 844, windowHeight: 390 }) }
+  const throwing = actualViewportInsets({ isBrowser: false, getSafeAreaRect: () => { throw Error('unsupported') } }, runtimeWx)
+  assert.ok(throwing(960, 443.6018957345971).top > 58)
+  const existing = actualViewportInsets({ isBrowser: false,
+    getSafeAreaRect: () => ({ x: 20, y: 10, width: 920, height: 350 }) }, runtimeWx)(960, 443.6018957345971)
+  assert.equal(existing.top, 83.60189573459712)
+  assert.equal(existing.left, 20)
+  assert.equal(existing.bottom, 10)
+})
+
+test('旧基础库只提供getSystemInfoSync时实际净区同样避胶囊', () => {
+  const insets = actualViewportInsets({ isBrowser: false, getSafeAreaRect: () => notchRect }, {
+    getMenuButtonBoundingClientRect: () => capsuleRect,
+    getSystemInfoSync: () => ({ windowWidth: 844, windowHeight: 390 }),
+  })(960, 443.6018957345971)
+  assert.ok(insets.top > 58)
+})
+
+test('窗口信息较新API暂不可用时兼容旧API，只有窗口原点的screenTop可参与换算', () => {
+  const insets = actualViewportInsets({ isBrowser: false }, {
+    getMenuButtonBoundingClientRect: () => ({ ...capsuleRect, top: 32, bottom: 64 }),
+    getWindowInfo: () => { throw Error('not ready') },
+    getSystemInfoSync: () => ({ windowWidth: 844, windowHeight: 390, screenTop: 20 }),
+  })(960, 443.6018957345971)
+  assert.ok(insets.top > 58 && insets.top < 58.1)
+})
+
+test('连续窗口变化重新读取胶囊与窗口尺寸，不复用首次净区或乘DPR', () => {
+  let bottom = 44
+  let windowHeight = 390
+  const readInsets = actualViewportInsets({ isBrowser: false }, {
+    getMenuButtonBoundingClientRect: () => ({ ...capsuleRect, bottom, height: bottom - 12 }),
+    getWindowInfo: () => ({ windowWidth: 844, windowHeight, pixelRatio: 3 }),
+  })
+  assert.ok(readInsets(960, 443.6018957345971).top > 58)
+  bottom = 60; windowHeight = 600
+  assert.equal(readInsets(960, 640).top, 72)
+})
+
+test('浏览器跳过微信调用；原生没有或抛错的胶囊接口保留实测safeArea', () => {
+  const unsupported = { getMenuButtonBoundingClientRect: () => { throw Error('unsupported') } }
+  assert.equal(actualViewportInsets({ isBrowser: true }, unsupported)(960, 640).top, 0)
+  for (const runtimeWx of [undefined, unsupported]) {
+    const insets = actualViewportInsets({ isBrowser: false, getSafeAreaRect: () => notchRect }, runtimeWx)(960, 443.6018957345971)
+    assert.equal(insets.top, 0)
+    assert.equal(insets.bottom, notchRect.y)
+  }
+})
+
+test('错误尺寸、未就绪零胶囊和窗口之外坐标不能吞掉内容净区', () => {
+  const badRects = [{ ...capsuleRect, bottom: NaN }, { ...capsuleRect, width: 0 },
+    { ...capsuleRect, top: -1 }, { ...capsuleRect, right: 900 },
+    { ...capsuleRect, top: 350, bottom: 382 }]
+  for (const rect of badRects) {
+    const insets = actualViewportInsets({ isBrowser: false, getSafeAreaRect: () => notchRect }, {
+      getMenuButtonBoundingClientRect: () => rect,
+      getWindowInfo: () => ({ windowWidth: 844, windowHeight: 390 }),
+    })(960, 443.6018957345971)
+    assert.equal(insets.top, 0)
+    assert.equal(insets.bottom, notchRect.y)
+  }
+})
 interface GuideHarness {
   node: Node; isValid: boolean; bubble: Node | null; blockerNodes: Node[]; openPanelKey: () => string | null
   contentRectFor: () => Rect; attach(script: GuideScriptResp): void; repaint(): void; update(): void
