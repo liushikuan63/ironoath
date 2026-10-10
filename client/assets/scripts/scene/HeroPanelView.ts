@@ -12,10 +12,10 @@
  * 不提示的话玩家会把资源一直投进去而看不到任何变化，那会被理解成数值造假。
  *
  * <p><b>必须在 Cocos 编辑器里补的部分</b>：.scene / .prefab 资产、武将立绘、编队拖拽换位、
- * 装备与经验书的选择弹窗、长列表的 ScrollView。占位期用 Graphics 色块 + Label，item 已池化。
+ * 装备与经验书的选择弹窗。名册与编队正文已由运行期ScrollView承载，item 保持池化。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec2, Vec3, view } from 'cc'
 import { buildHeroPanel } from '../game/hero/HeroPanel'
 import type { HeroPanelView as HeroPanelData, HeroRow, LineupPanel } from '../game/hero/HeroPanel'
 import type { HeroListResp } from '../net/generated/HeroProtocol'
@@ -23,6 +23,7 @@ import { applyAnyIconSprite, applyCommandButton, ensureFamily, rarityIconKey } f
 import { heroPortraitKey } from '../game/art/ArtFamilies'
 import { NodePool } from './NodePool'
 import { applySystemUiFont } from './UiFont'
+import { createDialogScroll, dialogContentRect, observeDialogSize } from './DialogStyle'
 
 const { ccclass } = _decorator
 
@@ -43,12 +44,19 @@ const COLOR_R = new Color(96, 140, 196, 255)
 const COLOR_N = new Color(140, 134, 124, 255)
 
 const PANEL_WIDTH = 680
-const ROW_HEIGHT = 96
+/** 四段正文按实际字体换行测高；此下限还容纳独立的养成按钮行。 */
+const ROW_HEIGHT = 136
 const ROW_GAP = 5
 const HEADER_HEIGHT = 96
 const PADDING = 16
-/** 一屏最多画几行。武将行比其它面板高（要放下五条养成线），所以留得少 */
-const MAX_VISIBLE_ROWS = 5
+/** 只预热池，不限制服务端名册或编队附注的显示数量。 */
+const ROW_POOL_WARMUP = 5
+const ROW_TEXT_WIDTH = PANEL_WIDTH - PADDING * 2 - 64
+const TEXT_TOP = 4
+const TEXT_GAP = 2
+const ACTION_GAP = 8
+const ACTION_HEIGHT = 26
+const ROW_BOTTOM = 6
 
 type Tab = 'heroes' | 'lineups'
 
@@ -62,6 +70,7 @@ export class HeroPanelView extends Component {
   private pending: HeroListResp | null = null
 
   private rowPool: NodePool | null = null
+  private rowScroll: ReturnType<typeof createDialogScroll> | null = null
   private readonly drawnRows: Node[] = []
   /** 行节点 → 它当前代表的武将 id。池化节点复用时每次渲染都要重新登记 */
   private readonly rowHeroes = new Map<Node, string>()
@@ -98,8 +107,12 @@ export class HeroPanelView extends Component {
   override onLoad(): void {
     const size = view.getVisibleSize()
     this.buildBackground(size.width, size.height)
-    this.rowPool = new NodePool(this.node, () => this.createRow(), MAX_VISIBLE_ROWS)
+    // 正文能自然增高；滚动只包住行，页眉和底部导航仍固定。
+    this.rowScroll = createDialogScroll(this.node, 'HeroRows', PANEL_WIDTH, 1, 0, 0)
+    this.rowPool = new NodePool(this.rowScroll.content, () => this.createRow(), ROW_POOL_WARMUP)
     this.buildHeader(size.height)
+    observeDialogSize(this.node, () => { this.layoutViewport(); this.render() })
+    this.layoutViewport()
     // 立绘族按需拉取：先画一帧稀有度图标，立绘到了补一帧；加载失败就停在图标上
     ensureFamily('hero').then((loaded) => {
       if (loaded > 0 && this.isValid) {
@@ -116,6 +129,7 @@ export class HeroPanelView extends Component {
   override onDestroy(): void {
     this.rowPool?.destroy()
     this.rowPool = null
+    this.rowScroll = null
     this.drawnRows.length = 0
     this.rowHeroes.clear()
     this.tabLabels.clear()
@@ -140,6 +154,7 @@ export class HeroPanelView extends Component {
       return
     }
     this.tab = tab
+    this.rowScroll?.scroll.scrollToTop()
     this.render()
   }
 
@@ -185,8 +200,7 @@ export class HeroPanelView extends Component {
         graphics.fill()
         graphics.stroke()
       }
-      const label = this.addLabel(node, 'Caption', 0, 0, COLOR_TEXT, 16)
-      label.string = item.text
+      const label = this.addButtonCaption(node, item.text, 16, 102, 26)
       this.tabLabels.set(item.tab, label)
       this.tabButtons.set(item.tab, node)
       const tab = item.tab
@@ -209,8 +223,7 @@ export class HeroPanelView extends Component {
       graphics.fill()
       graphics.stroke()
     }
-    const composeLabel = this.addLabel(compose, 'Caption', 0, 0, COLOR_TEXT, 16)
-    composeLabel.string = '碎片合成'
+    this.addButtonCaption(compose, '碎片合成', 16, 86, 26)
     compose.on('touch-start', (_event: EventTouch) => this.onCompose?.(), this)
   }
 
@@ -223,29 +236,34 @@ export class HeroPanelView extends Component {
     graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 5)
     graphics.fill()
 
-    const lines: Array<{ name: string; y: number; size: number; color: Color }> = [
-      { name: 'Line1', y: 32, size: 18, color: COLOR_TEXT },
-      { name: 'Line2', y: 10, size: 14, color: COLOR_TEXT_DIM },
-      { name: 'Line3', y: -8, size: 14, color: COLOR_TEXT_DIM },
-      { name: 'Line4', y: -26, size: 13, color: COLOR_TEXT_DIM },
+    const lines: Array<{ name: string; size: number; color: Color }> = [
+      { name: 'Line1', size: 18, color: COLOR_TEXT },
+      { name: 'Line2', size: 14, color: COLOR_TEXT_DIM },
+      { name: 'Line3', size: 14, color: COLOR_TEXT_DIM },
+      { name: 'Line4', size: 13, color: COLOR_TEXT_DIM },
     ]
     for (const line of lines) {
-      const label = this.addLabel(node, line.name, -PANEL_WIDTH / 2 + PADDING + 48,
-        line.y, line.color, line.size)
+      const label = this.addLabel(node, line.name, -PANEL_WIDTH / 2 + PADDING + 64,
+        0, line.color, line.size)
       label.horizontalAlign = Label.HorizontalAlign.LEFT
-      label.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-      label.node.getComponent(UITransform)?.setContentSize(new Size(430, line.size * 1.5))
-      label.overflow = Label.Overflow.SHRINK
+      label.verticalAlign = Label.VerticalAlign.TOP
+      label.node.getComponent(UITransform)?.setAnchorPoint(0, 1)
+      label.node.getComponent(UITransform)?.setContentSize(new Size(ROW_TEXT_WIDTH, label.lineHeight))
+      // 限宽、按完整文字长高：不让默认40行高或长装备名把13号字压成6号。
+      label.enableWrapText = true
+      label.overflow = Label.Overflow.RESIZE_HEIGHT
     }
 
+    // 最右按钮也完整落在正文的16像素边距内，滚动Mask不会裁去按钮框。
+    const actionRight = PANEL_WIDTH / 2 - PADDING - 24
     const actions: Array<{ name: string; text: string; x: number; action: HeroAction }> = [
       // 「装备库」是 V03-b-S1 的入口：装备穿在武将身上，"我有哪些装备、要不要强化"就在这一页问
       // （不进底栏导航：它是武将页的二级页）。其余四个动作的落地另记在队列里 —— 今天它们只打日志。
-      { name: 'ArmoryButton', text: '装备库', x: PANEL_WIDTH / 2 - 228, action: 'armory' },
-      { name: 'LevelUpButton', text: '升级', x: PANEL_WIDTH / 2 - 176, action: 'levelUp' },
-      { name: 'StarUpButton', text: '升星', x: PANEL_WIDTH / 2 - 124, action: 'starUp' },
-      { name: 'AwakenButton', text: '觉醒', x: PANEL_WIDTH / 2 - 72, action: 'awaken' },
-      { name: 'SkillButton', text: '技能', x: PANEL_WIDTH / 2 - 20, action: 'skillUp' },
+      { name: 'ArmoryButton', text: '装备库', x: actionRight - 208, action: 'armory' },
+      { name: 'LevelUpButton', text: '升级', x: actionRight - 156, action: 'levelUp' },
+      { name: 'StarUpButton', text: '升星', x: actionRight - 104, action: 'starUp' },
+      { name: 'AwakenButton', text: '觉醒', x: actionRight - 52, action: 'awaken' },
+      { name: 'SkillButton', text: '技能', x: actionRight, action: 'skillUp' },
     ]
     for (const button of actions) {
       const buttonNode = new Node(button.name)
@@ -262,10 +280,9 @@ export class HeroPanelView extends Component {
         buttonGraphics.fill()
         buttonGraphics.stroke()
       }
-      const caption = this.addLabel(buttonNode, 'Caption', 0, 0, COLOR_TEXT, 12)
-      caption.string = button.text
+      this.addButtonCaption(buttonNode, button.text, 12, 40, 20)
       const action = button.action
-      buttonNode.on('touch-start', (_event: EventTouch) => {
+      buttonNode.on('touch-end', (_event: EventTouch) => {
         const heroId = this.rowHeroes.get(node)
         if (heroId !== undefined) {
           this.onHeroAction?.(heroId, action)
@@ -290,9 +307,72 @@ export class HeroPanelView extends Component {
     label.string = ''
     label.color = color
     label.fontSize = fontSize
+    label.lineHeight = fontSize + 6
+    label.enableWrapText = false
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     label.verticalAlign = Label.VerticalAlign.CENTER
     return label
+  }
+
+  /** 按钮文案保留字号；自身盒限制在按钮内，避免滚动行的子节点跨行。 */
+  private addButtonCaption(parent: Node, text: string, fontSize: number, width: number, height: number): Label {
+    const label = this.addLabel(parent, 'Caption', 0, 0, COLOR_TEXT, fontSize)
+    label.node.getComponent(UITransform)!.setAnchorPoint(.5, .5)
+    label.node.getComponent(UITransform)!.setContentSize(new Size(width, height))
+    // NONE 会由字体基线重新写节点尺寸；CLAMP 保留固定盒与配置字号，完整短文案能放下。
+    label.overflow = Label.Overflow.CLAMP
+    label.string = text
+    return label
+  }
+
+  /** 只调整真实导航净区；尺寸变化不请求或改写玩家数据。 */
+  private layoutViewport(): void {
+    const wrapped = this.rowScroll
+    if (wrapped === null) return
+    const area = dialogContentRect(this.node)
+    const size = view.getVisibleSize()
+    const background = this.node.getChildByName('Background')
+    background?.getComponent(UITransform)?.setContentSize(new Size(size.width, size.height))
+    const graphics = background?.getComponent(Graphics)
+    if (graphics !== undefined && graphics !== null) {
+      graphics.clear()
+      graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
+      graphics.fill()
+    }
+    const top = area.y + area.height - PADDING
+    const bodyTop = top - HEADER_HEIGHT
+    const height = Math.max(1, bodyTop - area.y)
+    wrapped.node.getComponent(UITransform)!.setContentSize(new Size(PANEL_WIDTH, height))
+    wrapped.node.setPosition(new Vec3(0, bodyTop - height / 2, 0))
+    this.headerLabel?.node.setPosition(new Vec3(0, top - 20, 0))
+    this.cappedLabel?.node.setPosition(new Vec3(0, top - 46, 0))
+    this.emptyLabel?.node.setPosition(new Vec3(0, bodyTop - ROW_HEIGHT / 2, 0))
+    for (const button of this.tabButtons.values()) button.setPosition(new Vec3(button.position.x, top - 74, 0))
+    const compose = this.node.getChildByName('ComposeEntry')
+    compose?.setPosition(new Vec3(compose.position.x, top - 74, 0))
+  }
+
+  /** 用当前四段全文的实际排版高度排开正文与动作，池化复用时重新量取。 */
+  private layoutRow(node: Node): void {
+    const labels = node.children.slice(0, 4).map(child => child.getComponent(Label))
+      .filter((label): label is Label => label !== null)
+    const visible = labels.filter(label => label.string.length > 0)
+    for (const label of labels) {
+      label.node.active = label.string.length > 0
+      label.updateRenderData(true)
+    }
+    const textHeight = visible.reduce((height, label) => height + label.node.getComponent(UITransform)!.height, 0)
+      + Math.max(0, visible.length - 1) * TEXT_GAP
+    const buttons = node.children.filter(child => child.name.endsWith('Button'))
+    const actionsHeight = buttons.some(button => button.active) ? ACTION_GAP + ACTION_HEIGHT : 0
+    const height = Math.max(ROW_HEIGHT, TEXT_TOP + textHeight + actionsHeight + ROW_BOTTOM)
+    node.getComponent(UITransform)!.setContentSize(new Size(PANEL_WIDTH, height))
+    let y = height / 2 - TEXT_TOP
+    for (const label of visible) {
+      label.node.setPosition(new Vec3(label.node.position.x, y, 0))
+      y -= label.node.getComponent(UITransform)!.height + TEXT_GAP
+    }
+    for (const button of buttons) button.setPosition(new Vec3(button.position.x, -height / 2 + ROW_BOTTOM + ACTION_HEIGHT / 2, 0))
   }
 
   // ---------- 渲染 ----------
@@ -329,28 +409,31 @@ export class HeroPanelView extends Component {
       this.emptyLabel.string = this.tab === 'heroes' ? '暂无武将' : '暂无编队'
       this.emptyLabel.node.active = drafts.length === 0
     }
-    const size = view.getVisibleSize()
-    const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    const wrapped = this.rowScroll
+    if (wrapped === null) return
+    const offset = wrapped.scroll.getScrollOffset().y
+    this.layoutViewport()
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
     this.rowHeroes.clear()
 
-    drafts.slice(0, MAX_VISIBLE_ROWS).forEach((draft, index) => {
+    let y = 0
+    drafts.forEach((draft, index) => {
       const node = pool.acquire()
-      node.setPosition(new Vec3(0, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
       this.drawnRows.push(node)
       this.renderRow(node, draft, index)
+      const height = node.getComponent(UITransform)!.height
+      node.setPosition(new Vec3(0, -y - height / 2, 0))
+      y += height + ROW_GAP
     })
+    const viewportHeight = wrapped.node.getComponent(UITransform)!.height
+    const contentHeight = Math.max(viewportHeight, y > 0 ? y - ROW_GAP : 0)
+    wrapped.content.getComponent(UITransform)!.setContentSize(new Size(PANEL_WIDTH, contentHeight))
+    wrapped.content.setPosition(new Vec3(0, viewportHeight / 2, 0))
+    wrapped.scroll.scrollToOffset(new Vec2(0, Math.min(Math.max(0, offset), contentHeight - viewportHeight)))
   }
 
   private renderRow(node: Node, draft: RowDraft, index: number): void {
-    const graphics = node.getComponent(Graphics)
-    if (graphics !== null) {
-      graphics.clear()
-      graphics.fillColor = index % 2 === 0 ? COLOR_ROW : COLOR_ROW_ALT
-      graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 5)
-      graphics.fill()
-    }
     for (let line = 0; line < 4; line++) {
       const label = node.children[line]?.getComponent(Label)
       if (label === undefined || label === null) {
@@ -365,6 +448,15 @@ export class HeroPanelView extends Component {
     for (const button of node.children.filter((child) => child.name.endsWith('Button'))) {
       button.active = draft.heroId !== null
     }
+    this.layoutRow(node)
+    const height = node.getComponent(UITransform)!.height
+    const graphics = node.getComponent(Graphics)
+    if (graphics !== null) {
+      graphics.clear()
+      graphics.fillColor = index % 2 === 0 ? COLOR_ROW : COLOR_ROW_ALT
+      graphics.roundRect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height, 5)
+      graphics.fill()
+    }
     const icon = node.getChildByName('Icon')
     if (icon !== null) {
       icon.active = draft.iconKey !== null
@@ -373,11 +465,12 @@ export class HeroPanelView extends Component {
     // 整行点击也要先 off 再 on：节点来自池子，上一条数据留下的回调会指向别的武将/编队，
     // 这类 bug 的表现是「点了第 3 套编队却打开了第 1 套」，而且只在切页时出现，极难复现
     node.off('touch-start')
+    node.off('touch-end')
     if (draft.heroId !== null) {
       this.rowHeroes.set(node, draft.heroId)
     } else if (draft.presetIndex !== null) {
       const presetIndex = draft.presetIndex
-      node.on('touch-start', (_event: EventTouch) => this.onLineupEdit?.(presetIndex), this)
+      node.on('touch-end', (_event: EventTouch) => this.onLineupEdit?.(presetIndex), this)
     }
   }
 }
