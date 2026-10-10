@@ -323,6 +323,11 @@ export class GameBootstrap extends Component {
     // 邮件不占首屏：多一个并发请求会挤那 3 秒预算（首屏判据是「可交互」而不是「可见」），
     // 而邮箱不在可交互的必需项里 —— 玩家点开那一格才拉第一次。onShow 这个钩子此前挂着没人用。
     this.nav.onShow = key => {
+      // 离开地图会解绑 requester；每次回到地图都经权威行军列表重新初始化。
+      // 只在登录时预取一次，第二次进场便会留在 worldReady=false。
+      if (key === 'world') {
+        void this.root?.refresh('world')
+      }
       if (key === 'mail') {
         void this.root?.refresh('mail')
       }
