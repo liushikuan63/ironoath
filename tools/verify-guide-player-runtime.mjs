@@ -308,7 +308,9 @@ function readPlayerFrame() {
       next: buttonOf(find(bubble, 'GuideNext')), skip: buttonOf(find(bubble, 'GuideSkip')), masks,
       navBlocked: !!navPoint && masks.some(box => box && navPoint.x >= box.left && navPoint.x <= box.right
         && navPoint.y >= box.top && navPoint.y <= box.bottom) },
-    rows, prompt: { active: prompt?.activeInHierarchy === true, box: boxOf(prompt), render: renderOf(prompt),
+    rows, tabs: ['Tab-quest', 'Tab-activity', 'Tab-achievement'].map(name => ({ name, box: boxOf(find(quest, name)),
+      caption: labelOf(find(quest, name)?.getChildByName('Caption')) })),
+    prompt: { active: prompt?.activeInHierarchy === true, box: boxOf(prompt), render: renderOf(prompt),
       width: prompt?.getComponent('cc.UITransform')?.width, height: prompt?.getComponent('cc.UITransform')?.height,
       parentIsQuest: prompt?.parent === quest, siblingIndex: promptIndex, siblingCount: quest?.children.length ?? 0,
       laterQuestSiblings, sprites: spritesIn(prompt),
@@ -549,6 +551,8 @@ try {
     } else {
       must(`${name}第一行领取键可见且不被提示覆盖`, frame.rows[0]?.claim?.active
         && contains(frame.canvas, frame.rows[0].claim.box) && !intersects(guide.box, frame.rows[0].claim.box), frame.rows[0])
+      must(`${name}三页签自身盒完整可见且引导未覆盖`, frame.tabs.length === 3
+        && frame.tabs.every(tab => contains(frame.canvas, tab.box) && !intersects(guide.box, tab.box)), frame.tabs)
     }
     return frame
   }
