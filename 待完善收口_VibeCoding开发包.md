@@ -6902,3 +6902,5 @@ TEST_EXIT=0
 | #988 关卡首通与汇总奖励名称走服务端配置，未知项按类别安全回退 | 本笔（原子留档，本批统一推送） | 独立旧实现28中4失败(actual1)，修后四套28通过0失败0错误0跳过(actual0)；main补丁SHA及apply-check0；后续F17全量测试和boss真实UI名称待验 | D:/tmp/ironoath-wechat-20261010/stage-reward-name-worktree；stage-reward-name-fix.patch；stage-reward-green2/maven.log；#980真实eq_bamboo_tally泄漏反证 | 主树刚合入尚未F17全量构建及真实十关boss名称竹符验收；旧F16通过不代表该变更通过；手机未验 |
 
 | #989 微信顶部净区纳入实际胶囊位置，系统安全区与胶囊分别保守计算 | 本笔（原子留档，本批统一推送） | 旧实现38=32通过6失败(actual1)；修后38通过0失败0跳过(actual0)、两类型检查0；main SHA/apply-check0；R7实际胶囊交集与GPU待验 | D:/tmp/ironoath-wechat-20261010/capsule-safe-area-fix.patch；capsule-safe-area-red.log/green-1.log；R6实际HELD截图97与public capsule111 | F17全量重构建、R7实际public胶囊矩形及HELD文字不相交/GPU完整字体待验；浏览器回归不替代原生；手机未验 |
+
+| #990 装备弹窗统一暗铁主题和短屏滚动净区，拖动取消不提前强化 | 本笔（原子留档，本批统一推送） | 旧实现新增4回归全部失败(actual1)；新实现5通过及相关三族48通过0失败0跳过(actual0)；两类型检查/主树apply-check/diff-check0；F17实画与实际拖动待验 | D:/tmp/ironoath-wechat-20261010/equip-dialog-theme-fix.patch；equip-dialog-theme-handoff-v17.json；equip-dialog-red-v17.log/green-v17.log；#984真实旧plaincard反证 | 新F17真实装备entry/row/forge/gray和短屏主题/固定footer/拖动零写入待验；纯Node几何不代替GPU字体与微信设备；手机未验 |

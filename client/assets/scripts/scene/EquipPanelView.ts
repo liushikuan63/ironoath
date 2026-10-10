@@ -11,16 +11,16 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
 import type { EquipPanelView as EquipViewData, EquipRow } from '../game/equip/EquipPanel'
 import type { EquipSlot } from '../net/generated/EquipProtocol'
+import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
+import { applyDialogButton, DIALOG_SCRIM, fitExistingDialog } from './DialogStyle'
 import { applySystemUiFont } from './UiFont'
 
 const { ccclass } = _decorator
 
-const COLOR_SCRIM = new Color(0, 0, 0, 170)
 const COLOR_BACKGROUND = new Color(24, 20, 18, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
 const COLOR_ROW_ALT = new Color(48, 39, 33, 255)
 const COLOR_ROW_LOCKED = new Color(32, 29, 26, 255)
-const COLOR_BUTTON = new Color(62, 44, 26, 255)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
@@ -29,6 +29,7 @@ const COLOR_HINT = new Color(120, 168, 196, 255)
 
 const CARD_WIDTH = 620
 const CARD_HEIGHT = 600
+const CONTENT_WIDTH = CARD_WIDTH - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right
 const ROW_HEIGHT = 46
 const PADDING = 16
 /** 行右端的「强化」键区宽度：行的触摸命中区到它左沿为止（几何分离的理由写在 `drawRow` 里）。 */
@@ -69,48 +70,56 @@ export class EquipPanelView extends Component {
   private redraw(): void {
     this.clearRows()
     this.drawScrim()
-    this.drawCard()
+    const card = this.drawCard()
     let y = CARD_HEIGHT / 2 - PADDING - 10
     y = this.drawTitle(y)
     this.drawRows(y)
-    this.drawClose()
+    // 既有自然高度内的行序与未显示提示不变；短屏只缩滚动窗口，关闭键固定。
+    const body = this.rows.filter(node => node.name !== 'scrim' && node !== card)
+    const close = this.drawClose()
+    const layout = fitExistingDialog(this.node, card, body, [close], 'ui.panel.iron', CARD_WIDTH, CARD_HEIGHT,
+      { registerViewport: node => this.rows.push(node) })
+    layout()
   }
 
   private drawScrim(): void {
     const size = view.getVisibleSize()
     const node = new Node('scrim')
     this.node.addChild(node)
-    node.addComponent(UITransform)
+    node.addComponent(UITransform).setContentSize(size.width, size.height)
     const graphics = node.addComponent(Graphics)
-    graphics.fillColor = COLOR_SCRIM
+    graphics.fillColor = DIALOG_SCRIM
     graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
     graphics.fill()
+    node.on('touch-start', () => {}, this)
     this.rows.push(node)
   }
 
-  private drawCard(): void {
+  private drawCard(): Node {
     const node = new Node('card')
     this.node.addChild(node)
-    node.addComponent(UITransform)
+    node.addComponent(UITransform).setContentSize(CARD_WIDTH, CARD_HEIGHT)
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_BACKGROUND
     graphics.rect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT)
     graphics.fill()
+    node.on('touch-start', () => {}, this)
     this.rows.push(node)
+    return node
   }
 
   private drawTitle(y: number): number {
-    this.label('装 备', COLOR_COPPER_GOLD, 26, -CARD_WIDTH / 2 + PADDING, y - 12, 'left')
+    this.label('装 备', COLOR_COPPER_GOLD, 26, -CONTENT_WIDTH / 2 + PADDING, y - 12, 'left')
     const view = this.viewData
     if (view?.targetText !== null && view?.targetText !== undefined) {
       // 换装模式：右边写"给谁换"，汇总行另起一行（这两件事都要看得见，谁都不该把谁顶掉）
-      this.label(view.targetText, COLOR_TEXT, 18, CARD_WIDTH / 2 - PADDING, y - 12, 'right')
-      this.label(view.summaryText, COLOR_TEXT_DIM, 15, -CARD_WIDTH / 2 + PADDING, y - 34, 'left')
+      this.label(view.targetText, COLOR_TEXT, 18, CONTENT_WIDTH / 2 - PADDING, y - 12, 'right')
+      this.label(view.summaryText, COLOR_TEXT_DIM, 15, -CONTENT_WIDTH / 2 + PADDING, y - 34, 'left')
       return y - 52
     }
     const summary = view?.summaryText ?? ''
     if (summary !== '') {
-      this.label(summary, COLOR_TEXT_DIM, 18, CARD_WIDTH / 2 - PADDING, y - 12, 'right')
+      this.label(summary, COLOR_TEXT_DIM, 18, CONTENT_WIDTH / 2 - PADDING, y - 12, 'right')
     }
     return y - 40
   }
@@ -141,25 +150,24 @@ export class EquipPanelView extends Component {
       this.label(`还有 ${hidden} 件未显示（面板放不下）`, COLOR_TEXT_DIM, 15, 0, floor + 14, 'center')
     }
     if (view.noticeText !== null) {
-      this.label(view.noticeText, COLOR_HINT, 15, -CARD_WIDTH / 2 + PADDING, floor + 14, 'left')
+      this.label(view.noticeText, COLOR_HINT, 15, -CONTENT_WIDTH / 2 + PADDING, floor + 14, 'left')
     }
   }
 
   private drawRow(row: EquipRow, y: number, index: number): void {
-    const usable = CARD_WIDTH - PADDING * 2
-    // **命中区与「强化」键区几何分开**：键是兄弟节点，而 Cocos 的触摸会派发给所有命中的节点
-    // （引擎声明里没有 `propagationStopped` 可用来阻断，本轮已核 `client/temp/declarations/cc.d.ts` 零命中），
-    // 所以行的命中区必须真的不覆盖键区。渲染面仍是整行：锚点挪到左端 + 位置左移，让
+    const usable = CONTENT_WIDTH - PADDING * 2
+    // 命中区与强化键区几何分开。渲染面仍是整行：锚点挪到左端 + 位置左移，让
     // "底板照画满整行"与"命中区只到键区左沿"同时成立。
     const node = new Node(`equip-${row.uid}`)
     this.node.addChild(node)
     const transform = node.addComponent(UITransform)
     transform.setAnchorPoint(0, 0.5)
     transform.setContentSize(usable - FORGE_ZONE, ROW_HEIGHT - 4)
-    node.setPosition(new Vec3(-usable / 2, y, 0))
+    const rowCenter = y - ROW_HEIGHT / 2
+    node.setPosition(new Vec3(-usable / 2, rowCenter, 0))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = row.canForge ? (index % 2 === 0 ? COLOR_ROW : COLOR_ROW_ALT) : COLOR_ROW_LOCKED
-    graphics.rect(0, -ROW_HEIGHT + 2, usable, ROW_HEIGHT - 4)
+    graphics.rect(0, -(ROW_HEIGHT - 4) / 2, usable, ROW_HEIGHT - 4)
     graphics.fill()
     this.rows.push(node)
 
@@ -184,12 +192,13 @@ export class EquipPanelView extends Component {
       : (row.costText ?? row.wornText)
     this.label(cost, COLOR_TEXT_DIM, 14, right, y - 31, 'right')
     // 强化键与"能不能装备"是两件事：前者看这一件自己的 canForge，后者看有没有选武将
-    this.forgeButton(row, y, usable / 2 - FORGE_ZONE / 2)
+    this.forgeButton(row, rowCenter, usable / 2 - FORGE_ZONE / 2)
 
     // 只有**给得出动作**的行才吃触摸：没有动作的行不该长得像能点（点了没反应比不给按钮更糟）
     if (row.actionText !== null) {
       const takeOff = row.actionText === '卸下'
-      node.on('touch-start', () => this.onRowAction?.(row.uid, row.slot, takeOff))
+      // ScrollView.cancelInnerEvents在拖动时取消子节点触摸；按下时不提前发动作。
+      node.on('touch-end', () => this.onRowAction?.(row.uid, row.slot, takeOff))
     }
   }
 
@@ -216,32 +225,44 @@ export class EquipPanelView extends Component {
     graphics.roundRect(-width / 2, -height / 2, width, height, 6)
     graphics.stroke()
     if (row.canForge) {
-      node.on('touch-start', () => this.onForge?.(row.uid))
+      node.on('touch-end', () => this.onForge?.(row.uid))
     }
     this.rows.push(node)
-    this.label('强化', row.canForge ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 16, x, y, 'center')
+    applyDialogButton(node, row.canForge, width, height)
+    this.caption(node, '强化', row.canForge ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 16, width, height)
   }
 
-  private drawClose(): void {
+  private drawClose(): Node {
     const bottom = -CARD_HEIGHT / 2 + 28
     const node = new Node('close')
     this.node.addChild(node)
     node.addComponent(UITransform).setContentSize(160, 36)
     node.setPosition(new Vec3(0, bottom, 0))
     const graphics = node.addComponent(Graphics)
-    graphics.fillColor = COLOR_BUTTON
+    graphics.fillColor = COLOR_ROW_ALT
     graphics.rect(-80, -18, 160, 36)
     graphics.fill()
-    node.on('touch-start', () => this.hide())
+    node.on('touch-end', () => this.hide())
     this.rows.push(node)
-    this.label('关闭', COLOR_COPPER_GOLD, 18, 0, bottom, 'center')
+    applyDialogButton(node, true, 160, 36)
+    this.caption(node, '关闭', COLOR_COPPER_GOLD, 18, 160, 36)
+    return node
+  }
+
+  /** 控制文字由按钮拥有；固定自身盒不会拦成与按钮分离的兄弟节点。 */
+  private caption(parent: Node, text: string, color: Color, size: number, width: number, height: number): void {
+    const caption = this.label(text, color, size, 0, 0, 'center', parent)
+    caption.node.getComponent(UITransform)!.setContentSize(width, height)
+    caption.overflow = Label.Overflow.SHRINK
+    caption.enableWrapText = false
+    caption.verticalAlign = Label.VerticalAlign.CENTER
   }
 
   /** 造一个左右对齐靠得住的 Label：**锚点先按对齐方式定**，再摆位置。 */
   private label(text: string, color: Color, size: number, x: number, y: number,
-    align: 'left' | 'right' | 'center'): Label {
+    align: 'left' | 'right' | 'center', parent: Node = this.node): Label {
     const node = new Node('label')
-    this.node.addChild(node)
+    parent.addChild(node)
     node.addComponent(UITransform).setAnchorPoint(
       align === 'left' ? 0 : align === 'right' ? 1 : 0.5, 0.5)
     const label = applySystemUiFont(node.addComponent(Label))
@@ -253,7 +274,7 @@ export class EquipPanelView extends Component {
       ? Label.HorizontalAlign.LEFT
       : align === 'right' ? Label.HorizontalAlign.RIGHT : Label.HorizontalAlign.CENTER
     node.setPosition(new Vec3(x, y, 0))
-    this.rows.push(node)
+    if (parent === this.node) this.rows.push(node)
     return label
   }
 
