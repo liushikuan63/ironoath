@@ -670,7 +670,39 @@ interface Harness {
   pickShareChannel(channel: string): void
 }
 
-function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolean } = {}): Harness {
+test('城内生产刷新和手动收割后都重读资源教学权威状态，不在客户端推算解锁等级', async () => {
+  const h = harness({ resourceTeaching: true })
+  const learning = { resources: [], collectAllUnlocked: false, unlockReason: '尚缺手动采集', requiredMainLevel: 5, serverNow: SERVER_NOW }
+  h.http.overrides.set('/city/harvest-learning', learning)
+  await h.root.start('resource-teaching-fixture', '资源教学测试')
+  const before = h.http.countOf('/city/harvest-learning')
+  await h.root.refresh('city')
+  assert.equal(h.http.countOf('/city/harvest-learning'), before + 1)
+  assert.equal(h.attached.at(-1), 'cityTeaching:' + JSON.stringify(learning))
+  const unlocked = { ...learning, collectAllUnlocked: true, unlockReason: '教学完成', requiredMainLevel: 99 }
+  h.http.overrides.set('/city/harvest-learning', unlocked)
+  await h.root.collect('server-resource-building')
+  assert.equal(h.http.countOf('/city/harvest-learning'), before + 2)
+  assert.ok(h.attached.includes('cityTeaching:' + JSON.stringify(unlocked)))
+  assert.equal(h.http.calls.filter(call => call.path === '/city/harvest-learning').every(call => call.method === 'GET'), true)
+})
+
+test('教学读取失败使用既有错误回执，下一次打开重新读取；无教学视图时不增加请求', async () => {
+  const h = harness({ resourceTeaching: true })
+  h.http.failPaths.add('/city/harvest-learning')
+  await h.root.refresh('city')
+  assert.ok(h.errors.some(error => error[0] === 'city'))
+  assert.equal(h.attached.some(item => item.startsWith('cityTeaching:')), false)
+  h.http.failPaths.delete('/city/harvest-learning')
+  const value = { resources: [], collectAllUnlocked: false, unlockReason: '待完成', requiredMainLevel: 5, serverNow: SERVER_NOW }
+  h.http.overrides.set('/city/harvest-learning', value)
+  await h.root.refresh('city')
+  assert.equal(h.attached.at(-1), 'cityTeaching:' + JSON.stringify(value))
+  const headless = harness(); await headless.root.refresh('city')
+  assert.equal(headless.http.countOf('/city/harvest-learning'), 0)
+})
+
+function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolean, resourceTeaching?: boolean } = {}): Harness {
   resetWorld()
   const http = new RoutingHttp()
   const sockets: RecordingSocket[] = []
@@ -772,6 +804,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
   const targets: PanelTargets = {
+    ...(options.resourceTeaching ? { cityHarvestLearning: (value: import('../assets/scripts/net/generated/CityProtocol').CityHarvestLearningResp) => attached.push('cityTeaching:' + JSON.stringify(value)) } : {}),
     city: () => attached.push('city'),
     cityCollect: () => attached.push('cityCollect'),
     cityCancelled: (resp) => {

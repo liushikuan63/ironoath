@@ -1,4 +1,4 @@
-// 由 tools/config-gen 依据 contract/config/resource.json（表 version=3） 自动生成，禁止手改。
+// 由 tools/config-gen 依据 contract/config/resource.json（表 version=4） 自动生成，禁止手改。
 // 要改协议请改 Schema，然后运行 `npm run gen`；CI 会用 scripts/check-contract-sync.sh 校验同步性。
 package com.ironoath.config.cfg;
 
@@ -16,7 +16,9 @@ public record ResourceCfg(
         Kind kind,   // 枚举，取值见 ResourceKind
         long initAmount,
         long initCap,
-        long basePerHour)
+        long basePerHour,
+        String tutorialText,
+        boolean manualLearningRequired)
 {
     /** 枚举取值与配置表 fieldTypes 中的 ENUM 声明完全一致（CI 校验）。 */
     public enum Kind {

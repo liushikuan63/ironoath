@@ -2,6 +2,8 @@ package com.ironoath.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -14,8 +16,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.ironoath.common.json.JsonUtils;
+import com.ironoath.config.cfg.HeroCfg;
+import com.ironoath.config.cfg.SkillCfg;
 
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
@@ -58,10 +69,15 @@ import com.ironoath.web.social.SocialStore;
  * 的方式制造"已完成"的前置状态 —— 事件链本身由 game-core 的 {@code QuestSystemTest} 覆盖
  * （含验收 7 的 100 个事件），而各业务动作真的发出事件这件事由各自端点测试的进度断言覆盖。
  */
-@SpringBootTest
+@SpringBootTest(properties = "spring.autoconfigure.exclude="
+        + "org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration,"
+        + "org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration,"
+        + "org.springframework.boot.autoconfigure.data.mongo.MongoRepositoriesAutoConfiguration")
 @ActiveProfiles("test")
+@AutoConfigureMockMvc
 class QuestEndpointTest {
 
+    @Autowired private MockMvc mockMvc;
     @Autowired private QuestAppService quests;
     @Autowired private QuestProgressStore questStore;
     @Autowired private SocialStore socialStore;
@@ -269,6 +285,134 @@ class QuestEndpointTest {
     // ---------- 首日武将（B06 §1「主线赠送：首日必得 1 名 SR」） ----------
 
     @Test
+    @DisplayName("选将 HTTP 下发三候选真实基础三维、技能中文效果及特点，不复制设计 why")
+    void heroChoicesExposeRealBaseStatsAndPlayerSkillInformation() throws Exception {
+        String playerId = newPlayer();
+        JsonNode choices = firstHeroChoicesHttp(playerId);
+        assertThat(choices.size()).isEqualTo(3);
+        long[][] expectedStats = {{70, 65, 60}, {65, 70, 60}, {60, 65, 70}};
+        String[] expectedNames = {"卫无咎", "沈砚秋", "崔明烛"};
+        String[] expectedMain = {"无咎守", "砚秋雨", "明烛照"};
+        String[] expectedSub = {"顽抗", "包扎", "破甲"};
+        String[] expectedDescriptions = {
+                "回合开始时，35%概率：提升己方防御25%；持续2回合。",
+                "每回合，30%概率：回复己方损失兵力的15%。",
+                "受击时，25%概率：额外伤害系数60%。"};
+        String[] expectedFeatures = {
+                "主技能：提升防御；副技能：提升防御",
+                "主技能：回复损失兵力；副技能：回复损失兵力",
+                "主技能：额外伤害；副技能：降低敌方防御"};
+        for (int i = 0; i < choices.size(); i++) {
+            JsonNode choice = choices.get(i);
+            assertThat(choice.path("heroId").asText()).isEqualTo("hero_sr_0" + (i + 1));
+            assertThat(choice.path("name").asText()).isEqualTo(expectedNames[i]);
+            assertThat(choice.path("rarity").asText()).isEqualTo("SR");
+            assertThat(choice.path("might").longValue()).isEqualTo(expectedStats[i][0]);
+            assertThat(choice.path("command").longValue()).isEqualTo(expectedStats[i][1]);
+            assertThat(choice.path("wisdom").longValue()).isEqualTo(expectedStats[i][2]);
+            assertThat(choice.path("mainSkillName").asText()).isEqualTo(expectedMain[i]);
+            assertThat(choice.path("subSkillName").asText()).isEqualTo(expectedSub[i]);
+            assertThat(choice.path("mainSkillDescription").asText()).isEqualTo(expectedDescriptions[i]);
+            assertThat(choice.path("subSkillDescription").asText()).isNotBlank();
+            assertThat(choice.path("featureText").asText()).isEqualTo(expectedFeatures[i]);
+            assertThat(choice.has("why")).isFalse();
+            assertSafeHeroChoiceDisplay(choice);
+        }
+        assertThat(heroes.findByPlayerId(playerId))
+                .as("打开候选不会自动发将").isEmpty();
+    }
+
+    @Test
+    @DisplayName("候选显示响应读取实际配置变更，属性非静态姓名映射、定点百分比不舍入丢精度")
+    void heroChoiceInformationFollowsRuntimeHeroAndSkillConfiguration() throws Exception {
+        ObjectNode originalHero = configTableForChoiceTest("hero");
+        ObjectNode originalSkill = configTableForChoiceTest("skill");
+        ObjectNode changedHero = originalHero.deepCopy();
+        ObjectNode changedSkill = originalSkill.deepCopy();
+        ObjectNode hero = configRowForChoiceTest(changedHero, "hero_sr_01");
+        hero.put("name", "临时候选名").put("might", 77L).put("command", 66L).put("wisdom", 55L);
+        ObjectNode skill = configRowForChoiceTest(changedSkill, "skill_sr_wu_jiu_shou");
+        skill.put("name", "临时守护").put("chance", "0.1234").put("value", "0.2345");
+        try {
+            configs.reload("hero", HeroCfg.class, changedHero.toString());
+            configs.reload("skill", SkillCfg.class, changedSkill.toString());
+            JsonNode choice = firstHeroChoicesHttp(newPlayer()).get(0);
+            assertThat(choice.path("name").asText()).isEqualTo("临时候选名");
+            assertThat(choice.path("might").longValue()).isEqualTo(77L);
+            assertThat(choice.path("command").longValue()).isEqualTo(66L);
+            assertThat(choice.path("wisdom").longValue()).isEqualTo(55L);
+            assertThat(choice.path("mainSkillName").asText()).isEqualTo("临时守护");
+            assertThat(choice.path("mainSkillDescription").asText())
+                    .isEqualTo("回合开始时，12.34%概率：提升己方防御23.45%；持续2回合。");
+            assertSafeHeroChoiceDisplay(choice);
+        } finally {
+            configs.reload("hero", HeroCfg.class, originalHero.toString());
+            configs.reload("skill", SkillCfg.class, originalSkill.toString());
+        }
+    }
+
+    @Test
+    @DisplayName("真实 HTTP 拒印 raw-id 名字；缺武将的显示工厂回退不替代装配器合法候选校验")
+    void missingHeroChoiceConfigurationNeverDisplaysAnInternalId() throws Exception {
+        ObjectNode original = configTableForChoiceTest("hero");
+        ObjectNode changed = original.deepCopy();
+        configRowForChoiceTest(changed, "hero_sr_01").put("name", "hero_sr_01");
+        try {
+            configs.reload("hero", HeroCfg.class, changed.toString());
+            JsonNode choices = firstHeroChoicesHttp(newPlayer());
+            assertThat(choices.get(0).path("heroId").asText()).isEqualTo("hero_sr_01");
+            assertThat(choices.get(0).path("name").asText()).isEqualTo("未知武将");
+            assertThat(choices.get(0).path("might").longValue()).isEqualTo(70L);
+            assertSafeHeroChoiceDisplay(choices.get(0));
+            assertThat(choices.get(1).path("name").asText()).isEqualTo("沈砚秋");
+
+            // 非法删候选仍被原装配器拒绝。此处只验实际生产显示工厂的 missing-config 分支，
+            // 不把工厂单测冒充非法配置整页 HTTP 可用或领奖合法。
+            configRowForChoiceTest(changed, "hero_sr_01").put("id", "hero_unavailable_choice");
+            configs.reload("hero", HeroCfg.class, changed.toString());
+            Object view = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                    quests, "heroChoiceView", "hero_sr_01", "quest_main_01");
+            JsonNode choice = JsonUtils.readTree(JsonUtils.toJson(view));
+            assertThat(choice.path("heroId").asText()).isEqualTo("hero_sr_01");
+            assertThat(choice.path("name").asText()).isEqualTo("未知武将");
+            for (String field : List.of("rarity", "might", "command", "wisdom")) {
+                assertThat(choice.path(field).isNull()).as("缺真实值不编造属性：%s", field).isTrue();
+            }
+            assertThat(choice.path("mainSkillDescription").asText()).isEqualTo("技能信息暂不可用");
+            assertThat(choice.path("featureText").asText()).isEqualTo("技能信息暂不可用");
+            assertSafeHeroChoiceDisplay(choice);
+        } finally {
+            configs.reload("hero", HeroCfg.class, original.toString());
+        }
+    }
+
+    @Test
+    @DisplayName("缺单技能与未实现硬控只回退该说明，另一技能及真实三维仍可比较")
+    void unavailableSkillInformationDoesNotInventAnEffectOrHideOtherStats() throws Exception {
+        ObjectNode original = configTableForChoiceTest("skill");
+        ObjectNode changed = original.deepCopy();
+        configRowForChoiceTest(changed, "skill_sr_wu_jiu_shou").put("id", "skill_unavailable_choice");
+        configRowForChoiceTest(changed, "skill_sr_yan_qiu_yu").put("effect", "SKIP_TURN");
+        try {
+            configs.reload("skill", SkillCfg.class, changed.toString());
+            JsonNode choices = firstHeroChoicesHttp(newPlayer());
+            JsonNode first = choices.get(0);
+            assertThat(first.path("name").asText()).isEqualTo("卫无咎");
+            assertThat(first.path("might").longValue()).isEqualTo(70L);
+            assertThat(first.path("mainSkillName").asText()).isEqualTo("未知技能");
+            assertThat(first.path("mainSkillDescription").asText()).isEqualTo("技能信息暂不可用");
+            assertThat(first.path("subSkillName").asText()).isEqualTo("顽抗");
+            assertThat(first.path("subSkillDescription").asText())
+                    .isEqualTo("受击时，15%概率：提升己方防御12%；持续1回合。");
+            assertThat(choices.get(1).path("mainSkillDescription").asText()).isEqualTo("技能信息暂不可用");
+            assertSafeHeroChoiceDisplay(first);
+            assertSafeHeroChoiceDisplay(choices.get(1));
+        } finally {
+            configs.reload("skill", SkillCfg.class, original.toString());
+        }
+    }
+
+    @Test
     @DisplayName("首日送将：领 quest_main_01 时从候选里挑一名，那名武将真的进武将册（这条链此前是死的）")
     void claimingTheFirstMainQuestGrantsTheChosenHero() {
         String playerId = newPlayer();
@@ -394,15 +538,55 @@ class QuestEndpointTest {
         QuestClaimResp claimed = quests.claim(playerId,
                 new QuestClaimReq(newId(), "quest_main_01", "hero_sr_01"));
 
-        assertThat(claimed.rewards())
-                .as("奖励必须真的发出去 —— 只推进状态、东西进补偿队列就是假发放")
-                .hasSize(1);
+        assertThat(claimed.rewards().stream().filter(r -> r.type().equals("HERO")))
+                .as("整卡必须真的发出去；本任务另含一次免费粮礼，不能把全部奖励条数当整卡数")
+                .singleElement().satisfies(reward -> {
+                    assertThat(reward.id()).isEqualTo("hero_sr_01");
+                    assertThat(reward.count()).isEqualTo(1L);
+                });
         assertThat(heroes.findByPlayerId(playerId).orElseThrow().heroes().stream()
                 .map(com.ironoath.core.hero.HeroInstance::heroId))
                 .as("武将必须落在册子里").containsExactly("hero_sr_01");
     }
 
     // ---------- 辅助 ----------
+
+    private JsonNode firstHeroChoicesHttp(String playerId) throws Exception {
+        String body = mockMvc.perform(get("/quest/list").header("X-Player-Id", playerId))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        JsonNode response = JsonUtils.readTree(body);
+        assertThat(response.path("code").asInt()).isZero();
+        for (JsonNode quest : response.path("data").path("quests")) {
+            if (quest.path("questId").asText().equals("quest_main_01")) return quest.path("heroChoices");
+        }
+        throw new AssertionError("真实 HTTP 任务面板缺首条主线");
+    }
+
+    private static void assertSafeHeroChoiceDisplay(JsonNode choice) {
+        for (String field : List.of("name", "mainSkillName", "subSkillName", "mainSkillDescription",
+                "subSkillDescription", "featureText")) {
+            assertThat(choice.path(field).asText()).as("玩家文案：%s", field)
+                    .doesNotContain("hero_", "skill_", "ROUND_START", "ON_HIT", "BUFF_DEF", "SKIP_TURN", "零氪");
+        }
+    }
+
+    private static ObjectNode configTableForChoiceTest(String name) throws java.io.IOException {
+        java.nio.file.Path cursor = java.nio.file.Path.of("").toAbsolutePath();
+        for (int i = 0; i < 6 && cursor != null; i++, cursor = cursor.getParent()) {
+            java.nio.file.Path file = cursor.resolve("contract/config/" + name + ".json");
+            if (java.nio.file.Files.isRegularFile(file)) {
+                return (ObjectNode) JsonUtils.readTree(java.nio.file.Files.readString(file));
+            }
+        }
+        throw new AssertionError("隔离 worktree 缺配置表 " + name);
+    }
+
+    private static ObjectNode configRowForChoiceTest(ObjectNode table, String id) {
+        for (JsonNode row : (ArrayNode) table.path("rows")) {
+            if (row.path("id").asText().equals(id)) return (ObjectNode) row;
+        }
+        throw new AssertionError("缺测试配置行 " + id);
+    }
 
     /**
      * 把某条任务播成"已完成未领取"。累加型的进度由事件推动，这里只制造前置状态。

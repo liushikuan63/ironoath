@@ -60,14 +60,14 @@ test('每次返回任务页都重新拉取，后续升级不能复用首次进�
   nav.show('city')
   nav.show('quest')
   assert.deepEqual(nav.calls, [
-    ['refresh', 'quest', 'activity'], ['refresh', 'quest', 'activity'],
+    ['refresh', 'quest', 'activity'], ['refresh', 'city'], ['refresh', 'quest', 'activity'],
   ])
 })
 
-test('内城不会因为任务刷新而增加首屏请求', () => {
+test('返回内城重新读取权威城市及资源教学，避免复用升级前等级与手动记录', () => {
   const nav = navigation()
   nav.show('city')
-  assert.deepEqual(nav.calls, [])
+  assert.deepEqual(nav.calls, [['refresh', 'city']])
 })
 
 test('离开地图进入任务时仍执行既有地图解绑', () => {
@@ -108,7 +108,13 @@ function armyNavigation() {
   const net = new NetModule({ baseUrl: 'https://army-navigation.test', wsUrl: 'wss://army-navigation.test/ws',
     maxRetryAttempts: 0, retryBaseDelayMs: 1, retryMaxDelayMs: 1, offlineQueueMax: 1, requestTimeoutMs: 1000 }, {
     http: {
-      get: async (url, headers) => { reads.push({ path: new URL(url).pathname, headers }); return response },
+      get: async (url, headers) => {
+        const path = new URL(url).pathname
+        reads.push({ path, headers })
+        if (path === '/city/list') return { status: 200, bodyText: JSON.stringify({ code: 0, serverNow: 1000,
+          data: { buildings: [], buildOptions: [], queues: { used: 0, available: 1, max: 1 }, resources: {}, serverNow: 1000 } }) }
+        return response
+      },
       post: async url => { posts.push(new URL(url).pathname); throw new Error('navigation must not POST') },
     },
     socketFactory: () => { throw new Error('navigation must not open a socket') },
@@ -159,7 +165,7 @@ test('离开再回兵营及同页再次打开都重拉，训练到期后的兵�
   h.respond(settled); h.nav.show('city'); h.nav.show('army'); await h.nav.settled()
   assert.deepEqual(h.delivered.at(-1), settled)
   h.nav.show('army'); await h.nav.settled()
-  assert.equal(h.reads.length, 3, '不得将首次兵营请求或已完成 promise 当缓存')
+  assert.equal(h.reads.filter(read => read.path === '/army/list').length, 3, '不得将首次兵营请求或已完成 promise 当缓存')
   assert.deepEqual(h.posts, [])
 })
 
@@ -179,5 +185,5 @@ test('离开地图进入兵营仍解绑地图，其他导航不会偷偷增加�
   const nav = navigation('world'); nav.show('army'); await nav.settled()
   assert.deepEqual(nav.calls, [['refresh', 'army'], ['leaveWorld']])
   const h = armyNavigation(); h.nav.show('city'); await h.nav.settled()
-  assert.deepEqual(h.reads, []); assert.deepEqual(h.posts, [])
+  assert.deepEqual(h.reads.map(read => read.path), ['/city/list']); assert.deepEqual(h.posts, [])
 })

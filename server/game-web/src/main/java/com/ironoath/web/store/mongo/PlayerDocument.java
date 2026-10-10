@@ -40,7 +40,20 @@ public record PlayerDocument(
         String avatarFrame,
         /** 已拥有的头像框 id（B24 块③）；老文档没有这一位 ⇒ 读成一个都没拥有。 */
         java.util.List<String> ownedAvatarFrames,
-        long version) {
+        long version,
+        HarvestLearningDoc harvestLearning) {
+    /** 旧文档/既有构造入口兼容：没有教程进度时从未手动采集。 */
+    public PlayerDocument(String playerId, String deviceId, String nickName, int avatarId,
+            long createdAt, long lastLoginAt, int cityLevel, Map<String, ResourceDoc> resources,
+            PowerDoc power, PvpDoc pvp, Long protectUntil, GloryDoc glory, GuideDoc guide,
+            PaidDoc paid, TechDoc tech, GiftPopupDoc giftPopup, String avatarFrame,
+            java.util.List<String> ownedAvatarFrames, long version) {
+        this(playerId, deviceId, nickName, avatarId, createdAt, lastLoginAt, cityLevel, resources,
+                power, pvp, protectUntil, glory, guide, paid, tech, giftPopup, avatarFrame,
+                ownedAvatarFrames, version, null);
+    }
+    public record HarvestLearningDoc(Map<String, Long> pendingOutput, java.util.List<String> collected) {}
+
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "player";

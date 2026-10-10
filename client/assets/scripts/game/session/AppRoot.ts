@@ -27,7 +27,7 @@ import type { Store } from '../store/Store'
 import type { TimeSync } from '../../core/TimeSync'
 import type { OfflineReportView, PowerDetailResp, StaminaBuyResp, StaminaResp } from '../../net/generated/Protocol'
 import type {
-  CityCancelResp, CityCollectResp, CityListResp, SpeedUpSource,
+  CityHarvestLearningResp, CityCancelResp, CityCollectResp, CityListResp, SpeedUpSource,
 } from '../../net/generated/CityProtocol'
 import type { ArmyListResp } from '../../net/generated/ArmyProtocol'
 import type { BagListResp, OpenBatchResp, ResourceDetailResp } from '../../net/generated/BagProtocol'
@@ -244,6 +244,7 @@ export interface RallyPanelData {
 export interface PanelTargets {
   city?(resp: CityListResp, offsetMs: number): void
   /** 一次收割的即时结果（要立刻飘字，之后再被 city 列表覆盖）。 */
+  cityHarvestLearning?(resp: CityHarvestLearningResp): void
   cityCollect?(resp: CityCollectResp): void
   /** 体力详情弹层（B09 §5）。视图模型已经算好文案与置灰，表现层只负责画。 */
   staminaDetail?(view: StaminaDetailView): void
@@ -913,6 +914,8 @@ export class AppRoot {
           this.cityResp = r
           this.targets.city?.(r, offsetMs)
         })
+        if (this.targets.cityHarvestLearning !== undefined)
+          this.deliver('city', await this.api.cityHarvestLearning(), r => this.targets.cityHarvestLearning?.(r))
         return
       case 'army':
         this.deliver('army', await this.api.armyList(), r => {

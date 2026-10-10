@@ -40,7 +40,7 @@ import type {
   LevelRewardClaimReq, LevelRewardClaimResp, LevelRewardListResp,
 } from '../../net/generated/LevelRewardProtocol'
 import type {
-  CityCancelReq, CityCancelResp, CityCollectReq, CityCollectResp, CityListResp, CityPauseReq,
+  CityHarvestLearningResp, CityCancelReq, CityCancelResp, CityCollectReq, CityCollectResp, CityListResp, CityPauseReq,
   CityPauseResp, CityResumeReq, CityResumeResp, CityUpgradeReq,
   CityUpgradeResp, SpeedUpReq, SpeedUpResp,
 } from '../../net/generated/CityProtocol'
@@ -486,6 +486,10 @@ export class GameApi {
    * <p>这是个「带副作用的读」：服务端会顺带收割到点的升级（惰性结算，不跑定时器）。
    * 所以面板每次打开都调它，而不是只在登录后调一次。
    */
+  cityHarvestLearning(): Promise<NetOutcome<CityHarvestLearningResp>> {
+    return this.read<CityHarvestLearningResp>('/city/harvest-learning')
+  }
+
   async cityList(): Promise<NetOutcome<CityListResp>> {
     const outcome = await this.read<CityListResp>('/city/list')
     if (outcome.kind === 'ok') {

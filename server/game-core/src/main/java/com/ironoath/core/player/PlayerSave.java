@@ -85,6 +85,29 @@ public final class PlayerSave {
     private java.util.Set<String> ownedAvatarFrames = java.util.Set.of();
     /** 乐观锁版本号，每次持久化自增。 */
     private long version;
+    /** 已入账但尚未手动确认的产出；不是第二个钱包，确认不再发资源。 */
+    private final Map<String, Long> pendingManualOutput = new LinkedHashMap<>();
+    private final java.util.Set<String> manuallyCollected = new java.util.LinkedHashSet<>();
+
+    public Map<String, Long> pendingManualOutput() { return Map.copyOf(pendingManualOutput); }
+    public java.util.Set<String> manuallyCollected() { return java.util.Set.copyOf(manuallyCollected); }
+    public void restoreHarvestLearning(Map<String, Long> pending, java.util.Collection<String> collected) {
+        pendingManualOutput.clear(); manuallyCollected.clear();
+        if (pending != null) pending.forEach((type, amount) -> {
+            if (hasResource(type) && amount != null && amount > 0) pendingManualOutput.put(type, amount);
+        });
+        if (collected != null) collected.stream().filter(this::hasResource).forEach(manuallyCollected::add);
+    }
+    public void recordProducedOutput(Map<String, Long> credited) {
+        credited.forEach((type, amount) -> {
+            if (amount > 0 && !manuallyCollected.contains(type))
+                pendingManualOutput.merge(type, amount, (a, b) -> a > Long.MAX_VALUE - b ? Long.MAX_VALUE : a + b);
+        });
+    }
+    public boolean confirmManualOutput(String type) {
+        if (pendingManualOutput.getOrDefault(type, 0L) <= 0) return false;
+        pendingManualOutput.remove(type); manuallyCollected.add(type); return true;
+    }
 
     /** 反序列化用的空构造器，业务代码请用 {@link #createNew}。 */
     public PlayerSave() {
@@ -480,6 +503,7 @@ public final class PlayerSave {
         copy.restore(playerId, deviceId, nickName, avatarId, createdAt, lastLoginAt, cityLevel,
                 new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, tech, giftPopup,
                 avatarFrame, ownedAvatarFrames, version);
+        copy.restoreHarvestLearning(pendingManualOutput, manuallyCollected);
         return copy;
     }
 }

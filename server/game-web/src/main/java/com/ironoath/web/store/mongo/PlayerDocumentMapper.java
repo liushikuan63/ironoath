@@ -63,7 +63,8 @@ public final class PlayerDocumentMapper {
                 // 外观两位（B24 块③）：没戴 / 一个都没拥有，也都是明确写下来的值而不是缺列
                 save.avatarFrame(),
                 toOwnedFrames(save.ownedAvatarFrames()),
-                save.version());
+                save.version(), new PlayerDocument.HarvestLearningDoc(save.pendingManualOutput(),
+                        java.util.List.copyOf(save.manuallyCollected())));
     }
 
     private static PlayerDocument.TechDoc toTechDoc(com.ironoath.core.player.PlayerTech tech) {
@@ -185,6 +186,8 @@ public final class PlayerDocumentMapper {
                 doc.ownedAvatarFrames() == null ? java.util.Set.of()
                         : new java.util.LinkedHashSet<>(doc.ownedAvatarFrames()),
                 doc.version());
+        if (doc.harvestLearning() != null) save.restoreHarvestLearning(
+                doc.harvestLearning().pendingOutput(), doc.harvestLearning().collected());
         return save;
     }
 

@@ -333,6 +333,7 @@ export class GameBootstrap extends Component {
       }
       // 兵营解锁与带兵上限会被城建、编队改变；训练/治疗到期也由列表读取惰性结算。
       // 每次进入都取权威响应，不能继续复用登录时的兵营等级、容量或训练队列。
+      if (key === 'city') { void this.root?.refresh('city') }
       if (key === 'army') {
         void this.root?.refresh('army')
       }
@@ -1428,6 +1429,8 @@ export class GameBootstrap extends Component {
     if (city !== null) {
       out.city = (resp, offsetMs) => city.attach(resp, offsetMs)
       out.cityCollect = resp => city.attachCollect(resp)
+      out.cityHarvestLearning = resp => city.attachHarvestLearning(resp)
+      city.onResourceTutorialVisibility = visible => this.guide?.setBubbleSuppressed('city', visible)
       city.onUpgrade = (configId: string, gridX?: number, gridY?: number) => {
         void this.root?.upgradeBuilding(configId, gridX ?? null, gridY ?? null)
       }

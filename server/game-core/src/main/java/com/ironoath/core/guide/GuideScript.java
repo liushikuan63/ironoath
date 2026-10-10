@@ -40,7 +40,9 @@ public final class GuideScript {
         /** 对应任务的<b>目标</b>已达成（进度 ≥ 目标值）。 */
         QUEST_DONE,
         /** 对应任务的<b>奖</b>已领 —— 第 2 步（领奖选将）用它：目标达成不等于奖到手。 */
-        QUEST_CLAIMED
+        QUEST_CLAIMED,
+        /** 四种资源真实手动采集且对应攒粮任务奖励已领。 */
+        MANUAL_RESOURCES_AND_CLAIMED
     }
 
     /** 玩家对一步做了什么。与契约 {@code GuideAction} 同形。 */

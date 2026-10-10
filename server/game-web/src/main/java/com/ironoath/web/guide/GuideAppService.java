@@ -187,6 +187,11 @@ public class GuideAppService {
         return switch (step.judge()) {
             case QUEST_DONE -> entry.get().complete();
             case QUEST_CLAIMED -> entry.get().claimed();
+            case MANUAL_RESOURCES_AND_CLAIMED -> entry.get().claimed()
+                    && players.findByPlayerId(playerId).map(player -> configs.all(
+                            com.ironoath.config.cfg.ResourceCfg.class).stream()
+                            .filter(com.ironoath.config.cfg.ResourceCfg::manualLearningRequired)
+                            .allMatch(cfg -> player.manuallyCollected().contains(cfg.id()))).orElse(false);
         };
     }
 

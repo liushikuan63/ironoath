@@ -15,8 +15,8 @@
  * 正式美术。列表 item 已按 B07 §4 池化。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, view } from 'cc'
-import { buildQuestList, candidateLabel, chosenClaimReq, claimIntentOf } from '../game/quest/QuestPanel'
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec2, Vec3, view } from 'cc'
+import { buildQuestList, candidateLabel, candidatePreview, chosenClaimReq, claimIntentOf } from '../game/quest/QuestPanel'
 import {
   clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
 } from '../game/ui/PanelPaging'
@@ -27,9 +27,9 @@ import { buildActivityList } from '../game/activity/ActivityPanel'
 import type { ActivityListView, ActivityRow } from '../game/activity/ActivityPanel'
 import { NodePool } from './NodePool'
 import { applyAnyIconSprite, applySlicedSprite, ensureFamily } from './ArtCatalog'
-import { activityIconKey, PANEL_IRON_INSET } from '../game/art/ArtFamilies'
+import { activityIconKey, heroPortraitKey, PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
-import { applyDialogButton, dialogContentRect, paintCompactDialogFrame } from './DialogStyle'
+import { applyDialogButton, createDialogScroll, dialogContentRect, paintCompactDialogFrame } from './DialogStyle'
 import { dialogLayout } from '../game/ui/DialogLayout'
 
 const { ccclass } = _decorator
@@ -63,15 +63,8 @@ const MAX_VISIBLE_ROWS = 8
  */
 const ROW_ICON_COLUMN = 34
 /** 三选一弹窗里每个候选按钮的高度与间距 */
-const OPTION_HEIGHT = 56
-const OPTION_GAP = 8
-const COMPACT_OPTION_HEIGHT = 44
-const COMPACT_OPTION_GAP = 6
 const PROMPT_TITLE_HEIGHT = 28
-const PROMPT_TITLE_GAP = 8
 const PROMPT_HINT_HEIGHT = 22
-const PROMPT_HINT_GAP = 12
-const OPTION_CAPTION_HEIGHT = 40
 
 /**
  * 三个页签。顺序即从左到右。
@@ -122,6 +115,10 @@ export class QuestPanelView extends Component {
   private promptPanel: Node | null = null
   private promptTitle: Label | null = null
   private promptHint: Label | null = null
+  private promptScroll: ReturnType<typeof createDialogScroll> | null = null
+  private promptCancel: Node | null = null
+  private promptConfirm: Node | null = null
+  private selectedHeroId: string | null = null
   /** 弹窗里每个候选按钮 → 它的 heroId。每次开弹窗重建，避免残留上一条任务的候选 */
   private readonly optionHeroIds = new Map<Node, string>()
   private prompt: HeroChoicePrompt | null = null
@@ -159,6 +156,9 @@ export class QuestPanelView extends Component {
       if (loaded > 0 && this.isValid) {
         this.render()
       }
+    })
+    ensureFamily('hero').then((loaded) => {
+      if (loaded > 0 && this.isValid && this.promptPanel?.active) this.layoutPrompt()
     })
   }
 
@@ -210,8 +210,7 @@ export class QuestPanelView extends Component {
     if (this.promptPanel === null || !this.promptPanel.active || this.prompt === null) return
     // NodePool会把后来取出的Rows追加到Quest末尾；弹窗开着时仍须守住层级。
     this.keepPromptAboveRows()
-    const topLimit = this.promptTopLimit(area.y + area.height, size.height)
-    const key = `${size.width}:${size.height}:${area.x}:${area.y}:${area.width}:${area.height}:${topLimit}`
+    const key = `${size.width}:${size.height}:${area.x}:${area.y}:${area.width}:${area.height}`
     if (key !== this.promptLayoutKey) this.layoutPrompt()
   }
 
@@ -381,7 +380,7 @@ export class QuestPanelView extends Component {
     panel.layer = this.node.layer
     this.node.addChild(panel)
     panel.addComponent(UITransform)
-    // 矩形内的空白也吞触摸；页签仍在弹窗之外，保留原有切页关闭路径。
+    // 空白吞触摸；候选正文滚动，取消与确认固定在框内，短屏也有完整退出入口。
     panel.on('touch-start', (_event: EventTouch) => undefined)
     // Sprite独占底板节点，不能与Graphics争Cocos登记的首个UIRenderer。
     const plate = new Node('DialogFrameArt')
@@ -391,8 +390,20 @@ export class QuestPanelView extends Component {
     this.promptPanel = panel
 
     this.promptTitle = this.addLabel(panel, 'PromptTitle', 0, 0, COLOR_COPPER_GOLD, 20)
-    this.promptHint = this.addLabel(panel, 'PromptHint', 0, 0, COLOR_TEXT_DIM, 14)
-    this.promptHint.string = '选择一名武将作为奖励（只能选一次）'
+    this.promptHint = this.addLabel(panel, 'PromptHint', 0, 0, COLOR_TEXT, 16)
+    this.promptHint.string = '滑动比较武将资料，选中后确认领取（只能选一次）'
+    this.promptScroll = createDialogScroll(panel, 'HeroChoiceViewport', 1, 1, 0, 0)
+    this.promptCancel = new Node('HeroChoiceCancel')
+    this.promptConfirm = new Node('HeroChoiceConfirm')
+    for (const button of [this.promptCancel, this.promptConfirm]) {
+      button.layer = panel.layer
+      panel.addChild(button)
+      button.addComponent(UITransform)
+      button.addComponent(Graphics)
+      this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 18)
+    }
+    this.promptCancel.on('touch-end', () => this.hidePrompt())
+    this.promptCancel.getChildByName('Caption')!.getComponent(Label)!.string = '取消'
     panel.active = false
   }
 
@@ -712,43 +723,55 @@ export class QuestPanelView extends Component {
   // ---------- 三选一弹窗 ----------
 
   private showPrompt(prompt: HeroChoicePrompt): void {
-    const panel = this.promptPanel
-    if (panel === null || this.promptTitle === null) {
-      return
-    }
+    const panel = this.promptPanel, wrapped = this.promptScroll
+    if (panel === null || wrapped === null || this.promptTitle === null) return
     this.prompt = prompt
+    this.selectedHeroId = null
     this.promptTitle.string = prompt.title
-    // 候选按钮每次重建：数量随任务变，而残留的旧按钮会让玩家点到上一条任务的武将
-    for (const child of [...panel.children]) {
-      const heroId = this.optionHeroIds.get(child)
-      if (heroId !== undefined) {
-        child.removeFromParent()
-        child.destroy()
-      }
+    for (const option of Array.from(this.optionHeroIds.keys())) {
+      option.removeFromParent()
+      option.destroy()
     }
     this.optionHeroIds.clear()
-
-    prompt.candidates.forEach((choice) => {
-      const option = new Node(`HeroOption_${choice.heroId}`)
+    for (const choice of prompt.candidates) {
+      const option = new Node('HeroOption_' + choice.heroId)
       option.layer = panel.layer
-      panel.addChild(option)
+      wrapped.content.addChild(option)
       option.addComponent(UITransform)
       option.addComponent(Graphics)
-      const label = this.addLabel(option, 'Name', 0, 0, COLOR_TEXT, 18)
-      label.string = candidateLabel(choice)
       this.optionHeroIds.set(option, choice.heroId)
-      option.on('touch-start', (_event: EventTouch) => {
-        // 选中的必须在候选里：chosenClaimReq 会本地校验（不合法时抛出，
-        // 而这里只画按钮，选不中候选意味着界面出了问题 —— 抛出比继续更诚实）
-        const req = chosenClaimReq(prompt, choice.heroId)
-        this.hidePrompt()
-        this.onClaim?.(req.questId, req.heroChoice)
+      const portrait = new Node('Portrait')
+      portrait.layer = option.layer
+      option.addChild(portrait)
+      portrait.addComponent(UITransform)
+      portrait.addComponent(Graphics)
+      const portraitArt = new Node('PortraitArt')
+      portraitArt.layer = portrait.layer
+      portrait.addChild(portraitArt)
+      portraitArt.addComponent(UITransform)
+      this.addLabel(portrait, 'PortraitFallback', 0, 0, COLOR_TEXT, 14).string = '暂无头像'
+      for (const [name, font] of [['Name', 20], ['Attributes', 16], ['Feature', 16],
+        ['MainSkill', 16], ['SubSkill', 16]] as const) this.addLabel(option, name, 0, 0, COLOR_TEXT, font)
+      // 按下只作为滚动起点，超过拖动阈值由ScrollView取消；抬起选择也不发奖。
+      option.on('touch-end', () => {
+        if (this.prompt === null || !this.promptPanel?.active) return
+        this.selectedHeroId = choice.heroId
+        this.layoutPrompt()
       })
-    })
+    }
     this.layoutPrompt()
-    panel.active = true
+    wrapped.scroll.scrollToOffset(new Vec2(0, 0), 0)
     this.keepPromptAboveRows()
+    panel.active = true
     this.onPromptVisibility?.(true)
+  }
+
+  private readonly onConfirmHero = (): void => {
+    const prompt = this.prompt, selected = this.selectedHeroId
+    if (prompt === null || selected === null || !this.promptPanel?.active) return
+    const req = chosenClaimReq(prompt, selected)
+    this.hidePrompt()
+    this.onClaim?.(req.questId, req.heroChoice)
   }
 
   private keepPromptAboveRows(): void {
@@ -758,87 +781,122 @@ export class QuestPanelView extends Component {
     }
   }
 
-  private promptTopLimit(areaTop: number, height: number): number {
-    let top = Math.min(areaTop, height / 2 - PADDING - HEADER_HEIGHT + 6)
-    // 页签可能在另一个窗口尺寸下创建；使用其真实盒下沿，不能只凭新视口公式猜位置。
-    for (const [node] of this.tabNodes) {
-      const box = node.getComponent(UITransform)
-      if (node.active && box !== null) top = Math.min(top, node.position.y - box.height / 2)
-    }
-    return top
-  }
-
   private layoutPrompt(): void {
-    const panel = this.promptPanel, prompt = this.prompt
-    if (panel === null || prompt === null || this.promptTitle === null || this.promptHint === null) return
+    const panel = this.promptPanel, prompt = this.prompt, wrapped = this.promptScroll
+    if (panel === null || prompt === null || wrapped === null || this.promptTitle === null
+      || this.promptHint === null || this.promptCancel === null || this.promptConfirm === null) return
     const area = dialogContentRect(this.node), size = view.getVisibleSize()
-    const count = prompt.candidates.length
-    // 弹窗须给页签留下真实关闭入口；只取页签下沿至导航上沿的净区。
-    const topLimit = this.promptTopLimit(area.y + area.height, size.height)
-    const promptArea = { ...area, height: Math.max(1, topLimit - area.y) }
-    const normalHeight = PROMPT_TITLE_HEIGHT + PROMPT_TITLE_GAP + PROMPT_HINT_HEIGHT + PROMPT_HINT_GAP
-      + count * OPTION_HEIGHT + Math.max(0, count - 1) * OPTION_GAP
-      + PANEL_IRON_INSET.top + PANEL_IRON_INSET.bottom
-    const compact = normalHeight > promptArea.height - 16
-    const optionHeight = compact ? COMPACT_OPTION_HEIGHT : OPTION_HEIGHT
-    const optionGap = compact ? COMPACT_OPTION_GAP : OPTION_GAP
-    const titleGap = compact ? 6 : PROMPT_TITLE_GAP
-    const hintGap = compact ? 8 : PROMPT_HINT_GAP
-    const headingHeight = PROMPT_TITLE_HEIGHT + titleGap + PROMPT_HINT_HEIGHT + hintGap
-    const naturalHeight = headingHeight
-      + count * optionHeight + Math.max(0, count - 1) * optionGap
     const contentWidth = PANEL_WIDTH - PADDING * 2 - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right
-    let layout = dialogLayout(promptArea, contentWidth, naturalHeight)
-    // 胶囊/页签会进一步压低净区；按真实内框算行容量，保留候选字号和按钮高度。
-    const innerHeight = layout.innerTop - layout.innerBottom
-    const rowCapacity = Math.max(1, Math.floor((innerHeight - headingHeight + optionGap) / (optionHeight + optionGap)))
-    const columns = Math.max(1, Math.ceil(count / rowCapacity))
-    const rows = Math.ceil(count / columns)
-    if (columns > 1) layout = dialogLayout(promptArea, contentWidth,
-      headingHeight + rows * optionHeight + Math.max(0, rows - 1) * optionGap)
-    const optionWidth = (layout.innerWidth - Math.max(0, columns - 1) * optionGap) / columns
+    const headingHeight = PROMPT_TITLE_HEIGHT + 4 + PROMPT_HINT_HEIGHT + 8
+    const footerHeight = 36, footerGap = 12, cardGap = 8
+    const wanted = headingHeight + prompt.candidates.length * 200
+      + Math.max(0, prompt.candidates.length - 1) * cardGap + footerHeight + footerGap
+    // 使用宿主完整安全区；固定取消按钮替代被正文占用的旧页签关闭入口。
+    const layout = dialogLayout(area, contentWidth, wanted)
     panel.getComponent(UITransform)!.setContentSize(layout.width, layout.height)
     panel.setPosition(new Vec3(area.x + area.width / 2, layout.centerY, 0))
     const plate = panel.getChildByName('DialogFrameArt')!
     plate.active = applySlicedSprite(plate, 'ui.panel.iron', layout.width, layout.height)
     const fallback = panel.getChildByName('DialogFrameVector')
-    if (plate.active) {
-      if (fallback !== null) fallback.active = false
-    } else {
-      paintCompactDialogFrame(panel, layout.width, layout.height)
-    }
-
+    if (plate.active) { if (fallback !== null) fallback.active = false }
+    else paintCompactDialogFrame(panel, layout.width, layout.height)
     let top = layout.innerTop - layout.centerY
-    this.setPromptLabelBox(this.promptTitle, layout.innerWidth, PROMPT_TITLE_HEIGHT, 22)
+    this.setPromptLabelBox(this.promptTitle, layout.innerWidth, PROMPT_TITLE_HEIGHT, 26)
     this.promptTitle.node.setPosition(new Vec3(0, top - PROMPT_TITLE_HEIGHT / 2, 0))
-    top -= PROMPT_TITLE_HEIGHT + titleGap
-    this.setPromptLabelBox(this.promptHint, layout.innerWidth, PROMPT_HINT_HEIGHT, 18)
+    top -= PROMPT_TITLE_HEIGHT + 4
+    this.setPromptLabelBox(this.promptHint, layout.innerWidth, PROMPT_HINT_HEIGHT, 22)
     this.promptHint.node.setPosition(new Vec3(0, top - PROMPT_HINT_HEIGHT / 2, 0))
-    top -= PROMPT_HINT_HEIGHT + hintGap
-    prompt.candidates.forEach((choice, index) => {
-      const option = panel.getChildByName(`HeroOption_${choice.heroId}`)!
-      const row = Math.floor(index / columns), column = index % columns
-      const itemsInRow = Math.min(columns, count - row * columns)
-      option.setPosition(new Vec3((column - (itemsInRow - 1) / 2) * (optionWidth + optionGap),
-        top - optionHeight / 2 - row * (optionHeight + optionGap), 0))
-      applyDialogButton(option, true, optionWidth, optionHeight)
-      // 共用按钮助手在素材缺失时停用旧Graphics，恢复同色兜底以保住真实可见的按钮。
+    top -= PROMPT_HINT_HEIGHT + 8
+    const bottom = layout.innerBottom - layout.centerY
+    const viewportHeight = Math.max(1, top - bottom - footerHeight - footerGap)
+    const previousOffset = wrapped.scroll.getScrollOffset()
+    wrapped.node.getComponent(UITransform)!.setContentSize(layout.innerWidth, viewportHeight)
+    wrapped.node.setPosition(new Vec3(0, top - viewportHeight / 2, 0))
+    const textWidth = Math.max(1, layout.innerWidth - 112 - PADDING)
+    const textCenter = -layout.innerWidth / 2 + 112 + textWidth / 2
+    let contentHeight = 0
+    for (const choice of prompt.candidates) {
+      const option = Array.from(this.optionHeroIds.entries()).find(([, id]) => id === choice.heroId)![0]
+      const preview = candidatePreview(choice)
+      const lines = [['Name', preview.name], ['Attributes', preview.attributes], ['Feature', preview.feature],
+        ['MainSkill', preview.mainSkill], ['SubSkill', preview.subSkill]] as const
+      let rowHeight = PADDING
+      const measured: { label: Label; height: number }[] = []
+      for (const [name, copy] of lines) {
+        const label = option.getChildByName(name)!.getComponent(Label)!
+        label.string = copy
+        label.lineHeight = name === 'Name' ? 26 : 22
+        label.horizontalAlign = Label.HorizontalAlign.LEFT
+        label.verticalAlign = Label.VerticalAlign.CENTER
+        label.overflow = Label.Overflow.RESIZE_HEIGHT
+        label.enableWrapText = true
+        const box = label.node.getComponent(UITransform)!
+        box.setContentSize(textWidth, label.lineHeight)
+        label.updateRenderData(true)
+        const height = Math.max(label.lineHeight, box.height)
+        measured.push({ label, height })
+        rowHeight += height + 4
+      }
+      rowHeight = Math.max(128, rowHeight + PADDING - 4)
+      option.setPosition(new Vec3(0, -contentHeight - rowHeight / 2, 0))
+      applyDialogButton(option, true, layout.innerWidth, rowHeight, choice.heroId === this.selectedHeroId)
       const art = option.getChildByName('DialogButtonArt')?.getComponent(Sprite)
-      const graphics = option.getComponent(Graphics)!
       if (art?.enabled !== true || art.spriteFrame === null) {
+        const graphics = option.getComponent(Graphics)!
         graphics.enabled = true
         graphics.clear()
         graphics.fillColor = COLOR_ROW
         graphics.strokeColor = COLOR_COPPER_GOLD
-        graphics.lineWidth = 1
-        graphics.roundRect(-optionWidth / 2, -optionHeight / 2, optionWidth, optionHeight, 6)
+        graphics.lineWidth = choice.heroId === this.selectedHeroId ? 3 : 1
+        graphics.roundRect(-layout.innerWidth / 2, -rowHeight / 2, layout.innerWidth, rowHeight, 6)
         graphics.fill()
         graphics.stroke()
       }
-      this.setPromptLabelBox(option.getChildByName('Name')!.getComponent(Label)!,
-        optionWidth - PADDING * 2, OPTION_CAPTION_HEIGHT, 24)
-    })
-    this.promptLayoutKey = `${size.width}:${size.height}:${area.x}:${area.y}:${area.width}:${area.height}:${topLimit}`
+      let y = rowHeight / 2 - PADDING
+      for (const { label, height } of measured) {
+        label.node.setPosition(new Vec3(textCenter, y - height / 2, 0))
+        y -= height + 4
+      }
+      const portrait = option.getChildByName('Portrait')!
+      portrait.setPosition(new Vec3(-layout.innerWidth / 2 + 60, rowHeight / 2 - PADDING - 44, 0))
+      portrait.getComponent(UITransform)!.setContentSize(88, 88)
+      const key = heroPortraitKey(choice.heroId)
+      const portraitArt = portrait.getChildByName('PortraitArt')!
+      const loaded = key !== null && applyAnyIconSprite(portraitArt, key, 88, 88)
+      portraitArt.active = loaded
+      portrait.getChildByName('PortraitFallback')!.active = !loaded
+      this.setPromptLabelBox(portrait.getChildByName('PortraitFallback')!.getComponent(Label)!, 80, 28, 20)
+      const graphics = portrait.getComponent(Graphics)!
+      graphics.enabled = !loaded
+      if (!loaded) {
+        graphics.clear()
+        graphics.fillColor = COLOR_PANEL
+        graphics.strokeColor = COLOR_COPPER_GOLD
+        graphics.lineWidth = 1
+        graphics.rect(-44, -44, 88, 88)
+        graphics.fill()
+        graphics.stroke()
+      }
+      contentHeight += rowHeight + cardGap
+    }
+    contentHeight = Math.max(1, contentHeight - cardGap)
+    wrapped.content.getComponent(UITransform)!.setContentSize(layout.innerWidth, contentHeight)
+    wrapped.content.setPosition(new Vec3(0, viewportHeight / 2, 0))
+    wrapped.scroll.stopAutoScroll()
+    wrapped.scroll.scrollToOffset(new Vec2(0, Math.max(0,
+      Math.min(previousOffset.y, contentHeight - viewportHeight))), 0)
+    const buttonWidth = Math.min(220, (layout.innerWidth - 12) / 2)
+    for (const [button, sign] of [[this.promptCancel, -1], [this.promptConfirm, 1]] as const) {
+      button.setPosition(new Vec3(sign * (buttonWidth + 12) / 2, bottom + footerHeight / 2, 0))
+      applyDialogButton(button, button === this.promptCancel || this.selectedHeroId !== null, buttonWidth, footerHeight)
+      this.setPromptLabelBox(button.getChildByName('Caption')!.getComponent(Label)!, buttonWidth - 16, 28, 24)
+    }
+    this.promptConfirm.off('touch-end', this.onConfirmHero, this)
+    const selected = prompt.candidates.find(choice => choice.heroId === this.selectedHeroId)
+    this.promptConfirm.getChildByName('Caption')!.getComponent(Label)!.string = selected === undefined
+      ? '选择后领取' : '领取 · ' + candidateLabel(selected)
+    if (selected !== undefined) this.promptConfirm.on('touch-end', this.onConfirmHero, this)
+    this.promptLayoutKey = [size.width, size.height, area.x, area.y, area.width, area.height].join(':')
   }
 
   private setPromptLabelBox(label: Label, width: number, height: number, lineHeight: number): void {
@@ -852,6 +910,7 @@ export class QuestPanelView extends Component {
 
   private hidePrompt(): void {
     this.prompt = null
+    this.selectedHeroId = null
     if (this.promptPanel !== null) {
       this.promptPanel.active = false
     }

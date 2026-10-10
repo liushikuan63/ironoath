@@ -115,9 +115,9 @@ test('三选一：带候选的任务必须先弹选择，不能直接领', () =>
   const row = rowAt({
     quests: [view({ questId: 'quest_main_01', complete: true, claimable: true,
       heroChoices: [
-        { heroId: 'hero_sr_01', name: '卫无咎' },
-        { heroId: 'hero_sr_02', name: '沈砚秋' },
-        { heroId: 'hero_sr_03', name: '崔明烛' },
+        { heroId: 'hero_sr_01', name: '卫无咎', rarity: null, might: null, command: null, wisdom: null, mainSkillName: null, mainSkillDescription: null, subSkillName: null, subSkillDescription: null, featureText: null },
+        { heroId: 'hero_sr_02', name: '沈砚秋', rarity: null, might: null, command: null, wisdom: null, mainSkillName: null, mainSkillDescription: null, subSkillName: null, subSkillDescription: null, featureText: null },
+        { heroId: 'hero_sr_03', name: '崔明烛', rarity: null, might: null, command: null, wisdom: null, mainSkillName: null, mainSkillDescription: null, subSkillName: null, subSkillDescription: null, featureText: null },
       ] })],
     claimableCount: 1,
     serverNow: 1,
@@ -136,7 +136,7 @@ test('三选一：带候选的任务必须先弹选择，不能直接领', () =>
 
 test('三选一：选定之后才构造请求体，且选中的必须在候选里', () => {
   const prompt = { questId: 'quest_main_01', title: '主线 · 筑起第一堵墙',
-    candidates: [{ heroId: 'hero_sr_01', name: '卫无咎' }, { heroId: 'hero_sr_02', name: '沈砚秋' }] }
+    candidates: [{ heroId: 'hero_sr_01', name: '卫无咎', rarity: null, might: null, command: null, wisdom: null, mainSkillName: null, mainSkillDescription: null, subSkillName: null, subSkillDescription: null, featureText: null }, { heroId: 'hero_sr_02', name: '沈砚秋', rarity: null, might: null, command: null, wisdom: null, mainSkillName: null, mainSkillDescription: null, subSkillName: null, subSkillDescription: null, featureText: null }] }
   const req = chosenClaimReq(prompt, 'hero_sr_02')
   assert.equal(req.questId, 'quest_main_01')
   assert.equal(req.heroChoice, 'hero_sr_02')
@@ -195,6 +195,6 @@ test('领取回执：奖励明细用服务端给的名字，整卡武将单独�
 })
 
 test('候选展示名直接用服务端那份，不自己翻译也不回落 id', () => {
-  assert.equal(candidateLabel({ heroId: 'hero_sr_01', name: '卫无咎' }), '卫无咎',
+  assert.equal(candidateLabel({ heroId: 'hero_sr_01', name: '卫无咎', rarity: null, might: null, command: null, wisdom: null, mainSkillName: null, mainSkillDescription: null, subSkillName: null, subSkillDescription: null, featureText: null }), '卫无咎',
     '名字由服务端从 hero 表解析；客户端自己拼会与战报、客服工单里的称呼对不上')
 })

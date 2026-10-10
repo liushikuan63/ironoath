@@ -310,6 +310,7 @@ public class CityAppService {
         long cityVersion = cities.versionOf(playerId);
         ResourceRateService.Settlement settlement = resourceRates.settle(player, city, now);
         syncMainCityLevel(player, city);
+        player.recordProducedOutput(settlement.credited());
         // 升级完成的事件在这里发（B12 §1）：收割是「结算那一刻」发生的，而结算是被读触发的 ——
         // 挂在任何单一端点上都会漏掉「先读列表再看别的」的路径。次数=收割到的栋数，目标=建筑配置 id
         for (String instanceId : settlement.harvested()) {
@@ -1108,6 +1109,15 @@ public class CityAppService {
         ResourceRateService.Settlement settlement = ctx.settlement();
 
         String requested = req.buildingId();
+        if (requested == null || requested.isBlank()) {
+            String reason = harvestUnlockReason(player);
+            if (reason != null) {
+                // 被拒的是批量按钮；到点升级/惰性产出仍要保存，避免下次读取重复发送升级事件。
+                players.save(player);
+                cities.save(playerId, city, ctx.cityVersion());
+                throw new BizException(ErrorCode.PARAM_INVALID, reason);
+            }
+        }
         if (requested != null && !requested.isBlank()) {
             BuildingInstance target = city.building(requested);
             // load() 已经把到点的升级收割掉了，所以「还在升级中」只可能是「没到点」
@@ -1120,7 +1130,12 @@ public class CityAppService {
 
         List<BuildingView> collected = new ArrayList<>();
         if (requested != null && !requested.isBlank()) {
-            collected.add(toView(city.building(requested), now));
+            BuildingInstance target = city.building(requested);
+            var resource = configs.get(BuildingCfg.class, target.configId()).outputResource();
+            if (resource != null && target.level() > 0
+                    && configs.get(com.ironoath.config.cfg.ResourceCfg.class, resource).manualLearningRequired())
+                player.confirmManualOutput(resource);
+            collected.add(toView(target, now));
         } else {
             for (String id : settlement.harvested()) {
                 collected.add(toView(city.building(id), now));
@@ -1132,6 +1147,41 @@ public class CityAppService {
         LOG.info("收割升级 playerId={} 本次收割={} 入账产出={}",
                 playerId, settlement.harvested(), settlement.credited());
         return new CityCollectResp(collected, toAmountList(settlement.credited()), now);
+    }
+
+    /** 服务端唯一解锁判定；读取和收割使用同一口径。 */
+    private String harvestUnlockReason(PlayerSave player) {
+        long level = configs.longParam("CITY_COLLECT_ALL_MAIN_LEVEL");
+        if (player.cityLevel() < level) return "一键收割需主城 " + level + " 级，并完成四种资源手动采集。";
+        List<String> missing = new ArrayList<>();
+        for (var cfg : configs.all(com.ironoath.config.cfg.ResourceCfg.class))
+            if (cfg.manualLearningRequired() && !player.manuallyCollected().contains(cfg.id())) missing.add(cfg.name());
+        return missing.isEmpty() ? null : "请先逐种手动采集：" + String.join("、", missing) + "。";
+    }
+
+    public com.ironoath.web.dto.generated.CityHarvestLearningResp harvestLearning(String playerId) {
+        long now = timeService.serverNow();
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            Ctx ctx = load(playerId, now); PlayerSave player = ctx.player();
+            List<com.ironoath.web.dto.generated.ResourceLearningView> views = new ArrayList<>();
+            for (var cfg : configs.all(com.ironoath.config.cfg.ResourceCfg.class)) {
+                String buildingId = null;
+                if (cfg.manualLearningRequired() && player.pendingManualOutput().getOrDefault(cfg.id(), 0L) > 0)
+                    for (var b : ctx.city().buildings())
+                        if (b.level() > 0 && !b.isUpgrading()
+                                && cfg.id().equals(configs.get(BuildingCfg.class, b.configId()).outputResource())) {
+                            buildingId = b.instanceId(); break;
+                        }
+                views.add(new com.ironoath.web.dto.generated.ResourceLearningView(
+                        com.ironoath.web.dto.generated.ResourceType.valueOf(cfg.id()), cfg.name(), cfg.tutorialText(),
+                        cfg.manualLearningRequired(), player.manuallyCollected().contains(cfg.id()), buildingId));
+            }
+            String reason = harvestUnlockReason(player);
+            players.save(player); cities.save(playerId, ctx.city(), ctx.cityVersion());
+            return new com.ironoath.web.dto.generated.CityHarvestLearningResp(views, reason == null,
+                    reason == null ? "资源教学完成，一键收割已开启。" : reason,
+                    Math.toIntExact(configs.longParam("CITY_COLLECT_ALL_MAIN_LEVEL")), now);
+        });
     }
 
     // ---------- 内部辅助 ----------

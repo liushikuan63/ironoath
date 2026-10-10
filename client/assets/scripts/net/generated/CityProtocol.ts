@@ -260,3 +260,28 @@ export interface CityCollectResp {
   output: ResourceAmount[]
   serverNow: number
 }
+
+export interface ResourceLearningView {
+  type: ResourceType
+  /** 服务端资源中文名 */
+  name: string
+  /** 服务端资源用途与手动教学说明 */
+  description: string
+  /** 是否要求手动采集 */
+  manualRequired: boolean
+  /** 是否已确认该种资源真实产出 */
+  manuallyCollected: boolean
+  /** 有可确认产出的已建成资源建筑；无产出时为null */
+  collectableBuildingId: string | null
+}
+
+export interface CityHarvestLearningResp {
+  resources: ResourceLearningView[]
+  /** 主城等级与全部手动教学均完成 */
+  collectAllUnlocked: boolean
+  /** 面向玩家的解锁原因或已解锁说明 */
+  unlockReason: string
+  /** 配置中的主城等级门槛 */
+  requiredMainLevel: number
+  serverNow: number
+}

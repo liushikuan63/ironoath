@@ -16,6 +16,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -30,12 +34,14 @@ import com.ironoath.core.guide.GuideScript;
 import com.ironoath.core.player.PlayerGuide;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
+import com.ironoath.core.hero.HeroRepository;
 import com.ironoath.core.quest.GoalType;
 import com.ironoath.web.dto.generated.GuideAction;
 import com.ironoath.web.dto.generated.GuideProgressReq;
 import com.ironoath.web.dto.generated.PlayerInitReq;
 import com.ironoath.web.dto.generated.QuestClaimReq;
 import com.ironoath.web.quest.QuestEvents;
+import com.ironoath.web.config.ClockSource;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
 
@@ -51,9 +57,25 @@ import com.ironoath.web.store.memory.InMemoryPlayerStore;
  * 位置必须还在第 N 步；跨进程那一半由 {@code PlayerGuideEquivalenceTest} 在真 MongoDB 上钉。
  */
 @ActiveProfiles("test")
-@SpringBootTest
+@SpringBootTest(properties = "spring.autoconfigure.exclude="
+        + "org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration,"
+        + "org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration,"
+        + "org.springframework.boot.autoconfigure.data.mongo.MongoRepositoriesAutoConfiguration")
 @AutoConfigureMockMvc
+@Import(GuideEndpointTest.FixedClock.class)
 class GuideEndpointTest {
+
+    /** 不推进时间：赠粮断言只量实际奖励入账，不把自然产粮算成赠礼。不开端口或 Mongo。 */
+    @TestConfiguration
+    static class FixedClock {
+        static final long NOW = System.currentTimeMillis();
+
+        @Bean
+        @Primary
+        ClockSource guideTestClock() {
+            return () -> NOW;
+        }
+    }
 
     private static final String PLAYER_HEADER = "X-Player-Id";
     private static final String FIRST = "guide_01_upgrade_main";
@@ -65,6 +87,7 @@ class GuideEndpointTest {
     @Autowired private PlayerRepository players;
     @Autowired private QuestEvents events;
     @Autowired private ConfigRegistry configs;
+    @Autowired private HeroRepository heroes;
 
     @BeforeEach
     void resetStores() {
@@ -196,8 +219,138 @@ class GuideEndpointTest {
         progress(playerId, SECOND, GuideAction.COMPLETE);
 
         assertThat(progress(playerId, THIRD, GuideAction.SKIP).get("nextStepIndex").asLong())
-                .as("粮食一枚没攒也能跳过去").isEqualTo(4L);
+                .as("SKIP 不要求粮食任务达标或领奖").isEqualTo(4L);
         assertThat(guideOf(playerId).stepIndex()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("一次性免费新手礼：普通选将领奖令初粮 8000→16000；同键重放和第二次领奖都不再发")
+    void firstHeroClaimGrantsGrainExactlyOnce() throws Exception {
+        String playerId = newPlayer();
+        assertThat(grainOf(playerId)).as("普通新号，未开启资源提速").isEqualTo(8000L);
+        upgradeMainCityTwice(playerId);
+        String claimId = requestId();
+
+        JsonNode claimed = dataOf(claimQuest(playerId, "quest_main_01", "hero_sr_02", claimId));
+        assertThat(grainOf(playerId)).as("免费赠粮必须由真实奖励发放器入玩家钱包").isEqualTo(16000L);
+        assertThat(claimed.get("rewards").findValuesAsText("id")).containsExactly("GRAIN", "hero_sr_02");
+        assertThat(claimed.get("rewards").get(0).get("type").asText()).isEqualTo("RESOURCE");
+        assertThat(claimed.get("rewards").get(0).get("count").asLong()).isEqualTo(8000L);
+        assertThat(heroes.findByPlayerId(playerId).orElseThrow().heroes())
+                .extracting(com.ironoath.core.hero.HeroInstance::heroId).containsExactly("hero_sr_02");
+
+        assertThat(code(claimQuest(playerId, "quest_main_01", "hero_sr_02", claimId)))
+                .isEqualTo(ErrorCode.REQUEST_DUPLICATED.code());
+        assertThat(code(claimQuest(playerId, "quest_main_01", "hero_sr_02", requestId())))
+                .isEqualTo(ErrorCode.QUEST_ALREADY_CLAIMED.code());
+        assertThat(grainOf(playerId)).as("两种重复请求均不得再次赠粮").isEqualTo(16000L);
+        assertThat(heroes.findByPlayerId(playerId).orElseThrow().heroes()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("未完成或未作合法选将的失败领奖不能赠粮；选择合法后才发免费新手礼")
+    void rejectedHeroClaimDoesNotGrantTheGift() throws Exception {
+        String playerId = newPlayer();
+        assertThat(code(claimQuest(playerId, "quest_main_01", "hero_sr_02", requestId())))
+                .isEqualTo(ErrorCode.QUEST_NOT_COMPLETE.code());
+        assertThat(grainOf(playerId)).isEqualTo(8000L);
+        upgradeMainCityTwice(playerId);
+        assertThat(code(claimQuest(playerId, "quest_main_01", null, requestId()))).isNotZero();
+        assertThat(code(claimQuest(playerId, "quest_main_01", "hero_ssr_01", requestId()))).isNotZero();
+        assertThat(grainOf(playerId)).as("选将失败不得提前发放这份资源礼").isEqualTo(8000L);
+        assertThat(heroes.findByPlayerId(playerId).map(r -> r.heroes().size()).orElse(0)).isZero();
+        assertThat(code(claimQuest(playerId, "quest_main_01", "hero_sr_02", requestId()))).isZero();
+        assertThat(grainOf(playerId)).isEqualTo(16000L);
+    }
+
+    @Test
+    @DisplayName("赠粮不代做资源教学或领粮；四种手动与领02完成后继续训20和普通领03")
+    void giftLeavesTrainingAndBattleClaimPrerequisitesIntact() throws Exception {
+        String playerId = reachGrainGuide();
+        assertThat(questOf(playerId, "quest_main_02").get("complete").asBoolean()).isTrue();
+        assertThat(questOf(playerId, "quest_main_02").get("claimed").asBoolean()).isFalse();
+        assertThat(progress(playerId, THIRD, GuideAction.COMPLETE).get("nextStepIndex").asLong())
+                .isEqualTo(3L);
+        assertTrainingIsLockedUntilGrainClaim(playerId);
+
+        assertThat(code(claimQuest(playerId, "quest_main_02", null, requestId()))).isZero();
+        assertThat(progress(playerId, THIRD, GuideAction.COMPLETE).get("advanced").asBoolean()).isFalse();
+        // 本例聚焦赠粮与领奖前置；真实逐种collect和持久化由CityHarvestLearningTest覆盖。
+        var teaching = players.findByPlayerId(playerId).orElseThrow();
+        teaching.recordProducedOutput(java.util.Map.of("WOOD", 1L, "STONE", 1L, "IRON", 1L, "GRAIN", 1L));
+        for (String type : java.util.List.of("WOOD", "STONE", "IRON", "GRAIN")) teaching.confirmManualOutput(type);
+        players.save(teaching);
+        assertThat(progress(playerId, THIRD, GuideAction.COMPLETE).get("nextStepIndex").asLong()).isEqualTo(4L);
+        assertThat(questOf(playerId, "quest_main_03").get("locked").asBoolean()).isFalse();
+        events.progress(playerId, GoalType.TRAIN_UNIT, "unit_infantry_t1", 20L, FixedClock.NOW);
+        assertThat(questOf(playerId, "quest_main_03").get("current").asLong()).isEqualTo(20L);
+        assertThat(questOf(playerId, "quest_main_03").get("claimed").asBoolean()).isFalse();
+        assertThat(progress(playerId, "guide_04_barracks_train", GuideAction.COMPLETE)
+                .get("nextStepIndex").asLong()).isEqualTo(5L);
+
+        events.progress(playerId, GoalType.KILL_MONSTER, "mapmonster_lv01", 1L, FixedClock.NOW);
+        assertThat(questOf(playerId, "quest_main_04").get("current").asLong())
+                .as("Guide4 的 QUEST_DONE 不能替普通领取03，锁着的野战事件不计入04").isZero();
+        assertThat(progress(playerId, "guide_05_first_battle", GuideAction.COMPLETE)
+                .get("advanced").asBoolean()).isFalse();
+        assertThat(code(claimQuest(playerId, "quest_main_03", null, requestId()))).isZero();
+        events.progress(playerId, GoalType.KILL_MONSTER, "mapmonster_lv01", 1L, FixedClock.NOW);
+        assertThat(questOf(playerId, "quest_main_04").get("current").asLong()).isEqualTo(1L);
+        assertThat(progress(playerId, "guide_05_first_battle", GuideAction.COMPLETE)
+                .get("nextStepIndex").asLong()).isEqualTo(6L);
+    }
+
+    @Test
+    @DisplayName("Guide3 SKIP 同样不代领02：粮食充足时训练仍锁，普通领取02后才接收训练事件")
+    void skipStillRequiresTheOrdinaryGrainClaim() throws Exception {
+        String playerId = reachGrainGuide();
+        assertThat(progress(playerId, THIRD, GuideAction.SKIP).get("nextStepIndex").asLong()).isEqualTo(4L);
+        assertThat(players.findByPlayerId(playerId).orElseThrow().manuallyCollected()).isEmpty();
+        assertTrainingIsLockedUntilGrainClaim(playerId);
+        assertThat(code(claimQuest(playerId, "quest_main_02", null, requestId()))).isZero();
+        events.progress(playerId, GoalType.TRAIN_UNIT, "unit_infantry_t1", 20L, FixedClock.NOW);
+        assertThat(progress(playerId, "guide_04_barracks_train", GuideAction.COMPLETE)
+                .get("advanced").asBoolean()).isTrue();
+    }
+
+    private void assertTrainingIsLockedUntilGrainClaim(String playerId) throws Exception {
+        assertThat(questOf(playerId, "quest_main_03").get("preQuestId").asText()).isEqualTo("quest_main_02");
+        assertThat(questOf(playerId, "quest_main_03").get("locked").asBoolean()).isTrue();
+        events.progress(playerId, GoalType.TRAIN_UNIT, "unit_infantry_t1", 20L, FixedClock.NOW);
+        assertThat(questOf(playerId, "quest_main_03").get("current").asLong()).isZero();
+        assertThat(code(claimQuest(playerId, "quest_main_03", null, requestId())))
+                .isEqualTo(ErrorCode.QUEST_LOCKED.code());
+        String currentStep = players.findByPlayerId(playerId).orElseThrow().guide().stepIndex() == 3
+                ? THIRD : "guide_04_barracks_train";
+        assertThat(progress(playerId, currentStep, GuideAction.COMPLETE)
+                .get("advanced").asBoolean()).isFalse();
+    }
+
+    private String reachGrainGuide() throws Exception {
+        String playerId = newPlayer();
+        upgradeMainCityTwice(playerId);
+        progress(playerId, FIRST, GuideAction.COMPLETE);
+        claimMainCityQuest(playerId);
+        progress(playerId, SECOND, GuideAction.COMPLETE);
+        return playerId;
+    }
+
+    private long grainOf(String playerId) {
+        return players.findByPlayerId(playerId).orElseThrow().resource("GRAIN").current();
+    }
+
+    private JsonNode questOf(String playerId, String questId) throws Exception {
+        for (JsonNode quest : dataOf(request(get("/quest/list").header(PLAYER_HEADER, playerId))).get("quests")) {
+            if (quest.get("questId").asText().equals(questId)) return quest;
+        }
+        throw new AssertionError("任务未下发：" + questId);
+    }
+
+    private JsonNode claimQuest(String playerId, String questId, String heroChoice, String requestId)
+            throws Exception {
+        return request(post("/quest/claim").header(PLAYER_HEADER, playerId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(JsonUtils.toJson(new QuestClaimReq(requestId, questId, heroChoice))));
     }
 
     @Test
@@ -219,12 +372,8 @@ class GuideEndpointTest {
     /**
      * 「走完」那一位单独验：末步（第 7 步）按裁决②可跳，所以夹具把进度放到末步，再真的 SKIP 一次。
      *
-     * <p><b>为什么不是从头跳</b> —— 从头跳不过去（强制步不许跳），而真做过去今天做不到：
-     * 主线任务的 {@code preQuest} 是链式的，第 4 步的判据 {@code quest_main_03} 的前置是
-     * {@code quest_main_02}（攒 1 万粮），而新号粮食底产 {@code basePerHour=400} ⇒ 单靠自然产出约 25 小时。
-     * 也就是说 B00「五分钟体验」与 B18 §五① 那份七步表在**现状配置下走不完** ——
-     * 这条已记进收口清单等裁决（要么给首日一份够 1 万粮的开局库存/章节奖，要么改那条前置）。
-     * 判据链本身（未达成按住、达成才推进、领奖才算第 2 步）由上面三条用例覆盖，本条只负责结束语义。
+     * <p>此夹具只负责结束语义，不替代训练与首战流程。首个选将任务的一次性免费赠粮、
+     * 普通领取前置、训练与野战事件以及服务端 Guide4/5 判据由上面的真实领取用例覆盖。
      */
     @Test
     @DisplayName("走到末步再跳过：finished=true、nextStepIndex=null、存档写下结束时刻，重放不再推进")

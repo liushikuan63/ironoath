@@ -601,14 +601,12 @@ class CityEndpointTest {
     }
 
     @Test
-    @DisplayName("collect 不指定 buildingId 时返回空列表而不是报错（没有到点的建筑是正常状态）")
+    @DisplayName("新号不能通过空buildingId绕过五级与四种手动教学门槛")
     void collectWithoutTargetReturnsEmpty() {
         String playerId = newPlayer();
-        CityCollectResp resp = cityAppService.collect(playerId,
-                new com.ironoath.web.dto.generated.CityCollectReq(newRequestId(), null));
-        assertThat(resp.collected()).isEmpty();
-        assertThat(resp.output()).isEmpty();
-        assertThat(resp.serverNow()).isPositive();
+        assertThatThrownBy(() -> cityAppService.collect(playerId,
+                new com.ironoath.web.dto.generated.CityCollectReq(newRequestId(), null)))
+                .isInstanceOf(BizException.class).hasMessageContaining("主城 5 级");
     }
 
     @Test
@@ -626,7 +624,7 @@ class CityEndpointTest {
         cities.save(playerId, city, version);
 
         CityCollectResp collected = cityAppService.collect(playerId,
-                new com.ironoath.web.dto.generated.CityCollectReq(newRequestId(), null));
+                new com.ironoath.web.dto.generated.CityCollectReq(newRequestId(), upgrade.buildingId()));
         assertThat(collected.collected()).hasSize(1);
         assertThat(collected.collected().get(0).level()).isEqualTo(1);
         assertThat(collected.collected().get(0).status()).isEqualTo(BuildingStatus.IDLE);

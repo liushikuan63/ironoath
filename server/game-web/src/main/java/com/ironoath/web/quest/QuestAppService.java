@@ -1,5 +1,6 @@
 package com.ironoath.web.quest;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,7 +17,9 @@ import com.ironoath.common.time.DayKey;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.common.time.WeekKey;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.ConfigException;
 import com.ironoath.config.cfg.HeroCfg;
+import com.ironoath.config.cfg.SkillCfg;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.player.PlayerRepository;
@@ -372,12 +375,11 @@ public class QuestAppService {
     }
 
     /**
-     * 候选的展示形态：id 与名字成对（协议 {@code HeroChoice}）。
+     * 候选的展示形态：选择 id 与配置里的名字、基础三维、技能说明一起下发。
      *
      * <p><b>名字在这里解析，客户端不查表</b>：与 {@code QuestReward.name} 同一条口径 ——
      * 客户端自己翻译武将名，会在表改名之后与服务端日志、客服工单里的称呼对不上。
-     * 解析失败（hero 表里没有这个 id）时**回落成 id 而不是抛**：装配器已经在配表时校验过候选，
-     * 走到这里说明是运行期表被改坏，而一块面板不该因为一句文案整页 500。
+     * 展示工厂缺配置时只给玩家安全回退语，不打印内部 id；任务装配器与领取侧原有候选校验仍保留。
      */
     private List<com.ironoath.web.dto.generated.HeroChoice> heroChoiceViews(String questId) {
         List<String> ids = heroChoicesOf(questId);
@@ -386,16 +388,97 @@ public class QuestAppService {
         }
         List<com.ironoath.web.dto.generated.HeroChoice> out = new ArrayList<>(ids.size());
         for (String heroId : ids) {
-            String heroName;
-            try {
-                heroName = configs.get(HeroCfg.class, heroId).name();
-            } catch (RuntimeException e) {
-                LOG.warn("候选武将 {} 不在 hero 表里（任务 {}），本次回落成 id 展示", heroId, questId);
-                heroName = heroId;
-            }
-            out.add(new com.ironoath.web.dto.generated.HeroChoice(heroId, heroName));
+            out.add(heroChoiceView(heroId, questId));
         }
         return out;
+    }
+
+    private com.ironoath.web.dto.generated.HeroChoice heroChoiceView(String heroId, String questId) {
+        HeroCfg hero;
+        try {
+            hero = configs.get(HeroCfg.class, heroId);
+        } catch (ConfigException e) {
+            LOG.warn("候选武将 {} 缺配置（任务 {}），显示安全回退语", heroId, questId);
+            return new com.ironoath.web.dto.generated.HeroChoice(heroId, "未知武将", null,
+                    null, null, null, "未知技能", "技能信息暂不可用",
+                    "未知技能", "技能信息暂不可用", "技能信息暂不可用");
+        }
+        SkillChoiceInfo main = skillChoiceInfo(hero.mainSkill());
+        SkillChoiceInfo sub = skillChoiceInfo(hero.subSkill());
+        String feature = main.feature() == null && sub.feature() == null ? "技能信息暂不可用"
+                : "主技能：" + featureOrUnavailable(main) + "；副技能：" + featureOrUnavailable(sub);
+        return new com.ironoath.web.dto.generated.HeroChoice(heroId,
+                playerConfigName(hero.name(), heroId, "未知武将"),
+                hero.rarity() == null ? null : hero.rarity().name(), hero.might(), hero.command(), hero.wisdom(),
+                main.name(), main.description(), sub.name(), sub.description(), feature);
+    }
+
+    /** 仅解释基础技能配置；不把设计 why、技能 id 或内部枚举印给玩家。 */
+    private SkillChoiceInfo skillChoiceInfo(String skillId) {
+        SkillCfg skill;
+        try {
+            if (skillId == null || skillId.isBlank()) return SkillChoiceInfo.unavailable();
+            skill = configs.get(SkillCfg.class, skillId);
+        } catch (ConfigException e) {
+            LOG.warn("候选技能 {} 缺配置，显示安全回退语", skillId);
+            return SkillChoiceInfo.unavailable();
+        }
+        String name = playerConfigName(skill.name(), skillId, "未知技能");
+        // 战斗内核对 SKIP_TURN 刻意不施加效果，不能在选将时声称硬控已可用。
+        if (skill.effect() == null || skill.effect() == SkillCfg.Effect.SKIP_TURN || skill.trigger() == null) {
+            return new SkillChoiceInfo(name, "技能信息暂不可用", null);
+        }
+        String trigger = switch (skill.trigger()) {
+            case ROUND_START -> "回合开始时";
+            case EVERY_ROUND -> "每回合";
+            case ON_HIT -> "受击时";
+            case ON_DEATH -> "己方单位阵亡时";
+        };
+        String value = skillPercent(skill.value());
+        String effect = switch (skill.effect()) {
+            case DAMAGE -> "额外伤害系数" + value;
+            case HEAL -> "回复己方损失兵力的" + value;
+            case BUFF_ATK -> "提升己方攻击" + value;
+            case BUFF_DEF -> "提升己方防御" + value;
+            case DEBUFF_ATK -> "降低敌方攻击" + value;
+            case DEBUFF_DEF -> "降低敌方防御" + value;
+            case SKIP_TURN -> throw new IllegalStateException("未实现硬控不应进入技能说明");
+        };
+        String feature = switch (skill.effect()) {
+            case DAMAGE -> "额外伤害";
+            case HEAL -> "回复损失兵力";
+            case BUFF_ATK -> "提升攻击";
+            case BUFF_DEF -> "提升防御";
+            case DEBUFF_ATK -> "降低敌方攻击";
+            case DEBUFF_DEF -> "降低敌方防御";
+            case SKIP_TURN -> throw new IllegalStateException("未实现硬控不应进入技能特点");
+        };
+        boolean sustained = switch (skill.effect()) {
+            case BUFF_ATK, BUFF_DEF, DEBUFF_ATK, DEBUFF_DEF -> true;
+            default -> false;
+        };
+        String duration = sustained && skill.durationRounds() > 0 ? "；持续" + skill.durationRounds() + "回合" : "";
+        return new SkillChoiceInfo(name, trigger + "，" + skillPercent(skill.chance()) + "概率："
+                + effect + duration + "。", feature);
+    }
+
+    private static String skillPercent(long fixed) {
+        return BigDecimal.valueOf(fixed, 2).stripTrailingZeros().toPlainString() + "%";
+    }
+
+    private static String playerConfigName(String name, String id, String fallback) {
+        return name == null || name.isBlank() || name.equals(id) || name.startsWith("hero_") || name.startsWith("skill_")
+                ? fallback : name;
+    }
+
+    private static String featureOrUnavailable(SkillChoiceInfo skill) {
+        return skill.feature() == null ? "技能信息暂不可用" : skill.feature();
+    }
+
+    private record SkillChoiceInfo(String name, String description, String feature) {
+        static SkillChoiceInfo unavailable() {
+            return new SkillChoiceInfo("未知技能", "技能信息暂不可用", null);
+        }
     }
 
     /**

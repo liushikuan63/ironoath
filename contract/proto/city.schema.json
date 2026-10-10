@@ -642,6 +642,81 @@
           "format": "int64"
         }
       }
+    },
+    "ResourceLearningView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "name",
+        "description",
+        "manualRequired",
+        "manuallyCollected",
+        "collectableBuildingId"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/ResourceType"
+        },
+        "name": {
+          "type": "string",
+          "description": "服务端资源中文名"
+        },
+        "description": {
+          "type": "string",
+          "description": "服务端资源用途与手动教学说明"
+        },
+        "manualRequired": {
+          "type": "boolean",
+          "description": "是否要求手动采集"
+        },
+        "manuallyCollected": {
+          "type": "boolean",
+          "description": "是否已确认该种资源真实产出"
+        },
+        "collectableBuildingId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "有可确认产出的已建成资源建筑；无产出时为null"
+        }
+      }
+    },
+    "CityHarvestLearningResp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resources",
+        "collectAllUnlocked",
+        "unlockReason",
+        "requiredMainLevel",
+        "serverNow"
+      ],
+      "properties": {
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceLearningView"
+          }
+        },
+        "collectAllUnlocked": {
+          "type": "boolean",
+          "description": "主城等级与全部手动教学均完成"
+        },
+        "unlockReason": {
+          "type": "string",
+          "description": "面向玩家的解锁原因或已解锁说明"
+        },
+        "requiredMainLevel": {
+          "type": "integer",
+          "description": "配置中的主城等级门槛"
+        },
+        "serverNow": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
     }
   }
 }

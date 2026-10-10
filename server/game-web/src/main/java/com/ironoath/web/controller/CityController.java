@@ -75,6 +75,13 @@ public class CityController {
         return Result.ok(cityAppService.list(playerId));
     }
 
+    @GetMapping("/harvest-learning")
+    public Result<com.ironoath.web.dto.generated.CityHarvestLearningResp> harvestLearning(
+            @RequestHeader(PLAYER_HEADER) String playerId) {
+        requirePlayer(playerId);
+        return Result.ok(cityAppService.harvestLearning(playerId));
+    }
+
     /**
      * 加速。免费与付费共用同一接口，用 {@code source} 区分（B03 §3）。
      *

@@ -568,13 +568,15 @@ export type GuideTrigger =
 export type GuideJudge =
   | 'QUEST_DONE'
   | 'QUEST_CLAIMED'
+  | 'MANUAL_RESOURCES_AND_CLAIMED'
 
 /**
  * 配置表 guide 的一行。
  * 新手引导脚本表（B18）。7 步与主线 quest_main_01~quest_main_06 逐条对齐：引导走真实主线，不另造一条链。
  * 本表是**步骤序列的唯一出处**（改脚本不改包 = 硬要求），客户端全仓不得出现任何步骤文案（验收 1 的静态检查盯的就是这个）。
+ * 2026-10-11用户裁决：第3步逐种讲解和手动采集，完成四种资源并领取攒粮任务后才算完成；原可跳保持，一键收割仍独立受主城5级和手动记录双门槛约束。
  *
- * 源表 version=2
+ * 源表 version=3
  */
 export interface GuideCfg {
   /** 主键 */
@@ -1004,7 +1006,7 @@ export type ResourceKind =
  *
  * v3 新增 STAMINA（体力）与第三个 kind：体力是 B09 打野与关卡的消耗闸门。把它做成资源行而不是独立系统，是为了复用已经修好的惰性结算 —— 「每 X 分钟恢复 1 点」「溢出不超上限」「不用定时器给全体玩家重置」这三条 B09 要求，在资源模型里分别对应 basePerHour、cap 截断、lastSettle 时间差，全部是现成的。
  *
- * 源表 version=3
+ * 源表 version=4
  */
 export interface ResourceCfg {
   /** 主键 */
@@ -1015,6 +1017,8 @@ export interface ResourceCfg {
   initAmount: number
   initCap: number
   basePerHour: number
+  tutorialText: string
+  manualLearningRequired: boolean
 }
 
 /** role_permission.rolePermissionScope 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */

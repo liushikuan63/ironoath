@@ -10,7 +10,7 @@ import type { BuildingRow, CityGrid, CityPanelView as CityData } from '../assets
 import { buildBuildChoices } from '../assets/scripts/game/session/Choices'
 import { GuideDriver } from '../assets/scripts/game/guide/GuideDriver'
 import * as anchors from '../assets/scripts/game/city/CitySceneAnchors'
-import type { CityListResp } from '../assets/scripts/net/generated/CityProtocol'
+import type { CityHarvestLearningResp, CityListResp } from '../assets/scripts/net/generated/CityProtocol'
 import type { GuideStepView } from '../assets/scripts/net/generated/GuideProtocol'
 import { PANEL_FRAME_BAND, buildingArtFootRatio } from '../assets/scripts/game/art/ArtFamilies'
 import { guideBubbleLayout } from '../assets/scripts/game/ui/GuideLayout'
@@ -62,6 +62,9 @@ interface CityHarness {
   viewAdjusted: boolean; gridTiles: Array<{ node: Node; icon: Node; plate: anchors.ProjectedPlate }>
   buildPicker: Picker; selectionBar: Node; selectedTitle: Label
   onUpgrade: ((id: string, x?: number, y?: number) => void) | null
+  onCollect: ((id: string | null) => void) | null
+  attachHarvestLearning(resp: CityHarvestLearningResp): void
+  openResourceTutorial(): void
   buildActionBar(parent: Node): void; renderSelection(row: BuildingRow | null): void
   buildCard(): void; buildGrid(): void
   renderGrid(grid: CityGrid): void; render(): void; paintTile(): void; syncPreviews(): void
@@ -101,6 +104,38 @@ function setup(height = 443.6018957345971, themed = true): { city: CityHarness; 
   return { city, commands, view, buildingSize: sceneExports.buildingIconSize as (id: string, width: number, height: number) => number }
 }
 function action(city: CityHarness, name: string): Node { const node = city.selectionBar.getChildByName(name); assert.ok(node); return node }
+test('收割入口在无权威回执或未解锁时只打开资源教学，服务端开启后才发送批量请求', () => {
+  const { city } = setup()
+  let tutorials = 0
+  const requests: Array<string | null> = []
+  city.openResourceTutorial = () => { tutorials++ }
+  city.onCollect = id => requests.push(id)
+  const button = city.node.getChildByName('CollectAllButton')!
+  assert.ok(button)
+  button.emit('touch-start'); assert.equal(tutorials, 1); assert.deepEqual(requests, [])
+  city.attachHarvestLearning({ resources: [], collectAllUnlocked: false,
+    unlockReason: '请先逐种手动采集木材、石料、铁矿、粮草。', requiredMainLevel: 5, serverNow: 1000 })
+  assert.equal(button.getChildByName('Caption')!.getComponent(Label)!.string, '资源教学')
+  button.emit('touch-start'); assert.equal(tutorials, 2); assert.deepEqual(requests, [])
+  // 用不同阈值反证客户端没有硬编码等级：只消费服务端最终结论。
+  city.attachHarvestLearning({ resources: [], collectAllUnlocked: true,
+    unlockReason: '资源教学完成，一键收割已开启。', requiredMainLevel: 99, serverNow: 1000 })
+  assert.equal(button.getChildByName('Caption')!.getComponent(Label)!.string, '一键收割')
+  button.emit('touch-start'); assert.deepEqual(requests, [null]); assert.equal(tutorials, 2)
+})
+
+test('建筑已空闲时也根据服务端的待确认产出显示手动收割键，不以本地计时冒充学习状态', () => {
+  const { city } = setup()
+  city.attachHarvestLearning({ resources: [{ type: 'WOOD', name: '木材', description: '测试服务端说明',
+    manualRequired: true, manuallyCollected: false, collectableBuildingId: 'bld_main_city' }],
+    collectAllUnlocked: false, unlockReason: '手动教学未完成', requiredMainLevel: 5, serverNow: 1000 })
+  assert.equal(action(city, 'DetailCollectButton').active, true)
+  const sent: Array<string | null> = []; city.onCollect = id => sent.push(id)
+  action(city, 'DetailCollectButton').emit('touch-start'); assert.deepEqual(sent, ['bld_main_city'])
+  city.attachHarvestLearning({ resources: [], collectAllUnlocked: false,
+    unlockReason: '暂无可确认产出', requiredMainLevel: 5, serverNow: 1000 })
+  assert.equal(action(city, 'DetailCollectButton').active, false)
+})
 function main(city: CityHarness): BuildingRow { const row = city.panel.rows.find(row => row.id === 'bld_main_city'); assert.ok(row); return row }
 function empty(city: CityHarness): Node { const node = city.gridTiles.find(tile => tile.plate.gridX === 1 && tile.plate.gridY === 2)?.node; assert.ok(node); return node }
 function own(node: Node): { left: number; right: number; bottom: number; top: number } { const ui = node.getComponent(UITransform)!; let x = node.position.x, y = node.position.y; for (let p = node.parent; p; p = p.parent) { x += p.position.x; y += p.position.y } return { left: x - ui.anchorX * ui.width, right: x + (1 - ui.anchorX) * ui.width, bottom: y - ui.anchorY * ui.height, top: y + (1 - ui.anchorY) * ui.height } }

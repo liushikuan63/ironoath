@@ -8,7 +8,7 @@
 
 import {
   _decorator, Color, Component, EventMouse, EventTouch, Graphics, Label, LabelOutline, Node, Size, Sprite,
-  UITransform, Vec3, sys, view,
+  UITransform, Vec2, Vec3, sys, view,
 } from 'cc'
 import {
   CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, cancelMessage, collectMessage,
@@ -16,9 +16,11 @@ import {
 import type { BuildingRow, CityGrid, CityPanelView as CityPanelData } from '../game/city/CityPanel'
 import { buildBuildChoices } from '../game/session/Choices'
 import type {
-  CityCancelResp, CityCollectResp, CityListResp, SpeedUpSource,
+  CityHarvestLearningResp, CityCancelResp, CityCollectResp, CityListResp, SpeedUpSource,
 } from '../net/generated/CityProtocol'
 import { ChoiceOverlay } from './ChoiceOverlay'
+import { applyDialogButton, createDialogScroll, dialogContentRect, observeDialogSize, paintCompactDialogFrame } from './DialogStyle'
+import { dialogLayout } from '../game/ui/DialogLayout'
 import {
   applyAnyIconSprite, applyCommandButton, applyIconSprite, applySimpleSprite,
   applySlicedSprite, applyTiledSprite, artFrame, buildingIconKey, ensureFamily,
@@ -296,6 +298,95 @@ export class CityPanelView extends Component {
 
   onUpgrade: ((configId: string, gridX?: number, gridY?: number) => void) | null = null
   onSpeedUp: ((buildingId: string, source: SpeedUpSource) => void) | null = null
+  private harvestLearning: CityHarvestLearningResp | null = null
+  private collectAllButton: Node | null = null
+  private resourceTutor: Node | null = null
+  onResourceTutorialVisibility: ((visible: boolean) => void) | null = null
+
+  attachHarvestLearning(resp: CityHarvestLearningResp): void {
+    const unlockedBefore = this.harvestLearning?.collectAllUnlocked === true
+    this.harvestLearning = resp
+    const button = this.collectAllButton
+    if (button !== null) {
+      button.getChildByName('Caption')!.getComponent(Label)!.string = resp.collectAllUnlocked ? '一键收割' : '资源教学'
+      applyCommandButton(button, 'normal', 132, 34)
+    }
+    if (!unlockedBefore && resp.collectAllUnlocked) this.showMessage(resp.unlockReason, COLOR_GOOD)
+    this.renderSelection(this.panel?.rows.find(row => row.id === this.selectedId) ?? null)
+  }
+
+  private openResourceTutorial(index = 0): void {
+    const learning = this.harvestLearning
+    if (learning === null) { this.showMessage('资源资料加载中，请稍后再试。', COLOR_TEXT_DIM); return }
+    const resource = learning.resources[index]
+    if (resource === undefined) return
+    this.resourceTutor?.destroy()
+    const dialog = new Node('ResourceTutorialPanel')
+    dialog.layer = this.node.layer; this.node.addChild(dialog); dialog.addComponent(UITransform)
+    dialog.on('touch-start', () => {}, this)
+    this.resourceTutor = dialog
+    this.onResourceTutorialVisibility?.(true)
+    const title = this.addLabel(dialog, 'ResourceTutorialTitle', 0, 0, COLOR_COPPER_GOLD, 22)
+    title.string = resource.name + ' · ' + (index + 1) + '/' + learning.resources.length
+    const wrapped = createDialogScroll(dialog, 'ResourceTutorialViewport', 1, 1, 0, 0)
+    const body = this.addLabel(wrapped.content, 'ResourceTutorialBody', 0, 0, COLOR_TEXT, 18)
+    body.string = resource.description + '\n\n' + (resource.manualRequired
+      ? (resource.manuallyCollected ? '已完成本资源的手动采集。' : '请选择对应资源建筑，等待产出后手动收割。')
+      : '本资源只需了解用途，不计入四种手动采集。') + '\n\n' + learning.unlockReason
+    const close = () => {
+      dialog.destroy(); if (this.resourceTutor === dialog) this.resourceTutor = null
+      this.onResourceTutorialVisibility?.(false)
+    }
+    const actions: Array<{ name: string; caption: string; enabled: boolean; action: () => void }> = [
+      { name: 'ResourceTutorialPrev', caption: '上一种', enabled: index > 0, action: () => this.openResourceTutorial(index - 1) },
+      { name: 'ResourceTutorialCollect', caption: resource.manualRequired ? '手动收割' : '用途说明',
+        enabled: resource.manualRequired && resource.collectableBuildingId !== null,
+        action: () => { close(); if (resource.collectableBuildingId !== null) this.onCollect?.(resource.collectableBuildingId) } },
+      { name: 'ResourceTutorialNext', caption: '下一种', enabled: index + 1 < learning.resources.length,
+        action: () => this.openResourceTutorial(index + 1) },
+      { name: 'ResourceTutorialClose', caption: '返回城内', enabled: true, action: close },
+    ]
+    const buttons = actions.map(action => {
+      const node = new Node(action.name); node.layer = dialog.layer; dialog.addChild(node)
+      node.addComponent(UITransform); node.addComponent(Graphics)
+      const label = this.addLabel(node, 'Caption', 0, 0, action.enabled ? COLOR_TEXT : COLOR_TEXT_DIM, 16)
+      label.string = action.caption
+      if (action.enabled) node.on('touch-end', action.action, this)
+      return { node, label, enabled: action.enabled }
+    })
+    const layout = () => {
+      const area = dialogContentRect(this.node), rect = dialogLayout(area, 600, 400)
+      dialog.getComponent(UITransform)!.setContentSize(rect.width, rect.height)
+      dialog.setPosition(new Vec3(area.x + area.width / 2, rect.centerY, 0))
+      paintCompactDialogFrame(dialog, rect.width, rect.height)
+      const top = rect.innerTop - rect.centerY, bottom = rect.innerBottom - rect.centerY
+      title.node.getComponent(UITransform)!.setContentSize(rect.innerWidth, 30)
+      title.lineHeight = 28; title.overflow = Label.Overflow.SHRINK; title.enableWrapText = false
+      title.node.setPosition(new Vec3(0, top - 15, 0))
+      const viewportHeight = Math.max(1, top - bottom - 30 - 12 - 38 - 12)
+      wrapped.node.getComponent(UITransform)!.setContentSize(rect.innerWidth, viewportHeight)
+      wrapped.node.setPosition(new Vec3(0, top - 42 - viewportHeight / 2, 0))
+      const offset = wrapped.scroll.getScrollOffset()
+      body.node.getComponent(UITransform)!.setContentSize(rect.innerWidth - 16, 28)
+      body.lineHeight = 26; body.enableWrapText = true; body.overflow = Label.Overflow.RESIZE_HEIGHT
+      body.horizontalAlign = Label.HorizontalAlign.LEFT; body.verticalAlign = Label.VerticalAlign.TOP
+      body.updateRenderData(true)
+      const contentHeight = Math.max(viewportHeight, body.node.getComponent(UITransform)!.height)
+      body.node.setPosition(new Vec3(0, -body.node.getComponent(UITransform)!.height / 2, 0))
+      wrapped.content.getComponent(UITransform)!.setContentSize(rect.innerWidth, contentHeight)
+      wrapped.content.setPosition(new Vec3(0, viewportHeight / 2, 0))
+      wrapped.scroll.scrollToOffset(new Vec2(0, Math.max(0, Math.min(offset.y, contentHeight - viewportHeight))), 0)
+      const width = (rect.innerWidth - 24) / 4
+      buttons.forEach((button, i) => {
+        button.node.setPosition(new Vec3((i - 1.5) * (width + 8), bottom + 19, 0))
+        applyDialogButton(button.node, button.enabled, width, 38)
+        button.label.node.getComponent(UITransform)!.setContentSize(width - 8, 28)
+        button.label.lineHeight = 24; button.label.overflow = Label.Overflow.SHRINK; button.label.enableWrapText = false
+      })
+    }
+    layout(); observeDialogSize(dialog, layout)
+  }
+
   onCollect: ((buildingId: string | null) => void) | null = null
   /**
    * 点资源条上的「体力」那一行（B09 §5）。
@@ -418,6 +509,10 @@ export class CityPanelView extends Component {
   }
 
   override onDestroy(): void {
+    this.resourceTutor?.destroy()
+    this.resourceTutor = null
+    this.onResourceTutorialVisibility?.(false)
+    this.onResourceTutorialVisibility = null
     this.gridTiles.length = 0
     this.previewNodes.clear()
     this.actionButtons.clear()
@@ -1103,6 +1198,7 @@ export class CityPanelView extends Component {
     const collectAll = new Node('CollectAllButton')
     collectAll.layer = parent.layer
     parent.addChild(collectAll)
+    this.collectAllButton = collectAll
     // 贴右上角，避开顶部渐变的文字带
     collectAll.setPosition(new Vec3(
       this.contentWidth / 2 - this.safeInsets.right - FRAME_BAND - 76,
@@ -1117,8 +1213,11 @@ export class CityPanelView extends Component {
       collectGraphics.fill()
       collectGraphics.stroke()
     }
-    this.addLabel(collectAll, 'Caption', 0, 0, COLOR_TEXT, 15).string = '一键收割'
-    collectAll.on('touch-start', (_event: EventTouch) => this.onCollect?.(null), this)
+    this.addLabel(collectAll, 'Caption', 0, 0, COLOR_TEXT, 15).string = this.harvestLearning?.collectAllUnlocked === true ? '一键收割' : '资源教学'
+    collectAll.on('touch-start', (_event: EventTouch) => {
+      if (this.harvestLearning?.collectAllUnlocked === true) this.onCollect?.(null)
+      else this.openResourceTutorial()
+    }, this)
 
     // 研究页是**全局一页一队列**，不是某个建筑的属性 ⇒ 不挂在学院行上（挂上去会带来两个够不着的
     // 时刻：没选中学院、学院正在升级把按钮条占满）。学院等级仍是服务端的真门槛
@@ -1570,7 +1669,7 @@ export class CityPanelView extends Component {
       button.off('touch-start')
       const hasBuildChoices = (this.panel?.buildOptions.length ?? 0) > 0
       const visible = kind === 'build' ? hasBuildChoices
-        : row !== null && (kind === 'collect' ? row.collectable
+        : row !== null && (kind === 'collect' ? row.collectable || this.harvestLearning?.resources.some(resource => resource.collectableBuildingId === row.id) === true
           : kind === 'upgrade' ? !row.upgrading && !row.collectable && !row.paused
             // 暂停：只有"正在升级且还没到点"才可暂停；已暂停的那一行给「恢复」
             : kind === 'pause' ? row.upgrading && !row.collectable && !row.paused

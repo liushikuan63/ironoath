@@ -229,5 +229,24 @@ export function chosenClaimReq(prompt: HeroChoicePrompt, heroId: string): {
  * 与战报、客服工单里的对不上（与 QuestReward.name 同一条纪律）。
  */
 export function candidateLabel(choice: HeroChoice): string {
-  return choice.name
+    return choice.name?.trim() && choice.name !== choice.heroId ? choice.name : '未知武将'
+}
+
+/** 只呈现候选回执中的基础资料；旧回执缺少预览时不能推测属性或技能。 */
+export function candidatePreview(choice: HeroChoice): {
+    readonly name: string; readonly attributes: string; readonly feature: string
+    readonly mainSkill: string; readonly subSkill: string
+} {
+    const copy = (value: string | null | undefined, fallback: string): string =>
+        value?.trim() && !/(?:hero_|skill_|pool_)/.test(value) ? value : fallback
+    const stat = (value: number | null | undefined): string =>
+        typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : '—'
+    const rarity = ['N', 'R', 'SR', 'SSR'].includes(choice.rarity ?? '') ? choice.rarity + ' ' : ''
+    return {
+        name: rarity + candidateLabel(choice),
+        attributes: `基础属性 · 武力 ${stat(choice.might)}  统率 ${stat(choice.command)}  智力 ${stat(choice.wisdom)}`,
+        feature: copy(choice.featureText, '特点信息暂不可用'),
+        mainSkill: `主技 ${copy(choice.mainSkillName, '未知技能')}：${copy(choice.mainSkillDescription, '技能信息暂不可用')}`,
+        subSkill: `副技 ${copy(choice.subSkillName, '未知技能')}：${copy(choice.subSkillDescription, '技能信息暂不可用')}`,
+    }
 }

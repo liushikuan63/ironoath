@@ -262,6 +262,7 @@ declare module 'cc' {
     scrollToBottom(timeInSecond?: number): void
     scrollToOffset(offset: Vec2, timeInSecond?: number): void
     getScrollOffset(): Vec2
+    stopAutoScroll(): void
   }
 
   /**

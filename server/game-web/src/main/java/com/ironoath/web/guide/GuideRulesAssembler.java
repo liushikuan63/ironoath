@@ -80,6 +80,7 @@ public class GuideRulesAssembler {
         return switch (judge) {
             case QUEST_DONE -> GuideScript.Judge.QUEST_DONE;
             case QUEST_CLAIMED -> GuideScript.Judge.QUEST_CLAIMED;
+            case MANUAL_RESOURCES_AND_CLAIMED -> GuideScript.Judge.MANUAL_RESOURCES_AND_CLAIMED;
         };
     }
 }

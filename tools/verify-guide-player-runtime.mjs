@@ -277,10 +277,15 @@ function readPlayerFrame() {
     walk(node)
     return result
   }
-  const options = (prompt?.children ?? []).filter(node => node.name.startsWith('HeroOption_')).map(node => ({
+  const optionContent = find(prompt, 'HeroChoiceViewportContent')
+  const optionViewport = find(prompt, 'HeroChoiceViewport')
+  const options = (optionContent?.children ?? []).filter(node => node.name.startsWith('HeroOption_')).map(node => ({
     name: node.name, active: node.activeInHierarchy, box: boxOf(node), label: labelOf(node.getChildByName('Name')),
     width: node.getComponent('cc.UITransform')?.width, height: node.getComponent('cc.UITransform')?.height,
     render: renderOf(node), sprites: spritesIn(node),
+    attributes: labelOf(node.getChildByName('Attributes')), feature: labelOf(node.getChildByName('Feature')),
+    mainSkill: labelOf(node.getChildByName('MainSkill')), subSkill: labelOf(node.getChildByName('SubSkill')),
+    portrait: { box: boxOf(node.getChildByName('Portrait')), sprites: spritesIn(node.getChildByName('Portrait')) },
   }))
   const plate = find(bubble, 'GuideBubblePlate'), plateSprite = plate?.getComponent('cc.Sprite')
   const masks = (guide?.children ?? []).filter(node => node.name === 'GuideMask' && node.activeInHierarchy).map(boxOf)
@@ -314,6 +319,9 @@ function readPlayerFrame() {
       width: prompt?.getComponent('cc.UITransform')?.width, height: prompt?.getComponent('cc.UITransform')?.height,
       parentIsQuest: prompt?.parent === quest, siblingIndex: promptIndex, siblingCount: quest?.children.length ?? 0,
       laterQuestSiblings, sprites: spritesIn(prompt),
+      viewport: { box: boxOf(optionViewport), mask: !!optionViewport?.getComponent('cc.Mask'),
+        cancelInnerEvents: optionViewport?.getComponent('cc.ScrollView')?.cancelInnerEvents },
+      confirm: buttonOf(find(prompt, 'HeroChoiceConfirm')), cancel: buttonOf(find(prompt, 'HeroChoiceCancel')),
       title: labelOf(find(prompt, 'PromptTitle')), hint: labelOf(find(prompt, 'PromptHint')), options },
   }
 }
@@ -397,7 +405,7 @@ try {
   requireThat(existsSync(path.join(ROOT, 'index.html')), '产物不存在，先跑 scripts/build-webmobile.sh')
   const table = JSON.parse(readFileSync('contract/config/guide.json', 'utf8'))
   const step = index => table.rows.find(row => row.stepIndex === index)
-  requireThat(table.version === 2 && [1, 2, 3].every(index => step(index)), '本探针需要 contract guide@2 的前三步')
+  requireThat(table.version >= 3 && [1, 2, 3].every(index => step(index)), '本探针需要现行资源教学脚本的前三步')
   const ccFile = path.join(ROOT, 'cocos-js', 'cc.js')
   requireThat(existsSync(ccFile), '缺 Cocos 引擎产物，不能校准字号')
   const engine = readFileSync(ccFile, 'utf8')
@@ -689,46 +697,47 @@ try {
     must(`${name}选择窗位于真实任务绘制层最上方`, frame.prompt.parentIsQuest
       && frame.prompt.siblingIndex === frame.prompt.siblingCount - 1 && frame.prompt.laterQuestSiblings.length === 0,
     { siblingIndex: frame.prompt.siblingIndex, siblingCount: frame.prompt.siblingCount, later: frame.prompt.laterQuestSiblings })
-    const compact = frame.visibleSize.height < 600
-    must(`${name}实际暗铁底板和三颗古铜边按钮完整可见`, contains(frame.canvas, frame.prompt.box)
-      && near(frame.prompt.width, 648) && near(frame.prompt.height, compact ? 256 : 302)
-      && frame.prompt.sprites.some(sprite => sprite.name === 'DialogFrameArt' && sprite.frameName === 'panel-iron-v1')
-      && options.length === 3 && options.every(option => near(option.height, compact ? 44 : 56)
-        && option.sprites.some(sprite => sprite.name === 'DialogButtonArt' && sprite.frameName === 'button-iron-v1')),
-    { prompt: frame.prompt.box, width: frame.prompt.width, height: frame.prompt.height,
-      sprites: frame.prompt.sprites, options: options.map(option => ({ height: option.height, sprites: option.sprites })) })
-    const title = frame.prompt.title, hint = frame.prompt.hint
-    for (const [role, label, text, font, height, lineHeight] of [
-      ['标题', title, questFrame.rows[0].title.text, 20, 28, 22],
-      ['提示', hint, '选择一名武将作为奖励（只能选一次）', 14, 22, 18],
-      ...options.map(option => [option.name, option.label, option.label?.text, 18, 40, 24]),
-    ]) {
-      const issues = copyIssues(label, text, frame)
-      must(`${name}/${role}全文单行字号与自身盒真实排版`, issues.length === 0 && fontMetrics(label, font).pass
-        && near(label.height, height) && near(label.lineHeight, lineHeight) && label.parsedString.length === 1
-        && label.wrap === false && label.overflow === 2 && label.horizontalAlign === 1 && label.verticalAlign === 1,
-      { issues, label, metrics: fontMetrics(label, font) })
-    }
-    const contentBoxes = [title.box, hint.box, ...options.map(option => option.box)]
-    must(`${name}标题提示候选自身盒全部在主题窗内且互不覆盖`, contentBoxes.every(box => contains(frame.prompt.box, box))
-      && contentBoxes.every((box, index) => contentBoxes.slice(index + 1).every(other => !intersects(box, other))),
-    { prompt: frame.prompt.box, contentBoxes })
-    must(`${name}三名中文候选完整可见`, options.length === 3 && options.every((option, index) => {
-      const candidate = firstQuest.heroChoices[index]
-      return option.name === `HeroOption_${candidate.heroId}` && candidate.name !== candidate.heroId
-        && /[\u3400-\u9fff]/.test(candidate.name) && option.label?.text.includes(candidate.name)
-        && !option.label.text.includes(candidate.heroId) && copyIssues(option.label, option.label.text, frame).length === 0
-        && contains(frame.canvas, option.box) && contains(option.box, option.label.box)
-    }) && options.every((option, index) => options.slice(index + 1).every(other => !intersects(option.box, other.box))), options)
-    for (const option of options) {
-      const point = await page.evaluate(resolveCocosClickPoint, { name: option.name, within: 'HeroChoicePanel' })
-      requireThat(point.verified, `${name}候选点击中心量具不可信：${point.reason}`)
-      evidence.push({ phase: `${name}-option-center`, option: option.name, point })
+    must(name+'安全框、滚动遮罩及固定确认取消正确', contains(frame.canvas, frame.prompt.box)
+      && frame.prompt.viewport.mask && frame.prompt.viewport.cancelInnerEvents
+      && contains(frame.prompt.box, frame.prompt.viewport.box) && contains(frame.prompt.box, frame.prompt.confirm.box)
+      && contains(frame.prompt.box, frame.prompt.cancel.box)
+      && !intersects(frame.prompt.viewport.box,frame.prompt.confirm.box)
+      && !intersects(frame.prompt.viewport.box,frame.prompt.hint.box)
+      && frame.prompt.sprites.some(sprite=>sprite.name==='DialogFrameArt'&&sprite.frameName==='panel-iron-v1'),frame.prompt)
+    must(name+'三候选真实基础属性与特点技能来自服务端',options.length===3&&options.every((option,i)=>{
+      const c=firstQuest.heroChoices[i]
+      return option.name==='HeroOption_'+c.heroId && option.label.text.includes(c.name)
+        && option.attributes.text.includes('武力 '+c.might) && option.attributes.text.includes('统率 '+c.command)
+        && option.attributes.text.includes('智力 '+c.wisdom) && option.feature.text===c.featureText
+        && option.mainSkill.text==='主技 '+c.mainSkillName+'：'+c.mainSkillDescription
+        && option.subSkill.text==='副技 '+c.subSkillName+'：'+c.subSkillDescription
+        && [option.label,option.attributes,option.feature,option.mainSkill,option.subSkill].every(label=>
+          label.drawable&&label.wrap===true&&label.overflow===3&&label.fontSize>=(label===option.label?20:16)
+          && label.parsedString.join('').replace(/\s/g,'')===label.text.replace(/\s/g,'')
+          && contains(option.box,label.box))
+    }),options)
+    // 每颗头像及五段文字必须实际进入滚动视口。仅有离屏节点不算可读。
+    for(let i=0;i<options.length;i++)for(const role of ['portrait','label','attributes','feature','mainSkill','subSkill']){
+      let shown=false
+      for(let attempt=0;attempt<45;attempt++){
+        const live=await read(),item=live.prompt.options[i][role],vp=live.prompt.viewport.box,box=item.box
+        if(contains(vp,box)){shown=true;break}
+        const direction=(box.top+box.bottom)/2>(vp.top+vp.bottom)/2?1:-1
+        const distance=Math.min((vp.bottom-vp.top)*.65,Math.max(12,Math.abs((box.top+box.bottom-vp.top-vp.bottom)/2)))
+        const x=(vp.left+vp.right)/2,from=direction>0?vp.bottom-8:vp.top+8,to=from-direction*distance
+        await page.mouse.move(x,from);await page.mouse.down();await page.mouse.move(x,to,{steps:12});await page.mouse.up();await page.waitForTimeout(180)
+        evidence.push({phase:name+'-natural-card-drag',candidate:i,role,from,to})
+        must(name+'拖动资料不发领取请求',requests.filter(r=>r.route==='/quest/claim').length===claimCount)
+      }
+      must(name+'/'+i+'/'+role+'通过真实拖动完整进入裁剪视口',shown)
+      const visible=await shot(name+'-hero-'+i+'-'+role)
+      if(role==='portrait')must(name+'候选头像为真实素材',visible.prompt.options[i].portrait.sprites.some(sprite=>sprite.frameName))
+      else must(name+'文字字号全文实际绘制',copyIssues(visible.prompt.options[i][role],visible.prompt.options[i][role].text,visible).length===0)
     }
     await navigationBlocked(`${name}选择窗打开时`)
     const blank = { x: (frame.prompt.box.left + frame.prompt.box.right) / 2,
-      y: (hint.box.bottom + options[0].box.top) / 2 }
-    requireThat(blank.y > hint.box.bottom && blank.y < options[0].box.top, `${name}主题窗空白点击前提不足`)
+      y: (frame.prompt.title.box.bottom + frame.prompt.hint.box.top) / 2 }
+    requireThat(blank.y > frame.prompt.title.box.bottom && blank.y < frame.prompt.hint.box.top, `${name}主题窗空白点击前提不足`)
     const beforeBlank = requests.filter(request => request.route === '/quest/claim').length
     await page.mouse.click(blank.x, blank.y)
     evidence.push({ phase: `${name}-real-blank-mouse`, point: blank })
@@ -737,8 +746,8 @@ try {
     must(`${name}真点主题窗矩形空白保持选择且零发奖`, afterBlank.prompt.active && afterBlank.current === 'quest'
       && requests.filter(request => request.route === '/quest/claim').length === beforeBlank, afterBlank.prompt)
   }
-  await click({ name: 'Tab-achievement', within: 'quest' })
-  await wait('真实切页签关闭选择窗并恢复强制引导气泡', frame => !frame.prompt.active && frame.guide.bubbleActive)
+  await click({ name: 'HeroChoiceCancel', within: 'HeroChoicePanel' })
+  await wait('真实取消关闭选择窗并恢复强制引导气泡', frame => !frame.prompt.active && frame.guide.bubbleActive)
   must('关闭选择窗仍零领取请求', requests.filter(request => request.route === '/quest/claim').length === claimCount)
   await shot('choice-real-tab-closed-guide-restored')
   await click({ name: 'Tab-quest', within: 'quest' })
@@ -750,7 +759,12 @@ try {
     && !reopened.guide.bubbleActive && reopened.guide.navBlocked
     && requests.filter(request => request.route === '/quest/claim').length === claimCount, reopened.prompt)
   const chosen = firstQuest.heroChoices[0]
-  const claimed = await clickResponse('/quest/claim', { name: `HeroOption_${chosen.heroId}`, within: 'HeroChoicePanel' })
+  await click({ name: 'HeroChoiceCancel', within: 'HeroChoicePanel' })
+  await click({ name: 'ClaimButton', within: 'quest' })
+  await wait('取消重开返回首张资料',frame=>frame.prompt.active)
+  await click({ name: 'HeroOption_'+chosen.heroId, within: 'HeroChoicePanel' })
+  must('点选武将只高亮不发奖',requests.filter(request=>request.route==='/quest/claim').length===claimCount)
+  const claimed = await clickResponse('/quest/claim', { name: 'HeroChoiceConfirm', within: 'HeroChoicePanel' })
   must('真实点中文候选中心按当前QuestClaimReq送出选项与幂等键', claimed.request.questId === firstQuest.questId
     && claimed.request.heroChoice === chosen.heroId && typeof claimed.request.requestId === 'string'
     && claimed.request.requestId.length > 0, claimed.request)
