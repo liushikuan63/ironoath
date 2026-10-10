@@ -2,7 +2,7 @@
 
 import { Color, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3 } from 'cc'
 import type { ChoiceOption } from '../game/session/Choices'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 import { applySlicedSprite } from './ArtCatalog'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import { DIALOG_SCRIM, applyDialogButton, fitExistingDialog } from './DialogStyle'
@@ -165,20 +165,19 @@ export class ChoiceOverlay {
     // 同族第四处：原先按 `面板宽 - 40` 算行底，而 A 档 border 抬到 80 之后净宽是 `宽 - 160` ⇒
     // 行底左右各铺进铜边 60px。改成从 inset 推。
     const bandWidth = this.width - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right
-    node.addComponent(UITransform).setContentSize(new Size(bandWidth, 52))
+    node.addComponent(UITransform).setContentSize(new Size(bandWidth, 56))
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW
-    graphics.roundRect(-bandWidth / 2, -26, bandWidth, 52, 6)
+    graphics.roundRect(-bandWidth / 2, -28, bandWidth, 56, 6)
     graphics.fill()
-    const title = this.addLabelTo(node, 0, 8, 17, COLOR_TEXT)
-    const detail = this.addLabelTo(node, 0, -12, 13, COLOR_DIM)
+    const title = this.addLabelTo(node, 0, 14, 17, COLOR_TEXT)
+    const detail = this.addLabelTo(node, 0, -14, 13, COLOR_DIM)
     // 标签要自己有宽度：addLabelTo 挂的 UITransform 是默认的 100×100，而 overflow=SHRINK
     // 是按盒子排的 —— 不设就会把一句 17 号的标题挤成两三行（军队那格实测：
     // 「取消这一口训练」被拆成两行，与下面那条的说明叠在一起）
-    title.node.getComponent(UITransform)?.setContentSize(new Size(bandWidth - 24, 24))
-    detail.node.getComponent(UITransform)?.setContentSize(new Size(bandWidth - 24, 18))
-    title.overflow = Label.Overflow.SHRINK
-    detail.overflow = Label.Overflow.SHRINK
+    // 两个27高的单行槽留1px间隔；旧24/18高盒会把短文也压小。
+    capWidth(title, bandWidth - 24)
+    capWidth(detail, bandWidth - 24)
     return { node, title, detail }
   }
 

@@ -36,6 +36,46 @@ page.on('request', request => {
 })
 const noActionPosts = before => posts.length === before
 const check = (name, pass, detail) => { results.push({ name, pass, detail }); console.log(` ${pass ? 'PASS' : 'FAIL'} ${name}${pass ? '' : ` ${JSON.stringify(detail)}`}`) }
+const choiceFontEvidence = []
+
+function readChoicePaint() {
+  const scene = window.cc.director.getScene()
+  const game = scene.getChildByName('Canvas')?.getChildByName('Game')
+  const owner = game?.getComponent('GameBootstrap')?.armyQueue
+  const cameras = scene.getComponentsInChildren('cc.Camera')
+  return (owner?.optionNodes ?? []).flatMap((node, index) => {
+    if (!node.activeInHierarchy) return []
+    const read = label => {
+      if (!label) return null
+      const ui = label.node.getComponent('cc.UITransform')
+      const box = ui?.getBoundingBoxToWorld()
+      return { text: label.string, fontSize: label.fontSize, actualFontSize: label.actualFontSize,
+        slotHeight: ui?.height, drawable: label.node.activeInHierarchy && label.enabled
+          && label.node._uiProps.uiComp === label
+          && cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & label.node.layer) !== 0),
+        box: box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null }
+    }
+    return [{ index, title: read(owner.optionTitleLabels[index]),
+      detail: read(owner.optionDetailLabels[index]) }]
+  })
+}
+
+function choiceFontIssues(rows) {
+  const issues = []
+  if (rows.length !== 3) issues.push('缺真实当页三个选择行')
+  for (const row of rows) {
+    for (const [role, expected] of [['title', 17], ['detail', 13]]) {
+      const label = row[role]
+      if (!label?.drawable || !label.text) issues.push(`${row.index}/${role}未真实绘制`)
+      if (label?.fontSize !== expected || label?.actualFontSize !== expected) issues.push(`${row.index}/${role}实际字号未保持${expected}`)
+      if (label?.slotHeight !== 27) issues.push(`${row.index}/${role}单行盒高不是27`)
+    }
+    const a = row.title?.box, b = row.detail?.box
+    if (!a || !b || a.width <= 0 || b.width <= 0 || a.height <= 0 || b.height <= 0) issues.push(`${row.index}文字自身盒缺失`)
+    else if (a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y) issues.push(`${row.index}标题与说明自身盒相交`)
+  }
+  return issues
+}
 const specs = [
   { host: 'expPick', component: 'ExpPickOverlay', footer: ['cancel', 'confirm'], disabled: 'confirm', last: '末项经验书' },
   { host: 'awakenPick', component: 'AwakenPickOverlay', footer: ['cancel', 'confirm'], disabled: 'confirm', last: '末项觉醒石' },
@@ -223,6 +263,45 @@ try {
         && geometry.frameInArea && geometry.clipInArea && geometry.separation && geometry.footer.every(row => row.inArea && (!row.active || row.material)), geometry)
       if (geometry.error) continue
       check(`${spec.host}/${name} 仅一个真实滚动窗且正文非空`, geometry.viewportCount === 1 && geometry.seen.length > 0, geometry)
+      if (spec.owner === 'armyQueue') {
+        const paint = await page.evaluate(readChoicePaint)
+        choiceFontEvidence.push({ phase: name, paint, issues: choiceFontIssues(paint) })
+        check(`Choice/${name} 短文实际17/13字号且两行自身盒不相交`, choiceFontIssues(paint).length === 0, paint)
+        if (name === 'normal') {
+          try {
+            await page.evaluate(() => {
+              const game = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game')
+              const owner = game.getComponent('GameBootstrap').armyQueue
+              window.__choiceFontRestore = owner.optionNodes.flatMap((node, rowIndex) => !node.activeInHierarchy ? []
+                : [owner.optionTitleLabels[rowIndex], owner.optionDetailLabels[rowIndex]].map((label, index) => {
+                  const ui = label.node.getComponent('cc.UITransform')
+                  const saved = { ui, width: ui.width, height: ui.height }
+                  ui.setContentSize(ui.width, index === 0 ? 24 : 18)
+                  return saved
+                }))
+            })
+            await page.waitForTimeout(80)
+            const negative = await page.evaluate(readChoicePaint)
+            const issues = choiceFontIssues(negative)
+            choiceFontEvidence.push({ phase: '旧24/18短盒负控', paint: negative, issues })
+            check('Choice真实旧短盒由同字号门因实际缩字翻红', choiceFontIssues(paint).length === 0
+              && negative.length === 3 && issues.some(issue => issue.includes('/title实际字号'))
+              && issues.some(issue => issue.includes('/detail实际字号')), { negative, issues })
+            await page.screenshot({ path: path.join(OUT, 'armyQueueDialog-font-shortbox-negative.png') })
+          } finally {
+            await page.evaluate(() => {
+              for (const saved of window.__choiceFontRestore ?? []) saved.ui.setContentSize(saved.width, saved.height)
+              delete window.__choiceFontRestore
+            })
+            await page.waitForTimeout(80)
+            const restored = await page.evaluate(readChoicePaint)
+            choiceFontEvidence.push({ phase: '同字号门还原', paint: restored, issues: choiceFontIssues(restored) })
+            check('Choice还原同真实文字盒后字号门恢复绿', choiceFontIssues(restored).length === 0
+              && JSON.stringify(restored) === JSON.stringify(paint), restored)
+            await page.screenshot({ path: path.join(OUT, 'armyQueueDialog-font-restored.png') })
+          }
+        }
+      }
       if (spec.host === 'MarchCompose' || spec.host === 'OfflineReport' || spec.host === 'giftPopup') {
         check(`${spec.host}/${name} 标题、坐标、正文行和说明自身框不相交`, geometry.bodyOverlaps.length === 0, geometry.bodyOverlaps)
         if (spec.host === 'MarchCompose') {
@@ -413,6 +492,7 @@ try {
   check('所有弹窗路径无浏览器异常', errors.length === 0, errors)
   fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify({ backend: BACKEND, errors, results,
     requests: { allPosts, businessPosts: posts, telemetryPosts } }, null, 2))
+  fs.writeFileSync(path.join(OUT, 'choice-font-evidence.json'), JSON.stringify(choiceFontEvidence, null, 2))
 } finally { await browser.close(); await preview.close() }
 console.log(`共享弹窗：${results.filter(row => row.pass).length} 通过 / ${results.filter(row => !row.pass).length} 失败`)
 process.exit(results.every(row => row.pass) ? 0 : 1)
