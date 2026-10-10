@@ -67,10 +67,19 @@ class Node {
 class Component { node = new Node('host') }
 class Color { constructor(...readonlyValues: number[]) { this.values = readonlyValues } values: readonly number[] }
 class ScrollView {
+  node!: Node
   content: Node | null = null; horizontal = true; vertical = false; inertia = false; elastic = true; cancelInnerEvents = false
   offset = new Vec2()
-  scrollToTop(): void { this.offset = new Vec2() }
-  scrollToOffset(offset: Vec2): void { this.offset = offset }
+  scrollToTop(): void { this.scrollToOffset(new Vec2()) }
+  scrollToBottom(): void {
+    this.scrollToOffset(new Vec2(0, Math.max(0,
+      this.content!.getComponent(UITransform)!.height - this.node.getComponent(UITransform)!.height)))
+  }
+  scrollToOffset(offset: Vec2): void {
+    this.offset = offset
+    // Cocos的top-anchor正文以正y offset上移；这里只复现公开滚动几何，不冒充引擎输入。
+    this.content?.setPosition(new Vec3(0, this.node.getComponent(UITransform)!.height / 2 + offset.y, 0))
+  }
   getScrollOffset(): Vec2 { return this.offset }
 }
 interface EquipHarness {
@@ -180,15 +189,56 @@ test('生产动作在touch-end提交，拖动cancel无强化/装备；灰键与�
   }
   assert.deepEqual(calls, ['forge:enabled', 'equip:enabled'])
 })
-test('数据名称/顺序/强化权威灰态和未显示提示保持，重画销毁旧滚动容器，关闭只hide', () => {
+test('16件全部保留服务端行序/uid/名称/强化权威灰态，重画销毁旧容器，关闭只hide', () => {
   const { equip } = setup(); const rows = Array.from({ length: 16 }, (_, i) => row(String(i), i % 2 === 0))
   equip.render(data(rows)); const body = find(equip.node, 'DialogContentContent')
   const drawn = body.children.filter(n => n.name.startsWith('equip-')).map(n => n.name)
-  assert.deepEqual(drawn, rows.slice(0, drawn.length).map(r => 'equip-' + r.uid)); assert.ok(drawn.length > 1 && drawn.length < rows.length)
-  assert.ok(body.children.some(n => n.getComponent(Label)?.string === `还有 ${rows.length - drawn.length} 件未显示（面板放不下）`))
+  assert.deepEqual(drawn, rows.map(r => 'equip-' + r.uid))
+  for (const r of rows) assert.ok(body.children.some(n => n.getComponent(Label)?.string === `${r.name}  ${r.rarityText}`))
+  assert.equal(body.children.some(n => n.getComponent(Label)?.string.includes('件未显示')), false)
   assert.equal(find(equip.node, 'forge-1').getChildByName('DialogButtonArt')?.getComponent(Sprite)?.spriteFrame?.name ?? find(equip.node, 'forge-1').getComponent(Sprite)?.spriteFrame?.name, 'ui.button.command:disabled')
+  const scroll = find(equip.node, 'DialogContent').getComponent(ScrollView)!; scroll.scrollToBottom()
+  assert.ok(inside(own(find(equip.node, 'equip-15')), own(find(equip.node, 'DialogContent'))))
+  assert.ok(inside(own(find(equip.node, 'forge-15')), own(find(equip.node, 'DialogContent'))))
   equip.render(data([row('new')])); assert.equal(equip.node.children.filter(n => n.name === 'DialogContent').length, 1)
   find(equip.node, 'close').emit('touch-end'); assert.equal(equip.node.active, false)
+})
+test('40件实际正文bounds包含末行及尾提示，scroll到底后末行/强化键可达且保权威uid', () => {
+  const { equip } = setup(); const rows = Array.from({ length: 40 }, (_, i) => row('uid' + i))
+  equip.render({ ...data(rows), noticeText: '服务端返回的尾部提示' })
+  const viewport = find(equip.node, 'DialogContent'), content = find(equip.node, 'DialogContentContent')
+  assert.equal(content.children.filter(n => n.name.startsWith('equip-')).length, rows.length)
+  const last = find(equip.node, 'equip-uid39'), forge = find(equip.node, 'forge-uid39')
+  const notice = content.children.find(n => n.getComponent(Label)?.string === '服务端返回的尾部提示')!
+  assert.ok(notice); assert.ok(own(notice).y + own(notice).height < own(last).y, 'Notice follows last complete row')
+  assert.ok(inside(own(last), own(content))); assert.ok(inside(own(notice), own(content)))
+  assert.ok(own(content).height >= 40 * 46)
+  const scroll = viewport.getComponent(ScrollView)!; scroll.scrollToBottom()
+  assert.equal(scroll.getScrollOffset().y, own(content).height - own(viewport).height)
+  for (const node of [last, forge, notice]) assert.ok(inside(own(node), own(viewport)), node.name + ' must be reachable at bottom')
+  const calls: string[] = []; equip.onForge = uid => calls.push('forge:' + uid); equip.onRowAction = uid => calls.push('equip:' + uid)
+  assert.equal(scroll.cancelInnerEvents, true)
+  for (const node of [last, forge]) { node.emit('touch-start'); node.emit('touch-cancel') }
+  assert.deepEqual(calls, [])
+  forge.emit('touch-end'); last.emit('touch-end'); assert.deepEqual(calls, ['forge:uid39', 'equip:uid39'])
+})
+test('40件底部normal→短屏→normal重排保持全部行并clamp真实scroll offset，close始终独立固定', () => {
+  const { equip, area, size, resize } = setup(760)
+  equip.render(data(Array.from({ length: 40 }, (_, i) => row('resize' + i))))
+  const viewport = find(equip.node, 'DialogContent'), scroll = viewport.getComponent(ScrollView)!
+  const content = find(equip.node, 'DialogContentContent'), last = find(equip.node, 'equip-resize39'), close = find(equip.node, 'close')
+  assert.equal(content.children.filter(n => n.name.startsWith('equip-')).length, 40)
+  scroll.scrollToBottom(); const normalOffset = scroll.getScrollOffset().y, normalCloseY = close.position.y
+  assert.ok(inside(own(last), own(viewport)))
+  size.height = 443.6; area.height = 359.715; resize()
+  assert.equal(scroll.getScrollOffset().y, normalOffset); assert.ok(inside(own(close), own(find(equip.node, 'card'))))
+  const shortCloseY = close.position.y; scroll.scrollToBottom()
+  assert.ok(scroll.getScrollOffset().y > normalOffset); assert.ok(inside(own(last), own(viewport)))
+  assert.equal(close.position.y, shortCloseY, 'Scrolling must not move the fixed footer')
+  size.height = 760; area.height = 676.115; resize()
+  assert.equal(scroll.getScrollOffset().y, normalOffset); assert.ok(inside(own(last), own(viewport)))
+  assert.equal(close.position.y, normalCloseY); assert.equal(own(find(equip.node, 'card')).height, 600)
+  assert.equal(equip.node.children.filter(n => n.name === 'DialogContent').length, 1)
 })
 test('行命中区与强化控制分离，卸下回调保uid/slot/takeOff，caption位于真实按钮盒', () => {
   const { equip } = setup(); equip.render(data([row('serverUid', true, '卸下')]))

@@ -6,7 +6,7 @@
  *
  * <p><b>锚点显式给</b>：Label 的框按文字长度自己长，默认中心锚点会让左右对齐的每一行随句子长短漂
  * （收口清单 #199 与 #262 是同一个根因的两次），所以这里一律先 `setAnchorPoint` 再摆位置。
- * 行逐条 `setPosition`（池化行叠在 y=0 那次事故的教训）；放不下时如实说还有几件，不静默截断。
+ * 行逐条 `setPosition`（池化行叠在 y=0 那次事故的教训）；全部实例放进滚动正文，不按卡片高度截断。
  */
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
 import type { EquipPanelView as EquipViewData, EquipRow } from '../game/equip/EquipPanel'
@@ -34,7 +34,6 @@ const ROW_HEIGHT = 46
 const PADDING = 16
 /** 行右端的「强化」键区宽度：行的触摸命中区到它左沿为止（几何分离的理由写在 `drawRow` 里）。 */
 const FORGE_ZONE = 104
-const BOTTOM_RESERVED = 56
 
 @ccclass('EquipPanelView')
 export class EquipPanelView extends Component {
@@ -74,7 +73,7 @@ export class EquipPanelView extends Component {
     let y = CARD_HEIGHT / 2 - PADDING - 10
     y = this.drawTitle(y)
     this.drawRows(y)
-    // 既有自然高度内的行序与未显示提示不变；短屏只缩滚动窗口，关闭键固定。
+    // 全部行的实际边界决定滚动正文高度；卡片仍为既有尺寸，短屏缩窗口，关闭键固定。
     const body = this.rows.filter(node => node.name !== 'scrim' && node !== card)
     const close = this.drawClose()
     const layout = fitExistingDialog(this.node, card, body, [close], 'ui.panel.iron', CARD_WIDTH, CARD_HEIGHT,
@@ -126,7 +125,7 @@ export class EquipPanelView extends Component {
 
   /**
    * 一件一行。**顺序照抄服务端**（不按穿没穿重排：重排是用客户端口径覆盖服务端的编排，
-   * 与科技树/榜单同一条纪律）；放不下的不画，但如实说还有几件。
+   * 与科技树/榜单同一条纪律）；正文完整交给ScrollView承载，末项也能滚动访问。
    */
   private drawRows(startY: number): void {
     const view = this.viewData
@@ -134,23 +133,15 @@ export class EquipPanelView extends Component {
       this.label(view?.noticeText ?? '正在载入…', COLOR_HINT, 18, 0, startY - 12, 'center')
       return
     }
-    const floor = -CARD_HEIGHT / 2 + BOTTOM_RESERVED
     let y = startY
-    let drawn = 0
+    let index = 0
     for (const row of view.rows) {
-      if (y - ROW_HEIGHT < floor) {
-        break
-      }
-      this.drawRow(row, y, drawn)
+      this.drawRow(row, y, index)
       y -= ROW_HEIGHT
-      drawn += 1
-    }
-    const hidden = view.rows.length - drawn
-    if (hidden > 0) {
-      this.label(`还有 ${hidden} 件未显示（面板放不下）`, COLOR_TEXT_DIM, 15, 0, floor + 14, 'center')
+      index += 1
     }
     if (view.noticeText !== null) {
-      this.label(view.noticeText, COLOR_HINT, 15, -CONTENT_WIDTH / 2 + PADDING, floor + 14, 'left')
+      this.label(view.noticeText, COLOR_HINT, 15, -CONTENT_WIDTH / 2 + PADDING, y - PADDING, 'left')
     }
   }
 
