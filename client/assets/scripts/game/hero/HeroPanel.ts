@@ -63,7 +63,7 @@ export interface LineupPanel {
   readonly capped: boolean
   readonly cappedHint: string | null
   readonly breakdownLines: readonly string[]
-  /** 已激活的缘分（成对同队才算）。id 能对上武将就显示名字，对不上原样显示 */
+  /** 已激活的缘分（成对同队才算）。名字由服务端下发，查不到时显示未知武将 */
   readonly bondTexts: readonly string[]
 }
 
@@ -142,7 +142,7 @@ export function buildHeroRow(hero: HeroView, nameById: ReadonlyMap<string, strin
     powerText: `战力 ${hero.power}`,
     bondText: hero.bondWith === null
       ? null
-      : `缘分：${nameById.get(hero.bondWith) ?? hero.bondWith}`,
+      : `缘分：${nameById.get(hero.bondWith) ?? '未知武将'}`,
   }
 }
 
@@ -183,7 +183,7 @@ export function buildLineupPanel(lineup: LineupView, nameById: ReadonlyMap<strin
       : null,
     breakdownLines: bonus.breakdown.map((line) =>
       `${zoneText(line.zone)} ${line.source} +${FixedPoint.percentText(line.value)}`),
-    bondTexts: lineup.activeBonds.map((id) => nameById.get(id) ?? id),
+    bondTexts: lineup.activeBonds.map((id) => nameById.get(id) ?? '未知武将'),
   }
 }
 

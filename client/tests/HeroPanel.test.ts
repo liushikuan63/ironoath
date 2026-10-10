@@ -149,9 +149,12 @@ test('装备四槽按 WEAPON/ARMOR/MOUNT/ACCESSORY 落位：空槽显示「空�
   assert.equal(buildHeroRow(hero({ equips: [] }), NAMES).emptyEquipSlots, 4)
 })
 
-test('缘分对象显示名字而不是 id；查不到名字时原样显示 id（静默变空白会让玩家以为没缘分）', () => {
+test('缘分对象显示服务端名字；新号尚未拥有对象时显示未知武将，绝不回退内部 id', () => {
   assert.equal(buildHeroRow(hero({ bondWith: 'h2' }), NAMES).bondText, '缘分：沈砚')
-  assert.equal(buildHeroRow(hero({ bondWith: 'unknown_hero' }), NAMES).bondText, '缘分：unknown_hero')
+  assert.equal(buildHeroRow(hero({ bondWith: 'unknown_hero' }), NAMES).bondText, '缘分：未知武将')
+  const fresh = buildHeroPanel(heroResp([hero({ heroId: 'hero_r_03', name: '贺兰迟', bondWith: 'hero_r_02' })]))
+  assert.equal(fresh.heroes[0]?.bondText, '缘分：未知武将')
+  assert.equal(fresh.heroes[0]?.bondText?.includes('hero_r_02'), false)
   assert.equal(buildHeroRow(hero({ bondWith: null }), NAMES).bondText, null)
 })
 
@@ -210,6 +213,9 @@ test('编队空位显示「空」并计数：三个位置少一个，玩家要�
 test('已激活的缘分把 id 换成名字（成对同队才算，这个判定在服务端）', () => {
   assert.deepEqual(buildLineupPanel(lineup({ activeBonds: ['h2', 'h3'] }), NAMES).bondTexts, ['沈砚', '李承鄞'])
   assert.deepEqual(buildLineupPanel(lineup({ activeBonds: [] }), NAMES).bondTexts, [])
+  const stale = buildLineupPanel(lineup({ activeBonds: ['h2', 'hero_missing'] }), NAMES)
+  assert.deepEqual(stale.bondTexts, ['沈砚', '未知武将'])
+  assert.equal(stale.bondTexts.join(' ').includes('hero_missing'), false)
 })
 
 test('槽位上的 heroId 在名册里查不到名字时写「未知武将」，绝不把内部编号印上队伍栏', () => {
