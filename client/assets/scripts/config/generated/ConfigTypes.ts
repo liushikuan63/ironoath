@@ -574,7 +574,7 @@ export type GuideJudge =
  * 新手引导脚本表（B18）。7 步与主线 quest_main_01~quest_main_06 逐条对齐：引导走真实主线，不另造一条链。
  * 本表是**步骤序列的唯一出处**（改脚本不改包 = 硬要求），客户端全仓不得出现任何步骤文案（验收 1 的静态检查盯的就是这个）。
  *
- * 源表 version=1
+ * 源表 version=2
  */
 export interface GuideCfg {
   /** 主键 */
