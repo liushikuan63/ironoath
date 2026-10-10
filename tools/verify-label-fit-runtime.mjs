@@ -504,49 +504,107 @@ async function walkPhase(page, key) {
 // Sprite 按钮不在旧 Graphics 像素规划器里；这一维直接读生产行的 Value 与动作自身盒。
 const socialValueEvidence = []
 const readSocialValueLayouts = page => page.evaluate(() => {
-  const scene = window.cc.director.getScene()
-  const view = scene.getComponentInChildren('SocialPanelView')
-  if (!view?.node.activeInHierarchy || !Array.isArray(view.drawnRows)) return { found: false, rows: [] }
-  const cameras = scene.getComponentsInChildren('cc.Camera')
-  const drawable = (node, component) => {
-    if (!node?.activeInHierarchy || !component?.enabled || node._uiProps?.uiComp !== component
-      || !cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & node.layer) !== 0)) return false
-    for (let ancestor = node; ancestor; ancestor = ancestor.parent) {
-      if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) return false
+  const director = window.cc?.director
+  const event = window.cc?.Director?.EVENT_AFTER_DRAW
+  const timeoutMs = 5000
+  const samples = []
+  const drawEvidence = stable => ({ event: event ?? null, requiredFrames: 2, timeoutMs,
+    completedFrames: samples.length, frameIds: samples.map(sample => sample.frameId), stable, samples })
+  if (!director || !event || typeof director.on !== 'function' || typeof director.off !== 'function'
+    || typeof director.getTotalFrames !== 'function') {
+    return { found: false, rows: [], reason: 'Social后绘前提不足：EVENT_AFTER_DRAW或真实帧计数不可用',
+      drawEvidence: drawEvidence(false) }
+  }
+  const capture = () => {
+    const scene = director.getScene()
+    const view = scene?.getComponentInChildren('SocialPanelView')
+    if (!view?.node.activeInHierarchy || !Array.isArray(view.drawnRows)) return { found: false, rows: [] }
+    const cameras = scene.getComponentsInChildren('cc.Camera')
+    const drawable = (node, component) => {
+      if (!node?.activeInHierarchy || !component?.enabled || node._uiProps?.uiComp !== component
+        || !cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & node.layer) !== 0)) return false
+      for (let ancestor = node; ancestor; ancestor = ancestor.parent) {
+        if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) return false
+      }
+      return true
     }
-    return true
+    const selfBox = node => {
+      const box = node?.getComponent('cc.UITransform')
+      if (!box || box.width <= 0 || box.height <= 0) return null
+      const points = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([x, y]) =>
+        box.convertToWorldSpaceAR(new window.cc.Vec3((x - box.anchorX) * box.width, (y - box.anchorY) * box.height, 0)))
+      if (!points.every(point => [point.x, point.y].every(Number.isFinite))) return null
+      const xs = points.map(point => point.x), ys = points.map(point => point.y)
+      return { left: Math.min(...xs), right: Math.max(...xs), bottom: Math.min(...ys), top: Math.max(...ys) }
+    }
+    const rows = view.drawnRows.filter(row => row.activeInHierarchy).map((row, index) => {
+      const value = row.getChildByName('Value')
+      const label = value?.getComponent('cc.Label') ?? null
+      const actions = ['ActionButton', 'ActionButton2', 'ActionButton3'].map(name => row.getChildByName(name))
+        .filter(node => node?.activeInHierarchy).map(node => {
+          const sprite = node.getComponent('cc.Sprite')
+          return { node: node.name, text: String(node.getChildByName('Caption')?.getComponent('cc.Label')?.string ?? ''),
+            box: selfBox(node), drawable: drawable(node, sprite) && !!sprite.spriteFrame && sprite.color.a > 0,
+            frameName: sprite?.spriteFrame?.name ?? null }
+        })
+      return { index, title: String(row.getChildByName('Title')?.getComponent('cc.Label')?.string ?? ''),
+        hasValue: !!label, value: { text: String(label?.string ?? ''), box: selfBox(value),
+          drawable: drawable(value, label) && label.color.a > 0,
+          fontSize: label?.fontSize ?? null, actualFontSize: label?.actualFontSize ?? null, overflow: label?.overflow ?? null,
+          localWidth: value?.getComponent('cc.UITransform')?.width ?? null,
+          localPosition: value ? { x: value.position.x, y: value.position.y } : null }, actions }
+    })
+    return { found: true, rows, tab: view.tab, page: view.page,
+      sourceFundText: String(view.data?.alliance?.fundText ?? ''), sourceFund: view.lastResp?.alliance?.fund ?? null }
   }
-  const selfBox = node => {
-    const box = node?.getComponent('cc.UITransform')
-    if (!box || box.width <= 0 || box.height <= 0) return null
-    const points = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([x, y]) =>
-      box.convertToWorldSpaceAR(new window.cc.Vec3((x - box.anchorX) * box.width, (y - box.anchorY) * box.height, 0)))
-    if (!points.every(point => [point.x, point.y].every(Number.isFinite))) return null
-    const xs = points.map(point => point.x), ys = points.map(point => point.y)
-    return { left: Math.min(...xs), right: Math.max(...xs), bottom: Math.min(...ys), top: Math.max(...ys) }
-  }
-  const rows = view.drawnRows.filter(row => row.activeInHierarchy).map((row, index) => {
-    const value = row.getChildByName('Value')
-    const label = value?.getComponent('cc.Label') ?? null
-    const actions = ['ActionButton', 'ActionButton2', 'ActionButton3'].map(name => row.getChildByName(name))
-      .filter(node => node?.activeInHierarchy).map(node => {
-        const sprite = node.getComponent('cc.Sprite')
-        return { node: node.name, text: String(node.getChildByName('Caption')?.getComponent('cc.Label')?.string ?? ''),
-          box: selfBox(node), drawable: drawable(node, sprite) && !!sprite.spriteFrame && sprite.color.a > 0,
-          frameName: sprite?.spriteFrame?.name ?? null }
-      })
-    return { index, title: String(row.getChildByName('Title')?.getComponent('cc.Label')?.string ?? ''),
-      hasValue: !!label, value: { text: String(label?.string ?? ''), box: selfBox(value),
-        drawable: drawable(value, label) && label.color.a > 0,
-        fontSize: label?.fontSize ?? null, actualFontSize: label?.actualFontSize ?? null, overflow: label?.overflow ?? null,
-        localWidth: value?.getComponent('cc.UITransform')?.width ?? null,
-        localPosition: value ? { x: value.position.x, y: value.position.y } : null }, actions }
+  // 必须在后绘回调里直接取快照；另一次evaluate可能再次撞进NONE测宽与SHRINK重算之间。
+  return new Promise(resolve => {
+    let timer = null
+    let attached = false
+    let completed = false
+    const finish = reason => {
+      if (completed) return
+      completed = true
+      if (attached) director.off(event, onAfterDraw)
+      clearTimeout(timer)
+      const last = samples.at(-1)?.snapshot ?? { found: false, rows: [] }
+      resolve({ ...last, found: !reason && last.found, ...(reason ? { reason } : {}),
+        drawEvidence: drawEvidence(!reason) })
+    }
+    const onAfterDraw = () => {
+      if (completed) return
+      let snapshot
+      let frameId = null
+      try {
+        snapshot = capture()
+        frameId = director.getTotalFrames()
+      } catch (error) {
+        snapshot = { found: false, rows: [], reason: `Social后绘快照读取失败：${error.message}` }
+      }
+      samples.push({ frameId, snapshot })
+      if (samples.length !== 2) return
+      const [first, second] = samples
+      const consecutive = Number.isSafeInteger(first.frameId) && first.frameId >= 0
+        && second.frameId === first.frameId + 1
+      const stable = JSON.stringify(first.snapshot) === JSON.stringify(second.snapshot)
+      const reason = first.snapshot.reason ?? second.snapshot.reason
+        ?? (!consecutive ? 'Social后绘帧不是连续两个真实完成帧'
+        : !stable ? 'Social连续两个后绘帧的完整行、字号或权威资金内容不稳定'
+          : !second.snapshot.found || second.snapshot.rows.length === 0
+            ? '生产SocialPanelView或当前可见行缺失' : null)
+      finish(reason)
+    }
+    timer = setTimeout(() => finish(`Social后绘等待超时：${timeoutMs}ms内仅完成${samples.length}/2帧`), timeoutMs)
+    try {
+      attached = true
+      director.on(event, onAfterDraw)
+    } catch (error) {
+      finish(`Social后绘监听注册失败：${error.message}`)
+    }
   })
-  return { found: true, rows, tab: view.tab, page: view.page,
-    sourceFundText: String(view.data?.alliance?.fundText ?? ''), sourceFund: view.lastResp?.alliance?.fund ?? null }
 })
 const socialValueFailures = (snapshot, requireFund = false) => {
-  if (!snapshot.found || snapshot.rows.length === 0) return ['生产SocialPanelView或当前可见行缺失']
+  if (!snapshot.found || snapshot.rows.length === 0) return [snapshot.reason ?? '生产SocialPanelView或当前可见行缺失']
   const failures = []
   const validBox = box => !!box && [box.left, box.right, box.top, box.bottom].every(Number.isFinite)
     && box.right > box.left && box.top > box.bottom
@@ -587,11 +645,15 @@ async function socialValuePass(page, tag) {
   const requireFund = tag === 'social/alliance-joined'
   const normal = await readSocialValueLayouts(page)
   const normalFailures = socialValueFailures(normal, requireFund)
-  socialValueEvidence.push({ phase: tag, snapshot: normal, failures: normalFailures })
+  const normalEvidence = { phase: tag, snapshot: normal, failures: normalFailures }
+  socialValueEvidence.push(normalEvidence)
   check(`${tag} 真实Value与所有可见Sprite动作自身盒无覆盖${requireFund ? '，完整资金12800且字号未缩' : ''}`,
     JSON.stringify(normalFailures), '[]')
   if (tag === 'social/rally') await socialRallyValuePass(page, normal)
   if (!requireFund) return
+  const normalShot = path.join(OUT, 'social-alliance-value-normal-after-draw.png')
+  await page.screenshot({ path: normalShot })
+  normalEvidence.normalScreenshot = { file: normalShot, measuredAfterDrawFrameIds: normal.drawEvidence.frameIds }
   const moved = await page.evaluate(() => {
     const view = window.cc.director.getScene().getComponentInChildren('SocialPanelView')
     const fundText = view?.data?.alliance?.fundText
