@@ -288,13 +288,8 @@ const collectFrame = () => page.evaluate(() => {
     if (on && /^Grid-\d+$/.test(node.name)) {
       const icon = node.getChildByName('BuildingIcon')
       const sprite = icon === null ? null : icon.getComponent('cc.Sprite')
-      const texts = []
-      const collect = (child) => {
-        const label = child.getComponent && child.getComponent('cc.Label')
-        if (label !== null && label !== undefined && label.string !== '') texts.push(label.string)
-        for (const grand of child.children) collect(grand)
-      }
-      collect(node)
+      const ref = refs.get(node.name)
+      const texts = [ref?.levelLabel, ref?.nameLabel].filter(label => label?.string).map(label => label.string)
       let ancestorOpacity = true
       for (let ancestor = icon; ancestor; ancestor = ancestor.parent) {
         if (ancestor.getComponent('cc.UIOpacity')?.opacity === 0) ancestorOpacity = false
@@ -303,7 +298,6 @@ const collectFrame = () => page.evaluate(() => {
         && icon._uiProps?.uiComp === sprite && icon.layer === node.layer
         && cameras.some(camera => camera.enabled && camera.node.activeInHierarchy && (camera.visibility & icon.layer) !== 0)
         && sprite.color.a > 0 && ancestorOpacity
-      const ref = refs.get(node.name)
       const row = ref ? rows.get(`${ref.plate.gridX}:${ref.plate.gridY}`) : null
       const box = icon?.getComponent('cc.UITransform') ?? null
       const actualFrame = sprite?.spriteFrame ?? null
@@ -331,8 +325,8 @@ const collectFrame = () => page.evaluate(() => {
         frameName: sprite === null || sprite.spriteFrame === null ? null : sprite.spriteFrame.name,
         configId: row?.configId ?? null, gridX: row?.gridX ?? null, gridY: row?.gridY ?? null,
         expectedFrame: row && art ? art.FAMILY_ASSETS.building[row.configId]?.split('/').at(-1) ?? null : null,
-        name: String(node.getChildByName('Name')?.getComponent('cc.Label')?.string ?? ''),
-        level: String(node.getChildByName('Level')?.getComponent('cc.Label')?.string ?? ''),
+        name: String(ref?.nameLabel?.string ?? ''),
+        level: String(ref?.levelLabel?.string ?? ''),
         pngPath: resource ? `client/assets/resources/${resource}.png` : null,
         trim: sprite?.trim ?? null, spriteType: sprite?.type ?? null, spriteAlpha: sprite?.color.a ?? null,
         originalSize: actualFrame ? { width: actualFrame.originalSize.width, height: actualFrame.originalSize.height } : null,

@@ -175,19 +175,15 @@ const frame = await page.evaluate(() => {
   const cc = window.cc
   const scene = cc.director.getScene()
   const cameras = scene.getComponentsInChildren('cc.Camera')
+  const tileRefs = new Map((scene.getComponentInChildren('CityPanelView')?.gridTiles ?? []).map(tile => [tile.node.name, tile]))
   const tiles = []
   const visit = (node, shown) => {
     const on = shown && node.activeInHierarchy === true
     if (on && /^Grid-\d+$/.test(node.name)) {
       const icon = node.getChildByName('BuildingIcon')
       const sprite = icon === null ? null : icon.getComponent('cc.Sprite')
-      const texts = []
-      const collect = (child) => {
-        const l = child.getComponent && child.getComponent('cc.Label')
-        if (l !== null && l !== undefined && l.string !== '') texts.push(l.string)
-        for (const grand of child.children) collect(grand)
-      }
-      collect(node)
+      const ref = tileRefs.get(node.name)
+      const texts = [ref?.levelLabel, ref?.nameLabel].filter(label => label?.string).map(label => label.string)
       // 2026-10-04 诊断读数（先有读数再下结论）：这一格点不中，上一版只有"选择栏成了什么"，
       // 不足以分辨「命中区没盖住基座」与「坐标算错」。这里把**几何**也打出来：
       // 格子节点与 BuildingIcon 的世界坐标 / 尺寸 / 锚点 —— 前者决定点哪儿，后者决定画在哪儿。

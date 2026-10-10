@@ -82,6 +82,15 @@ await page.waitForFunction(() => window.cc?.director?.getScene?.() != null, null
   .catch(() => {})
 await page.waitForTimeout(3000)
 await hideGuideOverlay(page)
+await page.evaluate(() => {
+  const scene = window.cc.director.getScene()
+  const visit = node => {
+    if (node.name === 'giftPopup' && node.activeInHierarchy) node.getComponent('GiftPopupView')?.hide()
+    for (const child of node.children) visit(child)
+  }
+  visit(scene)
+})
+await page.waitForTimeout(180)
 
 /**
  * 读镜头与 36 格。
@@ -95,6 +104,8 @@ const readView = () => page.evaluate((keepName) => {
   const scene = window.cc.director.getScene()
   const game = scene.getChildByName('Canvas')?.getChildByName('Game') ?? null
   const city = game?.children.find((child) => child.name === 'city') ?? null
+  const cityView = scene.getComponentInChildren('CityPanelView')
+  const refsByTile = new Map((cityView?.gridTiles ?? []).map(tile => [tile.node.name, tile]))
   const find = (root, name) => {
     let out = null
     const walk = (n) => {
@@ -117,10 +128,8 @@ const readView = () => page.evaluate((keepName) => {
   const inside = (lx, ly) => Math.abs(panelX(lx)) <= visible.width / 2 + 2
     && Math.abs(panelY(ly)) <= visible.height / 2 + 2
   const tiles = []
-  // 负控把 Name 暂移出建筑后仍读同一颗真实节点：不能用“父子关系不符”代替几何脱离。
-  const nameNode = (tile) => tile.getChildByName('Name')
-    ?? (globalThis.__cityZoomDetachedName?.tileUuid === tile.uuid
-      ? globalThis.__cityZoomDetachedName.node : null)
+  // 统一后绘制层与移父节点负控都读取生产ref指向的同一颗真实文字节点。
+  const nameNode = tile => refsByTile.get(tile.name)?.nameLabel?.node ?? null
   for (const tile of grid.children) {
     if (!tile.name.startsWith('Grid-')) continue
     const label = nameNode(tile)?.getComponent('cc.Label') ?? null
@@ -164,7 +173,6 @@ const readView = () => page.evaluate((keepName) => {
     ? Array.from(window.System.entries()).find(([key, module]) => /(?:^|\/)ArtFamilies\.ts(?:$|\?)/.test(key)
       && typeof module?.buildingArtFootRatio === 'function') : undefined
   const artFamilies = artFamilyEntry?.[1] ?? null
-  const cityView = scene.getComponentInChildren('CityPanelView')
   const platesByTile = new Map((cityView?.gridTiles ?? []).map(tile => [tile.node.name, tile.plate]))
   const rowsByPlate = new Map((cityView?.panel?.rows ?? []).map(row => [`${row.gridX}:${row.gridY}`, row]))
   const expectedBuildings = (cityView?.panel?.rows ?? [])
@@ -214,13 +222,20 @@ const readView = () => page.evaluate((keepName) => {
       origin, points, verified: [...points, origin].every(point => Number.isFinite(point.roundTripDrift)
         && point.roundTripDrift <= 0.5) }
   }
+  const renderOrders = new Map()
+  const recordOrder = (node, siblings = []) => {
+    renderOrders.set(node, { index: renderOrders.size, siblings, camera: cameraFor(node)?.node.uuid ?? null })
+    node.children.forEach((child, index) => recordOrder(child, [...siblings, index]))
+  }
+  if (city) recordOrder(city)
   const buildings = grid.children.filter(tile => /^Grid-\d+$/.test(tile.name)).flatMap(tile => {
     const icon = tile.getChildByName('BuildingIcon')
     const sprite = icon?.getComponent('cc.Sprite') ?? null
     if (!drawable(icon, sprite) || !sprite.spriteFrame || sprite.color.a <= 0) return []
-    const frame = tile.getChildByName('BuildingNameplate')
+    const refs = refsByTile.get(tile.name)
+    const frame = refs?.nameplate ?? null
     const name = nameNode(tile)
-    const level = tile.getChildByName('Level')
+    const level = refs?.levelLabel?.node ?? null
     const nameLabel = name?.getComponent('cc.Label') ?? null
     const levelLabel = level?.getComponent('cc.Label') ?? null
     const plate = platesByTile.get(tile.name)
@@ -235,7 +250,7 @@ const readView = () => page.evaluate((keepName) => {
     const footGeometryValid = !!row && !!artFamilies && Number.isFinite(footRatio) && footRatio >= 0 && footRatio <= 1
       && sprite.trim === false && expectedFrame === sprite.spriteFrame.name
       && footDistance !== null && footDistance <= 0.5
-    return [{ tile: tile.name, configId: row?.configId ?? null, name: String(nameLabel?.string ?? ''),
+    return [{ tile: tile.name, id: row?.id ?? null, configId: row?.configId ?? null, name: String(nameLabel?.string ?? ''),
       level: String(levelLabel?.string ?? ''), art: sprite.spriteFrame.name,
       foot, base, footGeometryValid, footVerified: foot !== null && base !== null
         && Number.isFinite(foot.roundTripDrift) && foot.roundTripDrift <= 0.5
@@ -244,6 +259,9 @@ const readView = () => page.evaluate((keepName) => {
         trim: sprite.trim, anchorY: iconBox?.anchorY ?? null, entityFootLocalY: Number.isFinite(entityFootLocalY) ? entityFootLocalY : null,
         footDistance },
       frame: screenBox(frame), nameBox: screenBox(name), levelBox: screenBox(level),
+      iconBox: screenBox(icon),
+      renderOrder: { icon: renderOrders.get(icon), frame: renderOrders.get(frame),
+        nameBox: renderOrders.get(name), levelBox: renderOrders.get(level) },
       frameDrawable: drawable(frame, frame?.getComponent('cc.Graphics')),
       nameDrawable: drawable(name, nameLabel) && nameLabel.color.a > 0 && nameLabel.string !== '',
       levelDrawable: drawable(level, levelLabel) && levelLabel.color.a > 0 && levelLabel.string !== '' }]
@@ -251,6 +269,7 @@ const readView = () => page.evaluate((keepName) => {
   // HUD 与建筑使用同一真实相机口径；登记绘制不代表没有被后绘制的操作栏盖住。
   const selectionBar = find(city, 'SelectionBar')
   const selectionBackground = selectionBar?.getChildByName('SelectionBarBackground') ?? null
+  const giftPopup = find(scene, 'giftPopup')
   const hudLabel = (name) => {
     const node = find(city, name)
     const label = node?.getComponent('cc.Label') ?? null
@@ -272,9 +291,16 @@ const readView = () => page.evaluate((keepName) => {
     keepBounds,
     keepDrawable,
     keepScreenBox: screenBox(keepIcon),
+    giftPopup: { present: giftPopup !== null, active: giftPopup?.activeInHierarchy === true },
     hud: { selectionBar: { box: screenBox(selectionBar),
-      drawable: drawable(selectionBackground, selectionBackground?._uiProps?.uiComp ?? null) },
+      backgroundMetadata: selectionBackground?.getComponent('cc.Graphics') != null,
+      drawable: drawable(selectionBackground, selectionBackground?.getComponent('cc.Graphics') ?? null) },
       header: hudLabel('Header'), queue: hudLabel('Queue') },
+    selectionState: { selectedId: cityView?.selectedId ?? null, buildMode: cityView?.buildMode,
+      barActive: selectionBar?.active, backgroundActive: selectionBackground?.active,
+      title: cityView?.selectedTitle?.string, titleActive: cityView?.selectedTitle?.node.active,
+      status: cityView?.selectedStatus?.string, statusActive: cityView?.selectedStatus?.node.active,
+      buttons: Array.from(cityView?.actionButtons ?? []).map(([node]) => ({ name: node.name, active: node.active })) },
     buildings,
     expectedBuildings,
     buildingDataReady: Array.isArray(cityView?.panel?.rows) && (cityView?.gridTiles?.length ?? 0) > 0,
@@ -332,10 +358,10 @@ const defaultHudFailures = (snapshot) => {
     > Math.max(a.y - a.height / 2, b.y - b.height / 2)
   if (!snapshot.keepDrawable || !validBox(snapshot.keepScreenBox)) failures.push('默认HUD门：主堡真实Sprite投影或登记绘制缺失')
   if (!main.frameDrawable || !main.nameDrawable || !main.levelDrawable) failures.push('默认HUD门：主堡薄框、名字或级数未登记绘制')
-  if (!hud?.selectionBar?.drawable || !validBox(hud.selectionBar.box)) failures.push('默认HUD门：实际SelectionBar绘制或四角投影缺失')
+  if (hud?.selectionBar?.backgroundMetadata !== true || !validBox(hud?.selectionBar?.box)) failures.push('默认HUD门：实际SelectionBar背景元数据或四角投影缺失')
   for (const key of ['frame', 'nameBox', 'levelBox']) {
     if (!validBox(main[key])) failures.push(`默认HUD门：主堡${key}真实投影缺失`)
-    else if (validBox(hud?.selectionBar?.box) && overlaps(main[key], hud.selectionBar.box)) {
+    else if (hud?.selectionBar?.drawable === true && validBox(hud.selectionBar.box) && overlaps(main[key], hud.selectionBar.box)) {
       failures.push(`默认HUD门：主堡${key}与实际SelectionBar重叠`)
     }
   }
@@ -347,6 +373,34 @@ const defaultHudFailures = (snapshot) => {
     }
   }
   return failures
+}
+
+/** Cocos同相机的真实UI子树按兄弟序遍历绘制，框和文字必须晚于全部建筑实体。 */
+const captionOrderFailures = snapshot => {
+  const failures = [...buildingSourceFailures(snapshot)]
+  if (!snapshot.buildings.length) return ['没有可测的真实铭牌']
+  for (const caption of snapshot.buildings) {
+    if (!caption.frameDrawable || !caption.nameDrawable || !caption.levelDrawable) failures.push(`${caption.tile}: 真实铭牌未绘制`)
+    for (const key of ['frame', 'nameBox', 'levelBox']) {
+      const order = caption.renderOrder?.[key]
+      for (const body of snapshot.buildings) {
+        const entity = body.renderOrder?.icon
+        if (!order || !entity || !order.camera || order.camera !== entity.camera || order.index <= entity.index) {
+          failures.push(`${caption.tile}.${key}: 未在${body.tile}真实楼体之后绘制`)
+        }
+      }
+    }
+  }
+  return failures
+}
+const captionBodyOverlaps = snapshot => {
+  const main = snapshot.buildings.find(building => building.configId === 'main_city')
+  if (!main?.frame) return []
+  return snapshot.buildings.filter(body => body.configId !== 'main_city' && body.iconBox
+    && Math.abs(main.frame.x - body.iconBox.x) < (main.frame.width + body.iconBox.width) / 2
+    && Math.abs(main.frame.y - body.iconBox.y) < (main.frame.height + body.iconBox.height) / 2)
+    .map(body => ({ configId: body.configId, name: body.name, iconBox: body.iconBox, renderOrder: body.renderOrder.icon,
+      mainCaptionOrder: main.renderOrder.frame }))
 }
 
 /**
@@ -416,6 +470,11 @@ console.log(`[city-zoom] 后端 ${BACKEND}，设备号=${deviceId}，期望真�
 
 // ---------- 第 1 相：默认就是放大 + 对准主堡 ----------
 report('36 格都建出来了', first.tileCount === 36, `实测 ${first.tileCount}`)
+report('首相礼包弹窗已实际收起，不遮城景截图', first.giftPopup.active === false, JSON.stringify(first.giftPopup))
+const firstCaptionFailures = captionOrderFailures(first)
+report('所有真实铭牌与文字在全部楼体之后绘制', firstCaptionFailures.length === 0, firstCaptionFailures.slice(0, 3).join('；'))
+const captionEvidence = [{ phase: '默认真实铭牌在全部楼体上方', snapshot: first, failures: firstCaptionFailures,
+  mainBodyOverlaps: captionBodyOverlaps(first) }]
 report('真实建筑数量满足本轮验收前提', first.buildings.length >= EXPECT_BUILDINGS,
   `${first.buildings.length}/${EXPECT_BUILDINGS} 栋（满城复用 CITY_ZOOM_DEVICE 与 CITY_ZOOM_EXPECT_BUILDINGS=15）`)
 const sourceFailures = buildingSourceFailures(first)
@@ -476,28 +535,34 @@ hudEvidence.push({ phase: '默认主堡与真实HUD无覆盖', snapshot: first, 
 report('默认主堡铭牌避开实际操作栏，主体避开Header/Queue文字', initialHudFailures.length === 0,
   initialHudFailures.length ? initialHudFailures.join('；') : JSON.stringify({ main: first.keepScreenBox, hud: first.hud }))
 
-// 同门负控：把真实铭牌及文字移到实际操作栏中心，只改三个显示节点的本地位置。
+// 同门负控：先经生产renderSelection展开真实栏，再把真实铭牌与文字移到栏心。
 const hudNegativeReady = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   const cityView = scene.getComponentInChildren('CityPanelView')
   const row = cityView?.panel?.rows?.find(row => row.configId === 'main_city')
-  const tile = row ? cityView.gridTiles.find(tile => tile.plate.gridX === row.gridX && tile.plate.gridY === row.gridY)?.node : null
+  const refs = row ? cityView.gridTiles.find(tile => tile.plate.gridX === row.gridX && tile.plate.gridY === row.gridY) : null
   const city = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('city') ?? null
   const bar = city?.getChildByName('Card')?.getChildByName('SelectionBar') ?? null
   const barBox = bar?.getComponent('cc.UITransform') ?? null
-  const tileBox = tile?.getComponent('cc.UITransform') ?? null
-  const nodes = ['BuildingNameplate', 'Name', 'Level'].map(name => tile?.getChildByName(name) ?? null)
-  if (!barBox || !tileBox || nodes.some(node => !node?.activeInHierarchy)) return false
-  const destination = tileBox.convertToNodeSpaceAR(barBox.convertToWorldSpaceAR(new window.cc.Vec3(0, 0, 0)))
+  const anchorBox = refs?.labelAnchor?.getComponent('cc.UITransform') ?? null
+  const nodes = [refs?.nameplate, refs?.nameLabel?.node, refs?.levelLabel?.node]
+  if (!row || !barBox || !anchorBox || nodes.some(node => !node?.activeInHierarchy)
+    || typeof cityView?.renderSelection !== 'function') return false
+  globalThis.__cityZoomHudRestore = { nodes: nodes.map(node => ({ node, position: node.position.clone() })), cityView,
+    selectedId: cityView.selectedId, buildMode: cityView.buildMode, barActive: bar.active }
+  cityView.selectedId = row.id
+  cityView.buildMode = false
+  cityView.renderSelection(row)
+  bar.active = true
+  const destination = anchorBox.convertToNodeSpaceAR(barBox.convertToWorldSpaceAR(new window.cc.Vec3(0, 0, 0)))
   if (![destination.x, destination.y, destination.z].every(Number.isFinite)) return false
   const dx = destination.x - nodes[0].position.x, dy = destination.y - nodes[0].position.y
-  globalThis.__cityZoomHudRestore = nodes.map(node => ({ node, position: node.position.clone() }))
   for (const node of nodes) node.setPosition(new window.cc.Vec3(node.position.x + dx, node.position.y + dy, node.position.z))
   return true
 })
 report('HUD负控前置：真实主堡铭牌与文字移到真实操作栏中心', hudNegativeReady)
-if (hudNegativeReady) {
-  try {
+try {
+  if (hudNegativeReady) {
     await page.waitForTimeout(180)
     const hidden = await readView()
     const hiddenMain = hidden.buildings.find(building => building.configId === 'main_city')
@@ -505,17 +570,27 @@ if (hudNegativeReady) {
     const barBox = hidden.hud?.selectionBar?.box
     report('HUD负控：真实薄框与文字仍登记绘制且薄框位于栏心', !!hiddenMain?.frameDrawable
       && hiddenMain.nameDrawable && hiddenMain.levelDrawable && !!hiddenMain.frame && !!barBox
+      && hidden.hud.selectionBar.drawable === true
       && Math.hypot(hiddenMain.frame.x - barBox.x, hiddenMain.frame.y - barBox.y) <= 0.5)
     hudEvidence.push({ phase: '负控：操作栏覆盖真实铭牌必须红', snapshot: hidden, failures: deviations })
     report('HUD负控：同一默认可见性门因真实薄框与操作栏覆盖翻红',
       deviations.includes('默认HUD门：主堡frame与实际SelectionBar重叠'), deviations.join('；'))
     await page.screenshot({ path: path.join(OUT, 'city-zoom-negative-hud-nameplate.png') })
-  } finally {
-    await page.evaluate(() => {
-      for (const saved of globalThis.__cityZoomHudRestore) saved.node.setPosition(saved.position)
-      delete globalThis.__cityZoomHudRestore
-    })
   }
+} finally {
+  await page.evaluate(() => {
+    const saved = globalThis.__cityZoomHudRestore
+    if (!saved) return
+    for (const entry of saved.nodes) entry.node.setPosition(entry.position)
+    saved.cityView.selectedId = saved.selectedId
+    saved.cityView.buildMode = saved.buildMode
+    const row = saved.cityView.panel?.rows.find(row => row.id === saved.selectedId) ?? null
+    saved.cityView.renderSelection(row)
+    saved.cityView.selectionBar.active = saved.barActive
+    delete globalThis.__cityZoomHudRestore
+  })
+}
+if (hudNegativeReady) {
   await page.waitForTimeout(180)
   const restored = await readView()
   const restoredFailures = defaultHudFailures(restored)
@@ -525,9 +600,24 @@ if (hudNegativeReady) {
   }
   hudEvidence.push({ phase: 'HUD负控还原后默认可见性门恢复绿', snapshot: restored, failures: restoredFailures })
   report('HUD负控还原后同一可见性门恢复绿，真实框/文字投影回到首相', restoredFailures.length === 0
-    && JSON.stringify(positions(restored)) === JSON.stringify(positions(first)), restoredFailures.join('；'))
+    && JSON.stringify(positions(restored)) === JSON.stringify(positions(first))
+    && JSON.stringify(restored.selectionState) === JSON.stringify(first.selectionState), restoredFailures.join('；'))
   await page.screenshot({ path: path.join(OUT, 'city-zoom-restored-hud-nameplate.png') })
 }
+
+const clickedCaption = await clickNodeViaCocos(page, { labelPrefix: KEEP_NAME, within: 'CityNameplates' })
+await page.waitForTimeout(180)
+const selectedCaption = await readView()
+report('真实点击主堡名字仍选择对应建筑', clickedCaption.clicked === true
+  && selectedCaption.selectionState.selectedId === first.buildings.find(building => building.configId === 'main_city')?.id,
+  JSON.stringify({ clicked: clickedCaption.clicked, selection: selectedCaption.selectionState.selectedId }))
+await page.evaluate(saved => {
+  const view = window.cc.director.getScene().getComponentInChildren('CityPanelView')
+  view.selectedId = saved.selectedId
+  view.buildMode = saved.buildMode
+  view.renderSelection(view.panel.rows.find(row => row.id === saved.selectedId) ?? null)
+  view.selectionBar.active = saved.barActive
+}, first.selectionState)
 
 // ---------- 第 2 相：缩小到下限 ⇒ 全城尽收 ----------
 const stepsDown = Math.ceil((ZOOM_DEFAULT - ZOOM_MIN) / ZOOM_STEP) + 1
@@ -537,6 +627,11 @@ for (let i = 0; i < stepsDown; i += 1) {
 }
 report('缩小键点得到（真鼠标坐标命中）', tapped === stepsDown, `${tapped}/${stepsDown} 次命中`)
 const zoomedOut = await readView()
+const overviewCaptionFailures = captionOrderFailures(zoomedOut)
+const mainBodyOverlaps = captionBodyOverlaps(zoomedOut)
+captionEvidence.push({ phase: '全城真实铭牌覆盖全部楼体', snapshot: zoomedOut, failures: overviewCaptionFailures, mainBodyOverlaps })
+report('全城铭牌与文字均晚于全部实体，主堡铭牌与前庭相交仍处于其上方', overviewCaptionFailures.length === 0,
+  overviewCaptionFailures.length ? overviewCaptionFailures.slice(0, 3).join('；') : JSON.stringify(mainBodyOverlaps))
 reportFollow('缩小键之后薄框与文字随建筑同比例移动/缩小', first, zoomedOut)
 report(`缩小到下限 ${ZOOM_MIN}（夹取生效，不多缩）`, near(zoomedOut.zoom, ZOOM_MIN), `实测 ${zoomedOut.zoom}`)
 report('缩小后 36 格全在视口里（对照组：这才是"全城尽收"）',
@@ -571,16 +666,11 @@ report('数据刷新后镜头仍在玩家停的地方（没有自动回中）',
 // 不能以“名字不在父节点里”为失败理由；readView 继续投影它的真实 reference。
 const detached = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
-  let grid = null, card = null
-  const walk = node => {
-    if (node.name === 'CityGrid') grid = node
-    if (node.name === 'city') card = node.getChildByName('Card')
-    for (const child of node.children) walk(child)
-  }
-  walk(scene)
-  const tile = grid?.children.find(node => node.getChildByName('BuildingIcon')?.activeInHierarchy
-    && node.getChildByName('Name')?.getComponent('cc.Label')?.string)
-  const name = tile?.getChildByName('Name') ?? null
+  const view = scene.getComponentInChildren('CityPanelView')
+  const card = scene.getChildByName('Canvas')?.getChildByName('Game')?.getChildByName('city')?.getChildByName('Card')
+  const refs = view?.gridTiles.find(tile => tile.icon.activeInHierarchy && tile.nameLabel.string)
+  const tile = refs?.node
+  const name = refs?.nameLabel.node ?? null
   if (!name || !card) return false
   globalThis.__cityZoomDetachedName = { node: name, tileUuid: tile.uuid, parent: name.parent,
     position: name.position.clone(), scale: name.scale.clone(), rotation: name.rotation.clone(), sibling: name.getSiblingIndex() }
@@ -650,7 +740,7 @@ report('真鼠标滚轮改变缩放倍数', !near(wheeled.zoom, oneStep.zoom), `
 reportFollow('真滚轮缩放之后薄框与文字保持脚面相对比例', oneStep, wheeled)
 await page.screenshot({ path: path.join(OUT, 'city-zoom-wheel.png') })
 writeFileSync(path.join(OUT, 'city-nameplate-follow.json'), JSON.stringify({
-  backend: BACKEND, deviceId, expectedBuildings: EXPECT_BUILDINGS, initial: first, hudEvidence, followEvidence, errors,
+  backend: BACKEND, deviceId, expectedBuildings: EXPECT_BUILDINGS, initial: first, hudEvidence, captionEvidence, followEvidence, errors,
 }, null, 2))
 
 await browser.close()

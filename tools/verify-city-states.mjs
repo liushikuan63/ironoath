@@ -101,6 +101,7 @@ const waitPanel = async () => {
 /** 一帧读数：屏上文本、**按名字找格子**的文字、渲染读数。 */
 const snapshot = () => page.evaluate(() => {
   const scene = window.cc.director.getScene()
+  const tileRefs = new Map((scene.getComponentInChildren('CityPanelView')?.gridTiles ?? []).map(tile => [tile.node.name, tile]))
   const texts = []
   const tiles = {}
   let referenceSize = null
@@ -117,16 +118,11 @@ const snapshot = () => page.evaluate(() => {
       }
     }
     if (/^Grid-\d+$/.test(node.name)) {
-      const own = []
-      const collect = (child) => {
-        const l = child.getComponent && child.getComponent('cc.Label')
-        if (l !== null && l !== undefined && l.string !== '') own.push(l.string)
-        for (const grand of child.children) collect(grand)
-      }
-      collect(node)
+      const ref = tileRefs.get(node.name)
+      const own = [ref?.levelLabel, ref?.nameLabel].filter(label => label?.string).map(label => label.string)
       const icon = node.getChildByName('BuildingIcon')
-      const levelLabel = node.getChildByName('Level')?.getComponent('cc.Label') ?? null
-      const nameLabel = node.getChildByName('Name')?.getComponent('cc.Label') ?? null
+      const levelLabel = ref?.levelLabel ?? null
+      const nameLabel = ref?.nameLabel ?? null
       const iconSprite = icon === null ? null : icon.getComponent('cc.Sprite')
       const rgb = (color) => color === null || color === undefined
         ? null : `${color.r},${color.g},${color.b}`

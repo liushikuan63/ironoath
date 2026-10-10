@@ -218,7 +218,8 @@ interface GridTileRefs {
   readonly graphics: Graphics
   /** 主体保持母版原色；交互反馈只画在真实基座上。 */
   readonly icon: Node
-  /** 与楼体同属本格、继承同一镜头变换的薄铭牌；在楼体之后绘制。 */
+  /** 真实铭牌锚点与本格同坐标，统一放在所有楼体之后绘制，继承同一镜头变换。 */
+  readonly labelAnchor: Node
   readonly nameplate: Node
   readonly nameplateGraphics: Graphics
   readonly levelLabel: Label
@@ -785,6 +786,8 @@ export class CityPanelView extends Component {
     this.buildPreviews(grid)
     // Cocos 按子节点次序绘制。落地越靠画面下方越晚画；服务器格位只负责取数据。
     const ordered = scenePlatesBackToFront(this.sceneLayout.plates)
+    const nameplates = new Node('CityNameplates')
+    nameplates.layer = grid.layer
     for (const plate of ordered) {
       const index = plate.gridY * CITY_GRID_WIDTH + plate.gridX
       const tile = new Node(`Grid-${index}`)
@@ -803,22 +806,36 @@ export class CityPanelView extends Component {
       const iconBox = icon.addComponent(UITransform)
       iconBox.setAnchorPoint(0.5, 0)
       iconBox.setContentSize(new Size(plate.width, plate.width))
+      const labelAnchor = new Node(`LabelAnchor-${index}`)
+      labelAnchor.layer = grid.layer
+      nameplates.addChild(labelAnchor)
+      labelAnchor.setPosition(new Vec3(plate.x, plate.y, 0))
+      const labelHitBox = labelAnchor.addComponent(UITransform)
+      labelHitBox.setContentSize(new Size(NAMEPLATE_WIDTH, NAMEPLATE_HEIGHT))
+      // 锚点仍是建筑脚面；触摸盒仅覆盖其下的真实铭牌，不扩大到相邻楼体。
+      labelHitBox.setAnchorPoint(0.5, 0.5 - NAMEPLATE_Y / NAMEPLATE_HEIGHT)
+      labelAnchor.on('touch-start', (event: EventTouch) => {
+        // 复用每次renderGrid重绑的当前行处理器，不截断向CityStage冒泡的拖动/捏合。
+        const target = tile as Node & { emit(type: string, event: EventTouch): void }
+        target.emit('touch-start', event)
+      }, this)
       const nameplate = new Node('BuildingNameplate')
-      nameplate.layer = tile.layer
-      tile.addChild(nameplate)
+      nameplate.layer = labelAnchor.layer
+      labelAnchor.addChild(nameplate)
       nameplate.setPosition(new Vec3(0, NAMEPLATE_Y, 0))
       nameplate.addComponent(UITransform).setContentSize(new Size(NAMEPLATE_WIDTH, NAMEPLATE_HEIGHT))
       const nameplateGraphics = nameplate.addComponent(Graphics)
-      const levelLabel = this.addLabel(tile, 'Level', 28, NAMEPLATE_Y, COLOR_NAMEPLATE_IVORY, 10)
+      const levelLabel = this.addLabel(labelAnchor, 'Level', 28, NAMEPLATE_Y, COLOR_NAMEPLATE_IVORY, 10)
       this.outlineFor(levelLabel)
       capWidth(levelLabel, 28)
-      const nameLabel = this.addLabel(tile, 'Name', -16, NAMEPLATE_Y, COLOR_NAMEPLATE_IVORY, 11)
+      const nameLabel = this.addLabel(labelAnchor, 'Name', -16, NAMEPLATE_Y, COLOR_NAMEPLATE_IVORY, 11)
       this.outlineFor(nameLabel)
       capWidth(nameLabel, 54)
-      // Name / Level 仍是 Grid 的直接子节点，保留既有状态探针与建筑选中的读取路径。
-      this.gridTiles.push({ node: tile, graphics, icon, nameplate, nameplateGraphics,
+      this.gridTiles.push({ node: tile, graphics, icon, labelAnchor, nameplate, nameplateGraphics,
         levelLabel, nameLabel, plate })
     }
+    // 整层晚于全部建筑：前庭的楼体不能盖住后方主堡的框与文字。
+    grid.addChild(nameplates)
   }
 
   /** 铭牌中的浅字加一圈细暗边，缩放后仍清楚，但不形成粗重黑字块。 */
@@ -1250,6 +1267,7 @@ export class CityPanelView extends Component {
     const nameplateGraphics = tile.nameplateGraphics
     nameplateGraphics.clear()
     if (row === null) {
+      tile.labelAnchor.active = false
       tile.levelLabel.string = ''
       tile.nameLabel.string = ''
       tile.levelLabel.node.active = false
@@ -1283,6 +1301,7 @@ export class CityPanelView extends Component {
     // 那种格子如果照画正稿，玩家会看到一栋自己从没建成的楼（2026-09-22 取消功能上线后实测到）。
     // 口径与 build-many 那条判据一致：升级中 / 已暂停 / 待收割 / 已建成 才算这格有楼。
     const built = row.level > 0 || row.upgrading || row.paused || row.collectable
+    tile.labelAnchor.active = built
 
     /**
      * 「这栋楼点得动」的三级地面语言（用户 2026-09-26：要凸显可操作建筑，但不能破坏自然感）。
