@@ -13,7 +13,7 @@
  *
  * 退出码：0 全绿；1 判据失败；2 前置不满足（产物缺失 / 后端不答 / 令牌没配）。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { chromium } from 'playwright'
@@ -402,6 +402,8 @@ const analyze = (snapshot, phase) => {
   const input = path.join(OUT, `city-occlusion-${phase}-snapshot.json`)
   const output = path.join(OUT, `city-occlusion-${phase}.json`)
   const issues = snapshotFailures(snapshot)
+  // 本轮失败不能读到上轮的绿报告；只清本探针拥有的这一份输出文件。
+  if (existsSync(output)) unlinkSync(output)
   writeFileSync(input, JSON.stringify({ ...snapshot, phase, layout: LAYOUT, backend: BACKEND, deviceId, built,
     buildings: snapshot.tiles.filter(tile => tile.drawable), identityErrors: issues,
     metadata: { layout: LAYOUT, backend: BACKEND, deviceId, zoom: snapshot.zoom, artSource: snapshot.artSource, input } }, null, 2))
@@ -413,6 +415,7 @@ const analyze = (snapshot, phase) => {
     return { ok: false, errors: [...issues, `${command}/Pillow主体mask量具未完成：${result.error?.message ?? result.stderr?.trim() ?? result.status}`], buildings: [] }
   }
   const measured = JSON.parse(readFileSync(output, 'utf8'))
+  if (result.status !== 0) measured.errors.push(`主体mask量具退出码=${result.status}：${result.stderr?.trim() ?? ''}`)
   if (issues.length > 0) measured.errors.push(...issues)
   measured.ok = result.status === 0 && measured.ok === true && issues.length === 0
   writeFileSync(output, JSON.stringify(measured, null, 2))
