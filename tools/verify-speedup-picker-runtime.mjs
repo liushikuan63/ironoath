@@ -26,7 +26,7 @@
  * <p><b>不验的</b>：真的把道具用掉、队列真的少多少时间 —— 那是服务端 `ItemAppService`
  * 与 `BagEndpointTest` 的 speedUpItemReducesRemainingByConfiguredSeconds 那一头；这里的道具与训练队列都是**读接口夹具**（dev 新号两样都没有）。
  */
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
@@ -234,6 +234,130 @@ const PICKER = `(() => {
   }
 })()`
 
+/** 只读真实加速选择器标题：固定两帧完成绘制，不按读数逢绿停。 */
+async function readSpeedupTitleAfterDraw() {
+  const cc = window.cc
+  const director = cc?.director
+  const event = cc?.Director?.EVENT_AFTER_DRAW
+  if (!event || typeof director?.on !== 'function' || typeof director?.off !== 'function'
+      || typeof director?.getTotalFrames !== 'function') {
+    return { found: false, reason: 'Missing after-draw API', frameIds: [], samples: [] }
+  }
+  const readSnapshot = () => {
+    const scene = director.getScene()
+    const game = scene?.getChildByName('Canvas')?.getChildByName('Game')
+    const panel = game?.getChildByName('bag')
+    if (!panel?.activeInHierarchy) throw new Error('Missing active bag panel')
+    const owner = panel.getComponent('BagPanelView')?.targetPicker
+    const overlays = []
+    const rows = []
+    const walk = (node, output, name) => {
+      if (!node?.activeInHierarchy) return
+      if (node.name === name) output.push(node)
+      for (const child of node.children) walk(child, output, name)
+    }
+    walk(panel, overlays, 'ChoiceOverlay')
+    if (overlays.length !== 1 || owner?.node !== overlays[0]) {
+      throw new Error('Missing or duplicate active targetPicker ChoiceOverlay: ' + overlays.length)
+    }
+    const overlay = overlays[0]
+    walk(overlay, rows, 'Choice-0')
+    const row = owner.optionNodes?.[0]
+    const label = owner.optionTitleLabels?.[0]
+    if (rows.length !== 1 || rows[0] !== row || !label
+        || owner.optionNodes.filter(value => value === row).length !== 1
+        || owner.optionTitleLabels.filter(value => value === label).length !== 1
+        || owner.optionDetailLabels?.[0] === label
+        || label.node?.parent !== row || !label.node.activeInHierarchy
+        || row.children.filter(node => node.getComponent('cc.Label') === label).length !== 1
+        || label.node.getComponent('cc.Label') !== label) {
+      throw new Error('Missing, duplicate or mismatched real Choice-0 title refs')
+    }
+    const ui = label.node.getComponent('cc.UITransform')
+    const rowUi = row.getComponent('cc.UITransform')
+    if (!ui || !rowUi || ui.width <= 0 || rowUi.width <= 0 || rowUi.height <= 0) {
+      throw new Error('Missing positive title/row UITransform')
+    }
+    const cameras = scene.getComponentsInChildren('cc.Camera')
+    const drawable = label.enabled === true && label.node._uiProps?.uiComp === label
+      && cameras.some(camera => camera.enabled && camera.node.activeInHierarchy
+        && (camera.visibility & label.node.layer) !== 0)
+    if (!drawable) throw new Error('Title is not the active first Label renderer with a camera')
+    const ownWorldBox = transform => {
+      const points = [0, 1].flatMap(x => [0, 1].map(y => transform.convertToWorldSpaceAR(
+        new cc.Vec3((x - transform.anchorX) * transform.width,
+          (y - transform.anchorY) * transform.height, 0))))
+      const box = { left: Math.min(...points.map(point => point.x)),
+        right: Math.max(...points.map(point => point.x)),
+        bottom: Math.min(...points.map(point => point.y)), top: Math.max(...points.map(point => point.y)) }
+      if (!Object.values(box).every(Number.isFinite)) throw new Error('Non-finite title/row world box')
+      return box
+    }
+    const titleBox = ownWorldBox(ui), rowBox = ownWorldBox(rowUi)
+    const context = document.createElement('canvas').getContext('2d')
+    if (!context || !label.useSystemFont || !label.fontFamily || typeof label.string !== 'string') {
+      throw new Error('Missing actual system-font canvas measurement')
+    }
+    context.font = [label.isItalic ? 'italic' : '', label.isBold ? 'bold' : '',
+      label.fontSize + 'px', label.fontFamily].filter(Boolean).join(' ')
+    const naturalWidth = context.measureText(label.string).width
+    return { text: label.string, fontSize: label.fontSize, actualFontSize: label.actualFontSize,
+      titleW: ui.width, titleH: ui.height, measuredFont: context.font, naturalWidth,
+      titleBox, rowBox, drawable,
+      inRow: titleBox.left >= rowBox.left - 0.5 && titleBox.right <= rowBox.right + 0.5
+        && titleBox.bottom >= rowBox.bottom - 0.5 && titleBox.top <= rowBox.top + 0.5 }
+  }
+  return new Promise(resolve => {
+    const frameIds = [], samples = []
+    let timer = null, done = false
+    const finish = result => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      try { director.off(event, onDraw) } catch (error) {
+        result = { found: false, reason: 'After-draw listener cleanup failed: ' + String(error) }
+      }
+      resolve({ frameIds, samples, ...result })
+    }
+    const onDraw = () => {
+      try {
+        const frame = director.getTotalFrames()
+        if (!Number.isFinite(frame) || (frameIds.length && frame !== frameIds[0] + 1)) {
+          throw new Error('Missing consecutive completed draw frames')
+        }
+        frameIds.push(frame)
+        samples.push({ frame, title: readSnapshot() })
+        if (samples.length === 2) {
+          const stable = JSON.stringify(samples[0].title) === JSON.stringify(samples[1].title)
+          finish(stable ? { found: true, drawn: true, stable, title: samples[1].title }
+            : { found: false, stable, reason: 'Title snapshot changed across two completed draw frames' })
+        }
+      } catch (error) { finish({ found: false, reason: 'After-draw title capture failed: ' + String(error) }) }
+    }
+    timer = setTimeout(() => finish({ found: false, reason: 'Timed out before two completed draw frames' }), 2000)
+    try { director.on(event, onDraw) } catch (error) {
+      finish({ found: false, reason: 'After-draw listener registration failed: ' + String(error) })
+    }
+  })
+}
+
+function speedupTitleIssues(evidence) {
+  const issues = []
+  const title = evidence?.title
+  if (evidence?.found !== true) issues.push(evidence?.reason ?? 'Missing real title evidence')
+  if (evidence?.drawn !== true || evidence?.stable !== true || evidence?.frameIds?.length !== 2
+      || !evidence.frameIds.every(Number.isFinite) || evidence.frameIds[1] !== evidence.frameIds[0] + 1
+      || evidence?.samples?.length !== 2) issues.push('Missing fixed two consecutive stable completed draw frames')
+  if (!title || title.fontSize !== 17 || title.actualFontSize !== 17 || title.titleH !== 27) {
+    issues.push('Title must retain actual 17 font in the 27-high slot')
+  }
+  if (!title || !Number.isFinite(title.naturalWidth) || title.naturalWidth <= 0
+      || !Number.isFinite(title.titleW) || title.naturalWidth > title.titleW + 0.5
+      || /[\r\n]/.test(title.text)) issues.push('Title must fit its natural single-line width without a line break')
+  if (title?.drawable !== true || title?.inRow !== true) issues.push('Actual title renderer must be fully within its own row')
+  return issues
+}
+
 // 面板初始页签由 /resource/detail 决定（attachResources 把 tab 钉回「资源明细」），
 // 所以要先按「背包」页签才看得到道具行
 let state = null
@@ -253,8 +377,11 @@ state = await page.evaluate(PICKER)
 check('点使用先弹目标选择器（不直接吃掉道具）', state?.pickerOpen, true)
 checkTrue('选择器里那条目标写的是服务端下发的队列名（不是写死的字）',
   (state?.texts ?? []).some((t) => t.includes('重步')))
-checkTrue('标题盒子是一行高（#316 修的就是标签没盒子被裁成两行）',
-  state?.title?.h !== undefined && state.title.h <= 26)
+const titleDraw = await page.evaluate(readSpeedupTitleAfterDraw)
+const titleIssues = speedupTitleIssues(titleDraw)
+console.log('  加速选择器标题后绘：' + JSON.stringify({ ...titleDraw, issues: titleIssues }))
+writeFileSync(path.join(OUT, 'speedup-title-draw-evidence.json'), JSON.stringify({ ...titleDraw, issues: titleIssues }, null, 2))
+checkTrue('标题实绘保持17号单行字（27高槽、自然宽在自身盒内且整盒在行内）', titleIssues.length === 0)
 checkTrue('色带与标题都不宽过面板（width 参数真被吃到）',
   state?.bandW <= state?.panelW && state?.title?.w <= state?.panelW)
 checkTrue('色带不宽过屏幕（背包弹层写死 760，窄屏会溢出）',
