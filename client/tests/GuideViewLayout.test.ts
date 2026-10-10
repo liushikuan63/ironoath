@@ -10,6 +10,9 @@ import { guideBubbleLayout } from '../assets/scripts/game/ui/GuideLayout'
 import { buildQuestList, candidateLabel, candidatePreview, chosenClaimReq } from '../assets/scripts/game/quest/QuestPanel'
 import type { HeroChoicePrompt } from '../assets/scripts/game/quest/QuestPanel'
 import type { GuideScriptResp } from '../assets/scripts/net/generated/GuideProtocol'
+import type { CityHarvestLearningResp } from '../assets/scripts/net/generated/CityProtocol'
+import * as cityAnchors from '../assets/scripts/game/city/CitySceneAnchors'
+import { PANEL_FRAME_BAND } from '../assets/scripts/game/art/ArtFamilies'
 import type { QuestListResp, QuestView } from '../assets/scripts/net/generated/QuestProtocol'
 import * as paging from '../assets/scripts/game/ui/PanelPaging'
 import { dialogLayout, safeAreaInsets } from '../assets/scripts/game/ui/DialogLayout'
@@ -677,5 +680,66 @@ test('单双动作Caption使用固定44高单行SHRINK，禁用NONE的55.44高�
       assert.equal(label.enableWrapText, false); assert.equal(label.verticalAlign, Label.VerticalAlign.CENTER)
       assert.equal(dimensions(caption).height, 44); assert.equal(label.fontSize, 22); assert.equal(label.lineHeight, 28)
     }
+  }
+})
+
+interface ResourceTutorialHarness {
+  node: Node; harvestLearning: CityHarvestLearningResp; resourceTutor: Node | null
+  onOpenHarvestQuest: (() => void) | null; onResourceTutorialVisibility: ((visible: boolean) => void) | null
+  openResourceTutorial(index?: number): void
+}
+function resourceTutorial(area: Rect): ResourceTutorialHarness {
+  const art = () => false
+  const size = { width: 960, height: area.height + 84 }
+  const styles = sceneExports('DialogStyle', { view: { getVisibleSize: () => size }, PANEL_IRON_INSET,
+    ...uiTokens, dialogLayout, applySlicedSprite: art, applyIronButton: art })
+  const City = sceneClass<ResourceTutorialHarness>('CityPanelView', {
+    ...cityAnchors, PANEL_FRAME_BAND, ...sceneExports('UiFont', {}), applySystemUiFont: (label: Label) => label,
+    ...styles, dialogContentRect: () => area,
+    dialogLayout, observeDialogSize: (_node: Node, _layout: () => void) => undefined,
+  })
+  const city = new City(); city.node = new Node('city'); city.node.addComponent(UITransform).setContentSize(960, size.height)
+  city.harvestLearning = { resources: [
+    { type: 'WOOD', name: '木材', description: '来自服务端的资源用途说明，供教学完整换行显示。', manualRequired: true, manuallyCollected: true, collectableBuildingId: null },
+    { type: 'GOLD', name: '金币', description: '用途说明，不作为手动采集任务。', manualRequired: false, manuallyCollected: false, collectableBuildingId: null },
+  ], collectAllUnlocked: false, unlockReason: '主城达到服务端要求等级后开启。', requiredMainLevel: 5, serverNow: 1000 }
+  return city
+}
+function wireResourceQuest(city: ResourceTutorialHarness, nav: { show(key: string): void }): void {
+  const source = sceneSource('GameBootstrap'), ast = ts.createSourceFile('GameBootstrap.ts', source, ts.ScriptTarget.ES2020, true)
+  let callback: ts.Expression | undefined
+  const scan = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && ts.isPropertyAccessExpression(node.left)
+      && node.left.expression.getText(ast) === 'city' && node.left.name.text === 'onOpenHarvestQuest') callback = node.right
+    ts.forEachChild(node, scan)
+  }
+  scan(ast); assert.ok(callback, 'actual production city-to-quest callback is required')
+  const code = ts.transpileModule('exports.callback=(function(){return (' + callback.getText(ast) + ')}).call(host)',
+    { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText
+  const exports: Record<string, unknown> = {}; runInNewContext(code, { exports, host: { nav } })
+  city.onOpenHarvestQuest = exports.callback as () => void
+}
+test('资源教学固定五按钮在短屏净区且任务入口走真实导航，退出恢复气泡', () => {
+  for (const height of [nativeArea.height, 516, 556]) {
+    const area = { ...nativeArea, height }, city = resourceTutorial(area), visibility: boolean[] = []
+    let current = 'city'; wireResourceQuest(city, { show: key => { current = key } })
+    city.onResourceTutorialVisibility = visible => visibility.push(visible)
+    city.openResourceTutorial()
+    const dialog = city.resourceTutor!, names = ['ResourceTutorialPrev', 'ResourceTutorialCollect', 'ResourceTutorialNext', 'ResourceTutorialQuest', 'ResourceTutorialClose']
+    const boxes = names.map(name => ownRect(dialog.getChildByName(name)!))
+    for (let i = 0; i < boxes.length; i++) {
+      const box = boxes[i]!, previous = boxes[i - 1]
+      assert.ok(box.width >= 64 && box.height === 38)
+      if (previous !== undefined) assert.ok(box.x >= previous.x + previous.width + 7)
+      const label = dialog.getChildByName(names[i]!)!.getChildByName('Caption')!.getComponent(Label)!
+      assert.equal(label.fontSize, 16); assert.equal(label.enableWrapText, false)
+    }
+    assert.equal(dialog.getChildByName('ResourceTutorialCollect')!.hasEventListener('touch-end'), false)
+    dialog.getChildByName('ResourceTutorialQuest')!.emit('touch-end')
+    assert.equal(current, 'quest'); assert.equal(city.resourceTutor, null); assert.deepEqual(visibility, [true, false])
+    city.openResourceTutorial(1)
+    city.resourceTutor!.getChildByName('ResourceTutorialClose')!.emit('touch-end')
+    assert.equal(current, 'quest', 'return closes the dialog without sending a claim or changing panel')
+    assert.equal(city.resourceTutor, null); assert.deepEqual(visibility, [true, false, true, false])
   }
 })

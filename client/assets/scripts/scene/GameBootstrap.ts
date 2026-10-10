@@ -1430,6 +1430,7 @@ export class GameBootstrap extends Component {
       out.city = (resp, offsetMs) => city.attach(resp, offsetMs)
       out.cityCollect = resp => city.attachCollect(resp)
       out.cityHarvestLearning = resp => city.attachHarvestLearning(resp)
+      city.onOpenHarvestQuest = () => this.nav?.show('quest')
       city.onResourceTutorialVisibility = visible => this.guide?.setBubbleSuppressed('city', visible)
       city.onUpgrade = (configId: string, gridX?: number, gridY?: number) => {
         void this.root?.upgradeBuilding(configId, gridX ?? null, gridY ?? null)

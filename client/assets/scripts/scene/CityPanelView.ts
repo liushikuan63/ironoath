@@ -302,6 +302,7 @@ export class CityPanelView extends Component {
   private collectAllButton: Node | null = null
   private resourceTutor: Node | null = null
   onResourceTutorialVisibility: ((visible: boolean) => void) | null = null
+  onOpenHarvestQuest: (() => void) | null = null
 
   attachHarvestLearning(resp: CityHarvestLearningResp): void {
     const unlockedBefore = this.harvestLearning?.collectAllUnlocked === true
@@ -344,6 +345,8 @@ export class CityPanelView extends Component {
         action: () => { close(); if (resource.collectableBuildingId !== null) this.onCollect?.(resource.collectableBuildingId) } },
       { name: 'ResourceTutorialNext', caption: '下一种', enabled: index + 1 < learning.resources.length,
         action: () => this.openResourceTutorial(index + 1) },
+      { name: 'ResourceTutorialQuest', caption: '任务领奖', enabled: this.onOpenHarvestQuest !== null,
+        action: () => { close(); this.onOpenHarvestQuest?.() } },
       { name: 'ResourceTutorialClose', caption: '返回城内', enabled: true, action: close },
     ]
     const buttons = actions.map(action => {
@@ -376,9 +379,9 @@ export class CityPanelView extends Component {
       wrapped.content.getComponent(UITransform)!.setContentSize(rect.innerWidth, contentHeight)
       wrapped.content.setPosition(new Vec3(0, viewportHeight / 2, 0))
       wrapped.scroll.scrollToOffset(new Vec2(0, Math.max(0, Math.min(offset.y, contentHeight - viewportHeight))), 0)
-      const width = (rect.innerWidth - 24) / 4
+      const width = (rect.innerWidth - 8 * (buttons.length - 1)) / buttons.length
       buttons.forEach((button, i) => {
-        button.node.setPosition(new Vec3((i - 1.5) * (width + 8), bottom + 19, 0))
+        button.node.setPosition(new Vec3((i - (buttons.length - 1) / 2) * (width + 8), bottom + 19, 0))
         applyDialogButton(button.node, button.enabled, width, 38)
         button.label.node.getComponent(UITransform)!.setContentSize(width - 8, 28)
         button.label.lineHeight = 24; button.label.overflow = Label.Overflow.SHRINK; button.label.enableWrapText = false
@@ -513,6 +516,7 @@ export class CityPanelView extends Component {
     this.resourceTutor = null
     this.onResourceTutorialVisibility?.(false)
     this.onResourceTutorialVisibility = null
+    this.onOpenHarvestQuest = null
     this.gridTiles.length = 0
     this.previewNodes.clear()
     this.actionButtons.clear()
