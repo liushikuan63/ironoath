@@ -1020,7 +1020,7 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 - **V25-b 出图后**：把 P-01 的 border 临时改成 200 重跑 `verify-art-runtime.mjs`，**必须报红** —— 判据不能失败就不许进 V25-c；
 - 逐张 1:1 目视（中心净区真净吗 / 边厚铺到 C 档 26 高还在吗 / 光向与主城一致吗）——机器指标全绿不代表可用；
 - 视觉最终判据是**截图**（`tools/shot-panel-sweep.mjs` 1440×900 留帧 ≥8 屏），不是探针退 0；
-- 加新门要同批改 `AGENTS.md:22` 的「静态门（46 道）」与 `scripts/check-doc-counts.sh` 的对账，否则门自己变红。
+- 加新门要同批改 `AGENTS.md:22` 的「静态门（47 道）」与 `scripts/check-doc-counts.sh` 的对账，否则门自己变红。
 
 ### 五格拆分
 
@@ -1042,7 +1042,7 @@ B13 验收 8「国家集结 50 人门槛」进不去。
 >
 > | 要找什么 | 关键词 / 一条命令 |
 > |---|---|
-> | 静态门（现 **46 道**）逐道的开启动机与自测 | `grep -n "道门\|check-doc-counts\|dead-callbacks\|check-client-orphans" 待完善收口_VibeCoding开发包.md`；道数真值永远以 `bash scripts/check-doc-counts.sh` 为准 |
+> | 静态门（现 **47 道**）逐道的开启动机与自测 | `grep -n "道门\|check-doc-counts\|dead-callbacks\|check-client-orphans" 待完善收口_VibeCoding开发包.md`；道数真值永远以 `bash scripts/check-doc-counts.sh` 为准 |
 > | 植入取证 / 量具假绿的形状 | `grep -n "植入\|对照组\|NO-RUN\|假绿" 待完善收口_VibeCoding开发包.md`（最密的一批在 10-04 全量批跑与 10-07 各格） |
 > | 国战 B13 承载线（3c~3g：只读页 / 宣战 / 关系表 / 全服奖励 / 疲劳 / 冷却） | 小节标题含「B13 承载」与「国战承载」；台账对应 #754~#765、#768、#769 |
 > | **国家集结上限（V22 裁决 / V24 设计与合流式子）** | 卡在本包 **§二·补·六**；三条裁决原文在台账 **#775**；「OPS_TOKEN 是假阻塞」「B15 名额不存在」的取证在 **#776** |
@@ -6842,3 +6842,5 @@ TEST_EXIT=0
 | #958 V9关卡独立物理可见补验revision2实际通过及无遮挡截图复核 | 本笔（原子留档，本批统一推送） | root63459 wrapper/native0；新鲜player P6500767417714a2b82d83837744ca86e真实Nav-more/Nav-stage各一次事件和独立hit/draw；authority50唯一关卡及active中文Label0裸chapter/stage；childaccepted/errors0、前后guard0、9捕获身份gone、8538/8539free、envrestored；root已实际查看PNG | D:/tmp/ironoath-visual-20261009/stage-visible-owned-v9-20261010T074741550-9e1fb955/owner-summary.native.exit.json；probe/stage-visible-readout.json SHA657b6a0a822dbe01a1a0e58dc9f8806f92e17122a870128e96fbf299df49ee56；probe/stage-first-row-unobstructed.png SHA87bc78e012438fb99543f48761e24c293c1b0d1d554a1038bea6979504521c4b | 本次gift原本inactive、guideFixtureAppliedfalse，不证明关闭礼包或完整新手引导；原A8使用dev16及读侧fixtures，不能替代正常养城或真实手机；旧visible首红publicversion仍保留；最终当前文档/交付范围/推送/newCI待 |
 
 | #959 V9完整同冻结包证据接受器实际70门全通过 | 本笔（原子留档，本批统一推送） | root运行固定revision2接受器native0、acceptedtrue/checks70/errors0；原默认64 first0及原600秒、227suite/2270JUnit0fail/error/skip/stale、88source/337Web同Jar、五专项、Stage45/fullA8、storage16/三原生退出、World真实往返/history18/equip31全部同轮原证绑定；独立visible root63459已0 | D:/tmp/ironoath-visual-20261009/visual-final-9-complete-revision2-evidence.json；verify-visual-final-9-complete-revision2-evidence.mjs SHA7d9ebd1ff847dc9ccaf6389f5ad2fe8467c19f0df1d180e9c7d2637555bf61a5；visual-final-9-complete-revision2-candidates-ready.json SHA6006d2f9c4db9bb990ae50d57fc2067b8abd5cc5a88f29e9c4e970f12db95f67 | 这70是证据门而非70份新增业务流程；本地工程/实际运行已接受，当前文档状态替换、最终范围审查、freshfetch0behind、一次push与同SHA新CI尚待；正式微信/手机/外部资格保持未验证 |
+
+| #960 本地终验后实际收口当前文档状态与历史真机误称更正 | 本笔（原子留档，本批统一推送） | 应用脚本actualnative0/acceptedtrue，四docs原7处exactText及matrix当前基线，4份全部先独占备份/SHA保护；root逐diff核并保历史数字/状态checkbox；写后check.sh实际0、47静态/1103client pass0fail/skip，final-docs-after guard88源码337Web同Jar及227suite/2270JUnit全0 | D:/tmp/ironoath-visual-20261009/final-docs-v9-application.json SHA26f8c8f6cb94981fd442acd55c82aef7a7b246e01f1682dae6aaeb1893442b6b；final-docs-post-application-check.log及.exit；guard-final-docs-after.json；完整原证visual-final-9-complete-revision2-evidence.json及NEWvisible owner目录20261010T074741550-9e1fb955 | 本地验收收口，最终当前HEAD范围审查、freshfetch快进条件、一次push与同SHA新CI仍待；微信手机/负载/实名支付/外部资格未验证保持上线不可提审；不以历史真机41误称复用 |
