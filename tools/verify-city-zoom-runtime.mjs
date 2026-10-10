@@ -755,13 +755,32 @@ report('真鼠标滚轮改变缩放倍数', !near(wheeled.zoom, oneStep.zoom), `
 reportFollow('真滚轮缩放之后薄框与文字保持脚面相对比例', oneStep, wheeled)
 await page.screenshot({ path: path.join(OUT, 'city-zoom-wheel.png') })
 
-// ---------- 第 6 相：微信窄横屏与标准尺寸；同一实际投影门、真实点击/拖动/缩放 ----------
+// ---------- 第 6 相：微信横屏比例与标准尺寸；同一实际投影门、真实点击/拖动/缩放 ----------
+// Web 的844 CSS宽会触发正常的窄窗口DOM提示；不能拿它遮住输入后的结果冒充微信触摸失败。
+// 先真验该提示，再用1688x780保持相同844:390比例，Cocos可视区仍为960x443.6019。
+// 微信844x390的系统安全区和实际输入另由原生开发者工具验收，不在本Web量具中伪装平台。
 const viewportEvidence = []
+await page.setViewportSize({ width: 844, height: 390 })
+await openCity()
+const narrowGuardState = () => page.evaluate(() => {
+  const overlay = [...document.body.children].find(node => node.style.position === 'fixed'
+    && node.textContent?.includes('窗口太窄，画面会小到看不清'))
+  return { present: !!overlay, display: overlay ? getComputedStyle(overlay).display : null,
+    fullscreen: document.fullscreenElement !== null, width: innerWidth, height: innerHeight }
+})
+const narrow = await narrowGuardState()
+report('Web844宽真实显示窄窗口提示且未误点进入全屏', narrow.present && narrow.display !== 'none'
+  && narrow.fullscreen === false, JSON.stringify(narrow))
+viewportEvidence.push({ label: 'web-844-narrow-guard', viewport: { width: 844, height: 390 }, guard: narrow })
+await page.screenshot({ path: path.join(OUT, 'city-zoom-web-844-narrow-guard.png') })
 for (const [label, width, height] of [
-  ['wechat-landscape', 844, 390], ['design-640', 960, 640], ['common-600', 960, 600],
+  ['wechat-landscape-ratio', 1688, 780], ['design-640', 960, 640], ['common-600', 960, 600],
 ]) {
   await page.setViewportSize({ width, height })
   await openCity()
+  const guard = await narrowGuardState()
+  report(`${label}真实交互前Web窄窗口提示已自然消失`, guard.present && guard.display === 'none'
+    && guard.fullscreen === false, JSON.stringify(guard))
   const initial = await readView()
   const targetHeight = 960 * height / width
   report(`${label}实际可视区覆盖目标横屏比例`, initial.found === true
