@@ -331,6 +331,11 @@ export class GameBootstrap extends Component {
       if (key === 'mail') {
         void this.root?.refresh('mail')
       }
+      // 兵营解锁与带兵上限会被城建、编队改变；训练/治疗到期也由列表读取惰性结算。
+      // 每次进入都取权威响应，不能继续复用登录时的兵营等级、容量或训练队列。
+      if (key === 'army') {
+        void this.root?.refresh('army')
+      }
       // 活动不占首屏（B17 §六：它是任务面板里的一个页签），玩家真点开任务那一格才拉第一次。
       // 每次打开都拉而不是"只拉一次"：读取路径在服务端会顺手同步窗口，缓存会让 EXPIRED 迟到
       // 任务进度也会被城建、训练与战斗推进：打开时重拉，才能领刚完成的任务。
