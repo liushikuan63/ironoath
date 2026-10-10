@@ -533,7 +533,7 @@ public class StageAppService {
         }
         String previous = previousStageId(stage);
         if (previous != null && !progress.cleared(previous)) {
-            return "需要先通关 " + previous;
+            return "需要先通关 " + requireStage(previous).name();
         }
         return null;
     }

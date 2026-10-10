@@ -384,15 +384,23 @@ class StageEndpointTest {
         assertThat(first.lockedReason()).isNull();
         assertThat(second.unlocked()).isFalse();
         assertThat(second.lockedReason()).as("必须说清楚卡在哪一关，灰掉的关卡不说明原因会被当成 bug")
-                .contains(STAGE_1);
+                .isEqualTo("需要先通关 " + stageOf(STAGE_1).name())
+                .doesNotContain("stage_", "chapter_");
         assertThat(chapter2.lockedReason())
                 .as("第二章要求主城 5 级（夹具已满足），所以挡住它的应当是「上一章未通关」")
-                .contains("stage_01_10");
+                .isEqualTo("需要先通关 " + stageOf(BOSS_1).name())
+                .doesNotContain("stage_", "chapter_");
+        entries.stream().filter(e -> e.lockedReason() != null).forEach(e ->
+                assertThat(e.lockedReason()).as("所有未解锁原因都不得向玩家显示内部关卡或章节 id")
+                        .doesNotContain("stage_", "chapter_"));
 
         assertThatThrownBy(() -> stageAppService.challenge(playerId,
                 new ChallengeStageReq(newRequestId(), STAGE_2,
                         List.of(new StageUnit(UNIT, 5000L)), List.of())))
                 .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).detail())
+                        .isEqualTo("需要先通关 " + stageOf(STAGE_1).name())
+                        .doesNotContain("stage_", "chapter_"))
                 .extracting(e -> ((BizException) e).errorCode())
                 .isEqualTo(ErrorCode.STAGE_LOCKED);
 
