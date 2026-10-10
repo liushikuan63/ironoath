@@ -246,7 +246,7 @@ test('字号恢复后normal-short Header/Queue/资源自身盒分开，消息避
   }
 })
 
-test('首次默认Guide真实placeBubble不覆盖完整City Header/Queue自身盒', () => {
+test('首次默认Guide真实placeBubble不覆盖完整City Header/Queue及资源教学入口自身盒', () => {
   for (const height of [443.6018957345971, 600, 640]) {
     const { city } = setup(height)
     const Guide = exportsFor('GuideView', { guideBubbleLayout, applySlicedSprite: () => false, DIALOG_SCRIM: new Color() })['GuideView'] as new () => {
@@ -258,7 +258,13 @@ test('首次默认Guide真实placeBubble不覆盖完整City Header/Queue自身�
     const safe = city.safeInsets
     guide.placeBubble(960, height, { x: -480 + safe.left, y: -height / 2 + safe.bottom + 60,
       width: 960 - safe.left - safe.right, height: height - safe.top - safe.bottom - 60 })
-    for (const name of ['Header', 'Queue']) assert.equal(overlaps(own(city.node.getChildByName(name)!), own(guide.bubble)), false, name + ' full own-box is hidden by the first Guide')
+    for (const name of ['Header', 'Queue', 'CollectAllButton']) assert.equal(overlaps(own(city.node.getChildByName(name)!), own(guide.bubble)), false, name + ' full own-box is hidden by the first Guide')
+    const collect = own(city.node.getChildByName('CollectAllButton')!)
+    assert.ok(own(guide.bubble).bottom - collect.top >= 8 - 1e-7, 'Resource teaching needs an actual gap below the Guide')
+    assert.ok(collect.bottom >= -height / 2 + safe.bottom + 60, 'Resource teaching must stay above navigation')
+    for (const node of [city.node.getChildByName('ResourcePlate')!, city.node.getChildByName('Message')!, city.node.getChildByName('TechOpenButton')!, action(city, 'DetailBuildButton')]) {
+      assert.equal(overlaps(collect, own(node)), false, 'Resource teaching overlaps ' + node.name + ' ' + JSON.stringify({ height, collect, other: own(node) }))
+    }
   }
 })
 
@@ -293,7 +299,7 @@ test('HUD重排后的真实default mainCityFraming保铭牌4px净区，各档主
     const bodyBox = { left: castleLeft, right: castleRight, ...castle }, centerX = (castleLeft + castleRight) / 2
     const captionBox = { left: centerX - 96 * zoom / 2, right: centerX + 96 * zoom / 2, ...caption }
     const hud = [city.node.getChildByName('ResourcePlate')!, city.node.getChildByName('Header')!, city.node.getChildByName('Queue')!,
-      city.node.getChildByName('Message')!, city.node.getChildByName('TechOpenButton')!, action(city, 'DetailBuildButton'),
+      city.node.getChildByName('Message')!, city.node.getChildByName('CollectAllButton')!, city.node.getChildByName('TechOpenButton')!, action(city, 'DetailBuildButton'),
       ...city.node.children.filter(node => node.name.startsWith('Resource-') && node.getComponent(Label)?.string !== '')]
     for (const node of hud) {
       assert.equal(overlaps(bodyBox, own(node)), false, 'Default main body overlaps ' + node.name)

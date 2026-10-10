@@ -905,7 +905,10 @@ export class CityPanelView extends Component {
     }
     // 消息落在资源板和默认主堡铭牌右侧、操作条上方，不压研究/建造入口。
     const messageLeft = Math.max(blockLeft + blockWidth + 8, NAMEPLATE_WIDTH * CITY_ZOOM_DEFAULT / 2 + 12)
-    const messageRight = this.contentWidth / 2 - this.safeInsets.right - 12
+    // 紧凑横屏中教学入口与消息处于同一条净区，消息右边留出按钮和8px间隙。
+    const messageRight = this.contentHeight < 600 && this.contentWidth > this.contentHeight
+      ? this.contentWidth / 2 - this.safeInsets.right - FRAME_BAND - 76 - 66 - 8
+      : this.contentWidth / 2 - this.safeInsets.right - 12
     this.messageLabel = this.addLabel(card, 'Message', (messageLeft + messageRight) / 2,
       -this.contentHeight / 2 + this.safeInsets.bottom + NAV_BAR_HEIGHT + ACTION_HEIGHT + 26,
       COLOR_WARNING, 15, false, Math.max(1, messageRight - messageLeft))
@@ -1203,10 +1206,11 @@ export class CityPanelView extends Component {
     collectAll.layer = parent.layer
     parent.addChild(collectAll)
     this.collectAllButton = collectAll
-    // 贴右上角，避开顶部渐变的文字带
+    // 教学与收割入口始终在引导气泡下方；按同一可用区计算，避免短横屏点击被气泡截走。
+    const guide = this.defaultGuideLayout()
     collectAll.setPosition(new Vec3(
       this.contentWidth / 2 - this.safeInsets.right - FRAME_BAND - 76,
-      this.contentHeight / 2 - this.safeInsets.top - FRAME_BAND - 4, 0))
+      guide.y - guide.height / 2 - 8 - 17, 0))
     collectAll.addComponent(UITransform).setContentSize(new Size(132, 34))
     if (!applyCommandButton(collectAll, 'normal', 132, 34)) {
       const collectGraphics = collectAll.addComponent(Graphics)
