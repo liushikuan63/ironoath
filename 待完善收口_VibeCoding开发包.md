@@ -6898,3 +6898,5 @@ TEST_EXIT=0
 | #986 原生新手第四步训练页缺返回建设入口，先补页面内真实导航再验强制链路 | 本笔（原子留档，本批统一推送） | R6实际Army/Guide4截图160；生产ArmyPanelView及GameBootstrap接线只读交叉复核；契约step4为army且不可跳，Guide洞不含底部导航 | D:/tmp/ironoath-wechat-20261010/run-local-ide-6；guide-army-prerequisite-worktree（独立分支codex/guide-army-prerequisite-v16） | 独立RED/GREEN回归和主树合入待完成；F17新包必须真点内城建设、正常建兵营返回训练，20名训练自然完成；未验证手机 |
 
 | #987 F16默认65首次全0，五个未验子项经同构建真实补验证据消账 | 本笔（原子留档，本批统一推送） | 65/65首次实际0、无重跑/失败/超时/前提不足；原wrapper及durable actual1（5项未验）；政策87/0及装备69/0补验各actual0；补充严格汇总accepted=true/actual0；cleanup与release各0 | D:/tmp/ironoath-wechat-20261010/runtime-v16-retry3/summary-supplemented.json；phase-evidence-combined.json；root-supervised-v16-default-retry3.actual-exit.json；policy-retry3与equip-retry6 | 此次F16仍有原生胶囊遮挡、装备旧样式及Army建设路线已确认缺陷；随后四修复合入的新F17须全量重构建/批测/原生七步，不借本次旧包通过；手机未验 |
+
+| #988 关卡首通与汇总奖励名称走服务端配置，未知项按类别安全回退 | 本笔（原子留档，本批统一推送） | 独立旧实现28中4失败(actual1)，修后四套28通过0失败0错误0跳过(actual0)；main补丁SHA及apply-check0；后续F17全量测试和boss真实UI名称待验 | D:/tmp/ironoath-wechat-20261010/stage-reward-name-worktree；stage-reward-name-fix.patch；stage-reward-green2/maven.log；#980真实eq_bamboo_tally泄漏反证 | 主树刚合入尚未F17全量构建及真实十关boss名称竹符验收；旧F16通过不代表该变更通过；手机未验 |

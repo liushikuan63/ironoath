@@ -4,6 +4,12 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.StageCfg;
+import com.ironoath.config.cfg.ItemCfg;
+import com.ironoath.config.cfg.HeroCfg;
+import com.ironoath.core.reward.RewardItem;
+import com.ironoath.core.reward.RewardType;
+import com.ironoath.web.dto.generated.StageReward;
+import org.springframework.test.util.ReflectionTestUtils;
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.player.PlayerRepository;
@@ -594,6 +600,12 @@ class StageEndpointTest {
         long equipInReceipt = last.rewards().stream()
                 .filter(r -> r.id() != null && r.id().startsWith("eq_")).count();
         assertThat(equipInReceipt).as("最后一次挑战就是通章那一场，回执里应当有那件装备").isEqualTo(1);
+        assertThat(last.rewards().stream().filter(r -> r.id().startsWith("eq_")).toList())
+                .singleElement().satisfies(reward -> {
+                    assertThat(reward.type()).isEqualTo("ITEM");
+                    assertThat(reward.name()).isEqualTo(configs.get(ItemCfg.class, reward.id()).name())
+                            .isNotEqualTo(reward.id());
+                });
         assertThat(inventories.findByPlayerId(playerId).orElseThrow().equipInstances())
                 .as("通章装备必须真的落到背包里（发奖走过 PlayerBag 的 EQUIP 路由）").hasSize(1);
     }
@@ -610,5 +622,55 @@ class StageEndpointTest {
         assertThat(lost.stars().cleared()).as("1 个兵打不过第一关（夹具前提）").isFalse();
         assertThat(players.findByPlayerId(playerId).orElseThrow().giftPopup().triggeredAtOf("STUCK_STAGE"))
                 .as("卡关是三类触发之一，输了就该记下时刻").isPositive();
+    }
+
+    @Test
+    @DisplayName("章节奖励按真实类型取配置显示名：装备、武将、资源、体力与碎片不泄内部编号")
+    void stageRewardNamesUseTheirActualConfigurationTables() {
+        List<RewardItem> items = List.of(
+                new RewardItem(RewardType.ITEM, "eq_bamboo_tally", 1L),
+                new RewardItem(RewardType.HERO, "hero_ssr_01", 1L),
+                new RewardItem(RewardType.RESOURCE, "WOOD", 3L),
+                new RewardItem(RewardType.STAMINA, "STAMINA", 2L),
+                new RewardItem(RewardType.HERO_FRAGMENT, "hero_ssr_01", 5L));
+        List<StageReward> rows = ReflectionTestUtils.invokeMethod(stageAppService, "toRewardViews", items);
+        assertThat(rows).extracting(StageReward::name).containsExactly(
+                configs.get(ItemCfg.class, "eq_bamboo_tally").name(),
+                configs.get(HeroCfg.class, "hero_ssr_01").name(),
+                configs.getResource("WOOD").name(), configs.getResource("STAMINA").name(),
+                configs.get(ItemCfg.class, "item_mat_hero_frag_ssr").name());
+        assertThat(rows).extracting(StageReward::type).containsExactly("ITEM", "HERO", "RESOURCE", "STAMINA", "HERO_FRAGMENT");
+        assertThat(rows).extracting(StageReward::count).containsExactly(1L, 1L, 3L, 2L, 5L);
+    }
+
+    @Test
+    @DisplayName("扫荡汇总保留每个奖励原类型并按同一张配置表命名，不能把装备和武将当资源")
+    void sweepAggregateNamesParseTheActualRewardType() {
+        Map<String, Long> totals = new java.util.LinkedHashMap<>();
+        totals.put("ITEM|eq_bamboo_tally", 2L);
+        totals.put("HERO|hero_ssr_01", 1L);
+        totals.put("RESOURCE|WOOD", 3L);
+        totals.put("STAMINA|STAMINA", 4L);
+        List<StageReward> rows = ReflectionTestUtils.invokeMethod(stageAppService, "aggregated", totals);
+        assertThat(rows).extracting(StageReward::name).containsExactly(
+                configs.get(ItemCfg.class, "eq_bamboo_tally").name(),
+                configs.get(HeroCfg.class, "hero_ssr_01").name(),
+                configs.getResource("WOOD").name(), configs.getResource("STAMINA").name());
+        assertThat(rows).extracting(StageReward::type).containsExactly("ITEM", "HERO", "RESOURCE", "STAMINA");
+        assertThat(rows).extracting(StageReward::id).containsExactly("eq_bamboo_tally", "hero_ssr_01", "WOOD", "STAMINA");
+        assertThat(rows).extracting(StageReward::count).containsExactly(2L, 1L, 3L, 4L);
+    }
+
+    @Test
+    @DisplayName("奖励配置缺失仍返回可读安全回退，保留类型和数量，不泄内部编号或打断结算响应")
+    void missingRewardNamesNeverExposeIds() {
+        List<RewardItem> items = java.util.Arrays.stream(RewardType.values())
+                .map(type -> new RewardItem(type, "missing_" + type.name().toLowerCase(java.util.Locale.ROOT), 1L)).toList();
+        List<StageReward> rows = ReflectionTestUtils.invokeMethod(stageAppService, "toRewardViews", items);
+        assertThat(rows).hasSize(items.size()).allSatisfy(row -> {
+            assertThat(row.name()).isNotBlank().doesNotContain("missing_").isNotEqualTo(row.id());
+            assertThat(row.count()).isEqualTo(1L);
+        });
+        assertThat(rows).extracting(StageReward::type).containsExactlyElementsOf(items.stream().map(item -> item.type().name()).toList());
     }
 }

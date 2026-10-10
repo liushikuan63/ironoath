@@ -50,6 +50,7 @@ import com.ironoath.web.dto.generated.SweepResult;
 import com.ironoath.web.dto.generated.BossMechanic;
 import com.ironoath.web.dto.generated.UnitRestriction;
 import com.ironoath.web.reward.ServerSeedSource;
+import com.ironoath.web.reward.RewardNames;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -101,6 +102,7 @@ public class StageAppService {
     private final StageProgressRepository progressRepo;
     private final com.ironoath.core.player.PlayerRepository players;
     private final RewardService rewardService;
+    private final RewardNames rewardNames;
     private final com.ironoath.core.reward.RewardPorts.Wallet wallet;
     private final PlayerLock playerLock;
     private final IdempotencyStore idempotency;
@@ -124,7 +126,7 @@ public class StageAppService {
                            TimeService timeService, ServerSeedSource seeds,
                            StaminaService staminaService,
                            com.ironoath.web.battle.BattleTechBonuses techBonuses,
-                           com.ironoath.web.quest.QuestEvents questEvents) {
+                           com.ironoath.web.quest.QuestEvents questEvents, RewardNames rewardNames) {
         this.configs = configs;
         this.armyFactory = armyFactory;
         this.rulesAssembler = rulesAssembler;
@@ -137,6 +139,7 @@ public class StageAppService {
         this.progressRepo = progressRepo;
         this.players = players;
         this.rewardService = rewardService;
+        this.rewardNames = rewardNames;
         this.wallet = wallet;
         this.playerLock = playerLock;
         this.idempotency = idempotency;
@@ -716,28 +719,37 @@ public class StageAppService {
         List<StageReward> out = new ArrayList<>(totals.size());
         totals.forEach((key, count) -> {
             int sep = key.indexOf('|');
+            RewardType type = RewardType.valueOf(key.substring(0, sep));
             String id = key.substring(sep + 1);
-            out.add(new StageReward(key.substring(0, sep), id, count,
-                    displayName(new RewardItem(RewardType.RESOURCE, id, count))));
+            out.add(new StageReward(type.name(), id, count,
+                    displayName(new RewardItem(type, id, count))));
         });
         return out;
     }
 
     /**
-     * 奖励的中文显示名。
-     *
-     * <p>由服务端下发而不是客户端翻译：飘字、战报、客服工单里的称呼必须是同一个，
-     * 客户端自己翻就会出现「服务端日志写 GOLD、玩家截图里写金币、客服看不懂」的情况。
-     * 资源类查 resource 表；其它类型（武将碎片等）暂时回落到 id，
-     * 等对应的表落地后再补 —— 回落而不是抛异常，因为奖励已经发出去了，
-     * 不能因为一个显示名让整个响应失败。
+     * 奖励名称与背包、任务和邮件共用 RewardNames。体力实际在 resource 表中，
+     * 只对其名称查询使用资源类型，回执和发放仍保留原 STAMINA 类型。
+     * 显示配置缺失时返回可读名称，不能在已经发奖后因查名失败中断响应或泄露 id。
      */
     private String displayName(RewardItem item) {
         try {
-            return configs.getResource(item.id()).name();
-        } catch (RuntimeException unknownResource) {
-            return item.id();
+            RewardItem namedItem = item.type() == RewardType.STAMINA
+                    ? new RewardItem(RewardType.RESOURCE, item.id(), item.count()) : item;
+            String name = rewardNames.nameOf(namedItem);
+            if (name != null && !name.isBlank() && !name.equals(item.id())) {
+                return name;
+            }
+        } catch (ConfigException | IllegalArgumentException unknownReward) {
+            LOG.warn("关卡奖励显示配置缺失 type={} id={}", item.type(), item.id());
         }
+        return switch (item.type()) {
+            case RESOURCE, STAMINA -> "未知资源";
+            case ITEM -> "未知道具";
+            case HERO -> "未知武将";
+            case HERO_FRAGMENT -> "未知武将碎片";
+            case PRIVILEGE -> "未知奖励";
+        };
     }
 
     private static void requirePlayer(String playerId) {
