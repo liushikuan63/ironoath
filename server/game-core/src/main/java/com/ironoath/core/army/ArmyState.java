@@ -45,7 +45,7 @@ public final class ArmyState {
 
     public void requireRepositoryVersion(long expectedVersion) {
         if (repositoryVersion >= 0L && repositoryVersion != expectedVersion) {
-            throw new IllegalStateException("军队快照版本与提交版本不符：快照=" + repositoryVersion
+            throw new ArmyVersionConflictException("军队快照版本与提交版本不符：快照=" + repositoryVersion
                     + "，提交=" + expectedVersion + "。请重读军队存档后重试。");
         }
     }

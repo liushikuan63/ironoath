@@ -2,6 +2,7 @@ package com.ironoath.web.store.mongo;
 
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
+import com.ironoath.core.army.ArmyVersionConflictException;
 import com.mongodb.client.result.UpdateResult;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -84,7 +85,7 @@ public final class MongoArmyStore implements ArmyRepository {
             if (!exists) {
                 throw new IllegalStateException("军队存档不存在，无法更新：playerId=" + playerId);
             }
-            throw new IllegalStateException("乐观锁冲突：playerId=" + playerId
+            throw new ArmyVersionConflictException("乐观锁冲突：playerId=" + playerId
                     + "，提交版本=" + expectedVersion + "。请重读军队存档后重试。");
         }
         army.bindRepositoryVersion(expectedVersion + 1L);

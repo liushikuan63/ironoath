@@ -2,6 +2,7 @@ package com.ironoath.web.store.memory;
 
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
+import com.ironoath.core.army.ArmyVersionConflictException;
 
 import java.util.Map;
 import java.util.Optional;
@@ -68,7 +69,7 @@ public final class InMemoryArmyStore implements ArmyRepository {
         synchronized (entry) {
             army.requireRepositoryVersion(expectedVersion);
             if (entry.version != expectedVersion) {
-                throw new IllegalStateException("乐观锁冲突：playerId=" + playerId
+                throw new ArmyVersionConflictException("乐观锁冲突：playerId=" + playerId
                         + "，存储版本=" + entry.version + "，提交版本=" + expectedVersion
                         + "。请重读军队存档后重试。");
             }

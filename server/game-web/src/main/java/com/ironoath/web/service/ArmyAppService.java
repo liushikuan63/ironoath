@@ -12,6 +12,7 @@ import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.config.cfg.UnitCfg;
 import com.ironoath.core.army.ArmyRepository;
 import com.ironoath.core.army.ArmyState;
+import com.ironoath.core.army.ArmyVersionConflictException;
 import com.ironoath.core.army.AutoTrainPolicy;
 import com.ironoath.core.city.BuildingInstance;
 import com.ironoath.core.city.CityState;
@@ -467,7 +468,13 @@ public class ArmyAppService {
                 bagPort.add(playerId, req.itemId(), 1L);
                 throw e;
             }
-            armies.save(playerId, army, version);
+            try {
+                armies.save(playerId, army, version);
+            } catch (ArmyVersionConflictException conflict) {
+                // 仅补偿确定未写入的版本冲突；数据库结果未知时不能返令以免双获益。
+                bagPort.add(playerId, req.itemId(), 1L);
+                throw conflict;
+            }
 
             ArmyState.TrainingTask task = army.queue().get(req.unitId());
             long finishAt = task == null ? snap.now() : task.finishAt();
