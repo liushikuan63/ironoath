@@ -539,6 +539,7 @@ const readSocialValueLayouts = page => page.evaluate(() => {
       hasValue: !!label, value: { text: String(label?.string ?? ''), box: selfBox(value),
         drawable: drawable(value, label) && label.color.a > 0,
         fontSize: label?.fontSize ?? null, actualFontSize: label?.actualFontSize ?? null, overflow: label?.overflow ?? null,
+        localWidth: value?.getComponent('cc.UITransform')?.width ?? null,
         localPosition: value ? { x: value.position.x, y: value.position.y } : null }, actions }
   })
   return { found: true, rows, tab: view.tab, page: view.page,
@@ -555,6 +556,10 @@ const socialValueFailures = (snapshot, requireFund = false) => {
     if (!row.hasValue) { failures.push(`行${row.index}:真实Value Label缺失`); continue }
     if (row.value.text === '') continue
     if (!row.value.drawable || !validBox(row.value.box)) failures.push(`行${row.index}:Value未登记绘制或自身四角缺失`)
+    if (row.value.overflow !== 2 || row.value.fontSize !== 15 || !Number.isFinite(row.value.actualFontSize)
+      || Math.abs(row.value.actualFontSize - row.value.fontSize) > 0.51) {
+      failures.push(`行${row.index}:Value容量改变了原15号字的实际字号（${row.value.text}）`)
+    }
     for (const action of row.actions) {
       if (!action.drawable || !validBox(action.box)) failures.push(`行${row.index}:${action.node}真实Sprite绘制或自身四角缺失`)
       else if (validBox(row.value.box) && overlaps(row.value.box, action.box)) {
@@ -585,6 +590,7 @@ async function socialValuePass(page, tag) {
   socialValueEvidence.push({ phase: tag, snapshot: normal, failures: normalFailures })
   check(`${tag} 真实Value与所有可见Sprite动作自身盒无覆盖${requireFund ? '，完整资金12800且字号未缩' : ''}`,
     JSON.stringify(normalFailures), '[]')
+  if (tag === 'social/rally') await socialRallyValuePass(page, normal)
   if (!requireFund) return
   const moved = await page.evaluate(() => {
     const view = window.cc.director.getScene().getComponentInChildren('SocialPanelView')
@@ -623,6 +629,76 @@ async function socialValuePass(page, tag) {
   checkTrue('资金负控finally还原后同一覆盖门恢复绿且实际Value/动作盒回到正常快照',
     restoredFailures.length === 0 && JSON.stringify(restored.rows) === JSON.stringify(normal.rows))
   await page.screenshot({ path: path.join(OUT, 'social-alliance-value-restored.png') })
+}
+
+async function socialRallyValuePass(page, normal) {
+  let setup = null
+  try {
+    setup = await page.evaluate(() => {
+      const view = window.cc.director.getScene().getComponentInChildren('SocialPanelView')
+      const data = view?.rallyData
+      const source = data?.source?.rallies?.find(rally => rally.members?.length > 0)
+      if (!view?.node.activeInHierarchy || view.tab !== 'rally' || !source) return null
+      // 仍用本相真实读接口夹具，选其中已有成员让生产组装器走「我已加入」分支。
+      globalThis.__socialRallyValueRestore = { view, data, page: view.page, tab: view.tab }
+      view.rallyData = { ...data, myPlayerId: source.members[0] }
+      const drafts = view.rallyRows()
+      const longDraft = drafts.find(draft => draft.actionId === source.rallyId && draft.value.endsWith('（我已加入）'))
+      const shortDraft = drafts.find(draft => draft.value !== '' && draft.actionText === null)
+      if (!longDraft || !shortDraft) return null
+      view.render()
+      const rows = view.drawnRows.filter(row => row.activeInHierarchy)
+      const index = rows.findIndex(row => row.getChildByName('Value')?.getComponent('cc.Label')?.string === longDraft.value)
+      if (index < 0) return null
+      Object.assign(globalThis.__socialRallyValueRestore, { row: rows[index], index, shortDraft })
+      return { expectedLong: longDraft.value, expectedShort: shortDraft.value, index }
+    })
+    checkTrue('长集结Value容量前置：真实source成员经production rallyRows生成mine串并画在当前池行', setup !== null)
+    if (setup !== null) {
+      await page.waitForTimeout(180)
+      const long = await readSocialValueLayouts(page)
+      const longFailures = socialValueFailures(long)
+      const longValue = long.rows[setup.index]?.value
+      socialValueEvidence.push({ phase: '长集结mine Value容量', snapshot: long, failures: longFailures, expected: setup.expectedLong })
+      checkTrue('真实长集结mine Value完整原15字号、自然宽槽大于160且同一覆盖门绿',
+        longFailures.length === 0 && longValue?.text === setup.expectedLong && longValue.localWidth > 160)
+      await page.screenshot({ path: path.join(OUT, 'social-rally-value-long-mine.png') })
+
+      const shortRendered = await page.evaluate(() => {
+        const saved = globalThis.__socialRallyValueRestore
+        if (!saved?.row?.activeInHierarchy || !saved.shortDraft) return false
+        // 同一条池行换成同一真实source里的短值，再走生产renderRow；不改字号或自造文本。
+        saved.view.renderRow(saved.row, saved.shortDraft, saved.index)
+        return true
+      })
+      checkTrue('长集结Value容量复位前置：同一池行经production renderRow切回source短值', shortRendered)
+      await page.waitForTimeout(180)
+      const short = await readSocialValueLayouts(page)
+      const shortFailures = socialValueFailures(short)
+      const shortValue = short.rows[setup.index]?.value
+      socialValueEvidence.push({ phase: '长集结Value短槽复位', snapshot: short, failures: shortFailures, expected: setup.expectedShort })
+      checkTrue('长值切回短值后同池Value槽复位160、完整原15字号且同一覆盖门绿',
+        shortRendered && shortFailures.length === 0 && shortValue?.text === setup.expectedShort && shortValue.localWidth === 160)
+      await page.screenshot({ path: path.join(OUT, 'social-rally-value-short-reset.png') })
+    }
+  } finally {
+    await page.evaluate(() => {
+      const saved = globalThis.__socialRallyValueRestore
+      if (!saved) return
+      saved.view.rallyData = saved.data
+      saved.view.page = saved.page
+      saved.view.tab = saved.tab
+      saved.view.render()
+      delete globalThis.__socialRallyValueRestore
+    })
+  }
+  await page.waitForTimeout(180)
+  const restored = await readSocialValueLayouts(page)
+  const restoredFailures = socialValueFailures(restored)
+  socialValueEvidence.push({ phase: '长集结Value容量还原', snapshot: restored, failures: restoredFailures })
+  checkTrue('长集结Value容量finally恢复真实view数据与当前页，同一门绿且行快照恢复',
+    setup !== null && restoredFailures.length === 0 && JSON.stringify(restored.rows) === JSON.stringify(normal.rows))
+  await page.screenshot({ path: path.join(OUT, 'social-rally-value-restored.png') })
 }
 
 /**
