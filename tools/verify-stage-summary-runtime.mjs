@@ -19,7 +19,7 @@
  * <p><b>体力那三份读口都被钉死</b>（`/stamina`、`/stamina/buy`、`/resource/detail`）：
  * dev 新号的金币与今日已购是随机的，不钉死的话"点一下能不能买成"这条判据每次跑都在换前提。
  */
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
@@ -32,6 +32,9 @@ const BACKEND = process.env.BACKEND_ORIGIN ?? (() => {
   process.exit(2)
 })()
 const PORT = Number(process.env.STAGE_PORT ?? 8195)
+// 可交接由公共API真实准备的账号；不替换页面收到的武将或兵力。
+const DEVICE = process.env.STAGE_SUMMARY_DEVICE ?? `stage-summary-${Date.now()}`
+const REQUIRE_FULL = process.env.STAGE_SUMMARY_REQUIRE_FULL === '1'
 const OUT = path.resolve(process.cwd(), 'client/build/stage-summary-verify')
 mkdirSync(OUT, { recursive: true })
 /** 记录发出去的 `POST /stamina/buy` 请求体，用来断言"这一按真的发出去了、且带了幂等键" */
@@ -57,7 +60,7 @@ const browser = await chromium.launch({ headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
-}, `stage-summary-${Date.now()}`)
+}, DEVICE)
 
 const cors = (request) => ({
   'access-control-allow-origin': request.headers()['origin'] ?? '*',
@@ -89,6 +92,73 @@ const STAMINA = {
 const staminaBody = () => ({ ...STAMINA, serverNow: Date.now() })
 /** 真点「挑战」那一相：发出去的请求体（要数次数、要核幂等键） */
 const CHALLENGE_CALLS = []
+const CHALLENGE_RECEIPTS = []
+
+/** 转发真实上游状态和原始字节，不把业务失败包成code0。 */
+async function forwardChallengeReceipt(route) {
+  if (await passthrough(route)) return
+  const request = route.request()
+  const posted = JSON.parse(request.postData() ?? '{}')
+  CHALLENGE_CALLS.push(posted)
+  const receipt = { method: request.method(), playerId: request.headers()['x-player-id'] ?? null,
+    requestId: posted.requestId ?? null,
+    stageId: posted.stageId ?? null, status: null, rawBody: null, code: null, data: null, error: null }
+  CHALLENGE_RECEIPTS.push(receipt)
+  try {
+    const upstream = await route.fetch()
+    receipt.status = upstream.status()
+    const body = await upstream.body()
+    receipt.rawBody = body.toString('utf8')
+    try {
+      const envelope = JSON.parse(receipt.rawBody)
+      receipt.code = envelope?.code ?? null
+      receipt.data = envelope?.data ?? null
+    } catch (error) { receipt.error = 'Invalid upstream JSON: ' + String(error) }
+    await route.fulfill({ response: upstream, body })
+  } catch (error) {
+    receipt.error = (receipt.error ? receipt.error + '; ' : '') + 'Upstream/forward failed: ' + String(error)
+    try { await route.abort('failed') } catch (abortError) {
+      receipt.error += '; abort failed: ' + String(abortError)
+    }
+  }
+}
+
+function challengeReceiptIssues(receipts, requests) {
+  const issues = []
+  if (requests.length !== 1 || receipts.length !== 1) {
+    return ['Expected exactly one challenge request and one upstream receipt; requests=' + requests.length
+      + ', receipts=' + receipts.length]
+  }
+  const receipt = receipts[0], request = requests[0], data = receipt.data
+  if (receipt.method !== 'POST' || typeof receipt.playerId !== 'string' || !receipt.playerId
+      || typeof request.requestId !== 'string' || !request.requestId
+      || typeof request.stageId !== 'string' || !request.stageId
+      || receipt.requestId !== request.requestId || receipt.stageId !== request.stageId) {
+    issues.push('Upstream receipt must match this POST requestId and stageId')
+  }
+  if (receipt.error || receipt.status !== 200 || receipt.code !== 0
+      || typeof receipt.rawBody !== 'string' || receipt.rawBody.length === 0) {
+    issues.push('Expected authentic HTTP200/code0 JSON receipt: ' + JSON.stringify({
+      status: receipt.status, code: receipt.code, error: receipt.error }))
+  }
+  const nonnegative = value => Number.isInteger(value) && value >= 0
+  const stars = value => nonnegative(value) && value <= 3
+  if (!data || typeof data.reportId !== 'string' || !data.reportId
+      || !data.stars || !['cleared', 'noLoss', 'withinRounds'].every(key => typeof data.stars[key] === 'boolean')
+      || !stars(data.stars.total) || !stars(data.starsEarned) || typeof data.newBest !== 'boolean'
+      || !Array.isArray(data.rewards) || !Array.isArray(data.losses)
+      || !nonnegative(data.staminaCost) || !nonnegative(data.staminaCharged) || !nonnegative(data.serverNow)
+      || data.progress?.stageId !== request.stageId || !stars(data.progress?.stars)
+      || !['bestRounds', 'clearedAt', 'sweepCount'].every(key => nonnegative(data.progress?.[key]))) {
+    issues.push('Missing or invalid real ChallengeStageResp fields or matching progress.stageId')
+  }
+  return issues
+}
+
+function stageFullBranchIssues(required, executed) {
+  return required && executed !== true ? ['Required full A branch with all eight original assertions did not execute'] : []
+}
+
 /** 夹具到底改没改到第一关 —— 没改到的话后面那几条"结算亮着"就都是在读一个没发生过的状态 */
 const stageFlip = { attempted: false, done: false }
 await context.route('**/stage/list*', async (route) => {
@@ -120,8 +190,8 @@ await context.route('**/hero/list*', async (route) => {
   heroFlip.lineups = lineups.length
   if (lineups.length > 0) {
     const firstHero = (Array.isArray(data.heroes) ? data.heroes : [])[0]
-    if (firstHero?.id !== undefined && firstHero !== null) {
-      lineups[0] = { ...lineups[0], main: lineups[0].main ?? firstHero.id }
+    if (typeof firstHero?.heroId === 'string' && firstHero.heroId.length > 0) {
+      lineups[0] = { ...lineups[0], main: lineups[0].main ?? firstHero.heroId }
       heroFlip.mainSet = lineups[0].main !== null && lineups[0].main !== undefined
     }
   }
@@ -129,13 +199,7 @@ await context.route('**/hero/list*', async (route) => {
 })
 // 挑战**不打桩**：把请求记下来、把服务端的真响应原样转回去。这一相要验的正是
 // 「真结算到手后摘要带亮不亮」，用夹具替掉它等于把要验的那一段抽走。
-await context.route('**/stage/challenge*', async (route) => {
-  if (await passthrough(route)) return
-  CHALLENGE_CALLS.push(JSON.parse(route.request().postData() ?? '{}'))
-  const upstream = await route.fetch()
-  const envelope = await upstream.json()
-  await reply(route, envelope.data ?? envelope)
-})
+await context.route('**/stage/challenge*', forwardChallengeReceipt)
 // 体力三份读口都钉死：dev 新号的金币与今日已购是随机的，
 // 不钉死的话"点一下能不能买成"这条判据每次跑都在换前提
 await context.route('**/stamina/buy*', async (route) => {
@@ -545,12 +609,15 @@ if (heroFlip.mainSet) {
     settled?.active === true)
   checkTrue('摘要里念的是这次结算（星级与体力都在服务端那份响应里）',
     (settled?.text ?? '').includes('星') && (settled?.text ?? '').includes('体力'))
+  const receiptIssues = challengeReceiptIssues(CHALLENGE_RECEIPTS, CHALLENGE_CALLS)
+  console.log('  真实挑战上游回执：' + JSON.stringify({ receipts: CHALLENGE_RECEIPTS, issues: receiptIssues }))
+  checkTrue('真实挑战上游恰一HTTP200/code0完整回执且对应本次关卡请求', receiptIssues.length === 0)
 } else {
   // ---- 分支 B：dev 号连一支编队都没有 ⇒ 走不到弹窗，但**被挡下这件事本身要说得出、看得见**----
   // 这一支不是降级凑数：`rejectNeeds('stage', ...)` 走的就是 #354 修的那条摘要带，
   // 挡下的话没画出来，玩家按「挑战」就会得到"没反应"——正是这一族最坏的样子。
   console.log(`  注：dev 号 lineups=${heroFlip.lineups}、heroes=0，走「被挡下」分支。`)
-  console.log('  ⚠ **A 支那五条判据本次没有执行、历史上也从没执行过**（要跑它得给这个号一个真武将，'
+  console.log('  ⚠ **A 支那八条判据本次没有执行、历史上也从没执行过**（要跑它得给这个号一个真武将，'
     + '或凭空造一份 23 字段的 HeroView —— 那是 #347 警告过的"现实中不存在的形状"）。'
     + '所以本文件的通过数**不等于**挑战完整路径验过了。')
   check('这一支不该发出挑战请求', CHALLENGE_CALLS.length, 0)
@@ -568,6 +635,19 @@ if (heroFlip.mainSet) {
 await page.screenshot({ path: path.join(OUT, 'stage-challenge-settled.png') })
 console.log(`  截图：${path.join(OUT, 'stage-challenge-settled.png')}`)
 
+if (REQUIRE_FULL) {
+  checkTrue('指定完整模式必须实际执行A支全部八条原判据', stageFullBranchIssues(REQUIRE_FULL, branchAExecuted).length === 0)
+}
+const challengeEvidence = {
+  deviceId: DEVICE, backend: BACKEND, requireFull: REQUIRE_FULL, branchAExecuted,
+  aChecksExecuted: branchAExecuted ? 8 : 0,
+  calls: CHALLENGE_CALLS, receipts: CHALLENGE_RECEIPTS,
+  receiptIssues: branchAExecuted ? challengeReceiptIssues(CHALLENGE_RECEIPTS, CHALLENGE_CALLS) : [],
+  fullBranchIssues: stageFullBranchIssues(REQUIRE_FULL, branchAExecuted),
+  fixtureBoundary: 'stamina/read/buy and resource display are fixtures; stage/list unlock and hero/list main are read-response edits; challenge HTTP/status/code/body are real upstream',
+}
+writeFileSync(path.join(OUT, 'stage-challenge-receipt-evidence.json'), JSON.stringify(challengeEvidence, null, 2))
+console.log('STAGE_A8_RECEIPT=' + JSON.stringify(challengeEvidence))
 check('运行期零 error（页面级报错）', errors.length, 0)
 if (errors.length > 0) {
   for (const message of errors.slice(0, 3)) console.log(`    error: ${message.slice(0, 160)}`)
@@ -577,6 +657,6 @@ await browser.close()
 preview.close?.()
 console.log(`\n=== 通过 ${pass} 项，失败 ${fail} 项 ===`)
 if (!branchAExecuted) {
-  console.log('=== 其中「完整挑战路径」那一支（A 支五条）**未执行**：dev 号没有武将，补不出主将 ===')
+  console.log('=== 其中「完整挑战路径」那一支（A 支八条）**未执行**：dev 号没有武将，补不出主将 ===')
 }
 process.exit(fail === 0 ? 0 : 1)
