@@ -218,6 +218,79 @@ test('已激活的缘分把 id 换成名字（成对同队才算，这个判定�
   assert.equal(stale.bondTexts.join(' ').includes('hero_missing'), false)
 })
 
+test('完整响应的三套编队把服务端 a+b 缘分逐成员查名，姓名只取本次名册', () => {
+  // HeroAppService.toLineupView 按 heroId.compareTo(partner) < 0 发送这一形状。
+  const roster = [
+    hero({ heroId: 'hero_ssr_01', name: '裴惊澜' }),
+    hero({ heroId: 'hero_ssr_03', name: '燕孤鸿' }),
+    hero({ heroId: 'hero_sr_02', name: '沈砚秋' }),
+    hero({ heroId: 'hero_ssr_02', name: '苏妄之' }),
+    hero({ heroId: 'hero_r_02', name: '秦小满' }),
+    hero({ heroId: 'hero_r_03', name: '贺兰迟' }),
+  ]
+  const lineups = [
+    lineup({ main: 'hero_ssr_01', sub1: 'hero_ssr_03', activeBonds: ['hero_ssr_01+hero_ssr_03'] }),
+    lineup({ presetIndex: 1, main: 'hero_ssr_02', sub1: 'hero_sr_02',
+      bonus: bonus({ atkFixed: 1250, commandValue: 321, capped: true }),
+      activeBonds: ['hero_sr_02+hero_ssr_02'] }),
+    lineup({ presetIndex: 2, main: 'hero_r_02', sub1: 'hero_r_03', sub2: 'hero_ssr_01',
+      bonus: bonus({ defFixed: 1750, skillFixed: 3000 }), activeBonds: ['hero_r_02+hero_r_03'] }),
+  ]
+  const resp = heroResp(roster, lineups)
+  const before = JSON.stringify(resp)
+  const panel = buildHeroPanel(resp)
+  assert.deepEqual(panel.lineups.map((item) => item.bondTexts), [
+    ['裴惊澜 + 燕孤鸿'], ['沈砚秋 + 苏妄之'], ['秦小满 + 贺兰迟'],
+  ])
+  assert.deepEqual(panel.lineups.map((item) => item.slotTexts), [
+    ['主将：裴惊澜', '副将：燕孤鸿', '副将：空'],
+    ['主将：苏妄之', '副将：沈砚秋', '副将：空'],
+    ['主将：秦小满', '副将：贺兰迟', '副将：裴惊澜'],
+  ])
+  assert.deepEqual(panel.lineups.map((item) => item.emptySlots), [1, 1, 0])
+  assert.deepEqual(panel.lineups.map((item) => item.presetIndex), [0, 1, 2])
+  assert.equal(panel.lineups[1]?.atkText, '攻击 +12.5%')
+  assert.equal(panel.lineups[1]?.commandText, '统帅 321')
+  assert.equal(panel.lineups[1]?.capped, true)
+  assert.equal(panel.lineups[2]?.defText, '防御 +17.5%')
+  assert.equal(panel.lineups[2]?.skillText, '技能强度 +30%')
+  assert.equal(JSON.stringify(resp), before, '展示不得修改服务器的槽位、缘分或加成')
+
+  const renamed = roster.map((item, index) => ({ ...item, name: `响应姓名${index + 1}` }))
+  assert.deepEqual(buildHeroPanel(heroResp(renamed, lineups)).lineups.map((item) => item.bondTexts), [
+    ['响应姓名1 + 响应姓名2'], ['响应姓名3 + 响应姓名4'], ['响应姓名5 + 响应姓名6'],
+  ], '同样的 id 必须跟随本次响应姓名，不能查客户端静态表或沿用旧名册')
+})
+
+test('pair 缺失的成员分别回退未知武将，仍兼容 single，绝不显示内部 id', () => {
+  const panel = buildHeroPanel(heroResp([hero({ heroId: 'hero_known', name: '响应武将' })], [
+    lineup({ activeBonds: ['hero_known+hero_missing', 'hero_absent+hero_known',
+      'hero_absent+hero_missing', 'hero_known', 'hero_missing'] }),
+  ]))
+  const texts = panel.lineups[0]?.bondTexts ?? []
+  assert.deepEqual(texts, ['响应武将 + 未知武将', '未知武将 + 响应武将',
+    '未知武将 + 未知武将', '响应武将', '未知武将'])
+  assert.doesNotMatch(texts.join(' · '), /hero_(known|missing|absent)/)
+})
+
+test('空白、缺端、多分隔及同成员的 malformed pair 安全回退，不把整个 pair 当姓名键', () => {
+  const malformed = ['', ' ', '+', '+h1', 'h1+', 'h1++h2', 'h1+h2+h3',
+    'h1+h1', ' h1+h2', 'h1+ h2', 'h1+h2 ']
+  const names = new Map(NAMES)
+  // 即使名册里出现同形的脏键，也不能冒充一对合法成员的展示。
+  for (const key of malformed) names.set(key, '脏键姓名')
+  const texts = buildLineupPanel(lineup({ activeBonds: malformed }), names).bondTexts
+  assert.deepEqual(texts, malformed.map(() => '未知武将'))
+  assert.doesNotMatch(texts.join(' · '), /h[123]|脏键/)
+})
+
+test('多个 pair 与旧 single 按服务端的顺序和数量展示，不自行重排或重算激活条件', () => {
+  const panel = buildLineupPanel(lineup({ main: null, sub1: null, sub2: null,
+    activeBonds: ['h2+h3', 'h1', 'h1+h2', 'h2+h3'] }), NAMES)
+  assert.deepEqual(panel.bondTexts, ['沈砚 + 李承鄞', '裴惊澜', '裴惊澜 + 沈砚', '沈砚 + 李承鄞'])
+  assert.deepEqual(panel.slotTexts, ['主将：空', '副将：空', '副将：空'])
+})
+
 test('槽位上的 heroId 在名册里查不到名字时写「未知武将」，绝不把内部编号印上队伍栏', () => {
   // 这条会失败：把 `?? '未知武将'` 改回 `?? heroId` 就红。
   // 形态与 `LineupEdit` 那条同源（#255 家族）：玩家读到的应该是一句人话，不是 `hero_guanyu`。

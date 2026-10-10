@@ -183,8 +183,24 @@ export function buildLineupPanel(lineup: LineupView, nameById: ReadonlyMap<strin
       : null,
     breakdownLines: bonus.breakdown.map((line) =>
       `${zoneText(line.zone)} ${line.source} +${FixedPoint.percentText(line.value)}`),
-    bondTexts: lineup.activeBonds.map((id) => nameById.get(id) ?? '未知武将'),
+    bondTexts: lineup.activeBonds.map((key) => bondText(key, nameById)),
   }
+}
+
+/** 服务端已判定激活；这里只把 a+b 的两名成员换成本次名册里的名字，兼容旧 single。 */
+function bondText(key: string, nameById: ReadonlyMap<string, string>): string {
+  if (typeof key !== 'string' || key.length === 0 || key.trim() !== key) {
+    return '未知武将'
+  }
+  const members = key.split('+')
+  if (members.length === 1) {
+    return nameById.get(key) ?? '未知武将'
+  }
+  if (members.length !== 2 || members[0] === members[1]
+    || members.some((id) => id.length === 0 || id.trim() !== id)) {
+    return '未知武将'
+  }
+  return members.map((id) => nameById.get(id) ?? '未知武将').join(' + ')
 }
 
 /**
