@@ -431,7 +431,8 @@ await page.screenshot({ path: path.join(OUT, '14-city-full-overview.png') })
 const normalOcclusion = analyze(overview, 'overview')
 if (!normalOcclusion.ok) failures.push(...normalOcclusion.errors)
 
-// 同一页面复现旧前庭东格的真实遮挡：只改当前节点显示位置与绘制序，绝不写城建API或存档。
+// 同一页面把学院实际节点放到当前主堡背后。主堡会按HUD净空缩放，历史固定坐标不再保证遮挡。
+// 负控沿本轮真实主堡的位置和绘制深度，仍只改显示节点，绝不写城建API或存档。
 const negativeReady = await page.evaluate(() => {
   const scene = window.cc.director.getScene()
   const cityView = scene.getComponentInChildren('CityPanelView')
@@ -442,35 +443,43 @@ const negativeReady = await page.evaluate(() => {
   const rows = cityView?.panel?.rows ?? []
   const academyRow = rows.find(row => row.configId === 'academy')
   const academy = academyRow ? cityView.gridTiles.find(tile => tile.plate.gridX === academyRow.gridX && tile.plate.gridY === academyRow.gridY) : null
+  const mainRow = rows.find(row => row.configId === 'main_city')
+  const main = mainRow ? cityView.gridTiles.find(tile => tile.plate.gridX === mainRow.gridX && tile.plate.gridY === mainRow.gridY) : null
   const scale = cityView?.sceneLayout?.scale
-  if (!academy || !layout || !Number.isFinite(scale) || scale <= 0 || !academy.node.parent) return false
+  if (!academy || !main || !layout || !Number.isFinite(scale) || scale <= 0
+    || !academy.node.parent || academy.node.parent !== main.node.parent || !Number.isFinite(main.plate.depth)) return false
   const grid = academy.node.parent
   globalThis.__fullCityOcclusionRestore = { node: academy.node, position: academy.node.position.clone(), order: [...grid.children] }
-  // 历史反证坐标（1000×625工作视图的565,213）；尺寸与当前投影尺度均来自运行产物。
-  academy.node.setPosition(new window.cc.Vec3((565 - layout.SCENE_VIEW_WIDTH / 2) * scale,
-    (layout.SCENE_VIEW_HEIGHT / 2 - 213) * scale, academy.node.position.z))
+  academy.node.setPosition(main.node.position.clone())
   const ordered = layout.scenePlatesBackToFront(cityView.gridTiles.map(tile => ({ ...tile.plate,
-    depth: tile === academy ? 213 : tile.plate.depth,
+    depth: tile === academy ? main.plate.depth - 1 : tile.plate.depth,
     x: tile === academy ? academy.node.position.x : tile.plate.x })))
   const first = Math.min(...cityView.gridTiles.map(tile => tile.node.getSiblingIndex()))
   ordered.forEach((plate, index) => cityView.gridTiles.find(tile => tile.plate.gridX === plate.gridX
     && tile.plate.gridY === plate.gridY)?.node.setSiblingIndex(first + index))
   return true
 })
-if (!negativeReady) failures.push('旧学院实画遮挡负控前提缺失：生产学院节点、投影模块或真实绘制序不可读')
+if (!negativeReady) failures.push('学院实画遮挡负控前提缺失：学院/主堡同父节点、投影模块或真实绘制序不可读')
 if (negativeReady) {
   try {
     await page.waitForTimeout(180)
     const negative = await collectFrame()
     const negativeIssues = snapshotFailures(negative)
+    const negativeAcademy = negative.tiles.find(tile => tile.configId === 'academy')
+    const negativeMain = negative.tiles.find(tile => tile.configId === 'main_city')
+    if (!negativeAcademy || !negativeMain
+      || JSON.stringify(negativeAcademy.actualPosition) !== JSON.stringify(negativeMain.actualPosition)
+      || !(negativeAcademy.order[0] < negativeMain.order[0])) {
+      negativeIssues.push('学院负控未实际处于本轮主堡同位置且绘制在主堡后方')
+    }
     if (negativeIssues.length) failures.push(...negativeIssues)
-    await page.screenshot({ path: path.join(OUT, '14-city-full-negative-old-academy.png') })
-    const result = analyze(negative, 'negative-old-academy')
+    await page.screenshot({ path: path.join(OUT, '14-city-full-negative-academy.png') })
+    const result = analyze(negative, 'negative-academy')
     const academy = result.buildings.find(building => building.configId === 'academy')
     if (negativeIssues.length || result.ok || !(academy?.occludedRatio > 0.20)) {
-      failures.push('旧学院真实节点/绘制序负控没有让同一主体遮挡门因学院遮挡>20%翻红')
+      failures.push('学院真实节点/绘制序负控没有让同一主体遮挡门因学院遮挡>20%翻红')
     } else {
-      console.log(`[full-city] PASS 旧学院真实负控被同门抓到：主体遮挡 ${(academy.occludedRatio * 100).toFixed(2)}%`)
+      console.log(`[full-city] PASS 学院真实负控被同门抓到：主体遮挡 ${(academy.occludedRatio * 100).toFixed(2)}%`)
     }
   } finally {
     await page.evaluate(() => {
@@ -500,6 +509,6 @@ if (failures.length > 0) {
   console.error(`[full-city] 判据失败：${failures.join('；')}`)
   process.exit(1)
 }
-console.log('[full-city] 全绿：15类实际正稿、中文标注与存档格位完整对应；主体遮挡均≤20%，旧学院真实负控红→还原绿')
+console.log('[full-city] 全绿：15类实际正稿、中文标注与存档格位完整对应；主体遮挡均≤20%，本轮学院真实负控红→还原绿')
 void GRID
 void MAIN_CITY
