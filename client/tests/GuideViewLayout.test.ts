@@ -40,6 +40,15 @@ class Label {
   static VerticalAlign = { CENTER: 1 }
   node!: Node; string = ''; fontSize = 0; lineHeight = 0; color: unknown
   overflow = 0; horizontalAlign = 0; verticalAlign = 0; enableWrapText = true
+  actualFontSize = 0; parsedString: string[] = []
+  updateRenderData(): void {
+    const box = this.node.getComponent(UITransform)!
+    // Conservative synthetic glyph width only; actual Cocos normalized font and parsed pixels need GPU acceptance.
+    const textWidth = [...this.string].reduce((width, ch) => width + this.fontSize * (ch.charCodeAt(0) > 255 ? 1 : .6), 0)
+    this.actualFontSize = this.overflow === Label.Overflow.SHRINK
+      ? Math.floor(this.fontSize * Math.min(1, box.width / Math.max(1, textWidth), box.height / this.lineHeight)) : this.fontSize
+    this.parsedString = [this.string]
+  }
 }
 class Sprite { enabled = true; spriteFrame: { name: string } | null = null }
 class Node {
@@ -466,6 +475,90 @@ const prompt: HeroChoicePrompt = { questId: 'server-quest', title: '服务器奖
   candidates: [{ heroId: 'hero-from-server', name: '服务器武将' }] }
 const threeChoices: HeroChoicePrompt = { questId: 'server-three', title: '服务器下发的任务奖励标题',
   candidates: ['一', '二', '三'].map((suffix, index) => ({ heroId: `server-hero-${index}`, name: `服务端武将${suffix}` })) }
+
+// R8-083/085: the real capsule lowers the hole top by58.047; old nativeArea above omitted it.
+const capturedCapsuleArea = { x: -426.5402843601896, y: -137.914691943128,
+  width: 853.0805687203791, height: 301.66824644549763 }
+const capturedChoices: HeroChoicePrompt = { questId: 'captured-main-wall', title: '主线 · 筑起第一堵墙',
+  candidates: [{ heroId: 'hero_sr_01', name: '卫无咎' }, { heroId: 'hero_sr_02', name: '沈砚秋' }, { heroId: 'hero_sr_03', name: '崔明烛' }] }
+function treeOwnRect(node: Node): Rect {
+  let x = 0, y = 0
+  for (let parent = node.parent; parent !== null; parent = parent.parent) { x += parent.position.x; y += parent.position.y }
+  return ownRect(node, new Vec3(x, y))
+}
+function contained(child: Rect, parent: Rect): boolean {
+  const epsilon = .00001
+  return child.x >= parent.x - epsilon && child.y >= parent.y - epsilon
+    && child.x + child.width <= parent.x + parent.width + epsilon
+    && child.y + child.height <= parent.y + parent.height + epsilon
+}
+for (const material of [true, false]) test(`真实R8胶囊净区三候选全框和全文不入遮罩，640/短屏/恢复保持节点与唯一领取接线（素材${material}）`, () => {
+  const { guide, size, area } = setup('quest')
+  size.height = 640; Object.assign(area, { x: -480, y: -260, width: 960, height: 580 })
+  const quest = questWithGuide(guide, area, material, size); quest.update(); quest.showPrompt(capturedChoices)
+  const panel = quest.promptPanel!, candidates = capturedChoices.candidates.map(choice => panel.getChildByName(`HeroOption_${choice.heroId}`)!)
+  const claims: Array<[string, string | null]> = []; quest.onClaim = (id, hero) => claims.push([id, hero])
+  for (const height of [640, nativeSize.height, 640]) {
+    size.height = height; Object.assign(area, height === nativeSize.height ? capturedCapsuleArea
+      : { x: -480, y: -260, width: 960, height: 580 })
+    quest.update(); guide.update()
+    const panelBox = treeOwnRect(panel), short = height === nativeSize.height
+    assert.ok(contained(panelBox, area)); assert.equal(panel.active, true); assert.equal(guide.bubble!.active, false)
+    assert.equal(quest.node.children.at(-1), panel); assert.equal(claims.length, 0, 'resize is read only')
+    const title = panel.getChildByName('PromptTitle')!, hint = panel.getChildByName('PromptHint')!
+    assert.equal(title.getComponent(Label)!.string, capturedChoices.title)
+    assert.equal(hint.getComponent(Label)!.string, '选择一名武将作为奖励（只能选一次）')
+    for (const [node, font] of [[title, 20], [hint, 14]] as const) {
+      const label = node.getComponent(Label)!; label.updateRenderData()
+      assert.equal(label.fontSize, font); assert.equal(label.actualFontSize, font); assert.equal(label.parsedString.join(''), label.string)
+    }
+    for (const entry of [title, hint, ...candidates]) {
+      assert.ok(contained(treeOwnRect(entry), panelBox), `${height}/${entry.name} own frame must remain inside actual panel`)
+      assert.ok(contained(treeOwnRect(entry), area), `${height}/${entry.name} must remain entirely in Guide mask hole`)
+    }
+    for (const [index, choice] of capturedChoices.candidates.entries()) {
+      const button = panel.getChildByName(`HeroOption_${choice.heroId}`)!
+      assert.equal(button, candidates[index]); assert.equal(button.parent, panel, 'direct HeroOption child remains probe compatible')
+      assert.equal(dimensions(button).height, short ? 44 : 56)
+      const art = button.getChildByName('DialogButtonArt')!, caption = button.getChildByName('Name')!, label = caption.getComponent(Label)!
+      assert.deepEqual(treeOwnRect(art), treeOwnRect(button)); assert.ok(contained(treeOwnRect(caption), treeOwnRect(button)))
+      assert.ok(contained(treeOwnRect(caption), panelBox)); assert.ok(contained(treeOwnRect(caption), area))
+      assert.equal(label.fontSize, 18); assert.equal(label.lineHeight, 24); assert.equal(label.string, candidateLabel(choice))
+      label.updateRenderData(); assert.equal(label.actualFontSize, 18, 'layout must not hide overflow by shrinking candidate font')
+      assert.equal(label.parsedString.join(''), candidateLabel(choice)); assert.equal(label.enableWrapText, false)
+      if (!short) assert.equal(button.position.x, 0, 'sufficient height keeps original single column')
+      assert.equal(button.getComponent(Graphics)!.enabled, !material)
+    }
+    for (let i = 0; i < candidates.length; i++) for (let j = i + 1; j < candidates.length; j++) {
+      assert.equal(intersects(treeOwnRect(candidates[i]!), treeOwnRect(candidates[j]!)), false)
+      assert.equal(intersects(treeOwnRect(candidates[i]!.getChildByName('Name')!), treeOwnRect(candidates[j]!.getChildByName('Name')!)), false)
+    }
+    for (const key of ['quest', 'activity', 'achievement']) assert.equal(intersects(panelBox, treeOwnRect(quest.node.getChildByName(`Tab-${key}`)!)), false)
+    if (short) { assert.equal(candidates[0]!.position.y, candidates[1]!.position.y); assert.ok(candidates[2]!.position.y < candidates[1]!.position.y); assert.ok(candidates[0]!.position.x < candidates[1]!.position.x) }
+  }
+  panel.emit('touch-start'); assert.equal(claims.length, 0)
+  candidates[2]!.emit('touch-start'); assert.deepEqual(claims, [[capturedChoices.questId, capturedChoices.candidates[2]!.heroId]])
+  assert.equal(panel.active, false); assert.equal(guide.bubble!.active, true); assert.equal(quest.openPrompt, null)
+  quest.showPrompt(capturedChoices); quest.node.getChildByName('Tab-achievement')!.emit('touch-start')
+  assert.equal(panel.active, false); assert.equal(guide.bubble!.active, true); assert.equal(claims.length, 1)
+})
+test('同一短屏只改变净区也按真实内框重新算候选行数，不硬编码两列且恢复保留全部节点', () => {
+  const { guide, size, area } = setup('quest'); Object.assign(area, capturedCapsuleArea)
+  const quest = questWithGuide(guide, area, true, size); quest.update(); quest.showPrompt(capturedChoices)
+  const panel = quest.promptPanel!, buttons = capturedChoices.candidates.map(c => panel.getChildByName(`HeroOption_${c.heroId}`)!)
+  let claims = 0; quest.onClaim = () => { claims++ }
+  assert.equal(buttons[0]!.position.y, buttons[1]!.position.y); assert.ok(buttons[2]!.position.y < buttons[1]!.position.y)
+  area.height -= 48; quest.update()
+  assert.ok(buttons.every(b => b.position.y === buttons[0]!.position.y), 'one complete row fits this smaller inner area')
+  assert.ok(buttons[0]!.position.x < buttons[1]!.position.x && buttons[1]!.position.x < buttons[2]!.position.x)
+  for (const button of buttons) {
+    assert.ok(contained(treeOwnRect(button), treeOwnRect(panel))); assert.ok(contained(treeOwnRect(button), area))
+    const label = button.getChildByName('Name')!.getComponent(Label)!; label.updateRenderData(); assert.equal(label.actualFontSize, 18)
+  }
+  Object.assign(area, capturedCapsuleArea); quest.update(); assert.equal(claims, 0)
+  assert.equal(buttons[0]!.position.y, buttons[1]!.position.y); assert.ok(buttons[2]!.position.y < buttons[1]!.position.y)
+  assert.ok(buttons.every(b => panel.getChildByName(b.name) === b)); assert.equal(panel.active, true)
+})
 test('真实showPrompt把三候选提示抬到后追加任务行之上，保持三颗生产按钮和服务端全文', () => {
   const { guide } = setup('quest'), quest = questWithGuide(guide)
   const rows = [new Node('QuestRow'), new Node('QuestRow'), new Node('QuestRow')]

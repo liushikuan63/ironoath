@@ -784,10 +784,19 @@ export class QuestPanelView extends Component {
     const optionGap = compact ? COMPACT_OPTION_GAP : OPTION_GAP
     const titleGap = compact ? 6 : PROMPT_TITLE_GAP
     const hintGap = compact ? 8 : PROMPT_HINT_GAP
-    const naturalHeight = PROMPT_TITLE_HEIGHT + titleGap + PROMPT_HINT_HEIGHT + hintGap
+    const headingHeight = PROMPT_TITLE_HEIGHT + titleGap + PROMPT_HINT_HEIGHT + hintGap
+    const naturalHeight = headingHeight
       + count * optionHeight + Math.max(0, count - 1) * optionGap
-    const layout = dialogLayout(promptArea, PANEL_WIDTH - PADDING * 2 - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right,
-      naturalHeight)
+    const contentWidth = PANEL_WIDTH - PADDING * 2 - PANEL_IRON_INSET.left - PANEL_IRON_INSET.right
+    let layout = dialogLayout(promptArea, contentWidth, naturalHeight)
+    // 胶囊/页签会进一步压低净区；按真实内框算行容量，保留候选字号和按钮高度。
+    const innerHeight = layout.innerTop - layout.innerBottom
+    const rowCapacity = Math.max(1, Math.floor((innerHeight - headingHeight + optionGap) / (optionHeight + optionGap)))
+    const columns = Math.max(1, Math.ceil(count / rowCapacity))
+    const rows = Math.ceil(count / columns)
+    if (columns > 1) layout = dialogLayout(promptArea, contentWidth,
+      headingHeight + rows * optionHeight + Math.max(0, rows - 1) * optionGap)
+    const optionWidth = (layout.innerWidth - Math.max(0, columns - 1) * optionGap) / columns
     panel.getComponent(UITransform)!.setContentSize(layout.width, layout.height)
     panel.setPosition(new Vec3(area.x + area.width / 2, layout.centerY, 0))
     const plate = panel.getChildByName('DialogFrameArt')!
@@ -808,8 +817,11 @@ export class QuestPanelView extends Component {
     top -= PROMPT_HINT_HEIGHT + hintGap
     prompt.candidates.forEach((choice, index) => {
       const option = panel.getChildByName(`HeroOption_${choice.heroId}`)!
-      option.setPosition(new Vec3(0, top - optionHeight / 2 - index * (optionHeight + optionGap), 0))
-      applyDialogButton(option, true, layout.innerWidth, optionHeight)
+      const row = Math.floor(index / columns), column = index % columns
+      const itemsInRow = Math.min(columns, count - row * columns)
+      option.setPosition(new Vec3((column - (itemsInRow - 1) / 2) * (optionWidth + optionGap),
+        top - optionHeight / 2 - row * (optionHeight + optionGap), 0))
+      applyDialogButton(option, true, optionWidth, optionHeight)
       // 共用按钮助手在素材缺失时停用旧Graphics，恢复同色兜底以保住真实可见的按钮。
       const art = option.getChildByName('DialogButtonArt')?.getComponent(Sprite)
       const graphics = option.getComponent(Graphics)!
@@ -819,12 +831,12 @@ export class QuestPanelView extends Component {
         graphics.fillColor = COLOR_ROW
         graphics.strokeColor = COLOR_COPPER_GOLD
         graphics.lineWidth = 1
-        graphics.roundRect(-layout.innerWidth / 2, -optionHeight / 2, layout.innerWidth, optionHeight, 6)
+        graphics.roundRect(-optionWidth / 2, -optionHeight / 2, optionWidth, optionHeight, 6)
         graphics.fill()
         graphics.stroke()
       }
       this.setPromptLabelBox(option.getChildByName('Name')!.getComponent(Label)!,
-        layout.innerWidth - PADDING * 2, OPTION_CAPTION_HEIGHT, 24)
+        optionWidth - PADDING * 2, OPTION_CAPTION_HEIGHT, 24)
     })
     this.promptLayoutKey = `${size.width}:${size.height}:${area.x}:${area.y}:${area.width}:${area.height}:${topLimit}`
   }
