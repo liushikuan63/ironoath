@@ -7048,3 +7048,5 @@ TEST_EXIT=0
 | #1060 官方窗口登录成功及后续真实收割量具 | 本笔（证据原子提交，本批统一推） | login task status success/login_success actual0，独立islogin0/logintrue；默认前33actual0；guide310/0/dialog421/0；stage7c及network量具AST0、业务NO_RUN | D:/tmp/ironoath-wechat-20261010/native-stable-v26-login-window-user-reply.stdout；native-stable-v26-islogin-window-user-reply.stdout；runtime-v26/guide-player；native-v26-harness-prepared-next.json | 旧CLI登录悬而未决根因及9GB内存待；原生后五步/第二第三完整图/正向收割及65/600/精确补项/最终独审待，未推 |
 
 | #1061 默认前43实际0及600秒采样开始 | 本笔（证据原子提交，本批统一推） | 默认43份actual0；国家训练自然420秒；整城新图目视；旧CLI精确清理0但不算登录、后独立logintrue/0；外置control/监督器AST0、业务NO_RUN | D:/tmp/ironoath-wechat-20261010/runtime-v26；native-stable-v26-login-refresh2-client-stop.json；native-stable-v26-islogin-after-old-cli-stop.stdout；native-control-moving-v26/canonical-owner-adjustment.json | 性能600秒与后22份未完成；精确5补项/独审及原生后五步/三头像实图/9GB内存根因待，未推 |
+
+| #1062 F26完整600秒性能和原生测量静态兼容 | 本笔（证据原子提交，本批统一推） | 默认前44actual0；600秒0、首屏2505ms/FPS60.2/堆22.1至32.8MB峰63.4；弱网6秒恢复；外置14文件AST及模式0、business NO_RUN | D:/tmp/ironoath-wechat-20261010/runtime-v26/probe-verify-perf-runtime.mjs.log；native-v26-harness-prepared-memory.json | 浏览器性能不代原生性能；默认余21/精确5补项及最终67待；原生余步/头像补图及9GB内存根因待，未推 |
