@@ -1290,6 +1290,9 @@ export class GameBootstrap extends Component {
       },
     }
     if (giftPopup !== null) {
+      giftPopup.onVisibilityChanged = visible => {
+        if (!this.destroyed && this.guide?.isValid) this.guide.setOverlaySuppressed('giftPopup', visible)
+      }
       out.giftPopup = resp => giftPopup.attach(resp)
       // 体力详情：弹层自己建节点，目标只负责把那一帧画上去
       out.staminaDetail = view => staminaDetail.render(view)
@@ -1668,6 +1671,9 @@ export class GameBootstrap extends Component {
     // 出征编成弹层（B25-S1）：挂在最上层，编排层给什么画什么；它是弹层不是面板，所以不走 panel()
     // 「自上次登录以来」那一屏（B25-S3）：挂在导航之后 ⇒ 同层兄弟里它排在更后，遮罩压得住面板与导航条
     this.offlineReport = new OfflineReportOverlay(this.node)
+    this.offlineReport.onVisibilityChanged = visible => {
+      if (!this.destroyed && this.guide?.isValid) this.guide.setOverlaySuppressed('offlineReport', visible)
+    }
     // 点条目 = 玩家就是要看那一页：先收起这一屏再跳，否则弹层盖着刚跳到的面板（#767 实测过）
     this.offlineReport.onJump = jump => {
       this.offlineReport?.hide()

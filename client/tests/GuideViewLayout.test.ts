@@ -212,6 +212,7 @@ test('错误尺寸、未就绪零胶囊和窗口之外坐标不能吞掉内容�
 interface GuideHarness {
   node: Node; isValid: boolean; bubble: Node | null; blockerNodes: Node[]; openPanelKey: () => string | null
   contentRectFor: () => Rect; attach(script: GuideScriptResp): void; repaint(): void; update(): void
+  setOverlaySuppressed(key: string, suppressed: boolean): void
   setBubbleSuppressed(panel: string, suppressed: boolean): void
   applyProgress(index: number | null, advanced?: boolean): void
 }
@@ -742,4 +743,92 @@ test('资源教学固定五按钮在短屏净区且任务入口走真实导航�
     assert.equal(current, 'quest', 'return closes the dialog without sending a claim or changing panel')
     assert.equal(city.resourceTutor, null); assert.deepEqual(visibility, [true, false, true, false])
   }
+})
+
+test('全局礼包显示时收起引导气泡及遮罩，关闭后恢复服务端当前步骤而不跳步', () => {
+  const { guide, restoreHeld } = setup()
+  assert.equal(guide.node.active, true)
+  guide.setOverlaySuppressed('giftPopup', true)
+  assert.equal(guide.node.active, false)
+  assert.equal(guide.bubble, null)
+  assert.equal(guide.blockerNodes.length, 0)
+  guide.repaint(); guide.applyProgress(1, false); restoreHeld()
+  assert.equal(guide.node.active, false, '异步回执和HELD计时器不得抢回全局弹窗层级')
+  guide.setOverlaySuppressed('giftPopup', false)
+  assert.equal(guide.node.active, true)
+  assert.equal(guide.bubble!.getChildByName('GuideStepPosition')!.getComponent(Label)!.string, '第 1 / 1 步')
+  assert.equal(guide.bubble!.getChildByName('GuideStepText')!.getComponent(Label)!.string, '服务端下发正文')
+  assert.ok(guide.blockerNodes.length > 0)
+})
+
+test('多个全局弹层按实际可见性恢复，面板选择窗的气泡抑制仍保留', () => {
+  const { guide } = setup()
+  guide.setBubbleSuppressed('city', true)
+  guide.setOverlaySuppressed('giftPopup', true)
+  guide.setOverlaySuppressed('otherOverlay', true)
+  guide.setOverlaySuppressed('giftPopup', false)
+  assert.equal(guide.node.active, false)
+  guide.setOverlaySuppressed('otherOverlay', false)
+  assert.equal(guide.node.active, true)
+  assert.equal(guide.bubble!.active, false, '临时全局弹层关闭不能抹去资源教学可见性')
+  guide.setBubbleSuppressed('city', false)
+  assert.equal(guide.bubble!.active, true)
+})
+
+interface GiftVisibilityHarness {
+  node: Node; ensureNodes(): void; attach(resp: { popup: boolean; productName?: string; productId?: string; offerExpireAt: null; serverNow: number }): void
+  hide(): void; onVisibilityChanged: ((visible: boolean) => void) | null
+}
+test('实际礼包attach/hide接到生产引导可见性回调，服务端不弹与重复关闭都恢复原步', () => {
+  const { guide } = setup()
+  const Gift = sceneClass<GiftVisibilityHarness>('GiftPopupView', { DIALOG_SCRIM: {} })
+  const gift = new Gift(); gift.ensureNodes = () => {}
+  const ast = ts.createSourceFile('GameBootstrap.ts', sceneSource('GameBootstrap'), ts.ScriptTarget.ES2020, true)
+  let callback: ts.Expression | undefined
+  const scan = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && ts.isPropertyAccessExpression(node.left)
+      && node.left.expression.getText(ast) === 'giftPopup' && node.left.name.text === 'onVisibilityChanged') callback = node.right
+    ts.forEachChild(node, scan)
+  }; scan(ast); assert.ok(callback, '礼包可见性必须接入生产targets')
+  const code = ts.transpileModule('exports.callback=(function(){return (' + callback.getText(ast) + ')}).call(host)',
+    { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText
+  const exports: Record<string, unknown> = {}; runInNewContext(code, { exports, host: { guide, destroyed: false } })
+  gift.onVisibilityChanged = exports.callback as (visible: boolean) => void
+  gift.attach({ popup: true, productName: '服务端礼包名', productId: 'server-gift', offerExpireAt: null, serverNow: 1 })
+  assert.equal(gift.node.active, true); assert.equal(guide.node.active, false)
+  guide.repaint(); assert.equal(guide.node.active, false)
+  gift.attach({ popup: false, offerExpireAt: null, serverNow: 2 })
+  assert.equal(gift.node.active, false); assert.equal(guide.node.active, true)
+  gift.hide(); assert.equal(guide.node.active, true)
+})
+
+interface OfflineVisibilityHarness {
+  node: Node; render(view: { items: Array<{ text: string; detail: string | null; jump: string }> }): void; hide(): void
+  onVisibilityChanged: ((visible: boolean) => void) | null
+}
+test('实际离线汇总render/hide生产可见性回调恢复引导，空汇总与嵌套礼包不抢层', () => {
+  const { guide } = setup()
+  const Offline = sceneExports('OfflineReportOverlay', { DIALOG_SCRIM: {}, PANEL_IRON_INSET,
+    applySlicedSprite: () => false, applySystemUiFont: (label: Label) => label,
+    applyDialogButton: () => {}, fitExistingDialog: () => () => {},
+  }).OfflineReportOverlay as new (parent: Node) => OfflineVisibilityHarness
+  const offline = new Offline(new Node('Game'))
+  const ast = ts.createSourceFile('GameBootstrap.ts', sceneSource('GameBootstrap'), ts.ScriptTarget.ES2020, true)
+  let callback: ts.Expression | undefined
+  const scan = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && ts.isPropertyAccessExpression(node.left)
+      && node.left.expression.getText(ast) === 'this.offlineReport' && node.left.name.text === 'onVisibilityChanged') callback = node.right
+    ts.forEachChild(node, scan)
+  }; scan(ast); assert.ok(callback, '离线汇总可见性必须接入生产targets')
+  const code = ts.transpileModule('exports.callback=(function(){return (' + callback.getText(ast) + ')}).call(host)',
+    { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText
+  const exports: Record<string, unknown> = {}; runInNewContext(code, { exports, host: { guide, destroyed: false } })
+  offline.onVisibilityChanged = exports.callback as (visible: boolean) => void
+  const view = { items: [{ text: '来自服务端的汇总', detail: null, jump: 'city' }] }
+  offline.render(view); assert.equal(offline.node.active, true); assert.equal(guide.node.active, false)
+  guide.repaint(); assert.equal(guide.node.active, false)
+  offline.hide(); assert.equal(offline.node.active, false); assert.equal(guide.node.active, true)
+  guide.setOverlaySuppressed('giftPopup', true); offline.render(view); offline.render({ items: [] })
+  assert.equal(offline.node.active, false); assert.equal(guide.node.active, false, '礼包仍显示时不能恢复引导遮罩')
+  guide.setOverlaySuppressed('giftPopup', false); assert.equal(guide.node.active, true)
 })

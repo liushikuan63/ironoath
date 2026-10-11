@@ -55,6 +55,8 @@ export class OfflineReportOverlay {
   onJump: ((jump: string) => void) | null = null
   /** 点「知道了」：收起，并记住这一批已展示（同一批不再弹）。 */
   onDismiss: (() => void) | null = null
+  /** 与其它全局弹窗共同让出引导层，不改变汇总指纹或教程步骤。 */
+  onVisibilityChanged: ((visible: boolean) => void) | null = null
 
   constructor(parent: Node, width = PANEL_WIDTH) {
     const height = PANEL_HEIGHT
@@ -110,10 +112,11 @@ export class OfflineReportOverlay {
   render(view: OfflineReportPopup): void {
     this.view = view
     if (view.items.length === 0) {
-      this.node.active = false
+      this.hide()
       return
     }
     this.node.active = true
+    this.onVisibilityChanged?.(true)
     this.rowNodes.forEach((row, index) => {
       const item = view.items[index]
       row.active = item !== undefined
@@ -136,6 +139,7 @@ export class OfflineReportOverlay {
    */
   hide(): void {
     this.node.active = false
+    this.onVisibilityChanged?.(false)
   }
 
   private createRow(index: number, height: number): { node: Node; text: Label; detail: Label } {

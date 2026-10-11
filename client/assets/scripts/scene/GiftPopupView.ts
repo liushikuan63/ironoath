@@ -40,6 +40,8 @@ export class GiftPopupView extends Component {
   onBuy: ((productId: string) => void) | null = null
   /** 点"关闭"或遮罩：面板自己藏起来，不打扰编排层。 */
   onClose: (() => void) | null = null
+  /** 全局弹窗可见性用于暂时让出引导层，不改变引导进度。 */
+  onVisibilityChanged: ((visible: boolean) => void) | null = null
 
   private mask: Node | null = null
   private title: Label | null = null
@@ -79,6 +81,7 @@ export class GiftPopupView extends Component {
     this.setBuyEnabled(true)
     this.updateCountdown(resp)
     this.node.active = true
+    this.onVisibilityChanged?.(true)
     this.layoutDialog?.()
   }
 
@@ -108,6 +111,7 @@ export class GiftPopupView extends Component {
   /** 面板藏起来（关闭按钮、或服务端说这一屏不弹）。 */
   hide(): void {
     this.node.active = false
+    this.onVisibilityChanged?.(false)
   }
 
   private updateCountdown(resp: GiftPopupResp): void {

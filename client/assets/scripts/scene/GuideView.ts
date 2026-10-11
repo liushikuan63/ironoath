@@ -77,8 +77,17 @@ export class GuideView extends Component {
   private skipCaption: Label | null = null
   /** 面板真实选择窗暂收提示；离页不等于选择窗关闭，不能随clearLayer丢掉。 */
   private readonly suppressedPanels = new Set<string>()
+  /** 全局弹窗自带遮罩；显示时整层让出，服务端步骤与面板气泡状态保留。 */
+  private readonly suppressedOverlays = new Set<string>()
   private layoutKey = ''
   private buttonWidth = BUTTON_WIDTH
+
+  setOverlaySuppressed(key: string, suppressed: boolean): void {
+    if (suppressed === this.suppressedOverlays.has(key)) return
+    if (suppressed) this.suppressedOverlays.add(key)
+    else this.suppressedOverlays.delete(key)
+    this.repaint()
+  }
 
   /** 只收气泡，洞外遮罩继续有效；不读取任务或步骤id。 */
   setBubbleSuppressed(panelKey: string, suppressed: boolean): void {
@@ -105,6 +114,10 @@ export class GuideView extends Component {
    * 于是遮罩不会留在屏幕上挡住正常操作。
    */
   repaint(): void {
+    if (this.suppressedOverlays.size > 0) {
+      this.clearLayer()
+      return
+    }
     const driver = this.driver
     const openKey = this.openPanelKey?.() ?? null
     const frame = driver === null ? null : driver.frameFor(openKey)
@@ -564,5 +577,6 @@ export class GuideView extends Component {
   override onDestroy(): void {
     this.clearLayer()
     this.suppressedPanels.clear()
+    this.suppressedOverlays.clear()
   }
 }
