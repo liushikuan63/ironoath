@@ -7132,3 +7132,5 @@ TEST_EXIT=0
 | 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
 |---|---|---|---|---|
 | #1101 连续compact失败保全；第4次准备/第5次轮转/两次失败提前 | 本笔（本批统一推） | 原failed turn及两次compact失败已核；归档42919条完整备份；源SHA守卫正确拒绝迟到记录覆盖，候选未应用；项目及全局规则/交接落盘；表形状、只增不删及diff均exit0，全局原字节保留/读回验证通过 | D:/tmp/ironoath-chat-recovery-20261011-evening/diagnosis.json；archive-preservation.json；continuation.md；后续 native-create-result.json/continuation-progress.json/official-feedback-receipt.json 仅实际产生后有效 | 未证明压缩次数为服务端根因；新聊天创建及实际工具执行待随后的实际回执核验，不能提前报绿；原生4a恢复及4b/5/6/7a、键盘/真heap600/最终批推未完成；候选减载未应用；英文反馈已接收（回执no-active-thread-01a12b29-cf8c-7011-bb6f-f9de2000497e），官方修复未知；全局规则回退快照f2da3d5759204cbdb1bc0606d0dbd7e6；本格不推 |
+
+| #1101 实际新聊天接续与后端缺失守卫 | 本笔（本批统一推） | 真实工具执行，Git及F28三SHA一致；原48600/9490不存在，IDE36576匹配，Mongo同UID五持久记录在；成功compact计数0 | D:/tmp/ironoath-chat-recovery-20261011-evening/continuation-tools.actual.json | 用户已批准限定恢复后端，待新owner与同号GET复核；原4a分页首红保留，恢复及4b/5/6/7a、键盘/真heap600/最终批推未做 |
