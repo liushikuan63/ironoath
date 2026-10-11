@@ -61,11 +61,9 @@ public class QuestEventListener implements GameEventBus.Listener {
             long now = timeService.serverNow();
             String playerId = event.playerId();
             QuestProgressStore.State stored = store.load(playerId).orElse(null);
-            QuestProgress progress = stored == null
-                    ? QuestProgress.open(playerId, assembler.quests().stream()
-                            .map(QuestRulesAssembler.QuestDef::def).toList(),
-                            DayKey.of(now), WeekKey.of(now))
-                    : QuestProgress.restore(playerId, stored.entries(), stored.dayKey(), stored.weekKey());
+            // 写侧也使用当前表定义：只在面板读侧对账，会让旧存档继续按旧目标吞掉真实事件。
+            QuestProgress progress = QuestAppService.reconcile(playerId, assembler.quests(), stored,
+                    DayKey.of(now), WeekKey.of(now));
             // 跨期清零要在累加之前：反过来会把刚记上的进度一起抹掉，
             // 而那一刻恰逢跨天时，玩家看到的是「我明明做了，任务进度是 0」
             progress.rollover(DayKey.of(now), WeekKey.of(now));

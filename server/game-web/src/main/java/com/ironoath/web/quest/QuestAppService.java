@@ -249,7 +249,7 @@ public class QuestAppService {
      * 表里改过的 goalValue 对老玩家不生效（条目里存着旧值）。
      * 两者都不报错 —— 只是"改了表没反应"，正是本项目反复防的那一类。
      */
-    private static QuestProgress reconcile(String playerId, List<QuestRulesAssembler.QuestDef> defs,
+    static QuestProgress reconcile(String playerId, List<QuestRulesAssembler.QuestDef> defs,
                                            QuestProgressStore.State stored, String day, String week) {
         if (stored == null) {
             return QuestProgress.open(playerId, defs.stream()

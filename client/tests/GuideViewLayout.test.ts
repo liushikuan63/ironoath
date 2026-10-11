@@ -19,6 +19,7 @@ import { dialogLayout, safeAreaInsets } from '../assets/scripts/game/ui/DialogLa
 import { PANEL_IRON_INSET } from '../assets/scripts/game/art/ArtFamilies'
 import * as uiTokens from '../assets/scripts/game/ui/UiTokens'
 import { worldSceneLayout } from '../assets/scripts/game/world/WorldSceneLayout'
+import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
 
 class Vec2 { constructor(public x = 0, public y = 0) {} }
 class Mask { static Type = { GRAPHICS_RECT: 1 }; type = 0 }
@@ -890,6 +891,60 @@ interface OfflineVisibilityHarness {
   node: Node; render(view: { items: Array<{ text: string; detail: string | null; jump: string }> }): void; hide(): void
   onVisibilityChanged: ((visible: boolean) => void) | null
 }
+
+interface MarchVisibilityHarness {
+  node: Node; render(view: MarchComposeView): void
+  onVisibilityChanged: ((visible: boolean) => void) | null
+}
+function actualMarchOverlay(): MarchVisibilityHarness {
+  const March = sceneExports('MarchComposeOverlay', {
+    DIALOG_SCRIM: {}, PANEL_IRON_INSET, applyContainedSprite: () => false,
+    applySlicedSprite: () => false, applySystemUiFont: (label: Label) => label,
+    applyDialogButton: () => {}, fitExistingDialog: () => () => {},
+    view: { getVisibleSize: () => ({ width: 960, height: 443.6018957345971 }) },
+  }).MarchComposeOverlay as new (parent: Node) => MarchVisibilityHarness
+  return new March(new Node('Game'))
+}
+const monsterComposeView: MarchComposeView = {
+  targetKind: 'MONSTER', targetId: 'monster_395_270', targetName: '野怪 5级', coordText: '395,270',
+  compose: { options: [], totalText: '0', hasTroops: false, canSubmit: false, blockedReason: '尚未编成' },
+  notice: null, submitting: false,
+}
+test('实际编成render打开与空目标关闭让出完整引导层，提交中不恢复旧气泡', () => {
+  const { guide } = setup(), overlay = actualMarchOverlay()
+  const reports: unknown[] = []
+  ;(guide as GuideHarness & { onReport: (...args: unknown[]) => void }).onReport = (...args: unknown[]) => reports.push(args)
+  overlay.onVisibilityChanged = visible => guide.setOverlaySuppressed('marchCompose', visible)
+  overlay.render(monsterComposeView)
+  assert.equal(overlay.node.active, true)
+  assert.equal(guide.node.active, false, '真实编成打开必须移除遮挡加号/出征的Guide层')
+  guide.repaint(); overlay.render({ ...monsterComposeView, submitting: true })
+  assert.equal(guide.node.active, false, '异步回执及提交态重画不能抢回引导')
+  guide.setOverlaySuppressed('giftPopup', true)
+  overlay.render({ ...monsterComposeView, targetId: '' })
+  assert.equal(overlay.node.active, false); assert.equal(guide.node.active, false)
+  guide.setOverlaySuppressed('giftPopup', false)
+  assert.equal(guide.node.active, true)
+  assert.equal(guide.bubble!.getChildByName('GuideStepText')!.getComponent(Label)!.string, '服务端下发正文')
+  assert.deepEqual(reports, [], '打开/关闭编成不能代玩家报告COMPLETE或SKIP')
+})
+test('编成可见性实际接入GameBootstrap生产回调，销毁宿主不重画引导', () => {
+  const ast = ts.createSourceFile('GameBootstrap.ts', sceneSource('GameBootstrap'), ts.ScriptTarget.ES2020, true)
+  let callback: ts.Expression | undefined
+  const scan = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && ts.isPropertyAccessExpression(node.left)
+      && node.left.expression.getText(ast) === 'this.marchCompose' && node.left.name.text === 'onVisibilityChanged') callback = node.right
+    ts.forEachChild(node, scan)
+  }; scan(ast); assert.ok(callback, '生产编成可见性必须接到引导让层，不只在测试手工连线')
+  const { guide } = setup(), host = { guide, destroyed: false }, exports: Record<string, unknown> = {}
+  const code = ts.transpileModule('exports.callback=(function(){return (' + callback.getText(ast) + ')}).call(host)',
+    { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText
+  runInNewContext(code, { exports, host }); const overlay = actualMarchOverlay()
+  overlay.onVisibilityChanged = exports.callback as (visible: boolean) => void
+  overlay.render(monsterComposeView); assert.equal(guide.node.active, false)
+  host.destroyed = true; overlay.render({ ...monsterComposeView, targetId: '' })
+  assert.equal(guide.node.active, false, '已销毁宿主不得因晚到的关闭回执恢复Guide')
+})
 test('实际离线汇总render/hide生产可见性回调恢复引导，空汇总与嵌套礼包不抢层', () => {
   const { guide } = setup()
   const Offline = sceneExports('OfflineReportOverlay', { DIALOG_SCRIM: {}, PANEL_IRON_INSET,

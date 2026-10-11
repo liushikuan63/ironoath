@@ -288,13 +288,13 @@ class GuideEndpointTest {
         assertThat(progress(playerId, "guide_04_barracks_train", GuideAction.COMPLETE)
                 .get("nextStepIndex").asLong()).isEqualTo(5L);
 
-        events.progress(playerId, GoalType.KILL_MONSTER, "mapmonster_lv01", 1L, FixedClock.NOW);
+        events.progress(playerId, GoalType.KILL_MONSTER, "mapmonster_lv05", 1L, FixedClock.NOW);
         assertThat(questOf(playerId, "quest_main_04").get("current").asLong())
                 .as("Guide4 的 QUEST_DONE 不能替普通领取03，锁着的野战事件不计入04").isZero();
         assertThat(progress(playerId, "guide_05_first_battle", GuideAction.COMPLETE)
                 .get("advanced").asBoolean()).isFalse();
         assertThat(code(claimQuest(playerId, "quest_main_03", null, requestId()))).isZero();
-        events.progress(playerId, GoalType.KILL_MONSTER, "mapmonster_lv01", 1L, FixedClock.NOW);
+        events.progress(playerId, GoalType.KILL_MONSTER, "mapmonster_lv05", 1L, FixedClock.NOW);
         assertThat(questOf(playerId, "quest_main_04").get("current").asLong()).isEqualTo(1L);
         assertThat(progress(playerId, "guide_05_first_battle", GuideAction.COMPLETE)
                 .get("nextStepIndex").asLong()).isEqualTo(6L);

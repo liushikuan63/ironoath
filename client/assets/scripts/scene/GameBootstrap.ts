@@ -1696,6 +1696,9 @@ export class GameBootstrap extends Component {
     creditsNode.active = false
     this.creditsOverlay = credits
     this.marchCompose = new MarchComposeOverlay(this.node)
+    this.marchCompose.onVisibilityChanged = visible => {
+      if (!this.destroyed && this.guide?.isValid) this.guide.setOverlaySuppressed('marchCompose', visible)
+    }
     this.marchCompose.onPick = (unitId, count) => this.root?.pickMarchUnit(unitId, count)
       // 出征 / 发起集结 的切换（B26 S12）：编成与目标都不变，只换命令种类
     this.marchCompose.onToggleMode = () => { void this.root?.toggleComposeRally() }

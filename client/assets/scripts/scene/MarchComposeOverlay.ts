@@ -118,6 +118,8 @@ export class MarchComposeOverlay {
   /** 人数上限 / 等待时长加减一档（direction = ±1）。同样不发请求 */
   onAdjustNumber: ((field: RallyField, direction: number) => void) | null = null
   onCancel: (() => void) | null = null
+  /** 实际弹层开关通知宿主让出全局引导；不报告教程进度。 */
+  onVisibilityChanged: ((visible: boolean) => void) | null = null
 
   constructor(parent: Node, width = PANEL_WIDTH) {
     this.node = new Node('MarchCompose')
@@ -270,9 +272,11 @@ export class MarchComposeOverlay {
     this.view = view
     if (view.targetId.length === 0) {
       this.node.active = false
+      this.onVisibilityChanged?.(false)
       return
     }
     this.node.active = true
+    this.onVisibilityChanged?.(true)
     const scopes = view.rallyScopes ?? []
     const numbers = view.rallyNumbers ?? []
     // 那一条只顶替最下面一行：兵力行少一眼能看完一种兵，

@@ -97,6 +97,9 @@ class MonsterHuntEndpointTest {
     @Autowired private com.ironoath.web.battle.MonsterBattleService monsters;
     @Autowired private com.ironoath.web.season.SeasonRulesAssembler seasons;
     @Autowired private BattleReportStore battleReports;
+    @Autowired private com.ironoath.web.quest.QuestAppService quests;
+    @Autowired private com.ironoath.web.quest.QuestProgressStore questStore;
+    @Autowired private com.ironoath.web.quest.QuestRulesAssembler questRules;
     @Autowired private com.ironoath.web.battle.BattleReportService battleReportService;
 
     @BeforeEach
@@ -355,6 +358,7 @@ class MonsterHuntEndpointTest {
         Hunter hunter = readyHunter();
         giveTroops(hunter.playerId, Map.of(hunter.unitId, hunter.overwhelming));
         arriveAndProcess(sendAttack(hunter));
+        assertThat(world.isConsumed(hunter.monsterCoord)).as("必须先证明真实战斗胜利而非只注入击杀事件").isTrue();
         String reportId = battleReportService.list(hunter.playerId).reports().get(0).reportId();
 
         String stranger = newPlayerAt(300, 300);
@@ -418,7 +422,7 @@ class MonsterHuntEndpointTest {
         assertThat(captured).as("打赢一场野怪应当恰好发一个事件").hasSize(1);
         assertThat(captured.get(0).playerId()).isEqualTo(hunter.playerId);
         assertThat(captured.get(0).targetId())
-                .as("目标必须是 mapmonster 的行 id —— 任务表按它匹配（quest_main_04 盯的就是 lv01）")
+                .as("击杀事件仍保留真实 mapmonster 行 id，任意等级任务由目标为空匹配")
                 .isEqualTo(hunter.monster.id());
         assertThat(captured.get(0).amount()).isEqualTo(1L);
     }
@@ -428,7 +432,58 @@ class MonsterHuntEndpointTest {
     }
 
     private Hunter readyHunter() {
-        String playerId = newPlayerAt(256, 256);
+        return readyHunter(256, 256);
+    }
+
+    @Test
+    @DisplayName("外圈同号首战：真实Lv5胜利推进任意等级主线04，旧Lv1定义不重置已领前置")
+    void outerRingVictoryCompletesFirstBattleForExistingLevelOneQuest() {
+        Hunter hunter = readyHunter(401, 270);
+        assertThat(hunter.monster.level()).isEqualTo(5L);
+        seedExistingFirstBattleQuest(hunter.playerId, false);
+        giveTroops(hunter.playerId, Map.of(hunter.unitId, hunter.overwhelming));
+        arriveAndProcess(sendAttack(hunter));
+        var entry = quests.entryOf(hunter.playerId, "quest_main_04").orElseThrow();
+        assertThat(entry.current()).as("真实非Lv1胜利也应完成首战主线").isEqualTo(1L);
+        assertThat(entry.goalTarget()).as("旧存档定义从当前表重建为任意等级").isNull();
+        assertThat(entry.claimed()).as("打赢不代替普通领奖").isFalse();
+        assertThat(quests.entryOf(hunter.playerId, "quest_main_03").orElseThrow().claimed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("外圈首战失败不推进任意等级任务；已领主线04重建定义后保留领取与计数")
+    void outerRingLossDoesNotCompleteAndClaimedFirstBattleStaysClaimed() {
+        Hunter hunter = readyHunter(401, 270);
+        seedExistingFirstBattleQuest(hunter.playerId, false);
+        giveTroops(hunter.playerId, Map.of("unit_infantry_t1", 1L));
+        arriveAndProcess(sendAttack(hunter));
+        assertThat(world.isConsumed(hunter.monsterCoord)).isFalse();
+        assertThat(quests.entryOf(hunter.playerId, "quest_main_04").orElseThrow().current()).isZero();
+        seedExistingFirstBattleQuest(hunter.playerId, true);
+        var retained = quests.entryOf(hunter.playerId, "quest_main_04").orElseThrow();
+        assertThat(retained.goalTarget()).isNull();
+        assertThat(retained.current()).isEqualTo(1L);
+        assertThat(retained.claimed()).as("表热更不重置已领状态或创造重复领奖").isTrue();
+    }
+
+    /** 仅测试夹具：已有F29任务账本的定义仍限定Lv1，前置三条已正常领过。 */
+    private void seedExistingFirstBattleQuest(String playerId, boolean firstBattleClaimed) {
+        var entries = questRules.quests().stream().map(row -> {
+            var def = row.def();
+            boolean previous = List.of("quest_main_01", "quest_main_02", "quest_main_03").contains(def.questId());
+            boolean first = "quest_main_04".equals(def.questId());
+            return new com.ironoath.core.quest.QuestProgress.Entry(def.questId(), def.type(),
+                    def.goalType(), first ? "mapmonster_lv01" : def.goalTarget(), def.goalValue(),
+                    def.preQuestId(), previous || first && firstBattleClaimed ? def.goalValue() : 0L,
+                    previous || first && firstBattleClaimed);
+        }).toList();
+        long now = System.currentTimeMillis();
+        questStore.save(playerId, new com.ironoath.web.quest.QuestProgressStore.State(playerId, entries,
+                com.ironoath.common.time.DayKey.of(now), com.ironoath.common.time.WeekKey.of(now)));
+    }
+
+    private Hunter readyHunter(int homeX, int homeY) {
+        String playerId = newPlayerAt(homeX, homeY);
         liftProtection(playerId);
         Coord home = worldAppService.homeOf(playerId);
 
@@ -452,7 +507,7 @@ class MonsterHuntEndpointTest {
                 }
             }
         }
-        assertThat(monsterCoord).as("世界中心 40 格内必须能找到野怪").isNotNull();
+        assertThat(monsterCoord).as("夹具城附近40格内必须能找到野怪").isNotNull();
 
         long monsterTotal = monster.infantryCount() + monster.cavalryCount()
                 + monster.archerCount() + monster.siegeCount();
