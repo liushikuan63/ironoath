@@ -7056,3 +7056,5 @@ TEST_EXIT=0
 | #1064 原生对照与同号恢复 | 本笔（证据原子提交，本批统一推） | 移动120秒actual0/约7900真实帧；正常close0；R15恢复actual0；GPU只读第三尝试true0，前两semanticfalse保留 | D:/tmp/ironoath-wechat-20261010/native-control-moving-v26/moving-control-first.actual.json；native-resume-guide3-after-control-v26-session9.actual.json；root-native-onboarding-v26/game-idle-after-control-v26-retry2.receipt.json | 六资源/四手动retry1在途；后五步及完整头像实图待；9GB交互内存根因待，未推 |
 
 | #1065 六资源原生操作内存新反证 | 本笔（证据原子提交，本批统一推） | 六说明一致；同号六课checkpoint true；GPU两次true0/纹理35MB缓冲31MB稳定/afterdraw槽0，真实主进程约1.88GB→正常close438MB | D:/tmp/ironoath-wechat-20261010/root-ide-v25-session9/memory.jsonl；root-native-onboarding-v26/driver-0391-six-lessons-gpu-counters.receipt.json；native-checkpoint-six-lessons-v26-session9.actual.json | 四建四手采在途；金币体力矮屏末段真滚动待，内存根因和剩余七步/头像实图待，未推 |
+
+| #1066 礼包引导重叠候选及原生量具反证 | 候选e63edeab；本笔主源证据提交 | 原源39含3红→候选39全绿；client1232/0失败0跳；两typecheck0；真实mask正向point0/负向拒2；游戏堆接口不可用 | D:/tmp/ironoath-native-gift-guide-1066/docs/native-gift-guide-priority-1066.md；D:/tmp/ironoath-wechat-20261010/gift-guide-1066-client-full.log；native-stage3-v26-session9-retry1至7各原失败回执 | 候选未应用F26/未构建原生；retry8资源续测在途；模拟器实际竖屏未转，头像及内存根因/余七步待，未推 |
