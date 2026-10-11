@@ -7020,3 +7020,5 @@ TEST_EXIT=0
 | #1046 版本4重生成两处头部同步，F23失败不抹掉 | 本笔（原子修正，本批统一推送） | F23 consumer-release0/check1/supervisor1；npm gen0，两处生成头同步版本4 | D:/tmp/ironoath-wechat-20261010/root-supervised-v23-full.actual-exit.json；full-validation-v23/check.log；pve-entry-1046-gen.log | 新F24独占全量/同输入运行时/原生全7与主5待，不借旧源绿；登录待，本批未推 |
 
 | #1047 野怪入口新源 F24 全工程、两端产物及67独审现过 | 本笔（原子留档，本批统一推送） | consumer-release/check/build/Web/微信/supervisor全0；47门，client1228/0/0，JUnit2289/0/0/0；独审67/0，1440源786生成337Web342微信 | D:/tmp/ironoath-wechat-20261010/full-validation-v24/inputs.json；root-supervised-v24-full.actual-exit.json；native-v24-independent-input-evidence.json | 65批及五补项运行时待、原生全7/主5及panzoom待；独审首工具依赖漏复制实际1保留后修量具真实复核0；旧引擎loginfalse，登录待，本批未推 |
+
+| #1048 F24国策补项真实87/0及自有清理通过，R13仅准备 | 本笔（原子留档，本批统一推送） | policy87/0、原始probe0/wrapper0/supervisor0/cleanup0；纯装备126与policy17量具现过；R13 342/340两本地配置差异 | D:/tmp/ironoath-wechat-20261010/runtime-v24-policy-first/policy-proof.json；root-supervised-v24-policy-first.actual-exit.json；run-local-ide-13/native-artifact-binding-v24.json；native-v24-preparation-first-failure.txt | 65与装备业务仍在途；原生登录待、同号全7/主5及真实像素panzoom未验；R13准备器两真实失败保留后修量具重新0；仅目视新Web内城/行军弹窗，不替原生，本批未推 |
