@@ -7050,3 +7050,5 @@ TEST_EXIT=0
 | #1061 默认前43实际0及600秒采样开始 | 本笔（证据原子提交，本批统一推） | 默认43份actual0；国家训练自然420秒；整城新图目视；旧CLI精确清理0但不算登录、后独立logintrue/0；外置control/监督器AST0、业务NO_RUN | D:/tmp/ironoath-wechat-20261010/runtime-v26；native-stable-v26-login-refresh2-client-stop.json；native-stable-v26-islogin-after-old-cli-stop.stdout；native-control-moving-v26/canonical-owner-adjustment.json | 性能600秒与后22份未完成；精确5补项/独审及原生后五步/三头像实图/9GB内存根因待，未推 |
 
 | #1062 F26完整600秒性能和原生测量静态兼容 | 本笔（证据原子提交，本批统一推） | 默认前44actual0；600秒0、首屏2505ms/FPS60.2/堆22.1至32.8MB峰63.4；弱网6秒恢复；外置14文件AST及模式0、business NO_RUN | D:/tmp/ironoath-wechat-20261010/runtime-v26/probe-verify-perf-runtime.mjs.log；native-v26-harness-prepared-memory.json | 浏览器性能不代原生性能；默认余21/精确5补项及最终67待；原生余步/头像补图及9GB内存根因待，未推 |
+
+| #1063 F26完整运行时和精确补项闭合 | 本笔（证据原子提交，本批统一推） | 默认65首次actual0/零重试失败跳过；cleanup0；policy87/equip81 COVER4/4精确5补项；合并accepted true/校验0；现核独审67/0 | D:/tmp/ironoath-wechat-20261010/runtime-v26/phase-closure.actual.json；phase-evidence-v26.json；summary-supplemented.json；final-independent-input.log | 原wrapper1和原五未验保持；原生control在途，七步后五步/主5收割panzoom/完整头像实图及9GB根因待，未推 |
