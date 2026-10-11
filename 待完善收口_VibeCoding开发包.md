@@ -7018,3 +7018,5 @@ TEST_EXIT=0
 | #1045 首战脚本内容变更同步版本4，避免旧版本展示缓存 | 本笔（原子修正，本批统一推送） | GuideScriptResp与GuideRulesAssembler版本读取生产证据；guide version3→4 | contract/config/guide.json；server/game-web/src/main/java/com/ironoath/web/guide/GuideRulesAssembler.java | 新F23统一生成/全量及原生待，本批未推 |
 
 | #1046 版本4重生成两处头部同步，F23失败不抹掉 | 本笔（原子修正，本批统一推送） | F23 consumer-release0/check1/supervisor1；npm gen0，两处生成头同步版本4 | D:/tmp/ironoath-wechat-20261010/root-supervised-v23-full.actual-exit.json；full-validation-v23/check.log；pve-entry-1046-gen.log | 新F24独占全量/同输入运行时/原生全7与主5待，不借旧源绿；登录待，本批未推 |
+
+| #1047 野怪入口新源 F24 全工程、两端产物及67独审现过 | 本笔（原子留档，本批统一推送） | consumer-release/check/build/Web/微信/supervisor全0；47门，client1228/0/0，JUnit2289/0/0/0；独审67/0，1440源786生成337Web342微信 | D:/tmp/ironoath-wechat-20261010/full-validation-v24/inputs.json；root-supervised-v24-full.actual-exit.json；native-v24-independent-input-evidence.json | 65批及五补项运行时待、原生全7/主5及panzoom待；独审首工具依赖漏复制实际1保留后修量具真实复核0；旧引擎loginfalse，登录待，本批未推 |
