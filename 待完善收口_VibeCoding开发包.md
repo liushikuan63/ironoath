@@ -7060,3 +7060,5 @@ TEST_EXIT=0
 | #1066 礼包引导重叠候选及原生量具反证 | 候选e63edeab；本笔主源证据提交 | 原源39含3红→候选39全绿；client1232/0失败0跳；两typecheck0；真实mask正向point0/负向拒2；游戏堆接口不可用 | D:/tmp/ironoath-native-gift-guide-1066/docs/native-gift-guide-priority-1066.md；D:/tmp/ironoath-wechat-20261010/gift-guide-1066-client-full.log；native-stage3-v26-session9-retry1至7各原失败回执 | 候选未应用F26/未构建原生；retry8资源续测在途；模拟器实际竖屏未转，头像及内存根因/余七步待，未推 |
 
 | #1067 全局礼包与离线汇总引导层修复应用 | 本笔（五源码测试路径+专文+证据原子提交） | 真实回归40含1红→40绿；候选client1233/0失败0跳；两typecheck0；原R15正常close0/9488清理0 | docs/native-gift-guide-priority-1066.md；D:/tmp/ironoath-wechat-20261010/global-overlay-1067.applied.json；offline-guide-1067-client-full.log | F26旧读数不能验新源；F27全工程/新原生实画与完整头像七步待；方向API0非实际旋转，内存根因待，未推 |
+
+| #1068 F27完整工程与新输入冻结 | 本笔（证据原子提交，本批统一推） | 全监督0/47门0/client1233辅助11均0失败0跳/JUnit229套2292无失败错误跳/Web及WX0/capture0/独审67全绿 | D:/tmp/ironoath-wechat-20261010/full-validation-v27/inputs.json；native-v27-independent-input-evidence.json；root-supervised-v27-full.actual-exit.json | 新默认65/600真实在途无最终counts；policy/equip NO_RUN；新原生礼包/离线汇总、头像七步/真实方向及内存根因待，未推 |
