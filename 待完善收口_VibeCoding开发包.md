@@ -7179,6 +7179,12 @@ TEST_EXIT=0
 
 | #1123 免费金币长期游玩设计v1与G01至G07实施卡；现有等级奖励不重复建设 | 本笔（本批统一推） | 現读配置/生产调用与7任务卡；来源额度与预算算术断言全部通过；F30 input/binding/JAR三个SHA现核保持；仅文档核验，不冒充新功能测试或原生闭环。 | docs/免费金币与长期游玩设计.md；D:/tmp/ironoath-wechat-20261010/gold-design-inventory.actual.json；free-gold-design-validation.actual.json | 新金币功能尚未实现；建议额度/目标/探索条目/共享首杀/历史迁移待审定及经济模型；未对冻结F30发奖或改变配置；原生剩余如#1122，未推。 |
 
+## 四、实施记录（续：2026-10-12 当前聊天持续验收）
+
+以下为原任务的持续执行记录。旧轮转记录保留为历史；当前按用户最新要求留在本聊天继续。
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
 | #1124 提前结束执行原因现核与持续推进规则修复；Guide7导航首红有效回归49全过 | 本笔（本批统一推） | GuideViewLayout49：旧48/1有效红→初修边界浮点1红→净隙49/0/0；当前后端Java50152与IDE36576原创建时间保持；尚未全量或切版。 | D:/tmp/ironoath-wechat-20261010/native-guide7-current-ui.actual.json；guide-navigation-1124.red.log；guide-navigation-1124.green-final.log；AGENTS.md九 | 导航修复在隔离分支未切F31，完整工程/10probe及同号导航验收待做；原生05领取/主5/小队真实键盘/正收割/Guide4/真heap600/65加5/批推未完成。 |
 
 | #1125 STATE跨面板导航修复完整工程与10探针全过，F31客户端候选就绪 | 本笔（本批统一推） | check0/build0，229XML共2294/0/0/0，客户端1245/0/0；Cocos包装0/raw36且产物完整，10probe各0，首包2.80MB小于4MB；bundle确含navigationRect/excludeNavigation。 | D:/tmp/ironoath-wechat-20261010/guide-navigation-1125.candidate.actual.json；guide-navigation-1124-runtime/actual.json；guide-navigation-1124.junit.actual.json；guide-navigation-1124-native-candidate/plan.json；f30-before-native-f31-backup/backup.actual.json | F31尚未切活，真实STATE导航与主5/小队/收割等仍待，浏览器不冒充原生；未推。 |
@@ -7208,3 +7214,5 @@ TEST_EXIT=0
 | #1137 F32冻结逐字节核对与106处换行反证 | 本笔（本批统一推） | 独立当前audit EXIT0；1440+786+45+337+342原字节全匹配；跨副本106仅EOL；候选tracked clean；compact实际6仍在本聊天继续 | D:/tmp/ironoath-wechat-20261010/f32-current-frozen-input-audit-1791741794401.actual.json；首次严格audit-1791741750240.actual.json保留 | 完整65批跑尚未结束；满城原两次环境失败待最终映射新实际0；后台键盘拒绝后等待用户实际输入，Guide7/06/原生收取/无挡名称牌/真实GAME heap600未验完。 |
 
 | #1138 验收启动器保留Windows继承PATH，真实找程序回归 | 本笔（本批统一推） | 路径回归EXIT0：原失效反证ENOENT；两种键真实Python+Node退出0；父环境不变；新producer语法EXIT0；当前性能采样150秒堆41.3MB/峰44.8MB | D:/tmp/ironoath-wechat-20261010/task-child-env-path-regression-1791743436269.actual.json；fixed-f32-batch-producer-prepared.actual.json | 修正新启动器仅备好且语法验证，未重复启动整批；当前65批跑43已完成，600秒浏览器采样未完；原生字段仍空，Guide7/06/07解锁可见/收取/无挡地图/真实GAME heap600未完成。 |
+
+| #1139 当前连续执行记录明确归入§四，旧轮转仅历史 | 本笔（本批统一推） | 文档实读与旧非空行包含验证通过；表形状/只增不删/diff现跑；600秒浏览器性能实际EXIT0/0错误，完整余项仍在跑 | D:/tmp/ironoath-wechat-20261010/current-implementation-section.actual.json；开发包§四续；原性能probe日志 | 完整65尚未收口；当前R18手工文字输入依赖与原生Guide7/06/07/正收取/地图实图/真正GAME heap600仍未验完，未推送。 |
