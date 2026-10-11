@@ -7016,3 +7016,5 @@ TEST_EXIT=0
 | #1044 world野怪点选→原编成正常确认，原子合入并准备新F23 | 本笔（原子实现，本批统一推送） | immutable patch apply-check/主gen0；候选最终1228/0/0、两类typecheck0、track门纠正准备方法豁免后0；两条原缺函数RED保留，取消无写/无点、确认恰好一次 | D:/tmp/ironoath-wechat-20261010/pve-entry-1044.review.patch；pve-entry-1043-client-final.log；pve-entry-1044-main-gen.log；pve-entry-1043-track-first.log与retry1 | 主分支新F23全量/构建/同输入65及补项/原生新同号全七步与主5未执行，旧F22仅旧源；NWJS独立登录仍待，本批未推 |
 
 | #1045 首战脚本内容变更同步版本4，避免旧版本展示缓存 | 本笔（原子修正，本批统一推送） | GuideScriptResp与GuideRulesAssembler版本读取生产证据；guide version3→4 | contract/config/guide.json；server/game-web/src/main/java/com/ironoath/web/guide/GuideRulesAssembler.java | 新F23统一生成/全量及原生待，本批未推 |
+
+| #1046 版本4重生成两处头部同步，F23失败不抹掉 | 本笔（原子修正，本批统一推送） | F23 consumer-release0/check1/supervisor1；npm gen0，两处生成头同步版本4 | D:/tmp/ironoath-wechat-20261010/root-supervised-v23-full.actual-exit.json；full-validation-v23/check.log；pve-entry-1046-gen.log | 新F24独占全量/同输入运行时/原生全7与主5待，不借旧源绿；登录待，本批未推 |
