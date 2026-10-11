@@ -7076,3 +7076,5 @@ TEST_EXIT=0
 | #1074 F27默认65与精确5遗漏新补验收口 | 本笔（本批统一推） | 默认65首跑actual0/cleanup0；policy87/0；equip81/0 COVER4/4；exact5/闭包0/独立67/0；13张本轮实图已看 | D:/tmp/ironoath-wechat-20261010/runtime-v27/phase-closure.actual.json；f27-supplement-visual-review-1074.json | 原wrapper1保留；极短240国策无提案行；微信七步18字段及原生600秒NO_RUN，隔离堆GC与低端真机未验，未推 |
 
 | #1075 F27微信普通后端与R16横屏新号真实打开，七步在途 | 本笔（本批统一推） | ordinary9489 auth200/code0；新binding29/0；实际open/read/shot0；新号main1/Guide1；frame844x390横屏 | D:/tmp/ironoath-wechat-20261010/native-v27-r16-independent-binding-evidence.json；native-observed-open-v27-session9.actual.json；root-native-onboarding-v27/driver-0013-f27-first-actual-screen.png | stage1实际在途；七步及18hero字段实图未完成；原生600秒/隔离堆GC/低端真机未验，未推 |
+
+| #1076 微信主城3级真实结果核验0，退出码采集修复及选择窗内存增长未收口 | 本笔（本批统一推） | main3/Guide2/choice真实；原stage1顶层null保留；新只读核验0/70动作0；exit控制0及7正确；内存449至3272MB后close456MB | D:/tmp/ironoath-wechat-20261010/native-stage1-independent-observed-v27-session9.actual.json；native-action-exit-control-v27.actual.json；root-native-onboarding-v27/f27-choice-retained-nullguard.receipt.json；root-ide-v25-session9/memory.jsonl | 选择窗内存持续增长根因/稳定性未收口；工具关闭仅保护；三武将18字段/四手采/5级收割/原生600秒未完成，未推 |
