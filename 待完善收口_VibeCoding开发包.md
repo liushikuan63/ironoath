@@ -7068,3 +7068,5 @@ TEST_EXIT=0
 | #1070 F27弹窗与实图复核及原生诊断准备 | 本笔（证据原子提交，本批统一推） | 默认首21actual0；弹窗421通过0失败；两图真实查看；三新外置量具语法0 | D:/tmp/ironoath-wechat-20261010/f27-visual-review-1070.json；native-v27-retained-memory-prepared.json；runtime-v27/probe-verify-dialog-style-runtime.mjs.log | 默认65/600在途；新原生同场遮挡/18字段/七步仍NO_RUN；方向/内存根因待；官方19207未确认本案，未推 |
 
 | #1071 F27三路径新绿与原生600秒独立量具 | 本笔（证据原子提交，本批统一推） | 默认首37actual0；Guide310/奖励130/行军135均0失败，奖励0跳；native600量具语法0 | D:/tmp/ironoath-wechat-20261010/runtime-v27；f26-historical-scene-geometry-1071.json；native-v27-soak-600-observed.mjs | 国家集结及默认余项在途；policy/equip业务NO_RUN；新原生18字段/七步/600秒未执行，方向/内存根因/隔离堆GC仍待，未推 |
+
+| #1072 外部引擎修复证据补注与当前国家链路 | 本笔（证据原子提交，本批统一推） | 默认首38actual0；国家集结全部判据过/页面异常0；只读依赖诊断语法0 | D:/tmp/ironoath-wechat-20261010/native-v27-dependency-diagnostic-prepared.json；runtime-v27/probe-verify-nation-rally-runtime.mjs.log；官方forum176993与cocos4 PR267 | 本机当前平台清理开关及图片贡献NO_RUN；不冒v4合并为3.8.7已修；默认余项/精确补项/新原生七步18字段600仍待，未推 |
