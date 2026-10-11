@@ -197,8 +197,8 @@ export class EquipPanelView extends Component {
    * 「强化」键（V11）。
    *
    * <p><b>灰键不吃触摸</b>（与招募面板同一条纪律）：点了没反应比不给按钮更糟。
-   * 灰的原因不去这里复述 —— 右侧那一行本来就写着 `row.reasonText`（"已满级" / "铁不够"），
-   * 在按钮上再写一遍就是同一句话的两个产地。
+   * 换装动作会占用右列的状态位置，禁用按钮直接显示同一服务端原因，
+   * 让玩家在可装备/卸下时也能知道为什么不能强化；费用仍保留在右列第二行。
    */
   private forgeButton(row: EquipRow, y: number, x: number): void {
     const width = FORGE_ZONE - 10
@@ -220,7 +220,8 @@ export class EquipPanelView extends Component {
     }
     this.rows.push(node)
     applyDialogButton(node, row.canForge, width, height)
-    this.caption(node, '强化', row.canForge ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 16, width, height)
+    this.caption(node, row.canForge ? '强化' : (row.reasonText ?? '暂不能强化'),
+      row.canForge ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM, 16, width, height)
   }
 
   private drawClose(): Node {

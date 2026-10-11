@@ -189,6 +189,26 @@ test('生产动作在touch-end提交，拖动cancel无强化/装备；灰键与�
   }
   assert.deepEqual(calls, ['forge:enabled', 'equip:enabled'])
 })
+test('选中武将可换装时灰强化键仍显示服务端原因，材料费用保留且无强化监听', () => {
+  const { equip } = setup()
+  const locked = { ...row('low', false), costText: '强化消耗 铁矿 1551' }
+  equip.render(data([locked, { ...row('max', false, '卸下'), reasonText: '已满级' }, row('ready')]))
+  const caption = (uid: string): Label => find(equip.node, 'forge-' + uid).children
+    .map(node => node.getComponent(Label)).find((label): label is Label => label !== null)!
+  assert.equal(caption('low').string, locked.reasonText)
+  assert.equal(caption('max').string, '已满级')
+  assert.equal(caption('ready').string, '强化')
+  const body = find(equip.node, 'DialogContentContent')
+  assert.ok(body.children.some(node => node.getComponent(Label)?.string === locked.costText))
+  assert.ok(body.children.some(node => node.getComponent(Label)?.string === '装备'))
+  assert.ok(body.children.some(node => node.getComponent(Label)?.string === '卸下'))
+  for (const uid of ['low', 'max']) {
+    assert.equal(find(equip.node, 'forge-' + uid).hasEventListener('touch-end'), false)
+    assert.equal(caption(uid).overflow, Label.Overflow.SHRINK)
+    assert.equal(caption(uid).enableWrapText, false)
+  }
+})
+
 test('16件全部保留服务端行序/uid/名称/强化权威灰态，重画销毁旧容器，关闭只hide', () => {
   const { equip } = setup(); const rows = Array.from({ length: 16 }, (_, i) => row(String(i), i % 2 === 0))
   equip.render(data(rows)); const body = find(equip.node, 'DialogContentContent')
