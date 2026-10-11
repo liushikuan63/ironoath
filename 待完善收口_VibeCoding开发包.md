@@ -7066,3 +7066,5 @@ TEST_EXIT=0
 | #1069 F27新原生与补测准备 | 本笔（证据原子提交，本批统一推） | R16文件342中340原样；外置语法0；装备纯127全绿及两绑定0；默认已完成12实际0 | D:/tmp/ironoath-wechat-20261010/run-local-ide-16/native-artifact-binding-v27.json；native-v27-hero-preview-prepared.json；full-unified-tools-v27/equip-tools/template-freeze.json | 默认65未结束；policy/equip及新原生18字段/七步业务NO_RUN；方向和内存根因待；未推 |
 
 | #1070 F27弹窗与实图复核及原生诊断准备 | 本笔（证据原子提交，本批统一推） | 默认首21actual0；弹窗421通过0失败；两图真实查看；三新外置量具语法0 | D:/tmp/ironoath-wechat-20261010/f27-visual-review-1070.json；native-v27-retained-memory-prepared.json；runtime-v27/probe-verify-dialog-style-runtime.mjs.log | 默认65/600在途；新原生同场遮挡/18字段/七步仍NO_RUN；方向/内存根因待；官方19207未确认本案，未推 |
+
+| #1071 F27三路径新绿与原生600秒独立量具 | 本笔（证据原子提交，本批统一推） | 默认首37actual0；Guide310/奖励130/行军135均0失败，奖励0跳；native600量具语法0 | D:/tmp/ironoath-wechat-20261010/runtime-v27；f26-historical-scene-geometry-1071.json；native-v27-soak-600-observed.mjs | 国家集结及默认余项在途；policy/equip业务NO_RUN；新原生18字段/七步/600秒未执行，方向/内存根因/隔离堆GC仍待，未推 |
