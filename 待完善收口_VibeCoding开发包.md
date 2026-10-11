@@ -7126,3 +7126,9 @@ TEST_EXIT=0
 | #1099 R18三候选18字段与后端逐项对账全0，选将一次8000粮实际成功并进入资源教学 | 本笔（本批统一推） | R18 hero慢拖恢复actual0/18字段；独立后端对账18/0 actual0；6真PNG已看；选将高亮不发奖/确认武将+粮8003/Guide3均真；stage3普通链在途 | D:/tmp/ironoath-wechat-20261010/native-stage2-v28-r18-slow-recovery.actual.json；native-r18-hero-preview-authority.actual.json；root-native-onboarding-v28-r18/driver-0099、0109、0381、0413、0495、0517对应PNG；native-r18-after-hero.caller.log；native-stage3-v28-r18-chain.owner.json | 资源stage3及普通后段/主城5正收割/建筑拖缩/粮草末句实图/真实键盘建小队/整树与真gameheap600尚未收口；当前小游戏上下文没有memory/SDK，前端heap不可替代；未推送 |
 
 | #1100 R18六资源教学与四资源唯一手动全0；粮草末句实拖实图及主城3锁门成立 | 本笔（本批统一推） | stage3 actual0/六教学+四自然造+四手动+粮领奖+Guide4；独立7GET/4唯一transition actual0；主城3收割仍锁；粮末句实拖17.09px/PNG已看；4a在途 | D:/tmp/ironoath-wechat-20261010/native-stage3-v28-r18-chain.actual-exit.json；native-stage3-v28-r18.actual.json；native-r18-four-manual-learning.audit.json；native-grain-body-scroll-v28-r18.actual.json；root-native-onboarding-v28-r18/driver-0620-grain-final-unlock-lines-after-real-scroll.png；native-stage4a-v28-r18-chain.owner.json | 普通兵营/编队/100练兵/野怪/召募/主城5正收割/建筑拖缩/真实文字输入小队/整树与真gameheap600未收口；官方keyboard文档本轮搜索无结果且直接页无法打开，不据记忆猜API；当前Game上下文自带require是小程序模块，v8模块不可用，不能用前端heap替代游戏heap；未推 |
+
+### 2026-10-11 晚间 · #1101 压缩复发保全与主动轮转
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #1101 连续compact失败保全；第4次准备/第5次轮转/两次失败提前 | 本笔（本批统一推） | 原failed turn及两次compact失败已核；归档42919条完整备份；源SHA守卫正确拒绝迟到记录覆盖，候选未应用；项目及全局规则/交接落盘；表形状、只增不删及diff均exit0，全局原字节保留/读回验证通过 | D:/tmp/ironoath-chat-recovery-20261011-evening/diagnosis.json；archive-preservation.json；continuation.md；后续 native-create-result.json/continuation-progress.json/official-feedback-receipt.json 仅实际产生后有效 | 未证明压缩次数为服务端根因；新聊天创建及实际工具执行待随后的实际回执核验，不能提前报绿；原生4a恢复及4b/5/6/7a、键盘/真heap600/最终批推未完成；候选减载未应用；英文反馈已接收（回执no-active-thread-01a12b29-cf8c-7011-bb6f-f9de2000497e），官方修复未知；全局规则回退快照f2da3d5759204cbdb1bc0606d0dbd7e6；本格不推 |
