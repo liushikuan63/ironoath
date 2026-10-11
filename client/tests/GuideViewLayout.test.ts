@@ -421,6 +421,33 @@ test('引导已结束后不抢新导航层级', () => {
   assert.equal(host.children.at(-1), nav)
   assert.equal(guide.node.active, false)
 })
+
+test('跨面板状态引导保留真实导航盒可点；非导航暗区仍拦截', () => {
+  const { guide } = setup('hero'), host = new Node('Game'), nav = new Node('NavBar')
+  host.addChild(guide.node); host.addChild(nav)
+  nav.addComponent(UITransform).setContentSize(800, 52); nav.setPosition(new Vec3(0, -180, 0))
+  guide.attach({ version: 'server', nextStepIndex: 7, applies: true, serverNow: 1,
+    steps: [{ id: 'state', name: '状态目标', stepIndex: 7, panelKey: 'social', highlightPath: 'social',
+      maskArea: 'full', text: '服务端状态目标', trigger: 'STATE_REACHED', skippable: true }] })
+  assert.equal(guide.node.active, true, '状态提示仍跨面板显示，不伪造完成')
+  const navRect = ownRect(nav)
+  assert.ok(guide.blockerNodes.length > 0, '其他暗区仍保持遮罩')
+  for (const blocker of guide.blockerNodes) assert.equal(intersects(ownRect(blocker), navRect), false,
+    '导航真实自身盒不得被引导挡住：' + JSON.stringify({ blocker: ownRect(blocker), navRect }))
+  assert.ok(guide.blockerNodes.some(n => intersects(ownRect(n), { x: -470, y: -190, width: 10, height: 10 })),
+    '导航盒外的底部暗区不能被一并放开')
+  nav.setPosition(new Vec3(0, -170, 0)); guide.update()
+  for (const blocker of guide.blockerNodes) assert.equal(intersects(ownRect(blocker), ownRect(nav)), false,
+    '安全边变化后导航洞须跟随实际盒')
+})
+
+test('面板打开类引导仍拦导航，不把跨面板状态例外扩大到所有步骤', () => {
+  const { guide } = setup('city'), host = new Node('Game'), nav = new Node('NavBar')
+  host.addChild(guide.node); host.addChild(nav)
+  nav.addComponent(UITransform).setContentSize(800, 52); nav.setPosition(new Vec3(0, -180, 0))
+  guide.repaint()
+  assert.ok(guide.blockerNodes.some(n => intersects(ownRect(n), ownRect(nav))))
+})
 test('非city长文保原420宽；非对称安全区两角均在真实净区内', () => {
   const { guide } = setup('army')
   assert.equal(dimensions(guide.bubble!).width, 420)

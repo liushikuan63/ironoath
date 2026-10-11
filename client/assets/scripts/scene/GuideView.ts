@@ -9,7 +9,8 @@
  * 一个全屏节点挂了触摸监听就会把**所有**触摸吃掉，高亮处也一起被挡住，玩家就没法做那一步了（引导会卡死）。
  * 四块拼出"除了高亮之外的区域"，于是：高亮内的操作照常（升级主城、领奖…），
  * 高亮外的点击被挡下并交给 {@link GuideDriver.outsideTap} 记一次埋点（验收 6）。
- * 洞 = 面板可用区域（不含底部导航条，由 {@code PanelNav.contentRectFor} 给出）∩ 服务端给的矩形遮罩。
+ * 洞 = 面板可用区域（由 {@code PanelNav.contentRectFor} 给出）∩ 服务端给的矩形遮罩。
+ * 跨面板 STATE_REACHED 另保留导航条的真实自身盒，允许玩家去完成状态目标；其他暗区仍拦截。
  *
  * <p><b>不参与 node:test</b>：本文件 import 'cc'，与 scene/ 下其它文件同一条边界。
  * 因此"遮罩真的挡住了导航条"这件事在编辑器/真机里看过才算验证过，这里只有类型与构建保证。
@@ -186,8 +187,35 @@ export class GuideView extends Component {
       return `${node.position.x}:${node.position.y}:${box.width}:${box.height}:${box.anchorX}:${box.anchorY}`
     }).join(';')
     const quest = this.node.parent?.getChildByName('quest')
+    const nav = this.navigationRect()
     return `${width}:${height}:${this.openPanelKey?.() ?? ''}:${hole.x}:${hole.y}:${hole.width}:${hole.height}`
       + `:${this.node.position.x}:${this.node.position.y}:${quest?.position.x}:${quest?.position.y}:${tabs}`
+      + `:${nav?.x}:${nav?.y}:${nav?.width}:${nav?.height}`
+  }
+
+  /** 状态目标允许跨面板操作；只放行导航自身盒，不扩大面板洞或绕过服务端完成判定。 */
+  private navigationRect(): GuideRect | null {
+    if (this.driver?.current()?.trigger !== 'STATE_REACHED') return null
+    const nav = this.node.parent?.getChildByName('NavBar')
+    const box = nav?.getComponent(UITransform)
+    if (!nav?.active || box === null || box === undefined || box.width <= 0 || box.height <= 0) return null
+    return { x: nav.position.x - box.anchorX * box.width - this.node.position.x,
+      y: nav.position.y - box.anchorY * box.height - this.node.position.y,
+      width: box.width, height: box.height }
+  }
+
+  private excludeNavigation(piece: GuideRect, nav: GuideRect | null): GuideRect[] {
+    if (nav === null) return [piece]
+    // 给自身盒留2px净隙：避免矩形边界的浮点舍入及触摸边缘仍落进遮罩。
+    const left = Math.max(piece.x, nav.x - 2), right = Math.min(piece.x + piece.width, nav.x + nav.width + 2)
+    const bottom = Math.max(piece.y, nav.y - 2), top = Math.min(piece.y + piece.height, nav.y + nav.height + 2)
+    if (right <= left || top <= bottom) return [piece]
+    return [
+      { x: piece.x, y: piece.y, width: piece.width, height: bottom - piece.y },
+      { x: piece.x, y: top, width: piece.width, height: piece.y + piece.height - top },
+      { x: piece.x, y: bottom, width: left - piece.x, height: top - bottom },
+      { x: right, y: bottom, width: piece.x + piece.width - right, height: top - bottom },
+    ].filter(rect => rect.width > 0 && rect.height > 0)
   }
 
   private questTabs(): Node[] {
@@ -231,8 +259,8 @@ export class GuideView extends Component {
   /**
    * 洞：面板可用区域（已排除底部导航条）。
    *
-   * <p>它决定"引导期间还能点什么"：高亮的那个面板能用，导航条落在洞外被挡下 ——
-   * 这正是验收 6 要的形状（挡住其他输入，但不挡住这一步本身要做的操作）。
+   * <p>面板打开类步骤仍拦导航；跨面板状态目标由 navigationRect 单独放行导航自身盒。
+   * 其他洞外输入继续拦截，不能让引导挡住它要求玩家完成目标的路径。
    */
   private holeOf(width: number, height: number): GuideRect {
     const content = this.contentRectFor?.(this.openPanelKey?.() ?? null) ?? null
@@ -266,7 +294,8 @@ export class GuideView extends Component {
     if (right < screenRight) {
       pieces.push({ x: right, y: bottom, width: screenRight - right, height: hole.height })
     }
-    for (const piece of pieces) {
+    const navigation = this.navigationRect()
+    for (const piece of pieces.flatMap(rect => this.excludeNavigation(rect, navigation))) {
       this.blockerNodes.push(this.blocker(piece))
     }
   }
