@@ -7,6 +7,8 @@ import com.ironoath.web.security.AuthSessionService;
 import com.ironoath.web.security.LocalDevIdentityVerifier;
 import com.ironoath.web.security.LocalDevWeChatCodeExchanger;
 import com.ironoath.web.security.PlayerIdentityVerifier;
+import com.ironoath.web.security.WeChatCodeExchanger;
+import com.ironoath.web.security.WeChatLoginException;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -31,8 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 依赖：Spring Boot Test + MockMvc；test profile 下用 {@link LocalDevWeChatCodeExchanger}，
  * 不联网、不依赖 AppSecret 就能验证整条链路的形状与不变量。
  *
- * <p><b>这里验的是"同一微信 = 同一存档"这条产品承诺</b>（换手机能找回号），
- * 以及票据本身不能被伪造/越权。真机上的 {code2session} 由部署时的
+ * <p>本地HTTP验证同设备重新登录保留存档及票据不能被伪造/越权；
+ * 不把本地设备身份当作跨设备微信身份。真机上的 {code2session} 由部署时的
  * {@code WeChatSessionCodeExchanger} 负责，它没被本测试覆盖 —— 那需要真实 AppSecret，
  * 属于上线前必须单独跑一次的联调项。
  */
@@ -67,19 +70,52 @@ class WeChatLoginTest {
     }
 
     @Test
-    @DisplayName("同一个 wx code 登录两次：拿到同一份存档，而不是建两个号")
-    void sameWxCodeReturnsSamePlayer() throws Exception {
+    @DisplayName("本地同设备重新登录使用不同临时code，仍回到同一存档")
+    void newWxCodeOnSameLocalDeviceReturnsSamePlayer() throws Exception {
         String code = "wx-code-" + UUID.randomUUID();
         String deviceId = "dev-" + UUID.randomUUID();
 
         JsonNode first = init(code, deviceId);
-        // 第二次故意换 requestId 与 deviceId：模拟"换了台手机但同一个微信"。
-        // 账号键必须是 openid 而不是 deviceId，否则这条会各建一个号
-        JsonNode second = init(code, "dev-" + UUID.randomUUID());
+        var save = players.findByPlayerId(first.get("playerId").asText()).orElseThrow();
+        save.setCityLevel(3);
+        players.save(save);
+        // 本地没有真实code2session，不能把一次性code作为账号键。
+        JsonNode second = init("wx-code-" + UUID.randomUUID(), deviceId);
 
         assertThat(second.get("playerId").asText())
-                .as("同一个微信账号必须回到同一份存档（换手机找回号的前提）")
+                .as("本地重开游戏必须回到同一份存档，不能把新的临时code当新账号")
                 .isEqualTo(first.get("playerId").asText());
+        assertThat(players.findByPlayerId(second.get("playerId").asText()).orElseThrow().cityLevel())
+                .as("重新登录不能重置已有主城进度").isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("本地即使code相同也不合并不同设备存档")
+    void localDevicesStaySeparate() throws Exception {
+        String code = "wx-code-" + UUID.randomUUID();
+        assertThat(init(code, "dev-" + UUID.randomUUID()).get("playerId").asText())
+                .isNotEqualTo(init(code, "dev-" + UUID.randomUUID()).get("playerId").asText());
+    }
+
+    @Test
+    @DisplayName("正式兑换默认仍只信code2session，不受客户端设备号影响")
+    void realExchangeIgnoresDeviceHint() {
+        WeChatCodeExchanger exchanger = code -> new WeChatCodeExchanger.Identity("same-wechat-user", null, "key");
+        assertThat(exchanger.exchange("fresh-code-1", "phone-1"))
+                .isEqualTo(exchanger.exchange("fresh-code-2", "phone-2"));
+    }
+
+    @Test
+    @DisplayName("本地稳定身份拒绝缺失code和持久设备号")
+    void localStableIdentityRequiresCodeAndDevice() {
+        LocalDevWeChatCodeExchanger exchanger = new LocalDevWeChatCodeExchanger();
+        assertThatThrownBy(() -> exchanger.exchange(" ", "device"))
+                .isInstanceOf(WeChatLoginException.class);
+        assertThatThrownBy(() -> exchanger.exchange("code", " "))
+                .isInstanceOf(WeChatLoginException.class);
+        assertThat(exchanger.exchange("code-1", "device").openId())
+                .isEqualTo(exchanger.exchange("code-2", "device").openId());
+        assertThat(exchanger.productionReady()).isFalse();
     }
 
     @Test

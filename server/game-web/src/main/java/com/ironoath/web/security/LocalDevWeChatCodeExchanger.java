@@ -12,9 +12,8 @@ import java.util.HexFormat;
  * 职责：本地开发与单测用的 code 兑换器 —— 把 code 确定性地映射成一个 openid，不调微信。
  * 依赖：JDK（MessageDigest）。
  *
- * <p><b>确定性是它的全部意义</b>：同一个 code 永远得到同一个 openid，
- * 于是「同一个微信用户第二次登录拿到同一份存档」这条链路在本地就能被端到端验证，
- * 而这一点恰恰是接真实现时最容易写错的（把 code 当账号键，而 code 一次性）。
+ * <p>本地无法从一次性 code 得知真实微信身份。登录调用使用持久设备号维持同机存档，
+ * 不模拟跨设备找回微信账号；正式实现仍由微信返回的 openid 决定身份。
  *
  * <p>{@link #productionReady()} 固定 false：prod 下本 bean 在场会让服务拒绝启动
  * （{@code ProductionReadiness}），避免"忘了配 AppSecret 就上线"。
@@ -24,7 +23,7 @@ public final class LocalDevWeChatCodeExchanger implements WeChatCodeExchanger {
     private static final Logger LOG = LoggerFactory.getLogger(LocalDevWeChatCodeExchanger.class);
 
     public LocalDevWeChatCodeExchanger() {
-        LOG.warn("微信登录使用本地开发实现：任何 code 都会被映射成一个稳定的 openid，"
+        LOG.warn("微信登录使用本地开发实现：登录按持久设备号维持同机存档，不能验证跨设备微信身份，"
                 + "不会真的调用微信服务器。上线前必须配置 WECHAT_APP_ID / WECHAT_APP_SECRET "
                 + "并切到 WeChatSessionCodeExchanger（prod 下本实现会让服务拒绝启动）");
     }
@@ -37,6 +36,17 @@ public final class LocalDevWeChatCodeExchanger implements WeChatCodeExchanger {
         String openId = "dev-openid-" + sha256Hex(code).substring(0, 24);
         // sessionKey 在本地没有意义；给一个固定值以保持字段非空，真实实现才填微信返回值
         return new Identity(openId, null, "dev-session-key");
+    }
+
+    @Override
+    public Identity exchange(String code, String deviceId) {
+        if (code == null || code.isBlank()) {
+            throw new WeChatLoginException("缺少 wx.login 返回的 code");
+        }
+        if (deviceId == null || deviceId.isBlank()) {
+            throw new WeChatLoginException("缺少本地持久设备号");
+        }
+        return new Identity("dev-device-" + sha256Hex(deviceId).substring(0, 24), null, "dev-session-key");
     }
 
     private static String sha256Hex(String text) {

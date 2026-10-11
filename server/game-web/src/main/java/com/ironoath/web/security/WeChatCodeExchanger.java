@@ -37,6 +37,11 @@ public interface WeChatCodeExchanger {
      */
     Identity exchange(String code);
 
+    /** 正式兑换仍只信微信返回的身份；本地实现可用持久设备号维持开发存档。 */
+    default Identity exchange(String code, String deviceId) {
+        return exchange(code);
+    }
+
     /**
      * 这个实现能否用于正式环境。<b>默认 false</b>：本地实现必须显式声明不能上生产，
      * 于是"忘了配 AppSecret 就上线"的表现是服务起不来，而不是所有人都能登进别人的号。

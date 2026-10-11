@@ -120,8 +120,8 @@ public class PlayerInitService {
     private PlayerInitResp doInit(PlayerInitReq req) {
         validate(req);
         long now = timeService.serverNow();
-        // 微信登录：code → openid → 账号键。走这条时 deviceId 不参与建档，
-        // 于是"换手机但同一个微信"能拿回同一份存档；反过来清缓存换设备也只影响无微信的环境。
+        // 正式微信登录由 code2session 返回的 openid 建档；本地兑换器没有真实身份，
+        // 使用持久设备号维持同机存档，不能把每次变化的临时 code 当账号键。
         String accountKey = weChatAccountKey(req);
         // 昵称在建档之前送检：那一刻存档还不存在，账号键是唯一带着 openid 的东西。
         // 走非微信账号（本地设备号）时没有 openid，进不了送检 —— 由守卫按既定取舍处理。
@@ -245,7 +245,7 @@ public class PlayerInitService {
         if (code == null || code.isBlank()) {
             return req.deviceId();
         }
-        var identity = weChat.exchange(code);
+        var identity = weChat.exchange(code, req.deviceId());
         return WeChatCodeExchanger.WECHAT_ACCOUNT_PREFIX + identity.openId();
     }
 
