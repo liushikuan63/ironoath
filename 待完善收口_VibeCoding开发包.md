@@ -7070,3 +7070,5 @@ TEST_EXIT=0
 | #1071 F27三路径新绿与原生600秒独立量具 | 本笔（证据原子提交，本批统一推） | 默认首37actual0；Guide310/奖励130/行军135均0失败，奖励0跳；native600量具语法0 | D:/tmp/ironoath-wechat-20261010/runtime-v27；f26-historical-scene-geometry-1071.json；native-v27-soak-600-observed.mjs | 国家集结及默认余项在途；policy/equip业务NO_RUN；新原生18字段/七步/600秒未执行，方向/内存根因/隔离堆GC仍待，未推 |
 
 | #1072 外部引擎修复证据补注与当前国家链路 | 本笔（证据原子提交，本批统一推） | 默认首38actual0；国家集结全部判据过/页面异常0；只读依赖诊断语法0 | D:/tmp/ironoath-wechat-20261010/native-v27-dependency-diagnostic-prepared.json；runtime-v27/probe-verify-nation-rally-runtime.mjs.log；官方forum176993与cocos4 PR267 | 本机当前平台清理开关及图片贡献NO_RUN；不冒v4合并为3.8.7已修；默认余项/精确补项/新原生七步18字段600仍待，未推 |
+
+| #1073 F27本轮600秒完整性能与只读输入诊断 | 本笔（证据原子提交，本批统一推） | perf actual0/600s/2459ms/60.2FPS/堆22.6至25.4峰45.8MB/弱网恢复0；默认首44actual0；6getter纯校验0 | D:/tmp/ironoath-wechat-20261010/f27-perf-1073.actual.json；native-v27-getter-sizes-prepared.json；native-v27-edit-focus-diagnostics-prepared.json | 默认余项/精确补项待；新原生七步18字段/600秒业务NO_RUN；隔离堆GC/低端手机FPS不能冒桌面读数，未推 |
