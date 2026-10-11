@@ -28,7 +28,7 @@
  * "建得成"本身不在这里验：`SocialEndpointTest` 里有 `newPlayer(5)` 走同一套服务真建队真建盟的用例
  * （含扣 500 金币那一条），而 B26-S1 的权限探针已经证明建成之后按钮会亮 —— 两截接起来才是整条。
  */
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
@@ -340,6 +340,34 @@ const FOCUS_FIELD = (nodeName) => `(() => {
 
 const readRows = () => page.evaluate(ROWS)
 const readOverlay = () => page.evaluate(OVERLAY)
+// Read each node's own transformed corners; getBoundingBoxToWorld may include
+// overflowing children and would incorrectly let the old TEXT_LABEL pass.
+const readFormLayout = () => page.evaluate(() => {
+  const cc = window.cc, game = cc.director.getScene().getChildByName('Canvas').getChildByName('Game')
+  const root = game.getChildByName('socialCreate'), nodes = []
+  const walk = n => { if (n.activeInHierarchy) { nodes.push(n); n.children.forEach(walk) } }; walk(root)
+  const own = n => {
+    const ui = n.getComponent('cc.UITransform'), x = -ui.width * ui.anchorX, y = -ui.height * ui.anchorY
+    const p = [[x,y],[x+ui.width,y],[x,y+ui.height],[x+ui.width,y+ui.height]]
+      .map(([a,b]) => ui.convertToWorldSpaceAR(new cc.Vec3(a,b,0)))
+    return { left: Math.min(...p.map(v=>v.x)), right: Math.max(...p.map(v=>v.x)),
+      bottom: Math.min(...p.map(v=>v.y)), top: Math.max(...p.map(v=>v.y)) }
+  }
+  const field = nodes.find(n=>n.name==='name-field'), edit = field.getComponent('cc.EditBox')
+  const title = nodes.find(n=>n.name==='title'), canvas = cc.game.canvas.getBoundingClientRect(), size = cc.view.getVisibleSize()
+  const point = title.getWorldPosition()
+  const viewport = nodes.find(n=>n.name==='DialogContent'), scroll = viewport.getComponent('cc.ScrollView')
+  return { name: edit.string, text: edit.textLabel.string, textVisible: edit.textLabel.node.activeInHierarchy,
+    field: own(field), textRect: own(edit.textLabel.node), viewport: own(viewport),
+    cost: own(nodes.find(n=>n.name==='cost')), submit: own(nodes.find(n=>n.name==='submit')),
+    contentHeight: scroll.content.getComponent('cc.UITransform').height, viewportHeight: viewport.getComponent('cc.UITransform').height,
+    visibleSize: {width:size.width,height:size.height},
+    titlePoint:{x:canvas.left+point.x/size.width*canvas.width,y:canvas.top+(1-point.y/size.height)*canvas.height},
+    viewportPoint:{x:canvas.left+(viewport.getWorldPosition().x/size.width)*canvas.width,
+      y:canvas.top+(1-viewport.getWorldPosition().y/size.height)*canvas.height} }
+})
+const containsRect = (outer, inner) => inner.left >= outer.left-.25 && inner.right <= outer.right+.25
+  && inner.bottom >= outer.bottom-.25 && inner.top <= outer.top+.25
 const waitForRows = async (predicate, timeoutMs = 25_000) => {
   const deadline = Date.now() + timeoutMs
   let last = null
@@ -517,13 +545,48 @@ check('B7 名字没填时确认不挂触摸（点了不发那一枪）', overlay
 check('B8 打开表单没顺手多发一次创建请求', fixture.createCalls.length, tapsBefore)
 
 check('B9 聚焦名字框', await page.evaluate(FOCUS_FIELD('name-field')), 'focused')
-const typed = '五个人的队'
+const typed = '铁誓晨光巡队'
 await page.keyboard.type(typed, { delay: 40 })
 await page.waitForTimeout(900)
 const overlay2 = await readOverlay()
 check('B10 打完字，输入框里还是那一整串（重画没把字吃掉）', overlay2.nameText, typed)
 check('B11 填上名字后确认挂上触摸', overlay2.submitTouched, true)
 check('B12 打字一条请求都不发', fixture.createCalls.length, tapsBefore)
+const initialGeometry = await readFormLayout()
+await page.mouse.click(initialGeometry.titlePoint.x, initialGeometry.titlePoint.y)
+await page.waitForFunction(() => {
+  const game=window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game')
+  const root=game.getChildByName('socialCreate'); let found=null
+  const walk=n=>{if(n.name==='name-field')found=n;else n.children.forEach(walk)};walk(root)
+  return found?.getComponent('cc.EditBox').textLabel.node.activeInHierarchy===true
+})
+for (const [name, viewport, fullBody] of [
+  ['native-short',{width:1440,height:665},true],
+  ['normal640',{width:1440,height:960},true],
+  ['short320',{width:1440,height:480},true],
+  ['short240',{width:1440,height:360},false],
+]) {
+  await page.setViewportSize(viewport)
+  await page.waitForFunction(([w,h])=>{const s=window.cc.view.getFrameSize();return Math.abs(s.width-w)<1&&Math.abs(s.height-h)<1},[viewport.width,viewport.height])
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+  const layout=await readFormLayout()
+  writeFileSync(path.join(OUT,'B-layout-'+name+'.json'),JSON.stringify(layout,null,2)+'\n')
+  checkTrue('B布局 '+name+' 中文仍完整且文字自身框在输入框内',layout.name===typed&&layout.text===typed&&layout.textVisible&&containsRect(layout.field,layout.textRect))
+  checkTrue('B布局 '+name+' 确认键在正文滚动区外',layout.submit.top<=layout.viewport.bottom+.25)
+  if(fullBody) checkTrue('B布局 '+name+' 消耗完整显示',containsRect(layout.viewport,layout.cost))
+  else {
+    checkTrue('B布局 极短屏长正文可滚动',layout.contentHeight>layout.viewportHeight)
+    await page.mouse.move(layout.viewportPoint.x,layout.viewportPoint.y);await page.mouse.wheel(0,900)
+    await page.waitForFunction(() => {
+      const root=window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('socialCreate')
+      return Math.abs(root.getChildByName('DialogContent').getComponent('cc.ScrollView').getScrollOffset().y)>1
+    })
+    const scrolled=await readFormLayout();checkTrue('B布局 极短屏普通滚轮后消耗可见',containsRect(scrolled.viewport,scrolled.cost))
+  }
+  await shot('B-form-'+name+'-typed')
+}
+await page.setViewportSize({width:1280,height:720})
+await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
 await shot('B-form-typed')
 
 const policyReadsBefore = fixture.policyReads

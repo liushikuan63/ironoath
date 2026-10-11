@@ -12,7 +12,7 @@
 import { _decorator, Color, Component, EditBox, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import type { CreateForm } from '../game/social/SocialCreate'
 import { applyContainedSprite, applyIronButton } from './ArtCatalog'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 import { DIALOG_SCRIM, finishLegacyDialog } from './DialogStyle'
 
 const { ccclass } = _decorator
@@ -68,6 +68,7 @@ export class SocialCreateOverlay extends Component {
   private builtHasTag = false
   private built = false
   private builtHeight = 0
+  private layoutDialog: ((reset?: boolean) => void) | null = null
 
   /** 打字（不是意图动作：只改编排层那份输入态，一条请求都不发）。 */
   onType: ((field: 'name' | 'tag', value: string) => void) | null = null
@@ -137,6 +138,7 @@ export class SocialCreateOverlay extends Component {
     if (this.hintLabel !== null) {
       this.hintLabel.string = form.hint
       this.hintLabel.color = form.canSubmit ? COLOR_TEXT_DIM : COLOR_WARNING
+      this.hintLabel.node.active = form.hint.length > 0
     }
     if (this.nameBox !== null && this.nameBox.string !== form.name) {
       this.nameBox.string = form.name
@@ -153,6 +155,8 @@ export class SocialCreateOverlay extends Component {
         this.submitNode.on('touch-start', () => { this.onSubmit?.() }, this)
       }
     }
+    // 只重新量正文，保留 EditBox 与当前滚动位置。
+    this.layoutDialog?.(false)
   }
 
   private rebuild(): void {
@@ -182,16 +186,14 @@ export class SocialCreateOverlay extends Component {
 
     this.drawScrim()
     this.drawCard(titleY + 26, buttonY - BUTTON_HEIGHT / 2 - 18)
-    // 联盟语义的顶饰（规格 §一 第 4 条 + 映射表"联盟 → 旗帜纹章"）：贴在卡片上沿之上、居中，
-    // 与标题错开 —— 标题在 titleY±12，顶饰中心在 titleY + 56、高 58 ⇒ 下沿 titleY+27，不相压。
+    this.titleLabel = this.addLabel('title', form.titleText, 0, titleY, COLOR_COPPER_GOLD, 20)
+    // 纹章与标题共用一行，短屏不会把正文推到输入框/消耗以外。
     const crest = new Node('crest')
     crest.layer = this.node.layer
-    crest.addComponent(UITransform).setContentSize(new Size(40, 58))
-    crest.setPosition(new Vec3(0, titleY + 56, 0))
-    applyContainedSprite(crest, 'ui.crest.league', 40, 58)
-    this.node.addChild(crest)
-    this.nodes.push(crest)
-    this.titleLabel = this.addLabel('title', form.titleText, 0, titleY, COLOR_COPPER_GOLD, 20)
+    crest.addComponent(UITransform).setContentSize(new Size(26, 26))
+    crest.setPosition(new Vec3(-70, 0, 0))
+    applyContainedSprite(crest, 'ui.crest.league', 26, 26)
+    this.titleLabel.node.addChild(crest)
     this.nameBox = this.addField(form.nameLabel, 'name-field', nameY, nameCapY, 'name')
     if (hasTag) {
       this.tagBox = this.addField(form.tagLabel ?? '', 'tag-field', tagY, tagCapY, 'tag')
@@ -201,9 +203,10 @@ export class SocialCreateOverlay extends Component {
     this.costLabel = this.addLabel('cost', form.costText, 0, costY, COLOR_TEXT_DIM, 14)
     this.hintLabel = this.addLabel('hint', form.hint, 0, hintY,
       form.canSubmit ? COLOR_TEXT_DIM : COLOR_WARNING, 14)
+    this.hintLabel.node.active = form.hint.length > 0
     this.addButton('cancel', '取消', -BUTTON_WIDTH / 2 - 8, buttonY, false)
     this.addButton('submit', '确认', BUTTON_WIDTH / 2 + 8, buttonY, !form.canSubmit)
-    finishLegacyDialog(this.node, this.nodes, 'ui.panel.warning')
+    this.layoutDialog = finishLegacyDialog(this.node, this.nodes, 'ui.panel.warning', { flow: true })
     this.built = true
     this.builtHeight = view.getVisibleSize().height
     this.builtHasTag = hasTag
@@ -274,6 +277,13 @@ export class SocialCreateOverlay extends Component {
       box.textLabel.fontSize = 16
       box.textLabel.color = COLOR_TEXT
       box.textLabel.overflow = Label.Overflow.SHRINK
+      box.textLabel.horizontalAlign = Label.HorizontalAlign.LEFT
+      box.textLabel.verticalAlign = Label.VerticalAlign.CENTER
+      box.textLabel.enableWrapText = false
+      capWidth(box.textLabel, FIELD_WIDTH - 20)
+      const textBox = box.textLabel.node.getComponent(UITransform)
+      textBox?.setAnchorPoint(0, 0.5)
+      box.textLabel.node.setPosition(new Vec3(-FIELD_WIDTH / 2 + 10, 0, 0))
     }
     box.node.on(EditBox.EventType.TEXT_CHANGED, () => {
       this.onType?.(kind, box.string)
@@ -319,10 +329,7 @@ export class SocialCreateOverlay extends Component {
     node.on('touch-start', () => { this.onCancel?.() }, this)
   }
 
-  /**
-   * 小标签（左对齐）。锚点必须显式设成 (0, .5)：默认是中心，
-   * 于是"贴左"的写法会把整条文字盒再往左推半个宽度 —— 截图上就是标签跑到屏幕外。
-   */
+  /** 居中的文字盒内左对齐；流排调整内宽时，两侧仍在同一净区。 */
   private addCaption(name: string, text: string, y: number): Label {
     const node = new Node(name)
     node.layer = this.node.layer
@@ -330,15 +337,19 @@ export class SocialCreateOverlay extends Component {
     this.nodes.push(node)
     const transform = node.addComponent(UITransform)
     transform.setContentSize(new Size(FIELD_WIDTH, 22))
-    transform.setAnchorPoint(0, 0.5)
-    node.setPosition(new Vec3(-FIELD_WIDTH / 2, y, 0))
+    transform.setAnchorPoint(0.5, 0.5)
+    node.setPosition(new Vec3(0, y, 0))
     const label = node.addComponent(Label)
     applySystemUiFont(label)
     label.fontSize = 13
+    label.lineHeight = 19
     label.color = COLOR_TEXT_DIM
     label.string = text
     label.horizontalAlign = Label.HorizontalAlign.LEFT
     label.overflow = Label.Overflow.SHRINK
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    label.enableWrapText = false
+    capWidth(label, FIELD_WIDTH)
     return label
   }
 
@@ -352,8 +363,14 @@ export class SocialCreateOverlay extends Component {
     const label = node.addComponent(Label)
     applySystemUiFont(label)
     label.fontSize = fontSize
+    label.lineHeight = fontSize + 6
     label.color = color
     label.string = text
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+    label.verticalAlign = Label.VerticalAlign.CENTER
+    label.enableWrapText = false
+    label.overflow = Label.Overflow.SHRINK
+    capWidth(label, FIELD_WIDTH)
     return label
   }
 
@@ -369,5 +386,6 @@ export class SocialCreateOverlay extends Component {
     this.tagBox = null
     this.submitNode = null
     this.submitCaption = null
+    this.layoutDialog = null
   }
 }

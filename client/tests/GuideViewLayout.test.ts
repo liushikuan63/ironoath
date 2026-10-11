@@ -15,7 +15,7 @@ import * as cityAnchors from '../assets/scripts/game/city/CitySceneAnchors'
 import { PANEL_FRAME_BAND } from '../assets/scripts/game/art/ArtFamilies'
 import type { QuestListResp, QuestView } from '../assets/scripts/net/generated/QuestProtocol'
 import * as paging from '../assets/scripts/game/ui/PanelPaging'
-import { dialogLayout, safeAreaInsets } from '../assets/scripts/game/ui/DialogLayout'
+import { dialogLayout, safeAreaInsets, dialogBodyFlow as requireDialogBodyFlow } from '../assets/scripts/game/ui/DialogLayout'
 import { PANEL_IRON_INSET } from '../assets/scripts/game/art/ArtFamilies'
 import * as uiTokens from '../assets/scripts/game/ui/UiTokens'
 import { worldSceneLayout } from '../assets/scripts/game/world/WorldSceneLayout'
@@ -28,6 +28,7 @@ class ScrollView {
   node!: Node; content: Node | null = null; horizontal=false; vertical=true; inertia=true; elastic=false; cancelInnerEvents=true
   offset = new Vec2(); getScrollOffset(): Vec2 { return this.offset }
   stopAutoScroll(): void {}
+  scrollToTop(): void { this.scrollToOffset(new Vec2()) }
   scrollToOffset(offset: Vec2): void { this.offset = offset; if(this.content) this.content.position.y = this.node.getComponent(UITransform)!.height / 2 + offset.y }
 }
 class Vec3 { constructor(public x = 0, public y = 0, public z = 0) {} }
@@ -1025,18 +1026,44 @@ test('原生社交首行创建与军队右列操作不被实际Guide气泡挡住
 interface SocialCreateHarness {
   node: Node; render(form: CreateForm): void; hide(): void; onDestroy(): void
   onVisibilityChanged: ((visible: boolean) => void) | null
-  nameBox: { string: string } | null
+  nameBox: { node: Node; string: string; textLabel: Label | null } | null
 }
-function socialCreateHarness(): SocialCreateHarness {
+function socialCreateHarness(realDialog = false): SocialCreateHarness {
   class EditBox {
     static InputMode = { SINGLE_LINE: 1 }; static EventType = { TEXT_CHANGED: 'text-changed' }
-    node!: Node; string = ''; textLabel = null
+    private host!: Node; textLabel: Label | null = null
+    get node(): Node { return this.host }
+    set node(node: Node) {
+      this.host = node
+      // Captured native F32 TEXT_LABEL defaults: centered anchor at(-238,20),478x40.
+      const text = new Node('TEXT_LABEL'); node.addChild(text)
+      text.addComponent(UITransform).setContentSize(478, 40)
+      text.setPosition(new Vec3(-238, 20)); this.textLabel = text.addComponent(Label)
+      this.textLabel.lineHeight = 40
+    }
+    private value = ''
+    get string(): string { return this.value }
+    set string(value: string) { this.value = value; if (this.textLabel) this.textLabel.string = value }
   }
+  const styles = realDialog ? sceneExports('DialogStyle', {
+    view: { getVisibleSize: () => nativeSize }, PANEL_IRON_INSET, ...uiTokens,
+    dialogLayout, dialogBodyFlow: requireDialogBodyFlow,
+    applySlicedSprite: () => false, applyIronButton: () => false, applyCommandButton: () => false,
+  }) : { finishLegacyDialog: () => null }
   const Social = sceneClass<SocialCreateHarness>('SocialCreateOverlay', { EditBox,
     view: { getVisibleSize: () => nativeSize }, DIALOG_SCRIM: {},
     applyContainedSprite: () => false, applyIronButton: () => false,
-    applySystemUiFont: (label: Label) => label, finishLegacyDialog: () => {} })
-  const overlay = new Social(); overlay.node.active = false; return overlay
+    applySystemUiFont: (label: Label) => label,
+    capWidth: (label: Label, width: number) => dimensions(label.node).setContentSize(width, 27), ...styles })
+  const overlay = new Social(); overlay.node.active = false
+  if (realDialog) {
+    const game = new Node('Game'); game.addChild(overlay.node)
+    const original = game.getComponent.bind(game)
+    Object.assign(game, { getComponent: (kind: unknown) => kind === 'PanelNav'
+      ? { current: () => 'social', contentRectFor: () => capturedCapsuleArea }
+      : original(kind as new () => unknown) })
+  }
+  return overlay
 }
 const emptySocialForm: CreateForm = { titleText: '创建小队', nameLabel: '小队名称', tagLabel: null,
   costText: '不消耗资源', hint: '请填写名称', canSubmit: false, name: '', tag: '' }
@@ -1074,4 +1101,39 @@ test('组合根已销毁时创建表单可见性回调不再改引导', () => {
   const { guide } = setup('social'), overlay = socialCreateHarness(), host = { destroyed: true }
   wireSocialCreate(guide, overlay, host); overlay.render(emptySocialForm)
   assert.equal(guide.node.active, true)
+})
+
+test('社交原生EditBox的文字自身框留在输入框内，连续输入仍保留同一组件', () => {
+  const overlay = socialCreateHarness()
+  overlay.render({ ...emptySocialForm, name: '铁誓晨光巡队', hint: '', canSubmit: true })
+  const input = overlay.nameBox!, label = input.textLabel!, rect = ownRect(label.node)
+  assert.ok(rect.x >= -240 && rect.x + rect.width <= 240, '不能采用原生默认中心锚使文字横向飘出')
+  assert.ok(rect.y >= -20 && rect.y + rect.height <= 20, '文字不能位于输入框上沿之外')
+  assert.equal(label.verticalAlign, Label.VerticalAlign.CENTER)
+  assert.equal(label.horizontalAlign, Label.HorizontalAlign.LEFT)
+  assert.equal(label.overflow, Label.Overflow.SHRINK)
+  overlay.render({ ...emptySocialForm, name: '铁誓晨光巡队甲', hint: '', canSubmit: true })
+  assert.equal(overlay.nameBox, input)
+  assert.equal(label.string, '铁誓晨光巡队甲')
+})
+
+test('实际短屏社交表单显示完整小队名、消耗和提示，确认键固定在滚动区外', () => {
+  const overlay = socialCreateHarness(true)
+  const relative = (node: Node): Rect => {
+    const parentOffset = new Vec3(); let parent = node.parent
+    while (parent && parent !== overlay.node) { parentOffset.x += parent.position.x; parentOffset.y += parent.position.y; parent = parent.parent }
+    return ownRect(node, parentOffset)
+  }
+  overlay.render(emptySocialForm)
+  const viewport = overlay.node.getChildByName('DialogContent')!, content = viewport.children[0]!
+  const hole = relative(viewport), input = overlay.nameBox
+  for (const name of ['title', 'name-field-caption', 'name-field', 'cost', 'hint']) {
+    const node = content.getChildByName(name)!, box = relative(node)
+    assert.ok(box.y >= hole.y && box.y + box.height <= hole.y + hole.height, name + '完整自身框必须在可视净区内')
+  }
+  assert.ok(relative(overlay.node.getChildByName('submit')!).y + 36 <= hole.y)
+  overlay.render({ ...emptySocialForm, name: '铁誓晨光巡队', hint: '', canSubmit: true })
+  assert.equal(overlay.nameBox, input)
+  assert.equal(content.getChildByName('hint')!.active, false)
+  assert.ok(relative(content.getChildByName('cost')!).y >= hole.y, '空提示变化后消耗仍完整可见')
 })
