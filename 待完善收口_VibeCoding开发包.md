@@ -7192,3 +7192,5 @@ TEST_EXIT=0
 | #1129 Guide7真实社交首行被气泡覆盖，保留首红并在当前聊天继续 | 本笔（本批统一推） | stage7b准备EXIT1；只读诊断与截图0；当前聊天成功compact实际5，用户最新要求当前聊天继续优先，未交接。 | D:/tmp/ironoath-wechat-20261010/native-social-guide-overlap-v31.actual.json；root-native-onboarding-v31-r18/driver-0249-actionbutton.receipt.json及0253.png | 社交创建真实键盘、06与Guide闭环、主5一键正反馈、无遮挡拖移视觉、GAME heap600与最终全门未完；同类army气泡原先也遮直接加速，需回归。 |
 
 | #1130 Guide右列与创建弹层真实接线候选全门0 | 本笔（本批统一推） | 47门0；全量build0；JUnit2294/0败/0跳(229XML含balance-sim)；客户端1248/0/0；Cocosweb+wechat各wrapper0/raw36+完整产物0；10浏览器各0且自有9510已清理。 | guide-actions-1130.candidate.actual.json；guide-actions-1129.red.log及check.log保留反证；final.check/build/final-web/final-native、runtime/actual、f31-before-native-f32-backup/backup.actual.json。 | 新F32真实社交/键盘/Guide7/06、一键正反馈、无遮挡拖移视觉和GAME heap600未验；原真实F31仍运行，不以浏览器/节点桩绿冒原生。 |
+
+| #1131 F32仅客户端切换同UID与后端进度前后0 | 本笔（本批统一推） | 原生switch0 accepted同UID；冻源1440/生成786/342包/45配置；原F32生产器末条输出误指受保护F31prepared而EEXIST，旧证据未动/刷新未用，独立全文件读回后补新F32prepared0并只切换一次。 | native-f32-prepared.actual.json；native-f32-switch.actual.json；f31-before-native-f32-backup/backup.actual.json；driver0006原生截图。 | Guide7社交创建/真实键盘、06完成、正收割与无遮挡拖图仍未验；真实GAME堆读取能力缺失，不冒充网页heap；600/65+补5/最终批推未完。 |
