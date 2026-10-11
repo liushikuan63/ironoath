@@ -1,13 +1,106 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 import {
   WORLD_BUTTON_HEIGHT, WORLD_NAV_INSET, worldSceneLayout,
   worldMapTranslation, worldCaptionViewport, worldMapInputAllowed,
   worldTerrainTileScale, worldFogContours,
 } from '../assets/scripts/game/world/WorldSceneLayout'
 import { baseCellPixels, cellPixels } from '../assets/scripts/game/world/WorldZoom'
+import type { ViewportInsets } from '../assets/scripts/game/ui/DialogLayout'
 
 const sizes = [[1440, 900], [1280, 720], [960, 600], [375, 667], [320, 480]] as const
+
+test('R18顶部安全区不能遮住地图工具栏，地图底边也避开安全底边上的导航', () => {
+  const width = 960, height = 443.6018957345971
+  const safe = { left: 0, right: 0, top: 58.047393364928894, bottom: 12 }
+  const layout = worldSceneLayout(width, height, safe)
+  for (const button of layout.buttons) {
+    assert.ok(button.y + WORLD_BUTTON_HEIGHT / 2 <= height / 2 - safe.top,
+      `${button.name}进入顶部安全区，玩家触摸被GuideMask吞掉`)
+  }
+  assert.equal(layout.mapBottom, -height / 2 + safe.bottom + WORLD_NAV_INSET)
+  assert.equal(worldMapInputAllowed(layout, safe.bottom + WORLD_NAV_INSET - 0.1), false)
+  assert.equal(worldMapInputAllowed(layout, safe.bottom + WORLD_NAV_INSET), true)
+  assert.equal(worldMapInputAllowed(layout, height - safe.top - 1), false)
+})
+
+test('非对称左右安全区内按钮换行，地图投影与名牌仍使用同一净区', () => {
+  const width = 375, height = 667
+  const safe = { left: 40, right: 12, top: 46, bottom: 24 }
+  const layout = worldSceneLayout(width, height, safe)
+  for (const button of layout.buttons) {
+    assert.ok(button.x - button.width / 2 >= -width / 2 + safe.left)
+    assert.ok(button.x + button.width / 2 <= width / 2 - safe.right)
+    assert.ok(button.y + WORLD_BUTTON_HEIGHT / 2 <= height / 2 - safe.top)
+    assert.ok(button.y - WORLD_BUTTON_HEIGHT / 2 > layout.statusY + 14)
+  }
+  const translation = worldMapTranslation(layout, 120.75, 240.25, 18)
+  const viewport = worldCaptionViewport(layout, 120.75, 240.25, 18)
+  assert.equal(viewport.minX + translation.x, -width / 2 + safe.left)
+  assert.equal(viewport.maxX + translation.x, width / 2 - safe.right)
+  assert.equal(viewport.minY + translation.y, layout.mapBottom)
+  assert.equal(viewport.maxY + translation.y, layout.mapTop)
+  assert.equal((120.75 + 0.5) * 18 + translation.x, (safe.left - safe.right) / 2)
+  const uiY = layout.mapCenterY + height / 2
+  assert.equal(worldMapInputAllowed(layout, uiY, safe.left - 0.1), false)
+  assert.equal(worldMapInputAllowed(layout, uiY, safe.left), true)
+  assert.equal(worldMapInputAllowed(layout, uiY, width - safe.right - 0.1), true)
+  assert.equal(worldMapInputAllowed(layout, uiY, width - safe.right), false)
+})
+
+test('真实WorldMap初次加载与同尺寸安全区变化都更新布局，稳定帧复用工具栏', () => {
+  // 执行实际场景方法，节点桩只验证接线与重排，不替代Cocos实画/原生触摸。
+  const client = existsSync(path.resolve('client/assets')) ? path.resolve('client') : process.cwd()
+  const source = readFileSync(path.join(client, 'assets/scripts/scene/WorldMap.ts'), 'utf8')
+  const ast = ts.createSourceFile('WorldMap.ts', source, ts.ScriptTarget.ES2020, true)
+  const body = ts.createPrinter().printFile(ts.factory.updateSourceFile(ast,
+    ast.statements.filter(statement => !ts.isImportDeclaration(statement))))
+  const code = ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ES2020,
+    module: ts.ModuleKind.CommonJS, experimentalDecorators: true } }).outputText
+  class Transform { setContentSize(): void {} }
+  class SceneNode {
+    layer = 1
+    addChild(): void {}
+    addComponent(): Transform { return new Transform() }
+    getComponent(): Transform { return new Transform() }
+    getChildByName(): null { return null }
+  }
+  let safe: ViewportInsets = { left: 0, right: 0, top: 58.047393364928894, bottom: 12 }
+  const size = { width: 960, height: 443.6018957345971 }
+  const exports: Record<string, unknown> = {}
+  runInNewContext(code, { exports, _decorator: { ccclass: () => (klass: unknown) => klass },
+    Component: class { node = new SceneNode() }, Color: class {}, Node: SceneNode,
+    UITransform: Transform, Graphics: class {}, NodePool: class {},
+    worldSceneLayout, view: { getVisibleSize: () => size }, viewportSafeInsets: () => safe })
+  type Scene = { onLoad(): void; syncViewport(): void; sceneLayout: ReturnType<typeof worldSceneLayout>;
+    buildBackground(): void; buildLayer(): SceneNode; buildHud(): void; buildMarchPanel(): void;
+    bindInput(): void; bindModel(): void; createOverlayGraphics(): SceneNode }
+  const WorldMap = exports.WorldMap as new () => Scene
+  const scene = new WorldMap()
+  let builds = 0
+  scene.buildBackground = () => {}
+  scene.buildLayer = () => new SceneNode()
+  scene.buildHud = () => { builds++ }
+  scene.buildMarchPanel = () => {}
+  scene.bindInput = () => {}
+  scene.bindModel = () => {}
+  scene.createOverlayGraphics = () => new SceneNode()
+  scene.onLoad()
+  assert.ok(scene.sceneLayout.buttons[0]!.y + WORLD_BUTTON_HEIGHT / 2 <= size.height / 2 - safe.top)
+  scene.syncViewport()
+  assert.equal(builds, 1)
+  const firstY = scene.sceneLayout.buttons[0]!.y
+  safe = { ...safe, top: safe.top + 16 }
+  scene.syncViewport()
+  assert.equal(builds, 2, '同尺寸的胶囊安全区变化必须重排工具栏')
+  assert.equal(scene.sceneLayout.buttons[0]!.y, firstY - 16)
+  scene.syncViewport()
+  assert.equal(builds, 2, '稳定安全区不能每帧销毁工具栏')
+})
 
 test('操作条在横竖画布都不出框、不重叠，坐标状态行在全部按钮下方', () => {
   for (const [w, h] of sizes) {

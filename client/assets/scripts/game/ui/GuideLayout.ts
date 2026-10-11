@@ -19,7 +19,9 @@ export function guideBubbleLayout(area: DialogRect, viewportWidth: number, viewp
   const top = Math.min(area.y + area.height, viewportHeight / 2)
   // 任务领取键在右列，提示放左角；选择窗打开时由显式可见性回调暂收气泡。
   const x = panelKey === 'quest' ? area.x + 12 + width / 2 : area.x + area.width - 12 - width / 2
-  const y = Math.max(top - height / 2 - 12, area.y + height / 2 + 8)
+  // 地图顶部是缩放/行军工具栏；本步提示贴安全底角，给玩家保留全部操作条。
+  const y = panelKey === 'world' ? area.y + height / 2 + 8
+    : Math.max(top - height / 2 - 12, area.y + height / 2 + 8)
   return { width, height, x, y, inset, innerWidth: width - inset * 2,
     buttonWidth: compactCity ? 144 : preferred.buttonWidth }
 }

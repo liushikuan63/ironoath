@@ -18,6 +18,7 @@ import * as paging from '../assets/scripts/game/ui/PanelPaging'
 import { dialogLayout, safeAreaInsets } from '../assets/scripts/game/ui/DialogLayout'
 import { PANEL_IRON_INSET } from '../assets/scripts/game/art/ArtFamilies'
 import * as uiTokens from '../assets/scripts/game/ui/UiTokens'
+import { worldSceneLayout } from '../assets/scripts/game/world/WorldSceneLayout'
 
 class Vec2 { constructor(public x = 0, public y = 0) {} }
 class Mask { static Type = { GRAPHICS_RECT: 1 }; type = 0 }
@@ -315,6 +316,24 @@ function setup(panel = 'city', skippable = false, material = true): {
     restoreHeld: () => { heldTimers.pop()?.() } }
 }
 function dimensions(node: Node): UITransform { return node.getComponent(UITransform)! }
+
+test('原生地图引导气泡避开缩放与行军工具栏，同时留在导航上方的安全内容区', () => {
+  const { guide, size, area } = setup('world')
+  const safe = { left: 53.459715639810426, right: 53.459715639810426,
+    top: 58.047393364928894, bottom: 23.886255924170616 }
+  const layout = worldSceneLayout(size.width, size.height, safe)
+  area.x = -size.width / 2 + safe.left
+  area.y = layout.mapBottom
+  area.width = size.width - safe.left - safe.right
+  area.height = size.height / 2 - safe.top - area.y
+  guide.repaint()
+  const bubble = guide.bubble!, box = dimensions(bubble)
+  assert.ok(bubble.position.y + box.height / 2 <= layout.mapTop,
+    '安全区修正后引导气泡仍不可覆盖世界工具栏或状态行')
+  assert.ok(bubble.position.y - box.height / 2 >= area.y)
+  assert.ok(bubble.position.x - box.width / 2 >= area.x)
+  assert.ok(bubble.position.x + box.width / 2 <= area.x + area.width)
+})
 function bubbleRect(guide: GuideHarness, size = nativeSize): Rect {
   const node = guide.bubble!, ui = dimensions(node)
   return { x: node.position.x + size.width / 2 - ui.width / 2,

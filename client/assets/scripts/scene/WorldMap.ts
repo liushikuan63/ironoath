@@ -47,6 +47,7 @@ import {
   CAPTION_PLATE_HEIGHT, captionBox, captionPlateWidth, entityCaption, pickVisibleCaptions,
 } from '../game/world/WorldLabels'
 import type { Unsubscribe } from '../core/EventBus'
+import { viewportSafeInsets } from './ViewportSafeArea'
 
 const { ccclass } = _decorator
 
@@ -191,7 +192,7 @@ export class WorldMap extends Component {
 
   override onLoad(): void {
     const size = view.getVisibleSize()
-    this.sceneLayout = worldSceneLayout(size.width, size.height)
+    this.sceneLayout = worldSceneLayout(size.width, size.height, viewportSafeInsets(size.width, size.height))
     this.buildBackground(size.width, size.height)
     this.mapLayer = this.buildLayer('MapLayer', size.width, size.height)
     this.hudLayer = this.buildLayer('HudLayer', size.width, size.height)
@@ -222,11 +223,15 @@ export class WorldMap extends Component {
     this.marchPanel.onRepeat = () => this.onRepeatLastMarch?.()
   }
 
-  /** 仅视口改变时重排操作条与弹窗；地图节点池、玩家焦点、行军状态均继续复用。 */
+  /** 视口或安全区改变时重排操作条与弹窗；地图节点池、玩家焦点、行军状态继续复用。 */
   private syncViewport(): void {
     const size = view.getVisibleSize()
-    if (size.width === this.sceneLayout.width && size.height === this.sceneLayout.height) return
-    this.sceneLayout = worldSceneLayout(size.width, size.height)
+    const safe = viewportSafeInsets(size.width, size.height)
+    const previous = this.sceneLayout.safeInsets
+    if (size.width === this.sceneLayout.width && size.height === this.sceneLayout.height
+      && safe.left === previous.left && safe.right === previous.right
+      && safe.top === previous.top && safe.bottom === previous.bottom) return
+    this.sceneLayout = worldSceneLayout(size.width, size.height, safe)
     this.node.getComponent(UITransform)?.setContentSize(size.width, size.height)
     this.mapLayer?.getComponent(UITransform)?.setContentSize(size.width, size.height)
     this.hudLayer?.getComponent(UITransform)?.setContentSize(size.width, size.height)
@@ -480,17 +485,18 @@ export class WorldMap extends Component {
     graphics.lineTo(width / 2, height / 2 - this.sceneLayout.hudHeight)
     graphics.stroke()
 
-    const coordWidth = Math.min(230, width * 0.45)
-    this.coordLabel = this.createHudLabel('CoordLabel', '', -width / 2 + 12, this.sceneLayout.statusY)
+    const contentWidth = this.sceneLayout.mapWidth
+    const coordWidth = Math.min(230, contentWidth * 0.45)
+    this.coordLabel = this.createHudLabel('CoordLabel', '', this.sceneLayout.mapLeft + 12, this.sceneLayout.statusY)
     this.coordLabel.horizontalAlign = Label.HorizontalAlign.LEFT
     this.coordLabel.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     capWidth(this.coordLabel, coordWidth)
 
-    this.hintLabel = this.createHudLabel('HintLabel', '', width / 2 - 12, this.sceneLayout.statusY)
+    this.hintLabel = this.createHudLabel('HintLabel', '', this.sceneLayout.mapRight - 12, this.sceneLayout.statusY)
     this.hintLabel.horizontalAlign = Label.HorizontalAlign.RIGHT
     this.hintLabel.color = COLOR_TEXT_DIM
     this.hintLabel.fontSize = 16
-    capWidth(this.hintLabel, Math.max(1, width - coordWidth - 36))
+    capWidth(this.hintLabel, Math.max(1, contentWidth - coordWidth - 36))
 
     const buttons: Array<{ name: string; text: string; onTap: () => void }> = [
       { name: 'ZoomInButton', text: '放大', onTap: () => this.zoomIn() },
@@ -639,7 +645,7 @@ export class WorldMap extends Component {
       // 落在 HUD 条带里的触摸不启动拖动，否则点按钮的同时会把地图拖走
       this.dragging = !suppressed
         && !(this.marchPanel?.isVisible ?? false)
-        && worldMapInputAllowed(this.sceneLayout, event.getUILocation().y)
+        && worldMapInputAllowed(this.sceneLayout, event.getUILocation().y, event.getUILocation().x)
     }, this)
     this.node.on('touch-move', (event: EventTouch) => {
       this.syncActiveTouches(event)
@@ -718,7 +724,7 @@ export class WorldMap extends Component {
     this.pinchZoomTriggered = false
     const points = Array.from(this.activeTouches.values())
     this.pinchAnchorDistance = !(this.marchPanel?.isVisible ?? false)
-      && points.every((point) => worldMapInputAllowed(this.sceneLayout, point.y))
+      && points.every((point) => worldMapInputAllowed(this.sceneLayout, point.y, point.x))
       ? pinchDistance(points) : null
   }
 
@@ -826,7 +832,7 @@ export class WorldMap extends Component {
    * 这样窗口尺寸、设计分辨率适配、以及以后加分屏/横竖屏切换都不用再回来改常量。
    */
   private baseCell(model: WorldViewModel): number {
-    return baseCellPixels(this.sceneLayout.width, this.sceneLayout.mapHeight, model.chunkSize)
+    return baseCellPixels(this.sceneLayout.mapWidth, this.sceneLayout.mapHeight, model.chunkSize)
   }
 
   private render(frame: WorldFrame, model: WorldViewModel): void {

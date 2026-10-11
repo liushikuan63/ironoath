@@ -1,5 +1,6 @@
 /** 世界地图的显示净区与投影。只处理像素，服务端格坐标、探索状态及缩放档位照旧。 */
 import type { CaptionViewport } from './WorldLabels'
+import type { ViewportInsets } from '../ui/DialogLayout'
 
 export const WORLD_NAV_INSET = 60
 export const WORLD_BUTTON_HEIGHT = 34
@@ -23,8 +24,13 @@ export interface WorldToolbarButton {
 export interface WorldSceneLayout {
   readonly width: number
   readonly height: number
+  readonly safeInsets: ViewportInsets
   readonly hudHeight: number
   readonly statusY: number
+  readonly mapWidth: number
+  readonly mapLeft: number
+  readonly mapRight: number
+  readonly mapCenterX: number
   readonly mapHeight: number
   readonly mapCenterY: number
   readonly mapBottom: number
@@ -33,26 +39,31 @@ export interface WorldSceneLayout {
 }
 
 /** 操作条按可见宽度换行；状态行在按钮下方，避免坐标与迁城冷却互相覆盖。 */
-export function worldSceneLayout(width: number, height: number): WorldSceneLayout {
+export function worldSceneLayout(width: number, height: number,
+  safe: ViewportInsets = { left: 0, right: 0, top: 0, bottom: 0 }): WorldSceneLayout {
   const buttons: WorldToolbarButton[] = []
+  const mapLeft = -width / 2 + safe.left
+  const mapRight = width / 2 - safe.right
+  const mapWidth = Math.max(1, mapRight - mapLeft)
   let left = OUTER
   let row = 0
   for (const [name, requestedWidth] of BUTTONS) {
-    const buttonWidth = Math.min(requestedWidth, Math.max(1, width - OUTER * 2))
-    if (left > OUTER && left + buttonWidth > width - OUTER) {
+    const buttonWidth = Math.min(requestedWidth, Math.max(1, mapWidth - OUTER * 2))
+    if (left > OUTER && left + buttonWidth > mapWidth - OUTER) {
       row += 1
       left = OUTER
     }
     buttons.push({ name, width: buttonWidth,
-      x: -width / 2 + left + buttonWidth / 2,
-      y: height / 2 - OUTER - row * ROW_PITCH - WORLD_BUTTON_HEIGHT / 2 })
+      x: mapLeft + left + buttonWidth / 2,
+      y: height / 2 - safe.top - OUTER - row * ROW_PITCH - WORLD_BUTTON_HEIGHT / 2 })
     left += buttonWidth + GAP
   }
-  const hudHeight = OUTER + (row + 1) * ROW_PITCH + STATUS_HEIGHT
-  const mapBottom = -height / 2 + WORLD_NAV_INSET
+  const hudHeight = safe.top + OUTER + (row + 1) * ROW_PITCH + STATUS_HEIGHT
+  const mapBottom = -height / 2 + safe.bottom + WORLD_NAV_INSET
   const mapTop = height / 2 - hudHeight
   return {
-    width, height, hudHeight, buttons,
+    width, height, safeInsets: { ...safe }, hudHeight, buttons,
+    mapLeft, mapRight, mapWidth, mapCenterX: (mapLeft + mapRight) / 2,
     statusY: height / 2 - hudHeight + STATUS_HEIGHT / 2,
     mapBottom, mapTop,
     mapHeight: Math.max(1, mapTop - mapBottom),
@@ -64,7 +75,7 @@ export function worldSceneLayout(width: number, height: number): WorldSceneLayou
 export function worldMapTranslation(
   layout: WorldSceneLayout, cameraX: number, cameraY: number, cell: number,
 ): { x: number; y: number } {
-  return { x: -(cameraX + 0.5) * cell,
+  return { x: layout.mapCenterX - (cameraX + 0.5) * cell,
     y: layout.mapCenterY - (cameraY + 0.5) * cell }
 }
 
@@ -74,16 +85,18 @@ export function worldCaptionViewport(
 ): CaptionViewport {
   const translation = worldMapTranslation(layout, cameraX, cameraY, cell)
   return {
-    minX: -layout.width / 2 - translation.x,
-    maxX: layout.width / 2 - translation.x,
+    minX: layout.mapLeft - translation.x,
+    maxX: layout.mapRight - translation.x,
     minY: layout.mapBottom - translation.y,
     maxY: layout.mapTop - translation.y,
   }
 }
 
 /** UI 坐标原点在左下方。顶部操作条和底部导航均不启动地图手势。 */
-export function worldMapInputAllowed(layout: WorldSceneLayout, uiY: number): boolean {
-  return uiY >= WORLD_NAV_INSET && uiY < layout.height - layout.hudHeight
+export function worldMapInputAllowed(layout: WorldSceneLayout, uiY: number,
+  uiX: number = layout.width / 2): boolean {
+  return uiY >= layout.mapBottom + layout.height / 2 && uiY < layout.mapTop + layout.height / 2
+    && uiX >= layout.mapLeft + layout.width / 2 && uiX < layout.mapRight + layout.width / 2
 }
 
 /** 实际裁帧按一块至多 2×2 个纹样铺地，随投影放大；不改变地貌 variant 或世界坐标。 */
