@@ -7178,3 +7178,5 @@ TEST_EXIT=0
 | #1122 Guide6正常完成至7；Navquest遮盖首红保留，免费金币设计新增并行目标 | 本笔（本批统一推） | 82652实际exit1；独立四生产GET HTTP200/code0，Guide7/newbie1/history1；这是阶段中间态，不算stage6全过。 | D:/tmp/ironoath-wechat-20261010/native-stage6-guide7-intermediate-v30-r18.actual.json；handoff-native-and-gold-compact4.md | 05普通领取/7a主5拖缩/真实小队键盘/收割/Guide4直接加速/真game heap600/65加5/最终批推未完成。 |
 
 | #1123 免费金币长期游玩设计v1与G01至G07实施卡；现有等级奖励不重复建设 | 本笔（本批统一推） | 現读配置/生产调用与7任务卡；来源额度与预算算术断言全部通过；F30 input/binding/JAR三个SHA现核保持；仅文档核验，不冒充新功能测试或原生闭环。 | docs/免费金币与长期游玩设计.md；D:/tmp/ironoath-wechat-20261010/gold-design-inventory.actual.json；free-gold-design-validation.actual.json | 新金币功能尚未实现；建议额度/目标/探索条目/共享首杀/历史迁移待审定及经济模型；未对冻结F30发奖或改变配置；原生剩余如#1122，未推。 |
+
+| #1124 提前结束执行原因现核与持续推进规则修复；Guide7导航首红有效回归49全过 | 本笔（本批统一推） | GuideViewLayout49：旧48/1有效红→初修边界浮点1红→净隙49/0/0；当前后端Java50152与IDE36576原创建时间保持；尚未全量或切版。 | D:/tmp/ironoath-wechat-20261010/native-guide7-current-ui.actual.json；guide-navigation-1124.red.log；guide-navigation-1124.green-final.log；AGENTS.md九 | 导航修复在隔离分支未切F31，完整工程/10probe及同号导航验收待做；原生05领取/主5/小队真实键盘/正收割/Guide4/真heap600/65加5/批推未完成。 |
