@@ -7156,3 +7156,5 @@ TEST_EXIT=0
 | #1111 可见Lv5选怪及编成取消负链路真0；Guide5气泡挡加号/出征新红 | 本笔（本批统一推） | 可见选怪/真实编成取消actual0；invalid actions隐藏/GET行军0；两正按钮安全点semanticfalse；diagnostic actual0、业务acceptedfalse | D:/tmp/ironoath-wechat-20261010/native-world-compose-cancel-negative-v29-r18.actual.json；native-compose-guide-obstruction-v29-r18.actual.json；root-native-onboarding-v29-r18/driver-0085-native-lv5-compose-cancel-negative.png | Lv1规则待裁决，编成Guide让层候选待隔离有效回归/批跑；未出征/6–7未跑，Guide4行加速/键盘/正收割/真heap600未验，未推 |
 
 | #1112 用户裁决主线04击杀任意等级；编成让层两有效回归47全绿候选 | 本笔（本批统一推） | 用户任意等级裁决明确；编成有效旧47中2红→47/0/0；typecheck0/47静态0；全构建在途 | D:/tmp/ironoath-wechat-20261010/compose-guide-1111.red3.log；compose-guide-1111.green.log；compose-guide-1111.typecheck.log；compose-guide-1111.check.log | 任意等级契约/真业务回归/新候选全门与产物待；候选未整入/替换，活F29不动；后端新冻结范围尚需候选就绪后确认；原生后段/Guide4/键盘/正收割/真heap600未验，未推 |
+
+| #1113 首战任意等级有效业务反证；旧存档事件侧未对账吞Lv5胜利新根因 | 本笔（本批统一推） | 有效旧14中2红；仅表变更30中1红（非Lv1真胜利旧存档0）；候选共用reconcile+新gen0，30正验在途 | D:/tmp/ironoath-wechat-20261010/any-level-1112.red3.log；any-level-1112.green.log；any-level-1113.gen.log；any-level-1113.green.log | 新候选全部工程/双产物/10probe及同号新后端范围尚待；Guide5业务未绿、原生后段/Guide4/键盘/正收割/真heap600未验，未推 |
