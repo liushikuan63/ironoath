@@ -75,9 +75,16 @@ export class SocialCreateOverlay extends Component {
   onSubmit: (() => void) | null = null
   /** 取消：丢掉这次输入。 */
   onCancel: (() => void) | null = null
+  /** 弹层拥有输入时暂收引导；输入更新不重复切换可见性。 */
+  onVisibilityChanged: ((visible: boolean) => void) | null = null
+  private visible = false
 
   render(form: CreateForm): void {
     this.node.active = true
+    if (!this.visible) {
+      this.visible = true
+      this.onVisibilityChanged?.(true)
+    }
     if (this.built && this.builtHasTag === (form.tagLabel !== null)) {
       this.form = form
       this.syncTexts()
@@ -93,11 +100,20 @@ export class SocialCreateOverlay extends Component {
 
   hide(): void {
     this.node.active = false
+    if (this.visible) {
+      this.visible = false
+      this.onVisibilityChanged?.(false)
+    }
     this.built = false
     this.nameBox = null
     this.tagBox = null
     this.submitNode = null
     this.clearNodes()
+  }
+
+  override onDestroy(): void {
+    this.hide()
+    this.onVisibilityChanged = null
   }
 
   /** 结构不变时只改字：输入框与它的焦点留着，玩家才打得进第二个字。 */

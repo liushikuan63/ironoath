@@ -20,6 +20,7 @@ import { PANEL_IRON_INSET } from '../assets/scripts/game/art/ArtFamilies'
 import * as uiTokens from '../assets/scripts/game/ui/UiTokens'
 import { worldSceneLayout } from '../assets/scripts/game/world/WorldSceneLayout'
 import type { MarchComposeView } from '../assets/scripts/game/session/AppRoot'
+import type { CreateForm } from '../assets/scripts/game/social/SocialCreate'
 
 class Vec2 { constructor(public x = 0, public y = 0) {} }
 class Mask { static Type = { GRAPHICS_RECT: 1 }; type = 0 }
@@ -997,4 +998,80 @@ test('实际离线汇总render/hide生产可见性回调恢复引导，空汇总
   guide.setOverlaySuppressed('giftPopup', true); offline.render(view); offline.render({ items: [] })
   assert.equal(offline.node.active, false); assert.equal(guide.node.active, false, '礼包仍显示时不能恢复引导遮罩')
   guide.setOverlaySuppressed('giftPopup', false); assert.equal(guide.node.active, true)
+})
+
+test('原生社交首行创建与军队右列操作不被实际Guide气泡挡住', () => {
+  // F31 native receipt0251: game origin480,221.8009; social action776,297.6019,72x30.
+  const action = { x: 776 - 36, y: 297.6018957345971 - 15, width: 72, height: 30 }
+  for (const panel of ['social', 'army']) {
+    const { guide, area } = setup(panel)
+    Object.assign(area, { ...nativeArea, height: 301.6682464454976 })
+    guide.repaint()
+    let button = action
+    if (panel === 'army') {
+      const Army = sceneClass<{ node: Node; createRow(): Node }>('ArmyPanelView', {
+        applySystemUiFont: (label: Label) => label, applyCommandButton: () => false,
+        capWidth: (label: Label, width: number) => dimensions(label.node).setContentSize(width, 27),
+        keepOneLine: () => {}, applyIconSprite: () => false, unitIconKey: () => null,
+      })
+      const row = new Army().createRow()
+      button = ownRect(row.getChildByName('SpeedTrainButton')!, new Vec3(480, 297.6018957345971, 0))
+    }
+    assert.equal(intersects(bubbleRect(guide), button), false, panel + '实际右列动作必须净空')
+    assert.equal(dimensions(guide.bubble!).width, 420, '保留服务端长文宽度')
+  }
+})
+
+interface SocialCreateHarness {
+  node: Node; render(form: CreateForm): void; hide(): void; onDestroy(): void
+  onVisibilityChanged: ((visible: boolean) => void) | null
+  nameBox: { string: string } | null
+}
+function socialCreateHarness(): SocialCreateHarness {
+  class EditBox {
+    static InputMode = { SINGLE_LINE: 1 }; static EventType = { TEXT_CHANGED: 'text-changed' }
+    node!: Node; string = ''; textLabel = null
+  }
+  const Social = sceneClass<SocialCreateHarness>('SocialCreateOverlay', { EditBox,
+    view: { getVisibleSize: () => nativeSize }, DIALOG_SCRIM: {},
+    applyContainedSprite: () => false, applyIronButton: () => false,
+    applySystemUiFont: (label: Label) => label, finishLegacyDialog: () => {} })
+  const overlay = new Social(); overlay.node.active = false; return overlay
+}
+const emptySocialForm: CreateForm = { titleText: '创建小队', nameLabel: '小队名称', tagLabel: null,
+  costText: '不消耗资源', hint: '请填写名称', canSubmit: false, name: '', tag: '' }
+function wireSocialCreate(guide: GuideHarness, overlay: SocialCreateHarness, host: { destroyed: boolean }): void {
+  const ast = ts.createSourceFile('GameBootstrap.ts', sceneSource('GameBootstrap'), ts.ScriptTarget.ES2020, true)
+  let callback: ts.Expression | undefined
+  const scan = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && ts.isPropertyAccessExpression(node.left)
+      && node.left.expression.getText(ast) === 'socialCreate' && node.left.name.text === 'onVisibilityChanged') callback = node.right
+    ts.forEachChild(node, scan)
+  }; scan(ast); assert.ok(callback, '实际生产接线必须收起整个Guide遮罩')
+  const code = ts.transpileModule('exports.callback=(function(){return (' + callback.getText(ast) + ')}).call(host)',
+    { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText
+  const exports: Record<string, unknown> = {}; runInNewContext(code, { exports, host: { guide, get destroyed() { return host.destroyed } } })
+  overlay.onVisibilityChanged = exports.callback as (visible: boolean) => void
+}
+test('创建表单实际生产接线收起Guide，连续输入保留EditBox，关闭仅恢复自己的抑制项', () => {
+  const { guide } = setup('social'), overlay = socialCreateHarness(), host = { destroyed: false }
+  wireSocialCreate(guide, overlay, host)
+  const callback = overlay.onVisibilityChanged!, transitions: boolean[] = []
+  overlay.onVisibilityChanged = visible => { transitions.push(visible); callback(visible) }
+  overlay.render(emptySocialForm); assert.equal(guide.node.active, false)
+  const input = overlay.nameBox
+  overlay.render({ ...emptySocialForm, name: '铁' }); overlay.render({ ...emptySocialForm, name: '铁誓' })
+  assert.equal(overlay.nameBox, input, '不能重建输入框丢失第二个字与焦点')
+  assert.equal(overlay.nameBox!.string, '铁誓'); assert.deepEqual(transitions, [true])
+  guide.repaint(); assert.equal(guide.node.active, false)
+  guide.setOverlaySuppressed('giftPopup', true); overlay.hide(); overlay.hide()
+  assert.deepEqual(transitions, [true, false]); assert.equal(guide.node.active, false)
+  guide.setOverlaySuppressed('giftPopup', false); assert.equal(guide.node.active, true)
+  overlay.render(emptySocialForm); overlay.onDestroy(); assert.equal(guide.node.active, true)
+  assert.equal(overlay.onVisibilityChanged, null)
+})
+test('组合根已销毁时创建表单可见性回调不再改引导', () => {
+  const { guide } = setup('social'), overlay = socialCreateHarness(), host = { destroyed: true }
+  wireSocialCreate(guide, overlay, host); overlay.render(emptySocialForm)
+  assert.equal(guide.node.active, true)
 })

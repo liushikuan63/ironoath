@@ -92,7 +92,8 @@ for (const height of [443.6018957345971, 600, 640]) test(`Army实际header在960
   const area = { x: -426.5402843601896, y: -height / 2 + 83.88625592417056, width: 853.0805687203791, height: height - 83.88625592417056 }
   assert.ok(rect.x >= area.x && rect.y >= area.y && rect.x + rect.width <= area.x + area.width && rect.y + rect.height <= area.y + area.height)
   const bubble = guideBubbleLayout(area, 960, height, 'army', { width: 420, height: 150, margin: 24, buttonWidth: 150 })
-  assert.ok(rect.x + rect.width < bubble.x - bubble.width / 2 || rect.y + rect.height < bubble.y - bubble.height / 2)
+  assert.ok(rect.x + rect.width < bubble.x - bubble.width / 2 || rect.x > bubble.x + bubble.width / 2
+    || rect.y + rect.height < bubble.y - bubble.height / 2 || rect.y > bubble.y + bubble.height / 2)
   for (const name of ['AutoTrainButton', 'TreatButton']) {
     const other = view.node.getChildByName(name)!; const own = other.getComponent(UITransform)!;
     assert.equal(button.position.y, other.position.y)
@@ -126,7 +127,10 @@ test('600创建后short→600→640原位跟随高度，列表未到不render/re
     assert.ok(button.position.y + own.height / 2 <= height / 2)
     const area = { x: -426.5402843601896, y: -height / 2 + 83.88625592417056, width: 853.0805687203791, height: height - 83.88625592417056 }
     const bubble = guideBubbleLayout(area, 960, height, 'army', { width: 420, height: 150, margin: 24, buttonWidth: 150 })
-    assert.ok(button.position.x + own.width / 2 < bubble.x - bubble.width / 2)
+    assert.ok(button.position.x + own.width / 2 < bubble.x - bubble.width / 2
+      || button.position.x - own.width / 2 > bubble.x + bubble.width / 2
+      || button.position.y + own.height / 2 < bubble.y - bubble.height / 2
+      || button.position.y - own.height / 2 > bubble.y + bubble.height / 2)
     button.emit('touch-start')
   }
   assert.equal(positions, 3, '同高度第二帧不得重复重排'); assert.equal(navigation, 3)

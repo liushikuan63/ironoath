@@ -1551,6 +1551,9 @@ export class GameBootstrap extends Component {
       // 三道门一起到：权限两份（小队 / 联盟各一份）+ 创建政策。面板按页签分别门控，缺的那一份不拿来猜
       out.socialGates = (state, create) => social.attachSocialGates(state, create)
       if (socialCreate !== null) {
+        socialCreate.onVisibilityChanged = visible => {
+          if (!this.destroyed && this.guide?.isValid) this.guide.setOverlaySuppressed('socialCreate', visible)
+        }
         out.socialCreate = form => {
           if (form === null) {
             socialCreate.hide()
