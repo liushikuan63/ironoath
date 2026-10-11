@@ -118,10 +118,11 @@ function sceneClass<T>(name: string, bindings: Record<string, unknown>): new () 
 const capsuleRect = { left: 746, top: 12, right: 834, bottom: 44, width: 88, height: 32 }
 const notchRect = { x: 53.459715639810426, y: 23.886255924170616,
   width: 853.0805687203791, height: 419.7156398104265 }
-function actualViewportInsets(runtimeSys: Record<string, unknown>, runtimeWx?: Record<string, unknown>):
+function actualViewportInsets(runtimeSys: Record<string, unknown>, runtimeWx?: Record<string, unknown>, clock?: () => number):
   (width: number, height: number) => { left: number; right: number; top: number; bottom: number } {
   return sceneExports('ViewportSafeArea', { sys: runtimeSys, safeAreaInsets,
     view: { getFrameSize: () => ({ width: 844, height: 390 }) }, wx: runtimeWx,
+    ...(clock === undefined ? {} : { Date: { now: clock } }),
   }).viewportSafeInsets as ReturnType<typeof actualViewportInsets>
 }
 
@@ -184,6 +185,70 @@ test('连续窗口变化重新读取胶囊与窗口尺寸，不复用首次净�
   assert.ok(readInsets(960, 443.6018957345971).top > 58)
   bottom = 60; windowHeight = 600
   assert.equal(readInsets(960, 640).top, 72)
+})
+
+test('稳定视口连续帧只读一次原生安全区、窗口和胶囊，返回值不能污染缓存', () => {
+  let safeReads = 0; let windowReads = 0; let capsuleReads = 0
+  const readInsets = actualViewportInsets({ isBrowser: false,
+    getSafeAreaRect: () => { safeReads++; return notchRect } }, {
+    getWindowInfo: () => { windowReads++; return { windowWidth: 844, windowHeight: 390 } },
+    getMenuButtonBoundingClientRect: () => { capsuleReads++; return capsuleRect },
+  })
+  const expected = readInsets(960, 443.6018957345971)
+  const changed = readInsets(960, 443.6018957345971); changed.top = 999
+  for (let frame = 0; frame < 1000; frame++) assert.deepEqual(readInsets(960, 443.6018957345971), expected)
+  assert.deepEqual([safeReads, windowReads, capsuleReads], [1, 1, 1], '真实update调用不得逐帧桥接微信API')
+})
+
+test('同尺寸窗口变化和回前台使安全区缓存失效，每类监听只注册一次', () => {
+  let bottom = 44; let safeReads = 0; let resize: (() => void) | undefined; let show: (() => void) | undefined
+  let resizeListeners = 0; let showListeners = 0
+  const readInsets = actualViewportInsets({ isBrowser: false,
+    getSafeAreaRect: () => { safeReads++; return notchRect } }, {
+    getWindowInfo: () => ({ windowWidth: 844, windowHeight: 390 }),
+    getMenuButtonBoundingClientRect: () => ({ ...capsuleRect, bottom, height: bottom - 12 }),
+    onWindowResize: (listener: () => void) => { resizeListeners++; resize = listener },
+    onShow: (listener: () => void) => { showListeners++; show = listener },
+  })
+  const initial = readInsets(960, 443.6018957345971).top
+  for (let frame = 0; frame < 100; frame++) readInsets(960, 443.6018957345971)
+  assert.deepEqual([resizeListeners, showListeners], [1, 1])
+  bottom = 60; resize!()
+  const resized = readInsets(960, 443.6018957345971).top
+  assert.ok(resized > initial)
+  bottom = 70; show!()
+  assert.ok(readInsets(960, 443.6018957345971).top > resized)
+  assert.deepEqual([safeReads, resizeListeners, showListeners], [3, 1, 1])
+})
+
+test('启动时胶囊暂未就绪的回退最多每秒惰性重试，恢复后不永久保留零净区', () => {
+  let now = 100; let ready = false; let reads = 0
+  const readInsets = actualViewportInsets({ isBrowser: false }, {
+    getWindowInfo: () => ({ windowWidth: 844, windowHeight: 390 }),
+    getMenuButtonBoundingClientRect: () => { reads++; return { ...capsuleRect, width: ready ? 88 : 0 } },
+  }, () => now)
+  assert.equal(readInsets(960, 443.6018957345971).top, 0)
+  ready = true
+  for (let frame = 0; frame < 100; frame++) assert.equal(readInsets(960, 443.6018957345971).top, 0)
+  assert.equal(reads, 1)
+  now += 1000
+  assert.ok(readInsets(960, 443.6018957345971).top > 58)
+  for (let frame = 0; frame < 100; frame++) readInsets(960, 443.6018957345971)
+  assert.equal(reads, 2)
+})
+
+test('原生safeArea初始为零时不会永久缓存，胶囊避让与之后恢复的刘海边缘都保留', () => {
+  let now = 0; let ready = false
+  const readInsets = actualViewportInsets({ isBrowser: false,
+    getSafeAreaRect: () => ready ? notchRect : { x: 0, y: 0, width: 0, height: 0 } }, {
+    getWindowInfo: () => ({ windowWidth: 844, windowHeight: 390 }),
+    getMenuButtonBoundingClientRect: () => capsuleRect,
+  }, () => now)
+  const initial = readInsets(960, 443.6018957345971)
+  assert.ok(initial.top > 58); assert.equal(initial.left, 0)
+  ready = true; now = 1000
+  const recovered = readInsets(960, 443.6018957345971)
+  assert.equal(recovered.left, notchRect.x); assert.ok(recovered.top > 58)
 })
 
 test('浏览器跳过微信调用；原生没有或抛错的胶囊接口保留实测safeArea', () => {
