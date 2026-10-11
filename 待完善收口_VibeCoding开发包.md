@@ -7052,3 +7052,5 @@ TEST_EXIT=0
 | #1062 F26完整600秒性能和原生测量静态兼容 | 本笔（证据原子提交，本批统一推） | 默认前44actual0；600秒0、首屏2505ms/FPS60.2/堆22.1至32.8MB峰63.4；弱网6秒恢复；外置14文件AST及模式0、business NO_RUN | D:/tmp/ironoath-wechat-20261010/runtime-v26/probe-verify-perf-runtime.mjs.log；native-v26-harness-prepared-memory.json | 浏览器性能不代原生性能；默认余21/精确5补项及最终67待；原生余步/头像补图及9GB内存根因待，未推 |
 
 | #1063 F26完整运行时和精确补项闭合 | 本笔（证据原子提交，本批统一推） | 默认65首次actual0/零重试失败跳过；cleanup0；policy87/equip81 COVER4/4精确5补项；合并accepted true/校验0；现核独审67/0 | D:/tmp/ironoath-wechat-20261010/runtime-v26/phase-closure.actual.json；phase-evidence-v26.json；summary-supplemented.json；final-independent-input.log | 原wrapper1和原五未验保持；原生control在途，七步后五步/主5收割panzoom/完整头像实图及9GB根因待，未推 |
+
+| #1064 原生对照与同号恢复 | 本笔（证据原子提交，本批统一推） | 移动120秒actual0/约7900真实帧；正常close0；R15恢复actual0；GPU只读第三尝试true0，前两semanticfalse保留 | D:/tmp/ironoath-wechat-20261010/native-control-moving-v26/moving-control-first.actual.json；native-resume-guide3-after-control-v26-session9.actual.json；root-native-onboarding-v26/game-idle-after-control-v26-retry2.receipt.json | 六资源/四手动retry1在途；后五步及完整头像实图待；9GB交互内存根因待，未推 |
