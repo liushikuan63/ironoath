@@ -7062,3 +7062,5 @@ TEST_EXIT=0
 | #1067 全局礼包与离线汇总引导层修复应用 | 本笔（五源码测试路径+专文+证据原子提交） | 真实回归40含1红→40绿；候选client1233/0失败0跳；两typecheck0；原R15正常close0/9488清理0 | docs/native-gift-guide-priority-1066.md；D:/tmp/ironoath-wechat-20261010/global-overlay-1067.applied.json；offline-guide-1067-client-full.log | F26旧读数不能验新源；F27全工程/新原生实画与完整头像七步待；方向API0非实际旋转，内存根因待，未推 |
 
 | #1068 F27完整工程与新输入冻结 | 本笔（证据原子提交，本批统一推） | 全监督0/47门0/client1233辅助11均0失败0跳/JUnit229套2292无失败错误跳/Web及WX0/capture0/独审67全绿 | D:/tmp/ironoath-wechat-20261010/full-validation-v27/inputs.json；native-v27-independent-input-evidence.json；root-supervised-v27-full.actual-exit.json | 新默认65/600真实在途无最终counts；policy/equip NO_RUN；新原生礼包/离线汇总、头像七步/真实方向及内存根因待，未推 |
+
+| #1069 F27新原生与补测准备 | 本笔（证据原子提交，本批统一推） | R16文件342中340原样；外置语法0；装备纯127全绿及两绑定0；默认已完成12实际0 | D:/tmp/ironoath-wechat-20261010/run-local-ide-16/native-artifact-binding-v27.json；native-v27-hero-preview-prepared.json；full-unified-tools-v27/equip-tools/template-freeze.json | 默认65未结束；policy/equip及新原生18字段/七步业务NO_RUN；方向和内存根因待；未推 |
