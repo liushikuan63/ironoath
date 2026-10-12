@@ -13,6 +13,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 
 function repoRoot(): string {
   let dir = process.cwd()
@@ -58,4 +60,63 @@ test('播完才 resolve：先销毁再 resolve，顺序反了队列就会叠着�
   assert.ok(destroyAt >= 0 && resolveAt >= 0, '找不到销毁或 resolve 那两句，判据走不到')
   assert.ok(destroyAt < resolveAt,
     'resolve() 排在 hint.destroy() 之前 —— 队列会在提示还挂在屏上时就放下一条进来')
+})
+
+test('公共结果提示的底板与文字各占一个绘制节点，文字不会被同节点Graphics替代', async () => {
+  const ast = ts.createSourceFile('GameBootstrap.ts', GB, ts.ScriptTarget.ES2020, true)
+  const klass = ast.statements.find(ts.isClassDeclaration)!
+  const paint = klass.members.find(member => member.name?.getText(ast) === 'paintHint')!
+  const hold = klass.members.find(member => member.name?.getText(ast) === 'HINT_HOLD_MS')!
+  const source = `export class GameBootstrap { ${hold.getText(ast)} ${paint.getText(ast)} }`
+  const code = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020,
+  } }).outputText
+  class Transform { setContentSize(..._values: unknown[]): void {} }
+  class Renderer {}
+  class Caption extends Renderer {
+    static Overflow = { SHRINK: 2 }
+    string = ''; fontSize = 0; lineHeight = 0; color: unknown; overflow = 0
+  }
+  class Background extends Renderer {
+    fillColor: unknown
+    roundRect(..._values: unknown[]): void {}
+    fill(): void {}
+  }
+  class HintNode {
+    children: HintNode[] = []; parent: HintNode | null = null; layer = 0
+    components = new Map<unknown, unknown>(); uiComp: Renderer | null = null
+    destroyed = false
+    constructor(readonly name: string) {}
+    addChild(child: HintNode): void { child.parent = this; this.children.push(child) }
+    addComponent<T>(type: new () => T): T {
+      const value = new type(); this.components.set(type, value)
+      // Cocos3.8.7 UIRenderer.__preload assigns one NodeUIProperties.uiComp.
+      if (value instanceof Renderer) this.uiComp = value
+      return value
+    }
+    getComponent<T>(type: new () => T): T | null { return this.components.get(type) as T ?? null }
+    setPosition(..._values: unknown[]): void {}
+    destroy(): void { this.destroyed = true; this.parent?.children.splice(this.parent.children.indexOf(this), 1) }
+  }
+  const timers: Array<() => void> = [], exports: Record<string, unknown> = {}
+  runInNewContext(code, { exports, Node: HintNode, UITransform: Transform, Label: Caption,
+    Graphics: Background, Color: class {}, Size: class {},
+    view: { getVisibleSize: () => ({ width: 960, height: 443.6018957345971 }) },
+    applySystemUiFont: (label: Caption) => label,
+    setTimeout: (callback: () => void) => { timers.push(callback); return 1 },
+  })
+  const GameBootstrap = exports.GameBootstrap as new () => {
+    node: HintNode; paintHint(text: string): Promise<void>
+  }
+  const bootstrap = new GameBootstrap(), canvas = new HintNode('Canvas')
+  bootstrap.node = new HintNode('Game'); canvas.addChild(bootstrap.node)
+  const text = '补结算产出 木材 +7 · 石料 +6 · 铁矿 +3 · 粮草 +13'
+  const playback = bootstrap.paintHint(text), hint = canvas.children.find(node => node.name === 'SettingsHint')!
+  const nodes = [hint, ...hint.children]
+  const visible = nodes.map(node => node.uiComp).filter(value => value instanceof Caption) as Caption[]
+  assert.deepEqual(visible.map(label => label.string), [text], '背景绘制不得覆盖唯一文字渲染器')
+  assert.ok(nodes.every(node => [...node.components.values()].filter(value => value instanceof Renderer).length <= 1))
+  assert.equal(hint.destroyed, false)
+  timers[0]!(); await playback
+  assert.equal(hint.destroyed, true)
 })

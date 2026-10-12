@@ -108,7 +108,7 @@ const measure = () => page.evaluate(() => {
   const visit = (node) => {
     if (node.name === 'SettingsHint' && node.activeInHierarchy === true) {
       const box = node.getComponent('cc.UITransform')
-      const label = node.getComponent('cc.Label')
+      const label = node.getComponentInChildren('cc.Label')
       const r = box === null ? null : box.getBoundingBoxToWorld()
       out.push({
         text: label === null ? '' : label.string,

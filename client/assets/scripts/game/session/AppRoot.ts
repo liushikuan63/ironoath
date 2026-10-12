@@ -20,6 +20,7 @@
  */
 
 import { TRACK_EVENTS, trackParam } from '../track/TrackEvents'
+import { collectMessage } from '../city/CityPanel'
 import type { GameApi } from './GameApi'
 import type { GameSession } from './GameSession'
 import type { NetOutcome } from '../../net/NetModule'
@@ -1301,7 +1302,11 @@ export class AppRoot {
   collect(buildingId: string | null): Promise<void> {
     this.track(TRACK_EVENTS.gatherCollect, { buildingId: trackParam(buildingId), all: trackParam(buildingId === null) })
     return this.write('city', this.api.cityCollect({ buildingId }),
-      ['city', 'resources', 'reddot'], r => this.targets.cityCollect?.(r))
+      ['city', 'resources', 'reddot'], r => {
+        this.targets.cityCollect?.(r)
+        const message = collectMessage(r)
+        if (message !== null) this.targets.hint?.(message.text)
+      })
   }
 
   /**

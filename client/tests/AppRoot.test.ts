@@ -280,7 +280,7 @@ const ROUTES: Record<string, unknown> = {
   },
   '/city/upgrade': { accepted: true, serverNow: SERVER_NOW },
   '/city/speedUp': { remainingSeconds: 0, serverNow: SERVER_NOW },
-  '/city/collect': { collected: {}, entries: [], serverNow: SERVER_NOW },
+  '/city/collect': { collected: [], output: [], serverNow: SERVER_NOW },
   '/city/cancel': { buildingId: 'b1', refund: [{ type: 'WOOD', amount: 300 }] },
   '/army/train': { started: 1, serverNow: SERVER_NOW },
   // 开关自动续训（B25-S2d）：回一份「开着、还剩 2 批」的策略，够编排用例读回执
@@ -1546,6 +1546,32 @@ test('一键收割发的是 buildingId=null，且收割结果先落地再刷新�
     '「一键收割」必须是显式的 null，而不是缺字段 —— 缺字段在服务端那是另一种语义')
   assert.deepEqual(h.attached.slice(0, 2), ['cityCollect', 'city'],
     '飘字必须赶在列表重画之前，否则玩家看不到收了多少')
+})
+
+test('一键收割四资源正产出进入公共结果提示，短屏不只依赖内城窄提示行', async () => {
+  const h = harness()
+  await h.root.start('dev-collect-readable', '君')
+  h.resetHints()
+  h.http.overrides.set('/city/collect', { collected: [], output: [
+    { type: 'WOOD', amount: 7 }, { type: 'STONE', amount: 6 },
+    { type: 'IRON', amount: 3 }, { type: 'GRAIN', amount: 13 },
+  ], serverNow: SERVER_NOW })
+
+  await h.root.collect(null)
+
+  assert.deepEqual(h.hintReceipts, ['补结算产出 木材 +7 · 石料 +6 · 铁矿 +3 · 粮草 +13'])
+  assert.equal(h.http.countOf('/city/collect'), 1, '提示不得另发收割请求')
+})
+
+test('收割空结果不制造资源到账提示', async () => {
+  const h = harness()
+  await h.root.start('dev-collect-empty', '君')
+  h.resetHints()
+
+  await h.root.collect(null)
+
+  assert.deepEqual(h.hintReceipts, [])
+  assert.equal(h.http.countOf('/city/collect'), 1)
 })
 
 test('领奖：三选一的 heroChoice 原样进请求体，埋点区分「选完再领」与「直接领」', async () => {

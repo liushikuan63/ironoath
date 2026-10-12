@@ -845,7 +845,11 @@ export class GameBootstrap extends Component {
     const visible = view.getVisibleSize()
     hint.addComponent(UITransform).setContentSize(new Size(visible.width - 80, 36))
     hint.setPosition(0, -visible.height / 2 + 90, 0)
-    const label = applySystemUiFont(hint.addComponent(Label))
+    const caption = new Node('Caption')
+    hint.addChild(caption)
+    caption.layer = hint.layer
+    caption.addComponent(UITransform).setContentSize(new Size(visible.width - 80, 36))
+    const label = applySystemUiFont(caption.addComponent(Label))
     label.string = text
     label.fontSize = 16
     label.lineHeight = 22
