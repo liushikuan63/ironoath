@@ -141,6 +141,19 @@ function install(opts = {}) {
 const resolveStamina = (extra = {}) =>
   resolveCocosClickPoint(Object.assign({ labelPrefix: '体力' }, extra))
 
+test('同名地图Marker按实际uuid解析图标，不能误点第一颗或名牌', () => {
+  const fixture = install()
+  fixture.target.name = 'Marker'
+  fixture.target.uuid = 'actual-resource-icon'
+  fixture.root.children[1].children.unshift({ name: 'Marker', uuid: 'other-marker',
+    activeInHierarchy: true, children: [], getComponent: () => null })
+  const hit = resolveCocosClickPoint({ uuid: 'actual-resource-icon', within: 'Canvas' })
+  assert.equal(hit.verified, true, JSON.stringify(hit))
+  assert.equal(hit.x, RECT.left + CENTER_ENGINE.x / DPR)
+  assert.equal(hit.y, RECT.top + RECT.height - CENTER_ENGINE.y / DPR)
+  assert.equal(resolveCocosClickPoint({ uuid: 'missing-marker' }).reason, 'node-not-found')
+})
+
 // ── 正例 ────────────────────────────────────────────────────────────────
 test('dpr=2 时：CSS 点 = rect.left + 引擎x/dpr、rect.top + 高 - 引擎y/dpr（逐字手算对上）', () => {
   install()

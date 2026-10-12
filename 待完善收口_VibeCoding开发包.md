@@ -7324,3 +7324,5 @@ TEST_EXIT=0
 | #1190 用户明确允许后续多账号，双方真实开战列为必验 | 本笔（本批统一推） | 用户授权已落盘；双向开战尚未执行，非通过 | docs/多账号攻防验收.md；本聊天2026-10-12用户多账号与互相开战要求 | A攻B/B攻A与双方资产结算均未验；当前先完成资源采集修复/五门/浏览器/新冻结与原生采集；不得以夹具或单方向结果代替双向完成 |
 
 | #1191 用户要求更新微信开发者工具，官方9231包SHA与签名验证 | 本笔（本批统一推） | 版本8070→候选9231；官方包196841032字节；SHA256匹配/签名Valid；installed=false | D:/tmp/ironoath-chat-stop-20261012/wechat-devtools-upgrade/download.actual.json；wechat-official-download.html；官方腾讯包与microsoft/winget-pkgs安装清单 | 工具安装/实际重启与新版本原生SDK/同号复验尚未做；恢复窗口必须后台不置前；现有SDK入口脚本须保留并检查新版兼容 |
+
+| #1192 资源采集入口接线，取消0请求/确认与重发GATHER有效回归 | 本笔（本批统一推） | 旧采集2条回归真红→AppRoot/World195通过，新增缺名回退后全客户端1272/0失败0跳；共用UUID12跑旧1红→12全过；五门全0；JUnit2298/0fail0error0skip/229XML且当轮新时间；批11份0+入口10通过0失败；最终check0 | D:/tmp/ironoath-chat-stop-20261012/gather39b-gates.actual.json；gather-junit.actual.json；gather-runtime-effective.actual.json；gather-entry-rev3/actual.json及gather-compose.png；gather-uuid-red/green.log；gather-final-check.log；f38-before-native-f39-and-tool-upgrade-backup/backup.actual.json；resource-gather-1192-native-candidate/plan.json | 入口浏览器军队与派遣拒绝为明确夹具，未验证真实服务端采集或原生；原号仍F38军队266兵1738金主6/独立38068，F39未冻结切换；工具9231安装管理员UAC及资料备份/恢复未做；多账号双向开战仍待验 |

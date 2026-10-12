@@ -50,6 +50,86 @@ import { resetWorld, initializeWorld, feedViewport } from '../assets/scripts/gam
 
 const SERVER_NOW = 1_788_000_000_000
 
+test('地图采集：可见资源只编成，取消零发送，确认和再次出征保留GATHER', async () => {
+  const h = harness()
+  await h.root.start('dev-gather', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  initializeWorld({ worldSize: 512, chunkSize: 32, maxChunks: 9 }, 0, { x: 16, y: 16 })
+  feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['0:0'], fogChunks: [],
+    chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
+      id: 'resource-internal-17', type: 'RESOURCE', x: 17, y: 16, level: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: 'STONE', load: null,
+    }] }] })
+  const begin = () => h.root.beginResourceMarchCompose('RESOURCE:resource-internal-17')
+  try {
+    begin()
+    assert.equal(h.lastCompose?.targetName, '石料')
+    assert.equal(h.lastCompose?.targetKind, 'RESOURCE')
+    assert.equal(h.lastCompose?.compose.hasTroops, false)
+    assert.equal(h.lastCompose?.submitLabel, '采集')
+    await h.root.toggleComposeRally()
+    h.root.toggleComposeScout()
+    assert.equal(h.lastCompose?.mode, 'MARCH', '采集不能转成玩家城侦察或集结')
+    h.root.cancelMarchCompose()
+    assert.equal(h.http.countOf('/world/march'), 0)
+    begin()
+    h.root.pickMarchUnit('unit_infantry_t1', 100)
+    await h.root.confirmMarch()
+    const first = h.http.calls.filter(c => c.path === '/world/march')
+    assert.equal(first.length, 1)
+    assert.deepEqual([first[0]?.body.toX, first[0]?.body.toY, first[0]?.body.action], [17, 16, 'GATHER'])
+    assert.deepEqual(first[0]?.body.units, [{ unitId: 'unit_infantry_t1', count: 100 }])
+    assert.equal(h.events.filter(e => e.name === 'march_send').length, 1)
+    await h.root.repeatLastMarch()
+    const sent = h.http.calls.filter(c => c.path === '/world/march')
+    assert.equal(sent.length, 2)
+    assert.equal(sent[1]?.body.action, 'GATHER')
+    assert.equal(h.http.countOf('/world/searchTargets'), 0)
+  } finally { resetWorld() }
+})
+
+test('地图采集：迷雾、错误类型和消失资源不能打开编成或发送', async () => {
+  const h = harness()
+  await h.root.start('dev-gather-hidden', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  initializeWorld({ worldSize: 512, chunkSize: 32, maxChunks: 9 }, 0, { x: 16, y: 16 })
+  feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['1:0'], fogChunks: ['0:0'],
+    chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
+      id: 'hidden-resource', type: 'RESOURCE', x: 17, y: 16, level: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: 'STONE', load: null,
+    }] }, { key: '1:0', version: 1, truncated: false, entities: [{
+      id: 'monster', type: 'MONSTER', x: 33, y: 16, level: 1,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+    }] }] })
+  try {
+    for (const key of ['RESOURCE:hidden-resource', 'MONSTER:monster', 'RESOURCE:gone']) {
+      h.root.beginResourceMarchCompose(key)
+      assert.ok(!h.lastCompose?.targetId)
+    }
+    assert.equal(h.http.countOf('/world/march'), 0)
+  } finally { resetWorld() }
+})
+
+test('地图采集：缺少资源名时给安全回退，不把内部资源id印给玩家', async () => {
+  const h = harness()
+  await h.root.start('dev-gather-name', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  initializeWorld({ worldSize: 512, chunkSize: 32, maxChunks: 9 }, 0, { x: 16, y: 16 })
+  feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['0:0'], fogChunks: [],
+    chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
+      id: 'resource-internal-no-name', type: 'RESOURCE', x: 17, y: 16, level: null,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+    }] }] })
+  try {
+    h.root.beginResourceMarchCompose('RESOURCE:resource-internal-no-name')
+    assert.equal(h.lastCompose?.targetName, '资源点')
+    assert.equal(h.http.countOf('/world/march'), 0)
+  } finally { resetWorld() }
+})
+
 test('原生首战：选中可见野怪只编成，取消不出征，确认才发送实际坐标和所选兵力', async () => {
   const h = harness()
   await h.root.start('dev-pve', '君')

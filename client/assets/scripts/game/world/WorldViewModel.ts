@@ -102,10 +102,20 @@ export interface WorldFrame {
 
 /** 只取此刻已加载、已探索的野怪；隐藏、卸载和消失目标不成为操作入口。 */
 export function selectedVisibleMonster(frame: WorldFrame | null, key: string | null): WorldEntity | null {
+  return selectedVisibleEntity(frame, key, 'MONSTER')
+}
+
+/** 采集只能从当前已加载、已探索的资源点进入，不能用过期选择或裸坐标绕过视野。 */
+export function selectedVisibleResource(frame: WorldFrame | null, key: string | null): WorldEntity | null {
+  return selectedVisibleEntity(frame, key, 'RESOURCE')
+}
+
+function selectedVisibleEntity(frame: WorldFrame | null, key: string | null,
+                              type: WorldEntity['type']): WorldEntity | null {
   if (frame === null || key === null) return null
   for (const tile of frame.tiles) {
     if (!tile.loaded || tile.fogged) continue
-    const found = tile.entities.find(entity => entity.type === 'MONSTER' && `MONSTER:${entity.id}` === key)
+    const found = tile.entities.find(entity => entity.type === type && `${type}:${entity.id}` === key)
     if (found !== undefined) return found
   }
   return null

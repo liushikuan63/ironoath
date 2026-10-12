@@ -31,7 +31,7 @@ import {
 } from '../game/world/WorldSceneLayout'
 import type { WorldViewModel } from '../game/world/WorldViewModel'
 import type { WorldFrame, ChunkTile, MarchRender } from '../game/world/WorldViewModel'
-import { selectedVisibleMonster } from '../game/world/WorldViewModel'
+import { selectedVisibleMonster, selectedVisibleResource } from '../game/world/WorldViewModel'
 import { buildMarchPanel } from '../game/world/MarchPanel'
 import type { MarchPanelAction } from '../game/world/MarchPanel'
 import type { WorldEntityType } from '../net/generated/WorldProtocol'
@@ -124,6 +124,8 @@ export class WorldMap extends Component {
   onRepeatLastMarch: (() => void) | null = null
   /** 点选后由组合根打开既有编成；本场景不提交请求或判定战力。 */
   onAttackMonster: ((entityKey: string) => void) | null = null
+  /** 当前可见资源点的采集意图；编成和请求由组合根处理。 */
+  onGatherResource: ((entityKey: string) => void) | null = null
 
   private readonly refs = new Map<Node, MarkerRefs>()
   /** 已画出的实体：键 → 节点。每帧与渲染帧做差集，决定谁复用、谁归还 */
@@ -289,6 +291,7 @@ export class WorldMap extends Component {
     this.marchButtonCaption = null
     this.onEnterCity = null
     this.onAttackMonster = null
+    this.onGatherResource = null
   }
 
   override onDisable(): void {
@@ -520,8 +523,11 @@ export class WorldMap extends Component {
       marchPosition.x, marchPosition.y, marchPosition.width)
     this.marchButtonCaption = marchNode.getChildByName('MarchButton_Caption')?.getComponent(Label) ?? null
     marchNode.on('touch-start', () => {
-      const monster = selectedVisibleMonster(worldModel()?.frame(Date.now()) ?? null, this.selectedKey)
+      const frame = worldModel()?.frame(Date.now()) ?? null
+      const monster = selectedVisibleMonster(frame, this.selectedKey)
+      const resource = selectedVisibleResource(frame, this.selectedKey)
       if (monster !== null && this.selectedKey !== null) this.onAttackMonster?.(this.selectedKey)
+      else if (resource !== null && this.selectedKey !== null) this.onGatherResource?.(this.selectedKey)
       else this.toggleMarchPanel()
     }, this)
   }
@@ -1064,7 +1070,8 @@ export class WorldMap extends Component {
     const cameraY = Math.round(frame.center.y + this.panAccumY)
     this.coordLabel.string = `(${cameraX}, ${cameraY}) · 缩放 ${frame.zoom}`
     const caption = selectedVisibleMonster(frame, this.selectedKey) !== null
-      ? '讨伐野怪' : frame.marches.length === 0 ? '行军' : `行军 ${frame.marches.length}`
+      ? '讨伐野怪' : selectedVisibleResource(frame, this.selectedKey) !== null
+        ? '采集资源' : frame.marches.length === 0 ? '行军' : `行军 ${frame.marches.length}`
     if (this.marchButtonCaption !== null && caption !== this.lastMarchButtonCaption) {
       this.lastMarchButtonCaption = caption
       this.marchButtonCaption.string = caption

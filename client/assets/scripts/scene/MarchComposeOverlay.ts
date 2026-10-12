@@ -316,10 +316,10 @@ export class MarchComposeOverlay {
     // 置灰反而把原因一起藏了（玩家只会以为按钮坏了）。
     // 当前是哪一种命令用字色标出（选中=金色）：不重画底色，免得为一颗键的状态把整块 Graphics 再描一遍
     this.toggleLabel.string = '集结'
-    this.toggleLabel.node.parent!.active = view.targetKind !== 'MONSTER'
+    this.toggleLabel.node.parent!.active = view.targetKind === undefined
     this.toggleLabel.color = view.mode === 'RALLY' ? COLOR_GOLD : COLOR_TEXT
     this.scoutLabel.string = '侦察'
-    this.scoutLabel.node.parent!.active = view.targetKind !== 'MONSTER'
+    this.scoutLabel.node.parent!.active = view.targetKind === undefined
     this.scoutLabel.color = view.mode === 'SCOUT' ? COLOR_GOLD : COLOR_TEXT
     this.confirmLabel.color = view.submitting ? COLOR_DIM : COLOR_MASK
     this.confirmNode.active = !view.submitting

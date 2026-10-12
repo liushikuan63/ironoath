@@ -66,6 +66,8 @@ const SKIP = new Set([
   "beginMarchCompose",
   // 野怪点选同样只打开编成；真正确认仍由 confirmMarch 唯一记录 march_send。
   "beginMonsterMarchCompose",
+  // 资源点同样只准备编成；取消不发送，确认由 confirmMarch 唯一记录 action=GATHER。
+  "beginResourceMarchCompose",
   // 同一条理由（V02-S1 的集结）：`beginRallyCompose` 只是把编成面板弹出来，
   // 真正"把兵压上去"那一下在 `confirmRallyJoin` 里打 `rally_join` ——
   // 两处都打会把一次加入记成两次

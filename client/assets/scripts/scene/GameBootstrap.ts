@@ -1781,6 +1781,7 @@ export class GameBootstrap extends Component {
       // 空态的「再次出征」：够不够、发不发由编排层判（表现层不碰这些）
       world.onRepeatLastMarch = () => { void this.root?.repeatLastMarch() }
       world.onAttackMonster = entityKey => this.root?.beginMonsterMarchCompose(entityKey)
+      world.onGatherResource = entityKey => this.root?.beginResourceMarchCompose(entityKey)
     }
     // 队列参数不属于任何一块面板，但必须早于任何一次提示 —— 挂在 targets 上由 init 递进来
     out.hintTuning = (toast) => this.applyHintTuning(toast)

@@ -34,6 +34,7 @@
  * 浏览器侧：算出「点这个节点」的 CSS 坐标，并用引擎自己的命中测试作背书。
  * @param {object} opts
  * @param {string} [opts.name] 节点名精确匹配
+ * @param {string} [opts.uuid] 实际节点uuid精确匹配，用于同名池化地图图标
  * @param {string} [opts.labelPrefix] 按 `cc.Label` 文本前缀匹配（不写死行列号）
  * @param {string} [opts.within] 把搜索范围限制在这一个节点的子树里
  * @param {Array<{label:string,x:number,y:number}>} [opts.compare] 附加的对照点（CSS 坐标），
@@ -53,11 +54,11 @@ export function resolveCocosClickPoint(opts) {
   // ---- 1. 找节点。深度上限 64 是 #624 记下的坑：场景树里有过很深的链，不设上限会打爆栈。
   // `children` 读成 `?? []`：遍历的是别人的场景树，不能假设每一层都带 children。
   const kids = (n) => n.children ?? []
-  const findByName = (root, name) => {
+  const findByName = (root, name, field = 'name') => {
     let found = null
     const walk = (n, depth) => {
       if (found !== null || n == null || depth > 64) return
-      if (n.name === name) { found = n; return }
+      if (n[field] === name) { found = n; return }
       for (const c of kids(n)) walk(c, depth + 1)
     }
     walk(root, 0)
@@ -82,10 +83,11 @@ export function resolveCocosClickPoint(opts) {
     scope = host
   }
   let node = null
-  if (o.name != null) node = findByName(scope, o.name)
+  if (o.uuid != null) node = findByName(scope, o.uuid, 'uuid')
+  else if (o.name != null) node = findByName(scope, o.name)
   else if (o.labelPrefix != null) node = findByLabel(scope, o.labelPrefix)
   else return fail('no-criterion', {})
-  if (node === null) return fail('node-not-found', { node: (o.name ?? o.labelPrefix ?? null) })
+  if (node === null) return fail('node-not-found', { node: (o.uuid ?? o.name ?? o.labelPrefix ?? null) })
   if (node.activeInHierarchy !== true) return fail('node-inactive', { node: node.name })
 
   const box = node.getComponent ? node.getComponent('cc.UITransform') : null
