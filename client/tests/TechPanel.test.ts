@@ -62,8 +62,17 @@ test('一行把等级、效果、成本、耗时都摊开，效果是定点百�
   assert.equal(row?.levelText, '3 / 30 级')
   assert.equal(row?.effectText, '木材产量 +4%/级', '400 定点 = 4%，不是 0.04')
   assert.equal(row?.costText, '木材 600 · 石料 200')
-  assert.equal(row?.timeText, '5 分')
+  assert.equal(row?.timeText, '5 秒')
   assert.equal(view.academyText, '学院 2 级')
+})
+
+test('nextTimeSec按契约秒数显示，和同秒数队列倒计时保持一致', () => {
+  for (const [seconds, text] of [[13, '13 秒'], [17, '17 秒'], [59, '59 秒'],
+    [60, '1 分'], [61, '1 分 1 秒'], [3600, '1 小时']] as const) {
+    const row = buildTechPanel(list({ techs: [tech({ nextTimeSec: seconds })] })).rows[0]
+    assert.equal(row?.timeText, text, `${seconds}秒不应再次换算成分钟输入`)
+    assert.equal(row?.timeText, remainTextOf(seconds))
+  }
 })
 
 test('满级那行：不显示 +0%、不显示成本与耗时，原因写"已满级"', () => {

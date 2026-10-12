@@ -205,7 +205,7 @@ export function buildTechPanel(resp: TechListView | null,
       levelText: `${tech.level} / ${tech.maxLevel} 级`,
       effectText: maxed ? null : effectTextOf(tech),
       costText: maxed ? '已满级' : costTextOf(tech.nextCost),
-      timeText: maxed ? null : remainTextOf(tech.nextTimeSec * 60),
+      timeText: maxed ? null : remainTextOf(tech.nextTimeSec),
       canResearch: tech.canResearch,
       reasonText: tech.canResearch ? null : blockReasonText(tech.blockedReason),
     }
