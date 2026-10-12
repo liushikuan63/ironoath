@@ -57,7 +57,7 @@ const preview = await startPreviewServer({ root: 'client/build/web-mobile', back
 console.log(`=== 关卡摘要版式运行时验收：产物经 ${preview.origin}，后端 ${BACKEND} ===`)
 
 const browser = await chromium.launch({ headless: true })
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+const context = await browser.newContext({ viewport: { width: 1280, height: 592 } })
 await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
 }, DEVICE)
@@ -307,10 +307,9 @@ const control = await page.evaluate(`(() => {
 check('对照组：新建 UITransform 的默认宽就是 100（判据盯的正是这个默认值）', control, 100)
 checkTrue('摘要标签的盒子按面板内框给（不再是默认 100 宽）',
   box !== null && box.w > 400 && box.w <= box.panelW)
-checkTrue('摘要标签的盒子不高出面板（240 高的框里放得下）',
-  box !== null && box.h > 100 && box.h <= box.panelH)
+checkTrue('空摘要已挂载到滚动正文，宽度按真实卡片给', box !== null && box.w > 400)
 
-// 把五行仿真摘要喂进真实渲染路径（私有方法在运行时就是普通方法，走的是同一套排版）
+// 把二十段长摘要喂进真实渲染路径；短摘要可能已完全放得下，不能拿它冒充滚动前提。
 const shown = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')
   const panel = game?.getChildByName('stage')
@@ -322,18 +321,51 @@ const shown = await page.evaluate(`(() => {
     '本次未通关，体力已退回',
     '获得 木材 ×12,400 · 石料 ×8,600 · 金币 ×2,300 · 经验 ×41,000 · 加速道具（1 小时） ×2',
     '损失 T1 重步 ×1,240 · T2 弓手 ×380 · T3 骑兵 ×55（按阶级列，只给总数看不出掉的是哪档）',
+    ...Array.from({ length: 15 }, (_, i) => '附加明细第' + (i + 1) + '行：金币与战损来源分别列示'),
   ], new window.cc.Color(226, 214, 190, 255))
   return true
 })()`)
-checkTrue('摘要能画出来（拿到 StagePanelView 组件并喂进五行仿真文案）', shown)
+checkTrue('摘要能画出来（真实组件喂入二十段长文案）', shown)
 await page.waitForTimeout(400)
 const after = await page.evaluate(BOX)
-check('喂进去的摘要有五段（读回来不是空串）',
-  (after?.text ?? '').split('\n').filter((line) => line.length > 0).length, 5)
+check('喂进去的摘要有二十段（无截断）',
+  (after?.text ?? '').split('\n').filter((line) => line.length > 0).length, 20)
 check('摘要面板显示中', after?.active, true)
-checkTrue('摘要出现时行区自己收进行数（画得出来的行不少于 1 条，不把列表清空）',
-  after?.rows >= 1)
+check('摘要独立展示时关卡行全部收起', after?.rows, 0)
 check('没有一行压在摘要面板上（两层半透明文字叠在一起就是这坨）', after?.rowsOver, 0)
+const dialog = await page.evaluate(() => {
+  const c = window.cc, game = c.director.getScene().getChildByName('Canvas').getChildByName('Game')
+  const panel = game.getChildByName('stage').getChildByName('SummaryPanel'), card = panel.getChildByName('SummaryCard')
+  const mask = panel.getChildByName('DialogContent'), scroll = mask?.getComponent('cc.ScrollView')
+  const close = panel.getChildByName('SummaryCloseButton'), nav = game.getChildByName('NavBar')
+  const box = card.getComponent('cc.UITransform').getBoundingBoxToWorld(), navBox = nav.getComponent('cc.UITransform').getBoundingBoxToWorld()
+  const u = close.getComponent('cc.UITransform'), world = u.convertToWorldSpaceAR(new c.Vec3()), size = c.view.getVisibleSize()
+  const rect = document.querySelector('canvas').getBoundingClientRect()
+  return { cardBottom: box.y, cardTop: box.y + box.height, navTop: navBox.y + navBox.height, viewportTop: size.height,
+    bodyHeight: scroll.content.getComponent('cc.UITransform').height, maskHeight: mask.getComponent('cc.UITransform').height,
+    close: close.hasEventListener('touch-start'), x: rect.left + world.x / size.width * rect.width,
+    y: rect.top + (1 - world.y / size.height) * rect.height }
+})
+checkTrue('结算卡片位于真实可视区并让开导航', dialog.cardBottom >= dialog.navTop && dialog.cardTop <= dialog.viewportTop)
+checkTrue('长结算正文保留完整高度，可通过ScrollView读取', dialog.bodyHeight > dialog.maskHeight)
+checkTrue('返回关卡按钮有生产触摸监听', dialog.close)
+await hideGuideOverlay(page)
+await page.screenshot({ path: path.join(OUT, 'stage-summary.png') })
+async function closeStageSummary() {
+  await hideGuideOverlay(page)
+  const hit = await page.evaluate(() => {
+    const c = window.cc, panel = c.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('stage').getChildByName('SummaryPanel')
+    const n = panel.getChildByName('SummaryCloseButton'); if (!panel.active || !n?.hasEventListener('touch-start')) return null
+    const world = n.getComponent('cc.UITransform').convertToWorldSpaceAR(new c.Vec3()), size = c.view.getVisibleSize(), rect = document.querySelector('canvas').getBoundingClientRect()
+    return { x: rect.left + world.x / size.width * rect.width, y: rect.top + (1 - world.y / size.height) * rect.height }
+  })
+  if (!hit) return false
+  await page.mouse.click(hit.x, hit.y)
+  await page.waitForFunction(() => !window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('stage').getChildByName('SummaryPanel').active)
+  return true
+}
+checkTrue('正常点击返回关卡成功', await closeStageSummary())
+check('正常返回后关卡行重新可见', (await page.evaluate(BOX)).rows > 0, true)
 
 // 行标签的盒子：锚点在中心又没设宽度时，左对齐的文字起点会跑到行的左边界外面（标题被屏幕裁字）
 const rowBox = await page.evaluate(`(() => {
@@ -407,6 +439,7 @@ const notice = await page.evaluate(`(() => {
     found: true,
     text: noticeNode.getComponent('cc.Label').string,
     y: noticeNode.worldPosition.y, summaryTop: summary, lastRowBottom,
+    navTop: game.getChildByName('NavBar').worldPosition.y + game.getChildByName('NavBar').getComponent('cc.UITransform').height / 2,
   }
 })()`)
 check('翻页那一格找得到', notice?.found, true)
@@ -414,9 +447,8 @@ check('翻页那一格找得到', notice?.found, true)
 // 但那 N 关永远拿不到"。关卡换成真分页之后，这一格改说"第几页 / 共几关"，判据跟着换形状。
 checkTrue('那一格说的是分页位置而不是"还有多少关看不见"（具体数字随窗口高度变，不钉死）',
   /^第 \d+\/\d+ 页 · 共 \d+ 关$/.test(notice?.text ?? ''))
-checkTrue('那一格在最后一行之下、摘要框之上（没飘进摘要里）',
-  notice !== null && notice.y < notice.lastRowBottom && notice.y > notice.summaryTop)
-await page.screenshot({ path: path.join(OUT, 'stage-summary.png') })
+checkTrue('返回后页码位于最后一行之下、导航之上',
+  notice !== null && notice.y < notice.lastRowBottom && notice.y > notice.navTop)
 console.log(`  截图：${path.join(OUT, 'stage-summary.png')}`)
 
 // ---------- 体力那一条 + 买一次（B26 S22：`staminaView` / `staminaBuy` 第一次有玩家入口） ----------
@@ -541,6 +573,7 @@ checkTrue('夹具确实把第一关翻成可挑战（`/stage/list` 真回过、�
 
 // 摘要带是**跨相复用的同一块**：上一相买体力那两行字还留在里面。
 // 不先快照，下一相"读到字"就可能读到旧内容（#356 撤掉的那条假绿正是这个形状）。
+checkTrue('读完买体力回执后正常返回关卡', await closeStageSummary())
 const bandBefore = await page.evaluate(BOX)
 const tappedChallenge = await page.evaluate(`(() => {
   const game = window.cc.director.getScene().getChildByName('Canvas')?.getChildByName('Game')

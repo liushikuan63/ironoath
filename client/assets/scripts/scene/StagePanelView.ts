@@ -33,6 +33,7 @@ import type { ChallengeStageResp, StageListResp, SweepResp } from '../net/genera
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { NodePool } from './NodePool'
 import { applySystemUiFont, oneLineFloorHeight } from './UiFont'
+import { applyDialogButton, DIALOG_SCRIM, fitExistingDialog } from './DialogStyle'
 
 const { ccclass } = _decorator
 
@@ -62,8 +63,8 @@ const PADDING = 16
 const MAX_VISIBLE_ROWS = 7
 /** 摘要出现时行区留给文字的右边界：再往右是星级与按钮那一列 */
 const ROW_TEXT_WIDTH = PANEL_WIDTH - PADDING * 2 - 150
-/** 结算摘要那块框的高度：它占掉底部，行区就要按剩下的空间收 */
-const SUMMARY_HEIGHT = 240
+/** 结算独立展示；短屏缩正文滚动窗口，返回动作固定在净区底部。 */
+const SUMMARY_HEIGHT = 320
 /**
  * 屏幕底部要给导航条让出的高度 = 8（下边距）+ 52（`PanelNav.BAR_HEIGHT`）+ 8（安全间隙）。
  * 与 `ArmyPanelView` 里那个同名常量是同一次量出来的（设计分辨率 960×640，面板画的是整屏矩形，
@@ -102,6 +103,7 @@ export class StagePanelView extends Component {
   private canNext = false
   private summaryLabel: Label | null = null
   private summaryPanel: Node | null = null
+  private summaryLayout: ((reset?: boolean) => void) | null = null
   private lineupPicker: ChoiceOverlay | null = null
   /** 体力那一屏。null = `/stamina` 还没到 —— 此时表头继续用它自己那份 `体力 N` */
   private stamina: StaminaBoardView | null = null
@@ -385,27 +387,39 @@ export class StagePanelView extends Component {
     const panel = new Node('SummaryPanel')
     panel.layer = this.node.layer
     this.node.addChild(panel)
-    panel.setPosition(new Vec3(0, -height / 2 + BOTTOM_RESERVED + SUMMARY_HEIGHT / 2, 0))
-    panel.addComponent(UITransform).setContentSize(new Size(width - PADDING * 2, SUMMARY_HEIGHT))
-    const graphics = panel.addComponent(Graphics)
-    graphics.fillColor = COLOR_PANEL
-    graphics.strokeColor = COLOR_COPPER_GOLD
-    graphics.lineWidth = 2
-    graphics.roundRect(-(width - PADDING * 2) / 2, -SUMMARY_HEIGHT / 2,
-      width - PADDING * 2, SUMMARY_HEIGHT, 8)
+    panel.addComponent(UITransform).setContentSize(width, height)
+    const scrim = new Node('scrim')
+    panel.addChild(scrim)
+    scrim.addComponent(UITransform).setContentSize(width, height)
+    const graphics = scrim.addComponent(Graphics)
+    graphics.fillColor = DIALOG_SCRIM
+    graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
-    graphics.stroke()
+    scrim.on('touch-start', () => {}, this)
+    const card = new Node('SummaryCard')
+    panel.addChild(card)
+    card.addComponent(UITransform).setContentSize(PANEL_WIDTH, SUMMARY_HEIGHT)
+    card.on('touch-start', () => {}, this)
     this.summaryPanel = panel
 
     this.summaryLabel = this.addLabel(panel, 'SummaryText', 0, 0, COLOR_TEXT, 17)
-    // SHRINK 是按盒子排的，而 `addLabel` 挂的 UITransform 是默认的 100×100 —— 这段摘要是
-    // 多行文本（结算 / 体力 / 差额 / 奖励 / 损失），100 宽会把每一行再挤成两三行。
-    // 盒子按摘要面板的内框给，与军队/背包/战报那三处「标签没盒子」同族（#316、#319、#320）。
-    this.summaryLabel.node.getComponent(UITransform)?.setContentSize(
-      new Size(width - PADDING * 4, SUMMARY_HEIGHT - PADDING * 2))
+    this.summaryLabel.node.getComponent(UITransform)?.setContentSize(PANEL_WIDTH - PADDING * 2, 1)
     this.summaryLabel.horizontalAlign = Label.HorizontalAlign.LEFT
-    this.summaryLabel.verticalAlign = Label.VerticalAlign.CENTER
-    this.summaryLabel.overflow = Label.Overflow.SHRINK
+    this.summaryLabel.verticalAlign = Label.VerticalAlign.TOP
+    this.summaryLabel.lineHeight = 23
+    this.summaryLabel.overflow = Label.Overflow.RESIZE_HEIGHT
+    this.summaryLabel.enableWrapText = true
+    const close = new Node('SummaryCloseButton')
+    panel.addChild(close)
+    close.addComponent(UITransform).setContentSize(160, 36)
+    close.on('touch-start', () => this.hideSummary(), this)
+    applyDialogButton(close, true, 160, 36)
+    const caption = this.addLabel(close, 'Caption', 0, 0, COLOR_TEXT, 18)
+    caption.string = '返回关卡'
+    caption.node.getComponent(UITransform)?.setContentSize(160, 36)
+    this.summaryLayout = fitExistingDialog(panel, card, [this.summaryLabel.node], [close],
+      'ui.panel.iron', PANEL_WIDTH, SUMMARY_HEIGHT, { flow: true })
+    this.summaryLayout()
     panel.active = false
   }
 
@@ -510,6 +524,13 @@ export class StagePanelView extends Component {
     const topY = size.height / 2 - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     pool.releaseAll(this.drawnRows)
     this.drawnRows.length = 0
+    if (this.summaryPanel?.active) {
+      // 结算文字独立可读，不能为了最少一行把关卡/翻页键强塞到同一块正文上。
+      if (this.overflowLabel !== null) this.overflowLabel.string = ''
+      if (this.prevPageButton !== null) this.prevPageButton.active = false
+      if (this.nextPageButton !== null) this.nextPageButton.active = false
+      return
+    }
 
     const total = list.rows.length
     // 共几页、夹到哪一页、切哪一段必须用同一个 perPage（`PanelPaging` 那条原话）：
@@ -552,15 +573,11 @@ export class StagePanelView extends Component {
   /**
    * 行区能画几行 —— 按几何算，不写死数字：设计高度会随窗口变，写死的行数在 640 高下
    * 会把最后几行推到导航条底下（画了但玩家看不见），在 900 高下又白留一截空位。
-   * 下界取「导航条上沿」与「摘要框上沿（摘要显示时）」里更高的那个。
+   * 结算显示时行全部归还池，此处只计算正常列表与导航之间的空间。
    */
   private rowCapacity(topY: number): number {
     const navTop = -view.getVisibleSize().height / 2 + BOTTOM_RESERVED
-    let floor = navTop
-    const panel = this.summaryPanel
-    if (panel !== null && panel.active) {
-      floor = Math.max(navTop, panel.position.y + SUMMARY_HEIGHT / 2 + ROW_GAP)
-    }
+    const floor = navTop
     const fit = (topY - ROW_HEIGHT / 2 - floor) / (ROW_HEIGHT + ROW_GAP) + 1
     return Math.max(1, Math.min(MAX_VISIBLE_ROWS, Math.floor(fit)))
   }
@@ -675,8 +692,7 @@ export class StagePanelView extends Component {
     this.summaryLabel.string = lines.join('\n')
     this.summaryLabel.color = color
     this.summaryPanel.active = true
-    // 摘要占掉底部那一块，行区要立刻收进去 —— 不重排的话最后三行会压在摘要上，
-    // 两层半透明文字叠在一起（2026-09-21 运行截图抓到的就是这一坨）
+    this.summaryLayout?.()
     this.render()
   }
 
