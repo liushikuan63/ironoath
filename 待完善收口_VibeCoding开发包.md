@@ -7238,3 +7238,5 @@ TEST_EXIT=0
 | #1149 F33中文小队与06到07接续成立但原生新帧截图待恢复 | 本笔（本批统一推） | finish-manual退出0只证明创建/引导/领取/解锁/节点；手工中文实图通过；原生07新帧图未通过；driver0169/0170/0171 draw失败均保留；普通后台点击未证实恢复 | D:/tmp/ironoath-wechat-20261010/native-stage7b-v33-r18.actual.json；native-stage7b-v33-r18-manual-keyboard.actual.json；native-stage7b-v33-r18-next-quest-visual-block.actual.json | 07实际画面、一键收割正产出、内城拖缩待原窗口可见后继续；手工输入不冒充自动键入；GAME heap、真机FPS/GC与完整接口性能未验；未推送 |
 
 | #1150 F33原窗口恢复新帧后07实际画面成立 | 本笔（本批统一推） | draw0172退出0/两新帧；shot0173退出0/原生07实图PASS；read0175退出0/同UID/第4页/07进行中 | D:/tmp/ironoath-wechat-20261010/native-stage7b-v33-r18-next-quest-visual.actual.json；root-native-onboarding-v33-r18/driver-0173-f33-main07-user-window-visible.png | 一键收割正产出和内城拖缩仍在执行；GAME JS堆600/真机FPS与GC/完整接口性能未验；未推送 |
+
+| #1151 F33一键收割同次真实正产出，编码路径过滤与建筑点位量具首红留存 | 本笔（本批统一推） | 首stage7c退出1保留；同次network恢复读取退出0/请求null与响应正产出；city首point退出2/未发swipe；后续四图待执行 | D:/tmp/ironoath-wechat-20261010/native-stage7c-v33-r18-network-recovered.actual.json；root-native-onboarding-v33-r18/f33-collect-all-buffer-safe-diagnostic.receipt.json；driver0218失败 | 收割反馈在原生实图可读性及内城拖缩四图尚未通过；不把节点文字代替图像；GAME heap/真机FPS/GC/全接口性能仍未验；未推送 |
