@@ -125,11 +125,11 @@ public class ActivityAppService {
                 block = progress.blockOf(req.activityId(), now, playerAnchor);
             } catch (IllegalArgumentException e) {
                 // 活动表的行不在了（改表或客户端缓存过期）：与「现在领不了」分开报
-                throw new BizException(ErrorCode.ACTIVITY_NOT_FOUND, e.getMessage());
+                throw new BizException(ErrorCode.ACTIVITY_NOT_FOUND, "这个活动已结束或已更新，请刷新活动列表后再试。");
             }
             if (block.blocked()) {
                 throw new BizException(ErrorCode.ACTIVITY_NOT_CLAIMABLE,
-                        detailOf(req.activityId(), block, progress, now, playerAnchor));
+                        detailOf(req.activityId(), block, progress));
             }
             progress.claim(req.activityId(), now, playerAnchor);
             // 先落状态再发奖：失败方向见类注释
@@ -179,16 +179,17 @@ public class ActivityAppService {
     }
 
     /** 领取被拒的原因写进 detail：三种原因共用一个错误码（B17 §二），detail 是玩家唯一能看到的差别。 */
-    private static String detailOf(String activityId, ActivityProgress.ClaimBlock block,
-                                   ActivityProgress progress, long now, long playerAnchor) {
+    private String detailOf(String activityId, ActivityProgress.ClaimBlock block, ActivityProgress progress) {
+        String name = configs.get(com.ironoath.config.cfg.ActivityCfg.class, activityId).name();
+        String label = name == null || name.isBlank() ? "该活动" : "“" + name + "”";
         if (block == ActivityProgress.ClaimBlock.NOT_REACHED) {
             ActivityProgress.Entry entry = progress.entry(activityId);
-            return "活动 " + activityId + " 还没达标：" + entry.value() + "/" + progressGoal(progress, activityId);
+            return label + "还没达标：" + entry.value() + "/" + progressGoal(progress, activityId);
         }
         return switch (block) {
-            case EXPIRED -> "活动 " + activityId + " 的上一轮已经结束，本轮还没开始：记录留在列表里，但奖领不了";
-            case ALREADY_CLAIMED -> "活动 " + activityId + " 这一轮的奖励已经领过了";
-            case NOT_REACHED, NONE -> "活动 " + activityId + " 当前可领（这条不该出现在拒绝路径里）";
+            case EXPIRED -> label + "的上一轮已经结束，本轮还没开始：记录留在列表里，但奖领不了";
+            case ALREADY_CLAIMED -> label + "这一轮的奖励已经领过了";
+            case NOT_REACHED, NONE -> "请刷新活动状态后再尝试领取。";
         };
     }
 

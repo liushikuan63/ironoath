@@ -183,6 +183,25 @@ class ActivityEndpointTest {
         assertThat(codeOf(missing)).as("活动不在表里与「现在领不了」是两个码").isEqualTo(12005);
     }
 
+    @Test
+    void rejectedKnownActivityUsesItsChineseName() throws Exception {
+        String playerId = newPlayer();
+        JsonNode rejected = claim(playerId, "activity_monster_hunt", "req-" + UUID.randomUUID());
+        assertThat(codeOf(rejected)).isEqualTo(12006);
+        assertThat(rejected.get("detail").asText())
+                .contains(configs.get(com.ironoath.config.cfg.ActivityCfg.class, "activity_monster_hunt").name())
+                .doesNotContain("activity_");
+    }
+
+    @Test
+    void removedActivityDoesNotEchoCachedInternalIdentifiers() throws Exception {
+        String playerId = newPlayer();
+        String removed = "activity_removed_config";
+        JsonNode rejected = claim(playerId, removed, "req-" + UUID.randomUUID());
+        assertThat(codeOf(rejected)).isEqualTo(12005);
+        assertThat(rejected.get("detail").asText()).contains("刷新").doesNotContain(removed).doesNotContain("activityId");
+    }
+
     // ---------- 验收 4：窗口过期 ----------
 
     @Test
