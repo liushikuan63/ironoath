@@ -7270,3 +7270,5 @@ TEST_EXIT=0
 | #1165 G01金币来源消费扩展与建造同价反证 | 本笔（本批统一推） | 当前45表及12生产文件SHA/道具来源引用0已现算；G01毛收入模型未改、未给玩家发金币，原生升级按自然1倍进行；文档与台账形状验证通过。 | docs/免费金币经济基线_G01.md第二轮；D:/tmp/ironoath-wechat-20261010/gold-g01-source-sink-price-audit.actual.json及.mjs | 通用箱子/奖励/邮件全调用链、消费决策、长期可达性和净结余仍未穷尽；统一加速价格及新增免费奖励额度待经济口径审定，G02-G07未实施。 |
 
 | #1166 同号正常领取主线07并真实解锁08 | 本笔（本批统一推） | 原生正常升级各次服务端事件与累计唯一性通过，正常领奖和新任务服务读回/真实截图通过；原9490 PID3208/同UID/IDE36576/普通1倍/547金币保留，未改产品规则或源码。 | D:/tmp/ironoath-wechat-20261010/native-main07-normal-complete-v35-r18.actual.json；native-main07-normal-visible-v35-r18.actual.json；driver-0270实际PNG已查看 | F35新足量训练加速复验下一条才跑；08研究尚未执行，旧Guide4遮罩/原生性能/G01长期模型和经济价差裁决仍待，本笔未推。 |
+
+| #1167 F35足量训练加速真实原生立即归队通过 | 本笔（本批统一推） | 当前F35训练饱和毫秒尾数修复原生闭环通过；真实普通训练与本道具消耗/客户端立即列表/图片/官方网络四层一致，无自然等待至60秒冒充加速、无私人回调/直接POST/赠送或改时钟。 | D:/tmp/ironoath-wechat-20261010/native-training-sufficient-one-v35-r18.actual.json；native-training-sufficient-one-visible-v35-r18.actual.json；f35-single-sufficient-network.receipt.json | 治疗同型修复有JUnit与浏览器但本号原生治疗未验；旧Guide4遮罩完整重验/真Gameheap/实体机性能仍待，08尚未研究，G01价差与新奖励数值待定，本笔未推。 |
