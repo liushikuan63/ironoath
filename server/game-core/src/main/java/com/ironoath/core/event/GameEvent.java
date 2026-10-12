@@ -23,7 +23,11 @@ import com.ironoath.core.quest.GoalType;
  * @param amount   增量或当前值，见上
  * @param at       服务端时间戳（铁律 5：不用客户端时间）
  */
-public record GameEvent(String playerId, GoalType goalType, String targetId, long amount, long at) {
+public record GameEvent(String playerId, GoalType goalType, String targetId, long amount, long at, String factId) {
+
+    public GameEvent(String playerId, GoalType goalType, String targetId, long amount, long at) {
+        this(playerId, goalType, targetId, amount, at, null);
+    }
 
     public GameEvent {
         if (playerId == null || playerId.isBlank()) {
@@ -36,6 +40,7 @@ public record GameEvent(String playerId, GoalType goalType, String targetId, lon
             throw new IllegalArgumentException("at 必须为正的服务端时间戳，实际=" + at);
         }
         targetId = targetId == null || targetId.isBlank() ? null : targetId;
+        factId = factId == null || factId.isBlank() ? null : factId;
     }
 
     /**
@@ -56,6 +61,14 @@ public record GameEvent(String playerId, GoalType goalType, String targetId, lon
                     + "：0 没有意义，负数会让「累加」变成可以倒退的东西");
         }
         return new GameEvent(playerId, goalType, targetId, delta, at);
+    }
+
+    /** 服务端稳定完成事实；同一批/战斗/升级重送必须复用同一个factId。 */
+    public static GameEvent progressOnce(String playerId, GoalType goalType, String targetId,
+                                         long delta, long at, String factId) {
+        if (factId == null || factId.isBlank()) throw new IllegalArgumentException("稳定事实标识不得为空");
+        var event = progress(playerId, goalType, targetId, delta, at);
+        return new GameEvent(event.playerId(), event.goalType(), event.targetId(), event.amount(), event.at(), factId);
     }
 
     /**

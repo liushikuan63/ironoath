@@ -314,8 +314,9 @@ public class CityAppService {
         // 升级完成的事件在这里发（B12 §1）：收割是「结算那一刻」发生的，而结算是被读触发的 ——
         // 挂在任何单一端点上都会漏掉「先读列表再看别的」的路径。次数=收割到的栋数，目标=建筑配置 id
         for (String instanceId : settlement.harvested()) {
-            questEvents.progress(playerId, com.ironoath.core.quest.GoalType.UPGRADE_BUILDING,
-                    city.building(instanceId).configId(), 1L, now);
+            var completed = city.building(instanceId);
+            questEvents.progressOnce(playerId, com.ironoath.core.quest.GoalType.UPGRADE_BUILDING,
+                    completed.configId(), 1L, now, "building:" + instanceId + ":" + completed.level());
         }
         if (!settlement.harvested().isEmpty()) {
             // 建筑落成是一类触发（GiftCfg.Trigger.BUILDING_DONE）。打标打在**手里这份 player** 上，

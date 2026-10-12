@@ -266,7 +266,8 @@ public class QuestAppService {
                     def.def().goalType(), def.def().goalTarget(), def.def().goalValue(),
                     def.def().preQuestId(),
                     previous == null ? 0L : previous.current(),
-                    previous != null && previous.claimed()));
+                    previous != null && previous.claimed(), def.def().requiresFact(),
+                    previous == null ? java.util.Set.of() : previous.factIds()));
         }
         return QuestProgress.restore(playerId, merged, stored.dayKey(), stored.weekKey());
     }

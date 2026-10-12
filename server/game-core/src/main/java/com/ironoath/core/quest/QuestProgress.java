@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.ironoath.core.event.GameEvent;
 
@@ -55,7 +56,10 @@ public final class QuestProgress {
      * @param preQuestId 前置任务 id，null 表示无前置
      */
     public record Def(String questId, QuestType type, GoalType goalType, String goalTarget,
-                      long goalValue, String preQuestId) {
+                      long goalValue, String preQuestId, boolean requiresFact) {
+        public Def(String questId, QuestType type, GoalType goalType, String goalTarget, long goalValue, String preQuestId) {
+            this(questId, type, goalType, goalTarget, goalValue, preQuestId, false);
+        }
         public Def {
             if (questId == null || questId.isBlank()) {
                 throw new IllegalArgumentException("questId 不得为空");
@@ -69,6 +73,8 @@ public final class QuestProgress {
             }
             goalTarget = goalTarget == null || goalTarget.isBlank() ? null : goalTarget;
             preQuestId = preQuestId == null || preQuestId.isBlank() ? null : preQuestId;
+            if (requiresFact && (type != QuestType.ACHIEVEMENT || !goalType.accumulates()))
+                throw new IllegalArgumentException("稳定事实只用于永久累加成就");
         }
     }
 
@@ -79,7 +85,16 @@ public final class QuestProgress {
      * @param claimed  奖励是否已领。领取是幂等的：重复领必须被拒而不是再发一次
      */
     public record Entry(String questId, QuestType type, GoalType goalType, String goalTarget,
-                        long goalValue, String preQuestId, long current, boolean claimed) {
+                        long goalValue, String preQuestId, long current, boolean claimed,
+                        Boolean requiresFact, Set<String> factIds) {
+        public Entry(String questId, QuestType type, GoalType goalType, String goalTarget,
+                     long goalValue, String preQuestId, long current, boolean claimed) {
+            this(questId, type, goalType, goalTarget, goalValue, preQuestId, current, claimed, false, Set.of());
+        }
+        public Entry {
+            requiresFact = Boolean.TRUE.equals(requiresFact);
+            factIds = factIds == null ? Set.of() : Set.copyOf(factIds);
+        }
 
         public boolean complete() {
             return current >= goalValue;
@@ -119,7 +134,7 @@ public final class QuestProgress {
                 throw new IllegalArgumentException("任务 id 重复: " + def.questId());
             }
             progress.entries.put(def.questId(), new Entry(def.questId(), def.type(), def.goalType(),
-                    def.goalTarget(), def.goalValue(), def.preQuestId(), 0L, false));
+                    def.goalTarget(), def.goalValue(), def.preQuestId(), 0L, false, def.requiresFact(), Set.of()));
             progress.claimedById.put(def.questId(), Boolean.FALSE);
         }
         return progress;
@@ -162,12 +177,20 @@ public final class QuestProgress {
             if (!unlocked(entry)) {
                 continue;
             }
+            if (entry.requiresFact() && (event.factId() == null || entry.factIds().contains(event.factId())
+                    || entry.complete() || entry.claimed())) continue;
             long next = entry.goalType().accumulates()
                     ? entry.current() + event.amount()
                     : event.amount();
             // 上限截断到 goalValue：累计到 10 倍的量对「完成与否」没有任何额外信息，
             // 却让存档里的数字一直涨，而玩家在面板上看到的是「200/20」这种莫名其妙的东西
-            entries.put(entry.questId(), withCurrent(entry, Math.min(next, entry.goalValue())));
+            Set<String> facts = entry.factIds();
+            if (entry.requiresFact()) {
+                var accepted = new java.util.HashSet<>(facts);
+                accepted.add(event.factId());
+                facts = Set.copyOf(accepted);
+            }
+            entries.put(entry.questId(), withCurrent(entry, Math.min(next, entry.goalValue()), facts));
         }
     }
 
@@ -190,7 +213,7 @@ public final class QuestProgress {
                     + entry.current() + "/" + entry.goalValue());
         }
         entries.put(questId, new Entry(entry.questId(), entry.type(), entry.goalType(), entry.goalTarget(),
-                entry.goalValue(), entry.preQuestId(), entry.current(), true));
+                entry.goalValue(), entry.preQuestId(), entry.current(), true, entry.requiresFact(), entry.factIds()));
         claimedById.put(questId, Boolean.TRUE);
     }
 
@@ -318,8 +341,8 @@ public final class QuestProgress {
         return entry;
     }
 
-    private static Entry withCurrent(Entry entry, long current) {
+    private static Entry withCurrent(Entry entry, long current, Set<String> facts) {
         return new Entry(entry.questId(), entry.type(), entry.goalType(), entry.goalTarget(),
-                entry.goalValue(), entry.preQuestId(), current, entry.claimed());
+                entry.goalValue(), entry.preQuestId(), current, entry.claimed(), entry.requiresFact(), facts);
     }
 }

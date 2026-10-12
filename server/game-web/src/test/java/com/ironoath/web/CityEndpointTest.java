@@ -1,5 +1,6 @@
 package com.ironoath.web;
 
+import java.util.List;
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.core.city.CityRepository;
@@ -76,6 +77,9 @@ class CityEndpointTest {
     @Autowired
     private com.ironoath.web.quest.QuestAppService quests;
 
+    @Autowired
+    private com.ironoath.core.event.GameEventBus events;
+
     @BeforeEach
     void resetStores() {
         ((InMemoryPlayerStore) players).clear();
@@ -140,6 +144,29 @@ class CityEndpointTest {
         assertThat(cityAppService.list(playerId).buildings())
                 .as("已经建成的楼被取消升级后必须还在（不能被当成未建成摘掉）")
                 .anyMatch(view -> view.id().equals(again.buildingId()));
+    }
+
+    @Test
+    void onlyCompletedConstructionEmitsAStableFactAndRepeatedReadsDoNotEmitAgain() {
+        String playerId = newPlayer();
+        List<com.ironoath.core.event.GameEvent> captured = new java.util.ArrayList<>();
+        events.subscribe(com.ironoath.core.quest.GoalType.UPGRADE_BUILDING, event -> {
+            if (playerId.equals(event.playerId())) captured.add(event);
+        });
+        var cancelled = startUpgrade(playerId, "lumber_camp", 1, 1);
+        cityAppService.cancel(playerId, new CityCancelReq(newRequestId(), cancelled.buildingId()));
+        cityAppService.list(playerId);
+        assertThat(captured).as("出队或取消不是完成事实").isEmpty();
+
+        var completed = startUpgrade(playerId, "lumber_camp", 1, 1);
+        cityAppService.speedUp(playerId, new SpeedUpReq(newRequestId(), completed.buildingId(), SpeedUpSource.GOLD, null));
+        cityAppService.collect(playerId, new com.ironoath.web.dto.generated.CityCollectReq(newRequestId(), completed.buildingId()));
+        cityAppService.list(playerId);
+        cityAppService.list(playerId);
+        assertThat(captured).hasSize(1);
+        assertThat(captured.get(0).factId()).isEqualTo("building:" + completed.buildingId() + ":1");
+        assertThat(captured.get(0).targetId()).isEqualTo("lumber_camp");
+        assertThat(captured.get(0).amount()).isEqualTo(1);
     }
 
     // ---------- /city/list ----------

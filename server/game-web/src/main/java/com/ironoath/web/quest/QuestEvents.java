@@ -41,6 +41,11 @@ public class QuestEvents {
         publish(GameEvent.progress(playerId, goalType, targetId, delta, now));
     }
 
+    /** 完成事实带稳定标识；旧任务仍按原增量消费，永久成就可按事实去重。 */
+    public void progressOnce(String playerId, GoalType goalType, String targetId, long delta, long now, String factId) {
+        publish(GameEvent.progressOnce(playerId, goalType, targetId, delta, now, factId));
+    }
+
     /**
      * 状态型进展（当前持有 N 粮、是否在小队/联盟、科技等级）。
      *
