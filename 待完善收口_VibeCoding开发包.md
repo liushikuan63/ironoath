@@ -7358,3 +7358,5 @@ TEST_EXIT=0
 | #1207 永久已达标资格保原目标与金币快照 | 本笔（本批统一推） | 定向52=核心新事实5+原系统18+资格3+原Quest端点17+共享查询4+内存/Mongo5，全部0失败0错0跳，Maven0；真实隔离Mongo重读与标已领保10/50，未达标更新30/150；git diff check0；本格未复跑完整门/2345+新增全量/网络或原生 | D:/tmp/ironoath-free-gold-20261013/permanent-qualification-goal-red.log、permanent-qualification-amount-red.log、permanent-qualification-scoped-final.log；资格快照与内存/Mongo重读回归 | 永久额度配置未激活、claim与预览未用快照，稳定key钱包先于任务及丢失回执恢复/移除定义保资格待接；九档900/首杀500/两档月卡/主12收割/原生同号升级与双向战争仍未完；当前运行冻结JAR未含本笔，切入前统一重打验证 |
 
 | #1208 活动整合2400每两月方向批准保开放权益 | 本笔（本批统一推） | 文档与用户答复逐项核对；960+3x480=2400；仅设计授权记录，不称配置/发奖/真人参与已通过；台账形状及append-only现跑 | 用户本轮答复采用预算整合，保留已开放活动奖励；docs/免费金币与长期游玩设计.md §十六 | 具体活动排期/目标/实例规则奖励快照迁移未实施，未改当前六活动金币或原号资格；G03三城建领取/预览/回执恢复在工作区继续，其他成就首杀月卡主12和原生双向战争仍未完 |
+
+| #1210 聊天5次压缩触发轮转但创建接口缺失保未验代码 | 本笔（本批统一推） | 只读inspect成功次数5；HEAD与工作区现查；保存11文件补丁及SHA清单；非全绿或原生完成；台账形状和append-only现跑 | D:/tmp/ironoath-free-gold-20261013/current-chat-handoff.md；rotation-five-inputs.actual.json；rotation-five-work-in-progress.patch；city-permanent-reward-first-green.log | 新聊天尚未创建或归档、接续未发生；G03客户端与全验/资格移除保护未完；未来活动排期迁移、其他成就首杀月卡主12及双向战争仍未完成 |
