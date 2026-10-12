@@ -126,6 +126,60 @@ const ARMY_FOR_MARCH = {
   serverNow: SERVER_NOW,
 }
 
+function returnedInfantry(count: number) {
+  return { ...ARMY_FOR_MARCH, units: ARMY_FOR_MARCH.units.map(unit =>
+    unit.unitId === 'unit_infantry_t1' ? { ...unit, count } : unit) }
+}
+
+function visibleReturnMonster() {
+  initializeWorld({ worldSize: 512, chunkSize: 32, maxChunks: 9 }, 0, { x: 16, y: 16 })
+  feedViewport({ serverNow: SERVER_NOW, staleChunks: [], exploredChunks: ['0:0'], fogChunks: [],
+    chunks: [{ key: '0:0', version: 1, truncated: false, entities: [{
+      id: 'monster-return-test', type: 'MONSTER', x: 17, y: 16, level: 5,
+      ownerName: null, allianceTag: null, marchStatus: null, resourceType: null, load: null,
+    }] }] })
+}
+
+test('回城后重进地图刷新真实兵力：197变193，编成不会继续展示或选择旧上限', async () => {
+  const h = harness()
+  await h.root.start('dev-return', '君')
+  h.http.overrides.set('/army/list', returnedInfantry(197))
+  await h.root.refresh('army')
+  h.http.overrides.set('/army/list', returnedInfantry(193))
+  const reads = h.http.countOf('/army/list')
+  await h.root.refresh('world')
+  visibleReturnMonster()
+  const callsBeforeCompose = h.http.calls.length
+  h.root.beginMonsterMarchCompose('MONSTER:monster-return-test')
+  assert.equal(h.lastCompose?.compose.options.find(row => row.unitId === 'unit_infantry_t1')?.available, 193)
+  h.root.pickMarchUnit('unit_infantry_t1', 197)
+  assert.equal(h.lastCompose?.compose.options.find(row => row.unitId === 'unit_infantry_t1')?.selected, 193)
+  assert.equal(h.http.countOf('/army/list'), reads + 1, '地图入口读取一次兵力，而不是复用战损前的快照')
+  assert.equal(h.http.calls.length, callsBeforeCompose, '编成和选择仍不发请求，确认之前不出征')
+})
+
+test('重进地图兵力读取失败时不沿用战损前快照打开编成', async () => {
+  const h = harness()
+  await h.root.start('dev-return-fail', '君')
+  h.http.overrides.set('/army/list', returnedInfantry(197))
+  await h.root.refresh('army')
+  h.http.failPaths.add('/army/list')
+  await h.root.refresh('world')
+  visibleReturnMonster()
+  h.root.beginMonsterMarchCompose('MONSTER:monster-return-test')
+  assert.equal(h.lastCompose?.targetName ?? null, null, '没取得最新兵力不能把旧197当成可用兵力')
+  assert.equal(h.http.countOf('/world/march'), 0)
+})
+
+test('首屏不重复读取军队；显式同时刷新军队与地图也只读取一次', async () => {
+  const h = harness()
+  await h.root.start('dev-return-reads', '君')
+  assert.equal(h.http.countOf('/army/list'), 1)
+  const reads = h.http.countOf('/army/list')
+  await h.root.refresh('army', 'world')
+  assert.equal(h.http.countOf('/army/list'), reads + 1)
+})
+
 /** 每个端点的响应。只给「代码真的会读到的字段」，其余留空对象。 */
 const ROUTES: Record<string, unknown> = {
   '/player/init': {

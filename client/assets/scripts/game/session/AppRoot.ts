@@ -906,6 +906,14 @@ export class AppRoot {
 
   /** 逐个面板拉取。单个失败只让那个面板显示原因，不牵连其它面板。 */
   async refresh(...keys: PanelKey[]): Promise<void> {
+    if (keys.includes('world')) {
+      // 回城和战损会改变可出征数量；地图入口不能继续拿上一次练兵时的快照编成。
+      // 先失效旧快照，读取失败时仍由既有编成守卫阻止使用旧兵力；首屏并发预拉不走这里。
+      this.armyResp = null
+      if (!keys.includes('army')) {
+        await this.refreshOne('army')
+      }
+    }
     for (const key of keys) {
       await this.refreshOne(key)
     }
@@ -4755,7 +4763,7 @@ export class AppRoot {
       this.composeNotice = null
       this.receipt(`已出征：${target.name}`)
       this.deliverCompose()
-      void this.refresh('world')
+      await this.refresh('world')
       return
     }
     this.composeNotice = outcome.kind === 'biz'
@@ -4800,7 +4808,7 @@ export class AppRoot {
         compose: buildCompose(this.armyResp ?? EMPTY_ARMY, {}),
         notice: `已再次出征：${spec.toX}, ${spec.toY}`, submitting: false,
       })
-      void this.refresh('world')
+      await this.refresh('world')
       return
     }
     this.say('targets', outcome)

@@ -7276,3 +7276,5 @@ TEST_EXIT=0
 | #1168 原生免费等级4/5补领奖真实到账400金币 | 本笔（本批统一推） | 实际免费领奖按钮/到账回执/金币增量400/中文画面通过，与充值/成长基金/月卡隔离；本笔不新增发奖数值或源码。 | D:/tmp/ironoath-wechat-20261010/native-level4-5-free-claimed-v35-r18.actual.json；native-level4-5-free-visible-v35-r18.actual.json；driver-0420实际PNG已查看 | 主城6/学院/08待正常资源筹集与实施；G01新奖励和统一加速价仍待数值审定，原生治疗及性能未验，本笔未推。 |
 
 | #1169 普通PvE第一胜与地图目标消耗首红保留 | 本笔（本批统一推） | 第一真实胜利/回程/既有普通资源金币掉落读回通过；原首红不是新假胜利替代，官方正常地图拖动与新目标实际截图已核，未直接POST/改时间/赠资源。 | D:/tmp/ironoath-wechat-20261010/native-pve-resource-progression-first-failure-v35-r18.actual.json；driver-0498实际编成100；driver-0585新目标图 | 后两场/主城6/学院/08尚未完成，G01只补可证明低阶一次可达，不外推长周期；未推。 |
+
+| #1170 地图重新进入刷新真实可出征兵力候选 | 本笔（本批统一推） | 三条有效回归旧码172跑170绿2红/0跳；候选初次发现确认与再次出征异步刷新回归2红，修正await后172/0/0，真实197变193/失败不沿用/首屏与显式双刷新不重复读均通过。编译初次method拼写错误日志保留，不充当逻辑红。 | D:/tmp/ironoath-wechat-20261010/world-army-fresh-1170.red-runtime.log；world-army-fresh-1170.green-complete.log；native-pve-resource-progression-recovery-first-failure-v35-r18.actual.json；driver-0647及native-stale-compose-cancelled-v35-r18.actual.json | 候选仅定向单测已过，全量工程/Cocos双产物/相关批探针/原生F36未跑；原9490 PID3208/原IDE/DB/193兵914金保留，未改活客户端。当前同页行军回城实时刷新不在本笔入口修复验收范围。 |
