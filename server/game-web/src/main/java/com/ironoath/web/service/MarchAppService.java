@@ -927,6 +927,9 @@ public class MarchAppService {
                 case MONSTER -> {
                     var monsterOutcome = monsterBattleService.resolve(march, now, beneficiaries);
                     if (monsterOutcome.won()) {
+                        // 沿既有行军主人记个人PvE胜利；不是派兵事实，也不新增集结成员或首杀资格。
+                        questEvents.progressOnce(march.playerId(), com.ironoath.core.quest.GoalType.PVE_WIN,
+                                march.targetId(), 1L, now, "pve:monster:" + march.id());
                         // 打赢了才算击杀（B12 §1 的 KILL_MONSTER）：打输了也记的话，
                         // 「清剿城外流寇」会在玩家被流寇打回家的那一刻完成
                         questEvents.progress(march.playerId(),

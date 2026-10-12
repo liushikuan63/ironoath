@@ -673,4 +673,37 @@ class StageEndpointTest {
         });
         assertThat(rows).extracting(StageReward::type).containsExactlyElementsOf(items.stream().map(item -> item.type().name()).toList());
     }
+
+    @Autowired private com.ironoath.web.quest.QuestAppService permanentQuests;
+    private long pveWins(String uid) {
+        var row = permanentQuests.list(uid).quests().stream().filter(q -> q.questId().equals("quest_achievement_pve_10")).findFirst();
+        assertThat(row).as("批准的PvE永久成就必须下发").isPresent();
+        return row.orElseThrow().current();
+    }
+    @Test void realChallengeWinCountsOnceAndReportReplayDoesNotAdvancePveAchievement() {
+        String uid=newPlayer();giveTroops(uid,Map.of(UNIT,5000L));
+        var reply=stageAppService.challenge(uid,new ChallengeStageReq(newRequestId(),STAGE_1,List.of(new StageUnit(UNIT,5000L)),List.of()));
+        assertThat(reply.stars().cleared()).isTrue();assertThat(pveWins(uid)).isEqualTo(1);
+        battleReports.open(uid,reply.reportId());
+        assertThat(pveWins(uid)).as("战报重读不是另一场胜利").isEqualTo(1);
+    }
+    @Test void realLostChallengeDoesNotCreatePveVictoryFact() {
+        String uid=newPlayer();giveTroops(uid,Map.of(UNIT,1L));
+        var reply=stageAppService.challenge(uid,new ChallengeStageReq(newRequestId(),STAGE_1,List.of(new StageUnit(UNIT,1L)),List.of()));
+        assertThat(reply.stars().cleared()).isFalse();assertThat(pveWins(uid)).isZero();
+    }
+    @Test void sweepWinsCountPerRealBattleAndOldAttemptCountersAreNotBackfilled() {
+        String uid=newPlayer();giveTroops(uid,Map.of(UNIT,5000L));stageAppService.list(uid);forceThreeStars(uid,STAGE_1);
+        assertThat(pveWins(uid)).as("旧三星存档不能捏造胜利总账").isZero();
+        var reply=stageAppService.sweep(uid,new SweepReq(newRequestId(),STAGE_1,3));
+        assertThat(reply.executed()).isEqualTo(3);
+        assertThat(reply.results()).allSatisfy(r->assertThat(r.stars().cleared()).isTrue());
+        assertThat(pveWins(uid)).isEqualTo(3);
+    }
+    @Test void failedSweepAttemptsDoNotCountAsWins() {
+        String uid=newPlayer();giveTroops(uid,Map.of(UNIT,1L));stageAppService.list(uid);forceThreeStars(uid,STAGE_1);
+        var reply=stageAppService.sweep(uid,new SweepReq(newRequestId(),STAGE_1,1));
+        assertThat(reply.executed()).isEqualTo(1);assertThat(reply.results().get(0).stars().cleared()).isFalse();
+        assertThat(pveWins(uid)).as("sweepCount包含失败尝试，不能当胜利数").isZero();
+    }
 }

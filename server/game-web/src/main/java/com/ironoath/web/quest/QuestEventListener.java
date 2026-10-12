@@ -10,6 +10,7 @@ import com.ironoath.common.time.WeekKey;
 import com.ironoath.core.event.GameEvent;
 import com.ironoath.core.event.GameEventBus;
 import com.ironoath.core.quest.GoalType;
+import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.quest.QuestProgress;
 
 /**
@@ -41,12 +42,14 @@ public class QuestEventListener implements GameEventBus.Listener {
     private final QuestProgressStore store;
     private final QuestRulesAssembler assembler;
     private final TimeService timeService;
+    private final PlayerLock playerLock;
 
     public QuestEventListener(GameEventBus bus, QuestProgressStore store,
-                              QuestRulesAssembler assembler, TimeService timeService) {
+                              QuestRulesAssembler assembler, TimeService timeService, PlayerLock playerLock) {
         this.store = store;
         this.assembler = assembler;
         this.timeService = timeService;
+        this.playerLock = playerLock;
         if (bus == null) {
             throw new IllegalArgumentException("事件总线不得为 null：没有它任务进度永远不动");
         }
@@ -58,8 +61,10 @@ public class QuestEventListener implements GameEventBus.Listener {
     @Override
     public void onEvent(GameEvent event) {
         try {
-            long now = timeService.serverNow();
             String playerId = event.playerId();
+            // 全局行军可能在别人的主人/国家锁内触发：只取末端账本锁，不能反取主人锁。
+            playerLock.runLocked(QuestProgressStore.lockKey(playerId), 3000L, () -> {
+            long now = timeService.serverNow();
             QuestProgressStore.State stored = store.load(playerId).orElse(null);
             // 写侧也使用当前表定义：只在面板读侧对账，会让旧存档继续按旧目标吞掉真实事件。
             QuestProgress progress = QuestAppService.reconcile(playerId, assembler.quests(), stored,
@@ -70,6 +75,8 @@ public class QuestEventListener implements GameEventBus.Listener {
             progress.onEvent(event);
             store.save(playerId, new QuestProgressStore.State(playerId, progress.entries(),
                     progress.dayKey(), progress.weekKey()));
+            return null;
+            });
         } catch (RuntimeException e) {
             LOG.error("任务进度累加失败（不影响玩家这次操作，事件可据此补记）：{}", event, e);
         }

@@ -598,4 +598,24 @@ class MonsterHuntEndpointTest {
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
     }
+
+    @Autowired private com.ironoath.web.quest.QuestAppService permanentQuests;
+    private long pveWins(String uid) {
+        var row=permanentQuests.list(uid).quests().stream().filter(q->q.questId().equals("quest_achievement_pve_10")).findFirst();
+        assertThat(row).as("PvE永久成就必须下发").isPresent();return row.orElseThrow().current();
+    }
+    @Test void actualMonsterVictoryCountsOnceOnlyAfterArrivalAndRepeatedDueProcessingCannotAdd() {
+        Hunter hunter=readyHunter();giveTroops(hunter.playerId,Map.of(hunter.unitId,hunter.overwhelming));
+        String marchId=sendAttack(hunter);
+        assertThat(pveWins(hunter.playerId)).as("派兵不是胜利").isZero();
+        arriveAndProcess(marchId);assertThat(world.isConsumed(hunter.monsterCoord)).isTrue();
+        assertThat(pveWins(hunter.playerId)).isEqualTo(1);
+        marchAppService.processDue(hunter.playerId,System.currentTimeMillis());
+        assertThat(pveWins(hunter.playerId)).isEqualTo(1);
+    }
+    @Test void actualMonsterDefeatDoesNotCreatePveVictoryFact() {
+        Hunter hunter=readyHunter();giveTroops(hunter.playerId,Map.of("unit_infantry_t1",1L));
+        String marchId=sendAttack(hunter);arriveAndProcess(marchId);
+        assertThat(world.isConsumed(hunter.monsterCoord)).isFalse();assertThat(pveWins(hunter.playerId)).isZero();
+    }
 }
