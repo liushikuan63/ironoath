@@ -262,12 +262,17 @@ public class QuestAppService {
         List<QuestProgress.Entry> merged = new ArrayList<>(defs.size());
         for (QuestRulesAssembler.QuestDef def : defs) {
             QuestProgress.Entry previous = old.get(def.def().questId());
+            // 已达标永久事实代表接受过的资格；改表不能倒退目标或改写当时奖励。
+            if (previous != null && previous.requiresFact() && (previous.complete() || previous.claimed())) {
+                merged.add(previous);
+                continue;
+            }
             merged.add(new QuestProgress.Entry(def.def().questId(), def.def().type(),
                     def.def().goalType(), def.def().goalTarget(), def.def().goalValue(),
                     def.def().preQuestId(),
                     previous == null ? 0L : previous.current(),
                     previous != null && previous.claimed(), def.def().requiresFact(),
-                    previous == null ? java.util.Set.of() : previous.factIds()));
+                    previous == null ? java.util.Set.of() : previous.factIds(), def.def().goldReward()));
         }
         return QuestProgress.restore(playerId, merged, stored.dayKey(), stored.weekKey());
     }

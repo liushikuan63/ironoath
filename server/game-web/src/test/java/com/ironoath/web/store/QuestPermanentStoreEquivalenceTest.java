@@ -41,6 +41,28 @@ class QuestPermanentStoreEquivalenceTest {
         assertThat(reloaded.entry("permanent").current()).isEqualTo(1);
         assertThat(reloaded.entry("permanent").factIds()).containsExactly("build:instance:2");
     }
+    @ParameterizedTest @ValueSource(strings = {"memory", "mongo"})
+    void qualifiedAmountAndClaimSurviveASecondStoreRead(String kind) {
+        String id = "P-qualified-gold-" + UUID.randomUUID();
+        var progress = QuestProgress.open(id, List.of(new QuestProgress.Def("permanent", QuestProgress.QuestType.ACHIEVEMENT,
+                GoalType.UPGRADE_BUILDING, null, 10, null, true, 50L)), "20261013", "2026W42");
+        for (int n = 1; n <= 10; n++) progress.onEvent(GameEvent.progressOnce(id, GoalType.UPGRADE_BUILDING,
+                "main_city", 1, 1_800_000_000_000L, "building:instance:" + n));
+        var store = store(kind);
+        store.save(id, new QuestProgressStore.State(id, progress.entries(), progress.dayKey(), progress.weekKey()));
+        var snapshot = store.load(id).orElseThrow();
+        var qualified = QuestProgress.restore(id, snapshot.entries(), snapshot.dayKey(), snapshot.weekKey());
+        assertThat(qualified.entry("permanent").complete()).isTrue();
+        assertThat(qualified.entry("permanent").goldReward()).isEqualTo(50);
+        qualified.claim("permanent");
+        store.save(id, new QuestProgressStore.State(id, qualified.entries(), qualified.dayKey(), qualified.weekKey()));
+        var again = ("mongo".equals(kind) ? store(kind) : store).load(id).orElseThrow().entries().get(0);
+        assertThat(again.claimed()).isTrue();
+        assertThat(again.goldReward()).isEqualTo(50);
+        assertThat(again.goalValue()).isEqualTo(10);
+        assertThat(again.factIds()).hasSize(10);
+    }
+
     @Test void missingFactFieldsInAnOldMongoDocumentDefaultToLegacyBehavior() {
         String id = "P-old-quest-" + UUID.randomUUID();
         var entry = new Document("questId", "legacy").append("type", "MAIN").append("goalType", "UPGRADE_BUILDING")

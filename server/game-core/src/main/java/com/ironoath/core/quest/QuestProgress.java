@@ -56,9 +56,13 @@ public final class QuestProgress {
      * @param preQuestId 前置任务 id，null 表示无前置
      */
     public record Def(String questId, QuestType type, GoalType goalType, String goalTarget,
-                      long goalValue, String preQuestId, boolean requiresFact) {
+                      long goalValue, String preQuestId, boolean requiresFact, Long goldReward) {
         public Def(String questId, QuestType type, GoalType goalType, String goalTarget, long goalValue, String preQuestId) {
-            this(questId, type, goalType, goalTarget, goalValue, preQuestId, false);
+            this(questId, type, goalType, goalTarget, goalValue, preQuestId, false, null);
+        }
+        public Def(String questId, QuestType type, GoalType goalType, String goalTarget,
+                   long goalValue, String preQuestId, boolean requiresFact) {
+            this(questId, type, goalType, goalTarget, goalValue, preQuestId, requiresFact, null);
         }
         public Def {
             if (questId == null || questId.isBlank()) {
@@ -75,6 +79,8 @@ public final class QuestProgress {
             preQuestId = preQuestId == null || preQuestId.isBlank() ? null : preQuestId;
             if (requiresFact && (type != QuestType.ACHIEVEMENT || !goalType.accumulates()))
                 throw new IllegalArgumentException("稳定事实只用于永久累加成就");
+            if (goldReward != null && (!requiresFact || goldReward <= 0))
+                throw new IllegalArgumentException("永久金币定义必须有稳定事实和正额度");
         }
     }
 
@@ -86,14 +92,20 @@ public final class QuestProgress {
      */
     public record Entry(String questId, QuestType type, GoalType goalType, String goalTarget,
                         long goalValue, String preQuestId, long current, boolean claimed,
-                        Boolean requiresFact, Set<String> factIds) {
+                        Boolean requiresFact, Set<String> factIds, Long goldReward) {
         public Entry(String questId, QuestType type, GoalType goalType, String goalTarget,
                      long goalValue, String preQuestId, long current, boolean claimed) {
-            this(questId, type, goalType, goalTarget, goalValue, preQuestId, current, claimed, false, Set.of());
+            this(questId, type, goalType, goalTarget, goalValue, preQuestId, current, claimed, false, Set.of(), null);
+        }
+        public Entry(String questId, QuestType type, GoalType goalType, String goalTarget,
+                     long goalValue, String preQuestId, long current, boolean claimed, Boolean requiresFact, Set<String> factIds) {
+            this(questId, type, goalType, goalTarget, goalValue, preQuestId, current, claimed, requiresFact, factIds, null);
         }
         public Entry {
             requiresFact = Boolean.TRUE.equals(requiresFact);
             factIds = factIds == null ? Set.of() : Set.copyOf(factIds);
+            if (goldReward != null && (!requiresFact || goldReward <= 0))
+                throw new IllegalArgumentException("永久金币快照必须有稳定事实和正额度");
         }
 
         public boolean complete() {
@@ -134,7 +146,7 @@ public final class QuestProgress {
                 throw new IllegalArgumentException("任务 id 重复: " + def.questId());
             }
             progress.entries.put(def.questId(), new Entry(def.questId(), def.type(), def.goalType(),
-                    def.goalTarget(), def.goalValue(), def.preQuestId(), 0L, false, def.requiresFact(), Set.of()));
+                    def.goalTarget(), def.goalValue(), def.preQuestId(), 0L, false, def.requiresFact(), Set.of(), def.goldReward()));
             progress.claimedById.put(def.questId(), Boolean.FALSE);
         }
         return progress;
@@ -213,7 +225,7 @@ public final class QuestProgress {
                     + entry.current() + "/" + entry.goalValue());
         }
         entries.put(questId, new Entry(entry.questId(), entry.type(), entry.goalType(), entry.goalTarget(),
-                entry.goalValue(), entry.preQuestId(), entry.current(), true, entry.requiresFact(), entry.factIds()));
+                entry.goalValue(), entry.preQuestId(), entry.current(), true, entry.requiresFact(), entry.factIds(), entry.goldReward()));
         claimedById.put(questId, Boolean.TRUE);
     }
 
@@ -343,6 +355,6 @@ public final class QuestProgress {
 
     private static Entry withCurrent(Entry entry, long current, Set<String> facts) {
         return new Entry(entry.questId(), entry.type(), entry.goalType(), entry.goalTarget(),
-                entry.goalValue(), entry.preQuestId(), current, entry.claimed(), entry.requiresFact(), facts);
+                entry.goalValue(), entry.preQuestId(), current, entry.claimed(), entry.requiresFact(), facts, entry.goldReward());
     }
 }
