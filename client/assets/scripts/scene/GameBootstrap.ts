@@ -93,6 +93,7 @@ import { RewardToastQueue } from '../game/reward/RewardToastQueue'
 import type { ToastTuning } from '../net/generated/Protocol'
 import { preloadRuntimeArt } from './ArtCatalog'
 import { claimReceiptText } from '../game/activity/ActivityPanel'
+import { buildClaimSummary } from '../game/quest/QuestPanel'
 
 const { ccclass } = _decorator
 
@@ -1731,6 +1732,11 @@ export class GameBootstrap extends Component {
       }
       if (this.guide?.isValid) this.guide.setBubbleSuppressed('quest', quest.openPrompt !== null)
       out.quest = resp => quest.attach(resp)
+      out.questClaimed = resp => {
+        const summary = buildClaimSummary(resp)
+        quest.showReceipt([summary.rewardLines.join('、') || '奖励已领取', summary.remainingText]
+          .filter(Boolean).join(' · '))
+      }
       out.activity = (resp, serverNowMs) => quest.attachActivity(resp, serverNowMs)
       out.activityClaimed = resp => quest.showReceipt(claimReceiptText(resp))
       quest.onClaim = (questId, heroChoice) => { void this.root?.claimQuest(questId, heroChoice) }

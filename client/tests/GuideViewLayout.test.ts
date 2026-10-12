@@ -508,7 +508,7 @@ function questRows(quest: QuestHarness, firstClaimable = false): void {
     questId: `server-row-${index}`, name: `服务端任务${index}`, type: 'SIDE', goalType: 'GATHER_RESOURCE',
     goalTarget: 'WOOD', goalValue: 5000, current: firstClaimable && index === 0 ? 5000 : 2500,
     complete: firstClaimable && index === 0, claimed: false,
-    claimable: firstClaimable && index === 0, locked: false, preQuestId: null, heroChoices: [],
+    claimable: firstClaimable && index === 0, locked: false, preQuestId: null, heroChoices: [], rewards: null,
   }))
   quest.attach({ quests, claimableCount: firstClaimable ? 1 : 0, serverNow: 1 })
 }
@@ -1137,3 +1137,25 @@ test('实际短屏社交表单显示完整小队名、消耗和提示，确认�
   assert.equal(content.getChildByName('hint')!.active, false)
   assert.ok(relative(content.getChildByName('cost')!).y >= hole.y, '空提示变化后消耗仍完整可见')
 })
+
+for (const height of [nativeSize.height, 600]) {
+  test(`任务到账回执在${height}高视口与页签首行有净隙，权威刷新不抹掉回执`, () => {
+    const { guide, size, area } = setup('quest')
+    size.height = height
+    Object.assign(area, height === nativeSize.height ? nativeArea : { x: -480, y: -height / 2 + 60, width: 960, height: height - 60 })
+    const quest = questWithGuide(guide, area, true, size)
+    questRows(quest, true); quest.update()
+    ;(quest as unknown as { showReceipt(text: string): void }).showReceipt('成就已领取，金币入账20，另30金币已转入邮箱。')
+    questRows(quest, true)
+    const receipt = quest.node.getChildByName('Receipt')!
+    const row = quest.drawnRows[0]!
+    const rowTop = ownRect(row).y + ownRect(row).height
+    assert.ok(receipt.position.y - 20 >= rowTop + 4, '两行回执的下沿须在首行上沿外，不能被后绘制的行板压住')
+    for (const key of ['quest', 'activity', 'achievement']) {
+      assert.ok(receipt.position.y + 20 <= ownRect(quest.node.getChildByName(`Tab-${key}`)!).y - 4, '回执上沿须在页签下沿外')
+    }
+    assert.equal(dimensions(receipt).height, 40)
+    assert.ok(dimensions(receipt).width >= 600)
+    assert.match(receipt.getComponent(Label)!.string, /另30金币已转入邮箱/)
+  })
+}

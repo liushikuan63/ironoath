@@ -229,6 +229,18 @@ public final class QuestProgress {
         claimedById.put(questId, Boolean.TRUE);
     }
 
+    /** 可信钱包已接受的永久金币收据只修投影，不再推进事实或发奖。 */
+    public boolean restoreClaimedFromGoldReceipt(String questId, long goal, long gold) {
+        Entry entry = require(questId);
+        if (!entry.requiresFact() || entry.type() != QuestType.ACHIEVEMENT || goal <= 0 || gold <= 0)
+            throw new IllegalArgumentException("金币收据只能恢复永久成就资格");
+        if (entry.claimed() && entry.goalValue() == goal && java.util.Objects.equals(entry.goldReward(), gold)) return false;
+        entries.put(questId, new Entry(entry.questId(), entry.type(), entry.goalType(), entry.goalTarget(),
+                goal, entry.preQuestId(), goal, true, true, entry.factIds(), gold));
+        claimedById.put(questId, Boolean.TRUE);
+        return true;
+    }
+
     /**
      * 跨天/跨周重置。
      *

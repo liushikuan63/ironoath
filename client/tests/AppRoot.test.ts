@@ -1114,6 +1114,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
       offlineJumps.push(key)
     },
     quest: () => attached.push('quest'),
+    ...({ questClaimed: () => attached.push('questClaimed') } as Partial<PanelTargets>),
     mail: () => attached.push('mail'),
     activity: (resp, serverNowMs) => {
       attached.push('activity')
@@ -1737,8 +1738,8 @@ test('领奖：三选一的 heroChoice 原样进请求体，埋点区分「选�
     '选中的武将必须原样进请求体 —— 服务端靠它决定发哪一名')
   assert.deepEqual(h.events.find(e => e.name === 'quest_claim')?.params,
     { questId: 'quest_main_01', needsChoice: 'true', heroId: 'hero_sr_02' })
-  assert.deepEqual(h.attached.slice(-2), ['quest', 'hero'],
-    '领完要重拉任务面板（已领取状态）与武将面板（整卡进册的权威读法）')
+  assert.deepEqual(h.attached.slice(-5), ['questClaimed', 'hero', 'quest', 'resources', 'reddot'],
+    '先递领取回执并重读武将，最终以权威任务、金币和红点收口')
 })
 
 test('领奖：没有候选的任务必须带 null 而不是空串（多传或漏传都会被服务端拒）', async () => {
@@ -4895,3 +4896,26 @@ test('列表还没读到时不说成"没在建"：那是读侧故障，不是玩
 
   assert.ok(h.errors.some(e => /状态还没读到/.test(e[1])))
 })
+
+for (const lostResponse of [false, true]) {
+  test(`永久金币领取${lostResponse ? '回应失败' : '成功'}后刷新已接受钱包，且不自动重复领取`, async () => {
+    const h = harness()
+    h.http.overrides.set('/resource/detail', { resources: [{ type: 'GOLD', current: 200 }], serverNow: SERVER_NOW })
+    await h.root.start('dev-quest-gold', '君')
+    h.attached.length = 0
+    const before = h.http.calls.length
+    // 已接受的服务端余额夹具；此处不冒充真实断网或原生玩家验收。
+    h.http.overrides.set('/resource/detail', { resources: [{ type: 'GOLD', current: 250 }], serverNow: SERVER_NOW })
+    if (lostResponse) h.http.bizFailNext = { code: 1002, msg: '领取回应丢失，请刷新查看', detail: null }
+    await h.root.claimQuest('quest_achievement_build_10', null)
+    const calls = h.http.calls.slice(before)
+    assert.equal(calls.filter(c => c.path === '/quest/claim').length, 1)
+    assert.equal(calls.filter(c => c.path === '/quest/list').length, 1)
+    assert.equal(calls.filter(c => c.path === '/resource/detail').length, 1)
+    assert.equal(calls.filter(c => c.path === '/social/reddot').length, 1)
+    assert.deepEqual(h.attached, lostResponse ? ['quest', 'resources', 'reddot'] : ['questClaimed', 'hero', 'quest', 'resources', 'reddot'])
+    if (lostResponse) assert.equal(h.errors.some(e => e[0] === 'quest'), true)
+    await h.root.refresh('stamina')
+    assert.equal(h.lastStamina?.gold, 250, '显示所用金币读取权威余额，不由回执自行加50')
+  })
+}

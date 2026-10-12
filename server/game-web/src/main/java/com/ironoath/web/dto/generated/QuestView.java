@@ -20,6 +20,7 @@ public record QuestView(
         boolean claimable,   // 此刻能不能领：complete 且未 claimed 且前置已完成。客户端不要自己算这个布尔（前置链一变就会漂）。
         boolean locked,   // 前置任务未完成 ⇒ 还不能做。与 claimed 分开是为了让客户端知道该提示「先完成前置」还是「已领取」。
         String preQuestId,   // 前置任务 id，null 表示无前置。下发它是因为客户端要能画出任务链（「完成 X 后解锁」）。
-        List<HeroChoice> heroChoices)   // 本条任务的可选武将列表（含名字）；空数组表示这条任务的奖励里没有「挑一名」这一项。客户端据此在领奖前弹出选择界面，选择结果随 claim 的 heroChoice 提交。
+        List<HeroChoice> heroChoices,   // 本条任务的可选武将列表（含名字）；空数组表示这条任务的奖励里没有「挑一名」这一项。客户端据此在领奖前弹出选择界面，选择结果随 claim 的 heroChoice 提交。
+        List<QuestReward> rewards)   // 可选奖励预览；永久金币取保存的资格额度，普通任务保持空列表。旧回应缺少该字段时沿用原展示。
 {
 }

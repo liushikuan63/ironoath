@@ -11,6 +11,7 @@ public record QuestClaimResp(
         String questId,   // 领的哪一条任务。
         List<QuestReward> rewards,   // 本次实际发放的奖励明细（已按 type+id 聚合）。
         int claimableCount,   // 领取之后还剩几条可领。与 list 的同一字段同源，省掉客户端再查一次列表。
-        long serverNow)   // 服务端时刻。
+        long serverNow,   // 服务端时刻。
+        String message)   // 可选服务端到账说明，永久金币区分实际入余额和转邮箱；旧回应缺少时沿用原奖励明细。
 {
 }

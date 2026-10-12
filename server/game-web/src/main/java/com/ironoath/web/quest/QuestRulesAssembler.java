@@ -78,14 +78,20 @@ public class QuestRulesAssembler {
             ids.put(row.id(), Boolean.TRUE);
         }
         for (QuestCfg row : rows) {
+            boolean permanentGold = Boolean.TRUE.equals(row.permanentGold());
+            List<RewardItem> rewards = rewardsOf(row, carrierByRarity);
+            List<String> choices = heroChoicesOf(row);
+            if (permanentGold && (row.rewardGold() <= 0 || row.battlePassPoints() != 0 || !choices.isEmpty()
+                    || rewards.stream().anyMatch(r -> r.type() != RewardType.RESOURCE || !"GOLD".equals(r.id()))))
+                throw new IllegalStateException("永久金币成就必须为纯金币、无战令积分且无选将奖励");
             QuestProgress.Def def = new QuestProgress.Def(row.id(), typeOf(row.questType()),
-                    goalOf(row.goalType()), row.goalTarget(), row.goalValue(), row.preQuest());
+                    goalOf(row.goalType()), row.goalTarget(), row.goalValue(), row.preQuest(),
+                    permanentGold, permanentGold ? row.rewardGold() : null);
             if (def.preQuestId() != null && !ids.containsKey(def.preQuestId())) {
                 throw new IllegalStateException("任务 " + row.id() + " 的前置 " + def.preQuestId()
                         + " 不在 quest 表里：它永远无法解锁，而玩家只会看到一个锁死的任务");
             }
-            out.add(new QuestDef(def, row.name(), rewardsOf(row, carrierByRarity),
-                    heroChoicesOf(row)));
+            out.add(new QuestDef(def, row.name(), rewards, choices));
         }
         return List.copyOf(out);
     }

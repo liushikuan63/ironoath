@@ -121,7 +121,7 @@ public class QuestAppService {
             }
             List<QuestView> views = new ArrayList<>();
             for (QuestProgress.Entry entry : progress.entries()) {
-                views.add(view(progress, entry, names.getOrDefault(entry.questId(), entry.questId())));
+                views.add(view(progress, entry, names.getOrDefault(entry.questId(), "未知任务")));
             }
             return new QuestListResp(List.copyOf(views), progress.claimableCount(), now);
         });
@@ -141,10 +141,10 @@ public class QuestAppService {
                 () -> loaded(playerId, now).claimableCount());
     }
 
-    /** 领取奖励：先推进状态（领了就是领了），再走发放器发东西。 */
+    /** 领取奖励：普通任务先保存投影；永久金币先原子接受钱包收据，再保存可恢复的已领投影。 */
     public QuestClaimResp claim(String playerId, QuestClaimReq req) {
         long now = timeService.serverNow();
-        acquire(req == null ? null : req.requestId(), now);
+        String requestKey = acquire(playerId, req == null ? null : req.requestId(), now);
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 QuestProgress progress = loaded(playerId, now);
@@ -154,27 +154,44 @@ public class QuestAppService {
                 }
                 // 三选一的校验放在 claim 之前：它决定这次要领的到底是什么。
                 // 放到后面会让「已领」标记与「没选中」的失败顺序反转 —— 玩家点了按钮却发现要领的东西没定
-                List<RewardItem> choices = heroChoiceReward(questId, req.heroChoice());
+                QuestProgress.Entry entry;
+                try { entry = progress.entry(questId); }
+                catch (IllegalArgumentException missing) {
+                    throw new BizException(ErrorCode.QUEST_NOT_FOUND, "任务已更新，请刷新任务列表后再试。");
+                }
+                boolean permanent = permanentGold(entry);
+                if (permanent && req.heroChoice() != null && !req.heroChoice().isBlank())
+                    throw new BizException(ErrorCode.PARAM_INVALID, "该成就不需要选择武将。");
+                List<RewardItem> choices = permanent ? List.of() : heroChoiceReward(questId, req.heroChoice());
                 try {
                     progress.claim(questId);
                 } catch (IllegalArgumentException e) {
                     throw new BizException(ErrorCode.QUEST_NOT_FOUND, e.getMessage());
                 } catch (IllegalStateException e) {
-                    throw new BizException(claimErrorOf(e.getMessage()), e.getMessage());
+                    throw new BizException(claimErrorOf(e.getMessage()), permanent
+                            ? entry.claimed() ? "该成就奖励已经领取，请刷新查看。"
+                            : "该成就尚未满足领取条件：" + entry.current() + "/" + entry.goalValue() : e.getMessage());
                 }
-                // 先落状态再发奖：失败方向选「标记了已领但没发出去」（有补偿队列与客服入口），
-                // 反过来（发了没标记）玩家会重复领 —— 与赛季结算、国库俸禄同一条取舍
-                store.save(playerId, stateOf(progress));
-                List<RewardItem> rewards = new ArrayList<>(assembler.rewardsByQuest()
-                        .getOrDefault(questId, List.of()));
+                // 普通奖励沿用先投影后发奖；永久金币以钱包原子收据防重复，投影丢失由读取修复。
+                if (!permanent) store.save(playerId, stateOf(progress));
+                List<RewardItem> rewards = permanent ? new ArrayList<>(permanentRewards(entry))
+                        : new ArrayList<>(assembler.rewardsByQuest().getOrDefault(questId, List.of()));
                 // 选中的武将是「这次领奖」的一部分，追加在表里那批之后：
                 // 顺序即客户端飘字顺序，把它放最后是为了先让玩家看到资源到账、再看到武将入手
                 rewards.addAll(choices);
                 List<RewardItem> granted = List.of();
+                String message = null;
                 if (!rewards.isEmpty()) {
                     var result = rewardService.grant(playerId, rewards,
-                            RewardContext.toMail("quest", questId, questId + ":" + req.requestId()));
+                            permanent ? new RewardContext("free_gold", questId, achievementKey(questId), true,
+                                    Set.of("achievement-goal:" + entry.goalValue(), "achievement-gold:" + entry.goldReward()))
+                                    : RewardContext.toMail("quest", questId, questId + ":" + req.requestId()));
                     granted = result.granted();
+                    if (permanent) {
+                        long credited = granted.stream().mapToLong(RewardItem::count).sum();
+                        long overflow = result.overflow().stream().mapToLong(RewardItem::count).sum();
+                        message = "成就已领取，金币入账" + credited + (overflow > 0 ? "，另" + overflow + "金币已转入邮箱。" : "。");
+                    }
                     if (result.hasCompensation()) {
                         LOG.error("【任务奖励未入账已进补偿队列】playerId={} questId={} 奖励={} compensationId={}",
                                 playerId, questId, rewards, result.compensationId());
@@ -182,15 +199,16 @@ public class QuestAppService {
                 }
                 // 战令积分：**只在领取成功这一下加**，加多少由 quest 表那一列给。
                 // 幂等不必在这里再做一次：重放请求在时 acquire(requestId) 就被挡掉了，走不到这里
-                long points = configs.get(com.ironoath.config.cfg.QuestCfg.class, questId).battlePassPoints();
+                if (permanent) store.save(playerId, stateOf(progress));
+                long points = permanent ? 0 : configs.get(com.ironoath.config.cfg.QuestCfg.class, questId).battlePassPoints();
                 if (points > 0L) {
                     battlePass.addPoints(playerId, points, "quest:" + questId);
                 }
                 LOG.info("任务奖励已领取 playerId={} questId={} 奖励={} 战令积分+{}", playerId, questId, granted, points);
-                return new QuestClaimResp(questId, rewardViews(granted), progress.claimableCount(), now);
+                return new QuestClaimResp(questId, rewardViews(granted), progress.claimableCount(), now, message);
             });
         } catch (RuntimeException e) {
-            idempotency.release(req.requestId());
+            idempotency.release(requestKey);
             throw e;
         }
     }
@@ -261,7 +279,7 @@ public class QuestAppService {
         }
         List<QuestProgress.Entry> merged = new ArrayList<>(defs.size());
         for (QuestRulesAssembler.QuestDef def : defs) {
-            QuestProgress.Entry previous = old.get(def.def().questId());
+            QuestProgress.Entry previous = old.remove(def.def().questId());
             // 已达标永久事实代表接受过的资格；改表不能倒退目标或改写当时奖励。
             if (previous != null && previous.requiresFact() && (previous.complete() || previous.claimed())) {
                 merged.add(previous);
@@ -273,6 +291,11 @@ public class QuestAppService {
                     previous == null ? 0L : previous.current(),
                     previous != null && previous.claimed(), def.def().requiresFact(),
                     previous == null ? java.util.Set.of() : previous.factIds(), def.def().goldReward()));
+        }
+        // 配置删除不能撤销已接受的永久金币资格；未达标旧定义不凭空获得奖励。
+        for (QuestProgress.Entry previous : old.values()) {
+            if (permanentGold(previous) && previous.type() == QuestProgress.QuestType.ACHIEVEMENT
+                    && (previous.complete() || previous.claimed())) merged.add(previous);
         }
         return QuestProgress.restore(playerId, merged, stored.dayKey(), stored.weekKey());
     }
@@ -297,6 +320,15 @@ public class QuestAppService {
         if (owner != null && owner.goldClaims().values().stream()
                 .anyMatch(com.ironoath.core.reward.GoldClaimReceipt::pendingOverflow)) {
             rewardService.recoverGoldClaims(progress.playerId());
+        }
+        if (owner != null) for (QuestProgress.Entry entry : progress.entries()) {
+            if (!permanentGold(entry)) continue;
+            var receipt = owner.goldClaims().get(achievementKey(entry.questId()));
+            if (receipt == null || !"free_gold".equals(receipt.source()) || !entry.questId().equals(receipt.sourceRef())) continue;
+            long goal = receipt.facts().stream().filter(f -> f.startsWith("achievement-goal:"))
+                    .mapToLong(f -> Long.parseLong(f.substring("achievement-goal:".length()))).findFirst()
+                    .orElseThrow(() -> new IllegalStateException("成就收据缺少资格目标"));
+            if (progress.restoreClaimedFromGoldReceipt(entry.questId(), goal, receipt.requested())) changed++;
         }
         for (QuestProgress.Entry entry : progress.entries()) {
             if (entry.goalType().accumulates() || !STATE_TYPES_WITH_SOURCE.contains(entry.goalType())) {
@@ -366,7 +398,8 @@ public class QuestAppService {
                 entry.goalTarget(), entry.goalValue(), entry.current(), entry.complete(),
                 entry.claimed(), progress.claimable(entry.questId()),
                 !progress.unlocked(entry.questId()), entry.preQuestId(),
-                heroChoiceViews(entry.questId()));
+                permanentGold(entry) ? List.of() : heroChoiceViews(entry.questId()),
+                permanentGold(entry) ? rewardViews(permanentRewards(entry)) : List.of());
     }
 
     /**
@@ -559,13 +592,21 @@ public class QuestAppService {
         return ErrorCode.QUEST_NOT_COMPLETE;
     }
 
-    private void acquire(String requestId, long now) {
+    private static boolean permanentGold(QuestProgress.Entry entry) { return entry.requiresFact() && entry.goldReward() != null; }
+    private static String achievementKey(String questId) { return "achievement:" + questId; }
+    private static List<RewardItem> permanentRewards(QuestProgress.Entry entry) {
+        return List.of(new RewardItem(RewardType.RESOURCE, "GOLD", entry.goldReward()));
+    }
+
+    private String acquire(String playerId, String requestId, long now) {
         if (requestId == null || requestId.isBlank()) {
             throw new BizException(ErrorCode.REQUEST_ID_MISSING, "领取任务奖励必须带 requestId");
         }
         long ttlMs = configs.longParam("REQUEST_ID_TTL_SECONDS") * 1000L;
-        if (!idempotency.tryAcquire(requestId, now, ttlMs)) {
-            throw new BizException(ErrorCode.REQUEST_DUPLICATED, "requestId=" + requestId);
+        String key = "quest:" + playerId + ":" + requestId;
+        if (!idempotency.tryAcquire(key, now, ttlMs)) {
+            throw new BizException(ErrorCode.REQUEST_DUPLICATED, "请勿重复领取，请刷新查看结果。");
         }
+        return key;
     }
 }

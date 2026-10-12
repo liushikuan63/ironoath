@@ -52,6 +52,8 @@ const ROW_GAP = 6
  * 小于 (22+14)/2+4 = 23 —— 页签底板还会压住表名下沿（横扫的"字形相碰"那一维量出来的，见台账 #388）。
  */
 const HEADER_HEIGHT = 76
+/** 到账回执最多两行，显示时为它留出独立净区。 */
+const RECEIPT_HEIGHT = 40
 const PADDING = 16
 /** 底部导航条留出来的高度（与军队/商店/战令同一口径）：多画的行会被它盖住。 */
 const BOTTOM_RESERVED = 68
@@ -200,7 +202,7 @@ export class QuestPanelView extends Component {
       const top = Math.min(size.height / 2, area.y + area.height)
       const centerX = area.x + area.width / 2
       this.headerLabel?.node.setPosition(new Vec3(centerX, top - PADDING - 20, 0))
-      this.receiptLabel?.node.setPosition(new Vec3(centerX, top - PADDING - HEADER_HEIGHT + 2, 0))
+      this.receiptLabel?.node.setPosition(new Vec3(centerX, top - PADDING - HEADER_HEIGHT - RECEIPT_HEIGHT / 2, 0))
       const tabWidth = PANEL_WIDTH / TABS.length
       let index = 0
       for (const [tab] of this.tabNodes) {
@@ -250,6 +252,7 @@ export class QuestPanelView extends Component {
   showReceipt(text: string): void {
     if (this.receiptLabel !== null) {
       this.receiptLabel.string = text
+      this.render()
     }
   }
 
@@ -269,7 +272,11 @@ export class QuestPanelView extends Component {
   private buildHeader(height: number): void {
     this.headerLabel = this.addLabel(this.node, 'Header', 0, height / 2 - PADDING - 20, COLOR_COPPER_GOLD, 22)
     this.receiptLabel = this.addLabel(this.node, 'Receipt', 0,
-      height / 2 - PADDING - HEADER_HEIGHT + 2, COLOR_CLAIMABLE, 14)
+      height / 2 - PADDING - HEADER_HEIGHT - RECEIPT_HEIGHT / 2, COLOR_CLAIMABLE, 14)
+    this.receiptLabel.node.getComponent(UITransform)?.setContentSize(PANEL_WIDTH - PADDING * 2, RECEIPT_HEIGHT)
+    this.receiptLabel.lineHeight = 20
+    this.receiptLabel.overflow = Label.Overflow.CLAMP
+    this.receiptLabel.enableWrapText = true
     this.overflowLabel = this.addLabel(this.node, 'Overflow', 0,
       height / 2 - PADDING - HEADER_HEIGHT - MAX_VISIBLE_ROWS * (ROW_HEIGHT + ROW_GAP) - 12,
       COLOR_TEXT_DIM, 14)
@@ -520,7 +527,8 @@ export class QuestPanelView extends Component {
       : row.type !== 'ACHIEVEMENT')
     const size = view.getVisibleSize()
     const area = dialogContentRect(this.node)
-    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    const receiptSpace = this.receiptLabel?.string ? RECEIPT_HEIGHT + ROW_GAP : 0
+    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - receiptSpace - ROW_HEIGHT / 2
     // 行数按实测可视高度算，不写死：① 可视高度随窗口/机型变；② 多画的行会被底部导航条盖住，
     // 那是"画了但玩家看不见"，比少画一行更难发现（表头带抬到 76 之后这一屏更矮了一档）。
     const navTop = Math.max(-size.height / 2 + BOTTOM_RESERVED, area.y)
@@ -562,7 +570,8 @@ export class QuestPanelView extends Component {
     const scope = this.tab === 'signin' ? '签到' : '活动'
     const size = view.getVisibleSize()
     const area = dialogContentRect(this.node)
-    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
+    const receiptSpace = this.receiptLabel?.string ? RECEIPT_HEIGHT + ROW_GAP : 0
+    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - receiptSpace - ROW_HEIGHT / 2
     if (data === null) {
       if (this.headerLabel !== null) {
         this.headerLabel.string = `${scope} 加载中`
@@ -698,7 +707,7 @@ export class QuestPanelView extends Component {
       title.color = row.claimable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
     if (detail !== undefined && detail !== null) {
-      const parts: string[] = [row.progressText]
+      const parts: string[] = [row.progressText, ...row.rewardLines]
       if (row.lockedHint !== null) {
         parts.push(row.lockedHint)
       }

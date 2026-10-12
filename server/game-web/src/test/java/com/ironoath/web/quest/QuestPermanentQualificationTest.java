@@ -50,4 +50,26 @@ class QuestPermanentQualificationTest {
         assertThat(result.entry("permanent").goldReward()).isEqualTo(150);
         assertThat(result.claimableCount()).isZero();
     }
+    private static QuestProgress removed(QuestProgress before) {
+        return QuestAppService.reconcile(PLAYER, List.of(),
+                new QuestProgressStore.State(PLAYER, before.entries(), before.dayKey(), before.weekKey()), "20261101", "2026W44");
+    }
+    @Test void removingConfigKeepsEarnedUnclaimedPermanentGoldQualification() {
+        var result = removed(progress(10));
+        assertThat(result.entries()).hasSize(1);
+        assertThat(result.entry("permanent").goldReward()).isEqualTo(50);
+        assertThat(result.claimableCount()).isEqualTo(1);
+    }
+    @Test void removingConfigKeepsClaimedPermanentGoldQualification() {
+        var before = progress(10);
+        before.claim("permanent");
+        var result = removed(before);
+        assertThat(result.entries()).hasSize(1);
+        assertThat(result.entry("permanent").claimed()).isTrue();
+        assertThat(result.entry("permanent").goldReward()).isEqualTo(50);
+        assertThat(result.claimableCount()).isZero();
+    }
+    @Test void removingUnqualifiedConfigDoesNotInventAnEarnedReward() {
+        assertThat(removed(progress(9)).entries()).isEmpty();
+    }
 }

@@ -43,6 +43,7 @@ function view(overrides: Partial<QuestView> = {}): QuestView {
     locked: false,
     preQuestId: null,
     heroChoices: [],
+    rewards: null,
     ...overrides,
   }
 }
@@ -176,6 +177,7 @@ test('不可领取时不发请求：noop 带原因，而不是让灰按钮打出
 test('领取回执：奖励明细用服务端给的名字，整卡武将单独挑出来给动效用', () => {
   const resp: QuestClaimResp = {
     questId: 'quest_main_01',
+    message: null,
     rewards: [
       { type: 'HERO', id: 'hero_sr_01', count: 1, name: '卫无咎' },
       { type: 'RESOURCE', id: 'GOLD', count: 100, name: '金币' },
@@ -197,4 +199,22 @@ test('领取回执：奖励明细用服务端给的名字，整卡武将单独�
 test('候选展示名直接用服务端那份，不自己翻译也不回落 id', () => {
   assert.equal(candidateLabel({ heroId: 'hero_sr_01', name: '卫无咎', rarity: null, might: null, command: null, wisdom: null, mainSkillName: null, mainSkillDescription: null, subSkillName: null, subSkillDescription: null, featureText: null }), '卫无咎',
     '名字由服务端从 hero 表解析；客户端自己拼会与战报、客服工单里的称呼对不上')
+})
+
+test('永久城建预览采用服务端资格奖励金额，旧响应缺少预览时仍显示原任务', () => {
+  const quest = view({ type: 'ACHIEVEMENT', rewards: [{ type: 'RESOURCE', id: 'GOLD', name: '金币', count: 50 }] })
+  const row = rowAt({ quests: [quest], claimableCount: 0, serverNow: 1 }, 0)
+  assert.deepEqual((row as unknown as { rewardLines: readonly string[] }).rewardLines, ['金币 ×50'])
+  const legacy = { ...quest }
+  delete (legacy as Partial<QuestView>).rewards
+  const oldRow = rowAt({ quests: [legacy], claimableCount: 0, serverNow: 1 }, 0)
+  assert.deepEqual((oldRow as unknown as { rewardLines: readonly string[] }).rewardLines, [])
+})
+
+test('永久金币回执采用服务端实际入账及转邮箱说明，不把申请额当余额增量', () => {
+  const response: QuestClaimResp = { questId: 'build', claimableCount: 0, serverNow: 1,
+    rewards: [{ type: 'RESOURCE', id: 'GOLD', name: '金币', count: 20 }],
+    message: '成就已领取，金币入账20，另30金币已转入邮箱。' }
+  assert.deepEqual(buildClaimSummary(response).rewardLines, [response.message])
+  assert.deepEqual(buildClaimSummary({ ...response, message: null }).rewardLines, ['金币 ×20'])
 })

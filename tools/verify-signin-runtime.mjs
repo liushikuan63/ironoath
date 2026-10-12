@@ -103,7 +103,11 @@ try {
     const daily = state.rows.find(r => r.claim)
     check(`视口${index}：真实签到行显示配置金额与04:00`, daily.title.includes('20') && daily.detail.includes('04:00'))
     await page.screenshot({ path: `${OUT}/signin-${index}-before.png` })
-    await click(page, daily.claim)
+    // 截图等待期间异步绘图可能重用行池：按同一服务端标题重取当前可点键，
+    // 不沿用已变为灰行的旧uuid；此步只重新读节点，没有再次领取。
+    const currentDaily = (await page.evaluate(screen)).rows.find(r => r.title === daily.title && r.claim)
+    assert.ok(currentDaily?.claim, '截图后当前签到行仍须可领取')
+    await click(page, currentDaily.claim)
     await page.waitForFunction(fn => { const s = (0, eval)(`(${fn})`)(); return s?.rows.length > 0 && s.rows.every(r => !r.claim) }, screen.toString())
     check(`视口${index}：点击后金币只增加20`, await gold(account.uid) === before + 20)
     check(`视口${index}：领取后权威列表无签到可领红点`, (await list(account.uid)).activities.filter(r => r.category === 'SIGN_IN').every(r => r.state !== 'CLAIMABLE'))

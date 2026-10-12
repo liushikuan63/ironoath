@@ -64,6 +64,8 @@ export interface QuestView {
   preQuestId: string | null
   /** 本条任务的可选武将列表（含名字）；空数组表示这条任务的奖励里没有「挑一名」这一项。客户端据此在领奖前弹出选择界面，选择结果随 claim 的 heroChoice 提交。 */
   heroChoices: HeroChoice[]
+  /** 可选奖励预览；永久金币取保存的资格额度，普通任务保持空列表。旧回应缺少该字段时沿用原展示。 */
+  rewards: QuestReward[] | null
 }
 
 /**
@@ -115,6 +117,8 @@ export interface QuestClaimResp {
   claimableCount: number
   /** 服务端时刻。 */
   serverNow: number
+  /** 可选服务端到账说明，永久金币区分实际入余额和转邮箱；旧回应缺少时沿用原奖励明细。 */
+  message: string | null
 }
 
 /**

@@ -113,7 +113,7 @@ import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProt
 import { worldModel } from '../world/WorldContext'
 import { selectedVisibleMonster, selectedVisibleResource } from '../world/WorldViewModel'
 import { resourceName } from '../ui/ResourceNames'
-import type { QuestListResp } from '../../net/generated/QuestProtocol'
+import type { QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
 import type {
   BattleReportBrief, BattleReportListResp, BattleReportResp, ShareChannel,
 } from '../../net/generated/BattleProtocol'
@@ -417,6 +417,8 @@ export interface PanelTargets {
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
   quest?(resp: QuestListResp): void
+  /** 服务端任务领取回执，成功一次只递一次；实际额度及邮箱说明均取响应。 */
+  questClaimed?(resp: QuestClaimResp): void
   /**
    * 邮件面板（B12 §2）。列表本身是「带副作用的读」：服务端在这次读里顺手清过期。
    */
@@ -1629,8 +1631,8 @@ export class AppRoot {
    * {@code heroChoice === null ? … : …}，而「这个任务有没有候选」由服务端的
    * {@code QuestView.heroChoices} 决定，不在客户端另判。
    *
-   * <p>成功之后重拉任务面板与武将面板：前者是「已领取」状态，后者是因为整卡武将会进册
-   * （`/hero/list` 才是武将册的权威读法，奖励回执只说明发了什么）。
+   * <p>成功先递到账回执并重读武将；成功或回应失败都重读任务、资源和红点。
+   * 钱包可能已接受而回应丢失，刷新只读权威结果，不自动再次领取。
    */
   claimQuest(questId: string, heroChoice: string | null): Promise<void> {
     this.track(TRACK_EVENTS.questClaim, {
@@ -1638,8 +1640,9 @@ export class AppRoot {
       needsChoice: trackParam(heroChoice !== null),
       heroId: trackParam(heroChoice),
     })
-    return this.write('quest', this.api.questClaim({ questId, heroChoice }),
-      ['quest', 'hero'])
+    return this.write('quest', this.api.questClaim({ questId, heroChoice }), ['hero'],
+      resp => this.targets.questClaimed?.(resp))
+      .finally(() => this.refresh('quest', 'resources', 'reddot'))
   }
 
   // ---------- 新手引导（B18） ----------

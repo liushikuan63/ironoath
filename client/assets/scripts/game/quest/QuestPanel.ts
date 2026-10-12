@@ -41,6 +41,8 @@ export interface QuestRow {
    * 非空时界面必须先让玩家选一个 —— 不选就发请求会被服务端拒。
    */
   readonly heroChoices: readonly HeroChoice[]
+  /** 服务端保存的资格奖励预览；旧响应无该字段时保持空。 */
+  readonly rewardLines: readonly string[]
 }
 
 /** 整个任务列表页的数据。 */
@@ -103,6 +105,7 @@ function toRow(namesById: ReadonlyMap<string, string>, quest: QuestView): QuestR
       : null,
     claimable: quest.claimable,
     heroChoices: quest.heroChoices,
+    rewardLines: (quest.rewards ?? []).map(rewardLine),
   }
 }
 
@@ -154,7 +157,7 @@ export function buildClaimSummary(resp: QuestClaimResp): ClaimSummary {
   }
   return {
     questId: resp.questId,
-    rewardLines: resp.rewards.map(rewardLine),
+    rewardLines: resp.message?.trim() ? [resp.message] : resp.rewards.map(rewardLine),
     remainingText: resp.claimableCount > 0 ? `还有 ${resp.claimableCount} 个奖励可领取` : null,
     grantedHeroIds: resp.rewards.filter(r => r.type === 'HERO').map(r => r.id),
   }
