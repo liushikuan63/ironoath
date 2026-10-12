@@ -7320,3 +7320,5 @@ TEST_EXIT=0
 | #1188 F38石料选中仍行军列表，资源采集生产入口缺失 | 本笔（本批统一推） | 石料真实caption行军；生产资源编成0入口；默认资源明细13/13保首红；无采集派遣 | native-f38-stone-resource-selection-v38-r18.actual.json；root-native-onboarding-v38-r18/f38-logistics-bag-failure-model.ui.json；D:/tmp/ironoath-chat-stop-20261012/f38-logistics-prepare-live3.log；WorldMap.ts/WorldViewModel.ts/GameBootstrap.ts/AppRoot.ts | 资源采集入口未修；背包失败为量具节点/页签前提错误非产品失败；G01长期净流/后续新奖励数值仍未审定 |
 
 | #1189 F38既购100金补给正常使用，166→266即时队列归零 | 本笔（本批统一推） | 真实单张2次；即时266/360队列0/1；同号GET266/训练0/1738金；3张截图SHA审图通过 | native-f38-owned-two-single-training-items-v38-r18.actual.json；native-f38-logistics-image-audit.actual.json；D:/tmp/ironoath-chat-stop-20261012/f38-training-two-singles.log；docs/免费金币经济基线_G01.md | 资源采集生产入口正在修，尚未派遣；主6→10及建盟未做；195测试仅逻辑回归；门禁新准备动作豁免需重跑；G01长期可达净流未完成 |
+
+| #1190 用户明确允许后续多账号，双方真实开战列为必验 | 本笔（本批统一推） | 用户授权已落盘；双向开战尚未执行，非通过 | docs/多账号攻防验收.md；本聊天2026-10-12用户多账号与互相开战要求 | A攻B/B攻A与双方资产结算均未验；当前先完成资源采集修复/五门/浏览器/新冻结与原生采集；不得以夹具或单方向结果代替双向完成 |
