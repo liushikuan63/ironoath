@@ -7292,3 +7292,5 @@ TEST_EXIT=0
 | 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
 |---|---|---|---|---|
 | #1175 中途compact网络失败；写死未知/6改真实计数与动作前阈值守卫 | 本笔（本批统一推） | 旧聊天9次compact/最后命令0；完整备份归档；计数7/0、动作守卫4/0、driver/record语法0；0/4允许、5/9拒绝，原输入/业务源码不变 | D:/tmp/ironoath-chat-stop-20261012/diagnosis.json；counter-validation.json；native-action-guard-validation.json；archive-receipt.json；continuation.md；新聊天结果与进展仅实际产生后有效 | 网络发送错误底层根因未证；初次SQLite占用首红保留并已修；新聊天创建/真实接续尚待，不能仅交接报通过；当前学院未提交、屯田令/08领取/09画面与阶段完整门禁/批推未做；用户明确留当前聊天的例外按最新要求记录；本格未推 |
+
+| #1176 接续3真实启动与同冻结后端停机恢复 | 本笔（本批统一推） | 计数0；启动exit0；原生read/shot各exit0；同UID及main6/学院选择器实图通过。 | D:/tmp/ironoath-chat-stop-20261012/backend-resume-continuation3；root-native-onboarding-v36-r18/continuation3-initial-read拒绝与restored-read/restored-screen；parent-observation.json | 旧进程退出根因仍未证；学院/屯田令/08领取/09实图与阶段全门禁/批推未做，原失败保留，本格未推。 |
