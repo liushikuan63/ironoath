@@ -7260,3 +7260,5 @@ TEST_EXIT=0
 | #1160 F34同号原生训练行加速直达通过 | 本笔（本批统一推） | 实际原生训练100及两次直达加速、同UID服务读回和中文选择弹窗通过；0278完成截图仍旧队列，不能算完成画面通过；本笔无源码或运行输入改变。 | D:/tmp/ironoath-wechat-20261010/native-training-direct-complete-v34-r18.actual.json；driver-0237及0278实际PNG已查看 | 旧Guide4遮罩未重验；外层hidden导致0278旧画面，实际armyResp剩151毫秒/training100，稍后HTTP才结算196；下一笔修加速毫秒尾数并补真实完成画面，其他原生性能与G01-G07仍未完成。 |
 
 | #1161 足量训练与治疗加速清除毫秒尾数 | 本笔（本批统一推） | 四条有效回归：旧码25跑/2失败/0错/0跳，足量训练与治疗立即收取失败；候选25/0/0/0，部分加速留151毫秒和重复收取无重复兵同时通过。 | D:/tmp/ironoath-wechat-20261010/army-speed-fraction-1161.red.log；army-speed-fraction-1161.green.log；training-direct-army-view-diagnostic.receipt.json | 仅定向JUnit已绿；完整check/test/build和真启动探针未跑，候选未加载原9490；原生完成画面等待用户恢复原窗口可见，旧Guide4遮罩及真机性能仍未验。 |
+
+| #1162 G01条件金币曲线与逐关重复奖励漏项 | 本笔（本批统一推） | 全部模型输入逐表SHA，出生200/日常65/周常500/等级24000/章箱3000/逐关配置3000现算；五情景毛收入已给分项，连续窗口源代码核对，玩家存档未写。 | docs/免费金币经济基线_G01.md；D:/tmp/ironoath-wechat-20261010/free-gold-g01-conditional-baseline.actual.json及.mjs | G01仅部分完成：全来源和消费、关卡扫荡、活动实际排期与可达性/净结余尚未合入；条件胜利不是实测，G02-G07未实施，新增奖励额度未审定。 |
