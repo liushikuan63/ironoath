@@ -19,9 +19,36 @@ const DAY = 86_400_000
 function view(overrides: Partial<ActivityView> & { id: string }): ActivityView {
   return {
     name: '剿匪令', state: 'RUNNING', progress: 30, goal: 50,
-    windowEndAt: NOW + 2 * DAY, claimed: false, ...overrides,
+    windowEndAt: NOW + 2 * DAY, claimed: false, category: null, rewards: null,
+    details: null, automatic: null, processing: null, ...overrides,
   }
 }
+
+test('签到的类别、金额预览、条件均取服务端，自动额外奖励不能独立点击', () => {
+  const list = buildActivityList({ activities: [view({ id: 'signin_daily', name: '每日签到',
+    state: 'CLAIMABLE', category: 'SIGN_IN', details: '本次含周满勤奖励。',
+    rewards: [{ type: 'RESOURCE', id: 'GOLD', count: 120, name: '金币' }] }),
+    view({ id: 'signin_week_full', name: '一周全勤', category: 'SIGN_IN', state: 'CLAIMABLE', automatic: true })],
+    serverNow: NOW, claimableCount: 1 }, NOW)
+  assert.equal(list.rows[0]?.category, 'SIGN_IN')
+  assert.equal(list.rows[0]?.rewardText, '金币 ×120')
+  assert.equal(list.rows[0]?.details, '本次含周满勤奖励。')
+  assert.equal(list.rows[0]?.claimable, true)
+  assert.equal(list.rows[1]?.claimable, false)
+  assert.equal(list.rows[1]?.statusText, '随签到领取')
+  assert.equal(claimReceiptText({ claimed: true, state: 'RUNNING', rewards: [], message: '20金币已转入邮箱。' }),
+    '20金币已转入邮箱。')
+})
+
+test('旧服务端缺少新增签到字段时，仍按普通活动显示和领取', () => {
+  const legacy = { id: 'legacy_activity', name: '旧活动', state: 'CLAIMABLE',
+    progress: 3, goal: 3, windowEndAt: NOW + DAY, claimed: false } as ActivityView
+  const row = buildActivityList({ activities: [legacy], serverNow: NOW, claimableCount: 1 }, NOW).rows[0]
+  assert.equal(row?.category, 'EVENT')
+  assert.equal(row?.claimable, true)
+  assert.equal(row?.rewardText, '')
+  assert.equal(row?.details, null)
+})
 
 test('进度与目标照搬服务端，大数字带千分位（捐献 2000 在面板上要读得出来）', () => {
   const list = buildActivityList({
@@ -100,14 +127,14 @@ test('领取请求只带 activityId；空 id 当场抛（那是一次注定打�
 
 test('回执用的是服务端回来的入账量：背包满时一部分走邮件，界面不能替它说"已发"', () => {
   assert.equal(claimReceiptText({
-    claimed: true, state: 'RUNNING',
+    claimed: true, state: 'RUNNING', message: null,
     rewards: [
       { type: 'RESOURCE', id: 'GOLD', count: 500, name: '金币' },
       { type: 'ITEM', id: 'item_speedup_train_1h', count: 2, name: '一小时训练令' },
     ],
   }), '已领取：金币 ×500、一小时训练令 ×2')
   // 什么都没入账（全走邮件兜底）⇒ 空串，界面据此不显示那一行，而不是显示断句的「已领取：」
-  assert.equal(claimReceiptText({ claimed: true, state: 'RUNNING', rewards: [] }), '')
+  assert.equal(claimReceiptText({ claimed: true, state: 'RUNNING', rewards: [], message: null }), '')
 })
 
 test('响应为空 / 现在不是有限数：当场抛，而不是画一屏假数据', () => {

@@ -60,12 +60,13 @@ public class ActivityAppService {
     private final ConfigRegistry configs;
     /** 战令积分（B24 S-d-c）。与任务那条同源：分值挂在既有活动上，不新增任务体系。 */
     private final com.ironoath.web.battlepass.BattlePassService battlePass;
+    private final SignInRewards signIn;
 
     public ActivityAppService(ActivityProgressStore store, ActivityRulesAssembler assembler,
                               ActivityAnchors anchors, RewardService rewardService, RewardNames names,
                               IdempotencyStore idempotency, PlayerLock playerLock,
                               TimeService timeService, ConfigRegistry configs,
-                              com.ironoath.web.battlepass.BattlePassService battlePass) {
+                              com.ironoath.web.battlepass.BattlePassService battlePass, SignInRewards signIn) {
         this.store = store;
         this.assembler = assembler;
         this.anchors = anchors;
@@ -76,6 +77,7 @@ public class ActivityAppService {
         this.timeService = timeService;
         this.configs = configs;
         this.battlePass = battlePass;
+        this.signIn = signIn;
     }
 
     /** 活动列表。顺序 = 表序；含 EXPIRED 的行（轮到下一轮之前它看得见、领不了）。 */
@@ -91,10 +93,12 @@ public class ActivityAppService {
             long playerAnchor = anchors.playerAnchorMs(playerId);
             List<ActivityView> views = new ArrayList<>();
             for (ActivityProgress.Def def : progress.defs()) {
+                if (def.retired() && progress.blockOf(def.activityId(), now, playerAnchor).blocked()) continue;
                 views.add(viewOf(progress, def, now, playerAnchor));
             }
+            views.addAll(signIn.list(playerId, now));
             return new ActivityListResp(List.copyOf(views), now,
-                    progress.claimableCount(now, playerAnchor));
+                    progress.claimableCount(now, playerAnchor) + signInCount(views));
         });
     }
 
@@ -102,7 +106,7 @@ public class ActivityAppService {
     public int claimableCount(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
-                () -> loaded(playerId).claimableCount(now, anchors.playerAnchorMs(playerId)));
+                () -> loaded(playerId).claimableCount(now, anchors.playerAnchorMs(playerId)) + signInCount(signIn.list(playerId, now)));
     }
 
     /** 领取一次活动奖励。requestId 幂等；同窗口重复领取被拒且不发货。 */
@@ -111,8 +115,9 @@ public class ActivityAppService {
             throw new BizException(ErrorCode.PARAM_INVALID, "activityId 不得为空");
         }
         long now = timeService.serverNow();
-        acquire(req.requestId(), now);
+        acquire(playerId, req.requestId(), now);
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            if (signIn.contains(req.activityId())) return signIn.claim(playerId, req.activityId(), timeService.serverNow());
             ActivityProgress progress = loaded(playerId);
             long playerAnchor = anchors.playerAnchorMs(playerId);
             ActivityProgress.ClaimBlock block;
@@ -151,7 +156,7 @@ public class ActivityAppService {
             }
             LOG.info("活动奖励已领取 playerId={} activityId={} 奖励={} 战令积分+{}", playerId, req.activityId(), granted, points);
             return new ActivityClaimResp(true, granted,
-                    stateOf(progress.phaseOf(req.activityId(), now, playerAnchor)));
+                    stateOf(progress.phaseOf(req.activityId(), now, playerAnchor)), null);
         });
     }
 
@@ -162,7 +167,15 @@ public class ActivityAppService {
         ActivityWindow.Span span = progress.windowOf(def.activityId(), now, playerAnchor);
         return new ActivityView(def.activityId(), assembler.namesById().get(def.activityId()),
                 stateOf(progress.phaseOf(def.activityId(), now, playerAnchor)),
-                entry.value(), def.goalValue(), span.endAt(), entry.claimed());
+                entry.value(), def.goalValue(), span.endAt(), entry.claimed(),
+                com.ironoath.web.dto.generated.ActivityCategory.EVENT,
+                views(assembler.rewardsByActivity().getOrDefault(def.activityId(), List.of())),
+                def.retired() ? "旧登录活动已停止累计，本轮已达标奖励仍可在原截止前领取。" : null, false, false);
+    }
+
+    private static int signInCount(List<ActivityView> views) {
+        return (int) views.stream().filter(v -> v.category() == com.ironoath.web.dto.generated.ActivityCategory.SIGN_IN
+                && v.state() == ActivityState.CLAIMABLE && !v.claimed() && !Boolean.TRUE.equals(v.automatic())).count();
     }
 
     /** 领取被拒的原因写进 detail：三种原因共用一个错误码（B17 §二），detail 是玩家唯一能看到的差别。 */
@@ -218,14 +231,14 @@ public class ActivityAppService {
     }
 
     /** 幂等键：与 {@code QuestAppService} 同一条（缺键回 1003，重复回 1002，TTL 读配置表）。 */
-    private void acquire(String requestId, long now) {
+    private void acquire(String playerId, String requestId, long now) {
         if (requestId == null || requestId.isBlank()) {
             throw new BizException(ErrorCode.REQUEST_ID_MISSING, "领取活动奖励必须带 requestId");
         }
         long ttlMs = configs.longParam("REQUEST_ID_TTL_SECONDS") * 1000L;
-        if (!idempotency.tryAcquire(requestId, now, ttlMs)) {
+        if (!idempotency.tryAcquire("activity:" + playerId + ':' + requestId, now, ttlMs)) {
             throw new BizException(ErrorCode.REQUEST_DUPLICATED,
-                    "requestId=" + requestId + " 已经用过了：同一次领取重投只会拿到同一份结果");
+                    "这次领取请求已处理，请刷新列表查看奖励到账情况。");
         }
     }
 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ironoath.local/contract/proto/activity.schema.json",
   "title": "ActivityProtocol",
-  "description": "活动协议契约（B17 §二）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。\n\n**五条贯穿全部 def 的设计约束**：\n1. **活动是配置定义、进度是玩家状态**：`contract/config/activity.json` 只放定义（名称/条件/目标/奖励/时长），\n   「谁推进到哪、谁领过」一律进存档与账本。把领取状态写回表里就会有两个家，改一次表等于改全服历史。\n2. **达标与窗口全在服务端算**（铁律 3）：本协议只下发结论（state/progress/goal/windowEndAt），\n   客户端不拿这些数自己判「能不能领」—— 判定路径一旦有两条，弱网与改表就会让两边各说一套。\n3. **下发窗口结束时刻而不是剩余秒数**：时钟以服务端为准（铁律 5），剩余时间是客户端每秒自己减的展示量，\n   不进协议（与 `MailView.expireAt`、`MarchUnit.finishAt` 同一条口径）。\n4. **不新开签到端点**：七日登录 / 月常守望就是 activity.json 里 `activityType=LOGIN_STREAK` 的两行，\n   契约与其余六类完全同形（§五① 的双锚点：这两行锚玩家首登，其余六类锚开服）。多一个 `/signin` 就是第二套窗口语义。\n5. **不删记录、不加「预览期」类状态**：窗口过期只是 `EXPIRED` 这一个终态（记录留在存储里，审计与断点续算都要它）。\n   先声明没人发的状态（预览/结算中）就是「有名字没读者」那一族缺口。",
+  "description": "活动协议契约（B17 §二）。由 tools/config-gen 生成 Java record 与 TS interface，禁止手改生成物。\n\n**五条贯穿全部 def 的设计约束**：\n1. **活动是配置定义、进度是玩家状态**：`contract/config/activity.json` 只放定义（名称/条件/目标/奖励/时长），\n   「谁推进到哪、谁领过」一律进存档与账本。把领取状态写回表里就会有两个家，改一次表等于改全服历史。\n2. **达标与窗口全在服务端算**（铁律 3）：本协议只下发结论（state/progress/goal/windowEndAt），\n   客户端不拿这些数自己判「能不能领」—— 判定路径一旦有两条，弱网与改表就会让两边各说一套。\n3. **下发窗口结束时刻而不是剩余秒数**：时钟以服务端为准（铁律 5），剩余时间是客户端每秒自己减的展示量，\n   不进协议（与 `MailView.expireAt`、`MarchUnit.finishAt` 同一条口径）。\n4. **不新开签到端点**：2026-10-13签到由sign_in_reward配置定义，复用活动列表与领取口；04:00业务日、自然周/月与旧个人滚动活动分开，旧7/30日停止新增累计但保留合法待领奖励。签到当日与已达标额外奖整批接受，客户端不提交日期/额度/资格。\n5. **不删记录、不加「预览期」类状态**：窗口过期只是 `EXPIRED` 这一个终态（记录留在存储里，审计与断点续算都要它）。\n   先声明没人发的状态（预览/结算中）就是「有名字没读者」那一族缺口。",
   "x-java-package": "com.ironoath.web.dto.generated",
   "x-ts-module": "ActivityProtocol",
   "$defs": {
@@ -62,7 +62,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "`activity.json` 的 id。客户端把它回传给 `POST /activity/claim`。"
+          "description": "活动或签到配置的行标识。客户端原样回传给 `POST /activity/claim`，不把标识显示给玩家。"
         },
         "name": {
           "type": "string",
@@ -82,7 +82,7 @@
           "type": "integer",
           "format": "int64",
           "minimum": 1,
-          "description": "达标目标，来自 `activity.json` 的 `conditionValue`。它下发而不是让客户端读表：客户端读表意味着表与包的版本必须永远同步。"
+          "description": "服务端计算的达标目标。普通活动来自条件配置，签到来自周期规则；月满勤为业务月自然日数减允许漏签天数。已领取签到保留接受时目标。"
         },
         "windowEndAt": {
           "type": [
@@ -95,12 +95,44 @@
         "claimed": {
           "type": "boolean",
           "description": "本窗口是否已领过。领取幂等的判据在服务端（同 requestId 重放只发一次、同窗口重复领取被拒），这一格只是结果展示。"
+        },
+        "category": {
+          "$ref": "#/$defs/ActivityCategory",
+          "description": "可选分类，旧服务端缺少时按普通活动显示。"
+        },
+        "rewards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActivityReward"
+          },
+          "description": "服务端奖励预览，不代表已入账；每日签到展示本次可领的合计，条件与组成由details说明。"
+        },
+        "details": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "服务端生成的参与条件、奖励组成、刷新与恢复说明，不包含内部业务key。"
+        },
+        "automatic": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "额外签到奖励随每日入口自动接受，不提供独立领取按钮。"
+        },
+        "processing": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "奖励已接受但尚有发放待恢复；资格与余额收据不会重发。"
         }
       }
     },
     "ActivityListResp": {
       "type": "object",
-      "description": "活动列表。8 行表里对当前玩家可见的那些 —— 顺序按 `activity.json` 的行序（配置表就是唯一排序来源，服务端不另排一遍）。",
+      "description": "当前玩家可见的活动与签到列表。各分类按服务端配置顺序显示；已停用的旧登录奖励仅在原窗口内合法待领时保留。",
       "additionalProperties": false,
       "required": [
         "activities",
@@ -158,11 +190,11 @@
       "properties": {
         "claimed": {
           "type": "boolean",
-          "description": "本次是否真的发了奖。**同 requestId 重放时也为 true**（幂等重放返回的是同一次领取的结果，而不是再发一份）。"
+          "description": "本次领取是否被接受。同请求重复提交返回业务拒绝，不再次发奖；客户端随后重新读取列表、余额和红点确认权威状态。"
         },
         "rewards": {
           "type": "array",
-          "description": "本次入账的奖励明细（含溢出转邮件的那部分，`name` 与邮件里的一致）。空数组只在「什么都没发」时出现，而那意味着领取被拒（错误码见下）。",
+          "description": "本次直接入账的奖励明细。签到溢出金币转邮件并由message说明，全部转邮件时明细可以为空；普通活动沿用已有奖励回执口径。",
           "items": {
             "$ref": "#/$defs/ActivityReward"
           }
@@ -170,8 +202,23 @@
         "state": {
           "$ref": "#/$defs/ActivityState",
           "description": "领取之后这一行的新状态。领完同轮就要红点熄灭（验收 8），所以状态必须回来 —— 让客户端猜「现在是不是还要亮」等于把判定搬到客户端。"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "可选的服务端到账说明，区分入余额与转邮箱。旧回应缺少时按已有奖励明细显示。"
         }
       }
+    },
+    "ActivityCategory": {
+      "type": "string",
+      "enum": [
+        "EVENT",
+        "SIGN_IN"
+      ],
+      "description": "服务端分类；客户端用于分组，不把枚举原文显示给玩家。"
     }
   }
 }

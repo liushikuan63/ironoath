@@ -1585,10 +1585,26 @@ test('领活动奖励：带 activityId 发一次写请求（含幂等键），�
   assert.equal(claims[0]?.body.requestId !== undefined, true, '领取是写操作，必须带幂等键')
   assert.equal(h.http.calls.filter(c => c.path === '/activity/list').length, 1,
     '领完重拉一次列表，那一行才会变成「本轮已领取」')
-  assert.deepEqual(h.attached, ['activityClaimed', 'activity'],
-    '先递回执（玩家要看到领到了什么），再落重拉后的列表')
+  assert.deepEqual(h.attached, ['activityClaimed', 'activity', 'resources', 'reddot'],
+    '先递领取回执，再刷新列表、金币余额和红点')
   assert.equal(h.events.some(e => e.name === 'activity_claim' && e.params.activityId === 'activity_monster_hunt'),
     true, '领奖要埋点：看板上要能看出哪条活动在发奖')
+})
+
+test('签到领取回应失败后仍刷新列表、金币和红点，避免已入账但界面停在可领取', async () => {
+  const h = harness()
+  await h.root.start('dev-1', '君')
+  h.attached.length = 0
+  const before = h.http.calls.length
+  h.http.bizFailNext = { code: 1002, msg: '领取回应丢失，请刷新查看', detail: null }
+
+  await h.root.claimActivity('signin_daily')
+
+  const calls = h.http.calls.slice(before)
+  assert.equal(calls.filter(c => c.path === '/activity/claim').length, 1)
+  assert.equal(calls.filter(c => c.path === '/activity/list').length, 1)
+  assert.deepEqual(h.attached, ['activity', 'resources', 'reddot'])
+  assert.equal(h.errors.some(e => e[0] === 'activity'), true)
 })
 
 test('一键领取：只发 1 次请求（B12 禁止项），成功后重拉列表并把回执单独递一次', async () => {

@@ -34,4 +34,8 @@ public interface RewardService {
 
     /** 调用方持有玩家锁时，惰性恢复已接受的新金币奖励溢出；不重发已入余额部分。 */
     default void recoverGoldClaims(String playerId) {}
+
+    default GrantResult grantGoldBatch(String playerId, List<RewardPorts.Wallet.GoldRequest> requests) {
+        throw new UnsupportedOperationException("发放器未实现整批金币领取");
+    }
 }

@@ -106,7 +106,10 @@ public final class RewardGrantor implements RewardService {
             amount = Math.addExact(amount, reward.count());
         }
         // 异常向上返回，已落盘的收据由读取/重试恢复，不能另建一份可能重复增发的普通补偿。
-        var accepted = wallet.grantGoldOnce(playerId, amount, ctx, clock.getAsLong());
+        return deliverGold(playerId, wallet.grantGoldOnce(playerId, amount, ctx, clock.getAsLong()));
+    }
+
+    private GrantResult deliverGold(String playerId, RewardPorts.Wallet.GoldGrant accepted) {
         var receipt = accepted.receipt();
         List<RewardItem> overflow = receipt.overflow() == 0 ? List.of()
                 : List.of(new RewardItem(RewardType.RESOURCE, "GOLD", receipt.overflow()));
@@ -119,6 +122,20 @@ public final class RewardGrantor implements RewardService {
         List<RewardItem> granted = accepted.creditedNow() == 0 ? List.of()
                 : List.of(new RewardItem(RewardType.RESOURCE, "GOLD", accepted.creditedNow()));
         return new GrantResult(granted, overflow, mailId, null);
+    }
+
+    @Override
+    public GrantResult grantGoldBatch(String playerId, List<RewardPorts.Wallet.GoldRequest> requests) {
+        var accepted = wallet.grantGoldBatchOnce(playerId, requests, clock.getAsLong());
+        long granted = 0; long overflow = 0; String firstMailId = null;
+        for (var item : accepted) {
+            var result = deliverGold(playerId, item);
+            granted = Math.addExact(granted, item.creditedNow());
+            overflow = Math.addExact(overflow, item.receipt().overflow());
+            if (firstMailId == null) firstMailId = result.mailId();
+        }
+        return new GrantResult(granted == 0 ? List.of() : List.of(new RewardItem(RewardType.RESOURCE, "GOLD", granted)),
+                overflow == 0 ? List.of() : List.of(new RewardItem(RewardType.RESOURCE, "GOLD", overflow)), firstMailId, null);
     }
 
     @Override

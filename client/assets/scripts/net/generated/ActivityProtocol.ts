@@ -14,6 +14,13 @@ export type ActivityState =
   | 'EXPIRED'
 
 /**
+ * 服务端分类；客户端用于分组，不把枚举原文显示给玩家。
+ */
+export type ActivityCategory =
+  | 'EVENT'
+  | 'SIGN_IN'
+
+/**
  * 领取时入账的一条奖励。与 bag 的 `RewardItemView`、quest 的 `QuestReward`、stage 的 `StageReward`、mail 的 `MailReward` 形状相同，但生成器只支持同文件 `$ref`，所以这里又有一份（第 5 份）。**五份的字段与枚举取值必须一致**，由 `ActivityEndpointTest` 的反射比对与 `StageContractParityTest` 一族一起钉住 —— 复制而不校验才是危险：漂移的症状是服务端下发的字符串在客户端解析成 undefined，而 TS 侧不会报错，UI 只会空白。
  */
 export interface ActivityReward {
@@ -31,7 +38,7 @@ export interface ActivityReward {
  * 一行活动在玩家视图里的样子。窗口内的进度、窗口结束时刻、领没领过 —— 都在这一格里。
  */
 export interface ActivityView {
-  /** `activity.json` 的 id。客户端把它回传给 `POST /activity/claim`。 */
+  /** 活动或签到配置的行标识。客户端原样回传给 `POST /activity/claim`，不把标识显示给玩家。 */
   id: string
   /** 活动名。**只在服务端与配置表里存一份**：客户端硬编码一份就会出现「改表了但界面没改」。 */
   name: string
@@ -39,16 +46,26 @@ export interface ActivityView {
   state: ActivityState
   /** 当前窗口内的进度值。由事件推进（禁止轮询扫表），读取时不做「顺手推进一遍」。 */
   progress: number
-  /** 达标目标，来自 `activity.json` 的 `conditionValue`。它下发而不是让客户端读表：客户端读表意味着表与包的版本必须永远同步。 */
+  /** 服务端计算的达标目标。普通活动来自条件配置，签到来自周期规则；月满勤为业务月自然日数减允许漏签天数。已领取签到保留接受时目标。 */
   goal: number
   /** 本窗口结束时刻（毫秒）。**可空**：配置表若出现时长为 0 的行（常驻活动），窗口无终点，下发 null 而不是编一个天文数字。 */
   windowEndAt: number | null
   /** 本窗口是否已领过。领取幂等的判据在服务端（同 requestId 重放只发一次、同窗口重复领取被拒），这一格只是结果展示。 */
   claimed: boolean
+  /** 可选分类，旧服务端缺少时按普通活动显示。 */
+  category: ActivityCategory | null
+  /** 服务端奖励预览，不代表已入账；每日签到展示本次可领的合计，条件与组成由details说明。 */
+  rewards: ActivityReward[] | null
+  /** 服务端生成的参与条件、奖励组成、刷新与恢复说明，不包含内部业务key。 */
+  details: string | null
+  /** 额外签到奖励随每日入口自动接受，不提供独立领取按钮。 */
+  automatic: boolean | null
+  /** 奖励已接受但尚有发放待恢复；资格与余额收据不会重发。 */
+  processing: boolean | null
 }
 
 /**
- * 活动列表。8 行表里对当前玩家可见的那些 —— 顺序按 `activity.json` 的行序（配置表就是唯一排序来源，服务端不另排一遍）。
+ * 当前玩家可见的活动与签到列表。各分类按服务端配置顺序显示；已停用的旧登录奖励仅在原窗口内合法待领时保留。
  */
 export interface ActivityListResp {
   /** 逐行视图。含已过期的行（`state=EXPIRED`）—— 列表里要看得见「哪个活动结束了」，这与邮件过期即消失不同：活动的窗口是**轮换**的，玩家需要知道下一轮什么时候开始。 */
@@ -73,10 +90,12 @@ export interface ActivityClaimReq {
  * 领取结果。奖励走 `RewardService.grantReward`，背包装不下时由邮件兜底（B04 验收 2 已落地），所以这里没有「失败但没提示」的那条暗路。
  */
 export interface ActivityClaimResp {
-  /** 本次是否真的发了奖。**同 requestId 重放时也为 true**（幂等重放返回的是同一次领取的结果，而不是再发一份）。 */
+  /** 本次领取是否被接受。同请求重复提交返回业务拒绝，不再次发奖；客户端随后重新读取列表、余额和红点确认权威状态。 */
   claimed: boolean
-  /** 本次入账的奖励明细（含溢出转邮件的那部分，`name` 与邮件里的一致）。空数组只在「什么都没发」时出现，而那意味着领取被拒（错误码见下）。 */
+  /** 本次直接入账的奖励明细。签到溢出金币转邮件并由message说明，全部转邮件时明细可以为空；普通活动沿用已有奖励回执口径。 */
   rewards: ActivityReward[]
   /** 领取之后这一行的新状态。领完同轮就要红点熄灭（验收 8），所以状态必须回来 —— 让客户端猜「现在是不是还要亮」等于把判定搬到客户端。 */
   state: ActivityState
+  /** 可选的服务端到账说明，区分入余额与转邮箱。旧回应缺少时按已有奖励明细显示。 */
+  message: string | null
 }

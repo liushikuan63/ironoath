@@ -33,7 +33,10 @@ public final class ActivityProgress {
      * @param durationDays 时长（天）。≤ 0 表示常驻（窗口无终点）
      */
     public record Def(String activityId, ActivityType type, ActivityCondition condition,
-                      long goalValue, long durationDays) {
+                      long goalValue, long durationDays, boolean retired) {
+        public Def(String activityId, ActivityType type, ActivityCondition condition, long goalValue, long durationDays) {
+            this(activityId, type, condition, goalValue, durationDays, false);
+        }
         public Def {
             if (activityId == null || activityId.isBlank()) {
                 throw new IllegalArgumentException("activityId 不得为空");
@@ -201,6 +204,7 @@ public final class ActivityProgress {
     private int rebase(long nowMs, long playerFirstLoginMs, boolean keepPending) {
         int rolled = 0;
         for (Def def : defs.values()) {
+            if (def.retired()) continue;
             Entry entry = entries.get(def.activityId());
             if (!stale(def, entry, nowMs, playerFirstLoginMs)) {
                 continue;
@@ -247,6 +251,7 @@ public final class ActivityProgress {
         }
         eventCount++;
         for (Def def : defs.values()) {
+            if (def.retired()) continue;
             if (def.condition().goalType() != event.goalType()) {
                 continue;
             }
@@ -329,6 +334,7 @@ public final class ActivityProgress {
 
     /** 这份进度是否还属于当前窗口。 */
     private boolean stale(Def def, Entry entry, long nowMs, long playerFirstLoginMs) {
+        if (def.retired()) return windowOf(def, nowMs, playerFirstLoginMs).expired(nowMs);
         return entry.windowStart() != windowOf(def, nowMs, playerFirstLoginMs).startAt();
     }
 
@@ -385,6 +391,10 @@ public final class ActivityProgress {
     }
 
     private ActivityWindow.Span windowOf(Def def, long nowMs, long playerFirstLoginMs) {
+        if (def.retired()) {
+            long start = entries.get(def.activityId()).windowStart();
+            return new ActivityWindow.Span(start, start + def.durationDays() * 86_400_000L);
+        }
         return ActivityWindow.current(anchorOf(def, playerFirstLoginMs), def.durationDays(), nowMs);
     }
 

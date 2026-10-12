@@ -1991,8 +1991,9 @@ export class AppRoot {
    */
   claimActivity(activityId: string): Promise<void> {
     this.track(TRACK_EVENTS.activityClaim, { activityId })
-    return this.write('activity', this.api.activityClaim(claimActivityReq(activityId)), ['activity'],
+    return this.write('activity', this.api.activityClaim(claimActivityReq(activityId)), [],
       r => this.targets.activityClaimed?.(r))
+      .finally(() => this.refresh('activity', 'resources', 'reddot'))
   }
 
   // ---------- 社交 ----------

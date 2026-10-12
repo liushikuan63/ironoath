@@ -44,7 +44,7 @@ public class ActivityRulesAssembler {
         List<ActivityProgress.Def> defs = new ArrayList<>();
         for (ActivityCfg row : configs.all(ActivityCfg.class)) {
             defs.add(new ActivityProgress.Def(row.id(), typeOf(row.activityType()),
-                    conditionOf(row.conditionType()), row.conditionValue(), row.durationDays()));
+                    conditionOf(row.conditionType()), row.conditionValue(), row.durationDays(), Boolean.TRUE.equals(row.retired())));
         }
         return List.copyOf(defs);
     }

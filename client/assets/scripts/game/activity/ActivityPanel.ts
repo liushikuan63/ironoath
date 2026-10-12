@@ -30,6 +30,10 @@ export interface ActivityRow {
   readonly statusText: string
   /** 能不能点「领取」。等于服务端的 `state === 'CLAIMABLE'`，不自己算 */
   readonly claimable: boolean
+  readonly category: 'EVENT' | 'SIGN_IN'
+  readonly rewardText: string
+  readonly details: string | null
+  readonly automatic: boolean
 }
 
 /** 整个活动页的数据。 */
@@ -82,6 +86,7 @@ export function claimReceiptText(resp: ActivityClaimResp): string {
   if (resp === undefined || resp === null) {
     return ''
   }
+  if (resp.message) return resp.message
   const parts = resp.rewards.map(item => `${item.name} ×${formatCount(item.count)}`)
   return parts.length === 0 ? '' : `已领取：${parts.join('、')}`
 }
@@ -89,11 +94,15 @@ export function claimReceiptText(resp: ActivityClaimResp): string {
 function toRow(view: ActivityView, nowMs: number): ActivityRow {
   return {
     activityId: view.id,
-    name: view.name,
+    name: view.name || '未知活动',
     progressText: `${formatCount(view.progress)}/${formatCount(view.goal)}`,
     remainingText: remainingText(view.windowEndAt, nowMs),
     statusText: statusText(view),
-    claimable: view.state === STATE_CLAIMABLE,
+    claimable: view.state === STATE_CLAIMABLE && !view.claimed && view.automatic !== true,
+    category: view.category === 'SIGN_IN' ? 'SIGN_IN' : 'EVENT',
+    rewardText: (view.rewards ?? []).map(r => `${r.name} ×${formatCount(r.count)}`).join('、'),
+    details: view.details ?? null,
+    automatic: view.automatic === true,
   }
 }
 
@@ -102,12 +111,14 @@ function toRow(view: ActivityView, nowMs: number): ActivityRow {
  * 继续做 / 去领奖 / 这一轮错过了 / 这轮已经领过。
  */
 function statusText(view: ActivityView): string {
+  if (view.processing === true) return '补发处理中'
   if (view.state === STATE_EXPIRED) {
     return '上一轮已结束'
   }
   if (view.claimed) {
     return '本轮已领取'
   }
+  if (view.automatic === true) return '随签到领取'
   if (view.state === STATE_CLAIMABLE) {
     return '可领取'
   }
@@ -116,7 +127,7 @@ function statusText(view: ActivityView): string {
   }
   // 服务端加了新状态而这里没跟上：把原文显示出来而不是假装它是"进行中" ——
   // 一个看不懂的状态至少能让问题被报上来，而错译会让它永远查不出
-  return view.state
+  return '状态更新中'
 }
 
 /**

@@ -33,7 +33,7 @@ export type ActivityConditionType =
  * 配置表 activity 的一行。
  * 活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。 battlePassPoints 列（B24 S-d-c）：领取这条活动奖励时给多少战令积分。与任务那条同源：分值挂既有活动上，不新增任务体系。
  *
- * 源表 version=1
+ * 源表 version=2
  */
 export interface ActivityCfg {
   /** 主键 */
@@ -50,6 +50,7 @@ export interface ActivityCfg {
   rewardItemId: string
   rewardItemCount: number
   battlePassPoints: number
+  retired?: boolean | null
 }
 
 /**
@@ -1119,6 +1120,36 @@ export interface ShopCfg {
   /** 枚举，取值见 ShopRefreshType */
   refreshType: ShopRefreshType
   requireMainLevel: number
+}
+
+/** sign_in_reward.signInRewardPeriod 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type SignInRewardPeriod =
+  | 'DAILY'
+  | 'WEEKLY'
+  | 'MONTHLY'
+
+/** sign_in_reward.signInRewardMetric 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type SignInRewardMetric =
+  | 'TOTAL_DAYS'
+  | 'CONSECUTIVE_DAYS'
+
+/**
+ * 配置表 sign_in_reward 的一行。
+ * 2026-10-13用户批准的手动签到。北京时间04:00业务日；自然周从周一04:00、自然月从1日04:00开始。额外奖随当日签到整批接受，不与旧连续7/30日登录奖励叠加。
+ *
+ * 源表 version=1
+ */
+export interface SignInRewardCfg {
+  /** 主键 */
+  id: string
+  name: string
+  /** 枚举，取值见 SignInRewardPeriod */
+  period: SignInRewardPeriod
+  /** 枚举，取值见 SignInRewardMetric */
+  metric: SignInRewardMetric
+  targetDays?: number | null
+  allowedMissDays?: number | null
+  rewardGold: number
 }
 
 /** skill.skillTrigger 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */

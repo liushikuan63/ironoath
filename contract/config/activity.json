@@ -1,6 +1,6 @@
 {
   "table": "activity",
-  "version": 1,
+  "version": 2,
   "comment": "活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。 battlePassPoints 列（B24 S-d-c）：领取这条活动奖励时给多少战令积分。与任务那条同源：分值挂既有活动上，不新增任务体系。",
   "designNote": "八个活动精确覆盖八个系统（登录/PVE/集结/捐献/PVP/建造/小队互助/抽卡），每个都是把某系统的核心行为做成限时目标。奖励选取原则是「给玩家当下最缺的东西」而不是「给最贵的东西」：第一周给加速（缺时间）、打野活动给铁箱（缺铁）、捐献活动给研究令（在冲科技）。",
   "fieldTypes": {
@@ -15,11 +15,13 @@
     "rewardItemCount": "LONG_POS",
     "why": "?STRING",
     "todo": "?STRING",
-    "battlePassPoints": "LONG_NONNEG"
+    "battlePassPoints": "LONG_NONNEG",
+    "retired": "?BOOL"
   },
   "rows": [
     {
       "id": "activity_login_7d",
+      "retired": true,
       "name": "七日登临",
       "activityType": "LOGIN_STREAK",
       "conditionType": "LOGIN_DAYS",
@@ -33,6 +35,7 @@
     },
     {
       "id": "activity_login_30d",
+      "retired": true,
       "name": "月常守望",
       "activityType": "LOGIN_STREAK",
       "conditionType": "LOGIN_DAYS",

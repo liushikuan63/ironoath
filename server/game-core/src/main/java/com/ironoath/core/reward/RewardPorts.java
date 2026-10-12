@@ -29,6 +29,12 @@ public final class RewardPorts {
     public interface Wallet {
 
         record GoldGrant(GoldClaimReceipt receipt, long creditedNow) {}
+        record GoldRequest(long amount, RewardContext context) {}
+
+        /** 当日签到与已达标的周/月组成必须在一次余额/收据更新中接受。 */
+        default List<GoldGrant> grantGoldBatchOnce(String playerId, List<GoldRequest> requests, long now) {
+            throw new UnsupportedOperationException("钱包未实现整批金币领取");
+        }
 
         /** 余额与收据必须原子落盘；旧适配器不得静默回退为普通非幂等发放。 */
         default GoldGrant grantGoldOnce(String playerId, long amount, RewardContext ctx, long now) {

@@ -58,6 +58,8 @@ class ActivityEndpointTest {
     @Autowired private QuestEvents events;
     @Autowired private ConfigRegistry configs;
     @Autowired private com.ironoath.web.battlepass.BattlePassService battlePass;
+    @Autowired private com.ironoath.web.activity.SignInRewards signIn;
+    @Autowired private com.ironoath.core.lock.PlayerLock playerLock;
 
     @BeforeEach
     void resetStores() {
@@ -65,46 +67,47 @@ class ActivityEndpointTest {
         store.clear();
     }
 
-    // ---------- 验收 1：8 行定义全部来自表 ----------
+    // ---------- 验收 1：普通活动与签到分别来自服务端配置 ----------
 
     @Test
-    @DisplayName("验收 1：列表的 8 行、名称、目标都来自 activity.json（顺序 = 表序，服务端不另排）")
+    @DisplayName("验收 1：六项普通活动与五项签到的名称、目标和顺序均来自服务端配置")
     void listComesFromTheTable() throws Exception {
         String playerId = newPlayer();
 
         JsonNode activities = list(playerId).get("activities");
-        assertThat(activities).hasSize(8);
+        assertThat(activities).hasSize(11);
         List<String> fromApi = new java.util.ArrayList<>();
         for (JsonNode row : activities) {
             fromApi.add(row.get("id").asText());
-            assertThat(row.get("goal").asLong())
+            if ("EVENT".equals(row.get("category").asText())) assertThat(row.get("goal").asLong())
                     .as("目标必须等于表里的 conditionValue：" + row.get("id").asText())
                     .isEqualTo(goalOf(row.get("id").asText()));
             assertThat(row.get("name").asText()).as("名字只在表里存一份").isNotBlank();
-            assertThat(row.get("state").asText()).as("新号：没达标才可能是 RUNNING").isEqualTo("RUNNING");
+            assertThat(row.get("state").asText()).isEqualTo("signin_daily".equals(row.get("id").asText()) ? "CLAIMABLE" : "RUNNING");
         }
         assertThat(fromApi).as("顺序必须与 activity.json 的行序一致（服务端不另行排序）")
-                .isEqualTo(List.of("activity_login_7d", "activity_login_30d", "activity_monster_hunt",
+                .isEqualTo(List.of("activity_monster_hunt",
                         "activity_rally_week", "activity_donate_week", "activity_pvp_win",
-                        "activity_build_sprint", "activity_squad_help"));
+                        "activity_build_sprint", "activity_squad_help", "signin_daily", "signin_week_full",
+                        "signin_week_third", "signin_week_seventh", "signin_month_full"));
         assertThat(list(playerId).get("claimableCount").asInt())
-                .as("一件都没做：可领数必须是 0（红点别乱亮）").isZero();
+                .as("新号只有手动签到入口可领，额外签到奖励不重复计红点").isEqualTo(1);
     }
 
     // ---------- 验收 2：七类条件各一条真事件 ----------
 
     @Test
-    @DisplayName("验收 2 + 5：登录走真生产者（POST /player/init）→ 七日登临进度 1，同日重复登录仍是 1")
-    void loginAdvancesTheStreakThroughItsRealProducer() throws Exception {
+    @DisplayName("验收 2 + 5：真实登录不代替手动签到，也不重新开放旧登录奖励")
+    void loginDoesNotClaimSignInOrReopenRetiredRewards() throws Exception {
         String playerId = newPlayer();
-        assertThat(valueOf(playerId, "activity_login_7d"))
-                .as("建档本身就是第一天：这里必须是 1，否则「连续七天」要等第二天才开始").isEqualTo(1L);
+        assertThat(valueOf(playerId, "signin_daily")).as("登录不等于手动签到").isZero();
+        assertThat(list(playerId).get("activities")).noneSatisfy(row ->
+                assertThat(row.get("id").asText()).isEqualTo("activity_login_7d"));
 
         // 同一自然日再登录一次（真端点）：仍然只算一天
         playerInitService.init(new PlayerInitReq("req-" + UUID.randomUUID(), deviceOf(playerId),
                 "活动测试", 1_700_000_000_000L, ""));
-        assertThat(valueOf(playerId, "activity_login_7d"))
-                .as("同一自然日重复登录只算一天（幂等由活动域负责，不在登录路径上判）").isEqualTo(1L);
+        assertThat(valueOf(playerId, "signin_daily")).as("重登不自动发金币或推进签到").isZero();
     }
 
     @Test
@@ -125,7 +128,7 @@ class ActivityEndpointTest {
         assertThat(valueOf(playerId, "activity_pvp_win")).isEqualTo(10L);
         assertThat(valueOf(playerId, "activity_build_sprint")).isEqualTo(10L);
         assertThat(valueOf(playerId, "activity_squad_help")).isEqualTo(30L);
-        assertThat(valueOf(playerId, "activity_login_7d")).as("没发登录事件，那一行不许动").isEqualTo(1L);
+        assertThat(valueOf(playerId, "signin_daily")).as("其他六类事件不能冒充手动签到").isZero();
     }
 
     // ---------- 验收 3：领取幂等 ----------
@@ -204,7 +207,7 @@ class ActivityEndpointTest {
         assertThat(row.get("state").asText()).isEqualTo("EXPIRED");
         assertThat(row.get("progress").asLong()).as("记录不删：上一轮的 30 还看得见").isEqualTo(30L);
         assertThat(list(playerId).get("claimableCount").asInt())
-                .as("不可领的行不许让红点亮").isZero();
+                .as("过期活动不计红点，保留当天可领的签到").isEqualTo(1);
 
         JsonNode claim = claim(playerId, "activity_monster_hunt", "req-" + UUID.randomUUID());
         assertThat(codeOf(claim)).isEqualTo(12006);
@@ -219,12 +222,69 @@ class ActivityEndpointTest {
         String playerId = newPlayer();
         long now = System.currentTimeMillis();
 
+        assertThat(codeOf(claim(playerId, "signin_daily", "req-" + UUID.randomUUID()))).isZero();
         assertThat(activityDot(playerId)).as("什么都没做时不亮").isFalse();
         events.progress(playerId, GoalType.PVP_WIN, null, 10L, now);
         assertThat(activityDot(playerId)).as("有可领的奖励就该亮").isTrue();
 
         assertThat(codeOf(claim(playerId, "activity_pvp_win", "req-" + UUID.randomUUID()))).isZero();
         assertThat(activityDot(playerId)).as("领完同轮熄灭（判定与列表同源，不是各算一遍）").isFalse();
+    }
+
+    @Test
+    void manualSignupCreditsOnceAndNeitherReadNorLoginMintsGold() throws Exception {
+        String id = newPlayer(); long before = goldOf(id);
+        list(id); list(id);
+        assertThat(goldOf(id)).isEqualTo(before);
+        assertThat(valueOf(id, "signin_daily")).isZero();
+        String req = "req-" + UUID.randomUUID();
+        var received = claim(id, "signin_daily", req);
+        assertThat(codeOf(received)).isZero();
+        assertThat(received.get("data").get("message").asText()).contains("20");
+        assertThat(goldOf(id)).isEqualTo(before + 20);
+        assertThat(rowOf(id, "signin_daily").get("claimed").asBoolean()).isTrue();
+        assertThat(players.findByPlayerId(id).orElseThrow().goldClaims()).hasSize(1);
+        assertThat(codeOf(claim(id, "signin_daily", req))).isEqualTo(1002);
+        assertThat(codeOf(claim(id, "signin_daily", "req-" + UUID.randomUUID()))).isEqualTo(12006);
+        assertThat(goldOf(id)).isEqualTo(before + 20);
+        assertThat(codeOf(claim(id, "signin_week_full", "req-" + UUID.randomUUID()))).isEqualTo(12006);
+    }
+
+    @Test
+    void twoOwnersMayUseTheSameClientRequestIdWithoutBlockingEachOther() throws Exception {
+        String a = newPlayer(), b = newPlayer(), req = "shared-" + UUID.randomUUID();
+        long aBefore = goldOf(a), bBefore = goldOf(b);
+        assertThat(codeOf(claim(a, "signin_daily", req))).isZero();
+        assertThat(codeOf(claim(b, "signin_daily", req))).isZero();
+        assertThat(goldOf(a)).isEqualTo(aBefore + 20);
+        assertThat(goldOf(b)).isEqualTo(bBefore + 20);
+    }
+
+    @Test
+    void sevenFixtureBusinessDaysUseTheRealWalletAndAutomaticallyPay260() {
+        String id = newPlayer(); long before = goldOf(id);
+        // 只给隔离账号的域调用传入夹具时间；原运行实例与系统时钟均不改。
+        for (int d = 1; d <= 7; d++) {
+            long at = java.time.LocalDate.of(2026, 6, d).atTime(4, 0)
+                    .toInstant(com.ironoath.common.time.DayKey.CALENDAR_ZONE).toEpochMilli();
+            playerLock.runLocked(id, 5000, () -> signIn.claim(id, "signin_daily", at));
+        }
+        assertThat(goldOf(id)).isEqualTo(before + 260);
+        assertThat(players.findByPlayerId(id).orElseThrow().goldClaims()).hasSize(10);
+    }
+
+    @Test
+    void retiredLoginAlreadyEarnedInsideOriginalWindowRemainsClaimableOnce() throws Exception {
+        String id = newPlayer(); long now = System.currentTimeMillis();
+        var stored = store.load(id).orElseThrow();
+        var entries = stored.entries().stream().map(e -> e.activityId().equals("activity_login_7d")
+                ? new ActivityProgress.Entry(e.activityId(), now - 86400000, 7, false, now) : e).toList();
+        store.save(id, new ActivityProgressStore.State(id, entries, stored.serverOpenMs()));
+        assertThat(rowOf(id, "activity_login_7d").get("state").asText()).isEqualTo("CLAIMABLE");
+        long before = goldOf(id);
+        assertThat(codeOf(claim(id, "activity_login_7d", "req-" + UUID.randomUUID()))).isZero();
+        assertThat(goldOf(id)).isEqualTo(before + 300);
+        assertThat(codeOf(claim(id, "activity_login_7d", "req-" + UUID.randomUUID()))).isEqualTo(12006);
     }
 
     // ---------- 夹具与工具 ----------

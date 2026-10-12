@@ -152,4 +152,41 @@ class GoldClaimStoreEquivalenceTest {
                     } catch (InvocationTargetException e) { throw e.getCause(); }
                 });
     }
+
+    private static java.util.List<com.ironoath.core.reward.RewardPorts.Wallet.GoldRequest> signBatch() {
+        return java.util.List.of(
+                new com.ironoath.core.reward.RewardPorts.Wallet.GoldRequest(20, CTX),
+                new com.ironoath.core.reward.RewardPorts.Wallet.GoldRequest(60,
+                        RewardContext.toMail("free_gold", "week_full", "signin-week:20261012:full")),
+                new com.ironoath.core.reward.RewardPorts.Wallet.GoldRequest(40,
+                        RewardContext.toMail("free_gold", "week_seventh", "signin-week:20261012:seventh")));
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"memory", "mongo"})
+    void batchAcknowledgementLossStillPersistsEveryComponentTogether(String kind) {
+        var store = store(kind); String id = player(store);
+        assertThatThrownBy(() -> new PlayerWallet(failingSave(store, true)).grantGoldBatchOnce(id, signBatch(), NOW))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("模拟提交回执丢失");
+        var accepted = store.findByPlayerId(id).orElseThrow();
+        assertThat(accepted.resource("GOLD").current()).isEqualTo(320);
+        assertThat(accepted.goldClaims()).hasSize(3);
+        assertThat(accepted.goldClaims().values()).extracting(r -> r.requested())
+                .containsExactlyInAnyOrder(20L, 60L, 40L);
+        var retry = new PlayerWallet(store).grantGoldBatchOnce(id, signBatch(), NOW + 1);
+        assertThat(retry).allSatisfy(r -> assertThat(r.creditedNow()).isZero());
+        assertThat(store.findByPlayerId(id).orElseThrow().resource("GOLD").current()).isEqualTo(320);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"memory", "mongo"})
+    void batchFailureBeforeCommitLeavesEveryComponentAvailable(String kind) {
+        var store = store(kind); String id = player(store);
+        assertThatThrownBy(() -> new PlayerWallet(failingSave(store, false)).grantGoldBatchOnce(id, signBatch(), NOW))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("模拟提交前故障");
+        var untouched = store.findByPlayerId(id).orElseThrow();
+        assertThat(untouched.resource("GOLD").current()).isEqualTo(200);
+        assertThat(untouched.goldClaims()).isEmpty();
+        var accepted = new PlayerWallet(store).grantGoldBatchOnce(id, signBatch(), NOW + 1);
+        assertThat(accepted).extracting(r -> r.creditedNow()).containsExactly(20L, 60L, 40L);
+        assertThat(store.findByPlayerId(id).orElseThrow().goldClaims()).hasSize(3);
+    }
 }

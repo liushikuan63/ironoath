@@ -1,0 +1,19 @@
+{
+  "table": "sign_in_reward",
+  "version": 1,
+  "comment": "2026-10-13用户批准的手动签到。北京时间04:00业务日；自然周从周一04:00、自然月从1日04:00开始。额外奖随当日签到整批接受，不与旧连续7/30日登录奖励叠加。",
+  "fieldTypes": {
+    "id": "STRING_KEY", "name": "STRING",
+    "period": "ENUM:DAILY,WEEKLY,MONTHLY",
+    "metric": "ENUM:TOTAL_DAYS,CONSECUTIVE_DAYS",
+    "targetDays": "?LONG_POS", "allowedMissDays": "?LONG_NONNEG",
+    "rewardGold": "LONG_POS", "why": "?STRING"
+  },
+  "rows": [
+    {"id":"signin_daily","name":"每日签到","period":"DAILY","metric":"TOTAL_DAYS","targetDays":1,"allowedMissDays":null,"rewardGold":20,"why":"手动签到，每业务日一次，不受断签影响。"},
+    {"id":"signin_week_full","name":"一周全勤","period":"WEEKLY","metric":"TOTAL_DAYS","targetDays":7,"allowedMissDays":null,"rewardGold":60,"why":"每天20×7加周满勤60为基础200；连签额外另计。"},
+    {"id":"signin_week_third","name":"三日连签","period":"WEEKLY","metric":"CONSECUTIVE_DAYS","targetDays":3,"allowedMissDays":null,"rewardGold":20,"why":"每自然周连续第三天额外20，每周一次，不跨周拼接。"},
+    {"id":"signin_week_seventh","name":"七日连签","period":"WEEKLY","metric":"CONSECUTIVE_DAYS","targetDays":7,"allowedMissDays":null,"rewardGold":40,"why":"每自然周连续第七天额外40，每周一次。"},
+    {"id":"signin_month_full","name":"月度满勤","period":"MONTHLY","metric":"TOTAL_DAYS","targetDays":null,"allowedMissDays":3,"rewardGold":160,"why":"当月签到达到自然日数减3，额外160；闰月按真实日历。"}
+  ]
+}

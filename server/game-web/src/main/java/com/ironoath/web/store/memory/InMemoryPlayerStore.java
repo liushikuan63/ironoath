@@ -133,19 +133,17 @@ public final class InMemoryPlayerStore implements PlayerRepository {
         if (save == null) {
             throw new IllegalArgumentException("待保存的存档不得为 null");
         }
-        PlayerSave stored = byPlayerId.get(save.playerId());
-        if (stored == null) {
-            throw new IllegalStateException("存档不存在，无法更新：playerId=" + save.playerId());
-        }
-        synchronized (stored) {
+        // 版本校验和替换必须锁在稳定的map键上；锁旧对象会在替换后让第二个写入仍看到旧版本。
+        byPlayerId.compute(save.playerId(), (id, stored) -> {
+            if (stored == null) throw new IllegalStateException("存档不存在，无法更新：playerId=" + save.playerId());
             if (stored.version() != save.version()) {
                 throw new IllegalStateException("乐观锁冲突：playerId=" + save.playerId()
                         + "，存储版本=" + stored.version() + "，提交版本=" + save.version()
                         + "。请重读存档后重试。");
             }
             save.incrementVersion();
-            byPlayerId.put(save.playerId(), save.copy());
-        }
+            return save.copy();
+        });
     }
 
     @Override

@@ -8,8 +8,9 @@ import java.util.List;
  * 领取结果。奖励走 `RewardService.grantReward`，背包装不下时由邮件兜底（B04 验收 2 已落地），所以这里没有「失败但没提示」的那条暗路。
  */
 public record ActivityClaimResp(
-        boolean claimed,   // 本次是否真的发了奖。**同 requestId 重放时也为 true**（幂等重放返回的是同一次领取的结果，而不是再发一份）。
-        List<ActivityReward> rewards,   // 本次入账的奖励明细（含溢出转邮件的那部分，`name` 与邮件里的一致）。空数组只在「什么都没发」时出现，而那意味着领取被拒（错误码见下）。
-        ActivityState state)   // 领取之后这一行的新状态。领完同轮就要红点熄灭（验收 8），所以状态必须回来 —— 让客户端猜「现在是不是还要亮」等于把判定搬到客户端。
+        boolean claimed,   // 本次领取是否被接受。同请求重复提交返回业务拒绝，不再次发奖；客户端随后重新读取列表、余额和红点确认权威状态。
+        List<ActivityReward> rewards,   // 本次直接入账的奖励明细。签到溢出金币转邮件并由message说明，全部转邮件时明细可以为空；普通活动沿用已有奖励回执口径。
+        ActivityState state,   // 领取之后这一行的新状态。领完同轮就要红点熄灭（验收 8），所以状态必须回来 —— 让客户端猜「现在是不是还要亮」等于把判定搬到客户端。
+        String message)   // 可选的服务端到账说明，区分入余额与转邮箱。旧回应缺少时按已有奖励明细显示。
 {
 }

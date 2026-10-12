@@ -1735,6 +1735,7 @@ export class GameBootstrap extends Component {
       out.activityClaimed = resp => quest.showReceipt(claimReceiptText(resp))
       quest.onClaim = (questId, heroChoice) => { void this.root?.claimQuest(questId, heroChoice) }
       quest.onClaimActivity = activityId => { void this.root?.claimActivity(activityId) }
+      quest.onActivityOpened = () => { void this.root?.refresh('activity') }
     }
     if (reports !== null) {
       out.reports = (resp, serverNowMs) => reports.attach(resp, serverNowMs)

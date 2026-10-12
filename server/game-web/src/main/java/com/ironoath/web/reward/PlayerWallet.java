@@ -34,26 +34,46 @@ public final class PlayerWallet implements RewardPorts.Wallet {
     @Override
     public RewardPorts.Wallet.GoldGrant grantGoldOnce(String playerId, long amount,
             com.ironoath.core.reward.RewardContext ctx, long now) {
-        if (amount <= 0 || !ctx.durableGold() || !ctx.overflowToMail())
-            throw new IllegalArgumentException("持久金币领取必须有正额度与邮件溢出策略");
-        PlayerSave save = require(playerId);
-        var previous = save.goldClaims().get(ctx.traceId());
-        if (previous != null) {
-            if (!previous.source().equals(ctx.source()) || !previous.sourceRef().equals(ctx.sourceRef()))
-                throw new IllegalStateException("金币业务键不能复用于不同奖励来源");
-            return new RewardPorts.Wallet.GoldGrant(previous, 0);
+        return grantGoldBatchOnce(playerId, java.util.List.of(new RewardPorts.Wallet.GoldRequest(amount, ctx)), now).get(0);
+    }
+
+    @Override
+    public java.util.List<RewardPorts.Wallet.GoldGrant> grantGoldBatchOnce(String playerId,
+            java.util.List<RewardPorts.Wallet.GoldRequest> requests, long now) {
+        if (requests == null || requests.isEmpty()) throw new IllegalArgumentException("领取组成不得为空");
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        for (var request : requests) {
+            var ctx = request.context();
+            if (request.amount() <= 0 || ctx == null || !ctx.durableGold() || !ctx.overflowToMail()
+                    || !keys.add(ctx.traceId()))
+                throw new IllegalArgumentException("整批金币领取必须有正额度、邮件策略和不重复的业务key");
         }
+        PlayerSave save = require(playerId);
         PlayerResourceState state = save.resource("GOLD");
         ResourceSettlement.Result settled = ResourceSettlement.settle(
                 state.current(), state.cap(), state.perHour(), state.lastSettle(), now);
-        long credited = Math.min(amount, state.cap() - settled.current());
-        save.putResource("GOLD", new PlayerResourceState(settled.current() + credited, state.cap(),
-                state.protectedAmount(), state.perHour(), settled.lastSettle()));
-        var receipt = new com.ironoath.core.reward.GoldClaimReceipt(ctx.traceId(), ctx.source(),
-                ctx.sourceRef(), amount, credited, now, ctx.claimFacts(), null);
-        save.putGoldClaim(receipt);
-        players.save(save);
-        return new RewardPorts.Wallet.GoldGrant(receipt, credited);
+        long current = settled.current(); boolean dirty = false;
+        java.util.List<RewardPorts.Wallet.GoldGrant> accepted = new java.util.ArrayList<>();
+        for (var request : requests) {
+            var ctx = request.context(); var previous = save.goldClaims().get(ctx.traceId());
+            if (previous != null) {
+                if (!previous.source().equals(ctx.source()) || !previous.sourceRef().equals(ctx.sourceRef()))
+                    throw new IllegalStateException("金币业务键不能复用于不同奖励来源");
+                accepted.add(new RewardPorts.Wallet.GoldGrant(previous, 0));
+                continue;
+            }
+            long credited = Math.min(request.amount(), state.cap() - current);
+            var receipt = new com.ironoath.core.reward.GoldClaimReceipt(ctx.traceId(), ctx.source(),
+                    ctx.sourceRef(), request.amount(), credited, now, ctx.claimFacts(), null);
+            save.putGoldClaim(receipt); current += credited; dirty = true;
+            accepted.add(new RewardPorts.Wallet.GoldGrant(receipt, credited));
+        }
+        if (dirty) {
+            save.putResource("GOLD", new PlayerResourceState(current, state.cap(),
+                    state.protectedAmount(), state.perHour(), settled.lastSettle()));
+            players.save(save);
+        }
+        return java.util.List.copyOf(accepted);
     }
 
     @Override

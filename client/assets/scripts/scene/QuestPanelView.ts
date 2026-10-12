@@ -74,6 +74,7 @@ const PROMPT_HINT_HEIGHT = 22
  */
 const TABS = [
   { key: 'quest', label: '任务' },
+  { key: 'signin', label: '签到' },
   { key: 'activity', label: '活动' },
   { key: 'achievement', label: '成就' },
 ] as const
@@ -103,7 +104,7 @@ export class QuestPanelView extends Component {
   private readonly drawnRows: Node[] = []
   private headerLabel: Label | null = null
   private overflowLabel: Label | null = null
-  /** 当前页（0 起）。三个页签共用一格：换页签归零（`switchTab`），重新 attach 只 clamp（`render`）。 */
+  /** 当前页（0 起）。四个页签共用一格：换页签归零（`switchTab`），重新 attach 只 clamp（`render`）。 */
   private page = 0
   private prevPageButton: Node | null = null
   private nextPageButton: Node | null = null
@@ -129,6 +130,7 @@ export class QuestPanelView extends Component {
   onClaim: ((questId: string, heroChoice: string | null) => void) | null = null
   /** 玩家要领某条活动的奖励。windowKey 由服务端判，这里只递 activityId */
   onClaimActivity: ((activityId: string) => void) | null = null
+  onActivityOpened: (() => void) | null = null
   /** 三选一真实开关交给装配层，让引导提示让出选择操作，遮罩仍由Guide管理。 */
   onPromptVisibility: ((visible: boolean) => void) | null = null
 
@@ -173,6 +175,7 @@ export class QuestPanelView extends Component {
     this.tabNodes.clear()
     this.tabLabels.clear()
     this.onClaimActivity = null
+    this.onActivityOpened = null
     this.drawnRows.length = 0
     this.rowQuestIds.clear()
     this.optionHeroIds.clear()
@@ -238,7 +241,7 @@ export class QuestPanelView extends Component {
       return
     }
     this.activity = buildActivityList(resp, nowMs)
-    if (this.tab === 'activity') {
+    if (this.tab === 'activity' || this.tab === 'signin') {
       this.render()
     }
   }
@@ -454,6 +457,7 @@ export class QuestPanelView extends Component {
       return
     }
     this.tab = key
+    if (key === 'activity' || key === 'signin') this.onActivityOpened?.()
     // 三个页签是三份不同长度的列表，留着上一个页签的页号会停在错位的位置上
     //（与 `attach` 相反：那里只 clamp，领奖后重新 attach 不该把玩家弹回第一页）
     this.page = 0
@@ -500,7 +504,7 @@ export class QuestPanelView extends Component {
     this.drawnRows.length = 0
     this.activityPool?.releaseAll(this.drawnActivity)
     this.drawnActivity.length = 0
-    if (this.tab === 'activity') {
+    if (this.tab === 'activity' || this.tab === 'signin') {
       this.renderActivity()
       return
     }
@@ -555,12 +559,13 @@ export class QuestPanelView extends Component {
       return
     }
     const data = this.activity
+    const scope = this.tab === 'signin' ? '签到' : '活动'
     const size = view.getVisibleSize()
     const area = dialogContentRect(this.node)
     const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - ROW_HEIGHT / 2
     if (data === null) {
       if (this.headerLabel !== null) {
-        this.headerLabel.string = '活动 加载中'
+        this.headerLabel.string = `${scope} 加载中`
       }
       if (this.overflowLabel !== null) {
         this.overflowLabel.string = '正在拉取活动列表…'
@@ -571,15 +576,16 @@ export class QuestPanelView extends Component {
     // 与任务那一页同一口径：行数按实测可视高度算，装不下就翻页而不是只说"另有几条没画下"
     const navTop = Math.max(-size.height / 2 + BOTTOM_RESERVED, area.y)
     const capacity = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
-    const total = data.rows.length
+    const rows = data.rows.filter(row => this.tab === 'signin' ? row.category === 'SIGN_IN' : row.category !== 'SIGN_IN')
+    const total = rows.length
     const perPage = contentPerPage(total, capacity)
     const pages = pageCount(total, perPage)
     this.page = clampPage(this.page, total, perPage)
     const slice = pageWindow(total, this.page, perPage)
-    const visible = data.rows.slice(slice.start, slice.end)
+    const visible = rows.slice(slice.start, slice.end)
     if (this.headerLabel !== null) {
-      this.headerLabel.string = `活动 ${total} 条`
-        + (data.claimableText === null ? '' : ` · ${data.claimableText}`)
+      const claimable = rows.filter(row => row.claimable).length
+      this.headerLabel.string = `${scope} ${total} 条` + (claimable > 0 ? ` · ${claimable} 个奖励可领取` : '')
     }
     visible.forEach((row, index) => {
       const node = pool.acquire()
@@ -595,11 +601,11 @@ export class QuestPanelView extends Component {
     const detail = node.children[1]?.getComponent(Label)
     const status = node.children[2]?.getComponent(Label)
     if (title !== undefined && title !== null) {
-      title.string = row.name
+      title.string = row.name + (row.rewardText ? ` · ${row.rewardText}` : '')
       title.color = row.claimable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
     if (detail !== undefined && detail !== null) {
-      detail.string = `${row.progressText} · ${row.remainingText}`
+      detail.string = `${row.progressText} · ${row.details ?? row.remainingText}`
     }
     if (status !== undefined && status !== null) {
       status.string = row.statusText
@@ -631,14 +637,25 @@ export class QuestPanelView extends Component {
     graphics.fill()
 
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, 12, COLOR_TEXT, 19)
+    title.node.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, 15, 0))
+    title.node.getComponent(UITransform)!.setContentSize(PANEL_WIDTH - 280, 22)
+    title.lineHeight = 22
+    title.overflow = Label.Overflow.SHRINK
+    title.enableWrapText = false
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     // 锚点必须挪到左中：addLabel 给的默认锚点是中心，文本框会以 x 为中轴向两边长，
     // 于是四五个字的标题会压到左边那一列图标上（真跑截图里看到的就是这个）。
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, -14, COLOR_TEXT_DIM, 14)
+    detail.node.getComponent(UITransform)!.setContentSize(PANEL_WIDTH - 280, 30)
+    detail.fontSize = 13
+    detail.lineHeight = 15
+    detail.overflow = Label.Overflow.SHRINK
+    detail.enableWrapText = true
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 150, 0, COLOR_TEXT, 15)
+    status.node.getComponent(UITransform)!.setContentSize(96, 24)
     status.horizontalAlign = Label.HorizontalAlign.RIGHT
 
     const button = new Node('ClaimButton')

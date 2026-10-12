@@ -5,7 +5,7 @@ package com.ironoath.web.dto.generated;
 import java.util.List;
 
 /**
- * 活动列表。8 行表里对当前玩家可见的那些 —— 顺序按 `activity.json` 的行序（配置表就是唯一排序来源，服务端不另排一遍）。
+ * 当前玩家可见的活动与签到列表。各分类按服务端配置顺序显示；已停用的旧登录奖励仅在原窗口内合法待领时保留。
  */
 public record ActivityListResp(
         List<ActivityView> activities,   // 逐行视图。含已过期的行（`state=EXPIRED`）—— 列表里要看得见「哪个活动结束了」，这与邮件过期即消失不同：活动的窗口是**轮换**的，玩家需要知道下一轮什么时候开始。
