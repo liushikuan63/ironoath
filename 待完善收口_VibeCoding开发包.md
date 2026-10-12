@@ -7322,3 +7322,5 @@ TEST_EXIT=0
 | #1189 F38既购100金补给正常使用，166→266即时队列归零 | 本笔（本批统一推） | 真实单张2次；即时266/360队列0/1；同号GET266/训练0/1738金；3张截图SHA审图通过 | native-f38-owned-two-single-training-items-v38-r18.actual.json；native-f38-logistics-image-audit.actual.json；D:/tmp/ironoath-chat-stop-20261012/f38-training-two-singles.log；docs/免费金币经济基线_G01.md | 资源采集生产入口正在修，尚未派遣；主6→10及建盟未做；195测试仅逻辑回归；门禁新准备动作豁免需重跑；G01长期可达净流未完成 |
 
 | #1190 用户明确允许后续多账号，双方真实开战列为必验 | 本笔（本批统一推） | 用户授权已落盘；双向开战尚未执行，非通过 | docs/多账号攻防验收.md；本聊天2026-10-12用户多账号与互相开战要求 | A攻B/B攻A与双方资产结算均未验；当前先完成资源采集修复/五门/浏览器/新冻结与原生采集；不得以夹具或单方向结果代替双向完成 |
+
+| #1191 用户要求更新微信开发者工具，官方9231包SHA与签名验证 | 本笔（本批统一推） | 版本8070→候选9231；官方包196841032字节；SHA256匹配/签名Valid；installed=false | D:/tmp/ironoath-chat-stop-20261012/wechat-devtools-upgrade/download.actual.json；wechat-official-download.html；官方腾讯包与microsoft/winget-pkgs安装清单 | 工具安装/实际重启与新版本原生SDK/同号复验尚未做；恢复窗口必须后台不置前；现有SDK入口脚本须保留并检查新版兼容 |
