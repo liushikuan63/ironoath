@@ -1081,6 +1081,8 @@ export class WorldMap extends Component {
   private toggleMarchPanel(): void {
     this.resetGesture()
     this.marchPanel?.toggle()
+    // 到达/采满由服务端惰性推进，打开列表时必须重拉，不能沿用出发时的状态。
+    if (this.marchPanel?.isVisible) worldRequester()?.marches()
   }
 
   /** 面板打开时在数据变化后重画；关闭时不创建任何额外节点工作。 */

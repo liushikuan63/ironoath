@@ -11,8 +11,46 @@ import {
 } from '../assets/scripts/game/world/WorldSceneLayout'
 import { baseCellPixels, cellPixels } from '../assets/scripts/game/world/WorldZoom'
 import type { ViewportInsets } from '../assets/scripts/game/ui/DialogLayout'
+import { buildMarchPanel } from '../assets/scripts/game/world/MarchPanel'
+import type { MarchRender } from '../assets/scripts/game/world/WorldViewModel'
 
 const sizes = [[1440, 900], [1280, 720], [960, 600], [375, 667], [320, 480]] as const
+
+test('队伍已经到达后重新打开行军面板要拉权威状态，关闭不重查', () => {
+  const client = existsSync(path.resolve('client/assets')) ? path.resolve('client') : process.cwd()
+  const source = readFileSync(path.join(client, 'assets/scripts/scene/WorldMap.ts'), 'utf8')
+  const ast = ts.createSourceFile('WorldMap.ts', source, ts.ScriptTarget.ES2020, true)
+  const body = ts.createPrinter().printFile(ts.factory.updateSourceFile(ast,
+    ast.statements.filter(statement => !ts.isImportDeclaration(statement))))
+  const code = ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ES2020,
+    module: ts.ModuleKind.CommonJS, experimentalDecorators: true } }).outputText
+  const exports: Record<string, unknown> = {}
+  let visible = false, requests = 0
+  let march = { action: 'GATHER', status: 'MARCHING', marchId: 'arrived-gather',
+    to: { x: 400, y: 269 }, x: 400, y: 269, load: 0, loadCap: 5320,
+    remainingMs: 0, gatherRemainingMs: 0 } as MarchRender
+  let rows: ReturnType<typeof buildMarchPanel> = []
+  type Scene = { toggleMarchPanel(): void; renderMarchPanel(marches: MarchRender[]): void;
+    marchPanel: unknown; resetGesture(): void }
+  let scene: Scene
+  runInNewContext(code, { exports, _decorator: { ccclass: () => (klass: unknown) => klass },
+    Component: class {}, Color: class {}, worldSceneLayout, buildMarchPanel,
+    worldRequester: () => ({ marches: () => {
+      requests++
+      march = { ...march, status: 'GATHERING' }
+      scene.renderMarchPanel([march])
+    } }) })
+  const WorldMap = exports.WorldMap as new () => Scene
+  scene = new WorldMap()
+  scene.resetGesture = () => {}
+  scene.marchPanel = { get isVisible() { return visible }, toggle: () => { visible = !visible },
+    render: (next: ReturnType<typeof buildMarchPanel>) => { rows = next } }
+  scene.toggleMarchPanel()
+  assert.equal(requests, 1, '打开面板必须重新读取到达后的服务端状态')
+  assert.equal(rows[0]?.actionText, '收取', '不能继续显示出发时的召回按钮')
+  scene.toggleMarchPanel()
+  assert.equal(requests, 1, '关闭面板不需要额外查询')
+})
 
 test('R18顶部安全区不能遮住地图工具栏，地图底边也避开安全底边上的导航', () => {
   const width = 960, height = 443.6018957345971

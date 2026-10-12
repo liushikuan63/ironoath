@@ -18,6 +18,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 592 } })
 await page.addInitScript(id => localStorage.setItem('ironoath.deviceId', id), `gather-entry-${Date.now()}`)
 const requests = [], errors = [], clicks = []
 let pass = 0, fail = 0, armyFixtureUsed = false
+let marchFixture = null, marchFixtureReads = 0
 const check = (name, value) => { if (value) { pass++; console.log('PASS ' + name) }
   else { fail++; console.log('FAIL ' + name) } }
 page.on('pageerror', error => errors.push(error.message))
@@ -36,6 +37,15 @@ await page.route('**/world/march', async route => {
     action: body.action, units: body.units, heroes: body.heroes, hasRequestId: !!body.requestId })
   await route.fulfill({ status: 200, json: { code: 1006,
     msg: '验收夹具已捕获采集请求，未实际发兵', data: null, serverNow: Date.now() } })
+})
+await page.route('**/world/marches', async route => {
+  const response = await route.fetch(), body = await response.json()
+  if (marchFixture) {
+    if (body.code !== 0 || !body.data?.home) throw Error('真实行军读口未就绪')
+    marchFixtureReads++
+    body.data.marches = [marchFixture]
+  }
+  await route.fulfill({ response, json: body })
 })
 const tap = async (name, within) => {
   const result = await clickNodeViaCocos(page, { name, within })
@@ -101,12 +111,47 @@ try {
   const rejected = await snapshot()
   check('夹具拒绝保留编成及原因，不伪造发兵成功', rejected.overlayActive
     && rejected.nodes.some(n => n.text.includes('验收夹具已捕获采集请求')))
+  await tap('编成取消', 'MarchCompose')
+  await tap('world')
+  const now = Date.now()
+  marchFixture = { marchId: 'fixture-arrived-gather', from: { x: compose.target.x, y: compose.target.y },
+    to: { x: compose.target.x, y: compose.target.y }, status: 'GATHERING', targetType: 'RESOURCE',
+    targetId: 'STONE', rallyId: null, action: 'GATHER', startAt: now - 10000,
+    arriveAt: now - 5000, returnStartAt: null, returnArriveAt: null,
+    units: requests[0].units, heroes: [], load: 0, loadCap: 200, teamSpeed: 4,
+    position: { x: compose.target.x, y: compose.target.y }, progressFixed: 10000,
+    gatherFinishAt: now + 900000, serverNow: now }
+  await tap('MarchButton', 'world')
+  await page.waitForFunction(() => {
+    const game = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game')
+    const panel = game.getChildByName('world')?.getChildByName('HudLayer')?.getChildByName('MarchPanel')
+    const walk = node => !!node?.activeInHierarchy && (node.getComponent('cc.Label')?.string === '收取'
+      || node.children.some(walk))
+    return walk(panel)
+  }, null, { timeout: 5000 })
+  const arrived = await snapshot()
+  check('打开面板真实发出新GET，读口夹具采集状态进入可见行', marchFixtureReads === 1
+    && arrived.nodes.some(n => n.parent === 'Action' && n.text === '收取'))
+  await page.screenshot({ path: path.join(out, 'gather-march-panel.png') })
+  await tap('CloseButton', 'MarchPanel')
+  check('关闭面板不追加读请求', marchFixtureReads === 1)
+  marchFixture = { ...marchFixture, status: 'RETURNING', returnStartAt: Date.now(),
+    returnArriveAt: Date.now() + 30000, gatherFinishAt: null, serverNow: Date.now() }
+  await tap('MarchButton', 'world')
+  await page.waitForTimeout(500)
+  const returning = await snapshot()
+  check('重新打开再次查权威状态，返程行取消收取入口', marchFixtureReads === 2
+    && returning.nodes.some(n => n.parent === 'MarchRow-0' && n.text.includes('返程中'))
+    && !returning.nodes.some(n => n.parent === 'Action' && n.text === '收取'))
+  check('行军查询与翻阅没有新增业务派遣', requests.length === 1)
   check('军队夹具确实执行', armyFixtureUsed)
   check('页面零未捕获异常', errors.length === 0)
   fs.writeFileSync(path.join(out, 'actual.json'), JSON.stringify({ accepted: fail === 0,
     presentationContractOnly: true, serviceGatherVerified: false, nativeVerified: false,
-    fixtures: ['army/list首兵种100可用', 'world/march拒绝回执，不转发业务写入', '引导遮罩隐藏'],
-    pass, fail, requests, errors, clicks, before, compose, rejected }, null, 2) + '\n')
+    fixtures: ['army/list首兵种100可用', 'world/march拒绝回执，不转发业务写入',
+      'world/marches先采集后返程读口夹具，无真实行军', '引导遮罩隐藏'],
+    pass, fail, requests, errors, clicks, before, compose, rejected, arrived, returning,
+    marchFixtureReads }, null, 2) + '\n')
 } catch (error) { fail++; console.error(String(error))
   const state = await snapshot().catch(() => null)
   await page.screenshot({ path: path.join(out, 'first-failure.png') }).catch(() => {})
