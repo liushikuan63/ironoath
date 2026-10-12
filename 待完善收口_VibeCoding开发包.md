@@ -7274,3 +7274,5 @@ TEST_EXIT=0
 | #1167 F35足量训练加速真实原生立即归队通过 | 本笔（本批统一推） | 当前F35训练饱和毫秒尾数修复原生闭环通过；真实普通训练与本道具消耗/客户端立即列表/图片/官方网络四层一致，无自然等待至60秒冒充加速、无私人回调/直接POST/赠送或改时钟。 | D:/tmp/ironoath-wechat-20261010/native-training-sufficient-one-v35-r18.actual.json；native-training-sufficient-one-visible-v35-r18.actual.json；f35-single-sufficient-network.receipt.json | 治疗同型修复有JUnit与浏览器但本号原生治疗未验；旧Guide4遮罩完整重验/真Gameheap/实体机性能仍待，08尚未研究，G01价差与新奖励数值待定，本笔未推。 |
 
 | #1168 原生免费等级4/5补领奖真实到账400金币 | 本笔（本批统一推） | 实际免费领奖按钮/到账回执/金币增量400/中文画面通过，与充值/成长基金/月卡隔离；本笔不新增发奖数值或源码。 | D:/tmp/ironoath-wechat-20261010/native-level4-5-free-claimed-v35-r18.actual.json；native-level4-5-free-visible-v35-r18.actual.json；driver-0420实际PNG已查看 | 主城6/学院/08待正常资源筹集与实施；G01新奖励和统一加速价仍待数值审定，原生治疗及性能未验，本笔未推。 |
+
+| #1169 普通PvE第一胜与地图目标消耗首红保留 | 本笔（本批统一推） | 第一真实胜利/回程/既有普通资源金币掉落读回通过；原首红不是新假胜利替代，官方正常地图拖动与新目标实际截图已核，未直接POST/改时间/赠资源。 | D:/tmp/ironoath-wechat-20261010/native-pve-resource-progression-first-failure-v35-r18.actual.json；driver-0498实际编成100；driver-0585新目标图 | 后两场/主城6/学院/08尚未完成，G01只补可证明低阶一次可达，不外推长周期；未推。 |
