@@ -15,11 +15,9 @@ import java.time.temporal.ChronoUnit;
  * 一处按 UTC、另一处按本地时区，玩家就会遇到「加速次数重置了、体力购买次数还没重置」，
  * 而这种 bug 只在跨时区部署或夏令时切换时出现，几乎无法复现。
  *
- * <p><b>按 UTC+8（Asia/Shanghai）取日</b>：日切落在本地 0 点，玩家的「今天」就是他所处的自然日。
- * 2026-09-08 裁决：改代码而不是改文档，因为日限次是玩家能直接感知的东西，
- * 而 UTC 的重置时刻对国内玩家意味着「上午八点日常任务突然全重置了」。
- * 偏移必须与 {@code city_rule_daily_reset_hour_utc} 表达的同一个重置时刻一致
- * （换算式：偏移 = (24 - 该字段的 UTC 小时) % 24，当前 16 ⇒ +8）。
+ * <p><b>2026-10-13 裁决：北京时间 04:00 刷新每日内容</b>：凌晨四点之前
+ * 属于前一业务日；时区仍是 UTC+8。自然日、赛季日历与旧月卡权益计算保持原口径。
+ * {@code city_rule_daily_reset_hour_utc} 声明同一个切点（北京时间 04:00 = UTC 20:00）。
  * game-common 读不到配置表，所以这条一致性由 {@code DailyResetZoneParityTest} 钉住 ——
  * 表说一套、代码做一套比两边都没定更糟，因为它会让运营以为改表就能挪重置时刻（并不能）。
  *
@@ -33,12 +31,12 @@ import java.time.temporal.ChronoUnit;
 public final class DayKey {
 
     /**
-     * 日历时区：固定 +8 小时（见类注释的裁决记录与 parity 测试）。
-     *
-     * <p>公开是因为 {@link WeekKey} 必须用<b>同一个</b>时区：日切与周边界分处两个时区时，
-     * 周一凌晨的日常会被算进上一周。一条口径不该有两个家。
+     * 日历时区：固定 +8 小时。自然周/月沿用此时区，签到周期使用业务日期。
      */
     public static final ZoneOffset CALENDAR_ZONE = ZoneOffset.ofHours(8);
+
+    /** 每日业务切点，北京时间凌晨四点。 */
+    public static final int RESET_HOUR = 4;
 
     private DayKey() {
     }
@@ -52,7 +50,7 @@ public final class DayKey {
         if (nowMs <= 0L) {
             throw new IllegalArgumentException("nowMs 必须为正的服务端时间戳，实际=" + nowMs);
         }
-        return dateOf(nowMs)
+        return businessDateOf(nowMs)
                 .toString()
                 .replace("-", "");
     }
@@ -65,6 +63,33 @@ public final class DayKey {
      */
     public static long daysBetween(long fromMs, long toMs) {
         return ChronoUnit.DAYS.between(dateOf(fromMs), dateOf(toMs));
+    }
+
+    /** 北京时间自然日期键，用于节假日日历与旧月卡权益。 */
+    public static String naturalOf(long nowMs) {
+        if (nowMs <= 0L) {
+            throw new IllegalArgumentException("nowMs 必须为正的服务端时间戳，实际=" + nowMs);
+        }
+        return dateOf(nowMs).toString().replace("-", "");
+    }
+
+    /** 时间戳所在的业务日期；00:00～03:59 属于前一日。 */
+    public static LocalDate businessDateOf(long ms) {
+        if (ms <= 0L) {
+            throw new IllegalArgumentException("ms 必须为正的服务端时间戳，实际=" + ms);
+        }
+        return Instant.ofEpochMilli(ms).atZone(CALENDAR_ZONE).minusHours(RESET_HOUR).toLocalDate();
+    }
+
+    /** 跨过几个北京时间04:00边界，用于签到与连签，不改变自然日计算。 */
+    public static long businessDaysBetween(long fromMs, long toMs) {
+        return ChronoUnit.DAYS.between(businessDateOf(fromMs), businessDateOf(toMs));
+    }
+
+    /** 所在业务日再偏移days天的北京时间04:00。 */
+    public static long startOfBusinessDayPlusDays(long fromMs, long days) {
+        return businessDateOf(fromMs).plusDays(days).atTime(RESET_HOUR, 0)
+                .toInstant(CALENDAR_ZONE).toEpochMilli();
     }
 
     /**

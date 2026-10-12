@@ -119,20 +119,36 @@ class ActivitySystemTest {
     // ---------- 连续签到 ----------
 
     @Test
-    @DisplayName("同一自然日重复登录只算一天（幂等）")
+    @DisplayName("同一04:00业务日重复登录只算一天（幂等）")
     void sameDayLoginCountsOnce() {
         ActivityProgress progress = opened();
-        long d1Morning = at("2026-09-10");
+        long d1Morning = at("2026-09-10") + 4 * 60 * 60 * 1000L;
         progress.rollover(d1Morning, d1Morning);
         progress.onEvent(login(d1Morning));
         // 先连到第 2 天，把进度做到 2 —— 进度停在 1 时，"不重算"与"归零重数成 1"是分不开的
         progress.onEvent(login(d1Morning + DAY_MS));
         assertThat(progress.entry("activity_login_7d").value()).isEqualTo(2L);
 
-        // 第 2 天里再登录两次（含深夜 23:59，仍是同一个自然日）：进度必须还是 2
+        // 次日10:00与再下一日03:59仍属于第二个业务日。
         progress.onEvent(login(d1Morning + DAY_MS + 6 * 60 * 60 * 1000L));
         progress.onEvent(login(d1Morning + 2 * DAY_MS - 1));
         assertThat(progress.entry("activity_login_7d").value()).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("午夜重复登录不增加，跨04:00一毫秒才推进连签")
+    void loginStreakUsesBusinessDayBoundary() {
+        ActivityProgress progress = opened();
+        long beforeMidnight = at("2026-09-10") + DAY_MS - 1;
+        progress.rollover(beforeMidnight, beforeMidnight);
+        progress.onEvent(login(beforeMidnight));
+        progress.onEvent(login(beforeMidnight + 1));
+        assertThat(progress.entry("activity_login_7d").value()).isEqualTo(1);
+        long four = DayKey.startOfBusinessDayPlusDays(beforeMidnight, 1);
+        progress.onEvent(login(four - 1));
+        assertThat(progress.entry("activity_login_7d").value()).isEqualTo(1);
+        progress.onEvent(login(four));
+        assertThat(progress.entry("activity_login_7d").value()).isEqualTo(2);
     }
 
     @Test

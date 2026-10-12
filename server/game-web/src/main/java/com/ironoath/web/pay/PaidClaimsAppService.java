@@ -104,7 +104,7 @@ public class PaidClaimsAppService {
                             "月卡不在有效期内（到期时刻=" + save.paid().cardExpireAt()
                                     + "，当前=" + now + "），本次没有可领的日包");
                     case SETTLED_TODAY -> throw new BizException(ErrorCode.PAY_ALREADY_CLAIMED,
-                            "今天（" + DayKey.of(now) + "）的日包已经领过了，明日零点（UTC+8）之后再领");
+                            "今天（" + DayKey.naturalOf(now) + "）的旧月卡日包已经领过了，明日零点（UTC+8）之后再领");
                     default -> {
                     }
                 }

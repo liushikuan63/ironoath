@@ -50,7 +50,7 @@ public final class MinorCurfew {
             throw new IllegalArgumentException(
                     "窗口非法：需要 0 <= start < end <= 24，实际 start=" + startHour + " end=" + endHour);
         }
-        if (holidayDayKeys != null && holidayDayKeys.contains(DayKey.of(nowMs))) {
+        if (holidayDayKeys != null && holidayDayKeys.contains(DayKey.naturalOf(nowMs))) {
             return Verdict.allow();
         }
         ZonedDateTime local = Instant.ofEpochMilli(nowMs).atZone(DayKey.CALENDAR_ZONE);

@@ -39,16 +39,15 @@ class WeekKeyTest {
     }
 
     @Test
-    @DisplayName("周键与日键共用同一个时区：周日 17:00(UTC) 已经属于东八区的下一周")
+    @DisplayName("自然周在周一零点变化，每日业务日等到北京时间04:00才变化")
     void sharesTheSameZoneAsDayKey() {
         // 东八区的 2026-09-07 00:00 是周一，对应 UTC 2026-09-06T16:00。
-        // 下面两个时刻只差一小时，却横跨了这个边界：如果周界与日切分处两个时区，
-        // 它们就会被算进同一周，周一凌晨的任务跟着落到上一周去
+        // 自然周保持原口径；每日业务切点由用户单独裁决为04:00。
         long before = Instant.parse("2026-09-06T15:30:00Z").toEpochMilli();
         long after = Instant.parse("2026-09-06T16:30:00Z").toEpochMilli();
 
         assertThat(WeekKey.of(after)).isNotEqualTo(WeekKey.of(before));
-        assertThat(DayKey.of(after)).isNotEqualTo(DayKey.of(before));
+        assertThat(DayKey.of(after)).isEqualTo(DayKey.of(before));
         assertThat(WeekKey.number(after)).isGreaterThan(WeekKey.number(before));
     }
 

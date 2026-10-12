@@ -61,7 +61,7 @@ class MinorCurfewTest {
     @Test
     @DisplayName("法定节假日整天可玩：窗口与时刻都拦不住它")
     void holidaysAreOpenAllDay() {
-        Set<String> holiday = Set.of(DayKey.of(at(3, 0)));
+        Set<String> holiday = Set.of(DayKey.naturalOf(at(3, 0)));
 
         assertThat(MinorCurfew.evaluate(at(3, 0), holiday, START, END).allowed())
                 .as("凌晨三点，但今天是法定节假日").isTrue();

@@ -274,7 +274,7 @@ public final class ActivityProgress {
             // 同一自然日再登录一次：进度不动。这就是"同一天只算一天"的幂等点
             return entry.value();
         }
-        boolean consecutive = DayKey.daysBetween(entry.lastLoginAt(), loginAt) == 1L;
+        boolean consecutive = DayKey.businessDaysBetween(entry.lastLoginAt(), loginAt) == 1L;
         return consecutive ? entry.value() + 1L : 1L;
     }
 

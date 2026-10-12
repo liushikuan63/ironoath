@@ -78,7 +78,7 @@ public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fund
      */
     public boolean cardClaimedToday(long now) {
         return cardClaimedThroughAt != null
-                && DayKey.of(cardClaimedThroughAt).equals(DayKey.of(now));
+                && DayKey.naturalOf(cardClaimedThroughAt).equals(DayKey.naturalOf(now));
     }
 
     /** 买过成长基金。 */

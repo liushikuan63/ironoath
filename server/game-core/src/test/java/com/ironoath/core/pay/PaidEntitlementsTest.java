@@ -117,8 +117,10 @@ class PaidEntitlementsTest {
         // UTC+8 的 23:30 = UTC 15:30；跨过北京零点（UTC 16:00）只过了 30 分钟，但已经是新的一天
         long beforeMidnight = DayKey.startOfDayPlusDays(BASE, 1) + DAY - 30 * MINUTE;
         long afterMidnight = beforeMidnight + HOUR;
-        assertThat(DayKey.of(beforeMidnight)).as("两个时刻的日键必须不同，否则这条用例什么都没测")
-                .isNotEqualTo(DayKey.of(afterMidnight));
+        assertThat(DayKey.naturalOf(beforeMidnight)).as("旧月卡的两个自然日必须不同")
+                .isNotEqualTo(DayKey.naturalOf(afterMidnight));
+        assertThat(DayKey.of(beforeMidnight)).as("新的每日业务日还未跨过04:00")
+                .isEqualTo(DayKey.of(afterMidnight));
 
         PlayerPaid claimedYesterdayEvening = freshCard(BASE, 30)
                 .withCardSettledThrough(DayKey.startOfDayPlusDays(beforeMidnight, 0));
@@ -126,6 +128,10 @@ class PaidEntitlementsTest {
         assertThat(verdict.status()).as("跨了北京的零点就是跨了一天，哪怕只隔一小时")
                 .isEqualTo(PaidEntitlements.CardVerdict.CLAIMABLE);
         assertThat(verdict.days()).isEqualTo(1L);
+        PlayerPaid settled = claimedYesterdayEvening
+                .withCardSettledThrough(DayKey.startOfDayPlusDays(afterMidnight, 0));
+        assertThat(settled.cardClaimedToday(afterMidnight)).isTrue();
+        assertThat(settled.cardClaimedToday(afterMidnight + 4 * HOUR)).isTrue();
     }
 
     @Test

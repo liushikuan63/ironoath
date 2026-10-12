@@ -26,8 +26,7 @@ import com.ironoath.config.model.GlobalCfg;
  * 表说一套、代码做一套比两边都没定更糟：运营会以为改表就能把日切调到凌晨 5 点，
  * 而玩家看到的行为一动不动，且没有任何测试会红。
  *
- * <p><b>2026-09-08 的裁决</b>：按 Asia/Shanghai（UTC+8）切日，重置时刻 = 本地 0 点
- * = UTC 16 点，所以表里的值是 16。换算式 {@code 偏移 = (24 - 该值) % 24}。
+ * <p>2026-10-13 用户裁决：北京时间04:00切日，时区仍为UTC+8；表声明UTC20:00。
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -38,29 +37,25 @@ class DailyResetZoneParityTest {
     @Autowired private ConfigRegistry configs;
 
     @Test
-    @DisplayName("DayKey 的日切偏移与表里声明的重置时刻是同一时刻：改表不改代码会被判红")
+    @DisplayName("DayKey 的北京时间04:00与表声明的UTC20:00是同一切点")
     void dayKeyZoneMatchesTheDeclaredResetHour() {
         long resetHourUtc = declaredResetHourUtc();
-        ZoneOffset declaredZone = ZoneOffset.ofHours((int) ((24 - resetHourUtc) % 24));
-        // 取一个远离日切的普通时刻，只比较「同一个时刻算出来的日期键」
-        long now = Instant.parse("2026-09-08T03:17:42Z").toEpochMilli();
-
-        assertThat(DayKey.of(now))
-                .as("表里 %s=%d（UTC 小时），代码就必须按 UTC%s 取日", PARAM_ID, resetHourUtc, declaredZone)
-                .isEqualTo(Instant.ofEpochMilli(now).atZone(declaredZone)
-                        .toLocalDate().toString().replace("-", ""));
+        assertThat(DayKey.CALENDAR_ZONE).isEqualTo(ZoneOffset.ofHours(8));
+        assertThat(Math.floorMod(DayKey.RESET_HOUR - DayKey.CALENDAR_ZONE.getTotalSeconds() / 3600, 24))
+                .as("%s声明的UTC切点必须与代码相同", PARAM_ID)
+                .isEqualTo((int) resetHourUtc);
     }
 
     @Test
-    @DisplayName("日切字面落在 UTC+8 的 0 点：前一毫秒还是今天，整点就是明天")
-    void dayFlipsAtMidnightBeijing() {
-        // 这两行是「重置发生在玩家睡着的时候」这个产品口径的字面表达。
-        // 上面那条 parity 断言负责保证表里的数字与它们说的是同一件事
-        assertThat(DayKey.of(Instant.parse("2026-09-08T15:59:59.999Z").toEpochMilli()))
-                .as("UTC 15:59:59.999 = UTC+8 23:59:59.999，仍是今天")
+    @DisplayName("北京时间04:00换业务日，午夜不重置")
+    void dayFlipsAtFourBeijing() {
+        assertThat(DayKey.of(Instant.parse("2026-09-08T16:00:00Z").toEpochMilli()))
+                .as("北京时间次日午夜仍属前一业务日")
                 .isEqualTo("20260908");
-        assertThat(DayKey.of(Instant.parse("2026-09-08T16:00:00.000Z").toEpochMilli()))
-                .as("再一毫秒就是本地 0 点 ⇒ 换日")
+        assertThat(DayKey.of(Instant.parse("2026-09-08T19:59:59.999Z").toEpochMilli()))
+                .isEqualTo("20260908");
+        assertThat(DayKey.of(Instant.parse("2026-09-08T20:00:00.000Z").toEpochMilli()))
+                .as("北京时间04:00进入新业务日")
                 .isEqualTo("20260909");
     }
 
