@@ -41,7 +41,20 @@ public record PlayerDocument(
         /** 已拥有的头像框 id（B24 块③）；老文档没有这一位 ⇒ 读成一个都没拥有。 */
         java.util.List<String> ownedAvatarFrames,
         long version,
-        HarvestLearningDoc harvestLearning) {
+        HarvestLearningDoc harvestLearning,
+        Map<String, GoldClaimDoc> goldClaims) {
+    public PlayerDocument(String playerId, String deviceId, String nickName, int avatarId,
+            long createdAt, long lastLoginAt, int cityLevel, Map<String, ResourceDoc> resources,
+            PowerDoc power, PvpDoc pvp, Long protectUntil, GloryDoc glory, GuideDoc guide,
+            PaidDoc paid, TechDoc tech, GiftPopupDoc giftPopup, String avatarFrame,
+            java.util.List<String> ownedAvatarFrames, long version, HarvestLearningDoc harvestLearning) {
+        this(playerId, deviceId, nickName, avatarId, createdAt, lastLoginAt, cityLevel, resources,
+                power, pvp, protectUntil, glory, guide, paid, tech, giftPopup, avatarFrame,
+                ownedAvatarFrames, version, harvestLearning, null);
+    }
+
+    public record GoldClaimDoc(String businessKey, String source, String sourceRef, long requested,
+            long credited, long acceptedAt, java.util.List<String> facts, String overflowMailId) {}
     /** 旧文档/既有构造入口兼容：没有教程进度时从未手动采集。 */
     public PlayerDocument(String playerId, String deviceId, String nickName, int avatarId,
             long createdAt, long lastLoginAt, int cityLevel, Map<String, ResourceDoc> resources,

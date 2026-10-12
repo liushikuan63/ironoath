@@ -25,6 +25,19 @@ public final class PlayerSave {
     private long lastLoginAt;
     private int cityLevel;
     private final Map<String, PlayerResourceState> resources = new LinkedHashMap<>();
+    private final Map<String, com.ironoath.core.reward.GoldClaimReceipt> goldClaims = new LinkedHashMap<>();
+
+    public Map<String, com.ironoath.core.reward.GoldClaimReceipt> goldClaims() { return Map.copyOf(goldClaims); }
+    public void putGoldClaim(com.ironoath.core.reward.GoldClaimReceipt receipt) {
+        goldClaims.put(receipt.businessKey(), receipt);
+    }
+    public void restoreGoldClaims(Map<String, com.ironoath.core.reward.GoldClaimReceipt> stored) {
+        goldClaims.clear();
+        if (stored != null) stored.forEach((key, receipt) -> {
+            if (!key.equals(receipt.businessKey())) throw new IllegalArgumentException("金币收据业务键不匹配");
+            goldClaims.put(key, receipt);
+        });
+    }
     private PlayerPower power;
     /** PVP 侧状态（战力峰值时点 / 暴虐值 / 连续受害护盾），B08 引入。 */
     private PlayerPvp pvp = PlayerPvp.empty();
@@ -467,6 +480,7 @@ public final class PlayerSave {
         this.lastLoginAt = lastLoginAt;
         this.cityLevel = cityLevel;
         this.resources.clear();
+        this.goldClaims.clear();
         this.resources.putAll(restoredResources);
         this.power = restoredPower;
         // 老存档没有这个字段：补空状态而不是抛异常。
@@ -504,6 +518,7 @@ public final class PlayerSave {
                 new LinkedHashMap<>(resources), power, pvp, protectUntil, glory, guide, paid, tech, giftPopup,
                 avatarFrame, ownedAvatarFrames, version);
         copy.restoreHarvestLearning(pendingManualOutput, manuallyCollected);
+        copy.restoreGoldClaims(goldClaims);
         return copy;
     }
 }

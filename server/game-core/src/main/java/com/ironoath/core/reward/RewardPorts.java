@@ -28,6 +28,19 @@ public final class RewardPorts {
      */
     public interface Wallet {
 
+        record GoldGrant(GoldClaimReceipt receipt, long creditedNow) {}
+
+        /** 余额与收据必须原子落盘；旧适配器不得静默回退为普通非幂等发放。 */
+        default GoldGrant grantGoldOnce(String playerId, long amount, RewardContext ctx, long now) {
+            throw new UnsupportedOperationException("钱包未实现持久金币领取");
+        }
+
+        default void completeGoldOverflow(String playerId, String businessKey, String mailId) {
+            throw new UnsupportedOperationException("钱包未实现金币溢出收据更新");
+        }
+
+        default List<GoldClaimReceipt> pendingGoldClaims(String playerId) { return List.of(); }
+
         /**
          * 发放资源。
          *

@@ -288,6 +288,10 @@ public class QuestAppService {
         // 顺带修掉的是另一个更难看见的问题：两次分开读之间若有人写了这个号，同一次刷新里的
         // 两位目标会看到两个版本的存档，而面板把这两行画在一起。
         PlayerSave owner = players.findByPlayerId(progress.playerId()).orElse(null);
+        if (owner != null && owner.goldClaims().values().stream()
+                .anyMatch(com.ironoath.core.reward.GoldClaimReceipt::pendingOverflow)) {
+            rewardService.recoverGoldClaims(progress.playerId());
+        }
         for (QuestProgress.Entry entry : progress.entries()) {
             if (entry.goalType().accumulates() || !STATE_TYPES_WITH_SOURCE.contains(entry.goalType())) {
                 continue;

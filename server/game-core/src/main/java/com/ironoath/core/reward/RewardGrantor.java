@@ -65,6 +65,8 @@ public final class RewardGrantor implements RewardService {
             return GrantResult.full(List.of());
         }
 
+        if (ctx.durableGold()) return grantGoldOnce(playerId, rewards, ctx);
+
         long now = clock.getAsLong();
         List<RewardItem> granted = new ArrayList<>(rewards.size());
         List<RewardItem> overflow = new ArrayList<>();
@@ -94,6 +96,37 @@ public final class RewardGrantor implements RewardService {
             compensationId = compensation.record(playerId, List.copyOf(failed), ctx, firstCause);
         }
         return new GrantResult(granted, overflow, mailId, compensationId);
+    }
+
+    private GrantResult grantGoldOnce(String playerId, List<RewardItem> rewards, RewardContext ctx) {
+        long amount = 0;
+        for (var reward : rewards) {
+            if (reward.type() != RewardType.RESOURCE || !"GOLD".equals(reward.id()))
+                throw new IllegalArgumentException("持久金币领取不接受混合奖励");
+            amount = Math.addExact(amount, reward.count());
+        }
+        // 异常向上返回，已落盘的收据由读取/重试恢复，不能另建一份可能重复增发的普通补偿。
+        var accepted = wallet.grantGoldOnce(playerId, amount, ctx, clock.getAsLong());
+        var receipt = accepted.receipt();
+        List<RewardItem> overflow = receipt.overflow() == 0 ? List.of()
+                : List.of(new RewardItem(RewardType.RESOURCE, "GOLD", receipt.overflow()));
+        String mailId = receipt.overflowMailId();
+        if (receipt.pendingOverflow()) {
+            mailId = mailbox.sendOverflow(playerId, overflow, new RewardContext(receipt.source(),
+                    receipt.sourceRef(), receipt.businessKey(), true, receipt.facts()));
+            wallet.completeGoldOverflow(playerId, receipt.businessKey(), mailId);
+        }
+        List<RewardItem> granted = accepted.creditedNow() == 0 ? List.of()
+                : List.of(new RewardItem(RewardType.RESOURCE, "GOLD", accepted.creditedNow()));
+        return new GrantResult(granted, overflow, mailId, null);
+    }
+
+    @Override
+    public void recoverGoldClaims(String playerId) {
+        for (var receipt : wallet.pendingGoldClaims(playerId)) {
+            grantGoldOnce(playerId, List.of(new RewardItem(RewardType.RESOURCE, "GOLD", receipt.requested())),
+                    new RewardContext(receipt.source(), receipt.sourceRef(), receipt.businessKey(), true, receipt.facts()));
+        }
     }
 
     private void applyOne(String playerId, RewardItem reward, long now,

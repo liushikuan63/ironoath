@@ -32,6 +32,50 @@ public final class PlayerWallet implements RewardPorts.Wallet {
     }
 
     @Override
+    public RewardPorts.Wallet.GoldGrant grantGoldOnce(String playerId, long amount,
+            com.ironoath.core.reward.RewardContext ctx, long now) {
+        if (amount <= 0 || !ctx.durableGold() || !ctx.overflowToMail())
+            throw new IllegalArgumentException("持久金币领取必须有正额度与邮件溢出策略");
+        PlayerSave save = require(playerId);
+        var previous = save.goldClaims().get(ctx.traceId());
+        if (previous != null) {
+            if (!previous.source().equals(ctx.source()) || !previous.sourceRef().equals(ctx.sourceRef()))
+                throw new IllegalStateException("金币业务键不能复用于不同奖励来源");
+            return new RewardPorts.Wallet.GoldGrant(previous, 0);
+        }
+        PlayerResourceState state = save.resource("GOLD");
+        ResourceSettlement.Result settled = ResourceSettlement.settle(
+                state.current(), state.cap(), state.perHour(), state.lastSettle(), now);
+        long credited = Math.min(amount, state.cap() - settled.current());
+        save.putResource("GOLD", new PlayerResourceState(settled.current() + credited, state.cap(),
+                state.protectedAmount(), state.perHour(), settled.lastSettle()));
+        var receipt = new com.ironoath.core.reward.GoldClaimReceipt(ctx.traceId(), ctx.source(),
+                ctx.sourceRef(), amount, credited, now, ctx.claimFacts(), null);
+        save.putGoldClaim(receipt);
+        players.save(save);
+        return new RewardPorts.Wallet.GoldGrant(receipt, credited);
+    }
+
+    @Override
+    public java.util.List<com.ironoath.core.reward.GoldClaimReceipt> pendingGoldClaims(String playerId) {
+        return require(playerId).goldClaims().values().stream()
+                .filter(com.ironoath.core.reward.GoldClaimReceipt::pendingOverflow).toList();
+    }
+
+    @Override
+    public void completeGoldOverflow(String playerId, String businessKey, String mailId) {
+        PlayerSave save = require(playerId);
+        var receipt = save.goldClaims().get(businessKey);
+        if (receipt == null) throw new IllegalStateException("金币收据不存在");
+        if (receipt.overflowMailId() != null) {
+            if (!receipt.overflowMailId().equals(mailId)) throw new IllegalStateException("溢出邮件不能改号");
+            return;
+        }
+        save.putGoldClaim(receipt.withOverflowMail(mailId));
+        players.save(save);
+    }
+
+    @Override
     public long grant(String playerId, String resourceType, long amount, long now) {
         if (amount < 0L) {
             throw new IllegalArgumentException("发放量不得为负：" + amount);

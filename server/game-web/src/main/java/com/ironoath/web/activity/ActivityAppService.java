@@ -82,6 +82,7 @@ public class ActivityAppService {
     public ActivityListResp list(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            rewardService.recoverGoldClaims(playerId);
             ActivityProgress progress = loaded(playerId);
             // 读取路径的惰性同步：没有待展示记录的行直接进入新一轮（有进展没领的行留住）
             if (progress.syncOnRead(now, anchors.playerAnchorMs(playerId)) > 0) {

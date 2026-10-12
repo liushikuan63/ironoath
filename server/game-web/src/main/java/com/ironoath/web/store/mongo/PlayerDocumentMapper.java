@@ -64,7 +64,15 @@ public final class PlayerDocumentMapper {
                 save.avatarFrame(),
                 toOwnedFrames(save.ownedAvatarFrames()),
                 save.version(), new PlayerDocument.HarvestLearningDoc(save.pendingManualOutput(),
-                        java.util.List.copyOf(save.manuallyCollected())));
+                        java.util.List.copyOf(save.manuallyCollected())), goldClaimDocs(save));
+    }
+
+    private static Map<String, PlayerDocument.GoldClaimDoc> goldClaimDocs(PlayerSave save) {
+        Map<String, PlayerDocument.GoldClaimDoc> out = new LinkedHashMap<>();
+        save.goldClaims().forEach((key, receipt) -> out.put(key, new PlayerDocument.GoldClaimDoc(
+                receipt.businessKey(), receipt.source(), receipt.sourceRef(), receipt.requested(),
+                receipt.credited(), receipt.acceptedAt(), java.util.List.copyOf(receipt.facts()), receipt.overflowMailId())));
+        return out;
     }
 
     private static PlayerDocument.TechDoc toTechDoc(com.ironoath.core.player.PlayerTech tech) {
@@ -188,6 +196,15 @@ public final class PlayerDocumentMapper {
                 doc.version());
         if (doc.harvestLearning() != null) save.restoreHarvestLearning(
                 doc.harvestLearning().pendingOutput(), doc.harvestLearning().collected());
+        if (doc.goldClaims() != null) {
+            Map<String, com.ironoath.core.reward.GoldClaimReceipt> receipts = new LinkedHashMap<>();
+            doc.goldClaims().forEach((key, receipt) -> receipts.put(key,
+                    new com.ironoath.core.reward.GoldClaimReceipt(receipt.businessKey(), receipt.source(),
+                            receipt.sourceRef(), receipt.requested(), receipt.credited(), receipt.acceptedAt(),
+                            receipt.facts() == null ? java.util.Set.of() : java.util.Set.copyOf(receipt.facts()),
+                            receipt.overflowMailId())));
+            save.restoreGoldClaims(receipts);
+        }
         return save;
     }
 

@@ -15,7 +15,12 @@ package com.ironoath.core.reward;
  *                         false 时溢出部分直接丢弃 —— 只用于「不可补发」的场景，
  *                         例如排行榜实时结算，此时补发邮件反而会让玩家困惑
  */
-public record RewardContext(String source, String sourceRef, String traceId, boolean overflowToMail) {
+public record RewardContext(String source, String sourceRef, String traceId, boolean overflowToMail,
+                            java.util.Set<String> claimFacts) {
+
+    public RewardContext(String source, String sourceRef, String traceId, boolean overflowToMail) {
+        this(source, sourceRef, traceId, overflowToMail, java.util.Set.of());
+    }
 
     public RewardContext {
         if (source == null || source.isBlank()) {
@@ -25,6 +30,7 @@ public record RewardContext(String source, String sourceRef, String traceId, boo
             throw new IllegalArgumentException("traceId 不得为空：发奖必须可追溯到一次具体请求");
         }
         sourceRef = sourceRef == null ? "" : sourceRef;
+        claimFacts = claimFacts == null ? java.util.Set.of() : java.util.Set.copyOf(claimFacts);
     }
 
     /** 溢出转邮件（默认策略）。 */
@@ -36,4 +42,7 @@ public record RewardContext(String source, String sourceRef, String traceId, boo
     public static RewardContext discardOverflow(String source, String sourceRef, String traceId) {
         return new RewardContext(source, sourceRef, traceId, false);
     }
+
+    /** 新金币领取以traceId承载稳定业务key；外层HTTP requestId不参与资格唯一性。 */
+    public boolean durableGold() { return "free_gold".equals(source) || "paid_gold".equals(source); }
 }

@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 职责：通用奖励发放器的<b>端到端</b>集成测试 —— 验证它真的作用在玩家存档与背包上。
@@ -49,6 +50,12 @@ class RewardGrantIntegrationTest {
     @Autowired
     private InventoryRepository inventories;
 
+    @Autowired private com.ironoath.web.reward.PlayerWallet wallet;
+    @Autowired private com.ironoath.core.reward.RewardPorts.Mailbox mailbox;
+    @Autowired private com.ironoath.web.mail.MailStore mailStore;
+    @Autowired private com.ironoath.web.mail.MailAppService mails;
+    @Autowired private com.ironoath.common.time.TimeService time;
+
     @BeforeEach
     void resetStores() {
         ((InMemoryPlayerStore) players).clear();
@@ -67,6 +74,66 @@ class RewardGrantIntegrationTest {
 
     private long woodOf(String playerId) {
         return players.findByPlayerId(playerId).orElseThrow().resource("WOOD").current();
+    }
+
+    @Test
+    @DisplayName("新免费金币按业务key永久幂等，重试和配置额度变化不再增发")
+    void freeGoldUsesDurableBusinessKeyRatherThanRequestRetry() {
+        String playerId = newPlayer();
+        long before = players.findByPlayerId(playerId).orElseThrow().resource("GOLD").current();
+        RewardContext business = RewardContext.toMail("free_gold", "signin", "signin:20261013");
+        rewardService.grant(playerId, List.of(new RewardItem(RewardType.RESOURCE, "GOLD", 20)), business);
+        rewardService.grant(playerId, List.of(new RewardItem(RewardType.RESOURCE, "GOLD", 20)), business);
+        rewardService.grant(playerId, List.of(new RewardItem(RewardType.RESOURCE, "GOLD", 30)), business);
+        assertThat(players.findByPlayerId(playerId).orElseThrow().resource("GOLD").current())
+                .as("换外层请求号/重放/配置更新都不能重发同一天的钱")
+                .isEqualTo(before + 20);
+    }
+
+    @Test
+    @DisplayName("溢出邮件创建后崩溃、已被领取后再恢复，不重置邮件或重复增发")
+    void overflowRecoveryKeepsAlreadyRedeemedMailAndMoney() {
+        String playerId = newPlayer();
+        long now = time.serverNow();
+        var save = players.findByPlayerId(playerId).orElseThrow();
+        save.putResource("GOLD", new com.ironoath.core.player.PlayerResourceState(999990, 1000000, 0, 0, now));
+        players.save(save);
+        RewardContext ctx = RewardContext.toMail("free_gold", "signin", "signin:20261013");
+        wallet.grantGoldOnce(playerId, 20, ctx, now);
+        String mailId = mailbox.sendOverflow(playerId,
+                List.of(new RewardItem(RewardType.RESOURCE, "GOLD", 10)), ctx);
+        assertThat(wallet.pendingGoldClaims(playerId)).hasSize(1);
+        assertThat(mailStore.findById(playerId, mailId).orElseThrow().text())
+                .contains("签到与成长奖励").doesNotContain("free_gold", "signin", "20261013");
+        // 模拟已创建邮件、原收据尚未更新的崩溃窗口。正常花费后通过真实邮件服务领取。
+        assertThat(wallet.deduct(playerId, "GOLD", 20, time.serverNow())).isEqualTo(20);
+        var claimed = mails.claimAll(playerId,
+                new com.ironoath.web.dto.generated.MailClaimAllReq("req-" + UUID.randomUUID()));
+        assertThat(claimed.claimed()).isEqualTo(1);
+        assertThat(players.findByPlayerId(playerId).orElseThrow().resource("GOLD").current()).isEqualTo(999990);
+        assertThat(mailStore.findById(playerId, mailId).orElseThrow().claimedAt()).isNotNull();
+        rewardService.recoverGoldClaims(playerId);
+        rewardService.recoverGoldClaims(playerId);
+        assertThat(wallet.pendingGoldClaims(playerId)).isEmpty();
+        assertThat(mailStore.listOf(playerId, time.serverNow())).hasSize(1);
+        assertThat(mailStore.findById(playerId, mailId).orElseThrow().claimedAt()).isNotNull();
+        assertThat(players.findByPlayerId(playerId).orElseThrow().resource("GOLD").current()).isEqualTo(999990);
+        assertThat(mails.claimAll(playerId,
+                new com.ironoath.web.dto.generated.MailClaimAllReq("req-" + UUID.randomUUID())).claimed()).isZero();
+    }
+
+    @Test
+    @DisplayName("新幂等金币通道拒绝混合道具，不能入账一半再进入普通补偿")
+    void durableGoldRejectsMixedRewardsBeforeAnyCredit() {
+        String playerId = newPlayer();
+        long before = players.findByPlayerId(playerId).orElseThrow().resource("GOLD").current();
+        assertThatThrownBy(() -> rewardService.grant(playerId, List.of(
+                new RewardItem(RewardType.RESOURCE, "GOLD", 20),
+                new RewardItem(RewardType.ITEM, "item_speedup_build_1h", 1)),
+                RewardContext.toMail("free_gold", "signin", "signin:20261013")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(players.findByPlayerId(playerId).orElseThrow().resource("GOLD").current()).isEqualTo(before);
+        assertThat(players.findByPlayerId(playerId).orElseThrow().goldClaims()).isEmpty();
     }
 
     @Test

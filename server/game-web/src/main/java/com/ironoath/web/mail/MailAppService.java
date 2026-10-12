@@ -142,10 +142,15 @@ public class MailAppService {
                 Map<String, String> nameOfLine = new LinkedHashMap<>();
                 List<MailClaimFailure> failed = new ArrayList<>();
                 for (MailRecord mail : snapshot) {
-                    if (!mail.claimable(timeService.serverNow())) {
+                    long eligibleAt = timeService.serverNow();
+                    if (!mail.claimable(eligibleAt)) {
                         continue;
                     }
-                    if (!store.claim(playerId, mail.mailId(), timeService.serverNow())) {
+                    // 新金币溢出已带持久业务收据：先原子发金币再标邮件，崩溃后仍可重试。
+                    boolean durableGold = "OVERFLOW".equals(mail.kind()) && mail.rewards().size() == 1
+                            && "RESOURCE".equals(mail.rewards().get(0).type()) && "GOLD".equals(mail.rewards().get(0).id())
+                            && (mail.sourceRef().startsWith("free_gold:") || mail.sourceRef().startsWith("paid_gold:"));
+                    if (!durableGold && !store.claim(playerId, mail.mailId(), eligibleAt)) {
                         // 另一次点击已经把它领走了：这不算失败，也不该出现在 failed 里
                         LOG.info("邮件已被另一次领取占走 playerId={} mailId={}", playerId, mail.mailId());
                         continue;
@@ -155,8 +160,10 @@ public class MailAppService {
                             RewardItem item = new RewardItem(RewardType.valueOf(line.type()), line.id(),
                                     line.count());
                             var result = rewardService.grant(playerId, List.of(item),
-                                    RewardContext.toMail("mail", mail.mailId(),
-                                            mail.mailId() + ":" + req.requestId()));
+                                    durableGold ? RewardContext.toMail(
+                                            mail.sourceRef().startsWith("paid_gold:") ? "paid_gold" : "free_gold",
+                                            "overflow:" + mail.mailId(), "mail_gold:" + mail.mailId())
+                                            : RewardContext.toMail("mail", mail.mailId(), mail.mailId() + ":" + req.requestId()));
                             if (result.hasCompensation()) {
                                 throw new IllegalStateException("发放进入补偿队列 compensationId="
                                         + result.compensationId());
@@ -168,9 +175,11 @@ public class MailAppService {
                                 nameOfLine.putIfAbsent(key, names.nameOf(got));
                             }
                         }
+                        if (durableGold && !store.claim(playerId, mail.mailId(), eligibleAt))
+                            throw new IllegalStateException("邮件状态已变化，金币领取收据已保留");
                         claimed++;
                     } catch (RuntimeException e) {
-                        store.releaseClaim(playerId, mail.mailId());
+                        if (!durableGold) store.releaseClaim(playerId, mail.mailId());
                         String reason = reasonOf(e);
                         failed.add(new MailClaimFailure(mail.mailId(), reason));
                         LOG.warn("邮件附件未能发放，已退回未领 playerId={} mailId={} 附件={} 原因={}",

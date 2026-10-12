@@ -188,6 +188,7 @@ public final class MongoPlayerStore implements PlayerRepository {
                 // 引导进度同理：漏这一行的症状是「内存 dev 一切正常、生产每次重启把玩家弹回第 1 步」
                 .set("guide", doc.guide())
                 .set("harvestLearning", doc.harvestLearning())
+                .set("goldClaims", doc.goldClaims())
                 // 付费权益同理，而且这一位的代价是钱：漏写的症状是「买过月卡的号每次重启都变回没买过」，
                 // 而 insertIfAbsent 走的是整篇文档，所以新号看起来一切正常 —— 只有更新路径在丢
                 .set("paid", doc.paid())

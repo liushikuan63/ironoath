@@ -59,7 +59,10 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         for (RewardItem item : overflow) {
             lines.add(new RewardLine(item.type().name(), item.id(), item.count(), names.nameOf(item)));
         }
-        String mailId = "mail_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        String mailId = ctx.durableGold()
+                ? "mail_" + UUID.nameUUIDFromBytes((playerId + "\u0000" + ctx.source() + "\u0000" + ctx.traceId())
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString().replace("-", "")
+                : "mail_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         store.save(new MailRecord(mailId, playerId, "OVERFLOW", "奖励放不下，先存进邮箱",
                 bodyOf(lines, ctx, days), lines, ctx.source() + ':' + ctx.sourceRef(), now,
                 now + days * 86_400_000L, null, null));
@@ -110,8 +113,9 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         for (RewardLine line : lines) {
             text.append("· ").append(line.name()).append(" ×").append(line.count()).append('\n');
         }
-        text.append("来源：").append(ctx.source());
-        if (!ctx.sourceRef().isBlank()) {
+        text.append("来源：").append(ctx.durableGold()
+                ? ("paid_gold".equals(ctx.source()) ? "月卡金币奖励" : "签到与成长奖励") : ctx.source());
+        if (!ctx.durableGold() && !ctx.sourceRef().isBlank()) {
             text.append('（').append(ctx.sourceRef()).append('）');
         }
         return text.toString().stripTrailing();

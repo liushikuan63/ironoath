@@ -31,4 +31,7 @@ public interface RewardService {
      * @return 发放结果，含实际发放、溢出、补偿记录三部分
      */
     GrantResult grant(String playerId, List<RewardItem> rewards, RewardContext ctx);
+
+    /** 调用方持有玩家锁时，惰性恢复已接受的新金币奖励溢出；不重发已入余额部分。 */
+    default void recoverGoldClaims(String playerId) {}
 }
