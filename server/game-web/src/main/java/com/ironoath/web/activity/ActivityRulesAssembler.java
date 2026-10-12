@@ -33,6 +33,19 @@ import com.ironoath.core.reward.RewardType;
 @Component
 public class ActivityRulesAssembler {
 
+    /** 由同一行一次构造承诺，目标/奖励/积分不会来自三次不同配置读取。 */
+    public static ActivityInstance instance(ActivityCfg row, com.ironoath.core.activity.ActivityWindow.Span span) {
+        List<RewardItem> rewards = new ArrayList<>();
+        if (row.rewardGold() > 0) rewards.add(new RewardItem(RewardType.RESOURCE, GOLD_RESOURCE_ID, row.rewardGold()));
+        if (row.rewardItemId() != null && !row.rewardItemId().isBlank() && row.rewardItemCount() > 0) {
+            rewards.add(new RewardItem(RewardType.ITEM, row.rewardItemId(), row.rewardItemCount()));
+        }
+        if (rewards.isEmpty()) throw new IllegalStateException("活动不得没有奖励："+row.id());
+        return new ActivityInstance(new ActivityProgress.Def(row.id(), typeOf(row.activityType()),
+                conditionOf(row.conditionType()), row.conditionValue(), row.durationDays(), Boolean.TRUE.equals(row.retired())),
+                row.name(), rewards, row.battlePassPoints(), span.startAt(), span.endAt());
+    }
+
     private final ConfigRegistry configs;
 
     public ActivityRulesAssembler(ConfigRegistry configs) {

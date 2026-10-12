@@ -29,6 +29,13 @@ public class ActivityBeansConfig {
     @Bean
     @ConditionalOnProperty(name = "ironoath.storage",
             havingValue = GameProperties.STORAGE_MEMORY, matchIfMissing = true)
+    public com.ironoath.web.activity.ActivityRuleHistoryStore activityRuleHistoryStore() {
+        return new com.ironoath.web.store.memory.InMemoryActivityRuleHistoryStore();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "ironoath.storage",
+            havingValue = GameProperties.STORAGE_MEMORY, matchIfMissing = true)
     public ActivityProgressStore activityProgressStore() {
         LOG.warn("使用内存活动进度：重启后连续签到天数与活动进度全部归零 —— "
                 + "而它们无法从当前状态反推（日子过去了就补不回来）。"

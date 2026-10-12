@@ -110,4 +110,36 @@ class ActivityInstanceProtectionTest {
         activities.claim(uid, new ActivityClaimReq(HUNT, id()));
         assertThat(gold(uid)).isEqualTo(beforeGold+500);
     }
+    @Test void emptyInstanceAdoptsNewRulesOnlyAtOriginalDeadline() {
+        String uid=player(); var before=row(uid); edit();
+        now=before.windowEndAt()-1; doReturn(now).when(time).serverNow();
+        assertThat(row(uid).goal()).isEqualTo(50);
+        now++; doReturn(now).when(time).serverNow();
+        var next=row(uid);
+        assertThat(next.goal()).isEqualTo(80);
+        assertThat(next.progress()).isZero();
+        assertThat(next.windowEndAt()).isEqualTo(now+86_400_000L);
+        assertThat(next.name()).isEqualTo("未来剿匪令");
+    }
+    @Test void pendingExpiredInstanceCannotClaimAndLateEventCannotAdvanceNextWindow() {
+        String uid=player(); event(uid,49); var before=row(uid); edit();
+        long oldTime=now; now=before.windowEndAt(); doReturn(now).when(time).serverNow();
+        assertThat(row(uid).state()).isEqualTo(com.ironoath.web.dto.generated.ActivityState.EXPIRED);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> activities.claim(uid,new ActivityClaimReq(HUNT,id())))
+                .isInstanceOf(com.ironoath.common.BizException.class);
+        events.progress(uid,GoalType.KILL_MONSTER,"m1",1,oldTime);
+        assertThat(row(uid).progress()).isZero();
+        event(uid,1);
+        assertThat(row(uid).progress()).isEqualTo(1);
+        assertThat(row(uid).goal()).isEqualTo(80);
+    }
+    @Test void claimedInstanceDoesNotReopenAfterConfigChange() {
+        String uid=player(); event(uid,50); activities.claim(uid,new ActivityClaimReq(HUNT,id()));
+        long after=gold(uid); edit();
+        assertThat(row(uid).claimed()).isTrue();
+        assertThat(row(uid).goal()).isEqualTo(50);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> activities.claim(uid,new ActivityClaimReq(HUNT,id())))
+                .isInstanceOf(com.ironoath.common.BizException.class);
+        assertThat(gold(uid)).isEqualTo(after);
+    }
 }

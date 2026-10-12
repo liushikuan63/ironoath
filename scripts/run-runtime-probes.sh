@@ -137,7 +137,8 @@ while read -r f; do
       target_backend="$WAR_BACKEND"
     fi
   fi
-  port=$((8200 + i))
+  # 独立worktree可指定预览端口段，避免与另一聊天的批跑争用同一端口。
+  port=$((${RUNTIME_PROBES_PORT_BASE:-8200} + i))
   logdir="${RUNTIME_PROBES_LOGDIR:-/d/tmp}"
   mkdir -p "$logdir"
   log="$logdir/probe-$base.log"

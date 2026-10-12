@@ -110,6 +110,7 @@ public final class ActivityProgress {
     private final String playerId;
     private final Map<String, Def> defs = new LinkedHashMap<>();
     private final Map<String, Entry> entries = new LinkedHashMap<>();
+    private final Map<String, ActivityWindow.Span> fixedWindows = new LinkedHashMap<>();
     private final long serverOpenMs;
     private long eventCount;
 
@@ -162,6 +163,20 @@ public final class ActivityProgress {
         return progress;
     }
 
+    /** web 已选好规则及窗口快照；核心只累计/判定，不再用最新时长重新计算承诺。 */
+    public static ActivityProgress restoreInstances(String playerId, List<Def> defs, List<Entry> restored,
+                                                    long serverOpenMs, Map<String, ActivityWindow.Span> windows) {
+        if (playerId == null || playerId.isBlank()) throw new IllegalArgumentException("playerId 不得为空");
+        ActivityProgress progress = defs.isEmpty() ? new ActivityProgress(playerId, serverOpenMs)
+                : restore(playerId, defs, restored, serverOpenMs);
+        for (Def def : defs) {
+            var span = windows.get(def.activityId());
+            if (span == null) throw new IllegalArgumentException("活动实例缺少窗口");
+            progress.fixedWindows.put(def.activityId(), span);
+        }
+        return progress;
+    }
+
     /**
      * 窗口轮换：把每条活动推进到 {@code nowMs} 所在的窗口。
      *
@@ -204,6 +219,7 @@ public final class ActivityProgress {
     private int rebase(long nowMs, long playerFirstLoginMs, boolean keepPending) {
         int rolled = 0;
         for (Def def : defs.values()) {
+            if (fixedWindows.containsKey(def.activityId())) continue;
             if (def.retired()) continue;
             Entry entry = entries.get(def.activityId());
             if (!stale(def, entry, nowMs, playerFirstLoginMs)) {
@@ -252,6 +268,8 @@ public final class ActivityProgress {
         eventCount++;
         for (Def def : defs.values()) {
             if (def.retired()) continue;
+            ActivityWindow.Span fixed = fixedWindows.get(def.activityId());
+            if (fixed != null && (event.at() < fixed.startAt() || fixed.expired(event.at()))) continue;
             if (def.condition().goalType() != event.goalType()) {
                 continue;
             }
@@ -334,6 +352,9 @@ public final class ActivityProgress {
 
     /** 这份进度是否还属于当前窗口。 */
     private boolean stale(Def def, Entry entry, long nowMs, long playerFirstLoginMs) {
+        ActivityWindow.Span fixed = fixedWindows.get(def.activityId());
+        if (fixed != null) return nowMs < fixed.startAt() || fixed.expired(nowMs)
+                || entry.windowStart() != fixed.startAt();
         if (def.retired()) return windowOf(def, nowMs, playerFirstLoginMs).expired(nowMs);
         return entry.windowStart() != windowOf(def, nowMs, playerFirstLoginMs).startAt();
     }
@@ -391,6 +412,7 @@ public final class ActivityProgress {
     }
 
     private ActivityWindow.Span windowOf(Def def, long nowMs, long playerFirstLoginMs) {
+        if (fixedWindows.containsKey(def.activityId())) return fixedWindows.get(def.activityId());
         if (def.retired()) {
             long start = entries.get(def.activityId()).windowStart();
             return new ActivityWindow.Span(start, start + def.durationDays() * 86_400_000L);

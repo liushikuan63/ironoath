@@ -7369,3 +7369,6 @@ TEST_EXIT=0
 
 
 | #1214 活动开放实例热更五项有效首红与真实新聊天接续 | 本笔（本批统一推） | 当前聊天只读inspect成功压缩0；主树与独立worktree真实Git复核；Maven1，五项5跑5失败0错误0跳过；首次编译失败和初版业务异常均保留且不冒充有效首红 | D:/tmp/ironoath-activity-evidence-20261013/protection-red-assertions.log；rotation-user-confirmed-20261013.md；ActivityInstanceProtectionTest | 活动快照及Mongo兼容/全量/真实流程尚未修复验证；2400排期未实施；主树PvE属其他线程，本分支未合回未推，原9490/IDE/UID及已收采集不动，其余成就首杀月卡主12和双向战争继续 |
+
+
+| G06-A1 活动实例规则奖励快照初验且生产守卫遗漏首红 | 本笔（本批统一推） | 首红5跑5失败0错0跳后最终定向56全过；47门0/client1282/server全量2375零失败错误跳过；Cocos原36包装0缺失0/337产物；13相关探针首轮全0；真实Mongo HTTP25项与引擎点击3次/pageerror0，两图已实看，钱包旧500/战令旧50，重领拒绝；新增端口守卫5测1失败，故本笔未宣布最终完成 | D:/tmp/ironoath-activity-evidence-20261013/snapshot-initial-validation.actual.json、protection-red-assertions.log、protection-final-focused-package.log、history-guard-red.log、check-first.log、build-first.log、webmobile-first.log、probes-exitcodes.actual.txt、http-acceptance.actual.json及两PNG；JAR462fcc038240d76fe8694ef4c6ede3aed6c3e37ae1dde8a0f1e47e2bc9eb9d5b | 下一补Mongo守卫与BeanAssembly清单并验最终候选；旧混合活动仍沿先标已领后发奖取舍，未补崩溃间隙outbox，未来新金币活动须稳定收据；当前六项金币未改，2400目标次数等产品细化待答，尚未激活。主树PvE34ecc36a已提交且探索由原线程继续，本分支未合回未推；原号原生/首杀/月卡/主12/战争仍未完 |
