@@ -17,6 +17,7 @@ import type { TechCancelResp, TechSpeedUpResp } from '../net/generated/TechProto
 import type { ResearchSpeedupChoice } from '../game/session/Choices'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { applySystemUiFont } from './UiFont'
+import { clampPage, pageCount, pageNotice, pageWindow } from '../game/ui/PanelPaging'
 
 const { ccclass } = _decorator
 
@@ -34,21 +35,21 @@ const COLOR_GOOD = new Color(120, 176, 96, 255)
 
 const CARD_WIDTH = 560
 const CARD_HEIGHT = 600
-/**
- * 行高按"11 项全部画得下"定的（实测：38 会挤掉最后一项，而这一页**没有滚动**，
- * 挤掉就等于那一项玩家永远够不到）。表里现在 11 行，再加行就得配翻页 —— 到那时改这里并让探针跟着改。
- */
+/** 两行正文的高度；完整科技树通过分页可达，不按当前配置行数挤小字体。 */
 const ROW_HEIGHT = 34
 const GROUP_HEIGHT = 20
 const PADDING = 16
-/** 底部留给关闭按钮的高度：行画到这儿就停，剩下的如实报"还有几项"（不硬塞、不静默截断）。 */
-const BOTTOM_RESERVED = 56
+/** 页码说明与关闭/翻页按钮各占一行，正文不能覆盖它们。 */
+const BOTTOM_RESERVED = 90
+const NAV_RESERVED = 68
 
 @ccclass('TechPanelView')
 export class TechPanelView extends Component {
 
   private readonly rows: Node[] = []
   private viewData: TechViewData | null = null
+  private page = 0
+  private cardHeight = CARD_HEIGHT
   /** 玩家点了某一行的「研究」。发不发、能不能发由外层按服务端那份 `canResearch` 判 */
   onResearch: ((techId: string) => void) | null = null
   /** 玩家点了队列那一行的「取消研究」。返还多少由服务端算，本场景只把回执念出来 */
@@ -101,15 +102,19 @@ export class TechPanelView extends Component {
 
   hide(): void {
     this.receipt = null
+    this.page = 0
     this.node.active = false
   }
 
   private redraw(): void {
+    // 卡片按实际可视高布局，整体上移半个导航保留区，使底部动作始终在导航之上。
+    this.cardHeight = Math.min(CARD_HEIGHT, view.getVisibleSize().height - PADDING * 2 - NAV_RESERVED)
+    this.node.setPosition(new Vec3(0, NAV_RESERVED / 2, 0))
     this.clearRows()
     this.drawScrim()
     this.drawCard()
 
-    let y = CARD_HEIGHT / 2 - PADDING - 10
+    let y = this.cardHeight / 2 - PADDING - 10
     y = this.drawTitle(y)
     y = this.drawQueue(y)
     y = this.drawRows(y)
@@ -124,7 +129,7 @@ export class TechPanelView extends Component {
     node.addComponent(UITransform)
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_SCRIM
-    graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
+    graphics.rect(-size.width / 2, -size.height / 2 - NAV_RESERVED / 2, size.width, size.height)
     graphics.fill()
     this.rows.push(node)
   }
@@ -135,7 +140,7 @@ export class TechPanelView extends Component {
     node.addComponent(UITransform)
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_BACKGROUND
-    graphics.rect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT)
+    graphics.rect(-CARD_WIDTH / 2, -this.cardHeight / 2, CARD_WIDTH, this.cardHeight)
     graphics.fill()
     this.rows.push(node)
   }
@@ -200,7 +205,7 @@ export class TechPanelView extends Component {
   /**
    * 科技行。按学派的**顺序变化**插一条分组标题（不重排行 —— 顺序是服务端给的）。
    *
-   * 放不下的行不画，但**如实说还有几项**：静默截断会让玩家以为科技树只有这么长。
+   * 分页容量按每项最多一条学派标题计算，跨页也保留分组语义，不丢弃后面的科技。
    */
   private drawRows(startY: number): number {
     const view = this.viewData
@@ -208,11 +213,15 @@ export class TechPanelView extends Component {
       this.label(view?.noticeText ?? '正在载入…', COLOR_HINT, 18, 0, startY - 12, 'center')
       return startY - 30
     }
-    const floor = -CARD_HEIGHT / 2 + BOTTOM_RESERVED
+    const floor = -this.cardHeight / 2 + BOTTOM_RESERVED
+    const perPage = Math.max(1, Math.floor((startY - floor) / (ROW_HEIGHT + GROUP_HEIGHT)))
+    this.page = clampPage(this.page, view.rows.length, perPage)
+    const pages = pageCount(view.rows.length, perPage)
+    const window = pageWindow(view.rows.length, this.page, perPage)
     let y = startY
     let school = ''
     let drawn = 0
-    for (const row of view.rows) {
+    for (const row of view.rows.slice(window.start, window.end)) {
       const needsGroup = row.schoolText !== school
       const height = ROW_HEIGHT + (needsGroup ? GROUP_HEIGHT : 0)
       if (y - height < floor) {
@@ -227,11 +236,9 @@ export class TechPanelView extends Component {
       y -= ROW_HEIGHT
       drawn += 1
     }
-    const hidden = view.rows.length - drawn
-    if (hidden > 0) {
-      this.label(`还有 ${hidden} 项未显示（面板放不下，先研究前面的）`,
-        COLOR_TEXT_DIM, 15, 0, floor + 14, 'center')
-    }
+    this.label(pageNotice(this.page, pages), COLOR_TEXT_DIM, 15, 0, floor - 22, 'center')
+    if (this.page > 0) this.drawPageButton('TechPrevPageButton', '上一页', -188, -1)
+    if (this.page < pages - 1) this.drawPageButton('TechNextPageButton', '下一页', 188, 1)
     if (view.noticeText !== null && drawn > 0) {
       this.label(view.noticeText, COLOR_HINT, 15, -CARD_WIDTH / 2 + PADDING, floor + 14, 'left')
     }
@@ -288,7 +295,7 @@ export class TechPanelView extends Component {
   }
 
   private drawClose(): void {
-    const bottom = -CARD_HEIGHT / 2 + 28
+    const bottom = -this.cardHeight / 2 + 28
     const node = new Node('close')
     this.node.addChild(node)
     const transform = node.addComponent(UITransform)
@@ -301,6 +308,21 @@ export class TechPanelView extends Component {
     node.on('touch-start', () => this.hide())
     this.rows.push(node)
     this.label('关闭', COLOR_COPPER_GOLD, 18, 0, bottom, 'center')
+  }
+
+  private drawPageButton(name: string, text: string, x: number, delta: number): void {
+    const y = -this.cardHeight / 2 + 28
+    const node = new Node(name)
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(120, 36)
+    node.setPosition(new Vec3(x, y, 0))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_BUTTON
+    graphics.rect(-60, -18, 120, 36)
+    graphics.fill()
+    node.on('touch-start', () => { this.page += delta; this.redraw() })
+    this.rows.push(node)
+    this.label(text, COLOR_COPPER_GOLD, 18, x, y, 'center')
   }
 
   /** 造一个左右对齐靠得住的 Label：**锚点先按对齐方式定**，再摆位置。 */

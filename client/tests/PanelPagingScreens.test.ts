@@ -53,6 +53,7 @@ const PAGED_VIEWS = [
   'ShopPanelView',
   'AvatarFramePanelView',
   'BagPanelView',
+  'TechPanelView',
 ]
 
 /**

@@ -91,7 +91,9 @@ const LABEL_SNAPSHOT = `(() => {
   }
   walk(node, 0)
   const transform = node.getComponent('cc.UITransform')
-  return { active: node.active, labels: out, ys, height: transform ? transform.contentSize.height : -1 }
+  return { active: node.active, labels: out, ys, height: transform ? transform.contentSize.height : -1,
+    rows: node.children.filter(n => n.name.startsWith('tech-')).map(n => n.name.slice(5)),
+    hasNext: node.children.some(n => n.activeInHierarchy && n.name === 'TechNextPageButton') }
 })()`
 
 const has = (labels, text) => labels.some((l) => l.includes(text))
@@ -114,7 +116,7 @@ async function openTechPanel(page) {
 
 const deviceId = `tech-runtime-${Date.now()}`
 const browser = await chromium.launch({ headless: true })
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+const context = await browser.newContext({ viewport: { width: 1280, height: 592 } })
 await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
 }, deviceId)
@@ -186,14 +188,55 @@ if (first === undefined) {
 const outside = snap.ys.filter((y) => y > snap.height / 2 + 1 || y < -snap.height / 2 - 1)
 check('每一行文字都落在页面高度之内', outside.length, 0)
 
-// 行数必须与服务端一致（这一页没有滚动：少画一行 = 那一项玩家永远够不到）
-const drawnRows = snap.labels.filter((l) => l.includes(' / ') && l.endsWith('级')).length
-check('每一行都画出来了（行数与服务端一致）', drawnRows, mine.techs.length)
+// 每页通过正常浏览器指针翻页，逐页核对世界矩形；所有服务端行必须可达。
+async function clickVisibleControl(name) {
+  // 此探针沿用隔离新号的引导隐藏夹具；每次刷新后重核，避免引导重新盖住科技文字。
+  await hideGuideOverlay(page)
+  const hit = await page.evaluate((name) => {
+    const c = window.cc, game = c.director.getScene().getChildByName('Canvas').getChildByName('Game')
+    const n = game.getChildByName('techPanel').getChildByName(name), u = n?.getComponent('cc.UITransform')
+    if (!n?.activeInHierarchy || !u || !n.hasEventListener('touch-start')) return null
+    const world = u.convertToWorldSpaceAR(new c.Vec3()), box = u.getBoundingBoxToWorld(), size = c.view.getVisibleSize()
+    if (box.x < 0 || box.y < 0 || box.x + box.width > size.width || box.y + box.height > size.height) return null
+    const rect = document.querySelector('canvas').getBoundingClientRect()
+    return { x: rect.left + world.x / size.width * rect.width, y: rect.top + (1 - world.y / size.height) * rect.height }
+  }, name)
+  checkTrue(`${name}实际按钮矩形在可视区内`, hit !== null)
+  if (!hit) return false
+  await page.mouse.click(hit.x, hit.y)
+  // Cocos destroy在帧尾清理：等待真实绘制完成，避免读取旧页待销毁节点和新页的混合集合。
+  await page.evaluate(() => new Promise(resolve => {
+    const c = window.cc, director = c.director, event = c.Director.EVENT_AFTER_DRAW
+    let draws = 0
+    const listener = () => { if (++draws >= 2) { director.off(event, listener); resolve() } }
+    director.on(event, listener)
+  }))
+  return true
+}
+const reached = new Set(snap.rows)
+let current = snap
+for (let index = 0; current.hasNext && index < mine.techs.length; index++) {
+  const beforeRows = current.rows.join(',')
+  if (!await clickVisibleControl('TechNextPageButton')) break
+  await page.waitForFunction((before) => {
+    const n = window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('techPanel')
+    return n.children.filter(x => x.name.startsWith('tech-')).map(x => x.name.slice(5)).join(',') !== before
+  }, beforeRows)
+  current = await page.evaluate(LABEL_SNAPSHOT)
+  for (const id of current.rows) reached.add(id)
+  check('翻页后文字仍在可视高内', current.ys.filter(y => Math.abs(y) > current.height / 2 + 1).length, 0)
+}
+check('完整科技树通过分页可达（无缺项或额外项）', [...reached].sort().join(','), mine.techs.map(t => t.techId).sort().join(','))
 check('没有"未显示"这类截断提示', has(snap.labels, '未显示'), false)
 
 check('页面零错误', errors.join(' | ') || '无', '无')
+await hideGuideOverlay(page)
 await page.screenshot({ path: path.join(OUT, 'tech-panel.png') })
 console.log(`  截图：${path.join(OUT, 'tech-panel.png')}`)
+if (await clickVisibleControl('close')) {
+  await page.waitForFunction(() => !window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('techPanel').active)
+  check('正常点击关闭后科技页隐藏', (await page.evaluate(LABEL_SNAPSHOT)).active, false)
+}
 
 await browser.close()
 await preview.close?.()
