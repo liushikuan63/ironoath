@@ -7284,3 +7284,5 @@ TEST_EXIT=0
 | #1172 F36地图重进最新兵力真实战损回归通过 | 本笔（本批统一推） | F36新入口兵力修复原生闭环通过：启动193、在途93、回城189、重进刷新189、正常编成100/189，确认后89，全部官方接口与图片一致；后端3208/普通1倍/同UID未动。 | D:/tmp/ironoath-wechat-20261010/native-world-reentry-army-fresh-visible-v36-r18.actual.json；driver-0215实际PNG已查看；f36-world-reentry-army-189-network.receipt.json | 第三场资源战斗正在普通行军，主城6/学院/08未完成；同页不重进即时回城刷新未验，原生治疗/Guide4遮罩/性能及经济价差仍待，本笔未推。 |
 
 | #1173 低阶三场PvE普通资源循环与战损现读 | 本笔（本批统一推） | 三个独立新战报won true/行军回程空/真实正常GUI编成与发送及资源读回通过，当前石料3667已够主城6/学院/研究；G01只补单号低阶可达事实，不外推30/90/180天或不受地图目标限制的日产。 | docs/免费金币经济基线_G01.md实测补充；D:/tmp/ironoath-wechat-20261010/native-pve-resource-progression-first-failure-v35-r18.actual.json与native-pve-resource-progression-recovery-v36-r18.actual.json | 实际战报页面图片尚待核，不把服务端胜利字段当胜利页面已验；主城6/学院/08 actor正在自然进度，长期模型/新奖励数值/刷新周期/补兵净成本仍待，未推。 |
+
+| #1174 主城自然升6与学院滚动选择器首红保留 | 本笔（本批统一推） | 主城6权威读回通过，学院未提交/资源足够/正常滚动后实际学院中文行已目视确认，原拒绝记录保留；不能重跑旧actor再升一次主城。 | D:/tmp/ironoath-wechat-20261010/native-main6-academy-scroll-first-failure-v36-r18.actual.json；driver-0374拒绝/0387真实可见学院PNG | 学院1/屯田令/08领奖09可见尚待，按当前真实滚动位置接续；战报页图片与性能/经济裁决仍待，未推。 |
