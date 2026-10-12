@@ -321,7 +321,10 @@ public final class ArmyState {
         if (applied <= 0L) {
             return 0L;
         }
-        queue.put(unitId, task.withFinishAt(task.finishAt() - applied * 1000L));
+        // 展示剩余秒数向下取整；足量道具要覆盖真实毫秒尾数，不能仅减掉展示的整秒。
+        // 等于展示秒数但尚不足量时仍保留尾数，避免把正常部分加速当成已完成。
+        long finishAt = reduceSeconds > remainingSeconds ? now : task.finishAt() - applied * 1000L;
+        queue.put(unitId, task.withFinishAt(finishAt));
         return applied;
     }
 
@@ -457,7 +460,7 @@ public final class ArmyState {
         if (applied <= 0L) {
             return 0L;
         }
-        treatFinishAt = treatFinishAt - applied * 1000L;
+        treatFinishAt = reduceSeconds > remaining ? now : treatFinishAt - applied * 1000L;
         return applied;
     }
 

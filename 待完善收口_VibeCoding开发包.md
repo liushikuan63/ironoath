@@ -7258,3 +7258,5 @@ TEST_EXIT=0
 | #1159 F34阶段统一批推90873878及两条GitHub工作流实绿 | 本地补记，下批推 | git push退出0/640a4183→90873878；ls-remote精确SHA一致；两run completed/success；本机本轮输入/三原生图与所有门禁实际读数在#1158 | D:/tmp/ironoath-wechat-20261010/f34-push-plan.actual.json；f34-push-and-ci.actual.json；f34-browser-65-plus-5-current.actual.json；native-f34-critical-images-final-audit.actual.json | 本条文档补记本地已提交未推，代码与#1158已在远端90873878；CI产物SKIPPED依旧不代替本机Cocos和原生证据。Guide4直接提速原生重跑/GAME堆600/实体机FPS与GC/124未测接口性能仍未验；免费金币G01-G07后续功能未实现 |
 
 | #1160 F34同号原生训练行加速直达通过 | 本笔（本批统一推） | 实际原生训练100及两次直达加速、同UID服务读回和中文选择弹窗通过；0278完成截图仍旧队列，不能算完成画面通过；本笔无源码或运行输入改变。 | D:/tmp/ironoath-wechat-20261010/native-training-direct-complete-v34-r18.actual.json；driver-0237及0278实际PNG已查看 | 旧Guide4遮罩未重验；外层hidden导致0278旧画面，实际armyResp剩151毫秒/training100，稍后HTTP才结算196；下一笔修加速毫秒尾数并补真实完成画面，其他原生性能与G01-G07仍未完成。 |
+
+| #1161 足量训练与治疗加速清除毫秒尾数 | 本笔（本批统一推） | 四条有效回归：旧码25跑/2失败/0错/0跳，足量训练与治疗立即收取失败；候选25/0/0/0，部分加速留151毫秒和重复收取无重复兵同时通过。 | D:/tmp/ironoath-wechat-20261010/army-speed-fraction-1161.red.log；army-speed-fraction-1161.green.log；training-direct-army-view-diagnostic.receipt.json | 仅定向JUnit已绿；完整check/test/build和真启动探针未跑，候选未加载原9490；原生完成画面等待用户恢复原窗口可见，旧Guide4遮罩及真机性能仍未验。 |

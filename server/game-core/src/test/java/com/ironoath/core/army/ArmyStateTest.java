@@ -155,6 +155,33 @@ class ArmyStateTest {
     }
 
     @Test
+    @DisplayName("足量训练加速在非整秒时刻立即可结算，不留下不足一秒的尾数")
+    void sufficientTrainingSpeedUpClearsFractionalSecond() {
+        ArmyState army = army();
+        army.train("unit_infantry_t1", 10L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        long clickedAt = NOW + 849L;
+
+        assertThat(army.speedUp("unit_infantry_t1", 3_600L, clickedAt)).isEqualTo(599L);
+        assertThat(army.collectFinished(clickedAt)).containsExactly("unit_infantry_t1");
+        assertThat(army.countOf("unit_infantry_t1")).isEqualTo(10L);
+        assertThat(army.usedSlots()).isZero();
+        assertThat(army.collectFinished(clickedAt)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("不足量训练加速保留精确尾数，不能因为显示零秒提前完成")
+    void partialTrainingSpeedUpPreservesFractionalSecond() {
+        ArmyState army = army();
+        army.train("unit_infantry_t1", 10L, 60L, 0L, SLOTS, 10_000L, BATCH_MAX, NOW);
+        long clickedAt = NOW + 849L;
+
+        assertThat(army.speedUp("unit_infantry_t1", 599L, clickedAt)).isEqualTo(599L);
+        assertThat(army.queue().get("unit_infantry_t1").finishAt()).isEqualTo(clickedAt + 151L);
+        assertThat(army.collectFinished(clickedAt)).isEmpty();
+        assertThat(army.collectFinished(clickedAt + 151L)).containsExactly("unit_infantry_t1");
+    }
+
+    @Test
     @DisplayName("取消训练把任务交回给调用方；已到点的批次直接入账而不是被取消掉")
     void cancelReturnsTaskAndHarvestsIfAlreadyDue() {
         ArmyState army = army();
@@ -295,6 +322,35 @@ class ArmyStateTest {
         assertThat(second.treatFinishAt()).isNull();
         assertThatThrownBy(() -> second.cancelTreatment(NOW))
                 .isInstanceOf(BizException.class).hasMessageContaining("无法取消");
+    }
+
+    @Test
+    @DisplayName("足量治疗加速在非整秒时刻立即归队，不留下毫秒尾数")
+    void sufficientTreatmentSpeedUpClearsFractionalSecond() {
+        ArmyState army = army();
+        army.admitWounded(Map.of("unit_infantry_t1", 30L), 100L);
+        army.startTreatment(180L, Map.of("IRON", 900L), NOW);
+        long clickedAt = NOW + 849L;
+
+        assertThat(army.speedUpTreatment(3_600L, clickedAt)).isEqualTo(179L);
+        assertThat(army.collectTreated(clickedAt)).containsEntry("unit_infantry_t1", 30L);
+        assertThat(army.totalWounded()).isZero();
+        assertThat(army.totalTroops()).isEqualTo(30L);
+        assertThat(army.collectTreated(clickedAt)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("不足量治疗加速不能提前归队，剩余毫秒仍按自然时间完成")
+    void partialTreatmentSpeedUpPreservesFractionalSecond() {
+        ArmyState army = army();
+        army.admitWounded(Map.of("unit_infantry_t1", 30L), 100L);
+        army.startTreatment(180L, Map.of("IRON", 900L), NOW);
+        long clickedAt = NOW + 849L;
+
+        assertThat(army.speedUpTreatment(179L, clickedAt)).isEqualTo(179L);
+        assertThat(army.treatFinishAt()).isEqualTo(clickedAt + 151L);
+        assertThat(army.collectTreated(clickedAt)).isEmpty();
+        assertThat(army.collectTreated(clickedAt + 151L)).containsEntry("unit_infantry_t1", 30L);
     }
 
     // ---------- 兵力增减的边界 ----------
