@@ -7286,3 +7286,9 @@ TEST_EXIT=0
 | #1173 低阶三场PvE普通资源循环与战损现读 | 本笔（本批统一推） | 三个独立新战报won true/行军回程空/真实正常GUI编成与发送及资源读回通过，当前石料3667已够主城6/学院/研究；G01只补单号低阶可达事实，不外推30/90/180天或不受地图目标限制的日产。 | docs/免费金币经济基线_G01.md实测补充；D:/tmp/ironoath-wechat-20261010/native-pve-resource-progression-first-failure-v35-r18.actual.json与native-pve-resource-progression-recovery-v36-r18.actual.json | 实际战报页面图片尚待核，不把服务端胜利字段当胜利页面已验；主城6/学院/08 actor正在自然进度，长期模型/新奖励数值/刷新周期/补兵净成本仍待，未推。 |
 
 | #1174 主城自然升6与学院滚动选择器首红保留 | 本笔（本批统一推） | 主城6权威读回通过，学院未提交/资源足够/正常滚动后实际学院中文行已目视确认，原拒绝记录保留；不能重跑旧actor再升一次主城。 | D:/tmp/ironoath-wechat-20261010/native-main6-academy-scroll-first-failure-v36-r18.actual.json；driver-0374拒绝/0387真实可见学院PNG | 学院1/屯田令/08领奖09可见尚待，按当前真实滚动位置接续；战报页图片与性能/经济裁决仍待，未推。 |
+
+### 2026-10-12 · #1175 压缩停止与计数守卫
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #1175 中途compact网络失败；写死未知/6改真实计数与动作前阈值守卫 | 本笔（本批统一推） | 旧聊天9次compact/最后命令0；完整备份归档；计数7/0、动作守卫4/0、driver/record语法0；0/4允许、5/9拒绝，原输入/业务源码不变 | D:/tmp/ironoath-chat-stop-20261012/diagnosis.json；counter-validation.json；native-action-guard-validation.json；archive-receipt.json；continuation.md；新聊天结果与进展仅实际产生后有效 | 网络发送错误底层根因未证；初次SQLite占用首红保留并已修；新聊天创建/真实接续尚待，不能仅交接报通过；当前学院未提交、屯田令/08领取/09画面与阶段完整门禁/批推未做；用户明确留当前聊天的例外按最新要求记录；本格未推 |
