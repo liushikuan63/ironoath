@@ -79,10 +79,11 @@ class BotRuntimeTickTest {
     }
 
     @Test
-    @DisplayName("tick 真的推动世界：Bot 的主城升级被发起、资源真的被扣（走的是真人同一条写路径）")
+    @DisplayName("tick 真的推动世界：Bot 依性格发起建造或升级并扣资源（走真人同一条写路径）")
     void ticksActuallyLevelUpTheBotCity() {
         String botId = bot();
-        long woodBefore = resource(botId, "WOOD");
+        long resourcesBefore = List.of("WOOD", "STONE", "IRON", "GRAIN").stream()
+                .mapToLong(id -> resource(botId, id)).sum();
 
         long now = timeService.serverNow();
         Map<String, Long> last = Map.of();
@@ -97,17 +98,17 @@ class BotRuntimeTickTest {
         // 升级是「发起 → 到点收割」两段的（真人也一样）。本用例不推进真实时钟，所以能断言的是
         // 「这一轮真的在跑」：建筑进入 UPGRADING 且完成时刻在未来。把「等级已经涨了」写成断言，
         // 就是自证一个本档做不到的事（那要等真实时间或注入加速时钟）
-        var main = cities.findByPlayerId(botId).orElseThrow().findByConfigId("main_city");
+        var builtCity = cities.findByPlayerId(botId).orElseThrow();
+        var main = builtCity.findByConfigId("main_city");
         assertThat(main).as("主城必须还在（Bot 不许拆自己的城）").isNotNull();
-        assertThat(main.status())
-                .as("tick 之后主城应该在升级中，而不是原地不动")
-                .isEqualTo(com.ironoath.core.city.BuildingStatus.UPGRADING);
-        assertThat(main.upgradeFinishAt())
-                .as("完成时刻必须在未来 —— 到点收割才是等级涨的那一刻")
-                .isGreaterThan(timeService.serverNow());
-        assertThat(resource(botId, "WOOD"))
+        var started = builtCity.buildings().stream().filter(b ->
+                b.status() == com.ironoath.core.city.BuildingStatus.UPGRADING).toList();
+        assertThat(started).as("性格可选不同楼，但必须有真实建造队列").isNotEmpty();
+        assertThat(started).allSatisfy(b -> assertThat(b.upgradeFinishAt())
+                .as("完成时刻必须在未来，到点收割才涨级").isGreaterThan(timeService.serverNow()));
+        assertThat(List.of("WOOD", "STONE", "IRON", "GRAIN").stream().mapToLong(id -> resource(botId, id)).sum())
                 .as("资源必须真的被扣：Bot 免消耗就是 B11 §十 明写的特权捷径")
-                .isLessThan(woodBefore);
+                .isLessThan(resourcesBefore);
     }
 
     @Test

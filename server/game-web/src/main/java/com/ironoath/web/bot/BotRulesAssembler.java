@@ -123,6 +123,19 @@ public class BotRulesAssembler {
         return List.copyOf(out);
     }
 
+    /** B11: farming prefers resources, raiding prefers military; no new weights or growth bonuses. */
+    public com.ironoath.config.cfg.BuildingCfg.Type preferredBuildingType(String archetypeId) {
+        for (BotArchetypeCfg row : configs.all(BotArchetypeCfg.class)) {
+            if (!row.id().equals(archetypeId)) continue;
+            return switch (row.playStyle()) {
+                case FARMER -> com.ironoath.config.cfg.BuildingCfg.Type.RESOURCE;
+                case RAIDER -> com.ironoath.config.cfg.BuildingCfg.Type.MILITARY;
+                default -> null;
+            };
+        }
+        return null;
+    }
+
     /**
      * 作息规则（B11 §四「按真人曲线分布 tick」）。
      *

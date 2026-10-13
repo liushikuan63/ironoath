@@ -532,7 +532,8 @@ public class CityAppService {
     }
 
     /** 「现在能升哪一栋」的产物 —— 目标由领域层的同一份判定选出，不由调用方猜。 */
-    public record Upgradable(String configId, int targetLevel) {
+    public record Upgradable(String configId, int targetLevel, Integer gridX, Integer gridY) {
+        public Upgradable(String configId, int targetLevel) { this(configId, targetLevel, null, null); }
     }
 
     /**
@@ -572,6 +573,63 @@ public class CityAppService {
             }
             return new CityTickFacts(freeQueue, target);
         });
+    }
+
+    /** Bot target choice shares player placement/upgrade checks; probing never persists a new plot. */
+    public CityTickFacts botCityTickFacts(String playerId, long now, BuildingCfg.Type preferredType) {
+        return withSettledCity(playerId, ctx -> {
+            boolean freeQueue = ctx.city().usedQueues()
+                    < ctx.rules().availableQueues(isInNewbieProtect(ctx.player(), ctx.now()), ctx.city().extraQueues());
+            if (!freeQueue) return new CityTickFacts(false, null);
+            List<BuildingCfg> definitions = configs.all(BuildingCfg.class);
+            if (preferredType != null) {
+                for (BuildingCfg cfg : definitions) {
+                    if (cfg.type() != preferredType) continue;
+                    Upgradable target = developmentTarget(ctx, cfg);
+                    if (target != null) return new CityTickFacts(true, target);
+                }
+            }
+            // Neutral personalities keep the original placed-building order before new construction.
+            for (BuildingInstance instance : ctx.city().buildings()) {
+                BuildingCfg cfg = configs.get(BuildingCfg.class, instance.configId());
+                if (cfg.type() == preferredType) continue;
+                Upgradable target = developmentTarget(ctx, cfg);
+                if (target != null) return new CityTickFacts(true, target);
+            }
+            for (BuildingCfg cfg : definitions) {
+                if (cfg.type() == preferredType || ctx.city().findByConfigId(cfg.id()) != null) continue;
+                Upgradable target = developmentTarget(ctx, cfg);
+                if (target != null) return new CityTickFacts(true, target);
+            }
+            return new CityTickFacts(true, null);
+        });
+    }
+
+    private Upgradable developmentTarget(CitySnapshot ctx, BuildingCfg cfg) {
+        BuildingInstance existing = ctx.city().findByConfigId(cfg.id());
+        if (existing != null) {
+            UpgradeAttempt attempt = attemptOf(ctx.city(), existing, ctx.player(), ctx.rules(), ctx.now());
+            return attempt.check().passed() ? new Upgradable(cfg.id(), attempt.targetLevel()) : null;
+        }
+        for (int y = 0; y < ctx.rules().gridSize(); y++) {
+            for (int x = 0; x < ctx.rules().gridSize(); x++) {
+                if (!ctx.city().isGridFree(x, y)) continue;
+                CityState probe = CityState.fromSnapshot(ctx.city().snapshot());
+                BuildingInstance candidate;
+                try {
+                    candidate = probe.place("development_probe", cfg.id(), x, y, ctx.rules(),
+                            cfg.type() == BuildingCfg.Type.DEFENSE && "wall".equals(cfg.id()),
+                            cfg.type() == BuildingCfg.Type.CORE);
+                } catch (BizException e) {
+                    if (e.errorCode() != ErrorCode.CITY_GRID_INVALID) throw e;
+                    continue;
+                }
+                UpgradeAttempt attempt = attemptOf(probe, candidate, ctx.player(), ctx.rules(), ctx.now());
+                // Once a legal plot is found, queue/cost/level checks are identical at other coordinates.
+                return attempt.check().passed() ? new Upgradable(cfg.id(), attempt.targetLevel(), x, y) : null;
+            }
+        }
+        return null;
     }
 
     private boolean isInNewbieProtect(PlayerSave player, long now) {

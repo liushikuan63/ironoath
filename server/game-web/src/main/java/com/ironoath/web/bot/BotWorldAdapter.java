@@ -360,9 +360,9 @@ public class BotWorldAdapter implements BotScheduler.World {
             LOG.info("Bot {} 决定升级但已无目标（决策理由={}）", botId, decision.reason());
             return;
         }
-        // 已放置的建筑不需要坐标；首次建造要选格子，那是另一件事（类注释与 #91）
+        // 首次建造坐标已经用真人同一份领域规则验证；执行仍由真人服务重新校验并扣资源。
         String requestId = newRequestId(botId);
-        cities.upgrade(botId, new CityUpgradeReq(requestId, target.configId(), null, null));
+        cities.upgrade(botId, new CityUpgradeReq(requestId, target.configId(), target.gridX(), target.gridY()));
         upgraded.incrementAndGet();
         LOG.info("Bot {} 升级 {} → {} 级 幂等键={}", botId, target.configId(), target.targetLevel(), requestId);
     }
@@ -950,7 +950,9 @@ public class BotWorldAdapter implements BotScheduler.World {
     /** 一次读城建事实，失败退回"什么都没有" —— observe 不许抛（见类注释）。 */
     private CityAppService.CityTickFacts readCityQuietly(String botId, long now) {
         try {
-            return cities.cityTickFacts(botId, now);
+            BotProfile profile = bots.profileOf(botId);
+            return cities.botCityTickFacts(botId, now,
+                    profile == null ? null : assembler.preferredBuildingType(profile.archetypeId()));
         } catch (RuntimeException e) {
             failed.incrementAndGet();
             LOG.warn("读 Bot {} 的城建事实失败，本次按无可用目标处理：{}", botId, e.getMessage());
