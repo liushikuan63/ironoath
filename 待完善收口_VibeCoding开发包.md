@@ -7464,3 +7464,5 @@ TEST_EXIT=0
 | 核心Bot完整画像与持久游标 #1265 | 本次实现原子提交（24源码/配置测试及3台账，未推） | 47门/2632server/1321client全0；77重点；4JVM/AOF16；17FIRST；战争44全0 | tmp/core-bot-bilateral-20261014-ef81904d/final-persistence-summary.json | 原9490/UID/IDE未切、无provider CI/付款/部署；领取后硬崩溃不重放；回应水位/24h频控/B04溢出邮件继续 |
 
 | Bot行为与24h持续目标首红 #1266 | 本发现本地原子提交（未推） | 真实Mongo两上下文/真实规则热更3测3失败0错误跳过；首红有效 | tmp/bot-behavior-state-20261014-2c1101a7/state-red1.log；BotBehaviorRestartTest.java | 未实现未过恢复，输入为受击/计账夹具非三场真战争；在途额度、独立JVM及完整验证仍待后续 |
+
+| Bot行为与频控新实现/在途回归 #1267 | 本发现原子提交（未推） | 3首红修后；42重点0；在途1首红实际4仗→43重点全0；真实Mongo并发 | tmp/bot-behavior-state-20261014-2c1101a7/state-green2.log；arrival-quota-red1.log；state-green3.log | 并发多到达/独立JVM/完整验证/新批探针未做；过期来源删除不永久去重、战斗故障重放未承诺；原号未迁移 |
