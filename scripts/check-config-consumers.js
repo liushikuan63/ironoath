@@ -10,6 +10,66 @@
 const fs = require('fs')
 const path = require('path')
 
+// 只识别现有PayProductCfg价格指针：生产中同一接收对象类型的getter被赋给String变量，
+// 且该变量被longParam读取。只声明表、测试引用、只取名称或不同变量均不算消费。
+function indirectPaidPriceParams(files, rows) {
+  // 捕获的Java标识符只含字母数字下划线和$；$需要转义而非作为正则行尾。
+  const escape = name => name.replace(/\$/g, '\\$')
+  const used = files.some(file => {
+    if (file.test || typeof file.f !== 'string' || !file.f.endsWith('.java')) return false
+    // 空白保留位置；注释和Java字符串中的伪引用、花括号都不能参与作用域判定。
+    const src = file.src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,
+      match => ' '.repeat(match.length))
+    const scopes = [], stack = []
+    for (let i = 0; i < src.length; i++) {
+      if (src[i] === '{') stack.push(i)
+      if (src[i] === '}' && stack.length) {
+        const start = stack.pop()
+        const before = Math.max(src.lastIndexOf('{', start - 1), src.lastIndexOf('}', start - 1), src.lastIndexOf(';', start - 1)) + 1
+        scopes.push({start, end:i, header:src.slice(before, start)})
+      }
+    }
+    const assignments = src.matchAll(/\bString\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\.priceCentsParam\(\)\s*;/g)
+    for (const match of assignments) {
+      const [, variable, receiver] = match
+      const enclosing = scopes.filter(scope => scope.start < match.index && scope.end > match.index)
+        .sort((a,b) => (a.end-a.start)-(b.end-b.start))
+      const local = enclosing[0]
+      if (!local) continue
+      const declared = new RegExp('\\bPayProductCfg\\s+' + escape(receiver) + '(?![\\w$])')
+      const typed = enclosing.some(scope => declared.test(scope.header))
+        || declared.test(src.slice(local.start, match.index))
+      const after = src.slice(match.index + match[0].length, local.end)
+      const lookup = new RegExp('\\.longParam\\(\\s*' + escape(variable) + '\\s*\\)').test(after)
+      if (typed && lookup) return true
+    }
+    return false
+  })
+  return new Set(used ? rows.map(row => row.priceCentsParam).filter(id => typeof id === 'string' && id.length > 0) : [])
+}
+
+
+if (process.argv.includes('--self-test-price-pointers')) {
+  const assert = require('node:assert/strict')
+  const rows = [{priceCentsParam: 'PRICE_A'}, {priceCentsParam: 'PRICE_B'}]
+  const source = 'long price(PayProductCfg product) { String param = product.priceCentsParam(); return configs.longParam(param); }'
+  const hit = (src, test = false) => [...indirectPaidPriceParams([{f: 'Fixture.java', src, test}], rows)].sort()
+  assert.deepEqual(hit(source), ['PRICE_A', 'PRICE_B'])
+  assert.deepEqual(hit(source, true), [], 'test references cannot count as production')
+  assert.deepEqual(hit(source.replace('configs.longParam(param)', '0L')), [], 'getter alone cannot qualify')
+  assert.deepEqual(hit(source.replace('longParam(param)', 'longParam(other)')), [], 'different variable cannot qualify')
+  assert.deepEqual(hit(source.replace('PayProductCfg', 'OtherCfg')), [], 'another table cannot qualify')
+  assert.deepEqual(hit(source.replace('priceCentsParam()', 'name()')), [], 'another field cannot qualify')
+  assert.deepEqual([...indirectPaidPriceParams([{f: 'Fixture.java', src: source, test:false}], [{priceCentsParam:null}])], [])
+  assert.deepEqual(hit(source.replaceAll('param', 'param$').replaceAll('product', 'product$')), ['PRICE_A', 'PRICE_B'], 'Java dollar identifiers qualify')
+  assert.deepEqual(hit('class Foo { String getter(PayProductCfg product) { String param = product.priceCentsParam(); return param; } long other(String param) { return configs.longParam(param); } }'), [], 'getter and lookup in different methods cannot qualify')
+  assert.deepEqual(hit('String note = "' + source + '";'), [], 'text inside Java string literals cannot qualify')
+  assert.deepEqual([...indirectPaidPriceParams([{f:'Fixture.ts',src:source,test:false}],rows)], [], 'Java-looking text in another language cannot qualify')
+  assert.deepEqual([...indirectPaidPriceParams([{src:source,test:false}],rows)], [], 'missing source type cannot qualify')
+  console.log('[check-config-consumers] price-pointer self-test12 passed')
+  process.exit(0)
+}
+
 const CFG_DIR = 'server/game-config/src/main/java/com/ironoath/config/cfg'
 const CHECKLIST = '收口清单.md'
 
@@ -152,10 +212,6 @@ const UNREFERENCED = {
   BOT_MISTAKE_RATE_MAX: 'zero-ref: #501②（同上）',
   BOT_MARK_AFTER_DAYS: 'zero-ref: #501③（标识策略属未开工的那半：B11 开放问题 3 的建议值）',
   NATION_DIPLOMACY_RELATIONS: 'zero-ref: #501③（四种外交关系的枚举清单，B13 §5 定；消费方按关系名硬判，没有读这个清单的地方）',
-  PRODUCT_BATTLE_PASS_CENTS: 'zero-ref: #501③（战令商品未上货架，B24 裁决②已定价）',
-  PRODUCT_GROWTH_FUND_CENTS: 'zero-ref: #501③（成长基金未上货架）',
-  PRODUCT_FIRST_CHARGE_CENTS: 'zero-ref: #501③（首充档位未上货架）',
-  PRODUCT_GIFT_CENTS: 'zero-ref: #501③（礼包档价格未上货架）',
   GIFT_VALUE_MULTIPLIER: 'zero-ref: #501①（**换算期输入**：B19 §五① 的倍率只在算价时用，运行期读 product_reward 的逐行 rewardValue）',
   // 2026-09-30: #19 rally bonus wiring is DONE (PlayerCityBattleService.rallyBonus).
   //   Amplitude comes from the measured balance-sim --rally curve (A10).
@@ -203,11 +259,14 @@ for (const s of consumers) {
 
 const WHY_UNWIRED_MARK = '运行期无人读它'
 
+const paidPriceParams = indirectPaidPriceParams(consumers, JSON.parse(fs.readFileSync('contract/config/pay_product.json', 'utf8')).rows || [])
+
 let paramHits = 0
 const deadParams = []
 for (const row of GLOBAL_ROWS) {
   const re = new RegExp('\\b' + row.id + '\\b')
   if (consumers.some((s) => !s.test && re.test(s.src))) { paramHits++; continue }
+  if (paidPriceParams.has(row.id)) { paramHits++; continue }
   // 动态拼接：id 以某个「前缀常量」的字面量开头，且那个前缀**在生产源码里**被这么声明过
   const dynamic = [...dynamicPrefixes].some((prefix) => row.id.startsWith(prefix)
       && consumers.some((f) => !f.test && f.src.includes(prefix + '"')))

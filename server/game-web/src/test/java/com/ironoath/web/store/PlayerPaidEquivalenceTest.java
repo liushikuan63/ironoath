@@ -204,4 +204,27 @@ class PlayerPaidEquivalenceTest {
         assertThat(base.withCardExtended(NOW, DAY).cardExpireAt())
                 .as("月卡是唯一可以叠加的那一位").isEqualTo(NOW + DAY);
     }
+
+    @Test void independentCardPurchaseSnapshotsSurviveMemoryAndRealMongoUpdate() {
+        assertThat(db).as("real Mongo required for new field compatibility").isNotNull();
+        var terms=new com.ironoath.core.pay.MonthlyCardTerms("金币月卡",30,300,
+                List.of(new com.ironoath.core.reward.RewardItem(com.ironoath.core.reward.RewardType.RESOURCE,"GOLD",90)),false,0,false);
+        var purchase=new com.ironoath.core.pay.MonthlyCardPurchase("new-order","monthly_gold_card",terms,NOW,NOW+30*DAY,1,4);
+        var paid=fullPaid().withMonthlyPurchase(purchase);
+        for(PlayerRepository store:bothStores()) {
+            String uid="P-monthly-map-"+java.util.UUID.randomUUID();store.insertIfAbsent(saveWithPaid(uid,PlayerPaid.empty()));
+            var save=store.findByPlayerId(uid).orElseThrow();save.setPaid(paid);store.save(save);
+            assertThat(store.findByPlayerId(uid).orElseThrow().paid()).isEqualTo(paid);
+        }
+    }
+    @Test void actualOldMongoPaidDocumentMissingNewMapKeepsLegacyExpiryAndCursor() {
+        assertThat(db).isNotNull();String uid="P-old-monthly-map-"+java.util.UUID.randomUUID();
+        new MongoPlayerStore(db.template()).insertIfAbsent(saveWithPaid(uid,fullPaid()));
+        db.template().getCollection(PlayerDocument.COLLECTION).updateOne(new org.bson.Document("_id",uid),
+                new org.bson.Document("$unset",new org.bson.Document("paid.monthlyPurchases","")));
+        var read=new MongoPlayerStore(db.template()).findByPlayerId(uid).orElseThrow().paid();
+        assertThat(read.monthlyPurchases()).isEmpty();assertThat(read.cardExpireAt()).isEqualTo(fullPaid().cardExpireAt());
+        assertThat(read.cardClaimedThroughAt()).isEqualTo(fullPaid().cardClaimedThroughAt());
+    }
+
 }

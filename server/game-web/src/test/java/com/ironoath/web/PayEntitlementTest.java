@@ -92,7 +92,7 @@ class PayEntitlementTest {
     @Autowired private PlayerLock playerLock;
     @Autowired private IdempotencyStore idempotency;
     @Autowired private Environment environment;
-    @Autowired private PlayerRepository players;
+    @org.springframework.boot.test.mock.mockito.SpyBean private PlayerRepository players;
     @Autowired private RewardService rewardService;
     @Autowired private PaidProducts catalog;
     @Autowired private CityAppService city;
@@ -291,7 +291,7 @@ class PayEntitlementTest {
                 .extracting(e -> ((BizException) e).errorCode())
                 .isEqualTo(ErrorCode.PARAM_INVALID);
         assertThatThrownBy(() -> pay.createOrder(playerId,
-                new CreateOrderReq(newRequestId(), monthlyId(), 1, "hero_sr_01")))
+                new CreateOrderReq(newRequestId(), "monthly_gold_card", 1, "hero_sr_01")))
                 .as("月卡没有可挑的武将，带了 heroChoice 说明客户端拿错了商品")
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).errorCode())
@@ -401,18 +401,17 @@ class PayEntitlementTest {
         };
         PayAppService service = serviceWith(clock, flaky);
 
-        CreateOrderResp created = service.createOrder(playerId,
-                new CreateOrderReq(newRequestId(), monthlyId(), 1, null));
-        service.callback(new PayCallbackReq(created.orderId(), "txn-1", "sign-1", true));
+        String legacyOrderId = legacyOrder(playerId, clock.get());
+        service.callback(new PayCallbackReq(legacyOrderId, "txn-1", "sign-1", true));
 
-        assertThat(orders.get(created.orderId()).status())
+        assertThat(orders.get(legacyOrderId).status())
                 .as("钱收了而货没发出去 ⇒ 必须留在补单队列里").isEqualTo(PayOrder.Status.PAID_UNFULFILLED);
         assertThat(player(playerId).paid().cardExpireAt())
                 .as("失败的那一次不该留下任何权益").isNull();
 
-        service.retry(playerId, new PayRetryReq(newRequestId(), created.orderId()));
+        service.retry(playerId, new PayRetryReq(newRequestId(), legacyOrderId));
 
-        assertThat(orders.get(created.orderId()).status()).isEqualTo(PayOrder.Status.SUCCESS);
+        assertThat(orders.get(legacyOrderId).status()).isEqualTo(PayOrder.Status.SUCCESS);
         assertThat(deliverCalls.get()).as("实现被调了两次，货只有一份").isEqualTo(2);
         Long expireAt = player(playerId).paid().cardExpireAt();
         assertThat(expireAt)
@@ -499,8 +498,9 @@ class PayEntitlementTest {
         return "req-" + UUID.randomUUID();
     }
 
-    /** 走 HTTP 下单（连控制器与请求体一起验），返回订单号。 */
+    /** 新售商品走HTTP下单；旧monthly_card仅构造退售前存量订单，再走真实HTTP回调/补单。 */
     private String order(String playerId, String productId, String heroChoice) throws Exception {
+        if (productId.equals(monthlyId())) return legacyOrder(playerId, System.currentTimeMillis());
         JsonNode data = okData(perform(post("/pay/order")
                 .header(PLAYER_HEADER, playerId)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -587,4 +587,85 @@ class PayEntitlementTest {
         // MockMvc 默认按 ISO-8859-1 解码响应体，中文提示会变乱码
         return JsonUtils.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8));
     }
+
+    @Test void legacyMonthlySkuIsReadableButNewOrdersAreDenied() {
+        String uid=newPlayer();assertThat(catalog.require("monthly_card")).isNotNull();
+        assertThat(catalog.onSale().stream().map(PaidProducts.PriceEntry::productId)).doesNotContain("monthly_card");
+        assertThatThrownBy(()->pay.createOrder(uid,new com.ironoath.web.dto.generated.CreateOrderReq(newRequestId(),"monthly_card",1,null)))
+                .isInstanceOf(BizException.class).extracting(e->((BizException)e).errorCode()).isEqualTo(ErrorCode.PAY_PRODUCT_OFFLINE);
+    }
+    @Test void splitCardsUseFakePaymentAndGoldUpfrontIsSeparateFromMaterialRights() throws Exception {
+        String uid=newPlayer();long before=gold(uid);
+        String goldOrder=order(uid,"monthly_gold_card",null);callback(goldOrder);callback(goldOrder);
+        assertThat(gold(uid)).isEqualTo(before+300);
+        var goldRights=catalog.entitlements(player(uid).paid(),System.currentTimeMillis());
+        assertThat(goldRights.adFree()).isFalse();assertThat(goldRights.bonusQueues()).isZero();
+        String materialOrder=order(uid,"monthly_material_card",null);callback(materialOrder);callback(materialOrder);
+        assertThat(gold(uid)).isEqualTo(before+300);
+        var combined=catalog.entitlements(player(uid).paid(),System.currentTimeMillis());
+        assertThat(combined.adFree()).isTrue();assertThat(combined.bonusQueues()).isZero();
+        assertThat(player(uid).paid().cardExpireAt()).as("new cards must not overwrite the legacy expiry field").isNull();
+    }
+
+
+    /** 明确的退售前PENDING订单夹具，保旧价格与旧无条款快照；不再伪称退售后能新买。 */
+    private String legacyOrder(String uid, long now) {
+        String orderId="old-monthly-"+UUID.randomUUID();
+        var monthly=catalog.requireKind(PayProductCfg.Kind.MONTHLY_CARD);
+        orders.insert(PayOrder.create(orderId,uid,new PayOrder.Line(monthly.id(),1,catalog.priceCents(monthly),now,null)));
+        return orderId;
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"purchase","initial","finished"})
+    void newCardAcknowledgementLossNeverExtendsOrPaysAgainAndHistoryKeepsInitialGold(String stage) {
+        String uid=newPlayer();long before=gold(uid);
+        var created=pay.createOrder(uid,new CreateOrderReq(newRequestId(),"monthly_gold_card",1,null));
+        String orderId=created.orderId();var lost=new java.util.concurrent.atomic.AtomicBoolean(true);
+        org.mockito.Mockito.doAnswer(call->{
+            PlayerSave save=call.getArgument(0);boolean purchase=save.paid().monthlyPurchases().containsKey(orderId);
+            boolean initial=save.goldClaims().containsKey("monthly:purchase:"+orderId),finished=save.paid().fulfilled(orderId);
+            boolean target=purchase&&switch(stage){case "purchase"->!initial&&!finished;case "initial"->initial&&!finished;case "finished"->finished;default->false;};
+            Object result=call.callRealMethod();
+            if(target&&lost.compareAndSet(true,false))throw new IllegalStateException("fixture accepted save but acknowledgement lost:"+stage);
+            return result;
+        }).when(players).save(org.mockito.ArgumentMatchers.argThat(save->save!=null&&save.playerId().equals(uid)));
+        pay.callback(new PayCallbackReq(orderId,"fixture-txn","s",true));
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.PAID_UNFULFILLED);
+        var accepted=player(uid).paid().monthlyPurchases().get(orderId);assertThat(accepted).isNotNull();
+        pay.retry(uid,new PayRetryReq(newRequestId(),orderId));
+        assertThat(orders.get(orderId).status()).isEqualTo(PayOrder.Status.SUCCESS);
+        assertThat(gold(uid)).isEqualTo(before+300);
+        assertThat(player(uid).paid().monthlyPurchases()).hasSize(1);
+        assertThat(player(uid).paid().monthlyPurchases().get(orderId).expiresAt()).isEqualTo(accepted.expiresAt());
+        assertThat(orders.get(orderId).rewards().stream().filter(r->r.type().equals("RESOURCE")&&r.id().equals("GOLD")))
+                .as("Order history must include already accepted initial300 after lost acknowledgement")
+                .singleElement().satisfies(r->assertThat(r.count()).isEqualTo(300));
+    }
+    @Test void pendingNewCardUsesOrderTermsAfterConfigReloadAndRepeatedDeliveryAfterLedgerTrim() throws Exception {
+        String uid=newPlayer();long before=gold(uid);
+        var created=pay.createOrder(uid,new CreateOrderReq(newRequestId(),"monthly_gold_card",1,null));
+        var originalLine=orders.get(created.orderId()).line();String original=readContractTable("pay_product.json");
+        var tree=new com.fasterxml.jackson.databind.ObjectMapper().readTree(original);
+        for(var row:tree.get("rows"))if(row.get("id").asText().equals("monthly_gold_card")) {
+            var object=(com.fasterxml.jackson.databind.node.ObjectNode)row;
+            object.put("name","changed fixture").put("initialGold",999).put("durationDays",60).put("adFree",true).put("extraQueues",5);
+        }
+        configs.reload("pay_product",PayProductCfg.class,tree.toString());
+        try {
+            callback(created.orderId());assertThat(gold(uid)).isEqualTo(before+300);
+            var accepted=player(uid).paid().monthlyPurchases().get(created.orderId());
+            assertThat(accepted.terms()).isEqualTo(originalLine.cardTerms());assertThat(accepted.terms().name()).isEqualTo("金币月卡");
+            assertThat(accepted.expiresAt()-accepted.startsAt()).isEqualTo(30*DAY);
+            assertThat(catalog.entitlements(player(uid).paid(),System.currentTimeMillis()).adFree()).isFalse();
+            assertThat(catalog.entitlements(player(uid).paid(),System.currentTimeMillis()).bonusQueues()).isZero();
+            var save=player(uid);var paid=save.paid();for(int i=0;i<40;i++)paid=paid.withFulfilledOrder("fixture-other-order-"+i);
+            assertThat(paid.fulfilled(created.orderId())).isFalse();save.setPaid(paid);players.save(save);
+            assertThat(fulfiller.deliver(uid,created.orderId(),originalLine,System.currentTimeMillis()).delivered()).isTrue();
+            assertThat(gold(uid)).isEqualTo(before+300);
+            assertThat(player(uid).paid().monthlyPurchases().get(created.orderId()).expiresAt()).isEqualTo(accepted.expiresAt());
+        } finally {configs.reload("pay_product",PayProductCfg.class,original);}
+    }
+
 }

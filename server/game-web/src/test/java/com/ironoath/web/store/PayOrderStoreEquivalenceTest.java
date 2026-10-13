@@ -440,4 +440,18 @@ class PayOrderStoreEquivalenceTest {
         return "o-debt|P-debt|pack_monthly|1|600|" + T0 + "|PAID_UNFULFILLED|txn=txn-debt|cb=1|fa=0"
                 + "|paid=" + (T0 + 1_000L) + "|ful=0|reason=null";
     }
+
+    @Test void monthlyTermsSurviveOrderSaveAndRealMongoRestarts() {
+        requireMongo();
+        var terms=new com.ironoath.core.pay.MonthlyCardTerms("金币月卡",30,300,
+                List.of(new com.ironoath.core.reward.RewardItem(com.ironoath.core.reward.RewardType.RESOURCE,"GOLD",90)),false,0,false);
+        for(PayOrderStore store:bothStores()) {
+            String id="monthly-order-"+java.util.UUID.randomUUID();
+            var order=PayOrder.create(id,"P-monthly-terms",new PayOrder.Line("monthly_gold_card",1,3000,T0,null,terms));
+            store.insert(order);var read=store.get(id);read.confirmCallback("fixture-txn",true,T0+1000);store.save(read);
+            assertThat(store.get(id).line().cardTerms()).isEqualTo(terms);
+            if(store instanceof MongoPayOrderStore)assertThat(newMongoStore().get(id).line().cardTerms()).isEqualTo(terms);
+        }
+    }
+
 }

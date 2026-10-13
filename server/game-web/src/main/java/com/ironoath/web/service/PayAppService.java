@@ -238,7 +238,7 @@ public class PayAppService {
                 String orderId = "order_" + playerId + "_" + now + "_"
                         + Long.toHexString(req.requestId().hashCode());
                 PayOrder.Line line = new PayOrder.Line(product.id(), Math.max(1, req.count()),
-                        cents, now, req.heroChoice());
+                        cents, now, req.heroChoice(), catalog.cardTerms(product));
                 PayOrder existing = orders.get(orderId);
                 if (existing != null) {
                     // 幂等：同一个 requestId 重放时返回同一个订单，而不是造出第二笔。
@@ -627,6 +627,8 @@ public class PayAppService {
      */
     private PayProductCfg requireBuyable(String playerId, CreateOrderReq req) {
         PayProductCfg product = catalog.require(req.productId());
+        if (!catalog.saleable(product)) throw new BizException(ErrorCode.PAY_PRODUCT_OFFLINE,
+                "该商品已停止新售，已有月卡权益和旧订单补单仍保留。");
         List<String> candidates = catalog.heroChoices(product);
         boolean picked = req.heroChoice() != null && !req.heroChoice().isBlank();
         if (candidates.isEmpty()) {

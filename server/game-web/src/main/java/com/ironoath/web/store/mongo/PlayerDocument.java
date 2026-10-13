@@ -124,7 +124,12 @@ public record PlayerDocument(
                           Long fundPurchasedAt,
                           java.util.List<String> fundClaimedTiers,
                           Long firstChargedAt,
-                          java.util.List<String> fulfilledOrderIds) {
+                          java.util.List<String> fulfilledOrderIds,
+                          Map<String, com.ironoath.core.pay.MonthlyCardPurchase> monthlyPurchases) {
+        public PaidDoc(Long cardExpireAt, Long cardClaimedThroughAt, Long fundPurchasedAt,
+                       java.util.List<String> fundClaimedTiers, Long firstChargedAt, java.util.List<String> fulfilledOrderIds) {
+            this(cardExpireAt, cardClaimedThroughAt, fundPurchasedAt, fundClaimedTiers, firstChargedAt, fulfilledOrderIds, null);
+        }
     }
 
     /**

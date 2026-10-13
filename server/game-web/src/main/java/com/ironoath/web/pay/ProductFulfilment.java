@@ -60,7 +60,10 @@ public final class ProductFulfilment implements PayAppService.ProductFulfiller {
 
     @Override
     public Result deliver(String playerId, String orderId, PayOrder.Line line, long now) {
+        if (line.cardTerms() != null) return deliverMonthlyPurchase(playerId, orderId, line, now);
         PayProductCfg product = catalog.require(line.productId());
+        if (product.kind() == PayProductCfg.Kind.MONTHLY_MATERIAL_CARD || product.kind() == PayProductCfg.Kind.MONTHLY_GOLD_CARD)
+            return Result.failure("新月卡订单缺少购买时条款快照，请恢复原订单后补发。");
         PlayerSave save = players.findByPlayerId(playerId)
                 .orElseThrow(() -> new IllegalStateException(
                         "发货时玩家存档不存在：playerId=" + playerId + " orderId=" + orderId
@@ -157,4 +160,36 @@ public final class ProductFulfilment implements PayAppService.ProductFulfiller {
         save.setPaid(save.paid().withFulfilledOrder(orderId));
         players.save(save);
     }
+
+    /** 周期先持久接受一次，初始金币由稳定订单回执发放；丢ack补单不会再延一期。 */
+    private Result deliverMonthlyPurchase(String playerId, String orderId, PayOrder.Line line, long now) {
+        PlayerSave save = players.findByPlayerId(playerId).orElseThrow();
+        var purchase = save.paid().monthlyPurchases().get(orderId);
+        if (purchase == null) {
+            long lastEnd = save.paid().monthlyPurchases().values().stream()
+                    .filter(p -> p.productId().equals(line.productId())).mapToLong(p -> p.expiresAt()).max().orElse(now);
+            long start = Math.max(now, lastEnd);
+            long duration = Math.multiplyExact(Math.multiplyExact(line.cardTerms().durationDays(), line.count()), 86_400_000L);
+            purchase = new com.ironoath.core.pay.MonthlyCardPurchase(orderId, line.productId(), line.cardTerms(),
+                    start, Math.addExact(start, duration), line.count(), 0);
+            save.setPaid(save.paid().withMonthlyPurchase(purchase));
+            players.save(save);
+        } else if (!purchase.productId().equals(line.productId()) || !purchase.terms().equals(line.cardTerms())
+                || purchase.quantity() != line.count()) {
+            throw new IllegalStateException("月卡稳定订单身份不可对应不同购买条款");
+        }
+        long initial = Math.multiplyExact(purchase.terms().initialGold(), purchase.quantity());
+        List<RewardItem> granted = new ArrayList<>();
+        granted.add(new RewardItem(RewardType.PRIVILEGE, purchase.productId(), purchase.totalDays()));
+        if (initial > 0) {
+            var result = rewardService.grant(playerId, List.of(new RewardItem(RewardType.RESOURCE, "GOLD", initial)),
+                    new RewardContext("paid_gold", orderId, "monthly:purchase:" + orderId, true,
+                            java.util.Set.of("monthly-product:" + purchase.productId())));
+            // 订单历史记录累计已交付（含转邮件），丢ack补单的本次delta=0仍不能漏掉原300。
+            granted.add(new RewardItem(RewardType.RESOURCE, "GOLD", initial));
+        }
+        markFulfilled(playerId, orderId);
+        return new Result(true, List.copyOf(granted), null);
+    }
+
 }
