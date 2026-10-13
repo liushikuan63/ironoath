@@ -11,7 +11,8 @@ import com.ironoath.core.activity.ActivityWindow;
 @Component
 public class ActivityLedger {
     public enum Mode { READ, EVENT, CLAIM }
-    public record Book(ActivityProgress progress, List<ActivityInstance> instances) {
+    public record Book(ActivityProgress progress, List<ActivityInstance> instances, List<ActivityClaimPlan> pendingClaims) {
+        public Book(ActivityProgress progress, List<ActivityInstance> instances) { this(progress, instances, List.of()); }
         public ActivityInstance instance(String id) {
             return instances.stream().filter(i -> i.def().activityId().equals(id)).findFirst().orElseThrow();
         }
@@ -53,7 +54,8 @@ public class ActivityLedger {
             }
             boolean expired=instance != null && instance.span().expired(now);
             boolean pending=entry != null && !entry.claimed() && entry.value()>0;
-            boolean keep=instance != null && instance.openedAt()!=null && (!expired || mode==Mode.CLAIM || mode==Mode.READ && pending
+            boolean deliveryPending=stored!=null && stored.pendingClaims().stream().anyMatch(p -> p.instance().def().activityId().equals(id));
+            boolean keep=instance != null && instance.openedAt()!=null && (deliveryPending || !expired || mode==Mode.CLAIM || mode==Mode.READ && pending
                     || instance.def().retired());
             if (!keep) {
                 var current=rules.resolve(id, now, serverAnchor, playerAnchor);
@@ -69,12 +71,12 @@ public class ActivityLedger {
         }
         var progress=ActivityProgress.restoreInstances(playerId,instances.stream().map(ActivityInstance::def).toList(),
                 restored,serverAnchor,windows);
-        Book book=new Book(progress,List.copyOf(instances));
+        Book book=new Book(progress,List.copyOf(instances),stored==null?List.of():stored.pendingClaims());
         save(book);
         return book;
     }
     public void save(Book book) {
         var p=book.progress();
-        store.save(p.playerId(),new ActivityProgressStore.State(p.playerId(),p.entries(),p.serverOpenMs(),book.instances()));
+        store.save(p.playerId(),new ActivityProgressStore.State(p.playerId(),p.entries(),p.serverOpenMs(),book.instances(),book.pendingClaims()));
     }
 }

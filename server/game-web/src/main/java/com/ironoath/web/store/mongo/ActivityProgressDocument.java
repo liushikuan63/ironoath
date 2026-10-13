@@ -23,18 +23,19 @@ public record ActivityProgressDocument(
         @Id String id,
         List<ActivityProgress.Entry> entries,
         long serverOpenMs,
-        List<com.ironoath.web.activity.ActivityInstance> instances) {
+        List<com.ironoath.web.activity.ActivityInstance> instances,
+        List<com.ironoath.web.activity.ActivityClaimPlan> pendingClaims) {
 
     /** 集合名。 */
     public static final String COLLECTION = "activity_progress";
 
     static ActivityProgressDocument of(ActivityProgressStore.State state) {
         return new ActivityProgressDocument(state.playerId(), List.copyOf(state.entries()),
-                state.serverOpenMs(), state.instances());
+                state.serverOpenMs(), state.instances(), state.pendingClaims());
     }
 
     ActivityProgressStore.State toState() {
         return new ActivityProgressStore.State(id, entries == null ? List.of() : List.copyOf(entries),
-                serverOpenMs, instances);
+                serverOpenMs, instances, pendingClaims);
     }
 }

@@ -150,8 +150,8 @@ public class MailAppService {
                     boolean durableGold = "OVERFLOW".equals(mail.kind()) && mail.rewards().size() == 1
                             && "RESOURCE".equals(mail.rewards().get(0).type()) && "GOLD".equals(mail.rewards().get(0).id())
                             && (mail.sourceRef().startsWith("free_gold:") || mail.sourceRef().startsWith("paid_gold:"));
-                    String itemSource=mail.sourceRef().startsWith("paid_items:")?"paid_items":"paid_item";
-                    boolean durableItems = "OVERFLOW".equals(mail.kind()) && (mail.sourceRef().startsWith("paid_item:")||mail.sourceRef().startsWith("paid_items:"))
+                    String itemSource=mail.sourceRef().startsWith("paid_items:")?"paid_items":mail.sourceRef().startsWith("free_item:")?"free_item":"paid_item";
+                    boolean durableItems = "OVERFLOW".equals(mail.kind()) && (mail.sourceRef().startsWith("paid_item:")||mail.sourceRef().startsWith("paid_items:")||mail.sourceRef().startsWith("free_item:"))
                             && !mail.rewards().isEmpty() && mail.rewards().stream().allMatch(line -> "ITEM".equals(line.type()));
                     if (!durableGold && !durableItems && !store.claim(playerId, mail.mailId(), eligibleAt)) {
                         // 另一次点击已经把它领走了：这不算失败，也不该出现在 failed 里

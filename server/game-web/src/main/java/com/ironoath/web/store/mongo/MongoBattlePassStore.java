@@ -51,9 +51,9 @@ public final class MongoBattlePassStore implements BattlePassStore {
         Query query = Query.query(Criteria.where("seasonId").is(seasonId));
         query.fields().include("playerId");
         List<String> out = new java.util.ArrayList<>();
-        for (BattlePassDocument doc : mongo.find(query, BattlePassDocument.class,
+        for (org.bson.Document doc : mongo.find(query, org.bson.Document.class,
                 BattlePassDocument.COLLECTION)) {
-            out.add(doc.playerId());
+            out.add(doc.getString("playerId"));
         }
         java.util.Collections.sort(out);
         return out;
@@ -97,6 +97,8 @@ public final class MongoBattlePassStore implements BattlePassStore {
                     .set("points", next.points())
                     .set("paidUnlocked", next.paidUnlocked())
                     .set("claimed", List.copyOf(next.claimed()))
+                    .set("pointClaims", next.pointClaims())
+                    .set("tierMailWindows", next.tierMailWindows())
                     .set("version", current.version() + 1L);
             if (mongo.updateFirst(guard, update, BattlePassDocument.COLLECTION).getModifiedCount() == 1L) {
                 return next;

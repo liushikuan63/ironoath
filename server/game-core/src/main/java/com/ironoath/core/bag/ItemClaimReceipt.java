@@ -1,10 +1,10 @@
 package com.ironoath.core.bag;
 import java.util.*;
-/** 支付材料的持久回执，与同批物品数量在同一背包聚合一次保存。 */
+/** 免费或支付材料的持久回执，与同批物品数量在同一背包聚合一次保存。 */
 public record ItemClaimReceipt(String businessKey,String source,String sourceRef,Map<String,Long> requested,
         Map<String,Long> credited,long acceptedAt,Set<String> facts,String overflowMailId) {
     public ItemClaimReceipt {
-        if(businessKey==null||businessKey.isBlank()||!("paid_item".equals(source)||"paid_items".equals(source))||sourceRef==null||sourceRef.isBlank()||acceptedAt<=0||requested==null||requested.isEmpty()||credited==null)
+        if(businessKey==null||businessKey.isBlank()||!("paid_item".equals(source)||"paid_items".equals(source)||"free_item".equals(source))||sourceRef==null||sourceRef.isBlank()||acceptedAt<=0||requested==null||requested.isEmpty()||credited==null)
             throw new IllegalArgumentException("材料回执需要业务键、来源、数量和接受时间");
         requested=Collections.unmodifiableMap(new LinkedHashMap<>(requested));credited=Collections.unmodifiableMap(new LinkedHashMap<>(credited));
         for(var e:requested.entrySet()) if(e.getKey()==null||e.getKey().isBlank()||e.getValue()==null||e.getValue()<=0)throw new IllegalArgumentException("材料回执数量无效");

@@ -80,6 +80,18 @@ class InventoryItemClaimCompatibilityTest {
             assertThat(bag.itemClaims().get("old-key").facts()).isEmpty();
         }
     }
+    @Test void freeActivityItemsKeepFreeSourceAndTheirWindowFactsAcrossMongoSave(){
+        try(var db=TestMongo.tryOpen()){
+            assertThat(db).isNotNull();String uid=insert(db,new Document());var store=new MongoInventoryStore(db.template(),configs());
+            var ctx=new RewardContext("free_item","hunt","activity_claim:hunt:1:items",true,Set.of("activity-window:1"));
+            var bag=new PlayerBag(store,configs());var accepted=bag.grantItemsOnce(uid,Map.of(SPEED,1L,WOOD,1L),ctx,NOW);
+            var after=store.findByPlayerId(uid).orElseThrow();after.remove(SPEED,1);store.save(uid,after,store.versionOf(uid));
+            var replay=new PlayerBag(new MongoInventoryStore(db.template(),configs()),configs()).grantItemsOnce(uid,Map.of(SPEED,1L,WOOD,1L),ctx,NOW+1);
+            assertThat(replay.creditedNow()).isEmpty();assertThat(replay.receipt()).isEqualTo(accepted.receipt());
+            assertThat(replay.receipt().source()).isEqualTo("free_item");assertThat(replay.receipt().facts()).containsExactly("activity-window:1");
+            assertThat(store.findByPlayerId(uid).orElseThrow().countOf(SPEED)).isEqualTo(2);
+        }
+    }
     @ParameterizedTest @ValueSource(strings={"key","source","class","double","id","duplicate","facts"})
     void invalidHistoricalRowsFailWithoutErasingOrChangingTheirOriginalBson(String corruption) {
         try(var db=TestMongo.tryOpen()) {

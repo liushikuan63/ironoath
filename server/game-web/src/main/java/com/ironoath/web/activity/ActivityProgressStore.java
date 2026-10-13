@@ -36,7 +36,10 @@ public interface ActivityProgressStore {
 
     /** 落库的形状：条目 + 那份开服时刻（诊断用）。 */
     record State(String playerId, List<ActivityProgress.Entry> entries, long serverOpenMs,
-                 List<ActivityInstance> instances) {
+                 List<ActivityInstance> instances, List<ActivityClaimPlan> pendingClaims) {
+        public State(String playerId, List<ActivityProgress.Entry> entries, long serverOpenMs, List<ActivityInstance> instances) {
+            this(playerId, entries, serverOpenMs, instances, List.of());
+        }
         public State(String playerId, List<ActivityProgress.Entry> entries, long serverOpenMs) {
             this(playerId, entries, serverOpenMs, List.of());
         }
@@ -46,6 +49,14 @@ public interface ActivityProgressStore {
             }
             entries = entries == null ? List.of() : List.copyOf(entries);
             instances = instances == null ? List.of() : List.copyOf(instances);
+            pendingClaims = pendingClaims == null ? List.of() : List.copyOf(pendingClaims);
+            var keys = new java.util.HashSet<String>();
+            for (var plan : pendingClaims) {
+                if (!keys.add(plan.businessKey()) || instances.stream().noneMatch(plan.instance()::equals)
+                        || entries.stream().noneMatch(e -> e.activityId().equals(plan.instance().def().activityId())
+                            && e.windowStart()==plan.instance().startAt() && e.claimed() && e.value()>=plan.instance().def().goalValue()))
+                    throw new IllegalArgumentException("活动待发计划必须与已接受的原窗口一致");
+            }
         }
     }
 

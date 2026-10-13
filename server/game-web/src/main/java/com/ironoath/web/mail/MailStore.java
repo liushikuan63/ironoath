@@ -53,6 +53,9 @@ public interface MailStore {
             return hasAttachment() && claimedAt == null && now < expireAt;
         }
 
+        /** Permanent delivery evidence prevents replay after this stable grant's visible retention ends. */
+        public boolean durableGrantReceipt() { return "BATTLE_PASS".equals(kind)&&sourceRef.startsWith("battlePassRecovery:"); }
+
         private static void require(String value, String field) {
             if (value == null || value.isBlank()) {
                 throw new IllegalArgumentException("mail." + field + " 不得为空：一封没有" + field + "的邮件发不出去也查不回来");

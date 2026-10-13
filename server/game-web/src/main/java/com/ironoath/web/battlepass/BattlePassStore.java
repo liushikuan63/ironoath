@@ -30,13 +30,27 @@ public interface BattlePassStore {
      * @param claimed 已领过的档位键，格式 {@code tier:TRACK}（如 {@code 12:FREE}）。
      *                **两条线各记各的**：合成一位会让"领了免费那份"顺手把付费那份也标成已领
      */
-    record Progress(long points, boolean paidUnlocked, Set<String> claimed) {
+    record TierMailWindow(long createdAt,long expireAt) {
+        public TierMailWindow { if(createdAt<=0||expireAt<=createdAt)throw new IllegalArgumentException("原季补发邮件保留窗口无效"); }
+    }
+    record Progress(long points, boolean paidUnlocked, Set<String> claimed, java.util.Map<String,Long> pointClaims,
+                    java.util.Map<String,TierMailWindow> tierMailWindows) {
+        public Progress(long points,boolean paidUnlocked,Set<String> claimed,java.util.Map<String,Long> pointClaims){
+            this(points,paidUnlocked,claimed,pointClaims,java.util.Map.of());
+        }
+        public Progress(long points, boolean paidUnlocked, Set<String> claimed) {
+            this(points,paidUnlocked,claimed,java.util.Map.of());
+        }
 
         public Progress {
             if (points < 0L) {
                 throw new IllegalArgumentException("战令积分不得为负：" + points);
             }
             claimed = Set.copyOf(claimed);
+            pointClaims = pointClaims==null?java.util.Map.of():java.util.Map.copyOf(pointClaims);
+            tierMailWindows=tierMailWindows==null?java.util.Map.of():java.util.Map.copyOf(tierMailWindows);
+            for(var receipt:pointClaims.entrySet())if(receipt.getKey().isBlank()||receipt.getValue()<=0)
+                throw new IllegalArgumentException("战令积分回执键和份额无效");
         }
 
         public static Progress empty() {
@@ -49,17 +63,31 @@ public interface BattlePassStore {
         }
 
         public Progress withPoints(long delta) {
-            return new Progress(points + delta, paidUnlocked, claimed);
+            return new Progress(Math.addExact(points,delta), paidUnlocked, claimed,pointClaims,tierMailWindows);
         }
 
         public Progress withPaidUnlocked() {
-            return new Progress(points, true, claimed);
+            return new Progress(points, true, claimed,pointClaims,tierMailWindows);
         }
 
         public Progress withClaimed(int tier, BattlePassTrack track) {
             Set<String> next = new LinkedHashSet<>(claimed);
             next.add(keyOf(tier, track));
-            return new Progress(points, paidUnlocked, next);
+            return new Progress(points, paidUnlocked, next,pointClaims,tierMailWindows);
+        }
+
+        public Progress withPointsOnce(String businessKey,long delta) {
+            if(businessKey==null||businessKey.isBlank()||delta<=0)throw new IllegalArgumentException("积分接受需要稳定业务键与正份额");
+            Long accepted=pointClaims.get(businessKey);
+            if(accepted!=null){if(accepted!=delta)throw new IllegalStateException("积分业务键不能改变份额");return this;}
+            var receipts=new java.util.LinkedHashMap<>(pointClaims);receipts.put(businessKey,delta);
+            return new Progress(Math.addExact(points,delta),paidUnlocked,claimed,receipts,tierMailWindows);
+        }
+        public Progress withTierMailWindow(String key,long createdAt,long expireAt){
+            if(key==null||key.isBlank())throw new IllegalArgumentException("原季邮件需要稳定业务键");
+            if(tierMailWindows.containsKey(key))return this;
+            var windows=new java.util.LinkedHashMap<>(tierMailWindows);windows.put(key,new TierMailWindow(createdAt,expireAt));
+            return new Progress(points,paidUnlocked,claimed,pointClaims,windows);
         }
 
         public static String keyOf(int tier, BattlePassTrack track) {

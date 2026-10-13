@@ -85,13 +85,27 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
      */
     public String sendGrant(String playerId, String kind, String title, List<RewardItem> items,
                             String reason, RewardContext ctx) {
-        long now = timeService.serverNow();
-        int days = retentionDays();
+        long now=timeService.serverNow();
+        return sendGrantTo(playerId,kind,title,items,reason,ctx,"mail_"+UUID.randomUUID().toString().replace("-", "").substring(0,16),now,now+retentionDays()*86_400_000L);
+    }
+
+    /** Stable identity is accepted by MailStore without overwriting read or claimed state. */
+    public MailRecord sendGrantOnce(String playerId,String kind,String title,List<RewardItem> items,String reason,RewardContext ctx) {
+        String id="mail_"+UUID.nameUUIDFromBytes((playerId+"\u0000"+ctx.source()+"\u0000"+ctx.traceId())
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString().replace("-", "");
+        var existing=store.findById(playerId,id);
+        if(existing.isPresent())return existing.get();
+        long now=timeService.serverNow();
+        sendGrantTo(playerId,kind,title,items,reason,ctx,id,now,Math.addExact(now,Math.multiplyExact(retentionDays(),86_400_000L)));
+        return store.findById(playerId,id).orElseThrow(()->new IllegalStateException("稳定补发邮件未读回，保留活动计划重试"));
+    }
+
+    private String sendGrantTo(String playerId,String kind,String title,List<RewardItem> items,String reason,RewardContext ctx,String mailId,long now,long expireAt) {
+        int days = (int)((expireAt-now)/86_400_000L);
         List<RewardLine> lines = new ArrayList<>(items.size());
         for (RewardItem item : items) {
             lines.add(new RewardLine(item.type().name(), item.id(), item.count(), names.nameOf(item)));
         }
-        String mailId = "mail_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         // 正文必须逐条写出「什么、多少」：只写"有 N 档没领"的邮件等于让玩家拿着信去问客服 ——
         // 而这封信正是为了"不静默作废"才发的，说不清内容就失败了
         StringBuilder text = new StringBuilder(reason);
@@ -100,7 +114,7 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         }
         text.append("\n请在 ").append(days).append(" 天内领取。");
         store.save(new MailRecord(mailId, playerId, kind, title, text.toString(), lines,
-                ctx.source() + ':' + ctx.sourceRef(), now, now + days * 86_400_000L, null, null));
+                ctx.source() + ':' + ctx.sourceRef(), now, expireAt, null, null));
         LOG.info("奖励已发进邮箱 playerId={} mailId={} 类型={} 来源={}({}) 条数={} 保留={}天",
                 playerId, mailId, kind, ctx.source(), ctx.sourceRef(), lines.size(), days);
         return mailId;
@@ -113,7 +127,7 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         for (RewardLine line : lines) {
             text.append("· ").append(line.name()).append(" ×").append(line.count()).append('\n');
         }
-        text.append("来源：").append(ctx.durableItems() ? "月卡材料奖励" : ctx.durableGold()
+        text.append("来源：").append(ctx.durableItems() ? ("free_item".equals(ctx.source())?"活动材料奖励":"月卡材料奖励") : ctx.durableGold()
                 ? ("paid_gold".equals(ctx.source()) ? "月卡金币奖励" : "签到与成长奖励") : ctx.source());
         if (!ctx.durableGold() && !ctx.durableItems() && !ctx.sourceRef().isBlank()) {
             text.append('（').append(ctx.sourceRef()).append('）');

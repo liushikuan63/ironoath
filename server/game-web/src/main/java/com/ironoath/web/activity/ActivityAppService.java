@@ -36,8 +36,8 @@ import com.ironoath.web.reward.RewardNames;
  * 读取时留住"上一轮有进展但没领"的行（它会被读成 EXPIRED），事件到达时把它推进到新一轮。
  * 为什么必须这样切见 {@code ActivityProgress.syncOnRead} 的注释（那是 B17 文档内部张力的一处解法）。
  *
- * <p><b>旧混合活动领取保持「先落状态再发奖」</b>：失败方向选
- * 「标记了已领但没发出去」（有补偿队列与客服入口可追），反过来（发了没标记）玩家会重复领。
+ * <p>常规活动先同次保存资格与冻结待发计划，再按金币、材料与原赛季积分稳定回执接受。
+ * 读取和重试恢复计划；没有计划的历史已领标记不推测补发。
  *
  * <p><b>红点与列表同一条判定</b>：{@code claimableCount} 调的是核心的 {@code blockOf}，
  * 这里不另算一遍"什么算可领"。
@@ -145,36 +145,43 @@ public class ActivityAppService {
                 return new ActivityClaimResp(true, views(result.granted()),
                         stateOf(progress.phaseOf(req.activityId(), now, playerAnchor)), null);
             }
+            for (var reward : instance.rewards()) {
+                if(reward.type()==com.ironoath.core.reward.RewardType.ITEM
+                        && configs.get(com.ironoath.config.cfg.ItemCfg.class,reward.id()).type()==com.ironoath.config.cfg.ItemCfg.Type.EQUIP)
+                    throw new IllegalArgumentException("活动稳定发奖只接受普通堆叠道具");
+            }
+            var plan = new ActivityClaimPlan(ActivityClaimPlan.keyOf(instance),instance,
+                    battlePass.activitySeasonId(),now,battlePass.activityTierSnapshot());
             progress.claim(req.activityId(), now, playerAnchor);
-            // 先落状态再发奖：失败方向见类注释
-            ledger.save(book);
-            List<RewardItem> rewards = book.instance(req.activityId()).rewards();
-            List<ActivityReward> granted = List.of();
-            if (!rewards.isEmpty()) {
-                var result = rewardService.grant(playerId, rewards,
-                        RewardContext.toMail("activity", req.activityId(),
-                                req.activityId() + ":" + req.requestId()));
-                // 写的是**入账量**，不是申请量（与 QuestClaimResp.rewards / MailClaimAllResp.rewards 同一条）：
-                // 背包装不下的那些走邮件兜底，不在这里假装发过
-                granted = views(result.granted());
-                if (result.hasCompensation()) {
-                    LOG.error("【活动奖励未入账已进补偿队列】playerId={} activityId={} 奖励={} compensationId={}",
-                            playerId, req.activityId(), rewards, result.compensationId());
-                }
-            }
-            // 战令积分：只在领取成功这一下加（重放请求在 acquire(requestId) 那一步就被挡掉了）
-            long points = book.instance(req.activityId()).battlePassPoints();
-            if (points > 0L) {
-                battlePass.addPoints(playerId, points, "activity:" + req.activityId());
-            }
-            LOG.info("活动奖励已领取 playerId={} activityId={} 奖励={} 战令积分+{}", playerId, req.activityId(), granted, points);
-            return new ActivityClaimResp(true, granted,
-                    stateOf(progress.phaseOf(req.activityId(), now, playerAnchor)), null);
+            var pending = new ArrayList<>(book.pendingClaims());pending.add(plan);
+            var accepted = new ActivityLedger.Book(progress,book.instances(),List.copyOf(pending));
+            // This single state write accepts the qualification and its frozen delivery plan together.
+            ledger.save(accepted);
+            List<ActivityReward> granted = deliver(plan,playerId);
+            ledger.save(new ActivityLedger.Book(progress,book.instances(),book.pendingClaims()));
+            LOG.info("活动计划发放完成 playerId={} key={} 奖励={}",playerId,plan.businessKey(),granted);
+            return new ActivityClaimResp(true,granted,stateOf(progress.phaseOf(req.activityId(),now,playerAnchor)),null);
         });
         } catch (RuntimeException error) {
             idempotency.release("activity:"+playerId+':'+req.requestId());
             throw error;
         }
+    }
+
+    private List<ActivityReward> deliver(ActivityClaimPlan plan,String playerId) {
+        List<ActivityReward> granted=new ArrayList<>();
+        String activityId=plan.instance().def().activityId();
+        var facts=java.util.Set.of("activity-window:"+plan.instance().startAt());
+        var gold=plan.instance().rewards().stream().filter(r -> r.type()==com.ironoath.core.reward.RewardType.RESOURCE).toList();
+        var items=plan.instance().rewards().stream().filter(r -> r.type()==com.ironoath.core.reward.RewardType.ITEM).toList();
+        if (!gold.isEmpty()) granted.addAll(views(rewardService.grant(playerId,gold,
+                new RewardContext("free_gold",activityId,plan.businessKey()+":gold",true,facts)).granted()));
+        if (!items.isEmpty()) granted.addAll(views(rewardService.grant(playerId,items,
+                new RewardContext("free_item",activityId,plan.businessKey()+":items",true,facts)).granted()));
+        if (plan.instance().battlePassPoints()>0) battlePass.addActivityPointsOnce(playerId,plan.seasonId(),
+                plan.businessKey(),plan.instance().battlePassPoints());
+        if (plan.instance().battlePassPoints()>0) battlePass.recoverActivityTierRewards(playerId,plan.seasonId(),plan.battlePassTiers());
+        return List.copyOf(granted);
     }
 
     private static boolean campaign(ActivityInstance instance) {
@@ -188,7 +195,15 @@ public class ActivityAppService {
     /** 任一读取、红点或重试恢复钱包已接受的资格，不依赖HTTP requestId。 */
     private ActivityLedger.Book load(String playerId,long now,ActivityLedger.Mode mode) {
         rewardService.recoverGoldClaims(playerId);
+        rewardService.recoverItemClaims(playerId);
         ActivityLedger.Book book=ledger.load(playerId,now,mode);
+        if (!book.pendingClaims().isEmpty()) {
+            for (var plan : book.pendingClaims()) deliver(plan,playerId);
+            var completed = new ActivityLedger.Book(book.progress(),book.instances(),List.of());
+            ledger.save(completed);
+            // After old delivery is accepted, choose the current window using normal ledger rules.
+            book=ledger.load(playerId,now,mode);
+        }
         var owner=players.findByPlayerId(playerId).orElse(null);
         if (owner==null) return book;
         boolean changed=false;

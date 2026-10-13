@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.core.bag.Inventory;
@@ -89,12 +91,13 @@ class DurableItemGrantTest {
         assertThat(mail.text()).contains("月卡材料奖励").doesNotContain("paid_items", "material-card-period");
     }
 
-    @Test void actualMailClaimReplyLossRetriesTheWholeAttachmentWithoutDuplicatingFirstItem() {
+    @ParameterizedTest @ValueSource(strings={"paid_items","paid_item","free_item"})
+    void actualMailClaimReplyLossRetriesTheWholeAttachmentWithoutDuplicatingFirstItem(String source) {
         var store = new InMemoryInventoryStore();
         var full = Inventory.empty(1); full.add("item_res_stone_10k", 1, 99);
         store.insertIfAbsent(PLAYER, full);
         var grants = spy(grants(store, mailbox));
-        grants.grant(PLAYER, PACK, context);
+        grants.grant(PLAYER, PACK, RewardContext.toMail(source,"material-card-period","card-day:order-one:0"));
         var bag = store.findByPlayerId(PLAYER).orElseThrow();
         bag.remove("item_res_stone_10k", 1); bag.setCapacityMax(60);
         store.save(PLAYER, bag, store.versionOf(PLAYER));
@@ -115,8 +118,11 @@ class DurableItemGrantTest {
         assertThat(store.findByPlayerId(PLAYER).orElseThrow().countOf(PACK.get(1).id())).isEqualTo(1);
         assertThat(mails.listOf(PLAYER, NOW)).singleElement().extracting(com.ironoath.web.mail.MailStore.MailRecord::claimedAt).isEqualTo(NOW);
         String mailId=mails.listOf(PLAYER,NOW).get(0).mailId();
-        assertThat(store.findByPlayerId(PLAYER).orElseThrow().itemClaims()).containsKey("mail_items:"+mailId)
-                .doesNotContainKey("mail_item:"+mailId);
+        assertThat(mails.listOf(PLAYER,NOW).get(0).text()).contains("free_item".equals(source)?"活动材料奖励":"月卡材料奖励")
+                .doesNotContain("free_item","paid_item");
+        String key="paid_items".equals(source)?"mail_items:":"mail_item:";
+        assertThat(store.findByPlayerId(PLAYER).orElseThrow().itemClaims()).containsKey(key+mailId);
+        assertThat(store.findByPlayerId(PLAYER).orElseThrow().itemClaims().get(key+mailId).source()).isEqualTo(source);
     }
 
     @Test void freshGrantorRecoversPendingMailWithoutResettingEarlierClaim() {

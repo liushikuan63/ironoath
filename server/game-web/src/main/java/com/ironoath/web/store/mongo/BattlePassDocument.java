@@ -28,6 +28,8 @@ public record BattlePassDocument(
         long points,
         boolean paidUnlocked,
         List<String> claimed,
+        java.util.Map<String,Long> pointClaims,
+        java.util.Map<String,BattlePassStore.TierMailWindow> tierMailWindows,
         long version) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
@@ -39,10 +41,10 @@ public record BattlePassDocument(
 
     static BattlePassDocument of(String seasonId, String playerId, BattlePassStore.Progress progress) {
         return new BattlePassDocument(keyOf(seasonId, playerId), seasonId, playerId,
-                progress.points(), progress.paidUnlocked(), List.copyOf(progress.claimed()), 0L);
+                progress.points(), progress.paidUnlocked(), List.copyOf(progress.claimed()), progress.pointClaims(),progress.tierMailWindows(),0L);
     }
 
     BattlePassStore.Progress progress() {
-        return new BattlePassStore.Progress(points, paidUnlocked, java.util.Set.copyOf(claimed));
+        return new BattlePassStore.Progress(points, paidUnlocked, java.util.Set.copyOf(claimed),pointClaims,tierMailWindows);
     }
 }

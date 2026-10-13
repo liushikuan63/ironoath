@@ -24,7 +24,7 @@ final class InventoryItemClaimCodec {
             for(Object field:row.keySet())if(!FIELDS.contains(field))throw invalid("unknown receipt field");
             String source=text(row.get("source"),"source");
             boolean legacy="paid_items".equals(source);
-            if(!legacy&&!"paid_item".equals(source))throw invalid("unknown receipt source");
+            if(!legacy&&!"paid_item".equals(source)&&!"free_item".equals(source))throw invalid("unknown receipt source");
             Object hint=row.get("_class");
             if(hint!=null&&!(legacy?LEGACY:CURRENT).equals(hint))throw invalid("receipt type conflicts with source");
             if(!businessKey.equals(text(row.get("businessKey"),"businessKey")))throw invalid("receipt key mismatch");

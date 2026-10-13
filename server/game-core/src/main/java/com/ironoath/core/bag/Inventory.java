@@ -98,7 +98,7 @@ public final class Inventory {
         if(existing!=null){
             if(!existing.source().equals(ctx.source())||!existing.sourceRef().equals(ctx.sourceRef()))throw new IllegalStateException("材料业务键不可改变来源");
             // 旧来源按原收据重放，不因后来改表或删除道具配置重新发奖。
-            if("paid_item".equals(ctx.source())&&(!existing.requested().equals(requested)||!existing.facts().equals(ctx.claimFacts())))throw new IllegalStateException("材料业务键不可改变含义");
+            if(!"paid_items".equals(ctx.source())&&(!existing.requested().equals(requested)||!existing.facts().equals(ctx.claimFacts())))throw new IllegalStateException("材料业务键不可改变含义");
             return existing;
         }
         // 先验证整批；不允许在第二件参数错误时留下第一件的修改。

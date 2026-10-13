@@ -80,7 +80,7 @@ public class BattlePassService {
     }
 
     /**
-     * 加积分。**只由任务与活动的领取路径调用**（各自在发奖成功之后调一次）。
+     * 普通任务领取加积分；活动使用addActivityPointsOnce的持久窗口回执。
      *
      * <p>调用方已经过一次幂等闸（{@code requestId}），所以这里不需要第二个幂等键 ——
      * 重放请求在那两处就被挡掉了，走不到这里。这也正是"不新开一套任务体系"的好处：
@@ -94,6 +94,37 @@ public class BattlePassService {
         BattlePassStore.Progress after = store.update(seasonId, playerId, cur -> cur.withPoints(points));
         LOG.info("战令积分 +{} playerId={} 来源={} 当前={}", points, playerId, reason, after.points());
         return after.points();
+    }
+
+    /** 活动计划冻结领取时赛季，恢复不向后续赛季转移积分。 */
+    public String activitySeasonId() { return rules.seasonId(); }
+
+    public List<BattlePassCfg> activityTierSnapshot() { return List.copyOf(rules.tiers()); }
+
+    /** 迟恢复的原季积分必须兑现原档位；一名玩家、一档一封稳定邮件后再标已领。 */
+    public void recoverActivityTierRewards(String playerId,String seasonId,List<BattlePassCfg> frozenTiers) {
+        if(seasonId.equals(activitySeasonId()))return;
+        if(frozenTiers==null||frozenTiers.isEmpty())throw new IllegalStateException("活动缺少原季战令档位快照，拒绝按当前表猜测补发");
+        var progress=store.load(seasonId,playerId);
+        for(var tier:frozenTiers)for(var track:BattlePassTrack.values()) {
+            if(progress.points()<tier.requiredPoints()||track==BattlePassTrack.PAID&&!progress.paidUnlocked()
+                    ||progress.claimed((int)tier.tier(),track))continue;
+            String key="activity-battle-pass:"+seasonId+":"+tier.tier()+":"+track.name();
+            var mail=mailbox.sendGrantOnce(playerId,"BATTLE_PASS","赛季战令奖励补发",List.of(rewardItemOf(tier,track)),
+                    "活动奖励恢复后补齐了原赛季积分，这档"+(track==BattlePassTrack.PAID?"付费":"免费")+"奖励已补发：",
+                    new RewardContext("battlePassRecovery",seasonId+":"+track.name(),key,false));
+            progress=store.update(seasonId,playerId,p->p.withTierMailWindow(key,mail.createdAt(),mail.expireAt())
+                    .withClaimed((int)tier.tier(),track));
+        }
+    }
+
+    public long addActivityPointsOnce(String playerId,String seasonId,String businessKey,long points) {
+        if(seasonId==null||seasonId.isBlank()||businessKey==null||!businessKey.startsWith("activity_claim:"))
+            throw new IllegalArgumentException("活动积分需要原赛季与活动窗口业务键");
+        if(points<=0)return 0;
+        var accepted=store.update(seasonId,playerId,p -> p.withPointsOnce(businessKey,points));
+        LOG.info("活动战令积分已接受 playerId={} season={} key={} 当前={}",playerId,seasonId,businessKey,accepted.points());
+        return accepted.points();
     }
 
     /** 领一档的某一条线。 */

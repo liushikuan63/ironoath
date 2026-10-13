@@ -135,7 +135,9 @@ public final class MongoMailStore implements MailStore {
     public int purgeExpired(long nowMillis) {
         // 边界与内存版同一条：expireAt <= now 算过期
         return (int) mongo.remove(Query.query(
-                        Criteria.where(MailDocument.FIELD_EXPIRE_AT).lte(nowMillis)),
+                        Criteria.where(MailDocument.FIELD_EXPIRE_AT).lte(nowMillis)
+                                .norOperator(new Criteria().andOperator(Criteria.where("mail.kind").is("BATTLE_PASS"),
+                                        Criteria.where("mail.sourceRef").regex("^battlePassRecovery:")))),
                 MailDocument.COLLECTION).getDeletedCount();
     }
 

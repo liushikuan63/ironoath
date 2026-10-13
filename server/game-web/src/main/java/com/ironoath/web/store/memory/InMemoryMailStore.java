@@ -101,7 +101,7 @@ public final class InMemoryMailStore implements MailStore {
     public synchronized int purgeExpired(long nowMillis) {
         List<String> doomed = new ArrayList<>();
         for (MailRecord mail : mails.values()) {
-            if (mail.expireAt() <= nowMillis) {
+            if (mail.expireAt() <= nowMillis && !mail.durableGrantReceipt()) {
                 doomed.add(mail.mailId());
             }
         }
