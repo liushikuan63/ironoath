@@ -25,7 +25,8 @@ VIEW_DIR="${VIEW_DIR:-client/assets/scripts/scene}"
 
 # 存量基线（2026-09-22 清点）。**只减不增**；减少时把新数字填回来，别让这份账失效。
 # 09-22 当天第一次降账：BagPanelView 4 → 3（接「全开」时把那一处改成按名字取），总数 43 → 42。
-BASELINE_TOTAL=39
+# 2026-10-14 UI02：QuestPanelView八处改为具名读取，实查39→31，禁止重新引入。
+BASELINE_TOTAL=31
 # 单文件基线：新增文件必须从 0 开始（不出现在这张表里就只允许 0 处）
 declare -A BASELINE=(
   [ArmyPanelView.ts]=4
@@ -33,7 +34,7 @@ declare -A BASELINE=(
   [BattlePlaybackView.ts]=1
   [GachaDisclosureView.ts]=2
   [MailPanelView.ts]=4
-  [QuestPanelView.ts]=8
+  [QuestPanelView.ts]=0
   [SocialPanelView.ts]=9
   [StagePanelView.ts]=4
   [TargetSearchView.ts]=4
@@ -89,4 +90,4 @@ if [ "$total" -lt "$BASELINE_TOTAL" ]; then
   exit 1
 fi
 
-echo "[view-child-index] 按下标取节点：$total 处（= 基线，只减不增）；10 个视图文件的存量见脚本顶部"
+echo "[view-child-index] 按下标取节点：$total 处（= 基线，只减不增）；逐文件基线见脚本顶部"

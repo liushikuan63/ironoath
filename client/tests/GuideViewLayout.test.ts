@@ -483,7 +483,8 @@ function questWithGuide(guide: GuideHarness, area: Rect = { ...nativeArea }, mat
   }
   const styles = sceneExports('DialogStyle', { view: { getVisibleSize: () => size },
     PANEL_IRON_INSET, ...uiTokens, dialogLayout, applySlicedSprite: art,
-    applyIronButton: (node: Node, _state: string, width: number, height: number) => art(node, 'ui.button.iron', width, height) })
+    applyIronButton: (node: Node, _state: string, width: number, height: number) => art(node, 'ui.button.iron', width, height),
+    applyCommandButton: (node: Node, _state: string, width: number, height: number) => art(node, 'ui.button.chip', width, height) })
   const QuestPanel = sceneClass<QuestHarness>('QuestPanelView', { view: { getVisibleSize: () => size },
     applySystemUiFont: (label: Label) => label, buildQuestList, candidateLabel, candidatePreview, chosenClaimReq, ...paging,
     applySlicedSprite: art, applyDialogButton: styles.applyDialogButton, createDialogScroll: styles.createDialogScroll,
@@ -569,7 +570,7 @@ test('真实Quest从600创建后短屏再600/640重排自身Tabs背景行和翻�
     assert.equal(dimensions(quest.node).height, height)
     assert.equal(quest.node.getChildByName('Header')!.position.y, Math.min(height / 2, area.y + area.height) - 36)
     assert.ok(quest.drawnRows.length > 0)
-    assert.equal(quest.drawnRows[0]!.position.y, Math.min(height / 2, area.y + area.height) - 123)
+    assert.equal(quest.drawnRows[0]!.position.y, Math.min(height / 2, area.y + area.height) - 130)
     for (const name of ['PrevPageButton', 'NextPageButton']) {
       const pager = quest.node.getChildByName(name)!, rect = ownRect(pager)
       assert.equal(pager.active, true); assert.ok(rect.y >= area.y)
@@ -597,7 +598,7 @@ test('真实Quest安全净区改变只render一次，保留选择窗候选及页
   const top = area.y + area.height
   assert.equal(quest.node.getChildByName('Header')!.position.y, top - 36)
   assert.equal(quest.drawnRows[0]!.position.x, area.x + area.width / 2)
-  assert.equal(quest.drawnRows[0]!.position.y, top - 123)
+  assert.equal(quest.drawnRows[0]!.position.y, top - 130)
 })
 const prompt: HeroChoicePrompt = { questId: 'server-quest', title: '服务器奖励',
   candidates: [{ heroId: 'hero-from-server', name: '服务器武将', rarity: null, might: null, command: null, wisdom: null, mainSkillName: null, mainSkillDescription: null, subSkillName: null, subSkillDescription: null, featureText: null }] }
@@ -807,7 +808,7 @@ function resourceTutorial(area: Rect): ResourceTutorialHarness {
   const art = () => false
   const size = { width: 960, height: area.height + 84 }
   const styles = sceneExports('DialogStyle', { view: { getVisibleSize: () => size }, PANEL_IRON_INSET,
-    ...uiTokens, dialogLayout, applySlicedSprite: art, applyIronButton: art })
+    ...uiTokens, dialogLayout, applySlicedSprite: art, applyIronButton: art, applyCommandButton: art })
   const City = sceneClass<ResourceTutorialHarness>('CityPanelView', {
     ...cityAnchors, PANEL_FRAME_BAND, ...sceneExports('UiFont', {}), applySystemUiFont: (label: Label) => label,
     ...styles, dialogContentRect: () => area,

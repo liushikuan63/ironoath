@@ -101,7 +101,7 @@ try {
     await page.waitForFunction(fn => { const s = (0, eval)(`(${fn})`)(); return s?.rows.some(r => r.claim) }, screen.toString())
     state = await page.evaluate(screen)
     const daily = state.rows.find(r => r.claim)
-    check(`视口${index}：真实签到行显示配置金额与04:00`, daily.title.includes('20') && daily.detail.includes('04:00'))
+    check(`视口${index}：真实签到奖励说明显示配置金额与04:00`, daily.detail.includes(`金币 ×${signs[0].rewards[0].count}`) && daily.detail.includes('04:00'))
     await page.screenshot({ path: `${OUT}/signin-${index}-before.png` })
     // 截图等待期间异步绘图可能重用行池：按同一服务端标题重取当前可点键，
     // 不沿用已变为灰行的旧uuid；此步只重新读节点，没有再次领取。

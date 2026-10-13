@@ -39,14 +39,14 @@ const COLOR_BACKGROUND = new Color(20, 17, 15, 238)
 const COLOR_PANEL = new Color(40, 33, 27, 255)
 const COLOR_ROW = new Color(52, 43, 35, 255)
 const COLOR_ROW_DIM = new Color(32, 29, 27, 255)
-const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
+const COLOR_COPPER_GOLD = new Color(218, 179, 107, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
-const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
-const COLOR_CLAIMABLE = new Color(120, 176, 96, 255)
+const COLOR_TEXT_DIM = new Color(185, 174, 151, 255)
+const COLOR_CLAIMABLE = new Color(218, 179, 107, 255)
 
 const PANEL_WIDTH = 680
-const ROW_HEIGHT = 62
-const ROW_GAP = 6
+const ROW_HEIGHT = 76
+const ROW_GAP = 8
 /**
  * 顶部带的高度：表头 + 页签行。64 时表头（22 号）与页签行（14 号）的字形带只差 21px，
  * 小于 (22+14)/2+4 = 23 —— 页签底板还会压住表名下沿（横扫的"字形相碰"那一维量出来的，见台账 #388）。
@@ -346,6 +346,7 @@ export class QuestPanelView extends Component {
       button.active = paged
       button.setPosition(new Vec3(centerX + (button === this.prevPageButton ? -1 : 1) * (PANEL_WIDTH / 2 - 46), rowY, 0))
       caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+      applyDialogButton(button, usable, 80, 32)
     }
   }
 
@@ -359,12 +360,25 @@ export class QuestPanelView extends Component {
     graphics.fill()
 
     const title = this.addLabel(node, 'Title', -PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, 12, COLOR_TEXT, 19)
+    title.node.getComponent(UITransform)?.setContentSize(PANEL_WIDTH - 280, 22)
+    title.lineHeight = 22
+    title.overflow = Label.Overflow.SHRINK
+    title.enableWrapText = false
     title.horizontalAlign = Label.HorizontalAlign.LEFT
     title.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
     const detail = this.addLabel(node, 'Detail', -PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, -14, COLOR_TEXT_DIM, 14)
+    detail.node.getComponent(UITransform)?.setContentSize(PANEL_WIDTH - 280, 30)
+    detail.fontSize = 13
+    detail.lineHeight = 15
+    detail.overflow = Label.Overflow.SHRINK
+    detail.enableWrapText = true
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 150, 0, COLOR_TEXT, 15)
+    const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 160, 0, COLOR_TEXT, 15)
+    status.node.getComponent(UITransform)?.setContentSize(96, 24)
+    status.lineHeight = 20
+    status.overflow = Label.Overflow.SHRINK
+    status.enableWrapText = false
     status.horizontalAlign = Label.HorizontalAlign.RIGHT
 
     // 一个「领取」按钮：不可领时隐藏（灰着却能点只会让玩家一直点然后以为卡了）
@@ -372,7 +386,7 @@ export class QuestPanelView extends Component {
     button.layer = node.layer
     node.addChild(button)
     button.setPosition(new Vec3(PANEL_WIDTH / 2 - 62, 0, 0))
-    button.addComponent(UITransform).setContentSize(new Size(76, 32))
+    button.addComponent(UITransform).setContentSize(new Size(92, 36))
     const buttonGraphics = button.addComponent(Graphics)
     buttonGraphics.fillColor = COLOR_PANEL
     buttonGraphics.strokeColor = COLOR_COPPER_GOLD
@@ -382,6 +396,7 @@ export class QuestPanelView extends Component {
     buttonGraphics.stroke()
     const caption = this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 15)
     caption.string = '领取'
+    applyDialogButton(button, true, 92, 36, true)
     return node
   }
 
@@ -479,7 +494,8 @@ export class QuestPanelView extends Component {
       const label = this.tabLabels.get(node)
       if (label !== undefined) {
         const active = key === this.tab
-        label.color = active ? COLOR_COPPER_GOLD : COLOR_TEXT_DIM
+        label.color = active ? COLOR_COPPER_GOLD : COLOR_TEXT
+        applyDialogButton(node, true, PANEL_WIDTH / TABS.length - 8, TAB_HEIGHT, active)
       }
     }
   }
@@ -609,22 +625,23 @@ export class QuestPanelView extends Component {
   }
 
   private renderActivityRow(node: Node, row: ActivityRow): void {
-    const title = node.children[0]?.getComponent(Label)
-    const detail = node.children[1]?.getComponent(Label)
-    const status = node.children[2]?.getComponent(Label)
+    this.paintRowSurface(node, ROW_HEIGHT)
+    const title = node.getChildByName('Title')?.getComponent(Label)
+    const detail = node.getChildByName('Detail')?.getComponent(Label)
+    const status = node.getChildByName('Status')?.getComponent(Label)
     if (title !== undefined && title !== null) {
-      title.string = row.name + (row.rewardText ? ` · ${row.rewardText}` : '')
-      title.color = row.claimable ? COLOR_TEXT : COLOR_TEXT_DIM
+      title.string = row.name
+      title.color = COLOR_TEXT
     }
     if (detail !== undefined && detail !== null) {
-      detail.string = `${row.progressText} · ${row.details ?? row.remainingText}`
+      detail.string = `${row.progressText}${row.rewardText ? ` · ${row.rewardText}` : ''}\n${row.details ?? row.remainingText}`
     }
     if (status !== undefined && status !== null) {
       status.string = row.statusText
       status.color = row.claimable ? COLOR_CLAIMABLE : COLOR_TEXT_DIM
     }
-    const button = node.children[3]
-    if (button !== undefined) {
+    const button = node.getChildByName('ClaimButton')
+    if (button !== null) {
       button.off('touch-start')
       button.active = row.claimable
       if (row.claimable) {
@@ -666,15 +683,19 @@ export class QuestPanelView extends Component {
     detail.enableWrapText = true
     detail.horizontalAlign = Label.HorizontalAlign.LEFT
     detail.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
-    const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 150, 0, COLOR_TEXT, 15)
+    const status = this.addLabel(node, 'Status', PANEL_WIDTH / 2 - 160, 0, COLOR_TEXT, 15)
+    status.node.getComponent(UITransform)?.setContentSize(96, 24)
     status.node.getComponent(UITransform)!.setContentSize(96, 24)
+    status.lineHeight = 20
+    status.overflow = Label.Overflow.SHRINK
+    status.enableWrapText = false
     status.horizontalAlign = Label.HorizontalAlign.RIGHT
 
     const button = new Node('ClaimButton')
     button.layer = node.layer
     node.addChild(button)
     button.setPosition(new Vec3(PANEL_WIDTH / 2 - 62, 0, 0))
-    button.addComponent(UITransform).setContentSize(new Size(76, 32))
+    button.addComponent(UITransform).setContentSize(new Size(92, 36))
     const buttonGraphics = button.addComponent(Graphics)
     buttonGraphics.fillColor = COLOR_PANEL
     buttonGraphics.strokeColor = COLOR_COPPER_GOLD
@@ -684,7 +705,8 @@ export class QuestPanelView extends Component {
     buttonGraphics.stroke()
     const caption = this.addLabel(button, 'Caption', 0, 0, COLOR_TEXT, 15)
     caption.string = '领取'
-    // Icon 挂在最后：renderActivityRow 按 children 下标取文本，插在中间会错位。
+    applyDialogButton(button, true, 92, 36, true)
+    // 具名读取不依赖装饰节点/图标的兄弟顺序。
     const icon = new Node('Icon')
     icon.layer = node.layer
     node.addChild(icon)
@@ -705,13 +727,14 @@ export class QuestPanelView extends Component {
       graphics.roundRect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height, 6)
       graphics.fill()
     }
-    const title = node.children[0]?.getComponent(Label)
-    const detail = node.children[1]?.getComponent(Label)
-    const status = node.children[2]?.getComponent(Label)
+    this.paintRowSurface(node, height)
+    const title = node.getChildByName('Title')?.getComponent(Label)
+    const detail = node.getChildByName('Detail')?.getComponent(Label)
+    const status = node.getChildByName('Status')?.getComponent(Label)
     if (title !== undefined && title !== null) {
       title.node.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, firstKill ? 24 : 15, 0))
       title.string = row.title
-      title.color = row.claimable ? COLOR_TEXT : COLOR_TEXT_DIM
+      title.color = COLOR_TEXT
     }
     if (detail !== undefined && detail !== null) {
       const parts: string[] = [row.progressText, ...row.rewardLines]
@@ -728,8 +751,8 @@ export class QuestPanelView extends Component {
       status.color = row.claimable ? COLOR_CLAIMABLE : COLOR_TEXT_DIM
     }
 
-    const button = node.children[3]
-    if (button !== undefined) {
+    const button = node.getChildByName('ClaimButton')
+    if (button !== null) {
       button.off('touch-start')
       button.active = row.claimable
       this.rowQuestIds.set(node, row.questId)
@@ -737,6 +760,23 @@ export class QuestPanelView extends Component {
         button.on('touch-start', (_event: EventTouch) => this.handleClaimClick(row))
       }
     }
+  }
+
+  private paintRowSurface(node: Node, height: number): void {
+    let surface = node.getChildByName('RowSurface')
+    if (surface === null) {
+      surface = new Node('RowSurface')
+      surface.layer = node.layer
+      node.addChild(surface)
+      surface.addComponent(UITransform)
+      surface.setSiblingIndex(0)
+    }
+    const loaded = applySlicedSprite(surface, 'ui.plate.band', PANEL_WIDTH, height)
+    surface.active = loaded
+    const graphics = node.getComponent(Graphics)
+    if (graphics !== null) graphics.enabled = !loaded
+    const sprite = surface.getComponent(Sprite)
+    if (sprite !== null) sprite.enabled = loaded
   }
 
   /** 点「领取」：按 intent 分流（直接领 / 先弹三选一 / 什么都不做）。 */
