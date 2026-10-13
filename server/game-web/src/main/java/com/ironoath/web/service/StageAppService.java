@@ -254,6 +254,9 @@ public class StageAppService {
         List<RewardItem> rewards = attempt.won()
                 ? grantStageRewards(playerId, stage, progress, firstClear) : List.of();
         if (attempt.won()) {
+            // 永久PvE只接受已记录的真实胜利，战报重读/重送复用同一稳定事实。
+            questEvents.progressOnce(playerId, com.ironoath.core.quest.GoalType.PVE_WIN,
+                    stage.id(), 1L, now, "pve:stage:" + reportId);
             // 通关算一次（B12 §1 的 CLEAR_STAGE）。**重复挑战也记**：周常问的是"这周打了几关"，
             // 而重复挑战同样是花体力打的一场；目标不细分时由事件带 targetId 交给任务表去匹配
             questEvents.progress(playerId, com.ironoath.core.quest.GoalType.CLEAR_STAGE,
@@ -343,6 +346,8 @@ public class StageAppService {
             for (RewardItem item : rewards) {
                 totalRewards.merge(item.type() + "|" + item.id(), item.count(), Long::sum);
             }
+            if (attempt.won()) questEvents.progressOnce(playerId, com.ironoath.core.quest.GoalType.PVE_WIN,
+                    stage.id(), 1L, now, "pve:stage:" + reportId);
             results.add(new SweepResult(reportId,
                     stars(attempt.won(), attempt.noLoss(), attempt.withinRounds()),
                     toRewardViews(rewards)));

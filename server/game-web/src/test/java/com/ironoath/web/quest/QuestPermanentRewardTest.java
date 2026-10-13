@@ -100,4 +100,46 @@ class QuestPermanentRewardTest {
         quests.claim(uid,new QuestClaimReq(id(),MIDDLE,null));
         assertThat(gold(uid)).isEqualTo(before+50);
     }
+
+    private com.ironoath.web.dto.generated.QuestView firstKill(String uid,int level) {
+        return quests.list(uid).quests().stream().filter(q->q.questId().equals(String.format("quest_firstkill_lv%02d",level)))
+                .findFirst().orElseThrow(()->new AssertionError("Missing first kill level "+level));
+    }
+    private Long firstAt(Object entry) throws Exception { return (Long)entry.getClass().getMethod("firstVictoryAt").invoke(entry); }
+    // Explicit bus qualification fixture: not fifty actual battles or native acceptance.
+    private void firstWin(String uid,int level,long at) {
+        events.progressOnce(uid,GoalType.valueOf("SOLO_MONSTER_WIN"),Integer.toString(level),1,at,"firstkill:level:"+level);
+    }
+    @Test void fiftyLevelsBudgetIsFiveHundredAndUidReplaySeasonAreIsolated() throws Exception {
+        String a=player(),b=player();long goldA=gold(a),goldB=gold(b),at=time.serverNow();
+        assertThat(quests.list(a).quests().stream().filter(q->q.questId().startsWith("quest_firstkill_lv"))).hasSize(50);
+        for(int level=1;level<=50;level++) {
+            firstWin(a,level,at);firstWin(a,level,at+1000);
+            var row=firstKill(a,level);assertThat(row.current()).isEqualTo(1);assertThat(firstAt(row)).isEqualTo(at);
+            assertThat(row.claimable()).isTrue();assertThat(firstKill(b,level).current()).isZero();
+            quests.claim(a,new QuestClaimReq("shared-request-"+level,row.questId(),null));
+            firstWin(a,level,at+2000);
+            assertThatThrownBy(()->quests.claim(a,new QuestClaimReq(id(),row.questId(),null))).isInstanceOf(RuntimeException.class);
+        }
+        assertThat(gold(a)).isEqualTo(goldA+500);assertThat(gold(b)).isEqualTo(goldB);
+        firstWin(b,1,at);quests.claim(b,new QuestClaimReq("shared-request-1",firstKill(b,1).questId(),null));
+        assertThat(gold(b)).isEqualTo(goldB+10);
+        var old=store.load(a).orElseThrow();var restored=QuestProgress.restore(a,old.entries(),old.dayKey(),old.weekKey());
+        restored.rollover("20991231","2099W52");store.save(a,new QuestProgressStore.State(a,restored.entries(),restored.dayKey(),restored.weekKey()));
+        assertThat(firstKill(a,1).claimed()).isTrue();assertThat(firstAt(firstKill(a,1))).isEqualTo(at);
+    }
+    @Test void acceptedWalletRestoresFirstVictoryTimeAfterCompleteProjectionLoss() throws Exception {
+        String uid=player();long before=gold(uid),at=time.serverNow();firstWin(uid,1,at);
+        var initial=store.load(uid).orElseThrow();
+        quests.claim(uid,new QuestClaimReq(id(),firstKill(uid,1).questId(),null));
+        // Only this fixture UID: discard qualification/claim projection; durable wallet is untouched.
+        var lost=initial.entries().stream().map(e->e.questId().equals("quest_firstkill_lv01")
+                ? new QuestProgress.Entry(e.questId(),e.type(),e.goalType(),e.goalTarget(),e.goalValue(),e.preQuestId(),0,false,true,Set.of(),10L) : e).toList();
+        store.save(uid,new QuestProgressStore.State(uid,lost,initial.dayKey(),initial.weekKey()));
+        var recovered=firstKill(uid,1);assertThat(recovered.claimed()).isTrue();assertThat(firstAt(recovered)).isEqualTo(at);
+        assertThat(gold(uid)).isEqualTo(before+10);
+        assertThatThrownBy(()->quests.claim(uid,new QuestClaimReq(id(),recovered.questId(),null))).isInstanceOf(RuntimeException.class);
+        assertThat(gold(uid)).isEqualTo(before+10);
+    }
+
 }

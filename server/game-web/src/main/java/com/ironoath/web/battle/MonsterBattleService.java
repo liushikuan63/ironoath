@@ -166,7 +166,7 @@ public class MonsterBattleService {
                           long overflowDead,
                           long staminaCost,
                           long staminaCharged,
-                          List<RewardItem> drops) {
+                          List<RewardItem> drops, long monsterLevel) {
 
         public Outcome {
             lossesByUnitId = Map.copyOf(lossesByUnitId);
@@ -407,7 +407,7 @@ public class MonsterBattleService {
                 result.totalRounds(), lossesByUnitId, deadByUnitId, woundedByUnitId,
                 overflowDead, staminaCharged, staminaCost, drops.size(), hospitalCapacity);
         return new Outcome(result, won, lossesByUnitId, deadByUnitId, woundedByUnitId,
-                overflowDead, staminaCost, staminaCharged, drops);
+                overflowDead, staminaCost, staminaCharged, drops, monster.level());
     }
 
 

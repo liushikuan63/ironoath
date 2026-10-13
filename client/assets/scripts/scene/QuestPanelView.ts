@@ -79,6 +79,7 @@ const TABS = [
   { key: 'signin', label: '签到' },
   { key: 'activity', label: '活动' },
   { key: 'achievement', label: '成就' },
+  { key: 'firstkill', label: '首杀图鉴' },
 ] as const
 type TabKey = typeof TABS[number]['key']
 const TAB_HEIGHT = 34
@@ -524,15 +525,17 @@ export class QuestPanelView extends Component {
     // 任务页不含成就、成就页只看成就（两个页签的数据来自同一份响应，只是过滤不同）
     const rows = list.rows.filter(row => this.tab === 'achievement'
       ? row.type === 'ACHIEVEMENT'
-      : row.type !== 'ACHIEVEMENT')
+      : this.tab === 'firstkill' ? row.type === 'FIRST_KILL'
+      : row.type !== 'ACHIEVEMENT' && row.type !== 'FIRST_KILL')
+    const rowHeight = this.tab === 'firstkill' ? 80 : ROW_HEIGHT
     const size = view.getVisibleSize()
     const area = dialogContentRect(this.node)
     const receiptSpace = this.receiptLabel?.string ? RECEIPT_HEIGHT + ROW_GAP : 0
-    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - receiptSpace - ROW_HEIGHT / 2
+    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT - receiptSpace - rowHeight / 2
     // 行数按实测可视高度算，不写死：① 可视高度随窗口/机型变；② 多画的行会被底部导航条盖住，
     // 那是"画了但玩家看不见"，比少画一行更难发现（表头带抬到 76 之后这一屏更矮了一档）。
     const navTop = Math.max(-size.height / 2 + BOTTOM_RESERVED, area.y)
-    const capacity = Math.max(1, Math.floor((topY + ROW_HEIGHT / 2 - navTop) / (ROW_HEIGHT + ROW_GAP)))
+    const capacity = Math.max(1, Math.floor((topY + rowHeight / 2 - navTop) / (rowHeight + ROW_GAP)))
     // 共几页、夹到哪一页、切哪一段用同一个 perPage（`PanelPaging` 那条原话）：从前这里
     // slice(0, maxRows) 一刀切、再把「另有 N 条」拼到表头，剩下的任务一条也够不着（#307）。
     const total = rows.length
@@ -542,19 +545,19 @@ export class QuestPanelView extends Component {
     const slice = pageWindow(total, this.page, perPage)
     const visible = rows.slice(slice.start, slice.end)
     if (this.headerLabel !== null) {
-      const scope = this.tab === 'achievement' ? '成就' : '任务'
-      const claimable = this.tab === 'achievement' ? null : list.claimableText
+      const scope = this.tab === 'achievement' ? '成就' : this.tab === 'firstkill' ? '首杀图鉴' : '任务'
+      const claimable = this.tab === 'quest' ? list.claimableText : null
       this.headerLabel.string = `${scope} ${total} 条`
         + (claimable === null ? '' : ` · ${claimable}`)
     }
     visible.forEach((row, index) => {
       const node = pool.acquire()
-      node.setPosition(new Vec3(area.x + area.width / 2, topY - index * (ROW_HEIGHT + ROW_GAP), 0))
+      node.setPosition(new Vec3(area.x + area.width / 2, topY - index * (rowHeight + ROW_GAP), 0))
       this.drawnRows.push(node)
       this.renderRow(node, row)
     })
     // 页码与两颗键排在本屏让出来的那一格上（装不下时 `contentPerPage` 少画一行）
-    this.paintPager(total, pages, topY - visible.length * (ROW_HEIGHT + ROW_GAP) - 12)
+    this.paintPager(total, pages, topY - visible.length * (rowHeight + ROW_GAP) - 12)
   }
 
   /**
@@ -691,18 +694,22 @@ export class QuestPanelView extends Component {
   }
 
   private renderRow(node: Node, row: QuestRow): void {
+    const firstKill = row.type === 'FIRST_KILL'
+    const height = firstKill ? 80 : ROW_HEIGHT
+    node.getComponent(UITransform)?.setContentSize(PANEL_WIDTH, height)
     const graphics = node.getComponent(Graphics)
     if (graphics !== null) {
       graphics.clear()
       // 可领的高亮、锁着的压暗：玩家扫一眼就该看出哪条能动
       graphics.fillColor = row.claimable ? COLOR_ROW : COLOR_ROW_DIM
-      graphics.roundRect(-PANEL_WIDTH / 2, -ROW_HEIGHT / 2, PANEL_WIDTH, ROW_HEIGHT, 6)
+      graphics.roundRect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height, 6)
       graphics.fill()
     }
     const title = node.children[0]?.getComponent(Label)
     const detail = node.children[1]?.getComponent(Label)
     const status = node.children[2]?.getComponent(Label)
     if (title !== undefined && title !== null) {
+      title.node.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, firstKill ? 24 : 15, 0))
       title.string = row.title
       title.color = row.claimable ? COLOR_TEXT : COLOR_TEXT_DIM
     }
@@ -711,7 +718,10 @@ export class QuestPanelView extends Component {
       if (row.lockedHint !== null) {
         parts.push(row.lockedHint)
       }
-      detail.string = parts.join(' · ')
+      detail.node.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, firstKill ? -9 : -14, 0))
+      detail.node.getComponent(UITransform)?.setContentSize(PANEL_WIDTH - 280, firstKill ? 40 : 30)
+      detail.lineHeight = firstKill ? 18 : 15
+      detail.string = parts.join(' · ') + (row.firstVictoryText ? `\n${row.firstVictoryText}` : '')
     }
     if (status !== undefined && status !== null) {
       status.string = row.statusText

@@ -44,6 +44,7 @@ function view(overrides: Partial<QuestView> = {}): QuestView {
     preQuestId: null,
     heroChoices: [],
     rewards: null,
+    firstVictoryAt: null,
     ...overrides,
   }
 }
@@ -217,4 +218,16 @@ test('永久金币回执采用服务端实际入账及转邮箱说明，不把�
     message: '成就已领取，金币入账20，另30金币已转入邮箱。' }
   assert.deepEqual(buildClaimSummary(response).rewardLines, [response.message])
   assert.deepEqual(buildClaimSummary({ ...response, message: null }).rewardLines, ['金币 ×20'])
+})
+
+test('首杀按目标类型分流，首次时间仅取服务端，旧时间缺失不猜测', () => {
+  const first = view({ type: 'ACHIEVEMENT', goalType: 'SOLO_MONSTER_WIN' as QuestView['goalType'],
+    name: '1级独立首胜（上线后累计）', complete: true, claimable: true,
+    ...({ firstVictoryAt: 1800000000000 } as Partial<QuestView>) })
+  const row = rowAt({ quests: [first], claimableCount: 1, serverNow: 1900000000000 }, 0)
+  assert.equal(row.type, 'FIRST_KILL')
+  assert.equal((row as QuestRow & { firstVictoryText: string }).firstVictoryText, '首胜 2027-01-15 16:00:00（北京时间）')
+  const old = rowAt({ quests: [JSON.parse(JSON.stringify({ ...first, firstVictoryAt: undefined })) as QuestView], claimableCount: 1, serverNow: 1900000000000 }, 0)
+  assert.equal((old as QuestRow & { firstVictoryText: string }).firstVictoryText, '首胜时间未记录')
+  assert.equal(rowAt({ quests: [view({ type: 'ACHIEVEMENT' })], claimableCount: 0, serverNow: 1 }, 0).type, 'ACHIEVEMENT')
 })

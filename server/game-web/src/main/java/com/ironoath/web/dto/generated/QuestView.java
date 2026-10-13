@@ -12,7 +12,7 @@ public record QuestView(
         String name,   // 任务名（表里的 name）。客户端不得自行翻译或拼接进度文案。
         QuestType type,
         GoalType goalType,
-        String goalTarget,   // 目标细分（建筑 id / 资源 id / 兵种 id / 野怪 id / 卡池 id）。null = 不限定（任意建筑升级都算）。
+        String goalTarget,   // 目标细分（建筑 id / 资源 id / 兵种 id / 野怪 id / 卡池 id）。null = 不限定（任意建筑升级都算）。 SOLO_MONSTER_WIN按等级数字字符串1至50匹配，不是野怪配置id。
         long goalValue,   // 目标值。恒 >= 1：为 0 的任务一创建就是完成态（领域层在构造期就拒绝）。
         long current,   // 当前进度。累加型只增不减；状态型是最近一次事件的快照值，可以回落（花掉粮食就退回去）。
         boolean complete,   // current >= goalValue。**它与 claimable 不同**：完成但没领、完成且领过、以及前置没做完，是三种不同状态。
@@ -21,6 +21,7 @@ public record QuestView(
         boolean locked,   // 前置任务未完成 ⇒ 还不能做。与 claimed 分开是为了让客户端知道该提示「先完成前置」还是「已领取」。
         String preQuestId,   // 前置任务 id，null 表示无前置。下发它是因为客户端要能画出任务链（「完成 X 后解锁」）。
         List<HeroChoice> heroChoices,   // 本条任务的可选武将列表（含名字）；空数组表示这条任务的奖励里没有「挑一名」这一项。客户端据此在领奖前弹出选择界面，选择结果随 claim 的 heroChoice 提交。
-        List<QuestReward> rewards)   // 可选奖励预览；永久金币取保存的资格额度，普通任务保持空列表。旧回应缺少该字段时沿用原展示。
+        List<QuestReward> rewards,   // 可选奖励预览；永久金币取保存的资格额度，普通任务保持空列表。旧回应缺少该字段时沿用原展示。
+        Long firstVictoryAt)   // 首次独立野怪胜利的服务端Unix毫秒；未获胜或可靠时间未知时为空。旧响应可缺省；不得用领取时间或客户端时间替代。
 {
 }

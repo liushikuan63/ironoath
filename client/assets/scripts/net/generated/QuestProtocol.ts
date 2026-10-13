@@ -16,7 +16,7 @@ export type QuestType =
   | 'ACHIEVEMENT'
 
 /**
- * 任务目标类型（B12 §1 的统一 GoalType）。16 个取值分成累加型与状态型两类 —— 前者进度只增不减（累计训练 20 个兵），后者进度是当前状态、可升可降（当前持有 10000 粮）。分类在服务端的 GoalType 枚举上，由 CI 的枚举一致性守卫保证两边同名同序。末三个（LOGIN_DAY / ALLIANCE_DONATE / PVP_WIN）是 B17 活动系统补的累加型目标，任务表暂未使用。
+ * 任务目标类型（B12 §1 的统一 GoalType）。19 个取值分成累加型与状态型两类 —— 前者进度只增不减（累计训练 20 个兵），后者进度是当前状态、可升可降（当前持有 10000 粮）。分类在服务端的 GoalType 枚举上，由 CI 的枚举一致性守卫保证两边同名同序。LOGIN_DAY / ALLIANCE_DONATE / PVP_WIN 三项是 B17 活动系统补的累加型目标，任务表暂未使用。 PVE_WIN为新增实际PvE胜利累加目标，关卡和野怪只有胜利结算才发布稳定事实。 EXPLORE_CHUNK仅接受已实际合法到达的不同地图块稳定事实，不从派遣预亮雾区或出生点亮推断。 SOLO_MONSTER_WIN只接受真实独立野怪胜利，目标是结算快照等级1至50，集结不计。
  */
 export type GoalType =
   | 'UPGRADE_BUILDING'
@@ -35,6 +35,9 @@ export type GoalType =
   | 'LOGIN_DAY'
   | 'ALLIANCE_DONATE'
   | 'PVP_WIN'
+  | 'PVE_WIN'
+  | 'EXPLORE_CHUNK'
+  | 'SOLO_MONSTER_WIN'
 
 /**
  * 一条任务的当前视图。**进度由事件推动累加**（B12 禁止项：任务进度不得轮询），所以这里的 current 是账本里的值，不是每次读的时候扫出来的。
@@ -46,7 +49,7 @@ export interface QuestView {
   name: string
   type: QuestType
   goalType: GoalType
-  /** 目标细分（建筑 id / 资源 id / 兵种 id / 野怪 id / 卡池 id）。null = 不限定（任意建筑升级都算）。 */
+  /** 目标细分（建筑 id / 资源 id / 兵种 id / 野怪 id / 卡池 id）。null = 不限定（任意建筑升级都算）。 SOLO_MONSTER_WIN按等级数字字符串1至50匹配，不是野怪配置id。 */
   goalTarget: string | null
   /** 目标值。恒 >= 1：为 0 的任务一创建就是完成态（领域层在构造期就拒绝）。 */
   goalValue: number
@@ -66,6 +69,8 @@ export interface QuestView {
   heroChoices: HeroChoice[]
   /** 可选奖励预览；永久金币取保存的资格额度，普通任务保持空列表。旧回应缺少该字段时沿用原展示。 */
   rewards: QuestReward[] | null
+  /** 首次独立野怪胜利的服务端Unix毫秒；未获胜或可靠时间未知时为空。旧响应可缺省；不得用领取时间或客户端时间替代。 */
+  firstVictoryAt: number | null
 }
 
 /**

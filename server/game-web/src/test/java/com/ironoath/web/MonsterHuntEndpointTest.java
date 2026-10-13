@@ -602,4 +602,78 @@ class MonsterHuntEndpointTest {
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
     }
+
+    @Autowired private com.ironoath.web.quest.QuestAppService permanentQuests;
+    private long pveWins(String uid) {
+        var row=permanentQuests.list(uid).quests().stream().filter(q->q.questId().equals("quest_achievement_pve_10")).findFirst();
+        assertThat(row).as("PvE永久成就必须下发").isPresent();return row.orElseThrow().current();
+    }
+    @Test void actualMonsterVictoryCountsOnceOnlyAfterArrivalAndRepeatedDueProcessingCannotAdd() {
+        Hunter hunter=readyHunter();giveTroops(hunter.playerId,Map.of(hunter.unitId,hunter.overwhelming));
+        String marchId=sendAttack(hunter);
+        assertThat(pveWins(hunter.playerId)).as("派兵不是胜利").isZero();
+        arriveAndProcess(marchId);assertThat(world.isConsumed(hunter.monsterCoord)).isTrue();
+        assertThat(pveWins(hunter.playerId)).isEqualTo(1);
+        marchAppService.processDue(hunter.playerId,System.currentTimeMillis());
+        assertThat(pveWins(hunter.playerId)).isEqualTo(1);
+    }
+    @Test void actualMonsterDefeatDoesNotCreatePveVictoryFact() {
+        Hunter hunter=readyHunter();giveTroops(hunter.playerId,Map.of("unit_infantry_t1",1L));
+        String marchId=sendAttack(hunter);arriveAndProcess(marchId);
+        assertThat(world.isConsumed(hunter.monsterCoord)).isFalse();assertThat(pveWins(hunter.playerId)).isZero();
+    }
+
+    private com.ironoath.web.dto.generated.QuestView firstKill(Hunter hunter) {
+        return permanentQuests.list(hunter.playerId).quests().stream()
+                .filter(q -> q.questId().equals(String.format("quest_firstkill_lv%02d", hunter.monster.level())))
+                .findFirst().orElseThrow(() -> new AssertionError("Missing level-specific first kill"));
+    }
+    private Long firstAt(Object entry) throws Exception {
+        return (Long) entry.getClass().getMethod("firstVictoryAt").invoke(entry);
+    }
+    @Test void soloVictoryQualifiesOnlyOnArrivalAndNormalDropsRemainSeparate() throws Exception {
+        Hunter hunter=readyHunter();giveTroops(hunter.playerId,Map.of(hunter.unitId,hunter.overwhelming));
+        long gold=players.findByPlayerId(hunter.playerId).orElseThrow().resource("GOLD").current();
+        assertThat(firstKill(hunter).claimable()).isFalse();
+        String marchId=sendAttack(hunter);
+        assertThat(firstKill(hunter).current()).isZero();
+        long before=System.currentTimeMillis();arriveAndProcess(marchId);long after=System.currentTimeMillis();
+        var row=firstKill(hunter);assertThat(row.claimable()).isTrue();
+        assertThat(row.rewards()).singleElement().satisfies(r -> assertThat(r.count()).isEqualTo(10));
+        assertThat(firstAt(row)).isBetween(before,after);
+        assertThat(players.findByPlayerId(hunter.playerId).orElseThrow().resource("GOLD").current()).isEqualTo(gold+hunter.monster.dropGold());
+        marchAppService.processDue(hunter.playerId,System.currentTimeMillis());
+        assertThat(firstAt(firstKill(hunter))).isEqualTo(firstAt(row));
+        permanentQuests.claim(hunter.playerId,new com.ironoath.web.dto.generated.QuestClaimReq(newRequestId(),row.questId(),null));
+        assertThat(firstKill(hunter).claimed()).isTrue();assertThat(firstAt(firstKill(hunter))).isEqualTo(firstAt(row));
+        assertThat(players.findByPlayerId(hunter.playerId).orElseThrow().resource("GOLD").current()).isEqualTo(gold+hunter.monster.dropGold()+10);
+    }
+    @Test void realDefeatCannotQualifyAnyFirstKillLevel() {
+        Hunter hunter=readyHunter();giveTroops(hunter.playerId,Map.of("unit_infantry_t1",1L));
+        arriveAndProcess(sendAttack(hunter));assertThat(world.isConsumed(hunter.monsterCoord)).isFalse();
+        assertThat(firstKill(hunter).claimable()).isFalse();assertThat(firstKill(hunter).current()).isZero();
+    }
+
+
+    @Test void secondActualSoloWinAtAnotherCoordinateNeverChangesTimeOrReopensClaim() throws Exception {
+        Hunter first=readyHunter();giveTroops(first.playerId,Map.of(first.unitId,first.overwhelming));
+        String marchId=sendAttack(first);arriveAndProcess(marchId);var row=firstKill(first);
+        permanentQuests.claim(first.playerId,new com.ironoath.web.dto.generated.QuestClaimReq(newRequestId(),row.questId(),null));
+        March returning=marches.findById(marchId).orElseThrow();marchAppService.processDue(first.playerId,returning.returnArriveAt()+1);
+        Coord next=null;
+        for(int dx=-35;dx<=35&&next==null;dx++) for(int dy=-35;dy<=35&&next==null;dy++) {
+            Coord coord=Coord.of(first.home.x()+dx,first.home.y()+dy);
+            if(!coord.withinWorld(512)||coord.equals(first.monsterCoord)||world.cityAt(coord).isPresent())continue;
+            var cell=worldAppService.cellAt(coord);
+            if(cell.entityType()==WorldGenerator.EntityType.MONSTER&&configs.get(MapmonsterCfg.class,cell.entityId()).level()==first.monster.level())next=coord;
+        }
+        assertThat(next).isNotNull();Hunter second=new Hunter(first.playerId,first.home,next,first.monster,first.unitId,first.overwhelming);
+        giveTroops(first.playerId,Map.of(first.unitId,first.overwhelming));
+        long before=players.findByPlayerId(first.playerId).orElseThrow().resource("GOLD").current();
+        arriveAndProcess(sendAttack(second));assertThat(world.isConsumed(next)).isTrue();
+        var again=firstKill(first);assertThat(again.current()).isEqualTo(1);assertThat(again.claimed()).isTrue();
+        assertThat(firstAt(again)).isEqualTo(firstAt(row));
+        assertThat(players.findByPlayerId(first.playerId).orElseThrow().resource("GOLD").current()).isEqualTo(before+first.monster.dropGold());
+    }
+
 }

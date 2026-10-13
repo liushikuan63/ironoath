@@ -16,8 +16,9 @@ import com.ironoath.web.store.memory.InMemoryQuestProgressStore;
  * （「累计训练 20 个兵」的兵可能已经战死），所以进度只能在事件发生那一刻记下来 ——
  * 内存版重启即空，玩家看到的是「我明明做了，任务没动」。
  *
- * <p>并发：没有任何版本号，前提是「同玩家的进度只有一个线程在改」（事件在玩家自己的锁内同步派发，
- * 且所有目标事件都来自玩家自己的动作）。这条前提写在端口上，将来出现跨玩家事件时要补锁。
+ * <p>整档读改写通过独立任务账本锁串行，包含事件、领取和会刷新落盘的读取。
+ * 全局行军可以在异主人的玩家/国家锁域发布事件，不能依赖调用方已持主人锁。
+ * 具体末端锁键及不得反取外层业务锁的契约见{@link QuestProgressStore}。
  */
 public final class MongoQuestProgressStore implements QuestProgressStore {
 

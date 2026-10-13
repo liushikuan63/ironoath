@@ -113,7 +113,7 @@ public class QuestAppService {
     /** 任务面板。顺带跨期清零与状态型快照刷新（两者都只在真变化时落库）。 */
     public QuestListResp list(String playerId) {
         long now = timeService.serverNow();
-        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> runProgressLocked(playerId, () -> {
             QuestProgress progress = loaded(playerId, now);
             Map<String, String> names = new LinkedHashMap<>();
             for (QuestRulesAssembler.QuestDef def : assembler.quests()) {
@@ -124,7 +124,7 @@ public class QuestAppService {
                 views.add(view(progress, entry, names.getOrDefault(entry.questId(), "未知任务")));
             }
             return new QuestListResp(List.copyOf(views), progress.claimableCount(), now);
-        });
+        }));
     }
 
     /**
@@ -138,7 +138,7 @@ public class QuestAppService {
     public int claimableCount(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
-                () -> loaded(playerId, now).claimableCount());
+                () -> runProgressLocked(playerId, () -> loaded(playerId, now).claimableCount()));
     }
 
     /** 领取奖励：普通任务先保存投影；永久金币先原子接受钱包收据，再保存可恢复的已领投影。 */
@@ -146,7 +146,7 @@ public class QuestAppService {
         long now = timeService.serverNow();
         String requestKey = acquire(playerId, req == null ? null : req.requestId(), now);
         try {
-            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> runProgressLocked(playerId, () -> {
                 QuestProgress progress = loaded(playerId, now);
                 String questId = req.questId();
                 if (questId == null || questId.isBlank()) {
@@ -184,7 +184,7 @@ public class QuestAppService {
                 if (!rewards.isEmpty()) {
                     var result = rewardService.grant(playerId, rewards,
                             permanent ? new RewardContext("free_gold", questId, achievementKey(questId), true,
-                                    Set.of("achievement-goal:" + entry.goalValue(), "achievement-gold:" + entry.goldReward()))
+                                    achievementReceiptFacts(entry))
                                     : RewardContext.toMail("quest", questId, questId + ":" + req.requestId()));
                     granted = result.granted();
                     if (permanent) {
@@ -206,7 +206,7 @@ public class QuestAppService {
                 }
                 LOG.info("任务奖励已领取 playerId={} questId={} 奖励={} 战令积分+{}", playerId, questId, granted, points);
                 return new QuestClaimResp(questId, rewardViews(granted), progress.claimableCount(), now, message);
-            });
+            }));
         } catch (RuntimeException e) {
             idempotency.release(requestKey);
             throw e;
@@ -244,7 +244,16 @@ public class QuestAppService {
      * <p><b>只有真变化才落库</b>：读面板是高频动作，每次都写一遍会让存储成为热点，
      * 而这里的两件事都只在跨天/跨周或状态真的变了时才发生。
      */
+    private <T> T runProgressLocked(String playerId, java.util.function.Supplier<T> action) {
+        return playerLock.runLocked(QuestProgressStore.lockKey(playerId), LOCK_TIMEOUT_MS, action);
+    }
+
     QuestProgress loaded(String playerId, long now) {
+        // entryOf也会触发刷新/跨日落盘；其读改写同样必须与异主人结算串行。
+        return runProgressLocked(playerId, () -> loadProgressLocked(playerId, now));
+    }
+
+    private QuestProgress loadProgressLocked(String playerId, long now) {
         List<QuestRulesAssembler.QuestDef> defs = assembler.quests();
         String day = DayKey.of(now);
         String week = WeekKey.of(now);
@@ -290,7 +299,8 @@ public class QuestAppService {
                     def.def().preQuestId(),
                     previous == null ? 0L : previous.current(),
                     previous != null && previous.claimed(), def.def().requiresFact(),
-                    previous == null ? java.util.Set.of() : previous.factIds(), def.def().goldReward()));
+                    previous == null ? java.util.Set.of() : previous.factIds(), def.def().goldReward(),
+                    previous == null ? null : previous.firstVictoryAt()));
         }
         // 配置删除不能撤销已接受的永久金币资格；未达标旧定义不凭空获得奖励。
         for (QuestProgress.Entry previous : old.values()) {
@@ -328,7 +338,9 @@ public class QuestAppService {
             long goal = receipt.facts().stream().filter(f -> f.startsWith("achievement-goal:"))
                     .mapToLong(f -> Long.parseLong(f.substring("achievement-goal:".length()))).findFirst()
                     .orElseThrow(() -> new IllegalStateException("成就收据缺少资格目标"));
-            if (progress.restoreClaimedFromGoldReceipt(entry.questId(), goal, receipt.requested())) changed++;
+            Long firstAt = receipt.facts().stream().filter(f -> f.startsWith("first-victory-at:"))
+                    .map(f -> Long.valueOf(f.substring("first-victory-at:".length()))).findFirst().orElse(null);
+            if (progress.restoreClaimedFromGoldReceipt(entry.questId(), goal, receipt.requested(), firstAt)) changed++;
         }
         for (QuestProgress.Entry entry : progress.entries()) {
             if (entry.goalType().accumulates() || !STATE_TYPES_WITH_SOURCE.contains(entry.goalType())) {
@@ -389,6 +401,14 @@ public class QuestAppService {
                 progress.dayKey(), progress.weekKey());
     }
 
+    private Set<String> achievementReceiptFacts(QuestProgress.Entry entry) {
+        var facts = new java.util.HashSet<String>();
+        facts.add("achievement-goal:" + entry.goalValue());
+        facts.add("achievement-gold:" + entry.goldReward());
+        if (entry.firstVictoryAt() != null) facts.add("first-victory-at:" + entry.firstVictoryAt());
+        return Set.copyOf(facts);
+    }
+
     // ---------- 视图 ----------
 
     private QuestView view(QuestProgress progress, QuestProgress.Entry entry, String name) {
@@ -399,7 +419,7 @@ public class QuestAppService {
                 entry.claimed(), progress.claimable(entry.questId()),
                 !progress.unlocked(entry.questId()), entry.preQuestId(),
                 permanentGold(entry) ? List.of() : heroChoiceViews(entry.questId()),
-                permanentGold(entry) ? rewardViews(permanentRewards(entry)) : List.of());
+                permanentGold(entry) ? rewardViews(permanentRewards(entry)) : List.of(), entry.firstVictoryAt());
     }
 
     /**
