@@ -33,6 +33,7 @@ public class ActivityRuleHistory {
         configs.addReloadGuard("activity", candidate -> capture(candidate.all(ActivityCfg.class)));
     }
     private synchronized void capture(List<ActivityCfg> rows) {
+        rows.forEach(ActivitySchedule::validate);
         // 多实例竞争只做有界CAS重读；失败拒绝热更，不能用新表猜旧条件。
         for (int attempt=0; attempt<3; attempt++) {
             List<Revision> history = store.load();
@@ -74,12 +75,13 @@ public class ActivityRuleHistory {
                 Segment previous = segments.isEmpty() ? null : segments.get(segments.size()-1);
                 long start = cutover;
                 if (previous != null && previous.row() != null) {
-                    ActivityWindow.Span old = ActivityWindow.current(previous.startAt(), previous.row().durationDays(), cutover-1);
+                    ActivityWindow.Span old = ActivitySchedule.current(previous.row(), previous.startAt(), cutover-1);
                     if (old.endAt() == null) { last=next; continue; }
-                    start = old.endAt();
+                    if (old.startAt() < cutover && !old.expired(cutover-1)) start = old.endAt();
                 }
                 if (next != null) {
-                    long anchor = next.activityType() == ActivityCfg.ActivityType.LOGIN_STREAK && playerAnchor > 0
+                    long anchor = next.cycleAnchorAt()!=null ? next.cycleAnchorAt()
+                            : next.activityType() == ActivityCfg.ActivityType.LOGIN_STREAK && playerAnchor > 0
                             ? playerAnchor : serverAnchor;
                     start = Math.max(start, anchor);
                 }
@@ -91,8 +93,8 @@ public class ActivityRuleHistory {
             // 未来首登/开服锚还没开始：仍提供窗口，但核心拒绝累计及领取。
             if (selected == null && !segments.isEmpty()) selected=segments.get(0);
             if (selected == null || selected.row() == null) return null;
-            ActivityWindow.Span span = ActivityWindow.current(selected.startAt(), selected.row().durationDays(), Math.max(1,now));
-            return ActivityRulesAssembler.instance(selected.row(), span);
+            ActivityWindow.Span span = ActivitySchedule.current(selected.row(), selected.startAt(), Math.max(1,now));
+            return ActivityRulesAssembler.instance(selected.row(), span,now);
         }
     }
 }

@@ -29,6 +29,11 @@ class ActivityRuleHistoryTest {
         while (!Files.exists(root.resolve("contract/config/activity.json"))) root=root.getParent();
         configs=ConfigRegistry.loadFromDirectory(root.resolve("contract/config"));
         table=(ObjectNode)JsonUtils.mapper().readTree(Files.readString(root.resolve("contract/config/activity.json")));
+        // 本组测试明确模拟v2旧服再热更，不能拿未来零金币表冒充旧承诺。
+        try (var input=ActivityRuleHistory.class.getResourceAsStream("/migrations/activity-rules-v2.json")) {
+            table.set("rows",JsonUtils.mapper().readTree(input));
+        }
+        configs.reload("activity",ActivityCfg.class,table.toString());
         time=mock(TimeService.class); when(time.serverNow()).thenReturn(OPEN+DAY);
         store=new InMemoryActivityRuleHistoryStore(); history=new ActivityRuleHistory(store,configs,time);
     }

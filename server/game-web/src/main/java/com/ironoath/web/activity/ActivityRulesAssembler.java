@@ -34,7 +34,7 @@ import com.ironoath.core.reward.RewardType;
 public class ActivityRulesAssembler {
 
     /** 由同一行一次构造承诺，目标/奖励/积分不会来自三次不同配置读取。 */
-    public static ActivityInstance instance(ActivityCfg row, com.ironoath.core.activity.ActivityWindow.Span span) {
+    public static ActivityInstance instance(ActivityCfg row, com.ironoath.core.activity.ActivityWindow.Span span,long now) {
         List<RewardItem> rewards = new ArrayList<>();
         if (row.rewardGold() > 0) rewards.add(new RewardItem(RewardType.RESOURCE, GOLD_RESOURCE_ID, row.rewardGold()));
         if (row.rewardItemId() != null && !row.rewardItemId().isBlank() && row.rewardItemCount() > 0) {
@@ -42,8 +42,9 @@ public class ActivityRulesAssembler {
         }
         if (rewards.isEmpty()) throw new IllegalStateException("活动不得没有奖励："+row.id());
         return new ActivityInstance(new ActivityProgress.Def(row.id(), typeOf(row.activityType()),
-                conditionOf(row.conditionType()), row.conditionValue(), row.durationDays(), Boolean.TRUE.equals(row.retired())),
-                row.name(), rewards, row.battlePassPoints(), span.startAt(), span.endAt());
+                conditionOf(row.conditionType()), row.conditionValue(), row.durationDays(), Boolean.TRUE.equals(row.retired()), row.cycleMonths()!=null),
+                row.name(), rewards, row.battlePassPoints(), span.startAt(), span.endAt(),
+                now>=span.startAt() && !span.expired(now) ? now : null);
     }
 
     private final ConfigRegistry configs;
@@ -57,7 +58,7 @@ public class ActivityRulesAssembler {
         List<ActivityProgress.Def> defs = new ArrayList<>();
         for (ActivityCfg row : configs.all(ActivityCfg.class)) {
             defs.add(new ActivityProgress.Def(row.id(), typeOf(row.activityType()),
-                    conditionOf(row.conditionType()), row.conditionValue(), row.durationDays(), Boolean.TRUE.equals(row.retired())));
+                    conditionOf(row.conditionType()), row.conditionValue(), row.durationDays(), Boolean.TRUE.equals(row.retired()), row.cycleMonths()!=null));
         }
         return List.copyOf(defs);
     }

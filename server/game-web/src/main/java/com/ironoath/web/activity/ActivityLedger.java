@@ -53,11 +53,12 @@ public class ActivityLedger {
             }
             boolean expired=instance != null && instance.span().expired(now);
             boolean pending=entry != null && !entry.claimed() && entry.value()>0;
-            boolean keep=instance != null && (!expired || mode==Mode.CLAIM || mode==Mode.READ && pending
+            boolean keep=instance != null && instance.openedAt()!=null && (!expired || mode==Mode.CLAIM || mode==Mode.READ && pending
                     || instance.def().retired());
             if (!keep) {
                 var current=rules.resolve(id, now, serverAnchor, playerAnchor);
                 if (current != null) instance=current;
+                else if (instance!=null && instance.openedAt()==null) instance=null;
                 // 已移除的旧实例保留原存档，固定窗口保证不能继续累积或重领。
             }
             if (instance == null) continue;

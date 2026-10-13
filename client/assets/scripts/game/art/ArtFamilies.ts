@@ -248,11 +248,16 @@ export const ITEM_ICON_BY_CONFIG: Readonly<Record<string, string>> = {
   item_gold_1000: 'icon:resources/gold',
 }
 
-/** activity.json 八行 → 活动族键。表里加行而这里没跟上时，tests/ArtFamilies.test.ts 的对账会红。 */
+/** activity.json 十二行 → 活动族键。表里加行而这里没跟上时，tests/ArtFamilies.test.ts 的对账会红。 */
 export const ACTIVITY_ICON_BY_CONFIG: Readonly<Record<string, string>> = {
   activity_login_7d: 'activity:login_7d',
   activity_login_30d: 'activity:login_30d',
   activity_monster_hunt: 'activity:monster_hunt',
+  // 四项主题均为普通打野，复用既有讨伐图，不另存价格、目标或奖励。
+  activity_theme_major: 'activity:monster_hunt',
+  activity_theme_first_minor: 'activity:monster_hunt',
+  activity_theme_second_early: 'activity:monster_hunt',
+  activity_theme_second_late: 'activity:monster_hunt',
   activity_rally_week: 'activity:rally_week',
   activity_donate_week: 'activity:donate_week',
   activity_pvp_win: 'activity:pvp_win',

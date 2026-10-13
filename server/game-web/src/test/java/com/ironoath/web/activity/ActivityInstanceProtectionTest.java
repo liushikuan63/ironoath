@@ -48,6 +48,11 @@ class ActivityInstanceProtectionTest {
         Path root = Path.of("").toAbsolutePath();
         while (!Files.exists(root.resolve("contract/config/activity.json"))) root = root.getParent();
         table = (ObjectNode) JsonUtils.mapper().readTree(Files.readString(root.resolve("contract/config/activity.json")));
+        // 保护回归从已核实v2旧服输入开始，未来预算单独由Campaign测试验证。
+        try (var input=ActivityRuleHistory.class.getResourceAsStream("/migrations/activity-rules-v2.json")) {
+            table.set("rows",JsonUtils.mapper().readTree(input));
+        }
+        configs.reload("activity",ActivityCfg.class,table.toString());
     }
     private String player() {
         return init.init(new PlayerInitReq(id(), "instance-"+id(), "活动保护验收", now, "")).playerId();

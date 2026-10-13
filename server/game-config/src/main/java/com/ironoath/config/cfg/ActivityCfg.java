@@ -1,10 +1,10 @@
-// 由 tools/config-gen 依据 contract/config/activity.json（表 version=2） 自动生成，禁止手改。
+// 由 tools/config-gen 依据 contract/config/activity.json（表 version=3） 自动生成，禁止手改。
 // 要改协议请改 Schema，然后运行 `npm run gen`；CI 会用 scripts/check-contract-sync.sh 校验同步性。
 package com.ironoath.config.cfg;
 
 /**
  * 配置表 activity 的一行。
- * 活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。 battlePassPoints 列（B24 S-d-c）：领取这条活动奖励时给多少战令积分。与任务那条同源：分值挂既有活动上，不新增任务体系。
+ * 活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。 battlePassPoints 列（B24 S-d-c）：领取这条活动奖励时给多少战令积分。与任务那条同源：分值挂既有活动上，不新增任务体系。 v3新增两月日历主题金币窗口，旧六項保材料和战令积分，原开放实例沿持久历史保旧。
  *
  * <p>本类型由生成器产出，<b>禁止手改</b>：改 {@code contract/config/activity.json} 的 fieldTypes 后运行 {@code npm run gen}。
  */
@@ -17,9 +17,13 @@ public record ActivityCfg(
         long durationDays,
         long rewardGold,
         String rewardItemId,   // 外键，指向 item 表的 id
-        long rewardItemCount,
+        Long rewardItemCount,
         long battlePassPoints,
-        Boolean retired)
+        Boolean retired,
+        Long cycleAnchorAt,
+        Long cycleMonths,
+        Long cycleMonthOffset,
+        Long cycleDay)
 {
     /** 枚举取值与配置表 fieldTypes 中的 ENUM 声明完全一致（CI 校验）。 */
     public enum ActivityType {

@@ -42,7 +42,7 @@ export interface ActivityView {
   id: string
   /** 活动名。**只在服务端与配置表里存一份**：客户端硬编码一份就会出现「改表了但界面没改」。 */
   name: string
-  /** 服务端算出来的状态：`EXPIRED`=窗口已过（不可领）；`CLAIMABLE`=达标且本窗口没领过；`RUNNING`=其余（含已领过但窗口未结束 —— 那一格由 `claimed` 表达）。 */
+  /** 服务端算出来的状态：`EXPIRED`=当前时刻不在窗口（未开始或已结束，不可领），未开始时间由windowStartAt说明；`CLAIMABLE`=达标且本窗口没领过；`RUNNING`=其余（含已领过但窗口未结束 —— 那一格由 `claimed` 表达）。 */
   state: ActivityState
   /** 当前窗口内的进度值。由事件推进（禁止轮询扫表），读取时不做「顺手推进一遍」。 */
   progress: number
@@ -62,6 +62,8 @@ export interface ActivityView {
   automatic: boolean | null
   /** 奖励已接受但尚有发放待恢复；资格与余额收据不会重发。 */
   processing: boolean | null
+  /** 服务端当前实例开始时刻；可空兼容旧客户端与签到。只用于展示未开始时间，领取资格仍取state，不由客户端比较时间后开放按钮。 */
+  windowStartAt: number | null
 }
 
 /**
