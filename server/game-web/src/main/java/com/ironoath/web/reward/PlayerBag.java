@@ -33,6 +33,63 @@ public final class PlayerBag implements RewardPorts.Bag {
     }
 
     @Override
+    public RewardPorts.Bag.ItemGrant grantItemsOnce(String playerId,
+            java.util.List<com.ironoath.core.reward.RewardItem> items,
+            com.ironoath.core.reward.RewardContext ctx, long now) {
+        if (ctx == null || !ctx.durableItems() || !ctx.overflowToMail() || items == null || items.isEmpty())
+            throw new IllegalArgumentException("材料日包须有持久业务键和邮件策略");
+        Inventory bag = loadOrCreate(playerId);
+        long version = inventories.versionOf(playerId);
+        var previous = bag.itemClaims().get(ctx.traceId());
+        if (previous != null) {
+            if (!previous.source().equals(ctx.source()) || !previous.sourceRef().equals(ctx.sourceRef()))
+                throw new IllegalStateException("道具业务键不得复用于不同来源");
+            return new RewardPorts.Bag.ItemGrant(previous, java.util.List.of());
+        }
+        var requested = new java.util.LinkedHashMap<String, Long>();
+        var limits = new java.util.HashMap<String, Long>();
+        for (var item : items) {
+            if (item.type() != com.ironoath.core.reward.RewardType.ITEM || isInstanced(item.id()))
+                throw new IllegalArgumentException("持久材料日包只支持普通堆叠道具");
+            requested.merge(item.id(), item.count(), Math::addExact);
+            limits.put(item.id(), stackMaxOf(item.id()));
+        }
+        var plan = new java.util.ArrayList<com.ironoath.core.reward.RewardItem>();
+        var got = new java.util.ArrayList<com.ironoath.core.reward.RewardItem>();
+        requested.forEach((id, count) -> {
+            plan.add(new com.ironoath.core.reward.RewardItem(com.ironoath.core.reward.RewardType.ITEM, id, count));
+            long actual = bag.countOf(id) == 0 && bag.capacityUsed() >= bag.capacityMax()
+                    ? 0 : bag.add(id, count, limits.get(id));
+            if (actual > 0) got.add(new com.ironoath.core.reward.RewardItem(com.ironoath.core.reward.RewardType.ITEM, id, actual));
+        });
+        var receipt = new com.ironoath.core.reward.ItemClaimReceipt(ctx.traceId(), ctx.source(), ctx.sourceRef(),
+                plan, got, now, null);
+        bag.putItemClaim(receipt);
+        inventories.save(playerId, bag, version);
+        return new RewardPorts.Bag.ItemGrant(receipt, got);
+    }
+
+    @Override
+    public java.util.List<com.ironoath.core.reward.ItemClaimReceipt> pendingItemClaims(String playerId) {
+        return inventories.findByPlayerId(playerId).map(bag -> bag.itemClaims().values().stream()
+                .filter(com.ironoath.core.reward.ItemClaimReceipt::pendingOverflow).toList()).orElse(java.util.List.of());
+    }
+
+    @Override
+    public void completeItemOverflow(String playerId, String businessKey, String mailId) {
+        Inventory bag = inventories.findByPlayerId(playerId).orElseThrow();
+        long version = inventories.versionOf(playerId);
+        var receipt = bag.itemClaims().get(businessKey);
+        if (receipt == null) throw new IllegalStateException("道具收据不存在");
+        if (receipt.overflowMailId() != null) {
+            if (!receipt.overflowMailId().equals(mailId)) throw new IllegalStateException("道具溢出邮件不得换号");
+            return;
+        }
+        bag.putItemClaim(receipt.withOverflowMail(mailId));
+        inventories.save(playerId, bag, version);
+    }
+
+    @Override
     public long add(String playerId, String itemId, long count) {
         if (count <= 0L) {
             throw new IllegalArgumentException("入包数量必须为正，itemId=" + itemId + ", count=" + count);

@@ -66,6 +66,20 @@ public final class Inventory {
 
     /** itemId → 持有量。用 LinkedHashMap 保持插入顺序，让背包列表的展示顺序稳定可复现。 */
     private final Map<String, Long> counts = new LinkedHashMap<>();
+    private final Map<String, com.ironoath.core.reward.ItemClaimReceipt> itemClaims = new LinkedHashMap<>();
+
+    public Map<String, com.ironoath.core.reward.ItemClaimReceipt> itemClaims() { return Map.copyOf(itemClaims); }
+    public void putItemClaim(com.ironoath.core.reward.ItemClaimReceipt receipt) {
+        itemClaims.put(receipt.businessKey(), receipt);
+    }
+    public void restoreItemClaims(Map<String, com.ironoath.core.reward.ItemClaimReceipt> stored) {
+        itemClaims.clear();
+        if (stored != null) stored.forEach((key, receipt) -> {
+            if (receipt == null || !key.equals(receipt.businessKey()))
+                throw new IllegalArgumentException("背包道具收据键不一致");
+            itemClaims.put(key, receipt);
+        });
+    }
 
     /** uid → 一件装备。同样按插入顺序，"先拿到的排前面"是界面上可复现的顺序。 */
     private final Map<String, EquipInstance> equips = new LinkedHashMap<>();
@@ -402,6 +416,7 @@ public final class Inventory {
     public Inventory copy() {
         Inventory copy = new Inventory(capacityMax);
         copy.restore(snapshot(), equipSnapshot(), capacityMax, nextEquipUid, itemId -> false);
+        copy.restoreItemClaims(itemClaims);
         return copy;
     }
 
@@ -423,6 +438,7 @@ public final class Inventory {
     public void restore(Map<String, Long> restored, List<EquipInstance> restoredEquips,
                         int restoredCapacityMax, int restoredNextEquipUid,
                         java.util.function.Predicate<String> instancedItemIds) {
+        itemClaims.clear();
         if (restoredCapacityMax < 0) {
             throw new IllegalArgumentException("capacityMax 不得为负：" + restoredCapacityMax);
         }

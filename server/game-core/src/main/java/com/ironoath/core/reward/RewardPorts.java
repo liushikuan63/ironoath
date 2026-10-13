@@ -76,6 +76,17 @@ public final class RewardPorts {
     /** 背包。实现必须做堆叠上限与容量上限校验。 */
     public interface Bag {
 
+        record ItemGrant(ItemClaimReceipt receipt, List<RewardItem> creditedNow) {
+            public ItemGrant { creditedNow = List.copyOf(creditedNow); }
+        }
+        default ItemGrant grantItemsOnce(String playerId, List<RewardItem> items, RewardContext context, long now) {
+            throw new UnsupportedOperationException("背包未实现整批道具持久领取");
+        }
+        default List<ItemClaimReceipt> pendingItemClaims(String playerId) { return List.of(); }
+        default void completeItemOverflow(String playerId, String businessKey, String mailId) {
+            throw new UnsupportedOperationException("背包未实现道具溢出收据更新");
+        }
+
         /**
          * 加入道具。
          *

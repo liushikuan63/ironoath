@@ -59,7 +59,7 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         for (RewardItem item : overflow) {
             lines.add(new RewardLine(item.type().name(), item.id(), item.count(), names.nameOf(item)));
         }
-        String mailId = ctx.durableGold()
+        String mailId = ctx.durableGold() || ctx.durableItems()
                 ? "mail_" + UUID.nameUUIDFromBytes((playerId + "\u0000" + ctx.source() + "\u0000" + ctx.traceId())
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString().replace("-", "")
                 : "mail_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
@@ -113,9 +113,9 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         for (RewardLine line : lines) {
             text.append("· ").append(line.name()).append(" ×").append(line.count()).append('\n');
         }
-        text.append("来源：").append(ctx.durableGold()
+        text.append("来源：").append(ctx.durableItems() ? "月卡材料奖励" : ctx.durableGold()
                 ? ("paid_gold".equals(ctx.source()) ? "月卡金币奖励" : "签到与成长奖励") : ctx.source());
-        if (!ctx.durableGold() && !ctx.sourceRef().isBlank()) {
+        if (!ctx.durableGold() && !ctx.durableItems() && !ctx.sourceRef().isBlank()) {
             text.append('（').append(ctx.sourceRef()).append('）');
         }
         return text.toString().stripTrailing();

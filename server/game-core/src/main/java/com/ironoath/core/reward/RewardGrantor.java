@@ -66,6 +66,7 @@ public final class RewardGrantor implements RewardService {
         }
 
         if (ctx.durableGold()) return grantGoldOnce(playerId, rewards, ctx);
+        if (ctx.durableItems()) return deliverItems(playerId, bag.grantItemsOnce(playerId, rewards, ctx, clock.getAsLong()));
 
         long now = clock.getAsLong();
         List<RewardItem> granted = new ArrayList<>(rewards.size());
@@ -107,6 +108,25 @@ public final class RewardGrantor implements RewardService {
         }
         // 异常向上返回，已落盘的收据由读取/重试恢复，不能另建一份可能重复增发的普通补偿。
         return deliverGold(playerId, wallet.grantGoldOnce(playerId, amount, ctx, clock.getAsLong()));
+    }
+
+    private GrantResult deliverItems(String playerId, RewardPorts.Bag.ItemGrant accepted) {
+        var receipt = accepted.receipt();
+        String mailId = receipt.overflowMailId();
+        if (receipt.pendingOverflow()) {
+            mailId = mailbox.sendOverflow(playerId, receipt.overflow(), RewardContext.toMail(
+                    receipt.source(), receipt.sourceRef(), receipt.businessKey()));
+            bag.completeItemOverflow(playerId, receipt.businessKey(), mailId);
+        }
+        return new GrantResult(accepted.creditedNow(), receipt.overflow(), mailId, null);
+    }
+
+    @Override
+    public void recoverItemClaims(String playerId) {
+        for (var receipt : bag.pendingItemClaims(playerId)) {
+            deliverItems(playerId, bag.grantItemsOnce(playerId, receipt.requested(), RewardContext.toMail(
+                    receipt.source(), receipt.sourceRef(), receipt.businessKey()), clock.getAsLong()));
+        }
     }
 
     private GrantResult deliverGold(String playerId, RewardPorts.Wallet.GoldGrant accepted) {

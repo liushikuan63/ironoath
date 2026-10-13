@@ -8,7 +8,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.when;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -90,15 +89,60 @@ class DurableItemGrantTest {
         assertThat(mail.text()).contains("月卡材料奖励").doesNotContain("paid_items", "material-card-period");
     }
 
+    @Test void actualMailClaimReplyLossRetriesTheWholeAttachmentWithoutDuplicatingFirstItem() {
+        var store = new InMemoryInventoryStore();
+        var full = Inventory.empty(1); full.add("item_res_stone_10k", 1, 99);
+        store.insertIfAbsent(PLAYER, full);
+        var grants = spy(grants(store, mailbox));
+        grants.grant(PLAYER, PACK, context);
+        var bag = store.findByPlayerId(PLAYER).orElseThrow();
+        bag.remove("item_res_stone_10k", 1); bag.setCapacityMax(60);
+        store.save(PLAYER, bag, store.versionOf(PLAYER));
+        var fail = new AtomicBoolean(true);
+        doAnswer(call -> {
+            Object result = call.callRealMethod();
+            if (fail.getAndSet(false)) throw new IllegalStateException("fixture: attachment committed reply lost");
+            return result;
+        }).when(grants).grant(anyString(), any(), any(RewardContext.class));
+        var service = new com.ironoath.web.mail.MailAppService(mails, clock(), configs, grants,
+                new com.ironoath.web.store.memory.InMemoryIdempotencyStore(),
+                new com.ironoath.web.lock.InJvmPlayerLock(), new RewardNames(configs, mock(HeroFragmentExtras.class)));
+        var first = service.claimAll(PLAYER, new com.ironoath.web.dto.generated.MailClaimAllReq("mail-first"));
+        assertThat(first.failed()).hasSize(1);
+        var retry = service.claimAll(PLAYER, new com.ironoath.web.dto.generated.MailClaimAllReq("mail-retry"));
+        assertThat(retry.claimed()).isEqualTo(1);
+        assertThat(store.findByPlayerId(PLAYER).orElseThrow().countOf(PACK.get(0).id())).isEqualTo(1);
+        assertThat(store.findByPlayerId(PLAYER).orElseThrow().countOf(PACK.get(1).id())).isEqualTo(1);
+        assertThat(mails.listOf(PLAYER, NOW)).singleElement().extracting(com.ironoath.web.mail.MailStore.MailRecord::claimedAt).isEqualTo(NOW);
+    }
+
+    @Test void freshGrantorRecoversPendingMailWithoutResettingEarlierClaim() {
+        var store = new InMemoryInventoryStore();
+        var full = Inventory.empty(1); full.add("item_res_stone_10k", 1, 99);
+        store.insertIfAbsent(PLAYER, full);
+        RewardPorts.Mailbox replyLost = (player, items, ctx) -> {
+            mailbox.sendOverflow(player, items, ctx);
+            throw new IllegalStateException("fixture: committed mail reply lost");
+        };
+        assertThatThrownBy(() -> grants(store, replyLost).grant(PLAYER, PACK, context))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(new PlayerBag(store, configs).pendingItemClaims(PLAYER)).hasSize(1);
+        String id = mails.listOf(PLAYER, NOW).get(0).mailId();
+        assertThat(mails.claim(PLAYER, id, NOW)).isTrue();
+        grants(store, mailbox).recoverItemClaims(PLAYER);
+        assertThat(new PlayerBag(store, configs).pendingItemClaims(PLAYER)).isEmpty();
+        assertThat(mails.listOf(PLAYER, NOW)).hasSize(1);
+        assertThat(mails.findById(PLAYER, id).orElseThrow().claimedAt()).isEqualTo(NOW);
+        assertThat(store.findByPlayerId(PLAYER).orElseThrow().snapshot()).containsOnlyKeys("item_res_stone_10k");
+    }
+
     private RewardGrantor grants(InventoryRepository store, RewardPorts.Mailbox mail) {
         return new RewardGrantor(mock(RewardPorts.Wallet.class), new PlayerBag(store, configs), mail,
                 mock(RewardPorts.Compensation.class), mock(RewardPorts.Extras.class), () -> NOW);
     }
 
     private static com.ironoath.common.time.TimeService clock() {
-        var clock = mock(com.ironoath.common.time.TimeService.class);
-        when(clock.serverNow()).thenReturn(NOW);
-        return clock;
+        return new com.ironoath.common.time.TimeService(() -> NOW);
     }
 
     private static ConfigRegistry configs() {
