@@ -424,6 +424,39 @@ public final class MongoSocialStore implements SocialStore {
     }
 
     @Override
+    public boolean appendChatOrdered(String channelKey, ChatMessage message, int historyCap, long sequence) {
+        if (historyCap < 1 || sequence <= 0) throw new IllegalArgumentException("投递容量/序号必须为正");
+        Query id = Query.query(Criteria.where("_id").is(channelKey));
+        // 初次建档只用_id，避免条件upsert在已投递时触发重复主键。
+        mongo.upsert(id, new Update().setOnInsert("messages", List.of()), ChatChannelDocument.class,
+                ChatChannelDocument.COLLECTION);
+        String field = deliveryField(message.senderId());
+        Criteria unseen = new Criteria().orOperator(Criteria.where(field).exists(false), Criteria.where(field).lt(sequence));
+        Query guarded = Query.query(new Criteria().andOperator(Criteria.where("_id").is(channelKey), unseen));
+        org.bson.Document push = new org.bson.Document("$each", List.of(ChatChannelDocument.entryOf(message)))
+                .append("$slice", -historyCap);
+        return mongo.updateFirst(guarded, new Update().push("messages", push).set(field, sequence),
+                ChatChannelDocument.class, ChatChannelDocument.COLLECTION).getModifiedCount() == 1;
+    }
+
+    @Override
+    public long chatDeliverySequence(String channelKey, String senderId) {
+        String field = deliveryField(senderId);
+        Query query = Query.query(Criteria.where("_id").is(channelKey));
+        query.fields().include(field);
+        org.bson.Document doc = mongo.findOne(query, org.bson.Document.class, ChatChannelDocument.COLLECTION);
+        if (doc == null || !(doc.get("deliverySequences") instanceof org.bson.Document sequences)) return 0L;
+        Object value = sequences.get(field.substring("deliverySequences.".length()));
+        return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private static String deliveryField(String senderId) {
+        // UUID编码不含Mongo路径分隔符；不将原始昵称或任意用户文本作为字段名。
+        return "deliverySequences.p" + java.util.UUID.nameUUIDFromBytes(
+                senderId.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString().replace("-", "");
+    }
+
+    @Override
     public boolean hasMore(String channelKey, String beforeMessageId, int limit) {
         ChatChannelDocument document = mongo.findById(channelKey, ChatChannelDocument.class,
                 ChatChannelDocument.COLLECTION);

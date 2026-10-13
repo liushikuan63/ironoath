@@ -42,7 +42,11 @@ public final class BotChatBook {
         /** 刚加入联盟的问候。 */
         ALLIANCE_JOIN,
         /** 买卖资源的口风。 */
-        TRADE;
+        TRADE,
+        TAUNT_AGGRESSIVE_REPLY,
+        TAUNT_CAUTIOUS_REPLY,
+        TAUNT_ALLY_REPLY,
+        TAUNT_ATTACK;
 
         /**
          * 这个场景是不是「被某件事触发」的（B11 §四「事件触发模板句库」）。

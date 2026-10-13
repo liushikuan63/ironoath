@@ -225,12 +225,16 @@ export type BotChatScene =
   | 'CHAT_IDLE'
   | 'ALLIANCE_JOIN'
   | 'TRADE'
+  | 'TAUNT_AGGRESSIVE_REPLY'
+  | 'TAUNT_CAUTIOUS_REPLY'
+  | 'TAUNT_ALLY_REPLY'
+  | 'TAUNT_ATTACK'
 
 /**
  * 配置表 bot_chat 的一行。
  * Bot 聊天语料表（B11 交付数据）。scene 决定这句话在什么场合出现，minCityLevel/maxCityLevel 限定说话者的等级区间。
  *
- * 源表 version=2
+ * 源表 version=3
  */
 export interface BotChatCfg {
   /** 主键 */

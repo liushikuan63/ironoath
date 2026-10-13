@@ -61,6 +61,7 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
     private final BotScheduler.World world;
     private final BotRegistry registry;
     private final BotWorldAdapter adapter;
+    private final BotConversationService conversations;
     private final ConfigRegistry configs;
     /** 攻击频控的账本：清理超过 24h 的记录（唯一"系统自己会动的时刻"就是本类的 tick）。 */
     private final BotAttackLimiter attackLimiter;
@@ -94,7 +95,8 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
                              BotScheduler.World world, BotRegistry registry,
                              BotWorldAdapter adapter, ConfigRegistry configs,
                              BotAttackLimiter attackLimiter, BotCalibrationService calibration,
-                             com.ironoath.web.service.WorldAppService worldService) {
+                             com.ironoath.web.service.WorldAppService worldService,
+                             BotConversationService conversations) {
         this.assembler = assembler;
         this.queue = queue;
         this.world = world;
@@ -104,6 +106,7 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
         this.attackLimiter = attackLimiter;
         this.calibration = calibration;
         this.worldService = worldService;
+        this.conversations = conversations;
         // 反向只给一个窄口（回收时要用的"撤销排期"），不把本类整个交出去。
         // 为什么是回填而不是构造注入：校准要撤销排期、排期在本类手里 —— 构造互相注入就是环
         // （BeanCurrentlyInCreation），与 #82 那次同一条解法：改依赖方向，不用 @Lazy 遮丑
@@ -126,6 +129,7 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
      *         只有前者在涨说明"轮在跑但什么都没发生"。
      */
     public Map<String, Long> tick(long now) {
+        conversations.drive(now);
         BotScheduler scheduler = scheduler();
         enrollNew(scheduler, now);
         // 顺带清理频控账本里超过 24h 的记录：这张表按受害者索引，不清理就只增不减

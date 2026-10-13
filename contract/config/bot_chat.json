@@ -1,6 +1,6 @@
 {
   "table": "bot_chat",
-  "version": 2,
+  "version": 3,
   "rows": [
     {
       "id": "chat_help_wood",
@@ -163,13 +163,49 @@
       "minCityLevel": 5,
       "maxCityLevel": null,
       "why": "交易语料刻意只提资源互换、**绝不提金币或付费**：§七 红线明写禁止 Bot 主动私聊诱导充值，而语料库里出现「金币」字样就是给这条红线开口子。"
+    },
+    {
+      "id": "chat_taunt_aggressive_reply",
+      "scene": "TAUNT_AGGRESSIVE_REPLY",
+      "text": "@{target} 应战可以，城门外见。",
+      "weight": 100,
+      "minCityLevel": 1,
+      "maxCityLevel": null,
+      "why": "2026-10-14用户核心Bot互动目标；仅明确有对象/合法出征上下文，画像延迟和社交频控，禁止私聊与付费诱导。"
+    },
+    {
+      "id": "chat_taunt_cautious_reply",
+      "scene": "TAUNT_CAUTIOUS_REPLY",
+      "text": "@{target} 我先守城，今天不接这场。",
+      "weight": 100,
+      "minCityLevel": 1,
+      "maxCityLevel": null,
+      "why": "2026-10-14用户核心Bot互动目标；仅明确有对象/合法出征上下文，画像延迟和社交频控，禁止私聊与付费诱导。"
+    },
+    {
+      "id": "chat_taunt_ally_reply",
+      "scene": "TAUNT_ALLY_REPLY",
+      "text": "@{target} 我会和盟友商量，别急。",
+      "weight": 100,
+      "minCityLevel": 1,
+      "maxCityLevel": null,
+      "why": "2026-10-14用户核心Bot互动目标；仅明确有对象/合法出征上下文，画像延迟和社交频控，禁止私聊与付费诱导。"
+    },
+    {
+      "id": "chat_taunt_attack",
+      "scene": "TAUNT_ATTACK",
+      "text": "@{target} 我已出征，你的城防准备好了吗？",
+      "weight": 100,
+      "minCityLevel": 1,
+      "maxCityLevel": null,
+      "why": "2026-10-14用户核心Bot互动目标；仅明确有对象/合法出征上下文，画像延迟和社交频控，禁止私聊与付费诱导。"
     }
   ],
   "comment": "Bot 聊天语料表（B11 交付数据）。scene 决定这句话在什么场合出现，minCityLevel/maxCityLevel 限定说话者的等级区间。",
-  "designNote": "B11 §四 拟人化：事件触发模板句库 + 占位符替换，频率限流、不刷屏。\n八种 scene 对应八个触发场合。每一行都带 minCityLevel（部分带 maxCityLevel）：**等级门槛是语料库最容易漏的一处** —— 1 级的 Bot 说「练兵中」或「T3 骑兵」会立刻露馅，而说错话的 Bot 比不说话的 Bot 更容易被认出来（验收 2 的盲测就是测这个）。\n合规：TRADE 场景的语料只提资源互换，绝不出现金币/充值字样（§七 红线：禁止 Bot 主动私聊诱导充值）。语料库里一旦出现「金币」，模板替换就可能拼出一句诱导付费的话，而那是违反即视为任务失败的红线。\n本次落 18 行，够八个场合各有 1~3 句。扩充语料属内容工作，骨架期先保证每个场合都有话可说 —— 缺场景比句子少更容易被察觉。",
+  "designNote": "B11 §四 拟人化：事件触发模板句库 + 占位符替换，频率限流、不刷屏。\n八种 scene 对应八个触发场合。每一行都带 minCityLevel（部分带 maxCityLevel）：**等级门槛是语料库最容易漏的一处** —— 1 级的 Bot 说「练兵中」或「T3 骑兵」会立刻露馅，而说错话的 Bot 比不说话的 Bot 更容易被认出来（验收 2 的盲测就是测这个）。\n合规：TRADE 场景的语料只提资源互换，绝不出现金币/充值字样（§七 红线：禁止 Bot 主动私聊诱导充值）。语料库里一旦出现「金币」，模板替换就可能拼出一句诱导付费的话，而那是违反即视为任务失败的红线。\n本次落 18 行，够八个场合各有 1~3 句。扩充语料属内容工作，骨架期先保证每个场合都有话可说 —— 缺场景比句子少更容易被察觉。\n2026-10-14新增四种有对象挑衅语料；{target}仅替换权威真人昵称，原八类事件语料规则保留。",
   "fieldTypes": {
     "id": "STRING_KEY",
-    "scene": "ENUM:HELP_REQUEST,RALLY_CALL,ATTACKED,VICTORY,DEFEAT,CHAT_IDLE,ALLIANCE_JOIN,TRADE",
+    "scene": "ENUM:HELP_REQUEST,RALLY_CALL,ATTACKED,VICTORY,DEFEAT,CHAT_IDLE,ALLIANCE_JOIN,TRADE,TAUNT_AGGRESSIVE_REPLY,TAUNT_CAUTIOUS_REPLY,TAUNT_ALLY_REPLY,TAUNT_ATTACK",
     "text": "STRING",
     "weight": "LONG_POS",
     "minCityLevel": "LONG_NONNEG",

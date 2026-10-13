@@ -218,6 +218,11 @@ public interface SocialStore {
      */
     void appendChat(String channelKey, ChatMessage message, int historyCap);
 
+    /** 同一频道/说话人递增投递，水位与追加原子写，历史裁剪不丢幂等事实。 */
+    boolean appendChatOrdered(String channelKey, ChatMessage message, int historyCap, long sequence);
+
+    long chatDeliverySequence(String channelKey, String senderId);
+
     /**
      * 取某频道的最近消息，按时间升序。
      *

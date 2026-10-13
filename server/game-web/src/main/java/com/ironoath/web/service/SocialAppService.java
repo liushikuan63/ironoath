@@ -1556,6 +1556,22 @@ public class SocialAppService {
 
     /** 发消息。被限流时抛业务错误而不是静默丢弃（假装发成功会让玩家以为对方收到了）。 */
     public ChatSendResp chatSend(String playerId, ChatSendReq req, long now) {
+        return sendChat(playerId, req, now, 0L, null, null);
+    }
+
+    /** 内部待办重试仍走相同发送漏斗；不允许借这个入口发私聊。 */
+    public ChatSendResp chatSendOrdered(String playerId, ChatSendReq req, long now, long sequence,
+                                       String expectedChannelKey, String expectedPeer) {
+        if (sequence <= 0 || req.channel() == ChatChannel.PRIVATE || expectedChannelKey == null
+                || expectedChannelKey.isBlank() || expectedPeer == null || expectedPeer.isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "有序投递仅接受公开组织频道与正序号");
+        }
+        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
+                () -> sendChat(playerId, req, now, sequence, expectedChannelKey, expectedPeer));
+    }
+
+    private ChatSendResp sendChat(String playerId, ChatSendReq req, long now, long sequence,
+                                 String expectedChannelKey, String expectedPeer) {
         ChatChannel channel = req.channel();
         if (channel == null) {
             throw new BizException(ErrorCode.PARAM_INVALID, "channel 不得为空");
@@ -1576,6 +1592,11 @@ public class SocialAppService {
             requireNotBlocked(playerId, req.toPlayerId());
         }
         String channelKey = requireChannelKey(channel, playerId, req.toPlayerId());
+        if (sequence > 0) requireConversationChannel(playerId, expectedPeer, channel, expectedChannelKey, channelKey);
+        if (sequence > 0 && store.chatDeliverySequence(channelKey, playerId) >= sequence) {
+            return new ChatSendResp(toMessageView(new SocialStore.ChatMessage(
+                    "msg_" + req.requestId(), channel.name(), playerId, nickname(playerId), content, now)), now);
+        }
         ChatRateLimiter.Verdict verdict = chatLimiter.check(playerId, content, now);
         if (!verdict.allowed()) {
             throw new BizException(ErrorCode.SOCIAL_CHAT_RATE_LIMITED,
@@ -1589,11 +1610,38 @@ public class SocialAppService {
                 // 与 march_ / battle_ 同一套随机 id 约定：id 只负责唯一，可读性靠前缀。
                 "msg_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16),
                 channel.name(), playerId, nickname(playerId), content, now);
-        store.appendChat(channelKey, message, (int) configs.longParam("CHAT_LOCAL_HISTORY_MAX"));
+        int historyCap = (int) configs.longParam("CHAT_LOCAL_HISTORY_MAX");
+        if (sequence > 0) requireConversationChannel(playerId, expectedPeer, channel, expectedChannelKey,
+                requireChannelKey(channel, playerId, req.toPlayerId()));
+        boolean appended = sequence == 0;
+        if (sequence == 0) store.appendChat(channelKey, message, historyCap);
+        else appended = store.appendChatOrdered(channelKey, message, historyCap, sequence);
+        if (appended) events.publishEvent(new com.ironoath.web.social.ChatAcceptedEvent(channelKey, message));
         if (channel == ChatChannel.PRIVATE) {
             notifyPrivateMessage(playerId, req.toPlayerId(), now);
         }
         return new ChatSendResp(toMessageView(message), now);
+    }
+
+    private void requireConversationChannel(String playerId, String peerId, ChatChannel channel,
+                                            String expected, String actual) {
+        boolean senderMember = conversationMember(playerId, channel);
+        boolean peerMember = conversationMember(peerId, channel);
+        if (!expected.equals(actual) || !expected.equals(channelKey(channel, peerId, null))
+                || !senderMember || !peerMember || store.hasBlocked(peerId, playerId) || store.hasBlocked(playerId, peerId)) {
+            throw new BizException(ErrorCode.SOCIAL_CHAT_CHANNEL_INVALID, "原频道或对话对象已变化，不补发旧消息");
+        }
+    }
+
+    private boolean conversationMember(String playerId, ChatChannel channel) {
+        return switch (channel) {
+            case WORLD -> players.findByPlayerId(playerId).isPresent();
+            case ALLIANCE -> store.allianceOf(playerId)
+                    .filter(a -> !a.isDisbanded() && a.memberIds().contains(playerId)).isPresent();
+            case SQUAD -> store.squadOf(playerId)
+                    .filter(s -> !s.isDisbanded() && s.memberIds().contains(playerId)).isPresent();
+            default -> false;
+        };
     }
 
     /**
@@ -1628,6 +1676,7 @@ public class SocialAppService {
     /** 拉取某频道的最近消息。 */
     public ChatListResp chatList(String playerId, ChatListReq req, long now) {
         String channelKey = requireChannelKey(req.channel(), playerId, req.toPlayerId());
+        events.publishEvent(new com.ironoath.web.social.ChatReadEvent(now));
         int limit = (int) Math.min(Math.max(1, req.limit()), configs.longParam("CHAT_LOCAL_HISTORY_MAX"));
         List<SocialStore.ChatMessage> messages =
                 withoutBlocked(store.chat(channelKey, req.beforeMessageId(), limit), playerId);

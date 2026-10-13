@@ -232,6 +232,10 @@ public class BotRulesAssembler {
             case CHAT_IDLE -> BotChatBook.Scene.CHAT_IDLE;
             case ALLIANCE_JOIN -> BotChatBook.Scene.ALLIANCE_JOIN;
             case TRADE -> BotChatBook.Scene.TRADE;
+            case TAUNT_AGGRESSIVE_REPLY -> BotChatBook.Scene.TAUNT_AGGRESSIVE_REPLY;
+            case TAUNT_CAUTIOUS_REPLY -> BotChatBook.Scene.TAUNT_CAUTIOUS_REPLY;
+            case TAUNT_ALLY_REPLY -> BotChatBook.Scene.TAUNT_ALLY_REPLY;
+            case TAUNT_ATTACK -> BotChatBook.Scene.TAUNT_ATTACK;
         };
     }
 

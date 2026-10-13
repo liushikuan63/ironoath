@@ -394,6 +394,22 @@ public final class InMemorySocialStore implements SocialStore {
         }
     }
 
+    private final Map<String, Map<String, Long>> chatDeliveries = new HashMap<>();
+
+    @Override
+    public synchronized boolean appendChatOrdered(String channelKey, ChatMessage message, int historyCap, long sequence) {
+        if (historyCap < 1 || sequence <= 0) throw new IllegalArgumentException("投递容量/序号必须为正");
+        if (chatDeliverySequence(channelKey, message.senderId()) >= sequence) return false;
+        appendChat(channelKey, message, historyCap);
+        chatDeliveries.computeIfAbsent(channelKey, key -> new HashMap<>()).put(message.senderId(), sequence);
+        return true;
+    }
+
+    @Override
+    public synchronized long chatDeliverySequence(String channelKey, String senderId) {
+        return chatDeliveries.getOrDefault(channelKey, Map.of()).getOrDefault(senderId, 0L);
+    }
+
     /**
      * 游标定位：返回"这条之前"的截止下标。
      *
@@ -799,6 +815,7 @@ public final class InMemorySocialStore implements SocialStore {
         disbandProtectedUntil.clear();
         pendingApplications.clear();
         chats.clear();
+        chatDeliveries.clear();
         unreadEvents.clear();
         helpRequests.clear();
         reports.clear();

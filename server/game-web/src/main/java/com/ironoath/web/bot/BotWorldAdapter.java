@@ -114,6 +114,7 @@ public class BotWorldAdapter implements BotScheduler.World {
      * （{@link WorldAppService#visibleEntitiesOf}，与 viewport 共用同一份实体装配）。
      */
     private final WorldAppService worldService;
+    private final org.springframework.context.ApplicationEventPublisher events;
 
     /** 成功落地的动作数（按动作类型分别记，供 {@code /bot/tick} 与仿真断言用）。 */
     private final AtomicLong upgraded = new AtomicLong();
@@ -228,7 +229,8 @@ public class BotWorldAdapter implements BotScheduler.World {
                            com.ironoath.core.world.WorldRepository world,
                            SocialAppService social2, TargetSearchService targetSearch,
                            com.ironoath.web.quest.QuestAppService quests,
-                           BotRulesAssembler assembler, WorldAppService worldService) {
+                           BotRulesAssembler assembler, WorldAppService worldService,
+                           org.springframework.context.ApplicationEventPublisher events) {
         this.bots = bots;
         this.players = players;
         this.cities = cities;
@@ -248,6 +250,7 @@ public class BotWorldAdapter implements BotScheduler.World {
         this.targetSearch = targetSearch;
         this.assembler = assembler;
         this.worldService = worldService;
+        this.events = events;
     }
 
     @Override
@@ -646,10 +649,11 @@ public class BotWorldAdapter implements BotScheduler.World {
         }
         var target = resp.targets().get(0);   // 搜索已按 B08 §8 的四项权重排好序，取第一个
         try {
-            marches2.send(botId, new MarchReq(newRequestId(botId),
+            var dispatched = marches2.send(botId, new MarchReq(newRequestId(botId),
                     target.coord().x(), target.coord().y(), units, java.util.List.of(),
                     MarchAction.ATTACK));
             raided.incrementAndGet();
+            events.publishEvent(new BotRaidAcceptedEvent(botId, target.id(), dispatched.march().marchId(), now));
             LOG.info("Bot {} 掠袭 {}（距我 {} 档，目标战力 {}）", botId, target.name(),
                     target.distanceBand(), target.matchPower());
         } catch (RuntimeException e) {
