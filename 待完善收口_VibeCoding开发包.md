@@ -7413,3 +7413,6 @@ TEST_EXIT=0
 
 
 | G08-N5 原主7到8普通81秒自然升级，主9前置读取保留首红 | 本笔本地提交未推 | 原F40/F35/9490同UID正常选择主城并点击升级，生产建设窗口81秒，真实自然等待后主8空闲；5判据通过，金币1738保持、石料5173，完成图已实际查看。原医院1/使馆1/兵营6/学院1与266兵保持；随后主9首次GET因Mongo不可达500而结束，没有发起升级 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/main8.actual.json与main8-scheduled.actual.json；native-original-main8.log；原R18 driver-0365-original-main8-natural-complete-20261013.png；main9-failure.actual.json与driver-0368-http.json | 原号最后可核实主8，不将停库后的状态猜作已升9；Docker后台启动是全局服务操作，等待已发用户授权，原后端/IDE不重启、原数据库/账号进度保留。恢复后先读生产状态，再普通升主10建盟与主12；新活动/新两卡原生及两号双向战争未验，无夹具/加速/新增购买或旧物资重领 |
+
+
+| G09-I1 用户授权后台Docker恢复，原库同号与147真实Mongo购卡整合复验 | 本笔本地提交未推 | 用户明确允许现有Docker/mongo27后台恢复；首次start返回already running但引擎stopped不算成功，检查WSL版本恢复后经官方CLI restart detach恢复running，mongo ping=1，原D盘绑定和unless-stopped不变。原Java38068与IDE36728启动epoch保持，真实原号GET及5判据通过：主8/G1738/医院1/使馆1/同UID，266兵0伤兵。重跑本版购卡整合147实际测试，0失败/错误/跳过，exit0 | D:/tmp/ironoath-activity-evidence-20261013/mongo27-recovered-inspect.actual.txt；native-original-ui/mongo-recovered.original.actual.json；monthcard-purchase-integration-recovered-focused.log；G09-I0停库首红保留 | 仅恢复既有引擎与容器，无安装/重建/删库/重启电脑或原应用；其他既有容器按其原策略自动恢复，没有改它们。147通过只证明本批，新版全量构建/新候选运行批次待，原主9尚未发起，主10建盟/主12/新两卡原生/两号战争待；主树日包与UI仍原执行者WIP，不复制或覆盖 |
