@@ -7462,3 +7462,5 @@ TEST_EXIT=0
 | 下一Bot行为与24h账本设计 #1264 | 本行设计原子提交（未推） | 现查3行为内存表及Held热更清账；出征1判断/到达后2记账生产调用 | BotWorldAdapter.java；BotAttackLimiter.java；B11；docs/核心对战玩法收口.md | 本设计未实现未验证恢复；在途超额度先回归校准，不猜规则；旧运行账本不能凭角色/昵称重建；当前画像/队列17批尚在途 |
 
 | 核心Bot完整画像与持久游标 #1265 | 本次实现原子提交（24源码/配置测试及3台账，未推） | 47门/2632server/1321client全0；77重点；4JVM/AOF16；17FIRST；战争44全0 | tmp/core-bot-bilateral-20261014-ef81904d/final-persistence-summary.json | 原9490/UID/IDE未切、无provider CI/付款/部署；领取后硬崩溃不重放；回应水位/24h频控/B04溢出邮件继续 |
+
+| Bot行为与24h持续目标首红 #1266 | 本发现本地原子提交（未推） | 真实Mongo两上下文/真实规则热更3测3失败0错误跳过；首红有效 | tmp/bot-behavior-state-20261014-2c1101a7/state-red1.log；BotBehaviorRestartTest.java | 未实现未过恢复，输入为受击/计账夹具非三场真战争；在途额度、独立JVM及完整验证仍待后续 |
