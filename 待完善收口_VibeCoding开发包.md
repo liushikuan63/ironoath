@@ -7454,3 +7454,5 @@ TEST_EXIT=0
 | 核心Bot画像存储自检 #1260 | 本行本地原子提交（未推） | 漏口首红1失败；新版70重点全0；前版2629server/1321client/47门0 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-guard-red1.log；persistence-guard-green1.log | 新加guard全量需重验；JVM/AOF仍未执行，provider CI未跑；受击水位/24h频控后续 |
 
 | 核心Bot真实重启首红 #1261 | 本行本地原子提交（未推） | 最新2630server/1321client/47门0；真4JVM/AOF10过但HTTP500，exit1 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-jvm1/result.actual.json；jvm3/backend.log | 真实双实例校准与迷雾写冲突未修；不能称完整恢复通过，下一玩家锁回归；原号/9490/IDE未动 |
+
+| 核心Bot多实例校准修复 #1262 | 本行本地原子提交（未推） | 校准2有效失败→20core+57web全0；玩家锁内重读保存 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-calibration-red1.log；persistence-calibration-green1.log | 新完整验证及真JVM/AOF竞争尚未完成；当日跨实例重复校准不是持久全局日标记；受击/频控另续 |
