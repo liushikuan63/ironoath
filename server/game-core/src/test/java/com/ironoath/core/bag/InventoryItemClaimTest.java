@@ -45,4 +45,21 @@ class InventoryItemClaimTest {
         assertThat(bag.itemClaims()).as("another snapshot without receipt fields cannot inherit the prior claim ledger").isEmpty();
         assertThat(bag.copy().itemClaims()).isEmpty();
     }
+    @Test void legacySourceReplaysOriginalAmountAfterConsumptionAndConfigChange() {
+        var bag=Inventory.empty(2);
+        var old=new RewardContext("paid_items","old-order","old-day:0",true);
+        var receipt=bag.claimItemsOnce(pair(),Map.of("speed",99L,"wood",99L),old,1000);
+        bag.remove("speed",1);bag.remove("wood",1);
+        assertThat(bag.claimItemsOnce(Map.of("speed",10L,"wood",10L),Map.of(),old,2000)).isEqualTo(receipt);
+        assertThat(bag.snapshot()).isEmpty();assertThat(receipt.facts()).isEmpty();
+        assertThat(receipt.source()).isEqualTo("paid_items");
+    }
+    @Test void aBusinessKeyCannotCrossTheLegacyAndNewSources() {
+        var bag=Inventory.empty(2);
+        bag.claimItemsOnce(pair(),Map.of("speed",99L,"wood",99L),ctx("same-key"),1000);
+        var old=new RewardContext("paid_items","orderA","same-key",true);
+        assertThatThrownBy(()->bag.claimItemsOnce(pair(),Map.of("speed",99L,"wood",99L),old,2000))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(bag.itemClaims()).hasSize(1);assertThat(bag.snapshot()).isEqualTo(pair());
+    }
 }

@@ -9,7 +9,6 @@ import com.ironoath.core.activity.ActivityCondition;
 import com.ironoath.core.activity.ActivityProgress;
 import com.ironoath.core.event.GameEvent;
 import com.ironoath.core.event.GameEventBus;
-import com.ironoath.web.activity.ActivityProgressStore.State;
 
 /**
  * 职责：把领域事件累加进活动进度账本（B17 §一「进度推进必须事件驱动」）。
@@ -35,18 +34,12 @@ public class ActivityEventListener implements GameEventBus.Listener {
 
     private static final Logger LOG = LoggerFactory.getLogger(ActivityEventListener.class);
 
-    private final ActivityProgressStore store;
-    private final ActivityRulesAssembler assembler;
-    private final ActivityAnchors anchors;
     private final TimeService timeService;
+    private final ActivityLedger ledger;
 
-    public ActivityEventListener(GameEventBus bus, ActivityProgressStore store,
-                                 ActivityRulesAssembler assembler, ActivityAnchors anchors,
-                                 TimeService timeService) {
-        this.store = store;
-        this.assembler = assembler;
-        this.anchors = anchors;
+    public ActivityEventListener(GameEventBus bus, TimeService timeService, ActivityLedger ledger) {
         this.timeService = timeService;
+        this.ledger = ledger;
         if (bus == null) {
             throw new IllegalArgumentException("事件总线不得为 null：没有它活动进度永远不动");
         }
@@ -60,15 +53,10 @@ public class ActivityEventListener implements GameEventBus.Listener {
         try {
             long now = timeService.serverNow();
             String playerId = event.playerId();
-            State stored = store.load(playerId).orElse(null);
-            ActivityProgress progress = stored == null
-                    ? ActivityProgress.open(playerId, assembler.activities(),
-                            anchors.serverOpenMs(playerId))
-                    : ActivityProgress.restore(playerId, assembler.activities(), stored.entries(),
-                            stored.serverOpenMs());
-            progress.rollover(now, anchors.playerAnchorMs(playerId));
+            ActivityLedger.Book book = ledger.load(playerId, now, ActivityLedger.Mode.EVENT);
+            ActivityProgress progress = book.progress();
             progress.onEvent(event);
-            store.save(playerId, new State(playerId, progress.entries(), progress.serverOpenMs()));
+            ledger.save(book);
         } catch (RuntimeException e) {
             LOG.error("活动进度累加失败（不影响玩家这次操作，事件可据此补记）：{}", event, e);
         }

@@ -70,12 +70,12 @@ class ActivityEndpointTest {
     // ---------- 验收 1：普通活动与签到分别来自服务端配置 ----------
 
     @Test
-    @DisplayName("验收 1：六项普通活动与五项签到的名称、目标和顺序均来自服务端配置")
+    @DisplayName("验收 1：六项常规、四项主题与五项签到的名称、目标和顺序均来自服务端配置")
     void listComesFromTheTable() throws Exception {
         String playerId = newPlayer();
 
         JsonNode activities = list(playerId).get("activities");
-        assertThat(activities).hasSize(11);
+        assertThat(activities).hasSize(15);
         List<String> fromApi = new java.util.ArrayList<>();
         for (JsonNode row : activities) {
             fromApi.add(row.get("id").asText());
@@ -83,12 +83,15 @@ class ActivityEndpointTest {
                     .as("目标必须等于表里的 conditionValue：" + row.get("id").asText())
                     .isEqualTo(goalOf(row.get("id").asText()));
             assertThat(row.get("name").asText()).as("名字只在表里存一份").isNotBlank();
-            assertThat(row.get("state").asText()).isEqualTo("signin_daily".equals(row.get("id").asText()) ? "CLAIMABLE" : "RUNNING");
+            String hint=row.path("details").asText("");
+            assertThat(row.get("state").asText()).isEqualTo(hint.startsWith("尚未开始") ? "EXPIRED"
+                    : "signin_daily".equals(row.get("id").asText()) ? "CLAIMABLE" : "RUNNING");
         }
         assertThat(fromApi).as("顺序必须与 activity.json 的行序一致（服务端不另行排序）")
                 .isEqualTo(List.of("activity_monster_hunt",
                         "activity_rally_week", "activity_donate_week", "activity_pvp_win",
-                        "activity_build_sprint", "activity_squad_help", "signin_daily", "signin_week_full",
+                        "activity_build_sprint", "activity_squad_help", "activity_theme_major", "activity_theme_first_minor",
+                        "activity_theme_second_early", "activity_theme_second_late", "signin_daily", "signin_week_full",
                         "signin_week_third", "signin_week_seventh", "signin_month_full"));
         assertThat(list(playerId).get("claimableCount").asInt())
                 .as("新号只有手动签到入口可领，额外签到奖励不重复计红点").isEqualTo(1);
@@ -149,7 +152,8 @@ class ActivityEndpointTest {
         assertThat(first.get("data").get("state").asText())
                 .as("领完同轮就该是 RUNNING（红点同轮熄灭靠它）").isEqualTo("RUNNING");
         long goldAfter = goldOf(playerId);
-        assertThat(goldAfter).as("500 金币必须真的到账").isEqualTo(goldBefore + 500L);
+        assertThat(goldAfter).as("新号常规活动按本期表发奖，不叠加主题金币；旧500资格另由实例保护回归钉住")
+                .isEqualTo(goldBefore + configs.get(com.ironoath.config.cfg.ActivityCfg.class,"activity_monster_hunt").rewardGold());
         assertThat(first.get("data").get("rewards")).isNotEmpty();
         long pointsAfter = battlePass.status(playerId).points();
         assertThat(pointsAfter - pointsBefore)

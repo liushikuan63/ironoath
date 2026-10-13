@@ -66,7 +66,7 @@ public final class SignInRewards {
             if (row.pending()) detail += "奖励已登记，尚有金币等待补发。";
             out.add(new ActivityView(row.rule().id(), row.rule().name(), ready ? ActivityState.CLAIMABLE : ActivityState.RUNNING,
                     row.progress(), row.goal(), row.windowEndAt(), daily ? !ready : row.claimed(),
-                    ActivityCategory.SIGN_IN, preview(amount), detail, !daily, row.pending()));
+                    ActivityCategory.SIGN_IN, preview(amount), detail, !daily, row.pending(),null));
         }
         return List.copyOf(out);
     }

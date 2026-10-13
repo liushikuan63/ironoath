@@ -944,8 +944,9 @@ public class MarchAppService {
                                 march.targetId(), 1L, now, "pve:monster:" + march.id());
                         // 打赢了才算击杀（B12 §1 的 KILL_MONSTER）：打输了也记的话，
                         // 「清剿城外流寇」会在玩家被流寇打回家的那一刻完成
-                        questEvents.progress(march.playerId(),
-                                com.ironoath.core.quest.GoalType.KILL_MONSTER, march.targetId(), 1L, now);
+                        questEvents.progressOnce(march.playerId(),
+                                com.ironoath.core.quest.GoalType.KILL_MONSTER, march.targetId(), 1L, now,
+                                (march.rallyId()==null ? "solo-monster:" : "rally-monster:") + march.id());
                     }
                 }
                 case PLAYER_CITY -> {

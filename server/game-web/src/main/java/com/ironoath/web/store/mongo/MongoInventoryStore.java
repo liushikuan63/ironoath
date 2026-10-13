@@ -11,6 +11,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import org.bson.Document;
 
 import java.util.Optional;
 
@@ -40,9 +41,15 @@ public final class MongoInventoryStore implements InventoryRepository {
         if (playerId == null) {
             return Optional.empty();
         }
-        InventoryDocument doc = mongo.findById(playerId, InventoryDocument.class,
+        Document raw = mongo.findById(playerId, Document.class,
                 InventoryDocument.COLLECTION);
-        return Optional.ofNullable(doc).map(this::toDomain);
+        if(raw==null)return Optional.empty();
+        var receipts=InventoryItemClaimCodec.read(raw.get("itemClaims"));
+        // Decode this field locally before Spring attempts to instantiate the other historical class.
+        Document base=new Document(raw);base.remove("itemClaims");
+        Inventory inventory=toDomain(mongo.getConverter().read(InventoryDocument.class,base));
+        inventory.restoreItemClaims(receipts);
+        return Optional.of(inventory);
     }
 
     @Override
@@ -54,9 +61,11 @@ public final class MongoInventoryStore implements InventoryRepository {
             throw new IllegalArgumentException("背包不得为 null");
         }
         try {
-            mongo.insert(new InventoryDocument(playerId, 0L, inventory.capacityMax(),
-                    inventory.snapshot(), inventory.equipSnapshot(), inventory.nextEquipUid(), inventory.itemClaims()),
-                    InventoryDocument.COLLECTION);
+            Document raw=new Document();
+            mongo.getConverter().write(new InventoryDocument(playerId,0L,inventory.capacityMax(),
+                    inventory.snapshot(),inventory.equipSnapshot(),inventory.nextEquipUid()),raw);
+            raw.put("itemClaims",InventoryItemClaimCodec.write(inventory.itemClaims(),mongo.getConverter()));
+            mongo.insert(raw,InventoryDocument.COLLECTION);
             return true;
         } catch (DuplicateKeyException e) {
             return false;
@@ -71,7 +80,7 @@ public final class MongoInventoryStore implements InventoryRepository {
         Query query = Query.query(Criteria.where("_id").is(playerId).and("version").is(expectedVersion));
         Update update = new Update()
                 .set("counts", inventory.snapshot())
-                .set("itemClaims", inventory.itemClaims())
+                .set("itemClaims", InventoryItemClaimCodec.write(inventory.itemClaims(),mongo.getConverter()))
                 // 实例账本必须同一条更新里写：漏了它，"装备去哪了"就成了只有重启才能复现的问题
                 .set("equips", inventory.equipSnapshot())
                 .set("nextEquipUid", inventory.nextEquipUid())
@@ -93,12 +102,12 @@ public final class MongoInventoryStore implements InventoryRepository {
 
     @Override
     public long versionOf(String playerId) {
-        InventoryDocument doc = mongo.findById(playerId, InventoryDocument.class,
-                InventoryDocument.COLLECTION);
-        if (doc == null) {
+        Query query=Query.query(Criteria.where("_id").is(playerId));query.fields().include("version");
+        Document raw=mongo.findOne(query,Document.class,InventoryDocument.COLLECTION);
+        if (raw == null) {
             throw new IllegalStateException("背包不存在：playerId=" + playerId);
         }
-        return doc.version();
+        return InventoryItemClaimCodec.whole(raw.get("version"),"version");
     }
 
     /**

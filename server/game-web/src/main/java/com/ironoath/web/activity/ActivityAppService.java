@@ -18,7 +18,6 @@ import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.reward.RewardContext;
 import com.ironoath.core.reward.RewardItem;
 import com.ironoath.core.reward.RewardService;
-import com.ironoath.web.activity.ActivityProgressStore.State;
 import com.ironoath.web.dto.generated.ActivityClaimReq;
 import com.ironoath.web.dto.generated.ActivityClaimResp;
 import com.ironoath.web.dto.generated.ActivityListResp;
@@ -29,15 +28,15 @@ import com.ironoath.web.reward.RewardNames;
 
 /**
  * 职责：活动面板与领取（B17 §一、§二的实现侧）。
- * 依赖：{@link ActivityProgressStore}（两份实现语义一致）、{@link ActivityRulesAssembler}（表）、
+ * 依赖：{@link ActivityLedger}（规则、窗口及奖励快照）、{@link ActivityProgressStore}（两份实现语义一致）、
  *       {@link ActivityAnchors}（两块锚）、发放器（奖励不得绕过它）、幂等、玩家锁、
  *       {@link RewardNames}（奖励显示名与背包/邮件同源）。
  *
- * <p><b>读取路径先 {@code syncOnRead}，事件路径先 {@code rollover}</b>：两者的差别只有一条 ——
+ * <p><b>读取与事件由 {@code ActivityLedger} 选择实例</b>：两者的差别只有一条 ——
  * 读取时留住"上一轮有进展但没领"的行（它会被读成 EXPIRED），事件到达时把它推进到新一轮。
  * 为什么必须这样切见 {@code ActivityProgress.syncOnRead} 的注释（那是 B17 文档内部张力的一处解法）。
  *
- * <p><b>领取顺序「先落状态再发奖」</b>：与 {@code QuestAppService} 完全一致 —— 失败方向选
+ * <p><b>旧混合活动领取保持「先落状态再发奖」</b>：失败方向选
  * 「标记了已领但没发出去」（有补偿队列与客服入口可追），反过来（发了没标记）玩家会重复领。
  *
  * <p><b>红点与列表同一条判定</b>：{@code claimableCount} 调的是核心的 {@code blockOf}，
@@ -49,8 +48,6 @@ public class ActivityAppService {
     private static final Logger LOG = LoggerFactory.getLogger(ActivityAppService.class);
     private static final long LOCK_TIMEOUT_MS = 5_000L;
 
-    private final ActivityProgressStore store;
-    private final ActivityRulesAssembler assembler;
     private final ActivityAnchors anchors;
     private final RewardService rewardService;
     private final RewardNames names;
@@ -61,14 +58,14 @@ public class ActivityAppService {
     /** 战令积分（B24 S-d-c）。与任务那条同源：分值挂在既有活动上，不新增任务体系。 */
     private final com.ironoath.web.battlepass.BattlePassService battlePass;
     private final SignInRewards signIn;
+    private final ActivityLedger ledger;
+    private final com.ironoath.core.player.PlayerRepository players;
 
-    public ActivityAppService(ActivityProgressStore store, ActivityRulesAssembler assembler,
-                              ActivityAnchors anchors, RewardService rewardService, RewardNames names,
+    public ActivityAppService(ActivityAnchors anchors, RewardService rewardService, RewardNames names,
                               IdempotencyStore idempotency, PlayerLock playerLock,
                               TimeService timeService, ConfigRegistry configs,
-                              com.ironoath.web.battlepass.BattlePassService battlePass, SignInRewards signIn) {
-        this.store = store;
-        this.assembler = assembler;
+                              com.ironoath.web.battlepass.BattlePassService battlePass, SignInRewards signIn,
+                              ActivityLedger ledger, com.ironoath.core.player.PlayerRepository players) {
         this.anchors = anchors;
         this.rewardService = rewardService;
         this.names = names;
@@ -78,23 +75,25 @@ public class ActivityAppService {
         this.configs = configs;
         this.battlePass = battlePass;
         this.signIn = signIn;
+        this.ledger = ledger;
+        this.players = players;
     }
 
     /** 活动列表。顺序 = 表序；含 EXPIRED 的行（轮到下一轮之前它看得见、领不了）。 */
     public ActivityListResp list(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
-            rewardService.recoverGoldClaims(playerId);
-            ActivityProgress progress = loaded(playerId);
+            ActivityLedger.Book book = load(playerId, now, ActivityLedger.Mode.READ);
+            ActivityProgress progress = book.progress();
             // 读取路径的惰性同步：没有待展示记录的行直接进入新一轮（有进展没领的行留住）
             if (progress.syncOnRead(now, anchors.playerAnchorMs(playerId)) > 0) {
-                save(playerId, progress);
+                ledger.save(book);
             }
             long playerAnchor = anchors.playerAnchorMs(playerId);
             List<ActivityView> views = new ArrayList<>();
             for (ActivityProgress.Def def : progress.defs()) {
                 if (def.retired() && progress.blockOf(def.activityId(), now, playerAnchor).blocked()) continue;
-                views.add(viewOf(progress, def, now, playerAnchor));
+                views.add(viewOf(book, def, now, playerAnchor));
             }
             views.addAll(signIn.list(playerId, now));
             return new ActivityListResp(List.copyOf(views), now,
@@ -106,7 +105,7 @@ public class ActivityAppService {
     public int claimableCount(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
-                () -> loaded(playerId).claimableCount(now, anchors.playerAnchorMs(playerId)) + signInCount(signIn.list(playerId, now)));
+                () -> load(playerId, now, ActivityLedger.Mode.READ).progress().claimableCount(now, anchors.playerAnchorMs(playerId)) + signInCount(signIn.list(playerId, now)));
     }
 
     /** 领取一次活动奖励。requestId 幂等；同窗口重复领取被拒且不发货。 */
@@ -116,9 +115,10 @@ public class ActivityAppService {
         }
         long now = timeService.serverNow();
         acquire(playerId, req.requestId(), now);
-        return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+        try { return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
             if (signIn.contains(req.activityId())) return signIn.claim(playerId, req.activityId(), timeService.serverNow());
-            ActivityProgress progress = loaded(playerId);
+            ActivityLedger.Book book = load(playerId, now, ActivityLedger.Mode.CLAIM);
+            ActivityProgress progress = book.progress();
             long playerAnchor = anchors.playerAnchorMs(playerId);
             ActivityProgress.ClaimBlock block;
             try {
@@ -129,13 +129,26 @@ public class ActivityAppService {
             }
             if (block.blocked()) {
                 throw new BizException(ErrorCode.ACTIVITY_NOT_CLAIMABLE,
-                        detailOf(req.activityId(), block, progress));
+                        detailOf(req.activityId(), block, book,now));
+            }
+            ActivityInstance instance = book.instance(req.activityId());
+            if (campaign(instance)) {
+                var facts = new java.util.LinkedHashSet<>(progress.entry(req.activityId()).facts());
+                facts.add("activity-window:" + instance.startAt());
+                facts.add("activity-goal:" + instance.def().goalValue());
+                var result = rewardService.grant(playerId, instance.rewards(), new RewardContext(
+                        "free_gold", req.activityId(), campaignKey(instance), true, facts));
+                progress.claim(req.activityId(), now, playerAnchor);
+                ledger.save(book);
+                LOG.info("主题活动金币已接受 playerId={} activityId={} 窗口={} 业务收据={}",
+                        playerId,req.activityId(),instance.startAt(),campaignKey(instance));
+                return new ActivityClaimResp(true, views(result.granted()),
+                        stateOf(progress.phaseOf(req.activityId(), now, playerAnchor)), null);
             }
             progress.claim(req.activityId(), now, playerAnchor);
             // 先落状态再发奖：失败方向见类注释
-            save(playerId, progress);
-            List<RewardItem> rewards = assembler.rewardsByActivity()
-                    .getOrDefault(req.activityId(), List.of());
+            ledger.save(book);
+            List<RewardItem> rewards = book.instance(req.activityId()).rewards();
             List<ActivityReward> granted = List.of();
             if (!rewards.isEmpty()) {
                 var result = rewardService.grant(playerId, rewards,
@@ -150,7 +163,7 @@ public class ActivityAppService {
                 }
             }
             // 战令积分：只在领取成功这一下加（重放请求在 acquire(requestId) 那一步就被挡掉了）
-            long points = configs.get(com.ironoath.config.cfg.ActivityCfg.class, req.activityId()).battlePassPoints();
+            long points = book.instance(req.activityId()).battlePassPoints();
             if (points > 0L) {
                 battlePass.addPoints(playerId, points, "activity:" + req.activityId());
             }
@@ -158,19 +171,60 @@ public class ActivityAppService {
             return new ActivityClaimResp(true, granted,
                     stateOf(progress.phaseOf(req.activityId(), now, playerAnchor)), null);
         });
+        } catch (RuntimeException error) {
+            idempotency.release("activity:"+playerId+':'+req.requestId());
+            throw error;
+        }
+    }
+
+    private static boolean campaign(ActivityInstance instance) {
+        return instance.def().requiresFact() && instance.battlePassPoints()==0 && instance.rewards().size()==1
+                && instance.rewards().get(0).type()==com.ironoath.core.reward.RewardType.RESOURCE
+                && "GOLD".equals(instance.rewards().get(0).id());
+    }
+    private static String campaignKey(ActivityInstance instance) {
+        return "activity_gold:"+instance.def().activityId()+":"+instance.startAt();
+    }
+    /** 任一读取、红点或重试恢复钱包已接受的资格，不依赖HTTP requestId。 */
+    private ActivityLedger.Book load(String playerId,long now,ActivityLedger.Mode mode) {
+        rewardService.recoverGoldClaims(playerId);
+        ActivityLedger.Book book=ledger.load(playerId,now,mode);
+        var owner=players.findByPlayerId(playerId).orElse(null);
+        if (owner==null) return book;
+        boolean changed=false;
+        for (var instance:book.instances()) {
+            if (!campaign(instance)) continue;
+            var receipt=owner.goldClaims().get(campaignKey(instance));
+            if (receipt==null || !"free_gold".equals(receipt.source())
+                    || !instance.def().activityId().equals(receipt.sourceRef())) continue;
+            long goal=receipt.facts().stream().filter(f -> f.startsWith("activity-goal:"))
+                    .mapToLong(f -> Long.parseLong(f.substring("activity-goal:".length()))).findFirst().orElseThrow();
+            if (!receipt.facts().contains("activity-window:"+instance.startAt()))
+                throw new IllegalStateException("活动金币收据窗口不一致，拒绝猜测资格");
+            changed|=book.progress().restoreClaimedFromGoldReceipt(instance.def().activityId(),instance.startAt(),goal,receipt.facts());
+        }
+        if (changed) ledger.save(book);
+        return book;
     }
 
     /** 名单上那一行此刻的视图（读与领共用，字段口径只有一处）。 */
-    private ActivityView viewOf(ActivityProgress progress, ActivityProgress.Def def, long now,
+    private ActivityView viewOf(ActivityLedger.Book book, ActivityProgress.Def def, long now,
                                 long playerAnchor) {
+        ActivityProgress progress = book.progress();
         ActivityProgress.Entry entry = progress.entry(def.activityId());
         ActivityWindow.Span span = progress.windowOf(def.activityId(), now, playerAnchor);
-        return new ActivityView(def.activityId(), assembler.namesById().get(def.activityId()),
+        return new ActivityView(def.activityId(), book.instance(def.activityId()).name(),
                 stateOf(progress.phaseOf(def.activityId(), now, playerAnchor)),
                 entry.value(), def.goalValue(), span.endAt(), entry.claimed(),
                 com.ironoath.web.dto.generated.ActivityCategory.EVENT,
-                views(assembler.rewardsByActivity().getOrDefault(def.activityId(), List.of())),
-                def.retired() ? "旧登录活动已停止累计，本轮已达标奖励仍可在原截止前领取。" : null, false, false);
+                views(book.instance(def.activityId()).rewards()),
+                now<span.startAt() ? "尚未开始："+windowTime(span.startAt())+"，截止："+windowTime(span.endAt())+"（北京时间）。"
+                        : def.retired() ? "旧登录活动已停止累计，本轮已达标奖励仍可在原截止前领取。" : null, false, false,span.startAt());
+    }
+
+    private static String windowTime(long at) {
+        return java.time.Instant.ofEpochMilli(at).atZone(com.ironoath.common.time.DayKey.CALENDAR_ZONE)
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
     }
 
     private static int signInCount(List<ActivityView> views) {
@@ -179,9 +233,12 @@ public class ActivityAppService {
     }
 
     /** 领取被拒的原因写进 detail：三种原因共用一个错误码（B17 §二），detail 是玩家唯一能看到的差别。 */
-    private String detailOf(String activityId, ActivityProgress.ClaimBlock block, ActivityProgress progress) {
-        String name = configs.get(com.ironoath.config.cfg.ActivityCfg.class, activityId).name();
+    private String detailOf(String activityId, ActivityProgress.ClaimBlock block, ActivityLedger.Book book,long now) {
+        ActivityProgress progress = book.progress();
+        String name = book.instance(activityId).name();
         String label = name == null || name.isBlank() ? "该活动" : "“" + name + "”";
+        if (block==ActivityProgress.ClaimBlock.EXPIRED && now<book.instance(activityId).startAt())
+            return label+"尚未开始，请按活动列表的开放时间参与。";
         if (block == ActivityProgress.ClaimBlock.NOT_REACHED) {
             ActivityProgress.Entry entry = progress.entry(activityId);
             return label + "还没达标：" + entry.value() + "/" + progressGoal(progress, activityId);
@@ -216,19 +273,6 @@ public class ActivityAppService {
             out.add(new ActivityReward(item.type().name(), item.id(), item.count(), names.nameOf(item)));
         }
         return List.copyOf(out);
-    }
-
-    /** 载入或新建账本。**新建不放库**：从没打开过活动页的玩家不该因为一次读取就留下存档。 */
-    private ActivityProgress loaded(String playerId) {
-        State stored = store.load(playerId).orElse(null);
-        return stored == null
-                ? ActivityProgress.open(playerId, assembler.activities(), anchors.serverOpenMs(playerId))
-                : ActivityProgress.restore(playerId, assembler.activities(), stored.entries(),
-                        stored.serverOpenMs());
-    }
-
-    private void save(String playerId, ActivityProgress progress) {
-        store.save(playerId, new State(playerId, progress.entries(), progress.serverOpenMs()));
     }
 
     /** 幂等键：与 {@code QuestAppService} 同一条（缺键回 1003，重复回 1002，TTL 读配置表）。 */

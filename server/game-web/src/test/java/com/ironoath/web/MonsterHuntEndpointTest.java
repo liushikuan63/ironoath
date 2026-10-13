@@ -425,6 +425,10 @@ class MonsterHuntEndpointTest {
                 .as("击杀事件仍保留真实 mapmonster 行 id，任意等级任务由目标为空匹配")
                 .isEqualTo(hunter.monster.id());
         assertThat(captured.get(0).amount()).isEqualTo(1L);
+        assertThat(captured.get(0).factId()).as("主题活动以真实独立行军身份去重，不用野怪坐标或HTTP请求身份")
+                .isEqualTo("solo-monster:"+marchId);
+        marchAppService.processDue(hunter.playerId,System.currentTimeMillis());
+        assertThat(captured).as("同一真实行军再次到期处理不重复发布胜利事实").hasSize(1);
     }
 
     private record Hunter(String playerId, Coord home, Coord monsterCoord, MapmonsterCfg monster,

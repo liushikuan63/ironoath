@@ -17,23 +17,24 @@ import com.ironoath.web.activity.ActivityProgressStore;
  *
  * <p>{@code serverOpenMs} 也存一份：它属于部署参数（{@code SERVER_OPEN_AT}），
  * 读出来能让"这台服的开服时刻变过"这件事在数据里看得见 —— 窗口起点已经落在每个条目上，
- * 所以它不参与计算，只做审计。
+ * 恢复时仍使用这份原锚，不能被后来改动的部署参数覆盖；instances 保存本轮完整承诺。
  */
 public record ActivityProgressDocument(
         @Id String id,
         List<ActivityProgress.Entry> entries,
-        long serverOpenMs) {
+        long serverOpenMs,
+        List<com.ironoath.web.activity.ActivityInstance> instances) {
 
     /** 集合名。 */
     public static final String COLLECTION = "activity_progress";
 
     static ActivityProgressDocument of(ActivityProgressStore.State state) {
         return new ActivityProgressDocument(state.playerId(), List.copyOf(state.entries()),
-                state.serverOpenMs());
+                state.serverOpenMs(), state.instances());
     }
 
     ActivityProgressStore.State toState() {
         return new ActivityProgressStore.State(id, entries == null ? List.of() : List.copyOf(entries),
-                serverOpenMs);
+                serverOpenMs, instances);
     }
 }

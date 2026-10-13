@@ -97,7 +97,7 @@ function toRow(view: ActivityView, nowMs: number): ActivityRow {
     name: view.name || '未知活动',
     progressText: `${formatCount(view.progress)}/${formatCount(view.goal)}`,
     remainingText: remainingText(view.windowEndAt, nowMs),
-    statusText: statusText(view),
+    statusText: statusText(view, nowMs),
     claimable: view.state === STATE_CLAIMABLE && !view.claimed && view.automatic !== true,
     category: view.category === 'SIGN_IN' ? 'SIGN_IN' : 'EVENT',
     rewardText: (view.rewards ?? []).map(r => `${r.name} ×${formatCount(r.count)}`).join('、'),
@@ -110,9 +110,10 @@ function toRow(view: ActivityView, nowMs: number): ActivityRow {
  * 状态文案。四句话对应用户能做的四件事：
  * 继续做 / 去领奖 / 这一轮错过了 / 这轮已经领过。
  */
-function statusText(view: ActivityView): string {
+function statusText(view: ActivityView, nowMs: number): string {
   if (view.processing === true) return '补发处理中'
   if (view.state === STATE_EXPIRED) {
+    if (view.windowStartAt != null && view.windowStartAt > nowMs) return '未开始'
     return '上一轮已结束'
   }
   if (view.claimed) {

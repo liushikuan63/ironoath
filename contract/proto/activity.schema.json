@@ -70,7 +70,7 @@
         },
         "state": {
           "$ref": "#/$defs/ActivityState",
-          "description": "服务端算出来的状态：`EXPIRED`=窗口已过（不可领）；`CLAIMABLE`=达标且本窗口没领过；`RUNNING`=其余（含已领过但窗口未结束 —— 那一格由 `claimed` 表达）。"
+          "description": "服务端算出来的状态：`EXPIRED`=当前时刻不在窗口（未开始或已结束，不可领），未开始时间由windowStartAt说明；`CLAIMABLE`=达标且本窗口没领过；`RUNNING`=其余（含已领过但窗口未结束 —— 那一格由 `claimed` 表达）。"
         },
         "progress": {
           "type": "integer",
@@ -127,6 +127,14 @@
             "null"
           ],
           "description": "奖励已接受但尚有发放待恢复；资格与余额收据不会重发。"
+        },
+        "windowStartAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "description": "服务端当前实例开始时刻；可空兼容旧客户端与签到。只用于展示未开始时间，领取资格仍取state，不由客户端比较时间后开放按钮。"
         }
       }
     },

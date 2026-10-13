@@ -39,7 +39,7 @@ public final class MonthlyCardService {
                 if(day>0&&receipt.pendingOverflow())rewards.grant(uid,List.of(new RewardItem(RewardType.RESOURCE,"GOLD",receipt.requested())),new RewardContext(receipt.source(),receipt.sourceRef(),receipt.businessKey(),true,receipt.facts()));
                 accepted=Math.max(accepted,day);
             }
-            for(var receipt:itemReceipts)accepted=Math.max(accepted,acceptedDay(p.orderId(),p.totalDays(),receipt.businessKey(),receipt.sourceRef(),receipt.facts()));
+            for(var receipt:itemReceipts)if("paid_item".equals(receipt.source()))accepted=Math.max(accepted,acceptedDay(p.orderId(),p.totalDays(),receipt.businessKey(),receipt.sourceRef(),receipt.facts()));
             if(accepted>p.settledDays()){paid=paid.withMonthlyPurchase(p.withSettledDays(accepted));changed=true;}
         }
         if(changed){save=require(uid);save.setPaid(paid);players.save(save);}

@@ -33,11 +33,15 @@ public final class ActivityProgress {
      * @param durationDays 时长（天）。≤ 0 表示常驻（窗口无终点）
      */
     public record Def(String activityId, ActivityType type, ActivityCondition condition,
-                      long goalValue, long durationDays, boolean retired) {
+                      long goalValue, long durationDays, boolean retired, Boolean requiresFact) {
+        public Def(String activityId, ActivityType type, ActivityCondition condition, long goalValue, long durationDays, boolean retired) {
+            this(activityId, type, condition, goalValue, durationDays, retired, false);
+        }
         public Def(String activityId, ActivityType type, ActivityCondition condition, long goalValue, long durationDays) {
             this(activityId, type, condition, goalValue, durationDays, false);
         }
         public Def {
+            requiresFact = Boolean.TRUE.equals(requiresFact);
             if (activityId == null || activityId.isBlank()) {
                 throw new IllegalArgumentException("activityId 不得为空");
             }
@@ -69,9 +73,14 @@ public final class ActivityProgress {
      *                    <b>存毫秒而不是日期串</b>：「同一天」与「隔一天」两个判定都能从它算出来，
      *                    存日期串则每次都要反解回时间。
      */
-    public record Entry(String activityId, long windowStart, long value, boolean claimed, long lastLoginAt) {
+    public record Entry(String activityId, long windowStart, long value, boolean claimed, long lastLoginAt,
+                        java.util.Set<String> facts) {
+        public Entry(String activityId, long windowStart, long value, boolean claimed, long lastLoginAt) {
+            this(activityId, windowStart, value, claimed, lastLoginAt, java.util.Set.of());
+        }
 
         public Entry {
+            facts = facts == null ? java.util.Set.of() : java.util.Set.copyOf(facts);
             if (activityId == null || activityId.isBlank()) {
                 throw new IllegalArgumentException("activityId 不得为空");
             }
@@ -110,6 +119,7 @@ public final class ActivityProgress {
     private final String playerId;
     private final Map<String, Def> defs = new LinkedHashMap<>();
     private final Map<String, Entry> entries = new LinkedHashMap<>();
+    private final Map<String, ActivityWindow.Span> fixedWindows = new LinkedHashMap<>();
     private final long serverOpenMs;
     private long eventCount;
 
@@ -162,6 +172,20 @@ public final class ActivityProgress {
         return progress;
     }
 
+    /** web 已选好规则及窗口快照；核心只累计/判定，不再用最新时长重新计算承诺。 */
+    public static ActivityProgress restoreInstances(String playerId, List<Def> defs, List<Entry> restored,
+                                                    long serverOpenMs, Map<String, ActivityWindow.Span> windows) {
+        if (playerId == null || playerId.isBlank()) throw new IllegalArgumentException("playerId 不得为空");
+        ActivityProgress progress = defs.isEmpty() ? new ActivityProgress(playerId, serverOpenMs)
+                : restore(playerId, defs, restored, serverOpenMs);
+        for (Def def : defs) {
+            var span = windows.get(def.activityId());
+            if (span == null) throw new IllegalArgumentException("活动实例缺少窗口");
+            progress.fixedWindows.put(def.activityId(), span);
+        }
+        return progress;
+    }
+
     /**
      * 窗口轮换：把每条活动推进到 {@code nowMs} 所在的窗口。
      *
@@ -204,6 +228,7 @@ public final class ActivityProgress {
     private int rebase(long nowMs, long playerFirstLoginMs, boolean keepPending) {
         int rolled = 0;
         for (Def def : defs.values()) {
+            if (fixedWindows.containsKey(def.activityId())) continue;
             if (def.retired()) continue;
             Entry entry = entries.get(def.activityId());
             if (!stale(def, entry, nowMs, playerFirstLoginMs)) {
@@ -252,16 +277,25 @@ public final class ActivityProgress {
         eventCount++;
         for (Def def : defs.values()) {
             if (def.retired()) continue;
+            ActivityWindow.Span fixed = fixedWindows.get(def.activityId());
+            if (fixed != null && (event.at() < fixed.startAt() || fixed.expired(event.at()))) continue;
             if (def.condition().goalType() != event.goalType()) {
                 continue;
             }
             Entry entry = entries.get(def.activityId());
+            java.util.Set<String> facts = entry.facts();
+            if (def.requiresFact()) {
+                if (event.factId() == null || !event.factId().startsWith("solo-monster:") || event.amount() != 1
+                        || entry.claimed() || entry.value() >= def.goalValue() || facts.contains(event.factId())) continue;
+                var accepted = new java.util.LinkedHashSet<>(facts);
+                accepted.add(event.factId()); facts = java.util.Set.copyOf(accepted);
+            }
             long next = def.condition().consecutive()
                     ? streakAfter(entry, event.at())
                     : Math.min(entry.value() + event.amount(), def.goalValue());
             long lastLoginAt = def.condition().consecutive() ? event.at() : entry.lastLoginAt();
             entries.put(def.activityId(), new Entry(def.activityId(), entry.windowStart(), next,
-                    entry.claimed(), lastLoginAt));
+                    entry.claimed(), lastLoginAt, facts));
         }
     }
 
@@ -298,7 +332,20 @@ public final class ActivityProgress {
         }
         Entry entry = entries.get(activityId);
         entries.put(activityId, new Entry(activityId, entry.windowStart(), entry.value(), true,
-                entry.lastLoginAt()));
+                entry.lastLoginAt(), entry.facts()));
+    }
+
+    /** 钱包原子收据是金币已接受的事实，允许在过期之后恢复已领投影。 */
+    public boolean restoreClaimedFromGoldReceipt(String id, long windowStart, long acceptedGoal,
+                                                java.util.Set<String> acceptedFacts) {
+        Entry entry = entries.get(id); Def def = defs.get(id);
+        if (entry == null || def == null || !def.requiresFact() || entry.windowStart()!=windowStart
+                || acceptedGoal!=def.goalValue() || entry.claimed()) return false;
+        var facts = new java.util.LinkedHashSet<>(entry.facts());
+        acceptedFacts.stream().filter(f -> f.startsWith("solo-monster:")).forEach(facts::add);
+        if (facts.size() != acceptedGoal) throw new IllegalStateException("活动金币收据缺少独立胜利资格事实");
+        entries.put(id, new Entry(id,windowStart,acceptedGoal,true,entry.lastLoginAt(),facts));
+        return true;
     }
 
     /**
@@ -334,6 +381,9 @@ public final class ActivityProgress {
 
     /** 这份进度是否还属于当前窗口。 */
     private boolean stale(Def def, Entry entry, long nowMs, long playerFirstLoginMs) {
+        ActivityWindow.Span fixed = fixedWindows.get(def.activityId());
+        if (fixed != null) return nowMs < fixed.startAt() || fixed.expired(nowMs)
+                || entry.windowStart() != fixed.startAt();
         if (def.retired()) return windowOf(def, nowMs, playerFirstLoginMs).expired(nowMs);
         return entry.windowStart() != windowOf(def, nowMs, playerFirstLoginMs).startAt();
     }
@@ -391,6 +441,7 @@ public final class ActivityProgress {
     }
 
     private ActivityWindow.Span windowOf(Def def, long nowMs, long playerFirstLoginMs) {
+        if (fixedWindows.containsKey(def.activityId())) return fixedWindows.get(def.activityId());
         if (def.retired()) {
             long start = entries.get(def.activityId()).windowStart();
             return new ActivityWindow.Span(start, start + def.durationDays() * 86_400_000L);

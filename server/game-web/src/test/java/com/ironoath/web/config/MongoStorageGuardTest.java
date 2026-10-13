@@ -23,6 +23,20 @@ import org.springframework.mock.env.MockEnvironment;
 class MongoStorageGuardTest {
 
     @Test
+    void activityRuleHistoryCannotSilentlyUseMemoryInMongoMode() {
+        try (var context = new org.springframework.context.support.GenericApplicationContext()) {
+            context.getBeanFactory().registerSingleton("activityRuleHistoryStore",
+                    new com.ironoath.web.store.memory.InMemoryActivityRuleHistoryStore());
+            context.refresh();
+            var guard = new MongoStorageGuard();
+            guard.setEnvironment(new MockEnvironment().withProperty("ironoath.storage", "mongo"));
+            guard.setApplicationContext(context);
+            org.assertj.core.api.Assertions.assertThatThrownBy(guard::afterSingletonsInstantiated)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("ActivityRuleHistoryStore");
+        }
+    }
+
+    @Test
     @DisplayName("全部端口都是 Mongo 实现：判定放行")
     void allMongoImplementationsAreAccepted() {
         Map<Class<?>, List<String>> byPort = new LinkedHashMap<>();

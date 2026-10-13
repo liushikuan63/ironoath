@@ -94,10 +94,15 @@ public final class Inventory {
     public ItemClaimReceipt claimItemsOnce(Map<String,Long> requested,Map<String,Long> stackLimits,
             com.ironoath.core.reward.RewardContext ctx,long now) {
         if(ctx==null||!ctx.durableItems()||!ctx.overflowToMail()||ctx.sourceRef().isBlank())throw new IllegalArgumentException("材料持久领取来源无效");
+        var existing=itemClaims.get(ctx.traceId());
+        if(existing!=null){
+            if(!existing.source().equals(ctx.source())||!existing.sourceRef().equals(ctx.sourceRef()))throw new IllegalStateException("材料业务键不可改变来源");
+            // 旧来源按原收据重放，不因后来改表或删除道具配置重新发奖。
+            if("paid_item".equals(ctx.source())&&(!existing.requested().equals(requested)||!existing.facts().equals(ctx.claimFacts())))throw new IllegalStateException("材料业务键不可改变含义");
+            return existing;
+        }
         // 先验证整批；不允许在第二件参数错误时留下第一件的修改。
         var candidate=new ItemClaimReceipt(ctx.traceId(),ctx.source(),ctx.sourceRef(),requested,Map.of(),now,ctx.claimFacts(),null);
-        var existing=itemClaims.get(ctx.traceId());
-        if(existing!=null){if(!existing.sourceRef().equals(ctx.sourceRef())||!existing.requested().equals(candidate.requested())||!existing.facts().equals(candidate.facts()))throw new IllegalStateException("材料业务键不可改变含义");return existing;}
         for(String id:candidate.requested().keySet())if(stackLimits==null||!stackLimits.containsKey(id)||stackLimits.get(id)==null||instanceCount(id)>0)throw new IllegalArgumentException("材料堆叠配置缺失或不是普通堆叠物品");
         var next=copy();var credited=new LinkedHashMap<String,Long>();
         for(var e:candidate.requested().entrySet()){

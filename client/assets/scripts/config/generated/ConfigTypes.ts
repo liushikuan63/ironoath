@@ -31,9 +31,9 @@ export type ActivityConditionType =
 
 /**
  * 配置表 activity 的一行。
- * 活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。 battlePassPoints 列（B24 S-d-c）：领取这条活动奖励时给多少战令积分。与任务那条同源：分值挂既有活动上，不新增任务体系。
+ * 活动表。B02 字段：活动类型/条件/奖励。durationDays 是开放时长，conditionValue 是达标门槛。 battlePassPoints 列（B24 S-d-c）：领取这条活动奖励时给多少战令积分。与任务那条同源：分值挂既有活动上，不新增任务体系。 v3新增两月日历主题金币窗口，旧六項保材料和战令积分，原开放实例沿持久历史保旧。
  *
- * 源表 version=2
+ * 源表 version=3
  */
 export interface ActivityCfg {
   /** 主键 */
@@ -47,10 +47,14 @@ export interface ActivityCfg {
   durationDays: number
   rewardGold: number
   /** 外键，指向 item 表的 id */
-  rewardItemId: string
-  rewardItemCount: number
+  rewardItemId?: string
+  rewardItemCount?: number | null
   battlePassPoints: number
   retired?: boolean | null
+  cycleAnchorAt?: number | null
+  cycleMonths?: number | null
+  cycleMonthOffset?: number | null
+  cycleDay?: number | null
 }
 
 /**

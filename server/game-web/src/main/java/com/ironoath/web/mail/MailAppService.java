@@ -150,7 +150,8 @@ public class MailAppService {
                     boolean durableGold = "OVERFLOW".equals(mail.kind()) && mail.rewards().size() == 1
                             && "RESOURCE".equals(mail.rewards().get(0).type()) && "GOLD".equals(mail.rewards().get(0).id())
                             && (mail.sourceRef().startsWith("free_gold:") || mail.sourceRef().startsWith("paid_gold:"));
-                    boolean durableItems = "OVERFLOW".equals(mail.kind()) && mail.sourceRef().startsWith("paid_item:")
+                    String itemSource=mail.sourceRef().startsWith("paid_items:")?"paid_items":"paid_item";
+                    boolean durableItems = "OVERFLOW".equals(mail.kind()) && (mail.sourceRef().startsWith("paid_item:")||mail.sourceRef().startsWith("paid_items:"))
                             && !mail.rewards().isEmpty() && mail.rewards().stream().allMatch(line -> "ITEM".equals(line.type()));
                     if (!durableGold && !durableItems && !store.claim(playerId, mail.mailId(), eligibleAt)) {
                         // 另一次点击已经把它领走了：这不算失败，也不该出现在 failed 里
@@ -163,7 +164,8 @@ public class MailAppService {
                         for (List<RewardLine> batch : batches) {
                             List<RewardItem> items = batch.stream().map(line -> new RewardItem(RewardType.valueOf(line.type()),line.id(),line.count())).toList();
                             var result = rewardService.grant(playerId, items,
-                                    durableItems ? RewardContext.toMail("paid_item", "overflow:" + mail.mailId(), "mail_item:" + mail.mailId())
+                                    durableItems ? RewardContext.toMail(itemSource, "overflow:" + mail.mailId(),
+                                            ("paid_items".equals(itemSource)?"mail_items:":"mail_item:") + mail.mailId())
                                     : durableGold ? RewardContext.toMail(
                                             mail.sourceRef().startsWith("paid_gold:") ? "paid_gold" : "free_gold",
                                             "overflow:" + mail.mailId(), "mail_gold:" + mail.mailId())

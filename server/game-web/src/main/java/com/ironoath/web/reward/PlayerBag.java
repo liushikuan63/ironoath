@@ -34,13 +34,18 @@ public final class PlayerBag implements RewardPorts.Bag {
 
 
     @Override public ItemGrant grantItemsOnce(String playerId,java.util.Map<String,Long> items,com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(ctx==null||!ctx.durableItems()||!ctx.overflowToMail()||ctx.sourceRef().isBlank())throw new IllegalArgumentException("材料持久领取来源无效");
+        Inventory inventory=loadOrCreate(playerId);long version=inventories.versionOf(playerId);
+        String otherAttachmentKey=ctx.traceId().startsWith("mail_item:")?"mail_items:"+ctx.traceId().substring("mail_item:".length())
+                :ctx.traceId().startsWith("mail_items:")?"mail_item:"+ctx.traceId().substring("mail_items:".length()):null;
+        if(otherAttachmentKey!=null&&inventory.itemClaims().containsKey(otherAttachmentKey))throw new IllegalStateException("邮件附件存在另一格式的回执，拒绝重复发放");
+        boolean existed=inventory.itemClaims().containsKey(ctx.traceId());
+        if(existed)return new ItemGrant(inventory.claimItemsOnce(items,java.util.Map.of(),ctx,now),java.util.Map.of());
         var limits=new java.util.LinkedHashMap<String,Long>();
         for(String id:items.keySet()){if(isInstanced(id))throw new IllegalArgumentException("材料稳定领取只接受堆叠道具");limits.put(id,stackMaxOf(id));}
-        Inventory inventory=loadOrCreate(playerId);long version=inventories.versionOf(playerId);
-        boolean existed=inventory.itemClaims().containsKey(ctx.traceId());
         var receipt=inventory.claimItemsOnce(items,limits,ctx,now);
-        if(!existed)inventories.save(playerId,inventory,version);
-        return new ItemGrant(receipt,existed?java.util.Map.of():receipt.credited());
+        inventories.save(playerId,inventory,version);
+        return new ItemGrant(receipt,receipt.credited());
     }
     @Override public void completeItemOverflow(String playerId,String key,String mailId) {
         var inventory=loadOrCreate(playerId);var receipt=inventory.itemClaims().get(key);

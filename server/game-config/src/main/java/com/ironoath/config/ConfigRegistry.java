@@ -82,6 +82,13 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
      */
     private volatile Map<String, GlobalCfg> globals;
 
+    /** 提交前保存依赖配置的持久承诺；失败时旧配置不替换。候选只供读取。 */
+    private final Map<String, java.util.function.Consumer<ConfigRegistry>> reloadGuards = new LinkedHashMap<>();
+
+    public synchronized void addReloadGuard(String table, java.util.function.Consumer<ConfigRegistry> guard) {
+        reloadGuards.put(table, java.util.Objects.requireNonNull(guard));
+    }
+
     private ConfigRegistry(Map<String, RawConfigTable> rawTables) {
         this.rawTables = Map.copyOf(rawTables);
         this.globals = Map.copyOf(parseGlobals(this.rawTables.get(TABLE_GLOBAL)));
@@ -243,7 +250,7 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
      * @param json 新的表 JSON 全文
      * @throws ConfigException 新表校验失败时抛出，<b>旧表保持不变</b>（热更失败不能把服务打挂）
      */
-    public <T> void reload(String name, Class<T> type, String json) {
+    public synchronized <T> void reload(String name, Class<T> type, String json) {
         List<ConfigValidator.Issue> issues = new ArrayList<>();
         JsonNode root = ConfigValidator.parseOrCollect(name, json, issues);
         if (root != null) {
@@ -262,6 +269,9 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
         // 客户端因此认为自己是最新的、永远不下载新表，那是一种不会自愈的双端分歧。
         Map<String, RawConfigTable> nextRaw = new LinkedHashMap<>(rawTables);
         nextRaw.put(name, raw);
+        ConfigRegistry candidate = new ConfigRegistry(nextRaw);
+        var guard = reloadGuards.get(name);
+        if (guard != null) guard.accept(candidate);
         rawTables = Map.copyOf(nextRaw);
         if (TABLE_GLOBAL.equals(name)) {
             globals = Map.copyOf(parseGlobals(raw));
@@ -341,6 +351,7 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
      */
     public synchronized void reloadAllFromDirectory(Path dir) {
         ConfigRegistry candidate = loadFromDirectory(dir);
+        for (var guard : reloadGuards.values()) guard.accept(candidate);
         // 替换顺序与单表热更一致：原始表 → global 索引 → 强类型视图。
         // 中间态是「清单已广告新 hash 而业务还在用旧值」，它只持续两次赋值，且客户端下载新表后自然收敛
         this.rawTables = candidate.rawTables;

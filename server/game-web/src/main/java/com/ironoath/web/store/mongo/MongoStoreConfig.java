@@ -30,6 +30,11 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 @ConditionalOnProperty(name = "ironoath.storage", havingValue = GameProperties.STORAGE_MONGO)
 public class MongoStoreConfig {
 
+    @Bean
+    public com.ironoath.web.activity.ActivityRuleHistoryStore activityRuleHistoryStore(MongoTemplate mongo) {
+        return new MongoActivityRuleHistoryStore(mongo);
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(MongoStoreConfig.class);
 
     @Bean

@@ -35,12 +35,17 @@ public interface ActivityProgressStore {
     void clear();
 
     /** 落库的形状：条目 + 那份开服时刻（诊断用）。 */
-    record State(String playerId, List<ActivityProgress.Entry> entries, long serverOpenMs) {
+    record State(String playerId, List<ActivityProgress.Entry> entries, long serverOpenMs,
+                 List<ActivityInstance> instances) {
+        public State(String playerId, List<ActivityProgress.Entry> entries, long serverOpenMs) {
+            this(playerId, entries, serverOpenMs, List.of());
+        }
         public State {
             if (playerId == null || playerId.isBlank()) {
                 throw new IllegalArgumentException("playerId 不得为空");
             }
             entries = entries == null ? List.of() : List.copyOf(entries);
+            instances = instances == null ? List.of() : List.copyOf(instances);
         }
     }
 

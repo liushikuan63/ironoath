@@ -89,9 +89,9 @@ test('hero.json 每一行都有立绘，且键表与磁盘文件一一对应', (
   assert.deepEqual(unmapped, [])
 })
 
-test('activity.json 八行 ↔ 映射表 ↔ 族键四方咬合（表里多一行少一行都会红在这里）', () => {
+test('activity.json 十二行 ↔ 映射表 ↔ 族键四方咬合（四项主题复用既有讨伐图）', () => {
   const ids = configIds('activity.json')
-  assert.equal(ids.length, 8, 'activity.json 行数变了：素材族要同步补图或改本断言')
+  assert.equal(ids.length, 12, 'activity.json 行数变了：素材族要同步登记真实图标键')
   const unmapped = ids.filter((id) => activityIconKey(id) === null)
   assert.deepEqual(unmapped, [], '表里有行没有图标键 —— 界面上就是一个空位')
   const orphans = Object.keys(ACTIVITY_ICON_BY_CONFIG).filter((id) => !ids.includes(id))

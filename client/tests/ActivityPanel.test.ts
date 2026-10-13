@@ -20,9 +20,21 @@ function view(overrides: Partial<ActivityView> & { id: string }): ActivityView {
   return {
     name: '剿匪令', state: 'RUNNING', progress: 30, goal: 50,
     windowEndAt: NOW + 2 * DAY, claimed: false, category: null, rewards: null,
-    details: null, automatic: null, processing: null, ...overrides,
+    details: null, automatic: null, processing: null, windowStartAt: null, ...overrides,
   }
 }
+
+test('未来窗口展示未开始与服务端开放时间，仍沿服务端资格禁领', () => {
+  const list = buildActivityList({ activities: [view({ id: 'theme-major', name: '铁誓远征',
+    state: 'EXPIRED', progress: 0, goal: 40, windowStartAt: NOW + DAY,
+    details: '尚未开始：2026-11-01 04:00（北京时间）。' })], serverNow: NOW, claimableCount: 0 }, NOW)
+  assert.equal(list.rows[0]?.statusText, '未开始')
+  assert.equal(list.rows[0]?.claimable, false)
+  assert.equal(list.rows[0]?.details, '尚未开始：2026-11-01 04:00（北京时间）。')
+  const expired = buildActivityList({ activities: [view({ id: 'past', state: 'EXPIRED',
+    windowStartAt: NOW - 2 * DAY, windowEndAt: NOW - DAY })], serverNow: NOW, claimableCount: 0 }, NOW)
+  assert.equal(expired.rows[0]?.statusText, '上一轮已结束')
+})
 
 test('签到的类别、金额预览、条件均取服务端，自动额外奖励不能独立点击', () => {
   const list = buildActivityList({ activities: [view({ id: 'signin_daily', name: '每日签到',
