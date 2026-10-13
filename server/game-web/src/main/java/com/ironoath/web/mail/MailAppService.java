@@ -14,6 +14,7 @@ import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.reward.RewardContext;
@@ -44,12 +45,9 @@ import com.ironoath.web.reward.RewardNames;
  * 「哪几封可领」是服务端状态，客户端只该说「全领」。带列表的版本会把判断搬到客户端，
  * 于是客户端缓存的列表与服务端的真实状态之间的窗口期就是重复领取的入口。
  *
- * <p><b>领取顺序是「先占格再发货，发货失败就退回」</b>：
- * {@link MailStore#claim} 赢下这一封之后才发奖；发不出去（背包满到溢出策略拒绝、子系统抛错）
- * 就用 {@link MailStore#releaseClaim} 把格子退回未领，邮件于是<b>留在列表里</b>并带着原因回给玩家
- * （验收 5）。反过来先发货再占格的话，两个并发请求会都看到「没领过」而各发一遍 ——
- * 那与 {@code QuestAppService} 记下的「先落状态再发奖」是同一条取舍，
- * 只是这里多了一步退回，因为邮件的失败必须看得见而任务的失败不该。
+ * <p>仅含金币与非装备道具的附件按邮件ID接受持久收据，再标已领；重试不重复资产。
+ * 旧持久溢出附件保留原业务键。其他附件仍先占格再发货，失败用
+ * {@link MailStore#releaseClaim} 退回；这一旧路径尚不具备跨进程中断恢复能力。
  *
  * <p><b>溢出会再生成一封邮件</b>：附件发放时若背包/仓库满了，走的是 B04 的溢出转邮件
  * （{@code RewardContext.toMail}）。它<b>不会在本次请求里循环</b> ——
@@ -153,15 +151,22 @@ public class MailAppService {
                     String itemSource=mail.sourceRef().startsWith("paid_items:")?"paid_items":mail.sourceRef().startsWith("free_item:")?"free_item":"paid_item";
                     boolean durableItems = "OVERFLOW".equals(mail.kind()) && (mail.sourceRef().startsWith("paid_item:")||mail.sourceRef().startsWith("paid_items:")||mail.sourceRef().startsWith("free_item:"))
                             && !mail.rewards().isEmpty() && mail.rewards().stream().allMatch(line -> "ITEM".equals(line.type()));
-                    if (!durableGold && !durableItems && !store.claim(playerId, mail.mailId(), eligibleAt)) {
-                        // 另一次点击已经把它领走了：这不算失败，也不该出现在 failed 里
-                        LOG.info("邮件已被另一次领取占走 playerId={} mailId={}", playerId, mail.mailId());
-                        continue;
-                    }
+                    boolean ordinaryCandidate = !mail.rewards().isEmpty() && mail.rewards().stream().allMatch(line ->
+                            "ITEM".equals(line.type()) || ("RESOURCE".equals(line.type()) && "GOLD".equals(line.id())));
+                    boolean durable = durableGold || durableItems || ordinaryCandidate;
                     try {
+                        if (ordinaryCandidate && !durableGold && !durableItems)
+                            durable = rewardService.hasMailAttachmentClaim(playerId, mail.mailId()) || validateDurableAttachments(mail);
+                        if (!durable && !store.claim(playerId, mail.mailId(), eligibleAt)) {
+                            LOG.info("邮件已被另一次领取占走 playerId={} mailId={}", playerId, mail.mailId());
+                            continue;
+                        }
                         List<List<RewardLine>> batches = durableItems ? List.of(mail.rewards())
+                                : durable ? List.of(mail.rewards().stream().filter(line -> "RESOURCE".equals(line.type())).toList(),
+                                        mail.rewards().stream().filter(line -> "ITEM".equals(line.type())).toList())
                                 : mail.rewards().stream().map(line -> List.of(line)).toList();
                         for (List<RewardLine> batch : batches) {
+                            if (batch.isEmpty()) continue;
                             List<RewardItem> items = batch.stream().map(line -> new RewardItem(RewardType.valueOf(line.type()),line.id(),line.count())).toList();
                             var result = rewardService.grant(playerId, items,
                                     durableItems ? RewardContext.toMail(itemSource, "overflow:" + mail.mailId(),
@@ -169,6 +174,7 @@ public class MailAppService {
                                     : durableGold ? RewardContext.toMail(
                                             mail.sourceRef().startsWith("paid_gold:") ? "paid_gold" : "free_gold",
                                             "overflow:" + mail.mailId(), "mail_gold:" + mail.mailId())
+                                            : durable ? durableMailContext(mail, "ITEM".equals(batch.get(0).type()))
                                             : RewardContext.toMail("mail", mail.mailId(), mail.mailId() + ":" + req.requestId()));
                             if (result.hasCompensation()) {
                                 throw new IllegalStateException("发放进入补偿队列 compensationId="
@@ -181,14 +187,14 @@ public class MailAppService {
                                 nameOfLine.putIfAbsent(key, names.nameOf(got));
                             }
                         }
-                        if ((durableGold || durableItems) && !store.claim(playerId, mail.mailId(), eligibleAt))
-                            throw new IllegalStateException("邮件状态已变化，金币领取收据已保留");
+                        if (durable && !store.claim(playerId, mail.mailId(), eligibleAt))
+                            throw new IllegalStateException("邮件状态已变化，附件领取收据已保留");
                         claimed++;
                     } catch (RuntimeException e) {
-                        if (!durableGold && !durableItems) store.releaseClaim(playerId, mail.mailId());
+                        if (!durable) store.releaseClaim(playerId, mail.mailId());
                         String reason = reasonOf(e);
                         failed.add(new MailClaimFailure(mail.mailId(), reason));
-                        LOG.warn("邮件附件未能发放，已退回未领 playerId={} mailId={} 附件={} 原因={}",
+                        LOG.warn("邮件附件领取未完成，保留状态与收据 playerId={} mailId={} 附件={} 原因={}",
                                 playerId, mail.mailId(), mail.rewards(), reason, e);
                     }
                 }
@@ -275,6 +281,25 @@ public class MailAppService {
     }
 
     // ---------- 内部 ----------
+
+    /** Validate the entire pack before accepting either aggregate; equipment retains its instance path. */
+    private boolean validateDurableAttachments(MailRecord mail) {
+        boolean equipment = false;
+        Map<String, Long> totals = new LinkedHashMap<>();
+        for (RewardLine line : mail.rewards()) {
+            if (line.count() <= 0) throw new IllegalArgumentException("邮件附件数量必须为正");
+            totals.merge(line.type() + ":" + line.id(), line.count(), Math::addExact);
+            if ("ITEM".equals(line.type()) && configs.get(ItemCfg.class, line.id()).type() == ItemCfg.Type.EQUIP)
+                equipment = true;
+        }
+        return !equipment;
+    }
+
+    private static RewardContext durableMailContext(MailRecord mail, boolean items) {
+        return new RewardContext(items ? "free_item" : "free_gold", "mail:" + mail.mailId(),
+                (items ? "mail_item:" : "mail_gold:") + mail.mailId(), true,
+                java.util.Set.of("mail_source:" + mail.sourceRef()));
+    }
 
     /**
      * 运维读回补发记录（B12 §2 的「补发必须可核对」）。

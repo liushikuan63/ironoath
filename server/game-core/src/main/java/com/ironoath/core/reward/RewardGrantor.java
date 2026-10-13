@@ -99,6 +99,13 @@ public final class RewardGrantor implements RewardService {
         return new GrantResult(granted, overflow, mailId, compensationId);
     }
 
+    @Override
+    public boolean hasMailAttachmentClaim(String playerId, String mailId) {
+        return wallet.hasGoldClaim(playerId, "mail_gold:" + mailId)
+                || bag.hasItemClaim(playerId, "mail_item:" + mailId)
+                || bag.hasItemClaim(playerId, "mail_items:" + mailId);
+    }
+
 
     private GrantResult grantItemsOnce(String playerId,List<RewardItem> rewards,RewardContext ctx) {
         var items=new java.util.LinkedHashMap<String,Long>();

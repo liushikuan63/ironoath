@@ -83,6 +83,11 @@ public final class PlayerWallet implements RewardPorts.Wallet {
     }
 
     @Override
+    public boolean hasGoldClaim(String playerId, String businessKey) {
+        return require(playerId).goldClaims().containsKey(businessKey);
+    }
+
+    @Override
     public void completeGoldOverflow(String playerId, String businessKey, String mailId) {
         PlayerSave save = require(playerId);
         var receipt = save.goldClaims().get(businessKey);

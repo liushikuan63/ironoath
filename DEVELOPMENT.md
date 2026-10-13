@@ -285,3 +285,5 @@ tests/      逻辑单测（node:test；在 assets 外，Cocos 不会编译它）
 本轮仅本地实现及随机Mongo验收，不执行上述生产切换，也不更新原9490/验收账号/微信IDE。
 
 稳定原季补发邮件的送达证据随mail记录保留：BATTLE_PASS且mail.sourceRef以前缀battlePassRecovery:开头的记录，到期后隐藏/禁领但不由purgeExpired删除。tierMailWindows只在真实送达后保存。不得让旧邮件清理程序混跑删除此证据；普通邮件按既有过期清理。备份及一致切点需覆盖mail与battle_pass、activity_progress、inventory及player聚合。
+
+普通金币及非装备道具邮件新增按邮件ID的持久附件收据后，同样不得与旧MailAppService写入者混跑。旧程序即使能读取部分收据格式，普通邮件旧领取仍不查询mail_gold/mail_item业务收据，无法据此恢复已接受组件；恢复源码版本必须保留新领取逻辑。仅金币/材料组件在新版中具备本轮断点保障，装备与其他资源旧通道仍待设计，历史claimed无收据不猜补。本轮原生/生产版本未切，旧普通邮件写者的真实混跑负控未执行。

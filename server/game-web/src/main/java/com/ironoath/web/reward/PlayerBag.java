@@ -57,6 +57,10 @@ public final class PlayerBag implements RewardPorts.Bag {
         return inventories.findByPlayerId(playerId).map(i->i.itemClaims().values().stream().filter(com.ironoath.core.bag.ItemClaimReceipt::pendingOverflow).toList()).orElse(java.util.List.of());
     }
 
+    @Override public boolean hasItemClaim(String playerId, String businessKey) {
+        return inventories.findByPlayerId(playerId).map(i -> i.itemClaims().containsKey(businessKey)).orElse(false);
+    }
+
     @Override
     public long add(String playerId, String itemId, long count) {
         if (count <= 0L) {

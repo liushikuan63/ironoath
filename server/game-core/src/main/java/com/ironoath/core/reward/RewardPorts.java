@@ -47,6 +47,8 @@ public final class RewardPorts {
 
         default List<GoldClaimReceipt> pendingGoldClaims(String playerId) { return List.of(); }
 
+        default boolean hasGoldClaim(String playerId, String businessKey) { return false; }
+
         /**
          * 发放资源。
          *
@@ -80,6 +82,8 @@ public final class RewardPorts {
         default ItemGrant grantItemsOnce(String playerId,java.util.Map<String,Long> items,RewardContext ctx,long now) {throw new UnsupportedOperationException("背包未实现稳定材料领取");}
         default void completeItemOverflow(String playerId,String key,String mailId) {throw new UnsupportedOperationException("背包未实现材料邮件回执");}
         default List<com.ironoath.core.bag.ItemClaimReceipt> pendingItemClaims(String playerId) {return List.of();}
+
+        default boolean hasItemClaim(String playerId, String businessKey) { return false; }
 
 
         /**

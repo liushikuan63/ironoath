@@ -37,6 +37,9 @@ public interface RewardService {
 
     default void recoverItemClaims(String playerId) {}
 
+    /** An accepted component pins mail recovery to durable grants even after config reload. */
+    default boolean hasMailAttachmentClaim(String playerId, String mailId) { return false; }
+
     default GrantResult grantGoldBatch(String playerId, List<RewardPorts.Wallet.GoldRequest> requests) {
         throw new UnsupportedOperationException("发放器未实现整批金币领取");
     }
