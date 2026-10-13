@@ -7446,3 +7446,5 @@ TEST_EXIT=0
 | #1256 持久画像/队列独审两项活进程停摆均有效首红，静态子串量具前提现查 | 本笔发现原子本地留档，未推 | ab65153c/17SHA独审2Important0Critical；core1/1失败0错误跳、Web真实建号前提1/1失败0错跳，原动作/整批丢失及未落游标登记1均证明；check新RedisBot名称命中isBot子串 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-review1.manifest.json、persistence-review-red1至3及persistence-check-final1.log | 两项尚待最小修复与新绿/复审/独立JVM Redis重启；命名沿Redisson既有约定且门不放宽，未称54旧重点就是新绿。受击频控/B04溢出后续，不推部署付款/原9490 UID IDE操作 |
 
 | #1257 前两故障修后56与完整2623绿，复审后重排IO再得2有效首红 | 本笔发现/最小保全设计原子提交，未推 | dd8c21f6/18SHA复审前两修闭合，后续均值/Redis重排1Important；review2-red1共2/2断言失败0错误跳，分未执行原pending与已执行下一决策恢复、不允许重打仗；旧47门/267套2623server/1321client全0保 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-review2.manifest.json、persistence-review2-red1.log与persistence-build-final2.log | 新故障保全未修完/真JVM AOF未验，活进程缓存不称持久，取出后崩溃边界保；其他受击/频控/B04溢出继续，不推部署付款/原9490 UID IDE操作 |
+
+| 核心Bot持久游标恢复故障补充 #1258 | 本行本地原子提交（未推） | 有效首红3条1失败；19core+42web全0；未降预算 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-review2-green2.log；persistence-review3.diff | 当前完整验证/独立JVM/AOF未做；领取后硬崩溃不重放，受击水位/24h频控另续；provider CI未运行 |
