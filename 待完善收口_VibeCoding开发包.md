@@ -7470,3 +7470,5 @@ TEST_EXIT=0
 | Bot频控并发与战后故障首红 #1268 | 本发现原子提交未推 | 真实战斗故障2测试2失败0错误跳过；真实行军接线+内核替身并发1测试1失败0错误跳过 | tmp/bot-behavior-state-20261014-2c1101a7/ledger-fault-red1.log；quota-concurrency-red2.log；state-review1.diff | 原子占位/补账/问候故障修复及新全验未做；战斗整体硬崩溃不保证重放恢复；原9490未动 |
 
 | 原子占位/战后补账/问候故障 #1269 | 本发现原子提交未推 | 38重点全0；独立Mongo战斗1测试含2真战与断开式读取/实际返兵全0；4有效首红保留 | tmp/bot-behavior-state-20261014-2c1101a7/state-green5.log；mongo-battle-fault1.log；greeting-red2.log；state-review2.diff | 只读再审/完整新版本/JVM及批探针未做；硬崩溃pending需核对、不猜重放；原实例未迁移 |
+
+| 战斗阶段/跨实例请求号/时间口径 #1270 | 本发现原子提交未推 | 三有效首红：phase1失败；GC+真实第二反击2失败0错误跳过；改前61重点和47门0 | tmp/bot-behavior-state-20261014-2c1101a7/review2-red2.log；review2-red3.log；focused7.log；check1.log | focused8修后在途；完整新版/JVM/批探针未做；不确定部分战斗须人工核对、不能重打；原9490未动 |
