@@ -7438,3 +7438,5 @@ TEST_EXIT=0
 | #1252 普通1x双向到达延迟反击真实返兵与四向圈层67全过 | 本笔验收完成留档本地提交，未推 | 998ef07d/attempt5共67全过，三次实际战斗/双报/医院/真实返兵/重复读、真实受击decide延迟3秒反击及四向圈层6004无副作用；自有候选全清，47门/2607server/1321client全0、战争44/0 | tmp/core-bot-bilateral-20261014-ef81904d/attempt5/result.actual.json与三个battle结果；runtime-attempt1 | 18族尾部及两合法真人队长带Bot普通成员的集结sqrtN2负例待补，未称自然训练/tick/原号手机；满仓邮件#1250后续，画像Redis持久化继续。不推部署付款/原9490 UID IDE操作 |
 
 | #1253 画像Mongo及RedisZSET动作恢复设计进入持续下一单元 | 本笔仅设计原子提交，未推 | 现查Registry内存/TaskQueue树/enrolled首次重排、B11 ZSET与无轮询；Redisson3.27.2官方源+本机javap签名同，计划完整画像、单Botcursor原子首次登记/pending保持、生产装配和真Mongo/Redis/JVM竞争恢复 | docs/核心对战玩法收口.md第四实施单元；tmp/core-bot-bilateral-20261014-ef81904d/record-1253.json | 尚未实现或验新增持久化；67双向/20合法集结负例已过，18族尾部待读；取出后崩溃不保重放，受击水位/24h频控等内存债另核，B04溢出后续。原9490/UID/IDE与共享Redis配置不改、不推部署付款 |
+
+| #1254 17首次探针与战争44通过，国家集结420秒真实训练超预算定向补验 | 本笔发现本地原子留档，未推 | 严格18 exit1原保：17FIRST0无重跑，末份TIMEOUT240；后端9868实际7兵耗时420秒，四候选清；单9876普通1x1200预算仅补国家集结。持久化2有效首红修后过，Redis装配1新有效首红 | tmp/core-bot-bilateral-20261014-ef81904d/runtime-attempt1及nation-rally-supplement1；persistence-red2与red3 | 未将wrapper0或超时称全绿，国家集结补验等待真实训练，Redis/ZSET及JVM恢复持续；未验邮箱溢出，原9490/UID/IDE不操作、共享Redis配置不改、不推部署付款 |
