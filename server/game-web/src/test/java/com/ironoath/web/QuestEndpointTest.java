@@ -122,7 +122,7 @@ class QuestEndpointTest {
         String playerId = newPlayer();
         QuestListResp resp = quests.list(playerId);
 
-        assertThat(resp.quests()).as("quest 表 23 行（含城建与PvE各三项永久成就）全部下发").hasSize(23);
+        assertThat(resp.quests()).as("quest 表 26 行（含城建/PvE/探索各三项永久成就）全部下发").hasSize(26);
         QuestView first = byId(resp, "quest_main_01");
         assertThat(first.name()).as("名字来自表，不是 id").isNotBlank().isNotEqualTo(first.questId());
         assertThat(first.locked()).as("首条没有前置").isFalse();

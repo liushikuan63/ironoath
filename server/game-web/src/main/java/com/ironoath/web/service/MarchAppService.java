@@ -886,6 +886,13 @@ public class MarchAppService {
             if (marchAlive) {
                 marches.save(march, version);
             }
+            // 派遣已预亮Fog，不能据此发探索资格；只在真实合法到达后沿既有chunk计主人。
+            // 排除出发城块（出生/迁城点亮不是探索）；目标块作为稳定事实，不按行军ID重复计。
+            String reachedChunk = march.to().chunkKey(chunkSize());
+            if (!reachedChunk.equals(march.from().chunkKey(chunkSize()))) {
+                questEvents.progressOnce(march.playerId(), com.ironoath.core.quest.GoalType.EXPLORE_CHUNK,
+                        reachedChunk, 1L, now, "explore:chunk:" + reachedChunk);
+            }
             LOG.info("行军到达 marchId={} playerId={} 目标={} 行为={} 新状态={}",
                     march.id(), march.playerId(), march.to(), march.action(), march.status());
             return true;

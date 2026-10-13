@@ -1134,4 +1134,53 @@ class WorldEndpointTest {
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
     }
+    @Autowired private com.ironoath.web.quest.QuestAppService permanentQuests;
+    private long explored(String uid) {
+        var row=permanentQuests.list(uid).quests().stream().filter(q->q.questId().equals("quest_achievement_explore_5")).findFirst();
+        assertThat(row).as("批准的有效探索块成就").isPresent();return row.orElseThrow().current();
+    }
+    private void reach(String uid,String marchId) {
+        // 沿既有有界时钟夹具，仅提前到达时刻，仍运行真实行军验证/到达/持久路径。
+        rewindMarch(marchId);marchAppService.processDue(uid,System.currentTimeMillis());
+        assertThat(marches.findById(marchId).orElseThrow().status()).isEqualTo(March.Status.STATIONED);
+    }
+    @Test void spawnViewportAndDispatchPrelightingDoNotCountButActualArrivalCountsOne() {
+        String uid=newPlayer();Coord home=worldAppService.homeOf(uid);prepareArmy(uid,200);
+        worldAppService.ensureHomeExplored(uid);
+        worldAppService.viewport(uid,new ViewportReq(home.x(),home.y(),0,List.of()));
+        assertThat(explored(uid)).isZero();
+        MarchResp sent=marchAppService.send(uid,marchReq(home,40,MarchAction.STATION,10));
+        Coord target=marches.findById(sent.march().marchId()).orElseThrow().to();
+        assertThat(world.fogOf(uid).isExplored(target,(int)configs.longParam("WORLD_CHUNK_SIZE"))).isTrue();
+        assertThat(explored(uid)).as("派遣预亮不能冒充已到达").isZero();
+        reach(uid,sent.march().marchId());assertThat(explored(uid)).isEqualTo(1);
+        marchAppService.list(uid);assertThat(explored(uid)).isEqualTo(1);
+    }
+    @Test void distinctCoordinatesInSameChunkAndRepeatedDueProcessingDoNotAddAnotherRegion() {
+        String uid=newPlayer();Coord home=worldAppService.homeOf(uid);prepareArmy(uid,200);
+        MarchResp one=marchAppService.send(uid,marchReq(home,40,MarchAction.STATION,10));reach(uid,one.march().marchId());
+        Coord target=marches.findById(one.march().marchId()).orElseThrow().to();int size=(int)configs.longParam("WORLD_CHUNK_SIZE");
+        int x=target.x()%size==size-1?target.x()-1:target.x()+1;
+        assertThat(Coord.of(x,target.y()).chunkKey(size)).isEqualTo(target.chunkKey(size));
+        MarchResp same=marchAppService.send(uid,new MarchReq(newRequestId(),x,target.y(),List.of(new MarchUnit("unit_infantry_t1",10L)),List.of(),MarchAction.STATION));
+        reach(uid,same.march().marchId());marchAppService.processDue(uid,System.currentTimeMillis());
+        assertThat(explored(uid)).isEqualTo(1);
+        MarchResp other=marchAppService.send(uid,marchReq(home,80,MarchAction.STATION,10));reach(uid,other.march().marchId());
+        assertThat(explored(uid)).isEqualTo(2);
+    }
+    @Test void recallingBeforeArrivalDoesNotTurnPrelitFogIntoExplorerFact() {
+        String uid=newPlayer();Coord home=worldAppService.homeOf(uid);prepareArmy(uid,200);
+        MarchResp sent=marchAppService.send(uid,marchReq(home,40,MarchAction.STATION,10));
+        marchAppService.recall(uid,new MarchIdReq(newRequestId(),sent.march().marchId()));
+        rewindMarch(sent.march().marchId());marchAppService.processDue(uid,System.currentTimeMillis());
+        assertThat(explored(uid)).isZero();
+    }
+    @Test void lawfulArrivalInsideHomeChunkDoesNotCountBirthRegion() {
+        String uid=newPlayer();Coord home=worldAppService.homeOf(uid);prepareArmy(uid,200);
+        int size=(int)configs.longParam("WORLD_CHUNK_SIZE");int x=home.x()%size==size-1?home.x()-1:home.x()+1;
+        assertThat(Coord.of(x,home.y()).chunkKey(size)).isEqualTo(home.chunkKey(size));
+        MarchResp sent=marchAppService.send(uid,new MarchReq(newRequestId(),x,home.y(),List.of(new MarchUnit("unit_infantry_t1",10L)),List.of(),MarchAction.STATION));
+        reach(uid,sent.march().marchId());assertThat(explored(uid)).isZero();
+    }
+
 }
