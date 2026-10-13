@@ -7466,3 +7466,5 @@ TEST_EXIT=0
 | Bot行为与24h持续目标首红 #1266 | 本发现本地原子提交（未推） | 真实Mongo两上下文/真实规则热更3测3失败0错误跳过；首红有效 | tmp/bot-behavior-state-20261014-2c1101a7/state-red1.log；BotBehaviorRestartTest.java | 未实现未过恢复，输入为受击/计账夹具非三场真战争；在途额度、独立JVM及完整验证仍待后续 |
 
 | Bot行为与频控新实现/在途回归 #1267 | 本发现原子提交（未推） | 3首红修后；42重点0；在途1首红实际4仗→43重点全0；真实Mongo并发 | tmp/bot-behavior-state-20261014-2c1101a7/state-green2.log；arrival-quota-red1.log；state-green3.log | 并发多到达/独立JVM/完整验证/新批探针未做；过期来源删除不永久去重、战斗故障重放未承诺；原号未迁移 |
+
+| Bot频控并发与战后故障首红 #1268 | 本发现原子提交未推 | 真实战斗故障2测试2失败0错误跳过；真实行军接线+内核替身并发1测试1失败0错误跳过 | tmp/bot-behavior-state-20261014-2c1101a7/ledger-fault-red1.log；quota-concurrency-red2.log；state-review1.diff | 原子占位/补账/问候故障修复及新全验未做；战斗整体硬崩溃不保证重放恢复；原9490未动 |
