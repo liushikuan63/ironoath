@@ -7456,3 +7456,5 @@ TEST_EXIT=0
 | 核心Bot真实重启首红 #1261 | 本行本地原子提交（未推） | 最新2630server/1321client/47门0；真4JVM/AOF10过但HTTP500，exit1 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-jvm1/result.actual.json；jvm3/backend.log | 真实双实例校准与迷雾写冲突未修；不能称完整恢复通过，下一玩家锁回归；原号/9490/IDE未动 |
 
 | 核心Bot多实例校准修复 #1262 | 本行本地原子提交（未推） | 校准2有效失败→20core+57web全0；玩家锁内重读保存 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-calibration-red1.log；persistence-calibration-green1.log | 新完整验证及真JVM/AOF竞争尚未完成；当日跨实例重复校准不是持久全局日标记；受击/频控另续 |
+
+| 核心Bot真实持久恢复 #1263 | 本行本地原子提交（未推） | 新版2632server/1321client/47门全0；真4JVM/AOF16过0失败；cleanup0 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-jvm2/result.actual.json；persistence-candidate-final2/inputs.json | 17探针新批/实现提交尚未收口；初始受击为夹具，不冒充原生或自然受击；受击水位/24h频控/B04溢出另续 |
