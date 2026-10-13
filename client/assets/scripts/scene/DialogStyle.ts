@@ -144,8 +144,28 @@ export function applyDialogButton(node: Node, enabled: boolean, width: number, h
   node.getComponent(UITransform)!.setContentSize(width, height)
   const target = bitmapTarget(node, 'DialogButtonArt')
   const state = enabled ? (selected ? 'hover' : 'normal') : 'disabled'
-  if (width >= 100) applyIronButton(target, state, width, height)
-  else applyCommandButton(target, state, width, height)
+  const loaded = width >= 100 ? applyIronButton(target, state, width, height)
+    : applyCommandButton(target, state, width, height)
+  const sprite = target.getComponent(Sprite)
+  if (sprite !== null) {
+    sprite.enabled = loaded
+    // iron禁用取常态母版，用既有灰阶tint；再次启用必须复位，不能残留池化的灰色。
+    sprite.color = enabled || width < 100 ? new Color(255, 255, 255, 255) : new Color(128, 128, 128, 255)
+  }
+  if (target !== node) target.active = loaded
+  const previous = node.getChildByName('DialogButtonVector')
+  if (previous !== null) previous.active = !loaded
+  if (loaded) return
+  const fallback = rendererChild(node, 'DialogButtonVector', width, height)
+  const graphics = fallback.getComponent(Graphics) ?? fallback.addComponent(Graphics)
+  graphics.enabled = true
+  graphics.clear()
+  graphics.fillColor = new Color(...IRON_SURFACE)
+  graphics.strokeColor = new Color(...BRONZE_GOLD)
+  graphics.lineWidth = enabled && selected ? 2 : 1
+  graphics.roundRect(-width / 2 + 1, -height / 2 + 1, width - 2, height - 2, CORNER_RADIUS)
+  graphics.fill()
+  graphics.stroke()
 }
 
 export function createDialogScroll(parent: Node, name: string, width: number, height: number,

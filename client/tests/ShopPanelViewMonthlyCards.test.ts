@@ -7,6 +7,8 @@ import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import * as paging from '../assets/scripts/game/ui/PanelPaging'
 import * as shop from '../assets/scripts/game/shop/ShopPanel'
+import * as tokens from '../assets/scripts/game/ui/UiTokens'
+import { PANEL_IRON_INSET } from '../assets/scripts/game/art/ArtFamilies'
 import type { MonthlyCardRow } from '../assets/scripts/game/shop/MonthlyCardPanel'
 import type { MonthlyShopView, ShopView } from '../assets/scripts/game/session/AppRoot'
 
@@ -18,9 +20,12 @@ class UITransform {
   setContentSize(size: Size | number, height?: number): void { this.width = typeof size === 'number' ? size : size.width; this.height = typeof size === 'number' ? height! : size.height }
 }
 class Graphics {
+  enabled = true
   fillColor: unknown; strokeColor: unknown; lineWidth = 0
-  clear(): void {} rect(): void {} roundRect(): void {} fill(): void {} stroke(): void {}
+  painted = false
+  clear(): void { this.painted = false } rect(): void {} roundRect(): void {} fill(): void { this.painted = true } stroke(): void {}
 }
+class Sprite { enabled = true; color = new Color(255, 255, 255, 255) }
 class Label {
   static Overflow = { NONE: 0, SHRINK: 2 }; static HorizontalAlign = { LEFT: 0, CENTER: 1, RIGHT: 2 }; static VerticalAlign = { CENTER: 1 }
   node!: Node; string = ''; color: unknown; fontSize = 0; lineHeight = 40; horizontalAlign = 0; verticalAlign = 0
@@ -34,28 +39,37 @@ class Node {
   addComponent<T extends object>(type: new () => T): T { const value = new type(); Object.assign(value, { node: this }); this.components.set(type, value); return value }
   getComponent<T>(type: new () => T): T | null { return this.components.get(type) as T | undefined ?? null }
   setPosition(position: Vec3): void { this.position = position }
+  getChildByName(name: string): Node | null { return this.children.find(n => n.name === name) ?? null }
+  setSiblingIndex(index: number): void {
+    if (!this.parent) return
+    const siblings = this.parent.children, previous = siblings.indexOf(this)
+    if (previous >= 0) siblings.splice(previous, 1)
+    siblings.splice(index, 0, this)
+  }
   on(event: string, callback: () => void): void { this.events.set(event, callback) }
   emit(event: string): void { this.events.get(event)?.() }
 }
 class Component { node = new Node('shop') }
-class Color { constructor(..._values: number[]) {} }
+class Color { readonly values: number[]; constructor(...values: number[]) { this.values = values } }
 interface Harness {
   node: Node; onLoad(): void; onDestroy(): void; attach(data: ShopView): void; attachMonthlyCards(data: MonthlyShopView): void
   onMonthlyTab: (() => void) | null; onTab: ((currency: string) => void) | null
   onCardClaim: ((productId: string | null) => void) | null; onCardPurchase: ((productId: string) => void) | null
 }
-function setup(width: number, height: number): Harness {
-  const exportsFor = (name: string, values: Record<string, unknown>): Record<string, unknown> => {
+const exportsFor = (name: string, values: Record<string, unknown>): Record<string, unknown> => {
     const source = readFileSync(path.join(process.cwd(), 'assets/scripts/scene', name + '.ts'), 'utf8')
     const ast = ts.createSourceFile(name + '.ts', source, ts.ScriptTarget.ES2020, true)
     const stripped = ts.createPrinter().printFile(ts.factory.updateSourceFile(ast, ast.statements.filter(s => !ts.isImportDeclaration(s))))
     const code = ts.transpileModule(stripped, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, experimentalDecorators: true } }).outputText
     const exports: Record<string, unknown> = {}
-    runInNewContext(code, { exports, _decorator: { ccclass: () => (klass: unknown) => klass }, Node, Component, Color, Graphics, Label, UITransform, Vec3, Size, ...values })
+    runInNewContext(code, { exports, _decorator: { ccclass: () => (klass: unknown) => klass }, Node, Component, Color, Graphics, Label, UITransform, Vec3, Size, Sprite, ...values })
     return exports
   }
+function setup(width: number, height: number): Harness {
   const font = exportsFor('UiFont', {})
-  const Scene = exportsFor('ShopPanelView', { ...font, ...paging, ...shop, view: { getVisibleSize: () => ({ width, height }) } }).ShopPanelView as new () => Harness
+  // 本夹具只执行实际布局/点击；位图加载与材质边框由真实Cocos浏览器量具验证。
+  const Scene = exportsFor('ShopPanelView', { ...font, ...paging, ...shop, applySlicedSprite: () => false,
+    applyDialogButton: () => {}, view: { getVisibleSize: () => ({ width, height }) } }).ShopPanelView as new () => Harness
   const result = new Scene(); result.onLoad(); return result
 }
 function child(node: Node, name: string): Node { const found = node.children.find(n => n.name === name); assert.ok(found, 'Missing ' + name); return found }
@@ -105,10 +119,13 @@ for (const [width, height] of [[960, 443.6018957345971], [960, 540], [1440, 900]
         const box = bounds(card)
         assert.ok(box.left >= -width! / 2 && box.right <= width! / 2 && box.bottom >= -height! / 2 + 68 && box.top <= height! / 2,
           `card must stay above navigation and inside ${width}×${height}: ${JSON.stringify(box)}`)
-        for (const part of card.children) {
+        const content = card.children.filter(n => n.name !== 'CardSurface')
+        for (const part of content) {
           const own = bounds(part)
           assert.ok(own.left >= box.left && own.right <= box.right && own.bottom >= box.bottom && own.top <= box.top, part.name + ' escapes card')
-          for (const other of card.children) if (part !== other) noOverlap(part, other)
+          for (const other of content) if (part !== other) noOverlap(part, other)
+          assert.ok(own.left >= box.left + 24 && own.right <= box.right - 24
+            && own.bottom >= box.bottom + 24 && own.top <= box.top - 24, part.name + ' enters material frame')
           const label = part.getComponent(Label)
           if (label) {
             assert.equal(label.lineHeight, label.fontSize + 6)
@@ -181,4 +198,29 @@ test('月卡切回货架恢复原行、货币回调和页码；再回月卡从�
   assert.equal(child(scene.node, 'MonthlyCards').active, false); assert.equal(text(scene.node, 'Balance'), '500 金币')
   scene.attachMonthlyCards(data()); assert.equal(text(cards(scene)[0]!, 'Name'), '材料月卡')
   scene.onDestroy(); assert.equal(scene.onMonthlyTab, null); assert.equal(scene.onCardClaim, null); assert.equal(scene.onCardPurchase, null)
+})
+
+
+test('共用按钮贴图加载失败仍有可见兜底底画，重画不会叠多个材质节点', () => {
+  const style = exportsFor('DialogStyle', { ...tokens, PANEL_IRON_INSET, applyIronButton: () => false, applyCommandButton: () => false })
+  const paint = style.applyDialogButton as (node: Node, enabled: boolean, width: number, height: number) => void
+  for (const width of [64, 108]) for (const hadVector of [true, false]) {
+    const button = new Node('Button'); button.addComponent(UITransform)
+    if (hadVector) button.addComponent(Graphics).fill()
+    paint(button, true, width, 34)
+    const visible = (node: Node): boolean => Boolean(node.getComponent(Graphics)?.enabled && node.getComponent(Graphics)?.painted) || node.children.some(visible)
+    assert.ok(button.active && visible(button), 'asset failure must keep the button and a painted background visible')
+    const count = button.children.length; paint(button, false, width, 34)
+    assert.ok(visible(button)); assert.equal(button.children.length, count)
+  }
+})
+
+test('铁按钮禁用材质明确置灰，再启用恢复原亮度', () => {
+  const bitmap = (node: Node): boolean => { node.getComponent(Sprite) ?? node.addComponent(Sprite); return true }
+  const style = exportsFor('DialogStyle', { ...tokens, PANEL_IRON_INSET, applyIronButton: bitmap, applyCommandButton: bitmap })
+  const paint = style.applyDialogButton as (node: Node, enabled: boolean, width: number, height: number) => void
+  const button = new Node('Button');button.addComponent(UITransform);button.addComponent(Graphics)
+  paint(button, true, 108, 34);const normal = child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0]!
+  paint(button, false, 108, 34);assert.ok(child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0]! < normal)
+  paint(button, true, 108, 34);assert.equal(child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0], normal)
 })

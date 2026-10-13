@@ -13,13 +13,15 @@
  * 压在底部导航条下面 —— 画了但玩家看不见，比少画一行更难发现；画不下的数量在表头说出来。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, view } from 'cc'
 import { canBuy, SHOP_TABS, shopRowStateText } from '../game/shop/ShopPanel'
 import type { ShopRow } from '../game/shop/ShopPanel'
 import type { MonthlyCardRow } from '../game/shop/MonthlyCardPanel'
 import type { MonthlyShopView, ShopView } from '../game/session/AppRoot'
 import type { ShopCurrency } from '../net/generated/ShopProtocol'
 import { applySystemUiFont, capWidth } from './UiFont'
+import { applySlicedSprite } from './ArtCatalog'
+import { applyDialogButton } from './DialogStyle'
 import {
   clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
 } from '../game/ui/PanelPaging'
@@ -30,10 +32,10 @@ const COLOR_BACKGROUND = new Color(22, 18, 16, 255)
 const COLOR_PANEL = new Color(40, 33, 27, 255)
 const COLOR_ROW = new Color(52, 43, 35, 255)
 const COLOR_ROW_LOCKED = new Color(34, 31, 28, 255)
-const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
+const COLOR_COPPER_GOLD = new Color(218, 179, 107, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
-const COLOR_TEXT_DIM = new Color(150, 140, 124, 255)
-const COLOR_GOOD = new Color(120, 176, 96, 255)
+const COLOR_TEXT_DIM = new Color(185, 174, 151, 255)
+const COLOR_GOOD = new Color(218, 179, 107, 255)
 const COLOR_WARNING = new Color(200, 60, 40, 255)
 
 const PANEL_WIDTH = 680
@@ -282,6 +284,7 @@ export class ShopPanelView extends Component {
       button.active = paged
       button.setPosition(new Vec3(button.position.x, rowY, 0))
       caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
+      applyDialogButton(button, usable, 64, 28)
     }
   }
 
@@ -318,7 +321,7 @@ export class ShopPanelView extends Component {
     button.addComponent(UITransform).setContentSize(new Size(92, 34))
     const buttonGraphics = button.addComponent(Graphics)
     this.paintButton(buttonGraphics, COLOR_GOOD)
-    const buttonCaption = this.addLabel('Caption', 0, 0, COLOR_BACKGROUND, 15, button)
+    const buttonCaption = this.addLabel('Caption', 0, 0, COLOR_TEXT, 15, button)
     button.on('touch-start', (_event: EventTouch) => {
       const rowId = this.rowIds[index] ?? null
       if (rowId !== null) {
@@ -328,7 +331,7 @@ export class ShopPanelView extends Component {
     return { node, name, price, limit, state, button, buttonCaption }
   }
 
-  /** 按钮底色：可兑换是绿的、锁定是灰的 —— 颜色之外还有 state 那一行文字说明原因。 */
+  /** 状态仍由文字说明，材质统一为铁饰按钮。 */
   private paintButton(graphics: Graphics, fill: Color): void {
     graphics.clear()
     graphics.fillColor = fill
@@ -395,17 +398,37 @@ export class ShopPanelView extends Component {
       graphics.roundRect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height, 6)
       graphics.fill()
     }
-    const left = -PANEL_WIDTH / 2 + PADDING
-    this.placeMonthlyLabel(card.name, left, compact ? 69 : 100, 380, 26, 20)
-    this.placeMonthlyLabel(card.price, 106, compact ? 69 : 100, 218, 26, 16)
-    this.placeMonthlyLabel(card.offer, left, compact ? 31 : 59, PANEL_WIDTH - 2 * PADDING, compact ? 44 : 48, compact ? 14 : 15, true)
-    this.placeMonthlyLabel(card.status, left, compact ? -13 : 12, PANEL_WIDTH - 2 * PADDING, compact ? 40 : 42, 14, true)
-    this.placeMonthlyLabel(card.expiry, left, compact ? -47 : -26, compact ? 316 : PANEL_WIDTH - 2 * PADDING, 20, compact ? 13 : 14)
-    this.placeMonthlyLabel(card.refresh, compact ? 8 : left, compact ? -47 : -50, compact ? 316 : PANEL_WIDTH - 2 * PADDING, 20, compact ? 13 : 14)
+    this.paintCardSurface(card.node, height)
+    // gilt母版四边24px，内容与操作均在框带内侧；紧凑档不缩放整张卡。
+    const left = -PANEL_WIDTH / 2 + 32
+    this.placeMonthlyLabel(card.name, left, compact ? 56 : 82, 400, compact ? 22 : 26, compact ? 18 : 21)
+    this.placeMonthlyLabel(card.price, 116, compact ? 56 : 82, 192, compact ? 22 : 26, compact ? 14 : 16)
+    this.placeMonthlyLabel(card.offer, left, compact ? 26 : 40, 616, compact ? 30 : 44, compact ? 14 : 16, true)
+    this.placeMonthlyLabel(card.status, left, compact ? -4 : -10, 616, compact ? 22 : 32, 14, true)
+    this.placeMonthlyLabel(card.expiry, left, compact ? -26 : -42, 300, compact ? 18 : 20, 13)
+    this.placeMonthlyLabel(card.refresh, 8, compact ? -26 : -42, 300, compact ? 18 : 20, 13)
     for (const button of [card.claim, card.purchase]) {
-      button.setPosition(new Vec3(button.position.x, compact ? -75 : -91, 0))
-      button.getComponent(UITransform)?.setContentSize(new Size(108, compact ? 32 : 34))
+      button.setPosition(new Vec3(button === card.claim ? 138 : 260, compact ? -52 : -76, 0))
+      button.getComponent(UITransform)?.setContentSize(new Size(108, compact ? 32 : 36))
     }
+  }
+
+  private paintCardSurface(node: Node, height: number): void {
+    // Graphics和Sprite分节点，避免Cocos只登记首个UIRenderer使位图不显示。
+    let art = node.getChildByName('CardSurface')
+    if (art === null) {
+      art = new Node('CardSurface')
+      art.layer = node.layer
+      node.addChild(art)
+      art.addComponent(UITransform)
+      art.setSiblingIndex(0)
+    }
+    const loaded = applySlicedSprite(art, 'ui.panel.gilt', PANEL_WIDTH, height)
+    art.active = loaded
+    const graphics = node.getComponent(Graphics)
+    if (graphics !== null) graphics.enabled = !loaded
+    const sprite = art.getComponent(Sprite)
+    if (sprite !== null) sprite.enabled = loaded
   }
 
   private monthlyButton(parent: Node, name: string, x: number, pressed: () => void): { node: Node; caption: Label } {
@@ -425,13 +448,14 @@ export class ShopPanelView extends Component {
     const graphics = node.getComponent(Graphics)
     if (graphics !== null) {
       graphics.clear()
-      graphics.fillColor = usable ? COLOR_GOOD : COLOR_PANEL
+      graphics.fillColor = COLOR_PANEL
       const height = node.getComponent(UITransform)?.height ?? 34
       graphics.roundRect(-54, -height / 2, 108, height, 5)
       graphics.fill()
     }
     caption.string = text
-    caption.color = usable ? COLOR_BACKGROUND : COLOR_TEXT_DIM
+    applyDialogButton(node, usable, 108, node.getComponent(UITransform)?.height ?? 34, usable)
+    caption.color = usable ? COLOR_TEXT : COLOR_TEXT_DIM
   }
 
   private paintTab(node: Node, selected: boolean): void {
@@ -444,6 +468,7 @@ export class ShopPanelView extends Component {
     graphics.roundRect(-(TAB_WIDTH - 8) / 2, -17, TAB_WIDTH - 8, 34, 5)
     graphics.fill()
     graphics.stroke()
+    applyDialogButton(node, true, TAB_WIDTH - 8, 34, selected)
   }
 
   private addLabel(name: string, x: number, y: number, color: Color, fontSize: number,
@@ -484,13 +509,7 @@ export class ShopPanelView extends Component {
       if (graphics === null) {
         continue
       }
-      graphics.clear()
-      graphics.fillColor = currency === panel.currency ? COLOR_ROW : COLOR_PANEL
-      graphics.strokeColor = COLOR_COPPER_GOLD
-      graphics.lineWidth = currency === panel.currency ? 2 : 1
-      graphics.roundRect(-(TAB_WIDTH - 8) / 2, -17, TAB_WIDTH - 8, 34, 5)
-      graphics.fill()
-      graphics.stroke()
+      this.paintTab(node, currency === panel.currency)
     }
 
     if (this.balanceLabel !== null) {
@@ -559,9 +578,10 @@ export class ShopPanelView extends Component {
       if (buttonGraphics !== null) {
         this.paintButton(buttonGraphics, row.purchasable ? COLOR_GOOD : COLOR_PANEL)
       }
+      applyDialogButton(this.rowButton[index]!, row.purchasable, 92, 34, row.purchasable)
       // 锁定行**按钮仍可点**：点了由编排层把服务端给的原因说出去（灰按钮什么都不做才是坏体验）
       this.rowButtonCaption[index]!.string = canBuy(row) ? '兑换' : '不可兑换'
-      this.rowButtonCaption[index]!.color = row.purchasable ? COLOR_BACKGROUND : COLOR_TEXT_DIM
+      this.rowButtonCaption[index]!.color = row.purchasable ? COLOR_TEXT : COLOR_TEXT_DIM
     })
   }
 
