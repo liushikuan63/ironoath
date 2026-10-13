@@ -114,7 +114,7 @@ class GiftPurchaseLimitTest {
         String playerId = newPlayer();
 
         assertThat(pay.createOrder(playerId, new CreateOrderReq(
-                "req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId())
+                "req-" + UUID.randomUUID(), "monthly_gold_card", 1, null)).orderId())
                 .as("月卡不读礼包触发：它没有「过窗」，也没买过").isNotBlank();
         assertThat(configs.all(GiftCfg.class)).as("夹具前提：gift 表有行").isNotEmpty();
     }

@@ -1,6 +1,6 @@
 {
   "table": "global",
-  "version": 43,
+  "version": 45,
   "comment": "全局参数表（键值型）。所有跨批次共用常量集中于此，代码中不得出现同义魔法数字（铁律 1）。value 的 JSON 类型必须与 valueType 匹配：LONG→number、DECIMAL→string、BOOL→boolean、STRING→string。source 标注该数字的出处，todo 标注尚未定稿需后续批次确认的项。",
   "fieldTypes": {
     "id": "STRING_KEY",
@@ -1967,7 +1967,7 @@
     {
       "id": "PRODUCT_BATTLE_PASS_CENTS",
       "value": 3000,
-      "why": "赛季战令买断价。与月卡同价（3000 分 = 30 元）是 B24 裁决② 的原话：战令与月卡同档，**不新增价格点** —— 价格点越多，玩家越要在\"买哪个\"上做比较，而这两个商品卖的是完全不同的东西（月卡买时间，战令买一个赛季的进度与外观）。【运行期无人读它】未上货架：B24 裁决② 已定价（与月卡同档），战令本身还没进 product 表的售卖清单。",
+      "why": "赛季战令买断价。与月卡同价（3000 分 = 30 元）是 B24 裁决② 的原话：战令与月卡同档，**不新增价格点** —— 价格点越多，玩家越要在\"买哪个\"上做比较，而这两个商品卖的是完全不同的东西（月卡买时间，战令买一个赛季的进度与外观）。【实际间接消费】pay_product.priceCentsParam指向本参数，PaidProducts.priceCents/onSale动态读取；价格不在客户端写死。静态门现识别生产getter与同变量longParam，不再误标未上货架。",
       "valueType": "LONG",
       "unit": "分",
       "source": "B24 裁决②（定价与月卡同档，不新增价格点）"
@@ -1978,7 +1978,7 @@
       "value": 9800,
       "unit": "分",
       "source": "B15 §六 开放问题 2（建议 98 元，累计返还 10 倍金币）",
-      "why": "成长基金价格。采纳建议值 98 元。98 而不是 100：定价尾数 8 是国内付费点的常见锚定，而成长基金是「高 LTV、拉付费率」的定位（§一 优先级 2），它的价格必须落在玩家「咬咬牙能接受」的区间，100 元整会显得像一个整数关卡而不是一个商品。【运行期无人读它】未上货架：成长基金未进售卖清单（B15 §六 开放问题 2 也在问它）。"
+      "why": "成长基金价格。采纳建议值 98 元。98 而不是 100：定价尾数 8 是国内付费点的常见锚定，而成长基金是「高 LTV、拉付费率」的定位（§一 优先级 2），它的价格必须落在玩家「咬咬牙能接受」的区间，100 元整会显得像一个整数关卡而不是一个商品。【实际间接消费】pay_product.priceCentsParam指向本参数，PaidProducts.priceCents/onSale动态读取；价格不在客户端写死。静态门现识别生产getter与同变量longParam，不再误标未上货架。"
     },
     {
       "id": "PRODUCT_GROWTH_FUND_RETURN_RATIO",
@@ -1994,7 +1994,7 @@
       "value": 600,
       "unit": "分",
       "source": "B15 §六 开放问题 3（建议 6 元）",
-      "why": "首充价格。采纳建议值 6 元 —— 它是破冰付费，目的不是收入而是「让一个从未付费的人完成第一次付费」，而第一次付费的心理门槛与金额成反比。6 元恰好落在微信支付的免密额度内，付款流程最短。【运行期无人读它】未上货架：首充档位未进售卖清单。"
+      "why": "首充价格。采纳建议值 6 元 —— 它是破冰付费，目的不是收入而是「让一个从未付费的人完成第一次付费」，而第一次付费的心理门槛与金额成反比。6 元恰好落在微信支付的免密额度内，付款流程最短。【实际间接消费】pay_product.priceCentsParam指向本参数，PaidProducts.priceCents/onSale动态读取；价格不在客户端写死。静态门现识别生产getter与同变量longParam，不再误标未上货架。"
     },
     {
       "id": "GIFT_VALUE_MULTIPLIER",
@@ -2010,7 +2010,7 @@
       "value": 600,
       "unit": "分",
       "source": "B19 §五⑤（2026-09-16 裁决「首批 3 个礼包统一定价 600 分（6 元）」）",
-      "why": "三个礼包同一价。**参数与 `PRODUCT_FIRST_CHARGE_CENTS` 分开，即使两者今天同为 600**：裁决说\"与首充同档、不新增价格点\"讲的是**价格阶梯**不要变多，不是\"两条业务共用一个开关\"。合成一个参数的后果是\"调首充价顺带改了礼包价\"，而礼包是弹窗推给未付费玩家的，它的价被一次首充活动改动带走没有任何人会去检查。【运行期无人读它】未上货架：礼包档价格未进售卖清单（B19 S3 的礼包触发链路还在补）。"
+      "why": "三个礼包同一价。**参数与 `PRODUCT_FIRST_CHARGE_CENTS` 分开，即使两者今天同为 600**：裁决说\"与首充同档、不新增价格点\"讲的是**价格阶梯**不要变多，不是\"两条业务共用一个开关\"。合成一个参数的后果是\"调首充价顺带改了礼包价\"，而礼包是弹窗推给未付费玩家的，它的价被一次首充活动改动带走没有任何人会去检查。【实际间接消费】pay_product.priceCentsParam指向本参数，PaidProducts.priceCents/onSale动态读取；价格不在客户端写死。静态门现识别生产getter与同变量longParam，不再误标未上货架。"
     },
     {
       "id": "PAY_CHANNEL",
@@ -2233,15 +2233,15 @@
       "why": "每名次的赛季币基数，实际发放 = coinPerRank × (rewardedTopN − rank + 1)，所以第 1 名拿 rewardedTopN 份、最后一名拿 1 份。**用「名次越靠前份数越多」而不是「每名次等额」**：等额的话第 1 名与第 100 名只差一个名次却拿一样的钱，排行就失去了意义；而这个线性公式的好处是不引入第二个参数（不需要再定一个「首名额外倍数」），调 SEASON_REWARDED_TOP_N 时整条曲线自动跟着变。",
       "todo": "TODO(需确认): 100 是起点，且赛季币的用途（荣耀商店？）尚未定义 —— 一种没有用途的货币发得再多也没有激励作用"
     },
-  {
-    "id": "SEASON_COUNT",
-    "valueType": "LONG",
-    "value": 5,
-    "unit": "个赛季",
-    "source": "#750 裁决（2026-10-02 人工选中「5 个」，区间上沿）",
-    "why": "一共跑几个赛季。⚠️ 运行期无人读它 —— —— 代码里没有「第几个赛季」的概念：seasonId 由 SeasonRulesAssembler 从 season 表行 id 的前缀反推（season.json 只有 season_01 五行 ⇒ 恒为 season_01），所以这个数今天改了不会生效，直到 SeasonTimeline.Rules 或 SeasonRulesAssembler 那唯一一处改成按天数推进（#505 裁决：可见性落在 why 不落 todo）。与同区的 SEASON_ARCHIVE_RETENTION=3 一起看：跑 5 季而归档留 3 季（= 当前季 + 前两季），所以「上个赛季的争议」始终可取证——这正是 ARCHIVE_RETENTION 那条 why 要保证的事，而季数本身不参与该判断。上界取 5 的理由同 ARCHIVE_RETENTION 那段 why：5 个赛季 = 225 天，已足够让 #748 实测的「跨赛季才满级」形态（45 天主城 22 级 → 120 天 39 级）跑满 5 轮并被玩家体验到；同时季号补零到两位（SeasonSettlementService:284-285 注释：季号形如 season_01_phase_3，补零两位使字典序等于时间序），5 远在两位数的容量之内 ⇒ 季号排序不失效。",
-    "todo": "TODO(需确认) season 表目前只有 season_01 五行；SEASON_COUNT=5 要真正生效需要补 season_02..season_05 的阶段行，且每季 5 个阶段的 goalValue 与三种奖励（rewardGold/rewardSeasonCoin/rewardHeroFragment）本仓无出处——season_01 现值是 8/1/200/5/1 与 200/500/1000/2000/5000、100/200/400/800/2000、0/2/5/10/30，而「赛季之间该递多少」表里未写，需产品给口径（见 #750 第三段）。另需确认：代码里目前没有「第几个赛季」的概念，seasonId 由 SeasonRulesAssembler 从 season 表行 id 前缀反推（恒为 season_01），要让它随天数推进需改 SeasonTimeline.Rules 或 SeasonRulesAssembler 一处（seasonId 生产读点 38 处，真要改的只有那一处）。"
-  },
+    {
+      "id": "SEASON_COUNT",
+      "valueType": "LONG",
+      "value": 5,
+      "unit": "个赛季",
+      "source": "#750 裁决（2026-10-02 人工选中「5 个」，区间上沿）",
+      "why": "一共跑几个赛季。⚠️ 运行期无人读它 —— —— 代码里没有「第几个赛季」的概念：seasonId 由 SeasonRulesAssembler 从 season 表行 id 的前缀反推（season.json 只有 season_01 五行 ⇒ 恒为 season_01），所以这个数今天改了不会生效，直到 SeasonTimeline.Rules 或 SeasonRulesAssembler 那唯一一处改成按天数推进（#505 裁决：可见性落在 why 不落 todo）。与同区的 SEASON_ARCHIVE_RETENTION=3 一起看：跑 5 季而归档留 3 季（= 当前季 + 前两季），所以「上个赛季的争议」始终可取证——这正是 ARCHIVE_RETENTION 那条 why 要保证的事，而季数本身不参与该判断。上界取 5 的理由同 ARCHIVE_RETENTION 那段 why：5 个赛季 = 225 天，已足够让 #748 实测的「跨赛季才满级」形态（45 天主城 22 级 → 120 天 39 级）跑满 5 轮并被玩家体验到；同时季号补零到两位（SeasonSettlementService:284-285 注释：季号形如 season_01_phase_3，补零两位使字典序等于时间序），5 远在两位数的容量之内 ⇒ 季号排序不失效。",
+      "todo": "TODO(需确认) season 表目前只有 season_01 五行；SEASON_COUNT=5 要真正生效需要补 season_02..season_05 的阶段行，且每季 5 个阶段的 goalValue 与三种奖励（rewardGold/rewardSeasonCoin/rewardHeroFragment）本仓无出处——season_01 现值是 8/1/200/5/1 与 200/500/1000/2000/5000、100/200/400/800/2000、0/2/5/10/30，而「赛季之间该递多少」表里未写，需产品给口径（见 #750 第三段）。另需确认：代码里目前没有「第几个赛季」的概念，seasonId 由 SeasonRulesAssembler 从 season 表行 id 前缀反推（恒为 season_01），要让它随天数推进需改 SeasonTimeline.Rules 或 SeasonRulesAssembler 一处（seasonId 生产读点 38 处，真要改的只有那一处）。"
+    },
     {
       "id": "SEASON_ARCHIVE_RETENTION",
       "valueType": "LONG",
@@ -2376,6 +2376,22 @@
       "unit": "主城等级",
       "source": "2026-10-11 用户明确裁决：四资源手动教学完成后，主城5级开启一键收割",
       "why": "等级与逐种手动采集同时满足；引导跳过和批量收割不能代替手动进度。"
+    },
+    {
+      "id": "PRODUCT_MATERIAL_MONTHLY_CARD_CENTS",
+      "valueType": "LONG",
+      "value": 1800,
+      "unit": "分",
+      "source": "2026-10-12用户明确双月卡拆分裁决",
+      "why": "新独立SKU价格参数；旧PRODUCT_MONTHLY_CARD_CENTS保持3000及旧订单历史，不把游戏金币当真实付款授权。"
+    },
+    {
+      "id": "PRODUCT_GOLD_MONTHLY_CARD_CENTS",
+      "valueType": "LONG",
+      "value": 3000,
+      "unit": "分",
+      "source": "2026-10-12用户明确双月卡拆分裁决",
+      "why": "新独立SKU价格参数；旧PRODUCT_MONTHLY_CARD_CENTS保持3000及旧订单历史，不把游戏金币当真实付款授权。"
     }
   ]
 }

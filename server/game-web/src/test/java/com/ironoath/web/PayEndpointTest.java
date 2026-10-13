@@ -148,15 +148,15 @@ class PayEndpointTest {
         assertThat(data.get("region").asText()).isNotBlank();
         JsonNode products = data.get("products");
         assertThat(products.size())
-                .as("四类主力商品（月卡/基金/首充/战令）+ 三档礼包（B19-S3-i #169；"
-                        + "战令是 B24 块② 加的第四个主力商品，与月卡同价）")
-                .isEqualTo(7);
+                .as("五类在售主力商品（双月卡/基金/首充/战令）+ 三档礼包；旧月卡仅退新售保权益")
+                .isEqualTo(8);
         long giftCents = configs.longParam("PRODUCT_GIFT_CENTS");
         int giftRows = 0;
         for (JsonNode product : products) {
             String id = product.get("productId").asText();
             long expected = switch (id) {
-                case "monthly_card" -> configs.longParam("PRODUCT_MONTHLY_CARD_CENTS");
+                case "monthly_gold_card" -> configs.longParam("PRODUCT_GOLD_MONTHLY_CARD_CENTS");
+                case "monthly_material_card" -> configs.longParam("PRODUCT_MATERIAL_MONTHLY_CARD_CENTS");
                 case "growth_fund" -> configs.longParam("PRODUCT_GROWTH_FUND_CENTS");
                 case "first_charge" -> configs.longParam("PRODUCT_FIRST_CHARGE_CENTS");
                 case "battle_pass" -> configs.longParam("PRODUCT_BATTLE_PASS_CENTS");
@@ -224,7 +224,7 @@ class PayEndpointTest {
         plan.succeedFrom(1);
         String playerId = newPlayer();
         String orderId = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), "monthly_card", 1, null))).get("orderId").asText();
+                new CreateOrderReq(newRequestId(), "monthly_gold_card", 1, null))).get("orderId").asText();
 
         for (int i = 0; i < 3; i++) {
             JsonNode data = okData(postJson("/pay/callback", null,
@@ -273,7 +273,7 @@ class PayEndpointTest {
     void retryKeepsTheOrderAliveWithoutDoubleDelivering() throws Exception {
         String playerId = newPlayer();
         String orderId = okData(postJson("/pay/order", playerId,
-                new CreateOrderReq(newRequestId(), "monthly_card", 1, null))).get("orderId").asText();
+                new CreateOrderReq(newRequestId(), "monthly_gold_card", 1, null))).get("orderId").asText();
         okData(postJson("/pay/callback", null, new PayCallbackReq(orderId, "txn-1", "sign-1", true)));
         int attemptsAfterCallback = orders.get(orderId).fulfillAttempts();
 
@@ -297,7 +297,7 @@ class PayEndpointTest {
         long countBefore = before.get("unfulfilledOrders").asLong();
 
         String first = paidButUnfulfilled("growth_fund");
-        String second = paidButUnfulfilled("monthly_card");
+        String second = paidButUnfulfilled("monthly_gold_card");
         long expected = orders.get(first).line().totalCents() + orders.get(second).line().totalCents();
 
         JsonNode after = debt200(20);
@@ -314,7 +314,7 @@ class PayEndpointTest {
     @DisplayName("limit 只截明细、不截总额，而「没列全」这件事在响应里是看得见的")
     void debtListIsCappedButTheTotalIsNot() throws Exception {
         paidButUnfulfilled("growth_fund");
-        paidButUnfulfilled("monthly_card");
+        paidButUnfulfilled("monthly_gold_card");
 
         JsonNode capped = debt200(1);
         assertThat(capped.get("listed").asInt()).as("明细受 limit 约束").isEqualTo(1);
@@ -416,7 +416,7 @@ class PayEndpointTest {
         PayAppService pay = payWithClock(clock);
         String playerId = newPlayer();
         String orderId = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_gold_card", 1, null)).orderId();
         assertThat(pay.status(playerId, orderId).status()).isEqualTo(OrderStatus.PENDING);
 
         clock.set(base + ttlMs + MINUTE);
@@ -475,14 +475,14 @@ class PayEndpointTest {
         // 用月卡而不是首充：B19 起「同一账号的第二次首充」会在下单处被拒，
         // 而本用例要的是同一个人手上同时有一条负债与一条僵尸单
         String stale = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_gold_card", 1, null)).orderId();
         String paid = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_gold_card", 1, null)).orderId();
         pay.callback(new PayCallbackReq(paid, "txn-paid", "sign-1", true));
 
         clock.set(base + ttlMs + MINUTE);
         String fresh = pay.createOrder(playerId,
-                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_card", 1, null)).orderId();
+                new CreateOrderReq("req-" + UUID.randomUUID(), "monthly_gold_card", 1, null)).orderId();
 
         assertThat(orders.get(stale).status()).as("下单是唯一让订单表变大的入口，不在这里扫表就只增不减")
                 .isEqualTo(PayOrder.Status.CANCELLED);

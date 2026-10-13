@@ -1,19 +1,22 @@
 {
   "table": "pay_product",
-  "version": 3,
-  "comment": "付费商品表（B19 §一.1）。三行 = 支付域唯一在卖的三类商品：月卡 / 成长基金 / 首充。\n本表只放**结构与权益**；价格不放这里（见 designNote 第 1 条：价格住在 global 的 PRODUCT_*_CENTS，本表用 priceCentsParam 指它的名字）。",
-  "designNote": "**四条口径**（来源：`收口清单.md` #145 的 B19 裁决 + `B19_付费发货与礼包弹窗.md` §一.1）：\n1. **价格不在本表**：三类商品的价格早已是 `global` 的 `PRODUCT_MONTHLY_CARD_CENTS` / `PRODUCT_GROWTH_FUND_CENTS` / `PRODUCT_FIRST_CHARGE_CENTS`，而 `PayAppService.priceOf` 按 productId 去读。再在本表存一份数字，就是同一个价两个家 —— 改一处另一处不动，症状是「下单按旧价扣钱、界面显示新价」。本表因此只存**参数的名字**（`priceCentsParam`），它是指针不是副本。\n2. **发货内容在 `product_reward` 那张表里**（按本表 id 挂）：月卡的日包、首充的金币与选将、基金的六档，全是「一个商品多行奖励」的形状。为什么不像宝箱那样塞一个 JSON 字段（`chest.json` 的 designNote 当年就为这件事写过理由）：奖励要能被外键卡口逐行验（`rewardId` 打错成不存在的道具，校验器看得见，JSON 看不见），而发错的后果是玩家付费后领到别的东西。\n3. **`grantOccasion` 决定「什么时候发」**，三类各不同且不能混：`ON_PURCHASE` 发货即发（首充）；`DAILY` 有效期内每天领一次（月卡，跨天走 `DayKey` UTC+8）；`TIER` 按主城等级分批领（基金，档位门槛在 `product_reward.requireMainLevel`）。这个位放本表而不是奖励行上，是因为「按什么节奏领」是**商品的属性**：日包三行奖励共享同一个节奏，逐行重复三个一样的值是抄三遍。\n4. **`adFree` / `extraQueues` 只给月卡**（§五②b 的三件套之二）。两条裁决原文留在字段里防误读：\n   · `adFree` 免的是**播放**不是次数 —— `city_rule_ad_speedup_daily_limit`（5 次/日）保留，月卡玩家照样一天最多 5 次，只是不必看广告；把上限一起免掉等于让时间卡点被付费绕过（那条 city_rule 的 why 原文就写着这件事）。\n   · `extraQueues` 是 `city_rule_max_queue_count`（3）之上**临时 +1**，到期只禁新开、不中断在跑的升级（§五②b「到期收回」）。\n\n**礼包不放本表**：礼包弹窗是「触发条件 + 限时 + 限购」那一族（`B19` §一.3），与这三类「一次买断、分批领」的商品语义不同；它随弹窗接线那一批单独成表，避免把两种生命周期塞进同一张表的可选列里。",
+  "version": 4,
+  "comment": "付费商品表（B19 §一.1）。三行 = 支付域唯一在卖的三类商品：月卡 / 成长基金 / 首充。\n本表只放**结构与权益**；价格不放这里（见 designNote 第 1 条：价格住在 global 的 PRODUCT_*_CENTS，本表用 priceCentsParam 指它的名字）。 2026-10-12批准拆分18材料/30纯金币两个独立SKU；旧monthly_card只停止新售，原条款、日包、剩余期与补单保留。",
+  "designNote": "**四条口径**（来源：`收口清单.md` #145 的 B19 裁决 + `B19_付费发货与礼包弹窗.md` §一.1）：\n1. **价格不在本表**：三类商品的价格早已是 `global` 的 `PRODUCT_MONTHLY_CARD_CENTS` / `PRODUCT_GROWTH_FUND_CENTS` / `PRODUCT_FIRST_CHARGE_CENTS`，而 `PayAppService.priceOf` 按 productId 去读。再在本表存一份数字，就是同一个价两个家 —— 改一处另一处不动，症状是「下单按旧价扣钱、界面显示新价」。本表因此只存**参数的名字**（`priceCentsParam`），它是指针不是副本。\n2. **发货内容在 `product_reward` 那张表里**（按本表 id 挂）：月卡的日包、首充的金币与选将、基金的六档，全是「一个商品多行奖励」的形状。为什么不像宝箱那样塞一个 JSON 字段（`chest.json` 的 designNote 当年就为这件事写过理由）：奖励要能被外键卡口逐行验（`rewardId` 打错成不存在的道具，校验器看得见，JSON 看不见），而发错的后果是玩家付费后领到别的东西。\n3. **`grantOccasion` 决定「什么时候发」**，三类各不同且不能混：`ON_PURCHASE` 发货即发（首充）；`DAILY` 有效期内每天领一次（月卡，跨天走 `DayKey` UTC+8）；`TIER` 按主城等级分批领（基金，档位门槛在 `product_reward.requireMainLevel`）。这个位放本表而不是奖励行上，是因为「按什么节奏领」是**商品的属性**：日包三行奖励共享同一个节奏，逐行重复三个一样的值是抄三遍。\n4. **`adFree` / `extraQueues` 只给月卡**（§五②b 的三件套之二）。两条裁决原文留在字段里防误读：\n   · `adFree` 免的是**播放**不是次数 —— `city_rule_ad_speedup_daily_limit`（5 次/日）保留，月卡玩家照样一天最多 5 次，只是不必看广告；把上限一起免掉等于让时间卡点被付费绕过（那条 city_rule 的 why 原文就写着这件事）。\n   · `extraQueues` 是 `city_rule_max_queue_count`（3）之上**临时 +1**，到期只禁新开、不中断在跑的升级（§五②b「到期收回」）。\n\n**礼包不放本表**：礼包弹窗是「触发条件 + 限时 + 限购」那一族（`B19` §一.3），与这三类「一次买断、分批领」的商品语义不同；它随弹窗接线那一批单独成表，避免把两种生命周期塞进同一张表的可选列里。\n【2026-10-12裁决】saleable缺省为在售，旧monthly_card=false但仍可查旧订单/补单；新材料/金币卡独立kind与订单条款快照、独立周期。initialGold仅新金币卡购买时发300，不混入DAILY日包；旧50金/两材料/免广告/+1队列保持原行。新两卡额外队列都0，18早收仍需四手动事实，30无早收。",
   "fieldTypes": {
     "id": "STRING_KEY",
     "name": "STRING",
-    "kind": "ENUM:MONTHLY_CARD,GROWTH_FUND,FIRST_CHARGE,GIFT,BATTLE_PASS",
+    "kind": "ENUM:MONTHLY_CARD,GROWTH_FUND,FIRST_CHARGE,GIFT,BATTLE_PASS,MONTHLY_MATERIAL_CARD,MONTHLY_GOLD_CARD",
     "priceCentsParam": "STRING",
     "grantOccasion": "ENUM:ON_PURCHASE,DAILY,TIER",
     "durationDays": "?LONG_POS",
     "adFree": "BOOL",
     "extraQueues": "LONG_NONNEG",
     "heroChoices": "?STRING",
-    "why": "?STRING"
+    "why": "?STRING",
+    "saleable": "?BOOL",
+    "initialGold": "?LONG_NONNEG",
+    "earlyCollectAll": "?BOOL"
   },
   "rows": [
     {
@@ -26,7 +29,8 @@
       "adFree": true,
       "extraQueues": 1,
       "heroChoices": null,
-      "why": "30 元 × 基准 10 金币/元 × 倍率 10 = 3000 金币等值，摊到 30 天 = 每天 100 金币等值（`product_reward` 里那三行日包加起来正好 100：50 金币 + 建造令 1h(商店价 40) + 木材包(商店价 10)）。倍率取 10 的理由与「日包为什么拆成金币 + 两张令」是同一件事：纯金币的日包会被拿去攒大招（第 30 天一次买空），而每天到期的两张令把玩家拉回日常节奏 —— 月卡买的是习惯，不是一笔钱。"
+      "why": "30 元 × 基准 10 金币/元 × 倍率 10 = 3000 金币等值，摊到 30 天 = 每天 100 金币等值（`product_reward` 里那三行日包加起来正好 100：50 金币 + 建造令 1h(商店价 40) + 木材包(商店价 10)）。倍率取 10 的理由与「日包为什么拆成金币 + 两张令」是同一件事：纯金币的日包会被拿去攒大招（第 30 天一次买空），而每天到期的两张令把玩家拉回日常节奏 —— 月卡买的是习惯，不是一笔钱。",
+      "saleable": false
     },
     {
       "id": "growth_fund",
@@ -99,6 +103,36 @@
       "extraQueues": 0,
       "heroChoices": null,
       "why": "出征战败或城被攻破时弹窗。内容 1×闭城令 8h + 1×木材箱 + 80 金币 = 180 金币等值。第一件是**止损**（八小时不再被连续抢），资源是重建本钱 —— 战败时的痛点顺序就是\"先别再挨打、再补家底\"，所以它排在最前。"
+    },
+    {
+      "id": "monthly_material_card",
+      "name": "材料月卡",
+      "kind": "MONTHLY_MATERIAL_CARD",
+      "priceCentsParam": "PRODUCT_MATERIAL_MONTHLY_CARD_CENTS",
+      "grantOccasion": "DAILY",
+      "durationDays": 30,
+      "adFree": true,
+      "extraQueues": 0,
+      "heroChoices": null,
+      "saleable": true,
+      "initialGold": 0,
+      "earlyCollectAll": true,
+      "why": "用户2026-10-12裁决18元30天，免广告，每日一张1h建造令和一个10000木材包，不加量；完成四种资源手动教学后提前一键收获。无额外队列，与纯金币卡独立。"
+    },
+    {
+      "id": "monthly_gold_card",
+      "name": "金币月卡",
+      "kind": "MONTHLY_GOLD_CARD",
+      "priceCentsParam": "PRODUCT_GOLD_MONTHLY_CARD_CENTS",
+      "grantOccasion": "DAILY",
+      "durationDays": 30,
+      "adFree": false,
+      "extraQueues": 0,
+      "heroChoices": null,
+      "saleable": true,
+      "initialGold": 300,
+      "earlyCollectAll": false,
+      "why": "用户2026-10-12裁决30元30天纯金币卡，购买立即300+每日90x30=3000游戏金币；与18材料卡独立。无材料、免广告、提前一键或队列特权。初始奖励按稳定订单领取回执，日包另领。"
     }
   ]
 }

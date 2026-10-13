@@ -86,7 +86,10 @@ public final class PayOrder {
      *                        那时客户端早就断开，而"替玩家挑一个"是不允许的（B19 §五②e）
      */
     public record Line(String productId, int count, long unitPriceCents, long createdAt,
-                       String heroChoice) {
+                       String heroChoice, MonthlyCardTerms cardTerms) {
+        public Line(String productId, int count, long unitPriceCents, long createdAt, String heroChoice) {
+            this(productId, count, unitPriceCents, createdAt, heroChoice, null);
+        }
         public Line {
             if (productId == null || productId.isBlank()) {
                 throw new IllegalArgumentException("productId 不得为空");
@@ -436,13 +439,20 @@ public final class PayOrder {
     public record Snapshot(String orderId, String playerId, String productId, int count,
                            long unitPriceCents, long createdAt, Status status, String transactionId,
                            int callbackCount, int fulfillAttempts, long paidAt, long fulfilledAt,
-                           String failureReason, String heroChoice, List<RewardRow> rewards) {
+                           String failureReason, String heroChoice, List<RewardRow> rewards, MonthlyCardTerms cardTerms) {
+        public Snapshot(String orderId, String playerId, String productId, int count,
+                        long unitPriceCents, long createdAt, Status status, String transactionId,
+                        int callbackCount, int fulfillAttempts, long paidAt, long fulfilledAt,
+                        String failureReason, String heroChoice, List<RewardRow> rewards) {
+            this(orderId, playerId, productId, count, unitPriceCents, createdAt, status, transactionId,
+                    callbackCount, fulfillAttempts, paidAt, fulfilledAt, failureReason, heroChoice, rewards, null);
+        }
     }
 
     public Snapshot snapshot() {
         return new Snapshot(orderId, playerId, line.productId(), line.count(),
                 line.unitPriceCents(), line.createdAt(), status, transactionId, callbackCount,
-                fulfillAttempts, paidAt, fulfilledAt, failureReason, line.heroChoice(), rewards);
+                fulfillAttempts, paidAt, fulfilledAt, failureReason, line.heroChoice(), rewards, line.cardTerms());
     }
 
     /**
@@ -462,7 +472,7 @@ public final class PayOrder {
             throw new IllegalArgumentException("orderId 不得为空：它是回调幂等的唯一键");
         }
         PayOrder order = new PayOrder(s.orderId(), s.playerId(),
-                new Line(s.productId(), s.count(), s.unitPriceCents(), s.createdAt(), s.heroChoice()));
+                new Line(s.productId(), s.count(), s.unitPriceCents(), s.createdAt(), s.heroChoice(), s.cardTerms()));
         order.status = s.status() == null ? Status.PENDING : s.status();
         order.transactionId = s.transactionId();
         order.callbackCount = s.callbackCount();

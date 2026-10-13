@@ -83,7 +83,7 @@ public final class PlayerDocumentMapper {
     private static PlayerDocument.PaidDoc toPaidDoc(com.ironoath.core.player.PlayerPaid paid) {
         return new PlayerDocument.PaidDoc(paid.cardExpireAt(), paid.cardClaimedThroughAt(),
                 paid.fundPurchasedAt(), java.util.List.copyOf(paid.fundClaimedTiers()),
-                paid.firstChargedAt(), java.util.List.copyOf(paid.fulfilledOrderIds()));
+                paid.firstChargedAt(), java.util.List.copyOf(paid.fulfilledOrderIds()), paid.monthlyPurchases());
     }
 
     /**
@@ -149,7 +149,7 @@ public final class PlayerDocumentMapper {
                 ? com.ironoath.core.player.PlayerPaid.empty()
                 : new com.ironoath.core.player.PlayerPaid(pd.cardExpireAt(), pd.cardClaimedThroughAt(),
                         pd.fundPurchasedAt(), safeList(pd.fundClaimedTiers()), pd.firstChargedAt(),
-                        safeList(pd.fulfilledOrderIds()));
+                        safeList(pd.fulfilledOrderIds()), pd.monthlyPurchases());
 
         // 个人科技：缺子文档 = B20 之前的老号，读成「一行都没研究」。
         // 与付费同一条纪律：**这一位不是派生缓存**，读不懂时抛而不是补 empty ——

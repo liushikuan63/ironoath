@@ -37,7 +37,13 @@ import com.ironoath.common.time.DayKey;
  */
 public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fundPurchasedAt,
                          Set<String> fundClaimedTiers, Long firstChargedAt,
-                         Set<String> fulfilledOrderIds) {
+                         Set<String> fulfilledOrderIds,
+                          java.util.Map<String, com.ironoath.core.pay.MonthlyCardPurchase> monthlyPurchases) {
+
+    public PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fundPurchasedAt,
+                      Set<String> fundClaimedTiers, Long firstChargedAt, Set<String> fulfilledOrderIds) {
+        this(cardExpireAt, cardClaimedThroughAt, fundPurchasedAt, fundClaimedTiers, firstChargedAt, fulfilledOrderIds, java.util.Map.of());
+    }
 
     /**
      * 发货幂等账本最多记几笔。
@@ -50,6 +56,11 @@ public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fund
     public PlayerPaid {
         // 刻意不用 Set.copyOf：它不保证迭代顺序，而 withFulfilledOrder 的"丢最早几笔"
         // 靠的正是插入顺序 —— 换成 copyOf 之后被丢掉的会是随机几笔，一条老订单于是可能重发两份货。
+        monthlyPurchases = monthlyPurchases == null ? java.util.Map.of()
+                : Collections.unmodifiableMap(new java.util.LinkedHashMap<>(monthlyPurchases));
+        for (var entry : monthlyPurchases.entrySet())
+            if (entry.getValue() == null || !entry.getKey().equals(entry.getValue().orderId()))
+                throw new IllegalArgumentException("月卡账本键必须与订单身份一致");
         fundClaimedTiers = immutableOrdered(fundClaimedTiers);
         fulfilledOrderIds = immutableOrdered(fulfilledOrderIds);
         requirePositiveOrNull(cardExpireAt, "月卡到期时刻", "从未买过");
@@ -119,13 +130,13 @@ public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fund
         Long cursor = cardClaimedThroughAt != null
                 ? cardClaimedThroughAt : DayKey.startOfDayPlusDays(now, -1);
         return new PlayerPaid(base + durationMillis, cursor, fundPurchasedAt,
-                fundClaimedTiers, firstChargedAt, fulfilledOrderIds);
+                fundClaimedTiers, firstChargedAt, fulfilledOrderIds, monthlyPurchases);
     }
 
     /** 把日包结清到某个自然日（传 {@code DayKey.startOfDayPlusDays(now, 0)} 即"结到今天")。 */
     public PlayerPaid withCardSettledThrough(long dayStartMillis) {
         return new PlayerPaid(cardExpireAt, dayStartMillis, fundPurchasedAt,
-                fundClaimedTiers, firstChargedAt, fulfilledOrderIds);
+                fundClaimedTiers, firstChargedAt, fulfilledOrderIds, monthlyPurchases);
     }
 
     /** 登记买过基金；重复登记返回自身，好让「再买一次基金」不会改写第一笔的时刻。 */
@@ -134,7 +145,7 @@ public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fund
             return this;
         }
         return new PlayerPaid(cardExpireAt, cardClaimedThroughAt, now,
-                fundClaimedTiers, firstChargedAt, fulfilledOrderIds);
+                fundClaimedTiers, firstChargedAt, fulfilledOrderIds, monthlyPurchases);
     }
 
     /** 记一档基金已领。调用方必须先用 {@link #fundTierClaimed} 挡过重复。 */
@@ -142,7 +153,7 @@ public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fund
         Set<String> next = new LinkedHashSet<>(fundClaimedTiers);
         next.add(tierId);
         return new PlayerPaid(cardExpireAt, cardClaimedThroughAt, fundPurchasedAt,
-                next, firstChargedAt, fulfilledOrderIds);
+                next, firstChargedAt, fulfilledOrderIds, monthlyPurchases);
     }
 
     /** 记下首充时刻；已有首充时返回自身，于是「只发一次」在类型层面就是成立的。 */
@@ -151,7 +162,7 @@ public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fund
             return this;
         }
         return new PlayerPaid(cardExpireAt, cardClaimedThroughAt, fundPurchasedAt,
-                fundClaimedTiers, now, fulfilledOrderIds);
+                fundClaimedTiers, now, fulfilledOrderIds, monthlyPurchases);
     }
 
     /**
@@ -169,7 +180,7 @@ public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fund
             oldest.remove();
         }
         return new PlayerPaid(cardExpireAt, cardClaimedThroughAt, fundPurchasedAt,
-                fundClaimedTiers, firstChargedAt, next);
+                fundClaimedTiers, firstChargedAt, next, monthlyPurchases);
     }
 
     private static Set<String> immutableOrdered(Set<String> values) {
@@ -198,4 +209,21 @@ public record PlayerPaid(Long cardExpireAt, Long cardClaimedThroughAt, Long fund
             }
         }
     }
+
+    /** 首次条款和周期不可改；重复订单不再续期，结清游标仅可前进。 */
+    public PlayerPaid withMonthlyPurchase(com.ironoath.core.pay.MonthlyCardPurchase purchase) {
+        var previous = monthlyPurchases.get(purchase.orderId());
+        if (previous != null) {
+            if (!previous.productId().equals(purchase.productId()) || !previous.terms().equals(purchase.terms())
+                    || previous.startsAt() != purchase.startsAt() || previous.expiresAt() != purchase.expiresAt()
+                    || previous.quantity() != purchase.quantity())
+                throw new IllegalArgumentException("稳定月卡订单不可用于其他条款或周期");
+            if (purchase.settledDays() <= previous.settledDays()) return this;
+        }
+        var map = new java.util.LinkedHashMap<>(monthlyPurchases);
+        map.put(purchase.orderId(), purchase);
+        return new PlayerPaid(cardExpireAt, cardClaimedThroughAt, fundPurchasedAt,
+                fundClaimedTiers, firstChargedAt, fulfilledOrderIds, map);
+    }
+
 }

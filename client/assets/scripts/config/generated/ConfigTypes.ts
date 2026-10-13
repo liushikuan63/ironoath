@@ -880,6 +880,8 @@ export type PayProductKind =
   | 'FIRST_CHARGE'
   | 'GIFT'
   | 'BATTLE_PASS'
+  | 'MONTHLY_MATERIAL_CARD'
+  | 'MONTHLY_GOLD_CARD'
 
 /** pay_product.payProductGrantOccasion 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type PayProductGrantOccasion =
@@ -890,9 +892,9 @@ export type PayProductGrantOccasion =
 /**
  * 配置表 pay_product 的一行。
  * 付费商品表（B19 §一.1）。三行 = 支付域唯一在卖的三类商品：月卡 / 成长基金 / 首充。
- * 本表只放**结构与权益**；价格不放这里（见 designNote 第 1 条：价格住在 global 的 PRODUCT_*_CENTS，本表用 priceCentsParam 指它的名字）。
+ * 本表只放**结构与权益**；价格不放这里（见 designNote 第 1 条：价格住在 global 的 PRODUCT_*_CENTS，本表用 priceCentsParam 指它的名字）。 2026-10-12批准拆分18材料/30纯金币两个独立SKU；旧monthly_card只停止新售，原条款、日包、剩余期与补单保留。
  *
- * 源表 version=3
+ * 源表 version=4
  */
 export interface PayProductCfg {
   /** 主键 */
@@ -907,6 +909,9 @@ export interface PayProductCfg {
   adFree: boolean
   extraQueues: number
   heroChoices?: string
+  saleable?: boolean | null
+  initialGold?: number | null
+  earlyCollectAll?: boolean | null
 }
 
 /** product_reward.productRewardRewardType 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
@@ -919,7 +924,7 @@ export type ProductRewardRewardType =
  * 付费商品的发货内容（B19 §一.1）。一个商品多行奖励：月卡的日包三行、首充的金币一行、成长基金的六档各一行。
  * 价格与「按什么节奏领」在 `pay_product`，本表只回答「一次发的是哪些东西、各多少个」。
  *
- * 源表 version=2
+ * 源表 version=3
  */
 export interface ProductRewardCfg {
   /** 主键 */

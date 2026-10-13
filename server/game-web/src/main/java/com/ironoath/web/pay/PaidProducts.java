@@ -159,7 +159,7 @@ public final class PaidProducts {
                     ? "本账号已经完成过首充，这一档是一次性的（不是下架，是这一档只送一次）" : null;
             case GROWTH_FUND -> paid.fundPurchased()
                     ? "本账号已经买过成长基金，返还档位是跟着账号的，再买一份不会多出六档" : null;
-            case MONTHLY_CARD -> null;
+            case MONTHLY_CARD, MONTHLY_MATERIAL_CARD, MONTHLY_GOLD_CARD -> null;
             // 礼包今天在这里放行：它的限购是「每礼包每日 1 次」而不是「账号一次」。
             // 判"今天是否已买过"要读订单而不是读 PlayerPaid（礼包没有账号级权益位，见 #169），
             // 那一步在 S3-iii 与购买入口同批落 —— 现在放行的后果是"能重复买"，
@@ -175,6 +175,7 @@ public final class PaidProducts {
     public List<PriceEntry> onSale() {
         List<PriceEntry> out = new ArrayList<>();
         for (PayProductCfg row : configs.all(PayProductCfg.class)) {
+            if (!saleable(row)) continue;
             String param = row.priceCentsParam();
             if (param == null || param.isBlank() || !configs.hasParam(param)) {
                 continue;
@@ -297,24 +298,38 @@ public final class PaidProducts {
      * 服务端不跑定时器（B00 陷阱 2），没有人会在到期那一秒去把 +1 收走 —— 而推导不会漏收。
      */
     public Entitlements entitlements(PlayerPaid paid, long now) {
-        if (paid == null || !paid.cardActive(now)) {
-            return new Entitlements(false, 0L);
-        }
+        if (paid == null) return new Entitlements(false, 0L, false);
         boolean adFree = false;
-        long bonusQueues = 0L;
-        for (PayProductCfg row : configs.all(PayProductCfg.class)) {
-            // 只认月卡这一族：adFree / extraQueues 两列对别的商品没有意义（表 designNote 第 4 条）
-            if (row.kind() != PayProductCfg.Kind.MONTHLY_CARD) {
-                continue;
-            }
-            adFree = adFree || row.adFree();
-            bonusQueues += row.extraQueues();
+        long bonusQueues = 0;
+        boolean earlyCollectAll = false;
+        // 旧月卡原时钟与原权益不受退新售影响。
+        if (paid.cardActive(now)) for (PayProductCfg row : configs.all(PayProductCfg.class)) {
+            if (row.kind() != PayProductCfg.Kind.MONTHLY_CARD) continue;
+            adFree |= row.adFree(); bonusQueues += row.extraQueues();
         }
-        return new Entitlements(adFree, bonusQueues);
+        for (var purchase : paid.monthlyPurchases().values()) if (purchase.active(now)) {
+            adFree |= purchase.terms().adFree();
+            bonusQueues += purchase.terms().extraQueues();
+            earlyCollectAll |= purchase.terms().earlyCollectAll();
+        }
+        return new Entitlements(adFree, bonusQueues, earlyCollectAll);
+    }
+
+    public boolean saleable(PayProductCfg product) { return !Boolean.FALSE.equals(product.saleable()); }
+
+    /** 新订单固定条款；旧monthly_card保持原路径，不从新条款推断旧权益。 */
+    public com.ironoath.core.pay.MonthlyCardTerms cardTerms(PayProductCfg product) {
+        if (product.kind() != PayProductCfg.Kind.MONTHLY_MATERIAL_CARD
+                && product.kind() != PayProductCfg.Kind.MONTHLY_GOLD_CARD) return null;
+        if (product.durationDays() == null) throw new IllegalStateException("新月卡缺少期限");
+        return new com.ironoath.core.pay.MonthlyCardTerms(product.name(), product.durationDays(),
+                product.initialGold() == null ? 0 : product.initialGold(), toDomainRewards(alwaysRows(product.id()), 1),
+                product.adFree(), product.extraQueues(), Boolean.TRUE.equals(product.earlyCollectAll()));
     }
 
     /** 此刻生效的付费权益（城建读它，不读商品表也不读存档细节）。 */
-    public record Entitlements(boolean adFree, long bonusQueues) {
+    public record Entitlements(boolean adFree, long bonusQueues, boolean earlyCollectAll) {
+        public Entitlements(boolean adFree, long bonusQueues) { this(adFree, bonusQueues, false); }
 
         public int bonusQueuesAsInt() {
             return (int) Math.max(0L, Math.min(bonusQueues, Integer.MAX_VALUE));

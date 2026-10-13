@@ -3,4 +3,5 @@
 # 依赖：node。
 set -euo pipefail
 cd "$(dirname "$0")/.."
+node scripts/check-config-consumers.js --self-test-price-pointers
 node scripts/check-config-consumers.js

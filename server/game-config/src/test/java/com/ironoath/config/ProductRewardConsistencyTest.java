@@ -107,7 +107,7 @@ class ProductRewardConsistencyTest {
         // BATTLE_PASS（B24 块②）也在这一族里：它按 kind 反查（战令域读 require("battle_pass") 与
         // 解锁位），一个 kind 只能有一行 —— 出现第二行时"本赛季的解锁位是哪一个商品买的"就没有答案。
         assertThat(byKind.keySet()).containsExactlyInAnyOrder(
-                "MONTHLY_CARD", "GROWTH_FUND", "FIRST_CHARGE", "BATTLE_PASS");
+                "MONTHLY_CARD", "MONTHLY_MATERIAL_CARD", "MONTHLY_GOLD_CARD", "GROWTH_FUND", "FIRST_CHARGE", "BATTLE_PASS");
         assertThat(products().stream().filter(p -> p.kind() == PayProductCfg.Kind.GIFT).count())
                 .as("礼包一族必须有多行（B19 §五⑤ 首批 3 个），只有一行说明触发点没配齐")
                 .isGreaterThan(1L);
@@ -278,4 +278,34 @@ class ProductRewardConsistencyTest {
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("金币等值");
     }
+
+    @Test void splitMonthlyCardsHaveExactApprovedPricesAndSeparateRights() throws Exception {
+        assertThat(products().stream().map(PayProductCfg::id)).contains("monthly_material_card","monthly_gold_card");
+        var material=product("monthly_material_card");var gold=product("monthly_gold_card");
+        assertThat(priceOf(material)).isEqualTo(1800);assertThat(priceOf(gold)).isEqualTo(3000);
+        assertThat(material.durationDays()).isEqualTo(30);assertThat(gold.durationDays()).isEqualTo(30);
+        assertThat(material.adFree()).isTrue();assertThat(gold.adFree()).isFalse();
+        assertThat(material.extraQueues()).isZero();assertThat(gold.extraQueues()).isZero();
+        assertThat(gold.getClass().getMethod("initialGold").invoke(gold)).isEqualTo(300L);
+        assertThat(material.getClass().getMethod("earlyCollectAll").invoke(material)).isEqualTo(true);
+        assertThat(gold.getClass().getMethod("earlyCollectAll").invoke(gold)).isEqualTo(false);
+        var materialRows=rewards().stream().filter(q->q.productId().equals(material.id())).toList();
+        var legacyItems=rewards().stream().filter(q->q.productId().equals("monthly_card")&&q.rewardType()==ProductRewardCfg.RewardType.ITEM).toList();
+        assertThat(materialRows).hasSize(2);
+        assertThat(materialRows.stream().map(ProductRewardCfg::rewardId)).containsExactlyInAnyOrderElementsOf(legacyItems.stream().map(ProductRewardCfg::rewardId).toList());
+        assertThat(materialRows).allSatisfy(q->{assertThat(q.rewardType()).isEqualTo(ProductRewardCfg.RewardType.ITEM);assertThat(q.count()).isEqualTo(1);});
+        var goldRows=rewards().stream().filter(q->q.productId().equals(gold.id())).toList();
+        assertThat(goldRows).singleElement().satisfies(q->{assertThat(q.rewardType()).isEqualTo(ProductRewardCfg.RewardType.RESOURCE);assertThat(q.rewardId()).isEqualTo("GOLD");assertThat(q.count()).isEqualTo(90);});
+        assertThat(300+90*30).isEqualTo(3000);
+    }
+    @Test void legacyCardIsRetiredFromSalesWithoutLosingItsOriginalContents() throws Exception {
+        var legacy=product("monthly_card");assertThat(priceOf(legacy)).isEqualTo(3000);
+        assertThat(legacy.getClass().getMethod("saleable").invoke(legacy)).isEqualTo(false);
+        assertThat(legacy.adFree()).isTrue();assertThat(legacy.extraQueues()).isEqualTo(1);
+        var rows=rewards().stream().filter(q->q.productId().equals(legacy.id())).toList();
+        assertThat(rows).hasSize(3);
+        assertThat(rows.stream().filter(q->q.rewardType()==ProductRewardCfg.RewardType.RESOURCE)).singleElement().satisfies(q->assertThat(q.count()).isEqualTo(50));
+        assertThat(rows.stream().filter(q->q.rewardType()==ProductRewardCfg.RewardType.ITEM)).hasSize(2).allSatisfy(q->assertThat(q.count()).isEqualTo(1));
+    }
+
 }
