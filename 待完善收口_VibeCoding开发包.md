@@ -7432,3 +7432,5 @@ TEST_EXIT=0
 | #1249 真人Bot真到达揭示平局战报掠夺与账实不符 | 本笔发现/最小修复设计原子提交，未推 | 普通1x attempt3共27检查26过，真实到达/双方seed与伤亡/医院/返程过；DRAW战报GOLD1920但实际未扣，现查won才plunder与原始result直接记报差异 | tmp/core-bot-bilateral-20261014-ef81904d/attempt3；docs/核心对战玩法收口.md | 战报校准实际plundered回归与修复下一步；返兵未等完不算闭环，圈层/画像调度继续，原9490/UID/IDE不操作，不推部署付款 |
 
 | #1250 战报首红修复40通过，独审揭示既有掠夺溢出漏邮件 | 本笔发现本地原子留档，未推 | 真实到达回归1首红/修后40全0，冻结a4aa3a2b两SHA只读审查无新增阻断；既有wallet.grant截容量差额仅log，与B04统一发放/超额邮件规则不符 | tmp/core-bot-bilateral-20261014-ef81904d/loot-red1与red2、loot-green1、loot-review.manifest.json；B04 §背包收益 | 新普通1x/完整工程尚在验，未验满仓邮件；该既有Important列返兵圈层与画像调度之后持续推进。原9490/UID/IDE不操作，不推部署付款 |
+
+| #1251 Bot真人真实返兵通过，真人战后资源生产使全对象相等量具假红 | 本笔验收前提发现本地原子留档，未推 | 新998ef07d普通1x attempt4共39点38过，Bot真返兵/防重复已验；真人战报无loot且金币未减，但木石粮+1/+1/+3及结算时间变化，改核余额无扣减 | tmp/core-bot-bilateral-20261014-ef81904d/attempt4及钱包前后；build-final1.log | 真人返兵/核心延迟反击与四向圈层尚待新attempt5，原首红39/1保，自有库已清；额外18探针在途，满仓邮件#1250与画像调度后续，原9490/UID/IDE不动、不推部署付款 |
