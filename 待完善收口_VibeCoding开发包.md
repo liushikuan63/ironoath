@@ -7399,3 +7399,6 @@ TEST_EXIT=0
 
 
 | G08-N2 原号使馆选择窗第三行遮罩首红 | 本笔本地记录提交未推 | 原号正常空地选择后第2页使馆Choice-2在当前443.6逻辑高度遮罩外；点位守卫返回No usable target/listener/viewport intersection，CLI实际0但semanticAccepted false，禁止点击。当前仅2前提判据通过，未开工，不把CLI0当业务成功 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/embassy-failure.actual.json；原R18 driver-0216-choice-2.receipt.json；original-embassy-picker-first-red-20261013.png已查看 | 下一真实滑动DialogContent把第三行移入视口，再现查同号/尚无使馆，正常选择并等待30秒；不改守卫、不调用回调或POST伪开工。当前选择窗仍打开，原9490/同号/IDE/1738金币与医院1保持 |
+
+
+| G08-N3 原使馆真实滚动恢复与30秒正常完成 | 本笔本地提交未推 | 在原选择窗DialogContent真实滑动80像素后使馆完整进入mask可见区，原点位守卫正常接受；5判据通过，普通同号使馆1真实30秒自然完成，金币1738保持，滚动后及建成图已看。原小队铁誓晨光巡队保留；真实createPolicy建盟需主10且500金币，当前主6所以未创建 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/embassy-recovery.actual.json；native-original-embassy-recovery.log；原R18 driver-0231/0259.png；原首红G08-N2完整保留 | 使馆入窗只改变正常滚动，不降mask/坐标门、不改业务或伪POST；原主6/兵营6/学院1/医院1/使馆1、266兵、1738金保持，下一普通升级主10再建盟，主12与两号战争待。主树月卡购买候选进程已启动证明仍在推进，未重复其日包/UI实现，未合主树/推/部署原输入 |
