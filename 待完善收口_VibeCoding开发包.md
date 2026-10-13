@@ -7419,3 +7419,6 @@ TEST_EXIT=0
 
 
 | G08-N6 原主8到9普通96秒自然升级，石料不足继续真实采集 | 本笔本地提交未推 | 原F40/F35/9490同UID正常选择主城并点击升级，生产建设窗口96秒，真实自然等待后主9空闲；5判据通过，金币1738保持、石料1347，完成图已实际查看。原医院1/使馆1/兵营6/学院1与266兵保持；此前主9停库首次GET首红保留，恢复后只发起一次正常升级 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/main9.actual.json与main9-scheduled.actual.json；native-original-main9-recovered.log；原R18 driver-0421-original-main9-natural-complete-20261013.png；main9-failure.actual.json与driver-0368-http.json | 原号主9已验，后续主10先核真实资源门；现有背包无资源包，按正常新采集补资源，不重收旧行军。Docker已获授权恢复，原后端/IDE不重启、原库/账号保留；新活动/新两卡原生及两号双向战争未验，无夹具/加速/新增购买或旧物资重领 |
+
+
+| G08-N7 原地图放大后返回内城首红，同名按钮量具增加活动面板核对 | 本笔本地提交未推 | 原号主9后正常开地图、三次放大调用均CLI0，但最终current=city且world.active=false、截图为内城；首两次point parent=WorldToolbar，第三次parent=Card，说明第三次确实误点内城同名放大。非采集通过，未派遣或重复收旧行军；原号/金币/士兵保持。后续改用当次唯一UUID并在动作前后校验current/world.active，保留原首红与所有点位回执 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/new-gather-map-zoom.actual.json；native-original-new-gather-map-zoom.log；原R18 driver-0441/0447/0453点位与driver-0461图；select-original-new-stone.mjs | 第二次放大后返回内城的产品/环境根因未证，未凭推断修改客户端或降坐标守卫。第三次未校验面板的量具缺口已补后续前提，真实新采集选择/编成/派遣/自然采集/收回仍待。普通主10/主12/建盟及两号战争未验 |
