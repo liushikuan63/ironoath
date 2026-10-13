@@ -7458,3 +7458,5 @@ TEST_EXIT=0
 | 核心Bot多实例校准修复 #1262 | 本行本地原子提交（未推） | 校准2有效失败→20core+57web全0；玩家锁内重读保存 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-calibration-red1.log；persistence-calibration-green1.log | 新完整验证及真JVM/AOF竞争尚未完成；当日跨实例重复校准不是持久全局日标记；受击/频控另续 |
 
 | 核心Bot真实持久恢复 #1263 | 本行本地原子提交（未推） | 新版2632server/1321client/47门全0；真4JVM/AOF16过0失败；cleanup0 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-jvm2/result.actual.json；persistence-candidate-final2/inputs.json | 17探针新批/实现提交尚未收口；初始受击为夹具，不冒充原生或自然受击；受击水位/24h频控/B04溢出另续 |
+
+| 下一Bot行为与24h账本设计 #1264 | 本行设计原子提交（未推） | 现查3行为内存表及Held热更清账；出征1判断/到达后2记账生产调用 | BotWorldAdapter.java；BotAttackLimiter.java；B11；docs/核心对战玩法收口.md | 本设计未实现未验证恢复；在途超额度先回归校准，不猜规则；旧运行账本不能凭角色/昵称重建；当前画像/队列17批尚在途 |
