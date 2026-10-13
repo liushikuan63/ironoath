@@ -24,7 +24,7 @@ import type {
 /** 任务列表的一行。 */
 export interface QuestRow {
   readonly questId: string
-  /** 任务类型（服务端下发）。面板按它分页签：任务页看不到成就，成就页只看 ACHIEVEMENT。 */
+  /** 服务端任务类型；首杀按SOLO_MONSTER_WIN目标分流为FIRST_KILL展示页签。 */
   readonly type: string
   /** 「每日 · 讨伐野怪 3 次」这样的标题。类型与名字都取自服务端，客户端不拼接分类 */
   readonly title: string
@@ -43,6 +43,8 @@ export interface QuestRow {
   readonly heroChoices: readonly HeroChoice[]
   /** 服务端保存的资格奖励预览；旧响应无该字段时保持空。 */
   readonly rewardLines: readonly string[]
+  /** 首胜时间只消费服务端；未获胜为空，已完成且旧时间未知时明确标注。 */
+  readonly firstVictoryText?: string | null
 }
 
 /** 整个任务列表页的数据。 */
@@ -86,10 +88,11 @@ function prerequisiteName(quest: QuestView, namesById: ReadonlyMap<string, strin
 }
 
 function toRow(namesById: ReadonlyMap<string, string>, quest: QuestView): QuestRow {
+  const type = quest.goalType === 'SOLO_MONSTER_WIN' ? 'FIRST_KILL' : quest.type
   return {
     questId: quest.questId,
-    type: quest.type,
-    title: `${typeLabel(quest.type)} · ${quest.name}`,
+    type,
+    title: `${typeLabel(type)} · ${quest.name}`,
     progressText: quest.complete
       ? '已完成'
       : `${formatProgress(quest.current)}/${formatProgress(quest.goalValue)}`,
@@ -106,6 +109,10 @@ function toRow(namesById: ReadonlyMap<string, string>, quest: QuestView): QuestR
     claimable: quest.claimable,
     heroChoices: quest.heroChoices,
     rewardLines: (quest.rewards ?? []).map(rewardLine),
+    firstVictoryText: type === 'FIRST_KILL'
+      ? quest.firstVictoryAt == null ? quest.complete ? '首胜时间未记录' : '尚未独立获胜'
+        : firstVictoryTime(quest.firstVictoryAt)
+      : null,
   }
 }
 
@@ -120,11 +127,20 @@ function typeLabel(type: string): string {
       return '每日'
     case 'WEEKLY':
       return '每周'
+    case 'FIRST_KILL':
+      return '首杀'
     case 'ACHIEVEMENT':
       return '成就'
     default:
       return type
   }
+}
+
+function firstVictoryTime(at: number): string {
+  const date = new Date(at + 8 * 60 * 60 * 1000)
+  if (!Number.isFinite(at) || at <= 0 || !Number.isFinite(date.getTime())) return '首胜时间未记录'
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `首胜 ${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}（北京时间）`
 }
 
 /** 进度数字：超大的量级压成千分位，避免「1200000/2000000」这种数不清的文本。 */

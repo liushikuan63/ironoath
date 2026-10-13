@@ -769,4 +769,40 @@ class RallyDepartureTest {
     private static String newRequestId() {
         return "req-" + UUID.randomUUID();
     }
+
+    @Autowired private com.ironoath.config.ConfigRegistry firstKillConfigs;
+    @Autowired private com.ironoath.web.quest.QuestAppService firstKillQuests;
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints={1,2})
+    void actualRallyMonsterWinCannotQualifySoloEvenWithOneParticipant(int participants) {
+        String leader=player(1000L,0L),mate=player(1000L,0L);Squad squad=squadOf(leader,mate);
+        assertThat(world.moveCity(leader,Coord.of(256,256))).isTrue();
+        Coord target=null;
+        for(int dx=-25;dx<=25&&target==null;dx++) for(int dy=-25;dy<=25&&target==null;dy++) {
+            Coord coord=Coord.of(256+dx,256+dy);if(world.cityAt(coord).isPresent())continue;
+            var cell=worldAppService.cellAt(coord);
+            if(cell.entityType()==com.ironoath.core.world.WorldGenerator.EntityType.MONSTER
+                    &&firstKillConfigs.get(com.ironoath.config.cfg.MapmonsterCfg.class,cell.entityId()).level()==1)target=coord;
+        }
+        assertThat(target).isNotNull();
+        String rallyId=socials.squadRally(leader,new SquadRallyReq(newRequestId(),new SocialCoord(target.x(),target.y()),
+                SocialTargetType.MONSTER,troops(Map.of(T1,300L)),List.of())).rally().rallyId();
+        if(participants==2) join(mate,rallyId,Map.of(T1,300L));
+        else {
+            // Explicit compatible old-minimum snapshot fixture; current sales/config rules are unchanged.
+            Rally old=socialStore.rallyOf(rallyId).orElseThrow();Map<String,Rally.Participant> members=new LinkedHashMap<>();
+            old.memberIds().forEach(id->members.put(id,old.participant(id)));
+            Rally single=Rally.restore(old.rallyId(),old.scope(),old.groupId(),old.initiatorId(),old.maxMembers(),1,
+                    old.createdAt(),old.prepareUntil(),members,old.status(),old.departure(),old.targetX(),old.targetY(),old.targetType(),old.version());
+            socialStore.saveRally(single,old.version());
+        }
+        assertThat(depart(rallyId)).isEqualTo(1);March merged=onlyMarch(leader);assertThat(merged.isRallyMarch()).isTrue();
+        marchAppService.processDue(leader,merged.arriveAt()+1);
+        assertThat(world.isConsumed(target)).as("negative qualification requires a real winning rally").isTrue();
+        for(String uid:List.of(leader,mate)) {
+            var row=firstKillQuests.list(uid).quests().stream().filter(q->q.questId().equals("quest_firstkill_lv01")).findFirst().orElseThrow();
+            assertThat(row.current()).isZero();assertThat(row.claimable()).isFalse();assertThat(row.firstVictoryAt()).isNull();
+        }
+    }
+
 }

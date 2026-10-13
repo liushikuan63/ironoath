@@ -184,7 +184,7 @@ public class QuestAppService {
                 if (!rewards.isEmpty()) {
                     var result = rewardService.grant(playerId, rewards,
                             permanent ? new RewardContext("free_gold", questId, achievementKey(questId), true,
-                                    Set.of("achievement-goal:" + entry.goalValue(), "achievement-gold:" + entry.goldReward()))
+                                    achievementReceiptFacts(entry))
                                     : RewardContext.toMail("quest", questId, questId + ":" + req.requestId()));
                     granted = result.granted();
                     if (permanent) {
@@ -299,7 +299,8 @@ public class QuestAppService {
                     def.def().preQuestId(),
                     previous == null ? 0L : previous.current(),
                     previous != null && previous.claimed(), def.def().requiresFact(),
-                    previous == null ? java.util.Set.of() : previous.factIds(), def.def().goldReward()));
+                    previous == null ? java.util.Set.of() : previous.factIds(), def.def().goldReward(),
+                    previous == null ? null : previous.firstVictoryAt()));
         }
         // 配置删除不能撤销已接受的永久金币资格；未达标旧定义不凭空获得奖励。
         for (QuestProgress.Entry previous : old.values()) {
@@ -337,7 +338,9 @@ public class QuestAppService {
             long goal = receipt.facts().stream().filter(f -> f.startsWith("achievement-goal:"))
                     .mapToLong(f -> Long.parseLong(f.substring("achievement-goal:".length()))).findFirst()
                     .orElseThrow(() -> new IllegalStateException("成就收据缺少资格目标"));
-            if (progress.restoreClaimedFromGoldReceipt(entry.questId(), goal, receipt.requested())) changed++;
+            Long firstAt = receipt.facts().stream().filter(f -> f.startsWith("first-victory-at:"))
+                    .map(f -> Long.valueOf(f.substring("first-victory-at:".length()))).findFirst().orElse(null);
+            if (progress.restoreClaimedFromGoldReceipt(entry.questId(), goal, receipt.requested(), firstAt)) changed++;
         }
         for (QuestProgress.Entry entry : progress.entries()) {
             if (entry.goalType().accumulates() || !STATE_TYPES_WITH_SOURCE.contains(entry.goalType())) {
@@ -398,6 +401,14 @@ public class QuestAppService {
                 progress.dayKey(), progress.weekKey());
     }
 
+    private Set<String> achievementReceiptFacts(QuestProgress.Entry entry) {
+        var facts = new java.util.HashSet<String>();
+        facts.add("achievement-goal:" + entry.goalValue());
+        facts.add("achievement-gold:" + entry.goldReward());
+        if (entry.firstVictoryAt() != null) facts.add("first-victory-at:" + entry.firstVictoryAt());
+        return Set.copyOf(facts);
+    }
+
     // ---------- 视图 ----------
 
     private QuestView view(QuestProgress progress, QuestProgress.Entry entry, String name) {
@@ -408,7 +419,7 @@ public class QuestAppService {
                 entry.claimed(), progress.claimable(entry.questId()),
                 !progress.unlocked(entry.questId()), entry.preQuestId(),
                 permanentGold(entry) ? List.of() : heroChoiceViews(entry.questId()),
-                permanentGold(entry) ? rewardViews(permanentRewards(entry)) : List.of());
+                permanentGold(entry) ? rewardViews(permanentRewards(entry)) : List.of(), entry.firstVictoryAt());
     }
 
     /**

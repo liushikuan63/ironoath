@@ -77,4 +77,31 @@ class QuestPermanentStoreEquivalenceTest {
         progress.onEvent(GameEvent.progress(id, GoalType.UPGRADE_BUILDING, "main_city", 1, 1_800_000_000_000L));
         assertThat(progress.entry("legacy").complete()).isTrue();
     }
+
+    @ParameterizedTest @ValueSource(strings={"memory","mongo"})
+    void firstVictoryTimeSurvivesReloadClaimAndRepeatedWins(String kind) throws Exception {
+        String id="P-firstkill-"+UUID.randomUUID();long at=1_800_000_000_000L;
+        var goal=GoalType.valueOf("SOLO_MONSTER_WIN");
+        var p=QuestProgress.open(id,List.of(new QuestProgress.Def("first",QuestProgress.QuestType.ACHIEVEMENT,goal,"1",1,null,true,10L)),"20261013","2026W42");
+        p.onEvent(GameEvent.progressOnce(id,goal,"1",1,at,"firstkill:level:1"));
+        var store=store(kind);store.save(id,new QuestProgressStore.State(id,p.entries(),p.dayKey(),p.weekKey()));
+        var snapshot=store.load(id).orElseThrow();p=QuestProgress.restore(id,snapshot.entries(),snapshot.dayKey(),snapshot.weekKey());
+        p.onEvent(GameEvent.progressOnce(id,goal,"1",1,at+1000,"other-coordinate-same-level"));p.claim("first");
+        store.save(id,new QuestProgressStore.State(id,p.entries(),p.dayKey(),p.weekKey()));
+        var entry=store.load(id).orElseThrow().entries().get(0);
+        assertThat(entry.getClass().getMethod("firstVictoryAt").invoke(entry)).isEqualTo(at);
+        assertThat(entry.current()).isEqualTo(1);assertThat(entry.claimed()).isTrue();
+    }
+    @Test void oldMongoDocumentWithoutTimestampRemainsUnknown() throws Exception {
+        String id="P-old-first-time-"+UUID.randomUUID();
+        var entry=new Document("questId","old").append("type","ACHIEVEMENT").append("goalType","UPGRADE_BUILDING")
+                .append("goalValue",10L).append("current",10L).append("claimed",true).append("requiresFact",true)
+                .append("factIds",List.of("old-proof")).append("goldReward",50L);
+        db.template().getCollection(QuestProgressDocument.COLLECTION).insertOne(new Document("_id",id)
+                .append("entries",List.of(entry)).append("dayKey","20261013").append("weekKey","2026W42"));
+        var restored=new MongoQuestProgressStore(db.template()).load(id).orElseThrow().entries().get(0);
+        assertThat(restored.getClass().getMethod("firstVictoryAt").invoke(restored)).isNull();
+        assertThat(restored.claimed()).isTrue();assertThat(restored.goldReward()).isEqualTo(50);
+    }
+
 }

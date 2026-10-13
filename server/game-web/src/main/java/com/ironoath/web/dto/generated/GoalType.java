@@ -3,7 +3,7 @@
 package com.ironoath.web.dto.generated;
 
 /**
- * 任务目标类型（B12 §1 的统一 GoalType）。18 个取值分成累加型与状态型两类 —— 前者进度只增不减（累计训练 20 个兵），后者进度是当前状态、可升可降（当前持有 10000 粮）。分类在服务端的 GoalType 枚举上，由 CI 的枚举一致性守卫保证两边同名同序。LOGIN_DAY / ALLIANCE_DONATE / PVP_WIN 三项是 B17 活动系统补的累加型目标，任务表暂未使用。 PVE_WIN为新增实际PvE胜利累加目标，关卡和野怪只有胜利结算才发布稳定事实。 EXPLORE_CHUNK仅接受已实际合法到达的不同地图块稳定事实，不从派遣预亮雾区或出生点亮推断。
+ * 任务目标类型（B12 §1 的统一 GoalType）。19 个取值分成累加型与状态型两类 —— 前者进度只增不减（累计训练 20 个兵），后者进度是当前状态、可升可降（当前持有 10000 粮）。分类在服务端的 GoalType 枚举上，由 CI 的枚举一致性守卫保证两边同名同序。LOGIN_DAY / ALLIANCE_DONATE / PVP_WIN 三项是 B17 活动系统补的累加型目标，任务表暂未使用。 PVE_WIN为新增实际PvE胜利累加目标，关卡和野怪只有胜利结算才发布稳定事实。 EXPLORE_CHUNK仅接受已实际合法到达的不同地图块稳定事实，不从派遣预亮雾区或出生点亮推断。 SOLO_MONSTER_WIN只接受真实独立野怪胜利，目标是结算快照等级1至50，集结不计。
  */
 public enum GoalType {
     UPGRADE_BUILDING,
@@ -23,5 +23,6 @@ public enum GoalType {
     ALLIANCE_DONATE,
     PVP_WIN,
     PVE_WIN,
-    EXPLORE_CHUNK
+    EXPLORE_CHUNK,
+    SOLO_MONSTER_WIN
 }

@@ -508,7 +508,7 @@ function questRows(quest: QuestHarness, firstClaimable = false): void {
     questId: `server-row-${index}`, name: `服务端任务${index}`, type: 'SIDE', goalType: 'GATHER_RESOURCE',
     goalTarget: 'WOOD', goalValue: 5000, current: firstClaimable && index === 0 ? 5000 : 2500,
     complete: firstClaimable && index === 0, claimed: false,
-    claimable: firstClaimable && index === 0, locked: false, preQuestId: null, heroChoices: [], rewards: null,
+    claimable: firstClaimable && index === 0, locked: false, preQuestId: null, heroChoices: [], rewards: null, firstVictoryAt: null,
   }))
   quest.attach({ quests, claimableCount: firstClaimable ? 1 : 0, serverNow: 1 })
 }

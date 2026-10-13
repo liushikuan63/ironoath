@@ -92,7 +92,12 @@ public final class QuestProgress {
      */
     public record Entry(String questId, QuestType type, GoalType goalType, String goalTarget,
                         long goalValue, String preQuestId, long current, boolean claimed,
-                        Boolean requiresFact, Set<String> factIds, Long goldReward) {
+                        Boolean requiresFact, Set<String> factIds, Long goldReward, Long firstVictoryAt) {
+        public Entry(String questId, QuestType type, GoalType goalType, String goalTarget,
+                     long goalValue, String preQuestId, long current, boolean claimed,
+                     Boolean requiresFact, Set<String> factIds, Long goldReward) {
+            this(questId, type, goalType, goalTarget, goalValue, preQuestId, current, claimed, requiresFact, factIds, goldReward, null);
+        }
         public Entry(String questId, QuestType type, GoalType goalType, String goalTarget,
                      long goalValue, String preQuestId, long current, boolean claimed) {
             this(questId, type, goalType, goalTarget, goalValue, preQuestId, current, claimed, false, Set.of(), null);
@@ -104,6 +109,8 @@ public final class QuestProgress {
         public Entry {
             requiresFact = Boolean.TRUE.equals(requiresFact);
             factIds = factIds == null ? Set.of() : Set.copyOf(factIds);
+            if (firstVictoryAt != null && firstVictoryAt <= 0)
+                throw new IllegalArgumentException("首次胜利时间必须为正的Unix毫秒");
             if (goldReward != null && (!requiresFact || goldReward <= 0))
                 throw new IllegalArgumentException("永久金币快照必须有稳定事实和正额度");
         }
@@ -202,7 +209,9 @@ public final class QuestProgress {
                 accepted.add(event.factId());
                 facts = Set.copyOf(accepted);
             }
-            entries.put(entry.questId(), withCurrent(entry, Math.min(next, entry.goalValue()), facts));
+            Long firstAt = entry.firstVictoryAt();
+            if (entry.goalType() == GoalType.SOLO_MONSTER_WIN && firstAt == null && event.amount() > 0) firstAt = event.at();
+            entries.put(entry.questId(), withCurrent(entry, Math.min(next, entry.goalValue()), facts, firstAt));
         }
     }
 
@@ -225,18 +234,24 @@ public final class QuestProgress {
                     + entry.current() + "/" + entry.goalValue());
         }
         entries.put(questId, new Entry(entry.questId(), entry.type(), entry.goalType(), entry.goalTarget(),
-                entry.goalValue(), entry.preQuestId(), entry.current(), true, entry.requiresFact(), entry.factIds(), entry.goldReward()));
+                entry.goalValue(), entry.preQuestId(), entry.current(), true, entry.requiresFact(), entry.factIds(), entry.goldReward(), entry.firstVictoryAt()));
         claimedById.put(questId, Boolean.TRUE);
     }
 
     /** 可信钱包已接受的永久金币收据只修投影，不再推进事实或发奖。 */
     public boolean restoreClaimedFromGoldReceipt(String questId, long goal, long gold) {
+        return restoreClaimedFromGoldReceipt(questId, goal, gold, null);
+    }
+
+    public boolean restoreClaimedFromGoldReceipt(String questId, long goal, long gold, Long firstVictoryAt) {
         Entry entry = require(questId);
         if (!entry.requiresFact() || entry.type() != QuestType.ACHIEVEMENT || goal <= 0 || gold <= 0)
             throw new IllegalArgumentException("金币收据只能恢复永久成就资格");
-        if (entry.claimed() && entry.goalValue() == goal && java.util.Objects.equals(entry.goldReward(), gold)) return false;
+        Long recoveredAt = firstVictoryAt == null ? entry.firstVictoryAt() : firstVictoryAt;
+        if (entry.claimed() && entry.goalValue() == goal && java.util.Objects.equals(entry.goldReward(), gold)
+                && java.util.Objects.equals(entry.firstVictoryAt(), recoveredAt)) return false;
         entries.put(questId, new Entry(entry.questId(), entry.type(), entry.goalType(), entry.goalTarget(),
-                goal, entry.preQuestId(), goal, true, true, entry.factIds(), gold));
+                goal, entry.preQuestId(), goal, true, true, entry.factIds(), gold, recoveredAt));
         claimedById.put(questId, Boolean.TRUE);
         return true;
     }
@@ -365,8 +380,8 @@ public final class QuestProgress {
         return entry;
     }
 
-    private static Entry withCurrent(Entry entry, long current, Set<String> facts) {
+    private static Entry withCurrent(Entry entry, long current, Set<String> facts, Long firstVictoryAt) {
         return new Entry(entry.questId(), entry.type(), entry.goalType(), entry.goalTarget(),
-                entry.goalValue(), entry.preQuestId(), current, entry.claimed(), entry.requiresFact(), facts, entry.goldReward());
+                entry.goalValue(), entry.preQuestId(), current, entry.claimed(), entry.requiresFact(), facts, entry.goldReward(), firstVictoryAt);
     }
 }

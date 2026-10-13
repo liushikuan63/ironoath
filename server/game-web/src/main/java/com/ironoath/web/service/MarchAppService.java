@@ -934,7 +934,12 @@ public class MarchAppService {
                 case MONSTER -> {
                     var monsterOutcome = monsterBattleService.resolve(march, now, beneficiaries);
                     if (monsterOutcome.won()) {
-                        // 沿既有行军主人记个人PvE胜利；不是派兵事实，也不新增集结成员或首杀资格。
+                        // 普通PvE保留现有主人计数；首杀另按结算快照等级且仅独立行军记账。
+                        if (!march.isRallyMarch()) {
+                            String level = Long.toString(monsterOutcome.monsterLevel());
+                            questEvents.progressOnce(march.playerId(), com.ironoath.core.quest.GoalType.SOLO_MONSTER_WIN,
+                                    level, 1L, now, "firstkill:level:" + level);
+                        }
                         questEvents.progressOnce(march.playerId(), com.ironoath.core.quest.GoalType.PVE_WIN,
                                 march.targetId(), 1L, now, "pve:monster:" + march.id());
                         // 打赢了才算击杀（B12 §1 的 KILL_MONSTER）：打输了也记的话，
