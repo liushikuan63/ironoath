@@ -50,7 +50,9 @@ class BotCalibrationTest {
     private static final long HOUR = 3_600_000L;
 
     @Autowired private PlayerInitService playerInitService;
-    @Autowired private PlayerRepository players;
+    @org.springframework.boot.test.mock.mockito.SpyBean private PlayerRepository players;
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.core.lock.PlayerLock playerLock;
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.web.bot.BotSpawnService spawner;
     @Autowired private WorldRepository world;
     @Autowired private ConfigRegistry configs;
     @Autowired private TimeService timeService;
@@ -61,12 +63,45 @@ class BotCalibrationTest {
 
     @BeforeEach
     void resetStores() {
+        org.mockito.Mockito.reset(players,playerLock,spawner);
         ((InMemoryPlayerStore) players).clear();
         ((InMemoryWorldStore) world).clear();
         bots.clear();
         runtime.reset();
         calibration.reset();
         adapter.resetCounters();
+    }
+
+    @Test
+    void calibrationWritesStayInsideTheExistingPlayerLock() {
+        String human=humanAt(300,300,"锁验收真人"),bot=botAt(256,256);
+        setMatchPower(human,10_000);setMatchPower(bot,1_000);
+        var inside=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(call->{
+            inside.set(true);
+            try { return ((java.util.function.Supplier<?>)call.getArgument(2)).get(); }
+            finally { inside.set(false); }
+        }).when(playerLock).runLocked(org.mockito.ArgumentMatchers.eq(bot),org.mockito.ArgumentMatchers.anyLong(),org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.doAnswer(call->{
+            assertThat(inside.get()).as("每日校准写存档必须持该Bot的玩家锁").isTrue();
+            return call.callRealMethod();
+        }).when(players).save(org.mockito.ArgumentMatchers.any(PlayerSave.class));
+        org.mockito.Mockito.doAnswer(call->{
+            assertThat(inside.get()).as("活跃字段与校准写共享同一玩家锁").isTrue();
+            return call.callRealMethod();
+        }).when(players).touchLogin(org.mockito.ArgumentMatchers.eq(bot),org.mockito.ArgumentMatchers.anyLong());
+        calibration.calibrateIfNewDay(timeService.serverNow());
+        org.mockito.Mockito.verify(playerLock).runLocked(org.mockito.ArgumentMatchers.eq(bot),org.mockito.ArgumentMatchers.anyLong(),org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void failedCalibrationDoesNotMarkTheDayCompleted() {
+        humanAt(300,300,"故障真人");botAt(256,256);long now=timeService.serverNow();
+        org.mockito.Mockito.doThrow(new IllegalStateException("temporary calibration read failure"))
+                .doCallRealMethod().when(spawner).humanAverageMatchPower();
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->calibration.calibrateIfNewDay(now))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("temporary calibration");
+        assertThat(calibration.calibrateIfNewDay(now+1)).as("失败没有记成今日已完成，下一请求重试").isTrue();
     }
 
     @Test

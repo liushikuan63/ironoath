@@ -7460,3 +7460,5 @@ TEST_EXIT=0
 | 核心Bot真实持久恢复 #1263 | 本行本地原子提交（未推） | 新版2632server/1321client/47门全0；真4JVM/AOF16过0失败；cleanup0 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-jvm2/result.actual.json；persistence-candidate-final2/inputs.json | 17探针新批/实现提交尚未收口；初始受击为夹具，不冒充原生或自然受击；受击水位/24h频控/B04溢出另续 |
 
 | 下一Bot行为与24h账本设计 #1264 | 本行设计原子提交（未推） | 现查3行为内存表及Held热更清账；出征1判断/到达后2记账生产调用 | BotWorldAdapter.java；BotAttackLimiter.java；B11；docs/核心对战玩法收口.md | 本设计未实现未验证恢复；在途超额度先回归校准，不猜规则；旧运行账本不能凭角色/昵称重建；当前画像/队列17批尚在途 |
+
+| 核心Bot完整画像与持久游标 #1265 | 本次实现原子提交（24源码/配置测试及3台账，未推） | 47门/2632server/1321client全0；77重点；4JVM/AOF16；17FIRST；战争44全0 | tmp/core-bot-bilateral-20261014-ef81904d/final-persistence-summary.json | 原9490/UID/IDE未切、无provider CI/付款/部署；领取后硬崩溃不重放；回应水位/24h频控/B04溢出邮件继续 |

@@ -1,8 +1,6 @@
 package com.ironoath.web.bot;
 
 import java.util.Collection;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,19 +28,20 @@ import com.ironoath.core.bot.BotTuning;
  * {@link BotTuning#mayHoldOffice}（§六 的三级社交分布表），本类只做「真人不问、Bot 转问它」
  * 的合成；任命与派生席位都走 {@link #mayHoldOffice}，不再各写一套"Bot 一刀切拒绝"的说法。
  *
- * <p>内存实现：Bot 画像由孵化流程写入，进程重启后需要重新孵化。
- * 生产应当落库（与其它存储同一笔 MongoDB 债务，见上线检查清单 §四 2）。
+ * <p>画像由孵化流程写入权威存储；生产Mongo使新进程与其他实例直接读取完整身份。
+ * dev/test使用内存存储。身份查询不保留会把另一实例的新Bot误认为真人的私有缓存。
  */
 @Component
 public class BotRegistry {
 
     private static final Logger LOG = LoggerFactory.getLogger(BotRegistry.class);
 
-    private final Map<String, BotProfile> profiles = new ConcurrentHashMap<>();
+    private final BotProfileStore profiles;
     private final BotRulesAssembler assembler;
 
-    public BotRegistry(BotRulesAssembler assembler) {
+    public BotRegistry(BotRulesAssembler assembler, BotProfileStore profiles) {
         this.assembler = assembler;
+        this.profiles = profiles;
     }
 
     /** 登记一个 Bot（孵化完成时调用）。重复登记会覆盖并打 WARN —— 那说明孵化流程重复了。 */
@@ -50,7 +49,7 @@ public class BotRegistry {
         if (profile == null || profile.botId() == null || profile.botId().isBlank()) {
             throw new IllegalArgumentException("profile 与 profile.botId 都不得为空");
         }
-        BotProfile previous = profiles.put(profile.botId(), profile);
+        BotProfile previous = profiles.put(profile);
         if (previous != null) {
             LOG.warn("Bot {} 被重复登记（原型 {} → {}）：孵化流程可能对同一个 id 跑了两次",
                     profile.botId(), previous.archetypeId(), profile.archetypeId());
@@ -59,7 +58,7 @@ public class BotRegistry {
 
     /** @return 画像；<b>不是 Bot 时返回 null</b>（与 {@code Optional} 相比，这里 null 是常态而不是异常） */
     public BotProfile profileOf(String playerId) {
-        return playerId == null ? null : profiles.get(playerId);
+        return profiles.find(playerId).orElse(null);
     }
 
     /**
@@ -69,7 +68,7 @@ public class BotRegistry {
      * <p><b>但业务代码应当优先用本类的闸门方法</b>（{@link #mayHoldOffice} 等），理由见它们的注释。
      */
     public boolean isBot(String playerId) {
-        return playerId != null && profiles.containsKey(playerId);
+        return profiles.find(playerId).isPresent();
     }
 
     /**
@@ -202,7 +201,7 @@ public class BotRegistry {
     }
 
     public Collection<String> botIds() {
-        return profiles.keySet();
+        return profiles.all().stream().map(BotProfile::botId).toList();
     }
 
     /**
@@ -237,8 +236,9 @@ public class BotRegistry {
             return java.util.List.of();
         }
         java.util.List<String> humans = new java.util.ArrayList<>(playerIds.size());
+        var knownBots = new java.util.HashSet<>(botIds());
         for (String playerId : playerIds) {
-            if (playerId != null && !profiles.containsKey(playerId)) {
+            if (playerId != null && !knownBots.contains(playerId)) {
                 humans.add(playerId);
             }
         }
@@ -246,12 +246,12 @@ public class BotRegistry {
     }
 
     public int size() {
-        return profiles.size();
+        return profiles.all().size();
     }
 
     /** 不再是 Bot（清理或转真人）。调度器会在下一次 tick 时把它从队列里摘掉。 */
     public void unregister(String playerId) {
-        if (profiles.remove(playerId) != null) {
+        if (profiles.remove(playerId)) {
             LOG.info("Bot {} 已从注册表移除", playerId);
         }
     }

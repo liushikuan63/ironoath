@@ -2,6 +2,11 @@
 # 启动：java -jar game-web.jar --spring.profiles.active=prod
 ironoath:
   storage: mongo
+  lock: redisson
+  bot:
+    task-queue: redis
+  redis:
+    address: ${IRONOATH_REDIS_ADDRESS}
   # 生产绝不下发 detail：里面含内部字段名、配置 id 与校验规则，泄漏等于给外挂作者送地图
   expose-detail: false
 

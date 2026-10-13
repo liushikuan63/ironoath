@@ -303,7 +303,8 @@ class SeasonStatusTest {
         SeasonRulesAssembler assembler = new SeasonRulesAssembler(registry);
         // 红线判定（Bot 不进榜）需要一份注册表；本类不注册任何 Bot，它只是一个必填依赖
         com.ironoath.web.bot.BotRegistry bots = new com.ironoath.web.bot.BotRegistry(
-                new com.ironoath.web.bot.BotRulesAssembler(registry));
+                new com.ironoath.web.bot.BotRulesAssembler(registry),
+                new com.ironoath.web.store.memory.InMemoryBotProfileStore());
         SeasonSettlementService settlements = new SeasonSettlementService(registry, clock,
                 assembler, players, rewardService, new InMemorySeasonLedger(),
                 new com.ironoath.web.store.memory.InMemorySeasonBoardStore(), idempotency, bots, battlePass);

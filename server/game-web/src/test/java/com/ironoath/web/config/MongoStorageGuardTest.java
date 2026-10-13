@@ -23,6 +23,20 @@ import org.springframework.mock.env.MockEnvironment;
 class MongoStorageGuardTest {
 
     @Test
+    void botProfilesCannotSilentlyUseMemoryInMongoMode() {
+        try (var context = new org.springframework.context.support.GenericApplicationContext()) {
+            context.getBeanFactory().registerSingleton("botProfileStore",
+                    new com.ironoath.web.store.memory.InMemoryBotProfileStore());
+            context.refresh();
+            var guard = new MongoStorageGuard();
+            guard.setEnvironment(new MockEnvironment().withProperty("ironoath.storage", "mongo"));
+            guard.setApplicationContext(context);
+            org.assertj.core.api.Assertions.assertThatThrownBy(guard::afterSingletonsInstantiated)
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("BotProfileStore");
+        }
+    }
+
+    @Test
     void activityRuleHistoryCannotSilentlyUseMemoryInMongoMode() {
         try (var context = new org.springframework.context.support.GenericApplicationContext()) {
             context.getBeanFactory().registerSingleton("activityRuleHistoryStore",

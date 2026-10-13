@@ -2,7 +2,6 @@ package com.ironoath.web.bot;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -41,9 +40,10 @@ import com.ironoath.core.bot.BotScheduler;
  * <p><b>登记是懒做的</b>：每轮开始前把注册表里还没排进作息表的 Bot 补进去。不在孵化那一刻直接调这里，
  * 是为了不形成「孵化 → 调度 → 适配器 → 孵化」的依赖环（适配器的真人均值口径要问孵化侧）。
  *
- * <p><b>进程内状态</b>：{@code enrolled} 与待办队列都在内存 —— 与画像、孵化节流同一笔债
- * （#84 丙：多实例要 Redis 才不会各跑各的）。重启后第一轮重新登记全部 Bot，
- * 代价是每个 Bot 的下一次 tick 被推后一个基准间隔，不丢档。
+ * <p><b>进程内状态</b>：{@code enrolled}只记录本实例的首次登记；生产画像及游标由Mongo/Redis保存。
+ * 首次enroll采用原子ifAbsent保留恢复动作，内存模式仍丢排期；孵化节流等状态另有恢复边界。
+ * Redis待办不因新实例登记而推后；内存模式才会重排下一次tick。
+ * 取出后崩溃的动作不重放，受击响应水位、频控及孵化节流的恢复须单独核验。
  */
 @Service
 public class BotRuntimeService implements BotCalibrationService.BotSchedulerAccess {
@@ -63,6 +63,8 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
     private final BotWorldAdapter adapter;
     private final BotConversationService conversations;
     private final ConfigRegistry configs;
+    private final com.ironoath.core.lock.PlayerLock playerLock;
+    private static final long LOCK_TIMEOUT_MS = 3000L;
     /** 攻击频控的账本：清理超过 24h 的记录（唯一"系统自己会动的时刻"就是本类的 tick）。 */
     private final BotAttackLimiter attackLimiter;
     /**
@@ -87,7 +89,8 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
     /** 当前调度器 + 它当时用的两份规则。规则一变就重建（见类注释）。 */
     private final AtomicReference<Wiring> wiring = new AtomicReference<>();
     /** 已排进作息表的 Bot。 */
-    private final Set<String> enrolled = ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.ConcurrentMap<String,Object> enrolled = new ConcurrentHashMap<>();
+    private final BotScheduler.RecoveryState recovery = new BotScheduler.RecoveryState();
     private final AtomicLong nextSafetyNetAt = new AtomicLong();
     private final AtomicLong rounds = new AtomicLong();
 
@@ -96,7 +99,8 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
                              BotWorldAdapter adapter, ConfigRegistry configs,
                              BotAttackLimiter attackLimiter, BotCalibrationService calibration,
                              com.ironoath.web.service.WorldAppService worldService,
-                             BotConversationService conversations) {
+                             BotConversationService conversations,
+                             com.ironoath.core.lock.PlayerLock playerLock) {
         this.assembler = assembler;
         this.queue = queue;
         this.world = world;
@@ -107,6 +111,7 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
         this.calibration = calibration;
         this.worldService = worldService;
         this.conversations = conversations;
+        this.playerLock = playerLock;
         // 反向只给一个窄口（回收时要用的"撤销排期"），不把本类整个交出去。
         // 为什么是回填而不是构造注入：校准要撤销排期、排期在本类手里 —— 构造互相注入就是环
         // （BeanCurrentlyInCreation），与 #82 那次同一条解法：改依赖方向，不用 @Lazy 遮丑
@@ -189,10 +194,11 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
 
     /** 测试用：丢掉登记与节流状态，并把已登记 Bot 的待办一并撤掉（不然重新登记会排出一份重复的）。 */
     public void reset() {
-        for (String botId : enrolled) {
+        for (String botId : enrolled.keySet()) {
             queue.cancel(botId);
         }
         enrolled.clear();
+        recovery.clear();
         nextSafetyNetAt.set(0L);
         rounds.set(0L);
     }
@@ -206,8 +212,8 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
      */
     @Override
     public void forget(String botId) {
-        queue.cancel(botId);
-        enrolled.remove(botId);
+        try { queue.cancel(botId); }
+        finally { enrolled.remove(botId);recovery.discard(botId); }
     }
 
     // ---------- 内部 ----------
@@ -222,7 +228,7 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
             return current.scheduler();
         }
         BotScheduler next = new BotScheduler(rules, world, queue, new BotDecisionTree(),
-                new BotSchedule(scheduleRules), Rng.of(rngSeed()));
+                new BotSchedule(scheduleRules), Rng.of(rngSeed()),System::nanoTime,recovery);
         if (!wiring.compareAndSet(current, new Wiring(next, rules, scheduleRules))) {
             // 另一个线程刚重建过：用它的结果，别让自己这份带着一样的规则跑两份计数
             return wiring.get().scheduler();
@@ -246,14 +252,25 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
 
     private void enrollNew(BotScheduler scheduler, long now) {
         for (String botId : registry.botIds()) {
-            if (enrolled.add(botId)) {
-                scheduler.enroll(botId, now);
+            Object claim = new Object();
+            if (enrolled.putIfAbsent(botId,claim)==null) {
+                try {
+                    scheduler.enroll(botId, now);
+                } catch (RuntimeException unavailable) {
+                    // 只撤回本轮的登记归属；并发forget/新登记不能被旧失败回滚误删。
+                    enrolled.remove(botId,claim);
+                    LOG.warn("Bot {} 首次排期失败，后续请求重试：{}",botId,unavailable.toString());
+                    continue;
+                }
                 // 「开始看世界」的补手续：点亮家门口（幂等，已亮不写）。
                 // 放在登记之后、并且自己兜异常：这一步失败不该让 Bot 不排期 ——
                 // 下一次 tick 时它已经登记过（enrolled 里），所以重试只发生在重启/重登之后；
                 // 而它偶尔看不到东西的代价只是这一个 tick 落 IDLE，比整轮 tick 抛出去小得多
                 try {
-                    worldService.ensureHomeExplored(botId);
+                    playerLock.runLocked(botId, LOCK_TIMEOUT_MS, () -> {
+                        worldService.ensureHomeExplored(botId);
+                        return null;
+                    });
                 } catch (RuntimeException e) {
                     LOG.warn("Bot {} 家门口点亮失败（不影响排期，视野留待下次登记时补）：{}",
                             botId, e.toString());

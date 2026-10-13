@@ -46,11 +46,13 @@ import com.ironoath.core.player.PlayerSave;
 public class BotCalibrationService {
 
     private static final Logger LOG = LoggerFactory.getLogger(BotCalibrationService.class);
+    private static final long LOCK_TIMEOUT_MS = 3000L;
 
     private final BotRegistry registry;
     private final BotRulesAssembler assembler;
     private final PlayerRepository players;
     private final BotSpawnService spawner;
+    private final com.ironoath.core.lock.PlayerLock playerLock;
     /**
      * 回收时撤销排期的窄口。<b>由运行时在装配期回填</b>：校准服务要"撤销排期"这个能力，
      * 而那个能力在运行时手里 —— 构造互相注入会形成 {@code runtime ↔ calibration} 的环
@@ -72,11 +74,13 @@ public class BotCalibrationService {
     }
 
     public BotCalibrationService(BotRegistry registry, BotRulesAssembler assembler,
-                                 PlayerRepository players, BotSpawnService spawner) {
+                                 PlayerRepository players, BotSpawnService spawner,
+                                 com.ironoath.core.lock.PlayerLock playerLock) {
         this.registry = registry;
         this.assembler = assembler;
         this.players = players;
         this.spawner = spawner;
+        this.playerLock = playerLock;
     }
 
     /** 由运行时在装配期注册"撤销排期"的能力（见字段注释：方向只能从运行时指向校准）。 */
@@ -89,13 +93,13 @@ public class BotCalibrationService {
      *
      * @return 这一轮是否真的做了校准（诊断与用例断言用）
      */
-    public boolean calibrateIfNewDay(long now) {
+    public synchronized boolean calibrateIfNewDay(long now) {
         String today = DayKey.of(now);
         if (today.equals(lastCalibratedDay)) {
             return false;
         }
-        lastCalibratedDay = today;
         calibrate(now);
+        lastCalibratedDay = today;
         return true;
     }
 
@@ -115,32 +119,35 @@ public class BotCalibrationService {
         int recalibrated = 0;
         int touched = 0;
         for (String botId : botIds) {
-            BotProfile profile = registry.profileOf(botId);
-            PlayerSave save = players.findByPlayerId(botId).orElse(null);
-            if (profile == null || save == null) {
-                continue;
-            }
-            if (humanAverage > 0L) {
-                long target = tuning.targetPower(humanAverage, powerFactorOf(profile));
-                if (target > 0L && target != save.power().matchPower()) {
-                    // 三个字段一起写：PlayerPower 的不变量是 peak >= match，
-                    // 只改 match 而不管 peak 会在下一次战力重算时炸（那个不变量是刻意的）
-                    save.setPower(new PlayerPower(target, target, target));
-                    players.save(save);
-                    recalibrated++;
-                }
-            }
-            // 活跃时间：走仓储的 touchLogin 而不是 save（它是一个可交换字段，
-            // 走「读-改-写 + 乐观锁」会与并发登录互撞；端口注释写了为什么）
-            players.touchLogin(botId, now);
-            touched++;
-            // 手上的副本也跟上：同一轮里回收那一步要读 lastLoginAt 来决定去留，
-            // 不更新副本的话它会用旧值排序（而这一轮刚把这些值推进到 now）
-            save.touchLogin(now);
+            // 与真人服务共用玩家锁；跨实例必须在锁内重读，不能拿锁外旧版本写回。
+            CalibrationResult result = playerLock.runLocked(botId, LOCK_TIMEOUT_MS,
+                    () -> calibrateBot(botId, tuning, humanAverage, now));
+            if (result.recalibrated()) { recalibrated++; }
+            if (result.touched()) { touched++; }
         }
         int recycled = recycleIfOverCap(tuning);
         LOG.info("Bot 每日校准完成 日期键={} 在册={} 重定战力={} 刷新活跃={} 回收={} 真人均值={}",
-                lastCalibratedDay, botIds.size(), recalibrated, touched, recycled, humanAverage);
+                DayKey.of(now), botIds.size(), recalibrated, touched, recycled, humanAverage);
+    }
+
+    private record CalibrationResult(boolean recalibrated, boolean touched) { }
+
+    private CalibrationResult calibrateBot(String botId, BotTuning tuning, long humanAverage, long now) {
+        BotProfile profile = registry.profileOf(botId);
+        PlayerSave save = players.findByPlayerId(botId).orElse(null);
+        if (profile == null || save == null) { return new CalibrationResult(false, false); }
+        boolean recalibrated = false;
+        if (humanAverage > 0L) {
+            long target = tuning.targetPower(humanAverage, powerFactorOf(profile));
+            if (target > 0L && target != save.power().matchPower()) {
+                // 三字段一起写，仍沿用原校准规则与PlayerPower不变量。
+                save.setPower(new PlayerPower(target, target, target));
+                players.save(save);
+                recalibrated = true;
+            }
+        }
+        players.touchLogin(botId, now);
+        return new CalibrationResult(recalibrated, true);
     }
 
     /**

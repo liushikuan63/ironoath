@@ -46,9 +46,15 @@ class BotSchedulerTest {
         /** 让 observe / execute 抛，用来验"一个 Bot 的失败不会带走整轮、也不会让它自己退出调度"。 */
         private RuntimeException throwOnObserve;
         private RuntimeException throwOnExecute;
+        private String failProfileOnceFor;
+        private boolean failAverageOnce;
 
         @Override
         public BotProfile profileOf(String botId) {
+            if (botId.equals(failProfileOnceFor)) {
+                failProfileOnceFor=null;
+                throw new IllegalStateException("temporary profile storage failure");
+            }
             return profile;
         }
 
@@ -75,6 +81,10 @@ class BotSchedulerTest {
 
         @Override
         public long humanAverageMatchPower(long now) {
+            if (failAverageOnce) {
+                failAverageOnce=false;
+                throw new IllegalStateException("temporary average storage failure after action");
+            }
             return humanAverage;
         }
     }
@@ -82,11 +92,20 @@ class BotSchedulerTest {
     /** 可控的队列：到期即摘除（与 MarchDueQueue 同一条约定）。 */
     private static final class FakeQueue implements BotScheduler.TaskQueue {
         private final List<BotScheduler.BotTask> tasks = new ArrayList<>();
+        private RuntimeException failWrites;
 
         @Override
         public void schedule(BotScheduler.BotTask task) {
+            if (failWrites!=null) throw failWrites;
+            tasks.removeIf(old -> old.botId().equals(task.botId()));
             tasks.add(task);
             tasks.sort((a, b) -> Long.compare(a.dueAt(), b.dueAt()));
+        }
+
+        @Override public boolean scheduleIfAbsent(BotScheduler.BotTask task) {
+            if (tasks.stream().anyMatch(old -> old.botId().equals(task.botId()))) return false;
+            schedule(task);
+            return true;
         }
 
         @Override
@@ -164,6 +183,7 @@ class BotSchedulerTest {
     /** 纳秒时钟替身：用例可以把时间「拨快」来触发预算中断。 */
     private static final class FakeNanos {
         private long value;
+        private long stepMillis=1;
 
         long get() {
             return value;
@@ -189,13 +209,172 @@ class BotSchedulerTest {
                 new BotDecisionTree(), schedule(), Rng.of(20260908L),
                 () -> {
                     long current = nanos.get();
-                    nanos.advanceMillis(1L);
+                    nanos.advanceMillis(nanos.stepMillis);
                     return current;
                 });
         return new Harness(scheduler, world, queue, nanos);
     }
 
     // ---------- 用例 ----------
+
+    @Test
+    @DisplayName("并发恢复旧快照不能将已执行pending再次入队")
+    void concurrentRecoverySnapshotsCannotReplayTheOriginalPending() throws Exception {
+        var h=harness(profile("bot-1","0.50","3","3"),100,20);
+        var recovery=new BotScheduler.RecoveryState();
+        var pending=BotScheduler.BotTask.actionAt("bot-1",NOW,
+                new BotDecisionTree.Decision(BotDecisionTree.Action.REACT_ATTACK,false,3_000,"并发只执行一次"));
+        h.queue.schedule(pending);h.queue.failWrites=new IllegalStateException("initial budget return unavailable");
+        var seedClock=new java.util.concurrent.atomic.AtomicLong();
+        new BotScheduler(new BotScheduler.Rules(1,20),h.world,h.queue,new BotDecisionTree(),schedule(),Rng.of(1),
+                ()->seedClock.getAndAdd(1_000_000),recovery).processDue(NOW);
+        assertThat(recovery.size()).isEqualTo(1);assertThat(h.world.executed).isEmpty();
+        h.queue.failWrites=null;
+        // 第一次已执行后下一决策写失败，使旧快照第二次入队的槽确实为空。
+        BotScheduler.TaskQueue queue=new BotScheduler.TaskQueue() {
+            @Override public void schedule(BotScheduler.BotTask task) {
+                if (!task.isAction()) throw new IllegalStateException("next decision unavailable");
+                h.queue.schedule(task);
+            }
+            @Override public boolean scheduleIfAbsent(BotScheduler.BotTask task) { return h.queue.scheduleIfAbsent(task); }
+            @Override public List<BotScheduler.BotTask> dueBefore(long now,int limit) { return h.queue.dueBefore(now,limit); }
+            @Override public void cancel(String id) { h.queue.cancel(id); }
+            @Override public int size() { return h.queue.size(); }
+        };
+        var bothSnapshots=new java.util.concurrent.CountDownLatch(2);
+        var firstFinished=new java.util.concurrent.CountDownLatch(1);
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.function.IntFunction<java.util.concurrent.Callable<Integer>> call=index->()->{
+                var reads=new java.util.concurrent.atomic.AtomicInteger();
+                java.util.function.LongSupplier clock=()->{
+                    if(reads.incrementAndGet()==2) {
+                        bothSnapshots.countDown();
+                        try {
+                            if(!bothSnapshots.await(5,java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("both snapshots required");
+                            if(index==2 && !firstFinished.await(5,java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("first claimant must finish");
+                        } catch(InterruptedException e) { Thread.currentThread().interrupt();throw new IllegalStateException(e); }
+                    }
+                    return 0;
+                };
+                try {
+                    return new BotScheduler(new BotScheduler.Rules(100,20),h.world,queue,new BotDecisionTree(),schedule(),Rng.of(index),clock,recovery).processDue(NOW+1);
+                } finally { if(index==1) firstFinished.countDown(); }
+            };
+            var first=pool.submit(call.apply(1));var second=pool.submit(call.apply(2));
+            first.get(10,java.util.concurrent.TimeUnit.SECONDS);second.get(10,java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(h.world.executed).containsExactly(pending.pending());
+            assertThat(recovery.size()).as("已尝试动作只保下一决策").isEqualTo(1);
+        } finally { pool.shutdownNow(); }
+    }
+
+    @Test
+    @DisplayName("已决定的拟人延迟动作写入失败后保留原决定及最早到期，不再重随机")
+    void failedDelayedActionWriteRetainsTheChosenDecisionAndOriginalEarliestDue() {
+        var h=harness(profile("bot-1","0.50","3","3"),100,20);
+        h.world.state=underAttackState();
+        h.queue.schedule(BotScheduler.BotTask.decisionAt("bot-1",NOW));
+        h.queue.failWrites=new IllegalStateException("one delayed action write failure");
+        h.scheduler.processDue(NOW);
+        assertThat(h.world.executed).isEmpty();
+        h.queue.failWrites=null;h.world.state=idleState();h.scheduler.processDue(NOW+1);
+        assertThat(h.world.executed).as("原延迟还没到，不得重决定成IDLE并执行").isEmpty();
+        assertThat(h.queue.tasks).singleElement().satisfies(task->{
+            assertThat(task.dueAt()).isEqualTo(NOW+3_000);assertThat(task.pending()).isNotNull();
+            assertThat(task.pending().action()).isEqualTo(BotDecisionTree.Action.REACT_ATTACK);
+        });
+    }
+
+    @Test
+    @DisplayName("预算归还时Redis不可写保原未执行动作，下一正常请求逐个恢复")
+    void budgetReturnWriteFailureRetainsEveryUnexecutedTask() {
+        var h=harness(profile("bot-1","0.50","3","30"),1,20);
+        var first=BotScheduler.BotTask.actionAt("bot-1",NOW,new BotDecisionTree.Decision(BotDecisionTree.Action.REACT_ATTACK,false,3_000,"原动作"));
+        var second=BotScheduler.BotTask.actionAt("bot-2",NOW,new BotDecisionTree.Decision(BotDecisionTree.Action.IDLE,false,0,"第二动作"));
+        h.queue.schedule(first);h.queue.schedule(second);h.queue.failWrites=new IllegalStateException("return temporarily unavailable");
+        org.assertj.core.api.Assertions.assertThatCode(()->h.scheduler.processDue(NOW)).doesNotThrowAnyException();
+        assertThat(h.world.executed).isEmpty();
+        h.queue.failWrites=null;h.nanos.stepMillis=0;h.scheduler.processDue(NOW+1);
+        assertThat(h.world.executed).containsExactly(first.pending(),second.pending());
+    }
+
+    @Test
+    @DisplayName("规则热更重建调度器保活进程故障恢复仓，已尝试动作不重放")
+    void schedulerRebuildSharesRecoveryStateWithoutReplayingCompletedAction() {
+        var h=harness(profile("bot-1","0.50","3","30"),100,20);
+        var state=new BotScheduler.RecoveryState();
+        var first=new BotScheduler(new BotScheduler.Rules(100,20),h.world,h.queue,new BotDecisionTree(),schedule(),Rng.of(1),()->0,state);
+        var action=BotScheduler.BotTask.actionAt("bot-1",NOW,new BotDecisionTree.Decision(BotDecisionTree.Action.REACT_ATTACK,false,3_000,"一次真实尝试"));
+        h.queue.schedule(action);h.queue.failWrites=new IllegalStateException("one queue failure");first.processDue(NOW);
+        assertThat(h.world.executed).containsExactly(action.pending());assertThat(state.size()).isEqualTo(1);
+        h.queue.failWrites=null;
+        var rebuilt=new BotScheduler(new BotScheduler.Rules(100,20),h.world,h.queue,new BotDecisionTree(),schedule(),Rng.of(2),()->0,state);
+        rebuilt.processDue(NOW+1);assertThat(h.world.executed).containsExactly(action.pending());
+        assertThat(state.size()).isZero();assertThat(h.queue.size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("动作成功后均值读取故障不重放原动作，同批其余动作和下一游标仍保全")
+    void postActionAverageFailureKeepsNextDecisionAndNeverReplaysTheAction() {
+        var h=harness(profile("bot-1","0.50","3","30"),100,20);
+        var first=BotScheduler.BotTask.actionAt("bot-1",NOW,
+                new BotDecisionTree.Decision(BotDecisionTree.Action.REACT_ATTACK,false,3_000,"首个动作"));
+        var second=BotScheduler.BotTask.actionAt("bot-2",NOW,
+                new BotDecisionTree.Decision(BotDecisionTree.Action.IDLE,false,0,"第二个动作"));
+        h.queue.schedule(first);h.queue.schedule(second);h.world.failAverageOnce=true;
+        org.assertj.core.api.Assertions.assertThatCode(()->h.scheduler.processDue(NOW)).doesNotThrowAnyException();
+        assertThat(h.world.executed).containsExactly(first.pending(),second.pending());
+        h.scheduler.processDue(NOW+1);
+        assertThat(h.world.executed).as("重排故障修复不等于重复打一次仗").containsExactly(first.pending(),second.pending());
+        assertThat(h.queue.size()).isEqualTo(2);
+        assertThat(h.queue.tasks).allMatch(task->task.pending()==null && task.dueAt()>NOW);
+    }
+
+    @Test
+    @DisplayName("已领取批次的Redis重排失败在活进程保留下一决策，恢复后无重复动作")
+    void queueWriteFailureRetainsPostActionDecisionsAndRestOfTheClaimedBatch() {
+        var h=harness(profile("bot-1","0.50","3","30"),100,20);
+        var first=BotScheduler.BotTask.actionAt("bot-1",NOW,
+                new BotDecisionTree.Decision(BotDecisionTree.Action.REACT_ATTACK,false,3_000,"首个动作"));
+        var second=BotScheduler.BotTask.actionAt("bot-2",NOW,
+                new BotDecisionTree.Decision(BotDecisionTree.Action.IDLE,false,0,"第二个动作"));
+        h.queue.schedule(first);h.queue.schedule(second);h.queue.failWrites=new IllegalStateException("Redis write temporarily unavailable");
+        org.assertj.core.api.Assertions.assertThatCode(()->h.scheduler.processDue(NOW)).doesNotThrowAnyException();
+        assertThat(h.world.executed).containsExactly(first.pending(),second.pending());
+        h.queue.failWrites=null;h.scheduler.processDue(NOW+1);
+        assertThat(h.world.executed).containsExactly(first.pending(),second.pending());
+        assertThat(h.queue.size()).isEqualTo(2);
+        assertThat(h.queue.tasks).allMatch(task->task.pending()==null && task.dueAt()>NOW);
+    }
+
+    @Test
+    @DisplayName("一次画像读取失败仍保留原pending及due，不丢同批其他任务")
+    void temporaryProfileReadFailurePreservesPendingAndRestOfBatch() {
+        var h=harness(profile("bot-1","0.50","3","30"),100,20);
+        var first=BotScheduler.BotTask.actionAt("bot-1",NOW,
+                new BotDecisionTree.Decision(BotDecisionTree.Action.REACT_ATTACK,false,3_000,"原受击动作"));
+        var second=BotScheduler.BotTask.actionAt("bot-2",NOW,
+                new BotDecisionTree.Decision(BotDecisionTree.Action.IDLE,false,0,"另一个到期动作"));
+        h.queue.schedule(first);h.queue.schedule(second);h.world.failProfileOnceFor="bot-1";
+        org.assertj.core.api.Assertions.assertThatCode(()->h.scheduler.processDue(NOW)).doesNotThrowAnyException();
+        assertThat(h.world.executed).containsExactly(second.pending());
+        assertThat(h.queue.dueBefore(NOW,20)).containsExactly(first);
+        h.queue.schedule(first);h.scheduler.processDue(NOW);
+        assertThat(h.world.executed).containsExactly(second.pending(),first.pending());
+    }
+
+    @Test
+    @DisplayName("新实例首次enroll保留已恢复的延迟动作与到期，不重新决定")
+    void enrollmentPreservesAlreadyPersistedPendingAction() {
+        var h=harness(profile("bot-1","0.50","3","30"),5,20);
+        var pending=BotScheduler.BotTask.actionAt("bot-1",NOW+3_000,
+                new BotDecisionTree.Decision(BotDecisionTree.Action.REACT_ATTACK,false,3_000,"已决定"));
+        h.queue.schedule(pending);
+        h.scheduler.enroll("bot-1",NOW);
+        assertThat(h.queue.size()).isEqualTo(1);
+        assertThat(h.queue.dueBefore(NOW+2_999,20)).isEmpty();
+        assertThat(h.queue.dueBefore(NOW+3_000,20)).containsExactly(pending);
+    }
 
     @Test
     @DisplayName("登记后按活跃度排第一次 tick：一天 86400 秒 / 当日 tick 数，不多不少")
@@ -337,15 +516,16 @@ class BotSchedulerTest {
     void formerBotsAreDroppedFromTheQueue() {
         BotProfile bot = profile("bot-1", "0.60", "3", "30");
         Harness h = harness(bot, 50L, 50);
-        h.queue.schedule(BotScheduler.BotTask.decisionAt("bot-1", NOW));
         h.queue.schedule(BotScheduler.BotTask.decisionAt("bot-1", NOW + HOUR));
+        // 新契约每Bot一游标：将到期游标作为最终替换项，退休后应撤销这一项。
+        h.queue.schedule(BotScheduler.BotTask.decisionAt("bot-1", NOW));
         h.world.profile = null;
 
         h.scheduler.processDue(NOW);
 
         assertThat(h.scheduler.droppedCount()).isEqualTo(1);
         assertThat(h.world.executed).as("不该执行任何动作").isEmpty();
-        assertThat(h.queue.size()).as("同一 Bot 的其余待办也要一并撤销").isZero();
+        assertThat(h.queue.size()).as("该Bot游标必须撤销").isZero();
     }
 
     /**

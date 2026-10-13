@@ -82,7 +82,11 @@ public final class BotScheduler {
      */
     public interface TaskQueue {
 
+        /** 替换该Bot当前游标；每Bot最多保留一份决定或延迟动作。 */
         void schedule(BotTask task);
+
+        /** 首次排期；已存在该Bot游标时保留其原到期与pending，不因重启重新决定。 */
+        boolean scheduleIfAbsent(BotTask task);
 
         /**
          * 取出到期时间早于 now 的待办，按到期时刻升序。
@@ -132,6 +136,32 @@ public final class BotScheduler {
         }
     }
 
+    /** 活进程暂存已领取但未能落回队列的游标；不是持久仓，进程崩溃不承诺恢复。 */
+    public static final class RecoveryState {
+        private static final class Entry {
+            private final BotTask task;
+            private Entry(BotTask task) { this.task = task; }
+        }
+        private final java.util.concurrent.ConcurrentMap<String,Entry> tasks = new java.util.concurrent.ConcurrentHashMap<>();
+        public void discard(String botId) { tasks.remove(botId); }
+        public void clear() { tasks.clear(); }
+        public int size() { return tasks.size(); }
+        private void retain(BotTask task) { tasks.put(task.botId(),new Entry(task)); }
+        private boolean claim(Entry entry) { return tasks.remove(entry.task.botId(),entry); }
+        private void returnClaim(Entry entry) { tasks.putIfAbsent(entry.task.botId(),entry); }
+        private List<Entry> snapshot(int limit) {
+            return tasks.values().stream().sorted(java.util.Comparator.comparingLong((Entry entry)->entry.task.dueAt())
+                    .thenComparing(entry->entry.task.botId())).limit(limit).toList();
+        }
+    }
+
+    private static final class Progress {
+        private BotProfile profile;
+        private BotTask chosenPending;
+        private boolean attempted;
+        private boolean retired;
+    }
+
     /**
      * @param roundBudgetMillis 一次 {@link #processDue} 最多占用多久（真正的墙钟闸，超时即中断留待下次）。
      *                          来源 global.BOT_ROUND_BUDGET_MS。<b>不要与 BOT_TICK_BUDGET_MS 混为一谈</b>：
@@ -165,6 +195,7 @@ public final class BotScheduler {
     private final BotSchedule schedule;
     private final Rng rng;
     private final LongSupplier nanoClock;
+    private final RecoveryState recovery;
 
     private long executedCount;
     private long deferredCount;
@@ -185,9 +216,14 @@ public final class BotScheduler {
      */
     public BotScheduler(Rules rules, World world, TaskQueue queue, BotDecisionTree tree,
                         BotSchedule schedule, Rng rng, LongSupplier nanoClock) {
+        this(rules,world,queue,tree,schedule,rng,nanoClock,new RecoveryState());
+    }
+
+    public BotScheduler(Rules rules, World world, TaskQueue queue, BotDecisionTree tree,
+                        BotSchedule schedule, Rng rng, LongSupplier nanoClock,RecoveryState recovery) {
         if (rules == null || world == null || queue == null || tree == null || schedule == null
-                || rng == null || nanoClock == null) {
-            throw new IllegalArgumentException("BotScheduler 的七个依赖都不得为 null");
+                || rng == null || nanoClock == null || recovery == null) {
+            throw new IllegalArgumentException("BotScheduler 的依赖都不得为 null");
         }
         this.rules = rules;
         this.world = world;
@@ -196,6 +232,7 @@ public final class BotScheduler {
         this.schedule = schedule;
         this.rng = rng;
         this.nanoClock = nanoClock;
+        this.recovery = recovery;
     }
 
     /**
@@ -210,34 +247,62 @@ public final class BotScheduler {
         if (profile == null) {
             throw new IllegalArgumentException("不是 Bot，无法登记进作息表: " + botId);
         }
-        queue.schedule(BotTask.decisionAt(botId, nextTickAt(profile, now)));
+        queue.scheduleIfAbsent(BotTask.decisionAt(botId, nextTickAt(profile, now)));
     }
 
     /**
      * 推进所有到点的 Bot。<b>由外部驱动</b>，本类不起任何线程或定时器。
      *
-     * <p><b>今天还没有驱动方</b>（别照旧版本的注释以为它挂在行军到期扫描上 —— 那是设计意图，不是事实）。
-     * C1 要接的两个位置见收口清单 §五：请求路径兜底 + {@code POST /bot/tick}（外部调度按秒级打，
-     * 否则验收 9 的 3~30 秒反应延迟没有上界保证）。
+     * <p>生产入口为请求兜底与{@code POST /bot/tick}；没有请求时不保证最早到期后的墙钟送达。
      *
      * @return 本次实际处理的待办条数
      */
     public int processDue(long now) {
         long startNanos = nanoClock.getAsLong();
+        restoreRetained(startNanos);
         List<BotTask> due = queue.dueBefore(now, rules.dueBatchLimit());
         int processed = 0;
         for (BotTask task : due) {
+            Progress progress = new Progress();
+            try {
             if (overBudget(startNanos)) {
                 // 预算用完：剩下的待办已经被 dueBefore 摘出队列了，必须放回去，
                 // 否则它们会永久消失 —— 那几个 Bot 从此再也不动，而日志里一切正常
-                requeue(task);
                 budgetHitCount++;
+                requeue(task);
                 continue;
             }
-            handle(task, now);
+            handle(task, now,progress);
             processed++;
+            } catch (RuntimeException unavailable) {
+                failedCount++;
+                if (!progress.retired) {
+                    // 动作已尝试后只保下一次决策；未执行原动作才允许保原pending。
+                    BotTask retry = progress.attempted
+                            ? BotTask.decisionAt(task.botId(),nextTickAt(progress.profile,now,baseTickDelay(progress.profile)))
+                            : progress.chosenPending != null ? progress.chosenPending : task;
+                    recovery.retain(retry);
+                }
+            }
         }
         return processed;
+    }
+
+    private void restoreRetained(long startNanos) {
+        for(RecoveryState.Entry entry:recovery.snapshot(rules.dueBatchLimit())) {
+            if (overBudget(startNanos)) { budgetHitCount++; break; }
+            // 快照可能过时；只有原子取得该条归属才能写回，防止并发请求重放旧pending。
+            if (!recovery.claim(entry)) { continue; }
+            BotTask task = entry.task;
+            try {
+                if(world.profileOf(task.botId())==null) {
+                    queue.cancel(task.botId());
+                } else {
+                    // 不覆盖其他实例已经接续出的新游标。
+                    queue.scheduleIfAbsent(task);
+                }
+            } catch(RuntimeException unavailable) { failedCount++; recovery.returnClaim(entry); }
+        }
     }
 
     /**
@@ -247,18 +312,29 @@ public final class BotScheduler {
      * 要过锁与乐观锁，{@code nextTickDelay} 要问均值。原先的写法是让它们直接往外抛 ——
      * 而"下一次决策"的重排代码写在成功路径之后，于是<b>一次异常就把这个 Bot 永久摘出了作息表</b>，
      * 症状是"地图上某个 Bot 从某天起再也不动"，而日志里只有一行栈。
-     * 失败改成计数（{@link #failedCount()}）+ 一律重排下一次；重排本身再失败时无处可兜，
-     * 那就让它抛（那是队列坏了，不是 Bot 坏了，必须响）。
+     * 失败计数照实；重排本身失败由processDue按执行阶段保全，下一请求重试落库。
      */
-    private void handle(BotTask task, long now) {
-        BotProfile profile = world.profileOf(task.botId());
+    private void handle(BotTask task, long now,Progress progress) {
+        BotProfile profile;
+        try {
+            profile = world.profileOf(task.botId());
+        } catch (RuntimeException unavailable) {
+            // 尚未执行动作；原pending与due必须保留，同批其他Bot继续推进。
+            failedCount++;
+            requeue(task);
+            return;
+        }
         if (profile == null) {
+            progress.retired = true;
+            recovery.discard(task.botId());
             // 它已经不是 Bot 了：摘掉，不再安排下一次
             droppedCount++;
             queue.cancel(task.botId());
             return;
         }
+        progress.profile = profile;
         if (task.isAction()) {
+            progress.attempted = true;
             runQuietly(() -> world.execute(task.botId(), task.pending(), now));
             requeueDecision(task.botId(), profile, now);
             return;
@@ -276,9 +352,11 @@ public final class BotScheduler {
         if (decision.delayMillis() > 0L) {
             // 拟人延迟：等到点再执行，而不是现在执行完再等
             deferredCount++;
-            queue.schedule(BotTask.actionAt(task.botId(), now + decision.delayMillis(), decision));
+            progress.chosenPending = BotTask.actionAt(task.botId(), now + decision.delayMillis(), decision);
+            queue.schedule(progress.chosenPending);
             return;
         }
+        progress.attempted = true;
         runQuietly(() -> world.execute(task.botId(), decision, now));
         requeueDecision(task.botId(), profile, now);
     }
@@ -314,7 +392,10 @@ public final class BotScheduler {
      * 是比"凌晨也动"更明显的机器特征。
      */
     private long nextTickAt(BotProfile profile, long now) {
-        long interval = nextTickDelay(profile, now);
+        return nextTickAt(profile,now,nextTickDelay(profile,now));
+    }
+
+    private long nextTickAt(BotProfile profile,long now,long interval) {
         long due = now + interval;
         List<Integer> active = profile.persona().activeHours();
         if (active.contains(hourOf(due))) {
@@ -389,11 +470,7 @@ public final class BotScheduler {
      * 每次动的收益与真人完全相同 —— 直接给它加战力就是禁止项说的特权捷径。
      */
     long nextTickDelay(BotProfile profile, long now) {
-        int ticksPerDay = schedule.ticksPerDay(profile.ai().activeness());
-        if (ticksPerDay < 1) {
-            ticksPerDay = 1;
-        }
-        long base = MILLIS_PER_DAY / ticksPerDay;
+        long base = baseTickDelay(profile);
         long botPower = world.matchPowerOf(profile.botId());
         long humanAverage = world.humanAverageMatchPower(now);
         boolean behind = humanAverage > 0L && botPower < humanAverage;
@@ -404,6 +481,14 @@ public final class BotScheduler {
         // multiplier 是定点数（1.5 → 15000），所以 base × SCALE / multiplier = base / 1.5
         long shortened = base * FixedPoint.SCALE / multiplier;
         return Math.max(1L, shortened);
+    }
+
+    private long baseTickDelay(BotProfile profile) {
+        int ticksPerDay = schedule.ticksPerDay(profile.ai().activeness());
+        if (ticksPerDay < 1) {
+            ticksPerDay = 1;
+        }
+        return MILLIS_PER_DAY / ticksPerDay;
     }
 
     private boolean overBudget(long startNanos) {

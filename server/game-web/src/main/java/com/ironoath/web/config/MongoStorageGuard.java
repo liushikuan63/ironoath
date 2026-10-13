@@ -80,7 +80,8 @@ public class MongoStorageGuard implements SmartInitializingSingleton, Environmen
             com.ironoath.web.nation.WarStore.class,
             com.ironoath.web.ops.TrackEventStore.class,
             com.ironoath.web.social.SocialStore.class,
-            com.ironoath.web.battlepass.BattlePassStore.class);
+            com.ironoath.web.battlepass.BattlePassStore.class,
+            com.ironoath.web.bot.BotProfileStore.class);
 
     private Environment environment;
     private ApplicationContext applicationContext;

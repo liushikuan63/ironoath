@@ -30,13 +30,23 @@ public final class InMemoryBotTaskQueue implements BotScheduler.TaskQueue {
                     .thenComparing(task -> task.isAction() ? 1 : 0);
 
     private final NavigableSet<BotScheduler.BotTask> tasks = new TreeSet<>(ORDER);
+    private final java.util.Map<String,BotScheduler.BotTask> byBot = new java.util.HashMap<>();
 
     @Override
     public synchronized void schedule(BotScheduler.BotTask task) {
         if (task == null) {
             throw new IllegalArgumentException("task 不得为 null");
         }
+        BotScheduler.BotTask old=byBot.put(task.botId(),task);
+        if(old!=null) tasks.remove(old);
         tasks.add(task);
+    }
+
+    @Override public synchronized boolean scheduleIfAbsent(BotScheduler.BotTask task) {
+        if(task==null) throw new IllegalArgumentException("task 不得为 null");
+        if(byBot.containsKey(task.botId())) return false;
+        schedule(task);
+        return true;
     }
 
     @Override
@@ -49,6 +59,7 @@ public final class InMemoryBotTaskQueue implements BotScheduler.TaskQueue {
                 break;
             }
             iterator.remove();
+            byBot.remove(task.botId());
             out.add(task);
         }
         return out;
@@ -56,7 +67,8 @@ public final class InMemoryBotTaskQueue implements BotScheduler.TaskQueue {
 
     @Override
     public synchronized void cancel(String botId) {
-        tasks.removeIf(task -> task.botId().equals(botId));
+        BotScheduler.BotTask old=byBot.remove(botId);
+        if(old!=null) tasks.remove(old);
     }
 
     @Override
@@ -67,5 +79,6 @@ public final class InMemoryBotTaskQueue implements BotScheduler.TaskQueue {
     /** 测试辅助：清空。 */
     public synchronized void clear() {
         tasks.clear();
+        byBot.clear();
     }
 }

@@ -284,6 +284,16 @@ tests/      逻辑单测（node:test；在 assets 外，Cocos 不会编译它）
 
 本轮仅本地实现及随机Mongo验收，不执行上述生产切换，也不更新原9490/验收账号/微信IDE。
 
+### Bot画像与延迟动作的存储选择
+
+生产配置使用`ironoath.storage=mongo`、`ironoath.lock=redisson`与`ironoath.bot.task-queue=redis`，Redis地址由`IRONOATH_REDIS_ADDRESS`提供（例如`redis://127.0.0.1:6379`），Mongo连接仍由`IRONOATH_MONGO_URI`提供。dev/test缺省保留内存队列；显式要求Redis而依赖或连接缺失时应启动失败，不降级。此处是源码配置与使用说明，本任务不部署或更新原9490实例。
+
+Bot完整画像存于`bot_profiles`，身份查询直接读同一存储。Redis队列以实际Mongo库名的SHA256作为hash tag，ZSET和载荷HASH同槽；每Bot一游标，包含原pendingDecision和最早到期，首次登记只补不存在的游标。到期项先校验，再按原载荷原子领取；多个客户端不会领取同一项。没有Bot消费轮询或常驻定时器，逾期动作仍由请求/ops tick惰性推进。拉取后进程崩溃不保证该动作重放，不能将这项实现称为全业务状态恢复。
+
+活进程内的存储异常恢复按执行阶段保全：未执行时保原动作和最早到期，已选拟人延迟不重新随机，动作已尝试后只接下一次决策。恢复仓跨规则热更共享，以独立Entry原子领取防并发旧快照重新入队；落队失败仅在没有新游标时归还，重试计入原整轮预算。该恢复仓不持久，进程硬崩溃边界不变。自动测试须有真实Mongo27017及Redis6379，托管CI配置两项健康服务；本地Python无PyYAML时可用现有JAR的SnakeYAML核验工作流，不为此新增依赖。
+
+旧版本的内存画像/待办无法从普通玩家存档可靠推导；实际切版前须导出并登记经核实的完整画像与未完成游标，不按昵称、deviceId或UID猜身份，也不重新孵化替代旧账号。受击响应水位、24小时攻击频控及其他内存节流仍须独立验收与持久化。自有验收使用随机Mongo库和独立Redis容器，只清带当前owner标记的测试数据；共享Redis配置、原账号与IDE保持原状。
+
 稳定原季补发邮件的送达证据随mail记录保留：BATTLE_PASS且mail.sourceRef以前缀battlePassRecovery:开头的记录，到期后隐藏/禁领但不由purgeExpired删除。tierMailWindows只在真实送达后保存。不得让旧邮件清理程序混跑删除此证据；普通邮件按既有过期清理。备份及一致切点需覆盖mail与battle_pass、activity_progress、inventory及player聚合。
 
 普通金币及非装备道具邮件新增按邮件ID的持久附件收据后，同样不得与旧MailAppService写入者混跑。旧程序即使能读取部分收据格式，普通邮件旧领取仍不查询mail_gold/mail_item业务收据，无法据此恢复已接受组件；恢复源码版本必须保留新领取逻辑。仅金币/材料组件在新版中具备本轮断点保障，装备与其他资源旧通道仍待设计，历史claimed无收据不猜补。本轮原生/生产版本未切，旧普通邮件写者的真实混跑负控未执行。
