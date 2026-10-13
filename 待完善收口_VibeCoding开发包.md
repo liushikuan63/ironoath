@@ -7402,3 +7402,6 @@ TEST_EXIT=0
 
 
 | G08-N3 原使馆真实滚动恢复与30秒正常完成 | 本笔本地提交未推 | 在原选择窗DialogContent真实滑动80像素后使馆完整进入mask可见区，原点位守卫正常接受；5判据通过，普通同号使馆1真实30秒自然完成，金币1738保持，滚动后及建成图已看。原小队铁誓晨光巡队保留；真实createPolicy建盟需主10且500金币，当前主6所以未创建 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/embassy-recovery.actual.json；native-original-embassy-recovery.log；原R18 driver-0231/0259.png；原首红G08-N2完整保留 | 使馆入窗只改变正常滚动，不降mask/坐标门、不改业务或伪POST；原主6/兵营6/学院1/医院1/使馆1、266兵、1738金保持，下一普通升级主10再建盟，主12与两号战争待。主树月卡购买候选进程已启动证明仍在推进，未重复其日包/UI实现，未合主树/推/部署原输入 |
+
+
+| G08-N4 原主6到7普通69秒自然升级 | 本笔本地提交未推 | 原同号正常选择真实主城并点击升级，69秒生产建设窗口、真实自然等待后主7空闲；4判据通过，金币1738保持，完成实图已看，背包只有现存3份武将碎片无资源包。原医院1/使馆1/兵营6/学院1及266兵保持 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/main7.actual.json与main7-scheduled.actual.json；native-original-main7.log；原R18 driver-0321.png | 继续普通升主10建盟再主12；当前石8420，后续先按真实资源门处理，不用夹具或加速，不重买/领既有物资。旧F40/F35输入未切，未验证新活动/两卡原生，也未创建联盟或两号战争 |
