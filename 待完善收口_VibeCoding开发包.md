@@ -7474,3 +7474,5 @@ TEST_EXIT=0
 | 战斗阶段/跨实例请求号/时间口径 #1270 | 本发现原子提交未推 | 三有效首红：phase1失败；GC+真实第二反击2失败0错误跳过；改前61重点和47门0 | tmp/bot-behavior-state-20261014-2c1101a7/review2-red2.log；review2-red3.log；focused7.log；check1.log | focused8修后在途；完整新版/JVM/批探针未做；不确定部分战斗须人工核对、不能重打；原9490未动 |
 
 | 全身份部分战斗隔离/快照版本竞争 #1271 | 本发现原子提交未推 | 真实新Mongo上下文重放1有效红；修后80重点全0；旧快照竞争1红；前版270套2657server/1321client/47门/Web0 | tmp/bot-behavior-state-20261014-2c1101a7/review3-red1.log；focused9.log；stale-claim-red1.log；validation-full1.json | focused10/最终冻结复审和新完整验证/JVM/批探针未做；部分结算供核对，不保证自动修复或整战exactly-once |
+
+| 召回及明确未开战故障停摆 #1272 | 本发现原子提交未推 | 4测试4有效断言失败0错误跳过；前冻结check3/build2退出0 | tmp/bot-behavior-state-20261014-2c1101a7/review4-red1.log；validation-full2.json；state-review4.diff | 故障修复/新终审/最终完整验证/JVM/批探针未做；未确认CAS归属和partial仍需核对、不解除其他owner |
