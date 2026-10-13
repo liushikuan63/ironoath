@@ -7396,3 +7396,6 @@ TEST_EXIT=0
 
 
 | G08-N1 原号后台正常建设医院1与返兵伤兵容量实屏 | 本笔本地提交未推 | 原F40/F35/9490/UID沿普通建造入口，正常选择空地与医院，真实等待35秒自然完成；四自动判据通过：原号、主6且无旧医院、正常完成1级、金币1738不变。运行中生产GET记录startedAt/finishAt相差35000ms；内城实际显示医院1、军队实际显示医院0/200，可用重步兵266、伤兵与训练0，两个新图已实际查看；原Java38068和IDE36728启动epoch仍原值 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/hospital.actual.json；native-original-hospital.log；原R18 driver-0139-http.json与driver-0158/0168.png；无时钟/数据库/训练夹具 | 此为原号普通成长里程碑，不是新活动候选原生验收；未训练/派兵/买卡/重收旧采集/换版，主城仍6、兵营6、学院1。后续使馆/正常建盟、主12与两自有号双向战争未验；旧键盘后台refusal只是历史，若建盟需要输入先复验现有能力，不直接越界前台。新月卡主树仍WIP，不复制未提交输入 |
+
+
+| G08-N2 原号使馆选择窗第三行遮罩首红 | 本笔本地记录提交未推 | 原号正常空地选择后第2页使馆Choice-2在当前443.6逻辑高度遮罩外；点位守卫返回No usable target/listener/viewport intersection，CLI实际0但semanticAccepted false，禁止点击。当前仅2前提判据通过，未开工，不把CLI0当业务成功 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/embassy-failure.actual.json；原R18 driver-0216-choice-2.receipt.json；original-embassy-picker-first-red-20261013.png已查看 | 下一真实滑动DialogContent把第三行移入视口，再现查同号/尚无使馆，正常选择并等待30秒；不改守卫、不调用回调或POST伪开工。当前选择窗仍打开，原9490/同号/IDE/1738金币与医院1保持 |
