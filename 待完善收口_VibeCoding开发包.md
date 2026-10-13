@@ -7430,3 +7430,5 @@ TEST_EXIT=0
 | #1248 双向量具惰性城档与合法Bot互战前提现验 | 本笔仅发现本地原子留档，未推 | attempt1初始化前提失败；attempt2共18检查17过且真实派兵但目标为另一Bot；现查512世界/128搜索，隔离第一对后用新UID重验 | tmp/core-bot-bilateral-20261014-ef81904d/attempt1与attempt2；docs/核心对战玩法收口.md | 未到达不算战斗闭环；不改合法目标排序，原9490/UID/IDE不操作，全部自有候选已清，真实返兵/圈层/持久化继续，不推部署付款 |
 
 | #1249 真人Bot真到达揭示平局战报掠夺与账实不符 | 本笔发现/最小修复设计原子提交，未推 | 普通1x attempt3共27检查26过，真实到达/双方seed与伤亡/医院/返程过；DRAW战报GOLD1920但实际未扣，现查won才plunder与原始result直接记报差异 | tmp/core-bot-bilateral-20261014-ef81904d/attempt3；docs/核心对战玩法收口.md | 战报校准实际plundered回归与修复下一步；返兵未等完不算闭环，圈层/画像调度继续，原9490/UID/IDE不操作，不推部署付款 |
+
+| #1250 战报首红修复40通过，独审揭示既有掠夺溢出漏邮件 | 本笔发现本地原子留档，未推 | 真实到达回归1首红/修后40全0，冻结a4aa3a2b两SHA只读审查无新增阻断；既有wallet.grant截容量差额仅log，与B04统一发放/超额邮件规则不符 | tmp/core-bot-bilateral-20261014-ef81904d/loot-red1与red2、loot-green1、loot-review.manifest.json；B04 §背包收益 | 新普通1x/完整工程尚在验，未验满仓邮件；该既有Important列返兵圈层与画像调度之后持续推进。原9490/UID/IDE不操作，不推部署付款 |
