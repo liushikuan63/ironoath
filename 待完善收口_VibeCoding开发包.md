@@ -7450,3 +7450,5 @@ TEST_EXIT=0
 | 核心Bot持久游标恢复故障补充 #1258 | 本行本地原子提交（未推） | 有效首红3条1失败；19core+42web全0；未降预算 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-review2-green2.log；persistence-review3.diff | 当前完整验证/独立JVM/AOF未做；领取后硬崩溃不重放，受击水位/24h频控另续；provider CI未运行 |
 
 | 核心Bot持久恢复并发 #1259 | 本行本地原子提交（未推） | 首红1失败/动作重复2次；20core+42web全0；完整验证未完成 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-review3-red1.log；persistence-review3-green1.log | review4/独立JVM及AOF待实际运行；旧check用Node24退前置，build未跑，未假绿；provider CI未做 |
+
+| 核心Bot画像存储自检 #1260 | 本行本地原子提交（未推） | 漏口首红1失败；新版70重点全0；前版2629server/1321client/47门0 | tmp/core-bot-bilateral-20261014-ef81904d/persistence-guard-red1.log；persistence-guard-green1.log | 新加guard全量需重验；JVM/AOF仍未执行，provider CI未跑；受击水位/24h频控后续 |
