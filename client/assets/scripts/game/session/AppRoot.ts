@@ -139,6 +139,9 @@ import { buildStaminaDetail } from '../ui/StaminaDetail'
 import type { StaminaDetailView } from '../ui/StaminaDetail'
 import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army/AutoTrain'
 import { buildShopPanel, buyBodyOf, buyResultText, shopRowStateText } from '../shop/ShopPanel'
+import { buildMonthlyCardPanel, monthlyClaimBody, monthlyPurchaseId, monthlyClaimResultText } from '../shop/MonthlyCardPanel'
+import type { MonthlyCardPanel as MonthlyCardPanelData } from '../shop/MonthlyCardPanel'
+import type { CardStatusResp } from '../../net/generated/PayProtocol'
 import type { ShopPanelView } from '../shop/ShopPanel'
 import type { ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import { buildAvatarFramePanel, wearBodyOf, wearResultText } from '../avatar/AvatarFramePanel'
@@ -211,6 +214,8 @@ export interface MarchComposeView {
 }
 
 /** 商店面板：货架那块来自 game/shop/ShopPanel.ts，notice 是**上一次兑换的结果**（临时提示）。 */
+export interface MonthlyShopView extends MonthlyCardPanelData { readonly notice: string | null }
+
 export interface ShopView extends ShopPanelView {
   readonly notice: string | null
 }
@@ -447,6 +452,7 @@ export interface PanelTargets {
   offlineJump?(key: string): void
   /** 商店面板（B24 S-b）。整块视图由编排层组装好递过来。 */
   shop?(view: ShopView): void
+  monthlyCards?(view: MonthlyShopView): void
   /** 外观面板（B24 块③）。同形：整块视图由编排层组装好递过来。 */
   avatarFrames?(view: AvatarFramesView): void
   /** 战令面板（B24 S-d-e）：原始响应 + 上一次领取的结果。 */
@@ -542,6 +548,10 @@ export class AppRoot {
   private shopTab: ShopCurrency = 'GOLD'
   private shopResp: ShopListResp | null = null
   private shopNotice: string | null = null
+  private monthlyShop = false
+  private monthlyResp: CardStatusResp | null = null
+  private monthlyBusy = false
+  private shopEpoch = 0
   /** 外观：最近一次框列表与上一次操作的结果。拥有/佩戴两位都取自响应，本地不改。 */
   private frameResp: AvatarFrameListResp | null = null
   private frameNotice: string | null = null
@@ -1054,12 +1064,19 @@ export class AppRoot {
         this.deliver('reports', scouts, r => this.targets.scoutIntel?.(r, this.timeSync.serverNow()))
         return
       }
-      case 'shop':
-        this.deliver('shop', await this.api.shopList(this.shopTab), r => {
-          this.shopResp = r
-          this.deliverShop()
-        })
+      case 'shop': {
+        const epoch = this.shopEpoch
+        if (this.monthlyShop) {
+          const outcome = await this.api.monthlyCardStatus()
+          if (!this.monthlyShop || epoch !== this.shopEpoch) return
+          this.deliver('shop', outcome, r => { this.monthlyResp = r; this.deliverShop() })
+        } else {
+          const outcome = await this.api.shopList(this.shopTab)
+          if (this.monthlyShop || epoch !== this.shopEpoch) return
+          this.deliver('shop', outcome, r => { this.shopResp = r; this.deliverShop() })
+        }
         return
+      }
       case 'gacha':
         this.deliver('gacha', await this.api.gachaPools(), r => {
           this.gachaResp = r
@@ -1693,6 +1710,10 @@ export class AppRoot {
    */
   /** 组装并递一次商店视图。`notice` 是**上一次兑换的结果**，进货架时一并带上（面板只画一次）。 */
   private deliverShop(): void {
+    if (this.monthlyShop) {
+      if (this.monthlyResp !== null) this.targets.monthlyCards?.({ ...buildMonthlyCardPanel(this.monthlyResp), notice: this.shopNotice })
+      return
+    }
     const resp = this.shopResp
     if (resp === null) {
       return
@@ -1704,7 +1725,60 @@ export class AppRoot {
    * 切商店页签（B24 S-b）。切完重拉那一页 —— 四个币种的余额与限购各是各的账本，
    * 客户端不能拿金币页的数据去画赛季币页。
    */
+
+  openMonthlyCardTab(): Promise<void> {
+    this.track(TRACK_EVENTS.shopTab, { currency: 'MONTHLY_CARD' })
+    this.monthlyShop = true
+    this.shopEpoch++
+    this.shopNotice = null
+    return this.refresh('shop')
+  }
+  async claimMonthlyCard(productId: string | null): Promise<void> {
+    if (this.monthlyBusy) return
+    const row = this.monthlyResp === null ? undefined : buildMonthlyCardPanel(this.monthlyResp).rows.find(r => r.productId === productId)
+    const body = row === undefined ? null : monthlyClaimBody(row)
+    if (row === undefined || body === null) { this.rejectNeeds('shop', row?.statusText ?? '月卡信息尚未加载，请刷新后再试'); return }
+    this.track(TRACK_EVENTS.monthlyCardClaim, { productId: productId ?? '' })
+    this.monthlyBusy = true
+    const epoch = this.shopEpoch
+    try {
+      const outcome = await this.api.claimMonthlyCard(body)
+      if (outcome.kind === 'ok') {
+        if (this.monthlyShop && this.shopEpoch === epoch) this.shopNotice = monthlyClaimResultText(outcome.data, row)
+      } else {
+        if (this.monthlyShop && this.shopEpoch === epoch) {
+          this.shopNotice = outcome.kind === 'network'
+            ? '领取结果尚未确认，请以刷新后的月卡、背包和邮件状态为准'
+            : AppRoot.reason(outcome)
+        }
+        this.say('shop', outcome)
+      }
+      // 即使后续状态读取仍离线，也先显示本次回执，不能留下上一笔成功提示。
+      if (this.monthlyShop && this.shopEpoch === epoch) this.deliverShop()
+      // 未知响应也只重读；服务端接受的稳定回执会恢复游标，绝不自动POST重试。
+      await this.refresh('shop', 'resources', 'bag', 'city')
+    } finally { this.monthlyBusy = false }
+  }
+  async buyMonthlyCard(productId: string): Promise<void> {
+    if (this.monthlyBusy) return
+    const row = this.monthlyResp === null ? undefined : buildMonthlyCardPanel(this.monthlyResp).rows.find(r => r.productId === productId)
+    if (row === undefined || monthlyPurchaseId(row) === null) { this.rejectNeeds('shop', '这张月卡当前不提供购买'); return }
+    this.monthlyBusy = true
+    const epoch = this.shopEpoch
+    try {
+      const result = await this.purchaseProduct(productId, (name, params) => this.tracker?.track(name, params))
+      if (this.monthlyShop && this.shopEpoch === epoch) {
+        this.shopNotice = [result.title, result.detail, result.minorNotice].filter(Boolean).join('；')
+        this.deliverShop()
+      }
+      await this.refresh('shop', 'resources', 'bag', 'city')
+    }
+    finally { this.monthlyBusy = false }
+  }
+
   openShopTab(currency: ShopCurrency): Promise<void> {
+    this.monthlyShop = false
+    this.shopEpoch++
     this.shopTab = currency
     this.shopNotice = null
     this.track(TRACK_EVENTS.shopTab, { currency })
@@ -5079,16 +5153,20 @@ export class AppRoot {
    * 两个网络调用、拉起支付的桥、以及埋点与时钟。
    */
   async buyGift(productId: string): Promise<void> {
+    this.targets.payResult?.(await this.purchaseProduct(productId, (name, params) => this.tracker?.track(name, params)))
+  }
+
+  /** 复用同一支付与查单流程，结果由发起购买的界面显示。 */
+  private purchaseProduct(productId: string, track: (name: string, params: Record<string, string>) => void): Promise<PayView> {
     const flow = new GiftPayFlow({
       createOrder: (id) => this.api.createPayOrder(id),
       orderStatus: (orderId) => this.api.payOrderStatus(orderId),
       invokePayment: (params) => requestMidasPayment(params),
       now: () => Date.now(),
       delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      track: (name, params) => this.tracker?.track(name, params),
+      track,
     })
-    const view = await flow.buy(productId)
-    this.targets.payResult?.(view)
+    return flow.buy(productId)
   }
 }
 

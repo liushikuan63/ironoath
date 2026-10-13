@@ -215,18 +215,168 @@
         }
       }
     },
+    "MonthlyCardRewardView": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "带服务器玩家可见名称的月卡奖励预览；id仅作为识别键。",
+      "required": [
+        "type",
+        "id",
+        "name",
+        "count"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "MonthlyCardView": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "服务器报价与当前已购快照分离的月卡视图。购买价、每日数量和资格均由服务器下发；客户端不推算付费权益。",
+      "required": [
+        "productId",
+        "name",
+        "saleable",
+        "priceCents",
+        "durationDays",
+        "initialGold",
+        "dailyRewards",
+        "active",
+        "claimableDays",
+        "adFree",
+        "bonusQueues",
+        "earlyCollectAll",
+        "nextRefreshAt",
+        "offerAdFree",
+        "offerBonusQueues",
+        "offerEarlyCollectAll"
+      ],
+      "properties": {
+        "productId": {
+          "type": "string",
+          "description": "商品标识，用于请求；界面展示name。"
+        },
+        "name": {
+          "type": "string",
+          "description": "服务器商品名称。"
+        },
+        "saleable": {
+          "type": "boolean",
+          "description": "是否仍可购买；旧综合卡停售但已购买权益仍可领取。"
+        },
+        "priceCents": {
+          "type": "integer",
+          "description": "购买当前报价，分。",
+          "format": "int64"
+        },
+        "durationDays": {
+          "type": "integer",
+          "description": "本次商品每份持续天数。",
+          "format": "int64"
+        },
+        "initialGold": {
+          "type": "integer",
+          "description": "当前报价的购买初始金币，旧权益不补发。",
+          "format": "int64"
+        },
+        "dailyRewards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MonthlyCardRewardView"
+          },
+          "description": "当前购买报价的每日奖励。"
+        },
+        "ownedDailyRewards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MonthlyCardRewardView"
+          },
+          "description": "当前有效已购订单快照的每日奖励；领取按该快照，不随新报价修改。"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "是否有当前有效已购周期。"
+        },
+        "expireAt": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "同商品续购后的最后到期时刻；未买null。",
+          "format": "int64"
+        },
+        "claimableDays": {
+          "type": "integer",
+          "description": "目前可领份数；新卡04:00业务日、已购周期总份数上限，剩余有效天数封顶。",
+          "format": "int64"
+        },
+        "adFree": {
+          "type": "boolean",
+          "description": "该商品当前有效权益，免播放不增加次数。"
+        },
+        "bonusQueues": {
+          "type": "integer",
+          "description": "该商品当前有效额外队列数。",
+          "format": "int64"
+        },
+        "earlyCollectAll": {
+          "type": "boolean",
+          "description": "该商品当前有效提前收割权益；不豁免四资源手动教学。"
+        },
+        "nextRefreshAt": {
+          "type": "integer",
+          "description": "新卡下一次北京时间04:00刷新；旧综合卡仍采用既有自然日。",
+          "format": "int64"
+        },
+        "offerAdFree": {
+          "type": "boolean",
+          "description": "当前购买报价免广告权益，和active生效权益分开。"
+        },
+        "offerBonusQueues": {
+          "type": "integer",
+          "description": "当前购买报价的额外队列。",
+          "format": "int64"
+        },
+        "offerEarlyCollectAll": {
+          "type": "boolean",
+          "description": "当前购买报价的提前收割权益，仍须四种手动教学。"
+        }
+      }
+    },
     "CardStatusResp": {
       "type": "object",
       "description": "GET /pay/card 响应：月卡当前状态（B19 §一.1a）。\n\n**为什么要把权益也回给客户端而不是让客户端自己判断**：免广告与队列 +1 的判定住在服务端（`pay_product` 的 adFree / extraQueues），客户端只展示。客户端自己算「买过月卡 = 有权益」的话，月卡到期那一刻两端就会分叉：一边还在跳过广告，另一边已经把跳过收走了。",
       "additionalProperties": false,
-      "required": ["active", "claimedToday", "claimableDays", "adFree", "bonusQueues", "serverNow"],
+      "required": [
+        "active",
+        "claimedToday",
+        "claimableDays",
+        "adFree",
+        "bonusQueues",
+        "serverNow"
+      ],
       "properties": {
         "active": {
           "type": "boolean",
           "description": "当前是否在有效期内。**由服务端用服务器时间判定**（铁律 5）：客户端时钟可以改，改快就能多领几天。"
         },
         "expireAt": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "int64",
           "description": "到期时刻（毫秒）。null = 从未买过。续费是在原到期时刻上叠加（B19 §五②c：未到期再买 +30 天，不设上限），所以这个值可以大于「购买时刻 + 30 天」。"
         },
@@ -252,6 +402,13 @@
           "type": "integer",
           "format": "int64",
           "description": "服务端当前时刻，客户端据此画倒计时（铁律 5）。"
+        },
+        "cards": {
+          "type": "array",
+          "description": "新服务端月卡列表；旧响应缺字段或null时客户端保留兼容。旧顶层active/expireAt/claimableDays只表示旧综合月卡。",
+          "items": {
+            "$ref": "#/$defs/MonthlyCardView"
+          }
         }
       }
     },
@@ -259,11 +416,20 @@
       "type": "object",
       "description": "POST /pay/card/claim 请求体：领取月卡日包。",
       "additionalProperties": false,
-      "required": ["requestId"],
+      "required": [
+        "requestId"
+      ],
       "properties": {
         "requestId": {
           "type": "string",
           "description": "幂等键。日包是「点一下给东西」的写操作，弱网重发不幂等就会一天领两份。"
+        },
+        "productId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "选定月卡商品，缺字段/null只领取旧综合月卡，绝不隐式选择两新卡；服务端按自身存档和04:00业务日确定资格与份数。"
         }
       }
     },
@@ -271,7 +437,11 @@
       "type": "object",
       "description": "月卡日包领取结果。",
       "additionalProperties": false,
-      "required": ["claimedDays", "rewards", "serverNow"],
+      "required": [
+        "claimedDays",
+        "rewards",
+        "serverNow"
+      ],
       "properties": {
         "claimedDays": {
           "type": "integer",
@@ -286,7 +456,10 @@
           }
         },
         "expireAt": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "int64",
           "description": "领取后的到期时刻，与 GET /pay/card 同口径。"
         },
@@ -294,6 +467,13 @@
           "type": "integer",
           "format": "int64",
           "description": "服务端当前时刻。"
+        },
+        "productId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "实际领取的月卡商品；旧响应缺字段兼容。"
         }
       }
     },

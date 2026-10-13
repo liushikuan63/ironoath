@@ -32,6 +32,26 @@ public final class PlayerBag implements RewardPorts.Bag {
         this.configs = configs;
     }
 
+
+    @Override public ItemGrant grantItemsOnce(String playerId,java.util.Map<String,Long> items,com.ironoath.core.reward.RewardContext ctx,long now) {
+        var limits=new java.util.LinkedHashMap<String,Long>();
+        for(String id:items.keySet()){if(isInstanced(id))throw new IllegalArgumentException("材料稳定领取只接受堆叠道具");limits.put(id,stackMaxOf(id));}
+        Inventory inventory=loadOrCreate(playerId);long version=inventories.versionOf(playerId);
+        boolean existed=inventory.itemClaims().containsKey(ctx.traceId());
+        var receipt=inventory.claimItemsOnce(items,limits,ctx,now);
+        if(!existed)inventories.save(playerId,inventory,version);
+        return new ItemGrant(receipt,existed?java.util.Map.of():receipt.credited());
+    }
+    @Override public void completeItemOverflow(String playerId,String key,String mailId) {
+        var inventory=loadOrCreate(playerId);var receipt=inventory.itemClaims().get(key);
+        if(receipt==null)throw new IllegalStateException("材料回执不存在");
+        if(mailId.equals(receipt.overflowMailId()))return;
+        long version=inventories.versionOf(playerId);inventory.completeItemOverflow(key,mailId);inventories.save(playerId,inventory,version);
+    }
+    @Override public java.util.List<com.ironoath.core.bag.ItemClaimReceipt> pendingItemClaims(String playerId) {
+        return inventories.findByPlayerId(playerId).map(i->i.itemClaims().values().stream().filter(com.ironoath.core.bag.ItemClaimReceipt::pendingOverflow).toList()).orElse(java.util.List.of());
+    }
+
     @Override
     public long add(String playerId, String itemId, long count) {
         if (count <= 0L) {

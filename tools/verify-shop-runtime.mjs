@@ -191,8 +191,8 @@ async function main() {
   verdict(read?.found === true && read?.currentKey === 'shop',
     '深链 ?panel=shop 生效（导航第 14 项挂上了）',
     `found=${read?.found} 当前格=${read?.currentKey ?? '—'}`)
-  verdict(JSON.stringify(read?.tabs) === JSON.stringify(['金币', '贡献', '小队币', '赛季币']),
-    '四个币种页签按顺序画出来了', `tabs=${JSON.stringify(read?.tabs)}`)
+  verdict(JSON.stringify(read?.tabs) === JSON.stringify(['金币', '贡献', '小队币', '赛季币', '月卡']),
+    '四个币种页签保留原顺序且月卡入口可见', `tabs=${JSON.stringify(read?.tabs)}`)
   const balance = (read?.labels ?? []).find(text => text.startsWith('Balance:')) ?? ''
   verdict(/余额|金币|赛季币|贡献|小队币/.test(balance),
     '余额那一行画出来了（带币种名）', `"${balance}"`)

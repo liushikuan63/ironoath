@@ -717,3 +717,22 @@ test('没有查询参数时不追加问号', async () => {
   await net.get('/army/list', { type: null })
   assert.equal(http.lastUrl(), 'https://game.test/army/list', '全是 null 等于没有参数')
 })
+
+test('explicit single POST retains requestId but does not repeat after an uncertain response', async () => {
+  const {net,http,delays}=createHarness({maxRetryAttempts:3})
+  http.script=[new Error('fixture: backend accepted but HTTP acknowledgement lost')]
+  const options={idempotent:true,requestId:'monthly-fixed-request',retryOnNetworkFailure:false}
+  const outcome=await net.post('/pay/card/claim',{productId:'gold-sku'},options)
+  assert.equal(outcome.kind,'network');assert.equal(http.callCount,1);assert.deepEqual(delays,[])
+  assert.equal(http.lastBody().requestId,'monthly-fixed-request');assert.equal(http.lastBody().productId,'gold-sku')
+})
+
+test('retry preference cannot replay a POST without an idempotency key', async () => {
+  const { net, http, delays } = createHarness({ maxRetryAttempts: 3 })
+  http.script = [new Error('response lost after a non-idempotent write')]
+  const outcome = await net.post('/write-once', {}, { retryOnNetworkFailure: true })
+  assert.equal(outcome.kind, 'network')
+  assert.equal(http.callCount, 1)
+  assert.deepEqual(delays, [])
+  assert.equal(outcome.requestId, null)
+})

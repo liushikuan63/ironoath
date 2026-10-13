@@ -114,7 +114,7 @@ export class GiftPayFlow {
       return {
         phase: 'cancelled',
         title: '已取消支付',
-        detail: '本次没有扣款，礼包还在等你',
+        detail: '本次没有扣款，可稍后重新购买',
         rewards: [],
         showSupport: false,
         minorNotice,

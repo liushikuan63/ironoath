@@ -80,6 +80,34 @@ public final class Inventory {
     /** 背包格子容量上限。0 表示无上限（不推荐：那是放弃了付费扩容点，见 B04 开放问题 1）。 */
     private int capacityMax;
 
+
+    private final Map<String, ItemClaimReceipt> itemClaims = new LinkedHashMap<>();
+    public Map<String, ItemClaimReceipt> itemClaims() { return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(itemClaims)); }
+    public void restoreItemClaims(Map<String, ItemClaimReceipt> restored) {
+        var validated=new LinkedHashMap<String,ItemClaimReceipt>();
+        if(restored!=null) restored.forEach((key,receipt)->{if(receipt==null||!key.equals(receipt.businessKey()))throw new IllegalArgumentException("材料回执键不符");validated.put(key,receipt);});
+        itemClaims.clear();itemClaims.putAll(validated);
+    }
+    public void completeItemOverflow(String key,String mailId) {
+        var receipt=itemClaims.get(key);if(receipt==null)throw new IllegalArgumentException("材料回执不存在");itemClaims.put(key,receipt.withOverflowMail(mailId));
+    }
+    public ItemClaimReceipt claimItemsOnce(Map<String,Long> requested,Map<String,Long> stackLimits,
+            com.ironoath.core.reward.RewardContext ctx,long now) {
+        if(ctx==null||!ctx.durableItems()||!ctx.overflowToMail()||ctx.sourceRef().isBlank())throw new IllegalArgumentException("材料持久领取来源无效");
+        // 先验证整批；不允许在第二件参数错误时留下第一件的修改。
+        var candidate=new ItemClaimReceipt(ctx.traceId(),ctx.source(),ctx.sourceRef(),requested,Map.of(),now,ctx.claimFacts(),null);
+        var existing=itemClaims.get(ctx.traceId());
+        if(existing!=null){if(!existing.sourceRef().equals(ctx.sourceRef())||!existing.requested().equals(candidate.requested())||!existing.facts().equals(candidate.facts()))throw new IllegalStateException("材料业务键不可改变含义");return existing;}
+        for(String id:candidate.requested().keySet())if(stackLimits==null||!stackLimits.containsKey(id)||stackLimits.get(id)==null||instanceCount(id)>0)throw new IllegalArgumentException("材料堆叠配置缺失或不是普通堆叠物品");
+        var next=copy();var credited=new LinkedHashMap<String,Long>();
+        for(var e:candidate.requested().entrySet()){
+            if(next.countOf(e.getKey())==0&&next.capacityUsed()>=next.capacityMax())continue;
+            long actual=next.add(e.getKey(),e.getValue(),stackLimits.get(e.getKey()));if(actual>0)credited.put(e.getKey(),actual);
+        }
+        var receipt=new ItemClaimReceipt(candidate.businessKey(),candidate.source(),candidate.sourceRef(),candidate.requested(),credited,now,candidate.facts(),null);
+        counts.clear();counts.putAll(next.counts);itemClaims.put(receipt.businessKey(),receipt);return receipt;
+    }
+
     public Inventory(int capacityMax) {
         if (capacityMax < 0) {
             throw new IllegalArgumentException("capacityMax 不得为负：" + capacityMax);
@@ -402,6 +430,7 @@ public final class Inventory {
     public Inventory copy() {
         Inventory copy = new Inventory(capacityMax);
         copy.restore(snapshot(), equipSnapshot(), capacityMax, nextEquipUid, itemId -> false);
+        copy.restoreItemClaims(itemClaims);
         return copy;
     }
 
@@ -429,6 +458,7 @@ public final class Inventory {
         if (restoredNextEquipUid < 1) {
             throw new IllegalArgumentException("实例序号必须从 1 起，实际=" + restoredNextEquipUid);
         }
+        itemClaims.clear();
         counts.clear();
         equips.clear();
         if (restoredEquips != null) {

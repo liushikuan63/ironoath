@@ -55,7 +55,7 @@ public final class MongoInventoryStore implements InventoryRepository {
         }
         try {
             mongo.insert(new InventoryDocument(playerId, 0L, inventory.capacityMax(),
-                    inventory.snapshot(), inventory.equipSnapshot(), inventory.nextEquipUid()),
+                    inventory.snapshot(), inventory.equipSnapshot(), inventory.nextEquipUid(), inventory.itemClaims()),
                     InventoryDocument.COLLECTION);
             return true;
         } catch (DuplicateKeyException e) {
@@ -71,6 +71,7 @@ public final class MongoInventoryStore implements InventoryRepository {
         Query query = Query.query(Criteria.where("_id").is(playerId).and("version").is(expectedVersion));
         Update update = new Update()
                 .set("counts", inventory.snapshot())
+                .set("itemClaims", inventory.itemClaims())
                 // 实例账本必须同一条更新里写：漏了它，"装备去哪了"就成了只有重启才能复现的问题
                 .set("equips", inventory.equipSnapshot())
                 .set("nextEquipUid", inventory.nextEquipUid())
@@ -112,7 +113,7 @@ public final class MongoInventoryStore implements InventoryRepository {
     private Inventory toDomain(InventoryDocument doc) {
         Inventory inventory = Inventory.empty(doc.capacityMax());
         inventory.restore(doc.counts(), doc.equips(), doc.capacityMax(),
-                doc.nextEquipUid() <= 0 ? 1 : doc.nextEquipUid(),
+                doc.nextEquipUid() == null || doc.nextEquipUid() <= 0 ? 1 : doc.nextEquipUid(),
                 // 老文档没有这两个字段：null 视作"一件也没有"、0 视作"序号未初始化"
                 itemId -> {
                     try {
@@ -123,6 +124,7 @@ public final class MongoInventoryStore implements InventoryRepository {
                         return false;
                     }
                 });
+        inventory.restoreItemClaims(doc.itemClaims());
         return inventory;
     }
 }

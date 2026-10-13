@@ -1111,7 +1111,7 @@ public class CityAppService {
 
         String requested = req.buildingId();
         if (requested == null || requested.isBlank()) {
-            String reason = harvestUnlockReason(player);
+            String reason = harvestUnlockReason(player,now);
             if (reason != null) {
                 // 被拒的是批量按钮；到点升级/惰性产出仍要保存，避免下次读取重复发送升级事件。
                 players.save(player);
@@ -1151,9 +1151,9 @@ public class CityAppService {
     }
 
     /** 服务端唯一解锁判定；读取和收割使用同一口径。 */
-    private String harvestUnlockReason(PlayerSave player) {
+    private String harvestUnlockReason(PlayerSave player,long now) {
         long level = configs.longParam("CITY_COLLECT_ALL_MAIN_LEVEL");
-        if (player.cityLevel() < level) return "一键收割需主城 " + level + " 级，并完成四种资源手动采集。";
+        if (player.cityLevel() < level && !paidProducts.entitlements(player.paid(),now).earlyCollectAll()) return "一键收割需主城 " + level + " 级，并完成四种资源手动采集。";
         List<String> missing = new ArrayList<>();
         for (var cfg : configs.all(com.ironoath.config.cfg.ResourceCfg.class))
             if (cfg.manualLearningRequired() && !player.manuallyCollected().contains(cfg.id())) missing.add(cfg.name());
@@ -1177,7 +1177,7 @@ public class CityAppService {
                         com.ironoath.web.dto.generated.ResourceType.valueOf(cfg.id()), cfg.name(), cfg.tutorialText(),
                         cfg.manualLearningRequired(), player.manuallyCollected().contains(cfg.id()), buildingId));
             }
-            String reason = harvestUnlockReason(player);
+            String reason = harvestUnlockReason(player,now);
             players.save(player); cities.save(playerId, ctx.city(), ctx.cityVersion());
             return new com.ironoath.web.dto.generated.CityHarvestLearningResp(views, reason == null,
                     reason == null ? "资源教学完成，一键收割已开启。" : reason,

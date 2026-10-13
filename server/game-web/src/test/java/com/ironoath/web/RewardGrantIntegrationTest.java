@@ -47,7 +47,7 @@ class RewardGrantIntegrationTest {
     @Autowired
     private PlayerRepository players;
 
-    @Autowired
+    @org.springframework.boot.test.mock.mockito.SpyBean
     private InventoryRepository inventories;
 
     @Autowired private com.ironoath.web.reward.PlayerWallet wallet;
@@ -251,5 +251,39 @@ class RewardGrantIntegrationTest {
                 .isGreaterThan(5000L);
         assertThat(inventories.findByPlayerId(playerId).orElseThrow()
                 .countOf("item_res_iron_5k")).isEqualTo(1L);
+    }
+
+    private List<RewardItem> materialPair() {return List.of(new RewardItem(RewardType.ITEM,"item_speedup_build_1h",1),new RewardItem(RewardType.ITEM,"item_res_wood_10k",1));}
+    @Test void paidMaterialPairIsOnceByBusinessKeyEvenAfterConsumption() {
+        String uid=newPlayer();var ctx=RewardContext.toMail("paid_item","order1","monthly:daily:order1:1");
+        rewardService.grant(uid,materialPair(),ctx);rewardService.grant(uid,materialPair(),ctx);
+        var bag=inventories.findByPlayerId(uid).orElseThrow();
+        assertThat(bag.countOf("item_speedup_build_1h")).isEqualTo(1);assertThat(bag.countOf("item_res_wood_10k")).isEqualTo(1);
+        bag.remove("item_speedup_build_1h",1);bag.remove("item_res_wood_10k",1);inventories.save(uid,bag,inventories.versionOf(uid));
+        rewardService.grant(uid,materialPair(),ctx);assertThat(inventories.findByPlayerId(uid).orElseThrow().snapshot()).isEmpty();
+    }
+    @Test void acceptedInventorySaveThenLostAcknowledgementDoesNotRepeatEitherItem() {
+        String uid=newPlayer();var ctx=RewardContext.toMail("paid_item","order1","monthly:daily:order1:1");
+        var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(inv->{Object result=inv.callRealMethod();if(uid.equals(inv.getArgument(0))&&once.compareAndSet(false,true))throw new IllegalStateException("fixture: accepted inventory write then acknowledgement lost");return result;})
+            .when(inventories).save(org.mockito.ArgumentMatchers.eq(uid),org.mockito.ArgumentMatchers.any(Inventory.class),org.mockito.ArgumentMatchers.anyLong());
+        assertThatThrownBy(()->rewardService.grant(uid,materialPair(),ctx)).isInstanceOf(IllegalStateException.class);
+        rewardService.grant(uid,materialPair(),ctx);var bag=inventories.findByPlayerId(uid).orElseThrow();
+        assertThat(bag.countOf("item_speedup_build_1h")).isEqualTo(1);assertThat(bag.countOf("item_res_wood_10k")).isEqualTo(1);
+    }
+    @Test void materialOverflowMailClaimLostAcknowledgementAndRecoveryKeepBothItemsOnce() {
+        String uid=newPlayer();long now=time.serverNow();inventories.insertIfAbsent(uid,Inventory.empty(0));var bag=inventories.findByPlayerId(uid).orElseThrow();bag.setCapacityMax(0);inventories.save(uid,bag,inventories.versionOf(uid));
+        var ctx=RewardContext.toMail("paid_item","order1","monthly:daily:order1:1");
+        var granted=rewardService.grant(uid,materialPair(),ctx);assertThat(granted.overflow()).hasSize(2);String mailId=granted.mailId();
+        assertThat(mailStore.findById(uid,mailId).orElseThrow().text()).doesNotContain("paid_item","order1","monthly:");
+        bag=inventories.findByPlayerId(uid).orElseThrow();bag.setCapacityMax(2);inventories.save(uid,bag,inventories.versionOf(uid));
+        var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(inv->{Object result=inv.callRealMethod();if(uid.equals(inv.getArgument(0))&&once.compareAndSet(false,true))throw new IllegalStateException("fixture: accepted mail attachment inventory write then acknowledgement lost");return result;})
+            .when(inventories).save(org.mockito.ArgumentMatchers.eq(uid),org.mockito.ArgumentMatchers.any(Inventory.class),org.mockito.ArgumentMatchers.anyLong());
+        var failed=mails.claimAll(uid,new com.ironoath.web.dto.generated.MailClaimAllReq("req-"+UUID.randomUUID()));assertThat(failed.failed()).hasSize(1);
+        var retried=mails.claimAll(uid,new com.ironoath.web.dto.generated.MailClaimAllReq("req-"+UUID.randomUUID()));assertThat(retried.claimed()).isEqualTo(1);
+        rewardService.grant(uid,materialPair(),ctx);bag=inventories.findByPlayerId(uid).orElseThrow();
+        assertThat(bag.countOf("item_speedup_build_1h")).isEqualTo(1);assertThat(bag.countOf("item_res_wood_10k")).isEqualTo(1);
+        assertThat(mailStore.findById(uid,mailId).orElseThrow().claimedAt()).isNotNull();assertThat(mailStore.listOf(uid,now)).hasSize(1);
     }
 }

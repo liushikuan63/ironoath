@@ -633,7 +633,7 @@ class CityEndpointTest {
         String playerId = newPlayer();
         assertThatThrownBy(() -> cityAppService.collect(playerId,
                 new com.ironoath.web.dto.generated.CityCollectReq(newRequestId(), null)))
-                .isInstanceOf(BizException.class).hasMessageContaining("主城 5 级");
+                .isInstanceOf(BizException.class).hasMessageContaining("主城 12 级");
     }
 
     @Test

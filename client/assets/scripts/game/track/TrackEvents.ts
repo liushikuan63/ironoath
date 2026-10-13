@@ -92,6 +92,8 @@ export const TRACK_EVENTS = {
   shopBuy: 'shop_buy',
   /** 切商店页签。四个币种的余额与限购各是各的账本，各页的流量是要分开看的。 */
   shopTab: 'shop_tab',
+  /** 月卡手动领取意图；资格刷新和失败后的重读不重复记领取。 */
+  monthlyCardClaim: 'monthly_card_claim',
   /**
    * 戴上 / 卸下头像框（B24 块③）。`frameId` 是那一枚的 id，卸下记 `none` ——
    * 两者分开看才知道玩家是在收集还是在退坑。

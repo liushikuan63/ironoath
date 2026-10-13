@@ -76,6 +76,12 @@ public final class RewardPorts {
     /** 背包。实现必须做堆叠上限与容量上限校验。 */
     public interface Bag {
 
+        record ItemGrant(com.ironoath.core.bag.ItemClaimReceipt receipt, java.util.Map<String,Long> creditedNow) {}
+        default ItemGrant grantItemsOnce(String playerId,java.util.Map<String,Long> items,RewardContext ctx,long now) {throw new UnsupportedOperationException("背包未实现稳定材料领取");}
+        default void completeItemOverflow(String playerId,String key,String mailId) {throw new UnsupportedOperationException("背包未实现材料邮件回执");}
+        default List<com.ironoath.core.bag.ItemClaimReceipt> pendingItemClaims(String playerId) {return List.of();}
+
+
         /**
          * 加入道具。
          *

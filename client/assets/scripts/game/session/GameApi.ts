@@ -96,7 +96,7 @@ import type {
 import type {
   ActivityClaimReq, ActivityClaimResp, ActivityListResp,
 } from '../../net/generated/ActivityProtocol'
-import type { CreateOrderReq, CreateOrderResp, GachaHistoryResp, GiftPopupResp, OrderStatusResp } from '../../net/generated/PayProtocol'
+import type { CardClaimReq, CardClaimResp, CardStatusResp, CreateOrderReq, CreateOrderResp, GachaHistoryResp, GiftPopupResp, OrderStatusResp } from '../../net/generated/PayProtocol'
 import type {
   GuideProgressReq, GuideProgressResp, GuideScriptResp,
 } from '../../net/generated/GuideProtocol'
@@ -805,6 +805,18 @@ export class GameApi {
    */
   async giftPopup(): Promise<NetOutcome<GiftPopupResp>> {
     return this.read<GiftPopupResp>('/gift/popup')
+  }
+
+
+  monthlyCardStatus(): Promise<NetOutcome<CardStatusResp>> {
+    return this.read<CardStatusResp>('/pay/card')
+  }
+  async claimMonthlyCard(req: Omit<CardClaimReq, 'requestId'>): Promise<NetOutcome<CardClaimResp>> {
+    const requestId = this.deps.newRequestId()
+    const sentAt = this.deps.now()
+    const outcome = await this.deps.net.post<CardClaimReq, CardClaimResp>('/pay/card/claim', { ...req, requestId },
+      { idempotent: true, requestId, queueWhenOffline: false, retryOnNetworkFailure: false })
+    return this.calibrate(outcome, sentAt)
   }
 
   async createPayOrder(productId: string): Promise<NetOutcome<CreateOrderResp>> {

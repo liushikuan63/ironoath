@@ -34,6 +34,7 @@ class CityHarvestLearningTest {
     @Autowired private PlayerInitService init;
     @Autowired private PlayerRepository players;
     @Autowired private CityRepository cities;
+    @Autowired private com.ironoath.web.pay.PaidProducts catalog;
     @TestConfiguration
     static class ControlledClock {
         static final AtomicLong NOW = new AtomicLong(1_790_000_000_000L);
@@ -65,20 +66,20 @@ class CityHarvestLearningTest {
     void freshAccountCannotCollectAll() {
         String id = newPlayer();
         assertThatThrownBy(() -> city.collect(id, new CityCollectReq("req-" + UUID.randomUUID(), null)))
-                .isInstanceOf(BizException.class).hasMessageContaining("主城").hasMessageContaining("5");
+                .isInstanceOf(BizException.class).hasMessageContaining("主城").hasMessageContaining("12");
     }
 
     @Test
-    void levelFiveAloneDoesNotBypassManualResourceLearning() {
+    void levelTwelveAloneDoesNotBypassManualResourceLearning() {
         String id = newPlayer();
         var player = players.findByPlayerId(id).orElseThrow();
-        player.setCityLevel(5);
+        player.setCityLevel(12);
         players.save(player);
         assertThatThrownBy(() -> city.collect(id, new CityCollectReq("req-" + UUID.randomUUID(), null)))
                 .isInstanceOf(BizException.class).hasMessageContaining("手动");
     }
 
-    @Test void allFourManualCollectionsAndMainFiveAreBothRequired() {
+    @Test void allFourManualCollectionsAndMainTwelveAreBothRequired() {
         String id = newPlayer(); setMainLevel(id, 4);
         String[] configs = {"lumber_camp", "quarry", "iron_mine", "farm"};
         String[] types = {"WOOD", "STONE", "IRON", "GRAIN"};
@@ -100,8 +101,10 @@ class CityHarvestLearningTest {
             assertThat(city.harvestLearning(id).collectAllUnlocked()).isFalse();
         }
         assertThatThrownBy(() -> city.collect(id, new CityCollectReq("req-" + UUID.randomUUID(), null)))
-                .hasMessageContaining("5");
-        setMainLevel(id, 5);
+                .hasMessageContaining("12");
+        setMainLevel(id, 11);
+        assertThat(city.harvestLearning(id).collectAllUnlocked()).isFalse();
+        setMainLevel(id, 12);
         assertThat(city.harvestLearning(id).collectAllUnlocked()).isTrue();
         city.collect(id, new CityCollectReq("req-" + UUID.randomUUID(), null));
         assertThat(players.findByPlayerId(id).orElseThrow().manuallyCollected()).containsExactlyInAnyOrder(types);
@@ -116,8 +119,8 @@ class CityHarvestLearningTest {
         assertThat(players.findByPlayerId(id).orElseThrow().manuallyCollected()).isEmpty();
     }
 
-    @Test void oneManualResourceAtLevelFiveStillCannotCollectAll() {
-        String id = newPlayer(); setMainLevel(id, 5);
+    @Test void oneManualResourceAtLevelTwelveStillCannotCollectAll() {
+        String id = newPlayer(); setMainLevel(id, 12);
         String target = prepareResource(id, "lumber_camp", 0);
         ControlledClock.NOW.addAndGet(60_000L);
         city.list(id); city.collect(id, new CityCollectReq("req-" + UUID.randomUUID(), target));
@@ -135,6 +138,37 @@ class CityHarvestLearningTest {
             assertThat(r.name()).isNotBlank().isNotEqualTo(r.type().name());
             assertThat(r.description()).isNotBlank();
         });
-        assertThat(resp.requiredMainLevel()).isEqualTo(5);
+        assertThat(resp.requiredMainLevel()).isEqualTo(12);
+    }
+
+    private void monthlyEntitlementFixture(String uid,boolean material,boolean expired) {
+        var kind=material?com.ironoath.config.cfg.PayProductCfg.Kind.MONTHLY_MATERIAL_CARD:com.ironoath.config.cfg.PayProductCfg.Kind.MONTHLY_GOLD_CARD;
+        var row=catalog.requireKind(kind);long now=ControlledClock.NOW.get();long start=expired?now-31*86_400_000L:now-60_000;
+        var period=new com.ironoath.core.pay.MonthlyCardPurchase("harvest-order-"+UUID.randomUUID(),row.id(),catalog.cardTerms(row),start,start+30*86_400_000L,1,0);
+        var player=players.findByPlayerId(uid).orElseThrow();player.setPaid(com.ironoath.core.player.PlayerPaid.empty().withMonthlyPurchase(period));players.save(player);
+    }
+    private void actuallyTeachAllFour(String uid) {
+        var config=com.ironoath.config.ConfigRegistry.loadFromDirectory(configDirForFixture());int x=10;
+        for(String type:java.util.List.of("WOOD","STONE","IRON","GRAIN")){
+            String building=config.all(com.ironoath.config.cfg.BuildingCfg.class).stream().filter(b->type.equals(b.outputResource())).findFirst().orElseThrow().id();
+            String target=prepareResource(uid,building,x++);ControlledClock.NOW.addAndGet(60_000);city.list(uid);city.collect(uid,new CityCollectReq("req-"+UUID.randomUUID(),target));
+        }
+        assertThat(players.findByPlayerId(uid).orElseThrow().manuallyCollected()).containsExactlyInAnyOrder("WOOD","STONE","IRON","GRAIN");
+    }
+    private java.nio.file.Path configDirForFixture(){var p=java.nio.file.Path.of("").toAbsolutePath();while(p!=null){if(java.nio.file.Files.isDirectory(p.resolve("contract/config")))return p.resolve("contract/config");p=p.getParent();}throw new IllegalStateException();}
+    @Test void activeMaterialCardBypassesOnlyLevelAndStillNeedsAllFourActualManualFacts() {
+        String uid=newPlayer();monthlyEntitlementFixture(uid,true,false);
+        assertThat(city.harvestLearning(uid).collectAllUnlocked()).isFalse();assertThatThrownBy(()->city.collect(uid,new CityCollectReq("req-"+UUID.randomUUID(),null))).isInstanceOf(BizException.class).hasMessageContaining("手动");
+        var player=players.findByPlayerId(uid).orElseThrow();var baseline=player.copy();baseline.setPaid(com.ironoath.core.player.PlayerPaid.empty());
+        assertThat(city.cityRules(player,ControlledClock.NOW.get()).maxQueueCount()).isEqualTo(city.cityRules(baseline,ControlledClock.NOW.get()).maxQueueCount());
+        assertThat(city.cityRules(player,ControlledClock.NOW.get()).adSpeedupDailyLimit()).isEqualTo(city.cityRules(baseline,ControlledClock.NOW.get()).adSpeedupDailyLimit());
+        actuallyTeachAllFour(uid);assertThat(city.harvestLearning(uid).collectAllUnlocked()).isTrue();city.collect(uid,new CityCollectReq("req-"+UUID.randomUUID(),null));
+    }
+    @Test void pureGoldCardAndExpiredMaterialCardCannotBypassFreeMainLevel() {
+        String uid=newPlayer();monthlyEntitlementFixture(uid,false,false);actuallyTeachAllFour(uid);assertThat(city.harvestLearning(uid).collectAllUnlocked()).isFalse();
+        assertThatThrownBy(()->city.collect(uid,new CityCollectReq("req-"+UUID.randomUUID(),null))).hasMessageContaining("12");
+        monthlyEntitlementFixture(uid,true,true);assertThat(city.harvestLearning(uid).collectAllUnlocked()).isFalse();
+        assertThatThrownBy(()->city.collect(uid,new CityCollectReq("req-"+UUID.randomUUID(),null))).hasMessageContaining("12");
+        setMainLevel(uid,12);assertThat(city.harvestLearning(uid).collectAllUnlocked()).isTrue();
     }
 }

@@ -16,7 +16,7 @@ public record MonthlyCardPurchase(String orderId, String productId, MonthlyCardT
     public long settleThroughDays(long now) {
         return Math.max(0, Math.min(totalDays(), DayKey.businessDaysBetween(startsAt, now) + 1));
     }
-    /** 沿既有活跃期/自然日/剩余天数补领口径，并以一期30份额度限制额外跨日。 */
+    /** 新卡按04:00业务日计算，保留活跃期/剩余天数上限与一期30份额度；旧卡自然日不变。 */
     public long claimableDays(long now) {
         if (!active(now)) return 0;
         long owed = Math.max(0, settleThroughDays(now) - settledDays);

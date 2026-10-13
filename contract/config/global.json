@@ -1,6 +1,6 @@
 {
   "table": "global",
-  "version": 45,
+  "version": 46,
   "comment": "全局参数表（键值型）。所有跨批次共用常量集中于此，代码中不得出现同义魔法数字（铁律 1）。value 的 JSON 类型必须与 valueType 匹配：LONG→number、DECIMAL→string、BOOL→boolean、STRING→string。source 标注该数字的出处，todo 标注尚未定稿需后续批次确认的项。",
   "fieldTypes": {
     "id": "STRING_KEY",
@@ -2372,10 +2372,10 @@
     {
       "id": "CITY_COLLECT_ALL_MAIN_LEVEL",
       "valueType": "LONG",
-      "value": 5,
+      "value": 12,
       "unit": "主城等级",
-      "source": "2026-10-11 用户明确裁决：四资源手动教学完成后，主城5级开启一键收割",
-      "why": "等级与逐种手动采集同时满足；引导跳过和批量收割不能代替手动进度。"
+      "source": "2026-10-13用户明确裁决：四资源手动教学完成后免费主城12级一键收割；18元材料卡只提前等级条件",
+      "why": "等级与四种真实手动采集同时满足；材料卡可跳等级但不能跳教学，不改变产量容量或广告次数。"
     },
     {
       "id": "PRODUCT_MATERIAL_MONTHLY_CARD_CENTS",

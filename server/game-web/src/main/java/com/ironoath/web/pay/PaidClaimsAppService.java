@@ -60,11 +60,12 @@ public class PaidClaimsAppService {
     private final ConfigRegistry configs;
     private final RewardService rewardService;
     private final PaidProducts catalog;
+    private final MonthlyCardService monthly;
 
     public PaidClaimsAppService(PlayerRepository players, PlayerLock playerLock,
                                 IdempotencyStore idempotency, TimeService timeService,
                                 ConfigRegistry configs, RewardService rewardService,
-                                PaidProducts catalog) {
+                                PaidProducts catalog, com.ironoath.core.bag.InventoryRepository inventories, com.ironoath.web.reward.RewardNames names) {
         this.players = players;
         this.playerLock = playerLock;
         this.idempotency = idempotency;
@@ -72,6 +73,7 @@ public class PaidClaimsAppService {
         this.configs = configs;
         this.rewardService = rewardService;
         this.catalog = catalog;
+        this.monthly = new MonthlyCardService(players,inventories,rewardService,catalog,configs,names);
     }
 
     // ---------- 月卡 ----------
@@ -79,11 +81,10 @@ public class PaidClaimsAppService {
     /** 月卡状态：是否在有效期、今天领过没有、现在点会领几天、当前生效的两项权益。 */
     public CardStatusResp cardStatus(String playerId) {
         long now = timeService.serverNow();
-        PlayerPaid paid = require(playerId).paid();
-        var entitlements = catalog.entitlements(paid, now);
-        return new CardStatusResp(paid.cardActive(now), paid.cardExpireAt(),
-                paid.cardClaimedToday(now), PaidEntitlements.claimableDays(paid, now),
-                entitlements.adFree(), entitlements.bonusQueues(), now);
+        return playerLock.runLocked(playerId,LOCK_TIMEOUT_MS,()->{
+            var views=monthly.views(playerId,now);PlayerPaid paid=require(playerId).paid();var entitlements=catalog.entitlements(paid,now);
+            return new CardStatusResp(paid.cardActive(now),paid.cardExpireAt(),paid.cardClaimedToday(now),PaidEntitlements.claimableDays(paid,now),entitlements.adFree(),entitlements.bonusQueues(),now,views);
+        });
     }
 
     /**
@@ -98,6 +99,7 @@ public class PaidClaimsAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 PlayerSave save = require(playerId);
+                if(req.productId()!=null&&!req.productId().equals(catalog.requireKind(PayProductCfg.Kind.MONTHLY_CARD).id()))return monthly.claim(playerId,req.productId(),now);
                 var verdict = PaidEntitlements.claimCard(save.paid(), now);
                 switch (verdict.status()) {
                     case NOT_ACTIVE -> throw new BizException(ErrorCode.PAY_CARD_INACTIVE,
@@ -126,7 +128,7 @@ public class PaidClaimsAppService {
                 LOG.info("月卡日包发放 playerId={} 补发={} 天 奖励={} 项 到期={}",
                         playerId, days, result.granted().size(), afterGrant.paid().cardExpireAt());
                 return new CardClaimResp(days, PaidProducts.toProtocol(result.granted()),
-                        afterGrant.paid().cardExpireAt(), now);
+                        afterGrant.paid().cardExpireAt(), now, monthly.id());
             });
         } catch (RuntimeException e) {
             idempotency.release(req.requestId());

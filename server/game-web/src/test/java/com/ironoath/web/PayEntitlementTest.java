@@ -94,10 +94,12 @@ class PayEntitlementTest {
     @Autowired private Environment environment;
     @org.springframework.boot.test.mock.mockito.SpyBean private PlayerRepository players;
     @Autowired private RewardService rewardService;
+    @Autowired private com.ironoath.web.reward.RewardNames rewardNames;
     @Autowired private PaidProducts catalog;
     @Autowired private CityAppService city;
     @Autowired private HeroRepository heroes;
     @Autowired private RewardPorts.Bag bag;
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.core.bag.InventoryRepository inventories;
 
     // ---------- 月卡：发货只买回有效期 ----------
 
@@ -134,7 +136,7 @@ class PayEntitlementTest {
         long speedupBefore = bag.countOf(playerId, "item_speedup_build_1h");
         long woodBefore = bag.countOf(playerId, "item_res_wood_10k");
 
-        CardClaimResp resp = claims.claimCard(playerId, new CardClaimReq(newRequestId()));
+        CardClaimResp resp = claims.claimCard(playerId, new CardClaimReq(newRequestId(),null));
 
         assertThat(resp.claimedDays()).isEqualTo(1L);
         assertThat(gold(playerId) - goldBefore)
@@ -146,7 +148,7 @@ class PayEntitlementTest {
         assertThat(resp.rewards()).as("响应回的就是实际发出的那几行")
                 .hasSize(catalog.alwaysRows(monthlyId()).size());
 
-        assertThatThrownBy(() -> claims.claimCard(playerId, new CardClaimReq(newRequestId())))
+        assertThatThrownBy(() -> claims.claimCard(playerId, new CardClaimReq(newRequestId(),null)))
                 .as("同日再领必须被拒：挡不住就是一天领无限份日包")
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).errorCode())
@@ -163,7 +165,7 @@ class PayEntitlementTest {
         long goldBefore = gold(playerId);
 
         CardClaimResp resp = claimsAt(base + 10 * DAY)
-                .claimCard(playerId, new CardClaimReq(newRequestId()));
+                .claimCard(playerId, new CardClaimReq(newRequestId(),null));
 
         assertThat(resp.claimedDays()).as("第 9、10 两天都没领 ⇒ 这次一起补").isEqualTo(2L);
         assertThat(gold(playerId) - goldBefore)
@@ -180,7 +182,7 @@ class PayEntitlementTest {
                 .withCardSettledThrough(DayKey.startOfDayPlusDays(base, -1)));
 
         CardClaimResp resp = claimsAt(base + 25 * DAY)
-                .claimCard(playerId, new CardClaimReq(newRequestId()));
+                .claimCard(playerId, new CardClaimReq(newRequestId(),null));
 
         assertThat(resp.claimedDays())
                 .as("欠 25 天，卡只剩 6 天（含今天）⇒ 只发 6 天。"
@@ -193,7 +195,7 @@ class PayEntitlementTest {
     void claimWithoutCardSaysWhy() {
         String playerId = newPlayer();
         assertThat(claims.cardStatus(playerId).active()).isFalse();
-        assertThatThrownBy(() -> claims.claimCard(playerId, new CardClaimReq(newRequestId())))
+        assertThatThrownBy(() -> claims.claimCard(playerId, new CardClaimReq(newRequestId(),null)))
                 .isInstanceOf(BizException.class)
                 .extracting(e -> ((BizException) e).errorCode())
                 .isEqualTo(ErrorCode.PAY_CARD_INACTIVE);
@@ -562,7 +564,7 @@ class PayEntitlementTest {
     /** 时钟可控的领取服务：只为这一条用例造时间，绝不去动上下文那份 TimeService。 */
     private PaidClaimsAppService claimsAt(long now) {
         return new PaidClaimsAppService(players, playerLock, idempotency,
-                new TimeService(() -> now), configs, rewardService, catalog);
+                new TimeService(() -> now), configs, rewardService, catalog,inventories,rewardNames);
     }
 
     /** 换掉发货实现的服务实例（验收 3 要的「第一次失败」只有这条路做得到）。 */
@@ -668,4 +670,149 @@ class PayEntitlementTest {
         } finally {configs.reload("pay_product",PayProductCfg.class,original);}
     }
 
+
+    private JsonNode claimMonthlyHttp(String uid,String sku) throws Exception {
+        return perform(post("/pay/card/claim").header(PLAYER_HEADER,uid).contentType(MediaType.APPLICATION_JSON)
+            .content(JsonUtils.toJson(java.util.Map.of("requestId",newRequestId(),"productId",sku))));
+    }
+    @Test void eachNewMonthlySkuClaimsItsOwnActualDailyPackAndRepeatIsDenied() throws Exception {
+        String uid=newPlayer();callback(order(uid,"monthly_gold_card",null));callback(order(uid,"monthly_material_card",null));
+        long before=gold(uid);long speed=bag.countOf(uid,"item_speedup_build_1h"),wood=bag.countOf(uid,"item_res_wood_10k");
+        var goldDaily=okData(claimMonthlyHttp(uid,"monthly_gold_card"));assertThat(goldDaily.get("claimedDays").asLong()).isEqualTo(1);
+        assertThat(gold(uid)).isEqualTo(before+90);assertThat(bag.countOf(uid,"item_speedup_build_1h")).isEqualTo(speed);
+        var materialDaily=okData(claimMonthlyHttp(uid,"monthly_material_card"));assertThat(materialDaily.get("claimedDays").asLong()).isEqualTo(1);
+        assertThat(gold(uid)).isEqualTo(before+90);assertThat(bag.countOf(uid,"item_speedup_build_1h")).isEqualTo(speed+1);assertThat(bag.countOf(uid,"item_res_wood_10k")).isEqualTo(wood+1);
+        assertThat(claimMonthlyHttp(uid,"monthly_gold_card").get("code").asInt()).isEqualTo(ErrorCode.PAY_ALREADY_CLAIMED.code());
+        assertThat(claimMonthlyHttp(uid,"monthly_material_card").get("code").asInt()).isEqualTo(ErrorCode.PAY_ALREADY_CLAIMED.code());
+    }
+    @Test void monthlyStatusHasServerOffersAndRetainedLegacyEntitlementOnlyWhenOwned() throws Exception {
+        String uid=newPlayer();callback(order(uid,"monthly_gold_card",null));
+        var cards=okData(perform(get("/pay/card").header(PLAYER_HEADER,uid))).get("cards");assertThat(cards).isNotNull();assertThat(cards.size()).isEqualTo(2);
+        var bySku=new java.util.HashMap<String,JsonNode>();cards.forEach(c->bySku.put(c.get("productId").asText(),c));
+        assertThat(bySku.get("monthly_material_card").get("priceCents").asLong()).isEqualTo(1800);assertThat(bySku.get("monthly_gold_card").get("priceCents").asLong()).isEqualTo(3000);
+        assertThat(bySku.get("monthly_material_card").get("offerAdFree")).isNotNull();assertThat(bySku.get("monthly_material_card").get("offerAdFree").asBoolean()).isTrue();
+        assertThat(bySku.get("monthly_material_card").get("offerEarlyCollectAll").asBoolean()).isTrue();
+        assertThat(bySku.get("monthly_gold_card").get("dailyRewards").get(0).get("name").asText()).isEqualTo("金币");
+        assertThat(bySku.get("monthly_gold_card").get("initialGold").asLong()).isEqualTo(300);assertThat(bySku.get("monthly_gold_card").get("active").asBoolean()).isTrue();
+        var save=player(uid);seedPaid(uid,save.paid().withCardExtended(System.currentTimeMillis(),30*DAY));
+        cards=okData(perform(get("/pay/card").header(PLAYER_HEADER,uid))).get("cards");assertThat(cards.size()).isEqualTo(3);
+        for(var c:cards)if(c.get("productId").asText().equals("monthly_card")){assertThat(c.get("saleable").asBoolean()).isFalse();assertThat(c.get("active").asBoolean()).isTrue();}
+    }
+    @Test void absentProductIdStaysLegacyOnlyAndAnotherAccountCannotClaimNewEntitlement() throws Exception {
+        String a=newPlayer(),b=newPlayer();callback(order(a,"monthly_gold_card",null));long before=gold(a);
+        assertThatThrownBy(()->claims.claimCard(a,new CardClaimReq(newRequestId(),null))).isInstanceOf(BizException.class).extracting(e->((BizException)e).errorCode()).isEqualTo(ErrorCode.PAY_CARD_INACTIVE);
+        assertThat(claimMonthlyHttp(b,"monthly_gold_card").get("code").asInt()).isEqualTo(ErrorCode.PAY_CARD_INACTIVE.code());
+        assertThat(claimMonthlyHttp(a,"growth_fund").get("code").asInt()).isEqualTo(ErrorCode.PAY_NOT_ENTITLED.code());assertThat(gold(a)).isEqualTo(before);
+    }
+
+    private static final long MONTHLY_START=java.time.Instant.parse("2030-03-02T15:55:00Z").toEpochMilli();
+    /** Only purchase timing/reward snapshot is controlled; callback and grant/store/receipt paths are real. */
+    private com.ironoath.core.pay.MonthlyCardPurchase timedMonthly(String uid,String sku,long start,com.ironoath.core.pay.MonthlyCardTerms override) {
+        var saved=player(uid);var paid=saved.paid();var original=paid.monthlyPurchases().values().stream().filter(x->x.productId().equals(sku)).findFirst().orElseThrow();
+        var period=new com.ironoath.core.pay.MonthlyCardPurchase(original.orderId(),sku,override==null?original.terms():override,start,start+30*DAY,1,0);
+        var map=new java.util.LinkedHashMap<>(paid.monthlyPurchases());map.put(period.orderId(),period);
+        seedPaid(uid,new PlayerPaid(paid.cardExpireAt(),paid.cardClaimedThroughAt(),paid.fundPurchasedAt(),paid.fundClaimedTiers(),paid.firstChargedAt(),paid.fulfilledOrderIds(),map));return period;
+    }
+    @Test void goldCardActualUpfrontPlusThirtyBusinessDayClaimsIsExactlyThreeThousand() throws Exception {
+        String uid=newPlayer();long before=gold(uid);callback(order(uid,"monthly_gold_card",null));assertThat(gold(uid)).isEqualTo(before+300);
+        timedMonthly(uid,"monthly_gold_card",MONTHLY_START,null);
+        for(int n=0;n<30;n++){
+            var response=claimsAt(MONTHLY_START+n*DAY).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_gold_card"));
+            assertThat(response.claimedDays()).isEqualTo(1);assertThat(gold(uid)).isEqualTo(before+300+(n+1)*90);
+            if(n==0){assertThatThrownBy(()->claimsAt(MONTHLY_START+10*60_000).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_gold_card"))).isInstanceOf(BizException.class).extracting(e->((BizException)e).errorCode()).isEqualTo(ErrorCode.PAY_ALREADY_CLAIMED);
+                assertThat(claimsAt(java.time.Instant.parse("2030-03-02T19:59:59Z").toEpochMilli()).cardStatus(uid).cards().stream().filter(c->c.productId().equals("monthly_gold_card")).findFirst().orElseThrow().claimableDays()).isZero();
+                assertThat(claimsAt(java.time.Instant.parse("2030-03-02T20:00:00Z").toEpochMilli()).cardStatus(uid).cards().stream().filter(c->c.productId().equals("monthly_gold_card")).findFirst().orElseThrow().claimableDays()).isEqualTo(1);
+            }
+        }
+        assertThat(gold(uid)-before).isEqualTo(3000);
+        assertThatThrownBy(()->claimsAt(MONTHLY_START+30*DAY-1).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_gold_card"))).isInstanceOf(BizException.class).extracting(e->((BizException)e).errorCode()).isEqualTo(ErrorCode.PAY_ALREADY_CLAIMED);
+        assertThatThrownBy(()->claimsAt(MONTHLY_START+30*DAY).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_gold_card"))).isInstanceOf(BizException.class).extracting(e->((BizException)e).errorCode()).isEqualTo(ErrorCode.PAY_CARD_INACTIVE);
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"monthly_gold_card","monthly_material_card"})
+    void monthlyCatchUpAcceptsAllSelectedDailyPacksInOneDurableReceipt(String sku) throws Exception {
+        String uid=newPlayer();callback(order(uid,sku,null));var period=timedMonthly(uid,sku,MONTHLY_START,null);
+        long before=gold(uid),speed=bag.countOf(uid,"item_speedup_build_1h"),wood=bag.countOf(uid,"item_res_wood_10k");
+        var response=claimsAt(MONTHLY_START+28*DAY).claimCard(uid,new CardClaimReq(newRequestId(),sku));
+        assertThat(response.claimedDays()).isEqualTo(3);
+        assertMonthlyCatchUpAmounts(uid,sku,before,speed,wood,3);
+        String key="monthly:daily:"+period.orderId()+":29";
+        if(sku.equals("monthly_gold_card")) {
+            var receipts=player(uid).goldClaims().values().stream().filter(r->r.businessKey().startsWith("monthly:daily:"+period.orderId()+":")).toList();
+            assertThat(receipts).singleElement().satisfies(r->{assertThat(r.businessKey()).isEqualTo(key);assertThat(r.requested()).isEqualTo(270);assertThat(r.facts()).contains("monthly-day:29");});
+        } else {
+            var receipts=inventories.findByPlayerId(uid).orElseThrow().itemClaims().values();
+            assertThat(receipts).singleElement().satisfies(r->{assertThat(r.businessKey()).isEqualTo(key);assertThat(r.requested()).containsEntry("item_speedup_build_1h",3L).containsEntry("item_res_wood_10k",3L);assertThat(r.facts()).contains("monthly-day:29");});
+        }
+        assertThat(player(uid).paid().monthlyPurchases().get(period.orderId()).settledDays()).isEqualTo(29);
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"monthly_gold_card,next-day","monthly_material_card,next-day","monthly_gold_card,expired","monthly_material_card,expired"})
+    void monthlyCatchUpLostAcknowledgementRecoversWholeBatchAcrossDayOrExpiry(String sku,String resume) throws Exception {
+        String uid=newPlayer();callback(order(uid,sku,null));var period=timedMonthly(uid,sku,MONTHLY_START,null);
+        long before=gold(uid),speed=bag.countOf(uid,"item_speedup_build_1h"),wood=bag.countOf(uid,"item_res_wood_10k");
+        String prefix="monthly:daily:"+period.orderId()+":";var once=new java.util.concurrent.atomic.AtomicBoolean();
+        if(sku.equals("monthly_gold_card")) {
+            org.mockito.Mockito.doAnswer(inv->{Object result=inv.callRealMethod();var saved=inv.getArgument(0,PlayerSave.class);if(uid.equals(saved.playerId())&&saved.goldClaims().keySet().stream().anyMatch(k->k.startsWith(prefix))&&once.compareAndSet(false,true))throw new IllegalStateException("fixture: catch-up accepted then acknowledgement lost");return result;})
+                .when(players).save(org.mockito.ArgumentMatchers.any(PlayerSave.class));
+        } else {
+            org.mockito.Mockito.doAnswer(inv->{Object result=inv.callRealMethod();var saved=inv.getArgument(1,com.ironoath.core.bag.Inventory.class);if(saved.itemClaims().keySet().stream().anyMatch(k->k.startsWith(prefix))&&once.compareAndSet(false,true))throw new IllegalStateException("fixture: catch-up accepted then acknowledgement lost");return result;})
+                .when(inventories).save(org.mockito.ArgumentMatchers.eq(uid),org.mockito.ArgumentMatchers.any(com.ironoath.core.bag.Inventory.class),org.mockito.ArgumentMatchers.anyLong());
+        }
+        assertThatThrownBy(()->claimsAt(MONTHLY_START+28*DAY).claimCard(uid,new CardClaimReq(newRequestId(),sku))).isInstanceOf(IllegalStateException.class).hasMessageContaining("catch-up accepted");
+        assertThat(once).isTrue();
+        long later=MONTHLY_START+(resume.equals("expired")?30:29)*DAY;
+        claimsAt(later).cardStatus(uid);claimsAt(later).cardStatus(uid);
+        assertThat(player(uid).paid().monthlyPurchases().get(period.orderId()).settledDays()).as("the accepted three-day batch survives the new cutoff").isEqualTo(29);
+        assertMonthlyCatchUpAmounts(uid,sku,before,speed,wood,3);
+        if(resume.equals("next-day")) {
+            assertThat(claimsAt(later).claimCard(uid,new CardClaimReq(newRequestId(),sku)).claimedDays()).isEqualTo(1);
+            assertMonthlyCatchUpAmounts(uid,sku,before,speed,wood,4);
+        } else {
+            assertThatThrownBy(()->claimsAt(later).claimCard(uid,new CardClaimReq(newRequestId(),sku))).isInstanceOf(BizException.class).extracting(e->((BizException)e).errorCode()).isEqualTo(ErrorCode.PAY_CARD_INACTIVE);
+            assertMonthlyCatchUpAmounts(uid,sku,before,speed,wood,3);
+        }
+    }
+    private void assertMonthlyCatchUpAmounts(String uid,String sku,long before,long speed,long wood,long days) {
+        boolean goldCard=sku.equals("monthly_gold_card");
+        assertThat(gold(uid)).isEqualTo(before+(goldCard?days*90:0));
+        assertThat(bag.countOf(uid,"item_speedup_build_1h")).isEqualTo(speed+(goldCard?0:days));
+        assertThat(bag.countOf(uid,"item_res_wood_10k")).isEqualTo(wood+(goldCard?0:days));
+    }
+    @Test void acceptedDailyGoldWriteWithLostAcknowledgementRestoresCursorWithoutPayingAgain() throws Exception {
+        String uid=newPlayer();callback(order(uid,"monthly_gold_card",null));var period=timedMonthly(uid,"monthly_gold_card",MONTHLY_START,null);long before=gold(uid);
+        String key="monthly:daily:"+period.orderId()+":1";var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(inv->{Object result=inv.callRealMethod();var saved=inv.getArgument(0,PlayerSave.class);if(uid.equals(saved.playerId())&&saved.goldClaims().containsKey(key)&&once.compareAndSet(false,true))throw new IllegalStateException("fixture: daily gold accepted then acknowledgement lost");return result;})
+            .when(players).save(org.mockito.ArgumentMatchers.any(PlayerSave.class));
+        assertThatThrownBy(()->claimsAt(MONTHLY_START).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_gold_card"))).isInstanceOf(IllegalStateException.class);
+        assertThat(gold(uid)).isEqualTo(before+90);assertThat(player(uid).paid().monthlyPurchases().get(period.orderId()).settledDays()).isZero();
+        claimsAt(MONTHLY_START).cardStatus(uid);claimsAt(MONTHLY_START).cardStatus(uid);
+        assertThat(player(uid).paid().monthlyPurchases().get(period.orderId()).settledDays()).isEqualTo(1);assertThat(gold(uid)).isEqualTo(before+90);
+        assertThatThrownBy(()->claimsAt(MONTHLY_START).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_gold_card"))).isInstanceOf(BizException.class).extracting(e->((BizException)e).errorCode()).isEqualTo(ErrorCode.PAY_ALREADY_CLAIMED);
+    }
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"before-cursor","after-cursor"})
+    void acceptedMaterialPairThenCursorFaultRecoversWithoutRegrant(String stage) throws Exception {
+        String uid=newPlayer();callback(order(uid,"monthly_material_card",null));var period=timedMonthly(uid,"monthly_material_card",MONTHLY_START,null);long before=gold(uid),speed=bag.countOf(uid,"item_speedup_build_1h"),wood=bag.countOf(uid,"item_res_wood_10k");var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(inv->{var save=inv.getArgument(0,PlayerSave.class);boolean fail=uid.equals(save.playerId())&&save.paid().monthlyPurchases().get(period.orderId()).settledDays()==1&&once.compareAndSet(false,true);if(fail&&stage.equals("before-cursor"))throw new IllegalStateException("fixture: cursor write not accepted");Object result=inv.callRealMethod();if(fail)throw new IllegalStateException("fixture: cursor accepted then acknowledgement lost");return result;})
+            .when(players).save(org.mockito.ArgumentMatchers.any(PlayerSave.class));
+        assertThatThrownBy(()->claimsAt(MONTHLY_START).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_material_card"))).isInstanceOf(IllegalStateException.class);
+        claimsAt(MONTHLY_START).cardStatus(uid);assertThat(player(uid).paid().monthlyPurchases().get(period.orderId()).settledDays()).isEqualTo(1);
+        assertThat(gold(uid)).isEqualTo(before);assertThat(bag.countOf(uid,"item_speedup_build_1h")).isEqualTo(speed+1);assertThat(bag.countOf(uid,"item_res_wood_10k")).isEqualTo(wood+1);
+        assertThatThrownBy(()->claimsAt(MONTHLY_START).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_material_card"))).isInstanceOf(BizException.class).extracting(e->((BizException)e).errorCode()).isEqualTo(ErrorCode.PAY_ALREADY_CLAIMED);
+    }
+    @Test void paidDailyRewardsUseOwnedOrderSnapshotAndCurrentOfferIsShownSeparately() throws Exception {
+        String uid=newPlayer();callback(order(uid,"monthly_gold_card",null));var owned=new com.ironoath.core.pay.MonthlyCardTerms("旧购买时快照",30,300,java.util.List.of(new com.ironoath.core.reward.RewardItem(com.ironoath.core.reward.RewardType.RESOURCE,"GOLD",7)),false,0,false);
+        timedMonthly(uid,"monthly_gold_card",MONTHLY_START,owned);long before=gold(uid);
+        var view=claimsAt(MONTHLY_START).cardStatus(uid).cards().stream().filter(c->c.productId().equals("monthly_gold_card")).findFirst().orElseThrow();
+        assertThat(view.dailyRewards().get(0).count()).isEqualTo(90);assertThat(view.ownedDailyRewards().get(0).count()).isEqualTo(7);
+        claimsAt(MONTHLY_START).claimCard(uid,new CardClaimReq(newRequestId(),"monthly_gold_card"));assertThat(gold(uid)).isEqualTo(before+7);
+    }
+    @Test void oldJsonMissingProductIdRemainsLegacyAndNewDailyCursorsCannotSettleLegacy() throws Exception {
+        var oldReq=JsonUtils.fromJson("{\"requestId\":\"legacy-missing-sku\"}",CardClaimReq.class);assertThat(oldReq.productId()).isNull();
+        String uid=newPlayer();callback(order(uid,"monthly_gold_card",null));callback(order(uid,"monthly_material_card",null));long base=System.currentTimeMillis();seedPaid(uid,player(uid).paid().withCardExtended(base,30*DAY));
+        claims.claimCard(uid,new CardClaimReq(newRequestId(),"monthly_gold_card"));claims.claimCard(uid,new CardClaimReq(newRequestId(),"monthly_material_card"));
+        assertThat(player(uid).paid().cardClaimedThroughAt()).isNotNull(); // original pre-purchase cursor is retained
+        assertThat(claims.cardStatus(uid).claimableDays()).isEqualTo(1);long before=gold(uid);
+        claims.claimCard(uid,new CardClaimReq(newRequestId(),null));assertThat(gold(uid)-before).isEqualTo(50);
+    }
 }

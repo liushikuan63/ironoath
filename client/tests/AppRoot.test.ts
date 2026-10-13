@@ -836,6 +836,7 @@ interface Harness {
   /** 最近一次下发到场景层的那棵红点树。 */
   readonly reddotTree: ClientReddotTree | null
 
+  readonly targets: PanelTargets
   readonly root: AppRoot
   readonly http: RoutingHttp
   /** 长连接实例。用例要靠它按下"服务端完成了握手"（见 {@link RecordingSocket}）。 */
@@ -1364,7 +1365,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
       }
     },
 
-    root, http, sockets, store, errors, attached, events,
+    root, http, sockets, store, errors, attached, events, targets,
   }
 }
 
@@ -4919,3 +4920,132 @@ for (const lostResponse of [false, true]) {
     assert.equal(h.lastStamina?.gold, 250, '显示所用金币读取权威余额，不由回执自行加50')
   })
 }
+
+
+interface MonthlyController {
+  openMonthlyCardTab():Promise<void>
+  claimMonthlyCard(productId:string|null):Promise<void>
+  buyMonthlyCard(productId:string):Promise<void>
+}
+function monthlyStatusForRoot(claimable=true) {
+  return {active:false,expireAt:null,claimedToday:false,claimableDays:0,adFree:false,bonusQueues:0,serverNow:SERVER_NOW,cards:[{
+    productId:'root-gold-sku',name:'金币月卡',saleable:true,priceCents:3000,durationDays:30,initialGold:300,
+    dailyRewards:[{type:'RESOURCE',id:'GOLD',name:'金币',count:90}],ownedDailyRewards:[{type:'RESOURCE',id:'GOLD',name:'金币',count:90}],
+    active:true,expireAt:SERVER_NOW+86400000,claimableDays:claimable?1:0,adFree:false,bonusQueues:0,earlyCollectAll:false,nextRefreshAt:SERVER_NOW+86400000,
+    offerAdFree:false,offerBonusQueues:0,offerEarlyCollectAll:false,
+  }]}
+}
+function monthlyTarget(h:Harness) {
+  const views:Array<import('../assets/scripts/game/session/AppRoot').MonthlyShopView>=[]
+  Object.assign(h.targets,{monthlyCards:(view:import('../assets/scripts/game/session/AppRoot').MonthlyShopView)=>views.push(view)})
+  h.http.overrides.set('/pay/card',monthlyStatusForRoot())
+  h.http.overrides.set('/pay/order',{orderId:'fixture-monthly-order',minorNotice:null,payParams:{mode:'game',offerId:'fixture-only',buyQuantity:'3000',env:'1',currencyType:'CNY',signature:null}})
+  h.http.overrides.set('/pay/card/claim',{claimedDays:1,rewards:[{type:'RESOURCE',id:'GOLD',count:90}],expireAt:SERVER_NOW+86400000,serverNow:SERVER_NOW,productId:'root-gold-sku'})
+  return views
+}
+test('monthly shop tab reads server status and claim uses selected sku then authoritative refresh',async()=>{
+  const h=harness({resourceTeaching:true});const views=monthlyTarget(h);const root=h.root as unknown as MonthlyController
+  await h.root.start('monthly-root','月卡');await root.openMonthlyCardTab();assert.equal(h.http.countOf('/pay/card'),1);assert.equal(views.at(-1)?.rows[0]?.name,'金币月卡')
+  await root.claimMonthlyCard('root-gold-sku');const writes=h.http.calls.filter(c=>c.path==='/pay/card/claim');assert.equal(writes.length,1);assert.equal(writes[0]!.body.productId,'root-gold-sku');assert.equal(typeof writes[0]!.body.requestId,'string')
+  assert.equal(h.http.countOf('/pay/card'),2);assert.ok(h.http.countOf('/city/harvest-learning')>=2)
+})
+test('monthly claim accepted but reply lost sends one POST and disables row from subsequent GET',async()=>{
+  const h=harness();const views=monthlyTarget(h);const root=h.root as unknown as MonthlyController;await h.root.start('monthly-loss','月卡');await root.openMonthlyCardTab()
+  const original=h.http.post.bind(h.http)
+  h.http.post=async(url,body,headers)=>{const result=await original(url,body,headers);if(new URL(url).pathname==='/pay/card/claim'){h.http.overrides.set('/pay/card',monthlyStatusForRoot(false));throw new Error('fixture: accepted daily claim then acknowledgement lost')}return result}
+  await root.claimMonthlyCard('root-gold-sku');assert.equal(h.http.countOf('/pay/card/claim'),1);assert.equal(h.http.countOf('/pay/card'),2);assert.equal(views.at(-1)?.rows[0]?.claimable,false)
+  assert.match(views.at(-1)?.notice ?? '', /结果尚未确认/)
+  await root.claimMonthlyCard('root-gold-sku');assert.equal(h.http.countOf('/pay/card/claim'),1)
+})
+test('rapid repeated monthly claim intent while first request is pending sends one write',async()=>{
+  const h=harness();monthlyTarget(h);const root=h.root as unknown as MonthlyController;await h.root.start('monthly-busy','月卡');await root.openMonthlyCardTab()
+  const release=h.http.hold('/pay/card/claim');const first=root.claimMonthlyCard('root-gold-sku');await new Promise<void>(resolve=>setImmediate(resolve));await root.claimMonthlyCard('root-gold-sku');assert.equal(h.http.countOf('/pay/card/claim'),1);release();await first
+})
+test('late monthly response after switching to ordinary currency cannot replace shop page',async()=>{
+  const h=harness();const views=monthlyTarget(h);const root=h.root as unknown as MonthlyController;await h.root.start('monthly-late','月卡')
+  const release=h.http.hold('/pay/card');const late=root.openMonthlyCardTab();await h.root.openShopTab('GOLD');release();await late
+  assert.equal(views.length,0);assert.equal(h.lastShop?.currency,'GOLD')
+})
+test('monthly purchase delegates existing payment order with quantity one and no real gateway',async()=>{
+  const h=harness();monthlyTarget(h);const root=h.root as unknown as MonthlyController;await h.root.start('monthly-buy','月卡');await root.openMonthlyCardTab();await root.buyMonthlyCard('root-gold-sku')
+  const orders=h.http.calls.filter(c=>c.path==='/pay/order');assert.equal(orders.length,1);assert.equal(orders[0]!.body.productId,'root-gold-sku');assert.equal(orders[0]!.body.count,1)
+})
+
+test('monthly payment result and server notice remain visible in the shop without a gift popup', async () => {
+  const h = harness()
+  monthlyTarget(h)
+  const views: import('../assets/scripts/game/session/AppRoot').MonthlyShopView[] = []
+  h.targets.monthlyCards = view => views.push(view)
+  h.http.overrides.set('/pay/order', {
+    orderId: 'monthly-unsupported', minorNotice: '服务端额度提醒',
+    payParams: { mode: 'game', offerId: 'fixture-only', buyQuantity: '3000', env: '1', currencyType: 'CNY', signature: null },
+  })
+  await h.root.start('monthly-feedback', '月卡')
+  await h.root.openMonthlyCardTab()
+  await h.root.buyMonthlyCard('root-gold-sku')
+  assert.match(views.at(-1)?.notice ?? '', /开发|浏览器|微信/)
+  assert.match(views.at(-1)?.notice ?? '', /服务端额度提醒/)
+  assert.equal(h.http.countOf('/pay/order'), 1)
+})
+test('retired month card cannot create purchase order through root controller',async()=>{
+  const h=harness();monthlyTarget(h);const status=monthlyStatusForRoot();status.cards[0]!.saleable=false;h.http.overrides.set('/pay/card',status);const root=h.root as unknown as MonthlyController
+  await h.root.start('monthly-retired','月卡');await root.openMonthlyCardTab();await root.buyMonthlyCard('root-gold-sku');assert.equal(h.http.countOf('/pay/order'),0)
+})
+
+test('monthly claim rejection replaces an older success notice with the server reason', async () => {
+  const h = harness()
+  const views = monthlyTarget(h)
+  await h.root.start('monthly-rejection', '月卡')
+  await h.root.openMonthlyCardTab()
+  await h.root.claimMonthlyCard('root-gold-sku')
+  assert.match(views.at(-1)?.notice ?? '', /已结算/)
+  h.http.bizFailNext = { code: 15003, msg: '本日月卡奖励已领取', detail: null }
+  await h.root.claimMonthlyCard('root-gold-sku')
+  assert.match(views.at(-1)?.notice ?? '', /本日月卡奖励已领取/)
+  assert.doesNotMatch(views.at(-1)?.notice ?? '', /已结算/)
+})
+
+for (const lostResponse of [false, true]) {
+  test(`monthly claim ${lostResponse ? 'unknown' : 'successful'} result renders even when authoritative GET also fails`, async () => {
+    const h = harness()
+    const views = monthlyTarget(h)
+    await h.root.start('monthly-read-unavailable', '月卡')
+    await h.root.openMonthlyCardTab()
+    await h.root.claimMonthlyCard('root-gold-sku')
+    assert.match(views.at(-1)?.notice ?? '', /已结算/)
+    const priorViews = views.length
+    const priorWrites = h.http.countOf('/pay/card/claim')
+    const priorReads = h.http.countOf('/pay/card')
+    const originalGet = h.http.get.bind(h.http)
+    h.http.get = async (url, headers) => {
+      const response = await originalGet(url, headers)
+      if (new URL(url).pathname === '/pay/card') throw new Error('fixture: authoritative read is offline')
+      return response
+    }
+    if (lostResponse) {
+      const originalPost = h.http.post.bind(h.http)
+      h.http.post = async (url, body, headers) => {
+        const response = await originalPost(url, body, headers)
+        if (new URL(url).pathname === '/pay/card/claim') throw new Error('fixture: accepted claim acknowledgement lost')
+        return response
+      }
+    }
+    await h.root.claimMonthlyCard('root-gold-sku')
+    assert.equal(h.http.countOf('/pay/card/claim') - priorWrites, 1, 'a failed read never retries the write')
+    assert.ok(h.http.countOf('/pay/card') > priorReads, 'authoritative refresh was attempted')
+    assert.ok(views.length > priorViews, 'the result renders independently of the failed read')
+    assert.match(views.at(-1)?.notice ?? '', lostResponse ? /结果尚未确认/ : /已结算/)
+    if (lostResponse) assert.doesNotMatch(views.at(-1)?.notice ?? '', /已结算/)
+  })
+}
+
+test('monthly payment feedback remains visible when subsequent status refresh fails', async () => {
+  const h = harness()
+  const views = monthlyTarget(h)
+  await h.root.start('monthly-payment-read-unavailable', '月卡')
+  await h.root.openMonthlyCardTab()
+  h.http.failPaths.add('/pay/card')
+  await h.root.buyMonthlyCard('root-gold-sku')
+  assert.match(views.at(-1)?.notice ?? '', /当前环境不支持支付/)
+  assert.equal(h.http.countOf('/pay/order'), 1)
+})

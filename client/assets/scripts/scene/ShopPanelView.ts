@@ -1,5 +1,5 @@
 /**
- * 职责：商店面板 —— 四个币种页签、货架行与兑换（B24 S-b）。
+ * 职责：商店面板 —— 四个币种货架与月卡页签、兑换和月卡购买/日包领取（B24 S-b）。
  * 依赖：cc（渲染）、game/shop/ShopPanel（展示数据组装，已单测）、scene/ArtCatalog、scene/UiFont。
  *
  * <p><b>本场景不做任何判定</b>（铁律 2）：能不能兑换、还差几级、本期限购剩几个、余额够不够，
@@ -16,7 +16,8 @@
 import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { canBuy, SHOP_TABS, shopRowStateText } from '../game/shop/ShopPanel'
 import type { ShopRow } from '../game/shop/ShopPanel'
-import type { ShopView } from '../game/session/AppRoot'
+import type { MonthlyCardRow } from '../game/shop/MonthlyCardPanel'
+import type { MonthlyShopView, ShopView } from '../game/session/AppRoot'
 import type { ShopCurrency } from '../net/generated/ShopProtocol'
 import { applySystemUiFont, capWidth } from './UiFont'
 import {
@@ -48,6 +49,26 @@ const TAB_WIDTH = 110
 const ROW_POOL_SIZE = 6
 /** 屏幕底部要给导航条让出的高度（8 下边距 + 52 导航条 + 8 安全间隙，与军队面板同一个数）。 */
 const BOTTOM_RESERVED = 68
+const MONTHLY_CARD_HEIGHT = 240
+const MONTHLY_COMPACT_HEIGHT = 184
+const MONTHLY_CARD_GAP = 12
+const MONTHLY_CARD_POOL_SIZE = 3
+const MONTHLY_HEADER_HEIGHT = 138
+const MONTHLY_PAGER_HEIGHT = 32
+
+interface MonthlyCardNodes {
+  readonly node: Node
+  readonly name: Label
+  readonly price: Label
+  readonly offer: Label
+  readonly status: Label
+  readonly expiry: Label
+  readonly refresh: Label
+  readonly claim: Node
+  readonly claimCaption: Label
+  readonly purchase: Node
+  readonly purchaseCaption: Label
+}
 
 @ccclass('ShopPanelView')
 export class ShopPanelView extends Component {
@@ -75,11 +96,20 @@ export class ShopPanelView extends Component {
   private nextPageCaption: Label | null = null
   private canPrev = false
   private canNext = false
+  private monthlyMode = false
+  private monthlyPanel: MonthlyShopView | null = null
+  private monthlyTab: Node | null = null
+  private monthlyRoot: Node | null = null
+  private readonly monthlyNodes: MonthlyCardNodes[] = []
+  private readonly monthlyRows: Array<MonthlyCardRow | null> = []
 
   /** 切页签：由编排层去拉那一页（四个币种的账本各是各的）。 */
   onTab: ((currency: ShopCurrency) => void) | null = null
   /** 兑换一行。可不可兑换由服务端说了算，编排层会在本地先挡一次并说明原因。 */
   onBuy: ((rowId: string) => void) | null = null
+  onMonthlyTab: (() => void) | null = null
+  onCardClaim: ((productId: string | null) => void) | null = null
+  onCardPurchase: ((productId: string) => void) | null = null
 
   override onLoad(): void {
     const size = view.getVisibleSize()
@@ -95,17 +125,31 @@ export class ShopPanelView extends Component {
     this.rowNodes.length = 0
     this.onTab = null
     this.onBuy = null
+    this.onMonthlyTab = null
+    this.onCardClaim = null
+    this.onCardPurchase = null
+    this.monthlyNodes.length = 0
+    this.monthlyRows.length = 0
   }
 
   /** 装载一整块商店视图（编排层组装好的，本文件不改其中任何判定）。 */
   attach(shopView: ShopView): void {
     // 换币种归零（四个账本是四份不同的货架），买完重拉同一页只 clamp：
     // 兑换后编排层会再 attach 一次，归零会把玩家刚买的那一行从屏上弹走
-    if (this.lastCurrency !== shopView.currency) {
+    if (this.monthlyMode || this.lastCurrency !== shopView.currency) {
       this.page = 0
       this.lastCurrency = shopView.currency
     }
+    this.monthlyMode = false
     this.panel = shopView
+    this.render()
+  }
+
+  /** 月卡只展示服务器组装的权益与资格，同一页领取刷新保留当前卡。 */
+  attachMonthlyCards(panel: MonthlyShopView): void {
+    if (!this.monthlyMode) this.page = 0
+    this.monthlyMode = true
+    this.monthlyPanel = panel
     this.render()
   }
 
@@ -133,7 +177,7 @@ export class ShopPanelView extends Component {
     this.prevPageButton = this.buildPagerButton('PrevPageButton', -PANEL_WIDTH / 2 + 46)
     this.nextPageButton = this.buildPagerButton('NextPageButton', PANEL_WIDTH / 2 - 46)
 
-    const startX = -(SHOP_TABS.length - 1) * TAB_WIDTH / 2
+    const startX = -SHOP_TABS.length * TAB_WIDTH / 2
     SHOP_TABS.forEach((tab, index) => {
       const node = new Node(`Tab_${tab.currency}`)
       node.layer = this.node.layer
@@ -152,6 +196,25 @@ export class ShopPanelView extends Component {
       node.on('touch-start', (_event: EventTouch) => this.onTab?.(currency), this)
       this.tabNodes.set(currency, node)
     })
+
+    this.monthlyTab = new Node('Tab_MonthlyCards')
+    this.monthlyTab.layer = this.node.layer
+    this.node.addChild(this.monthlyTab)
+    this.monthlyTab.setPosition(new Vec3(startX + SHOP_TABS.length * TAB_WIDTH, top - 112, 0))
+    this.monthlyTab.addComponent(UITransform).setContentSize(new Size(TAB_WIDTH - 8, 34))
+    this.monthlyTab.addComponent(Graphics)
+    this.paintTab(this.monthlyTab, false)
+    this.addLabel('Caption', 0, 0, COLOR_TEXT, 15, this.monthlyTab).string = '月卡'
+    this.monthlyTab.on('touch-start', () => this.onMonthlyTab?.(), this)
+
+    this.monthlyRoot = new Node('MonthlyCards')
+    this.monthlyRoot.layer = this.node.layer
+    this.node.addChild(this.monthlyRoot)
+    this.monthlyRoot.active = false
+    for (let index = 0; index < MONTHLY_CARD_POOL_SIZE; index++) {
+      this.monthlyNodes.push(this.createMonthlyCard(index, this.monthlyRoot))
+      this.monthlyRows.push(null)
+    }
 
     for (let index = 0; index < ROW_POOL_SIZE; index++) {
       const row = this.createRow(index)
@@ -273,6 +336,116 @@ export class ShopPanelView extends Component {
     graphics.fill()
   }
 
+  private createMonthlyCard(index: number, parent: Node): MonthlyCardNodes {
+    const node = new Node(`MonthlyCardRow_${index}`)
+    node.layer = parent.layer
+    parent.addChild(node)
+    node.addComponent(UITransform).setContentSize(new Size(PANEL_WIDTH, MONTHLY_CARD_HEIGHT))
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_ROW
+    graphics.roundRect(-PANEL_WIDTH / 2, -MONTHLY_CARD_HEIGHT / 2, PANEL_WIDTH, MONTHLY_CARD_HEIGHT, 6)
+    graphics.fill()
+    const name = this.monthlyLabel(node, 'Name', -PANEL_WIDTH / 2 + PADDING, 100, 380, 26, 20, COLOR_COPPER_GOLD)
+    const price = this.monthlyLabel(node, 'Price', 106, 100, 218, 26, 16, COLOR_TEXT)
+    const offer = this.monthlyLabel(node, 'Offer', -PANEL_WIDTH / 2 + PADDING, 59, PANEL_WIDTH - 2 * PADDING, 48, 15, COLOR_TEXT, true)
+    const status = this.monthlyLabel(node, 'Status', -PANEL_WIDTH / 2 + PADDING, 12, PANEL_WIDTH - 2 * PADDING, 42, 14, COLOR_GOOD, true)
+    const expiry = this.monthlyLabel(node, 'Expiry', -PANEL_WIDTH / 2 + PADDING, -26, PANEL_WIDTH - 2 * PADDING, 20, 14, COLOR_TEXT_DIM)
+    const refresh = this.monthlyLabel(node, 'Refresh', -PANEL_WIDTH / 2 + PADDING, -50, PANEL_WIDTH - 2 * PADDING, 20, 14, COLOR_TEXT_DIM)
+    const claim = this.monthlyButton(node, 'ClaimButton', 150, () => {
+      const row = this.monthlyRows[index]
+      if (this.monthlyMode && row?.claimable) this.onCardClaim?.(row.productId)
+    })
+    const purchase = this.monthlyButton(node, 'PurchaseButton', 274, () => {
+      const row = this.monthlyRows[index]
+      if (this.monthlyMode && row?.purchasable && row.productId !== null) this.onCardPurchase?.(row.productId)
+    })
+    node.active = false
+    return { node, name, price, offer, status, expiry, refresh, claim: claim.node, claimCaption: claim.caption,
+      purchase: purchase.node, purchaseCaption: purchase.caption }
+  }
+
+  private monthlyLabel(parent: Node, name: string, x: number, y: number, width: number, height: number,
+                       fontSize: number, color: Color, wrap = false): Label {
+    const label = this.addLabel(name, x, y, color, fontSize, parent)
+    this.placeMonthlyLabel(label, x, y, width, height, fontSize, wrap)
+    return label
+  }
+
+  private placeMonthlyLabel(label: Label, x: number, y: number, width: number, height: number,
+                            fontSize: number, wrap = false): void {
+    label.node.setPosition(new Vec3(x, y, 0))
+    const transform = label.node.getComponent(UITransform)
+    transform?.setAnchorPoint(0, 0.5)
+    transform?.setContentSize(new Size(width, height))
+    label.horizontalAlign = Label.HorizontalAlign.LEFT
+    label.fontSize = fontSize
+    label.enableWrapText = wrap
+    label.lineHeight = fontSize + 6
+    label.overflow = Label.Overflow.SHRINK
+  }
+
+  /** 矮逻辑窗口改排版、时间并列；按钮保留至少32px高度，不缩放整卡。 */
+  private layoutMonthlyCard(card: MonthlyCardNodes, compact: boolean): void {
+    const height = compact ? MONTHLY_COMPACT_HEIGHT : MONTHLY_CARD_HEIGHT
+    card.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH, height))
+    const graphics = card.node.getComponent(Graphics)
+    if (graphics !== null) {
+      graphics.clear()
+      graphics.fillColor = COLOR_ROW
+      graphics.roundRect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height, 6)
+      graphics.fill()
+    }
+    const left = -PANEL_WIDTH / 2 + PADDING
+    this.placeMonthlyLabel(card.name, left, compact ? 69 : 100, 380, 26, 20)
+    this.placeMonthlyLabel(card.price, 106, compact ? 69 : 100, 218, 26, 16)
+    this.placeMonthlyLabel(card.offer, left, compact ? 31 : 59, PANEL_WIDTH - 2 * PADDING, compact ? 44 : 48, compact ? 14 : 15, true)
+    this.placeMonthlyLabel(card.status, left, compact ? -13 : 12, PANEL_WIDTH - 2 * PADDING, compact ? 40 : 42, 14, true)
+    this.placeMonthlyLabel(card.expiry, left, compact ? -47 : -26, compact ? 316 : PANEL_WIDTH - 2 * PADDING, 20, compact ? 13 : 14)
+    this.placeMonthlyLabel(card.refresh, compact ? 8 : left, compact ? -47 : -50, compact ? 316 : PANEL_WIDTH - 2 * PADDING, 20, compact ? 13 : 14)
+    for (const button of [card.claim, card.purchase]) {
+      button.setPosition(new Vec3(button.position.x, compact ? -75 : -91, 0))
+      button.getComponent(UITransform)?.setContentSize(new Size(108, compact ? 32 : 34))
+    }
+  }
+
+  private monthlyButton(parent: Node, name: string, x: number, pressed: () => void): { node: Node; caption: Label } {
+    const node = new Node(name)
+    node.layer = parent.layer
+    parent.addChild(node)
+    node.setPosition(new Vec3(x, -91, 0))
+    node.addComponent(UITransform).setContentSize(new Size(108, 34))
+    node.addComponent(Graphics)
+    const caption = this.monthlyLabel(node, 'Caption', -50, 0, 100, 22, 15, COLOR_TEXT)
+    caption.horizontalAlign = Label.HorizontalAlign.CENTER
+    node.on('touch-start', pressed, this)
+    return { node, caption }
+  }
+
+  private paintMonthlyButton(node: Node, caption: Label, usable: boolean, text: string): void {
+    const graphics = node.getComponent(Graphics)
+    if (graphics !== null) {
+      graphics.clear()
+      graphics.fillColor = usable ? COLOR_GOOD : COLOR_PANEL
+      const height = node.getComponent(UITransform)?.height ?? 34
+      graphics.roundRect(-54, -height / 2, 108, height, 5)
+      graphics.fill()
+    }
+    caption.string = text
+    caption.color = usable ? COLOR_BACKGROUND : COLOR_TEXT_DIM
+  }
+
+  private paintTab(node: Node, selected: boolean): void {
+    const graphics = node.getComponent(Graphics)
+    if (graphics === null) return
+    graphics.clear()
+    graphics.fillColor = selected ? COLOR_ROW : COLOR_PANEL
+    graphics.strokeColor = COLOR_COPPER_GOLD
+    graphics.lineWidth = selected ? 2 : 1
+    graphics.roundRect(-(TAB_WIDTH - 8) / 2, -17, TAB_WIDTH - 8, 34, 5)
+    graphics.fill()
+    graphics.stroke()
+  }
+
   private addLabel(name: string, x: number, y: number, color: Color, fontSize: number,
                    parent: Node = this.node): Label {
     const node = new Node(name)
@@ -292,6 +465,16 @@ export class ShopPanelView extends Component {
   // ---------- 渲染 ----------
 
   private render(): void {
+    this.layoutHeader(this.monthlyMode)
+    if (this.monthlyRoot !== null) this.monthlyRoot.active = this.monthlyMode
+    if (this.monthlyTab !== null) this.paintTab(this.monthlyTab, this.monthlyMode)
+    if (this.monthlyMode) {
+      for (const node of this.tabNodes.values()) this.paintTab(node, false)
+      this.renderMonthlyCards()
+      return
+    }
+    if (this.prevPageCaption !== null) this.prevPageCaption.string = '上一页'
+    if (this.nextPageCaption !== null) this.nextPageCaption.string = '下一页'
     const panel = this.panel
     if (panel === null) {
       return
@@ -380,5 +563,87 @@ export class ShopPanelView extends Component {
       this.rowButtonCaption[index]!.string = canBuy(row) ? '兑换' : '不可兑换'
       this.rowButtonCaption[index]!.color = row.purchasable ? COLOR_BACKGROUND : COLOR_TEXT_DIM
     })
+  }
+
+  private renderMonthlyCards(): void {
+    for (let index = 0; index < this.rowNodes.length; index++) {
+      this.rowNodes[index]!.active = false
+      this.rowIds[index] = null
+    }
+    const panel = this.monthlyPanel
+    if (panel === null) return
+    const size = view.getVisibleSize()
+    const top = size.height / 2 - PADDING - MONTHLY_HEADER_HEIGHT
+    const navTop = -size.height / 2 + BOTTOM_RESERVED
+    const compact = top - navTop < MONTHLY_CARD_HEIGHT + MONTHLY_PAGER_HEIGHT
+    const height = compact ? MONTHLY_COMPACT_HEIGHT : MONTHLY_CARD_HEIGHT
+    // 翻页独立留出32px，旧卡与未来服务端扩展行都不能掉到导航条下。
+    const capacity = Math.max(1, Math.min(MONTHLY_CARD_POOL_SIZE,
+      Math.floor((top - navTop - MONTHLY_PAGER_HEIGHT + MONTHLY_CARD_GAP) / (height + MONTHLY_CARD_GAP))))
+    const pages = pageCount(panel.rows.length, capacity)
+    this.page = clampPage(this.page, panel.rows.length, capacity)
+    const window = pageWindow(panel.rows.length, this.page, capacity)
+    const rows = panel.rows.slice(window.start, window.end)
+    if (this.headerLabel !== null) {
+      this.headerLabel.string = `月卡 ${rows.length}/${panel.rows.length} 张`
+        + (pages > 1 ? ` · ${pageNotice(this.page, pages)}` : '')
+      this.headerLabel.color = COLOR_COPPER_GOLD
+    }
+    if (this.balanceLabel !== null) {
+      this.balanceLabel.string = '日包需手动领取，有效期内可补领，以当前可领天数为准'
+      this.balanceLabel.color = COLOR_TEXT
+    }
+    if (this.noticeLabel !== null) {
+      this.noticeLabel.string = panel.notice ?? panel.noticeText ?? ''
+      this.noticeLabel.color = COLOR_TEXT
+    }
+    if (this.prevPageCaption !== null) this.prevPageCaption.string = capacity > 1 ? '上一页' : '上一卡'
+    if (this.nextPageCaption !== null) this.nextPageCaption.string = capacity > 1 ? '下一页' : '下一卡'
+    this.paintPager(pages, top - rows.length * height - Math.max(0, rows.length - 1) * MONTHLY_CARD_GAP - 18)
+    this.monthlyNodes.forEach((card, index) => {
+      const row = rows[index] ?? null
+      this.monthlyRows[index] = row
+      card.node.active = row !== null
+      if (row === null) return
+      this.layoutMonthlyCard(card, compact)
+      card.node.setPosition(new Vec3(0, top - height / 2 - index * (height + MONTHLY_CARD_GAP), 0))
+      card.name.string = row.name
+      card.price.string = row.priceText ?? '已购权益保留'
+      card.offer.string = row.offerText
+      card.status.string = row.statusText
+      card.status.color = row.claimable ? COLOR_GOOD : COLOR_TEXT_DIM
+      card.expiry.string = row.expiryText
+      card.refresh.string = row.refreshText
+      this.paintMonthlyButton(card.claim, card.claimCaption, row.claimable, row.claimable ? '领取日包' : '暂无可领')
+      this.paintMonthlyButton(card.purchase, card.purchaseCaption, row.purchasable, row.purchasable ? '购买' : '当前停售')
+    })
+  }
+
+  /** 两行支付/领取回执只占月卡自己的表头；返回普通货架还原旧槽位。 */
+  private layoutHeader(monthly: boolean): void {
+    const top = view.getVisibleSize().height / 2 - PADDING
+    if (this.headerLabel !== null) {
+      this.headerLabel.node.setPosition(new Vec3(0, top - (monthly ? 16 : 20), 0))
+      this.headerLabel.lineHeight = monthly ? 26 : 40
+      this.headerLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, monthly ? 26 : 0))
+    }
+    if (this.balanceLabel !== null) {
+      this.balanceLabel.node.setPosition(new Vec3(0, top - (monthly ? 43 : 50), 0))
+      this.balanceLabel.fontSize = monthly ? 14 : 17
+      this.balanceLabel.lineHeight = monthly ? 20 : 40
+      this.balanceLabel.enableWrapText = !monthly
+      this.balanceLabel.overflow = monthly ? Label.Overflow.SHRINK : Label.Overflow.NONE
+      this.balanceLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, monthly ? 20 : 0))
+    }
+    if (this.noticeLabel !== null) {
+      this.noticeLabel.node.setPosition(new Vec3(0, top - (monthly ? 75 : 76), 0))
+      this.noticeLabel.fontSize = monthly ? 14 : 15
+      this.noticeLabel.lineHeight = monthly ? 20 : 40
+      this.noticeLabel.enableWrapText = true
+      this.noticeLabel.node.getComponent(UITransform)?.setContentSize(new Size(PANEL_WIDTH - 2 * PADDING, monthly ? 40 : 27))
+    }
+    const tabs = Array.from(this.tabNodes.values())
+    if (this.monthlyTab !== null) tabs.push(this.monthlyTab)
+    for (const node of tabs) node.setPosition(new Vec3(node.position.x, top - (monthly ? 115 : 112), 0))
   }
 }

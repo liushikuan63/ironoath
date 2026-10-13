@@ -2,6 +2,8 @@
 // 要改协议请改 Schema，然后运行 `npm run gen`；CI 会用 scripts/check-contract-sync.sh 校验同步性。
 package com.ironoath.web.dto.generated;
 
+import java.util.List;
+
 /**
  * GET /pay/card 响应：月卡当前状态（B19 §一.1a）。
  *
@@ -14,6 +16,7 @@ public record CardStatusResp(
         long claimableDays,   // 现在点领取会发出几天的日包。漏领的天数在有效期内累计补领，但**封顶为剩余有效天数**（B19 §五②a）—— 补发不会超过卡本身还剩多少天，所以「两周后回来一次领完」拿不到比日常更多的东西。0 表示今天无可领。
         boolean adFree,   // 免广告收益（仅指**跳过播放**）：`city_rule_ad_speedup_daily_limit` 的次数上限照旧生效。把次数一起免掉等于让「时间」这个核心卡点被付费彻底绕过，那是当初给广告加速设上限的理由。
         long bonusQueues,   // 月卡带来的额外建造队列格数（0 表示没有）。**这是临时权益、到期即收回**：客户端不得把它累加成永久值，服务端也不落库（每次按当前有效期推导），否则到期那一刻就出现「存档里还留着 +1」的第二真相。
-        long serverNow)   // 服务端当前时刻，客户端据此画倒计时（铁律 5）。
+        long serverNow,   // 服务端当前时刻，客户端据此画倒计时（铁律 5）。
+        List<MonthlyCardView> cards)   // 新服务端月卡列表；旧响应缺字段或null时客户端保留兼容。旧顶层active/expireAt/claimableDays只表示旧综合月卡。
 {
 }

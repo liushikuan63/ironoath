@@ -136,6 +136,58 @@ export interface PayRetryReq {
 }
 
 /**
+ * 带服务器玩家可见名称的月卡奖励预览；id仅作为识别键。
+ */
+export interface MonthlyCardRewardView {
+  type: string
+  id: string
+  name: string
+  count: number
+}
+
+/**
+ * 服务器报价与当前已购快照分离的月卡视图。购买价、每日数量和资格均由服务器下发；客户端不推算付费权益。
+ */
+export interface MonthlyCardView {
+  /** 商品标识，用于请求；界面展示name。 */
+  productId: string
+  /** 服务器商品名称。 */
+  name: string
+  /** 是否仍可购买；旧综合卡停售但已购买权益仍可领取。 */
+  saleable: boolean
+  /** 购买当前报价，分。 */
+  priceCents: number
+  /** 本次商品每份持续天数。 */
+  durationDays: number
+  /** 当前报价的购买初始金币，旧权益不补发。 */
+  initialGold: number
+  /** 当前购买报价的每日奖励。 */
+  dailyRewards: MonthlyCardRewardView[]
+  /** 当前有效已购订单快照的每日奖励；领取按该快照，不随新报价修改。 */
+  ownedDailyRewards: MonthlyCardRewardView[] | null
+  /** 是否有当前有效已购周期。 */
+  active: boolean
+  /** 同商品续购后的最后到期时刻；未买null。 */
+  expireAt: number | null
+  /** 目前可领份数；新卡04:00业务日、已购周期总份数上限，剩余有效天数封顶。 */
+  claimableDays: number
+  /** 该商品当前有效权益，免播放不增加次数。 */
+  adFree: boolean
+  /** 该商品当前有效额外队列数。 */
+  bonusQueues: number
+  /** 该商品当前有效提前收割权益；不豁免四资源手动教学。 */
+  earlyCollectAll: boolean
+  /** 新卡下一次北京时间04:00刷新；旧综合卡仍采用既有自然日。 */
+  nextRefreshAt: number
+  /** 当前购买报价免广告权益，和active生效权益分开。 */
+  offerAdFree: boolean
+  /** 当前购买报价的额外队列。 */
+  offerBonusQueues: number
+  /** 当前购买报价的提前收割权益，仍须四种手动教学。 */
+  offerEarlyCollectAll: boolean
+}
+
+/**
  * GET /pay/card 响应：月卡当前状态（B19 §一.1a）。
  *
  * **为什么要把权益也回给客户端而不是让客户端自己判断**：免广告与队列 +1 的判定住在服务端（`pay_product` 的 adFree / extraQueues），客户端只展示。客户端自己算「买过月卡 = 有权益」的话，月卡到期那一刻两端就会分叉：一边还在跳过广告，另一边已经把跳过收走了。
@@ -155,6 +207,8 @@ export interface CardStatusResp {
   bonusQueues: number
   /** 服务端当前时刻，客户端据此画倒计时（铁律 5）。 */
   serverNow: number
+  /** 新服务端月卡列表；旧响应缺字段或null时客户端保留兼容。旧顶层active/expireAt/claimableDays只表示旧综合月卡。 */
+  cards: MonthlyCardView[] | null
 }
 
 /**
@@ -163,6 +217,8 @@ export interface CardStatusResp {
 export interface CardClaimReq {
   /** 幂等键。日包是「点一下给东西」的写操作，弱网重发不幂等就会一天领两份。 */
   requestId: string
+  /** 选定月卡商品，缺字段/null只领取旧综合月卡，绝不隐式选择两新卡；服务端按自身存档和04:00业务日确定资格与份数。 */
+  productId: string | null
 }
 
 /**
@@ -177,6 +233,8 @@ export interface CardClaimResp {
   expireAt: number | null
   /** 服务端当前时刻。 */
   serverNow: number
+  /** 实际领取的月卡商品；旧响应缺字段兼容。 */
+  productId: string | null
 }
 
 /**

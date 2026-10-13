@@ -89,6 +89,8 @@ export interface RequestOptions {
    * 有了幂等键，重试与离线重放才是安全的 —— 服务端会去重（B00 陷阱 3）。
    */
   readonly idempotent?: boolean
+  /** 服务端可能已接受的领奖操作，可保留幂等键而只发一次POST，再由GET核对。缺省沿用既有策略。 */
+  readonly retryOnNetworkFailure?: boolean
   /**
    * 断网时是否入离线队列。
    *
@@ -253,7 +255,7 @@ export class NetModule {
       return { kind: 'network', message: '连接不可用，请求已进入离线队列', queued, requestId }
     }
 
-    return this.sendWithRetry<TResp>(path, requestId, requestId !== null,
+    return this.sendWithRetry<TResp>(path, requestId, requestId !== null && options.retryOnNetworkFailure !== false,
       (url, headers) => this.deps.http.post(url, bodyText, headers))
   }
 

@@ -1758,6 +1758,10 @@ export class GameBootstrap extends Component {
     }
     if (shop !== null) {
       out.shop = view => shop.attach(view)
+      out.monthlyCards = view => shop.attachMonthlyCards(view)
+      shop.onMonthlyTab = () => { void this.root?.openMonthlyCardTab() }
+      shop.onCardClaim = productId => { void this.root?.claimMonthlyCard(productId) }
+      shop.onCardPurchase = productId => { void this.root?.buyMonthlyCard(productId) }
       shop.onTab = currency => { void this.root?.openShopTab(currency) }
       shop.onBuy = rowId => { void this.root?.buyShopRow(rowId) }
     }

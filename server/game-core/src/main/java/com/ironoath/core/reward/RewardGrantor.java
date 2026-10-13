@@ -66,6 +66,7 @@ public final class RewardGrantor implements RewardService {
         }
 
         if (ctx.durableGold()) return grantGoldOnce(playerId, rewards, ctx);
+        if (ctx.durableItems()) return grantItemsOnce(playerId,rewards,ctx);
 
         long now = clock.getAsLong();
         List<RewardItem> granted = new ArrayList<>(rewards.size());
@@ -96,6 +97,27 @@ public final class RewardGrantor implements RewardService {
             compensationId = compensation.record(playerId, List.copyOf(failed), ctx, firstCause);
         }
         return new GrantResult(granted, overflow, mailId, compensationId);
+    }
+
+
+    private GrantResult grantItemsOnce(String playerId,List<RewardItem> rewards,RewardContext ctx) {
+        var items=new java.util.LinkedHashMap<String,Long>();
+        for(var reward:rewards){if(reward.type()!=RewardType.ITEM)throw new IllegalArgumentException("持久材料领取不能混合奖励");items.merge(reward.id(),reward.count(),Math::addExact);}
+        return deliverItems(playerId,bag.grantItemsOnce(playerId,items,ctx,clock.getAsLong()));
+    }
+    private GrantResult deliverItems(String playerId,RewardPorts.Bag.ItemGrant accepted) {
+        var receipt=accepted.receipt();var overflow=receipt.overflow().entrySet().stream().map(e->new RewardItem(RewardType.ITEM,e.getKey(),e.getValue())).toList();
+        String mailId=receipt.overflowMailId();
+        if(receipt.pendingOverflow()){
+            mailId=mailbox.sendOverflow(playerId,overflow,new RewardContext(receipt.source(),receipt.sourceRef(),receipt.businessKey(),true,receipt.facts()));
+            bag.completeItemOverflow(playerId,receipt.businessKey(),mailId);
+        }
+        var granted=accepted.creditedNow().entrySet().stream().map(e->new RewardItem(RewardType.ITEM,e.getKey(),e.getValue())).toList();
+        return new GrantResult(granted,overflow,mailId,null);
+    }
+    @Override public void recoverItemClaims(String playerId) {
+        for(var receipt:bag.pendingItemClaims(playerId))grantItemsOnce(playerId,receipt.requested().entrySet().stream().map(e->new RewardItem(RewardType.ITEM,e.getKey(),e.getValue())).toList(),
+            new RewardContext(receipt.source(),receipt.sourceRef(),receipt.businessKey(),true,receipt.facts()));
     }
 
     private GrantResult grantGoldOnce(String playerId, List<RewardItem> rewards, RewardContext ctx) {
