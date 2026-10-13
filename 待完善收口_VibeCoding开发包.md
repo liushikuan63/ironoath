@@ -7416,3 +7416,6 @@ TEST_EXIT=0
 
 
 | G09-I1 用户授权后台Docker恢复，原库同号与147真实Mongo购卡整合复验 | 本笔本地提交未推 | 用户明确允许现有Docker/mongo27后台恢复；首次start返回already running但引擎stopped不算成功，检查WSL版本恢复后经官方CLI restart detach恢复running，mongo ping=1，原D盘绑定和unless-stopped不变。原Java38068与IDE36728启动epoch保持，真实原号GET及5判据通过：主8/G1738/医院1/使馆1/同UID，266兵0伤兵。重跑本版购卡整合147实际测试，0失败/错误/跳过，exit0 | D:/tmp/ironoath-activity-evidence-20261013/mongo27-recovered-inspect.actual.txt；native-original-ui/mongo-recovered.original.actual.json；monthcard-purchase-integration-recovered-focused.log；G09-I0停库首红保留 | 仅恢复既有引擎与容器，无安装/重建/删库/重启电脑或原应用；其他既有容器按其原策略自动恢复，没有改它们。147通过只证明本批，新版全量构建/新候选运行批次待，原主9尚未发起，主10建盟/主12/新两卡原生/两号战争待；主树日包与UI仍原执行者WIP，不复制或覆盖 |
+
+
+| G08-N6 原主8到9普通96秒自然升级，石料不足继续真实采集 | 本笔本地提交未推 | 原F40/F35/9490同UID正常选择主城并点击升级，生产建设窗口96秒，真实自然等待后主9空闲；5判据通过，金币1738保持、石料1347，完成图已实际查看。原医院1/使馆1/兵营6/学院1与266兵保持；此前主9停库首次GET首红保留，恢复后只发起一次正常升级 | D:/tmp/ironoath-activity-evidence-20261013/native-original-ui/main9.actual.json与main9-scheduled.actual.json；native-original-main9-recovered.log；原R18 driver-0421-original-main9-natural-complete-20261013.png；main9-failure.actual.json与driver-0368-http.json | 原号主9已验，后续主10先核真实资源门；现有背包无资源包，按正常新采集补资源，不重收旧行军。Docker已获授权恢复，原后端/IDE不重启、原库/账号保留；新活动/新两卡原生及两号双向战争未验，无夹具/加速/新增购买或旧物资重领 |
