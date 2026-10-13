@@ -7434,3 +7434,5 @@ TEST_EXIT=0
 | #1250 战报首红修复40通过，独审揭示既有掠夺溢出漏邮件 | 本笔发现本地原子留档，未推 | 真实到达回归1首红/修后40全0，冻结a4aa3a2b两SHA只读审查无新增阻断；既有wallet.grant截容量差额仅log，与B04统一发放/超额邮件规则不符 | tmp/core-bot-bilateral-20261014-ef81904d/loot-red1与red2、loot-green1、loot-review.manifest.json；B04 §背包收益 | 新普通1x/完整工程尚在验，未验满仓邮件；该既有Important列返兵圈层与画像调度之后持续推进。原9490/UID/IDE不操作，不推部署付款 |
 
 | #1251 Bot真人真实返兵通过，真人战后资源生产使全对象相等量具假红 | 本笔验收前提发现本地原子留档，未推 | 新998ef07d普通1x attempt4共39点38过，Bot真返兵/防重复已验；真人战报无loot且金币未减，但木石粮+1/+1/+3及结算时间变化，改核余额无扣减 | tmp/core-bot-bilateral-20261014-ef81904d/attempt4及钱包前后；build-final1.log | 真人返兵/核心延迟反击与四向圈层尚待新attempt5，原首红39/1保，自有库已清；额外18探针在途，满仓邮件#1250与画像调度后续，原9490/UID/IDE不动、不推部署付款 |
+
+| #1252 普通1x双向到达延迟反击真实返兵与四向圈层67全过 | 本笔验收完成留档本地提交，未推 | 998ef07d/attempt5共67全过，三次实际战斗/双报/医院/真实返兵/重复读、真实受击decide延迟3秒反击及四向圈层6004无副作用；自有候选全清，47门/2607server/1321client全0、战争44/0 | tmp/core-bot-bilateral-20261014-ef81904d/attempt5/result.actual.json与三个battle结果；runtime-attempt1 | 18族尾部及两合法真人队长带Bot普通成员的集结sqrtN2负例待补，未称自然训练/tick/原号手机；满仓邮件#1250后续，画像Redis持久化继续。不推部署付款/原9490 UID IDE操作 |
