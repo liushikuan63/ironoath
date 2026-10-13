@@ -105,6 +105,8 @@ function harness(width: number, height: number, initialInsets: Insets): {
     COLOR_BAR: 'bar', COLOR_IDLE: 'idle',
     view: { getVisibleSize: () => ({ width, height }) },
     viewportSafeInsets: () => insets,
+    // 此夹具只验证导航/安全区几何；材质由共用助手故障回归和真实Cocos量具覆盖。
+    applyPanelSurface: () => {},
   }) as new () => Harness
   const nav = new Constructor()
   const city = new Node('city')

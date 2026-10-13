@@ -13,15 +13,15 @@
  * 压在底部导航条下面 —— 画了但玩家看不见，比少画一行更难发现；画不下的数量在表头说出来。
  */
 
-import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, Sprite, UITransform, Vec3, view } from 'cc'
+import { _decorator, Color, Component, EventTouch, Graphics, Label, Node, Size, UITransform, Vec3, view } from 'cc'
 import { canBuy, SHOP_TABS, shopRowStateText } from '../game/shop/ShopPanel'
 import type { ShopRow } from '../game/shop/ShopPanel'
 import type { MonthlyCardRow } from '../game/shop/MonthlyCardPanel'
 import type { MonthlyShopView, ShopView } from '../game/session/AppRoot'
 import type { ShopCurrency } from '../net/generated/ShopProtocol'
 import { applySystemUiFont, capWidth } from './UiFont'
-import { applySlicedSprite } from './ArtCatalog'
-import { applyDialogButton } from './DialogStyle'
+import { applyDialogButton, applyPanelSurface } from './DialogStyle'
+import { TEXT_PRIMARY, TEXT_SECONDARY, TEXT_ACCENT, TEXT_SELECTED } from '../game/ui/UiTokens'
 import {
   clampPage, contentPerPage, pageCount, pageNotice, pageWindow,
 } from '../game/ui/PanelPaging'
@@ -32,10 +32,10 @@ const COLOR_BACKGROUND = new Color(22, 18, 16, 255)
 const COLOR_PANEL = new Color(40, 33, 27, 255)
 const COLOR_ROW = new Color(52, 43, 35, 255)
 const COLOR_ROW_LOCKED = new Color(34, 31, 28, 255)
-const COLOR_COPPER_GOLD = new Color(218, 179, 107, 255)
-const COLOR_TEXT = new Color(226, 214, 190, 255)
-const COLOR_TEXT_DIM = new Color(185, 174, 151, 255)
-const COLOR_GOOD = new Color(218, 179, 107, 255)
+const COLOR_COPPER_GOLD = new Color(...TEXT_ACCENT)
+const COLOR_TEXT = new Color(...TEXT_PRIMARY)
+const COLOR_TEXT_DIM = new Color(...TEXT_SECONDARY)
+const COLOR_GOOD = new Color(...TEXT_ACCENT)
 const COLOR_WARNING = new Color(200, 60, 40, 255)
 
 const PANEL_WIDTH = 680
@@ -398,7 +398,7 @@ export class ShopPanelView extends Component {
       graphics.roundRect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height, 6)
       graphics.fill()
     }
-    this.paintCardSurface(card.node, height)
+    applyPanelSurface(card.node, 'ui.panel.gilt', PANEL_WIDTH, height, 'CardSurface')
     // gilt母版四边24px，内容与操作均在框带内侧；紧凑档不缩放整张卡。
     const left = -PANEL_WIDTH / 2 + 32
     this.placeMonthlyLabel(card.name, left, compact ? 56 : 82, 400, compact ? 22 : 26, compact ? 18 : 21)
@@ -411,24 +411,6 @@ export class ShopPanelView extends Component {
       button.setPosition(new Vec3(button === card.claim ? 138 : 260, compact ? -52 : -76, 0))
       button.getComponent(UITransform)?.setContentSize(new Size(108, compact ? 32 : 36))
     }
-  }
-
-  private paintCardSurface(node: Node, height: number): void {
-    // Graphics和Sprite分节点，避免Cocos只登记首个UIRenderer使位图不显示。
-    let art = node.getChildByName('CardSurface')
-    if (art === null) {
-      art = new Node('CardSurface')
-      art.layer = node.layer
-      node.addChild(art)
-      art.addComponent(UITransform)
-      art.setSiblingIndex(0)
-    }
-    const loaded = applySlicedSprite(art, 'ui.panel.gilt', PANEL_WIDTH, height)
-    art.active = loaded
-    const graphics = node.getComponent(Graphics)
-    if (graphics !== null) graphics.enabled = !loaded
-    const sprite = art.getComponent(Sprite)
-    if (sprite !== null) sprite.enabled = loaded
   }
 
   private monthlyButton(parent: Node, name: string, x: number, pressed: () => void): { node: Node; caption: Label } {
@@ -469,6 +451,8 @@ export class ShopPanelView extends Component {
     graphics.fill()
     graphics.stroke()
     applyDialogButton(node, true, TAB_WIDTH - 8, 34, selected)
+    const caption = node.getChildByName('Caption')?.getComponent(Label)
+    if (caption !== null && caption !== undefined) caption.color = new Color(...(selected ? TEXT_SELECTED : TEXT_PRIMARY))
   }
 
   private addLabel(name: string, x: number, y: number, color: Color, fontSize: number,

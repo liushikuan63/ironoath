@@ -1,7 +1,7 @@
 /** 铁誓弹窗共用的材质与净区：内容按需滚动，操作固定，遮罩仍铺满。 */
 import { _decorator, Color, Component, Graphics, Label, Mask, Node, ScrollView, Size, Sprite, UITransform, Vec2, Vec3, view } from 'cc'
 import { PANEL_IRON_INSET } from '../game/art/ArtFamilies'
-import { BRONZE_GOLD, CORNER_RADIUS, IRON_SURFACE, MASK_SCRIM, PANEL_FALLBACK } from '../game/ui/UiTokens'
+import { BRONZE_GOLD, CORNER_RADIUS, DISABLED_TINT, IRON_SURFACE, MASK_SCRIM, PANEL_FALLBACK } from '../game/ui/UiTokens'
 import { dialogBodyFlow, dialogLayout } from '../game/ui/DialogLayout'
 import { applyCommandButton, applyIronButton, applySlicedSprite } from './ArtCatalog'
 import type { PanelNav } from './PanelNav'
@@ -150,7 +150,7 @@ export function applyDialogButton(node: Node, enabled: boolean, width: number, h
   if (sprite !== null) {
     sprite.enabled = loaded
     // iron禁用取常态母版，用既有灰阶tint；再次启用必须复位，不能残留池化的灰色。
-    sprite.color = enabled || width < 100 ? new Color(255, 255, 255, 255) : new Color(128, 128, 128, 255)
+    sprite.color = enabled || width < 100 ? new Color(255, 255, 255, 255) : new Color(...DISABLED_TINT)
   }
   if (target !== node) target.active = loaded
   const previous = node.getChildByName('DialogButtonVector')
@@ -163,6 +163,35 @@ export function applyDialogButton(node: Node, enabled: boolean, width: number, h
   graphics.fillColor = new Color(...IRON_SURFACE)
   graphics.strokeColor = new Color(...BRONZE_GOLD)
   graphics.lineWidth = enabled && selected ? 2 : 1
+  graphics.roundRect(-width / 2 + 1, -height / 2 + 1, width - 2, height - 2, CORNER_RADIUS)
+  graphics.fill()
+  graphics.stroke()
+}
+
+/** 中心锚点卡片/条行的共用材质。位图、兜底独占子节点，反复渲染不增生节点。 */
+export function applyPanelSurface(node: Node, key: 'ui.panel.gilt' | 'ui.plate.band',
+                                  width: number, height: number, artName = 'PanelSurface'): void {
+  node.getComponent(UITransform)?.setContentSize(width, height)
+  const previousGraphics = node.getComponent(Graphics)
+  if (previousGraphics !== null) { previousGraphics.clear(); previousGraphics.enabled = false }
+  const previousSprite = node.getComponent(Sprite)
+  if (previousSprite !== null) previousSprite.enabled = false
+  const art = rendererChild(node, artName, width, height)
+  const loaded = applySlicedSprite(art, key, width, height)
+  art.active = loaded
+  const sprite = art.getComponent(Sprite)
+  if (sprite !== null) sprite.enabled = loaded
+  const fallbackName = `${artName}Fallback`
+  const previousFallback = node.getChildByName(fallbackName)
+  if (previousFallback !== null) previousFallback.active = !loaded
+  if (loaded) return
+  const fallback = rendererChild(node, fallbackName, width, height)
+  const graphics = fallback.getComponent(Graphics) ?? fallback.addComponent(Graphics)
+  graphics.enabled = true
+  graphics.clear()
+  graphics.fillColor = new Color(...PANEL_FALLBACK)
+  graphics.strokeColor = new Color(...BRONZE_GOLD)
+  graphics.lineWidth = 1
   graphics.roundRect(-width / 2 + 1, -height / 2 + 1, width - 2, height - 2, CORNER_RADIUS)
   graphics.fill()
   graphics.stroke()

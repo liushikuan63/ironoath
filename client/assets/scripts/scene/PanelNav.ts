@@ -40,6 +40,8 @@ import { applyNavTab } from './ArtCatalog'
 import { ClientReddotTree } from '../game/reddot/ReddotTree'
 import { applySystemUiFont } from './UiFont'
 import { viewportSafeInsets } from './ViewportSafeArea'
+import { TEXT_PRIMARY, TEXT_SELECTED } from '../game/ui/UiTokens'
+import { applyPanelSurface } from './DialogStyle'
 
 const { ccclass } = _decorator
 
@@ -54,8 +56,8 @@ const COLOR_TEXT_ACTIVE = new Color(26, 19, 16, 255)
  * 这条不是预防性设计：换成页签图之前，导航格用的是缩到 63×44 的按钮九宫格，
  * 选中格深色字压在深色底上，「内城」两个字实际看不见（相对亮度 0.079，收口清单 #213 截图）。
  */
-const COLOR_TEXT_ACTIVE_ON_ART = new Color(255, 205, 92, 255)
-const COLOR_TEXT_IDLE = new Color(200, 186, 160, 255)
+const COLOR_TEXT_ACTIVE_ON_ART = new Color(...TEXT_SELECTED)
+const COLOR_TEXT_IDLE = new Color(...TEXT_PRIMARY)
 const COLOR_RED_DOT = new Color(214, 60, 50, 255)
 
 const BAR_HEIGHT = 52
@@ -299,6 +301,8 @@ export class PanelNav extends Component {
     graphics.fillColor = COLOR_BAR
     graphics.roundRect(-width / 2, -BAR_HEIGHT / 2, width, BAR_HEIGHT, 8)
     graphics.fill()
+
+    applyPanelSurface(background, 'ui.plate.band', width, BAR_HEIGHT)
 
     // 格子数 = 常驻面板 + 「更多」自己那一格
     const columnWidth = width / (BAR_PANELS.length + 1)

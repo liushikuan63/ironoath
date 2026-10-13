@@ -67,8 +67,9 @@ const exportsFor = (name: string, values: Record<string, unknown>): Record<strin
   }
 function setup(width: number, height: number): Harness {
   const font = exportsFor('UiFont', {})
+  const styles = exportsFor('DialogStyle', { ...tokens, PANEL_IRON_INSET, applySlicedSprite: () => false })
   // 本夹具只执行实际布局/点击；位图加载与材质边框由真实Cocos浏览器量具验证。
-  const Scene = exportsFor('ShopPanelView', { ...font, ...paging, ...shop, applySlicedSprite: () => false,
+  const Scene = exportsFor('ShopPanelView', { ...tokens, ...font, ...paging, ...shop, applyPanelSurface: styles.applyPanelSurface,
     applyDialogButton: () => {}, view: { getVisibleSize: () => ({ width, height }) } }).ShopPanelView as new () => Harness
   const result = new Scene(); result.onLoad(); return result
 }
@@ -119,7 +120,7 @@ for (const [width, height] of [[960, 443.6018957345971], [960, 540], [1440, 900]
         const box = bounds(card)
         assert.ok(box.left >= -width! / 2 && box.right <= width! / 2 && box.bottom >= -height! / 2 + 68 && box.top <= height! / 2,
           `card must stay above navigation and inside ${width}×${height}: ${JSON.stringify(box)}`)
-        const content = card.children.filter(n => n.name !== 'CardSurface')
+        const content = card.children.filter(n => n.getComponent(Label) !== null || n.name.endsWith('Button'))
         for (const part of content) {
           const own = bounds(part)
           assert.ok(own.left >= box.left && own.right <= box.right && own.bottom >= box.bottom && own.top <= box.top, part.name + ' escapes card')
@@ -223,4 +224,28 @@ test('铁按钮禁用材质明确置灰，再启用恢复原亮度', () => {
   paint(button, true, 108, 34);const normal = child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0]!
   paint(button, false, 108, 34);assert.ok(child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0]! < normal)
   paint(button, true, 108, 34);assert.equal(child(button, 'DialogButtonArt').getComponent(Sprite)!.color.values[0], normal)
+})
+
+
+test('共用卡片材质加载失败和恢复切换不残留底画，复用节点且不隐藏宿主', () => {
+  let loaded = true
+  const bitmap = (node: Node): boolean => { node.getComponent(Sprite) ?? node.addComponent(Sprite); return loaded }
+  const style = exportsFor('DialogStyle', { ...tokens, PANEL_IRON_INSET, applySlicedSprite: bitmap })
+  const paint = style.applyPanelSurface as (node: Node, key: string, width: number, height: number, name: string) => void
+  for (const hadVector of [true, false]) {
+    const host = new Node('Card');host.addComponent(UITransform)
+    if(hadVector)host.addComponent(Graphics).fill()
+    loaded = true;paint(host, 'ui.panel.gilt', 680, 240, 'CardSurface')
+    assert.ok(host.active && child(host,'CardSurface').active)
+    if(hadVector){assert.equal(host.getComponent(Graphics)!.enabled,false);assert.equal(host.getComponent(Graphics)!.painted,false)}
+    loaded = false;paint(host, 'ui.panel.gilt', 680, 184, 'CardSurface')
+    assert.equal(child(host,'CardSurface').active,false)
+    assert.ok(child(host,'CardSurfaceFallback').active && child(host,'CardSurfaceFallback').getComponent(Graphics)!.painted)
+    const count=host.children.length
+    loaded = true;paint(host, 'ui.panel.gilt', 680, 240, 'CardSurface')
+    assert.equal(child(host,'CardSurfaceFallback').active,false)
+    assert.ok(child(host,'CardSurface').active)
+    loaded = false;paint(host, 'ui.panel.gilt', 680, 184, 'CardSurface')
+    assert.equal(host.children.length,count);assert.ok(host.active)
+  }
 })

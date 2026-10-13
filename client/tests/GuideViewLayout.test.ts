@@ -486,8 +486,8 @@ function questWithGuide(guide: GuideHarness, area: Rect = { ...nativeArea }, mat
     applyIronButton: (node: Node, _state: string, width: number, height: number) => art(node, 'ui.button.iron', width, height),
     applyCommandButton: (node: Node, _state: string, width: number, height: number) => art(node, 'ui.button.chip', width, height) })
   const QuestPanel = sceneClass<QuestHarness>('QuestPanelView', { view: { getVisibleSize: () => size },
-    applySystemUiFont: (label: Label) => label, buildQuestList, candidateLabel, candidatePreview, chosenClaimReq, ...paging,
-    applySlicedSprite: art, applyDialogButton: styles.applyDialogButton, createDialogScroll: styles.createDialogScroll,
+    ...uiTokens, applySystemUiFont: (label: Label) => label, buildQuestList, candidateLabel, candidatePreview, chosenClaimReq, ...paging,
+    applySlicedSprite: art, applyDialogButton: styles.applyDialogButton, applyPanelSurface: styles.applyPanelSurface, createDialogScroll: styles.createDialogScroll,
     heroPortraitKey: (id: string) => id.startsWith("hero_sr_") ? "portrait" : null, applyAnyIconSprite: art,
     paintCompactDialogFrame: styles.paintCompactDialogFrame, dialogContentRect: () => area,
     PANEL_IRON_INSET, dialogLayout })

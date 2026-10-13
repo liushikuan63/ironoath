@@ -60,3 +60,12 @@ export const CORNER_RADIUS = 6
 
 /** 标题字号。现跑两处主流是 22（`BagPanelView.ts:291`、`NationPanelView.ts:262`），26 是礼包那一处的离群值。 */
 export const TITLE_FONT_SIZE = 22
+
+/** 2026-10-14 UI01/02真实铁饰界面验收后的文字层级；边框号色仍由BRONZE_GOLD定义。 */
+export const TEXT_PRIMARY: Rgba = [226, 214, 190, 255]
+export const TEXT_SECONDARY: Rgba = [185, 174, 151, 255]
+export const TEXT_ACCENT: Rgba = [218, 179, 107, 255]
+/** 复用导航已有选中金字，页签和导航保持同一种选择提示。 */
+export const TEXT_SELECTED: Rgba = [255, 205, 92, 255]
+/** 既有LevelReward铁按钮置灰值；恢复可用时还原白色而非沿用灰色。 */
+export const DISABLED_TINT: Rgba = [128, 128, 128, 255]

@@ -29,8 +29,9 @@ import { NodePool } from './NodePool'
 import { applyAnyIconSprite, applySlicedSprite, ensureFamily } from './ArtCatalog'
 import { activityIconKey, heroPortraitKey, PANEL_IRON_INSET } from '../game/art/ArtFamilies'
 import { applySystemUiFont } from './UiFont'
-import { applyDialogButton, createDialogScroll, dialogContentRect, paintCompactDialogFrame } from './DialogStyle'
+import { applyDialogButton, applyPanelSurface, createDialogScroll, dialogContentRect, paintCompactDialogFrame } from './DialogStyle'
 import { dialogLayout } from '../game/ui/DialogLayout'
+import { TEXT_PRIMARY, TEXT_SECONDARY, TEXT_ACCENT, TEXT_SELECTED } from '../game/ui/UiTokens'
 
 const { ccclass } = _decorator
 
@@ -39,10 +40,10 @@ const COLOR_BACKGROUND = new Color(20, 17, 15, 238)
 const COLOR_PANEL = new Color(40, 33, 27, 255)
 const COLOR_ROW = new Color(52, 43, 35, 255)
 const COLOR_ROW_DIM = new Color(32, 29, 27, 255)
-const COLOR_COPPER_GOLD = new Color(218, 179, 107, 255)
-const COLOR_TEXT = new Color(226, 214, 190, 255)
-const COLOR_TEXT_DIM = new Color(185, 174, 151, 255)
-const COLOR_CLAIMABLE = new Color(218, 179, 107, 255)
+const COLOR_COPPER_GOLD = new Color(...TEXT_ACCENT)
+const COLOR_TEXT = new Color(...TEXT_PRIMARY)
+const COLOR_TEXT_DIM = new Color(...TEXT_SECONDARY)
+const COLOR_CLAIMABLE = new Color(...TEXT_ACCENT)
 
 const PANEL_WIDTH = 680
 const ROW_HEIGHT = 76
@@ -494,7 +495,7 @@ export class QuestPanelView extends Component {
       const label = this.tabLabels.get(node)
       if (label !== undefined) {
         const active = key === this.tab
-        label.color = active ? COLOR_COPPER_GOLD : COLOR_TEXT
+        label.color = new Color(...(active ? TEXT_SELECTED : TEXT_PRIMARY))
         applyDialogButton(node, true, PANEL_WIDTH / TABS.length - 8, TAB_HEIGHT, active)
       }
     }
@@ -625,7 +626,7 @@ export class QuestPanelView extends Component {
   }
 
   private renderActivityRow(node: Node, row: ActivityRow): void {
-    this.paintRowSurface(node, ROW_HEIGHT)
+    applyPanelSurface(node, 'ui.plate.band', PANEL_WIDTH, ROW_HEIGHT, 'RowSurface')
     const title = node.getChildByName('Title')?.getComponent(Label)
     const detail = node.getChildByName('Detail')?.getComponent(Label)
     const status = node.getChildByName('Status')?.getComponent(Label)
@@ -634,9 +635,11 @@ export class QuestPanelView extends Component {
       title.color = COLOR_TEXT
     }
     if (detail !== undefined && detail !== null) {
+      detail.node.getComponent(UITransform)?.setContentSize(row.claimable ? PANEL_WIDTH - 280 : PANEL_WIDTH - PADDING * 2 - ROW_ICON_COLUMN, 30)
       detail.string = `${row.progressText}${row.rewardText ? ` · ${row.rewardText}` : ''}\n${row.details ?? row.remainingText}`
     }
     if (status !== undefined && status !== null) {
+      status.node.setPosition(new Vec3(PANEL_WIDTH / 2 - 160, 18, 0))
       status.string = row.statusText
       status.color = row.claimable ? COLOR_CLAIMABLE : COLOR_TEXT_DIM
     }
@@ -727,7 +730,7 @@ export class QuestPanelView extends Component {
       graphics.roundRect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height, 6)
       graphics.fill()
     }
-    this.paintRowSurface(node, height)
+    applyPanelSurface(node, 'ui.plate.band', PANEL_WIDTH, height, 'RowSurface')
     const title = node.getChildByName('Title')?.getComponent(Label)
     const detail = node.getChildByName('Detail')?.getComponent(Label)
     const status = node.getChildByName('Status')?.getComponent(Label)
@@ -742,11 +745,12 @@ export class QuestPanelView extends Component {
         parts.push(row.lockedHint)
       }
       detail.node.setPosition(new Vec3(-PANEL_WIDTH / 2 + PADDING + ROW_ICON_COLUMN, firstKill ? -9 : -14, 0))
-      detail.node.getComponent(UITransform)?.setContentSize(PANEL_WIDTH - 280, firstKill ? 40 : 30)
+      detail.node.getComponent(UITransform)?.setContentSize(row.claimable ? PANEL_WIDTH - 280 : PANEL_WIDTH - PADDING * 2 - ROW_ICON_COLUMN, firstKill ? 40 : 30)
       detail.lineHeight = firstKill ? 18 : 15
       detail.string = parts.join(' · ') + (row.firstVictoryText ? `\n${row.firstVictoryText}` : '')
     }
     if (status !== undefined && status !== null) {
+      status.node.setPosition(new Vec3(PANEL_WIDTH / 2 - 160, firstKill ? 24 : 18, 0))
       status.string = row.statusText
       status.color = row.claimable ? COLOR_CLAIMABLE : COLOR_TEXT_DIM
     }
@@ -760,23 +764,6 @@ export class QuestPanelView extends Component {
         button.on('touch-start', (_event: EventTouch) => this.handleClaimClick(row))
       }
     }
-  }
-
-  private paintRowSurface(node: Node, height: number): void {
-    let surface = node.getChildByName('RowSurface')
-    if (surface === null) {
-      surface = new Node('RowSurface')
-      surface.layer = node.layer
-      node.addChild(surface)
-      surface.addComponent(UITransform)
-      surface.setSiblingIndex(0)
-    }
-    const loaded = applySlicedSprite(surface, 'ui.plate.band', PANEL_WIDTH, height)
-    surface.active = loaded
-    const graphics = node.getComponent(Graphics)
-    if (graphics !== null) graphics.enabled = !loaded
-    const sprite = surface.getComponent(Sprite)
-    if (sprite !== null) sprite.enabled = loaded
   }
 
   /** 点「领取」：按 intent 分流（直接领 / 先弹三选一 / 什么都不做）。 */

@@ -75,3 +75,19 @@ test('圆角与标题字号取的是现跑主流值', () => {
   // 现跑标题：22（BagPanelView:291、NationPanelView:262）为主，26 是礼包离群
   assert.equal(tokens.TITLE_FONT_SIZE, 22)
 })
+
+test('铁饰界面主字、辅助字和选中字在兜底面上保持清楚对比', () => {
+  const luminance = (rgba: tokens.Rgba): number => {
+    const channels = rgba.slice(0, 3).map(v => {
+      const s = v / 255
+      return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+    })
+    return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722
+  }
+  for (const foreground of [tokens.TEXT_PRIMARY, tokens.TEXT_SECONDARY, tokens.TEXT_ACCENT, tokens.TEXT_SELECTED]) {
+    for (const background of [tokens.PANEL_FALLBACK, tokens.IRON_SURFACE]) {
+      const a = luminance(foreground), b = luminance(background)
+      assert.ok((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) >= 4.5)
+    }
+  }
+})
