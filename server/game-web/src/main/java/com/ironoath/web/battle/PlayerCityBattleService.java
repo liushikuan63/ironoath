@@ -186,8 +186,8 @@ public class PlayerCityBattleService {
     }
 
     /**
-     * @param result            内核战果（含掠夺量与双方阵亡/伤兵）
-     * @param plundered         实际掠夺到手的资源（已按守方保护额度裁剪，可能小于 result.loot()）
+     * @param result            已按实际资源结算校准掠夺量的玩家战果，保留内核双方阵亡/伤兵
+     * @param plundered         实际掠夺入袋的资源（与 result.loot() 相同；溢出补发另有未完成接线）
      * @param tyrannyDelta      本次为攻方累积的暴虐值（区间内的正常对抗为 0）
      * @param shieldRaised      守方的免战护盾是否被真的推后
      * @param attackerReportId  攻方那份战报的 id
@@ -315,6 +315,14 @@ public class PlayerCityBattleService {
         // ---------- 六、掠夺（只有打赢才搬得走） ----------
         Map<String, Long> plundered = won
                 ? plunder(beneficiaries, defenderId, result.loot(), now) : Map.of();
+        // 内核按破墙与负载计算可掠夺量；玩家战报只展示真实资源漏斗结算的收益。
+        // 平局未搬资源、保护额度裁剪或发放被截断时，不把理论数当作到账数。
+        if (!result.loot().equals(plundered)) {
+            result = new BattleResult(result.winner(), result.rounds(), result.totalRounds(),
+                    result.atkSurvivors(), result.defSurvivors(), result.atkDead(), result.atkWounded(),
+                    result.atkOverflowDead(), result.defDead(), result.defWounded(), result.defOverflowDead(),
+                    plundered, result.lootCapacity(), result.seed(), result.attritionLog());
+        }
 
         // ---------- 七、战后战力重算 ----------
         // 守方不是这次请求的发起人，HTTP 边界的拦截器覆盖不到他 ——

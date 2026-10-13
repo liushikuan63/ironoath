@@ -169,6 +169,13 @@ class PlayerCityAttackEndpointTest {
         assertThat(totalTroops(f.defender)).as("守方必须有战损").isLessThan(defenderTroopsBefore);
         assertThat(resourceOf(f.defender, "GOLD")).as("守方金币被掠走").isLessThan(defenderGoldBefore);
         assertThat(resourceOf(f.attacker, "GOLD")).as("攻方金币增加").isGreaterThan(attackerGoldBefore);
+        for (String owner : List.of(f.attacker, f.defender)) {
+            var brief = battleReportService.list(owner).reports().get(0);
+            long reportedGold = battleReportService.open(owner, brief.reportId()).result().loot().stream()
+                    .filter(entry -> "GOLD".equals(entry.resourceType())).mapToLong(entry -> entry.amount()).sum();
+            assertThat(reportedGold).as("双方胜利战报中的金币与实际攻方到账相符")
+                    .isEqualTo(resourceOf(f.attacker, "GOLD") - attackerGoldBefore);
+        }
         assertThat(resourceOf(f.defender, "STAMINA"))
                 .as("体力住在 resource 表里但不是仓库存货：掠走它等于替对方决定接下来几天能做什么。"
                         + "用「不少于开战前」而不是「等于」，因为体力会随时间惰性恢复")
@@ -205,6 +212,23 @@ class PlayerCityAttackEndpointTest {
         assertThat(mine.attackerLoss()).isEqualTo(theirs.attackerLoss());
         assertThat(mine.defenderLoss()).isEqualTo(theirs.defenderLoss());
         assertThat(mine.reportId()).as("两份是两个 id，不是一条被两个人共享").isNotEqualTo(theirs.reportId());
+    }
+
+    @Test
+    @DisplayName("平局或守方胜利：双方真实战报不得声称掠走未扣的资源")
+    void nonWinningReportsContainOnlySettledLoot() {
+        Fixture f = readyPair(1_000L, 1_000L);
+        long goldBefore = resourceOf(f.defender, "GOLD");
+        String marchId = sendAttack(f.attacker, f.defenderCoord, Map.of("unit_infantry_t1", 1_000L));
+        arriveAndProcess(marchId);
+        var actual = battleReports.reportsOf(f.attacker).get(0).result();
+        assertThat(actual.winner()).isNotEqualTo(com.ironoath.battle.Winner.ATTACKER);
+        assertThat(resourceOf(f.defender, "GOLD")).isEqualTo(goldBefore);
+        for (String owner : List.of(f.attacker, f.defender)) {
+            var brief = battleReportService.list(owner).reports().get(0);
+            assertThat(battleReportService.open(owner, brief.reportId()).result().loot())
+                    .as("双方玩家看到的是实际结算收益，未获胜没有搬资源").isEmpty();
+        }
     }
 
     // ---------- 暴虐值 ----------
