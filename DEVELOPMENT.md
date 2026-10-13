@@ -283,3 +283,5 @@ tests/      逻辑单测（node:test；在 assets 外，Cocos 不会编译它）
 出现新格式后，程序回退应使用理解并保留新字段及来源的兼容修复版本。直接回到旧JAR、删除新收据、清除待发计划都不是安全回退。若只能整体恢复备份，应停写并恢复应用、配置和数据库的一致切点，事先明确如何恢复升级后的玩家进度；不能声称没有数据影响。新版仍需完成待发活动与原季积分/档位邮件恢复，不能因计划数暂时为零就断言旧codec可以读新背包回执。
 
 本轮仅本地实现及随机Mongo验收，不执行上述生产切换，也不更新原9490/验收账号/微信IDE。
+
+稳定原季补发邮件的送达证据随mail记录保留：BATTLE_PASS且mail.sourceRef以前缀battlePassRecovery:开头的记录，到期后隐藏/禁领但不由purgeExpired删除。tierMailWindows只在真实送达后保存。不得让旧邮件清理程序混跑删除此证据；普通邮件按既有过期清理。备份及一致切点需覆盖mail与battle_pass、activity_progress、inventory及player聚合。
