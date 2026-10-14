@@ -7512,3 +7512,5 @@ TEST_EXIT=0
 | #1283成员专属英雄到达与冻结在途选择 #1287 | 本次四英雄源码及台账原子本地提交 | 47门/270新套2685server/1321client/4JVM22/17FIRST/war44/HTTPUI31均0失败及跳过，五SHA漂移0 | tmp/rally-hero-ownership-20261014/final-summary.actual.json；http-ui1两截图已看 | 初始数据/腾空间夹具与HTTP100x；季计数新回归未直接读回；原9490/UID/原生未验；未知CAS/partial/硬崩溃仍对账；不推部署付款 |
 
 | 核心Bot每日校准跨实例缺口 #1288 | 本笔现查与实施判据本地提交 | 发送口141/生产缺口0；校准日键仅进程内；B11每日一次原规则 | tmp/bot-daily-calibration-20261014/start.json；BotCalibrationService.lastCalibratedDay | 回归/原子日期与校准结果同档/真Mongo及两JVM/完整门尚未执行；原9490/UID/IDE不切，不推部署付款 |
+
+| Bot每日校准原子完成标记 #1289 | 本笔验证及量具反证本地提交 | 4有效首红→37全0；47门/2697server/1321client全0；既有4JVM22全0；专项两轮量具前提/观测顺序错保留 | tmp/bot-daily-calibration-20261014/review1-independent.md；calibration-jvm1/2的measurement-correction.actual.json | 专项第3轮与17FIRST/战争待终验；旧版混跑不保证；日界可控时间非24小时墙钟；继续余项不停止，不推部署付款 |
