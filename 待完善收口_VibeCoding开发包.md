@@ -7530,3 +7530,5 @@ TEST_EXIT=0
 | B11第一性能候选仍红/身份读域发现 #1296 | 本笔发现原子本地提交 | 2700全验0；同量具旧三轮失败、新冷42.3s与P997.5~7.8ms仍失败；9845城市排期真实读回 | tmp/bot-performance-20261014/memory3/4；review2-independent.md | 还未达30s/5ms；身份按ID投影回归/修复与第二候选待验；Mongo/Redis5000仍未量、不推 |
 
 | B11权威身份投影第二修复 #1297 | 本笔首红/38重点证据原子提交 | 读域1有效红→六套38全0，真实Mongo投影/跨实例身份/失败闭锁已验 | tmp/bot-performance-20261014/red3.actual.json；green2-suites.actual.json | 10源新完整验证/第二候选5000及相关批验待完成；原四JVM与2700仅旧候选绿，不推 |
+
+| B11内存三轮达标/B22引导量具竞态 #1298 | 本笔完成与发现原子本地提交 | 新22e 2703全验0；5000冷11.39s/P992.29ms、热7.7s/P992.1ms；4真JVM22/0 | tmp/bot-performance-20261014/memory5；tmp/chat-rate-limit-20261014/attempt8 | 17FIRST/war44与修后B22待终验；Mongo/Redis5000未量；不把内存通过当生产容量、不推 |
