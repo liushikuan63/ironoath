@@ -7522,3 +7522,5 @@ TEST_EXIT=0
 | B22限流实际25项及脱敏复核 #1292 | 本笔发现/验证原子本地提交 | attempt5普通1×真实HTTP/UI 25/0；脱敏synthetic 2/0 | tmp/chat-rate-limit-20261014/attempt5；review2-independent.md；首失败全保留 | 最后labels脱敏后最终check3/attempt7和review3待验；不是原生验收，不推部署付款 |
 
 | B22限流真实浏览器闭环 #1293 | 本次量具/脱敏/台账原子本地提交 | 最终三SHA0漂移；47门/1321client/2脱敏/HTTPUI25全0 | tmp/chat-rate-limit-20261014/final-summary.actual.json；attempt7两截图 | 原生未代验；无产品规则变更、不推；下一5000 Bot性能报告继续 |
+
+| B11五千Bot性能实测设计 #1294 | 本笔设计原子本地提交 | 既定30s/P99 5ms；生产Runtime/World/Queue已定位 | tmp/bot-performance-20261014；B11§九6 | 压测尚未执行；先独立内存基线、持久后端另核；不代替5000真人在线，不推 |
