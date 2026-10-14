@@ -7544,3 +7544,5 @@ TEST_EXIT=0
 | B11持久首次登记均值全扫真红 #1303 | 本笔首红/最小读回设计原子提交 | 初始化5000/44.7s过；首次Runtime344.2s仅1样本，未完成5000；真实实现/Netty退出及owner清理过 | tmp/bot-mongo-performance-20261014/attempt2；runtime-thread.actual.log | 数值仅请求内快照回归/实现与新候选待验；不变身份权威、预算或战斗路径，不推部署付款 |
 
 | B11单驱动均值数值读集实现 #1304 | 本笔有效首红/43重点证据原子提交 | 登记均值1有效红→7套43全0；懒读/新调用/嵌套now/失败释放/线程隔离均验 | tmp/bot-mongo-performance-20261014/red1.actual.json；green1.actual.json；Runtime生产接点1 | 六源新完整候选与持久5000未验；Netty仅实验默认未改，不推部署付款 |
+
+| B11均值作用域全门禁与量具回执异常 #1305 | 本笔门禁及新发现原子留档，源码尚待完整实测交付 | 47门/274套2708server/1321client全0；清理故障注入8全0；attempt3未创建，attempt4运行中 | tmp/bot-mongo-performance-20261014/validation-full1.json；cleanup-regression1.log；candidate1/inputs.json；review2-manifest.json | 合成故障不等于实网丢回执；持久5000与同JAR关联流程未验；Netty仅量具实验，生产默认未改 |
