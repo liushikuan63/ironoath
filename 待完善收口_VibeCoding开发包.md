@@ -7604,3 +7604,5 @@ TEST_EXIT=0
 | B25补兵模型与原生轮转现场 #1333（2026-10-15） | 本格检查点文档本地提交（不推）；两源仍未提交 | 有效red2 12/9过3失败0跳→green12/0/0跳，test:build0；真实compact5/连续失败0；9490/6072监听 | tmp/auto-refill-entry-20261015/model-red2.log、model-green.log、handoff.md与source-snapshot.json | Root/scene/meta/玩家POST/真UI/全门与17批尚未完成；保留脏两源，原生接续未证明前不得标成功；不推升级原服 |
 
 | B25 Root确认与账号隔离六项首红 #1334（2026-10-15） | 本格证据文档本地提交（不推）；四源待完成 | Root tsc0后有效6失败/0过/189不匹配跳过；模型12/0；9490仍6072；新窗口动作待读回 | tmp/auto-refill-entry-20261015/root-red.log、root-red-build.log、source-snapshot.json、handoff.md | Root三方法仅stub，scene和真实正目标入口未做，不把首红当完成；原生接续仍需新线程工具与归属验证 |
+
+| B25 原生接续与Root补兵确认 #1335 | 本地文档检查点；4源+Root逻辑仍在途 | 首红6失败→6过；迟到训练1失败→绿；相关208过0失败0跳过，tsc0；native handoff passed true | tmp/auto-refill-entry-20261015/native-receipt.json、native-new-window.png、root-model-regression.log | Army/overlay/meta/Bootstrap及真实UI正target差额费用队列时长启停、全门新Web/17FIRST与独立复审未做；新goal active持续推进，原9490/6072同号普通1倍保留，不推送 |
