@@ -7534,3 +7534,5 @@ TEST_EXIT=0
 | B11内存三轮达标/B22引导量具竞态 #1298 | 本笔完成与发现原子本地提交 | 新22e 2703全验0；5000冷11.39s/P992.29ms、热7.7s/P992.1ms；4真JVM22/0 | tmp/bot-performance-20261014/memory5；tmp/chat-rate-limit-20261014/attempt8 | 17FIRST/war44与修后B22待终验；Mongo/Redis5000未量；不把内存通过当生产容量、不推 |
 
 | B11五千Bot内存预算与批链收口 #1299 | 本次十一源码/报告/四台账原子本地提交 | 47门/2703server/1321client/2脱敏/四JVM22/17FIRST/war44/HTTPUI26全0；5000三轮全部达标 | tmp/bot-performance-20261014/final-summary.actual.json；docs/Bot5000性能实测.md | 固定业务时间非1×墙钟；Mongo/Redis5000与原生未代验；下一持久性能继续，不推部署付款 |
+
+| B11持久后端五千Bot实际阶段 #1300 | 本笔设计/授权边界原子本地提交 | ca5b6608内存完整已验未推；同22e新候选，既定预算/负载不改 | tmp/bot-mongo-performance-20261014；现有Mongo27/独立Redis owner流程 | Mongo/Redis5000尚未量；仅外部量具接真实生产实现，不动原号/9490/IDE、不推部署付款 |
