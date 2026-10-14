@@ -315,3 +315,12 @@ python -X utf8 scripts/tools/run-season-coin-purchase.py --candidate tmp/bot-mat
 `SEASON_SHOP_OWNER` 回执、当前线程、live PID、loopback origin/端口、memory1×/新号范围在全服结算前必须匹配。令牌由运行器临时生成，只用于本次子进程与请求，不写入回执或提交文件。回执包含冻结源码及五个依赖 SHA，运行结束核漂移与浏览器/预览/JVM/端口清理；元数据缺失或损坏不会记通过。缺必要输入或其他任务归属在任何接口前退出2，这是前提拒绝，不是兑换通过。
 
 此验收使用明确的部署锚点夹具，未等待现实45天、未验证生产调度部署或微信原生端，不涉及真实付款。源码数量反例测试已接入 `scripts/check.sh`；它们是离线合成 count0/count2/缺发/多发等判据回归，实际链路仍以独立进程与浏览器结果为准。
+<!-- B25 repeat-march acceptance -->
+
+B25 再次出征的有限实流量具：先构建当前 Web，再使用完整冻结候选和新的证据目录运行。
+
+```powershell
+python -X utf8 scripts/tools/run-repeat-march.py --candidate tmp/bot-match-power-projection-20261014/candidate1 --out tmp/repeat-march-ui-20261014/replay-new --java-bin D:/Java/jdk/microsoft-jdk-17/bin --node D:/Java/nodejs/node20.13.0/node.exe
+```
+
+要求当前 `CODEX_THREAD_ID`，默认仅新建自有 memory 后端 9855 和预览 9856；端口已有监听或输出目录已存在即拒绝。配置与 JAR 必须匹配候选 `inputs.json`，不修改冻结文件。显式输入夹具为 dev 主城16、资源200万、时间100倍及配置武将经本实例运维邮件实际领取上阵；军队建造、训练、派遣、采集返城都走实际接口，没有军队或响应 mock。浏览器通过实际画布按钮首次派出10兵并再次派同业务参数，要求新请求号、新行军 ID，按独立训练兵种核请求/回执与完整库存扣兵返兵；同号新浏览器轮次自然无历史时，实际点击须显示理由、零派遣并且库存不变。量具核对输入 SHA 漂移及浏览器、预览、后端和端口清理。真实兵力不足战损、普通1倍时间、微信原生端和真实支付另验；本命令的通过不代表这些边界已通过。

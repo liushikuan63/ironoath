@@ -4205,7 +4205,7 @@ test('再次出征：把上一次成功的队伍原样重发，且兵力不足�
   const before = h.http.countOf('/world/march')
   await h.root.repeatLastMarch()
   assert.equal(h.http.countOf('/world/march'), before, '没有上一次就不该发请求')
-  assert.match(h.lastCompose?.notice ?? '', /还没有成功出征过/)
+  assert.ok(h.hintReceipts.some(text => text.includes('还没有成功出征过')), '无历史原因必须走玩家可见回执口，空编成会被视图隐藏')
 
   // 先成功出征一次，再重复
   h.root.beginMarchCompose('P9')
@@ -4222,6 +4222,19 @@ test('再次出征：把上一次成功的队伍原样重发，且兵力不足�
   assert.equal(second.toY, first.toY)
   assert.equal(second.action, first.action)
   assert.notEqual(second.requestId, first.requestId, '每次点都是新键：复用旧键会被 REQUEST_DUPLICATED 拒')
+  assert.ok(h.hintReceipts.some(text => text.includes('已再次出征')), '成功回执必须在收起编成后仍可见')
+
+  h.http.bizFailNext = { code: 6004, msg: '战力圈层校验未通过', detail: '对方实力远弱于你' }
+  await h.root.repeatLastMarch()
+  assert.equal(h.hintReceipts.at(-1), '对方实力远弱于你', '重复请求被服务端拒绝时理由也必须可见')
+  assert.equal(h.http.countOf('/world/march'), 3, '一次拒绝只发一枪')
+
+  h.http.overrides.set('/army/list', { ...ARMY_FOR_MARCH, units: [] })
+  await h.root.refresh('army')
+  await h.root.repeatLastMarch()
+  assert.equal(h.http.countOf('/world/march'), 3, '缓存兵种缺失时不派遣')
+  assert.match(h.hintReceipts.at(-1) ?? '', /兵种/)
+  assert.equal((h.hintReceipts.at(-1) ?? '').includes('unit_infantry_t1'), false, '缺失兵种回退不能暴露裸ID')
 
   // 兵力不够了：说清差多少，且不发第三枪
   const shrunk = { ...ARMY_FOR_MARCH, units: [{ ...ARMY_FOR_MARCH.units[0]!, count: 5 },
@@ -4231,8 +4244,7 @@ test('再次出征：把上一次成功的队伍原样重发，且兵力不足�
   const beforeShrunk = h.http.countOf('/world/march')
   await h.root.repeatLastMarch()
   assert.equal(h.http.countOf('/world/march'), beforeShrunk, '凑不齐就不发')
-  assert.match(h.lastCompose?.notice ?? '', /30/)
-  assert.match(h.lastCompose?.notice ?? '', /5/)
+  assert.ok(h.hintReceipts.some(text => text.includes('30') && text.includes('现在只剩 5')), '兵力不足说明也必须走玩家可见回执口')
 })
 
 test('自动续训：没训过就不发请求（续的是哪一批只有玩家自己知道），训过之后按那一批发', async () => {

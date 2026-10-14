@@ -164,7 +164,7 @@ export function repeatBlockedReason(spec: MarchSpec | null, army: ArmyListResp |
   for (const unit of spec.units) {
     const current = army.units.find(candidate => candidate.unitId === unit.unitId)
     if (current === undefined) {
-      return `上次带的兵种不在了：${unit.unitId}（换过编制？）`
+      return '上次带的兵种不在了，请重新编成'
     }
     if (!current.unlocked) {
       return `上次带的 ${current.name} 现在不可用（${current.unlockHint ?? '未解锁'}）`

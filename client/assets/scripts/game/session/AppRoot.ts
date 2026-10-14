@@ -4887,11 +4887,7 @@ export class AppRoot {
   async repeatLastMarch(): Promise<void> {
     const blocked = repeatBlockedReason(this.lastMarch, this.armyResp)
     if (blocked !== null) {
-      this.targets.marchCompose?.({
-        targetId: '', targetName: '', coordText: '',
-        compose: buildCompose(this.armyResp ?? EMPTY_ARMY, {}),
-        notice: blocked, submitting: false,
-      })
+      this.receipt(blocked)
       return
     }
     const spec = this.lastMarch as MarchSpec
@@ -4904,15 +4900,17 @@ export class AppRoot {
         action: trackParam(spec.action),
         troops: trackParam(spec.units.reduce((sum, unit) => sum + unit.count, 0)),
       })
+      this.receipt(`已再次出征：${spec.toX}, ${spec.toY}`)
       this.targets.marchCompose?.({
         targetId: '', targetName: '', coordText: '',
         compose: buildCompose(this.armyResp ?? EMPTY_ARMY, {}),
-        notice: `已再次出征：${spec.toX}, ${spec.toY}`, submitting: false,
+        notice: null, submitting: false,
       })
       await this.refresh('world')
       return
     }
     this.say('targets', outcome)
+    this.receipt(outcome.kind === 'biz' ? (outcome.detail ?? outcome.msg) : AppRoot.reason(outcome))
     this.targets.marchCompose?.({
       targetId: '', targetName: '', coordText: '',
       compose: buildCompose(this.armyResp ?? EMPTY_ARMY, {}),

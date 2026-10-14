@@ -106,6 +106,9 @@ test('过时的队伍不静默改小：凑不齐时说清差多少，而不是�
   // 兵种不在了、以及从未出征过，各有各的说法
   assert.match(repeatBlockedReason(spec, army([])) ?? '', /不在了/)
   assert.match(repeatBlockedReason(null, shrunk) ?? '', /还没有成功出征过/)
+  const missingReason = repeatBlockedReason(spec, army([])) ?? ''
+  assert.match(missingReason, /兵种/)
+  assert.equal(missingReason.includes(spec.units[0]!.unitId), false, '缺失兵种回退提示不能暴露内部ID')
   assert.match(repeatBlockedReason(spec, null) ?? '', /军队信息还没拉到/)
 
   // 情况不变（数量足够）时没有理由拦：再次出征应当可发

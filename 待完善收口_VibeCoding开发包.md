@@ -7574,3 +7574,5 @@ TEST_EXIT=0
 | B25 正式实流与裸ID反证 #1318 | 本格证据本地提交；9源最终验证在途 | full1 276fresh2714/1321/47/337Web全0；durable2真实110/0/全cleanup；helper5离线全0；missing-red2断言红/198绿0skip→200重点全0 | tmp/repeat-march-ui-20261014/durable2/result.actual.json/runner-result.actual.json、missing-red.log/missing-green.log、validation-full1.json | 最终泛称/守卫变动需check2/web2后durable3；兵力不足真实战损及原生/普通1×未验；110不是最终源码新读数 |
 
 | B25 最终冻结与关联验收 #1319 | 本格证据本地提交；代码交付等待批跑 | final9独立逐SHA同/漂移0；check2 47/1321/22脚本全0；web2 337；durable3 111/0全cleanup；guard2合成预期退2；war44/0 | tmp/repeat-march-ui-20261014/final9-source-inputs.json、durable3/result.actual.json/runner-result.actual.json、guard-checks.actual.json；behavior-runtime10/war-real-battle.log | 相关批仍在途，不提前全绿；真实战损不足/并发/原生未补；原账号不动，不推部署付款 |
+
+| B25 首派返兵→再次正链收口 #1320 | 本格14路径原子本地提交（不推） | full1 276fresh2714全0；最终check2/3 47/1321/22脚本全0；web2 337；durable3真实111/0；17FIRST无RERUN/SKIP与war44/0；所有owner清理/SHA漂移0 | tmp/repeat-march-ui-20261014/final-summary.actual.json、durable3、validation-client2.json/validation-check3.json；behavior-runtime10/result.actual.json | 实损兵不足/并发上限/普通1×/原生仍未验，矩阵留🟡；继续真实UI自动续训排批扣费及关闭，旧emit探针不代真实点击；不推部署付款 |
