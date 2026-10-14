@@ -10,6 +10,7 @@ parser.add_argument('--node',type=Path,required=True)
 parser.add_argument('--port',type=int,default=9877)
 parser.add_argument('--preview-port',type=int,default=9878)
 parser.add_argument('--tool',type=Path,default=Path('tools/verify-loss-refill-runtime.mjs'))
+parser.add_argument('--time-speed',type=int,choices=[1,100],default=100)
 args=parser.parse_args();root=Path(__file__).resolve().parents[2];candidate=args.candidate.resolve();out=args.out.resolve()
 assert os.environ.get('CODEX_THREAD_ID'),'Actual current task identity required'
 assert 1024<=args.port<=65535 and 1024<=args.preview_port<=65535 and args.port!=args.preview_port
@@ -31,11 +32,11 @@ dependencies=['tools/lib/march-evidence.mjs','tools/lib/resource-debit-evidence.
 dependency_hashes={name:sha(root/name) for name in dependencies}
 out.mkdir(parents=True);(out/'web-inputs.json').write_text(json.dumps(web_hashes,indent=2),encoding='utf8')
 token=uuid.uuid4().hex;flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
-env=os.environ.copy();env.update(SPRING_PROFILES_ACTIVE='dev',IRONOATH_DEV_CITY_LEVEL='16',IRONOATH_DEV_START_AMOUNT='5000',IRONOATH_DEV_TIME_SPEED='100',
+env=os.environ.copy();env.update(SPRING_PROFILES_ACTIVE='dev',IRONOATH_DEV_CITY_LEVEL='16',IRONOATH_DEV_START_AMOUNT='5000',IRONOATH_DEV_TIME_SPEED=str(args.time_speed),
  REPEAT_BACKEND='http://127.0.0.1:'+str(args.port),REPEAT_OPS_TOKEN=token,REPEAT_OUT=str(out),REPEAT_CONFIG=str(candidate/'config'),REPEAT_OWNER=str(out/'owner.actual.json'),REPEAT_PORT=str(args.preview_port))
 for key in ['REPEAT_DIAG_ONLY','REPEAT_OFFLINE_DELAY','REPEAT_ROOT']:env.pop(key,None)
 owner={'pid':None,'port':args.port,'previewPort':args.preview_port,'threadId':env['CODEX_THREAD_ID'],'jarSha256':base['jarSha256'],'configHashes':config_hashes,
- 'cityLevel':16,'startAmount':5000,'timeSpeed':100,'storage':'memory','newUidOnly':True,'toolSha256':tool_sha,'runnerSha256':runner_sha,'dependencyHashes':dependency_hashes}
+ 'cityLevel':16,'startAmount':5000,'timeSpeed':args.time_speed,'storage':'memory','newUidOnly':True,'toolSha256':tool_sha,'runnerSha256':runner_sha,'dependencyHashes':dependency_hashes}
 (out/'owner.actual.json').write_text(json.dumps(owner,indent=2),encoding='utf8')
 backend=probe=None;logs=[];exit_code=1;errors=[]
 try:
@@ -53,7 +54,7 @@ try:
   except (urllib.error.URLError,TimeoutError):pass
   assert time.monotonic()<deadline,'Owned startup deadline exceeded';time.sleep(.2)
  log=(out/'probe.log').open('wb');logs.append(log)
- probe=subprocess.Popen([str(args.node),str(tool)],cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT,creationflags=flags);exit_code=probe.wait(timeout=240)
+ probe=subprocess.Popen([str(args.node),str(tool)],cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT,creationflags=flags);exit_code=probe.wait(timeout=1800 if args.time_speed==1 else 240)
 except Exception as error:errors.append({'type':type(error).__name__,'message':str(error)})
 finally:
  for process in [probe,backend]:
@@ -74,6 +75,6 @@ finally:
  if errors or drift or not all(value if isinstance(value,bool) else all(value.values()) for value in cleanup.values()):exit_code=1
  result={'exit':exit_code,'probeExit':probe.poll() if probe else None,'errors':errors,'cleanup':cleanup,'jarSha256':base['jarSha256'],'configHashes':config_hashes,
   'toolSha256':tool_sha,'runnerSha256':runner_sha,'dependencyHashes':dependency_hashes,'sourceShaDrift':int(drift),'webFiles':len(web_hashes),
-  'fixture':{'cityLevel':16,'startAmount':5000,'timeSpeed':100,'hero':'configured HERO via owned ops mail, actual claim and lineup; no troops mocked'},'originalAccountChanged':False,'realPayment':False}
+  'fixture':{'cityLevel':16,'startAmount':5000,'timeSpeed':args.time_speed,'hero':'configured HERO via owned ops mail, actual claim and lineup; no troops mocked'},'originalAccountChanged':False,'realPayment':False}
  (out/'runner-result.actual.json').write_text(json.dumps(result,indent=2),encoding='utf8');print(json.dumps({k:v for k,v in result.items() if k!='configHashes'}),flush=True)
 raise SystemExit(exit_code)
