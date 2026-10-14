@@ -7510,3 +7510,5 @@ TEST_EXIT=0
 | 活动预览测试启动时钟固定 #1286 | 本次仅Activity测试及三台账原子本地提交 | 原full2/green5各3倒退errors，反证Rally污染；固定启动钟后Activity4+重点总79全0，review3通过 | tmp/rally-hero-ownership-20261014/review3-test-followup.md | 四英雄源码当前完整check3/build3及新JAR真流程待收口；不改生产守卫；不推部署付款 |
 
 | #1283成员专属英雄到达与冻结在途选择 #1287 | 本次四英雄源码及台账原子本地提交 | 47门/270新套2685server/1321client/4JVM22/17FIRST/war44/HTTPUI31均0失败及跳过，五SHA漂移0 | tmp/rally-hero-ownership-20261014/final-summary.actual.json；http-ui1两截图已看 | 初始数据/腾空间夹具与HTTP100x；季计数新回归未直接读回；原9490/UID/原生未验；未知CAS/partial/硬崩溃仍对账；不推部署付款 |
+
+| 核心Bot每日校准跨实例缺口 #1288 | 本笔现查与实施判据本地提交 | 发送口141/生产缺口0；校准日键仅进程内；B11每日一次原规则 | tmp/bot-daily-calibration-20261014/start.json；BotCalibrationService.lastCalibratedDay | 回归/原子日期与校准结果同档/真Mongo及两JVM/完整门尚未执行；原9490/UID/IDE不切，不推部署付款 |
