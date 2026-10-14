@@ -7568,3 +7568,5 @@ TEST_EXIT=0
 | B25重复出征真实验收启动 #1315 | 本笔现查/夹具边界原子记录；无生产改动 | RepeatLast生产链已接；新外部语法0；自有备兵及场景初验后台6541运行 | tmp/repeat-march-ui-20261014/candidate1/inputs.json；inspect.mjs；attempt1/owner.actual.json | 只初验备兵/可见资源，尚无首次/再次出征；Hero/等级/资源/时间是显式输入，不代原生或普通成长 |
 
 | B25 备兵导航首红定位 #1316 | 本格本地提交（不推） | attempt8严格当前UUID不支持旧代假设；attempt9 DOM→Canvas/Cocos→礼包mask；attempt10真实close后55/0 exit0，全部owner关闭 | tmp/repeat-march-ui-20261014/attempt9/result.actual.json、attempt10/result.actual.json/runner-result.actual.json；handoff-compact4.md | 首次GATHER与再次出征仍未执行；55只是前置，UI夹具/提速档不代表普通1×或原生端；不推部署付款 |
+
+| B25 无历史提示隐藏缺陷 #1317 | 本格证据提交；修复源待完整验证 | attempt13 102/1真实人话不可见首红；unit-red2 1有效断言红（188过滤skip）；修后两套200/0/0skip | tmp/repeat-march-ui-20261014/attempt13/result.actual.json、unit-red2.log、unit-green.log | 源码两文件尚待新Web/真实无历史负控和完整门；总数量具待按兵种修正，缺兵真流未验，不当全绿 |
