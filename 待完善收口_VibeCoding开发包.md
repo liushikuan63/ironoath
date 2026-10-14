@@ -7498,3 +7498,5 @@ TEST_EXIT=0
 | Bot行为/24h额度/真实返程最终收口 #1280 | 本笔源码及证据原子本地提交未推 | freeze8 26SHA一致；check6/build5均0；270套2676server/1321client全0；4JVM/AOF/16来源slot/普通反击22全0；17FIRST和战争44全0，owner全收 | tmp/bot-behavior-state-20261014-2c1101a7/final-resume2-summary.json；state-review8-followup.md；behavior-jvm3/result.actual.json；behavior-runtime2/result.actual.json | 初始人物/受击/兵和旧两次攻击为夹具；不是原号原生验收；partial/未知CAS与硬崩溃仍需核对；永久去重不承诺；B04邮件继续，未推部署付款 |
 
 | B04真胜利扣款后补发缺失/回执故障判据 #1281 | 本发现原子本地提交未推 | 新4回归4执行4断言首红0错误0跳过；单人守方扣减正数前提成立；满仓/部分空间/集结均邮箱为空 | tmp/battle-plunder-overflow-20261014/red1.log；start.json；两既有测试类新增4方法 | RewardService生产接线与中文body修复未做；新候选当前全验、HTTP/UI邮件及正常领取待；部分业务/邮件未知回执不承诺跨崩溃恰好一次 |
+
+| B04通用发放95绿/普通木材补领正文首红 #1282 | 本发现原子本地提交未推 | 原4首红→95全0；初版47门/build和2680server/1321client全0；新普通木材补领数量守恒过、正文1执行1失败0错跳；独立复核无额外阻断 | tmp/battle-plunder-overflow-20261014/focused1.log；validation-full1.json；review1-independent.md；reclaim-red1.log | 后继mail来源中文/隐藏ref待修及最终96回归/完整候选/HTTP/UI和批探针仍待；初版绿不作本修后绿；普通资源领取硬崩溃窗口另核对 |
