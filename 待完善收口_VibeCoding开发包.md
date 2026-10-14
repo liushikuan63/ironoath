@@ -7622,3 +7622,5 @@ TEST_EXIT=0
 | B25自有普通1×差额补兵收口 #1342 | 本格2量具/runner+4台账明确6路径本地原子提交，不推 | formal durable1 569/0，真实Lv8损1补1/IRON30 GRAIN20/1槽/60业务秒/60099ms恢复，全owner收；47/1343/33全0/独立2SHA无阻断 | tmp/auto-refill-ordinary-20261015/final-summary.actual.json、durable1/refill.actual.json、review2、label-only-delta.actual.json | dev新号主16/资源5000/R武将仅输入夹具，不代原UID或微信原生；当前无微信/Cocos窗口，下一隔离原生候选包及后台能力核验；原9490/6072 v35+45配置保护，新候选46配置分列；离线资源裁决/持久5000未收口；goal持续，不push |
 
 | B25隔离微信候选包构建 #1343 | 本格候选构建证据文档本地提交，不推；无生产源码改动 | Cocos与artifact脚本exit0；横屏/适配/global/9901补丁齐；首包2.83MB（本仓预算4.00）/分包4.17/整包7.01；原native与源SHA漂移0 | tmp/auto-refill-native-candidate-20261015/result.actual.json、inputs.json、client/build/wechatgame | 当前实际无微信/Cocos窗口，原生玩家链及整包官方发布限制未验；下一仅只读CLI后台契约/已存在端点检查，勿前台/重开原IDE/原UID业务POST；原9490保持、goal active，不push部署付款 |
+
+| B25原生后台入口契约复验 #1344 | 本格4文档本地原子提交，不推；无生产源码修改 | CLI现装2.02.2608080/新路径存在，旧路径不存在；无微信/Cocos进程及14窗口匹配/45269未监听；原生隔离包构建0/源与原包SHA0 | tmp/auto-refill-native-candidate-20261015/cli-contract.actual.json、result.actual.json | 尚无可复用原生窗口，本轮未open/auto/改IDE设置/重开原IDE/前台，不永久推断后台API全不可用；原生真玩家/离线资源裁决/持久5000未验，原9490保护，goal仍active |

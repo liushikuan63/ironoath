@@ -140,7 +140,7 @@ bash scripts/check-package-size.sh
 **微信开发者工具（2026-09-13 安装并实测）**
 
 - 安装：`winget install --id Tencent.WeixinDevTools`（本机 2.02.2608070，
-  目录 `D:\Program Files (x86)\Tencent\微信web开发者工具\`）。
+  目录 `D:\Program Files (x86)\Tencent\微信web开发者工具\`）。 **[2026-10-15 只读复核：该旧路径已不存在；现安装 2.02.2608080，CLI 为 `D:/Tencent/wechat-devtools/cli.bat`。当前无微信/Cocos进程或可复用窗口，历史45269端口未监听；不据旧端口推断当前服务开关。已安装CLI入口含无IDE时自动启动调用，本轮未执行open/auto或修改设置；隔离候选包构建通过不等原生玩家流程。证据 `tmp/auto-refill-native-candidate-20261015/cli-contract.actual.json`。]**
 - **CLI 服务端口默认关闭**：不开则所有 `cli open/preview/auto` 直接报
   `IDE service port disabled`；开关在 IDE「设置 → 安全设置 → 服务端口」，本机 HTTP 端口 45269。
 - 打开产物：`cli.bat open --project client/build/wechatgame`。
