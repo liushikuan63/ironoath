@@ -7598,3 +7598,5 @@ TEST_EXIT=0
 | 停电服务恢复与显式目标 #1330（2026-10-15） | 本格恢复事实本地提交（不推） | 原JAR/45配置SHA同；Java6072/9490/同Mongo同UID；HTTPcity×2/army均200code0；原主9/兵营6/学院等1全保；Mongo ping1/Redis PONG；owner创建UTC ticks及监听同/wrapper退出 | D:/tmp/ironoath-power-recovery-20261015/attempt1/recovery-summary.actual.json、process-owner-verified.actual.json、canonical-owners-updated.actual.json | 仅服务恢复与原号读回，不是客户端/原生全验；active goal下一补玩家目标策略入口，先完成NPC工具待提交，不升级原服/不推 |
 
 | B25 NPC实损与后端补兵正式收口 #1331（2026-10-15） | 本格7路径原子本地提交（不推） | durable2 140/0（含可见文案合成负控1+恢复1）；实际损11/补11/660业务秒/slot1/IRON330 GRAIN220/全cleanup；check1 47/1321/31全0；2SHA独立一致 | tmp/loss-repeat-ui-20261015/final-summary.actual.json、durable2、validation-check1.json | 玩家正目标入口仍0，下一单兵种按上次真实参数显式确认；ordinary1×/原生/并发上限未验，原9490同库主9已恢复6072，不推升级 |
+
+| B25 玩家补兵入口 implementation plan #1332（2026-10-15） | 本格设计计划本地提交（不推） | 原服务9490/6072已恢复，前格NPC正式140（138实流/2合成与恢复）全cleanup；新UI未实施 | docs/核心对战玩法收口.md #1332、tmp/loss-repeat-ui-20261015/final-summary.actual.json；active goal | 纯模型/Root/scene/newmeta/真UI与17批门均待执行；单兵种既有策略不扩多兵种/自由默认；马上TDD，不推原服升级 |
