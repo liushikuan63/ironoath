@@ -7504,3 +7504,5 @@ TEST_EXIT=0
 | B04真实补充验收发现跨成员武将到达缺口 #1283 | 本次本地发现提交 | HTTP/UI22已过，集结战前返程/超时EXIT1，cleanup全收 | tmp/battle-plunder-overflow-20261014/http-ui4 | 不将失败算通过；先无武将集结验证B04，再回归修复按成员归属读取英雄；原账号原生端未验 |
 
 | B04满仓/部分仓容与集结补发 #1284 | 本次四源码及台账原子本地提交 | 47门/2681server/1321client/4JVM22/17FIRST/war44/HTTPUI30均0失败及跳过 | tmp/battle-plunder-overflow-20261014/final-summary.actual.json；http-ui6两截图已看 | #1283成员独有英雄到达待独立修复；初始数据/腾空间夹具及100x；原9490/UID/原生未验；不推部署付款 |
+
+| #1283成员英雄及在途cap/PvE战前错误 #1285 | 本次发现与修复证据本地提交 | 两到达首红2；边界3测试2红；修后75全0；review2无阻断；当前check2=0/build2待终验 | tmp/rally-hero-ownership-20261014/review2-followup.md | 当前新JAR真实英雄HTTP及四JVM/17FIRST/war44仍待跑；新增测试未直接读季计数；未知战后异常未吞；不推部署付款 |
