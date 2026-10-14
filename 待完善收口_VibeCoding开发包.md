@@ -7506,3 +7506,5 @@ TEST_EXIT=0
 | B04满仓/部分仓容与集结补发 #1284 | 本次四源码及台账原子本地提交 | 47门/2681server/1321client/4JVM22/17FIRST/war44/HTTPUI30均0失败及跳过 | tmp/battle-plunder-overflow-20261014/final-summary.actual.json；http-ui6两截图已看 | #1283成员独有英雄到达待独立修复；初始数据/腾空间夹具及100x；原9490/UID/原生未验；不推部署付款 |
 
 | #1283成员英雄及在途cap/PvE战前错误 #1285 | 本次发现与修复证据本地提交 | 两到达首红2；边界3测试2红；修后75全0；review2无阻断；当前check2=0/build2待终验 | tmp/rally-hero-ownership-20261014/review2-followup.md | 当前新JAR真实英雄HTTP及四JVM/17FIRST/war44仍待跑；新增测试未直接读季计数；未知战后异常未吞；不推部署付款 |
+
+| 活动预览测试启动时钟固定 #1286 | 本次仅Activity测试及三台账原子本地提交 | 原full2/green5各3倒退errors，反证Rally污染；固定启动钟后Activity4+重点总79全0，review3通过 | tmp/rally-hero-ownership-20261014/review3-test-followup.md | 四英雄源码当前完整check3/build3及新JAR真流程待收口；不改生产守卫；不推部署付款 |
