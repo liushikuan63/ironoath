@@ -21,6 +21,16 @@ public interface PlayerRepository {
     /** 按玩家 id 查存档。 */
     Optional<PlayerSave> findByPlayerId(String playerId);
 
+    /**
+     * 只读当前匹配战力。缺档返回 empty；既有旧档没有 power 时与整档映射一样读成 0。
+     * 这不是 displayPower，不用于榜单；读存储失败必须传播，不按缺档处理。
+     * 生产实现按单字段投影读取，默认实现保留旧端口适配器的兼容性。
+     */
+    default OptionalLong findMatchPower(String playerId) {
+        return findByPlayerId(playerId).map(save -> OptionalLong.of(save.power().matchPower()))
+                .orElseGet(OptionalLong::empty);
+    }
+
     /** 按设备 id 查存档。同一设备重复 init 必须返回同一份存档（B01 验收 11）。 */
     Optional<PlayerSave> findByDeviceId(String deviceId);
 

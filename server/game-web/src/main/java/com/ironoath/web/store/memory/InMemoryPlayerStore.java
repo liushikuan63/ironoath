@@ -49,6 +49,16 @@ public final class InMemoryPlayerStore implements PlayerRepository {
     }
 
     @Override
+    public OptionalLong findMatchPower(String playerId) {
+        if (playerId == null) return OptionalLong.empty();
+        PlayerSave stored = byPlayerId.get(playerId);
+        if (stored == null) return OptionalLong.empty();
+        synchronized (stored) {
+            return OptionalLong.of(stored.power().matchPower());
+        }
+    }
+
+    @Override
     public Map<String, PlayerSave> findByPlayerIds(Collection<String> playerIds) {
         if (playerIds == null || playerIds.isEmpty()) {
             return Map.of();

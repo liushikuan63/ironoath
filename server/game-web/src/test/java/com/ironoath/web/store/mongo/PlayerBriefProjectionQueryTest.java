@@ -66,6 +66,13 @@ class PlayerBriefProjectionQueryTest {
     }
 
     @Test
+    void schedulingPowerQueryReadsOnlyMatchingPowerForOnePlayer() {
+        Query query=MongoPlayerStore.matchPowerQuery("P-match");
+        assertThat(query.getQueryObject()).hasSize(1).containsEntry("_id","P-match");
+        assertThat(query.getFieldsObject()).hasSize(1).containsEntry("power.matchPower",1);
+    }
+
+    @Test
     @DisplayName("窄读口那条查询只投影 createdAt、按一个 _id 取：字节这一维只有这里能红")
     void theCreatedAtQueryNarrowsToASingleColumnAndASingleId() {
         Query query = MongoPlayerStore.createdAtQuery("P-甲");

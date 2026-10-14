@@ -7554,3 +7554,5 @@ TEST_EXIT=0
 | B11排期matchPower窄读实施 #1308 | 本笔有效首红与新方案留档，源码未交付 | red1夹具1error非首红；red2 1test/1failure/0error/skip；green1六套实际运行中 | tmp/bot-match-power-projection-20261014/red1.actual.json；red2.actual.json；green1.log | 新重点/完整候选/持久5000未验，生产Socket未改；聊天输入对齐仍待修；不借上格读数 |
 
 | B11匹配战力窄读全门禁 #1309 | 本笔33重点/2714全量与候选冻结原子留档 | 6套33与276套2714server/1321client/47门全0；review1无阻断；persistent1后台78044运行中 | tmp/bot-match-power-projection-20261014/green1.actual.json；validation-full1.json；review1-independent.md；candidate1/inputs.json | 新eac5实际持久预算/内存/关联未验；Netty量具实验不改生产；聊天对齐待修 |
+
+| B11匹配战力窄读交付及聊天布局有效首红 #1310 | 本笔8backend/报告矩阵原子本地提交；UI量具改动另留待修 | 276套2714/1321/47全0；内存三轮5000过；4JVM22/17FIRST/war44/HTTPUI功能26全0；持久仅1024未达；布局1有效失败 | tmp/bot-match-power-projection-20261014/final-summary.actual.json；chat-input-layout/attempt1/input-geometry.actual.json；chat-rate-limit/attempt11 | 持久非完整5000仍未达，子集分位不算；UI输入/placeholder仍越框，下一真实前端修复；原生未验 |

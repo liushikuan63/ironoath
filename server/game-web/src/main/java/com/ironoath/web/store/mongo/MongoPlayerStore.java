@@ -65,6 +65,21 @@ public final class MongoPlayerStore implements PlayerRepository {
     }
 
     @Override
+    public OptionalLong findMatchPower(String playerId) {
+        if (playerId == null) return OptionalLong.empty();
+        PlayerMatchPowerDocument doc = mongo.findOne(matchPowerQuery(playerId),
+                PlayerMatchPowerDocument.class, PlayerDocument.COLLECTION);
+        return doc == null ? OptionalLong.empty()
+                : OptionalLong.of(doc.power() == null ? 0L : doc.power().matchPower());
+    }
+
+    static Query matchPowerQuery(String playerId) {
+        Query query = Query.query(Criteria.where("_id").is(playerId));
+        query.fields().include("power.matchPower");
+        return query;
+    }
+
+    @Override
     public Map<String, PlayerSave> findByPlayerIds(Collection<String> playerIds) {
         // 一次 $in 查询而不是 N 次 findById：目标搜索的候选池可能上千，
         // N 次往返的延迟会直接变成玩家点一次「搜索」的等待时间

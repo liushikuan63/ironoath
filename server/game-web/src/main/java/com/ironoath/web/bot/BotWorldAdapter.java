@@ -355,7 +355,7 @@ public class BotWorldAdapter implements BotScheduler.World {
 
     @Override
     public long matchPowerOf(String botId) {
-        return players.findByPlayerId(botId).map(save -> save.power().matchPower()).orElse(0L);
+        return players.findMatchPower(botId).orElse(0L);
     }
 
     @Override
