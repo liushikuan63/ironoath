@@ -301,3 +301,17 @@ Bot完整画像存于`bot_profiles`，身份查询直接读同一存储。Redis�
 稳定原季补发邮件的送达证据随mail记录保留：BATTLE_PASS且mail.sourceRef以前缀battlePassRecovery:开头的记录，到期后隐藏/禁领但不由purgeExpired删除。tierMailWindows只在真实送达后保存。不得让旧邮件清理程序混跑删除此证据；普通邮件按既有过期清理。备份及一致切点需覆盖mail与battle_pass、activity_progress、inventory及player聚合。
 
 普通金币及非装备道具邮件新增按邮件ID的持久附件收据后，同样不得与旧MailAppService写入者混跑。旧程序即使能读取部分收据格式，普通邮件旧领取仍不查询mail_gold/mail_item业务收据，无法据此恢复已接受组件；恢复源码版本必须保留新领取逻辑。仅金币/材料组件在新版中具备本轮断点保障，装备与其他资源旧通道仍待设计，历史claimed无收据不猜补。本轮原生/生产版本未切，旧普通邮件写者的真实混跑负控未执行。
+
+## B24 赛季币获得与真实兑换验收
+
+在当前 Codex 任务中运行，使用实际 `CODEX_THREAD_ID`。输入为通过验证的冻结目录：`city-runtime.jar`、完整 `config/` 及含 JAR/config SHA 的 `inputs.json`。源输入不得已有赛季部署锚点，输出必须是新目录；端口已占用会拒绝，不借已有实例。
+
+```powershell
+python -X utf8 scripts/tools/run-season-coin-purchase.py --candidate tmp/bot-match-power-projection-20261014/candidate1 --out tmp/season-coin-ui-20261014/replay-new --java-bin D:/Java/jdk/microsoft-jdk-17/bin --node D:/Java/nodejs/node20.13.0/node.exe
+```
+
+运行器复制完整输入，只在新实例配置中增加 `SEASON_START_AT`，按第一赛季配置的 SETTLE 起点派生 UTC+8 日界锚点。保持 memory、普通1×，不改变奖励/商品价格、不直接发币、不触原账号。新号先做真实主城升级，由写拦截器触发战力重算并读回赛季名次；随后三个不同 requestId 的真实结算验证只发一次。浏览器登录同 UID，通过现有 Cocos 自命中工具和真实画布点击切页/兑换，核余额、固定请求数量1/回执数量1/背包增量1，并再次点击已耗尽限购的行，核无第二单及不重复扣发。
+
+`SEASON_SHOP_OWNER` 回执、当前线程、live PID、loopback origin/端口、memory1×/新号范围在全服结算前必须匹配。令牌由运行器临时生成，只用于本次子进程与请求，不写入回执或提交文件。回执包含冻结源码及五个依赖 SHA，运行结束核漂移与浏览器/预览/JVM/端口清理；元数据缺失或损坏不会记通过。缺必要输入或其他任务归属在任何接口前退出2，这是前提拒绝，不是兑换通过。
+
+此验收使用明确的部署锚点夹具，未等待现实45天、未验证生产调度部署或微信原生端，不涉及真实付款。源码数量反例测试已接入 `scripts/check.sh`；它们是离线合成 count0/count2/缺发/多发等判据回归，实际链路仍以独立进程与浏览器结果为准。
