@@ -7582,3 +7582,5 @@ TEST_EXIT=0
 | B25 真实自动三批与剔产出铁矿守恒 #1322 | 本格发现/初验本地提交（不推） | attempt1误URL55/1、attempt2非0率守卫56/1非产品红；attempt3真实91/0全cleanup/漂移0；attempt4加入全兵种/手工关闭在途 | tmp/autotrain-ui-20261014/attempt3/result.actual.json/runner-result.actual.json；attempt4/owner.actual.json | 91仅手动1/auto3/预算停；手工关闭及全兵种新版待run4，账目口径review在途；普通1×/原生/实损补兵未验，不推 |
 
 | B25 真实手工关闭与账目自证反例 #1323 | 本格发现/反证本地提交（不推） | attempt4真实117/0全cleanup；旧费用oracle2合成有效fail→新6离线全0；正式durable1与check1在途 | tmp/autotrain-ui-20261014/attempt4/result.actual.json/runner-result.actual.json、ledger-oracle-red.log；tools/lib/resource-debit-evidence.test.mjs | 新独立时间/全部训练成本正式实流未收口，117只旧oracle初验；亏兵补回/普通1×/原生未验，不推 |
+
+| B25 全費种续训与等待生命周期收口前证据 #1324 | 本格证据本地提交（不推） | auto durable2真112/0；repeat新helper111/0；费用6/等待3离线全0；真实browser等待故障注入预期exit1且原回执/全cleanup保全；check2在途 | tmp/autotrain-ui-20261014/durable2、repeat-recheck1、waiter-fault1、final9-source-inputs.json | 九SHA复核/check2/最终截图文档待收口；普通1×/原生/实损补兵未验，故障注入与功能绿分列，不推 |
