@@ -7478,3 +7478,5 @@ TEST_EXIT=0
 | 召回及明确未开战故障停摆 #1272 | 本发现原子提交未推 | 4测试4有效断言失败0错误跳过；前冻结check3/build2退出0 | tmp/bot-behavior-state-20261014-2c1101a7/review4-red1.log；validation-full2.json；state-review4.diff | 故障修复/新终审/最终完整验证/JVM/批探针未做；未确认CAS归属和partial仍需核对、不解除其他owner |
 
 | 召回/战前准备/活进程释放返程补写 #1273 | 本发现原子提交未推 | 4有效首红→88重点全0；身份/释放/返程快照写3回归→91全0 | tmp/bot-behavior-state-20261014-2c1101a7/focused11.log；focused12.log；state-review5.diff | 第五只读复核在途；本版最终完整/JVM/批探针未做；初CAS归属不明及partial仍需核对 |
+
+| 首次返程IO前登记/拦截双方阶段 #1274 | 本发现原子提交未推 | 真实战斗或拒绝后改期前/后故障4红；实际拦截守方写1红；5失败0错误跳过 | tmp/bot-behavior-state-20261014-2c1101a7/review5-red1.log；state-review5.diff；validation-full3.json | 提前登记/双方交战归属与已知清理修复、终审完整验证/JVM/批探针未做；partial/未知归属仍保核对 |
