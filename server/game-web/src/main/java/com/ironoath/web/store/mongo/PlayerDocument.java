@@ -42,7 +42,18 @@ public record PlayerDocument(
         java.util.List<String> ownedAvatarFrames,
         long version,
         HarvestLearningDoc harvestLearning,
-        Map<String, GoldClaimDoc> goldClaims) {
+        Map<String, GoldClaimDoc> goldClaims,
+        Long lastBotCalibrationAt) {
+    public PlayerDocument(String playerId, String deviceId, String nickName, int avatarId,
+            long createdAt, long lastLoginAt, int cityLevel, Map<String, ResourceDoc> resources,
+            PowerDoc power, PvpDoc pvp, Long protectUntil, GloryDoc glory, GuideDoc guide,
+            PaidDoc paid, TechDoc tech, GiftPopupDoc giftPopup, String avatarFrame,
+            java.util.List<String> ownedAvatarFrames, long version, HarvestLearningDoc harvestLearning,
+            Map<String, GoldClaimDoc> goldClaims) {
+        this(playerId,deviceId,nickName,avatarId,createdAt,lastLoginAt,cityLevel,resources,power,pvp,
+                protectUntil,glory,guide,paid,tech,giftPopup,avatarFrame,ownedAvatarFrames,version,
+                harvestLearning,goldClaims,null);
+    }
     public PlayerDocument(String playerId, String deviceId, String nickName, int avatarId,
             long createdAt, long lastLoginAt, int cityLevel, Map<String, ResourceDoc> resources,
             PowerDoc power, PvpDoc pvp, Long protectUntil, GloryDoc glory, GuideDoc guide,

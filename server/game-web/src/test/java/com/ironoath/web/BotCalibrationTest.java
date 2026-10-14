@@ -60,6 +60,83 @@ class BotCalibrationTest {
     @Autowired private BotCalibrationService calibration;
     @Autowired private BotRuntimeService runtime;
     @Autowired private com.ironoath.web.bot.BotWorldAdapter adapter;
+    @Autowired private com.ironoath.web.bot.BotRulesAssembler rules;
+
+    private BotCalibrationService anotherInstance() {
+        return new BotCalibrationService(bots,rules,players,spawner,playerLock);
+    }
+
+    @Test void twoInstancesCommitOnlyOneCalibrationForTheSameBotDay() throws Exception {
+        String human=humanAt(300,300,"并发日校准"),bot=botAt(256,256);
+        setMatchPower(human,10_000L);setMatchPower(bot,1_000L);
+        long before=players.findByPlayerId(bot).orElseThrow().version(),now=timeService.serverNow();
+        var other=anotherInstance();var start=new java.util.concurrent.CountDownLatch(1);
+        var workers=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var a=workers.submit(()->{start.await();return calibration.calibrateIfNewDay(now);});
+            var b=workers.submit(()->{start.await();return other.calibrateIfNewDay(now+1);});
+            start.countDown();a.get(10,java.util.concurrent.TimeUnit.SECONDS);b.get(10,java.util.concurrent.TimeUnit.SECONDS);
+        } finally {workers.shutdownNow();}
+        var accepted=players.findByPlayerId(bot).orElseThrow();
+        assertThat(accepted.version()).as("同日并发实例只做一次完整校准写入").isEqualTo(before+1);
+        assertThat(accepted.lastBotCalibrationAt()).isIn(now,now+1);
+    }
+
+    @Test void sameDayAnotherInstanceKeepsTheAcceptedCalibration() {
+        String human=humanAt(300,300,"多实例均值"),bot=botAt(256,256);
+        setMatchPower(human,10_000L);setMatchPower(bot,1_000L);
+        long day=com.ironoath.common.time.DayKey.startOfDayPlusDays(timeService.serverNow(),0)+9*HOUR;
+        calibration.calibrateIfNewDay(day);var accepted=players.findByPlayerId(bot).orElseThrow();
+        setMatchPower(human,30_000L);anotherInstance().calibrateIfNewDay(day+HOUR);
+        var reread=players.findByPlayerId(bot).orElseThrow();
+        assertThat(reread.power()).as("同日新实例不能随变化的真人均值再次校准").isEqualTo(accepted.power());
+        assertThat(reread.version()).as("已接受的同日校准不重复写档").isEqualTo(accepted.version());
+        anotherInstance().calibrateIfNewDay(day+DAY);
+        assertThat(matchPowerOf(bot)).as("跨到次日仍正常校准").isGreaterThan(accepted.power().matchPower());
+    }
+
+    @Test void lostCommittedReplyDoesNotCalibrateAgainOnRetry() {
+        String human=humanAt(300,300,"回执丢失均值"),bot=botAt(256,256);
+        setMatchPower(human,10_000L);setMatchPower(bot,1_000L);
+        long now=timeService.serverNow();var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(call->{
+            Object result=call.callRealMethod();
+            if(once.compareAndSet(false,true))throw new IllegalStateException("owned calibration committed reply lost");
+            return result;
+        }).when(players).save(org.mockito.ArgumentMatchers.any(PlayerSave.class));
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->calibration.calibrateIfNewDay(now))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("committed reply lost");
+        var accepted=players.findByPlayerId(bot).orElseThrow();org.mockito.Mockito.reset(players);
+        setMatchPower(human,30_000L);anotherInstance().calibrateIfNewDay(now+1);
+        assertThat(players.findByPlayerId(bot).orElseThrow().power()).as("持久结果成功后丢回执也不能二次校准").isEqualTo(accepted.power());
+    }
+
+    @Test void partialBatchRetryPreservesBotsAlreadyCalibrated() {
+        String human=humanAt(300,300,"部分批次均值"),first=botAt(256,256),second=botAt(260,256);
+        setMatchPower(human,10_000L);setMatchPower(first,1_000L);setMatchPower(second,1_000L);
+        long now=timeService.serverNow();var count=new java.util.concurrent.atomic.AtomicInteger();
+        var committed=new java.util.concurrent.atomic.AtomicReference<String>();
+        org.mockito.Mockito.doAnswer(call->{
+            PlayerSave save=call.getArgument(0);
+            if(count.incrementAndGet()==2)throw new IllegalStateException("owned next bot precommit failure");
+            Object result=call.callRealMethod();committed.set(save.playerId());return result;
+        }).when(players).save(org.mockito.ArgumentMatchers.any(PlayerSave.class));
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->calibration.calibrateIfNewDay(now))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("precommit failure");
+        String done=committed.get();assertThat(done).isIn(first,second);
+        var accepted=players.findByPlayerId(done).orElseThrow().power();org.mockito.Mockito.reset(players);
+        setMatchPower(human,30_000L);calibration.calibrateIfNewDay(now+1);
+        assertThat(players.findByPlayerId(done).orElseThrow().power()).as("批次重试不能重复已完成的Bot").isEqualTo(accepted);
+        assertThat(matchPowerOf(done.equals(first)?second:first)).as("尚未提交的Bot仍应完成本日校准").isGreaterThan(accepted.matchPower());
+    }
+
+    @Test void clockRollbackDoesNotReopenAnOlderCalibrationDay() {
+        String human=humanAt(300,300,"回拨均值"),bot=botAt(256,256);
+        setMatchPower(human,10_000L);setMatchPower(bot,1_000L);long now=timeService.serverNow();
+        calibration.calibrateIfNewDay(now+DAY);var accepted=players.findByPlayerId(bot).orElseThrow().power();
+        setMatchPower(human,30_000L);anotherInstance().calibrateIfNewDay(now);
+        assertThat(players.findByPlayerId(bot).orElseThrow().power()).as("回拨不得重开更早日的校准").isEqualTo(accepted);
+    }
 
     @BeforeEach
     void resetStores() {

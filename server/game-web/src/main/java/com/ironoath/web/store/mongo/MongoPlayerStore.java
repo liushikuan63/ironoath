@@ -177,6 +177,7 @@ public final class MongoPlayerStore implements PlayerRepository {
                 .set("nickName", doc.nickName())
                 .set("avatarId", doc.avatarId())
                 .set("lastLoginAt", doc.lastLoginAt())
+                .set("lastBotCalibrationAt", doc.lastBotCalibrationAt())
                 .set("cityLevel", doc.cityLevel())
                 .set("resources", doc.resources())
                 .set("power", doc.power())

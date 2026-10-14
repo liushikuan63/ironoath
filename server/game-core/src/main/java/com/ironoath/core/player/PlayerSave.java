@@ -23,6 +23,18 @@ public final class PlayerSave {
     private int avatarId;
     private long createdAt;
     private long lastLoginAt;
+    /** 内部每日校准完成时刻；旧存档缺省 null，不进入玩家协议。 */
+    private Long lastBotCalibrationAt;
+
+    public Long lastBotCalibrationAt() { return lastBotCalibrationAt; }
+    public void restoreBotCalibrationAt(Long stored) {
+        if (stored != null && stored <= 0L) throw new IllegalArgumentException("校准完成时刻必须为正");
+        lastBotCalibrationAt = stored;
+    }
+    public void recordBotCalibration(long now) {
+        if (now <= 0L) throw new IllegalArgumentException("校准完成时刻必须为正");
+        if (lastBotCalibrationAt == null || now > lastBotCalibrationAt) lastBotCalibrationAt = now;
+    }
     private int cityLevel;
     private final Map<String, PlayerResourceState> resources = new LinkedHashMap<>();
     private final Map<String, com.ironoath.core.reward.GoldClaimReceipt> goldClaims = new LinkedHashMap<>();
@@ -519,6 +531,7 @@ public final class PlayerSave {
                 avatarFrame, ownedAvatarFrames, version);
         copy.restoreHarvestLearning(pendingManualOutput, manuallyCollected);
         copy.restoreGoldClaims(goldClaims);
+        copy.restoreBotCalibrationAt(lastBotCalibrationAt);
         return copy;
     }
 }

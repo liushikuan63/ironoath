@@ -64,7 +64,7 @@ public final class PlayerDocumentMapper {
                 save.avatarFrame(),
                 toOwnedFrames(save.ownedAvatarFrames()),
                 save.version(), new PlayerDocument.HarvestLearningDoc(save.pendingManualOutput(),
-                        java.util.List.copyOf(save.manuallyCollected())), goldClaimDocs(save));
+                        java.util.List.copyOf(save.manuallyCollected())), goldClaimDocs(save), save.lastBotCalibrationAt());
     }
 
     private static Map<String, PlayerDocument.GoldClaimDoc> goldClaimDocs(PlayerSave save) {
@@ -205,6 +205,7 @@ public final class PlayerDocumentMapper {
                             receipt.overflowMailId())));
             save.restoreGoldClaims(receipts);
         }
+        save.restoreBotCalibrationAt(doc.lastBotCalibrationAt());
         return save;
     }
 

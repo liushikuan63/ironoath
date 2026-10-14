@@ -60,7 +60,7 @@ public class BotCalibrationService {
      */
     private volatile BotSchedulerAccess schedulerAccess;
 
-    /** 上一次校准用的日期键（{@code DayKey}，UTC+8）。进程内 —— 重启后当天会再校一次，无害。 */
+    /** 本实例当日扫描缓存；每个Bot是否完成以同份玩家存档的持久时刻为准。 */
     private volatile String lastCalibratedDay = "";
 
     /**
@@ -136,17 +136,23 @@ public class BotCalibrationService {
         BotProfile profile = registry.profileOf(botId);
         PlayerSave save = players.findByPlayerId(botId).orElse(null);
         if (profile == null || save == null) { return new CalibrationResult(false, false); }
+        Long completedAt = save.lastBotCalibrationAt();
+        if (completedAt != null && DayKey.of(completedAt).compareTo(DayKey.of(now)) >= 0) {
+            return new CalibrationResult(false, false);
+        }
         boolean recalibrated = false;
         if (humanAverage > 0L) {
             long target = tuning.targetPower(humanAverage, powerFactorOf(profile));
             if (target > 0L && target != save.power().matchPower()) {
                 // 三字段一起写，仍沿用原校准规则与PlayerPower不变量。
                 save.setPower(new PlayerPower(target, target, target));
-                players.save(save);
                 recalibrated = true;
             }
         }
-        players.touchLogin(botId, now);
+        save.touchLogin(now);
+        save.recordBotCalibration(now);
+        // 校准结果、活跃时刻及完成标记共享同一版本化写入，丢回执后重读仍能识别完成。
+        players.save(save);
         return new CalibrationResult(recalibrated, true);
     }
 
