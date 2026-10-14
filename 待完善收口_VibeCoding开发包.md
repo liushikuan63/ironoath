@@ -7560,3 +7560,5 @@ TEST_EXIT=0
 | 聊天EditBox标签对齐实施 #1311 | 本笔有效首红、根因与typecheck原子留档；源码未交付 | 正式attempt11 15pass/1fail/pageconsole0/exit1全cleanup；typecheck1=0；full1后台40101运行中 | tmp/chat-input-layout-20261014/attempt1/input-geometry.actual.json；chat-rate-limit/attempt11/draft-bounds.actual.json；review1-manifest.json | 新Web实际30条/截图/社交可见性批探针未验；不把types绿当UI绿，原生仍未验 |
 
 | 聊天输入标签对齐交付 #1312 | 本笔UI2/报告矩阵及证据原子本地提交，未推 | 2714server/1321client/47门全0；headless337新文件；旧15/1→新版30/0；17FIRST/war44全0，owner全收 | tmp/chat-input-layout-20261014/final-summary.actual.json；chat-rate-limit/attempt12/draft和empty边界及两新截图已查看 | 原生未代验；持久5000仍未达；下一B24实际赛季币获得消费链路未验，已有零余额展示不算兑换通过 |
+
+| B24赛季币获得消费量具首前提 #1313 | 本笔原子记录失败前提/正确生产触发；新probe未交付 | attempt1真实9/1/exit1，空快照0币、浏览器未启动、own全cleanup；attempt2后台27604运行中 | tmp/season-coin-ui-20261014/attempt1/result.actual.json；candidate1/inputs.json；inputs-inspect.actual.json | 首失败是无真实上榜触发的夹具前提，不是消费功能；新版结算/真实UI购买仍待验，不虚报玩家全链通过 |
