@@ -7578,3 +7578,5 @@ TEST_EXIT=0
 | B25 首派返兵→再次正链收口 #1320 | 本格14路径原子本地提交（不推） | full1 276fresh2714全0；最终check2/3 47/1321/22脚本全0；web2 337；durable3真实111/0；17FIRST无RERUN/SKIP与war44/0；所有owner清理/SHA漂移0 | tmp/repeat-march-ui-20261014/final-summary.actual.json、durable3、validation-client2.json/validation-check3.json；behavior-runtime10/result.actual.json | 实损兵不足/并发上限/普通1×/原生仍未验，矩阵留🟡；继续真实UI自动续训排批扣费及关闭，旧emit探针不代真实点击；不推部署付款 |
 
 | B25 自动续训真实点击/排批初验 #1321 | 本格设计与发现本地提交（不推） | 现查旧autotrain使用emit且仅未手动输入分支；新probe语法0，后台48672运行 | tmp/autotrain-ui-20261014/inspect.mjs/run-owned.py、attempt1/owner.actual.json；前格repeat final-summary.actual.json | 新手动1→auto3费用/数量链未验；手工关闭待补；IRON无生产需实际前提通过；不把旧13/13当物理点击和扣费 |
+
+| B25 真实自动三批与剔产出铁矿守恒 #1322 | 本格发现/初验本地提交（不推） | attempt1误URL55/1、attempt2非0率守卫56/1非产品红；attempt3真实91/0全cleanup/漂移0；attempt4加入全兵种/手工关闭在途 | tmp/autotrain-ui-20261014/attempt3/result.actual.json/runner-result.actual.json；attempt4/owner.actual.json | 91仅手动1/auto3/预算停；手工关闭及全兵种新版待run4，账目口径review在途；普通1×/原生/实损补兵未验，不推 |
