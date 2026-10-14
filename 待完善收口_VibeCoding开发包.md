@@ -7600,3 +7600,5 @@ TEST_EXIT=0
 | B25 NPC实损与后端补兵正式收口 #1331（2026-10-15） | 本格7路径原子本地提交（不推） | durable2 140/0（含可见文案合成负控1+恢复1）；实际损11/补11/660业务秒/slot1/IRON330 GRAIN220/全cleanup；check1 47/1321/31全0；2SHA独立一致 | tmp/loss-repeat-ui-20261015/final-summary.actual.json、durable2、validation-check1.json | 玩家正目标入口仍0，下一单兵种按上次真实参数显式确认；ordinary1×/原生/并发上限未验，原9490同库主9已恢复6072，不推升级 |
 
 | B25 玩家补兵入口 implementation plan #1332（2026-10-15） | 本格设计计划本地提交（不推） | 原服务9490/6072已恢复，前格NPC正式140（138实流/2合成与恢复）全cleanup；新UI未实施 | docs/核心对战玩法收口.md #1332、tmp/loss-repeat-ui-20261015/final-summary.actual.json；active goal | 纯模型/Root/scene/newmeta/真UI与17批门均待执行；单兵种既有策略不扩多兵种/自由默认；马上TDD，不推原服升级 |
+
+| B25补兵模型与原生轮转现场 #1333（2026-10-15） | 本格检查点文档本地提交（不推）；两源仍未提交 | 有效red2 12/9过3失败0跳→green12/0/0跳，test:build0；真实compact5/连续失败0；9490/6072监听 | tmp/auto-refill-entry-20261015/model-red2.log、model-green.log、handoff.md与source-snapshot.json | Root/scene/meta/玩家POST/真UI/全门与17批尚未完成；保留脏两源，原生接续未证明前不得标成功；不推升级原服 |
