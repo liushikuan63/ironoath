@@ -7492,3 +7492,5 @@ TEST_EXIT=0
 | 终审集结名单战前IO已确认归属滞留 #1277 | 本发现原子本地提交未推 | 新check5/build4均0；270新套2675server/1321client全0；旧XML7条排除；4JVM/AOF/额度竞争/普通反击22全0；独立复核1Important | tmp/bot-behavior-state-20261014-2c1101a7/state-review7-independent.md；validation-resume.json；validation-resume-before-freshness.json；owned-resume1.log；behavior-jvm2/result.actual.json | 新集结名单读故障红/修复/新冻结终验待做；当前17+war仅前冻结版；硬崩溃/partial继续保守核对，B04继续 |
 
 | 确认集结归属后的名单战前故障无损返程 #1278 | 本修复证据原子本地提交未推 | review7回归1执行1断言首红0错跳；最小修复后91重点全0；前候选4JVM22/17FIRST/war44各0、owner全收 | tmp/bot-behavior-state-20261014-2c1101a7/review7-red1.log；focused15.log；final-resume-summary.json；state-review7-independent.md | 当前26路径最终源码未提交；freeze8新完整/JVM/AOF/批探针仍待；未知CAS与partial/硬崩溃保人工核对，B04继续 |
+
+| B04战斗满仓补发与中文可见性实施判据 #1279 | 本设计发现原子本地提交未推 | 生产仍wallet.grant容量截断、差额只日志；既有RewardService/StoreMailbox可复用；bodyOf默认直印ctx.source/sourceRef需定向适配 | server/game-web/src/main/java/com/ironoath/web/battle/PlayerCityBattleService.java:756；StoreMailbox.java:133；B04_资源背包与道具.md:101 | B04代码/有效首红/邮件真实领回及集结守恒尚未实施；先收Bot freeze8最终批验，未知回执/硬崩溃不承诺自动恢复 |
