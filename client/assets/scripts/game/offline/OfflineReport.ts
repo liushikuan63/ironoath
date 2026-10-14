@@ -73,7 +73,7 @@ export function buildOfflineItems(src: OfflineSources): OfflineItem[] {
     }
     const amount = Math.floor(state.perHour * hours)
     if (amount > 0) {
-      produced.push(`${RESOURCE_NAMES[id] ?? id} +${amount}`)
+      produced.push(`${RESOURCE_NAMES[id] ?? '未知资源'} +${amount}`)
     }
   }
   if (produced.length > 0) {

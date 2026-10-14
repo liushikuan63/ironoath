@@ -7624,3 +7624,5 @@ TEST_EXIT=0
 | B25隔离微信候选包构建 #1343 | 本格候选构建证据文档本地提交，不推；无生产源码改动 | Cocos与artifact脚本exit0；横屏/适配/global/9901补丁齐；首包2.83MB（本仓预算4.00）/分包4.17/整包7.01；原native与源SHA漂移0 | tmp/auto-refill-native-candidate-20261015/result.actual.json、inputs.json、client/build/wechatgame | 当前实际无微信/Cocos窗口，原生玩家链及整包官方发布限制未验；下一仅只读CLI后台契约/已存在端点检查，勿前台/重开原IDE/原UID业务POST；原9490保持、goal active，不push部署付款 |
 
 | B25原生后台入口契约复验 #1344 | 本格4文档本地原子提交，不推；无生产源码修改 | CLI现装2.02.2608080/新路径存在，旧路径不存在；无微信/Cocos进程及14窗口匹配/45269未监听；原生隔离包构建0/源与原包SHA0 | tmp/auto-refill-native-candidate-20261015/cli-contract.actual.json、result.actual.json | 尚无可复用原生窗口，本轮未open/auto/改IDE设置/重开原IDE/前台，不永久推断后台API全不可用；原生真玩家/离线资源裁决/持久5000未验，原9490保护，goal仍active |
+
+| B25资源摘要未知键回退 #1345 | 本格2源/测试与3台账明确路径本地原子提交，不推 | 有效首红6过1失败0跳→7/0；47门/1344client/33工具全0；新Web0/合成视图11条0/页面异常0/9903,9904释放；独立2SHA无阻断 | tmp/offline-resource-fallback-20261015/final-summary.actual.json、red.log、green.log、runtime-result.actual.json、截图offline-report.png | 精确流水仍待产品裁决；未重跑Java/17批，旧2714/17FIRST/569补兵只归旧输入；微信候选为摘要修前源，新Web单列；原9490/6072保持；原号微信/持久5000及第四明细滚动未验，goal active、不push部署付款前台 |

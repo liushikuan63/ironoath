@@ -98,6 +98,17 @@ test('验收 7：新号没有「上一次」⇒ 一条不列、也不弹', () =>
   assert.match(gate.reason ?? '', /新号/)
 })
 
+test('资源摘要缺少名称时保留数量并使用人话回退，不向玩家印内部资源键', () => {
+  const items = buildOfflineItems(sources({ resources: {
+    pool_unknown: { current: 5000, cap: 20000, protectedAmount: 0, perHour: 200, lastSettle: NOW_MS },
+  } }))
+  const res = items.find((i) => i.key === 'resources')
+  assert.equal(res?.detail, '未知资源 +600')
+  assert.equal(res?.text, '资源产出（约 3 小时）')
+  assert.equal(res?.jump, 'city')
+  assert.doesNotMatch(res?.detail ?? '', /pool_unknown/)
+})
+
 test('验收 7：离得太近或没有可说的都不弹（阈值全部来自服务端下发的那两个数）', () => {
   const items = buildOfflineItems(sources())
   assert.ok(items.length > 0, '夹具前提：这一批是有东西可说的')
