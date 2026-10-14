@@ -7610,3 +7610,5 @@ TEST_EXIT=0
 | B25冻审与跨登录发送隔离 #1336 | 发现/有效回归文档本地提交；源继续在途 | review1 13SHA一致；build1有效1338跑4失败0跳；修后相关272/0/0跳与tsc0 | tmp/auto-refill-entry-20261015/review1、build1.log、review-fix-green3.log | 修后3写口负控/完整全门新Web及真实NPC正目标入口/17FIRST/复审2未做；原9490/6072同号同库1x保护，新goal继续，不push |
 
 | B25迟到网络异常隔离 #1337 | 本地文档检查点；源在途 | review2 17SHA一致；有效2失败→相关274过0失败0跳过；check5 47门0/1341client0 | tmp/auto-refill-entry-20261015/late-network-red.log、late-network-green.log、review3 | 完整test3/build2/新Web在途，最终全门新2例、实际玩家NPC差额费用队列时长启停/17FIRST及review3未收口；原9490保持，持续goal active，不push |
+
+| B25真实玩家入口首红：CSS覆盖hidden #1338 | 发现/修复文档检查点本地提交；功能源在途 | test3 2714server/1343client0失败0跳；build2/Web1/check6全0；attempt1 20/1且全收；显式display后check-ui2/Web-ui2全0，attempt2真实训练100等待 | tmp/auto-refill-entry-20261015/attempt1/failure.png、runner-result.actual.json、ui-recheck2-exits.json | attempt2 NPC损耗返程/正目标确认差额费用队列时长启停、小屏/触摸/17FIRST与overlay差异复审待验；原9490/6072保持，不推 |
