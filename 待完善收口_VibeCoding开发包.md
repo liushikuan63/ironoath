@@ -7524,3 +7524,5 @@ TEST_EXIT=0
 | B22限流真实浏览器闭环 #1293 | 本次量具/脱敏/台账原子本地提交 | 最终三SHA0漂移；47门/1321client/2脱敏/HTTPUI25全0 | tmp/chat-rate-limit-20261014/final-summary.actual.json；attempt7两截图 | 原生未代验；无产品规则变更、不推；下一5000 Bot性能报告继续 |
 
 | B11五千Bot性能实测设计 #1294 | 本笔设计原子本地提交 | 既定30s/P99 5ms；生产Runtime/World/Queue已定位 | tmp/bot-performance-20261014；B11§九6 | 压测尚未执行；先独立内存基线、持久后端另核；不代替5000真人在线，不推 |
+
+| B11五千Bot三轮真红/读域修复 #1295 | 本笔发现与判据原子本地提交 | memory1三轮5000正确但64.3/52.8/53.9s与P99 13.6~14.6ms；red2两有效红 | tmp/bot-performance-20261014/memory1；thread1.actual.log；red2.actual.json | 修后重点/完整新候选与固定输入A/B尚未完成；持久后端仍待量，不推部署付款 |
