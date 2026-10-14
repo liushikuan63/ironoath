@@ -7594,3 +7594,5 @@ TEST_EXIT=0
 | B25 NPC战损→既有后端目标补回 #1328（2026-10-15） | 本格实证本地提交（不推） | attempt3真实133/0，20→8→补12到20/720业务秒/1槽/queue5001零费用/全费种/全cleanup；正式durable1在途 | tmp/loss-repeat-ui-20261015/attempt3/refill.actual.json、battle-report.actual.json、result.actual.json/runner-result.actual.json | 133未包括正式时长断言/玩家关闭；HTTP开target≠玩家能输入目标，positive发送0/留黄；普通1×/原生未验，不推 |
 
 | B25 真实132损耗补差与可见Label反控 #1329（2026-10-15） | 本格事实/量具完善本地提交（不推） | durable1 132/0：损8补8/480业务秒/slot1/IRON240 GRAIN160/全cleanup；新durable2可见文案负控及索引check在途 | tmp/loss-repeat-ui-20261015/durable1/refill.actual.json/result.actual.json/runner-result.actual.json；final2-source-inputs.json | 正目标开经HTTP非玩家入口；新Label负控未代验、目标UI输入仍0，普通1×/原生未验，不推 |
+
+| 停电服务恢复与显式目标 #1330（2026-10-15） | 本格恢复事实本地提交（不推） | 原JAR/45配置SHA同；Java6072/9490/同Mongo同UID；HTTPcity×2/army均200code0；原主9/兵营6/学院等1全保；Mongo ping1/Redis PONG；owner创建UTC ticks及监听同/wrapper退出 | D:/tmp/ironoath-power-recovery-20261015/attempt1/recovery-summary.actual.json、process-owner-verified.actual.json、canonical-owners-updated.actual.json | 仅服务恢复与原号读回，不是客户端/原生全验；active goal下一补玩家目标策略入口，先完成NPC工具待提交，不升级原服/不推 |
