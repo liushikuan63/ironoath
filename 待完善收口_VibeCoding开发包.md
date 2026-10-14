@@ -7616,3 +7616,5 @@ TEST_EXIT=0
 | B25真实正目标入口与焦点首红 #1339 | 本地证据检查点；完整特性源待最终原子提交 | attempt2 235/1→焦点修后attempt3 285/0；真实损6补6/IRON180 GRAIN120/slot1/360业务秒；47/1343/31/Web全0 | tmp/auto-refill-entry-20261015/attempt3/refill.actual.json、runner-result.actual.json、player-target-pending.png | 17FIRST/war44与触摸小屏销毁attempt4在途，overlay/probe窄差异独立复审及最终源提交未做；ordinary1×/微信原生未验，原9490/6072保持，不push |
 
 | B25 玩家补兵入口完整Web有限交付 #1340 | 本格20源/测试/量具+4台账明确路径本地原子提交，不推 | 47门/1343client/33工具/2714server无失败跳过，新337Web0；键盘285/0、触摸小屏销毁及严格反控287/0；17FIRST真实全0/war44全0/全owner收；20SHA独立一致 | tmp/auto-refill-entry-20261015/final-summary.actual.json、review6、attempt5/refill.actual.json、related1/first-pass-audit.actual.json | ordinary1×玩家正目标与微信原生尚未验；下一新自有普通1×流程，不触原9490/6072 v35同UID同Mongo主9兵营6；离线资源产品口径/持久5000未收口；tmp wrapper FIRST标签误判raw1保留、严审0不重跑；持续goal active、不push部署付款前台 |
+
+| B25普通1×相邻验收实际接续 #1341 | 本格发现/前提证据文档本地提交；新ordinary量具未提交 | 前格fcd07213已24路径/47与1343+33+2714全0；ordinary1x真实TrainOnce1→NPC1→仍1，306/1不满足损耗前提；owner全退出/sourceSHA0 | tmp/auto-refill-ordinary-20261015/attempt1/result.actual.json、runner-result.actual.json | ordinary1×差额补兵仍未验，下一较低阶配置武将或既有强NPC输入实查，不造损/不调速度；微信原生/离线资源裁决/持久5000未收口；原9490保持、goal继续，不push |
