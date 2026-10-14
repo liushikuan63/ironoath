@@ -7516,3 +7516,5 @@ TEST_EXIT=0
 | Bot每日校准原子完成标记 #1289 | 本笔验证及量具反证本地提交 | 4有效首红→37全0；47门/2697server/1321client全0；既有4JVM22全0；专项两轮量具前提/观测顺序错保留 | tmp/bot-daily-calibration-20261014/review1-independent.md；calibration-jvm1/2的measurement-correction.actual.json | 专项第3轮与17FIRST/战争待终验；旧版混跑不保证；日界可控时间非24小时墙钟；继续余项不停止，不推部署付款 |
 
 | 核心Bot每日校准持久幂等 #1290 | 本次七源码及三台账原子本地提交 | 47门/271新套2697server/1321client/既有4JVM22/校准4JVM15/17FIRST/war44全0失败及跳过，7SHA漂移0 | tmp/bot-daily-calibration-20261014/final-summary.actual.json | 旧版混跑不保证；日界可控输入非24小时墙钟；未测Mongo写中途崩溃；原9490/UID/原生未验；下一B22真实浏览器限流继续，不推部署付款 |
+
+| B22限流浏览器现查 #1291 | 本条原子本地提交 | 验收矩阵第1格仍🟡；生产10044与输入保留已接线 | tmp/chat-rate-limit-20261014；每日校准final-summary.actual.json | 实际浏览器限流尚未执行；原9490/UID/IDE与原生、外部服务均不动，不推 |
