@@ -7536,3 +7536,5 @@ TEST_EXIT=0
 | B11五千Bot内存预算与批链收口 #1299 | 本次十一源码/报告/四台账原子本地提交 | 47门/2703server/1321client/2脱敏/四JVM22/17FIRST/war44/HTTPUI26全0；5000三轮全部达标 | tmp/bot-performance-20261014/final-summary.actual.json；docs/Bot5000性能实测.md | 固定业务时间非1×墙钟；Mongo/Redis5000与原生未代验；下一持久性能继续，不推部署付款 |
 
 | B11持久后端五千Bot实际阶段 #1300 | 本笔设计/授权边界原子本地提交 | ca5b6608内存完整已验未推；同22e新候选，既定预算/负载不改 | tmp/bot-mongo-performance-20261014；现有Mongo27/独立Redis owner流程 | Mongo/Redis5000尚未量；仅外部量具接真实生产实现，不动原号/9490/IDE、不推部署付款 |
+
+| B11持久初始化首超时/分段传输实证 #1301 | 本笔发现及反证原子本地提交 | 900s前4844Bot、未tick；JFR645慢读中位42.9ms；整帧0.224/分段44ms；Redis<1ms | tmp/bot-mongo-performance-20261014/attempt1；mongo-wire-latency.actual.json；官方Driver4.11.2源 | 真5000持久未测到；传输对照与候选未验，不直接改生产默认，不推部署付款 |
