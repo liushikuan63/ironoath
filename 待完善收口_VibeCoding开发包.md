@@ -7588,3 +7588,5 @@ TEST_EXIT=0
 | B25 真实续训/全费用/关闭收口 #1325（2026-10-15） | 本格14路径原子本地提交（不推） | check2 47/1321/31工具全0；auto真实112/0/全費种；repeat当前111/0；真browser等待故障预期1且原回执/全清理；九SHA独立一致 | tmp/autotrain-ui-20261014/final-summary.actual.json、durable2、repeat-recheck1、waiter-fault1、validation-check2.json | 服务器目标补兵模式不等客户端入口，targetCount正值发送0/矩阵#4留黄；实损补兵/普通1×/原生未验；下一真实NPC损耗与缺兵重复负控，不推 |
 
 | B25 真实NPC损耗与再次缺兵负控 #1326（2026-10-15） | 本格设计/入口缺口本地提交（不推） | 前格1a29185f真实112/111/47/1321/31全0全收；新probe语法0/后台47647运行 | tmp/loss-repeat-ui-20261015/inspect.mjs/run-owned.py、attempt1/owner.actual.json | NPC实际战损/缺兵零发送与后端目标补兵均未验；客户端正目标入口仍0不得宣称完整补兵闭环；不推 |
+
+| B25 真实NPC损兵与再次拒绝 #1327（2026-10-15） | 本格事实/量具更正本地提交（不推） | attempt1 86/0，真实20→9/零再次发送/全cleanup；attempt2摘要3损耗成立/详情字段量具88/1非产品红；attempt3补兵在途 | tmp/loss-repeat-ui-20261015/attempt1/loss-state.actual.json/result.actual.json、attempt2/result.actual.json、attempt3/owner.actual.json | 后端目标补差/费/队列时长待run3；前端正目标仍0，原生/普通1×未验；stock5000为新自有夹具非原配置改动，不推 |
