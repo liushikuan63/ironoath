@@ -274,7 +274,7 @@ public class PlayerCityBattleService {
 
         // ---------- 一、造双方军队 ----------
         HeroRoster attackerRoster = heroes.findByPlayerId(attackerId).orElseGet(HeroRoster::new);
-        List<HeroSnapshot> attackerHeroes = heroMapper.snapshots(attackerId, march.heroes(), attackerRoster);
+        List<HeroSnapshot> attackerHeroes = heroMapper.snapshotsForMarch(march);
         CityState attackerCity = cities.findByPlayerId(attackerId).orElse(null);
         long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerId, attackerCity);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(march.units());
@@ -452,8 +452,7 @@ public class PlayerCityBattleService {
         String gathererId = gatherer.playerId();
 
         // ---------- 一、造双方军队（都来自各自的行军，不是城内军队） ----------
-        HeroRoster attackerRoster = heroes.findByPlayerId(attackerId).orElseGet(HeroRoster::new);
-        List<HeroSnapshot> attackerHeroes = heroMapper.snapshots(attackerId, attacker.heroes(), attackerRoster);
+        List<HeroSnapshot> attackerHeroes = heroMapper.snapshotsForMarch(attacker);
         CityState attackerCity = cities.findByPlayerId(attackerId).orElse(null);
         long attackerHospital = attackerCity == null ? 0L : armyAppService.hospitalCapacity(attackerId, attackerCity);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(attacker.units());

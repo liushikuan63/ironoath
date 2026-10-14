@@ -22,8 +22,6 @@ import com.ironoath.core.army.ArmyState;
 import com.ironoath.core.army.TierSplit;
 import com.ironoath.core.city.CityRepository;
 import com.ironoath.core.city.CityState;
-import com.ironoath.core.hero.HeroRepository;
-import com.ironoath.core.hero.HeroRoster;
 import com.ironoath.core.limit.DailyCounter;
 import com.ironoath.core.march.March;
 import com.ironoath.core.resource.ResourceIds;
@@ -95,7 +93,6 @@ public class MonsterBattleService {
     private final BattleArmyFactory armyFactory;
     private final BattleRulesAssembler rulesAssembler;
     private final HeroBattleMapper heroMapper;
-    private final HeroRepository heroes;
     private final ArmyRepository armies;
     private final CityRepository cities;
     private final ArmyAppService armyAppService;
@@ -117,7 +114,7 @@ public class MonsterBattleService {
 
     public MonsterBattleService(ConfigRegistry configs, BattleArmyFactory armyFactory,
                                 BattleRulesAssembler rulesAssembler, HeroBattleMapper heroMapper,
-                                HeroRepository heroes, ArmyRepository armies, CityRepository cities,
+                                ArmyRepository armies, CityRepository cities,
                                 ArmyAppService armyAppService, RewardService rewardService,
                                 com.ironoath.core.reward.RewardPorts.Wallet wallet,
                                 DailyCounter dailyCounter, WorldRepository world,
@@ -130,7 +127,6 @@ public class MonsterBattleService {
         this.armyFactory = armyFactory;
         this.rulesAssembler = rulesAssembler;
         this.heroMapper = heroMapper;
-        this.heroes = heroes;
         this.armies = armies;
         this.cities = cities;
         this.armyAppService = armyAppService;
@@ -314,8 +310,14 @@ public class MonsterBattleService {
         }
 
         // 三、造双方军队
-        HeroRoster roster = heroes.findByPlayerId(playerId).orElseGet(HeroRoster::new);
-        List<HeroSnapshot> heroSnapshots = heroMapper.snapshots(playerId, march.heroes(), roster);
+        List<HeroSnapshot> heroSnapshots;
+        try {
+            heroSnapshots = heroMapper.snapshotsForMarch(march);
+        } catch (RuntimeException preparationFailure) {
+            // 此处只读取武将与装备，尚无战损、体力扣减或野怪消耗；可明确安全返程。
+            throw new BizException(ErrorCode.SYSTEM_ERROR,
+                    "随军武将准备暂时失败，未产生战损，队伍安全返程", preparationFailure);
+        }
         CityState city = cities.findByPlayerId(playerId).orElse(null);
         long hospitalCapacity = city == null ? 0L : armyAppService.hospitalCapacity(playerId, city);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(march.units());

@@ -115,6 +115,7 @@ class RallyDepartureTest {
     @Autowired private SocialStore socialStore;
     @Autowired private com.ironoath.web.mail.MailStore overflowMailStore;
     @Autowired private com.ironoath.common.time.TimeService timeService;
+    @Autowired private com.ironoath.web.battle.HeroBattleMapper battleHeroMapper;
 
     @BeforeEach
     void resetStores() {
@@ -455,6 +456,98 @@ class RallyDepartureTest {
         });
         assertThat(slots).extracting(slot -> slot.playerId())
                 .containsExactlyInAnyOrder(leader, mate);
+
+        March merged=onlyMarch(leader);
+        marchAppService.processDue(leader,merged.arriveAt()+1);
+        assertThat(battleReportService.list(leader).reports())
+                .as("成员专属武将应按成员归属参与实际到达战斗，不能查队长库而战前返程")
+                .hasSize(1);
+        assertThat(battleReportService.list(squad.victim()).reports()).hasSize(1);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"normal","cap-shrink","hero-missing"})
+    void memberOwnedHeroReachesActualMonsterRallyBattle(String boundary) throws Exception {
+        String leader=player(1000L,0L),mate=player(1000L,0L);Squad squad=squadOf(leader,mate);
+        grantHero(leader,HERO_1);grantHero(mate,HERO_2);
+        assertThat(world.moveCity(leader,Coord.of(256,256))).isTrue();
+        Coord target=null;
+        for(int dx=-25;dx<=25&&target==null;dx++) for(int dy=-25;dy<=25&&target==null;dy++) {
+            Coord coord=Coord.of(256+dx,256+dy);if(world.cityAt(coord).isPresent())continue;
+            var cell=worldAppService.cellAt(coord);
+            if(cell.entityType()==com.ironoath.core.world.WorldGenerator.EntityType.MONSTER
+                    &&firstKillConfigs.get(com.ironoath.config.cfg.MapmonsterCfg.class,cell.entityId()).level()==1)target=coord;
+        }
+        assertThat(target).isNotNull();
+        String rallyId=socials.squadRally(leader,new SquadRallyReq(newRequestId(),new SocialCoord(target.x(),target.y()),
+                SocialTargetType.MONSTER,troops(Map.of(T1,300L)),List.of(HERO_1))).rally().rallyId();
+        socials.rallyJoin(mate,new RallyJoinReq(newRequestId(),rallyId,troops(Map.of(T1,300L)),List.of(HERO_2)));
+        assertThat(depart(rallyId)).isEqualTo(1);March merged=onlyMarch(leader);
+        String originalGlobal=null;
+        if(boundary.equals("cap-shrink")) {
+            java.nio.file.Path dir=java.nio.file.Path.of("").toAbsolutePath(),table=null;
+            for(int n=0;n<6&&dir!=null;n++,dir=dir.getParent()) {
+                var candidate=dir.resolve("contract/config/global.json");
+                if(java.nio.file.Files.isRegularFile(candidate)){table=candidate;break;}
+            }
+            assertThat(table).isNotNull();
+            var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
+            var root=(com.fasterxml.jackson.databind.node.ObjectNode)mapper.readTree(java.nio.file.Files.readString(table));
+            root.set("rows",mapper.valueToTree(firstKillConfigs.rawTable("global").rows()));
+            root.put("version",firstKillConfigs.rawTable("global").version());originalGlobal=root.toString();
+            for(var row:root.path("rows"))if(row.path("id").asText().equals("LINEUP_HERO_COUNT"))
+                ((com.fasterxml.jackson.databind.node.ObjectNode)row).put("value",1);
+            firstKillConfigs.reload("global",com.ironoath.config.model.GlobalCfg.class,root.toString());
+            assertThat(firstKillConfigs.longParam("LINEUP_HERO_COUNT")).isEqualTo(1);
+        }
+        try {
+            if(boundary.equals("hero-missing")) seam(battleHeroMapper,"heroes",com.ironoath.core.hero.HeroRepository.class,
+                    heroes,(method,args)->method.getName().equals("findByPlayerId")&&mate.equals(args[0])
+                            ? java.util.Optional.empty() : invoke(heroes,method,args));
+            long now=merged.arriveAt()+1,stamina=players.findByPlayerId(leader).orElseThrow().resource("STAMINA").current();
+            marchAppService.processDue(leader,now);
+            if(boundary.equals("hero-missing")) {
+                assertThat(marches.findById(merged.id()).orElseThrow().status())
+                        .as("明确战前英雄缺失必须安全返程，不永久留在到达队列").isEqualTo(March.Status.RETURNING);
+                assertThat(world.isConsumed(target)).isFalse();
+                assertThat(battleReportService.list(leader).reports()).isEmpty();
+                assertThat(players.findByPlayerId(leader).orElseThrow().resource("STAMINA").current()).isEqualTo(stamina);
+                assertThat(dailyCounter.used("monster_hunt",leader,com.ironoath.common.time.DayKey.of(now))).isZero();
+                marchAppService.processDue(leader,now+3_600_000L);
+                assertThat(marches.findById(merged.id())).isEmpty();
+                assertThat(countOf(leader,T1)).isEqualTo(1000L);assertThat(countOf(mate,T1)).isEqualTo(1000L);
+                assertThat(world.isConsumed(target)).isFalse();
+            } else {
+                assertThat(world.isConsumed(target)).as("野怪集结按成员归属与已冻结名单实际结算，不受出发后cap收缩影响").isTrue();
+                assertThat(battleReportService.list(leader).reports()).hasSize(1);
+            }
+        } finally {
+            if(originalGlobal!=null) firstKillConfigs.reload("global",com.ironoath.config.model.GlobalCfg.class,originalGlobal);
+        }
+    }
+
+    @Test void rallyHeroSnapshotUsesMemberGrowthAndKeepsGlobalSlots() {
+        String leader=player(1000L,0L),mate=player(800L,0L);
+        grantHero(leader,HERO_1);grantHero(leader,HERO_2);grantHero(mate,HERO_2);
+        var member=heroes.findByPlayerId(mate).orElseThrow();long version=heroes.versionOf(mate);
+        member.restoreHero(new com.ironoath.core.hero.HeroInstance(HERO_2,10,0L,1,0,2,2));
+        heroes.save(mate,member,version);
+        Squad squad=squadOf(leader,mate);
+        String rallyId=socials.squadRally(leader,new SquadRallyReq(newRequestId(),coordOf(squad.victim()),
+                SocialTargetType.PLAYER_CITY,troops(Map.of(T1,300L)),List.of(HERO_1))).rally().rallyId();
+        socials.rallyJoin(mate,new RallyJoinReq(newRequestId(),rallyId,troops(Map.of(T1,200L)),List.of(HERO_2)));
+        assertThat(depart(rallyId)).isEqualTo(1);March merged=onlyMarch(leader);
+        var actual=battleHeroMapper.snapshotsForMarch(merged);
+        var own=battleHeroMapper.snapshots(mate,List.of(HERO_2),heroes.findByPlayerId(mate).orElseThrow()).get(0);
+        var wrong=battleHeroMapper.snapshots(leader,List.of(HERO_2),heroes.findByPlayerId(leader).orElseThrow()).get(0);
+        assertThat(actual).extracting(com.ironoath.battle.HeroSnapshot::slot).containsExactly(0,1);
+        assertThat(actual.get(1).heroBonusFixed()).isEqualTo(own.heroBonusFixed()).isNotEqualTo(wrong.heroBonusFixed());
+        assertThat(actual.get(1).defBonusFixed()).isEqualTo(own.defBonusFixed());
+        assertThat(actual.get(1).skills()).isEqualTo(own.skills()).isNotEqualTo(wrong.skills());
+        socialStore.clear();
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->battleHeroMapper.snapshotsForMarch(merged))
+                .as("集结归属丢失时不得偷用队长同名武将")
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("集结归属不存在");
     }
 
     @Test

@@ -13,6 +13,9 @@ import com.ironoath.core.hero.HeroAttrs;
 import com.ironoath.core.hero.HeroCalculator;
 import com.ironoath.core.hero.HeroInstance;
 import com.ironoath.core.hero.HeroRoster;
+import com.ironoath.core.hero.HeroRepository;
+import com.ironoath.core.march.March;
+import com.ironoath.web.social.SocialStore;
 import com.ironoath.web.hero.EquipLedger;
 import com.ironoath.web.hero.EquipLedgers;
 import com.ironoath.web.service.HeroStatsService;
@@ -54,12 +57,44 @@ public class HeroBattleMapper {
     private final ConfigRegistry configs;
     private final HeroStatsService heroStats;
     private final EquipLedgers equipLedgers;
+    private final HeroRepository heroes;
+    private final SocialStore socials;
 
     public HeroBattleMapper(ConfigRegistry configs, HeroStatsService heroStats,
-                            EquipLedgers equipLedgers) {
+                            EquipLedgers equipLedgers, HeroRepository heroes, SocialStore socials) {
         this.configs = configs;
         this.heroStats = heroStats;
         this.equipLedgers = equipLedgers;
+        this.heroes = heroes;
+        this.socials = socials;
+    }
+
+    /** 合并行军只归队长调度；随军武将的养成与装备仍归报名成员。 */
+    public List<HeroSnapshot> snapshotsForMarch(March march) {
+        if (march.heroes().isEmpty()) return List.of();
+        if (!march.isRallyMarch()) {
+            return snapshots(march.playerId(), march.heroes(),
+                    heroes.findByPlayerId(march.playerId()).orElseGet(HeroRoster::new));
+        }
+        var rally = socials.rallyOf(march.rallyId()).orElseThrow(
+                () -> new IllegalStateException("随军武将的集结归属不存在"));
+        if (!rally.initiatorId().equals(march.playerId())) {
+            throw new IllegalStateException("合并行军与集结发起人不一致");
+        }
+        // 出发时的选择已经持久化；热更后的上限只约束新编队，不重选在途武将。
+        var selected = rally.heroSlots(march.heroes().size())
+                .stream().filter(slot -> slot.selected()).toList();
+        if (!selected.stream().map(slot -> slot.heroId()).toList().equals(march.heroes())) {
+            throw new IllegalStateException("合并行军武将名单与持久集结不一致");
+        }
+        List<HeroSnapshot> out = new ArrayList<>();
+        for (var slot : selected) {
+            var roster = heroes.findByPlayerId(slot.playerId()).orElseGet(HeroRoster::new);
+            var own = snapshots(slot.playerId(), List.of(slot.heroId()), roster).get(0);
+            out.add(new HeroSnapshot(own.heroId(), out.size(), own.heroBonusFixed(),
+                    own.defBonusFixed(), own.skills()));
+        }
+        return List.copyOf(out);
     }
 
     /**
