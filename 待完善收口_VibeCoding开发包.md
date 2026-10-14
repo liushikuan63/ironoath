@@ -7526,3 +7526,5 @@ TEST_EXIT=0
 | B11五千Bot性能实测设计 #1294 | 本笔设计原子本地提交 | 既定30s/P99 5ms；生产Runtime/World/Queue已定位 | tmp/bot-performance-20261014；B11§九6 | 压测尚未执行；先独立内存基线、持久后端另核；不代替5000真人在线，不推 |
 
 | B11五千Bot三轮真红/读域修复 #1295 | 本笔发现与判据原子本地提交 | memory1三轮5000正确但64.3/52.8/53.9s与P99 13.6~14.6ms；red2两有效红 | tmp/bot-performance-20261014/memory1；thread1.actual.log；red2.actual.json | 修后重点/完整新候选与固定输入A/B尚未完成；持久后端仍待量，不推部署付款 |
+
+| B11第一性能候选仍红/身份读域发现 #1296 | 本笔发现原子本地提交 | 2700全验0；同量具旧三轮失败、新冷42.3s与P997.5~7.8ms仍失败；9845城市排期真实读回 | tmp/bot-performance-20261014/memory3/4；review2-independent.md | 还未达30s/5ms；身份按ID投影回归/修复与第二候选待验；Mongo/Redis5000仍未量、不推 |
