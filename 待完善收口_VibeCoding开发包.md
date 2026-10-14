@@ -7558,3 +7558,5 @@ TEST_EXIT=0
 | B11匹配战力窄读交付及聊天布局有效首红 #1310 | 本笔8backend/报告矩阵原子本地提交；UI量具改动另留待修 | 276套2714/1321/47全0；内存三轮5000过；4JVM22/17FIRST/war44/HTTPUI功能26全0；持久仅1024未达；布局1有效失败 | tmp/bot-match-power-projection-20261014/final-summary.actual.json；chat-input-layout/attempt1/input-geometry.actual.json；chat-rate-limit/attempt11 | 持久非完整5000仍未达，子集分位不算；UI输入/placeholder仍越框，下一真实前端修复；原生未验 |
 
 | 聊天EditBox标签对齐实施 #1311 | 本笔有效首红、根因与typecheck原子留档；源码未交付 | 正式attempt11 15pass/1fail/pageconsole0/exit1全cleanup；typecheck1=0；full1后台40101运行中 | tmp/chat-input-layout-20261014/attempt1/input-geometry.actual.json；chat-rate-limit/attempt11/draft-bounds.actual.json；review1-manifest.json | 新Web实际30条/截图/社交可见性批探针未验；不把types绿当UI绿，原生仍未验 |
+
+| 聊天输入标签对齐交付 #1312 | 本笔UI2/报告矩阵及证据原子本地提交，未推 | 2714server/1321client/47门全0；headless337新文件；旧15/1→新版30/0；17FIRST/war44全0，owner全收 | tmp/chat-input-layout-20261014/final-summary.actual.json；chat-rate-limit/attempt12/draft和empty边界及两新截图已查看 | 原生未代验；持久5000仍未达；下一B24实际赛季币获得消费链路未验，已有零余额展示不算兑换通过 |

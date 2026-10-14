@@ -692,17 +692,31 @@ export class SocialPanelView extends Component {
     box.inputMode = EditBox.InputMode.SINGLE_LINE
     // **必须显式设置**：真实实现的默认上限是 20 个字符，不设就会把玩家的半句话静默截断
     box.maxLength = CHAT_INPUT_MAX_LENGTH
-    if (box.textLabel !== null) {
-      applySystemUiFont(box.textLabel)
-      box.textLabel.fontSize = 16
-      box.textLabel.color = COLOR_TEXT
-      box.textLabel.overflow = Label.Overflow.SHRINK
+    // EditBox 按左上角定位标签；动态 Label 的默认中心锚点会把文字推到框外。
+    // 显式准备两个标签，也覆盖面板尚未激活、引擎还没生成默认标签的情况。
+    const prepareInputLabel = (existing: Label | null, name: string, color: Color): Label => {
+      let label = existing
+      if (label === null) {
+        const labelNode = input.getChildByName(name) ?? new Node(name)
+        labelNode.layer = input.layer
+        if (labelNode.parent !== input) input.addChild(labelNode)
+        label = labelNode.getComponent(Label) ?? labelNode.addComponent(Label)
+      }
+      const transform = label.node.getComponent(UITransform) ?? label.node.addComponent(UITransform)
+      transform.setAnchorPoint(0, 1)
+      transform.setContentSize(new Size(inputWidth - 16, SEND_BUTTON_HEIGHT))
+      label.node.setPosition(new Vec3(-(inputWidth - 16) / 2, SEND_BUTTON_HEIGHT / 2, 0))
+      applySystemUiFont(label)
+      label.fontSize = 16
+      label.lineHeight = SEND_BUTTON_HEIGHT
+      label.horizontalAlign = Label.HorizontalAlign.LEFT
+      label.verticalAlign = Label.VerticalAlign.CENTER
+      label.color = color
+      label.overflow = Label.Overflow.SHRINK
+      return label
     }
-    if (box.placeholderLabel !== null) {
-      applySystemUiFont(box.placeholderLabel)
-      box.placeholderLabel.fontSize = 16
-      box.placeholderLabel.color = COLOR_TEXT_DIM
-    }
+    box.textLabel = prepareInputLabel(box.textLabel, 'TEXT_LABEL', COLOR_TEXT)
+    box.placeholderLabel = prepareInputLabel(box.placeholderLabel, 'PLACEHOLDER_LABEL', COLOR_TEXT_DIM)
     // 键盘上的"发送/回车"与右侧按钮走同一条路：单行输入里回车就是发送
     input.on(EditBox.EventType.EDITING_RETURN, () => this.sendChatDraft(), this)
     this.chatInput = box

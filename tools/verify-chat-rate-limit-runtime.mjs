@@ -43,6 +43,20 @@ function sceneHelpers() {
     visible: name => nodes().some(n => n.name === name),
     labels: () => nodes().map(n => n.getComponent('cc.Label')?.string).filter(Boolean),
     input: () => nodes().find(n => n.name === 'ChatInput')?.getComponent('cc.EditBox')?.string,
+    inputBounds: () => {
+      const all = nodes(), background = all.find(n => n.name === 'ChatInputBg');
+      const edit = all.find(n => n.name === 'ChatInput').getComponent('cc.EditBox');
+      const read = node => {
+        const transform = node.getComponent('cc.UITransform'), box = transform.getBoundingBoxToWorld();
+        return { name: node.name, anchor: { x: transform.anchorX, y: transform.anchorY },
+          box: { x: box.x, y: box.y, width: box.width, height: box.height } };
+      };
+      const border = read(background), text = read(edit.textLabel.node), placeholder = read(edit.placeholderLabel.node);
+      const inside = label => label.box.x >= border.box.x - 0.01 && label.box.y >= border.box.y - 0.01 &&
+        label.box.x + label.box.width <= border.box.x + border.box.width + 0.01 &&
+        label.box.y + label.box.height <= border.box.y + border.box.height + 0.01;
+      return { border, text, placeholder, textInside: inside(text), placeholderInside: inside(placeholder) };
+    },
     point: name => {
       const all = nodes(), target = all.find(n => n.name === name);
       const camera = all.map(n => n.getComponent('cc.Camera')).find(Boolean);
@@ -127,11 +141,19 @@ try {
   check('拒绝不增加权威消息条数', before.filter(m => m.content === repeated).length === accepted && after.filter(m => m.content === repeated).length === accepted);
   fs.writeFileSync(path.join(out, 'limited-labels.actual.json'), JSON.stringify(redactEvidence({ uid, accepted, rejected, hint, visible }), null, 2));
   await page.screenshot({ path: path.join(out, 'limited.png') });
+  const draftBounds = await page.evaluate(() => window.__chatRate.inputBounds());
+  fs.writeFileSync(path.join(out, 'draft-bounds.actual.json'), JSON.stringify(draftBounds, null, 2));
+  check('输入文字边界完全包含在实际输入框内', draftBounds.textInside);
+  check('占位文字边界完全包含在实际输入框内', draftBounds.placeholderInside);
   const different = '不同内容恢复验收' + Date.now(); await type(different);
   const success = await send(uid, different);
   check('同一窗口不同内容实际浏览器发送成功', success.code === 0);
   await page.waitForFunction(text => window.__chatRate.input() === '' && window.__chatRate.labels().some(s => s.includes(text)), different);
   check('不同内容已真实落入后端列表', (await list(uid)).some(m => m.content === different));
+  const emptyBounds = await page.evaluate(() => window.__chatRate.inputBounds());
+  fs.writeFileSync(path.join(out, 'empty-bounds.actual.json'), JSON.stringify(emptyBounds, null, 2));
+  check('发送清空后输入文字边界仍在输入框内', emptyBounds.textInside);
+  check('发送清空后实际占位文字边界仍在输入框内', emptyBounds.placeholderInside);
   const stillLimited = await api('/chat/send', uid, { requestId: randomUUID(), channel: 'WORLD', content: repeated, toPlayerId: null, share: null });
   check('不同内容成功时原同句窗口仍被10044拒绝', stillLimited.code === 10044);
   const retrySeconds = Number((rejected.detail ?? '').match(/(\d+)\s*秒后/)?.[1]);
