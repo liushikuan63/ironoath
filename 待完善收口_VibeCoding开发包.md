@@ -7518,3 +7518,5 @@ TEST_EXIT=0
 | 核心Bot每日校准持久幂等 #1290 | 本次七源码及三台账原子本地提交 | 47门/271新套2697server/1321client/既有4JVM22/校准4JVM15/17FIRST/war44全0失败及跳过，7SHA漂移0 | tmp/bot-daily-calibration-20261014/final-summary.actual.json | 旧版混跑不保证；日界可控输入非24小时墙钟；未测Mongo写中途崩溃；原9490/UID/原生未验；下一B22真实浏览器限流继续，不推部署付款 |
 
 | B22限流浏览器现查 #1291 | 本条原子本地提交 | 验收矩阵第1格仍🟡；生产10044与输入保留已接线 | tmp/chat-rate-limit-20261014；每日校准final-summary.actual.json | 实际浏览器限流尚未执行；原9490/UID/IDE与原生、外部服务均不动，不推 |
+
+| B22限流实际25项及脱敏复核 #1292 | 本笔发现/验证原子本地提交 | attempt5普通1×真实HTTP/UI 25/0；脱敏synthetic 2/0 | tmp/chat-rate-limit-20261014/attempt5；review2-independent.md；首失败全保留 | 最后labels脱敏后最终check3/attempt7和review3待验；不是原生验收，不推部署付款 |
