@@ -7570,3 +7570,5 @@ TEST_EXIT=0
 | B25 备兵导航首红定位 #1316 | 本格本地提交（不推） | attempt8严格当前UUID不支持旧代假设；attempt9 DOM→Canvas/Cocos→礼包mask；attempt10真实close后55/0 exit0，全部owner关闭 | tmp/repeat-march-ui-20261014/attempt9/result.actual.json、attempt10/result.actual.json/runner-result.actual.json；handoff-compact4.md | 首次GATHER与再次出征仍未执行；55只是前置，UI夹具/提速档不代表普通1×或原生端；不推部署付款 |
 
 | B25 无历史提示隐藏缺陷 #1317 | 本格证据提交；修复源待完整验证 | attempt13 102/1真实人话不可见首红；unit-red2 1有效断言红（188过滤skip）；修后两套200/0/0skip | tmp/repeat-march-ui-20261014/attempt13/result.actual.json、unit-red2.log、unit-green.log | 源码两文件尚待新Web/真实无历史负控和完整门；总数量具待按兵种修正，缺兵真流未验，不当全绿 |
+
+| B25 正式实流与裸ID反证 #1318 | 本格证据本地提交；9源最终验证在途 | full1 276fresh2714/1321/47/337Web全0；durable2真实110/0/全cleanup；helper5离线全0；missing-red2断言红/198绿0skip→200重点全0 | tmp/repeat-march-ui-20261014/durable2/result.actual.json/runner-result.actual.json、missing-red.log/missing-green.log、validation-full1.json | 最终泛称/守卫变动需check2/web2后durable3；兵力不足真实战损及原生/普通1×未验；110不是最终源码新读数 |
