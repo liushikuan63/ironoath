@@ -7590,3 +7590,5 @@ TEST_EXIT=0
 | B25 真实NPC损耗与再次缺兵负控 #1326（2026-10-15） | 本格设计/入口缺口本地提交（不推） | 前格1a29185f真实112/111/47/1321/31全0全收；新probe语法0/后台47647运行 | tmp/loss-repeat-ui-20261015/inspect.mjs/run-owned.py、attempt1/owner.actual.json | NPC实际战损/缺兵零发送与后端目标补兵均未验；客户端正目标入口仍0不得宣称完整补兵闭环；不推 |
 
 | B25 真实NPC损兵与再次拒绝 #1327（2026-10-15） | 本格事实/量具更正本地提交（不推） | attempt1 86/0，真实20→9/零再次发送/全cleanup；attempt2摘要3损耗成立/详情字段量具88/1非产品红；attempt3补兵在途 | tmp/loss-repeat-ui-20261015/attempt1/loss-state.actual.json/result.actual.json、attempt2/result.actual.json、attempt3/owner.actual.json | 后端目标补差/费/队列时长待run3；前端正目标仍0，原生/普通1×未验；stock5000为新自有夹具非原配置改动，不推 |
+
+| B25 NPC战损→既有后端目标补回 #1328（2026-10-15） | 本格实证本地提交（不推） | attempt3真实133/0，20→8→补12到20/720业务秒/1槽/queue5001零费用/全费种/全cleanup；正式durable1在途 | tmp/loss-repeat-ui-20261015/attempt3/refill.actual.json、battle-report.actual.json、result.actual.json/runner-result.actual.json | 133未包括正式时长断言/玩家关闭；HTTP开target≠玩家能输入目标，positive发送0/留黄；普通1×/原生未验，不推 |
