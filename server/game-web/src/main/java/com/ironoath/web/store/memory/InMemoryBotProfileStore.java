@@ -3,6 +3,8 @@ package com.ironoath.web.store.memory;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.Optional;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -18,6 +20,12 @@ public class InMemoryBotProfileStore implements BotProfileStore {
     }
     @Override public Collection<BotProfile> all() {
         return profiles.values().stream().sorted(Comparator.comparing(BotProfile::botId)).toList();
+    }
+    @Override public Set<String> existingIds(Collection<String> playerIds) {
+        if(playerIds==null || playerIds.isEmpty())return Set.of();
+        Set<String> found=new HashSet<>();
+        for(String id:playerIds)if(id!=null && profiles.containsKey(id))found.add(id);
+        return Set.copyOf(found);
     }
     @Override public BotProfile put(BotProfile profile) { return profiles.put(profile.botId(),profile); }
     @Override public boolean remove(String id) { return id!=null&&profiles.remove(id)!=null; }

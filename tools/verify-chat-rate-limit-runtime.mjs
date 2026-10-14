@@ -97,7 +97,10 @@ try {
   await page.waitForFunction(() => !!window.cc?.director?.getScene()?.getChildByName('Canvas'), null, { timeout: 60000 });
   await page.evaluate(sceneHelpers);
   await page.waitForFunction(() => window.__chatRate.visible('Nav-more') || window.__chatRate.visible('Nav-social'), null, { timeout: 60000 });
-  await page.evaluate(hideGuideBoard);
+  // 本量具固定创建未走引导的新设备；等待真实异步引导板挂载后再隐藏，不能藏一次空树就继续点导航。
+  await page.waitForFunction(() => window.__chatRate.visible('GuideNext'));
+  check('新账号引导板实际挂载后隐藏验收遮罩', await page.evaluate(hideGuideBoard));
+  await page.waitForFunction(() => !window.__chatRate.visible('GuideNext'));
   if (await page.evaluate(() => window.__chatRate.visible('离线汇总知道了'))) {
     await click('离线汇总知道了');
     await page.waitForFunction(() => !window.__chatRate.visible('离线汇总知道了'));

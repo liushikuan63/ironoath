@@ -317,7 +317,13 @@ public class BotSpawnService {
         if (cities.isEmpty()) {
             return 0L;
         }
-        Map<String, PlayerSave> saves = players.findByPlayerIds(cities.keySet());
+        // 真人均值只需要真人档；先筛身份，避免每个Bot tick都复制整服Bot存档。
+        // 不缓存均值或名单：新战力与身份变化仍由本次读取决定。
+        List<String> humanIds = registry.humansIn(cities.keySet());
+        if (humanIds.isEmpty()) {
+            return 0L;
+        }
+        Map<String, PlayerSave> saves = players.findByPlayerIds(humanIds);
         return averageMatchPower(saves, registry.humansIn(saves.keySet()));
     }
 

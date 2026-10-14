@@ -7532,3 +7532,5 @@ TEST_EXIT=0
 | B11权威身份投影第二修复 #1297 | 本笔首红/38重点证据原子提交 | 读域1有效红→六套38全0，真实Mongo投影/跨实例身份/失败闭锁已验 | tmp/bot-performance-20261014/red3.actual.json；green2-suites.actual.json | 10源新完整验证/第二候选5000及相关批验待完成；原四JVM与2700仅旧候选绿，不推 |
 
 | B11内存三轮达标/B22引导量具竞态 #1298 | 本笔完成与发现原子本地提交 | 新22e 2703全验0；5000冷11.39s/P992.29ms、热7.7s/P992.1ms；4真JVM22/0 | tmp/bot-performance-20261014/memory5；tmp/chat-rate-limit-20261014/attempt8 | 17FIRST/war44与修后B22待终验；Mongo/Redis5000未量；不把内存通过当生产容量、不推 |
+
+| B11五千Bot内存预算与批链收口 #1299 | 本次十一源码/报告/四台账原子本地提交 | 47门/2703server/1321client/2脱敏/四JVM22/17FIRST/war44/HTTPUI26全0；5000三轮全部达标 | tmp/bot-performance-20261014/final-summary.actual.json；docs/Bot5000性能实测.md | 固定业务时间非1×墙钟；Mongo/Redis5000与原生未代验；下一持久性能继续，不推部署付款 |

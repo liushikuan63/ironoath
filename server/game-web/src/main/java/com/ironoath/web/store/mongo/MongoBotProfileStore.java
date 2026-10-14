@@ -2,6 +2,9 @@ package com.ironoath.web.store.mongo;
 
 import java.util.Collection;
 import java.util.Optional;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.domain.Sort;
@@ -30,6 +33,17 @@ public class MongoBotProfileStore implements BotProfileStore {
     @Override public Collection<BotProfile> all() {
         return mongo.find(new Query().with(Sort.by("_id")),ProfileDocument.class,COLLECTION)
                 .stream().map(ProfileDocument::profile).toList();
+    }
+    @Override public Set<String> existingIds(Collection<String> playerIds) {
+        if(playerIds==null || playerIds.isEmpty())return Set.of();
+        Set<String> requested=new LinkedHashSet<>();
+        for(String id:playerIds)if(id!=null)requested.add(id);
+        if(requested.isEmpty())return Set.of();
+        Query query=Query.query(Criteria.where("_id").in(requested));
+        query.fields().include("_id");
+        Set<String> found=new HashSet<>();
+        for(var row:mongo.find(query,org.bson.Document.class,COLLECTION))found.add(row.getString("_id"));
+        return Set.copyOf(found);
     }
     @Override public BotProfile put(BotProfile profile) {
         var old=mongo.findAndModify(id(profile.botId()),new Update().set("profile",profile),

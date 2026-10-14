@@ -58,4 +58,24 @@ class BotProfileStoreTest {
         var registry=new BotRegistry(rules,broken);
         assertThatThrownBy(()->registry.mayHoldOffice("owned-bot","NATION",false,true)).isInstanceOf(IllegalStateException.class);
     }
+    @Test void requestedIdentityProjectionPreservesScopeAndImmediatePeerChanges() {
+        for(var store:stores()) {
+            BotProfileStore peer=store instanceof MongoBotProfileStore?new MongoBotProfileStore(db.template()):store;
+            store.put(profile("owned-a",8000));store.put(profile("outside",4000));
+            assertThat(store.existingIds(null)).isEmpty();assertThat(store.existingIds(List.of())).isEmpty();
+            var requested=java.util.Arrays.asList("owned-a",null,"owned-human","owned-a");
+            assertThat(peer.existingIds(requested)).containsExactly("owned-a");
+            store.remove("owned-a");assertThat(peer.existingIds(requested)).isEmpty();
+            store.put(profile("owned-human",3000));
+            assertThat(peer.existingIds(requested)).containsExactly("owned-human");
+            assertThat(new BotRegistry(rules,peer).humansIn(requested)).containsExactly("owned-a","owned-a");
+        }
+    }
+    @Test void identityProjectionFailureCannotTreatEveryoneAsHuman() {
+        BotProfileStore broken=org.mockito.Mockito.mock(BotProfileStore.class);
+        org.mockito.Mockito.when(broken.existingIds(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenThrow(new IllegalStateException("temporary identity projection failure"));
+        assertThatThrownBy(()->new BotRegistry(rules,broken).humansIn(List.of("owned-bot","owned-human")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("identity projection");
+    }
 }

@@ -236,7 +236,7 @@ public class BotRegistry {
             return java.util.List.of();
         }
         java.util.List<String> humans = new java.util.ArrayList<>(playerIds.size());
-        var knownBots = new java.util.HashSet<>(botIds());
+        var knownBots = profiles.existingIds(playerIds);
         for (String playerId : playerIds) {
             if (playerId != null && !knownBots.contains(playerId)) {
                 humans.add(playerId);
