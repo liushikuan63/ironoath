@@ -7538,3 +7538,5 @@ TEST_EXIT=0
 | B11持久后端五千Bot实际阶段 #1300 | 本笔设计/授权边界原子本地提交 | ca5b6608内存完整已验未推；同22e新候选，既定预算/负载不改 | tmp/bot-mongo-performance-20261014；现有Mongo27/独立Redis owner流程 | Mongo/Redis5000尚未量；仅外部量具接真实生产实现，不动原号/9490/IDE、不推部署付款 |
 
 | B11持久初始化首超时/分段传输实证 #1301 | 本笔发现及反证原子本地提交 | 900s前4844Bot、未tick；JFR645慢读中位42.9ms；整帧0.224/分段44ms；Redis<1ms | tmp/bot-mongo-performance-20261014/attempt1；mongo-wire-latency.actual.json；官方Driver4.11.2源 | 真5000持久未测到；传输对照与候选未验，不直接改生产默认，不推部署付款 |
+
+| B11真实驱动大文档传输对照 #1302 | 本笔对照/实验判据原子本地提交 | Socket/Netty小ping都快；4KB写43.03→0.94ms；CAS/读回/库清理/客户端及group退出均过 | tmp/bot-mongo-performance-20261014/transport2/result.actual.json；官方Driver4.11.2 TransportSettings | Netty仅外部量具显式实验输入，生产默认未改；真实5000持久tick未验，不推部署付款 |
