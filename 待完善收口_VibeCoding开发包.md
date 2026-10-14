@@ -7566,3 +7566,5 @@ TEST_EXIT=0
 | B24赛季币实际获得与兑换交付 #1314 | 本笔5source/复跑说明/矩阵及证据原子本地提交，未推 | durable4 47/0，结算1/0/0，币10000→9900、包0→1→1；量具旧合成2红→5绿；check3 47/1321/17全0，全部owner释放 | tmp/season-coin-ui-20261014/final-summary.actual.json；durable4两新截图已看；quantity-oracle-red.actual.json；quantity-green1.log | 受控部署anchor不代现实45天/生产调度或微信原生；持久5000仍未达；下一B25真实重复出征待验 |
 
 | B25重复出征真实验收启动 #1315 | 本笔现查/夹具边界原子记录；无生产改动 | RepeatLast生产链已接；新外部语法0；自有备兵及场景初验后台6541运行 | tmp/repeat-march-ui-20261014/candidate1/inputs.json；inspect.mjs；attempt1/owner.actual.json | 只初验备兵/可见资源，尚无首次/再次出征；Hero/等级/资源/时间是显式输入，不代原生或普通成长 |
+
+| B25 备兵导航首红定位 #1316 | 本格本地提交（不推） | attempt8严格当前UUID不支持旧代假设；attempt9 DOM→Canvas/Cocos→礼包mask；attempt10真实close后55/0 exit0，全部owner关闭 | tmp/repeat-march-ui-20261014/attempt9/result.actual.json、attempt10/result.actual.json/runner-result.actual.json；handoff-compact4.md | 首次GATHER与再次出征仍未执行；55只是前置，UI夹具/提速档不代表普通1×或原生端；不推部署付款 |
