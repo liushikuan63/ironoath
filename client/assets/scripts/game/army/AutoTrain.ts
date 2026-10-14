@@ -15,7 +15,51 @@
  * 之后开的自动续训就一直盯着一支永远排不出来的兵种。
  */
 
-import type { AutoTrainReq, AutoTrainView } from '../../net/generated/ArmyProtocol'
+import type { ArmyListResp, AutoTrainReq, AutoTrainView } from '../../net/generated/ArmyProtocol'
+import type { MarchSpec } from '../world/MarchCompose'
+
+export interface AutoRefillConfirmationView {
+  readonly unitName: string
+  readonly availableCount: number
+  readonly trainingCount: number
+  readonly targetCount: number
+  readonly batchCount: number
+  readonly batchBudget: number
+  readonly submitting: boolean
+  readonly notice: string | null
+}
+
+export type AutoRefillPreparation =
+  | { readonly kind: 'blocked'; readonly reason: string }
+  | { readonly kind: 'ready'; readonly view: AutoRefillConfirmationView;
+      readonly request: Omit<AutoTrainReq, 'requestId'> }
+
+/** Reuse the player's successful inputs; this prepares a confirmation and never sends a request. */
+export function prepareAutoRefill(memory: TrainMemory | null, march: MarchSpec | null,
+  army: Pick<ArmyListResp, 'units'> | null): AutoRefillPreparation {
+  if (memory === null) return { kind: 'blocked', reason: '先手动训一批，再开启该兵种的补兵' }
+  if (march === null) return { kind: 'blocked', reason: '先成功出征一次，再按该次编成补兵' }
+  if (army === null) return { kind: 'blocked', reason: '军队信息还没拉到，请稍后再试' }
+  const targets = march.units.filter(unit => unit.unitId === memory.unitId)
+  if (targets.length === 0) return { kind: 'blocked', reason: '上次训练的兵种不在上次出征编成中，请先训练要补的兵种' }
+  const target = targets[0]!
+  if (targets.length !== 1 || !Number.isSafeInteger(target.count) || target.count <= 0
+    || !Number.isSafeInteger(memory.count) || memory.count <= 0) {
+    return { kind: 'blocked', reason: '上次训练或出征数量已不可用，请重新训练并编成出征' }
+  }
+  const unit = army.units.find(candidate => candidate.unitId === memory.unitId)
+  if (unit === undefined) return { kind: 'blocked', reason: '上次的兵种当前不可用，请重新编成' }
+  if (!unit.unlocked) return { kind: 'blocked', reason: unit.unlockHint ?? '上次的兵种当前尚未解锁' }
+  const unitName = unit.name.trim() || '该兵种'
+  return {
+    kind: 'ready',
+    view: { unitName, availableCount: unit.count, trainingCount: unit.training,
+      targetCount: target.count, batchCount: memory.count, batchBudget: AUTO_TRAIN_BATCH_BUDGET,
+      submitting: false, notice: null },
+    request: { enabled: true, unitId: memory.unitId, count: memory.count,
+      targetCount: target.count, batchBudget: AUTO_TRAIN_BATCH_BUDGET },
+  }
+}
 
 /**
  * 一次开启最多自动排几批。

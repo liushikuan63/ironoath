@@ -83,13 +83,14 @@ function envelope<T>(data: T | null, serverNow = 5_000, code = 0, msg = '成功'
 
 interface Harness {
   api: GameApi
+  net: NetModule
   http: FakeHttp
   store: Store
   timeSync: TimeSync
   clock: { now: number }
 }
 
-function createHarness(): Harness {
+function createHarness(depsOverrides: Partial<NetDeps> = {}): Harness {
   resetWorld()
   const store = new Store()
   const clock = { now: 1_000 }
@@ -118,6 +119,7 @@ function createHarness(): Harness {
     rng: Prng.of(1),
     newRequestId: () => `req-${++seq}`,
     newTraceId: () => `trace-${seq}`,
+    ...depsOverrides,
   }
   const apiDeps: GameApiDeps = {
     net: new NetModule(config, deps),
@@ -126,10 +128,29 @@ function createHarness(): Harness {
     now: () => clock.now,
     newRequestId: () => `req-${++seq}`,
   }
-  return { api: new GameApi(apiDeps), http, store, timeSync, clock }
+  return { api: new GameApi(apiDeps), net: apiDeps.net, http, store, timeSync, clock }
 }
 
 // ---------- 时钟校准 ----------
+
+for (const action of ['train', 'march', 'refill'] as const) {
+  test(`补兵依赖实际GameApi ${action} 写口绑定发起身份，切号不重投`, async () => {
+    const h = createHarness({ delay: async () => {
+      h.net.setPlayer('OTHER_ACCOUNT')
+      h.net.setAuthToken('other-ticket')
+    } })
+    h.net.setPlayer('ORIGINAL_ACCOUNT')
+    h.net.setAuthToken('original-ticket')
+    h.http.script = [new Error('temporary disconnect'), envelope({})]
+    const outcome = action === 'train'
+      ? await h.api.armyTrain({ unitId: 'unit_infantry_t1', count: 100 })
+      : action === 'march'
+        ? await h.api.worldMarch({ toX: 60, toY: 60, units: [{ unitId: 'unit_infantry_t1', count: 100 }], heroes: [], action: 'ATTACK' })
+        : await h.api.armyAutoTrain({ enabled: true, unitId: 'unit_infantry_t1', count: 100, targetCount: 100, batchBudget: 3 })
+    assert.equal(outcome.kind, 'network')
+    assert.equal(h.http.calls.length, 1, '不得把原账号成功历史对应意图发给另一账号')
+  })
+}
 
 test('每个 ok 响应都喂一次 TimeSync，rtt 与 rawOffset 都用本次请求的实测值', async () => {
   const { api, http, timeSync } = createHarness()

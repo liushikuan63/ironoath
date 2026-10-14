@@ -137,7 +137,8 @@ import { ClientReddotTree } from '../reddot/ReddotTree'
 import { pickUnavailable, actionUnavailable } from '../ui/BlockedPickCopy'
 import { buildStaminaDetail } from '../ui/StaminaDetail'
 import type { StaminaDetailView } from '../ui/StaminaDetail'
-import { autoTrainBlockedReason, autoTrainRequest, rememberTrain } from '../army/AutoTrain'
+import { autoTrainBlockedReason, autoTrainRequest, prepareAutoRefill, rememberTrain } from '../army/AutoTrain'
+import type { AutoRefillConfirmationView } from '../army/AutoTrain'
 import { buildShopPanel, buyBodyOf, buyResultText, shopRowStateText } from '../shop/ShopPanel'
 import { buildMonthlyCardPanel, monthlyClaimBody, monthlyPurchaseId, monthlyClaimResultText } from '../shop/MonthlyCardPanel'
 import type { MonthlyCardPanel as MonthlyCardPanelData } from '../shop/MonthlyCardPanel'
@@ -266,6 +267,7 @@ export interface PanelTargets {
    * 「自动续训」现在能不能开（开关本身的策略全部来自响应，见 game/army/AutoTrain.ts）。
    */
   army?(resp: ArmyListResp, offsetMs: number, trainMemory: TrainMemory | null): void
+  autoRefill?(view: AutoRefillConfirmationView | null): void
   hero?(resp: HeroListResp): void
   resources?(resp: ResourceDetailResp): void
   bag?(resp: BagListResp): void
@@ -590,6 +592,17 @@ export class AppRoot {
    * 只在内存里：换设备后没有它，玩家重新训一批即可 —— 与「上一次出征」同一条口径（裁决②(a)）。
    */
   private lastTrain: TrainMemory | null = null
+  private lastTrainOwner: string | null = null
+  private lastMarchOwner: string | null = null
+  private refillSession = 0
+  private refillLoginPending = false
+  private readonly refillInFlightOwners = new Set<string>()
+  private refillIntent: {
+    owner: string
+    session: number
+    request: ReturnType<typeof autoTrainRequest>
+    view: AutoRefillConfirmationView
+  } | null = null
   /** 最近一次目标搜索的结果：出征要知道目标的坐标，而坐标只在下发的 brief 里（B25-S1） */
   private searchResp: SearchTargetsResp | null = null
   /** 当前正在编成的目标；没有编成时为 null */
@@ -819,8 +832,21 @@ export class AppRoot {
    * 表现会是「一进游戏就被七八个错误弹窗糊住」。
    */
   async start(deviceId: string, nickName: string, wxCode: string | null = null): Promise<boolean> {
+    this.refillSession++
+    const loginSession = this.refillSession
+    this.refillLoginPending = true
+    this.refillIntent = null
+    this.targets.autoRefill?.(null)
+    const hadCompose = this.composeTarget !== null || this.composeSubmitting
+    this.composeSubmitting = false
+    this.composeTarget = null
+    this.composePicks = {}
+    this.composeNotice = null
+    if (hadCompose) this.deliverCompose()
     this.nickName = nickName
     const outcome = await this.session.login(deviceId, nickName, wxCode)
+    if (loginSession !== this.refillSession) return false
+    this.refillLoginPending = false
     if (outcome.kind !== 'ok') {
       this.say('session', outcome)
       return false
@@ -1416,13 +1442,83 @@ export class AppRoot {
 
   // ---------- 军队 ----------
 
+  requestAutoRefill(): void {
+    if (this.refillLoginPending) {
+      this.receipt('登录仍在进行，请稍候再开启补兵')
+      return
+    }
+    if (this.refillIntent?.view.submitting) return
+    const owner = this.playerId
+    if (owner !== null && this.refillInFlightOwners.has(owner)) {
+      this.receipt('上次补兵请求仍在处理中，请稍候再确认')
+      return
+    }
+    const prepared = prepareAutoRefill(
+      owner !== null && this.lastTrainOwner === owner ? this.lastTrain : null,
+      owner !== null && this.lastMarchOwner === owner ? this.lastMarch : null,
+      this.armyResp,
+    )
+    if (prepared.kind === 'blocked' || owner === null) {
+      this.receipt(prepared.kind === 'blocked' ? prepared.reason : '请先登录，再开启补兵')
+      return
+    }
+    this.refillIntent = { owner, session: this.refillSession,
+      request: prepared.request, view: prepared.view }
+    this.targets.autoRefill?.(prepared.view)
+  }
+
+  cancelAutoRefill(): void {
+    if (this.refillIntent?.view.submitting) return
+    this.refillIntent = null
+    this.targets.autoRefill?.(null)
+  }
+
+  async confirmAutoRefill(): Promise<void> {
+    const intent = this.refillIntent
+    if (intent === null || intent.view.submitting || intent.owner !== this.playerId
+      || intent.session !== this.refillSession || this.refillLoginPending
+      || this.refillInFlightOwners.has(intent.owner)) return
+    this.refillInFlightOwners.add(intent.owner)
+    try {
+      intent.view = { ...intent.view, submitting: true, notice: null }
+      this.targets.autoRefill?.(intent.view)
+      this.track(TRACK_EVENTS.autoTrain, { on: trackParam(true) })
+      const outcome = await this.api.armyAutoTrain(intent.request)
+      // A login or a newer dialog invalidates this response before any view or refresh is touched.
+      if (this.refillIntent !== intent || intent.owner !== this.playerId
+        || intent.session !== this.refillSession) return
+      if (outcome.kind === 'ok' && outcome.data.autoTrain.enabled) {
+        this.refillIntent = null
+        this.targets.autoRefill?.(null)
+        this.receipt(`${intent.view.unitName}目标补兵已开启`)
+        await this.refresh('army')
+        return
+      }
+      const stopped = outcome.kind === 'ok' ? outcome.data.autoTrain.stopReason : null
+      const notice = outcome.kind !== 'ok' ? AppRoot.reason(outcome)
+        : stopped === 'RESOURCE_NOT_ENOUGH' ? '资源不足，补兵已停止；补足资源后可重新确认'
+        : stopped !== null && !/^[A-Z_0-9]+$/.test(stopped) ? stopped
+        : '补兵当前未开启，请查看军队状态后重新确认'
+      intent.view = { ...intent.view, submitting: false, notice }
+      this.targets.autoRefill?.(intent.view)
+      if (outcome.kind === 'ok') await this.refresh('army')
+    } finally {
+      this.refillInFlightOwners.delete(intent.owner)
+    }
+  }
+
   train(unitId: string, count: number): Promise<void> {
+    const owner = this.playerId
+    const session = this.refillSession
     this.track(TRACK_EVENTS.armyTrain, { unitId, count: trackParam(count) })
     return this.write('army', this.api.armyTrain({ unitId, count }), ['army'], () => {
       // 只记**成功**的那一批：被拒的训练（兵营没到级、队列满）不该成为"要续的那一批"，
       // 否则玩家之后开的自动续训会一直盯着一支永远排不出来的兵种
-      this.lastTrain = rememberTrain(unitId, count)
-    })
+      if (session === this.refillSession && owner === this.playerId) {
+        this.lastTrain = rememberTrain(unitId, count)
+        this.lastTrainOwner = owner
+      }
+    }, () => session === this.refillSession && owner === this.playerId)
   }
 
   /**
@@ -4851,14 +4947,20 @@ export class AppRoot {
     this.composeNotice = null
     this.deliverCompose()
 
+    const marchOwner = this.playerId
+    const marchSession = this.refillSession
     const outcome = await this.api.worldMarch({
       toX: target.x, toY: target.y, units, heroes: [], action,
     })
+    if (marchSession !== this.refillSession || marchOwner !== this.playerId) return
     this.composeSubmitting = false
     if (outcome.kind === 'ok') {
-      this.lastMarch = rememberMarch(this.lastMarch, {
-        toX: target.x, toY: target.y, units, heroes: [], action,
-      })
+      if (marchSession === this.refillSession && marchOwner === this.playerId) {
+        this.lastMarch = rememberMarch(this.lastMarch, {
+          toX: target.x, toY: target.y, units, heroes: [], action,
+        })
+        this.lastMarchOwner = marchOwner
+      }
       this.composeTarget = null
       this.composePicks = {}
       this.composeNotice = null
@@ -4991,8 +5093,9 @@ export class AppRoot {
    * （收割飘字就是这一类）。
    */
   private async write<T>(panel: string, call: Promise<NetOutcome<T>>, refresh: PanelKey[],
-                         onOk?: (resp: T) => void): Promise<void> {
+                         onOk?: (resp: T) => void, isCurrent?: () => boolean): Promise<void> {
     const outcome = await call
+    if (isCurrent !== undefined && !isCurrent()) return
     if (outcome.kind !== 'ok') {
       this.say(panel, outcome)
       return

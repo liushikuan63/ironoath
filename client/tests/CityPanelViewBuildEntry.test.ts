@@ -155,7 +155,7 @@ test('Guide1主城3遗留选中仍有真实建造事件，原升级继续可用'
 })
 test('真实Army生产导航回城保留主3，Army服务端步骤自然隐藏且建造可达', () => {
   const { city, view } = setup(), font = exportsFor('UiFont', {})
-  const Army = exportsFor('ArmyPanelView', { ...font, view, applyCommandButton: () => true })['ArmyPanelView'] as new () => { node: Node; onLoad(): void; onOpenCity: (() => void) | null }
+  const Army = exportsFor('ArmyPanelView', { ...font, view, sys: { isBrowser: false }, applyCommandButton: () => true })['ArmyPanelView'] as new () => { node: Node; onLoad(): void; onOpenCity: (() => void) | null }
   const army = new Army(); army.onLoad()
   const table = JSON.parse(readFileSync(path.join(repo, 'contract/config/guide.json'), 'utf8')) as { version: number; rows: GuideStepView[] }, step = table.rows.find(row => row.panelKey === 'army'); assert.ok(step)
   const driver = GuideDriver.from({ version: String(table.version), applies: true, nextStepIndex: step.stepIndex, steps: [step], serverNow: 0 }); assert.ok(driver)

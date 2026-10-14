@@ -91,6 +91,8 @@ export interface RequestOptions {
   readonly idempotent?: boolean
   /** 服务端可能已接受的领奖操作，可保留幂等键而只发一次POST，再由GET核对。缺省沿用既有策略。 */
   readonly retryOnNetworkFailure?: boolean
+  /** Account-specific confirmations must never retry or replay under another login identity. */
+  readonly bindPlayerIdentity?: boolean
   /**
    * 断网时是否入离线队列。
    *
@@ -151,6 +153,7 @@ export class NetModule {
   private readonly config: NetConfig
   private readonly deps: NetDeps
   private token: string | null = null
+  private identityRevision = 0
   /** HTTP 身份头。null = 尚未登录，此时认证端点会被服务端拒（这是应该的，不是 bug） */
   private playerId: string | null = null
   /** 最近一次请求发出的 traceId。崩溃上报要用它把"崩在哪条链路之后"对上服务端日志。 */
@@ -191,6 +194,7 @@ export class NetModule {
 
   /** 设置后续请求自动携带的 token。 */
   setToken(token: string | null): void {
+    if (this.token !== token) this.identityRevision++
     this.token = token
   }
 
@@ -202,6 +206,7 @@ export class NetModule {
    * 少调这一个的表现是「登录成功却满屏 400」。
    */
   setPlayer(playerId: string | null): void {
+    if (this.playerId !== playerId) this.identityRevision++
     this.playerId = playerId
   }
 
@@ -213,7 +218,7 @@ export class NetModule {
    * 把两者塞进一个方法会让人以为票据是本地生成的。
    */
   setAuthToken(token: string | null): void {
-    this.token = token
+    this.setToken(token)
   }
 
   /** 是否已经持有会话票据（启动自检用；不暴露票据本身）。 */
@@ -247,6 +252,9 @@ export class NetModule {
     }
     const bodyText = JSON.stringify(payload)
 
+    if (options.bindPlayerIdentity && options.queueWhenOffline) {
+      return { kind: 'network', message: '账号绑定操作不可进入离线队列，请保持登录后重试', queued: false, requestId }
+    }
     if (!this.online && (options.queueWhenOffline ?? false)) {
       if (requestId === null) {
         throw new Error(`queueWhenOffline 只对幂等请求开放：path=${path}`)
@@ -256,7 +264,8 @@ export class NetModule {
     }
 
     return this.sendWithRetry<TResp>(path, requestId, requestId !== null && options.retryOnNetworkFailure !== false,
-      (url, headers) => this.deps.http.post(url, bodyText, headers))
+      (url, headers) => this.deps.http.post(url, bodyText, headers),
+      options.bindPlayerIdentity ? this.identityRevision : null)
   }
 
   /**
@@ -299,6 +308,7 @@ export class NetModule {
     requestId: string | null,
     retryable: boolean,
     send: (url: string, headers: Readonly<Record<string, string>>) => Promise<HttpResponse>,
+    boundIdentityRevision: number | null = null,
   ): Promise<NetOutcome<TResp>> {
     const url = this.config.baseUrl + path
     const attempts = retryable ? this.config.maxRetryAttempts + 1 : 1
@@ -309,12 +319,18 @@ export class NetModule {
         this.emit({ kind: 'retry', path, attempt, maxAttempts: attempts - 1 })
         await this.deps.delay(this.backoffMs(attempt))
       }
+      if (boundIdentityRevision !== null && boundIdentityRevision !== this.identityRevision) {
+        return { kind: 'network', message: '登录身份已变更，原操作已停止重试', queued: false, requestId }
+      }
       const traceId = this.deps.newTraceId()
       // 崩溃上报要带"最后一条链路"的 id（见 CrashReportReq 的说明）：真正崩掉的那一帧
       // 常常就在某个请求之后，而除了这里没谁知道那次请求用的是哪个 traceId
       this.lastTraceIdValue = traceId
       try {
         const response = await send(url, this.headers(traceId))
+        if (boundIdentityRevision !== null && boundIdentityRevision !== this.identityRevision) {
+          return { kind: 'network', message: '登录身份已变更，原操作回执已失效', queued: false, requestId }
+        }
         // 拿到任何响应都说明链路是通的（哪怕业务失败），据此纠正 online 标记
         this.online = true
         if (response.status >= 500) {
@@ -327,6 +343,9 @@ export class NetModule {
         this.emit({ kind: 'recovered' })
         return this.parseEnvelope<TResp>(response.status, response.bodyText, traceId)
       } catch (error) {
+        if (boundIdentityRevision !== null && boundIdentityRevision !== this.identityRevision) {
+          return { kind: 'network', message: '登录身份已变更，原操作回执已失效', queued: false, requestId }
+        }
         lastError = describeError(error)
       }
     }

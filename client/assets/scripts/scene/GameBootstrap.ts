@@ -85,6 +85,7 @@ import { LevelRewardPanelView } from './LevelRewardPanelView'
 import { TargetSearchView } from './TargetSearchView'
 import { ChoiceOverlay } from './ChoiceOverlay'
 import { MarchComposeOverlay } from './MarchComposeOverlay'
+import { AutoRefillOverlay } from './AutoRefillOverlay'
 import { OfflineReportOverlay } from './OfflineReportOverlay'
 import { WorldMap } from './WorldMap'
 import { PanelNav } from './PanelNav'
@@ -208,6 +209,7 @@ export class GameBootstrap extends Component {
   private nav: PanelNav | null = null
   /** 出征编成弹层（B25-S1）。它是弹层不是面板，所以不走 `panel()` 那张按名字查表的通道。 */
   private marchCompose: MarchComposeOverlay | null = null
+  private autoRefill: AutoRefillOverlay | null = null
   /** 军队行上「队列」的菜单（B26 S15）。挂在 Game 节点上，不挂在军队面板里：
    * 面板每为倒计时重渲染一次就会把行 addChild 到父节点末尾，建在面板里的弹层必然被压住 */
   private armyQueue: ChoiceOverlay | null = null
@@ -491,6 +493,8 @@ export class GameBootstrap extends Component {
 
   override onDestroy(): void {
     this.destroyed = true
+    this.autoRefill?.destroy()
+    this.autoRefill = null
     // 先卸载全局钩子：不卸的话场景都没了，异常仍然会回调到这个已释放的组件上，
     // 表现是"切场景之后偶发报错"，而没人知道是谁还在监听
     this.uninstallCrashHooks?.()
@@ -1468,6 +1472,7 @@ export class GameBootstrap extends Component {
       // 「加速治疗」（V12）：军队四格最后一格 —— 点下去先弹"用哪一张训练令"，选择器复用已有的 ChoiceOverlay
       army.onTreatSpeedUp = () => this.root?.requestTreatSpeedUp()
       army.onToggleAutoTrain = () => { void this.root?.toggleAutoTrain() }
+      army.onRequestAutoRefill = () => this.root?.requestAutoRefill()
       army.onOpenCity = () => this.nav?.show('city')
       // 行上「队列」→ 编排层判有没有可取消的那一口，菜单再由本层画（B26 S15）
       army.onQueue = unitId => this.root?.openArmyQueue(unitId)
@@ -1704,6 +1709,13 @@ export class GameBootstrap extends Component {
     creditsNode.active = false
     this.creditsOverlay = credits
     this.marchCompose = new MarchComposeOverlay(this.node)
+    this.autoRefill = new AutoRefillOverlay(this.node)
+    this.autoRefill.onConfirm = () => { void this.root?.confirmAutoRefill() }
+    this.autoRefill.onCancel = () => this.root?.cancelAutoRefill()
+    this.autoRefill.onVisibilityChanged = visible => {
+      if (!this.destroyed && this.guide?.isValid) this.guide.setOverlaySuppressed('autoRefill', visible)
+    }
+    out.autoRefill = data => this.autoRefill?.render(data)
     this.marchCompose.onVisibilityChanged = visible => {
       if (!this.destroyed && this.guide?.isValid) this.guide.setOverlaySuppressed('marchCompose', visible)
     }

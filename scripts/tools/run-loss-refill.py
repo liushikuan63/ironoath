@@ -9,6 +9,7 @@ parser.add_argument('--java-bin',type=Path,required=True)
 parser.add_argument('--node',type=Path,required=True)
 parser.add_argument('--port',type=int,default=9877)
 parser.add_argument('--preview-port',type=int,default=9878)
+parser.add_argument('--tool',type=Path,default=Path('tools/verify-loss-refill-runtime.mjs'))
 args=parser.parse_args();root=Path(__file__).resolve().parents[2];candidate=args.candidate.resolve();out=args.out.resolve()
 assert os.environ.get('CODEX_THREAD_ID'),'Actual current task identity required'
 assert 1024<=args.port<=65535 and 1024<=args.preview_port<=65535 and args.port!=args.preview_port
@@ -25,8 +26,8 @@ assert all(free(port) for port in [args.port,args.preview_port]),'Existing liste
 assert not out.exists(),'Use a new evidence directory'
 web=root/'client/build/web-mobile';assert (web/'index.html').is_file(),'Build Web before running'
 web_hashes={p.relative_to(web).as_posix():sha(p) for p in web.rglob('*') if p.is_file()}
-tool=root/'tools/verify-loss-refill-runtime.mjs';tool_sha=sha(tool);runner_sha=sha(Path(__file__))
-dependencies=['tools/lib/march-evidence.mjs','tools/lib/resource-debit-evidence.mjs','tools/lib/runtime-response-wait.mjs','tools/lib/cocos-click.mjs','tools/lib/preview-server.mjs','tools/lib/guide-overlay.mjs','tools/lib/runtime-evidence-redaction.mjs']
+tool=(root/args.tool).resolve();assert tool.is_relative_to(root/'tools') and tool.is_file();tool_sha=sha(tool);runner_sha=sha(Path(__file__))
+dependencies=['tools/lib/march-evidence.mjs','tools/lib/resource-debit-evidence.mjs','tools/lib/runtime-response-wait.mjs','tools/lib/cocos-click.mjs','tools/lib/preview-server.mjs','tools/lib/guide-overlay.mjs','tools/lib/runtime-evidence-redaction.mjs','tools/lib/auto-refill-confirmation-evidence.mjs']
 dependency_hashes={name:sha(root/name) for name in dependencies}
 out.mkdir(parents=True);(out/'web-inputs.json').write_text(json.dumps(web_hashes,indent=2),encoding='utf8')
 token=uuid.uuid4().hex;flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0

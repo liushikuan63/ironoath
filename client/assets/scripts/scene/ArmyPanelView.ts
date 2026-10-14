@@ -116,6 +116,8 @@ export class ArmyPanelView extends Component {
   private warningLabel: Label | null = null
   private autoTrainButton: Node | null = null
   private openCityButton: Node | null = null
+  private autoRefillButton: Node | null = null
+  private autoRefillAccess: HTMLButtonElement | null = null
   private openCityHeight = 0
   private collectTreatedButton: Node | null = null
   /** 「加速治疗」（V12）：只在**正在治疗**时出现（"到点可收"那一档由「收取伤兵」承担，两者互斥）。 */
@@ -138,6 +140,7 @@ export class ArmyPanelView extends Component {
   onQueue: ((unitId: string) => void) | null = null
   /** 点「自动续训 / 停止自动」。能不能开、续的是哪一批由编排层判定（B25-S2d） */
   onToggleAutoTrain: (() => void) | null = null
+  onRequestAutoRefill: (() => void) | null = null
   /** 前往内城建设训练所需建筑；只是导航，不代替服务端的训练解锁判定。 */
   onOpenCity: (() => void) | null = null
 
@@ -153,6 +156,14 @@ export class ArmyPanelView extends Component {
     }
   }
 
+  override onEnable(): void {
+    if (this.autoRefillAccess !== null) this.autoRefillAccess.hidden = false
+  }
+
+  override onDisable(): void {
+    if (this.autoRefillAccess !== null) this.autoRefillAccess.hidden = true
+  }
+
   override onDestroy(): void {
     this.rowPool?.destroy()
     this.rowPool = null
@@ -165,6 +176,10 @@ export class ArmyPanelView extends Component {
     this.onTreatSpeedUp = null
     this.onOpenCity = null
     this.openCityButton = null
+    this.onRequestAutoRefill = null
+    this.autoRefillAccess?.remove()
+    this.autoRefillAccess = null
+    this.autoRefillButton = null
   }
 
   /**
@@ -210,6 +225,7 @@ export class ArmyPanelView extends Component {
     if (this.openCityButton !== null && height !== this.openCityHeight) {
       this.openCityButton.setPosition(new Vec3(-150, height / 2 - PADDING - 138, 0))
       this.openCityHeight = height
+      this.autoRefillButton?.setPosition(new Vec3(0, height / 2 - PADDING - 138, 0))
     }
     const resp = this.resp
     if (resp === null) {
@@ -408,6 +424,42 @@ export class ArmyPanelView extends Component {
     keepOneLine(cityCaption, 14)
     cityCaption.node.getComponent(UITransform)?.setContentSize(new Size(112, 20))
     openCity.on('touch-start', (_event: EventTouch) => this.onOpenCity?.(), this)
+
+    const refill = new Node('AutoRefillButton')
+    refill.layer = this.node.layer
+    this.node.addChild(refill)
+    refill.setPosition(new Vec3(0, top - 138, 0))
+    refill.addComponent(UITransform).setContentSize(new Size(120, 34))
+    applyCommandButton(refill, 'normal', 120, 34)
+    const refillCaption = this.addLabel(refill, 'Caption', 0, 0, COLOR_TEXT, 14)
+    refillCaption.string = '目标补兵'
+    keepOneLine(refillCaption, 14)
+    refill.on('touch-start', (_event: EventTouch) => this.onRequestAutoRefill?.(), this)
+    this.autoRefillButton = refill
+    if (sys.isBrowser && typeof document !== 'undefined') {
+      const access = document.createElement('button')
+      access.type = 'button'
+      access.textContent = '目标补兵'
+      access.dataset.ironoathAction = 'auto-refill'
+      // Canvas remains the pointer surface; this native button exposes the same action to keyboards.
+      access.style.cssText = 'position:fixed;left:-10000px;top:0;width:1px;height:1px;overflow:hidden'
+      const focus = new Node('KeyboardFocus')
+      focus.layer = this.node.layer
+      refill.addChild(focus)
+      focus.addComponent(UITransform).setContentSize(126, 40)
+      const ring = focus.addComponent(Graphics)
+      ring.strokeColor = COLOR_TEXT
+      ring.lineWidth = 2
+      ring.roundRect(-63, -20, 126, 40, 5)
+      ring.stroke()
+      focus.active = false
+      access.hidden = !this.node.active
+      access.addEventListener('focus', () => { focus.active = true })
+      access.addEventListener('blur', () => { focus.active = false })
+      access.addEventListener('click', () => { if (!access.hidden) this.onRequestAutoRefill?.() })
+      document.body.appendChild(access)
+      this.autoRefillAccess = access
+    }
 
     // 状态行：「重步兵 ×50 · 还剩 2 批」/ 停止原因 / 还没有可续的那一批。
     // 它读的是服务端下发的那份策略 —— 自动续训的账单是持续的，玩家必须能一眼看到它现在在做什么

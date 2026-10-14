@@ -36,7 +36,7 @@ class Node {
 class Component { node = new Node('army') }
 class Color { constructor(..._values: number[]) {} }
 class NodePool { destroy(): void {} }
-interface ArmyHarness { node: Node; onLoad(): void; onDestroy(): void; update(): void; onOpenCity: (() => void) | null }
+interface ArmyHarness { node: Node; onLoad(): void; onDestroy(): void; update(): void; onOpenCity: (() => void) | null; onRequestAutoRefill: (() => void) | null }
 const repoRoot = existsSync(path.resolve(process.cwd(), 'client/assets')) ? process.cwd() : path.resolve(process.cwd(), '..')
 const sourceDir = path.resolve(repoRoot, 'client/assets/scripts/scene')
 function army(height = 443.6018957345971, themed = true): { view: ArmyHarness; commands: string[]; resize(height: number): void } {
@@ -47,6 +47,7 @@ function army(height = 443.6018957345971, themed = true): { view: ArmyHarness; c
   const exports: Record<string, unknown> = {}, commands: string[] = []
   runInNewContext(code, { exports, _decorator: { ccclass: () => (klass: unknown) => klass }, Component, Color, Node, Label, Size, Vec3, UITransform, Graphics, NodePool,
     view: { getVisibleSize: () => ({ width: 960, height }) },
+    sys: { isBrowser: false },
     applySystemUiFont: (label: Label) => label,
     keepOneLine: (label: Label, font: number) => { label.lineHeight = font + 6; label.enableWrapText = false; return label },
     capWidth: (label: Label, width: number) => { label.node.getComponent(UITransform)?.setContentSize(new Size(width, 27)); return label },
@@ -56,6 +57,22 @@ function army(height = 443.6018957345971, themed = true): { view: ArmyHarness; c
   return { view, commands, resize: value => { height = value } }
 }
 function cityButton(view: ArmyHarness): Node { const button = view.node.getChildByName('OpenCityButton'); assert.ok(button, 'Army页自身必须有实际内城建设按钮'); return button }
+
+test('目标补兵实际头部入口位于建设和治疗之间，独立回抛且销毁后不再回调', () => {
+  const { view } = army()
+  const refill = view.node.getChildByName('AutoRefillButton')!
+  assert.ok(refill)
+  assert.equal(refill.position.x, 0)
+  assert.equal(refill.position.y, cityButton(view).position.y)
+  assert.equal(refill.getChildByName('Caption')!.getComponent(Label)!.string, '目标补兵')
+  let calls = 0
+  view.onRequestAutoRefill = () => { calls++ }
+  refill.emit('touch-start')
+  assert.equal(calls, 1)
+  view.onDestroy()
+  refill.emit('touch-start')
+  assert.equal(calls, 1)
+})
 function productionOpenCity(nav: { show(key: string): void }): () => void {
   const source = readFileSync(path.join(sourceDir, 'GameBootstrap.ts'), 'utf8')
   const ast = ts.createSourceFile('GameBootstrap.ts', source, ts.ScriptTarget.ES2020, true)

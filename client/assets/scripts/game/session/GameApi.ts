@@ -554,7 +554,7 @@ export class GameApi {
   }
 
   armyTrain(req: Omit<TrainReq, 'requestId'>): Promise<NetOutcome<TrainResp>> {
-    return this.mutate<TrainReq, TrainResp>('/army/train', req)
+    return this.mutate<TrainReq, TrainResp>('/army/train', req, false, true)
   }
 
   armyCancel(req: Omit<ArmyUnitReq, 'requestId'>): Promise<NetOutcome<TrainCancelResp>> {
@@ -585,7 +585,7 @@ export class GameApi {
    * 所以面板上要写清"还剩几批"与"为什么停了"。
    */
   armyAutoTrain(req: Omit<AutoTrainReq, 'requestId'>): Promise<NetOutcome<AutoTrainResp>> {
-    return this.mutate<AutoTrainReq, AutoTrainResp>('/army/autoTrain', req)
+    return this.mutate<AutoTrainReq, AutoTrainResp>('/army/autoTrain', req, false, true)
   }
 
   // ---------- 武将与抽卡（B06） ----------
@@ -753,7 +753,7 @@ export class GameApi {
   }
 
   worldMarch(req: Omit<MarchReq, 'requestId'>): Promise<NetOutcome<MarchResp>> {
-    return this.mutate<MarchReq, MarchResp>('/world/march', req)
+    return this.mutate<MarchReq, MarchResp>('/world/march', req, false, true)
   }
 
   worldScout(req: Omit<ScoutReq, 'requestId'>): Promise<NetOutcome<MarchResp>> {
@@ -1323,12 +1323,13 @@ export class GameApi {
     path: string,
     req: Omit<TReq, 'requestId'>,
     queueWhenOffline = false,
+    bindPlayerIdentity = false,
   ): Promise<NetOutcome<TResp>> {
     const requestId = this.deps.newRequestId()
     const body = { ...req, requestId } as TReq
     const sentAt = this.deps.now()
     const outcome = await this.deps.net.post<TReq, TResp>(path, body,
-      { idempotent: true, requestId, queueWhenOffline })
+      { idempotent: true, requestId, queueWhenOffline, bindPlayerIdentity })
     return this.calibrate(outcome, sentAt)
   }
 

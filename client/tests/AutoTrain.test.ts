@@ -11,9 +11,71 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   AUTO_TRAIN_BATCH_BUDGET, autoTrainBlockedReason, autoTrainRequest, autoTrainRunningText,
-  autoTrainStopText, autoTrainToggleCaption, rememberTrain,
+  autoTrainStopText, autoTrainToggleCaption, prepareAutoRefill, rememberTrain,
 } from '../assets/scripts/game/army/AutoTrain'
 import type { AutoTrainView } from '../assets/scripts/net/generated/ArmyProtocol'
+import type { ArmyListResp } from '../assets/scripts/net/generated/ArmyProtocol'
+import type { MarchSpec } from '../assets/scripts/game/world/MarchCompose'
+
+const refillArmy: Pick<ArmyListResp, 'units'> = { units: [{ unitId: 'unit_infantry_t1',
+  name: '重步兵 T1', type: 'INFANTRY', tier: 1, count: 9, wounded: 0, training: 2,
+  unlocked: true, finishAt: null, remainingSeconds: 0, unlockHint: null,
+  trainTimeSec: 60, trainCost: [] }] }
+const refillMarch: MarchSpec = { toX: 3, toY: 4, action: 'ATTACK', heroes: [],
+  units: [{ unitId: 'unit_infantry_t1', count: 20 }] }
+
+test('补兵确认只采用同兵种的成功出征目标与成功训练单批，沿既有预算', () => {
+  const prepared = prepareAutoRefill(rememberTrain('unit_infantry_t1', 5), refillMarch, refillArmy)
+  assert.equal(prepared.kind, 'ready')
+  if (prepared.kind !== 'ready') assert.fail('应当准备确认而不是直接发送')
+  assert.deepEqual(prepared.request, { enabled: true, unitId: 'unit_infantry_t1', count: 5,
+    targetCount: 20, batchBudget: AUTO_TRAIN_BATCH_BUDGET })
+  assert.deepEqual(prepared.view, { unitName: '重步兵 T1', availableCount: 9, trainingCount: 2,
+    targetCount: 20, batchCount: 5, batchBudget: AUTO_TRAIN_BATCH_BUDGET,
+    submitting: false, notice: null })
+  assert.equal('requestId' in prepared.request, false, '确认之前不分配业务请求键')
+})
+
+test('补兵缺任一真实输入时说明缺哪一份，不猜目标或兵力', () => {
+  for (const [memory, march, army, reason] of [
+    [null, refillMarch, refillArmy, /先.*训练|先手动训/],
+    [rememberTrain('unit_infantry_t1', 5), null, refillArmy, /成功出征/],
+    [rememberTrain('unit_infantry_t1', 5), refillMarch, null, /军队/],
+  ] as const) {
+    const prepared = prepareAutoRefill(memory, march, army)
+    assert.equal(prepared.kind, 'blocked')
+    if (prepared.kind !== 'blocked') assert.fail('无输入不应构造请求')
+    assert.match(prepared.reason, reason)
+    assert.equal(prepared.reason.includes('unit_'), false)
+  }
+})
+
+test('训练兵种不匹配上次编成，或兵种消失/锁定时不生成补兵请求', () => {
+  const wrong = prepareAutoRefill(rememberTrain('unit_archer_t1', 5), refillMarch, refillArmy)
+  assert.equal(wrong.kind, 'blocked')
+  for (const army of [{ units: [] }, { units: [{ ...refillArmy.units[0]!, unlocked: false }] }]) {
+    const prepared = prepareAutoRefill(rememberTrain('unit_infantry_t1', 5), refillMarch, army)
+    assert.equal(prepared.kind, 'blocked')
+    if (prepared.kind === 'blocked') assert.equal(prepared.reason.includes('unit_infantry_t1'), false)
+  }
+})
+
+test('不安全数量和重复兵种编成不能通过确认准备而被静默改小', () => {
+  for (const count of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(prepareAutoRefill({ unitId: 'unit_infantry_t1', count }, refillMarch, refillArmy).kind, 'blocked')
+    assert.equal(prepareAutoRefill(rememberTrain('unit_infantry_t1', 5), { ...refillMarch,
+      units: [{ unitId: 'unit_infantry_t1', count }] }, refillArmy).kind, 'blocked')
+  }
+  assert.equal(prepareAutoRefill(rememberTrain('unit_infantry_t1', 5), { ...refillMarch,
+    units: [...refillMarch.units, ...refillMarch.units] }, refillArmy).kind, 'blocked')
+})
+
+test('确认面上的名字只取军队下发名，空名使用泛称而不是内部ID', () => {
+  const prepared = prepareAutoRefill(rememberTrain('unit_infantry_t1', 5), refillMarch,
+    { units: [{ ...refillArmy.units[0]!, name: '' }] })
+  assert.equal(prepared.kind, 'ready')
+  if (prepared.kind === 'ready') assert.equal(prepared.view.unitName, '该兵种')
+})
 
 function policy(overrides: Partial<AutoTrainView> = {}): AutoTrainView {
   return {

@@ -74,6 +74,9 @@ const SKIP = new Set([
   "beginRallyCompose",
   "pickMarchUnit",
   "cancelMarchCompose",
+  // 补兵开窗和取消只准备确认，不开启策略；唯一请求意图在 confirmAutoRefill 记 auto_train。
+  "requestAutoRefill",
+  "cancelAutoRefill",
   // B26 S14 同一条口径：换召集层级与调那两个数都是**在编成面板里做选择**，
   // 真正"把兵压上去"那一下在 confirmAllianceRally / confirmSquadRally 里打 `rally_initiate`
   // （参数带 scope=SQUAD/ALLIANCE，层级本身已经分得开）—— 这里再打会把一次发起记成三四次

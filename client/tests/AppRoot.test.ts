@@ -21,6 +21,7 @@ import { GameApi } from '../assets/scripts/game/session/GameApi'
 import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
 import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
+import type { AutoRefillConfirmationView } from '../assets/scripts/game/army/AutoTrain'
 import type { RallyPanelData } from '../assets/scripts/game/session/AppRoot'
 import type { OfflineReportPopup, PanelTargets, ShopView } from '../assets/scripts/game/session/AppRoot'
 import type {
@@ -760,6 +761,7 @@ class RoutingHttp implements HttpTransport {
 }
 
 interface Harness {
+  readonly lastAutoRefill: AutoRefillConfirmationView | null
   /** 最近一次落地给社交面板的成员 id 列表（断言 diff 合并结果用）。 */
   readonly lastSocialMembers: string[]
   /** 最近一次落地给社交面板的互助请求 id 列表。 */
@@ -965,6 +967,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
   let lastSquadDiscovery: SquadListView | null = null
   let lastApplications: ApplicationView | null = null
   let lastCompose: MarchComposeView | null = null
+  let lastAutoRefill: AutoRefillConfirmationView | null = null
   /** #791：结果回执的唯一出口。写在弹层自己的提示行上等于没写（那一帧面板就关了）。 */
   const hintReceipts: string[] = []
   let lastShop: ShopView | null = null
@@ -1097,6 +1100,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
       attached.push('marchCompose')
       lastCompose = view
     },
+    autoRefill: view => { lastAutoRefill = view },
     hint: (text) => {
       hintReceipts.push(text)
     },
@@ -1260,6 +1264,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
     get lastCompose() {
       return lastCompose
     },
+    get lastAutoRefill() { return lastAutoRefill },
     get hintReceipts() {
       return hintReceipts
     },
@@ -4245,6 +4250,190 @@ test('再次出征：把上一次成功的队伍原样重发，且兵力不足�
   await h.root.repeatLastMarch()
   assert.equal(h.http.countOf('/world/march'), beforeShrunk, '凑不齐就不发')
   assert.ok(h.hintReceipts.some(text => text.includes('30') && text.includes('现在只剩 5')), '兵力不足说明也必须走玩家可见回执口')
+})
+
+async function refillHarness() {
+  const h = harness()
+  await h.root.start('dev-refill', '君')
+  h.http.overrides.set('/army/list', ARMY_FOR_MARCH)
+  await h.root.refresh('army')
+  await h.root.train('unit_infantry_t1', 5)
+  h.http.overrides.set('/world/searchTargets', {
+    targets: [{ id: 'P9', name: '邻居', coord: { x: 60, y: 60 }, matchPower: 12,
+      powerRatio: 12000, distanceBand: 'NEAR', resourceHint: 'NORMAL', isShielded: false,
+      tyrannyLevel: null }],
+    selfMatchPower: 10, lowerBound: 5, upperBound: 20, serverNow: SERVER_NOW,
+  })
+  await h.root.searchTargets(64)
+  h.root.beginMarchCompose('P9')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  await h.root.confirmMarch()
+  h.http.overrides.set('/army/autoTrain', { autoTrain: { enabled: true,
+    unitId: 'unit_infantry_t1', batchCount: 5, batchBudget: 3, targetCount: 30, stopReason: null },
+    serverNow: SERVER_NOW })
+  h.resetHints()
+  return h
+}
+
+test('目标补兵：开窗与取消不发，确认取实际成功编成和训练并生成新键', async () => {
+  const h = await refillHarness()
+  h.root.requestAutoRefill()
+  assert.deepEqual(h.lastAutoRefill, { unitName: '重步', availableCount: 500, trainingCount: 0,
+    targetCount: 30, batchCount: 5, batchBudget: 3, submitting: false, notice: null })
+  assert.equal(h.http.countOf('/army/autoTrain'), 0)
+  h.root.cancelAutoRefill()
+  assert.equal(h.lastAutoRefill, null)
+  await h.root.confirmAutoRefill()
+  assert.equal(h.http.countOf('/army/autoTrain'), 0)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    h.root.requestAutoRefill()
+    await h.root.confirmAutoRefill()
+    assert.equal(h.lastAutoRefill, null)
+  }
+  const calls = h.http.calls.filter(c => c.path === '/army/autoTrain')
+  assert.equal(calls.length, 2)
+  for (const call of calls) {
+    assert.deepEqual({ ...call.body, requestId: null }, { enabled: true,
+      unitId: 'unit_infantry_t1', count: 5, targetCount: 30, batchBudget: 3, requestId: null })
+    assert.match(String(call.body.requestId), /^req-/)
+  }
+  assert.notEqual(calls[0]!.body.requestId, calls[1]!.body.requestId)
+  assert.match(h.hintReceipts.at(-1) ?? '', /补兵.*开启|开启.*补兵/)
+})
+
+test('目标补兵：未成功训练或出征时说明缺口，无弹窗与请求', async () => {
+  const h = harness()
+  await h.root.start('dev-refill-missing', '君')
+  h.root.requestAutoRefill()
+  assert.match(h.hintReceipts.at(-1) ?? '', /先手动训/)
+  await h.root.train('unit_infantry_t1', 5)
+  h.root.requestAutoRefill()
+  assert.match(h.hintReceipts.at(-1) ?? '', /成功出征/)
+  assert.equal(h.lastAutoRefill, null)
+  assert.equal(h.http.countOf('/army/autoTrain'), 0)
+})
+
+test('目标补兵：提交等待时双击只发一次，不能取消后再开第二意图', async () => {
+  const h = await refillHarness()
+  const release = h.http.hold('/army/autoTrain')
+  h.root.requestAutoRefill()
+  const pending = h.root.confirmAutoRefill()
+  try {
+    assert.equal(h.lastAutoRefill?.submitting, true)
+    await h.root.confirmAutoRefill()
+    h.root.cancelAutoRefill()
+    h.root.requestAutoRefill()
+    assert.equal(h.lastAutoRefill?.submitting, true)
+    assert.equal(h.http.countOf('/army/autoTrain'), 1)
+  } finally { release(); await pending }
+  assert.equal(h.lastAutoRefill, null)
+})
+
+test('目标补兵：HTTP成功但资源阻断时如实显示停止，不说已开启', async () => {
+  const h = await refillHarness()
+  h.http.overrides.set('/army/autoTrain', { autoTrain: { enabled: false,
+    unitId: 'unit_infantry_t1', batchCount: 5, batchBudget: 3, targetCount: 30,
+    stopReason: 'RESOURCE_NOT_ENOUGH' }, serverNow: SERVER_NOW })
+  h.root.requestAutoRefill()
+  await h.root.confirmAutoRefill()
+  assert.equal(h.lastAutoRefill?.submitting, false)
+  assert.match(h.lastAutoRefill?.notice ?? '', /资源/)
+  assert.equal(h.hintReceipts.some(text => text.includes('已开启')), false)
+})
+
+test('目标补兵：被业务拒绝时显示具体理由，允许玩家明确重试', async () => {
+  const h = await refillHarness()
+  h.root.requestAutoRefill()
+  h.http.bizFailNext = { code: 5001, msg: '队列已满', detail: '训练队列已满，请等待一批完成' }
+  await h.root.confirmAutoRefill()
+  assert.equal(h.lastAutoRefill?.submitting, false)
+  assert.equal(h.lastAutoRefill?.notice, '训练队列已满，请等待一批完成')
+  await h.root.confirmAutoRefill()
+  assert.equal(h.http.countOf('/army/autoTrain'), 2)
+  assert.equal(h.lastAutoRefill, null)
+})
+
+test('目标补兵：切换账号使旧确认和迟到回执失效，不借用另一账号历史', async () => {
+  const h = await refillHarness()
+  const release = h.http.hold('/army/autoTrain')
+  h.root.requestAutoRefill()
+  const pending = h.root.confirmAutoRefill()
+  h.http.overrides.set('/player/init', { ...(ROUTES['/player/init'] as Record<string, unknown>),
+    playerId: 'OTHER_ACCOUNT' })
+  try {
+    await h.root.start('other-device', '乙')
+    h.resetHints()
+  } finally { release(); await pending }
+  assert.equal(h.lastAutoRefill, null)
+  assert.equal(h.hintReceipts.length, 0, '旧成功不能向新号报告开启')
+  h.root.requestAutoRefill()
+  assert.match(h.hintReceipts.at(-1) ?? '', /先手动训/)
+  assert.equal(h.http.countOf('/army/autoTrain'), 1)
+})
+
+test('目标补兵：同账号重登不能让尚未结束的策略请求旁边再发一份', async () => {
+  const h = await refillHarness()
+  const release = h.http.hold('/army/autoTrain')
+  h.root.requestAutoRefill()
+  const pending = h.root.confirmAutoRefill()
+  try {
+    await h.root.start('dev-refill', '君')
+    h.root.requestAutoRefill()
+    await h.root.confirmAutoRefill()
+    assert.equal(h.http.countOf('/army/autoTrain'), 1)
+  } finally { release(); await pending }
+  h.root.requestAutoRefill()
+  await h.root.confirmAutoRefill()
+  assert.equal(h.http.countOf('/army/autoTrain'), 2, '旧请求结束后允许玩家重新确认')
+})
+
+test('目标补兵：登录仍在等待时不使用前一账号身份重新开确认', async () => {
+  const h = await refillHarness()
+  const release = h.http.hold('/player/init')
+  const pending = h.root.start('other-device', '乙')
+  try {
+    h.root.requestAutoRefill()
+    await h.root.confirmAutoRefill()
+    assert.equal(h.lastAutoRefill, null)
+    assert.equal(h.http.countOf('/army/autoTrain'), 0)
+  } finally { release(); await pending }
+})
+
+test('目标补兵：切号后旧出征迟到成功不能关新号编成或报旧成功', async () => {
+  const h = await refillHarness()
+  const release = h.http.hold('/world/march')
+  h.root.beginMarchCompose('P9')
+  h.root.pickMarchUnit('unit_infantry_t1', 30)
+  const pending = h.root.confirmMarch()
+  h.http.overrides.set('/player/init', { ...(ROUTES['/player/init'] as Record<string, unknown>),
+    playerId: 'OTHER_ACCOUNT' })
+  try {
+    await h.root.start('other-device', '乙')
+    await h.root.searchTargets(64)
+    h.root.beginMarchCompose('P9')
+    h.root.pickMarchUnit('unit_infantry_t1', 10)
+    h.resetHints()
+  } finally { release(); await pending }
+  assert.equal(h.lastCompose?.targetName, '邻居', '新号当前编成不得被旧出征成功关闭')
+  assert.equal(h.hintReceipts.length, 0)
+})
+
+test('目标补兵：旧账号迟到训练不能覆盖新账号成功训练历史', async () => {
+  const h = await refillHarness()
+  const release = h.http.hold('/army/train')
+  const pending = h.root.train('unit_infantry_t1', 99)
+  h.http.overrides.set('/player/init', { ...(ROUTES['/player/init'] as Record<string, unknown>),
+    playerId: 'OTHER_ACCOUNT' })
+  try {
+    await h.root.start('other-device', '乙')
+    await h.root.train('unit_infantry_t1', 7)
+    await h.root.searchTargets(64)
+    h.root.beginMarchCompose('P9')
+    h.root.pickMarchUnit('unit_infantry_t1', 30)
+    await h.root.confirmMarch()
+  } finally { release(); await pending }
+  h.root.requestAutoRefill()
+  assert.equal(h.lastAutoRefill?.batchCount, 7)
 })
 
 test('自动续训：没训过就不发请求（续的是哪一批只有玩家自己知道），训过之后按那一批发', async () => {

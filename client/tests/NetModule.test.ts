@@ -132,7 +132,7 @@ interface Harness {
   clock: { now: number }
 }
 
-function createHarness(overrides: Partial<NetConfig> = {}): Harness {
+function createHarness(overrides: Partial<NetConfig> = {}, depsOverrides: Partial<NetDeps> = {}): Harness {
   FakeSocket.instances = []
   const http = new FakeHttp()
   const delays: number[] = []
@@ -163,11 +163,55 @@ function createHarness(overrides: Partial<NetConfig> = {}): Harness {
     newRequestId: () => `req-${++requestSeq}`,
     newTraceId: () => `trace-${++requestSeq}`,
     notifyNetwork: (signal) => signals.push(signal),
+    ...depsOverrides,
   }
   return { net: new NetModule(config, deps), http, delays, clock, signals }
 }
 
 // ---------- HTTP：幂等与重试 ----------
+
+test('账号绑定写请求在退避中切号后停止，不向新账号发送旧策略', async () => {
+  const { net, http } = createHarness({}, { delay: async () => {
+    net.setPlayer('ACCOUNT_B')
+    net.setAuthToken('ticket-b')
+  } })
+  net.setPlayer('ACCOUNT_A')
+  net.setAuthToken('ticket-a')
+  http.script = [new Error('temporary disconnect'), envelope({ enabled: true })]
+  const outcome = await net.post('/army/autoTrain', { enabled: true, targetCount: 100 },
+    { idempotent: true, bindPlayerIdentity: true })
+  assert.equal(outcome.kind, 'network')
+  assert.equal(http.calls.length, 1, '旧请求不得以B身份重投')
+  assert.equal(http.calls[0]!.headers['X-Player-Id'], 'ACCOUNT_A')
+  assert.equal(http.calls[0]!.headers.Authorization, 'Bearer ticket-a')
+})
+
+for (const maxRetryAttempts of [0, 1]) {
+  test(`绑定账号最后一次网络异常不污染新账号在线状态，重试次数${maxRetryAttempts}`, async () => {
+    let rejectOld!: (error: Error) => void
+    const held = new Promise<HttpResponse>((_resolve, reject) => { rejectOld = reject })
+    let attempts = 0
+    const { net, signals } = createHarness({ maxRetryAttempts }, { http: {
+      post: async () => {
+        attempts++
+        if (attempts <= maxRetryAttempts) throw new Error('first attempt failure')
+        return held
+      },
+      get: async () => envelope({ healthy: true }),
+    } })
+    net.setPlayer('ACCOUNT_A')
+    const pending = net.post('/army/autoTrain', { enabled: true }, { idempotent: true, bindPlayerIdentity: true })
+    while (attempts <= maxRetryAttempts) await Promise.resolve()
+    net.setPlayer('ACCOUNT_B')
+    net.setAuthToken('ticket-b')
+    assert.equal((await net.get('/player/power')).kind, 'ok')
+    const signalStart = signals.length
+    rejectOld(new Error('old account final attempt failed'))
+    assert.equal((await pending).kind, 'network')
+    assert.equal(net.isOnline(), true, 'B已成功联网，不得被A迟到异常标为离线')
+    assert.equal(signals.slice(signalStart).some(signal => signal.kind === 'givenUp'), false)
+  })
+}
 
 test('成功请求返回 ok，并带上服务端 traceId 与 serverNow', async () => {
   const { net, http } = createHarness()
