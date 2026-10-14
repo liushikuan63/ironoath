@@ -7596,3 +7596,5 @@ TEST_EXIT=0
 | B25 真实132损耗补差与可见Label反控 #1329（2026-10-15） | 本格事实/量具完善本地提交（不推） | durable1 132/0：损8补8/480业务秒/slot1/IRON240 GRAIN160/全cleanup；新durable2可见文案负控及索引check在途 | tmp/loss-repeat-ui-20261015/durable1/refill.actual.json/result.actual.json/runner-result.actual.json；final2-source-inputs.json | 正目标开经HTTP非玩家入口；新Label负控未代验、目标UI输入仍0，普通1×/原生未验，不推 |
 
 | 停电服务恢复与显式目标 #1330（2026-10-15） | 本格恢复事实本地提交（不推） | 原JAR/45配置SHA同；Java6072/9490/同Mongo同UID；HTTPcity×2/army均200code0；原主9/兵营6/学院等1全保；Mongo ping1/Redis PONG；owner创建UTC ticks及监听同/wrapper退出 | D:/tmp/ironoath-power-recovery-20261015/attempt1/recovery-summary.actual.json、process-owner-verified.actual.json、canonical-owners-updated.actual.json | 仅服务恢复与原号读回，不是客户端/原生全验；active goal下一补玩家目标策略入口，先完成NPC工具待提交，不升级原服/不推 |
+
+| B25 NPC实损与后端补兵正式收口 #1331（2026-10-15） | 本格7路径原子本地提交（不推） | durable2 140/0（含可见文案合成负控1+恢复1）；实际损11/补11/660业务秒/slot1/IRON330 GRAIN220/全cleanup；check1 47/1321/31全0；2SHA独立一致 | tmp/loss-repeat-ui-20261015/final-summary.actual.json、durable2、validation-check1.json | 玩家正目标入口仍0，下一单兵种按上次真实参数显式确认；ordinary1×/原生/并发上限未验，原9490同库主9已恢复6072，不推升级 |
