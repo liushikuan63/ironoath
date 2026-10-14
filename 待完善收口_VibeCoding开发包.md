@@ -7542,3 +7542,5 @@ TEST_EXIT=0
 | B11真实驱动大文档传输对照 #1302 | 本笔对照/实验判据原子本地提交 | Socket/Netty小ping都快；4KB写43.03→0.94ms；CAS/读回/库清理/客户端及group退出均过 | tmp/bot-mongo-performance-20261014/transport2/result.actual.json；官方Driver4.11.2 TransportSettings | Netty仅外部量具显式实验输入，生产默认未改；真实5000持久tick未验，不推部署付款 |
 
 | B11持久首次登记均值全扫真红 #1303 | 本笔首红/最小读回设计原子提交 | 初始化5000/44.7s过；首次Runtime344.2s仅1样本，未完成5000；真实实现/Netty退出及owner清理过 | tmp/bot-mongo-performance-20261014/attempt2；runtime-thread.actual.log | 数值仅请求内快照回归/实现与新候选待验；不变身份权威、预算或战斗路径，不推部署付款 |
+
+| B11单驱动均值数值读集实现 #1304 | 本笔有效首红/43重点证据原子提交 | 登记均值1有效红→7套43全0；懒读/新调用/嵌套now/失败释放/线程隔离均验 | tmp/bot-mongo-performance-20261014/red1.actual.json；green1.actual.json；Runtime生产接点1 | 六源新完整候选与持久5000未验；Netty仅实验默认未改，不推部署付款 |
