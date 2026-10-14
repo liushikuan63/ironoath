@@ -7520,3 +7520,5 @@ TEST_EXIT=0
 | B22限流浏览器现查 #1291 | 本条原子本地提交 | 验收矩阵第1格仍🟡；生产10044与输入保留已接线 | tmp/chat-rate-limit-20261014；每日校准final-summary.actual.json | 实际浏览器限流尚未执行；原9490/UID/IDE与原生、外部服务均不动，不推 |
 
 | B22限流实际25项及脱敏复核 #1292 | 本笔发现/验证原子本地提交 | attempt5普通1×真实HTTP/UI 25/0；脱敏synthetic 2/0 | tmp/chat-rate-limit-20261014/attempt5；review2-independent.md；首失败全保留 | 最后labels脱敏后最终check3/attempt7和review3待验；不是原生验收，不推部署付款 |
+
+| B22限流真实浏览器闭环 #1293 | 本次量具/脱敏/台账原子本地提交 | 最终三SHA0漂移；47门/1321client/2脱敏/HTTPUI25全0 | tmp/chat-rate-limit-20261014/final-summary.actual.json；attempt7两截图 | 原生未代验；无产品规则变更、不推；下一5000 Bot性能报告继续 |
