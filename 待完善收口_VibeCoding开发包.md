@@ -7480,3 +7480,9 @@ TEST_EXIT=0
 | 召回/战前准备/活进程释放返程补写 #1273 | 本发现原子提交未推 | 4有效首红→88重点全0；身份/释放/返程快照写3回归→91全0 | tmp/bot-behavior-state-20261014-2c1101a7/focused11.log；focused12.log；state-review5.diff | 第五只读复核在途；本版最终完整/JVM/批探针未做；初CAS归属不明及partial仍需核对 |
 
 | 首次返程IO前登记/拦截双方阶段 #1274 | 本发现原子提交未推 | 真实战斗或拒绝后改期前/后故障4红；实际拦截守方写1红；5失败0错误跳过 | tmp/bot-behavior-state-20261014-2c1101a7/review5-red1.log；state-review5.diff；validation-full3.json | 提前登记/双方交战归属与已知清理修复、终审完整验证/JVM/批探针未做；partial/未知归属仍保核对 |
+
+### 2026-10-14 · #1275 连续压缩失败与桌面接续
+
+| 格 | 提交 | 验证读数 | 截图/证据 | 未做 |
+|---|---|---|---|---|
+| #1275 第3次后两轮压缩解码失败；失败序列接守卫 | 本笔（仅文档，本批未推） | 真实compact3/连续失败2；9项回归0红，成功与其他失败重置、单轮retry不重复计数；旧聊天桌面错误已查看、完整备份及原生归档成功；源码25路径及部分暂存保留 | C:/Users/Admin/.codex/tmp/chat-recovery-20261014/diagnosis.json；failure-guard-validation.json；old-desktop-open.png；archive-receipt.json；staged.patch/unstaged.patch；后续handoff-receipt.json仅真实产生后有效 | 不宣称次数为解码错误根因或保证网络故障消失；新聊天及桌面/native writer/真实下一工具待后续验；Bot最新故障修后完整全验/多JVM/AOF/普通反击/批探针及B04待做；此前绿不是当前修后绿，源码未提交，本格不推 |
