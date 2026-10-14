@@ -113,6 +113,8 @@ class RallyDepartureTest {
     @Autowired private com.ironoath.core.limit.DailyCounter dailyCounter;
     @Autowired private BattleReportStore battleReports;
     @Autowired private SocialStore socialStore;
+    @Autowired private com.ironoath.web.mail.MailStore overflowMailStore;
+    @Autowired private com.ironoath.common.time.TimeService timeService;
 
     @BeforeEach
     void resetStores() {
@@ -129,6 +131,7 @@ class RallyDepartureTest {
         ((com.ironoath.web.limit.InMemoryDailyCounter) dailyCounter).clear();
         battleReports.clear();
         socialStore.clear();
+        overflowMailStore.clear();
     }
 
     private final List<Runnable> restorers = new ArrayList<>();
@@ -478,6 +481,37 @@ class RallyDepartureTest {
         assertThat(countOf(leader,T1)).isEqualTo(1_000L);
         assertThat(countOf(mate,T1)).isEqualTo(800L);
         assertThat(battleReportService.list(squad.victim()).reports()).isEmpty();
+    }
+
+    @Test void fullWarehouseRallySpoilsReachBothMembersByCommitment() {
+        String leader=player(1_000L,0L),mate=player(800L,0L);Squad squad=squadOf(leader,mate);
+        var types=List.of("WOOD","STONE","IRON","GRAIN","GOLD");
+        for(String uid:List.of(leader,mate)) {
+            var save=players.findByPlayerId(uid).orElseThrow();
+            for(String type:types) {var old=save.resource(type);save.putResource(type,new PlayerResourceState(old.cap(),old.cap(),old.protectedAmount(),old.perHour(),old.lastSettle()));}
+            players.save(save);
+        }
+        var before=new java.util.LinkedHashMap<String,Long>();
+        types.forEach(type->before.put(type,players.findByPlayerId(squad.victim()).orElseThrow().resource(type).current()));
+        String rallyId=initiate(squad,Map.of(T1,600L));join(mate,rallyId,Map.of(T1,400L));depart(rallyId);
+        March merged=onlyMarch(leader);marchAppService.processDue(leader,merged.arriveAt()+1);
+        var leaderMail=overflowMailStore.listOf(leader,timeService.serverNow());var mateMail=overflowMailStore.listOf(mate,timeService.serverNow());
+        assertThat(leaderMail).as("满仓集结发起人仍应收到自己那份战利品").isNotEmpty();
+        assertThat(mateMail).as("满仓集结成员也必须独立收到补发").isNotEmpty();
+        long lostTotal=0L;
+        for(String type:types) {
+            long lost=before.get(type)-players.findByPlayerId(squad.victim()).orElseThrow().resource(type).current();lostTotal+=lost;
+            long leaderShare=leaderMail.stream().flatMap(m->m.rewards().stream()).filter(x->x.id().equals(type)).mapToLong(x->x.count()).sum();
+            long mateShare=mateMail.stream().flatMap(m->m.rewards().stream()).filter(x->x.id().equals(type)).mapToLong(x->x.count()).sum();
+            assertThat(leaderShare+mateShare).as(type+"所有附件守恒，资源不消失也不凭空增发").isEqualTo(lost);
+            assertThat(leaderShare).isBetween(lost*600L/1000L,lost*600L/1000L+1L);
+            assertThat(mateShare).isBetween(lost*400L/1000L,lost*400L/1000L+1L);
+        }
+        assertThat(lostTotal).isPositive();
+        for(var mail:java.util.stream.Stream.concat(leaderMail.stream(),mateMail.stream()).toList()) {
+            assertThat(mail.sourceRef()).isEqualTo("battle:"+merged.id());
+            assertThat(mail.text()).contains("战斗").doesNotContain(merged.id()).doesNotContain("battle");
+        }
     }
 
     // ---------- 收益分摊（掠夺与掉落） ----------

@@ -7502,3 +7502,5 @@ TEST_EXIT=0
 | B04通用发放95绿/普通木材补领正文首红 #1282 | 本发现原子本地提交未推 | 原4首红→95全0；初版47门/build和2680server/1321client全0；新普通木材补领数量守恒过、正文1执行1失败0错跳；独立复核无额外阻断 | tmp/battle-plunder-overflow-20261014/focused1.log；validation-full1.json；review1-independent.md；reclaim-red1.log | 后继mail来源中文/隐藏ref待修及最终96回归/完整候选/HTTP/UI和批探针仍待；初版绿不作本修后绿；普通资源领取硬崩溃窗口另核对 |
 
 | B04真实补充验收发现跨成员武将到达缺口 #1283 | 本次本地发现提交 | HTTP/UI22已过，集结战前返程/超时EXIT1，cleanup全收 | tmp/battle-plunder-overflow-20261014/http-ui4 | 不将失败算通过；先无武将集结验证B04，再回归修复按成员归属读取英雄；原账号原生端未验 |
+
+| B04满仓/部分仓容与集结补发 #1284 | 本次四源码及台账原子本地提交 | 47门/2681server/1321client/4JVM22/17FIRST/war44/HTTPUI30均0失败及跳过 | tmp/battle-plunder-overflow-20261014/final-summary.actual.json；http-ui6两截图已看 | #1283成员独有英雄到达待独立修复；初始数据/腾空间夹具及100x；原9490/UID/原生未验；不推部署付款 |

@@ -138,10 +138,12 @@ public final class StoreMailbox implements RewardPorts.Mailbox {
         }
         boolean mailAttachment = ctx.traceId().startsWith("mail_gold:") || ctx.traceId().startsWith("mail_item:")
                 || ctx.traceId().startsWith("mail_items:");
-        text.append("来源：").append(mailAttachment && (ctx.durableGold() || ctx.durableItems()) ? "邮件附件奖励"
+        boolean battle="battle".equals(ctx.source());
+        boolean ordinaryMail="mail".equals(ctx.source());
+        text.append("来源：").append(battle ? "战斗掠夺奖励" : ordinaryMail || mailAttachment && (ctx.durableGold() || ctx.durableItems()) ? "邮件附件奖励"
                 : ctx.durableItems() ? ("free_item".equals(ctx.source())?"活动材料奖励":"月卡材料奖励") : ctx.durableGold()
                 ? ("paid_gold".equals(ctx.source()) ? "月卡金币奖励" : "签到与成长奖励") : ctx.source());
-        if (!ctx.durableGold() && !ctx.durableItems() && !ctx.sourceRef().isBlank()) {
+        if (!battle && !ordinaryMail && !ctx.durableGold() && !ctx.durableItems() && !ctx.sourceRef().isBlank()) {
             text.append('（').append(ctx.sourceRef()).append('）');
         }
         return text.toString().stripTrailing();

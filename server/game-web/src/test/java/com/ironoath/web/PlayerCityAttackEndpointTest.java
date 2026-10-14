@@ -101,8 +101,13 @@ class PlayerCityAttackEndpointTest {
     @Autowired private com.ironoath.web.social.SocialRulesAssembler socialRules;
     @Autowired private com.ironoath.common.time.TimeService timeService;
 
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.web.mail.MailStore overflowMailStore;
+    @Autowired private com.ironoath.web.mail.MailAppService overflowMailAppService;
+
     @BeforeEach
     void resetStores() {
+        org.mockito.Mockito.reset(overflowMailStore);
+        overflowMailStore.clear();
         ((InMemoryPlayerStore) players).clear();
         ((InMemoryCityStore) cities).clear();
         ((InMemoryInventoryStore) inventories).clear();
@@ -151,6 +156,101 @@ class PlayerCityAttackEndpointTest {
                 .as("不参战的人不吃国战疲劳：把别人的仗变成全服日常的负担不是设计者写过的东西")
                 .isZero();
     }
+    @Test void fullWarehousePlunderIsMailedAndCanBeClaimedOnce() { verifyPlunderOverflow(0L); }
+    @Test void partialWarehousePlunderConservesBagAndMail() { verifyPlunderOverflow(10L); }
+
+    private static final List<String> PLUNDER_RESOURCES=List.of("WOOD","STONE","IRON","GRAIN","GOLD");
+    private void verifyPlunderOverflow(long room) {
+        Fixture f=readyPair(1_800L,1_000L);
+        fillWarehouse(f.attacker,room);
+        var defenderBefore=resourceSnapshot(f.defender);
+        var attackerBefore=resourceSnapshot(f.attacker);
+        String id=sendAttack(f.attacker,f.defenderCoord,Map.of("unit_infantry_t1",1_800L));
+        arriveAndProcess(id);
+        long lost=PLUNDER_RESOURCES.stream().mapToLong(t->defenderBefore.get(t)-resourceOf(f.defender,t)).sum();
+        assertThat(lost).as("真实胜利必须确实扣过守方资源，量具才能判别溢出丢失").isPositive();
+        var mails=overflowMailStore.listOf(f.attacker,timeService.serverNow());
+        assertThat(mails).as("满仓战利品不能只从守方扣掉，未入仓部分必须进邮箱").isNotEmpty();
+        var mailed=new java.util.LinkedHashMap<String,Long>();
+        mails.forEach(mail->{
+            assertThat(mail.kind()).isEqualTo("OVERFLOW");
+            assertThat(mail.sourceRef()).isEqualTo("battle:"+id);
+            assertThat(mail.text()).contains("战斗").doesNotContain(id).doesNotContain("battle");
+            mail.rewards().forEach(line->{
+                assertThat(line.type()).isEqualTo("RESOURCE");
+                assertThat(line.name()).isEqualTo(configs.getResource(line.id()).name());
+                mailed.merge(line.id(),line.count(),Long::sum);
+            });
+        });
+        long inBag=0L;
+        for(String type:PLUNDER_RESOURCES) {
+            long gained=resourceOf(f.attacker,type)-attackerBefore.get(type);
+            inBag+=gained;
+            assertThat(gained+mailed.getOrDefault(type,0L)).as(type+"扣减必须等于实际入仓加补发附件")
+                    .isEqualTo(defenderBefore.get(type)-resourceOf(f.defender,type));
+            for(String owner:List.of(f.attacker,f.defender)) {
+                var report=battleReportService.open(owner,battleReportService.list(owner).reports().get(0).reportId());
+                assertThat(report.result().loot().stream().filter(x->type.equals(x.resourceType())).mapToLong(x->x.amount()).sum())
+                        .as("双方战报继续只记实际入仓，不混入待领邮件").isEqualTo(gained);
+            }
+        }
+        assertThat(mailed.values().stream().mapToLong(Long::longValue).sum()).isPositive();
+        if(room>0) assertThat(inBag).isPositive();
+        if(room==0) {
+            for(String type:PLUNDER_RESOURCES) setResource(f.attacker,type,0L);
+            overflowMailAppService.claimAll(f.attacker,new com.ironoath.web.dto.generated.MailClaimAllReq(UUID.randomUUID().toString()));
+            mails.forEach(mail->assertThat(overflowMailStore.findById(f.attacker,mail.mailId()).orElseThrow().claimedAt()).isNotNull());
+            for(String type:PLUNDER_RESOURCES) assertThat(resourceOf(f.attacker,type)).isEqualTo(mailed.getOrDefault(type,0L));
+            var afterClaim=resourceSnapshot(f.attacker);
+            overflowMailAppService.claimAll(f.attacker,new com.ironoath.web.dto.generated.MailClaimAllReq(UUID.randomUUID().toString()));
+            assertThat(resourceSnapshot(f.attacker)).as("已领补发不随新请求重发").isEqualTo(afterClaim);
+        }
+    }
+    private void fillWarehouse(String playerId,long room) {
+        for(String type:PLUNDER_RESOURCES) setResource(playerId,type,players.findByPlayerId(playerId).orElseThrow().resource(type).cap()-room);
+    }
+    private Map<String,Long> resourceSnapshot(String playerId) {
+        var result=new java.util.LinkedHashMap<String,Long>();
+        PLUNDER_RESOURCES.forEach(type->result.put(type,resourceOf(playerId,type)));return result;
+    }
+
+    @Test void materialOverflowReclaimKeepsQuantityAndHidesInternalMailReference() {
+        Fixture f=readyPair(1_800L,1_000L);fillWarehouse(f.attacker,0L);
+        for(String type:PLUNDER_RESOURCES) setResource(f.defender,type,0L);
+        long protectedWood=players.findByPlayerId(f.defender).orElseThrow().resource("WOOD").protectedAmount();
+        setResource(f.defender,"WOOD",Math.addExact(protectedWood,configs.getResource("WOOD").initCap()*100L));
+        String id=sendAttack(f.attacker,f.defenderCoord,Map.of("unit_infantry_t1",1_800L));arriveAndProcess(id);
+        long mailedBefore=overflowMailStore.listOf(f.attacker,timeService.serverNow()).stream()
+                .flatMap(mail->mail.rewards().stream()).filter(line->"WOOD".equals(line.id())).mapToLong(line->line.count()).sum();
+        assertThat(mailedBefore).as("必须真实掠夺并补发非金币资源，覆盖普通邮件附件分支").isPositive();
+        overflowMailAppService.claimAll(f.attacker,new com.ironoath.web.dto.generated.MailClaimAllReq(UUID.randomUUID().toString()));
+        var pending=overflowMailStore.listOf(f.attacker,timeService.serverNow()).stream().filter(mail->mail.claimedAt()==null).toList();
+        assertThat(pending.stream().flatMap(mail->mail.rewards().stream()).filter(line->"WOOD".equals(line.id())).mapToLong(line->line.count()).sum())
+                .as("仓库仍满时再补发保原数量").isEqualTo(mailedBefore);
+        pending.forEach(mail->{
+            assertThat(mail.sourceRef()).startsWith("mail:");
+            assertThat(mail.text()).contains("来源：邮件附件奖励").doesNotContain("mail_").doesNotContain("march_");
+        });
+    }
+
+    @Test void lostOverflowMailReplyDoesNotReplayBattleOrPlunder() {
+        Fixture f=readyPair(1_800L,1_000L);fillWarehouse(f.attacker,0L);
+        var fired=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(invocation->{
+            invocation.callRealMethod();
+            if(fired.compareAndSet(false,true)) throw new org.springframework.dao.DataAccessResourceFailureException("owned committed overflow mail reply loss");
+            return null;
+        }).when(overflowMailStore).save(org.mockito.ArgumentMatchers.any(com.ironoath.web.mail.MailStore.MailRecord.class));
+        String id=sendAttack(f.attacker,f.defenderCoord,Map.of("unit_infantry_t1",1_800L));arriveAndProcess(id);
+        assertThat(fired).as("必须经过真实战斗溢出邮件存储").isTrue();
+        assertThat(marches.findById(id).orElseThrow().status()).isEqualTo(March.Status.FIGHTING);
+        var victimAfter=resourceSnapshot(f.defender);int mailCount=overflowMailStore.listOf(f.attacker,timeService.serverNow()).size();
+        marchAppService.processDue(f.attacker,timeService.serverNow()+3_600_000L);
+        assertThat(resourceSnapshot(f.defender)).isEqualTo(victimAfter);
+        assertThat(overflowMailStore.listOf(f.attacker,timeService.serverNow())).hasSize(mailCount);
+        assertThat(marches.findById(id).orElseThrow().status()).isEqualTo(March.Status.FIGHTING);
+    }
+
     @Test
     @DisplayName("压倒性进攻：守方掉兵掉资源、攻方拿到掠夺、攻方带着残兵返程")
     void overwhelmingAttackSettlesBothSides() {

@@ -120,6 +120,7 @@ public class PlayerCityBattleService {
     private static final String WALL_CONFIG_ID = "wall";
 
     private final PlayerWallet wallet;
+    private final com.ironoath.core.reward.RewardService rewardService;
     private final PowerService powerService;
     private final PowerRefreshService powerRefreshService;
     private final BattleReportService battleReports;
@@ -150,7 +151,7 @@ public class PlayerCityBattleService {
                                    HeroStatsService heroStats, HeroRepository heroes,
                                    ArmyRepository armies, CityRepository cities,
                                    PlayerRepository players, ArmyAppService armyAppService,
-                                   PlayerWallet wallet, PowerService powerService,
+                                   PlayerWallet wallet, com.ironoath.core.reward.RewardService rewardService, PowerService powerService,
                                    PowerRefreshService powerRefreshService,
                                    BattleReportService battleReports, DailyCounter dailyCounter,
                                    com.ironoath.web.reward.ServerSeedSource seeds,
@@ -172,6 +173,7 @@ public class PlayerCityBattleService {
         this.players = players;
         this.armyAppService = armyAppService;
         this.wallet = wallet;
+        this.rewardService = rewardService;
         this.powerService = powerService;
         this.powerRefreshService = powerRefreshService;
         this.battleReports = battleReports;
@@ -187,7 +189,7 @@ public class PlayerCityBattleService {
 
     /**
      * @param result            已按实际资源结算校准掠夺量的玩家战果，保留内核双方阵亡/伤兵
-     * @param plundered         实际掠夺入袋的资源（与 result.loot() 相同；溢出补发另有未完成接线）
+     * @param plundered         实际掠夺入仓的资源（与 result.loot() 相同；未入仓部分由通用发放器转邮件或补偿）
      * @param tyrannyDelta      本次为攻方累积的暴虐值（区间内的正常对抗为 0）
      * @param shieldRaised      守方的免战护盾是否被真的推后
      * @param attackerReportId  攻方那份战报的 id
@@ -339,7 +341,7 @@ public class PlayerCityBattleService {
 
         // ---------- 六、掠夺（只有打赢才搬得走） ----------
         Map<String, Long> plundered = won
-                ? plunder(beneficiaries, defenderId, result.loot(), now) : Map.of();
+                ? plunder(beneficiaries, defenderId, result.loot(), march.id(), now) : Map.of();
         // 内核按破墙与负载计算可掠夺量；玩家战报只展示真实资源漏斗结算的收益。
         // 平局未搬资源、保护额度裁剪或发放被截断时，不把理论数当作到账数。
         if (!result.loot().equals(plundered)) {
@@ -754,7 +756,7 @@ public class PlayerCityBattleService {
      * 集结合并行军如果整包给发起人，就是「成员的兵分回来了、抢到的资源没分回来」。
      */
     private Map<String, Long> plunder(Map<String, Long> beneficiaries, String defenderId,
-                                      Map<String, Long> loot, long now) {
+                                      Map<String, Long> loot, String marchId, long now) {
         Map<String, Long> taken = new LinkedHashMap<>();
         loot.forEach((resourceType, want) -> {
             if (want <= 0L) {
@@ -777,13 +779,20 @@ public class PlayerCityBattleService {
             long granted = 0L;
             for (Map.Entry<String, Long> share
                     : com.ironoath.core.reward.RewardSplit.byWeight(beneficiaries, deducted).entrySet()) {
-                long each = wallet.grant(share.getKey(), resourceType, share.getValue(), now);
+                if(share.getValue()<=0L) continue;
+                var reward=rewardService.grant(share.getKey(),List.of(new com.ironoath.core.reward.RewardItem(
+                        com.ironoath.core.reward.RewardType.RESOURCE,resourceType,share.getValue())),
+                        com.ironoath.core.reward.RewardContext.toMail("battle",marchId,marchId));
+                long each=reward.granted().stream().filter(item->item.type()==com.ironoath.core.reward.RewardType.RESOURCE
+                        && item.id().equals(resourceType)).mapToLong(item->item.count()).sum();
                 granted += each;
-                if (each < share.getValue()) {
-                    // 这个人的仓库满了：少的那部分不会凭空回到守方手里（已经扣了），而是溢出，
-                    // B04 的发放器会把它转成邮件补发，这里只记录差额
-                    LOG.info("掠夺溢出，受益人仓库装不下 beneficiary={} resource={} 应得={} 入袋={}",
-                            share.getKey(), resourceType, share.getValue(), each);
+                if (reward.hasOverflow()) {
+                    LOG.info("掠夺溢出已转邮件 beneficiary={} resource={} 应得={} 入仓={} mailId={}",
+                            share.getKey(),resourceType,share.getValue(),each,reward.mailId());
+                }
+                if(reward.hasCompensation()) {
+                    LOG.warn("掠夺发放失败已入补偿队列 beneficiary={} resource={} marchId={} compensationId={}",
+                            share.getKey(),resourceType,marchId,reward.compensationId());
                 }
             }
             taken.put(resourceType, granted);
