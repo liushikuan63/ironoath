@@ -7564,3 +7564,5 @@ TEST_EXIT=0
 | B24赛季币获得消费量具首前提 #1313 | 本笔原子记录失败前提/正确生产触发；新probe未交付 | attempt1真实9/1/exit1，空快照0币、浏览器未启动、own全cleanup；attempt2后台27604运行中 | tmp/season-coin-ui-20261014/attempt1/result.actual.json；candidate1/inputs.json；inputs-inspect.actual.json | 首失败是无真实上榜触发的夹具前提，不是消费功能；新版结算/真实UI购买仍待验，不虚报玩家全链通过 |
 
 | B24赛季币实际获得与兑换交付 #1314 | 本笔5source/复跑说明/矩阵及证据原子本地提交，未推 | durable4 47/0，结算1/0/0，币10000→9900、包0→1→1；量具旧合成2红→5绿；check3 47/1321/17全0，全部owner释放 | tmp/season-coin-ui-20261014/final-summary.actual.json；durable4两新截图已看；quantity-oracle-red.actual.json；quantity-green1.log | 受控部署anchor不代现实45天/生产调度或微信原生；持久5000仍未达；下一B25真实重复出征待验 |
+
+| B25重复出征真实验收启动 #1315 | 本笔现查/夹具边界原子记录；无生产改动 | RepeatLast生产链已接；新外部语法0；自有备兵及场景初验后台6541运行 | tmp/repeat-march-ui-20261014/candidate1/inputs.json；inspect.mjs；attempt1/owner.actual.json | 只初验备兵/可见资源，尚无首次/再次出征；Hero/等级/资源/时间是显式输入，不代原生或普通成长 |
