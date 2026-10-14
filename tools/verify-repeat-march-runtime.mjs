@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** B25 real first/repeat GATHER and no-history boundary; explicit owned accelerated input fixture. */
 import fs from 'node:fs';
+import { retainResponseWait } from './lib/runtime-response-wait.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { armyCounts, subtractUnits, hasExactMarchUnits, isSameRepeat } from './lib/march-evidence.mjs';
 import path from 'node:path';
@@ -18,6 +19,7 @@ try {
  process.kill(owner.pid,0);
 }catch{console.error('Missing current owned memory fixture receipt; no network action');process.exit(2);} 
 const checks=[],requests=[];let uid,browser,preview,page,exit=1,failure,trainedUnitId,baseline,expectedUnits;let browserClosed=false,previewClosed=false;
+function responseWait(predicate){return retainResponseWait(page.waitForResponse(predicate));}
 function check(label,passed){checks.push({label,passed:!!passed});console.log((passed?'PASS ':'FAIL ')+label);if(!passed)throw Error(label);}
 async function api(method,route,body,ops=false){const response=await fetch(backend+route,{method,headers:{'Content-Type':'application/json',...(uid&&!ops?{'X-Player-Id':uid}:{}),...(ops?{'X-Ops-Token':token}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(15000)});const reply=await response.json();requests.push(redactEvidence({method,route,body,reply}));check(method+' '+route,reply.code===0);return reply.data;}
 async function wait(label,read,accept,limit=60000){const end=Date.now()+limit;while(Date.now()<end){const value=await read();if(accept(value)){check(label,true);return value;}await new Promise(resolve=>setTimeout(resolve,400));}check(label,false);}
@@ -38,7 +40,7 @@ try{
  baseline=armyCounts(await api('GET','/army/list'));
  preview=await startPreviewServer({root:process.env.REPEAT_ROOT??'client/build/web-mobile',backend,port:Number(process.env.REPEAT_PORT)});browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:900}});await context.addInitScript(device=>localStorage.setItem('ironoath.deviceId',device),device);page=await context.newPage();page.setDefaultTimeout(30000);
  page.on('pageerror',error=>requests.push(redactEvidence({kind:'pageerror',message:error.message})));page.on('console',message=>{if(['error','warning'].includes(message.type()))requests.push(redactEvidence({kind:'console',level:message.type(),message:message.text()}));});
- const initialized=page.waitForResponse(r=>r.url()===backend+'/player/init'&&r.request().method()==='POST');await page.goto(preview.origin,{waitUntil:'domcontentloaded'});const actual=await(await initialized).json();check('浏览器登录同一备兵UID',actual.data.playerId===uid);
+ const initialized=responseWait(r=>r.url()===backend+'/player/init'&&r.request().method()==='POST');await page.goto(preview.origin,{waitUntil:'domcontentloaded'});const actual=await(await initialized).json();check('浏览器登录同一备兵UID',actual.data.playerId===uid);
  await page.waitForFunction(()=>!!window.cc?.director?.getScene());await page.waitForTimeout(1000);await page.evaluate(hideGuideBoard);
  const initialScene=await page.evaluate(scene);
  if(initialScene.nodes.some(node=>node.name==='离线汇总知道了')){await tap({name:'离线汇总知道了'});await wait('离线汇总确实关闭',()=>page.evaluate(scene),value=>!value.nodes.some(node=>node.name==='离线汇总知道了'));}
@@ -61,19 +63,19 @@ try{
   const resource=snapshot.resources[0];await tap({uuid:resource.uuid});await wait('真实选中所点NPC资源',()=>page.evaluate(scene),value=>value.selectedKey===resource.key);
   await tap({name:'MarchButton'});await wait('资源采集编成层确实出现',()=>page.evaluate(scene),value=>value.nodes.some(n=>n.name==='MarchCompose'));
   await tap({name:'row-＋',within:'composeRow0'});await page.screenshot({path:path.join(out,'first-compose.png')});
-  const firstReplyPromise=page.waitForResponse(r=>r.url()===backend+'/world/march'&&r.request().method()==='POST');await tap({name:'编成出征',within:'MarchCompose'});const firstResponse=await firstReplyPromise,firstBody=firstResponse.request().postDataJSON(),firstReply=await firstResponse.json();requests.push({kind:'first-march',body:firstBody,reply:firstReply});check('首次真实UI出征成功且独立预期采集10兵',firstBody.action==='GATHER'&&hasExactMarchUnits(firstBody,firstReply,expectedUnits));
+  const firstReplyPromise=responseWait(r=>r.url()===backend+'/world/march'&&r.request().method()==='POST');await tap({name:'编成出征',within:'MarchCompose'});const firstResponse=await firstReplyPromise,firstBody=firstResponse.request().postDataJSON(),firstReply=await firstResponse.json();requests.push({kind:'first-march',body:firstBody,reply:firstReply});check('首次真实UI出征成功且独立预期采集10兵',firstBody.action==='GATHER'&&hasExactMarchUnits(firstBody,firstReply,expectedUnits));
   await wait('首次成功参数在客户端真实缓存',()=>page.evaluate(scene),value=>value.lastMarch!==null);
   check('首次派遣实际按兵种扣兵',isDeepStrictEqual(armyCounts(await api('GET','/army/list')),subtractUnits(baseline,expectedUnits)));
   const gathering=await wait('首次真实行军到达采集状态',()=>api('GET','/world/marches'),value=>value.marches.some(m=>m.marchId===firstReply.data.march.marchId&&m.status==='GATHERING'&&isDeepStrictEqual(m.units,expectedUnits)));
   const march=gathering.marches.find(m=>m.marchId===firstReply.data.march.marchId);await api('POST','/world/collectGather',{requestId:randomUUID(),marchId:march.marchId});await wait('首次采集真实返城队伍清空',()=>api('GET','/world/marches'),value=>value.marches.length===0);
   const returned=await api('GET','/army/list');check('真实首派返程20兵全部归还',isDeepStrictEqual(armyCounts(returned),baseline));
   const current=await page.evaluate(scene),home=current.home.find(h=>h.key==='CITY:'+uid);check('真实自身城标存在可清资源选中',!!home);await tap({uuid:home.uuid});await wait('实际选中自身城',()=>page.evaluate(scene),value=>value.selectedKey===home.key);await tap({name:'MarchButton'});await wait('真无在外队伍显示再次出征空态',()=>page.evaluate(scene),value=>value.nodes.some(n=>n.name==='RepeatLast'));await page.screenshot({path:path.join(out,'repeat-empty.png')});
-  const secondReplyPromise=page.waitForResponse(r=>r.url()===backend+'/world/march'&&r.request().method()==='POST');await tap({name:'RepeatLast'});const secondResponse=await secondReplyPromise,secondBody=secondResponse.request().postDataJSON(),secondReply=await secondResponse.json();requests.push({kind:'repeat-march',body:secondBody,reply:secondReply});const business=body=>Object.fromEntries(Object.entries(body).filter(([key])=>key!=='requestId'));check('再次出征真实成功且新幂等键，完整业务参数同首次',isSameRepeat(firstBody,secondBody,firstReply,secondReply,expectedUnits));await wait('再次成功提示确实对玩家可见',()=>page.evaluate(scene),value=>value.nodes.some(n=>n.text.startsWith('已再次出征：')));await page.screenshot({path:path.join(out,'repeat-sent.png')});
+  const secondReplyPromise=responseWait(r=>r.url()===backend+'/world/march'&&r.request().method()==='POST');await tap({name:'RepeatLast'});const secondResponse=await secondReplyPromise,secondBody=secondResponse.request().postDataJSON(),secondReply=await secondResponse.json();requests.push({kind:'repeat-march',body:secondBody,reply:secondReply});const business=body=>Object.fromEntries(Object.entries(body).filter(([key])=>key!=='requestId'));check('再次出征真实成功且新幂等键，完整业务参数同首次',isSameRepeat(firstBody,secondBody,firstReply,secondReply,expectedUnits));await wait('再次成功提示确实对玩家可见',()=>page.evaluate(scene),value=>value.nodes.some(n=>n.text.startsWith('已再次出征：')));await page.screenshot({path:path.join(out,'repeat-sent.png')});
   const secondArmy=await api('GET','/army/list');check('再次出征实际扣除相同10兵',isDeepStrictEqual(armyCounts(secondArmy),subtractUnits(baseline,expectedUnits)));
   const secondGather=await wait('第二支真实到达资源采集',()=>api('GET','/world/marches'),value=>value.marches.some(m=>m.marchId===secondReply.data.march.marchId&&m.status==='GATHERING'));
   await api('POST','/world/collectGather',{requestId:randomUUID(),marchId:secondReply.data.march.marchId});await wait('第二支实际返城无在外队伍',()=>api('GET','/world/marches'),value=>value.marches.length===0);
   check('重复采集后实际20兵仍完整归还',isDeepStrictEqual(armyCounts(await api('GET','/army/list')),baseline));
-  const reinit=page.waitForResponse(r=>r.url()===backend+'/player/init'&&r.request().method()==='POST');await page.reload({waitUntil:'domcontentloaded'});check('原同号新浏览器轮次重新登录',(await(await reinit).json()).data.playerId===uid);await page.waitForTimeout(1000);await page.evaluate(hideGuideBoard);
+  const reinit=responseWait(r=>r.url()===backend+'/player/init'&&r.request().method()==='POST');await page.reload({waitUntil:'domcontentloaded'});check('原同号新浏览器轮次重新登录',(await(await reinit).json()).data.playerId===uid);await page.waitForTimeout(1000);await page.evaluate(hideGuideBoard);
   if((await page.evaluate(scene)).nodes.some(n=>n.name==='离线汇总知道了')){await tap({name:'离线汇总知道了'});await wait('新轮次真实关闭离线汇总',()=>page.evaluate(scene),value=>!value.nodes.some(n=>n.name==='离线汇总知道了'));}
   await page.evaluate(()=>window.cc.director.getScene().getChildByName('Canvas').getChildByName('Game').getChildByName('Guide').getComponent('GuideView').setOverlaySuppressed('repeat-acceptance-fixture',true));
   if((await page.evaluate(scene)).nodes.some(n=>n.name==='giftPopup')){await tap({name:'close',within:'giftPopup'});await wait('新轮次真实关闭礼包',()=>page.evaluate(scene),value=>!value.nodes.some(n=>n.name==='giftPopup'));}

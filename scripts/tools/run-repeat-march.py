@@ -26,7 +26,7 @@ assert not out.exists(),'Use a new evidence directory'
 web=root/'client/build/web-mobile';assert (web/'index.html').is_file(),'Build Web before running'
 web_hashes={p.relative_to(web).as_posix():sha(p) for p in web.rglob('*') if p.is_file()}
 tool=root/'tools/verify-repeat-march-runtime.mjs';tool_sha=sha(tool);runner_sha=sha(Path(__file__))
-dependencies=['tools/lib/march-evidence.mjs','tools/lib/cocos-click.mjs','tools/lib/preview-server.mjs','tools/lib/guide-overlay.mjs','tools/lib/runtime-evidence-redaction.mjs']
+dependencies=['tools/lib/march-evidence.mjs','tools/lib/runtime-response-wait.mjs','tools/lib/cocos-click.mjs','tools/lib/preview-server.mjs','tools/lib/guide-overlay.mjs','tools/lib/runtime-evidence-redaction.mjs']
 dependency_hashes={name:sha(root/name) for name in dependencies}
 out.mkdir(parents=True);(out/'web-inputs.json').write_text(json.dumps(web_hashes,indent=2),encoding='utf8')
 token=uuid.uuid4().hex;flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0

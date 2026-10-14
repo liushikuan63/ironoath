@@ -324,3 +324,11 @@ python -X utf8 scripts/tools/run-repeat-march.py --candidate tmp/bot-match-power
 ```
 
 要求当前 `CODEX_THREAD_ID`，默认仅新建自有 memory 后端 9855 和预览 9856；端口已有监听或输出目录已存在即拒绝。配置与 JAR 必须匹配候选 `inputs.json`，不修改冻结文件。显式输入夹具为 dev 主城16、资源200万、时间100倍及配置武将经本实例运维邮件实际领取上阵；军队建造、训练、派遣、采集返城都走实际接口，没有军队或响应 mock。浏览器通过实际画布按钮首次派出10兵并再次派同业务参数，要求新请求号、新行军 ID，按独立训练兵种核请求/回执与完整库存扣兵返兵；同号新浏览器轮次自然无历史时，实际点击须显示理由、零派遣并且库存不变。量具核对输入 SHA 漂移及浏览器、预览、后端和端口清理。真实兵力不足战损、普通1倍时间、微信原生端和真实支付另验；本命令的通过不代表这些边界已通过。
+
+B25 真实自动续训与手工关闭的有限实流量具，同样要求已构建 Web、当前 `CODEX_THREAD_ID` 和完整冻结候选：
+
+```powershell
+python -X utf8 scripts/tools/run-autotrain-batches.py --candidate tmp/bot-match-power-projection-20261014/candidate1 --out tmp/autotrain-ui-20261014/replay-new --java-bin D:/Java/jdk/microsoft-jdk-17/bin --node D:/Java/nodejs/node20.13.0/node.exe
+```
+
+默认仅新建自有 memory 后端9871、预览9872；明确采用主城16、时间100倍、资源200万、邮件武将输入夹具，真实兵营与训练20作前置。浏览器真实训练1建立本地输入后开既有三批预算，核全部训练成本资源和完整兵种库存；预算耗尽会停止。再次开启后在预算仍剩余时真实关闭，只完成已排批次，跨训练时长后读回不再排。费用按两个权威资源快照的 `serverNow` 独立推产出并精确核 `lastSettle`，拒绝非整量产率、变化产率或可能封顶的窗口，避免把自然产出当免费训练。响应等待提前注册拒绝处理，点击失败后仍保原始错误及清理回执。普通1倍时间、微信原生和真实战损触发补兵模式另验；不向原账号写入，也不使用事件 emit 或训练状态 mock。

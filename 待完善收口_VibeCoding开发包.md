@@ -7584,3 +7584,5 @@ TEST_EXIT=0
 | B25 真实手工关闭与账目自证反例 #1323 | 本格发现/反证本地提交（不推） | attempt4真实117/0全cleanup；旧费用oracle2合成有效fail→新6离线全0；正式durable1与check1在途 | tmp/autotrain-ui-20261014/attempt4/result.actual.json/runner-result.actual.json、ledger-oracle-red.log；tools/lib/resource-debit-evidence.test.mjs | 新独立时间/全部训练成本正式实流未收口，117只旧oracle初验；亏兵补回/普通1×/原生未验，不推 |
 
 | B25 全費种续训与等待生命周期收口前证据 #1324 | 本格证据本地提交（不推） | auto durable2真112/0；repeat新helper111/0；费用6/等待3离线全0；真实browser等待故障注入预期exit1且原回执/全cleanup保全；check2在途 | tmp/autotrain-ui-20261014/durable2、repeat-recheck1、waiter-fault1、final9-source-inputs.json | 九SHA复核/check2/最终截图文档待收口；普通1×/原生/实损补兵未验，故障注入与功能绿分列，不推 |
+
+| B25 真实续训/全费用/关闭收口 #1325（2026-10-15） | 本格14路径原子本地提交（不推） | check2 47/1321/31工具全0；auto真实112/0/全費种；repeat当前111/0；真browser等待故障预期1且原回执/全清理；九SHA独立一致 | tmp/autotrain-ui-20261014/final-summary.actual.json、durable2、repeat-recheck1、waiter-fault1、validation-check2.json | 服务器目标补兵模式不等客户端入口，targetCount正值发送0/矩阵#4留黄；实损补兵/普通1×/原生未验；下一真实NPC损耗与缺兵重复负控，不推 |
