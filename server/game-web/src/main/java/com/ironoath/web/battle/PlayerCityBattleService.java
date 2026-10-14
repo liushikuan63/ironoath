@@ -196,6 +196,20 @@ public class PlayerCityBattleService {
      *       复仇与围剿恒为 0 的那段时间里，没有任何位置能回答「这次到底吃到没有」，
      *       而「加成没接线」与「加成接了但这仗不满足条件」在客户端看起来一模一样
      */
+    private static final class ResolutionStage { private boolean effectsStarted; }
+
+    /** 已有或可能已有战斗副作用；行军必须持久隔离，不能按身份或异常码猜测重试。 */
+    public static final class Uncertain extends RuntimeException {
+        private static final long serialVersionUID=1L;
+        public Uncertain(Throwable cause) { super("战斗已有或可能已有副作用，需核对原结算，禁止自动重放",cause); }
+    }
+
+    /** 唯一可证明未产生战斗副作用的拒绝；调用方可据此释放Bot额度占位。 */
+    public static final class NotStarted extends BizException {
+        private static final long serialVersionUID=1L;
+        public NotStarted(BizException cause) { super(cause.errorCode(),cause.detail(),cause); }
+    }
+
     public record Outcome(BattleResult result, Map<String, Long> plundered, long tyrannyDelta,
                           boolean shieldRaised, String attackerReportId, String defenderReportId,
                           BattleModifier attackerModifier) {
@@ -237,6 +251,16 @@ public class PlayerCityBattleService {
      *                      那些是「谁打的这一仗」的痕迹，不是可以分摊的收益
      */
     public Outcome resolve(March march, long now, Map<String, Long> beneficiaries) {
+        var stage=new ResolutionStage();
+        try { return resolveWithStage(march,now,beneficiaries,stage); }
+        catch(RuntimeException failure) {
+            if(stage.effectsStarted) throw new Uncertain(failure);
+            if(failure instanceof BizException rejection) throw new NotStarted(rejection);
+            throw new NotStarted(new BizException(ErrorCode.SYSTEM_ERROR,"战斗准备暂时失败，未产生战损，队伍安全返程",failure));
+        }
+    }
+
+    private Outcome resolveWithStage(March march,long now,Map<String,Long> beneficiaries,ResolutionStage stage) {
         if (march.targetType() != March.TargetType.PLAYER_CITY) {
             throw new BizException(ErrorCode.WORLD_TARGET_INVALID,
                     "目标不是玩家城，无法按 PVP 结算：targetType=" + march.targetType());
@@ -309,6 +333,7 @@ public class PlayerCityBattleService {
         long defenderMatch = powerService.matchPowerOf(defenderId, defenderArmy, defenderRoster);
 
         // ---------- 五、双方战损 ----------
+        stage.effectsStarted=true;
         applyAttackerLosses(march, attackerFold, result, attackerHospital, attackerId);
         applyDefenderLosses(defenderId, defenderTroops, defenderFold, result, defenderHospital);
 
@@ -400,6 +425,16 @@ public class PlayerCityBattleService {
      * @return 拦截结果（战果、实际夺得的负载、两份战报 id）
      */
     public Interception interceptGatherer(March attacker, March gatherer, long now) {
+        var stage=new ResolutionStage();
+        try { return interceptWithStage(attacker,gatherer,now,stage); }
+        catch(RuntimeException failure) {
+            if(stage.effectsStarted) throw new Uncertain(failure);
+            if(failure instanceof BizException rejection) throw new NotStarted(rejection);
+            throw new NotStarted(new BizException(ErrorCode.SYSTEM_ERROR,"战斗准备暂时失败，未产生战损，队伍安全返程",failure));
+        }
+    }
+
+    private Interception interceptWithStage(March attacker,March gatherer,long now,ResolutionStage stage) {
         if (attacker.playerId().equals(gatherer.playerId())) {
             throw new BizException(ErrorCode.WORLD_TARGET_INVALID, "不能拦截自己的采集队");
         }
@@ -446,6 +481,7 @@ public class PlayerCityBattleService {
         boolean won = result.winner() == Winner.ATTACKER;
 
         // ---------- 三、双方战损（与攻城同一条路径：摊回各阶级、伤兵进各自医院） ----------
+        stage.effectsStarted=true;
         applyAttackerLosses(attacker, attackerFold, result, attackerHospital, attackerId);
         applyDefenderLosses(gathererId, new LinkedHashMap<>(gatherer.units()), gathererFold, result,
                 gathererHospital);

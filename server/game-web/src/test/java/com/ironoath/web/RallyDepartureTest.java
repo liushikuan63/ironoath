@@ -454,6 +454,32 @@ class RallyDepartureTest {
                 .containsExactlyInAnyOrder(leader, mate);
     }
 
+    @Test
+    void beneficiaryReadFailureAfterConfirmedClaimReturnsUnfoughtRally() throws Exception {
+        String leader=player(1_000L,0L),mate=player(800L,0L);
+        Squad squad=squadOf(leader,mate);
+        String rallyId=initiate(squad,Map.of(T1,600L));
+        join(mate,rallyId,Map.of(T1,400L));
+        depart(rallyId);
+        March merged=onlyMarch(leader);
+        var fired=new java.util.concurrent.atomic.AtomicBoolean();
+        seam(marchAppService,"socialStore",SocialStore.class,socialStore,(method,args)->{
+            if(method.getName().equals("rallyOf") && rallyId.equals(args[0])
+                    && marches.findById(merged.id()).orElseThrow().status()==March.Status.FIGHTING
+                    && fired.compareAndSet(false,true)) {
+                throw new org.springframework.dao.DataAccessResourceFailureException("owned beneficiary read after confirmed battle claim");
+            }
+            return invoke(socialStore,method,args);
+        });
+        marchAppService.processDue(leader,merged.arriveAt()+1);
+        assertThat(fired).as("故障必须发生在持久交战归属之后、战斗副作用之前").isTrue();
+        marchAppService.processDue(leader,merged.arriveAt()+3_600_000L);
+        assertThat(marches.findById(merged.id())).as("明确未开战的集结不能永久卡交战态").isEmpty();
+        assertThat(countOf(leader,T1)).isEqualTo(1_000L);
+        assertThat(countOf(mate,T1)).isEqualTo(800L);
+        assertThat(battleReportService.list(squad.victim()).reports()).isEmpty();
+    }
+
     // ---------- 收益分摊（掠夺与掉落） ----------
 
     @Test

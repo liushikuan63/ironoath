@@ -69,8 +69,11 @@ class BotEventChatTest {
     @Autowired private BotWorldAdapter adapter;
     @Autowired private ApplicationEventPublisher events;
 
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.web.bot.BotBehaviorStore behavior;
+
     @BeforeEach
     void resetStores() {
+        org.mockito.Mockito.reset(behavior);
         ((InMemoryPlayerStore) players).clear();
         ((InMemoryWorldStore) world).clear();
         ((InMemoryArmyStore) armies).clear();
@@ -79,6 +82,19 @@ class BotEventChatTest {
         limiter.reset();
         runtime.reset();
         adapter.resetCounters();
+    }
+
+    @Test void sentGreetingSurvivesMarkerWriteFailureWithoutRepeatingJoinScene() {
+        String bot=botInAlliance("问候标记故障",16);long now=timeService.serverNow();
+        org.mockito.Mockito.doThrow(new IllegalStateException("injected greeting marker write outage"))
+                .doCallRealMethod().when(behavior).recordGreeting(org.mockito.ArgumentMatchers.eq(bot),org.mockito.ArgumentMatchers.anyString());
+        var decision=new com.ironoath.core.bot.BotDecisionTree.Decision(com.ironoath.core.bot.BotDecisionTree.Action.SEND_CHAT,false,0,"问候故障回归");
+        adapter.execute(bot,decision,now);
+        assertThat(social.chatList(bot,new ChatListReq(ChatChannel.ALLIANCE,null,null,20),now+1_000).messages()).hasSize(1);
+        assertThat(adapter.actionCounts().get("chatted")).as("已经发出的消息不能因标记失败谎报未发出").isEqualTo(1);
+        adapter.execute(bot,decision,now+60_000);
+        assertThat(adapter.lastChatSceneOf(bot)).isNotEqualTo("ALLIANCE_JOIN");
+        assertThat(behavior.find(bot).greetedAlliance()).isEqualTo(socialStore.allianceOf(bot).orElseThrow().id());
     }
 
     // ---------- 事件 → 发言 ----------

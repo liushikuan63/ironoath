@@ -7494,3 +7494,5 @@ TEST_EXIT=0
 | 确认集结归属后的名单战前故障无损返程 #1278 | 本修复证据原子本地提交未推 | review7回归1执行1断言首红0错跳；最小修复后91重点全0；前候选4JVM22/17FIRST/war44各0、owner全收 | tmp/bot-behavior-state-20261014-2c1101a7/review7-red1.log；focused15.log；final-resume-summary.json；state-review7-independent.md | 当前26路径最终源码未提交；freeze8新完整/JVM/AOF/批探针仍待；未知CAS与partial/硬崩溃保人工核对，B04继续 |
 
 | B04战斗满仓补发与中文可见性实施判据 #1279 | 本设计发现原子本地提交未推 | 生产仍wallet.grant容量截断、差额只日志；既有RewardService/StoreMailbox可复用；bodyOf默认直印ctx.source/sourceRef需定向适配 | server/game-web/src/main/java/com/ironoath/web/battle/PlayerCityBattleService.java:756；StoreMailbox.java:133；B04_资源背包与道具.md:101 | B04代码/有效首红/邮件真实领回及集结守恒尚未实施；先收Bot freeze8最终批验，未知回执/硬崩溃不承诺自动恢复 |
+
+| Bot行为/24h额度/真实返程最终收口 #1280 | 本笔源码及证据原子本地提交未推 | freeze8 26SHA一致；check6/build5均0；270套2676server/1321client全0；4JVM/AOF/16来源slot/普通反击22全0；17FIRST和战争44全0，owner全收 | tmp/bot-behavior-state-20261014-2c1101a7/final-resume2-summary.json；state-review8-followup.md；behavior-jvm3/result.actual.json；behavior-runtime2/result.actual.json | 初始人物/受击/兵和旧两次攻击为夹具；不是原号原生验收；partial/未知CAS与硬崩溃仍需核对；永久去重不承诺；B04邮件继续，未推部署付款 |

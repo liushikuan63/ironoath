@@ -64,6 +64,23 @@ class MarchStoreEquivalenceTest {
         }
     }
 
+    @Test void conditionalCleanupKeepsNewerStateAndHasOneConcurrentWinner() throws Exception {
+        assertThat(db).as("新增版本清理必须真实Mongo验证，跳过不算通过").isNotNull();
+        for(MarchRepository store:List.of(new InMemoryMarchStore(CHUNK_SIZE),new MongoMarchStore(db.template(),CHUNK_SIZE))) {
+            var value=march("conditional-cleanup",T0);store.insertIfAbsent(value);
+            long version=store.save(value,0);
+            assertThat(store.deleteIfVersion(value.id(),0)).as("过期归属不能删较新状态").isFalse();
+            assertThat(store.findById(value.id())).isPresent();
+            var pool=java.util.concurrent.Executors.newFixedThreadPool(4);var start=new java.util.concurrent.CountDownLatch(1);
+            try {
+                var jobs=new ArrayList<java.util.concurrent.Future<Boolean>>();
+                for(int i=0;i<8;i++) jobs.add(pool.submit(()->{start.await();return store.deleteIfVersion(value.id(),version);}));
+                start.countDown();int removed=0;for(var job:jobs) if(job.get(10,java.util.concurrent.TimeUnit.SECONDS)) removed++;
+                assertThat(removed).isEqualTo(1);assertThat(store.findById(value.id())).isEmpty();assertThat(store.activeCountOf(value.playerId())).isZero();
+            } finally {pool.shutdownNow();}
+        }
+    }
+
     @Test
     @DisplayName("列表按出发时刻升序、同刻按 id：两套实现给出的顺序必须一模一样")
     void orderingIsIdenticalAcrossImplementations() {

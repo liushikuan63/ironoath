@@ -81,15 +81,18 @@ class GatherInterceptionTest {
     @Autowired private ArmyRepository armies;
     @Autowired private com.ironoath.core.hero.HeroRepository heroes;
     @Autowired private WorldRepository world;
-    @Autowired private MarchRepository marches;
-    @Autowired private MarchDueQueue dueQueue;
+    @org.springframework.boot.test.mock.mockito.SpyBean private MarchRepository marches;
+    @org.springframework.boot.test.mock.mockito.SpyBean private MarchDueQueue dueQueue;
     @Autowired private com.ironoath.core.gacha.GachaStateRepository gachaStates;
     @Autowired private com.ironoath.core.gacha.GachaLogStore gachaLogs;
     @Autowired private com.ironoath.core.limit.DailyCounter dailyCounter;
     @Autowired private BattleReportStore battleReports;
 
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.web.battle.PlayerCityBattleService battle;
+
     @BeforeEach
     void resetStores() {
+        org.mockito.Mockito.reset(marches,dueQueue,battle);
         ((InMemoryPlayerStore) players).clear();
         ((InMemoryCityStore) cities).clear();
         ((InMemoryInventoryStore) inventories).clear();
@@ -102,6 +105,53 @@ class GatherInterceptionTest {
         ((InMemoryGachaLogStore) gachaLogs).clear();
         ((com.ironoath.web.limit.InMemoryDailyCounter) dailyCounter).clear();
         battleReports.clear();
+    }
+
+    @Test void rejectedInterceptionRestoresOwnedDefenderToGathering() {
+        Pair p=pairWithGatherer(1_200L,1_200L);
+        org.mockito.Mockito.doThrow(new com.ironoath.web.battle.PlayerCityBattleService.NotStarted(new com.ironoath.common.BizException(com.ironoath.common.ErrorCode.SYSTEM_ERROR,"owned pre-effect interception fault")))
+                .when(battle).interceptGatherer(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyLong());
+        arriveAndProcess(p.attackerMarchId);
+        assertThat(marches.findById(p.gathererMarchId).orElseThrow().status()).isEqualTo(March.Status.GATHERING);
+        assertThat(marches.findById(p.gathererMarchId).orElseThrow().totalUnits()).isEqualTo(1_200);
+        assertThat(marches.findById(p.attackerMarchId).orElseThrow().status()).isEqualTo(March.Status.RETURNING);
+        assertThat(battleReports.reportsOf(p.attacker)).isEmpty();
+    }
+    @Test void defenderReturnRescheduleWriteFailureRecoversBothArmies() { verifyDefenderRescheduleFault(false); }
+    @Test void lostDefenderReturnRescheduleReplyRecoversBothArmies() { verifyDefenderRescheduleFault(true); }
+    private void verifyDefenderRescheduleFault(boolean afterCommit) {
+        Pair p=pairWithGatherer(1_200L,1_200L);var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(invocation->{
+            if(once.compareAndSet(false,true)) {if(afterCommit) invocation.callRealMethod();throw new org.springframework.dao.DataAccessResourceFailureException("owned defender queue fault");}
+            return invocation.callRealMethod();
+        }).when(dueQueue).reschedule(org.mockito.ArgumentMatchers.eq(p.gathererMarchId),org.mockito.ArgumentMatchers.anyLong());
+        arriveAndProcess(p.attackerMarchId);var result=battleReports.reportsOf(p.attacker).get(0).result();
+        marchAppService.processDue(p.attacker,System.currentTimeMillis()+HOUR);
+        assertThat(marches.findById(p.attackerMarchId)).isEmpty();assertThat(marches.findById(p.gathererMarchId)).isEmpty();
+        assertThat(armies.findByPlayerId(p.attacker).orElseThrow().troops().getOrDefault(UNIT,0L)).isEqualTo(result.atkSurvivors().values().stream().mapToLong(Long::longValue).sum());
+        assertThat(armies.findByPlayerId(p.gatherer).orElseThrow().troops().getOrDefault(UNIT,0L)).isEqualTo(result.defSurvivors().values().stream().mapToLong(Long::longValue).sum());
+        assertThat(battleReports.reportsOf(p.attacker)).hasSize(1);assertThat(battleReports.reportsOf(p.gatherer)).hasSize(1);
+    }
+
+    @Test void completedInterceptionSurvivesDefenderReturnPersistenceFailure() {
+        Pair p=pairWithGatherer(1_200L,1_200L);
+        var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(invocation->{
+            March value=invocation.getArgument(0);
+            if(value.id().equals(p.gathererMarchId) && value.status()==March.Status.RETURNING && once.compareAndSet(false,true))
+                throw new org.springframework.dao.DataAccessResourceFailureException("owned defender return write fault");
+            return invocation.callRealMethod();
+        }).when(marches).save(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyLong());
+        arriveAndProcess(p.attackerMarchId);
+        var report=battleReports.reportsOf(p.attacker).get(0).result();
+        long attackSurvivors=report.atkSurvivors().values().stream().mapToLong(Long::longValue).sum();
+        long defenseSurvivors=report.defSurvivors().values().stream().mapToLong(Long::longValue).sum();
+        marchAppService.processDue(p.attacker,System.currentTimeMillis()+HOUR);
+        assertThat(marches.findById(p.attackerMarchId)).as("拦截内核已完成，附属守方写失败不能使攻方永卡交战").isEmpty();
+        assertThat(marches.findById(p.gathererMarchId)).as("两方都按已知实际伤亡返兵").isEmpty();
+        assertThat(armies.findByPlayerId(p.attacker).orElseThrow().troops().getOrDefault(UNIT,0L)).isEqualTo(attackSurvivors);
+        assertThat(armies.findByPlayerId(p.gatherer).orElseThrow().troops().getOrDefault(UNIT,0L)).isEqualTo(defenseSurvivors);
+        assertThat(battleReports.reportsOf(p.attacker)).hasSize(1);assertThat(battleReports.reportsOf(p.gatherer)).hasSize(1);
     }
 
     @Test

@@ -155,6 +155,18 @@ public final class InMemoryMarchStore implements MarchRepository {
         }
     }
 
+    @Override public boolean deleteIfVersion(String marchId,long expectedVersion) {
+        if(marchId==null || marchId.isBlank() || expectedVersion<0) throw new IllegalArgumentException("行军id与清理版本必须有效");
+        Entry entry=byId.get(marchId);
+        if(entry==null) return false;
+        synchronized(entry) {
+            if(entry.version!=expectedVersion || !byId.remove(marchId,entry)) return false;
+            var ids=byPlayer.get(entry.march.get().playerId());
+            if(ids!=null) ids.remove(marchId);
+            return true;
+        }
+    }
+
     @Override
     public long activeCountOf(String playerId) {
         long count = 0L;

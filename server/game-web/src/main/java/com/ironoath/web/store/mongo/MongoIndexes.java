@@ -251,6 +251,10 @@ public final class MongoIndexes {
                         .on("allianceId", Sort.Direction.ASC)
                         .named("idx_social_application_alliance"));        // 行军到期扫描：每条 dueBefore 都是 "dueAt <= now 按 dueAt 升序取前 N 条"，
         // 给 dueAt 一条索引即可；_id 是 marchId，点查/删除走主键。
+        String byBotVictimTime = mongo.indexOps(MongoBotAttackLedgerStore.BUDGET_COLLECTION).ensureIndex(new Index()
+                .on("entries.at", Sort.Direction.ASC).named("idx_bot_budget_entry_time"));
+        String byBotAttackTime = mongo.indexOps(MongoBotAttackLedgerStore.COLLECTION).ensureIndex(new Index()
+                .on("at", Sort.Direction.ASC).named("idx_bot_attack_time"));
         String byMarchDueAt = mongo.indexOps(MarchDueDocument.COLLECTION).ensureIndex(new Index()
                 .on("dueAt", Sort.Direction.ASC)
                 .named("idx_march_due_at"));        String summary = PlayerDocument.COLLECTION + ".{deviceId} → " + deviceIdIndex
@@ -282,7 +286,9 @@ public final class MongoIndexes {
                 + uniqueAllianceTag + " / " + byAllianceMember
                 + "；" + RallyDocument.COLLECTION + " → " + byRallyGroup + " / " + byRallyDue
                 + "；" + SocialApplicationDocument.COLLECTION + " → " + byApplicationAlliance
-                + "；" + MarchDueDocument.COLLECTION + ".{dueAt} → " + byMarchDueAt;
+                + "；" + MarchDueDocument.COLLECTION + ".{dueAt} → " + byMarchDueAt
+                + "；" + MongoBotAttackLedgerStore.BUDGET_COLLECTION + ".{entries.at} → " + byBotVictimTime
+                + "；" + MongoBotAttackLedgerStore.COLLECTION + ".{at} → " + byBotAttackTime;
         LOG.info("Mongo 索引就绪：{}", summary);
         return summary;
     }

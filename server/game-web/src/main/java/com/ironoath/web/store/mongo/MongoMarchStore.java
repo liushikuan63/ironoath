@@ -132,6 +132,12 @@ public final class MongoMarchStore implements MarchRepository {
         // 在 dev 全绿、在 prod 随机报错 —— #34 那套契约存在的全部理由就是不让这种事发生。
     }
 
+    @Override public boolean deleteIfVersion(String marchId,long expectedVersion) {
+        if(marchId==null || marchId.isBlank() || expectedVersion<0) throw new IllegalArgumentException("行军id与清理版本必须有效");
+        return mongo.remove(Query.query(Criteria.where("_id").is(marchId).and("version").is(expectedVersion)),
+                MarchDocument.class,MarchDocument.COLLECTION).getDeletedCount()>0;
+    }
+
     @Override
     public long activeCountOf(String playerId) {
         if (playerId == null || playerId.isBlank()) {

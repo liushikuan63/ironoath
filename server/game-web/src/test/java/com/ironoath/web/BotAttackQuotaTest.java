@@ -77,22 +77,27 @@ class BotAttackQuotaTest {
     @Autowired private CityRepository cities;
     @Autowired private ArmyRepository armies;
     @Autowired private WorldRepository world;
-    @Autowired private MarchRepository marches;
-    @Autowired private MarchDueQueue dueQueue;
+    @org.springframework.boot.test.mock.mockito.SpyBean private MarchRepository marches;
+    @org.springframework.boot.test.mock.mockito.SpyBean private MarchDueQueue dueQueue;
     @Autowired private MarchAppService marchAppService;
     @Autowired private CityAppService cityAppService;
     @Autowired private com.ironoath.web.service.WorldAppService worldAppService;
-    @Autowired private PowerRefreshService powerRefreshService;
+    @org.springframework.boot.test.mock.mockito.SpyBean private PowerRefreshService powerRefreshService;
     @Autowired private AttackGuardService guard;
     @Autowired private ConfigRegistry configs;
     @Autowired private TimeService timeService;
-    @Autowired private BotRegistry bots;
+    @org.springframework.boot.test.mock.mockito.SpyBean private BotRegistry bots;
     @Autowired private BotAttackLimiter limiter;
     @Autowired private BotRuntimeService runtime;
     @Autowired private BotWorldAdapter adapter;
 
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.web.bot.BotAttackLedgerStore ledger;
+    @Autowired private com.ironoath.web.battle.BattleReportStore reports;
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.web.battle.PlayerCityBattleService battle;
+
     @BeforeEach
     void resetStores() {
+        org.mockito.Mockito.reset(ledger,battle,powerRefreshService,marches,bots,dueQueue);
         ((InMemoryPlayerStore) players).clear();
         ((InMemoryCityStore) cities).clear();
         ((InMemoryArmyStore) armies).clear();
@@ -106,7 +111,240 @@ class BotAttackQuotaTest {
         adapter.resetCounters();
     }
 
+    @Test void returnRescheduleWriteFailureCannotStrandCompletedBattle() { verifyReturnRescheduleFailure(false,false); }
+    @Test void lostReturnRescheduleReplyCannotReplayCompletedBattle() { verifyReturnRescheduleFailure(true,false); }
+    @Test void returnRescheduleWriteFailureCannotStrandRejectedBattle() { verifyReturnRescheduleFailure(false,true); }
+    @Test void lostReturnRescheduleReplyCannotStrandRejectedBattle() { verifyReturnRescheduleFailure(true,true); }
+    private void verifyReturnRescheduleFailure(boolean afterCommit,boolean notStarted) {
+        String human=newPlayerAt(300,300),bot=botAt(256,256,"0.50");
+        for(String uid:List.of(human,bot)) {giveTroops(uid,Map.of("unit_infantry_t1",1_200L));powerRefreshService.refresh(uid);}
+        String id=sendAttack(bot,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));prepareArrival(id);
+        if(notStarted) org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("owned rejected battle"))
+                .doCallRealMethod().when(battle).precheck(org.mockito.ArgumentMatchers.eq(bot),org.mockito.ArgumentMatchers.eq(human),org.mockito.ArgumentMatchers.anyLong());
+        var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(invocation->{
+            if(once.compareAndSet(false,true)) {
+                if(afterCommit) invocation.callRealMethod();
+                throw new org.springframework.dao.DataAccessResourceFailureException("owned return reschedule write/reply fault");
+            }
+            return invocation.callRealMethod();
+        }).when(dueQueue).reschedule(org.mockito.ArgumentMatchers.eq(id),org.mockito.ArgumentMatchers.anyLong());
+        marchAppService.processDue(bot,timeService.serverNow());
+        long expected=notStarted ? 1_200 : reports.reportsOf(bot).get(0).result().atkSurvivors().values().stream().mapToLong(Long::longValue).sum();
+        marchAppService.processDue(bot,timeService.serverNow()+HOUR);
+        assertThat(marches.findById(id)).as("改期失败恢复后已知返程不能卡在交战态").isEmpty();
+        assertThat(armies.findByPlayerId(bot).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L)).isEqualTo(expected);
+        assertThat(reports.reportsOf(human)).hasSize(notStarted ? 0 : 1);
+        assertThat(ledger.count(human,timeService.serverNow())).isEqualTo(notStarted ? 0 : 1);
+    }
+
+    @Test void recallCannotUseStaleSnapshotToOverwriteAnotherFightingOwner() {
+        String human=newPlayerAt(300,300),bot=botAt(256,256,"0.50");
+        for(String uid:List.of(human,bot)) {giveTroops(uid,Map.of("unit_infantry_t1",1_200L));powerRefreshService.refresh(uid);}
+        String id=sendAttack(bot,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));
+        var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(invocation->{
+            long version=(Long)invocation.callRealMethod();
+            if(once.compareAndSet(false,true)) {
+                var winner=marches.findById(id).orElseThrow();
+                winner.restore(winner.startAt(),winner.returnArriveAt(),winner.returnStartAt(),winner.returnFrom(),winner.load(),winner.status(),winner.gatherStartAt(),winner.units());
+                winner.arrive(timeService.serverNow());return marches.save(winner,version);
+            }
+            return version;
+        }).when(marches).versionOf(id);
+        assertThatThrownBy(()->marchAppService.recall(bot,new com.ironoath.web.dto.generated.MarchIdReq(UUID.randomUUID().toString(),id)))
+                .as("召回不能给旧MARCHING对象配新的交战版本").isInstanceOf(BizException.class);
+        assertThat(marches.findById(id).orElseThrow().status()).isEqualTo(com.ironoath.core.march.March.Status.FIGHTING);
+    }
+
+    @Test void temporaryPreBattleReadFailureReturnsUndamagedMarchAndReleasesQuota() {
+        verifyKnownPreBattleFailure("precheck");
+    }
+    @Test void temporaryAdmissionWriteFailureCannotLeaveAnUnstartedBattleStuck() {
+        verifyKnownPreBattleFailure("reserve");
+    }
+    @Test void lostAdmissionReplyMustReleaseOnlyThisUnstartedOwnersReservation() {
+        verifyKnownPreBattleFailure("reserve-after-commit");
+    }
+    @Test void temporaryBotIdentityReadFailureMustNotStrandTheOwnedMarch() { verifyKnownPreBattleFailure("identity"); }
+    @Test void rejectedBattleRetriesTemporaryReservationReleaseFailure() { verifyKnownPreBattleFailure("precheck-release"); }
+    @Test void rejectedBattleRetriesTemporaryReturnSnapshotWriteFailure() { verifyKnownPreBattleFailure("precheck-return"); }
+    private void verifyKnownPreBattleFailure(String fault) {
+        String human=newPlayerAt(300,300),bot=botAt(256,256,"0.50");
+        for(String uid:List.of(human,bot)) {giveTroops(uid,Map.of("unit_infantry_t1",1_200L));powerRefreshService.refresh(uid);}
+        String id=sendAttack(bot,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));
+        if(fault.equals("identity")) {
+            org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("owned temporary identity read fault"))
+                    .doCallRealMethod().when(bots).botOnHuman(bot,human);
+        } else if(fault.startsWith("precheck")) {
+            org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("owned temporary pre-battle read fault"))
+                    .doCallRealMethod().when(battle).precheck(org.mockito.ArgumentMatchers.eq(bot),org.mockito.ArgumentMatchers.eq(human),org.mockito.ArgumentMatchers.anyLong());
+        } else {
+            var once=new java.util.concurrent.atomic.AtomicBoolean();
+            org.mockito.Mockito.doAnswer(invocation->{
+                if(once.compareAndSet(false,true)) {
+                    if(fault.equals("reserve-after-commit")) invocation.callRealMethod();
+                    throw new org.springframework.dao.DataAccessResourceFailureException("owned admission fault");
+                }
+                return invocation.callRealMethod();
+            }).when(ledger).reserve(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyInt());
+        }
+        if(fault.equals("precheck-release")) {
+            org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("owned release write fault"))
+                    .doCallRealMethod().when(ledger).release(org.mockito.ArgumentMatchers.any());
+        }
+        if(fault.equals("precheck-return")) {
+            prepareArrival(id);var once=new java.util.concurrent.atomic.AtomicBoolean();
+            org.mockito.Mockito.doAnswer(invocation->{
+                com.ironoath.core.march.March value=invocation.getArgument(0);
+                if(value.status()==com.ironoath.core.march.March.Status.RETURNING && once.compareAndSet(false,true))
+                    throw new org.springframework.dao.DataAccessResourceFailureException("owned known-return snapshot write fault");
+                return invocation.callRealMethod();
+            }).when(marches).save(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyLong());
+            marchAppService.processDue(bot,timeService.serverNow());
+            assertThat(marches.findById(id).orElseThrow().status()).isEqualTo(com.ironoath.core.march.March.Status.FIGHTING);
+            marchAppService.processDue(bot,timeService.serverNow()+HOUR);
+            assertThat(marches.findById(id)).as("活进程已知返程补写后实际到家").isEmpty();
+            assertThat(armies.findByPlayerId(bot).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L)).isEqualTo(1_200);
+            assertThat(reports.reportsOf(human)).isEmpty();assertThat(ledger.occupied(human,timeService.serverNow())).isZero();return;
+        }
+        arriveAndProcess(id);
+        assertThat(marches.findById(id).orElseThrow().status()).as("明确未开战且存储恢复后不应永久卡交战").isEqualTo(com.ironoath.core.march.March.Status.RETURNING);
+        assertThat(marches.findById(id).orElseThrow().totalUnits()).isEqualTo(1_200);
+        assertThat(armies.findByPlayerId(human).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L)).isEqualTo(1_200);
+        assertThat(reports.reportsOf(human)).isEmpty();
+        limiter.evict(timeService.serverNow());assertThat(ledger.occupied(human,timeService.serverNow())).isZero();
+        marchAppService.processDue(bot,timeService.serverNow()+HOUR);
+        assertThat(armies.findByPlayerId(bot).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L)).isEqualTo(1_200);
+    }
+
+    @Test void staleMarchSnapshotCannotClaimBattleWithNewerFightingVersion() {
+        String human=newPlayerAt(300,300),bot=botAt(256,256,"0.50");
+        for(String uid:List.of(human,bot)) {giveTroops(uid,Map.of("unit_infantry_t1",1_200L));powerRefreshService.refresh(uid);}
+        String id=sendAttack(bot,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));prepareArrival(id);
+        var once=new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.doAnswer(invocation->{
+            long version=(Long)invocation.callRealMethod();
+            if(once.compareAndSet(false,true)) {
+                var winner=marches.findById(id).orElseThrow();winner.arrive(timeService.serverNow());
+                return marches.save(winner,version); // 模拟另一写入者在本调用旧快照读取后已经取得FIGHTING。
+            }
+            return version;
+        }).when(marches).versionOf(id);
+        marchAppService.processDue(bot,timeService.serverNow());
+        org.mockito.Mockito.verify(battle,org.mockito.Mockito.never()).resolve(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyLong(),org.mockito.ArgumentMatchers.anyMap());
+        assertThat(marches.findById(id).orElseThrow().status()).isEqualTo(com.ironoath.core.march.March.Status.FIGHTING);
+        assertThat(dueQueue.size()).as("另一个写入者随后还会登记返程，不能误撤事件").isEqualTo(1);
+    }
+
+    @Test void businessExceptionAfterActualLossesMustNotReleaseUncertainQuota() {
+        String human=newPlayerAt(300,300),bot=botAt(256,256,"0.50");
+        for(String id:List.of(human,bot)) {giveTroops(id,Map.of("unit_infantry_t1",1_200L));powerRefreshService.refresh(id);}
+        String id=sendAttack(bot,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));
+        org.mockito.Mockito.doThrow(new BizException(ErrorCode.SYSTEM_ERROR,"injected post-loss business failure"))
+                .when(powerRefreshService).refresh(bot);
+        arriveAndProcess(id);
+        long remaining=armies.findByPlayerId(human).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L);
+        assertThat(remaining).as("故障发生时已经实际应用战损").isLessThan(1_200);
+        assertThat(ledger.occupied(human,timeService.serverNow())).as("有真实战损的异常不能冒充未开战释放额度").isEqualTo(1);
+        org.mockito.Mockito.reset(powerRefreshService);
+        marchAppService.processDue(bot,timeService.serverNow()+HOUR);
+        assertThat(armies.findByPlayerId(human).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L)).as("未确定结算禁止自动重打").isEqualTo(remaining);
+        assertThat(ledger.occupied(human,timeService.serverNow())).isEqualTo(1);
+    }
+
+    @Test void concurrentDistinctArrivalsMustNotBothSpendTheLastQuota() throws Exception {
+        String human=newPlayerAt(300,300),first=botAt(256,256,"0.50"),second=botAt(266,256,"0.50");
+        for(String id:List.of(human,first,second)) { giveTroops(id,Map.of("unit_infantry_t1",1_200L));powerRefreshService.refresh(id); }
+        String a=sendAttack(first,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));
+        String b=sendAttack(second,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));
+        limiter.recordAttack(first,human,timeService.serverNow(),"last-slot-fixture:1");
+        limiter.recordAttack(first,human,timeService.serverNow(),"last-slot-fixture:2");
+        var entered=new java.util.concurrent.CountDownLatch(1);var secondDone=new java.util.concurrent.CountDownLatch(1);
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        // 仅战斗内核是替身，隔离守军乐观写冲突；出征/到达/额度接线均真实。
+        var outcome=org.mockito.Mockito.mock(com.ironoath.web.battle.PlayerCityBattleService.Outcome.class,org.mockito.Mockito.RETURNS_DEEP_STUBS);
+        org.mockito.Mockito.doAnswer(invocation->{
+            if(calls.incrementAndGet()==1) { entered.countDown();assertThat(secondDone.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+            return outcome;
+        }).when(battle).resolve(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyLong(),org.mockito.ArgumentMatchers.anyMap());
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var jobA=pool.submit(()->arriveAndProcess(a));
+            assertThat(entered.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var jobB=pool.submit(()->{ try { arriveAndProcess(b); } finally { secondDone.countDown(); } });
+            jobB.get(10,java.util.concurrent.TimeUnit.SECONDS);jobA.get(10,java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(calls.get()).as("不同真实到达来源只能一个进入最后额度的战斗").isEqualTo(1);
+            assertThat(ledger.count(human,timeService.serverNow())).isEqualTo(3);
+        } finally { secondDone.countDown();pool.shutdownNow(); }
+    }
+
+    @Test void ledgerWriteFailureAfterRealBattleMustNotStrandOrReplayTheMarch() {
+        verifyPostBattleLedgerFailure(false);
+    }
+
+    @Test void diagnosticCountFailureMustNotBreakCompletedBattle() {
+        verifyPostBattleLedgerFailure(true);
+    }
+
+    @Test void ledgerReplyFailureAfterCommitMustNotReplayOrReturnOriginalTroops() {
+        verifyPostBattleLedgerFailure(false,true);
+    }
+    private void verifyPostBattleLedgerFailure(boolean diagnostic) { verifyPostBattleLedgerFailure(diagnostic,false); }
+    private void verifyPostBattleLedgerFailure(boolean diagnostic,boolean afterCommit) {
+        String human=newPlayerAt(300,300),bot=botAt(256,256,"0.50");
+        giveTroops(human,Map.of("unit_infantry_t1",1_200L));
+        giveTroops(bot,Map.of("unit_infantry_t1",1_200L));
+        powerRefreshService.refresh(bot);powerRefreshService.refresh(human);
+        String id=sendAttack(bot,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));
+        if(diagnostic) {
+            org.mockito.Mockito.doThrow(new IllegalStateException("injected diagnostic read outage"))
+                .when(ledger).count(org.mockito.ArgumentMatchers.eq(human),org.mockito.ArgumentMatchers.anyLong());
+        } else if(afterCommit) {
+            var once=new java.util.concurrent.atomic.AtomicBoolean();
+            org.mockito.Mockito.doAnswer(invocation->{ var result=invocation.callRealMethod();if(once.compareAndSet(false,true)) throw new IllegalStateException("injected lost ledger commit reply");return result; }).when(ledger).record(org.mockito.ArgumentMatchers.any());
+        } else {
+            org.mockito.Mockito.doThrow(new IllegalStateException("injected post-battle write outage"))
+                .doCallRealMethod().when(ledger).record(org.mockito.ArgumentMatchers.any());
+        }
+        arriveAndProcess(id);
+        var arrived=marches.findById(id).orElseThrow();
+        assertThat(arrived.status()).as("实际战斗结束后必须按伤亡返程，不能因附属记账失败卡住").isEqualTo(com.ironoath.core.march.March.Status.RETURNING);
+        assertThat(reports.reportsOf(human)).hasSize(1);
+        long survivors=arrived.totalUnits();
+        long defenders=armies.findByPlayerId(human).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L);
+        if(diagnostic) org.mockito.Mockito.verify(ledger,org.mockito.Mockito.never()).count(org.mockito.ArgumentMatchers.eq(human),org.mockito.ArgumentMatchers.anyLong());
+        org.mockito.Mockito.reset(ledger);
+        limiter.evict(timeService.serverNow());
+        marchAppService.processDue(bot,timeService.serverNow()+HOUR);
+        assertThat(reports.reportsOf(human)).as("重试记账不能重打一仗").hasSize(1);
+        assertThat(armies.findByPlayerId(human).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L)).isEqualTo(defenders);
+        assertThat(marches.findById(id)).as("实际返程完成后行军删除").isEmpty();
+        assertThat(armies.findByPlayerId(bot).orElseThrow().troops().getOrDefault("unit_infantry_t1",0L)).as("返兵必须是战后剩余兵力").isEqualTo(survivors);
+        assertThat(ledger.count(human,timeService.serverNow())).as("故障恢复后真实攻击只能记一次").isEqualTo(1);
+    }
+
     // ---------- 频控 ----------
+
+    @Test
+    @DisplayName("已合法出发的Bot行军到达前额度耗尽，不能再打一仗或追加频控账")
+    void inFlightAttackRechecksQuotaBeforeBattleAtArrival() {
+        String human=newPlayerAt(300,300),bot=botAt(256,256,"0.50");
+        giveTroops(human,Map.of("unit_infantry_t1",1_200L));
+        giveTroops(bot,Map.of("unit_infantry_t1",1_200L));
+        powerRefreshService.refresh(bot);powerRefreshService.refresh(human);
+        String marchId=sendAttack(bot,worldAppService.homeOf(human),Map.of("unit_infantry_t1",1_200L));
+        long now=timeService.serverNow();
+        // 在途期间其他已经发生的攻击把额度用尽；这三笔是明确计账输入夹具。
+        for(int i=0;i<3;i++) limiter.recordAttack(bot,human,now+i,"arrival-fixture:"+i);
+        arriveAndProcess(marchId);
+        assertThat(limiter.recordedCount()).as("到达时不能发生超过已有上限的第四仗").isEqualTo(3);
+        assertThat(armies.findByPlayerId(human).orElseThrow().troops().get("unit_infantry_t1"))
+                .as("被拒的已在途攻击不能伤害守军").isEqualTo(1_200);
+        var returned=marches.findById(marchId).orElseThrow();
+        assertThat(returned.status()).isEqualTo(com.ironoath.core.march.March.Status.RETURNING);
+        assertThat(returned.totalUnits()).as("打不成的原队伍完整返程").isEqualTo(1_200);
+    }
 
     @Test
     @DisplayName("C2 频控：Bot 打的第三仗之后，第四次被统一漏斗拒掉（11001），且账本上真的记了那三笔")
@@ -295,14 +533,17 @@ class BotAttackQuotaTest {
     }
 
     private void arriveAndProcess(String marchId) {
+        prepareArrival(marchId);
+        marchAppService.processDue(marches.findById(marchId).orElseThrow().playerId(),System.currentTimeMillis());
+    }
+    private void prepareArrival(String marchId) {
         var march = marches.findById(marchId).orElseThrow();
         long version = marches.versionOf(marchId);
         march.restore(march.startAt(), march.returnArriveAt(), march.returnStartAt(),
                 march.returnFrom(), march.load(), march.status(), march.gatherStartAt(),
                 march.units());
         marches.save(march, version);
-        dueQueue.reschedule(marchId, march.startAt());
-        marchAppService.processDue(march.playerId(), System.currentTimeMillis());
+        dueQueue.reschedule(marchId,march.startAt());
     }
 
     /** 一个「能打」的真人：城在世界里、保护已解除。 */

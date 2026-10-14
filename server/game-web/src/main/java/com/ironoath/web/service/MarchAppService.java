@@ -87,6 +87,9 @@ public class MarchAppService {
     /** 一次到期扫描最多处理多少支行军。分批让单次请求的耗时可预测（B07 验收 2）。 */
     private static final int DUE_BATCH_LIMIT = 200;
 
+    private record PendingReturn(March.Snapshot snapshot,long expectedVersion) { }
+    private final java.util.concurrent.ConcurrentHashMap<String,PendingReturn> pendingReturns = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String,Long> pendingDeletes = new java.util.concurrent.ConcurrentHashMap<>();
     private final ConfigRegistry configs;
     private final MarchRepository marches;
     private final MarchDueQueue dueQueue;
@@ -447,8 +450,9 @@ public class MarchAppService {
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
                 processDue(playerId, now);
-                March march = requireOwnMarch(playerId, req.marchId());
-                long version = marches.versionOf(march.id());
+                requireOwnMarch(playerId,req.marchId()); // 保留原归属/不存在错误口径。
+                long version=marches.versionOf(req.marchId());
+                March march=requireOwnMarch(playerId,req.marchId());
                 // 召回一支采集中的队伍时必须先结算已采集量（B09 验收 7：已采集部分不丢失）。
                 // 此前这里直接 recall，队伍空着手回家，玩家采了一小时的东西凭空消失 ——
                 // 不报错、不为负，只在资源账上表现为「我明明在采集，怎么什么都没多」
@@ -459,7 +463,10 @@ public class MarchAppService {
                 } catch (IllegalStateException e) {
                     throw new BizException(ErrorCode.MARCH_STATE_INVALID, e.getMessage());
                 }
-                marches.save(march, version);
+                try { marches.save(march,version); }
+                catch(IllegalStateException conflict) {
+                    throw new BizException(ErrorCode.MARCH_STATE_INVALID,"队伍状态已变化，请刷新后重试召回",conflict);
+                }
                 // 改期而不是「取消 + 重新登记」：后者在两步之间有一个窗口，
                 // 此时若正好有一次到期扫描，这支行军就会被漏掉（B07 验收 2：无漏触发）
                 dueQueue.reschedule(march.id(), returnAt);
@@ -591,6 +598,9 @@ public class MarchAppService {
      * 玩家看到的是一支停在半路、既不前进也不到家的队伍。
      */
     public int processDue(String playerId, long now) {
+        botAttackLimiter.retryPendingReleases();
+        recoverPendingReturns();
+        recoverPendingDeletes();
         // 集结出发挂在同一次扫描上：服务端不跑定时器，行军、Bot、集结都靠请求驱动推进。
         // 放在开头而不是结尾，是为了让「出发」与「到点」共用同一个 now，
         // 不会出现这一轮用旧时刻判定到点、下一轮用新时刻判定出发
@@ -618,6 +628,54 @@ public class MarchAppService {
                     playerId, processed, dueQueue.size());
         }
         return processed;
+    }
+
+    /** 活进程补写已知返程；只用已确认归属的版本CAS，不恢复未知/部分战斗。 */
+    private void recoverPendingReturns() {
+        for(var entry:pendingReturns.entrySet()) {
+            var pending=entry.getValue();String id=entry.getKey();
+            try {
+                var observed=marches.findById(id).orElse(null);
+                if(observed==null) { pendingReturns.remove(id,pending);continue; }
+                long version=marches.versionOf(id);
+                var latest=marches.findById(id).orElse(null);
+                if(latest==null) { pendingReturns.remove(id,pending);continue; }
+                if(latest.status()==March.Status.FIGHTING && version==pending.expectedVersion()) {
+                    var returned=March.fromSnapshot(pending.snapshot());
+                    marches.save(returned,pending.expectedVersion());
+                    if(returned.status()==March.Status.RETURNING) dueQueue.reschedule(id,returned.returnArriveAt());
+                } else if(latest.status()==pending.snapshot().status()) {
+                    // 上次状态写已提交但回执丢失；以当前持久状态为准，不覆写。
+                    if(latest.status()==March.Status.RETURNING) dueQueue.reschedule(id,latest.returnArriveAt());
+                } else {
+                    LOG.error("已知返程归属已变化，停止补写并需核对原结算 marchId={} expectedVersion={} currentVersion={} status={}",id,pending.expectedVersion(),version,latest.status());
+                }
+                pendingReturns.remove(id,pending);
+            } catch(RuntimeException unavailable) {
+                LOG.warn("已知返程快照待补写 marchId={}，当前归属内不重打一仗",id,unavailable);
+            }
+        }
+    }
+
+    private PendingReturn registerKnownState(March march,long version) {
+        var pending=new PendingReturn(March.fromSnapshot(march.snapshot()).snapshot(),version);
+        pendingReturns.put(march.id(),pending);return pending;
+    }
+
+    private void recoverPendingDeletes() {
+        for(var entry:pendingDeletes.entrySet()) {
+            String id=entry.getKey();long version=entry.getValue();
+            try {
+                if(marches.deleteIfVersion(id,version) || marches.findById(id).isEmpty()) {
+                    dueQueue.cancel(id);dueQueue.cancel(id+":filled");
+                } else {
+                    LOG.error("已知全灭清理归属已变化，拒绝删除别的写入者 marchId={} expectedVersion={}",id,version);
+                }
+                pendingDeletes.remove(id,version);
+            } catch(RuntimeException unavailable) {
+                LOG.warn("已知全灭行军待清理，不重打一仗 marchId={}",id,unavailable);
+            }
+        }
     }
 
     // ---------- 集结出发（B10 §5、验收 11） ----------
@@ -846,7 +904,10 @@ public class MarchAppService {
         }
         boolean processed = advance(march, now);
         // 到达后可能已登记返程，不能无条件 cancel，否则会吞掉那一笔新登记。
-        if (march.status() != March.Status.MARCHING && march.status() != March.Status.RETURNING) {
+        // 其他扫描读到持久FIGHTING时也不能删事件：当前写入者随后会登记返程。
+        March latest=marches.findById(marchId).orElse(null);
+        if (latest==null || (latest.status()!=March.Status.MARCHING && latest.status()!=March.Status.RETURNING
+                && latest.status()!=March.Status.FIGHTING)) {
             dueQueue.cancel(marchId);
         }
         return processed;
@@ -854,7 +915,10 @@ public class MarchAppService {
 
     /** 把一支到点的行军推进到下一个状态。返回是否真的推进了。 */
     private boolean advance(March march, long now) {
-        long version = marches.versionOf(march.id());
+        // 版本必须先于本次快照读取；CAS才能拒绝期间发生的更新，不能给旧对象配新版本。
+        long version=marches.versionOf(march.id());
+        march=marches.findById(march.id()).orElse(null);
+        if(march==null) return false;
         if (march.status() == March.Status.MARCHING) {
             if (now < march.arriveAt()) {
                 return false;
@@ -875,17 +939,37 @@ public class MarchAppService {
                 case STATION, GARRISON -> {
                     // 驻扎没有后续事件，等玩家召回
                 }
-                case ATTACK -> marchAlive = resolveAttack(march, now);
+                case ATTACK -> {
+                    if(march.targetType()==March.TargetType.PLAYER_CITY || march.targetType()==March.TargetType.RESOURCE) {
+                        // 所有身份先持久占有这场战斗；CAS失败者不会进入内核。
+                        // FIGHTING已有协议状态，崩溃/部分结算时不退回MARCHING重打。
+                        version=marches.save(march,version);
+                    }
+                    try { marchAlive=resolveAttack(march,now,version); }
+                    catch(com.ironoath.web.battle.PlayerCityBattleService.Uncertain uncertain) {
+                        // 保存已知战后快照供核对；失败时此前持久FIGHTING仍能阻止重放。
+                        marches.save(march,version);
+                        dueQueue.cancel(march.id());
+                        LOG.error("战斗结算不确定，行军保持交战态并退出自动扫描，需核对伤亡/收益/战报 marchId={} playerId={}",march.id(),march.playerId(),uncertain);
+                        return true;
+                    }
+                }
                 case SCOUT -> {
                     generateReport(march, now);
                     march.beginReturn(now, MarchCalculator.recallMillis(march, now));
                     dueQueue.reschedule(march.id(), march.returnArriveAt());
                 }
             }
-            world.bumpChunkVersion(march.to().chunkKey(chunkSize()));
-            if (marchAlive) {
-                marches.save(march, version);
+            PendingReturn knownReturn=null;
+            if(marchAlive && march.status()==March.Status.RETURNING
+                    && (march.targetType()==March.TargetType.PLAYER_CITY || march.targetType()==March.TargetType.RESOURCE)) {
+                // 只登记已明确完整结算或未开战的返程；Uncertain早已退出，不会进这个表。
+                knownReturn=registerKnownState(march,version);
             }
+            world.bumpChunkVersion(march.to().chunkKey(chunkSize()));
+            if (marchAlive) { marches.save(march,version); }
+            if(marchAlive && march.status()==March.Status.RETURNING) dueQueue.reschedule(march.id(),march.returnArriveAt());
+            if(knownReturn!=null) pendingReturns.remove(march.id(),knownReturn);
             // 派遣已预亮Fog，不能据此发探索资格；只在真实合法到达后沿既有chunk计主人。
             // 排除出发城块（出生/迁城点亮不是探索）；目标块作为稳定事实，不按行军ID重复计。
             String reachedChunk = march.to().chunkKey(chunkSize());
@@ -927,9 +1011,15 @@ public class MarchAppService {
      * 玩家看到的是一支永远卡在目标面前的队伍，而日志里一切正常。
      * 让它带着满编兵力回家是唯一不会留下烂状态的处理。
      */
-    private boolean resolveAttack(March march, long now) {
-        Map<String, Long> beneficiaries = beneficiaries(march);
+    private boolean resolveAttack(March march,long now,long version) {
         try {
+            Map<String,Long> beneficiaries;
+            try { beneficiaries=beneficiaries(march); }
+            catch(RuntimeException preparationFailure) {
+                // 已确认持有行军版本，但尚未申请额度或调用战斗内核；名单IO失败可无损返程。
+                throw new com.ironoath.web.battle.PlayerCityBattleService.NotStarted(
+                        new BizException(ErrorCode.SYSTEM_ERROR,"战斗参与者暂时读取失败，未进入战斗，队伍安全返程",preparationFailure));
+            }
             switch (march.targetType()) {
                 case MONSTER -> {
                     var monsterOutcome = monsterBattleService.resolve(march, now, beneficiaries);
@@ -950,7 +1040,12 @@ public class MarchAppService {
                     }
                 }
                 case PLAYER_CITY -> {
-                    var pvpOutcome = playerCityBattleService.resolve(march, now, beneficiaries);
+                    // 出征与到达之间其他攻击可能已耗尽额度；战斗尚未开始时重新核验。
+                    var admission=botAttackLimiter.beginAttack(march.playerId(),march.targetId(),now,"city:"+march.id());
+                    com.ironoath.web.battle.PlayerCityBattleService.Outcome pvpOutcome;
+                    try { pvpOutcome=playerCityBattleService.resolve(march,now,beneficiaries); }
+                    catch(com.ironoath.web.battle.PlayerCityBattleService.NotStarted notStarted) { botAttackLimiter.cancelAttack(admission);throw notStarted; }
+                    botAttackLimiter.finishAttack(admission);
                     // 活动进度（B17 争锋令）：只有进攻方获胜才记 —— 打输了也记的话，
                     // 「拿下一座玩家城」会在自己被打回家的那一刻完成（与 KILL_MONSTER 同一条）
                     if (pvpOutcome.result().winner() == com.ironoath.battle.Winner.ATTACKER) {
@@ -958,7 +1053,7 @@ public class MarchAppService {
                                 com.ironoath.core.quest.GoalType.PVP_WIN, null, 1L, now);
                     }
                     // 仗真的打起来了才记频控的账（胜负都算 —— 真人挨了打这件事已经发生）
-                    botAttackLimiter.recordAttack(march.playerId(), march.targetId(), now);
+                    // 频控已经在真实战斗完成后确认；辅助任务进度不负责攻击归属。
                 }
                 case RESOURCE -> interceptGatherer(march, now);
                 default -> throw new BizException(ErrorCode.WORLD_TARGET_INVALID,
@@ -971,12 +1066,13 @@ public class MarchAppService {
         if (march.totalUnits() <= 0L) {
             // 全军覆没：没有兵可以走回来，直接清理，否则地图上会留一支 0 兵的队伍在移动
             LOG.info("攻击失败且全军覆没，行军记录删除 marchId={} playerId={}", march.id(), march.playerId());
-            marches.delete(march.id());
+            pendingDeletes.put(march.id(),version);
+            recoverPendingDeletes();
             return false;
         }
         // 打完就返程：野怪不能被占领，玩家城的占领属 B13 国战，队伍都没有理由留在原地
-        march.beginReturn(now, MarchCalculator.recallMillis(march, now));
-        dueQueue.reschedule(march.id(), march.returnArriveAt());
+        march.beginReturn(now,MarchCalculator.recallMillis(march,now));
+        // 所有返程IO在advance登记已知快照之后进行。
         return true;
     }
 
@@ -1026,26 +1122,42 @@ public class MarchAppService {
      * 处置口径与攻城一致 —— 全军覆没就删记录（没有兵能走回来，
      * 否则会留一支 0 兵的队伍在地图上移动），否则带着剩余负载原路返回。
      */
-    private void interceptGatherer(March march, long now) {
-        March gatherer = gatheringMarchAt(march.to(), march.playerId())
-                .orElseThrow(() -> new BizException(ErrorCode.WORLD_TARGET_INVALID,
-                        "对方已经采完离开了，无可拦截"));
-        settleGathered(gatherer, now);
-        long gathererVersion = marches.versionOf(gatherer.id());
-        playerCityBattleService.interceptGatherer(march, gatherer, now);
-        // 拦截同样算「Bot 打了这个真人」：采集队也是他的兵，挨打的是他
-        botAttackLimiter.recordAttack(march.playerId(), gatherer.playerId(), now);
-        if (gatherer.totalUnits() <= 0L) {
-            LOG.info("采集队被全灭，行军记录删除 marchId={} playerId={} 剩余负载随队伍一起消失={}",
-                    gatherer.id(), gatherer.playerId(), gatherer.load());
-            marches.delete(gatherer.id());
-            return;
+    private void interceptGatherer(March march,long now) {
+        March gatherer;long gathererVersion;
+        try {
+            March found=gatheringMarchAt(march.to(),march.playerId())
+                    .orElseThrow(()->new BizException(ErrorCode.WORLD_TARGET_INVALID,"对方已经采完离开了，无可拦截"));
+            gathererVersion=marches.versionOf(found.id());
+            gatherer=marches.findById(found.id()).orElseThrow(()->new BizException(ErrorCode.WORLD_TARGET_INVALID,"采集队已经离开"));
+            if(gatherer.status()!=March.Status.GATHERING) throw new BizException(ErrorCode.WORLD_TARGET_INVALID,"采集队已不在采集中");
+            settleGathered(gatherer,now);
+        } catch(BizException rejected) { throw rejected; }
+        catch(RuntimeException preparationFailure) {
+            throw new com.ironoath.web.battle.PlayerCityBattleService.NotStarted(new BizException(ErrorCode.SYSTEM_ERROR,"拦截准备暂时失败，未开始战斗",preparationFailure));
         }
-        gatherer.beginReturn(now, MarchCalculator.recallMillis(gatherer, now));
-        marches.save(gatherer, gathererVersion);
-        // 改期而不是「取消 + 重新登记」：后者在两步之间有一个窗口，
-        // 此时若正好有一次到期扫描，这支行军就会被漏掉（B07 验收 2：无漏触发）
-        dueQueue.reschedule(gatherer.id(), gatherer.returnArriveAt());
+        var admission=botAttackLimiter.beginAttack(march.playerId(),gatherer.playerId(),now,"intercept:"+march.id());
+        var occupied=March.fromSnapshot(gatherer.snapshot());occupied.startInterception();
+        try { gathererVersion=marches.save(occupied,gathererVersion); }
+        catch(IllegalStateException conflict) {
+            botAttackLimiter.cancelAttack(admission);
+            throw new com.ironoath.web.battle.PlayerCityBattleService.NotStarted(new BizException(ErrorCode.MARCH_STATE_INVALID,"采集队状态已变化，未开始拦截",conflict));
+        } catch(RuntimeException unknownOwnership) {
+            throw new com.ironoath.web.battle.PlayerCityBattleService.Uncertain(unknownOwnership);
+        }
+        try { playerCityBattleService.interceptGatherer(march,gatherer,now); }
+        catch(com.ironoath.web.battle.PlayerCityBattleService.NotStarted notStarted) {
+            botAttackLimiter.cancelAttack(admission);
+            // 本次持有守方版本且无战损，恢复原采集状态；写失败也不猜另一个写入者。
+            registerKnownState(gatherer,gathererVersion);recoverPendingReturns();throw notStarted;
+        }
+        botAttackLimiter.finishAttack(admission);
+        if(gatherer.totalUnits()<=0L) {
+            pendingDeletes.put(gatherer.id(),gathererVersion);recoverPendingDeletes();return;
+        }
+        gatherer.beginReturn(now,MarchCalculator.recallMillis(gatherer,now));
+        registerKnownState(gatherer,gathererVersion);
+        // 内核已完整完成。附属保存/改期故障留恢复记录，不能打断攻方已知返程。
+        recoverPendingReturns();
     }
 
     /**

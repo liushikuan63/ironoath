@@ -39,6 +39,9 @@ public interface MarchRepository {
 
     void delete(String marchId);
 
+    /** 已知全灭的清理必须仍持有该版本，不能删除另一个写入者的新状态。 */
+    boolean deleteIfVersion(String marchId,long expectedVersion);
+
     /** 某玩家当前在外（未到家）的行军数，用于校验 MARCH_MAX_CONCURRENT。 */
     long activeCountOf(String playerId);
 }

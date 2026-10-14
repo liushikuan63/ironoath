@@ -176,15 +176,13 @@ public class BotWorldAdapter implements BotScheduler.World {
     /**
      * 已经回应到哪个时刻的攻击（botId → 该 Bot 回应过的最新受击时间戳）。
      *
-     * <p><b>为什么必须在内存里记一笔</b>：受击账本里没有"回应过没有"这个位，
-     * 而"每 tick 都回应同一发旧子弹"就是它缺位的症状。进程重启后这一笔会丢 ——
-     * 与画像、待办队列同一笔债（#84 丙），代价是重启后的第一小时内可能多回一次，
-     * 不构成玩法事故。
+     * Mongo模式按字段持久更新；原子单调推进确保跨实例同一旧攻击不重复回应。
+     * 同一端口也保存已问候联盟及入盟申请节流，不覆盖并发更新的其他字段。
      */
-    private final java.util.Map<String, Long> reactedUpTo = new java.util.concurrent.ConcurrentHashMap<>();
+    private final BotBehaviorStore behavior;
 
     /**
-     * 入盟申请的本地节流（botId → 上次尝试时刻）：行为常量，不是游戏数值。
+     * 入盟申请节流（botId → 上次尝试时刻）：行为常量，不是游戏数值。
      *
      * <p>为什么要它：申请被拒（人满 / 已申请过）之后，下一个 tick 还会再掷一次社交倾向 ——
      * 而 tick 是分钟级的，一天会给某个联盟的盟主刷几百条申请。**服务端已经有去重**
@@ -193,22 +191,11 @@ public class BotWorldAdapter implements BotScheduler.World {
      */
     private static final long SEEK_ALLIANCE_INTERVAL_MILLIS = 6L * 3600L * 1000L;
 
-    /**
-     * 已经打过招呼的联盟（botId → allianceId）。
-     *
-     * <p>入盟问候只在"第一次以成员身份 tick"时说一次 —— 没有这个标记的话，
-     * 那 2 句问候会按 tick 频率重复（分钟级），成了刷屏。
-     */
-    private final java.util.Map<String, String> greetedAlliance = new java.util.concurrent.ConcurrentHashMap<>();
-
-    /** 入盟申请尝试的本地节流表。 */
-    private final java.util.Map<String, Long> lastSeekAllianceAt = new java.util.concurrent.ConcurrentHashMap<>();
-
     /** 最近一次发言用的场景（诊断与用例断言"问候只说一次"要用）。 */
+    private final java.util.concurrent.ConcurrentHashMap<String,String> pendingGreetings = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, String> lastChatScene = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 幂等键序号。Bot 没有客户端，requestId 必须由服务端造，且<b>全局唯一</b>（撞了就是 1002）。 */
-    private final AtomicLong requestSeq = new AtomicLong();
 
     /**
      * Bot 的联盟捐献档位 —— <b>0 = 免费档</b>（2026-09-13 裁决 C18）。
@@ -230,7 +217,8 @@ public class BotWorldAdapter implements BotScheduler.World {
                            SocialAppService social2, TargetSearchService targetSearch,
                            com.ironoath.web.quest.QuestAppService quests,
                            BotRulesAssembler assembler, WorldAppService worldService,
-                           org.springframework.context.ApplicationEventPublisher events) {
+                           org.springframework.context.ApplicationEventPublisher events,
+                           BotBehaviorStore behavior) {
         this.bots = bots;
         this.players = players;
         this.cities = cities;
@@ -251,6 +239,7 @@ public class BotWorldAdapter implements BotScheduler.World {
         this.assembler = assembler;
         this.worldService = worldService;
         this.events = events;
+        this.behavior = behavior;
     }
 
     @Override
@@ -280,7 +269,7 @@ public class BotWorldAdapter implements BotScheduler.World {
         long average = spawner.humanAverageMatchPower();
 
         BotWorldAdapter.LatestHit lastHit = latestHit(save);
-        Long answered = reactedUpTo.get(botId);
+        Long answered = behavior.find(botId).reactedUpTo();
         // 「正在被攻击」= 最近一发还在窗口内、而且我还没回应过它。
         // 直接用 attackerHits 非空会让 Bot 在被揍后的 24 小时里每一 tick 都反应一次（账本是 24h 的）
         boolean underAttack = lastHit != null
@@ -545,7 +534,10 @@ public class BotWorldAdapter implements BotScheduler.World {
             LOG.info("Bot {} 决定受击反应但已找不到攻击记录（决策理由={}）", botId, decision.reason());
             return;
         }
-        reactedUpTo.merge(botId, hit.at(), Math::max);
+        if (!behavior.advanceReaction(botId,hit.at())) {
+            skipped.incrementAndGet();
+            return;
+        }
         reacted.incrementAndGet();
         long aggression = profile.ai().aggression();
         if (aggression >= COUNTER_ATTACK_MIN_FIXED && counterAttack(botId, hit.attackerId(), now)) {
@@ -693,10 +685,12 @@ public class BotWorldAdapter implements BotScheduler.World {
         if (save == null || profile == null) {
             return;
         }
+        // 上次实际已发出的问候先补标记；故障未恢复时不再发送第二句入盟问候。
+        if(!retryGreeting(botId)) return;
         BotChatBook book = assembler.chatBook();
         Rng rng = rngFor(botId, now);
         BotChatBook.Scene scene;
-        if (!alliance.get().id().equals(greetedAlliance.get(botId))) {
+        if (!alliance.get().id().equals(behavior.find(botId).greetedAlliance())) {
             scene = BotChatBook.Scene.ALLIANCE_JOIN;
         } else {
             scene = rng.nextLong() % 2L == 0L ? BotChatBook.Scene.CHAT_IDLE : BotChatBook.Scene.TRADE;
@@ -710,14 +704,29 @@ public class BotWorldAdapter implements BotScheduler.World {
         try {
             social2.chatSend(botId, new ChatSendReq(newRequestId(botId), ChatChannel.ALLIANCE,
                     line.get().text(), null), now);
-            greetedAlliance.put(botId, alliance.get().id());
-            lastChatScene.put(botId, scene.name());
-            chatted.incrementAndGet();
-            LOG.info("Bot {} 在联盟频道发言（场景={} 句={}）：{}", botId, scene, line.get().id(),
-                    line.get().text());
         } catch (RuntimeException e) {
             // 限流（同一句话太频繁）是玩法常态：INFO 一条，不当作失败
             LOG.info("Bot {} 发言未发出（句={}）：{}", botId, line.get().id(), e.getMessage());
+            return;
+        }
+        lastChatScene.put(botId,scene.name());
+        chatted.incrementAndGet();
+        LOG.info("Bot {} 在联盟频道发言（场景={} 句={}）：{}",botId,scene,line.get().id(),line.get().text());
+        if(scene==BotChatBook.Scene.ALLIANCE_JOIN) {
+            pendingGreetings.put(botId,alliance.get().id());
+            retryGreeting(botId);
+        }
+    }
+
+    private boolean retryGreeting(String botId) {
+        String allianceId=pendingGreetings.get(botId);
+        if(allianceId==null) return true;
+        try {
+            behavior.recordGreeting(botId,allianceId);
+            pendingGreetings.remove(botId,allianceId);return true;
+        } catch(RuntimeException failure) {
+            LOG.warn("Bot {} 联盟问候已发出、标记待补写；本进程不重复问候",botId,failure);
+            return false;
         }
     }
 
@@ -734,13 +743,11 @@ public class BotWorldAdapter implements BotScheduler.World {
         if (social.allianceOf(botId).isPresent()) {
             return;   // 已经被接纳了（申请通过发生在我们看不到的地方）
         }
-        Long last = lastSeekAllianceAt.get(botId);
-        if (last != null && now - last < SEEK_ALLIANCE_INTERVAL_MILLIS) {
+        if (!behavior.trySeekAlliance(botId,now,SEEK_ALLIANCE_INTERVAL_MILLIS)) {
             LOG.info("Bot {} 想申请入盟，但距上次尝试不足 {} 小时（决策理由={}）",
                     botId, SEEK_ALLIANCE_INTERVAL_MILLIS / 3_600_000L, decision.reason());
             return;
         }
-        lastSeekAllianceAt.put(botId, now);
         for (var alliance : social.allAlliances()) {
             if (alliance.memberCount() >= alliance.effectiveMemberCap()
                     || social.hasApplication(alliance.id(), botId)) {
@@ -964,15 +971,9 @@ public class BotWorldAdapter implements BotScheduler.World {
         }
     }
 
-    /**
-     * 幂等键。格式 {@code bot_<序号>_<botId 尾段>} ——
-     * <b>必须全局唯一</b>：{@code IdempotencyStore} 的键不按 playerId 分域（Mongo 用 {@code _id=requestId}），
-     * 撞了就是 1002 而不是重试成功。尾段带上 botId 只为了 grep 时能看出是谁的哪一次。
-     */
+    /** 全局幂等键；UUID不依赖进程序号，新实例和同Bot并发动作也不从旧序号重来。 */
     private String newRequestId(String botId) {
-        long seq = requestSeq.incrementAndGet();
-        String tail = botId.length() <= 8 ? botId : botId.substring(botId.length() - 8);
-        return "bot-" + seq + "-" + tail;
+        return "bot-"+java.util.UUID.randomUUID();
     }
 
     /** 已落地的动作计数（供 {@code /bot/tick} 回参与仿真断言）。 */
@@ -1015,15 +1016,14 @@ public class BotWorldAdapter implements BotScheduler.World {
         failed.set(0L);
         unhandled.set(0L);
         warned.clear();
-        reactedUpTo.clear();
-        greetedAlliance.clear();
-        lastSeekAllianceAt.clear();
+        behavior.clear();
         lastChatScene.clear();
+        pendingGreetings.clear();
     }
 
     /** 某个 Bot 已回应到哪个时刻（测试断言"同一发攻击不会被回应两次"要用）。 */
     public Long reactedUpToOf(String botId) {
-        return reactedUpTo.get(botId);
+        return behavior.find(botId).reactedUpTo();
     }
 
     /** 某个 Bot 上一次发言用的场景。 */
@@ -1033,6 +1033,6 @@ public class BotWorldAdapter implements BotScheduler.World {
 
     /** 某个 Bot 上一次尝试入盟的时刻（0 表示没试过）。 */
     public Long lastSeekAllianceAtOf(String botId) {
-        return lastSeekAllianceAt.get(botId);
+        return behavior.find(botId).lastSeekAllianceAt();
     }
 }

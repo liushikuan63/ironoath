@@ -350,6 +350,12 @@ public final class March {
         }
     }
 
+    /** 采集队被拦截时占有交战态；持久层保存后其他请求不能按原兵召回。 */
+    public void startInterception() {
+        if(status!=Status.GATHERING) throw new IllegalStateException("只有采集中的队伍能进入拦截交战");
+        status=Status.FIGHTING;
+    }
+
     /** 开始采集（到达资源点之后）。 */
     public void startGathering(long now) {
         if (status != Status.GATHERING) {

@@ -54,6 +54,8 @@ class BeanAssemblyTest {
             com.ironoath.web.season.SeasonLedgerStore.class,
             com.ironoath.web.battlepass.BattlePassStore.class,
             com.ironoath.web.bot.BotProfileStore.class,
+            com.ironoath.web.bot.BotBehaviorStore.class,
+            com.ironoath.web.bot.BotAttackLedgerStore.class,
             com.ironoath.web.battle.BattleReportStore.class,
             com.ironoath.web.quest.QuestProgressStore.class,
             com.ironoath.web.levelreward.LevelRewardClaimStore.class,
