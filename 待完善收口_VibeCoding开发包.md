@@ -7552,3 +7552,5 @@ TEST_EXIT=0
 | B11均值快照及持久量具交付 #1307 | 本笔8源码/报告矩阵及证据原子本地提交，未推 | 274套2708server/1321client/47门/清理8全0；内存三轮5000通过；4JVM22/17FIRST/war44/HTTPUI26全0 | tmp/bot-mongo-performance-20261014/final-summary.actual.json；review2-independent.md；B22attempt10两新截图已查看 | 持久仅824未达完整5000；生产运输未采纳；聊天文字/placeholder起点越框待实量修复；下一matchPower窄读继续 |
 
 | B11排期matchPower窄读实施 #1308 | 本笔有效首红与新方案留档，源码未交付 | red1夹具1error非首红；red2 1test/1failure/0error/skip；green1六套实际运行中 | tmp/bot-match-power-projection-20261014/red1.actual.json；red2.actual.json；green1.log | 新重点/完整候选/持久5000未验，生产Socket未改；聊天输入对齐仍待修；不借上格读数 |
+
+| B11匹配战力窄读全门禁 #1309 | 本笔33重点/2714全量与候选冻结原子留档 | 6套33与276套2714server/1321client/47门全0；review1无阻断；persistent1后台78044运行中 | tmp/bot-match-power-projection-20261014/green1.actual.json；validation-full1.json；review1-independent.md；candidate1/inputs.json | 新eac5实际持久预算/内存/关联未验；Netty量具实验不改生产；聊天对齐待修 |
