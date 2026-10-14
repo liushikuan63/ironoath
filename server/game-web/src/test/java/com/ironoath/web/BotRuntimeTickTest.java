@@ -68,6 +68,8 @@ class BotRuntimeTickTest {
     @Autowired private PlayerRepository players;
     @Autowired private TimeService timeService;
     @Autowired private com.ironoath.web.service.WorldAppService worldAppService;
+    @org.springframework.boot.test.mock.mockito.SpyBean private com.ironoath.web.bot.BotSpawnService spawner;
+    @Autowired private com.ironoath.web.bot.BotCalibrationService calibration;
 
     @BeforeEach
     void reset() {
@@ -254,6 +256,19 @@ class BotRuntimeTickTest {
     }
 
     // ---------- 夹具 ----------
+
+    @Test
+    void enrollmentUsesOneRoundMeanAndNextDriveReadsItAgain() {
+        bot();bot();bot();calibration.reset();
+        org.mockito.Mockito.doReturn(300L).when(spawner).humanAverageMatchPower();
+        org.mockito.Mockito.clearInvocations(spawner);
+        long now=timeService.serverNow();runtime.tick(now);
+        org.mockito.Mockito.verify(spawner,org.mockito.Mockito.times(2)).humanAverageMatchPower();
+        // 其中一次是每天校准的独立读取；登记/决策只共享本轮的一次按需快照。
+        runtime.reset();org.mockito.Mockito.doReturn(900L).when(spawner).humanAverageMatchPower();
+        org.mockito.Mockito.clearInvocations(spawner);runtime.tick(now);
+        org.mockito.Mockito.verify(spawner,org.mockito.Mockito.times(1)).humanAverageMatchPower();
+    }
 
     /**
      * 造一个"活在世界里"的 Bot：真人同一条建档路径（{@code PlayerInitService.init}）+ 注册画像。

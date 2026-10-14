@@ -3,6 +3,7 @@ package com.ironoath.web.bot;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,6 +77,30 @@ import com.ironoath.web.social.SocialStore;
  */
 @Component
 public class BotWorldAdapter implements BotScheduler.World {
+    /** 仅一个驱动调用栈内的数值读集；没有身份名单/TTL，也不跨线程或新驱动复用。 */
+    private final ThreadLocal<RoundAverage> roundAverage = new ThreadLocal<>();
+    private static final class RoundAverage {
+        final long now;
+        boolean resolved;
+        long value;
+        RuntimeException failure;
+        RoundAverage(long now) { this.now=now; }
+        long read(java.util.function.LongSupplier source) {
+            if(!resolved) {
+                try { value=source.getAsLong(); } catch(RuntimeException unavailable) { failure=unavailable; }
+                resolved=true;
+            }
+            if(failure!=null)throw failure;
+            return value;
+        }
+    }
+    public <T> T withHumanAverageSnapshot(long now,Supplier<T> work) {
+        RoundAverage previous=roundAverage.get();
+        if(previous!=null && previous.now==now)return work.get();
+        roundAverage.set(new RoundAverage(now));
+        try { return work.get(); }
+        finally { if(previous==null)roundAverage.remove();else roundAverage.set(previous); }
+    }
 
     private static final Logger LOG = LoggerFactory.getLogger(BotWorldAdapter.class);
 
@@ -266,7 +291,7 @@ public class BotWorldAdapter implements BotScheduler.World {
         ArmyState armyState = armies.findByPlayerId(botId).orElse(null);
         long troopCap = heroes.troopCap(botId);
         long troops = armyState == null ? 0L : armyState.totalTroops() + armyState.totalTraining();
-        long average = spawner.humanAverageMatchPower();
+        long average = humanAverageMatchPower(now);
 
         BotWorldAdapter.LatestHit lastHit = latestHit(save);
         Long answered = behavior.find(botId).reactedUpTo();
@@ -337,7 +362,8 @@ public class BotWorldAdapter implements BotScheduler.World {
     public long humanAverageMatchPower(long now) {
         // 口径的唯一持有者是孵化侧（那一份均值同时决定 Bot 的战力带），这里转问它，
         // 不在这里重算一遍 —— 两份均值迟早分叉，而分叉的表现是"校准跟着活数据走"变成假话
-        return spawner.humanAverageMatchPower();
+        RoundAverage snapshot=roundAverage.get();
+        return snapshot!=null && snapshot.now==now?snapshot.read(spawner::humanAverageMatchPower):spawner.humanAverageMatchPower();
     }
 
     // ---------- C1：升级建筑与训练兵种 ----------

@@ -7548,3 +7548,5 @@ TEST_EXIT=0
 | B11均值作用域全门禁与量具回执异常 #1305 | 本笔门禁及新发现原子留档，源码尚待完整实测交付 | 47门/274套2708server/1321client全0；清理故障注入8全0；attempt3未创建，attempt4运行中 | tmp/bot-mongo-performance-20261014/validation-full1.json；cleanup-regression1.log；candidate1/inputs.json；review2-manifest.json | 合成故障不等于实网丢回执；持久5000与同JAR关联流程未验；Netty仅量具实验，生产默认未改 |
 
 | B11持久5000第二候选有界首红 #1306 | 本笔失败及定位证据原子留档 | 5000初始化52.309s；180.404s/824样本/failed0；冷correct=false/exit1；owner五项cleanup全true | tmp/bot-mongo-performance-20261014/attempt4/result.actual.json；runner-result.actual.json；runtime-thread.actual.log；runtime-jfr-summary.actual.json | 824分位不能充完整5000P99，热轮/全量读回未执行；生产Netty未采纳；同新JAR关联待验 |
+
+| B11均值快照及持久量具交付 #1307 | 本笔8源码/报告矩阵及证据原子本地提交，未推 | 274套2708server/1321client/47门/清理8全0；内存三轮5000通过；4JVM22/17FIRST/war44/HTTPUI26全0 | tmp/bot-mongo-performance-20261014/final-summary.actual.json；review2-independent.md；B22attempt10两新截图已查看 | 持久仅824未达完整5000；生产运输未采纳；聊天文字/placeholder起点越框待实量修复；下一matchPower窄读继续 |

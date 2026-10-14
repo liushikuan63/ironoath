@@ -134,6 +134,10 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
      *         只有前者在涨说明"轮在跑但什么都没发生"。
      */
     public Map<String, Long> tick(long now) {
+        return adapter.withHumanAverageSnapshot(now,()->tickWithRoundInputs(now));
+    }
+
+    private Map<String,Long> tickWithRoundInputs(long now) {
         conversations.drive(now);
         BotScheduler scheduler = scheduler();
         enrollNew(scheduler, now);

@@ -4,7 +4,8 @@ import java.util.*;
 import java.util.stream.IntStream;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.annotation.*;
-import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ironoath.common.rng.Rng;
 import com.ironoath.common.time.TimeService;
@@ -19,11 +20,25 @@ import com.ironoath.web.service.PlayerInitService;
 public final class BotRuntimeBench {
     static final int COUNT = 5000;
     static final Sampler sampler = new Sampler();
+    static final class MongoTransportOwner implements AutoCloseable {
+        final io.netty.channel.nio.NioEventLoopGroup group;
+        final String mode;
+        MongoTransportOwner() {
+            mode=Optional.ofNullable(System.getenv("BOT_BENCH_MONGO_TRANSPORT")).orElse("socket");
+            if(!List.of("socket","netty").contains(mode))throw new IllegalArgumentException("Unknown transport fixture");
+            group=mode.equals("netty")?new io.netty.channel.nio.NioEventLoopGroup(2):null;
+        }
+        public void close() {
+            if(group!=null)group.shutdownGracefully(0,10,java.util.concurrent.TimeUnit.SECONDS).syncUninterruptibly();
+        }
+        boolean terminated() { return group==null || group.isTerminated(); }
+    }
     static final class Sampler {
         boolean enabled;
         Set<String> eligible = new HashSet<>();
         Map<String, Long> starts = new HashMap<>(), samples = new LinkedHashMap<>();
         Map<String, BotScheduler.BotTask> latest = new HashMap<>();
+        String queueDelegateClass;
         void begin() { enabled=true; eligible.clear(); starts.clear(); samples.clear(); }
         void batch(List<BotScheduler.BotTask> tasks) {
             eligible.clear(); starts.clear();
@@ -39,6 +54,14 @@ public final class BotRuntimeBench {
     }
     @Configuration(proxyBeanMethods=false)
     static class ProbeConfig {
+        @Bean(destroyMethod="close")
+        MongoTransportOwner benchMongoTransportOwner() { return new MongoTransportOwner(); }
+        @Bean
+        org.springframework.boot.autoconfigure.mongo.MongoClientSettingsBuilderCustomizer benchTransport(MongoTransportOwner owner) {
+            return builder->{
+                if(owner.group!=null)builder.transportSettings(com.mongodb.connection.TransportSettings.nettyBuilder().eventLoopGroup(owner.group).build());
+            };
+        }
         @Bean @Primary
         TimeService benchTime() {
             String value=System.getenv("BOT_BENCH_BUSINESS_NOW");
@@ -57,7 +80,10 @@ public final class BotRuntimeBench {
             };
         }
         @Bean @Primary
-        BotScheduler.TaskQueue benchQueue(@Qualifier("botTaskQueue") BotScheduler.TaskQueue delegate) {
+        BotScheduler.TaskQueue benchQueue(@Value("${ironoath.bot.task-queue:memory}") String kind,ApplicationContext context) {
+            if(!List.of("memory","redis").contains(kind))throw new IllegalArgumentException("Unsupported queue fixture "+kind);
+            var delegate=context.getBean(kind.equals("redis")?"redissonBotTaskQueue":"botTaskQueue",BotScheduler.TaskQueue.class);
+            sampler.queueDelegateClass=delegate.getClass().getName();
             return new BotScheduler.TaskQueue() {
                 public void schedule(BotScheduler.BotTask task) { delegate.schedule(task); sampler.finish(task); }
                 public boolean scheduleIfAbsent(BotScheduler.BotTask task) {
@@ -79,13 +105,26 @@ public final class BotRuntimeBench {
         var app=new SpringApplication(com.ironoath.web.Application.class,ProbeConfig.class);
         var ctx=app.run(args); ObjectMapper mapper=ctx.getBean(ObjectMapper.class);
         Map<String,Object> result=new LinkedHashMap<>(); List<Map<String,Object>> phases=new ArrayList<>();
-        boolean passed=false;
+        boolean passed=false;var transport=ctx.getBean(MongoTransportOwner.class);
         try {
             var init=ctx.getBean(PlayerInitService.class);var time=ctx.getBean(TimeService.class);
             var registry=ctx.getBean(BotRegistry.class);var players=ctx.getBean(PlayerRepository.class);
             var world=ctx.getBean(WorldRepository.class);var rules=ctx.getBean(BotRulesAssembler.class);
             var runtime=ctx.getBean(BotRuntimeService.class);var queue=ctx.getBean(BotScheduler.TaskQueue.class);
             var config=ctx.getBean(com.ironoath.config.ConfigRegistry.class);
+            String storage=ctx.getEnvironment().getProperty("ironoath.storage","memory");
+            if(storage.equals("mongo")) {
+                String db=ctx.getBean(org.springframework.data.mongodb.core.MongoTemplate.class).getDb().getName();
+                if(!db.equals(System.getenv("BOT_BENCH_DATABASE")) || !db.startsWith("ironoath_bot_bench_"))
+                    throw new AssertionError("Only explicitly owned benchmark database");
+                result.put("database",db);
+            }
+            result.put("storageMode",storage);result.put("playerStoreClass",players.getClass().getName());
+            result.put("profileStoreClass",ctx.getBean(BotProfileStore.class).getClass().getName());
+            result.put("queueDelegateClass",sampler.queueDelegateClass);
+            result.put("playerLockClass",ctx.getBean(com.ironoath.core.lock.PlayerLock.class).getClass().getName());
+            result.put("mongoTransport",transport.mode);result.put("transportFixtureOverridesDefault",transport.group!=null);
+            Files.writeString(out.resolve("implementation.actual.json"),mapper.writeValueAsString(result),StandardCharsets.UTF_8);
             long roundTarget=config.longParam("BOT_FULL_ROUND_BUDGET_MS"),tickTarget=config.longParam("BOT_TICK_BUDGET_MS");
             long seededAt=time.serverNow(),seedStart=System.nanoTime();
             var human=init.init(new PlayerInitReq(UUID.randomUUID().toString(),"bench-human-"+UUID.randomUUID(),"性能真人",seededAt,"")).playerId();
@@ -109,7 +148,7 @@ public final class BotRuntimeBench {
             result.put("availableProcessors",Runtime.getRuntime().availableProcessors());result.put("maxHeapBytes",Runtime.getRuntime().maxMemory());
             result.put("businessTime",seededAt);result.put("fixedBusinessTime",System.getenv("BOT_BENCH_BUSINESS_NOW")!=null);
             result.put("thresholds",Map.of("fullRoundMillis",roundTarget,"singleTickP99Millis",tickTarget));
-            result.put("fixtureBoundary","5000新身份/规则六原型/全员活跃和到期时间为显式压力输入；可控业务时钟避免不同墙钟耗时造成升级自然完工差异，计时及生产调度预算仍真实System.nanoTime；真实Runtime/World/内存Queue及玩家service；逐tick时间含profile到真实重新排期、另计全Runtime冷登记/校准与队列开销。不是Mongo/Redis、5000在线玩家或战斗峰值报告。");
+            result.put("fixtureBoundary","5000新身份/规则六原型/全员活跃和到期时间为显式压力输入；可控业务时钟避免不同墙钟耗时造成升级自然完工差异，计时及生产调度预算仍真实System.nanoTime；真实Runtime/World/声明的生产Queue及玩家service，存储/锁/队列实现类和Mongo命名空间单独读回；逐tick时间含profile到真实重新排期、另计全Runtime冷登记/校准与队列开销。不是5000在线玩家或战斗峰值报告。");
             Map<String,Long> lastReport=null;
             for(int phase=0;phase<3;phase++) {
                 long now=time.serverNow();
@@ -161,7 +200,9 @@ public final class BotRuntimeBench {
             result.put("error",Map.of("type",error.getClass().getName(),"message",Objects.toString(error.getMessage(),"")));
             error.printStackTrace();
         } finally {
-            result.put("phases",phases);result.put("passed",passed);ctx.close();result.put("contextClosed",true);
+            result.put("phases",phases);ctx.close();result.put("contextClosed",true);
+            result.put("transportEventLoopTerminated",transport.terminated());if(!transport.terminated())passed=false;
+            result.put("passed",passed);
             Files.writeString(out.resolve("result.actual.json"),mapper.writeValueAsString(result),StandardCharsets.UTF_8);
         }
         if(!passed)System.exit(1);
