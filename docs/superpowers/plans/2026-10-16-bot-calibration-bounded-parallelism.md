@@ -4,11 +4,11 @@
 
 **Goal:** 只让不同玩家的每日校准任务有界并发，保真实玩家锁、持久完成标记及失败重试，测量冷轮收益而不承诺完整5000预算通过。
 
-**Architecture:** 新增只负责有限批次执行与收口的 BotCalibrationBatch。Spring 管理路径默认4个 worker、上限8，兼容构造器与旧校准入口保持串行；Runtime 明确调用新并发入口。每任务继续执行原锁内 profile/player 重读及原 save；全部已派发任务结束后才回收或返回，失败停止继续派发，不取消正在写入的任务。
+**Architecture:** 新增只负责有限批次执行与收口的 BotCalibrationBatch。Spring 管理路径默认4个 worker、上限8，兼容构造器与旧校准入口保持串行；Runtime 明确调用新并发入口。只有PlayerRepository能证明不同原始锁键不会命中同一存档才并发，未知提供者和Mongo非simple/映射碰撞安全串行。每任务继续执行原锁内 profile/player 重读及原 save；全部已派发任务结束后才回收或返回，失败停止继续派发，不取消正在写入的任务。
 
 **Tech Stack:** Java 17、项目现有 Spring Boot/Mongo/Redisson、JDK ExecutorCompletionService；不增加依赖。
 
-**Spec:** `待完善收口_VibeCoding开发包.md` §四 #1378、`AGENTS.md`、`tmp/persistent-budget-resume-20261015/command-window-audit.actual.json`。本计划只改变校准执行方式，不实施 lazy-decision 提案。
+**Spec:** `待完善收口_VibeCoding开发包.md` §四 #1378/#1379、`AGENTS.md`、`tmp/persistent-budget-resume-20261015/command-window-audit.actual.json`和真实BSON `calibration-alias-valid-red-report.xml`。本计划只改变校准执行方式，不实施 lazy-decision 提案；7a普通队列证据不覆盖新发现的别名反例。
 
 ## Global Constraints
 
@@ -24,12 +24,12 @@
 1. 一项已写入但回执失败，其他工作仍在进行：先收口已派发任务，再抛原cause；保完成标记，重试不重复改成功者。
 2. 等待线程被中断：停止继续派发，所有已派发写入完成后恢复中断标志并报告失败，不留下后台写入或提前回收。
 3. Spring事务/同步/绑定资源与旧重入调用：回退同线程；旧calibrate及calibrateIfNewDay保持串行，不把原有重入迁往新线程。
-4. 当前生产接点：Spring真实Runtime实际走新入口，所有 worker仍持真实玩家锁并锁内重读；mock/兼容构造器串行不能替代该证据。
+4. 当前生产接点和寻址别名：Spring真实Runtime实际走新入口，所有 worker仍持真实玩家锁并锁内重读；不同字符串可能由QueryMapper或collation命中同一玩家，必须拒绝这种并发，未知能力默认串行，不猜ID格式或缓存身份。
 5. 生命周期和失败边界：最多配置数量的在途任务，首个观察到的失败后不再派发；已派发全部结束且线程退出后才返回，回收只在全成功后发生。
 
 ---
 
-### Task 1: 钉住当前生产入口串行与需要保留的状态语义
+### Task 1: 校准有界并发的完整TDD与真实交付
 
 **Files:** Create `server/game-web/src/test/java/com/ironoath/web/BotCalibrationParallelTest.java`。
 
@@ -39,9 +39,9 @@
 - [ ] 同类覆盖`ackFailureDrainsWorkersAndRetryUsesPersistedMarkers`：一个真实save之后抛同一个受控异常，另一个工作阻塞；不得提前返回或设置日扫描完成，放行后才能抛cause；同日重试确认已完成者不再save。
 - [ ] 运行并归档有效XML：`mvn -f server/pom.xml -pl game-web -am test -Dtest=BotCalibrationParallelTest -Dsurefire.failIfNoSpecifiedTests=false -DskipTests=false`，保非零功能失败及零errors/skips，编译失败不能计首红。
 
-### Task 2: 有界批次与校准生产接线
+#### 阶段二：有界批次与校准生产接线
 
-**Files:** Create `server/game-web/src/main/java/com/ironoath/web/bot/BotCalibrationBatch.java`、`server/game-web/src/test/java/com/ironoath/web/bot/BotCalibrationBatchTest.java`；Modify `server/game-web/src/main/java/com/ironoath/web/bot/BotCalibrationService.java`、`server/game-web/src/main/java/com/ironoath/web/bot/BotRuntimeService.java`。
+**Files:** Create `server/game-web/src/main/java/com/ironoath/web/bot/BotCalibrationBatch.java`、`server/game-web/src/test/java/com/ironoath/web/bot/BotCalibrationBatchTest.java`、`server/game-web/src/test/java/com/ironoath/web/store/BotCalibrationAliasSafetyTest.java`、`server/game-web/src/test/java/com/ironoath/web/store/PlayerLockAddressingTest.java`；Modify `server/game-web/src/main/java/com/ironoath/web/bot/BotCalibrationService.java`、`server/game-web/src/main/java/com/ironoath/web/bot/BotRuntimeService.java`、`server/game-core/src/main/java/com/ironoath/core/player/PlayerRepository.java`、`server/game-web/src/main/java/com/ironoath/web/store/memory/InMemoryPlayerStore.java`、`server/game-web/src/main/java/com/ironoath/web/store/mongo/MongoPlayerStore.java`。
 
 **Interfaces:**
 
@@ -49,6 +49,8 @@
 - `<T> List<T> run(List<String> ids, Function<String,T> task, boolean parallelAllowed)`：返回顺序与输入一致；false、workers=1、单任务或线程绑定Spring资源时同线程执行。
 - BotCalibrationService保五参兼容构造器，新增Spring显式注入batch构造器；旧`calibrate(long)`/`calibrateIfNewDay(long)`保持串行。新`calibrateInParallelIfNewDay(long)`复用同一synchronized日门与原校准逻辑，供已审核的Runtime顶层使用。
 - Runtime只将当前`calibration.calibrateIfNewDay(now)`接至新入口；其它时序、输入和body不改。
+- `PlayerRepository.supportsIndependentPlayerLocks(Collection<String>)`保守default=false；Memory按精确字符串key证明，Mongo只在标准Codec、无实体collation覆盖、每批实际collection simple以及实际point QueryMapper结果可辨认且不同原键不碰撞时true。相同原键重复可由同一真实锁序列化；未知/非simple/metadata13返回false，其它连接/转换/未知错误传播。判断不读写玩家业务数据或缓存身份/metadata，不保证并发DDL原子性。
+- `BotCalibrationBatch.canDispatchInParallel(int)`包内上下文预检与run复用；校准只有其为true且provider独立性为true才用并发，旧入口/事务/单任务/预置中断不新增优化metadata访问。
 
 - [ ] 先以串行stub建立接口并写helper有效行为测试，再实现并发，避免将编译错误当并发首红。
 - [ ] 用CompletionService滑窗派发，最多workers个在途任务；按完成事件观察失败并停止新派发，仍收完当前在途工作；结果按原输入索引保存。
@@ -56,9 +58,10 @@
 - [ ] 每次run只创建本次executor，finally关闭并等待退出；不保存可逃逸Future或常驻线程池。不在worker调用recycle或写lastCalibratedDay。
 - [ ] helper测试覆盖有界重叠/有序结果、首失败停止派发并drain、原cause、提交拒绝后drain、中断后drain并恢复标志、显式串行与Spring绑定资源回退、所有实际worker线程在返回后退出。
 - [ ] 校准集成测试证明每个worker仍走真实InJvm/Redisson锁接口和锁内权威读取；回收在全部成功之后，失败不回收；旧入口在调用方持本玩家锁时继续同线程。
+- [ ] 别名真实Mongo首红2run1fail/0errskip必须转绿且旧串行control不变；新增provider normal/simple正例、ObjectId大小写碰撞、同键重复、非simple与metadata重读、确定性converter碰撞、metadata13与其它错误传播，未知provider串行。禁止吞CAS或改锁键来躲过反例。
 - [ ] 运行新测试及既有BotCalibrationTest、BotCalibrationStorageEquivalenceTest、BotRuntime相关测试，确认非零执行且零fail/error/skip；审查生产接点和线程上下文边界。
 
-### Task 3: 冻结、实际对照与交付
+#### 阶段三：冻结、实际对照与交付
 
 **Files:** 上述源码/测试；既有四份交付文档和本计划状态。
 
