@@ -7642,3 +7642,5 @@ TEST_EXIT=0
 | B25 原生补兵接续 #1352 | 本地原子提交，明确三台账路径，未推送 | AST真实守卫8通过0失败；独立复审P2关闭；当前R18完整343输入匹配 | tmp/auto-refill-native-resumed-20261015/full-tree-guard-check.actual.json；read-native-uid.py；prepare-r18-candidate.py | 一次R18 fullMode开窗许可待答复；原生UID、候选切换刷新及原号真实损耗补差未验；SDK已通，原9490与账号进度保留 |
 
 | B25 原号运行保护 #1353 | 三台账明确路径本地原子提交，未推送 | 原JAR+45cfg全树0漂移；同UID主9营6；GET city两次/army各200 code0；1x观测0.950844；独立owner复核无阻断 | D:/tmp/ironoath-power-recovery-20261015/attempt2-reboot/preflight.actual.json、http-recovery.actual.json、canonical-owner-binding.actual.json | OS重启后微信已退出，待一次启动开窗许可；原生实际UID与补差流程未验；Mongo备份完整不代恢复演练，原服务21756保持不作fixture清理 |
+
+| B25 原生同号候选切换 #1354 | 三台账明确路径本地原子提交，未推 | 原生UID/9490/WECHAT_GAME切换前后同号；343树各匹配；一bundle变/0增删/两cfg字节同；独立复审无阻断 | tmp/auto-refill-native-resumed-20261015/uid-r18B25Refreshed.actual.json、accepted-r18-b25-applied-inputs.actual.json | 新按钮已实际可见，T2训练1已真触摸排入67秒队列；NPC损耗及目标补差费用启停仍待验，原服保持/开窗许可仅本次 |
