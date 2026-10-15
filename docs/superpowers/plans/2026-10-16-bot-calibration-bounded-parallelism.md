@@ -49,7 +49,7 @@
 - `<T> List<T> run(List<String> ids, Function<String,T> task, boolean parallelAllowed)`：返回顺序与输入一致；false、workers=1、单任务或线程绑定Spring资源时同线程执行。
 - BotCalibrationService保五参兼容构造器，新增Spring显式注入batch构造器；旧`calibrate(long)`/`calibrateIfNewDay(long)`保持串行。新`calibrateInParallelIfNewDay(long)`复用同一synchronized日门与原校准逻辑，供已审核的Runtime顶层使用。
 - Runtime只将当前`calibration.calibrateIfNewDay(now)`接至新入口；其它时序、输入和body不改。
-- `PlayerRepository.supportsIndependentPlayerLocks(Collection<String>)`保守default=false；Memory按精确字符串key证明，Mongo只在标准Codec、无实体collation覆盖、每批实际collection simple以及实际point QueryMapper结果可辨认且不同原键不碰撞时true。相同原键重复可由同一真实锁序列化；未知/非simple/metadata13返回false，其它连接/转换/未知错误传播。判断不读写玩家业务数据或缓存身份/metadata，不保证并发DDL原子性。
+- `PlayerRepository.supportsIndependentPlayerLocks(Collection<String>)`保守default=false；Memory按精确字符串key证明，Mongo只在标准Codec、无实体collation覆盖、每批实际collection simple以及实际point QueryMapper经实际collection Codec编码的最终BSON键可辨认且不同原键不碰撞时true。只比较外层Codec类名不够：DocumentCodec内部可使用另一registry改写String，专项ADDR-1要求真实反例先红。相同原键重复可由同一真实锁序列化；未知/非simple/metadata13返回false，其它连接/转换/未知错误传播。判断不读写玩家业务数据或缓存身份/metadata，不保证并发DDL原子性；配置的身份寻址规则须在批次内稳定，不能将任意有状态或按线程改写的转换器视为已证明独立。
 - `BotCalibrationBatch.canDispatchInParallel(int)`包内上下文预检与run复用；校准只有其为true且provider独立性为true才用并发，旧入口/事务/单任务/预置中断不新增优化metadata访问。
 
 - [ ] 先以串行stub建立接口并写helper有效行为测试，再实现并发，避免将编译错误当并发首红。
