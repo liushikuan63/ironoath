@@ -69,11 +69,12 @@ public final class RedissonPlayerLock implements PlayerLock {
         try {
             return action.get();
         } finally {
-            // 只有当前线程仍持有锁时才解锁：租期意外失效后锁可能已属于别人，
-            // 此时解锁会释放别人的锁，导致第三方请求也进来
-            if (lock.isHeldByCurrentThread()) {
+            // Redisson 的 unlock Lua 在改重入计数前原子校验 node/thread owner，
+            // 无需先做一次独立的 HEXISTS；丢锁时不会释放其它 owner 的锁。
+            try {
                 lock.unlock();
-            } else {
+            } catch (IllegalMonitorStateException lostOwnership) {
+                // 只处理释放自身的丢锁：action 的异常及其它 Redis 故障仍向外传播。
                 LOG.error("玩家锁在业务执行期间丢失（看门狗续期失败或 Redis 抖动）playerId={}，"
                         + "本次写入可能与其它请求冲突，请检查乐观锁是否兜住", playerId);
             }
