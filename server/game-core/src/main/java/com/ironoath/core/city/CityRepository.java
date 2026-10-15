@@ -15,6 +15,14 @@ public interface CityRepository {
     /** 取某玩家的城建存档。新号返回 empty，由应用层负责初始化。 */
     Optional<CityState> findByPlayerId(String playerId);
 
+    /** 调用方拥有状态副本；版本必须与状态来自同一次读取，不能另查 versionOf 后拼接。 */
+    record VersionedCity(CityState state, long version) {
+        public VersionedCity { java.util.Objects.requireNonNull(state, "城建状态不得为 null"); }
+    }
+
+    /** 原子读取用于修改的状态与CAS版本；新号返回empty。实现不得用两次独立读取拼接。 */
+    Optional<VersionedCity> findVersionedByPlayerId(String playerId);
+
     /**
      * 首次创建城建存档。
      *

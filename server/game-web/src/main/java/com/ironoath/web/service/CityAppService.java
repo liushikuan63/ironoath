@@ -306,8 +306,9 @@ public class CityAppService {
     private Ctx load(String playerId, long now) {
         PlayerSave player = requirePlayer(playerId);
         CityRules rules = cityRules(player, now);
-        CityState city = loadOrCreateCity(playerId, rules, now);
-        long cityVersion = cities.versionOf(playerId);
+        CityRepository.VersionedCity loaded = loadOrCreateCity(playerId, rules, now);
+        CityState city = loaded.state();
+        long cityVersion = loaded.version();
         ResourceRateService.Settlement settlement = resourceRates.settle(player, city, now);
         syncMainCityLevel(player, city);
         player.recordProducedOutput(settlement.credited());
@@ -358,8 +359,8 @@ public class CityAppService {
     }
 
     /** 取或创建城建存档。新号在中心格放一个 1 级主城。 */
-    private CityState loadOrCreateCity(String playerId, CityRules rules, long now) {
-        var existing = cities.findByPlayerId(playerId);
+    private CityRepository.VersionedCity loadOrCreateCity(String playerId, CityRules rules, long now) {
+        var existing = cities.findVersionedByPlayerId(playerId);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -378,7 +379,7 @@ public class CityAppService {
             throw new IllegalStateException("main_city 的配置类型应为 CORE，实际=" + mainCity.type());
         }
         cities.insertIfAbsent(playerId, fresh);
-        return cities.findByPlayerId(playerId)
+        return cities.findVersionedByPlayerId(playerId)
                 .orElseThrow(() -> new BizException(ErrorCode.SYSTEM_ERROR, "城建存档创建后立即读不到"));
     }
 

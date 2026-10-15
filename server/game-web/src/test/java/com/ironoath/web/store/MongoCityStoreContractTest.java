@@ -62,9 +62,9 @@ class MongoCityStoreContractTest extends VersionedStoreContractTest<CityState> {
     }
 
     @Override protected StoreHandle<CityState> read() {
-        CityState state = store.findByPlayerId(playerId).orElseThrow(
+        var loaded = store.findVersionedByPlayerId(playerId).orElseThrow(
                 () -> new AssertionError("契约前提被破坏：插入之后读不到城建存档"));
-        return new StoreHandle<>(state, store.versionOf(playerId));
+        return new StoreHandle<>(loaded.state(), loaded.version());
     }
 
     @Override protected long observe(CityState state) {

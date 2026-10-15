@@ -24,9 +24,9 @@ class CityStoreContractTest extends VersionedStoreContractTest<CityState> {
     }
 
     @Override protected StoreHandle<CityState> read() {
-        CityState state = store.findByPlayerId(PLAYER).orElseThrow(
+        var loaded = store.findVersionedByPlayerId(PLAYER).orElseThrow(
                 () -> new AssertionError("契约前提被破坏：插入之后读不到城建存档"));
-        return new StoreHandle<>(state, store.versionOf(PLAYER));
+        return new StoreHandle<>(loaded.state(), loaded.version());
     }
 
     @Override protected long observe(CityState state) {

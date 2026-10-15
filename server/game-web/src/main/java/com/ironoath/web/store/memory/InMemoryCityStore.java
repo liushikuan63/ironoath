@@ -37,6 +37,13 @@ public final class InMemoryCityStore implements CityRepository {
     }
 
     @Override
+    public Optional<VersionedCity> findVersionedByPlayerId(String playerId) {
+        // Entry及其私有状态只会整体替换；同一引用的状态副本与version始终属于同一版。
+        Entry entry = playerId == null ? null : byPlayer.get(playerId);
+        return entry == null ? Optional.empty() : Optional.of(new VersionedCity(copyOf(entry.state), entry.version));
+    }
+
+    @Override
     public boolean insertIfAbsent(String playerId, CityState state) {
         if (playerId == null || playerId.isBlank()) {
             throw new IllegalArgumentException("playerId 不得为空");

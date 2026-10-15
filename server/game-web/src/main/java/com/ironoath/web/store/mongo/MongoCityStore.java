@@ -48,6 +48,13 @@ public final class MongoCityStore implements CityRepository {
     }
 
     @Override
+    public Optional<VersionedCity> findVersionedByPlayerId(String playerId) {
+        if (playerId == null) return Optional.empty();
+        CityDocument doc = mongo.findById(playerId, CityDocument.class, CityDocument.COLLECTION);
+        return doc == null ? Optional.empty() : Optional.of(new VersionedCity(doc.toDomain(), doc.version()));
+    }
+
+    @Override
     public boolean insertIfAbsent(String playerId, CityState state) {
         if (playerId == null || playerId.isBlank()) {
             throw new IllegalArgumentException("playerId 不得为空");
