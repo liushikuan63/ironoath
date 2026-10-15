@@ -44,6 +44,68 @@ public final class MongoPlayerStore implements PlayerRepository {
     }
 
     @Override
+    public boolean supportsIndependentPlayerLocks(Collection<String> playerIds) {
+        if (playerIds == null || playerIds.stream().anyMatch(id -> id == null || id.isBlank())) return false;
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()
+                || org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
+                || !org.springframework.transaction.support.TransactionSynchronizationManager.getResourceMap().isEmpty()
+                || org.springframework.data.mongodb.MongoDatabaseUtils.isTransactionActive(mongo.getMongoDatabaseFactory())) return false;
+        var annotation = PlayerDocument.class.getAnnotation(org.springframework.data.mongodb.core.mapping.Document.class);
+        if (annotation != null && !annotation.collation().isBlank()) return false;
+        var converter = mongo.getConverter();
+        if (converter.getClass() != org.springframework.data.mongodb.core.convert.MappingMongoConverter.class) return false;
+        var entity = converter.getMappingContext().getRequiredPersistentEntity(PlayerDocument.class);
+        if (converter.getCustomConversions().hasValueConverter(entity.getIdProperty())
+                || converter.getCustomConversions().hasCustomWriteTarget(String.class)) return false;
+        // Unknown codecs may rewrite otherwise distinct mapped keys. Do not guess their equality rules.
+        var codecs = mongo.getCollection(PlayerDocument.COLLECTION).getCodecRegistry();
+        try {
+            if (codecs.get(org.bson.Document.class).getClass() != org.bson.codecs.DocumentCodec.class
+                    || codecs.get(String.class).getClass() != org.bson.codecs.StringCodec.class
+                    || codecs.get(org.bson.types.ObjectId.class).getClass() != org.bson.codecs.ObjectIdCodec.class) return false;
+        } catch (org.bson.codecs.configuration.CodecConfigurationException unknown) { return false; }
+        // No identity/metadata cache: collection collation may change between batches.
+        org.bson.Document metadata;
+        try {
+            metadata = mongo.getDb().listCollections().filter(new org.bson.Document("name", PlayerDocument.COLLECTION)).first();
+        } catch (com.mongodb.MongoCommandException failure) {
+            if (failure.getErrorCode() == 13) return false;
+            throw failure;
+        }
+        if (metadata == null || !PlayerDocument.COLLECTION.equals(metadata.get("name"))
+                || !"collection".equals(metadata.get("type"))
+                || !(metadata.get("options") instanceof org.bson.Document options)) return false;
+        if (options.containsKey("collation") && (!(options.get("collation") instanceof org.bson.Document collation)
+                || !"simple".equals(collation.get("locale")))) return false;
+        var mapper = new org.springframework.data.mongodb.core.convert.QueryMapper(converter);
+        Map<Object, String> owners = new LinkedHashMap<>();
+        for (String raw : new LinkedHashSet<>(playerIds)) {
+            var mapped = mapper.getMappedObject(Query.query(Criteria.where("_id").is(raw)).getQueryObject(), entity);
+            Object key = mapped.get("_id");
+            if (key instanceof String text) {
+                if (!java.nio.charset.StandardCharsets.UTF_8.newEncoder().canEncode(text)) return false;
+            } else if (!(key instanceof org.bson.types.ObjectId)) return false;
+            // DocumentCodec may use its own inner registry. Class names alone do not prove wire identity.
+            var logical = mapped.toBsonDocument(org.bson.Document.class, codecs).get("_id");
+            if (!supportedKey(logical)) return false;
+            org.bson.BsonValue physical;
+            try (var bytes = new org.bson.io.BasicOutputBuffer(); var writer = new org.bson.BsonBinaryWriter(bytes)) {
+                codecs.get(org.bson.Document.class).encode(writer, mapped, org.bson.codecs.EncoderContext.builder().build());
+                physical = new org.bson.RawBsonDocument(bytes.toByteArray()).get("_id");
+            }
+            if (!supportedKey(physical)) return false;
+            String previous = owners.putIfAbsent(physical, raw);
+            if (previous != null && !previous.equals(raw)) return false;
+        }
+        return true;
+    }
+
+    private static boolean supportedKey(org.bson.BsonValue key) {
+        return key != null && (key.isObjectId() || (key.isString()
+                && java.nio.charset.StandardCharsets.UTF_8.newEncoder().canEncode(key.asString().getValue())));
+    }
+
+    @Override
     public Optional<PlayerSave> findByPlayerId(String playerId) {
         if (playerId == null) {
             return Optional.empty();

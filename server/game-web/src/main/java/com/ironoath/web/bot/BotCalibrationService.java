@@ -53,6 +53,7 @@ public class BotCalibrationService {
     private final PlayerRepository players;
     private final BotSpawnService spawner;
     private final com.ironoath.core.lock.PlayerLock playerLock;
+    private final BotCalibrationBatch batch;
     /**
      * 回收时撤销排期的窄口。<b>由运行时在装配期回填</b>：校准服务要"撤销排期"这个能力，
      * 而那个能力在运行时手里 —— 构造互相注入会形成 {@code runtime ↔ calibration} 的环
@@ -76,11 +77,19 @@ public class BotCalibrationService {
     public BotCalibrationService(BotRegistry registry, BotRulesAssembler assembler,
                                  PlayerRepository players, BotSpawnService spawner,
                                  com.ironoath.core.lock.PlayerLock playerLock) {
+        this(registry,assembler,players,spawner,playerLock,new BotCalibrationBatch(1));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BotCalibrationService(BotRegistry registry, BotRulesAssembler assembler,
+                                 PlayerRepository players, BotSpawnService spawner,
+                                 com.ironoath.core.lock.PlayerLock playerLock,BotCalibrationBatch batch) {
         this.registry = registry;
         this.assembler = assembler;
         this.players = players;
         this.spawner = spawner;
         this.playerLock = playerLock;
+        this.batch = java.util.Objects.requireNonNull(batch);
     }
 
     /** 由运行时在装配期注册"撤销排期"的能力（见字段注释：方向只能从运行时指向校准）。 */
@@ -94,11 +103,20 @@ public class BotCalibrationService {
      * @return 这一轮是否真的做了校准（诊断与用例断言用）
      */
     public synchronized boolean calibrateIfNewDay(long now) {
+        return calibrateDay(now,false);
+    }
+
+    /** 只供Runtime顶层使用；不得从持玩家锁的回调调用。旧公开入口仍在调用线程串行。 */
+    public synchronized boolean calibrateInParallelIfNewDay(long now) {
+        return calibrateDay(now,true);
+    }
+
+    private boolean calibrateDay(long now,boolean parallelAllowed) {
         String today = DayKey.of(now);
         if (today.equals(lastCalibratedDay)) {
             return false;
         }
-        calibrate(now);
+        calibrate(now,parallelAllowed);
         lastCalibratedDay = today;
         return true;
     }
@@ -110,6 +128,10 @@ public class BotCalibrationService {
      * 于是"回收谁"这件事用的是同一份新鲜数据，不会出现"用昨天的战力决定今天的去留"。
      */
     public void calibrate(long now) {
+        calibrate(now,false);
+    }
+
+    private void calibrate(long now,boolean parallelAllowed) {
         List<String> botIds = new ArrayList<>(registry.botIds());
         if (botIds.isEmpty()) {
             return;
@@ -118,10 +140,12 @@ public class BotCalibrationService {
         BotTuning tuning = new BotTuning(assembler.tuningRules());
         int recalibrated = 0;
         int touched = 0;
-        for (String botId : botIds) {
-            // 与真人服务共用玩家锁；跨实例必须在锁内重读，不能拿锁外旧版本写回。
-            CalibrationResult result = playerLock.runLocked(botId, LOCK_TIMEOUT_MS,
-                    () -> calibrateBot(botId, tuning, humanAverage, now));
+        // 每个worker仍独立获取真实玩家锁，并在锁内重新读取权威档；所有已派发写入收口后才回收。
+        boolean independent=parallelAllowed && batch.canDispatchInParallel(botIds.size())
+                && players.supportsIndependentPlayerLocks(botIds);
+        List<CalibrationResult> results=batch.run(botIds,botId->playerLock.runLocked(botId,LOCK_TIMEOUT_MS,
+                ()->calibrateBot(botId,tuning,humanAverage,now)),independent);
+        for (CalibrationResult result : results) {
             if (result.recalibrated()) { recalibrated++; }
             if (result.touched()) { touched++; }
         }

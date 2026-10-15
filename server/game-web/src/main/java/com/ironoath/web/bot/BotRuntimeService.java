@@ -146,7 +146,7 @@ public class BotRuntimeService implements BotCalibrationService.BotSchedulerAcce
         attackLimiter.evict(now);
         // 每天第一轮 tick 顺带做一次全量校准（战力滞后跟随真人均值 + 刷新活跃时间 + 超限回收）。
         // 放在 processDue 之前：让这一轮的决策跑在刚校准过的战力上，而不是拿昨天的战力做今天的判断
-        calibration.calibrateIfNewDay(now);
+        calibration.calibrateInParallelIfNewDay(now);
         long start = System.nanoTime();
         int processed = scheduler.processDue(now);
         rounds.incrementAndGet();

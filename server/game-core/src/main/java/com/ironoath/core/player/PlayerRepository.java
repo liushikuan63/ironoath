@@ -18,6 +18,18 @@ import java.util.OptionalLong;
  */
 public interface PlayerRepository {
 
+    /**
+     * Whether different raw player-lock keys in this batch address independent physical saves.
+     * Repeated identical keys remain protected by the same lock. Unknown adapters must stay serial.
+     * This is a concurrency capability check, never an authorization or existence check.
+     * Supported identity rules must produce the same address across caller/worker threads and
+     * probe/actual query encoding contexts for the entire batch. Runtime mapping/DDL changes
+     * and context-dependent identity rules cannot be certified by this point-in-time probe.
+     */
+    default boolean supportsIndependentPlayerLocks(Collection<String> playerIds) {
+        return false;
+    }
+
     /** 按玩家 id 查存档。 */
     Optional<PlayerSave> findByPlayerId(String playerId);
 

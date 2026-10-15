@@ -32,6 +32,11 @@ public final class InMemoryPlayerStore implements PlayerRepository {
     private final Map<String, String> deviceIdToPlayerId = new ConcurrentHashMap<>();
 
     @Override
+    public boolean supportsIndependentPlayerLocks(Collection<String> playerIds) {
+        return playerIds != null && playerIds.stream().allMatch(id -> id != null && !id.isBlank());
+    }
+
+    @Override
     public Optional<PlayerSave> findByPlayerId(String playerId) {
         if (playerId == null) {
             return Optional.empty();

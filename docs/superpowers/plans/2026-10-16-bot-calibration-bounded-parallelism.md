@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 17、项目现有 Spring Boot/Mongo/Redisson、JDK ExecutorCompletionService；不增加依赖。
 
-**Spec:** `待完善收口_VibeCoding开发包.md` §四 #1378/#1379、`AGENTS.md`、`tmp/persistent-budget-resume-20261015/command-window-audit.actual.json`和真实BSON `calibration-alias-valid-red-report.xml`。本计划只改变校准执行方式，不实施 lazy-decision 提案；7a普通队列证据不覆盖新发现的别名反例。
+**Spec:** `待完善收口_VibeCoding开发包.md` §四 #1378/#1379/#1380/#1381、`AGENTS.md`、`tmp/persistent-budget-resume-20261015/command-window-audit.actual.json`和真实BSON `calibration-alias-valid-red-report.xml`。本计划只改变校准执行方式，不实施 lazy-decision 提案；7a普通队列证据不覆盖新发现的别名反例。
 
 ## Global Constraints
 
@@ -35,9 +35,9 @@
 
 **Interfaces:** 只消费现有 `BotRuntimeService.tick(long)`、BotRegistry、PlayerInitService、PlayerRepository和PlayerLock；首红不引用尚不存在的新API。
 
-- [ ] 写Spring memory实例测试 `runtimeCalibrationOverlapsDifferentPlayerWritesButReturnsAfterBoth`：配置`ironoath.bot.calibration-workers=2`，创建两名本测试Bot；在真实玩家save、且lastBotCalibrationAt等于本次now的窄钩子中，用有超时的latch记录重叠数及实际线程。原串行应表现maxActive=1，要求2产生功能首红；finally始终释放latch并回收本测试profile。
-- [ ] 同类覆盖`ackFailureDrainsWorkersAndRetryUsesPersistedMarkers`：一个真实save之后抛同一个受控异常，另一个工作阻塞；不得提前返回或设置日扫描完成，放行后才能抛cause；同日重试确认已完成者不再save。
-- [ ] 运行并归档有效XML：`mvn -f server/pom.xml -pl game-web -am test -Dtest=BotCalibrationParallelTest -Dsurefire.failIfNoSpecifiedTests=false -DskipTests=false`，保非零功能失败及零errors/skips，编译失败不能计首红。
+- [x] 写Spring memory实例测试 `runtimeCalibrationOverlapsDifferentPlayerWritesButReturnsAfterBoth`：配置`ironoath.bot.calibration-workers=2`，创建两名本测试Bot；在真实玩家save、且lastBotCalibrationAt等于本次now的窄钩子中，用有超时的latch记录重叠数及实际线程。原串行应表现maxActive=1，要求2产生功能首红；finally始终释放latch并回收本测试profile。
+- [x] 同类覆盖`ackFailureDrainsWorkersAndRetryUsesPersistedMarkers`：一个真实save之后抛同一个受控异常，另一个工作阻塞；不得提前返回或设置日扫描完成，放行后才能抛cause；同日重试确认已完成者不再save。
+- [x] 运行并归档有效XML：`mvn -f server/pom.xml -pl game-web -am test -Dtest=BotCalibrationParallelTest -Dsurefire.failIfNoSpecifiedTests=false -DskipTests=false`，保非零功能失败及零errors/skips，编译失败不能计首红。
 
 #### 阶段二：有界批次与校准生产接线
 
@@ -51,24 +51,30 @@
 - Runtime只将当前`calibration.calibrateIfNewDay(now)`接至新入口；其它时序、输入和body不改。
 - `PlayerRepository.supportsIndependentPlayerLocks(Collection<String>)`保守default=false；Memory按精确字符串key证明，Mongo只在标准Codec、无实体collation覆盖、每批实际collection simple以及实际point QueryMapper经实际collection Codec编码的最终BSON键可辨认且不同原键不碰撞时true。只比较外层Codec类名不够：DocumentCodec内部可使用另一registry改写String，专项ADDR-1要求真实反例先红。相同原键重复可由同一真实锁序列化；未知/非simple/metadata13返回false，其它连接/转换/未知错误传播。判断不读写玩家业务数据或缓存身份/metadata，不保证并发DDL原子性；配置的身份寻址规则须在批次内稳定，不能将任意有状态或按线程改写的转换器视为已证明独立。
 - `BotCalibrationBatch.canDispatchInParallel(int)`包内上下文预检与run复用；校准只有其为true且provider独立性为true才用并发，旧入口/事务/单任务/预置中断不新增优化metadata访问。
+- #1380后收紧：Mongo对非exact MappingMongoConverter、ID property value converter或String custom write target保守串行，不预执行未支持的自定义ID规则。默认映射后先检查实际DocumentCodec逻辑输出String的UTF8合法性，再以实际DocumentCodec+BsonBinaryWriter编码完整point filter、读取最终BSON键判重；允许标准DocumentCodec内部有不同registry，但不能仅凭外层类名证明地址。稳定身份寻址须覆盖caller/worker线程、预检/实际查询编码上下文，而不只是配置对象未替换；运行中DDL或任意上下文相关codec不属于本能力可证明范围。
 
-- [ ] 先以串行stub建立接口并写helper有效行为测试，再实现并发，避免将编译错误当并发首红。
-- [ ] 用CompletionService滑窗派发，最多workers个在途任务；按完成事件观察失败并停止新派发，仍收完当前在途工作；结果按原输入索引保存。
-- [ ] 多个失败按已派发的最小输入索引选择原RuntimeException/Error对象；提交拒绝同样先收口；等待中断不取消写入，收口并恢复标志，若无worker失败则抛带原InterruptedException的等待失败。
-- [ ] 每次run只创建本次executor，finally关闭并等待退出；不保存可逃逸Future或常驻线程池。不在worker调用recycle或写lastCalibratedDay。
-- [ ] helper测试覆盖有界重叠/有序结果、首失败停止派发并drain、原cause、提交拒绝后drain、中断后drain并恢复标志、显式串行与Spring绑定资源回退、所有实际worker线程在返回后退出。
-- [ ] 校准集成测试证明每个worker仍走真实InJvm/Redisson锁接口和锁内权威读取；回收在全部成功之后，失败不回收；旧入口在调用方持本玩家锁时继续同线程。
-- [ ] 别名真实Mongo首红2run1fail/0errskip必须转绿且旧串行control不变；新增provider normal/simple正例、ObjectId大小写碰撞、同键重复、非simple与metadata重读、确定性converter碰撞、metadata13与其它错误传播，未知provider串行。禁止吞CAS或改锁键来躲过反例。
-- [ ] 运行新测试及既有BotCalibrationTest、BotCalibrationStorageEquivalenceTest、BotRuntime相关测试，确认非零执行且零fail/error/skip；审查生产接点和线程上下文边界。
+- [x] 先以串行stub建立接口并写helper有效行为测试，再实现并发，避免将编译错误当并发首红。
+- [x] 用CompletionService滑窗派发，最多workers个在途任务；按完成事件观察失败并停止新派发，仍收完当前在途工作；结果按原输入索引保存。
+- [x] 多个失败按已派发的最小输入索引选择原RuntimeException/Error对象；提交拒绝同样先收口；等待中断不取消写入，收口并恢复标志，若无worker失败则抛带原InterruptedException的等待失败。
+- [x] 每次run只创建本次executor，finally关闭并等待退出；不保存可逃逸Future或常驻线程池。不在worker调用recycle或写lastCalibratedDay。
+- [x] helper测试覆盖有界重叠/有序结果、首失败停止派发并drain、原cause、提交拒绝后drain、中断后drain并恢复标志、显式串行与Spring绑定资源回退、所有实际worker线程在返回后退出。
+- [x] 校准集成测试证明每个worker仍走真实InJvm/Redisson锁接口和锁内权威读取；回收在全部成功之后，失败不回收；旧入口在调用方持本玩家锁时继续同线程。
+- [x] 别名真实Mongo首红2run1fail/0errskip必须转绿且旧串行control不变；新增provider normal/simple正例、ObjectId大小写碰撞、同键重复、非simple与metadata重读、确定性converter碰撞、metadata13与其它错误传播，未知provider串行。禁止吞CAS或改锁键来躲过反例。
+- [x] 运行新测试及既有BotCalibrationTest、BotCalibrationStorageEquivalenceTest、BotRuntime相关测试，确认非零执行且零fail/error/skip；审查生产接点和线程上下文边界。
 
 #### 阶段三：冻结、实际对照与交付
 
 **Files:** 上述源码/测试；既有四份交付文档和本计划状态。
 
-- [ ] 两类测试git add后冻结明确源码清单；独立源码审查。跑`build.sh`及`check.sh`，逐份读取本轮fresh XML与实际client/tools/gates计数，不引用预计测试数。
-- [ ] 冻结新JAR/46cfg及Batch/Calibration/Runtime和未变关键类SHA；以旧deb与新候选跑同195/fbe/606的新memory和真实Mongo+Redisson+Netty有界对照。所有owner cleanup真实全过。
-- [ ] 新Web完整构建，精确17FIRST首次全过、无跳过或前提不足；保原实例文件/进程归属。并发worker不存活、无脱离调用的写入须有实际证据。
-- [ ] 独立复算原始样本/实际实现与回读，只按实际完整性和预算判定；并发可能只改善冷校准，不直接宣称逐Bot P99达标。
-- [ ] 追加开发包§四、收口清单、验收矩阵、核心收口文档的真值与未做；最终差异独审后只提交明确路径，不推送。更新队列及本计划真实完成状态，继续未完成目标。
+- [x] 两类测试git add后冻结明确源码清单；独立源码审查。跑`build.sh`及`check.sh`，逐份读取本轮fresh XML与实际client/tools/gates计数，不引用预计测试数。
+- [x] 冻结新JAR/46cfg及Batch/Calibration/Runtime和未变关键类SHA；以旧deb与新候选跑同195/fbe/606的新memory和真实Mongo+Redisson+Netty有界对照。所有owner cleanup真实全过。
+- [x] 新Web完整构建，精确17FIRST首次全过、无跳过或前提不足；保原实例文件/进程归属。并发worker不存活、无脱离调用的写入须有实际证据。
+- [x] 独立复算原始样本/实际实现与回读，只按实际完整性和预算判定；并发可能只改善冷校准，不直接宣称逐Bot P99达标。
+- [x] 追加开发包§四、收口清单、验收矩阵、核心收口文档的真值与未做；将最终差异独审与显式15路径原子提交设为硬门；回执确认0阻断/最终SHA匹配才提交，不推送。实时状态以队列及提交回执为准，继续未完成目标。
 
 Self-review：覆盖目标与五项Review Focus，原入口/新入口和helper签名一致；没有任何放宽预算、并发调度或lazy业务跳过的任务。执行方式沿现有授权采用原生逐步实施和独立只读审查，不因技能默认交接模板再向用户请求重复批准。
+
+送审快照状态（2026-10-16，提交后的实时状态见队列及回执）：实现与运行验收完成；safe-review2六生产/四测试SHA冻结，88focused、296fresh2839server、1344client33工具47门、新337Web与17FIRST均过。新d2ce4fc8/46cfg与旧deb正式同195对照3766/2620，均partial预算false，单组不证稳定收益；ADDR-1专项4efa61aa已关闭。原完整fresh审查已0阻断；本次增量核验与原子提交尚待，以review-owned/calibration-safe-final-review.actual.json及calibration-safe-commit.actual.json真实回执为交付门；整体持久5000目标继续。
+
+
+终审补记：完整fresh审查07d024a1为0阻断；CAL-TEST-1/P3仅测试同步已修，final3再次296fresh2839/0/0/0与1344client33工具47门全0，重点88套件读数来自该fresh全量。运行六源码与d2ce/46cfg/337Web及17输入未变，因此保留既有真实运行证据，不伪称重跑。同一席位增量核验和原子提交仍为最后交付门：review-owned/calibration-safe-final-fixpass-review.actual.json与calibration-safe-commit.actual.json。两份旧cases索引见calibration-safe-junit-evidence-index.actual.json；新增fresh cases为calibration-safe-final3-cases.actual.json。
