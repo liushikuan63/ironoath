@@ -95,4 +95,22 @@ class RedissonBotTaskQueueTest {
         assertThatThrownBy(()->queue.dueBefore(100_000,1)).isInstanceOf(IllegalStateException.class);
         assertThat(queue.size()).isEqualTo(1);assertThat(client.getMap(key,StringCodec.INSTANCE).get("a")).isEqualTo("not-json");
     }
+    @Test void batchRoundTripPreservesReplacementsAndCompletePendingAcrossClients() {
+        queue.schedule(action("a",90_000));
+        var input=List.of(action("a",120_000),action("b",100_000),action("c",110_000));
+        assertThat(queue.scheduleAll(input)).isEmpty();assertThat(queue.size()).isEqualTo(3);
+        var other=connect();
+        try {
+            var peer=new RedissonBotTaskQueue(other,new ObjectMapper(),namespace);
+            assertThat(peer.dueBefore(110_000,50)).containsExactly(input.get(1),input.get(2));
+            assertThat(queue.dueBefore(120_000,50)).containsExactly(input.get(0));assertThat(queue.size()).isZero();
+        } finally {other.shutdown();}
+    }
+    @Test void invalidBatchCannotPartiallyOverwriteExistingRedisCursors() {
+        var original=action("a",90_000);queue.schedule(original);
+        assertThatThrownBy(()->queue.scheduleAll(List.of(action("b",100_000),action("b",110_000))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(queue.scheduleAll(List.of())).isEmpty();
+        assertThat(queue.dueBefore(120_000,50)).containsExactly(original);
+    }
 }

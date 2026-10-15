@@ -85,6 +85,31 @@ public final class BotScheduler {
         /** 替换该Bot当前游标；每Bot最多保留一份决定或延迟动作。 */
         void schedule(BotTask task);
 
+        /**
+         * 批量归还已领取但尚未处理的游标，返回本次未确认写入的原任务。
+         * RPC 失败可能已写入，返回项不等于确定未写入，也不提供执行去重账本。
+         * 有效输入的逐项失败必须继续处理其它项；成功前缀和后缀不得返回。
+         */
+        default List<BotTask> scheduleAll(List<BotTask> tasks) {
+            List<BotTask> input = checkedBatch(tasks);
+            var unconfirmed = new java.util.ArrayList<BotTask>();
+            for (BotTask task : input) {
+                try { schedule(task); }
+                catch (RuntimeException unavailable) { unconfirmed.add(task); }
+            }
+            return List.copyOf(unconfirmed);
+        }
+
+        /** 所有实现共享的前置校验：空批无写，重复身份或空项必须在任何写之前拒绝。 */
+        static List<BotTask> checkedBatch(List<BotTask> tasks) {
+            List<BotTask> input = List.copyOf(tasks);
+            var ids = new java.util.HashSet<String>();
+            for (BotTask task : input) {
+                if (!ids.add(task.botId())) throw new IllegalArgumentException("批任务不得重复botId");
+            }
+            return input;
+        }
+
         /** 首次排期；已存在该Bot游标时保留其原到期与pending，不因重启重新决定。 */
         boolean scheduleIfAbsent(BotTask task);
 
@@ -262,15 +287,17 @@ public final class BotScheduler {
         restoreRetained(startNanos);
         List<BotTask> due = queue.dueBefore(now, rules.dueBatchLimit());
         int processed = 0;
-        for (BotTask task : due) {
+        for (int index = 0; index < due.size(); index++) {
+            BotTask task = due.get(index);
             Progress progress = new Progress();
             try {
             if (overBudget(startNanos)) {
                 // 预算用完：剩下的待办已经被 dueBefore 摘出队列了，必须放回去，
                 // 否则它们会永久消失 —— 那几个 Bot 从此再也不动，而日志里一切正常
-                budgetHitCount++;
-                requeue(task);
-                continue;
+                List<BotTask> tail = List.copyOf(due.subList(index, due.size()));
+                budgetHitCount += tail.size();
+                returnUnprocessedTail(tail);
+                break;
             }
             handle(task, now,progress);
             processed++;
@@ -286,6 +313,25 @@ public final class BotScheduler {
             }
         }
         return processed;
+    }
+
+    private void returnUnprocessedTail(List<BotTask> tail) {
+        List<BotTask> unconfirmed;
+        try {
+            unconfirmed = List.copyOf(queue.scheduleAll(tail));
+            var input = new java.util.HashSet<>(tail);
+            if (!input.containsAll(unconfirmed)
+                    || new java.util.HashSet<>(unconfirmed).size() != unconfirmed.size()) {
+                throw new IllegalStateException("批任务确认包含未知或重复游标");
+            }
+        } catch (RuntimeException unavailable) {
+            // 实现意外抛错/确认无效：整尾尚无可靠确认，不能遗失已领取游标。
+            unconfirmed = tail;
+        }
+        for (BotTask task : unconfirmed) {
+            failedCount++;
+            recovery.retain(task);
+        }
     }
 
     private void restoreRetained(long startNanos) {

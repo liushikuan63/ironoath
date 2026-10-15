@@ -34,6 +34,13 @@ public final class RedissonBotTaskQueue implements BotScheduler.TaskQueue {
         end
         return out
         """;
+    private static final String WRITE_MANY="""
+        for i = 1, #ARGV, 3 do
+            redis.call('HSET', KEYS[2], ARGV[i], ARGV[i + 2])
+            redis.call('ZADD', KEYS[1], ARGV[i + 1], ARGV[i])
+        end
+        return #ARGV / 3
+        """;
     private static final String CLAIM="""
         local out = {}
         for i = 2, #ARGV, 2 do
@@ -82,6 +89,33 @@ public final class RedissonBotTaskQueue implements BotScheduler.TaskQueue {
     }
     @Override public void schedule(BotScheduler.BotTask task) { write(task,false); }
     @Override public boolean scheduleIfAbsent(BotScheduler.BotTask task) { return write(task,true); }
+
+    @Override public List<BotScheduler.BotTask> scheduleAll(List<BotScheduler.BotTask> tasks) {
+        List<BotScheduler.BotTask> input=BotScheduler.TaskQueue.checkedBatch(tasks);
+        var unconfirmed=new java.util.HashSet<BotScheduler.BotTask>();
+        List<BotScheduler.BotTask> encoded=new ArrayList<>();
+        List<Object> arguments=new ArrayList<>();
+        for(var task:input) {
+            try {
+                String body=mapper.writeValueAsString(new StoredTask(task.botId(),task.dueAt(),task.pending()));
+                arguments.add(task.botId());arguments.add(Long.toString(task.dueAt()));arguments.add(body);
+                encoded.add(task);
+            } catch(JsonProcessingException | RuntimeException failure) {
+                // 坏项不阻断已成功序列化的同批其它项；尚未发出任何Redis写。
+                unconfirmed.add(task);
+            }
+        }
+        if(!encoded.isEmpty()) {
+            try {
+                Number count=script.eval(RScript.Mode.READ_WRITE,WRITE_MANY,RScript.ReturnType.INTEGER,keys,arguments.toArray());
+                if(count==null || count.longValue()!=encoded.size())unconfirmed.addAll(encoded);
+            } catch(RuntimeException unavailable) {
+                // 回执丢失/脚本失败可能已经写入，不冒称回滚或exactly-once。
+                unconfirmed.addAll(encoded);
+            }
+        }
+        return input.stream().filter(unconfirmed::contains).toList();
+    }
 
     @Override public List<BotScheduler.BotTask> dueBefore(long now,int limit) {
         if(limit<=0) return List.of();

@@ -39,6 +39,13 @@ public final class BotRuntimeBench {
         Map<String, Long> starts = new HashMap<>(), samples = new LinkedHashMap<>();
         Map<String, BotScheduler.BotTask> latest = new HashMap<>();
         String queueDelegateClass;
+        String batchDelegateMethod;
+        long bulkCalls,bulkAcknowledged,bulkUnconfirmed,bulkFallbackCalls;
+        Map<String,Object> batchEvidence() {
+            return Map.of("delegateMethod",Objects.toString(batchDelegateMethod,"not-initialized"),
+                    "calls",bulkCalls,"acknowledgedTasks",bulkAcknowledged,
+                    "unconfirmedTasks",bulkUnconfirmed,"legacyFallbackCalls",bulkFallbackCalls);
+        }
         void begin() { enabled=true; eligible.clear(); starts.clear(); samples.clear(); }
         void batch(List<BotScheduler.BotTask> tasks) {
             eligible.clear(); starts.clear();
@@ -51,6 +58,71 @@ public final class BotRuntimeBench {
             if(enabled && started!=null && samples.putIfAbsent(task.botId(),System.nanoTime()-started)!=null)
                 throw new AssertionError("重复测量同一到期tick："+task.botId());
         }
+    }
+    /** Public signature is intentionally valid against both old and new TaskQueue interfaces. */
+    static final class MeasuredQueue implements BotScheduler.TaskQueue {
+        private final BotScheduler.TaskQueue delegate;
+        private final Sampler sample;
+        private final java.lang.reflect.Method bulkMethod;
+        MeasuredQueue(BotScheduler.TaskQueue delegate,Sampler sample) {
+            this.delegate=delegate;this.sample=sample;
+            java.lang.reflect.Method found;
+            try {found=BotScheduler.TaskQueue.class.getMethod("scheduleAll",List.class);}
+            catch(NoSuchMethodException oldInterface) {found=null;}
+            bulkMethod=found;
+            if(found==null)sample.batchDelegateMethod="old-interface-single-write-fallback";
+            else {
+                try {sample.batchDelegateMethod=delegate.getClass().getMethod("scheduleAll",List.class).getDeclaringClass().getName();}
+                catch(NoSuchMethodException invalidImplementation) {throw new IllegalStateException(invalidImplementation);}
+            }
+        }
+        public void schedule(BotScheduler.BotTask task) {delegate.schedule(task);sample.finish(task);}
+        public boolean scheduleIfAbsent(BotScheduler.BotTask task) {
+            boolean added=delegate.scheduleIfAbsent(task);if(added)sample.finish(task);return added;
+        }
+        // No @Override: old candidate jars do not declare this method.
+        public List<BotScheduler.BotTask> scheduleAll(List<BotScheduler.BotTask> tasks) {
+            List<BotScheduler.BotTask> input=List.copyOf(tasks);Set<String> ids=new HashSet<>();
+            for(var task:input)if(!ids.add(task.botId()))throw new IllegalArgumentException("Duplicate batch identity");
+            if(input.isEmpty())return List.of();
+            sample.bulkCalls++;
+            if(bulkMethod==null) {
+                sample.bulkFallbackCalls++;List<BotScheduler.BotTask> unconfirmed=new ArrayList<>();
+                for(var task:input) {
+                    try {delegate.schedule(task);}
+                    catch(RuntimeException unavailable) {unconfirmed.add(task);sample.bulkUnconfirmed++;continue;}
+                    sample.finish(task);sample.bulkAcknowledged++;
+                }
+                return List.copyOf(unconfirmed);
+            }
+            Set<BotScheduler.BotTask> unconfirmed=new HashSet<>();
+            try {
+                Object returned;
+                try {returned=bulkMethod.invoke(delegate,input);}
+                catch(java.lang.reflect.InvocationTargetException failure) {
+                    Throwable cause=failure.getCause();
+                    if(cause instanceof RuntimeException runtime)throw runtime;
+                    if(cause instanceof Error error)throw error;
+                    throw new IllegalStateException("Bulk delegate failed",cause);
+                } catch(IllegalAccessException failure) {throw new IllegalStateException("Bulk delegate inaccessible",failure);}
+                if(!(returned instanceof List<?> list))throw new IllegalStateException("Invalid bulk acknowledgement");
+                for(Object item:list) {
+                    if(!(item instanceof BotScheduler.BotTask task)||!input.contains(task)||!unconfirmed.add(task))
+                        throw new IllegalStateException("Unknown/duplicate bulk acknowledgement");
+                }
+            } catch(RuntimeException | Error unavailable) {
+                sample.bulkUnconfirmed+=input.size();
+                throw unavailable;
+            }
+            sample.bulkUnconfirmed+=unconfirmed.size();
+            for(var task:input)if(!unconfirmed.contains(task)) {sample.finish(task);sample.bulkAcknowledged++;}
+            return input.stream().filter(unconfirmed::contains).toList();
+        }
+        public List<BotScheduler.BotTask> dueBefore(long now,int limit) {
+            var tasks=delegate.dueBefore(now,limit);sample.batch(tasks);return tasks;
+        }
+        public void cancel(String id) {delegate.cancel(id);sample.latest.remove(id);}
+        public int size() {return delegate.size();}
     }
     @Configuration(proxyBeanMethods=false)
     static class ProbeConfig {
@@ -84,18 +156,7 @@ public final class BotRuntimeBench {
             if(!List.of("memory","redis").contains(kind))throw new IllegalArgumentException("Unsupported queue fixture "+kind);
             var delegate=context.getBean(kind.equals("redis")?"redissonBotTaskQueue":"botTaskQueue",BotScheduler.TaskQueue.class);
             sampler.queueDelegateClass=delegate.getClass().getName();
-            return new BotScheduler.TaskQueue() {
-                public void schedule(BotScheduler.BotTask task) { delegate.schedule(task); sampler.finish(task); }
-                public boolean scheduleIfAbsent(BotScheduler.BotTask task) {
-                    boolean added=delegate.scheduleIfAbsent(task);
-                    if(added) sampler.finish(task); return added;
-                }
-                public List<BotScheduler.BotTask> dueBefore(long now,int limit) {
-                    var tasks=delegate.dueBefore(now,limit); sampler.batch(tasks); return tasks;
-                }
-                public void cancel(String id) { delegate.cancel(id); sampler.latest.remove(id); }
-                public int size() { return delegate.size(); }
-            };
+            return new MeasuredQueue(delegate,sampler);
         }
     }
     public static void main(String[] args) throws Exception {
@@ -200,6 +261,7 @@ public final class BotRuntimeBench {
             result.put("error",Map.of("type",error.getClass().getName(),"message",Objects.toString(error.getMessage(),"")));
             error.printStackTrace();
         } finally {
+            result.put("queueBatchBridge",sampler.batchEvidence());
             result.put("phases",phases);ctx.close();result.put("contextClosed",true);
             result.put("transportEventLoopTerminated",transport.terminated());if(!transport.terminated())passed=false;
             result.put("passed",passed);
