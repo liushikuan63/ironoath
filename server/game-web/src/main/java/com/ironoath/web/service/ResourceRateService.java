@@ -257,17 +257,18 @@ public class ResourceRateService {
         if (player == null) {
             throw new IllegalArgumentException("player 不得为 null");
         }
+        if (city == null) {
+            throw new IllegalArgumentException("city 不得为 null");
+        }
         Map<String, Long> credited = new LinkedHashMap<>();
         Map<String, PlayerResourceState> states = new LinkedHashMap<>();
         List<String> harvested = new ArrayList<>();
-        Rates lastRates = compute(city, player.tech(), player.playerId());
 
         // 逐个完成时刻切段：先按「收割前」的产率结算到该时刻，再收割，再进入下一段。
         // 这样升级带来的产率阶跃只影响它真正生效之后的时间。
         for (long milestone : city.pendingFinishTimes(now)) {
             Segment seg = settleTo(player, city, milestone);
             accumulate(credited, seg.credited());
-            lastRates = seg.rates();
             List<String> done = city.collectFinished(milestone);
             harvested.addAll(done);
             if (!done.isEmpty()) {
@@ -277,12 +278,11 @@ public class ResourceRateService {
         }
         Segment tail = settleTo(player, city, now);
         accumulate(credited, tail.credited());
-        lastRates = tail.rates();
 
         for (Map.Entry<String, PlayerResourceState> e : player.resources().entrySet()) {
             states.put(e.getKey(), e.getValue());
         }
-        return new Settlement(states, credited, harvested, lastRates);
+        return new Settlement(states, credited, harvested, tail.rates());
     }
 
     /**
