@@ -69,6 +69,11 @@ public interface WorldRepository {
      */
     Map<String, Coord> allCities();
 
+    /** 已落位玩家的即时身份快照；不需要坐标的读取可由存储提供窄投影。 */
+    default java.util.Set<String> cityPlayerIds() {
+        return java.util.Set.copyOf(allCities().keySet());
+    }
+
     // ---------- 格子覆盖 ----------
 
     /**

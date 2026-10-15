@@ -136,6 +136,11 @@ public final class InMemoryWorldStore implements WorldRepository {
         return Map.copyOf(cityByPlayer);
     }
 
+    @Override
+    public java.util.Set<String> cityPlayerIds() {
+        return java.util.Set.copyOf(cityByPlayer.keySet());
+    }
+
     // ---------- 格子消耗 ----------
 
     @Override

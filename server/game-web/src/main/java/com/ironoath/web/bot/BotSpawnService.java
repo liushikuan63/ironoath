@@ -313,13 +313,13 @@ public class BotSpawnService {
      * （{@code BotTuning.targetPower} 对 0 返回 0，见它的注释 —— 不是"战力为 0"，是"没有可比对象"）。
      */
     public long humanAverageMatchPower() {
-        Map<String, Coord> cities = world.allCities();
-        if (cities.isEmpty()) {
+        var cityIds = world.cityPlayerIds();
+        if (cityIds.isEmpty()) {
             return 0L;
         }
         // 真人均值只需要真人档；先筛身份，避免每个Bot tick都复制整服Bot存档。
         // 不缓存均值或名单：新战力与身份变化仍由本次读取决定。
-        List<String> humanIds = registry.humansIn(cities.keySet());
+        List<String> humanIds = registry.humansIn(cityIds);
         if (humanIds.isEmpty()) {
             return 0L;
         }

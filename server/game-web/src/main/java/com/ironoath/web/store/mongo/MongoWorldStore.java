@@ -42,6 +42,9 @@ import java.util.Optional;
  */
 public final class MongoWorldStore implements WorldRepository {
 
+    /** 沿用完整城文档的@Id String转换；不物化坐标，也保留逻辑ID去重语义。 */
+    private record CityPlayerId(@org.springframework.data.annotation.Id String playerId) { }
+
     private final MongoTemplate mongo;
     private final MarchRepository marches;
     private final int chunkSize;
@@ -141,6 +144,14 @@ public final class MongoWorldStore implements WorldRepository {
         mongo.findAll(WorldCityDocument.class, WorldCityDocument.COLLECTION)
                 .forEach(doc -> out.put(doc.playerId(), toCoord(doc)));
         return Map.copyOf(out);
+    }
+
+    @Override
+    public java.util.Set<String> cityPlayerIds() {
+        Query query = new Query();
+        query.fields().include("_id");
+        return mongo.find(query, CityPlayerId.class, WorldCityDocument.COLLECTION).stream()
+                .map(CityPlayerId::playerId).collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     // ---------- 格子消耗 ----------

@@ -23,6 +23,7 @@ class BotHumanAverageReadScopeTest {
         Map<String,Coord> cities=new LinkedHashMap<>();
         for(int i=0;i<cityIds.length;i++)cities.put(cityIds[i],Coord.of(i+10,10));
         when(world.allCities()).thenReturn(cities);
+        when(world.cityPlayerIds()).thenReturn(Set.copyOf(cities.keySet()));
         when(registry.humansIn(anyCollection())).thenAnswer(call->{
             Collection<String> ids=call.getArgument(0);
             return ids.stream().filter(id->!botIds.contains(id)).toList();
@@ -61,5 +62,22 @@ class BotHumanAverageReadScopeTest {
         Map<String,PlayerSave> updated=Map.of("human-a",power(800));
         when(players.findByPlayerIds(anyCollection())).thenReturn(updated);
         assertThat(service.humanAverageMatchPower()).isEqualTo(800);
+    }
+
+    @Test void averageNeedsOnlyPlacedPlayerIdsWithoutLoadingCoordinates() {
+        worldWith(Set.of("bot-a"),"human-a","bot-a");
+        PlayerSave human=power(200);
+        when(players.findByPlayerIds(anyCollection())).thenReturn(Map.of("human-a",human));
+        assertThat(service.humanAverageMatchPower()).isEqualTo(200);
+        verify(world).cityPlayerIds();
+        verify(world,never()).allCities();
+    }
+
+    @Test void cityIdentityReadFailurePropagatesInsteadOfProducingAnEmptyMean() {
+        worldWith(Set.of(),"human-a");
+        when(world.cityPlayerIds()).thenThrow(new IllegalStateException("city identities unavailable"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(service::humanAverageMatchPower)
+                .hasMessage("city identities unavailable");
+        verifyNoInteractions(players);
     }
 }
