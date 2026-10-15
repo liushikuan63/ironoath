@@ -114,7 +114,7 @@ public class QuestAppService {
     public QuestListResp list(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> runProgressLocked(playerId, () -> {
-            QuestProgress progress = loaded(playerId, now);
+            QuestProgress progress = loadProgressLocked(playerId, now);
             Map<String, String> names = new LinkedHashMap<>();
             for (QuestRulesAssembler.QuestDef def : assembler.quests()) {
                 names.put(def.def().questId(), def.name());
@@ -138,7 +138,7 @@ public class QuestAppService {
     public int claimableCount(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
-                () -> runProgressLocked(playerId, () -> loaded(playerId, now).claimableCount()));
+                () -> runProgressLocked(playerId, () -> loadProgressLocked(playerId, now).claimableCount()));
     }
 
     /** 领取奖励：普通任务先保存投影；永久金币先原子接受钱包收据，再保存可恢复的已领投影。 */
@@ -147,7 +147,7 @@ public class QuestAppService {
         String requestKey = acquire(playerId, req == null ? null : req.requestId(), now);
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> runProgressLocked(playerId, () -> {
-                QuestProgress progress = loaded(playerId, now);
+                QuestProgress progress = loadProgressLocked(playerId, now);
                 String questId = req.questId();
                 if (questId == null || questId.isBlank()) {
                     throw new BizException(ErrorCode.PARAM_INVALID, "questId 不得为空");
@@ -253,6 +253,7 @@ public class QuestAppService {
         return runProgressLocked(playerId, () -> loadProgressLocked(playerId, now));
     }
 
+    /** 只供已持任务账本锁的调用；外部读取仍通过loaded取得同一把共享锁。 */
     private QuestProgress loadProgressLocked(String playerId, long now) {
         List<QuestRulesAssembler.QuestDef> defs = assembler.quests();
         String day = DayKey.of(now);
