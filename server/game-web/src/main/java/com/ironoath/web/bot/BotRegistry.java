@@ -201,7 +201,7 @@ public class BotRegistry {
     }
 
     public Collection<String> botIds() {
-        return profiles.all().stream().map(BotProfile::botId).toList();
+        return profiles.ids();
     }
 
     /**
@@ -246,7 +246,7 @@ public class BotRegistry {
     }
 
     public int size() {
-        return profiles.all().size();
+        return profiles.size();
     }
 
     /** 不再是 Bot（清理或转真人）。调度器会在下一次 tick 时把它从队列里摘掉。 */

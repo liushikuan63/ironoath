@@ -78,4 +78,26 @@ class BotProfileStoreTest {
         assertThatThrownBy(()->new BotRegistry(rules,broken).humansIn(List.of("owned-bot","owned-human")))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("identity projection");
     }
+    @Test void identityEnumerationAndCountStaySortedAndObservePeerWrites() {
+        for(var store:stores()) {
+            BotProfileStore peer=store instanceof MongoBotProfileStore?new MongoBotProfileStore(db.template()):store;
+            assertThat(peer.ids()).isEmpty();assertThat(peer.size()).isZero();
+            store.put(profile("owned-z",8000));store.put(profile("owned-a",3000));
+            assertThat(peer.ids()).containsExactly("owned-a","owned-z");assertThat(peer.size()).isEqualTo(2);
+            store.put(profile("owned-a",4000));
+            assertThat(peer.ids()).containsExactly("owned-a","owned-z");assertThat(peer.size()).isEqualTo(2);
+            store.remove("owned-a");assertThat(peer.ids()).containsExactly("owned-z");assertThat(peer.size()).isEqualTo(1);
+            store.clear();assertThat(peer.ids()).isEmpty();assertThat(peer.size()).isZero();
+        }
+    }
+    @Test void identityEnumerationPreservesHexStringIdsAndCaseThroughMongoObjectIdMapping() {
+        for(var store:stores()) {
+            store.put(profile("507f1f77bcf86cd799439011",8000));
+            store.put(profile("507F1F77BCF86CD799439012",3000));
+            store.put(profile("owned-non-hex",4000));
+            assertThat(store.ids()).containsExactlyElementsOf(store.all().stream().map(BotProfile::botId).toList());
+            assertThat(store.ids()).contains("507f1f77bcf86cd799439011","507F1F77BCF86CD799439012");
+            assertThat(store.size()).isEqualTo(3);
+        }
+    }
 }

@@ -21,6 +21,10 @@ public class InMemoryBotProfileStore implements BotProfileStore {
     @Override public Collection<BotProfile> all() {
         return profiles.values().stream().sorted(Comparator.comparing(BotProfile::botId)).toList();
     }
+    @Override public Collection<String> ids() {
+        return profiles.keySet().stream().sorted().toList();
+    }
+    @Override public int size() { return profiles.size(); }
     @Override public Set<String> existingIds(Collection<String> playerIds) {
         if(playerIds==null || playerIds.isEmpty())return Set.of();
         Set<String> found=new HashSet<>();

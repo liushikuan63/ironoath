@@ -34,6 +34,14 @@ public class MongoBotProfileStore implements BotProfileStore {
         return mongo.find(new Query().with(Sort.by("_id")),ProfileDocument.class,COLLECTION)
                 .stream().map(ProfileDocument::profile).toList();
     }
+    @Override public Collection<String> ids() {
+        Query query=new Query().with(Sort.by("_id"));
+        // @Id String may be stored as ObjectId. Keep the original profile ID, including hex case.
+        query.fields().include("profile.botId").exclude("_id");
+        return mongo.find(query,org.bson.Document.class,COLLECTION).stream()
+                .map(row->row.get("profile",org.bson.Document.class).getString("botId")).toList();
+    }
+    @Override public int size() { return Math.toIntExact(mongo.count(new Query(),COLLECTION)); }
     @Override public Set<String> existingIds(Collection<String> playerIds) {
         if(playerIds==null || playerIds.isEmpty())return Set.of();
         Set<String> requested=new LinkedHashSet<>();
