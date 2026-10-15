@@ -7646,3 +7646,5 @@ TEST_EXIT=0
 | B25 原生同号候选切换 #1354 | 三台账明确路径本地原子提交，未推 | 原生UID/9490/WECHAT_GAME切换前后同号；343树各匹配；一bundle变/0增删/两cfg字节同；独立复审无阻断 | tmp/auto-refill-native-resumed-20261015/uid-r18B25Refreshed.actual.json、accepted-r18-b25-applied-inputs.actual.json | 新按钮已实际可见，T2训练1已真触摸排入67秒队列；NPC损耗及目标补差费用启停仍待验，原服保持/开窗许可仅本次 |
 
 | B25 原号原生目标补兵 #1355 | 四台账明确路径本地原子提交，未推 | 实际NPC5损1→UI正target1补1；铁34粮22/67秒/唯一队列；取消不改已采集资源/军队状态；停恢复同队列不重扣；达标待命后最终手停；24证据谓词0失败 | tmp/auto-refill-native-resumed-20261015/native-refill-audit.actual.json、b25-refill-cancel-canvas.png、b25-goal-reached-canvas.png、b25-final-stopped-canvas.png | SDK/OS合成图旧而native帧图新，真机未验；编成T2行裁切、两swipe超时保留；无raw网络零POST断言；持久5000和精确流水仍未收口 |
+
+| 后续持久预算诊断 #1356 | 三台账明确路径本地原子提交，未推 | 旧1024样本sum76.057s/phase180.147s/区间外104.090s；原输入SHA一致；新JFR隔离owner17900/9895/6389已实际启动 | tmp/persistent-budget-resume-20261015/old-persistent-sample-breakdown.actual.json、profile-plan.actual.json、profile1/owner.actual.json | 仍需收profile1终态与JFR热点再决定修改；未达完整5000/30s/5ms，未证明单一根因，原9490/原库/微信保留 |
