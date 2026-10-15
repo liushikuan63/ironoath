@@ -255,6 +255,10 @@ public final class MongoIndexes {
                 .on("entries.at", Sort.Direction.ASC).named("idx_bot_budget_entry_time"));
         String byBotAttackTime = mongo.indexOps(MongoBotAttackLedgerStore.COLLECTION).ensureIndex(new Index()
                 .on("at", Sort.Direction.ASC).named("idx_bot_attack_time"));
+        // 到期快查不应扫描大量冷却/未来槽；前缀也供due()按到期时间和Bot稳定排序。
+        String byBotConversationDue = mongo.indexOps(MongoBotConversationStore.COLLECTION).ensureIndex(new Index()
+                .on("pending.dueAt", Sort.Direction.ASC).on("_id", Sort.Direction.ASC)
+                .named("idx_bot_conversation_due"));
         String byMarchDueAt = mongo.indexOps(MarchDueDocument.COLLECTION).ensureIndex(new Index()
                 .on("dueAt", Sort.Direction.ASC)
                 .named("idx_march_due_at"));        String summary = PlayerDocument.COLLECTION + ".{deviceId} → " + deviceIdIndex
@@ -288,7 +292,8 @@ public final class MongoIndexes {
                 + "；" + SocialApplicationDocument.COLLECTION + " → " + byApplicationAlliance
                 + "；" + MarchDueDocument.COLLECTION + ".{dueAt} → " + byMarchDueAt
                 + "；" + MongoBotAttackLedgerStore.BUDGET_COLLECTION + ".{entries.at} → " + byBotVictimTime
-                + "；" + MongoBotAttackLedgerStore.COLLECTION + ".{at} → " + byBotAttackTime;
+                + "；" + MongoBotAttackLedgerStore.COLLECTION + ".{at} → " + byBotAttackTime
+                + "；" + MongoBotConversationStore.COLLECTION + ".{pending.dueAt,_id} → " + byBotConversationDue;
         LOG.info("Mongo 索引就绪：{}", summary);
         return summary;
     }

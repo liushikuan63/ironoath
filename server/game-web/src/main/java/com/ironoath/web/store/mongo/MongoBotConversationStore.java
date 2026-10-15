@@ -41,6 +41,8 @@ public class MongoBotConversationStore implements BotConversationStore {
     }
     @Override public List<Pending> dueFor(long now, java.util.Collection<String> botIds, int limit) {
         if (botIds.isEmpty()) return List.of();
+        // 空队列不必把全部已知Bot放进IN；有工作时仍先限定身份再取批次，避免未知Bot挤占名额。
+        if (!mongo.exists(Query.query(Criteria.where("pending.dueAt").lte(now)), Slot.class, COLLECTION)) return List.of();
         Query query=Query.query(Criteria.where("_id").in(botIds).and("pending.dueAt").lte(now))
                 .with(Sort.by(Sort.Direction.ASC,"pending.dueAt","_id")).limit(limit);
         return mongo.find(query,Slot.class,COLLECTION).stream().map(Slot::pending).toList();

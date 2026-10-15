@@ -124,4 +124,42 @@ class BotConversationStoreTest {
             assertThat(store.dueFor(999_000,List.of(),50)).isEmpty();
         }
     }
+
+    @Test void emptyDueQueueDoesNotHideLaterOffersOrFutureWorkOnEitherStore() {
+        for(var store:stores()) {
+            assertThat(store.dueFor(103_000,List.of("known"),50)).isEmpty();
+            assertThat(store.offer(task("known",100_001),10_000)).isTrue();
+            assertThat(store.dueFor(103_000,List.of("known"),50)).isEmpty();
+            assertThat(store.dueFor(103_001,List.of("known"),50)).containsExactly(task("known",100_001));
+            assertThat(store.complete("known",100_001,103_001,10_000)).isTrue();
+            assertThat(store.dueFor(999_000,List.of("known"),50)).isEmpty();
+        }
+    }
+
+    @Test void dueProbeUsesProductionIndexForManyFutureSlotsAndIndexCreationIsIdempotent() {
+        var mongo=db.template();
+        mongo.dropCollection(MongoBotConversationStore.COLLECTION);
+        com.ironoath.web.store.mongo.MongoIndexes.ensure(mongo);
+        var collection=mongo.getCollection(MongoBotConversationStore.COLLECTION);
+        var documents=java.util.stream.IntStream.range(0,5000)
+                .mapToObj(i->new org.bson.Document("_id","future"+i)
+                        .append("pending",new org.bson.Document("dueAt",999_000L)))
+                .toList();
+        collection.insertMany(documents);
+        var indexes=collection.listIndexes().into(new ArrayList<org.bson.Document>());
+        assertThat(indexes).anySatisfy(index->{
+            assertThat(index.getString("name")).isEqualTo("idx_bot_conversation_due");
+            assertThat(index.get("key")).isEqualTo(new org.bson.Document("pending.dueAt",1).append("_id",1));
+        });
+        com.ironoath.web.store.mongo.MongoIndexes.ensure(mongo);
+        assertThat(collection.listIndexes().into(new ArrayList<org.bson.Document>())).hasSize(indexes.size());
+        var explain=mongo.getDb().runCommand(new org.bson.Document("explain",
+                new org.bson.Document("find",MongoBotConversationStore.COLLECTION)
+                        .append("filter",new org.bson.Document("pending.dueAt",new org.bson.Document("$lte",123_000L)))
+                        .append("limit",1)).append("verbosity","executionStats"));
+        var stats=explain.get("executionStats",org.bson.Document.class);
+        assertThat(((Number)stats.get("nReturned")).longValue()).isZero();
+        assertThat(((Number)stats.get("totalDocsExamined")).longValue()).isZero();
+        assertThat(new MongoBotConversationStore(mongo).dueFor(123_000,List.of("future0"),50)).isEmpty();
+    }
 }
