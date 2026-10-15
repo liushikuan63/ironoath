@@ -100,4 +100,94 @@ class BotProfileStoreTest {
             assertThat(store.size()).isEqualTo(3);
         }
     }
+    @Test void batchIdentityMatchesPointAuthorityForObjectIdsAndRequestedCaseAliases() {
+        var store=new MongoBotProfileStore(db.template());store.clear();
+        var peer=new MongoBotProfileStore(db.template());
+        String lower="507f1f77bcf86cd799439011",upper="507F1F77BCF86CD799439012";
+        store.put(profile(lower,8000));store.put(profile(upper,3000));
+        var requested=java.util.Arrays.asList(lower,lower.toUpperCase(java.util.Locale.ROOT),upper,
+                upper.toLowerCase(java.util.Locale.ROOT),null,"human-z","human-a","human-z",lower);
+        var expected=requested.stream().filter(java.util.Objects::nonNull).filter(id->peer.find(id).isPresent())
+                .collect(java.util.stream.Collectors.toSet());
+        assertThat(expected).containsExactlyInAnyOrder(lower,lower.toUpperCase(java.util.Locale.ROOT),upper,
+                upper.toLowerCase(java.util.Locale.ROOT));
+        assertThat(peer.existingIds(requested)).containsExactlyInAnyOrderElementsOf(expected);
+        assertThat(new BotRegistry(rules,peer).humansIn(requested)).containsExactly("human-z","human-a","human-z");
+        store.remove(lower);store.put(profile("human-z",4000));
+        assertThat(peer.existingIds(requested)).containsExactlyInAnyOrder(upper,upper.toLowerCase(java.util.Locale.ROOT),"human-z");
+        assertThat(new BotRegistry(rules,peer).humansIn(requested)).containsExactly(lower,
+                lower.toUpperCase(java.util.Locale.ROOT),"human-a",lower);
+    }
+    @Test void batchIdentityPreservesRawStringKeysWithoutInventingObjectIdAliases() {
+        var store=new MongoBotProfileStore(db.template());store.clear();
+        String raw="507F1F77BCF86CD799439013",nonHex="owned-MixedCase";
+        var converter=db.template().getConverter();
+        var document=new org.bson.Document();converter.write(new MongoBotProfileStore.ProfileDocument(raw,profile(raw,8000)),document);
+        document.put("_id",raw);db.template().getCollection(MongoBotProfileStore.COLLECTION).insertOne(document);
+        store.put(profile(nonHex,3000));
+        var requested=java.util.Arrays.asList(raw,raw.toLowerCase(java.util.Locale.ROOT),nonHex,"owned-mixedcase",null,"",nonHex);
+        var expected=requested.stream().filter(java.util.Objects::nonNull).filter(id->store.find(id).isPresent())
+                .collect(java.util.stream.Collectors.toSet());
+        assertThat(expected).containsExactly(nonHex);
+        assertThat(store.existingIds(requested)).containsExactlyInAnyOrderElementsOf(expected);
+        assertThat(store.existingIds(java.util.Arrays.asList(null,null))).isEmpty();
+        store.put(profile(raw,4000)); // Same text can coexist physically as BSON ObjectId and String.
+        assertThat(db.template().getCollection(MongoBotProfileStore.COLLECTION).countDocuments()).isEqualTo(3);
+        assertThat(store.find(raw)).isPresent();
+        assertThat(store.existingIds(requested)).containsExactlyInAnyOrder(raw,raw.toLowerCase(java.util.Locale.ROOT),nonHex);
+        assertThat(store.remove(raw)).isTrue();
+        assertThat(db.template().getCollection(MongoBotProfileStore.COLLECTION).countDocuments()).isEqualTo(2);
+        assertThat(store.find(raw)).isEmpty();
+        assertThat(store.existingIds(requested)).containsExactly(nonHex);
+    }
+
+    @Test void batchIdentityUsesSamePropertyConverterAsPointAuthorityWithoutSecondMapping() {
+        for (String physicalId : List.of("key:owned-a", "507f1f77bcf86cd799439099")) {
+            db.template().getCollection(MongoBotProfileStore.COLLECTION).deleteMany(new org.bson.Document());
+            var expectedProfile = profile("owned-a", 8000);
+            var row = new org.bson.Document();
+            db.template().getConverter().write(
+                    new MongoBotProfileStore.ProfileDocument("owned-a", expectedProfile), row);
+            row.put("_id", physicalId); // Deliberate physical BSON String, including the valid-hex case.
+            db.template().getCollection(MongoBotProfileStore.COLLECTION).insertOne(row);
+            var context = new org.springframework.data.mongodb.core.mapping.MongoMappingContext();
+            var converter = new org.springframework.data.mongodb.core.convert.MappingMongoConverter(
+                    org.springframework.data.mongodb.core.convert.NoOpDbRefResolver.INSTANCE, context);
+            var propertyConverter = new org.springframework.data.convert.PropertyValueConverter<
+                    Object, Object, org.springframework.data.mongodb.core.convert.MongoConversionContext>() {
+                private String physical(Object value) {
+                    return "owned-a".equals(value) ? physicalId : "key:" + value;
+                }
+                @Override public Object write(Object value,
+                        org.springframework.data.mongodb.core.convert.MongoConversionContext conversionContext) {
+                    if (value instanceof org.bson.Document condition && condition.containsKey("$in")) {
+                        return new org.bson.Document("$in", ((java.util.Collection<?>) condition.get("$in"))
+                                .stream().map(this::physical).toList());
+                    }
+                    return physical(value);
+                }
+                @Override public Object read(Object value,
+                        org.springframework.data.mongodb.core.convert.MongoConversionContext conversionContext) {
+                    if (physicalId.equals(value)) return "owned-a";
+                    return value instanceof String text && text.startsWith("key:") ? text.substring(4) : value;
+                }
+            };
+            converter.setCustomConversions(org.springframework.data.mongodb.core.convert.MongoCustomConversions.create(
+                    adapter -> adapter.configurePropertyConversions(registrar -> registrar.registerConverter(
+                            MongoBotProfileStore.ProfileDocument.class, "id", propertyConverter))));
+            converter.afterPropertiesSet();
+            var template = new org.springframework.data.mongodb.core.MongoTemplate(
+                    db.template().getMongoDatabaseFactory(), converter);
+            var store = new MongoBotProfileStore(template);
+            assertThat(store.find("owned-a")).contains(expectedProfile); // Authority must be proven first.
+            assertThat(store.find("human")).isEmpty();
+            assertThat(store.existingIds(java.util.Arrays.asList("owned-a", "human", null, "owned-a")))
+                    .containsExactly("owned-a");
+            assertThat(new BotRegistry(rules, store).humansIn(List.of("human", "owned-a", "human")))
+                    .containsExactly("human", "human");
+            assertThat(db.template().getCollection(MongoBotProfileStore.COLLECTION)
+                    .find(new org.bson.Document("_id", physicalId)).first().get("_id"))
+                    .isInstanceOf(String.class).isEqualTo(physicalId);
+        }
+    }
 }

@@ -10,6 +10,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.convert.QueryMapper;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
@@ -49,8 +50,17 @@ public class MongoBotProfileStore implements BotProfileStore {
         if(requested.isEmpty())return Set.of();
         Query query=Query.query(Criteria.where("_id").in(requested));
         query.fields().include("_id");
-        Set<String> found=new HashSet<>();
-        for(var row:mongo.find(query,org.bson.Document.class,COLLECTION))found.add(row.getString("_id"));
+        // Use the point-read converter rather than guessing hex/case aliases from returned BSON IDs.
+        var converter=mongo.getConverter();
+        var mapped=new QueryMapper(converter).getMappedObject(query.getQueryObject(),
+                converter.getMappingContext().getRequiredPersistentEntity(ProfileDocument.class));
+        var mappedIds=mapped.get("_id",org.bson.Document.class).getList("$in",Object.class);
+        Set<Object> physicalIds=new HashSet<>();
+        for(var row:mongo.query(ProfileDocument.class).inCollection(COLLECTION)
+                .as(org.bson.Document.class).matching(query).all())physicalIds.add(row.get("_id"));
+        Set<String> found=new LinkedHashSet<>();
+        int index=0;
+        for(String id:requested)if(physicalIds.contains(mappedIds.get(index++)))found.add(id);
         return Set.copyOf(found);
     }
     @Override public BotProfile put(BotProfile profile) {
