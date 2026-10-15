@@ -7640,3 +7640,5 @@ TEST_EXIT=0
 | B25原项目配置规范化与保身份343候选 #1351 | 本格3台账明确路径本地原子提交，不推；无生产源码改动 | 原342守卫有效拦SDK导入后元配置变化；新343输入仅公共cfg变+私有cfg增，341业务SHA0漂移/身份字段不变；候选保留两cfg原字节/其他341新包SHA同已构建包/独立artifact0 | tmp/auto-refill-native-resumed-20261015/accepted-r18-post-import-inputs.actual.json、candidate-r18-preserved.actual.json、candidate-r18-preserved-check.log | 原v40 342备份仍保，不能称新343同旧全包零漂；尚未开R18/未换包刷新/未核实际UID或玩家补兵，待一次fullMode开窗范围；原9490及账号数据不变，无push部署付款前台 |
 
 | B25 原生补兵接续 #1352 | 本地原子提交，明确三台账路径，未推送 | AST真实守卫8通过0失败；独立复审P2关闭；当前R18完整343输入匹配 | tmp/auto-refill-native-resumed-20261015/full-tree-guard-check.actual.json；read-native-uid.py；prepare-r18-candidate.py | 一次R18 fullMode开窗许可待答复；原生UID、候选切换刷新及原号真实损耗补差未验；SDK已通，原9490与账号进度保留 |
+
+| B25 原号运行保护 #1353 | 三台账明确路径本地原子提交，未推送 | 原JAR+45cfg全树0漂移；同UID主9营6；GET city两次/army各200 code0；1x观测0.950844；独立owner复核无阻断 | D:/tmp/ironoath-power-recovery-20261015/attempt2-reboot/preflight.actual.json、http-recovery.actual.json、canonical-owner-binding.actual.json | OS重启后微信已退出，待一次启动开窗许可；原生实际UID与补差流程未验；Mongo备份完整不代恢复演练，原服务21756保持不作fixture清理 |
