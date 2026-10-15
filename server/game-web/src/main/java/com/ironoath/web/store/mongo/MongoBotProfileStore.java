@@ -5,16 +5,21 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
+import org.bson.Document;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.MongoDatabaseUtils;
+import org.springframework.data.mongodb.core.DbCallback;
 import org.springframework.data.mongodb.core.convert.QueryMapper;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.ironoath.core.bot.BotProfile;
 import com.ironoath.web.bot.BotProfileStore;
 
@@ -55,12 +60,52 @@ public class MongoBotProfileStore implements BotProfileStore {
         var mapped=new QueryMapper(converter).getMappedObject(query.getQueryObject(),
                 converter.getMappingContext().getRequiredPersistentEntity(ProfileDocument.class));
         var mappedIds=mapped.get("_id",org.bson.Document.class).getList("$in",Object.class);
+        if(!hasSimpleCollation())return existingIdsWithCollation(List.copyOf(requested),mapped,mappedIds);
         Set<Object> physicalIds=new HashSet<>();
         for(var row:mongo.query(ProfileDocument.class).inCollection(COLLECTION)
                 .as(org.bson.Document.class).matching(query).all())physicalIds.add(row.get("_id"));
         Set<String> found=new LinkedHashSet<>();
         int index=0;
         for(String id:requested)if(physicalIds.contains(mappedIds.get(index++)))found.add(id);
+        return Set.copyOf(found);
+    }
+    /** Collection metadata is read anew; neither identities nor collation are cached across calls. */
+    private boolean hasSimpleCollation() {
+        if(TransactionSynchronizationManager.isSynchronizationActive()
+                || MongoDatabaseUtils.isTransactionActive(mongo.getMongoDatabaseFactory()))return false;
+        Document metadata;
+        try {
+            metadata=mongo.execute((DbCallback<Document>)database->database.listCollections()
+                    .filter(new Document("name",COLLECTION)).first());
+        } catch(RuntimeException failure) {
+            // Only an unauthorized metadata command is a capability fallback. Authentication/network failures propagate.
+            for(Throwable cause=failure;cause!=null;cause=cause.getCause())
+                if(cause instanceof com.mongodb.MongoCommandException command && command.getErrorCode()==13)return false;
+            throw failure;
+        }
+        if(metadata==null || !COLLECTION.equals(metadata.get("name")) || !"collection".equals(metadata.get("type"))
+                || !(metadata.get("options") instanceof Document options))return false;
+        if(!options.containsKey("collation"))return true;
+        return options.get("collation") instanceof Document collation && "simple".equals(collation.get("locale"));
+    }
+    /** Mongo compares mapped keys using its own collation; returned indices identify the original request labels. */
+    private Set<String> existingIdsWithCollation(List<String> labels,Document mapped,List<Object> mappedIds) {
+        var key=new Document("$arrayElemAt",List.of("$requestedKeys","$$index"));
+        var matches=new Document("$cond",List.of(
+                new Document("$lte",List.of(new Document("$size","$present"),new Document("$size","$missing"))),
+                new Document("$in",List.of(key,"$present")),
+                new Document("$not",List.of(new Document("$in",List.of(key,"$missing"))))));
+        var indices=new Document("$filter",new Document("input",new Document("$range",List.of(0,new Document("$size","$requestedKeys"))))
+                .append("as","index").append("cond",matches));
+        var pipeline=List.of(new Document("$match",mapped),new Document("$project",new Document("_id",1)),
+                new Document("$group",new Document("_id",null).append("present",new Document("$addToSet","$_id"))),
+                new Document("$set",new Document("requestedKeys",new Document("$literal",mappedIds))),
+                new Document("$set",new Document("missing",new Document("$setDifference",List.of("$requestedKeys","$present")))),
+                new Document("$project",new Document("_id",0).append("indices",indices)));
+        Document row=mongo.execute(COLLECTION,collection->collection.aggregate(pipeline).first());
+        if(row==null)return Set.of();
+        Set<String> found=new LinkedHashSet<>();
+        for(int index:row.getList("indices",Integer.class))found.add(labels.get(index));
         return Set.copyOf(found);
     }
     @Override public BotProfile put(BotProfile profile) {

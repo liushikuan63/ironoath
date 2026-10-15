@@ -32,6 +32,12 @@ class BotProfileStoreTest {
         return new BotProfile(id,"bot_jielue",new BotProfile.AiProfile(aggression,4_000,2_000,6_000),
                 new BotProfile.Persona(42,7,99,List.of(0,12,23),3,27,1_000),9_000);
     }
+    private java.util.Set<String> aggregateIdentity(MongoBotProfileStore store,java.util.Collection<String> requested) {
+        assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try { return store.existingIds(requested); }
+        finally { org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization(); }
+    }
     @Test void completeFieldsAtomicReplaceDeleteAndClearHaveEquivalentSemantics() {
         for(var store:stores()) {
             var original=profile("owned-bot",8_000);var changed=profile("owned-bot",3_000);
@@ -112,6 +118,7 @@ class BotProfileStoreTest {
         assertThat(expected).containsExactlyInAnyOrder(lower,lower.toUpperCase(java.util.Locale.ROOT),upper,
                 upper.toLowerCase(java.util.Locale.ROOT));
         assertThat(peer.existingIds(requested)).containsExactlyInAnyOrderElementsOf(expected);
+        assertThat(aggregateIdentity(peer,requested)).containsExactlyInAnyOrderElementsOf(expected);
         assertThat(new BotRegistry(rules,peer).humansIn(requested)).containsExactly("human-z","human-a","human-z");
         store.remove(lower);store.put(profile("human-z",4000));
         assertThat(peer.existingIds(requested)).containsExactlyInAnyOrder(upper,upper.toLowerCase(java.util.Locale.ROOT),"human-z");
@@ -130,15 +137,18 @@ class BotProfileStoreTest {
                 .collect(java.util.stream.Collectors.toSet());
         assertThat(expected).containsExactly(nonHex);
         assertThat(store.existingIds(requested)).containsExactlyInAnyOrderElementsOf(expected);
+        assertThat(aggregateIdentity(store,requested)).containsExactlyInAnyOrderElementsOf(expected);
         assertThat(store.existingIds(java.util.Arrays.asList(null,null))).isEmpty();
         store.put(profile(raw,4000)); // Same text can coexist physically as BSON ObjectId and String.
         assertThat(db.template().getCollection(MongoBotProfileStore.COLLECTION).countDocuments()).isEqualTo(3);
         assertThat(store.find(raw)).isPresent();
         assertThat(store.existingIds(requested)).containsExactlyInAnyOrder(raw,raw.toLowerCase(java.util.Locale.ROOT),nonHex);
+        assertThat(aggregateIdentity(store,requested)).containsExactlyInAnyOrder(raw,raw.toLowerCase(java.util.Locale.ROOT),nonHex);
         assertThat(store.remove(raw)).isTrue();
         assertThat(db.template().getCollection(MongoBotProfileStore.COLLECTION).countDocuments()).isEqualTo(2);
         assertThat(store.find(raw)).isEmpty();
         assertThat(store.existingIds(requested)).containsExactly(nonHex);
+        assertThat(aggregateIdentity(store,requested)).containsExactly(nonHex);
     }
 
     @Test void batchIdentityUsesSamePropertyConverterAsPointAuthorityWithoutSecondMapping() {
@@ -183,11 +193,74 @@ class BotProfileStoreTest {
             assertThat(store.find("human")).isEmpty();
             assertThat(store.existingIds(java.util.Arrays.asList("owned-a", "human", null, "owned-a")))
                     .containsExactly("owned-a");
+        assertThat(aggregateIdentity(store,java.util.Arrays.asList("owned-a","human",null,"owned-a"))).containsExactly("owned-a");
             assertThat(new BotRegistry(rules, store).humansIn(List.of("human", "owned-a", "human")))
                     .containsExactly("human", "human");
             assertThat(db.template().getCollection(MongoBotProfileStore.COLLECTION)
                     .find(new org.bson.Document("_id", physicalId)).first().get("_id"))
                     .isInstanceOf(String.class).isEqualTo(physicalId);
+        }
+    }
+    @Test void batchIdentityUsesCollectionCollationAndPreservesAllRequestedLabels() {
+        try(var isolated=TestMongo.tryOpen()) {
+            assertThat(isolated).as("隔离真实Mongo必须可用").isNotNull();
+            var template=isolated.template();
+            if(template.collectionExists(MongoBotProfileStore.COLLECTION))template.dropCollection(MongoBotProfileStore.COLLECTION);
+            template.getDb().createCollection(MongoBotProfileStore.COLLECTION,
+                    new com.mongodb.client.model.CreateCollectionOptions().collation(
+                            com.mongodb.client.model.Collation.builder().locale("en")
+                                    .collationStrength(com.mongodb.client.model.CollationStrength.SECONDARY).build()));
+            var store=new MongoBotProfileStore(template);var peer=new MongoBotProfileStore(new org.springframework.data.mongodb.core.MongoTemplate(template.getMongoDatabaseFactory()));
+            store.put(profile("owned-User",8000));
+            var requested=java.util.Arrays.asList("owned-user","OWNED-USER",null,"owned-User","human-x","owned-user");
+            var expected=requested.stream().filter(java.util.Objects::nonNull).filter(id->store.find(id).isPresent())
+                    .collect(java.util.stream.Collectors.toSet());
+            assertThat(expected).containsExactlyInAnyOrder("owned-user","OWNED-USER","owned-User");
+            assertThat(peer.existingIds(requested)).containsExactlyInAnyOrderElementsOf(expected);
+            assertThat(new BotRegistry(rules,peer).humansIn(requested)).containsExactly("human-x");
+            assertThat(store.remove("owned-User")).isTrue();peer.put(profile("human-X",3000));
+            assertThat(store.find("human-x")).isPresent();
+            assertThat(store.existingIds(requested)).containsExactly("human-x");
+            assertThat(new BotRegistry(rules,store).humansIn(requested))
+                    .containsExactly("owned-user","OWNED-USER","owned-User","owned-user");
+            template.dropCollection(MongoBotProfileStore.COLLECTION);template.getDb().createCollection(MongoBotProfileStore.COLLECTION);
+            store.put(profile("owned-User",8000));
+            assertThat(store.find("owned-user")).isEmpty();
+            assertThat(store.existingIds(requested)).containsExactly("owned-User");
+            template.dropCollection(MongoBotProfileStore.COLLECTION);
+            template.getDb().createCollection(MongoBotProfileStore.COLLECTION,new com.mongodb.client.model.CreateCollectionOptions().collation(
+                    com.mongodb.client.model.Collation.builder().locale("en")
+                            .collationStrength(com.mongodb.client.model.CollationStrength.PRIMARY).build()));
+            store.put(profile("owned-Café",3000));
+            assertThat(store.find("owned-cafe")).isPresent();
+            assertThat(store.existingIds(List.of("owned-cafe","OWNED-CAFE","owned-Café","human")))
+                    .containsExactlyInAnyOrder("owned-cafe","OWNED-CAFE","owned-Café");
+        }
+    }
+    @Test void actualSimpleAndNonSimpleCommandsIncludeMetadataWithoutCaching() {
+        try(var isolated=TestMongo.tryOpen()) {
+            assertThat(isolated).isNotNull();String database=isolated.template().getDb().getName();
+            var counts=new java.util.concurrent.ConcurrentHashMap<String,java.util.concurrent.atomic.AtomicLong>();
+            var settings=com.mongodb.MongoClientSettings.builder().applyConnectionString(new com.mongodb.ConnectionString(TestMongo.uri()))
+                    .addCommandListener(new com.mongodb.event.CommandListener(){
+                        @Override public void commandStarted(com.mongodb.event.CommandStartedEvent event) {
+                            if(database.equals(event.getDatabaseName()))counts.computeIfAbsent(event.getCommandName(),key->new java.util.concurrent.atomic.AtomicLong()).incrementAndGet();
+                        }
+                    }).build();
+            try(var client=com.mongodb.client.MongoClients.create(settings)) {
+                var template=new org.springframework.data.mongodb.core.MongoTemplate(client,database);var store=new MongoBotProfileStore(template);
+                store.put(profile("owned-User",8000));counts.clear();
+                assertThat(store.existingIds(List.of("owned-user","owned-User"))).containsExactly("owned-User");
+                assertThat(counts.keySet()).containsExactlyInAnyOrder("listCollections","find");
+                assertThat(counts.values()).allSatisfy(value->assertThat(value.get()).isEqualTo(1));
+                template.dropCollection(MongoBotProfileStore.COLLECTION);
+                template.getDb().createCollection(MongoBotProfileStore.COLLECTION,new com.mongodb.client.model.CreateCollectionOptions().collation(
+                        com.mongodb.client.model.Collation.builder().locale("en").collationStrength(com.mongodb.client.model.CollationStrength.SECONDARY).build()));
+                store.put(profile("owned-User",8000));counts.clear();
+                assertThat(store.existingIds(List.of("owned-user","owned-User"))).containsExactlyInAnyOrder("owned-user","owned-User");
+                assertThat(counts.keySet()).containsExactlyInAnyOrder("listCollections","aggregate");
+                assertThat(counts.values()).allSatisfy(value->assertThat(value.get()).isEqualTo(1));
+            }
         }
     }
 }
