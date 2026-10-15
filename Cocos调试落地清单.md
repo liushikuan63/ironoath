@@ -153,6 +153,41 @@ bash scripts/check-package-size.sh
 - **`cli preview` 不适用于小游戏产物**：它走小程序上传通道，会对 `game.js` 项目报
   `/app.json not found`。真机预览请在 IDE 里扫码或走「真机调试」，不要把这条当成构建坏了。
 
+### 2026-10-15：本机原生 SDK 入口与路径身份
+
+本机已安装的原生 SDK 入口是 `D:\Tencent\wechat-devtools\wechatide.cmd`（随附
+`wechatide-skill` 当前版本 0.3.11），与上文传统 `cli.bat` 的 open/preview/auto 入口分开。
+复用已运行的开发者工具时，先读取随附 SKILL.md 的版本，再执行对应版本状态检查，例如：
+
+```powershell
+$env:ELECTRON_BASE_APP_PATH = 'D:\Tencent\wechat-devtools\resources\app.asar'
+& 'D:\Tencent\wechat-devtools\wechatide.cmd' -c Codex check_wechatide_status --skill-version 0.3.11
+```
+
+这里的环境变量只作用于当前任务进程，且必须使用与实际 GUI 一致的 Windows 路径格式。
+实证：SDK 直接对 `ELECTRON_BASE_APP_PATH` 原字符串计算用户目录 MD5；相同文件的
+`D:/Tencent/.../app.asar` 和 `D:\Tencent\...\app.asar` 会得到不同目录。前者本轮生成
+`73b25…` 且没有 `.ide`，后者生成 GUI 实际使用的 `cbd442…` 并发现本轮端口 62900。
+因此 `CONNECT_ERROR` 不能单独推出用户未授权：先核对实际心跳、路径身份和规范路径调用，
+不反复发起 auth，不手改 `.ide`、用户目录或令牌。本轮只修正任务进程环境，无应用配置迁移。
+
+CLI 退出码 0 也可能返回 `ok:false`；本轮实际通过读数为
+`ok:true / success:true / versionRelation:equal / loginExpired:false / cliTokenRequired:false`。
+`mcpTokenRequired:true` 约束另一种 MCP 入口，不应拿来拦已通过检查的 CLI 调用。
+SDK 端口由当前实例发现，45269 只保留为上文历史快照，不写死到新控制器。
+
+本轮保留原 UID、Mongo、9490/v35/45 配置的真实验收镜像是
+`D:\tmp\ironoath-wechat-20261010\run-local-ide-18\wechatgame`，由最新 v40 绑定逐文件核定；
+仓库默认 `client/build/wechatgame` 仍可能指向 8080，不能凭相同窗口标题当成该镜像。
+`project_import` 只导入项目列表，不代表窗口或实际 UID 已验。
+
+`open_project_window` 也不是保证静默的接口：本机实现的复用路径含 `focusWindow`，默认
+`liteMode` 还含置顶行为，公开参数未提供不激活开关。仅后台约定下应复用已打开的正确窗口，
+或先取得这一步的明确开窗范围；不要用调用成功替代焦点、运行时 UID 和实际玩家流程验收。
+本轮连接修复证据见 `tmp/auto-refill-native-resumed-20261015/native-status-canonical-path.actual.json`
+及两份 `sdk-port-path*.actual.json`；这些证据不表示原账号玩家补兵已完成。
+
+
 ## 七、常见问题
 
 | 现象 | 原因与处理 |
