@@ -43,6 +43,16 @@ public class MongoBotConversationStore implements BotConversationStore {
         if (botIds.isEmpty()) return List.of();
         // 空队列不必把全部已知Bot放进IN；有工作时仍先限定身份再取批次，避免未知Bot挤占名额。
         if (!mongo.exists(Query.query(Criteria.where("pending.dueAt").lte(now)), Slot.class, COLLECTION)) return List.of();
+        return selectDueKnown(now,botIds,limit);
+    }
+    @Override public List<Pending> dueForKnownBots(long now,
+            java.util.function.Supplier<? extends java.util.Collection<String>> knownBots, int limit) {
+        java.util.Objects.requireNonNull(knownBots,"knownBots");
+        if (!mongo.exists(Query.query(Criteria.where("pending.dueAt").lte(now)), Slot.class, COLLECTION)) return List.of();
+        var ids=java.util.Objects.requireNonNull(knownBots.get(),"knownBots result");
+        return ids.isEmpty()?List.of():selectDueKnown(now,ids,limit);
+    }
+    private List<Pending> selectDueKnown(long now,java.util.Collection<String> botIds,int limit) {
         Query query=Query.query(Criteria.where("_id").in(botIds).and("pending.dueAt").lte(now))
                 .with(Sort.by(Sort.Direction.ASC,"pending.dueAt","_id")).limit(limit);
         return mongo.find(query,Slot.class,COLLECTION).stream().map(Slot::pending).toList();

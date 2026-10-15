@@ -107,7 +107,7 @@ public class BotConversationService {
     public void drive(long now) {
         long start=System.nanoTime();
         try {
-            for (var task:pending.dueFor(now,List.copyOf(bots.botIds()),(int)configs.longParam("BOT_DUE_BATCH_LIMIT"))) {
+            for (var task:pending.dueForKnownBots(now,()->List.copyOf(bots.botIds()),(int)configs.longParam("BOT_DUE_BATCH_LIMIT"))) {
                 if ((System.nanoTime()-start)/1_000_000L>=configs.longParam("BOT_ROUND_BUDGET_MS")) break;
                 try {
                     BotProfile profile=bots.profileOf(task.botId());

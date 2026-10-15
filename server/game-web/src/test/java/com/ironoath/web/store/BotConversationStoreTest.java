@@ -1,6 +1,6 @@
 package com.ironoath.web.store;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.*;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +24,43 @@ import java.nio.file.Path;
 
 /** 真Mongo必须可用；水位/原子追加/历史裁剪与重建都可观察，不以零执行或跳过验收。 */
 class BotConversationStoreTest {
+    @Test void lazyKnownIdentitiesAreSkippedUntilDueThenReadFreshOnBothStores() {
+        for(var store:stores()) {
+            var reads=new java.util.concurrent.atomic.AtomicInteger();
+            var known=new java.util.concurrent.atomic.AtomicReference<List<String>>(List.of("known"));
+            java.util.function.Supplier<List<String>> identities=()->{reads.incrementAndGet();return known.get();};
+            assertThat(store.dueForKnownBots(103_000,identities,50)).isEmpty();
+            assertThat(store.offer(task("known",100_001),10_000)).isTrue();
+            assertThat(store.dueForKnownBots(103_000,identities,50)).isEmpty();assertThat(reads.get()).isZero();
+            assertThat(store.dueForKnownBots(103_001,identities,50)).containsExactly(task("known",100_001));assertThat(reads.get()).isEqualTo(1);
+            known.set(List.of("other"));assertThat(store.dueForKnownBots(103_001,identities,50)).isEmpty();assertThat(reads.get()).isEqualTo(2);
+            known.set(List.of("known"));assertThat(store.dueForKnownBots(103_001,identities,50)).containsExactly(task("known",100_001));
+            assertThat(store.complete("known",100_001,103_001,10_000)).isTrue();int before=reads.get();
+            assertThat(store.dueForKnownBots(999_000,identities,50)).isEmpty();assertThat(reads.get()).isEqualTo(before);
+            assertThatNullPointerException().isThrownBy(()->store.dueForKnownBots(999_000,null,50));
+        }
+    }
+
+    @Test void lazyKnownIdentityFilterStillPrecedesLimitWithManyUnknownSlots() {
+        for(var store:stores()) {
+            for(int i=0;i<60;i++)assertThat(store.offer(task("unknown"+i,100_000+i),10_000)).isTrue();
+            assertThat(store.offer(task("known",200_000),10_000)).isTrue();
+            assertThat(store.dueForKnownBots(999_000,()->List.of("known"),50)).containsExactly(task("known",200_000));
+        }
+    }
+
+    @Test void memoryStoreDoesNotHoldItsMonitorDuringIdentityRead() throws Exception {
+        var store=new InMemoryBotConversationStore();assertThat(store.offer(task("known",100_000),0)).isTrue();
+        var entered=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);var executor=Executors.newFixedThreadPool(2);
+        try {
+            var read=executor.submit(()->store.dueForKnownBots(999_000,()->{
+                entered.countDown();try{if(!release.await(5,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("Identity read not released");}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException(e);}return List.of("known","later");
+            },50));
+            assertThat(entered.await(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var offer=executor.submit(()->store.offer(task("later",100_001),0));assertThat(offer.get(2,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            release.countDown();assertThat(read.get(5,java.util.concurrent.TimeUnit.SECONDS)).containsExactly(task("known",100_000),task("later",100_001));
+        }finally{release.countDown();executor.shutdownNow();assertThat(executor.awaitTermination(5,java.util.concurrent.TimeUnit.SECONDS)).isTrue();}
+    }
     static TestMongo db;
     static SocialRulesAssembler rules;
     @BeforeAll static void open() {

@@ -46,5 +46,14 @@ public class InMemoryBotConversationStore implements BotConversationStore {
         slot.nextChatAt = Math.max(slot.nextChatAt, now + cooldownMillis);
         return true;
     }
+    @Override public List<Pending> dueForKnownBots(long now,
+            java.util.function.Supplier<? extends java.util.Collection<String>> knownBots, int limit) {
+        java.util.Objects.requireNonNull(knownBots,"knownBots");
+        synchronized(this) {
+            if(slots.values().stream().noneMatch(s->s.pending!=null && s.pending.dueAt()<=now))return List.of();
+        }
+        // 不持内存仓储monitor读取外部身份权威；最终选择仍重新检查当前待办。
+        return dueFor(now,java.util.Objects.requireNonNull(knownBots.get(),"knownBots result"),limit);
+    }
     @Override public synchronized void clear() { slots.clear(); }
 }

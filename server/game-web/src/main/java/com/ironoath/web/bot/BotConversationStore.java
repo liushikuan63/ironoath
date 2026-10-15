@@ -11,6 +11,15 @@ public interface BotConversationStore {
     boolean offer(Pending pending, long cooldownMillis);
     List<Pending> due(long now, int limit);
     List<Pending> dueFor(long now, java.util.Collection<String> botIds, int limit);
+    /**
+     * 延迟读取本次身份名单。内置仓储无到期项时不调用 supplier；有工作仍先过滤身份再分页。
+     * supplier 只作本次权威读取，不缓存、不承载必做写入。旧实现默认委托原入口。
+     */
+    default List<Pending> dueForKnownBots(long now,
+            java.util.function.Supplier<? extends java.util.Collection<String>> knownBots, int limit) {
+        java.util.Objects.requireNonNull(knownBots, "knownBots");
+        return dueFor(now, java.util.Objects.requireNonNull(knownBots.get(), "knownBots result"), limit);
+    }
     boolean complete(String botId, long sequence, long now, long cooldownMillis);
     void clear();
 }

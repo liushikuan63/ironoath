@@ -37,7 +37,7 @@ class BotConversationTest {
     @Autowired PlayerRepository players;
     @SpyBean SocialAppService social;
     @Autowired SocialStore store;
-    @Autowired BotRegistry bots;
+    @SpyBean BotRegistry bots;
     @Autowired TimeService time;
     @Autowired com.ironoath.core.world.WorldRepository world;
     @Autowired com.ironoath.core.army.ArmyRepository armies;
@@ -47,6 +47,22 @@ class BotConversationTest {
     @Autowired com.ironoath.web.social.SocialRulesAssembler rules;
     @SpyBean com.ironoath.web.service.AttackGuardService attackGuard;
     @SpyBean com.ironoath.web.bot.BotConversationStore conversations;
+    @Autowired com.ironoath.web.bot.BotConversationService conversationService;
+
+    @Test void emptyConversationDriveDoesNotReadAllBotIdentities() {
+        clearInvocations(bots);
+        conversationService.drive(time.serverNow());
+        verify(bots,never()).botIds();
+    }
+
+    @Test void futureOnlyConversationDriveDoesNotReadAllBotIdentities() {
+        long now=time.serverNow();
+        assertThat(conversations.offer(new com.ironoath.web.bot.BotConversationStore.Pending(
+                "future-owned-bot","peer","WORLD","WORLD","source","未来待办",now,now+60_000,null),0)).isTrue();
+        clearInvocations(bots);
+        conversationService.drive(now);
+        verify(bots,never()).botIds();
+    }
 
     @BeforeEach void reset() {
         org.mockito.Mockito.reset(conversations);
