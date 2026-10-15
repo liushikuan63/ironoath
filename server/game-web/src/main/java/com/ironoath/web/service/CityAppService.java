@@ -209,6 +209,23 @@ public class CityAppService {
      * @throws BizException 前置校验失败，携带结构化 need/current 详情
      */
     public CityUpgradeResp upgrade(String playerId, CityUpgradeReq req) {
+        UpgradeClaim claim = new UpgradeClaim();
+        try {
+            return performUpgradeRequest(playerId, req, claim, now ->
+                    playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> doUpgrade(playerId, req, now)));
+        } catch (RuntimeException e) {
+            if (claim.requestId != null) idempotency.release(claim.requestId);
+            throw e;
+        }
+    }
+
+    /** One call's successful reservation; cleanup belongs outside the complete lock lifecycle. */
+    private static final class UpgradeClaim {
+        String requestId;
+    }
+
+    private CityUpgradeResp performUpgradeRequest(String playerId, CityUpgradeReq req, UpgradeClaim claim,
+                                                  java.util.function.LongFunction<CityUpgradeResp> action) {
         validateRequest(playerId, req);
         long now = timeService.serverNow();
         long ttlMs = configs.longParam("REQUEST_ID_TTL_SECONDS") * 1000L;
@@ -217,15 +234,8 @@ public class CityAppService {
         if (!idempotency.tryAcquire(req.requestId(), now, ttlMs)) {
             throw new BizException(ErrorCode.REQUEST_DUPLICATED, "requestId=" + req.requestId());
         }
-        try {
-            // 第二道防线：玩家级锁，让读-改-写串行
-            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
-                    () -> doUpgrade(playerId, req, now));
-        } catch (RuntimeException e) {
-            // 失败必须释放幂等键：副作用没有产生，否则玩家重试会被永久挡在门外
-            idempotency.release(req.requestId());
-            throw e;
-        }
+        claim.requestId = req.requestId();
+        return action.apply(now);
     }
 
     private CityUpgradeResp doUpgrade(String playerId, CityUpgradeReq req, long now) {
@@ -578,32 +588,66 @@ public class CityAppService {
 
     /** Bot target choice shares player placement/upgrade checks; probing never persists a new plot. */
     public CityTickFacts botCityTickFacts(String playerId, long now, BuildingCfg.Type preferredType) {
-        return withSettledCity(playerId, ctx -> {
-            boolean freeQueue = ctx.city().usedQueues()
-                    < ctx.rules().availableQueues(isInNewbieProtect(ctx.player(), ctx.now()), ctx.city().extraQueues());
-            if (!freeQueue) return new CityTickFacts(false, null);
-            List<BuildingCfg> definitions = configs.all(BuildingCfg.class);
-            if (preferredType != null) {
-                for (BuildingCfg cfg : definitions) {
-                    if (cfg.type() != preferredType) continue;
-                    Upgradable target = developmentTarget(ctx, cfg);
-                    if (target != null) return new CityTickFacts(true, target);
-                }
-            }
-            // Neutral personalities keep the original placed-building order before new construction.
-            for (BuildingInstance instance : ctx.city().buildings()) {
-                BuildingCfg cfg = configs.get(BuildingCfg.class, instance.configId());
-                if (cfg.type() == preferredType) continue;
-                Upgradable target = developmentTarget(ctx, cfg);
-                if (target != null) return new CityTickFacts(true, target);
-            }
+        return withSettledCity(playerId, ctx -> developmentFacts(ctx, preferredType));
+    }
+
+    private CityTickFacts developmentFacts(CitySnapshot ctx, BuildingCfg.Type preferredType) {
+        boolean freeQueue = ctx.city().usedQueues()
+                < ctx.rules().availableQueues(isInNewbieProtect(ctx.player(), ctx.now()), ctx.city().extraQueues());
+        if (!freeQueue) return new CityTickFacts(false, null);
+        List<BuildingCfg> definitions = configs.all(BuildingCfg.class);
+        if (preferredType != null) {
             for (BuildingCfg cfg : definitions) {
-                if (cfg.type() == preferredType || ctx.city().findByConfigId(cfg.id()) != null) continue;
+                if (cfg.type() != preferredType) continue;
                 Upgradable target = developmentTarget(ctx, cfg);
                 if (target != null) return new CityTickFacts(true, target);
             }
-            return new CityTickFacts(true, null);
-        });
+        }
+        // Neutral personalities keep the original placed-building order before new construction.
+        for (BuildingInstance instance : ctx.city().buildings()) {
+            BuildingCfg cfg = configs.get(BuildingCfg.class, instance.configId());
+            if (cfg.type() == preferredType) continue;
+            Upgradable target = developmentTarget(ctx, cfg);
+            if (target != null) return new CityTickFacts(true, target);
+        }
+        for (BuildingCfg cfg : definitions) {
+            if (cfg.type() == preferredType || ctx.city().findByConfigId(cfg.id()) != null) continue;
+            Upgradable target = developmentTarget(ctx, cfg);
+            if (target != null) return new CityTickFacts(true, target);
+        }
+        return new CityTickFacts(true, null);
+    }
+
+    public record SelectedUpgrade(Upgradable target, CityUpgradeResp response) { }
+
+    /**
+     * Persist target selection, then run the ordinary upgrade while retaining the same player lock.
+     * A missing target creates no request ID. The second load/settlement and all upgrade checks remain.
+     * Selection writes survive later failure; this does not introduce a multi-document transaction.
+     */
+    public java.util.Optional<SelectedUpgrade> upgradeFirstAvailable(String playerId, BuildingCfg.Type preferredType,
+                                                                    java.util.function.Supplier<String> requestId) {
+        java.util.Objects.requireNonNull(requestId, "requestId supplier");
+        long selectionNow = timeService.serverNow();
+        UpgradeClaim claim = new UpgradeClaim();
+        try {
+            return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
+                Ctx ctx = load(playerId, selectionNow);
+                CityTickFacts facts = developmentFacts(new CitySnapshot(
+                        ctx.player(), ctx.city(), ctx.rules(), ctx.settlement(), selectionNow), preferredType);
+                players.save(ctx.player());
+                cities.save(playerId, ctx.city(), ctx.cityVersion());
+                Upgradable target = facts.nextUpgradable();
+                if (target == null) return java.util.Optional.empty();
+                CityUpgradeReq req = new CityUpgradeReq(requestId.get(), target.configId(), target.gridX(), target.gridY());
+                CityUpgradeResp response = performUpgradeRequest(playerId, req, claim, now -> doUpgrade(playerId, req, now));
+                return java.util.Optional.of(new SelectedUpgrade(target, response));
+            });
+        } catch (RuntimeException e) {
+            // Includes final unlock failure, after any successful request reservation and business write.
+            if (claim.requestId != null) idempotency.release(claim.requestId);
+            throw e;
+        }
     }
 
     private Upgradable developmentTarget(CitySnapshot ctx, BuildingCfg cfg) {

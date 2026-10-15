@@ -33,6 +33,7 @@ class BotDevelopmentFlowTest {
     @Autowired PlayerRepository players;
     @Autowired com.ironoath.config.ConfigRegistry configs;
     @SpyBean TimeService time;
+    @SpyBean com.ironoath.core.lock.PlayerLock playerLock;
     long now;
     @BeforeEach void setup(){
         now=System.currentTimeMillis();doReturn(now).when(time).serverNow();
@@ -58,6 +59,15 @@ class BotDevelopmentFlowTest {
     CityState state(String uid){return cities.findByPlayerId(uid).orElseThrow();}
     long resources(String uid){var p=players.findByPlayerId(uid).orElseThrow();return List.of("WOOD","STONE","IRON","GRAIN").stream().mapToLong(id->p.resource(id).current()).sum();}
     void develop(String uid){adapter.execute(uid,new BotDecisionTree.Decision(BotDecisionTree.Action.UPGRADE_BUILDING,false,0,"fixture: autonomous development"),now);}
+    @Test void developmentSharesOnePlayerLockAcrossSelectionAndRealUpgrade(){
+        String uid=fixture("bot_paoyao",4,true);long before=resources(uid);
+        clearInvocations(playerLock);develop(uid);
+        assertThat(state(uid).findByConfigId("lumber_camp").status()).isEqualTo(BuildingStatus.UPGRADING);
+        assertThat(resources(uid)).isLessThan(before);
+        assertThat(adapter.actionCounts().get("upgraded")).isEqualTo(1L);
+        assertThat(adapter.actionCounts().get("failed")).isZero();
+        verify(playerLock,times(1)).runLocked(eq(uid),anyLong(),any());
+    }
     @ParameterizedTest @CsvSource({"bot_paoyao,lumber_camp","bot_jielue,barracks"})
     void personalityChoosesDifferentRealUpgradeForTheSameCity(String archetype,String target){
         String uid=fixture(archetype,4,true);long before=resources(uid);develop(uid);

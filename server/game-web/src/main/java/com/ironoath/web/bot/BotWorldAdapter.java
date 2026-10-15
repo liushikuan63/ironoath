@@ -30,7 +30,6 @@ import com.ironoath.web.dto.generated.AllianceDonateReq;
 import com.ironoath.web.dto.generated.AllianceIdReq;
 import com.ironoath.web.dto.generated.ChatChannel;
 import com.ironoath.web.dto.generated.ChatSendReq;
-import com.ironoath.web.dto.generated.CityUpgradeReq;
 import com.ironoath.web.dto.generated.ExileReq;
 import com.ironoath.web.dto.generated.MarchAction;
 import com.ironoath.web.dto.generated.MarchReq;
@@ -369,20 +368,35 @@ public class BotWorldAdapter implements BotScheduler.World {
     // ---------- C1：升级建筑与训练兵种 ----------
 
     private void upgrade(String botId, long now, BotDecisionTree.Decision decision) {
-        CityAppService.CityTickFacts facts = readCityQuietly(botId, now);
-        CityAppService.Upgradable target = facts.nextUpgradable();
-        if (target == null) {
+        boolean[] requestStarted = {false};
+        String[] generatedRequestId = {null};
+        java.util.Optional<CityAppService.SelectedUpgrade> selected;
+        try {
+            BotProfile profile = bots.profileOf(botId);
+            selected = cities.upgradeFirstAvailable(botId,
+                    profile == null ? null : assembler.preferredBuildingType(profile.archetypeId()), () -> {
+                        requestStarted[0] = true;
+                        generatedRequestId[0] = newRequestId(botId);
+                        return generatedRequestId[0];
+                    });
+        } catch (RuntimeException e) {
+            if (requestStarted[0]) throw e;
+            // Same pre-request failure accounting as readCityQuietly followed by an empty target.
+            failed.incrementAndGet();
+            skipped.incrementAndGet();
+            LOG.warn("读 Bot {} 的城建事实失败，本次按无可用目标处理：{}", botId, e.getMessage());
+            return;
+        }
+        if (selected.isEmpty()) {
             // observe 说能升、现在不能升：中间有别的请求动了这个城（或者就是近似偏乐观）。
             // 什么都不做，但计一次 —— 「Bot 在空转」必须可见，否则没人知道它在原地打转
             skipped.incrementAndGet();
             LOG.info("Bot {} 决定升级但已无目标（决策理由={}）", botId, decision.reason());
             return;
         }
-        // 首次建造坐标已经用真人同一份领域规则验证；执行仍由真人服务重新校验并扣资源。
-        String requestId = newRequestId(botId);
-        cities.upgrade(botId, new CityUpgradeReq(requestId, target.configId(), target.gridX(), target.gridY()));
+        CityAppService.Upgradable target = selected.orElseThrow().target();
         upgraded.incrementAndGet();
-        LOG.info("Bot {} 升级 {} → {} 级 幂等键={}", botId, target.configId(), target.targetLevel(), requestId);
+        LOG.info("Bot {} 升级 {} → {} 级 幂等键={}", botId, target.configId(), target.targetLevel(), generatedRequestId[0]);
     }
 
     private void train(String botId, long now, BotDecisionTree.Decision decision) {
