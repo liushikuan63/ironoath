@@ -51,8 +51,13 @@ public class NationTechBonuses {
      * 将来给它们各配一行，本方法不用改（与 {@code TechEffects.outputPercent} 同一条取舍）。
      */
     public long outputPercent(String resourceId, String playerId) {
+        return outputPercent(resourceId, playerId, null);
+    }
+
+    /** Optional successful-lookup snapshot shared only by one resource calculation. */
+    public long outputPercent(String resourceId, String playerId, NationOutputReadScope scope) {
         return ResourceIds.GRAIN.equals(resourceId)
-                ? percentFor(NationTechCfg.EffectAttr.GRAIN_OUTPUT, playerId) : 0L;
+                ? percentFor(NationTechCfg.EffectAttr.GRAIN_OUTPUT, playerId, scope) : 0L;
     }
 
     /** 建造速度（万分比）。与个人科技那一份<b>相加后</b>交给 {@code Rates.shortenSeconds} 作用一次。 */
@@ -72,7 +77,11 @@ public class NationTechBonuses {
 
     /** Σ（该属性的每一行：每级幅度 × 国家账本里的等级）。没有国家就是 0。 */
     private long percentFor(NationTechCfg.EffectAttr attr, String playerId) {
-        Nation nation = nationOf(playerId);
+        return percentFor(attr, playerId, null);
+    }
+
+    private long percentFor(NationTechCfg.EffectAttr attr, String playerId, NationOutputReadScope scope) {
+        Nation nation = nationOf(playerId, scope);
         if (nation == null || nation.techLevels().isEmpty()) {
             return 0L;
         }
@@ -101,15 +110,16 @@ public class NationTechBonuses {
      * <p>仓储异常也吞成 0：<b>响亮但不断路</b>。让它抛的后果是"国家仓储抖一下，
      * 全服的产率与城建时长算式跟着炸"，那比少一档加成严重得多；现场留在 WARN 日志里。
      */
-    private Nation nationOf(String playerId) {
+    private Nation nationOf(String playerId, NationOutputReadScope scope) {
         if (playerId == null || playerId.isBlank()) {
             return null;
         }
         try {
-            return social.allianceOf(playerId)
+            java.util.function.Supplier<Nation> lookup = () -> social.allianceOf(playerId)
                     .flatMap(alliance -> nations.findByAlliance(alliance.id()))
                     .map(leaders::bind)
                     .orElse(null);
+            return scope == null ? lookup.get() : scope.resolve(playerId, lookup);
         } catch (RuntimeException e) {
             LOG.warn("国家科技加成读不到所属国家，按 0 计 playerId={} 原因={}", playerId, e.toString());
             return null;

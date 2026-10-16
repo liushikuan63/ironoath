@@ -135,6 +135,7 @@ public class ResourceRateService {
         Map<String, ResourceOutputCalculator.Breakdown> breakdowns = new LinkedHashMap<>();
         Map<String, Long> caps = new LinkedHashMap<>();
         Long policyOutputPercent = null;
+        var nationRead = new com.ironoath.web.nation.NationOutputReadScope(playerId);
 
         for (ResourceCfg res : configs.allResources()) {
             List<ResourceOutputCalculator.Line> baseLines = new ArrayList<>();
@@ -170,11 +171,11 @@ public class ResourceRateService {
             // 国策是第三个相加项（收口清单 #146 ②：同类加成相加成总率、作用于基础一次）。
             // 国策的 OUTPUT 一行管四种资源，所以这里传的是 playerId 而不是 res.id()。
             long resourceOutputPercent = techEffects.outputPercent(res.id(), tech)
-                    + nationTechBonuses.outputPercent(res.id(), playerId);
+                    + nationTechBonuses.outputPercent(res.id(), playerId, nationRead);
             // 同一次计算复用首次读取的国策值（0 也是有效值）；下一次 compute 重新读取。
             // 留在原消费位置懒读取，空资源列表或前置失败不会新增身份/国策访问。
             if (policyOutputPercent == null) {
-                policyOutputPercent = policyBonuses.outputPercent(playerId);
+                policyOutputPercent = policyBonuses.outputPercent(playerId, nationRead);
             }
             breakdowns.put(res.id(), ResourceOutputCalculator.compute(baseLines,
                     resourceOutputPercent + policyOutputPercent, 0L, 0L));

@@ -18,6 +18,7 @@ import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.web.nation.NationPolicyBonuses;
 import com.ironoath.web.nation.NationTechBonuses;
+import com.ironoath.web.nation.NationOutputReadScope;
 import com.ironoath.web.tech.TechEffects;
 
 /** Only consumed settlement segments should read live organization bonuses. */
@@ -48,17 +49,17 @@ class ResourceSettlementRateReadCountTest {
 
     private ResourceRateService.Rates expectedRates(CityState city, String playerId, long percent) {
         var referencePolicy = mock(NationPolicyBonuses.class);
-        when(referencePolicy.outputPercent(playerId)).thenReturn(percent);
+        when(referencePolicy.outputPercent(eq(playerId), any(NationOutputReadScope.class))).thenReturn(percent);
         return new ResourceRateService(configs, mock(TechEffects.class), mock(NationTechBonuses.class), referencePolicy)
                 .compute(city, player(playerId).tech(), playerId);
     }
 
     @Test void noMilestoneReadsOneBonusAndUsesThatReadInTheReturnedRates() {
-        when(policy.outputPercent("plain")).thenReturn(1000L, 9000L);
+        when(policy.outputPercent(eq("plain"), any(NationOutputReadScope.class))).thenReturn(1000L, 9000L);
         PlayerSave player = player("plain");
         var result = service.settle(player, new CityState(), START+3_600_000);
-        verify(policy).outputPercent("plain");
-        for (var resource : configs.allResources()) verify(national).outputPercent(resource.id(), "plain");
+        verify(policy).outputPercent(eq("plain"), any(NationOutputReadScope.class));
+        for (var resource : configs.allResources()) verify(national).outputPercent(eq(resource.id()), eq("plain"), any(NationOutputReadScope.class));
         long grainBase = configs.allResources().stream().filter(r -> ResourceIds.GRAIN.equals(r.id())).findFirst().orElseThrow().basePerHour();
         assertThat(result.rates().perHour(ResourceIds.GRAIN)).isEqualTo(grainBase*11000/10000);
         assertThat(result.states().get(ResourceIds.GRAIN).current()).isEqualTo(result.rates().perHour(ResourceIds.GRAIN));
@@ -67,7 +68,7 @@ class ResourceSettlementRateReadCountTest {
     }
 
     @Test void twoFinishTimesReadExactlyThreeConsumedSegmentsAndHarvestBoth() {
-        when(policy.outputPercent("segments")).thenReturn(1000L, 2000L, 3000L, 9000L);
+        when(policy.outputPercent(eq("segments"), any(NationOutputReadScope.class))).thenReturn(1000L, 2000L, 3000L, 9000L);
         CityState city = finishingCity(START+7_200_000);
         CityState referenceCity = CityState.fromSnapshot(city.snapshot());
         var before = expectedRates(referenceCity, "segments", 1000);
@@ -79,7 +80,7 @@ class ResourceSettlementRateReadCountTest {
         var after = expectedRates(referenceCity, "segments", 3000);
         var tail = ResourceSettlement.settle(second.current(), after.cap(ResourceIds.GRAIN), after.perHour(ResourceIds.GRAIN), second.lastSettle(), START+10_800_000);
         var result = service.settle(player("segments"), city, START+10_800_000);
-        verify(policy, times(3)).outputPercent("segments");
+        verify(policy, times(3)).outputPercent(eq("segments"), any(NationOutputReadScope.class));
         assertThat(result.harvested()).containsExactly("first", "second");
         assertThat(city.building("first").level()).isEqualTo(2);
         assertThat(city.building("second").level()).isEqualTo(2);
@@ -92,20 +93,20 @@ class ResourceSettlementRateReadCountTest {
     @Test void equalFinishTimesShareOneSegmentButStillRecomputeAfterHarvest() {
         CityState city = finishingCity(START+3_600_000);
         var result = service.settle(player("same-time"), city, START+7_200_000);
-        verify(policy, times(2)).outputPercent("same-time");
+        verify(policy, times(2)).outputPercent(eq("same-time"), any(NationOutputReadScope.class));
         assertThat(result.harvested()).containsExactly("first", "second");
         assertThat(city.building("first").level()).isEqualTo(2);
         assertThat(city.building("second").level()).isEqualTo(2);
     }
 
     @Test void nextSettlementAndAnotherPlayerReadAuthorityAgainIncludingZero() {
-        when(policy.outputPercent("repeat")).thenReturn(0L, 2000L);
+        when(policy.outputPercent(eq("repeat"), any(NationOutputReadScope.class))).thenReturn(0L, 2000L);
         PlayerSave player = player("repeat");
         var first = service.settle(player, new CityState(), START+1000);
         var second = service.settle(player, new CityState(), START+2000);
         service.settle(player("other"), new CityState(), START+1000);
-        verify(policy, times(2)).outputPercent("repeat");
-        verify(policy).outputPercent("other");
+        verify(policy, times(2)).outputPercent(eq("repeat"), any(NationOutputReadScope.class));
+        verify(policy).outputPercent(eq("other"), any(NationOutputReadScope.class));
         assertThat(second.rates().perHour(ResourceIds.GRAIN)).isGreaterThan(first.rates().perHour(ResourceIds.GRAIN));
     }
 
@@ -113,19 +114,19 @@ class ResourceSettlementRateReadCountTest {
         PlayerSave player = player("failure"); CityState city = finishingCity(START+7_200_000);
         var resources = player.resources(); var snapshot = city.snapshot();
         var failure = new IllegalStateException("owned rate read unavailable");
-        when(policy.outputPercent("failure")).thenThrow(failure).thenReturn(0L);
+        when(policy.outputPercent(eq("failure"), any(NationOutputReadScope.class))).thenThrow(failure).thenReturn(0L);
         assertThatThrownBy(() -> service.settle(player, city, START+10_800_000)).isSameAs(failure);
         assertThat(player.resources()).isEqualTo(resources); assertThat(city.snapshot()).isEqualTo(snapshot);
         assertThat(service.settle(player, city, START+10_800_000).harvested()).containsExactly("first", "second");
-        verify(policy, times(4)).outputPercent("failure");
+        verify(policy, times(4)).outputPercent(eq("failure"), any(NationOutputReadScope.class));
     }
 
     @Test void tailAtTheExactLastFinishTimeStillRefreshesRatesAfterHarvest() {
-        when(policy.outputPercent("exact-finish")).thenReturn(1000L, 2000L, 9000L);
+        when(policy.outputPercent(eq("exact-finish"), any(NationOutputReadScope.class))).thenReturn(1000L, 2000L, 9000L);
         CityState city = finishingCity(START+3_600_000);
         var before = expectedRates(CityState.fromSnapshot(city.snapshot()), "exact-finish", 1000);
         var result = service.settle(player("exact-finish"), city, START+3_600_000);
-        verify(policy, times(2)).outputPercent("exact-finish");
+        verify(policy, times(2)).outputPercent(eq("exact-finish"), any(NationOutputReadScope.class));
         assertThat(result.harvested()).containsExactly("first", "second");
         assertThat(result.rates()).isEqualTo(expectedRates(city, "exact-finish", 2000));
         assertThat(result.credited().get(ResourceIds.GRAIN)).isEqualTo(before.perHour(ResourceIds.GRAIN));

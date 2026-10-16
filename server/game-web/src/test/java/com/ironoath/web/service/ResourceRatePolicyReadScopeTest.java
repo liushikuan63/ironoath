@@ -13,6 +13,7 @@ import com.ironoath.core.player.PlayerTech;
 import com.ironoath.core.resource.ResourceOutputCalculator;
 import com.ironoath.web.nation.NationPolicyBonuses;
 import com.ironoath.web.nation.NationTechBonuses;
+import com.ironoath.web.nation.NationOutputReadScope;
 import com.ironoath.web.tech.TechEffects;
 
 /** One policy snapshot belongs to one rate calculation, including a legitimate zero. */
@@ -36,54 +37,54 @@ class ResourceRatePolicyReadScopeTest {
 
     @Test
     void oneNonzeroReadFeedsEveryResourceWithoutSkippingResourceSpecificBonuses() {
-        when(policy.outputPercent("player-a")).thenReturn(1000L);
+        when(policy.outputPercent(eq("player-a"), any(NationOutputReadScope.class))).thenReturn(1000L);
         when(personal.outputPercent(anyString(), same(tech))).thenReturn(200L);
-        when(national.outputPercent(anyString(), eq("player-a"))).thenReturn(300L);
+        when(national.outputPercent(anyString(), eq("player-a"), any(NationOutputReadScope.class))).thenReturn(300L);
         assertPolicy(service.compute(new CityState(), tech, "player-a"), 1500L);
-        verify(policy).outputPercent("player-a");
+        verify(policy).outputPercent(eq("player-a"), any(NationOutputReadScope.class));
         for (ResourceCfg res : configs.allResources()) {
             verify(personal).outputPercent(res.id(), tech);
-            verify(national).outputPercent(res.id(), "player-a");
+            verify(national).outputPercent(eq(res.id()), eq("player-a"), any(NationOutputReadScope.class));
         }
         var order = inOrder(personal, national, policy);
         String first = configs.allResources().get(0).id();
         order.verify(personal).outputPercent(first, tech);
-        order.verify(national).outputPercent(first, "player-a");
-        order.verify(policy).outputPercent("player-a");
+        order.verify(national).outputPercent(eq(first), eq("player-a"), any(NationOutputReadScope.class));
+        order.verify(policy).outputPercent(eq("player-a"), any(NationOutputReadScope.class));
     }
 
     @Test
     void zeroIsAResolvedPolicyValue() {
         assertPolicy(service.compute(new CityState(), tech, "player-a"), 0);
-        verify(policy).outputPercent("player-a");
+        verify(policy).outputPercent(eq("player-a"), any(NationOutputReadScope.class));
     }
 
     @Test
     void nextCalculationReadsChangedPolicyAgain() {
-        when(policy.outputPercent("player-a")).thenReturn(1000L, 2000L);
+        when(policy.outputPercent(eq("player-a"), any(NationOutputReadScope.class))).thenReturn(1000L, 2000L);
         assertPolicy(service.compute(new CityState(), tech, "player-a"), 1000);
         assertPolicy(service.compute(new CityState(), tech, "player-a"), 2000);
-        verify(policy, times(2)).outputPercent("player-a");
+        verify(policy, times(2)).outputPercent(eq("player-a"), any(NationOutputReadScope.class));
     }
 
     @Test
     void failurePropagatesAndNextCalculationRetriesAuthoritativeRead() {
         var failure = new IllegalStateException("policy configuration unavailable");
-        when(policy.outputPercent("player-a")).thenThrow(failure).thenReturn(700L);
+        when(policy.outputPercent(eq("player-a"), any(NationOutputReadScope.class))).thenThrow(failure).thenReturn(700L);
         assertThatThrownBy(() -> service.compute(new CityState(), tech, "player-a"))
                 .isSameAs(failure);
         assertPolicy(service.compute(new CityState(), tech, "player-a"), 700);
-        verify(policy, times(2)).outputPercent("player-a");
+        verify(policy, times(2)).outputPercent(eq("player-a"), any(NationOutputReadScope.class));
     }
 
     @Test
     void anotherPlayerDoesNotReuseThePreviousPlayersPolicy() {
-        when(policy.outputPercent("player-a")).thenReturn(500L);
-        when(policy.outputPercent("player-b")).thenReturn(1700L);
+        when(policy.outputPercent(eq("player-a"), any(NationOutputReadScope.class))).thenReturn(500L);
+        when(policy.outputPercent(eq("player-b"), any(NationOutputReadScope.class))).thenReturn(1700L);
         assertPolicy(service.compute(new CityState(), tech, "player-a"), 500);
         assertPolicy(service.compute(new CityState(), tech, "player-b"), 1700);
-        verify(policy).outputPercent("player-a");
-        verify(policy).outputPercent("player-b");
+        verify(policy).outputPercent(eq("player-a"), any(NationOutputReadScope.class));
+        verify(policy).outputPercent(eq("player-b"), any(NationOutputReadScope.class));
     }
 
     @Test

@@ -107,7 +107,12 @@ public class NationPolicyBonuses {
 
     /** 四种资源的国家加成（定点万分比）。国策里 {@code OUTPUT} 一行管四资源，同一个幅度。 */
     public long outputPercent(String playerId) {
-        Nation nation = nationOf(playerId);
+        return outputPercent(playerId, null);
+    }
+
+    /** Optional successful-lookup snapshot; policy clock and settlement stay unchanged. */
+    public long outputPercent(String playerId, NationOutputReadScope scope) {
+        Nation nation = nationOf(playerId, scope);
         if (nation == null) {
             return 0L;
         }
@@ -165,14 +170,19 @@ public class NationPolicyBonuses {
      * 但那里是「必须有一个国家」的语义，这里是「没有就算了」的语义。
      */
     private Nation nationOf(String playerId) {
+        return nationOf(playerId, null);
+    }
+
+    private Nation nationOf(String playerId, NationOutputReadScope scope) {
         if (playerId == null || playerId.isBlank()) {
             return null;
         }
         try {
-            return social.allianceOf(playerId)
+            java.util.function.Supplier<Nation> lookup = () -> social.allianceOf(playerId)
                     .flatMap(alliance -> nations.findByAlliance(alliance.id()))
                     .map(leaders::bind)
                     .orElse(null);
+            return scope == null ? lookup.get() : scope.resolve(playerId, lookup);
         } catch (RuntimeException e) {
             LOG.warn("国策加成读不到所属国家，按 0 计 playerId={} 原因={}", playerId, e.toString());
             return null;
