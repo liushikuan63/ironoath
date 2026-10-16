@@ -297,7 +297,8 @@ public class BotWorldAdapter implements BotScheduler.World {
         }
         CityAppService.CityTickFacts cityFacts = readCityQuietly(botId, now);
         ArmyState armyState = armies.findByPlayerId(botId).orElse(null);
-        long troopCap = heroes.troopCap(botId);
+        var troopCapacity = heroes.troopCapSnapshot(botId);
+        long troopCap = troopCapacity.maximumFor(botId);
         long troops = armyState == null ? 0L : armyState.totalTroops() + armyState.totalTraining();
         long average = humanAverageMatchPower(now);
 
@@ -317,7 +318,7 @@ public class BotWorldAdapter implements BotScheduler.World {
                 // 「人口满」在 B05 的口径里就是带兵上限（troopCap 由武将统帅值决定），
                 // 用 service 的那一份读法而不是自己乘一遍将领头数
                 troops >= troopCap,
-                army.firstTrainable(botId, now).isPresent(),
+                army.firstTrainable(botId, now, troopCapacity).isPresent(),
                 wallet.available(botId, "STAMINA", now) > 0L,
                 marches.activeCountOf(botId) < configs.longParam("MARCH_MAX_CONCURRENT"),
                 social.allianceOf(botId).isPresent(),

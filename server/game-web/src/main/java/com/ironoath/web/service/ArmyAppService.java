@@ -831,9 +831,21 @@ public class ArmyAppService {
      * 最坏结果是 Bot 空跑一次并被计入失败数 —— 不会有 Bot 白拿东西，也不会有真人被多扣。
      */
     public java.util.Optional<Trainable> firstTrainable(String playerId, long now) {
+        return firstTrainableWithCapacity(playerId, () -> heroAppService.troopCap(playerId));
+    }
+
+    /** Reuse this observation's capacity only for advice; real train still reads and validates current capacity. */
+    public java.util.Optional<Trainable> firstTrainable(String playerId, long now,
+                                                       HeroAppService.TroopCapSnapshot capacity) {
+        long maximum = java.util.Objects.requireNonNull(capacity, "capacity snapshot").maximumFor(playerId);
+        return firstTrainableWithCapacity(playerId, () -> maximum);
+    }
+
+    private java.util.Optional<Trainable> firstTrainableWithCapacity(String playerId,
+                                                                    java.util.function.LongSupplier capacity) {
         return cityAppService.withSettledCity(playerId, ctx -> {
             ArmyState army = loadOrCreate(playerId);
-            long troopCap = heroAppService.troopCap(playerId);
+            long troopCap = capacity.getAsLong();
             int slots = availableSlots(army);
             long batchMax = configs.longParam("TRAIN_BATCH_MAX");
             long room = Math.min(batchMax, troopCap - army.totalTroops() - army.totalTraining());

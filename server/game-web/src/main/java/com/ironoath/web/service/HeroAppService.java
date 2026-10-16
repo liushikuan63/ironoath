@@ -134,6 +134,29 @@ public class HeroAppService {
         return stats.troopCap(equipLedgers.of(playerId), loadOrCreate(playerId), 0);
     }
 
+    /** One successful capacity read for one Bot observation's advisory facts, never an action authorization. */
+    public TroopCapSnapshot troopCapSnapshot(String playerId) {
+        return new TroopCapSnapshot(playerId, troopCap(playerId));
+    }
+
+    /** Local immutable value only; the next observation and actual training must read again. */
+    public static final class TroopCapSnapshot {
+        private final String playerId;
+        private final long maximum;
+
+        private TroopCapSnapshot(String playerId, long maximum) {
+            this.playerId = playerId;
+            this.maximum = maximum;
+        }
+
+        public long maximumFor(String requestedPlayer) {
+            if (!java.util.Objects.equals(playerId, requestedPlayer)) {
+                throw new IllegalArgumentException("带兵上限快照与玩家不一致");
+            }
+            return maximum;
+        }
+    }
+
     // ---------- 养成五条线 ----------
 
     /** 等级线：投喂经验书，一次可能连升数级。 */
