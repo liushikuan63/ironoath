@@ -631,6 +631,12 @@ public final class ArmyState {
                            List<String> rallyRefunds) {
 
         public Snapshot {
+            // Keep the existing null shape and iteration order, while detaching
+            // every mutable container from both constructor inputs and the Army.
+            troops = troops == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(troops));
+            queue = queue == null ? null : Collections.unmodifiableList(new java.util.ArrayList<>(queue));
+            wounded = wounded == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(wounded));
+            treatCost = treatCost == null ? null : Collections.unmodifiableMap(new LinkedHashMap<>(treatCost));
             // 老档（或还没写这一项的新档）读出来是 null ⇒ 当作"关"：一个从没开过自动的号
             // 不该因为一次读档就开始花钱
             autoTrain = autoTrain == null ? AutoTrainPolicy.off() : autoTrain;

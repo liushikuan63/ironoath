@@ -819,6 +819,38 @@ public class ArmyAppService {
     public record Trainable(String unitId, long count) {
     }
 
+    /** One initial Army read for a single observation's advice; absence does not replace loadOrCreate. */
+    public ArmyObservationSnapshot observationSnapshot(String playerId) {
+        if (playerId == null || playerId.isBlank()) {
+            throw new IllegalArgumentException("playerId 不得为空");
+        }
+        return new ArmyObservationSnapshot(playerId,
+                armies.findByPlayerId(playerId).map(ArmyState::snapshot).orElse(null));
+    }
+
+    public static final class ArmyObservationSnapshot {
+        private final String playerId;
+        private final ArmyState.Snapshot snapshot;
+
+        private ArmyObservationSnapshot(String playerId, ArmyState.Snapshot snapshot) {
+            this.playerId = playerId;
+            this.snapshot = snapshot;
+        }
+
+        private void requirePlayer(String requestedPlayer) {
+            if (!java.util.Objects.equals(playerId, requestedPlayer)) {
+                throw new IllegalArgumentException("军队观察快照与玩家不一致");
+            }
+        }
+
+        public long populationInUseFor(String requestedPlayer) {
+            requirePlayer(requestedPlayer);
+            if (snapshot == null) return 0L;
+            ArmyState state = ArmyState.fromSnapshot(snapshot);
+            return state.totalTroops() + state.totalTraining();
+        }
+    }
+
     /**
      * 第一个<b>此刻解锁且队列/人口有空位</b>的兵种，判定复用 {@code isUnlocked} 与领域层的
      * {@code ArmyState#canTrain}（与 {@code train} 同一条算式，不在这里抄第二份）。
@@ -831,20 +863,32 @@ public class ArmyAppService {
      * 最坏结果是 Bot 空跑一次并被计入失败数 —— 不会有 Bot 白拿东西，也不会有真人被多扣。
      */
     public java.util.Optional<Trainable> firstTrainable(String playerId, long now) {
-        return firstTrainableWithCapacity(playerId, () -> heroAppService.troopCap(playerId));
+        return firstTrainableWithCapacity(playerId, () -> heroAppService.troopCap(playerId),
+                () -> loadOrCreate(playerId));
     }
 
     /** Reuse this observation's capacity only for advice; real train still reads and validates current capacity. */
     public java.util.Optional<Trainable> firstTrainable(String playerId, long now,
                                                        HeroAppService.TroopCapSnapshot capacity) {
         long maximum = java.util.Objects.requireNonNull(capacity, "capacity snapshot").maximumFor(playerId);
-        return firstTrainableWithCapacity(playerId, () -> maximum);
+        return firstTrainableWithCapacity(playerId, () -> maximum, () -> loadOrCreate(playerId));
+    }
+
+    /** Existing Army advice is coherent with this observation; cold reads retain the original reload/create. */
+    public java.util.Optional<Trainable> firstTrainable(String playerId, long now,
+                                                       HeroAppService.TroopCapSnapshot capacity,
+                                                       ArmyObservationSnapshot observed) {
+        long maximum = java.util.Objects.requireNonNull(capacity, "capacity snapshot").maximumFor(playerId);
+        java.util.Objects.requireNonNull(observed, "Army observation snapshot").requirePlayer(playerId);
+        return firstTrainableWithCapacity(playerId, () -> maximum, () -> observed.snapshot == null
+                ? loadOrCreate(playerId) : ArmyState.fromSnapshot(observed.snapshot));
     }
 
     private java.util.Optional<Trainable> firstTrainableWithCapacity(String playerId,
-                                                                    java.util.function.LongSupplier capacity) {
+                                                                    java.util.function.LongSupplier capacity,
+                                                                    java.util.function.Supplier<ArmyState> state) {
         return cityAppService.withSettledCity(playerId, ctx -> {
-            ArmyState army = loadOrCreate(playerId);
+            ArmyState army = state.get();
             long troopCap = capacity.getAsLong();
             int slots = availableSlots(army);
             long batchMax = configs.longParam("TRAIN_BATCH_MAX");
