@@ -99,6 +99,8 @@ echo "[check] 探针脚本语法：$(ls tools/verify-*.mjs | wc -l) 份全部通
 # 这里把它连同「往返自检 + 引擎自命中 + 出画布」三道门一起钉住：改动 dpr、y 翻转或
 # `worldToScreen` 参数顺序，**任一处都会变红**（已用三个变异实测过）。
 node --test tools/lib/cocos-click.test.mjs tools/lib/purchase-evidence.test.mjs tools/lib/march-evidence.test.mjs tools/lib/resource-debit-evidence.test.mjs tools/lib/runtime-response-wait.test.mjs tools/lib/auto-refill-confirmation-evidence.test.mjs
+# B11 量具资源归属：创建/删除回执丢失、容器改名与外部owner不能被当成已清理。
+python -X utf8 -m unittest discover -s scripts/tools -p 'test_bench*.py'
 # 写死在量具里的 Java 包路径谓词必须命中真实文件/目录，且**每族谓词命中数必须 > 0**（2026-10-06 开）：
 # 本仓有 17 条门禁字面量路径 + 2 条 exec.mainClass + 24 份契约的 x-java-package 指向 Java 源码树。
 # 它们一旦与源码目录脱节（移动类、模块改名、真去改包名），门会去扫**不存在的目录** ⇒ 拿到 0 个文件
