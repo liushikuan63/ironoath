@@ -347,6 +347,15 @@ public class QuestAppService {
             if (entry.goalType().accumulates() || !STATE_TYPES_WITH_SOURCE.contains(entry.goalType())) {
                 continue;
             }
+            // A source row may be locked while its event still feeds an unlocked
+            // wildcard/same-target row. Skip only when no row can consume it;
+            // claimed state rows still refresh, just as in QuestProgress.onEvent.
+            var signal = com.ironoath.core.event.GameEvent.state(progress.playerId(),
+                    entry.goalType(), entry.goalTarget(), 0L, now);
+            boolean hasConsumer = progress.entries().stream().anyMatch(candidate ->
+                    candidate.goalType() == entry.goalType() && progress.unlocked(candidate.questId())
+                            && signal.matchesTarget(candidate.goalTarget()));
+            if (!hasConsumer) continue;
             long current = stateValue(progress.playerId(), entry, owner);
             if (current == entry.current()) {
                 continue;
