@@ -31,6 +31,17 @@ public interface PlayerLock {
      */
     <T> T runLocked(String playerId, long timeoutMs, java.util.function.Supplier<T> action);
 
+    /**
+     * 显式共享一次外层玩家锁范围。默认实现保持普通锁语义，适配器无需新增实现。
+     * 分布式实现可以在此范围内复用同线程、同玩家的外层 hold，但每次复用前必须
+     * 重新向服务端验证 owner；独立任务账本键、其它玩家和其它线程不共享。
+     * 此可选入口不改变范围之外普通 {@link #runLocked} 的远程重入语义。
+     */
+    default <T> T runWithSharedScope(String playerId, long timeoutMs,
+                                    java.util.function.Supplier<T> action) {
+        return runLocked(playerId, timeoutMs, action);
+    }
+
     /** 获取锁超时。客户端应重试；这不是服务端故障，而是该玩家有请求正在处理。 */
     class LockTimeoutException extends RuntimeException {
         private static final long serialVersionUID = 1L;

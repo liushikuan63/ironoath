@@ -84,4 +84,54 @@ class RedissonPlayerLockOwnershipTest {
         String first=player(),second=player();var provider=new RedissonPlayerLock(client);var other=new RedissonPlayerLock(peer);
         assertThat(provider.runLocked(first,1000,()->other.runLocked(second,1000,()->"independent"))).isEqualTo("independent");
     }
+    @Test void explicitSharedScopeReusesOneRemoteOwnerAndStillExcludesPeer() {
+        String id=player();var provider=new RedissonPlayerLock(client);var raw=client.getLock(key(id));
+        provider.runWithSharedScope(id,1000,()->{
+            provider.runLocked(id,1000,()->{assertThat(raw.getHoldCount()).isEqualTo(1);return "shared";});
+            assertThat(raw.getHoldCount()).isEqualTo(1);assertThat(acquire(peer.getLock(key(id)),100)).isFalse();return null;
+        });
+        assertThat(raw.getHoldCount()).isZero();
+    }
+    @Test void lostSharedOwnerCannotRunNestedActionOrReleaseThePeerOwner() {
+        String id=player();var provider=new RedissonPlayerLock(client);var raw=client.getLock(key(id));var other=peer.getLock(key(id));
+        var nestedRan=new AtomicBoolean();
+        try{
+            provider.runWithSharedScope(id,1000,()->{
+                assertThat(raw.forceUnlock()).isTrue();assertThat(acquire(other,1000)).isTrue();
+                assertThatThrownBy(()->provider.runLocked(id,100,()->{nestedRan.set(true);return null;}))
+                        .isInstanceOf(PlayerLock.LockTimeoutException.class);
+                return null;
+            });
+            assertThat(nestedRan).isFalse();assertThat(other.isHeldByCurrentThread()).isTrue();assertThat(other.getHoldCount()).isEqualTo(1);
+        }finally{if(other.isHeldByCurrentThread())other.unlock();}
+        assertThat(provider.runLocked(id,1000,()->"fresh after loss")).isEqualTo("fresh after loss");
+    }
+    @Test void failedSharedActionRestoresOrdinaryRemoteReentrantCountTwo() {
+        String id=player();var provider=new RedissonPlayerLock(client);var raw=client.getLock(key(id));
+        var failure=new IllegalArgumentException("own shared action failed");
+        assertThatThrownBy(()->provider.runWithSharedScope(id,1000,()->provider.runLocked(id,1000,()->{throw failure;}))).isSameAs(failure);
+        provider.runLocked(id,1000,()->provider.runLocked(id,1000,()->{assertThat(raw.getHoldCount()).isEqualTo(2);return null;}));
+        assertThat(acquire(peer.getLock(key(id)),1000)).isTrue();peer.getLock(key(id)).unlock();
+    }
+    @Test void anotherThreadInsideSharedScopeStillContendsWithTheSameClient() throws Exception {
+        String id=player();var provider=new RedissonPlayerLock(client);var called=new AtomicBoolean();var pool=Executors.newSingleThreadExecutor();
+        try{
+            provider.runWithSharedScope(id,1000,()->{
+                var other=pool.submit(()->provider.runLocked(id,100,()->{called.set(true);return null;}));
+                assertThatThrownBy(()->other.get(5,TimeUnit.SECONDS)).isInstanceOf(ExecutionException.class).hasCauseInstanceOf(PlayerLock.LockTimeoutException.class);
+                assertThat(called).isFalse();return null;
+            });
+        }finally{pool.shutdownNow();assertThat(pool.awaitTermination(5,TimeUnit.SECONDS)).isTrue();}
+    }
+    @Test void preInterruptedNestedSharedAcquireDoesNotSendUnacknowledgedReentry() {
+        String id=player();var provider=new RedissonPlayerLock(client);var called=new AtomicBoolean();
+        provider.runWithSharedScope(id,1000,()->{
+            Thread.currentThread().interrupt();try{
+                assertThatThrownBy(()->provider.runLocked(id,100,()->{called.set(true);return null;}))
+                        .isInstanceOf(PlayerLock.LockTimeoutException.class);
+                assertThat(Thread.currentThread().isInterrupted()).isTrue();assertThat(called).isFalse();
+            }finally{Thread.interrupted();}return null;
+        });
+        assertThat(acquire(peer.getLock(key(id)),1000)).isTrue();peer.getLock(key(id)).unlock();
+    }
 }

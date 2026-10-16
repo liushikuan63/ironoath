@@ -19,6 +19,7 @@ import com.ironoath.core.bot.BotProfile;
 import com.ironoath.core.bot.BotPveTargets;
 import com.ironoath.core.bot.BotScheduler;
 import com.ironoath.core.march.MarchRepository;
+import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.reward.RewardPorts;
@@ -142,6 +143,8 @@ public class BotWorldAdapter implements BotScheduler.World {
 
     /** 成功落地的动作数（按动作类型分别记，供 {@code /bot/tick} 与仿真断言用）。 */
     private final AtomicLong upgraded = new AtomicLong();
+    private final PlayerLock playerLock;
+    private static final long PLAYER_SCOPE_TIMEOUT_MS = 3000L;
     private final AtomicLong trained = new AtomicLong();
     /**
      * <b>异常</b>次数（读世界/执行抛出来）。
@@ -242,7 +245,7 @@ public class BotWorldAdapter implements BotScheduler.World {
                            com.ironoath.web.quest.QuestAppService quests,
                            BotRulesAssembler assembler, WorldAppService worldService,
                            org.springframework.context.ApplicationEventPublisher events,
-                           BotBehaviorStore behavior) {
+                           BotBehaviorStore behavior, PlayerLock playerLock) {
         this.bots = bots;
         this.players = players;
         this.cities = cities;
@@ -264,6 +267,7 @@ public class BotWorldAdapter implements BotScheduler.World {
         this.worldService = worldService;
         this.events = events;
         this.behavior = behavior;
+        this.playerLock = playerLock;
     }
 
     @Override
@@ -278,6 +282,11 @@ public class BotWorldAdapter implements BotScheduler.World {
      */
     @Override
     public BotDecisionTree.WorldState observe(String botId, long now) {
+        return playerLock.runWithSharedScope(botId, PLAYER_SCOPE_TIMEOUT_MS,
+                () -> observeWithinPlayerScope(botId, now));
+    }
+
+    private BotDecisionTree.WorldState observeWithinPlayerScope(String botId, long now) {
         PlayerSave save = players.findByPlayerId(botId).orElse(null);
         if (save == null) {
             // 画像还在、存档却没了：按"什么都不缺"回答会让决策树去升一个不存在的城。

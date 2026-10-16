@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.TimeUnit;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Supplier;
 
 /**
@@ -33,12 +35,37 @@ public final class RedissonPlayerLock implements PlayerLock {
     private static final String KEY_PREFIX = "ironoath:lock:player:";
 
     private final RedissonClient redisson;
+    /** A lexical hint only; every nested reuse still checks the remote owner. */
+    private final ThreadLocal<Map<String, Integer>> sharedScopes = new ThreadLocal<>();
 
     public RedissonPlayerLock(RedissonClient redisson) {
         if (redisson == null) {
             throw new IllegalArgumentException("RedissonClient 不得为 null");
         }
         this.redisson = redisson;
+    }
+
+    @Override
+    public <T> T runWithSharedScope(String playerId, long timeoutMs, Supplier<T> action) {
+        if (action == null) {
+            throw new IllegalArgumentException("action 不得为 null");
+        }
+        return runLocked(playerId, timeoutMs, () -> {
+            Map<String, Integer> scopes = sharedScopes.get();
+            if (scopes == null) {
+                scopes = new HashMap<>();
+                sharedScopes.set(scopes);
+            }
+            scopes.merge(playerId, 1, Integer::sum);
+            try {
+                return action.get();
+            } finally {
+                int depth = scopes.get(playerId) - 1;
+                if (depth == 0) scopes.remove(playerId);
+                else scopes.put(playerId, depth);
+                if (scopes.isEmpty()) sharedScopes.remove();
+            }
+        });
     }
 
     @Override
@@ -52,7 +79,21 @@ public final class RedissonPlayerLock implements PlayerLock {
         if (action == null) {
             throw new IllegalArgumentException("action 不得为 null");
         }
+        // An already interrupted synchronous Redis acquisition can be sent but
+        // lose its reply, leaving an unacknowledged reentrant hold behind.
+        // Reject it before any Redis operation while retaining the flag.
+        if (Thread.currentThread().isInterrupted()) {
+            throw new LockTimeoutException(playerId, timeoutMs);
+        }
         RLock lock = redisson.getLock(KEY_PREFIX + playerId);
+        Map<String, Integer> scopes = sharedScopes.get();
+        // Ordinary calls keep Redisson's original reentrant holds. Only an
+        // explicit scope may reuse a same-thread hold after an actual owner read.
+        // Interrupt and lost-owner cases retain the original acquisition path.
+        if (scopes != null && scopes.containsKey(playerId)
+                && !Thread.currentThread().isInterrupted() && lock.isHeldByCurrentThread()) {
+            return action.get();
+        }
         boolean acquired;
         try {
             // 不传 leaseTime ⇒ 启用看门狗自动续期，见类注释
