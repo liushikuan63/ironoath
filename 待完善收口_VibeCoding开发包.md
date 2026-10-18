@@ -7814,3 +7814,5 @@ TEST_EXIT=0
 | 零帧错误元数据旁路r9 #1437 | 四docs local提交见receipt | 新12+原58+接入10=80/0/0/0；逆字节AST；validate-only0；独审无阻断 | tmp/persistent-budget-resume-20261018/r9-errors-offline-reviewed-ready-v1.actual.json；specV5与RED/GREEN/独审；冻结r8原件保留 | 旧r8实际原因不能回溯；新runtime/probe/5000无窗口；先能力探针；JFR覆盖/开销/总预算与原生仍未验 |
 
 | Java-only proc probe ready及周额度策略 #1438 | 四docs local提交见receipt | 新9+原70+probe19=98/0/0/0；javac0但main未执行；validate-only0；118/46一致；独审无阻断 | sharedQA ironoath-proc-probe-ready-v1.json SHA0d7e3301；本地proc-probe-frozen-ready-v1.actual.json及全部loghash/独审；周官方66percent观察 | 无真实新slot/无probe；97秒为计划不是实测；真实读取根因/一帧/5000和原生未验；周<30须安全收口后暂停ironoath |
+
+| 实际proc能力探针 #1439 | 四docs local提交见receipt | launcher1/finalize0；第三读203.3934ms/exit1非timeout；完整帧0；约8.1s清理及独立QA通过 | proc-probe-diagnosis-v1.actual.json及能力矩阵；sharedQA原started/terminal/release/independent保留 | 旧r8底层因/内核Docker机制未证；后验身份缺失不能发CPU/RSS partial；新窗口未授权，下一仅离线 |
