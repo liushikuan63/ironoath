@@ -7812,3 +7812,5 @@ TEST_EXIT=0
 | r8一次性真实诊断首帧失败 #1436 | 四docs local提交见receipt | outer1/inner1；Java与observer已执行但有效样本0/阶段0/JFR无；独立清理通过；不重试 | tmp/persistent-budget-resume-20261018/r8-attempt-failed-cleanup-v1.actual.json；共享QA actual-started及terminal-cleanup-release-ready；原目录和失败保留 | 具体底层读取原因被旧observer隐去；需新旁路安全错误分类/失败timing离线回归及重新独审，后续实测另协调；总预算及原生未验 |
 
 | 零帧错误元数据旁路r9 #1437 | 四docs local提交见receipt | 新12+原58+接入10=80/0/0/0；逆字节AST；validate-only0；独审无阻断 | tmp/persistent-budget-resume-20261018/r9-errors-offline-reviewed-ready-v1.actual.json；specV5与RED/GREEN/独审；冻结r8原件保留 | 旧r8实际原因不能回溯；新runtime/probe/5000无窗口；先能力探针；JFR覆盖/开销/总预算与原生仍未验 |
+
+| Java-only proc probe ready及周额度策略 #1438 | 四docs local提交见receipt | 新9+原70+probe19=98/0/0/0；javac0但main未执行；validate-only0；118/46一致；独审无阻断 | sharedQA ironoath-proc-probe-ready-v1.json SHA0d7e3301；本地proc-probe-frozen-ready-v1.actual.json及全部loghash/独审；周官方66percent观察 | 无真实新slot/无probe；97秒为计划不是实测；真实读取根因/一帧/5000和原生未验；周<30须安全收口后暂停ironoath |
