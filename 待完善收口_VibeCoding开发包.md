@@ -7818,3 +7818,5 @@ TEST_EXIT=0
 | 实际proc能力探针 #1439 | 四docs local提交见receipt | launcher1/finalize0；第三读203.3934ms/exit1非timeout；完整帧0；约8.1s清理及独立QA通过 | proc-probe-diagnosis-v1.actual.json及能力矩阵；sharedQA原started/terminal/release/independent保留 | 旧r8底层因/内核Docker机制未证；后验身份缺失不能发CPU/RSS partial；新窗口未授权，下一仅离线 |
 
 | IO capability离线策略 #1440 | 四docs local提交见receipt | 最终22/0/0/0及解包重放22/0/0/0；独审无阻断；无新资源 | proc-capability-policy-frozen-v1.actual.json；policy9c39/实际fixture96931/bundle98cee；design-v2与矩阵 | 尚未接入collector/launcher/无实际新帧；下一split采集需独立准备及新<=120秒窗口；总5000/原生未验 |
+
+| split probe v2 ready #1441 | 四docs local提交见receipt | 22+13+20=55/0/0/0；解包重放55通过；validate-only0；独审无阻断 | sharedQA ready-v2 SHA410f07a3；本地frozen-ready-v2及全部source/log/bundle哈希；design-v3 | 无新实际partial/完整帧/窗口；103秒为计划；IO替代/JFR/5000及原生未验，周需复查 |
