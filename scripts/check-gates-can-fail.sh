@@ -560,6 +560,30 @@ run_track_dictionary() { bash scripts/check-track-dictionary.sh; }
 three_arg check-track-dictionary.sh \
           mk_track_dictionary run_track_dictionary '事件名必须在看板文档的事件字典里有定义（走 TRACK_DICT_* 口，零污染）'
 
+# check-track-params：`this.track(...)` 传的每个参数键都必须在看板文档 §七 该事件的参数列里有定义
+# （参数没写进文档 ⇒ 运营侧看不懂这一列到底传了什么；反过来「把参数从文档里删掉」= 把口径丢掉）。
+# ⚠️ 走 TRACK_PARAMS_EVENTS / TRACK_PARAMS_DOC / TRACK_PARAMS_SCRIPTS 三个口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = 假客户端源码里 `this.track(TRACK_EVENTS.zzProbe, { zzSecret: 1 })` 传了一个键，
+# 而假看板文档该事件的参数列里**没有**这个键 ⇒ 红点精确落在「参数没文档化」。
+TP_D=/d/tmp/probe753/gates-trackparams
+mk_track_params() {
+  if [ "$1" = "1" ]; then
+    mkdir -p "$TP_D/scripts"
+    printf 'export const TRACK_EVENTS = {\n  zzProbe: %s,\n} as const\n' "'zz_probe_event'" > "$TP_D/TrackEvents.ts"
+    printf '## 七、事件字典\n\n| 事件名 | 触发时机 | 关键参数 |\n|---|---|---|\n| `zz_probe_event` | 别的 | `documentedParam` |\n' > "$TP_D/dashboard.md"
+    printf 'export function probe() {\n  this.track(TRACK_EVENTS.zzProbe, { zzSecret: 1 })\n}\n' > "$TP_D/scripts/probe.ts"
+    export TRACK_PARAMS_EVENTS="$TP_D/TrackEvents.ts"
+    export TRACK_PARAMS_DOC="$TP_D/dashboard.md"
+    export TRACK_PARAMS_SCRIPTS="$TP_D/scripts"
+  else
+    unset TRACK_PARAMS_EVENTS TRACK_PARAMS_DOC TRACK_PARAMS_SCRIPTS
+    rm -f "$TP_D/TrackEvents.ts" "$TP_D/dashboard.md" "$TP_D/scripts/probe.ts"
+  fi
+}
+run_track_params() { node scripts/check-track-params.js; }
+three_arg check-track-params.sh \
+          mk_track_params run_track_params 'track 传的参数必须在看板文档该事件的参数列里有定义（走 TRACK_PARAMS_* 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。

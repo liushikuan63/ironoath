@@ -22,9 +22,12 @@
 const fs = require('fs')
 const path = require('path')
 
-const EVENTS_FILE = 'client/assets/scripts/game/track/TrackEvents.ts'
-const DOC = '数据看板需求.md'
-const SCRIPTS_DIR = 'client/assets/scripts'
+// 三个输入（**可选口 TRACK_PARAMS_EVENTS / TRACK_PARAMS_DOC / TRACK_PARAMS_SCRIPTS**）：
+// 不设时与默认读取完全一致；绝对路径也直接可用 ⇒ harness 的夹具可以建在 /d/tmp 下，
+// 不必往真事件表、真看板文档与真客户端源码里植东西。
+const EVENTS_FILE = process.env.TRACK_PARAMS_EVENTS || 'client/assets/scripts/game/track/TrackEvents.ts'
+const DOC = process.env.TRACK_PARAMS_DOC || '数据看板需求.md'
+const SCRIPTS_DIR = process.env.TRACK_PARAMS_SCRIPTS || 'client/assets/scripts'
 
 const read = (file) => fs.readFileSync(file, 'utf8')
 
