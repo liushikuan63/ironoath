@@ -242,7 +242,7 @@ public class SocialAppService {
                 if (name.isEmpty()) {
                     throw new BizException(ErrorCode.SQUAD_NAME_INVALID, "小队名不得为空");
                 }
-                contentSecurity.requireClean(playerId,
+                contentSecurity.requireCleanForAccount(save.deviceId(),
                         com.ironoath.web.security.ContentSecurityClient.Scene.PROFILE,
                         name, ErrorCode.SQUAD_NAME_INVALID, "小队名");
                 if (store.squadNameTaken(name)) {
@@ -403,10 +403,10 @@ public class SocialAppService {
                 if (name.isEmpty() || tag.isEmpty()) {
                     throw new BizException(ErrorCode.ALLIANCE_NAME_INVALID, "联盟名与标签都不得为空");
                 }
-                contentSecurity.requireClean(playerId,
+                contentSecurity.requireCleanForAccount(save.deviceId(),
                         com.ironoath.web.security.ContentSecurityClient.Scene.PROFILE,
                         name, ErrorCode.ALLIANCE_NAME_INVALID, "联盟名");
-                contentSecurity.requireClean(playerId,
+                contentSecurity.requireCleanForAccount(save.deviceId(),
                         com.ironoath.web.security.ContentSecurityClient.Scene.PROFILE,
                         tag, ErrorCode.ALLIANCE_NAME_INVALID, "联盟标签");
                 if (store.allianceNameTaken(name)) {
