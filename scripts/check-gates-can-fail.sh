@@ -515,6 +515,29 @@ run_rank_payload() { bash scripts/check-rank-payload.sh; }
 three_arg check-rank-payload.sh \
           mk_rank_payload run_rank_payload '榜分页最坏响应不得超过预算（走 RANK_PAYLOAD_ROOT 口，零污染）'
 
+# check-search-radius：目标搜索的半径这条通道必须**两端都还在**
+# （客户端有注入调用 + 契约带齐 radiusMin/radiusDefault/radiusMax），少一端半径就退回恒 0，
+# 面板永远空着而界面一切正常（台账 #353 那一族）。
+# ⚠️ 走 SEARCH_RADIUS_CLIENT_DIR / SEARCH_RADIUS_SCHEMA 两个口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = 假客户端目录里**没有** `.setRadiusBounds(`，而假契约**带齐**三个 radius 字段
+# ⇒ 红点精确落在「客户端没有任何一处调用 setRadiusBounds」，不会被契约那一半抢走。
+SR_D=/d/tmp/probe753/gates-searchradius
+mk_search_radius() {
+  if [ "$1" = "1" ]; then
+    mkdir -p "$SR_D/client"
+    printf 'export const probe = 1\n' > "$SR_D/client/ZzProbe.ts"
+    printf '{\n  "radiusMin": 1,\n  "radiusDefault": 3,\n  "radiusMax": 9\n}\n' > "$SR_D/world.schema.json"
+    export SEARCH_RADIUS_CLIENT_DIR="$SR_D/client"
+    export SEARCH_RADIUS_SCHEMA="$SR_D/world.schema.json"
+  else
+    unset SEARCH_RADIUS_CLIENT_DIR SEARCH_RADIUS_SCHEMA
+    rm -f "$SR_D/client/ZzProbe.ts" "$SR_D/world.schema.json"
+  fi
+}
+run_search_radius() { bash scripts/check-search-radius.sh; }
+three_arg check-search-radius.sh \
+          mk_search_radius run_search_radius '目标搜索半径的上下界两端都必须在（走 SEARCH_RADIUS_* 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。

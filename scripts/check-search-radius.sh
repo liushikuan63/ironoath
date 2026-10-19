@@ -12,10 +12,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-call_sites=$(grep -rn "\.setRadiusBounds(" client/assets/scripts --include=*.ts 2>/dev/null \
+# 两个输入（**可选口 SEARCH_RADIUS_CLIENT_DIR / SEARCH_RADIUS_SCHEMA**）：不设时与默认扫描完全一致；
+# 绝对路径也直接可用 ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真客户端源码与真契约里植东西。
+CLIENT_DIR="${SEARCH_RADIUS_CLIENT_DIR:-client/assets/scripts}"
+SCHEMA_FILE="${SEARCH_RADIUS_SCHEMA:-contract/proto/world.schema.json}"
+
+call_sites=$(grep -rn "\.setRadiusBounds(" "$CLIENT_DIR" --include=*.ts 2>/dev/null \
   | grep -v "/net/generated/" | wc -l || true)
 schema_fields=$(grep -c "\"radiusMin\"\|\"radiusDefault\"\|\"radiusMax\"" \
-  contract/proto/world.schema.json || true)
+  "$SCHEMA_FILE" || true)
 
 fail=0
 if [ "$call_sites" -lt 1 ]; then
