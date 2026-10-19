@@ -222,3 +222,21 @@ test('parseSpeeds 解析配置字符串，遇到不认识的档位直接拒绝�
     '配置里写了 4 说明有人想加 4x，静默改成 2x 会让那次改动看起来生效了却没生效')
   assert.throws(() => parseSpeeds(''), /解析后为空/)
 })
+
+// ---------- 倍速档位来自服务端下发（客户端不抄配置表） ----------
+
+test('允许的倍速档位取这份战报实际下发的集合，不在客户端写死一份', () => {
+  const playback = new BattlePlayback(result([round(1)]), options({ speeds: [1, 2] }))
+  assert.deepEqual(playback.allowedSpeeds, [1, 2],
+    '界面层要用「服务端这次下发了哪些档位」来切倍速，写死一份就是改表只改一半')
+})
+
+test('服务端下发的档位与客户端写死的不同时，允许集合跟着下发走', () => {
+  // 反证用：只要 allowedSpeeds 读的是 options.speeds，换一组下发值就换一组允许档位；
+  // 若实现里偷偷留了一份写死的 [1,2]，这条会红。
+  const onlyOne = new BattlePlayback(result([round(1)]), options({ speeds: [1] }))
+  assert.deepEqual(onlyOne.allowedSpeeds, [1], '只下发 1x 时允许集合里就不该有 2x')
+  assert.equal(onlyOne.setSpeed(2 as never), 1, '不在下发档位里的倍速必须被拒')
+  assert.equal(onlyOne.currentSpeed, 1)
+})
+

@@ -89,6 +89,17 @@ export class BattlePlayback {
   }
 
   /**
+   * 服务端允许的倍速档位（来源 global.BATTLE_PLAYBACK_SPEEDS，随战报下发）。
+   *
+   * <p><b>为什么暴露成只读副本而不是让调用方自己再 parse 一遍</b>：解析规则只有一份
+   * （{@link parseSpeeds}），而「下一个档位是谁」这件事必须以**这一份战报实际下发的档位**为准 ——
+   * 界面层如果自己写死一份「1,2」，改表就会只改一半：服务器认了新档位，界面切不过去。
+   */
+  get allowedSpeeds(): readonly PlaybackSpeed[] {
+    return this.options.speeds
+  }
+
+  /**
    * 切换倍速。
    *
    * @returns 切换后的倍速；请求的档位不在配置允许范围内时保持原值并返回它

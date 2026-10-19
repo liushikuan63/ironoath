@@ -41,7 +41,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D"
 }
 trap cleanup EXIT
 
@@ -350,6 +350,25 @@ mk_client_orphans() { # check-client-orphans：客户端 game/scene 的 .ts 必�
 run_client_orphans() { bash scripts/check-client-orphans.sh; }
 three_arg check-client-orphans.sh \
           mk_client_orphans run_client_orphans '客户端 game/scene 的 .ts 必须被生产导入（走环境变量口，零污染）'
+
+CC_D=/d/tmp/probe753/gates-cfgcopy
+mk_client_config_copy() { # check-client-config-copy：客户端不得抄 global 表里「值本身就是表内容」的字符串
+  # ⚠️ 走**环境变量口**（CONFIGCOPY_SCAN_DIR / CONFIGCOPY_GLOBAL_JSON）⇒ **零污染**：
+  #    违规态只往临时目录里放一个 .ts，不碰 client/assets 那 145 个文件。
+  # ⚠️ 临时表也要有一行「配置型字符串值」，否则门读不到值会先判红（那是另一条判据，不是本条）。
+  if [ "$1" = "1" ]; then
+    rm -rf "$CC_D"; mkdir -p "$CC_D"
+    printf '{"table":"global","version":1,"fieldTypes":{},"rows":[{"id":"ZZ_GATE_PROBE","valueType":"STRING","value":"0.42"}]}\n' > "$CC_D/global.json"
+    printf 'export const copied = "0.42"\n' > "$CC_D/ZzCopied.ts"
+    export CONFIGCOPY_SCAN_DIR="$CC_D" CONFIGCOPY_GLOBAL_JSON="$CC_D/global.json"
+  else
+    unset CONFIGCOPY_SCAN_DIR CONFIGCOPY_GLOBAL_JSON
+    rm -rf "$CC_D"
+  fi
+}
+run_client_config_copy() { bash scripts/check-client-config-copy.sh; }
+three_arg check-client-config-copy.sh \
+          mk_client_config_copy run_client_config_copy '客户端不得抄 global 表的字符串值（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'

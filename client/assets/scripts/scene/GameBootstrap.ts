@@ -113,6 +113,8 @@ const TIME_SYNC_INITIAL_BEST_RTT_MS = 150
  * 它是**发出去的参数**而不是玩法数值，所以不进 `global.json`；真正权威的那个是表里的
  * `RELEASE_LATEST_VERSION`，这里只是"我是谁"。
  */
+// config-copy-exempt: 客户端自报版本不是 global 表的行值 —— 它是「我是谁」的出站参数，
+// 与表里的「最新版本号」是两个不同的事实（表里那两条管的是服务端认不认这个版本）。
 const CLIENT_VERSION = '1.0.0'
 /** 离线未发批次的缓冲上限。`TrackQueue` 刻意不设默认值，必须由组合根给一个。 */
 const TRACK_MAX_UNSENT_BATCHES = 3

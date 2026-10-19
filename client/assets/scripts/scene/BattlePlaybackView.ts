@@ -21,7 +21,7 @@
  */
 
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3, view } from 'cc'
-import { BattlePlayback, parseSpeeds } from '../game/battle/BattlePlayback'
+import { BattlePlayback } from '../game/battle/BattlePlayback'
 import type { PlaybackOptions, PlaybackStep } from '../game/battle/BattlePlayback'
 import type { BattleResultView, RoundView, UnitStack, UnitType } from '../net/generated/BattleProtocol'
 import { NodePool } from './NodePool'
@@ -46,16 +46,6 @@ const UNIT_ORDER: readonly UnitType[] = ['INFANTRY', 'CAVALRY', 'ARCHER', 'SIEGE
 const UNIT_LABEL: Readonly<Record<UnitType, string>> = {
   INFANTRY: '步兵', CAVALRY: '骑兵', ARCHER: '弓手', SIEGE: '攻城',
 }
-
-/**
- * 倍速档位的原始配置值。
- *
- * <p>TODO(B05 表现层缺口): 应当由服务端随战报下发 global.BATTLE_PLAYBACK_SPEEDS 与各段时长，
- * 客户端的 config/generated 只有类型没有值，铁律 1 不允许在这里写死数值。
- * 目前先按 B05 §三 明写的「1x / 2x」占位，接入点已经留在 attach 的 options 参数上 ——
- * 适配层拿到服务端下发的时长后直接传进来即可。
- */
-const SPEEDS_RAW = '1,2'
 
 const STACK_BLOCK = 54
 const STACK_GAP = 10
@@ -174,7 +164,9 @@ export class BattlePlaybackView extends Component {
     if (playback === null) {
       return
     }
-    const allowed = parseSpeeds(SPEEDS_RAW)
+    // 档位取这份战报实际下发的允许集合：写死一份就是「改表只改一半」——
+    // 服务器认了新档位而界面切不过去，玩家看到的倍速选项与表不一致。
+    const allowed = playback.allowedSpeeds
     const index = allowed.indexOf(playback.currentSpeed)
     const next = allowed[(index + 1) % allowed.length] ?? 1
     playback.setSpeed(next)

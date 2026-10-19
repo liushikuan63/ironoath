@@ -47,6 +47,10 @@ bash scripts/check-balance-sim-config-sync.sh
 bash scripts/check-balance-sim-tech-sync.sh
 bash scripts/check-balance-sim-usage.sh
 bash scripts/check-guide-no-copy.sh
+# 客户端不得抄 global 表里「值本身就是表内容」的字符串参数（倍速档位 "1,2" 这一族）。
+# 症状是**改表只改一半**：服务端按新表下发，客户端还在用旧值，
+# 而单测 / 类型检查 / 构建全绿（两边各自自洽，没有一条断言会红）。
+bash scripts/check-client-config-copy.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-client-typecheck.sh
 # 客户端逻辑层单测（941 项）：**类型门只保证"能编译"，不保证"算对了"**。CI 里这批用例本来就跑
