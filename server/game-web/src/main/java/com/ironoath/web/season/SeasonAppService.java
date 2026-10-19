@@ -54,12 +54,17 @@ public class SeasonAppService {
         long start = ServerCalendar.seasonStartOrZero(configs);
         if (start == 0L) {
             // 赛季没启用就没有荣耀可展示：glory 与 myRank 同一条口径，回 null 而不是回一个全零对象
-            return new SeasonStatusResp("", null, null, null, totalDays, null,
+            return new SeasonStatusResp("", null, null, null, null, totalDays, null,
                     true, false, false, null, null, now);
         }
         SeasonTimeline.Phase phase = timeline.phaseAtTime(now, start);
         boolean identified = playerId != null && !playerId.isBlank();
-        return new SeasonStatusResp(timeline.seasonId(), SeasonPhase.valueOf(phase.name()), start,
+        return new SeasonStatusResp(timeline.seasonId(), SeasonPhase.valueOf(phase.name()),
+                // 当前**目标阶段**的中文名：客户端没有配置表加载器 ⇒ 拿不到 season 表；
+                // 而规则阶段（EXPAND）对应**两个**目标阶段（立盟期 / 争锋期），
+                // 客户端自己翻只能翻错一个 ⇒ 这个名只能由服务端给。
+                assembler.currentPhaseName(now),
+                start,
                 (int) SeasonTimeline.dayIndexOf(now, start), totalDays,
                 timeline.phaseEndAt(now, start),
                 phase.allowsPvp(), phase.allowsCapitalWar(), phase.readOnly(),

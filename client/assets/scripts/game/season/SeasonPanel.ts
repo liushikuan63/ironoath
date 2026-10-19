@@ -20,22 +20,27 @@ import type {
   SeasonGloryView, SeasonPhase, SeasonStatusResp, SeasonTier,
 } from '../../net/generated/SeasonProtocol'
 
-/** 赛季阶段名（玩家语言）。表里没有的取值退回枚举名，不显示空白。 */
-export function phaseLabel(phase: SeasonPhase | null): string {
-  switch (phase) {
-    case 'PREPARE':
-      return '开垦期'
-    case 'EXPAND':
-      return '立盟期'
-    case 'CAPITAL_WAR':
-      return '问鼎期'
-    case 'SETTLE':
-      return '结算期'
-    case 'REST':
-      return '休赛期'
-    default:
-      return phase === null ? '' : String(phase)
+/**
+ * 赛季阶段名（玩家语言）—— **服务端下发**（`SeasonStatusResp.phaseName`），不是客户端翻的。
+ *
+ * <p><b>为什么不能按规则阶段自己翻</b>：season 表里「立盟期」与「争锋期」是
+ * **两个目标阶段、同一条 EXPAND 规则**（契约里 `SeasonPhase` 的说明写着
+ * 「两者不能按序号对齐 —— 映射走 season 表的 rulePhase 列」）。
+ * 客户端只拿到规则阶段（PREPARE/EXPAND/…）就<b>翻不出</b>当前该显示哪个目标阶段名 ——
+ * 它只能在两个里挑一个，挑错就是屏上写着一个不是当前的阶段名。
+ *
+ * <p><b>为什么表里的名字不能抄进客户端</b>：客户端没有配置表加载器（season 表不进包）⇒ 拿不到表；
+ * 抄一份的话表里改了客户端不跟着改。
+ *
+ * <p><b>回退是什么</b>：服务端没给名字（赛季没启用 ⇒ `phaseName` 为 null）时，
+ * 退回枚举原文（`EXPAND`）而不是空白 —— 与 {@link tierLabel} 同一条纪律：
+ * 新值上线时玩家看到的是一个陌生的英文词，而不是一个空的行。
+ */
+export function phaseLabel(phaseName: string | null, phase: SeasonPhase | null): string {
+  if (phaseName !== null && phaseName !== '') {
+    return phaseName
   }
+  return phase === null ? '' : String(phase)
 }
 
 /**
@@ -144,12 +149,12 @@ export function buildSeasonPanel(resp: SeasonStatusResp | null,
   const days = `${(resp.dayIndex ?? 0) + 1} / ${resp.totalDays}`
   return {
     visible: true,
-    // 不印 `resp.seasonId`：那是 season 表的行 id（真值形如 `season_01_phase_1`），玩家读不懂，
-    // 而赛季**中文名在表里、不在响应里** —— 客户端只有 ConfigTypes 类型没有表数据，
-    // 不许自己查表拼一个（#255 建筑名 / #268 资源名 / #278 技能名 / #281 碎片名同族第五处）。
-    // 正解是 `SeasonStatusResp` 带 name，那是契约改动，单独排队；在此之前标题只说玩家看得懂的部分。
+    // 不印 `resp.seasonId`：那是 season 表的行 id（真值形如 `season_01_phase_1`），玩家读不懂。
+    // 赛季**中文名**由 `resp.phaseName` 下发（#2254：契约已带 phaseName）——
+    // 客户端只有 ConfigTypes 类型没有表数据，不许自己查表拼一个
+    // （#255 建筑名 / #268 资源名 / #278 技能名 / #281 碎片名同族）。
     titleText: `赛季 · 第 ${days} 天`,
-    phaseText: `${phaseLabel(resp.phase)} · ${remainTextOf(resp.phaseEndAt, now)}`,
+    phaseText: `${phaseLabel(resp.phaseName, resp.phase)} · ${remainTextOf(resp.phaseEndAt, now)}`,
     gates: [
       { allowed: resp.allowsPvp, text: resp.allowsPvp ? '可以攻击其他玩家' : '当前阶段禁止玩家间攻击' },
       { allowed: resp.allowsCapitalWar, text: resp.allowsCapitalWar ? '中央王城已开放' : '中央王城尚未开放（问鼎期才开）' },

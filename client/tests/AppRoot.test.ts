@@ -351,7 +351,9 @@ const ROUTES: Record<string, unknown> = {
     myRank: 2, myValue: 900, page: 1, pageSize: 20, hasMore: false,
   },
   '/season/status': {
-    seasonId: 'season_01', phase: 'EXPAND', seasonStartAt: SERVER_NOW - 12 * 86_400_000,
+    // 阶段名由服务端下发（season 表的 name 列）—— 客户端没有配置表加载器 ⇒ 拿不到表。
+    seasonId: 'season_01', phase: 'EXPAND', phaseName: '立盟期',
+    seasonStartAt: SERVER_NOW - 12 * 86_400_000,
     dayIndex: 11, totalDays: 45, phaseEndAt: SERVER_NOW + 5 * 86_400_000,
     allowsPvp: true, allowsCapitalWar: false, readOnly: false,
     glory: { gloryLevel: 3, highestTier: 'GOLD', badges: ['season_01'] },

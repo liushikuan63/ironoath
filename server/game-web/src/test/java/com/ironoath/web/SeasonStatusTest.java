@@ -136,6 +136,25 @@ class SeasonStatusTest {
     }
 
     @Test
+    @DisplayName("状态带目标阶段名：客户端没有配置表加载器，那个名只能由服务端给")
+    void statusCarriesTargetPhaseName() {
+        // 为什么必须下发：season 表里「立盟期」与「争锋期」是**两个目标阶段、同一条 EXPAND 规则**
+        // （契约里 SeasonPhase 的说明写着「两者不能按序号对齐 —— 映射走 season 表的 rulePhase 列」）。
+        // 客户端只拿到规则阶段（PREPARE/EXPAND/…）就**翻不出**当前该显示哪个目标阶段名 ——
+        // 它只能在两个里挑一个，挑错就是屏上写着一个不是当前的阶段名。
+        // 而客户端没有配置表加载器（season 表不进包）⇒ 拿不到表，只能由服务端下发。
+        SeasonStatusResp atDayOne = statusAtDay(0);
+        assertThat(atDayOne.phaseName())
+                .as("第 1 天是开垦期（PREPARE 规则下的第一个目标阶段）")
+                .isEqualTo("开垦期");
+
+        // 未启用赛季时是 null（与 phase 同一条口径，不回空串）
+        assertThat(wiringOn(plain).status().status(null).phaseName())
+                .as("赛季没启用就没有阶段名 —— 回空串会被客户端读成「有一个空名字」")
+                .isNull();
+    }
+
+    @Test
     @DisplayName("立盟期放行 PVP 但不开王城，问鼎期才开王城：三个阶段的读数各自不同")
     void expandAllowsPvpWhileCapitalWarNeedsItsOwnPhase() {
         SeasonStatusResp dayTen = statusAtDay(10);

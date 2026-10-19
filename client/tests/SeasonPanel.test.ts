@@ -18,7 +18,10 @@ const NOW = 1_700_000_000_000
 
 function resp(overrides: Partial<SeasonStatusResp> = {}): SeasonStatusResp {
   return {
-    seasonId: 'season_01', phase: 'EXPAND', seasonStartAt: NOW - 12 * 86_400_000,
+    seasonId: 'season_01', phase: 'EXPAND',
+    // 阶段名由服务端下发（season 表的 name 列）—— 客户端没有配置表加载器 ⇒ 拿不到表。
+    phaseName: '立盟期',
+    seasonStartAt: NOW - 12 * 86_400_000,
     dayIndex: 11, totalDays: 45, phaseEndAt: NOW + 5 * 86_400_000,
     allowsPvp: true, allowsCapitalWar: false, readOnly: false,
     glory: { gloryLevel: 3, highestTier: 'GOLD', badges: ['season_01', 'season_02', 'season_03'] },
@@ -66,12 +69,23 @@ test('标题不印 season 表行 id（客户端也不许自己查表拼名字）
   assert.ok(!view.titleText.includes('phase_'), `标题里漏出阶段行 id：「${view.titleText}」`)
 })
 
-test('阶段名是玩家语言，五个取值都有（含休赛期）', () => {
-  assert.deepEqual(
-    (['PREPARE', 'EXPAND', 'CAPITAL_WAR', 'SETTLE', 'REST'] as const).map((p) => phaseLabel(p)),
-    ['开垦期', '立盟期', '问鼎期', '结算期', '休赛期'],
-  )
-  assert.equal(phaseLabel(null), '')
+test('阶段名用服务端下发的那个，客户端不自己翻', () => {
+  // 缺陷形状：客户端按**规则阶段**自己翻中文名，而 season 表里「立盟期」与「争锋期」
+  // 是**两个目标阶段、同一条 EXPAND 规则**（契约里 SeasonPhase 的说明写着
+  // 「两者不能按序号对齐 —— 映射走 season 表的 rulePhase 列」）
+  // ⇒ 客户端只拿到规则阶段就翻不出当前该显示哪个名字，只能两个里挑一个（挑错就是屏上写错）。
+  assert.equal(phaseLabel('争锋期', 'EXPAND'), '争锋期',
+    'EXPAND 阶段服务端说「争锋期」时，屏上就该是「争锋期」—— 客户端自己翻只能翻成「立盟期」')
+  assert.equal(phaseLabel('立盟期', 'EXPAND'), '立盟期')
+  assert.equal(phaseLabel('开垦期', 'PREPARE'), '开垦期')
+})
+
+test('服务端没给阶段名时退回枚举原文，不显示空白', () => {
+  // 赛季没启用（phase=null、phaseName=null）⇒ 整块收起，不该显示空白
+  assert.equal(phaseLabel(null, null), '')
+  // 有了规则阶段但名字没到（滚动升级期间的旧服务端）⇒ 退回枚举原文而不是空白
+  assert.equal(phaseLabel(null, 'EXPAND'), 'EXPAND',
+    '宁可显示一个陌生的英文词，也不要一个空的行')
 })
 
 test('段位是 B14 的原词，不是枚举名：六个档次都对，未知取值退回原文而不是空白', () => {

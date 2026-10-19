@@ -8,6 +8,7 @@ package com.ironoath.web.dto.generated;
 public record SeasonStatusResp(
         String seasonId,   // 赛季 id（从 season 表行 id 的前缀反推，如 season_01）。未配置赛季锚点时为空串。归档集合名 season_<id> 由它拼出。
         SeasonPhase phase,   // 当前规则阶段；**null = 赛季未启用**（没配 SEASON_START_AT），不是「第 0 天」。这一位不在 required 里 —— 生成器按「非必填 = 可空」产出 `SeasonPhase | null`，可空性由所在位置声明而不是 $defs 里那个 type 数组（那个数组对枚举不起作用）。此前它被列进 required，于是生成出来的类型说非空而 SeasonAppService#status 会下发 null：客户端 `switch (resp.phase)` 照样编译通过，把 null 当成兜底分支。
+        String phaseName,   // 当前**目标阶段**的中文名（season 表的 name 列，如「开垦期」「立盟期」）。**为什么必须下发**：客户端没有配置表加载器（season 表不进包）⇒ 客户端拿不到表；自己按规则阶段（PREPARE/EXPAND/…）翻中文名就会**丢掉一半信息** —— season 表里「立盟期」与「争锋期」是**两个目标阶段、同一条 EXPAND 规则**（契约里 SeasonPhase 的说明写着「两者不能按序号对齐 —— 映射走 season 表的 rulePhase 列」），所以规则阶段根本翻不出正确的那个目标阶段名。**null = 赛季没启用**（与 phase 同一条口径，不回空串）。
         Long seasonStartAt,   // 赛季开始的服务端时刻（毫秒）。null = 未配置。客户端要它才能把自己的服务器时钟换算成「赛季第几天」，而不该自己拿本地时间算 —— 那是 B00 铁律 5 禁止的事。
         Integer dayIndex,   // 赛季第几天（0-based），整天数向下取整，所以阶段切换精确落在整日边界。<b>null = 赛季未启用</b>，不是「第 0 天」。
         long totalDays,   // 本赛季总天数（season 表各行 durationDays 之和）。超过它就进入休赛期。

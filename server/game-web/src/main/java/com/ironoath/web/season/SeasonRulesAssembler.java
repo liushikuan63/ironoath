@@ -136,6 +136,51 @@ public class SeasonRulesAssembler {
     }
 
     /**
+     * 当前处于第几个**目标阶段**（表里的 phaseNo），以及那个阶段的中文名。
+     *
+     * <p><b>为什么客户端不能自己翻这个名</b>：season 表里「立盟期」与「争锋期」是
+     * <b>两个目标阶段、同一条 EXPAND 规则</b>（契约里 {@code SeasonPhase} 的说明写着
+     * 「两者不能按序号对齐 —— 映射走 season 表的 rulePhase 列」）。
+     * 客户端只拿到规则阶段（PREPARE/EXPAND/…）就<b>翻不出</b>当前该显示哪个目标阶段名 ——
+     * 它只能两个里挑一个（挑错就是屏上写着一个不是当前的阶段名）。
+     * 而客户端又没有配置表加载器（season 表不进包）⇒ 这个名只能由服务端下发。
+     *
+     * @return 阶段名；赛季没启用时为 null（与 {@code phase} 同一条口径，不回空串）
+     */
+    public String currentPhaseName(long now) {
+        List<SeasonCfg> allRows = new ArrayList<>(configs.all(SeasonCfg.class));
+        if (allRows.isEmpty()) {
+            return null;
+        }
+        long start = ServerCalendar.seasonStartOrZero(configs);
+        if (start == 0L) {
+            // 赛季没启用：没有阶段名可给（与 phase=null 同一条口径）
+            return null;
+        }
+        String currentId = currentSeasonIdOf(allRows, now);
+        // 时间轴按同一条规则装配（与 timelineRules 同一份表筛选），
+        // 拿它定位「当前是第几个目标阶段」——阶段序号与表里的 phaseNo 一一对应。
+        SeasonTimeline timeline = new SeasonTimeline(timelineRules(now));
+        long dayOffset = SeasonTimeline.dayIndexOf(now, start);
+        SeasonTimeline.Stage stage = timeline.stageAt(dayOffset);
+        if (stage == null) {
+            // 赛季结束之后（休赛期）：**表里没有这一行，是刻意的** ——
+            // season 表的 designNote 写着「【休赛期不在表里，这是刻意的】REST 不是赛季内的一段时间，
+            // 而是「赛季结束之后、下一季开始之前」，所以第 45 天之后由时间轴判为休赛，
+            // 而不是塞一行进 45 天轴」⇒ 没有表行就没有表里的名，返回 null 让客户端退回枚举原文。
+            return null;
+        }
+        for (SeasonCfg row : allRows) {
+            if (seasonIdOf(row.id()).equals(currentId) && row.phaseNo() == stage.phaseNo()) {
+                return row.name();
+            }
+        }
+        // 阶段序号对不上表里的行：那是配置事故，不该让客户端显示一个空名或猜一个
+        throw new com.ironoath.config.ConfigException(
+                "season 表里找不到当前阶段 " + stage.phaseNo() + " 的行（赛季 " + currentId + "）");
+    }
+
+    /**
      * 当前是第几季（返回行 id 前缀，如 {@code season_02}）。
      *
      * <p><b>三条口径，每条都有出处</b>：
