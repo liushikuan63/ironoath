@@ -7824,3 +7824,5 @@ TEST_EXIT=0
 | 自有commit自动维护收口 #1442 | 单次无auto-maint四docs local提交见receipt | session33224完成；自有六PID已退；派生helper两替换/AST核验；无新采集 | record1441-auto-maintenance-owned/terminal与helper03c8；v2ready410f未改 | 无新窗口；实际split partial/完整5000和原生仍未验，周额度须合理复查 |
 
 | current-holder-v3准备 #1443 | 四docs local提交见receipt | 原25哈希一致；旧版对照3红；55+9=64/0/0/0；四处逆字节AST；独审无阻断 | sharedQA current-holder-ready-v3 SHA04d64a22e7acefcd1356282d2ecf2195c52690390e6b1b0dceef931a7800c910；launcher9d9301cc；derivation/RED/GREEN/review/design完整保留 | mayExecuteNow=false；新holder fresh hold、官方周额度、全局冲突/资源/冻结及UTC authority/admission未齐；G07不并行；实际新帧/5000/原生未验 |
+
+| current-holder-v4握手 #1444 | 四docs local提交见receipt | 37冻结SHA一致；本地镜像存在；owner容器0及probe进程0；仅新4时序microcheck，未重跑64 | sharedQA ready-handshake-v4 SHAcd1e2443160b152ff89568793a5faf802aedcce048e138df50041d7aee721ddf；scheduler SHAbd47147a32fa583fe1e746f6f02362371bb3cdbee3f905388ed22b7eddd94b58；实际检查UTC及边界保留 | mayExecuteNow=false；未armed/未runtime；新hold/周额度/全局G07排他/资源与UTC准入未齐；120秒含40清理为计划，5000及原生未验 |
