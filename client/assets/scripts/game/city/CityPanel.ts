@@ -54,14 +54,33 @@ export interface BuildingRow {
   readonly paused: boolean
 }
 
-export const CITY_GRID_WIDTH = 6
-export const CITY_GRID_HEIGHT = 6
+/**
+ * 网格边长的**回退值**：只在**旧服务端没下发** `gridSize` 时用（滚动升级期间）。
+ *
+ * <p><b>为什么曾经是一个写死的常量</b>：网格边长住在 `city_rule.city_rule_grid_size`，
+ * 而客户端不抄配置表（数值一律服务端下发）⇒ 它只能走协议过来。
+ * 写死 6 的后果不是「显示小了一点」，而是**判错坐标**：
+ * 表里 6→8 那一改，服务端按 8×8 下发坐标（到 7），客户端还按 6×6 判越界
+ * ⇒ 玩家自己的城被说成「坐标非法」，建筑掉进 `unplaced`。
+ *
+ * <p><b>为什么回退值仍然是 6 而不是别的</b>：它是**当前表里的真值**，
+ * 用来让「服务端还没升上去」的那段时间行为不变（模式隔离：不改变现有行为）。
+ * 真正的值一律以 `CityListResp.gridSize` 为准。
+ */
+export const CITY_GRID_FALLBACK_SIZE = 6
 
 export interface CityGrid {
-  /** 以 gridY * CITY_GRID_WIDTH + gridX 为下标；空位为 null。 */
+  /** 以 gridY * 网格边长 + gridX 为下标；空位为 null。 */
   readonly cells: readonly (BuildingRow | null)[]
   /** 坐标非法或重复的建筑。场景层必须显式提示，不能静默丢掉。 */
   readonly unplaced: readonly BuildingRow[]
+  /**
+   * 本网格的边长（`cells` 是 `size` × `size`）。
+   *
+   * <p>以前这个数是模块级常量（两份，各写死 6），现在由服务端下发的
+   * `CityListResp.gridSize` 决定 ⇒ **判越界用的是服务端说的那个网格**。
+   */
+  readonly size: number
 }
 
 /** 一行资源条：显示文本 + 它是哪一种资源。 */
@@ -91,6 +110,13 @@ export interface CityPanelView {
   readonly resourceLines: readonly ResourceLine[]
   /** 有建筑升级已到时但还没收割时的提示 */
   readonly collectHint: string | null
+  /**
+   * 城内网格边长（服务端下发的 `CityListResp.gridSize`）。
+   *
+   * <p>表现层排版（标题「建筑 3/36」、格子下标）都要用它，
+   * 写死一份就是**第三份**副本 —— 而它会被表一改就判错坐标。
+   */
+  readonly gridSize: number
 }
 
 /**
@@ -137,6 +163,9 @@ export function buildCityPanel(resp: CityListResp, offsetMs: number, localNow: n
 
   return {
     rows,
+    // 网格边长以服务端下发的为准；旧服务端（滚动升级期间）没这个字段时用回退值，
+    // **不静默当成别的数** —— 那会让表一改就判错坐标。
+    gridSize: resp.gridSize ?? CITY_GRID_FALLBACK_SIZE,
     // 滚动升级期间旧服务端不会带这个新字段；缺字段按“没有可建造项”处理，不能让面板崩掉。
     buildOptions: resp.buildOptions ?? [],
     queueText: queueText(resp.queues),
@@ -177,26 +206,31 @@ export function buildBuildingRow(building: BuildingView, offsetMs: number, local
   }
 }
 
-/** 把建筑放进 6×6 城内网格；无效或重复坐标进入 unplaced，由表现层明示。 */
-export function buildCityGrid(rows: readonly BuildingRow[]): CityGrid {
+/**
+ * 把建筑放进城内网格；无效或重复坐标进入 unplaced，由表现层明示。
+ *
+ * @param size 网格边长。**必须是服务端下发的那个**（`CityListResp.gridSize`）——
+ *              写死一个数就是「客户端抄配置表」，而表一改这里就会判错坐标。
+ */
+export function buildCityGrid(rows: readonly BuildingRow[], size: number = CITY_GRID_FALLBACK_SIZE): CityGrid {
   const cells: Array<BuildingRow | null> = Array.from(
-    { length: CITY_GRID_WIDTH * CITY_GRID_HEIGHT }, () => null)
+    { length: size * size }, () => null)
   const unplaced: BuildingRow[] = []
   for (const row of rows) {
     if (!Number.isInteger(row.gridX) || !Number.isInteger(row.gridY)
-        || row.gridX < 0 || row.gridX >= CITY_GRID_WIDTH
-        || row.gridY < 0 || row.gridY >= CITY_GRID_HEIGHT) {
+        || row.gridX < 0 || row.gridX >= size
+        || row.gridY < 0 || row.gridY >= size) {
       unplaced.push(row)
       continue
     }
-    const index = row.gridY * CITY_GRID_WIDTH + row.gridX
+    const index = row.gridY * size + row.gridX
     if (cells[index] !== null) {
       unplaced.push(row)
       continue
     }
     cells[index] = row
   }
-  return { cells, unplaced }
+  return { cells, unplaced, size }
 }
 
 /**

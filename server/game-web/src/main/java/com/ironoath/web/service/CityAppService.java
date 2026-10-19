@@ -751,8 +751,11 @@ public class CityAppService {
                 LOG.info("城内列表触发到点收割 playerId={} 完成建筑={} 本次入账={}",
                         playerId, ctx.settlement().harvested(), ctx.settlement().credited());
             }
+            // 网格边长随响应下发：客户端要按它排布内城、判定坐标越界，
+            // 而这个数住在 city_rule 表里 —— 客户端不抄配置表，数值一律服务端下发。
+            // 不下发的话，表里 6→8 那一改，客户端还按 6×6 判，玩家自己的城会被说成「坐标非法」。
             return new CityListResp(buildings, buildOptions, queues,
-                    toResourceMap(ctx.settlement().states()), now);
+                    toResourceMap(ctx.settlement().states()), ctx.rules().gridSize(), now);
         });
     }
 

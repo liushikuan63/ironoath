@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
-import { CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel } from '../assets/scripts/game/city/CityPanel'
+import { CITY_GRID_FALLBACK_SIZE, buildCityGrid, buildCityPanel } from '../assets/scripts/game/city/CityPanel'
 import type { BuildingRow, CityGrid, CityPanelView as CityData } from '../assets/scripts/game/city/CityPanel'
 import { buildBuildChoices } from '../assets/scripts/game/session/Choices'
 import { GuideDriver } from '../assets/scripts/game/guide/GuideDriver'
@@ -85,13 +85,15 @@ function response(): CityListResp {
   return { buildings: [{ id: 'bld_main_city', configId: 'main_city', name: '主城', level: 3, gridX: 3, gridY: 3, status: 'IDLE',
     finishAt: null, remainingSeconds: null, progress: 0, startedAt: 0, totalSeconds: 0, helpCount: 0 }],
     buildOptions: [{ configId: 'barracks', name: '兵营', type: 'MILITARY', requireMainLevel: 2, requireBuilding: null, requireBuildingName: null }],
-    queues: { used: 0, available: 2, max: 3 }, resources: {} as CityListResp['resources'], serverNow: 1000 }
+    queues: { used: 0, available: 2, max: 3 }, resources: {} as CityListResp['resources'],
+    // 网格边长由服务端下发（city_rule.city_rule_grid_size）⇒ 夹具必须带它。
+    gridSize: 6, serverNow: 1000 }
 }
 function setup(height = 443.6018957345971, themed = true): { city: CityHarness; commands: string[]; view: { getVisibleSize(): { width: number; height: number } }; buildingSize(id: string, width: number, height: number): number } {
   const commands: string[] = [], view = { getVisibleSize: () => ({ width: 960, height }) }
   const font = exportsFor('UiFont', {})
   const applyCommandButton = (node: Node): boolean => { commands.push(node.name); return themed }
-  const sceneExports = exportsFor('CityPanelView', { ...anchors, PANEL_FRAME_BAND, buildingArtFootRatio, CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, buildBuildChoices, guideBubbleLayout, ...font, view, sys: { now: () => 1000 }, applyCommandButton })
+  const sceneExports = exportsFor('CityPanelView', { ...anchors, PANEL_FRAME_BAND, buildingArtFootRatio, CITY_GRID_FALLBACK_SIZE, buildCityGrid, buildCityPanel, buildBuildChoices, guideBubbleLayout, ...font, view, sys: { now: () => 1000 }, applyCommandButton })
   const City = sceneExports['CityPanelView'] as new () => CityHarness
   const city = new City(); city.contentWidth = 960; city.contentHeight = height; city.card = city.node
   // R8 actual logical viewport/capsule/insets, rather than a zero-inset screen.

@@ -205,6 +205,39 @@ class CityEndpointTest {
     }
 
     /**
+     * 网格边长必须随快照下发：客户端要按它排布内城、判定坐标越界。
+     *
+     * <p>为什么这条必须存在：网格边长住在 {@code city_rule.city_rule_grid_size}，
+     * 而**客户端不抄配置表**（数值一律服务端下发）⇒ 它只能走协议过来。
+     * 以前客户端按写死的 6 判，于是：
+     * <ul>
+     *   <li>表里 6→8 那一改，服务端按 8×8 下发坐标（到 7），客户端还按 6×6 判越界
+     *       ⇒ 玩家自己建的城被说成「坐标非法」，建筑掉进 unplaced；</li>
+     *   <li>而**没有任何测试会红** —— 客户端那两份副本已被一条用例绑在一起（互相不脱节），
+     *       却与表里的值**零绑定**。</li>
+     * </ul>
+     *
+     * <p>断言写成「等于表里的值」而不是「等于 6」：这样表一改，这条用例必须跟着改 ——
+     * 而它改的方式只能是**同时确认服务端真的下发了新值**。
+     */
+    @Test
+    @DisplayName("list 下发网格边长（客户端不抄配置表，网格边长只能走协议）")
+    void listCarriesGridSizeFromConfigTable() {
+        String playerId = newPlayer();
+        CityListResp resp = cityAppService.list(playerId);
+
+        assertThat(resp.gridSize())
+                .as("网格边长必须来自 city_rule.city_rule_grid_size，不能是客户端写死的数")
+                .isEqualTo(6);
+        // 主城在中心格（city_rule_center_is_main_city）：边长为偶数时中心是边长/2。
+        // 这条把「边长」与「中心格」两个表值的关系也钉住 —— 改其中一个而另一个没跟上会红。
+        assertThat(resp.buildings().get(0).gridX())
+                .as("中心主城必须落在网格正中")
+                .isEqualTo(resp.gridSize() / 2);
+        assertThat(resp.buildings().get(0).gridY()).isEqualTo(resp.gridSize() / 2);
+    }
+
+    /**
      * 整表判据，不是抽查一行。
      *
      * <p>为什么值得单独立一条：显示名这件事在客户端**没有第二道防线** —— 它没有表数据，

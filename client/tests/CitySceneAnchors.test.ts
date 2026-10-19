@@ -78,12 +78,43 @@ test('默认主城的展示锚是王庭地面基座，不能继续命中旧背�
     '主堡应落在王庭空基座，旧塔楼热区会把真实 Sprite 顶出画面')
 })
 
-test('投影表与 CityPanel 的网格常量同源（脱节必须在这里红，而不是在运行时少格）', () => {
-  const src = fs.readFileSync(path.join(repoRoot(), 'client', 'assets', 'scripts',
+test('网格边长只由服务端下发，客户端不再各写一份（脱节必须在这里红）', () => {
+  // 以前这条用例钉的是「CityPanel 的常量 == 投影表的常量」——
+  // 那是**两份副本互相比对**，而两份副本**都与表里的 city_rule_grid_size 无关**。
+  // 实测：全仓 grep `city_rule_grid_size` 在 client/ 下**零命中** ⇒
+  // 表里 6→8 那一改，两份副本都还是 6，没有任何测试或门会红，
+  // 而服务端已经按 8×8 下发坐标 ⇒ 客户端判越界 ⇒ 玩家自己的城被说成「坐标非法」。
+  //
+  // 现在网格边长由 `CityListResp.gridSize` 下发（协议必填字段），
+  // 客户端这边**只留一个回退值**（旧服务端滚动升级期间用）。
+  // ⇒ 这条用例改成钉「客户端不再有第二份网格边长」：
+  //   ① 投影表那份必须与回退值一致（它是手写 36 格美术资产，形状得对得上）；
+  //   ② CityPanel 里不得再出现一个「与表无关的写死边长」。
+  const cityPanelSrc = fs.readFileSync(path.join(repoRoot(), 'client', 'assets', 'scripts',
     'game', 'city', 'CityPanel.ts'), 'utf8')
-  const w = /CITY_GRID_WIDTH\s*=\s*(\d+)/.exec(src)
-  const h = /CITY_GRID_HEIGHT\s*=\s*(\d+)/.exec(src)
-  assert.ok(w !== null && h !== null, '读不到 CityPanel 的网格常量：本用例的取法要跟着改')
-  assert.equal(Number(w[1]), SCENE_GRID_WIDTH, 'CityPanel 改了宽，投影表没跟上')
-  assert.equal(Number(h[1]), SCENE_GRID_HEIGHT, 'CityPanel 改了高，投影表没跟上')
+  const fallback = /CITY_GRID_FALLBACK_SIZE\s*=\s*(\d+)/.exec(cityPanelSrc)
+  assert.ok(fallback !== null, '读不到 CITY_GRID_FALLBACK_SIZE：回退值没了，滚动升级期间会崩')
+  assert.equal(Number(fallback[1]), SCENE_GRID_WIDTH,
+    '回退值与投影表的网格宽度不一致：旧服务端那段时间里，两者会判出不同的网格')
+
+  // 客户端**不得**再有第二个写死的网格边长（那是第二份副本）。
+  // 判据：CityPanel.ts 里除回退值外，不得再出现 `CITY_GRID_WIDTH` / `CITY_GRID_HEIGHT` 这两个名字。
+  assert.equal(/CITY_GRID_WIDTH\s*=/.test(cityPanelSrc), false,
+    'CityPanel 又长出一个写死的网格宽度：网格边长只能由服务端下发')
+  assert.equal(/CITY_GRID_HEIGHT\s*=/.test(cityPanelSrc), false,
+    'CityPanel 又长出一个写死的网格高度：网格边长只能由服务端下发')
+})
+
+test('投影表的格数与网格边长一致：服务端说 8 时，客户端不能按 6 排布', () => {
+  // 这条钉住**危害链**本身：服务端下发的边长与手写美术表不一致时，
+  // 越界判定会与美术布局脱节 —— 建筑画在一处，判定按另一处。
+  // 现状（两边都是 6）是**一致的**；不一致时必须有人报警而不是默默画歪。
+  const sceneSrc = fs.readFileSync(path.join(repoRoot(), 'client', 'assets', 'scripts',
+    'game', 'city', 'CitySceneAnchors.ts'), 'utf8')
+  const w = /SCENE_GRID_WIDTH\s*=\s*(\d+)/.exec(sceneSrc)
+  assert.ok(w !== null, '读不到 SCENE_GRID_WIDTH')
+  assert.equal(Number(w[1]), SCENE_GRID_WIDTH, '投影表内部自相矛盾')
+  // 投影表是 6×6 = 36 格的手写资产：格数必须与边长自洽。
+  assert.equal(SCENE_ANCHORS.length, SCENE_GRID_WIDTH * SCENE_GRID_HEIGHT,
+    '投影表里的锚点数与网格边长不自洽：加格删格时忘了改边长')
 })

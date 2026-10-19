@@ -556,7 +556,8 @@
         "buildOptions",
         "queues",
         "resources",
-        "serverNow"
+        "serverNow",
+        "gridSize"
       ],
       "properties": {
         "buildings": {
@@ -584,6 +585,12 @@
           "additionalProperties": {
             "$ref": "#/$defs/ResourceStateView"
           }
+        },
+        "gridSize": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "description": "城内网格边长（`gridSize` × `gridSize`）。**为什么必须下发**：客户端要按网格排布内城与判定坐标越界，而网格边长住在 `city_rule.city_rule_grid_size` 这张表里 —— 客户端不抄配置表（数值一律服务端下发），所以这个数只能走协议过来。**不这么做会怎样**：表里的边长一改（6 → 8），服务端按新网格下发坐标（到 7），客户端还按 6×6 判越界 ⇒ 玩家自己的城被说成「坐标非法」，建筑掉进 unplaced。**注意**：这是 `CityListResp` 的必填字段 —— 旧服务端滚动升级期间不带它时，客户端按「没有这个字段」处理（见 `CityPanel` 的回退分支），不许静默当成 6。"
         },
         "serverNow": {
           "type": "integer",

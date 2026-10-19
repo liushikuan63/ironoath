@@ -11,7 +11,7 @@ import {
   UITransform, Vec2, Vec3, sys, view,
 } from 'cc'
 import {
-  CITY_GRID_HEIGHT, CITY_GRID_WIDTH, buildCityGrid, buildCityPanel, cancelMessage, collectMessage,
+  CITY_GRID_FALLBACK_SIZE, buildCityGrid, buildCityPanel, cancelMessage, collectMessage,
 } from '../game/city/CityPanel'
 import type { BuildingRow, CityGrid, CityPanelView as CityPanelData } from '../game/city/CityPanel'
 import { buildBuildChoices } from '../game/session/Choices'
@@ -30,7 +30,7 @@ import { applySystemUiFont, capWidth, oneLineFloorHeight } from './UiFont'
 import { viewportSafeInsets } from './ViewportSafeArea'
 import { guideBubbleLayout } from '../game/ui/GuideLayout'
 import {
-  DISTRICT_TINT_RGB, SCENE_RUNTIME_HEIGHT, SCENE_RUNTIME_WIDTH,
+  DISTRICT_TINT_RGB, SCENE_GRID_WIDTH, SCENE_RUNTIME_HEIGHT, SCENE_RUNTIME_WIDTH,
   SCENE_STAGE_HEIGHT, SCENE_STAGE_WIDTH, coverSceneSize, fitSceneLandmark, projectSceneLayout, scenePlatesBackToFront,
 } from '../game/city/CitySceneAnchors'
 import type { ProjectedPlate, SceneDistrict, SceneLayout } from '../game/city/CitySceneAnchors'
@@ -938,7 +938,9 @@ export class CityPanelView extends Component {
     const nameplates = new Node('CityNameplates')
     nameplates.layer = grid.layer
     for (const plate of ordered) {
-      const index = plate.gridY * CITY_GRID_WIDTH + plate.gridX
+      // 这里的 index 只是**节点名**（`Grid-35`），不参与任何查表 ⇒ 用锚点表自己的网格宽度。
+      // 查表那一侧走 `grid.size`（服务端下发的边长），两件事别混。
+      const index = plate.gridY * SCENE_GRID_WIDTH + plate.gridX
       const tile = new Node(`Grid-${index}`)
       tile.layer = grid.layer
       grid.addChild(tile)
@@ -1315,7 +1317,10 @@ export class CityPanelView extends Component {
       return
     }
     this.lastRenderedSecond = Math.floor(sys.now() / 1000)
-    const grid = buildCityGrid(panel.rows)
+    // 网格边长用**服务端下发的那个**（`CityListResp.gridSize`）：
+    // 写死就是「客户端抄配置表」，而表一改客户端就会判错坐标（建筑被说成越界）。
+    const gridSize = panel.gridSize ?? CITY_GRID_FALLBACK_SIZE
+    const grid = buildCityGrid(panel.rows, gridSize)
 
     const selected = this.buildMode ? null
       : panel.rows.find((row) => row.id === this.selectedId) ?? null
@@ -1324,7 +1329,7 @@ export class CityPanelView extends Component {
     const placedCount = grid.cells.reduce((count, cell) => count + (cell === null ? 0 : 1), 0)
     const unplacedText = grid.unplaced.length === 0 ? '' : ` · ${grid.unplaced.length} 栋坐标异常`
     if (this.headerLabel !== null) {
-      this.headerLabel.string = panel.collectHint ?? `内城 · 建筑 ${placedCount}/${CITY_GRID_WIDTH * CITY_GRID_HEIGHT}`
+      this.headerLabel.string = panel.collectHint ?? `内城 · 建筑 ${placedCount}/${gridSize * gridSize}`
       this.headerLabel.color = panel.collectHint === null ? COLOR_COPPER_GOLD : COLOR_GOOD
     }
     if (this.queueLabel !== null) {
@@ -1378,7 +1383,7 @@ export class CityPanelView extends Component {
     let keepSize = 0
     this.gridTiles.forEach((tile) => {
       // 按格位取格子，不按数组下标：下标一旦和锚点表的顺序耦合，改投影就会改玩法
-      const index = tile.plate.gridY * CITY_GRID_WIDTH + tile.plate.gridX
+      const index = tile.plate.gridY * grid.size + tile.plate.gridX
       const row = grid.cells[index] ?? null
       tile.node.off('touch-start')
       this.paintTile(tile, row)

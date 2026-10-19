@@ -14,8 +14,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildBuildingRow, buildCityGrid, buildCityPanel, collectMessage, countdownMs, errorText, formatCountdown,
-  formatPercent, outputText, queueExpandText, queueText,
+  buildBuildingRow, buildCityGrid, buildCityPanel, CITY_GRID_FALLBACK_SIZE, collectMessage, countdownMs, errorText,
+  formatCountdown, formatPercent, outputText, queueExpandText, queueText,
 } from '../assets/scripts/game/city/CityPanel'
 import type { BuildingView, CityListResp, QueueView, ResourceStateView } from '../assets/scripts/net/generated/CityProtocol'
 
@@ -52,6 +52,9 @@ function cityResp(buildings: BuildingView[], queues: QueueView,
     buildOptions: [],
     queues,
     resources: resources as unknown as CityListResp['resources'],
+    // 网格边长由服务端下发（city_rule.city_rule_grid_size）⇒ 夹具必须带它。
+    // 写 6 是「当前表里的真值」，不是客户端自己定的数。
+    gridSize: 6,
     serverNow: 0,
   }
 }
@@ -307,4 +310,47 @@ test('城内网格按 gridX/gridY 放置；非法或重复坐标不能从界面�
   assert.equal(grid.cells[0]?.id, 'origin')
   assert.equal(grid.cells[35]?.id, 'corner')
   assert.deepEqual(grid.unplaced.map((row) => row.id), ['outside', 'duplicate'])
+})
+
+
+// ---------- 网格边长由服务端下发（#2251） ----------
+
+test('网格边长以服务端下发的为准：表里 6→8 那一改，客户端不能还按 6 判越界', () => {
+  // 旧实现：客户端按写死的 6×6 判越界。服务端按 8×8 下发坐标（到 7）时，
+  // 玩家自己建的城会被说成「坐标非法」，建筑掉进 unplaced —— 而没有任何测试会红。
+  const resp = cityResp([building({ id: 'b1', gridX: 7, gridY: 7 })], QUEUE)
+  ;(resp as unknown as { gridSize: number }).gridSize = 8
+  const panel = buildCityPanel(resp, 0, 0)
+
+  assert.equal(panel.gridSize, 8, '面板必须带着服务端说的那个网格边长')
+  assert.equal(panel.gridSize, 8, '不能再是客户端写死的那个数')
+
+  const grid = buildCityGrid(panel.rows, panel.gridSize)
+  assert.equal(grid.size, 8)
+  assert.equal(grid.cells.length, 64, '8×8 网格是 64 格：按 6 排会少 28 格')
+  assert.deepEqual(grid.unplaced, [],
+    '坐标 (7,7) 在服务端说的 8×8 里是合法的 —— 判成越界就是客户端抄了配置表')
+  assert.equal(grid.cells[7 * 8 + 7]?.id, 'b1', '建筑要落在服务端说的那个格位上')
+})
+
+test('旧服务端没下发 gridSize 时按回退值走，且不静默当成别的数', () => {
+  // 滚动升级期间旧服务端不带这个字段 ⇒ 行为必须与改动前**完全一致**（模式隔离）。
+  const resp = cityResp([building({ id: 'b1', gridX: 3, gridY: 3 })], QUEUE)
+  delete (resp as unknown as { gridSize?: number }).gridSize
+  const panel = buildCityPanel(resp, 0, 0)
+
+  assert.equal(panel.gridSize, CITY_GRID_FALLBACK_SIZE,
+    '缺字段时用回退值，而不是 0 / 1 / NaN 之类')
+  const grid = buildCityGrid(panel.rows, panel.gridSize)
+  assert.equal(grid.size, CITY_GRID_FALLBACK_SIZE)
+  assert.equal(grid.cells.length, CITY_GRID_FALLBACK_SIZE * CITY_GRID_FALLBACK_SIZE)
+  assert.deepEqual(grid.unplaced, [], '回退路径下坐标 (3,3) 仍然合法')
+})
+
+test('网格边长真的参与越界判定：按更小的网格判，(7,7) 就该是越界', () => {
+  // 反证这条判据会失败：同一份建筑，只改网格边长，越界结论必须跟着变。
+  const panel = buildCityPanel(cityResp([building({ id: 'b1', gridX: 7, gridY: 7 })], QUEUE), 0, 0)
+  assert.deepEqual(buildCityGrid(panel.rows, 8).unplaced, [], '8×8 下 (7,7) 合法')
+  assert.equal(buildCityGrid(panel.rows, 6).unplaced.length, 1,
+    '6×6 下 (7,7) 必须判越界 —— 不判就说明网格边长没参与判定')
 })
