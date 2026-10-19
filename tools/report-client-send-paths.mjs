@@ -29,7 +29,7 @@ const API = process.env.SENDPATHS_API || path.join(CLIENT, 'game', 'session', 'G
 
 /** `switch (` / `if (` 这类语句会被"两空格 + 名字 + 左括号"的形状误认成方法。 */
 const KEYWORDS = new Set(['switch', 'if', 'for', 'while', 'catch', 'return', 'function',
-  'new', 'else', 'do', 'try', 'constructor', 'get', 'set'])
+  'new', 'else', 'do', 'try', 'constructor', 'get', 'set', 'async'])
 
 function walk(dir, out = []) {
   if (!fs.existsSync(dir)) return out
@@ -45,7 +45,11 @@ function methodNames(file) {
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/)
   const found = []
   lines.forEach((line, i) => {
-    const m = /^  (?:private |readonly )?([a-zA-Z][\w]*)\s*\(/.exec(line)
+    // 方法形状：两空格缩进 + 可选修饰符（private/readonly/public/static）+ 可选 async + 名字 + 左括号。
+    // ⚠️ async 必须显式吃掉：否则 `  async playerPower(): ...` 里的 "async" 会被当成方法名收进来
+    // （GameApi.ts 当时有 16 个 async 方法 ⇒ 报告器把它们收成 16 个名叫 "async" 的假方法，
+    //  而那 16 个真发送口一个都没被扫 ⇒「生产零调用点 0」不覆盖它们。判据：tools/verify-send-paths-indirect.mjs）。
+    const m = /^  (?:private |readonly |public |static )*(?:async )?([a-zA-Z][\w]*)\s*\(/.exec(line)
     if (!m || KEYWORDS.has(m[1])) return
     // 方法签名要能在同一行或下一行看到 `): 类型` / `) {`；语句行不会有返回类型。
     const head = line.slice(m[0].length)
@@ -87,6 +91,43 @@ const selfOnly = rows.filter((r) => r.selfOnly)
 console.log(`GameApi 方法：${rows.length}｜生产零调用点：${unwired.length}｜` +
   `其中连测试与探针也没碰过：${unreachable.length}｜只在 GameApi 内部被调（要顺入口方法复验）：${selfOnly.length}`)
 if (selfOnly.length) console.log(`  内部调用 > ${selfOnly.map((r) => r.name).join(', ')}`)
+
+// 间接可达分析（**可选口 SENDPATHS_VERBOSE=1**；不设时上面那段输出逐字节等同改动前，
+// harness 的零污染三读数依赖这一点，所以这段只能追加、不能改上面任何一行）。
+//
+// 为什么要有它：「只在 GameApi 内部被调」这一类里既有真缺口，也有**经动态注入可达**的假阳性
+// —— 例如 worldExile / worldRecall / worldCollectGather 是 GameApi 自己 bindWorldRequester
+// 注入到 WorldRequester 的，静态看不见调用点，只能靠人工顺入口复验（2026-10-19 已复验：三个都通）。
+// 这里把那一跳补上：谁在 GameApi 内部调用了它、那个内部调用者有没有生产调用点。
+if (process.env.SENDPATHS_VERBOSE === '1' && selfOnly.length) {
+  const apiText = fs.readFileSync(API, 'utf8')
+  const apiLines = apiText.split(/\r?\n/)
+  const apiMethods = methodNames(API)
+  // 每个方法体的行区间：签名行起，到下一个方法签名行前。
+  const rangeOf = (index) => {
+    const from = apiMethods[index].at
+    const to = index + 1 < apiMethods.length ? apiMethods[index + 1].at - 1 : apiLines.length
+    return { name: apiMethods[index].name, from, to }
+  }
+  const byName = new Map(rows.map((r) => [r.name, r]))
+  console.log('  间接可达分析（GameApi 内部调用者是否有生产调用点）：')
+  for (const r of selfOnly) {
+    const re = new RegExp(`\\.${r.name}\\s*[\\(?]`)
+    const callers = new Set()
+    apiLines.forEach((line, i) => {
+      if (!re.test(line)) return
+      const owner = apiMethods.findIndex((m, idx) => rangeOf(idx).from <= i + 1 && i + 1 <= rangeOf(idx).to)
+      if (owner >= 0 && apiMethods[owner].name !== r.name) callers.add(apiMethods[owner].name)
+    })
+    const via = [...callers].filter((c) => (byName.get(c)?.external ?? []).length > 0)
+    if (via.length) {
+      const where = via.map((c) => `${c}（${byName.get(c).external.map((f) => path.relative(CLIENT, f)).join(' ')}）`)
+      console.log(`    ${r.name} ← 经 ${where.join(' / ')} 可达（已接生产入口）`)
+    } else {
+      console.log(`    ${r.name} ← 需人工复验（内部调用者也没有生产调用点）`)
+    }
+  }
+}
 for (const r of unwired) {
   const tag = r.tests.length || r.probes.length ? '只有测试/探针在用' : '完全没人用'
   console.log(`  ${tag} > ${r.name} (GameApi.ts:${r.at})` +
