@@ -143,7 +143,15 @@
             <!-- 纯 Java 层单测必须毫秒级跑完；这里显式关闭 Spring 相关的自动探测 -->
             <trimStackTrace>false</trimStackTrace>
             <!-- 铁律 10 要求中文日志。Windows 控制台默认 GBK，不强制 UTF-8 会输出乱码 -->
-            <argLine>-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8</argLine>
+            <!--
+              java.io.tmpdir 指向构建输出目录：JUnit 的 @TempDir 需要一个**可写**的临时目录，
+              而 JVM 的默认值在 Windows 上是 C:\windows（普通用户无权创建）⇒
+              @TempDir 用例直接报「Failed to create default temp directory」⇒ 整轮红。
+              目标目录取 ${project.build.directory}：maven 一定先建好它，且它在 .gitignore 里。
+              （同一个根因的另一处：Git Bash 的 /tmp 不可写，mktemp 报 Permission denied 却退出 0
+                ⇒ 三个门长期红 —— 已在 #2257 修。）
+            -->
+            <argLine>-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Djava.io.tmpdir=${project.build.directory}</argLine>
           </configuration>
         </plugin>
         <plugin>
