@@ -12,7 +12,11 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const DIR = path.join(ROOT, 'server/game-web/src/main/java/com/ironoath/web/store/mongo');
+// 扫描目录（**可选口 MONGOSET_DIR**）：不设时与默认扫描完全一致；绝对路径也直接可用
+// ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真 mongo 存储源码里植死文档类。
+const MONGO_SET_DIR = process.env.MONGOSET_DIR
+  || path.join(ROOT, 'server/game-web/src/main/java/com/ironoath/web/store/mongo');
+const DIR = path.isAbsolute(MONGO_SET_DIR) ? MONGO_SET_DIR : path.resolve(ROOT, MONGO_SET_DIR);
 
 if (!fs.existsSync(DIR)) {
   console.error(`[check-mongo-set-coverage] 前置不满足：目录不存在 ${DIR}`);

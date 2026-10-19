@@ -474,6 +474,26 @@ run_config_refs() {
 three_arg check-config-refs.sh \
           mk_config_refs run_config_refs '配置表引用外键必须成立（走 CONFIG_REFS_DIR 口，零污染）'
 
+# check-mongo-set-coverage：Mongo 存档的 save 必须覆盖 Document 的**每一个字段**
+# （漏字段 = 静默丢档：写进去的东西读出来是空的，而没有任何报错）。
+# ⚠️ 走 MONGOSET_DIR 口（2026-10-19 加在门上）⇒ 零污染：不往真 mongo 存储源码里植死文档类。
+# 违规态 = 假树里一对文件：Document 有两个字段，而那个唯一写它的 Store 只 set 了一个 ⇒ 漏字段。
+MS_D=/d/tmp/probe753/gates-mongoset
+mk_mongo_set_coverage() {
+  if [ "$1" = "1" ]; then
+    rm -rf "$MS_D"; mkdir -p "$MS_D"
+    printf 'package com.ironoath.web.store.mongo;\n\npublic record ZzProbeDocument(String id, String nickname) {}\n' > "$MS_D/ZzProbeDocument.java"
+    printf 'package com.ironoath.web.store.mongo;\n\npublic class MongoZzProbeStore {\n  Class<?> documentType() { return ZzProbeDocument.class; }\n  void save(ZzProbeDocument d) {\n    org.springframework.data.mongodb.core.query.Update.set("id", d.id());\n  }\n}\n' > "$MS_D/MongoZzProbeStore.java"
+    export MONGOSET_DIR="$MS_D"
+  else
+    unset MONGOSET_DIR
+    rm -rf "$MS_D"
+  fi
+}
+run_mongo_set_coverage() { node scripts/check-mongo-set-coverage.js; }
+three_arg check-mongo-set-coverage.sh \
+          mk_mongo_set_coverage run_mongo_set_coverage 'Mongo save 必须覆盖 Document 每个字段（走 MONGOSET_DIR 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
