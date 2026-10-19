@@ -123,3 +123,62 @@ test('没有敌情时那一格说的是怎么弄出一份，而不是"暂无数�
   const notYet = buildScoutIntel(null, 1_000)
   assert.equal(notYet.emptyText, '敌情读取中', '没连上和"连上了但空"要分得开')
 })
+
+// ---------- 侦察指标的资源名走唯一那份映射（#2208） ----------
+
+test('侦察指标里的资源名与资源条上的一致：铁矿就是铁矿，不是「铁」', () => {
+  // 侦察详情**只列前三项**（既有口径，见上面那条「只列前三项观测值」断言）⇒ 分两批看。
+  const first = buildScoutIntel(scoutList(scoutReport({
+    metrics: [
+      { name: 'iron', value: 1_200 },
+      { name: 'wood', value: 3_000 },
+      { name: 'stone', value: 400 },
+    ],
+  })), 1_000)
+  const detail = first.rows[0]?.detail ?? ''
+  // 旧实现这里另抄了一份资源名，且把铁矿抄成了「铁」——
+  // 玩家在战报里看到「铁」、在资源条上看到「铁矿」，说的是同一样东西。
+  assert.match(detail, /铁矿 1200/, '铁矿必须与资源条上同一个名字（ResourceNames 是唯一那份）')
+  assert.equal(detail.includes(' 铁 '), false, '不能出现「铁」这种简写：那是第二份家，且与资源条不一致')
+  assert.match(detail, /木材 3000/)
+  assert.match(detail, /石料 400/)
+
+  const second = buildScoutIntel(scoutList(scoutReport({
+    metrics: [
+      { name: 'grain', value: 500 },
+      { name: 'gold', value: 60 },
+    ],
+  })), 1_000)
+  const detail2 = second.rows[0]?.detail ?? ''
+  assert.match(detail2, /粮草 500/)
+  assert.match(detail2, /金币 60/)
+})
+
+test('资源指标名走映射而不是靠「键名相同」：协议键是小写，资源枚举是大写', () => {
+  // `ScoutMetric.name` 的合法取值是小写指标键（wood/iron/…），
+  // `RESOURCE_NAMES` 的键是大写资源枚举（WOOD/IRON/…）—— **两个命名空间**。
+  // 想当然地 `resourceName(metric.name)` 会全部落空、屏幕退回英文原名。
+  // 这条用例钉住：映射存在，且映射方向正确。
+  const view = buildScoutIntel(scoutList(scoutReport({
+    metrics: [{ name: 'grain', value: 4_200 }],
+  })), 1_000)
+  assert.match(view.rows[0]?.detail ?? '', /粮草 4200/,
+    '小写协议键必须映射到大写资源枚举，再取到唯一那份中文名')
+  assert.equal((view.rows[0]?.detail ?? '').includes('grain'), false,
+    '不该把协议原文露给玩家')
+})
+
+test('不属于资源的指标仍走显示词表，且表里没有的名字原样透出（宁可生僻也不猜）', () => {
+  // 同样只列前三项 ⇒ 不认识的那条放第三个。
+  const view = buildScoutIntel(scoutList(scoutReport({
+    metrics: [
+      { name: 'power', value: 12_400 },
+      { name: 'totalUnits', value: 9_000 },
+      { name: 'zz_unknown_metric', value: 7 },
+    ],
+  })), 1_000)
+  const detail = view.rows[0]?.detail ?? ''
+  assert.match(detail, /战力 1\.2 万/)
+  assert.match(detail, /总兵力 9000/)
+  assert.match(detail, /zz_unknown_metric 7/, '不认识的指标名原样透出，不猜一个错的中文')
+})

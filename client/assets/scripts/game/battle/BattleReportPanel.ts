@@ -13,6 +13,7 @@ import type { BattleReportListResp, BattlePlaybackParams } from '../../net/gener
 import type { ScoutListResp } from '../../net/generated/WorldProtocol'
 import { parseSpeeds } from './BattlePlayback'
 import type { PlaybackOptions } from './BattlePlayback'
+import { resourceName } from '../ui/ResourceNames'
 
 /** 一行的展示数据。 */
 export interface ReportRow {
@@ -106,10 +107,49 @@ function expiresInText(millis: number): string {
 
 // ---------- 侦察情报（B26 S19：`GET /world/reports` 的读者）----------
 
-/** 指标名的中文表。表里没有的名字原样透出（宁可生僻，也不猜一个错的）。 */
+/**
+ * 侦察指标名 → 中文。**只放「不是资源」的那几条**。
+ *
+ * <p><b>为什么资源那几条不在这张表里</b>：资源名是 `resource.json` 的 `name` 列，
+ * 客户端那份唯一副本在 `game/ui/ResourceNames`（`RESOURCE_NAMES`）。
+ * 这里原本**另抄了一份**，而且抄错了：
+ * `iron: '铁'` —— 而唯一副本里是「铁矿」。⇒ 同一份资源名在客户端有两种译法，
+ * 玩家在战报里看到「铁」、在资源条上看到「铁矿」，说的是同一样东西。
+ *
+ * <p><b>为什么资源那五条不在这张表里**（第二个理由，比第一个更硬）：
+ * `ScoutMetric.name` 的合法取值是 `wood` / `stone` / `iron` / `grain` / `gold`（**小写**），
+ * 而 `RESOURCE_NAMES` 的键是 `WOOD` / `STONE` / `IRON` / `GRAIN` / `GOLD`（**大写**）——
+ * 协议用的是**指标键**，不是**资源类型枚举**，两个命名空间。
+ * 所以这里必须显式做一次键名映射（`wood` → `WOOD`），
+ * 想当然地直接 `resourceName(metric.name)` 会全部落空、屏幕上退回英文原名。
+ */
 const METRIC_LABEL: Record<string, string> = {
   power: '战力', totalUnits: '总兵力', infantry: '步兵', cavalry: '骑兵', archer: '弓手',
-  siege: '攻城', wood: '木材', stone: '石料', iron: '铁', grain: '粮草', gold: '金币',
+  siege: '攻城',
+}
+
+/**
+ * 侦察指标键 → 资源类型枚举。
+ *
+ * <p>协议键是**小写的指标名**（`ScoutMetric.name` 的取值），
+ * 资源类型枚举是**大写的资源 id**（`resource.json` 的 `rows[].id`）。
+ * 两者不是同一个命名空间 ⇒ 必须显式映射。
+ *
+ * <p>⚠️ **只列服务端真会发的那几条**（`ScoutReport.STANDARD_METRICS` 里的资源项：
+ * wood / stone / iron / grain / gold）。表里没有的键不在这里 ——
+ * 那样它会走到「表里没有的名字原样透出」的回退分支（宁可生僻，也不猜一个错的）。
+ */
+const METRIC_RESOURCE_TYPE: Record<string, string> = {
+  wood: 'WOOD', stone: 'STONE', iron: 'IRON', grain: 'GRAIN', gold: 'GOLD',
+}
+
+/** 一个侦察指标的中文名。资源类走唯一那份资源名映射，其余走本文件的显示词表。 */
+function metricLabel(name: string): string {
+  const resourceType = METRIC_RESOURCE_TYPE[name]
+  if (resourceType !== undefined) {
+    return resourceName(resourceType)
+  }
+  return METRIC_LABEL[name] ?? name
 }
 
 /** 一行侦察情报。`outcome` 放在最右边那一格：过期与否是"这份还能不能用"的第一读数。 */
@@ -148,7 +188,7 @@ export function buildScoutIntel(resp: ScoutListResp | null, now: number): ScoutL
   const rows = resp.reports.map((report) => {
     const errorPercent = Math.round(report.errorFixed / 100)
     const metrics = report.metrics.slice(0, 3)
-      .map(metric => `${METRIC_LABEL[metric.name] ?? metric.name} ${compactCount(metric.value)}`)
+      .map(metric => `${metricLabel(metric.name)} ${compactCount(metric.value)}`)
       .join(' · ')
     const observed = metrics.length === 0 ? '没有观测项' : `${metrics} · ±${errorPercent}%`
     return {

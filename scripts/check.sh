@@ -55,6 +55,10 @@ bash scripts/check-client-config-copy.sh
 # 症状：表值一改，这条判断就**静默失效** —— 玩家点某个东西没反应，
 # 而单测 / 类型检查 / 构建全绿（测试读的是同一份硬编码）。
 bash scripts/check-client-text-logic.sh
+# 客户端对**每个资源**只能有一种中文名，且那一种必须与表一致
+# （战报里写「铁 1200」、资源条上写「铁矿 1200」，而 iron 只有一个）。
+# 纯显示层缺陷：**没有任何测试会红**（断言钉的是同一份硬编码）。
+bash scripts/check-client-resource-names.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-client-typecheck.sh
 # 客户端逻辑层单测（941 项）：**类型门只保证"能编译"，不保证"算对了"**。CI 里这批用例本来就跑
