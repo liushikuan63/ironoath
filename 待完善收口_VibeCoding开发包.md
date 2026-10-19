@@ -7830,3 +7830,5 @@ TEST_EXIT=0
 | v3 Java-only实际能力探针 #1445 | 四docs local提交见receipt | scheduler1/launcher1/finalize0；六读；IO176.0995ms非timeout；pre/post seal均真；partial=true/complete=false；窗口内精确清理 | sharedQA current-holder-result-v4 SHA5efd7f78f615ae399cfa736585dc7105e8cd702f20fcdc577468bd364feb6984；原capture/terminal/final-cleanup/started及哈希；session42680 | PID1 IO unavailable/null、完整帧未得；未证旧r8根因/内核Docker机制；未运行5000且预算/原生未验；窗口已消费，待协调器显式释放LLM |
 
 | PID1 IO ENOENT离线定位 #1446 | 四docs local提交见receipt | 原37SHA一致；新32/0/0/0；真adapter仅mock；独审无阻断；无新资源 | sharedQA proc-enoent-rootcause-v1 SHA89a2ed01de4aa89d06048da10fa6c37a8956dbc8d0ebb4c549d71bdf82168d15；新diagnosis/test/log/design/输入与源码行哈希 | IO路径实际安全修复未知；raw ExitCode/FinishedAt/PidMode/execUID无法补历史；新runtime未授权，原partial非完整/5000/原生未验 |
+
+| lifecycle collector v2离线接入 #1447 | 四docs local提交见receipt | 五处逆字节AST；原13加新12共25/0/0/0；对照3红；独审无阻断；原37不变 | split-lifecycle-v2-offline-frozen.actual.json SHA5f6d34ceaf7c5fa5c9cb0973586c19df2daf10cf33c17d3bb419a986bde9d1df；source62176e43及全部输入测试日志hash | 未接launcher/未新runtime；原State不可补；实际IO修复/机制/完整profile/5000/原生未验；新窗口未授 |
