@@ -3,7 +3,6 @@ package com.ironoath.web.levelreward;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,8 +15,8 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.LevelRewardCfg;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
+import com.ironoath.core.player.PlayerBrief;
 import com.ironoath.core.player.PlayerRepository;
-import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.core.reward.RewardContext;
 import com.ironoath.core.reward.RewardItem;
@@ -79,7 +78,7 @@ public class LevelRewardAppService {
     public LevelRewardListResp list(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
-            int mainLevel = requirePlayer(playerId).cityLevel();
+            int mainLevel = cityLevelOf(playerId);
             Rendered rendered = render(mainLevel, loaded(playerId));
             return new LevelRewardListResp(rendered.rows(), rendered.claimableCount(), mainLevel, now);
         });
@@ -96,7 +95,7 @@ public class LevelRewardAppService {
     public int claimableCount(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
-                () -> render(requirePlayer(playerId).cityLevel(), loaded(playerId)).claimableCount());
+                () -> render(cityLevelOf(playerId), loaded(playerId)).claimableCount());
     }
 
     /** 领取一级的奖励。未达等级 / 已领过 / 表里没这一级，各有各的业务码。 */
@@ -108,7 +107,7 @@ public class LevelRewardAppService {
         acquire(req.requestId(), now);
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
-                int mainLevel = requirePlayer(playerId).cityLevel();
+                int mainLevel = cityLevelOf(playerId);
                 LevelRewardCfg row = rowOf(req.level());
                 LevelRewardClaimStore.State state = loaded(playerId);
                 if (row.level() > mainLevel) {
@@ -209,10 +208,27 @@ public class LevelRewardAppService {
         return claims.load(playerId).orElseGet(() -> LevelRewardClaimStore.State.empty(playerId));
     }
 
-    private PlayerSave requirePlayer(String playerId) {
-        Optional<PlayerSave> save = players.findByPlayerId(playerId);
-        return save.orElseThrow(() -> new BizException(ErrorCode.PLAYER_NOT_FOUND,
-                "玩家不存在：" + playerId));
+    /**
+     * 只要主城等级这一位 ⇒ 走**窄读口**，不为一位数搬回整份存档。
+     *
+     * <p>为什么：{@code findByPlayerId} 会把资源表、PVP 账本、科技、礼包弹窗账本、已拥有的头像框集合
+     * 整份搬回来，而这里要的只是等级那一个数（{@code PlayerRepository} 的注释点名了这个坑）。
+     * 窄读口 {@code findBriefs} 的投影含 {@code cityLevel}，它与整档的一致性由
+     * {@code PlayerBriefEquivalenceTest} 钉住。
+     *
+     * <p>玩家不存在时的行为与原 {@code requirePlayer} 一致：同错误码、同文案。
+     *
+     * <p>判据：{@code LevelRewardPlayerReadCountTest}（计数型 —— 这三个入口从不调整档读）。
+     */
+    private int cityLevelOf(String playerId) {
+        if (playerId == null || playerId.isBlank()) {
+            throw new BizException(ErrorCode.PLAYER_NOT_FOUND, "玩家不存在：" + playerId);
+        }
+        PlayerBrief brief = players.findBriefs(List.of(playerId)).get(playerId);
+        if (brief == null) {
+            throw new BizException(ErrorCode.PLAYER_NOT_FOUND, "玩家不存在：" + playerId);
+        }
+        return brief.cityLevel();
     }
 
     /** 幂等键：与任务/活动/社交同一条（缺键回 1003，重复回 1002，TTL 读配置表）。 */
