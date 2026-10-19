@@ -1710,7 +1710,7 @@ public class SocialAppService {
         }
         store.follow(playerId, target);
         LOG.info("已关注 playerId={} 目标={}", playerId, target);
-        return follows(playerId);
+        return buildFollows(playerId);
     }
 
     /** 取消关注（幂等）。 */
@@ -1718,7 +1718,7 @@ public class SocialAppService {
         String target = requireFollowTarget(playerId, req);
         store.unfollow(playerId, target);
         LOG.info("已取消关注 playerId={} 目标={}", playerId, target);
-        return follows(playerId);
+        return buildFollows(playerId);
     }
 
     /**
@@ -1730,6 +1730,20 @@ public class SocialAppService {
      */
     public FriendListView follows(String playerId) {
         requirePlayer(playerId);
+        return buildFollows(playerId);
+    }
+
+    /**
+     * 关注列表本体。
+     *
+     * <p><b>为什么拆出来</b>：{@code follow} / {@code unfollow} 的上游 {@code requireFollowTarget}
+     * 已经 {@code requirePlayer} 过（玩家不存在时在那里就抛了），中间只写社交集合、
+     * <b>不写玩家档</b> ⇒ 再读一次整份存档是白搬一趟。
+     * 直接调 {@link #follows(String)} 的调用方（客户端打开关注列）仍走原路：先确认玩家存在再列。
+     *
+     * <p>判据：{@code SocialFollowSinglePlayerReadTest}。
+     */
+    private FriendListView buildFollows(String playerId) {
         long now = timeService.serverNow();
         List<String> ids = store.followedPlayers(playerId);
         // 关注对象的昵称与活跃时刻一次批量读回。逐个 findByPlayerId 是每次打开这一列表打
