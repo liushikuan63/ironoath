@@ -404,6 +404,49 @@ run_error_codes() { bash scripts/check-error-codes.sh; }
 three_arg check-error-codes.sh \
           mk_error_codes run_error_codes '错误码唯一且落在段位内（走 ERRORCODES_SERVER_DIR 口，零污染）'
 
+# check-view-child-index：视图里取子节点不许用**位置索引**（孩子顺序一变就取错那个）。
+# ⚠️ 走 VIEW_DIR 口（门上本来就有）⇒ 零污染：夹具放 /d/tmp。
+# 违规态 = 假树里一个**不在基线表里**的新文件用 children[0] 取子节点
+# （基线注释写明「新增文件必须从 0 开始」⇒ 一处即超；文件名不用基线里那几个，才不会撞单文件基线）。
+VI_D=/d/tmp/probe753/gates-viewidx
+mk_view_child_index() {
+  if [ "$1" = "1" ]; then
+    rm -rf "$VI_D"; mkdir -p "$VI_D"
+    printf 'export class ZzProbeView {\n  a() { return this.node.children[0] }\n  b() { return this.node.children[0] }\n  c() { return this.node.children[0] }\n}\n' > "$VI_D/ZzProbeView.ts"
+    export VIEW_DIR="$VI_D"
+  else
+    unset VIEW_DIR
+    rm -rf "$VI_D"
+  fi
+}
+run_view_child_index() { bash scripts/check-view-child-index.sh; }
+three_arg check-view-child-index.sh \
+          mk_view_child_index run_view_child_index '视图取子节点不许用位置索引（走 VIEW_DIR 口，零污染）'
+
+# check-checklist-table：收口清单的表格每行单元格不得多于表头（多出来的会被**整格丢掉且不报错**）。
+# ⚠️ 门脚本把文件名写死成「收口清单.md」，但它的 .js 本来就吃 argv[2] ⇒ 这里直接调 .js，
+#    用 CL_TABLE_FILE 区分基线态（真清单）与违规态（假清单）⇒ 零污染，不动真清单。
+CT_F=/d/tmp/probe753/gates-checklist-table.md
+mk_checklist_table() {
+  if [ "$1" = "1" ]; then
+    rm -f "$CT_F"
+    printf '| 格 | 提交 |\n|---|---|\n| 多了一格 | B | C |\n' > "$CT_F"
+    export CL_TABLE_FILE="$CT_F"
+  else
+    unset CL_TABLE_FILE
+    rm -f "$CT_F"
+  fi
+}
+run_checklist_table() {
+  if [ -n "${CL_TABLE_FILE:-}" ]; then
+    node scripts/check-checklist-table.js "$CL_TABLE_FILE"
+  else
+    node scripts/check-checklist-table.js 收口清单.md
+  fi
+}
+three_arg check-checklist-table.sh \
+          mk_checklist_table run_checklist_table '收口清单表格每行单元格不得多于表头（走 CL_TABLE_FILE 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
