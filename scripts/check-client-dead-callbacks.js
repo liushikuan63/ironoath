@@ -157,3 +157,68 @@ if (real.length > 0) {
   process.exit(1);
 }
 console.log('[dead-callbacks] 通过：每一条 on* 回调都有调用点');
+
+/**
+ * 自测（`node scripts/check-client-dead-callbacks.js --self-test`）。
+ *
+ * 为什么要有：这道门判的是「声明了但没人调用」，而它**自己**从来没有被证过能红 ——
+ * 门在仓库里一直绿，绿的原因可能只是「这一族缺陷已经没有了」，也可能是**谓词早就失效了**
+ * （扫空目录退 0 / 正则再也匹配不到任何声明）。AGENTS.md 的老教训：
+ * 「扫空目录然后退 0」是假绿的典型；`check-package-path-predicates` 为此专门留了
+ * 「谓词命中数：路径 0 / … 」的读数，`check-dangling-test-refs` 干脆自带 `--self-test`。
+ *
+ * 做法：**不动主判据**（自测用子进程重新调用本脚本，只换扫描根）——
+ * 这样自测本身不会把主逻辑改坏，也不会影响 `check-gates-can-fail.sh` 的零污染三读数。
+ * 四条断言：
+ *   ① 合成语料里「声明了 + 有调用点」⇒ 子进程退 0（且读到声明数 > 0，证明谓词真的在扫）；
+ *   ② 合成语料里「声明了 + 没有调用点」⇒ 子进程退 1 且**点名那条回调**（反证：门能红）；
+ *   ③ 扫描根不存在 ⇒ 子进程退 1（fail-closed，不静默跳过）；
+ *   ④ 自测目录用完即删，不留在仓库里。
+ */
+if (process.argv.includes('--self-test')) {
+  const { spawnSync } = require('child_process');
+  const os = require('os');
+  const fs2 = require('fs');
+  const sandbox = path.join(ROOT, 'tmp', 'deadcall-selftest-' + process.pid);
+  const failures = [];
+  const check = (name, ok, detail) => {
+    if (ok) console.log(`ok - ${name}`);
+    else { console.log(`not ok - ${name}${detail ? ' :: ' + detail : ''}`); failures.push(name); }
+  };
+  const runGate = (scanDir) => {
+    const env = { ...process.env, DEADCALL_SCAN_DIRS: scanDir };
+    delete env.DEADCALL_ALLOW_EXTRA;
+    const out = spawnSync(process.execPath, [__filename], { env, encoding: 'utf8' });
+    return { code: out.status, text: (out.stdout || '') + (out.stderr || '') };
+  };
+  try {
+    fs2.mkdirSync(sandbox, { recursive: true });
+    // ① 有调用点 ⇒ 退 0
+    fs2.writeFileSync(path.join(sandbox, 'Live.ts'),
+      'export class Live {\n  onBar: (() => void) | null = null\n' +
+      '  fire() { this.onBar?.() }\n}\n');
+    const live = runGate(path.relative(ROOT, sandbox).replace(/\\/g, '/'));
+    check('有调用点的合成回调：门退 0', live.code === 0, live.text);
+    check('门读到了声明数（谓词没失效）', /声明 [1-9][0-9]* 条/.test(live.text), live.text.split('\n')[0]);
+
+    // ② 没有调用点 ⇒ 退 1 且点名（反证：门能红）
+    fs2.writeFileSync(path.join(sandbox, 'Dead.ts'),
+      'export class Dead {\n  onFoo: (() => void) | null = null\n' +
+      '  fire() { /* 画了按钮但没接 */ }\n}\n');
+    const dead = runGate(path.relative(ROOT, sandbox).replace(/\\/g, '/'));
+    check('没有调用点的合成回调：门退 1', dead.code === 1, `code=${dead.code}`);
+    check('门点名了那条回调', /onFoo/.test(dead.text), dead.text);
+
+    // ③ 扫描根不存在 ⇒ fail-closed
+    const missing = runGate('tmp/deadcall-selftest-does-not-exist-' + process.pid);
+    check('扫描根不存在时 fail-closed（退 1）', missing.code === 1, `code=${missing.code}`);
+  } finally {
+    fs2.rmSync(sandbox, { recursive: true, force: true });
+  }
+  if (failures.length) {
+    console.error(`\n[dead-callbacks][SELFTEST][FAIL] ${failures.length} 条未过：${failures.join(' / ')}`);
+    process.exit(1);
+  }
+  console.log('\n[dead-callbacks][SELFTEST] 全部通过：门能绿（谓词在扫）也能红（点名叫得出）');
+  process.exit(0);
+}
