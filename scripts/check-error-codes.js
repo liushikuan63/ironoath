@@ -21,7 +21,9 @@ function walk(dir, out) {
   return out
 }
 
-const files = walk('server', [])
+// 扫描根（**可选口 ERRORCODES_SERVER_DIR**）：不设时与默认扫描完全一致（`server`）；
+// 绝对路径也直接可用 ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真 server 源码里植死枚举。
+const files = walk(process.env.ERRORCODES_SERVER_DIR || 'server', [])
 const defFile = files.find((f) => f.endsWith(path.join('common', 'ErrorCode.java')))
 if (!defFile) {
   console.error('[check-error-codes][FAIL] 找不到 ErrorCode.java，检查无法进行')

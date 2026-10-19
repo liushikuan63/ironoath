@@ -369,6 +369,41 @@ run_player_jargon() { bash scripts/check-player-copy-jargon.sh; }
 three_arg check-player-copy-jargon.sh \
           mk_player_jargon run_player_jargon '玩家可见文案禁工程黑话（走 JARGON_SCAN_DIRS 口，零污染）'
 
+# check-error-codes：错误码必须唯一且落在声明的段位里。
+# ⚠️ 走 ERRORCODES_SERVER_DIR 口（2026-10-19 加在门上）⇒ 零污染：不往真 server 源码里植死枚举。
+# ⚠️ 夹具必须**造出完整形状**：这道门有两道下限守卫（类注释里至少 15 个段位、至少 100 个码声明），
+# 少一个就变成「下限守卫先红」⇒ 红点归因不到「码值重复」这一形状。
+# 违规态 = 100 个互不重复、都在首段位内的码 + **一对重复**（1050 落在 1000~1099 内 ⇒ 段位判据不抢红点）。
+EC_D=/d/tmp/probe753/gates-errcodes
+mk_error_codes() {
+  if [ "$1" = "1" ]; then
+    rm -rf "$EC_D"; mkdir -p "$EC_D/common"
+    {
+      echo 'public enum ErrorCode {'
+      i=0
+      while [ "$i" -lt 15 ]; do
+        echo "  // 段位 $((1000 + i * 100))~$((1099 + i * 100))"
+        i=$((i + 1))
+      done
+      i=0
+      while [ "$i" -lt 100 ]; do
+        echo "  CODE_$i($((1000 + i)), \"码 $i\");"
+        i=$((i + 1))
+      done
+      echo '  DUP_A(1050, "重复的码值");'
+      echo '  DUP_B(1050, "重复的码值");'
+      echo '}'
+    } > "$EC_D/common/ErrorCode.java"
+    export ERRORCODES_SERVER_DIR="$EC_D"
+  else
+    unset ERRORCODES_SERVER_DIR
+    rm -rf "$EC_D"
+  fi
+}
+run_error_codes() { bash scripts/check-error-codes.sh; }
+three_arg check-error-codes.sh \
+          mk_error_codes run_error_codes '错误码唯一且落在段位内（走 ERRORCODES_SERVER_DIR 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
