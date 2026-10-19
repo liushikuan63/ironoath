@@ -587,11 +587,12 @@ mk_client_numeric_copy() { # check-client-numeric-copy：客户端不得写死�
     rm -rf "$NC_D"; mkdir -p "$NC_D"
     printf '{"table":"global","version":1,"fieldTypes":{},"rows":[{"id":"ZZ_GATE_PROBE","valueType":"LONG","value":"7"}]}\n' > "$NC_D/global.json"
     printf '{"table":"city_rule","version":1,"fieldTypes":{},"rows":[]}\n' > "$NC_D/city_rule.json"
+    printf '{"table":"chest","version":1,"fieldTypes":{},"rows":[]}\n' > "$NC_D/chest.json"
     # 违规形状：**注释里点名表 id**，同一块声明里写死那个数。
     printf '/** 来源 global.ZZ_GATE_PROBE */\nconst ZzCopied = 7\n' > "$NC_D/ZzNumericCopy.ts"
-    export NUMCOPY_SCAN_DIR="$NC_D" NUMCOPY_GLOBAL_JSON="$NC_D/global.json" NUMCOPY_CITYRULE_JSON="$NC_D/city_rule.json"
+    export NUMCOPY_SCAN_DIR="$NC_D" NUMCOPY_GLOBAL_JSON="$NC_D/global.json" NUMCOPY_CITYRULE_JSON="$NC_D/city_rule.json" NUMCOPY_CHEST_JSON="$NC_D/chest.json"
   else
-    unset NUMCOPY_SCAN_DIR NUMCOPY_GLOBAL_JSON NUMCOPY_CITYRULE_JSON
+    unset NUMCOPY_SCAN_DIR NUMCOPY_GLOBAL_JSON NUMCOPY_CITYRULE_JSON NUMCOPY_CHEST_JSON
     rm -rf "$NC_D"
   fi
 }

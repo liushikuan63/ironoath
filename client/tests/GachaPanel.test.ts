@@ -35,7 +35,8 @@ function gold(current: number): ResourceDetail {
 function chest(count: number): BagItem {
   return { itemId: 'item_chest_hero', name: '招募宝箱', type: 'MATERIAL', rarity: 'R',
     obtainFrom: '关卡', count, stackMax: 99, sortKey: 3,
-    effectKind: 'OPEN_CHEST', effectTarget: null }
+    effectKind: 'OPEN_CHEST',
+    batchCap: 0, effectTarget: null }
 }
 
 const limitedPool = (overrides: Partial<GachaPoolSummary> = {}): GachaPoolSummary => pool({

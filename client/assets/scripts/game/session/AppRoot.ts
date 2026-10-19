@@ -521,7 +521,17 @@ export type PanelKey =
   | 'battlePass' | 'rallies' | 'tech' | 'equip' | 'gacha' | 'levelReward'
 
 /** 「全开」这一档的天花板：`OpenBatchReq.count` 的协议上界（逐箱上限由服务端判，超了会明确拒）。 */
-const CHEST_OPEN_CEILING = 100
+/**
+ * 批量开箱的上限 —— **服务端随背包行下发**（`BagItem.batchCap`），不是客户端写死的一份。
+ *
+ * <p>为什么必须下发、为什么还有兜底值：见 `Choices.ts` 的 `CHEST_BATCH_CEILING_FALLBACK` 注释
+ * （同一个道理：上限住在表里，客户端拿不到表；而服务端对超出的批量请求是**明确拒绝**不是静默截断，
+ * 客户端那份数一旦过期，玩家点「全开」就是当场报错）。
+ */
+// numeric-copy-exempt: 这是「先发后覆盖」里的兜底默认值 —— 服务端随背包行下发的
+// BagItem.batchCap 一到就被覆盖，而抄表是永远不覆盖。两者由 `Choices.test.ts` 的
+// 「「全开」说的上限是服务端下发的那份」与「兜底上限只在上限还没到时用」两条用例分别钉着。
+const CHEST_OPEN_CEILING_FALLBACK = 100
 
 /** 埋点出口。只要一个 `track`，为的是单测能塞一个数组进来，而不是塞整个 TrackClient。 */export interface Tracker {
   track(name: string, params?: Record<string, string>): void
@@ -1610,7 +1620,9 @@ export class AppRoot {
     const held = this.bagResp?.items.find((it) => it.itemId === itemId)
     if (held !== undefined && held.type === 'CHEST') {
       this.track(TRACK_EVENTS.itemUse, { itemId, blocked: 'chest_picker' })
-      const options = buildChestOpenChoices(held.count)
+      // 上限随背包行下发（`BagItem.batchCap`）：0 = 这一种不支持批量。
+      const batchCap = held.batchCap > 0 ? held.batchCap : CHEST_OPEN_CEILING_FALLBACK
+      const options = buildChestOpenChoices(held.count, batchCap)
       if (options.length === 0) {
         this.rejectNeeds('bag', '手里这一种宝箱已经没有了')
         return Promise.resolve()
@@ -1621,7 +1633,7 @@ export class AppRoot {
       }
       this.targets.chestOpenChoice(options, (picked) => {
         void this.openChest(itemId, picked === 'all'
-          ? Math.min(held.count, CHEST_OPEN_CEILING) : Number(picked))
+          ? Math.min(held.count, batchCap) : Number(picked))
       })
       return Promise.resolve()
     }

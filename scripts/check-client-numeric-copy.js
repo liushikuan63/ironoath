@@ -54,11 +54,26 @@ const path = require('path')
 const ROOT = process.env.NUMCOPY_SCAN_DIR || 'client/assets/scripts'
 const GLOBAL_TABLE = process.env.NUMCOPY_GLOBAL_JSON || 'contract/config/global.json'
 const CITY_RULE_TABLE = process.env.NUMCOPY_CITYRULE_JSON || 'contract/config/city_rule.json'
+const CHEST_TABLE = process.env.NUMCOPY_CHEST_JSON || 'contract/config/chest.json'
 
-/** 参与判定的表：这些表里的行是「服务端会按它跑、客户端会按它判」的数。 */
+/**
+ * 参与判定的表：这些表里的行是「服务端会按它跑、客户端会按它判」的数。
+ *
+ * <p>⚠️ **两种表形状，判据不同**：
+ * <ul>
+ *   <li><b>「值在一列里」</b>（global / city_rule）：行有 `value` 列，值在那一列 ⇒
+ *       判「客户端写死了这个 value」。</li>
+ *   <li><b>「值是命名列」</b>（chest 的 `maxBatchCount`）：行没有 `value` 列，
+ *       数值散在**有名字的列**里 ⇒ 判「客户端写死了这一列的值」，
+ *       而列名（`maxBatchCount`）就是判据的线索。</li>
+ * </ul>
+ * 两种形状都收，因为它们是同一族缺陷（客户端抄了表里的数），而**只收一种就会漏掉另一种**
+ * —— 本门存在的理由正是「不能靠人记得」（chat 表那次就是「同名但不同量纲」的教训）。
+ */
 const TABLES = [
-  { file: GLOBAL_TABLE, label: 'global' },
-  { file: CITY_RULE_TABLE, label: 'city_rule' },
+  { file: GLOBAL_TABLE, label: 'global', shape: 'value' },
+  { file: CITY_RULE_TABLE, label: 'city_rule', shape: 'value' },
+  { file: CHEST_TABLE, label: 'chest', shape: 'named-column' },
 ]
 
 /** 豁免的形状：紧邻上一行的 `numeric-copy-exempt: <理由>`。 */
@@ -75,7 +90,17 @@ function collectFiles(dir, out) {
   return out
 }
 
-/** 表里所有行 id → 该行的真值。 */
+/**
+ * 表里所有行 id → 该行可被抄走的数值。
+ *
+ * <p>两种形状：
+ * <ul>
+ *   <li>`value` 形状：行有 `value` 列 ⇒ 线索是**行 id**（`global.NET_RETRY_MAX_ATTEMPTS`）。</li>
+ *   <li>`named-column` 形状：行没有 `value` 列，数值在**有名字的列**里 ⇒
+ *       线索是**列名**（`chest.maxBatchCount`）。</li>
+ * </ul>
+ * 键统一写成「表名.线索」，两种形状就能走同一套匹配。
+ */
 function readTableRows() {
   const rows = new Map()
   for (const table of TABLES) {
@@ -91,19 +116,45 @@ function readTableRows() {
       if (!row || typeof row !== 'object') continue
       const id = row.id
       if (typeof id !== 'string' || id === '') continue
-      rows.set(id, { label: table.label, value: row.value })
+      if (table.shape === 'value') {
+        const value = row.value
+        if (typeof value !== 'string' && typeof value !== 'number') continue
+        rows.set(`${table.label}.${id}`, { label: table.label, value: String(value) })
+        continue
+      }
+      // named-column 形状：每一个「数值型命名列」都是一条可被抄走的线索
+      for (const [column, value] of Object.entries(row)) {
+        if (column === 'id') continue
+        if (typeof value !== 'number' || typeof value === 'boolean') continue
+        rows.set(`${table.label}.${column}`, { label: table.label, value: String(value) })
+      }
     }
   }
   return rows
 }
 
-/** 一段文本里点名的表 id（词边界，避免短 id 误伤）。 */
+/**
+ * 一段文本里点名的表 id（词边界，避免短 id 误伤）。
+ *
+ * <p>⚠️ **两种写法都要认**：客户端的注释里既有裸 id
+ * （「来源：contract/config/global.json 的 FIXED_POINT_SCALE」）也有带表名的
+ * （「来源 global.NET_RETRY_MAX_ATTEMPTS」）。⇒ 匹配时**裸 id 是主形态**，
+ * 带表名的形态是它的子串 —— 只认一种就会漏（第一版把键改成「表名.id」，
+ * 裸 id 那种写法全漏了，命中数从 7 掉到 4）。
+ */
 function mentionedIds(text, ids) {
   const found = []
-  for (const id of ids.keys()) {
-    if (!text.includes(id)) continue
-    const re = new RegExp(`(^|[^A-Za-z0-9_])${id}($|[^A-Za-z0-9_])`)
-    if (re.test(text)) found.push(id)
+  for (const key of ids.keys()) {
+    const bare = key.includes('.') ? key.slice(key.indexOf('.') + 1) : key
+    // 两种形态都试：带表名的完整键、以及裸 id
+    for (const candidate of [key, bare]) {
+      if (!text.includes(candidate)) continue
+      const re = new RegExp(`(^|[^A-Za-z0-9_])${candidate.replace(/\./g, '\\.')}($|[^A-Za-z0-9_])`)
+      if (re.test(text)) {
+        found.push(key)
+        break
+      }
+    }
   }
   return found
 }

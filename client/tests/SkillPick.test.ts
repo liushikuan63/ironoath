@@ -16,7 +16,8 @@ function book(overrides: Partial<BagItem> = {}): BagItem {
   return {
     itemId: 'item_hero_skillbook_main', name: '主技能秘卷', type: 'MATERIAL', rarity: 'SR',
     obtainFrom: '章节宝箱', count: 3, stackMax: 999, sortKey: 100,
-    effectKind: SKILL_UP_KIND, effectTarget: 'MAIN', ...overrides,
+    effectKind: SKILL_UP_KIND,
+    batchCap: 0, effectTarget: 'MAIN', ...overrides,
   }
 }
 

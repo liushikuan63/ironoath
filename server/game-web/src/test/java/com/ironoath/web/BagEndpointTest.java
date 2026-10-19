@@ -3,6 +3,7 @@ package com.ironoath.web;
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.ChestCfg;
 import com.ironoath.config.cfg.ItemCfg;
 import com.ironoath.core.bag.Inventory;
 import com.ironoath.core.bag.InventoryRepository;
@@ -162,6 +163,13 @@ class BagEndpointTest {
         assertThat(item.obtainFrom()).as("来源必须非空，否则「长按看哪里能刷」这个转化设计就落空了")
                 .isNotBlank();
         assertThat(item.stackMax()).isEqualTo(configs.get(ItemCfg.class, "item_chest_resource").stackMax());
+        // 单次批量上限随行下发：客户端没有配置表加载器（chest 表不进包）⇒ 拿不到表。
+        // 抄一份的后果比「少拉几行」严重：服务端对超出的批量请求是**明确拒绝**而不是静默截断
+        // （静默只开一部分却扣全部等于吞道具）⇒ 客户端那份数一旦过期，玩家点「全开」当场报错，
+        // 而屏上「一次最多开 N 个」还是旧的那句。
+        assertThat(item.batchCap())
+                .as("宝箱行的批量上限必须来自 chest 表的 maxBatchCount")
+                .isEqualTo((int) configs.get(ChestCfg.class, "item_chest_resource").maxBatchCount());
         assertThat(item.count()).isEqualTo(3L);
     }
 

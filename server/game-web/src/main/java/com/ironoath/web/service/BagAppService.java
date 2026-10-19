@@ -186,6 +186,31 @@ public class BagAppService {
         return (rarityRank * typeKinds + typeRank) * COUNT_SPAN + countRank;
     }
 
+    /**
+     * 这一种道具单次批量使用最多几个（0 = 不支持批量）。
+     *
+     * <p>只有宝箱有批量口径（chest 表的 maxBatchCount）；别的道具一律 0 ——
+     * 「不支持批量」与「上限是 100」是两件事，客户端据此不显示「全开」。
+     *
+     * <p>读不到 chest 行时**不当成 0**（那会让客户端以为「不支持批量」而是真上限）：
+     * 抛出来更诚实 —— 缺配置是运营事故，不该被客户端悄悄当成一种合法状态。
+     */
+    private int batchCapOf(ItemCfg cfg) {
+        if (cfg.type() != ItemCfg.Type.CHEST) {
+            return 0;
+        }
+        try {
+            return (int) configs.get(ChestCfg.class, cfg.id()).maxBatchCount();
+        } catch (ConfigException e) {
+            // 武将招募匣走 gacha 卡池，没有 chest 行 —— 它本来就不走批量开箱这条路。
+            if (cfg.effectKind() == ItemCfg.EffectKind.OPEN_GACHA) {
+                return 0;
+            }
+            throw new BizException(ErrorCode.CONFIG_INVALID,
+                    "宝箱 " + cfg.id() + " 缺 chest 配置行，单次批量上限无从下发：", e);
+        }
+    }
+
     private BagItem toBagItem(ItemCfg cfg, long count) {
         ItemRarity rarity = ItemRarity.valueOf(cfg.rarity().name());
         // 表里的 sellable / sellPriceGold **已随 B24 裁决④ 从表里删掉**（2026-09-13 先撤协议与客户端按钮、
@@ -199,6 +224,12 @@ public class BagAppService {
                 // 判别字段随行下发（V03-d）：客户端按它筛"哪些道具能喂武将/能觉醒"
                 // —— `type` 太粗（三本经验书都是 MATERIAL，底下还有 11 种别的材料）
                 cfg.effectKind().name(),
+                // 单次批量使用的上限随行下发（0 = 这一种不支持批量）：
+                // 上限住在 chest 表的 maxBatchCount，而客户端没有配置表加载器 ⇒ 拿不到表。
+                // 抄一份的后果比「少拉几行」严重：服务端对超出的批量请求是**明确拒绝**
+                // 而不是静默截断（静默只开一部分却扣全部等于吞道具）⇒ 客户端那份数一旦过期，
+                // 玩家点「全开」就是当场报错，而屏上「一次最多开 N 个」还是旧的那句。
+                batchCapOf(cfg),
                 // 判别字段的**宾语**（V03-d 最后一条）：两本技能书在 type 与 effectKind 两列下完全同型，
                 // 只有这一列知道自己是主技能书还是副技能书 —— 而 skillUp 的 skillSlot 不许客户端猜
                 cfg.effectTarget());

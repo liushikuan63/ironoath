@@ -228,3 +228,35 @@ test('训练与治疗每次只吃一张，正库存才可选，研究仍保留�
     { itemId: 'r3', name: '研究令', type: 'SPEEDUP', effectKind: 'REDUCE_RESEARCH_SECONDS', count: 3 },
   ] } as never).map(choice => choice.count), [1, 3])
 })
+
+// ---------- 批量开箱上限由服务端下发（#2253） ----------
+
+test('「全开」说的上限是服务端下发的那份，不是客户端写死的那份', () => {
+  // 缺陷形状：上限住在 chest 表的 maxBatchCount（客户端没有配置表加载器 ⇒ 拿不到表），
+  // 客户端于是写死一份 100。抄一份的后果比「少拉几行」严重：
+  // 服务端对超出的批量请求是**明确拒绝**而不是静默截断
+  // （静默只开一部分却扣全部等于吞道具）⇒ 客户端那份数一旦过期，
+  // 玩家点「全开」就是当场报错，而屏上「一次最多开 N 个」还是旧的那句。
+  const all = buildChestOpenChoices(250, 50).find(o => o.id === 'all')
+  assert.equal(all?.label, '全开 50 个', '上限必须是服务端下发的 50，不是客户端写死的 100')
+  assert.match(all?.detail ?? '', /一次最多开 50 个/,
+    '提示里的上限必须与服务端的裁决是同一个数，否则玩家按屏上的话做会失败')
+})
+
+test('服务端下发 0（这一种不支持批量）时，不给「全开」', () => {
+  // 0 = 不支持批量（不是「上限是 0」）。给它画一个「全开 0 个」是玩家点不动的按钮。
+  const options = buildChestOpenChoices(250, 0)
+  assert.equal(options.find(o => o.id === 'all'), undefined,
+    '上限 0 时不该出现「全开」选项')
+  // 逐个开的档位仍在（1/5/10 与上限无关）
+  assert.deepEqual(options.map(o => o.id), ['1', '5', '10'],
+    '上限 0 只影响「全开」，逐个开的档位照旧')
+})
+
+test('兜底上限只在上限还没到时用：显式传 0 与不传是两回事', () => {
+  // 兜底值（100）是「服务端还没说」时的默认，不是「上限是 0」。
+  // 不传 ⇒ 兜底 100（与服务端同源的值，今天表里就是 100）；
+  // 显式传 0 ⇒ 不支持批量。
+  const fallback = buildChestOpenChoices(250).find(o => o.id === 'all')
+  assert.equal(fallback?.label, '全开 100 个', '没传上限时用兜底值（= 当前表里的真值）')
+})

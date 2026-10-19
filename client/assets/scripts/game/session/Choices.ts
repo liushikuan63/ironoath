@@ -29,7 +29,23 @@ export interface ResearchSpeedupChoice extends ChoiceOption {
 }
 
 /** 一次开宝箱的协议天花板（`OpenBatchReq.count` 的上界，B04 验收 3 按它定的）。 */
-const CHEST_BATCH_CEILING = 100
+/**
+ * 批量使用的上限 —— **服务端随背包行下发**（`BagItem.batchCap`），不是客户端写死的一份。
+ *
+ * <p><b>为什么必须下发</b>：上限住在 `chest` 表的 `maxBatchCount`，而**客户端没有配置表加载器**
+ * （表不进包，客户端只有生成的类型、没有表数据）⇒ 客户端拿不到表。
+ * 抄一份的后果比「少拉几行」严重得多：服务端对超出的批量请求是**明确拒绝**而不是静默截断
+ * （静默只开一部分却扣全部等于吞道具）⇒ 客户端那份数一旦过期，
+ * 玩家点「全开」就是**当场报错**，而屏上「一次最多开 N 个」还是旧的那句 ⇒ 提示与裁决对不上。
+ *
+ * <p><b>这个兜底值为什么还在</b>：背包响应还没到时（首帧、或拉背包失败）客户端总得有个数可用。
+ * 它**不是「抄表」**：它会被服务端的值覆盖，而抄表是永远不覆盖。
+ * 两者由 `AppRoot.test.ts` 那条用例钉着。
+ */
+// numeric-copy-exempt: 这是「先发后覆盖」里的兜底默认值 —— 服务端随背包行下发的
+// BagItem.batchCap 一到就被覆盖，而抄表是永远不覆盖。两者由 `Choices.test.ts` 的
+// 「「全开」说的上限是服务端下发的那份」与「兜底上限只在上限还没到时用」两条用例分别钉着。
+const CHEST_BATCH_CEILING_FALLBACK = 100
 
 export interface LineupChoice extends ChoiceOption {
   readonly heroes: readonly string[]
@@ -87,8 +103,9 @@ export function buildArmyQueueChoices(army: ArmyListResp | null,
  * 那句"单次最多开 X 个"原样显示给玩家，他照着改一次就行。
  *
  * @param held 背包里这一种宝箱的数量（服务端下发，不自己数）
+ * @param cap  单次批量开箱的上限（服务端随背包行下发，{@code BagItem.batchCap}）
  */
-export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
+export function buildChestOpenChoices(held: number, cap: number = CHEST_BATCH_CEILING_FALLBACK): readonly ChoiceOption[] {
   if (held <= 0) {
     return []
   }
@@ -98,12 +115,12 @@ export function buildChestOpenChoices(held: number): readonly ChoiceOption[] {
       out.push({ id: String(n), label: `开 ${n} 个`, detail: `还剩 ${held - n} 个没开` })
     }
   }
-  const all = Math.min(held, CHEST_BATCH_CEILING)
+  const all = Math.min(held, cap)
   if (all > 10) {
     out.push({
       id: 'all',
       label: `全开 ${all} 个`,
-      detail: all === held ? '一次开完手里这些' : `手里 ${held} 个，一次最多开 ${CHEST_BATCH_CEILING} 个`,
+      detail: all === held ? '一次开完手里这些' : `手里 ${held} 个，一次最多开 ${cap} 个`,
     })
   }
   return out
