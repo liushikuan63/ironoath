@@ -85,7 +85,8 @@ public class ActivityAppService {
     public ActivityListResp list(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
-            ActivityLedger.Book book = load(playerId, now, ActivityLedger.Mode.READ).book();
+            Loaded loaded = load(playerId, now, ActivityLedger.Mode.READ);
+            ActivityLedger.Book book = loaded.book();
             ActivityProgress progress = book.progress();
             // 读取路径的惰性同步：没有待展示记录的行直接进入新一轮（有进展没领的行留住）
             if (progress.syncOnRead(now, anchors.playerAnchorMs(playerId)) > 0) {
@@ -97,7 +98,8 @@ public class ActivityAppService {
                 if (def.retired() && progress.blockOf(def.activityId(), now, playerAnchor).blocked()) continue;
                 views.add(viewOf(book, def, now, playerAnchor));
             }
-            views.addAll(signIn.list(playerId, now));
+            // 复用 load 已经读到的存档：同一次请求里同一份玩家档只读一次（owner 是补发之后那份）。
+            views.addAll(signIn.list(playerId, now, loaded.owner()));
             return new ActivityListResp(List.copyOf(views), now,
                     progress.claimableCount(now, playerAnchor) + signInCount(views));
         });

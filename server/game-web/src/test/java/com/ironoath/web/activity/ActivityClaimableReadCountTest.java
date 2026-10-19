@@ -62,6 +62,27 @@ class ActivityClaimableReadCountTest {
     @InjectMocks private ActivityAppService service;
 
     @Test
+    @DisplayName("一次活动列表：玩家档案也只读一遍（与可领数同一形状）")
+    void listReadsThePlayerDocumentOnce() {
+        doAnswer(invocation -> ((Supplier<?>) invocation.getArgument(2)).get())
+                .when(playerLock).runLocked(anyString(), anyLong(), any());
+        ActivityLedger.Book book = org.mockito.Mockito.mock(ActivityLedger.Book.class);
+        ActivityProgress progress = org.mockito.Mockito.mock(ActivityProgress.class);
+        when(book.progress()).thenReturn(progress);
+        when(progress.defs()).thenReturn(List.of());
+        when(ledger.load(anyString(), anyLong(), any())).thenReturn(book);
+        PlayerSave save = org.mockito.Mockito.mock(PlayerSave.class);
+        org.mockito.Mockito.lenient().when(save.playerId()).thenReturn("p1");
+        when(players.findByPlayerId("p1")).thenReturn(Optional.of(save));
+        when(signIn.list(anyString(), anyLong(), any())).thenReturn(List.of());
+
+        service.list("p1");
+
+        verify(players, times(1)).findByPlayerId("p1");
+        verify(signIn, times(1)).list(anyString(), anyLong(), any());
+    }
+
+    @Test
     @DisplayName("一次可领数查询：玩家档案只读一遍（活动域与签到域共用同一份收据）")
     void claimableCountReadsThePlayerDocumentOnce() {
         doAnswer(invocation -> ((Supplier<?>) invocation.getArgument(2)).get())
