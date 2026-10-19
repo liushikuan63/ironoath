@@ -111,14 +111,15 @@ function expiresInText(millis: number): string {
  * 侦察指标名 → 中文。**只放「不是资源」的那几条**。
  *
  * <p><b>为什么资源那几条不在这张表里</b>：资源名是 `resource.json` 的 `name` 列，
- * 客户端那份唯一副本在 `game/ui/ResourceNames`（`RESOURCE_NAMES`）。
+ * 客户端那份唯一来源在 `game/ui/ResourceNames`（`resourceName`）——
+ * 而它的内容是**服务端随 /player/init 下发**的，不是客户端抄的表。
  * 这里原本**另抄了一份**，而且抄错了：
  * `iron: '铁'` —— 而唯一副本里是「铁矿」。⇒ 同一份资源名在客户端有两种译法，
  * 玩家在战报里看到「铁」、在资源条上看到「铁矿」，说的是同一样东西。
  *
  * <p><b>为什么资源那五条不在这张表里**（第二个理由，比第一个更硬）：
  * `ScoutMetric.name` 的合法取值是 `wood` / `stone` / `iron` / `grain` / `gold`（**小写**），
- * 而 `RESOURCE_NAMES` 的键是 `WOOD` / `STONE` / `IRON` / `GRAIN` / `GOLD`（**大写**）——
+ * 而资源名映射的键是 `WOOD` / `STONE` / `IRON` / `GRAIN` / `GOLD`（**大写**）——
  * 协议用的是**指标键**，不是**资源类型枚举**，两个命名空间。
  * 所以这里必须显式做一次键名映射（`wood` → `WOOD`），
  * 想当然地直接 `resourceName(metric.name)` 会全部落空、屏幕上退回英文原名。

@@ -41,7 +41,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$RN_D" "$NC_D" "$DN_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$NC_D" "$DN_D"
 }
 trap cleanup EXIT
 
@@ -636,26 +636,6 @@ run_client_text_logic() { bash scripts/check-client-text-logic.sh; }
 three_arg check-client-text-logic.sh \
           mk_client_text_logic run_client_text_logic '客户端不得拿中文串做逻辑判据（走环境变量口，零污染）'
 
-RN_D=/d/tmp/probe753/gates-resname
-mk_client_resource_names() { # check-client-resource-names：同一个资源不得有两种中文名
-  # 走**环境变量口**（RESNAME_SCAN_DIR / RESNAME_TABLE）⇒ **零污染**：
-  #    违规态只往临时目录里放一个 .ts 与一张临时表，不碰 client/assets 那 145 个文件。
-  # 临时目录里必须有**唯一那份**资源名映射（RESOURCE_NAMES），
-  #    否则门会先因为「找不到唯一那份」而退 1 —— 那是另一条判据，不是本条。
-  if [ "$1" = "1" ]; then
-    rm -rf "$RN_D"; mkdir -p "$RN_D/game/ui"
-    printf '{"table":"resource","version":1,"fieldTypes":{},"rows":[{"id":"WOOD","valueType":"STRING","name":"木材"}]}\n' > "$RN_D/resource.json"
-    printf "export const RESOURCE_NAMES: Readonly<Record<string, string>> = { WOOD: '木材' }\n" > "$RN_D/game/ui/ResourceNames.ts"
-    printf "export const bad = { WOOD: '木头' }\n" > "$RN_D/ZzResName.ts"
-    export RESNAME_SCAN_DIR="$RN_D" RESNAME_TABLE="$RN_D/resource.json"
-  else
-    unset RESNAME_SCAN_DIR RESNAME_TABLE
-    rm -rf "$RN_D"
-  fi
-}
-run_client_resource_names() { bash scripts/check-client-resource-names.sh; }
-three_arg check-client-resource-names.sh \
-          mk_client_resource_names run_client_resource_names '同一资源不得有两种中文名（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'

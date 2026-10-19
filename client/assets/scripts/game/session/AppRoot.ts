@@ -112,7 +112,7 @@ import { gameBus } from '../../core/EventBus'
 import type { MarchUnit, SearchTargetsResp } from '../../net/generated/WorldProtocol'
 import { worldModel } from '../world/WorldContext'
 import { selectedVisibleMonster, selectedVisibleResource } from '../world/WorldViewModel'
-import { resourceName } from '../ui/ResourceNames'
+import { applyResourceNames, resourceName } from '../ui/ResourceNames'
 import type { QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
 import type {
   BattleReportBrief, BattleReportListResp, BattleReportResp, ShareChannel,
@@ -879,6 +879,14 @@ export class AppRoot {
     this.offlineConfig = outcome.data.offlineReport ?? null
     // 队列参数与离线汇总同源同刻：都在 init 这一次响应里，且都必须早于任何一次提示
     this.targets.hintTuning?.(outcome.data.toast ?? null)
+    // 资源中文名同理：**在 init 这一次响应里一次给全**（服务端读 resource 表递过来），
+    // 客户端只建一张运行时映射，不在代码里留一份表数据的副本。
+    // 必须在任何面板读名字之前收下 —— 这一行就是那个「之前」。
+    // ⚠️ **字段缺省时不清空**：那是滚动升级期间旧服务端的样子（它压根不知道有这个字段），
+    // 而「服务端明确下发了一份空清单」才是「它说没有资源名」—— 两者语义不同，不能混。
+    if (Array.isArray(outcome.data.resourceNames)) {
+      applyResourceNames(outcome.data.resourceNames)
+    }
     await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'stamina', 'social', 'power',
       'world', 'quest', 'reddot')
     // 首屏拉齐之后再弹「自上次登录以来」（B25-S3）：它要读城市/社交那两份已到的数据，

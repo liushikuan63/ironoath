@@ -263,7 +263,14 @@ test('首屏不重复读取军队；显式同时刷新军队与地图也只读�
 
 /** 每个端点的响应。只给「代码真的会读到的字段」，其余留空对象。 */
 const ROUTES: Record<string, unknown> = {
+  // 资源中文名随 /player/init 下发（服务端读 resource 表递过来）——
+  // 客户端没有配置表加载器 ⇒ 拿不到表，这里也不该有一份副本。
   '/player/init': {
+    resourceNames: [
+      { type: 'WOOD', name: '木材' }, { type: 'STONE', name: '石料' },
+      { type: 'IRON', name: '铁矿' }, { type: 'GRAIN', name: '粮草' },
+      { type: 'GOLD', name: '金币' }, { type: 'STAMINA', name: '体力' },
+    ],
     playerId: 'P1', profile: { nickName: '君' }, cityLevel: 1, resources: {},
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, protectUntil: null,
     // 默认给一份"没有上一次"的边界（= 新号）：绝大多数用例不该被一屏汇总干扰，

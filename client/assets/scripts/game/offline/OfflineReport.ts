@@ -20,7 +20,7 @@
 
 import type { OfflineReportView } from '../../net/generated/Protocol'
 import type { BuildingView, ResourceStateView } from '../../net/generated/CityProtocol'
-import { RESOURCE_NAMES } from '../ui/ResourceNames'
+import { currentResourceNames } from '../ui/ResourceNames'
 import type { BattleReportBrief } from '../../net/generated/BattleProtocol'
 import type { SocialEventView } from '../../net/generated/SocialProtocol'
 
@@ -73,7 +73,10 @@ export function buildOfflineItems(src: OfflineSources): OfflineItem[] {
     }
     const amount = Math.floor(state.perHour * hours)
     if (amount > 0) {
-      produced.push(`${RESOURCE_NAMES[id] ?? '未知资源'} +${amount}`)
+      // 没有名字时用「未知资源」而不是枚举原文 —— 资源键是内部 id，
+      // 印给玩家就是「不许把内部 id 印给玩家」那条红线（`pool_unknown` 不该出现在屏上）。
+      const label = currentResourceNames()[id] ?? '未知资源'
+      produced.push(`${label} +${amount}`)
     }
   }
   if (produced.length > 0) {

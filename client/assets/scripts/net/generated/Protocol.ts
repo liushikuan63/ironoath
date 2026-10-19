@@ -137,6 +137,8 @@ export interface PlayerInitResp {
   protectUntil: number | null
   /** 「自上次登录以来」的汇总**判定依据**（B25-S3）。下发的是时间边界与两个阈值，不是一个算好的汇总 —— 汇总由客户端从它已经拉到的面板数据里聚合（裁决①(a)：只聚合既有账本，不新造第二本账） */
   offlineReport: OfflineReportView
+  /** 全部资源的中文名（resource 表的 name 列）。**为什么随 /player/init 下发**：客户端没有配置表加载器（resource 表不进包）⇒ 拿不到表；抄一份就是**改表只改一半**（服务端认了新名，客户端还显示旧名），而两边各自自洽 ⇒ 单测 / 类型检查 / 构建全绿，没有任何一条断言会红。**为什么一次给全部而不是逐个金额对象带 name**：面板上显示资源名的地方有十几处，其中好几处手里**只有类型没有金额对象**（抽卡消耗、社交政策消耗、地图实体、战报指标）—— 逐个对象带 name 要改五份契约，一次下发则让客户端自己建映射，十八处调用点一行不用改。**刻意不在 required 里（字段缺省 = 滚动升级期间旧服务端没这个字段）**：客户端把「没有这个字段」读作「这次没有名字」⇒ 两边都能跑（旧服务端 + 新客户端只是名字退化成枚举原文，不会崩也不会读错数）。⚠️ 注意它**不是**「array + null」那种可空写法 —— 生成器只支持「单一类型 + null」且那个 null 分支只走原始类型（`resolvePrimitive`），数组走不进去（实测报错「使用了不支持的类型: array」）；而「不在 required 里」在 TS 侧产出的是 `resourceNames?: ResourceNameView[]`，正是这里要的语义。 */
+  resourceNames: ResourceNameView[] | null
   /** 飘字队列的参数包。放在 init 而不是每个面板各自问一次：队列住在编排层（整个客户端只有一个出口），而 init 是它唯一必然先于任何提示发生的时刻。 */
   toast: ToastTuning
 }
@@ -278,4 +280,13 @@ export interface ToastTuning {
   maxQueued: number
   /** 单条飘字最长播放时间，超时强制推进（降级路径）。来源 global.TOAST_STUCK_TIMEOUT_MS */
   stuckTimeoutMs: number
+}
+
+/**
+ * 一种资源的中文名。**为什么必须下发**：资源名住在 resource 表的 name 列，而**客户端没有配置表加载器**（表不进包，客户端只有生成的类型、没有表数据）⇒ 客户端拿不到表。抄一份的后果是**改表只改一半**（服务端认了新名，客户端还显示旧名），而两边各自自洽 ⇒ 单测 / 类型检查 / 构建全绿，没有一条断言会红。**一次下发全部资源名**（而不是每个金额对象各带一个 name）是有意的：面板上显示资源名的地方有十几处，其中好几处手里**只有类型没有金额对象**（抽卡消耗、社交政策消耗、地图实体、战报指标）—— 逐个对象带 name 就要改五份契约，而一次下发让客户端自己建映射，十八处调用点一行不用改。
+ */
+export interface ResourceNameView {
+  type: ResourceType
+  /** 资源中文名，来自 resource 表的 name 列。客户端不得自行翻译 */
+  name: string
 }

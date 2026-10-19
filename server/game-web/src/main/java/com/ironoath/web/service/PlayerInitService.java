@@ -22,7 +22,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -181,7 +183,7 @@ public class PlayerInitService {
             // 资源用存档里那一份（刚建档算出来的，与 now 同源），不走结算
             return PlayerDtoMapper.toInitResp(save, now, null, save.resources(),
                     sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
-                    configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning());
+                    configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning(), resourceNames());
         } catch (RuntimeException e) {
             // 建号失败必须释放幂等键：副作用没有产生，让客户端能安全重试
             idempotency.release(req.requestId());
@@ -207,7 +209,7 @@ public class PlayerInitService {
         return PlayerDtoMapper.toInitResp(save, now, previousLoginAt, resourceRates.settledView(
                 save, cities.findByPlayerId(save.playerId()).orElse(null), now),
                 sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
-                configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning());
+                configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning(), resourceNames());
     }
 
     /**
@@ -223,6 +225,29 @@ public class PlayerInitService {
      * 所以队列的间隔 / 上限 / 卡住超时只能由这里下发 —— 客户端写死一份就是第二个真相
      * （B04 验收 8 那条「多个奖励按序播放、不堆叠遮挡」此前收不了，正是因为队列有了、参数没人递）。
      */
+    /**
+     * 全部资源的中文名（resource 表的 name 列）。
+     *
+     * <p><b>为什么必须下发</b>：客户端没有配置表加载器（resource 表不进包）⇒ 拿不到表。
+     * 抄一份的后果是**改表只改一半**（服务端认了新名，客户端还显示旧名），
+     * 而两边各自自洽 ⇒ 单测 / 类型检查 / 构建全绿，没有一条断言会红。
+     *
+     * <p><b>为什么一次给全部</b>：面板上显示资源名的地方有十几处，其中好几处手里
+     * <b>只有类型没有金额对象</b>（抽卡消耗、社交政策消耗、地图实体、战报指标）——
+     * 逐个对象带 name 就要改五份契约；一次下发则让客户端自己建映射，十八处调用点一行不用改。
+     */
+    private List<com.ironoath.web.dto.generated.ResourceNameView> resourceNames() {
+        List<com.ironoath.web.dto.generated.ResourceNameView> out = new ArrayList<>();
+        for (var row : configs.all(com.ironoath.config.cfg.ResourceCfg.class)) {
+            out.add(new com.ironoath.web.dto.generated.ResourceNameView(
+                    com.ironoath.web.dto.generated.ResourceType.valueOf(row.id()), row.name()));
+        }
+        // 按资源类型排序：表里的行序是配置作者的顺序，而客户端的映射与面板的行序无关 ——
+        // 但下发的顺序会影响「第一次收到的名字」在日志里的样子，稳定的顺序便于对照。
+        out.sort(java.util.Comparator.comparing(v -> v.type().name()));
+        return out;
+    }
+
     private ToastTuning toastTuning() {
         // 契约里这三列是 integer ⇒ 生成物取 int，而表读出来是 long：显式窄化而不是悄悄丢精度。
         // 这三个数的量级（毫秒与队列条数）远小于 int 上限，窄化在此处是有意的、不是遗漏。

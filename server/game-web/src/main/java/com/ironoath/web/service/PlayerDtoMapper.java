@@ -6,11 +6,13 @@ import com.ironoath.core.player.PlayerSave;
 import com.ironoath.web.dto.generated.OfflineReportView;
 import com.ironoath.web.dto.generated.PlayerInitResp;
 import com.ironoath.web.dto.generated.PlayerProfile;
+import com.ironoath.web.dto.generated.ResourceNameView;
 import com.ironoath.web.dto.generated.ToastTuning;
 import com.ironoath.web.dto.generated.PowerSnapshot;
 import com.ironoath.web.dto.generated.ResourceState;
 import com.ironoath.web.dto.generated.ResourceType;
 
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -60,13 +62,16 @@ public final class PlayerDtoMapper {
      * @param previousLoginAt 上次登录时刻；**新号传 null**（没有「上一次」可言）
      * @param minIdleMinutes  距上次登录不足这么多分钟就不打扰，来源 global 表
      * @param minItems        至少这么多条明细才值得弹，来源 global 表
+     * @param resourceNames   全部资源的中文名，来源 resource 表 —— 客户端不抄配置表，
+     *                        所以资源名必须由服务端递过去（否则改表只改一半）
      * @param toast           飘字队列的三个参数，同样来源 global 表 ——
      *                        客户端不抄配置表，所以队列的间隔/上限/卡住超时必须由服务端递过去
      */
     public static PlayerInitResp toInitResp(PlayerSave save, long serverNow, Long previousLoginAt,
                                             Map<String, PlayerResourceState> resources,
                                             String authToken, long minIdleMinutes, long minItems,
-                                            ToastTuning toast) {
+                                            ToastTuning toast,
+                                            List<ResourceNameView> resourceNames) {
         Map<ResourceType, ResourceState> views = new LinkedHashMap<>();
         for (Map.Entry<String, PlayerResourceState> e : resources.entrySet()) {
             PlayerResourceState s = e.getValue();
@@ -86,6 +91,6 @@ public final class PlayerDtoMapper {
 
         return new PlayerInitResp(
                 save.playerId(), authToken == null ? "" : authToken, serverNow, profile, save.cityLevel(),
-                views, power, save.protectUntil(), offlineReport, toast);
+                views, power, save.protectUntil(), offlineReport, resourceNames, toast);
     }
 }

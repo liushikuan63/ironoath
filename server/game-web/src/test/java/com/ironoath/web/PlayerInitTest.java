@@ -423,4 +423,44 @@ class PlayerInitTest {
         assertThat(toast.get("gapMs").asInt()).isPositive();
     }
 
+    /**
+     * 资源中文名随 init 下发，逐条等于 resource 表的 name 列。
+     *
+     * <p>为什么钉在服务端：红线是「客户端不抄配置表」，而资源名此前就是客户端自己抄的一份
+     * （{@code game/ui/ResourceNames.ts} 里的静态映射）。抄的那份与服务端这份会分叉 ——
+     * 分叉的症状不是崩溃，是**屏上显示旧叫法**（比如表里把「铁矿」改成「精铁」，
+     * 玩家看到的还是「铁矿」），而没有任何一条断言会红。
+     *
+     * <p><b>为什么一次给全部</b>：面板上显示资源名的地方有十几处，其中好几处手里
+     * <b>只有类型没有金额对象</b>（抽卡消耗、社交政策消耗、地图实体、战报指标）——
+     * 逐个对象带 name 就要改五份契约；一次下发则让客户端自己建映射，十八处调用点一行不用改。
+     */
+    @Test
+    @DisplayName("资源中文名随 init 下发，逐条等于 resource 表的 name 列")
+    void resourceNamesAreSentFromTheTable() throws Exception {
+        MvcResult result = mockMvc.perform(post(INIT_URL)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(newInitReq())))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode names = JsonUtils.readTree(body(result)).get("data").get("resourceNames");
+        assertThat(names).as("资源中文名必须随 init 下发（客户端没有配置表加载器）").isNotNull();
+        assertThat(names.size()).as("每一种资源都要有名字").isEqualTo(configs.allResources().size());
+
+        for (var cfg : configs.allResources()) {
+            JsonNode entry = null;
+            for (JsonNode candidate : names) {
+                if (cfg.id().equals(candidate.get("type").asText())) {
+                    entry = candidate;
+                    break;
+                }
+            }
+            assertThat(entry).as("资源 %s 必须有名字", cfg.id()).isNotNull();
+            assertThat(entry.get("name").asText())
+                    .as("资源 %s 的名字必须逐字等于 resource 表的 name 列", cfg.id())
+                    .isEqualTo(cfg.name());
+        }
+    }
+
 }

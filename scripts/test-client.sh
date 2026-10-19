@@ -33,4 +33,10 @@ npx --no-install tsc -p tsconfig.test.json
 # 引号形态交给 node 自己展开（CI 的 node 20.20.2 与本机 20.13/24 实测都不展开，
 # 2026-09-26 合并后 CI 与本地都死在 "Could not find ...*.test.js"）；失败即回退 shell 展开，
 # 两条路径跑的是同一批文件，判据不变。
-node --test "build-test/tests/*.test.js" || node --test build-test/tests/*.test.js
+# `--import` 装上「服务端下发的资源中文名」：资源名现在随 /player/init 下发（#2256），
+# 而二十来条既有用例断言的是面板上的**显示文案** ⇒ 它们要看到名字。
+# 实测（Node 20）：`--import` 会传播到**每个测试子进程**（测试文件各自跑在子进程里），
+# 所以每个文件里的模块状态都是「已下发」的状态。
+# ⚠️ 断言「客户端自己给不出名字」的那条用例必须**自己先清空**（`ResourceNames.test.ts` 就是这么写的）。
+node --test --import ./build-test/tests/_resourceNamesSetup.js "build-test/tests/*.test.js" \
+  || node --test --import ./build-test/tests/_resourceNamesSetup.js build-test/tests/*.test.js
