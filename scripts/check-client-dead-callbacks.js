@@ -60,7 +60,9 @@ function skipped(file) {
 
 const files = [];
 for (const dir of SCAN_DIRS) {
-  const abs = path.join(ROOT, dir);
+  // 扫描根可以是**绝对路径**（harness 的夹具在 /d/tmp 下，与其它门一致）；
+  // 相对路径仍按仓库根解析（默认 client/assets/scripts）。
+  const abs = path.isAbsolute(dir) ? dir : path.join(ROOT, dir);
   if (!fs.existsSync(abs)) {
     console.error(`[dead-callbacks][FAIL] 扫描根不存在：${dir}（fail-closed，不静默跳过）`);
     process.exit(1);

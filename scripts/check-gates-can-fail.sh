@@ -307,6 +307,28 @@ run_client_send_paths() { bash scripts/check-client-send-paths.sh; }
 three_arg check-client-send-paths.sh \
           mk_client_send_paths run_client_send_paths 'GameApi 每个发送口都必须有人调（走环境变量口，零污染）'
 
+# check-client-dead-callbacks：视图声明的 on* 回调必须真的有人**调用**（#770 那一族）。
+# ⚠️ 这道门原先**不在 harness 里** ⇒ 它的「能红」只靠门自己的 --self-test（手动跑），
+#    CI 侧没有任何机制证明它会红 ⇒ 谓词烂掉也只会安静地一直绿。
+# ⚠️ 走 DEADCALL_SCAN_DIRS 口（2026-10-19 加在门上，并支持绝对路径）⇒ 零污染：不碰真客户端源码。
+# 违规态 = 假树里 onDead 没有任何调用点；onLive 必须被调到，
+# 否则两条都成缺口，红点归因不到「新增没人调的回调」这一形状。
+DC_D=/d/tmp/probe753/gates-deadcall
+mk_dead_callbacks() {
+  if [ "$1" = "1" ]; then
+    rm -rf "$DC_D"; mkdir -p "$DC_D"
+    printf 'export class V {\n  onDead: (() => void) | null = null\n  onLive: (() => void) | null = null\n}\n' > "$DC_D/V.ts"
+    printf 'export function use(v: V) { v.onLive?.() }\n' > "$DC_D/use.ts"
+    export DEADCALL_SCAN_DIRS="$DC_D"
+  else
+    unset DEADCALL_SCAN_DIRS
+    rm -rf "$DC_D"
+  fi
+}
+run_dead_callbacks() { bash scripts/check-client-dead-callbacks.sh; }
+three_arg check-client-dead-callbacks.sh \
+          mk_dead_callbacks run_dead_callbacks '视图声明的 on* 回调必须有人调用（走 DEADCALL_SCAN_DIRS 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
