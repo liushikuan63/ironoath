@@ -18,8 +18,10 @@ cd "$(dirname "$0")/.."
 node -e '
 const fs = require("fs")
 
-const EVENTS = "client/assets/scripts/game/track/TrackEvents.ts"
-const DOC = "数据看板需求.md"
+// 两个输入（**可选口 TRACK_DICT_EVENTS / TRACK_DICT_DOC**）：不设时与默认读取完全一致；
+// 绝对路径也直接可用 ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真事件表与真看板文档里植东西。
+const EVENTS = process.env.TRACK_DICT_EVENTS || "client/assets/scripts/game/track/TrackEvents.ts"
+const DOC = process.env.TRACK_DICT_DOC || "数据看板需求.md"
 
 // 事件名 = `export const TRACK_EVENTS = { ... } as const` 里每个属性的**值**（字符串字面量）
 const source = fs.readFileSync(EVENTS, "utf8")

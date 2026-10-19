@@ -538,6 +538,28 @@ run_search_radius() { bash scripts/check-search-radius.sh; }
 three_arg check-search-radius.sh \
           mk_search_radius run_search_radius '目标搜索半径的上下界两端都必须在（走 SEARCH_RADIUS_* 口，零污染）'
 
+# check-track-dictionary：代码里打的每个事件名都必须在看板文档 §七 的事件字典里有定义
+# （缺一条 ⇒ 运营侧看不到这条数据；而「为了让门变绿就删字典行」等于丢掉还在收的历史定义）。
+# ⚠️ 走 TRACK_DICT_EVENTS / TRACK_DICT_DOC 两个口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = 假事件表里有一个事件名，而假看板文档的字典表里**只有别的**事件
+# ⇒ 红点精确落在「N 个事件里有 1 个没进字典」，而不是「一条都没解析出来」。
+TD_D=/d/tmp/probe753/gates-trackdict
+mk_track_dictionary() {
+  if [ "$1" = "1" ]; then
+    mkdir -p "$TD_D"
+    printf 'export const TRACK_EVENTS = {\n  zzProbe: %s,\n} as const\n' "'zz_probe_event'" > "$TD_D/TrackEvents.ts"
+    printf '## 七、事件字典\n\n| 事件名 | 触发时机 | 关键参数 |\n|---|---|---|\n| `other_event` | 别的 | 无 |\n' > "$TD_D/dashboard.md"
+    export TRACK_DICT_EVENTS="$TD_D/TrackEvents.ts"
+    export TRACK_DICT_DOC="$TD_D/dashboard.md"
+  else
+    unset TRACK_DICT_EVENTS TRACK_DICT_DOC
+    rm -f "$TD_D/TrackEvents.ts" "$TD_D/dashboard.md"
+  fi
+}
+run_track_dictionary() { bash scripts/check-track-dictionary.sh; }
+three_arg check-track-dictionary.sh \
+          mk_track_dictionary run_track_dictionary '事件名必须在看板文档的事件字典里有定义（走 TRACK_DICT_* 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
