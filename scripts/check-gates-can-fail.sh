@@ -329,6 +329,46 @@ run_dead_callbacks() { bash scripts/check-client-dead-callbacks.sh; }
 three_arg check-client-dead-callbacks.sh \
           mk_dead_callbacks run_dead_callbacks '视图声明的 on* 回调必须有人调用（走 DEADCALL_SCAN_DIRS 口，零污染）'
 
+# check-client-iter-spread：客户端不得对**迭代器**做 spread（Cocos 的 SWC loose 假设不展开迭代器 ⇒ 面板画不出来）。
+# ⚠️ 走 ITERSPREAD_SCAN_DIR 口（2026-10-19 加在门上）⇒ 零污染：不往真客户端源码里植死代码。
+# 违规态 = 假树里一条 `[...m.values()]`；再放一条合规的（数组 spread 不算违规），
+# 这样红点能归因到「迭代器 spread」这一形状，而不是「扫到文件就红」。
+IS_D=/d/tmp/probe753/gates-iterspread
+mk_iter_spread() {
+  if [ "$1" = "1" ]; then
+    rm -rf "$IS_D"; mkdir -p "$IS_D"
+    printf 'export const bad = [...m.values()]\n' > "$IS_D/bad.ts"
+    printf 'export const fine = [...plainArray]\n' > "$IS_D/fine.ts"
+    export ITERSPREAD_SCAN_DIR="$IS_D"
+  else
+    unset ITERSPREAD_SCAN_DIR
+    rm -rf "$IS_D"
+  fi
+}
+run_iter_spread() { bash scripts/check-client-iter-spread.sh; }
+three_arg check-client-iter-spread.sh \
+          mk_iter_spread run_iter_spread '客户端不得对迭代器做 spread（走 ITERSPREAD_SCAN_DIR 口，零污染）'
+
+# check-player-copy-jargon：玩家看得见的文案里不得出现工程黑话。
+# ⚠️ 走 JARGON_SCAN_DIRS 口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = 假树里一条含 'ScrollView' 的**字符串字面量**（黑话表里就有这个词）；
+# 另一条放合规文案，红点才能归因到「黑话」而不是「扫到文件就红」。
+PJ_D=/d/tmp/probe753/gates-jargon
+mk_player_jargon() {
+  if [ "$1" = "1" ]; then
+    rm -rf "$PJ_D"; mkdir -p "$PJ_D"
+    printf 'export const t = %s\n' "'另有 2 项未显示（长列表需要 ScrollView）'" > "$PJ_D/bad.ts"
+    printf 'export const ok = %s\n' "'木材 +100'" > "$PJ_D/fine.ts"
+    export JARGON_SCAN_DIRS="$PJ_D"
+  else
+    unset JARGON_SCAN_DIRS
+    rm -rf "$PJ_D"
+  fi
+}
+run_player_jargon() { bash scripts/check-player-copy-jargon.sh; }
+three_arg check-player-copy-jargon.sh \
+          mk_player_jargon run_player_jargon '玩家可见文案禁工程黑话（走 JARGON_SCAN_DIRS 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。

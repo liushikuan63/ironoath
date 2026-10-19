@@ -11,7 +11,9 @@
 const fs = require('fs')
 const path = require('path')
 
-const ROOT = 'client/assets/scripts'
+// 扫描根（**可选口 ITERSPREAD_SCAN_DIR**）：不设时与默认扫描完全一致（`client/assets/scripts`）；
+// 绝对路径也直接可用 ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真客户端源码里植死代码。
+const ROOT = process.env.ITERSPREAD_SCAN_DIR || 'client/assets/scripts'
 
 // 只认"表达式里明确是迭代器"的四种写法：数组的 spread 没有问题（concat 对数组是真展开），
 // 变量是不是 Map/Set 无法在语法层判断 —— 这条检查覆盖的是最常见的形状，不是全部。

@@ -19,7 +19,10 @@ const JARGON = ['编辑器', 'ScrollView', '服务端', '客户端', '下发', '
   // 「未接入」与「选择器」是 2026-09-20 补的：`AppRoot.rejectNeeds` 那五句玩家提示一直从这一族
   // 漏出去（#255/#268/#278/#281/#288 同族），原因不是文件不在扫描范围内，而是这两个词根本不在表里。
   '未接入', '选择器']
-const ROOTS = ['client/assets/scripts/scene', 'client/assets/scripts/game']
+// 扫描根（**可选口 JARGON_SCAN_DIRS**，空格分隔）：不设时与默认扫描完全一致；
+// 绝对路径也直接可用 ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真客户端源码里植死文案。
+const ROOTS = (process.env.JARGON_SCAN_DIRS
+  || 'client/assets/scripts/scene client/assets/scripts/game').split(/\s+/).filter(Boolean)
 
 // 已知债务：文件里确实有工程术语进了玩家文案，但**这个文件正被并发会话改**，不由本门代改。
 // 与台账编号豁免清单同一条纪律：**这个清单应当长期为空** —— 留着已经失效的条目，
