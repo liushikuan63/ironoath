@@ -303,12 +303,16 @@ public class BotWorldAdapter implements BotScheduler.World {
         long average = humanAverageMatchPower(now);
 
         BotWorldAdapter.LatestHit lastHit = latestHit(save);
-        Long answered = behavior.find(botId).reactedUpTo();
         // 「正在被攻击」= 最近一发还在窗口内、而且我还没回应过它。
-        // 直接用 attackerHits 非空会让 Bot 在被揍后的 24 小时里每一 tick 都反应一次（账本是 24h 的）
-        boolean underAttack = lastHit != null
-                && now - lastHit.at() <= ATTACK_NOTICE_MILLIS
-                && (answered == null || lastHit.at() > answered);
+        // 直接用 attackerHits 非空会让 Bot 在被揍后的 24 小时里每一 tick 都反应一次（账本是 24h 的）。
+        // 回应水位只在窗口内才有意义：没有窗口内受击就不读它 —— 否则每个 Bot 每个 tick 都要为
+        // 一位用不上的布尔读一次行为档（5000 Bot × 每轮，而绝大多数当时并没有受击记录）。
+        // 判据是读范围：BotUnderAttackReadScopeTest（无受击时零次行为档读）。
+        boolean underAttack = false;
+        if (lastHit != null && now - lastHit.at() <= ATTACK_NOTICE_MILLIS) {
+            Long answered = behavior.find(botId).reactedUpTo();
+            underAttack = answered == null || lastHit.at() > answered;
+        }
         return new BotDecisionTree.WorldState(
                 underAttack,
                 // 有没有可领的任务奖励（C19）。口径直接取任务服务那个红点读数，不在这里重算
