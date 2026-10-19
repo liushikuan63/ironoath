@@ -64,7 +64,12 @@ if [ "${#ROOTS[@]}" -eq 0 ]; then
 fi
 
 # ── ① 包路径字面量：抽出 (路径, 出处) 配对，逐条查存在性 ────────────────────
-PAIRS="$(mktemp)"; trap 'rm -f "$PAIRS"' EXIT
+# 临时工作目录：仓库内相对路径 + 进程号唯一（**不能用 mktemp**：本机 Git Bash 的 /tmp
+# 不可写，mktemp 报 Permission denied 却退出 0 ⇒ 变量成空串 ⇒ 后面全在空路径上做，
+# 症状是 "cut: '': No such file or directory" 这种看不懂的报错）。
+# 详见 scripts/tmp-work-dir.sh 的头注释。
+source scripts/tmp-work-dir.sh pkg-path
+PAIRS="$TMP_DIR/pairs";
 PATH_RE='[A-Za-z0-9_./-]*/java/(com|org|net)/[A-Za-z0-9_./-]+'
 while IFS= read -r f; do
   [ -n "$f" ] || continue

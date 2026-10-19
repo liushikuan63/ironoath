@@ -23,8 +23,11 @@ SCAN_DIRS="${ORPHAN_SCAN_DIRS:-client/assets/scripts/game client/assets/scripts/
 ASSET_DIR="${ORPHAN_ASSET_DIR:-client/assets}"
 
 # 白名单：文件名 <TAB> 理由 <TAB> 撤销条件
-ALLOWED="$(mktemp)"; FILES="$(mktemp)"; IMPORTED="$(mktemp)"
-trap 'rm -f "$ALLOWED" "$FILES" "$IMPORTED"' EXIT
+# 临时工作目录：仓库内相对路径 + 进程号唯一（**不能用 mktemp**：本机 Git Bash 的 /tmp
+# 不可写，mktemp 报 Permission denied 却退出 0 ⇒ 变量成空串 ⇒ 本门长期红在
+# "cut: '': No such file or directory" 上）。详见 scripts/tmp-work-dir.sh 的头注释。
+source scripts/tmp-work-dir.sh client-orphans
+ALLOWED="$TMP_DIR/allowed"; FILES="$TMP_DIR/files"; IMPORTED="$TMP_DIR/imported"
 cat > "$ALLOWED" <<'EOF'
 MainCity	B01 阶段的占位主城场景，**它自己的文件注释就写着**「删掉这个文件，游戏逻辑不受任何影响 —— 这是判断表现层有没有越界的尺子」。现跑：Boot.scene 里没有它的压缩 uuid（meta 头 8b2dd467 在场景里 0 命中），其余提及全在别的视图文件注释里。⇒ 是"留作参照的死码"，不是没接的功能。**撤销条件**：要么删掉本文件（连带删 .ts.meta 并复跑 check-ts-meta），要么把它接回某个场景 ⇒ 删掉本行。
 EOF

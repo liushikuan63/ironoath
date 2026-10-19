@@ -146,8 +146,13 @@ if [ -z "$SAMPLE_PAL" ]; then
   exit 2
 fi
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# 临时工作目录：仓库内相对路径 + 进程号唯一（**不能用 mktemp**：本机 Git Bash 的 /tmp
+# 不可写，mktemp 报 Permission denied 却**退出 0** ⇒ 变量成空串 ⇒
+# 下面那两条自证用的样本文件**压根没写出来**，而本门**照样绿**
+# —— 那是「判据不咬住东西」的典型：自证没跑，门却过。
+# 详见 scripts/tmp-work-dir.sh 的头注释。
+source scripts/tmp-work-dir.sh art-quantized
+TMP="$TMP_DIR"
 if [ -n "$SAMPLE_RGBA" ]; then
   cp "$SAMPLE_RGBA" "$TMP/rgba.png"
 else

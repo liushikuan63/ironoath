@@ -25,8 +25,11 @@ CORE_DIR="${COREWIRING_CORE_DIR:-server/game-core/src/main/java}"
 CONSUMER_DIR="${COREWIRING_CONSUMER_DIR:-server}"
 
 # 白名单：类名 <TAB> 为什么可以没有生产引用（每条都要能被下一轮人判断"该不该撤"）
-ALLOWED="$(mktemp)"; CLASSES="$(mktemp)"; WORDS="$(mktemp)"
-trap 'rm -f "$ALLOWED" "$CLASSES" "$WORDS"' EXIT
+# 临时工作目录：仓库内相对路径 + 进程号唯一（**不能用 mktemp**：本机 Git Bash 的 /tmp
+# 不可写，mktemp 报 Permission denied 却退出 0 ⇒ 变量成空串 ⇒ 本门长期红在
+# "cut: '': No such file or directory" 上）。详见 scripts/tmp-work-dir.sh 的头注释。
+source scripts/tmp-work-dir.sh core-wiring
+ALLOWED="$TMP_DIR/allowed"; CLASSES="$TMP_DIR/classes"; WORDS="$TMP_DIR/words"
 cat > "$ALLOWED" <<'EOF'
 InMemoryRewardPorts	故意的测试替身：四个发放端口的内存实现。放在 game-core 而不是 web 的 test 目录，是「RewardGrantor 可脱离容器单测」这条铁律的证明（见该类 javadoc）。生产实现是另一族 Spring Bean。撤销条件：无（它本来就不该有生产引用）。
 EOF
