@@ -240,14 +240,23 @@ test('队列有空位时后续 enqueue 仍然能被接受（丢弃不是永久�
 
 test('gapMs 让两条飘字之间留出可分辨的间隔', async () => {
   const presenter = new ManualPresenter()
-  const q = queue(presenter, { gapMs: 40 })
+  // 间隔走队列自己的可注入 `delay`（RewardToastQueue.ts:174）⇒ 手动放行即**完全确定化**。
+  // 旧写法靠真实 40ms 计时，并断言「间隔期内 b 还没起」这个**时序中间态** ——
+  // 机器一忙 40ms 就过去了，b 抢先起 ⇒ 读到 ['a','b'] 而红（与同文件的卡死兜底用例同族）。
+  const release: { fn: (() => void) | null } = { fn: null }
+  const q = queue(presenter, { gapMs: 40 }, (ms) =>
+    ms === 40
+      ? new Promise<void>((resolve) => { release.fn = () => resolve() })
+      : Promise.resolve())
   q.enqueue([toast('a'), toast('b')])
 
   await tick()
   presenter.finish('a')
   await tick()
   assert.deepEqual(presenter.started, ['a'], '间隔期内不能起下一条')
-  await wait(70)
+  assert.ok(release.fn, '间隔计时器必须已经挂上（否则这条用例根本没在验间隔）')
+  release.fn()
+  await wait(10)
   assert.deepEqual(presenter.started, ['a', 'b'], '间隔结束后应起下一条')
   presenter.finish('b')
   await tick()
