@@ -751,6 +751,8 @@ export class SocialPanelView extends Component {
    */
   showRolePicker(currentRole: string | null, onPick: (choice: RoleChoice) => void): void {
     if (this.rolePicker === null) {
+      // display-name-exempt: 权限位动作词「任命职位」与 role_permission 表的 permissionName 同字。
+      // **待裁决**（理由见 NationSections.ts 里同一条豁免的说明）。
       this.rolePicker = new ChoiceOverlay(this.node, '任命职位', 560)
     }
     const options = roleChoices(currentRole)
@@ -1704,6 +1706,8 @@ function allianceDrafts(alliance: AllianceSection, permissions: PermissionState,
         ? '资金与贡献值同步增加（验收 8）'
         : `资金与贡献值同步增加 · ${donateGate.reason}`,
       value: '',
+      // display-name-exempt: 权限位动作词「捐献」与 role_permission 表的 permissionName 同字。
+      // **待裁决**（理由见 NationSections.ts 里同一条豁免的说明）。
       actionText: '捐献',
       actionEnabled: donateGate.allowed,
       actionId: String(tier),

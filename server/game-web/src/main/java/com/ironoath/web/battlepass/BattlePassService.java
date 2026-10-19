@@ -49,6 +49,8 @@ public class BattlePassService {
 
     /** 玩家锁等待上限（与任务领取同一个量级：一次领取只碰一个存档）。 */
     private static final long LOCK_TIMEOUT_MS = 5_000L;
+    /** 战令在 pay_product 表里的行 id（那一行的 name 列就是战令的显示名）。 */
+    private static final String BATTLE_PASS_PRODUCT_ID = "battle_pass";
 
     private final BattlePassStore store;
     private final BattlePassRules rules;
@@ -240,6 +242,24 @@ public class BattlePassService {
 
     // ---------- 组装 ----------
 
+    /**
+     * 战令的显示名（{@code pay_product} 表 {@code battle_pass} 行的 name 列）。
+     *
+     * <p><b>为什么由服务端给</b>：客户端没有配置表加载器（{@code pay_product} 不进包）
+     * ⇒ 拿不到表；自己写一份就是**抄表** —— 表里改了客户端不跟着改，
+     * 屏上的商品名与服务端卖的那个商品对不上。而商品名正是玩家在购买弹窗里要读的那句话。
+     *
+     * <p><b>读不到配置行时回 null 而不是编一个</b>：缺配置是运营事故，
+     * 编一个名字会让屏上看不出「这个商品没配」。
+     */
+    private String battlePassName() {
+        try {
+            return configs.get(com.ironoath.config.cfg.PayProductCfg.class, BATTLE_PASS_PRODUCT_ID).name();
+        } catch (com.ironoath.config.ConfigException e) {
+            return null;
+        }
+    }
+
     private BattlePassStatusResp statusOf(String seasonId, BattlePassStore.Progress progress, long now) {
         List<BattlePassTierView> tiers = new ArrayList<>();
         for (BattlePassCfg row : rules.tiers()) {
@@ -251,7 +271,7 @@ public class BattlePassService {
         }
         long start = ServerCalendar.seasonStartOrZero(configs);
         long seasonEndAt = start == 0L ? 0L : start + rules.seasonTotalDays() * 86_400_000L;
-        return new BattlePassStatusResp(seasonId, progress.points(), progress.paidUnlocked(),
+        return new BattlePassStatusResp(battlePassName(), seasonId, progress.points(), progress.paidUnlocked(),
                 seasonEndAt, tiers, now);
     }
 

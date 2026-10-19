@@ -23,6 +23,10 @@ export interface ShopTab {
 
 /** 四个币种页签，顺序即展示顺序（与 `shop.json` 的四个币种一一对应）。 */
 export const SHOP_TABS: readonly ShopTab[] = [
+  // display-name-exempt: 商店的四个货币页签是**客户端本地化一个枚举**
+  // （GOLD / ALLIANCE_COIN / SQUAD_COIN / SEASON_COIN），不是抄表 —— 四个里只有「金币」
+  // 恰好与 resource 表的 GOLD.name 重名，其余三个表里根本没有中文名列
+  // （shop 表的 priceCurrency 是枚举，没有 name 列）。
   { currency: 'GOLD', label: '金币' },
   { currency: 'ALLIANCE_COIN', label: '贡献' },
   { currency: 'SQUAD_COIN', label: '小队币' },

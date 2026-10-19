@@ -44,6 +44,9 @@ function resp(overrides: Partial<BattlePassStatusResp> = {}): BattlePassStatusRe
     base.push(tier({ tier: n, requiredPoints: n * 150, reached: points >= n * 150 }))
   }
   return {
+    // 战令的显示名由服务端下发（pay_product 表 battle_pass 行的 name 列）——
+    // 客户端没有配置表加载器 ⇒ 拿不到表，自己写一份就是抄表。
+    name: '赛季战令',
     seasonId: 'season_01', points: 0, paidUnlocked: false,
     seasonEndAt: NOW + 12 * DAY, serverNow: NOW,
     ...rest, tiers: replaced ?? base,
@@ -148,4 +151,39 @@ test('列表还没拉回来时画一句说明，不画一个假进度', () => {
 test('领到之后那句话取服务端回执里的名字与份数', () => {
   assert.equal(claimResultText({ rewardType: 'ITEM', rewardId: 'x', name: '木材箱(1万)', count: 2 }),
     '已领取 木材箱(1万) ×2')
+})
+
+// ---------- 战令名由服务端下发（#2255） ----------
+
+test('标题里的战令名用服务端下发的那个，不是客户端写死的那份', () => {
+  // 缺陷形状：战令名住在 pay_product 表的 name 列，而客户端没有配置表加载器 ⇒ 拿不到表；
+  // 客户端于是写死一份「赛季战令」——表里改了客户端不跟着改，
+  // 屏上的商品名与服务端卖的那个商品对不上（而商品名正是玩家在购买弹窗里要读的那句）。
+  const named = buildBattlePassPanel(resp({ name: '赛季战令' }), 6)
+  assert.match(named.titleText, /^赛季战令/,
+    '服务端下发的名字必须出现在标题上')
+
+  // 服务端改了名（表里改成别的叫法）⇒ 标题跟着改。
+  const renamed = buildBattlePassPanel(resp({ name: '王者通行证' }), 6)
+  assert.match(renamed.titleText, /^王者通行证/,
+    '表里改了名，标题必须跟着改 —— 写死的那份不会')
+  assert.ok(!renamed.titleText.includes('赛季战令'),
+    '客户端写死的那份不能混进标题')
+})
+
+test('服务端没给名字时退回中性词，不显示空白', () => {
+  // 读不到 pay_product 配置行 / 滚动升级期间的旧服务端 ⇒ 没有名字。
+  // 退回一个中性词，而不是空白（空标题看着像坏了）。
+  const noName = buildBattlePassPanel(resp({ name: null }), 6)
+  assert.match(noName.titleText, /^战令/,
+    '没有名字时给一个中性词，不是空白，也不是表里那个名字的副本')
+  assert.ok(!noName.titleText.includes('赛季战令'),
+    '客户端不该在标题里留一份表里名字的副本')
+})
+
+test('档位范围为空时不拼出带尾巴的分隔符（#349 那一族）', () => {
+  // 「赛季战令 · 」这种带尾巴的空分隔符是 #349 目视抓到的。
+  const empty = buildBattlePassPanel(resp({ name: '赛季战令', tiers: [] }), 6)
+  assert.equal(empty.titleText, '赛季战令',
+    '档位范围为空时标题就是名字本身，不带「 · 」')
 })

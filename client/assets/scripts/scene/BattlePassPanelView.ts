@@ -236,9 +236,10 @@ export class BattlePassPanelView extends Component {
       // 零档位时 `rangeText` 是空串（`game/activity/BattlePassPanel.ts` 在 total === 0 时给空），
       // 无条件拼分隔符就会印出「赛季战令 · 」这种带尾巴的空分隔符（#349 目视抓到）。
       // 房规同 `ArmyPanelView:413`、`ShopPanelView:262`：可空的那一段非空才拼分隔符。
-      this.headerLabel.string = view2.rangeText === ''
-        ? '赛季战令'
-        : `赛季战令 · ${view2.rangeText}`
+      // 标题行由纯逻辑层拼好（`buildBattlePassPanel`）：名字来自服务端下发的
+      // `pay_product` 表 name 列，客户端没有配置表加载器 ⇒ 拿不到表、不许自己写一份。
+      // 可空的那一段非空才拼分隔符（房规同 ArmyPanelView:413 / ShopPanelView:262）。
+      this.headerLabel.string = view2.titleText
     }
     if (this.pointsLabel !== null) {
       this.pointsLabel.string = view2.pointsText

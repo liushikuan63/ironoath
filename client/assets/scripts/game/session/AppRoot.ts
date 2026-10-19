@@ -5068,6 +5068,8 @@ export class AppRoot {
       notice: this.composeNotice,
       submitting: this.composeSubmitting,
       mode: this.composeScout ? 'SCOUT' : this.composeRally ? 'RALLY' : 'MARCH',
+      // display-name-exempt: 权限位动作词「发起集结」与 role_permission 表的 permissionName 同字。
+      // **待裁决**（理由见 NationSections.ts 里同一条豁免的说明）。
       submitLabel: this.composeScout ? '派侦察' : this.composeRally ? '发起集结'
         : this.composeTarget.kind === 'RESOURCE' ? '采集' : '出征',
       rallyBlocked: this.rallyBlockedReason(),

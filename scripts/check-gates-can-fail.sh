@@ -41,7 +41,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$RN_D" "$NC_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$RN_D" "$NC_D" "$DN_D"
 }
 trap cleanup EXIT
 
@@ -599,6 +599,25 @@ mk_client_numeric_copy() { # check-client-numeric-copy：客户端不得写死�
 run_client_numeric_copy() { bash scripts/check-client-numeric-copy.sh; }
 three_arg check-client-numeric-copy.sh \
           mk_client_numeric_copy run_client_numeric_copy '客户端不得写死配置表里的数值（走环境变量口，零污染）'
+
+DN_D=/d/tmp/probe753/gates-displayname
+mk_client_display_name() { # check-client-display-name-copy：客户端不得写死配置表的显示名
+  # ⚠️ 走**环境变量口**（DISPLAYNAME_SCAN_DIR / DISPLAYNAME_CONFIG_DIR）⇒ **零污染**：
+  #    违规态只往临时目录里放一个 .ts 与一张临时表，不碰 client/assets 那 145 个文件。
+  # ⚠️ 临时表要有一行带**显示名列**（name）的行，否则门读不到值会先判红（那是另一条判据）。
+  if [ "$1" = "1" ]; then
+    rm -rf "$DN_D"; mkdir -p "$DN_D/cfg"
+    printf '{"table":"zz_probe","version":1,"fieldTypes":{},"rows":[{"id":"zz_probe_row","name":"探针名"}]}\n' > "$DN_D/cfg/zz_probe.json"
+    printf 'export const copied = "探针名"\n' > "$DN_D/ZzDisplayName.ts"
+    export DISPLAYNAME_SCAN_DIR="$DN_D" DISPLAYNAME_CONFIG_DIR="$DN_D/cfg"
+  else
+    unset DISPLAYNAME_SCAN_DIR DISPLAYNAME_CONFIG_DIR
+    rm -rf "$DN_D"
+  fi
+}
+run_client_display_name() { bash scripts/check-client-display-name-copy.sh; }
+three_arg check-client-display-name-copy.sh \
+          mk_client_display_name run_client_display_name '客户端不得写死配置表的显示名（走环境变量口，零污染）'
 
 TL_D=/d/tmp/probe753/gates-textlogic
 mk_client_text_logic() { # check-client-text-logic：客户端不得拿中文表值做逻辑判断

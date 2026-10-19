@@ -100,6 +100,7 @@
       "description": "GET /battlePass/status 响应：本赛季的战令全貌。积分、解锁位、20 档一起下发，客户端一次画完。",
       "additionalProperties": false,
       "required": [
+        "name",
         "seasonId",
         "points",
         "paidUnlocked",
@@ -108,6 +109,10 @@
         "serverNow"
       ],
       "properties": {
+        "name": {
+          "type": ["string", "null"],
+          "description": "战令的显示名（pay_product 表 battle_pass 行的 name 列，如「赛季战令」）。**为什么必须下发**：客户端没有配置表加载器（pay_product 不进包）⇒ 拿不到表；自己写一份就是**抄表** —— 表里改了客户端不跟着改，屏上的商品名与服务端卖的那个商品对不上。而商品名正是玩家在购买弹窗里要读的那句话。"
+        },
         "seasonId": {
           "type": "string",
           "description": "这些进度属于哪个赛季（与赛季账本、商店 `SEASON` 限购同一个键）。**下发给客户端是为了让界面能说清「这是哪一季的战令」**：跨赛季那一刻玩家的积分会归零，而界面上如果没有赛季名，看到的就只是「我的分突然没了」。"

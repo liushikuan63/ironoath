@@ -550,6 +550,8 @@ export class NationPanelView extends Component {
       y -= 34
     }
     const selected = section.targets.find(t => t.key === this.warTarget) ?? null
+    // display-name-exempt: 权限位动作词「宣战」与 role_permission 表的 permissionName 同字。
+    // **待裁决**（理由见 NationSections.ts 里同一条豁免的说明）：这一行与那一行必须一起改。
     this.button('WarDeclare', this.warArmed ? '确认宣战' : '宣战', left + 60, y, 120,
       section.declareGate.enabled && selected !== null && !section.hasWar,
       () => {

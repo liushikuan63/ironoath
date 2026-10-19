@@ -39,7 +39,23 @@ export interface BattlePassRow {
 }
 
 /** 整块战令视图。 */
+/**
+ * 服务端没给战令名时的兜底词（读不到 pay_product 配置行 / 滚动升级期间的旧服务端）。
+ *
+ * <p>它**不是抄表**：真正的名字由服务端下发（`resp.name`），这份只兜「一个名字都没有」的情况。
+ * 选一个中性词而不是表里那个名字 —— 宁可少一个字，也不在客户端留一份表的副本。
+ */
+const BATTLE_PASS_FALLBACK_NAME = '战令'
+
 export interface BattlePassPanelView {
+  /**
+   * 标题行：「赛季战令」或「赛季战令 · 第 1–6 档 / 共 20 档」。
+   *
+   * <p>**名字来自服务端**（`pay_product` 表 battle_pass 行的 name 列）——
+   * 客户端没有配置表加载器 ⇒ 拿不到表；自己写一份就是**抄表**（表里改了客户端不跟着改，
+   * 屏上的商品名与服务端卖的那个商品对不上）。
+   */
+  readonly titleText: string
   /** 「第 1–6 档 / 共 20 档」 */
   readonly rangeText: string
   /** 「本赛季积分 300 / 3000」 */
@@ -135,6 +151,7 @@ export function buildBattlePassPanel(resp: BattlePassStatusResp | null,
   maxRows: number): BattlePassPanelView {
   if (resp === null || resp === undefined) {
     return {
+      titleText: BATTLE_PASS_FALLBACK_NAME,
       rangeText: '', pointsText: '', claimedText: '', remainText: '', paidUnlocked: false,
       paidHint: null, rows: [], windowStart: 0, noticeText: '战令进度还没拉回来，稍后再试',
     }
@@ -154,8 +171,14 @@ export function buildBattlePassPanel(resp: BattlePassStatusResp | null,
     return sum + count
   }, 0)
   const totalUnits = total * (resp.paidUnlocked ? 2 : 1)
+  const rangeText = total === 0 ? '' : `第 ${start + 1}–${last + 1} 档 / 共 ${total} 档`
+  // 标题：服务端下发的商品名 + 档位范围。
+  // **无条件拼分隔符就会印出「赛季战令 · 」这种带尾巴的空分隔符**（#349 目视抓到），
+  // 所以可空的那一段非空才拼。
+  const name = resp.name ?? BATTLE_PASS_FALLBACK_NAME
   return {
-    rangeText: total === 0 ? '' : `第 ${start + 1}–${last + 1} 档 / 共 ${total} 档`,
+    titleText: rangeText === '' ? name : `${name} · ${rangeText}`,
+    rangeText,
     pointsText: `本赛季积分 ${resp.points} / ${ranks}`,
     claimedText: `已领 ${claimedUnits} / ${totalUnits} 份`,
     remainText: remainTextOf(resp),

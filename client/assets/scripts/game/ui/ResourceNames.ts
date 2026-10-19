@@ -13,6 +13,11 @@
 
 /** 资源类型 → 中文名。表里没有的取值退回原文，不显示空行（与其它 label 表同一条纪律）。 */
 export const RESOURCE_NAMES: Readonly<Record<string, string>> = {
+  // display-name-exempt: 资源中文名的**唯一一份**（gate 50「一个资源只有一种中文名」守着它）。
+  // 它确实是 resource.json 的 name 列的客户端副本 —— 理想形态是服务端下发（与 #255 建筑名
+  // 改成服务端下发是同一条），但 ResourceAmount 的契约还没带 name（army/bag/city/tech 四份
+  // schema 各有一份定义），那是一次独立的契约改动，**已记进项目队列等单独一格做**。
+  // 在那之前这里是唯一允许的副本：别的地方要名字就来这里取（不许再长第二份）。
   WOOD: '木材', STONE: '石料', IRON: '铁矿', GRAIN: '粮草', GOLD: '金币', STAMINA: '体力',
 }
 

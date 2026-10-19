@@ -371,6 +371,12 @@ export function buildWarSection(resp: WarStatusResp | null,
   for (const row of cooldowns?.cooldowns ?? []) {
     cooldownByTarget.set(row.targetNationId, row.remainingSec)
   }
+// display-name-exempt: 权限位的中文名**目前由客户端翻**（role_permission 表的
+// permissionName 列）。**这一处是待裁决，不是已定**：同一个仓库里两处纪律打架 ——
+// `PermissionGates.ts` 的头注释写着「码表在服务端，客户端翻一份就是第二份真相」，
+// 而这里恰恰翻了一份。⇒ 需要先定口径（按钮上的动作词算不算「翻码表」）：
+// 若算 ⇒ 服务端下发 permissionName（PermissionListResp 加字段），这一行删掉；
+// 若不算 ⇒ 改 PermissionGates 的注释，把「码表在服务端」限定成「枚举值在服务端」。
   const declareGate = permissionGateOf('DECLARE_WAR', '宣战', permissions, permissionsLoaded)
   const targetViews = targets.slice(0, 8).map(t => ({
     key: t.nationId,

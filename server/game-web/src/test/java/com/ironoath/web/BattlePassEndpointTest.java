@@ -83,6 +83,11 @@ class BattlePassEndpointTest {
         });
         assertThat(resp.paidUnlocked()).as("新号没买战令").isFalse();
         assertThat(resp.seasonId()).as("赛季 id 取自赛季域（不是战令自己推的）").isNotBlank();
+        // 战令的显示名随状态下发：客户端没有配置表加载器（pay_product 不进包）⇒ 拿不到表；
+        // 自己写一份就是**抄表** —— 表里改了客户端不跟着改，屏上的商品名与服务端卖的那个对不上。
+        assertThat(resp.name())
+                .as("战令名必须来自 pay_product 表 battle_pass 行的 name 列")
+                .isEqualTo(catalog.require("battle_pass").name());
         assertThat(resp.seasonEndAt())
                 .as("test profile 没设 SEASON_START_AT ⇒ 赛季未启用，时刻给 0 而不是一个假的日子"
                         + "（与 /season/status 的 phase=null 同一条口径）；启用时它是 赛季起点 + 45 天")

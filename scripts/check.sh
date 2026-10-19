@@ -63,6 +63,10 @@ bash scripts/check-client-resource-names.sh
 # 症状是**改表只改一半**：服务端按新表跑，客户端还按旧数跑，
 # 而单测 / 类型检查 / 构建全绿（两边各自自洽，没有一条断言会红）。
 bash scripts/check-client-numeric-copy.sh
+# 客户端不得把**配置表的显示名**（中文名 / 标题 / 标签）抄在自己代码里。
+# 症状与数值族同源：改表只改一半 —— 服务端认了新名，客户端还在显示旧名，
+# 而两边各自自洽 ⇒ 单测 / 类型检查 / 构建全绿。
+bash scripts/check-client-display-name-copy.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-client-typecheck.sh
 # 客户端逻辑层单测（941 项）：**类型门只保证"能编译"，不保证"算对了"**。CI 里这批用例本来就跑
