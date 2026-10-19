@@ -7834,3 +7834,5 @@ TEST_EXIT=0
 | lifecycle collector v2离线接入 #1447 | 四docs local提交见receipt | 五处逆字节AST；原13加新12共25/0/0/0；对照3红；独审无阻断；原37不变 | split-lifecycle-v2-offline-frozen.actual.json SHA5f6d34ceaf7c5fa5c9cb0973586c19df2daf10cf33c17d3bb419a986bde9d1df；source62176e43及全部输入测试日志hash | 未接launcher/未新runtime；原State不可补；实际IO修复/机制/完整profile/5000/原生未验；新窗口未授 |
 
 | lifecycle entry v4离线闭链 #1448 | 四docs local提交见receipt | 八处逆字节AST；原20加新5共25/0/0/0；独审无阻断；原37未改 | proc-lifecycle-entry-v4-offline-frozen.actual.json SHA4318fa2be2fdee2c01ddfe7dee35c48c579aacf6b65c6bb89e55ba16c93e7c44；launcher32fc1bfe及全部source/log/review hash | runtimeReady=false；旧scheduler不可复用；r9完整链仍旧holder/合并proc；新窗口/实际State/完整profile/5000/原生均未验 |
+
+| lifecycle v4 READY及调度 #1449 | 四docs local提交见receipt | 61SHA匹配；3处逆字节AST；新12/0/0/0无子进程；独审无阻断；原37未改 | sharedQA lifecycle-ready-v4 SHAa9c925cbb42772a149c53c88e97616449c7192e143b0b703810c81ebe3a0ebab与schedule-ready-v1 SHA05daf5a786fddc28599992ffa15fcd59e464024ecff455fcb87b50fd604ce0dd；scheduler1ead3bd4 | mayExecuteNow=false/未arm；缺新hold/quota/global-G07与资源/UTC准入；IO实际机制/完整profile/5000/原生仍未验 |
