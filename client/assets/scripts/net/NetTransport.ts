@@ -31,6 +31,22 @@ export interface HttpTransport {
    * 传输层只负责把这个 url 发出去 —— 编码规则只有一份，不该在两个传输实现里各写一遍。
    */
   get(url: string, headers: Readonly<Record<string, string>>): Promise<HttpResponse>
+
+  /**
+   * 用服务端下发的单请求超时覆盖当前值（**可选**）。
+   *
+   * <p><b>为什么传输层要能改超时</b>：超时的**执行点**在这一层
+   * （`AbortController` 的 abort 定时器 / `wx.request` 的 timeout 参数），
+   * `NetModule` 并不读它 ⇒ 服务端下发的新超时只有落到这一层才有效。
+   *
+   * <p><b>为什么是可选的</b>：单测里的假传输实现不需要这个能力
+   * （它们不真的发网络请求，超时对它们无意义）⇒ 不做成必填，
+   * 免得每个假实现都要写一个空方法。
+   *
+   * <p><b>为什么不下发就一直是旧值</b>：第一个请求（版本检查）本身要用这些参数发出去
+   * ⇒ 鸡生蛋，所以是「先用默认值发第一个请求，拿到响应后覆盖」。
+   */
+  applyTimeout?(timeoutMs: number): void
 }
 
 /** WebSocket 事件回调。 */

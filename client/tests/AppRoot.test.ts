@@ -5250,3 +5250,29 @@ test('monthly payment feedback remains visible when subsequent status refresh fa
   assert.match(views.at(-1)?.notice ?? '', /当前环境不支持支付/)
   assert.equal(h.http.countOf('/pay/order'), 1)
 })
+
+
+// ---------- 本地聊天历史上限由服务端下发（#2252） ----------
+
+test('聊天：本地缓存留多少条用服务端下发的 historyCap，不是客户端写死的那份', async () => {
+  // 缺陷形状：`CHAT_LOCAL_HISTORY_MAX` 住在 global 表（客户端没有配置表加载器 ⇒ 拿不到表），
+  // 客户端于是写死一份 200。**请求里的 limit 那一处无害**（服务端会夹到同一个表值），
+  // 但**本地缓存留多少条没有服务端兜底** ⇒ 表里 200→100 那一改，
+  // 客户端仍然留 200 条，而没有任何测试会红。
+  const h = harness()
+  // 服务端说：本地只留 2 条。
+  h.http.overrides.set('/chat/list', {
+    messages: [
+      { messageId: 'm1', channel: 'WORLD', senderId: 'P2', senderName: '乙', content: '一', sentAt: SERVER_NOW - 60_000 },
+      { messageId: 'm2', channel: 'WORLD', senderId: 'P1', senderName: '君', content: '二', sentAt: SERVER_NOW - 50_000 },
+      { messageId: 'm3', channel: 'WORLD', senderId: 'P2', senderName: '乙', content: '三', sentAt: SERVER_NOW - 40_000 },
+    ],
+    hasMore: false, historyCap: 2, serverNow: SERVER_NOW,
+  })
+  assert.equal(await h.root.start('dev-1', '君'), true)
+
+  await h.root.openChat()
+  assert.equal(h.lastChat?.mode, 'messages')
+  assert.deepEqual(h.lastChat?.messages.map(m => m.content), ['二', '三'],
+    '本地只留服务端说的 2 条 ⇒ 丢掉最旧的那条 —— 客户端写死 200 的话三条都会留着')
+})

@@ -10,9 +10,29 @@
 import type { HttpTransport, HttpResponse } from './NetTransport'
 
 export class FetchHttpTransport implements HttpTransport {
-  private readonly timeoutMs: number
+  /**
+   * 单请求超时。**可被服务端下发的值覆盖**（见 `NetModule.applyNetworkTuning` 同一条理由：
+   * 这个数住在 `global.json`，客户端没有配置表加载器 ⇒ 写死一份会与服务端悄悄漂移）。
+   *
+   * <p>之所以放在传输层而不是只用 `NetModule` 那一处：超时是**这一层**执行的
+   * （`AbortController` 的 abort 定时器就在这里），`NetModule` 并不读它。
+   */
+  private timeoutMs: number
 
   constructor(timeoutMs: number) {
+    if (timeoutMs <= 0) {
+      throw new RangeError(`timeoutMs 必须为正数：${timeoutMs}`)
+    }
+    this.timeoutMs = timeoutMs
+  }
+
+  /**
+   * 用服务端下发的超时覆盖当前值。
+   *
+   * <p>与 `NetModule.applyNetworkTuning` 同一时刻调用（版本检查响应到达后）。
+   * 只影响**之后**发起的请求：已经发出的那个请求用的是旧值（第一个请求必然如此）。
+   */
+  applyTimeout(timeoutMs: number): void {
     if (timeoutMs <= 0) {
       throw new RangeError(`timeoutMs 必须为正数：${timeoutMs}`)
     }

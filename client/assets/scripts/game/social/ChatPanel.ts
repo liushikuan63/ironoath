@@ -24,14 +24,34 @@ import type {
 } from '../../net/generated/SocialProtocol'
 
 /**
- * 客户端每个频道本地保留的历史条数上限。
+ * 客户端每个频道本地保留的历史条数上限 —— **服务端下发**，不是客户端写死的一份。
  *
- * <p>来源：`global.json` 的 `CHAT_LOCAL_HISTORY_MAX`。那张表的 `why` 已经把口径写清楚：
- * 200 条约 12KB、四个频道合计不到 50KB，超出丢最旧 —— 聊天记录不是账目，
- * 旧消息的价值随时间迅速衰减。客户端镜像这个数是因为拉取时要用它当 `limit`
- * （服务端仍会再夹一次，所以镜像过期不会越界，只会少拉）。
+ * <p><b>为什么必须下发</b>：这个数住在 `global.json`（`CHAT_LOCAL_HISTORY_MAX`），
+ * 而**客户端没有配置表加载器**（`global.json` 不进包，客户端只有生成的类型、没有表数据）
+ * ⇒ 客户端拿不到表。写死一份的后果分两种：
+ * <ul>
+ *   <li><b>作为请求的 limit 发出</b>（`AppRoot` 拉历史时）：**无害** ——
+ *       服务端会再夹一次（`SocialAppService` 的 `Math.min(..., CHAT_LOCAL_HISTORY_MAX)`），
+ *       客户端发大了也越不过服务端。</li>
+ *   <li><b>作为本地缓存的丢弃上限</b>（`mergeChatHistory` 的 cap）：**有害** ——
+ *       这一处**没有服务端兜底**，客户端缓存留多少条完全由客户端自己那份数决定。
+ *       表里 200→100 那一改，客户端仍然留 200 条（内存多一倍、屏上翻得更远），
+ *       而**没有任何测试会红**（断言钉的是同一份硬编码）。</li>
+ * </ul>
+ *
+ * <p>⇒ 结论：<b>能被服务端兜住的那一处不必改，被兜不住的那一处必须改</b>。
+ * 所以本笔把「本地缓存上限」改成服务端下发（`ChatListResp.historyCap`），
+ * 而**请求里的 limit 照旧发**（它会被服务端夹，发什么都不越界 —— 那是既有的、正确的行为）。
+ *
+ * <p><b>这个兜底值为什么还在</b>：服务端还没回第一页时（首帧、或拉历史失败），
+ * 客户端总得有个数可用 —— 那时用服务端**上一次**下发的值；一次都没有时用这个兜底值。
+ * 它**不是「抄表」**：它会被服务端的值覆盖，而抄表是永远不覆盖。
+ * 两者的区别在 `ChatPanel.test.ts` 那条用例里钉着。
  */
-export const CHAT_LOCAL_HISTORY_MAX = 200
+// numeric-copy-exempt: 这是「先发后覆盖」里的兜底默认值 —— 服务端下发的 historyCap 一到就被覆盖
+// （AppRoot 按 outcome.data.historyCap 传进 mergeChatHistory），而抄表是永远不覆盖。
+// 两者由 `AppRoot.test.ts` 那条「本地缓存留多少条用服务端下发的 historyCap」用例钉着。
+export const CHAT_LOCAL_HISTORY_FALLBACK_MAX = 200
 
 /**
  * 聊天一屏**最多**画几行（容量，不是每页行数）。
@@ -49,10 +69,13 @@ export const CHAT_PAGE_ROWS = 5
 /**
  * 「更早」一次向服务端要多少条。
  *
- * <p>**与 {@link CHAT_LOCAL_HISTORY_MAX} 是两个数，别合并**：200 是本地缓存上限
+ * <p>**与 {@link CHAT_LOCAL_HISTORY_FALLBACK_MAX} 是两个数，别合并**：200 是本地缓存上限
  * （`global.CHAT_LOCAL_HISTORY_MAX`，超出丢最旧），这里是"往前翻一屏要补多少"。
  * 取 20 = 4 屏的量：翻 4 次才发一枪，而弱网下多一次往返就是多一次超时机会。
  */
+// numeric-copy-exempt: 这是**交互节奏**（往前翻一屏补多少条），不是表值的副本 ——
+// 它的注释自己写着「与本地缓存上限是两个数，别合并」：本地缓存上限是 200（表里的行），
+// 这里是「翻 4 次才发一枪」的取舍。两者语义不同，合并就是丢信息。
 export const CHAT_FETCH_OLDER = 20
 
 /**
@@ -200,7 +223,7 @@ export interface ChatPanelData {
 /** 合并一段历史：按 messageId 去重、按时间升序、超出上限丢最旧。 */
 export function mergeChatHistory(existing: readonly ChatMessageView[],
                                  incoming: readonly ChatMessageView[],
-                                 cap: number = CHAT_LOCAL_HISTORY_MAX): ChatMessageView[] {
+                                 cap: number = CHAT_LOCAL_HISTORY_FALLBACK_MAX): ChatMessageView[] {
   const byId = new Map<string, ChatMessageView>()
   for (const message of existing) {
     byId.set(message.messageId, message)

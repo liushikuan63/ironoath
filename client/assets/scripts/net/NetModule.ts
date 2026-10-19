@@ -50,6 +50,28 @@ export interface NetConfig {
 }
 
 /**
+ * 客户端网络层的**可下发参数**（退避、超时、离线队列上限）。
+ *
+ * <p><b>为什么单独一个类型</b>：这几个数住在 `global.json`，而**客户端没有配置表加载器**
+ * （`global.json` 不进包，客户端只有生成的类型、没有表数据）⇒ 客户端拿不到表。
+ * 写死一份的代价是**与服务端悄悄漂移**，症状是「谁都没报错」的偏差
+ * （与 `TrackPolicy` 随 `/ops/app/version` 下发是同一条理由）。
+ *
+ * <p><b>为什么它们必须是可变的</b>：它们决定**第一个请求**怎么发，而下发它们的那个响应
+ * （版本检查）本身就是一个请求 —— 鸡生蛋。解法是先用内置默认值把第一个请求发出去，
+ * 拿到响应后用服务端的值覆盖（见 {@link NetModule.applyNetworkTuning}）。
+ * 覆盖**只影响之后的请求**：已经发出去的那个请求用的是默认值，这是对的 ——
+ * 第一个请求没有「服务端说的值」可用。
+ */
+export interface NetworkTuningConfig {
+  readonly maxRetryAttempts: number
+  readonly retryBaseDelayMs: number
+  readonly retryMaxDelayMs: number
+  readonly offlineQueueMax: number
+  readonly requestTimeoutMs: number
+}
+
+/**
  * 弱网事件（传输层的事实，不是文案）。
  *
  * <p><b>为什么在 net 里定义而不是在显示层</b>：这三件事（将要重投 / 重投到上限 / 链路又通了）
@@ -151,6 +173,14 @@ const HEADER_PLAYER = 'X-Player-Id'
 
 export class NetModule {
   private readonly config: NetConfig
+  /**
+   * 退避/超时/队列上限：**可被服务端下发的值覆盖**。
+   *
+   * <p>与 {@link config} 分开是因为「地址」是启动期注入的（编辑器可改字段），
+   * 而这几个数是**服务端说了算的策略**，会在版本检查响应到达后被覆盖。
+   * 分开之后覆盖只动得到该动的那几个。
+   */
+  private tuning: NetworkTuningConfig
   private readonly deps: NetDeps
   private token: string | null = null
   private identityRevision = 0
@@ -187,7 +217,44 @@ export class NetModule {
       throw new RangeError(`offlineQueueMax 必须为正：${config.offlineQueueMax}`)
     }
     this.config = config
+    this.tuning = {
+      maxRetryAttempts: config.maxRetryAttempts,
+      retryBaseDelayMs: config.retryBaseDelayMs,
+      retryMaxDelayMs: config.retryMaxDelayMs,
+      offlineQueueMax: config.offlineQueueMax,
+      requestTimeoutMs: config.requestTimeoutMs,
+    }
     this.deps = deps
+  }
+
+  /**
+   * 用服务端下发的调参覆盖当前的退避/超时/队列上限。
+   *
+   * <p><b>为什么需要它</b>：这些数住在 `global.json`，客户端没有配置表加载器 ⇒ 拿不到表。
+   * 写死一份会与服务端悄悄漂移（症状是「谁都没报错」的偏差）。
+   * 而下发它们的响应（版本检查）本身就是一个请求 ⇒ 鸡生蛋 ⇒ 只能用「先发后覆盖」。
+   *
+   * <p><b>为什么校验在这里而不在构造期</b>：服务端下发的值也可能是坏值（表被改坏了），
+   * 那时**抛出来比默默用坏值发请求好** —— 症状会立刻出现在崩溃上报里，
+   * 而不是表现为「重试不生效」这种没人查的现象。
+   *
+   * <p><b>只影响之后的请求</b>：已经发出的请求用的是旧值。第一个请求必然如此，
+   * 而那是对的：它发生时还没有「服务端说的值」可用。
+   */
+  applyNetworkTuning(tuning: NetworkTuningConfig): void {
+    if (tuning.maxRetryAttempts < 0) {
+      throw new RangeError(`maxRetryAttempts 不得为负：${tuning.maxRetryAttempts}`)
+    }
+    if (tuning.retryBaseDelayMs <= 0 || tuning.retryMaxDelayMs < tuning.retryBaseDelayMs) {
+      throw new RangeError('退避时长非法：base 必须为正且 max >= base')
+    }
+    if (tuning.offlineQueueMax <= 0) {
+      throw new RangeError(`offlineQueueMax 必须为正：${tuning.offlineQueueMax}`)
+    }
+    if (tuning.requestTimeoutMs <= 0) {
+      throw new RangeError(`requestTimeoutMs 必须为正：${tuning.requestTimeoutMs}`)
+    }
+    this.tuning = tuning
   }
 
   // ---------- 身份 ----------
@@ -311,7 +378,7 @@ export class NetModule {
     boundIdentityRevision: number | null = null,
   ): Promise<NetOutcome<TResp>> {
     const url = this.config.baseUrl + path
-    const attempts = retryable ? this.config.maxRetryAttempts + 1 : 1
+    const attempts = retryable ? this.tuning.maxRetryAttempts + 1 : 1
     let lastError = '未知网络错误'
 
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -393,8 +460,8 @@ export class NetModule {
 
   /** 退避时长 = base × 2^(attempt-1)，封顶 max，并叠加 ±25% 抖动。 */
   private backoffMs(attempt: number): number {
-    const exponential = this.config.retryBaseDelayMs * Math.pow(2, attempt - 1)
-    const capped = Math.min(exponential, this.config.retryMaxDelayMs)
+    const exponential = this.tuning.retryBaseDelayMs * Math.pow(2, attempt - 1)
+    const capped = Math.min(exponential, this.tuning.retryMaxDelayMs)
     // 抖动避免「服务端刚恢复就被全体客户端同时重连打垮」（惊群）
     const jitter = this.deps.rng.range(7500, 12500) / 10000
     return Math.max(1, Math.round(capped * jitter))
@@ -433,12 +500,12 @@ export class NetModule {
   // ---------- 离线队列 ----------
 
   private enqueue(path: string, bodyText: string, requestId: string): boolean {
-    if (this.offlineQueue.length >= this.config.offlineQueueMax) {
+    if (this.offlineQueue.length >= this.tuning.offlineQueueMax) {
       // 队满丢最旧：最旧的请求最可能已经过期（比如「加速建造」在几小时后重放已无意义），
       // 而最新的请求最可能是玩家刚刚点的那一下
       const dropped = this.offlineQueue.shift()
       console.warn(
-        `[NetModule] 离线队列已满（上限 ${this.config.offlineQueueMax}），丢弃最旧请求 path=${dropped?.path} 入队于=${dropped?.enqueuedAt}`,
+        `[NetModule] 离线队列已满（上限 ${this.tuning.offlineQueueMax}），丢弃最旧请求 path=${dropped?.path} 入队于=${dropped?.enqueuedAt}`,
       )
     }
     this.offlineQueue.push({ path, bodyText, requestId, enqueuedAt: this.deps.now() })
@@ -661,8 +728,8 @@ export class NetModule {
   private scheduleReconnect(): void {
     this.reconnectAttempts++
     const delayMs = Math.min(
-      this.config.retryBaseDelayMs * Math.pow(2, Math.min(this.reconnectAttempts - 1, 6)),
-      this.config.retryMaxDelayMs,
+      this.tuning.retryBaseDelayMs * Math.pow(2, Math.min(this.reconnectAttempts - 1, 6)),
+      this.tuning.retryMaxDelayMs,
     )
     setTimeout(() => {
       if (!this.closedByUser && !this.socketOpen) {

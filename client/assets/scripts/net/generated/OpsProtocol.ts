@@ -285,8 +285,32 @@ export interface AppVersionResp {
   notice: string | null
   /** 本次会话应当使用的埋点攒批策略。<b>必填而不是可空</b>：客户端从第一个事件（startup）开始就要按策略攒批，而版本检查正是启动的第一个请求，所以策略在这一刻必然已经拿到。做成可空的话客户端就必须准备一套兜底数字，而那套兜底数字正是铁律 1 禁止的硬编码 —— 更糟的是它会与服务端悄悄漂移。 */
   trackPolicy: TrackPolicy
+  /** 客户端网络层与时钟校准的参数。随版本检查一起下发（与 `trackPolicy` 同一条理由）。**为什么必须随版本检查而不是随 /player/init**：这些参数要**在第一个请求之前**就位（退避、超时、离线队列上限决定第一个请求怎么发），而 `/player/init` 要登录之后才有。 */
+  networkTuning: NetworkTuning
   /** 客服与退款入口的配置；本环境未配置时为 null。**刻意是可选字段而不是 required**：滚动升级期间旧服务端不会下发它，而客户端把「没有这个字段」读作「未配置」，两边都能跑。 */
   support: SupportEntry | null
+}
+
+/**
+ * 客户端网络层与时钟校准的参数包。**为什么由服务端下发**：这些数住在 `global.json` 里，而**客户端没有配置表加载器**（`global.json` 不进包，客户端只有生成的类型、没有表数据）⇒ 客户端拿不到表，要么写死一份、要么从服务端拿。写死的那份会与服务端悄悄漂移，症状是「客户端发 50 条、服务端按 10 条攒批」这类**谁都没报错**的偏差（与 `TrackPolicy` 随 `/ops/app/version` 下发是同一条理由）。**它不是「服务端的重试参数」**：它是**客户端网络层与时钟校准的策略**，服务端读同一张表只是为了让两端口径一致。
+ */
+export interface NetworkTuning {
+  /** 最大重试次数。来源 global.NET_RETRY_MAX_ATTEMPTS */
+  maxRetryAttempts: number
+  /** 首次退避时长（毫秒）。来源 global.NET_RETRY_BASE_DELAY_MS */
+  retryBaseDelayMs: number
+  /** 退避上限（毫秒）。来源 global.NET_RETRY_MAX_DELAY_MS */
+  retryMaxDelayMs: number
+  /** 离线队列上限（条）。来源 global.NET_OFFLINE_QUEUE_MAX */
+  offlineQueueMax: number
+  /** 单请求超时（毫秒）。**它不在 global.json 里**（表里没有这一行）—— 这是客户端自己的超时上限，与表无关；放在这里是为了让客户端的「网络层参数」集中在一处下发，而不是散在客户端各处写死。 */
+  requestTimeoutMs: number
+  /** 偏移平滑系数（定点 ×10000）。来源 global.TIME_SYNC_ALPHA */
+  timeSyncAlphaFixed: number
+  /** 抖动剔除倍数（定点 ×10000）。来源 global.TIME_SYNC_JITTER_FACTOR */
+  timeSyncJitterFactorFixed: number
+  /** 首次采样前的最佳 RTT 兜底（毫秒）。来源 global.TIME_SYNC_INITIAL_BEST_RTT_MS */
+  timeSyncInitialBestRttMs: number
 }
 
 /**

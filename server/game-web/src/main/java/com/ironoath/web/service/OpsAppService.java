@@ -30,6 +30,7 @@ import com.ironoath.web.dto.generated.TrackBatchReq;
 import com.ironoath.web.dto.generated.TrackBatchResp;
 import com.ironoath.web.dto.generated.TrackEvent;
 import com.ironoath.web.dto.generated.TrackIngestResp;
+import com.ironoath.web.dto.generated.NetworkTuning;
 import com.ironoath.web.dto.generated.TrackPolicy;
 import com.ironoath.web.ops.TrackEventStore;
 import com.ironoath.web.ops.TrackFlusher;
@@ -373,8 +374,22 @@ public class OpsAppService {
         // 攒批策略随版本检查一起下发：客户端没有配置表加载器，这两个数字若不来自服务端就只能写死，
         // 而写死的策略会与服务端悄悄漂移（症状是「客户端发 50 条，服务端按 10 条攒批」，谁都没报错）
         TrackPolicy policy = new TrackPolicy(assembler.trackBatchMaxSize(), assembler.trackFlushSeconds());
+        // 客户端网络层与时钟校准的参数同样随版本检查下发：客户端没有配置表加载器，
+        // 这些数（退避、超时、离线队列上限、对时参数）写死一份就会与服务端悄悄漂移，
+        // 而症状是「谁都没报错」的偏差 —— 与 trackPolicy 同一条理由。
+        // 必须随版本检查（而不是随 /player/init）：它们决定**第一个请求**怎么发，
+        // 而 /player/init 要登录之后才有。
+        NetworkTuning tuning = new NetworkTuning(
+                assembler.netRetryMaxAttempts(),
+                assembler.netRetryBaseDelayMs(),
+                assembler.netRetryMaxDelayMs(),
+                assembler.netOfflineQueueMax(),
+                assembler.netRequestTimeoutMs(),
+                assembler.timeSyncAlphaFixed(),
+                assembler.timeSyncJitterFactorFixed(),
+                assembler.timeSyncInitialBestRttMs());
         return new AppVersionResp(verdict.latestVersion(), verdict.forceUpdate(), verdict.grayEnabled(),
-                verdict.notice(), policy, supportConfig.toEntry());
+                verdict.notice(), policy, tuning, supportConfig.toEntry());
     }
 
     // ---------- 配置热更（B16 §5，验收 7） ----------

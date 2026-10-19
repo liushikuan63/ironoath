@@ -41,7 +41,7 @@ import type {
 } from '../../net/generated/SocialProtocol'
 import {
   ackablePrivateEventIds, buildChatPanel, chatFailureText, chatKey, chatPageCount,
-  CHAT_FETCH_OLDER, CHAT_LOCAL_HISTORY_MAX, CHAT_PAGE_ROWS, mergeChatHistory,
+  CHAT_FETCH_OLDER, CHAT_LOCAL_HISTORY_FALLBACK_MAX, CHAT_PAGE_ROWS, mergeChatHistory,
 } from '../social/ChatPanel'
 import type { ChatPanelData } from '../social/ChatPanel'
 import { buildRankBoard, buildRankSnapshotView } from '../power/RankBoard'
@@ -545,6 +545,15 @@ export class AppRoot {
 
   /** 二级选择器的最近一次权威响应；不参与任何数值判断。 */
   private cityResp: CityListResp | null = null
+  /**
+   * 服务端下发的「本地聊天历史留多少条」上限。
+   *
+   * <p>第一次拿到之前用兜底值（{@link CHAT_LOCAL_HISTORY_FALLBACK_MAX}）——
+   * 服务端还没回第一页时客户端总得有个数可用。
+   * 拿到之后**一律用服务端那份**：本地缓存留多少条没有服务端兜底，
+   * 客户端自己写死一份的话，表一改它就静默留着旧上限。
+   */
+  private chatHistoryCap: number = CHAT_LOCAL_HISTORY_FALLBACK_MAX
   private armyResp: ArmyListResp | null = null
   /** 商店：当前页签与最近一次兑换的临时提示。货架来自 /shop/list 的响应，不缓存计算 */
   private shopTab: ShopCurrency = 'GOLD'
@@ -2624,7 +2633,7 @@ export class AppRoot {
     // 用服务端回执里的那条消息，而不是本地拼一条：id 与时刻都是权威的，
     // 本地拼的那条会在下一次拉取时与本尊撞成两条
     this.chatHistory.set(key,
-      mergeChatHistory(this.chatHistory.get(key) ?? [], [outcome.data.message]))
+      mergeChatHistory(this.chatHistory.get(key) ?? [], [outcome.data.message], this.chatHistoryCap))
     this.chatNotice = null
     this.chatSentSeq += 1
     // **发完一条回到最新那一页**：停在"更早"那一页时，自己刚发的话落在最新页上，
@@ -2691,7 +2700,9 @@ export class AppRoot {
       channel,
       toPlayerId: channel === 'PRIVATE' ? peerId : null,
       beforeMessageId: null,
-      limit: CHAT_LOCAL_HISTORY_MAX,
+      // 请求里的 limit **照旧发**：服务端会夹到同一个表值（发大了也越不过去），
+      // 所以这里用兜底值无害 —— 真正必须用服务端那份的是**本地缓存上限**（上面那几处）。
+      limit: this.chatHistoryCap,
     })
     if (outcome.kind !== 'ok') {
       // 没资格看这个频道（未入盟看联盟频道）走的就是这一支：服务端的 detail
@@ -2704,8 +2715,11 @@ export class AppRoot {
       return
     }
     const key = chatKey(channel, peerId)
+    // 服务端下发的本地历史上限：本地缓存留多少条**没有服务端兜底**（请求里的 limit 有），
+    // 所以这一处必须用服务端那份 —— 客户端写死一份的话，表一改它就静默留着旧上限。
+    this.chatHistoryCap = outcome.data.historyCap
     this.chatHistory.set(key,
-      mergeChatHistory(this.chatHistory.get(key) ?? [], outcome.data.messages))
+      mergeChatHistory(this.chatHistory.get(key) ?? [], outcome.data.messages, this.chatHistoryCap))
     // 打开/切频道/换会话一律回到最新那一页，并把服务端的 `hasMore` 收下来（V15）
     this.chatPage = 0
     this.chatHasMoreOlder = outcome.data.hasMore
@@ -4249,7 +4263,8 @@ export class AppRoot {
       this.deliverChat()
       return
     }
-    this.chatHistory.set(key, mergeChatHistory(loaded, outcome.data.messages))
+    this.chatHistoryCap = outcome.data.historyCap
+    this.chatHistory.set(key, mergeChatHistory(loaded, outcome.data.messages, this.chatHistoryCap))
     this.chatHasMoreOlder = outcome.data.hasMore
     this.learnPeerNames(outcome.data.messages)
     // 补到的这一段正好接在旧窗口之前，所以页码只前进一格

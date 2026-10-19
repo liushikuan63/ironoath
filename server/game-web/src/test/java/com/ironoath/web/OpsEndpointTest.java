@@ -571,6 +571,35 @@ class OpsEndpointTest {
         assertThat(policy).as("响应必须带埋点攒批策略").isNotNull();
         assertThat(policy.get("maxBatchSize").asInt()).isEqualTo((int) configs.longParam("TRACK_BATCH_MAX_SIZE"));
         assertThat(policy.get("flushSeconds").asInt()).isEqualTo((int) configs.longParam("TRACK_BATCH_FLUSH_SECONDS"));
+
+        // 客户端网络层与对时的参数同理：这些数住在 global 表里，而**客户端没有配置表加载器**
+        // （global.json 不进包）⇒ 客户端拿不到表，写死一份就会与服务端悄悄漂移
+        // （症状是「谁都没报错」的偏差）。它们**必须在第一个请求之前**就位
+        // （退避、超时、离线队列上限决定第一个请求怎么发）⇒ 只能随版本检查下发，
+        // 而不是随 /player/init（那个要登录之后才有）。
+        JsonNode tuning = current.get("networkTuning");
+        assertThat(tuning).as("响应必须带客户端网络层与对时参数").isNotNull();
+        assertThat(tuning.get("maxRetryAttempts").asInt())
+                .as("重试次数必须来自 global 表").isEqualTo((int) configs.longParam("NET_RETRY_MAX_ATTEMPTS"));
+        assertThat(tuning.get("retryBaseDelayMs").asInt())
+                .as("退避起始时长必须来自 global 表").isEqualTo((int) configs.longParam("NET_RETRY_BASE_DELAY_MS"));
+        assertThat(tuning.get("retryMaxDelayMs").asInt())
+                .as("退避上限必须来自 global 表").isEqualTo((int) configs.longParam("NET_RETRY_MAX_DELAY_MS"));
+        assertThat(tuning.get("offlineQueueMax").asInt())
+                .as("离线队列上限必须来自 global 表").isEqualTo((int) configs.longParam("NET_OFFLINE_QUEUE_MAX"));
+        assertThat(tuning.get("requestTimeoutMs").asInt())
+                .as("单请求超时必须为正（它不在 global 表里，是客户端自己的数）").isPositive();
+        // 对时参数：表里是 DECIMAL（0.2 / 3.0），下发的是定点 ×10000（2000 / 30000）。
+        // 漏乘的症状是「alpha 变成 0.2 倍」⇒ 偏移平滑几乎不生效，倒计时会逐次跳变。
+        assertThat(tuning.get("timeSyncAlphaFixed").asInt())
+                .as("平滑系数必须按定点 ×10000 下发（不是表里的比率）")
+                .isEqualTo((int) configs.fixedParam("TIME_SYNC_ALPHA"));
+        assertThat(tuning.get("timeSyncJitterFactorFixed").asInt())
+                .as("抖动剔除倍数必须按定点 ×10000 下发")
+                .isEqualTo((int) configs.fixedParam("TIME_SYNC_JITTER_FACTOR"));
+        assertThat(tuning.get("timeSyncInitialBestRttMs").asInt())
+                .as("初始最佳 RTT 兜底必须来自 global 表")
+                .isEqualTo((int) configs.longParam("TIME_SYNC_INITIAL_BEST_RTT_MS"));
     }
 
     @Test

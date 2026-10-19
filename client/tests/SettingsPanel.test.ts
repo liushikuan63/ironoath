@@ -19,6 +19,11 @@ function resp(overrides: Partial<AppVersionResp> = {}): AppVersionResp {
     grayEnabled: false,
     notice: null,
     trackPolicy: { maxBatchSize: 10, flushSeconds: 10 },
+    networkTuning: {
+      maxRetryAttempts: 3, retryBaseDelayMs: 500, retryMaxDelayMs: 8_000,
+      offlineQueueMax: 50, requestTimeoutMs: 5_000,
+      timeSyncAlphaFixed: 2_000, timeSyncJitterFactorFixed: 30_000, timeSyncInitialBestRttMs: 150,
+    },
     support: null,
     ...overrides,
   }

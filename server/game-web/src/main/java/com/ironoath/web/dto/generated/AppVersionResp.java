@@ -11,6 +11,7 @@ public record AppVersionResp(
         boolean grayEnabled,   // 该玩家是否落在灰度批次内（global.RELEASE_GRAY_PERCENT）。**与 forceUpdate 正交**：灰度 5% 不等于另外 95% 的人不能玩。同一个玩家的判定结果每次一致（稳定哈希），否则他刷新一次就可能从灰度里掉出去，而「刚才能玩现在不能玩」是最难排查的一类投诉。
         String notice,   // 强制更新的提示文案（global.RELEASE_FORCE_UPDATE_NOTICE），forceUpdate=false 时为 null —— 不强制更新时不该打扰玩家。文案必须说明「为什么」：只说「请更新」的话，被挡在门外的玩家会以为游戏坏了而直接卸载。
         TrackPolicy trackPolicy,   // 本次会话应当使用的埋点攒批策略。<b>必填而不是可空</b>：客户端从第一个事件（startup）开始就要按策略攒批，而版本检查正是启动的第一个请求，所以策略在这一刻必然已经拿到。做成可空的话客户端就必须准备一套兜底数字，而那套兜底数字正是铁律 1 禁止的硬编码 —— 更糟的是它会与服务端悄悄漂移。
+        NetworkTuning networkTuning,   // 客户端网络层与时钟校准的参数。随版本检查一起下发（与 `trackPolicy` 同一条理由）。**为什么必须随版本检查而不是随 /player/init**：这些参数要**在第一个请求之前**就位（退避、超时、离线队列上限决定第一个请求怎么发），而 `/player/init` 要登录之后才有。
         SupportEntry support)   // 客服与退款入口的配置；本环境未配置时为 null。**刻意是可选字段而不是 required**：滚动升级期间旧服务端不会下发它，而客户端把「没有这个字段」读作「未配置」，两边都能跑。
 {
 }

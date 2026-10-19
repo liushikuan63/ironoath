@@ -67,6 +67,9 @@ export interface BuildingRow {
  * 用来让「服务端还没升上去」的那段时间行为不变（模式隔离：不改变现有行为）。
  * 真正的值一律以 `CityListResp.gridSize` 为准。
  */
+// numeric-copy-exempt: 这是「先发后覆盖」里的兜底默认值 —— 服务端下发的 gridSize 一到就被覆盖
+// （CityPanelView 按 panel.gridSize 判越界），而抄表是永远不覆盖。两者由
+// `CityPanel.test.ts` 与 `CitySceneAnchors.test.ts` 的用例分别钉着。
 export const CITY_GRID_FALLBACK_SIZE = 6
 
 export interface CityGrid {

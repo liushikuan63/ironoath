@@ -41,7 +41,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$RN_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D" "$RN_D" "$NC_D"
 }
 trap cleanup EXIT
 
@@ -556,6 +556,27 @@ mk_client_config_copy() { # check-client-config-copy：客户端不得抄 global
 run_client_config_copy() { bash scripts/check-client-config-copy.sh; }
 three_arg check-client-config-copy.sh \
           mk_client_config_copy run_client_config_copy '客户端不得抄 global 表的字符串值（走环境变量口，零污染）'
+
+NC_D=/d/tmp/probe753/gates-numcopy
+mk_client_numeric_copy() { # check-client-numeric-copy：客户端不得写死配置表里的数值
+  # ⚠️ 走**环境变量口**（NUMCOPY_SCAN_DIR / NUMCOPY_GLOBAL_JSON / NUMCOPY_CITYRULE_JSON）⇒ **零污染**：
+  #    违规态只往临时目录里放两个 .ts 与一张临时表，不碰 client/assets 那 145 个文件。
+  # ⚠️ 临时表要有带**数字**的行（global 的 DECIMAL 行），否则门读不到值会先判红（那是另一条判据）。
+  if [ "$1" = "1" ]; then
+    rm -rf "$NC_D"; mkdir -p "$NC_D"
+    printf '{"table":"global","version":1,"fieldTypes":{},"rows":[{"id":"ZZ_GATE_PROBE","valueType":"LONG","value":"7"}]}\n' > "$NC_D/global.json"
+    printf '{"table":"city_rule","version":1,"fieldTypes":{},"rows":[]}\n' > "$NC_D/city_rule.json"
+    # 违规形状：**注释里点名表 id**，同一块声明里写死那个数。
+    printf '/** 来源 global.ZZ_GATE_PROBE */\nconst ZzCopied = 7\n' > "$NC_D/ZzNumericCopy.ts"
+    export NUMCOPY_SCAN_DIR="$NC_D" NUMCOPY_GLOBAL_JSON="$NC_D/global.json" NUMCOPY_CITYRULE_JSON="$NC_D/city_rule.json"
+  else
+    unset NUMCOPY_SCAN_DIR NUMCOPY_GLOBAL_JSON NUMCOPY_CITYRULE_JSON
+    rm -rf "$NC_D"
+  fi
+}
+run_client_numeric_copy() { bash scripts/check-client-numeric-copy.sh; }
+three_arg check-client-numeric-copy.sh \
+          mk_client_numeric_copy run_client_numeric_copy '客户端不得写死配置表里的数值（走环境变量口，零污染）'
 
 TL_D=/d/tmp/probe753/gates-textlogic
 mk_client_text_logic() { # check-client-text-logic：客户端不得拿中文表值做逻辑判断

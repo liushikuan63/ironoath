@@ -1677,14 +1677,18 @@ public class SocialAppService {
     public ChatListResp chatList(String playerId, ChatListReq req, long now) {
         String channelKey = requireChannelKey(req.channel(), playerId, req.toPlayerId());
         events.publishEvent(new com.ironoath.web.social.ChatReadEvent(now));
-        int limit = (int) Math.min(Math.max(1, req.limit()), configs.longParam("CHAT_LOCAL_HISTORY_MAX"));
+        int historyCap = (int) configs.longParam("CHAT_LOCAL_HISTORY_MAX");
+        int limit = (int) Math.min(Math.max(1, req.limit()), historyCap);
         List<SocialStore.ChatMessage> messages =
                 withoutBlocked(store.chat(channelKey, req.beforeMessageId(), limit), playerId);
         List<ChatMessageView> views = new ArrayList<>(messages.size());
         for (SocialStore.ChatMessage message : messages) {
             views.add(toMessageView(message));
         }
-        return new ChatListResp(views, store.hasMore(channelKey, req.beforeMessageId(), limit), now);
+        // 本地缓存上限随响应下发：客户端没有配置表加载器，拿不到这张表；
+        // 而**本地缓存留多少条没有服务端兜底**（请求里的 limit 有 —— 上面那行 Math.min）。
+        // 不下发的话，客户端会静默用着自己那份写死的数，表一改它就不知道。
+        return new ChatListResp(views, historyCap, store.hasMore(channelKey, req.beforeMessageId(), limit), now);
     }
 
     // ================= 举报与拉黑（B22 §一 3） =================

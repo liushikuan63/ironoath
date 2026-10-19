@@ -27,7 +27,7 @@ import { NetModule } from '../net/NetModule'
 import type { NetConfig, NetDeps } from '../net/NetModule'
 import { WxHttpTransport, WxSocketTransport } from '../net/WxTransport'
 import { BrowserSocketTransport } from '../net/BrowserTransport'
-import type { SocketTransport } from '../net/NetTransport'
+import type { HttpTransport, SocketTransport } from '../net/NetTransport'
 import { Prng } from '../core/Prng'
 import { TimeSync } from '../core/TimeSync'
 import { gameStore } from '../game/store/Store'
@@ -62,7 +62,7 @@ import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
 import { NetworkNotice } from '../game/network/NetworkNotice'
 import type { UpdateGateDecision } from '../game/release/UpdateGate'
-import type { AppVersionResp } from '../net/generated/OpsProtocol'
+import type { AppVersionResp, NetworkTuning } from '../net/generated/OpsProtocol'
 import type { DiplomacyRelation, NationOffice } from '../net/generated/NationProtocol'
 import type { NetOutcome, NetworkSignal } from '../net/NetModule'
 import { TrackClient } from '../game/track/TrackClient'
@@ -98,15 +98,34 @@ import { buildClaimSummary } from '../game/quest/QuestPanel'
 
 const { ccclass } = _decorator
 
-/** 与 `global.json` 同值。客户端拿不到表，所以在这里镜像一份，改了表要同步改这里。 */
-const NET_RETRY_MAX_ATTEMPTS = 3
-const NET_RETRY_BASE_DELAY_MS = 500
-const NET_RETRY_MAX_DELAY_MS = 8_000
-const NET_OFFLINE_QUEUE_MAX = 50
-const REQUEST_TIMEOUT_MS = 5_000
-const TIME_SYNC_ALPHA_FIXED = 2_000
-const TIME_SYNC_JITTER_FACTOR_FIXED = 30_000
-const TIME_SYNC_INITIAL_BEST_RTT_MS = 150
+/**
+ * 客户端网络层与时钟校准的**内置默认值**。
+ *
+ * <p><b>这些不是「最终值」</b>：它们是**第一个请求**（版本检查）用的值，
+ * 因为那个响应本身就是用这些参数发的（鸡生蛋）。响应到达后，服务端下发的真值会覆盖它们
+ * （`net.applyNetworkTuning` / `timeSync.applyTimeSyncTuning`），**之后的请求一律用服务端那份**。
+ *
+ * <p><b>为什么真值由服务端下发而不是客户端抄表</b>：这些数住在 `global.json`，
+ * 而**客户端没有配置表加载器**（`global.json` 不进包，客户端只有生成的类型、没有表数据）
+ * ⇒ 客户端拿不到表。写死一份会与服务端悄悄漂移，症状是「谁都没报错」的偏差
+ * （与 `TrackPolicy` 随 `/ops/app/version` 下发是同一条理由）。
+ *
+ * <p><b>为什么这里还留着一份</b>：因为版本检查本身要用它们发出去。
+ * 留一份**默认值**不是「抄表」—— 它会被服务端的值覆盖，而抄表是永远不覆盖。
+ * 两者的区别在下面那条测试里钉着。
+ */
+const DEFAULT_NET_TUNING = {
+  maxRetryAttempts: 3,
+  retryBaseDelayMs: 500,
+  retryMaxDelayMs: 8_000,
+  offlineQueueMax: 50,
+  requestTimeoutMs: 5_000,
+}
+const DEFAULT_TIME_SYNC_TUNING = {
+  alphaFixed: 2_000,
+  jitterFactorFixed: 30_000,
+  initialBestRttMs: 150,
+}
 
 /**
  * 客户端自报版本。点分数字，服务端按段比较（`ReleaseSystemTest` 钉过 "1.10.0" > "1.9.0"）。
@@ -208,6 +227,16 @@ export class GameBootstrap extends Component {
   root: AppRoot | null = null
 
   private net: NetModule | null = null
+  /**
+   * 时钟校准器。**存成字段是为了版本检查响应到达后能改它的参数**
+   * （服务端下发的对时参数，见 {@link applyServerNetworkTuning}）。
+   */
+  private timeSync: TimeSync | null = null
+  /**
+   * HTTP 传输层。**存成字段是为了版本检查响应到达后能改它的超时**
+   * （超时的执行点在这一层，见 {@link applyServerNetworkTuning}）。
+   */
+  private httpTransport: HttpTransport | null = null
   private nav: PanelNav | null = null
   /** 出征编成弹层（B25-S1）。它是弹层不是面板，所以不走 `panel()` 那张按名字查表的通道。 */
   private marchCompose: MarchComposeOverlay | null = null
@@ -529,24 +558,58 @@ export class GameBootstrap extends Component {
    * <p>面板**先接后登录**：View 的 `attach()` 在节点 `onLoad` 之前会先进 pending 缓冲，
    * 所以接得早不会丢数据；反过来先登录再接，就会有响应因为没人接而落空。
    */
+  /**
+   * 用服务端下发的网络层与对时参数覆盖客户端的默认值。
+   *
+   * <p><b>为什么需要这一步</b>：这些数住在 `global.json`，而**客户端没有配置表加载器**
+   * （`global.json` 不进包，客户端只有生成的类型、没有表数据）⇒ 客户端拿不到表。
+   * 写死一份会与服务端悄悄漂移，症状是「谁都没报错」的偏差
+   * （与 `TrackPolicy` 随 `/ops/app/version` 下发是同一条理由）。
+   *
+   * <p><b>为什么不是「构造时就用服务端的值」</b>：版本检查**本身就是一个请求**，
+   * 而它要用这些参数发出去 ⇒ 鸡生蛋。所以是「先用默认值发第一个请求，拿到响应后覆盖」。
+   * 覆盖**只影响之后的请求** —— 已经发出的那个请求用的是默认值，那是对的。
+   *
+   * <p><b>为什么拆成三处</b>：退避/队列上限在 `NetModule`、超时在**传输层**
+   * （`AbortController` / `wx.request` 的 timeout 就在那一层）、对时参数在 `TimeSync` ——
+   * 三个参数各自住在不同的执行点，所以各改各的。
+   */
+  private applyServerNetworkTuning(tuning: NetworkTuning): void {
+    this.net?.applyNetworkTuning({
+      maxRetryAttempts: tuning.maxRetryAttempts,
+      retryBaseDelayMs: tuning.retryBaseDelayMs,
+      retryMaxDelayMs: tuning.retryMaxDelayMs,
+      offlineQueueMax: tuning.offlineQueueMax,
+      requestTimeoutMs: tuning.requestTimeoutMs,
+    })
+    this.timeSync?.applyTimeSyncTuning(tuning.timeSyncAlphaFixed, tuning.timeSyncJitterFactorFixed)
+    // 可选方法：单测注入的假传输实现可能没有它（它们不真的发网络请求）
+    this.httpTransport?.applyTimeout?.(tuning.requestTimeoutMs)
+  }
+
   private async boot(): Promise<void> {
     if (this.booting) {
       return
     }
     this.booting = true
     const timeSync = new TimeSync({
-      alphaFixed: TIME_SYNC_ALPHA_FIXED,
-      jitterFactorFixed: TIME_SYNC_JITTER_FACTOR_FIXED,
-      initialBestRttMs: TIME_SYNC_INITIAL_BEST_RTT_MS,
+      alphaFixed: DEFAULT_TIME_SYNC_TUNING.alphaFixed,
+      jitterFactorFixed: DEFAULT_TIME_SYNC_TUNING.jitterFactorFixed,
+      initialBestRttMs: DEFAULT_TIME_SYNC_TUNING.initialBestRttMs,
     })
+    this.timeSync = timeSync
     let seq = 0
     // 弱网提示必须在**第一个请求之前**就建好：第一次请求（版本检查）本身就可能在弱网下重投，
     // 而 B16 验收 2 要的那句"重试提示"恰恰是给这一段等待看的
     this.netNotice = new NetworkNotice()
     this.createNetworkNoticeRow()
+    // 传输层的超时**可被下发覆盖**（超时的执行点在这一层：AbortController / wx.request 的 timeout）。
+    // 与 NetModule 的退避参数一样：先用默认值把第一个请求发出去，拿到响应后换成服务端那份。
+    const httpTransport = isWxRuntime() ? new WxHttpTransport(DEFAULT_NET_TUNING.requestTimeoutMs)
+      : new FetchHttpTransport(DEFAULT_NET_TUNING.requestTimeoutMs)
+    this.httpTransport = httpTransport
     const deps: NetDeps = {
-      http: isWxRuntime() ? new WxHttpTransport(REQUEST_TIMEOUT_MS)
-        : new FetchHttpTransport(REQUEST_TIMEOUT_MS),
+      http: httpTransport,
       socketFactory: (url: string): SocketTransport =>
         isWxRuntime() ? new WxSocketTransport(url) : new BrowserSocketTransport(url),
       now: () => sys.now(),
@@ -562,11 +625,11 @@ export class GameBootstrap extends Component {
     const config: NetConfig = {
       baseUrl: this.baseUrl,
       wsUrl: this.wsUrl,
-      maxRetryAttempts: NET_RETRY_MAX_ATTEMPTS,
-      retryBaseDelayMs: NET_RETRY_BASE_DELAY_MS,
-      retryMaxDelayMs: NET_RETRY_MAX_DELAY_MS,
-      offlineQueueMax: NET_OFFLINE_QUEUE_MAX,
-      requestTimeoutMs: REQUEST_TIMEOUT_MS,
+      maxRetryAttempts: DEFAULT_NET_TUNING.maxRetryAttempts,
+      retryBaseDelayMs: DEFAULT_NET_TUNING.retryBaseDelayMs,
+      retryMaxDelayMs: DEFAULT_NET_TUNING.retryMaxDelayMs,
+      offlineQueueMax: DEFAULT_NET_TUNING.offlineQueueMax,
+      requestTimeoutMs: DEFAULT_NET_TUNING.requestTimeoutMs,
     }
     const net = new NetModule(config, deps)
     this.net = net
@@ -582,6 +645,11 @@ export class GameBootstrap extends Component {
     // 同一次响应后面还要用来建埋点（攒批策略在这份响应里），所以只发这一次请求。
     const version = await api.appVersion(CLIENT_VERSION, null)
     this.appVersion = version !== null && version.kind === 'ok' ? version.data : null
+    // 服务端下发的网络层与对时参数：从这一刻起，**之后的每个请求**都用它们。
+    // （第一个请求用的是内置默认值 —— 那时还没有「服务端说的值」可用，这是对的。）
+    if (this.appVersion !== null) {
+      this.applyServerNetworkTuning(this.appVersion.networkTuning)
+    }
     // 隐私授权排在进入游戏之前：平台要求「使用隐私相关接口前先取得同意」，
     // 而登录就会带上设备与账号标识 —— 那正是隐私接口的范畴。
     // 弹窗与协议文本都由平台提供，本作不画、不存文案。

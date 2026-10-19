@@ -34,6 +34,11 @@ import com.ironoath.core.track.TrackBatcher;
 public class ReleaseRulesAssembler {
 
     private static final long MILLIS_PER_SECOND = 1000L;
+    /**
+     * 单请求超时（毫秒）。**客户端自己的数，与配置表无关**（表里没有这一行）——
+     * 放在这里是为了让客户端的「网络层参数」集中在一处下发，而不是散在客户端各处写死。
+     */
+    private static final int CLIENT_REQUEST_TIMEOUT_MS = 5_000;
     /** 表内容 hash 取前 16 位十六进制（64 bit）。碰撞概率对配置表这个量级可忽略，而全量 64 位会让清单体积翻倍。 */
     private static final int HASH_HEX_LENGTH = 16;
 
@@ -65,6 +70,66 @@ public class ReleaseRulesAssembler {
     /** 攒批秒数（global.TRACK_BATCH_FLUSH_SECONDS）。原始值，双端同源下发给客户端。 */
     public int trackFlushSeconds() {
         return (int) configs.longParam("TRACK_BATCH_FLUSH_SECONDS");
+    }
+
+    // ---------- 客户端网络层与时钟校准（B01 的客户端侧参数） ----------
+
+    /**
+     * 客户端网络层与时钟校准的参数，随 {@code /ops/app/version} 下发。
+     *
+     * <p><b>为什么这些数住在 global 表里、却由服务端读</b>：它们在表里的 {@code source} 写的是
+     * 「B01 客户端 NetModule 要求」「B01 时间校准契约」——<b>主人是客户端</b>。
+     * 但 {@code global.json} 不进客户端包（客户端只有生成的类型、没有表数据），
+     * 所以客户端只能从服务端拿：<b>服务端读同一张表，两端口径因此一致</b>。
+     *
+     * <p><b>为什么不是「客户端自己写死一份」</b>：与 {@code TrackPolicy} 同一条理由 ——
+     * 写死的那份会与服务端悄悄漂移，症状是「谁都没报错」的偏差。
+     *
+     * <p><b>为什么必须随版本检查而不是随 /player/init</b>：这些参数要<b>在第一个请求之前</b>就位
+     * （退避、超时、离线队列上限决定第一个请求怎么发），而 {@code /player/init} 要登录之后才有。
+     *
+     * <p>每次调用都重新装配，不缓存 —— 与本类其它方法同一条纪律（配置表可热更）。
+     */
+    public int netRetryMaxAttempts() {
+        return (int) configs.longParam("NET_RETRY_MAX_ATTEMPTS");
+    }
+
+    public int netRetryBaseDelayMs() {
+        return (int) configs.longParam("NET_RETRY_BASE_DELAY_MS");
+    }
+
+    public int netRetryMaxDelayMs() {
+        return (int) configs.longParam("NET_RETRY_MAX_DELAY_MS");
+    }
+
+    public int netOfflineQueueMax() {
+        return (int) configs.longParam("NET_OFFLINE_QUEUE_MAX");
+    }
+
+    /**
+     * 单请求超时（毫秒）。
+     *
+     * <p><b>它不在 global.json 里</b>（表里没有这一行）—— 这是客户端自己的超时上限，
+     * 与表无关。放在这里是为了让客户端的「网络层参数」集中在一处下发，
+     * 而不是散在客户端各处写死；<b>所以它没有表出处</b>，注释里如实写明。
+     */
+    public int netRequestTimeoutMs() {
+        return CLIENT_REQUEST_TIMEOUT_MS;
+    }
+
+    /** 时钟校准的平滑系数（定点 ×10000）。来源 global.TIME_SYNC_ALPHA（表里是比率 0.2）。 */
+    public int timeSyncAlphaFixed() {
+        return (int) configs.fixedParam("TIME_SYNC_ALPHA");
+    }
+
+    /** 时钟校准的抖动剔除倍数（定点 ×10000）。来源 global.TIME_SYNC_JITTER_FACTOR（表里是 3.0）。 */
+    public int timeSyncJitterFactorFixed() {
+        return (int) configs.fixedParam("TIME_SYNC_JITTER_FACTOR");
+    }
+
+    /** 首次采样前的最佳 RTT 兜底（毫秒）。来源 global.TIME_SYNC_INITIAL_BEST_RTT_MS。 */
+    public int timeSyncInitialBestRttMs() {
+        return (int) configs.longParam("TIME_SYNC_INITIAL_BEST_RTT_MS");
     }
 
     /**

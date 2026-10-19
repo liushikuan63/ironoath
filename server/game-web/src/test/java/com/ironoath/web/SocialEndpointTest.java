@@ -88,6 +88,7 @@ class SocialEndpointTest {
     @Autowired private SocialStore socialStore;
     @Autowired private com.ironoath.web.reward.PlayerWallet wallet;
     @Autowired private com.ironoath.web.social.SocialRulesAssembler socialRules;
+    @Autowired private com.ironoath.config.ConfigRegistry configs;
 
     @BeforeEach
     void resetStores() {
@@ -1268,6 +1269,22 @@ class SocialEndpointTest {
         assertThat(list.get("messages").get(0).get("content").asText()).isEqualTo("今晚八点集结");
         assertThat(list.get("messages").get(0).get("senderName").asText()).isNotBlank();
         assertThat(list.get("hasMore").asBoolean()).isFalse();
+    }
+
+    @Test
+    @DisplayName("拉聊天历史时下发本地缓存上限：客户端没有配置表加载器，本地留多少条没有服务端兜底")
+    void chatListCarriesHistoryCap() throws Exception {
+        String player = newPlayer(11);
+        post200("/chat/send", player, new ChatSendReq(newRequestId(), ChatChannel.WORLD, "有人吗", null));
+
+        JsonNode list = post200("/chat/list", player, new ChatListReq(ChatChannel.WORLD, null, null, 20));
+        // 请求里的 limit 那一处**有服务端兜底**（下面 Math.min 夹过），
+        // 但**客户端本地缓存留多少条没有兜底** ⇒ 那个数必须下发，
+        // 否则客户端会静默用着自己写死的那份，表一改它就不知道。
+        assertThat(list.get("historyCap")).as("响应必须带本地缓存上限").isNotNull();
+        assertThat(list.get("historyCap").asInt())
+                .as("本地缓存上限必须来自 global 表")
+                .isEqualTo((int) configs.longParam("CHAT_LOCAL_HISTORY_MAX"));
     }
 
     @Test

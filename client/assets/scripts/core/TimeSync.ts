@@ -26,8 +26,18 @@ export interface TimeSyncOptions {
 }
 
 export class TimeSync {
-  private readonly alphaFixed: number
-  private readonly jitterFactorFixed: number
+  /**
+   * 偏移平滑系数（定点 ×10000）。**可被服务端下发的值覆盖**。
+   *
+   * <p>为什么可覆盖：它住在 `global.json`，而客户端没有配置表加载器（`global.json` 不进包），
+   * 客户端只有生成的类型、没有表数据 ⇒ 拿不到表。写死一份会与服务端悄悄漂移
+   * （与 `TrackPolicy` 随 `/ops/app/version` 下发是同一条理由）。
+   */
+  private alphaFixed: number
+  /**
+   * 抖动剔除倍数（定点 ×10000）。**可被服务端下发的值覆盖**（理由同 {@link alphaFixed}）。
+   */
+  private jitterFactorFixed: number
   // 字段名与同名访问器方法刻意错开（bestRtt / bestRttMs()），否则 TS 报重复标识符
   private bestRtt: number
   private offset = 0
@@ -58,6 +68,31 @@ export class TimeSync {
    * @param rttMs     往返时延（收到响应时刻 - 发出请求时刻）
    * @param rawOffset 服务端返回的 offset 原值（= 服务端收到请求时刻 - 客户端发出请求时刻）
    */
+  /**
+   * 用服务端下发的对时参数覆盖当前的平滑系数与抖动剔除倍数。
+   *
+   * <p><b>为什么需要它</b>：这两个数住在 `global.json`，客户端没有配置表加载器 ⇒ 拿不到表。
+   * 写死一份会与服务端悄悄漂移（症状是「谁都没报错」的偏差）。
+   * 而下发它们的响应（版本检查）本身就是一个请求 ⇒ 鸡生蛋 ⇒ 只能用「先发后覆盖」。
+   *
+   * <p><b>为什么校验在这里</b>：服务端下发的值也可能是坏值（表被改坏了），
+   * 那时**抛出来比默默用坏值继续对时好** —— 症状会立刻出现在崩溃上报里，
+   * 而不是表现为「时钟对不准」这种没人查的现象。
+   *
+   * <p><b>只影响之后的采样</b>：已经采到的样本用的是旧值。第一个请求必然如此，
+   * 而那是对的：它发生时还没有「服务端说的值」可用。
+   */
+  applyTimeSyncTuning(alphaFixed: number, jitterFactorFixed: number): void {
+    if (alphaFixed <= 0 || alphaFixed > Fixed.ONE) {
+      throw new RangeError(`alpha 必须落在 (0, 1.0] 的定点区间，实际=${alphaFixed}`)
+    }
+    if (jitterFactorFixed < Fixed.ONE) {
+      throw new RangeError(`jitterFactor 不得小于 1.0，否则所有样本都会被丢弃，实际=${jitterFactorFixed}`)
+    }
+    this.alphaFixed = alphaFixed
+    this.jitterFactorFixed = jitterFactorFixed
+  }
+
   offer(rttMs: number, rawOffset: number): void {
     if (rttMs < 0) {
       throw new RangeError(`rttMs 不得为负：${rttMs}`)

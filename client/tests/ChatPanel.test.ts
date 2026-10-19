@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 import {
   ackablePrivateEventIds, buildChatPanel, buildChatMessages, chatConversations, chatFailureText,
   chatContentPerPage, chatKey, chatMessageText, chatPageCount, chatPageOf, chatUnreadCount, CHAT_FETCH_OLDER,
-  CHAT_LOCAL_HISTORY_MAX, CHAT_PAGE_ROWS, mergeChatHistory,
+  CHAT_LOCAL_HISTORY_FALLBACK_MAX, CHAT_PAGE_ROWS, mergeChatHistory,
   parseSharedReport, SOCIAL_CHAT_RATE_LIMITED,
 } from '../assets/scripts/game/social/ChatPanel'
 import type { ChatMessageView, SocialEventView } from '../assets/scripts/net/generated/SocialProtocol'
@@ -51,8 +51,10 @@ test('历史合并：超出上限丢最旧，保留的恰好是最近 cap 条', 
   const incoming = Array.from({ length: 12 }, (_, i) => message(`m${i}`, 1000 + i))
   const merged = mergeChatHistory([], incoming, 5)
   assert.deepEqual(merged.map(m => m.messageId), ['m7', 'm8', 'm9', 'm10', 'm11'])
-  // 默认上限就是 global 里那个数（200），不是随手写的
-  assert.equal(CHAT_LOCAL_HISTORY_MAX, 200)
+  // 兜底上限就是 global 里那个数（200），不是随手写的。
+  // **它只是兜底**：服务端下发 `ChatListResp.historyCap` 之后，本地缓存上限用服务端那份
+  // （那一处没有服务端兜底，客户端写死就会静默留着旧上限）。
+  assert.equal(CHAT_LOCAL_HISTORY_FALLBACK_MAX, 200)
   assert.equal(mergeChatHistory([], incoming).length, 12)
 })
 
@@ -320,5 +322,24 @@ test('聊天分页：CHAT_PAGE_ROWS 与"向服务端一次要多少"是两个数
   assert.equal(CHAT_FETCH_OLDER, 20, '往前翻一次补 20 条 = 4 屏，翻 4 次才发一枪')
   assert.notEqual(CHAT_PAGE_ROWS, CHAT_FETCH_OLDER)
   assert.ok(CHAT_FETCH_OLDER > CHAT_PAGE_ROWS, '一次要的必须多于一屏，否则每翻一页都发一次请求')
-  assert.ok(CHAT_FETCH_OLDER <= CHAT_LOCAL_HISTORY_MAX, '一次要的不能超过本地缓存上限')
+  assert.ok(CHAT_FETCH_OLDER <= CHAT_LOCAL_HISTORY_FALLBACK_MAX, '一次要的不能超过本地缓存上限')
+})
+
+// ---------- 本地历史上限由服务端下发（#2252） ----------
+
+test('本地缓存上限用服务端下发的那个数，不是客户端写死的那份', () => {
+  // 缺陷形状：`CHAT_LOCAL_HISTORY_MAX` 住在 global 表（客户端没有配置表加载器 ⇒ 拿不到表），
+  // 客户端于是写死一份 200。**请求里的 limit 那一处无害**（服务端会夹到同一个表值），
+  // 但**本地缓存留多少条没有服务端兜底** ⇒ 表里 200→100 那一改，
+  // 客户端仍然留 200 条（内存多一倍、屏上翻得更远），而没有任何测试会红。
+  const incoming = Array.from({ length: 12 }, (_, i) => message(`m${i}`, 1000 + i))
+
+  // 服务端说：本地留 5 条 ⇒ 合并后只剩最近 5 条。
+  const capped = mergeChatHistory([], incoming, 5)
+  assert.deepEqual(capped.map(m => m.messageId), ['m7', 'm8', 'm9', 'm10', 'm11'],
+    '本地缓存上限必须用服务端下发的那个数')
+
+  // 客户端写死的那份（200）只在**还没收到服务端的值**时兜底。
+  const fallback = mergeChatHistory([], incoming)
+  assert.equal(fallback.length, 12, '兜底上限 200 大于这批 12 条 ⇒ 全部保留')
 })

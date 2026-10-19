@@ -20,6 +20,9 @@ import type { CrashInput } from '../track/TrackClient'
  * 而中文一字符可能占 3 字节。宁可压得比限制更狠，也不要让一条崩溃因为超预算被整条丢弃 ——
  * 被丢弃的崩溃比被截断的崩溃损失大得多。
  */
+// numeric-copy-exempt: 这是**客户端自己的堆栈字符预算**，不是表值的副本 ——
+// 表里的 PERF_PAYLOAD_MAX_BYTES 是服务端的**字节**预算，这里是客户端的**字符**预算
+// （中文一字符可能占 3 字节，所以宁可压得更狠）。两者是不同的量纲。
 export const CRASH_STACK_BUDGET_CHARS = 6_000
 /** 同一个错误摘要在这么长时间内只报一次。 */
 export const CRASH_DEDUPE_WINDOW_MS = 60_000

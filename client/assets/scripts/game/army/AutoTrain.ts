@@ -69,6 +69,9 @@ export function prepareAutoRefill(memory: TrainMemory | null, march: MarchSpec |
  * 够玩家睡一觉回来还有一批在训，而它花掉的是他自己看得到的资源。
  * 客户端读不到那张表（`gen.sh` 不生成 global），所以这个数写在客户端 —— 只当默认值用。
  */
+// numeric-copy-exempt: 这不是表值的副本，是**故意比表里小的 UI 默认值**（表是 5，这里取 3：
+// 「排三次」的默认够玩家睡一觉回来还有一批在训，而它花掉的是他自己看得到的资源）。
+// 权威上限在服务端（`/army/autoTrain` 会把超出的当场拒并带回上限本身）⇒ 客户端这份怎么取都不越界。
 export const AUTO_TRAIN_BATCH_BUDGET = 3
 
 /** 客户端记住的「上一次训练」：自动续训按它来续。 */

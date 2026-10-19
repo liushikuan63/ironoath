@@ -16,6 +16,9 @@
  */
 
 /** 定点放大倍数，来源：contract/config/global.json 的 FIXED_POINT_SCALE。 */
+// numeric-copy-exempt: 这不是表值的副本，是**跨语言的定点基约定**（服务端 FixedPoint.java 是同一份，
+// 全项目所有定点数都按 ×10000 记）。它不是「服务端会按它跑、客户端按它判」的那类参数 ——
+// 改了它要双端同时改，本来就该是同一个常量。`ConfigTypes.ts` 的文件头也写着这条约定。
 export const SCALE = 10000
 
 /** 定点 0。 */
