@@ -18,6 +18,10 @@ import type { BagItem, ResourceDetail } from '../../net/generated/BagProtocol'
 import type { GachaDrawResp, GachaPoolSummary } from '../../net/generated/HeroProtocol'
 import { resourceName } from '../ui/ResourceNames'
 
+// numeric-copy-exempt: 这不是 gacha 表 costCount 的副本，是**协议里的十抽批量**
+// （B06 §2：count 只允许 1 或 10）。两者**同名不同义** —— 表里的 costCount 说的是
+// 「抽一次要花多少」（150 / 1200 / 1 三个池各不相同），而这里的 10 是「一次抽几个」。
+// 判据上它们会撞上（注释里同时出现了表名 gacha 与列名 costCount），所以豁免写明。
 /** 十抽的倍数。服务端按 `costCount × count` 收钱，count 只允许 1 或 10（B06 §2）。 */
 export const TEN_DRAW_COUNT = 10
 

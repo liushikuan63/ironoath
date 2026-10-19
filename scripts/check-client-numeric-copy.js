@@ -52,9 +52,18 @@ const path = require('path')
 // 两个输入都可用环境变量换（验证这道门真的会红，而不必改仓库里的文件）——
 // 与本仓其它门同一形状。**不设时逐字节等同改动前**（模式隔离）。
 const ROOT = process.env.NUMCOPY_SCAN_DIR || 'client/assets/scripts'
-const GLOBAL_TABLE = process.env.NUMCOPY_GLOBAL_JSON || 'contract/config/global.json'
-const CITY_RULE_TABLE = process.env.NUMCOPY_CITYRULE_JSON || 'contract/config/city_rule.json'
-const CHEST_TABLE = process.env.NUMCOPY_CHEST_JSON || 'contract/config/chest.json'
+/**
+ * 配置表目录（**全部 46 张表**都参与）。
+ *
+ * <p><b>为什么从「三张表」扩到「全部」</b>：先前只收 global / city_rule / chest，
+ * 因为**那三张是客户端确实从表里镜像过数的地方**；而「其余 43 张有没有被抄」当时只有
+ * **反向审计**（人工逐表查）这一层证据 ⇒ 覆盖是「查过的」，不是「机器守着的」。
+ * 收进本门之后，那层证据变成机器判据。
+ *
+ * <p><b>实测：扩到全部表之后命中只有 3 条</b>（逐条判完都是**非抄表**）⇒
+ * 扩表的误报面是可控的，不需要为每张表写例外。
+ */
+const CONFIG_DIR = process.env.NUMCOPY_CONFIG_DIR || 'contract/config'
 
 /**
  * 参与判定的表：这些表里的行是「服务端会按它跑、客户端会按它判」的数。
@@ -70,11 +79,6 @@ const CHEST_TABLE = process.env.NUMCOPY_CHEST_JSON || 'contract/config/chest.jso
  * 两种形状都收，因为它们是同一族缺陷（客户端抄了表里的数），而**只收一种就会漏掉另一种**
  * —— 本门存在的理由正是「不能靠人记得」（chat 表那次就是「同名但不同量纲」的教训）。
  */
-const TABLES = [
-  { file: GLOBAL_TABLE, label: 'global', shape: 'value' },
-  { file: CITY_RULE_TABLE, label: 'city_rule', shape: 'value' },
-  { file: CHEST_TABLE, label: 'chest', shape: 'named-column' },
-]
 
 /** 豁免的形状：紧邻上一行的 `numeric-copy-exempt: <理由>`。 */
 // 理由可以跨行（写清楚一条理由常常不止一行）⇒ 理由取到**下一个空行或下一个声明**为止，
@@ -91,67 +95,97 @@ function collectFiles(dir, out) {
 }
 
 /**
- * 表里所有行 id → 该行可被抄走的数值。
+ * 读**全部**配置表：每张表的行 id + 数值列名，并统计**每个数值列名出现在几张表里**。
  *
- * <p>两种形状：
+ * <p>两种表形状都收（#2253 已踩过一次这个坑）：
  * <ul>
- *   <li>`value` 形状：行有 `value` 列 ⇒ 线索是**行 id**（`global.NET_RETRY_MAX_ATTEMPTS`）。</li>
- *   <li>`named-column` 形状：行没有 `value` 列，数值在**有名字的列**里 ⇒
- *       线索是**列名**（`chest.maxBatchCount`）。</li>
+ *   <li><b>「值在一列里」</b>（global / city_rule）：行有 `value` 列 ⇒ 线索是**行 id**。</li>
+ *   <li><b>「值是命名列」</b>（chest 的 `maxBatchCount`）：数值散在有名字的列里 ⇒ 线索是**列名**。</li>
  * </ul>
- * 键统一写成「表名.线索」，两种形状就能走同一套匹配。
+ *
+ * <p><b>列名只在「全局唯一」时才算线索</b>：122 个数值列名里有 95 个是全局唯一的
+ * （`maxBatchCount` / `costCount` / `staminaCost` …），剩下的是 `maxLevel` / `count` / `level` /
+ * `tier` / `durationDays` 这种**普通英文词** —— 它们在多张表里都有，孤零零出现在代码里
+ * 只能说明「代码里有个同名词」，不能说明「抄了表」（实测：按「列名出现过」统计，
+ * 命中从 3 条撑到 24 条，全是 `hero_rarity` 的行 id `N` 撞上 `COLOR_SSR` 这类噪音）。
  */
-function readTableRows() {
-  const rows = new Map()
-  for (const table of TABLES) {
-    if (!fs.existsSync(table.file)) continue
+function readTables() {
+  const tables = []
+  const colOwner = new Map()
+  const files = fs.existsSync(CONFIG_DIR)
+    ? fs.readdirSync(CONFIG_DIR).filter(f => f.endsWith('.json')).sort()
+    : []
+  for (const file of files) {
     let data
     try {
-      data = JSON.parse(fs.readFileSync(table.file, 'utf8'))
+      data = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, file), 'utf8'))
     } catch {
       continue
     }
-    const list = Array.isArray(data) ? data : (data.rows || [])
-    for (const row of list) {
+    const rows = Array.isArray(data) ? data : (data.rows || [])
+    if (!Array.isArray(rows)) continue
+    const table = file.replace('.json', '')
+    const ids = []
+    const cols = new Set()
+    for (const row of rows) {
       if (!row || typeof row !== 'object') continue
-      const id = row.id
-      if (typeof id !== 'string' || id === '') continue
-      if (table.shape === 'value') {
-        const value = row.value
-        if (typeof value !== 'string' && typeof value !== 'number') continue
-        rows.set(`${table.label}.${id}`, { label: table.label, value: String(value) })
-        continue
-      }
-      // named-column 形状：每一个「数值型命名列」都是一条可被抄走的线索
+      if (typeof row.id === 'string') ids.push(row.id)
       for (const [column, value] of Object.entries(row)) {
         if (column === 'id') continue
-        if (typeof value !== 'number' || typeof value === 'boolean') continue
-        rows.set(`${table.label}.${column}`, { label: table.label, value: String(value) })
+        if (typeof value === 'number' && typeof value !== 'boolean') {
+          cols.add(column)
+          if (!colOwner.has(column)) colOwner.set(column, new Set())
+          colOwner.get(column).add(table)
+        }
       }
     }
+    tables.push({ table, ids, cols })
   }
-  return rows
+  const uniqueCols = new Set()
+  for (const [column, owners] of colOwner) {
+    if (owners.size === 1) uniqueCols.add(column)
+  }
+  return { tables, uniqueCols }
 }
 
 /**
- * 一段文本里点名的表 id（词边界，避免短 id 误伤）。
+ * 一段文本里出现的「表数据线索」。
  *
- * <p>⚠️ **两种写法都要认**：客户端的注释里既有裸 id
- * （「来源：contract/config/global.json 的 FIXED_POINT_SCALE」）也有带表名的
- * （「来源 global.NET_RETRY_MAX_ATTEMPTS」）。⇒ 匹配时**裸 id 是主形态**，
- * 带表名的形态是它的子串 —— 只认一种就会漏（第一版把键改成「表名.id」，
- * 裸 id 那种写法全漏了，命中数从 7 掉到 4）。
+ * <p><b>线索只有两种形态，且各自有它的理由</b>：
+ * <ul>
+ *   <li><b>表行 id</b>（`season_01_phase_1`）：必须**连表名一起**出现才算线索 ——
+ *       表的行 id 可能是 `N` / `R` / `SR` / `SSR` 这种短 token（`hero_rarity` 的行），
+ *       孤零零出现会撞上一堆普通标识符（`COLOR_SSR`、`const R = …`）。
+ *       而人自认抄表时写的正是「来源 global.json 的 XXX」「对应 chest 的 maxBatchCount」这种
+ *       **带表名**的形态。</li>
+ *   <li><b>全局唯一的数值列名</b>（`maxBatchCount` / `costCount` / `staminaCost`）：
+ *       可以**单独**出现 —— 复合领域词在 46 张表里只出现一次 ⇒ 本身就是有辨识度的线索。</li>
+ * </ul>
+ *
+ * <p>⚠️ **「裸 id 是主形态」那条旧结论要分清**：全局表里参数 id（`NET_RETRY_MAX_ATTEMPTS`）
+ * 本身就是自认的形态（「来源：global.json 的 NET_RETRY_MAX_ATTEMPTS」——**表名与 id 之间
+ * 隔着 `.json`**，不是紧挨着）⇒ 「行 id 要连表名」这条若按「紧挨着」判会漏掉它。
+ * ⇒ 这里按「**同一段注释里同时出现表名与该 id**」来判，两者之间隔什么都不影响。
  */
-function mentionedIds(text, ids) {
+function cluesIn(text, tables, uniqueCols) {
   const found = []
-  for (const key of ids.keys()) {
-    const bare = key.includes('.') ? key.slice(key.indexOf('.') + 1) : key
-    // 两种形态都试：带表名的完整键、以及裸 id
-    for (const candidate of [key, bare]) {
-      if (!text.includes(candidate)) continue
-      const re = new RegExp(`(^|[^A-Za-z0-9_])${candidate.replace(/\./g, '\\.')}($|[^A-Za-z0-9_])`)
+  for (const { table, ids, cols } of tables) {
+    const esc = table.replace(/\./g, '\\.')
+    const tableNamed = new RegExp(`(^|[^A-Za-z0-9_])${esc}($|[^A-Za-z0-9_])`).test(text)
+    if (tableNamed) {
+      for (const id of ids) {
+        const re = new RegExp(`(^|[^A-Za-z0-9_])${id.replace(/\./g, '\\.')}($|[^A-Za-z0-9_])`)
+        if (re.test(text)) {
+          found.push(`${table}.${id}`)
+          break
+        }
+      }
+    }
+    for (const column of cols) {
+      if (!uniqueCols.has(column)) continue
+      const re = new RegExp(`(^|[^A-Za-z0-9_])${column.replace(/\./g, '\\.')}($|[^A-Za-z0-9_])`)
       if (re.test(text)) {
-        found.push(key)
+        found.push(`${table}.${column}（全局唯一的数值列名）`)
         break
       }
     }
@@ -216,13 +250,13 @@ function hasBareNumber(body) {
 }
 
 /** 声明块里点了名 ⇒ 抄表。 */
-function scan(files, ids) {
+function scan(files, tables, uniqueCols) {
   const findings = []
   for (const file of files) {
     const raw = fs.readFileSync(file, 'utf8')
     const rawLines = raw.split(/\r?\n/)
     for (const block of findConstBlocks(rawLines)) {
-      const mentions = mentionedIds(block.comment, ids)
+      const mentions = cluesIn(block.comment, tables, uniqueCols)
       if (mentions.length === 0) continue
       if (!hasBareNumber(block.body)) continue
       const exempt = findExempt(rawLines, block.declLine)
@@ -243,7 +277,11 @@ function scan(files, ids) {
  * 只取第一段就够读懂（不把整块 JSDoc 搬过来）。
  */
 function findExempt(rawLines, index) {
-  for (let back = 1; back <= 3; back++) {
+  // ⚠️ **窗口是 8 行不是 3 行**：豁免说明常写成**多行注释**，而要豁免的那一行可能在那个
+  // 注释块**之后隔一行**（中间还夹着一行 JSDoc）。只开 3 行时那种写法会**静默漏掉**
+  // —— 门判红而人看不出为什么（#2258 实测踩到：GachaPanel 那条豁免就漏了）。
+  // 与 `check-client-display-name-copy` 同一条教训、同一个窗口。
+  for (let back = 1; back <= 8; back++) {
     const prev = rawLines[index - back]
     if (prev === undefined) break
     const match = EXEMPT_RE.exec(prev)
@@ -261,7 +299,11 @@ function findExempt(rawLines, index) {
       }
       return parts.filter(part => part !== '').join(' ')
     }
-    if (prev.trim() !== '' && !prev.trim().startsWith('*') && !prev.trim().startsWith('//')) break
+    // ⚠️ `/**` 也是注释行：只认 `*` 与 `//` 的话，**一行 JSDoc 就会把查找截断**
+    // （实测：GachaPanel 那条豁免写在 JSDoc 之上 ⇒ 中间隔了一行 `/** … */`
+    //  ⇒ 查找在那一行 break ⇒ 豁免没被认到 ⇒ 门判红而人看不出为什么）。
+    if (prev.trim() !== '' && !prev.trim().startsWith('*') && !prev.trim().startsWith('//')
+        && !prev.trim().startsWith('/*')) break
   }
   return null
 }
@@ -271,8 +313,8 @@ function main() {
   const probe = args.includes('--probe')
   const selfTest = args.includes('--self-test')
 
-  const ids = readTableRows()
-  if (ids.size === 0) {
+  const { tables, uniqueCols } = readTables()
+  if (tables.length === 0) {
     console.error('[check-client-numeric-copy][FAIL] 一张表都没读到 —— 判据坏了')
     process.exit(1)
   }
@@ -286,17 +328,17 @@ function main() {
     process.exit(1)
   }
 
-  const found = scan(files, ids)
+  const found = scan(files, tables, uniqueCols)
   const offending = found.filter(h => h.exempt === null)
   const exempted = found.filter(h => h.exempt !== null)
 
   if (selfTest) {
     // 植入一条违规：注释里点名 global.NET_RETRY_MAX_ATTEMPTS，同一行写死那个数。
-    const probeId = ids.has('NET_RETRY_MAX_ATTEMPTS') ? 'NET_RETRY_MAX_ATTEMPTS' : ids.keys().next().value
+    const probeId = 'NET_RETRY_MAX_ATTEMPTS'
     const tmp = path.join(ROOT, 'zz-numcopy-selftest.ts')
     try {
       fs.writeFileSync(tmp, `/** 来源 global.${probeId} */\nconst X = 3\n`, 'utf8')
-      const after = scan(collectFiles(ROOT, []).filter(f => !f.split(path.sep).includes('generated')), ids)
+      const after = scan(collectFiles(ROOT, []).filter(f => !f.split(path.sep).includes('generated')), tables, uniqueCols)
       if (!after.some(h => h.file === tmp)) {
         console.error('[check-client-numeric-copy][FAIL] 自检：植入的违规没有被抓到 —— 判据不成立')
         process.exit(1)
@@ -309,7 +351,7 @@ function main() {
   }
 
   if (probe) {
-    console.log(`表 ${ids.size} 条行；客户端非生成物 .ts ${files.length} 个；命中 ${found.length} 条（其中豁免 ${exempted.length}）`)
+    console.log(`表 ${tables.length} 张；全局唯一的数值列名 ${uniqueCols.size} 个；客户端非生成物 .ts ${files.length} 个；命中 ${found.length} 条（其中豁免 ${exempted.length}）`)
     for (const hit of found) {
       console.log(`  ${hit.file}:${hit.line}  [${hit.ids.join(', ')}]  ${hit.exempt ? '[豁免] ' : ''}${hit.text}`)
     }

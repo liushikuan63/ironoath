@@ -157,7 +157,9 @@ function findExempt(rawLines, index) {
     if (match) return match[1].trim()
     const trimmed = prev.trim()
     if (trimmed === '') break
-    if (!trimmed.startsWith('*') && !trimmed.startsWith('//')) break
+    // ⚠️ `/**` 也是注释行：只认 `*` 与 `//` 的话，**一行 JSDoc 就会把查找截断**
+    // （与数值门同一条教训，实测同一次踩到）。
+    if (!trimmed.startsWith('*') && !trimmed.startsWith('//') && !trimmed.startsWith('/*')) break
   }
   return null
 }

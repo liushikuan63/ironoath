@@ -580,19 +580,18 @@ three_arg check-client-config-copy.sh \
 
 NC_D=/d/tmp/probe753/gates-numcopy
 mk_client_numeric_copy() { # check-client-numeric-copy：客户端不得写死配置表里的数值
-  # ⚠️ 走**环境变量口**（NUMCOPY_SCAN_DIR / NUMCOPY_GLOBAL_JSON / NUMCOPY_CITYRULE_JSON）⇒ **零污染**：
-  #    违规态只往临时目录里放两个 .ts 与一张临时表，不碰 client/assets 那 145 个文件。
-  # ⚠️ 临时表要有带**数字**的行（global 的 DECIMAL 行），否则门读不到值会先判红（那是另一条判据）。
+  # ⚠️ 走**环境变量口**（NUMCOPY_SCAN_DIR / NUMCOPY_CONFIG_DIR）⇒ **零污染**：
+  #    违规态只往临时目录里放一个 .ts 与一个**配置表目录**，不碰 client/assets 那 145 个文件。
+  # ⚠️ 门读的是**一个目录下的全部表**（NUMCOPY_CONFIG_DIR）⇒ 临时表要放在临时子目录里。
+  # ⚠️ 临时表要有带**数字**的行，否则门读不到值会先判红（那是另一条判据，不是本条）。
   if [ "$1" = "1" ]; then
-    rm -rf "$NC_D"; mkdir -p "$NC_D"
-    printf '{"table":"global","version":1,"fieldTypes":{},"rows":[{"id":"ZZ_GATE_PROBE","valueType":"LONG","value":"7"}]}\n' > "$NC_D/global.json"
-    printf '{"table":"city_rule","version":1,"fieldTypes":{},"rows":[]}\n' > "$NC_D/city_rule.json"
-    printf '{"table":"chest","version":1,"fieldTypes":{},"rows":[]}\n' > "$NC_D/chest.json"
+    rm -rf "$NC_D"; mkdir -p "$NC_D/cfg"
+    printf '{"table":"global","version":1,"fieldTypes":{},"rows":[{"id":"ZZ_GATE_PROBE","valueType":"LONG","value":"7"}]}\n' > "$NC_D/cfg/global.json"
     # 违规形状：**注释里点名表 id**，同一块声明里写死那个数。
     printf '/** 来源 global.ZZ_GATE_PROBE */\nconst ZzCopied = 7\n' > "$NC_D/ZzNumericCopy.ts"
-    export NUMCOPY_SCAN_DIR="$NC_D" NUMCOPY_GLOBAL_JSON="$NC_D/global.json" NUMCOPY_CITYRULE_JSON="$NC_D/city_rule.json" NUMCOPY_CHEST_JSON="$NC_D/chest.json"
+    export NUMCOPY_SCAN_DIR="$NC_D" NUMCOPY_CONFIG_DIR="$NC_D/cfg"
   else
-    unset NUMCOPY_SCAN_DIR NUMCOPY_GLOBAL_JSON NUMCOPY_CITYRULE_JSON NUMCOPY_CHEST_JSON
+    unset NUMCOPY_SCAN_DIR NUMCOPY_CONFIG_DIR
     rm -rf "$NC_D"
   fi
 }
