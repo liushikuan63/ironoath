@@ -11,7 +11,9 @@
 # 这个脚本就退 1 并打出两个数 —— 它跟着表走，不是写死的数字。
 set -uo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# 仓库根（**可选口 RANK_PAYLOAD_ROOT**）：不设时就是本脚本所在仓库；
+# 绝对路径也直接可用 ⇒ harness 的夹具可以建在 /d/tmp 下，不必先弄脏真表。
+ROOT_DIR="${RANK_PAYLOAD_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 RESULT="$(node - "$ROOT_DIR" <<'NODE'
 const fs = require('fs')

@@ -494,6 +494,27 @@ run_mongo_set_coverage() { node scripts/check-mongo-set-coverage.js; }
 three_arg check-mongo-set-coverage.sh \
           mk_mongo_set_coverage run_mongo_set_coverage 'Mongo save 必须覆盖 Document 每个字段（走 MONGOSET_DIR 口，零污染）'
 
+# check-rank-payload：榜分页的单响应**在最坏情况下**也不超过 PERF_PAYLOAD_MAX_BYTES
+# （量的是上界：每页条数 × 一条最坏行 + 信封；跟着表走，不是写死的数字）。
+# ⚠️ 走 RANK_PAYLOAD_ROOT 口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = **真 global.json 的副本**里把 RANK_PAGE_SIZE_MAX 从 20 改成 200
+# （脚本注释原话：「把 RANK_PAGE_SIZE_MAX 从 20 改成 40（或把 PERF_PAYLOAD_MAX_BYTES 调小）这个脚本就退 1」）⇒ 红点明确。
+RP_D=/d/tmp/probe753/gates-rankpayload
+mk_rank_payload() {
+  if [ "$1" = "1" ]; then
+    mkdir -p "$RP_D/contract/config"
+    cp contract/config/global.json "$RP_D/contract/config/global.json"
+    node -e 'const fs=require("fs");const p=process.argv[1];const j=JSON.parse(fs.readFileSync(p,"utf8"));for(const r of (j.rows||[]))if(r.id==="RANK_PAGE_SIZE_MAX")r.value=200;fs.writeFileSync(p,JSON.stringify(j,null,2));' "$RP_D/contract/config/global.json"
+    export RANK_PAYLOAD_ROOT="$RP_D"
+  else
+    unset RANK_PAYLOAD_ROOT
+    rm -f "$RP_D/contract/config/global.json"
+  fi
+}
+run_rank_payload() { bash scripts/check-rank-payload.sh; }
+three_arg check-rank-payload.sh \
+          mk_rank_payload run_rank_payload '榜分页最坏响应不得超过预算（走 RANK_PAYLOAD_ROOT 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
