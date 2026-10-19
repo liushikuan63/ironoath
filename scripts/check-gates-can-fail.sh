@@ -447,6 +447,33 @@ run_checklist_table() {
 three_arg check-checklist-table.sh \
           mk_checklist_table run_checklist_table '收口清单表格每行单元格不得多于表头（走 CL_TABLE_FILE 口，零污染）'
 
+# check-config-refs：配置表之间的引用外键必须成立（悬空外键的后果是「发了个不存在的东西」，
+# 玩家只当 bug 报上来，不会报错）。
+# ⚠️ 门脚本把配置目录写死成 contract/config，但它的 .js 本来就吃 argv[2]（作者原话：
+# 「换一份配置目录跑，用来验证这份检查真的会红，而不必先弄脏仓库里的表」）⇒ 这里直接调 .js。
+# ⚠️ 夹具是**真配置目录的副本 + 只改一行**（activity.json 的 rewardItemId 指到不存在的道具），
+# 而不是造假表：假表会先红在「item 表读不到或为空」这个下限守卫上，红点归因不到悬空外键。
+CR_D=/d/tmp/probe753/gates-configrefs
+mk_config_refs() {
+  if [ "$1" = "1" ]; then
+    rm -rf "$CR_D"; cp -r contract/config "$CR_D"
+    node -e 'const fs=require("fs");const p=process.argv[1];const j=JSON.parse(fs.readFileSync(p,"utf8"));if(j.rows&&j.rows[0])j.rows[0].rewardItemId="no_such_item_zz";fs.writeFileSync(p,JSON.stringify(j,null,2));' "$CR_D/activity.json"
+    export CONFIG_REFS_DIR="$CR_D"
+  else
+    unset CONFIG_REFS_DIR
+    rm -rf "$CR_D"
+  fi
+}
+run_config_refs() {
+  if [ -n "${CONFIG_REFS_DIR:-}" ]; then
+    node scripts/check-config-refs.js "$CONFIG_REFS_DIR"
+  else
+    node scripts/check-config-refs.js
+  fi
+}
+three_arg check-config-refs.sh \
+          mk_config_refs run_config_refs '配置表引用外键必须成立（走 CONFIG_REFS_DIR 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
