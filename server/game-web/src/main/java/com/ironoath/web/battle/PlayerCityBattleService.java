@@ -699,6 +699,27 @@ public class PlayerCityBattleService {
     }
 
     /**
+     * 取这个玩家的军队档；没有就建一份空的。
+     *
+     * <p><b>为什么单独抽出来</b>：原先这里连着读两次同一份档 —— 第一次取内容、第二次只为判「在不在」，
+     * 而「在不在」第一次就读到了。攻守双方各走一次这条路径（{@link #admitWounded}），
+     * 于是<b>一场战斗要多读两次同一份军队档</b>。
+     *
+     * <p><b>为什么合并不改语义</b>：原来第二次读与第一次读之间，别人可能刚好建好了这份档 ⇒ 原写法会看到「已存在」
+     * 而不建；新写法会调 {@code insertIfAbsent}，而它是**原子插入：已存在则返回 false、不覆盖** ⇒ 结果相同。
+     *
+     * <p>判据是读次数：{@code AdmitWoundedArmyReadCountTest}。
+     */
+    ArmyState loadOrInsertArmy(String playerId) {
+        java.util.Optional<ArmyState> existing = armies.findByPlayerId(playerId);
+        ArmyState army = existing.orElseGet(ArmyState::new);
+        if (existing.isEmpty()) {
+            armies.insertIfAbsent(playerId, army);
+        }
+        return army;
+    }
+
+    /**
      * 扣掉损失、把伤兵送进医院，超容量的部分死亡。攻守双方共用这一份实现 ——
      * 两条路径各写一遍的话，「伤兵进医院」这件事迟早会只改一边。
      */
@@ -712,10 +733,7 @@ public class PlayerCityBattleService {
                 wounded.put(unitId, woundedCount);
             }
         });
-        ArmyState army = armies.findByPlayerId(playerId).orElseGet(ArmyState::new);
-        if (armies.findByPlayerId(playerId).isEmpty()) {
-            armies.insertIfAbsent(playerId, army);
-        }
+        ArmyState army = loadOrInsertArmy(playerId);
         long version = armies.versionOf(playerId);
         // 先扣损失再收伤兵：反过来的话伤兵会先被算进「现有兵力」，
         // 而 deduct 是按现有数量扣的，于是同一批兵被扣两次
