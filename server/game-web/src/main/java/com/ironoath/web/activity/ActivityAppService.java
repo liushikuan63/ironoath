@@ -2,6 +2,7 @@ package com.ironoath.web.activity;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import com.ironoath.core.activity.ActivityProgress;
 import com.ironoath.core.activity.ActivityWindow;
 import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.lock.PlayerLock;
+import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.reward.RewardContext;
 import com.ironoath.core.reward.RewardItem;
 import com.ironoath.core.reward.RewardService;
@@ -83,7 +85,7 @@ public class ActivityAppService {
     public ActivityListResp list(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
-            ActivityLedger.Book book = load(playerId, now, ActivityLedger.Mode.READ);
+            ActivityLedger.Book book = load(playerId, now, ActivityLedger.Mode.READ).book();
             ActivityProgress progress = book.progress();
             // 读取路径的惰性同步：没有待展示记录的行直接进入新一轮（有进展没领的行留住）
             if (progress.syncOnRead(now, anchors.playerAnchorMs(playerId)) > 0) {
@@ -105,7 +107,13 @@ public class ActivityAppService {
     public int claimableCount(String playerId) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS,
-                () -> load(playerId, now, ActivityLedger.Mode.READ).progress().claimableCount(now, anchors.playerAnchorMs(playerId)) + signInCount(signIn.list(playerId, now)));
+                () -> {
+                    // 一次读取，owner 同时喂给活动域与签到域：同一次请求里同一份存档只读一次。
+                    // ⚠ owner 必须是**补发之后**那份 —— load 内部先 recoverGoldClaims（可能补发并落库）才读它。
+                    Loaded loaded = load(playerId, now, ActivityLedger.Mode.READ);
+                    return loaded.book().progress().claimableCount(now, anchors.playerAnchorMs(playerId))
+                            + signInCount(signIn.list(playerId, now, loaded.owner()));
+                });
     }
 
     /** 领取一次活动奖励。requestId 幂等；同窗口重复领取被拒且不发货。 */
@@ -117,7 +125,7 @@ public class ActivityAppService {
         acquire(playerId, req.requestId(), now);
         try { return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
             if (signIn.contains(req.activityId())) return signIn.claim(playerId, req.activityId(), timeService.serverNow());
-            ActivityLedger.Book book = load(playerId, now, ActivityLedger.Mode.CLAIM);
+            ActivityLedger.Book book = load(playerId, now, ActivityLedger.Mode.CLAIM).book();
             ActivityProgress progress = book.progress();
             long playerAnchor = anchors.playerAnchorMs(playerId);
             ActivityProgress.ClaimBlock block;
@@ -193,7 +201,10 @@ public class ActivityAppService {
         return "activity_gold:"+instance.def().activityId()+":"+instance.startAt();
     }
     /** 任一读取、红点或重试恢复钱包已接受的资格，不依赖HTTP requestId。 */
-    private ActivityLedger.Book load(String playerId,long now,ActivityLedger.Mode mode) {
+    /** 一次载入的结果：账本 + **补发之后**读到的玩家存档（可复用于同一次请求里的另一处收据读取）。 */
+    private record Loaded(ActivityLedger.Book book, Optional<PlayerSave> owner) { }
+
+    private Loaded load(String playerId,long now,ActivityLedger.Mode mode) {
         rewardService.recoverGoldClaims(playerId);
         rewardService.recoverItemClaims(playerId);
         ActivityLedger.Book book=ledger.load(playerId,now,mode);
@@ -204,12 +215,12 @@ public class ActivityAppService {
             // After old delivery is accepted, choose the current window using normal ledger rules.
             book=ledger.load(playerId,now,mode);
         }
-        var owner=players.findByPlayerId(playerId).orElse(null);
-        if (owner==null) return book;
+        Optional<PlayerSave> owner=players.findByPlayerId(playerId);
+        if (owner.isEmpty()) return new Loaded(book, owner);
         boolean changed=false;
         for (var instance:book.instances()) {
             if (!campaign(instance)) continue;
-            var receipt=owner.goldClaims().get(campaignKey(instance));
+            var receipt=owner.get().goldClaims().get(campaignKey(instance));
             if (receipt==null || !"free_gold".equals(receipt.source())
                     || !instance.def().activityId().equals(receipt.sourceRef())) continue;
             long goal=receipt.facts().stream().filter(f -> f.startsWith("activity-goal:"))
@@ -219,7 +230,7 @@ public class ActivityAppService {
             changed|=book.progress().restoreClaimedFromGoldReceipt(instance.def().activityId(),instance.startAt(),goal,receipt.facts());
         }
         if (changed) ledger.save(book);
-        return book;
+        return new Loaded(book, owner);
     }
 
     /** 名单上那一行此刻的视图（读与领共用，字段口径只有一处）。 */

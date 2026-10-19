@@ -6,6 +6,7 @@ import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.cfg.SignInRewardCfg;
 import com.ironoath.core.activity.SignInProgress;
 import com.ironoath.core.player.PlayerRepository;
+import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.reward.RewardItem;
 import com.ironoath.core.reward.RewardService;
 import com.ironoath.core.reward.RewardType;
@@ -17,6 +18,7 @@ import com.ironoath.web.dto.generated.ActivityView;
 import com.ironoath.web.reward.RewardNames;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
@@ -38,9 +40,22 @@ public final class SignInRewards {
     }
     public boolean contains(String id) { return rules().stream().anyMatch(rule -> rule.id().equals(id)); }
     public List<ActivityView> list(String playerId, long now) {
-        var owner = players.findByPlayerId(playerId).orElse(null);
-        if (owner == null) return List.of();
-        var receipts = owner.goldClaims();
+        return list(playerId, now, players.findByPlayerId(playerId));
+    }
+
+    /**
+     * 复用调用方<b>已经读到的</b>存档：同一次请求里同一份存档只读一次。
+     *
+     * <p>为什么不给这口就白读两次：活动红点（{@code activity/claimable} 叶子）会在同一次请求里
+     * 既让活动域读一次收据、又让签到域读一次同一份收据，而两次之间没有玩家存档写入。
+     *
+     * <p>⚠ <b>调用方必须保证这份存档是「补发之后」的</b>：{@code ActivityAppService.load} 先
+     * {@code recoverGoldClaims}（可能补发并落库）才读存档 ⇒ 提前读到的会是过期收据。
+     * 判据：{@code ActivityClaimableReadCountTest}。
+     */
+    public List<ActivityView> list(String playerId, long now, Optional<PlayerSave> owner) {
+        if (owner.isEmpty()) return List.of();
+        var receipts = owner.get().goldClaims();
         var quote = SignInProgress.quote(now, rules(), receipts);
         List<ActivityView> out = new ArrayList<>();
         for (var row : quote.rows()) {
