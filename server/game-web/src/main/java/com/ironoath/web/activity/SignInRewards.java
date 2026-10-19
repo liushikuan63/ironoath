@@ -55,6 +55,11 @@ public final class SignInRewards {
      */
     public List<ActivityView> list(String playerId, long now, Optional<PlayerSave> owner) {
         if (owner.isEmpty()) return List.of();
+        // 归属校验：这份存档必须是**这个玩家**的（调用方把 load 读到的 owner 传进来时必须同源）。
+        // 用 IllegalArgumentException 而不是业务码：身份对不上是**编程错误**，不是玩家能触发的业务分支。
+        if (!playerId.equals(owner.get().playerId())) {
+            throw new IllegalArgumentException("存档与玩家不匹配：playerId=" + playerId);
+        }
         var receipts = owner.get().goldClaims();
         var quote = SignInProgress.quote(now, rules(), receipts);
         List<ActivityView> out = new ArrayList<>();

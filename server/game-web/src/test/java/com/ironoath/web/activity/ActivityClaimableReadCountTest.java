@@ -70,7 +70,9 @@ class ActivityClaimableReadCountTest {
         ActivityProgress progress = org.mockito.Mockito.mock(ActivityProgress.class);
         when(book.progress()).thenReturn(progress);
         when(ledger.load(anyString(), anyLong(), any())).thenReturn(book);
-        when(players.findByPlayerId("p1")).thenReturn(Optional.of(org.mockito.Mockito.mock(PlayerSave.class)));
+        PlayerSave save = org.mockito.Mockito.mock(PlayerSave.class);
+        org.mockito.Mockito.lenient().when(save.playerId()).thenReturn("p1");
+        when(players.findByPlayerId("p1")).thenReturn(Optional.of(save));
         when(signIn.list(anyString(), anyLong(), any())).thenReturn(List.of());
 
         service.claimableCount("p1");
