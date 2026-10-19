@@ -64,16 +64,19 @@ function toast(id: string, text = `+${id}`): RewardToast {
   return { id, text, kind: 'resource' }
 }
 
-function queue(presenter: ToastPresenter, overrides: Record<string, number> = {}) {
-  return new RewardToastQueue(presenter, makeOptions(overrides))
+function queue(presenter: ToastPresenter, overrides: Record<string, number> = {},
+                delay?: (ms: number) => Promise<void>) {
+  return new RewardToastQueue(presenter, makeOptions(overrides, delay))
 }
 
-function makeOptions(overrides: Record<string, number> = {}) {
+function makeOptions(overrides: Record<string, number> = {},
+                     delay?: (ms: number) => Promise<void>) {
   return {
     gapMs: 0,
     maxQueued: 12,
     stuckTimeoutMs: 5_000,
     ...overrides,
+    ...(delay ? { delay } : {}),
   }
 }
 
@@ -168,7 +171,16 @@ test('一条动效抛异常不影响后续：异常被隔离，队列继续消�
 test('卡住的动效被 stuckTimeoutMs 强制推进，队列不会永久冻结', async () => {
   const presenter = new ManualPresenter()
   presenter.hangOn = 'b'
-  const q = queue(presenter, { stuckTimeoutMs: 30 })
+  // 超时走的是队列自己的 `delay`（RewardToastQueue.ts:200），所以把它注入手动放行即可
+  // **完全确定化**：间隔（gapMs=0）立即放行，超时（30ms）等测试自己放。
+  // 旧写法靠真实 30ms 定时器，断言「超时前 b 还在播」依赖时序中间态 ——
+  // 机器一忙超时就先发生，读到的 playing 是 'c' ⇒ 这条用例在整包负载下随机红
+  // （2026-10-19 22:1x 实测：check.sh 里红、单独跑 3 次全绿）。
+  const release: { fn: (() => void) | null } = { fn: null }
+  const q = queue(presenter, { stuckTimeoutMs: 30 }, (ms) =>
+    ms === 30
+      ? new Promise<void>((resolve) => { release.fn = () => resolve() })
+      : Promise.resolve())
   q.enqueue([toast('a'), toast('b'), toast('c')])
 
   await tick()
@@ -177,7 +189,9 @@ test('卡住的动效被 stuckTimeoutMs 强制推进，队列不会永久冻结'
   assert.equal(q.playing?.id, 'b', 'b 开始播放后就会卡住')
 
   // 卡住的这条永不 resolve；若无超时兜底，c 永远不会播，玩家此后再也看不到任何飘字
-  await wait(80)
+  assert.ok(release.fn, '超时计时器必须已经挂上（否则这条用例根本没在验兜底）')
+  release.fn()
+  await wait(10)
   assert.deepEqual(presenter.started, ['a', 'b', 'c'], '超时后必须推进到 c')
   presenter.finish('c')
   await tick()
