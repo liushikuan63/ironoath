@@ -7828,3 +7828,5 @@ TEST_EXIT=0
 | current-holder-v4握手 #1444 | 四docs local提交见receipt | 37冻结SHA一致；本地镜像存在；owner容器0及probe进程0；仅新4时序microcheck，未重跑64 | sharedQA ready-handshake-v4 SHAcd1e2443160b152ff89568793a5faf802aedcce048e138df50041d7aee721ddf；scheduler SHAbd47147a32fa583fe1e746f6f02362371bb3cdbee3f905388ed22b7eddd94b58；实际检查UTC及边界保留 | mayExecuteNow=false；未armed/未runtime；新hold/周额度/全局G07排他/资源与UTC准入未齐；120秒含40清理为计划，5000及原生未验 |
 
 | v3 Java-only实际能力探针 #1445 | 四docs local提交见receipt | scheduler1/launcher1/finalize0；六读；IO176.0995ms非timeout；pre/post seal均真；partial=true/complete=false；窗口内精确清理 | sharedQA current-holder-result-v4 SHA5efd7f78f615ae399cfa736585dc7105e8cd702f20fcdc577468bd364feb6984；原capture/terminal/final-cleanup/started及哈希；session42680 | PID1 IO unavailable/null、完整帧未得；未证旧r8根因/内核Docker机制；未运行5000且预算/原生未验；窗口已消费，待协调器显式释放LLM |
+
+| PID1 IO ENOENT离线定位 #1446 | 四docs local提交见receipt | 原37SHA一致；新32/0/0/0；真adapter仅mock；独审无阻断；无新资源 | sharedQA proc-enoent-rootcause-v1 SHA89a2ed01de4aa89d06048da10fa6c37a8956dbc8d0ebb4c549d71bdf82168d15；新diagnosis/test/log/design/输入与源码行哈希 | IO路径实际安全修复未知；raw ExitCode/FinishedAt/PidMode/execUID无法补历史；新runtime未授权，原partial非完整/5000/原生未验 |
