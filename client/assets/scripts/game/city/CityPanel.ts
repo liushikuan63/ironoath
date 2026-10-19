@@ -20,7 +20,7 @@ import { resourceName } from '../ui/ResourceNames'
 import { countdownMs, formatCountdown as formatCountdownOf } from '../../core/Countdown'
 import type {
   BuildingView, BuildOptionView, CityCancelResp, CityCollectResp, CityListResp, ErrorDetail, QueueView,
-  ResourceAmount,
+  ResourceAmount, ResourceType,
 } from '../../net/generated/CityProtocol'
 
 /** 一栋建筑在面板上的一行。 */
@@ -64,6 +64,22 @@ export interface CityGrid {
   readonly unplaced: readonly BuildingRow[]
 }
 
+/** 一行资源条：显示文本 + 它是哪一种资源。 */
+export interface ResourceLine {
+  /** 显示文本，例如「木材 12000/12000（满）」。 */
+  readonly text: string
+  /**
+   * 资源种类（协议枚举原文，来自 `CityListResp.resources` 的键）。
+   *
+   * <p><b>为什么必须把种类一起带出来</b>：这一行以前只有一个字符串，
+   * 界面层要认出「哪一行是体力」只能按**中文名前缀**去比（`line.startsWith('体力')`）。
+   * 而中文名是 `resource.json` 的表值 —— 客户端那份映射一改（或者表里改了），
+   * 这条判断就会**静默失效**：那一行不再可点，玩家点体力没反应，而所有测试都照绿。
+   * 种类就在手边（服务端下发的 map 键），带出来就没有认错的机会。
+   */
+  readonly type: ResourceType
+}
+
 /** 整个城建面板的数据。 */
 export interface CityPanelView {
   readonly rows: readonly BuildingRow[]
@@ -72,7 +88,7 @@ export interface CityPanelView {
   readonly queueText: string
   /** 还能再开几条队列；已满时为 null（B03 验收 7：客户端据此显示「可开启第 N 队列」） */
   readonly queueExpandText: string | null
-  readonly resourceLines: readonly string[]
+  readonly resourceLines: readonly ResourceLine[]
   /** 有建筑升级已到时但还没收割时的提示 */
   readonly collectHint: string | null
 }
@@ -97,9 +113,9 @@ export function buildCityPanel(resp: CityListResp, offsetMs: number, localNow: n
       collectable++
     }
   }
-  const resources: string[] = []
-  for (const type of Object.keys(resp.resources)) {
-    const state = resp.resources[type as keyof typeof resp.resources]
+  const resources: ResourceLine[] = []
+  for (const type of Object.keys(resp.resources) as ResourceType[]) {
+    const state = resp.resources[type]
     if (state === undefined) {
       continue
     }
@@ -111,7 +127,12 @@ export function buildCityPanel(resp: CityListResp, offsetMs: number, localNow: n
     // 后缀只留一个「满」字：资源条是 HUD，长后缀会把列宽撑到盖住主堡
     // （2026-09-26 排版审查实测「（已满，停产）」把底板推过画面中线）；
     // "停产"的完整解释在仓库/体力详情里，不在这一行里重复。
-    resources.push(`${resourceName(type)} ${state.current}/${state.cap}${full ? '（满）' : ''}`)
+    // **种类一起带出来**（协议枚举原文）：界面要认出「哪一行是体力」不能靠中文名前缀 ——
+    // 中文名是表值，它一改这条判断就静默失效，而那一行会变成点了没反应。
+    resources.push({
+      text: `${resourceName(type)} ${state.current}/${state.cap}${full ? '（满）' : ''}`,
+      type,
+    })
   }
 
   return {

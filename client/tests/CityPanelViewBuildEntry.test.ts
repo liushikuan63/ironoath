@@ -63,6 +63,7 @@ interface CityHarness {
   buildPicker: Picker; selectionBar: Node; selectedTitle: Label
   onUpgrade: ((id: string, x?: number, y?: number) => void) | null
   onCollect: ((id: string | null) => void) | null
+  onStamina: (() => void) | null
   attachHarvestLearning(resp: CityHarvestLearningResp): void
   openResourceTutorial(): void
   buildActionBar(parent: Node): void; renderSelection(row: BuildingRow | null): void
@@ -271,7 +272,7 @@ test('首次默认Guide真实placeBubble不覆盖完整City Header/Queue及资�
 test('HUD重排后的真实default mainCityFraming保铭牌4px净区，各档主堡与Guide二维相隔12px', () => {
   for (const height of [443.6018957345971, 600, 640]) {
     const { city, buildingSize } = setup(height), row = city.resp.buildings[0]!, tile = city.gridTiles.find(tile => tile.plate.gridX === row.gridX && tile.plate.gridY === row.gridY)!
-    city.panel = { ...city.panel, resourceLines: Array.from({ length: 6 }, (_, i) => 'unit display line ' + i) }; city.render()
+    city.panel = { ...city.panel, resourceLines: Array.from({ length: 6 }, (_, i) => ({ text: 'unit display line ' + i, type: 'WOOD' as const })) }; city.render()
     city.node.getChildByName('Message')!.getComponent(Label)!.string = 'unit action hint'
     const zoom = 1.5, framing = city.mainCityFraming(tile.plate.y, buildingSize('main_city', tile.plate.width, height), tile.plate.x), ratio = buildingArtFootRatio('main_city')
     // Production paintTile first sizes the icon, then renderGrid fits focus with that actual icon height.
@@ -311,7 +312,7 @@ test('HUD重排后的真实default mainCityFraming保铭牌4px净区，各档主
 test('服务端展示行超过现有六槽时原提示仍完整显示，自己的盒不占消息/详情/建造/研究/缩放键', () => {
   for (const height of [443.6018957345971, 600, 640]) {
     const { city } = setup(height)
-    city.panel = { ...city.panel, resourceLines: Array.from({ length: 7 }, (_, i) => 'unit display line ' + i) }; city.render()
+    city.panel = { ...city.panel, resourceLines: Array.from({ length: 7 }, (_, i) => ({ text: 'unit display line ' + i, type: 'WOOD' as const })) }; city.render()
     const warning = city.node.getChildByName('ResourceOverflow')!, box = own(warning)
     assert.equal(warning.getComponent(Label)?.string, '另有 1 项资源未显示')
     const avoid = [action(city, 'DetailBuildButton'), action(city, 'DetailUpgradeButton'), city.node.getChildByName('TechOpenButton')!,
@@ -319,4 +320,49 @@ test('服务端展示行超过现有六槽时原提示仍完整显示，自己�
       city.selectionBar.getChildByName('SelectedTitle')!, city.selectionBar.getChildByName('SelectedStatus')!]
     for (const node of avoid) assert.equal(overlaps(box, own(node)), false, 'ResourceOverflow own box overlaps ' + node.name)
   }
+})
+
+// ---------- 资源条按「种类」认，不按中文名前缀（#2207） ----------
+
+test('体力那一行按资源种类（STAMINA）认，不按中文名前缀：中文名改了也不影响可点性', () => {
+  const { city } = setup()
+  let opened = 0
+  city.onStamina = () => { opened++ }
+  // 故意把显示文本换成**不是中文名**的内容：界面若还按前缀认「体力」，
+  // 这一行就点不动 —— 而那正是旧实现的形状（`line.startsWith('体力')`）。
+  city.panel = {
+    ...city.panel,
+    resourceLines: [
+      { text: '任意一行显示文本 1/2', type: 'WOOD' },
+      { text: '任意一行显示文本 3/4', type: 'STAMINA' },
+    ],
+  }
+  city.render()
+
+  const staminaRow = city.node.children.find(node =>
+    node.name.startsWith('Resource-') && node.getComponent(Label)?.string === '任意一行显示文本 3/4')
+  assert.ok(staminaRow, '第二行应当被画出来')
+  assert.ok(staminaRow!.hasEventListener('touch-start'), 'STAMINA 那一行必须可点')
+  staminaRow!.emit('touch-start')
+  assert.equal(opened, 1, '点 STAMINA 那一行必须打开体力详情')
+})
+
+test('非 STAMINA 的行不可点：按种类认，不会把别的资源误当成体力', () => {
+  const { city } = setup()
+  let opened = 0
+  city.onStamina = () => { opened++ }
+  city.panel = {
+    ...city.panel,
+    resourceLines: [
+      { text: '木材 12000/12000', type: 'WOOD' },
+      { text: '金币 300/12000', type: 'GOLD' },
+    ],
+  }
+  city.render()
+
+  for (const node of city.node.children.filter(node => node.name.startsWith('Resource-'))) {
+    assert.equal(node.hasEventListener('touch-start'), false,
+      '非 STAMINA 的资源行不应绑体力入口：' + node.name)
+  }
+  assert.equal(opened, 0)
 })

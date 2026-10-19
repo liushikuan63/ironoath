@@ -41,7 +41,7 @@ CO_D=/d/tmp/probe753/gates-clientorphan
 
 cleanup() {
   rm -f "$TMP_JAVA" "$TMP_TS" "$TMP_TS.meta" "$TMP_MJS" "$JAVA_LAYER"
-  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D"
+  rm -rf /d/tmp/probe753/gates-defs /d/tmp/probe753/gates-ep "$TC_D" "$PS_D" "$DC_D" "$PP_D" "$SP_D" "$CW_D" "$CO_D" "$CC_D" "$TL_D"
 }
 trap cleanup EXIT
 
@@ -369,6 +369,23 @@ mk_client_config_copy() { # check-client-config-copy：客户端不得抄 global
 run_client_config_copy() { bash scripts/check-client-config-copy.sh; }
 three_arg check-client-config-copy.sh \
           mk_client_config_copy run_client_config_copy '客户端不得抄 global 表的字符串值（走环境变量口，零污染）'
+
+TL_D=/d/tmp/probe753/gates-textlogic
+mk_client_text_logic() { # check-client-text-logic：客户端不得拿中文表值做逻辑判断
+  # ⚠️ 走**环境变量口**（TEXTLOGIC_SCAN_DIR）⇒ **零污染**：
+  #    违规态只往临时目录里放一个 .ts，不碰 client/assets 那 145 个文件。
+  if [ "$1" = "1" ]; then
+    rm -rf "$TL_D"; mkdir -p "$TL_D"
+    printf "export const bad = '体力'.startsWith('体力')\n" > "$TL_D/ZzTextLogic.ts"
+    export TEXTLOGIC_SCAN_DIR="$TL_D"
+  else
+    unset TEXTLOGIC_SCAN_DIR
+    rm -rf "$TL_D"
+  fi
+}
+run_client_text_logic() { bash scripts/check-client-text-logic.sh; }
+three_arg check-client-text-logic.sh \
+          mk_client_text_logic run_client_text_logic '客户端不得拿中文串做逻辑判据（走环境变量口，零污染）'
 
 three check-no-scheduled.sh   mk_sched    '禁 @Scheduled'
 three check-no-handout.sh     mk_handout  '禁弱势补偿类命名'

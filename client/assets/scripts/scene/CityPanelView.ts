@@ -1336,12 +1336,16 @@ export class CityPanelView extends Component {
     panel.resourceLines.forEach((line, index) => {
       const label = this.resourceLabels[index]
       if (label !== undefined) {
-        label.string = line
-        // 「体力」那一行可点：打开体力详情。按**文本前缀**认它，不写死行列号 ——
-        // 资源条的排列来自服务端下发的资源表，写死第 5 格这种事会在改表那天静默失效。
+        label.string = line.text
+        // 「体力」那一行可点：打开体力详情。**按资源种类认**（协议枚举 STAMINA），
+        // 不按中文名前缀 —— 中文名是 `resource.json` 的表值，
+        // 它一改（或者客户端那份映射一改）这条判断就**静默失效**：
+        // 那一行不再可点，玩家点体力没反应，而所有测试都照绿。
+        // 也不写死行列号：资源条的排列来自服务端下发的资源表，
+        // 写死第 5 格这种事会在改表那天静默失效。
         const node = label.node
         node.off('touch-start')
-        if (line.startsWith('体力')) {
+        if (line.type === 'STAMINA') {
           node.on('touch-start', () => this.onStamina?.(), this)
         }
       }

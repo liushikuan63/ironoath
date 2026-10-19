@@ -51,6 +51,10 @@ bash scripts/check-guide-no-copy.sh
 # 症状是**改表只改一半**：服务端按新表下发，客户端还在用旧值，
 # 而单测 / 类型检查 / 构建全绿（两边各自自洽，没有一条断言会红）。
 bash scripts/check-client-config-copy.sh
+# 客户端不得拿**中文表值**做逻辑判断（认「哪一行是体力」用 startsWith('体力') 这一族）。
+# 症状：表值一改，这条判断就**静默失效** —— 玩家点某个东西没反应，
+# 而单测 / 类型检查 / 构建全绿（测试读的是同一份硬编码）。
+bash scripts/check-client-text-logic.sh
 bash scripts/check-client-iter-spread.sh
 bash scripts/check-client-typecheck.sh
 # 客户端逻辑层单测（941 项）：**类型门只保证"能编译"，不保证"算对了"**。CI 里这批用例本来就跑
