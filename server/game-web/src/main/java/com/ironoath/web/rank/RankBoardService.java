@@ -247,9 +247,10 @@ public class RankBoardService {
         int from = (safePage - 1) * pageSize;
         int to = Math.min(rows.size(), from + pageSize);
 
+        Map<String, com.ironoath.core.player.PlayerBrief> briefs = briefsOf(rows, from, to, type);
         List<RankEntryView> entries = new ArrayList<>(Math.max(0, to - from));
         for (int i = from; i < to; i++) {
-            entries.add(toView(i + 1, rows.get(i), type));
+            entries.add(toView(i + 1, rows.get(i), type, briefs));
         }
         MyRow mine = myRowOf(playerId, type, rows);
         // dayKey 与 `captureTodayIfAbsent` 用的是**同一个源**（todayKey() → DayKey.of(serverNow)）：
@@ -325,9 +326,10 @@ public class RankBoardService {
         int safePage = Math.min(Math.max(1, page), totalPages);
         int from = (safePage - 1) * pageSize;
         int to = Math.min(rows.size(), from + pageSize);
+        Map<String, com.ironoath.core.player.PlayerBrief> briefs = briefsOf(rows, from, to, type);
         List<RankEntryView> entries = new ArrayList<>(Math.max(0, to - from));
         for (int i = from; i < to; i++) {
-            entries.add(toView(i + 1, rows.get(i), type));
+            entries.add(toView(i + 1, rows.get(i), type, briefs));
         }
         return new OpsRankSnapshotResp(type, day, taken.snapshotAt(), entries, rows.size(),
                 safePage, pageSize, to < rows.size());
@@ -598,9 +600,10 @@ public class RankBoardService {
         return nation == null ? null : nation.id();
     }
 
-    private RankEntryView toView(int rank, SeasonSettlement.Entry entry, RankType type) {
+    private RankEntryView toView(int rank, SeasonSettlement.Entry entry, RankType type,
+                                 Map<String, com.ironoath.core.player.PlayerBrief> briefs) {
         boolean org = type == RankType.ALLIANCE || type == RankType.NATION;
-        return new RankEntryView(rank, entry.id(), displayNameOf(entry, type), entry.score(),
+        return new RankEntryView(rank, entry.id(), displayNameOf(entry, type, briefs), entry.score(),
                 org ? tagOf(entry.id(), type) : null);
     }
 
@@ -608,14 +611,38 @@ public class RankBoardService {
      * 显示名。个人榜用**当下**的昵称（榜上存的是上报那一刻的名字：
      * 改过名的人不该在榜上永远挂着旧名），组织榜名字里已经带了缩写，原样回。
      */
-    private String displayNameOf(SeasonSettlement.Entry entry, RankType type) {
+    private String displayNameOf(SeasonSettlement.Entry entry, RankType type,
+                                 Map<String, com.ironoath.core.player.PlayerBrief> briefs) {
+        String fallback = entry.name() == null ? entry.id() : entry.name();
         if (type == RankType.ALLIANCE || type == RankType.NATION) {
-            return entry.name() == null ? entry.id() : entry.name();
+            return fallback;
         }
-        return players.findByPlayerId(entry.id())
-                .map(PlayerSave::nickName)
-                .filter(name -> name != null && !name.isBlank())
-                .orElse(entry.name() == null ? entry.id() : entry.name());
+        // 榜单的个人名只取一个昵称 ⇒ 整页一次**投影批读**，而不是每条把整份存档搬回来。
+        // 口径逐字不变：读不到档、或昵称为空 ⇒ 同一个回退（榜上上报那一刻的名字或 id）。
+        com.ironoath.core.player.PlayerBrief brief = briefs.get(entry.id());
+        if (brief == null) {
+            return fallback;
+        }
+        String name = brief.nickName();
+        return name == null || name.isBlank() ? fallback : name;
+    }
+
+    /**
+     * 这一页的**投影批读**（个人榜才需要；组织榜的名字在榜上，不读玩家档）。
+     *
+     * <p>原来个人榜是**每条** {@code findByPlayerId} 一次 —— 一页 N 条就是 N 次整份存档读取
+     * （资源表 / PVP 账本 / 科技 / 礼包弹本 / 头像框集合全被搬回），而榜上只要一个昵称。
+     */
+    private Map<String, com.ironoath.core.player.PlayerBrief> briefsOf(
+            List<SeasonSettlement.Entry> rows, int from, int to, RankType type) {
+        if (type == RankType.ALLIANCE || type == RankType.NATION) {
+            return Map.of();
+        }
+        List<String> ids = new ArrayList<>(Math.max(0, to - from));
+        for (int i = from; i < to; i++) {
+            ids.add(rows.get(i).id());
+        }
+        return ids.isEmpty() ? Map.of() : players.findBriefs(ids);
     }
 
     /** 组织缩写：个人榜没有；联盟榜从联盟表取，国家榜回 null（国家的标识是名字，没有缩写列）。 */
