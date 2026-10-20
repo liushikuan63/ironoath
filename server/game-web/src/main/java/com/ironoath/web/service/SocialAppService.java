@@ -1584,7 +1584,10 @@ public class SocialAppService {
         // 顺序反了会让被限流的消息也白跑一次外部调用（而外部调用是这四处里最贵的一步）。
         // 送检排在限流之后：限流是"你发太快"，送检是"这句能不能发"，
         // 顺序反了会让被限流的消息也白跑一次外部调用（而外部调用是这四处里最贵的一步）。
-        contentSecurity.requireClean(playerId,
+        // 这一次读取供三处复用：送检要的 deviceId、消息里的昵称、玩家不存在时的回退。
+        // 原来这三处各读一次整份存档（资源表 / PVP 账本 / 科技 / 礼包弹窗账本 / 头像框集合）。
+        PlayerSave self = players.findByPlayerId(playerId).orElse(null);
+        contentSecurity.requireCleanForAccount(self == null ? null : self.deviceId(),
                 com.ironoath.web.security.ContentSecurityClient.Scene.SOCIAL_LOG,
                 content, ErrorCode.SOCIAL_CHAT_CONTENT_INVALID, "消息内容");
         if (channel == ChatChannel.PRIVATE) {
@@ -1595,7 +1598,7 @@ public class SocialAppService {
         if (sequence > 0) requireConversationChannel(playerId, expectedPeer, channel, expectedChannelKey, channelKey);
         if (sequence > 0 && store.chatDeliverySequence(channelKey, playerId) >= sequence) {
             return new ChatSendResp(toMessageView(new SocialStore.ChatMessage(
-                    "msg_" + req.requestId(), channel.name(), playerId, nickname(playerId), content, now)), now);
+                    "msg_" + req.requestId(), channel.name(), playerId, (self == null ? playerId : self.nickName()), content, now)), now);
         }
         ChatRateLimiter.Verdict verdict = chatLimiter.check(playerId, content, now);
         if (!verdict.allowed()) {
@@ -1609,7 +1612,7 @@ public class SocialAppService {
                 // 撞上的表现不是报错，是翻页时静默少一条，客户端无从发现。
                 // 与 march_ / battle_ 同一套随机 id 约定：id 只负责唯一，可读性靠前缀。
                 "msg_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16),
-                channel.name(), playerId, nickname(playerId), content, now);
+                channel.name(), playerId, (self == null ? playerId : self.nickName()), content, now);
         int historyCap = (int) configs.longParam("CHAT_LOCAL_HISTORY_MAX");
         if (sequence > 0) requireConversationChannel(playerId, expectedPeer, channel, expectedChannelKey,
                 requireChannelKey(channel, playerId, req.toPlayerId()));
