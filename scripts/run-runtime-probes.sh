@@ -78,6 +78,10 @@ fi
 : > "$OUT"
 # 把"这一批打的是哪台后端"写进记录：`BACKEND` 有默认值（8199＝dev 约定），
 # 但默认值一旦没落进输出，事后就分不清这批读数是哪个端机器给的（同族教训：静默回落 8080）
+# ⚠️ **本批的「起始行号」**：$OUT 是**跨批累加**的（每批追加，不清空）⇒
+#   「本批真红有几份」必须只数**本批写的那些行**（起始行号之后的），
+#   否则上一批留下的红会一直把每一批都判成红（实测：判成红的那批其实只跑到第 2 份就被掐断了）。
+OUT_BASE="$(wc -l < "$OUT" 2>/dev/null || echo 0)"
 echo "# 后端=$BACKEND 清单=$LIST 记账=$OUT" | tee -a "$OUT"
 while read -r f; do
   # 显式清单也会由 Windows 工具写成 CRLF；read 会保留行尾 CR，导致真实文件被当成不存在。
@@ -216,7 +220,9 @@ done < "$LIST"
 # ⇒ 上层（批跑入口）读到的「BATCH_EXIT=0」会被当成「探针全过」。
 # ⇒ 「跑了几份」要从 $OUT 数（每跑一份写一行），**不能**从 $LIST 数
 # （列表可能压根没建成 —— 那正是本条要抓的形状）。
-RUN_COUNT="$(grep -cvE '^(# |SKIP )' "$OUT" 2>/dev/null || true)"
+# 本批的行 = $OUT 里起始行号之后的那些（$OUT 跨批累加，见上面 OUT_BASE 的注释）
+batch_lines() { tail -n "+$((OUT_BASE + 1))" "$OUT" 2>/dev/null || true; }
+RUN_COUNT="$(batch_lines | grep -cvE '^(# |SKIP )' || true)"
 if [ "${RUN_COUNT:-0}" -eq 0 ]; then
   echo "[runtime-probes][FAIL] 一份探针都没跑成（跑了 0 份）—— 此时退出 0 是假绿" >&2
   echo "[runtime-probes] 常见原因：列表文件没建成（mktemp 在本机不可用）、" >&2
@@ -229,11 +235,11 @@ echo "[runtime-probes] 本批实跑 ${RUN_COUNT} 份" >&2
 # 这张表只数"真正需要人看、且不是超时/前提不足"的那些。
 # ⚠️ 措辞用"需看的份数"而不是"非零退出的份数"（2026-10-04）：NO-RUN 与 PREREQ 都**没有可用的退出码**
 # （前者是量具没起来，后者是量具声明前提不足），旧措辞把它们算进"非零退出"会让人以为量具测出了红。
-echo "--- 汇总：需看的份数 = $(grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |# )' "$OUT")（其中 未跑成 NO-RUN = $(grep -c '^NO-RUN ' "$OUT")，再其中 缺凭据 = $(grep -c '^NO-RUN .*缺凭据' "$OUT")）  超时 = $(grep -c '^TIMEOUT ' "$OUT")  前提不足 PREREQ = $(grep -c '^PREREQ ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
-grep -vE '^(0 |SKIP |TIMEOUT |PREREQ |# )' "$OUT" || true
+echo "--- 汇总：需看的份数 = $(batch_lines | grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |# )' || true)（其中 未跑成 NO-RUN = $(grep -c '^NO-RUN ' "$OUT")，再其中 缺凭据 = $(grep -c '^NO-RUN .*缺凭据' "$OUT")）  超时 = $(grep -c '^TIMEOUT ' "$OUT")  前提不足 PREREQ = $(grep -c '^PREREQ ' "$OUT")  SKIP = $(grep -c '^SKIP ' "$OUT")"
+batch_lines | grep -vE '^(0 |SKIP |TIMEOUT |PREREQ |# )' || true
 # 超时与"前提不足"各自单独列一遍：它们不在上面那张表里，但恰恰是最需要人看的一批
-grep '^TIMEOUT ' "$OUT" || true
-grep '^PREREQ ' "$OUT" || true
+batch_lines | grep '^TIMEOUT ' || true
+batch_lines | grep '^PREREQ ' || true
 
 # ⚠️⚠️ **有真红就要退非 0**（2026-10-20 补）。
 # 此前这个脚本的退出码是**最后一条 grep 的状态**（恒为 0）⇒
@@ -243,7 +249,7 @@ grep '^PREREQ ' "$OUT" || true
 #   其余（真红）≥1 就退 1。
 # ⚠️ 口径与上面「需看的份数」**刻意不同**：那一行按 2026-10-04 的口径把 NO-RUN 也算进去
 # （「量具没起来」该让人看），而**退出码只认真红** —— 「要人看」与「判失败」是两件事。
-NEED_REVIEW="$(grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |NO-RUN |# )' "$OUT" 2>/dev/null || true)"
+NEED_REVIEW="$(batch_lines | grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |NO-RUN |# )' || true)"
 if [ "${NEED_REVIEW:-0}" -gt 0 ]; then
   echo "[runtime-probes][FAIL] 本批有 ${NEED_REVIEW} 份真红（上面那张表）—— 退出码按真红判" >&2
   exit 1
