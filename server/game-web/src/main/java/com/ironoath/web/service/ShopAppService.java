@@ -19,6 +19,7 @@ import com.ironoath.core.idempotency.IdempotencyStore;
 import com.ironoath.core.limit.DailyCounter;
 import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.player.PlayerRepository;
+import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.resource.ResourceIds;
 import com.ironoath.core.reward.GrantResult;
 import com.ironoath.core.reward.RewardContext;
@@ -82,7 +83,7 @@ public class ShopAppService {
     private static final String CLOSED_NOTICE = "";
 
     private final ConfigRegistry configs;
-    private final RewardPorts.Wallet wallet;
+    private final com.ironoath.web.reward.PlayerWallet wallet;
     private final RewardService rewardService;
     /** 外观货（B24 块③）：头像框不是道具，发货走它自己那条「记下拥有」的路。 */
     private final AvatarFrameService avatarFrames;
@@ -98,7 +99,7 @@ public class ShopAppService {
     /** 当前赛季 id 的来源：限购周期与账本键都要用它，两边必须是同一个值。 */
     private final com.ironoath.web.season.SeasonRulesAssembler seasonRules;
 
-    public ShopAppService(ConfigRegistry configs, RewardPorts.Wallet wallet, RewardService rewardService,
+    public ShopAppService(ConfigRegistry configs, com.ironoath.web.reward.PlayerWallet wallet, RewardService rewardService,
                           AvatarFrameService avatarFrames, RewardPorts.Compensation compensation, DailyCounter limits,
                           SocialStore social, PlayerRepository players, PlayerLock playerLock,
                           IdempotencyStore idempotency, TimeService timeService,
@@ -137,8 +138,12 @@ public class ShopAppService {
     public ShopListResp list(String playerId, ShopCurrency currency) {
         long now = timeService.serverNow();
         boolean open = !CLOSED_CURRENCIES.contains(currency);
-        Long balance = open ? Long.valueOf(balanceOf(playerId, currency, now)) : null;
-        int cityLevel = cityLevelOf(playerId);
+        // 这一次读取供两处共用：金币余额（惰性结算后可用量）与主城等级。
+        // 原来两处各自去读一遍整份存档，而两次之间没有任何写。
+        PlayerSave save = players.findByPlayerId(playerId)
+                .orElseThrow(() -> new BizException(ErrorCode.PLAYER_NOT_FOUND, playerId));
+        Long balance = open ? Long.valueOf(balanceOf(playerId, currency, now, save)) : null;
+        int cityLevel = cityLevelOf(save);
 
         List<ShopRowView> rows = new ArrayList<>();
         for (ShopCfg row : rowsOf(currency)) {
@@ -174,15 +179,19 @@ public class ShopAppService {
                 }
                 ShopCfg row = requireRow(req);
                 String period = periodOf(row, now);
+                // 这一次读取供三处共用：主城等级、金币余额、是否已拥有该头像框。
+                // ⚠ 它**不**进任何写路径：扣款（wallet.deduct）仍自己读、仍整篇 save。
+                PlayerSave save = players.findByPlayerId(playerId)
+                        .orElseThrow(() -> new BizException(ErrorCode.PLAYER_NOT_FOUND, playerId));
                 Block block = blockOf(playerId, row, limits.used(scopeOf(row), playerId, period),
-                        cityLevelOf(playerId), balanceOf(playerId, req.currency(), now));
+                        cityLevelOf(save), balanceOf(playerId, req.currency(), now, save));
                 if (block != null) {
                     // 与列表用同一个判定函数：两处各写一遍的话，
                     // 「列表说能买、点下去报错」迟早会出现，而那是最伤信任的一种表现
                     throw new BizException(block.code(), block.reason());
                 }
 
-                if (row.frameId() != null && alreadyOwnsFrame(playerId, row.frameId())) {
+                if (row.frameId() != null && alreadyOwnsFrame(save, row.frameId())) {
                     // **限购是周期性的、拥有是永久性的**：赛季重置会放开 limitCount，
                     // 那时若不判"已拥有"，玩家会第二次掏钱买一个已经戴在身上的框。
                     // 下单处拦（与一次性档同一条纪律：别的分支都在下单处拦，不在发货处兜）
@@ -201,7 +210,7 @@ public class ShopAppService {
                 deliver(playerId, row, req, spent);
 
                 long used = limits.used(scopeOf(row), playerId, period);
-                long balance = balanceOf(playerId, req.currency(), now);
+                long balance = balanceOf(playerId, req.currency(), now, null);
                 LOG.info("商店兑换 playerId={} 行={} 道具={} 个数={} 币种={} 花费={} 余额={} 本周期已用={}/{}",
                         playerId, row.id(), row.itemId(), req.count(), row.priceCurrency(),
                         spent, balance, used, row.limitCount());
@@ -292,10 +301,17 @@ public class ShopAppService {
 
     // ---------- 内部：账本 ----------
 
-    private long balanceOf(String playerId, ShopCurrency currency, long now) {
+    /**
+     * 余额。{@code knownSave} 是调用方<b>已经拿着</b>的存档 ⇒ 金币那一支不必再搬回整份存档。
+     *
+     * <p>{@code knownSave} 为 {@code null} ⇒ 退回自己读（扣款后那次必须新读，理由见调用点）。
+     */
+    private long balanceOf(String playerId, ShopCurrency currency, long now, PlayerSave knownSave) {
         return switch (currency) {
             // available() 内部会先做惰性结算但不落库，所以读路径上不必额外结算
-            case GOLD -> wallet.available(playerId, ResourceIds.GOLD, now);
+            case GOLD -> knownSave == null
+                    ? wallet.available(playerId, ResourceIds.GOLD, now)
+                    : wallet.available(knownSave, ResourceIds.GOLD, now);
             case ALLIANCE_COIN -> social.allianceOf(playerId)
                     .map(alliance -> alliance.contributionOf(playerId)).orElse(0L);
             case SQUAD_COIN -> social.squadOf(playerId)
@@ -350,10 +366,9 @@ public class ShopAppService {
     }
 
     /** 这个玩家是否已经拥有那个头像框（读存档，不缓存 —— 缓存会让"刚买完又买一次"漏过检查）。 */
-    private boolean alreadyOwnsFrame(String playerId, String frameId) {
-        return players.findByPlayerId(playerId)
-                .map(save -> save.ownedAvatarFrames().contains(frameId))
-                .orElse(false);
+    /** 是否已拥有那个头像框（调用方已经拿着存档时用它）。 */
+    private boolean alreadyOwnsFrame(PlayerSave knownSave, String frameId) {
+        return knownSave != null && knownSave.ownedAvatarFrames().contains(frameId);
     }
 
     /**
@@ -488,10 +503,9 @@ public class ShopAppService {
         }
     }
 
-    private int cityLevelOf(String playerId) {
-        return players.findByPlayerId(playerId)
-                .orElseThrow(() -> new BizException(ErrorCode.PLAYER_NOT_FOUND, playerId))
-                .cityLevel();
+    /** 主城等级（调用方已经拿着存档时用它）。存档从哪来由调用点负责，缺失时那里就会抛。 */
+    private int cityLevelOf(PlayerSave knownSave) {
+        return knownSave.cityLevel();
     }
 
     private void acquire(String requestId, long now) {
