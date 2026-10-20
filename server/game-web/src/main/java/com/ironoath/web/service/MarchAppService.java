@@ -246,7 +246,11 @@ public class MarchAppService {
         March.TargetType targetType = resolveTargetType(cell, target);
         // 玩家自身状态的禁令排在目标校验之前：闭城期间换任何目标都没用，
         // 先说「目标不是资源点」会让人以为换个格子就能采 —— 那是句会误导人的真话
-        requireNotClosedForGather(playerId, action, now);
+        // 这一次读取供两处共用：闭城判定（pvp().closedUntil()）与行军装配（tech()）。
+        // ⚠ 必须放在 processDue **之后**：它在行军到点时会写玩家档，读在前面就拿到结算前的旧快照。
+        // 这份档**只读**，绝不进任何写路径。
+        com.ironoath.core.player.PlayerSave knownSave = players.findByPlayerId(playerId).orElse(null);
+        requireNotClosedForGather(playerId, action, now, knownSave);
         validateAction(target, action, targetType, playerId, now, targetEntityId(cell, target));
 
         // 武将校验必须在扣兵之前：非法 heroId 若放到战斗结算时才炸，
@@ -301,7 +305,8 @@ public class MarchAppService {
                 targetEntityId(cell, target), action, slowest, loadCap, now,
                 null,     // 个人出征不属于任何集结；到家时按普通行军全额归队
                 () -> armies.save(playerId, army, armyVersion),
-                () -> refundTroops(playerId, army, armyVersion, byUnitId));
+                () -> refundTroops(playerId, army, armyVersion, byUnitId),
+                knownSave);
         int distance = home.distanceTo(target);
         // 时长从行军自己反推，不再算第二遍：MarchCalculator.durationSeconds 是唯一实现，
         // 这里重新调一次的话，万一两次调用之间配置被热更，响应里的时长就会与实际到达时刻不一致
@@ -310,7 +315,10 @@ public class MarchAppService {
     }
 
     /** 这个玩家的科技那一位。读不到存档按「一行都没研究」，与战斗装配同一条读法。 */
-    private com.ironoath.core.player.PlayerTech techOf(String playerId) {
+    private com.ironoath.core.player.PlayerTech techOf(String playerId, com.ironoath.core.player.PlayerSave knownSave) {
+        if (knownSave != null) {
+            return knownSave.tech();
+        }
         return players.findByPlayerId(playerId)
                 .map(com.ironoath.core.player.PlayerSave::tech)
                 .orElseGet(com.ironoath.core.player.PlayerTech::empty);
@@ -320,8 +328,9 @@ public class MarchAppService {
     private March assembleMarch(String marchId, String playerId, Coord home, Coord target,
                                 Map<String, Long> troops, List<String> heroes,
                                 March.TargetType targetType, String targetId, March.Action action,
-                                int teamSpeed, long loadCap, long now, String rallyId) {
-        com.ironoath.core.player.PlayerTech tech = techOf(playerId);
+                                int teamSpeed, long loadCap, long now, String rallyId,
+                                com.ironoath.core.player.PlayerSave knownSave) {
+        com.ironoath.core.player.PlayerTech tech = techOf(playerId, knownSave);
         long carriedCap = Rates.scaleUp(loadCap, techEffects.loadCapacityPercent(tech));
         long marchSpeedFixed = techEffects.marchSpeedPercent(tech)
                 + nationTechBonuses.marchSpeedPercent(playerId)
@@ -338,13 +347,13 @@ public class MarchAppService {
     private March createMarch(String playerId, Coord home, Coord target, Map<String, Long> byUnitId,
                               List<String> heroes, March.TargetType targetType, String targetId,
                               March.Action action, int teamSpeed, long loadCap, long now, String rallyId,
-                              Runnable commit, Runnable rollback) {
+                              Runnable commit, Runnable rollback, com.ironoath.core.player.PlayerSave knownSave) {
         String marchId = "march_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 
         March march;
         try {
             march = assembleMarch(marchId, playerId, home, target, byUnitId, heroes,
-                    targetType, targetId, action, teamSpeed, loadCap, now, rallyId);
+                    targetType, targetId, action, teamSpeed, loadCap, now, rallyId, knownSave);
         } catch (RuntimeException e) {
             rollback.run();
             throw e;
@@ -413,12 +422,13 @@ public class MarchAppService {
      * 不由实现者顺手扩大限制范围 —— 把限制放宽到它们会让闭城变成"什么都不能做"，
      * 那已经不是同一个道具了。
      */
-    private void requireNotClosedForGather(String playerId, March.Action action, long now) {
+    private void requireNotClosedForGather(String playerId, March.Action action, long now,
+            com.ironoath.core.player.PlayerSave knownSave) {
         if (action != March.Action.GATHER) {
             return;
         }
-        Long closedUntil = players.findByPlayerId(playerId)
-                .map(save -> save.pvp().closedUntil()).orElse(null);
+        // 读不到档 = 没有闭城记录，与改之前逐字同口径（orElse(null)）。
+        Long closedUntil = knownSave == null ? null : knownSave.pvp().closedUntil();
         if (closedUntil == null || closedUntil <= now) {
             return;
         }
@@ -832,7 +842,7 @@ public class MarchAppService {
 
         return assembleMarch(marchId, initiatorId, worldAppService.homeOf(initiatorId), target, troops,
                 heroes, targetType, targetId, March.Action.ATTACK,
-                teamSpeed, loadCap, departure.departAt(), rally.rallyId());
+                teamSpeed, loadCap, departure.departAt(), rally.rallyId(), null);
     }
 
     /**
