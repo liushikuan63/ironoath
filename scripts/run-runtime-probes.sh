@@ -28,7 +28,13 @@ LIST="${1:-}"
 PROBE_TIMEOUT="${RUNTIME_PROBES_TIMEOUT:-900}"
 EXCLUDE_LIST="${RUNTIME_PROBES_EXCLUDE:-scripts/runtime-probes-exclude.txt}"
 if [ -z "$LIST" ]; then
-  LIST="$(mktemp -t runtime-probes-list.XXXXXX)"
+  # ⚠️ **不能用 mktemp**：本机 Git Bash 的 /tmp 不可写（mktemp 报 Permission denied
+  # 却**退出 0**）⇒ LIST 变成**空串** ⇒ 下面 `> "$LIST"` 写到空路径 ⇒ 列表文件压根没建成
+  # ⇒ **一份探针都没跑**，而脚本照样退 0 ⇒ **假绿**（实测：批跑报「需看的份数 = 0」
+  # 却 BATCH_EXIT=0 —— 这正是「判据不咬住东西的等于没写」的典型）。
+  # ⇒ 用仓库内相对路径 + 进程号唯一的助手（scripts/tmp-work-dir.sh，与三道门同一形状）。
+  source scripts/tmp-work-dir.sh runtime-probes
+  LIST="$TMP_DIR/list"
   # 收集**全部** verify-*.mjs（2026-10-03，#753 收尾）：旧规则只收 `*-runtime.mjs`，
   # 而"文件名带不带 -runtime"与"要不要真跑"毫无关系 —— #611 实测有 23 份量具从没被批跑到
   # （含整个 nation 族），本次现跑是 **24/24 份都需要后端、23 份开浏览器、0 份纯逻辑**，
@@ -203,6 +209,22 @@ while read -r f; do
   fi
   echo "$code $base ($backend_env, port $port)" | tee -a "$OUT"
 done < "$LIST"
+
+# ⚠️⚠️ **反空转：一份探针都没跑成 ⇒ 退 2（不是 0）**。
+# 实测过一次**假绿**：本机 Git Bash 下 mktemp 失败却退出 0 ⇒ 列表文件压根没建成
+# ⇒ 循环体一次都没进 ⇒ 汇总打印「需看的份数 = 0」⇒ 而脚本**照样退 0**
+# ⇒ 上层（批跑入口）读到的「BATCH_EXIT=0」会被当成「探针全过」。
+# ⇒ 「跑了几份」要从 $OUT 数（每跑一份写一行），**不能**从 $LIST 数
+# （列表可能压根没建成 —— 那正是本条要抓的形状）。
+RUN_COUNT="$(grep -cvE '^(# |SKIP )' "$OUT" 2>/dev/null || true)"
+if [ "${RUN_COUNT:-0}" -eq 0 ]; then
+  echo "[runtime-probes][FAIL] 一份探针都没跑成（跑了 0 份）—— 此时退出 0 是假绿" >&2
+  echo "[runtime-probes] 常见原因：列表文件没建成（mktemp 在本机不可用）、" >&2
+  echo "[runtime-probes] 后端没起来（探活失败）、或全部被排除名单剔掉。" >&2
+  exit 2
+fi
+echo "[runtime-probes] 本批实跑 ${RUN_COUNT} 份" >&2
+
 # SKIP 不是红、`#` 开头的是本批的元信息行、超时与 PREREQ 另列（见末尾那两行）：
 # 这张表只数"真正需要人看、且不是超时/前提不足"的那些。
 # ⚠️ 措辞用"需看的份数"而不是"非零退出的份数"（2026-10-04）：NO-RUN 与 PREREQ 都**没有可用的退出码**

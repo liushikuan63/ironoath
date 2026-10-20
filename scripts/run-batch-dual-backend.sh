@@ -40,6 +40,9 @@ WAR_PORT="${WAR_PORT:-8197}"
 TIMEOUT="${RUNTIME_PROBES_TIMEOUT:-900}"
 LOG="${LOG:-/d/tmp/probe753/batch-dual.log}"
 LOGDIR="${RUNTIME_PROBES_LOGDIR:-/d/tmp}"
+# 后端 JVM 的临时目录（**必须可写**，理由见下面启动后端那一行的注释）。
+# 放在 /d/tmp 下而不是仓库里：后端进程会在里面建 tomcat.<port>.<随机> 目录。
+BACKEND_TMP_DIR="${BACKEND_TMP_DIR:-/d/tmp/ironoath-backend-tmp}"
 JDK="/d/Java/jdk/microsoft-jdk-17/bin/java.exe"
 # jar 可指向 worktree 沙箱里刚重打的那一份（`GAME_WEB_JAR=../ironoath-sbx-*/server/game-web/target/game-web.jar`）。
 # 为什么要有这个旋钮：主树那份 `target/game-web.jar` 经常是**旧的**（跑依赖新契约列的探针会得到
@@ -55,7 +58,7 @@ mkdir -p "$(dirname "$LOG")"
 # 后端日志落在 $LOGDIR 下，而 `java ... >> "$LOGDIR/dual-backend.log"` 发生在任何 mkdir 之前：
 # LOGDIR 指到一个新目录时重定向直接失败 ⇒ **JVM 根本没起来**，脚本却只报"普通后端没起来（探活失败）"，
 # 看起来像产品/端口问题（2026-10-07 全量批跑就是这么在 2 秒内退 2 的）。
-mkdir -p "$LOGDIR"
+mkdir -p "$LOGDIR" "$BACKEND_TMP_DIR"
 : > "$LOG"
 
 # 探活到返回就 0，最多 70 秒
@@ -118,7 +121,14 @@ report_stray_backends
 sleep 3
 
 echo "[dual] 起普通后端 $BACKEND_PORT" >> "$LOG"
-"$JDK" -jar "$JAR" --server.port="$BACKEND_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-backend.log" 2>&1 &
+# ⚠️ **必须给后端进程也指一个可写的 java.io.tmpdir**：
+# Spring Boot（Tomcat）启动时会在 java.io.tmpdir 下建自己的临时目录，
+# 而本机（Git Bash）上 JVM 的默认值落在 **C:\windows**（Windows 侧读不懂 Git Bash 的
+# POSIX 风格 TEMP 路径 ⇒ JVM 退回内置默认）⇒ AccessDeniedException:
+# C:\windows\tomcat.<port>.<随机> ⇒ **后端根本起不来**（症状：探活失败，
+# 而日志里那一行藏在栈底，不看日志会以为是端口或 jar 的问题）。
+# 与 pom 里 surefire 那条同根同解（一个给测试 JVM，一个给后端 JVM）。
+"$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -jar "$JAR" --server.port="$BACKEND_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-backend.log" 2>&1 &
 if ! wait_up "$BACKEND_PORT"; then
   echo "[dual] 普通后端没起来（探活失败）" >> "$LOG"
   echo "[dual] DONE" >> "$LOG"
@@ -130,7 +140,7 @@ echo "[dual] 起提速档后端 $BOOST_PORT" >> "$LOG"
 IRONOATH_DEV_CITY_LEVEL=16 \
 IRONOATH_DEV_START_AMOUNT=2000000 \
 SPRING_PROFILES_ACTIVE=dev \
-  "$JDK" -jar "$JAR" --server.port="$BOOST_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-boost.log" 2>&1 &
+  "$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -jar "$JAR" --server.port="$BOOST_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-boost.log" 2>&1 &
 if wait_up "$BOOST_PORT"; then
   echo "[dual] 提速档后端就绪" >> "$LOG"
 else
@@ -150,7 +160,7 @@ IRONOATH_DEV_CITY_LEVEL=16 \
 IRONOATH_DEV_START_AMOUNT=2000000 \
 IRONOATH_DEV_TIME_SPEED="${WAR_TIME_SPEED:-100}" \
 SPRING_PROFILES_ACTIVE=dev \
-  "$JDK" -jar "$JAR" --server.port="$WAR_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-war.log" 2>&1 &
+  "$JDK" -Djava.io.tmpdir="$BACKEND_TMP_DIR" -jar "$JAR" --server.port="$WAR_PORT" --ironoath.ops.token="$OPS_TOK" >> "$LOGDIR/dual-war.log" 2>&1 &
 if wait_up "$WAR_PORT"; then
   echo "[dual] 真仗档后端就绪" >> "$LOG"
 else
