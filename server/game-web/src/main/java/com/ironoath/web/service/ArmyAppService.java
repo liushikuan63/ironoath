@@ -623,7 +623,23 @@ public class ArmyAppService {
      * <p>取整用 HALF_UP 而不是 §五④ 的 ceil：那条裁决管的是<b>缩短时长</b>（BUILD/TRAIN/MARCH 三条），
      * 向上取整是为了防"0 秒队列"；容量是绝对值，套同一条 ceil 只会让它系统性偏大一截。
      */
+    /**
+     * 医院容量（对外入口，自己取存档）。
+     *
+     * <p>外部调用方（战斗、关卡）手里没有玩家档，只能由这里读一次。
+     */
     public long hospitalCapacity(String playerId, CityState city) {
+        PlayerSave save = playerId == null ? null : players.findByPlayerId(playerId).orElse(null);
+        return hospitalCapacityFor(playerId, city, save);
+    }
+
+    /**
+     * 医院容量（已知存档时用它）：<b>不为一个科技百分比再搬回整份存档</b>。
+     *
+     * <p>{@code knownSave} 为 {@code null} ⇒ 科技那半按 0 算（与「没有存档」同义）。
+     * 军队总览那条路（{@code toListResp}）手里已经有结算后的存档 ⇒ 直接复用。
+     */
+    private long hospitalCapacityFor(String playerId, CityState city, PlayerSave knownSave) {
         long exponent = configs.curve("BUILDING_OUTPUT").exponentFixed();
         long capacity = 0L;
         for (BuildingInstance b : city.buildings()) {
@@ -637,8 +653,7 @@ public class ArmyAppService {
         if (capacity <= 0L) {
             return 0L;
         }
-        PlayerSave save = playerId == null ? null : players.findByPlayerId(playerId).orElse(null);
-        long percentFixed = save == null ? 0L : techEffects.hospitalPercent(save.tech());
+        long percentFixed = knownSave == null ? 0L : techEffects.hospitalPercent(knownSave.tech());
         return Rates.scaleUp(capacity, percentFixed);
     }
 
@@ -768,7 +783,7 @@ public class ArmyAppService {
 
     private ArmyListResp toListResp(String playerId, ArmyState army, CityAppService.CitySnapshot snap) {
         long troopCap = heroAppService.troopCap(playerId);
-        long hospitalCap = hospitalCapacity(playerId, snap.city());
+        long hospitalCap = hospitalCapacityFor(playerId, snap.city(), snap.player());
         List<UnitView> units = new ArrayList<>();
         for (UnitCfg unit : configs.all(UnitCfg.class)) {
             ArmyState.TrainingTask task = army.queue().get(unit.id());
