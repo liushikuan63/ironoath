@@ -94,6 +94,9 @@ function collectFiles(dir, out) {
   return out
 }
 
+/** 「长得像数字的字符串」：逗号分隔的数字、比率、点分版本号（与 48 号门的「配置值」同一形状）。 */
+const NUMERIC_STRING_RE = /^[0-9]+([.,][0-9]+)*$|^\d+(\.\d+){1,3}$/
+
 /**
  * 读**全部**配置表：每张表的行 id + 数值列名，并统计**每个数值列名出现在几张表里**。
  *
@@ -132,11 +135,17 @@ function readTables() {
       if (typeof row.id === 'string') ids.push(row.id)
       for (const [column, value] of Object.entries(row)) {
         if (column === 'id') continue
-        if (typeof value === 'number' && typeof value !== 'boolean') {
-          cols.add(column)
-          if (!colOwner.has(column)) colOwner.set(column, new Set())
-          colOwner.get(column).add(table)
-        }
+        // ⚠️ **字符串型数值列也要算**（2026-10-20 补）：有些表把数字**写成字符串**
+        // （`bot_archetype.aggression` = "0.05"、`alliance_config.techCapBonus` = "0.0"）。
+        // 之前只收 `typeof value === 'number'` ⇒ **这一族在门 51 的视野之外**
+        // （门 48 只扫 global 的字符串参数，也看不见它们）⇒ 那就是一处**没人守着的缺口**。
+        // ⇒ 现在按「长得像数字的字符串」一并收进来。
+        const numeric = (typeof value === 'number' && typeof value !== 'boolean')
+          || (typeof value === 'string' && NUMERIC_STRING_RE.test(value.trim()))
+        if (!numeric) continue
+        cols.add(column)
+        if (!colOwner.has(column)) colOwner.set(column, new Set())
+        colOwner.get(column).add(table)
       }
     }
     tables.push({ table, ids, cols })

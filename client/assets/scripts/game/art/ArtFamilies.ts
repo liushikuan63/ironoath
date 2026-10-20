@@ -24,6 +24,10 @@ export type ArtFamily = 'item' | 'equip' | 'hero' | 'activity' | 'building'
  * 运行期沿用 `city-base-v2` 路径与 UUID；CityPanelView 按 SpriteFrame 的原尺寸等比 cover，
  * 不把 3:2 母版压成 8:5。原稿与采用记录见 `art-src/generated/accepted/iron-unified-v3/`。
  */
+// numeric-copy-exempt: 门 51 的线索命中了 `curve.base` 这一列，但那是**巧合**：
+// 上面那段注释里有路径名 `city-base-v2`（里面的 "base" 恰好撞上 curve 表的列名），
+// 而紧跟着的声明块里有数字（1536×1024 / 3:2 / 8:5 这类写在注释里的尺寸）。
+// ⇒ 与 curve 表毫无关系：客户端不读 curve 表的任何一行。
 export const CITY_STAGE_ASSETS = {
   ground: 'ui/generated/city/city-ground-cobble-v1',
   wall: 'ui/generated/city/city-wall-band-v1',
