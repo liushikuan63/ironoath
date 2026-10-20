@@ -373,11 +373,15 @@ public class StageAppService {
                            List<String> heroIds, long seed, long now) {
         HeroRoster roster = heroes.findByPlayerId(playerId).orElseGet(HeroRoster::new);
         CityState city = cities.findByPlayerId(playerId).orElse(null);
-        long hospitalCapacity = city == null ? 0L : armyAppService.hospitalCapacity(playerId, city);
+        // 这一次读取供两处共用：医院容量的科技那半、战斗装配的个人科技。
+        // 原来两处各自去读一遍整份存档（都只为拿 tech），而它们之间没有任何写。
+        PlayerSave player = players.findByPlayerId(playerId).orElse(null);
+        long hospitalCapacity = city == null ? 0L
+                : armyAppService.hospitalCapacity(playerId, city, player);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(units);
         var attacker = armyFactory.toSide(playerId, attackerFold,
                 heroMapper.snapshots(playerId, heroIds, roster), 0L,
-                techBonuses.forPlayer(playerId), hospitalCapacity);
+                techBonuses.forPlayer(playerId, player == null ? null : player.tech()), hospitalCapacity);
         var defender = armyFactory.toSide(stage.id(), armyFactory.fold(enemyArmy(stage)),
                 List.of(), 0L, com.ironoath.battle.TechBonus.none(), 0L);
 

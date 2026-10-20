@@ -44,16 +44,26 @@ public class BattleTechBonuses {
      * 而不是抛 —— 战斗装配跑在读路径上，而"少一份个人科技"比"这场仗打不起来"更接近事实。
      */
     public TechBonus forPlayer(String playerId) {
-        TechBonus alliance = allianceBonuses.forPlayer(playerId);
         if (playerId == null || playerId.isBlank()) {
-            return alliance;
+            return allianceBonuses.forPlayer(playerId);
         }
         PlayerSave save = players.findByPlayerId(playerId).orElse(null);
-        if (save == null) {
+        return forPlayer(playerId, save == null ? null : save.tech());
+    }
+
+    /**
+     * 乘区 B 总加成（调用方<b>已经拿着</b>这份科技时用它）：不为两个百分比再搬回整份存档。
+     *
+     * <p>与 {@link #forPlayer(String)} 逐字同口径：{@code tech} 为 {@code null}（读不到存档 / 玩家没建号）
+     * ⇒ 只算联盟那一份，<b>不抛</b>（战斗装配跑在读路径上，「少一份个人科技」比「这场仗打不起来」好）。
+     */
+    public TechBonus forPlayer(String playerId, com.ironoath.core.player.PlayerTech tech) {
+        TechBonus alliance = allianceBonuses.forPlayer(playerId);
+        if (playerId == null || playerId.isBlank() || tech == null) {
             return alliance;
         }
-        TechBonus personal = new TechBonus(techEffects.attackPercent(save.tech()),
-                techEffects.defensePercent(save.tech()));
+        TechBonus personal = new TechBonus(techEffects.attackPercent(tech),
+                techEffects.defensePercent(tech));
         return alliance.plus(personal);
     }
 }

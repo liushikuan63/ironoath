@@ -634,6 +634,15 @@ public class ArmyAppService {
     }
 
     /**
+     * 医院容量（调用方<b>已经拿着</b>存档时用它）：<b>不为一个科技百分比再搬回整份存档</b>。
+     *
+     * <p>与两参版逐字同口径：{@code save} 为 {@code null} ⇒ 科技那半按 0 算（与「读不到存档」同义）。
+     */
+    public long hospitalCapacity(String playerId, CityState city, PlayerSave save) {
+        return hospitalCapacityFor(playerId, city, save);
+    }
+
+    /**
      * 医院容量（已知存档时用它）：<b>不为一个科技百分比再搬回整份存档</b>。
      *
      * <p>{@code knownSave} 为 {@code null} ⇒ 科技那半按 0 算（与「没有存档」同义）。
