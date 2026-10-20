@@ -19,7 +19,10 @@
 // 判据本身也要有判据：第一次跑完必须确认它在**无违规**时能报绿。
 const { readFileSync } = require('fs')
 
-const cliPath = 'server/tools/balance-sim/src/main/java/com/ironoath/battle/sim/BalanceCli.java'
+// 输入（**可选口 BALANCE_SIM_TECH_CLI**）：不设时与默认读取完全一致；绝对路径也直接可用
+// ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真模拟器源码里植东西。
+const cliPath = process.env.BALANCE_SIM_TECH_CLI
+  || 'server/tools/balance-sim/src/main/java/com/ironoath/battle/sim/BalanceCli.java'
 const src = readFileSync(cliPath, 'utf8')
 const problems = []
 

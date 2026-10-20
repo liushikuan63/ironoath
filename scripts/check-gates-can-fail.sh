@@ -621,6 +621,33 @@ run_balance_sim_config_sync() { node scripts/check-balance-sim-config-sync.js; }
 three_arg check-balance-sim-config-sync.sh \
           mk_balance_sim_config_sync run_balance_sim_config_sync '模拟器不得硬编与配置表重复的数值（走 BALANCE_SIM_* 口，零污染）'
 
+# check-balance-sim-tech-sync：模拟器的科技加成必须从 tech 表读（写成常量就会「照常报数、却全是错的」，
+# 与 #594 initCap / #596 完全同族）。⚠️ 走 BALANCE_SIM_TECH_CLI 口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = 假模拟器源码里**没有** --tech-level 的解析 ⇒ 红点落在「reads --tech-level from options」。
+BT_D=/d/tmp/probe753/gates-balancesimtech
+mk_balance_sim_tech_sync() {
+  if [ "$1" = "1" ]; then
+    mkdir -p "$BT_D"
+    cat > "$BT_D/BalanceCli.java" <<'EOF'
+package com.ironoath.battle.sim;
+
+public final class BalanceCli {
+    public static void main(String[] args) {
+        // 违规样本：--tech-level 的解析不见了（科技乘数因此退化成写死的值）。
+        String level = "0";
+    }
+}
+EOF
+    export BALANCE_SIM_TECH_CLI="$BT_D/BalanceCli.java"
+  else
+    unset BALANCE_SIM_TECH_CLI
+    rm -f "$BT_D/BalanceCli.java"
+  fi
+}
+run_balance_sim_tech_sync() { node scripts/check-balance-sim-tech-sync.js; }
+three_arg check-balance-sim-tech-sync.sh \
+          mk_balance_sim_tech_sync run_balance_sim_tech_sync '模拟器科技加成必须从 tech 表读（走 BALANCE_SIM_TECH_CLI 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
