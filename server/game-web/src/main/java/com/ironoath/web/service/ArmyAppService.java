@@ -47,6 +47,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * 职责：军队应用服务 —— 训练队列、兵种阶级解锁、医院与治疗（B05 §二）。
@@ -629,8 +630,9 @@ public class ArmyAppService {
      * <p>外部调用方（战斗、关卡）手里没有玩家档，只能由这里读一次。
      */
     public long hospitalCapacity(String playerId, CityState city) {
-        PlayerSave save = playerId == null ? null : players.findByPlayerId(playerId).orElse(null);
-        return hospitalCapacityFor(playerId, city, save);
+        // 无有效医院时容量已确定为0，不能为一个用不上的科技加成访问存储。
+        return hospitalCapacity(city,
+                () -> playerId == null ? null : players.findByPlayerId(playerId).orElse(null));
     }
 
     /**
@@ -649,6 +651,10 @@ public class ArmyAppService {
      * 军队总览那条路（{@code toListResp}）手里已经有结算后的存档 ⇒ 直接复用。
      */
     private long hospitalCapacityFor(String playerId, CityState city, PlayerSave knownSave) {
+        return hospitalCapacity(city, () -> knownSave);
+    }
+
+    private long hospitalCapacity(CityState city, Supplier<PlayerSave> loadPlayer) {
         long exponent = configs.curve("BUILDING_OUTPUT").exponentFixed();
         long capacity = 0L;
         for (BuildingInstance b : city.buildings()) {
@@ -662,6 +668,7 @@ public class ArmyAppService {
         if (capacity <= 0L) {
             return 0L;
         }
+        PlayerSave knownSave = loadPlayer.get();
         long percentFixed = knownSave == null ? 0L : techEffects.hospitalPercent(knownSave.tech());
         return Rates.scaleUp(capacity, percentFixed);
     }

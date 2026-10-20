@@ -106,7 +106,7 @@ export class QuestPanelView extends Component {
    *
    * <p><b>为什么按族分别存</b>：服务端按族下发（一次全发 76 行 ⇒ 响应体 28513B ⇒
    * 超全局预算 20480B；各族单独发都在预算内）⇒ 客户端手里会有好几份，
-   * 切页签时**先看这份在不在**，不在才去拉 ⇒ 切回去不用重拉。
+   * 切页签时**先看这份在不在**，不在才去拉；下一次权威刷新前切回去不用重拉。
    */
   private readonly listsByScope = new Map<QuestScope, QuestListView>()
   private pendingList: QuestListResp | null = null
@@ -267,12 +267,17 @@ export class QuestPanelView extends Component {
     }
     // 按族分别存（服务端按族下发，见 listsByScope 的注释）：切页签时先看这份在不在。
     const built = buildQuestList(resp)
+    // AppRoot在领取、战斗等进度变化后仍通过QUEST重读任务。该响应只能更新任务族，
+    // 不能证明此前缓存的成就/首杀仍新鲜；失效后只补拉当前可见族，仍不一次全拉。
+    if (scope === 'QUEST') this.listsByScope.clear()
     this.listsByScope.set(scope, built)
-    // 手里这份不是当前页签要的那一族 ⇒ 别动当前页签的画面（等它自己那份到货）。
+    this.list = built
+    // 非当前族的迟到响应只缓存；QUEST权威刷新则须让当前族进入补拉状态，
+    // 否则成就/首杀领取后仍会展示旧的可领取行。
     if (TAB_SCOPE[this.tab] !== scope) {
+      if (scope === 'QUEST' && TAB_SCOPE[this.tab] !== undefined) this.render()
       return
     }
-    this.list = built
     // 与 #354 那条「回执被自己触发的刷新抹掉」同形状，但这一处是良性的，判据两条：
     // 三选一是玩家点「领取」时按 intent 现算出来的（`handleClaimClick`），不来自任何写回执；
     // 登录预拉、进入任务页与 `claimQuest` 都会刷新这里；切回面板时读取权威进度，领奖后关闭已消费的选择弹窗。

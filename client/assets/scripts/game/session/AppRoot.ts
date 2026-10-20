@@ -567,6 +567,9 @@ export class AppRoot {
    */
   private chatHistoryCap: number = CHAT_LOCAL_HISTORY_FALLBACK_MAX
   private armyResp: ArmyListResp | null = null
+  /** QUEST权威刷新使此前发出的其他族响应过期；同族只接受最后一次请求。 */
+  private questGeneration: object = {}
+  private readonly questRequestTokens = new Map<QuestScope, object>()
   /** 商店：当前页签与最近一次兑换的临时提示。货架来自 /shop/list 的响应，不缓存计算 */
   private shopTab: ShopCurrency = 'GOLD'
   private shopResp: ShopListResp | null = null
@@ -888,10 +891,10 @@ export class AppRoot {
     // 而「服务端明确下发了一份空清单」才是「它说没有资源名」—— 两者语义不同，不能混。
     if (Array.isArray(outcome.data.resourceNames)) {
       applyResourceNames(outcome.data.resourceNames)
-      // 权限位中文名与「自动续训默认批数」同属**服务端下发的展示/默认数据**：
-      // 客户端没有配置表加载器 ⇒ 拿不到表，自己写一份就是第二个真相。
-        applyAutoTrainDefaultBatches(outcome.data.autoTrainDefaultBatches ?? 1)
     }
+    // 续训默认批数独立于资源名；滚动升级缺少资源名字段时也必须接收它，
+    // 缺少批数字段则回到最小值，不能继承此前会话的默认设置。
+    applyAutoTrainDefaultBatches(outcome.data.autoTrainDefaultBatches ?? 1)
     await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'stamina', 'social', 'power',
       'world', 'quest', 'reddot')
     // 首屏拉齐之后再弹「自上次登录以来」（B25-S3）：它要读城市/社交那两份已到的数据，
@@ -1120,8 +1123,7 @@ export class AppRoot {
         // 而多发的那两个请求正是「一次启动只发 PANEL_PULLS 条请求」那道守卫不许的
         // （每多一个请求，玩家就多等一段白屏）⇒ 另两族等玩家切到那个页签再拉
         // （见 refreshQuestScope；面板在那一族没到货时写「读取中…」，不留上一页的行）。
-        this.deliver('quest', await this.api.questList('QUEST'),
-          r => this.targets.quest?.(r, 'QUEST'))
+        await this.refreshQuestScope('QUEST')
         return
       case 'reports': {
         // 战报与敌情同一次刷新一起拉（B26 S19）：它们是同一块面板的两个页签，
@@ -1797,7 +1799,19 @@ export class AppRoot {
    * 有守卫盯着）⇒ 玩家切到别的页签时那一族才拉；拉到过就留在面板里（切回去不用重拉）。
    */
   async refreshQuestScope(scope: QuestScope): Promise<void> {
-    this.deliver('quest', await this.api.questList(scope), r => this.targets.quest?.(r, scope))
+    const token = {}
+    const generation = this.questGeneration
+    const session = this.refillSession
+    const owner = this.playerId
+    this.questRequestTokens.set(scope, token)
+    const outcome = await this.api.questList(scope)
+    if (session !== this.refillSession || owner !== this.playerId
+        || this.questRequestTokens.get(scope) !== token
+        || (scope !== 'QUEST' && this.questGeneration !== generation)) return
+    this.deliver('quest', outcome, r => {
+      if (scope === 'QUEST') this.questGeneration = {}
+      this.targets.quest?.(r, scope)
+    })
   }
 
   claimQuest(questId: string, heroChoice: string | null): Promise<void> {

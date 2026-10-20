@@ -22,6 +22,9 @@ import type { GameApiDeps } from '../assets/scripts/game/session/GameApi'
 import { GameSession } from '../assets/scripts/game/session/GameSession'
 import { AppRoot } from '../assets/scripts/game/session/AppRoot'
 import type { AutoRefillConfirmationView } from '../assets/scripts/game/army/AutoTrain'
+import { applyAutoTrainDefaultBatches, autoTrainDefaultBatchBudget } from '../assets/scripts/game/army/AutoTrain'
+import type { QuestScope } from '../assets/scripts/game/quest/QuestScope'
+import type { QuestListResp } from '../assets/scripts/net/generated/QuestProtocol'
 import type { RallyPanelData } from '../assets/scripts/game/session/AppRoot'
 import type { OfflineReportPopup, PanelTargets, ShopView } from '../assets/scripts/game/session/AppRoot'
 import type {
@@ -635,6 +638,108 @@ function reddotResponse(socialLit: boolean, helpLit: boolean) {
     serverNow: SERVER_NOW,
   }
 }
+
+for (const suppliesDefault of [true, false]) {
+  test(`统合：资源名字段缺省不阻止续训默认值${suppliesDefault ? '下发' : '回退'}`, async () => {
+    const h = harness()
+    const init = { ...(ROUTES['/player/init'] as Record<string, unknown>) }
+    delete init.resourceNames
+    if (suppliesDefault) init.autoTrainDefaultBatches = 4
+    else delete init.autoTrainDefaultBatches
+    h.http.overrides.set('/player/init', init)
+    const previous = autoTrainDefaultBatchBudget()
+    applyAutoTrainDefaultBatches(5)
+    try {
+      await h.root.start('integration-init-fields', '君')
+      assert.equal(autoTrainDefaultBatchBudget(), suppliesDefault ? 4 : 1,
+        '两个独立的init字段不能互相设门槛；旧响应也须清掉此前会话的默认批数')
+    } finally {
+      applyAutoTrainDefaultBatches(previous)
+    }
+  })
+}
+
+for (const globalRefresh of [false, true]) {
+  test(`统合：${globalRefresh ? 'QUEST权威刷新后' : '同族新请求后'}旧成就响应不回滚新结果`, async () => {
+    const h = harness()
+    await h.root.start('integration-quest-race', '君')
+    const delivered: Array<{ scope: QuestScope | undefined, ids: string[] }> = []
+    h.targets.quest = (resp, scope) => delivered.push({ scope, ids: resp.quests.map(q => q.questId) })
+    const base = ROUTES['/quest/list'] as QuestListResp
+    const response = (id: string): QuestListResp => ({ ...base,
+      quests: base.quests.map(q => ({ ...q, questId: id })) })
+    h.http.overrides.set('/quest/list', response('old-scope'))
+    let releaseOld!: () => void
+    let capturedOld!: () => void
+    const oldGate = new Promise<void>(resolve => { releaseOld = resolve })
+    const captured = new Promise<void>(resolve => { capturedOld = resolve })
+    const get = h.http.get.bind(h.http)
+    let first = true
+    h.http.get = async (url, headers = {}) => {
+      const reply = await get(url, headers)
+      if (new URL(url).searchParams.get('scope') === 'ACHIEVEMENT' && first) {
+        first = false
+        capturedOld()
+        await oldGate
+      }
+      return reply
+    }
+    const old = h.root.refreshQuestScope('ACHIEVEMENT')
+    await captured
+    if (globalRefresh) {
+      h.http.overrides.set('/quest/list', response('current-quest'))
+      await h.root.refresh('quest')
+      releaseOld()
+      await old
+      assert.deepEqual(delivered.filter(value => value.scope === 'ACHIEVEMENT'), [],
+        '跨过QUEST刷新代际的旧响应即使没有同族后继请求，也不能重新灌入缓存')
+    }
+    h.http.overrides.set('/quest/list', response('fresh-scope'))
+    await h.root.refreshQuestScope('ACHIEVEMENT')
+    if (!globalRefresh) {
+      releaseOld()
+      await old
+    }
+    assert.deepEqual(delivered.filter(value => value.scope === 'ACHIEVEMENT').map(value => value.ids),
+      [['fresh-scope']], '晚到的旧请求不能把已刷新的成就缓存换回旧状态')
+  })
+}
+
+test('统合：新登录待响应期间，旧会话的任务族响应不能灌回面板', async () => {
+  const h = harness()
+  await h.root.start('integration-old-session', '君')
+  const delivered: QuestScope[] = []
+  h.targets.quest = (_resp, scope) => { if (scope !== undefined) delivered.push(scope) }
+  let releaseOld!: () => void
+  let capturedOld!: () => void
+  const gate = new Promise<void>(resolve => { releaseOld = resolve })
+  const captured = new Promise<void>(resolve => { capturedOld = resolve })
+  const get = h.http.get.bind(h.http)
+  h.http.get = async (url, headers = {}) => {
+    const reply = await get(url, headers)
+    if (new URL(url).searchParams.get('scope') === 'ACHIEVEMENT') {
+      capturedOld()
+      await gate
+    }
+    return reply
+  }
+  const old = h.root.refreshQuestScope('ACHIEVEMENT')
+  await captured
+  const releaseLogin = h.http.hold('/player/init')
+  h.http.overrides.set('/player/init', {
+    ...(ROUTES['/player/init'] as Record<string, unknown>), playerId: 'P2',
+  })
+  const login = h.root.start('integration-new-session', '新君')
+  try {
+    releaseOld()
+    await old
+    assert.equal(delivered.includes('ACHIEVEMENT'), false,
+      '此时尚未收到新QUEST响应，必须由既有登录会话边界挡住旧响应')
+  } finally {
+    releaseLogin()
+    await login
+  }
+})
 
 interface Call {
   readonly method: 'GET' | 'POST'

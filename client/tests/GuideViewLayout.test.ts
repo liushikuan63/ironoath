@@ -9,6 +9,7 @@ import { GuideDriver } from '../assets/scripts/game/guide/GuideDriver'
 import { guideBubbleLayout } from '../assets/scripts/game/ui/GuideLayout'
 import { buildQuestList, candidateLabel, candidatePreview, chosenClaimReq } from '../assets/scripts/game/quest/QuestPanel'
 import type { HeroChoicePrompt } from '../assets/scripts/game/quest/QuestPanel'
+import type { QuestScope } from '../assets/scripts/game/quest/QuestScope'
 import type { GuideScriptResp } from '../assets/scripts/net/generated/GuideProtocol'
 import type { CityHarvestLearningResp } from '../assets/scripts/net/generated/CityProtocol'
 import * as cityAnchors from '../assets/scripts/game/city/CitySceneAnchors'
@@ -289,7 +290,9 @@ interface QuestHarness {
   node: Node; promptPanel: Node | null; onPromptVisibility: ((visible: boolean) => void) | null
   onClaim: ((quest: string, hero: string | null) => void) | null; openPrompt: HeroChoicePrompt | null
   buildPrompt(): void; buildTabs(height: number): void; showPrompt(prompt: HeroChoicePrompt): void; hidePrompt(): void; onDestroy(): void
-  attach(resp: QuestListResp): void; switchTab(key: string): void; rowPool: object | null
+  attach(resp: QuestListResp, scope?: QuestScope): void; switchTab(key: string): void; rowPool: object | null
+  onScopeRequested: ((scope: QuestScope) => void) | null
+  listsByScope: Map<QuestScope, ReturnType<typeof buildQuestList>>
   buildBackground(width: number, height: number): void; buildHeader(height: number): void
   createRow(): Node; render(): void; drawnRows: Node[]; tab: string; page: number
   update(): void
@@ -502,6 +505,67 @@ function ownRect(node: Node, offset = new Vec3()): Rect {
   return { x: offset.x + node.position.x - ui.anchorX * ui.width,
     y: offset.y + node.position.y - ui.anchorY * ui.height, width: ui.width, height: ui.height }
 }
+function integrationQuestScope(scope: QuestScope, claimed = false): QuestListResp {
+  const firstKill = scope === 'FIRST_KILL'
+  return {
+    quests: [{ questId: `integration-${scope}`, name: '服务端任务',
+      type: scope === 'QUEST' ? 'SIDE' : 'ACHIEVEMENT',
+      goalType: firstKill ? 'SOLO_MONSTER_WIN' : 'GATHER_RESOURCE', goalTarget: 'WOOD',
+      goalValue: 1, current: 1, complete: true, claimed, claimable: !claimed,
+      locked: false, preQuestId: null, heroChoices: [], rewards: null,
+      firstVictoryAt: firstKill ? 1_780_000_000_000 : null }],
+    claimableCount: claimed ? 0 : 1, serverNow: 1_780_000_000_000,
+  }
+}
+
+for (const scope of ['ACHIEVEMENT', 'FIRST_KILL'] as const) {
+  test(`统合：任务权威刷新使${scope}旧缓存失效并按需补拉当前族`, () => {
+    const { guide } = setup('quest')
+    const quest = questWithGuide(guide)
+    questRows(quest)
+    quest.switchTab(scope === 'ACHIEVEMENT' ? 'achievement' : 'firstkill')
+    quest.attach(integrationQuestScope(scope), scope)
+    assert.equal(quest.drawnRows.length, 1)
+    assert.equal(quest.listsByScope.get(scope)?.rows[0]?.claimable, true)
+    const requests: QuestScope[] = []
+    quest.onScopeRequested = requested => requests.push(requested)
+
+    // 领取/战斗等写操作完成后，AppRoot原有刷新通道重读QUEST。
+    quest.attach(integrationQuestScope('QUEST'), 'QUEST')
+    assert.deepEqual(requests, [scope], '当前成就/首杀不能继续展示领取前的缓存')
+    assert.equal(quest.drawnRows.length, 0, '等权威族响应期间不能留着旧的可领取行')
+    quest.attach(integrationQuestScope(scope, true), scope)
+    assert.equal(quest.drawnRows.length, 1)
+    assert.equal(quest.listsByScope.get(scope)?.rows[0]?.claimable, false)
+    assert.equal(quest.listsByScope.get(scope)?.rows[0]?.statusText, '已领取')
+  })
+}
+
+test('统合：非当前族的迟到响应只缓存，不替换任务页已显示的行', () => {
+  const { guide } = setup('quest')
+  const quest = questWithGuide(guide)
+  questRows(quest)
+  const before = [...quest.drawnRows]
+  quest.attach(integrationQuestScope('ACHIEVEMENT'), 'ACHIEVEMENT')
+  assert.equal(quest.drawnRows.length, before.length)
+  before.forEach((node, index) => assert.equal(quest.drawnRows[index], node))
+  quest.switchTab('achievement')
+  assert.equal(quest.drawnRows.length, 1)
+})
+
+test('统合：旧全量任务响应已有成就行时仍可直接显示，不额外请求', () => {
+  const { guide } = setup('quest')
+  const quest = questWithGuide(guide)
+  questRows(quest)
+  quest.attach({ quests: [...integrationQuestScope('QUEST').quests,
+    ...integrationQuestScope('ACHIEVEMENT').quests], claimableCount: 2, serverNow: 1 })
+  const requests: QuestScope[] = []
+  quest.onScopeRequested = scope => requests.push(scope)
+  quest.switchTab('achievement')
+  assert.equal(quest.drawnRows.length, 1)
+  assert.deepEqual(requests, [])
+})
+
 function questRows(quest: QuestHarness, firstClaimable = false): void {
   const Pool = sceneExports('NodePool', {}).NodePool as new (parent: Node, factory: () => Node) => object
   quest.rowPool = new Pool(quest.node, () => quest.createRow())
