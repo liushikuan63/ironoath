@@ -7920,3 +7920,5 @@ TEST_EXIT=0
 | 性能接续 #2266 | 四docs原子提交见record2266-commit.actual.json；候选源码a0fb8225 | 离线package0、原195仅javac0、46配置及旧118逐项SHA通过；自有build worktree安全清理0 | tmp/integration-review-20261020 候选e5714fcd、源码/配置manifest、编译日志和v6接续方案 | 实际采集及5000/native未验；新fresh持有人/额度/互斥/UTC窗口仍需准入，旧r9不可运行；proc IO机制未知保partial |
 
 | 主线兼容补验 #2267 | 四docs原子提交见record2267-commit.actual.json；源码a0fb8225不变 | 20类31测试/0失败错误跳过；候选产物独审无阻断 | tmp/integration-review-20261020/master-read-scope-tests.actual.json 与 artifact-integration-review.actual.json | 含源码形状断言，不能代完整服务端/DB/runtime/原生/5000；新fresh准入未到，无资源启动 |
+
+| 诊断接入 #2268 | 四docs原子提交见record2268-commit.actual.json；产品源码a0fb不变 | 冻结observer对照1fail+2error；timeout两反例实红后绿；最终27/0/0/0与独审同SHA通过 | tmp/integration-review-20261020/profile-lifecycle-bridge-v1-frozen.actual.json、design和review | 仅新bridge/factory/真实两调用契约；完整r10outer未派生，实际采样/IO机制/JFR/5000/native未验，不能用mock代替 |
