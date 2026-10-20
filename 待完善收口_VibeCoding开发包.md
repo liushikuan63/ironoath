@@ -7926,3 +7926,5 @@ TEST_EXIT=0
 | r10入口 #2269 | 四docs原子提交见record2269-commit.actual.json；产品源码a0fb不变 | gate29+slot10+entrymock11共50绿/0跳；独审同源50绿；实际validate-only0与self birth0 | tmp/integration-review-20261020/r10-reviewed-frozen-v1.actual.json、design、review、全部RED日志 | 无真实新能力/负载/JFR；缺真实complete capability和fresh互斥窗口，旧partial/authority不能复用；预算/native仍未验 |
 
 | 原生协调 #2270 | 四docs原子提交见record2270-commit.actual.json；冻结r10不变 | DB-only归档/交接链实查；pipe两次32602；Cua限定metadata两proxy退出；fresh heavy0/ports空仅snapshot | tmp/integration-review-20261020/native-coordination-boundary-v1.actual.json | 无已送达消息/真实fresh唯一holder hold/新窗口；v4/r10旧holder固定不能沿用；整体预算/native未完成，保留同Goal待外部状态变化 |
+
+| 当前内核能力 #2271 | 四docs原子local提交见record2271-commit.actual.json；产品a0fb及r10不变 | 当前元数据9命令exit0；真实TASKSTATS=n；118及r10冻结与JAR/46cfg核对；独审局限明示 | tmp/integration-review-20261020/kernel-io-stage-frozen-v1.actual.json、kernel-io-capability-matrix-v1.md及review-v1 | 历史ENOENT根因未倒填；reader-v1未批准复用；partial模式仅设计未实现/未实测；完整IO/预算/native仍未验，需fresh新窗口 |
