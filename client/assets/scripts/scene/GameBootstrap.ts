@@ -1813,7 +1813,7 @@ export class GameBootstrap extends Component {
         if (!this.destroyed && this.guide?.isValid) this.guide.setBubbleSuppressed('quest', visible)
       }
       if (this.guide?.isValid) this.guide.setBubbleSuppressed('quest', quest.openPrompt !== null)
-      out.quest = resp => quest.attach(resp)
+      out.quest = (resp, scope) => quest.attach(resp, scope)
       out.questClaimed = resp => {
         const summary = buildClaimSummary(resp)
         quest.showReceipt([summary.rewardLines.join('、') || '奖励已领取', summary.remainingText]
@@ -1824,6 +1824,8 @@ export class GameBootstrap extends Component {
       quest.onClaim = (questId, heroChoice) => { void this.root?.claimQuest(questId, heroChoice) }
       quest.onClaimActivity = activityId => { void this.root?.claimActivity(activityId) }
       quest.onActivityOpened = () => { void this.root?.refresh('activity') }
+      // 任务族按需补拉（成就 / 首杀图鉴）：服务端按族下发是为了守住响应体预算
+      quest.onScopeRequested = scope => { void this.root?.refreshQuestScope(scope) }
     }
     if (reports !== null) {
       out.reports = (resp, serverNowMs) => reports.attach(resp, serverNowMs)

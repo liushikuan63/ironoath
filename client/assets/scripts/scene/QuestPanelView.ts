@@ -22,6 +22,7 @@ import {
 } from '../game/ui/PanelPaging'
 import type { ClaimIntent, HeroChoicePrompt, QuestListView, QuestRow } from '../game/quest/QuestPanel'
 import type { QuestListResp } from '../net/generated/QuestProtocol'
+import type { QuestScope } from '../game/quest/QuestScope'
 import type { ActivityListResp } from '../net/generated/ActivityProtocol'
 import { buildActivityList } from '../game/activity/ActivityPanel'
 import type { ActivityListView, ActivityRow } from '../game/activity/ActivityPanel'
@@ -83,12 +84,34 @@ const TABS = [
   { key: 'firstkill', label: '首杀图鉴' },
 ] as const
 type TabKey = typeof TABS[number]['key']
+/**
+ * 页签 → 服务端下发的族（签到与活动不是任务族，它们走活动列表那一路）。
+ *
+ * <p><b>这份映射是客户端与服务端之间那份「口径」</b>：服务端 `QuestAppService#scopeOf`
+ * 用同一个判据分族（`goalType=SOLO_MONSTER_WIN` ⇒ FIRST_KILL 优先，其次 questType=ACHIEVEMENT）。
+ * 两边有一处改了就会分出两套 ⇒ 那时成就页会漏行、或首杀页混进成就行。
+ */
+const TAB_SCOPE: Partial<Record<TabKey, QuestScope>> = {
+  quest: 'QUEST',
+  achievement: 'ACHIEVEMENT',
+  firstkill: 'FIRST_KILL',
+}
 const TAB_HEIGHT = 34
 
 @ccclass('QuestPanelView')
 export class QuestPanelView extends Component {
   private list: QuestListView | null = null
+  /**
+   * 各族的任务列表（任务 / 成就 / 首杀图鉴）。
+   *
+   * <p><b>为什么按族分别存</b>：服务端按族下发（一次全发 76 行 ⇒ 响应体 28513B ⇒
+   * 超全局预算 20480B；各族单独发都在预算内）⇒ 客户端手里会有好几份，
+   * 切页签时**先看这份在不在**，不在才去拉 ⇒ 切回去不用重拉。
+   */
+  private readonly listsByScope = new Map<QuestScope, QuestListView>()
   private pendingList: QuestListResp | null = null
+  /** 与 pendingList 配套：面板还没建好时先记住这一份属于哪一族。 */
+  private pendingScope: QuestScope = 'QUEST'
   /** 活动页数据。null = 还没拉到（页签切过去时显示提示，不假装"没有活动"） */
   private activity: ActivityListView | null = null
   private pendingActivity: { resp: ActivityListResp, nowMs: number } | null = null
@@ -135,6 +158,13 @@ export class QuestPanelView extends Component {
   /** 玩家要领某条活动的奖励。windowKey 由服务端判，这里只递 activityId */
   onClaimActivity: ((activityId: string) => void) | null = null
   onActivityOpened: (() => void) | null = null
+  /**
+   * 玩家切到某个任务族、而这一族还没到货时，由外层去拉。
+   *
+   * <p><b>为什么不是面板自己拉</b>：面板是 Cocos 组件，不碰网络
+   * （它只有 {@link onActivityOpened} 这一个「要数据」的回调）⇒ 拉取走外层那条已有通道。
+   */
+  onScopeRequested: ((scope: QuestScope) => void) | null = null
   /** 三选一真实开关交给装配层，让引导提示让出选择操作，遮罩仍由Guide管理。 */
   onPromptVisibility: ((visible: boolean) => void) | null = null
 
@@ -148,8 +178,9 @@ export class QuestPanelView extends Component {
     this.buildPrompt()
     if (this.pendingList !== null) {
       const pending = this.pendingList
+      const pendingScope = this.pendingScope
       this.pendingList = null
-      this.attach(pending)
+      this.attach(pending, pendingScope)
     }
     if (this.pendingActivity !== null) {
       const pending = this.pendingActivity
@@ -180,6 +211,7 @@ export class QuestPanelView extends Component {
     this.tabLabels.clear()
     this.onClaimActivity = null
     this.onActivityOpened = null
+    this.onScopeRequested = null
     this.drawnRows.length = 0
     this.rowQuestIds.clear()
     this.optionHeroIds.clear()
@@ -221,13 +253,26 @@ export class QuestPanelView extends Component {
     if (key !== this.promptLayoutKey) this.layoutPrompt()
   }
 
-  /** 装载任务列表。行顺序照搬服务端（它按章节/类型稳定排序）。 */
-  attach(resp: QuestListResp): void {
+  /**
+   * 装载任务列表。行顺序照搬服务端（它按章节/类型稳定排序）。
+   *
+   * <p><b>scope 是调用方告诉面板的</b>（客户端自己请求的那一族）—— 响应里不重复它，
+   * 同一件事说两遍就会有一处说歪。
+   */
+  attach(resp: QuestListResp, scope: QuestScope = 'QUEST'): void {
     if (this.rowPool === null) {
       this.pendingList = resp
+      this.pendingScope = scope
       return
     }
-    this.list = buildQuestList(resp)
+    // 按族分别存（服务端按族下发，见 listsByScope 的注释）：切页签时先看这份在不在。
+    const built = buildQuestList(resp)
+    this.listsByScope.set(scope, built)
+    // 手里这份不是当前页签要的那一族 ⇒ 别动当前页签的画面（等它自己那份到货）。
+    if (TAB_SCOPE[this.tab] !== scope) {
+      return
+    }
+    this.list = built
     // 与 #354 那条「回执被自己触发的刷新抹掉」同形状，但这一处是良性的，判据两条：
     // 三选一是玩家点「领取」时按 intent 现算出来的（`handleClaimClick`），不来自任何写回执；
     // 登录预拉、进入任务页与 `claimQuest` 都会刷新这里；切回面板时读取权威进度，领奖后关闭已消费的选择弹窗。
@@ -326,6 +371,27 @@ export class QuestPanelView extends Component {
     if (delta > 0 && !this.canNext) return
     this.page += delta
     this.render()
+  }
+
+  /**
+   * 画「读取中」。
+   *
+   * <p><b>为什么必须显式说在读</b>：这一族的数据没到时若什么都不画，玩家会看到
+   * **上一个页签的行还留在屏上**（或一片空白）⇒ 他会以为界面坏了。
+   * ⇒ 用页码那条同款的位置写一句「读取中…」。
+   */
+  private showScopeLoading(_scope: QuestScope | undefined): void {
+    if (this.overflowLabel === null || this.overflowLabel.node === null) {
+      return
+    }
+    const area = dialogContentRect(this.node)
+    const size = view.getVisibleSize()
+    if (area === undefined || size === undefined) {
+      return
+    }
+    const topY = Math.min(size.height / 2, area.y + area.height) - PADDING - HEADER_HEIGHT
+    this.overflowLabel.string = '读取中…'
+    this.overflowLabel.node.setPosition(new Vec3(area.x + area.width / 2, topY - 20, 0))
   }
 
   /** 页码与两颗键跟着这一屏最后画出的那行走；只有一页时整对收掉（#345）。 */
@@ -533,9 +599,17 @@ export class QuestPanelView extends Component {
       this.renderActivity()
       return
     }
-    const list = this.list
     const pool = this.rowPool
-    if (list === null || pool === null) {
+    if (pool === null) {
+      this.hidePager()
+      return
+    }
+    const scope = TAB_SCOPE[this.tab]
+    // 这一族到货了就用它；还没到 ⇒ **先用手上这份**（本地过滤照旧，见下面那行 filter），
+    // 这样「手上这份里本来就有当前页签的行」的老情形一个都不受影响。
+    const scoped = scope === undefined ? null : (this.listsByScope.get(scope) ?? null)
+    const list = scoped ?? this.list
+    if (list === null) {
       this.hidePager()
       return
     }
@@ -544,6 +618,14 @@ export class QuestPanelView extends Component {
       ? row.type === 'ACHIEVEMENT'
       : this.tab === 'firstkill' ? row.type === 'FIRST_KILL'
       : row.type !== 'ACHIEVEMENT' && row.type !== 'FIRST_KILL')
+    if (scoped === null && scope !== undefined && rows.length === 0) {
+      // 这一族还没到，而手上这份里**一行当前页签的都没有** ⇒ 画出来是一片空白，
+      // 玩家会以为界面坏了 ⇒ **说清楚在读**，并去要这一族。
+      this.hidePager()
+      this.showScopeLoading(scope)
+      this.onScopeRequested?.(scope)
+      return
+    }
     const rowHeight = this.tab === 'firstkill' ? 80 : ROW_HEIGHT
     const size = view.getVisibleSize()
     const area = dialogContentRect(this.node)

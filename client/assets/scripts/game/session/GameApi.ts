@@ -90,6 +90,7 @@ import type {
 } from '../../net/generated/SocialProtocol'
 import type { ShopBuyReq, ShopBuyResp, ShopCurrency, ShopListResp } from '../../net/generated/ShopProtocol'
 import type { QuestClaimReq, QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
+import type { QuestScope } from '../quest/QuestScope'
 import type {
   MailClaimAllReq, MailClaimAllResp, MailListResp, MailReadReq, MailReadResp,
 } from '../../net/generated/MailProtocol'
@@ -1342,9 +1343,10 @@ export class GameApi {
    * 所以面板每次打开都要真拉一次，不能拿缓存糊弄 —— 拿旧数据会让「每日任务今天已清零」
    * 这件事在界面上晚一整天。
    */
-  questList(): Promise<NetOutcome<QuestListResp>> {
-    return this.read<QuestListResp>('/quest/list')
+  questList(scope: QuestScope = 'QUEST'): Promise<NetOutcome<QuestListResp>> {
+    return this.read<QuestListResp>(`/quest/list?scope=${scope}`)
   }
+
 
   /**
    * POST /quest/claim。

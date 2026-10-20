@@ -35,6 +35,7 @@ import com.ironoath.common.time.TimeService;
 import com.ironoath.common.time.WeekKey;
 import com.ironoath.core.bag.InventoryRepository;
 import com.ironoath.core.quest.GoalType;
+import com.ironoath.web.dto.generated.QuestType;
 import com.ironoath.core.quest.QuestProgress;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
@@ -44,6 +45,7 @@ import com.ironoath.web.dto.generated.QuestClaimResp;
 import com.ironoath.web.dto.generated.QuestListResp;
 import com.ironoath.web.dto.generated.QuestView;
 import com.ironoath.web.quest.QuestAppService;
+import com.ironoath.web.quest.QuestScope;
 import com.ironoath.web.quest.QuestProgressStore;
 import com.ironoath.web.service.PlayerInitService;
 import com.ironoath.web.store.memory.InMemoryPlayerStore;
@@ -132,6 +134,74 @@ class QuestEndpointTest {
         assertThat(byId(resp, "quest_main_02").locked())
                 .as("第二条的前置是首条 —— 没领前置就该锁着").isTrue();
         assertThat(resp.claimableCount()).as("什么都没做，没有可领的").isZero();
+    }
+
+    @Test
+    @DisplayName("任务列表按族下发：三族互不重叠、合起来正好是全部行，且每族都在响应预算内")
+    void scopesPartitionTheQuestListAndFitThePayloadBudget() {
+        String playerId = newPlayer();
+
+        // ① 三族互不重叠，合起来正好是全部行（**不丢行、也不重行**）
+        //    —— 这一条是「分族」最容易错的地方：口径写歪一次，
+        //    就会出现「首杀那 50 行进了成就族」或「某一行两族都出现」。
+        QuestListResp all = quests.list(playerId);
+        QuestListResp questRows = quests.list(playerId, QuestScope.QUEST);
+        QuestListResp achievementRows = quests.list(playerId, QuestScope.ACHIEVEMENT);
+        QuestListResp firstKillRows = quests.list(playerId, QuestScope.FIRST_KILL);
+
+        Set<String> allIds = idsOf(all);
+        Set<String> questIds = idsOf(questRows);
+        Set<String> achievementIds = idsOf(achievementRows);
+        Set<String> firstKillIds = idsOf(firstKillRows);
+
+        assertThat(intersection(questIds, achievementIds)).as("任务族与成就族不能有同一行").isEmpty();
+        assertThat(intersection(questIds, firstKillIds)).as("任务族与首杀族不能有同一行").isEmpty();
+        assertThat(intersection(achievementIds, firstKillIds)).as("成就族与首杀族不能有同一行").isEmpty();
+
+        Set<String> union = new HashSet<>(questIds);
+        union.addAll(achievementIds);
+        union.addAll(firstKillIds);
+        assertThat(union).as("三族合起来必须正好是全部 %d 行", allIds.size()).isEqualTo(allIds);
+        assertThat(questRows.quests().size() + achievementRows.quests().size() + firstKillRows.quests().size())
+                .as("行数不能因为分族而多出或少掉").isEqualTo(all.quests().size());
+
+        // ② 口径与客户端的本地过滤一致：首杀那批的 questType 也是 ACHIEVEMENT，
+        //    是客户端用 goalType=SOLO_MONSTER_WIN 判成 FIRST_KILL 的 ⇒ ���里也必须优先。
+        for (QuestView row : firstKillRows.quests()) {
+            assertThat(row.goalType()).as("首杀族必须是 SOLO_MONSTER_WIN（口径与客户端同一判据）")
+                    .isEqualTo(com.ironoath.web.dto.generated.GoalType.SOLO_MONSTER_WIN);
+        }
+        for (QuestView row : achievementRows.quests()) {
+            assertThat(row.type()).as("成就族必须是 ACHIEVEMENT").isEqualTo(QuestType.ACHIEVEMENT);
+            assertThat(row.goalType()).as("首杀优先于成就：首杀那批不许进成就族")
+                    .isNotEqualTo(com.ironoath.web.dto.generated.GoalType.SOLO_MONSTER_WIN);
+        }
+
+        // ③ **每族的响应体都在全局预算内**（这才是分族的理由）：
+        //    一次全发 76 行 ⇒ 28513B ⇒ 超 PERF_PAYLOAD_MAX_BYTES（20480B）⇒
+        //    探针 verify-perf-runtime 实测 28162B（超 37%）。
+        long budget = configs.longParam("PERF_PAYLOAD_MAX_BYTES");
+        for (QuestListResp resp : List.of(questRows, achievementRows, firstKillRows)) {
+            int bytes = resp.quests().stream()
+                    .mapToInt(q -> q.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                    .sum();
+            assertThat(bytes).as("这一族的响应体必须在预算 %d B 内（实测口径：按 JSON 逐行字节算）", budget)
+                    .isLessThan((int) budget);
+        }
+    }
+
+    private static Set<String> idsOf(QuestListResp resp) {
+        Set<String> ids = new HashSet<>();
+        for (QuestView row : resp.quests()) {
+            ids.add(row.questId());
+        }
+        return ids;
+    }
+
+    private static Set<String> intersection(Set<String> a, Set<String> b) {
+        Set<String> out = new HashSet<>(a);
+        out.retainAll(b);
+        return out;
     }
 
     @Test

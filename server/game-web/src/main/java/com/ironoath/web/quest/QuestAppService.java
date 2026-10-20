@@ -25,6 +25,7 @@ import com.ironoath.core.lock.PlayerLock;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.core.quest.GoalType;
+import com.ironoath.web.quest.QuestScope;
 import com.ironoath.core.quest.QuestProgress;
 import com.ironoath.core.reward.RewardContext;
 import com.ironoath.core.reward.RewardItem;
@@ -112,6 +113,23 @@ public class QuestAppService {
 
     /** 任务面板。顺带跨期清零与状态型快照刷新（两者都只在真变化时落库）。 */
     public QuestListResp list(String playerId) {
+        return list(playerId, null);
+    }
+
+    /**
+     * 任务列表（只给请求的那一族）。
+     *
+     * <p><b>为什么要分族</b>：一次全发 76 行 ⇒ 响应体 28513B ⇒ **超了全局响应预算
+     * {@code PERF_PAYLOAD_MAX_BYTES}（20480B，探针 {@code verify-perf-runtime} 实测 28162B，超 37%）。
+     * 客户端的任务面板本来就把任务分成三个页签（任务 / 成就 / 首杀图鉴），
+     * <b>每族单独发都在预算内</b>（任务 17 行 6273B、成就 9 行 3453B、首杀 50 行 18877B）
+     * ⇒ ⇒ <b>服务端按族下发，客户端体验不变</b>（面板本来就在页签内翻页，族内行数不变）。
+     *
+     * <p><b>口径与客户端的本地过滤逐一对应</b>：客户端原来按
+     * {@code goalType == 'SOLO_MONGER_WIN' ? 'FIRST_KILL' : questType} 分族
+     * ⇒ 这里用同一个判据（{@link #scopeOf}）⇒ 两边不会各分一次而分出两套。
+     */
+    public QuestListResp list(String playerId, QuestScope scope) {
         long now = timeService.serverNow();
         return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> runProgressLocked(playerId, () -> {
             QuestProgress progress = loadProgressLocked(playerId, now);
@@ -121,10 +139,39 @@ public class QuestAppService {
             }
             List<QuestView> views = new ArrayList<>();
             for (QuestProgress.Entry entry : progress.entries()) {
+                if (scope != null && scopeOf(entry) != scope) {
+                    continue;
+                }
                 views.add(view(progress, entry, names.getOrDefault(entry.questId(), "未知任务")));
             }
-            return new QuestListResp(List.copyOf(views), progress.claimableCount(), now);
+            // 可领数也按族算：客户端只在「任务」页签显示它（`list.claimableText`），
+            // 而族外的行不该算进这一族的红点。
+            int claimable = 0;
+            for (QuestView v : views) {
+                if (v.claimable()) {
+                    claimable++;
+                }
+            }
+            return new QuestListResp(List.copyOf(views), claimable, now);
         }));
+    }
+
+    /**
+     * 这一行属于哪一族。
+     *
+     * <p><b>判据必须与客户端原来的本地过滤一模一样</b>：客户端是
+     * {@code quest.goalType === 'SOLO_MONSTER_WIN' ? 'FIRST_KILL' : quest.type}
+     * ⇒ 首杀那 50 行的 {@code questType} 也是 {@code ACHIEVEMENT}
+     * ⇒ <b>FIRST_KILL 优先于 ACHIEVEMENT</b>，顺序反了就会把首杀行发进成就族。
+     */
+    private static QuestScope scopeOf(QuestProgress.Entry entry) {
+        if (entry.goalType() == GoalType.SOLO_MONSTER_WIN) {
+            return QuestScope.FIRST_KILL;
+        }
+        if (entry.type() == QuestProgress.QuestType.ACHIEVEMENT) {
+            return QuestScope.ACHIEVEMENT;
+        }
+        return QuestScope.QUEST;
     }
 
     /**

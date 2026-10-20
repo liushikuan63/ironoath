@@ -114,6 +114,7 @@ import { worldModel } from '../world/WorldContext'
 import { selectedVisibleMonster, selectedVisibleResource } from '../world/WorldViewModel'
 import { applyResourceNames, resourceName } from '../ui/ResourceNames'
 import type { QuestClaimResp, QuestListResp } from '../../net/generated/QuestProtocol'
+import type { QuestScope } from '../quest/QuestScope'
 import type {
   BattleReportBrief, BattleReportListResp, BattleReportResp, ShareChannel,
 } from '../../net/generated/BattleProtocol'
@@ -423,7 +424,8 @@ export interface PanelTargets {
    * 任务面板（B12 §1）。**行里带 {@code heroChoices}**：首日那条主线送将任务是三选一，
    * 界面必须先让玩家选一个再领（服务端刻意不替玩家默认挑）。
    */
-  quest?(resp: QuestListResp): void
+  /** 任务列表到货。**scope 是客户端自己请求的那一族**（响应里不重复它，见 `QuestScope.ts`）。 */
+  quest?(resp: QuestListResp, scope: QuestScope): void
   /** 服务端任务领取回执，成功一次只递一次；实际额度及邮箱说明均取响应。 */
   questClaimed?(resp: QuestClaimResp): void
   /**
@@ -1110,7 +1112,16 @@ export class AppRoot {
         await this.loadEquip()
         return
       case 'quest':
-        this.deliver('quest', await this.api.questList(), r => this.targets.quest?.(r))
+        // 任务列表**按族下发**：服务端一次全发 76 行 ⇒ 响应体 28513B ⇒
+        // 超了全局响应预算 PERF_PAYLOAD_MAX_BYTES（20480B；探针 verify-perf-runtime 实测 28162B，超 37%）。
+        // 分成三族后每份都在预算内（任务 17 行 6273B、成就 9 行 3453B、首杀 50 行 18877B）。
+        //
+        // **启动时只拉「任务」族**（不是三族并行）：面板一打开就要有内容，
+        // 而多发的那两个请求正是「一次启动只发 PANEL_PULLS 条请求」那道守卫不许的
+        // （每多一个请求，玩家就多等一段白屏）⇒ 另两族等玩家切到那个页签再拉
+        // （见 refreshQuestScope；面板在那一族没到货时写「读取中…」，不留上一页的行）。
+        this.deliver('quest', await this.api.questList('QUEST'),
+          r => this.targets.quest?.(r, 'QUEST'))
         return
       case 'reports': {
         // 战报与敌情同一次刷新一起拉（B26 S19）：它们是同一块面板的两个页签，
@@ -1779,6 +1790,16 @@ export class AppRoot {
    * <p>成功先递到账回执并重读武将；成功或回应失败都重读任务、资源和红点。
    * 钱包可能已接受而回应丢失，刷新只读权威结果，不自动再次领取。
    */
+  /**
+   * 补拉某个任务族（成就 / 首杀图鉴）。
+   *
+   * <p><b>为什么按需补拉</b>：面板打开时只拉「任务」族（多发请求 = 玩家多等白屏，
+   * 有守卫盯着）⇒ 玩家切到别的页签时那一族才拉；拉到过就留在面板里（切回去不用重拉）。
+   */
+  async refreshQuestScope(scope: QuestScope): Promise<void> {
+    this.deliver('quest', await this.api.questList(scope), r => this.targets.quest?.(r, scope))
+  }
+
   claimQuest(questId: string, heroChoice: string | null): Promise<void> {
     this.track(TRACK_EVENTS.questClaim, {
       questId,

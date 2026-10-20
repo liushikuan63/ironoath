@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.ironoath.common.BizException;
@@ -13,7 +14,9 @@ import com.ironoath.common.Result;
 import com.ironoath.web.dto.generated.QuestClaimReq;
 import com.ironoath.web.dto.generated.QuestClaimResp;
 import com.ironoath.web.dto.generated.QuestListResp;
+
 import com.ironoath.web.quest.QuestAppService;
+import com.ironoath.web.quest.QuestScope;
 
 /**
  * 职责：任务域 HTTP 入口（B12 §1）—— 任务面板与领取奖励。
@@ -36,11 +39,19 @@ public class QuestController {
         this.quests = quests;
     }
 
-    /** 任务面板。会跨天/跨周清零每日与每周任务（惰性推进，不跑定时器）。 */
+    /**
+     * 任务面板。会跨天/跨周清零每日与每周任务（惰性推进，不跑定时器）。
+     *
+     * <p><b>{@code scope} 决定给哪一族</b>（任务 / 成就 / 首杀图鉴）：
+     * 一次全发 76 行会让响应体 28513B ⇒ 超全局响应预算 20480B；
+     * 按族分开发就都在预算内，而客户端的三个页签本来就这样分 ⇒ 体验不变。
+     * 缺省给「任务」族（与客户端打开面板时的默认页签一致）。
+     */
     @GetMapping("/list")
-    public Result<QuestListResp> list(@RequestHeader(CityController.PLAYER_HEADER) String playerId) {
+    public Result<QuestListResp> list(@RequestHeader(CityController.PLAYER_HEADER) String playerId,
+                                      @RequestParam(name = "scope", defaultValue = "QUEST") String scope) {
         requirePlayer(playerId);
-        return Result.ok(quests.list(playerId));
+        return Result.ok(quests.list(playerId, QuestScope.parse(scope)));
     }
 
     /** 领取一条已完成任务的奖励。未完成 / 已领取 / 前置未解锁各有各的业务码。 */
