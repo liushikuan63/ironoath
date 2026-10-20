@@ -2071,20 +2071,29 @@ public class SocialAppService {
     }
 
     private SquadView toSquadView(Squad squad, String viewerId, long now) {
+        // 成员行走**投影批读**：改之前逐个点查整份存档（每人一次），
+        // 打开这一屏要发 N 趟整份存档读取（资源表 / PVP 账本 / 科技 / 礼包弹窗账本 / 头像框集合全在里面），
+        // 而这一列只要昵称 / 展示战力 / 最近登录 / 主城等级四项 ⇒ 走投影口
+        // （同 {@code allianceApplications} 的做法：一次批读替代 N 次点查）。
+        List<String> memberIds = squad.memberIds();
+        Map<String, PlayerBrief> briefs = memberIds.isEmpty()
+                ? Map.of() : players.findBriefs(memberIds);
         List<SquadMember> members = new ArrayList<>(squad.memberCount());
         // 队长必在成员名单里（建队与转让都保留队长）⇒ 循环里顺手记下队长那一行的等级，
         // 免得为了 memberCap 再读一遍队长的整份存档（两次读之间没有任何写）。
         Integer leaderCityLevel = null;
-        for (String memberId : squad.memberIds()) {
-            PlayerSave save = players.findByPlayerId(memberId).orElse(null);
-            int cityLevel = save == null ? 0 : save.cityLevel();
+        for (String memberId : memberIds) {
+            // 读不到档的四条兜底与改之前逐字同口径：昵称回「未知玩家」、战力回 0、
+            // 最近登录回 now、主城等级回 0（投影里 power 缺档时本身就是 0）。
+            PlayerBrief brief = briefs.get(memberId);
+            int cityLevel = brief == null ? 0 : brief.cityLevel();
             if (memberId.equals(squad.leaderId())) {
                 leaderCityLevel = cityLevel;
             }
             members.add(new SquadMember(memberId,
-                    PlayerDtoMapper.displayName(save),
-                    save == null || save.power() == null ? 0L : save.power().displayPower(),
-                    save == null ? now : save.lastLoginAt(),
+                    brief == null ? PlayerDtoMapper.UNKNOWN_PLAYER_NAME : brief.nickName(),
+                    brief == null ? 0L : brief.displayPower(),
+                    brief == null ? now : brief.lastLoginAt(),
                     com.ironoath.web.dto.generated.SquadRole.valueOf(
                             String.valueOf(squad.roleOf(memberId))),
                     cityLevel));
