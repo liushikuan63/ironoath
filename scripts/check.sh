@@ -144,4 +144,6 @@ bash scripts/check-client-dead-callbacks.sh
 # AGENTS.md 写「32 道」而这里实际 40 道是现跑抓到的 —— 计数一漂，后面每次会话都拿旧数当
 # 「门全开」的证据。⚠️ 这道门自己也在被数之内：加/删门禁不改 AGENTS.md 的数字就会红。
 bash scripts/check-doc-counts.sh
+
+node scripts/check-harness-coverage.js
 echo "[check] 全部静态检查通过。"

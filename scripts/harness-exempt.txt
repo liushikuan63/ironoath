@@ -1,0 +1,19 @@
+# 豁免清单：这些门**不进** harness 三读数（每条都要写理由，理由缺失即红）。
+# 口径：check.sh 的门数 == harness 已接数 + 本清单条目数；多一道门忘了接、
+#       或者把已接的挪进清单，都会红。
+# 门名用文件基名（check-xxx，不带扩展名）。
+check-art-quantized # 夹具要造素材图（png），零污染代价高于收益
+check-checklist-append-only # 夹具要一个临时 git 仓库（判的是 HEAD 的行还在不在）
+check-client-typecheck # 违规态需要真的编译失败（夹具要接进 tsc 工程）
+check-config-consumers # 自带自检（price-pointer self-test），判据自证
+check-contract-sync # 违规态需要契约生成产物
+check-eol-policy # 判的是 git 索引里的 blob，造违规态要动真索引
+check-guide-no-copy # 要两个口才能零污染（契约文案表 + 客户端两个根）
+check-harness-coverage # 它自己就是覆盖度的基准（自指：放进 harness 会自证）
+check-icon-legibility # 夹具要造素材图（png），零污染代价高于收益
+check-identity-used # 三道重下限守卫（400 文件 / 1500 方法 / 120 身份方法），假树要造 400 个 java 文件
+check-probe-coordinate-space # 自带自检（植入违规样本后确认本门会红）
+check-resource-order-invariant # 自带自检（11 份夹具灌进同一个 judge）
+check-runtime-probe-coverage # 夹具要模仿真收集脚本形态（含 env 识别正则的抽取）
+check-web-artifact # 违规态需要真构建产物
+check-wechat-artifact # 违规态需要真构建产物
