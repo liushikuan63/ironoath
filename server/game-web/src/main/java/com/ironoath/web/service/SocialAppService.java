@@ -1182,7 +1182,7 @@ public class SocialAppService {
         CreateBlock allianceBlocked = allianceCreateBlock(playerId, save, now);
         if (allianceBlocked == null) {
             // 门都过了才问钱：与写路径同一个顺序，否则"名字没填"会被"金币不足"抢先盖掉
-            allianceBlocked = costLack(cost, balanceOf(playerId, GOLD_RESOURCE_ID, now));
+            allianceBlocked = costLack(cost, balanceOf(save, GOLD_RESOURCE_ID, now));
         }
         CreateBlock squadBlocked = squadCreateBlock(playerId, save, now);
         return new SocialCreatePolicyResp(
@@ -3263,6 +3263,16 @@ public class SocialAppService {
      */
     private long balanceOf(String playerId, String resourceType, long now) {
         return wallet.available(playerId, resourceType, now);
+    }
+
+    /**
+     * 余额（调用方<b>已经拿着</b>存档时用它）：不为一个余额再搬回整份存档。
+     *
+     * <p>只读：{@code available} 不落库。而 {@code deduct} 会整篇 {@code save}
+     * ⇒ 写路径上不能传旧档（宽字段 {@code $set} 会回滚并发写手的字段）。
+     */
+    private long balanceOf(PlayerSave knownSave, String resourceType, long now) {
+        return wallet.available(knownSave, resourceType, now);
     }
 
     /**
