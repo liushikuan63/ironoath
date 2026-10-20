@@ -234,3 +234,17 @@ grep -vE '^(0 |SKIP |TIMEOUT |PREREQ |# )' "$OUT" || true
 # 超时与"前提不足"各自单独列一遍：它们不在上面那张表里，但恰恰是最需要人看的一批
 grep '^TIMEOUT ' "$OUT" || true
 grep '^PREREQ ' "$OUT" || true
+
+# ⚠️⚠️ **有真红就要退非 0**（2026-10-20 补）。
+# 此前这个脚本的退出码是**最后一条 grep 的状态**（恒为 0）⇒
+# **批跑里哪怕有一份真红，退出码也是 0** ⇒ 上层（`run-batch-dual-backend.sh` 的 `BATCH_EXIT=`）
+# 读到的「0」会被当成「这批全过」。
+# ⇒ 现在按**退出码账**算：0 / SKIP / TIMEOUT / PREREQ / NO-RUN / `#` 开头的元信息行**都不算红**，
+#   其余（真红）≥1 就退 1。
+# ⚠️ 口径与上面「需看的份数」**刻意不同**：那一行按 2026-10-04 的口径把 NO-RUN 也算进去
+# （「量具没起来」该让人看），而**退出码只认真红** —— 「要人看」与「判失败」是两件事。
+NEED_REVIEW="$(grep -cvE '^(0 |SKIP |TIMEOUT |PREREQ |NO-RUN |# )' "$OUT" 2>/dev/null || true)"
+if [ "${NEED_REVIEW:-0}" -gt 0 ]; then
+  echo "[runtime-probes][FAIL] 本批有 ${NEED_REVIEW} 份真红（上面那张表）—— 退出码按真红判" >&2
+  exit 1
+fi

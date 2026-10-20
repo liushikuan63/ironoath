@@ -1465,7 +1465,15 @@ const gates = [
   ['活动族增量与磁盘张数不符', familyAfterActivity - familyBeforeActivity !== ACTIVITY_PNG_EXPECTED],
   ['活动页签读数失败', activityTab.error !== undefined],
   ['活动绘制读数失败', activityDrawn.error !== undefined],
-  ['活动行数不是 8', activityDrawn.activityRows !== 8],
+  // ⚠️ **这条原来是写死 8 的**（那是 activity.json 早期的行数）⇒ 活动族长到 12 行、
+  //   那个页签实际交付 15 行之后，它就变成了一条**过期的代理判据**：它断言的其实是
+  //   「表里有几行」，而活动族是活的 ⇒ 每加一行活动都要回来改这里，忘了就假红。
+  // ⇒ 换成**它自己注释里写的那条真判据**（见上面 G4 段的注释）：
+  //   「activity.json 加了新行而映射没跟上 → 那一行走 null 图标，iconRows < activityRows」
+  //   —— 也就是「**画出来的每一行都有图标**」。判据跟着事实走，不跟着某个数字走。
+  //   （分页时「画出来的行数」≠「交付的行数」，所以比的是 drawnRows 而不是 activityRows。）
+  ['活动一行都没画出来', activityDrawn.drawnRows === 0],
+  ['活动行缺图标（族图映射没跟上）', activityDrawn.iconRows !== activityDrawn.drawnRows],
   ['活动行图标与绘制行数不符', activityDrawn.iconRows !== activityDrawn.drawnRows],
   ['活动页签有重叠', activityDrawn.overlaps > 0],
   ['活动页签标题读不到', activityTab.questTitleX === null],

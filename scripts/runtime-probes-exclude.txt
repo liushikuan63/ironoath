@@ -32,3 +32,18 @@ verify-label-fit-runtime.mjs    # 每格都已在跑，重复跑没有信息量
 #    与 C 组（真机类）那一族同一个解锁点。同目录的 `verify-devtools-panels.mjs` **不排**：
 #    它用 playwright 打 web 产物，令牌只用于 `/ops/mail/send` 夹具，批跑环境正是它的射程。
 verify-devtools-runtime.mjs    # 要微信开发者工具模拟器的 boot_check 回执，批跑这台后端上必然为空 ⇒ 假红
+
+# 2026-10-20（#2259 收尾）加：REPEAT 族**有专用入口**（`scripts/tools/run-autotrain-batches.py`
+# / `run-loss-refill.py` / `run-repeat-march.py` 各自起自己的后端并注入 REPEAT_* 那一组变量），
+# 而**批跑没有第四台后端** ⇒ 它们在批跑里必然 NO-RUN（量具没起来）。
+# ⚠️ **为什么现在才排**：NO-RUN 在汇总里**被算进「需看的份数」**（那是 2026-10-04 的口径：
+# 「NO-RUN = 量具没起来」⇒ 该让人看），⇒ 于是**每批都有 5 份结构性噪音**，
+# 把真正的红**淹没在计数里**（实测：那批「需看 6」里 5 份是这族、只有 1 份是真红）。
+# ⇒ 排掉它们之后，汇总里的「需看」才真的等于「有东西要看」。
+# ⇒ **它们不是被藏起来了**：专用入口照旧能跑（`python scripts/tools/run-<族>.py --port <端口>`），
+#     批跑只是**不再假装能跑它们**。
+verify-autotrain-batches-runtime.mjs    # REPEAT 族有专用入口 scripts/tools/run-autotrain-batches.py，批跑没有第四台后端 ⇒ 排跑里必然 NO-RUN
+verify-loss-refill-runtime.mjs    # 同上（scripts/tools/run-loss-refill.py）
+verify-player-auto-refill-runtime.mjs    # 同上
+verify-player-auto-refill-ordinary-runtime.mjs    # 同上
+verify-repeat-march-runtime.mjs    # 同上（scripts/tools/run-repeat-march.py）
