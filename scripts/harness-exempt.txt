@@ -8,7 +8,6 @@ check-client-typecheck # 违规态需要真的编译失败（夹具要接进 tsc
 check-config-consumers # 自带自检（price-pointer self-test），判据自证
 check-contract-sync # 违规态需要契约生成产物
 check-eol-policy # 判的是 git 索引里的 blob，造违规态要动真索引
-check-guide-no-copy # 要两个口才能零污染（契约文案表 + 客户端两个根）
 check-harness-coverage # 它自己就是覆盖度的基准（自指：放进 harness 会自证）
 check-icon-legibility # 夹具要造素材图（png），零污染代价高于收益
 check-identity-used # 三道重下限守卫（400 文件 / 1500 方法 / 120 身份方法），假树要造 400 个 java 文件

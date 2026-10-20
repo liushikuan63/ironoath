@@ -16,17 +16,20 @@ cd "$(dirname "$0")/.."
 report() { echo "[check-guide-copy] $*"; }
 err() { echo "[check-guide-copy][FAIL] $*" >&2; }
 
-SCAN_DIR='client/assets/scripts'
+SCAN_DIR="${GUIDE_COPY_SCAN_DIR:-client/assets/scripts}"
+TESTS_DIR="${GUIDE_COPY_TESTS_DIR:-client/tests}"
 MIN_TEXTS=5
 
-if [ ! -f contract/config/guide.json ]; then
-  err "读不到 contract/config/guide.json —— 检查无从进行（宁可失败也不空转通过）"
+GUIDE_COPY_TEXTS="${GUIDE_COPY_TEXTS:-contract/config/guide.json}"
+if [ ! -f "$GUIDE_COPY_TEXTS" ]; then
+  err "读不到 $GUIDE_COPY_TEXTS —— 检查无从进行（宁可失败也不空转通过）"
   exit 1
 fi
 
 # 每行文案一条，行内换行折成空格（表里刻意不写换行，写坏了也照样能比对）
 texts=$(node -e '
-const rows = require("./contract/config/guide.json").rows || []
+const p = process.env.GUIDE_COPY_TEXTS || "./contract/config/guide.json";
+const rows = JSON.parse(require("fs").readFileSync(p, "utf8")).rows || []
 for (const r of rows) {
   if (typeof r.text === "string" && r.text.trim() !== "") {
     process.stdout.write(r.text.replace(/\s+/g, " ").trim() + "\n")
@@ -41,7 +44,7 @@ if [ "$count" -lt "$MIN_TEXTS" ]; then
 fi
 
 fail=0
-for dir in "$SCAN_DIR" client/tests; do
+for dir in "$SCAN_DIR" "$TESTS_DIR"; do
   [ -d "$dir" ] || continue
   while IFS= read -r text; do
     [ -n "$text" ] || continue

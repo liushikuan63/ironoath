@@ -674,6 +674,27 @@ run_balance_sim_usage() { node scripts/check-balance-sim-usage.js; }
 three_arg check-balance-sim-usage.sh \
           mk_balance_sim_usage run_balance_sim_usage '模拟器 usage 块必须列全开关（走 BALANCE_SIM_USAGE_CLI 口，零污染）'
 
+# check-guide-no-copy：客户端源码里**不得**出现文案表里的步骤文案（抄表 ⇒ 改文案时两处要一起改）。
+# ⚠️ 走 GUIDE_COPY_TEXTS / GUIDE_COPY_SCAN_DIR / GUIDE_COPY_TESTS_DIR 三个口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = 假客户端源码里**含**一句表里的文案 ⇒ 红点「客户端源码里出现了表中的步骤文案」。
+GN_D=/d/tmp/probe753/gates-guidecopy
+mk_guide_no_copy() {
+  if [ "$1" = "1" ]; then
+    mkdir -p "$GN_D/scripts" "$GN_D/tests"
+    printf '{\n  "rows": [\n    {"text": "点击开始战斗"},\n    {"text": "领取奖励"},\n    {"text": "建造队列"},\n    {"text": "训练士兵"},\n    {"text": "前往下一城"}\n  ]\n}\n' > "$GN_D/guide.json"
+    printf 'const label = %s;\n' "'点击开始战斗'" > "$GN_D/scripts/ZzProbe.ts"
+    export GUIDE_COPY_TEXTS="$GN_D/guide.json"
+    export GUIDE_COPY_SCAN_DIR="$GN_D/scripts"
+    export GUIDE_COPY_TESTS_DIR="$GN_D/tests"
+  else
+    unset GUIDE_COPY_TEXTS GUIDE_COPY_SCAN_DIR GUIDE_COPY_TESTS_DIR
+    rm -f "$GN_D/guide.json" "$GN_D/scripts/ZzProbe.ts"
+  fi
+}
+run_guide_no_copy() { bash scripts/check-guide-no-copy.sh; }
+three_arg check-guide-no-copy.sh \
+          mk_guide_no_copy run_guide_no_copy '客户端源码不得抄文案表里的步骤文案（走 GUIDE_COPY_* 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
