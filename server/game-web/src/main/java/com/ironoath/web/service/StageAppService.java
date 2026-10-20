@@ -103,7 +103,7 @@ public class StageAppService {
     private final com.ironoath.core.player.PlayerRepository players;
     private final RewardService rewardService;
     private final RewardNames rewardNames;
-    private final com.ironoath.core.reward.RewardPorts.Wallet wallet;
+    private final com.ironoath.web.reward.PlayerWallet wallet;
     private final PlayerLock playerLock;
     private final IdempotencyStore idempotency;
     private final TimeService timeService;
@@ -121,7 +121,7 @@ public class StageAppService {
                            StageProgressRepository progressRepo,
                            com.ironoath.core.player.PlayerRepository players,
                            RewardService rewardService,
-                           com.ironoath.core.reward.RewardPorts.Wallet wallet,
+                           com.ironoath.web.reward.PlayerWallet wallet,
                            PlayerLock playerLock, IdempotencyStore idempotency,
                            TimeService timeService, ServerSeedSource seeds,
                            StaminaService staminaService,
@@ -186,7 +186,7 @@ public class StageAppService {
                     BossMechanic.valueOf(stage.bossMechanic().name()),
                     lockedReason == null, lockedReason, progress.attempted(stage.id()), view(stage.id(), record)));
         }
-        long stamina = wallet.available(playerId, StaminaService.RESOURCE_ID, now);
+        long stamina = wallet.available(save, StaminaService.RESOURCE_ID, now);
         return new StageListResp(entries, stamina, now);
     }
 

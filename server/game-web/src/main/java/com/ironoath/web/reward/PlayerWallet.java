@@ -123,7 +123,21 @@ public final class PlayerWallet implements RewardPorts.Wallet {
 
     @Override
     public long available(String playerId, String resourceType, long now) {
-        PlayerSave save = require(playerId);
+        return available(require(playerId), resourceType, now);
+    }
+
+    /**
+     * 余额（调用方<b>已经拿着</b>存档时用它）：不为一个余额再搬回整份存档。
+     *
+     * <p>与 {@link #available(String, String, long)} **逐字同口径**（同一套结算式、同样不落库），
+     * 差别只在「档从哪来」。
+     *
+     * <p>⚠ 只读：{@code available} 不落库，而 {@code deduct} / {@code grant} 会
+     * {@code players.save} 整篇 —— 那条路上**不能**传旧档（整篇 $set 会回滚并发写手的字段）。
+     *
+     * <p>判据：{@code StageListSinglePlayerReadTest}。
+     */
+    public long available(PlayerSave save, String resourceType, long now) {
         PlayerResourceState state = save.resource(resourceType);
         return ResourceSettlement.settle(
                 state.current(), state.cap(), state.perHour(), state.lastSettle(), now).current();
