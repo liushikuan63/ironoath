@@ -7918,3 +7918,5 @@ TEST_EXIT=0
 | 主线统合 #2265 | 原子source+四docs提交见integration-commit.actual.json | 反例实红；最终51静态门+客户端1383/1383、辅助33/33；纯服务端7/0/0/0；独审无剩余项 | tmp/integration-review-20261020 基线/源码哈希/RED-GREEN/最终check/双审查日志 | 全量Mongo服务端与真实UI/runtime/5000未跑；需新候选打包冻结及新有限实测窗口，旧94c3不代表新源码 |
 
 | 性能接续 #2266 | 四docs原子提交见record2266-commit.actual.json；候选源码a0fb8225 | 离线package0、原195仅javac0、46配置及旧118逐项SHA通过；自有build worktree安全清理0 | tmp/integration-review-20261020 候选e5714fcd、源码/配置manifest、编译日志和v6接续方案 | 实际采集及5000/native未验；新fresh持有人/额度/互斥/UTC窗口仍需准入，旧r9不可运行；proc IO机制未知保partial |
+
+| 主线兼容补验 #2267 | 四docs原子提交见record2267-commit.actual.json；源码a0fb8225不变 | 20类31测试/0失败错误跳过；候选产物独审无阻断 | tmp/integration-review-20261020/master-read-scope-tests.actual.json 与 artifact-integration-review.actual.json | 含源码形状断言，不能代完整服务端/DB/runtime/原生/5000；新fresh准入未到，无资源启动 |
