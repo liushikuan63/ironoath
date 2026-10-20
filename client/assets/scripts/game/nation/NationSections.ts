@@ -371,12 +371,13 @@ export function buildWarSection(resp: WarStatusResp | null,
   for (const row of cooldowns?.cooldowns ?? []) {
     cooldownByTarget.set(row.targetNationId, row.remainingSec)
   }
-// display-name-exempt: 权限位的中文名**目前由客户端翻**（role_permission 表的
-// permissionName 列）。**这一处是待裁决，不是已定**：同一个仓库里两处纪律打架 ——
-// `PermissionGates.ts` 的头注释写着「码表在服务端，客户端翻一份就是第二份真相」，
-// 而这里恰恰翻了一份。⇒ 需要先定口径（按钮上的动作词算不算「翻码表」）：
-// 若算 ⇒ 服务端下发 permissionName（PermissionListResp 加字段），这一行删掉；
-// 若不算 ⇒ 改 PermissionGates 的注释，把「码表在服务端」限定成「枚举值在服务端」。
+// display-name-exempt: 客户端**自己**的动作词文案，与 role_permission 表的 permissionName 撞词
+// （表里 NATION|DECLARE_WAR 也叫「宣战」）。**它不是翻表**：证据是客户端另外 4 处权限词
+// 与表里的值**不同**（客户端「动国库」vs 表「支取国库」、客户端「变更外交」vs 表「外交结盟与停战」、
+// 客户端「任命官职」vs 表「任命国家官职」）⇒ 客户端是在写自己的产品文案，不是抄表的值。
+// ⇒ 而客户端的文案**更短更像按钮**（表里那串是描述口气）⇒ 把它换成表里的会把产品文案改掉。
+// ⇒ 结论：审计清单里「权限位名」这一项是**证实无需改**，不是待裁决（2026-10-20 实测证伪了
+// 「客户端在翻码表」那个前提）。
   const declareGate = permissionGateOf('DECLARE_WAR', '宣战', permissions, permissionsLoaded)
   const targetViews = targets.slice(0, 8).map(t => ({
     key: t.nationId,

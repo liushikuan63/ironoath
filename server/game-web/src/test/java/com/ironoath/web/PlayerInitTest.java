@@ -120,6 +120,27 @@ class PlayerInitTest {
     }
 
     @Test
+    @DisplayName("init 带下「自动续训默认批数」：客户端没有配置表加载器，只能靠这里递")
+    void initCarriesAutoTrainDefault() throws Exception {
+        MvcResult result = mockMvc.perform(post(INIT_URL)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(newInitReq())))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode data = JsonUtils.readTree(body(result)).get("data");
+
+        // ② 「自动续训默认批数」：等于 global 表的 AUTO_TRAIN_DEFAULT_BATCHES
+        //    （与服务端上限 AUTO_TRAIN_MAX_BATCHES 是两个数：默认 3 / 上限 5）
+        assertThat(data.get("autoTrainDefaultBatches").asInt())
+                .as("自动续训默认批数必须来自 global 表")
+                .isEqualTo((int) configs.longParam("AUTO_TRAIN_DEFAULT_BATCHES"));
+        assertThat(data.get("autoTrainDefaultBatches").asInt())
+                .as("默认批数与服务端上限是**两个数**（默认 3 / 上限 5）—— 混了就等于把上限放宽了")
+                .isLessThan((int) configs.longParam("AUTO_TRAIN_MAX_BATCHES"));
+    }
+
+    @Test
     @DisplayName("初始战力与新手保护期均来自配置表，代码中无硬编码")
     void initialPowerAndProtectionComeFromConfig() throws Exception {
         MvcResult result = mockMvc.perform(post(INIT_URL)

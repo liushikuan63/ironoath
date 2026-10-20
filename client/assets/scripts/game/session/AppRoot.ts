@@ -137,7 +137,7 @@ import { ClientReddotTree } from '../reddot/ReddotTree'
 import { pickUnavailable, actionUnavailable } from '../ui/BlockedPickCopy'
 import { buildStaminaDetail } from '../ui/StaminaDetail'
 import type { StaminaDetailView } from '../ui/StaminaDetail'
-import { autoTrainBlockedReason, autoTrainRequest, prepareAutoRefill, rememberTrain } from '../army/AutoTrain'
+import { autoTrainBlockedReason, autoTrainRequest, prepareAutoRefill, rememberTrain, applyAutoTrainDefaultBatches } from '../army/AutoTrain'
 import type { AutoRefillConfirmationView } from '../army/AutoTrain'
 import { buildShopPanel, buyBodyOf, buyResultText, shopRowStateText } from '../shop/ShopPanel'
 import { buildMonthlyCardPanel, monthlyClaimBody, monthlyPurchaseId, monthlyClaimResultText } from '../shop/MonthlyCardPanel'
@@ -886,6 +886,9 @@ export class AppRoot {
     // 而「服务端明确下发了一份空清单」才是「它说没有资源名」—— 两者语义不同，不能混。
     if (Array.isArray(outcome.data.resourceNames)) {
       applyResourceNames(outcome.data.resourceNames)
+      // 权限位中文名与「自动续训默认批数」同属**服务端下发的展示/默认数据**：
+      // 客户端没有配置表加载器 ⇒ 拿不到表，自己写一份就是第二个真相。
+        applyAutoTrainDefaultBatches(outcome.data.autoTrainDefaultBatches ?? 1)
     }
     await this.prefetch('city', 'army', 'hero', 'bag', 'resources', 'stage', 'stamina', 'social', 'power',
       'world', 'quest', 'reddot')
@@ -5076,8 +5079,9 @@ export class AppRoot {
       notice: this.composeNotice,
       submitting: this.composeSubmitting,
       mode: this.composeScout ? 'SCOUT' : this.composeRally ? 'RALLY' : 'MARCH',
-      // display-name-exempt: 权限位动作词「发起集结」与 role_permission 表的 permissionName 同字。
-      // **待裁决**（理由见 NationSections.ts 里同一条豁免的说明）。
+      // display-name-exempt: 客户端**自己**的动作词文案，与 role_permission 表的 permissionName 撞词
+      // （表里 SQUAD|START_RALLY 也叫「发起集结」）。**它不是翻表**：证据见 NationPanelView.ts 里
+      // 同一条豁免的说明（客户端另外 4 处权限词与表里的值不同 ⇒ 客户端写的是自己的产品文案）。
       submitLabel: this.composeScout ? '派侦察' : this.composeRally ? '发起集结'
         : this.composeTarget.kind === 'RESOURCE' ? '采集' : '出征',
       rallyBlocked: this.rallyBlockedReason(),

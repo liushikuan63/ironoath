@@ -183,7 +183,8 @@ public class PlayerInitService {
             // 资源用存档里那一份（刚建档算出来的，与 now 同源），不走结算
             return PlayerDtoMapper.toInitResp(save, now, null, save.resources(),
                     sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
-                    configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning(), resourceNames());
+                    configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning(), resourceNames(),
+                            autoTrainDefaultBatches());
         } catch (RuntimeException e) {
             // 建号失败必须释放幂等键：副作用没有产生，让客户端能安全重试
             idempotency.release(req.requestId());
@@ -209,7 +210,8 @@ public class PlayerInitService {
         return PlayerDtoMapper.toInitResp(save, now, previousLoginAt, resourceRates.settledView(
                 save, cities.findByPlayerId(save.playerId()).orElse(null), now),
                 sessions.issue(save.playerId(), now), offlineMinIdleMinutes(),
-                configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning(), resourceNames());
+                configs.longParam("OFFLINE_REPORT_MIN_ITEMS"), toastTuning(), resourceNames(),
+                        autoTrainDefaultBatches());
     }
 
     /**
@@ -218,6 +220,19 @@ public class PlayerInitService {
      */
     private long offlineMinIdleMinutes() {
         return configs.longParam("OFFLINE_REPORT_MIN_IDLE_MINUTES");
+    }
+
+    /**
+     * 客户端「自动续训」默认填几批（global 表的 AUTO_TRAIN_DEFAULT_BATCHES）。
+     *
+     * <p><b>与服务端上限 AUTO_TRAIN_MAX_BATCHES 是两个数</b>：上限是「最多允许几批」，
+     * 默认是「替他填几批」—— 取小是有意的（一次自动开 3 批 ≈ 睡一觉回来还有一批在训，
+     * 而花掉的是他自己看得到的资源）。
+     *
+     * <p><b>为什么必须下发</b>：客户端没有配置表加载器 ⇒ 自己写一份就是第二个真相。
+     */
+    private Integer autoTrainDefaultBatches() {
+        return (int) configs.longParam("AUTO_TRAIN_DEFAULT_BATCHES");
     }
 
     /**

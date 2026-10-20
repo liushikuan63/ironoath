@@ -286,6 +286,8 @@
         "power",
         "protectUntil",
         "offlineReport",
+        "resourceNames",
+        "autoTrainDefaultBatches",
         "toast"
       ],
       "properties": {
@@ -341,6 +343,12 @@
           "items": {
             "$ref": "#/$defs/ResourceNameView"
           }
+        },
+        "autoTrainDefaultBatches": {
+          "type": "integer",
+          "format": "int32",
+          "minimum": 1,
+          "description": "客户端「自动续训」默认填几批（global 表的 AUTO_TRAIN_DEFAULT_BATCHES）。**与服务端上限 AUTO_TRAIN_MAX_BATCHES 是两个数**（默认 3 / 上限 5）：上限是「最多允许几批」，默认是「替他填几批」—— 取小是有意的（一次自动开 3 批 ≈ 睡一觉回来还有一批在训，而花掉的是他自己看得到的资源）。**为什么必须下发**：客户端没有配置表加载器 ⇒ 自己写一份就是第二个真相（表里改了就漂）。**字段缺省 = 滚动升级期间的旧服务端**（它没这个字段）⇒ 客户端要能扛：退回 1 批（最小可用值，服务端不会拒）。"
         },
         "toast": {
           "$ref": "#/$defs/ToastTuning",

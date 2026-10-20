@@ -10,7 +10,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  AUTO_TRAIN_BATCH_BUDGET, autoTrainBlockedReason, autoTrainRequest, autoTrainRunningText,
+  applyAutoTrainDefaultBatches, autoTrainBlockedReason, autoTrainDefaultBatchBudget, autoTrainRequest, autoTrainRunningText,
   autoTrainStopText, autoTrainToggleCaption, prepareAutoRefill, rememberTrain,
 } from '../assets/scripts/game/army/AutoTrain'
 import type { AutoTrainView } from '../assets/scripts/net/generated/ArmyProtocol'
@@ -29,9 +29,9 @@ test('补兵确认只采用同兵种的成功出征目标与成功训练单批�
   assert.equal(prepared.kind, 'ready')
   if (prepared.kind !== 'ready') assert.fail('应当准备确认而不是直接发送')
   assert.deepEqual(prepared.request, { enabled: true, unitId: 'unit_infantry_t1', count: 5,
-    targetCount: 20, batchBudget: AUTO_TRAIN_BATCH_BUDGET })
+    targetCount: 20, batchBudget: autoTrainDefaultBatchBudget() })
   assert.deepEqual(prepared.view, { unitName: '重步兵 T1', availableCount: 9, trainingCount: 2,
-    targetCount: 20, batchCount: 5, batchBudget: AUTO_TRAIN_BATCH_BUDGET,
+    targetCount: 20, batchCount: 5, batchBudget: autoTrainDefaultBatchBudget(),
     submitting: false, notice: null })
   assert.equal('requestId' in prepared.request, false, '确认之前不分配业务请求键')
 })
@@ -119,9 +119,9 @@ test('开：请求带的是上一次那一批 + 默认批次预算（服务端�
   const body = autoTrainRequest(policy(), rememberTrain('unit_infantry_t1', 50))
   assert.deepEqual(body, {
     enabled: true, unitId: 'unit_infantry_t1', count: 50,
-    batchBudget: AUTO_TRAIN_BATCH_BUDGET, targetCount: null,
+    batchBudget: autoTrainDefaultBatchBudget(), targetCount: null,
   })
-  assert.ok(AUTO_TRAIN_BATCH_BUDGET > 0 && AUTO_TRAIN_BATCH_BUDGET <= 5,
+  assert.ok(autoTrainDefaultBatchBudget() > 0 && autoTrainDefaultBatchBudget() <= 5,
     '默认预算要在服务端上限（现 5）之内，否则一开就被拒')
 })
 
@@ -135,4 +135,24 @@ test('没东西可续：明确拦下并说清原因，不构造请求', () => {
   assert.match(autoTrainBlockedReason(null) ?? '', /先手动训一批/)
   assert.equal(autoTrainBlockedReason(rememberTrain('unit_infantry_t1', 50)), null)
   assert.throws(() => autoTrainRequest(policy(), null), /先手动训一批/)
+})
+
+// ---------- 默认批数由服务端下发（#2263） ----------
+
+test('默认批数来自服务端下发：客户端自己那份不是权威，且没收到时给的是保守值', () => {
+  // 缺陷形状：默认批数住在 global 表的 AUTO_TRAIN_DEFAULT_BATCHES，
+  // 而客户端没有配置表加载器 ⇒ 拿不到表；自己写一份 3 就是**第二个真相**
+  // （表里改了就漂，而屏上与发出去的请求仍按旧值走）。
+  // ⇒ 判据：① 没收到下发时给的是**保守值**（1 批），不是表里的 3；
+  //    ② 收到下发后按服务端给的走。
+  applyAutoTrainDefaultBatches(1)
+  assert.equal(autoTrainDefaultBatchBudget(), 1,
+    '没收到服务端下发时必须给保守值 —— 客户端不许留一份表里的数当默认')
+
+  applyAutoTrainDefaultBatches(3)
+  assert.equal(autoTrainDefaultBatchBudget(), 3, '收到服务端下发后必须按它走')
+
+  // 坏值不能把默认打坏（服务端给 0 或负数 ⇒ 忽略，保留上一次）
+  applyAutoTrainDefaultBatches(0)
+  assert.equal(autoTrainDefaultBatchBudget(), 3, '非法值必须被忽略，不能把默认打成 0 批')
 })

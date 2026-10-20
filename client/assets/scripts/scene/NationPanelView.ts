@@ -550,8 +550,11 @@ export class NationPanelView extends Component {
       y -= 34
     }
     const selected = section.targets.find(t => t.key === this.warTarget) ?? null
-    // display-name-exempt: 权限位动作词「宣战」与 role_permission 表的 permissionName 同字。
-    // **待裁决**（理由见 NationSections.ts 里同一条豁免的说明）：这一行与那一行必须一起改。
+    // display-name-exempt: 客户端**自己**的动作词文案，与 role_permission 表的 permissionName 撞词
+    // （表里 NATION|DECLARE_WAR 也叫「宣战」）。**它不是翻表**：证据是客户端另外 4 处权限词
+    // 与表里的值**不同**（客户端「动国库」vs 表「支取国库」、客户端「变更外交」vs 表「外交结盟与停战」、
+    // 客户端「任命官职」vs 表「任命国家官职」）⇒ 客户端是在写自己的产品文案，不是抄表的值。
+    // ⇒ 而客户端的文案**更短更像按钮**（表里那串是描述口气）⇒ 把它换成表里的会把产品文案改掉。
     this.button('WarDeclare', this.warArmed ? '确认宣战' : '宣战', left + 60, y, 120,
       section.declareGate.enabled && selected !== null && !section.hasWar,
       () => {

@@ -751,8 +751,9 @@ export class SocialPanelView extends Component {
    */
   showRolePicker(currentRole: string | null, onPick: (choice: RoleChoice) => void): void {
     if (this.rolePicker === null) {
-      // display-name-exempt: 权限位动作词「任命职位」与 role_permission 表的 permissionName 同字。
-      // **待裁决**（理由见 NationSections.ts 里同一条豁免的说明）。
+      // display-name-exempt: 客户端**自己**的动作词文案，与 role_permission 表的 permissionName 撞词
+      // （表里 ALLIANCE|SET_ROLE 也叫「任命职位」）。**它不是翻表**：证据见 NationPanelView.ts 里
+      // 同一条豁免的说明（客户端另外 4 处权限词与表里的值不同 ⇒ 客户端写的是自己的产品文案）。
       this.rolePicker = new ChoiceOverlay(this.node, '任命职位', 560)
     }
     const options = roleChoices(currentRole)
@@ -1706,8 +1707,7 @@ function allianceDrafts(alliance: AllianceSection, permissions: PermissionState,
         ? '资金与贡献值同步增加（验收 8）'
         : `资金与贡献值同步增加 · ${donateGate.reason}`,
       value: '',
-      // display-name-exempt: 权限位动作词「捐献」与 role_permission 表的 permissionName 同字。
-      // **待裁决**（理由见 NationSections.ts 里同一条豁免的说明）。
+      // display-name-exempt: 同上（客户端自己的动作词文案，与表里 ALLIANCE|DONATE 撞词）。
       actionText: '捐献',
       actionEnabled: donateGate.allowed,
       actionId: String(tier),

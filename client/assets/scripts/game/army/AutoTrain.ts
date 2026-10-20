@@ -54,25 +54,42 @@ export function prepareAutoRefill(memory: TrainMemory | null, march: MarchSpec |
   return {
     kind: 'ready',
     view: { unitName, availableCount: unit.count, trainingCount: unit.training,
-      targetCount: target.count, batchCount: memory.count, batchBudget: AUTO_TRAIN_BATCH_BUDGET,
+      targetCount: target.count, batchCount: memory.count, batchBudget: autoTrainDefaultBatchBudget(),
       submitting: false, notice: null },
     request: { enabled: true, unitId: memory.unitId, count: memory.count,
-      targetCount: target.count, batchBudget: AUTO_TRAIN_BATCH_BUDGET },
+      targetCount: target.count, batchBudget: autoTrainDefaultBatchBudget() },
   }
 }
 
 /**
- * 一次开启最多自动排几批。
+ * 一次开启最多自动排几批 —— **服务端下发**（`global` 表的 `AUTO_TRAIN_DEFAULT_BATCHES`）。
  *
  * <p><b>这是 UI 默认值，不是权威</b>：服务端另有上限（表 `global.AUTO_TRAIN_MAX_BATCHES`，现 5），
- * 超了会被 `/army/autoTrain` 当场拒并带回上限本身。取 3 而不是取满：一个"排三次"的默认
+ * 超了会被 `/army/autoTrain` 当场拒并带回上限本身。默认取 3 而不是取满：一个「排三次」的默认
  * 够玩家睡一觉回来还有一批在训，而它花掉的是他自己看得到的资源。
- * 客户端读不到那张表（`gen.sh` 不生成 global），所以这个数写在客户端 —— 只当默认值用。
+ *
+ * <p><b>为什么由服务端下发</b>：客户端没有配置表加载器（`global` 不进包）⇒ 拿不到表；
+ * 自己写一份就是**第二个真相**（表里改了就漂）⇒ 随 `/player/init` 的
+ * `autoTrainDefaultBatches` 一起递下来（决策 2026-10-20：保留「3」这个产品意图，
+ * 但不让客户端留一份与表不一致的数）。
+ *
+ * <p><b>还没收到时怎么办</b>：退回 1 批（最小可用值，服务端不会拒）——
+ * 宁可给一个保守的默认，也不要在客户端留一份表里的数。
  */
-// numeric-copy-exempt: 这不是表值的副本，是**故意比表里小的 UI 默认值**（表是 5，这里取 3：
-// 「排三次」的默认够玩家睡一觉回来还有一批在训，而它花掉的是他自己看得到的资源）。
-// 权威上限在服务端（`/army/autoTrain` 会把超出的当场拒并带回上限本身）⇒ 客户端这份怎么取都不越界。
-export const AUTO_TRAIN_BATCH_BUDGET = 3
+let autoTrainDefaultBatches = 1
+
+/** 收下服务端下发的默认批数（`/player/init` 的 `autoTrainDefaultBatches`）。 */
+export function applyAutoTrainDefaultBatches(batches: number): void {
+  if (!Number.isSafeInteger(batches) || batches < 1) {
+    return
+  }
+  autoTrainDefaultBatches = batches
+}
+
+/** 当前这份默认值（UI 填批数与发请求都用它）。 */
+export function autoTrainDefaultBatchBudget(): number {
+  return autoTrainDefaultBatches
+}
 
 /** 客户端记住的「上一次训练」：自动续训按它来续。 */
 export interface TrainMemory {
@@ -162,7 +179,7 @@ export function autoTrainRequest(
     enabled: true,
     unitId: memory.unitId,
     count: memory.count,
-    batchBudget: AUTO_TRAIN_BATCH_BUDGET,
+    batchBudget: autoTrainDefaultBatchBudget(),
     targetCount: null,
   }
 }

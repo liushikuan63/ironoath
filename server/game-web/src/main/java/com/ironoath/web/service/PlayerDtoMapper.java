@@ -71,7 +71,8 @@ public final class PlayerDtoMapper {
                                             Map<String, PlayerResourceState> resources,
                                             String authToken, long minIdleMinutes, long minItems,
                                             ToastTuning toast,
-                                            List<ResourceNameView> resourceNames) {
+                                            List<ResourceNameView> resourceNames,
+                                            Integer autoTrainDefaultBatches) {
         Map<ResourceType, ResourceState> views = new LinkedHashMap<>();
         for (Map.Entry<String, PlayerResourceState> e : resources.entrySet()) {
             PlayerResourceState s = e.getValue();
@@ -91,6 +92,7 @@ public final class PlayerDtoMapper {
 
         return new PlayerInitResp(
                 save.playerId(), authToken == null ? "" : authToken, serverNow, profile, save.cityLevel(),
-                views, power, save.protectUntil(), offlineReport, resourceNames, toast);
+                views, power, save.protectUntil(), offlineReport, resourceNames,
+                autoTrainDefaultBatches, toast);
     }
 }

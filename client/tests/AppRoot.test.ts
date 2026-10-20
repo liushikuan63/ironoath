@@ -271,6 +271,8 @@ const ROUTES: Record<string, unknown> = {
       { type: 'IRON', name: '铁矿' }, { type: 'GRAIN', name: '粮草' },
       { type: 'GOLD', name: '金币' }, { type: 'STAMINA', name: '体力' },
     ],
+    // 「自动续训默认批数」由服务端下发（#2263）：客户端没有配置表加载器 ⇒ 拿不到表。
+    autoTrainDefaultBatches: 3,
     playerId: 'P1', profile: { nickName: '君' }, cityLevel: 1, resources: {},
     power: { displayPower: 10, matchPower: 10, peakPower: 10 }, protectUntil: null,
     // 默认给一份"没有上一次"的边界（= 新号）：绝大多数用例不该被一屏汇总干扰，
