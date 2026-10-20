@@ -2072,19 +2072,26 @@ public class SocialAppService {
 
     private SquadView toSquadView(Squad squad, String viewerId, long now) {
         List<SquadMember> members = new ArrayList<>(squad.memberCount());
+        // 队长必在成员名单里（建队与转让都保留队长）⇒ 循环里顺手记下队长那一行的等级，
+        // 免得为了 memberCap 再读一遍队长的整份存档（两次读之间没有任何写）。
+        Integer leaderCityLevel = null;
         for (String memberId : squad.memberIds()) {
             PlayerSave save = players.findByPlayerId(memberId).orElse(null);
+            int cityLevel = save == null ? 0 : save.cityLevel();
+            if (memberId.equals(squad.leaderId())) {
+                leaderCityLevel = cityLevel;
+            }
             members.add(new SquadMember(memberId,
                     PlayerDtoMapper.displayName(save),
                     save == null || save.power() == null ? 0L : save.power().displayPower(),
                     save == null ? now : save.lastLoginAt(),
                     com.ironoath.web.dto.generated.SquadRole.valueOf(
                             String.valueOf(squad.roleOf(memberId))),
-                    save == null ? 0 : save.cityLevel()));
+                    cityLevel));
         }
         return new SquadView(squad.id(), squad.name(), squad.leaderId(), members,
                 squad.level(), squad.exp(), squad.expToNext(),
-                squad.memberCap(cityLevelOf(squad.leaderId())),
+                squad.memberCap(leaderCityLevel == null ? cityLevelOf(squad.leaderId()) : leaderCityLevel),
                 squad.shopUnlocked() ? squad.level() : 0,
                 squad.squadCoinOf(viewerId),
                 squad.allianceId(), squad.isSubSquad(),
