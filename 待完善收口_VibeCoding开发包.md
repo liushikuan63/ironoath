@@ -7924,3 +7924,5 @@ TEST_EXIT=0
 | 诊断接入 #2268 | 四docs原子提交见record2268-commit.actual.json；产品源码a0fb不变 | 冻结observer对照1fail+2error；timeout两反例实红后绿；最终27/0/0/0与独审同SHA通过 | tmp/integration-review-20261020/profile-lifecycle-bridge-v1-frozen.actual.json、design和review | 仅新bridge/factory/真实两调用契约；完整r10outer未派生，实际采样/IO机制/JFR/5000/native未验，不能用mock代替 |
 
 | r10入口 #2269 | 四docs原子提交见record2269-commit.actual.json；产品源码a0fb不变 | gate29+slot10+entrymock11共50绿/0跳；独审同源50绿；实际validate-only0与self birth0 | tmp/integration-review-20261020/r10-reviewed-frozen-v1.actual.json、design、review、全部RED日志 | 无真实新能力/负载/JFR；缺真实complete capability和fresh互斥窗口，旧partial/authority不能复用；预算/native仍未验 |
+
+| 原生协调 #2270 | 四docs原子提交见record2270-commit.actual.json；冻结r10不变 | DB-only归档/交接链实查；pipe两次32602；Cua限定metadata两proxy退出；fresh heavy0/ports空仅snapshot | tmp/integration-review-20261020/native-coordination-boundary-v1.actual.json | 无已送达消息/真实fresh唯一holder hold/新窗口；v4/r10旧holder固定不能沿用；整体预算/native未完成，保留同Goal待外部状态变化 |
