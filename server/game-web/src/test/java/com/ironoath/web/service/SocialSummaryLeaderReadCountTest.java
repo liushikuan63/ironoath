@@ -56,8 +56,11 @@ class SocialSummaryLeaderReadCountTest {
                 .as("memberCap 不得再直接读一遍队长")
                 .doesNotContain("squad.memberCap(cityLevelOf(squad.leaderId())");
 
+        // ⚠ 这里**不钉取值的字面量**：成员行后来改成了投影批读（#2247），
+        // 字面量随之变化而语义没变；「取哪几列、缺档怎么兜底」由同族的
+        // SocialSummaryProjectionReadTest 钉；这里只钉「队长等级来自成员行」。
         assertThat(body)
-                .as("缺档口径不变：等级按 0 算")
-                .contains("save == null ? 0 : save.cityLevel()");
+                .as("队长的等级必须来自成员行那一次读")
+                .contains("memberCap(leaderCityLevel");
     }
 }
