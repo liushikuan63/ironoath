@@ -230,10 +230,11 @@ public class PayAppService {
                 // 先扫过期再造新单：下单是唯一会让订单表变大的入口，
                 // 不在这里扫，「下了单没付」的记录就只增不减（PAY_ORDER_TTL_HOURS 的 why 就是这条）
                 expireUnpaidOrders(now);
-                PayProductCfg product = requireBuyable(playerId, req);
+                Buyable buyable = requireBuyable(playerId, req);
+                PayProductCfg product = buyable.product();
                 // 礼包的两道闸在**下单时**判（工单 6.1 S3-iii）：拦在发货就晚了 —— 玩家已经付过钱，
                 // 而"已付不退"是一条绝对纪律（§四 禁止项）。
-                requireGiftSellable(playerId, product, now);
+                requireGiftSellable(playerId, product, now, buyable.save());
                 long cents = catalog.priceCents(product);
                 String orderId = "order_" + playerId + "_" + now + "_"
                         + Long.toHexString(req.requestId().hashCode());
@@ -285,7 +286,8 @@ public class PayAppService {
      * <p><b>为什么在 orders.insert 之前判</b>：与 {@link #minorLimitNotice} 同一条理由 ——
      * 拦下了却留一条 PENDING 订单，对账与僵尸单清理都会把它当真实交易看。
      */
-    private void requireGiftSellable(String playerId, PayProductCfg product, long now) {
+    private void requireGiftSellable(String playerId, PayProductCfg product, long now,
+            PlayerSave knownSave) {
         if (product.kind() != PayProductCfg.Kind.GIFT) {
             return;
         }
@@ -295,7 +297,7 @@ public class PayAppService {
             throw new BizException(ErrorCode.PAY_PRODUCT_OFFLINE,
                     "这一档礼包当前不在推送列表里：productId=" + product.id());
         }
-        PlayerGiftPopup state = giftStateOf(playerId);
+        PlayerGiftPopup state = giftStateOf(playerId, knownSave);
         long triggerAt = state.triggeredAtOf(gift.trigger().name());
         long ttlMillis = gift.offerTtlMinutes() * 60_000L;
         if (triggerAt <= 0L || now - triggerAt >= ttlMillis) {
@@ -318,10 +320,18 @@ public class PayAppService {
         return null;
     }
 
-    private PlayerGiftPopup giftStateOf(String playerId) {
-        return players.findByPlayerId(playerId)
-                .orElseThrow(() -> new BizException(ErrorCode.PLAYER_NOT_FOUND, "玩家不存在：" + playerId))
-                .giftPopup();
+    /**
+     * 礼包弹窗状态（{@code knownSave} 是调用方<b>已经读到</b>的那份存档）。
+     *
+     * <p>缺档的处置与改之前逐字同义：读不到档仍报「玩家不存在」。
+     * ⚠ <b>这一条不能提前</b>：它只在礼包那一支被走到（非礼包提前 return）
+     * ⇒ 今天给不存在的玩家下非礼包单仍会成功，把「缺档即抛」提到读的那一层就是行为变更。
+     */
+    private PlayerGiftPopup giftStateOf(String playerId, PlayerSave knownSave) {
+        if (knownSave == null) {
+            throw new BizException(ErrorCode.PLAYER_NOT_FOUND, "玩家不存在：" + playerId);
+        }
+        return knownSave.giftPopup();
     }
 
     /**
@@ -625,7 +635,10 @@ public class PayAppService {
      * <p><b>选将的两个方向都要判</b>：该挑没挑 ⇒ 发货时只能替玩家挑一个（不允许）；
      * 不该挑却带了值 ⇒ 说明客户端拿的是旧表或别的商品，静默忽略会让这个错一路带到发货。
      */
-    private PayProductCfg requireBuyable(String playerId, CreateOrderReq req) {
+    /** 一次可买判定的结果：商品 + 那一刻读到的玩家存档（{@code null} 表示读不到存档）。 */
+    private record Buyable(PayProductCfg product, PlayerSave save) { }
+
+    private Buyable requireBuyable(String playerId, CreateOrderReq req) {
         PayProductCfg product = catalog.require(req.productId());
         if (!catalog.saleable(product)) throw new BizException(ErrorCode.PAY_PRODUCT_OFFLINE,
                 "该商品已停止新售，已有月卡权益和旧订单补单仍保留。");
@@ -649,13 +662,16 @@ public class PayAppService {
         // 读不到存档就当"本账号没有已购记录"：没有存档就没有可依据的权益位，
         // 而这条判定的目的（别收第二次钱）由发货处的第二道同样挡得住 ——
         // 更要紧的是，发货时会因为"存档不存在"直接失败进补单队列，那才是这道题的响亮答案
-        PlayerPaid paid = players.findByPlayerId(playerId).map(PlayerSave::paid).orElse(null);
+        // 读一次，把那份存档留下给礼包那道闸（只要 giftPopup）—— 两次读之间没有任何写。
+        // 读不到存档就当"本账号没有已购记录"（paid 传 null），与改之前逐字同口径。
+        PlayerSave save = players.findByPlayerId(playerId).orElse(null);
+        PlayerPaid paid = save == null ? null : save.paid();
         String alreadyOwned = catalog.alreadyOwned(playerId, paid, product);
         if (alreadyOwned != null) {
             throw new BizException(ErrorCode.PAY_NOT_ENTITLED,
                     "商品 " + product.id() + "：" + alreadyOwned);
         }
-        return product;
+        return new Buyable(product, save);
     }
 
     /**
