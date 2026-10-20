@@ -584,6 +584,43 @@ run_track_params() { node scripts/check-track-params.js; }
 three_arg check-track-params.sh \
           mk_track_params run_track_params 'track 传的参数必须在看板文档该事件的参数列里有定义（走 TRACK_PARAMS_* 口，零污染）'
 
+# check-balance-sim-config-sync：模拟器里凡与配置表重复的数值都必须从表读，不得硬编
+# （硬编的模拟器照常输出一整套读数，却全是按旧值算的，而没有任何测试会红 —— #592/#593 的结论就建立在错的输入上）。
+# ⚠️ 走 BALANCE_SIM_CLI / BALANCE_SIM_BUILDING / BALANCE_SIM_RESOURCE 三个口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = 假模拟器源码把仓容写成**硬编码字面量**（getOrDefault("cap-base", "1000")）+ 真表副本
+# ⇒ 红点落在「capBase 又变回硬编码字面量了」（表里的真值与源码里的字面量并排打出）。
+BS_D=/d/tmp/probe753/gates-balancesim
+mk_balance_sim_config_sync() {
+  if [ "$1" = "1" ]; then
+    mkdir -p "$BS_D"
+    cp contract/config/building.json "$BS_D/building.json"
+    cp contract/config/resource.json "$BS_D/resource.json"
+    cat > "$BS_D/BalanceCli.java" <<'EOF'
+package com.ironoath.battle.sim;
+
+public final class BalanceCli {
+    public static void main(String[] args) {
+        // 违规样本：仓容基数写成了字面量，而不是从 BuildingCfg 的 warehouse 行读。
+        String capBase = getOrDefault("cap-base", "1000");
+    }
+
+    private static String getOrDefault(String key, String fallback) {
+        return fallback;
+    }
+}
+EOF
+    export BALANCE_SIM_CLI="$BS_D/BalanceCli.java"
+    export BALANCE_SIM_BUILDING="$BS_D/building.json"
+    export BALANCE_SIM_RESOURCE="$BS_D/resource.json"
+  else
+    unset BALANCE_SIM_CLI BALANCE_SIM_BUILDING BALANCE_SIM_RESOURCE
+    rm -f "$BS_D/BalanceCli.java" "$BS_D/building.json" "$BS_D/resource.json"
+  fi
+}
+run_balance_sim_config_sync() { node scripts/check-balance-sim-config-sync.js; }
+three_arg check-balance-sim-config-sync.sh \
+          mk_balance_sim_config_sync run_balance_sim_config_sync '模拟器不得硬编与配置表重复的数值（走 BALANCE_SIM_* 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。

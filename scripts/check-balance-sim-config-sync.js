@@ -15,9 +15,13 @@
 const fs = require('fs')
 
 const NL = String.fromCharCode(10)
-const cliPath = 'server/tools/balance-sim/src/main/java/com/ironoath/battle/sim/BalanceCli.java'
-const buildingPath = 'contract/config/building.json'
-const resourcePath = 'contract/config/resource.json'
+// 三个输入（**可选口 BALANCE_SIM_CLI / BALANCE_SIM_BUILDING / BALANCE_SIM_RESOURCE**）：
+// 不设时与默认读取完全一致；绝对路径也直接可用（readFileSync 吃绝对路径）
+// ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真模拟器源码与真配置表里植东西。
+const cliPath = process.env.BALANCE_SIM_CLI
+  || 'server/tools/balance-sim/src/main/java/com/ironoath/battle/sim/BalanceCli.java'
+const buildingPath = process.env.BALANCE_SIM_BUILDING || 'contract/config/building.json'
+const resourcePath = process.env.BALANCE_SIM_RESOURCE || 'contract/config/resource.json'
 
 const cli = fs.readFileSync(cliPath, 'utf8')
 const lines = cli.split(/\r?\n/)
