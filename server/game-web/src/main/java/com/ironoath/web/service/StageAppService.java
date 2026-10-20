@@ -215,11 +215,14 @@ public class StageAppService {
     private ChallengeStageResp doChallenge(String playerId, ChallengeStageReq req, long now) {
         StageCfg stage = requireStage(req.stageId());
         StageProgress progress = loadProgress(playerId);
-        requireUnlocked(stage, progress, playerId);
+        // 这一次读取供两处共用：解锁判定（cityLevel）与体力余额 —— 两次之间没有玩家档写入。
+        // 缺档口径照抄原样：解锁判定把「读不到档」当 1 级（见下面那行）。
+        PlayerSave knownSave = players.findByPlayerId(playerId).orElse(null);
+        requireUnlocked(stage, progress, knownSave == null ? 1 : knownSave.cityLevel());
         Map<String, Long> units = requestedUnits(req.units());
         requireOwned(playerId, units);
         requireComplies(stage, units);
-        requireStamina(playerId, stage, now);
+        requireStamina(playerId, stage, knownSave, now);
 
         Attempt attempt = execute(stage, playerId, units, req.heroes(), seeds.nextSeed(), now);
         // 失败不扣体力（B09 验收 1）：失败已经扣了兵，再扣体力是对正在学这个系统的人收两次学费
@@ -529,9 +532,13 @@ public class StageAppService {
         });
     }
 
-    private void requireUnlocked(StageCfg stage, StageProgress progress, String playerId) {
-        String reason = lockedReason(stage, requireChapter(stage.chapterId()), progress,
-                players.findByPlayerId(playerId).map(PlayerSave::cityLevel).orElse(1));
+    /**
+     * 关卡是否已解锁（{@code cityLevel} 由调用方给：那边已经读过整份存档，不必再读一遍）。
+     *
+     * <p>缺档口径不变：调用方在读不到档时给 1，与改之前的 {@code orElse(1)} 同义。
+     */
+    private void requireUnlocked(StageCfg stage, StageProgress progress, int cityLevel) {
+        String reason = lockedReason(stage, requireChapter(stage.chapterId()), progress, cityLevel);
         if (reason != null) {
             throw new BizException(ErrorCode.STAGE_LOCKED, reason);
         }
@@ -597,8 +604,11 @@ public class StageAppService {
         };
     }
 
-    private void requireStamina(String playerId, StageCfg stage, long now) {
-        long available = wallet.available(playerId, StaminaService.RESOURCE_ID, now);
+    private void requireStamina(String playerId, StageCfg stage, PlayerSave knownSave, long now) {
+        // 只读：available 不落库。缺档时退回自己读（读不到就当 0，与改之前同口径）。
+        long available = knownSave == null
+                ? wallet.available(playerId, StaminaService.RESOURCE_ID, now)
+                : wallet.available(knownSave, StaminaService.RESOURCE_ID, now);
         if (available < stage.staminaCost()) {
             throw new BizException(ErrorCode.RESOURCE_NOT_ENOUGH,
                     "体力不足：本关需要 " + stage.staminaCost() + " 点，当前 " + available + " 点");
