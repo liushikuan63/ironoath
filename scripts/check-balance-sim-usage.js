@@ -11,7 +11,10 @@
 // BalanceCli without documenting it in the usage block, and this turns red.
 const { readFileSync } = require('fs')
 
-const cliPath = 'server/tools/balance-sim/src/main/java/com/ironoath/battle/sim/BalanceCli.java'
+// 输入（**可选口 BALANCE_SIM_USAGE_CLI**）：不设时与默认读取完全一致；绝对路径也直接可用
+// ⇒ harness 的夹具可以建在 /d/tmp 下，不必往真模拟器源码里植东西。
+const cliPath = process.env.BALANCE_SIM_USAGE_CLI
+  || 'server/tools/balance-sim/src/main/java/com/ironoath/battle/sim/BalanceCli.java'
 const src = readFileSync(cliPath, 'utf8')
 const lines = src.split('\n')
 

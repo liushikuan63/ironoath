@@ -648,6 +648,32 @@ run_balance_sim_tech_sync() { node scripts/check-balance-sim-tech-sync.js; }
 three_arg check-balance-sim-tech-sync.sh \
           mk_balance_sim_tech_sync run_balance_sim_tech_sync '模拟器科技加成必须从 tech 表读（走 BALANCE_SIM_TECH_CLI 口，零污染）'
 
+# check-balance-sim-usage：模拟器的 usage 块必须把每个开关（带默认值与口径说明）都列出来
+# （口径见收口清单 #653）。⚠️ 走 BALANCE_SIM_USAGE_CLI 口（2026-10-19 加在门上）⇒ 零污染。
+# 违规态 = 假模拟器源码**没有 usage 块** ⇒ 红点落在「找不到 usage 块」。
+BU_D=/d/tmp/probe753/gates-balancesimusage
+mk_balance_sim_usage() {
+  if [ "$1" = "1" ]; then
+    mkdir -p "$BU_D"
+    cat > "$BU_D/BalanceCli.java" <<'EOF'
+package com.ironoath.battle.sim;
+
+public final class BalanceCli {
+    public static void main(String[] args) {
+        // 违规样本：usage 块不见了 —— 玩家看不到有哪些开关、默认值与口径。
+    }
+}
+EOF
+    export BALANCE_SIM_USAGE_CLI="$BU_D/BalanceCli.java"
+  else
+    unset BALANCE_SIM_USAGE_CLI
+    rm -f "$BU_D/BalanceCli.java"
+  fi
+}
+run_balance_sim_usage() { node scripts/check-balance-sim-usage.js; }
+three_arg check-balance-sim-usage.sh \
+          mk_balance_sim_usage run_balance_sim_usage '模拟器 usage 块必须列全开关（走 BALANCE_SIM_USAGE_CLI 口，零污染）'
+
 mk_core_wiring() { # check-core-wiring：core 的类必须被外层主源码真的引用
   # ⚠️ 走**两个环境变量口**（COREWIRING_CORE_DIR / COREWIRING_CONSUMER_DIR，2026-10-06 新加）⇒ **零污染**：
   #    不碰 server/ 那 111 个类与 797 个外层文件，只造一棵假树。
