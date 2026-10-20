@@ -125,7 +125,7 @@ public class GuideAppService {
         PlayerSave save = requireSave(playerId);
         GuideScript script = assembler.script();
         GuideScript.Outcome outcome = script.advance(save.guide(), req.stepId(),
-                actionOf(req), judgeReached(playerId, script, req.stepId()));
+                actionOf(req), judgeReached(playerId, script, req.stepId(), save));
 
         switch (outcome.status()) {
             case STEP_NOT_FOUND -> throw new BizException(ErrorCode.GUIDE_STEP_NOT_FOUND,
@@ -172,7 +172,14 @@ public class GuideAppService {
      * <p>上报的 stepId 查不到（旧脚本）时返回 false：让 {@code GuideScript} 去报
      * {@code STEP_NOT_FOUND}，而不是在这里判一个不存在的目标 —— 那会先抛出一个「任务不存在」。
      */
-    private boolean judgeReached(String playerId, GuideScript script, String stepId) {
+    /**
+     * 这一步的达成条件（{@code knownSave} 是调用方<b>已经拿着</b>的存档）。
+     *
+     * <p>为什么不用自己再读：调用方 {@code advance} 开头已经读到整份存档，
+     * 两次读之间只有取脚本与算动作，<b>没有任何写</b>；而「手动领取的资源是否已领」
+     * 这一支要的也只是那份存档里的一个集合。
+     */
+    private boolean judgeReached(String playerId, GuideScript script, String stepId, PlayerSave knownSave) {
         GuideScript.Step step = stepById(script, stepId).orElse(null);
         if (step == null) {
             return false;
@@ -188,7 +195,7 @@ public class GuideAppService {
             case QUEST_DONE -> entry.get().complete();
             case QUEST_CLAIMED -> entry.get().claimed();
             case MANUAL_RESOURCES_AND_CLAIMED -> entry.get().claimed()
-                    && players.findByPlayerId(playerId).map(player -> configs.all(
+                    && Optional.of(knownSave).map(player -> configs.all(
                             com.ironoath.config.cfg.ResourceCfg.class).stream()
                             .filter(com.ironoath.config.cfg.ResourceCfg::manualLearningRequired)
                             .allMatch(cfg -> player.manuallyCollected().contains(cfg.id()))).orElse(false);
