@@ -224,7 +224,8 @@ public class StageAppService {
         requireComplies(stage, units);
         requireStamina(playerId, stage, knownSave, now);
 
-        Attempt attempt = execute(stage, playerId, units, req.heroes(), seeds.nextSeed(), now);
+        Attempt attempt = execute(stage, playerId, units, req.heroes(), seeds.nextSeed(), now,
+                knownSave);
         // 失败不扣体力（B09 验收 1）：失败已经扣了兵，再扣体力是对正在学这个系统的人收两次学费
         long charged = attempt.won()
                 ? wallet.deduct(playerId, StaminaService.RESOURCE_ID, stage.staminaCost(), now)
@@ -374,17 +375,28 @@ public class StageAppService {
      */
     public Attempt execute(StageCfg stage, String playerId, Map<String, Long> units,
                            List<String> heroIds, long seed, long now) {
+        return execute(stage, playerId, units, heroIds, seed, now,
+                players.findByPlayerId(playerId).orElse(null));
+    }
+
+    /**
+     * 战斗装配（调用方<b>已经读到</b>玩家存档时用它）：那份存档同时供医院容量的科技那半
+     * 与战斗装配的个人科技用，不必再读一遍。
+     *
+     * <p>{@code knownSave} 为 {@code null}（读不到存档）⇒ 科技那半按「没有」算，
+     * 与改之前逐字同义。
+     */
+    public Attempt execute(StageCfg stage, String playerId, Map<String, Long> units,
+                           List<String> heroIds, long seed, long now, PlayerSave knownSave) {
         HeroRoster roster = heroes.findByPlayerId(playerId).orElseGet(HeroRoster::new);
         CityState city = cities.findByPlayerId(playerId).orElse(null);
-        // 这一次读取供两处共用：医院容量的科技那半、战斗装配的个人科技。
-        // 原来两处各自去读一遍整份存档（都只为拿 tech），而它们之间没有任何写。
-        PlayerSave player = players.findByPlayerId(playerId).orElse(null);
         long hospitalCapacity = city == null ? 0L
-                : armyAppService.hospitalCapacity(playerId, city, player);
+                : armyAppService.hospitalCapacity(playerId, city, knownSave);
         BattleArmyFactory.Folded attackerFold = armyFactory.fold(units);
         var attacker = armyFactory.toSide(playerId, attackerFold,
                 heroMapper.snapshots(playerId, heroIds, roster), 0L,
-                techBonuses.forPlayer(playerId, player == null ? null : player.tech()), hospitalCapacity);
+                techBonuses.forPlayer(playerId, knownSave == null ? null : knownSave.tech()),
+                hospitalCapacity);
         var defender = armyFactory.toSide(stage.id(), armyFactory.fold(enemyArmy(stage)),
                 List.of(), 0L, com.ironoath.battle.TechBonus.none(), 0L);
 

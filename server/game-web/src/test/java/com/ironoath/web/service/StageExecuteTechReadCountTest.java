@@ -35,45 +35,36 @@ class StageExecuteTechReadCountTest {
     }
 
     @Test
-    @DisplayName("战斗装配：玩家档只读一次，医院容量与个人科技共用这一份")
+    @DisplayName("战斗装配：自读版自己读一份，收档版用调用方给的那份")
     void executeReadsThePlayerDocumentOnce() throws Exception {
         Path stage = repoRoot().resolve(
                 "server/game-web/src/main/java/com/ironoath/web/service/StageAppService.java");
-        Path army = repoRoot().resolve(
-                "server/game-web/src/main/java/com/ironoath/web/service/ArmyAppService.java");
-        Path bonus = repoRoot().resolve(
-                "server/game-web/src/main/java/com/ironoath/web/battle/BattleTechBonuses.java");
-        String stageText = Files.readString(stage);
-        String armyText = Files.readString(army);
-        String bonusText = Files.readString(bonus);
+        String text = Files.readString(stage);
 
-        // 只看 execute 方法体
-        int start = stageText.indexOf("public Attempt execute(");
-        assertThat(start).as("必须找到 execute").isGreaterThan(0);
-        int end = stageText.indexOf("\n    }", start);
-        String body = stageText.substring(start, end < 0 ? stageText.length() : end);
+        // 收档版（调用方已经读过）：不得自己再读
+        int kstart = text.indexOf("public Attempt execute(StageCfg stage, String playerId, Map<String, Long> units,\n"
+                + "                           List<String> heroIds, long seed, long now, PlayerSave knownSave) {");
+        assertThat(kstart).as("必须存在「收档」那版").isGreaterThan(0);
+        int kend = text.indexOf("\n    }", kstart);
+        String kbody = text.substring(kstart, kend < 0 ? text.length() : kend);
+        // ⚠ 精确到**玩家档**那个仓储：方法体里还有 heroes.findByPlayerId（英雄名册）
+        // 与 cities.findByPlayerId（城建）—— 断言写成 findByPlayerId 会把这两个也算进去。
+        assertThat(kbody)
+                .as("收档那版不得自己再读整份**玩家**档案")
+                .doesNotContain("players.findByPlayerId");
+        assertThat(kbody)
+                .as("医院容量的科技那半与个人科技都用调用方给的那份")
+                .contains("armyAppService.hospitalCapacity(playerId, city, knownSave)")
+                .contains("techBonuses.forPlayer(playerId, knownSave == null ? null : knownSave.tech())");
 
-        assertThat(body)
-                .as("医院容量必须用已读到的那份存档")
-                .contains("armyAppService.hospitalCapacity(playerId, city, player)");
-        assertThat(body)
-                .as("个人科技必须用已读到的那份存档")
-                .contains("techBonuses.forPlayer(playerId, player == null ? null : player.tech())");
-        assertThat(body)
-                .as("装配过程不得再让这两处自己读档")
-                .doesNotContain("armyAppService.hospitalCapacity(playerId, city)")
-                .doesNotContain("techBonuses.forPlayer(playerId)");
-
-        assertThat(armyText)
-                .as("必须保留「已知存档」那版入口")
-                .contains("public long hospitalCapacity(String playerId, CityState city, PlayerSave save)");
-
-        int bstart = bonusText.indexOf("public TechBonus forPlayer(String playerId, com.ironoath.core.player.PlayerTech tech) {");
-        assertThat(bstart).as("必须有「已知科技」那版").isGreaterThan(0);
-        int bend = bonusText.indexOf("\n    }", bstart);
-        String bbody = bonusText.substring(bstart, bend < 0 ? bonusText.length() : bend);
-        assertThat(bbody)
-                .as("已知科技那版不得自己再读档案")
-                .doesNotContain("findByPlayerId");
+        // 自读版（没有存档可给的调用方，例如扫荡）：仍要自己读一次
+        int sstart = text.indexOf("public Attempt execute(StageCfg stage, String playerId, Map<String, Long> units,\n"
+                + "                           List<String> heroIds, long seed, long now) {");
+        assertThat(sstart).as("必须保留「自读」那版").isGreaterThan(0);
+        int send = text.indexOf("\n    }", sstart);
+        String sbody = text.substring(sstart, send < 0 ? text.length() : send);
+        assertThat(sbody)
+                .as("自读那版要自己读一次（读不到即 null，与改之前同义）")
+                .contains("findByPlayerId");
     }
 }
