@@ -7928,3 +7928,5 @@ TEST_EXIT=0
 | 原生协调 #2270 | 四docs原子提交见record2270-commit.actual.json；冻结r10不变 | DB-only归档/交接链实查；pipe两次32602；Cua限定metadata两proxy退出；fresh heavy0/ports空仅snapshot | tmp/integration-review-20261020/native-coordination-boundary-v1.actual.json | 无已送达消息/真实fresh唯一holder hold/新窗口；v4/r10旧holder固定不能沿用；整体预算/native未完成，保留同Goal待外部状态变化 |
 
 | 当前内核能力 #2271 | 四docs原子local提交见record2271-commit.actual.json；产品a0fb及r10不变 | 当前元数据9命令exit0；真实TASKSTATS=n；118及r10冻结与JAR/46cfg核对；独审局限明示 | tmp/integration-review-20261020/kernel-io-stage-frozen-v1.actual.json、kernel-io-capability-matrix-v1.md及review-v1 | 历史ENOENT根因未倒填；reader-v1未批准复用；partial模式仅设计未实现/未实测；完整IO/预算/native仍未验，需fresh新窗口 |
+
+| partial采集器 #2272 | 四docs原子local提交见record2272-commit.actual.json；产品a0fb未改 | 23主+5挂载独审+2规范化共30绿零跳；baseline4/3fail保留；新RED修后回归及独审 | tmp/integration-review-20261020/partial-metrics-offline-frozen-v1.actual.json、design、review及原始RED/source snapshots | 新host reader/实际holder新launcher及fresh窗口未就绪；库不授准入，未实采CPU/RSS/JFR/IO，完整IO/预算/native仍未完成 |
