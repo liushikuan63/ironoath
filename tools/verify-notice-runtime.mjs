@@ -158,6 +158,9 @@ check('点之后切到公告模式（「返回设置」行出现）', after.rowB
 check('切模式是重画而不是叠加（设置页那行不再存在）', after.rowNotice, false)
 check('公告页眉和正文卡片沿用铜边铁纹材质',
   after.panelSurface && after.divider && after.noticeCard && after.noticeCardSurface, true)
+if (process.env.NOTICE_EXPECT_EMPTY === '1') {
+  check('空公告表打开后显示「暂无公告」', after.texts?.includes('暂无公告'), true)
+}
 
 const shown = (after.texts ?? []).join('｜')
 console.log(`  公告模式文字：${shown}`)
