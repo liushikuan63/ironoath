@@ -35,6 +35,11 @@ const BUTTON_BAND = 62
 const BUTTON_HEIGHT = 36
 const PADDING = 16
 
+/**
+ * 职责：技能升级选材覆盖层（选材料、确认、取消）。
+ * 依赖：材料与可升级技能由服务端给。
+ */
+
 @ccclass('SkillPickOverlay')
 export class SkillPickOverlay extends Component {
 

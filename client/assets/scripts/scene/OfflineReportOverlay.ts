@@ -42,6 +42,11 @@ const VISIBLE_ROWS = 4
  */
 const PANEL_HEIGHT = PANEL_IRON_INSET.top + PANEL_IRON_INSET.bottom + 276
 
+/**
+ * 职责：离线报告覆盖层（回来时的那一屏：离线期间发生了什么、去哪继续）。
+ * 依赖：报告由服务端给；`onJump` 抛「跳到哪一屏」。
+ */
+
 export class OfflineReportOverlay {
   private readonly node: Node
   private readonly titleLabel: Label

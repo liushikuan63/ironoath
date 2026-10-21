@@ -43,6 +43,11 @@ const BUTTON_HEIGHT = 36
  */
 const BUTTON_CLEAR = (PLATE_HEIGHT + BUTTON_HEIGHT) / 2 + 10
 
+/**
+ * 职责：招募（抽卡）面板 —— 选池、抽卡、查概率、查记录。
+ * 依赖：概率与记录都是合规要求可见的，服务端给；抽卡结果由服务端判定。
+ */
+
 @ccclass('RecruitPanelView')
 export class RecruitPanelView extends Component {
   private data: GachaPanelView | null = null

@@ -61,6 +61,11 @@ const NAV_BAR_HEIGHT = 52
 const NAV_BAR_BOTTOM = 8
 const NAV_SAFE_GAP = 8
 
+/**
+ * 职责：目标搜索（按半径找可打/可采的格子）。
+ * 依赖：半径与结果由服务端给；`setRadiusBounds` 是把可搜半径夹到合法范围。
+ */
+
 @ccclass('TargetSearchView')
 export class TargetSearchView extends Component {
   private rows: readonly TargetRow[] = []

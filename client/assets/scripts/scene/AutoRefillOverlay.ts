@@ -8,6 +8,12 @@ import { Graphics } from 'cc'
 const TEXT = new Color(226, 214, 190, 255)
 const GOLD = new Color(184, 134, 11, 255)
 
+/**
+ * 职责：自动补给的**确认覆盖层**（开不开、什么时候开由 AppRoot 决定，这层只负责画与收两个手势）。
+ * 依赖：`onConfirm` / `onCancel` 交回 AppRoot；`onVisibilityChanged` 让引导层知道「上面盖着东西」，
+ * 以免新手气泡顶在覆盖层上面。
+ */
+
 export class AutoRefillOverlay {
   private readonly node: Node
   private readonly summary: Label

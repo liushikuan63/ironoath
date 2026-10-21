@@ -72,6 +72,11 @@ interface MonthlyCardNodes {
   readonly purchaseCaption: Label
 }
 
+/**
+ * 职责：商店面板 —— 货币页签、购买、月卡页签与月卡领取。
+ * 依赖：价格与内容由服务端算；客户端**只报「买哪一档」**，不自己算价（铁律 1）。
+ */
+
 @ccclass('ShopPanelView')
 export class ShopPanelView extends Component {
   private panel: ShopView | null = null

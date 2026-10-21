@@ -23,6 +23,11 @@ const COLOR_DIM = new Color(150, 140, 124, 255)
 const COLOR_GOLD = new Color(184, 134, 11, 255)
 const OPTIONS_PER_PAGE = 4
 
+/**
+ * 职责：通用选择覆盖层（一个列表 + 确定/取消）—— 多个玩法共用同一套皮。
+ * 依赖：内容由调用方给；这一层**不记状态**，展示什么、点了什么交回调用方。
+ */
+
 export class ChoiceOverlay {
   private readonly node: Node
   private readonly titleLabel: Label

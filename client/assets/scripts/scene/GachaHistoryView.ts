@@ -35,6 +35,11 @@ const TOP_RESERVE = 24
 const TITLE_TO_ROWS = 70
 const FOOTER_GAP = 20
 
+/**
+ * 职责：抽卡记录（最近若干次抽取）这一屏，可翻页。
+ * 依赖：记录由服务端给（保留条数是服务端口径）；这一层不缓存、不裁剪。
+ */
+
 @ccclass('GachaHistoryView')
 export class GachaHistoryView extends Component {
   private data: GachaHistoryData | null = null

@@ -116,6 +116,12 @@ interface MarkerRefs {
   tilePaintSignature?: string
 }
 
+/**
+ * 职责：大地图这一层 —— 格子渲染、缩放、行军与采集的点击入口。
+ * 依赖：格子内容与可操作性由服务端给；`onEnterCity` / `onAttackMonster` / `onGatherResource`
+ * 只抛意图，真正的行军由 AppRoot 发起。
+ */
+
 @ccclass('WorldMap')
 export class WorldMap extends Component {
   /** 放大到城市档时由组合根切到现有内城面板；本场景不直接 loadScene。 */

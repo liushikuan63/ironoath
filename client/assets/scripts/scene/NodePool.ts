@@ -18,6 +18,11 @@
 
 import { Node } from 'cc'
 
+/**
+ * 职责：Cocos 节点的复用池 —— 反复创建的行/图标从这里拿，用完还回去。
+ * 依赖：池里只有**同型**节点可复用；`releaseAll` / `destroy` 在场景切换时清空。
+ */
+
 export class NodePool {
   private readonly free: Node[] = []
   private readonly parent: Node

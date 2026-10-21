@@ -51,6 +51,11 @@ const HINT_STEP = 24
  */
 const INPUT_MAX_LENGTH = 64
 
+/**
+ * 职责：创建社交组织（联盟/小队）的覆盖层 —— 选类型、填信息、提交。
+ * 依赖：类型枚举与命名规则由服务端给；`onVisibilityChanged` 让引导层在它盖着时收掉。
+ */
+
 @ccclass('SocialCreateOverlay')
 export class SocialCreateOverlay extends Component {
   private readonly nodes: Node[] = []

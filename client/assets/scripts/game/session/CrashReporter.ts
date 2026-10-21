@@ -120,6 +120,11 @@ export interface CrashReporterDeps {
   readonly dedupeWindowMs?: number
 }
 
+/**
+ * 职责：把未捕获异常变成一条**可上报的崩溃记录**（堆栈按预算截断、同窗去重、带 traceId 与版本）。
+ * 依赖：注入式的 `CrashReporterDeps`（上报口、版本、场景名、traceId、时钟、堆栈预算、去重窗口）⇒
+ * 这一层不自己抓异常，只负责「拿到异常之后怎么变成一条记录」；抓与转交由上层做。
+ */
 export class CrashReporter {
   private readonly sink: CrashSink
   private readonly clientVersion: string

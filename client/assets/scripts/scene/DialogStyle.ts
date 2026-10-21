@@ -12,6 +12,12 @@ const FRAME_VERTICAL = PANEL_IRON_INSET.top + PANEL_IRON_INSET.bottom
 
 type DialogKey = 'ui.panel.iron' | 'ui.panel.warning' | 'ui.panel.parchment' | 'ui.panel.gilt'
 
+/**
+ * 职责：面板样式的统一入口（底板、圆角、字号等）与**尺寸变化观察**。
+ * 依赖：`DialogSizeObserver` 监听视口尺寸变化并回调（安全区/刘海屏变了要重排）⇒ 尺寸回调是
+ * 「布局跟着视口走」的唯一入口，别处不要另起一套。
+ */
+
 @_decorator.ccclass('DialogSizeObserver')
 class DialogSizeObserver extends Component {
   onResize: (() => void) | null = null

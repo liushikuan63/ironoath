@@ -240,6 +240,11 @@ interface GridTileRefs {
   readonly plate: ProjectedPlate
 }
 
+/**
+ * 职责：内城主面板 —— 建筑升级与加速、收割、学习引导的开关与出口。
+ * 依赖：数据经 `attach` 推来；写动作（`onUpgrade` / `onSpeedUp` / `onCollect`）一律抛回 AppRoot。
+ */
+
 @ccclass('CityPanelView')
 export class CityPanelView extends Component {
   private resp: CityListResp | null = null

@@ -54,6 +54,12 @@ export interface GuideRect {
   readonly height: number
 }
 
+/**
+ * 职责：新手引导这一层 —— 画引导步骤、气泡与遮罩，并**上报**引导埋点。
+ * 依赖：引导脚本由服务端下发（步骤顺序在表里）；`setOverlaySuppressed` / `setBubbleSuppressed`
+ * 用来在别的面板/覆盖层盖上来时把引导收掉 —— 引导的显示优先级只有这一处说了算。
+ */
+
 @ccclass('GuideView')
 export class GuideView extends Component {
   private driver: GuideDriver | null = null

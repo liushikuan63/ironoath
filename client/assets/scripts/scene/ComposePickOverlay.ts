@@ -45,6 +45,11 @@ const BUTTON_BAND = 56
 const BUTTON_HEIGHT = 36
 const PADDING = 16
 
+/**
+ * 职责：武将合成选材覆盖层（选碎片、确认、取消）。
+ * 依赖：碎片与合成规则由服务端给；这层只收集选择。
+ */
+
 @ccclass('ComposePickOverlay')
 export class ComposePickOverlay extends Component {
 

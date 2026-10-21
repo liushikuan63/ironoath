@@ -40,6 +40,11 @@ const ROW_HEIGHT = 40
 const FOOTER_LINE_HEIGHT = 26
 const PADDING = 20
 
+/**
+ * 职责：抽卡概率公示这一屏（合规要求必须能查到的概率表）。
+ * 依赖：概率表由服务端下发并**逐行带出处**；这层只展示，不自己算概率。
+ */
+
 @ccclass('GachaDisclosureView')
 export class GachaDisclosureView extends Component {
   private disclosure: GachaDisclosure | null = null

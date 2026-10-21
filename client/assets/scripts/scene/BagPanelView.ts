@@ -56,6 +56,12 @@ const BOTTOM_RESERVED = 68
 
 type Tab = 'resource' | 'bag'
 
+/**
+ * 职责：背包面板 —— 道具列表、用道具、批量开箱。
+ * 依赖：`attachResources` / `attachBag` 收数据，`onUseItem` / `onOpenBatch` 抛动作；
+ * 数量与「能不能用」的判定在服务端，这层不自己算。
+ */
+
 @ccclass('BagPanelView')
 export class BagPanelView extends Component {
   private resources: ResourcePanelView | null = null

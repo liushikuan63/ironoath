@@ -44,6 +44,11 @@ const BOTTOM_RESERVED = 68
 const BUTTON_WIDTH = 84
 const BUTTON_HEIGHT = 30
 
+/**
+ * 职责：战令面板 —— 展示等级进度并把领奖抛回 AppRoot。
+ * 依赖：`attach` 收数据、`onClaim` 抛领奖；「这一档能不能领」由服务端说。
+ */
+
 @ccclass('BattlePassPanelView')
 export class BattlePassPanelView extends Component {
   private panel: BattlePassPanelData | null = null

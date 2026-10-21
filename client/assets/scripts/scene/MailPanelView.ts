@@ -49,6 +49,11 @@ const RIGHT_SLOT = 140
 /** 左槽（标题 / 附件）吃掉剩下的宽度，中间留 12 的缝 —— 两槽相碰就是量具那一维的"字形相碰"。 */
 const LEFT_SLOT = PANEL_WIDTH - 2 * PADDING - RIGHT_SLOT - 12
 
+/**
+ * 职责：邮件面板 —— 列出邮件、一键领取、标记已读。
+ * 依赖：`attach` 收邮件与附件；`onClaimAll` / `onReadRequested` 抛动作，领取结果由服务端回执。
+ */
+
 @ccclass('MailPanelView')
 export class MailPanelView extends Component {
   private panelData: MailPanelData | null = null

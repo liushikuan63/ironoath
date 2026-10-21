@@ -43,6 +43,12 @@ function licenseLine(entry: CreditEntry): string {
   return `${entry.license} · ${entry.note}`
 }
 
+/**
+ * 职责：开源许可与署名的展示覆盖层。
+ * 依赖：**内容是法务要求原样保留的文本**（CC BY 3.0 的署名条件，不是花絮）⇒ 原文由文档提供，
+ * 这层只负责排版与关闭。
+ */
+
 @ccclass('CreditsOverlay')
 export class CreditsOverlay extends Component {
   onClose: (() => void) | null = null

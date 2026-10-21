@@ -80,6 +80,11 @@ function bandGroupLeft(index: number): number {
   return BAND_CHIP_RIGHT + 8 + index * (groupW + BAND_GROUP_GAP)
 }
 
+/**
+ * 职责：行军编成覆盖层（选兵、选将、切换采集/攻击、侦察、选目标范围、调数量）。
+ * 依赖：可选的兵与目标由服务端给；确认后由 AppRoot 发起行军 ⇒ 这一层不发请求。
+ */
+
 export class MarchComposeOverlay {
   private readonly node: Node
   private readonly titleLabel: Label

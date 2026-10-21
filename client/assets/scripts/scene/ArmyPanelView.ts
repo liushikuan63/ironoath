@@ -81,6 +81,13 @@ const TYPE_TABS: ReadonlyArray<{ type: UnitType | null; text: string }> = [
   { type: 'SIEGE', text: '攻城' },
 ]
 
+/**
+ * 职责：军队面板这一屏 —— 练兵、加速、取消、伤兵治疗与治疗加速的**按钮**都在这里。
+ * 依赖：数据由 AppRoot 预拉后经 `attach` 推给这层；**所有写动作都只往外抛回调**
+ * （`onTrain` / `onSpeedUpTrain` / `onCancelTrain` / `onTreat` / `onCollectTreated` / `onTreatSpeedUp`），
+ * 请求与失败收口一律在 AppRoot 一处 ⇒ 这一层不碰网络、不判规则。
+ */
+
 @ccclass('ArmyPanelView')
 export class ArmyPanelView extends Component {
   private resp: ArmyListResp | null = null

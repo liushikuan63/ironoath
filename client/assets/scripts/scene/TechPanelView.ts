@@ -43,6 +43,11 @@ const PADDING = 16
 const BOTTOM_RESERVED = 90
 const NAV_RESERVED = 68
 
+/**
+ * 职责：科技面板 —— 研究、取消研究、加速研究。
+ * 依赖：研究状态与消耗由服务端算；加速用的道具选择也在这一层收口。
+ */
+
 @ccclass('TechPanelView')
 export class TechPanelView extends Component {
 

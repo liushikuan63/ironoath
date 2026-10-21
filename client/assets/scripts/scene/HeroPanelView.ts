@@ -63,6 +63,11 @@ type Tab = 'heroes' | 'lineups'
 /** 行内按钮对应的养成动作。 */
 type HeroAction = 'levelUp' | 'starUp' | 'awaken' | 'skillUp' | 'equip' | 'armory'
 
+/**
+ * 职责：武将面板 —— 列表、升级、升星、合成、上阵编辑的入口。
+ * 依赖：`attach` 收数据；升级/升星/合成/上阵编辑都只抛回调给 AppRoot，规则判定在服务端。
+ */
+
 @ccclass('HeroPanelView')
 export class HeroPanelView extends Component {
   private panel: HeroPanelData | null = null

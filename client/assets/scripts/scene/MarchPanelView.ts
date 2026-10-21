@@ -53,6 +53,11 @@ interface RowRefs {
   actionKind: MarchPanelAction | null
 }
 
+/**
+ * 职责：在途行军列表这一屏（看状态、重复上次、召回）。
+ * 依赖：`onAction` / `onClose` / `onRepeat` 抛动作；行军的合法性（能不能召回/能不能重复）由服务端说。
+ */
+
 export class MarchPanelView {
   private readonly backdrop: Node
   private readonly panel: Node

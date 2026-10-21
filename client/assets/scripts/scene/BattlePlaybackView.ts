@@ -58,6 +58,12 @@ const HUD_BUTTON_GAP = 12
 /** 飘字上升动画的时长（毫秒）。特效时长，不是游戏数值。 */
 const FLOAT_TEXT_MS = 700
 
+/**
+ * 职责：战报回放这一屏 —— 按段推进、切换倍速、跳到结尾。
+ * 依赖：回放数据由 AppRoot 推来；**倍速与段时长随战报一起下发**（字段先到才谈得上用），
+ * 这层不自己算节奏。
+ */
+
 @ccclass('BattlePlaybackView')
 export class BattlePlaybackView extends Component {
   private playback: BattlePlayback | null = null

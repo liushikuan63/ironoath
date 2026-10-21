@@ -52,6 +52,11 @@ const CORNER_WIDTH = 4
 /** 四个角的符号（右上、左上、右下、左下）。 */
 const CORNERS: ReadonlyArray<readonly [number, number]> = [[1, 1], [-1, 1], [1, -1], [-1, -1]]
 
+/**
+ * 职责：头像框面板 —— 列出可用的头像框并把「戴哪一个」抛回 AppRoot。
+ * 依赖：`attach` 收数据、`onWear` 抛选择；框的获取条件（等级/付费）由服务端算，这层不判。
+ */
+
 @ccclass('AvatarFramePanelView')
 export class AvatarFramePanelView extends Component {
   private panel: AvatarFramesView | null = null

@@ -98,6 +98,11 @@ const TAB_SCOPE: Partial<Record<TabKey, QuestScope>> = {
 }
 const TAB_HEIGHT = 34
 
+/**
+ * 职责：任务面板 —— 主线/日常任务、活动任务、领奖与跳转。
+ * 依赖：任务进度与「能不能领」由服务端判；`onScopeRequested` 是**换任务范围**（分页/分栏）而不是翻页。
+ */
+
 @ccclass('QuestPanelView')
 export class QuestPanelView extends Component {
   private list: QuestListView | null = null

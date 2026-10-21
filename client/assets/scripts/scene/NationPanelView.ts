@@ -91,6 +91,12 @@ function parseCoord(text: string): number | null {
   return Number.isSafeInteger(value) ? value : null
 }
 
+/**
+ * 职责：国家面板 —— 建国家、加入、离开、解散、国库支出与国策提案等入口。
+ * 依赖：全部动作抛回 AppRoot；**权限与国籍判定在服务端**（`NationPermissions` 那一份），
+ * 这层不自己决定按钮该不该亮。
+ */
+
 @ccclass('NationPanelView')
 export class NationPanelView extends Component {
   private data: NationPanelData | null = null

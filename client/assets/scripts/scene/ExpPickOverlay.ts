@@ -30,6 +30,11 @@ const CARD_HEIGHT = 520
 const ROW_HEIGHT = 44
 const PADDING = 16
 
+/**
+ * 职责：经验道具的选量覆盖层（加数量、确认、取消）。
+ * 依赖：可选数量与上限由服务端给；这层只调整数量并交回。
+ */
+
 @ccclass('ExpPickOverlay')
 export class ExpPickOverlay extends Component {
 

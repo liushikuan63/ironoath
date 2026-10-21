@@ -42,6 +42,11 @@ const ROW_POOL_SIZE = 6
 const BUTTON_WIDTH = 84
 const BUTTON_HEIGHT = 30
 
+/**
+ * 职责：等级奖励面板 —— 展示各等级奖励并把领奖抛回 AppRoot。
+ * 依赖：奖励内容与「哪一领过了」由服务端给；这层不记「领过了」。
+ */
+
 @ccclass('LevelRewardPanelView')
 export class LevelRewardPanelView extends Component {
   private data: LevelRewardPanelData | null = null

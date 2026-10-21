@@ -55,6 +55,12 @@ const BOTTOM_RESERVED = 68
 /** 右列（胜 / 败 / 有效 / 过期）的槽宽：`TEXT_WIDTH` 从行宽里扣掉的那一段，再留 12 的缝。 */
 const OUTCOME_SLOT = PANEL_WIDTH - 2 * PADDING - TEXT_WIDTH - 12
 
+/**
+ * 职责：战报面板 —— 列出战报、进入回放、发起分享（含分享渠道选择与结果回执）。
+ * 依赖：`attach` 收战报与侦察信息；`onReplayRequested` / `onShareRequested` 抛动作，
+ * 分享的「成没成功」由服务端回执说了算。
+ */
+
 @ccclass('BattleReportPanelView')
 export class BattleReportPanelView extends Component {
   private list: ReportListView | null = null

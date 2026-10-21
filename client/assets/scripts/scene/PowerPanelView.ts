@@ -46,6 +46,11 @@ const PANEL_HEIGHT = 600
 const ROW_HEIGHT = 36
 const PADDING = 20
 
+/**
+ * 职责：战力面板 —— 战力构成、榜单（分段/赛季）与翻页。
+ * 依赖：战力口径由服务端算（客户端不自己加总）；榜单分页由 AppRoot 驱动。
+ */
+
 @ccclass('PowerPanelView')
 export class PowerPanelView extends Component {
 

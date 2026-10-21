@@ -147,6 +147,11 @@ type RowAction = 'none' | 'kick' | 'help' | 'helpAll' | 'event' | 'donate' | 'ch
   | 'socialReview' | 'socialReject' | 'socialResearch' | 'pagePrev' | 'pageNext'
   | 'socialSetRole' | 'nation' | 'chatOlder' | 'chatNewer'
 
+/**
+ * 职责：社交面板 —— 联盟/小队的行操作、批量求助、捐献、创建、退出与转移。
+ * 依赖：行操作按权限点亮，**权限由服务端算**（`PermissionGates`）；这层不自己判能不能踢人。
+ */
+
 @ccclass('SocialPanelView')
 export class SocialPanelView extends Component {
   private data: SocialData | null = null

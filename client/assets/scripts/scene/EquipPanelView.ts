@@ -35,6 +35,11 @@ const PADDING = 16
 /** 行右端的「强化」键区宽度：行的触摸命中区到它左沿为止（几何分离的理由写在 `drawRow` 里）。 */
 const FORGE_ZONE = 104
 
+/**
+ * 职责：装备面板 —— 列出装备并把「穿戴 / 强化」抛回 AppRoot。
+ * 依赖：`onRowAction` / `onForge` 抛动作；强化的成功率与消耗一律服务端给，这层不显示假概率。
+ */
+
 @ccclass('EquipPanelView')
 export class EquipPanelView extends Component {
 

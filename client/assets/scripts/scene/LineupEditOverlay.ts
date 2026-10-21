@@ -42,6 +42,11 @@ const BUTTON_BAND = 56
 const BUTTON_CLEAR = 32
 const BUTTON_HEIGHT = 36
 
+/**
+ * 职责：上阵编辑覆盖层（选槽位、选武将、清空、保存、取消）。
+ * 依赖：槽位与可选武将由服务端给；保存后由 AppRoot 落库 ⇒ 这层只编辑**未提交的草稿**。
+ */
+
 @ccclass('LineupEditOverlay')
 export class LineupEditOverlay extends Component {
 

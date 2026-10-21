@@ -34,6 +34,12 @@ const COLOR_BUTTON = new Color(122, 82, 24, 255)
 const PANEL_WIDTH = 520
 const PANEL_HEIGHT = 360
 
+/**
+ * 职责：礼包弹窗这一屏 —— 展示服务端判定的礼包与未成年付费额度提示，并把购买/关闭抛回。
+ * 依赖：`attach` 收数据、`onBuy` / `onClose` 抛动作；**弹不弹、弹哪个由服务端算**
+ * （频控与触发都在服务端），这层不自己判。
+ */
+
 @ccclass('GiftPopupView')
 export class GiftPopupView extends Component {
   /** 点"购买"：把商品 id 交给编排层（`AppRoot.buyGift`）。 */

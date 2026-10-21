@@ -40,6 +40,12 @@ const RESOURCE_BAR_TOP_MARGIN = 24
 const MAIN_CITY_SIZE = 160
 const GROUND_HEIGHT = 220
 
+/**
+ * 职责：主城场景的根节点 —— 内城网格与主城本体的容器。
+ * 依赖：它只负责**摆节点**，面板与数据的接线在 `GameBootstrap` / `PanelNav` ⇒
+ * 场景根不认业务。
+ */
+
 @ccclass('MainCity')
 export class MainCity extends Component {
   private readonly unsubscribes: Unsubscribe[] = []

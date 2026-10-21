@@ -34,6 +34,12 @@ const BUTTON_BAND = 62
 const BUTTON_HEIGHT = 36
 const PADDING = 16
 
+/**
+ * 职责：武将觉醒的选材覆盖层（选碎片、确认、取消）。
+ * 依赖：碎片与可觉醒的武将由 AppRoot 推来；确认后由 AppRoot 发起请求，
+ * 这层只管把「选了哪些」交出去。
+ */
+
 @ccclass('AwakenPickOverlay')
 export class AwakenPickOverlay extends Component {
 

@@ -81,6 +81,11 @@ const SWEEP_MAX = 10
 /** 行内按钮对应的动作。 */
 type RowAction = 'challenge' | 'sweep1' | 'sweep10'
 
+/**
+ * 职责：关卡面板 —— 挑战、扫荡、买体力。
+ * 依赖：`attach` 收关卡与体力；**关卡没解锁时要说清原因**（`showBlocked`）而不是静默失败。
+ */
+
 @ccclass('StagePanelView')
 export class StagePanelView extends Component {
   private list: StageListView | null = null

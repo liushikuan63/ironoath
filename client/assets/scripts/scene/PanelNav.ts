@@ -162,6 +162,12 @@ const MORE_PADDING = 10
 const MORE_KEY = 'more'
 const MORE_LABEL = '更多'
 
+/**
+ * 职责：底部导航层 —— 建出各面板节点、只激活当前一个、画导航条与红点。
+ * 依赖：面板清单是**静态的**（新增面板要在这里登记）；数据由 AppRoot 预拉、各面板 `attach` 消费，
+ * 所以切换是即时的，不需要再等网络。
+ */
+
 @ccclass('PanelNav')
 export class PanelNav extends Component {
 
