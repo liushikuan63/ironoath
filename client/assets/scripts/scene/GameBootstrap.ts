@@ -836,6 +836,15 @@ export class GameBootstrap extends Component {
       // **安全刷新点**（收口清单 #2287 ⑤）：点「公告」那一行才去取一次 ⇒
       // 运营改完公告，玩家下次点开就看到新文案，**不用等发版**。
       // 版本没变时 AppRoot 不会通知这里 ⇒ 界面也不会重画（不闪）。
+      //
+      // **为什么在 scene 层发起、而不是让 view 自己调 API**：本仓的客户端发送口一律走
+      // AppRoot（`GameApi` 只在 AppRoot 里被调，见 `check-client-send-paths` 那道门）⇒
+      // view 只负责画，网络与版本比对都在 AppRoot 一处 ⇒ 不会出现「两个地方各判一次版本」
+      // 而分叉。
+      //
+      // **这一跳只发请求、不切界面**：切到公告模式发生在 `out.noticeList` 那一跳
+      // （数据到手时）⇒ 玩家点下去到数据回来之间界面不动，而不是「点了却切到一个
+      // 还没内容的空面板」—— 后者会被当成 bug 报上来。
       void this.root?.openNotice()
       return
     }
@@ -1565,8 +1574,14 @@ export class GameBootstrap extends Component {
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
-      // 公告数据到手（AppRoot 判定版本变了才会给）⇒ 切到公告模式并重画。
+      // 公告数据到手（AppRoot 判定**内容 hash 变了**才会给）⇒ 切到公告模式并重画。
       // **不新增导航项、不建新面板** ⇒ 「已有内容可见性」那一族探针不受影响。
+      //
+      // **为什么版本没变时 AppRoot 压根不调这里**：界面不重画 ⇒ 玩家看不见一次没必要的
+      // 刷新（那是最容易被当成 bug 报上来的观感），而数据本身也没变。
+      //
+      // **为什么切模式放在这一跳而不是点击那一下**：点击时数据还没到 ⇒ 先切就会看到
+      // 一个空的公告面板。等数据到手再切，玩家看到的第一次就是有内容的画面。
       out.noticeList = view => settings.attachNotices(view)
       // 数据在 GameBootstrap 手里（版本响应是它拉的），所以这里直接推一次；
       // 面板没有 pending 通道可走 —— 那套是给 AppRoot 预拉的面板用的
