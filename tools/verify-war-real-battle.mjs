@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 真链路打真仗：宣战 → 出兵攻城 → 结算 → 击杀进国战账（B13 承载 3h 验收的"有仗态"那一维）。
+ * 真链路打真仗：宣战 → 出兵攻城 → 结算 → 击杀进国战账（B13 国战实战验收的"有仗态"那一维）。
  *
  * <p><b>这一份在补什么</b>：国战击杀的入账漏斗（`BattleReportService.recordKills`）此前没有任何
  * 探针护栏 —— `verify-march-runtime.mjs` 全打桩、`verify-nation-live.mjs` 只到"双国+宣战"，
@@ -18,9 +18,9 @@
  *     SERVER_PORT=8299 nohup bash scripts/dev.sh > /tmp/war-real-backend.log 2>&1 &
  *   BACKEND_ORIGIN=http://localhost:8299 node tools/verify-war-real-battle.mjs
  * </pre>
- * 时间倍速由 `DevClockSpeed`（@Profile("dev")）从环境变量读：练兵 60s×数量、行军、国战 3h 窗口
+ * 时间倍速由 `DevClockSpeed`（@Profile("dev")）从环境变量读：练兵 60s×数量、行军、国战 90 分钟窗口
  * 全部走同一套 serverNow，没有第二个时间源。倍速太低（<50×）时本探针退 2 并说明 —— 那是量具
- * 没架对，不是功能坏了。倍速过高也不行：国战窗口 WAR_DURATION_HOURS=3 会被压到几秒，
+ * 没架对，不是功能坏了。倍速过高也不行：国战窗口 WAR_DURATION_MINUTES=90 会被压到几秒，
  * 出战、行军还没落地仗就过期了（记录会被 EXPIRED 挡住）。
  *
  * <p><b>退出码</b>：0 = 全过；1 = 有断言失败（逐条打印）；2 = 前置不满足（后端/提速档/倍速）。
@@ -311,12 +311,12 @@ checkThat(`攻方疲劳已累积（myFatigue=${fatigueA} ≥ 1）`, fatigueA >= 
 
 // WAR 榜是"国战结算那一刻"才把个人击杀分写进去的（3b-1 的 reportWarSeasonPoints 挂在这里：
 // WarAppService.warStatus → settleIfExpired → settledNow 才进账，见该文件 :132-138）。
-// ⇒ 等这一场打满 3 小时窗口（WAR_DURATION_HOURS=3，倍速 100× 下 ≈110 秒真实时间）。
+// ⇒ 等这一场打满 90 分钟窗口（WAR_DURATION_MINUTES=90，倍速 100× 下 ≈54 秒真实时间）。
 // ⚠️ 结算后 hasWar 仍是 true、只有 phase 变 SETTLED（仗还"在库里"）—— 判据必须是 phase。
 const warEnded = await waitUntil(async () => {
   const war = await call('GET', '/nation/war', undefined, attacker)
   return war.code === 0 && (war.data?.phase === 'SETTLED' || war.data?.hasWar === false) ? true : null
-}, 360_000, 4000, '国战打满 3 小时窗口并结算')
+}, 360_000, 4000, '国战打满 90 分钟窗口并结算')
 checkThat('国战已结算（phase=SETTLED）', warEnded === true)
 
 let warRank = null

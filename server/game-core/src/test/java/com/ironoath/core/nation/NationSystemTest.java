@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
  * 依赖：JUnit 5 + AssertJ + game-core 的 nation 包（纯 Java，零框架）。
  *
  * <p>夹具数值抄自 contract/config（nation_config 三档 200/400/800、global 的冷却 24h、
- * 税收 10000/盟/周、日志保留 200 条、国战 3 小时、4 座关卡、三类积分 10/1/50、
+ * 税收 10000/盟/周、日志保留 200 条、国战 90 分钟、4 座关卡、三类积分 10/1/50、
  * 疲劳 5/1/上限 100、全服目标 50000 击杀）。「表值 == 文档值」由 game-config 侧断言，
  * 所以本类可以放心手抄 —— 手抄的那份若与表漂移，配置测试会先变红。
  */
@@ -53,7 +53,7 @@ class NationSystemTest {
     }
 
     private static WarScoreBoard.Rules warRules() {
-        return new WarScoreBoard.Rules(3 * HOUR, 4, 10L, 1L, 50L, 5L, 1L, 100L, 50_000L);
+        return new WarScoreBoard.Rules(90 * MINUTE, 4, 10L, 1L, 50L, 5L, 1L, 100L, 50_000L);
     }
 
     private static WarScoreBoard newWar(long start) {
@@ -575,25 +575,25 @@ class NationSystemTest {
     }
 
     @Test
-    @DisplayName("验收6：最后一秒偷家无法翻盘 —— 守了 179 分钟的国家分数是偷家者的上百倍")
+    @DisplayName("验收6：最后一秒偷家无法翻盘 —— 守了 89 分钟的国家分数远高于偷家者")
     void lastSecondCaptureCannotStealTheWin() {
         WarScoreBoard board = newWar(0L);
         board.captureGate("n1", "gate_1");
         board.captureGate("n2", "gate_2");
         board.beginSiege(0L);
 
-        // n1 从第 0 分钟守到第 179 分钟
+        // n1 从第 0 分钟守到第 89 分钟
         board.captureCapital("n1", 0L);
         // n2 在最后一分钟偷家
-        board.captureCapital("n2", 179 * MINUTE);
+        board.captureCapital("n2", 89 * MINUTE);
 
-        WarScoreBoard.Result result = board.settle(180 * MINUTE);
+        WarScoreBoard.Result result = board.settle(90 * MINUTE);
         long n1Occupy = result.scores().get("n1").occupyScore();
         long n2Occupy = result.scores().get("n2").occupyScore();
-        assertThat(n1Occupy).as("n1 守了 179 分钟").isEqualTo(179 * 10L);
+        assertThat(n1Occupy).as("n1 守了 89 分钟").isEqualTo(89 * 10L);
         assertThat(n2Occupy).as("n2 只占了 1 分钟").isEqualTo(10L);
         assertThat(result.winnerId()).as("偷家翻不了盘").isEqualTo("n1");
-        assertThat(n1Occupy).isGreaterThan(n2Occupy * 100L);
+        assertThat(n1Occupy).isGreaterThan(n2Occupy * 80L);
     }
 
     @Test
@@ -744,7 +744,7 @@ class NationSystemTest {
         assertThat(board.remainingSeconds(0L)).as("筹备阶段").isZero();
         board.captureGate("n1", "gate_1");
         board.beginSiege(0L);
-        assertThat(board.remainingSeconds(HOUR)).isEqualTo(2 * 3600L);
+        assertThat(board.remainingSeconds(30 * MINUTE)).isEqualTo(3600L);
         assertThat(board.remainingSeconds(10 * HOUR)).as("超时后不得为负").isZero();
     }
 

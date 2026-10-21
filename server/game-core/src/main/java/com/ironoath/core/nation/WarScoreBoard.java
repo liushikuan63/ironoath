@@ -45,7 +45,7 @@ public final class WarScoreBoard {
     }
 
     /**
-     * @param durationMillis          王城战时长。来源 global.WAR_DURATION_HOURS
+     * @param durationMillis          王城战时长。来源 global.WAR_DURATION_MINUTES
      * @param gateCount               王城周边关卡数。来源 global.WAR_GATE_COUNT
      * @param occupyScorePerMinute    占领王城每分钟得分。来源 global.WAR_SCORE_OCCUPY_PER_MINUTE
      * @param killScorePerUnit        每击杀一个单位得分。来源 global.WAR_SCORE_KILL_PER_UNIT

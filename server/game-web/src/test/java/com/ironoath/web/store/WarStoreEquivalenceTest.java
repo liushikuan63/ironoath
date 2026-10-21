@@ -293,9 +293,9 @@ class WarStoreEquivalenceTest {
     void lazySettleRunsExactlyOnceOnBothStores() {
         long duration = rules.rules().durationMillis();
         assertThat(duration)
-                .as("前置：本用例的边界数字全按 WAR_DURATION_HOURS 算，先钉住它是 3 小时。"
+                .as("B21 §五已裁决王城战时长为 90 分钟；配置与生产装配必须采用该值。"
                         + "配置改了这条会红，那是提醒重新算数，不是缺陷")
-                .isEqualTo(3L * 60L * MINUTE);
+                .isEqualTo(90L * MINUTE);
 
         for (WarStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
@@ -327,11 +327,11 @@ class WarStoreEquivalenceTest {
             assertThat(at.remainingSeconds(T0 + duration))
                     .as("%s 已结束的仗剩余秒数为 0（验收 6 的面板读数）", label).isZero();
             String settled = describe(at);
-            // n1 从 T0+7min 占到 T0+180min = 173 分钟 × WAR_SCORE_OCCUPY_PER_MINUTE(10)
+            // n1 从 T0+7min 占到 T0+90min = 83 分钟 × WAR_SCORE_OCCUPY_PER_MINUTE(10)
             assertThat(settled)
                     .as("%s 结算要把最后一段占领分结进去：这一项在结算前恒为 0，"
                             + "是最能分辨「到底结没结」的量（击杀与建筑分结算前后一样）", label)
-                    .contains("n1=1730,60000,100");
+                    .contains("n1=830,60000,100");
 
             // 第三档：时间再走 4 小时再读一次 —— 不许再动，也不许敲内核那条「重复结算」的护栏
             WarStore.Settlement afterS = store.settleIfExpired(T0 + duration + 4L * 60L * MINUTE).orElseThrow();

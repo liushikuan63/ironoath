@@ -113,7 +113,7 @@ public class WarAppService {
         long now = timeService.serverNow();
         WarScoreBoard.Rules rules = assembler.rules();
         // 读这一句顺带把时间推进一格：到点的那一场在这里结算并落盘（服务端禁常驻定时器）。
-        // 用 settleIfExpired 而不是 findLatest —— 后者只看不动，一场打满 3 小时的仗会永远停在 SIEGE，
+        // 用 settleIfExpired 而不是 findLatest —— 后者只看不动，一场打满 90 分钟的仗会永远停在 SIEGE，
         // 而"什么时候算打完"这个问题没有别的执行者。
         Optional<WarStore.Settlement> progressed = wars.settleIfExpired(now);
         if (progressed.isEmpty()) {
@@ -265,7 +265,7 @@ public class WarAppService {
      * <p><b>为什么这一格里还发不了奖、也没有王城</b>：关卡与王城今天不是地图上的可占领实体
      * （{@code WorldEntityType} 只有城/野怪/资源/行军/建筑），所以这块板会停在
      * {@code PREPARATION}，{@code beginSiege} 进不去，占领分与建筑分永远为 0，
-     * 会动的只有击杀（切片 2b）；打满 {@code WAR_DURATION_HOURS} 之后由读取惰性结算（切片 2c）。
+     * 会动的只有击杀（切片 2b）；打满 {@code WAR_DURATION_MINUTES} 之后由读取惰性结算（切片 2c）。
      * <b>胜者不发奖</b>：B13/B21 都没写「赢了给什么」（{@code WAR_SERVER_GOAL_GOLD} 是另一件事 ——
      * 全服目标奖励，且领取端点也还没做），那是产品口径，已登记待裁决而不是在这里替产品决定。
      * 验收矩阵 B13 的验收 6/7 仍挂 ⬜。
@@ -302,7 +302,7 @@ public class WarAppService {
                                         + "（查不到或已解散：解散记录仍然留在档里，所以必须过 isDisbanded）"));
 
                 // 宣战冷却：从「这一对两国最近那一场」的<b>开场时刻</b>起算，不是从结算那一刻。
-                // 表里那句「取 24 小时 = 每个国家每天最多宣战一次，配合 3 小时的战斗时长」
+                // 表里那句「取 24 小时 = 每个国家每天最多宣战一次，配合 90 分钟的战斗时长」
                 // 说的就是开场时刻的间隔；从结束起算会把它变成 27 小时，那是设计者没写过的东西。
                 // 毫秒口已经在 Nation 上（LevelRule.warCooldownHours() × 3600 × 1000），这里不乘第二遍。
                 // 还有一条要说清的边界：那一档是<b>宣战方当前等级</b>给的。今天 nation_config 三档都是 24，
@@ -319,7 +319,7 @@ public class WarAppService {
                                             + (last.startedAt() + cooldownMillis - now) / 1000L + "s");
                         });
                 // 先推进上一场的时间，再判"有没有活着的仗"。不这么做的表现不是报错而是卡死式的：
-                // insertIfNoneActive 读的是存储里的 phase 字面值，而一场打满 3 小时的仗在有人打开面板之前
+                // insertIfNoneActive 读的是存储里的 phase 字面值，而一场打满 90 分钟的仗在有人打开面板之前
                 // phase 仍然是 SIEGE —— 于是"仗早打完了却再也宣不了战"，解锁条件落在别人的那一次读上。
                 // 结算与插入各自收在自己的临界区里，这里没有把判断搬到服务层（见 WarStore#insertIfNoneActive）
                 wars.settleIfExpired(now);

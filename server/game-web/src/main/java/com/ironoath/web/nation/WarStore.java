@@ -121,7 +121,7 @@ public interface WarStore {
      * 于是玩家在同一秒看到「刚结算完」的状态变迁与「新仗 0 分」的面板。
      *
      * <p><b>{@code durationMillis} 取的是当前配置而不是建档那一刻</b>（规则不进快照，见
-     * {@link WarRulesAssembler}）：热调 {@code WAR_DURATION_HOURS} 会立刻影响已开着的仗。
+     * {@link WarRulesAssembler}）：热调 {@code WAR_DURATION_MINUTES} 会立刻影响已开着的仗。
      * 这与本类其余读口的口径一致（数值一律现取），记在这里是因为「缩短时长能不能提前结束一场
      * 正在打的仗」是一个有人会以为是锁死的语义问题。
      *

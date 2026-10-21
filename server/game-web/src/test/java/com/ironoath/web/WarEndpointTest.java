@@ -83,7 +83,7 @@ class WarEndpointTest {
 
     private static final String PLAYER_HEADER = "X-Player-Id";
     private static final long MINUTE = 60_000L;
-    /** 摆「早已打过 {@code WAR_DURATION_HOURS}」那两场用的量具单位（不是配置值，配置值现取）。 */
+    /** 摆「早已打过 {@code WAR_DURATION_MINUTES}」那两场用的量具单位（不是配置值，配置值现取）。 */
     private static final long HOUR = 60 * MINUTE;
 
     @Autowired private MockMvc mockMvc;
@@ -169,11 +169,11 @@ class WarEndpointTest {
         assertThat(data.get("serverGoalReached").asBoolean())
                 .as("60120 ≥ 50000 —— 达成判定在服务端算，客户端只读结果")
                 .isTrue();
-        // 剩余时间：startedAt 是「一分钟前」，3 小时时长 ⇒ 落在 10735~10740 之间。
+        // 剩余时间：startedAt 是「一分钟前」，90 分钟时长 ⇒ 落在 5335~5340 之间。
         // 写成区间而不是等号：service 里那次 serverNow() 与本行取时刻之间会流逝毫秒
         assertThat(data.get("remainingSec").asLong())
-                .as("读了 startedAt 才会是这个数；没读会是 10800 或 0")
-                .isBetween(10_735L, 10_740L);
+                .as("读了 startedAt 才会是这个数；没读会是 5400 或 0")
+                .isBetween(5_335L, 5_340L);
 
         JsonNode rows = data.get("scores");
         assertThat(rows).hasSize(2);
@@ -404,7 +404,7 @@ class WarEndpointTest {
         assertThat(data.get("hasWar").asBoolean()).isTrue();
         assertThat(data.get("phase").asText()).isEqualTo("PREPARATION");
         assertThat(data.get("remainingSec").asLong())
-                .as("剩余时间只在 SIEGE 阶段倒数；这里必须是 0 而不是把 3 小时直接印出来")
+                .as("剩余时间只在 SIEGE 阶段倒数；这里必须是 0 而不是把 90 分钟直接印出来")
                 .isZero();
         assertThat(data.get("scores")).hasSize(2);
         assertThat(rowOf(data.get("scores"), a.nationId).get("nationName").asText())
@@ -604,13 +604,13 @@ class WarEndpointTest {
     // ---------- 惰性结算（切片 2c：读端点顺带把时间推进一格）----------
 
     /**
-     * 一场打满了 {@code WAR_DURATION_HOURS} 的仗，靠这一次读面板定格。
+     * 一场打满了 {@code WAR_DURATION_MINUTES} 的仗，靠这一次读面板定格。
      *
      * <p><b>夹具把 {@code startedAt} 摆到四小时前</b>而不是 sleep、也不是拨系统时钟：
      * 到期判据是 {@code now >= startedAt + duration}，动 {@code startedAt} 这一侧就能精确跨过那一刻。
      *
      * <p><b>「未到期不许结」这一半由 {@link #warBoardReadsThroughTheStoreOnEveryDimension} 钉住</b>
-     * （它把 {@code startedAt} 摆在一分钟前并断言 {@code phase=SIEGE} 与 {@code remainingSec≈10740}）——
+     * （它把 {@code startedAt} 摆在一分钟前并断言 {@code phase=SIEGE} 与 {@code remainingSec≈5340}）——
      * 把结算改成无条件执行，那一条会红。所以这一条只需专攻"到期之后"那一半。
      */
     @Test
@@ -619,7 +619,7 @@ class WarEndpointTest {
         String playerId = newPlayer();
         nations.insertIfAbsent(nation("n_live", "铁誓王国"));
         nations.insertIfAbsent(nation("n_ghost", "无名之国"));
-        long startedAt = timeService.serverNow() - 4 * HOUR;   // 远超 3 小时的时长
+        long startedAt = timeService.serverNow() - 4 * HOUR;   // 远超 90 分钟的时长
         wars.insertIfAbsent(board(startedAt, 0L));
         assertThat(wars.findLatest().orElseThrow().phase())
                 .as("前置：findLatest 只读不动，此刻档里仍然是一场没结束的仗（结算不能是建档的副作用）")
@@ -659,7 +659,7 @@ class WarEndpointTest {
      * <b>宣战口自己也推进时间</b>：过期那一场不需要"先有人打开面板"才能解锁下一场。
      *
      * <p>这条要拦的形状很具体：{@code insertIfNoneActive} 的判据是存储里的 {@code phase != SETTLED}
-     * 字面值，而一场打满 3 小时的仗在结算之前那个字面值仍然是 {@code PREPARATION}。
+     * 字面值，而一场打满 90 分钟的仗在结算之前那个字面值仍然是 {@code PREPARATION}。
      * 于是如果只有读端点会结算，玩家侧表现就是「仗明明早打完了，宣战却一直回 WAR_ALREADY_ACTIVE」，
      * 解锁条件落在<b>别人</b>的某一次面板读取上 —— 那是"判定读了字面值而不是语义真值"那一族缺陷。
      */
@@ -707,13 +707,13 @@ class WarEndpointTest {
         Kingdom a = kingdom("铁誓");
         Kingdom b = kingdom("赤原");
         Kingdom c = kingdom("苍梧");
-        // 摆一场「四小时前开的」A-B 仗，它同时跨过两条线：超过 3 小时的战事时长（所以挡住下一次宣战的
+        // 摆一场「四小时前开的」A-B 仗，它同时跨过两条线：超过 90 分钟的战事时长（所以挡住下一次宣战的
         // 理由只能是冷却，不能是"那场还在打"），又仍在 24 小时冷却之内。
         seedPairWar(a.nationId, b.nationId, timeService.serverNow() - 4 * HOUR);
 
         assertThat(postRaw("/nation/war/declare", a.king,
                 new WarDeclareReq(newRequestId(), b.nationId)).get("code").asInt())
-                .as("这一码与 13020 的分工要分得开：回「等这一场打完」是误导 —— 那场仗只有 3 小时，"
+                .as("这一码与 13020 的分工要分得开：回「等这一场打完」是误导 —— 那场仗只有 90 分钟，"
                         + "按它说的等完还会再被拒一次，而玩家已经付了一次点击")
                 .isEqualTo(ErrorCode.WAR_DECLARE_COOLDOWN.code());
 
