@@ -48,6 +48,7 @@ export class SettingsPanelView extends Component {
 
   /** 已取到的公告视图；null = 还没取过（「公告」那一行此时给一句说明，不给假摘要）。 */
   private noticeView: NoticeView | null = null
+  private noticePending = false
 
   /** 上一次 render 的参数 —— 切模式时要按同一组参数重画。 */
   private lastRender: {
@@ -78,6 +79,19 @@ export class SettingsPanelView extends Component {
     this.noticeView = view
     this.mode = 'notices'
     this.redraw()
+  }
+
+  /** 请求飞行时只更新入口副标题，避免点下去毫无反馈，也避免销毁正在派发触摸的行。 */
+  setNoticePending(pending: boolean): void {
+    this.noticePending = pending
+    if (this.mode !== 'settings' || this.lastRender === null) return
+    const row = this.node.getChildByName('row-notice')
+    const subtitle = row?.children.find(child => child.position.y < 0)?.getComponent(Label)
+    if (subtitle === null || subtitle === undefined) return
+    const last = this.lastRender
+    const normal = buildSettingsView(last.resp, last.clientVersion,
+      last.privacy, last.audioMuted, this.noticeView).rows.find(item => item.key === 'notice')?.subtitle ?? ''
+    subtitle.string = pending ? '正在获取公告…' : normal
   }
 
   override update(): void {
@@ -112,7 +126,9 @@ export class SettingsPanelView extends Component {
       const line = compact ? Math.floor(index / 2) : index
       const x = compact ? (column === 0 ? -(rowWidth + PADDING) / 2 : (rowWidth + PADDING) / 2) : 0
       const y = height / 2 - 104 - line * (compact ? rowHeight + 8 : rowHeight)
-      this.drawActionRow(row, x, y, rowWidth, rowHeight - 8)
+      const shownRow = row.key === 'notice' && this.noticePending
+        ? { ...row, subtitle: '正在获取公告…' } : row
+      this.drawActionRow(shownRow, x, y, rowWidth, rowHeight - 8)
     })
 
     this.drawVersion(view.versionText, width, height)

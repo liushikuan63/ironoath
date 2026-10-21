@@ -261,6 +261,7 @@ export class GameBootstrap extends Component {
   private uninstallCrashHooks: (() => void) | null = null
   private lastTickAt = 0
   private lastActionAt = 0
+  private noticeOpenSerial = 0
   /** 本次启动的面板视图装配账（targets() 里写）。找不到视图是静默的，所以账必须自己记。 */
   private panelViews: { attempted: number, missing: string[] } = { attempted: 0, missing: [] }
 
@@ -835,17 +836,22 @@ export class GameBootstrap extends Component {
     if (action.kind === 'open-notice') {
       // **安全刷新点**（收口清单 #2287 ⑤）：点「公告」那一行才去取一次 ⇒
       // 运营改完公告，玩家下次点开就看到新文案，**不用等发版**。
-      // 版本没变时 AppRoot 不会通知这里 ⇒ 界面也不会重画（不闪）。
+      // 内容没变且已经在公告页时，视图不重画；从设置页再次打开同版仍要切入。
       //
       // **为什么在 scene 层发起、而不是让 view 自己调 API**：本仓的客户端发送口一律走
       // AppRoot（`GameApi` 只在 AppRoot 里被调，见 `check-client-send-paths` 那道门）⇒
       // view 只负责画，网络与版本比对都在 AppRoot 一处 ⇒ 不会出现「两个地方各判一次版本」
       // 而分叉。
       //
-      // **这一跳只发请求、不切界面**：切到公告模式发生在 `out.noticeList` 那一跳
-      // （数据到手时）⇒ 玩家点下去到数据回来之间界面不动，而不是「点了却切到一个
-      // 还没内容的空面板」—— 后者会被当成 bug 报上来。
-      void this.root?.openNotice()
+      // 请求期间只改这一行的副标题；数据到手后才切模式，失败则恢复原字幕。
+      const settings = this.panel(SettingsPanelView, 'settings')
+      settings?.setNoticePending(true)
+      const serial = ++this.noticeOpenSerial
+      const request = this.root?.openNotice()
+      if (request === undefined) { settings?.setNoticePending(false); return }
+      void request.finally(() => {
+        if (serial === this.noticeOpenSerial && !this.destroyed) settings?.setNoticePending(false)
+      })
       return
     }
     if (action.kind === 'open-privacy-contract') {

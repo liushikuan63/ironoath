@@ -79,11 +79,15 @@ function readNotice() {
   }
   walk(settings)
   const background = settings.getChildByName('background')
+  const noticeRow = settings.getChildByName('row-notice')
+  const noticeSubtitle = noticeRow?.children.find(child => child.position.y < 0)
+    ?.getComponent('cc.Label')?.string ?? null
   return { settingsMissing: false, rowNotice, rowBack, noticeCard, noticeCardSurface,
     panelSurface: !!background?.getChildByName('SettingsSurface')?.activeInHierarchy,
     divider: !!settings.getChildByName('header-divider')?.activeInHierarchy,
     rowSurface: !!settings.getChildByName('row-notice')
       ?.getChildByName('SettingsRowSurface')?.activeInHierarchy,
+    noticeSubtitle,
     texts }
 }
 
@@ -116,6 +120,15 @@ const page = await context.newPage()
 const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
 page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+let noticeReply = 'live'
+page.route('**/notice/list', async route => {
+  await new Promise(resolve => setTimeout(resolve, 650))
+  if (noticeReply === 'biz') {
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ code: 1006, msg: '公告暂不可用', detail: null,
+        traceId: 'notice-negative', serverNow: Date.now(), data: null }) })
+  } else await route.continue()
+})
 
 await page.goto(`${preview.origin}/?panel=settings`, { waitUntil: 'networkidle' })
 preview.assertRewritten()
@@ -135,6 +148,9 @@ console.log(`  设置页文字：${(before.texts ?? []).join(' ｜ ')}`)
 
 // 行的监听挂在 `touch-end` 上（`SettingsPanelView.drawActionRow`），不是 touch-start
 const clicked = await clickByName('row-notice', 'touch-end')
+await page.waitForTimeout(100)
+const loading = await page.evaluate(readNotice)
+check('请求未完成时显示正在获取公告', loading.texts?.includes('正在获取公告…'), true)
 await page.waitForTimeout(1200)
 const after = await page.evaluate(readNotice)
 check('点得动那一行', clicked, true)
@@ -156,6 +172,17 @@ check('点「返回设置」收得掉', back, true)
 check('收回后回到设置页（那行回来了）', backView.rowNotice, true)
 check('收回后不在公告模式了', backView.rowBack, false)
 await page.screenshot({ path: path.join(OUT, 'notice-back.png') })
+
+// 同一入口的业务拒绝：等候提示必须消失，原摘要回来，不能留下假“正在获取”。
+noticeReply = 'biz'
+check('拒绝夹具再次点得到公告入口', await clickByName('row-notice', 'touch-end'), true)
+await page.waitForTimeout(100)
+check('拒绝响应飞行时仍显示等待状态', (await page.evaluate(readNotice)).noticeSubtitle,
+  '正在获取公告…')
+await page.waitForTimeout(1000)
+const rejected = await page.evaluate(readNotice)
+check('拒绝后留在设置页', rejected.rowNotice && !rejected.rowBack, true)
+check('拒绝后恢复打开前的摘要', rejected.noticeSubtitle, backView.noticeSubtitle)
 
 check('页面零错误', errors.join(' | ') || '无', '无')
 
