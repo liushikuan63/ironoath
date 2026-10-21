@@ -629,6 +629,26 @@ class NationSystemTest {
     }
 
     @Test
+    @DisplayName("已参战但未持有关卡的国家不能占王城，取得资格后同一动作才可成功")
+    void unqualifiedNationCannotCaptureCapital() {
+        WarScoreBoard board = newWar(0L);
+        board.captureGate("n1", "gate_1");
+        board.beginSiege(0L);
+        assertThat(board.isQualified("n2")).isFalse();
+
+        assertThatThrownBy(() -> board.captureCapital("n2", MINUTE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("进攻资格");
+        assertThat(board.capitalHolder()).isNull();
+        assertThat(board.snapshot().get("n2").buildingScore()).isZero();
+
+        board.captureGate("n2", "gate_1");
+        assertThat(board.isQualified("n2")).isTrue();
+        board.captureCapital("n2", MINUTE);
+        assertThat(board.capitalHolder()).isEqualTo("n2");
+    }
+
+    @Test
     @DisplayName("关卡是排他的：一座关卡同时只能属于一方")
     void gatesAreExclusive() {
         WarScoreBoard board = newWar(0L);

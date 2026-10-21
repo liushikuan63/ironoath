@@ -238,13 +238,16 @@ public final class WarScoreBoard {
         scores.get(nationId)[2] += rules.buildingScorePerCapture();
     }
 
-    /** 占领王城。换手持有时结算上一段的占领时长积分。 */
+    /** 只允许具备当前进攻资格的参战方在围城阶段占王城；换手时结算上一段占领分。 */
     public void captureCapital(String nationId, long now) {
         requireSiegeOrPrep();
         if (phase != Phase.SIEGE) {
             throw new IllegalStateException("王城战尚未开始，不能占领王城：" + phase);
         }
         requireRegistered(nationId);
+        if (!isQualified(nationId)) {
+            throw new IllegalStateException("未取得王城进攻资格：" + nationId);
+        }
         settleOccupation(now);
         // 已经持有时仍要结算经过的整分钟，但不得把同一座王城再次算作新建筑。
         if (nationId.equals(capitalHolder)) {
