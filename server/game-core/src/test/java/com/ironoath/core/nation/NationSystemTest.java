@@ -621,6 +621,36 @@ class NationSystemTest {
     }
 
     @Test
+    @DisplayName("同一国家重复上报已持有的关卡不再得建筑分；换手后重新夺回才算新占领")
+    void recapturingOwnGateDoesNotMintBuildingScore() {
+        WarScoreBoard board = newWar(0L);
+        board.captureGate("n1", "gate_1");
+        board.captureGate("n1", "gate_1");
+        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(50L);
+        assertThat(board.gateCount("n1")).isEqualTo(1);
+
+        board.captureGate("n2", "gate_1");
+        board.captureGate("n1", "gate_1");
+        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(100L);
+        assertThat(board.snapshot().get("n2").buildingScore()).isEqualTo(50L);
+    }
+
+    @Test
+    @DisplayName("重复占领自己仍持有的王城只结算经过的分钟，不再得建筑分")
+    void recapturingOwnCapitalDoesNotMintBuildingScore() {
+        WarScoreBoard board = newWar(0L);
+        board.captureGate("n1", "gate_1");
+        board.beginSiege(0L);
+        board.captureCapital("n1", 0L);
+        board.captureCapital("n1", 30 * MINUTE);
+        board.captureCapital("n1", 60 * MINUTE);
+
+        WarScoreBoard.Score score = board.settle(90 * MINUTE).scores().get("n1");
+        assertThat(score.buildingScore()).isEqualTo(100L);
+        assertThat(score.occupyScore()).isEqualTo(90 * 10L);
+    }
+
+    @Test
     @DisplayName("结算后不能再改积分，也不能重复结算（重复结算会让积分被算两遍）")
     void scoreboardIsImmutableAfterSettlement() {
         WarScoreBoard board = newWar(0L);

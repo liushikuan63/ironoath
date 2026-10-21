@@ -217,6 +217,10 @@ public final class WarScoreBoard {
         if (gateId == null || gateId.isBlank()) {
             throw new IllegalArgumentException("gateId 不得为空");
         }
+        // 同一方重复送达不是一次新占领；否则重投同一关卡就能无限刷建筑分。
+        if (gates.get(nationId).contains(gateId)) {
+            return;
+        }
         // 关卡是排他的：一座关卡同时只能属于一方
         for (Map.Entry<String, Set<String>> entry : gates.entrySet()) {
             entry.getValue().remove(gateId);
@@ -230,6 +234,10 @@ public final class WarScoreBoard {
         requireSiegeOrPrep();
         requireRegistered(nationId);
         settleOccupation(now);
+        // 已经持有时仍要结算经过的整分钟，但不得把同一座王城再次算作新建筑。
+        if (nationId.equals(capitalHolder)) {
+            return;
+        }
         capitalHolder = nationId;
         capitalHeldSince = now;
         scores.get(nationId)[2] += rules.buildingScorePerCapture();
