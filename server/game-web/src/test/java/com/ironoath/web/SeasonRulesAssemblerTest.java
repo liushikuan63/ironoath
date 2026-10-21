@@ -198,7 +198,7 @@ class SeasonRulesAssemblerTest {
      * {@code IllegalArgument: 阶段序号必须从 1 起连续，实际缺了 2} 而 Error。
      */
     @Test
-    @DisplayName("按天数推进：第 46 天必须是 season_02，第 96 天必须是 season_03（第 1 季 45 天）")
+    @DisplayName("按 45 天推进：第 46 天第二季、第 96 天第三季、第 181 天第五季；表外不编第六季")
     void seasonAdvancesWithElapsedDays() {
         // 锚点是固定常量而不是「今天」—— 这条断言要能失败，就必须能复现同一个 now。
         SeasonRulesAssembler anchored = new SeasonRulesAssembler(
@@ -214,6 +214,13 @@ class SeasonRulesAssemblerTest {
                 .as("第 51 天落在第二季内").isEqualTo("season_02");
         assertThat(anchored.timelineRules(SEASON_ANCHOR + 95L * DAY_MS).seasonId())
                 .as("第 96 天跨过两季 ⇒ 第三季").isEqualTo("season_03");
+        assertThat(anchored.timelineRules(SEASON_ANCHOR + 179L * DAY_MS).seasonId())
+                .as("第 180 天仍是第四季；半年终局推演不能提前写成第五季").isEqualTo("season_04");
+        assertThat(anchored.timelineRules(SEASON_ANCHOR + 180L * DAY_MS).seasonId())
+                .as("0 基 180 天跨过四个完整赛季 ⇒ 第五季").isEqualTo("season_05");
+        assertThat(anchored.timelineRules(SEASON_ANCHOR + 225L * DAY_MS).seasonId())
+                .as("五季之外没有配置目标与奖励；现行装配钳在最后一季，不编造 season_06")
+                .isEqualTo("season_05");
         assertThat(anchored.timelineRules(SEASON_ANCHOR + 10_000L * DAY_MS).seasonId())
                 .as("天数远超表里最后一季（season_05）⇒ 取最后一季，不编造 season_06："
                         + "编出来的 id 会让 purgeArchivedSeasons 拿一个表里不存在的季号去比较归档")
