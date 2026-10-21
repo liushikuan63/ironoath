@@ -59,8 +59,8 @@ import { LineupEditOverlay } from './LineupEditOverlay'
 import { SocialCreateOverlay } from './SocialCreateOverlay'
 import { buildSettingsView } from '../game/settings/SettingsPanel'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
-import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
-import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
+import { authorizePrivacy } from '../game/privacy/PrivacyConsent'
+import type { PrivacyApiLike, PrivacyPlan } from '../game/privacy/PrivacyConsent'
 import { NetworkNotice } from '../game/network/NetworkNotice'
 import type { UpdateGateDecision } from '../game/release/UpdateGate'
 import type { AppVersionResp, NetworkTuning } from '../net/generated/OpsProtocol'
@@ -143,50 +143,9 @@ const TRACK_TICK_INTERVAL_MS = 1_000
 /** 会话结束时若已连续空闲超过这个秒数，就把它记成一次流失信号。 */
 const CHURN_IDLE_SECONDS = 120
 
-/** `wx` 只在小游戏运行时存在；这就是全仓库唯一的平台判定。 */
-/**
- * 取平台的隐私设置。没有这个接口（浏览器/编辑器）时返回 null —— 由纯模块决定这意味着什么。
- *
- * <p><b>查询是异步的</b>，而它只影响"这次弹不弹"：所以回调里拿到结果就自己发起授权，
- * 不把它塞进启动序列等待 —— 为一个"没查到也不拦启动"的答案加一个等待点不划算。
- */
-function readPrivacySetting(): { needAuthorization: boolean; privacyContractName: string | null } | null {
-  const wxApi = (globalThis as Record<string, unknown>).wx as {
-    getPrivacySetting?: (options: Record<string, unknown>) => void
-  } | undefined
-  if (wxApi?.getPrivacySetting === undefined) {
-    return null
-  }
-  try {
-    wxApi.getPrivacySetting({
-      success: (res: { needAuthorization?: boolean; privacyContractName?: string }) => {
-        if (res.needAuthorization === true) {
-          requestPrivacyAuthorization()
-        }
-      },
-      fail: (error: unknown) => console.warn('[privacy] getPrivacySetting 失败', error),
-    })
-  } catch (error) {
-    console.warn('[privacy] getPrivacySetting 抛异常', error)
-    return null
-  }
-  // 接口在（能查）但答案还没回来：这一次按"要问"处理由平台弹，
-  // 平台自己知道用户同意过没有 —— 重复问一次不会造成多余的弹窗
-  return { needAuthorization: true, privacyContractName: null }
-}
-
-/** 让平台弹它自己的隐私授权弹窗。失败只记日志：<b>不拦启动</b>（见 PrivacyConsent 里的取舍）。 */
-function requestPrivacyAuthorization(): void {
-  const wxApi = (globalThis as Record<string, unknown>).wx as {
-    requirePrivacyAuthorize?: (options: Record<string, unknown>) => void
-  } | undefined
-  if (wxApi?.requirePrivacyAuthorize === undefined) {
-    return
-  }
-  wxApi.requirePrivacyAuthorize({
-    success: () => console.log('[privacy] 用户已同意隐私协议'),
-    fail: (error: unknown) => console.warn('[privacy] 用户未同意隐私协议', error),
-  })
+/** 微信回调 API 由纯模块串成启动前置；浏览器预览传 null。 */
+function privacyApi(): PrivacyApiLike | null {
+  return isWxRuntime() ? ((globalThis as Record<string, unknown>).wx as PrivacyApiLike) : null
 }
 
 /** 打开平台配置的协议页（设置页那一行）。 */
@@ -594,6 +553,15 @@ export class GameBootstrap extends Component {
       return
     }
     this.booting = true
+    // 微信隐私结果是登录与首个服务端请求的前置条件。查询和弹窗都由平台回调结束，
+    // 不能把“已调用授权 API”误作“玩家已同意”；浏览器预览没有微信 API 时继续。
+    const privacy = await authorizePrivacy(privacyApi())
+    this.privacyPlan = privacy.plan
+    if (this.destroyed) return
+    if (!privacy.allowed) {
+      this.showPrivacyNotice(privacy.blockedReason)
+      return
+    }
     const timeSync = new TimeSync({
       alphaFixed: DEFAULT_TIME_SYNC_TUNING.alphaFixed,
       jitterFactorFixed: DEFAULT_TIME_SYNC_TUNING.jitterFactorFixed,
@@ -652,10 +620,6 @@ export class GameBootstrap extends Component {
     if (this.appVersion !== null) {
       this.applyServerNetworkTuning(this.appVersion.networkTuning)
     }
-    // 隐私授权排在进入游戏之前：平台要求「使用隐私相关接口前先取得同意」，
-    // 而登录就会带上设备与账号标识 —— 那正是隐私接口的范畴。
-    // 弹窗与协议文本都由平台提供，本作不画、不存文案。
-    this.privacyPlan = planPrivacyPrompt(readPrivacySetting())
     // 攒批策略由服务端下发（10 条或 10 秒那种），客户端不写死。appVersion 是公开端点，
     // 登录前就能调 —— 所以 startup 这个"登录前"的事件才有地方发。
     // 刻意建在闸门**之前**：被强制更新挡在提示页的那批玩家恰恰是最需要被数到的人
@@ -1030,12 +994,25 @@ export class GameBootstrap extends Component {
    * 这里原样画出来；不能从已剥离的 detail 或客户端时钟推算另一个时刻。
    */
   private showMinorCurfewNotice(message: string): void {
+    this.showBlockingNotice('MinorCurfewNotice', '游玩时段提示', message)
+  }
+
+  /** 授权未完成时停在登录前；用户重新进入后由微信再次给出授权状态。 */
+  private showPrivacyNotice(reason: 'denied' | 'unavailable' | null): void {
+    const message = reason === 'denied'
+      ? '你尚未同意微信提供的隐私保护指引。请重新进入游戏后完成授权。'
+      : '暂时无法读取微信隐私授权状态。请稍后重新进入游戏。'
+    this.showBlockingNotice('PrivacyNotice', '隐私授权未完成', message)
+  }
+
+  /** 两种登录前拦截共用不透明遮罩，避免画面下方的导航仍接收触摸。 */
+  private showBlockingNotice(name: string, heading: string, message: string): void {
     const canvas = this.node.parent ?? this.node
     // Game 节点承载场景 Camera。停用它会让引擎不再绘制新的一帧，屏幕反而留着
     // 登录前那张旧画面；整屏不透明遮罩盖住它，并由最上层节点吞掉触摸。
     const visible = view.getVisibleSize()
     const size = new Size(visible.width, visible.height)
-    const layer = new Node('MinorCurfewNotice')
+    const layer = new Node(name)
     canvas.addChild(layer)
     layer.layer = canvas.layer
     layer.addComponent(UITransform).setContentSize(size)
@@ -1057,7 +1034,7 @@ export class GameBootstrap extends Component {
     title.setPosition(0, size.height * 0.18, 0)
     title.addComponent(UITransform).setContentSize(new Size(size.width - 80, 42))
     const titleLabel = applySystemUiFont(title.addComponent(Label))
-    titleLabel.string = '游玩时段提示'
+    titleLabel.string = heading
     titleLabel.fontSize = 26
     titleLabel.lineHeight = 34
     titleLabel.color = new Color(224, 190, 120, 255)
