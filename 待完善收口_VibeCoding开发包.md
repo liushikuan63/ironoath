@@ -7932,3 +7932,5 @@ TEST_EXIT=0
 | partial采集器 #2272 | 四docs原子local提交见record2272-commit.actual.json；产品a0fb未改 | 23主+5挂载独审+2规范化共30绿零跳；baseline4/3fail保留；新RED修后回归及独审 | tmp/integration-review-20261020/partial-metrics-offline-frozen-v1.actual.json、design、review及原始RED/source snapshots | 新host reader/实际holder新launcher及fresh窗口未就绪；库不授准入，未实采CPU/RSS/JFR/IO，完整IO/预算/native仍未完成 |
 
 | metadata reader-v2 #2273 | 四docs原子local提交见record2273-commit.actual.json；产品源码未改 | 主18+独审4=22绿零跳；旧2/2fail及clock/stamp RED保留；独审与冻结绑定 | tmp/integration-review-20261020/kernel-reader-v2-offline-frozen.actual.json及review/final | 未有实际v2宿主观测；旧未知stderr不假定可用，running/exec非原子；fresh holder/新窗口/launcher及完整IO/JFR/预算/native仍缺 |
+
+| 实际metadata v3 #2274 | 四docs原子local提交见record2274-commit.actual.json；产品源码未改 | v2实际exit1保留；消息全SHA证明；v3实际13命令0/3提示/约2036ms；reader独审gen28绿和编码5绿 | tmp/integration-review-20261020/kernel-metadata-v3-phase-frozen.actual.json、两次实际回执、review及quota/DB/Cua旁证 | 无fresh唯一holder/新有限窗口；metadata不是Java/CPU/RSS/JFR/IO或5000通过，当前完整PID1IO未解；原目标未完成待外部协调 |
