@@ -42,6 +42,9 @@ public class NoticeService {
      * 当前生效的公告（按 priority 倒序：数字大者在前）。
      *
      * <p>空列表是合法结果 —— 没有公告时客户端不画面板，而不是画一个空的公告位。
+     *
+     * <p><b>响应带 notice 表的版本号</b>：客户端拿它判断「要不要重画」——
+     * 拉一次是真的，但版本没变就别让玩家看见界面闪一下。
      */
     public NoticeListResp list() {
         long now = timeService.serverNow();
@@ -50,7 +53,17 @@ public class NoticeService {
                 .sorted(Comparator.comparingLong(NoticeCfg::priority).reversed())
                 .map(row -> new NoticeItem(row.id(), row.title(), row.body(), row.priority()))
                 .toList();
-        return new NoticeListResp(live);
+        return new NoticeListResp(tableVersion(), live);
+    }
+
+    /**
+     * notice 表的版本号（内容变更即变）。
+     *
+     * <p>为什么用**表版本**而不是「生效公告条数」：条数不变而文案改了（最常见的运营动作）时，
+     * 条数版会让客户端以为没变而继续显示旧文案 ⇒ 症状是「改了公告没反应」。
+     */
+    private int tableVersion() {
+        return configs.rawTable("notice").version();
     }
 
     /**

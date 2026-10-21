@@ -41,6 +41,7 @@ class NoticeAndHotUpdateEndpointTest {
     @Autowired private NoticeService notices;
     @Autowired private HotUpdateTableService tables;
     @Autowired private ReleaseRulesAssembler release;
+    @Autowired private com.ironoath.config.ConfigRegistry configs;
 
     @Test
     @DisplayName("公告只给当前生效的：过期的行不返回（负控数据是表里真有的那一行）")
@@ -85,6 +86,14 @@ class NoticeAndHotUpdateEndpointTest {
             }
         }
         assertThat(sawExpired).as("过期的公告不能被端点吐出来").isFalse();
+    }
+
+    @Test
+    @DisplayName("响应带 notice 表的版本号（客户端靠它判断「要不要重绘」）")
+    void noticeResponseCarriesTableVersion() {
+        assertThat(notices.list().version())
+                .as("版本号必须是 notice 表的版本（内容变更即变）")
+                .isEqualTo(configs.rawTable("notice").version());
     }
 
     @Test
