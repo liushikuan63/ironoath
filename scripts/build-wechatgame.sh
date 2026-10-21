@@ -16,7 +16,19 @@ COCOS_DEBUG="${COCOS_DEBUG:-false}"
 # Cocos 模板自带的 wx6ac3f5090a6b99c5 是"游客小游戏"，新版 IDE 的自动化通道会直接拒绝它
 # （日志：formatProject reject tourist/empty appid），表现是"构建成功但打不开项目"。
 # 要换真实账号时用 WECHAT_GAME_APPID 覆盖。
+#
+# ⚠️ **「显式给过」与「取到默认值」是两件事** —— 发布构建那道闸要分的正是这个，
+# 所以在补默认值**之前**先记下来（`${VAR+x}` 判的是「环境里有没有这个变量」，
+# 不是「值是不是空」也不是「值是不是那个默认值」）。
+WECHAT_GAME_APPID_EXPLICIT="${WECHAT_GAME_APPID+x}"
 WECHAT_GAME_APPID="${WECHAT_GAME_APPID:-wx6293e0f5dc71d6cc}"
+#
+# **发布构建标记**（收口清单 #2287 ④ 的实现）：开发构建保留上面那个测试默认值，
+# 发布构建必须**显式**提供 WECHAT_GAME_APPID，缺失即失败。
+# 为什么值得这道闸：默认值 wx6293e0f5dc71d6cc 是开发期测试号，沿它出包
+# = 把测试身份带进发布产物 —— 而症状要到提审/上线才暴露，那时候已经是一笔返工。
+# 显式给出时**不额外校验值**（谁想用哪个号是他自己的事；门只管「有没有显式给」）。
+WECHAT_RELEASE_BUILD="${WECHAT_RELEASE_BUILD:-false}"
 PROJECT_DIR="client"
 BUILD_DIR="client/build/wechatgame"
 BOOT_META="client/assets/scenes/Boot.scene.meta"
@@ -41,6 +53,58 @@ BOOT_UUID=$(node -e '
   }
   process.stdout.write(meta.uuid)
 ' "$BOOT_META")
+
+# ---------- 发布构建的 AppID 闸门（收口清单 #2287 ④）----------
+case "$WECHAT_RELEASE_BUILD" in
+  true|TRUE|1|yes) IS_RELEASE_BUILD=1 ;;
+  *) IS_RELEASE_BUILD=0 ;;
+esac
+
+# ---------- 模式：--self-test / --preflight-only ----------
+# 为什么要有 preflight：这道闸要能被**快**地验（不必等一次 Cocos 构建），
+# 所以环境门跑完就能退 0；自测的两读数都走这条路径。
+if [ "${1:-}" = "--self-test" ]; then
+  # 正控：显式给了 AppID ⇒ 闸门放行
+  if WECHAT_RELEASE_BUILD=true WECHAT_GAME_APPID=wx0000000000000000 \
+       bash "$0" --preflight-only >/dev/null 2>&1; then
+    echo "[build-wechatgame][self-test] 正控：发布构建显式提供 AppID ⇒ 放行 ✓"
+  else
+    echo "[build-wechatgame][self-test][FAIL] 正控失败：显式提供 AppID 仍被拒" >&2
+    exit 1
+  fi
+  # 负控：发布构建**不**提供 AppID ⇒ 必须被拒，且理由要点名 WECHAT_GAME_APPID
+  set +e
+  NEG_OUT=$(env -u WECHAT_GAME_APPID WECHAT_RELEASE_BUILD=true \
+      bash "$0" --preflight-only 2>&1)
+  NEG_RC=$?
+  set -e
+  if [ "$NEG_RC" -eq 0 ]; then
+    echo "[build-wechatgame][self-test][FAIL] 负控失败：发布构建缺 AppID 竟然放行了" >&2
+    exit 1
+  fi
+  case "$NEG_OUT" in
+    *WECHAT_GAME_APPID*) : ;;
+    *)
+      echo "[build-wechatgame][self-test][FAIL] 负控被拒了，但理由里没提 WECHAT_GAME_APPID" >&2
+      echo "$NEG_OUT" >&2
+      exit 1 ;;
+  esac
+  echo "[build-wechatgame][self-test] 负控：发布构建缺 AppID ⇒ 退 $NEG_RC 且理由点名 ✓"
+  echo "[build-wechatgame][self-test] 两读数全过。"
+  exit 0
+fi
+
+if [ "$IS_RELEASE_BUILD" = "1" ] && [ -z "$WECHAT_GAME_APPID_EXPLICIT" ]; then
+  echo "[build-wechatgame][FAIL] 发布构建必须显式提供 WECHAT_GAME_APPID（收口清单 #2287 ④ 的决策）" >&2
+  echo "  现在的默认值 $WECHAT_GAME_APPID 是**开发期测试号**；发布构建沿用它 = 把测试身份带进发布产物。" >&2
+  echo "  显式给出：WECHAT_GAME_APPID=wx<你的小游戏号> WECHAT_RELEASE_BUILD=true bash scripts/build-wechatgame.sh" >&2
+  exit 1
+fi
+
+if [ "${1:-}" = "--preflight-only" ]; then
+  echo "[build-wechatgame] 预检通过（Cocos: $COCOS_CREATOR · AppID: $WECHAT_GAME_APPID · 发布构建: $IS_RELEASE_BUILD）"
+  exit 0
+fi
 
 echo "[build-wechatgame] CocosCreator: $COCOS_CREATOR"
 echo "[build-wechatgame] startScene: $BOOT_UUID"
