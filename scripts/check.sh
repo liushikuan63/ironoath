@@ -85,6 +85,8 @@ bash scripts/check-mongo-set-coverage.sh
 bash scripts/check-identity-used.sh
 bash scripts/check-rank-payload.sh
 bash scripts/check-wechat-artifact.sh
+# 发布包显式 AppID 与域名校验边界：不启动 Creator，用假产物做正反例。
+node --test scripts/test-wechat-build-mode.mjs
 bash scripts/check-search-radius.sh
 bash scripts/check-web-artifact.sh
 bash scripts/check-view-child-index.sh

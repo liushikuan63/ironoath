@@ -1,5 +1,5 @@
 // 职责：把微信小游戏产物指向指定后端（构建期写死的 localhost:8080 之外，一台设备无法用）。
-// 依赖：node。用法：node scripts/patch-wechat-backend.mjs <buildDir> [httpOrigin]
+// 依赖：node。用法：node scripts/patch-wechat-backend.mjs <buildDir> [httpOrigin] [--keep-url-check]
 //
 // 为什么要有这一条：`baseUrl` / `wsUrl` 是 Cocos 场景里的**编辑器字段**，构建时被写死进
 // `assets/main/index.js`（本轮实测：全包只有两处字面量 `http://localhost:8080` 与
@@ -7,7 +7,7 @@
 // 跑通"这句判断量的是**别人那台服务**（本轮就因此撞上四条端点 500）。而更根本的是：
 // 真机与提审都不可能有 localhost，这个开关早晚要有，先让它落在构建脚本里而不是手改产物。
 //
-// urlCheck 一并关掉，且**只在显式给了非默认后端时**：开发者工具会校验请求域名是否在
+// 开发包的 urlCheck 一并关掉，且**只在显式给了非默认后端时**：开发者工具会校验请求域名是否在
 // 公众平台的合法域名列表里，指到 http://127.0.0.1:8097 这类地址必然不在 —— 不关就是
 // "请求全部被 IDE 拦掉"，症状看起来像客户端坏了。不传参时一个字节都不改。
 import fs from 'node:fs'
@@ -15,12 +15,26 @@ import path from 'node:path'
 
 const buildDir = process.argv[2]
 const origin = process.argv[3] ?? ''
+const mode = process.argv[4] ?? ''
 if (!buildDir) {
-  console.error('用法：node scripts/patch-wechat-backend.mjs <buildDir> [httpOrigin]')
+  console.error('用法：node scripts/patch-wechat-backend.mjs <buildDir> [httpOrigin] [--keep-url-check]')
   process.exit(2)
 }
+if (mode !== '' && mode !== '--keep-url-check') {
+  console.error(`[patch-wechat-backend][FAIL] 未知选项 ${mode}`)
+  process.exit(2)
+}
+const keepUrlCheck = mode === '--keep-url-check'
+const configPath = path.join(buildDir, 'project.config.json')
+function setUrlCheck(value) {
+  const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  cfg.setting = { ...cfg.setting, urlCheck: value }
+  fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 4)}\n`)
+}
 if (!origin) {
-  console.log('[patch-wechat-backend] 没给后端地址：保持产物原样（构建期写死的 http://localhost:8080）')
+  if (keepUrlCheck) setUrlCheck(true)
+  console.log('[patch-wechat-backend] 没给后端地址：保持构建期后端 http://localhost:8080'
+    + (keepUrlCheck ? '，发布域名校验保持开启' : '，其余产物原样'))
   process.exit(0)
 }
 
@@ -55,10 +69,7 @@ if (hits === 0) {
   process.exit(1)
 }
 
-const configPath = path.join(buildDir, 'project.config.json')
-const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'))
-cfg.setting = { ...cfg.setting, urlCheck: false }
-fs.writeFileSync(configPath, JSON.stringify(cfg, null, 4))
+setUrlCheck(keepUrlCheck)
 
-console.log(`[patch-wechat-backend] 已换 ${hits} 处 → ${origin}（ws 为 ${wsOrigin}），并关闭 urlCheck`
-  + '（IDE 的合法域名校验会拦非注册域名，不关的表现是"请求全被吞"）')
+console.log(`[patch-wechat-backend] 已换 ${hits} 处 → ${origin}（ws 为 ${wsOrigin}），`
+  + (keepUrlCheck ? '发布域名校验保持开启' : '开发调试域名校验已关闭'))

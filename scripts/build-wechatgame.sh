@@ -9,26 +9,35 @@ cd "$(dirname "$0")/.."
 
 COCOS_CREATOR="${COCOS_CREATOR:-D:/Cocos/Creator/3.8.7/CocosCreator.exe}"
 COCOS_DEBUG="${COCOS_DEBUG:-false}"
+if [ "$COCOS_DEBUG" != "true" ] && [ "$COCOS_DEBUG" != "false" ]; then
+  echo "[build-wechatgame][FAIL] COCOS_DEBUG 只接受 true 或 false，实际=$COCOS_DEBUG"
+  exit 2
+fi
 # 开发期 AppID。**决定模式的是 AppID 的注册类型，不是 compileType**：
 # 填一个小程序类目的 AppID，工具就把这个包当普通小程序打开，
 # 症状是「在项目根目录未找到 app.json」（看着像产物坏了，其实是身份选错）——
 # 收口清单 #125 用一次只换 AppID 的 A/B 定位到的。本机小游戏工程的测试 AppID 是下面这个。
 # Cocos 模板自带的 wx6ac3f5090a6b99c5 是"游客小游戏"，新版 IDE 的自动化通道会直接拒绝它
 # （日志：formatProject reject tourist/empty appid），表现是"构建成功但打不开项目"。
-# 要换真实账号时用 WECHAT_GAME_APPID 覆盖。
-#
-# ⚠️ **「显式给过」与「取到默认值」是两件事** —— 发布构建那道闸要分的正是这个，
-# 所以在补默认值**之前**先记下来（`${VAR+x}` 判的是「环境里有没有这个变量」，
-# 不是「值是不是空」也不是「值是不是那个默认值」）。
-WECHAT_GAME_APPID_EXPLICIT="${WECHAT_GAME_APPID+x}"
-WECHAT_GAME_APPID="${WECHAT_GAME_APPID:-wx6293e0f5dc71d6cc}"
-#
-# **发布构建标记**（收口清单 #2287 ④ 的实现）：开发构建保留上面那个测试默认值，
-# 发布构建必须**显式**提供 WECHAT_GAME_APPID，缺失即失败。
-# 为什么值得这道闸：默认值 wx6293e0f5dc71d6cc 是开发期测试号，沿它出包
-# = 把测试身份带进发布产物 —— 而症状要到提审/上线才暴露，那时候已经是一笔返工。
-# 显式给出时**不额外校验值**（谁想用哪个号是他自己的事；门只管「有没有显式给」）。
+# 保留原显式发布标记供调用方标注用途；debug=false 按本仓既有发布构建口径
+# 也必须视为发布包。两者任一成立就要求非空 AppID，不能把空串兜回测试号。
+REQUESTED_WECHAT_APPID="${WECHAT_GAME_APPID:-}"
+WECHAT_GAME_APPID="${REQUESTED_WECHAT_APPID:-wx6293e0f5dc71d6cc}"
 WECHAT_RELEASE_BUILD="${WECHAT_RELEASE_BUILD:-false}"
+case "$WECHAT_RELEASE_BUILD" in
+  true|TRUE|1|yes) IS_RELEASE_BUILD=1 ;;
+  false|FALSE|0|no) IS_RELEASE_BUILD=0 ;;
+  *) echo "[build-wechatgame][FAIL] WECHAT_RELEASE_BUILD 只接受 true 或 false。" >&2; exit 2 ;;
+esac
+if [ "$COCOS_DEBUG" = "false" ]; then
+  IS_RELEASE_BUILD=1
+fi
+# --self-test 自己要造“缺 AppID”的负控，所以只让测试入口跳过这一次前置拒绝。
+if [ "${1:-}" != "--self-test" ] && [ "$IS_RELEASE_BUILD" = "1" ] \
+  && [ -z "${REQUESTED_WECHAT_APPID//[[:space:]]/}" ]; then
+  echo "[build-wechatgame][FAIL] 发布构建必须显式提供非空 WECHAT_GAME_APPID；当前默认值仅用于开发。" >&2
+  exit 2
+fi
 PROJECT_DIR="client"
 BUILD_DIR="client/build/wechatgame"
 BOOT_META="client/assets/scenes/Boot.scene.meta"
@@ -53,12 +62,6 @@ BOOT_UUID=$(node -e '
   }
   process.stdout.write(meta.uuid)
 ' "$BOOT_META")
-
-# ---------- 发布构建的 AppID 闸门（收口清单 #2287 ④）----------
-case "$WECHAT_RELEASE_BUILD" in
-  true|TRUE|1|yes) IS_RELEASE_BUILD=1 ;;
-  *) IS_RELEASE_BUILD=0 ;;
-esac
 
 # ---------- 模式：--self-test / --preflight-only ----------
 # 为什么要有 preflight：这道闸要能被**快**地验（不必等一次 Cocos 构建），
@@ -92,13 +95,6 @@ if [ "${1:-}" = "--self-test" ]; then
   echo "[build-wechatgame][self-test] 负控：发布构建缺 AppID ⇒ 退 $NEG_RC 且理由点名 ✓"
   echo "[build-wechatgame][self-test] 两读数全过。"
   exit 0
-fi
-
-if [ "$IS_RELEASE_BUILD" = "1" ] && [ -z "$WECHAT_GAME_APPID_EXPLICIT" ]; then
-  echo "[build-wechatgame][FAIL] 发布构建必须显式提供 WECHAT_GAME_APPID（收口清单 #2287 ④ 的决策）" >&2
-  echo "  现在的默认值 $WECHAT_GAME_APPID 是**开发期测试号**；发布构建沿用它 = 把测试身份带进发布产物。" >&2
-  echo "  显式给出：WECHAT_GAME_APPID=wx<你的小游戏号> WECHAT_RELEASE_BUILD=true bash scripts/build-wechatgame.sh" >&2
-  exit 1
 fi
 
 if [ "${1:-}" = "--preflight-only" ]; then
@@ -157,6 +153,10 @@ node scripts/patch-wechat-adapter.mjs "$BUILD_DIR/web-adapter.js"
 node scripts/patch-wechat-global.mjs "$BUILD_DIR/game.js"
 # 后端地址默认不传 = 保持构建期写死的 http://localhost:8080（与加这个开关之前的行为逐字节一致）。
 # 共享机器上 8080 常被别人的旧构建占着，或要把包给真机/别台机器跑时，用 WECHAT_BASE_URL 指过去。
-node scripts/patch-wechat-backend.mjs "$BUILD_DIR" "${WECHAT_BASE_URL:-}"
+if [ "$IS_RELEASE_BUILD" = "1" ]; then
+  node scripts/patch-wechat-backend.mjs "$BUILD_DIR" "${WECHAT_BASE_URL:-}" --keep-url-check
+else
+  node scripts/patch-wechat-backend.mjs "$BUILD_DIR" "${WECHAT_BASE_URL:-}"
+fi
 bash scripts/check-wechat-artifact.sh
 echo "[build-wechatgame] 微信小游戏构建与产物检查通过。"

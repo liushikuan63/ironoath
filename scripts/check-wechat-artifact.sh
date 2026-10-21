@@ -93,6 +93,20 @@ DEBUG_BUILD=$(node -e '
   process.stdout.write(settings.engine && settings.engine.debug ? "true" : "false")
 ' "$BUILD_DIR/src/settings.json")
 
+# 开发者工具指向本地非注册域名时才关 urlCheck；发布包必须保留平台域名校验。
+# 只在构建脚本里设一次不够：有人手工重跑补丁后也要被产物门抓到。
+if [ "$DEBUG_BUILD" = "false" ]; then
+  URL_CHECK=$(node -e '
+    const fs = require("fs")
+    const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    process.stdout.write(String(config.setting?.urlCheck))
+  ' "$BUILD_DIR/project.config.json")
+  if [ "$URL_CHECK" != "true" ]; then
+    echo "[check-wechat-artifact][FAIL] 发布包 urlCheck=$URL_CHECK，必须保持 true。"
+    FAIL=1
+  fi
+fi
+
 # 发布包里不许带着引擎 profiler 浮层：#280 那张地图截图左下角就是它（FPS / Draw call 一整块），
 # 而玩家看到的正是这块调试面板。debug 包留着才有意义 —— B07-4 那条"地图 ≥ 40 FPS"要量它。
 if [ "$DEBUG_BUILD" = "false" ] && [ -f "$BUILD_DIR/application.js" ] \
