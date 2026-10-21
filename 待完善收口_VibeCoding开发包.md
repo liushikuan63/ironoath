@@ -7934,3 +7934,5 @@ TEST_EXIT=0
 | metadata reader-v2 #2273 | 四docs原子local提交见record2273-commit.actual.json；产品源码未改 | 主18+独审4=22绿零跳；旧2/2fail及clock/stamp RED保留；独审与冻结绑定 | tmp/integration-review-20261020/kernel-reader-v2-offline-frozen.actual.json及review/final | 未有实际v2宿主观测；旧未知stderr不假定可用，running/exec非原子；fresh holder/新窗口/launcher及完整IO/JFR/预算/native仍缺 |
 
 | 实际metadata v3 #2274 | 四docs原子local提交见record2274-commit.actual.json；产品源码未改 | v2实际exit1保留；消息全SHA证明；v3实际13命令0/3提示/约2036ms；reader独审gen28绿和编码5绿 | tmp/integration-review-20261020/kernel-metadata-v3-phase-frozen.actual.json、两次实际回执、review及quota/DB/Cua旁证 | 无fresh唯一holder/新有限窗口；metadata不是Java/CPU/RSS/JFR/IO或5000通过，当前完整PID1IO未解；原目标未完成待外部协调 |
+
+| #2275 | 本次原子local提交（详见record2275-commit.actual.json） | gate10过；独立5例4红/0error/0skip；runtime未启动 | tmp/integration-review-20261020/record2275-direct-coordination-and-draft-red.actual.json | draft NOT READY；修复mono/metadata读链/实际SHA/clockDomain后独审；需新窗口，不复用预约或旧ACK；5000预算与原生终验未达 |
