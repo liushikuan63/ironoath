@@ -32,6 +32,8 @@ export function validateManifest(manifest) {
   if (!Array.isArray(manifest.players) || manifest.players.length !== 5000) {
     fail('B13-9 必须恰好提供 5000 个独立玩家')
   }
+  if (!Number.isInteger(manifest.durationSeconds) || manifest.durationSeconds < 1
+      || manifest.durationSeconds > 600) fail('durationSeconds 必须在 1 至 600 秒之间，报告须写明实际时长')
   const ids = new Set()
   for (const [index, player] of manifest.players.entries()) {
     if (!nonempty(player?.playerId) || !nonempty(player?.token)) fail(`玩家 ${index} 缺少身份或票据`)
@@ -51,7 +53,8 @@ export function validateManifest(manifest) {
 /** Checks only verifiable local bindings. It does not grant runtime authority. */
 export function validateAdmission(admission, manifestSha256, proofSha256, sourceSha, now = Date.now()) {
   if (admission?.schemaVersion !== 1 || !nonempty(admission.holderId)
-      || !nonempty(admission.runId) || admission.targetKind !== 'isolated') {
+      || !/^[A-Za-z0-9_-]{1,64}$/.test(admission.runId)
+      || admission.targetKind !== 'isolated') {
     fail('准入回执缺 holder、runId 或隔离目标标记')
   }
   if (admission.manifestSha256 !== manifestSha256 || admission.resourceProofSha256 !== proofSha256
@@ -70,7 +73,7 @@ export function validateAdmission(admission, manifestSha256, proofSha256, source
     maxMarchQps: admission.maxMarchQps }
 }
 
-export async function inspectFiles({ manifestPath, admissionPath, proofPath, sourceSha, now }) {
+export async function readValidatedInputs({ manifestPath, admissionPath, proofPath, sourceSha, now }) {
   const [manifestBytes, admissionBytes, proofBytes] = await Promise.all([
     readFile(manifestPath), readFile(admissionPath), readFile(proofPath),
   ])
@@ -85,9 +88,30 @@ export async function inspectFiles({ manifestPath, admissionPath, proofPath, sou
       || !Number.isInteger(proof.maxMarchQps) || proof.maxMarchQps < 200
       || !nonempty(proof.cleanupPlan)) fail('资源证明缺少匹配的 holder、隔离、容量或清理方案')
   const approved = validateAdmission(admission, sha256(manifestBytes), sha256(proofBytes), sourceSha, now)
-  return { ...shape, ...approved, manifestSha256: sha256(manifestBytes),
+  const receipt = { ...shape, ...approved, manifestSha256: sha256(manifestBytes),
     resourceProofSha256: sha256(proofBytes), sourceSha,
     status: 'INPUT_BINDINGS_ONLY_NO_RUNTIME_AUTHORITY' }
+  return { receipt, manifest, admission }
+}
+
+export async function inspectFiles(args) {
+  return (await readValidatedInputs(args)).receipt
+}
+
+export async function verifyCheckoutInputs(filenames) {
+  const repoRoot = fileURLToPath(new URL('../', import.meta.url))
+  for (const filename of filenames) {
+    const absolute = await realpath(filename)
+    const relative = path.relative(repoRoot, absolute)
+    if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+      fail('账号、准入与资源证明文件必须放在仓库外，避免票据误入提交')
+    }
+  }
+  const status = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=no'],
+    { cwd: repoRoot, encoding: 'utf8' })
+  if (status.trim()) fail('当前 checkout 有跟踪文件改动，不能绑定源码 SHA')
+  const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim()
+  return { repoRoot, sourceSha }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
@@ -98,18 +122,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     if (flags['--mode'] !== 'inspect' || !flags['--manifest'] || !flags['--admission']
         || !flags['--proof']) fail('用法：--mode=inspect --manifest=... --admission=... --proof=...')
-    const repoRoot = fileURLToPath(new URL('../', import.meta.url))
-    for (const filename of [flags['--manifest'], flags['--admission'], flags['--proof']]) {
-      const absolute = await realpath(filename)
-      const relative = path.relative(repoRoot, absolute)
-      if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
-        fail('账号、准入与资源证明文件必须放在仓库外，避免票据误入提交')
-      }
-    }
-    const status = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=no'],
-      { cwd: repoRoot, encoding: 'utf8' })
-    if (status.trim()) fail('当前 checkout 有跟踪文件改动，不能绑定源码 SHA')
-    const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim()
+    const { sourceSha } = await verifyCheckoutInputs([
+      flags['--manifest'], flags['--admission'], flags['--proof']])
     const result = await inspectFiles({ manifestPath: flags['--manifest'],
       admissionPath: flags['--admission'], proofPath: flags['--proof'], sourceSha })
     console.log(JSON.stringify(result))

@@ -71,4 +71,27 @@ test('capacity pressure, lost bound connections and UTC expiry stay visible in r
   }))
   assert.equal(expired.stoppedReason, 'admission_window_expired')
   assert.ok(expired.launched < 200)
+
+  let checks = 0
+  const cancelled = await runMarchLoad(players(), fleet(), options(clock(), {
+    shouldContinue: () => ++checks < 4,
+  }))
+  assert.equal(cancelled.stoppedReason, 'operator_cancelled')
+  assert.equal(cancelled.launched, 3)
+})
+
+test('socket readyState readback catches a lost connection even if close bookkeeping lags', async () => {
+  const time = clock()
+  const currentFleet = fleet()
+  currentFleet.connections = Array.from({ length: 5000 }, () => ({ socket: { readyState: 1 } }))
+  const sleep = async (waitMs) => {
+    time.advance(waitMs)
+    if (time.now() >= 500) currentFleet.connections[0].socket.readyState = 3
+  }
+  const report = await runMarchLoad(players(), currentFleet, options(time, {
+    durationSeconds: 2, sleep,
+  }))
+  assert.equal(report.stoppedReason, 'bound_connections_lost')
+  assert.equal(report.minBound, 4999)
+  assert.ok(report.launched < 400)
 })

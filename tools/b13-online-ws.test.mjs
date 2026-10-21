@@ -85,3 +85,14 @@ test('a connection lost after bound reduces online count and records an unexpect
   await closeFleet(fleet)
   assert.equal(fleet.state.unexpectedClosures, 1)
 })
+
+test('an expired admission during ramp stops opening more sockets and cleans earlier ones', async () => {
+  sockets.length = 0
+  let checks = 0
+  await assert.rejects(connectFleet(players(['p1', 'p2']), {
+    targetOrigin: 'http://127.0.0.1:8299', WebSocketCtor: FakeSocket,
+    expectedCount: 2, concurrency: 1, shouldContinue: () => ++checks === 1,
+  }), /准入窗口/)
+  assert.equal(sockets.length, 1)
+  assert.equal(sockets[0].readyState, 3)
+})

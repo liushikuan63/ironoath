@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, writeFile, rm, mkdir, copyFile } from 'node:fs/promises'
+import { mkdtemp, writeFile, appendFile, rm, mkdir, copyFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -11,6 +11,7 @@ import { inspectFiles, validateAdmission, validateManifest } from './b13-online-
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const sourceSha = 'a'.repeat(40)
 const baseManifest = () => ({ schemaVersion: 1, targetOrigin: 'http://127.0.0.1:8299',
+  durationSeconds: 1,
   players: Array.from({ length: 5000 }, (_, n) => ({ playerId: `p${n}`, token: `secret-${n}`,
     march: { toX: 10, toY: 20, action: 'SCOUT', units: [{ unitId: 'unit_infantry_t1', count: 1 }] } })) })
 const baseAdmission = (manifestHash, proofHash) => ({ schemaVersion: 1, holderId: 'fixture-holder',
@@ -98,6 +99,13 @@ test('CLI reads its own checkout SHA, with credential files outside the repo', a
     assert.equal(cli.status, 0, cli.stderr)
     assert.equal(JSON.parse(cli.stdout).sourceSha, currentSha)
     assert.ok(!cli.stdout.includes('secret-'))
+    await appendFile(scriptPath, '\n// dirty checkout negative fixture\n')
+    const dirty = spawnSync(process.execPath, [scriptPath,
+      '--mode=inspect', `--manifest=${manifestPath}`, `--admission=${admissionPath}`, `--proof=${proofPath}`],
+    { cwd: dir, encoding: 'utf8' })
+    assert.equal(dirty.status, 2)
+    assert.match(dirty.stderr, /跟踪文件改动/)
+    assert.ok(!dirty.stderr.includes('secret-'))
   } finally {
     assert.equal(path.dirname(dir), path.resolve(tmpdir()))
     await rm(dir, { recursive: true, force: true })

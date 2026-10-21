@@ -86,14 +86,17 @@ export async function closeFleet(fleet, timeoutMs = 5000) {
 }
 
 export async function connectFleet(players, { targetOrigin, WebSocketCtor = globalThis.WebSocket,
-  concurrency = 50, timeoutMs = 15_000, expectedCount = 5000 } = {}) {
+  concurrency = 50, timeoutMs = 15_000, expectedCount = 5000,
+  shouldContinue = () => true } = {}) {
   if (!Array.isArray(players) || players.length !== expectedCount || !WebSocketCtor
       || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 100
-      || !Number.isInteger(timeoutMs) || timeoutMs < 1) fail('WebSocket 连接池前置不满足')
+      || !Number.isInteger(timeoutMs) || timeoutMs < 1
+      || typeof shouldContinue !== 'function') fail('WebSocket 连接池前置不满足')
   const fleet = { opened: new Set(), connections: [],
     state: { bound: 0, peakBound: 0, unexpectedClosures: 0, closing: false } }
   try {
     for (let offset = 0; offset < players.length; offset += concurrency) {
+      if (!shouldContinue()) fail('准入窗口在连接爬升期间结束')
       const batch = players.slice(offset, offset + concurrency)
       const results = await Promise.allSettled(batch.map((player) => connectOne(player, targetOrigin,
         WebSocketCtor, timeoutMs, fleet.state, fleet.opened)))
@@ -113,11 +116,20 @@ export async function connectFleet(players, { targetOrigin, WebSocketCtor = glob
 export function startFleetHeartbeat(fleet) {
   const seconds = Math.min(...fleet.connections.map((connection) => connection.heartbeatSeconds))
   if (!Number.isFinite(seconds) || seconds <= 0) fail('没有服务端心跳间隔')
+  const periodMs = Math.max(1000, Math.floor(seconds * 500))
+  const tickMs = 100
+  const ticksPerPeriod = Math.ceil(periodMs / tickMs)
+  let tick = 0
   const timer = setInterval(() => {
-    for (const { socket } of fleet.connections) {
+    // 把 5000 条心跳摊到整段周期，避免同一瞬间再制造一波与行军无关的突发。
+    const from = Math.floor(tick * fleet.connections.length / ticksPerPeriod)
+    const to = Math.floor((tick + 1) * fleet.connections.length / ticksPerPeriod)
+    for (let i = from; i < to; i++) {
+      const { socket } = fleet.connections[i]
       if (socket.readyState !== 1) continue
       try { socket.send('{"type":"ping"}') } catch { /* close 事件会计入断连 */ }
     }
-  }, Math.max(1000, Math.floor(seconds * 500)))
+    tick = (tick + 1) % ticksPerPeriod
+  }, tickMs)
   return () => clearInterval(timer)
 }

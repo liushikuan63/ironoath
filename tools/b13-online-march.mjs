@@ -17,7 +17,7 @@ export async function runMarchLoad(players, fleet, {
   targetOrigin, runId, durationSeconds, rate = 200, maxInFlight = 400,
   requestTimeoutMs = 10_000, notAfterUtc,
   fetchImpl = globalThis.fetch, monotonicNow = () => performance.now(),
-  wallNow = () => Date.now(), sleep = delay,
+  wallNow = () => Date.now(), sleep = delay, shouldContinue = () => true,
 } = {}) {
   if (!Array.isArray(players) || players.length === 0 || !fleet?.state
       || fleet.state.bound !== players.length || !['http:', 'https:'].includes(new URL(targetOrigin).protocol)
@@ -26,7 +26,8 @@ export async function runMarchLoad(players, fleet, {
       || !Number.isInteger(rate) || rate < 1 || rate > 200
       || !Number.isInteger(maxInFlight) || maxInFlight < 1
       || !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1
-      || !Number.isFinite(Date.parse(notAfterUtc)) || typeof fetchImpl !== 'function') {
+      || !Number.isFinite(Date.parse(notAfterUtc)) || typeof fetchImpl !== 'function'
+      || typeof shouldContinue !== 'function') {
     throw new Error('行军负载前置无效')
   }
   const planned = durationSeconds * rate
@@ -73,7 +74,13 @@ export async function runMarchLoad(players, fleet, {
     const scheduledAt = startedAt + slot * 1000 / rate
     const waitMs = scheduledAt - monotonicNow()
     if (waitMs > 0) await sleep(waitMs)
+    if (!shouldContinue()) { stoppedReason = 'operator_cancelled'; break }
     minBound = Math.min(minBound, fleet.state.bound)
+    if (slot % rate === 0 && Array.isArray(fleet.connections)) {
+      const live = fleet.connections.filter(({ socket }) => socket.readyState === 1).length
+      minBound = Math.min(minBound, live)
+      if (live !== players.length) { stoppedReason = 'bound_connections_lost'; break }
+    }
     if (fleet.state.bound !== players.length || fleet.state.unexpectedClosures > 0) {
       stoppedReason = 'bound_connections_lost'
       break
@@ -96,6 +103,10 @@ export async function runMarchLoad(players, fleet, {
   }
   await Promise.allSettled([...pending])
   minBound = Math.min(minBound, fleet.state.bound)
+  if (Array.isArray(fleet.connections)) {
+    minBound = Math.min(minBound,
+      fleet.connections.filter(({ socket }) => socket.readyState === 1).length)
+  }
   samples.sort((a, b) => a.slot - b.slot)
   const httpStatusCounts = {}
   const businessCodeCounts = {}
