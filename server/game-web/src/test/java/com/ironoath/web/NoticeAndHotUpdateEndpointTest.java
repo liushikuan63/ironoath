@@ -112,6 +112,14 @@ class NoticeAndHotUpdateEndpointTest {
     }
 
     @Test
+    @DisplayName("公告响应版本为可见内容指纹，同一列表连续读取时稳定")
+    void noticeResponseCarriesVisibleContentVersion() {
+        String version = notices.list().version();
+        assertThat(version).matches("[0-9a-f]{16}");
+        assertThat(notices.list().version()).isEqualTo(version);
+    }
+
+    @Test
     @DisplayName("取表内容：白名单内的表给整表 JSON 与版本号")
     void tableEndpointServesWhitelistedTable() throws Exception {
         String body = mockMvc.perform(get("/config/table")
