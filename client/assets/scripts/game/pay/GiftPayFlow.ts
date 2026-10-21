@@ -10,8 +10,8 @@
  * <ol>
  *   <li><b>`retryQueued=true` 绝不许显示"已到账"</b>：钱收了、货还没发，说已到账会引发退款投诉；
  *       要说的是"发货处理中"并给客服入口</li>
- *   <li><b>轮询超时也不许报失败</b>：那一刻钱可能已经扣了，报失败等于让玩家去申请退款 ——
- *       同一句话：发货处理中，稍后查收</li>
+ *   <li><b>轮询超时也不许报失败</b>：那一刻钱可能已经扣了，但服务端还没确认，
+ *       要说「支付状态待确认」；只有服务端回 SUCCESS 且奖励未到，才说「发货处理中」</li>
  *   <li><b>浏览器/编辑器里不能是死按钮</b>：拉不起支付时要显示"开发期说明"，而不是点了没反应</li>
  * </ol>
  *
@@ -106,15 +106,16 @@ export class GiftPayFlow {
       return failed('当前环境不支持支付', '请在微信小游戏里打开本游戏；浏览器仅供开发调试', minorNotice)
     }
     if (paid === 'failed') {
-      // 拉起支付本身失败（非用户取消，例如余额不足/风控拦截）：**不能去轮询** ——
-      // 轮询会把"什么都没发生"读成 PENDING，最后显示成"发货处理中"，而那一刻一分钱都没扣
-      return failed('支付没有完成', '本次没有扣款；如已扣款请联系客服', minorNotice)
+      // 小游戏专用渠道的 fail 回调是否能证明未扣款尚未验收；当前不据此宣称资金终态。
+      // 也不把未知订单状态说成「款项已收到」，玩家先避免重复付款并保留客服路径。
+      return failed('支付结果未确认',
+        '请勿立即重复付款；若已扣款或奖励未到账，请通过设置页联系客服', minorNotice)
     }
     if (paid === 'cancelled') {
       return {
         phase: 'cancelled',
         title: '已取消支付',
-        detail: '本次没有扣款，可稍后重新购买',
+        detail: '已退出支付流程；如看到扣款或权益未到账，请通过设置页联系客服',
         rewards: [],
         showSupport: false,
         minorNotice,
@@ -155,11 +156,11 @@ export class GiftPayFlow {
           }
         }
         // 钱到了、货还在补单队列里 —— 这一支必须与"已到账"分开表达
-        return processing(minorNotice)
+        return processingPaid(minorNotice)
       }
       // PENDING：继续问
     }
-    return processing(minorNotice)
+    return processingUnconfirmed(minorNotice)
   }
 }
 
@@ -167,11 +168,22 @@ function failed(title: string, detail: string | null, minorNotice: string | null
   return { phase: 'failed', title, detail, rewards: [], showSupport: false, minorNotice }
 }
 
-function processing(minorNotice: string | null): PayView {
+function processingPaid(minorNotice: string | null): PayView {
   return {
     phase: 'processing',
     title: '发货处理中',
     detail: '款项已收到，奖励正在发放；稍后在邮件里查收，也可通过设置页的客服入口咨询',
+    rewards: [],
+    showSupport: true,
+    minorNotice,
+  }
+}
+
+function processingUnconfirmed(minorNotice: string | null): PayView {
+  return {
+    phase: 'processing',
+    title: '支付状态待确认',
+    detail: '暂未确认支付结果，请勿立即重复付款；若已扣款或奖励未到账，请通过设置页联系客服',
     rewards: [],
     showSupport: true,
     minorNotice,

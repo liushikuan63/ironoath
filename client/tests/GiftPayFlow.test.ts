@@ -95,6 +95,7 @@ test('钱到了货没到：SUCCESS 但 rewards 为空 ⇒ 发货处理中；标�
 
   assert.equal(view.phase, 'processing')
   assert.equal(view.title, '发货处理中')
+  assert.match(view.detail ?? '', /款项已收到/, '只有服务端 SUCCESS 才能说已收款')
   assert.equal(view.showSupport, true, '这一支必须给客服入口')
   assert.ok(!JSON.stringify(view).includes('已到账'),
     'retryQueued 场景说"已到账"会引发退款投诉（B19 §四 禁止项）')
@@ -108,14 +109,15 @@ test('retryQueued=true 同样走「发货处理中」', async () => {
   assert.equal((await h.flow.buy('gift_stuck_supply')).phase, 'processing')
 })
 
-test('支付取消 ⇒ cancelled，且一次都不该去轮询', async () => {
+test('支付桥报告取消时不凭客户端回调断言未扣款', async () => {
   const h = harness({ payment: 'cancelled' })
 
   const view = await h.flow.buy('gift_stuck_supply')
 
   assert.equal(view.phase, 'cancelled')
-  assert.ok(view.detail?.includes('没有扣款') === true, `取消要说清没扣钱，实际：${view.detail}`)
-  assert.equal(h.orderStatusCalls.length, 0, '用户没付钱，查单没有意义')
+  assert.doesNotMatch(view.detail ?? '', /没有扣款|已到账/,
+    '取消回调也不代替服务端订单状态')
+  assert.match(view.detail ?? '', /客服/, '有扣款争议时仍能找到处理入口')
 })
 
 test('浏览器/编辑器（拉不起支付）⇒ 明确说清是环境限制，不是死按钮', async () => {
@@ -142,13 +144,15 @@ test('下单被业务拒绝 ⇒ 原样用服务端的提示（15011 今天买过
   assert.equal(view.detail, '今日已购=1 上限=1', 'detail 给客服/排查用，原样带出去')
 })
 
-test('轮询一直 PENDING ⇒ 用完次数后是「发货处理中」，绝不报失败（那一刻钱可能已扣）', async () => {
+test('轮询一直 PENDING ⇒ 用完次数后待确认，不宣称款项已收到', async () => {
   const pending = okOutcome<OrderStatusResp>({ status: 'PENDING', rewards: [], retryQueued: null })
   const h = harness({ statuses: [pending], maxPolls: 3 })
 
   const view = await h.flow.buy('gift_stuck_supply')
 
   assert.equal(view.phase, 'processing')
+  assert.equal(view.title, '支付状态待确认')
+  assert.doesNotMatch(view.detail ?? '', /款项已收到|已到账/)
   assert.equal(h.orderStatusCalls.length, 3)
   assert.deepEqual(h.delays, [1_000, 1_000], '第一次不等，之后每次轮询前等一个间隔')
 })
@@ -165,14 +169,16 @@ test('弱网轮询：前两次查不到不下结论，第三次拿到 SUCCESS �
   assert.equal((await h.flow.buy('gift_stuck_supply')).phase, 'delivered')
 })
 
-test('拉起支付本身失败（非取消）⇒ 不轮询、报失败：那一刻一分钱都没扣，说"处理中"是假话', async () => {
+test('支付桥报告非取消失败时不擅自断言未扣款，提示玩家查单与联系客服', async () => {
   const h = harness({ payment: 'failed' })
 
   const view = await h.flow.buy('gift_stuck_supply')
 
   assert.equal(view.phase, 'failed')
-  assert.ok((view.detail ?? '').includes('没有扣款'), `要说清没扣钱，实际：${view.detail}`)
-  assert.equal(h.orderStatusCalls.length, 0, '没付款就没有可查的订单状态')
+  assert.equal(view.title, '支付结果未确认')
+  assert.doesNotMatch(view.detail ?? '', /没有扣款|已到账|款项已收到/,
+    '客户端回调不证明订单的最终扣款或发货状态')
+  assert.match(view.detail ?? '', /订单|客服/, '要给玩家可执行的查证路径')
 })
 
 /**

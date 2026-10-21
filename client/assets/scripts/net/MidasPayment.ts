@@ -26,7 +26,7 @@ export function requestMidasPayment(params: PayParams): Promise<PaymentOutcome> 
       currencyType: params.currencyType,
       success: () => resolve('ok'),
       fail: (err) => {
-        // -2 = 用户取消（官方口径，接入真实渠道时须按文档复核）。
+        // 当前桥把 -2 归为用户取消；微信小游戏专用文档和真机回执尚未核实，不能称此映射已通过正式渠道验收。
         // 其余一律按"没付成"：把余额不足当成"取消"会让玩家以为什么都没发生
         resolve(err.errCode === -2 ? 'cancelled' : 'failed')
       },

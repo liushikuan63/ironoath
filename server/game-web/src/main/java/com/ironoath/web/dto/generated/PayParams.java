@@ -3,7 +3,7 @@
 package com.ironoath.web.dto.generated;
 
 /**
- * 调起微信虚拟支付（米大师）所需的参数。**字段全部是字符串**：这些值由渠道生成，服务端只做透传，任何一侧试图解析或重算它们都会在渠道改格式时静默出错。
+ * 调起微信虚拟支付（米大师）的当前内部参数形状。服务端按订单金额与部署参数组装 mode、offerId、buyQuantity、env、currencyType；客户端桥目前只转发这五项。正式渠道字段语义与真机回执尚未验收，不能把本类型存在当成支付可用的证明。
  */
 public record PayParams(
         String mode,   // 米大师支付模式（game / short_series_goods 等），由服务端按渠道配置下发。
@@ -11,6 +11,6 @@ public record PayParams(
         String buyQuantity,   // 下单金额（**分**），字符串形式透传 —— 服务端发的是 line.totalCents()，也就是这一单的应收金额。 2026-09-13 裁决：语义以代码现状（金额）为准，并改掉本字段此前那句「购买数量（游戏币个数）」。理由是全条支付链只有 totalCents 一个真实生产者，没有任何一处产出过「个数」这种语义，而 global 里的 PRODUCT_*_CENTS 本身就是分。 **接入真实渠道之前仍须拿米大师正式文档复核**：两种读法的实收金额可以差 100 倍，而唯一能定它的是官方文档（本地没有凭据，check-contract-sync 也查不出「描述与代码意图不一致」）。见收口清单 #49 与 §三·补 A2。
         String env,   // 环境（0 正式 / 1 沙箱）。**沙箱参数绝不能出现在正式包里**，所以它由服务端下发而不是客户端写死 —— 客户端写死的话，一次忘了改的提交就会让正式包指向沙箱。
         String currencyType,   // 币种，与 ProductPrice.currency 同源。
-        String signature)   // 渠道要求的签名。为 null 表示当前环境不需要签名（本地开发）—— 而**正式环境必须有**，所以服务端在正式环境下不下发 null，客户端也不该把 null 当成正常情况静默放过。
+        String signature)   // 预留签名字段。**当前生产代码恒为 null**（PayAppService.payParams 最后一参），MidasPayment 桥也不传此字段；原注释声称『正式环境必有、不会下发 null』与代码不符。是否需要签名、签名来源及传参位置须按微信小游戏正式渠道文档和真机回执核实，本字段不构成已接通正式支付的证据。
 {
 }
