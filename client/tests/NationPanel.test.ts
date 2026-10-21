@@ -605,7 +605,7 @@ test('V13-d：三档 scope 各读各的槽位，NATION 不许落到联盟那一�
 // ---------- 国战那一页（B13 §一 §7；V18 的客户端承接，只读） ----------
 
 function warScore(nationId = 'nation_a', nationName: string | null = '北伐营',
-  totalScore = 1500, gatesHeld = 1, attackQualified = true): WarNationScoreView {
+  totalScore = 1500, gatesHeld = 4, attackQualified = true): WarNationScoreView {
   return {
     nationId, nationName,
     occupyScore: 0, killScore: totalScore, buildingScore: 0, totalScore,
@@ -640,23 +640,23 @@ test('国战那一页：没拉到 / 没有仗 / 有仗 三态各自说清，不�
 
   // ③ 有仗：阶段、剩余、王城、参战方行、全服进度、疲劳六样都在
   const war = buildWarSection(warResp({
-    hasWar: true, phase: 'SIEGE', remainingSec: 3 * 3600 + 25 * 60,
+    hasWar: true, phase: 'SIEGE', remainingSec: 3600 + 25 * 60,
     capitalHolderName: '铁誓王国',
     scores: [
       warScore('nation_b', null, 800, 0, false),   // 没有关卡 ⇒ 没有进攻资格，那一句不该画
-      warScore('nation_a', '北伐营', 1500, 3, true),
+      warScore('nation_a', '北伐营', 1500, 4, true),
     ],
     totalKills: 90, serverGoalKills: 500,
   }))
   assert.equal(war.hasWar, true)
   assert.match(war.phaseText ?? '', /王城战进行中/)
-  assert.match(war.remainingText ?? '', /3 小时 25 分/, '剩余时间由服务端 remainingSec 现算，不引本机时钟')
+  assert.match(war.remainingText ?? '', /1 小时 25 分/, '剩余时间由服务端 remainingSec 现算，不引本机时钟')
   assert.match(war.capitalText ?? '', /铁誓王国占着/)
   assert.deepEqual(war.rows.map(r => r.name), ['北伐营', '未知国家'],
     '按总分降序；国名缺失给回退语（协议里 nationName 不是必填）')
   assert.deepEqual(war.rows.map(r => r.rankText), ['第 1 名', '第 2 名'])
   assert.deepEqual(war.rows.map(r => r.scoreText), ['1,500', '800'])
-  assert.match(war.rows[0]?.gatesText ?? '', /关卡 3 \/ 共 4/, '关卡要写成"已占 x / 共 n"，n 来自服务端下发')
+  assert.match(war.rows[0]?.gatesText ?? '', /关卡 4 \/ 共 4/, '关卡要写成"已占 x / 共 n"，n 来自服务端下发')
   assert.equal(war.rows[0]?.qualifiedText, '已取得进攻资格')
   assert.equal(war.rows[1]?.qualifiedText, null)
   assert.match(war.goalText ?? '', /全服击杀 90 \/ 500/)
@@ -666,6 +666,14 @@ test('国战那一页：没拉到 / 没有仗 / 有仗 三态各自说清，不�
     war.goalText, war.fatigueText, ...war.rows.flatMap(r => [r.name, r.rankText, r.scoreText, r.gatesText, r.qualifiedText])]
     .filter((v): v is string => v !== null).join('|')
   assert.equal(/nation_[ab]/.test(onScreen), false, `国战那页印出了内部 id：${onScreen}`)
+})
+
+test('关卡三缺一时客户端只消费服务端资格位，不把持有数自行判成可攻城', () => {
+  const section = buildWarSection(warResp({ phase: 'PREPARATION',
+    scores: [warScore('nation_a', '北伐营', 1500, 3, false)] }))
+  assert.match(section.phaseText ?? '', /同一国家占齐周边关卡/)
+  assert.match(section.rows[0]?.gatesText ?? '', /关卡 3 \/ 共 4/)
+  assert.equal(section.rows[0]?.qualifiedText, null)
 })
 
 test('宣战目标带冷却（#755）：冷却中的目标灰着并写出还要等多久，解禁的不带任何标注', () => {

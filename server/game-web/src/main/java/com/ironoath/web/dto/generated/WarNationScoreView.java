@@ -13,6 +13,6 @@ public record WarNationScoreView(
         long buildingScore,   // 占领建筑积分（每次 `WAR_SCORE_BUILDING_PER_CAPTURE`）。
         long totalScore,   // 三项之和，名次按它排。**平分时不给胜者**：两国同分意味着谁都没赢，按 id 字典序硬挑一个会让玩家觉得结果是被系统指定的。所以这里不出现「第几名」，排名由客户端按这一列显示顺序呈现。
         int gatesHeld,   // 该国当前持有的关卡座数。上限是 `WarStatusResp.gateCount`。
-        boolean attackQualified)   // 是否已取得进攻资格（持有至少一座关卡）。**由服务端判**，客户端不许自己按 gatesHeld>0 再算一遍 —— 判定写两处就会有第二处不与领域层同步的那天。
+        boolean attackQualified)   // 是否已取得进攻资格（同一国家持有全部 `WAR_GATE_COUNT` 座关卡）。**由服务端判**，客户端不许自己按 gatesHeld>=gateCount 再算一遍 —— 判定写两处就会有第二处不与领域层同步的那天。
 {
 }

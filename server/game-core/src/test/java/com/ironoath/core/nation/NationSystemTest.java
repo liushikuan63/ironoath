@@ -63,6 +63,13 @@ class NationSystemTest {
         return board;
     }
 
+    /** 按当前 B13 裁决取得王城资格；四次归属变化各自计一次建筑分。 */
+    private static void captureAllGates(WarScoreBoard board, String nationId) {
+        for (int i = 1; i <= board.rules().gateCount(); i++) {
+            board.captureGate(nationId, "gate_" + i);
+        }
+    }
+
     // ---------- 联盟 ⊂ 国家（禁止项：个人不单独入籍） ----------
 
     @Test
@@ -556,7 +563,7 @@ class NationSystemTest {
     @DisplayName("验收6：三类积分分别计算正确（占领时长 / 击杀 / 占领建筑）")
     void threeScoreSourcesAreComputedSeparately() {
         WarScoreBoard board = newWar(0L);
-        board.captureGate("n1", "gate_1");          // +50 建筑分
+        captureAllGates(board, "n1");               // 4×50 建筑分
         board.beginSiege(0L);
         board.captureCapital("n1", 0L);             // +50 建筑分
         board.recordKill("n1", 1000);               // +1000 击杀分
@@ -564,13 +571,13 @@ class NationSystemTest {
         // 守到第 60 分钟：+60 × 10 = 600 占领分。
         // 中途查看用 snapshot（不结算占领分），settle 只能调一次
         WarScoreBoard.Score n1 = board.snapshot().get("n1");
-        assertThat(n1.buildingScore()).isEqualTo(100L);
+        assertThat(n1.buildingScore()).isEqualTo(250L);
         assertThat(n1.killScore()).isEqualTo(1000L);
 
         WarScoreBoard.Result result = board.settle(60 * MINUTE);
         WarScoreBoard.Score settled = result.scores().get("n1");
         assertThat(settled.occupyScore()).as("占领 60 分钟 × 每分钟 10 分").isEqualTo(600L);
-        assertThat(settled.total()).isEqualTo(1700L);
+        assertThat(settled.total()).isEqualTo(1850L);
         assertThat(result.winnerId()).isEqualTo("n1");
     }
 
@@ -578,13 +585,13 @@ class NationSystemTest {
     @DisplayName("验收6：最后一秒偷家无法翻盘 —— 守了 89 分钟的国家分数远高于偷家者")
     void lastSecondCaptureCannotStealTheWin() {
         WarScoreBoard board = newWar(0L);
-        board.captureGate("n1", "gate_1");
-        board.captureGate("n2", "gate_2");
+        captureAllGates(board, "n1");
         board.beginSiege(0L);
 
         // n1 从第 0 分钟守到第 89 分钟
         board.captureCapital("n1", 0L);
         // n2 在最后一分钟偷家
+        captureAllGates(board, "n2");
         board.captureCapital("n2", 89 * MINUTE);
 
         WarScoreBoard.Result result = board.settle(90 * MINUTE);
@@ -597,42 +604,75 @@ class NationSystemTest {
     }
 
     @Test
-    @DisplayName("没有进攻资格（未占任何关卡）就不能开始王城战")
+    @DisplayName("同一国家须占齐配置的四座关卡才有进攻资格，三座不足")
     void siegeRequiresGateQualification() {
         WarScoreBoard board = newWar(0L);
         assertThatThrownBy(() -> board.beginSiege(0L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("进攻资格");
         board.captureGate("n2", "gate_1");
-        assertThat(board.isQualified("n2")).isTrue();
+        board.captureGate("n2", "gate_2");
+        board.captureGate("n2", "gate_3");
+        assertThat(board.isQualified("n2")).as("少一座就没有资格").isFalse();
         assertThat(board.isQualified("n1")).isFalse();
+        assertThatThrownBy(() -> board.beginSiege(0L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("进攻资格");
+        board.captureGate("n2", "gate_4");
+        assertThat(board.isQualified("n2")).isTrue();
         board.beginSiege(0L);
         assertThat(board.phase()).isEqualTo(WarScoreBoard.Phase.SIEGE);
+    }
+
+    @Test
+    @DisplayName("四座关卡分属两国不能拼出王城资格；换手后只占齐的国家能占王城")
+    void splitGatesCannotQualifyEitherNation() {
+        WarScoreBoard board = newWar(0L);
+        board.captureGate("n1", "gate_1");
+        board.captureGate("n1", "gate_2");
+        board.captureGate("n1", "gate_3");
+        board.captureGate("n2", "gate_4");
+
+        assertThat(board.isQualified("n1")).isFalse();
+        assertThat(board.isQualified("n2")).isFalse();
+        assertThatThrownBy(() -> board.beginSiege(0L))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("进攻资格");
+        board.captureGate("n1", "gate_4");
+        assertThat(board.isQualified("n1")).isTrue();
+        assertThat(board.isQualified("n2")).isFalse();
+        board.beginSiege(0L);
+        assertThatThrownBy(() -> board.captureCapital("n2", MINUTE))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("进攻资格");
+        board.captureCapital("n1", MINUTE);
+        assertThat(board.capitalHolder()).isEqualTo("n1");
+        board.captureGate("n2", "gate_4");
+        assertThat(board.isQualified("n1"))
+                .as("失去任一关后资格应随当前归属消失，不沿用开战那一刻的旧答案").isFalse();
     }
 
     @Test
     @DisplayName("筹备阶段只争关卡：围城战尚未开始时不能占王城或偷记建筑分")
     void capitalCannotBeCapturedBeforeSiege() {
         WarScoreBoard board = newWar(0L);
-        board.captureGate("n1", "gate_1");
+        captureAllGates(board, "n1");
 
         assertThatThrownBy(() -> board.captureCapital("n1", MINUTE))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("王城战");
         assertThat(board.capitalHolder()).isNull();
-        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(50L);
+        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(200L);
 
         board.beginSiege(MINUTE);
         board.captureCapital("n1", MINUTE);
         assertThat(board.capitalHolder()).isEqualTo("n1");
-        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(100L);
+        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(250L);
     }
 
     @Test
     @DisplayName("已参战但未持有关卡的国家不能占王城，取得资格后同一动作才可成功")
     void unqualifiedNationCannotCaptureCapital() {
         WarScoreBoard board = newWar(0L);
-        board.captureGate("n1", "gate_1");
+        captureAllGates(board, "n1");
         board.beginSiege(0L);
         assertThat(board.isQualified("n2")).isFalse();
 
@@ -642,7 +682,7 @@ class NationSystemTest {
         assertThat(board.capitalHolder()).isNull();
         assertThat(board.snapshot().get("n2").buildingScore()).isZero();
 
-        board.captureGate("n2", "gate_1");
+        captureAllGates(board, "n2");
         assertThat(board.isQualified("n2")).isTrue();
         board.captureCapital("n2", MINUTE);
         assertThat(board.capitalHolder()).isEqualTo("n2");
@@ -698,14 +738,14 @@ class NationSystemTest {
     @DisplayName("重复占领自己仍持有的王城只结算经过的分钟，不再得建筑分")
     void recapturingOwnCapitalDoesNotMintBuildingScore() {
         WarScoreBoard board = newWar(0L);
-        board.captureGate("n1", "gate_1");
+        captureAllGates(board, "n1");
         board.beginSiege(0L);
         board.captureCapital("n1", 0L);
         board.captureCapital("n1", 30 * MINUTE);
         board.captureCapital("n1", 60 * MINUTE);
 
         WarScoreBoard.Score score = board.settle(90 * MINUTE).scores().get("n1");
-        assertThat(score.buildingScore()).isEqualTo(100L);
+        assertThat(score.buildingScore()).isEqualTo(250L);
         assertThat(score.occupyScore()).isEqualTo(90 * 10L);
     }
 
@@ -713,7 +753,7 @@ class NationSystemTest {
     @DisplayName("结算后不能再改积分，也不能重复结算（重复结算会让积分被算两遍）")
     void scoreboardIsImmutableAfterSettlement() {
         WarScoreBoard board = newWar(0L);
-        board.captureGate("n1", "gate_1");
+        captureAllGates(board, "n1");
         board.beginSiege(0L);
         board.settle(HOUR);
         assertThat(board.phase()).isEqualTo(WarScoreBoard.Phase.SETTLED);
@@ -727,8 +767,8 @@ class NationSystemTest {
     @DisplayName("同分时不给胜者：硬挑一个出来会让玩家觉得结果是被系统指定的")
     void tieHasNoWinner() {
         WarScoreBoard board = newWar(0L);
-        board.captureGate("n1", "gate_1");
-        board.captureGate("n2", "gate_2");
+        captureAllGates(board, "n1");
+        captureAllGates(board, "n2");
         board.beginSiege(0L);
         board.recordKill("n1", 100);
         board.recordKill("n2", 100);
@@ -742,7 +782,7 @@ class NationSystemTest {
     void remainingSecondsIsNeverNegative() {
         WarScoreBoard board = newWar(0L);
         assertThat(board.remainingSeconds(0L)).as("筹备阶段").isZero();
-        board.captureGate("n1", "gate_1");
+        captureAllGates(board, "n1");
         board.beginSiege(0L);
         assertThat(board.remainingSeconds(30 * MINUTE)).isEqualTo(3600L);
         assertThat(board.remainingSeconds(10 * HOUR)).as("超时后不得为负").isZero();
@@ -788,7 +828,7 @@ class NationSystemTest {
     @DisplayName("验收10：全服累计击杀达标后可领奖，且每人只能领一次")
     void serverGoalIsClaimableOncePerPlayer() {
         WarScoreBoard board = newWar(0L);
-        board.captureGate("n1", "gate_1");
+        captureAllGates(board, "n1");
         board.beginSiege(0L);
 
         board.recordKill("n1", 49_999L);

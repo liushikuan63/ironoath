@@ -183,11 +183,11 @@ class WarEndpointTest {
                 .isEqualTo("铁誓王国");
         assertThat(live.get("occupyScore").asLong()).isZero();
         assertThat(live.get("killScore").asLong()).isEqualTo(60_000L);
-        assertThat(live.get("buildingScore").asLong()).isEqualTo(100L);
+        assertThat(live.get("buildingScore").asLong()).isEqualTo(250L);
         assertThat(live.get("totalScore").asLong())
                 .as("合计必须等于三项之和，客户端不需要自己加")
-                .isEqualTo(60_100L);
-        assertThat(live.get("gatesHeld").asInt()).isEqualTo(1);
+                .isEqualTo(60_250L);
+        assertThat(live.get("gatesHeld").asInt()).isEqualTo(4);
         assertThat(live.get("attackQualified").asBoolean()).isTrue();
 
         JsonNode ghost = rowOf(rows, "n_ghost");
@@ -196,9 +196,38 @@ class WarEndpointTest {
                 .as("国家可能在战争进行中被解散：查不到就给 null，客户端给回退语，**绝不回落到裸 id**")
                 .isTrue();
         assertThat(ghost.get("killScore").asLong()).isEqualTo(120L);
+        assertThat(ghost.get("attackQualified").asBoolean()).isFalse();
 
         assertThat(data.get("capitalHolder").asText()).isEqualTo("n_live");
         assertThat(data.get("capitalHolderName").asText()).isEqualTo("铁誓王国");
+    }
+
+    @Test
+    @DisplayName("王城资格视图随关卡归属变：四关分属两国都不合格，同国占齐后只该国合格")
+    void attackQualificationRequiresOneNationToHoldAllGates() throws Exception {
+        String playerId = newPlayer();
+        WarScoreBoard board = new WarScoreBoard(warRules.rules(), timeService.serverNow());
+        board.registerNation("n1");
+        board.registerNation("n2");
+        board.captureGate("n1", "gate_1");
+        board.captureGate("n1", "gate_2");
+        board.captureGate("n1", "gate_3");
+        board.captureGate("n2", "gate_4");
+        wars.insertIfAbsent(board);
+
+        JsonNode split = get200("/nation/war", playerId);
+        assertThat(split.get("phase").asText()).isEqualTo("PREPARATION");
+        assertThat(rowOf(split.get("scores"), "n1").get("attackQualified").asBoolean()).isFalse();
+        assertThat(rowOf(split.get("scores"), "n2").get("attackQualified").asBoolean()).isFalse();
+
+        WarScoreBoard united = wars.findLatest().orElseThrow();
+        united.captureGate("n1", "gate_4");
+        wars.save(united);
+        JsonNode ready = get200("/nation/war", playerId);
+        assertThat(ready.get("gateCount").asInt()).isEqualTo(4);
+        assertThat(rowOf(ready.get("scores"), "n1").get("gatesHeld").asInt()).isEqualTo(4);
+        assertThat(rowOf(ready.get("scores"), "n1").get("attackQualified").asBoolean()).isTrue();
+        assertThat(rowOf(ready.get("scores"), "n2").get("attackQualified").asBoolean()).isFalse();
     }
 
     @Test
@@ -214,6 +243,9 @@ class WarEndpointTest {
                 .as("前置：先占着王城的是 n_live").isEqualTo("n_live");
 
         WarScoreBoard again = wars.findLatest().orElseThrow();
+        for (int i = 1; i <= warRules.rules().gateCount(); i++) {
+            again.captureGate("n_ghost", "gate_" + i);
+        }
         again.captureCapital("n_ghost", timeService.serverNow());
         wars.save(again);
 
@@ -778,7 +810,7 @@ class WarEndpointTest {
      * 一块把视图各维都填满的板子。
      *
      * <p>两个参战方刻意<b>不对称</b>：n_live 击杀 60000、n_ghost 击杀 120，占领分都是 0，
-     * 建筑分 100 与 50 —— 对称的数值会让「读串了行」这类错误看不见。
+     * 建筑分 250 与 0 —— 对称的数值会让「读串了行」这类错误看不见。
      * {@code n_ghost} 刻意<b>不在国家存储里</b>，用来走「查不到国名给 null」那一支。
      *
      * @param startedAt 开战时刻（调用方按当前时刻倒推，好让剩余秒数落在可断言的区间）
@@ -788,8 +820,9 @@ class WarEndpointTest {
         WarScoreBoard board = new WarScoreBoard(warRules.rules(), startedAt);
         board.registerNation("n_live");
         board.registerNation("n_ghost");
-        board.captureGate("n_live", "gate_1");
-        board.captureGate("n_ghost", "gate_2");
+        for (int i = 1; i <= warRules.rules().gateCount(); i++) {
+            board.captureGate("n_live", "gate_" + i);
+        }
         board.beginSiege(startedAt + MINUTE / 2);
         board.captureCapital("n_live", startedAt + MINUTE);
         board.recordKill("n_live", 60_000L);

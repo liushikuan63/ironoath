@@ -8,7 +8,7 @@ package com.ironoath.web.dto.generated;
  * 取值必须与 game-core 的 `WarScoreBoard.Phase` **逐一对应且同序**，由 `WarEndpointTest.warPhaseMatchesTheDomainEnum` 断言钉住 —— 与 `NationOffice` 那条同一条教训：复制而不校验才是真正的危险，漂移的症状是服务端认得的阶段客户端显示成未知，而 UI 只会空白。
  *
  * 三段各自能做什么：
- * - `PREPARATION` —— 筹备：联盟争夺王城周边 `WAR_GATE_COUNT` 座关卡，占到**任意一座**即取得进攻资格。不要求全占，因为全占会让弱势国家永远打不进王城，而国战的观赏性恰恰在翻盘可能。
+ * - `PREPARATION` —— 筹备：联盟争夺王城周边 `WAR_GATE_COUNT` 座关卡，同一国家占齐**全部 `WAR_GATE_COUNT` 座**才取得进攻资格（2026-10-22 用户裁决）；分属不同国家不能拼算，失去任一关即失去资格。
  * - `SIEGE` —— 王城战进行中，时长 `WAR_DURATION_MINUTES`（B21 §五已裁决 90 分钟）。占领分按分钟累积，这是「防最后一秒偷家」的执行机构。
  * - `SETTLED` —— 已结束，积分定格，只读。
  *

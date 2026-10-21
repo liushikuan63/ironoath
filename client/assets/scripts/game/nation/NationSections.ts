@@ -273,7 +273,7 @@ export function buildNationSections(tech: NationTechListView | null,
 export function warPhaseLabel(phase: 'PREPARATION' | 'SIEGE' | 'SETTLED'): string {
   switch (phase) {
     case 'PREPARATION':
-      return '筹备期：各盟在争周边的关卡，拿到关卡才有进攻资格'
+      return '筹备期：同一国家占齐周边关卡才有王城进攻资格'
     case 'SIEGE':
       return '王城战进行中'
     case 'SETTLED':

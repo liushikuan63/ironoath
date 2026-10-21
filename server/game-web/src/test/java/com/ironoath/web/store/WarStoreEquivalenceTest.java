@@ -118,7 +118,7 @@ class WarStoreEquivalenceTest {
     void fullStateSurvivesRoundTripOnBothStores() {
         WarScoreBoard source = richBoard(T0);
         String expected = describe(source);
-        assertThat(expected).as("夹具本身要够丰富，否则这条断言是空的").contains("n1=0,60000,100");
+        assertThat(expected).as("夹具本身要够丰富，否则这条断言是空的").contains("n1=0,60000,250");
 
         for (WarStore store : bothStores()) {
             String label = store.getClass().getSimpleName();
@@ -140,6 +140,9 @@ class WarStoreEquivalenceTest {
 
             WarScoreBoard back = store.findLatest().orElseThrow();
             // 换手的瞬间会结算上一段：从 T0+7min 到 T0+8min 正好 1 分钟 ⇒ 占领分 +1×10
+            for (int i = 1; i <= rules.rules().gateCount(); i++) {
+                back.captureGate("n2", "gate_" + i);
+            }
             back.captureCapital("n2", T0 + 8 * MINUTE);
             WarScoreBoard.Score n1 = back.snapshot().get("n1");
             assertThat(n1.occupyScore())
@@ -331,7 +334,7 @@ class WarStoreEquivalenceTest {
             assertThat(settled)
                     .as("%s 结算要把最后一段占领分结进去：这一项在结算前恒为 0，"
                             + "是最能分辨「到底结没结」的量（击杀与建筑分结算前后一样）", label)
-                    .contains("n1=830,60000,100");
+                    .contains("n1=830,60000,250");
 
             // 第三档：时间再走 4 小时再读一次 —— 不许再动，也不许敲内核那条「重复结算」的护栏
             WarStore.Settlement afterS = store.settleIfExpired(T0 + duration + 4L * 60L * MINUTE).orElseThrow();
@@ -1174,10 +1177,13 @@ class WarStoreEquivalenceTest {
         WarScoreBoard board = new WarScoreBoard(rules.rules(), startedAt, "n1");
         board.registerNation("n1");
         board.registerNation("n2");
-        board.captureGate("n1", "gate_1");
-        board.captureGate("n2", "gate_2");
+        for (int i = 1; i <= rules.rules().gateCount(); i++) {
+            board.captureGate("n1", "gate_" + i);
+        }
         board.beginSiege(startedAt + MINUTE);
         board.captureCapital("n1", startedAt + 7 * MINUTE);
+        // 围城后 n2 抢下一关：两国归属都要往返，但这时双方都不足四关，资格须随当前归属重算。
+        board.captureGate("n2", "gate_2");
         board.recordKill("n1", "P1", 60_000L);
         board.recordKill("n2", "P2", 120L);
         board.addFatigue("P1", 15L, 5L);   // 15×5 + 5×1 = 80

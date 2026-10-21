@@ -192,19 +192,21 @@ public final class WarScoreBoard {
         gates.computeIfAbsent(nationId, k -> new LinkedHashSet<>());
     }
 
-    /** 进入王城战阶段。要求至少一方拿到了进攻资格（占有关卡）。 */
+    /** 进入王城战阶段。要求至少一个参战国独自占齐规则指定的全部关卡。 */
     public void beginSiege(long now) {
         if (phase != Phase.PREPARATION) {
             throw new IllegalStateException("当前阶段不允许开始王城战：" + phase);
         }
         boolean qualified = false;
-        for (Set<String> held : gates.values()) {
-            if (!held.isEmpty()) {
+        for (String nationId : gates.keySet()) {
+            if (isQualified(nationId)) {
                 qualified = true;
+                break;
             }
         }
         if (!qualified) {
-            throw new IllegalStateException("没有任何联盟占领关卡，进攻资格不成立（B13 §7）");
+            throw new IllegalStateException("没有参战国独自占齐 " + rules.gateCount()
+                    + " 座关卡，进攻资格不成立（B13 §7）");
         }
         phase = Phase.SIEGE;
         capitalHeldSince = now;
@@ -263,7 +265,7 @@ public final class WarScoreBoard {
      *
      * <p><b>这一项就是防偷家的全部机制</b>：占领分按分钟累积，
      * 最后一秒才占上去的国家只能拿到不到 1 分钟的分，
-     * 而从头守到尾的拿满 180 分钟 —— 差 180 倍，翻盘无从谈起。
+     * 而从头守到尾的按规则时长累计整分钟；时长由外层配置装配，不在内核写死。
      */
     private void settleOccupation(long now) {
         if (capitalHolder == null) {
@@ -483,9 +485,9 @@ public final class WarScoreBoard {
         return held == null ? 0 : held.size();
     }
 
-    /** 某一方是否有进攻资格（占了至少一座关卡）。 */
+    /** 某一方是否有进攻资格（同国持有全部关卡；门槛来自 Rules.gateCount）。 */
     public boolean isQualified(String nationId) {
-        return gateCount(nationId) > 0;
+        return gateCount(nationId) == rules.gateCount();
     }
 
     public Set<String> registeredNations() {
