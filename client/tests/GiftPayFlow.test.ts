@@ -176,6 +176,7 @@ test('支付桥报告非取消失败时不擅自断言未扣款，提示玩家�
 
   assert.equal(view.phase, 'failed')
   assert.equal(view.title, '支付结果未确认')
+  assert.equal(view.showSupport, true, '结果未确认时礼包内应直接给客服入口')
   assert.doesNotMatch(view.detail ?? '', /没有扣款|已到账|款项已收到/,
     '客户端回调不证明订单的最终扣款或发货状态')
   assert.match(view.detail ?? '', /订单|客服/, '要给玩家可执行的查证路径')

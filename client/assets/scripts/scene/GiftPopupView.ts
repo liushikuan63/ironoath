@@ -36,7 +36,7 @@ const PANEL_HEIGHT = 360
 
 /**
  * 职责：礼包弹窗这一屏 —— 展示服务端判定的礼包与未成年付费额度提示，并把购买/关闭抛回。
- * 依赖：`attach` 收数据、`onBuy` / `onClose` 抛动作；**弹不弹、弹哪个由服务端算**
+ * 依赖：`attach` 收数据、`onBuy` / `onClose` / `onSupport` 抛动作；**弹不弹、弹哪个由服务端算**
  * （频控与触发都在服务端），这层不自己判。
  */
 
@@ -46,6 +46,8 @@ export class GiftPopupView extends Component {
   onBuy: ((productId: string) => void) | null = null
   /** 点"关闭"或遮罩：面板自己藏起来，不打扰编排层。 */
   onClose: (() => void) | null = null
+  /** 发货或支付状态待核实时的客服动作；由编排层复用设置页的同一条通道。 */
+  onSupport: (() => void) | null = null
   /** 全局弹窗可见性用于暂时让出引导层，不改变引导进度。 */
   onVisibilityChanged: ((visible: boolean) => void) | null = null
 
@@ -55,6 +57,7 @@ export class GiftPopupView extends Component {
   private countdown: Label | null = null
   private result: Label | null = null
   private buyButton: Node | null = null
+  private supportButton: Node | null = null
   private layoutDialog: (() => void) | null = null
   /**
    * 这一档要下单的**商品 id**（`pay_product.id`，服务端随弹窗下发）。
@@ -85,6 +88,7 @@ export class GiftPopupView extends Component {
       this.result.string = ''
     }
     this.setBuyEnabled(true)
+    if (this.supportButton !== null) this.supportButton.active = false
     this.updateCountdown(resp)
     this.node.active = true
     this.onVisibilityChanged?.(true)
@@ -111,6 +115,7 @@ export class GiftPopupView extends Component {
     }
     // 只有"已到账"和"失败/取消"才是终点；处理中也要把按钮收起来，避免重复下单
     this.setBuyEnabled(false)
+    if (this.supportButton !== null) this.supportButton.active = view.showSupport
     this.layoutDialog?.()
   }
 
@@ -214,6 +219,21 @@ export class GiftPopupView extends Component {
       }
     }, this)
 
+    // 与购买键共用左侧操作位：购买结果落地后 buy 收起，客服键只在 showSupport=true 时出现。
+    // 点击只抛意图，正式客服参数和无配置时的说明仍走设置页同一条生产通道。
+    this.supportButton = new Node('support')
+    this.supportButton.addComponent(UITransform).setContentSize(200, 36)
+    this.supportButton.setPosition(new Vec3(-28, contentTop - 122, 0))
+    if (!applySlicedSprite(this.supportButton, 'ui.button.iron', 200, 36)) {
+      const supportBg = this.supportButton.addComponent(Graphics)
+      supportBg.fillColor = COLOR_BUTTON
+      supportBg.fillRect(-100, -18, 200, 36)
+    }
+    this.label(this.supportButton, '联系客服', 0, 0, 20, COLOR_TEXT)
+    panel.addChild(this.supportButton)
+    this.supportButton.active = false
+    this.supportButton.on('touch-start', () => this.onSupport?.(), this)
+
     const close = new Node('close')
     close.addComponent(UITransform).setContentSize(36, 36)
     // 初始关闭盒在净区内，装配流排后与购买键一起固定到下沿，不占正文或铜角帽。
@@ -238,7 +258,7 @@ export class GiftPopupView extends Component {
     // 标题和结果按当前真实内宽换行，短屏逐段滚动；购买与关闭仍固定在下沿。
     this.layoutDialog = fitExistingDialog(root, plate,
       [this.title.node, this.subtitle.node, this.countdown.node, this.result.node],
-      [this.buyButton, close], 'ui.panel.gilt', PANEL_WIDTH, PANEL_HEIGHT, { flow: true })
+      [this.buyButton, this.supportButton, close], 'ui.panel.gilt', PANEL_WIDTH, PANEL_HEIGHT, { flow: true })
 
     this.node.active = false
   }

@@ -60,6 +60,10 @@ test('未配置客服时入口照样在，点下去说明未配置（不是死�
       `${row.key} 在未配置时也该有反应：点了什么都不发生会被当成 bug`)
     assert.ok(row.action.kind === 'message' && row.action.text.includes('未配置'),
       `${row.key} 的说明要说清是「没配置」而不是「坏了」：` + JSON.stringify(row.action))
+    if (row.action.kind === 'message') {
+      assert.doesNotMatch(row.action.text, /WECHAT_SUPPORT|_[A-Z]+/,
+        '部署变量名属于开发配置，不应出现在玩家可见提示里')
+    }
   }
   assert.equal(view.rows.find(r => r.key === 'support')?.subtitle, '本环境未配置客服')
 })

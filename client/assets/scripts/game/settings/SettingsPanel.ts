@@ -135,7 +135,7 @@ function privacyAction(privacy: PrivacyPlan): SettingsAction {
 
 function supportAction(support: SupportEntry | null): SettingsAction {
   if (support === null) {
-    return { kind: 'message', text: '本环境未配置客服，请通过官方渠道联系我们（配置 WECHAT_SUPPORT_* 后可用）' }
+    return { kind: 'message', text: '本环境未配置客服，请通过官方渠道联系我们' }
   }
   return { kind: 'open-customer-service', corpId: support.corpId, url: support.url }
 }

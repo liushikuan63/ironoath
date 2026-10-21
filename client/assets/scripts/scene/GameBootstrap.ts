@@ -57,6 +57,7 @@ import { NationPanelView } from './NationPanelView'
 import { CreditsOverlay } from './CreditsOverlay'
 import { LineupEditOverlay } from './LineupEditOverlay'
 import { SocialCreateOverlay } from './SocialCreateOverlay'
+import { buildSettingsView } from '../game/settings/SettingsPanel'
 import type { SettingsAction } from '../game/settings/SettingsPanel'
 import { planPrivacyPrompt } from '../game/privacy/PrivacyConsent'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
@@ -1455,6 +1456,12 @@ export class GameBootstrap extends Component {
       out.payResult = view => giftPopup.renderResult(view)
       giftPopup.onBuy = productId => { void this.root?.buyGift(productId) }
       giftPopup.onClose = () => giftPopup.hide()
+      giftPopup.onSupport = () => {
+        giftPopup.hide()
+        const support = buildSettingsView(this.appVersion, CLIENT_VERSION,
+          this.privacyPlan, isMuted()).rows.find(row => row.key === 'support')
+        if (support !== undefined) this.handleSettingsAction(support.action)
+      }
     }
     if (tech !== null) {
       // 打开由编排层发起（`AppRoot.openTech`，入口在内城「学院」）；这里只把"画"接上

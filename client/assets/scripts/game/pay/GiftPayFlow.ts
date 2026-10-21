@@ -38,7 +38,7 @@ export interface PayView {
   readonly detail: string | null
   /** 服务端确认发放的奖励（只有 `delivered` 时非空）——原样来自订单查询，客户端不加工。 */
   readonly rewards: OrderStatusResp['rewards']
-  /** 处于"发货处理中"时给客服入口留的位（面板据此显示入口）。 */
+  /** 支付结果待确认或发货处理中时显示礼包内的客服入口。 */
   readonly showSupport: boolean
   /**
    * 服务端随**下单回执**给的未成年付费额度提示，原样搬运（客户端不算额度、不改写、不翻译）。
@@ -109,7 +109,7 @@ export class GiftPayFlow {
       // 小游戏专用渠道的 fail 回调是否能证明未扣款尚未验收；当前不据此宣称资金终态。
       // 也不把未知订单状态说成「款项已收到」，玩家先避免重复付款并保留客服路径。
       return failed('支付结果未确认',
-        '请勿立即重复付款；若已扣款或奖励未到账，请通过设置页联系客服', minorNotice)
+        '请勿立即重复付款；若已扣款或奖励未到账，请联系客服', minorNotice, true)
     }
     if (paid === 'cancelled') {
       return {
@@ -164,15 +164,16 @@ export class GiftPayFlow {
   }
 }
 
-function failed(title: string, detail: string | null, minorNotice: string | null): PayView {
-  return { phase: 'failed', title, detail, rewards: [], showSupport: false, minorNotice }
+function failed(title: string, detail: string | null, minorNotice: string | null,
+                showSupport = false): PayView {
+  return { phase: 'failed', title, detail, rewards: [], showSupport, minorNotice }
 }
 
 function processingPaid(minorNotice: string | null): PayView {
   return {
     phase: 'processing',
     title: '发货处理中',
-    detail: '款项已收到，奖励正在发放；稍后在邮件里查收，也可通过设置页的客服入口咨询',
+    detail: '款项已收到，奖励正在发放；稍后在邮件里查收，也可联系客服',
     rewards: [],
     showSupport: true,
     minorNotice,
@@ -183,7 +184,7 @@ function processingUnconfirmed(minorNotice: string | null): PayView {
   return {
     phase: 'processing',
     title: '支付状态待确认',
-    detail: '暂未确认支付结果，请勿立即重复付款；若已扣款或奖励未到账，请通过设置页联系客服',
+    detail: '暂未确认支付结果，请勿立即重复付款；若已扣款或奖励未到账，请联系客服',
     rewards: [],
     showSupport: true,
     minorNotice,
