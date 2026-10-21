@@ -485,6 +485,13 @@ export function durationText(seconds: number): string {
   return hours > 0 ? `${hours} 小时 ${minutes} 分` : `${minutes} 分`
 }
 
+/** 宣战成功提示只格式化服务端时长；遇旧后端缺字段时不猜旧配置值。 */
+export function warDeclarationNotice(name: string, durationSec: number | null | undefined): string {
+  const duration = typeof durationSec === 'number' && Number.isSafeInteger(durationSec) && durationSec >= 60
+    ? `王城战时长 ${durationText(durationSec)}` : '王城战时长暂未确认'
+  return `已对 ${name} 宣战：${duration}，结算后按个人贡献记赛季分`
+}
+
 /** 关系变更之后给玩家看的那一句。**刻意不说"条约已生效"**：C21 裁决下要双方都记着才成立。 */export function diplomacyNotice(targetName: string, relation: string): string {
   return `已把与 ${targetName} 的关系记为「${diplomacyLabel(relation)}」`
     + '（盟约与附庸要对方也记着同一句才双向生效）'

@@ -112,6 +112,7 @@ public class WarAppService {
     public WarStatusResp warStatus(String playerId) {
         long now = timeService.serverNow();
         WarScoreBoard.Rules rules = assembler.rules();
+        long durationSec = rules.durationMillis() / 1_000L;
         // 读这一句顺带把时间推进一格：到点的那一场在这里结算并落盘（服务端禁常驻定时器）。
         // 用 settleIfExpired 而不是 findLatest —— 后者只看不动，一场打满 90 分钟的仗会永远停在 SIEGE，
         // 而"什么时候算打完"这个问题没有别的执行者。
@@ -121,7 +122,8 @@ public class WarAppService {
             // （那三项没有真值可给，填 0 会被读成"1970 年开过一场仗"）。
             // canMarch 在这里是 true —— 疲劳闸门只在国战里生效，没有仗就没有那道闸；
             // "有没有仗"由 hasWar 单独说，一个事实只用一种表示。
-            return new WarStatusResp(false, null, null, 0L, rules.gateCount(),
+            return new WarStatusResp(false, null, null, 0L, durationSec,
+                    rules.gateCount(),
                     null, null, List.of(), 0L, rules.serverGoalKills(), false,
                     0L, rules.fatigueMax(), true, now,
                     // 没有仗就没有可领的：我的领取位恒 false（不填 0 冒充，宁可说清"没有"）
@@ -151,7 +153,7 @@ public class WarAppService {
         }
         String capitalHolder = board.capitalHolder();
         return new WarStatusResp(true, toContractPhase(board.phase()), board.startedAt(),
-                board.remainingSeconds(now), rules.gateCount(),
+                board.remainingSeconds(now), durationSec, rules.gateCount(),
                 capitalHolder, nationNameOrNull(capitalHolder), List.copyOf(rows),
                 board.totalKills(), rules.serverGoalKills(), board.serverGoalReached(),
                 board.fatigueOf(playerId), rules.fatigueMax(), board.canMarch(playerId), now,

@@ -27,7 +27,7 @@ import type { NationPanelInput, NationPanelView, SpendDraft } from '../assets/sc
 import {
   APPOINTABLE_OFFICES, DIPLOMACY_OPTIONS, buildAppointRows, buildDiplomacyRows, buildNationSections,
   buildNationTechSection, buildWarSection, capitalTextOf, diplomacyLabel, diplomacyNotice,
-  durationText, nationTechBlockText, warPhaseLabel,
+  durationText, nationTechBlockText, warDeclarationNotice, warPhaseLabel,
 } from '../assets/scripts/game/nation/NationSections'
 import { codesOf, EMPTY_PERMISSIONS, gate, roleText, withPermissionScope, withoutNationPermissions } from '../assets/scripts/game/social/PermissionGates'
 import type { NationRelationView, WarNationScoreView, WarStatusResp }
@@ -615,12 +615,21 @@ function warScore(nationId = 'nation_a', nationName: string | null = '北伐营'
 
 function warResp(overrides: Partial<WarStatusResp> = {}): WarStatusResp {
   return {
-    hasWar: true, phase: 'SIEGE', startedAt: NOW, remainingSec: 600,
+    hasWar: true, phase: 'SIEGE', startedAt: NOW, remainingSec: 600, durationSec: 5_400,
     gateCount: 4, capitalHolder: null, capitalHolderName: null,
     scores: [warScore()], totalKills: 0, serverGoalKills: 500, serverGoalReached: false,
     myFatigue: 0, fatigueMax: 100, canMarch: true, serverNow: NOW, myGoalClaimed: false, ...overrides,
   }
 }
+
+test('宣战成功提示用服务端时长；旧后端缺字段时给诚实回退，不显示旧 3 小时或 NaN', () => {
+  assert.equal(warDeclarationNotice('赤原', 5_400),
+    '已对 赤原 宣战：王城战时长 1 小时 30 分，结算后按个人贡献记赛季分')
+  const fallback = warDeclarationNotice('赤原', undefined)
+  assert.match(fallback, /王城战时长暂未确认/)
+  assert.equal(/3 小时|NaN/.test(fallback), false)
+  assert.equal(/NaN/.test(warDeclarationNotice('赤原', Number.NaN)), false)
+})
 
 test('国战那一页：没拉到 / 没有仗 / 有仗 三态各自说清，不许混成一句「暂无国战」', () => {
   // ① 没拉到：这一句必须说"没读到"，否则断网会被读成"国战系统是关着的"

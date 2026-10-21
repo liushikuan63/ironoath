@@ -100,6 +100,7 @@ import { buildNationPanel, amountText, cooldownText } from '../nation/NationPane
 import type { NationCandidate, NationPanelView, NationTabKey, SpendDraft } from '../nation/NationPanel'
 import {
   APPOINTABLE_OFFICES, DIPLOMACY_OPTIONS, buildNationSections, diplomacyNotice,
+  warDeclarationNotice,
 } from '../nation/NationSections'
 import type {
   DiplomacyRelation, NationLeaveResp, NationOffice, NationRelationView, NationResp, NationTreasuryResp,
@@ -4161,7 +4162,7 @@ export class AppRoot {
     // 只记"做成了"的那一枪（与 `setNationRelation` 同口径）：被冷却/权限挡住的不进这一格，
     // 它们的读数在服务端错误码里，混进来会把"想宣战"和"宣战成功"揉成一个数
     this.track(TRACK_EVENTS.warDeclare)
-    this.nationNotice = `已对 ${name} 宣战：这一场打 3 小时，打完按人发赛季分`
+    this.nationNotice = warDeclarationNotice(name, outcome.data.durationSec)
     this.nationNoticeTone = 'ok'
     this.deliverNation()
   }

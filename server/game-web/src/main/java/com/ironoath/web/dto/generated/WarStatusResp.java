@@ -18,6 +18,7 @@ public record WarStatusResp(
         WarPhase phase,   // 处在哪一段。`hasWar=false` 时为 null。
         Long startedAt,   // 这一场开战的时刻（服务端时间，不是客户端时钟）。`hasWar=false` 时为 null。
         long remainingSec,   // 王城战剩余秒数。**非 SIEGE 阶段恒为 0，绝不为负**（内核 `remainingSeconds` 已 clamp）—— 负数会让界面显示「-37 秒」，而玩家会以为战斗还在跑。
+        long durationSec,   // 当前王城战规则时长（秒），由服务端把 `global.WAR_DURATION_MINUTES` 换算后下发。无战事和 PREPARATION 也必须给，供宣战确认文案使用；与只在 SIEGE 倒数的 `remainingSec` 分开。客户端不得抄旧的 3 小时，也不得用本机时间反推。
         int gateCount,   // 王城周边的关卡**总数**（`global.WAR_GATE_COUNT`）。上下界必须下发，否则客户端只能自己抄一份「4」，那是「客户端不抄配置表」红线；面板要写的「已占 2 / 共 4 座」两个数一个来自行、一个来自这里。
         String capitalHolder,   // 当前占着王城的国家 id；无人占领时为 null。**不得直接上屏**（同 `WarNationScoreView.nationId` 那条）。
         String capitalHolderName,   // 占领者的国名，服务端下发；无人占领或该国已解散时为 null（客户端给回退语，不许回落到裸 id）。

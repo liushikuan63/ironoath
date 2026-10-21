@@ -131,6 +131,9 @@ class WarEndpointTest {
         assertThat(data.get("capitalHolderName").isNull()).isTrue();
         assertThat(data.get("scores")).isEmpty();
         assertThat(data.get("remainingSec").asLong()).isZero();
+        assertThat(data.path("durationSec").asLong(-1L))
+                .as("即使没有战事也下发配置时长；客户端不能把旧 3 小时抄在宣战文案里")
+                .isEqualTo(5_400L);
         assertThat(data.get("totalKills").asLong()).isZero();
         // 上下界与目标值仍然要下发：客户端不抄配置表，面板要写「0 / 50000」「疲劳 0 / 100」
         assertThat(data.get("gateCount").asInt()).isEqualTo(4);
@@ -438,6 +441,9 @@ class WarEndpointTest {
         assertThat(data.get("remainingSec").asLong())
                 .as("剩余时间只在 SIEGE 阶段倒数；这里必须是 0 而不是把 90 分钟直接印出来")
                 .isZero();
+        assertThat(data.path("durationSec").asLong(-1L))
+                .as("宣战回执在 PREPARATION，但仍须给配置的王城战时长")
+                .isEqualTo(5_400L);
         assertThat(data.get("scores")).hasSize(2);
         assertThat(rowOf(data.get("scores"), a.nationId).get("nationName").asText())
                 .as("参战方那一行给的是服务端下发的国名（客户端不抄表）").isEqualTo("铁誓");

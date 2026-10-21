@@ -679,6 +679,16 @@ if (process.env.NATION_LIVE_UI === '1') {
         /王城战进行中|筹备期/.test(afterShown) && afterShown.includes('全服击杀')
           && !afterShown.includes('现在没有正在打的国战'))
       checkThat('（回读屏）开战成了一句给玩家的话', afterShown.includes('已对'))
+      const durationSec = afterWar.data?.durationSec
+      const durationLabel = Number.isSafeInteger(durationSec) && durationSec >= 60
+        ? (durationSec >= 3600
+          ? `${Math.floor(durationSec / 3600)} 小时 ${Math.floor((durationSec % 3600) / 60)} 分`
+          : `${Math.floor(durationSec / 60)} 分`)
+        : null
+      checkThat('（回读屏）服务端在筹备期仍下发规则时长', durationLabel !== null)
+      checkThat('（回读屏）宣战提示逐字消费服务端时长，不抄旧值',
+        durationLabel !== null && afterShown.includes(`王城战时长 ${durationLabel}`))
+      checkThat('（回读屏）屏上不再说旧的 3 小时', !afterShown.includes('这一场打 3 小时'))
       checkThat('（回读屏）开战后屏上仍无内部 id', !/nation_[a-z0-9]/.test(afterShown))
       await page.screenshot({ path: path.join(OUT, 'live-war-declared.png') })
       console.log(`  截图：${path.join(OUT, 'live-war-declared.png')}`)

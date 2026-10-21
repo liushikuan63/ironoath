@@ -616,6 +616,8 @@ export interface WarStatusResp {
   startedAt: number | null
   /** 王城战剩余秒数。**非 SIEGE 阶段恒为 0，绝不为负**（内核 `remainingSeconds` 已 clamp）—— 负数会让界面显示「-37 秒」，而玩家会以为战斗还在跑。 */
   remainingSec: number
+  /** 当前王城战规则时长（秒），由服务端把 `global.WAR_DURATION_MINUTES` 换算后下发。无战事和 PREPARATION 也必须给，供宣战确认文案使用；与只在 SIEGE 倒数的 `remainingSec` 分开。客户端不得抄旧的 3 小时，也不得用本机时间反推。 */
+  durationSec: number
   /** 王城周边的关卡**总数**（`global.WAR_GATE_COUNT`）。上下界必须下发，否则客户端只能自己抄一份「4」，那是「客户端不抄配置表」红线；面板要写的「已占 2 / 共 4 座」两个数一个来自行、一个来自这里。 */
   gateCount: number
   /** 当前占着王城的国家 id；无人占领时为 null。**不得直接上屏**（同 `WarNationScoreView.nationId` 那条）。 */
