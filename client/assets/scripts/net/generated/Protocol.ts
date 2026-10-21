@@ -164,12 +164,13 @@ export interface TimeSyncResp {
  */
 export interface ApiResult {
   code: number
+  /** 玩家可见的业务提示。15013 未成年人游玩时段拒绝会在这里带服务端计算的下次可玩时刻；客户端不得从 detail 或本地时钟重算。 */
   msg: string
   /** 业务负载，类型随接口而定 */
   data: unknown
   traceId: string
   serverNow: number
-  /** 错误详情，成功时为 null */
+  /** 排查用详情，生产环境会剥离为 null；玩家必须看到的内容放在 msg。 */
   detail: string | null
 }
 

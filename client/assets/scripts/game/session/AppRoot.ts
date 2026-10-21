@@ -483,6 +483,8 @@ export interface PanelTargets {
   reddot?(tree: ClientReddotTree): void
   /** 失败或不能做的说明。`panel` 是分流用的面板名，不是错误码。 */
   error?(panel: string, message: string): void
+  /** 15013 登录拒绝的玩家可见提示；不把只供开发者看的 error 通道当作屏幕。 */
+  loginBlocked?(message: string): void
   /** 家坐标（登录、进世界、迁城之后）。场景用它接「回城」按钮。 */
   home?(x: number, y: number): void
   /** 加速道具目标选择器。回调由场景层在选择后触发一次。 */
@@ -873,6 +875,10 @@ export class AppRoot {
     this.refillLoginPending = false
     if (outcome.kind !== 'ok') {
       this.say('session', outcome)
+      if (outcome.kind === 'biz' && outcome.code === 15013) {
+        // msg 带服务端给的下次可玩时刻；生产环境的 detail 会被剥离。
+        this.targets.loginBlocked?.(outcome.msg)
+      }
       return false
     }
     this.track(TRACK_EVENTS.login, {

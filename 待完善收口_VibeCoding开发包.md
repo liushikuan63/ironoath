@@ -504,6 +504,10 @@ grep -rn "mayEnterRankTop" server --include=*.java | grep -v "/test/"           
   ⇒ 整条 B19 支付链在玩家侧不可达，已修（见 §四 16:4x 那一格）。
 - **仍未做**：时长提示同族第二处（`MINOR_CURFEW(15013)` 的"下次可玩时刻"）客户端仍未消费；
   真机/微信开发者工具那一跑没做（web-mobile + Chromium 覆盖绘制路径，与本仓各格同口径）。
+
+> **2026-10-21 续补**：上一行是 V19 首次交付时的遗留状态；15013 的公开 `msg`、
+> 登录失败提示页及失败后停止战报预拉已补，现轮证据见 §四「V19 时长拒绝提示 #2293」。
+> 生产实名年龄来源与真机仍未验，Chromium 的路由桩不代替它们。
 ```
 
 ### V20 · 飘字队列接进生产提示出口（A2）
@@ -7956,3 +7960,5 @@ TEST_EXIT=0
 | 验收 10 全服目标领取翻 ✅ #2290 | 本格原子本地提交，未推送 | 现跑 `WarEndpointTest` **24 跑 / 0 失败 / 0 错误 / 0 跳过**（含 `serverGoalPaysOncePerWarAndFlipsMyClaimFlag`：未达成 13024 / 达成后金币真到账 / 再领 13025 / `myGoalClaimed` 只翻我自己）；生产接线现查：端点 `POST /nation/war/goal/claim`（`NationController.java:297-303`）· `WarAppService.claimServerGoal` · `WarStore.claimServerGoal`（临界区，内存 / Mongo 双实现）· `WarBeansConfig` 装配 · 契约 `nation.schema.json:1018/1032` · 客户端 `GameApi.claimWarGoal` + `NationPanelView.ts:591` + 埋点 | surefire `TEST-com.ironoath.web.WarEndpointTest.xml`（tests=24 failures=0 errors=0 skipped=0 time=15.693）；`verify-nation-live.mjs:727-742` 覆盖未达成那一半 | **只更正状态与记录口径边界，零生产代码改动**。边界：领取路径有 `requireNationOf` ⇒ 无国籍玩家领不到；B13:88 有两种读法，按读法②做要另立一格（已记进收口清单待裁决）。nation 三份探针本轮未纳入清单 |
 | 国战占领分侧的形状核实（规格缺口格） #2291 | 本格原子本地提交，未推送 | 逐层现查：内核只有 `Score(occupyScore, killScore, buildingScore)` 数据形状与 `Rules.gateCount` / `occupyScorePerMinute`，**没有记录占领分/建筑分的方法**；地图 `EntityType` 只有 `EMPTY/CITY/MONSTER/RESOURCE/BUILDING`（**无「关卡」也无「王城」**）；`beginSiege` 调用点全在测试里、生产零调用 | `WarScoreBoard.java:58/90/196`（Rules/Score/beginSiege）；`WorldGenerator.java:127-132`（EntityType 五个值）；`B13_国家与国战.md:78-83`（三行散文规格）；`WarStatusResp.java:12`（胜者不发奖，待裁决） | **只把形状与卡点钉进台账，零生产代码改动**。结论：这一格先要一格规格（关卡是什么实体 / 占领怎么发生 / 时长分与建筑分口径 / 王城是不是都城 / 胜者发什么），再拆内核记分、地图实体、生产触发三格。验收矩阵该行**维持 ⬜** |
 | 发布构建 AppID 闸门（#2287 ④ 实现） #2292 | 本格原子本地提交，未推送 | `bash scripts/build-wechatgame.sh --self-test` ⇒ **EXIT=0**（正控：显式提供 AppID ⇒ 放行 ✓；负控：缺 AppID ⇒ 退 1 且理由点名 ✓）；`WECHAT_RELEASE_BUILD=true bash scripts/build-wechatgame.sh` ⇒ **退 1** 并三行说明；**不设开关**时 `--preflight-only` 退 0 且 AppID 仍是默认值 `wx6293e0f5dc71d6cc` ⇒ 模式隔离成立 | tmp/dev-build-after-gate.log（开发构建实跑，开发路径未改坏的证据）；`scripts/build-wechatgame.sh`（新增 `WECHAT_GAME_APPID_EXPLICIT` / `WECHAT_RELEASE_BUILD` / `--preflight-only` / `--self-test`） | **发布构建本身没跑过**（要真实小游戏号 + 提审环境，本机给不了）；本条只证明闸门会拦、开发路径没被改坏。`urlCheck` 边界按决策维持原状，本条**没动** |
+
+| V19 时长拒绝提示 #2293 | 本格隔离分支本地提交，未推送 | `check.sh` EXIT=0：51 门、客户端 1384/1384、辅助 33/33；`test.sh` EXIT=0：服务端 3001 跑 0 失败 0 错误 0 跳过、客户端 1384/1384；`npm run gen` EXIT=0；Cocos web-mobile 构建脚本 EXIT=0（missing or invalid=0）；浏览器桩探针 3 相 EXIT=0（含受支持的 932px 横屏），15013 原句上屏且背景点击零业务请求，普通失败不误弹，页面异常 0 | `tmp/minor-curfew/curfew.png`、`curfew-landscape.png`、`ordinary.png` 已目视；`tmp/minor-curfew/check.actual.log`、`test.actual.log`、`build-webmobile.log` 与 `server/game-web/target/surefire-reports/com.ironoath.web.web.MinorCurfewResponseTest.txt`；首红原因见收口清单 #2293 | 实名年龄生产来源仍 UNKNOWN；真后端以确认未成年身份回 15013、微信开发者工具与实体手机未验；Chromium 路由桩不等同真渠道；未跑性能或推送 |

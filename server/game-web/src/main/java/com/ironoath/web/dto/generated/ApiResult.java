@@ -7,10 +7,10 @@ package com.ironoath.web.dto.generated;
  */
 public record ApiResult(
         int code,
-        String msg,
+        String msg,   // 玩家可见的业务提示。15013 未成年人游玩时段拒绝会在这里带服务端计算的下次可玩时刻；客户端不得从 detail 或本地时钟重算。
         Object data,   // 业务负载，类型随接口而定
         String traceId,
         long serverNow,
-        String detail)   // 错误详情，成功时为 null
+        String detail)   // 排查用详情，生产环境会剥离为 null；玩家必须看到的内容放在 msg。
 {
 }

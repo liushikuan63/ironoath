@@ -961,6 +961,7 @@ interface Harness {
   readonly sockets: RecordingSocket[]
   readonly store: Store
   readonly errors: Array<[string, string]>
+  readonly blockedLoginMessages: readonly string[]
   readonly attached: string[]
   readonly events: Array<{ name: string, params: Record<string, string> }>
   /** 最近一次弹出的军队「队列」菜单选项（B26 S15） */
@@ -1057,6 +1058,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
   }
   const api = new GameApi(apiDeps)
   const errors: Array<[string, string]> = []
+  const blockedLoginMessages: string[] = []
   const attached: string[] = []
   let socialMembers: string[] = []
   let socialHelps: string[] = []
@@ -1115,7 +1117,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
   let lastTechSpeedUp: { reduced: number, remaining: number, finished: boolean } | null = null
   let lineupPick: ((choice: LineupChoice) => void) | null = null
 
-  const targets: PanelTargets = {
+  const targets: PanelTargets & { loginBlocked: (message: string) => void } = {
     ...(options.resourceTeaching ? { cityHarvestLearning: (value: import('../assets/scripts/net/generated/CityProtocol').CityHarvestLearningResp) => attached.push('cityTeaching:' + JSON.stringify(value)) } : {}),
     city: () => attached.push('city'),
     cityCollect: () => attached.push('cityCollect'),
@@ -1301,6 +1303,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
       lastShareOutcome = [text, warning]
     },
     error: (panel, message) => errors.push([panel, message]),
+    loginBlocked: message => blockedLoginMessages.push(message),
   }
   const events: Array<{ name: string, params: Record<string, string> }> = []
   const root = new AppRoot({
@@ -1308,6 +1311,7 @@ function harness(options: { transportFails?: boolean, armySpeedupPicker?: boolea
     tracker: { track: (name, params) => events.push({ name, params: params ?? {} }) },
   })
   return {
+    blockedLoginMessages,
     get lastSocialMembers() {
       return socialMembers
     },
@@ -1588,6 +1592,18 @@ test('登录失败就停手：一个面板请求都不发（否则一进游戏�
     '登录之外一条都不发')
   assert.equal(h.attached.length, 0)
   assert.deepEqual(h.errors[0], ['session', '设备标识非法'])
+  assert.deepEqual(h.blockedLoginMessages, [], '普通登录错误不占用未成年时段提示页')
+})
+
+test('15013 登录被拒：下次可玩时刻原样送往屏上，且不拉首屏', async () => {
+  const h = harness()
+  const next = '当前不在未成年可游玩时段，下次可玩：2026-10-21 20:00'
+  h.http.bizFailNext = { code: 15013, msg: next, detail: null }
+
+  assert.equal(await h.root.start('minor-device', '君'), false)
+  assert.deepEqual(h.blockedLoginMessages, [next])
+  assert.deepEqual(h.http.calls.map(c => c.path), ['/player/init'])
+  assert.equal(h.attached.length, 0)
 })
 
 test('升级成功：请求带 configId 与幂等键，之后城建列表被重新拉一次', async () => {

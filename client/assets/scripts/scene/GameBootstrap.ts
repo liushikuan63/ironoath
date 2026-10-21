@@ -791,10 +791,12 @@ export class GameBootstrap extends Component {
       privacyAsked: String(this.privacyPlan.request),
       bootMs: String(bootElapsedMs()),
     })
-    // 战报列表刻意不挤进首屏那一批：那边已经跑在 2.8 秒 / 3.0 秒的预算上，
-    // 而「可交互」的判据里没有战报 —— 晚零点几秒到，玩家真点到那一格时通常已经拉完了。
-    // 这一句就是它在小游戏里的唯一拉取路径（PanelNav.onShow 只管邮件那一格）。
-    void this.root?.refresh('reports')
+    // 战报列表刻意不挤进首屏那一批：那边已经跑在 2.8 秒 / 3.0 秒的预算上。
+    // 登录失败时没有会话身份，尤其 15013 已停在提示页，不能继续发战报请求。
+    // 这一句是小游戏里的唯一预拉路径（PanelNav.onShow 只管邮件）。
+    if (started) {
+      void this.root?.refresh('reports')
+    }
     // 登录后把**当前那一格**再通知一次。PanelNav 的初始 show 跑在它自己的 onLoad 里，
     // 那时上面那句 onShow 还没赋值、会话也还没建出来 —— 于是深链 ?panel=mail 进来的人
     // 看到的邮箱永远只有一副骨架（症状由 tools/verify-devtools-panels.mjs 抓到）。
@@ -995,6 +997,57 @@ export class GameBootstrap extends Component {
     bodyLabel.string = `${gate.notice ?? ''}\n\n当前版本 ${CLIENT_VERSION} ｜ 最新版本 ${gate.latest}`
     bodyLabel.fontSize = 16
     bodyLabel.lineHeight = 24
+    bodyLabel.color = new Color(220, 214, 200, 255)
+    bodyLabel.overflow = Label.Overflow.RESIZE_HEIGHT
+    bodyLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+  }
+
+  /**
+   * 登录被 15013 拦下时停在可读的提示页。服务端把“下次可玩”写进公开 msg，
+   * 这里原样画出来；不能从已剥离的 detail 或客户端时钟推算另一个时刻。
+   */
+  private showMinorCurfewNotice(message: string): void {
+    const canvas = this.node.parent ?? this.node
+    // Game 节点承载场景 Camera。停用它会让引擎不再绘制新的一帧，屏幕反而留着
+    // 登录前那张旧画面；整屏不透明遮罩盖住它，并由最上层节点吞掉触摸。
+    const visible = view.getVisibleSize()
+    const size = new Size(visible.width, visible.height)
+    const layer = new Node('MinorCurfewNotice')
+    canvas.addChild(layer)
+    layer.layer = canvas.layer
+    layer.addComponent(UITransform).setContentSize(size)
+    layer.on('touch-start', () => {}, this)
+
+    const bg = new Node('Bg')
+    layer.addChild(bg)
+    bg.layer = layer.layer
+    bg.addComponent(UITransform).setContentSize(size)
+    bg.on('touch-start', () => {}, this)
+    const graphics = bg.addComponent(Graphics)
+    graphics.fillColor = new Color(18, 16, 14, 255)
+    graphics.rect(-size.width / 2, -size.height / 2, size.width, size.height)
+    graphics.fill()
+
+    const title = new Node('Title')
+    layer.addChild(title)
+    title.layer = layer.layer
+    title.setPosition(0, size.height * 0.18, 0)
+    title.addComponent(UITransform).setContentSize(new Size(size.width - 80, 42))
+    const titleLabel = applySystemUiFont(title.addComponent(Label))
+    titleLabel.string = '游玩时段提示'
+    titleLabel.fontSize = 26
+    titleLabel.lineHeight = 34
+    titleLabel.color = new Color(224, 190, 120, 255)
+    titleLabel.horizontalAlign = Label.HorizontalAlign.CENTER
+
+    const body = new Node('Body')
+    layer.addChild(body)
+    body.layer = layer.layer
+    body.addComponent(UITransform).setContentSize(new Size(size.width - 100, 160))
+    const bodyLabel = applySystemUiFont(body.addComponent(Label))
+    bodyLabel.string = message
+    bodyLabel.fontSize = 18
+    bodyLabel.lineHeight = 30
     bodyLabel.color = new Color(220, 214, 200, 255)
     bodyLabel.overflow = Label.Overflow.RESIZE_HEIGHT
     bodyLabel.horizontalAlign = Label.HorizontalAlign.CENTER
@@ -1367,6 +1420,7 @@ export class GameBootstrap extends Component {
           city?.showBlocked(message)
         }
       },
+      loginBlocked: message => this.showMinorCurfewNotice(message),
     }
     if (giftPopup !== null) {
       giftPopup.onVisibilityChanged = visible => {
