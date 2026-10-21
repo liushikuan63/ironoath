@@ -51,9 +51,9 @@ test('未配置客服时入口照样在，点下去说明未配置（不是死�
   const view = buildSettingsView(resp({ support: null }), '1.0.0', noPrivacyApi)
 
   const keys = view.rows.map(r => r.key)
-  assert.deepEqual(keys, ['audio', 'support', 'refund', 'privacy', 'credits'],
-    '音效 + 客服、退款、隐私、署名五个入口都要一级可见（提审按 §二 5/8/9 查；'
-    + '署名那条是 CC BY 3.0 的授权条件，V14 新加）')
+  assert.deepEqual(keys, ['audio', 'notice', 'support', 'refund', 'privacy', 'credits'],
+    '音效 + 公告 + 客服、退款、隐私、署名六个入口都要一级可见（提审按 §二 5/8/9 查；'
+    + '署名那条是 CC BY 3.0 的授权条件，V14 新加；公告那条是 V26-2b 加的）')
 
   for (const row of view.rows.filter(r => r.key === 'support' || r.key === 'refund')) {
     assert.equal(row.action.kind, 'message',
@@ -62,6 +62,25 @@ test('未配置客服时入口照样在，点下去说明未配置（不是死�
       `${row.key} 的说明要说清是「没配置」而不是「坏了」：` + JSON.stringify(row.action))
   }
   assert.equal(view.rows.find(r => r.key === 'support')?.subtitle, '本环境未配置客服')
+})
+
+test('公告入口（V26-2b）：一级可见、点下去是 open-notice，没取过时给一句说明（不编假摘要）', () => {
+  const notLoaded = buildSettingsView(resp(), '1.0.0', noPrivacyApi)
+  const row = notLoaded.rows.find(r => r.key === 'notice')
+  assert.ok(row !== undefined, '公告入口要一级可见')
+  assert.equal(row.action.kind, 'open-notice', '点公告那行要去取数据（安全刷新点）')
+  assert.ok(row.subtitle.includes('公告'),
+    '没取过时也要说清这一行是干什么的：' + row.subtitle)
+
+  // 取到之后，字幕换成**服务端算好的**摘要（客户端不自己数、不自己拼文案）
+  const loaded = buildSettingsView(resp(), '1.0.0', noPrivacyApi, false, {
+    rows: [{ id: 'n1', title: '丰收祭', body: '正文' }],
+    summary: '共 1 条 · 最新：丰收祭',
+    version: 'a1b2c3d4e5f60718',
+  })
+  const loadedRow = loaded.rows.find(r => r.key === 'notice')
+  assert.equal(loadedRow?.subtitle, '共 1 条 · 最新：丰收祭',
+    '取到之后那一行的字幕是服务端算好的摘要')
 })
 
 test('配置了客服 ⇒ 两个入口都走 open-customer-service，并原样带上 corpId 与 url', () => {
@@ -84,7 +103,7 @@ test('配置了客服 ⇒ 两个入口都走 open-customer-service，并原样�
 test('服务端版本没拿到时页面照常能用：入口还在，版本行只报当前版本', () => {
   const view = buildSettingsView(null, '1.0.0')
 
-  assert.equal(view.rows.length, 5, '拿不到版本响应不该让设置页空掉（五个入口照常）')
+  assert.equal(view.rows.length, 6, '拿不到版本响应不该让设置页空掉（六个入口照常）')
   assert.equal(view.versionText, '当前版本 1.0.0', '没有服务端版本就不显示「最新」，不编一个')
 })
 

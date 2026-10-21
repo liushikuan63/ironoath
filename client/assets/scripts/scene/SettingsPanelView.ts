@@ -14,6 +14,7 @@
 import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3 } from 'cc'
 import { buildSettingsView } from '../game/settings/SettingsPanel'
 import type { SettingsRow } from '../game/settings/SettingsPanel'
+import type { NoticeView } from '../game/notice/NoticePanel'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
 import type { AppVersionResp } from '../net/generated/OpsProtocol'
 import { applySystemUiFont, oneLineFloorHeight } from './UiFont'
@@ -31,10 +32,32 @@ const PANEL_WIDTH = 520
 const PANEL_HEIGHT = 420
 const ROW_HEIGHT = 72
 const PADDING = 20
+/** 一条公告正文占的高度（多行盒高）。 */
+const NOTICE_BODY_HEIGHT = 56
 
 @ccclass('SettingsPanelView')
 export class SettingsPanelView extends Component {
   private readonly rows: Node[] = []
+
+  /**
+   * 当前显示的是设置还是公告。
+   *
+   * <p>**为什么切模式而不是另开一个面板**：另开面板要动导航（17 项）+ 面板节点 +
+   * 可见性那一族探针；而公告是**设置页里的信息类条目**（与「联系客服 / 隐私政策」同类），
+   * 在同一页里切一份内容 ⇒ 不新增导航项、不新增面板节点、探针那一族不受影响。
+   */
+  private mode: 'settings' | 'notices' = 'settings'
+
+  /** 已取到的公告视图；null = 还没取过（「公告」那一行此时给一句说明，不给假摘要）。 */
+  private noticeView: NoticeView | null = null
+
+  /** 上一次 render 的参数 —— 切模式时要按同一组参数重画。 */
+  private lastRender: {
+    resp: AppVersionResp | null
+    clientVersion: string
+    privacy: PrivacyPlan
+    audioMuted: boolean
+  } | null = null
 
   /** 点「联系客服」或「申请退款」时触发；参数是那一行。 */
   onSupport: ((row: SettingsRow) => void) | null = null
@@ -42,9 +65,33 @@ export class SettingsPanelView extends Component {
   render(resp: AppVersionResp | null, clientVersion: string,
     privacy: PrivacyPlan = { request: false, contractName: null, apiAvailable: false },
     audioMuted = false): void {
+    this.lastRender = { resp, clientVersion, privacy, audioMuted }
+    this.redraw()
+  }
+
+  /**
+   * 公告数据到手时调用（AppRoot 接线）：存下视图、切到公告模式、重画。
+   *
+   * <p>**为什么这里才切模式**：点「公告」那一行时只发起了请求，数据还没到；
+   * 等数据到了再切 ⇒ 玩家不会看到「点了但什么都没变」的那种空面板。
+   */
+  attachNotices(view: NoticeView): void {
+    this.noticeView = view
+    this.mode = 'notices'
+    this.redraw()
+  }
+
+  /** 按当前模式重画。 */
+  private redraw(): void {
     this.clearRows()
-    const view = buildSettingsView(resp, clientVersion, privacy, audioMuted)
-    this.drawBackground()
+    if (this.mode === 'notices') {
+      this.drawNotices()
+      return
+    }
+    const last = this.lastRender
+    const view = buildSettingsView(last?.resp ?? null, last?.clientVersion ?? '',
+      last?.privacy, last?.audioMuted ?? false, this.noticeView)
+    this.drawBackground(PANEL_HEIGHT)
 
     let y = PANEL_HEIGHT / 2 - PADDING
     y = this.drawTitle('设置', y)
@@ -56,15 +103,84 @@ export class SettingsPanelView extends Component {
     this.drawVersion(view.versionText)
   }
 
-  private drawBackground(): void {
+  /**
+   * 公告模式的画面：标题 + 每条公告（标题单行 + 正文多行）+ 底部「返回设置」。
+   *
+   * <p>正文用**多行** Label（`enableWrapText`）：公告正文长度不固定，单行会被压成极小的字。
+   * 没有公告时画一句「暂无公告」—— 而不是画一块空白（空面板与「没加载」长得一样）。
+   */
+  private drawNotices(): void {
+    const view = this.noticeView
+    const rows = view?.rows ?? []
+    const bodyHeight = rows.length === 0 ? 0 : rows.length * NOTICE_BODY_HEIGHT
+    const height = Math.max(PANEL_HEIGHT, 140 + bodyHeight)
+    this.drawBackground(height)
+
+    let y = height / 2 - PADDING
+    y = this.drawTitle('公告', y)
+
+    if (rows.length === 0) {
+      const empty = this.createLabel('暂无公告', COLOR_TEXT_DIM, 15)
+      this.node.addChild(empty.node)
+      empty.node.setPosition(new Vec3(0, y - 30, 0))
+      empty.horizontalAlign = Label.HorizontalAlign.CENTER
+      this.rows.push(empty.node)
+      y -= 60
+    } else {
+      rows.forEach((row) => {
+        const title = this.createLabel(row.title, COLOR_TEXT, 18)
+        this.node.addChild(title.node)
+        title.node.setPosition(new Vec3(0, y - 20, 0))
+        title.horizontalAlign = Label.HorizontalAlign.CENTER
+        this.rows.push(title.node)
+        y -= 34
+
+        const body = this.createWrappedLabel(row.body, COLOR_TEXT_DIM, 13, NOTICE_BODY_HEIGHT)
+        this.node.addChild(body.node)
+        body.node.setPosition(new Vec3(0, y - NOTICE_BODY_HEIGHT / 2 + 4, 0))
+        body.horizontalAlign = Label.HorizontalAlign.LEFT
+        this.rows.push(body.node)
+        y -= NOTICE_BODY_HEIGHT
+      })
+    }
+
+    this.drawBackRow(y)
+  }
+
+  /** 底部「返回设置」：点它切回设置模式（公告区收起）。 */
+  private drawBackRow(y: number): void {
+    const node = new Node('row-notice-back')
+    this.node.addChild(node)
+    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, ROW_HEIGHT - 8)
+    const graphics = node.addComponent(Graphics)
+    graphics.fillColor = COLOR_ROW
+    graphics.roundRect(-(PANEL_WIDTH - PADDING * 2) / 2, -(ROW_HEIGHT - 8) / 2,
+      PANEL_WIDTH - PADDING * 2, ROW_HEIGHT - 8, 6)
+    graphics.fill()
+    node.setPosition(new Vec3(0, y - ROW_HEIGHT / 2, 0))
+
+    const label = this.createLabel('返回设置', COLOR_TEXT, 18)
+    node.addChild(label.node)
+    label.node.setPosition(new Vec3(0, 0, 0))
+    label.horizontalAlign = Label.HorizontalAlign.CENTER
+
+    node.on('touch-end', () => {
+      this.mode = 'settings'
+      this.redraw()
+    }, this)
+
+    this.rows.push(node)
+  }
+
+  private drawBackground(height: number): void {
     const background = new Node('background')
     this.node.addChild(background)
     const transform = background.addComponent(UITransform)
-    transform.setContentSize(PANEL_WIDTH, PANEL_HEIGHT)
+    transform.setContentSize(PANEL_WIDTH, height)
     transform.setAnchorPoint(0.5, 0.5)
     const graphics = background.addComponent(Graphics)
     graphics.fillColor = COLOR_BACKGROUND
-    graphics.rect(-PANEL_WIDTH / 2, -PANEL_HEIGHT / 2, PANEL_WIDTH, PANEL_HEIGHT)
+    graphics.rect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height)
     graphics.fill()
     this.rows.push(background)
   }
@@ -126,6 +242,25 @@ export class SettingsPanelView extends Component {
     label.node.setPosition(new Vec3(0, -PANEL_HEIGHT / 2 + PADDING + 6, 0))
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     this.rows.push(label.node)
+  }
+
+  /**
+   * 多行 Label（公告正文用）：`enableWrapText` 让长文本换行，`SHRINK` 在盒高内缩字号。
+   *
+   * <p>为什么不用 `createLabel`：它是**单行**盒子（`oneLineFloorHeight()`），长正文会被压成极小的字。
+   */
+  private createWrappedLabel(text: string, color: Color, size: number, boxHeight: number): Label {
+    const node = new Node('wrapped-label')
+    node.layer = this.node.layer
+    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, boxHeight)
+    const label = applySystemUiFont(node.addComponent(Label))
+    label.string = text
+    label.fontSize = size
+    label.color = color
+    label.verticalAlign = Label.VerticalAlign.TOP
+    label.overflow = Label.Overflow.SHRINK
+    label.enableWrapText = true
+    return label
   }
 
   private createLabel(text: string, color: Color, size: number): Label {

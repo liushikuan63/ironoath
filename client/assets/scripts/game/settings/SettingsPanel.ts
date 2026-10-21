@@ -12,10 +12,11 @@
 
 import type { AppVersionResp, SupportEntry } from '../../net/generated/OpsProtocol'
 import type { PrivacyPlan } from '../privacy/PrivacyConsent'
+import type { NoticeView } from '../notice/NoticePanel'
 
 /** 设置页的一行。 */
 export interface SettingsRow {
-  readonly key: 'audio' | 'support' | 'refund' | 'privacy' | 'credits'
+  readonly key: 'audio' | 'notice' | 'support' | 'refund' | 'privacy' | 'credits'
   readonly title: string
   readonly subtitle: string
   /** 点下去会发生什么；恒非空 —— 未配置时是一条说明，不是一个死按钮 */
@@ -25,6 +26,7 @@ export interface SettingsRow {
 /** 点击行为。三种都"有反应"，区别只是反应是什么。 */
 export type SettingsAction =
   | { readonly kind: 'toggle-audio' }
+  | { readonly kind: 'open-notice' }
   | { readonly kind: 'open-customer-service'; readonly corpId: string; readonly url: string }
   | { readonly kind: 'open-privacy-contract' }
   | { readonly kind: 'open-credits' }
@@ -42,12 +44,14 @@ export interface SettingsView {
  *
  * @param resp          `/ops/app/version` 的响应；null 表示这次没拿到（页面照常能用）
  * @param clientVersion 当前客户端版本
+ * @param notices       公告视图；null 表示**还没取过**（此时那一行给一句说明，不给假摘要）
  */
 export function buildSettingsView(
   resp: AppVersionResp | null,
   clientVersion: string,
   privacy: PrivacyPlan = { request: false, contractName: null, apiAvailable: false },
   audioMuted = false,
+  notices: NoticeView | null = null,
 ): SettingsView {
   const support = resp?.support ?? null
   const latest = resp?.latest ?? null
@@ -60,6 +64,18 @@ export function buildSettingsView(
         title: '音效',
         subtitle: audioMuted ? '当前：静音（点一下恢复声音）' : '当前：开（点一下静音）',
         action: { kind: 'toggle-audio' },
+      },
+      {
+        // 公告排在音效之后、客服之前：它是这一页里唯一**内容会变**的一行
+        // （运营改文案不用发版 ⇒ 玩家下次打开就能看到新内容）。
+        key: 'notice',
+        title: '公告',
+        // 字幕随数据走：没取过时是一句说明，取到后是服务端算好的摘要
+        // （「共 N 条 · 最新：…」由 `buildNoticeView` 产出，客户端不自己数、不自己拼文案）。
+        subtitle: notices === null
+          ? '查看运营公告（内容会随运营更新，不用等发版）'
+          : notices.summary,
+        action: { kind: 'open-notice' },
       },
       {
         key: 'support',

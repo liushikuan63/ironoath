@@ -110,6 +110,7 @@ import type {
   TechSpeedUpReq, TechSpeedUpResp,
 } from '../../net/generated/TechProtocol'
 import type { EquipForgeReq, EquipForgeResp, EquipInstanceListView } from '../../net/generated/EquipProtocol'
+import type { NoticeListResp } from '../../net/generated/NoticeProtocol'
 import type {
   NationAppointReq, NationDisbandReq, NationDisbandResp, NationDiplomacyReq, NationDiplomacyResp,
   NationFoundReq, NationJoinReq, NationLeaveReq, NationLeaveResp, NationPolicyProposeReq,
@@ -806,6 +807,20 @@ export class GameApi {
    */
   async giftPopup(): Promise<NetOutcome<GiftPopupResp>> {
     return this.read<GiftPopupResp>('/gift/popup')
+  }
+
+  /**
+   * 当前生效的运营公告（收口清单 #2287 ⑤ / V26-2b）。
+   *
+   * <p>**哪些公告在生效、它们的顺序，全部由服务端算**（客户端时钟可改，自己判窗口的症状是
+   * 「该显示时没显示 / 过期了还在显示」）。响应带 notice 表的版本号 ⇒ 客户端拿它判断
+   * 「要不要重绘」。
+   *
+   * <p>这是**按需拉取**的端点（打开公告时取一次），不是登录时拉一次 —— 那一刻
+   * 就是「安全刷新点」：改了公告不用发版，玩家下次打开就看到新内容。
+   */
+  async noticeList(): Promise<NetOutcome<NoticeListResp>> {
+    return this.read<NoticeListResp>('/notice/list')
   }
 
 

@@ -131,6 +131,8 @@ import type {
   ChatActionChoice, ChoiceOption, LineupChoice, ResearchSpeedupChoice, ShareChannelChoice, SpeedupChoice,
 } from './Choices'
 import type { GachaHistoryResp, GiftPopupResp } from '../../net/generated/PayProtocol'
+import type { NoticeView } from '../notice/NoticePanel'
+import { refreshNoticeView } from '../notice/NoticePanel'
 import type { PayView } from '../pay/GiftPayFlow'
 import { GiftPayFlow } from '../pay/GiftPayFlow'
 import { requestMidasPayment } from '../../net/MidasPayment'
@@ -318,6 +320,8 @@ export interface PanelTargets {
    * 客户端只负责画。
    */
   giftPopup?(resp: GiftPopupResp, serverNowMs: number): void
+  /** 公告视图到手时调用（版本变了才会调用 —— 见 {@link openNotice}）。 */
+  noticeList?(view: NoticeView): void
   /** 一次购买的结果（由 `GiftPayFlow` 判定；面板只显示）。 */
   payResult?(view: PayView): void
   power?(resp: PowerDetailResp): void
@@ -739,6 +743,14 @@ export class AppRoot {
   private gachaNotice: string | null = null
   /** 抽取记录那一屏：响应留一份（翻页要在本地切段），页码是"看的是哪一页"的唯一来源。 */
   private gachaHistoryResp: GachaHistoryResp | null = null
+  /**
+   * 已取到的公告**内容 hash**；null = 还没取过。
+   *
+   * <p>用内容 hash 而不是人工表版本：表版本在「内容变了却忘了升版本」时不动
+   * ⇒ 客户端以为没变而继续显示旧文案；hash 由内容算出 ⇒ 内容变它就变
+   * （而且它覆盖「服务端时刻跨过生效窗口」—— 那一刻表内容没变、返回的列表变了）。
+   */
+  private noticeVersion: string | null = null
   private gachaHistory: GachaHistoryView | null = null
   private gachaHistoryPage = 0
 
@@ -5311,6 +5323,33 @@ export class AppRoot {
   async afterForeground(): Promise<void> {
     await this.session.syncTime()
     await this.showGiftPopup()
+  }
+
+  /**
+   * 取一次运营公告（**安全刷新点**，收口清单 #2287 ⑤ / V26-2b）。
+   *
+   * <p><b>为什么是「点公告时取」而不是「登录时取」</b>：登录时取一次 ⇒ 玩家整个会话都看的是
+   * 旧公告，除非重登 ⇒ 「运营改完公告玩家看不到」这件事会一直存在。
+   *
+   * <p><b>为什么版本没变就不通知目标</b>：拉一次是真的，但没变就别让界面闪一下 ——
+   * 界面闪烁是最容易被当成 bug 报上来的观感（而且它没有任何信息量）。
+   *
+   * <p>拉不到就保持原样，**绝不因此报错打断玩家**（与礼包弹窗同一条纪律）。
+   */
+  async openNotice(): Promise<void> {
+    // **点了就发**：口径是「有多少人想去看公告」，不是「有多少人成功看到了」——
+    // 把拉取失败也算成想看，才看得出「公告位点了没反应」这类问题。
+    this.track(TRACK_EVENTS.noticeOpen)
+    const outcome = await this.api.noticeList()
+    if (outcome.kind !== 'ok') {
+      return
+    }
+    const result = refreshNoticeView(outcome.data, this.noticeVersion)
+    if (!result.changed) {
+      return
+    }
+    this.noticeVersion = result.view.version
+    this.targets.noticeList?.(result.view)
   }
 
   async showGiftPopup(): Promise<void> {

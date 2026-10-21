@@ -832,6 +832,13 @@ export class GameBootstrap extends Component {
         ?.render(this.appVersion, CLIENT_VERSION, this.privacyPlan, next)
       return
     }
+    if (action.kind === 'open-notice') {
+      // **安全刷新点**（收口清单 #2287 ⑤）：点「公告」那一行才去取一次 ⇒
+      // 运营改完公告，玩家下次点开就看到新文案，**不用等发版**。
+      // 版本没变时 AppRoot 不会通知这里 ⇒ 界面也不会重画（不闪）。
+      void this.root?.openNotice()
+      return
+    }
     if (action.kind === 'open-privacy-contract') {
       openPrivacyContract()
       return
@@ -1558,6 +1565,9 @@ export class GameBootstrap extends Component {
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
+      // 公告数据到手（AppRoot 判定版本变了才会给）⇒ 切到公告模式并重画。
+      // **不新增导航项、不建新面板** ⇒ 「已有内容可见性」那一族探针不受影响。
+      out.noticeList = view => settings.attachNotices(view)
       // 数据在 GameBootstrap 手里（版本响应是它拉的），所以这里直接推一次；
       // 面板没有 pending 通道可走 —— 那套是给 AppRoot 预拉的面板用的
       settings.render(this.appVersion, CLIENT_VERSION, this.privacyPlan, isMuted())

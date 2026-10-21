@@ -1086,9 +1086,28 @@ B13 验收 8「国家集结 50 人门槛」进不去。
       V26-e 白名单机制：白名单**表级**且只允许展示/非玩法表；任何影响玩家判定的表不得进白名单。
         **服务端取内容端点按它放行，白名单外一律拒**；manifest 只列白名单内的表。
 切分（这一格太大，按可独立验收的两半做）：
-  V26-1 **服务端半**（本卡下一格就做这一半）：global 加表级白名单参数 + 新表 notice.json +
+  V26-1 **服务端半**（✅ 已落地，见 #2311 / #2312）：global 加表级白名单参数 + 新表 notice.json +
     契约 + npm run gen + assembler 按白名单过滤 manifest + 两个只读端点 + JUnit 判据。
-  V26-2 **客户端半**：公告面板 + 安全刷新点应用 + 客户端单测 + 运行时探针读数与截图。
+  V26-2 **客户端半**（V26-2a ✅ 服务端侧已落地 #2312：响应带 notice 表版本；**V26-2b = 下面这段**）。
+
+  **V26-2b 的具体做法（客户端那半，已把接线点摸清，照做即可）**：
+    ① **挂点选「设置页内展开」，不新增导航项、不建新面板** —— 理由：① 导航有 17 项，新增一项会动
+       「已有内容可见性」那一族探针（verify-social-permission-runtime · verify-social-create-runtime ·
+       verify-rank-runtime），风险与代价都高；② 设置页已有「联系客服 / 申请退款 / 隐私政策 / 开源许可」
+       这类**信息类**条目，公告同类；③ `SettingsHint` 节点是**单行**（36px 高、SHrink 溢出）⇒ 放不下公告正文
+       ⇒ 正文需要一块**多行区域**，而设置页内展开是最省的一处。
+    ② 接线点（已现查）：`GameBootstrap.ts:1377` 取面板节点、`:1559-1563` 设 `onSupport` 分派与 `render`、
+       `:825` `handleSettingsAction` 按 action 分派；`AppRoot` 侧同形模板是 `showGiftPopup()`
+       （`AppRoot.ts:5316`：`await this.api.giftPopup()` → `this.targets.giftPopup?.(...)`），
+       `GameBootstrap` 侧是 `out.giftPopup = resp => giftPopup.attach(resp)`。
+    ③ 具体改法：`SettingsPanel.ts` 加 `key: 'notice'` 与 `{ kind: 'open-notice' }`（`buildSettingsView`
+       加一个**可选**参数 `notices`，默认 null ⇒ 既有单测不破）；`GameApi.noticeList()`；
+       `AppRoot` 加 `openNotice()`（拉一次 ⇒ 比版本 ⇒ **版本没变就不通知 target**，界面因此不重画）+
+       `targets.noticeList`；`GameBootstrap.handleSettingsAction` 加 `open-notice` 分派 ⇒ 调 `root.openNotice()`，
+       并在 `out.noticeList = resp => settings.attachNotices(resp)` 处把数据交给设置页；
+       `SettingsPanelView` 加「公告区」（多行 Label 列表，默认隐藏；点那行展开/再点收起；**空列表显示「暂无公告」**）。
+    ④ 判据：客户端单测（那 5 条 + 「点行 ⇒ 拉一次」与「版本没变 ⇒ 不重绘」两条接线断言）+
+       运行时探针（真后端 + 屏上截图）：**改服务端公告文案 ⇒ 客户端再次打开看到新文案**。
 
 验收：① 表里 1 行公告 ⇒ GET /notice/list 返回它；**窗口外的行不返回**（负控）。
       ② GET /config/table?name=notice 返回内容与版本；name=global（玩法/数值表）⇒ **被拒**（白名单外的表名拿不到）。
@@ -8050,3 +8069,4 @@ TEST_EXIT=0
 | V26-2 服务端侧：公告响应带表版本 #2312 | 本格原子本地提交，未推送 | 契约 `NoticeListResp` 加 `version`（notice 表版本号，required）+ `npm run gen` 重生成 `NoticeListResp.java` / `NoticeProtocol.ts`；服务端 `NoticeService.list()` 带上它；新增判据 `noticeResponseCarriesTableVersion`（响应版本号 == 表版本） | **这一格被两个门当场挡回并改形**：① `check-client-send-paths` 抓到「GameApi 发送口生产零调用点」（= 本仓 §四 第 2 条的头号形状「判定写了没接上」）；② `check-client-orphans` 抓到「`game/notice/NoticePanel.ts` 无人 import」⇒ ①要绿需要「打开公告面板」的调用点、②要绿需要面板 import 视图模型 ⇒ **面板/接线/视图模型/GameApi 绑定必须同批做**；客户端那半（`NoticePanel.ts` + `.meta` + 5 条单测）挪到 `tmp/v26-2-client-half-parked/` 备着、**不入库**（索引里也撤掉了，否则门按 git 索引读一个磁盘上不存在的文件 ⇒ ENOENT 假红） | **客户端那半整体未入库** ⇒ `GameApi` 仍没有 `noticeList()`、客户端仍没有公告面板、`AppRoot` 仍没有接线 ⇒ 「改公告不用发版」的玩家可见效果**仍不成立**；下一格（V26-2b）做面板 + 设置页那一行（挂设置页页内、**不新增导航项**）+ AppRoot 接线 + 探针；运行时探针本轮未跑 |
 | V26-1 主树安全白名单与审计修复 #2321 | 本格隔离分支本地提交，未推送 | 从主树 6a200578 独立复核：manifest 原被缩成白名单导致运维审计漏玩法表，HOT_UPDATE_TABLES 原只核存在会放行 global，出厂公告含无对应收益的虚构文案和测试用过期行；修为运维全量 + 客户端白名单双清单、代码安全分类拒 global、公告空预留表、取表 hash 与展示投影、坏窗口/误填热更前拒并保旧。定向 14+8+32+7 全绿；check.sh EXIT=0；test.sh 服务端 3010/0/0/0、客户端 1384/1384；build.sh EXIT=0；隔离内存 JAR HTTP 冒烟 8 维与独立清理全真 | D:/tmp/ironoath-v26-review-target-first.actual.log、check2.actual.log、test-full.actual.log、build.actual.log；D:/tmp/ironoath-v26-review-cd7133fff4444d8196794db44ec68fdf/receipt.json（indexTree b69f8f52、JAR SHA 回读相同、PID/端口已清） | V26-2 客户端安全刷新点尚在并发会话实施；其人工版本判重绘会漏同版本文案改动与时间窗口切换，须独立修复并验证。真实微信真机与正式运营文案未验；本格无性能运行、不推送 |
 | V26-2 可见公告内容版本反证 #2322 | 本格隔离分支本地提交，未推送 | NoticeListResp.version 改为当前可见 NoticeItem 列表的 16 位内容 hash，而非人工表版本；固定服务端时刻用例覆盖同版本改正文、1000ms 生效、2000ms 过期和内容不变时版本稳定。定向 NoticeVisibleVersionTest 1/1、NoticeAndHotUpdateEndpointTest 8/8；摘成整表 hash 后窗口断言红 1/1，原字节恢复并重编绿 1/1 | D:/tmp/ironoath-v26-visible-version-target.actual.log、raw-hash-red.actual.log、restored-green.actual.log；契约生成物由 gen.sh 更新 | 主树 V26-2 正在写入人工 int 版本，尚未合流；客户端消费/面板和真实微信真机仍需按最终 string 版本重新验，未运行性能、不推送 |
+| V26-2b 公告在设置页内可见（打开时取一次 + hash 变了才重绘） #2323 | 本格原子本地提交，未推送 | 挂点=**设置页内切两种模式**（不新增导航项/不建新面板 ⇒ 不动「已有内容可见性」族探针；`SettingsHint` 是单行放不下正文 ⇒ 正文用多行 Label + 公告模式单独画）；接线= `GameApi.noticeList()` + `AppRoot.openNotice()`（拉一次 ⇒ 比 **内容 hash** ⇒ 版本没变就不通知 target ⇒ 界面不重画）+ `GameBootstrap` 的 `open-notice` 分派 + `out.noticeList` + `SettingsPanelView.attachNotices()`；设置页新增「公告」那一行（没取过时给一句说明、取到后字幕是服务端算好的摘要）；埋点 `notice_open`（`TrackEvents.ts` + `数据看板需求.md` 字典表同批） | 客户端单测 **1390 跑 / 0 红 / 0 跳**（1384 + 6：新增 `NoticePanel.test.ts` 5 条 + 设置页公告入口 1 条，并把「入口数 5→6」同批改）；**反证两条实测**：把「版本没变就不重绘」判定改成恒真 ⇒ 2 条判据同时红（第一次改法让 `known` 变成未使用变量而**编译红**，那次反证无效 ⇒ 已改好重跑）；`check.sh` **EXIT=0**（51 道） | **运行时探针与屏上截图还没跑** ⇒ 「改服务端公告文案 ⇒ 客户端再次打开看到新文案」这条**还没有可运行的证据**，下一格补（真后端 + 截图）；另：点「公告」到数据到手之间**没有「正在取」的反馈**（点下去界面不动），下一格补 |
