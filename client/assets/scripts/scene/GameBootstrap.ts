@@ -907,12 +907,17 @@ export class GameBootstrap extends Component {
     canvas.addChild(hint)
     hint.layer = canvas.layer
     const visible = view.getVisibleSize()
-    hint.addComponent(UITransform).setContentSize(new Size(visible.width - 80, 36))
-    hint.setPosition(0, -visible.height / 2 + 90, 0)
+    // 内城详情栏的左侧是状态文字、右端是缩小键；原来 880 宽的整条提示横跨两者。
+    // 内城只用中右侧的净区（当前 960 宽画布上约 x=330..870），其他面板维持原位置。
+    const cityHint = this.nav?.current() === 'city'
+    const hintWidth = cityHint ? Math.min(540, visible.width - 80) : visible.width - 80
+    const hintX = cityHint ? Math.min(120, Math.max(0, (visible.width - hintWidth) / 2 - 40)) : 0
+    hint.addComponent(UITransform).setContentSize(new Size(hintWidth, 36))
+    hint.setPosition(hintX, -visible.height / 2 + 90, 0)
     const caption = new Node('Caption')
     hint.addChild(caption)
     caption.layer = hint.layer
-    caption.addComponent(UITransform).setContentSize(new Size(visible.width - 80, 36))
+    caption.addComponent(UITransform).setContentSize(new Size(hintWidth, 36))
     const label = applySystemUiFont(caption.addComponent(Label))
     label.string = text
     label.fontSize = 16
@@ -923,7 +928,7 @@ export class GameBootstrap extends Component {
     const background = hint.getComponent(Graphics)
     if (background !== null) {
       background.fillColor = new Color(24, 20, 18, 235)
-      background.roundRect(-(visible.width - 80) / 2, -18, visible.width - 80, 36, 6)
+      background.roundRect(-hintWidth / 2, -18, hintWidth, 36, 6)
       background.fill()
     }
     return new Promise<void>((resolve) => {
