@@ -611,6 +611,24 @@ class NationSystemTest {
     }
 
     @Test
+    @DisplayName("筹备阶段只争关卡：围城战尚未开始时不能占王城或偷记建筑分")
+    void capitalCannotBeCapturedBeforeSiege() {
+        WarScoreBoard board = newWar(0L);
+        board.captureGate("n1", "gate_1");
+
+        assertThatThrownBy(() -> board.captureCapital("n1", MINUTE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("王城战");
+        assertThat(board.capitalHolder()).isNull();
+        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(50L);
+
+        board.beginSiege(MINUTE);
+        board.captureCapital("n1", MINUTE);
+        assertThat(board.capitalHolder()).isEqualTo("n1");
+        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(100L);
+    }
+
+    @Test
     @DisplayName("关卡是排他的：一座关卡同时只能属于一方")
     void gatesAreExclusive() {
         WarScoreBoard board = newWar(0L);
