@@ -221,6 +221,15 @@ public final class WarScoreBoard {
         if (gates.get(nationId).contains(gateId)) {
             return;
         }
+        // gateCount 是世界上实际关卡总数，不是可凭字符串扩出来的记分额度。
+        // 已存在关卡换手照常允许；全图四关都入账后，第五个不同 id 必须拒绝且不改分。
+        Set<String> knownGates = new LinkedHashSet<>();
+        for (Set<String> held : gates.values()) {
+            knownGates.addAll(held);
+        }
+        if (!knownGates.contains(gateId) && knownGates.size() >= rules.gateCount()) {
+            throw new IllegalStateException("关卡数已达配置上限：" + rules.gateCount());
+        }
         // 关卡是排他的：一座关卡同时只能属于一方
         for (Map.Entry<String, Set<String>> entry : gates.entrySet()) {
             entry.getValue().remove(gateId);

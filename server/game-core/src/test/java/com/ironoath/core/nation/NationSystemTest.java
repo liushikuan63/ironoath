@@ -654,6 +654,27 @@ class NationSystemTest {
     }
 
     @Test
+    @DisplayName("地图只有规则声明的四座关卡：第五个不同 id 不能凭空加分，四关内换手仍可争")
+    void gateRosterCannotExceedConfiguredPhysicalCount() {
+        WarScoreBoard board = newWar(0L);
+        board.captureGate("n1", "gate_1");
+        board.captureGate("n1", "gate_2");
+        board.captureGate("n2", "gate_3");
+        board.captureGate("n2", "gate_4");
+
+        assertThatThrownBy(() -> board.captureGate("n1", "gate_5"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("关卡数");
+        assertThat(board.gateCount("n1") + board.gateCount("n2")).isEqualTo(4);
+        assertThat(board.snapshot().get("n1").buildingScore()).isEqualTo(100L);
+
+        board.captureGate("n2", "gate_1");
+        assertThat(board.gateCount("n1")).isEqualTo(1);
+        assertThat(board.gateCount("n2")).isEqualTo(3);
+        assertThat(board.snapshot().get("n2").buildingScore()).isEqualTo(150L);
+    }
+
+    @Test
     @DisplayName("重复占领自己仍持有的王城只结算经过的分钟，不再得建筑分")
     void recapturingOwnCapitalDoesNotMintBuildingScore() {
         WarScoreBoard board = newWar(0L);
