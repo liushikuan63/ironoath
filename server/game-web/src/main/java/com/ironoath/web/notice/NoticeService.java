@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 
 import com.ironoath.common.time.TimeService;
+import com.ironoath.common.json.JsonUtils;
 import com.ironoath.config.ConfigRegistry;
 import com.ironoath.config.ConfigException;
 import com.ironoath.config.cfg.NoticeCfg;
@@ -52,14 +53,18 @@ public class NoticeService {
      * <p>空列表是合法结果 —— 没有公告时客户端不画面板，而不是画一个空的公告位。
      */
     public NoticeListResp list() {
-        long now = timeService.serverNow();
+        return listAt(timeService.serverNow());
+    }
+
+    /** 固定服务端时刻的纯读路径，供边界用例验证窗口翻转时的可见内容版本。 */
+    NoticeListResp listAt(long now) {
         List<NoticeItem> live = configs.all(NoticeCfg.class).stream()
                 .filter(row -> inWindow(row, now))
                 .sorted(Comparator.comparingLong(NoticeCfg::priority).reversed()
                         .thenComparing(NoticeCfg::id))
                 .map(row -> new NoticeItem(row.id(), row.title(), row.body(), row.priority()))
                 .toList();
-        return new NoticeListResp(live);
+        return new NoticeListResp(ReleaseRulesAssembler.contentHash(JsonUtils.toJson(live)), live);
     }
 
     /**

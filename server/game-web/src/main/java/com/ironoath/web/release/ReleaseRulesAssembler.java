@@ -299,7 +299,8 @@ public class ReleaseRulesAssembler {
         return List.copyOf(out);
     }
 
-    private static String contentHash(String content) {
+    /** 表内容与玩家可见公告共用同一套 SHA-256 摘要口径，不另造一个会漂移的 hash 实现。 */
+    public static String contentHash(String content) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] bytes = digest.digest(content.getBytes(StandardCharsets.UTF_8));

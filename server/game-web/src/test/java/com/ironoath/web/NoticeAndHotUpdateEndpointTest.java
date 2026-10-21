@@ -97,6 +97,7 @@ class NoticeAndHotUpdateEndpointTest {
         JsonNode root = JsonUtils.readTree(body);
         assertThat(root.get("code").asInt()).as("业务码必须为 0，实际：" + body).isZero();
         JsonNode list = root.get("data").get("notices");
+        assertThat(root.get("data").get("version").asText()).matches("[0-9a-f]{16}");
         assertThat(list.isArray()).as("notices 必须是数组").isTrue();
         for (JsonNode item : list) {
             assertThat(item.has("why")).as("why 是给改表的人看的内部说明，不下发").isFalse();
