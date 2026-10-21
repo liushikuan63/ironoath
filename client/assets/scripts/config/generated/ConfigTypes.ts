@@ -881,6 +881,22 @@ export interface NationTechCfg {
   requireNationLevel: number
 }
 
+/**
+ * 配置表 notice 的一行。
+ * 运营公告表（展示型；客户端热更白名单的第一张表）。**表里只有文案与生效窗口，不放任何数值** —— 数值一律由服务端算好再下发（铁律 1 与「客户端不抄配置表」的红线）。生效窗口由服务端按 serverNow 判，客户端不自己比时间（玩家时钟可改）。白名单口径见 global.HOT_UPDATE_TABLES（表级），本表是那张白名单里的第一张。
+ *
+ * 源表 version=1
+ */
+export interface NoticeCfg {
+  /** 主键 */
+  id: string
+  title: string
+  body: string
+  startAt: number
+  endAt: number
+  priority: number
+}
+
 /** pay_product.payProductKind 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
 export type PayProductKind =
   | 'MONTHLY_CARD'

@@ -652,7 +652,8 @@ class OpsEndpointTest {
         JsonNode full = postJson(MANIFEST_URL, new ConfigManifestReq(Map.of()));
         assertThat(full.get("version").asText()).isEqualTo(configs.fingerprint());
         JsonNode tables = full.get("tables");
-        assertThat(tables.size()).as("清单覆盖全部已加载的表").isEqualTo(configs.tableNames().size());
+        assertThat(tables.size()).as("清单只列**白名单内**的表（收口清单 #2287 ⑤：客户端热更首版限于显式白名单）")
+                .isEqualTo(assembler.hotUpdateTables().size());
         assertThat(full.get("outdated").size()).as("客户端一张表都没有 ⇒ 全都要拉").isEqualTo(tables.size());
 
         // 用服务端下发的 hash 回填 ⇒ 无需更新
@@ -663,11 +664,13 @@ class OpsEndpointTest {
         JsonNode none = postJson(MANIFEST_URL, new ConfigManifestReq(upToDate));
         assertThat(none.get("outdated").size()).isZero();
 
-        // 只把 global 的 hash 改掉一位 ⇒ 只有 global 需要更新
-        upToDate.put("global", upToDate.get("global") + "-stale");
+        // 只把白名单内那张表的 hash 改掉一位 ⇒ 只有它需要更新
+        // （白名单外的表根本不在清单里 ⇒ 改它的 hash 不会让 outdated 变化）
+        String whitelisted = tables.get(0).get("name").asText();
+        upToDate.put(whitelisted, upToDate.get(whitelisted) + "-stale");
         JsonNode one = postJson(MANIFEST_URL, new ConfigManifestReq(upToDate));
         assertThat(one.get("outdated").size()).isEqualTo(1);
-        assertThat(one.get("outdated").get(0).asText()).isEqualTo("global");
+        assertThat(one.get("outdated").get(0).asText()).isEqualTo(whitelisted);
     }
 
     @Test
@@ -679,6 +682,8 @@ class OpsEndpointTest {
             assertThat(meta.get("hash").asText()).as("表 %s 缺 hash", name).isNotBlank();
             assertThat(meta.get("version").asText()).as("表 %s 缺版本号", name).isNotBlank();
             if ("global".equals(name)) {
+                // global **不在**白名单里 ⇒ 它不会出现在清单中 ⇒ 这条断言今天走不到
+                // （保留它是为了「清单若哪天放开了 global，版本号仍要对得上」）
                 assertThat(meta.get("version").asText()).isEqualTo(String.valueOf(configs.rawTable("global").version()));
             }
         }

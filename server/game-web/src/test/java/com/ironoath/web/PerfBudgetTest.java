@@ -13,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.NoticeCfg;
 import com.ironoath.config.model.GlobalCfg;
 import com.ironoath.core.release.ReleaseGate;
 import com.ironoath.web.release.ReleaseRulesAssembler;
@@ -130,7 +131,10 @@ class PerfBudgetTest {
         ReleaseGate.Manifest first = assembler.manifest();
         ReleaseGate.Manifest second = assembler.manifest();
 
-        assertThat(first.tables()).hasSize(configs.tableNames().size());
+        assertThat(first.tables()).hasSize(assembler.hotUpdateTables().size());
+        assertThat(first.tables()).extracting(ReleaseGate.TableMeta::name)
+                .as("清单只列白名单内的表（收口清单 #2287 ⑤）")
+                .containsExactlyElementsOf(assembler.hotUpdateTables());
         assertThat(first.manifestVersion()).isEqualTo(configs.fingerprint());
         for (ReleaseGate.TableMeta meta : first.tables()) {
             assertThat(meta.hash()).as("表 %s 的 hash", meta.name()).hasSize(16).matches("[0-9a-f]{16}");
@@ -141,17 +145,19 @@ class PerfBudgetTest {
     @Test
     @DisplayName("hash 由内容决定：改了内容忘了升版本 ⇒ hash 必须变；升了版本没改内容 ⇒ hash 必须不变")
     void hashFollowsContentNotVersion() throws Exception {
-        Path file = locateTable("global.json");
+        // **夹具表用 notice**（白名单里那张）：manifest 只列白名单内的表（收口清单 #2287 ⑤），
+        // 拿白名单外的表去取 hash 会得到 null —— 那不是 bug，是新口径。
+        Path file = locateTable("notice.json");
         String original = Files.readString(file, StandardCharsets.UTF_8);
-        int version = configs.rawTable("global").version();
-        String baseline = assembler.manifest().table("global").hash();
+        int version = configs.rawTable("notice").version();
+        String baseline = assembler.manifest().table("notice").hash();
 
         // 情形一：只升版本号，内容一个字符都没改
         String versionBumped = original.replace("\"version\": " + version, "\"version\": " + (version + 1));
         assertThat(versionBumped).as("夹具必须真的改到了版本号").isNotEqualTo(original);
         ConfigRegistry bumped = ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
-        bumped.reload("global", GlobalCfg.class, versionBumped);
-        ReleaseGate.TableMeta bumpedMeta = new ReleaseRulesAssembler(bumped).manifest().table("global");
+        bumped.reload("notice", NoticeCfg.class, versionBumped);
+        ReleaseGate.TableMeta bumpedMeta = new ReleaseRulesAssembler(bumped).manifest().table("notice");
         assertThat(bumpedMeta.version()).as("版本号确实升上去了").isEqualTo(String.valueOf(version + 1));
         assertThat(bumpedMeta.hash())
                 .as("内容没变 ⇒ hash 不该变，否则每次发版都让全服白下一遍完全相同的配置表")
@@ -159,12 +165,12 @@ class PerfBudgetTest {
 
         // 情形二：只改内容，版本号保持不动（配置表最常见的一类事故）
         String contentChanged = original.replace(
-                "\"id\": \"TRACK_BATCH_MAX_SIZE\",\n      \"valueType\": \"LONG\",\n      \"value\": 10,",
-                "\"id\": \"TRACK_BATCH_MAX_SIZE\",\n      \"valueType\": \"LONG\",\n      \"value\": 11,");
+                "\"title\": \"欢迎来到铁誓\"",
+                "\"title\": \"欢迎来到铁誓！\"");
         assertThat(contentChanged).as("夹具必须真的改到了那一行的值").isNotEqualTo(original);
         ConfigRegistry changed = ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
-        changed.reload("global", GlobalCfg.class, contentChanged);
-        ReleaseGate.TableMeta changedMeta = new ReleaseRulesAssembler(changed).manifest().table("global");
+        changed.reload("notice", NoticeCfg.class, contentChanged);
+        ReleaseGate.TableMeta changedMeta = new ReleaseRulesAssembler(changed).manifest().table("notice");
         assertThat(changedMeta.version()).as("版本号没动").isEqualTo(String.valueOf(version));
         assertThat(changedMeta.hash())
                 .as("内容变了 ⇒ hash 必须变，否则客户端认为自己是最新的，症状是「我明明改了表却看不到效果」")
@@ -172,14 +178,21 @@ class PerfBudgetTest {
 
         // 热更 global 之后，全局参数本身也必须立即生效 ——
         // 键值索引曾经和原始表快照一样是构造期的不可变副本，于是 reload 之后 longParam 仍返回旧值，
-        // 而「灰度比例改配置即生效，不用发版」正是线上出事时唯一来得及做的那件事
+        // 而「灰度比例改配置即生效，不用发版」正是线上出事时唯一来得及做的那件事。
+        // ⚠️ 这一段与 manifest 无关（它验的是 reload 机制本身）⇒ 夹具继续用 global。
+        String globalOriginal = Files.readString(locateTable("global.json"), StandardCharsets.UTF_8);
+        String globalChanged = globalOriginal.replace(
+                "\"id\": \"TRACK_BATCH_MAX_SIZE\",\n      \"valueType\": \"LONG\",\n      \"value\": 10,",
+                "\"id\": \"TRACK_BATCH_MAX_SIZE\",\n      \"valueType\": \"LONG\",\n      \"value\": 11,");
+        assertThat(globalChanged).as("夹具必须真的改到了那一行的值").isNotEqualTo(globalOriginal);
+        changed.reload("global", GlobalCfg.class, globalChanged);
         assertThat(new ReleaseRulesAssembler(changed).trackBatchMaxSize())
                 .as("热更 global 之后必须读到新值").isEqualTo(11);
         assertThat(assembler.trackBatchMaxSize())
                 .as("共享的那份 registry 没被热更影响").isEqualTo(10);
 
         // 共享的那份 registry 没被动过：上面用的都是独立实例
-        assertThat(assembler.manifest().table("global").hash()).isEqualTo(baseline);
+        assertThat(assembler.manifest().table("notice").hash()).isEqualTo(baseline);
     }
 
     /**

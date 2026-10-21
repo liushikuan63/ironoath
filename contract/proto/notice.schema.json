@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ironoath.local/contract/proto/notice.schema.json",
+  "title": "NoticeProtocol",
+  "description": "运营公告与配置表热更取内容的契约（收口清单 #2287 ⑤ 的客户端热更首版）。唯一真源，由 tools/config-gen 生成 Java record 与 TS interface，禁止手改两侧。\n\n两条贯穿全部 def 的设计约束：\n1. **服务端算一切客户端要判的东西**：生效窗口（哪些公告在展示）与排序都由服务端算好再下发。客户端的时钟可以被玩家改，所以「这条公告该不该显示」如果由客户端判，症状就是「该显示时没显示 / 过期了还在显示」，而两边都觉得自己没错。\n2. **热更取内容只给白名单表**：响应里带的是**整表 JSON 字符串**，由客户端按生成的 TS 类型解析。这样契约不必为每张表写一份行结构（表会增删，写进契约等于每加一张表就改双端代码），而白名单本身在服务端一处把关 —— 白名单外的表既不进 manifest，也取不到内容。",
+  "x-java-package": "com.ironoath.web.dto.generated",
+  "x-ts-module": "NoticeProtocol",
+  "$defs": {
+    "NoticeItem": {
+      "type": "object",
+      "description": "一条当前生效的运营公告。文案由服务端原样下发，客户端只展示。",
+      "additionalProperties": false,
+      "required": ["id", "title", "body", "priority"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "公告 id。**定位用，不印给玩家** —— 客户端拿它去拉表内容与做去重，界面上出现的是 title 与 body。"
+        },
+        "title": {
+          "type": "string",
+          "description": "公告标题，服务端原样下发。"
+        },
+        "body": {
+          "type": "string",
+          "description": "公告正文，服务端原样下发。**不允许客户端拼装或截断**：改文案是运营的日常动作，而客户端硬编码的文案在提审期被要求修改时只能发版。"
+        },
+        "priority": {
+          "type": "integer",
+          "format": "int64",
+          "description": "排序权重，**数字大者排前**。由服务端排序，客户端不重排（重排就会出现第二个排序真源）。"
+        }
+      }
+    },
+    "NoticeListResp": {
+      "type": "object",
+      "description": "当前生效的公告列表。空列表是合法结果（没有公告时客户端不画面板，而不是画一个空的）。",
+      "additionalProperties": false,
+      "required": ["notices"],
+      "properties": {
+        "notices": {
+          "type": "array",
+          "description": "按 priority 倒序（数字大者在前）排好的生效公告。",
+          "items": {
+            "$ref": "#/$defs/NoticeItem"
+          }
+        }
+      }
+    },
+    "ConfigTableResp": {
+      "type": "object",
+      "description": "白名单表的整表内容（热更取内容的响应）。",
+      "additionalProperties": false,
+      "required": ["name", "version", "json"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "表名。**只有白名单内的表名会被取到**（白名单在服务端一处，见 global.HOT_UPDATE_TABLES）。"
+        },
+        "version": {
+          "type": "integer",
+          "format": "int32",
+          "description": "该表的版本号（内容变更即变）。客户端拿它判断「要不要重画」：版本没变就不动界面，这是「安全刷新点」的另一半。"
+        },
+        "json": {
+          "type": "string",
+          "description": "**整表 JSON 字符串**（含 table/version/rows）。为什么是字符串而不是结构化对象：表会增删，把每张表的行结构写进契约等于每加一张表就改双端代码并重新生成；而客户端本来就持有生成的 TS 类型，解析后按那个类型断言即可。**解析失败必须当失败处理**，不许静默用空表继续跑 —— 静默吞掉解析失败，症状是「公告位空了」而不是「热更坏了」。"
+        }
+      }
+    }
+  }
+}
