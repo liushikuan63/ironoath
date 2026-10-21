@@ -5,11 +5,11 @@ package com.ironoath.web.dto.generated;
 import java.util.List;
 
 /**
- * 配置清单响应（验收 7）。同时给全量清单与「哪些表要更新」：清单用于展示与排查，outdated 用于决定下载什么。
+ * 客户端展示表白名单清单（V26）；运维全量变更审计仍使用服务端内部全表清单。
  */
 public record ConfigManifestResp(
-        String version,   // 清单版本，取服务端全部表版本的指纹。客户端把它记在本地，下次请求时若相同则可以整份跳过 —— 那是一次纯粹的省流量优化，正确性仍然由每张表的 hash 保证。
-        List<TableMeta> tables,   // 全部可热更的表（范围见 global.HOT_UPDATE_SCOPE）。
+        String version,   // 白名单表名与内容 hash 的指纹；人工表版本没升但内容变更时也会变化。客户端是否下载仍以各表 hash 为准。
+        List<TableMeta> tables,   // 客户端可下载的展示表，按 global.HOT_UPDATE_TABLES 与服务端安全分类双重过滤；不列玩法或经济表。
         List<String> outdated)   // 客户端需要下载的表名，按 tables 的顺序。**由服务端算**：比 hash 不比版本号这条规则只能存在一份。
 {
 }

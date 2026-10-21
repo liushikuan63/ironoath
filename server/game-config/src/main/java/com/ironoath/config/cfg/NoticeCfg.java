@@ -4,7 +4,7 @@ package com.ironoath.config.cfg;
 
 /**
  * 配置表 notice 的一行。
- * 运营公告表（展示型；客户端热更白名单的第一张表）。**表里只有文案与生效窗口，不放任何数值** —— 数值一律由服务端算好再下发（铁律 1 与「客户端不抄配置表」的红线）。生效窗口由服务端按 serverNow 判，客户端不自己比时间（玩家时钟可改）。白名单口径见 global.HOT_UPDATE_TABLES（表级），本表是那张白名单里的第一张。
+ * 运营公告展示表（V26）。出厂为空，由运营填入真实文案后通过 /ops/config/reload 原子热更；测试用例自行注入窗口内外的夹具，不把未获确认的活动权益或过期样例发给玩家。
  *
  * <p>本类型由生成器产出，<b>禁止手改</b>：改 {@code contract/config/notice.json} 的 fieldTypes 后运行 {@code npm run gen}。
  */

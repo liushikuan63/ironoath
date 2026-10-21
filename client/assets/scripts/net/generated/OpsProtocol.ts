@@ -211,7 +211,7 @@ export interface TableMeta {
  * 配置热更结果（B16 §5 / 验收 7：改配置表后客户端拉取新版本，不改包生效）。只回答两个问题：现在 live 的是哪一版、这次真的换掉了哪几张表。
  */
 export interface ConfigReloadResp {
-  /** 热更后的清单版本（全部表版本的指纹）。与 /ops/config/manifest 的 version 同源，运维据此确认客户端下次轮询会看到新版本。 */
+  /** 运维全量配置表版本指纹；客户端 /ops/config/manifest 只列展示白名单，另有内容 hash 清单版本，两者不再同值。 */
   version: string
   /** 这次内容真的变了的表名。**按内容 hash 比对而不是版本号**（与清单同一口径）：改了内容忘了升版本时，版本号看不出来而 hash 看得出来。空数组表示这次热更什么都没换（文件没动过，或改回了原样），那也是要如实说出来的结果 —— 它同时也是「我改的表到底是不是这张」的复核手段。 */
   changed: string[]
@@ -226,12 +226,12 @@ export interface ConfigManifestReq {
 }
 
 /**
- * 配置清单响应（验收 7）。同时给全量清单与「哪些表要更新」：清单用于展示与排查，outdated 用于决定下载什么。
+ * 客户端展示表白名单清单（V26）；运维全量变更审计仍使用服务端内部全表清单。
  */
 export interface ConfigManifestResp {
-  /** 清单版本，取服务端全部表版本的指纹。客户端把它记在本地，下次请求时若相同则可以整份跳过 —— 那是一次纯粹的省流量优化，正确性仍然由每张表的 hash 保证。 */
+  /** 白名单表名与内容 hash 的指纹；人工表版本没升但内容变更时也会变化。客户端是否下载仍以各表 hash 为准。 */
   version: string
-  /** 全部可热更的表（范围见 global.HOT_UPDATE_SCOPE）。 */
+  /** 客户端可下载的展示表，按 global.HOT_UPDATE_TABLES 与服务端安全分类双重过滤；不列玩法或经济表。 */
   tables: TableMeta[]
   /** 客户端需要下载的表名，按 tables 的顺序。**由服务端算**：比 hash 不比版本号这条规则只能存在一份。 */
   outdated: string[]

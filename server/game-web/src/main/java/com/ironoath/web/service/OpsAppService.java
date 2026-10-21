@@ -474,7 +474,7 @@ public class OpsAppService {
      * 若让客户端自己比，规则就有两份，而其中一份迟早会退化成比版本号。
      */
     public ConfigManifestResp configManifest(ConfigManifestReq req) {
-        ReleaseGate.Manifest manifest = assembler.manifest();
+        ReleaseGate.Manifest manifest = assembler.clientManifest();
         List<String> outdated = ReleaseGate.outdatedTables(manifest,
                 req == null ? null : req.tableHashes());
         List<TableMeta> metas = new ArrayList<>(manifest.tables().size());

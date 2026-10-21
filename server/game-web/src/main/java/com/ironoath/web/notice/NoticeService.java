@@ -7,9 +7,11 @@ import org.springframework.stereotype.Service;
 
 import com.ironoath.common.time.TimeService;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.ConfigException;
 import com.ironoath.config.cfg.NoticeCfg;
 import com.ironoath.web.dto.generated.NoticeItem;
 import com.ironoath.web.dto.generated.NoticeListResp;
+import com.ironoath.web.release.ReleaseRulesAssembler;
 
 /**
  * 职责：运营公告的读侧（收口清单 #2287 ⑤ / V26-1）。
@@ -17,8 +19,8 @@ import com.ironoath.web.dto.generated.NoticeListResp;
  *
  * <p><b>为什么公告是「客户端热更白名单」的第一张表</b>：热更要能改东西，而**能改的必须是
  * 不影响玩家判定的展示内容** —— 战斗与经济数值改了却不同步发版，玩家的账就与别人的不一样。
- * 公告只有标题、正文、生效窗口与排序权重，**表里没有任何数值**（数值一律服务端算好再下发），
- * 所以改它不会动到任何人的结算。
+ * 公告只有标题、正文、生效窗口与排序权重；窗口和优先级是展示元数据，
+ * **没有战斗、经济或奖励数值**，所以改它不会动到任何人的结算。
  *
  * <p><b>生效窗口与排序都由服务端算</b>：客户端的时钟可以被玩家改，所以「这条公告该不该显示」
  * 若由客户端判，症状就是「该显示时没显示 / 过期了还在显示」，而两边都觉得自己没错。
@@ -33,9 +35,15 @@ public class NoticeService {
     private final ConfigRegistry configs;
     private final TimeService timeService;
 
-    public NoticeService(ConfigRegistry configs, TimeService timeService) {
+    public NoticeService(ConfigRegistry configs, TimeService timeService,
+                         ReleaseRulesAssembler release) {
         this.configs = configs;
         this.timeService = timeService;
+        release.hotUpdateTables();
+        validate(configs.all(NoticeCfg.class));
+        configs.addReloadGuard("notice", candidate -> validate(candidate.all(NoticeCfg.class)));
+        configs.addReloadGuard("global", candidate ->
+                new ReleaseRulesAssembler(candidate).hotUpdateTables());
     }
 
     /**
@@ -47,7 +55,8 @@ public class NoticeService {
         long now = timeService.serverNow();
         List<NoticeItem> live = configs.all(NoticeCfg.class).stream()
                 .filter(row -> inWindow(row, now))
-                .sorted(Comparator.comparingLong(NoticeCfg::priority).reversed())
+                .sorted(Comparator.comparingLong(NoticeCfg::priority).reversed()
+                        .thenComparing(NoticeCfg::id))
                 .map(row -> new NoticeItem(row.id(), row.title(), row.body(), row.priority()))
                 .toList();
         return new NoticeListResp(live);
@@ -63,6 +72,15 @@ public class NoticeService {
         if (row.startAt() > 0L && now < row.startAt()) {
             return false;
         }
-        return row.endAt() == 0L || now <= row.endAt();
+        return row.endAt() == 0L || now < row.endAt();
+    }
+
+    /** 拒绝坏窗口进入 live 表；运维整批热更失败时旧版原样保留。 */
+    private static void validate(List<NoticeCfg> rows) {
+        for (NoticeCfg row : rows) {
+            if (row.endAt() != 0L && row.endAt() <= row.startAt()) {
+                throw new ConfigException("公告生效窗口无效：" + row.id());
+            }
+        }
     }
 }

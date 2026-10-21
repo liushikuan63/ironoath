@@ -58,7 +58,8 @@ class ConfigTablesAcceptanceTest {
      * **数据由运营按年填、不来自任何开发批次** —— 空结构 + 明确的"还没填"就是它的常态。
      * 判定口径同一条：表里一旦有数据，就不该再留在预留态。
      */
-    private static final Set<String> RESERVED = Set.of("holiday");
+    // notice 由运营填真实文案，出厂不带虚构活动权益或只给测试看的过期样例。
+    private static final Set<String> RESERVED = Set.of("holiday", "notice");
 
     /**
      * B02 建结构、由后续批次填数据的表（B10/B11/B13 已填，所以不再是预留表）。

@@ -1,9 +1,12 @@
 package com.ironoath.web.release;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.JsonNode;
 
 import com.ironoath.common.BizException;
 import com.ironoath.common.ErrorCode;
@@ -17,7 +20,7 @@ import com.ironoath.web.dto.generated.ConfigTableResp;
  * 依赖：game-config（表内容）、game-web 的 {@link ReleaseRulesAssembler}（白名单真源）。
  *
  * <p><b>为什么要有这一层，而 manifest 不够</b>：{@code POST /ops/config/manifest} 只给
- * 「**哪些表名**过期了」，不给内容，而且它是**运维端点**（要运维令牌）⇒ 客户端拿不到。
+ * 「**哪些表名**过期了」，不给内容；该端点用于客户端版本协商，不要求运维令牌。
  * 客户端要真正换掉自己那份展示数据，得有一条**面向客户端**的「按表名取内容」的通道。
  *
  * <p><b>白名单是唯一的边界</b>（global.HOT_UPDATE_TABLES，表级）：白名单外的表既不进 manifest，
@@ -46,16 +49,23 @@ public class HotUpdateTableService {
      */
     public ConfigTableResp table(String name) {
         if (name == null || name.isBlank() || !release.hotUpdateTables().contains(name)) {
-            throw new BizException(ErrorCode.CONFIG_NOT_FOUND, "没有这张配置表：" + name);
+            throw new BizException(ErrorCode.CONFIG_NOT_FOUND, "客户端展示表不可用");
         }
         RawConfigTable table = configs.rawTable(name);
-        // 整表按「与本地表同形」的方式拼：table/version/rows ⇒ 客户端解析后与它自己那张表
-        // 是同一个形状，替换时不需要额外映射。
+        var meta = release.tableMeta(table);
+        // 首版只准 notice。投影可展示字段，内部 why 不进入下载内容；扩表必须审查新投影。
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (JsonNode row : table.rows()) {
+            rows.add(Map.of("id", row.get("id").asText(),
+                    "title", row.get("title").asText(), "body", row.get("body").asText(),
+                    "startAt", row.get("startAt").asLong(), "endAt", row.get("endAt").asLong(),
+                    "priority", row.get("priority").asLong()));
+        }
         String json = JsonUtils.toJson(Map.of(
                 "table", table.name(),
                 "version", table.version(),
-                "rows", table.rows()));
-        return new ConfigTableResp(table.name(), table.version(), json);
+                "rows", rows));
+        return new ConfigTableResp(table.name(), table.version(), meta.hash(), json);
     }
 
     /**

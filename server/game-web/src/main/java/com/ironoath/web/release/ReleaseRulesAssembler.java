@@ -4,11 +4,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.springframework.stereotype.Component;
 
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.RawConfigTable;
 import com.ironoath.core.release.ReleaseGate;
 import com.ironoath.core.track.TrackBatcher;
 
@@ -189,19 +192,27 @@ public class ReleaseRulesAssembler {
      */
     public ReleaseGate.Manifest manifest() {
         List<ReleaseGate.TableMeta> metas = new ArrayList<>();
-        // **只列白名单内的表**（global.HOT_UPDATE_TABLES，表级）：客户端热更首版限于
-        // 显式白名单的展示/非玩法配置（收口清单 #2287 ⑤）。
-        // 为什么不列全部表：客户端能取到的表就是白名单里那些 ⇒ 清单多列几张，
-        // 客户端就会知道不存在的表名却拿不到内容（两边口径打架），
-        // 而且那等于把玩法与经济数值的表名公开。
-        for (String name : hotUpdateTables()) {
-            metas.add(new ReleaseGate.TableMeta(
-                    name,
-                    String.valueOf(configs.rawTable(name).version()),
-                    contentHash(configs.rawTable(name).rows().toString())));
+        for (String name : configs.tableNames()) {
+            metas.add(tableMeta(configs.rawTable(name)));
         }
-        // 清单版本用全部表的指纹：它只用于「整份跳过」这一条省流量优化，正确性仍由每张表的 hash 保证
+        // 运维重载与逐表审计必须看全表；客户端只能用 clientManifest()，不允许把这份全量清单下发。
         return new ReleaseGate.Manifest(configs.fingerprint(), metas);
+    }
+
+    /** 从同一份不可变表快照计算版本和内容 hash，避免热更夹在两次读之间拼出混合响应。 */
+    public ReleaseGate.TableMeta tableMeta(RawConfigTable table) {
+        return new ReleaseGate.TableMeta(table.name(), String.valueOf(table.version()),
+                contentHash(table.rows().toString()));
+    }
+
+    /** 客户端只见展示表；版本只由白名单内容 hash 构成，不泄露玩法表名或版本。 */
+    public ReleaseGate.Manifest clientManifest() {
+        ReleaseGate.Manifest all = manifest();
+        List<ReleaseGate.TableMeta> visible = new ArrayList<>();
+        for (String name : hotUpdateTables()) visible.add(all.table(name));
+        String version = visible.stream().map(meta -> meta.name() + "@" + meta.hash())
+                .reduce((a, b) -> a + "," + b).orElseThrow();
+        return new ReleaseGate.Manifest(version, visible);
     }
 
     /**
@@ -233,28 +244,21 @@ public class ReleaseRulesAssembler {
      * 且只声明边界**不过滤**；本表是**表级**真源 —— 白名单外的表既不进 manifest，也取不到内容。
      * 收口清单 #2287 ⑤ 裁的是「首版限于**显式白名单**的展示/非玩法配置」，「白名单」只能是表级。
      *
-     * <p><b>两条 fail-closed</b>：① 白名单为空 ⇒ 抛（那等于宣布客户端一张表都不能热更，
-     * 而 B16 §5 与 #2287 ⑤ 都要求展示型配置可热更）；② 白名单里写了不存在的表 ⇒ 抛
-     * （否则客户端拿到一份指向空表的清单，而症状是「热更不生效」，极难查）。
+     * <p>配置决定启用哪些表；代码安全分类限制只能是经审查的展示表。误填 global、付费或战斗表
+     * 时在运行/重载前拒绝，不能靠一行配置把玩法数值公开下载。
      */
     public List<String> hotUpdateTables() {
         String raw = configs.stringParam("HOT_UPDATE_TABLES");
-        List<String> out = new ArrayList<>();
-        for (String part : raw.split(",")) {
+        Set<String> displayOnly = Set.of("notice");
+        Set<String> out = new LinkedHashSet<>();
+        for (String part : raw.split(",", -1)) {
             String trimmed = part.trim();
-            if (!trimmed.isEmpty()) {
-                if (!configs.hasTable(trimmed)) {
-                    throw new IllegalStateException("HOT_UPDATE_TABLES 里的表 " + trimmed
-                            + " 不存在：白名单写了不存在的表 ⇒ 客户端会拿到一份指向空表的清单"
-                            + "（症状是「热更不生效」，极难查）");
-                }
-                out.add(trimmed);
+            if (trimmed.isEmpty() || !displayOnly.contains(trimmed) || !out.add(trimmed)
+                    || !configs.hasTable(trimmed)) {
+                throw new IllegalStateException("HOT_UPDATE_TABLES 含空、重复、不存在或非展示表：" + trimmed);
             }
         }
-        if (out.isEmpty()) {
-            throw new IllegalStateException("HOT_UPDATE_TABLES 为空：那等于宣布客户端一张表都不能热更，"
-                    + "而 B16 §5 与收口清单 #2287 ⑤ 要求展示型配置可热更");
-        }
+        if (out.isEmpty()) throw new IllegalStateException("HOT_UPDATE_TABLES 不得为空");
         return List.copyOf(out);
     }
 

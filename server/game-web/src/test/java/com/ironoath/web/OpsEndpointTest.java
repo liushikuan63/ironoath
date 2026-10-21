@@ -650,10 +650,13 @@ class OpsEndpointTest {
     @DisplayName("验收7：客户端 hash 与服务端一致时不需要更新；差一张或 hash 不同就要拉新表")
     void manifestReportsOutdatedTablesByHash() throws Exception {
         JsonNode full = postJson(MANIFEST_URL, new ConfigManifestReq(Map.of()));
-        assertThat(full.get("version").asText()).isEqualTo(configs.fingerprint());
+        assertThat(full.get("version").asText()).isEqualTo(assembler.clientManifest().manifestVersion());
         JsonNode tables = full.get("tables");
         assertThat(tables.size()).as("清单只列**白名单内**的表（收口清单 #2287 ⑤：客户端热更首版限于显式白名单）")
                 .isEqualTo(assembler.hotUpdateTables().size());
+        assertThat(tables.get(0).get("name").asText()).isEqualTo("notice");
+        assertThat(assembler.manifest().tables()).as("运维审计仍覆盖全部表")
+                .hasSize(configs.tableNames().size());
         assertThat(full.get("outdated").size()).as("客户端一张表都没有 ⇒ 全都要拉").isEqualTo(tables.size());
 
         // 用服务端下发的 hash 回填 ⇒ 无需更新
@@ -663,6 +666,10 @@ class OpsEndpointTest {
         }
         JsonNode none = postJson(MANIFEST_URL, new ConfigManifestReq(upToDate));
         assertThat(none.get("outdated").size()).isZero();
+
+        upToDate.put("global", "irrelevant-stale-hash");
+        assertThat(postJson(MANIFEST_URL, new ConfigManifestReq(upToDate)).get("outdated"))
+                .as("白名单外 global 的自报 hash 不得进入客户端更新列表").isEmpty();
 
         // 只把白名单内那张表的 hash 改掉一位 ⇒ 只有它需要更新
         // （白名单外的表根本不在清单里 ⇒ 改它的 hash 不会让 outdated 变化）
@@ -674,17 +681,15 @@ class OpsEndpointTest {
     }
 
     @Test
-    @DisplayName("清单里的版本号与 global 表一致，且每张表都有 hash（缺 hash 的表只能靠版本号判定，那是事故来源）")
+    @DisplayName("客户端下载清单只有 notice 且带 hash，运维全量表仍可审计")
     void manifestCarriesVersionAndHashPerTable() throws Exception {
         JsonNode full = postJson(MANIFEST_URL, new ConfigManifestReq(Map.of()));
         for (JsonNode meta : full.get("tables")) {
             String name = meta.get("name").asText();
             assertThat(meta.get("hash").asText()).as("表 %s 缺 hash", name).isNotBlank();
             assertThat(meta.get("version").asText()).as("表 %s 缺版本号", name).isNotBlank();
-            if ("global".equals(name)) {
-                // global **不在**白名单里 ⇒ 它不会出现在清单中 ⇒ 这条断言今天走不到
-                // （保留它是为了「清单若哪天放开了 global，版本号仍要对得上」）
-                assertThat(meta.get("version").asText()).isEqualTo(String.valueOf(configs.rawTable("global").version()));
+            if ("notice".equals(name)) {
+                assertThat(meta.get("version").asText()).isEqualTo(String.valueOf(configs.rawTable("notice").version()));
             }
         }
     }

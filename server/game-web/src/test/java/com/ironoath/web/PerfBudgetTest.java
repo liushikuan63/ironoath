@@ -131,9 +131,10 @@ class PerfBudgetTest {
         ReleaseGate.Manifest first = assembler.manifest();
         ReleaseGate.Manifest second = assembler.manifest();
 
-        assertThat(first.tables()).hasSize(assembler.hotUpdateTables().size());
-        assertThat(first.tables()).extracting(ReleaseGate.TableMeta::name)
-                .as("清单只列白名单内的表（收口清单 #2287 ⑤）")
+        assertThat(first.tables()).as("运维逐表变更审计不能因客户端白名单漏表")
+                .hasSize(configs.tableNames().size());
+        assertThat(assembler.clientManifest().tables()).extracting(ReleaseGate.TableMeta::name)
+                .as("客户端下载清单只列白名单表")
                 .containsExactlyElementsOf(assembler.hotUpdateTables());
         assertThat(first.manifestVersion()).isEqualTo(configs.fingerprint());
         for (ReleaseGate.TableMeta meta : first.tables()) {
@@ -145,8 +146,7 @@ class PerfBudgetTest {
     @Test
     @DisplayName("hash 由内容决定：改了内容忘了升版本 ⇒ hash 必须变；升了版本没改内容 ⇒ hash 必须不变")
     void hashFollowsContentNotVersion() throws Exception {
-        // **夹具表用 notice**（白名单里那张）：manifest 只列白名单内的表（收口清单 #2287 ⑤），
-        // 拿白名单外的表去取 hash 会得到 null —— 那不是 bug，是新口径。
+        // 夹具表用 notice：运维全量与客户端清单共用同一张表的内容 hash。
         Path file = locateTable("notice.json");
         String original = Files.readString(file, StandardCharsets.UTF_8);
         int version = configs.rawTable("notice").version();
@@ -164,9 +164,10 @@ class PerfBudgetTest {
                 .isEqualTo(baseline);
 
         // 情形二：只改内容，版本号保持不动（配置表最常见的一类事故）
-        String contentChanged = original.replace(
-                "\"title\": \"欢迎来到铁誓\"",
-                "\"title\": \"欢迎来到铁誓！\"");
+        String contentChanged = original.replace("\"rows\": []",
+                        "\"rows\": [{\"id\":\"fixture\",\"title\":\"公告\",\"body\":\"文本\","
+                        + "\"startAt\":0,\"endAt\":0,\"priority\":1,\"why\":\"夹具\"}]")
+                .replace("\"status\": \"RESERVED\"", "\"status\": \"ACTIVE\"");
         assertThat(contentChanged).as("夹具必须真的改到了那一行的值").isNotEqualTo(original);
         ConfigRegistry changed = ConfigRegistry.loadFromDirectory(Path.of("contract/config"));
         changed.reload("notice", NoticeCfg.class, contentChanged);
@@ -175,6 +176,8 @@ class PerfBudgetTest {
         assertThat(changedMeta.hash())
                 .as("内容变了 ⇒ hash 必须变，否则客户端认为自己是最新的，症状是「我明明改了表却看不到效果」")
                 .isNotEqualTo(baseline);
+        assertThat(new ReleaseRulesAssembler(changed).clientManifest().table("notice").hash())
+                .isEqualTo(changedMeta.hash());
 
         // 热更 global 之后，全局参数本身也必须立即生效 ——
         // 键值索引曾经和原始表快照一样是构造期的不可变副本，于是 reload 之后 longParam 仍返回旧值，
