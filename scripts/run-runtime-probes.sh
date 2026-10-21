@@ -14,6 +14,37 @@
 #   超时记成 TIMEOUT，**与"跑出来是红"分开计**（同 NO-RUN 那条纪律：没跑完不等于验出了问题）。
 set -u
 cd "$(dirname "$0")/.."
+
+# Count only existing probe log files. `ls pattern | wc -l` returns the `ls` failure
+# through pipefail when the directory is new and has no matches; sourced tmp-work-dir
+# enables `-e`, so a fresh isolated batch used to stop before writing its exit ledger.
+probe_log_count() {
+  local logdir="$1" path count=0
+  for path in "$logdir"/probe-*.log; do
+    [ -f "$path" ] || continue
+    count=$((count + 1))
+  done
+  printf '%s\n' "$count"
+}
+
+# Self-test the fresh-directory case and the file-only count without starting probes.
+if [ "${1:-}" = "--self-test-log-count" ]; then
+  source scripts/tmp-work-dir.sh runtime-probe-log-count-selftest
+  _log_test_dir="$TMP_DIR/logs"
+  mkdir -p "$_log_test_dir/probe-directory.log"
+  _log_test_count="$(probe_log_count "$_log_test_dir")"
+  [ "$_log_test_count" = "0" ] || { echo "[runtime-probes][FAIL] fresh log directory count=$_log_test_count, expected 0" >&2; exit 1; }
+  : > "$_log_test_dir/probe-one.log"
+  : > "$_log_test_dir/notes.txt"
+  _log_test_count="$(probe_log_count "$_log_test_dir")"
+  [ "$_log_test_count" = "1" ] || { echo "[runtime-probes][FAIL] one probe log count=$_log_test_count, expected 1" >&2; exit 1; }
+  : > "$_log_test_dir/probe-two.log"
+  _log_test_count="$(probe_log_count "$_log_test_dir")"
+  [ "$_log_test_count" = "2" ] || { echo "[runtime-probes][FAIL] two probe logs count=$_log_test_count, expected 2" >&2; exit 1; }
+  echo "[runtime-probes] probe-log-count self-test passed (0 / 1 / 2 files)."
+  exit 0
+fi
+
 i=0
 # 三个默认值都必须自己成立：#416 那版把 `RUNTIME_PROBES_OUT` 的默认写成 `${...:-"$OUT"}`
 # （自引用，`set -u` 下无参跑当场 "OUT: unbound variable"），把清单默认写成 `<(...)` 塞进参数展开
@@ -34,6 +65,11 @@ if [ -z "$LIST" ]; then
   # 却 BATCH_EXIT=0 —— 这正是「判据不咬住东西的等于没写」的典型）。
   # ⇒ 用仓库内相对路径 + 进程号唯一的助手（scripts/tmp-work-dir.sh，与三道门同一形状）。
   source scripts/tmp-work-dir.sh runtime-probes
+  # tmp-work-dir enables -euo pipefail for its callers. This runner must capture
+  # nonzero grep/wait/node statuses as probe results and continue to the next file.
+  set +e
+  set +o pipefail
+  set -u
   LIST="$TMP_DIR/list"
   # 收集**全部** verify-*.mjs（2026-10-03，#753 收尾）：旧规则只收 `*-runtime.mjs`，
   # 而"文件名带不带 -runtime"与"要不要真跑"毫无关系 —— #611 实测有 23 份量具从没被批跑到
@@ -66,7 +102,7 @@ fi
 #    第一次写这一段时正例与反向对照**都显式传了变量**，从没测到默认路径；
 #    第二次是用户名 a1740→Admin 之后那次提交丢失，同一处又退回未修形态）。
 if [ "${KEEP_PREV_LOGS:-}" != "1" ]; then
-  _prev="$(ls "${RUNTIME_PROBES_LOGDIR:-/d/tmp}"/probe-*.log 2>/dev/null | wc -l)"
+  _prev="$(probe_log_count "${RUNTIME_PROBES_LOGDIR:-/d/tmp}")"
   if [ "$_prev" -gt 0 ]; then
     _stamp="$(date +%Y%m%d-%H%M%S)"
     _dir="${RUNTIME_PROBES_LOGDIR:-/d/tmp}/archive/$_stamp"
