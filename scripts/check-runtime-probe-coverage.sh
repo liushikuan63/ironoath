@@ -140,3 +140,9 @@ if [ "$fail" -ne 0 ]; then
 fi
 total=$(ls tools/verify-*.mjs | wc -l)
 echo "[check-runtime-probe-coverage] 通过：量具 $total 份，排除 $checked 份（名单条目都存在且有理由；收集规则仍是全收）"
+
+# 回归：全新隔离日志目录没有任何 probe-*.log 时，批跑初始化仍须得到 0 并继续。
+source scripts/tmp-work-dir.sh runtime-probe-log-count
+RUNTIME_PROBES_OUT="$TMP_DIR/exitcodes.txt" \
+RUNTIME_PROBES_LOGDIR="$TMP_DIR/logs" \
+  bash scripts/run-runtime-probes.sh --self-test-log-count
