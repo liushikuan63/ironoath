@@ -11,33 +11,31 @@
  * 只是反应变成一句说明。
  */
 
-import { _decorator, Color, Component, Graphics, Label, Node, UITransform, Vec3 } from 'cc'
+import { _decorator, Color, Component, Graphics, Label, Node, Size, UITransform, Vec2, Vec3, view as ccView } from 'cc'
 import { buildSettingsView } from '../game/settings/SettingsPanel'
 import type { SettingsRow } from '../game/settings/SettingsPanel'
 import type { NoticeView } from '../game/notice/NoticePanel'
 import type { PrivacyPlan } from '../game/privacy/PrivacyConsent'
 import type { AppVersionResp } from '../net/generated/OpsProtocol'
 import { applySystemUiFont, oneLineFloorHeight } from './UiFont'
+import { applyDialogButton, applyPanelSurface, createDialogScroll } from './DialogStyle'
 
 const { ccclass } = _decorator
 
 const COLOR_BACKGROUND = new Color(24, 20, 18, 255)
 const COLOR_ROW = new Color(40, 33, 28, 255)
-const COLOR_ROW_ALT = new Color(48, 39, 33, 255)
 const COLOR_COPPER_GOLD = new Color(184, 134, 11, 255)
 const COLOR_TEXT = new Color(226, 214, 190, 255)
 const COLOR_TEXT_DIM = new Color(158, 146, 128, 255)
 
 const PANEL_WIDTH = 520
 const PANEL_HEIGHT = 420
-const ROW_HEIGHT = 72
+const ROW_HEIGHT = 56
 const PADDING = 20
-/** 一条公告正文占的高度（多行盒高）。 */
-const NOTICE_BODY_HEIGHT = 56
-
 @ccclass('SettingsPanelView')
 export class SettingsPanelView extends Component {
   private readonly rows: Node[] = []
+  private viewportKey = ''
 
   /**
    * 当前显示的是设置还是公告。
@@ -75,14 +73,24 @@ export class SettingsPanelView extends Component {
    * <p>**为什么这里才切模式**：点「公告」那一行时只发起了请求，数据还没到；
    * 等数据到了再切 ⇒ 玩家不会看到「点了但什么都没变」的那种空面板。
    */
-  attachNotices(view: NoticeView): void {
+  attachNotices(view: NoticeView, changed: boolean): void {
+    if (this.mode === 'notices' && !changed) return
     this.noticeView = view
     this.mode = 'notices'
     this.redraw()
   }
 
+  override update(): void {
+    if (this.lastRender === null) return
+    const size = ccView.getVisibleSize()
+    if (`${size.width}:${size.height}` !== this.viewportKey) this.redraw()
+  }
+
   /** 按当前模式重画。 */
   private redraw(): void {
+    const visible = ccView.getVisibleSize()
+    this.viewportKey = `${visible.width}:${visible.height}`
+    this.node.setScale(new Vec3(1, 1, 1))
     this.clearRows()
     if (this.mode === 'notices') {
       this.drawNotices()
@@ -91,73 +99,94 @@ export class SettingsPanelView extends Component {
     const last = this.lastRender
     const view = buildSettingsView(last?.resp ?? null, last?.clientVersion ?? '',
       last?.privacy, last?.audioMuted ?? false, this.noticeView)
-    this.drawBackground(PANEL_HEIGHT)
+    const compact = visible.height < 520
+    const width = compact ? Math.min(760, visible.width - 48) : PANEL_WIDTH
+    const height = compact ? Math.min(PANEL_HEIGHT, visible.height - 120) : PANEL_HEIGHT
+    this.drawBackground(width, height)
+    this.drawTitle('设置', height / 2 - PADDING, width)
 
-    let y = PANEL_HEIGHT / 2 - PADDING
-    y = this.drawTitle('设置', y)
-
+    const rowHeight = compact ? 68 : ROW_HEIGHT
+    const rowWidth = compact ? (width - PADDING * 3) / 2 : width - PADDING * 2
     view.rows.forEach((row, index) => {
-      y = this.drawActionRow(row, index % 2 === 0 ? COLOR_ROW : COLOR_ROW_ALT, y)
+      const column = compact ? index % 2 : 0
+      const line = compact ? Math.floor(index / 2) : index
+      const x = compact ? (column === 0 ? -(rowWidth + PADDING) / 2 : (rowWidth + PADDING) / 2) : 0
+      const y = height / 2 - 104 - line * (compact ? rowHeight + 8 : rowHeight)
+      this.drawActionRow(row, x, y, rowWidth, rowHeight - 8)
     })
 
-    this.drawVersion(view.versionText)
+    this.drawVersion(view.versionText, width, height)
   }
 
   /**
-   * 公告模式的画面：标题 + 每条公告（标题单行 + 正文多行）+ 底部「返回设置」。
-   *
-   * <p>正文用**多行** Label（`enableWrapText`）：公告正文长度不固定，单行会被压成极小的字。
-   * 没有公告时画一句「暂无公告」—— 而不是画一块空白（空面板与「没加载」长得一样）。
+   * 公告模式的画面：固定标题和返回入口，中间用滚动净区容纳完整正文。
+   * 横屏先收窄背景高度；正文按真实换行高度排，不能缩到读不清。
    */
   private drawNotices(): void {
-    const view = this.noticeView
-    const rows = view?.rows ?? []
-    const bodyHeight = rows.length === 0 ? 0 : rows.length * NOTICE_BODY_HEIGHT
-    const height = Math.max(PANEL_HEIGHT, 140 + bodyHeight)
-    this.drawBackground(height)
+    const notice = this.noticeView
+    const rows = notice?.rows ?? []
+    const height = Math.min(PANEL_HEIGHT, Math.max(220, ccView.getVisibleSize().height - 120))
+    this.drawBackground(PANEL_WIDTH, height)
 
-    let y = height / 2 - PADDING
-    y = this.drawTitle('公告', y)
+    this.drawTitle('运营公告', height / 2 - PADDING, PANEL_WIDTH)
+    const viewportHeight = height - 144
+    const scroll = createDialogScroll(this.node, 'NoticeRows', PANEL_WIDTH - 52,
+      viewportHeight, 0, height / 2 - 80)
+    this.rows.push(scroll.node)
+    const cardWidth = PANEL_WIDTH - 72
+    const textWidth = cardWidth - 40
+    let y = 12
 
     if (rows.length === 0) {
-      const empty = this.createLabel('暂无公告', COLOR_TEXT_DIM, 15)
-      this.node.addChild(empty.node)
-      empty.node.setPosition(new Vec3(0, y - 30, 0))
+      const card = this.noticeCard(scroll.content, 'notice-empty', cardWidth, 64, y)
+      const empty = this.createLabel('暂无公告', COLOR_TEXT, 17, textWidth)
+      card.addChild(empty.node)
+      empty.node.setPosition(new Vec3(0, 0, 0))
       empty.horizontalAlign = Label.HorizontalAlign.CENTER
-      this.rows.push(empty.node)
-      y -= 60
+      y += 76
     } else {
       rows.forEach((row) => {
-        const title = this.createLabel(row.title, COLOR_TEXT, 18)
-        this.node.addChild(title.node)
-        title.node.setPosition(new Vec3(0, y - 20, 0))
-        title.horizontalAlign = Label.HorizontalAlign.CENTER
-        this.rows.push(title.node)
-        y -= 34
-
-        const body = this.createWrappedLabel(row.body, COLOR_TEXT_DIM, 13, NOTICE_BODY_HEIGHT)
-        this.node.addChild(body.node)
-        body.node.setPosition(new Vec3(0, y - NOTICE_BODY_HEIGHT / 2 + 4, 0))
-        body.horizontalAlign = Label.HorizontalAlign.LEFT
-        this.rows.push(body.node)
-        y -= NOTICE_BODY_HEIGHT
+        const title = this.createWrappedLabel(row.title, COLOR_COPPER_GOLD, 20, textWidth)
+        const body = this.createWrappedLabel(row.body, COLOR_TEXT, 16, textWidth)
+        const titleHeight = title.node.getComponent(UITransform)!.height
+        const bodyHeight = body.node.getComponent(UITransform)!.height
+        const cardHeight = 18 + titleHeight + 12 + bodyHeight + 20
+        const card = this.noticeCard(scroll.content, `notice-entry-${row.id}`, cardWidth, cardHeight, y)
+        card.addChild(title.node)
+        title.node.setPosition(new Vec3(-textWidth / 2, cardHeight / 2 - 18, 0))
+        card.addChild(body.node)
+        body.node.setPosition(new Vec3(-textWidth / 2, cardHeight / 2 - 18 - titleHeight - 12, 0))
+        y += cardHeight + 12
       })
     }
+    scroll.content.getComponent(UITransform)!.setContentSize(new Size(PANEL_WIDTH - 52,
+      Math.max(viewportHeight, y)))
+    scroll.content.setPosition(new Vec3(0, viewportHeight / 2, 0))
+    scroll.scroll.scrollToOffset(new Vec2(0, 0), 0)
+    this.drawBackRow(height)
+  }
 
-    this.drawBackRow(y)
+  private noticeCard(parent: Node, name: string, width: number, height: number, top: number): Node {
+    const card = new Node(name)
+    card.layer = this.node.layer
+    parent.addChild(card)
+    card.addComponent(UITransform).setContentSize(width, height)
+    card.setPosition(new Vec3(0, -top - height / 2, 0))
+    applyPanelSurface(card, 'ui.plate.band', width, height, 'NoticeEntrySurface')
+    return card
   }
 
   /** 底部「返回设置」：点它切回设置模式（公告区收起）。 */
-  private drawBackRow(y: number): void {
+  private drawBackRow(height: number): void {
     const node = new Node('row-notice-back')
     this.node.addChild(node)
-    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, ROW_HEIGHT - 8)
+    node.addComponent(UITransform).setContentSize(180, 40)
     const graphics = node.addComponent(Graphics)
     graphics.fillColor = COLOR_ROW
-    graphics.roundRect(-(PANEL_WIDTH - PADDING * 2) / 2, -(ROW_HEIGHT - 8) / 2,
-      PANEL_WIDTH - PADDING * 2, ROW_HEIGHT - 8, 6)
+    graphics.roundRect(-90, -20, 180, 40, 6)
     graphics.fill()
-    node.setPosition(new Vec3(0, y - ROW_HEIGHT / 2, 0))
+    applyDialogButton(node, true, 180, 40)
+    node.setPosition(new Vec3(0, -height / 2 + 38, 0))
 
     const label = this.createLabel('返回设置', COLOR_TEXT, 18)
     node.addChild(label.node)
@@ -172,16 +201,17 @@ export class SettingsPanelView extends Component {
     this.rows.push(node)
   }
 
-  private drawBackground(height: number): void {
+  private drawBackground(width: number, height: number): void {
     const background = new Node('background')
     this.node.addChild(background)
     const transform = background.addComponent(UITransform)
-    transform.setContentSize(PANEL_WIDTH, height)
+    transform.setContentSize(width, height)
     transform.setAnchorPoint(0.5, 0.5)
     const graphics = background.addComponent(Graphics)
     graphics.fillColor = COLOR_BACKGROUND
-    graphics.rect(-PANEL_WIDTH / 2, -height / 2, PANEL_WIDTH, height)
+    graphics.rect(-width / 2, -height / 2, width, height)
     graphics.fill()
+    applyPanelSurface(background, 'ui.panel.gilt', width, height, 'SettingsSurface')
     this.rows.push(background)
   }
 
@@ -192,13 +222,22 @@ export class SettingsPanelView extends Component {
     this.rows.length = 0
   }
 
-  private drawTitle(text: string, y: number): number {
-    const label = this.createLabel(text, COLOR_COPPER_GOLD, 26)
+  private drawTitle(text: string, y: number, width: number): void {
+    const label = this.createLabel(text, COLOR_COPPER_GOLD, 27, width - 64)
     this.node.addChild(label.node)
     label.node.setPosition(new Vec3(0, y - 20, 0))
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     this.rows.push(label.node)
-    return y - 56
+    const divider = new Node('header-divider')
+    divider.layer = this.node.layer
+    this.node.addChild(divider)
+    divider.addComponent(UITransform).setContentSize(width - 80, 2)
+    divider.setPosition(new Vec3(0, y - 53, 0))
+    const line = divider.addComponent(Graphics)
+    line.fillColor = COLOR_COPPER_GOLD
+    line.rect(-(width - 80) / 2, -1, width - 80, 2)
+    line.fill()
+    this.rows.push(divider)
   }
 
   /**
@@ -207,23 +246,19 @@ export class SettingsPanelView extends Component {
    * <p>触摸事件挂在行节点上，行必须有 UITransform 且锚点在中心 —— 少了它这一行收不到触摸，
    * 表现就是「点了没反应」，而那与"未配置"长得一模一样（本项目在世界地图 HUD 上踩过一次）。
    */
-  private drawActionRow(row: SettingsRow, background: Color, y: number): number {
+  private drawActionRow(row: SettingsRow, x: number, y: number, width: number, height: number): void {
     const node = new Node(`row-${row.key}`)
     this.node.addChild(node)
-    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, ROW_HEIGHT - 8)
-    const graphics = node.addComponent(Graphics)
-    graphics.fillColor = background
-    graphics.roundRect(-(PANEL_WIDTH - PADDING * 2) / 2, -(ROW_HEIGHT - 8) / 2,
-      PANEL_WIDTH - PADDING * 2, ROW_HEIGHT - 8, 6)
-    graphics.fill()
-    node.setPosition(new Vec3(0, y - ROW_HEIGHT / 2, 0))
+    node.addComponent(UITransform).setContentSize(width, height)
+    node.setPosition(new Vec3(x, y, 0))
+    applyPanelSurface(node, 'ui.plate.band', width, height, 'SettingsRowSurface')
 
-    const title = this.createLabel(row.title, COLOR_TEXT, 20)
+    const title = this.createLabel(row.title, COLOR_TEXT, 20, width - 24)
     node.addChild(title.node)
     title.node.setPosition(new Vec3(0, 12, 0))
     title.horizontalAlign = Label.HorizontalAlign.CENTER
 
-    const subtitle = this.createLabel(row.subtitle, COLOR_TEXT_DIM, 13)
+    const subtitle = this.createLabel(row.subtitle, COLOR_TEXT_DIM, 13, width - 24)
     node.addChild(subtitle.node)
     subtitle.node.setPosition(new Vec3(0, -14, 0))
     subtitle.horizontalAlign = Label.HorizontalAlign.CENTER
@@ -233,44 +268,43 @@ export class SettingsPanelView extends Component {
     }, this)
 
     this.rows.push(node)
-    return y - ROW_HEIGHT
   }
 
-  private drawVersion(text: string): void {
-    const label = this.createLabel(text, COLOR_TEXT_DIM, 13)
+  private drawVersion(text: string, width: number, height: number): void {
+    const label = this.createLabel(text, COLOR_TEXT_DIM, 13, 150)
     this.node.addChild(label.node)
-    label.node.setPosition(new Vec3(0, -PANEL_HEIGHT / 2 + PADDING + 6, 0))
+    label.node.setPosition(new Vec3(width / 2 - 100, height / 2 - 26, 0))
     label.horizontalAlign = Label.HorizontalAlign.CENTER
     this.rows.push(label.node)
   }
 
-  /**
-   * 多行 Label（公告正文用）：`enableWrapText` 让长文本换行，`SHRINK` 在盒高内缩字号。
-   *
-   * <p>为什么不用 `createLabel`：它是**单行**盒子（`oneLineFloorHeight()`），长正文会被压成极小的字。
-   */
-  private createWrappedLabel(text: string, color: Color, size: number, boxHeight: number): Label {
+  /** 多行 Label 按内容增高，正文完整留在可滚动净区。 */
+  private createWrappedLabel(text: string, color: Color, size: number, width: number): Label {
     const node = new Node('wrapped-label')
     node.layer = this.node.layer
-    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, boxHeight)
+    node.addComponent(UITransform).setContentSize(width, size + 8)
+    node.getComponent(UITransform)!.setAnchorPoint(0, 1)
     const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.fontSize = size
+    label.lineHeight = size + 6
     label.color = color
     label.verticalAlign = Label.VerticalAlign.TOP
-    label.overflow = Label.Overflow.SHRINK
+    label.overflow = Label.Overflow.RESIZE_HEIGHT
     label.enableWrapText = true
+    label.horizontalAlign = Label.HorizontalAlign.LEFT
+    label.updateRenderData(true)
     return label
   }
 
-  private createLabel(text: string, color: Color, size: number): Label {
+  private createLabel(text: string, color: Color, size: number, width = PANEL_WIDTH - PADDING * 2): Label {
     const node = new Node('label')
     node.layer = this.node.layer
     // 盒高用 `oneLineFloorHeight`：这里原本是 `size + 8`，而 SHRINK 的盒高就是字形缩放系数，
     // 于是每一行都常态性小一号（台账 #367 点名 10 行，最狠的 13 号字只画到 21/30）。
     // 同时**不再显式设 lineHeight** —— 单行 Label 用它只会让"自然行高"多一个变量，
     // 引擎默认值参与算出来的高度才与 `oneLineFloorHeight` 的实测口径一致。
-    node.addComponent(UITransform).setContentSize(PANEL_WIDTH - PADDING * 2, oneLineFloorHeight())
+    node.addComponent(UITransform).setContentSize(width, oneLineFloorHeight())
     const label = applySystemUiFont(node.addComponent(Label))
     label.string = text
     label.fontSize = size

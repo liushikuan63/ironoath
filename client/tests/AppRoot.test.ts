@@ -5408,3 +5408,25 @@ test('聊天：本地缓存留多少条用服务端下发的 historyCap，不是
   assert.deepEqual(h.lastChat?.messages.map(m => m.content), ['二', '三'],
     '本地只留服务端说的 2 条 ⇒ 丢掉最旧的那条 —— 客户端写死 200 的话三条都会留着')
 })
+
+test('公告每次点击都取权威列表，同内容仍交付打开意图但无需重绘', async () => {
+  const h = harness()
+  const deliveries: Array<{ version: string; changed: boolean }> = []
+  h.targets.noticeList = (view, changed) => deliveries.push({ version: view.version, changed })
+  h.http.overrides.set('/notice/list', {
+    version: 'content-a', notices: [{ id: 'a', title: '公告标题', body: '第一版', priority: 1 }],
+  })
+  await h.root.start('notice-click', '君')
+  assert.equal(h.http.countOf('/notice/list'), 0, '登录不预拉公告')
+  await h.root.openNotice()
+  await h.root.openNotice()
+  assert.equal(h.http.countOf('/notice/list'), 2, '从公告返回后再点也重新读取')
+  assert.deepEqual(deliveries, [
+    { version: 'content-a', changed: true }, { version: 'content-a', changed: false },
+  ])
+  h.http.overrides.set('/notice/list', {
+    version: 'content-b', notices: [{ id: 'a', title: '公告标题', body: '第二版', priority: 1 }],
+  })
+  await h.root.openNotice()
+  assert.deepEqual(deliveries[2], { version: 'content-b', changed: true })
+})

@@ -64,9 +64,13 @@ function readNotice() {
   const texts = []
   let rowNotice = false
   let rowBack = false
+  let noticeCard = false
+  let noticeCardSurface = false
   const walk = (n) => {
     if (n.name === 'row-notice') rowNotice = true
     if (n.name === 'row-notice-back') rowBack = true
+    if (n.name === 'notice-empty' || n.name.startsWith('notice-entry-')) noticeCard = true
+    if (n.name === 'NoticeEntrySurface' && n.activeInHierarchy) noticeCardSurface = true
     const label = n.getComponent('cc.Label')
     if (label && typeof label.string === 'string' && label.string.length > 0) {
       texts.push(label.string)
@@ -74,7 +78,13 @@ function readNotice() {
     for (const child of n.children) walk(child)
   }
   walk(settings)
-  return { settingsMissing: false, rowNotice, rowBack, texts }
+  const background = settings.getChildByName('background')
+  return { settingsMissing: false, rowNotice, rowBack, noticeCard, noticeCardSurface,
+    panelSurface: !!background?.getChildByName('SettingsSurface')?.activeInHierarchy,
+    divider: !!settings.getChildByName('header-divider')?.activeInHierarchy,
+    rowSurface: !!settings.getChildByName('row-notice')
+      ?.getChildByName('SettingsRowSurface')?.activeInHierarchy,
+    texts }
 }
 
 /**
@@ -118,6 +128,8 @@ await page.waitForTimeout(500)
 const before = await page.evaluate(readNotice)
 check('设置页挂上了场景', before.settingsMissing, false)
 check('设置页有「公告」那一行', before.rowNotice, true)
+check('设置页铜边背景、分隔线与入口材质齐全',
+  before.panelSurface && before.divider && before.rowSurface, true)
 check('点之前不在公告模式（没有「返回设置」行）', before.rowBack, false)
 console.log(`  设置页文字：${(before.texts ?? []).join(' ｜ ')}`)
 
@@ -128,6 +140,8 @@ const after = await page.evaluate(readNotice)
 check('点得动那一行', clicked, true)
 check('点之后切到公告模式（「返回设置」行出现）', after.rowBack, true)
 check('切模式是重画而不是叠加（设置页那行不再存在）', after.rowNotice, false)
+check('公告页眉和正文卡片沿用铜边铁纹材质',
+  after.panelSurface && after.divider && after.noticeCard && after.noticeCardSurface, true)
 
 const shown = (after.texts ?? []).join('｜')
 console.log(`  公告模式文字：${shown}`)

@@ -1574,15 +1574,12 @@ export class GameBootstrap extends Component {
     }
     if (settings !== null) {
       settings.onSupport = (row) => this.handleSettingsAction(row.action)
-      // 公告数据到手（AppRoot 判定**内容 hash 变了**才会给）⇒ 切到公告模式并重画。
-      // **不新增导航项、不建新面板** ⇒ 「已有内容可见性」那一族探针不受影响。
-      //
-      // **为什么版本没变时 AppRoot 压根不调这里**：界面不重画 ⇒ 玩家看不见一次没必要的
-      // 刷新（那是最容易被当成 bug 报上来的观感），而数据本身也没变。
-      //
-      // **为什么切模式放在这一跳而不是点击那一下**：点击时数据还没到 ⇒ 先切就会看到
-      // 一个空的公告面板。等数据到手再切，玩家看到的第一次就是有内容的画面。
-      out.noticeList = view => settings.attachNotices(view)
+      // 请求返回后才切公告模式：点击时数据未到，先切会闪出空面板。
+      // 每次点击都交付打开意图；从公告返回设置后，同一内容 hash 也要重新打开。
+      // 已在公告页且版本未变时由视图跳过重绘；离开设置页的迟到响应不得改界面。
+      out.noticeList = (noticeView, changed) => {
+        if (!this.destroyed && this.nav?.current() === 'settings') settings.attachNotices(noticeView, changed)
+      }
       // 数据在 GameBootstrap 手里（版本响应是它拉的），所以这里直接推一次；
       // 面板没有 pending 通道可走 —— 那套是给 AppRoot 预拉的面板用的
       settings.render(this.appVersion, CLIENT_VERSION, this.privacyPlan, isMuted())

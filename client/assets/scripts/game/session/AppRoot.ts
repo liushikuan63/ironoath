@@ -320,8 +320,8 @@ export interface PanelTargets {
    * 客户端只负责画。
    */
   giftPopup?(resp: GiftPopupResp, serverNowMs: number): void
-  /** 公告视图到手时调用（版本变了才会调用 —— 见 {@link openNotice}）。 */
-  noticeList?(view: NoticeView): void
+  /** 每次打开都交付最新视图；changed 只决定已打开时是否重绘。 */
+  noticeList?(view: NoticeView, changed: boolean): void
   /** 一次购买的结果（由 `GiftPayFlow` 判定；面板只显示）。 */
   payResult?(view: PayView): void
   power?(resp: PowerDetailResp): void
@@ -751,6 +751,7 @@ export class AppRoot {
    * （而且它覆盖「服务端时刻跨过生效窗口」—— 那一刻表内容没变、返回的列表变了）。
    */
   private noticeVersion: string | null = null
+  private noticeEpoch = 0
   private gachaHistory: GachaHistoryView | null = null
   private gachaHistoryPage = 0
 
@@ -5331,8 +5332,8 @@ export class AppRoot {
    * <p><b>为什么是「点公告时取」而不是「登录时取」</b>：登录时取一次 ⇒ 玩家整个会话都看的是
    * 旧公告，除非重登 ⇒ 「运营改完公告玩家看不到」这件事会一直存在。
    *
-   * <p><b>为什么版本没变就不通知目标</b>：拉一次是真的，但没变就别让界面闪一下 ——
-   * 界面闪烁是最容易被当成 bug 报上来的观感（而且它没有任何信息量）。
+   * <p>每次都通知视图“玩家打开了公告”；视图只有已经在公告模式且版本未变时才跳过重绘。
+   * 若从公告返回了设置页，同版也必须再次打开。晚到的旧请求不能覆盖新公告。
    *
    * <p>拉不到就保持原样，**绝不因此报错打断玩家**（与礼包弹窗同一条纪律）。
    */
@@ -5340,16 +5341,16 @@ export class AppRoot {
     // **点了就发**：口径是「有多少人想去看公告」，不是「有多少人成功看到了」——
     // 把拉取失败也算成想看，才看得出「公告位点了没反应」这类问题。
     this.track(TRACK_EVENTS.noticeOpen)
+    const epoch = ++this.noticeEpoch
     const outcome = await this.api.noticeList()
+    if (epoch !== this.noticeEpoch) return
     if (outcome.kind !== 'ok') {
+      this.receipt(AppRoot.reason(outcome))
       return
     }
     const result = refreshNoticeView(outcome.data, this.noticeVersion)
-    if (!result.changed) {
-      return
-    }
     this.noticeVersion = result.view.version
-    this.targets.noticeList?.(result.view)
+    this.targets.noticeList?.(result.view, result.changed)
   }
 
   async showGiftPopup(): Promise<void> {
