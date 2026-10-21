@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 职责：检查 收口清单.md 的表格形状 —— 每行的单元格数必须等于它所在小节的表头列数。
+# 职责：保留收口清单已有的多列/撞号门，并按 #2287 方案③检查活文档新增表格行必须与表头等宽。
 # 依赖：node（不用 python：本机的 python 存根会中途 Permission denied，见 windows-toolchain-quirks）。
 #
 # 为什么值得做成 CI 一项而不是靠人记住：
@@ -11,3 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 node scripts/check-checklist-table.js 收口清单.md
+node --test scripts/check-new-table-rows.test.mjs
+node scripts/check-new-table-rows.js \
+  验收矩阵.md 上线检查清单.md 待完善收口_VibeCoding开发包.md \
+  CC开发全流程.md DSH线台账_2026-10-19.md 客户端发送口缺口清单.md

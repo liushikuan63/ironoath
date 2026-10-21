@@ -61,6 +61,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       # env.sh 先看 JAVA_HOME 是否已是 17，是就直接用 —— setup-java 正好把 JAVA_HOME 指过去。
       # 版本必须与 server/pom.xml 的 <maven.compiler.release>17</maven.compiler.release> 一致。
@@ -99,7 +101,11 @@ jobs:
       # 全部静态门（含台账形状与编号唯一性、埋点覆盖、端点路径、配置消费、合规红线、Mongo 写入清单）。
       # 产物类门在没有 Cocos 构建时会打 [SKIPPED] 并说明"这不是通过"。
       - name: Static gates
-        run: bash scripts/check.sh
+        env:
+          TABLE_SHAPE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          source scripts/prepare-table-shape-base.sh
+          bash scripts/check.sh
 
   # 运行时探针里**不需要前端产物**的那一类：纯 HTTP，起一个 dev 后端就能跑。
   #

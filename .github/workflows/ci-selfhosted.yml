@@ -35,6 +35,8 @@ jobs:
     runs-on: [self-hosted, ironoath-self]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       # node 必须是 20：本机默认 node 是 v24，而 `node --test` 的目录形态在 24 上跑不起来
       # （实测 check.sh 末段 test-client 判红，仓库文档给的本机做法也是切 20）。
@@ -52,8 +54,10 @@ jobs:
         working-directory: client
 
       - name: Static gates
+        env:
+          TABLE_SHAPE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         # Windows PATH 也有 WSL 的 bash.exe；显式调用本机已验证的 Git Bash。
         shell: powershell
         run: |
-          & 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc -e -o pipefail scripts/check.sh
+          & 'C:\Program Files\Git\bin\bash.exe' --noprofile --norc -e -o pipefail -c 'source scripts/prepare-table-shape-base.sh && bash scripts/check.sh'
           exit $LASTEXITCODE

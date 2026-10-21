@@ -1,13 +1,16 @@
-// 职责：见同名 check-checklist-table.sh。两条规则：
-// ① 单元格数**多于**表头列数才报错 —— 少几格只是末尾留空（照常渲染，不丢内容），
+// 职责：见同名 check-checklist-table.sh。三条规则：
+// ① 旧门始终拦单元格数**多于**表头的行；历史少格行按 #2287 决策暂不追溯，
 //    多出来的那一格会被 Markdown 整格丢掉：写进去的待办在文件里看得见、在渲染后的页面上不存在。
-// ② 台账编号不能重复，且行内自报的「本行占 #N」必须与首列编号一致 ——
+// ② #2287 后新增或改写的行必须与表头等宽，收口清单新行还必须有行尾竖线；
+//    旧短行按 Git 基线识别并保留，不建逐行豁免清单（见 check-new-table-rows.js）。
+// ③ 台账编号不能重复，且行内自报的「本行占 #N」必须与首列编号一致 ——
 //    编号是全仓库互相引用的锚点（"见 #112"），撞号之后指哪一条没人说得清。
 //    2026-09-19 加这条是因为同一天真撞了两次：#112 在历史上就重复过（两条不同条目共用一个号），
 //    #205 又被两个并行会话同时占用。**没有这条卡口时，两种情况都只能靠人眼发现。**
 'use strict'
 
 const fs = require('fs')
+const { checkNewRows } = require('./check-new-table-rows.js')
 
 const file = process.argv[2] || '收口清单.md'
 const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/)
@@ -35,6 +38,11 @@ let headerColumns = 0
 let headerLine = 0
 let headerIsIndex = false
 const problems = []
+try {
+  problems.push(...checkNewRows(file, fs.readFileSync(file, 'utf8')).problems)
+} catch (error) {
+  problems.push(error.message)
+}
 /** 编号 → 出现过它的行号（1 起） */
 const seenNumbers = new Map()
 
