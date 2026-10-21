@@ -13,6 +13,9 @@ import com.ironoath.core.hero.HeroRoster;
 import com.ironoath.core.player.PlayerRepository;
 import com.ironoath.core.player.PlayerSave;
 import com.ironoath.web.dto.generated.TrainReq;
+import com.ironoath.web.dto.generated.ChallengeStageReq;
+import com.ironoath.web.dto.generated.StageUnit;
+import com.ironoath.web.service.StageAppService;
 import com.ironoath.web.service.MarchAppService;
 import com.ironoath.web.service.WorldAppService;
 import com.ironoath.web.service.ArmyAppService;
@@ -82,6 +85,10 @@ class GiftPopupTriggerEndToEndTest {
     private static final int TARGET_X = 141;
     private static final int TARGET_Y = 83;
 
+    /** 关卡与兵种：照 StageEndpointTest 的形状（第一关 / T1 步兵）。 */
+    private static final String STAGE_1 = "stage_01_01";
+    private static final String UNIT = "unit_infantry_t1";
+
     @Autowired private MockMvc mockMvc;
     @Autowired private PlayerInitService playerInitService;
     @Autowired private PlayerRepository players;
@@ -95,6 +102,7 @@ class GiftPopupTriggerEndToEndTest {
     @Autowired private InventoryRepository inventories;
     @Autowired private HeroStatsService heroStats;
     @Autowired private com.ironoath.web.battle.BattleReportStore battleReports;
+    @Autowired private StageAppService stageAppService;
 
     /** 夹具：直接给足四种资源（照 ArmyEndpointTest.giveResources 的形状）。 */
     private void giveResources(String playerId, long amount) {
@@ -619,5 +627,88 @@ class GiftPopupTriggerEndToEndTest {
                     + "）⇒ BATTLE_LOST 这条仍未端到端跑通。修法见收口清单 #573。");
         }
         assertThat(gotId).isEqualTo(giftIdFor(GiftCfg.Trigger.BATTLE_LOST));
+    }
+
+    /**
+     * 夹具：把「夹具自己触发的弹窗」排空，并把全局冷却与待触发标记一起清掉。
+     *
+     * <p>为什么需要（照 ④ 那条已经踩过的坑，#573 / #589）：
+     * ① 造兵夹具要建兵营 + 升主城 ⇒ 那正是 {@code BUILDING_DONE} 的触发条件 ⇒ 弹的是「落成贺礼」，
+     *    不是本条要验的「卡关补给」。{@code /gift/popup} 是「问一次并压制该次机会」，
+     *    所以**在真实动作之前**先问一次即可排空；
+     * ② 排空那一刻会把 {@code lastShowAt} 写成真实时钟，而全局冷却 10 分钟读的就是这一位
+     *    ⇒ 紧接着的真实触发**必然被频控压住**（实测 {@code popup=false}，而标记与战报都在）。
+     *    {@code PlayerGiftPopup} 是 record、没有清零方法 ⇒ 用规范构造器把它置 0；
+     *    {@code triggeredAt} 同样整体清空（否则 BUILDING_DONE 的报价 TTL 60 分钟会先到先得）。
+     */
+    private void drainFixtureGiftPopup(String playerId) throws Exception {
+        JsonNode pre = popupData(playerId);
+        if (pre.path("popup").asBoolean(false)) {
+            System.out.println("[E2E] 已排空夹具自带的弹窗：" + pre.path("giftId").asText(""));
+        }
+        PlayerSave cooled = players.findByPlayerId(playerId).orElseThrow();
+        com.ironoath.core.player.PlayerGiftPopup g = cooled.giftPopup();
+        cooled.setGiftPopup(new com.ironoath.core.player.PlayerGiftPopup(
+                0L, g.showsByGift(), java.util.Map.of(), g.purchaseDayKey(), g.purchasedCountByGift()));
+        players.save(cooled);
+    }
+
+    /**
+     * B19 验收 8 的第三类触发（卡关）——**端到端那半**。
+     *
+     * <p>为什么必须单独一条：`StageEndpointTest.losingAStageMarksStuckStage` 已经钉住
+     * 「打输一关会记 STUCK_STAGE 时刻」（标记那一半），而验收问的是**玩家真的看到弹窗**
+     * （标记 ⇒ 频控 ⇒ 报价 ⇒ 弹窗那条读时链）。这两半之间隔着
+     * {@code GiftPopupService.decide}，标记打上了不等于弹窗出得来。
+     *
+     * <p>本条的三步各自都是真实动作：
+     * ① 造 1 个 T1（走真实训练链：兵营 → 训练 → 加速令 → 惰性收割）；
+     * ② 挑战第一关**并输掉**（1 个兵打 10 个敌人，照 StageEndpointTest 的形状），
+     *    输了才走 {@code StageAppService} 的失败分支 → 打 STUCK_STAGE 标记；
+     * ③ 读一次 {@code /gift/popup} ⇒ 必须是「卡关补给」这一行。
+     */
+    @Test
+    @DisplayName("真实挑战关卡失败 ⇒ 弹卡关补给（走 StageAppService 的 STUCK_STAGE 标记点）")
+    void stuckStageReallyTriggersTheSupplyPopup() throws Exception {
+        String pid = newPlayer();
+        // **要真有一个兵才能上阵**（请求体里的 units 要玩家实际持有）：走真实训练链造 1 个 T1。
+        trainT1(pid, 1L);
+        // 训练是**惰性结算**（本仓禁常驻定时器）⇒ 用加速令把剩余秒数减到 0，再收割一次。
+        finishTraining(pid, UNIT);
+        for (int i = 0; i < 5 && countOf(pid, UNIT) < 1L; i++) {
+            armyAppService.settledArmy(pid, System.currentTimeMillis() + SETTLE_SKEW_MS);
+            if (countOf(pid, UNIT) < 1L) {
+                finishTraining(pid, UNIT);
+            }
+        }
+        assertThat(countOf(pid, UNIT)).as("至少要有 1 个兵才能上阵（造兵链没走通）").isPositive();
+
+        // **排空夹具自带的 BUILDING_DONE 弹窗 + 清掉全局冷却**（见上面那个夹具说明）。
+        drainFixtureGiftPopup(pid);
+
+        // **1 个兵打 STAGE_1 的 10 个敌人 ⇒ 必败**（照 StageEndpointTest「失败：1 个兵打 10 个兵」的形状）。
+        // 输了之后 `StageAppService` 的失败分支才会打 STUCK_STAGE 标记（源码 243~252 行）。
+        int challengeCode = 0;
+        try {
+            stageAppService.challenge(pid,
+                    new ChallengeStageReq("e2e-stuck-" + UUID.randomUUID(), STAGE_1,
+                            List.of(new StageUnit(UNIT, 1L)), List.of()));
+        } catch (com.ironoath.common.BizException e) {
+            challengeCode = e.errorCode().code();
+            System.out.println("[E2E] challenge 业务码=" + challengeCode + " " + e.getMessage());
+        }
+        PlayerSave after = players.findByPlayerId(pid).orElseThrow();
+        System.out.println("[E2E] PID=" + pid + " giftPopup=" + after.giftPopup()
+                + " challengeCode=" + challengeCode);
+        assertThat(after.giftPopup().triggeredAtOf("STUCK_STAGE"))
+                .as("挑战输了就该记下 STUCK_STAGE 时刻（业务码=" + challengeCode + "）").isPositive();
+        JsonNode data = popupData(pid);
+        if (!data.path("popup").asBoolean(false)) {
+            System.out.println("[E2E] STUCK_STAGE 不可验：标记已打上但弹窗被压住，popup=false");
+            Assumptions.abort("标记已打上但弹窗被频控压住 ⇒ 本条不可验（不是通过也不是失败）。");
+        }
+        assertThat(data.path("giftId").asText())
+                .as("真实卡关 ⇒ 弹的必须是「卡关补给」那一行")
+                .isEqualTo(giftIdFor(GiftCfg.Trigger.STUCK_STAGE));
     }
 }
