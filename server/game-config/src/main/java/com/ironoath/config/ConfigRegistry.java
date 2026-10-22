@@ -72,6 +72,9 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
      */
     private volatile Map<String, RawConfigTable> rawTables;
 
+    /** 隔离视图只允许读配置；其类型缓存仍可按需建立或失效。 */
+    private final boolean readOnly;
+
     /** 强类型表缓存。热更时整表替换，读方持有的旧引用依然是一致快照。 */
     private volatile Map<Class<?>, ConfigTable<?>> typedTables = new ConcurrentHashMap<>();
 
@@ -90,8 +93,42 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
     }
 
     private ConfigRegistry(Map<String, RawConfigTable> rawTables) {
+        this(rawTables,false);
+    }
+
+    private ConfigRegistry(Map<String, RawConfigTable> rawTables,boolean readOnly) {
         this.rawTables = Map.copyOf(rawTables);
         this.globals = Map.copyOf(parseGlobals(this.rawTables.get(TABLE_GLOBAL)));
+        this.readOnly=readOnly;
+    }
+
+    /**
+     * 一次捕获已发布原始表整图；不取注册表monitor，避免国家/集结锁内与热更守卫逆序。
+     * 原始JSON深拷贝、global重建且类型缓存独立，不能把父视图热更的中间缓存带入战果。
+     * 只承诺对正式reload发布的快照一致性；任意并发修改诊断JsonNode不是热更入口。
+     */
+    public ConfigRegistry readOnlySnapshot() {
+        Map<String,RawConfigTable> captured=rawTables;
+        Map<String,RawConfigTable> copied=new LinkedHashMap<>();
+        captured.forEach((name,table)->copied.put(name,copyRawTable(table)));
+        return new ConfigRegistry(copied,true);
+    }
+
+    private static RawConfigTable copyRawTable(RawConfigTable original) {
+        List<JsonNode> rows=new ArrayList<>();Map<String,JsonNode> index=new LinkedHashMap<>();
+        for(JsonNode row:original.rows()) {
+            JsonNode copy=row.deepCopy();
+            if(copy.get("id")==null || !copy.get("id").isTextual() || index.put(copy.get("id").asText(),copy)!=null)
+                throw new IllegalStateException("原始配置行主键损坏，不能生成隔离视图");
+            rows.add(copy);
+        }
+        if(!index.keySet().equals(original.rowsById().keySet()))
+            throw new IllegalStateException("原始配置索引损坏，不能生成隔离视图");
+        return new RawConfigTable(original.name(),original.version(),original.status(),original.comment(),rows,index);
+    }
+
+    private void requireMutable() {
+        if(readOnly)throw new IllegalStateException("已冻结配置视图不接受热更");
     }
 
     /** global 表是键值型（value 的类型由同行 valueType 决定），无法生成静态 record，手工建模。 */
@@ -251,6 +288,7 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
      * @throws ConfigException 新表校验失败时抛出，<b>旧表保持不变</b>（热更失败不能把服务打挂）
      */
     public synchronized <T> void reload(String name, Class<T> type, String json) {
+        requireMutable();
         List<ConfigValidator.Issue> issues = new ArrayList<>();
         JsonNode root = ConfigValidator.parseOrCollect(name, json, issues);
         if (root != null) {
@@ -350,6 +388,7 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
      * @throws ConfigException 任一表校验失败：<b>旧表原样保留</b>，服务不受影响
      */
     public synchronized void reloadAllFromDirectory(Path dir) {
+        requireMutable();
         ConfigRegistry candidate = loadFromDirectory(dir);
         for (var guard : reloadGuards.values()) guard.accept(candidate);
         // 替换顺序与单表热更一致：原始表 → global 索引 → 强类型视图。
@@ -367,7 +406,7 @@ public final class ConfigRegistry implements CurveSource, GlobalParamSource {
         if (t == null) {
             throw new ConfigException("配置表[" + name + "]不存在，已加载的表=" + rawTables.keySet());
         }
-        return t;
+        return readOnly?copyRawTable(t):t;
     }
 
     public boolean hasTable(String name) {

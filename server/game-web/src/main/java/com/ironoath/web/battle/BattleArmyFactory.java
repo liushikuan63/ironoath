@@ -316,6 +316,12 @@ public class BattleArmyFactory {
      */
     public StrategicRallyCasualties freezeStrategicCasualties(March march,long marchVersion,Rally rally,
             BattleResult result,StrategicRallyCasualties.Side side,Map<String,Long> hospitalCapacities) {
+        // 同一隔离视图内取类型与展开损失。原simulate仍须由producer使用同一预先捕获视图。
+        return new BattleArmyFactory(configs.readOnlySnapshot()).freezeFromView(march,marchVersion,rally,result,side,hospitalCapacities);
+    }
+
+    private StrategicRallyCasualties freezeFromView(March march,long marchVersion,Rally rally,
+            BattleResult result,StrategicRallyCasualties.Side side,Map<String,Long> hospitalCapacities) {
         if(march==null || marchVersion<0 || side==null)throw new IllegalArgumentException("战略战损行军/版本缺失");
         var frozen=March.fromSnapshot(march.snapshot());
         var identity=StrategicRallyCasualties.RallyIdentity.freeze(rally);

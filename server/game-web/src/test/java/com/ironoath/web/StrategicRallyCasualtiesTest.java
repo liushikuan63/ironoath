@@ -3,6 +3,7 @@ package com.ironoath.web;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ironoath.battle.*;
 import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.UnitCfg;
 import com.ironoath.core.march.March;
 import com.ironoath.core.social.Rally;
 import com.ironoath.core.world.Coord;
@@ -12,8 +13,10 @@ import com.ironoath.web.battle.StrategicRallyCasualties;
 import com.ironoath.web.battle.StrategicRallyCasualties.Side;
 import org.junit.jupiter.api.Test;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.*;
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 /** 真模拟与显式账务反例分开；本类不写Army/目标，不代表实际攻占。 */
 class StrategicRallyCasualtiesTest {
@@ -270,5 +273,26 @@ class StrategicRallyCasualtiesTest {
         var two=rally(Map.of("P1",Map.of(U,3000000000L,V,3000000000L)));var large=march(two);var largeBefore=large.snapshot();
         assertThatThrownBy(()->freeze(large,two,accounting(Map.of(),6000000000L,0,0),Side.ATTACKER)).isInstanceOf(ArithmeticException.class);
         assertThat(large.snapshot()).isEqualTo(largeBefore);
+    }
+
+    @Test void strategicFreezerUsesTheCapturedViewWhenParentReloadsImmediatelyAfterCapture() throws Exception {
+        // 私有内存注册表的类型切换夹具，不修改contract文件或实际运行实例。
+        var live=spy(configs);var controlled=new BattleArmyFactory(live);
+        Path fixtureRoot=Path.of("").toAbsolutePath();
+        while(fixtureRoot!=null && !Files.isRegularFile(fixtureRoot.resolve("contract/config/unit.json")))fixtureRoot=fixtureRoot.getParent();
+        if(fixtureRoot==null)throw new IllegalStateException("fixture unit config missing");
+        var root=(com.fasterxml.jackson.databind.node.ObjectNode)ConfigRegistry.parse(Files.readString(fixtureRoot.resolve("contract/config/unit.json")));
+        for(var row:root.get("rows"))if(U.equals(row.get("id").asText()))
+            ((com.fasterxml.jackson.databind.node.ObjectNode)row).put("type","CAVALRY");
+        root.put("version",root.get("version").asInt()+1);String changed=root.toString();
+        doAnswer(inv->{var view=(ConfigRegistry)inv.callRealMethod();live.reload("unit",UnitCfg.class,changed);return view;})
+                .when(live).readOnlySnapshot();
+        var r=rally(owners(3,2));var m=march(r);var before=m.snapshot();
+        var payload=controlled.freezeStrategicCasualties(m,7,r,accounting(Map.of(UnitType.INFANTRY,3L),1,1,0),Side.ATTACKER,capacities(r.memberIds()));
+        verify(live,times(1)).readOnlySnapshot();
+        assertThat(live.get(UnitCfg.class,U).type()).isEqualTo(UnitCfg.Type.CAVALRY);
+        assertThat(payload.unitTypes()).containsEntry(U,UnitType.INFANTRY);
+        assertThat(sum(payload.lossesByPlayer())).isEqualTo(2);
+        assertThat(m.snapshot()).isEqualTo(before);
     }
 }
