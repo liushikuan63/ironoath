@@ -112,4 +112,38 @@ class TargetOccupationStoreTest {
             assertThat(a.findByTargetIds(List.of("gate_north"))).hasSize(1);
         } finally { pool.shutdownNow(); }
     }
+
+    @ParameterizedTest @EnumSource(Backend.class)
+    void actualGarrisonAndKnownEmptyArePartOfTheSameOwnerCas(Backend backend) {
+        var store=store(backend);
+        var original=state("N1",1,"capture");
+        var stationed=new TargetOccupationStore.Snapshot(original.targetId(),original.kind(),original.x(),original.y(),
+                original.nationId(),original.nationName(),original.capturedAt(),original.operationId(),original.version(),
+                TargetOccupationStore.Garrison.stationed("owned-current-march"));
+        assertThat(store.compareAndSet(stationed,0)).isTrue();
+        assertThat(store.compareAndSet(original,0)).as("同一归属不等于同一驻军回执").isFalse();
+        var empty=new TargetOccupationStore.Snapshot(original.targetId(),original.kind(),original.x(),original.y(),
+                original.nationId(),original.nationName(),original.capturedAt(),"withdraw-done",2,
+                TargetOccupationStore.Garrison.empty());
+        assertThat(store.compareAndSet(empty,1)).isTrue();
+        assertThat(store.compareAndSet(empty,1)).isTrue();
+        assertThat(store.compareAndSet(stationed,0)).as("旧驻军不能覆盖新空兵状态").isFalse();
+        if(backend==Backend.MONGO)store=new MongoTargetOccupationStore(db.template());
+        assertThat(store.findByTargetIds(List.of("gate_north"))).containsEntry("gate_north",empty);
+        assertThat(empty.nationId()).isEqualTo(stationed.nationId());
+    }
+
+    @Test void legacyMongoWithoutGarrisonColumnIsUnknownAndBrokenReferenceIsRejected() {
+        var store=store(Backend.MONGO);store.compareAndSet(state("N1",1,"legacy"),0);
+        db.template().updateFirst(new org.springframework.data.mongodb.core.query.Query(),
+                new org.springframework.data.mongodb.core.query.Update().unset("state.garrison"),"world_target_occupation");
+        assertThat(new MongoTargetOccupationStore(db.template()).findAll(1).get("gate_north").garrison()).isNull();
+        assertThatThrownBy(()->TargetOccupationStore.Garrison.stationed(null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(()->new TargetOccupationStore.Garrison(TargetOccupationStore.Garrison.Kind.EMPTY,"m"))
+                .isInstanceOf(IllegalArgumentException.class);
+        db.template().updateFirst(new org.springframework.data.mongodb.core.query.Query(),
+                new org.springframework.data.mongodb.core.query.Update().set("state.garrison.kind","STATIONED"),"world_target_occupation");
+        assertThatThrownBy(()->new MongoTargetOccupationStore(db.template()).findAll(1))
+                .isInstanceOf(RuntimeException.class);
+    }
 }

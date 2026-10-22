@@ -6,9 +6,28 @@ import java.util.Map;
 
 /** 战略目标归属端口。只保存变化；缺档是中立，不为旧世界回填13份默认档。 */
 public interface TargetOccupationStore {
+    /** null 引用是旧归属档的未知资料；EMPTY 是已知撤防，不得回填 NPC。 */
+    record Garrison(Kind kind, String marchId) {
+        public enum Kind { EMPTY, STATIONED }
+        public Garrison {
+            if(kind==null || (kind==Kind.EMPTY && marchId!=null)
+                    || (kind==Kind.STATIONED && (marchId==null || marchId.isBlank()))) {
+                throw new IllegalArgumentException("战略驻军引用无效，空驻军与缺档不可混同");
+            }
+        }
+        public static Garrison empty() { return new Garrison(Kind.EMPTY,null); }
+        public static Garrison stationed(String marchId) { return new Garrison(Kind.STATIONED,marchId); }
+    }
+
     /** 坐标/类型锚定防止改表静默搬走已占目标；国家名在国家域目前不可改名，随占领冻结。 */
     record Snapshot(String targetId, WorldGenerator.EntityType kind, int x, int y,
-                    String nationId, String nationName, long capturedAt, String operationId, long version) {
+                    String nationId, String nationName, long capturedAt, String operationId, long version,
+                    Garrison garrison) {
+        /** 旧元数据档保持未知驻军；缺字段不代表空兵，更不代表恢复配置守军。 */
+        public Snapshot(String targetId, WorldGenerator.EntityType kind, int x, int y,
+                        String nationId, String nationName, long capturedAt, String operationId, long version) {
+            this(targetId,kind,x,y,nationId,nationName,capturedAt,operationId,version,null);
+        }
         public Snapshot {
             if (targetId==null || targetId.isBlank() || kind==null || !kind.isStrategic()
                     || x<0 || y<0 || nationId==null || nationId.isBlank()

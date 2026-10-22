@@ -1,0 +1,102 @@
+package com.ironoath.web.world;
+
+import com.ironoath.config.ConfigRegistry;
+import com.ironoath.config.cfg.UnitCfg;
+import com.ironoath.core.march.March;
+import com.ironoath.core.march.MarchRepository;
+import com.ironoath.core.social.Rally;
+import com.ironoath.web.service.WorldTargets;
+import com.ironoath.web.social.SocialStore;
+import org.springframework.stereotype.Component;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * 战略目标守军的只读战前输入。仅从未占领目标取配置 NPC；已占空兵是零防守，
+ * 旧档未知或断开的兵权引用必须停止争夺，不用配置守军掩盖资料缺失。
+ * 本读取不申请战斗写入权；调用方仍须以冻结的目标/行军版本取得结算归属。
+ */
+@Component
+public final class StrategicTargetDefender {
+    public record Defender(TargetOccupationStore.Snapshot occupation, Long marchVersion,
+                           March.Snapshot march, Map<String,Long> troops, boolean initialNpc) {
+        public Defender { troops=Map.copyOf(troops); }
+    }
+    private final ConfigRegistry configs;
+    private final TargetOccupationStore occupations;
+    private final MarchRepository marches;
+    private final SocialStore social;
+    public StrategicTargetDefender(ConfigRegistry configs,TargetOccupationStore occupations,
+                                   MarchRepository marches,SocialStore social) {
+        this.configs=configs;this.occupations=occupations;this.marches=marches;this.social=social;
+    }
+
+    public Defender read(WorldTargets.Target target) {
+        Objects.requireNonNull(target,"战略目标不得为空");
+        var id=target.definition().id();var owner=owner(id);
+        if(owner==null) {
+            var initial=new Defender(null,null,null,initialTroops(target),true);
+            requireSameOwner(id,null);return initial;
+        }
+        if(owner.x()!=target.coord().x() || owner.y()!=target.coord().y()
+                || !owner.kind().name().equals(target.definition().kind().name()))
+            throw new IllegalStateException("战略目标归属锚点与配置绑定不一致");
+        var ref=owner.garrison();
+        if(ref==null)throw new IllegalStateException("已占目标驻军资料未建立，不能推定为空或恢复配置守军");
+        if(ref.kind()==TargetOccupationStore.Garrison.Kind.EMPTY) {
+            requireSameOwner(id,owner);return new Defender(owner,null,null,Map.of(),false);
+        }
+        long version=marches.versionOf(ref.marchId());
+        var march=marches.findById(ref.marchId()).orElseThrow(
+                ()->new IllegalStateException("目标绑定的实际驻军行军缺失，拒绝恢复配置守军"));
+        if(!march.hasGarrisonOwnership() || march.targetType()!=March.TargetType.STRATEGIC_TARGET
+                || !id.equals(march.targetId()) || !target.coord().equals(march.to()) || !march.isRallyMarch())
+            throw new IllegalStateException("目标与驻军行军的兵权绑定不一致");
+        if(march.status()!=March.Status.STATIONED)
+            throw new IllegalStateException("目标驻军正在交战或返程，不能重复作为驻守战斗输入");
+        var rally=social.rallyOf(march.rallyId()).orElseThrow(
+                ()->new IllegalStateException("实际驻军原集结缺失，不能推定国家与兵权"));
+        if(rally.scope()!=Rally.Scope.NATION || !owner.nationId().equals(rally.groupId()))
+            throw new IllegalStateException("实际驻军集结与占领国家不一致");
+        if(rally.targetX()!=target.coord().x() || rally.targetY()!=target.coord().y()
+                || !"STRATEGIC_TARGET".equals(rally.targetType()))
+            throw new IllegalStateException("实际驻军与原集结目标绑定不一致");
+        for(var player:march.garrisonTroopsByPlayer().entrySet()) {
+            var participant=rally.participant(player.getKey());
+            if(participant==null)throw new IllegalStateException("实际驻军出现非原集结成员");
+            for(var unit:player.getValue().entrySet())
+                if(unit.getValue()>participant.troops().getOrDefault(unit.getKey(),0L))
+                    throw new IllegalStateException("实际驻军兵权超过原集结出兵承诺");
+        }
+        // 重建一个不向调用方泄露可变 March 引用的快照；双版本读取只排除读取期间的混档，
+        // 不代替后续 CAS。读完之后仍可能有新事件，战斗必须消费此处冻结的版本。
+        var frozen=March.fromSnapshot(march.snapshot()).snapshot();
+        if(marches.versionOf(ref.marchId())!=version)
+            throw new IllegalStateException("实际驻军版本已变化，请重读后再申请战斗");
+        requireSameOwner(id,owner);
+        return new Defender(owner,version,frozen,frozen.units(),false);
+    }
+
+    private TargetOccupationStore.Snapshot owner(String id) {
+        return occupations.findByTargetIds(List.of(id)).get(id);
+    }
+    private void requireSameOwner(String id,TargetOccupationStore.Snapshot before) {
+        if(!Objects.equals(before,owner(id)))throw new IllegalStateException("目标归属已变化，请重读后再申请战斗");
+    }
+    private Map<String,Long> initialTroops(WorldTargets.Target target) {
+        var row=target.defender();Map<String,Long> troops=new LinkedHashMap<>();
+        var units=configs.all(UnitCfg.class);
+        for(var type:UnitCfg.Type.values()) {
+            long count=switch(type) {
+                case INFANTRY -> row.infantryCount();case CAVALRY -> row.cavalryCount();
+                case ARCHER -> row.archerCount();case SIEGE -> row.siegeCount();
+            };
+            var matching=units.stream().filter(u->u.type()==type && u.tier()==row.unitTier()).toList();
+            if(matching.size()!=1)throw new IllegalStateException("战略中立守军兵种配置缺失或重复："+type);
+            if(count>0L)troops.put(matching.get(0).id(),count);
+        }
+        return troops;
+    }
+}
