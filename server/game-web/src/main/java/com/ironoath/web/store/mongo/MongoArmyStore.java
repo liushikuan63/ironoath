@@ -77,6 +77,7 @@ public final class MongoArmyStore implements ArmyRepository {
                 .set("extraSlots", doc.extraSlots())
                 .set("autoTrain", doc.autoTrain())
                 .set("rallyRefunds", doc.rallyRefunds())
+                .set("strategicWounds",doc.strategicWounds())
                 .inc("version", 1L);
         UpdateResult result = mongo.updateFirst(query, update, ArmyDocument.class, ArmyDocument.COLLECTION);
         if (result.getMatchedCount() == 0L) {

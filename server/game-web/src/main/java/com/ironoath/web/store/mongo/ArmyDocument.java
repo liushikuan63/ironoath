@@ -41,7 +41,8 @@ public record ArmyDocument(
          * 领域侧的 {@code Snapshot} 会把 null 当成"关"，所以老号读档后不会突然开始花钱训兵。
          */
         com.ironoath.core.army.AutoTrainPolicy autoTrain,
-        List<String> rallyRefunds) {
+        List<String> rallyRefunds,
+        Map<String,ArmyState.StrategicWoundReceipt> strategicWounds) {
 
     /** 集合名。集中定义避免各处散落字符串。 */
     public static final String COLLECTION = "army";
@@ -50,13 +51,13 @@ public record ArmyDocument(
         ArmyState.Snapshot s = army.snapshot();
         return new ArmyDocument(playerId, version, s.troops(), s.queue(), s.wounded(),
                 s.treatFinishAt(), s.treatTotalSeconds(), s.treatOriginalSeconds(),
-                s.treatCost(), s.extraSlots(), s.autoTrain(), s.rallyRefunds());
+                s.treatCost(), s.extraSlots(), s.autoTrain(), s.rallyRefunds(),s.strategicWounds());
     }
 
     /** 每次调用都新建一份，所以读出去的不是库里的活对象。 */
     ArmyState toDomain() {
         ArmyState army = ArmyState.fromSnapshot(new ArmyState.Snapshot(troops, queue, wounded, treatFinishAt,
-                treatTotalSeconds, treatOriginalSeconds, treatCost, extraSlots, autoTrain, rallyRefunds));
+                treatTotalSeconds, treatOriginalSeconds, treatCost, extraSlots, autoTrain, rallyRefunds,strategicWounds));
         army.bindRepositoryVersion(version);
         return army;
     }

@@ -36,6 +36,8 @@ public final class ArmyState {
 
     private final Map<String, Long> troops = new LinkedHashMap<>();
     private final java.util.Set<String> rallyRefunds = new java.util.LinkedHashSet<>();
+    /** 每目标只保留当前代次；旧计划必须携原代次，不能换新代次重放旧战果。 */
+    private final Map<String,StrategicWoundReceipt> strategicWounds = new LinkedHashMap<>();
     /** 仓储读副本的版本，瞬时元数据，不进存档；防旧快照搭配后读的新版本覆盖并发退款。 */
     private long repositoryVersion = -1L;
 
@@ -88,6 +90,74 @@ public final class ArmyState {
 
     public boolean hasRallyRefund(String settlementId) {
         return rallyRefunds.contains(settlementId);
+    }
+
+    /** 医院实际收容结果与代次凭据同聚合保存，供可恢复战略结算重放。 */
+    public StrategicWoundReceipt admitStrategicWoundedOnce(String targetId,long sequence,String operationId,
+                                                          Map<String,Long> incoming,long hospitalCapacity) {
+        requireText(targetId,"targetId");requireText(operationId,"operationId");
+        if(sequence<1 || hospitalCapacity<0)throw new IllegalArgumentException("战略伤兵代次/容量无效");
+        var requested=copyWounds(incoming);
+        sumWounds(requested); // 在任何副作用前验证总量溢出。
+        var previous=strategicWounds.get(targetId);
+        if(previous!=null) {
+            if(sequence==previous.sequence() && operationId.equals(previous.operationId())
+                    && hospitalCapacity==previous.hospitalCapacity()
+                    && new java.util.ArrayList<>(requested.entrySet()).equals(
+                            new java.util.ArrayList<>(previous.requested().entrySet())))return previous;
+            if(sequence<=previous.sequence() || operationId.equals(previous.operationId()))
+                throw new IllegalStateException("战略伤兵旧代次或同操作异内容，不能重新收容");
+        }
+        // 普通收容的兵种顺序/容量规则保持唯一实现；在副本上计算，验证失败不留下半份医院。
+        var copy=ArmyState.fromSnapshot(snapshot());
+        long overflow=copy.admitWounded(requested,hospitalCapacity);
+        Map<String,Long> admitted=new LinkedHashMap<>();
+        requested.forEach((unit,count)->{
+            long n=copy.wounded.getOrDefault(unit,0L)-wounded.getOrDefault(unit,0L);
+            if(n>0L)admitted.put(unit,n);
+        });
+        var receipt=new StrategicWoundReceipt(targetId,operationId,sequence,requested,admitted,hospitalCapacity,overflow);
+        wounded.clear();wounded.putAll(copy.wounded);
+        strategicWounds.put(targetId,receipt);
+        return receipt;
+    }
+
+    public record StrategicWoundReceipt(String targetId,String operationId,long sequence,
+                                        Map<String,Long> requested,Map<String,Long> admitted,
+                                        long hospitalCapacity,long overflowDead) {
+        public StrategicWoundReceipt {
+            requireText(targetId,"targetId");requireText(operationId,"operationId");
+            if(sequence<1 || hospitalCapacity<0 || overflowDead<0)throw new IllegalArgumentException("战略伤兵凭据无效");
+            requested=copyWounds(requested);admitted=copyWounds(admitted);
+            for(var entry:admitted.entrySet())if(entry.getValue()>requested.getOrDefault(entry.getKey(),0L))
+                throw new IllegalArgumentException("战略伤兵收容超过本次伤兵");
+            if(sumWounds(requested)!=Math.addExact(sumWounds(admitted),overflowDead))
+                throw new IllegalArgumentException("战略伤兵收容与溢出死亡不守恒");
+            if(sumWounds(admitted)>hospitalCapacity)throw new IllegalArgumentException("战略伤兵实际收容超过容量");
+        }
+    }
+
+    private static Map<String,Long> copyWounds(Map<String,Long> source) {
+        if(source==null)throw new IllegalArgumentException("战略伤兵不得为null");
+        Map<String,Long> copy=new LinkedHashMap<>();
+        source.forEach((unit,count)->{
+            requireText(unit,"unitId");
+            if(count==null || count<0)throw new IllegalArgumentException("战略伤兵不得为空或负数");
+            if(count>0)copy.put(unit,count);
+        });
+        return Collections.unmodifiableMap(copy);
+    }
+    private static long sumWounds(Map<String,Long> source) {
+        long total=0;for(long count:source.values())total=Math.addExact(total,count);return total;
+    }
+    private static Map<String,StrategicWoundReceipt> freezeStrategicWounds(Map<String,StrategicWoundReceipt> source) {
+        if(source==null)return Map.of();
+        Map<String,StrategicWoundReceipt> copy=new LinkedHashMap<>();
+        source.forEach((target,receipt)->{
+            if(receipt==null || !receipt.targetId().equals(target))throw new IllegalArgumentException("战略伤兵目标凭据错绑");
+            copy.put(target,receipt);
+        });
+        return Collections.unmodifiableMap(copy);
     }
 
     // ---------- 读取 ----------
@@ -628,7 +698,7 @@ public final class ArmyState {
     public record Snapshot(Map<String, Long> troops, List<TrainingTask> queue, Map<String, Long> wounded,
                            Long treatFinishAt, long treatTotalSeconds, long treatOriginalSeconds,
                            Map<String, Long> treatCost, int extraSlots, AutoTrainPolicy autoTrain,
-                           List<String> rallyRefunds) {
+                           List<String> rallyRefunds,Map<String,StrategicWoundReceipt> strategicWounds) {
 
         public Snapshot {
             // Keep the existing null shape and iteration order, while detaching
@@ -641,6 +711,15 @@ public final class ArmyState {
             // 不该因为一次读档就开始花钱
             autoTrain = autoTrain == null ? AutoTrainPolicy.off() : autoTrain;
             rallyRefunds = rallyRefunds == null ? List.of() : List.copyOf(rallyRefunds);
+            strategicWounds=freezeStrategicWounds(strategicWounds);
+        }
+
+        /** 旧档/旧调用形状没有战略伤兵凭据，不能因此改变原医院或兵力。 */
+        public Snapshot(Map<String,Long> troops,List<TrainingTask> queue,Map<String,Long> wounded,
+                        Long treatFinishAt,long treatTotalSeconds,long treatOriginalSeconds,
+                        Map<String,Long> treatCost,int extraSlots,AutoTrainPolicy autoTrain,List<String> rallyRefunds) {
+            this(troops,queue,wounded,treatFinishAt,treatTotalSeconds,treatOriginalSeconds,treatCost,
+                    extraSlots,autoTrain,rallyRefunds,Map.of());
         }
 
         /** 老档与旧调用点没有退款凭据，按空集合恢复。 */
@@ -664,7 +743,7 @@ public final class ArmyState {
     public Snapshot snapshot() {
         return new Snapshot(troops(), List.copyOf(queue().values()), wounded(), treatFinishAt(),
                 treatTotalSeconds(), treatOriginalSeconds(), treatCost(), extraSlots(), autoTrain,
-                List.copyOf(rallyRefunds));
+                List.copyOf(rallyRefunds),strategicWounds);
     }
 
     /** 由快照重建。写入语义完全交给 {@link #restore} —— 那里已有"入参可能是内部视图"的防护。 */
@@ -683,6 +762,7 @@ public final class ArmyState {
         // 策略单独设：restore 的签名是四个调用点共用的（测试直接用），不为一个新字段去动它
         state.setAutoTrain(snapshot.autoTrain());
         state.rallyRefunds.addAll(snapshot.rallyRefunds());
+        state.strategicWounds.putAll(snapshot.strategicWounds());
         return state;
     }
 
