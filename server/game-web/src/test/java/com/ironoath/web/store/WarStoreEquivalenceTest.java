@@ -283,8 +283,62 @@ class WarStoreEquivalenceTest {
 
     // ---------- 惰性结算（切片 2c：「到点结束」终于有了执行者，而服务端不许常驻定时器）----------
 
+    @Test
+    @DisplayName("筹备超过旧90分钟不结算；晚开围城从进入时刻起满90分钟才到点")
+    void preparationDoesNotExpireAndLateSiegeUsesItsOwnClockOnBothStores() {
+        long duration = rules.rules().durationMillis();
+        long siegeAt = T0 + duration + MINUTE;
+        for (WarStore store : bothStores()) {
+            String label = store.getClass().getSimpleName();
+            store.insertIfNoneActive(pair(T0, "n1", "n2"));
+            WarStore.Settlement preparation = store.settleIfExpired(siegeAt).orElseThrow();
+            assertThat(preparation.settledNow()).as("%s 筹备不能吃掉围城90分钟", label).isFalse();
+            assertThat(preparation.board().phase()).isEqualTo(WarScoreBoard.Phase.PREPARATION);
+            assertThat(store.addMarchFatigueOnce("march-late-prep", "n1", "P1", siegeAt - 1L))
+                    .as("%s 筹备越过旧90分钟后仍按原战事记行军疲劳", label)
+                    .isEqualTo(WarStore.FatigueResult.APPLIED);
+
+            store.clear();
+            WarScoreBoard late = pair(T0, "n1", "n2");
+            for (int i = 1; i <= late.rules().gateCount(); i++) late.captureGate("n1", "gate_" + i);
+            late.beginSiege(siegeAt);
+            store.insertIfNoneActive(late);
+            WarStore.Settlement atSiege = store.settleIfExpired(siegeAt).orElseThrow();
+            assertThat(atSiege.settledNow()).as("%s 围城刚开不能立即结算", label).isFalse();
+            assertThat(atSiege.board().remainingSeconds(siegeAt)).isEqualTo(duration / 1_000L);
+            assertThat(store.settleIfExpired(siegeAt + duration - 1L).orElseThrow().settledNow())
+                    .as("%s 差一毫秒仍未到点", label).isFalse();
+            assertThat(store.settleIfExpired(siegeAt + duration).orElseThrow().settledNow())
+                    .as("%s 围城满90分钟到点", label).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("旧 Mongo 围城存档缺 siegeStartedAt 时沿原宣战锚点读，不在发布时延长老战事")
+    void legacyMongoSiegeWithoutNewClockKeepsOldDeadline() {
+        requireMongo();
+        WarStore store = newMongoStore();
+        WarScoreBoard board = pair(T0, "n1", "n2");
+        for (int i = 1; i <= board.rules().gateCount(); i++) {
+            board.captureGate("n1", "gate_" + i);
+        }
+        board.beginSiege(T0 + MINUTE);
+        store.insertIfNoneActive(board);
+        db.template().updateFirst(
+                org.springframework.data.mongodb.core.query.Query.query(
+                        org.springframework.data.mongodb.core.query.Criteria.where("_id")
+                                .is(WarStore.documentIdOf(board))),
+                new org.springframework.data.mongodb.core.query.Update().unset("state.siegeStartedAt"),
+                com.ironoath.web.store.mongo.WarDocument.COLLECTION);
+
+        WarScoreBoard restored = store.findLatest().orElseThrow();
+        assertThat(restored.siegeStartedAt()).isNull();
+        assertThat(restored.remainingSeconds(T0 + MINUTE))
+                .isEqualTo((board.rules().durationMillis() - MINUTE) / 1_000L);
+    }
+
     /**
-     * <b>本类里唯一一条把「时刻」当参数的用例</b>：{@code settleIfExpired(now)} 不读时钟，
+     * {@code settleIfExpired(now)} 不读时钟，
      * 所以到期、未到期、到点这三档都能精确摆位，不需要 sleep（也不需要谁去拨系统时间）。
      *
      * <p>三条判据分别对应三种真实缺陷形状，缺一不可：未到期就动 = 最后一段占领分被提前定格
@@ -736,6 +790,16 @@ class WarStoreEquivalenceTest {
         return board;
     }
 
+    /** 到点/历史归属夹具需要一场真正进入围城的仗，筹备不消耗这 90 分钟。 */
+    private static WarScoreBoard siegePair(long startedAt, String nationA, String nationB) {
+        WarScoreBoard board = pair(startedAt, nationA, nationB);
+        for (int i = 1; i <= board.rules().gateCount(); i++) {
+            board.captureGate(nationA, "gate_" + i);
+        }
+        board.beginSiege(startedAt);
+        return board;
+    }
+
     @Test
     @DisplayName("#754 过期即视为没在打：按时间过了期的仗不再收击杀，而板子仍是 SIEGE（结算与发奖留给下一次读）")
     void killsAfterExpiryAreRejectedOnBothStores() {
@@ -823,8 +887,12 @@ class WarStoreEquivalenceTest {
             WarScoreBoard board = new WarScoreBoard(rules.rules(), T0, "n1");
             board.registerNation("n1");
             board.registerNation("n2");
+            for (int i = 1; i <= board.rules().gateCount(); i++) {
+                board.captureGate("n1", "gate_" + i);
+            }
+            board.beginSiege(T0);
             board.recordKill("n1", "P1", 500L);
-            board.recordKill("n2", "P2", 500L);   // 两边同分
+            board.recordKill("n2", "P2", 700L);   // n1 四关建筑分 200，两边总分相同
             store.insertIfNoneActive(board);
 
             WarStore.Settlement at = store.settleIfExpired(T0 + duration).orElseThrow();
@@ -942,7 +1010,7 @@ class WarStoreEquivalenceTest {
         for (WarStore store : bothStores()) {
             assertThat(store.addMarchFatigueOnce("before", "n1", "P1", T0 - 1L))
                     .isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
-            store.insertIfAbsent(pair(T0, "n1", "n2"));
+            store.insertIfAbsent(siegePair(T0, "n1", "n2"));
             assertThat(store.addMarchFatigueOnce("before", "n1", "P1", T0 - 1L))
                     .isEqualTo(WarStore.FatigueResult.NO_ACTIVE_WAR);
             assertThat(store.addMarchFatigueOnce("outside", null, "P1", T0 + 1L))
@@ -1180,7 +1248,7 @@ class WarStoreEquivalenceTest {
         for (int i = 1; i <= rules.rules().gateCount(); i++) {
             board.captureGate("n1", "gate_" + i);
         }
-        board.beginSiege(startedAt + MINUTE);
+        board.beginSiege(startedAt);
         board.captureCapital("n1", startedAt + 7 * MINUTE);
         // 围城后 n2 抢下一关：两国归属都要往返，但这时双方都不足四关，资格须随当前归属重算。
         board.captureGate("n2", "gate_2");

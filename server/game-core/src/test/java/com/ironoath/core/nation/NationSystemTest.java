@@ -669,6 +669,24 @@ class NationSystemTest {
     }
 
     @Test
+    @DisplayName("筹备超过90分钟后才占齐四关，进入围城时仍获得完整90分钟")
+    void lateSiegeStartsItsOwnDurationAndSurvivesSnapshot() {
+        WarScoreBoard board = newWar(0L);
+        captureAllGates(board, "n1");
+        long siegeAt = board.rules().durationMillis() + MINUTE;
+
+        board.beginSiege(siegeAt);
+
+        assertThat(board.remainingSeconds(siegeAt))
+                .isEqualTo(board.rules().durationMillis() / 1_000L);
+        assertThat(board.remainingSeconds(siegeAt + board.rules().durationMillis()))
+                .isZero();
+        WarScoreBoard.Snapshot snapshot = board.toSnapshot();
+        assertThat(WarScoreBoard.fromSnapshot(snapshot, board.rules()).remainingSeconds(siegeAt))
+                .isEqualTo(board.rules().durationMillis() / 1_000L);
+    }
+
+    @Test
     @DisplayName("已参战但未持有关卡的国家不能占王城，取得资格后同一动作才可成功")
     void unqualifiedNationCannotCaptureCapital() {
         WarScoreBoard board = newWar(0L);

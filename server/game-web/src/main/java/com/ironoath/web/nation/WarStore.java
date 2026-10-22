@@ -276,16 +276,16 @@ public interface WarStore {
      *       {@link WarScoreBoard#settle(long)} 那条「重复结算会让积分被算两遍」的护栏并抛到端点上。
      *       内核那条护栏<b>保留且不许绕过</b>：它挡的是"有人不经存储层自己 settle"，
      *       而这里先判是为了让<b>正常路径</b>不去敲它。</li>
-     *   <li>{@code now >= startedAt + durationMillis} —— 未到期不许结算。写宽（比如用 {@code >} 配
+     *   <li>{@code now >= siegeClockStartedAt + durationMillis} —— 围城未到期不许结算。写宽（比如用 {@code >} 配
      *       分钟取整）会让最后不足一分钟的那段占领分被提前定格，而占领分正是防偷家的全部机制。</li>
      * </ul>
      *
-     * <p>用 {@code >=} 而不是 {@code >}：时长是配置里的整数小时，"刚好到点"那一次读必须算到期，
+     * <p>用 {@code >=} 而不是 {@code >}：时长是配置里的整数分钟，"刚好到点"那一次读必须算到期，
      * 否则玩家看到的面板会停在 {@code remainingSec=0} 而 {@code phase=SIEGE} —— 一个自相矛盾的读数。
      */
     static boolean dueToSettle(WarScoreBoard board, long now) {
-        return board.phase() != WarScoreBoard.Phase.SETTLED
-                && now >= board.startedAt() + board.rules().durationMillis();
+        return board.phase() == WarScoreBoard.Phase.SIEGE
+                && now >= board.siegeClockStartedAt() + board.rules().durationMillis();
     }
 
     /**
@@ -348,7 +348,8 @@ public interface WarStore {
             return FatigueResult.APPLIED;
         }
         if (board.phase() == WarScoreBoard.Phase.SETTLED || receipt.departedAt() < board.startedAt()
-                || receipt.departedAt() - board.startedAt() >= board.rules().durationMillis()) {
+                || (board.phase() == WarScoreBoard.Phase.SIEGE
+                    && receipt.departedAt() - board.siegeClockStartedAt() >= board.rules().durationMillis())) {
             return FatigueResult.NO_ACTIVE_WAR;
         }
         if (receipt.fatigueNationId() == null

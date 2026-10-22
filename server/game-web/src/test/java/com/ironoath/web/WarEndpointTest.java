@@ -172,11 +172,11 @@ class WarEndpointTest {
         assertThat(data.get("serverGoalReached").asBoolean())
                 .as("60120 ≥ 50000 —— 达成判定在服务端算，客户端只读结果")
                 .isTrue();
-        // 剩余时间：startedAt 是「一分钟前」，90 分钟时长 ⇒ 落在 5335~5340 之间。
+        // 剩余时间：宣战一分钟前、围城半分钟后启动 ⇒ 只消耗约 30 秒。
         // 写成区间而不是等号：service 里那次 serverNow() 与本行取时刻之间会流逝毫秒
         assertThat(data.get("remainingSec").asLong())
-                .as("读了 startedAt 才会是这个数；没读会是 5400 或 0")
-                .isBetween(5_335L, 5_340L);
+                .as("应从入围城时刻倒数；按宣战时刻算会少 30 秒")
+                .isBetween(5_365L, 5_370L);
 
         JsonNode rows = data.get("scores");
         assertThat(rows).hasSize(2);
@@ -711,11 +711,15 @@ class WarEndpointTest {
         WarScoreBoard stale = new WarScoreBoard(warRules.rules(), staleStartedAt);
         stale.registerNation(a.nationId);
         stale.registerNation(b.nationId);
+        for (int i = 1; i <= stale.rules().gateCount(); i++) {
+            stale.captureGate(a.nationId, "gate_" + i);
+        }
+        stale.beginSiege(staleStartedAt);
         stale.recordKill(a.nationId, 700L);
         wars.insertIfAbsent(stale);
         assertThat(wars.findLatest().orElseThrow().phase())
                 .as("前置：这一场是「过期但没结算」的活仗，而且全程没人读过面板")
-                .isEqualTo(WarScoreBoard.Phase.PREPARATION);
+                .isEqualTo(WarScoreBoard.Phase.SIEGE);
 
         JsonNode data = post200("/nation/war/declare", c.king,
                 new WarDeclareReq(newRequestId(), a.nationId));
@@ -850,6 +854,10 @@ class WarEndpointTest {
         WarScoreBoard board = new WarScoreBoard(warRules.rules(), startedAt);
         board.registerNation(nationA);
         board.registerNation(nationB);
+        for (int i = 1; i <= board.rules().gateCount(); i++) {
+            board.captureGate(nationA, "gate_" + i);
+        }
+        board.beginSiege(startedAt);
         wars.insertIfAbsent(board);
     }
 

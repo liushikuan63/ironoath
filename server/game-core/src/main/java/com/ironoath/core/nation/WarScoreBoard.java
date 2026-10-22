@@ -103,6 +103,8 @@ public final class WarScoreBoard {
 
     private final Rules rules;
     private final long startedAt;
+    /** 进入围城的服务端时刻；旧 SIEGE 快照缺它时沿用旧宣战锚点，避免发布时平白延长老战事。 */
+    private Long siegeStartedAt;
     /** 仓储读副本的版本，不进业务快照；旧副本不能覆盖后来写入的行军回执。 */
     private long repositoryVersion = -1L;
 
@@ -209,6 +211,7 @@ public final class WarScoreBoard {
                     + " 座关卡，进攻资格不成立（B13 §7）");
         }
         phase = Phase.SIEGE;
+        siegeStartedAt = now;
         capitalHeldSince = now;
     }
 
@@ -458,6 +461,16 @@ public final class WarScoreBoard {
         return startedAt;
     }
 
+    /** 围城起点；PREPARATION 与旧 SIEGE 快照可为空。 */
+    public Long siegeStartedAt() {
+        return siegeStartedAt;
+    }
+
+    /** 新战事从入围城起算；旧存档缺字段时保留历史宣战锚点。仅在 SIEGE 时消费。 */
+    public long siegeClockStartedAt() {
+        return siegeStartedAt == null ? startedAt : siegeStartedAt;
+    }
+
     /** 发起这一场的国家 id；没有发起方记录时为 {@code null}（含义见 {@link #initiatorNationId}）。 */
     public String initiatorNationId() {
         return initiatorNationId;
@@ -468,7 +481,7 @@ public final class WarScoreBoard {
         if (phase != Phase.SIEGE) {
             return 0L;
         }
-        return Math.max(0L, (startedAt + rules.durationMillis() - now) / 1000L);
+        return Math.max(0L, (siegeClockStartedAt() + rules.durationMillis() - now) / 1000L);
     }
 
     public String capitalHolder() {
@@ -564,6 +577,7 @@ public final class WarScoreBoard {
      *   <li>少 {@code goalClaimed}：验收 10 的「每人只领一次」变成「重启就能再领一次」——那是刷金入口；</li>
      *   <li>少 {@code fatigue}：验收 7 的疲劳上限每次重启清零，「逼迫联盟调度」这条设计当场作废；</li>
      *   <li>少 {@code phase}：一场已结算的仗会被当成还在打，而 {@link #settle} 会再结算一次。</li>
+     *   <li>少 {@code siegeStartedAt}：新围城会退回宣战锚点，筹备久了就变成零秒战。</li>
      * </ul>
      *
      * <p><b>{@code rules} 刻意不进快照</b>，与 {@code Nation.Snapshot} 同一条理由：规则来自配置表且会热更，
@@ -586,7 +600,17 @@ public final class WarScoreBoard {
                            String capitalHolder, long capitalHeldSince,
                            Map<String, Long> fatigue, Map<String, Long> playerKills,
                            List<String> goalClaimed, long totalKills,
-                           List<MarchFatigueReceipt> marchFatigueReceipts) {
+                           List<MarchFatigueReceipt> marchFatigueReceipts, Long siegeStartedAt) {
+
+        /** 旧快照形状：缺围城起点时按原宣战计时兼容，不悄悄延长既有战事。 */
+        public Snapshot(long startedAt, Phase phase, String initiatorNationId,
+                        List<NationRow> nations, String capitalHolder, long capitalHeldSince,
+                        Map<String, Long> fatigue, Map<String, Long> playerKills,
+                        List<String> goalClaimed, long totalKills,
+                        List<MarchFatigueReceipt> marchFatigueReceipts) {
+            this(startedAt, phase, initiatorNationId, nations, capitalHolder, capitalHeldSince,
+                    fatigue, playerKills, goalClaimed, totalKills, marchFatigueReceipts, null);
+        }
 
         public Snapshot {
             if (phase == null) {
@@ -634,7 +658,7 @@ public final class WarScoreBoard {
         }
         return new Snapshot(startedAt, phase, initiatorNationId, rows, capitalHolder, capitalHeldSince,
                 new LinkedHashMap<>(fatigue), new LinkedHashMap<>(playerKills),
-                List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()));
+                List.copyOf(goalClaimed), totalKills, List.copyOf(marchFatigueReceipts.values()), siegeStartedAt);
     }
 
     /**
@@ -660,6 +684,7 @@ public final class WarScoreBoard {
                 snapshot.capitalHolder(), snapshot.capitalHeldSince(), snapshot.fatigue(),
                 snapshot.playerKills(), new LinkedHashSet<>(snapshot.goalClaimed()),
                 snapshot.totalKills());
+        board.siegeStartedAt = snapshot.siegeStartedAt();
         for (MarchFatigueReceipt receipt : snapshot.marchFatigueReceipts()) {
             MarchFatigueReceipt previous = board.marchFatigueReceipts.putIfAbsent(receipt.marchId(), receipt);
             if (previous != null && !previous.equals(receipt)) {
