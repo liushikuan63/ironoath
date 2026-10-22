@@ -25,7 +25,7 @@ class WorldTargetPlacementTest {
     private final com.ironoath.web.world.TargetOccupationStore occupations =
             new com.ironoath.web.store.memory.InMemoryTargetOccupationStore();
     private final WorldAppService service = new WorldAppService(configs, store,
-            mock(PlayerRepository.class), null, null, null, null, null,occupations);
+            mock(PlayerRepository.class), null, null, null, null, null,occupations,new com.ironoath.web.store.memory.InMemoryTargetOperationStore());
     private static final List<Coord> RESERVED = List.of(Coord.of(256,256),
             Coord.of(256,216), Coord.of(296,256), Coord.of(256,296), Coord.of(216,256),
             Coord.of(320,192), Coord.of(352,224), Coord.of(192,192), Coord.of(160,224),
@@ -186,7 +186,7 @@ class WorldTargetPlacementTest {
         var app=new WorldAppService(configs,store,mock(PlayerRepository.class),time,
                 mock(com.ironoath.web.service.PowerService.class),
                 mock(com.ironoath.web.service.PublicEnemyBroadcaster.class),
-                mock(com.ironoath.web.bot.BotSpawnService.class),mock(com.ironoath.web.ws.PushGateway.class),occupations);
+                mock(com.ironoath.web.bot.BotSpawnService.class),mock(com.ironoath.web.ws.PushGateway.class),occupations,new com.ironoath.web.store.memory.InMemoryTargetOperationStore());
         when(store.cityOf("viewer")).thenReturn(Optional.of(Coord.of(255,216)));
         var fog=new com.ironoath.core.world.FogOfWar();fog.explore(Coord.of(256,216),32);
         when(store.fogOf("viewer")).thenReturn(fog);
@@ -214,7 +214,7 @@ class WorldTargetPlacementTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(()->service.visibleEntitiesOf("viewer"))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("迁移");
         org.assertj.core.api.Assertions.assertThatThrownBy(()->new WorldAppService(configs,store,
-                mock(PlayerRepository.class),null,null,null,null,null,occupations))
+                mock(PlayerRepository.class),null,null,null,null,null,occupations,new com.ironoath.web.store.memory.InMemoryTargetOperationStore()))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("迁移");
     }
 
@@ -241,4 +241,31 @@ class WorldTargetPlacementTest {
         assertThat(WorldTargets.from(configs).at(Coord.of(257,216))).isNull();
     }
 
+    @Test void operationWithoutOwnerStillGuardsStartupAndConfigurationMove() throws Exception {
+        var operations=mock(com.ironoath.web.world.TargetOperationStore.class);
+        var m=new com.ironoath.core.march.March("owned-plan-anchor","owned-player",Coord.of(255,216),Coord.of(256,216),100,110,
+                java.util.Map.of("unit_infantry_t4",2L),List.of(),100,1,
+                com.ironoath.core.march.March.TargetType.STRATEGIC_TARGET,"gate_north",com.ironoath.core.march.March.Action.ATTACK);
+        m.attachToRally("owned-plan-rally");m.arrive(110);m.holdStrategicVictory(java.util.Map.of(m.playerId(),m.units()));
+        var owner=new com.ironoath.web.world.TargetOccupationStore.Snapshot("gate_north",WorldGenerator.EntityType.GATE,
+                256,216,"owned-nation","验收国",100,"owned-capture",1,com.ironoath.web.world.TargetOccupationStore.Garrison.stationed(m.id()));
+        var plan=com.ironoath.web.world.TargetOperationStore.WithdrawalPlan.create(owner,m,0,1,120);
+        when(operations.findAllTargetIds(anyInt())).thenReturn(List.of("gate_north"));
+        when(operations.findByTargetId("gate_north")).thenReturn(Optional.of(new com.ironoath.web.world.TargetOperationStore.Snapshot("gate_north",1,false,plan)));
+        new WorldAppService(configs,store,mock(PlayerRepository.class),null,null,null,null,null,occupations,operations);
+        Path root=Path.of("").toAbsolutePath();
+        for(int i=0;i<6 && root!=null && !java.nio.file.Files.exists(root.resolve("contract/config/world_target.json"));i++)root=root.getParent();
+        assertThat(root).isNotNull();
+        var json=(com.fasterxml.jackson.databind.node.ObjectNode)new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(java.nio.file.Files.readString(root.resolve("contract/config/world_target.json")));
+        json.put("version",json.get("version").asInt()+1);
+        for(var row:json.withArray("rows"))if(row.get("id").asText().equals("gate_north"))
+            ((com.fasterxml.jackson.databind.node.ObjectNode)row).put("x",257);
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->configs.reload("world_target",
+                com.ironoath.config.cfg.WorldTargetCfg.class,json.toString())).hasMessageContaining("迁移");
+        assertThat(WorldTargets.from(configs).at(Coord.of(256,216)).definition().id()).isEqualTo("gate_north");
+        when(operations.findByTargetId("gate_north")).thenReturn(Optional.empty());
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->new WorldAppService(configs,store,mock(PlayerRepository.class),
+                null,null,null,null,null,occupations,operations)).hasMessageContaining("缺档");
+    }
 }

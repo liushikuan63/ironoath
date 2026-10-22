@@ -56,8 +56,23 @@ public final class StrategicTargetDefender {
             throw new IllegalStateException("目标与驻军行军的兵权绑定不一致");
         if(march.status()!=March.Status.STATIONED)
             throw new IllegalStateException("目标驻军正在交战或返程，不能重复作为驻守战斗输入");
+        requireOriginalRally(march,owner,target);
+        // 只排除读取期间的混档；战斗写入仍须消费这里冻结的原版本。
+        var frozen=March.fromSnapshot(march.snapshot()).snapshot();
+        if(marches.versionOf(ref.marchId())!=version)
+            throw new IllegalStateException("实际驻军版本已变化，请重读后再申请战斗");
+        requireSameOwner(id,owner);
+        return new Defender(owner,version,frozen,frozen.units(),false);
+    }
+
+    /** 待恢复计划可能已写RETURNING；原集结身份仍须验证，不能因此回退到旧比例/旧成员。 */
+    public void requireOriginalRally(March march,TargetOccupationStore.Snapshot owner,WorldTargets.Target target) {
         var rally=social.rallyOf(march.rallyId()).orElseThrow(
                 ()->new IllegalStateException("实际驻军原集结缺失，不能推定国家与兵权"));
+        if(rally.status()!=Rally.Status.DEPARTED && rally.status()!=Rally.Status.ARRIVED)
+            throw new IllegalStateException("实际驻军原集结状态无效，尚未出发或已取消");
+        if(!march.playerId().equals(rally.initiatorId()))
+            throw new IllegalStateException("实际驻军指挥者与原集结发起人不一致");
         if(rally.scope()!=Rally.Scope.NATION || !owner.nationId().equals(rally.groupId()))
             throw new IllegalStateException("实际驻军集结与占领国家不一致");
         if(rally.targetX()!=target.coord().x() || rally.targetY()!=target.coord().y()
@@ -70,13 +85,6 @@ public final class StrategicTargetDefender {
                 if(unit.getValue()>participant.troops().getOrDefault(unit.getKey(),0L))
                     throw new IllegalStateException("实际驻军兵权超过原集结出兵承诺");
         }
-        // 重建一个不向调用方泄露可变 March 引用的快照；双版本读取只排除读取期间的混档，
-        // 不代替后续 CAS。读完之后仍可能有新事件，战斗必须消费此处冻结的版本。
-        var frozen=March.fromSnapshot(march.snapshot()).snapshot();
-        if(marches.versionOf(ref.marchId())!=version)
-            throw new IllegalStateException("实际驻军版本已变化，请重读后再申请战斗");
-        requireSameOwner(id,owner);
-        return new Defender(owner,version,frozen,frozen.units(),false);
     }
 
     private TargetOccupationStore.Snapshot owner(String id) {

@@ -13,6 +13,8 @@ import com.ironoath.web.store.memory.InMemoryTargetOccupationStore;
 import com.ironoath.web.world.StrategicTargetDefender;
 import com.ironoath.web.world.TargetOccupationStore;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -130,5 +132,22 @@ class StrategicTargetDefenderTest {
             assertThat(restarted.read(target).troops()).isEmpty();
             assertThat(restarted.read(target).initialNpc()).isFalse();
         }
+    }
+
+    @ParameterizedTest @EnumSource(value=Rally.Status.class,names={"PREPARING","CANCELLED"})
+    void uncommittedOrCancelledRallyCannotProvideGarrisonIdentity(Rally.Status status) {
+        var m=stationed("gate_north","N-owned");
+        var original=spy(social.rallyOf(m.rallyId()).orElseThrow());when(original.status()).thenReturn(status);
+        when(social.rallyOf(m.rallyId())).thenReturn(Optional.of(original));
+        owners.compareAndSet(owner(TargetOccupationStore.Garrison.stationed(m.id()),1,"bad-rally-state"),0);
+        assertThatThrownBy(()->service.read(target)).isInstanceOf(IllegalStateException.class).hasMessageContaining("集结状态");
+    }
+
+    @Test void marchCommanderMustBeOriginalRallyInitiator() {
+        var m=stationed("gate_north","N-owned");
+        var original=spy(social.rallyOf(m.rallyId()).orElseThrow());when(original.initiatorId()).thenReturn("other-commander");
+        when(social.rallyOf(m.rallyId())).thenReturn(Optional.of(original));
+        owners.compareAndSet(owner(TargetOccupationStore.Garrison.stationed(m.id()),1,"bad-commander"),0);
+        assertThatThrownBy(()->service.read(target)).isInstanceOf(IllegalStateException.class).hasMessageContaining("发起人");
     }
 }

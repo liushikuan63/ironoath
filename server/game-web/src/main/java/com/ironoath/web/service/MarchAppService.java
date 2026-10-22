@@ -139,6 +139,7 @@ public class MarchAppService {
     /** 国战疲劳与国籍（B13 §7）：每次发起行军给参战方记一笔 —— 挂在 {@code createMarch} 上。 */
     private final com.ironoath.web.nation.WarStore wars;
     private final com.ironoath.web.nation.NationMembership membership;
+    private final com.ironoath.web.world.StrategicGarrisonWithdrawal garrisonWithdrawal;
 
     public MarchAppService(ConfigRegistry configs, MarchRepository marches, MarchDueQueue dueQueue,
                            WorldRepository world, ArmyRepository armies,
@@ -159,7 +160,8 @@ public class MarchAppService {
                           com.ironoath.web.nation.NationTechBonuses nationTechBonuses,
                               com.ironoath.web.nation.NationPolicyBonuses policyBonuses,
                           com.ironoath.web.nation.WarStore wars,
-                          com.ironoath.web.nation.NationMembership membership) {
+                          com.ironoath.web.nation.NationMembership membership,
+                          com.ironoath.web.world.StrategicGarrisonWithdrawal garrisonWithdrawal) {
         this.configs = configs;
         this.marches = marches;
         this.dueQueue = dueQueue;
@@ -187,6 +189,7 @@ public class MarchAppService {
         this.policyBonuses = policyBonuses;
         this.wars = wars;
         this.membership = membership;
+        this.garrisonWithdrawal = garrisonWithdrawal;
     }
 
     // ---------- 出征 ----------
@@ -456,6 +459,9 @@ public class MarchAppService {
             throw new BizException(ErrorCode.PARAM_INVALID, "marchId 不得为空");
         }
         long now = timeService.serverNow();
+        // 必须在acquire/processDue前查当前持久回执；否则到家扫描可能先删除原队伍。
+        var historical=garrisonWithdrawal.replay(playerId,req.marchId());
+        if(historical.isPresent())return garrisonRecallResponse(historical.get(),now);
         acquire(req.requestId(), now);
         try {
             return playerLock.runLocked(playerId, LOCK_TIMEOUT_MS, () -> {
@@ -463,6 +469,8 @@ public class MarchAppService {
                 requireOwnMarch(playerId,req.marchId()); // 保留原归属/不存在错误口径。
                 long version=marches.versionOf(req.marchId());
                 March march=requireOwnMarch(playerId,req.marchId());
+                if(march.hasGarrisonOwnership())
+                    return garrisonRecallResponse(garrisonWithdrawal.recall(playerId,march.id(),now),now);
                 // 召回一支采集中的队伍时必须先结算已采集量（B09 验收 7：已采集部分不丢失）。
                 // 此前这里直接 recall，队伍空着手回家，玩家采了一小时的东西凭空消失 ——
                 // 不报错、不为负，只在资源账上表现为「我明明在采集，怎么什么都没多」
@@ -489,6 +497,11 @@ public class MarchAppService {
             idempotency.release(req.requestId());
             throw e;
         }
+    }
+
+    private RecallResp garrisonRecallResponse(March returned,long now) {
+        long at=returned.returnArriveAt();
+        return new RecallResp(toView(returned,now),at,Math.max(0L,(at-now)/1000L),now);
     }
 
     // ---------- 采集 ----------
@@ -608,6 +621,8 @@ public class MarchAppService {
      * 玩家看到的是一支停在半路、既不前进也不到家的队伍。
      */
     public int processDue(String playerId, long now) {
+        // 全局发现必须在国家/集结/目标锁外；单目标失败不放行该目标的到家步骤。
+        garrisonWithdrawal.recoverPending();
         botAttackLimiter.retryPendingReleases();
         recoverPendingReturns();
         recoverPendingDeletes();
@@ -899,7 +914,9 @@ public class MarchAppService {
         March observed = marches.findById(marchId).orElse(null);
         if (observed != null && observed.isRallyMarch()) {
             return socialAppService.runRallyDepartureLocked(observed.rallyId(),
-                    () -> advanceDueMarchLocked(marchId, now));
+                    () -> observed.targetType()==March.TargetType.STRATEGIC_TARGET
+                            ? garrisonWithdrawal.runMarchLocked(observed,()->advanceDueMarchLocked(marchId,now))
+                            : advanceDueMarchLocked(marchId, now));
         }
         return advanceDueMarchLocked(marchId, now);
     }

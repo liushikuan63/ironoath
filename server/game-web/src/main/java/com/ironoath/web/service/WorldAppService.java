@@ -16,6 +16,7 @@ import com.ironoath.core.world.FogOfWar;
 import com.ironoath.core.world.WorldGenerator;
 import com.ironoath.core.world.WorldRepository;
 import com.ironoath.web.world.TargetOccupationStore;
+import com.ironoath.web.world.TargetOperationStore;
 import com.ironoath.web.dto.generated.ChunkData;
 import com.ironoath.web.dto.generated.ChunkVersion;
 import com.ironoath.web.dto.generated.MarchStatus;
@@ -100,7 +101,7 @@ public class WorldAppService {
                            PowerService powerService, PublicEnemyBroadcaster publicEnemies,
                            com.ironoath.web.bot.BotSpawnService botSpawn,
                            com.ironoath.web.ws.PushGateway pushGateway,
-                           TargetOccupationStore occupations) {
+                           TargetOccupationStore occupations,TargetOperationStore targetOperations) {
         this.configs = configs;
         this.world = world;
         this.players = players;
@@ -112,9 +113,11 @@ public class WorldAppService {
         this.occupations = occupations;
         var initialTargets=WorldTargets.from(configs);
         validateOccupationCatalog(initialTargets,occupations.findAll(initialTargets.targets().size()+1));
+        validateOperationCatalog(initialTargets,targetOperations);
         configs.addReloadGuard("world_target",candidate -> {
             var targets=WorldTargets.from(candidate);
             validateOccupationCatalog(targets,occupations.findAll(targets.targets().size()+1));
+            validateOperationCatalog(targets,targetOperations);
         });
     }
 
@@ -679,6 +682,16 @@ public class WorldAppService {
                     || !target.definition().kind().name().equals(owner.kind().name())) {
                 throw new IllegalStateException("已占战略目标被移位、改类型或移除，须先制定迁移："+owner.targetId());
             }
+        }
+    }
+
+    private static void validateOperationCatalog(WorldTargets targets,TargetOperationStore operations) {
+        for(String id:operations.findAllTargetIds(targets.targets().size()+1)) {
+            var slot=operations.findByTargetId(id).orElseThrow(()->new IllegalStateException("目标操作目录缺档"));
+            var anchor=slot.plan().before();var target=targets.at(Coord.of(anchor.x(),anchor.y()));
+            if(target==null || !target.definition().id().equals(id)
+                    || !target.definition().kind().name().equals(anchor.kind().name()))
+                throw new IllegalStateException("持久目标操作被移位、改类型或移除，须先制定迁移："+id);
         }
     }
 
