@@ -271,6 +271,7 @@ public class BotSpawnService {
      * （2026-09-12 的 C1b-PvE 落地时补上这一步，此前 Bot 的视野为空。）
      */
     private Optional<Coord> placeNear(String botId, Coord anchor, WorldGenerator.Rules worldRules, Rng rng) {
+        var targets = com.ironoath.web.service.WorldTargets.from(configs);
         int min = (int) configs.longParam("BOT_SPAWN_DISTANCE_MIN");
         int max = (int) configs.longParam("BOT_SPAWN_DISTANCE_MAX");
         for (int probe = 0; probe < PLACEMENT_PROBE_LIMIT; probe++) {
@@ -279,7 +280,7 @@ public class BotSpawnService {
                 break;
             }
             Coord coord = candidate.get();
-            if (!coord.withinWorld(worldRules.worldSize())) {
+            if (!coord.withinWorld(worldRules.worldSize()) || targets.reserved(coord)) {
                 continue;
             }
             if (world.placeCity(botId, coord)) {
@@ -289,7 +290,7 @@ public class BotSpawnService {
         long index = Math.floorMod((long) botId.hashCode(), 1_000_000L);
         for (int probe = 0; probe < 4096; probe++) {
             Coord candidate = WorldGenerator.spawnCoord(worldRules, index + probe);
-            if (!candidate.withinWorld(worldRules.worldSize())) {
+            if (!candidate.withinWorld(worldRules.worldSize()) || targets.reserved(candidate)) {
                 continue;
             }
             if (world.placeCity(botId, candidate)) {

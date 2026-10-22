@@ -129,9 +129,10 @@ public class WorldAppService {
         // 用 playerId 的哈希作为螺旋起点序号：不同玩家从不同位置开始铺开，
         // 而不是所有人都从 index 0 开始挤在同一个点
         long index = Math.floorMod((long) playerId.hashCode(), 1_000_000L);
+        WorldTargets targets = WorldTargets.from(configs);
         for (int probe = 0; probe < SPAWN_PROBE_LIMIT; probe++) {
             Coord candidate = WorldGenerator.spawnCoord(rules, index + probe);
-            if (!candidate.withinWorld(rules.worldSize())) {
+            if (!candidate.withinWorld(rules.worldSize()) || targets.reserved(candidate)) {
                 continue;
             }
             if (world.placeCity(playerId, candidate)) {
@@ -190,10 +191,12 @@ public class WorldAppService {
      */
     public Coord randomFreeCoord(long seed) {
         WorldGenerator.Rules rules = rules();
+        WorldTargets targets = WorldTargets.from(configs);
         long start = Math.floorMod(com.ironoath.common.rng.Rng.of(seed).nextLong(), 1_000_000L);
         for (int probe = 0; probe < SPAWN_PROBE_LIMIT; probe++) {
             Coord candidate = WorldGenerator.spawnCoord(rules, start + probe);
-            if (!candidate.withinWorld(rules.worldSize()) || world.cityAt(candidate).isPresent()) {
+            if (!candidate.withinWorld(rules.worldSize()) || targets.reserved(candidate)
+                    || world.cityAt(candidate).isPresent()) {
                 continue;
             }
             return candidate;
@@ -209,6 +212,9 @@ public class WorldAppService {
      * @return true 迁移成功；false 表示目标格已被占用（调用方另找一格）
      */
     public boolean relocateCity(String playerId, Coord to) {
+        if (WorldTargets.from(configs).reserved(to)) {
+            return false;
+        }
         if (!world.moveCity(playerId, to)) {
             return false;
         }

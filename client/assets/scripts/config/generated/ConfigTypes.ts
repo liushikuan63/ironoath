@@ -1401,3 +1401,28 @@ export interface UnitCounterCfg {
   /** 定点数（真实值 ×10000）。配置里写成十进制字符串，生成后是 long，禁止还原成 double */
   penaltyFixed?: number | null
 }
+
+/** world_target.worldTargetKind 的合法取值，与配置表 fieldTypes 的 ENUM 声明完全一致。 */
+export type WorldTargetKind =
+  | 'GATE'
+  | 'CAPITAL'
+  | 'FORTRESS'
+
+/**
+ * 配置表 world_target 的一行。
+ * B13/B21 首批固定战略目标候选：王城1、四关、八要塞。当前只预留新城落点并提供只读冲突检查，不代表开放攻城；旧城不迁移、不遮盖。精确落点和防守强度均为推荐，待确认与实战验证。
+ *
+ * 源表 version=1
+ */
+export interface WorldTargetCfg {
+  /** 主键 */
+  id: string
+  name: string
+  /** 枚举，取值见 WorldTargetKind */
+  kind: WorldTargetKind
+  x: number
+  y: number
+  /** 外键，指向 mapmonster 表的 id */
+  defenderId: string
+  effectRadius: number
+}

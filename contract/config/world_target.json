@@ -1,0 +1,161 @@
+{
+  "table": "world_target",
+  "version": 1,
+  "comment": "B13/B21 首批固定战略目标候选：王城1、四关、八要塞。当前只预留新城落点并提供只读冲突检查，不代表开放攻城；旧城不迁移、不遮盖。精确落点和防守强度均为推荐，待确认与实战验证。",
+  "fieldTypes": {
+    "id": "STRING_KEY",
+    "name": "STRING",
+    "kind": "ENUM:GATE,CAPITAL,FORTRESS",
+    "x": "LONG_NONNEG",
+    "y": "LONG_NONNEG",
+    "defenderId": "REF:mapmonster",
+    "effectRadius": "LONG_NONNEG",
+    "why": "?STRING",
+    "todo": "?STRING"
+  },
+  "rows": [
+    {
+      "id": "capital_center",
+      "name": "中央王城",
+      "kind": "CAPITAL",
+      "x": 256,
+      "y": 256,
+      "defenderId": "mapmonster_lv45",
+      "effectRadius": 0,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "gate_north",
+      "name": "北境关卡",
+      "kind": "GATE",
+      "x": 256,
+      "y": 216,
+      "defenderId": "mapmonster_lv40",
+      "effectRadius": 0,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "gate_east",
+      "name": "东境关卡",
+      "kind": "GATE",
+      "x": 296,
+      "y": 256,
+      "defenderId": "mapmonster_lv40",
+      "effectRadius": 0,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "gate_south",
+      "name": "南境关卡",
+      "kind": "GATE",
+      "x": 256,
+      "y": 296,
+      "defenderId": "mapmonster_lv40",
+      "effectRadius": 0,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "gate_west",
+      "name": "西境关卡",
+      "kind": "GATE",
+      "x": 216,
+      "y": 256,
+      "defenderId": "mapmonster_lv40",
+      "effectRadius": 0,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "fortress_ne_1",
+      "name": "东北第一要塞",
+      "kind": "FORTRESS",
+      "x": 320,
+      "y": 192,
+      "defenderId": "mapmonster_lv35",
+      "effectRadius": 20,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "fortress_ne_2",
+      "name": "东北第二要塞",
+      "kind": "FORTRESS",
+      "x": 352,
+      "y": 224,
+      "defenderId": "mapmonster_lv35",
+      "effectRadius": 20,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "fortress_nw_1",
+      "name": "西北第一要塞",
+      "kind": "FORTRESS",
+      "x": 192,
+      "y": 192,
+      "defenderId": "mapmonster_lv35",
+      "effectRadius": 20,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "fortress_nw_2",
+      "name": "西北第二要塞",
+      "kind": "FORTRESS",
+      "x": 160,
+      "y": 224,
+      "defenderId": "mapmonster_lv35",
+      "effectRadius": 20,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "fortress_sw_1",
+      "name": "西南第一要塞",
+      "kind": "FORTRESS",
+      "x": 192,
+      "y": 320,
+      "defenderId": "mapmonster_lv35",
+      "effectRadius": 20,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "fortress_sw_2",
+      "name": "西南第二要塞",
+      "kind": "FORTRESS",
+      "x": 160,
+      "y": 288,
+      "defenderId": "mapmonster_lv35",
+      "effectRadius": 20,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "fortress_se_1",
+      "name": "东南第一要塞",
+      "kind": "FORTRESS",
+      "x": 320,
+      "y": 320,
+      "defenderId": "mapmonster_lv35",
+      "effectRadius": 20,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    },
+    {
+      "id": "fortress_se_2",
+      "name": "东南第二要塞",
+      "kind": "FORTRESS",
+      "x": 352,
+      "y": 288,
+      "defenderId": "mapmonster_lv35",
+      "effectRadius": 20,
+      "todo": "TODO(需确认)：防守沿既有野怪难度锚点，待集结战斗/战损与赛季节奏验证；要塞坐标为推荐候选。",
+      "why": "以防守驻军为唯一破防资源，不另造耐久条；防守兵种/阶级/战力引用mapmonster，避免复制两套数值。"
+    }
+  ]
+}

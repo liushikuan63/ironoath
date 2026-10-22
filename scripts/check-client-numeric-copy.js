@@ -192,6 +192,9 @@ function cluesIn(text, tables, uniqueCols) {
     }
     for (const column of cols) {
       if (!uniqueCols.has(column)) continue
+      // x/y 是通用坐标轴，即使暂时只有一张表声明，也不能把 UI 像素注释当抄表。
+      // 显式点名 world_target.y 仍判；具名数值列保持原有的独立线索判定。
+      if (column.length === 1 && !tableNamed) continue
       const re = new RegExp(`(^|[^A-Za-z0-9_])${column.replace(/\./g, '\\.')}($|[^A-Za-z0-9_])`)
       if (re.test(text)) {
         found.push(`${table}.${column}（全局唯一的数值列名）`)
@@ -342,6 +345,14 @@ function main() {
   const exempted = found.filter(h => h.exempt !== null)
 
   if (selfTest) {
+    // 单字符坐标列全局唯一，也不足以证明 UI 注释中的 y 来自某张配置表。
+    const coordinateTables = [{ table: 'world_target', ids: ['target_fixture'], cols: ['x', 'y', 'effectRadius'] }]
+    const coordinateColumns = new Set(['x', 'y', 'effectRadius'])
+    if (cluesIn('UI 名牌 y 坐标，像素单位', coordinateTables, coordinateColumns).length !== 0
+      || !cluesIn('来源 world_target.y', coordinateTables, coordinateColumns).some(s => s.includes('world_target.y'))
+      || !cluesIn('服务端 effectRadius', coordinateTables, coordinateColumns).some(s => s.includes('effectRadius'))) {
+      throw new Error('自检：单字符列必须带表名，具名列的原判据仍须生效')
+    }
     // 植入一条违规：注释里点名 global.NET_RETRY_MAX_ATTEMPTS，同一行写死那个数。
     const probeId = 'NET_RETRY_MAX_ATTEMPTS'
     const tmp = path.join(ROOT, 'zz-numcopy-selftest.ts')
