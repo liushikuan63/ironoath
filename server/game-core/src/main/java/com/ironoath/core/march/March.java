@@ -1,6 +1,7 @@
 package com.ironoath.core.march;
 
 import com.ironoath.core.world.Coord;
+import com.ironoath.core.army.TierSplit;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -53,7 +54,8 @@ public final class March {
         MONSTER,
         RESOURCE,
         PLAYER_CITY,
-        ALLIANCE_BUILDING
+        ALLIANCE_BUILDING,
+        STRATEGIC_TARGET
     }
 
     /** 玩家选择的到达行为。与 {@link TargetType} 分开：目标是什么由地图决定，做什么由玩家决定。 */
@@ -78,6 +80,8 @@ public final class March {
     private long arriveAt;
     private Long returnArriveAt;
     private final Map<String, Long> units;
+    /** 实际驻军的当前成员兵权；null是普通/历史行军，空余额仍是已知兵权，不可退回原比例。 */
+    private Map<String,Map<String,Long>> garrisonTroopsByPlayer;
     private final List<String> heroes;
     private final long loadCap;
     private long load;
@@ -356,6 +360,35 @@ public final class March {
         status=Status.FIGHTING;
     }
 
+    public boolean hasGarrisonOwnership() { return garrisonTroopsByPlayer!=null; }
+    public Map<String,Map<String,Long>> garrisonTroopsByPlayer() {
+        return garrisonTroopsByPlayer==null?Map.of():garrisonTroopsByPlayer;
+    }
+
+    /** 战斗调用方确认攻方胜利后留驻；成员份额必须正好覆盖真实幸存兵。 */
+    public void holdStrategicVictory(Map<String,Map<String,Long>> survivorsByPlayer) {
+        if(targetType!=TargetType.STRATEGIC_TARGET || !isRallyMarch() || totalUnits()<=0L) {
+            throw new IllegalStateException("只有有幸存兵的战略集结能留驻");
+        }
+        var owners=freezeOwners(survivorsByPlayer);
+        if(!sumOwners(owners).equals(units))throw new IllegalArgumentException("驻军成员兵权与幸存总兵力不一致");
+        if(status==Status.STATIONED && owners.equals(garrisonTroopsByPlayer))return;
+        if(status!=Status.FIGHTING || hasGarrisonOwnership())throw new IllegalStateException("不能重置既有驻军兵权");
+        garrisonTroopsByPlayer=owners;status=Status.STATIONED;
+    }
+
+    public void beginGarrisonDefense() {
+        if(status!=Status.STATIONED || !hasGarrisonOwnership() || totalUnits()<=0L)
+            throw new IllegalStateException("只有有效驻军能开始守备战");
+        status=Status.FIGHTING;
+    }
+
+    public void finishGarrisonDefense() {
+        if(status!=Status.FIGHTING || !hasGarrisonOwnership() || totalUnits()<=0L)
+            throw new IllegalStateException("只有仍有幸存兵的驻军能继续留驻");
+        status=Status.STATIONED;
+    }
+
     /** 开始采集（到达资源点之后）。 */
     public void startGathering(long now) {
         if (status != Status.GATHERING) {
@@ -517,6 +550,8 @@ public final class March {
         if (losses == null) {
             throw new IllegalArgumentException("losses 不得为 null（没有损失请传空 Map）");
         }
+        if(hasGarrisonOwnership() && status!=Status.FIGHTING)
+            throw new IllegalStateException("驻军战损必须先占有交战态");
         Map<String, Long> actual = new LinkedHashMap<>();
         for (String unitId : new ArrayList<>(losses.keySet())) {
             Long lost = losses.get(unitId);
@@ -528,15 +563,54 @@ public final class March {
             if (deduct <= 0L) {
                 continue;
             }
-            long rest = have - deduct;
-            if (rest == 0L) {
-                units.remove(unitId);
-            } else {
-                units.put(unitId, rest);
-            }
             actual.put(unitId, deduct);
         }
+        // 所有分摊先在副本计算完再改聚合，失败不能留下总兵与成员兵权两种答案。
+        var nextOwners=hasGarrisonOwnership()?reduceOwners(garrisonTroopsByPlayer,actual):null;
+        for(var loss:actual.entrySet()) {
+            long rest=units.get(loss.getKey())-loss.getValue();
+            if(rest==0L)units.remove(loss.getKey());else units.put(loss.getKey(),rest);
+        }
+        if(nextOwners!=null)garrisonTroopsByPlayer=nextOwners;
         return actual;
+    }
+
+    private static Map<String,Map<String,Long>> freezeOwners(Map<String,Map<String,Long>> source) {
+        if(source==null)throw new IllegalArgumentException("驻军成员兵权不得为null");
+        for(var e:source.entrySet())if(e.getKey()==null || e.getKey().isBlank() || e.getValue()==null)
+            throw new IllegalArgumentException("驻军成员/部队不得为空");
+        var ids=new ArrayList<>(source.keySet());ids.sort(Comparator.naturalOrder());
+        Map<String,Map<String,Long>> out=new LinkedHashMap<>();
+        for(String player:ids) {
+            for(var count:source.get(player).values())if(count==null || count<0L)
+                throw new IllegalArgumentException("驻军兵数不得为空或为负");
+            out.put(player,Collections.unmodifiableMap(normalize(source.get(player),"驻军")));
+        }
+        return Collections.unmodifiableMap(out);
+    }
+
+    private static Map<String,Long> sumOwners(Map<String,Map<String,Long>> owners) {
+        Map<String,Long> total=new LinkedHashMap<>();
+        owners.values().forEach(u->u.forEach((unit,count)->total.merge(unit,count,Math::addExact)));
+        return total;
+    }
+
+    private static Map<String,Map<String,Long>> reduceOwners(Map<String,Map<String,Long>> owners,
+                                                          Map<String,Long> losses) {
+        Map<String,Map<String,Long>> next=new LinkedHashMap<>();
+        owners.forEach((p,u)->next.put(p,new LinkedHashMap<>(u)));
+        for(var loss:losses.entrySet()) {
+            Map<String,Long> current=new LinkedHashMap<>();
+            next.forEach((p,u)->{long n=u.getOrDefault(loss.getKey(),0L);if(n>0L)current.put(p,n);});
+            var shares=TierSplit.splitProportionally(current,loss.getValue());
+            long assigned=shares.values().stream().mapToLong(Long::longValue).sum();
+            if(assigned!=loss.getValue())throw new IllegalStateException("驻军损失无法按当前兵权分完");
+            shares.forEach((p,n)->{
+                var troop=next.get(p);long left=troop.get(loss.getKey())-n;
+                if(left==0L)troop.remove(loss.getKey());else troop.put(loss.getKey(),left);
+            });
+        }
+        return freezeOwners(next);
     }
 
     /** 供仓储反序列化写回。业务代码不要用。 */
@@ -552,6 +626,9 @@ public final class March {
         if (load < 0L || load > loadCap) {
             throw new IllegalArgumentException("负载越界：load=" + load + ", loadCap=" + loadCap);
         }
+        Map<String,Long> copy=normalize(restoredUnits,id);
+        if(hasGarrisonOwnership() && (status==Status.MARCHING || !sumOwners(garrisonTroopsByPlayer).equals(copy)))
+            throw new IllegalArgumentException("反序列化不能绕过驻军兵权修改总兵力");
         this.arriveAt = arriveAt;
         this.returnArriveAt = returnArriveAt;
         this.returnStartAt = returnStartAt;
@@ -562,7 +639,6 @@ public final class March {
         // normalize 内部先拷一份再返回新 map：入参可能就是 units() 返回的视图
         // （不可变包装套的是同一个 Map），直接 clear 会把正在读的入参一起清空 ——
         // 这个别名 bug 在 ArmyState / HeroRoster / FogOfWar 上已经踩过三次
-        Map<String, Long> copy = normalize(restoredUnits, id);
         units.clear();
         units.putAll(copy);
     }
@@ -584,14 +660,26 @@ public final class March {
                            long arriveAt, Map<String, Long> units, List<String> heroes,
                            long loadCap, int teamSpeed, TargetType targetType, String targetId,
                            Action action, Long returnArriveAt, Long returnStartAt, Coord returnFrom,
-                           long load, Status status, Long gatherStartAt, String rallyId) {
+                           long load, Status status, Long gatherStartAt, String rallyId,
+                           Map<String,Map<String,Long>> garrisonTroopsByPlayer,Boolean garrisonInitialized) {
+        public Snapshot {
+            if(garrisonTroopsByPlayer!=null)garrisonTroopsByPlayer=freezeOwners(garrisonTroopsByPlayer);
+        }
+        /** 兼容旧存档/既有调用形状，缺列不推断为配置守军或新成员份额。 */
+        public Snapshot(String id,String playerId,Coord from,Coord to,long startAt,long arriveAt,
+                        Map<String,Long> units,List<String> heroes,long loadCap,int teamSpeed,
+                        TargetType targetType,String targetId,Action action,Long returnArriveAt,
+                        Long returnStartAt,Coord returnFrom,long load,Status status,Long gatherStartAt,String rallyId) {
+            this(id,playerId,from,to,startAt,arriveAt,units,heroes,loadCap,teamSpeed,targetType,targetId,
+                    action,returnArriveAt,returnStartAt,returnFrom,load,status,gatherStartAt,rallyId,null,false);
+        }
     }
 
     /** 取出完整状态（不可变，可安全跨线程/跨存储传递）。 */
     public Snapshot snapshot() {
         return new Snapshot(id, playerId, from, to, startAt, arriveAt, units(), heroes(),
                 loadCap, teamSpeed, targetType, targetId, action, returnArriveAt, returnStartAt,
-                returnFrom, load, status, gatherStartAt, rallyId);
+                returnFrom, load, status, gatherStartAt, rallyId,garrisonTroopsByPlayer,hasGarrisonOwnership());
     }
 
     /**
@@ -604,6 +692,10 @@ public final class March {
         if (s == null) {
             throw new IllegalArgumentException("快照不得为 null：没有快照就没有重建");
         }
+        if(Boolean.TRUE.equals(s.garrisonInitialized()) && s.garrisonTroopsByPlayer()==null)
+            throw new IllegalArgumentException("驻军兵权缺失，不能退回原始比例分兵");
+        if(Boolean.FALSE.equals(s.garrisonInitialized()) && s.garrisonTroopsByPlayer()!=null)
+            throw new IllegalArgumentException("驻军初始化标记与成员兵权冲突");
         March march = new March(s.id(), s.playerId(), s.from(), s.to(), s.startAt(), s.arriveAt(),
                 s.units(), s.heroes(), s.loadCap(), s.teamSpeed(), s.targetType(), s.targetId(),
                 s.action());
@@ -611,6 +703,13 @@ public final class March {
                 s.load(), s.status(), s.gatherStartAt(), s.units());
         if (s.rallyId() != null && !s.rallyId().isBlank()) {
             march.attachToRally(s.rallyId());
+        }
+        if(s.garrisonTroopsByPlayer()!=null) {
+            var owners=freezeOwners(s.garrisonTroopsByPlayer());
+            if(s.targetType()!=TargetType.STRATEGIC_TARGET || !march.isRallyMarch()
+                    || s.status()==Status.MARCHING || !sumOwners(owners).equals(march.units))
+                throw new IllegalArgumentException("持久驻军兵权与行军快照不一致");
+            march.garrisonTroopsByPlayer=owners;
         }
         return march;
     }

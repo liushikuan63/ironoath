@@ -227,13 +227,14 @@
     },
     "TargetType": {
       "type": "string",
-      "description": "行军目标类型，决定到达后的行为分支（B07 §2 的表格）。",
+      "description": "行军目标类型，决定到达后的行为分支（B07 §2 的表格）。 STRATEGIC_TARGET用于战略目标实际驻军；当前争夺入口仍关闭。",
       "enum": [
         "EMPTY",
         "MONSTER",
         "RESOURCE",
         "PLAYER_CITY",
-        "ALLIANCE_BUILDING"
+        "ALLIANCE_BUILDING",
+        "STRATEGIC_TARGET"
       ]
     },
     "MarchAction": {

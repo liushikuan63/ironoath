@@ -61,7 +61,7 @@ export type MarchStatus =
   | 'FIGHTING'
 
 /**
- * 行军目标类型，决定到达后的行为分支（B07 §2 的表格）。
+ * 行军目标类型，决定到达后的行为分支（B07 §2 的表格）。 STRATEGIC_TARGET用于战略目标实际驻军；当前争夺入口仍关闭。
  */
 export type TargetType =
   | 'EMPTY'
@@ -69,6 +69,7 @@ export type TargetType =
   | 'RESOURCE'
   | 'PLAYER_CITY'
   | 'ALLIANCE_BUILDING'
+  | 'STRATEGIC_TARGET'
 
 /**
  * 玩家选择的到达行为。与 TargetType 分开：目标是什么由地图决定，做什么由玩家决定。

@@ -84,8 +84,10 @@ export function targetLabel(targetType: RallyView['targetType']): string {
       return '敌方城池'
     case 'ALLIANCE_BUILDING':
       return '联盟建筑'
+    case 'STRATEGIC_TARGET':
+      return '战略目标'
     default:
-      return String(targetType)
+      return '未知目标'
   }
 }
 

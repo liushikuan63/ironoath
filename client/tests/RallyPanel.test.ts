@@ -85,12 +85,16 @@ test('行文案是玩家语言：层级、目标类型、坐标、人数与兵�
   assert.equal(scopeLabel('NATION'), '国家集结')
 })
 
-test('目标类型的五个取值都有中文名（缺一个就会在界面上露出半英文）', () => {
+test('目标类型的六个取值都有中文名（缺一个就会在界面上露出半英文）', () => {
   assert.deepEqual(
-    (['EMPTY', 'MONSTER', 'RESOURCE', 'PLAYER_CITY', 'ALLIANCE_BUILDING'] as const)
+    (['EMPTY', 'MONSTER', 'RESOURCE', 'PLAYER_CITY', 'ALLIANCE_BUILDING', 'STRATEGIC_TARGET'] as const)
       .map((t) => targetLabel(t)),
-    ['空地', '野外怪', '资源点', '敌方城池', '联盟建筑'],
+    ['空地', '野外怪', '资源点', '敌方城池', '联盟建筑', '战略目标'],
   )
+})
+
+test('未知目标类型不直接印服务端枚举', () => {
+  assert.equal(targetLabel('future_internal_target' as RallyView['targetType']), '未知目标')
 })
 
 test('一支都没有时说清"这里本该有什么"，而不是画一个空列表', () => {

@@ -2907,6 +2907,9 @@ public class SocialAppService {
         if (coord == null || targetType == null) {
             throw new BizException(ErrorCode.RALLY_PREPARE_INVALID, "集结必须指定目标坐标与目标类型");
         }
+        if(targetType==SocialTargetType.STRATEGIC_TARGET) {
+            throw new BizException(ErrorCode.RALLY_PREPARE_INVALID,"战略目标尚未开放争夺");
+        }
         // 武将校验排在扣兵之前：被拒时一个兵都不该动（与个人出征同一条纪律）
         heroAppService.requireOnMarch(playerId, heroes);
         // 三档各取自己那一份规则，一次算好往下传。原先这里写的是

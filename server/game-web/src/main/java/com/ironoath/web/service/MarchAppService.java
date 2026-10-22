@@ -1270,6 +1270,7 @@ public class MarchAppService {
     private Map<String, Long> returnRallyTroops(March march) {
         com.ironoath.core.social.Rally rally = socialStore.rallyOf(march.rallyId()).orElse(null);
         if (rally == null) {
+            if(march.hasGarrisonOwnership())throw new IllegalStateException("驻军集结来源缺失，保留行军等待恢复");
             // 绝不退回到「全额记给发起人」：那会把一次数据缺失洗成一次看起来正常的发兵，
             // 而当事人的兵就真的找不回来了。记 ERROR 等人工补兵是可查的，洗账不是
             LOG.error("【集结合并行军找不到对应集结，幸存兵力未分回】marchId={} rallyId={} 兵力={} 必须人工补兵",
@@ -1281,7 +1282,21 @@ public class MarchAppService {
         Map<String, Map<String, Long>> credits = new LinkedHashMap<>();
         long survivors = 0L;
         long credited = 0L;
-        for (Map.Entry<String, Long> unit : march.units().entrySet()) {
+        if(march.hasGarrisonOwnership()) {
+            // 驻军可能经历多次守备，必须按持久化的当前兵权返还，不能重新按原比例分剩余兵。
+            for(var owner:march.garrisonTroopsByPlayer().entrySet()) {
+                var participant=rally.participant(owner.getKey());
+                if(participant==null)throw new IllegalStateException("驻军兵权出现非原集结成员");
+                for(var unit:owner.getValue().entrySet()) {
+                    if(unit.getValue()>participant.troops().getOrDefault(unit.getKey(),0L))
+                        throw new IllegalStateException("驻军成员余额超过原出兵承诺");
+                    credited=Math.addExact(credited,unit.getValue());
+                }
+                if(!owner.getValue().isEmpty())credits.put(owner.getKey(),new LinkedHashMap<>(owner.getValue()));
+            }
+            survivors=march.totalUnits();
+            if(credited!=survivors)throw new IllegalStateException("驻军兵权与返程总兵数不一致");
+        } else for (Map.Entry<String, Long> unit : march.units().entrySet()) {
             String unitId = unit.getKey();
             long count = unit.getValue();
             survivors += count;

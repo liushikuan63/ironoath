@@ -3,12 +3,13 @@
 package com.ironoath.web.dto.generated;
 
 /**
- * 集结目标的类型。取值必须与 world 协议的 TargetType 一致（SocialContractParityTest 断言）。决定集结到达后的行为分支，与 B07 §2 的行军目标类型同一套口径。
+ * 集结目标的类型。取值必须与 world 协议的 TargetType 一致（SocialContractParityTest 断言）。决定集结到达后的行为分支，与 B07 §2 的行军目标类型同一套口径。 STRATEGIC_TARGET可读取实际战略驻军，争夺发起仍由服务端显式关闭。
  */
 public enum SocialTargetType {
     EMPTY,
     MONSTER,
     RESOURCE,
     PLAYER_CITY,
-    ALLIANCE_BUILDING
+    ALLIANCE_BUILDING,
+    STRATEGIC_TARGET
 }

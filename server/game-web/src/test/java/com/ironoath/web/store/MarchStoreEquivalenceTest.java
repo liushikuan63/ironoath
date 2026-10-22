@@ -192,6 +192,54 @@ class MarchStoreEquivalenceTest {
 
     // ---------- 夹具 ----------
 
+    @Test void strategicGarrisonSharesSurviveMemoryAndMongoRoundTrips() {
+        for(MarchRepository store:List.of(new InMemoryMarchStore(CHUNK_SIZE),newMongoStore())) {
+            var m=new March("owned-garrison","P-1",Coord.of(10,10),Coord.of(20,20),T0,T0+10,
+                    Map.of("unit_infantry_t1",26L),List.of(),1000,1,
+                    March.TargetType.STRATEGIC_TARGET,"gate_north",March.Action.ATTACK);
+            m.attachToRally("owned-garrison-rally");m.arrive(T0+10);
+            m.holdStrategicVictory(Map.of("P-1",Map.of("unit_infantry_t1",8L),
+                    "P-2",Map.of("unit_infantry_t1",8L),"P-3",Map.of("unit_infantry_t1",5L),
+                    "P-4",Map.of("unit_infantry_t1",2L),"P-5",Map.of("unit_infantry_t1",2L),
+                    "P-6",Map.of("unit_infantry_t1",1L)));
+            store.insertIfAbsent(m);
+            var loaded=store.findById(m.id()).orElseThrow();
+            loaded.beginGarrisonDefense();loaded.applyLosses(Map.of("unit_infantry_t1",1L));loaded.finishGarrisonDefense();
+            store.save(loaded,store.versionOf(m.id()));
+            loaded.beginReturn(T0+20,10L);store.save(loaded,store.versionOf(m.id()));
+            MarchRepository reader=store instanceof MongoMarchStore?newMongoStore():store;
+            var returned=reader.findById(m.id()).orElseThrow();
+            assertThat(returned.status()).isEqualTo(March.Status.RETURNING);
+            assertThat(returned.totalUnits()).isEqualTo(25L);
+            assertThat(returned.garrisonTroopsByPlayer().get("P-4").get("unit_infantry_t1")).isEqualTo(2L);
+            assertThat(returned.garrisonTroopsByPlayer()).isEqualTo(loaded.garrisonTroopsByPlayer());
+        }
+    }
+
+    @Test void missingOwnershipInInitializedMongoGarrisonFailsClosed() {
+        var store=newMongoStore();
+        var m=new March("corrupt-garrison","P-1",Coord.of(10,10),Coord.of(20,20),T0,T0+10,
+                Map.of("unit_infantry_t1",5L),List.of(),1000,1,
+                March.TargetType.STRATEGIC_TARGET,"gate_north",March.Action.ATTACK);
+        m.attachToRally("owned-corrupt-rally");m.arrive(T0+10);
+        m.holdStrategicVictory(Map.of("P-1",Map.of("unit_infantry_t1",5L)));
+        store.insertIfAbsent(m);
+        db.template().updateFirst(Query.query(org.springframework.data.mongodb.core.query.Criteria.where("_id").is(m.id())),
+                new org.springframework.data.mongodb.core.query.Update().unset("state.garrisonTroopsByPlayer"),"march");
+        assertThatThrownBy(()->store.findById(m.id())).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("驻军兵权缺失");
+    }
+
+    @Test void legacyMongoMarchWithoutGarrisonFieldsRetainsOriginalTroops() {
+        var store=newMongoStore();var old=march("legacy-no-garrison-fields",T0);store.insertIfAbsent(old);
+        db.template().updateFirst(Query.query(org.springframework.data.mongodb.core.query.Criteria.where("_id").is(old.id())),
+                new org.springframework.data.mongodb.core.query.Update().unset("state.garrisonTroopsByPlayer")
+                        .unset("state.garrisonInitialized"),"march");
+        var loaded=newMongoStore().findById(old.id()).orElseThrow();
+        assertThat(loaded.units()).isEqualTo(old.units());
+        assertThat(loaded.hasGarrisonOwnership()).isFalse();
+    }
+
     private List<March> memory(List<March> seeds) {
         MarchRepository store = new InMemoryMarchStore(CHUNK_SIZE);
         seeds.forEach(store::insertIfAbsent);

@@ -31,13 +31,14 @@
     },
     "SocialTargetType": {
       "type": "string",
-      "description": "集结目标的类型。取值必须与 world 协议的 TargetType 一致（SocialContractParityTest 断言）。决定集结到达后的行为分支，与 B07 §2 的行军目标类型同一套口径。",
+      "description": "集结目标的类型。取值必须与 world 协议的 TargetType 一致（SocialContractParityTest 断言）。决定集结到达后的行为分支，与 B07 §2 的行军目标类型同一套口径。 STRATEGIC_TARGET可读取实际战略驻军，争夺发起仍由服务端显式关闭。",
       "enum": [
         "EMPTY",
         "MONSTER",
         "RESOURCE",
         "PLAYER_CITY",
-        "ALLIANCE_BUILDING"
+        "ALLIANCE_BUILDING",
+        "STRATEGIC_TARGET"
       ]
     },
     "SquadRole": {
@@ -1710,9 +1711,18 @@
         "createdAt"
       ],
       "properties": {
-        "reportId": { "type": "string", "description": "留痕记录 id。" },
-        "reporterId": { "type": "string", "description": "举报人。" },
-        "targetPlayerId": { "type": "string", "description": "被举报人。" },
+        "reportId": {
+          "type": "string",
+          "description": "留痕记录 id。"
+        },
+        "reporterId": {
+          "type": "string",
+          "description": "举报人。"
+        },
+        "targetPlayerId": {
+          "type": "string",
+          "description": "被举报人。"
+        },
         "messageId": {
           "type": [
             "string",
@@ -1720,7 +1730,10 @@
           ],
           "description": "被举报的消息 id；没带就是 null。带上它运营才能看到被举报的原话。"
         },
-        "reason": { "$ref": "#/$defs/ReportReason", "description": "举报原因。" },
+        "reason": {
+          "$ref": "#/$defs/ReportReason",
+          "description": "举报原因。"
+        },
         "detail": {
           "type": [
             "string",
@@ -1728,7 +1741,11 @@
           ],
           "description": "举报人的补充说明；没写就是 null。"
         },
-        "createdAt": { "type": "integer", "format": "int64", "description": "受理时刻（服务端时间戳）。" }
+        "createdAt": {
+          "type": "integer",
+          "format": "int64",
+          "description": "受理时刻（服务端时间戳）。"
+        }
       }
     },
     "OpsReportRecentResp": {
@@ -1761,7 +1778,9 @@
         "rows": {
           "type": "array",
           "description": "按受理时刻倒序，最多 limit 条。",
-          "items": { "$ref": "#/$defs/OpsReportRow" }
+          "items": {
+            "$ref": "#/$defs/OpsReportRow"
+          }
         }
       }
     },
@@ -1774,8 +1793,14 @@
         "targetPlayerId"
       ],
       "properties": {
-        "requestId": { "type": "string", "description": "幂等键：重复关注同一个人应当是幂等的结果，但重放不该产生第二条账。" },
-        "targetPlayerId": { "type": "string", "description": "要关注 / 取消关注的玩家。" }
+        "requestId": {
+          "type": "string",
+          "description": "幂等键：重复关注同一个人应当是幂等的结果，但重放不该产生第二条账。"
+        },
+        "targetPlayerId": {
+          "type": "string",
+          "description": "要关注 / 取消关注的玩家。"
+        }
       }
     },
     "FriendView": {
@@ -1789,10 +1814,23 @@
         "lastSeenAt"
       ],
       "properties": {
-        "playerId": { "type": "string", "description": "被关注的玩家 id。" },
-        "name": { "type": "string", "description": "昵称（服务端拼好下发）。" },
-        "online": { "type": "boolean", "description": "此刻是否在线（来自 WS 网关的在线快照）。" },
-        "lastSeenAt": { "type": "integer", "format": "int64", "description": "最近活跃时刻；在线时为当前时刻。" }
+        "playerId": {
+          "type": "string",
+          "description": "被关注的玩家 id。"
+        },
+        "name": {
+          "type": "string",
+          "description": "昵称（服务端拼好下发）。"
+        },
+        "online": {
+          "type": "boolean",
+          "description": "此刻是否在线（来自 WS 网关的在线快照）。"
+        },
+        "lastSeenAt": {
+          "type": "integer",
+          "format": "int64",
+          "description": "最近活跃时刻；在线时为当前时刻。"
+        }
       }
     },
     "FriendListView": {

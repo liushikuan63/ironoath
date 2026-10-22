@@ -6,7 +6,7 @@
  */
 
 /**
- * 集结目标的类型。取值必须与 world 协议的 TargetType 一致（SocialContractParityTest 断言）。决定集结到达后的行为分支，与 B07 §2 的行军目标类型同一套口径。
+ * 集结目标的类型。取值必须与 world 协议的 TargetType 一致（SocialContractParityTest 断言）。决定集结到达后的行为分支，与 B07 §2 的行军目标类型同一套口径。 STRATEGIC_TARGET可读取实际战略驻军，争夺发起仍由服务端显式关闭。
  */
 export type SocialTargetType =
   | 'EMPTY'
@@ -14,6 +14,7 @@ export type SocialTargetType =
   | 'RESOURCE'
   | 'PLAYER_CITY'
   | 'ALLIANCE_BUILDING'
+  | 'STRATEGIC_TARGET'
 
 /**
  * 小队职位（B10 §4 权限矩阵的 squad scope）。只有两级：小队 5~10 人，再多一层职位就是官僚主义 —— C00 公理七指出小队满足的是「我和兄弟们」，熟人圈子里没有副队长。
