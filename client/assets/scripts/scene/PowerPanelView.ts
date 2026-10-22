@@ -21,7 +21,7 @@ import { RANK_TABS } from '../game/power/RankBoard'
 import type { RankBoardView, RankTabKey } from '../game/power/RankBoard'
 import type { SeasonPanelView } from '../game/season/SeasonPanel'
 import type { PowerDetailResp } from '../net/generated/Protocol'
-import { applySystemUiFont } from './UiFont'
+import { applySystemUiFont, capWidth } from './UiFont'
 
 const { ccclass } = _decorator
 
@@ -376,15 +376,24 @@ export class PowerPanelView extends Component {
     graphics.rect(-(PANEL_WIDTH - PADDING * 2) / 2, -ROW_HEIGHT, PANEL_WIDTH - PADDING * 2, ROW_HEIGHT)
     graphics.fill()
 
+    // 左右边缘锚定并预留列间距；自动宽度标签以中心贴边会把文字推出底板。
+    const availableWidth = PANEL_WIDTH - PADDING * 2 - 24 - 12
+    const nameWidth = Math.floor(availableWidth * 2 / 3)
     const name = this.createLabel(labelText, foreground, 20)
     row.addChild(name.node)
     name.node.setPosition(new Vec3(-(PANEL_WIDTH - PADDING * 2) / 2 + 12, -ROW_HEIGHT / 2, 0))
     name.horizontalAlign = Label.HorizontalAlign.LEFT
+    name.node.getComponent(UITransform)?.setAnchorPoint(0, 0.5)
+    name.enableWrapText = false
+    capWidth(name, nameWidth)
 
     const value = this.createLabel(valueText, foreground, 20)
     row.addChild(value.node)
     value.node.setPosition(new Vec3((PANEL_WIDTH - PADDING * 2) / 2 - 12, -ROW_HEIGHT / 2, 0))
     value.horizontalAlign = Label.HorizontalAlign.RIGHT
+    value.node.getComponent(UITransform)?.setAnchorPoint(1, 0.5)
+    value.enableWrapText = false
+    capWidth(value, availableWidth - nameWidth)
 
     this.rows.push(row)
     return y - ROW_HEIGHT - 4

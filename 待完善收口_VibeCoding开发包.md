@@ -8140,3 +8140,6 @@ TEST_EXIT=0
 
 
 | 榜单量具真实响应与可见行证据 #2370 | 本格原子本地提交，未推送 | 点击前绑定实际后端/GET/榜类型，核空/非空、逐行名次名称榜值和世界y次序；旧rank2次42过1失败原账保留，新版错误主机37过3红已修；仅反转可见行10跑1红后10绿，check51/tools67/client1413零红错跳，review无P1/P2 | 原Mongo非空43/0、新自有memory空榜43/0，4条249/173/167/103不删不改；非空图SHA51eb6453…d0397未变复用已看观察，空榜新图已看。编译输入无漂移，复用#2369JAR及#2364 Cocos，不称新Maven/Cocos构建；原8相关探针证据复用，原batchEXIT1保留。D:/tmp/ironoath-2370-receipt.json、rank-populated-final、rank-empty | 截图已证非空行名前缀横向溢出，下一2371加边界反证并修左右锚点/列宽，未验收整体布局；自有Mongo48888/8523及memory56100/8527和原击杀数据保留，不报清理。实际B13链仍未完，5000无新准入不跑、不推 |
+
+
+| 排行榜与战力名值行不越底板 #2371 | 本格原子本地提交，未推送 | 初量具误量全屏宿主960而漏检，改量真实background自身520四角；旧Cocos有效反证45过3红。drawRow左右边锚点+296/148列/12缝，capWidth禁换行且标题居中不动；6新layout绿，check51/client1413/tools73零红错跳，review无P1/P2 | 新Cocos EXIT0/内部36/invalid0，337文件digest651115a8…e2ec2冻结；真实Mongo非空48/0、memory空榜48/0、仅浏览器16字/13位值展示fixture48/0；新正常/压力图已看，空图同SHA复用观察，真榜仍249/173/167/103。新产物9相关全0无未验；复用无漂移server JAR不称新Maven；两自有PID/库/40端口清。D:/tmp/ironoath-2371-receipt.json、source-receipt.json、layout-plate-red.log、layout-green、layout-stress、exits.txt | 微信原生未验，真实B13攻占/成员医院战报/围城/全国收益/奖励未完；NPC余兵与要塞幅度待答。原库不写，5000无新准入不跑，不推；下一回原B13主链 |

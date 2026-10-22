@@ -20,7 +20,7 @@ import { chromium } from 'playwright'
 import { startPreviewServer } from './lib/preview-server.mjs'
 import { hideGuideOverlay } from './lib/guide-overlay.mjs'
 import { retainResponseWait } from './lib/runtime-response-wait.mjs'
-import { assertRankBoardEvidence, matchesRankBoardResponse } from './lib/rank-board-evidence.mjs'
+import { assertRankBoardEvidence, matchesRankBoardResponse, assertRowHorizontalBounds } from './lib/rank-board-evidence.mjs'
 
 const OUT = process.env.RANK_VERIFY_OUT ?? path.resolve(process.cwd(), 'client/build/rank-verify')
 mkdirSync(OUT, { recursive: true })
@@ -74,6 +74,27 @@ await context.addInitScript((value) => {
   localStorage.setItem('ironoath.deviceId', value)
 }, deviceId)
 const page = await context.newPage()
+const layoutStressFixture = process.env.RANK_LAYOUT_STRESS_FIXTURE === '1'
+if (layoutStressFixture) {
+  console.log('[FIXTURE] 长名称/大榜值仅替换本浏览器KILL响应，不写后端榜分；真实对照须另跑')
+  await page.route('**/rank/list?**', async route => {
+    const request = route.request()
+    if (!matchesRankBoardResponse(request.url(), request.method(), 'KILL', BACKEND)) {
+      await route.continue(); return
+    }
+    const response = await route.fetch()
+    const body = await response.json()
+    if (response.status() !== 200 || body.code !== 0 || body.data?.type !== 'KILL') {
+      await route.fulfill({response}); return
+    }
+    body.data.entries = [
+      {rank:1,id:'layout-fixture-one',name:'长名称展示验证甲乙丙丁戊己庚辛壬',value:9_876_543_210_123,tag:null},
+      {rank:2,id:'layout-fixture-two',name:'长名称展示验证子丑寅卯辰巳午未申',value:1_234_567_890_123,tag:null},
+    ]
+    body.data.myRank = null; body.data.myValue = null; body.data.hasMore = false
+    await route.fulfill({response,json:body})
+  })
+}
 const errors = []
 const requests = []
 page.on('pageerror', (error) => errors.push(error.message))
@@ -118,6 +139,14 @@ const LABEL_SNAPSHOT = `(() => {
   if (!panel) return null
   const out = []
   const ys = []
+  const ownHorizontalBounds = node => {
+    const ui = node.getComponent('cc.UITransform')
+    const {width,height} = ui.contentSize, {x:ax,y:ay} = ui.anchorPoint
+    const points = [[-ax*width,-ay*height],[(1-ax)*width,-ay*height],
+      [-ax*width,(1-ay)*height],[(1-ax)*width,(1-ay)*height]]
+      .map(([x,y])=>ui.convertToWorldSpaceAR(new window.cc.Vec3(x,y,0)))
+    return {left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x))}
+  }
   const walk = (node, dy) => {
     if (!node.activeInHierarchy) return
     const y = dy + node.getPosition().y
@@ -131,20 +160,26 @@ const LABEL_SNAPSHOT = `(() => {
   walk(panel.node, 0)
   const rows = panel.node.children.filter(n => n.name === 'row' && n.activeInHierarchy).map(node => {
     const labels = []
+    const cells = []
     const visit = n => {
       if (!n.activeInHierarchy) return
       const label = n.getComponent('cc.Label')
-      if (label && label.string) labels.push(label.string)
+      if (label && label.string) {
+        labels.push(label.string)
+        cells.push({text:label.string,...ownHorizontalBounds(n)})
+      }
       n.children.forEach(visit)
     }
     visit(node)
-    return { labels, y: node.getWorldPosition().y }
+    return { labels, cells, y: node.getWorldPosition().y }
   })
   const transform = panel.node.getComponent('cc.UITransform')
   return {
     active: panel.node.active,
     labels: out,
     rows,
+    // 宿主被布局器撑成全屏；真正画出的面板边缘属于background，不可拿宿主放宽边界。
+    bounds: ownHorizontalBounds(panel.node.getChildByName('background')),
     ys,
     halfHeight: transform ? transform.contentSize.height / 2 : -1,
   }
@@ -192,8 +227,11 @@ async function clickBoard(type) {
         const data = reply.body.data
         writeFileSync(path.join(OUT, `rank-${type.toLowerCase()}-evidence.json`), JSON.stringify({
           status: reply.status, type: data.type, page: data.page, pageSize: data.pageSize,
-          entries: data.entries.map(({rank,name,value}) => ({rank,name,value})), rows: snapshot.rows,
-          evidence, scope: 'same clicked request real response and visible rows; no rank mutation',
+          entries: data.entries.map(({rank,name,value}) => ({rank,name,value})), rows: snapshot.rows, bounds: snapshot.bounds,
+          evidence, layoutStressFixture,
+          scope: layoutStressFixture && type === 'KILL'
+            ? 'controlled long-name/value presentation response fixture; server rank unchanged'
+            : 'same clicked request real response and visible rows; no rank mutation',
         }, null, 2) + '\n')
         return { snapshot, reply }
       } catch (error) { failure = error }
@@ -212,6 +250,10 @@ async function clickBoard(type) {
  * 只数"画了几个节点"永远看不出这类溢出，所以要量位置。
  */
 function checkInsidePanel(snapshot, where) {
+  try {
+    const layout = assertRowHorizontalBounds(snapshot)
+    ok(`${where}：${layout.cellCount}个行文字框在面板内且两列无重叠`)
+  } catch(error) { bad(`${where}：${error.message}`) }
   const { ys, halfHeight } = snapshot
   if (halfHeight <= 0) {
     bad(`${where}：拿不到面板高度，量不了溢出`)

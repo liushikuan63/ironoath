@@ -7,6 +7,26 @@ export function matchesRankBoardResponse(url,method,expectedType,backend) {
   } catch { return false; }
 }
 
+/** 面板自身四角形成的边界，不能使用会把越界子节点也包含进去的联合包围盒。 */
+export function assertRowHorizontalBounds(panel) {
+  const bounds=panel?.bounds;
+  if(!bounds || !Number.isFinite(bounds.left) || !Number.isFinite(bounds.right) || bounds.right<=bounds.left
+      || !Array.isArray(panel.rows))throw Error('面板自身横向边界缺失');
+  let cellCount=0;
+  for(const row of panel.rows) {
+    if(!Array.isArray(row.cells) || row.cells.length===0)throw Error('可见行单元格边界缺失');
+    let previousRight=-Infinity;
+    for(const cell of row.cells) {
+      if(!Number.isFinite(cell.left) || !Number.isFinite(cell.right) || cell.right<=cell.left)
+        throw Error('单元格边界无效');
+      if(cell.left<bounds.left-0.5 || cell.right>bounds.right+0.5)throw Error('可见行文字横向越出面板');
+      if(cell.left<previousRight-0.5)throw Error('可见行名称和榜值列重叠');
+      previousRight=cell.right;cellCount++;
+    }
+  }
+  return {rowCount:panel.rows.length,cellCount};
+}
+
 /** 当前点击的真实HTTP响应与可见榜行逐行核对，不从“新号”推断全服空榜。 */
 export function assertRankBoardEvidence(reply,expectedType,panel) {
   if(!reply || reply.status!==200 || reply.body?.code!==0)throw Error('榜单HTTP或业务响应未成功');
