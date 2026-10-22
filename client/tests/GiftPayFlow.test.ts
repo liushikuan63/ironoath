@@ -169,17 +169,48 @@ test('弱网轮询：前两次查不到不下结论，第三次拿到 SUCCESS �
   assert.equal((await h.flow.buy('gift_stuck_supply')).phase, 'delivered')
 })
 
-test('支付桥报告非取消失败时不擅自断言未扣款，提示玩家查单与联系客服', async () => {
-  const h = harness({ payment: 'failed' })
+test('支付桥失败而服务端已确认到账时，先查本单并显示已发奖励', async () => {
+  const h = harness({
+    payment: 'failed',
+    statuses: [success([{ type: 'RESOURCE', id: 'GOLD', count: 180 }])],
+  })
 
   const view = await h.flow.buy('gift_stuck_supply')
 
+  assert.equal(h.orderStatusCalls.length, 1)
+  assert.equal(view.phase, 'delivered')
+  assert.equal(view.rewards[0]?.count, 180)
+})
+
+test('支付桥失败且本人订单仍待确认时，不断言没有扣款并给客服入口', async () => {
+  const h = harness({
+    payment: 'failed',
+    statuses: [okOutcome<OrderStatusResp>({ status: 'PENDING', rewards: [], retryQueued: null })],
+  })
+
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(h.orderStatusCalls.length, 1)
   assert.equal(view.phase, 'failed')
   assert.equal(view.title, '支付结果未确认')
   assert.equal(view.showSupport, true, '结果未确认时礼包内应直接给客服入口')
   assert.doesNotMatch(view.detail ?? '', /没有扣款|已到账|款项已收到/,
     '客户端回调不证明订单的最终扣款或发货状态')
   assert.match(view.detail ?? '', /订单|客服/, '要给玩家可执行的查证路径')
+})
+
+test('支付桥失败且服务端当前订单失败，也不把可被迟到回调重开的订单说成绝对未扣款', async () => {
+  const h = harness({
+    payment: 'failed',
+    statuses: [okOutcome<OrderStatusResp>({ status: 'FAILED', rewards: [], retryQueued: null })],
+  })
+
+  const view = await h.flow.buy('gift_stuck_supply')
+
+  assert.equal(h.orderStatusCalls.length, 1)
+  assert.equal(view.phase, 'failed')
+  assert.doesNotMatch(view.detail ?? '', /本次没有扣款/)
+  assert.equal(view.showSupport, true)
 })
 
 /**
@@ -236,6 +267,7 @@ test('未成年提示：四种结局都带着它（它与支付成败无关—�
   const payFailed = await harness({
     createOrder: orderWithNotice(MINOR_NOTICE),
     payment: 'failed',
+    statuses: [okOutcome<OrderStatusResp>({ status: 'PENDING', rewards: [], retryQueued: null })],
   }).flow.buy('gift_stuck_supply')
 
   for (const [phase, view] of [['delivered', delivered], ['processing', processingView],

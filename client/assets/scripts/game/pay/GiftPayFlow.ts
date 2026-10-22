@@ -106,8 +106,18 @@ export class GiftPayFlow {
       return failed('当前环境不支持支付', '请在微信小游戏里打开本游戏；浏览器仅供开发调试', minorNotice)
     }
     if (paid === 'failed') {
-      // 小游戏专用渠道的 fail 回调是否能证明未扣款尚未验收；当前不据此宣称资金终态。
-      // 也不把未知订单状态说成「款项已收到」，玩家先避免重复付款并保留客服路径。
+      // 渠道 fail 回调不是订单终态：先向本人订单查一次，避免已经到账却显示失败。
+      // PENDING 或查不到仍保持未知，不延长这次失败回执的等待时间。
+      const status = await this.deps.orderStatus(order.data.orderId)
+      if (status.kind === 'ok') {
+        if (status.data.status === 'SUCCESS') {
+          return this.successView(status.data, minorNotice)
+        }
+        if (status.data.status === 'FAILED') {
+          return failed('支付未成功',
+            '当前订单未确认付款；如看到扣款或奖励未到账，请联系客服', minorNotice, true)
+        }
+      }
       return failed('支付结果未确认',
         '请勿立即重复付款；若已扣款或奖励未到账，请联系客服', minorNotice, true)
     }
@@ -142,25 +152,31 @@ export class GiftPayFlow {
 
       const data = status.data
       if (data.status === 'FAILED') {
-        return failed('支付未成功', '本次没有扣款；如已扣款请联系客服', minorNotice)
+        // 未付订单会惰性过期；迟到且验签通过的成功回调仍可重开，不能保证绝对未扣款。
+        return failed('支付未成功', '当前订单未确认付款；如看到扣款或奖励未到账，请联系客服',
+          minorNotice, true)
       }
       if (data.status === 'SUCCESS') {
-        if (data.rewards.length > 0) {
-          return {
-            phase: 'delivered',
-            title: '已到账',
-            detail: null,
-            rewards: data.rewards,
-            showSupport: false,
-            minorNotice,
-          }
-        }
-        // 钱到了、货还在补单队列里 —— 这一支必须与"已到账"分开表达
-        return processingPaid(minorNotice)
+        return this.successView(data, minorNotice)
       }
       // PENDING：继续问
     }
     return processingUnconfirmed(minorNotice)
+  }
+
+  private successView(data: OrderStatusResp, minorNotice: string | null): PayView {
+    if (data.rewards.length > 0) {
+      return {
+        phase: 'delivered',
+        title: '已到账',
+        detail: null,
+        rewards: data.rewards,
+        showSupport: false,
+        minorNotice,
+      }
+    }
+    // 钱到了、货还在补单队列里 —— 这一支必须与"已到账"分开表达。
+    return processingPaid(minorNotice)
   }
 }
 

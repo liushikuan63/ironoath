@@ -10,7 +10,7 @@
  */
 import type { PayParams } from './generated/PayProtocol'
 
-/** 拉起支付的四种结局。`failed` 与 `cancelled` 必须分开：前者是"没付成"（余额不足/风控），后者是"用户自己退的"。 */
+/** 拉起支付的四种桥接回调。`failed` 与 `cancelled` 分开保留；两者都不能代替本人订单状态。 */
 export type PaymentOutcome = 'ok' | 'cancelled' | 'unsupported' | 'failed'
 
 export function requestMidasPayment(params: PayParams): Promise<PaymentOutcome> {
@@ -27,7 +27,7 @@ export function requestMidasPayment(params: PayParams): Promise<PaymentOutcome> 
       success: () => resolve('ok'),
       fail: (err) => {
         // 当前桥把 -2 归为用户取消；微信小游戏专用文档和真机回执尚未核实，不能称此映射已通过正式渠道验收。
-        // 其余一律按"没付成"：把余额不足当成"取消"会让玩家以为什么都没发生
+        // 其余归为渠道 fail；资金和发货结局由本人订单查询判定。
         resolve(err.errCode === -2 ? 'cancelled' : 'failed')
       },
     })
